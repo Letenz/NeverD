@@ -1,7 +1,5 @@
 #include "Workbench.h"
 
-#include <algorithm>
-
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QDir>
@@ -13,6 +11,7 @@
 #include <QSet>
 #include <QStandardPaths>
 #include <QWindow>
+#include <algorithm>
 #include <utility>
 
 Workbench::Workbench(QString workerPath, QObject *parent)
@@ -203,6 +202,7 @@ QString Workbench::send(const QString &operation, const QJsonObject &payload,
                         FailureCallback failed) {
   static const QSet<QString> commands{"open",
                                       "analyze",
+                                      "signatures_load",
                                       "rename",
                                       "annotation_set",
                                       "save",
@@ -717,6 +717,16 @@ void Workbench::importContributions(const QUrl &url) {
   send("contribution_register", {{"path", url.toLocalFile()}},
        [this](const auto &payload, const auto &) {
          contributions_ = payload["items"].toArray().toVariantList();
+       });
+}
+void Workbench::loadSignatures(const QUrl &url) {
+  if (!loaded_ || opening_ || !url.isLocalFile())
+    return;
+  send("signatures_load", {{"path", url.toLocalFile()}},
+       [this](const auto &, const auto &) {
+         loadFunctions(false);
+         panes_.refreshAnalysisViews();
+         status_ = QT_TR_NOOP("Signature pack loaded");
        });
 }
 void Workbench::unloadContributions(const QString &nameSpace) {

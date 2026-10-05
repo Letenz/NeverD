@@ -3,91 +3,102 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-// Shared spellings belong to the Android owner; model control flow stays in
-// C++.
-#ifdef NEVERD_ANDROID_SYMBOL
-NEVERD_ANDROID_SYMBOL(DLOpen, "dlopen")
-NEVERD_ANDROID_SYMBOL(DLSym, "dlsym")
-NEVERD_ANDROID_SYMBOL(DLClose, "dlclose")
-NEVERD_ANDROID_SYMBOL(DLError, "dlerror")
-NEVERD_ANDROID_SYMBOL(PthreadOnce, "pthread_once")
-NEVERD_ANDROID_SYMBOL(ThreadCreate, "pthread_create")
-NEVERD_ANDROID_SYMBOL(ThreadJoin, "pthread_join")
-NEVERD_ANDROID_SYMBOL(ThreadDetach, "pthread_detach")
-NEVERD_ANDROID_SYMBOL(ThreadSelf, "pthread_self")
-NEVERD_ANDROID_SYMBOL(ThreadEqual, "pthread_equal")
-NEVERD_ANDROID_SYMBOL(ThreadExit, "pthread_exit")
-NEVERD_ANDROID_SYMBOL(ThreadGetAttr, "pthread_getattr_np")
-NEVERD_ANDROID_SYMBOL(ThreadGetTID, "pthread_gettid_np")
-NEVERD_ANDROID_SYMBOL(PthreadAttrPrefix, "pthread_attr_")
-NEVERD_ANDROID_SYMBOL(ThreadAttrInit, "pthread_attr_init")
-NEVERD_ANDROID_SYMBOL(ThreadAttrDestroy, "pthread_attr_destroy")
-NEVERD_ANDROID_SYMBOL(ThreadAttrGetDetachState, "pthread_attr_getdetachstate")
-NEVERD_ANDROID_SYMBOL(ThreadAttrSetDetachState, "pthread_attr_setdetachstate")
-NEVERD_ANDROID_SYMBOL(ThreadAttrGetInheritSched, "pthread_attr_getinheritsched")
-NEVERD_ANDROID_SYMBOL(ThreadAttrSetInheritSched, "pthread_attr_setinheritsched")
-NEVERD_ANDROID_SYMBOL(ThreadAttrGetSchedPolicy, "pthread_attr_getschedpolicy")
-NEVERD_ANDROID_SYMBOL(ThreadAttrSetSchedPolicy, "pthread_attr_setschedpolicy")
-NEVERD_ANDROID_SYMBOL(ThreadAttrGetSchedParam, "pthread_attr_getschedparam")
-NEVERD_ANDROID_SYMBOL(ThreadAttrSetSchedParam, "pthread_attr_setschedparam")
-NEVERD_ANDROID_SYMBOL(ThreadAttrGetStack, "pthread_attr_getstack")
-NEVERD_ANDROID_SYMBOL(ThreadAttrSetStack, "pthread_attr_setstack")
-NEVERD_ANDROID_SYMBOL(ThreadAttrGetStackSize, "pthread_attr_getstacksize")
-NEVERD_ANDROID_SYMBOL(ThreadAttrSetStackSize, "pthread_attr_setstacksize")
-NEVERD_ANDROID_SYMBOL(ThreadAttrGetGuardSize, "pthread_attr_getguardsize")
-NEVERD_ANDROID_SYMBOL(ThreadAttrSetGuardSize, "pthread_attr_setguardsize")
-NEVERD_ANDROID_SYMBOL(ThreadAttrGetScope, "pthread_attr_getscope")
-NEVERD_ANDROID_SYMBOL(ThreadAttrSetScope, "pthread_attr_setscope")
-NEVERD_ANDROID_SYMBOL(CxaAtExit, "__cxa_atexit")
-NEVERD_ANDROID_SYMBOL(CxaFinalize, "__cxa_finalize")
-NEVERD_ANDROID_SYMBOL(StrtokR, "strtok_r")
-NEVERD_ANDROID_SYMBOL(Sscanf, "sscanf")
-NEVERD_ANDROID_SYMBOL(Vsscanf, "vsscanf")
-NEVERD_ANDROID_SYMBOL(PthreadMutexPrefix, "pthread_mutex")
-NEVERD_ANDROID_SYMBOL(Errno, "__errno")
-NEVERD_ANDROID_SYMBOL(GetPageSize, "getpagesize")
-NEVERD_ANDROID_SYMBOL(Sysconf, "sysconf")
-NEVERD_ANDROID_SYMBOL(Time, "time")
-NEVERD_ANDROID_SYMBOL(DeviceAPILevel, "android_get_device_api_level")
-NEVERD_ANDROID_SYMBOL(StackCheckFail, "__stack_chk_fail")
-NEVERD_ANDROID_SYMBOL(Abort, "abort")
-NEVERD_ANDROID_SYMBOL(Memcpy, "memcpy")
-NEVERD_ANDROID_SYMBOL(Memmove, "memmove")
-NEVERD_ANDROID_SYMBOL(Memset, "memset")
-NEVERD_ANDROID_SYMBOL(Memcmp, "memcmp")
-NEVERD_ANDROID_SYMBOL(Strlen, "strlen")
-NEVERD_ANDROID_SYMBOL(Strnlen, "strnlen")
-NEVERD_ANDROID_SYMBOL(Strcmp, "strcmp")
-NEVERD_ANDROID_SYMBOL(Strncmp, "strncmp")
-NEVERD_ANDROID_SYMBOL(Strchr, "strchr")
-NEVERD_ANDROID_SYMBOL(Strrchr, "strrchr")
-NEVERD_ANDROID_SYMBOL(StrchrChk, "__strchr_chk")
-NEVERD_ANDROID_SYMBOL(StrrchrChk, "__strrchr_chk")
-NEVERD_ANDROID_SYMBOL(SystemPropertyGet, "__system_property_get")
-NEVERD_ANDROID_SYMBOL(Malloc, "malloc")
-NEVERD_ANDROID_SYMBOL(Calloc, "calloc")
-NEVERD_ANDROID_SYMBOL(Realloc, "realloc")
-NEVERD_ANDROID_SYMBOL(Free, "free")
-NEVERD_ANDROID_SYMBOL(Syscall, "syscall")
+// One inventory owns symbol spellings and Bionic call bindings. Prefixes retain
+// the existing diagnostics for unknown members of a modeled call family.
+#ifndef NEVERD_ANDROID_SYMBOL
+#define NEVERD_ANDROID_SYMBOL(Name, Text)
+#define NEVERD_ANDROID_UNDEF_SYMBOL
+#endif
+#ifndef NEVERD_ANDROID_CALL
+#define NEVERD_ANDROID_CALL(Name, Text, Handler)                               \
+  NEVERD_ANDROID_SYMBOL(Name, Text)
+#define NEVERD_ANDROID_UNDEF_CALL
+#endif
+#ifndef NEVERD_ANDROID_PREFIX
+#define NEVERD_ANDROID_PREFIX(Name, Text, Handler)                             \
+  NEVERD_ANDROID_SYMBOL(Name, Text)
+#define NEVERD_ANDROID_UNDEF_PREFIX
+#endif
+
+NEVERD_ANDROID_CALL(DLOpen, "dlopen", openLibrary)
+NEVERD_ANDROID_CALL(DLSym, "dlsym", lookupSymbol)
+NEVERD_ANDROID_CALL(DLClose, "dlclose", closeLibrary)
+NEVERD_ANDROID_CALL(DLError, "dlerror", getLinkerError)
+NEVERD_ANDROID_CALL(PthreadOnce, "pthread_once", once)
+#define NEVERD_ANDROID_THREAD_CALL(Name, Text, Method)                         \
+  NEVERD_ANDROID_CALL(Name, Text, threadCall)
+#include "AndroidThreads.def"
+#undef NEVERD_ANDROID_THREAD_CALL
+NEVERD_ANDROID_PREFIX(PthreadAttrPrefix, "pthread_attr_", threadAttributes)
+#define NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(Name, Text, Method)               \
+  NEVERD_ANDROID_CALL(Name, Text, threadAttributes)
+#include "AndroidThreadAttributes.def"
+#undef NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL
+NEVERD_ANDROID_CALL(CxaAtExit, "__cxa_atexit", registerExit)
+NEVERD_ANDROID_CALL(CxaFinalize, "__cxa_finalize", finalizeCall)
+NEVERD_ANDROID_CALL(StrtokR, "strtok_r", tokenize)
+NEVERD_ANDROID_CALL(Sscanf, "sscanf", scan)
+NEVERD_ANDROID_CALL(Vsscanf, "vsscanf", scan)
+NEVERD_ANDROID_PREFIX(PthreadMutexAttrPrefix, "pthread_mutexattr_",
+                      mutexAttributes)
+NEVERD_ANDROID_PREFIX(PthreadMutexPrefix, "pthread_mutex", mutex)
+NEVERD_ANDROID_CALL(Errno, "__errno", getErrno)
+NEVERD_ANDROID_CALL(GetPageSize, "getpagesize", getPageSize)
+NEVERD_ANDROID_CALL(Sysconf, "sysconf", queryConfiguration)
+NEVERD_ANDROID_CALL(Time, "time", getTime)
+NEVERD_ANDROID_CALL(Sigaction, "sigaction", signalAction)
+NEVERD_ANDROID_CALL(Sigaction64, "sigaction64", signalAction)
+NEVERD_ANDROID_CALL(DeviceAPILevel, "android_get_device_api_level", getAPILevel)
+NEVERD_ANDROID_CALL(StackCheckFail, "__stack_chk_fail", failCall)
+NEVERD_ANDROID_CALL(Abort, "abort", failCall)
+NEVERD_ANDROID_CALL(Memcpy, "memcpy", copyMemory)
+NEVERD_ANDROID_CALL(Memmove, "memmove", copyMemory)
+NEVERD_ANDROID_CALL(Memset, "memset", setMemory)
+NEVERD_ANDROID_CALL(Memcmp, "memcmp", compareMemory)
+NEVERD_ANDROID_CALL(Strlen, "strlen", stringLength)
+NEVERD_ANDROID_CALL(Strnlen, "strnlen", stringLength)
+NEVERD_ANDROID_CALL(Strcmp, "strcmp", compareString)
+NEVERD_ANDROID_CALL(Strncmp, "strncmp", compareString)
+NEVERD_ANDROID_CALL(Strchr, "strchr", findCharacter)
+NEVERD_ANDROID_CALL(Strrchr, "strrchr", findCharacter)
+NEVERD_ANDROID_CALL(StrchrChk, "__strchr_chk", findCharacter)
+NEVERD_ANDROID_CALL(StrrchrChk, "__strrchr_chk", findCharacter)
+NEVERD_ANDROID_CALL(SystemPropertyGet, "__system_property_get", getProperty)
+NEVERD_ANDROID_CALL(Malloc, "malloc", malloc)
+NEVERD_ANDROID_CALL(Calloc, "calloc", calloc)
+NEVERD_ANDROID_CALL(Realloc, "realloc", realloc)
+NEVERD_ANDROID_CALL(Free, "free", free)
+NEVERD_ANDROID_CALL(Syscall, "syscall", syscall)
 NEVERD_ANDROID_SYMBOL(StandardIO, "__sF")
 NEVERD_ANDROID_SYMBOL(StackGuard, "__stack_chk_guard")
-NEVERD_ANDROID_SYMBOL(MutexAttrInit, "pthread_mutexattr_init")
-NEVERD_ANDROID_SYMBOL(MutexAttrDestroy, "pthread_mutexattr_destroy")
-NEVERD_ANDROID_SYMBOL(MutexAttrGetType, "pthread_mutexattr_gettype")
-NEVERD_ANDROID_SYMBOL(MutexAttrSetType, "pthread_mutexattr_settype")
-NEVERD_ANDROID_SYMBOL(MutexAttrGetPShared, "pthread_mutexattr_getpshared")
-NEVERD_ANDROID_SYMBOL(MutexAttrSetPShared, "pthread_mutexattr_setpshared")
-NEVERD_ANDROID_SYMBOL(MutexAttrGetProtocol, "pthread_mutexattr_getprotocol")
-NEVERD_ANDROID_SYMBOL(MutexAttrSetProtocol, "pthread_mutexattr_setprotocol")
-NEVERD_ANDROID_SYMBOL(MutexInit, "pthread_mutex_init")
-NEVERD_ANDROID_SYMBOL(MutexDestroy, "pthread_mutex_destroy")
-NEVERD_ANDROID_SYMBOL(MutexLock, "pthread_mutex_lock")
-NEVERD_ANDROID_SYMBOL(MutexTryLock, "pthread_mutex_trylock")
-NEVERD_ANDROID_SYMBOL(MutexUnlock, "pthread_mutex_unlock")
-NEVERD_ANDROID_SYMBOL(PthreadMutexAttrPrefix, "pthread_mutexattr_")
+NEVERD_ANDROID_CALL(MutexAttrInit, "pthread_mutexattr_init",
+                    initializeMutexAttribute)
+NEVERD_ANDROID_CALL(MutexAttrDestroy, "pthread_mutexattr_destroy",
+                    destroyMutexAttribute)
+NEVERD_ANDROID_CALL(MutexInit, "pthread_mutex_init", initializeMutex)
+#define NEVERD_ANDROID_MUTEX_ATTRIBUTE_CALL(Name, Text, Mask, Shift, Maximum,  \
+                                            Setter)                            \
+  NEVERD_ANDROID_CALL(Name, Text, mutexAttributes)
+#define NEVERD_ANDROID_MUTEX_CALL(Name, Text, Method)                          \
+  NEVERD_ANDROID_CALL(Name, Text, mutex)
+#include "AndroidMutex.def"
+#undef NEVERD_ANDROID_MUTEX_CALL
+#undef NEVERD_ANDROID_MUTEX_ATTRIBUTE_CALL
 NEVERD_ANDROID_SYMBOL(PthreadMutexObjectPrefix, "pthread_mutex_")
-NEVERD_ANDROID_SYMBOL(Snprintf, "snprintf")
-NEVERD_ANDROID_SYMBOL(Vsnprintf, "vsnprintf")
-NEVERD_ANDROID_SYMBOL(Sprintf, "sprintf")
-NEVERD_ANDROID_SYMBOL(Vsprintf, "vsprintf")
+NEVERD_ANDROID_CALL(Snprintf, "snprintf", format)
+NEVERD_ANDROID_CALL(Vsnprintf, "vsnprintf", format)
+NEVERD_ANDROID_CALL(Sprintf, "sprintf", format)
+NEVERD_ANDROID_CALL(Vsprintf, "vsprintf", format)
+
+#ifdef NEVERD_ANDROID_UNDEF_SYMBOL
+#undef NEVERD_ANDROID_UNDEF_SYMBOL
+#undef NEVERD_ANDROID_SYMBOL
+#endif
+#ifdef NEVERD_ANDROID_UNDEF_CALL
+#undef NEVERD_ANDROID_UNDEF_CALL
+#undef NEVERD_ANDROID_CALL
+#endif
+#ifdef NEVERD_ANDROID_UNDEF_PREFIX
+#undef NEVERD_ANDROID_UNDEF_PREFIX
+#undef NEVERD_ANDROID_PREFIX
 #endif

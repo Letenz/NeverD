@@ -115,6 +115,10 @@ Rectangle {
             delegate: ItemDelegate {
                 id: functionRow
                 required property string name
+                required property var model
+                readonly property string linkageName: model.linkage_name || ""
+                readonly property string shownName: model.display_name || name
+                readonly property string identityDetail: shownName + "  " + address + (linkageName && linkageName !== shownName ? "\n" + linkageName : "")
                 required property string address
                 required property var size
                 required property int index
@@ -123,14 +127,14 @@ Rectangle {
                 hoverEnabled: true
                 focusPolicy: Qt.NoFocus
                 highlighted: functions.activeFocus && ListView.isCurrentItem
-                text: name + " " + address
+                text: shownName + " " + address
                 Accessible.name: text
                 contentItem: RowLayout {
                     spacing: 9
                     Text { textFormat: Text.PlainText; text: "ƒ"; font.pointSize: Theme.bodySize; color: Theme.functionName }
                     Text { textFormat: Text.PlainText;
                         id: functionName
-                        text: functionRow.name
+                        text: functionRow.shownName
                         color: Theme.foreground
                         font.pointSize: Theme.bodySize
                         elide: Text.ElideRight
@@ -162,11 +166,11 @@ Rectangle {
                 // Without a handler, AbstractButton emits clicked again.
                 onDoubleClicked: {}
                 ToolTip {
-                    visible: (functionRow.hovered || functionRow.highlighted) && functionName.truncated
-                    text: functionRow.name + "  " + functionRow.address
+                    visible: (functionRow.hovered || functionRow.highlighted) && (functionName.truncated || functionRow.shownName !== functionRow.linkageName)
+                    text: functionRow.identityDetail
                     delay: 700
                     width: 440
-                    contentItem: Text { textFormat: Text.PlainText; text: functionRow.name + "  " + functionRow.address; color: Theme.foreground; font.pointSize: Theme.captionSize; wrapMode: Text.WordWrap; maximumLineCount: 8; elide: Text.ElideRight }
+                    contentItem: Text { textFormat: Text.PlainText; text: functionRow.identityDetail; color: Theme.foreground; font.pointSize: Theme.captionSize; wrapMode: Text.WordWrap; maximumLineCount: 8; elide: Text.ElideRight }
                 }
             }
             EmptyPane {

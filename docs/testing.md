@@ -36,6 +36,45 @@ backend evidence, not as semantic success.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
 
+## Library recognition
+
+The feature repository retains the original compiler objects, truth, source
+profiles and digests. `NeverDLibraryRecognitionTests` consumes those archives
+and checks all 59 rules in the five supported libc++/MSVC STL/ATL/musl profiles.
+It includes standalone and inline positives, wrong layouts/types/call slots,
+COM ordering and exception near misses, cross-pack conflicts, budgets, unchanged
+IR and mapped HighC/default LLVMC/NoOpt LLVMC source. `NeverDSessionCAPITests`
+checks shared identities, authoritative names, template distinctions and cache
+invalidation. The worker fixture exercises actual paged engine responses.
+
+```sh
+cmake --build build-release --target NeverDLibraryRecognitionTests \
+  NeverDSessionCAPITests NeverDSignatureTests NeverDDebugInfoTests NeverDPDBIdentityTests \
+  NeverDObjCSourceCallTests NeverDLLVMCValueTests neverd-worker --parallel 4
+build-release/bin/NeverDLibraryRecognitionTests
+build-release/bin/NeverDSessionCAPITests
+build-release/bin/NeverDSignatureTests
+build-release/bin/NeverDDebugInfoTests
+build-release/bin/NeverDPDBIdentityTests
+build-release/bin/NeverDObjCSourceCallTests
+build-release/bin/NeverDLLVMCValueTests
+ctest --test-dir build-release -R '^NeverDWorkerLibraryFeatures$' --output-on-failure
+```
+
+MSVC consumer fixtures require Clang and `lld-link`. CMake links the archived
+`/Z7` objects into a matching PE/PDB pair and creates real runtime import thunks
+from fixture `.def` files. These ATL images are analysis-only: unresolved platform
+calls are retained and never executed. Unsupported native exception rewriting
+does not become supported by recognizing a library operation. Missing linkers
+omit these tests and must be reported as skipped profile coverage.
+
+The optional GUI targets `neverd-gui-library-view-tests` and
+`neverd-gui-text-position-tests` cover fold/unfold, original text copying,
+disjoint regions, page completeness, Unicode positions and revision changes.
+Run the broader `check-neverd` target before review because the source observers
+cross both C backends. Pack schema/probe tests in `signatures/scripts/tests`
+validate data production separately from these engine tests.
+
 ## Modular MBA simplification
 
 `SymSimplifyFinite.*` covers complete two-valued slices at widths from 8 to 512 bits, shared-use profitability, every supported poison-generating annotation, independent volatile reads and freezes, explicit undef/poison, deep iterative traversal, budgets and the obfuscation stamp. Original and simplified IR execute against an independent oracle over every byte input and randomized full-width inputs at O0/O2. Translation-object tests require distinct cache identities for distinct finite-value budgets.
@@ -496,7 +535,11 @@ Packed-flags tests cover all scalar entry-flag combinations, privilege masks, bo
 
 `FrameOffsets.*`, `NativeStackSpecialization.*` and `OriginalBinaryUndefinedIndependence.*` check all residues for alignments 2/4/8/16/32, free high bits, spills across calls, countdown loops, alias corruption, wrong dispatch, irrelevant wide masks, necessary partition upgrades and exact/one-short budgets. Separate native controls check guarded alignment, internal unsigned return cleanup, incorrect cleanup and prefixed returns. These tests do not establish automatic native-to-LLVM proof coverage for partitioned loops.
 
+Native frame-cache regressions cover 64 repeated aligned loads under the one-load query budget, one-short query refusal, changed out-of-frame addresses and the same address under distinct incoming predicates after one path has returned. Existing full-state mutation and cache key/capacity tests remain required.
+
 Frame-offset regressions cover 558 split-width/alignment/residue/bias combinations under a gate budget too small for whole-root subtraction, mismatched slice roots and biases, unconstrained sparse masks, modular carries and wraparound, nested masks and node/query exhaustion. Native tests verify exact stores through partially aligned pointers, reject missing alignment and out-of-frame accesses, and reject modified store values in full-state refinement.
+
+Repeated-feasibility regressions retain all 130 native instructions while using the same query budget as a two-instruction straight line, reject one-short query/instruction budgets, keep feasible traps across changed branches and entry domains, refuse exhausted solver gates and reject modified candidate state.
 
 Entry-congruence proof tests cover every residue at alignments 1/2/4/16, two distinct root registers, unconstrained higher bits, malformed domains, contradictory entry constants, nonwrapping bounds, exclusion gaps, preservation and exact/one-short query budgets. Inductive loop templates retain the original root predicate. Fresh native independence/refinement and native-to-LLVM checks reject mismatched domains and changed status, while certificate digests bind both domains. These are independently authored fixtures; no alignment is inferred from an ABI or a concrete execution. An independent guarded C function is compiled unchanged at O1/O2 and proved against the actual native instruction sequence under two residues; the same compiled artifacts must fail for a different residue.
 
@@ -659,6 +702,8 @@ Observers must see original CPU/aliases and staged results; read stops, result
 stops, callback exceptions and missing write permissions cannot publish effects.
 Unavailable transports and non-x64 oracle hosts are explicit skips. The target
 builds with Unicorn disabled; native WHP and ARM64 still require those hosts.
+
+`CMPXCHG8B` and `CMPXCHG16B` execute their original encodings on KVM, WHP and checked Unicorn in driver and user profiles. Successful and failed comparisons both require read/write access; faults are classified as writes. `CMPXCHG16B` checks 16-byte alignment before memory access and reports `#GP(0)`. Its two result observations share one RAM transaction: stopping or throwing in either publishes no registers or RAM. Unlocked `CMPXCHG8B` may cross pages; locked operands retain the natural-alignment contract. `X64WideAtomicTests.cpp` compares original host results and direct native faults, aliases, prefixes, address rules, repair and cancellation. Original Windows driver and ring3 PE fixtures exercise both widths; the WDK fixture also executes `_InterlockedCompareExchange128`. The CPU model must support `CMPXCHG16B`.
 
 ```bash
 cmake --build build-cpu --target NeverDRAMTransactionTests --parallel 4
@@ -846,6 +891,23 @@ processes to establish independent store-fault behavior. Other native-oracle
 hosts skip explicitly; backend cells distinguish unavailable execution.
 
 ## Process emulation checks
+
+`AndroidNative.FamilyFallbacksPreserveDiagnosticsAndProviderPrecedence` checks
+unknown pthread attribute and mutex members, disabled thread calls and generic
+unknown imports through real dynamic lookups. The same calls after library close
+must report the inactive provider before interpreting their invalid arguments.
+Dispatch refactors also require the Android, Linux, Darwin, process API and
+execution session/configuration suites, preserving complete reports across the
+public surfaces and available backends.
+
+`DriverKernelFramework.CallAdmissionPreservesValidationOrderAndIRQL` checks
+competing argument, globals, IRQL and object failures, preserves allocation state
+on rejection, and executes the unrestricted context accessors. Windows call
+routing changes require the complete driver, public driver API, native driver and
+guard metadata suites with driver emulation enabled. Request lifetime, queue
+ownership, cancellation, interrupt and power tests exercise the domain handlers;
+execution tests still report unavailable native hosts and optional WDK fixtures
+explicitly.
 
 `AndroidFinalizerTests.cpp` runs independent C ABI callers at O0/O2 with ordinary,
 APS2 and RELR relocations. It checks constructor registrations, exact callback
@@ -2282,7 +2344,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 46 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 224 WHP outcomes from all 112 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 26 built-in images, 46 WDK images and 40 request scenarios, each at original and rebased addresses. Together with the 3683 CPU checks and 17 SEH regressions, 3924 outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build. `3683 CPU + 224 WHP + 17 SEH = 3924`.
+`NativeDriverTests.def` requires 224 WHP outcomes from all 112 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 26 built-in images, 46 WDK images and 40 request scenarios, each at original and rebased addresses. Together with the 4569 CPU checks and 17 SEH regressions, 4810 outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build. `4825 CPU + 224 WHP + 17 SEH = 5066`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 
@@ -2299,6 +2361,10 @@ With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDri
 `X64BranchTests.cpp` checks all 16 Jcc conditions and relative JMP, nine prefix sequences, short/near forms, signed targets above 4 GiB, complete CPU/RAM state, observer stops/errors, split-page decoding, target-fetch faults and context restoration. The independent Intel-host oracle executes 9,792 original instructions; AMD low-target forms stay in guest tests. Both decoder models have complete/truncated-byte tests, and native probes test publication failure. Four original WDK resource probes exercise driver policy. This adds 274 mandatory outcomes per KVM/WHP gate. AMD software-model coverage does not establish native AMD or ARM64 execution.
 
 `X64StackTests.cpp` covers 42 encodings across nine families: widths, addressing, complete state, ordered observers, cancellation, permissions, split pages, physical aliases, fault repair, device rejection and context restoration. An independent host oracle checks original instructions; six WDK resource probes exercise the driver path. The native KVM/WHP gates each add 1135 mandatory outcomes. Unavailable transports remain explicit skips outside their required native gate.
+
+`X64FrameExitTests.cpp` covers 14 `LEAVE` encodings, effective prefix order, full RBP addressing, complete register state, read-only aliases, split-frame faults and repair, privilege checks, observers, invalid addresses, device rejection and context replay. An independent host oracle executes 42 original instructions; five WDK resource probes check driver execution. Both native gates add 379 mandatory outcomes.
+
+`X64FrameEntryTests.cpp` covers 14 encodings, nesting and overlap, physical aliases, write-only probes, cross-page faults and repair, observer cancellation, privilege, rejected prefixes and context replay. Independent host oracles execute 882 successful instructions and, on Linux x64, 84 faults with exact stack-byte and register checks. Two injected-transport tests distinguish cancellation/failure rollback from architectural fault publication. Six WDK resource probes exercise original driver instructions. Native gates add 508 mandatory KVM outcomes and 507 WHP outcomes.
 
 `DriverSIMDSEHTests.cpp` runs eight original SSE fault cases through four supported dispositions plus an x87-edit rejection, both native contracts, normal/CFG WDK images and two load addresses. Ten backend-specific outcomes and three pure kernel SSE record checks are mandatory. `driver_seh_simd.def` owns fixtures and modes; asynchronous unwind tables cover the faulting helper. Microsoft kernel 10.0.26100.9549 supplied independent classification and restoration evidence: 107,744 isolated instruction-path classifications and 8,192 restorations. These observations are not live Windows kernel-driver execution; ARM64 native KVM/WHP remains unverified.
 
@@ -2348,6 +2414,17 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 `WhpStateTransferCases.def` also covers every partial prefix of the combined 32-register capture and conflicts in all seven metadata fields. Both XSAVE API generations must preserve caller state and force a complete retry. The same suite checks one register read per step and recovers omitted XSAVE metadata from that read.
 
 ### Android native workloads
+
+`AndroidSignalTests.cpp` uses independent O0/O2 C declarations with ordinary,
+Android-packed and RELR relocations. It compares full guarded buffers for
+Bionic/kernel layouts, padding, 64-bit observations, signed flags, reserved
+masks, overlapping objects and disposition changes surviving failed copy-out.
+It also covers missing observations, validation order, errno, provider lifetime
+and API 28's indeterminate old output after an error. A direct model case checks
+earlier field stores and retained state after a later user-space pointer fault.
+`LinuxProcessTests` executes original x64/AArch64 syscall fixtures at O0/O2;
+`ProcessReportTests` checks lossless input, malformed entries and profile gates.
+These tests validate action bookkeeping, not signal delivery or handler frames.
 
 `AndroidNativeTests.cpp` compares both Android `sysconf` page-size selectors
 with `getpagesize`, page-aligned allocation and its final valid byte. Compiled
@@ -2684,3 +2761,17 @@ Memory-file reads cover empty ranges at the user limit and original-count signed
 `ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration` rejects a cached ABI that disagrees with the current nonempty method encoding or selector; declaration-only clients retain their existing contract.
 
 `DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract` covers all four matrix/affine producers and 22 rejected contract mutations. `ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy` proves the SDK result reaches the CoreImage copy and independent publication replay. `RejectsWrongProducerFrameAndSavedIR` checks 12 mutations per producer, including missing input writes, out-of-frame results, wrong providers/carriers and reuse of a consumed concat input. `GeneratedCMatchesOriginalMachineAndSDKResults` executes the unchanged generated C and original ARM64 fixture words against native CoreGraphics at O0/O2 on Apple ARM64: 1000 cases per producer compare all 48 result bytes, two input records, selector/receiver identity, one call, returned objects, private-copy writes and boundary guards. Other hosts skip this native SDK execution test.
+
+`MatrixFrameEffectsRequireExactCurrentContract` also checks the CGRect consumer and its 22 rejected mutations. `ObjCAffineImageValueCopy.CGRectInputUsesTheSameCurrentFrameOwner` verifies rotation → CGRect borrow → rotation reinitialization → CoreImage publication. `CGRectBorrowRejectsExpiredInputsAndChangedABI` rejects eight edits to initialization, input bounds, imports and carriers. `GeneratedCMatchesOriginalMachineAndSDKResults` additionally executes this full sequence at O0/O2 for 1000 cases against the original fixture words and native SDK, checking saved angle, all 48 final bytes, objects and guards.
+
+`FrameMetadataAccessorUsesCurrentCatalogAndABI` checks the shared metadata declaration, both response carriers and current frame-witness publication. `FrameMetadataAccessorRejectsChangedImportAndBytes` rejects weak imports, changed providers/names/addends, private-address requests, partial spills, wrong reloads and changed original calls. The original ARM64/generated-C witness oracle also calls the real Foundation URL metadata accessor: both variants run 2048 cases at O0/O2 with dynamic witness selection, exact output bytes, input preservation, call counts and guards. This coverage does not establish dynamic stack-allocation or witness memory effects.
+
+Structural constant native targets use the existing feasibility-gated scheduler directly. A symbolic singleton retains the incoming predicate only after exhaustive enumeration. Regressions check 128 literal transfers within the straight-line query budget and 32 computed transfers with two enumeration queries per transfer, preserving free high address bits and branch domains. Changed full-state results, missing alignment, zero target limits and short query/instruction budgets refuse. Existing multiple-target and incomplete-enumeration refusals remain required.
+
+A native branch retains its incoming domain on one edge only after a completed UNSAT proof excludes the other edge. Tests verify 32 guarded transfers in both orientations within 512 solver gates, exact/short query budgets and exhausted gates. Changed or missing alignment, reversed comparisons and changed terminal state must refuse; existing arbitrary-control and two-feasible-edge tests remain required.
+
+Bit-blast caches and traversal storage track only reached expression nodes and variables. `NeverDSolverTests` checks late sparse identifiers, context growth between incremental assertions, cached bit reuse, model extraction and changing assumptions. Unrelated wide expressions remain unencoded; reached width violations, malformed roots and exhausted gate budgets still refuse.
+
+`SourceFrameAnalysis.CallStorage*` checks exact occurrences, reaching definitions, initialization, padding, escapes, bounds and cycles without granting a source gate. `ObjCFrameBlockBorrows.*` checks descriptor-bounded synchronous borrows and 19 changed-import, header, ABI and machine cases. These tests retain padding as unproved bytes and reject missing ownership initialization; final block construction, capture reads and callback closure remain separate publication checks.
+
+The block/copy publication cases additionally cover two disjoint 48-byte ranges, descriptor overlap, changed callback bodies, stale machine and IR, detached call occurrences and the exact projection order. `MixedWidthFrameCopiesMeetEveryInitializedByte` and `FrameCoverageCannotHideMissingBytesOrPointerJoins` exercise 8/16-byte stores in both join orders, missing bytes, writable invalidation and pointer identities retained after partial overwrites.

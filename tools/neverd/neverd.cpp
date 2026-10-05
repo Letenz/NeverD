@@ -239,7 +239,7 @@ static int realMain(int Argc, char *Argv[]) {
 
   // Hunt and audit name callees through the same identity view as the rest of
   // the engine, so optional signature matching has to land before they run.
-  if ((AuditCmd || HuntCmd) &&
+  if ((AuditCmd || HuntCmd || DecompileCmd || FuncsCmd) &&
       (SigAuto || !SigBase.getValue().empty() || !SigFile.getValue().empty() ||
        !SigDir.getValue().empty())) {
     Expected<int> MatchCount = applyRequestedSignatures(Sess, Argv[0]);

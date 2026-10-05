@@ -261,25 +261,25 @@ bool admitsVectorOperands(const cs_x86 &X, const VectorOperation &V) {
             matchesVectorOperand(Pattern.Control, X.operands[2], V.Width));
   });
 }
-bool isAtomic(unsigned Instruction) {
+std::optional<unsigned> atomicPairWidth(unsigned Instruction) {
   switch (Instruction) {
-#define NEVERD_X64_ATOMIC_INSTRUCTION(Name)                                    \
+#define NEVERD_X64_ATOMIC_INSTRUCTION(Name, PairWidth)                         \
   case X86_INS_##Name:                                                         \
-    return true;
+    return PairWidth;
 #include "X64AtomicInstructions.def"
 #undef NEVERD_X64_ATOMIC_INSTRUCTION
   default:
-    return false;
+    return std::nullopt;
   }
 }
-unsigned flagsStackWidth(const cs_x86 &X) {
+} // namespace
+unsigned CheckedX64Backend::implicitStackWidth(const cs_x86 &X) {
   // The decoder identity retains 66H even when a later REX.W selects 64
-  // bits. Both PUSHF and POPF use the effective prefixes for their footprint.
+  // bits. PUSHF, POPF, ENTER and LEAVE use the effective operand-size prefix.
   return X.prefix[2] == X86_PREFIX_OPSIZE && !(X.rex & x64::RexW)
              ? x64::HalfWordBytes
              : x64::WordBytes;
 }
-} // namespace
 bool CheckedX64Backend::canonicalRange(uint64_t A, uint64_t N) const {
   return x64::canonicalRange(A, N);
 }
@@ -436,6 +436,8 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   const auto &X = I.detail->x86;
   if (StringRestart && StringRestart->PC != I.address)
     StringRestart.reset();
+  if (I.id == X86_INS_ENTER)
+    return executeEnter(I);
   // MOVSD and CMPSD share decoder identities with scalar SSE operations.
   // Only their string forms have two implicit memory operands.
   if ((I.id != X86_INS_MOVSD && I.id != X86_INS_CMPSD) ||
@@ -470,7 +472,9 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   if (Vector && !admitsVectorOperands(X, *Vector))
     return llvm::make_error<UnsupportedExecutionError>();
   const bool Locked = X.prefix[0] == X86_PREFIX_LOCK;
-  const bool Atomic = isAtomic(I.id);
+  const auto PairWidth = atomicPairWidth(I.id);
+  const bool Atomic = PairWidth.has_value();
+  const bool WideAtomic = PairWidth.value_or(0) != 0;
   // Address size selects RCX/ECX. The processor model owns 66H target width,
   // the decrement, unchanged flags and the signed rel8 displacement.
   if (isLoop(I.id) && !admitsLoopOperands(I))
@@ -498,11 +502,23 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   const bool BitWrites = Bit == BitAccess::Update;
   if (Bit && !admitsBitOperands(X))
     return llvm::make_error<UnsupportedExecutionError>();
-  if (Atomic &&
+  if (Atomic && !WideAtomic &&
       (X.op_count != 2 || X.operands[1].type != X86_OP_REG ||
        (X.operands[0].type != X86_OP_REG && X.operands[0].type != X86_OP_MEM) ||
        X.operands[0].size != X.operands[1].size))
     return llvm::make_error<UnsupportedExecutionError>();
+  if (WideAtomic) {
+    if (X.op_count != 1 || X.operands[0].type != X86_OP_MEM ||
+        X.operands[0].size != *PairWidth ||
+        X.encoding.modrm_offset < x64::WideAtomicOpcodeBytes)
+      return llvm::make_error<UnsupportedExecutionError>();
+    // Normalized decoder metadata can hide REP/HLE prefixes. Admit only the
+    // ordinary locked/unlocked operation; displacement bytes are not prefixes.
+    for (uint8_t Prefix : llvm::ArrayRef(
+             I.bytes, X.encoding.modrm_offset - x64::WideAtomicOpcodeBytes))
+      if (Prefix == X86_PREFIX_REP || Prefix == X86_PREFIX_REPNE)
+        return llvm::make_error<UnsupportedExecutionError>();
+  }
   if ((X.prefix[0] && !Locked) ||
       (Locked && ((!updateArity(I.id) && !Atomic && !BitWrites) ||
                   X.operands[0].type != X86_OP_MEM)) ||
@@ -559,7 +575,8 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     }
     if (O.type != X86_OP_MEM || I.id == X86_INS_LEA || I.id == X86_INS_NOP)
       continue;
-    if (O.size > (Vector ? x64::VectorBytes : x64::WordBytes) || !O.size)
+    if (O.size > (Vector || WideAtomic ? x64::VectorBytes : x64::WordBytes) ||
+        !O.size)
       return llvm::make_error<UnsupportedExecutionError>();
     uint64_t ExtraOffset = 0;
     if (Bit && X.operands[1].type == X86_OP_REG) {
@@ -578,18 +595,20 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     if (!Address)
       return Address.takeError();
     const uint64_t A = *Address;
-    if ((Locked || I.id == X86_INS_XCHG) && A % O.size)
-      return llvm::make_error<UnsupportedExecutionError>();
-    // Aligned SSE raises #GP(0) before any page lookup or data observation.
+    // Aligned SSE and CMPXCHG16B raise #GP(0) before any page lookup or data
+    // observation, even for a failed comparison or an unlocked operation.
     // Keep this architectural outcome identical on native and software
     // transports, including an absent/protected operand or a wrapped span.
-    if (Vector && A % Vector->Alignment) {
+    if ((Vector && A % Vector->Alignment) ||
+        (WideAtomic && *PairWidth == x64::VectorBytes && A % *PairWidth)) {
       BackendFault Fault{BackendFaultKind::Interrupt, I.address};
       Fault.Interrupt = unsigned(x64::ExceptionVector::GeneralProtection);
       Fault.ErrorCode = x64::NoSelectorErrorCode;
       Fault.Cause = BackendFaultCause::OperandAlignment;
       return raiseFault(Fault, true);
     }
+    if ((Locked || I.id == X86_INS_XCHG) && A % O.size)
+      return llvm::make_error<UnsupportedExecutionError>();
     // Some SETcc and SSE destinations have advisory decoder access metadata
     // marking them as reads. The architecture owns their actual effects.
     unsigned OperandAccess = O.access;
@@ -653,7 +672,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   if (PushFlags || PopFlags) {
     if (X.op_count)
       return llvm::make_error<UnsupportedExecutionError>();
-    const unsigned Size = flagsStackWidth(X);
+    const unsigned Size = implicitStackWidth(X);
     // Long mode always uses RSP for the implicit stack, even with 67H or
     // a segment override. Public flags exclude VM, RF and transport TF.
     if (PushFlags)
@@ -666,6 +685,21 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
         {SP - x64::WordBytes, x64::WordBytes, Write, I.address + I.size});
   if (I.id == X86_INS_RET)
     Accesses.push_back({SP, x64::WordBytes, Read, 0});
+  if (I.id == X86_INS_LEAVE) {
+    // LEAVE has no explicit operands. Inspect its bytes because the decoder
+    // may omit ignored REP prefixes from normalized metadata.
+    if (X.op_count ||
+        llvm::any_of(llvm::ArrayRef(I.bytes, I.size), [](uint8_t B) {
+          return B == X86_PREFIX_LOCK || B == X86_PREFIX_REP ||
+                 B == X86_PREFIX_REPNE;
+        }))
+      return llvm::make_error<UnsupportedExecutionError>();
+    // In long mode the implicit stack address is the original full RBP,
+    // independent of 67H, segment overrides and the old RSP. Preflight the
+    // complete read before the processor publishes either RSP or RBP.
+    Accesses.push_back(
+        {CPU.reg(X64Register::BP), implicitStackWidth(X), Read, 0});
+  }
   // RAM operands may cross pages with unrelated physical owners. Validate
   // their whole extent before native execution; a synchronous fault cannot
   // publish a prefix store. Device transfers remain indivisible and cannot
@@ -719,7 +753,12 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     }
     if (StopRequested || FirstFault)
       return llvm::Error::success();
-    if (auto E = access(A.Address, A.Size, A.Permission, true, true))
+    // Every exchange performs a write access, including a failed comparison.
+    // Check both permissions at the read boundary so an absent or protected
+    // operand reports the architectural RMW write fault before CPU entry.
+    const unsigned Permissions =
+        Atomic && A.Permission == Read ? Read | Write : A.Permission;
+    if (auto E = access(A.Address, A.Size, Permissions, true, true))
       return E;
     if (StopRequested)
       return llvm::Error::success();
@@ -819,17 +858,23 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     return llvm::Error::success();
   for (const auto &A : Accesses)
     if (A.Deferred && Hooks.Write) {
-      std::array<uint8_t, x64::WordBytes> Bytes{};
-      if (auto E = (*Transaction)
-                       ->read(A.Address,
-                              llvm::MutableArrayRef(Bytes.data(), A.Size)))
-        return E;
-      uint64_t Value = 0;
-      for (unsigned N = 0; N < A.Size; ++N)
-        Value |= uint64_t(Bytes[N]) << (N * CHAR_BIT);
-      Hooks.Write(A.Address, A.Size, Value);
-      if (StopRequested || FirstFault)
-        return llvm::Error::success();
+      // A wide result uses two scalar observations over one transaction.
+      // Neither half is published until both callbacks accept the result.
+      for (unsigned Offset = 0; Offset < A.Size; Offset += x64::WordBytes) {
+        const unsigned Size =
+            std::min<unsigned>(A.Size - Offset, x64::WordBytes);
+        std::array<uint8_t, x64::WordBytes> Bytes{};
+        if (auto E = (*Transaction)
+                         ->read(A.Address + Offset,
+                                llvm::MutableArrayRef(Bytes.data(), Size)))
+          return E;
+        uint64_t Value = 0;
+        for (unsigned N = 0; N < Size; ++N)
+          Value |= uint64_t(Bytes[N]) << (N * CHAR_BIT);
+        Hooks.Write(A.Address + Offset, Size, Value);
+        if (StopRequested || FirstFault)
+          return llvm::Error::success();
+      }
     }
   if (auto E = (*Transaction)->commit())
     return E;

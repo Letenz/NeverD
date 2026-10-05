@@ -1501,9 +1501,11 @@ TEST(DarwinIndirectRecordCalls, MatrixFrameEffectsRequireExactCurrentContract) {
       "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
   for (const char *Name :
        {"CATransform3DMakeTranslation", "CATransform3DScale",
-        "CGAffineTransformMakeRotation", "CGAffineTransformConcat"}) {
+        "CGAffineTransformMakeRotation", "CGAffineTransformConcat",
+        "CGRectApplyAffineTransform"}) {
     SCOPED_TRACE(Name);
-    const bool Affine = llvm::StringRef(Name).starts_with("CGAffine");
+    const bool Rect = llvm::StringRef(Name) == "CGRectApplyAffineTransform";
+    const bool Affine = llvm::StringRef(Name).starts_with("CGAffine") || Rect;
     const auto Provider = Affine ? CoreGraphics : QuartzCore;
     auto Image = image(("_" + std::string(Name)).c_str());
     Image.DynInfo.NeededLibs = {Provider};
@@ -1512,19 +1514,27 @@ TEST(DarwinIndirectRecordCalls, MatrixFrameEffectsRequireExactCurrentContract) {
     ASSERT_TRUE(Binding);
     auto Effects = darwinMatrixSourceFrameEffects(Image, *Binding);
     ASSERT_TRUE(Effects);
-    EXPECT_TRUE(Effects->InitializesIndirectResult);
+    EXPECT_EQ(Effects->InitializesIndirectResult, !Rect);
     const unsigned Inputs = std::string(Name) == "CGAffineTransformConcat" ? 2U
-                            : std::string(Name) == "CATransform3DScale"    ? 1U
-                                                                           : 0U;
-    EXPECT_EQ(Binding->Signature.ReturnType->Size, Affine ? 48U : 128U);
-    EXPECT_EQ(Binding->Signature.ReturnLocation.RegisterOffset, a64reg::X8);
+                            : std::string(Name) == "CATransform3DScale" || Rect
+                                ? 1U
+                                : 0U;
+    EXPECT_EQ(Binding->Signature.ReturnType->Size, Rect     ? 32U
+                                                   : Affine ? 48U
+                                                            : 128U);
+    if (Rect)
+      EXPECT_EQ(Binding->Signature.ReturnComponents.size(), 4U);
+    else
+      EXPECT_EQ(Binding->Signature.ReturnLocation.RegisterOffset, a64reg::X8);
     EXPECT_EQ(Effects->WritableFrameParameters.size(), Inputs);
     EXPECT_EQ(Effects->InitializedFrameParameters.size(),
               Effects->WritableFrameParameters.size());
     EXPECT_TRUE(Effects->ReadOnlyFrameParameters.empty());
     for (unsigned J = 0; J < Inputs; ++J) {
-      EXPECT_EQ(Effects->WritableFrameParameters.at(J), Affine ? 48U : 128U);
-      EXPECT_TRUE(Effects->InitializedFrameParameters.count(J));
+      const auto Parameter = Rect ? 1 : J;
+      EXPECT_EQ(Effects->WritableFrameParameters.at(Parameter),
+                Affine ? 48U : 128U);
+      EXPECT_TRUE(Effects->InitializedFrameParameters.count(Parameter));
     }
     EXPECT_TRUE(Effects->ByValueFrameParameters.empty());
     EXPECT_FALSE(Effects->ReturnFrameOrExternal);
@@ -1580,7 +1590,10 @@ TEST(DarwinIndirectRecordCalls, MatrixFrameEffectsRequireExactCurrentContract) {
         B.Signature.Parameters[0].Location.ValueBytes = 4;
         break;
       case 15:
-        B.Signature.ReturnLocation.RegisterOffset = a64reg::X0;
+        if (Rect)
+          B.Signature.ReturnComponents[0].RegisterOffset = a64reg::X0;
+        else
+          B.Signature.ReturnLocation.RegisterOffset = a64reg::X0;
         break;
       case 16:
         B.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());

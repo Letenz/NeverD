@@ -484,6 +484,16 @@ llvm::Error validateLowInstructionBoundaries(
 
 llvm::Error validateLowInstructionBoundaries(
     const LowFunc &Function, LowInstructionBoundaryRequirement Requirement) {
+  uint64_t PreviousEnd = 0;
+  bool First = true;
+  for (const auto &Range : Function.FunctionTemporaries) {
+    if (!Range.Bytes || Range.Offset > UINT64_MAX - (Range.Bytes - 1) ||
+        (!First && Range.Offset <= PreviousEnd))
+      return invalid("function temporary ranges are empty, overlapping, "
+                     "unsorted or wrapping");
+    PreviousEnd = Range.Offset + Range.Bytes - 1;
+    First = false;
+  }
   const bool AnyMetadata = std::any_of(
       Function.Blocks.begin(), Function.Blocks.end(),
       [](const LowBlock &Block) { return Block.hasInstructionBoundaries(); });

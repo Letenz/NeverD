@@ -24,6 +24,7 @@ add_neverd_component_library(NeverDEmulationArch
   arch/x86_64/CheckedX64Backend.cpp
   arch/x86_64/CheckedX64Memory.cpp
   arch/x86_64/CheckedX64Stack.cpp
+  arch/x86_64/CheckedX64Frame.cpp
   arch/aarch64/CheckedAArch64Backend.cpp
   LINK_COMPONENTS EmulationCore
   LLVM_COMPONENTS Support)
@@ -86,6 +87,7 @@ add_neverd_component_library(NeverDEmulationProcess
   runtime/ProcessSession.cpp
   runtime/ProcessReport.cpp
   runtime/ProcessLinuxTimeJSON.cpp
+  runtime/ProcessLinuxSignalsJSON.cpp
   runtime/ProcessLinuxFilesJSON.cpp
   runtime/ProcessAndroidJSON.cpp
   runtime/ProcessWindowsJSON.cpp

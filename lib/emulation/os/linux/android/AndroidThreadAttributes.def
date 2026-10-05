@@ -29,3 +29,49 @@ NEVERD_ANDROID_THREAD_ATTRIBUTE_VALUE(DefaultStackSize, 1024 * 1024 - 16 * 1024)
 NEVERD_ANDROID_THREAD_ATTRIBUTE_VALUE(MinimumStackSize, 4 * PageSize)
 NEVERD_ANDROID_THREAD_ATTRIBUTE_VALUE(DestroyedByte, 0x42)
 #endif
+
+#ifdef NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrInit, "pthread_attr_init", init)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrDestroy, "pthread_attr_destroy",
+                                     destroy)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrGetDetachState,
+                                     "pthread_attr_getdetachstate",
+                                     getDetachState)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrSetDetachState,
+                                     "pthread_attr_setdetachstate",
+                                     setDetachState)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrGetInheritSched,
+                                     "pthread_attr_getinheritsched",
+                                     getInheritSched)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrSetInheritSched,
+                                     "pthread_attr_setinheritsched",
+                                     setInheritSched)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrGetSchedPolicy,
+                                     "pthread_attr_getschedpolicy",
+                                     getSchedPolicy)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrSetSchedPolicy,
+                                     "pthread_attr_setschedpolicy",
+                                     setSchedPolicy)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrGetSchedParam,
+                                     "pthread_attr_getschedparam",
+                                     getSchedParam)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrSetSchedParam,
+                                     "pthread_attr_setschedparam",
+                                     setSchedParam)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrGetStack,
+                                     "pthread_attr_getstack", getStack)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrSetStack,
+                                     "pthread_attr_setstack", setStack)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrGetStackSize,
+                                     "pthread_attr_getstacksize", getStackSize)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrSetStackSize,
+                                     "pthread_attr_setstacksize", setStackSize)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrGetGuardSize,
+                                     "pthread_attr_getguardsize", getGuardSize)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrSetGuardSize,
+                                     "pthread_attr_setguardsize", setGuardSize)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrGetScope,
+                                     "pthread_attr_getscope", getScope)
+NEVERD_ANDROID_THREAD_ATTRIBUTE_CALL(ThreadAttrSetScope,
+                                     "pthread_attr_setscope", setScope)
+#endif

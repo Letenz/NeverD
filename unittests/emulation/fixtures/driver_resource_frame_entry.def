@@ -1,0 +1,38 @@
+//===- driver_resource_frame_entry.def - Original WDK frame entry probes ===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_RESOURCE_FRAME_ENTRY_CASE
+// Put the old frame at RSP so each nested read consumes a completed store.
+// Preserve the caller's frame, stack and flags around the original encoding.
+#define NEVERD_RESOURCE_FRAME_ENTRY_CODE(Instruction, Load)                    \
+  "pushfq\n\tpopq %q0\n\tpushq %%rbp\n\tmovq %%rsp, %%r11\n\t"                 \
+  "leaq -128(%%rsp), %%rsp\n\tmovq %%rsp, %%rbp\n\tmovq %%rsp, "               \
+  "%q3\n\t" Instruction "\n\tmovq %%rbp, %q2\n\tmovq %%rsp, %q4\n\t"           \
+  "movq $0, %q5\n\t" Load "\n\tmovq %%r11, %%rsp\n\tpopq %%rbp\n\t"            \
+  "pushfq\n\tpopq %q1"
+NEVERD_RESOURCE_FRAME_ENTRY_CASE(
+    Qword, 8, 0xffffffffffffffffULL, 17, 3,
+    NEVERD_RESOURCE_FRAME_ENTRY_CODE("enter $17, $3", "movq -16(%q3), %q5"))
+NEVERD_RESOURCE_FRAME_ENTRY_CASE(
+    Word, 2, 0xffffULL, 17, 3,
+    NEVERD_RESOURCE_FRAME_ENTRY_CODE(".byte 0x66,0xc8,0x11,0x00,0x03",
+                                     "movw -4(%q3), %w5"))
+NEVERD_RESOURCE_FRAME_ENTRY_CASE(
+    AddressWord, 2, 0xffffULL, 17, 3,
+    NEVERD_RESOURCE_FRAME_ENTRY_CODE(".byte 0x67,0x66,0xc8,0x11,0x00,0x03",
+                                     "movw -4(%q3), %w5"))
+NEVERD_RESOURCE_FRAME_ENTRY_CASE(
+    RexAfterOperand, 8, 0xffffffffffffffffULL, 17, 3,
+    NEVERD_RESOURCE_FRAME_ENTRY_CODE(".byte 0x66,0x48,0xc8,0x11,0x00,0x03",
+                                     "movq -16(%q3), %q5"))
+NEVERD_RESOURCE_FRAME_ENTRY_CASE(
+    OperandAfterRex, 2, 0xffffULL, 17, 3,
+    NEVERD_RESOURCE_FRAME_ENTRY_CODE(".byte 0x48,0x66,0xc8,0x11,0x00,0x03",
+                                     "movw -4(%q3), %w5"))
+NEVERD_RESOURCE_FRAME_ENTRY_CASE(
+    MaximumNesting, 8, 0xffffffffffffffffULL, 17, 31,
+    NEVERD_RESOURCE_FRAME_ENTRY_CODE("enter $17, $255", "movq -16(%q3), %q5"))
+#undef NEVERD_RESOURCE_FRAME_ENTRY_CODE
+#endif

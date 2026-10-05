@@ -120,6 +120,8 @@ public:
   AuthenticatedReturnValueState
   resolveAuthenticatedReturnValueState(va_t Entry) const override;
   bool hasAuthenticatedObjectExtents() const override;
+  std::vector<AuthenticatedRecordParameter>
+  resolveAuthenticatedRecordParameters(va_t Entry) const override;
   bool hasInfo() const override;
 
 private:

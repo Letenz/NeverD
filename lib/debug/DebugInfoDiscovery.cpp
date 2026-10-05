@@ -296,8 +296,10 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
     auto It = DataByAddr.find(Object.Addr);
     if (It != DataByAddr.end()) {
       Symbol &Existing = Img.Symbols[It->second];
-      if (Existing.Name.empty() || isSynthesizedFuncName(Existing.Name))
+      if (Existing.Name.empty() || Existing.Origin < NameOrigin::Stated) {
         Existing.Name = Object.Name;
+        Existing.Origin = NameOrigin::Stated;
+      }
       continue;
     }
     Symbol New;
@@ -323,8 +325,7 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
     // One address can carry both a stated name and a placeholder, when a
     // discovery pass minted `sub_` for code the symbol table also describes.
     // The stated one is what decides whether debug info may speak here.
-    if (!Inserted && isSynthesizedFuncName(Img.Symbols[It->second].Name) &&
-        !isSynthesizedFuncName(S.Name))
+    if (!Inserted && Img.Symbols[It->second].Origin < S.Origin)
       It->second = I;
   }
 
@@ -347,9 +348,10 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
     }
 
     Symbol &Existing = Img.Symbols[It->second];
-    if (!isSynthesizedFuncName(Existing.Name))
+    if (Existing.Origin >= NameOrigin::Stated && !Existing.Name.empty())
       continue;
     Existing.Name = FS.Name;
+    Existing.Origin = NameOrigin::Stated;
     if (Existing.Size == 0)
       Existing.Size = FS.Size;
     ++Applied;

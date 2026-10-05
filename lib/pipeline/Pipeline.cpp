@@ -468,6 +468,10 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   Trace.start(NativePipelineTrace::Stage::NoReturnVerify);
   propagateInternalNoReturn(Result.MedFuncs, Img.Arch);
 
+  // One read-only proof boundary serves both C routes. Neither annotation nor
+  // its display name becomes input to ABI recovery or instruction semantics.
+  recognizeLibraries(Img, Opts, Result, Dbg);
+
   if (Opts.DumpMed && Opts.EmitDumpOutput)
     dumpMedIR(Result.MedFuncs);
 

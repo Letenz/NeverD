@@ -819,8 +819,9 @@ bool swiftWitnessInstantiationArgumentUnused(const BinaryImage &Image,
   return false;
 }
 
-std::optional<SourceCallTypeHint>
-swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
+namespace {
+std::optional<SourceCallTypeHint> importedSwiftCall(const BinaryImage &Image,
+                                                    va_t ImportSlot) {
   const auto Import = darwinRuntimeImport(Image, ImportSlot);
   if (!Import)
     return std::nullopt;
@@ -832,6 +833,25 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   Result.CallKind = SourceCallTypeHint::Kind::SwiftRuntimeCall;
   Result.TargetAddress = ImportSlot;
   Result.TargetName = Name.str();
+  return Result;
+}
+} // namespace
+
+std::optional<SourceCallTypeHint>
+swiftMetadataAccessorSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
+  auto Result = importedSwiftCall(Image, ImportSlot);
+  if (!Result || !declaredMetadataABI(Image, ImportSlot, *Result))
+    return std::nullopt;
+  return Result;
+}
+
+std::optional<SourceCallTypeHint>
+swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
+  auto Imported = importedSwiftCall(Image, ImportSlot);
+  if (!Imported)
+    return std::nullopt;
+  auto Result = std::move(*Imported);
+  llvm::StringRef Name(Result.TargetName);
   if (Name == "swift_willThrow") {
     const auto Bind = Image.DyldBindSlots.find(ImportSlot);
     const auto *Section = Image.getSectionFor(ImportSlot);

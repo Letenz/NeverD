@@ -174,6 +174,37 @@ TEST(InterpreterMachineStateModel, EveryStateWordIsAnObservableOutput) {
   }
 }
 
+TEST(InterpreterMachineStateModel, FunctionTemporaryKeepsThePreWriteValue) {
+  Program Residual, Reference;
+  Residual.Function.FunctionTemporaries = {{64, 8}};
+  Residual.Function.Blocks.front().Succs = {1};
+  Residual.instruction({op(NdOp::COPY, t(64), {r(x86reg::RCX)}),
+                        op(NdOp::BRANCH, {}, {n(0x200)})});
+  Residual.block(1, 0x200);
+  Residual.instruction({op(NdOp::COPY, r(x86reg::RCX), {n(0)})});
+  Residual.instruction({op(NdOp::COPY, r(x86reg::RAX), {t(64)})});
+  Residual.finish();
+  Residual.edges();
+  Reference.instruction({op(NdOp::COPY, r(x86reg::RAX), {r(x86reg::RCX)}),
+                         op(NdOp::COPY, r(x86reg::RCX), {n(0)})});
+  Reference.finish();
+  for (auto Layout : {InterpreterMachineStateLayout::InlineReturns,
+                      InterpreterMachineStateLayout::SharedGPRExit}) {
+    auto Model = modelInterpreterMachineStateX64(
+        Residual.Function, InterpreterMachineStateProfile::UserX64NoFaultV1,
+        65536, std::nullopt, Layout);
+    ASSERT_TRUE(bool(Model)) << llvm::toString(Model.takeError());
+    expect(*Model, Reference.Function, contract());
+    Model->Function.FunctionTemporaries.clear();
+    expect(*Model, Reference.Function, contract(), Status::Invalid);
+  }
+  Residual.Function.FunctionTemporaries = {{uint64_t{1} << 61, 8}};
+  auto Bad = modelInterpreterMachineStateX64(Residual.Function);
+  ASSERT_FALSE(bool(Bad));
+  EXPECT_NE(llvm::toString(Bad.takeError()).find("wrapper scratch"),
+            std::string::npos);
+}
+
 TEST(InterpreterMachineStateModel, PartialWritesAndReadsKeepNativeLaneRules) {
   Program Residual, Reference;
   Residual.instruction({op(NdOp::INT_XOR, r(0, 4), {r(8, 4), r(16, 4)})});

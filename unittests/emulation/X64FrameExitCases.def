@@ -1,0 +1,87 @@
+//===- X64FrameExitCases.def - Independent LEAVE encodings and state ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_FRAME_EXIT_VALUE
+NEVERD_FRAME_EXIT_VALUE(Limit, 1024 * 1024)
+NEVERD_FRAME_EXIT_VALUE(Page, 4096)
+NEVERD_FRAME_EXIT_VALUE(Code, 0x10000)
+NEVERD_FRAME_EXIT_VALUE(LowData, 0x20000)
+NEVERD_FRAME_EXIT_VALUE(Data, 0x100020000ULL)
+NEVERD_FRAME_EXIT_VALUE(Alias, 0x200040000ULL)
+NEVERD_FRAME_EXIT_VALUE(DeviceAddress, 0x300060000ULL)
+NEVERD_FRAME_EXIT_VALUE(SegmentBase, 0x50000)
+NEVERD_FRAME_EXIT_VALUE(Noncanonical, 0x800000000000ULL)
+NEVERD_FRAME_EXIT_VALUE(Offset, 1024)
+NEVERD_FRAME_EXIT_VALUE(WordBytes, 8)
+NEVERD_FRAME_EXIT_VALUE(ByteBits, 8)
+NEVERD_FRAME_EXIT_VALUE(Seed, 0x1122334455667788ULL)
+NEVERD_FRAME_EXIT_VALUE(Fill, 0xa5)
+NEVERD_FRAME_EXIT_VALUE(LowFill, 0x5a)
+NEVERD_FRAME_EXIT_VALUE(Nop, 0x90)
+NEVERD_FRAME_EXIT_VALUE(Flags, 0xed7)
+NEVERD_FRAME_EXIT_VALUE(Timeout, 1'000'000)
+NEVERD_FRAME_EXIT_VALUE(MXCSR, 0x5fa5)
+NEVERD_FRAME_EXIT_VALUE(FPCW, 0xb7f)
+NEVERD_FRAME_EXIT_VALUE(FPSW, 0x1800)
+NEVERD_FRAME_EXIT_VALUE(FPHigh, 0x3fff)
+NEVERD_FRAME_EXIT_VALUE(VectorCount, 16)
+NEVERD_FRAME_EXIT_VALUE(FPCount, 8)
+NEVERD_FRAME_EXIT_VALUE(OracleFields, 3)
+NEVERD_FRAME_EXIT_VALUE(OracleWords, 6)
+#endif
+#ifdef NEVERD_FRAME_EXIT_TEXT
+NEVERD_FRAME_EXIT_TEXT(ObserverFailure, "frame exit read observer failed")
+NEVERD_FRAME_EXIT_TEXT(OracleUnavailable, "the frame exit oracle requires x64")
+NEVERD_FRAME_EXIT_TEXT(OracleExecuted, "original host frame exits: ")
+#endif
+#ifdef NEVERD_FRAME_EXIT_BACKEND
+NEVERD_FRAME_EXIT_BACKEND(kvmSupervisor, KVM, CheckedX64)
+NEVERD_FRAME_EXIT_BACKEND(kvmUser, KVM, CheckedUserX64)
+NEVERD_FRAME_EXIT_BACKEND(kvmDriver, KVM, Legacy)
+NEVERD_FRAME_EXIT_BACKEND(whpSupervisor, WHP, CheckedX64)
+NEVERD_FRAME_EXIT_BACKEND(whpUser, WHP, CheckedUserX64)
+NEVERD_FRAME_EXIT_BACKEND(whpDriver, WHP, Legacy)
+NEVERD_FRAME_EXIT_BACKEND(unicornSupervisor, Unicorn, CheckedX64)
+NEVERD_FRAME_EXIT_BACKEND(unicornUser, Unicorn, CheckedUserX64)
+#endif
+#ifdef NEVERD_FRAME_EXIT_CASE
+// Name, popped width, original instruction bytes.
+NEVERD_FRAME_EXIT_CASE(Qword, 8, 0xc9)
+NEVERD_FRAME_EXIT_CASE(Word, 2, 0x66, 0xc9)
+NEVERD_FRAME_EXIT_CASE(AddressQword, 8, 0x67, 0xc9)
+NEVERD_FRAME_EXIT_CASE(AddressWord, 2, 0x66, 0x67, 0xc9)
+NEVERD_FRAME_EXIT_CASE(RexW, 8, 0x66, 0x48, 0xc9)
+NEVERD_FRAME_EXIT_CASE(OperandAfterRex, 2, 0x48, 0x66, 0xc9)
+NEVERD_FRAME_EXIT_CASE(RexAfterOperand, 2, 0x66, 0x40, 0xc9)
+NEVERD_FRAME_EXIT_CASE(LastRexWins, 2, 0x66, 0x48, 0x40, 0xc9)
+NEVERD_FRAME_EXIT_CASE(RexAfterAddress, 8, 0x66, 0x67, 0x48, 0xc9)
+NEVERD_FRAME_EXIT_CASE(AddressAfterRex, 2, 0x66, 0x48, 0x67, 0xc9)
+NEVERD_FRAME_EXIT_CASE(FS, 8, 0x64, 0xc9)
+NEVERD_FRAME_EXIT_CASE(GSWord, 2, 0x65, 0x66, 0xc9)
+NEVERD_FRAME_EXIT_CASE(ExtendedRex, 8, 0x49, 0xc9)
+NEVERD_FRAME_EXIT_CASE(ExtendedRexWord, 2, 0x66, 0x41, 0xc9)
+#endif
+#ifdef NEVERD_FRAME_EXIT_REJECTED_PREFIX
+NEVERD_FRAME_EXIT_REJECTED_PREFIX(0xf0)
+NEVERD_FRAME_EXIT_REJECTED_PREFIX(0xf2)
+NEVERD_FRAME_EXIT_REJECTED_PREFIX(0xf3)
+#endif
+#ifdef NEVERD_FRAME_EXIT_ORACLE_REGISTER
+NEVERD_FRAME_EXIT_ORACLE_REGISTER(BP, 0)
+NEVERD_FRAME_EXIT_ORACLE_REGISTER(SP, 1)
+NEVERD_FRAME_EXIT_ORACLE_REGISTER(FLAGS, 2)
+#endif
+#ifdef NEVERD_FRAME_EXIT_ORACLE_BYTES
+// Preserve the host's frame and flags. R10 owns the packet and R11 keeps the
+// caller's stack, so LEAVE may consume a completely independent frame.
+NEVERD_FRAME_EXIT_ORACLE_BYTES(OraclePrefix, 0x55, 0x9c, 0x49, 0x89, 0xe3)
+NEVERD_FRAME_EXIT_ORACLE_BYTES(SysVArgument, 0x49, 0x89, 0xfa)
+NEVERD_FRAME_EXIT_ORACLE_BYTES(Win64Argument, 0x49, 0x89, 0xca)
+NEVERD_FRAME_EXIT_ORACLE_BYTES(OracleLoad, 0x41, 0xff, 0x72, 0x10, 0x9d, 0x49,
+                               0x8b, 0x2a, 0x49, 0x8b, 0x62, 0x08)
+NEVERD_FRAME_EXIT_ORACLE_BYTES(OracleSave, 0x49, 0x89, 0x6a, 0x18, 0x49, 0x89,
+                               0x62, 0x20, 0x4c, 0x89, 0xdc, 0x9c, 0x41, 0x8f,
+                               0x42, 0x28, 0x9d, 0x5d, 0xc3)
+#endif

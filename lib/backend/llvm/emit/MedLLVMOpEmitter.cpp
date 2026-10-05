@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/med/MedIntrinsicOutputs.h"
@@ -1120,6 +1121,9 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         Val = Builder.CreatePtrToInt(Sym, Val->getType());
     }
     auto *SI = Builder.CreateStore(Val, Ptr);
+    if (SourceMap && Op.Addr != InvalidVA && Op.OriginSeq >= 0)
+      SourceMap->Observations.push_back(
+          {CurMedFunc->Entry, {Op.Addr, Op.OriginSeq}, SI});
     SI->setAlignment(llvm::Align(1));
     if (Op.MemoryOrdering != NdMemoryOrdering::None) {
       if (Op.MemoryOrdering == NdMemoryOrdering::Acquire ||
@@ -1250,6 +1254,10 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     break;
   }
 
+  if (SourceMap && Result && Op.Output.Size > 0 && Op.Addr != InvalidVA &&
+      Op.OriginSeq >= 0 && Op.Opcode != NdOp::COPY)
+    SourceMap->Observations.push_back(
+        {CurMedFunc->Entry, {Op.Addr, Op.OriginSeq}, Result});
   if (Result && Op.Output.Size > 0)
     setVar(Op.Output, Result, Builder);
 }

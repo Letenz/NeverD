@@ -10,6 +10,7 @@
 #include "../arch/x86_64/NativeStackControl.h"
 #include "../arch/x86_64/X64Recovery.h"
 #include "../arch/x86_64/X64UserFlags.h"
+#include "FiniteQueryCache.h"
 #include "FiniteValues.h"
 #include "FrameEntryConstraints.h"
 #include "FrameOffsets.h"
@@ -101,7 +102,7 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(12); // Certificate semantic schema, independent of report formatting.
+  Number(13); // Certificate semantic schema, independent of report formatting.
   Number(Contract.RetainUnauditedNativeBoundaries);
   Number(Contract.AllowOverlappingNativeInstructions);
   Number(Contract.DeferNativeConditionalEdges);
@@ -137,6 +138,11 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
     Hash.update(Receipt.OperationDigest);
   }
   Number(F.Entry);
+  Number(F.FunctionTemporaries.size());
+  for (const auto &Range : F.FunctionTemporaries) {
+    Number(Range.Offset);
+    Number(Range.Bytes);
+  }
   Number(F.ModuleAnalysisRoots.size());
   for (va_t Root : F.ModuleAnalysisRoots)
     Number(Root);
@@ -359,10 +365,17 @@ class Checker {
   int NextNativeBlock = 0;
   const LowIRIndependenceContract &Contract;
   const LowIRIndependenceLimits &Limits;
+  // The existing cache bounds key construction and retained complete domains
+  // in words, using the same capacity convention as recovery.
+  detail::FiniteQueryCache FrameProofs{Limits.MaxSymbolicNodes};
   LowIRIndependenceResult OwnedResult;
   LowIRIndependenceResult &Result = OwnedResult;
   SymContext OwnedContext;
   SymContext &Ctx = OwnedContext;
+  // One completed model-free query in this immutable DAG and fixed solver
+  // configuration. No model, incomplete answer or cross-context fact escapes.
+  SymRef LastCompletedQuery;
+  solver::SatResult LastCompletedAnswer = solver::SatResult::Invalid;
   RefinementSession *Refinement = nullptr;
   bool CandidateExecution = false;
   SpecializationProvider *ReadProvider = nullptr;
@@ -388,6 +401,7 @@ class Checker {
     va_t NativeAddress = 0;
     SymRef LeftSystemFlags, RightSystemFlags;
     bool SkipCutpoint = false;
+    std::set<uint64_t> DefinedFunctionTemporaries;
   };
   std::deque<Path> Pending;
 
@@ -451,6 +465,8 @@ class Checker {
 
   solver::SatResult query(SymRef Predicate) {
     nodes();
+    if (Predicate && Predicate == LastCompletedQuery)
+      return LastCompletedAnswer;
     if (Result.SolverQueries >= Limits.MaxSolverQueries)
       fail(Status::BudgetExceeded, "solver-query budget exhausted");
     ++Result.SolverQueries;
@@ -460,6 +476,8 @@ class Checker {
       fail(Status::BudgetExceeded, "relational solver budget exhausted");
     if (Answer == solver::SatResult::Invalid)
       fail(Status::Invalid, "invalid relational solver query");
+    LastCompletedQuery = Predicate;
+    LastCompletedAnswer = Answer;
     return Answer;
   }
 
@@ -518,7 +536,8 @@ class Checker {
     uint64_t Queries = Result.SolverQueries;
     const auto Offset = detail::proveFrameOffset(
         Ctx, Predicate, Value, EntryRoot, Limits.Solver,
-        Limits.MaxSolverQueries, Limits.MaxSymbolicNodes, Queries);
+        Limits.MaxSolverQueries, Limits.MaxSymbolicNodes, Queries,
+        &FrameProofs);
     Result.SolverQueries = static_cast<uint32_t>(Queries);
     if (Offset.Status == detail::FrameOffsetStatus::Invalid)
       fail(Status::Invalid, "invalid frame-offset proof");
@@ -543,10 +562,13 @@ class Checker {
       fail(Status::Invalid, "input temporary overlaps proof memory scratch");
   }
 
-  void define(const NdVar &V, std::set<uint64_t> &Defined) {
+  void define(const NdVar &V, std::set<uint64_t> &Defined, Path *P = nullptr) {
     if (V.isTemp())
-      for (uint16_t I = 0; I != V.Size; ++I)
+      for (uint16_t I = 0; I != V.Size; ++I) {
         Defined.insert(V.Offset + I);
+        if (P && Function && Function->isFunctionTemporaryByte(V.Offset + I))
+          P->DefinedFunctionTemporaries.insert(V.Offset + I);
+      }
   }
 
   bool flagIntrinsic(Path &P, const LowOp &Original,
@@ -692,7 +714,7 @@ class Checker {
     };
     Apply(P.Left, U, LeftWhen);
     Apply(P.Right, V, RightWhen);
-    define(Effect.Output, Defined);
+    define(Effect.Output, Defined, &P);
     nodes();
   }
 
@@ -1108,11 +1130,17 @@ class Checker {
   void nativeTargets(Path P, SymRef Value, SymRef Predicate) {
     if (!Value || Ctx.width(Value) != 64)
       fail(Status::Invalid, "native control target must be a 64-bit address");
+    const auto Target = ordinary(Value);
+    // A structural constant has no other possible destination. Scheduling
+    // still proves feasibility and audits the actual mapped instruction.
+    if (const auto Constant = Ctx.asConst(Target)) {
+      scheduleNative(std::move(P), Constant->getZExtValue(), Predicate);
+      return;
+    }
     uint64_t Queries = Result.SolverQueries;
     const auto Values = detail::enumerateFiniteValues(
-        Ctx, Predicate, {ordinary(Value)}, Limits.MaxIndirectTargets,
-        Limits.Solver, Limits.MaxSolverQueries, Limits.MaxSymbolicNodes,
-        Queries);
+        Ctx, Predicate, {Target}, Limits.MaxIndirectTargets, Limits.Solver,
+        Limits.MaxSolverQueries, Limits.MaxSymbolicNodes, Queries);
     Result.SolverQueries = static_cast<uint32_t>(Queries);
     if (Values.Status != detail::FiniteValueStatus::Complete)
       fail(Values.Status == detail::FiniteValueStatus::Invalid
@@ -1122,9 +1150,16 @@ class Checker {
     for (const auto &Tuple : Values.Tuples) {
       if (Tuple.size() != 1)
         fail(Status::Invalid, "invalid native target tuple");
-      scheduleNative(P, Tuple[0],
-                     Ctx.mkAnd(Predicate, Ctx.mkEq(ordinary(Value),
-                                                   Ctx.mkConst(64, Tuple[0]))));
+      // Complete singleton enumeration already proves this equality over the
+      // entire incoming domain. Retaining it would make later feasibility and
+      // terminal coverage queries prove the same fact again. Multiple targets
+      // still need their separate guards, and Predicate retains branch guards.
+      const auto TargetPredicate =
+          Values.Tuples.size() == 1
+              ? Predicate
+              : Ctx.mkAnd(Predicate,
+                          Ctx.mkEq(Target, Ctx.mkConst(64, Tuple[0])));
+      scheduleNative(P, Tuple[0], TargetPredicate);
     }
   }
 
@@ -1211,7 +1246,9 @@ class Checker {
       NativeBlock = prepareNative(P, NativeEffects);
     const auto &B = NativeBlock ? *NativeBlock : *Blocks.at(P.BlockId);
     Result.BlockId = B.Id;
-    P.Ancestors.insert(B.Id);
+    // Only static independence uses ancestry to reject a reachable cycle.
+    if (!Provider && !Refinement)
+      P.Ancestors.insert(B.Id);
     if (!B.ExceptionalSuccs.empty() || !B.ExceptionalPreds.empty())
       fail(Status::Unsupported, "exceptional control flow is unsupported");
     SymExec Left(Ctx, P.Left), Right(Ctx, P.Right);
@@ -1249,7 +1286,10 @@ class Checker {
         fail(Status::Unsupported,
              "unsupported architectural undefined effects: " +
                  Description.Diagnostic);
-      std::set<uint64_t> Defined;
+      // Function-local storage starts unbound. Only bytes actually defined on
+      // this path survive an instruction boundary; native lifter temporaries
+      // retain their original instruction-local lifetime.
+      std::set<uint64_t> Defined = P.DefinedFunctionTemporaries;
       std::multimap<uint64_t, const LowUndefinedEffect *> Events;
       for (const auto &Effect : Description.Effects)
         Events.emplace(Effect.AfterOp, &Effect);
@@ -1275,7 +1315,7 @@ class Checker {
           fail(Status::Unsupported,
                "ordered or nondefault memory is unsupported");
         if (flagIntrinsic(P, Original, Description, Defined)) {
-          define(Original.Output, Defined);
+          define(Original.Output, Defined, &P);
           Apply(I + 1);
           nodes();
           continue;
@@ -1362,7 +1402,7 @@ class Checker {
             Right.opaqueOperationCount() != RO || Left.callHavocCount() ||
             Right.callHavocCount())
           fail(Status::Unsupported, "symbolic execution lost exact semantics");
-        define(Original.Output, Defined);
+        define(Original.Output, Defined, &P);
         Apply(I + 1);
         nodes();
         if (LF == StepResult::Continue)
@@ -1413,12 +1453,23 @@ class Checker {
             equal(P.Predicate, Left.branchCondition(), Right.branchCondition(),
                   "branch predicate");
             const auto Condition = ordinary(Left.branchCondition());
-            nativeTargets(P, Left.branchTarget(),
-                          Ctx.mkAnd(P.Predicate, Condition));
-            const auto Other = Ctx.mkAnd(P.Predicate, Ctx.mkNot(Condition));
-            scheduleNative(
-                std::move(P),
-                NativeInstructions.at(B.StartAddr).Fallthrough.Address, Other);
+            const auto Incoming = P.Predicate;
+            const auto Taken = Ctx.mkAnd(Incoming, Condition);
+            const auto Other = Ctx.mkAnd(Incoming, Ctx.mkNot(Condition));
+            const auto Fallthrough =
+                NativeInstructions.at(B.StartAddr).Fallthrough.Address;
+            // A completed UNSAT proof for one edge proves that its complement
+            // covers the incoming domain. Keep that domain without making
+            // later queries reprove this branch fact. Unknown still refuses,
+            // and two feasible edges retain their distinct predicates.
+            if (query(Taken) == solver::SatResult::Unsat) {
+              scheduleNative(std::move(P), Fallthrough, Incoming);
+            } else if (query(Other) == solver::SatResult::Unsat) {
+              nativeTargets(std::move(P), Left.branchTarget(), Incoming);
+            } else {
+              nativeTargets(P, Left.branchTarget(), Taken);
+              scheduleNative(std::move(P), Fallthrough, Other);
+            }
           } else {
             const auto Predicate = P.Predicate;
             nativeTargets(std::move(P), Left.branchTarget(), Predicate);
@@ -1508,6 +1559,7 @@ class Checker {
     uint64_t InputEdges = 0;
     if ((Function &&
          (Function->Blocks.size() > Limits.MaxBlockVisits ||
+          Function->FunctionTemporaries.size() > Limits.MaxInstructions ||
           Function->ModuleAnalysisRoots.size() > Limits.MaxBlockVisits ||
           Function->OrdinaryModuleAnalysisRoots.size() >
               Limits.MaxBlockVisits)) ||
@@ -1565,6 +1617,13 @@ class Checker {
       if (auto Error = validateLowInstructionBoundaries(
               *Function, LowInstructionBoundaryRequirement::Required))
         fail(Status::Invalid, llvm::toString(std::move(Error)));
+      for (const auto &Range : Function->FunctionTemporaries)
+        checkScratch(NdVar::tmp(Range.Offset, Range.Bytes));
+      // Cutpoint states currently bind registers and frame bytes only. A
+      // lifetime declaration cannot supply an unproved inductive value.
+      if (inductive() && !Function->FunctionTemporaries.empty())
+        fail(Status::Unsupported,
+             "function temporaries require finite execution, not loop cuts");
       for (va_t Root : Function->ModuleAnalysisRoots)
         if (Root != Function->Entry)
           fail(Status::Unsupported,

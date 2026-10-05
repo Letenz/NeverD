@@ -23,6 +23,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/Endian.h"
 
 #include <algorithm>
@@ -44,6 +45,21 @@ enum class API {
 #include "KernelRegistryAPIs.def"
 #undef NEVERD_KERNEL_REGISTRY_API
 };
+
+struct APIDescriptor {
+  API Function;
+  unsigned ArgumentCount;
+};
+
+const APIDescriptor *lookupAPI(llvm::StringRef Name) {
+  static const llvm::StringMap<APIDescriptor> APIs{
+#define NEVERD_KERNEL_REGISTRY_API(Name, Count) {#Name, {API::Name, Count}},
+#include "KernelRegistryAPIs.def"
+#undef NEVERD_KERNEL_REGISTRY_API
+  };
+  auto I = APIs.find(Name);
+  return I == APIs.end() ? nullptr : &I->second;
+}
 
 llvm::Error registryError(const llvm::Twine &Message) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(), Message);
@@ -467,17 +483,10 @@ llvm::Expected<uint64_t> KernelRegistry::set(const KernelModel &Model,
 llvm::Expected<uint64_t> KernelRegistry::call(const KernelModel &Model,
                                               llvm::StringRef Name,
                                               llvm::ArrayRef<uint64_t> A) {
-  API Function = API::Unknown;
-  size_t Count = 0;
-#define NEVERD_KERNEL_REGISTRY_API(Symbol, Arguments)                          \
-  if (Name == #Symbol) {                                                       \
-    Function = API::Symbol;                                                    \
-    Count = Arguments;                                                         \
-  }
-#include "KernelRegistryAPIs.def"
-#undef NEVERD_KERNEL_REGISTRY_API
-  if (Function == API::Unknown || A.size() != Count)
+  const auto *Descriptor = lookupAPI(Name);
+  if (!Descriptor || A.size() != Descriptor->ArgumentCount)
     return registryError("unknown registry API or incorrect argument count");
+  const API Function = Descriptor->Function;
   if (!Configured)
     return registryError("registry availability is unspecified; supply an "
                          "explicit registry scenario");

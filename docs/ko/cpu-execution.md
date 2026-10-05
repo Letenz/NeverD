@@ -96,6 +96,10 @@ checked x64는 KVM, WHP, Unicorn에서 16/32/64비트 대상과 imm8/CL 횟수�
 
 `X64StackInstructions.def`는 KVM, WHP, 검사 모드 Unicorn(`driver-strict` 포함)에서 범용 레지스터와 일반 RAM을 사용하는 16/64비트 `PUSH/POP` 및 즉시 값 PUSH을 허용합니다. PUSH는 RSP 감소 전에 소스를 읽고 POP은 RSP 증가 후 RSP/ESP 기반 목적지를 계산합니다. 주소 폭 잘림은 명시적 피연산자에만 적용됩니다. 전체 범위 권한 검사, 순서 있는 관찰 및 단일 RAM 트랜잭션은 오류, 취소, 콜백 실패 시 CPU와 메모리의 부분 갱신을 막습니다. LOCK 및 장치 피연산자는 지원하지 않습니다.
 
+KVM, WHP, checked Unicorn은 16/64비트 `LEAVE`도 지원합니다. `67H`가 있어도 RBP 전체로 저장된 프레임을 읽고, 16비트 형식에서는 선택되지 않은 RBP 비트를 유지합니다. 폴트나 읽기 취소 시 원래 RSP와 CPU 컨텍스트를 유지합니다. LOCK, REP, 장치 프레임은 지원하지 않습니다.
+
+KVM, WHP 및 checked Unicorn은 16/64비트 `ENTER`를 지원합니다. 할당량은 부호 없는 16비트로, 중첩 수준은 32로 나눈 나머지로 해석하며 전체 RSP/RBP와 유효한 접두사 순서를 사용합니다. 게스트 오류 시 완료된 스택 저장은 유지되고 RSP, RBP, PC는 진입 값을 유지합니다. 마지막 스택 검사는 피연산자 폭 전체의 쓰기 권한만 확인하며 데이터를 저장하지 않습니다. LOCK, REP, APX 접두사와 장치 프레임은 지원하지 않습니다.
+
 `X64PackedIntegerInstructions.def`는 순환·포화 덧셈과 뺄셈, 비교, 곱셈, 평균, 최솟값·최댓값, 바이트 차이, 패킹·언패킹을 포함한 45개 legacy SSE2 packed integer 명령을 허용합니다. XMM과 정렬된 128비트 RAM 소스는 KVM, WHP, Unicorn의 기존 checked 경로를 공유합니다. FLAGS와 MXCSR은 변하지 않으며 결함이나 관찰자 취소 시 상태를 보존합니다. MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
 
 `X64PackedShiftInstructions.def`는 legacy SSE2 패킹 시프트 열 종류를 허용합니다. 요소 시프트의 횟수는 imm8 또는 XMM/정렬된 m128이며 바이트 시프트는 imm8만 허용합니다. 가변 횟수는 부호 없는 하위 64비트를 사용하고 스칼라 횟수 마스킹을 하지 않으며 상위 64비트는 무시합니다. 횟수가 0이거나 범위를 넘어도 메모리 피연산자는 16바이트 전체를 읽어야 합니다. FLAGS와 MXCSR은 유지되며 MMX, VEX/EVEX, 장치 피연산자는 제외됩니다.
@@ -133,6 +137,8 @@ checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합�
 ## 단계적으로 보관하는 RAM 효과
 
 `RAMTransaction`은 물리 실행 임대 아래에서 명령이 선언한 쓰기 범위의 물리적 합집합만 보관합니다. 결과 관찰자 호출 전에 원래 RAM을 복원하며 취소, 전송 오류, 관찰자 예외는 부분 RAM이나 레지스터를 공개하지 않습니다. CPU 예외는 RAM 복원 후에도 아키텍처 예외 상태를 유지합니다. ARM64 단일·쌍 저장도 같은 계층을 사용합니다. x64는 8/16/32/64비트 `XCHG`, `XADD`, `CMPXCHG`를 실행하며 LOCK 또는 암시적 잠금 형식에는 자연 정렬을 요구합니다. `NeverDRAMTransactionTests`는 호스트 CPU와의 결과 비교, 복원, 별칭, 권한을 검증하며 사용할 수 없는 플랫폼은 명시적으로 건너뜁니다. 장치와 병렬 SMP는 제외되며 CPU 스냅샷은 이미 확정된 RAM을 복원하지 않습니다.
+
+`CMPXCHG8B`와 `CMPXCHG16B`는 KVM, WHP 및 checked Unicorn의 드라이버·사용자 프로필에서 원래 명령을 실행합니다. 비교 성공 여부와 관계없이 읽기와 쓰기 권한이 모두 필요하며, 폴트는 쓰기 접근으로 분류합니다. `CMPXCHG16B`는 메모리 접근 전에 16바이트 정렬을 검사하고 위반 시 `#GP(0)`을 보고합니다. 두 결과 콜백은 하나의 RAM 트랜잭션에 속하므로 어느 쪽에서든 중지하거나 예외가 발생하면 레지스터와 RAM 변경을 공개하지 않습니다. 잠금 없는 `CMPXCHG8B`는 페이지 경계를 넘을 수 있지만 잠금 연산은 자연 정렬이 필요합니다. `X64WideAtomicTests.cpp`는 호스트 원본 명령 결과와 네이티브 폴트, 별칭, 접두사, 주소 계산, 복구 후 재시도와 취소를 검증합니다. 자체 Windows 드라이버와 ring3 PE 픽스처가 두 폭을 실행하며 WDK 픽스처는 `_InterlockedCompareExchange128`도 실행합니다. CPU 모델은 `CMPXCHG16B`를 지원해야 합니다.
 
 ## 전체 x87 상태
 

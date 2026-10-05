@@ -76,6 +76,16 @@ Las longitudes se redondean a páginas. `munmap` tolera huecos y retiradas repet
 
 Los mapeos de archivos, compartidos o fijos, crecimiento descendente, páginas enormes, bloqueo, claves de protección, permisos solo de ejecución/escritura y otros indicadores siguen sin soporte explícito: se detienen antes de publicar efectos o inventar un retorno. Los errores normales de rango, longitud y alineación del subconjunto admitido devuelven errores invitados y permiten continuar. Ningún servicio reenvía punteros ni peticiones de mapeo al OS anfitrión.
 
+`linux_signals` proporciona las acciones iniciales de señal para todo el proceso. Una entrada ausente es desconocida y no implica `SIG_DFL`; una lista vacía explícita permite instalar sin consultar la acción anterior. Los cinco campos son obligatorios; los valores sin signo de 64 bits fuera del intervalo exacto de JSON usan cadenas decimales.
+
+```json
+{"linux_signals":{"actions":[
+  {"signal":11,"handler":0,"flags":0,"restorer":0,"mask":0}
+]}}
+```
+
+Los números de señal van del 1 al 64. `rt_sigaction` y Bionic comparten el estado, con disposición de campos y orden de errores propios de cada interfaz. No se implementan señales pendientes, entrega, ejecución de manejadores ni máscaras por hilo, y no se usan manejadores del anfitrión. Véase el [contrato completo](../process-emulation.md#linux-profile-semantics).
+
 <a id="windows-pe64-profile"></a>
 
 <!-- i18n-section: linux-clocks -->

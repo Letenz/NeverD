@@ -15,6 +15,7 @@
 #define NEVERD_LIB_BACKEND_C_HIGHC_HIGHCWRITER_H
 
 #include "../CIdentifier.h"
+#include "../CSourceRecorder.h"
 #include "../FloatConversion.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
@@ -82,10 +83,11 @@ public:
                                                 const TypeRef &Source);
   HighCWriter(llvm::raw_ostream &OS, const CEmitterOptions &Opts,
               DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true,
-              const std::unordered_set<std::string_view> *SharedNames = nullptr)
+              const std::unordered_set<std::string_view> *SharedNames = nullptr,
+              CSourceRecorder *Recorder = nullptr)
       : Out(OS), OS(Out), Opts(Opts), Dbg(Dbg),
         GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions),
-        SharedImageFunctionNames(SharedNames) {}
+        SharedImageFunctionNames(SharedNames), SourceRecorder(Recorder) {}
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
@@ -157,6 +159,7 @@ public:
 
   //--- Statement rendering (HighCStmtWriter.cpp) ---
   void writeStmt(const HighStmt &Stmt, int Indent);
+  void writeStmtImpl(const HighStmt &Stmt, int Indent);
   void writeCxxThrowExpr(const HighStmt &Stmt, const HighExpr &ThrowCall);
   void writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
                   size_t End = static_cast<size_t>(-1));
@@ -192,6 +195,7 @@ public:
 
   //--- Expression rendering (HighCExprWriter.cpp) ---
   std::string exprStr(const HighExpr &Expr, int ParentPrec = 0);
+  std::string exprStrImpl(const HighExpr &Expr, int ParentPrec);
   /// Operands of the integer operator being printed. A string literal among
   /// them is an array in C and prints as its integer address instead.
   std::set<const HighExpr *> LiteralAddressOperands;
@@ -322,6 +326,8 @@ public:
   std::string unwrapCastVar(const HighExpr &E);
   std::string invertCondStr(const HighExpr &E);
   std::string condStr(const HighExpr &E);
+  std::string condStrImpl(const HighExpr &E);
+  std::string invertCondStrImpl(const HighExpr &E);
   /// `!(a <= b && a != b)` is `a >= b`. When both IfElse arms print, Hex-Rays
   /// prefers `if (b > a) else-arm else then-arm`.
   std::optional<std::string> preferGreaterIfElseCond(const HighExpr &E);
@@ -536,6 +542,7 @@ public:
   bool InferredVoid = false;
   TypeRef FuncReturnType;
   const HighFunc *CurrentFunc = nullptr;
+  CSourceRecorder *SourceRecorder = nullptr;
   /// Win64 hidden sret parameter name (`result`) when TPI returns a class.
   std::string IndirectReturnName;
   bool PrintedIndirectReturn = false;
@@ -585,6 +592,8 @@ public:
   std::set<std::string> JoinPhiNames;
   /// Temps that only carry `this->field` print as the member at each use.
   std::map<std::string, std::string> FieldForward;
+  /// Original load expressions whose field spelling is forwarded at each use.
+  std::map<std::string, const HighExpr *> FieldForwardSources;
   std::map<std::string, TypeRef> FieldForwardTypes;
   std::map<std::string, TypeRef> EnumDestTypes;
   /// Temps used as a named-class pointer arg (`CStringT_dtor(v26)`).

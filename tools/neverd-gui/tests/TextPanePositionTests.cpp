@@ -1,6 +1,8 @@
+#include "LibraryCodeView.h"
 #include "NativeCodeHighlighter.h"
 #include "Workbench.h"
 
+#include <QClipboard>
 #include <QFile>
 #include <QQmlComponent>
 #include <QQmlContext>
@@ -179,6 +181,34 @@ private slots:
     fixture.pane->setProperty("mappings", QVariantList{anchor(420, AddressA)});
     QTRY_COMPARE(fixture.cursorLine(), 420);
     QTRY_VERIFY(fixture.cursorVisible());
+  }
+
+  void librarySummaryCopiesOriginalAndExpandsWithKeyboard() {
+    TextFixture fixture;
+    QVERIFY2(fixture.load(), qPrintable(fixture.error));
+    LibraryCodeView view;
+    const QString original = "return *(uint64_t*)pointer;\n";
+    view.reset(
+        original, {},
+        {QJsonObject{{"id", "data"},
+                     {"display_name", "std::vector<unsigned int>::data"},
+                     {"foldable", true},
+                     {"mapping_status", "mapped"},
+                     {"spans", QJsonArray{QJsonObject{{"begin_byte", 7},
+                                                      {"end_byte", 25}}}}}});
+    fixture.pane->setProperty("text", original);
+    fixture.pane->setProperty(
+        "libraryView", QVariant::fromValue(static_cast<QObject *>(&view)));
+    view.setFolded(true);
+    QTRY_COMPARE(fixture.code->property("text").toString(), view.text());
+    fixture.code->forceActiveFocus();
+    QTest::keySequence(&fixture.window, QKeySequence::SelectAll);
+    QTest::keySequence(&fixture.window, QKeySequence::Copy);
+    QTRY_COMPARE(QGuiApplication::clipboard()->text(), original);
+    QVERIFY(fixture.code->setProperty("cursorPosition", 10));
+    QTest::keyClick(&fixture.window, Qt::Key_Return);
+    QTRY_COMPARE(fixture.code->property("text").toString(), original);
+    QVERIFY(!view.anyFolded());
   }
 
   void replacingRepresentationRestoresTheSameAddressAtItsNewLine() {

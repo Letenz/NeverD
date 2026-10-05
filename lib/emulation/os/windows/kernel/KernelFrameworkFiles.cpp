@@ -43,103 +43,127 @@ std::optional<uint64_t> fileContextOffset(uint32_t Class) {
 
 } // namespace
 
-llvm::Expected<std::optional<uint64_t>>
-KernelFramework::callFile(llvm::StringRef Name, Binding &B,
-                          llvm::ArrayRef<uint64_t> A) {
-  using Result = std::optional<uint64_t>;
-  if (Name == api::WdfDeviceInitSetFileObjectConfig) {
-    auto Init = DeviceInits.find(A[1]);
-    if (Init == DeviceInits.end() || Init->second.Binding != B.Globals)
-      return fileError("configuration requires a live device initializer");
-    if (auto E = ValidateAccess(A[2], FileConfigSize, false))
-      return E;
-    auto Size = read(A[2], sizeof(uint32_t));
-    if (!Size)
-      return Size.takeError();
-    auto Create = read(A[2] + FileCreateCallbackOffset);
-    if (!Create)
-      return Create.takeError();
-    auto Close = read(A[2] + FileCloseCallbackOffset);
-    if (!Close)
-      return Close.takeError();
-    auto Cleanup = read(A[2] + FileCleanupCallbackOffset);
-    if (!Cleanup)
-      return Cleanup.takeError();
-    auto AutoForward = read(A[2] + FileAutoForwardOffset, sizeof(uint32_t));
-    if (!AutoForward)
-      return AutoForward.takeError();
-    auto Class = read(A[2] + FileClassOffset, sizeof(uint32_t));
-    if (!Class)
-      return Class.takeError();
-    if (*Size != FileConfigSize)
-      return fileError("unsupported file-object configuration size");
-    if (*AutoForward != FileAutoForwardFalse &&
-        *AutoForward != FileAutoForwardTrue &&
-        *AutoForward != FileAutoForwardDefault)
-      return fileError("unsupported file auto-forward choice");
-    if (*AutoForward == FileAutoForwardTrue &&
-        Init->second.Kind != DeviceInitKind::Pnp)
-      return fileError("forwarded file lifecycle requires a lower target");
-    const uint32_t FileClass = static_cast<uint32_t>(*Class);
-    const uint32_t BaseClass = baseFileClass(FileClass);
-    switch (BaseClass) {
-    case FileObjectNotRequired:
-      if (FileClass & FileObjectCanBeOptional)
-        return fileError("unsupported framework file-object class");
-      break;
-    case FileObjectCanUseFsContext:
-    case FileObjectCanUseFsContext2:
-    case FileObjectCannotUseFsContexts:
-      break;
-    default:
-      return fileError("unsupported framework file-object class");
-    }
-    auto Validation = attributes(A[3], AttributesUse::Device);
-    if (!Validation)
-      return Validation.takeError();
-    if (std::holds_alternative<uint32_t>(*Validation))
-      return fileError("invalid file-object attributes");
-    const auto &Attrs = std::get<Attributes>(*Validation);
-    if (Attrs.Synchronization != SynchronizationInherit &&
-        Attrs.Synchronization != SynchronizationNone)
-      return fileError("file callbacks inherit device synchronization or opt "
-                       "out of automatic synchronization");
-    if (BaseClass == FileObjectNotRequired &&
-        (Attrs.Type || Attrs.ContextSize || Attrs.Cleanup || Attrs.Destroy))
-      return fileError("file-object attributes require a file object");
-    FileConfig Config;
-    Config.Enabled = true;
-    Config.Create = *Create;
-    Config.Close = *Close;
-    Config.Cleanup = *Cleanup;
-    Config.AutoForward = static_cast<uint32_t>(*AutoForward);
-    Config.Class = FileClass;
-    Config.ObjectAttributes = Attrs;
-    Init->second.Files = Config;
-    return Result{0};
-  }
-  if (Name != api::WdfFileObjectGetFileName &&
-      Name != api::WdfFileObjectGetFlags &&
-      Name != api::WdfFileObjectGetDevice &&
-      Name != api::WdfFileObjectWdmGetFileObject)
-    return Result{};
-  auto Object = Objects.find(A[1]);
-  auto File = FileObjects.find(A[1]);
+llvm::Expected<KernelFramework::FileObject *>
+KernelFramework::fileObjectForCall(Binding &B, uint64_t Handle) {
+  auto Object = Objects.find(Handle);
+  auto File = FileObjects.find(Handle);
   if (Object == Objects.end() || Object->second.Kind != ObjectKind::File ||
       Object->second.Binding != B.Globals || Object->second.Deleting ||
       File == FileObjects.end())
     return fileError("access requires a live framework file object");
-  if (Name == api::WdfFileObjectGetFileName)
-    return Result{File->second.Wdm + windows::FileNameOffset};
-  if (Name == api::WdfFileObjectGetFlags) {
-    auto Flags =
-        read(File->second.Wdm + windows::FileFlagsOffset, sizeof(uint32_t));
-    if (!Flags)
-      return Flags.takeError();
-    return Result{*Flags};
+  return &File->second;
+}
+
+llvm::Expected<uint64_t> KernelFramework::callDeviceInitSetFileConfig(
+    llvm::StringRef, Binding &B, llvm::ArrayRef<uint64_t> A, uint8_t) {
+  auto Init = DeviceInits.find(A[1]);
+  if (Init == DeviceInits.end() || Init->second.Binding != B.Globals)
+    return fileError("configuration requires a live device initializer");
+  if (auto E = ValidateAccess(A[2], FileConfigSize, false))
+    return E;
+  auto Size = read(A[2], sizeof(uint32_t));
+  if (!Size)
+    return Size.takeError();
+  auto Create = read(A[2] + FileCreateCallbackOffset);
+  if (!Create)
+    return Create.takeError();
+  auto Close = read(A[2] + FileCloseCallbackOffset);
+  if (!Close)
+    return Close.takeError();
+  auto Cleanup = read(A[2] + FileCleanupCallbackOffset);
+  if (!Cleanup)
+    return Cleanup.takeError();
+  auto AutoForward = read(A[2] + FileAutoForwardOffset, sizeof(uint32_t));
+  if (!AutoForward)
+    return AutoForward.takeError();
+  auto Class = read(A[2] + FileClassOffset, sizeof(uint32_t));
+  if (!Class)
+    return Class.takeError();
+  if (*Size != FileConfigSize)
+    return fileError("unsupported file-object configuration size");
+  if (*AutoForward != FileAutoForwardFalse &&
+      *AutoForward != FileAutoForwardTrue &&
+      *AutoForward != FileAutoForwardDefault)
+    return fileError("unsupported file auto-forward choice");
+  if (*AutoForward == FileAutoForwardTrue &&
+      Init->second.Kind != DeviceInitKind::Pnp)
+    return fileError("forwarded file lifecycle requires a lower target");
+  const uint32_t FileClass = static_cast<uint32_t>(*Class);
+  const uint32_t BaseClass = baseFileClass(FileClass);
+  switch (BaseClass) {
+  case FileObjectNotRequired:
+    if (FileClass & FileObjectCanBeOptional)
+      return fileError("unsupported framework file-object class");
+    break;
+  case FileObjectCanUseFsContext:
+  case FileObjectCanUseFsContext2:
+  case FileObjectCannotUseFsContexts:
+    break;
+  default:
+    return fileError("unsupported framework file-object class");
   }
-  return Result{Name == api::WdfFileObjectGetDevice ? File->second.Device
-                                                    : File->second.Wdm};
+  auto Validation = attributes(A[3], AttributesUse::Device);
+  if (!Validation)
+    return Validation.takeError();
+  if (std::holds_alternative<uint32_t>(*Validation))
+    return fileError("invalid file-object attributes");
+  const auto &Attrs = std::get<Attributes>(*Validation);
+  if (Attrs.Synchronization != SynchronizationInherit &&
+      Attrs.Synchronization != SynchronizationNone)
+    return fileError("file callbacks inherit device synchronization or opt "
+                     "out of automatic synchronization");
+  if (BaseClass == FileObjectNotRequired &&
+      (Attrs.Type || Attrs.ContextSize || Attrs.Cleanup || Attrs.Destroy))
+    return fileError("file-object attributes require a file object");
+  FileConfig Config;
+  Config.Enabled = true;
+  Config.Create = *Create;
+  Config.Close = *Close;
+  Config.Cleanup = *Cleanup;
+  Config.AutoForward = static_cast<uint32_t>(*AutoForward);
+  Config.Class = FileClass;
+  Config.ObjectAttributes = Attrs;
+  Init->second.Files = Config;
+  return 0;
+}
+
+llvm::Expected<uint64_t>
+KernelFramework::callFileGetName(llvm::StringRef, Binding &B,
+                                 llvm::ArrayRef<uint64_t> A, uint8_t) {
+  auto File = fileObjectForCall(B, A[1]);
+  if (!File)
+    return File.takeError();
+  return (**File).Wdm + windows::FileNameOffset;
+}
+
+llvm::Expected<uint64_t>
+KernelFramework::callFileGetDevice(llvm::StringRef, Binding &B,
+                                   llvm::ArrayRef<uint64_t> A, uint8_t) {
+  auto File = fileObjectForCall(B, A[1]);
+  if (!File)
+    return File.takeError();
+  return (**File).Device;
+}
+
+llvm::Expected<uint64_t>
+KernelFramework::callFileGetWdmObject(llvm::StringRef, Binding &B,
+                                      llvm::ArrayRef<uint64_t> A, uint8_t) {
+  auto File = fileObjectForCall(B, A[1]);
+  if (!File)
+    return File.takeError();
+  return (**File).Wdm;
+}
+
+llvm::Expected<uint64_t>
+KernelFramework::callFileGetFlags(llvm::StringRef, Binding &B,
+                                  llvm::ArrayRef<uint64_t> A, uint8_t) {
+  auto File = fileObjectForCall(B, A[1]);
+  if (!File)
+    return File.takeError();
+  auto Flags = read((**File).Wdm + windows::FileFlagsOffset, sizeof(uint32_t));
+  if (!Flags)
+    return Flags.takeError();
+  return *Flags;
 }
 
 llvm::Expected<uint64_t>

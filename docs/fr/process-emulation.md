@@ -76,6 +76,16 @@ Les longueurs sont arrondies aux pages. `munmap` tolère les trous et suppressio
 
 Les mappings de fichiers, partagés ou fixes, la croissance descendante, les grandes pages, le verrouillage, les clés de protection, les politiques exécution seule/écriture seule et les autres drapeaux restent explicitement non pris en charge : arrêt avant tout effet publié ou retour inventé. Les erreurs ordinaires de plage, longueur et alignement du sous-ensemble admis retournent une erreur invitée et permettent de poursuivre. Aucun pointeur ni demande de mapping invité n'est transmis à l'OS hôte.
 
+`linux_signals` fournit les actions initiales des signaux pour tout le processus. Une entrée absente est inconnue et ne signifie pas `SIG_DFL` ; une liste explicitement vide permet une installation sans lecture de l’action précédente. Les cinq champs sont obligatoires ; les valeurs non signées sur 64 bits hors de la plage exacte de JSON utilisent des chaînes décimales.
+
+```json
+{"linux_signals":{"actions":[
+  {"signal":11,"handler":0,"flags":0,"restorer":0,"mask":0}
+]}}
+```
+
+Les numéros de signal vont de 1 à 64. `rt_sigaction` et Bionic partagent l’état, avec une disposition des champs et un ordre des erreurs propres à chaque interface. Les signaux en attente, leur livraison, l’appel des gestionnaires et les masques par thread ne sont pas implémentés ; aucun gestionnaire de l’hôte n’est utilisé. Voir le [contrat complet](../process-emulation.md#linux-profile-semantics).
+
 <a id="windows-pe64-profile"></a>
 
 <!-- i18n-section: linux-clocks -->

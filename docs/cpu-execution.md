@@ -78,6 +78,10 @@ Checked x64 executes `SHLD/SHRD` with 16/32/64-bit destinations and imm8 or CL c
 
 `X64StackInstructions.def` admits 16/64-bit `PUSH/POP` with general registers and ordinary RAM, plus immediate PUSH on KVM, WHP and checked Unicorn, including `driver-strict`. PUSH reads its source before decrementing RSP; POP computes an RSP/ESP-based destination after incrementing it. Address-size wrapping applies only to the explicit operand. Whole-span permissions, ordered observations and one RAM transaction preserve CPU and memory on faults, cancellation or callback errors. LOCK and device operands remain unsupported.
 
+KVM, WHP and checked Unicorn also admit 16/64-bit `LEAVE`. It reads the saved frame through full RBP, including with `67H`, and preserves unselected RBP bits in the 16-bit form. Faults or cancelled reads retain the original RSP and CPU context. LOCK, REP and device frames remain unsupported.
+
+KVM, WHP and checked Unicorn admit 16/64-bit `ENTER`, with unsigned 16-bit allocation and nesting modulo 32. Full RSP/RBP and effective prefix order determine the accesses. On a guest fault, completed stack stores remain visible while RSP, RBP and PC retain their entry values. The final stack check validates write permission over the operand width without storing data. LOCK, REP, APX prefixes and device frames remain unsupported.
+
 `X64PackedIntegerInstructions.def` admits 45 legacy SSE2 packed integer operations: wrapping and saturating addition/subtraction, comparisons, multiplication, averages, extrema, byte differences, packing and unpacking. XMM and aligned 128-bit RAM sources share the existing checked path on KVM, WHP and Unicorn. FLAGS and MXCSR remain unchanged; faults or observer cancellation preserve state. MMX, VEX/EVEX and device operands remain excluded.
 
 `X64PackedShiftInstructions.def` admits ten legacy SSE2 packed shifts. Lane shifts accept imm8 or XMM/aligned m128 counts; byte shifts accept imm8 only. Variable counts use the unsigned low 64 bits without scalar count masking; the high 64 bits are ignored. Memory operands still require a complete 16-byte read for zero or oversized counts. FLAGS and MXCSR remain unchanged; MMX, VEX/EVEX and device operands remain excluded.
@@ -115,6 +119,8 @@ delivery while architectural exception status is retained. ARM64 scalar/pair
 stores use the same RAM authority. Devices, unknown footprints and parallel
 hardware SMP remain outside this transaction. CPU snapshots do not undo already
 committed RAM.
+
+`CMPXCHG8B` and `CMPXCHG16B` execute their original encodings on KVM, WHP and checked Unicorn in driver and user profiles. Successful and failed comparisons both require read/write access; faults are classified as writes. `CMPXCHG16B` checks 16-byte alignment before memory access and reports `#GP(0)`. Its two result observations share one RAM transaction: stopping or throwing in either publishes no registers or RAM. Unlocked `CMPXCHG8B` may cross pages; locked operands retain the natural-alignment contract. `X64WideAtomicTests.cpp` compares original host results and direct native faults, aliases, prefixes, address rules, repair and cancellation. Original Windows driver and ring3 PE fixtures exercise both widths; the WDK fixture also executes `_InterlockedCompareExchange128`. The CPU model must support `CMPXCHG16B`.
 
 x64 contexts also preserve the complete x87 state: control/status, TOP,
 physical nonempty tags, opcode, instruction/data pointers and eight physical
@@ -367,6 +373,13 @@ The shared `encodeX64XsaveState` / `decodeX64XsaveState` codec owns standard/com
 WHP captures the x87/SSE metadata from `WhpXsaveRegisters.def` in the same `WHvGetVirtualProcessorRegisters` call as the ordinary registers. The stopped vCPU remains under one partition lease. Complete XSAVE capture and all metadata consistency checks still precede publication; this removes one host API call per step, without a measured throughput claim.
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
+
+The checked SIMD subset includes scalar-D and fixed-width vector `CMHI`
+unsigned comparisons. Each element produces an all-ones or zero mask; narrow
+and scalar results clear the unused high destination bits. Independently
+assembled tests cover all baseline arrangements, overlapping registers, equal
+operands and reserved encodings, and compare the complete scalar/vector state
+on available transports. See Arm's [Neon comparison reference](https://arm-software.github.io/acle/neon_intrinsics/advsimd.html#greater-than).
 
 The checked EL0/EL1 ARM64 contracts keep all `SCTLR_EL1` pointer-authentication
 key enables clear. `AArch64PAuthHints.def` admits only the twelve HINT-space

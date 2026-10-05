@@ -742,7 +742,7 @@ cl::opt<bool>
                cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
                cl::sub(HeadersCmd), cl::sub(EntryPointsCmd),
                cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(AuditCmd),
-               cl::sub(HuntCmd), cl::sub(MobileCmd));
+               cl::sub(HuntCmd), cl::sub(MobileCmd), cl::sub(DecompileCmd));
 
 //===----------------------------------------------------------------------===//
 // Plugins-specific options
@@ -940,20 +940,23 @@ cl::opt<std::string> SigDir("sig-dir",
                             cl::init(""), cl::sub(SigsCmd), cl::sub(AuditCmd),
                             cl::sub(HuntCmd));
 
-cl::opt<std::string> SigFile("sig-file", cl::desc("Single .pat file to load"),
-                             cl::init(""), cl::sub(SigsCmd), cl::sub(AuditCmd),
-                             cl::sub(HuntCmd));
+cl::opt<std::string>
+    SigFile("sig-file",
+            cl::desc("Byte signature (.pat) or library feature pack (.json)"),
+            cl::init(""), cl::sub(SigsCmd), cl::sub(AuditCmd), cl::sub(HuntCmd),
+            cl::sub(DecompileCmd), cl::sub(FuncsCmd));
 
 cl::opt<bool>
     SigAuto("auto", cl::desc("Auto-detect arch/format and load matching sigs"),
-            cl::sub(SigsCmd), cl::sub(AuditCmd), cl::sub(HuntCmd));
+            cl::sub(SigsCmd), cl::sub(AuditCmd), cl::sub(HuntCmd),
+            cl::sub(DecompileCmd), cl::sub(FuncsCmd));
 
 cl::opt<std::string>
     SigBase("sig-base",
             cl::desc("Signature tree to select from as --auto does (default: "
                      "signatures/ beside neverd, then ./signatures)"),
-            cl::init(""), cl::sub(SigsCmd), cl::sub(AuditCmd),
-            cl::sub(HuntCmd));
+            cl::init(""), cl::sub(SigsCmd), cl::sub(AuditCmd), cl::sub(HuntCmd),
+            cl::sub(DecompileCmd), cl::sub(FuncsCmd));
 
 //===----------------------------------------------------------------------===//
 // Simplify-specific options

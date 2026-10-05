@@ -1,6 +1,7 @@
 #include "../../../lib/loader/MachO/ImmutableNativeFrame.h"
 #include "../../../lib/loader/Swift/SwiftMangledClassMethodABI.h"
 #include "../../../lib/loader/Swift/SwiftMangledValueConstructorABI.h"
+#include "../../../lib/sdk/capi/ObjCBlockSources.h"
 #include "../../../lib/sdk/capi/ObjCByValueCopySources.h"
 #include "../../../lib/sdk/capi/ObjCNativeSwiftReceiverSources.h"
 #include "../../../lib/sdk/capi/SourceSwiftValueConstructorProjection.h"
@@ -263,12 +264,14 @@ struct ObjCImageCopyFixture : FieldFixture {
 };
 
 struct ObjCAffineImageCopyFixture : ObjCImageCopyFixture {
-  static constexpr va_t ProducerSlot = 0x3680;
+  static constexpr va_t ProducerSlot = 0x3680, RectSlot = 0x36a0;
   bool Concat;
   va_t ProducerCall, ImageCall;
+  va_t FirstProducerCall = InvalidVA, RectCall = InvalidVA;
   std::string ProducerName, FunctionName;
   std::vector<uint32_t> Words;
-  explicit ObjCAffineImageCopyFixture(bool Concat) : Concat(Concat) {
+  explicit ObjCAffineImageCopyFixture(bool Concat, bool RectBorrow = false)
+      : Concat(Concat) {
     ProducerName =
         Concat ? "CGAffineTransformConcat" : "CGAffineTransformMakeRotation";
     FunctionName = Concat ? "affine_concat" : "affine_rotation";
@@ -282,7 +285,30 @@ struct ObjCAffineImageCopyFixture : ObjCImageCopyFixture {
     for (unsigned I = 0; I < std::size(Stub); ++I)
       u32(0x1400 + I * 4, Stub[I]);
     Image.RuntimeFunctionAddrs.insert(0x1400);
-    if (Concat) {
+    if (RectBorrow) {
+      EXPECT_FALSE(Concat);
+      FunctionName = "affine_rect_rotation";
+      Image.ImportPtrSlots[RectSlot] = "_CGRectApplyAffineTransform";
+      Image.DyldBindSlots[RectSlot] = {"_CGRectApplyAffineTransform", 0,
+                                       Provider, false};
+      const uint32_t RectStub[] = {0xd0000010, 0xf9435210, 0xd61f0200};
+      for (unsigned I = 0; I < std::size(RectStub); ++I)
+        u32(0x1450 + I * 4, RectStub[I]);
+      Image.RuntimeFunctionAddrs.insert(0x1450);
+      // CGRect consumes the first complete result through x0 and returns
+      // d0-d3. The second rotation must reinitialize the permitted input
+      // writes before CoreImage consumes it. Saved d8 retains the angle.
+      Words = {0xd101c3ff, 0xa9067bfd, 0x910183fd, 0xa90453f3, 0xfd001be8,
+               0xaa0003f3, 0x1e604008, 0x910003e8, 0x940000b8, 0x910003e0,
+               0x6f00e400, 0x6f00e401, 0x1e6e1002, 0x1e6e1003, 0x940000c6,
+               0x910003e8, 0x1e604100, 0x940000af, 0xaa1303e0, 0x910003e2,
+               0x9400006c, 0xfd401be8, 0xa94453f3, 0xa9467bfd, 0x9101c3ff,
+               0xd65f03c0};
+      FirstProducerCall = Entry + 32;
+      RectCall = Entry + 56;
+      ProducerCall = Entry + 68;
+      ImageCall = Entry + 80;
+    } else if (Concat) {
       // Two initialized 48-byte inputs, a distinct 48-byte result, then
       // saved x19/x20 and FP/LR in the final 32 bytes of the 176-byte frame.
       Words = {0xd102c3ff, 0xa90a7bfd, 0x910283fd, 0xa90953f3, 0xaa0003f3,
@@ -312,6 +338,499 @@ struct ObjCAffineImageCopyFixture : ObjCImageCopyFixture {
         parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
   }
 };
+
+struct ObjCFrameBlockFixture : ObjCImageCopyFixture {
+  static constexpr va_t BlockCall = Entry + 68;
+  static constexpr va_t IsaSlot = 0x36c0, Descriptor = 0x3b20;
+  static constexpr va_t Signature = 0x3b60;
+  std::vector<uint32_t> Words{
+      0xd10103ff, 0xa9037bfd, 0xfd0013e0, 0xd0000008, 0xf9436108, 0xf90003e8,
+      0xd0000008, 0xfd458100, 0xfd0007e0, 0x90000008, 0x91140108, 0xd0000009,
+      0x912c8129, 0xa90127e8, 0x52800028, 0x3900a3e8, 0x910003e2, 0x9400006f,
+      0xa9437bfd, 0x910103ff, 0xd65f03c0};
+  ObjCFrameBlockFixture() {
+    Image.ObjCClasses.front().SuperclassName = "UIGraphicsImageRenderer";
+    text(0x3660, "imageWithActions:");
+    Image.ObjCSourceReferences[0x3600].Name = "imageWithActions:";
+    Image.ImportPtrSlots[IsaSlot] = "__NSConcreteStackBlock";
+    Image.DyldBindSlots[IsaSlot] = {"__NSConcreteStackBlock", 0,
+                                    "/usr/lib/libSystem.B.dylib", false};
+    u64(0x3b00, 0xc0000000); // Signature and extended nonobject layout.
+    u64(Descriptor, 0);
+    u64(Descriptor + 8, 48);
+    pointer(Descriptor + 16, Signature);
+    u64(Descriptor + 24, 0);
+    text(Signature, "v16@?0@8");
+    u32(0x1500, 0xd65f03c0);
+    Image.RuntimeFunctionAddrs.insert(0x1500);
+    Image.Symbols = {{"frame_block", Entry, Words.size() * 4, true},
+                     {"frame_block_invoke", 0x1500, 4, true}};
+    auto &Method = Image.ObjCMethods.front();
+    Method.Selector = "render:";
+    Method.TypeEncoding = "@24@0:8d16";
+    Method.TypeHint =
+        parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+    for (unsigned I = 0; I < Words.size(); ++I)
+      u32(Entry + I * 4, Words[I]);
+  }
+  SourceCallOccurrenceKey site() const {
+    for (const auto &Function : Result.LowFuncs)
+      for (const auto &Block : Function.Blocks)
+        for (const auto &Op : Block.Ops)
+          if (Op.Addr == BlockCall && Op.Opcode == NdOp::CALL)
+            return *sourceCallOccurrenceKey(Op);
+    throw std::runtime_error("Missing original block call");
+  }
+};
+
+struct ObjCFrameBlockCopyFixture : ObjCFrameBlockFixture {
+  static constexpr va_t CopySelector = 0x3640, ProducerSlot = 0x3680;
+  static constexpr va_t CopyTarget = 0x1380, ProducerTarget = 0x1400;
+  va_t ImageCopyCall;
+  explicit ObjCFrameBlockCopyFixture(bool WithConstant = false) {
+    text(0x3a00, "imageByApplyingTransform:");
+    pointer(CopySelector, 0x3a00);
+    Image.ObjCSourceReferences[CopySelector] = {
+        ObjCSourceReference::Kind::Selector, CopySelector, 8,
+        "imageByApplyingTransform:"};
+    const uint32_t CopyStub[] = {0xd0000001, 0xf9432021, 0xd0000010, 0xf9431210,
+                                 0xd61f0200};
+    for (unsigned I = 0; I != std::size(CopyStub); ++I)
+      u32(CopyTarget + 4 * I, CopyStub[I]);
+    const std::string Provider =
+        "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+    Image.DynInfo.NeededLibs.push_back(Provider);
+    Image.ImportPtrSlots[ProducerSlot] = "_CGAffineTransformMakeRotation";
+    Image.DyldBindSlots[ProducerSlot] = {"_CGAffineTransformMakeRotation", 0,
+                                         Provider, false};
+    const uint32_t ProducerStub[] = {0xd0000010, 0xf9434210, 0xd61f0200};
+    for (unsigned I = 0; I != std::size(ProducerStub); ++I)
+      u32(ProducerTarget + 4 * I, ProducerStub[I]);
+    Image.RuntimeFunctionAddrs.insert(CopyTarget);
+    Image.RuntimeFunctionAddrs.insert(ProducerTarget);
+    // The live 48-byte literal and the SDK-initialized 48-byte affine copy
+    // occupy separate ranges. Neither includes the saved registers.
+    Words = {0xd10203ff, 0xa9077bfd, 0x9101c3fd, 0xa90653f3, 0xaa0003f3,
+             0xaa0203f4, 0xfd0013e0, 0xd0000008, 0xf9436108, 0xf90003e8,
+             0xd0000008, 0xfd458100, 0xfd0007e0, 0x90000008, 0x91140108,
+             0xd0000009, 0x912c8129, 0xa90127e8, 0x52800028, 0x3900a3e8,
+             0x9100c3e8, 0xfd4013e0, 0,          0xaa1403e0, 0x9100c3e2,
+             0,          0xaa1303e0, 0x910003e2, 0,          0xa94653f3,
+             0xa9477bfd, 0x910203ff, 0xd65f03c0};
+    for (auto [Index, Target] : {std::pair{22u, ProducerTarget},
+                                 {25u, CopyTarget},
+                                 {28u, va_t{0x1300}}})
+      Words[Index] = 0x94000000 | uint32_t((Target - (Entry + 4 * Index)) / 4);
+    ImageCopyCall = Entry + 25 * 4;
+    Image.Symbols.front() = {"frame_block_copy", Entry, Words.size() * 4, true};
+    auto &Method = Image.ObjCMethods.front();
+    Method.Selector = "renderImage:angle:";
+    Method.TypeEncoding = "@32@0:8@\"CIImage\"16d24";
+    Method.TypeHint =
+        parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+    if (WithConstant) {
+      addSegment(0x7000, SegmentFlags::Readable);
+      Image.Segments.back().Name = "__DATA_CONST";
+      auto &Record = Image.Sections.back();
+      Record.Name = "__cfstring";
+      Record.SegmentName = "__DATA_CONST";
+      Record.Size = Record.FileSz = 32;
+      Section Characters = Record;
+      Characters.VA = 0x7100;
+      Characters.FileOff += 0x100;
+      Characters.Size = Characters.FileSz = 16;
+      Characters.Name = "__cstring";
+      Characters.Type = llvm::MachO::S_CSTRING_LITERALS;
+      Image.Sections.push_back(Characters);
+      const std::string Foundation =
+          "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
+      Image.DynInfo.NeededLibs.push_back(Foundation);
+      Image.recordDyldBindSlot(0x7000, "___CFConstantStringClassReference", 0,
+                               Foundation, false);
+      u64(0x7008, 0x7c8);
+      pointer(0x7010, 0x7100);
+      u64(0x7018, 4);
+      text(0x7100, "copy");
+      Image.ImportPtrSlots[0x36e0] = "_objc_release";
+      Image.DyldBindSlots[0x36e0] = {"_objc_release", 0,
+                                     "/usr/lib/libobjc.A.dylib", false};
+      const uint32_t ReleaseStub[] = {0xd0000010, 0xf9437210, 0xd61f0200};
+      for (unsigned I = 0; I != std::size(ReleaseStub); ++I)
+        u32(0x1580 + 4 * I, ReleaseStub[I]);
+      Image.RuntimeFunctionAddrs.insert(0x1580);
+      // Preserve the image result while the runtime consumes a separately
+      // authenticated constant object. Its source binding is not block data.
+      Words.insert(Words.begin() + 29,
+                   {0xaa0003f4, 0xd0000020, 0x91000000,
+                    0x94000000 | uint32_t((0x1580 - (Entry + 32 * 4)) / 4),
+                    0xaa1403e0});
+      Image.Symbols.front().Size = Words.size() * 4;
+    }
+    for (unsigned I = 0; I != Words.size(); ++I)
+      u32(Entry + I * 4, Words[I]);
+  }
+  void runWithInvoke() {
+    run();
+    const auto Plan = sdk::discoverObjCBlockSources(Image, Result);
+    PipelineOptions O;
+    O.EmitDumpOutput = false;
+    O.OnlyFunctionEntries = {Entry, 0x1500};
+    O.SourceTypeHints.emplace(Entry, *objcMethodSourceTypeHint(Image, Entry));
+    sdk::applyObjCBlockInvokeHints(Plan, O);
+    Result = Pipeline().run(Image, Context, O);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+  }
+  std::map<va_t, const HighFunc *> functions() const {
+    std::map<va_t, const HighFunc *> Functions;
+    for (const auto &F : Result.HighFuncs)
+      Functions.emplace(F.Entry, &F);
+    return Functions;
+  }
+};
+
+TEST(ObjCFrameBlockBorrows, CurrentCopyCanBorrowDisjointLiveLiteralStorage) {
+  ObjCFrameBlockCopyFixture F;
+  F.run();
+  const auto Copy = ObjCImageCopyFixture::copyCall(*F.high());
+  ASSERT_TRUE(Copy);
+  ASSERT_TRUE(sdk::objCByValueCopyFrameCallBound(*Copy, F.Image, F.Result,
+                                                 *F.high(), {}));
+  const auto Plan = sdk::discoverObjCBlockSources(F.Image, F.Result);
+  ASSERT_EQ(Plan.StackBlocks.count(F.Entry), 1u)
+      << (Plan.Rejections.count(F.Entry) ? Plan.Rejections.at(F.Entry) : "");
+  EXPECT_EQ(Plan.StackBlocks.at(F.Entry).front().FrameOffset, -128);
+}
+
+TEST(ObjCFrameBlockBorrows, PublicationRepeatsBothOwnersInProjectionOrder) {
+  ObjCFrameBlockCopyFixture F;
+  F.runWithInvoke();
+  const sdk::ObjCBlockSourceContext Source(F.Image);
+  const auto Plan = sdk::discoverObjCBlockSources(Source, F.Result);
+  const auto Functions = F.functions();
+  const auto Blocks =
+      sdk::bindObjCBlockSourceReferences(*F.high(), Source, Plan, Functions);
+  ASSERT_TRUE(Blocks.Limitation.empty()) << Blocks.Limitation;
+  auto Bound = sdk::bindObjCSourceReferences(Blocks.Function, F.Image, nullptr,
+                                             &Functions);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  const auto Copy = ObjCImageCopyFixture::copyCall(Bound.Function);
+  ASSERT_TRUE(Copy);
+  sdk::ObjCBlockByValueCopySourceValidator Validator(Source, F.Result, Plan);
+  EXPECT_TRUE(Validator.validate(*Copy, Bound.Function, Functions));
+}
+
+TEST(ObjCFrameBlockBorrows, ConstantsKeepTheirIndependentPublicationOwner) {
+  for (bool Changed : {false, true}) {
+    ObjCFrameBlockCopyFixture F(true);
+    F.runWithInvoke();
+    const sdk::ObjCBlockSourceContext Source(F.Image);
+    const auto Plan = sdk::discoverObjCBlockSources(Source, F.Result);
+    const auto Functions = F.functions();
+    const auto Blocks =
+        sdk::bindObjCBlockSourceReferences(*F.high(), Source, Plan, Functions);
+    ASSERT_TRUE(Blocks.Limitation.empty()) << Blocks.Limitation;
+    auto Bound = sdk::bindObjCSourceReferences(Blocks.Function, F.Image,
+                                               nullptr, &Functions);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    ASSERT_EQ(Bound.ConstantStrings, std::set<va_t>{0x7000});
+    const auto Copy = ObjCImageCopyFixture::copyCall(Bound.Function);
+    ASSERT_TRUE(Copy);
+    if (Changed)
+      F.Image.DyldBindSlots.at(0x7000).WeakImport = true;
+    sdk::ObjCBlockByValueCopySourceValidator Validator(Source, F.Result, Plan);
+    EXPECT_EQ(Validator.validate(*Copy, Bound.Function, Functions), !Changed);
+  }
+}
+
+TEST(ObjCFrameBlockBorrows, PublicationRejectsChangedBlockCopyAndCallback) {
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ObjCFrameBlockCopyFixture F;
+    F.runWithInvoke();
+    const sdk::ObjCBlockSourceContext Source(F.Image);
+    auto Plan = sdk::discoverObjCBlockSources(Source, F.Result);
+    const auto Functions = F.functions();
+    const auto Blocks =
+        sdk::bindObjCBlockSourceReferences(*F.high(), Source, Plan, Functions);
+    ASSERT_TRUE(Blocks.Limitation.empty()) << Blocks.Limitation;
+    auto Bound = sdk::bindObjCSourceReferences(Blocks.Function, F.Image,
+                                               nullptr, &Functions);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    auto Copy = ObjCImageCopyFixture::copyCall(Bound.Function);
+    ASSERT_TRUE(Copy);
+    if (Mutation == 0)
+      Plan.SourceResult = nullptr;
+    else if (Mutation == 1)
+      F.u32(F.ImageCopyCall, 0xd63f0100);
+    else if (Mutation == 2)
+      F.u64(F.Descriptor + 8, 64);
+    else if (Mutation == 3)
+      F.text(F.Signature, "i16@?0@8");
+    else if (Mutation == 4) {
+      bool Changed = false;
+      walkStmts(Bound.Function.Body, [&](HighStmt &S) {
+        forEachExpr(S, [&](ExprPtr &E) {
+          if (E && E->SourceCallHint &&
+              E->SourceCallHint->CallKind ==
+                  SourceCallTypeHint::Kind::NativeAddress) {
+            auto Hint =
+                std::make_shared<SourceCallTypeHint>(*E->SourceCallHint);
+            Hint->TargetAddress += 4;
+            E->SourceCallHint = Hint;
+            Changed = true;
+          }
+        });
+      });
+      ASSERT_TRUE(Changed);
+    } else if (Mutation == 5) {
+      auto Hint = std::make_shared<SourceCallTypeHint>(*Copy->SourceCallHint);
+      Hint->ByValueCopy->FrameOffset += 8;
+      Copy->SourceCallHint = Hint;
+    } else if (Mutation == 6) {
+      for (auto &Function : F.Result.HighFuncs)
+        if (Function.Entry == 0x1500) {
+          MedVar P;
+          P.Kind = MedVar::Param;
+          P.Id = 0;
+          P.Size = 8;
+          Function.Body.front().RetVal =
+              HighExpr::makeVar(P, Function.Params.front().Type);
+        }
+    } else
+      Copy = std::make_shared<HighExpr>(*Copy);
+    sdk::ObjCBlockByValueCopySourceValidator Validator(Source, F.Result, Plan);
+    EXPECT_FALSE(Validator.validate(*Copy, Bound.Function, Functions));
+  }
+}
+
+TEST(ObjCImageValueCopy, FrameBoundaryRepeatsCurrentBodyAndOccurrenceProof) {
+  for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ObjCImageCopyFixture F;
+    F.run();
+    auto Copy = ObjCImageCopyFixture::copyCall(*F.high());
+    ASSERT_TRUE(Copy);
+    ASSERT_TRUE(sdk::objCByValueCopyFrameCallBound(*Copy, F.Image, F.Result,
+                                                   *F.high(), {}));
+    if (Mutation == 0)
+      F.u32(F.CopyCall, 0xd63f0100);
+    else if (Mutation == 1) {
+      auto Hint = std::make_shared<SourceCallTypeHint>(*Copy->SourceCallHint);
+      ++Hint->ByValueCopy->Site.Sequence;
+      Copy->SourceCallHint = Hint;
+    } else if (Mutation == 2)
+      Copy->Operands[2] = HighExpr::makeConst(0, 8);
+    else if (Mutation == 3)
+      F.high()->FrameSize += 16;
+    else if (Mutation == 4)
+      F.Result.SourceImage = nullptr;
+    else if (Mutation == 5)
+      F.Image.ObjCMethods.clear();
+    else if (Mutation == 6)
+      F.Image.DynInfo.NeededLibs.pop_back();
+    else if (Mutation == 7)
+      Copy = std::make_shared<HighExpr>(*Copy);
+    else
+      F.Result.MedFuncs.clear();
+    EXPECT_FALSE(sdk::objCByValueCopyFrameCallBound(*Copy, F.Image, F.Result,
+                                                    *F.high(), {}));
+  }
+}
+
+TEST(ObjCFrameBlockBorrows, ReplaysInitializedHeaderWithoutInventingPadding) {
+  ObjCFrameBlockFixture F;
+  F.run();
+  ASSERT_TRUE(F.low());
+  const auto Hints = buildObjCSourceCallHints(F.Image, *F.low());
+  ASSERT_TRUE(Hints.count(F.BlockCall));
+  const auto &Binding = Hints.at(F.BlockCall);
+  ASSERT_TRUE(Binding.Receiver);
+  const auto Effect = objcNonEscapingBlockSourceFrameEffects(F.Image, *F.low(),
+                                                             F.site(), Binding);
+  ASSERT_TRUE(Effect);
+  EXPECT_EQ(Effect->WritableFrameParameters,
+            (std::map<size_t, size_t>{{2, 48}}));
+  EXPECT_TRUE(Effect->ReadOnlyFrameParameters.empty());
+  EXPECT_TRUE(Effect->InitializedFrameParameters.empty());
+  EXPECT_FALSE(Effect->InitializesIndirectResult);
+  NativeSourceCallContract Contract;
+  Contract.Signature = &Binding.Signature;
+  const NativeSourceCalls Calls{{F.site(), Contract}};
+  const auto Storage = sourceFrameCallArgumentStorage(*F.low(), Arch::AArch64,
+                                                      Calls, F.site(), 2, 48);
+  ASSERT_TRUE(Storage);
+  EXPECT_EQ(Storage->FrameOffset, -64);
+  for (unsigned I = 0; I < 41; ++I)
+    EXPECT_TRUE(Storage->Bytes[I].Initialized) << I;
+  for (unsigned I = 41; I < 48; ++I)
+    EXPECT_FALSE(Storage->Bytes[I].Initialized) << I;
+}
+
+TEST(ObjCFrameBlockBorrows, RejectsChangedImportsHeadersABIAndMachine) {
+  for (unsigned Mutation = 0; Mutation < 19; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ObjCFrameBlockFixture F;
+    F.run();
+    ASSERT_TRUE(F.low());
+    const auto Hints = buildObjCSourceCallHints(F.Image, *F.low());
+    ASSERT_TRUE(Hints.count(F.BlockCall));
+    auto Binding = Hints.at(F.BlockCall);
+    const auto Site = F.site();
+    ASSERT_TRUE(objcNonEscapingBlockSourceFrameEffects(F.Image, *F.low(), Site,
+                                                       Binding));
+    switch (Mutation) {
+    case 0:
+      F.Image.DyldBindSlots.at(F.IsaSlot).WeakImport = true;
+      break;
+    case 1:
+      F.Image.DyldBindSlots.at(F.IsaSlot).Module = "/tmp/blocks";
+      break;
+    case 2:
+      F.Image.DyldBindSlots.at(F.IsaSlot).Name = "__NSConcreteGlobalBlock";
+      break;
+    case 3:
+      F.u64(0x3b00, 0xc4000000);
+      break;
+    case 4:
+      F.u64(F.Descriptor + 8, 80);
+      break;
+    case 5:
+      F.u32(F.Entry + 40, 0x91141108);
+      F.run();
+      break;
+    case 6:
+      F.u32(F.Entry + 32, 0xbd0007e0);
+      F.run();
+      break;
+    case 7:
+      F.u32(F.Entry + 56, 0x910003e8);
+      F.u32(F.Entry + 60, 0xf90017e8);
+      F.run();
+      break;
+    case 8:
+      F.text(F.Signature, "i16@?0@8");
+      break;
+    case 9:
+      Binding.Signature.Parameters[2].Location.ValueBytes = 4;
+      break;
+    case 10:
+      F.u32(F.BlockCall, 0xd63f0100);
+      break;
+    case 11:
+      F.u32(F.Entry + 64, 0x9100c3e2);
+      F.run();
+      break;
+    case 12:
+      F.Image.ImportPtrSlots[F.IsaSlot] = "__NSConcreteGlobalBlock";
+      F.Image.DyldBindSlots.at(F.IsaSlot).Name = "__NSConcreteGlobalBlock";
+      break;
+    case 13:
+      F.u64(F.Descriptor + 24, 0x200);
+      break;
+    case 14:
+      Binding.Receiver.reset();
+      break;
+    case 15:
+      Binding.SelectorReferenceAddress += 8;
+      break;
+    case 16:
+      // A scalar equal to a preferred code address is not a relocated PC
+      // recipe for that function in a linked image.
+      F.u32(F.Entry + 40, 0xd282a008); // mov x8, #0x1500
+      F.run();
+      break;
+    case 17:
+      Binding.TargetName = "unknown_dispatch";
+      break;
+    case 18:
+      Binding.OwnerClass = "unknown_owner";
+      break;
+    }
+    EXPECT_FALSE(objcNonEscapingBlockSourceFrameEffects(F.Image, *F.low(), Site,
+                                                        Binding));
+  }
+}
+
+TEST(ObjCAffineImageValueCopy, CGRectInputUsesTheSameCurrentFrameOwner) {
+  ObjCAffineImageCopyFixture F(false, true);
+  F.run();
+  const auto Hints = buildObjCSourceCallHints(F.Image, *F.low());
+  ASSERT_TRUE(Hints.count(F.RectCall));
+  const auto Effects =
+      darwinMatrixSourceFrameEffects(F.Image, Hints.at(F.RectCall));
+  ASSERT_TRUE(Effects);
+  EXPECT_FALSE(Effects->InitializesIndirectResult);
+  EXPECT_EQ(Effects->WritableFrameParameters,
+            (std::map<size_t, size_t>{{1, 48}}));
+  EXPECT_EQ(Effects->InitializedFrameParameters, (std::set<size_t>{1}));
+  EXPECT_TRUE(Effects->ReadOnlyFrameParameters.empty());
+  ASSERT_TRUE(Hints.count(F.ImageCall));
+  ASSERT_TRUE(Hints.at(F.ImageCall).ByValueCopy);
+  EXPECT_EQ(Hints.at(F.ImageCall).ByValueCopy->FrameOffset, -112);
+  const auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image, {});
+  const auto Call = F.copyCall(Bound.Function);
+  ASSERT_TRUE(Call);
+  EXPECT_TRUE(sdk::objCByValueCopySourceCallBound(*Call, F.Image, F.Result,
+                                                  Bound.Function, {}));
+}
+
+TEST(ObjCAffineImageValueCopy, CGRectBorrowRejectsExpiredInputsAndChangedABI) {
+  for (unsigned Mutation = 0; Mutation < 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ObjCAffineImageCopyFixture F(false, true);
+    F.run();
+    const auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image, {});
+    const auto Call = F.copyCall(Bound.Function);
+    ASSERT_TRUE(Call);
+    ASSERT_TRUE(sdk::objCByValueCopySourceCallBound(*Call, F.Image, F.Result,
+                                                    Bound.Function, {}));
+    switch (Mutation) {
+    case 0:
+      F.Image.DyldBindSlots.at(F.RectSlot).WeakImport = true;
+      break;
+    case 1:
+      F.Image.DyldBindSlots.at(F.RectSlot).Module =
+          "/System/Library/Frameworks/UIKit.framework/UIKit";
+      break;
+    case 2:
+      F.Image.ConflictingImportStorageSlots.insert(F.RectSlot);
+      break;
+    case 3:
+      F.u32(F.ProducerCall, 0xd503201f); // Consumed bytes need a new producer.
+      break;
+    case 4:
+      F.u32(F.FirstProducerCall,
+            0xd503201f); // Borrow itself needs initialized input.
+      break;
+    case 5:
+      F.u32(F.Entry + 36, 0x910143e0); // Input extends outside the live frame.
+      break;
+    case 6:
+    case 7:
+      for (auto &M : F.Result.MedFuncs)
+        for (auto &B : M.Blocks)
+          for (auto &Op : B.Ops)
+            if (Op.Opcode == NdOp::CALL && Op.Addr == F.RectCall) {
+              ASSERT_TRUE(Op.SourceCallHint);
+              auto H = std::make_shared<SourceCallTypeHint>(*Op.SourceCallHint);
+              if (Mutation == 6)
+                H->Signature.Parameters[1].Location.RegisterOffset = a64reg::X1;
+              else
+                H->Signature.ReturnComponents[0].Kind =
+                    SourceABICarrierKind::IntegerRegister;
+              Op.SourceCallHint = H;
+            }
+      break;
+    }
+    EXPECT_FALSE(sdk::objCByValueCopySourceCallBound(*Call, F.Image, F.Result,
+                                                     Bound.Function, {}));
+    if (Mutation < 6) {
+      F.run();
+      const auto Hints = buildObjCSourceCallHints(F.Image, *F.low());
+      EXPECT_FALSE(Hints.count(F.ImageCall));
+    }
+  }
+}
 
 TEST(ObjCAffineImageValueCopy, CurrentProducerInitializesThePublishedCopy) {
   for (bool Concat : {false, true}) {
@@ -430,9 +949,10 @@ TEST(ObjCAffineImageValueCopy, GeneratedCMatchesOriginalMachineAndSDKResults) {
 #if !defined(__APPLE__) || !defined(__aarch64__)
   GTEST_SKIP() << "Native CoreGraphics SDK execution requires Apple arm64";
 #else
-  for (bool Concat : {false, true}) {
-    SCOPED_TRACE(Concat);
-    ObjCAffineImageCopyFixture F(Concat);
+  for (unsigned Variant = 0; Variant < 3; ++Variant) {
+    SCOPED_TRACE(Variant);
+    const bool Concat = Variant == 1;
+    ObjCAffineImageCopyFixture F(Concat, Variant == 2);
     F.run();
     const auto Bound = sdk::bindObjCSourceReferences(*F.high(), F.Image, {});
     const auto Call = F.copyCall(Bound.Function);
@@ -482,8 +1002,10 @@ __attribute__((naked,noinline)) void *original_affine(void *receiver,void *cmd,
        << "  __asm__(\n";
     for (unsigned I = 0; I < F.Words.size(); ++I) {
       const auto Address = F.Entry + 4 * I;
-      if (Address == F.ProducerCall)
+      if (Address == F.ProducerCall || Address == F.FirstProducerCall)
         OS << "    \"bl _" << F.ProducerName << "\\n\"\n";
+      else if (Address == F.RectCall)
+        OS << "    \"bl _CGRectApplyAffineTransform\\n\"\n";
       else if (Address == F.ImageCall)
         OS << "    \"bl _original_message\\n\"\n";
       else

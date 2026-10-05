@@ -205,6 +205,10 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `FrameOffsets.*`、`NativeStackSpecialization.*` 和 `OriginalBinaryUndefinedIndependence.*` 检查 2/4/8/16/32 字节对齐的全部余数、自由高位、跨调用保存、倒计数循环、别名破坏、错误分派、无关大掩码、必要分区升级及恰好／少一次预算。独立原生控制检查带分支约束的对齐、内部无符号返回清理、错误清理量和带前缀返回。这些测试不代表分区循环已具备自动原生到 LLVM 的完整证明。
 
+原生帧缓存回归覆盖以一次加载的查询预算执行 64 次重复对齐加载、查询预算少一、地址越界，以及一条路径返回后另一谓词下的相同地址。仍运行完整状态篡改和缓存键/容量测试。
+
+重复可行性回归保留全部 130 条原始指令，同时使用与两条直线指令相同的查询预算；查询或指令预算少一仍拒绝，分支及入口域变化后的可达陷阱、求解门预算耗尽和候选状态被修改仍拒绝。
+
 帧偏移回归覆盖 558 个切片宽度／对齐／余数／偏移组合，在不足以展开整个帧根相减的门预算下证明；同时检查来源或偏移不匹配的切片、未约束的稀疏掩码、模运算进位与回绕、嵌套掩码及节点／查询耗尽。原生测试验证部分对齐指针的精确存储，拒绝缺失对齐和帧外访问，并在完整状态精化中拒绝被修改的存储值。
 
 入口同余证明测试覆盖对齐1/2/4/16的全部余数、两个不同根寄存器、自由高位、非法域、矛盾入口常量、不回绕范围、排除区间空隙、保存义务和精确/少一查询预算。循环归纳模板保留原入口根条件。重新执行的原生独立性/关系证明和原生至LLVM检查拒绝不匹配的域及改变的状态码，证书摘要绑定两侧域。用例独立编写，不从ABI或一次执行推断对齐条件。 另将独立编写的带入口检查C函数原样编译为O1/O2，在两个余数下证明与实际原生指令序列一致；同一编译产物在不同余数下必须拒绝。
@@ -1028,6 +1032,8 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 
 `RAMTransaction` 在物理执行租约内，只保存一条指令明确声明的写入范围的物理并集。结果观察器运行前恢复原始 RAM；取消、后端传输错误和观察器异常不会发布部分 RAM 或寄存器。CPU 异常在 RAM 回滚后保留架构异常状态。ARM64 的单次和成对写入共用该内存权威层。x64 支持 8/16/32/64 位 `XCHG`、`XADD`、`CMPXCHG`，LOCK 或隐式锁定形式要求自然对齐。`NeverDRAMTransactionTests` 将结果与独立宿主 CPU 对照，并验证回滚、别名和权限；不可用的平台明确跳过。设备事务和并行 SMP 仍不在此契约内；CPU 快照不会撤销已经提交的 RAM。
 
+`CMPXCHG8B` 和 `CMPXCHG16B` 在 KVM、WHP 和 checked Unicorn 的驱动及用户模式中执行原始指令。比较成功或失败都需要读写权限，故障按写访问分类。`CMPXCHG16B` 在访问内存前检查 16 字节对齐，不满足时报告 `#GP(0)`。两次结果观察属于同一 RAM 事务；任一次停止或抛出异常，都不会发布寄存器或内存变化。未加锁的 `CMPXCHG8B` 可以跨页，加锁操作仍要求自然对齐。`X64WideAtomicTests.cpp` 对照宿主机原始执行结果和直接原生故障，并检查别名、前缀、寻址、修复重试和取消。原创 Windows 驱动及 ring3 PE 样例覆盖两种宽度，WDK 样例还执行 `_InterlockedCompareExchange128`。CPU 模型必须支持 `CMPXCHG16B`。
+
 ## 完整 x87 状态
 
 `NeverDEmulationArch` 独立负责 ISA、页表及 FP 状态布局，原生与 Unicorn 传输共用该层。x64 上下文保存 x87 控制、状态、TOP、物理标签、操作码、指令／数据指针和八个 80 位寄存器。`FP0`–`FP7` 使用 `RegisterValue`，标量访问拒绝截断；`FPTag` 是物理非空位图。`NeverDX64FPTests` 覆盖全部 TOP、精确运算的宿主 FXSAVE/FXRSTOR 对照及上下文恢复。这不新增 checked x87 指令，也不证明全部舍入语义；缺少原生主机时明确跳过。
@@ -1113,7 +1119,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 3683 项 CPU 检查及 17 项 SEH 回归，共有 3924 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `3683 CPU + 224 WHP + 17 SEH = 3924`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 4569 项 CPU 检查及 17 项 SEH 回归，共有 4810 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `4825 CPU + 224 WHP + 17 SEH = 5066`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1130,6 +1136,10 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 `X64BranchTests.cpp` 检查全部 16 种 Jcc 条件、相对 JMP、九组前缀、短/近形式、4 GiB 以上的有符号相对目标、完整 CPU/RAM 状态、观察器停止与错误、跨页解码、目标取指故障和上下文恢复。独立 Intel 宿主对照执行 9,792 条原始指令；AMD 低地址目标形式留在客体测试中。两种解码模型均测试完整和截断字节，原生探针还检查失败时不发布结果。四个原创 WDK 资源探针覆盖驱动策略。KVM/WHP 验收各增加 274 项必需结果。AMD 软件模型覆盖不代表原生 AMD 或 ARM64 执行证据。
 
 `X64StackTests.cpp` 以九类测试覆盖 42 种编码，检查宽度、寻址、完整状态、观察器顺序、取消、权限、跨页、物理别名、故障修复、设备拒绝和上下文恢复。独立宿主对照执行原始指令，六个 WDK 资源探针覆盖驱动路径。KVM/WHP 原生验收各增加 1135 项必需结果。不可用的后端在其原生强制验收之外仍明确报告跳过。
+
+`X64FrameExitTests.cpp` 覆盖 14 种 `LEAVE` 编码、有效前缀顺序、完整 RBP 寻址、完整寄存器状态、只读别名、跨页栈帧故障与修复、权限、观察器、无效地址、设备拒绝和上下文重放。独立宿主对照执行 42 条原始指令，五个 WDK 资源探针验证驱动执行。两个原生验收各增加 379 项必需结果。
+
+`X64FrameEntryTests.cpp` 覆盖 14 种编码、嵌套与重叠、物理别名、只写权限探测、跨页故障与修复、观察器取消、权限、前缀拒绝及上下文重放。独立宿主对照执行 882 组成功指令，并在 Linux x64 上执行 84 组故障，逐字节检查栈和寄存器。两项注入后端测试区分取消及失败回滚与架构故障提交。六个 WDK 资源探针执行原始驱动指令。原生验收新增 508 项 KVM 和 507 项 WHP 必测结果。
 
 `DriverSIMDSEHTests.cpp` 以四种受支持的处置及一次 x87 修改拒绝、两种原生执行契约、普通/CFG WDK 映像及两个加载地址运行八类原始 SSE 故障。十项后端专属结果和三项纯内核 SSE 记录检查均为必测。`driver_seh_simd.def` 统一定义样例与模式；异步展开表覆盖故障辅助函数。微软内核 10.0.26100.9549 提供独立分类与恢复依据：隔离执行了 107,744 组指令路径分类及 8,192 组恢复。这不代表已在完整 Windows 内核中执行驱动；ARM64 原生 KVM/WHP 仍未验证。
 
@@ -1305,3 +1315,17 @@ build-release/bin/NeverDByteCellScalarizationTests
 `ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration` 拒绝与当前非空方法编码或选择器不一致的缓存 ABI；仅提供显式类型声明的客户端保留原有约定。
 
 `DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract` 覆盖四个矩阵/仿射生产函数及 22 种必须拒绝的契约篡改。`ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy` 证明 SDK 结果进入 CoreImage 副本并通过独立发布重建；`RejectsWrongProducerFrameAndSavedIR` 对每个生产函数检查 12 种篡改，包括输入写入缺失、结果越界、错误提供者/ABI 载体和复用已消耗的 Concat 输入。`GeneratedCMatchesOriginalMachineAndSDKResults` 在 Apple ARM64 上以 O0/O2 执行未修改的生成 C 与原始 ARM64 机器字，并调用原生 CoreGraphics：每个函数 1000 组数据对比全部 48 个结果字节、两个输入记录、选择子/接收者身份、单次调用、返回对象、私有副本改写及边界保护值。其他主机跳过此原生 SDK 执行测试。
+
+`MatrixFrameEffectsRequireExactCurrentContract` 还覆盖 CGRect 消费者及 22 种必须拒绝的篡改。`ObjCAffineImageValueCopy.CGRectInputUsesTheSameCurrentFrameOwner` 验证“旋转 → CGRect 借用 → 旋转重新初始化 → CoreImage 发布”；`CGRectBorrowRejectsExpiredInputsAndChangedABI` 拒绝初始化、输入范围、导入和载体的八种修改。`GeneratedCMatchesOriginalMachineAndSDKResults` 还以 O0/O2、1000 组数据，将该完整顺序的生成 C 与原始机器字、原生 SDK 对照，检查保存的角度、全部 48 个最终字节、对象及保护值。
+
+`FrameMetadataAccessorUsesCurrentCatalogAndABI` 检查共享元数据声明、两个响应载体和当前帧见证的发布。`FrameMetadataAccessorRejectsChangedImportAndBytes` 拒绝弱导入、provider/名称/addend 变更、私有地址请求、部分 spill、错误重载及原始调用变更。原始 ARM64 与生成 C 的见证 oracle 还会实际调用 Foundation URL 元数据访问器：两个分支均在 O0/O2 下运行 2048 组，检查动态见证选择、完整输出字节、输入保持、调用次数和保护字。这些检查不证明动态栈分配或见证内存效应。
+
+结构上已为常量的原生目标直接使用现有的可达性检查调度。符号单目标只有在穷尽枚举后才复用传入谓词。回归在直线执行的查询预算内验证 128 次常量跳转，并按每次转移两次枚举查询的预算验证 32 次计算目标跳转，保留未约束的地址高位和分支域。完整状态结果被修改、缺少对齐约束、目标数量上限为零或查询与指令预算不足时必须拒绝。多目标和未完成枚举的现有拒绝检查仍然必需。
+
+只有完成 UNSAT 证明、排除另一条边后，原生分支才在当前边保留传入域。测试在 512 个求解门内验证两个方向各 32 次带条件跳转，并检查精确与少一次的查询预算及求解门耗尽。修改或删除对齐条件、反转比较以及修改终态都必须拒绝；任意未定义控制和两条边均可达的现有测试仍然必需。
+
+位展开缓存与遍历存储仅记录实际到达的表达式节点和变量。`NeverDSolverTests` 检查稀疏的高位编号、增量断言之间的上下文增长、缓存位复用、模型提取和假设切换。无关的宽表达式不会被编码；实际到达的宽度违规、畸形根节点和求解门预算耗尽仍必须拒绝。
+
+`SourceFrameAnalysis.CallStorage*` 覆盖精确调用、到达定义、初始化、填充、逃逸、边界和循环，不授予来源发布权限。`ObjCFrameBlockBorrows.*` 覆盖描述符限定的同步借用，以及 19 种导入、头部、ABI 和机器指令修改。测试保留未证明的填充字节并拒绝未初始化的所有权字段；block 构造、捕获读取及回调依赖闭包仍各自接受发布验证。
+
+block/副本发布测试还覆盖两个独立的 48 字节范围、描述符重叠、回调本体变化、过期机器指令与 IR、脱离本体的调用位置，以及精确投影顺序。`MixedWidthFrameCopiesMeetEveryInitializedByte` 与 `FrameCoverageCannotHideMissingBytesOrPointerJoins` 检查两种合并顺序下的 8/16 字节写入、缺失字节、可写借用失效和部分覆盖后仍保留的指针身份。

@@ -1012,14 +1012,20 @@ bool hasNativeSourceStateContract(
       if (StaticMessage && Binding.CallKind == Kind::ObjCSuper2)
         if (const auto Effects = objcSuperSourceFrameEffects(Image, Binding))
           static_cast<SourceFrameEffects &>(Contract) = *Effects;
+      if (StaticMessage && Low && Binding.CallKind == Kind::ObjCMessage) {
+        const SourceCallOccurrenceKey Site{Op.Addr, Op.OriginSeq, Op.Opcode,
+                                           Op.Inputs[0].ConstVal};
+        const auto NativeCallees = boundNativeBooleanCallees(Med);
+        if (const auto Effects = objcNonEscapingBlockSourceFrameEffects(
+                Image, *Low, Site, Binding, &NativeCallees))
+          static_cast<SourceFrameEffects &>(Contract) = *Effects;
+      }
       if (Binding.ByValueCopy) {
         if (!isObjCByValueCopyHint(Binding, Med.Entry, Image.Arch))
           return false;
         Contract.ByValueFrameParameters.insert(Binding.ByValueCopy->Parameter);
       }
-      if (StaticRuntime && Binding.CallKind == Kind::DarwinRuntimeCall &&
-          Binding.Signature.ReturnLocation.Kind ==
-              SourceABICarrierKind::IndirectResultPointer) {
+      if (StaticRuntime && Binding.CallKind == Kind::DarwinRuntimeCall) {
         if (const auto Effects = darwinMatrixSourceFrameEffects(Image, Binding))
           static_cast<SourceFrameEffects &>(Contract) = *Effects;
       }

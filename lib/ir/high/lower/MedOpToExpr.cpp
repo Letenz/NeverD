@@ -19,6 +19,13 @@
 namespace neverd {
 
 ExprPtr MedToHighConverter::medOpToExpr(const MedOp &Op) {
+  ExprPtr Result = medOpToExprImpl(Op);
+  if (ExpressionObserver && Result && Op.Addr != InvalidVA && Op.OriginSeq >= 0)
+    ExpressionObserver(Op, Result);
+  return Result;
+}
+
+ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
   if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
       Op.Inputs[1].isConst() && SourceRecordValues.count(varKey(Op.Inputs[0])))
     return sourceBitSlice(medvarToExpr(Op.Inputs[0]), Op.Inputs[1].ConstVal,

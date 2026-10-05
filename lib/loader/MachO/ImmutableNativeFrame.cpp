@@ -253,7 +253,9 @@ std::optional<SourceFunctionTypeHint> immutableNativeDirectCallABI(
     const std::map<va_t, SourceFunctionTypeHint> *NativeCallees) {
   std::optional<SourceFunctionTypeHint> Signature;
   if (const auto Slot = darwinImportVeneerSlot(Image, Target)) {
-    if (const auto Runtime = runtimeCFunctionAddressHint(Image, *Slot))
+    if (const auto Metadata = swiftMetadataAccessorSourceCallHint(Image, *Slot))
+      Signature = Metadata->Signature;
+    else if (const auto Runtime = runtimeCFunctionAddressHint(Image, *Slot))
       Signature = Runtime->AddressedFunctionABI;
     else if (isImmutableImageImportSlot(Image, *Slot)) {
       const auto ARC = objcRuntimeSourceCallHint(Image, *Slot);

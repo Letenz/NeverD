@@ -114,6 +114,7 @@ target_include_directories(NeverDX64MemoryUpdateTests PRIVATE
 add_neverd_unittest(NeverDRAMTransactionTests
   RAMTransactionTests.cpp
   X64AtomicTests.cpp
+  X64WideAtomicTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDRAMTransactionTests PRIVATE
@@ -135,6 +136,8 @@ add_neverd_unittest(NeverDX64IntegerTests
   X64LoopTests.cpp
   X64BranchTests.cpp
   X64StackTests.cpp
+  X64FrameExitTests.cpp
+  X64FrameEntryTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDX64IntegerTests PRIVATE
@@ -195,6 +198,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidThreadAttributeTests.cpp
   AndroidThreadTests.cpp
   AndroidTimeTests.cpp
+  AndroidSignalTests.cpp
   AndroidFileTests.cpp
   AndroidSyscallTests.cpp
   AndroidFormattingTests.cpp

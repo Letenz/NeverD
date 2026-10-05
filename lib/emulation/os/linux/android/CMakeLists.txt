@@ -1,6 +1,13 @@
 add_neverd_component_library(NeverDEmulationAndroid
   AndroidImage.cpp
   AndroidBionic.cpp
+  AndroidAllocation.cpp
+  AndroidDlfcn.cpp
+  AndroidKernelCalls.cpp
+  AndroidMemoryCalls.cpp
+  AndroidOnce.cpp
+  AndroidQueries.cpp
+  AndroidSignals.cpp
   AndroidStrings.cpp
   AndroidArguments.cpp
   AndroidFormatting.cpp
@@ -8,6 +15,7 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidMutex.cpp
   AndroidThreadAttributes.cpp
   AndroidThreads.cpp
+  AndroidThreadCalls.cpp
   AndroidMemory.cpp
   AndroidFinalizers.cpp
   AndroidNative.cpp

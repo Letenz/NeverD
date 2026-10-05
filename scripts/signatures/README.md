@@ -1,13 +1,37 @@
 # Signature generation
 
 Tooling that builds the `.pat` signatures in the `signatures` submodule
-(NeverSight/signatures). Two pipelines use it:
+(NeverSight/signatures). The byte-signature pipelines use it:
 
 - the exception-runtime databases, so that NeverD can locate a personality
   routine in an image that names nothing (most of this page), and
 - the MSVC and Windows SDK databases under `pe/`, which name the runtime,
   STL, ATL/MFC and SDK code statically linked into Windows programs (see
   [MSVC and Windows SDK signatures](#msvc-and-windows-sdk-signatures)).
+
+## Library feature packs
+
+`library_features.py` dispatches to the pinned signature repository's producer
+and validator. That repository owns the feature schema, source manifests,
+compiler probes, archived evidence and repeat-build checks; the engine does
+not keep a competing copy. The producers reuse the existing MSVC header
+collector and NeverD signature maker for gated byte rules.
+
+```sh
+python3 scripts/signatures/library_features.py validate
+python3 scripts/signatures/library_features.py probe --help
+python3 scripts/signatures/library_features.py libcxx --help
+python3 scripts/signatures/library_features.py msvc --help
+python3 scripts/signatures/library_features.py musl --help
+python3 scripts/signatures/library_features.py repeat --help
+```
+
+`--signatures /path/to/checkout` selects an authoring checkout before the command.
+Producer arguments pass through unchanged; retain the actual compiler/header
+manifest and any required independent repeat build. Data validation does not
+claim consumer success. Run the engine's `NeverDLibraryRecognitionTests` and
+source/session tests separately, and record the tested NeverD and feature SHAs
+in the feature coverage receipt. See [library recognition](../../docs/library-recognition.md).
 
 ## What a signature line says
 

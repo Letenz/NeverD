@@ -13,22 +13,25 @@
 #include "KernelModel.h"
 #include "WindowsKernelLayout.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <array>
 
 namespace neverd::emulation {
 namespace {
-namespace dma_api {
+enum class OperationKind {
 #define NEVERD_DMA_OPERATION(Name, Index, Arity, Minimum, Maximum, Modeled)    \
-  constexpr llvm::StringLiteral Name = #Name;
+  Name,
 #include "KernelDMAOperations.def"
 #undef NEVERD_DMA_OPERATION
-} // namespace dma_api
+};
 
 llvm::Error dmaAPIError(const llvm::Twine &Text) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                  "DMA API: " + Text);
 }
 struct Operation {
+  OperationKind Kind;
   llvm::StringLiteral Name;
   unsigned Index, Arity;
   uint8_t MinimumIRQL, MaximumIRQL;
@@ -36,26 +39,28 @@ struct Operation {
 };
 constexpr Operation Operations[] = {
 #define NEVERD_DMA_OPERATION(Name, Index, Arity, Minimum, Maximum, Modeled)    \
-  {#Name, Index, Arity, Minimum, Maximum, Modeled},
+  {OperationKind::Name, #Name, Index, Arity, Minimum, Maximum, Modeled},
 #include "KernelDMAOperations.def"
 #undef NEVERD_DMA_OPERATION
 };
+
+const Operation *lookupOperation(llvm::StringRef Name) {
+  auto I = llvm::find_if(
+      Operations, [Name](const Operation &Op) { return Op.Name == Name; });
+  return I == std::end(Operations) ? nullptr : I;
+}
 } // namespace
 
 std::optional<unsigned> KernelModel::dmaArgumentCount(llvm::StringRef Name) {
-  for (const auto &Op : Operations)
-    if (Op.Name == Name)
-      return Op.Arity;
+  if (const auto *Op = lookupOperation(Name))
+    return Op->Arity;
   return std::nullopt;
 }
 
 llvm::Expected<uint64_t>
 KernelModel::callDMAExport(const KernelExportRegistry::Export &Export,
                            llvm::ArrayRef<uint64_t> A) {
-  const Operation *Selected = nullptr;
-  for (const auto &Op : Operations)
-    if (Op.Name == Export.Name)
-      Selected = &Op;
+  const auto *Selected = lookupOperation(Export.Name);
   if (!Selected ||
       Export.Kind != KernelExportRegistry::ExportKind::DMAFunction ||
       A.size() != Selected->Arity || !DMA.adapter(Export.Binding) ||
@@ -66,40 +71,40 @@ KernelModel::callDMAExport(const KernelExportRegistry::Export &Export,
     return dmaAPIError(Export.Name + " called at an invalid IRQL");
   if (!Selected->Modeled)
     return dmaAPIError(Export.Name + " is outside the modeled DMA interface");
-  if (Export.Name == dma_api::PutDmaAdapter) {
+  switch (Selected->Kind) {
+  case OperationKind::PutDmaAdapter:
     if (auto E = DMA.putAdapter(A[0]))
       return E;
     return 0;
-  }
-  if (Export.Name == dma_api::AllocateCommonBuffer)
+  case OperationKind::AllocateCommonBuffer:
     return allocateCommonBuffer(A);
-  if (Export.Name == dma_api::FreeCommonBuffer) {
+  case OperationKind::FreeCommonBuffer:
     if (auto E = freeCommonBuffer(A))
       return E;
     return 0;
-  }
-  if (Export.Name == dma_api::GetDmaAlignment)
+  case OperationKind::GetDmaAlignment:
     return DMA.adapter(A[0])->Alignment;
-  if (Export.Name == dma_api::GetScatterGatherList)
+  case OperationKind::GetScatterGatherList:
     return getScatterGatherList(A);
-  if (Export.Name == dma_api::AllocateAdapterChannel)
+  case OperationKind::AllocateAdapterChannel:
     return allocateAdapterChannel(A);
-  if (Export.Name == dma_api::MapTransfer)
+  case OperationKind::MapTransfer:
     return mapTransfer(A);
-  if (Export.Name == dma_api::FlushAdapterBuffers) {
+  case OperationKind::FlushAdapterBuffers:
     if (auto E = flushAdapterBuffers(A))
       return E;
     return 1;
-  }
-  if (Export.Name == dma_api::FreeMapRegisters) {
+  case OperationKind::FreeMapRegisters:
     if (auto E = freeMapRegisters(A))
       return E;
     return 0;
-  }
-  if (Export.Name == dma_api::PutScatterGatherList) {
+  case OperationKind::PutScatterGatherList:
     if (auto E = putScatterGatherList(A))
       return E;
     return 0;
+  case OperationKind::FreeAdapterChannel:
+  case OperationKind::ReadDmaCounter:
+    break;
   }
   return dmaAPIError("method has no implementation");
 }

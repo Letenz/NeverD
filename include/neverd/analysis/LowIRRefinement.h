@@ -301,7 +301,10 @@ struct LowIRRefinementResult {
 /// This constructs an ISA-allowed refinement witness, not independence from
 /// all undefined choices, CPU-specific equality, or a native/source proof.
 /// Candidate is semantic LowIR: no architecture sidecars are inferred for it.
-/// Instruction boundaries and temporary lifetimes must still be valid. Loops
+/// Instruction boundaries and temporary lifetimes must still be valid.
+/// Declared function temporaries start unbound and need a reaching definition
+/// on each executed path; other temporaries remain instruction-local. They
+/// are supported by finite execution, not by inductive cutpoint states. Loops
 /// require complete finite execution within the shared budgets. Every feasible
 /// terminal pair and complete entry-domain coverage are checked. Incomplete
 /// exploration, unknown aliases and unsupported operations refuse a

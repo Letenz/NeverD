@@ -397,4 +397,48 @@ TEST(BitBlaster, AWidthBeyondTheLimitIsRefusedRatherThanEncoded) {
   EXPECT_EQ(Solver.check(), SatResult::Unknown);
 }
 
+TEST(BitBlaster, LateNodesKeepCachedBitsAndEncodingRefusals) {
+  SymContext Ctx;
+  for (unsigned I = 0; I != 65536; ++I)
+    Ctx.mkConst(64, (uint64_t(1) << 32) + I);
+  const auto X = Ctx.mkFreshVar(16, "x");
+  const auto TooWide = Ctx.mkFreshVar(17, "unused_wide");
+  SatSolver Sat;
+  CnfEncoder Enc(Sat);
+  BlastLimits Limits;
+  Limits.MaxWidth = 16;
+  Limits.MaxGates = 128;
+  BitBlaster Blaster(Ctx, Enc, Limits);
+  BitLits Before, After;
+  ASSERT_TRUE(Blaster.blast(X, Before));
+  ASSERT_EQ(Before.size(), 16U);
+  EXPECT_TRUE(Blaster.variableBits(Ctx.varId(TooWide)).empty());
+
+  for (unsigned I = 0; I != 65536; ++I)
+    Ctx.mkConst(64, (uint64_t(2) << 32) + I);
+  const auto Y = Ctx.mkFreshVar(16, "y");
+  ASSERT_TRUE(Blaster.blast(Ctx.mkXor(X, Y), After));
+  const auto Gates = Enc.numGates();
+  ASSERT_TRUE(Blaster.blast(X, After));
+  EXPECT_EQ(Before, After);
+  EXPECT_EQ(Enc.numGates(), Gates);
+  EXPECT_EQ(Blaster.encodedVars().size(), 2U);
+  EXPECT_FALSE(Blaster.blast(TooWide, After));
+  EXPECT_EQ(Blaster.error(), BlastError::WidthTooLarge);
+  EXPECT_FALSE(Blaster.blast(X, After));
+  EXPECT_TRUE(After.empty());
+
+  SatSolver LimitedSat;
+  CnfEncoder LimitedEnc(LimitedSat);
+  Limits.MaxGates = 1;
+  BitBlaster Limited(Ctx, LimitedEnc, Limits);
+  EXPECT_FALSE(Limited.blast(Ctx.mkMul(X, Y), After));
+  EXPECT_EQ(Limited.error(), BlastError::TooManyGates);
+  SatSolver InvalidSat;
+  CnfEncoder InvalidEnc(InvalidSat);
+  BitBlaster Invalid(Ctx, InvalidEnc);
+  EXPECT_FALSE(Invalid.blast(SymRef(UINT32_MAX), After));
+  EXPECT_EQ(Invalid.error(), BlastError::Malformed);
+}
+
 } // namespace

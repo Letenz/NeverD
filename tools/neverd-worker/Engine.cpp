@@ -7,6 +7,7 @@
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
 #include "neverd/sdk/NeverDCAPIQuery.h"
+#include "neverd/sdk/NeverDCAPISigs.h"
 #include "neverd/support/ProjectWriteLock.h"
 
 #include <algorithm>
@@ -412,6 +413,24 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     return result;
   }
   requireLoaded();
+  if (operation == "signatures_load") {
+    const auto path = stringField(p, "path", {}, 32768);
+    const auto mode = stringField(p, "mode", "file", 16);
+    if (path.empty() || (mode != "file" && mode != "auto"))
+      throw Error("invalid_request",
+                  "A signature path and file/auto mode are required");
+    const int matches =
+        mode == "auto" ? neverd_auto_apply_signatures(session_, path.c_str())
+                       : neverd_apply_signature_file(session_, path.c_str());
+    if (matches < 0)
+      throw Error("signature_load_failed", error());
+    // This changes analysis evidence only. It is also available on a read-only
+    // image and never stages a sidecar edit or modifies the binary.
+    analyzed_ = false;
+    invalidate();
+    ++revision_;
+    return {{"loaded", true}, {"byte_matches", matches}};
+  }
   if (operation == "metadata")
     return metadata();
   if (operation == "history") {
@@ -514,8 +533,13 @@ Json Engine::execute(const std::string &operation, const Json &p) {
                     "Filtered function index exceeds one million entries");
       filteredFunctions_.clear();
       for (int i = 0; i < count; ++i) {
+        const auto identity = backendJson(
+            neverd_resolve_addr(session_, neverd_func_entry(session_, i)),
+            false);
         if (folded(ownedString(neverd_func_name(session_, i))).find(filter) !=
                 std::string::npos ||
+            folded(identity.value("display_name", std::string{}))
+                    .find(filter) != std::string::npos ||
             hexAddress(neverd_func_entry(session_, i)).find(filter) !=
                 std::string::npos)
           filteredFunctions_.push_back(i);
@@ -531,10 +555,14 @@ Json Engine::execute(const std::string &operation, const Json &p) {
          ++i) {
       const int index =
           filter.empty() ? static_cast<int>(i) : filteredFunctions_[i];
-      items.push_back(
-          {{"name", ownedString(neverd_func_name(session_, index))},
-           {"address", hexAddress(neverd_func_entry(session_, index))},
-           {"size", neverd_func_size(session_, index)}});
+      auto item = backendJson(
+          neverd_resolve_addr(session_, neverd_func_entry(session_, index)),
+          false);
+      item["name"] = ownedString(neverd_func_name(session_, index));
+      item["display_name"] = item.value("display_name", item["name"]);
+      item["address"] = hexAddress(neverd_func_entry(session_, index));
+      item["size"] = neverd_func_size(session_, index);
+      items.push_back(std::move(item));
     }
     const bool complete = offset >= total || items.size() >= total - offset;
     return {{"items", items},
@@ -571,14 +599,20 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         throw Error("not_found", "No function matches that symbol");
       address = neverd_func_entry(session_, index);
     }
-    return {{"address", hexAddress(address)},
-            {"function_address",
-             index < 0 ? Json(nullptr)
-                       : Json(hexAddress(neverd_func_entry(session_, index)))},
-            {"name", index < 0
-                         ? std::string()
-                         : ownedString(neverd_func_name(session_, index))},
-            {"comment", ownedString(neverd_annotation_get(session_, address))}};
+    auto result =
+        index < 0
+            ? Json::object()
+            : backendJson(neverd_resolve_addr(
+                              session_, neverd_func_entry(session_, index)),
+                          false);
+    result["address"] = hexAddress(address);
+    result["function_address"] =
+        index < 0 ? Json(nullptr)
+                  : Json(hexAddress(neverd_func_entry(session_, index)));
+    result["name"] = index < 0 ? std::string()
+                               : ownedString(neverd_func_name(session_, index));
+    result["comment"] = ownedString(neverd_annotation_get(session_, address));
+    return result;
   }
   if (operation == "strings") {
     if (stringsCache_.is_null()) {
@@ -779,7 +813,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       throw Error("invalid_request", "limit must be at least 1");
     analyze();
     std::string mappingStatus = "unsupported_representation";
-    if (representation == "low" || representation == "med") {
+    if (representation == "low" || representation == "med" ||
+        representation == "c" || representation == "llvmc") {
       if (const auto view = irViewFunction()) {
         auto result = backendJson(
             view(session_, address, representation.c_str(), offset, limit),

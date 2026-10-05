@@ -96,6 +96,10 @@ checked x64 通过 KVM、WHP 和 Unicorn 执行 `SHLD/SHRD`，支持 16/32/64 �
 
 `X64StackInstructions.def` 在 KVM、WHP 和 checked Unicorn（含 `driver-strict`）中支持通用寄存器、普通 RAM 的 16/64 位 `PUSH/POP` 及立即数 PUSH。PUSH 先读取源操作数，再减小 RSP；POP 先增加 RSP，再计算使用 RSP/ESP 的目标地址。地址宽度截断只作用于显式操作数。完整范围权限检查、有序观察回调和单次 RAM 事务确保故障、取消或回调错误时 CPU 与内存不被部分更新。LOCK 和设备操作数仍不支持。
 
+KVM、WHP 和 checked Unicorn 也支持 16/64 位 `LEAVE`。它始终通过完整 RBP 读取保存的栈帧，包括带 `67H` 的情况；16 位形式保留 RBP 未选中的位。故障或读取取消时保留原始 RSP 和 CPU 上下文。LOCK、REP 和设备栈帧仍不支持。
+
+KVM、WHP 和 checked Unicorn 支持 16/64 位 `ENTER`，分配量按无符号 16 位解释，嵌套级别取模 32。访问使用完整 RSP/RBP，并遵循有效前缀顺序。访客故障会保留已完成的栈写入，RSP、RBP 和 PC 则保持入口值。最终栈检查覆盖整个操作数宽度的写权限，但不写入数据。LOCK、REP、APX 前缀及设备栈帧仍不支持。
+
 `X64PackedIntegerInstructions.def` 准入 45 条 legacy SSE2 packed integer 指令，涵盖回绕／饱和加减、比较、乘法、平均值、极值、字节差、打包及解包。XMM 和对齐的 128 位 RAM 源操作数在 KVM、WHP、Unicorn 上共用现有 checked 路径。FLAGS 与 MXCSR 保持不变；故障或观察器取消保留状态。MMX、VEX/EVEX 和设备操作数仍不支持。
 
 `X64PackedShiftInstructions.def` 准入十种 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／对齐的 m128 计数，字节移位仅接受 imm8。变量计数使用无符号低 64 位，不按标量移位规则掩码；高 64 位不参与计算。即使计数为零或超出位宽，内存操作数仍须完整读取 16 字节。FLAGS 和 MXCSR 保持不变；MMX、VEX/EVEX 和设备操作数仍被排除。
@@ -133,6 +137,8 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 ## 分阶段提交 RAM 效果
 
 `RAMTransaction` 在物理执行租约内，只保存一条指令明确声明的写入范围的物理并集。结果观察器运行前恢复原始 RAM；取消、后端传输错误和观察器异常不会发布部分 RAM 或寄存器。CPU 异常在 RAM 回滚后保留架构异常状态。ARM64 的单次和成对写入共用该内存权威层。x64 支持 8/16/32/64 位 `XCHG`、`XADD`、`CMPXCHG`，LOCK 或隐式锁定形式要求自然对齐。`NeverDRAMTransactionTests` 将结果与独立宿主 CPU 对照，并验证回滚、别名和权限；不可用的平台明确跳过。设备事务和并行 SMP 仍不在此契约内；CPU 快照不会撤销已经提交的 RAM。
+
+`CMPXCHG8B` 和 `CMPXCHG16B` 在 KVM、WHP 和 checked Unicorn 的驱动及用户模式中执行原始指令。比较成功或失败都需要读写权限，故障按写访问分类。`CMPXCHG16B` 在访问内存前检查 16 字节对齐，不满足时报告 `#GP(0)`。两次结果观察属于同一 RAM 事务；任一次停止或抛出异常，都不会发布寄存器或内存变化。未加锁的 `CMPXCHG8B` 可以跨页，加锁操作仍要求自然对齐。`X64WideAtomicTests.cpp` 对照宿主机原始执行结果和直接原生故障，并检查别名、前缀、寻址、修复重试和取消。原创 Windows 驱动及 ring3 PE 样例覆盖两种宽度，WDK 样例还执行 `_InterlockedCompareExchange128`。CPU 模型必须支持 `CMPXCHG16B`。
 
 ## 完整 x87 状态
 

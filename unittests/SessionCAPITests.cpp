@@ -2438,12 +2438,94 @@ TEST_F(SessionCAPITest,
   EXPECT_EQ(VM.getString("mapping_status"), "unsupported_architecture");
   EXPECT_TRUE(VM.getArray("rows")->empty());
   EXPECT_FALSE(VM.getString("text"));
-  for (const char *Stage : {"c", "high", "llvm"}) {
+  for (const char *Stage : {"high", "llvm"}) {
     auto Unsupported = takeView(neverd_ir_view_json(Session, 0, Stage, 0, 2));
     EXPECT_EQ(Unsupported.getString("mapping_status"),
               "unsupported_representation");
     EXPECT_TRUE(Unsupported.getArray("rows")->empty());
   }
+  for (const char *Stage : {"c", "llvmc"}) {
+    auto Unsupported = takeView(neverd_ir_view_json(Session, 0, Stage, 0, 2));
+    EXPECT_EQ(Unsupported.getString("mapping_status"),
+              "unsupported_architecture");
+    EXPECT_TRUE(Unsupported.getArray("rows")->empty());
+  }
+}
+
+TEST_F(SessionCAPITest, LibrarySourcePagesPreserveTextAndReloadEvidence) {
+  const auto Path =
+      (std::filesystem::path(NEVERD_LIBRARY_FIXTURE_DIR) / "accessors-inline.o")
+          .string();
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  int Index = neverd_func_find_by_name(Session, "_nd_vector_u32_data_inline");
+  if (Index < 0)
+    Index = neverd_func_find_by_name(Session, "nd_vector_u32_data_inline");
+  ASSERT_GE(Index, 0);
+  const auto Entry = neverd_func_entry(Session, Index);
+  auto Before = takeView(neverd_ir_view_json(Session, Entry, "c", 0, 2048));
+  ASSERT_NE(Before.getArray("library_regions"), nullptr);
+  EXPECT_TRUE(Before.getArray("library_regions")->empty());
+  const auto Rule = (std::filesystem::path(NEVERD_LIBRARY_FEATURE_DIR) /
+                     "libcxx-23git-arm64-macos-abi1-alternate-clang22.json")
+                        .string();
+  ASSERT_GE(neverd_apply_signature_file(Session, Rule.c_str()), 0)
+      << takeString(neverd_last_error(Session));
+  for (const char *Stage : {"c", "llvmc"}) {
+    SCOPED_TRACE(Stage);
+    const std::string Original = takeString(
+        std::strcmp(Stage, "c") == 0 ? neverd_decompile(Session, Entry)
+                                     : neverd_decompile_llvm(Session, Entry));
+    ASSERT_FALSE(Original.empty()) << takeString(neverd_last_error(Session));
+    std::string Assembled;
+    size_t Offset = 0;
+    std::string RegionID;
+    for (;;) {
+      auto Page =
+          takeView(neverd_ir_view_json(Session, Entry, Stage, Offset, 2));
+      ASSERT_EQ(Page.getString("mapping_status"), "library_regions");
+      EXPECT_EQ(Page.getInteger("byte_offset"), Assembled.size());
+      ASSERT_TRUE(Page.getString("text"));
+      Assembled += Page.getString("text")->str();
+      const auto *Regions = Page.getArray("library_regions");
+      ASSERT_NE(Regions, nullptr);
+      ASSERT_EQ(Regions->size(), 1u);
+      const auto *Region = Regions->front().getAsObject();
+      ASSERT_NE(Region, nullptr);
+      EXPECT_EQ(Region->getString("rule_id"), "libcxx.vector-u32.data");
+      EXPECT_EQ(Region->getString("scope"), "inline-expression");
+      EXPECT_EQ(Region->getString("linkage_name"), "");
+      EXPECT_EQ(Region->getBoolean("foldable"), true);
+      ASSERT_TRUE(Region->getString("id"));
+      if (RegionID.empty())
+        RegionID = Region->getString("id")->str();
+      EXPECT_EQ(Region->getString("id"), RegionID);
+      ASSERT_NE(Region->getArray("occurrences"), nullptr);
+      EXPECT_FALSE(Region->getArray("occurrences")->empty());
+      ASSERT_NE(Region->getArray("spans"), nullptr);
+      EXPECT_FALSE(Region->getArray("spans")->empty());
+      if (Page.getBoolean("complete").value_or(false))
+        break;
+      ASSERT_TRUE(Page.getInteger("next_offset"));
+      Offset = *Page.getInteger("next_offset");
+      ASSERT_LT(Offset, 10000u);
+    }
+    EXPECT_EQ(Assembled, Original);
+  }
+  std::filesystem::create_directories(Directory / "features" / "rules");
+  const auto BadRule = write("features/rules/broken.json", "{}");
+  EXPECT_EQ(neverd_apply_signature_file(Session, BadRule.c_str()), -1);
+  auto Preserved = takeView(neverd_ir_view_json(Session, Entry, "c", 0, 2048));
+  ASSERT_NE(Preserved.getArray("library_regions"), nullptr);
+  EXPECT_EQ(Preserved.getArray("library_regions")->size(), 1u);
+  const auto EmptyRoot = Directory / "empty-signature-tree";
+  std::filesystem::create_directories(EmptyRoot);
+  ASSERT_GE(neverd_auto_apply_signatures(Session, EmptyRoot.string().c_str()),
+            0);
+  auto Withdrawn = takeView(neverd_ir_view_json(Session, Entry, "c", 0, 2048));
+  ASSERT_NE(Withdrawn.getArray("library_regions"), nullptr);
+  EXPECT_TRUE(Withdrawn.getArray("library_regions")->empty());
+  EXPECT_EQ(Withdrawn.getString("text"), Before.getString("text"));
 }
 
 TEST_F(SessionCAPITest, IRViewRejectsInvalidUTF8Representation) {
@@ -2454,6 +2536,68 @@ TEST_F(SessionCAPITest, IRViewRejectsInvalidUTF8Representation) {
   EXPECT_EQ(Unsupported.getString("mapping_status"),
             "unsupported_representation");
   EXPECT_TRUE(takeString(neverd_last_error(Session)).empty());
+}
+
+TEST_F(SessionCAPITest,
+       LibraryIdentityIsSharedAndDoesNotReplaceUserOrLinkageNames) {
+  const auto Input = Directory / "library-identity.o";
+  std::filesystem::copy_file(std::filesystem::path(NEVERD_LIBRARY_FIXTURE_DIR) /
+                                 "accessors-inline.o",
+                             Input);
+  ASSERT_EQ(neverd_session_load(Session, Input.string().c_str()), 1);
+  const auto Pack = (std::filesystem::path(NEVERD_LIBRARY_FEATURE_DIR) /
+                     "libcxx-23git-arm64-macos-abi1-alternate-clang22.json")
+                        .string();
+  ASSERT_GE(neverd_apply_signature_file(Session, Pack.c_str()), 0);
+  ASSERT_EQ(neverd_session_analyze(Session), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Graph = takeView(neverd_callgraph_json(Session));
+  const auto *Nodes = Graph.getArray("nodes");
+  ASSERT_NE(Nodes, nullptr);
+  unsigned Checked = 0;
+  std::set<std::string> Displays;
+  for (const auto &Node : *Nodes) {
+    const auto *N = Node.getAsObject();
+    ASSERT_NE(N, nullptr);
+    const auto *Identity = N->getObject("identity");
+    ASSERT_NE(Identity, nullptr);
+    const auto *Annotations = Identity->getArray("library_annotations");
+    ASSERT_NE(Annotations, nullptr);
+    bool Whole = false;
+    for (const auto &A : *Annotations)
+      Whole |= A.getAsObject()->getString("scope") == "whole-function";
+    if (!Whole)
+      continue;
+    uint64_t Entry;
+    ASSERT_TRUE(N->getString("addr"));
+    ASSERT_FALSE(N->getString("addr")->getAsInteger(0, Entry));
+    auto Resolved = takeView(neverd_resolve_addr(Session, Entry));
+    const std::string Raw = Resolved.getString("name")->str();
+    EXPECT_EQ(Resolved.getString("name_origin"), "stated");
+    EXPECT_EQ(Resolved.getString("linkage_name"), Raw);
+    EXPECT_EQ(Resolved.getString("display_name"), N->getString("display_name"));
+    EXPECT_NE(Resolved.getString("display_name")->find("::"),
+              llvm::StringRef::npos);
+    Displays.insert(Resolved.getString("display_name")->str());
+    for (const char *Route : {"c", "llvmc"}) {
+      auto Page = takeView(neverd_ir_view_json(Session, Entry, Route, 0, 2048));
+      const auto *SourceIdentity = Page.getObject("function_identity");
+      ASSERT_NE(SourceIdentity, nullptr);
+      EXPECT_EQ(SourceIdentity->getString("display_name"),
+                Resolved.getString("display_name"));
+      EXPECT_EQ(SourceIdentity->getString("linkage_name"), Raw);
+    }
+    const auto User = "chosen_" + std::to_string(Checked++);
+    ASSERT_EQ(neverd_rename_func(Session, Raw.c_str(), User.c_str()), 0);
+    auto Renamed = takeView(neverd_resolve_addr(Session, Entry));
+    EXPECT_EQ(Renamed.getString("name"), User);
+    EXPECT_EQ(Renamed.getString("display_name"), User);
+    EXPECT_EQ(Renamed.getString("linkage_name"), Raw);
+    EXPECT_EQ(Renamed.getString("name_origin"), "user");
+    EXPECT_FALSE(Renamed.getArray("library_annotations")->empty());
+  }
+  EXPECT_EQ(Checked, 16u);
+  EXPECT_EQ(Displays.size(), Checked);
 }
 
 TEST_F(SessionCAPITest, IRViewPreservesEscapedLoaderNames) {
@@ -2545,6 +2689,50 @@ TEST_F(SessionCAPITest, SignatureJSONListsTheRoutinesOtherNames) {
   // public one and lists the others.
   expectSignatureJSONName("puts", " :0000 __IO_puts_internal :0000 _IO_puts",
                           {"_IO_puts", "__IO_puts_internal"});
+}
+
+TEST_F(SessionCAPITest, SignatureCannotReplaceAStatedHexPlaceholderName) {
+  for (const std::string Name : {"sub_400078", "func_aabb", "entry"}) {
+    SCOPED_TRACE(Name);
+    const auto Input = write(Name + ".elf", makeNamedNativeELF(Name));
+    ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+    ASSERT_EQ(neverd_func_count(Session), 1);
+    const auto Pattern = write(
+        "identity.pat", "B807000000C3 00 0000 0006 :0000 library_guess\n");
+    ASSERT_EQ(neverd_apply_signature_file(Session, Pattern.c_str()), 1);
+    EXPECT_EQ(takeString(neverd_func_name(Session, 0)), Name);
+    ASSERT_EQ(neverd_rename_func(Session, Name.c_str(), "user_choice"), 0);
+    ASSERT_EQ(neverd_apply_signature_file(Session, Pattern.c_str()), 1);
+    EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "user_choice");
+    write(Name + ".elf.neverd-renames.json", "[]");
+    ASSERT_EQ(neverd_renames_load(Session), 0);
+    EXPECT_EQ(takeString(neverd_func_name(Session, 0)), Name);
+  }
+}
+
+TEST_F(SessionCAPITest,
+       SignatureIdentitySurvivesDiscoveryAndWithdrawsOnReload) {
+  const auto Input = write("stripped-identity.elf", makeNativeELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  const auto Pattern =
+      write("identity.pat", "B807000000C3 00 0000 0006 :0000 library_guess\n");
+  ASSERT_EQ(neverd_apply_signature_file(Session, Pattern.c_str()), 1);
+  ASSERT_EQ(neverd_session_analyze(Session), 1)
+      << takeString(neverd_last_error(Session));
+  const int Index = neverd_func_find_by_addr(Session, Entry);
+  ASSERT_GE(Index, 0);
+  EXPECT_EQ(takeString(neverd_func_name(Session, Index)), "library_guess");
+  ASSERT_EQ(neverd_rename_func(Session, "library_guess", "user_choice"), 0);
+  write("stripped-identity.elf.neverd-renames.json", "[]");
+  ASSERT_EQ(neverd_renames_load(Session), 0);
+  EXPECT_EQ(takeString(neverd_func_name(Session, Index)), "library_guess");
+  write("identity.pat", "B809000000C3 00 0000 0006 :0000 other_guess\n");
+  ASSERT_EQ(neverd_apply_signature_file(Session, Pattern.c_str()), 0);
+  EXPECT_EQ(takeString(neverd_func_name(Session, Index)),
+            "sub_" + llvm::utohexstr(Entry));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  EXPECT_EQ(neverd_sig_match_count(Session), 0);
 }
 
 TEST_F(SessionCAPITest, SignaturesMatchARoutineOnlyACallReveals) {

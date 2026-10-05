@@ -35,6 +35,15 @@ sequence. `LowIR -> MedIR` is shared. Structured decompilation then uses
 `MedIR -> LLVM IR` route. In particular, patch and lift modes deliberately skip
 HighIR.
 
+Library feature recognition reads the shared MedIR boundary before the source
+routes diverge. `SignatureDB` owns validated packs and the existing byte matcher;
+MedIR analyses prove typed expressions and bounded COM ownership sequences.
+`PipelineLibraryRecognition` combines this evidence without changing names,
+operands, bodies or ABI contracts. The session publishes one display identity
+for lists, call sites and source pages. HighIR/LLVM source observations are
+sidecars: complete surviving mappings can authorize reversible UI folds, while
+ordinary C and export remain fully expanded. See [library recognition](library-recognition.md).
+
 Both source routes apply the same module-wide return modeling before recovering
 call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
 uses the two integer return registers; HighIR and LLVM emission must preserve
@@ -878,11 +887,17 @@ Finite-value enumeration may observe feasible tuples without changing the proof 
 
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
 
+`LowFunc::FunctionTemporaries` declares sorted, disjoint byte ranges that start unbound. Recovery captures a temporary indirect target once into a reserved function-local slot before finite dispatch crosses instruction boundaries. The shared relation checker retains only bytes actually defined on the current path; ordinary native temporaries still expire at each instruction. Range metadata and snapshot construction remain budgeted, and certificate semantic schema 13 binds these lifetimes. The raw-state model preserves byte semantics; source lowering requires exact whole-slot operands and refuses byte aliases. Inductive loop proof and inference currently reject these declarations because cutpoint states do not bind them. This adds no entry assumption or native ABI certificate.
+
 `FrameOffsets` owns budgeted singleton proofs of entry-relative displacements. Recovery canonicalizes actual symbolic memory accesses without changing residual address expressions; native checks retain two-execution address equality. Recovery owns exhaustive alignment dispatch and shared retry budgets. Native/LLVM partition-proof aggregation remains separate, unfinished work. `NativeStackControl` owns internal unsigned-16-bit return cleanup; the binary provider authenticates canonical eight-byte-pop encodings.
+
+Frame-offset checks reuse the existing bounded `FiniteQueryCache` within each relation checker. Key construction and retained proofs are limited to `MaxSymbolicNodes` words, as in recovery. Keys preserve the full predicate and relative-expression relationships; only completed domains or proved nonuniqueness are reusable. Every access still checks address independence and frame bounds.
+
+The relation checker retains one completed model-free SAT answer for the identical predicate reference in the same immutable symbolic context and fixed solver configuration. Node limits are checked before reuse; query budgets count actual solver calls. Unknown/Invalid results and models are never retained, and reuse ends with that checker. Different predicates still require proof.
 
 `FrameOffsets` reduces constant additions, masks and matching split-register slices to exact modular remainders before finite enumeration. For alignment, it extracts only the removed low bits instead of bit-blasting the whole frame root. Inspection is bounded to sixteen levels of binary forms; new DAG nodes remain charged. The original path predicate, singleton-domain proof, mapping/frame bounds and incomplete-result refusals remain mandatory. The rewrite assumes neither a residue nor reachability, and it leaves residual address expressions unchanged.
 
-`LowIRIndependenceFrame::EntryAlignment` declares an optional power-of-two entry-root congruence. The shared relation checker intersects its low-bit predicate with entry constants, nonwrapping bounds and exclusions before either execution or induction; it never rewrites the root. Invalid or infeasible domains produce no certificate. Native APIs require the exact same optional alignment in recovery options and a valid RSP root. Native-to-LLVM composition retains that frame domain in both freshly checked relations, including all state, status and preservation obligations. The common certificate digest binds presence, alignment and residue under semantic schema 12; object-cache recipes are unchanged. This contract grants no memory accessibility, frame privacy, native ABI or automatic partition aggregation.
+`LowIRIndependenceFrame::EntryAlignment` declares an optional power-of-two entry-root congruence. The shared relation checker intersects its low-bit predicate with entry constants, nonwrapping bounds and exclusions before either execution or induction; it never rewrites the root. Invalid or infeasible domains produce no certificate. Native APIs require the exact same optional alignment in recovery options and a valid RSP root. Native-to-LLVM composition retains that frame domain in both freshly checked relations, including all state, status and preservation obligations. The common certificate digest binds presence, alignment and residue under semantic schema 13; object-cache recipes are unchanged. This contract grants no memory accessibility, frame privacy, native ABI or automatic partition aggregation.
 
 After ordinary discovery stalls, recovery may partition one existing register context field per non-entry native cursor and instruction mode. Its incoming domain must be complete, varying and cover all declared field bits. Every actual predecessor independently proves its current complete domain, compares the live physical field and reprojects each case. Later predecessors and widened nodes are checked again; chaining stops at nominated entries. Comparisons have synthetic provenance and share node, operation, context, query and refinement budgets. Partial masks, undefined flags and frame-only fields do not qualify. No guest-memory read or caller assumption is added. Incomplete domains retain the conservative edge, and publication still requires every reachable case to finish.
 
@@ -994,7 +1009,7 @@ Legacy register XADD also has an exact 8/16/32/64-bit encoding audit: it defines
 
 Legacy register SHLD/SHRD uses an exact encoding audit and the shared masked-count producer checker. Zero count preserves flags; nonzero AF and multi-bit OF are arbitrary. At word width only, counts above 16 also make the low 16-bit result and CF/PF/ZF/SF arbitrary; count 16 remains defined for those outputs. DF and unaffected register bits stay preserved, and 32-bit writes retain zero extension. Memory/APX and unaudited prefixes remain refused. [SHLD/SHRD](https://cdrdv2-public.intel.com/929354/253667-093-sdm-vol-2b.pdf).
 
-The explicit finite-only `DeferNativeConditionalEdges` contract collects conditional successors after paired-control equality and feasibility checks. The default still eagerly audits both arms. Skipped arms have no instruction-inventory claim; every feasible arrival retains byte, mapping, boundary, effect, overlap and budget checks. Unknown solver results never discard an edge. Certificates bind this policy under semantic schema 12. Static LowIR and loop proof/inference APIs reject it; selected-value refinement remains relative to its witness.
+The explicit finite-only `DeferNativeConditionalEdges` contract collects conditional successors after paired-control equality and feasibility checks. The default still eagerly audits both arms. Skipped arms have no instruction-inventory claim; every feasible arrival retains byte, mapping, boundary, effect, overlap and budget checks. Unknown solver results never discard an edge. Certificates bind this policy under semantic schema 13. Static LowIR and loop proof/inference APIs reject it; selected-value refinement remains relative to its witness.
 
 Native immutable loads also accept exhaustively proved finite address sets, bounded by `MaxImmutableLoadAddresses`. Two-execution address equality is required before enumeration. Every candidate needs immutable bytes, mapping evidence and separation from the mutable frame; the selected value remains input-dependent. Missing candidates, writable or relocated data and exhausted enumeration refuse a certificate. Read witnesses and the address limit are bound into the certificate. Dynamic frame offsets and arbitrary external memory remain unsupported.
 
@@ -1339,6 +1354,18 @@ See [CPU configuration](cpu-execution.md) for the schema and current limits.
 
 `os/windows/driver/` owns driver image loading, execution sessions, scenarios, reports and execution policy. `os/windows/kernel/` owns kernel API and object models, including WDM/KMDF, device lifecycle, power policy, memory and scheduling; `KernelModelPowerPolicy.cpp` belongs there. `os/windows/process/` owns user-process startup and services, while `os/windows/exception/` owns shared exception search and unwind. Driver and kernel sources still form `NeverDEmulation`: their existing calls and shared types are not independent library boundaries. Each directory maintains its own `CMakeLists.txt` source list, and public headers remain compatible.
 
+`KernelFrameworkDispatch` resolves each KMDF call from one registration containing
+its argument count, handler and shared IRQL policy. Binding and globals checks
+precede the selected domain handler; interrupt, lock and power calls retain their
+own IRQL checks. `KernelFrameworkCalls` owns the small generic object-call
+handlers. Device initialization, queue transitions, request buffers, cancellation,
+forwarding and completion have directly registered handlers in their owning
+files. Shared admission helpers preserve the distinct rules for active requests,
+retained completed handles and queue-owned requests. Allocation, binding and
+lifecycle state remain in `KernelFramework`. Windows dispatcher and registry
+calls resolve operation and argument count together from their API inventories;
+DMA admission and execution share the selected operation descriptor.
+
 `os/linux/process/` and `os/darwin/process/` own image loading, initial stacks and execution continuations. `os/linux/kernel/` and `os/darwin/kernel/` own system-call ABI, services and memory policy, built as `NeverDEmulationLinuxKernel` and `NeverDEmulationDarwinKernel` with only the core memory/CPU boundary and LLVM Support. Their `MemoryLayout` contracts contain address policy, not executable images or startup ABIs. Android depends directly on the Linux kernel model; macOS and iOS retain separate platform profiles. Dependencies run from processes/platforms to kernel services. These kernel directories do not imply Linux/Darwin kernel-image or driver loading support. Shared OS vocabulary remains in the OS-level `.def` files.
 
 The Linux kernel component also owns validation and lookup of explicit fixed
@@ -1347,8 +1374,14 @@ The process wire parser validates representations and delegates value policy
 to that owner. Android reuses clock lookup and raw kernel services; Bionic
 alone owns errno conversion and `time`'s user-space destination store.
 
-Android's `AndroidSymbols.def` and `AndroidDiagnostics.def` own Bionic symbol
-spellings and native-model diagnostics. Kernel wrapper bindings stay in
+Android's `AndroidSymbols.def` owns Bionic symbol spellings and handler bindings;
+`AndroidDiagnostics.def` owns native-model diagnostics. The entry point validates
+TLS and provider lifetime before resolving an exact handler or a diagnostic
+family fallback. Allocation, memory, strings, queries, dynamic linking, once
+callbacks and kernel wrappers live in separate implementation files. Thread
+calls and scheduling also have separate files, sharing `GuestThreads` state.
+Attribute and mutex registrations come from their respective ABI inventories;
+their per-call views borrow the existing Bionic state. Kernel bindings stay in
 `AndroidKernelServices.def`; Linux clock diagnostics and process wire text stay
 with their existing Linux and report inventories. Keep control flow in C++ and
 independent test expectations in fixtures; ordinary punctuation and empty strings
@@ -1491,7 +1524,7 @@ through C++, the shared C ABI, Python and `neverd emulate`. It runs actual x64
 and AArch64 freestanding executables with stack/auxv initialization, typed
 system-call continuations and bounded byte output. It supports static TLS and
 self-relocating static PIE, while rejecting an interpreter, external dynamic
-dependencies, signals and thread creation. Those OS semantics remain in
+dependencies, signal delivery and thread creation. Those OS semantics remain in
 `os/linux/process/` and `os/linux/kernel/`; the generic CPU/runtime does not infer Linux from KVM or Windows
 from WHP. The Windows driver lifecycle remains independently available.
 
@@ -1519,6 +1552,13 @@ event and delegates number resolution to `LinuxServices.cpp`. Named wrappers,
 variadic calls and raw SVC therefore share memory, identity, output and exit
 semantics. Bionic alone owns libc error conversion; wrapper calls retain their
 native import event without inventing another executed service instruction.
+`LinuxSignals` owns one process-wide disposition table initialized by explicit
+`LinuxSignalOptions`. Missing observations remain unknown. Raw `rt_sigaction`
+and Bionic's `AndroidSignals` adapter use the same query/replacement operation;
+the Android adapter owns LP64 field order, reserved-mask filtering and errno.
+The kernel owner installs a new action before copying the old action out, so a
+copy fault does not undo the installation. No CPU backend or SDK interprets a
+handler address, queues a signal or delivers one.
 Bionic also owns the API 28 `pthread_once` control state. It requests guest
 initialization through an internal callback result; the native runner suspends
 the import and runs the callback on the same CPU and live stack. Pending
@@ -1768,7 +1808,7 @@ ordinary RAM writes. The ISA supplies exact footprints; devices and unknown
 effects cannot enter this transaction. Execution holds the physical lease and
 uses a private next CPU state. Staging restores original bytes before result
 observers run; permission failure, stop, callback exception or transport failure
-cannot publish speculative RAM or registers. Architectural CPU exception status
+cannot publish speculative RAM or registers. For instructions with atomic RAM effects, architectural CPU exception status
 remains available to the OS after RAM rollback. CPU snapshots still leave
 previously committed memory unchanged.
 
@@ -1778,6 +1818,8 @@ write value, including a failed comparison. Locked and implicit-lock memory
 forms require natural alignment. Physical aliases share one write footprint and
 budget. This preserves the existing cooperative execution model; it does not
 introduce parallel hardware SMP or atomic device transactions.
+
+`CMPXCHG8B` and `CMPXCHG16B` execute their original encodings on KVM, WHP and checked Unicorn in driver and user profiles. Successful and failed comparisons both require read/write access; faults are classified as writes. `CMPXCHG16B` checks 16-byte alignment before memory access and reports `#GP(0)`. Its two result observations share one RAM transaction: stopping or throwing in either publishes no registers or RAM. Unlocked `CMPXCHG8B` may cross pages; locked operands retain the natural-alignment contract. `X64WideAtomicTests.cpp` compares original host results and direct native faults, aliases, prefixes, address rules, repair and cancellation. Original Windows driver and ring3 PE fixtures exercise both widths; the WDK fixture also executes `_InterlockedCompareExchange128`. The CPU model must support `CMPXCHG16B`.
 
 `CheckedX64Memory` owns scalar device transfers and one MOVS element per restart
 boundary. It validates every access before effects; device pages remain outside
@@ -1907,6 +1949,10 @@ Native x64 KVM/WHP/HVF initialization executes `X64MachineProbe.def` in private 
 `ExecutionBackend::x64BranchModel()` publishes one immutable relative-branch contract, not a complete CPUID identity. `X64MachineProbe.def` measures KVM/WHP behavior before machine publication, using private non-taken instructions under the existing memory lease and deadline. The shared x64 decoder mode is consumed by checked execution and Windows driver policy; OS code does not infer the model from the host vendor. Failed probes publish no model.
 
 `CheckedX64Stack.cpp` owns stack-transfer access order and widths. The shared `operandAddress` computes RIP-relative addresses, 32-bit wrapping and FS/GS bases for ordinary and stack operands. The processor executes the original instruction; deferred write observations use its result before the shared RAM transaction publishes any effects.
+
+`LEAVE` uses the original full RBP for its implicit RAM read and the effective 16/64-bit operand size. Address-size and segment prefixes do not redirect that read. The shared layer validates the whole span before the original processor instruction updates RSP and RBP; refused accesses and stopped or failed read observers retain the complete entry state.
+
+`CheckedX64Frame.cpp` owns ordered `ENTER` accesses and a bounded physical-alias overlay for observations and fault-prefix values. Successful execution uses the original processor instruction. A guest fault publishes only preceding completed stores before OS notification; this is an explicit exception to ordinary atomic RAM rollback. Observers see the entry state, and cancellation, observer exceptions or transport failure discard uncommitted effects. Restoring CPU context does not undo already committed stores.
 
 The shared XSAVE decoder distinguishes standard and compacted initial SSE state. With XSTATE_BV[1] clear, both forms initialize XMM registers; standard format still reads and validates MXCSR, while compacted format initializes MXCSR. `X64XsaveCases.def` supplies independent packet layouts and original host XRSTOR programs. `X64XsaveTests.cpp` checks rejected-state atomicity and compares both formats with actual host execution, preserving the caller’s FP/SSE state. The host oracle skips explicitly when the architecture or required instruction feature is unavailable.
 
@@ -3275,3 +3321,11 @@ The shared Swift class-method declaration also admits the complete arm64 instanc
 The strong CoreImage SDK declarations retain the `CIImage` result of `imageWithCGImage:` and `imageByApplyingTransform:`. The latter has a logical six-double `CGAffineTransform` and an ARM64 physical pointer in x2 to a 48-byte private copy. An Objective-C method can bind this copy only after its current metadata authenticates the entry ABI and the shared frame owner proves every initializer, reaching path, intervening effect and later use against immutable machine/LowIR. Publication independently rebuilds a bounded dependency group through the canonical pipeline and compares the complete saved HighIR, MedIR replay and published body with that fresh result; saved argument values cannot authenticate themselves. Other lifetime or virtual receipts need separate integration. HighC takes one memcpy snapshot into the logical SDK record. This consumer remains ARM64-only; unsupported providers, weak imports, stale declarations and unproved copy storage fail closed.
 
 `darwinMatrixSourceFrameEffects` also authenticates the exact strong `CGAffineTransformMakeRotation` and `CGAffineTransformConcat` imports on linked Darwin ARM64. Their current SDK declarations certify a complete pointer-free 48-byte result through x8. Concat requires two initialized 48-byte private inputs through x0/x1 and conservatively permits writes to both; their contents are invalidated after the call. The shared frame owner checks all bounds, saved registers and subsequent initialization. CoreImage publication still requires fresh complete-body replay. Other record producers and stack block calls receive no effects from this contract.
+
+The same frame-effect owner handles the exact strong `CGRectApplyAffineTransform` bridge separately: its initialized 48-byte transform is logical parameter 1 carried in x0, while the rectangle/result occupy d0–d3. Permitted input writes invalidate the copy; a later consumer needs a new definite initialization. No indirect-result write is granted. Both Objective-C copy discovery and native frame validation consult this owner for HFA and indirect results.
+
+`AuthenticatedSourceFrameLoads` can cross a metadata-accessor call through `swiftMetadataAccessorSourceCallHint`. Both declaration paths reuse the existing compiler-observed catalog, exact strong provider and complete Swift request/metadata-response ABI. The two-register response and normal volatile-register clobbers remain intact; private spills still require the shared reaching-byte proof. This grants no value layout, witness memory effects, frame borrow or dynamic stack-allocation model.
+
+`objcNonEscapingBlockSourceFrameEffects` authenticates synchronous stack-block borrows through the shared `sourceFrameCallArgumentStorage` query. It replays the original machine, current qualified dispatch, strong concrete-block import, complete header and descriptor, callback ABI and reaching bytes. The descriptor supplies a writable bound; padding remains uninitialized evidence and capture field types and callback bodies still require independent source proofs. Cyclic observations and private-frame pointer captures fail closed, and dependencies use completed proof rounds.
+
+Source construction authenticates a disjoint disposable value copy with the same current machine and complete Low/Med/High replay used by publication. Final publication proves the block construction and capture lifetime independently, then compares the whole body after block projection and ordinary reference binding. Mixed-width private vector reads preserve only opaque scalar bytes initialized on every reaching path without pointer identities; writable borrows discard previous initialization facts. Constant strings continue through their existing reference owner; a block/copy proof cannot authorize a weak constant-object import.

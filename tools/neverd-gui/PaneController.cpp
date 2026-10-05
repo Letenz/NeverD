@@ -169,6 +169,7 @@ bool PaneController::clearResults() {
   graphRevision_.clear();
   nodes_.clear();
   edges_.clear();
+  libraryView_.reset({}, {}, {});
   return true;
 }
 
@@ -194,11 +195,11 @@ void PaneController::navigateTo(const QString &query, int historyTarget) {
               return;
             }
             const auto payload = response["payload"].toObject();
-            PaneLocation location{payload["address"].toString(),
-                                  payload["function_address"].toString(),
-                                  payload["name"].toString(),
-                                  payload["comment"].toString(),
-                                  payload["comment"].isString()};
+            PaneLocation location{
+                payload["address"].toString(),
+                payload["function_address"].toString(),
+                payload["display_name"].toString(payload["name"].toString()),
+                payload["comment"].toString(), payload["comment"].isString()};
             if (!validAddress(location.address) ||
                 (!location.functionAddress.isEmpty() &&
                  !validAddress(location.functionAddress))) {
@@ -352,13 +353,19 @@ void PaneController::loadText(bool append) {
             }
             const auto payload = response["payload"].toObject();
             const auto page = payload["text"].toString();
-            if (append && text_.size() + page.size() <= 2 * 1024 * 1024 &&
-                mappingRevision_ == response["revision"].toString()) {
+            const bool appended =
+                append && text_.size() + page.size() <= 2 * 1024 * 1024 &&
+                mappingRevision_ == response["revision"].toString();
+            const bool contiguous =
+                !appended || payload["byte_offset"].toInteger(-1) ==
+                                 textByteOffset_ + text_.toUtf8().size();
+            if (appended) {
               text_ += page;
             } else {
               text_ = page.left(2 * 1024 * 1024);
               textMappings_.clear();
               textStartLine_ = payload["offset"].toInt();
+              textByteOffset_ = payload["byte_offset"].toInteger(-1);
             }
             mappingRevision_ = response["revision"].toString();
             mappingState_ = payload["mapping_status"].toString();
@@ -374,7 +381,18 @@ void PaneController::loadText(bool append) {
                 nextText_ < 0
                     ? QT_TRANSLATE_NOOP("Workbench", "Complete")
                     : QT_TRANSLATE_NOOP("Workbench", "More lines available");
+            libraryView_.reset(text_, textMappings_,
+                               contiguous ? payload["library_regions"].toArray()
+                                          : QJsonArray{},
+                               textByteOffset_, appended);
           });
+}
+
+QObject *PaneController::libraryView() {
+  return mappingRevision_ == queries_->revision() &&
+                 mappingState_ == "library_regions"
+             ? &libraryView_
+             : nullptr;
 }
 
 QVariantList PaneController::textMappings() const {
@@ -392,6 +410,10 @@ QString PaneController::mappingStatus() const {
     return translated(QT_TRANSLATE_NOOP(
         "Workbench",
         "Linked instruction addresses; synthetic rows may be unmapped"));
+  if (mappingState_ == "library_regions")
+    return translated(QT_TRANSLATE_NOOP(
+        "Workbench", "Library regions link to original instructions; other "
+                     "source may be unmapped"));
   return translated(QT_TRANSLATE_NOOP(
       "Workbench", "Instruction mapping unavailable for this representation"));
 }
@@ -693,7 +715,9 @@ void PaneController::loadSelectionDetail() {
               }
               if (guard->location_.functionAddress ==
                   payload["function_address"].toString())
-                guard->location_.functionName = payload["name"].toString();
+                guard->location_.functionName =
+                    payload["display_name"].toString(
+                        payload["name"].toString());
             }
           }
         }

@@ -14,6 +14,12 @@ struct BinaryImage;
 std::optional<SourceCallTypeHint>
 swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot);
 
+/// The existing compiler-observed metadata-accessor catalog and exact strong
+/// import own this request/metadata-response ABI. No value layout, witness
+/// effects or private-frame borrowing follow from this declaration.
+std::optional<SourceCallTypeHint>
+swiftMetadataAccessorSourceCallHint(const BinaryImage &Image, va_t ImportSlot);
+
 /// Authenticate the exact runtime operation whose error-register output equals
 /// its input. Rechecks the current import and full ABI; this grants no memory
 /// effects and is false for general throwing calls.
