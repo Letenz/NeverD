@@ -38,6 +38,9 @@ void MedToHighConverter::lowerCBranch(HighFunc &Func, const MedOp &CurOp) {
   S.Addr = CurOp.Addr;
   if (CurOp.NumInputs >= 2) {
     S.Cond = medvarToExpr(CurOp.Inputs[1]);
+    if (ExpressionObserver && S.Cond && CurOp.Addr != InvalidVA &&
+        CurOp.OriginSeq >= 0)
+      ExpressionObserver(CurOp, S.Cond);
     HighStmt GotoStmt;
     GotoStmt.Kind = StmtKind::Goto;
     if (CurOp.Inputs[0].isConst())
@@ -98,6 +101,8 @@ void MedToHighConverter::lowerStore(HighFunc &Func, const MedOp &CurOp) {
     else
       S.StoreVal = medvarToExpr(CurOp.Inputs[1]);
   }
+  if (StatementObserver && CurOp.Addr != InvalidVA && CurOp.OriginSeq >= 0)
+    StatementObserver(CurOp, S);
   Func.Body.push_back(std::move(S));
 }
 
@@ -127,6 +132,8 @@ void MedToHighConverter::lowerCall(HighFunc &Func, const MedBlock &CurBlock,
   CallExpr->DoesNotReturn = CurOp.DoesNotReturn;
   if (CurOp.SourceCallHint)
     CallExpr->Type = sourceCallResultType(CurOp);
+  if (ExpressionObserver && CurOp.Addr != InvalidVA && CurOp.OriginSeq >= 0)
+    ExpressionObserver(CurOp, CallExpr);
 
   if (CurOp.Output.Id >= 0 && CurOp.Output.Size > 0) {
     HighStmt S;

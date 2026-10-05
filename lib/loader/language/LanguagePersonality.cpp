@@ -487,6 +487,7 @@ bool adoptPersonalityRoutineName(BinaryImage &Img, va_t Address,
 
   Symbol Sym;
   Sym.Name = Name.str();
+  Sym.Origin = NameOrigin::Analysis;
   Sym.Addr = Address;
   Sym.IsFunc = true;
   Img.Symbols.push_back(std::move(Sym));

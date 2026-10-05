@@ -6,6 +6,8 @@
 
 #include "../NeverDLiftFixture.h"
 
+#include "llvm/Support/JSON.h"
+
 #include <string_view>
 #include <tuple>
 
@@ -531,14 +533,20 @@ TEST_P(MBAFrameSourceTest, RemovesSpilledMBAAndPreservesExecutableBehavior) {
     // the harness to the emitted alias only after authenticating its address.
     const auto Listed = exec(ndBin(), {"funcs", "--json", Object.string()});
     ASSERT_TRUE(Listed.ok()) << Listed.err;
-    const std::regex Definition(
-        R"json(\{"addr":"([^"]+)","name":"([^"]+)","size":)json");
+    auto Functions = llvm::json::parse(Listed.out);
+    ASSERT_TRUE(static_cast<bool>(Functions))
+        << llvm::toString(Functions.takeError());
+    ASSERT_TRUE(Functions->getAsArray());
     std::vector<std::pair<std::string, std::string>> Symbols;
-    for (std::sregex_iterator
-             It(Listed.out.begin(), Listed.out.end(), Definition),
-         End;
-         It != End; ++It)
-      Symbols.emplace_back((*It)[1].str(), (*It)[2].str());
+    for (const auto &Value : *Functions->getAsArray()) {
+      const auto *Function = Value.getAsObject();
+      ASSERT_TRUE(Function);
+      const auto Address = Function->getString("addr");
+      const auto Name = Function->getString("name");
+      ASSERT_TRUE(Address);
+      ASSERT_TRUE(Name);
+      Symbols.emplace_back(Address->str(), Name->str());
+    }
     auto ResolveAlias = [&](const std::string &Name) {
       const auto Requested =
           std::find_if(Symbols.begin(), Symbols.end(), [&](const auto &Symbol) {

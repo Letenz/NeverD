@@ -77,6 +77,7 @@ const char *neverd_xrefs_to_json(neverd_session_t Sess, neverd_va_t Addr) {
   S->clearError();
   if (!S->ensurePipeline())
     return dupStr(std::string("[]"));
+  (void)S->synchronizeFunctions();
 
   llvm::json::Array Arr;
   for (const auto &F : S->PipeResult.LowFuncs)
@@ -87,6 +88,7 @@ const char *neverd_xrefs_to_json(neverd_session_t Sess, neverd_va_t Addr) {
             llvm::json::Object Obj;
             Obj["from"] = vaHex(Op.Addr);
             Obj["func"] = jsonSafeText(F.Name);
+            Obj["function_identity"] = S->functionIdentity(F.Entry);
             Obj["block"] = B.Id;
             Arr.push_back(std::move(Obj));
           }
@@ -98,6 +100,7 @@ const char *neverd_xrefs_from_json(neverd_session_t Sess, neverd_va_t Addr) {
   S->clearError();
   if (!S->ensurePipeline())
     return dupStr(std::string("[]"));
+  (void)S->synchronizeFunctions();
 
   llvm::json::Array Arr;
   for (const auto &F : S->PipeResult.LowFuncs)
@@ -109,7 +112,11 @@ const char *neverd_xrefs_from_json(neverd_session_t Sess, neverd_va_t Addr) {
               llvm::json::Object Obj;
               Obj["to"] = vaHex(Op.Inputs[I].Offset);
               Obj["func"] = jsonSafeText(F.Name);
+              Obj["function_identity"] = S->functionIdentity(F.Entry);
               Obj["opcode"] = std::string(ndOpName(Op.Opcode));
+              if (I == 0 && Op.Opcode == NdOp::CALL)
+                Obj["callee_identity"] =
+                    S->functionIdentity(Op.Inputs[0].Offset);
               Arr.push_back(std::move(Obj));
             }
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
@@ -650,6 +657,15 @@ const char *neverd_callgraph_json(neverd_session_t Sess) {
   FunctionJSONNames.reserve(S->Functions.size());
   for (const auto &Function : S->Functions)
     FunctionJSONNames.push_back(TextPool.intern(Function.Name));
+  std::vector<llvm::json::Value> Identities;
+  std::map<va_t, std::string> DisplayNames;
+  if (S->Img.Arch != Arch::SBF && S->Img.Arch != Arch::EVM)
+    for (const auto &Function : S->Functions) {
+      auto Identity = S->functionIdentity(Function.Entry);
+      if (auto Name = Identity.getString("display_name"))
+        DisplayNames.emplace(Function.Entry, Name->str());
+      Identities.push_back(std::move(Identity));
+    }
 
   // One canonical streaming serializer is used first as an exact escaped-byte
   // counter and then for the committed document. This counts fixed syntax,
@@ -669,6 +685,10 @@ const char *neverd_callgraph_json(neverd_session_t Sess) {
             JSON.attribute("name", FunctionJSONNames[FunctionID]);
             JSON.attribute("addr", vaHex(Function.Entry));
             JSON.attribute("size", static_cast<int64_t>(Function.Size));
+            if (!Identities.empty()) {
+              JSON.attribute("display_name", DisplayNames[Function.Entry]);
+              JSON.attribute("identity", Identities[FunctionID]);
+            }
           });
         }
       });
@@ -681,6 +701,12 @@ const char *neverd_callgraph_json(neverd_session_t Sess) {
             JSON.attribute("callee", vaHex(Recovered.Callee));
             JSON.attribute("caller_name", Recovered.CallerName);
             JSON.attribute("callee_name", Recovered.CalleeName);
+            if (const auto At = DisplayNames.find(Recovered.Caller);
+                At != DisplayNames.end())
+              JSON.attribute("caller_display_name", At->second);
+            if (const auto At = DisplayNames.find(Recovered.Callee);
+                At != DisplayNames.end())
+              JSON.attribute("callee_display_name", At->second);
           });
         }
       });

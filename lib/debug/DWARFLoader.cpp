@@ -11,6 +11,8 @@
 
 #include "neverd/debug/DWARFLoader.h"
 
+#include "neverd/ir/TargetRegInfo.h"
+
 #define DEBUG_TYPE "neverd-dwarf-loader"
 #include "llvm/DebugInfo/DWARF/DWARFAbbreviationDeclaration.h"
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"
@@ -240,6 +242,8 @@ struct DWARFDebugContext::Impl {
   std::map<va_t, FunctionSym> FuncMap;
   std::vector<FunctionSym> FuncList;
   std::map<va_t, AuthenticatedReturnValueState> ReturnValueStates;
+  std::map<va_t, std::vector<AuthenticatedRecordParameter>> RecordParameters;
+  llvm::Triple::ArchType MachineArch = llvm::Triple::UnknownArch;
 
   using AddressRange = std::pair<va_t, va_t>;
 
@@ -280,6 +284,8 @@ struct DWARFDebugContext::Impl {
   };
 
   TypeRef convertDwarfType(llvm::DWARFDie Die, int Depth = 0);
+  std::optional<AuthenticatedRecordParameter>
+  recordParameter(llvm::DWARFDie Die, va_t Entry) const;
   ReturnTypeResolution resolveReturnType(llvm::DWARFDie Die) const;
   AuthenticatedReturnValueState classifyReturnValue(llvm::DWARFDie Die,
                                                     int Depth = 0) const;
@@ -466,6 +472,7 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
   const std::optional<std::array<uint8_t, 16>> MainUUID = machOUUID(*Obj);
   const bool SnapshotMatches = objectBytesEqual(*Obj, ExpectedImageBytes);
   Ctx->PImpl->DwarfStackPointerReg = dwarfStackPointerRegister(MainArch);
+  Ctx->PImpl->MachineArch = MainArch;
   Ctx->PImpl->DwarfFramePointerReg = dwarfFramePointerRegister(MainArch);
 
   Ctx->PImpl->DwarfCtx = llvm::DWARFContext::create(*Obj);
@@ -521,6 +528,103 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
   LLVM_DEBUG(llvm::dbgs() << "debug: loaded " << Ctx->PImpl->FuncList.size()
                           << " functions with debug info" << "\n");
   return Ctx;
+}
+
+std::optional<AuthenticatedRecordParameter>
+DWARFDebugContext::Impl::recordParameter(llvm::DWARFDie Die, va_t Entry) const {
+  llvm::DWARFDie Type =
+      Die.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type);
+  bool Pointer = false;
+  unsigned Depth = 0;
+  for (; Type && Depth < 32; ++Depth) {
+    const auto Tag = Type.getTag();
+    if (Tag == llvm::dwarf::DW_TAG_pointer_type) {
+      if (Pointer || !Type.getDwarfUnit() ||
+          Type.getDwarfUnit()->getAddressByteSize() != 8)
+        return std::nullopt;
+      auto Width = strictAttribute(Type, llvm::dwarf::DW_AT_byte_size);
+      if (Width.TheStatus == StrictAttributeLookup::Status::Malformed ||
+          (Width.TheStatus == StrictAttributeLookup::Status::Found &&
+           Width.Value.getAsUnsignedConstant() != 8))
+        return std::nullopt;
+      Pointer = true;
+    } else if (Tag != llvm::dwarf::DW_TAG_typedef &&
+               Tag != llvm::dwarf::DW_TAG_const_type &&
+               Tag != llvm::dwarf::DW_TAG_volatile_type &&
+               Tag != llvm::dwarf::DW_TAG_restrict_type) {
+      break;
+    }
+    auto Next = strictAttribute(Type, llvm::dwarf::DW_AT_type);
+    if (Next.TheStatus != StrictAttributeLookup::Status::Found)
+      return std::nullopt;
+    Type = Type.getAttributeValueAsReferencedDie(Next.Value);
+  }
+  if (!Pointer || !Type || Depth == 32 ||
+      (Type.getTag() != llvm::dwarf::DW_TAG_structure_type &&
+       Type.getTag() != llvm::dwarf::DW_TAG_class_type))
+    return std::nullopt;
+  const auto Width = strictAttribute(Type, llvm::dwarf::DW_AT_byte_size);
+  if (Width.TheStatus != StrictAttributeLookup::Status::Found)
+    return std::nullopt;
+  auto Bytes = Width.Value.getAsUnsignedConstant();
+  if (!Bytes || *Bytes == 0 || *Bytes > (1u << 20) || !Type.getShortName())
+    return std::nullopt;
+  std::string Qualified;
+  llvm::raw_string_ostream NameOS(Qualified);
+  llvm::dumpTypeQualifiedName(Type, NameOS);
+  if (Qualified.empty() || Qualified.size() > 4096)
+    return std::nullopt;
+
+  auto Locations = Die.getLocations(llvm::dwarf::DW_AT_location);
+  if (!Locations) {
+    llvm::consumeError(Locations.takeError());
+    return std::nullopt;
+  }
+  std::optional<unsigned> Register;
+  for (const auto &Location : *Locations) {
+    if (Location.Range &&
+        !(Location.Range->valid() && Location.Range->LowPC <= Entry &&
+          Entry < Location.Range->HighPC))
+      continue;
+    llvm::StringRef Raw(reinterpret_cast<const char *>(Location.Expr.data()),
+                        Location.Expr.size());
+    auto *Unit = Die.getDwarfUnit();
+    llvm::DataExtractor Data(Raw, Unit->isLittleEndian(),
+                             Unit->getAddressByteSize());
+    llvm::DWARFExpression Expression(Data, Unit->getAddressByteSize(),
+                                     Unit->getFormat());
+    auto It = Expression.begin();
+    if (It == Expression.end() || It->isError())
+      return std::nullopt;
+    const auto Code = It->getCode();
+    std::optional<unsigned> Current;
+    if (Code >= llvm::dwarf::DW_OP_reg0 && Code <= llvm::dwarf::DW_OP_reg31)
+      Current = Code - llvm::dwarf::DW_OP_reg0;
+    else if (Code == llvm::dwarf::DW_OP_regx &&
+             It->getRawOperands().size() == 1 && It->getRawOperands()[0] <= 31)
+      Current = static_cast<unsigned>(It->getRawOperands()[0]);
+    ++It;
+    if (!Current || It != Expression.end() || (Register && Register != Current))
+      return std::nullopt;
+    Register = Current;
+  }
+  if (!Register)
+    return std::nullopt;
+  uint64_t Physical = 0;
+  if (MachineArch == llvm::Triple::aarch64 && *Register < 8) {
+    Physical = getTargetRegInfo(Arch::AArch64).IntParamRegs[*Register];
+  } else if (MachineArch == llvm::Triple::x86_64) {
+    constexpr unsigned DwarfArgs[] = {5, 4, 1, 2, 8, 9};
+    auto At = std::find(std::begin(DwarfArgs), std::end(DwarfArgs), *Register);
+    if (At == std::end(DwarfArgs))
+      return std::nullopt;
+    Physical =
+        getTargetRegInfo(Arch::X64).IntParamRegs[At - std::begin(DwarfArgs)];
+  } else {
+    return std::nullopt;
+  }
+  return AuthenticatedRecordParameter{Physical, std::move(Qualified),
+                                      static_cast<uint32_t>(*Bytes)};
 }
 
 TypeRef DWARFDebugContext::Impl::convertDwarfType(llvm::DWARFDie Die,
@@ -1019,9 +1123,12 @@ void DWARFDebugContext::Impl::parseFunction(llvm::DWARFDie Die,
     // A present but malformed reference is not evidence of void.
     Sym.ReturnType = std::make_shared<NdType>();
   }
+  std::vector<AuthenticatedRecordParameter> EntryRecords;
   for (llvm::DWARFDie Child : Die.children()) {
     if (Child.getTag() != llvm::dwarf::DW_TAG_formal_parameter)
       continue;
+    if (auto Record = recordParameter(Child, Addr))
+      EntryRecords.push_back(std::move(*Record));
     std::string Name;
     if (const char *RawName = Child.getName(llvm::DINameKind::ShortName))
       Name = RawName;
@@ -1032,6 +1139,7 @@ void DWARFDebugContext::Impl::parseFunction(llvm::DWARFDie Die,
                                                  : NdType::makeInt(4));
   }
 
+  RecordParameters[Addr] = std::move(EntryRecords);
   FunctionInfo &Info = Functions[Addr];
   Info = FunctionInfo{};
   Info.Ranges = Ranges;
@@ -1379,6 +1487,21 @@ DWARFDebugContext::resolveAuthenticatedReturnValueState(va_t Entry) const {
 
 bool DWARFDebugContext::hasAuthenticatedObjectExtents() const {
   return PImpl && PImpl->Loaded && PImpl->AuthenticatedObjectExtents;
+}
+
+std::vector<AuthenticatedRecordParameter>
+DWARFDebugContext::resolveAuthenticatedRecordParameters(va_t Entry) const {
+  if (!PImpl || !PImpl->Loaded || !PImpl->AuthenticatedObjectExtents ||
+      PImpl->SubprogramExtents.isAmbiguous(Entry))
+    return {};
+  auto It = PImpl->RecordParameters.find(Entry);
+  if (It == PImpl->RecordParameters.end())
+    return {};
+  std::set<uint64_t> Registers;
+  for (const auto &Parameter : It->second)
+    if (!Registers.insert(Parameter.Register).second)
+      return {};
+  return It->second;
 }
 
 bool DWARFDebugContext::hasInfo() const { return PImpl && PImpl->Loaded; }

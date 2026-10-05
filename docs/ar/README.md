@@ -1,6 +1,6 @@
 **اللغات**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](README.md)
 
-<!-- i18n-source: 2266006a7b377ad4fcf7286e06f099b4964f598b0a7bb518c4da1e0cb68aad8e -->
+<!-- i18n-source: 6a7456cc606f8f98767b33ad15e7c852cd0cb7e1bf8367759b0ad0cc03503470 -->
 
 [← مشروع NeverD](project.md)
 
@@ -19,6 +19,7 @@
 | [العمارة](architecture.md) | مسارات IR، وحدود المكونات، والرفع الصارم، وعمق الدعم، ومواقع التعديل |
 | [الاختبارات](testing.md) | المجموعات، وfixtures المولدة، ودورات Unicorn، والأوامر التزايدية |
 | [بيئة العمل المكتبية (الإنجليزية)](../gui.md) | واجهة Qt Quick اختيارية وعامل منفصل وC ABI وتعليقات وسير عمل MCP |
+| [التعرّف على المكتبات (بالإنجليزية)](../library-recognition.md) | هويات STL وATL/MFC وCOM وlibc المدعومة بالأدلة، وملفات التعريف وطي شيفرة C القابل للتراجع |
 | [سجل تحقق سطح المكتب (الإنجليزية)](../gui-qualification.md) | أدلة GUI المقاسة وحدود الحزم والتحقق المتبقي للمنصات |
 | [استعادة المصدر من المفسّرات](interpreter-recovery.md) | تخصيص تجريبي عبر `--devirtualize`، وخيارات CLI، وعقد التنفيذ، والأدلة والحدود; مقترحات إثبات للحلقات المتداخلة; ميزانيات اكتشاف صريحة وواجهة C ذات إصدارات; واجهة إثبات دقيقة من الشيفرة الأصلية إلى LLVM |
 | [إعادة بناء استثناءات Windows](windows-exception-reconstruction.md) | مصفوفة دعم SEH/C++، وعقد IR، وقواعد patch الأصلية، والتحقق من PE |

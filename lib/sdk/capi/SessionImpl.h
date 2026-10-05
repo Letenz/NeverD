@@ -18,6 +18,7 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/CodeGen.h"
+#include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/debug/DebugInfoDiscovery.h"
 #include "neverd/decode/Decoder.h"
@@ -58,6 +59,10 @@ struct FuncInfo {
   va_t Entry;
   uint64_t Size;
   std::string Name;
+  NameOrigin Origin = NameOrigin::Stated;
+  /// Original identity is never overwritten by a display annotation or rename.
+  std::string LinkageName;
+  NameOrigin LinkageOrigin = NameOrigin::Stated;
 };
 
 struct Session {
@@ -88,6 +93,7 @@ struct Session {
   std::unique_ptr<llvm::LLVMContext> LLVMCtx;
   PipelineResult PipeResult;
   bool PipeRan = false;
+  uint64_t PipelineFeatureGeneration = 0;
   std::optional<bool> LlvmModuleNoOpt;
   bool SBFFunctionsSynchronized = false;
   bool NativeFunctionsSynchronized = false;
@@ -225,6 +231,7 @@ struct Session {
   void clearError() { LastError.clear(); }
 
   void applyAnalysisOptions(PipelineOptions &Opts) const {
+    Opts.LibraryFeatures = &SigDB.featurePacks();
     Opts.EVMFork = EVMFork;
     Opts.EVMStrict = EVMStrict;
     Opts.SBFVersion = SBFVersion;
@@ -287,9 +294,17 @@ struct Session {
       OriginalNames[Symbol->Addr] = Name;
       if (auto Rename = Renames.find(Symbol->Addr); Rename != Renames.end())
         Name = Rename->second;
-      Functions.push_back({Symbol->Addr, Symbol->Size, std::move(Name)});
+      const NameOrigin Origin =
+          Renames.contains(Symbol->Addr) ? NameOrigin::User : Symbol->Origin;
+      Functions.push_back({Symbol->Addr, Symbol->Size, std::move(Name), Origin,
+                           Symbol->Name, Symbol->Origin});
     }
+    refreshFunctionNames();
   }
+
+  /// Recompute display identity from current evidence. No IR or image names
+  /// are modified, and a failed/withdrawn match cannot leave a stale label.
+  void refreshFunctionNames();
 
   void clearPipeline() {
     PipeResult = {};
@@ -310,6 +325,8 @@ struct Session {
       setError("no binary loaded");
       return false;
     }
+    if (PipeRan && PipelineFeatureGeneration != SigDB.featureGeneration())
+      clearPipeline();
     if (!PipeRan) {
       LLVMCtx = std::make_unique<llvm::LLVMContext>();
       PipelineOptions Opts;
@@ -319,6 +336,7 @@ struct Session {
       // context to the pipeline also carries source locations, declared sizes,
       // and parameter names into the IR.
       PipeResult = ThePipeline.run(Img, *LLVMCtx, Opts, Dbg.get());
+      PipelineFeatureGeneration = SigDB.featureGeneration();
       PipeRan = true;
     }
     if (!PipeResult.Success)
@@ -331,6 +349,9 @@ struct Session {
   /// their existing eager analysis contract. All public function-oriented APIs
   /// consume this single session view.
   bool synchronizeFunctions();
+  /// Presentation-only snapshot. Raw names remain the semantic identity;
+  /// metadata queries never force native function analysis.
+  llvm::json::Object functionIdentity(va_t Entry) const;
 
   const LowFunc *findLowFunc(va_t Addr) const {
     for (const auto &F : PipeResult.LowFuncs)
@@ -381,6 +402,8 @@ struct Session {
   }
 
   bool ensureLlvmModule(bool NoOpt = false) {
+    if (PipeRan && PipelineFeatureGeneration != SigDB.featureGeneration())
+      clearPipeline();
     if (PipeResult.LlvmModule &&
         (!LlvmModuleNoOpt || *LlvmModuleNoOpt == NoOpt))
       return true;
@@ -423,9 +446,16 @@ struct Session {
     for (const auto &[Addr, Name] : Img.getImportAddressNames())
       ImportMap.emplace_back(Addr, Name);
     MedLLVMEmitter Emitter;
+    std::shared_ptr<LLVMSourceMap> Sources;
+    if (!PipeResult.LibraryRecognitions.empty()) {
+      Sources = std::make_shared<LLVMSourceMap>();
+      Emitter.setSourceMap(Sources.get());
+    }
     auto Candidate =
         Emitter.emit(PipeResult.MedFuncs, *LLVMCtx, "neverd_output", Img.Arch,
                      ImportMap, &Img, Img.Format);
+    if (Sources)
+      Sources->preserveExpressionOrigins(PipeResult.LibraryRecognitions);
     if (!Candidate) {
       setError("native LLVM emission failed");
       return false;
@@ -440,9 +470,11 @@ struct Session {
     }
     if (NoOpt) {
       Pipeline::promoteScaffoldingAllocas(*Candidate);
+      if (Sources)
+        Sources->refreshExpressionOrigins();
     } else {
       const OptimizationResult Optimization =
-          Pipeline::optimizeOrPromoteModule(*Candidate);
+          Pipeline::optimizeOrPromoteModule(*Candidate, Sources.get());
       if (Optimization.Stop == OptimizationStopReason::VerificationFailed) {
         setError(std::string("native LLVM optimization failed: ") +
                  optimizationStopReasonName(Optimization.Stop));
@@ -457,6 +489,7 @@ struct Session {
       return false;
     }
     PipeResult.LlvmModule = std::move(Candidate);
+    PipeResult.LLVMSources = std::move(Sources);
     LlvmModuleNoOpt = NoOpt;
     return true;
   }

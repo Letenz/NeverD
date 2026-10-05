@@ -72,14 +72,21 @@ def run(executable):
                     resolved = client.call("resolve", {"query": query})
                     assert resolved["status"] == "ok", resolved
                     assert resolved["payload"]["function_address"] == hex(entry)
-                for stage in ("c", "high", "llvm"):
+                for stage in ("c", "llvmc"):
+                    reply = client.call("decompile", {"address": hex(entry), "representation": stage, "limit": 2})
+                    assert reply["status"] == "ok", reply
+                    assert reply["payload"]["mapping_status"] == "library_regions", reply
+                    assert reply["payload"]["library_regions"] == []
+                    assert reply["payload"]["byte_offset"] == 0
+                    assert all(row["addresses"] == [] for row in reply["payload"]["rows"])
+                for stage in ("high", "llvm"):
                     reply = client.call("decompile", {"address": hex(entry), "representation": stage, "limit": 2})
                     assert reply["status"] == "ok", reply
                     assert reply["payload"]["mapping_status"] == "unsupported_representation"
                     assert reply["payload"]["rows"] == []
             finally:
                 client.close()
-        print("real native x86/AArch64: recovered function navigation, high-VA Low/Med instruction anchors, canonical hex, stable paged rows and explicit C/High/LLVM mapping status passed")
+        print("real native x86/AArch64: recovered function navigation, high-VA Low/Med instruction anchors, stable paged rows and explicit C/High/LLVM mapping status passed")
         return 0
 
 

@@ -255,6 +255,17 @@ void HighCWriter::writeCxxThrowExpr(const HighStmt &Stmt,
 }
 
 void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
+  auto Event = SourceRecorder && CurrentFunc
+                   ? SourceRecorder->statement(CurrentFunc->Entry, Stmt)
+                   : std::nullopt;
+  if (Event)
+    OS << SourceRecorder->begin(*Event);
+  writeStmtImpl(Stmt, Indent);
+  if (Event)
+    OS << SourceRecorder->end(*Event);
+}
+
+void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
   if (Analysis.DeadStmts.count(&Stmt) &&
       !(Stmt.Kind == StmtKind::Assign && Stmt.Dst &&
         (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi) &&

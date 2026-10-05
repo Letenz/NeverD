@@ -2690,6 +2690,14 @@ bool HighCWriter::isNamedFrameMemory(const HighExpr &E) const {
 }
 
 std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
+  std::string Text = exprStrImpl(E, ParentPrec);
+  return SourceRecorder && CurrentFunc
+             ? SourceRecorder->expression(CurrentFunc->Entry, E,
+                                          std::move(Text))
+             : Text;
+}
+
+std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec) {
   static thread_local int Depth = 0;
   struct Guard {
     int &D;
@@ -3122,15 +3130,23 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
 
 std::string HighCWriter::printedForwardedVar(const std::string &Name,
                                              int ParentPrec) {
-  if (auto Fwd = FieldForward.find(Name); Fwd != FieldForward.end())
+  if (auto Fwd = FieldForward.find(Name); Fwd != FieldForward.end()) {
+    if (auto Source = FieldForwardSources.find(Name);
+        SourceRecorder && CurrentFunc && Source != FieldForwardSources.end())
+      return SourceRecorder->expression(CurrentFunc->Entry, *Source->second,
+                                        Fwd->second);
     return Fwd->second;
+  }
   if (auto Fwd = ValueForward.find(Name);
       Fwd != ValueForward.end() && Fwd->second) {
     const HighExpr *Inner = peelIntegerViewOps(Fwd->second);
     if (Inner && Inner->Kind == ExprKind::Load && !Inner->Operands.empty() &&
         Inner->Operands[0]) {
       if (auto Member = typedMemberAccess(*Inner->Operands[0]))
-        return *Member;
+        return SourceRecorder && CurrentFunc
+                   ? SourceRecorder->expression(CurrentFunc->Entry,
+                                                *Fwd->second, *Member)
+                   : *Member;
     }
     return exprStr(*Fwd->second, ParentPrec);
   }
@@ -3425,6 +3441,14 @@ HighCWriter::copyForwardSource(const HighExpr &E) const {
 }
 
 std::string HighCWriter::condStr(const HighExpr &E) {
+  std::string Text = condStrImpl(E);
+  return SourceRecorder && CurrentFunc
+             ? SourceRecorder->expression(CurrentFunc->Entry, E,
+                                          std::move(Text))
+             : Text;
+}
+
+std::string HighCWriter::condStrImpl(const HighExpr &E) {
   const HighExpr *Cur = forwardedExpr(&E);
   Cur = unwrapIntegerView(Cur);
   auto IsZeroLike = [this](const ExprPtr &Op) {
@@ -3651,6 +3675,14 @@ HighCWriter::preferGreaterIfElseCond(const HighExpr &E) {
 }
 
 std::string HighCWriter::invertCondStr(const HighExpr &E) {
+  std::string Text = invertCondStrImpl(E);
+  return SourceRecorder && CurrentFunc
+             ? SourceRecorder->expression(CurrentFunc->Entry, E,
+                                          std::move(Text))
+             : Text;
+}
+
+std::string HighCWriter::invertCondStrImpl(const HighExpr &E) {
   const HighExpr *Cur = forwardedExpr(&E);
   Cur = unwrapIntegerView(Cur);
   if (!Cur)

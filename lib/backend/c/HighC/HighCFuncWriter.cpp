@@ -16,6 +16,7 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -77,6 +78,22 @@ std::optional<FunctionSym> debugFunction(DebugContext *Dbg, va_t Entry) {
   if (!Dbg)
     return std::nullopt;
   return Dbg->resolveFunction(Entry);
+}
+
+// A debug record's byte size alone does not describe a C type. Keep the
+// recovered machine parameter when its pointer target has no printable name
+// or validated fields; receiver identity evidence is independent of this
+// presentation choice.
+bool hasUnsupportedAnonymousPointee(TypeRef Type) {
+  if (!Type || Type->Kind != NdTypeKind::Ptr)
+    return false;
+  for (unsigned Depth = 0; Type && Depth < 64; ++Depth) {
+    if (Type->Kind != NdTypeKind::Ptr)
+      return Type->Kind == NdTypeKind::Struct && Type->SourceName.empty() &&
+             sourceAggregateMembers(Type).empty();
+    Type = Type->Pointee;
+  }
+  return true;
 }
 
 bool isWindowsLanguagePersonality(ExceptionPersonality Personality) {
@@ -1646,6 +1663,7 @@ void HighCWriter::overlayPackedValueHomes(const HighFunc &Func) {
 
 void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
   FieldForward.clear();
+  FieldForwardSources.clear();
   FieldForwardTypes.clear();
   std::map<std::string, unsigned> AssignCount;
   walkStmts(Func.Body, [&](const HighStmt &S) {
@@ -1682,13 +1700,17 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
         Val->Operands[0] && Val->MemoryOrdering == NdMemoryOrdering::None) {
       const uint16_t AccessSize = Val->Type ? Val->Type->Size : 0;
       if (auto Member = typedMemberAccess(*Val->Operands[0], AccessSize)) {
-        if (ForwardName)
+        if (ForwardName) {
           FieldForward[DestName] = *Member;
+          FieldForwardSources[DestName] = S.Val.get();
+        }
         if (TypeRef Ty = typedMemberType(*Val->Operands[0], AccessSize))
           FieldForwardTypes[DestName] = std::move(Ty);
       } else if (auto Index = typedIndexAccess(*Val->Operands[0])) {
-        if (ForwardName)
+        if (ForwardName) {
           FieldForward[DestName] = Index->Base + "[" + Index->Index + "]";
+          FieldForwardSources[DestName] = S.Val.get();
+        }
         if (Index->ElemType)
           FieldForwardTypes[DestName] = Index->ElemType;
       }
@@ -1697,8 +1719,12 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
     if ((Val->Kind == ExprKind::Var || Val->Kind == ExprKind::Phi)) {
       const std::string Src = varName(Val->Var);
       if (ForwardName) {
-        if (auto It = FieldForward.find(Src); It != FieldForward.end())
+        if (auto It = FieldForward.find(Src); It != FieldForward.end()) {
           FieldForward[DestName] = It->second;
+          if (auto Source = FieldForwardSources.find(Src);
+              Source != FieldForwardSources.end())
+            FieldForwardSources[DestName] = Source->second;
+        }
       }
       if (auto TypeIt = FieldForwardTypes.find(Src);
           TypeIt != FieldForwardTypes.end())
@@ -1723,6 +1749,7 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
     const uint16_t AccessSize = Val->Type ? Val->Type->Size : 0;
     if (auto Member = typedMemberAccess(*Val->Operands[0], AccessSize)) {
       FieldForward[DestName] = *Member;
+      FieldForwardSources[DestName] = S.Val.get();
       if (TypeRef Ty = typedMemberType(*Val->Operands[0], AccessSize))
         FieldForwardTypes[DestName] = std::move(Ty);
     }
@@ -1829,6 +1856,9 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
         if (It == FieldForward.end())
           return;
         FieldForward[Dest] = It->second;
+        if (auto Source = FieldForwardSources.find(varName(Val->Var));
+            Source != FieldForwardSources.end())
+          FieldForwardSources[Dest] = Source->second;
         if (auto TypeIt = FieldForwardTypes.find(varName(Val->Var));
             TypeIt != FieldForwardTypes.end())
           FieldForwardTypes[Dest] = TypeIt->second;
@@ -4419,6 +4449,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   CopyForward.clear();
   JoinPhiNames.clear();
   FieldForward.clear();
+  FieldForwardSources.clear();
   FieldForwardTypes.clear();
   EnumDestTypes.clear();
   PointerArgDestTypes.clear();
@@ -4844,8 +4875,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         if (HighIRIncludesSret && static_cast<int>(PI) > SretId)
           DI = PI - 1;
         if (DI < DebugFn->Params.size()) {
-          if (DebugFn->Params[DI].second)
-            Ty = DebugFn->Params[DI].second;
+          if (const TypeRef &DebugType = DebugFn->Params[DI].second;
+              DebugType && !hasUnsupportedAnonymousPointee(DebugType))
+            Ty = cDisplayType(DebugType);
           if (!DebugFn->Params[DI].first.empty())
             Name = DebugFn->Params[DI].first;
         }

@@ -2006,6 +2006,15 @@ const llvm::Value *LLVMCWriter::jleZeroCore(const llvm::BinaryOperator *BO) {
 
 std::optional<std::string>
 LLVMCWriter::invertedRelationalText(const llvm::Value *V) {
+  auto Text = invertedRelationalTextImpl(V);
+  const auto *I = llvm::dyn_cast_or_null<llvm::Instruction>(V);
+  if (Text && SourceRecorder && I)
+    *Text = SourceRecorder->expression(*I, std::move(*Text));
+  return Text;
+}
+
+std::optional<std::string>
+LLVMCWriter::invertedRelationalTextImpl(const llvm::Value *V) {
   std::set<const llvm::Value *> Seen;
   while (V && Seen.insert(V).second) {
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
@@ -2060,6 +2069,21 @@ LLVMCWriter::invertedRelationalText(const llvm::Value *V) {
 }
 
 std::string LLVMCWriter::condStr(const llvm::Value *V) {
+  auto Text = condStrImpl(V);
+  const auto *I = llvm::dyn_cast_or_null<llvm::Instruction>(V);
+  // Branch structuring can remove an outer Boolean negation. Leave its
+  // delimiters outside the event so that private markers do not change the
+  // ordinary simplification or get sliced by it.
+  if (SourceRecorder && I && llvm::StringRef(Text).starts_with("!(") &&
+      Text.back() == ')')
+    return "!(" +
+           SourceRecorder->expression(*I, Text.substr(2, Text.size() - 3)) +
+           ")";
+  return SourceRecorder && I ? SourceRecorder->expression(*I, std::move(Text))
+                             : Text;
+}
+
+std::string LLVMCWriter::condStrImpl(const llvm::Value *V) {
   if (auto Text = scalarConditionText(V))
     return *Text;
   std::set<const llvm::Value *> Seen;
@@ -2323,10 +2347,13 @@ std::string LLVMCWriter::indirectCalleeStr(const llvm::Value *Callee,
     for (const llvm::Instruction *I : Chain)
       if (!MaterializedExpressions.count(I))
         Analysis.Inlinable.insert(I);
-  if (Off == 0)
-    return "(**(void ***)(" + ObjStr + "))";
-  return "(*(void **)((uintptr_t)(*(void **)(" + ObjStr + ")) + " +
-         std::to_string(Off) + "))";
+  std::string Text = Off == 0 ? "(**(void ***)(" + ObjStr + "))"
+                              : "(*(void **)((uintptr_t)(*(void **)(" + ObjStr +
+                                    ")) + " + std::to_string(Off) + "))";
+  if (SourceRecorder && !MarkChain)
+    for (const auto *I : Chain)
+      Text = SourceRecorder->expression(*I, std::move(Text));
+  return Text;
 }
 
 void LLVMCWriter::markIndirectCalleeChains(llvm::Function &Fn) {
@@ -2402,7 +2429,8 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
     if (auto Acc = frameSlotAccess(LI->getPointerOperand(),
                                    llvmAccessSize(LI->getType()),
                                    /*AddressOf=*/false))
-      return Acc->Text;
+      return SourceRecorder ? SourceRecorder->expression(*LI, Acc->Text)
+                            : Acc->Text;
     if (auto Acc = frameSlotAccess(LI, 0, /*AddressOf=*/true))
       return AddressText(Acc->Text);
   }
@@ -2464,12 +2492,26 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
     }
   }
   if (auto Text = ValueTexts.find(V);
-      Text != ValueTexts.end() && !Text->second.empty())
+      Text != ValueTexts.end() && !Text->second.empty()) {
+    // Cached field/index spellings still evaluate the original memory load.
+    // A cached variable name does not: never attribute that reference as an
+    // emitted memory operation.
+    if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V);
+        SourceRecorder && LI) {
+      auto Access = typedRecordAccess(LI->getPointerOperand(),
+                                      llvmAccessSize(LI->getType()));
+      if (!Access)
+        Access = typedIndexAccess(LI->getPointerOperand());
+      if (Access && Access->Text == Text->second)
+        return SourceRecorder->expression(*LI, Text->second);
+    }
     return Text->second;
+  }
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
     if (auto Acc = typedRecordAccess(LI->getPointerOperand(),
                                      llvmAccessSize(LI->getType())))
-      return Acc->Text;
+      return SourceRecorder ? SourceRecorder->expression(*LI, Acc->Text)
+                            : Acc->Text;
   }
   if (std::string Text = composedReprintText(V); !Text.empty())
     return Text;
@@ -2984,6 +3026,12 @@ std::string LLVMCWriter::aggregateMemberPath(llvm::Type *Ty,
 }
 
 std::string LLVMCWriter::renderInline(const llvm::Instruction &Inst) {
+  std::string Text = renderInlineImpl(Inst);
+  return SourceRecorder ? SourceRecorder->expression(Inst, std::move(Text))
+                        : Text;
+}
+
+std::string LLVMCWriter::renderInlineImpl(const llvm::Instruction &Inst) {
   if (Inst.getOpcode() == llvm::Instruction::FNeg)
     return "(-" + valueStr(Inst.getOperand(0)) + ")";
   if (const auto *Extract = llvm::dyn_cast<llvm::ExtractElementInst>(&Inst))

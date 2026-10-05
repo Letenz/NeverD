@@ -13,6 +13,7 @@
 #include "neverd/Common.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/llvm/LLVMName.h"
+#include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/SafetyCallsiteMetadata.h"
@@ -798,6 +799,10 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   // Itanium call-site ranges are tight around individual calls rather than
   // aligned to machine blocks, so the address this call came from has to
   // survive lowering for the LSDA to be able to name it.
+  if (SourceMap && llvm::isa_and_nonnull<llvm::CallBase>(Result) &&
+      Op.Addr != InvalidVA && Op.OriginSeq >= 0)
+    SourceMap->Observations.push_back(
+        {CurMedFunc->Entry, {Op.Addr, Op.OriginSeq}, Result});
   if (auto *Emitted = llvm::dyn_cast_or_null<llvm::CallBase>(Result))
     AttachSafetyCallsite(*Emitted);
   if (auto *Emitted = llvm::dyn_cast_or_null<llvm::CallInst>(Result)) {

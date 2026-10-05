@@ -780,6 +780,11 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
             Walk(I);
             continue;
           }
+          // A projected void return does not print its machine return value.
+          // Keep the call as a statement instead of sinking it into a use
+          // that the return writer deliberately omits.
+          if (InferredVoid && llvm::isa<llvm::ReturnInst>(I))
+            continue;
           Sinks.insert(I);
         }
       };

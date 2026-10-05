@@ -5,7 +5,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
-
 #include "neverd/object/MachOLayout.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -43,10 +42,10 @@ void parseStubImports(const llvm::object::MachOObjectFile &Obj,
       !rangeInBounds(SymtabCmd.symoff,
                      static_cast<uint64_t>(SymtabCmd.nsyms) * NListSize,
                      FileSize) ||
-      !rangeInBounds(
-          DysymtabCmd.indirectsymoff,
-          static_cast<uint64_t>(DysymtabCmd.nindirectsyms) * sizeof(uint32_t),
-          FileSize))
+      !rangeInBounds(DysymtabCmd.indirectsymoff,
+                     static_cast<uint64_t>(DysymtabCmd.nindirectsyms) *
+                         sizeof(uint32_t),
+                     FileSize))
     return;
 
   const char *StrTab =
@@ -103,6 +102,7 @@ void parseStubImports(const llvm::object::MachOObjectFile &Obj,
 
       Symbol Sym = Symbol::makeFunc(StubAddr);
       Sym.Name = SymName;
+      Sym.Origin = NameOrigin::Stated;
       Img.Symbols.push_back(std::move(Sym));
 
       LLVM_DEBUG(llvm::dbgs() << "macho: stub 0x" << llvm::utohexstr(StubAddr)
@@ -126,10 +126,10 @@ void parseNonLazyPtrImports(const llvm::object::MachOObjectFile &Obj,
       !rangeInBounds(SymtabCmd.symoff,
                      static_cast<uint64_t>(SymtabCmd.nsyms) * NListSize,
                      FileSize) ||
-      !rangeInBounds(
-          DysymtabCmd.indirectsymoff,
-          static_cast<uint64_t>(DysymtabCmd.nindirectsyms) * sizeof(uint32_t),
-          FileSize))
+      !rangeInBounds(DysymtabCmd.indirectsymoff,
+                     static_cast<uint64_t>(DysymtabCmd.nindirectsyms) *
+                         sizeof(uint32_t),
+                     FileSize))
     return;
 
   const char *StrTab =
@@ -293,8 +293,7 @@ parseImportPtrSlots(llvm::ArrayRef<uint8_t> Binary) {
     for (uint64_t I = 0; I < SlotCount; ++I) {
       const uint64_t IndirectIndex = uint64_t(Section.IndirectBase) + I;
       const uint64_t IndirectOffset =
-          uint64_t(Dysymtab.indirectsymoff) +
-          IndirectIndex * sizeof(uint32_t);
+          uint64_t(Dysymtab.indirectsymoff) + IndirectIndex * sizeof(uint32_t);
       const uint32_t SymbolIndex =
           llvm::support::endian::read32le(Binary.data() + IndirectOffset);
       if ((SymbolIndex & (INDIRECT_SYMBOL_LOCAL | INDIRECT_SYMBOL_ABS)) != 0)
@@ -323,8 +322,8 @@ parseImportPtrSlots(llvm::ArrayRef<uint8_t> Binary) {
       if (!Terminator || Terminator == Name)
         return Fail("external indirect symbol name is empty or unterminated");
 
-      if (I > (std::numeric_limits<va_t>::max() - Section.Address) /
-                  PointerSize)
+      if (I >
+          (std::numeric_limits<va_t>::max() - Section.Address) / PointerSize)
         return Fail("pointer-slot virtual address overflows");
       const va_t SlotAddress = Section.Address + I * PointerSize;
       const std::string SymbolName(Name, Terminator);

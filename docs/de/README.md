@@ -1,6 +1,6 @@
 **Sprachen**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 2266006a7b377ad4fcf7286e06f099b4964f598b0a7bb518c4da1e0cb68aad8e -->
+<!-- i18n-source: 6a7456cc606f8f98767b33ad15e7c852cd0cb7e1bf8367759b0ad0cc03503470 -->
 
 [← NeverD-Projekt](project.md)
 
@@ -19,6 +19,7 @@ Englische Anleitungen liegen direkt unter `docs/`. Übersetzungen sind in `ar/`,
 | [Architektur](architecture.md) | IR-Pfade, Komponentengrenzen, striktes Lifting, Supporttiefe und Änderungsorte |
 | [Tests](testing.md) | Testsuiten, generierte Fixtures, Unicorn-Roundtrips und inkrementelle Befehle |
 | [Desktop-Arbeitsplatz (Englisch)](../gui.md) | Optionale Qt-Quick-Oberfläche, separater Worker, C-ABI, Anmerkungen und MCP-Abläufe |
+| [Bibliothekserkennung (Englisch)](../library-recognition.md) | Belegte STL-, ATL/MFC-, COM- und libc-Identitäten, Profile und umkehrbares Einklappen von C-Code |
 | [Desktop-Validierung (Englisch)](../gui-qualification.md) | Gemessene GUI-Nachweise, Paketierungsgrenzen und offene Plattformvalidierung |
 | [Quelltextrekonstruktion aus Interpretern](interpreter-recovery.md) | Experimentelle Spezialisierung mit `--devirtualize`, CLI-Kontrollgrößen, Ausführungsvertrag, Nachweise und Grenzen; Beweisvorschläge für verschachtelte Schleifen; explizite Erkennungsbudgets und versionierte C-API; API für exakte Beweise von nativem Code zu LLVM |
 | [Windows-Ausnahmerekonstruktion](windows-exception-reconstruction.md) | SEH/C++-Supportmatrix, IR-Vertrag, native Patch-Regeln und PE-Validierung |

@@ -35,6 +35,7 @@ bool readable(const QString &operation) {
 bool command(const QString &operation) {
   static const QSet<QString> operations{"open",
                                         "analyze",
+                                        "signatures_load",
                                         "annotation_set",
                                         "rename",
                                         "save",

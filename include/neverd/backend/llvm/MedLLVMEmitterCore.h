@@ -66,9 +66,11 @@ namespace neverd {
 
 class MedLLVMEmitterTestPeer;
 class MedLLVMProvenanceTestPeer;
+class LLVMSourceMap;
 
 class MedLLVMEmitter {
 public:
+  void setSourceMap(LLVMSourceMap *Map) { SourceMap = Map; }
   /// Emit \p Funcs into a fresh module in \p LCtx.
   ///
   /// For parallel (sharded) emission each worker owns its own LLVMContext,
@@ -1933,6 +1935,7 @@ private:
 
   llvm::Function *CurFunc = nullptr;
   const MedFunc *CurMedFunc = nullptr;
+  LLVMSourceMap *SourceMap = nullptr;
   std::optional<MedVar> MutableReturnValue;
   std::map<const MedFunc *, MedMutableSourcePlan> MutableSourcePlans;
   std::map<std::pair<int, int>, llvm::AllocaInst *> VarAllocs;

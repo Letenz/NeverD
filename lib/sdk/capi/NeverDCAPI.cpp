@@ -69,15 +69,21 @@ bool Session::synchronizeFunctions() {
       // rename can precede discovery when reopening a stripped image.
       OriginalNames.try_emplace(Function.Entry, Function.Name);
       const auto Rename = Renames.find(Function.Entry);
+      // This entry was absent from the image inventory. Its recovered name
+      // is analysis evidence, regardless of its spelling.
+      const NameOrigin Origin = NameOrigin::Analysis;
       Functions.push_back(
           {Function.Entry, Function.OriginalSize,
-           Rename == Renames.end() ? Function.Name : Rename->second});
+           Rename == Renames.end() ? Function.Name : Rename->second,
+           Rename == Renames.end() ? Origin : NameOrigin::User, Function.Name,
+           Origin});
     }
     std::stable_sort(Functions.begin(), Functions.end(),
                      [](const FuncInfo &Left, const FuncInfo &Right) {
                        return Left.Entry < Right.Entry;
                      });
     NativeFunctionsSynchronized = true;
+    refreshFunctionNames();
     return true;
   }
   if (SBFFunctionsSynchronized)
@@ -111,12 +117,15 @@ bool Session::synchronizeFunctions() {
       FunctionID = Functions.size();
       Functions.push_back({Function.Address,
                            FunctionSizes.Exact.test(SBFID) ? Size : 0,
-                           Function.Name});
+                           Function.Name, NameOrigin::Analysis, Function.Name,
+                           NameOrigin::Analysis});
       FunctionIndices.try_emplace(Function.Address, FunctionID);
     }
     OriginalNames.try_emplace(Function.Address, Function.Name);
-    if (auto Rename = Renames.find(Function.Address); Rename != Renames.end())
+    if (auto Rename = Renames.find(Function.Address); Rename != Renames.end()) {
       Functions[FunctionID].Name = Rename->second;
+      Functions[FunctionID].Origin = NameOrigin::User;
+    }
   }
   std::sort(Functions.begin(), Functions.end(),
             [](const FuncInfo &Left, const FuncInfo &Right) {
@@ -231,6 +240,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.Loaded = true;
   S.Annotations.clear();
   S.Renames.clear();
+  S.SigDB.clear();
   S.resetFunctionsFromImage();
 
   neverd_annotations_load(Sess);

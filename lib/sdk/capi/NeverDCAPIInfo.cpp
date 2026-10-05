@@ -10,12 +10,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "JSONText.h"
+#include "LibraryPresentation.h"
 #include "SessionImpl.h"
 
 #include "neverd/evm/bytecode/EVMBytecode.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MD5.h"
 #include "llvm/Support/SHA256.h"
@@ -97,6 +99,57 @@ llvm::json::Object describeEVMImage(const evm::ImageMetadata &Meta) {
 }
 
 } // namespace
+
+llvm::json::Object Session::functionIdentity(va_t Entry) const {
+  const auto At =
+      std::lower_bound(Functions.begin(), Functions.end(), Entry,
+                       [](const auto &F, va_t E) { return F.Entry < E; });
+  if (At == Functions.end() || At->Entry != Entry)
+    return {};
+  const auto &F = *At;
+  std::string Display =
+      F.Origin == NameOrigin::User ? F.Name : llvm::demangle(F.Name);
+  llvm::json::Array Annotations;
+  const sigs::LibraryRecognition *Whole = nullptr;
+  bool Ambiguous = false;
+  const bool Current = PipeRan && PipeResult.Success &&
+                       PipelineFeatureGeneration == SigDB.featureGeneration();
+  const auto Indexed = PipeResult.LibraryRecognitionsByFunction.find(Entry);
+  const bool Analyzed =
+      Current && Indexed != PipeResult.LibraryRecognitionsByFunction.end();
+  if (Analyzed)
+    for (size_t Index : Indexed->second) {
+      const auto &R = PipeResult.LibraryRecognitions[Index];
+      Annotations.push_back(libraryRecognitionJSON(R));
+      if (R.Scope == sigs::LibraryFeatureScope::WholeFunction) {
+        Ambiguous |= Whole != nullptr;
+        Whole = &R;
+      }
+    }
+  const bool AnnotatedDisplay =
+      Whole && !Ambiguous && F.Origin < NameOrigin::Stated;
+  if (AnnotatedDisplay)
+    Display = Whole->DisplayName;
+  const char *State =
+      SigDB.featurePacks().empty() ? "disabled"
+      : !Analyzed                  ? "pending"
+      : PipeResult.LibraryRecognitionBudgetExhausted.contains(Entry)
+          ? "budget-exhausted"
+      : Annotations.empty() ? "no-match"
+                            : "matched";
+  return llvm::json::Object{{"name", jsonSafeText(F.Name)},
+                            {"display_name", jsonSafeText(Display)},
+                            {"linkage_name", jsonSafeText(F.LinkageName)},
+                            {"name_origin", nameOriginText(F.Origin)},
+                            {"display_origin", AnnotatedDisplay
+                                                   ? "recognition"
+                                                   : nameOriginText(F.Origin)},
+                            {"linkage_origin", nameOriginText(F.LinkageOrigin)},
+                            {"addr", vaHex(Entry)},
+                            {"size", static_cast<int64_t>(F.Size)},
+                            {"recognition_state", State},
+                            {"library_annotations", std::move(Annotations)}};
+}
 
 // ===--------------------------------------------------------------------===//
 // Info panels (JSON)
@@ -513,13 +566,10 @@ const char *neverd_resolve_addr(neverd_session_t Sess, neverd_va_t Addr) {
 
   llvm::json::Object Obj;
 
-  for (const auto &F : S->Functions) {
-    if (F.Entry == Addr) {
-      Obj["type"] = "function";
-      Obj["name"] = jsonSafeText(F.Name);
-      Obj["addr"] = vaHex(F.Entry);
-      return dupStr(jsonToString(llvm::json::Value(std::move(Obj))));
-    }
+  Obj = S->functionIdentity(Addr);
+  if (!Obj.empty()) {
+    Obj["type"] = "function";
+    return dupStr(jsonToString(llvm::json::Value(std::move(Obj))));
   }
 
   if (const Import *Imp = S->Img.findImportAt(Addr)) {

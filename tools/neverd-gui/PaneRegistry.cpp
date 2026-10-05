@@ -934,7 +934,9 @@ void PaneRegistry::repairAnalysisLocations(PaneController *only) {
             location.functionAddress =
                 payload.value("function_address").toString();
             if (payload.value("name").isString())
-              location.functionName = payload.value("name").toString();
+              location.functionName =
+                  payload.value("display_name")
+                      .toString(payload.value("name").toString());
             if (payload.value("comment").isString()) {
               location.comment = payload.value("comment").toString();
               location.commentKnown = true;
