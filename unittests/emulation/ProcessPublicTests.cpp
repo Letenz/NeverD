@@ -409,7 +409,8 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"virtual-file-metadata",
                     emulation::darwin_test::MutationMetadataHex},
           std::pair{"sparse-file-seek", "73"}, std::pair{"unlinked-file", "75"},
-          std::pair{"stdin", "00ff78"}, std::pair{"output-descriptors", "6f6b"},
+          std::pair{"created-file", "63"}, std::pair{"stdin", "00ff78"},
+          std::pair{"output-descriptors", "6f6b"},
           std::pair{"file-status", "73"}, std::pair{"file-mapping", "6d"},
           std::pair{"directories", "64"}, std::pair{"directory-entries", "65"},
           std::pair{"time-values", emulation::darwin_test::TimeHex},
@@ -458,7 +459,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   if (llvm::StringRef(Mode).starts_with("writable-files") ||
       llvm::StringRef(Mode) == "virtual-file-metadata" ||
       llvm::StringRef(Mode) == "sparse-file-seek" ||
-      llvm::StringRef(Mode) == "unlinked-file") {
+      llvm::StringRef(Mode) == "unlinked-file" ||
+      llvm::StringRef(Mode) == "created-file") {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     auto *File = Input.getAsObject()
                      ->getObject(field::DarwinFiles)
@@ -469,12 +471,14 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     (*File->getObject(field::FileMetadata))[field::FileFlags] = 0;
     if (llvm::StringRef(Mode) == "virtual-file-metadata" ||
         llvm::StringRef(Mode) == "sparse-file-seek" ||
-        llvm::StringRef(Mode) == "unlinked-file") {
+        llvm::StringRef(Mode) == "unlinked-file" ||
+        llvm::StringRef(Mode) == "created-file") {
       (*File->getObject(field::FileMetadata))[field::FileLinkCount] = 1;
       (*File)[field::FileMutationPolicy] = llvm::cantFail(
           llvm::json::parse(emulation::darwin_test::MutationPolicyJSON));
     }
-    if (llvm::StringRef(Mode) == "unlinked-file")
+    if (llvm::StringRef(Mode) == "unlinked-file" ||
+        llvm::StringRef(Mode) == "created-file")
       (*Input.getAsObject()
             ->getObject(field::DarwinFiles)
             ->getArray(field::Directories)

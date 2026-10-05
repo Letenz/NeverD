@@ -217,7 +217,7 @@ The original `writable-files` and `writable-files-nocancel` workloads compare
 actual bytes, offsets, flags and error order with the native kernel. Unit tests
 cover 4 KiB/16 KiB pages, budget reclamation, backend failure, metadata invalidation
 and mapping lifetime; C/CLI/Python exercise all five profile/ISA combinations.
-Creation, directory deletion, rename, hard links, native filesystem metadata updates, coherent vnode/COW
+Creation metadata, directory deletion, rename, hard links, native filesystem metadata updates, coherent vnode/COW
 or shared mappings and EOF SIGBUS remain unfinished. This does not complete the
 macOS/iOS environment or establish physical iOS or Intel HVF verification.
 
@@ -291,7 +291,7 @@ Per-directory `mutable:true` (C++ `DarwinFileOptions::MutableDirectories`) expli
 
 `unlink(10)` and `unlinkat(472)` remove existing regular names; unlinkat accepts flags zero or `AT_SYMLINK_NOFOLLOW_ANY=0x800`. Unknown flag bits return EINVAL before path/FD checks; valid directory-removal/system-discard modes remain unsupported. Low 32 flag bits apply. The shared resolver preserves pathname-fault/dirfd order, relative CWD/dirfd use and absolute-path independence. Missing names return ENOENT, file/trailing-slash paths ENOTDIR, ordinary directory targets EPERM and guest root EBUSY. Original native probes also check terminal `.`/`..` directory paths.
 
-A live namespace owns file objects separately from open descriptions. Unlink preserves existing FD/dup/independent-open bytes, offsets and status flags. Later opens fail; implicit parent directories and CWD remain present. F_GETPATH retains the captured old path, matching the native reference even after name removal. The file's writable grant belongs to its object. Unlinked objects retain their current-byte budget while any description or mapping lease remains; close/dup2 and the next mutation reclaim only unreachable objects, after the final mapped range is unmapped. Initial path/reference costs remain charged. This is bounded by the original catalogue; creation, rename, hard links and directory removal remain unfinished.
+A live namespace owns file objects separately from open descriptions. Unlink preserves existing FD/dup/independent-open bytes, offsets and status flags. Later opens fail; implicit parent directories and CWD remain present. F_GETPATH retains the captured old path, matching the native reference even after name removal. The file's writable grant belongs to its object. Unlinked objects retain their current-byte budget while any description or mapping lease remains; close/dup2 and the next mutation reclaim only unreachable objects, after the final mapped range is unmapped. Initial path/reference costs remain charged. Rename, hard links and directory removal remain unfinished; creation is described below.
 
 A successful unlink invalidates only its parent's stat and enumeration observations across old/new FDs, dup and path queries. stat/readdir/SEEK_END stop before output or cursor changes; ordinary read/pread still return EISDIR, while SET/CUR, F_GETPATH, fchdir and relative lookup continue. With a still-known file mutation policy, unlink sets nlink=0 and ctime to its fixed time, preserving mtime/atime/bytes/allocation. Later writes or truncation cannot restore nlink=1. Without a policy, or after whole-EFAULT, complete file metadata remains unknown. Rejected unlinks preserve all state. The original `unlinked-file` program compares native kernel name/descriptor behavior; policy timestamps and directory invalidation are explicit model rules.
 
@@ -300,6 +300,18 @@ A successful unlink invalidates only its parent's stat and enumeration observati
 ```
 
 [XNU unlink / unlinkat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [F_GETPATH](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+## Creating regular files
+
+`O_CREAT=0x200` creates an empty regular file only in an explicitly mutable immediate parent. Ordinary/nocancel open and openat share this behavior. The namespace grant makes new objects writable; existing objects retain their separate `WritableFiles` authority. A read-only descriptor can create but cannot write. Creation does not synthesize credentials, umask, inode or stat metadata: new stat64 and sparse-seek observations remain unknown, including when an old configured name is reused. New objects never inherit that old name's metadata or mutation policy.
+
+`O_EXCL=0x800` with O_CREAT returns EEXIST for an existing file or directory before truncation or writable/mapping checks; alone it has no effect. Existing read-only directory opens with O_CREAT succeed. Invalid access mode precedes descriptor availability, then O_CREAT|O_DIRECTORY returns EINVAL before pathname access. Only a missing final original component can be created: missing ancestors, trailing `/`, `//`, `/.` and `/..` remain ENOENT. Relative CWD/dirfd and absolute-path rules share the existing resolver. New O_CREAT|O_TRUNC does not set FWASWRITTEN; truncating an existing object does.
+
+Only successful insertion invalidates the immediate parent's stat/enumeration observations. New and old unlinked objects at the same name retain independent bytes, descriptors, metadata and mapping leases. The 256-entry cap includes fixed initial non-file entries plus live and retained orphan file objects. Each new object charges its canonical path and NUL alongside current bytes within 16 MiB. Unlink reclaims these dynamic charges only after the last description and mapping lease; closing a still-named object releases neither its entry nor bytes. Initial input/reference charges remain reserved. Exhausted model budgets, including a resolved canonical path of 1024 bytes or more, stop explicitly without inventing ENOSPC or a native pathname error. Rejected creation publishes no name or descriptor.
+
+The original `created-file` workload compares native macOS and all five guest profiles; 4K/16K tests independently cover exact capacity, rollback and mapped name reuse. Creation metadata, rename, links and directory mutation remain separate work.
+
+[XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
 ## Directories and relative paths
 
@@ -495,7 +507,7 @@ HVF runtime remains unvalidated and its Actions testing stays suspended. See the
 [HVF validation record](macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03).
 
 The focused workload gate additionally requires **every** Darwin process case
-on each platform supported by the host ISA: 81 cases on ARM64, or 54 on x64.
+on each platform supported by the host ISA: 84 cases on ARM64, or 56 on x64.
 Both `LC_MAIN` and independent raw `LC_UNIXTHREAD` programs are required on
 every supported platform. A source-inventory regression ensures each new
 Darwin process test joins this required set.
@@ -561,7 +573,7 @@ or physical iOS acceptance. Intel HVF Actions remain suspended.
 
 ### Remaining environment work
 
-1. Extend the bounded writable-file model with creation, rename and directory mutation,
+1. Extend the bounded writable-file model with creation metadata, rename and directory mutation,
    shared mappings and EOF fault delivery. Keep native acceptance for cursor,
    mapping lifetime and error-order interactions as the supported set grows.
 2. Extend fixed time inputs with advancing clocks and system observations,
@@ -777,3 +789,9 @@ The Release Darwin gate reconciled 671 registrations: 359 passed, 312 unavailabl
 ### Unlink verification, 2026-10-06
 
 Release Darwin reconciled 708 registrations: 384 passed, 324 unavailable-backend skips, zero failures; all 81 required ARM64 HVF identities executed. Focused coverage passed 137 of 156 with 19 unavailable skips. All 17 original native programs and 128 public C/CLI/report checks passed, including 83 Darwin comparisons. The unmodified Python method passed five profiles in 16.268 seconds; runner tests passed 66/66. Independent design and implementation review found no remaining blocker. Counts overlap, deadlines are unchanged and no recheck was needed. Evidence: `build-hvf-arm64/unlink-validation-summary.json`, `unlink-darwin-evidence/`, `unlink-native/`, `unlink-focused.xml` and `unlink-public.xml`. Directory invalidation and fixed policy times are explicit model behavior; these results do not establish full filesystem/runtime or physical iOS compatibility. Intel HVF Actions remains suspended; complete GitHub CI is separate.
+
+### Creation verification, 2026-10-06
+
+Release Darwin: 748 registrations, 412 passed, 336 unavailable-backend skips, zero failures; all 84 required ARM64 HVF identities executed. Focused: 162 registrations, 150 passed, 12 unavailable skips. Public C/CLI/report: 133/133, including 88 Darwin comparisons. Python passed all five profiles in 9.982 seconds; original native programs 18/18 and evidence runners 66/66 passed. Initial ARM64 creation runs correctly rejected pointer-table rebases introduced by the fixture; replacing the table with inline bytes removed them without changing loader admission. The original failures and binaries remain preserved. The runner inventory expectation was updated from 27 to 28 workloads. Independent review found no remaining blocker, including added parent-observation rollback coverage. Counts overlap and deadlines are unchanged. Full GitHub CI and physical iOS remain separate; Intel HVF Actions stay suspended.
+
+`build-hvf-arm64/create-validation-summary.json`, `create-darwin-evidence/`, `create-focused.xml`, `create-public.xml`, `create-native-final/`, `create-initial-evidence/`.

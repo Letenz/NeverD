@@ -37,7 +37,7 @@ public:
   MappingSource mappingSource(uint32_t FD) const;
 
 private:
-  enum class Kind { Input, Output, Error, File, Directory };
+  enum class Kind { Input, Output, Error, File, Directory, Missing };
   struct Contents {
     llvm::ArrayRef<uint8_t> Initial;
     std::optional<std::vector<uint8_t>> Modified;
@@ -46,6 +46,7 @@ private:
     const DarwinFileMutationPolicy *Policy = nullptr;
     std::optional<llvm::BitVector> Allocated;
     bool Writable = false;
+    uint64_t PathCharge = 0;
     bool MetadataInvalidated = false;
     std::shared_ptr<const unsigned> Lease = std::make_shared<const unsigned>(0);
     llvm::ArrayRef<uint8_t> bytes() const {
@@ -81,6 +82,7 @@ private:
   std::set<std::string> ChangedDirectories;
   bool NamespaceReady = false;
   std::optional<uint64_t> StorageUsed;
+  uint32_t FixedEntries = 0;
   std::optional<std::string> CurrentDirectory;
 
   uint32_t limit() const;
@@ -89,7 +91,8 @@ private:
   llvm::Error prepareMutation();
   void reclaimUnlinked();
   llvm::Expected<Pathname> readPath(uint64_t Address);
-  llvm::Expected<Lookup> resolvePath(uint64_t Address, uint32_t DirectoryFD);
+  llvm::Expected<Lookup> resolvePath(uint64_t Address, uint32_t DirectoryFD,
+                                     bool AllowMissing = false);
   llvm::Expected<std::optional<ServiceResult>> open(uint64_t Address,
                                                     uint32_t Flags,
                                                     uint32_t DirectoryFD,
@@ -101,6 +104,8 @@ private:
              ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   unlink(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>> create(Description &File,
+                                                      ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   copyout(uint64_t Address, llvm::ArrayRef<uint8_t> Bytes,
           const char *PartialDiagnostic, ProcessResult &Result);

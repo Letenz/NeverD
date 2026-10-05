@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 0de20e6b5b0a92721422de6cd168f08d02d0ab851a8d38159214df2ea73edb10 -->
+<!-- i18n-source: 868e3a532347e28dedc1fc91cdb30d0b59a7a017afd6e52c53aa3344d055195e -->
 
 [← 文件索引](README.md)
 
@@ -75,7 +75,7 @@ F_SETFL 只改 O_APPEND 並保留存取模式、close-on-exec 與 FWASWRITTEN；
 
 映射租約由 DarwinMemory 持有，全部區間 unmap 前拒絕 write、truncate、O_TRUNC，包含 PROT_NONE 和已 close 的 FD；失敗或舊式零長度映射不留租約。新映射取得目前內容。只寫 FD 的 READ/WRITE mmap 為 EACCES；PROT_NONE 可成功並以 mprotect 取得讀寫權限。
 
-原生一般/nocancel 程式比對位元組、游標、旗標及錯誤順序；單元測試涵蓋 4K/16K，C/CLI/Python 涵蓋五種組合。建立、刪除目錄、改名、硬連結、真實檔案系統的中繼資料更新、映射一致性與 EOF SIGBUS 尚缺；完整環境、iOS 實機與 Intel HVF 仍未驗收，Intel Actions 維持暫停。
+原生一般/nocancel 程式比對位元組、游標、旗標及錯誤順序；單元測試涵蓋 4K/16K，C/CLI/Python 涵蓋五種組合。建立中繼資料、刪除目錄、改名、硬連結、真實檔案系統的中繼資料更新、映射一致性與 EOF SIGBUS 尚缺；完整環境、iOS 實機與 Intel HVF 仍未驗收，Intel Actions 維持暫停。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -113,7 +113,7 @@ allocation_unit、mutation_time 及 seconds/nanoseconds 全部必填，整數沿
 
 `unlink(10)` / `unlinkat(472)` 刪除既有一般名稱；unlinkat 僅接受低 32 位 flags=0 或 `AT_SYMLINK_NOFOLLOW_ANY=0x800`。未知位先回 EINVAL；刪目錄/系統丟棄模式尚未支援。共用解析器保留路徑故障、dirfd、CWD 與絕對路徑順序；缺失 ENOENT、檔案後斜線 ENOTDIR、一般目錄 EPERM、根目錄 EBUSY。原生探針亦驗證末尾 `.`/`..`。
 
-舊 FD、dup、獨立開啟物件保留資料、游標與旗標，新開啟失敗；隱式父目錄與 CWD 保留，F_GETPATH 仍回傳捕獲的舊路徑。寫授權屬於檔案物件；全部描述元與最後一段映射釋放後，close/dup2 或下次修改才回收目前位元組預算，初始路徑/引用費用仍計入。建立、改名、硬連結與刪目錄尚缺。
+舊 FD、dup、獨立開啟物件保留資料、游標與旗標，新開啟失敗；隱式父目錄與 CWD 保留，F_GETPATH 仍回傳捕獲的舊路徑。寫授權屬於檔案物件；全部描述元與最後一段映射釋放後，close/dup2 或下次修改才回收目前位元組預算，初始路徑/引用費用仍計入。建立中繼資料、改名、硬連結與刪目錄尚缺。
 
 刪除後父目錄的 stat/列舉觀察對舊/新 FD、dup、路徑查詢皆失效；stat/readdir/SEEK_END 在複製或改游標前停止。read/pread 仍回 EISDIR，SET/CUR、F_GETPATH、fchdir 與相對查找可用。可信修改策略令 nlink=0、ctime=固定時間，保留其他時間、資料與分配；後續寫入不能恢復 nlink=1。無策略或整段 EFAULT 後中繼資料仍未知。失敗保留狀態；原生 `unlinked-file` 比較名稱/描述元，策略時間與目錄失效屬模型規則。
 
@@ -122,6 +122,16 @@ allocation_unit、mutation_time 及 seconds/nanoseconds 全部必填，整數沿
 ```
 
 [XNU unlink / unlinkat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [F_GETPATH](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+## 建立一般檔案
+
+O_CREAT=0x200 在明確 mutable 的直接父目錄建立空檔案，涵蓋一般/nocancel open、openat。新物件可寫，既有物件仍依 WritableFiles；唯讀 FD 可建立但不可寫入。不虛構憑據、umask、inode 或 stat，也不繼承同名舊物件的 metadata/mutation_policy；stat64 與稀疏定位仍未知。
+
+搭配 O_EXCL=0x800 時，既有檔案或目錄先回 EEXIST，不截斷；單獨 O_EXCL 無效。唯讀 O_CREAT 可開啟既有目錄。順序為無效存取模式→FD 容量→O_CREAT|O_DIRECTORY 的 EINVAL→路徑。只有原始路徑最後缺失分量可建立，缺失祖先或末尾 `/`、`//`、`/.`、`/..` 為 ENOENT。新建 O_CREAT|O_TRUNC 不設 FWASWRITTEN，截斷既有物件則設定。
+
+僅實際插入使父目錄觀測失效。同名新舊物件的資料、描述元、中繼資料與映射租約獨立。256 項涵蓋固定初始非檔案項、具名與存活孤立物件；新規範路徑/NUL 和目前資料計入 16 MiB，刪除且最後 FD/映射釋放後才回收，初始費用保留。預算耗盡或規範路徑達 1024 位元組明確停止，不捏造 ENOSPC 或原生路徑錯誤，失敗不建立名稱/FD。created-file 原生/五種來賓及 4K/16K 邊界測試驗證此合約；建立中繼資料、改名、連結及目錄修改仍待完善。
+
+[XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
 ## 目錄與相對路徑
 
@@ -214,7 +224,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-獨立工作負載驗收要求 ARM64 81 項或 x64 54 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
+獨立工作負載驗收要求 ARM64 84 項或 x64 56 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -301,3 +311,9 @@ Python 首次整組測試的三個 ARM64 目錄案例超時。不改參數的診
 稀疏定位驗證（2026-10-06）：Release Darwin 共 671 項，359 通過、312 項後端不可用而跳過、零失敗；78 項必需 ARM64 HVF 全部執行，Unicorn 覆蓋五種來賓。專項 147 項為 123 通過、24 跳過；16 個原生程式、122 項公共 C/CLI/報告（含 78 項 Darwin 比較）、Python 五組（12.344 秒）和 66 項 runner 全部通過。計數重疊，未改時限，歷史失敗保留。證據：`build-hvf-arm64/sparse-seek-validation-summary.json`。分配幾何屬於明確的虛擬策略，不能視為 APFS 等價；完整 CI 和 iOS 實機仍需驗收，Intel HVF Actions 保持暫停。
 
 刪除驗證（2026-10-06）：Release Darwin 708 項為 384 通過、324 項後端不可用跳過、零失敗，81 項必需 ARM64 HVF 全部執行。專項 156 項為 137 通過/19 跳過；原生 17/17、公共 C/CLI/報告 128/128（83 項 Darwin 比較）、Python 五組 16.268 秒、runner 66/66 皆通過。獨立設計與實作審查無剩餘阻塞；計數重疊、時限未改，無須重試。證據：`build-hvf-arm64/unlink-validation-summary.json`。目錄失效與固定策略時間屬模型規則，完整檔案系統/執行階段及 iOS 實機仍待驗收；Intel HVF Actions 維持暫停，完整 GitHub CI 另行驗收。
+
+### 建立驗證，2026-10-06
+
+Release Darwin：748 項，412 通過、336 項後端不可用跳過、零失敗；84 項 ARM64 HVF 必需項全執行。專項 162：150 通過/12 跳過；C/CLI/報告 133/133（Darwin 88）、Python 五組 9.982 秒、原生 18/18、runner 66/66 通過。初輪 ARM64 正確拒絕測試指標表的重定位，改為內聯位元組後通過，未放寬載入規則；原失敗和二進位檔保留。runner 清單預期由 27 更新為 28。獨立審查無剩餘阻塞，包含父目錄觀測的容量失敗測試。計數重疊、時限未改；完整 CI 與 iOS 實機另驗，Intel HVF Actions 暫停。
+
+`build-hvf-arm64/create-validation-summary.json`, `create-darwin-evidence/`, `create-focused.xml`, `create-public.xml`, `create-native-final/`, `create-initial-evidence/`.

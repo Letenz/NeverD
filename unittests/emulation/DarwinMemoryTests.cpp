@@ -162,6 +162,61 @@ TEST_P(DarwinMemoryTest, UnlinkedFileBudgetSurvivesPartialUnmapAndFinalClose) {
   EXPECT_EQ(Missing.Value, 2u);
 }
 
+TEST_P(DarwinMemoryTest,
+       RecreatedNamesKeepMappingsAndStorageLifetimesSeparate) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/other"] = {};
+  Options.DarwinFiles->WritableFiles = {"/data", "/other"};
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  const auto OldFD = openFile(std::vector<uint8_t>(Page * 2, 'x'), 2);
+  auto Old = call(ServiceKind::Mmap, {0, Page * 2, 1, 2, OldFD, 0});
+  ASSERT_FALSE(Old.Error);
+  const auto Scratch = allocate(Page);
+  const uint8_t Path[] = {'/', 'd', 'a', 't', 'a', 0};
+  llvm::cantFail(Space->write(Scratch, Path));
+  EXPECT_FALSE(fileCall(ServiceKind::Unlink, {Scratch}).Error);
+  const auto NewFD = fileCall(ServiceKind::Open, {Scratch, 0xa02});
+  ASSERT_FALSE(NewFD.Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {NewFD.Value, Page}).Error);
+  EXPECT_EQ(
+      fileCall(ServiceKind::Pwrite, {NewFD.Value, Scratch + 1, 1, 0}).Value,
+      1u);
+  auto Fresh = call(ServiceKind::Mmap, {0, Page, 1, 2, NewFD.Value, 0});
+  ASSERT_FALSE(Fresh.Error);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Old.Value, 1)), 'x');
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Fresh.Value, 1)), 'd');
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {OldFD, 0}).Value, UINT64_MAX);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationMapping);
+  EXPECT_FALSE(fileCall(ServiceKind::Close, {OldFD}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Unlink, {Scratch}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Close, {NewFD.Value}).Error);
+  const uint8_t Other[] = {'/', 'o', 't', 'h', 'e', 'r', 0};
+  llvm::cantFail(Space->write(Scratch, Other));
+  const auto B = fileCall(ServiceKind::Open, {Scratch, 2});
+  ASSERT_FALSE(B.Error);
+  const uint64_t Capacity = darwin_file_limits::Bytes - 2 * 6 - 2 * 7 - 2;
+  const uint64_t Occupied = Page * 3 + 6;
+  EXPECT_FALSE(
+      fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Occupied}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Occupied + 1})
+                .Value,
+            UINT64_MAX);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Old.Value, Page}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Occupied + 1})
+                .Value,
+            UINT64_MAX);
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Old.Value + Page, Page}).Error);
+  EXPECT_FALSE(
+      fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Page - 6}).Error);
+  EXPECT_EQ(
+      fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Page - 5}).Value,
+      UINT64_MAX);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Fresh.Value, 1)), 'd');
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Fresh.Value, Page}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {B.Value, Capacity}).Error);
+}
+
 TEST_P(DarwinMemoryTest, FailedAndLegacyZeroFileMappingsDoNotRetainLeases) {
   Options.DarwinFiles.emplace();
   Options.DarwinFiles->WritableFiles.insert("/data");

@@ -58,7 +58,11 @@ std::optional<ServiceResult> unsupported(ProcessResult &Result,
   Result.Diagnostic = Reason;
   return std::nullopt;
 }
-llvm::Expected<uint64_t>
+struct FileFootprint {
+  uint64_t Bytes;
+  uint32_t Entries;
+};
+llvm::Expected<FileFootprint>
 fileOptionsFootprint(const DarwinFileOptions &Options) {
   uint64_t Entries = Options.Files.size() + Options.Directories.size();
   if (Options.DescriptorLimit < 3 ||
@@ -246,7 +250,7 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     if (auto E = PathInput(Path, false))
       return E;
   }
-  return Total;
+  return FileFootprint{Total, uint32_t(Entries)};
 }
 } // namespace
 
@@ -314,7 +318,7 @@ void DarwinFiles::initializeNamespace() {
 void DarwinFiles::reclaimUnlinked() {
   for (auto I = Unlinked.begin(); I != Unlinked.end();) {
     if (I->use_count() == 1 && (*I)->Lease.use_count() == 1) {
-      *StorageUsed -= (*I)->bytes().size();
+      *StorageUsed -= (*I)->bytes().size() + (*I)->PathCharge;
       I = Unlinked.erase(I);
     } else {
       ++I;
@@ -327,7 +331,8 @@ llvm::Error DarwinFiles::prepareMutation() {
     auto Footprint = fileOptionsFootprint(*Options);
     if (!Footprint)
       return Footprint.takeError();
-    StorageUsed = *Footprint;
+    StorageUsed = Footprint->Bytes;
+    FixedEntries = Footprint->Entries - Options->Files.size();
   }
   reclaimUnlinked();
   return llvm::Error::success();
@@ -361,14 +366,16 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
   if ((Flags & OpenAccessMask) == OpenAccessMask)
     return returned(InvalidArgument, true);
   if (Flags & ~uint32_t(OpenCloseOnExec | OpenDirectory | OpenAccessMask |
-                        OpenAppend | OpenTruncate))
+                        OpenAppend | OpenTruncate | OpenCreate | OpenExclusive))
     return unsupported(Result, diagnostic::FileOpenFlags);
   // XNU reserves the descriptor before resolving the pathname. A failed
   // open does not retain that reservation.
   const uint32_t FD = freeDescriptor();
   if (FD == limit())
     return returned(TooManyFiles, true);
-  auto Resolved = resolvePath(Address, DirectoryFD);
+  if ((Flags & OpenCreate) && (Flags & OpenDirectory))
+    return returned(InvalidArgument, true);
+  auto Resolved = resolvePath(Address, DirectoryFD, Flags & OpenCreate);
   if (!Resolved)
     return Resolved.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*Resolved))
@@ -376,6 +383,14 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
   if (auto *Reason = std::get_if<const char *>(&*Resolved))
     return unsupported(Result, *Reason);
   auto &File = std::get<Description>(*Resolved);
+  const bool Created = File.Type == Kind::Missing;
+  if (!Created && (Flags & OpenCreate) && (Flags & OpenExclusive))
+    return returned(FileExists, true);
+  if (Created) {
+    auto Made = create(File, Result);
+    if (!Made || !*Made || (**Made).Error)
+      return Made;
+  }
   if ((Flags & OpenDirectory) && File.Type != Kind::Directory)
     return returned(NotDirectory, true);
   const bool Mutating = (Flags & OpenAccessMask) || (Flags & OpenTruncate);
@@ -384,7 +399,7 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
   if (Mutating && !File.File->Writable)
     return unsupported(Result, diagnostic::FileNotWritable);
   File.Flags = Flags & (OpenAccessMask | OpenAppend);
-  if (Flags & OpenTruncate) {
+  if ((Flags & OpenTruncate) && !Created) {
     auto Truncated = resize(File, 0, Result);
     if (!Truncated || !*Truncated || (**Truncated).Error)
       return Truncated;
@@ -396,7 +411,8 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
 }
 
 llvm::Expected<DarwinFiles::Lookup>
-DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD) {
+DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
+                         bool AllowMissing) {
   if (!Options)
     return diagnostic::FileInputs;
   initializeNamespace();
@@ -431,8 +447,8 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD) {
   // Walk before reducing dot components. A missing or regular-file ancestor
   // wins over later '..', long names and trailing slashes.
   auto Type = PathKind::Directory;
-  for (auto Part :
-       llvm::ArrayRef<llvm::StringRef>(Parts).drop_front(Absolute)) {
+  for (size_t Index = Absolute; Index < Parts.size(); ++Index) {
+    const auto Part = Parts[Index];
     if (Type != PathKind::Directory)
       return uint32_t(NotDirectory);
     if (Part.size() > limits::Name)
@@ -452,8 +468,11 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD) {
            : pathKind(*Options, Prefix) == PathKind::Directory
                ? PathKind::Directory
                : PathKind::Missing;
-    if (Type == PathKind::Missing)
+    if (Type == PathKind::Missing) {
+      if (AllowMissing && Index + 1 == Parts.size())
+        return Description{Kind::Missing, {}, 0, nullptr, std::move(Prefix)};
       return uint32_t(NoEntry);
+    }
   }
   auto Metadata = Options->Metadata.find(Prefix);
   Description File{Type == PathKind::File ? Kind::File : Kind::Directory,
@@ -546,6 +565,30 @@ DarwinFiles::unlink(uint64_t Path, uint32_t DirectoryFD,
   ChangedDirectories.insert(Parent);
   Unlinked.push_back(File.File);
   Nodes.erase(File.Path);
+  return returned(0);
+}
+
+llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::create(Description &File, ProcessResult &Result) {
+  const auto Parent = parentPath(File.Path);
+  if (!Options->MutableDirectories.contains(Parent))
+    return unsupported(Result, diagnostic::DirectoryNotMutable);
+  if (auto E = prepareMutation())
+    return std::move(E);
+  const uint64_t Charge = File.Path.size() + 1;
+  if (File.Path.size() >= limits::Path ||
+      FixedEntries + Nodes.size() + Unlinked.size() >= limits::Files ||
+      Charge > limits::Bytes - *StorageUsed)
+    return unsupported(Result, diagnostic::FileCreationLimit);
+  auto Node = std::make_shared<Contents>();
+  Node->Writable = true;
+  Node->PathCharge = Charge;
+  // A new object never inherits an old observation/policy at the same name.
+  File.Type = Kind::File;
+  File.File = Node;
+  *StorageUsed += Charge;
+  Nodes.emplace(File.Path, std::move(Node));
+  ChangedDirectories.insert(Parent);
   return returned(0);
 }
 

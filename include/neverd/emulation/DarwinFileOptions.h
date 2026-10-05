@@ -113,8 +113,10 @@ struct DarwinFileOptions {
   /// configured metadata; later successful mutations do not restore it.
   std::map<std::string, DarwinFileMutationPolicy> MutationPolicies;
   /// Explicit authority to change immediate names in these directories.
-  /// Independent of file-content writability. Namespace changes invalidate
-  /// the parent's observed metadata and directory snapshot.
+  /// Newly created objects have writable contents; existing objects retain
+  /// their separate WritableFiles authority. Namespace changes invalidate
+  /// the parent's observed metadata and directory snapshot. New objects have
+  /// no implicit metadata, mutation policy, credentials or umask observation.
   std::set<std::string> MutableDirectories;
 };
 } // namespace neverd::emulation

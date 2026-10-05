@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 0de20e6b5b0a92721422de6cd168f08d02d0ab851a8d38159214df2ea73edb10 -->
+<!-- i18n-source: 868e3a532347e28dedc1fc91cdb30d0b59a7a017afd6e52c53aa3344d055195e -->
 
 [← 文档索引](README.md)
 
@@ -83,7 +83,7 @@ F_SETFL 只改变 O_APPEND，保留访问模式、close-on-exec 和 FWASWRITTEN�
 
 DarwinMemory 持有映射租约；所有映射区间解除前，write、truncate 和 O_TRUNC 均停止，包括 PROT_NONE 和 FD 已关闭的映射。失败映射和旧式零长度映射不留租约；新映射读取当前内容。只写 FD 直接请求 READ/WRITE mmap 返回 EACCES，PROT_NONE 可成功并经 mprotect 获得读写权限。
 
-原生 writable-files 与 nocancel 程序比较字节、游标、标志和错误顺序；单元测试覆盖 4K/16K，C/CLI/Python 覆盖五种组合。创建、目录删除、重命名、硬链接、真实文件系统的元数据更新、映射一致性和 EOF SIGBUS 仍待实现。完整 macOS/iOS 目标尚未完成，iOS 真机与 Intel HVF 仍无验收，Intel Actions 保持暂停。
+原生 writable-files 与 nocancel 程序比较字节、游标、标志和错误顺序；单元测试覆盖 4K/16K，C/CLI/Python 覆盖五种组合。创建元数据、目录删除、重命名、硬链接、真实文件系统的元数据更新、映射一致性和 EOF SIGBUS 仍待实现。完整 macOS/iOS 目标尚未完成，iOS 真机与 Intel HVF 仍无验收，Intel Actions 保持暂停。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -121,7 +121,7 @@ DarwinMemory 持有映射租约；所有映射区间解除前，write、truncate
 
 `unlink(10)` / `unlinkat(472)` 删除现有普通名称；unlinkat 仅接受低 32 位 flags=0 或 `AT_SYMLINK_NOFOLLOW_ANY=0x800`。未知位先返回 EINVAL；已知的删除目录/系统丢弃模式仍不支持。共用解析器保留路径故障、目录 FD、CWD 和绝对路径的优先级；缺失为 ENOENT，文件后斜杠为 ENOTDIR，普通目录为 EPERM，来宾根目录为 EBUSY。原生探针也检查末尾 `.` / `..`。
 
-名称删除后，旧 FD、dup、独立打开对象仍保留数据、游标和状态标志，新打开返回 ENOENT；隐式父目录与 CWD 继续存在。F_GETPATH 保留已捕获旧路径，与原生对照一致。写授权属于文件对象。只有所有描述符和最后一段映射均释放后，close/dup2 或下一次修改才回收当前文件字节预算；初始路径/引用费用仍保留。创建、重命名、硬链接、目录删除仍待实现。
+名称删除后，旧 FD、dup、独立打开对象仍保留数据、游标和状态标志，新打开返回 ENOENT；隐式父目录与 CWD 继续存在。F_GETPATH 保留已捕获旧路径，与原生对照一致。写授权属于文件对象。只有所有描述符和最后一段映射均释放后，close/dup2 或下一次修改才回收当前文件字节预算；初始路径/引用费用仍保留。创建元数据、重命名、硬链接、目录删除仍待实现。
 
 成功删除使直接父目录的 stat/列举观察失效，涵盖旧/新 FD、dup 和路径查询；stat/readdir/SEEK_END 在复制和移动游标前停止。read/pread 仍为 EISDIR，SET/CUR、F_GETPATH、fchdir、相对查找继续可用。有仍可信的文件修改策略时，仅将 nlink 改为 0、ctime 改为固定时间，保留 mtime/atime、数据和分配；后续写入不能恢复 nlink=1。缺少策略或曾发生整段 EFAULT 时，完整文件元数据仍未知。失败不改变状态。原生 `unlinked-file` 比较名称/描述符行为；策略时间与目录失效是明确的模型规则。
 
@@ -130,6 +130,18 @@ DarwinMemory 持有映射租约；所有映射区间解除前，write、truncate
 ```
 
 [XNU unlink / unlinkat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [F_GETPATH](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+## 创建普通文件
+
+`O_CREAT=0x200` 只在显式 mutable 的直接父目录中创建空普通文件，普通/nocancel open、openat 共用实现。新对象获得内容写授权；已有对象仍使用独立的 WritableFiles 授权。只读 FD 可以创建但不能写入。新对象不虚构凭据、umask、inode 或 stat 信息，也不继承同名旧对象的 metadata/mutation_policy；stat64 和稀疏定位仍明确未知。
+
+O_CREAT 配合 `O_EXCL=0x800` 对已有文件或目录先返回 EEXIST，不截断、不检查写授权或映射；O_EXCL 单独无效。已有目录可用只读 O_CREAT 打开。顺序为无效访问模式→FD 容量→O_CREAT|O_DIRECTORY 的 EINVAL→路径访问。只能创建原始路径的最后缺失分量；缺失祖先及末尾 `/`、`//`、`/.`、`/..` 仍为 ENOENT。新文件的 O_CREAT|O_TRUNC 不设置 FWASWRITTEN，截断已有文件则设置。
+
+只有实际插入才使父目录 stat/枚举失效。同名重建与仍打开或映射的旧对象拥有独立字节、元数据、描述和映射租约。256 项上限计入固定初始非文件项、具名对象及仍存活的孤立对象；新对象的规范路径/NUL 和当前字节计入 16 MiB，删除且最后 FD/映射释放后才回收动态费用。关闭具名对象不释放名额，初始输入/引用费用仍保留。预算不足或规范路径达到 1024 字节会明确停止，不虚构 ENOSPC 或原生路径错误；失败不留下名称或 FD。
+
+原生 created-file 与五种来宾组合对照，4K/16K 测试覆盖精确容量、失败原子性和旧映射存活时重建。创建元数据、重命名、链接及目录修改仍待完善。
+
+[XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
 ## 目录与相对路径
 
@@ -227,7 +239,7 @@ Intel HVF 的 10 项原生 transport 和全部 26 个 Darwin 工作负载均已�
 [HVF 验证记录](macos-hvf.md)，不能把内核参考程序成功当作后端通过。
 
 新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
-ARM64 三个平台共 81 项，x64 的 macOS 和 Simulator 共 54 项。
+ARM64 三个平台共 84 项，x64 的 macOS 和 Simulator 共 56 项。
 每种平台都必须执行 `LC_MAIN` 和独立编写的 `LC_UNIXTHREAD` 程序；源码清单回归确保
 以后新增的 Darwin 进程用例也进入必需集合。
 macOS 本机构建还会把同一份自编目标文件链接为宿主参考程序，对照返回、退出、内存保护/
@@ -401,3 +413,9 @@ Python 首次整组测试在三个 ARM64 目录枚举场景超时；不改参数
 稀疏定位验证（2026-10-06）：Release Darwin 共 671 项，359 通过、312 项后端不可用而跳过、零失败；78 项必需 ARM64 HVF 全部执行，Unicorn 覆盖五种来宾。专项 147 项为 123 通过、24 跳过；16 个原生程序、122 项公共 C/CLI/报告（含 78 项 Darwin 比较）、Python 五组（12.344 秒）和 66 项 runner 全部通过。计数重叠，未改时限，历史失败保留。证据：`build-hvf-arm64/sparse-seek-validation-summary.json`。分配几何属于显式虚拟策略，不能视为 APFS 等价；完整 CI 和 iOS 真机仍需验收，Intel HVF Actions 保持暂停。
 
 删除验证（2026-10-06）：Release Darwin 708 项为 384 通过、324 项后端不可用跳过、零失败，81 项必需 ARM64 HVF 全部执行。专项 156 项为 137 通过/19 跳过；原生 17/17、公共 C/CLI/报告 128/128（83 项 Darwin 比较）、Python 五组 16.268 秒、runner 66/66 均通过。独立设计与实现审查无剩余阻塞；计数重叠、时限未改，无需重试。证据：`build-hvf-arm64/unlink-validation-summary.json`。目录失效与固定策略时间属于模型规则，完整文件系统/运行时和 iOS 真机仍未验收；Intel HVF Actions 继续暂停，完整 GitHub CI 单独验收。
+
+### 创建验证，2026-10-06
+
+Release Darwin 共 748 项：412 通过、336 项后端不可用跳过、零失败，84 项必需 ARM64 HVF 全部执行。专项 162 项为 150 通过/12 跳过；公共 C/CLI/报告 133/133（88 项 Darwin），Python 五组 9.982 秒、原生 18/18、runner 66/66 均通过。初轮 ARM64 正确拒绝测试指针表引入的重定位；改为内联字节后通过，未放宽加载规则，原失败和二进制保留。runner 预期清单同步从 27 改为 28 个工作负载。独立审查无剩余阻塞，并补测容量失败不改变父目录观测。计数重叠，时限未改。完整 GitHub CI、iOS 真机另行验收；Intel HVF Actions 仍暂停。
+
+`build-hvf-arm64/create-validation-summary.json`, `create-darwin-evidence/`, `create-focused.xml`, `create-public.xml`, `create-native-final/`, `create-initial-evidence/`.

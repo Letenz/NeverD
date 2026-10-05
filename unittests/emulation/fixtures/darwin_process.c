@@ -618,6 +618,105 @@ static int file_status(const char *path) {
   return 37;
 }
 /* Existing-file mutations execute unchanged against the native BSD ABI. */
+/* Original native/guest creation and same-name object lifetime comparison. */
+static int created_file(const char *path) {
+  unsigned error;
+  int check = 80;
+#define CREATE_EXPECT(expression)                                              \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  char parent[1024], before[1024], after[1024], trailing[1024], bytes[10];
+  unsigned size = 0, slash = 0;
+  while (path[size]) {
+    parent[size] = trailing[size] = path[size];
+    if (path[size] == '/')
+      slash = size;
+    ++size;
+  }
+  parent[slash ? slash : 1] = 0;
+  u64 directory = call(5, (u64)parent, 0x200, 0600, 0, 0, 0, &error);
+  CREATE_EXPECT(!error);
+  CREATE_EXPECT(call(5, (u64)parent, 0xe02, 0600, 0, 0, 0, &error) == 17 &&
+                error);
+  u64 old = call(5, (u64)path, 2, 0, 0, 0, 0, &error);
+  CREATE_EXPECT(!error);
+  CREATE_EXPECT(call(92, old, 50, (u64)before, 0, 0, 0, &error) == 0 && !error);
+  CREATE_EXPECT(call(5, (u64)path, 0xe02, 0600, 0, 0, 0, &error) == 17 &&
+                error);
+  CREATE_EXPECT(call(5, (u64)-1, 0x100200, 0600, 0, 0, 0, &error) == 22 &&
+                error);
+  CREATE_EXPECT(call(10, (u64)path, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  // Inline bytes keep this freestanding fixture free of pointer rebases.
+  const char suffixes[][8] = {"/", "//", "/.", "/..", "/../new"};
+  for (unsigned i = 0; i != 5; ++i) {
+    unsigned j = 0;
+    do {
+      trailing[size + j] = suffixes[i][j];
+    } while (suffixes[i][j++]);
+    CREATE_EXPECT(call(5, (u64)trailing, 0xa02, 0600, 0, 0, 0, &error) == 2 &&
+                  error);
+  }
+  CREATE_EXPECT(call(5, (u64)path, 0x800, 0, 0, 0, 0, &error) == 2 && error);
+  u64 a = call(464, directory, (u64)(path + slash + 1), 0x1234567801000e00UL,
+               0600, 0, 0, &error);
+  CREATE_EXPECT(!error);
+  CREATE_EXPECT(call(92, a, 3, 0, 0, 0, 0, &error) == 0 && !error);
+  CREATE_EXPECT(call(92, a, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  CREATE_EXPECT(call(199, a, 0, 2, 0, 0, 0, &error) == 0 && !error);
+  CREATE_EXPECT(call(4, a, (u64) "x", 1, 0, 0, 0, &error) == 9 && error);
+  u64 b = call(398, (u64)path, 10, 0, 0, 0, 0, &error);
+  CREATE_EXPECT(!error);
+  u64 d = call(41, b, 0, 0, 0, 0, 0, &error);
+  CREATE_EXPECT(!error);
+  CREATE_EXPECT(call(4, b, (u64) "abc", 3, 0, 0, 0, &error) == 3 && !error);
+  CREATE_EXPECT(call(199, d, 0, 1, 0, 0, 0, &error) == 3 && !error);
+  CREATE_EXPECT(call(199, a, 0, 1, 0, 0, 0, &error) == 0 && !error);
+  CREATE_EXPECT(call(154, d, (u64) "Z", 1, 5, 0, 0, &error) == 1 && !error);
+  CREATE_EXPECT(call(153, a, (u64)bytes, 10, 0, 0, 0, &error) == 6 && !error);
+  CREATE_EXPECT(bytes[0] == 'a' && bytes[2] == 'c' && !bytes[3] && !bytes[4] &&
+                bytes[5] == 'Z');
+  CREATE_EXPECT(call(92, b, 3, 0, 0, 0, 0, &error) == 0x1000a && !error);
+  CREATE_EXPECT(call(92, old, 50, (u64)after, 0, 0, 0, &error) == 0 && !error);
+  CREATE_EXPECT(equal(before, after));
+  CREATE_EXPECT(call(92, a, 50, (u64)after, 0, 0, 0, &error) == 0 && !error);
+  CREATE_EXPECT(equal(before, after));
+  unsigned char status[144];
+  CREATE_EXPECT(call(339, old, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  CREATE_EXPECT(little_integer(status + 6, 2) == 0 &&
+                little_integer(status + 96, 8) == 10);
+  CREATE_EXPECT(call(5, (u64)path, 0xe02, 0600, 0, 0, 0, &error) == 17 &&
+                error);
+  CREATE_EXPECT(call(199, a, 0, 2, 0, 0, 0, &error) == 6 && !error);
+  u64 truncated = call(5, (u64)path, 0x600, 0600, 0, 0, 0, &error);
+  CREATE_EXPECT(!error);
+  CREATE_EXPECT(call(92, truncated, 3, 0, 0, 0, 0, &error) == 0x10000 &&
+                !error);
+  CREATE_EXPECT(call(199, a, 0, 2, 0, 0, 0, &error) == 0 && !error);
+  CREATE_EXPECT(call(153, old, (u64)bytes, 10, 0, 0, 0, &error) == 10 &&
+                !error);
+  CREATE_EXPECT(bytes[0] == '0' && bytes[9] == '9');
+  const u64 fds[] = {old, a, b, d, truncated};
+  for (unsigned i = 0; i != 5; ++i)
+    CREATE_EXPECT(call(6, fds[i], 0, 0, 0, 0, 0, &error) == 0 && !error);
+  CREATE_EXPECT(
+      call(472, directory, (u64)(path + slash + 1), 0, 0, 0, 0, &error) == 0 &&
+      !error);
+  for (u64 access = 0; access != 3; ++access) {
+    u64 fresh = call(398, (u64)path, 0x600 | access, 0600, 0, 0, 0, &error);
+    CREATE_EXPECT(!error);
+    CREATE_EXPECT(call(92, fresh, 3, 0, 0, 0, 0, &error) == access && !error);
+    CREATE_EXPECT(call(6, fresh, 0, 0, 0, 0, 0, &error) == 0 && !error);
+    CREATE_EXPECT(call(10, (u64)path, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  }
+  CREATE_EXPECT(call(6, directory, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  CREATE_EXPECT(call(4, 1, (u64) "c", 1, 0, 0, 0, &error) == 1 && !error);
+#undef CREATE_EXPECT
+  return 37;
+}
+
 /* Original native/guest namespace and open-object lifetime comparison. */
 static int unlinked_file(const char *path) {
   unsigned error;
@@ -1083,6 +1182,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
 #endif
                0, mach_flags(1))
         .value;
+  if (equal(argv[1], "created-file"))
+    return argc < 3 ? 79 : created_file(argv[2]);
   if (equal(argv[1], "unlinked-file"))
     return argc < 3 ? 79 : unlinked_file(argv[2]);
   if (equal(argv[1], "sparse-file-seek"))

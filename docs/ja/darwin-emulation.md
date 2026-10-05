@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 0de20e6b5b0a92721422de6cd168f08d02d0ab851a8d38159214df2ea73edb10 -->
+<!-- i18n-source: 868e3a532347e28dedc1fc91cdb30d0b59a7a017afd6e52c53aa3344d055195e -->
 
 [← ドキュメント一覧](README.md)
 
@@ -75,7 +75,7 @@ F_SETFL は O_APPEND のみを変更し、アクセスモード、close-on-exec�
 
 DarwinMemory の全マッピング区間を unmap するまで変更を拒否します。PROT_NONE と close 済み FD も含み、失敗・旧式ゼロ長マップはリースを残しません。新しいマップは現在の内容を使います。O_WRONLY の READ/WRITE mmap は EACCES、PROT_NONE は成功し後から mprotect で読み書きを許可できます。
 
-元の通常/nocancel プログラムをネイティブと比較し、4K/16K 単体テストと C/CLI/Python の5構成を検証します。作成・ディレクトリ削除・改名・ハードリンク、実ファイルシステムのメタデータ更新、マップ整合性、EOF SIGBUS、完全な環境と iOS 実機は未完了です。Intel HVF は未検証、Actions は停止中です。
+元の通常/nocancel プログラムをネイティブと比較し、4K/16K 単体テストと C/CLI/Python の5構成を検証します。作成メタデータ・ディレクトリ削除・改名・ハードリンク、実ファイルシステムのメタデータ更新、マップ整合性、EOF SIGBUS、完全な環境と iOS 実機は未完了です。Intel HVF は未検証、Actions は停止中です。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -113,7 +113,7 @@ allocation_unit、mutation_time、seconds/nanoseconds は必須で、整数は�
 
 `unlink(10)` / `unlinkat(472)` は既存の通常名を削除。unlinkat の下位32ビットは0または `0x800` のみ対応し、未知ビットはパス/FDより先に EINVAL、既知のディレクトリ削除等は未対応です。共通パス解決を使い、不在 ENOENT、ファイル末尾スラッシュ ENOTDIR、通常ディレクトリ EPERM、ルート EBUSY。ネイティブで末尾 `.`/`..` も確認。
 
-古い FD/dup/独立 open はデータ・カーソル・フラグを維持し、F_GETPATH は捕捉した旧パスを返します。新規 open は失敗し、暗黙の親と CWD は残ります。書込み権限はオブジェクトに属し、最後の記述子とマップ範囲の解放後だけ close/dup2/次の変更で現在のバイト予算を回収。初期パス費用は残り、作成・改名・ハードリンク・ディレクトリ削除は未完了。
+古い FD/dup/独立 open はデータ・カーソル・フラグを維持し、F_GETPATH は捕捉した旧パスを返します。新規 open は失敗し、暗黙の親と CWD は残ります。書込み権限はオブジェクトに属し、最後の記述子とマップ範囲の解放後だけ close/dup2/次の変更で現在のバイト予算を回収。初期パス費用は残り、作成メタデータ・改名・ハードリンク・ディレクトリ削除は未完了。
 
 親の stat/readdir/SEEK_END は旧/新 FD とパス全体で未知となり、コピー/カーソル変更前に停止。read/pread は EISDIR、SET/CUR/F_GETPATH/fchdir/相対解決は継続。既知の変更ポリシーでは nlink=0、ctime=固定時刻のみ変更し、後の書込みでも nlink=1 に戻りません。ポリシーなし/EFAULT 後はメタデータ不明。失敗は状態を保持。元の `unlinked-file` はネイティブの名前/FD規則を比較し、時刻と親の失効は明示的モデル規則です。
 
@@ -122,6 +122,16 @@ allocation_unit、mutation_time、seconds/nanoseconds は必須で、整数は�
 ```
 
 [XNU unlink / unlinkat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [F_GETPATH](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+## 通常ファイルの作成
+
+O_CREAT=0x200 は明示的な mutable 親の直下に空ファイルを作成します。通常/nocancel open・openat は共通です。新規オブジェクトは書込み可能、既存は WritableFiles に従います。読取り専用 FD でも作成できますが書込みはできません。資格情報・umask・inode・stat を推測せず、同名の旧 metadata/mutation_policy も継承しません。stat64 と疎領域の検索は未知のままです。
+
+O_CREAT と O_EXCL=0x800 の併用は既存ファイル・ディレクトリに切詰め前の EEXIST。O_EXCL 単独は無効です。既存ディレクトリの読取り専用 O_CREAT は成功します。無効アクセスモード→FD 空き→O_CREAT|O_DIRECTORY の EINVAL→パスの順です。作成できるのは元パスの最後の欠落要素だけで、欠落祖先や末尾 `/`・`//`・`/.`・`/..` は ENOENT。新規 O_CREAT|O_TRUNC は FWASWRITTEN を設定せず、既存切詰めは設定します。
+
+実際の挿入だけが親の観測を無効化。同名の新旧データ・FD・メタデータ・マップ寿命は独立です。256 項は初期非ファイル項と生存ファイルを数え、新しい正規パス/NUL とデータは 16 MiB に課金。削除後、最後の FD/マップ解放で動的費用を回収し、初期費用は保持します。予算超過や1024バイト以上の正規パスは明示的に停止し、ENOSPC やネイティブのパスエラーを捏造しません。失敗時は名前/FD を公開しません。created-file のネイティブ/5構成、4K/16K 境界試験が対象。作成メタデータ・改名・リンク・ディレクトリ変更は残っています。
+
+[XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
 ## ディレクトリと相対パス
 
@@ -214,7 +224,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-独立したワークロード検証は ARM64 81 件または x64 54 件をすべて要求し、各プラットフォームの `LC_MAIN` と `LC_UNIXTHREAD` を含みます。必須項目の欠落、スキップ、`ld64.lld` の不足はいずれも失敗です。
+独立したワークロード検証は ARM64 84 件または x64 56 件をすべて要求し、各プラットフォームの `LC_MAIN` と `LC_UNIXTHREAD` を含みます。必須項目の欠落、スキップ、`ld64.lld` の不足はいずれも失敗です。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -301,3 +311,9 @@ Python の初回全体テストで ARM64 の3ディレクトリ例がタイム�
 疎ファイル位置検証（2026-10-06）：Release Darwin 671 件中 359 成功、利用不可バックエンド 312 スキップ、失敗ゼロ。必須 ARM64 HVF 78 件をすべて実行し、Unicorn は五つのゲストを検証。対象テストは 147 件中 123 成功、24 スキップ。ネイティブ 16、公開 C/CLI/report 122（Darwin 比較 78）、Python 五構成（12.344 秒）、runner 66 が成功。件数は重複し、期限は変更せず、過去の失敗も保存。証拠：`build-hvf-arm64/sparse-seek-validation-summary.json`。割り当て規則は明示的な仮想ポリシーであり、APFS 同等性ではありません。完全な CI と iOS 実機検証は別途必要で、Intel HVF Actions は停止中です。
 
 unlink 検証（2026-10-06）：Release Darwin 708 件中 384 成功、利用不可324スキップ、失敗ゼロ。必須 ARM64 HVF 81 件すべて実行。対象156件は137成功/19スキップ、ネイティブ17/17、C/CLI/report128/128（Darwin83）、Python五構成16.268秒、runner66/66成功。独立設計・実装レビューに残る阻害事項なし。件数重複、期限不変、再試行不要。証拠：`build-hvf-arm64/unlink-validation-summary.json`。親の失効と固定時刻はモデル規則であり、完全なファイルシステム/ランタイムやiOS実機の検証ではありません。Intel HVF Actions は停止中、完全CIは別途必要です。
+
+### 作成の検証、2026-10-06
+
+Release Darwin は748登録、412成功、336バックエンド不在のスキップ、失敗なし。必須ARM64 HVF 84件を実行。重点162件は150成功/12スキップ。C/CLI/レポート133/133（Darwin88）、Python5構成9.982秒、ネイティブ18/18、runner66/66成功。初回ARM64は試験用ポインタ表の再配置を正しく拒否し、インラインバイトへ変更して成功。ローダーを緩和せず、初回失敗とバイナリを保存。runner期待数は27から28へ更新。独立レビューに阻害事項なし、親観測を保持する容量失敗も検証。件数は重複、時間制限は不変。完全なCIと実機iOSは別途、Intel HVF Actionsは停止中。
+
+`build-hvf-arm64/create-validation-summary.json`, `create-darwin-evidence/`, `create-focused.xml`, `create-public.xml`, `create-native-final/`, `create-initial-evidence/`.

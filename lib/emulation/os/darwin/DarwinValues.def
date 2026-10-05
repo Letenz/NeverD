@@ -26,6 +26,7 @@ NEVERD_DARWIN_VALUE(BadDescriptor, 9)
 NEVERD_DARWIN_VALUE(NoEntry, 2)
 NEVERD_DARWIN_VALUE(OperationNotPermitted, 1)
 NEVERD_DARWIN_VALUE(ResourceBusy, 16)
+NEVERD_DARWIN_VALUE(FileExists, 17)
 NEVERD_DARWIN_VALUE(NoSuchAddress, 6)
 NEVERD_DARWIN_VALUE(NotDirectory, 20)
 NEVERD_DARWIN_VALUE(IsDirectory, 21)
@@ -42,6 +43,8 @@ NEVERD_DARWIN_VALUE(OpenWriteOnly, 1)
 NEVERD_DARWIN_VALUE(OpenReadWrite, 2)
 NEVERD_DARWIN_VALUE(OpenAppend, 8)
 NEVERD_DARWIN_VALUE(OpenTruncate, 0x400)
+NEVERD_DARWIN_VALUE(OpenCreate, 0x200)
+NEVERD_DARWIN_VALUE(OpenExclusive, 0x800)
 NEVERD_DARWIN_VALUE(FileTooLarge, 27)
 NEVERD_DARWIN_VALUE(FileWasWritten, 0x10000)
 NEVERD_DARWIN_VALUE(FileRestrictedFlags, 0x60006)
@@ -192,6 +195,9 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(
     NamespaceAlias, "Darwin mutable namespace identity aliases are unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(UnlinkFlags, "unsupported Darwin unlinkat flags")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileCreationLimit,
+    "Darwin creation exceeds the file entry, path or storage budget")
 NEVERD_DARWIN_DIAGNOSTIC(FileMutationLimit,
                          "Darwin mutation exceeds the file storage budget")
 NEVERD_DARWIN_DIAGNOSTIC(FileMutatedMetadata,
