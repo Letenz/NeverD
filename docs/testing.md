@@ -2325,6 +2325,15 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 
 ### Android native workloads
 
+`AndroidSearchTests.cpp` executes independently compiled character-search
+callers at O0/O2 with ordinary, APS2 and RELR relocations on each available
+ARM64 backend. It checks first/last matches, NUL and unsigned characters,
+64-bit bounds, read-only page tails, Fortify-before-read ordering, unchanged
+guest bytes and errno, and dynamic provider lifetime. Direct model checks
+separate object bounds from memory and deadline limits. C API/CLI and Python
+cover successful named calls and non-returning Fortify failures. Pinned API 28
+source defines the contract; these checks do not establish device equivalence.
+
 `AndroidTimeTests.cpp` executes independent O0/O2 C fixtures with ordinary,
 APS2 and RELR relocations. It checks explicit fixed clocks, post-2038 and
 negative 64-bit seconds, exact timeval/timespec/timezone bytes, errno, dynamic

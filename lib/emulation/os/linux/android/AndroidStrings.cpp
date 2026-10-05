@@ -1,4 +1,4 @@
-//===- AndroidStrings.cpp - Bounded guest string transformations ---------===//
+//===- AndroidStrings.cpp - Bounded guest string operations --------------===//
 //
 // NeverD Decompiler
 //
@@ -9,9 +9,41 @@
 
 #include "llvm/Support/Endian.h"
 
+#include <algorithm>
 #include <array>
 
 namespace neverd::emulation::android_model {
+llvm::Expected<uint64_t> Bionic::findCharacter(const NativeCallEvent &Call) {
+  const auto &A = Call.Arguments;
+  llvm::StringRef Name(Call.Name);
+  bool Fortified = Name == symbol::StrchrChk || Name == symbol::StrrchrChk;
+  bool FindLast = Name == symbol::Strrchr || Name == symbol::StrrchrChk;
+  uint8_t Character = static_cast<uint8_t>(A[1]);
+  uint64_t Bound = Fortified ? A[2] : Options.MemoryLimit;
+  uint64_t Match = 0;
+  // Check the object extent before each read. A first match may return without
+  // reaching NUL; a last match still requires a complete terminated string.
+  for (uint64_t I = 0, Limit = std::min(Bound, Options.MemoryLimit); I < Limit;
+       ++I) {
+    if (A[0] > UINT64_MAX - I)
+      return failure(diagnostic::StringAddressOverflow);
+    uint64_t Address = A[0] + I;
+    auto C = byte(Address);
+    if (!C)
+      return C.takeError();
+    if (*C == Character) {
+      if (!FindLast)
+        return Address;
+      Match = Address;
+    }
+    if (!*C)
+      return Match;
+  }
+  if (Fortified && Bound <= Options.MemoryLimit)
+    return failure(diagnostic::FortifyReadPrefix + Name);
+  return failure(diagnostic::StringScanLimit);
+}
+
 llvm::Expected<uint64_t> Bionic::tokenize(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   uint64_t Input = A[0];

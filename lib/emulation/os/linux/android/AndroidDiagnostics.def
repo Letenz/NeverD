@@ -92,6 +92,8 @@ NEVERD_ANDROID_DIAGNOSTIC(GuestCalledPrefix, "guest called ")
 NEVERD_ANDROID_DIAGNOSTIC(MemcpyOverlap, "overlapping memcpy operands")
 NEVERD_ANDROID_DIAGNOSTIC(StringAddressOverflow, "string address overflows")
 NEVERD_ANDROID_DIAGNOSTIC(StringScanLimit, "string scan exceeds memory limit")
+NEVERD_ANDROID_DIAGNOSTIC(FortifyReadPrefix,
+                          "FORTIFY read exceeds object bounds in ")
 NEVERD_ANDROID_DIAGNOSTIC(StringCompareLimit,
                           "string comparison exceeds memory limit")
 NEVERD_ANDROID_DIAGNOSTIC(ReallocationOwnership,
