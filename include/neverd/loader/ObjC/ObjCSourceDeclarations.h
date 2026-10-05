@@ -10,6 +10,15 @@
 namespace neverd {
 struct BinaryImage;
 
+/// Canonical ARM64 Boolean/CGRect getter declarations, shared by projection
+/// and C presentation. These shapes authenticate neither a selector nor a
+/// machine body, receiver, lifetime or publication occurrence.
+std::optional<SourceFunctionTypeHint>
+objcSuperGetterSourceDeclaration(Arch Architecture, const TypeRef &ReturnType);
+std::optional<SourceFunctionTypeHint>
+objcSuperGetterHelperSourceDeclaration(Arch Architecture,
+                                       const TypeRef &ReturnType);
+
 std::optional<ObjCReceiverTypeHint>
 objcNativeSwiftSelfTypeHint(const BinaryImage &Image, va_t Entry);
 

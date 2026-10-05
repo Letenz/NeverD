@@ -1159,7 +1159,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 4569 項 CPU 檢查及 17 項 SEH 回歸，共有 4810 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `4825 CPU + 224 WHP + 17 SEH = 5066`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 4835 項 CPU 檢查及 17 項 SEH 回歸，共有 5076 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `4835 CPU + 224 WHP + 17 SEH = 5076`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1360,6 +1360,9 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `FrameMetadataAccessorUsesCurrentCatalogAndABI` 檢查共用中繼資料宣告、兩個回應載體和目前框架見證的發布。`FrameMetadataAccessorRejectsChangedImportAndBytes` 拒絕弱匯入、provider/名稱/addend 變更、私有位址請求、部分 spill、錯誤重新載入及原始呼叫變更。原始 ARM64 與產生 C 的見證 oracle 也會實際呼叫 Foundation URL 中繼資料存取器：兩個分支均在 O0/O2 下執行 2048 組，檢查動態見證選擇、完整輸出位元組、輸入保持、呼叫次數和保護字。這些檢查不證明動態堆疊配置或見證記憶體效應。
 
+`AArch64ExclusiveTests.cpp` 涵蓋標量與成對寬度、acquire/release 形式、暫存器重疊、別名、對齊及權限錯誤、快照、觀察回呼取消或失敗，以及雙 CPU 競爭。`RAMReservationTests.cpp` 涵蓋相同值寫入、ABA、配置重用、回復，以及 KVM/Unicorn 字串和 `ENTER` 寫入的干擾。原始 ARM64 Windows 行程範例執行獨佔迴圈；`scripts/check_aarch64_exclusives.py` 在 Windows ARM64 CI 執行原始指令並保存對齊例外記錄。原生指令證據不代表已驗證 ARM64 KVM/WHP 後端執行；不可用設定仍明確列為略過。 相同的獨佔指令案例也涵蓋軟體 Unicorn、跨契約干擾、同值及 ABA 寫入、同次執行中的可執行別名，以及 `DC ZVA` 寫入與觀察回呼取消。
+ `windows-alignment-oracle.yml` 也執行 ARM64 探針：1,320 筆觀察記錄涵蓋所有未對齊偏移、四種讀寫序列，以及可寫、唯讀、不可存取和跨頁記憶體。探針保留完整位寬的暫存器測試值，並記錄錯誤前已提交的部分寫入。 `WindowsExclusiveProcessTests.cpp` 將 1,320 筆原始 Windows ARM64 觀察結果與 `WindowsExclusiveNative.def` 的原生摘要核對，保留暫存器值、例外中繼資料及 RAM 效果，只正規化程式碼與資料的放置位址。
+
 結構上已為常數的原生目標直接使用既有的可達性檢查排程。符號單目標只有在窮盡列舉後才重用傳入述詞。迴歸在直線執行的查詢預算內驗證 128 次常數跳轉，並按每次轉移兩次列舉查詢的預算驗證 32 次計算目標跳轉，保留未約束的位址高位元和分支域。完整狀態結果遭修改、缺少對齊約束、目標數量上限為零或查詢與指令預算不足時必須拒絕。多目標和未完成列舉的既有拒絕檢查仍然必要。
 
 只有完成 UNSAT 證明、排除另一條邊後，原生分支才在目前的邊保留傳入域。測試在 512 個求解閘內驗證兩個方向各 32 次條件跳轉，並檢查精確與少一次的查詢預算及求解閘耗盡。修改或移除對齊條件、反轉比較及修改終態都必須拒絕；任意未定義控制和兩條邊皆可達的既有測試仍然必要。
@@ -1373,3 +1376,5 @@ block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符�
 迴圈關係測試涵蓋跨任意迭代次數保留的真實入口前綴暫存值、兩側獨立暫存偏移、原生至 LowIR 的組合及經過檢查的推斷。缺少前綴、部分未定義的讀取、值漂移及廣義入口分支間已定義位元組集合衝突時，必須拒絕認證。精確觀察量與查詢預算通過，少一單位時失敗；存續期宣告仍綁定憑證摘要。這些檢查僅支援固定前綴值，不建立一般原生 ABI。
 
 原生迴圈關係測試在任意迭代次數下檢查延後條件分支收集及保留未審核拒絕邊界。手動與推斷方案都必須重新檢查完整入口域和歸納域；可達的錯誤分支、修改過的原生更新及查詢或指令預算耗盡都拒絕憑證。測試綁定變更的不可達邊界位元組，保留嚴格預設值與無效方案拒絕，檢查兩種見證及組合收集選項，並繼續拒絕靜態 API 與重疊指令。憑證語意綱要 15 綁定此准入；一般原生 ABI 和原始碼組合仍是獨立義務。
+
+`ObjCSuperGetterSources` 涵蓋四載體 CGRect getter、十項發布變更拒絕案例，以及布林/CGRect 呼叫者共用機器碼的情況。O0、O2 執行驗證檢查精確回傳位元（含負零、無窮及 NaN 酬載）、接收者/類別身分和中繼資料呼叫之後的選擇子載入。Apple ARM64 同時執行原始編譯器 thunk 和產生的 C；其他平台使用本機紀錄 ABI 執行產生的 C。

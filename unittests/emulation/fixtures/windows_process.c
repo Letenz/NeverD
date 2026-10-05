@@ -6,6 +6,8 @@
 // No Windows headers, CRT or redistributed system binaries are required.
 #if defined(__x86_64__) || defined(_M_X64)
 #include "windows_wide_atomic.inc"
+#elif defined(__aarch64__) || defined(_M_ARM64)
+#include "aarch64_exclusive.inc"
 #endif
 typedef unsigned int DWORD;
 typedef unsigned long long ULONG_PTR;
@@ -181,6 +183,8 @@ __declspec(allocate(".rdata")) const struct {
 DWORD entry(void) {
 #if defined(__x86_64__) || defined(_M_X64)
   require(checkWideAtomic());
+#elif defined(__aarch64__) || defined(_M_ARM64)
+  require(checkExclusiveAccesses());
 #endif
   const char Mode = mode();
   require(Phase == (Mode == 'm' ? 6 : 2) && ThreadValue == TLSSeed + 2 &&

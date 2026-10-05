@@ -1305,6 +1305,10 @@ CoreImage 的强 SDK 声明保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 
 `AuthenticatedSourceFrameLoads` 可通过 `swiftMetadataAccessorSourceCallHint` 跨越元数据访问器调用。两条声明路径复用已有的编译器证据表、准确的强链接 provider，以及完整的 Swift 请求和元数据响应 ABI。双寄存器响应与通常的易失寄存器破坏规则保持完整；私有 spill 仍须通过共享的到达字节证明。这不提供值布局、见证内存效应、栈借用或动态栈分配模型。
 
+`AArch64ExclusiveInstructions.def` 统一定义独占指令的编码准入；`AArch64ExclusiveExecution` 在物理执行锁内完成寄存器及监视器状态转换。`RAMReservation` 保留分配身份，接收主机写入、保留视图、`RAMTransaction`、字符串指令及 `ENTER` 故障前部分写入的提交通知。临时写入和回滚不会使保留状态失效。不声明写入范围的执行会使已有保留状态失效；声明范围的执行按实际提交范围跟踪。客户机故障、服务陷阱和地址空间绑定会清除本地监视器。原始 `LDAR[B/H]` 和 `STLR[B/H]` 仍通过后端执行，并保留自然对齐 RAM 契约。 Unicorn 软件适配层在观察回调允许写入后，通过写入前钩子保守地使保留状态失效；独占存储完成后，会先清除所有可执行别名的翻译缓存，再继续同一次执行。 `AArch64ExclusiveAccess` 选择对齐策略：checked 配置采用 FEAT_LSE2，软件 Unicorn 保留引擎的特性模型；预约按相同操作数宽度及物理粒度匹配。
+
 `objcNonEscapingBlockSourceFrameEffects` 通过共享的 `sourceFrameCallArgumentStorage` 查询认证栈上 block 的同步借用。它重放原始机器指令、当前接收者与派发、强导入、完整头部与描述符、回调 ABI 和到达字节。描述符限定可写范围，填充字节不因此获得初始化证明；捕获字段类型与回调本体仍须独立验证。循环中的不确定观察和私有栈地址捕获会被拒绝，依赖只使用已完成的证明轮次。
 
 来源构造复用发布阶段的当前机器指令与完整 Low/Med/High 重放，认证与 block 分离的一次性值副本。最终发布独立证明 block 构造和捕获生命周期，再比较 block 投影及普通引用绑定后的整个本体。不同宽度的私有向量读取只保留所有到达路径均已初始化、且不含指针身份的标量字节；可写借用会清除旧初始化事实。 常量字符串继续由既有引用证明层认证；block/副本证明不能授权弱导入的常量对象。
+
+共享父类 getter 投影也支持当前 Darwin ARM64 `CGRect` 声明的四个 double 返回载体。它独立核对完整的 15 条机器指令、类访问器、调用者选择子槽和全局一致的方法 ABI。同一机器入口的布尔与 CGRect 返回使用不同的源码辅助函数。发布时重新检查当前调用者 ABI、返回类型、语句位置和提供者；不接纳间接结果存储。 声明形状统一由 `ObjCSourceDeclarations` 提供，源码投影与 HighC 输出器共同复用。

@@ -292,6 +292,8 @@ llvm::Error CheckedX64Backend::executeString(const cs_insn &I, unsigned Size,
     for (unsigned N = 0; N < Size; ++N) {
       const uint64_t Address = Destination + N;
       const auto &P = Memory->mappings().at(Address & ~(x64::PageSize - 1));
+      Memory->recordRAMWrite(P.Physical + Address % x64::PageSize,
+                             sizeof(uint8_t));
       *Memory->physicalPointer(P.Physical + Address % x64::PageSize) =
           uint8_t(Value >> (N * CHAR_BIT));
     }

@@ -603,6 +603,38 @@ bool usesFramework(const BinaryImage &Image,
 }
 } // namespace
 
+std::optional<SourceFunctionTypeHint>
+objcSuperGetterSourceDeclaration(Arch Architecture, const TypeRef &ReturnType) {
+  if (Architecture != Arch::AArch64)
+    return std::nullopt;
+  for (const auto Encoding :
+       {"B16@0:8", "{CGRect={CGPoint=dd}{CGSize=dd}}16@0:8"}) {
+    auto Expected = parseObjCMethodEncoding("value", Encoding);
+    std::string Error;
+    if (Expected && equalSourceTypes(Expected->ReturnType, ReturnType) &&
+        assignDarwinObjCSourceABI(*Expected, Architecture, Error))
+      return Expected;
+  }
+  return std::nullopt;
+}
+
+std::optional<SourceFunctionTypeHint>
+objcSuperGetterHelperSourceDeclaration(Arch Architecture,
+                                       const TypeRef &ReturnType) {
+  auto Expected = objcSuperGetterSourceDeclaration(Architecture, ReturnType);
+  if (!Expected)
+    return std::nullopt;
+  Expected->Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Expected->Parameters.clear();
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  for (const auto Name : {"self", "command", "selector_slot", "metadata"})
+    Expected->Parameters.push_back({Name, Pointer});
+  std::string Error;
+  return assignDarwinFixedSourceABI(*Expected, Architecture, Error)
+             ? Expected
+             : std::nullopt;
+}
+
 static std::optional<SelectorSignatures>
 selectorSourceTypeHints(const BinaryImage &Image, llvm::StringRef Selector,
                         const SourceFunctionTypeHint *FormatSignature) {

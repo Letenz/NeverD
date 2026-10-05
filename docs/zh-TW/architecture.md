@@ -1243,6 +1243,10 @@ CoreImage 的強 SDK 宣告保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 
 `AuthenticatedSourceFrameLoads` 可透過 `swiftMetadataAccessorSourceCallHint` 跨越中繼資料存取器呼叫。兩條宣告路徑重用既有的編譯器證據表、準確的強連結 provider，以及完整的 Swift 請求與中繼資料回應 ABI。雙暫存器回應與一般的易失暫存器破壞規則保持完整；私有 spill 仍須通過共用的到達位元組證明。這不提供值配置、見證記憶體效應、堆疊借用或動態堆疊配置模型。
 
+`AArch64ExclusiveInstructions.def` 統一定義獨佔指令的編碼准入；`AArch64ExclusiveExecution` 在實體執行鎖內完成暫存器與監視器狀態轉換。`RAMReservation` 保留配置身分，接收主機寫入、保留檢視、`RAMTransaction`、字串指令及 `ENTER` 錯誤前部分寫入的提交通知。暫時寫入及回復不會使保留狀態失效。未宣告寫入範圍的執行會使既有保留狀態失效；已宣告範圍的執行按實際提交範圍追蹤。客體錯誤、服務陷阱及位址空間綁定會清除本地監視器。原始 `LDAR[B/H]` 與 `STLR[B/H]` 仍透過後端執行，保留自然對齊 RAM 契約。 Unicorn 軟體適配層在觀察回呼允許寫入後，透過寫入前掛鉤保守地使保留狀態失效；獨佔儲存完成後，會先清除所有可執行別名的翻譯快取，再繼續同一次執行。 `AArch64ExclusiveAccess` 選擇對齊策略：checked 設定採用 FEAT_LSE2，軟體 Unicorn 保留引擎的特性模型；保留狀態依相同運算元寬度與實體粒度比對。
+
 `objcNonEscapingBlockSourceFrameEffects` 透過共用的 `sourceFrameCallArgumentStorage` 查詢認證堆疊上 block 的同步借用。它重播原始機器指令、目前接收者與派發、強匯入、完整標頭與描述符、回呼 ABI 和到達位元組。描述符限定可寫範圍，填充位元組不因此取得初始化證明；擷取欄位型別與回呼本體仍須獨立驗證。循環中的不確定觀察和私有堆疊位址擷取會被拒絕，相依性只使用已完成的證明輪次。
 
 來源建構重用發布階段的當前機器指令與完整 Low/Med/High 重放，認證與 block 分離的一次性值副本。最終發布獨立證明 block 建構和擷取生命週期，再比較 block 投影及一般參照繫結後的整個本體。不同寬度的私有向量讀取僅保留所有到達路徑均已初始化、且不含指標身分的純量位元組；可寫借用會清除舊初始化事實。 常量字串仍由既有參照證明層認證；block/副本證明不能授權弱匯入的常量物件。
+
+共用父類 getter 投影也支援目前 Darwin ARM64 `CGRect` 宣告的四個 double 回傳載體。它獨立核對完整的 15 條機器指令、類別存取器、呼叫者選擇子槽和全域一致的方法 ABI。同一機器入口的布林與 CGRect 回傳使用不同的原始碼輔助函式。發布時重新檢查目前呼叫者 ABI、回傳型別、陳述式位置及提供者；不接納間接結果儲存。 宣告形狀統一由 `ObjCSourceDeclarations` 提供，原始碼投影與 HighC 輸出器共同重用。
