@@ -52,7 +52,7 @@ inline bool objcSourceCallBound(
         *BlockParameterReceivers = nullptr,
     const std::map<va_t, std::map<uint64_t, ObjCReceiverTypeHint>>
         *BlockCaptureReceivers = nullptr,
-    bool NativeSwiftReceiverProved = false);
+    bool NativeSwiftReceiverProved = false, bool ByValueCopyProved = false);
 
 struct ObjCSourceBindingResult {
   HighFunc Function;
@@ -8821,7 +8821,7 @@ inline bool objcSourceCallBound(
         *BlockParameterReceivers,
     const std::map<va_t, std::map<uint64_t, ObjCReceiverTypeHint>>
         *BlockCaptureReceivers,
-    bool NativeSwiftReceiverProved) {
+    bool NativeSwiftReceiverProved, bool ByValueCopyProved) {
   using namespace objc_binding_detail;
   if (Expression.Kind != ExprKind::Call || !Expression.SourceCallHint ||
       Expression.IntrinsicId != Intrinsic::None ||
@@ -9025,7 +9025,8 @@ inline bool objcSourceCallBound(
       Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress)
     return false;
   if (((hasIndirectSourceParameters(Hint) || Binding.ByValueCopy) &&
-       (!ContainingFunction || !NativeSwiftReceiverProved ||
+       (!ContainingFunction ||
+        (!NativeSwiftReceiverProved && !ByValueCopyProved) ||
         !isObjCByValueCopyHint(Binding, ContainingFunction->Entry,
                                Image.Arch))) ||
       !validateSourceABI(Hint, Reason) || Hint.Architecture != Image.Arch ||

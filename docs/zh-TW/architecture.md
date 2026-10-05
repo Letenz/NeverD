@@ -1210,3 +1210,5 @@ Objective-C once thunk 根節點與共用 getter 使用相同的有界證明，�
 Swift CoreGraphics 的 `CGContext.move(to:)` 和 `addLine(to:)` 保留原始匯入的 Swift 入口。Swift 6.1.2 的 arm64 與 x86_64 用戶端 IR 均傳入兩個 double 座標和隨後的 `swiftself`，回傳 void。只有精確符合的強 CoreGraphics 框架或 overlay 函式庫匯入取得此宣告；呼叫端、堆疊框架和發佈仍須完整證明。
 
 共用 Swift 類別方法宣告也接受完整的 arm64 執行個體型別 `void(CGContext, CGRect, swiftself)`：一般繪圖內容位於 x0，矩形位於 d0–d3，接收者位於 x20。公開與私有成員共用同一宣告；Objective-C 包裝入口、型別變更、特化後綴及 x86_64 均不在此契約內。接收者探索、機器碼/MedIR 驗證與原始碼發布保留實際的邏輯 self 參數，並重新核對已註冊類別身分。繪圖內容不能取代 self。宣告恢復不授予堆疊框架效果、所有權、相依閉包或發布權限。
+
+CoreImage 的強 SDK 宣告保留 `imageWithCGImage:` 和 `imageByApplyingTransform:` 的 `CIImage` 結果型別。後者區分由六個 double 組成的邏輯 `CGAffineTransform`，以及 ARM64 x2 中指向 48 位元組私有副本的實體指標。Objective-C 方法只有在目前中繼資料認證入口 ABI、共用框架分析對照不可變機器碼與 LowIR 證明全部初始化、到達路徑、中間效果及後續使用後，才能繫結該副本。發布時獨立透過標準管線重建有界相依群組，將儲存的 HighIR、MedIR 重播及完整發布函式本體與新結果逐一比較；儲存的參數值不能認證自身。其他生命週期或虛擬呼叫憑據仍需獨立整合。HighC 僅執行一次 memcpy 快照，轉換為邏輯 SDK 記錄。此消費者僅支援 ARM64；未支援的提供方、弱匯入、過期宣告與未經證明的副本儲存均被拒絕。
