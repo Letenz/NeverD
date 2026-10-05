@@ -282,6 +282,40 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     std::set<va_t> Closed;
     std::set<va_t> StableClosed;
     std::map<va_t, std::set<size_t>> IgnoredNativeContexts;
+    const auto SourceCallAllowed = [&](const HighExpr &Expression,
+                                       const HighFunc &Function,
+                                       const auto &ReadOnlyHelpers) {
+      return objcSourceCallBound(Expression, S->Img, Functions, &ProfileStorage,
+                                 &ReadOnlyHelpers, &Function,
+                                 &BlockPlan.ParameterReceivers,
+                                 &BlockPlan.CaptureReceivers) ||
+             objCSwiftBooleanSourceCallBound(Expression, S->Img, Result,
+                                             Function) ||
+             objCCFunctionParameterSourceCallBound(Expression, S->Img, Result,
+                                                   Function) ||
+             objCImmutableNativeSourceCallBound(Expression, S->Img, Result,
+                                                Function) ||
+             objCSwiftVirtualSourceCallBound(Expression, S->Img, Result,
+                                             Function) ||
+             objCNativeSwiftReceiverSourceCallBound(Expression, S->Img, Result,
+                                                    Function, Functions) ||
+             objCMetadataFactorySourceCallBound(
+                 Expression, S->Img, MetadataFactoryPlan, ProfileStorage,
+                 Function, Functions) ||
+             objCMergedSetterSourceCallBound(Expression, S->Img,
+                                             MergedSetterPlan, ProfileStorage,
+                                             Function, Functions) ||
+             objCSuperGetterSourceCallBound(Expression, S->Img, SuperGetterPlan,
+                                            Function, Functions) ||
+             objCForwardedInitializerSourceCallBound(Expression, S->Img,
+                                                     ForwardedInitializerPlan,
+                                                     Function, Functions) ||
+             swiftOnceCallbackBound(Expression, S->Img, OncePlan, Functions) ||
+             swiftOnceAddressorBound(Expression, S->Img, OncePlan, Functions) ||
+             objcBlockSourceCallBound(Expression, BlockSource, BlockPlan,
+                                      Functions);
+    };
+    std::map<va_t, std::set<size_t>> ErasedNativeContexts;
     for (const auto &[Entry, Func] : Functions) {
       const bool ObjCOnceThunk = OncePlan.ObjCThunks.count(Entry) != 0;
       if (!Func->SourceTypeHint && !ObjCOnceThunk)
@@ -423,39 +457,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                ObjectPointerHelpers.end());
         const auto Audit = Audits.find(Entry);
         const auto CallAllowed = [&](const HighExpr &Expression) {
-          return objcSourceCallBound(Expression, S->Img, Functions,
-                                     &ProfileStorage, &ReadOnlyHelpers,
-                                     &Binding.Function,
-                                     &BlockPlan.ParameterReceivers,
-                                     &BlockPlan.CaptureReceivers) ||
-                 objCSwiftBooleanSourceCallBound(Expression, S->Img, Result,
-                                                 Binding.Function) ||
-                 objCCFunctionParameterSourceCallBound(
-                     Expression, S->Img, Result, Binding.Function) ||
-                 objCImmutableNativeSourceCallBound(Expression, S->Img, Result,
-                                                    Binding.Function) ||
-                 objCSwiftVirtualSourceCallBound(Expression, S->Img, Result,
-                                                 Binding.Function) ||
-                 objCNativeSwiftReceiverSourceCallBound(
-                     Expression, S->Img, Result, Binding.Function, Functions) ||
-                 objCMetadataFactorySourceCallBound(
-                     Expression, S->Img, MetadataFactoryPlan, ProfileStorage,
-                     Binding.Function, Functions) ||
-                 objCMergedSetterSourceCallBound(
-                     Expression, S->Img, MergedSetterPlan, ProfileStorage,
-                     Binding.Function, Functions) ||
-                 objCSuperGetterSourceCallBound(Expression, S->Img,
-                                                SuperGetterPlan,
-                                                Binding.Function, Functions) ||
-                 objCForwardedInitializerSourceCallBound(
-                     Expression, S->Img, ForwardedInitializerPlan,
-                     Binding.Function, Functions) ||
-                 swiftOnceCallbackBound(Expression, S->Img, OncePlan,
-                                        Functions) ||
-                 swiftOnceAddressorBound(Expression, S->Img, OncePlan,
-                                         Functions) ||
-                 objcBlockSourceCallBound(Expression, BlockSource, BlockPlan,
-                                          Functions);
+          return SourceCallAllowed(Expression, Binding.Function,
+                                   ReadOnlyHelpers);
         };
         Reason = sourceBodyLimitation(
             Binding.Function, *Binding.Function.SourceTypeHint,
@@ -493,10 +496,81 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                 IgnoredNativeContexts[Entry].insert(Parameter);
         }
       }
+      if (!OnceBinding.ErasedSwiftOnceContextParameters.empty())
+        ErasedNativeContexts.emplace(
+            Entry, std::move(OnceBinding.ErasedSwiftOnceContextParameters));
       ProjectionReasons.emplace(Entry, std::move(Reason));
       Projections.emplace(Entry, std::move(Binding));
       BlockProjections.emplace(Entry, std::move(BlockBinding));
     }
+    // Context independence is a local value-use proof. Resolve unknown caller
+    // inputs after every current body has been checked, so address order cannot
+    // hide an already proved callee. Native ABIs and all dependencies stay
+    // unchanged. The closure fixed point below still rejects every caller with
+    // an unrecovered descendant; this local rewrite cannot publish it.
+    bool ContextProgress;
+    do {
+      ContextProgress = false;
+      for (const auto &[Entry, Parameters] : ErasedNativeContexts) {
+        const auto Projection = Projections.find(Entry);
+        if (Projection == Projections.end() || !Closed.count(Entry))
+          continue;
+        const auto &Function = Projection->second.Function;
+        if (!Function.SourceTypeHint ||
+            Function.SourceTypeHint->Origin !=
+                SourceFunctionTypeHint::OriginKind::NativeAnalysis)
+          continue;
+        for (size_t Parameter : Parameters)
+          if (swift_once_source_detail::projectedOnceContextUnused(Function,
+                                                                   Parameter))
+            IgnoredNativeContexts[Entry].insert(Parameter);
+      }
+      for (auto &[Entry, Projection] : Projections) {
+        if (Closed.count(Entry) || !Projection.Limitation.empty() ||
+            !Projection.Function.SourceTypeHint ||
+            ProjectionReasons[Entry] != "method contains an unresolved value")
+          continue;
+        size_t Filled = 0;
+        auto Current = bindSwiftOnceSourceReferences(
+            Projection.Function, S->Img, OncePlan, Functions,
+            &IgnoredNativeContexts, &Filled);
+        if (!Filled)
+          continue;
+        eliminateUnusedValues(Current.Function.Body);
+        if (ImmutableStringInputs.count(Entry) &&
+            !objCImmutableStringCallbackValid(Current.Function, S->Img, Result,
+                                              OncePlan))
+          continue;
+        if (!RegisterCopies.valid(Current.Function) ||
+            !Constructors.valid(Current.Function) ||
+            !OpaqueValues.valid(Current.Function) ||
+            !ConsumedInputs.valid(Current.Function) ||
+            !WitnessFrames.valid(Current.Function))
+          continue;
+        if (SynchronizedProjections.count(Entry) &&
+            !proveObjCSynchronizedReceiverCleanup(S->Img, Current.Function))
+          continue;
+        auto ReadOnlyHelpers =
+            readOnlyScalarSourceHelpers(Current.Function, S->Img);
+        const auto ObjectHelpers =
+            readOnlyObjectPointerSourceHelpers(Current.Function, S->Img);
+        ReadOnlyHelpers.insert(ObjectHelpers.begin(), ObjectHelpers.end());
+        const auto Audit = Audits.find(Entry);
+        const auto CallAllowed = [&](const HighExpr &Expression) {
+          return SourceCallAllowed(Expression, Current.Function,
+                                   ReadOnlyHelpers);
+        };
+        const auto Reason = sourceBodyLimitation(
+            Current.Function, *Current.Function.SourceTypeHint,
+            Audit == Audits.end() ? nullptr : Audit->second, CallAllowed);
+        if (!Reason.empty())
+          continue;
+        Projection.Function = std::move(Current.Function);
+        ProjectionReasons[Entry].clear();
+        Closed.insert(Entry);
+        ContextProgress = true;
+      }
+    } while (ContextProgress);
     // Keep the local result distinct from failures propagated through callees.
     const auto LocalProjectionReasons = ProjectionReasons;
     bool Changed;
