@@ -2415,6 +2415,23 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 
 ### Android native workloads
 
+`AndroidResidencyTests.cpp` compares raw SVC, variadic and named `mincore`
+calls using independent O0/O2 fixtures with ordinary, APS2 and RELR relocations.
+It checks ordered range/alignment errors, empty queries, unchanged output bytes,
+errno and mapped-page refusal. `LinuxMemoryTests.cpp` checks precise user-range
+boundaries, PROT_NONE and a mapped prefix before a hole without changing bytes,
+mapping generation or allocation counts. `LinuxProcessTests.cpp` executes the
+corresponding x64/ARM64 raw syscall callers and verifies the full output vector.
+
+`AndroidSnapshotTests.cpp` uses independent O0/O2 C fixtures with all three
+relocation packings to allocate and fill memory during a native call. It checks
+explicitly deferred snapshots against full byte expectations, preserves the
+default entry-mapping requirement, and exercises unmapping, permission removal,
+unsupported imports, terminal faults, instruction limits and pre-execution
+size/output budgets. The same cases run on every available AArch64 backend.
+`ProcessReportTests.cpp` checks the per-read JSON Boolean and rejects it on
+memory initialization regions.
+
 `AndroidSignalTests.cpp` uses independent O0/O2 C declarations with ordinary,
 Android-packed and RELR relocations. It compares full guarded buffers for
 Bionic/kernel layouts, padding, 64-bit observations, signed flags, reserved
@@ -2769,3 +2786,13 @@ Memory-file reads cover empty ranges at the user limit and original-count signed
 Structural constant native targets use the existing feasibility-gated scheduler directly. A symbolic singleton retains the incoming predicate only after exhaustive enumeration. Regressions check 128 literal transfers within the straight-line query budget and 32 computed transfers with two enumeration queries per transfer, preserving free high address bits and branch domains. Changed full-state results, missing alignment, zero target limits and short query/instruction budgets refuse. Existing multiple-target and incomplete-enumeration refusals remain required.
 
 A native branch retains its incoming domain on one edge only after a completed UNSAT proof excludes the other edge. Tests verify 32 guarded transfers in both orientations within 512 solver gates, exact/short query budgets and exhausted gates. Changed or missing alignment, reversed comparisons and changed terminal state must refuse; existing arbitrary-control and two-feasible-edge tests remain required.
+
+Bit-blast caches and traversal storage track only reached expression nodes and variables. `NeverDSolverTests` checks late sparse identifiers, context growth between incremental assertions, cached bit reuse, model extraction and changing assumptions. Unrelated wide expressions remain unencoded; reached width violations, malformed roots and exhausted gate budgets still refuse.
+
+`SourceFrameAnalysis.CallStorage*` checks exact occurrences, reaching definitions, initialization, padding, escapes, bounds and cycles without granting a source gate. `ObjCFrameBlockBorrows.*` checks descriptor-bounded synchronous borrows and 19 changed-import, header, ABI and machine cases. These tests retain padding as unproved bytes and reject missing ownership initialization; final block construction, capture reads and callback closure remain separate publication checks.
+
+The block/copy publication cases additionally cover two disjoint 48-byte ranges, descriptor overlap, changed callback bodies, stale machine and IR, detached call occurrences and the exact projection order. `MixedWidthFrameCopiesMeetEveryInitializedByte` and `FrameCoverageCannotHideMissingBytesOrPointerJoins` exercise 8/16-byte stores in both join orders, missing bytes, writable invalidation and pointer identities retained after partial overwrites.
+
+Loop refinement tests cover function-temporary values retained from real entry prefixes across arbitrary iteration counts, independent temporary offsets on either side, native-to-LowIR composition and checked inference. Missing prefixes, partially defined reads, value drift and conflicting defined-byte sets across generalized entry arms must refuse certification. Exact observation/query limits pass and one-short limits fail; lifetime declarations remain digest-bound. These checks support fixed prefix values only and do not establish an ordinary native ABI.
+
+Native loop refinement exercises deferred conditional collection and retained unaudited refusal boundaries under arbitrary iteration counts. Manual and inferred plans must recheck the complete entry and induction domains; live bad arms, changed native updates and exhausted query/instruction budgets refuse certificates. Tests bind changed unreachable boundary bytes, preserve strict defaults and malformed-plan rejection, check both witness policies and combined collection options, and retain static-API and overlapping-instruction refusals. Proof semantic schema 15 binds this admission; ordinary native ABI and source composition remain separate obligations.

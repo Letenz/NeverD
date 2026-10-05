@@ -170,6 +170,17 @@ There are no queued signals, asynchronous delivery, handler invocation, signal
 frames, `sigreturn`, alternate stacks or per-thread signal-mask operations in
 this contract. CPU faults retain their existing explicit stop behavior.
 
+`mincore` supports ordered validation, zero-length queries and a first queried
+page that is unmapped. Alignment errors return EINVAL before address-range
+checks; an invalid query range returns ENOMEM before vector-range validation.
+The vector consumes one byte per rounded-up page. Numerical vector-range
+errors return EFAULT, but an unmapped vector does not precede ENOMEM for an
+unmapped first query page. These paths do not write the vector. A mapped first
+page, including PROT_NONE, stops explicitly because mapping ownership alone
+does not establish Linux residency. The model does not skip a mapped prefix to
+report a later hole, fabricate resident bits or query the host. This bounded
+ordering follows the [Linux implementation](https://android.googlesource.com/kernel/common/+/16a2d602244f/mm/mincore.c).
+
 Static ELF TLS templates (`PT_TLS`) are validated as loader-owned facts, with
 one template, bounded file/memory extents, alignment congruence and readable
 initialized bytes. Guest startup allocates and initializes each TLS block and

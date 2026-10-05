@@ -7,6 +7,7 @@ add_neverd_component_library(NeverDEmulationLinuxKernel
   LinuxServiceABI.cpp
   LinuxThreadPointer.cpp
   LinuxMemory.cpp
+  LinuxResidency.cpp
   LinuxFiles.cpp
   LINK_COMPONENTS EmulationCore
   LLVM_COMPONENTS Support)

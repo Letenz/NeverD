@@ -102,7 +102,7 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(13); // Certificate semantic schema, independent of report formatting.
+  Number(15); // Certificate semantic schema, independent of report formatting.
   Number(Contract.RetainUnauditedNativeBoundaries);
   Number(Contract.AllowOverlappingNativeInstructions);
   Number(Contract.DeferNativeConditionalEdges);
@@ -278,6 +278,7 @@ struct TerminalState {
   SymRef Predicate, SystemFlags, ReturnOperand;
   std::set<uint64_t> Written;
   int Cutpoint = -1;
+  std::set<uint64_t> DefinedFunctionTemporaries{};
 };
 
 struct LoopPrefix {
@@ -441,7 +442,8 @@ class Checker {
                            P.LeftSystemFlags,
                            {},
                            std::move(P.Written),
-                           static_cast<int>(I)});
+                           static_cast<int>(I),
+                           std::move(P.DefinedFunctionTemporaries)});
       ++(CandidateExecution ? Refinement->CandidateCutpoints
                             : Refinement->OriginalCutpoints);
       if (Refinement->PrefixSearchCutpoint >= 0)
@@ -1001,7 +1003,7 @@ class Checker {
           // or discard that slot. scheduleNative collects every actual RET
           // destination after complete target enumeration, under the same
           // evidence and resource checks as any other reached instruction.
-          // The opt-in finite mode collects both conditional arms through
+          // The opt-in policy collects both conditional arms through
           // scheduleNative only after paired control equality and feasibility.
           // No bytes, boundary or semantics are asserted for a skipped arm.
           if (Op.Opcode == NdOp::COND_BR &&
@@ -1440,7 +1442,8 @@ class Checker {
             Returns.push_back(
                 {std::move(P.Left), P.Predicate, P.LeftSystemFlags,
                  Original.NumInputs ? Left.branchTarget() : SymRef{},
-                 std::move(P.Written)});
+                 std::move(P.Written), -1,
+                 std::move(P.DefinedFunctionTemporaries)});
             ++(CandidateExecution ? Refinement->CandidatePathCount
                                   : Refinement->OriginalPathCount);
           }
@@ -1518,20 +1521,24 @@ class Checker {
   }
 
   void validate() {
+    // Both inductive segments and finite executions use the same native
+    // collector. Candidate inference needs an actual image reader as well;
+    // semantic LowIR labels alone cannot authorize native collection policy.
+    const bool Native = Provider || (CandidateExecution && ReadProvider);
     const bool FiniteNative =
         (Provider || (CandidateExecution && ReadProvider && Refinement &&
                       Refinement->NativeFinite)) &&
         (!Refinement || (Refinement->NativeFinite && !Refinement->LoopPlan &&
                          Refinement->PrefixSearchCutpoint < 0));
-    if (Contract.RetainUnauditedNativeBoundaries && !FiniteNative)
+    if (Contract.RetainUnauditedNativeBoundaries && !Native)
       fail(Status::Unsupported,
-           "unaudited boundaries require the finite native proof API");
+           "unaudited boundaries require a native proof provider");
     if (Contract.AllowOverlappingNativeInstructions && !FiniteNative)
       fail(Status::Unsupported,
            "overlapping instructions require the finite native proof API");
-    if (Contract.DeferNativeConditionalEdges && !FiniteNative)
+    if (Contract.DeferNativeConditionalEdges && !Native)
       fail(Status::Unsupported,
-           "deferred conditional edges require the finite native proof API");
+           "deferred conditional edges require a native proof provider");
     if (Contract.X64FlagsProfile) {
       if (!Provider && !CandidateExecution)
         fail(Status::Unsupported, "flags profiles require the native API");
@@ -1619,11 +1626,6 @@ class Checker {
         fail(Status::Invalid, llvm::toString(std::move(Error)));
       for (const auto &Range : Function->FunctionTemporaries)
         checkScratch(NdVar::tmp(Range.Offset, Range.Bytes));
-      // Cutpoint states currently bind registers and frame bytes only. A
-      // lifetime declaration cannot supply an unproved inductive value.
-      if (inductive() && !Function->FunctionTemporaries.empty())
-        fail(Status::Unsupported,
-             "function temporaries require finite execution, not loop cuts");
       for (va_t Root : Function->ModuleAnalysisRoots)
         if (Root != Function->Entry)
           fail(Status::Unsupported,
@@ -1997,6 +1999,18 @@ private:
 
   void loopStateEqual(SymRef Predicate, TerminalState &Actual,
                       TerminalState &Expected, llvm::StringRef Side) {
+    // A lifetime declaration never initializes storage. Only real prefix
+    // definitions survive a cut, and every arrival must retain their exact
+    // values. Templates currently have no temporary assignments or inputs.
+    if (Actual.DefinedFunctionTemporaries !=
+        Expected.DefinedFunctionTemporaries)
+      fail(Status::Dependent,
+           (Side + " loop function-temporary definedness differs").str());
+    for (uint64_t Byte : Actual.DefinedFunctionTemporaries)
+      equal(
+          Predicate, Actual.State.read(SymSpace::Temporary, Byte, 1),
+          Expected.State.read(SymSpace::Temporary, Byte, 1),
+          (Side + " loop function-temporary byte " + llvm::Twine(Byte)).str());
     // Unassigned state starts at the same entry snapshot. Every program
     // register write and every template assignment enters RegisterBytes, so
     // later-discovered untouched registers are still identical by construction.
@@ -2356,6 +2370,7 @@ public:
                                                : Refinement->OriginalStart;
         if (Start) {
           Entry.Left = Entry.Right = Start->State;
+          Entry.DefinedFunctionTemporaries = Start->DefinedFunctionTemporaries;
           Entry.LeftSystemFlags = Entry.RightSystemFlags = Start->SystemFlags;
           Entry.Predicate = Predicate = Start->Predicate;
           Entry.SkipCutpoint = true;
@@ -2675,10 +2690,10 @@ LowIRRefinementResult runRefinement(
   const auto Finish = [&](bool Success) {
     return refinementResult(Session, Contract, Provider != nullptr, Success);
   };
-  if (Contract.RetainUnauditedNativeBoundaries && !Session.NativeFinite) {
+  if (Contract.RetainUnauditedNativeBoundaries && !Provider) {
     Session.Statistics.Status = Status::Unsupported;
     Session.Statistics.Diagnostic =
-        "unaudited boundaries require the finite native proof API";
+        "unaudited boundaries require a native proof provider";
     return Finish(false);
   }
   if (Contract.AllowOverlappingNativeInstructions && !Session.NativeFinite) {
@@ -2687,10 +2702,10 @@ LowIRRefinementResult runRefinement(
         "overlapping instructions require the finite native proof API";
     return Finish(false);
   }
-  if (Contract.DeferNativeConditionalEdges && !Session.NativeFinite) {
+  if (Contract.DeferNativeConditionalEdges && !Provider) {
     Session.Statistics.Status = Status::Unsupported;
     Session.Statistics.Diagnostic =
-        "deferred conditional edges require the finite native proof API";
+        "deferred conditional edges require a native proof provider";
     return Finish(false);
   }
   if (Witness != LowIRRefinementWitness::LiftedBits &&
@@ -4530,13 +4545,13 @@ public:
     const bool FilterBranches =
         Family == detail::LowIRLoopCutFamily::FilteredBranchArms;
     try {
-      if (Contract.RetainUnauditedNativeBoundaries)
+      if (Contract.RetainUnauditedNativeBoundaries && !ReadProvider)
         stop(Status::Unsupported,
              "unaudited boundaries are unsupported by loop inference");
       if (Contract.AllowOverlappingNativeInstructions)
         stop(Status::Unsupported,
              "overlapping instructions are unsupported by loop inference");
-      if (Contract.DeferNativeConditionalEdges)
+      if (Contract.DeferNativeConditionalEdges && !ReadProvider)
         stop(Status::Unsupported,
              "deferred conditional edges are unsupported by loop inference");
       if (!prepareCandidateRecords(Session, Records) ||

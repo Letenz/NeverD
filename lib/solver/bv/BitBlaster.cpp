@@ -81,15 +81,14 @@ void BitBlaster::store(SymRef R, llvm::ArrayRef<SatLit> Bits) {
   S.Width = static_cast<uint32_t>(Bits.size());
   BitPool.insert(BitPool.end(), Bits.begin(), Bits.end());
 
-  if (Encoded.size() <= R.index())
-    Encoded.resize(R.index() + 1);
   Encoded[R.index()] = S;
 }
 
 llvm::ArrayRef<SatLit> BitBlaster::variableBits(uint32_t VarId) const {
-  if (VarId >= VarSlices.size() || VarSlices[VarId].Width == 0)
+  const auto It = VarSlices.find(VarId);
+  if (It == VarSlices.end())
     return {};
-  const Slice &S = VarSlices[VarId];
+  const Slice &S = It->second;
   return llvm::ArrayRef<SatLit>(BitPool.data() + S.First, S.Width);
 }
 
@@ -101,15 +100,7 @@ bool BitBlaster::encodeReachable(SymRef Root) {
   if (!Root.isValid() || Root.index() >= Ctx.numNodes())
     return fail(BlastError::Malformed);
 
-  // Stamping avoids clearing a per-node array on every call.  The counter is
-  // wide enough that wrapping needs billions of calls, but a wrap would make
-  // stale marks look current, so it is handled rather than assumed away.
-  if (++Visit == 0) {
-    std::fill(Stamp.begin(), Stamp.end(), 0);
-    Visit = 1;
-  }
-  Stamp.resize(Ctx.numNodes(), 0);
-
+  Seen.clear();
   Order.clear();
   Work.clear();
   Work.push_back(Root.index());
@@ -118,9 +109,8 @@ bool BitBlaster::encodeReachable(SymRef Root) {
     uint32_t Index = Work.back();
     Work.pop_back();
 
-    if (Stamp[Index] == Visit)
+    if (!Seen.insert(Index).second)
       continue;
-    Stamp[Index] = Visit;
 
     // Anything encoded by an earlier call is a boundary: its bits are already
     // in the pool and its operands were encoded with it.
@@ -207,8 +197,6 @@ bool BitBlaster::encodeNode(SymRef R) {
     store(R, Result);
 
     uint32_t Id = Ctx.varId(R);
-    if (VarSlices.size() <= Id)
-      VarSlices.resize(Id + 1);
     VarSlices[Id] = Encoded[R.index()];
     EncodedVars.push_back(Id);
     return true;

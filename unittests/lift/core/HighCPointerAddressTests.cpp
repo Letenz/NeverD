@@ -30392,6 +30392,50 @@ HighStmt exceptTry(std::vector<HighStmt> Body, std::vector<HighStmt> Handler,
   return Try;
 }
 
+TEST(HighCPointerAddresses, TryJumpToWhatFollowsItPrintsLeave) {
+  // __try { if (arg0) goto Next; Probe(); } __except (1) { Recover(); }
+  // Next: Work();  The jump lands where the try falls through, which is what
+  // `__leave` does.  In a nested try `__leave` would end only the inner one,
+  // and under a __finally that prints code it would run that code as a
+  // normal exit, so those jumps stay gotos.
+  enum class Variant { Except, Nested, Finally };
+  const va_t NextVA = 0x140001050;
+  auto Build = [&](Variant Kind) {
+    HighStmt Leave;
+    Leave.Kind = StmtKind::If;
+    Leave.Addr = 0x140001004;
+    Leave.Cond = parameter(0);
+    Leave.Body = {gotoStmt(0x140001008, NextVA)};
+    std::vector<HighStmt> Body = {Leave, callStmt("Probe", 0x140002000, {})};
+    HighStmt Try = exceptTry(Body, {callStmt("Recover", 0x140002100, {})});
+    if (Kind == Variant::Nested)
+      Try = exceptTry({Try}, {callStmt("Recover2", 0x140002300, {})},
+                      0x14000104E);
+    if (Kind == Variant::Finally) {
+      Try.EHClauses.front().Kind = HighEHClauseKind::SEHFinally;
+      Try.EHClauses.front().FilterOrActionVA = 0x14000104C;
+    }
+    HighStmt Work = callStmt("Work", 0x140002200, {});
+    Work.Addr = NextVA;
+    HighFunc Func;
+    Func.Name = "try_leave";
+    Func.Entry = 0x140001000;
+    Func.ReturnType = NdType::makeVoid();
+    Func.Params = {{"arg0", NdType::makeInt(8)}};
+    Func.Body = {Try, Work};
+    return Func;
+  };
+  for (Variant Kind : {Variant::Except, Variant::Nested, Variant::Finally}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    const std::string Source = emitFunctions({Build(Kind)});
+    const bool Leaves = Kind == Variant::Except;
+    EXPECT_EQ(Source.find("__leave;") != std::string::npos, Leaves) << Source;
+    EXPECT_EQ(Source.find("goto L_140001050;") != std::string::npos, !Leaves)
+        << Source;
+    EXPECT_NE(Source.find("Work();"), std::string::npos) << Source;
+  }
+}
+
 TEST(HighCPointerAddresses, TryExitToNextStatementKeepsCodeAfterTry) {
   // The try body jumps to the code right after the try and the __except arm
   // jumps past it.  The body's goto is printed as a fall-through, so the try

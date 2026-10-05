@@ -3667,14 +3667,16 @@ TEST(COFFExceptionIR, StructuresSingleBlockSEHHandlerBody) {
 namespace {
 
 /// Blocks of a nested SEH frame: \p Specs lists, per block, its start and end,
-/// the call it makes (0 for none), whether it returns, and where it branches
-/// (0 to fall into the next block, or nowhere when it returns).
+/// the call it makes (0 for none), whether it returns, where it branches (0
+/// to fall into the next block, or nowhere when it returns), and where a
+/// conditional branch ahead of that fall-through goes (0 for none).
 struct NestedSEHBlockSpec {
   va_t Start;
   va_t End;
   va_t Callee;
   bool Returns;
   va_t BranchTo;
+  va_t CondTo = 0;
 };
 
 MedFunc makeNestedSEHFixture(llvm::StringRef Name,
@@ -3709,6 +3711,14 @@ MedFunc makeNestedSEHFixture(llvm::StringRef Name,
       Return.Opcode = NdOp::RETURN;
       Return.Addr = Specs[I].End - 1;
       Block.Ops.push_back(std::move(Return));
+    } else if (Specs[I].CondTo) {
+      MedOp Branch;
+      Branch.Opcode = NdOp::COND_BR;
+      Branch.Addr = Specs[I].End - 2;
+      Branch.addInput(MedVar::makeConst(Specs[I].CondTo, 8));
+      Branch.addInput(MedVar::makeConst(1, 1));
+      Block.Ops.push_back(std::move(Branch));
+      Block.Succs = {IndexAt(Specs[I].CondTo), static_cast<int>(I + 1)};
     } else if (Specs[I].BranchTo) {
       MedOp Branch;
       Branch.Opcode = NdOp::BRANCH;
@@ -3820,6 +3830,46 @@ TEST(COFFExceptionIR, SEHHandlerOutsideAnOuterRangeStaysOutOfTheInnerClause) {
   walkStmts(High.Body,
             [&](const HighStmt &Stmt) { Anywhere += Stmt.Addr == F + 0x34; });
   EXPECT_EQ(Anywhere, 1u);
+}
+
+TEST(COFFExceptionIR, SEHHandlerEndingAnArmContinuesAfterTheIfElse) {
+  // if (..) { __try { A(); } __except (1) { H(); } B(); return; } else C();
+  // D();  The handler sits after C() and falls into D(), so it ends the else
+  // arm and continues after the if/else; as the clause body it keeps that
+  // path with a jump or a copy of what runs there.
+  constexpr va_t F = 0x140001000;
+  const NestedSEHBlockSpec Specs[] = {
+      {F, F + 0x10, 0, false, 0, F + 0x30},
+      {F + 0x10, F + 0x20, 0x140008000, false, 0},
+      {F + 0x20, F + 0x30, 0x14000A000, true, 0},
+      {F + 0x30, F + 0x40, 0x14000C000, false, F + 0x50},
+      {F + 0x40, F + 0x50, 0x140009000, false, 0},
+      {F + 0x50, F + 0x60, 0x14000D000, true, 0}};
+  const SEHScopeRecord Scopes[] = {catchAllScope(F + 0x10, F + 0x20, F + 0x40)};
+  MedFunc Func = makeNestedSEHFixture("seh_handler_ending_an_arm", Specs,
+                                      Scopes, F + 0x60);
+
+  HighFunc High = MedToHighConverter().convert(Func, Arch::X64);
+  ASSERT_EQ(High.StructuredExceptionRegions, 1u);
+  const HighStmt *Try = nullptr;
+  walkStmts(High.Body, [&](const HighStmt &Stmt) {
+    if (Stmt.Kind == StmtKind::SEHTry)
+      Try = &Stmt;
+  });
+  ASSERT_NE(Try, nullptr);
+  ASSERT_EQ(Try->EHClauseBodies.size(), 1u);
+  size_t InClause = 0;
+  walkStmts(Try->EHClauseBodies.front(),
+            [&](const HighStmt &Stmt) { InClause += Stmt.Addr == F + 0x44; });
+  EXPECT_EQ(InClause, 1u);
+  size_t Anywhere = 0;
+  walkStmts(High.Body,
+            [&](const HighStmt &Stmt) { Anywhere += Stmt.Addr == F + 0x44; });
+  EXPECT_EQ(Anywhere, 1u);
+
+  const std::string Source = emitHighC({High});
+  EXPECT_EQ(Source.find("goto L_140001040"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("sub_14000D000();"), std::string::npos) << Source;
 }
 
 TEST(COFFExceptionIR, OuterSEHRangeIsNeverNestedInsideTheTryItHolds) {

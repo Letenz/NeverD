@@ -4327,6 +4327,114 @@ static bool elseArmsForFallthroughJumpsIn(std::vector<HighStmt> &Body,
   return Changed;
 }
 
+/// Statements of \p Stmts that begin a group at \p Addr, the only ones a jump
+/// there can land on: a first child sharing its parent's address prints under
+/// the parent's label.  \p Found is set to the last of them.
+static unsigned groupStartsAt(std::vector<HighStmt> &Stmts, va_t Addr,
+                              va_t Parent, HighStmt *&Found) {
+  unsigned Count = 0;
+  for (size_t I = 0; I < Stmts.size(); ++I) {
+    HighStmt &S = Stmts[I];
+    if (S.Addr == Addr && Addr != (I == 0 ? Parent : Stmts[I - 1].Addr)) {
+      ++Count;
+      Found = &S;
+    }
+    Count += groupStartsAt(S.Body, Addr, S.Addr, Found);
+    Count += groupStartsAt(S.ElseBody, Addr, 0, Found);
+    for (auto &C : S.Cases)
+      Count += groupStartsAt(C.Body, Addr, 0, Found);
+    Count += groupStartsAt(S.DefaultBody, Addr, 0, Found);
+    for (auto &ClauseBody : S.EHClauseBodies)
+      Count += groupStartsAt(ClauseBody, Addr, 0, Found);
+  }
+  return Count;
+}
+
+/// The statement of \p Arm that a jump entering the arm at its top lands
+/// on: its first statement, past empty anchors that run nothing.
+static const HighStmt *armEntry(const std::vector<HighStmt> &Arm) {
+  for (const HighStmt &S : Arm) {
+    if (S.Kind == StmtKind::Nop ||
+        (S.Kind == StmtKind::Block && S.Body.empty()))
+      continue;
+    return &S;
+  }
+  return nullptr;
+}
+
+bool mergeJumpsIntoNextIfArms(HighFunc &Func) {
+  std::map<va_t, unsigned> Uses;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Goto)
+      ++Uses[S.GotoTarget];
+    for (const HighEHClause &Clause : S.EHClauses)
+      ++Uses[Clause.HandlerVA];
+  });
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (size_t I = 0; I + 1 < L.size(); ++I) {
+          HighStmt &Test = L[I];
+          // Anchors nothing jumps to run nothing between the two tests.
+          size_t J = I + 1;
+          while (J + 1 < L.size() &&
+                 (L[J].Kind == StmtKind::Nop ||
+                  (L[J].Kind == StmtKind::Block && L[J].Body.empty())) &&
+                 (L[J].Addr == 0 || L[J].Addr == InvalidVA ||
+                  !Uses.count(L[J].Addr)))
+            ++J;
+          HighStmt &Next = L[J];
+          if (Test.Kind != StmtKind::If || !Test.Cond ||
+              !Test.ElseBody.empty() || Test.Body.size() != 1 ||
+              Test.Body[0].Kind != StmtKind::Goto ||
+              (Next.Kind != StmtKind::If && Next.Kind != StmtKind::IfElse) ||
+              !Next.Cond)
+            continue;
+          // A jump to the second if would skip the first test.
+          if (Next.Addr != Test.Addr && Next.Addr != 0 &&
+              Next.Addr != InvalidVA && Uses.count(Next.Addr))
+            continue;
+          const va_t Target = Test.Body[0].GotoTarget;
+          if (!Target || Target == InvalidVA || Target == Next.Addr)
+            continue;
+          // The jump lands where the arm starts and nowhere else.
+          HighStmt *Landing = nullptr;
+          if (groupStartsAt(Func.Body, Target, 0, Landing) != 1)
+            continue;
+          const bool Then = Landing == armEntry(Next.Body);
+          const bool Else = Landing == armEntry(Next.ElseBody);
+          if (!Then && !Else)
+            continue;
+          ExprPtr Merged =
+              Then ? HighExpr::makeBinop(NdOp::BOOL_OR, Test.Cond, Next.Cond)
+                   : HighExpr::makeBinop(NdOp::BOOL_AND,
+                                         invertHighCond(Test.Cond), Next.Cond);
+          Merged->Type = NdType::makeInt(1, false);
+          // The merged test runs where the first one did and keeps its label.
+          const va_t Addr = Test.Addr;
+          HighStmt Joined = std::move(Next);
+          Joined.Cond = std::move(Merged);
+          Joined.Addr = Addr;
+          if (--Uses[Target] == 0)
+            Uses.erase(Target);
+          L[I] = std::move(Joined);
+          L.erase(L.begin() + static_cast<ptrdiff_t>(J));
+          Changed = true;
+        }
+        for (HighStmt &S : L) {
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
+        }
+      };
+  Visit(Func.Body);
+  return Changed;
+}
+
 bool elseArmsForFallthroughJumps(HighFunc &Func) {
   const std::vector<HighStmt> *SavedBody = IfElseFunctionBody;
   IfElseFunctionBody = &Func.Body;

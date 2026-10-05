@@ -167,6 +167,46 @@ TEST(BitVectorSolver, AModelSatisfiesThePathConditionItCameFrom) {
   EXPECT_TRUE(Ctx.eval(Path, Model.asVarValues(Ctx)).isOne());
 }
 
+TEST(BitVectorSolver, SparseLateInputsKeepIncrementalModelsAndAssumptions) {
+  SymContext Ctx;
+  const auto Unused = Ctx.mkFreshVar(8, "unused");
+  for (unsigned I = 0; I != 65536; ++I) {
+    Ctx.mkConst(64, uint64_t(1) << 32 | I);
+    Ctx.mkFreshVar(8, "unrelated");
+  }
+  const auto X = Ctx.mkFreshVar(8, "x"), Y = Ctx.mkFreshVar(8, "y");
+  const auto Sum = Ctx.mkAdd(X, Ctx.mkMul(Y, Ctx.mkConst(8, 3)));
+  BitVectorSolver Solver(Ctx);
+  ASSERT_TRUE(Solver.assertEqual(Sum, Ctx.mkConst(8, 91)));
+  const auto First = Ctx.mkEq(X, Ctx.mkConst(8, 4));
+  ASSERT_EQ(Solver.check({First}), SatResult::Sat);
+  ASSERT_TRUE(Solver.model().value(Ctx, X));
+  ASSERT_TRUE(Solver.model().value(Ctx, Y));
+  EXPECT_EQ(Solver.model().value(Ctx, X)->getZExtValue(), 4U);
+  EXPECT_EQ(Solver.model().value(Ctx, Y)->getZExtValue(), 29U);
+  EXPECT_FALSE(Solver.model().value(Ctx, Unused));
+  EXPECT_EQ(Solver.blaster().encodedVars().size(), 2U);
+
+  for (unsigned I = 0; I != 65536; ++I)
+    Ctx.mkFreshVar(8, "later_unrelated");
+  const auto Z = Ctx.mkFreshVar(8, "z");
+  ASSERT_TRUE(Solver.assertEqual(Z, Ctx.mkXor(X, Y)));
+  const auto Second = Ctx.mkEq(X, Ctx.mkConst(8, 7));
+  ASSERT_EQ(Solver.check({Second}), SatResult::Sat);
+  ASSERT_TRUE(Solver.model().value(Ctx, X));
+  ASSERT_TRUE(Solver.model().value(Ctx, Y));
+  ASSERT_TRUE(Solver.model().value(Ctx, Z));
+  EXPECT_EQ(Solver.model().value(Ctx, X)->getZExtValue(), 7U);
+  EXPECT_EQ(Solver.model().value(Ctx, Y)->getZExtValue(), 28U);
+  EXPECT_EQ(Solver.model().value(Ctx, Z)->getZExtValue(), 27U);
+  EXPECT_FALSE(Solver.model().value(Ctx, Unused));
+  EXPECT_EQ(Solver.blaster().encodedVars().size(), 3U);
+  EXPECT_EQ(Solver.check({First, Second}), SatResult::Unsat);
+  ASSERT_EQ(Solver.check({First}), SatResult::Sat);
+  ASSERT_TRUE(Solver.model().value(Ctx, Z));
+  EXPECT_EQ(Solver.model().value(Ctx, Z)->getZExtValue(), 25U);
+}
+
 TEST(BitVectorSolver, RefutesConstraintsNothingSatisfies) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", W8);
