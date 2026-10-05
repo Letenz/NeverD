@@ -1151,7 +1151,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 4062 項 CPU 檢查及 17 項 SEH 回歸，共有 4303 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `4062 CPU + 224 WHP + 17 SEH = 4303`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 4569 項 CPU 檢查及 17 項 SEH 回歸，共有 4810 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `4569 CPU + 224 WHP + 17 SEH = 4810`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1170,6 +1170,8 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 `X64StackTests.cpp` 以九類測試涵蓋 42 種編碼，檢查寬度、定址、完整狀態、觀察器順序、取消、權限、跨頁、實體別名、故障修復、裝置拒絕及情境還原。獨立宿主對照執行原始指令，六個 WDK 資源探針涵蓋驅動路徑。KVM/WHP 原生驗收各增加 1135 項必要結果。無法使用的後端在其原生強制驗收之外仍明確回報略過。
 
 `X64FrameExitTests.cpp` 涵蓋 14 種 `LEAVE` 編碼、有效前綴順序、完整 RBP 定址、完整暫存器狀態、唯讀別名、跨頁框架錯誤與修復、權限、觀察器、無效位址、裝置拒絕及上下文重播。獨立主機對照執行 42 條原始指令，五個 WDK 資源探針驗證驅動程式執行。兩個原生驗收各增加 379 項必要結果。
+
+`X64FrameEntryTests.cpp` 涵蓋 14 種編碼、巢狀與重疊、實體別名、僅寫入權限探測、跨頁故障與修復、觀察器取消、權限、前綴拒絕及上下文重播。獨立宿主對照執行 882 組成功指令，並在 Linux x64 上執行 84 組故障，逐位元組檢查堆疊與暫存器。兩項注入後端測試區分取消及失敗回復與架構故障提交。六個 WDK 資源探針執行原始驅動指令。原生驗收新增 508 項 KVM 與 507 項 WHP 必測結果。
 
 `DriverSIMDSEHTests.cpp` 以四種受支援的處置及一次 x87 修改拒絕、兩種原生執行契約、一般/CFG WDK 映像及兩個載入位址執行八類原始 SSE 故障。十項後端專屬結果與三項純核心 SSE 記錄檢查均為必測。`driver_seh_simd.def` 統一定義樣例與模式；非同步展開表涵蓋故障輔助函式。微軟核心 10.0.26100.9549 提供獨立分類與還原依據：隔離執行了 107,744 組指令路徑分類及 8,192 組還原。這不代表已在完整 Windows 核心中執行驅動程式；ARM64 原生 KVM/WHP 仍未驗證。
 

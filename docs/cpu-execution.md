@@ -80,6 +80,8 @@ Checked x64 executes `SHLD/SHRD` with 16/32/64-bit destinations and imm8 or CL c
 
 KVM, WHP and checked Unicorn also admit 16/64-bit `LEAVE`. It reads the saved frame through full RBP, including with `67H`, and preserves unselected RBP bits in the 16-bit form. Faults or cancelled reads retain the original RSP and CPU context. LOCK, REP and device frames remain unsupported.
 
+KVM, WHP and checked Unicorn admit 16/64-bit `ENTER`, with unsigned 16-bit allocation and nesting modulo 32. Full RSP/RBP and effective prefix order determine the accesses. On a guest fault, completed stack stores remain visible while RSP, RBP and PC retain their entry values. The final stack check validates write permission over the operand width without storing data. LOCK, REP, APX prefixes and device frames remain unsupported.
+
 `X64PackedIntegerInstructions.def` admits 45 legacy SSE2 packed integer operations: wrapping and saturating addition/subtraction, comparisons, multiplication, averages, extrema, byte differences, packing and unpacking. XMM and aligned 128-bit RAM sources share the existing checked path on KVM, WHP and Unicorn. FLAGS and MXCSR remain unchanged; faults or observer cancellation preserve state. MMX, VEX/EVEX and device operands remain excluded.
 
 `X64PackedShiftInstructions.def` admits ten legacy SSE2 packed shifts. Lane shifts accept imm8 or XMM/aligned m128 counts; byte shifts accept imm8 only. Variable counts use the unsigned low 64 bits without scalar count masking; the high 64 bits are ignored. Memory operands still require a complete 16-byte read for zero or oversized counts. FLAGS and MXCSR remain unchanged; MMX, VEX/EVEX and device operands remain excluded.
