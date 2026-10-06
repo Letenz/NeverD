@@ -1566,4 +1566,6 @@ Les tests de relation de boucle native couvrent la collecte conditionnelle diff�
 
 `LowIRLoopRefinement.GuardedCuts*` et `BinaryLowIRLoopRefinement.GuardedCuts*` couvrent PC répétés, registres/cadre/drapeaux, ordres des octets, domaines non sélectionnés finis ou cycliques, recouvrement, mauvais côté, généralisation, témoins de valeurs indéfinies, métadonnées, empreintes et budgets. Des tests natifs indépendants prouvent deux contextes R10 au même PC et l’antériorité du contrôle des frontières non auditées. La certification ABI reste séparée.
 
+`DarwinIndirectRecordCalls` vérifie le contrat MakeScale actuel et ses 22 mutations d’import/ABI, puis consomme un résultat privé complet de 48 octets avec la preuve partagée de copie par valeur. Les plages mal alignées, décalées, chevauchantes ou hors cadre sont refusées. Supprimer l’effet d’écriture certaine entraîne aussi un refus, même si l’ABI de retour complète est conservée.
+
 `BinaryLowIRLoopInference.NativeSelectors*` couvre deux contextes de registre, des contextes distingués uniquement par le cadre, trois domaines conjoints, des modèles inséparables, des mutations des origines et du corps natif, ainsi que les budgets indépendants exacts et réduits d’une unité. Le nombre d’itérations est arbitraire, sans constante d’entrée ajoutée.

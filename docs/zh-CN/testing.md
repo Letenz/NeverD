@@ -1359,4 +1359,6 @@ block/副本发布测试还覆盖两个独立的 48 字节范围、描述符重�
 
 `LowIRLoopRefinement.GuardedCuts*` 和 `BinaryLowIRLoopRefinement.GuardedCuts*` 覆盖同址切点、寄存器、帧及原生系统标志、两种字节序、未匹配的有限及循环路径、重叠和错配拒绝、前缀泛化、未定义值见证、错误元数据、摘要及共享预算。独立原生测试证明两个 R10 上下文共用循环地址，并确认未审计边界检查先于选择条件。普通 ABI 认证仍是独立工作。
 
+`DarwinIndirectRecordCalls` 检查当前 MakeScale 契约及 22 项导入/ABI 变更拒绝案例，再通过共享按值副本证明消费完整的 48 字节私有结果。未对齐、偏移、重叠或越出栈帧的结果范围均被拒绝。即使保留完整返回 ABI，移除确定写入效果也会被拒绝。
+
 `BinaryLowIRLoopInference.NativeSelectors*` 覆盖两个寄存器上下文、仅靠帧区分的上下文、三域合取、无法区分的模板、来源及原生循环体变异，以及推断和证明各自的精确与少一预算。循环次数任意，不引入入口常量。
