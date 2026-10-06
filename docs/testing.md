@@ -275,6 +275,14 @@ behavior traps. Unknown selector arms, bypassed definitions, clobbered values,
 reached backedges, mutated table storage and exhausted evidence must prevent
 unsupported source publication. Clang and the existing lift fixture tools
 are required; unavailable fixtures remain skips.
+The independent ARM64 frame fixture also distinguishes restored native tail
+calls from live or unknown SP values, changed link words, full/partial return
+slot writes, unknown aliases, borrowed frame pointers, independent roots and
+conflicting loop backedges. HighC and both LLVMC routes must retain an explicit
+failure path for the unresolved live-frame branch, and their C must compile.
+Zero/short work budgets, incomplete instruction boundaries, unknown roots and
+invalid graph edges grant no frame candidate. The focused indirect-call
+suite includes the existing four-architecture tail-call runtime variety.
 An unselected prefix pointer to a separate function must not prevent recovery
 of local cases. A foreign target selected immediately or after a reached
 backedge must remain outside the local switch. The prefix case also runs
@@ -283,6 +291,8 @@ through all three C routes at both optimization levels.
 ```sh
 cmake --build build-release --target NeverDJumpTableTests --parallel 4
 build-release/bin/NeverDJumpTableTests
+cmake --build build-release --target NeverDIndCallXformTests --parallel 4
+build-release/bin/NeverDIndCallXformTests --gtest_filter='*TailVarietyRT*'
 ```
 
 `NeverDMachOPointerRelocationBoundaryTests` checks sparse dispatch origins

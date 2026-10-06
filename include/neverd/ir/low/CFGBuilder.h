@@ -1079,12 +1079,14 @@ private:
 
   /// Rewrite an unconditional indirect branch (`bx reg` / `br reg` / `jmp *reg`
   /// through a function pointer, not a jump table) into an INDIR_CALL + RETURN
-  /// pair — an indirect tail call.  Without this the unresolved INDIR_BR lowers
-  /// to a fall-through `ret 0`, dropping the call.
+  /// pair — an indirect tail call. Unclassified INDIR_BR operations remain
+  /// indirect branches and fail clearly if their destination cannot be emitted.
   void rewriteAsIndirectTailCall(InsnRecord &Rec);
 
-  /// After all jump-table resolution, convert any remaining unconditional
-  /// unresolved indirect branch into an indirect tail call and rebuild blocks.
+  /// After jump-table resolution, convert eligible unconditional unresolved
+  /// branches into indirect tail calls. AArch64 additionally requires the
+  /// incoming SP/link words restored on all paths; incomplete frame evidence
+  /// retains the branch. Rebuild blocks only when a conversion was accepted.
   void convertIndirectTailCalls(LowFunc &Func);
 
   /// Make the block beginning at Func.Entry block 0 and remap every CFG edge
