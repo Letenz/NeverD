@@ -6,6 +6,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/low/SourceFrameAnalysis.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -1501,8 +1502,8 @@ TEST(DarwinIndirectRecordCalls, MatrixFrameEffectsRequireExactCurrentContract) {
       "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
   for (const char *Name :
        {"CATransform3DMakeTranslation", "CATransform3DScale",
-        "CGAffineTransformMakeRotation", "CGAffineTransformConcat",
-        "CGRectApplyAffineTransform"}) {
+        "CGAffineTransformMakeRotation", "CGAffineTransformMakeScale",
+        "CGAffineTransformConcat", "CGRectApplyAffineTransform"}) {
     SCOPED_TRACE(Name);
     const bool Rect = llvm::StringRef(Name) == "CGRectApplyAffineTransform";
     const bool Affine = llvm::StringRef(Name).starts_with("CGAffine") || Rect;
@@ -1618,5 +1619,97 @@ TEST(DarwinIndirectRecordCalls, MatrixFrameEffectsRequireExactCurrentContract) {
       }
       EXPECT_FALSE(darwinMatrixSourceFrameEffects(I, B));
     }
+  }
+}
+
+TEST(DarwinIndirectRecordCalls,
+     MakeScaleProducesOnlyCompleteBoundedPrivateResultCopies) {
+  constexpr auto CoreGraphics =
+      "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+  auto Image = image("_CGAffineTransformMakeScale");
+  Image.DynInfo.NeededLibs = {CoreGraphics};
+  Image.DyldBindSlots.at(0x2180).Module = CoreGraphics;
+  const auto Binding = darwinRuntimeSourceCallHint(Image, 0x2180);
+  ASSERT_TRUE(Binding);
+  const auto Effects = darwinMatrixSourceFrameEffects(Image, *Binding);
+  ASSERT_TRUE(Effects);
+  ASSERT_EQ(Binding->Signature.Parameters.size(), 2U);
+  for (unsigned J = 0; J != 2; ++J) {
+    const auto &Parameter = Binding->Signature.Parameters[J];
+    EXPECT_EQ(Parameter.Type->Kind, NdTypeKind::Float);
+    EXPECT_EQ(Parameter.Type->Size, 8U);
+    EXPECT_EQ(Parameter.Location.Kind, SourceABICarrierKind::FloatingRegister);
+    EXPECT_EQ(Parameter.Location.RegisterOffset, a64reg::V0 + J * 16);
+  }
+  SourceFunctionTypeHint Entry, Consumer;
+  Entry.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Entry.ReturnType = NdType::makeVoid();
+  Consumer = Entry;
+  Consumer.Parameters = {{"transform", Binding->Signature.ReturnType}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinFixedSourceABI(Entry, Arch::AArch64, Error));
+  ASSERT_TRUE(assignDarwinFixedSourceABI(Consumer, Arch::AArch64, Error));
+  ASSERT_TRUE(Consumer.Parameters[0].IndirectByValue);
+  for (unsigned Offset : {0U, 4U, 8U, 16U, 24U, 64U}) {
+    SCOPED_TRACE(Offset);
+    LowFunc Low;
+    Low.Entry = 0x1200;
+    LowBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Low.Entry;
+    Low.Blocks.push_back(Block);
+    va_t Next = Low.Entry;
+    const auto SP = NdVar::reg(a64reg::SP, 8);
+    const auto LR = NdVar::reg(a64reg::X30, 8);
+    const auto X0 = NdVar::reg(a64reg::X0, 8);
+    const auto X8 = NdVar::reg(a64reg::X8, 8);
+    const auto X9 = NdVar::reg(a64reg::X9, 8);
+    const auto Add = [&](NdOp Opcode, NdVar Output,
+                         std::initializer_list<NdVar> Inputs) {
+      LowOp Op;
+      Op.Opcode = Opcode;
+      Op.Output = Output;
+      Op.Addr = Next;
+      Next += 4;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      Low.Blocks[0].Ops.push_back(Op);
+    };
+    Add(NdOp::INT_SUB, SP, {SP, NdVar::scalar(64, 8)});
+    Add(NdOp::INT_ADD, X9, {SP, NdVar::scalar(56, 8)});
+    Add(NdOp::STORE, {}, {X9, LR});
+    Add(NdOp::INT_ADD, X8, {SP, NdVar::scalar(Offset, 8)});
+    Add(NdOp::CALL, X0, {NdVar::cst(0x1100, 8)});
+    const auto ProducerSite = nativeSourceCallKey(Low.Blocks[0].Ops.back());
+    ASSERT_TRUE(ProducerSite);
+    Add(NdOp::COPY, X0, {SP});
+    Add(NdOp::CALL, X0, {NdVar::cst(0x1180, 8)});
+    const auto ConsumerSite = nativeSourceCallKey(Low.Blocks[0].Ops.back());
+    ASSERT_TRUE(ConsumerSite);
+    Add(NdOp::INT_ADD, X9, {SP, NdVar::scalar(56, 8)});
+    Add(NdOp::LOAD, LR, {X9});
+    Add(NdOp::INT_ADD, SP, {SP, NdVar::scalar(64, 8)});
+    Add(NdOp::RETURN, {}, {LR});
+    NativeSourceCalls Calls;
+    auto &ProducerCall = Calls[*ProducerSite];
+    ProducerCall.Signature = &Binding->Signature;
+    static_cast<SourceFrameEffects &>(ProducerCall) = *Effects;
+    auto &ConsumerCall = Calls[*ConsumerSite];
+    ConsumerCall.Signature = &Consumer;
+    ConsumerCall.ByValueFrameParameters.insert(0);
+    const auto Query = [&] {
+      return sourceFrameByValueCopies(Low, Arch::AArch64, Calls, *ConsumerSite,
+                                      Entry);
+    };
+    if (Offset) {
+      EXPECT_FALSE(Query());
+      continue;
+    }
+    ASSERT_TRUE(Query());
+    EXPECT_EQ(*Query(), (std::vector<SourceFrameByValueCopy>{{0, -64, 48}}));
+    EXPECT_TRUE(restoresNativeSourceState(Low, Arch::AArch64, Calls));
+    // A physical return declaration alone cannot initialize private bytes.
+    ProducerCall.InitializesIndirectResult = false;
+    EXPECT_FALSE(Query());
   }
 }

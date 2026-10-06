@@ -1557,6 +1557,132 @@ TEST(BinaryLowIRLoopInference, PackedFlagsStayConstrainedAcrossWidening) {
   EXPECT_GT(R.Refinement.Proof.RankingChecks, 0U);
 }
 
+TEST(BinaryLowIRLoopRefinement, GuardedCutsReadProfiledSystemFlags) {
+  Program P(
+      {0xe3, 9, 0x48, 0x01, 0xc8, 0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf5, 0xc3});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Inferred = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  ASSERT_TRUE(Inferred.proved()) << Inferred.Refinement.Proof.Diagnostic;
+  ASSERT_EQ(Inferred.Inference.Plan->Cutpoints.size(), 1U);
+  const auto Original = Inferred.Inference.Plan->Cutpoints.front();
+  LowIRLoopRefinementPlan Plan;
+  const LowIRLoopLocation Flags{LowIRLoopSpace::SystemFlags, 0, 8};
+  for (uint64_t Value : {0, 512}) {
+    auto Cut = Original;
+    uint64_t Next = 0;
+    for (const auto &I : Cut.Inputs)
+      Next = std::max(Next, I.Temporary.Offset + 8);
+    for (const auto &O : Cut.Expressions)
+      Next = std::max(Next, O.Output.Offset + 8);
+    const auto Input = NdVar::tmp(Next, 8);
+    Cut.Inputs.push_back({LowIRLoopSide::Entry, Flags, Input});
+    Next += 8;
+    const auto Expr = [&](NdOp Code, NdVar A, NdVar B, uint16_t Bytes) {
+      LowOp O;
+      O.Opcode = Code;
+      O.Output = NdVar::tmp(Next, Bytes);
+      Next += 8;
+      O.addInput(A);
+      O.addInput(B);
+      Cut.Expressions.push_back(O);
+      return O.Output;
+    };
+    const auto Bit = Expr(NdOp::INT_AND, Input, NdVar::scalar(512, 8), 8);
+    const auto Selected =
+        Expr(NdOp::INT_EQUAL, Bit, NdVar::scalar(Value, 8), 1);
+    Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Selected, 1);
+    Cut.OriginalGuards = Cut.CandidateGuards = {{Flags, 512, Value}};
+    Plan.Cutpoints.push_back(std::move(Cut));
+  }
+  const auto Good = checkBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery.Residual, P.Contract, Plan);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.LoopInitiations, 2U);
+  for (auto Location : {LowIRLoopLocation{LowIRLoopSpace::SystemFlags, 1, 8},
+                        LowIRLoopLocation{LowIRLoopSpace::SystemFlags, 0, 4}}) {
+    auto Wrong = Plan;
+    Wrong.Cutpoints[0].OriginalGuards[0].Location = Location;
+    refused(checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                           Recovery.Residual, P.Contract,
+                                           Wrong),
+            Status::Invalid);
+  }
+}
+
+TEST(BinaryLowIRLoopRefinement, GuardedCutsCannotBypassUnauditedBoundaries) {
+  Program P({0xd1, 0xd2, 0xc3}); // RCL EDX,1 has missing effect coverage.
+  Program Safe({0xc3});
+  const auto Candidate = Safe.recover();
+  ASSERT_TRUE(Candidate.complete()) << Candidate.Diagnostic;
+  P.Contract.RetainUnauditedNativeBoundaries = true;
+  LowIRLoopCutpoint Cut;
+  Cut.OriginalAddress = Entry;
+  Cut.CandidateAddress = Candidate.Residual.Entry;
+  Cut.UseEntryPrefix = true;
+  Cut.Rank = {NdVar::scalar(0, 8)};
+  // Bit 1 is set in every admitted system-flags image, so this selector never
+  // matches. Its failure still cannot justify skipping unaudited native bytes.
+  Cut.OriginalGuards = {{{LowIRLoopSpace::SystemFlags, 0, 8}, 2, 0}};
+  const auto R = checkBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Candidate.Residual, P.Contract, {{Cut}});
+  refused(R, Status::Unsupported);
+  EXPECT_NE(R.Proof.Diagnostic.find("unaudited native boundary"),
+            std::string::npos);
+  EXPECT_EQ(R.Proof.Operations, 0U);
+}
+
+TEST(BinaryLowIRLoopRefinement, GuardedCutsProveRepeatedNativeContexts) {
+  // R10 selects two recovered copies of the same original loop. RCX remains
+  // arbitrary on both paths; no specialization entry constant is a premise.
+  Program P({0x49, 0x89, 0xfa, 0x41, 0x83, 0xe2, 1,    0x45, 0x85,
+             0xd2, 0x74, 2,    0xeb, 0,    0xe3, 9,    0x48, 0x01,
+             0xc8, 0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf5, 0xc3});
+  P.Options.ControlRegisters = {{x86reg::R10, 8}};
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  std::vector<va_t> Headers;
+  for (const auto &O : Recovery.Origins)
+    if (O.NativeInstruction.Address == Entry + 14)
+      Headers.push_back(O.ResidualAddress);
+  ASSERT_EQ(Headers.size(), 2U);
+  const auto Inferred =
+      inferLowIRLoopRefinementPlan(Recovery.Residual, P.Contract, {}, Headers);
+  ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+  ASSERT_EQ(Inferred.Plan->Cutpoints.size(), 2U);
+  auto Unguarded = *Inferred.Plan;
+  for (auto &C : Unguarded.Cutpoints)
+    C.OriginalAddress = Entry + 14;
+  refused(checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                         Recovery.Residual, P.Contract,
+                                         Unguarded),
+          Status::Invalid);
+  unsigned Proved = 0;
+  // Try both explicit selector assignments. These are untrusted proposals;
+  // only the complete original/candidate checker may accept a correspondence.
+  for (unsigned Reverse : {0, 1}) {
+    auto Plan = Unguarded;
+    for (unsigned I = 0; I != 2; ++I)
+      Plan.Cutpoints[I].OriginalGuards = Plan.Cutpoints[I].CandidateGuards = {
+          {{LowIRLoopSpace::Register, x86reg::R10, 8}, 1, I ^ Reverse}};
+    const auto R = checkBinaryLowIRLoopRefinement(
+        P.Image, Entry, P.Options, Recovery.Residual, P.Contract, Plan);
+    if (!R.proved())
+      continue;
+    ++Proved;
+    EXPECT_EQ(R.Proof.LoopInitiations, 2U);
+    EXPECT_GT(R.Proof.RankingChecks, 0U);
+    auto Wrong = Plan;
+    Wrong.Cutpoints[1].OriginalGuards = Wrong.Cutpoints[0].OriginalGuards;
+    EXPECT_FALSE(checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                                Recovery.Residual, P.Contract,
+                                                Wrong)
+                     .proved());
+  }
+  EXPECT_EQ(Proved, 1U);
+}
+
 TEST(BinaryLowIRLoopInference, NativeEqualityExitsUseInductiveCounterBounds) {
   // Two independent unsigned loops, both exiting on equality with an input.
   // xor eax,eax; xor ecx,ecx; outer: cmp rcx,r8; je done; xor edx,edx;

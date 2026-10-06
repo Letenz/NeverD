@@ -34,12 +34,12 @@ darwinIndirectAffineTransformSignature(Arch Architecture,
 uint16_t darwinIndirectAffineTransformInputBytes(Arch Architecture,
                                                  const std::string &Name);
 
-/// Exact strong QuartzCore matrix producers and CoreGraphics affine rotation
-/// and concat initialize complete pointer-free results (128 and 48 bytes).
-/// Scale and concat consume initialized physical by-value input copies and may
-/// write their complete extents. CGRectApplyAffineTransform consumes one
-/// initialized 48-byte input and returns a four-double HFA through d0-d3,
-/// without a private result write. This authenticates the current import/ABI
+/// Exact strong QuartzCore matrix producers and CoreGraphics affine rotation,
+/// MakeScale and concat initialize complete pointer-free results (128 and 48
+/// bytes). Matrix scale and affine concat consume initialized physical by-value
+/// input copies and may write their complete extents. CGRectApplyAffineTransform
+/// consumes one initialized 48-byte input and returns a four-double HFA through
+/// d0-d3, without a private result write. This authenticates the current import/ABI
 /// contract, not a LowIR call occurrence or an arbitrary record producer.
 std::optional<SourceFrameEffects>
 darwinMatrixSourceFrameEffects(const BinaryImage &Image,

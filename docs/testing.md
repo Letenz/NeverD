@@ -921,6 +921,16 @@ ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMI
 
 ## Process emulation checks
 
+`AndroidSleepTests.cpp` compiles independent O0/O2 callers with ordinary, APS2 and
+RELR relocations. It checks raw, named and variadic relative sleeps, complete
+observed bytes, request/remaining aliases, malformed inputs, multiple deadlines,
+saved registers/TLS/errno, join/mutex/once continuations, provider lifetime and
+pending events at instruction limits. Available native AArch64 transports also
+match Unicorn's complete reports, including instruction and thread traces.
+`LinuxClockTests.cpp` checks shared elapsed
+time and atomic refusal on clock/deadline overflow. The x64/ARM64 Linux process
+fixtures verify raw sleep errors, unchanged input and both updated clock layouts.
+
 `AndroidNative.FamilyFallbacksPreserveDiagnosticsAndProviderPrecedence` checks
 unknown pthread attribute and mutex members, disabled thread calls and generic
 unknown imports through real dynamic lookups. The same calls after library close
@@ -2827,11 +2837,13 @@ The block/copy publication cases additionally cover two disjoint 48-byte ranges,
 
 Loop refinement tests cover fixed and changing function-temporary values over arbitrary iteration counts, separate side offsets, paired plans, partial and unaligned ranges, both byte orders and temporary-based ranks. Native composition keeps new storage candidate-only. Missing prefixes, undeclared or undefined bytes, wrong projections, omitted assignments, changed program behavior and inconsistent defined-byte sets must refuse certification. Exact execution, query and observation budgets pass and one-short budgets fail; inference cannot fund a later proof. Lifetimes remain digest-bound. These checks do not establish an ordinary native ABI.
 
-Native loop refinement exercises deferred conditional collection and retained unaudited refusal boundaries under arbitrary iteration counts. Manual and inferred plans must recheck the complete entry and induction domains; live bad arms, changed native updates and exhausted query/instruction budgets refuse certificates. Tests bind changed unreachable boundary bytes, preserve strict defaults and malformed-plan rejection, check both witness policies and combined collection options, and retain static-API and overlapping-instruction refusals. Proof semantic schema 16 binds this admission; ordinary native ABI and source composition remain separate obligations.
+Native loop refinement exercises deferred conditional collection and retained unaudited refusal boundaries under arbitrary iteration counts. Manual and inferred plans must recheck the complete entry and induction domains; live bad arms, changed native updates and exhausted query/instruction budgets refuse certificates. Tests bind changed unreachable boundary bytes, preserve strict defaults and malformed-plan rejection, check both witness policies and combined collection options, and retain static-API and overlapping-instruction refusals. Proof semantic schema 17 binds this admission; ordinary native ABI and source composition remain separate obligations.
 
 `ObjCSuperGetterSources` covers four-carrier CGRect getters, ten publication mutations and mixed Boolean/CGRect callers sharing one machine body. The execution oracle checks exact return bits (including signed zero, infinity and a NaN payload), receiver/class identity and selector loading after the metadata call at O0 and O2. Apple ARM64 runs the original compiler thunk as well as generated C; other hosts exercise the generated C with their native record ABI.
 
 `LowIRLoopInference` covers projected 8-, 24- and 32-bit counters with arbitrary initial upper bits, both directions, registers, frames, function temporaries and both byte orders. Complete self-proofs pass; changed results, stuttering, narrow wraparound and skipped equality exits refuse. Exact operation, query, path, rank-candidate and widening budgets pass and one-short budgets fail. Final proof operation, query and observation limits are checked separately.
+
+`ObjCCallHints.SDKRecordData*` checks both external records, every double offset, both Darwin architectures and provider aliases, plus changed imports, weak linkage, missing libraries, conflicting fixups, writable storage and incomplete ranges. `python3 -m unittest scripts.tests.test_generate_darwin_record_data_declarations scripts.tests.test_generate_darwin_data_declarations` checks profile conflicts, alternative layouts, invalid sizes/alignment, TLS and architecture-specific exports. Reproduce the record catalog with `generate_darwin_record_data_declarations.py` using the pinned SDK, libclang, output path and `--check`; this declaration check does not establish native indirect-result initialization or method recovery.
 
 `LowIRLoopInference.ProjectedBounds*` covers narrow equality exits with arbitrary upper bits in counters and bounds, 8/24/32-bit lanes, all three storage kinds and both byte orders. Complete proofs reject changed bounds, stuttering, skipped exits, wrapping and changes to observed upper input bytes. Inference and proof budgets remain separate, with exact and one-short checks.
 
@@ -2842,3 +2854,7 @@ Native loop refinement exercises deferred conditional collection and retained un
 `LowIRLoopInference.OrderedComparisonBits*` covers cached unsigned-order exits in both Boolean encodings across 8/24/32-bit counters, three storage kinds and both byte orders. Full proofs reject nonterminating updates, changed comparisons, moving bounds and observed upper-byte mutations. Exact and one-short inference/proof budgets are separate. Fixtures that change their Boolean encoding rebind the original operation digest before proof.
 
 `LowIRLoopInference.MutablePrefixBounds*` covers derived 8/24/32-bit bounds with changing upper bits, three counter storage kinds, both byte orders and direct/cached exits. It checks nontermination, moving equality bounds, observed upper-bit/cache mutations and exact/one-short budgets. A moving unsigned-order bound can terminate on wraparound and has its own complete proof regression.
+
+`LowIRLoopRefinement.GuardedCuts*` and `BinaryLowIRLoopRefinement.GuardedCuts*` cover repeated PCs, register/frame/profiled-system selectors, both byte orders, unmatched finite and cyclic paths, overlap and wrong-side refusal, prefix generalization, selected undefined-value witnesses, malformed metadata, digest binding and shared budgets. Independent native tests prove both R10 contexts at one original loop address and keep unaudited boundaries ahead of selectors. Automatic native selector discovery and ordinary ABI certification remain separate.
+
+`DarwinIndirectRecordCalls` checks the current MakeScale contract and its 22 import/ABI mutations, then consumes a complete 48-byte private result through the shared by-value-copy proof. Misaligned, displaced, overlapping or out-of-frame result ranges refuse. Removing the definite-write effect also refuses, even with the complete return ABI retained.

@@ -174,6 +174,7 @@ add_neverd_unittest(NeverDLinuxProcessTests
   LinuxProcessTests.cpp
   LinuxProcessLayoutTests.cpp
   LinuxMemoryTests.cpp
+  LinuxClockTests.cpp
   LinuxOutputNativeTests.cpp
   ProcessReportTests.cpp
   TIMEOUT 20
@@ -213,6 +214,7 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidThreadAttributeTests.cpp
   AndroidThreadTests.cpp
   AndroidTimeTests.cpp
+  AndroidSleepTests.cpp
   AndroidSignalTests.cpp
   AndroidSnapshotTests.cpp
   AndroidResidencyTests.cpp
