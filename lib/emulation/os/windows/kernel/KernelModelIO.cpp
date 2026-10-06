@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 
 namespace neverd::emulation {
 namespace {
