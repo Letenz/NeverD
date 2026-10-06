@@ -144,6 +144,24 @@ void HexView::request(Address base) const {
       });
 }
 
+void HexView::addressSpaceChanged() {
+  updateRange();
+  if (current_)
+    setCurrent(*current_, currentSize_);
+  else
+    viewport()->update();
+}
+
+std::optional<quint8> HexView::byteAt(Address address) const {
+  const auto it = chunks_.constFind(chunkBase(address));
+  if (it == chunks_.cend())
+    return std::nullopt;
+  const int offset = int(address - it.key());
+  if (offset >= it->mapped)
+    return std::nullopt;
+  return static_cast<quint8>(it->data.at(offset));
+}
+
 void HexView::setCurrent(Address address, int size) {
   current_ = address;
   currentSize_ = std::max(1, size);

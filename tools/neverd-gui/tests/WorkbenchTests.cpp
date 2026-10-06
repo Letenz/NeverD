@@ -21,6 +21,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTreeView>
+#include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <memory>
 
 using namespace neverd::gui;
@@ -83,6 +84,25 @@ private slots:
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        settingsDirectory_.path());
+  }
+
+  void hexViewShownBeforeOpeningLoadsItsBytes() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    // A restored desktop can show the hex view before the regions arrive.
+    for (auto *dock :
+         bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+      if (dock->uniqueName() == QLatin1String("hex-1"))
+        dock->raise();
+    auto *hex = bench.window->findChild<HexView *>();
+    QVERIFY(hex);
+    QTRY_VERIFY(hex->isVisible());
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(hex->byteAt(Base).has_value(), OpenTimeoutMs);
+    QVERIFY(hex->isVisible());
   }
 
   void viewsFollowTheSessionAndNavigation() {

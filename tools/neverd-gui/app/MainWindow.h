@@ -93,6 +93,9 @@ private:
   std::optional<Address> currentAddress() const;
   std::optional<Address> currentFunction() const;
   void navigate(Address address);
+  /// Jump in the active address view: the hex view when it was the last
+  /// analysis view used, otherwise the disassembly.
+  void jump(Address address);
   void navigateExpression(const QString &text);
   void synchronize(Address address, QObject *source);
   void updateActions();
@@ -157,6 +160,7 @@ private:
   QString lastPaletteCommand_;
   bool searchDown_ = true;
   bool synchronizing_ = false;
+  bool hexActive_ = false;
   bool quitting_ = false;
   bool defaultSizesPending_ = false;
   QTimer statusTimer_;

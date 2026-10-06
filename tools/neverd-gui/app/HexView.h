@@ -25,6 +25,10 @@ public:
   /// Show \p address, highlighting \p size bytes.
   void setCurrent(Address address, int size = 1);
   std::optional<Address> currentAddress() const { return current_; }
+  /// Map rows again after the regions of the address space changed.
+  void addressSpaceChanged();
+  /// The byte at \p address once it is loaded and mapped.
+  std::optional<quint8> byteAt(Address address) const;
 
 signals:
   void locationChanged(neverd::gui::Address address);

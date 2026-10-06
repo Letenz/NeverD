@@ -93,12 +93,14 @@ unless their lock is set. Rows mapped to instructions move the disassembly
 cursor. Recognized library operations in C can fold into one-line summaries:
 click a summary to expand it; copy and export always use the complete code.
 
-**Hex View-1** follows the disassembly cursor. **Imports**, **Exports**,
-**Names**, **Strings**, **Segments** and **Bookmarks** are choosers with a quick
-filter and sortable columns. **Jump anywhere** (G) takes an address, a name or
-an expression such as `main+0x10` and suggests names as you type. Cross
-references (X, Ctrl+X, Ctrl+J) list call (`p`), jump (`j`), read (`r`), write
-(`w`) and offset (`o`) references from the worker's reference index.
+**Hex View-1** follows the disassembly cursor; while it is the active view, a
+jump (G or `g` on the command line) moves it and keeps it in front.
+**Imports**, **Exports**, **Names**, **Strings**, **Segments** and
+**Bookmarks** are choosers with a quick filter and sortable columns. **Jump
+anywhere** (G) takes an address, a name or an expression such as `main+0x10`
+and suggests names as you type. Cross references (X, Ctrl+X, Ctrl+J) list call
+(`p`), jump (`j`), read (`r`), write (`w`) and offset (`o`) references from the
+worker's reference index.
 
 The output window's command line evaluates expressions in hexadecimal by
 default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,

@@ -181,9 +181,17 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
 MainWindow::~MainWindow() {
   qApp->removeEventFilter(this);
   // Child views are destroyed after this body, and their teardown releases
-  // queries; keep the resulting session notifications away from this window.
+  // queries and moves the focus; keep the resulting notifications away from
+  // this window.
   disconnect(&session_, nullptr, this, nullptr);
   disconnect(&broker_, nullptr, this, nullptr);
+  disconnect(qApp, &QApplication::focusChanged, this, nullptr);
+  // Docked windows are children of this window; closed and floating ones are
+  // not, and would keep their unique names registered after it is gone.
+  for (auto *dock : std::as_const(docks_))
+    if (!isAncestorOf(dock))
+      delete dock;
+  docks_.clear();
   statusTimer_.stop();
   if (instance_ == this)
     instance_ = nullptr;
@@ -220,6 +228,8 @@ void MainWindow::buildMenusAndToolbars() {
   connect(navigationBand_, &NavigationBand::spaceChanged, this, [this] {
     if (disassembly_)
       disassembly_->listing()->viewport()->update();
+    if (hex_)
+      hex_->addressSpaceChanged();
   });
   Q_UNUSED(toolbars);
 }
@@ -403,7 +413,17 @@ void MainWindow::buildDocks() {
     synchronizing_ = false;
   });
   connect(output_, &OutputWindow::navigateRequested, this,
-          [this](Address address) { navigate(address); });
+          [this](Address address) { jump(address); });
+  // The output window and dialogs act on the last analysis view used.
+  connect(qApp, &QApplication::focusChanged, this,
+          [this](QWidget *, QWidget *now) {
+            for (auto it = docks_.cbegin(); it != docks_.cend(); ++it)
+              if (*it && (*it)->isAncestorOf(now)) {
+                if (it.key() != QLatin1String(OutputDock))
+                  hexActive_ = it.key() == QLatin1String(HexDock);
+                return;
+              }
+          });
   connect(output_, &OutputWindow::commandRequested, this,
           &MainWindow::runCommand);
   connect(&session_, &Session::message, output_, &OutputWindow::append);
@@ -625,12 +645,24 @@ void MainWindow::navigate(Address address) {
   disassembly_->focusContent();
 }
 
+void MainWindow::jump(Address address) {
+  if (!session_.loaded())
+    return;
+  if (!hexActive_ || !hex_->isVisible()) {
+    navigate(address);
+    return;
+  }
+  disassembly_->navigate(address, true);
+  hex_->setCurrent(address);
+  hex_->setFocus();
+}
+
 void MainWindow::navigateExpression(const QString &text) {
   resolveExpression(
       session_, this, text, currentAddress(),
       [this, text](std::optional<Address> value, const QString &error) {
         if (value)
-          navigate(*value);
+          jump(*value);
         else
           output_->append(tr("Cannot jump to %1: %2").arg(text, error), 2);
       });
@@ -830,6 +862,8 @@ void MainWindow::connectActions() {
   on(ActionId::ViewHex, [this] {
     docks_.value(HexDock)->open();
     docks_.value(HexDock)->raise();
+    hexActive_ = true;
+    hex_->setFocus();
   });
   const auto openChooser = [this](ChooserKind kind) {
     auto *dock = chooserDock(kind);
