@@ -51,7 +51,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <unordered_map>
 #include <vector>
 
 namespace neverd::solver {
@@ -193,10 +192,16 @@ private:
   std::vector<Gate> Gates;
   std::vector<SatLit> OperandPool;
 
-  /// Identity hash of a gate to the gates carrying it.  Collisions are
-  /// resolved by comparing candidates, and the map is never iterated, so
-  /// nothing here can make the encoding order-dependent.
-  std::unordered_map<uint64_t, llvm::SmallVector<uint32_t, 2>> GateTable;
+  /// Flat open-addressed storage avoids one allocation per gate. Full hashes
+  /// and exact operands resolve collisions; slots never define gate identity
+  /// or encoding order. Gate indices remain stable when the table grows.
+  struct GateBucket {
+    uint64_t Hash = 0;
+    // Zero is empty; otherwise this is one plus the gate's stable index.
+    uint32_t Index = 0;
+  };
+  std::vector<GateBucket> GateTable;
+  void growGateTable();
 };
 
 } // namespace neverd::solver
