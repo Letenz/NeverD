@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: fb48643220c4133abaf1152bc583f4341f626a9d62e4c61f583d43af2c3ad145 -->
+<!-- i18n-source: 2fb61c4299cd9e0d2292a80e45a5655cf97a5598165087d2d61c18176bd13248 -->
 
 [← 文件索引](README.md)
 
@@ -113,7 +113,7 @@ allocation_unit、mutation_time 及 seconds/nanoseconds 全部必填，整數沿
 
 `unlink(10)` / `unlinkat(472)` 刪除既有一般名稱；一般檔案刪除僅接受低 32 位 flags=0 或 `AT_SYMLINK_NOFOLLOW_ANY=0x800`。未知位先回 EINVAL；AT_REMOVEDIR 使用下述受限目錄刪除；DATALESS、SYSTEM_DISCARDED 未支援。共用解析器保留路徑故障、dirfd、CWD 與絕對路徑順序；缺失 ENOENT、檔案後斜線 ENOTDIR、一般目錄 EPERM、純斜線根路徑 EISDIR，尾端帶 `.`/`..` 的根路徑 EBUSY。原生探針亦驗證末尾 `.`/`..`。
 
-舊 FD、dup、獨立開啟物件保留資料、游標與旗標，新開啟失敗；隱式父目錄與 CWD 保留，F_GETPATH 仍回傳捕獲的舊路徑。寫授權屬於檔案物件；全部描述元與最後一段映射釋放後，close/dup2 或下次修改才回收目前位元組預算，初始路徑/引用費用仍計入。權限強制檢查、跨父目錄改名、硬連結與刪除初始目錄或由目錄 FD/CWD 持有的目錄尚缺。
+舊 FD、dup、獨立開啟物件保留資料、游標與旗標，新開啟失敗；隱式父目錄與 CWD 保留，F_GETPATH 仍回傳捕獲的舊路徑。寫授權屬於檔案物件；全部描述元與最後一段映射釋放後，close/dup2 或下次修改才回收目前位元組預算，初始路徑/引用費用仍計入。權限強制檢查、跨父目錄改名、硬連結與刪除初始目錄尚缺。
 
 刪除後父目錄的 stat/列舉觀察對舊/新 FD、dup、路徑查詢皆失效；stat/readdir/SEEK_END 在複製或改游標前停止。read/pread 仍回 EISDIR，SET/CUR、F_GETPATH、fchdir 與相對查找可用。可信修改策略令 nlink=0、ctime=固定時間，保留其他時間、資料與分配；後續寫入不能恢復 nlink=1。無策略或整段 EFAULT 後中繼資料仍未知。失敗保留狀態；原生 `unlinked-file` 比較名稱/描述元，策略時間與目錄失效屬模型規則。
 
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-獨立工作負載驗收要求 ARM64 102 項或 x64 68 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
+獨立工作負載驗收要求 ARM64 105 項或 x64 70 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -437,9 +437,9 @@ Release Darwin 共971項：575通過、396因後端不可用跳過、零失敗�
 
 共用逐元件解析器。mkdir 可建立尾端只接斜線的缺失名稱；缺失祖先後接點/雙點仍為 ENOENT，一般檔案祖先為 ENOTDIR，既有名稱為 EEXIST。相對路徑沿用 FD/CWD，絕對路徑忽略 dirfd；字串錯誤先於相對 FD。建立不需可用 FD；查找、授權、位元組/項目預算或傳輸失敗不發布名稱、不使父觀測失效。
 
-`rmdir(137)` 與帶 AT_REMOVEDIR(0x80) 的 `unlinkat(472)` 刪除本程序建立的空目錄，可加 AT_SYMLINK_NOFOLLOW_ANY(0x800)。未知低32位旗標先回 EINVAL；DATALESS、SYSTEM_DISCARDED 未支援。保留已知路徑/類型/根目錄錯誤；刪除初始目錄為 UnsupportedService。新目錄尾點為 EINVAL，雙點或非空為 ENOTEMPTY。目錄 FD（含 dup）或 CWD 仍持有目標時明確拒絕，等待完整物件生命週期。已 unlink 的一般檔案 FD/映射不算名稱；原生對照確認位元組、inode 與最後連結 F_GETPATH 在父目錄刪除及名稱重用後保留。
+`rmdir(137)` 與帶 AT_REMOVEDIR(0x80) 的 `unlinkat(472)` 刪除本程序建立的空目錄，可加 AT_SYMLINK_NOFOLLOW_ANY(0x800)。未知低32位旗標先回 EINVAL；DATALESS、SYSTEM_DISCARDED 未支援。保留已知路徑/類型/根目錄錯誤；刪除初始目錄為 UnsupportedService。新目錄尾點為 EINVAL，從仍有名稱的目錄出發的雙點或非空目標為 ENOTEMPTY。目錄 FD（含 dup）或 CWD 保留原目錄物件，不再阻止刪除。已 unlink 的一般檔案 FD/映射不算名稱；原生對照確認位元組、inode 與最後連結 F_GETPATH 在父目錄刪除及名稱重用後保留。
 
-每個新目錄以規範路徑加 NUL 和一項計入共享16 MiB/256項預算。成功刪除僅退回自身費用，保留孤立檔案及映射租約。成功修改使直接父目錄完整 stat/列舉失效，失敗則保留；新目錄中繼資料及快照即使有一般檔案建立策略仍未知。原創 `directory-mutations` 在原生 macOS、五種客體與 C++/C/CLI/Python 比較巢狀建立、改名、unlink、刪除及孤立物件重用。
+每個新目錄以規範路徑加 NUL 和一項計入共享16 MiB/256項預算。已刪目錄不可達後僅退回自身費用，保留孤立檔案及映射租約。成功修改使直接父目錄完整 stat/列舉失效，失敗則保留；新目錄中繼資料及快照即使有一般檔案建立策略仍未知。原創 `directory-mutations` 在原生 macOS、五種客體與 C++/C/CLI/Python 比較巢狀建立、改名、unlink、刪除及孤立物件重用。
 
 [XNU mkdir/rmdir](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU directory creation lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c).
 
@@ -448,3 +448,13 @@ Release Darwin 共971項：575通過、396因後端不可用跳過、零失敗�
 Release Darwin 共1,017項：609通過、408因後端不可用略過、零失敗；102項必需 ARM64 HVF 全部執行。定向測試58通過、12略過，含26項新增4K/16K直接測試。公開 C/CLI/報告178/178，含128項 Darwin 輸入對照；Python 在17.255秒內通過五種組合，原生24/24、驗證腳本66/66通過。獨立審查核對預算、名稱重用、父身分、檔案租約與回滾。初始測試通過後，額外原生探針發現純斜線根刪除為 EISDIR、尾點/雙點根為 EBUSY；已統一判斷並加入共用斷言，初始測試與原始碼/二進位快照保留。計數重疊、時限不變；Intel HVF Actions 暫停，完整 GitHub CI 與 iOS 實機另驗。
 
 `build-hvf-arm64/directory-mutation-validation-summary.json`, `directory-mutation-darwin-final-evidence/`, `directory-mutation-focused-final.xml`, `directory-mutation-public-final.xml`, `directory-mutation-native-final/`, `directory-mutation-before-root-fix/`.
+
+## 保留的目錄身分
+
+刪除後的目錄由 FD/CWD 保留原父鏈，父名稱刪除與重用不改變身分。開啟點路徑有獨立游標，dup 共用；雙點沿原父物件，已刪目錄的一般子名稱回 ENOENT，不會接到替代目錄。LOOKUP 可穿越保留的已刪父物件；建立/刪除/改名查找回 ENOENT。改名目標尾點/雙點於該元件遍歷前回 EINVAL，更早祖先錯誤優先。F_GETPATH 保留末次路徑，完整 stat/列舉未知。新目錄的路徑+NUL與一項費用保留至所有 FD、CWD、舊子物件參照釋放；close、dup2、CWD 變更與修改准入回收不可達鏈。初始費用與一般檔案租約分開。原創 `deleted-directories` 在原生 macOS 與五種客體比較持有刪除、父鏈/名稱重用、查找意圖與僅 CWD 保留。
+
+### 目錄生命週期驗證，2026-10-06
+
+Release Darwin 1,051項：631通過、420後端不可用略過、零失敗；105項必需 ARM64 HVF 全執行。定向98通過、12略過；初始直接64/64，含14項新增及持有刪除更新。公開 C/CLI/報告183/183，含133項 Darwin；Python 五種設定18.691秒，原生25/25、腳本66/66。額外原生改名探針修正初始通過後發現的尾點錯誤順序，原始碼/結果/快照保留。主代理已核對源碼與證據，最終獨立審查不可用。計數重疊、時限不變；完整 CI/iOS實機另驗，Intel HVF Actions 暫停。
+
+`build-hvf-arm64/directory-lifetime-validation-summary.json`, `directory-lifetime-darwin-final-evidence/`, `directory-lifetime-focused-final.xml`, `directory-lifetime-public.xml`, `directory-lifetime-native/`, `directory-lifetime-before-rename-fix/`.

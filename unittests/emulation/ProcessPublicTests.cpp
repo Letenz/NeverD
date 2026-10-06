@@ -418,6 +418,7 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"vectored-io", "7621"},
           std::pair{"file-access", "61"},
           std::pair{"directory-mutations", "6d"},
+          std::pair{"deleted-directories", "68"},
           std::pair{"virtual-created-metadata",
                     emulation::darwin_test::CreationMetadataHex},
           std::pair{"stdin", "00ff78"},
@@ -478,6 +479,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       llvm::StringRef(Mode) == "unlinked-file" ||
       llvm::StringRef(Mode) == "created-file" ||
       llvm::StringRef(Mode) == "directory-mutations" ||
+      llvm::StringRef(Mode) == "deleted-directories" ||
       llvm::StringRef(Mode) == "created-file-metadata" ||
       llvm::StringRef(Mode) == "virtual-created-metadata" ||
       llvm::StringRef(Mode) == "renamed-file" ||
@@ -495,6 +497,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::StringRef(Mode) == "unlinked-file" ||
         llvm::StringRef(Mode) == "created-file" ||
         llvm::StringRef(Mode) == "directory-mutations" ||
+        llvm::StringRef(Mode) == "deleted-directories" ||
         llvm::StringRef(Mode) == "created-file-metadata" ||
         llvm::StringRef(Mode) == "virtual-created-metadata" ||
         llvm::StringRef(Mode) == "renamed-file") {
@@ -505,6 +508,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     if (llvm::StringRef(Mode) == "unlinked-file" ||
         llvm::StringRef(Mode) == "created-file" ||
         llvm::StringRef(Mode) == "directory-mutations" ||
+        llvm::StringRef(Mode) == "deleted-directories" ||
         llvm::StringRef(Mode) == "created-file-metadata" ||
         llvm::StringRef(Mode) == "virtual-created-metadata" ||
         llvm::StringRef(Mode) == "renamed-file")

@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: fb48643220c4133abaf1152bc583f4341f626a9d62e4c61f583d43af2c3ad145 -->
+<!-- i18n-source: 2fb61c4299cd9e0d2292a80e45a5655cf97a5598165087d2d61c18176bd13248 -->
 
 [← 문서 목록](README.md)
 
@@ -113,7 +113,7 @@ allocation_unit, mutation_time 및 seconds/nanoseconds는 필수이며 기존 �
 
 `unlink(10)` / `unlinkat(472)`는 기존 일반 이름을 제거합니다. 일반 파일 제거의 하위32비트는 0 또는 `0x800`만 지원합니다. 알 수 없는 비트는 경로/FD보다 먼저 EINVAL; AT_REMOVEDIR는 아래 제한된 제거를 사용하고 DATALESS와 SYSTEM_DISCARDED는 미지원입니다. 공통 경로 해석으로 ENOENT, 파일 뒤 슬래시 ENOTDIR, 일반 디렉터리 EPERM, 슬래시만 있는 루트 EISDIR, `.`/`..`로 끝나는 루트 EBUSY를 보존하며 네이티브로 마지막 `.`/`..`도 검사했습니다.
 
-기존 FD/dup/독립 open은 데이터·커서·플래그를 유지하고 F_GETPATH는 이전 경로를 반환합니다. 새 open은 실패하되 암시적 부모와 CWD는 남습니다. 쓰기 권한은 객체에 속하며 마지막 설명자와 매핑 범위가 해제된 뒤 close/dup2/다음 변경에서 현재 바이트 예산을 회수합니다. 초기 경로 비용은 유지하며 권한 강제 검사·부모 간 이름 변경·하드링크·초기 디렉터리 또는 디렉터리 FD/CWD가 유지하는 디렉터리 제거는 남아 있습니다.
+기존 FD/dup/독립 open은 데이터·커서·플래그를 유지하고 F_GETPATH는 이전 경로를 반환합니다. 새 open은 실패하되 암시적 부모와 CWD는 남습니다. 쓰기 권한은 객체에 속하며 마지막 설명자와 매핑 범위가 해제된 뒤 close/dup2/다음 변경에서 현재 바이트 예산을 회수합니다. 초기 경로 비용은 유지하며 권한 강제 검사·부모 간 이름 변경·하드링크·초기 디렉터리 제거는 남아 있습니다.
 
 부모 stat/readdir/SEEK_END는 구·신 FD 및 경로 모두에서 무효화되어 복사/커서 변경 전에 중지합니다. read/pread의 EISDIR와 SET/CUR/F_GETPATH/fchdir/상대 조회는 유지됩니다. 알려진 변경 정책은 nlink=0 및 고정 ctime만 적용하며 후속 쓰기도 nlink=1을 복구하지 않습니다. 정책 없음/EFAULT 뒤 메타데이터는 미상입니다. 실패는 상태를 보존하고 원본 `unlinked-file`은 네이티브 이름/FD 동작을 비교합니다. 정책 시간과 부모 무효화는 명시적 모델 규칙입니다.
 
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-독립 워크로드 검증은 ARM64 102개 또는 x64 68개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
+독립 워크로드 검증은 ARM64 105개 또는 x64 70개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -437,9 +437,9 @@ Release Darwin 971개 등록:575개 통과, 백엔드 미제공396개 건너뜀,
 
 공통 구성요소 탐색에서 mkdir는 끝 슬래시만 뒤따르는 누락 이름을 생성합니다. 누락 조상 뒤 점/두 점은 ENOENT, 파일 조상은 ENOTDIR, 기존 이름은 EEXIST입니다. 상대 FD/CWD, 절대 경로의 FD 무시, 문자열 실패 우선순위를 유지합니다. 사용 가능한 FD가 필요 없고 탐색·허가·예산·전송 거부는 이름이나 부모 관측을 변경하지 않습니다.
 
-`rmdir(137)`와 AT_REMOVEDIR(0x80)를 준 `unlinkat(472)`는 이 프로세스가 생성한 빈 디렉터리를 제거하며 AT_SYMLINK_NOFOLLOW_ANY(0x800)를 함께 쓸 수 있습니다. 미지 하위32비트는 입력 전에 EINVAL, DATALESS와 SYSTEM_DISCARDED는 미지원입니다. 알려진 경로/종류/루트 오류는 유지하고 초기 디렉터리 삭제는 UnsupportedService입니다. 생성된 대상의 끝 점은 EINVAL, 두 점/비어 있지 않음은 ENOTEMPTY입니다. 디렉터리 FD(dup 포함)나 CWD가 유지하는 대상 삭제는 지속 객체 수명을 구현할 때까지 명시적으로 거부합니다. unlink된 일반 파일 FD/매핑은 이름에 포함하지 않으며 부모 삭제와 재사용 후 내용·inode·마지막 F_GETPATH가 유지됨을 네이티브로 비교합니다.
+`rmdir(137)`와 AT_REMOVEDIR(0x80)를 준 `unlinkat(472)`는 이 프로세스가 생성한 빈 디렉터리를 제거하며 AT_SYMLINK_NOFOLLOW_ANY(0x800)를 함께 쓸 수 있습니다. 미지 하위32비트는 입력 전에 EINVAL, DATALESS와 SYSTEM_DISCARDED는 미지원입니다. 알려진 경로/종류/루트 오류는 유지하고 초기 디렉터리 삭제는 UnsupportedService입니다. 생성된 대상의 끝 점은 EINVAL, 연결된 디렉터리에서의 두 점/비어 있지 않은 대상은 ENOTEMPTY입니다. 디렉터리 FD(dup 포함)와 CWD는 원래 객체를 유지하며 삭제를 막지 않습니다. unlink된 일반 파일 FD/매핑은 이름에 포함하지 않으며 부모 삭제와 재사용 후 내용·inode·마지막 F_GETPATH가 유지됨을 네이티브로 비교합니다.
 
-새 정규 경로+NUL과1개 항목을 공통16 MiB/256개 예산에 합산하고 삭제 때 해당 비용만 반환합니다. 고아 파일·매핑은 유지합니다. 성공할 때만 부모의 전체 stat/열거를 무효화하며 새 디렉터리 관측은 계속 미지입니다. 독자 `directory-mutations`는 네이티브 macOS,5개 게스트,C++/C/CLI/Python에서 중첩 생성·이름 변경·unlink·삭제·고아 객체 재사용을 비교합니다.
+새 정규 경로+NUL과1개 항목을 공통16 MiB/256개 예산에 합산하고 삭제 후 모든 참조가 없어질 때 해당 비용만 반환합니다. 고아 파일·매핑은 유지합니다. 성공할 때만 부모의 전체 stat/열거를 무효화하며 새 디렉터리 관측은 계속 미지입니다. 독자 `directory-mutations`는 네이티브 macOS,5개 게스트,C++/C/CLI/Python에서 중첩 생성·이름 변경·unlink·삭제·고아 객체 재사용을 비교합니다.
 
 [XNU mkdir/rmdir](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU directory creation lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c).
 
@@ -448,3 +448,13 @@ Release Darwin 971개 등록:575개 통과, 백엔드 미제공396개 건너뜀,
 Release Darwin:1,017개 등록,609개 통과,백엔드 미제공408개 건너뜀,실패 없음. 필수 ARM64 HVF102개 실행. 집중58개 통과·12개 건너뜀,새4K/16K 직접26개 포함. 공개 C/CLI/report178/178(Darwin 입력128),Python5개 구성17.255초,네이티브24/24,스크립트66/66 통과. 독립 검토는 예산·이름 재사용·부모 식별·파일 임대·롤백을 확인했습니다. 초기 성공 후 추가 네이티브 검사가 슬래시 전용 루트 삭제 EISDIR와 끝 점/두 점 루트 EBUSY 차이를 발견해 공통 판단과 테스트를 수정했습니다. 초기 결과·소스·바이너리는 보존합니다. 수치는 중복,기한 불변,Intel HVF Actions 중지 유지. 전체 GitHub CI와 실제 iOS는 별도입니다.
 
 `build-hvf-arm64/directory-mutation-validation-summary.json`, `directory-mutation-darwin-final-evidence/`, `directory-mutation-focused-final.xml`, `directory-mutation-public-final.xml`, `directory-mutation-native-final/`, `directory-mutation-before-root-fix/`.
+
+## 유지된 디렉터리 식별
+
+삭제된 디렉터리의 FD/CWD는 원래 부모 체인을 유지하며 이름 재사용으로 다른 객체에 연결되지 않습니다. 점 open은 독립 커서,dup는 공유 커서,두 점은 원래 부모를 사용합니다. 삭제된 디렉터리의 일반 자식은 ENOENT입니다. LOOKUP은 보존된 삭제 부모를 통과하지만 생성/삭제/이름 변경 탐색은 ENOENT입니다. 이름 변경의 끝 점/두 점은 해당 구성요소 탐색 전에 EINVAL이며 앞선 조상 오류가 우선합니다. F_GETPATH는 마지막 경로를 유지하고 전체 stat/열거는 미지입니다. 경로+NUL과 한 항목 비용은 FD/CWD/이전 자식 참조가 모두 해제될 때까지 유지합니다. close/dup2/CWD변경/수정 허용 시 도달 불가 체인을 회수하며 초기 비용과 파일 임대는 별개입니다. 독자 `deleted-directories`는 네이티브 macOS와5개 구성에서 보유 중 삭제·부모와 이름 재사용·탐색 의도·CWD 단독 유지를 비교합니다.
+
+### 디렉터리 수명 검증, 2026-10-06
+
+Release Darwin1,051개,631통과,백엔드 미제공420건너뜀,실패 없음;필수 ARM64 HVF105개 실행. 집중98통과·12건너뜀,초기 직접64/64(신규14개와 보유 삭제 갱신). C/CLI/report183/183,Darwin133개;Python5구성18.691초,네이티브25/25,스크립트66/66. 추가 원시 이름 변경 검사로 끝 점 오류 순서를 수정하고 초기 소스·결과·스냅샷을 보존했습니다. 주 에이전트가 증거를 대조했으며 최종 독립 검토는 이용 불가했습니다. 수치 중복,기한 불변,전체CI/실제iOS 별도,Intel HVF Actions 중지 유지.
+
+`build-hvf-arm64/directory-lifetime-validation-summary.json`, `directory-lifetime-darwin-final-evidence/`, `directory-lifetime-focused-final.xml`, `directory-lifetime-public.xml`, `directory-lifetime-native/`, `directory-lifetime-before-rename-fix/`.

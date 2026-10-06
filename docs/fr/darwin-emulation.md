@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: fb48643220c4133abaf1152bc583f4341f626a9d62e4c61f583d43af2c3ad145 -->
+<!-- i18n-source: 2fb61c4299cd9e0d2292a80e45a5655cf97a5598165087d2d61c18176bd13248 -->
 
 [← Index de la documentation](README.md)
 
@@ -113,7 +113,7 @@ Sans politique, pour un répertoire ou après EFAULT intégral rendant l’alloc
 
 `unlink(10)` / `unlinkat(472)` retirent les noms ordinaires existants. la suppression de fichiers accepte les 32 bits bas 0 ou `0x800` ; bits inconnus : EINVAL avant chemin/FD ; AT_REMOVEDIR suit le contrat borné ci-dessous ; DATALESS et SYSTEM_DISCARDED restent exclus. Résolution commune : ENOENT, ENOTDIR après un fichier suivi de `/`, EPERM pour répertoire ordinaire, EISDIR pour une racine composée de barres seules, EBUSY pour une racine terminée par `.`/`..`. Les suffixes `.`/`..` ont aussi été vérifiés nativement.
 
-Les anciens FD/dup/ouvertures indépendantes gardent données, positions et flags ; F_GETPATH conserve l’ancien chemin capturé. Les nouvelles ouvertures échouent, parents implicites et CWD subsistent. L’autorisation d’écriture appartient à l’objet ; son budget de données actuelles est récupéré après le dernier descripteur et mapping, via close/dup2 ou la prochaine mutation. Les coûts initiaux des chemins restent comptés. Contrôle des droits, renommage entre parents, liens physiques et suppression des répertoires initiaux ou retenus par FD de répertoire/CWD restent à faire.
+Les anciens FD/dup/ouvertures indépendantes gardent données, positions et flags ; F_GETPATH conserve l’ancien chemin capturé. Les nouvelles ouvertures échouent, parents implicites et CWD subsistent. L’autorisation d’écriture appartient à l’objet ; son budget de données actuelles est récupéré après le dernier descripteur et mapping, via close/dup2 ou la prochaine mutation. Les coûts initiaux des chemins restent comptés. Contrôle des droits, renommage entre parents, liens physiques et suppression des répertoires initiaux restent à faire.
 
 Les observations stat/readdir/SEEK_END du parent deviennent inconnues pour tous les FD et chemins, avant copie/déplacement. read/pread restent EISDIR ; SET/CUR/F_GETPATH/fchdir/résolution relative continuent. Une politique connue fixe nlink=0 et ctime, sans restaurer nlink=1 aux écritures suivantes. Sans politique/après EFAULT, métadonnées inconnues. Les échecs préservent l’état. `unlinked-file` compare les règles natives de noms/FD ; temps et invalidation sont des règles explicites du modèle.
 
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-La validation indépendante exige chacun des 102 cas natifs ARM64 ou 68 cas x64, dont `LC_MAIN` et `LC_UNIXTHREAD` sur chaque plateforme. Les cas obligatoires absents/ignorés ou un `ld64.lld` manquant font échouer la validation.
+La validation indépendante exige chacun des 105 cas natifs ARM64 ou 70 cas x64, dont `LC_MAIN` et `LC_UNIXTHREAD` sur chaque plateforme. Les cas obligatoires absents/ignorés ou un `ld64.lld` manquant font échouer la validation.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -437,9 +437,9 @@ Release Darwin :971 inscriptions,575 réussites,396 sauts de backend indisponibl
 
 Le parcours commun admet un nom final absent suivi uniquement de slashs pour mkdir. Un ancêtre absent avant point/double-point donne ENOENT, un fichier ancêtre ENOTDIR et un nom existant EEXIST. FD/CWD relatifs, indépendance absolue du FD et priorité des fautes de chaîne restent inchangés. Aucun FD libre n’est nécessaire ; refus de recherche, autorisation, budget ou transport ne publient rien.
 
-`rmdir(137)` et `unlinkat(472)` avec AT_REMOVEDIR(0x80), éventuellement AT_SYMLINK_NOFOLLOW_ANY(0x800), suppriment les répertoires vides créés par ce processus. Les bits bas32 inconnus donnent EINVAL avant les entrées ; DATALESS et SYSTEM_DISCARDED restent exclus. Les erreurs connues de chemin/type/racine restent ; supprimer un répertoire initial est UnsupportedService. Sur un répertoire créé, point final donne EINVAL, double-point/non vide ENOTEMPTY. Tout FD de répertoire (dup compris) ou CWD conservé rend la suppression non prise en charge jusqu’à la modélisation de l’identité persistante. Les fichiers ordinaires déjà unlink et leurs mappings ne sont pas des noms : les comparaisons natives conservent contenu, inode et dernier F_GETPATH après suppression/réutilisation du parent.
+`rmdir(137)` et `unlinkat(472)` avec AT_REMOVEDIR(0x80), éventuellement AT_SYMLINK_NOFOLLOW_ANY(0x800), suppriment les répertoires vides créés par ce processus. Les bits bas32 inconnus donnent EINVAL avant les entrées ; DATALESS et SYSTEM_DISCARDED restent exclus. Les erreurs connues de chemin/type/racine restent ; supprimer un répertoire initial est UnsupportedService. Sur un répertoire créé, point final donne EINVAL, double-point depuis un répertoire lié ou cible non vide ENOTEMPTY. Les FD de répertoire, dup et CWD gardent l’objet original et ne bloquent plus sa suppression. Les fichiers ordinaires déjà unlink et leurs mappings ne sont pas des noms : les comparaisons natives conservent contenu, inode et dernier F_GETPATH après suppression/réutilisation du parent.
 
-Chaque nouveau chemin canonique+NUL et une entrée rejoignent le budget commun16 MiB/256 entrées. Seul ce coût est remboursé à la suppression, sans libérer les fichiers orphelins ou mappings. Seul le succès invalide stat/énumération du parent ; les observations complètes des nouveaux répertoires restent inconnues. L’original `directory-mutations` compare création imbriquée, renommage, unlink, suppression et réutilisation sur macOS natif et cinq invités via C++/C/CLI/Python.
+Chaque nouveau chemin canonique+NUL et une entrée rejoignent le budget commun16 MiB/256 entrées. Seul ce coût est remboursé après disparition de toutes les références au répertoire supprimé, sans libérer les fichiers orphelins ou mappings. Seul le succès invalide stat/énumération du parent ; les observations complètes des nouveaux répertoires restent inconnues. L’original `directory-mutations` compare création imbriquée, renommage, unlink, suppression et réutilisation sur macOS natif et cinq invités via C++/C/CLI/Python.
 
 [XNU mkdir/rmdir](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU directory creation lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c).
 
@@ -448,3 +448,13 @@ Chaque nouveau chemin canonique+NUL et une entrée rejoignent le budget commun16
 Release Darwin :1 017 cas,609 réussites,408 sauts de backend indisponible,aucun échec ;102 ARM64 HVF obligatoires exécutés. Ciblés :58 réussites,12 sauts,dont26 nouveaux cas directs4K/16K. C/CLI/report178/178,dont128 Darwin ;Python cinq combinaisons en 17.255s,natifs24/24,scripts66/66. Revue indépendante des budgets,réutilisations,identités parentes,baux et annulations. Une sonde native après le premier passage réussi a révélé EISDIR pour la racine uniquement en barres,contre EBUSY avec point/deux points finaux. Décision et tests natifs/invités sont partagés ;premiers résultats et instantanés sources/binaires conservés. Comptages recoupés,délais inchangés,Intel HVF Actions suspendu ;GitHub CI complète et iOS physique séparés.
 
 `build-hvf-arm64/directory-mutation-validation-summary.json`, `directory-mutation-darwin-final-evidence/`, `directory-mutation-focused-final.xml`, `directory-mutation-public-final.xml`, `directory-mutation-native-final/`, `directory-mutation-before-root-fix/`.
+
+## Identités de répertoires conservées
+
+FD/CWD gardent l’objet supprimé et sa chaîne de parents malgré la réutilisation des noms. Ouvrir un point crée un curseur indépendant ; dup le partage ; deux points suivent le parent original. Un enfant ordinaire d’un répertoire supprimé donne ENOENT. LOOKUP peut traverser les parents supprimés conservés, tandis que création/suppression/renommage donnent ENOENT. Le point final d’un renommage donne EINVAL avant sa traversée, après les erreurs précédentes. F_GETPATH conserve le dernier chemin ; stat et énumération complets restent inconnus. Le coût chemin+NUL et une entrée persiste jusqu’à libération de tous FD/CWD/enfants retenus. Close/dup2/changement de CWD/admission de mutation récupèrent les chaînes inaccessibles ; coûts initiaux et baux de fichiers restent séparés. `deleted-directories` compare ces durées, réutilisations et intentions avec macOS natif et cinq invités.
+
+### Vérification des durées de répertoires, 2026-10-06
+
+Release Darwin1 051 cas,631 réussites,420 sauts indisponibles,zéro échec;105 ARM64 HVF obligatoires exécutés. Ciblés98 réussites/12 sauts,directs initiaux64/64 dont14 nouveaux. C/CLI/report183/183,dont133 Darwin;Python cinq combinaisons 18.691s,natifs25/25,scripts66/66. Une sonde native supplémentaire a corrigé l’ordre du point final de renommage;premiers sources/résultats/instantanés conservés. Audit des preuves par l’agent principal;revue indépendante finale indisponible. Comptages recoupés,délais identiques,CI complète/iOS physique séparés,Intel HVF Actions suspendu.
+
+`build-hvf-arm64/directory-lifetime-validation-summary.json`, `directory-lifetime-darwin-final-evidence/`, `directory-lifetime-focused-final.xml`, `directory-lifetime-public.xml`, `directory-lifetime-native/`, `directory-lifetime-before-rename-fix/`.

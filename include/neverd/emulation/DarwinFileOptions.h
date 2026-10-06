@@ -131,8 +131,9 @@ struct DarwinFileOptions {
   /// Newly created files have writable contents; new directories inherit
   /// namespace mutation authority. Existing objects retain their separate
   /// grants. Namespace changes invalidate the parent's metadata and snapshot.
-  /// New directory metadata stays unknown. Initial directories, or directories
-  /// held by a directory FD or CWD, cannot be removed in the current model.
+  /// New directory metadata stays unknown. Initial directories cannot be
+  /// removed. Created directories retain their object and original parent
+  /// while held by a directory FD, CWD or an unlinked child after removal.
   std::set<std::string> MutableDirectories;
   /// Optional virtual regular-file creation metadata; requires InitialUmask.
   /// New directories inherit only the parent's known device/group and do not

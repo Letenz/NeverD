@@ -1501,6 +1501,117 @@ static int system_info(int emit_values) {
   return 37;
 }
 
+static int deleted_directories(const char *path) {
+  unsigned error;
+  char parent[1024], before[1024], after[1024];
+  u64 length = 0, slash = 0;
+  while (path[length] && length + 1 < sizeof(parent)) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      slash = length;
+    ++length;
+  }
+  if (path[0] != '/' || path[length])
+    return 51;
+  parent[slash ? slash : 1] = 0;
+  int check = 51;
+#define DELETED_EXPECT(expression)                                             \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  const char name[] = "dir-held", child[] = "child", fresh[] = "fresh";
+  const char dot[] = ".", dotdot[] = "..", absent[] = "absent";
+  const char old_child[] = "../child", escape[] = "../../dir-held/child/fresh";
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  DELETED_EXPECT(!error && root >= 3);
+  DELETED_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DELETED_EXPECT(call(475, root, (u64)name, 0700, 0, 0, 0, &error) == 0 &&
+                 !error);
+  u64 old = call(463, root, (u64)name, 0x100000, 0, 0, 0, &error);
+  DELETED_EXPECT(!error && old >= 3);
+  u64 duplicate = call(41, old, 0, 0, 0, 0, 0, &error);
+  DELETED_EXPECT(!error && duplicate != old);
+  DELETED_EXPECT(call(475, old, (u64)child, 0700, 0, 0, 0, &error) == 0 &&
+                 !error);
+  u64 held = call(463, old, (u64)child, 0x100000, 0, 0, 0, &error);
+  DELETED_EXPECT(!error && held >= 3);
+  DELETED_EXPECT(call(92, held, 50, (u64)before, 0, 0, 0, &error) == 0 &&
+                 !error);
+  DELETED_EXPECT(call(13, held, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DELETED_EXPECT(call(472, old, (u64)child, 0x80, 0, 0, 0, &error) == 0 &&
+                 !error);
+  DELETED_EXPECT(call(472, root, (u64)name, 0x80, 0, 0, 0, &error) == 0 &&
+                 !error);
+  DELETED_EXPECT(call(475, root, (u64)name, 0700, 0, 0, 0, &error) == 0 &&
+                 !error);
+  u64 newer = call(463, root, (u64)name, 0x100000, 0, 0, 0, &error);
+  DELETED_EXPECT(!error && newer >= 3);
+  DELETED_EXPECT(call(475, newer, (u64)child, 0700, 0, 0, 0, &error) == 0 &&
+                 !error);
+  u64 nested = call(463, newer, (u64)child, 0x100000, 0, 0, 0, &error);
+  DELETED_EXPECT(!error && nested >= 3);
+  DELETED_EXPECT(call(475, nested, (u64)fresh, 0700, 0, 0, 0, &error) == 0 &&
+                 !error);
+  DELETED_EXPECT(call(466, old, (u64)child, 0, 0, 0, 0, &error) == 2 && error);
+  DELETED_EXPECT(call(466, duplicate, (u64)child, 0, 0, 0, 0, &error) == 2 &&
+                 error);
+  DELETED_EXPECT(call(466, held, (u64)old_child, 0, 0, 0, 0, &error) == 2 &&
+                 error);
+  DELETED_EXPECT(call(466, held, (u64)escape, 0, 0, 0, 0, &error) == 0 &&
+                 !error);
+  DELETED_EXPECT(call(475, held, (u64)absent, 0700, 0, 0, 0, &error) == 2 &&
+                 error);
+  DELETED_EXPECT(call(475, held, (u64)dot, 0700, 0, 0, 0, &error) == 17 &&
+                 error);
+  DELETED_EXPECT(call(475, held, (u64)dotdot, 0700, 0, 0, 0, &error) == 2 &&
+                 error);
+  DELETED_EXPECT(
+      call(465, (u64)-1, (u64)path, held, (u64)dotdot, 0, 0, &error) == 22 &&
+      error);
+  DELETED_EXPECT(
+      call(465, (u64)-1, (u64)path, held, (u64)escape, 0, 0, &error) == 2 &&
+      error);
+  DELETED_EXPECT(call(472, held, (u64)dot, 0, 0, 0, 0, &error) == 1 && error);
+  DELETED_EXPECT(call(472, held, (u64)dot, 0x80, 0, 0, 0, &error) == 22 &&
+                 error);
+  u64 same = call(463, held, (u64)dot, 0x100000, 0, 0, 0, &error);
+  DELETED_EXPECT(!error && same >= 3 && same != held);
+  DELETED_EXPECT(call(92, same, 50, (u64)after, 0, 0, 0, &error) == 0 &&
+                 !error && equal(before, after));
+  DELETED_EXPECT(call(6, same, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DELETED_EXPECT(call(6, held, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DELETED_EXPECT(call(6, old, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DELETED_EXPECT(call(6, duplicate, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  // CWD alone now retains both removed directory objects.
+  DELETED_EXPECT(call(33, (u64)old_child, 0, 0, 0, 0, 0, &error) == 2 && error);
+  DELETED_EXPECT(call(33, (u64)escape, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  u64 old_parent = call(5, (u64)dotdot, 0x100000, 0, 0, 0, 0, &error);
+  DELETED_EXPECT(!error && old_parent >= 3);
+  DELETED_EXPECT(call(466, old_parent, (u64)child, 0, 0, 0, 0, &error) == 2 &&
+                 error);
+  DELETED_EXPECT(
+      call(90, newer, old_parent, 0, 0, 0, 0, &error) == old_parent && !error);
+  DELETED_EXPECT(call(466, old_parent, (u64)child, 0, 0, 0, 0, &error) == 0 &&
+                 !error);
+  DELETED_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DELETED_EXPECT(call(472, nested, (u64)fresh, 0x80, 0, 0, 0, &error) == 0 &&
+                 !error);
+  DELETED_EXPECT(call(472, newer, (u64)child, 0x80, 0, 0, 0, &error) == 0 &&
+                 !error);
+  DELETED_EXPECT(call(472, root, (u64)name, 0x80, 0, 0, 0, &error) == 0 &&
+                 !error);
+  DELETED_EXPECT(call(6, nested, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DELETED_EXPECT(call(6, newer, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DELETED_EXPECT(call(6, old_parent, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DELETED_EXPECT(call(6, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  const char marker = 'h';
+  DELETED_EXPECT(call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error);
+#undef DELETED_EXPECT
+  return 37;
+}
+
 static int directory_mutations(const char *path) {
   unsigned error;
   char parent[1024], old_path[1024], current_path[1024];
@@ -1861,6 +1972,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "deleted-directories"))
+    return argc < 3 ? 79 : deleted_directories(argv[2]);
   if (equal(argv[1], "directory-mutations"))
     return argc < 3 ? 79 : directory_mutations(argv[2]);
   if (equal(argv[1], "file-access"))

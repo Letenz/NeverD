@@ -328,6 +328,28 @@ TEST_P(DarwinProcess, DirectoryEnumerationPreservesRecordsCookiesAndCopyOrder) {
   EXPECT_TRUE(Result->StandardError.empty());
   EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
 }
+TEST_P(DarwinProcess,
+       DeletedDirectoriesRetainObjectsParentsAndWorkingDirectory) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.Arguments[2] = "/data";
+  auto Result = run("deleted-directories");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "h");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {475u, 472u, 13u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Result == 0 &&
+             Event.Error == false;
+    })) << Number;
+}
 TEST_P(DarwinProcess, DirectoryMutationsPreserveNamespaceAndOrphanFiles) {
   Options.DarwinFiles.emplace();
   Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',

@@ -36,11 +36,26 @@ public:
 
 private:
   enum class Kind { Input, Output, Error, File, Directory, Missing };
-  enum class MissingPath { Reject, Regular, Directory };
+  enum class LookupMode {
+    Existing,
+    CreateFile,
+    CreateDirectory,
+    DeleteFile,
+    DeleteDirectory,
+    RenameTarget
+  };
   enum class Terminal { Ordinary, Dot, DotDot };
   struct DirectoryIdentity {
     int32_t Device;
     uint32_t GID;
+  };
+  struct DirectoryNode {
+    std::string Path;
+    std::shared_ptr<DirectoryNode> Parent;
+    std::optional<DirectoryIdentity> Identity;
+    bool Created = false;
+    bool Linked = true;
+    bool Changed = false;
   };
   struct Contents {
     llvm::ArrayRef<uint8_t> Initial;
@@ -71,6 +86,8 @@ private:
     std::shared_ptr<Contents> File;
     uint32_t Flags = 0;
     Terminal FinalComponent = Terminal::Ordinary;
+    std::shared_ptr<DirectoryNode> Directory;
+    bool FinalParentUnlinked = false;
     llvm::ArrayRef<uint8_t> bytes() const {
       return File ? File->bytes() : Input;
     }
@@ -92,27 +109,27 @@ private:
   std::map<uint32_t, Descriptor> Descriptors;
   std::map<std::string, std::shared_ptr<Contents>> Nodes;
   std::vector<std::shared_ptr<Contents>> Unlinked;
-  std::map<std::string, std::optional<DirectoryIdentity>> CreatedDirectories;
-  std::set<std::string> ChangedDirectories;
+  std::map<std::string, std::shared_ptr<DirectoryNode>> CreatedDirectories;
+  std::map<std::string, std::shared_ptr<DirectoryNode>> InitialDirectories;
+  std::vector<std::shared_ptr<DirectoryNode>> UnlinkedDirectories;
   bool NamespaceReady = false;
   uint64_t NextCreatedInode = 0;
   uint16_t CurrentUmask = 0;
   std::optional<uint64_t> StorageUsed;
   uint32_t FixedEntries = 0;
-  std::optional<std::string> CurrentDirectory;
+  std::shared_ptr<DirectoryNode> CurrentDirectory;
 
   uint32_t limit() const;
   uint32_t freeDescriptor(uint32_t Minimum = 0) const;
   void initializeNamespace();
   llvm::Error prepareMutation();
   void reclaimUnlinked();
-  bool isDirectory(const std::string &Path) const;
+  std::shared_ptr<DirectoryNode> directoryNode(const std::string &Path);
   bool mutableDirectory(const std::string &Path) const;
-  std::optional<DirectoryIdentity>
-  directoryIdentity(const std::string &Path) const;
+  std::optional<DirectoryIdentity> directoryIdentity(const std::string &Path);
   llvm::Expected<Pathname> readPath(uint64_t Address);
   llvm::Expected<Lookup> resolvePath(uint64_t Address, uint32_t DirectoryFD,
-                                     MissingPath Missing = MissingPath::Reject);
+                                     LookupMode Mode = LookupMode::Existing);
   llvm::Expected<std::optional<ServiceResult>>
   open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD, uint32_t Mode,
        ProcessResult &Result);

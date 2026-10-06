@@ -256,26 +256,256 @@ TEST_P(DarwinFileTest, DirectoryRemovalPreservesHeldAndNonemptyObjects) {
   path("/new/child");
   EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
   path("/new");
-  EXPECT_FALSE(invoke(ServiceKind::Rmdir, {Base}));
-  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryRemovalHeld);
-  EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  error(ServiceKind::Access, {Base}, 2);
   EXPECT_EQ(ok(ServiceKind::Close, {Directory}), 0u);
-  path("/");
-  EXPECT_EQ(ok(ServiceKind::Chdir, {Base}), 0u);
-  path("/new");
-  EXPECT_FALSE(invoke(ServiceKind::Rmdir, {Base}));
-  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryRemovalHeld);
   identity(Dup, "/new");
   EXPECT_EQ(ok(ServiceKind::Fchdir, {Dup}), 0u);
   EXPECT_EQ(ok(ServiceKind::Close, {Dup}), 0u);
-  EXPECT_FALSE(invoke(ServiceKind::Rmdir, {Base}));
-  path("/", Base + 128);
-  EXPECT_EQ(ok(ServiceKind::Chdir, {Base + 128}), 0u);
-  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
-  error(ServiceKind::Access, {Base}, 2);
+  path(".");
+  EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+  path("/new");
   const auto File = ok(ServiceKind::Open, {Base, 0x202});
   error(ServiceKind::Open, {Base, 0x100000}, 20);
   identity(File, "/new");
+  path(".");
+  const auto OldDirectory = ok(ServiceKind::Open, {Base});
+  error(ServiceKind::Read, {OldDirectory, UINT64_MAX, 0}, 21);
+  path("/", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Chdir, {Base + 128}), 0u);
+}
+
+TEST_P(DarwinFileTest, DeletedDirectoryDotOpensKeepIndependentCursors) {
+  Options->MutableDirectories.insert("/");
+  path("/new");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  const auto Old = ok(ServiceKind::Open, {Base});
+  const auto Dup = ok(ServiceKind::Dup, {Old});
+  path(".", Base + 128);
+  const auto Independent = ok(ServiceKind::OpenAt, {Old, Base + 128});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Old, 7, 0}), 7u);
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  const auto New = ok(ServiceKind::Open, {Base});
+  path("/new/child");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  path("child");
+  error(ServiceKind::OpenAt, {Old, Base}, 2);
+  error(ServiceKind::FaccessAt, {Dup, Base}, 2);
+  EXPECT_EQ(ok(ServiceKind::FaccessAt, {New, Base}), 0u);
+  path(".");
+  const auto Reopened = ok(ServiceKind::OpenAt, {Old, Base});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Dup, 0, 1}), 7u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Independent, 0, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Reopened, 0, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {New, 0, 1}), 0u);
+  identity(Reopened, "/new");
+  error(ServiceKind::Read, {Old, UINT64_MAX, 0}, 21);
+  EXPECT_EQ(std::get<uint32_t>(Files->mappingSource(Old)), 22u);
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Old, UINT64_MAX}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  EXPECT_FALSE(
+      invoke(ServiceKind::GetDirEntries64, {Old, UINT64_MAX, 64, UINT64_MAX}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Dup, 0, 1}), 7u);
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {New, UINT64_MAX}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+}
+
+TEST_P(DarwinFileTest, DeletedDirectoryParentsRemainObjectsAfterNameReuse) {
+  Options->MutableDirectories.insert("/");
+  path("/p");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  path("/p/c");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  const auto Child = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {Child}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Child}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  path("/p");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  path("/p/c");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  path("/p/c/fresh");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  path("..");
+  const auto Parent = ok(ServiceKind::Open, {Base});
+  identity(Parent, "/p");
+  path("c");
+  error(ServiceKind::OpenAt, {Parent, Base}, 2);
+  path("../../p/c/fresh");
+  EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+  path("../c");
+  error(ServiceKind::Access, {Base}, 2);
+  path("..");
+  EXPECT_EQ(ok(ServiceKind::Chdir, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Parent}), 0u);
+  path("c");
+  error(ServiceKind::Access, {Base}, 2);
+  path("../p/c");
+  EXPECT_EQ(ok(ServiceKind::Chdir, {Base}), 0u);
+  path("fresh");
+  EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+}
+
+TEST_P(DarwinFileTest, DeletedDirectoryNamespaceLookupKeepsNativeIntent) {
+  Options->MutableDirectories.insert("/");
+  path("/p");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  path("/p/c");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  const auto Child = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  path("..");
+  error(ServiceKind::MkdirAt, {Child, Base}, 17);
+  error(ServiceKind::OpenAt, {Child, Base, 0xa00}, 17);
+  error(ServiceKind::UnlinkAt, {Child, Base, 0}, 1);
+  error(ServiceKind::UnlinkAt, {Child, Base, 0x80}, 2);
+  path("../.");
+  error(ServiceKind::UnlinkAt, {Child, Base, 0x80}, 22);
+  path("/p");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  for (const char *Name : {"..", "../.", "./..", "../..", "../../."}) {
+    SCOPED_TRACE(Name);
+    path(Name);
+    EXPECT_EQ(ok(ServiceKind::FaccessAt, {Child, Base}), 0u);
+    error(ServiceKind::MkdirAt, {Child, Base}, 2);
+    error(ServiceKind::OpenAt, {Child, Base, 0xa00}, 2);
+    error(ServiceKind::UnlinkAt, {Child, Base, 0}, 2);
+    error(ServiceKind::UnlinkAt, {Child, Base, 0x80}, 2);
+  }
+  for (const char *Name : {".", "./", "./."}) {
+    path(Name);
+    error(ServiceKind::MkdirAt, {Child, Base}, 17);
+    error(ServiceKind::OpenAt, {Child, Base, 0xa00}, 17);
+    error(ServiceKind::UnlinkAt, {Child, Base, 0}, 1);
+    error(ServiceKind::UnlinkAt, {Child, Base, 0x80}, 22);
+  }
+  path("new");
+  error(ServiceKind::MkdirAt, {Child, Base}, 2);
+  error(ServiceKind::OpenAt, {Child, Base, 0x202}, 2);
+  error(ServiceKind::FaccessAt, {Child, Base, 4}, 2);
+  error(ServiceKind::MkdirAt, {UINT64_MAX, 1}, 14);
+  error(ServiceKind::UnlinkAt, {Child, 1, 0x80}, 14);
+  path("/p");
+  EXPECT_EQ(ok(ServiceKind::FaccessAt, {Child, Base}), 0u);
+  error(ServiceKind::MkdirAt, {Child, Base}, 17);
+  path("");
+  error(ServiceKind::OpenAt, {Child, Base}, 2);
+  path("/data", Base + 128);
+  for (const char *Name : {".", "./.", "..", "./..", "..//"}) {
+    path(Name);
+    error(ServiceKind::RenameAt, {UINT64_MAX, Base + 128, Child, Base}, 22);
+  }
+  for (const char *Name :
+       {"../.", "../..", "../../.", "missing/..", "../../new"}) {
+    path(Name);
+    error(ServiceKind::RenameAt, {UINT64_MAX, Base + 128, Child, Base}, 2);
+  }
+  path("../../data");
+  error(ServiceKind::RenameAt, {Child, Base, UINT64_MAX, Base + 128}, 2);
+  EXPECT_EQ(ok(ServiceKind::Access, {Base + 128}), 0u);
+}
+
+TEST_P(DarwinFileTest, DeletedDirectoryPathBudgetRetainsCWDThenReclaims) {
+  Options->WritableFiles.insert("/data");
+  Options->MutableDirectories.insert("/");
+  const auto Data = ok(ServiceKind::Open, {Base, 2});
+  const uint64_t Capacity = darwin_file_limits::Bytes - 14;
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 5}), 0u);
+  path("/new");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  const auto Directory = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {Directory}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Directory}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity - 4}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 5}), 0u);
+  path("/x");
+  EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryCreationLimit);
+  error(ServiceKind::Access, {Base}, 2);
+  path(".");
+  EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+  path("/");
+  EXPECT_EQ(ok(ServiceKind::Chdir, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity}), 0u);
+}
+
+TEST_P(DarwinFileTest, DeletedDirectoryEntryBudgetRetainsParentChains) {
+  Options->Files.clear();
+  for (unsigned I = 0; I != 253; ++I)
+    Options->Files["/f" + std::to_string(I)] = {};
+  Options->MutableDirectories.insert("/");
+  path("/p");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  path("/p/c");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  const auto Child = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  path("/p");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  path("/a");
+  EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryCreationLimit);
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x200}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationLimit);
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {Child}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Child}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base}));
+  path("/", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Chdir, {Base + 128}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  path("/b");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  path("/c");
+  EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryCreationLimit);
+}
+
+TEST_P(DarwinFileTest, DeletedDirectoryDup2ReleasesOnlyReplacedObjects) {
+  Options->WritableFiles.insert("/data");
+  Options->MutableDirectories.insert("/");
+  const auto Data = ok(ServiceKind::Open, {Base, 2});
+  const uint64_t Capacity = darwin_file_limits::Bytes - 14;
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 5}), 0u);
+  path("/new");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  const auto Directory = ok(ServiceKind::Open, {Base});
+  const auto Dup = ok(ServiceKind::Dup, {Directory});
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Directory}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity}));
+  identity(Dup, "/new");
+  EXPECT_EQ(ok(ServiceKind::Dup2, {Data, Dup}), Dup);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity}), 0u);
+  identity(Dup, "/data");
+}
+
+TEST_P(DarwinFileTest, DeletedDirectoryCannotAcquireReusedFileMetadata) {
+  mutationPolicy();
+  creationPolicy();
+  const auto Original = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  const auto Directory = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  const auto Replacement = ok(ServiceKind::Open, {Base, 0x202, 0600});
+  const auto NewStatus = status(Replacement);
+  EXPECT_EQ(llvm::support::endian::read64le(NewStatus.data() + 8),
+            darwin_test::CreationPolicy.FirstInode);
+  path(".");
+  const auto Reopened = ok(ServiceKind::OpenAt, {Directory, Base});
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Reopened, UINT64_MAX}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  error(ServiceKind::Read, {Reopened, UINT64_MAX, 0}, 21);
+  identity(Reopened, "/data");
+  contents(Original, {'a', 'b', 0, 0xff, 'e', 'f'});
+  contents(Replacement, {});
+  EXPECT_EQ(status(Replacement), NewStatus);
 }
 
 TEST_P(DarwinFileTest, DirectoryPublicationInvalidatesOnlyChangedParents) {

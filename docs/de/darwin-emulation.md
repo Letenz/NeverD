@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: fb48643220c4133abaf1152bc583f4341f626a9d62e4c61f583d43af2c3ad145 -->
+<!-- i18n-source: 2fb61c4299cd9e0d2292a80e45a5655cf97a5598165087d2d61c18176bd13248 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -113,7 +113,7 @@ Ohne Policy, bei Verzeichnissen oder nach vollständigem EFAULT mit unbekannter 
 
 `unlink(10)` / `unlinkat(472)` entfernen vorhandene reguläre Namen. Dateilöschung unterstützt nur die unteren32 Bits 0 oder `0x800`; unbekannte Bits liefern EINVAL vor Pfad/FD, AT_REMOVEDIR nutzt den unten beschriebenen Löschvertrag; DATALESS und SYSTEM_DISCARDED bleiben unmodelliert. Gemeinsame Auflösung: ENOENT, ENOTDIR nach Datei mit `/`, EPERM für normale Verzeichnisse, EISDIR für eine Wurzel nur aus Schrägstrichen, EBUSY bei abschließendem `.`/`..`. Endkomponenten `.`/`..` wurden nativ geprüft.
 
-Alte FD/dup/unabhängige Opens behalten Daten, Position und Flags; F_GETPATH liefert den erfassten alten Pfad. Neue Opens scheitern, implizite Eltern und CWD bleiben. Schreibfreigaben gehören zum Objekt; das aktuelle Bytebudget wird erst nach letztem Deskriptor und letzter Mapping-Range durch close/dup2/nächste Mutation zurückgewonnen. Ursprüngliche Pfadkosten bleiben; Rechteprüfung, Umbenennung zwischen Elternverzeichnissen, Hardlinks und Löschen anfänglicher oder durch Verzeichnis-FD/CWD gehaltener Verzeichnisse fehlen noch.
+Alte FD/dup/unabhängige Opens behalten Daten, Position und Flags; F_GETPATH liefert den erfassten alten Pfad. Neue Opens scheitern, implizite Eltern und CWD bleiben. Schreibfreigaben gehören zum Objekt; das aktuelle Bytebudget wird erst nach letztem Deskriptor und letzter Mapping-Range durch close/dup2/nächste Mutation zurückgewonnen. Ursprüngliche Pfadkosten bleiben; Rechteprüfung, Umbenennung zwischen Elternverzeichnissen, Hardlinks und Löschen anfänglicher Verzeichnisse fehlen noch.
 
 Eltern-stat/readdir/SEEK_END werden für alte/neue FD und Pfade unbekannt und stoppen vor Kopie/Cursoränderung. read/pread bleiben EISDIR; SET/CUR/F_GETPATH/fchdir/relative Auflösung funktionieren weiter. Eine bekannte Richtlinie setzt nur nlink=0 und feste ctime; spätere Schreibvorgänge stellen nlink=1 nicht wieder her. Ohne Richtlinie/nach EFAULT bleiben Metadaten unbekannt. Fehler erhalten den Zustand. `unlinked-file` vergleicht native Namen-/FD-Regeln; Zeit und Invalidierung sind explizite Modellregeln.
 
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-Die eigene Workload-Prüfung verlangt alle 102 nativen ARM64- beziehungsweise 68 x64-Fälle, einschließlich `LC_MAIN` und `LC_UNIXTHREAD` auf jeder Plattform. Fehlende/übersprungene Pflichtfälle oder fehlendes `ld64.lld` führen zum Fehlschlag.
+Die eigene Workload-Prüfung verlangt alle 105 nativen ARM64- beziehungsweise 70 x64-Fälle, einschließlich `LC_MAIN` und `LC_UNIXTHREAD` auf jeder Plattform. Fehlende/übersprungene Pflichtfälle oder fehlendes `ld64.lld` führen zum Fehlschlag.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -437,9 +437,9 @@ Release Darwin:971 Registrierungen,575 bestanden,396 wegen fehlendem Backend üb
 
 Der gemeinsame Komponentenlauf erlaubt bei mkdir einen fehlenden letzten Namen mit ausschließlich nachfolgenden Schrägstrichen. Fehlende Vorfahren vor Punkt/Doppelpunkt liefern ENOENT, Dateivorfahren ENOTDIR, bestehende Namen EEXIST. Relative FD/CWD-Regeln, absolute FD-Unabhängigkeit und Vorrang von Stringfehlern bleiben bestehen. Kein freier FD ist nötig; Such-, Freigabe-, Budget- oder Transportfehler veröffentlichen nichts.
 
-`rmdir(137)` und `unlinkat(472)` mit AT_REMOVEDIR(0x80), optional AT_SYMLINK_NOFOLLOW_ANY(0x800), entfernen leere, von diesem Prozess erzeugte Verzeichnisse. Unbekannte untere32 Bits liefern EINVAL vor Eingaben; DATALESS und SYSTEM_DISCARDED bleiben unmodelliert. Bekannte Pfad-/Typ-/Wurzelfehler bleiben; anfängliche Verzeichnisse zu entfernen ist UnsupportedService. Bei erzeugten Zielen ergibt ein abschließender Punkt EINVAL, Doppelpunkt/nicht leer ENOTEMPTY. Jeder gehaltene Verzeichnis-FD einschließlich dup oder CWD verhindert modellierte Löschung bis zur Unterstützung dauerhafter Objektidentität. Bereits entlinkte reguläre Dateien/Mappings zählen nicht als Namen; native Vergleiche bestätigen Inhalt, Inode und letzten F_GETPATH nach Elternlöschung und Wiederverwendung.
+`rmdir(137)` und `unlinkat(472)` mit AT_REMOVEDIR(0x80), optional AT_SYMLINK_NOFOLLOW_ANY(0x800), entfernen leere, von diesem Prozess erzeugte Verzeichnisse. Unbekannte untere32 Bits liefern EINVAL vor Eingaben; DATALESS und SYSTEM_DISCARDED bleiben unmodelliert. Bekannte Pfad-/Typ-/Wurzelfehler bleiben; anfängliche Verzeichnisse zu entfernen ist UnsupportedService. Bei erzeugten Zielen ergibt ein abschließender Punkt EINVAL, Doppelpunkt aus einem verknüpften Verzeichnis oder nicht leeres Ziel ENOTEMPTY. Verzeichnis-FDs einschließlich dup und CWD behalten das ursprüngliche Objekt und verhindern die Löschung nicht mehr. Bereits entlinkte reguläre Dateien/Mappings zählen nicht als Namen; native Vergleiche bestätigen Inhalt, Inode und letzten F_GETPATH nach Elternlöschung und Wiederverwendung.
 
-Kanonischer Pfad+NUL und ein Eintrag je neuem Verzeichnis zählen zum gemeinsamen16-MiB-/256-Einträge-Budget. Löschen erstattet nur diesen Anteil, nicht verwaiste Dateien/Mappings. Nur Erfolg invalidiert stat/Auflistung des direkten Elternverzeichnisses; vollständige Beobachtungen neuer Verzeichnisse bleiben unbekannt. Das originale `directory-mutations` vergleicht verschachtelte Erzeugung, Umbenennung, unlink, Löschung und Wiederverwendung auf nativem macOS und fünf Gästen über C++/C/CLI/Python.
+Kanonischer Pfad+NUL und ein Eintrag je neuem Verzeichnis zählen zum gemeinsamen16-MiB-/256-Einträge-Budget. Nach Löschung und Freigabe aller Referenzen wird nur dieser Anteil erstattet, nicht verwaiste Dateien/Mappings. Nur Erfolg invalidiert stat/Auflistung des direkten Elternverzeichnisses; vollständige Beobachtungen neuer Verzeichnisse bleiben unbekannt. Das originale `directory-mutations` vergleicht verschachtelte Erzeugung, Umbenennung, unlink, Löschung und Wiederverwendung auf nativem macOS und fünf Gästen über C++/C/CLI/Python.
 
 [XNU mkdir/rmdir](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU directory creation lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c).
 
@@ -448,3 +448,13 @@ Kanonischer Pfad+NUL und ein Eintrag je neuem Verzeichnis zählen zum gemeinsame
 Release Darwin:1.017 registriert,609 bestanden,408 wegen fehlendem Backend übersprungen,keine Fehler;102 erforderliche ARM64 HVF ausgeführt. Gezielt58 bestanden,12 übersprungen,einschließlich26 neuer direkter4K/16K-Fälle. C/CLI/Report178/178,darunter128 Darwin;Python fünf Kombinationen in 17.255s,nativ24/24,Skripte66/66. Unabhängige Prüfung von Budget,Namenswiederverwendung,Elternidentität,Leases und Rollback. Eine zusätzliche native Probe nach dem ersten erfolgreichen Lauf zeigte EISDIR für reine Schrägstrich-Wurzeln und EBUSY bei abschließendem Punkt/Doppelpunkt. Gemeinsame Entscheidung und Tests wurden korrigiert;erste Ergebnisse und Quell-/Binärkopien bleiben erhalten. Überlappende Zahlen,unveränderte Fristen,Intel HVF Actions ausgesetzt;vollständige GitHub-CI und physisches iOS separat.
 
 `build-hvf-arm64/directory-mutation-validation-summary.json`, `directory-mutation-darwin-final-evidence/`, `directory-mutation-focused-final.xml`, `directory-mutation-public-final.xml`, `directory-mutation-native-final/`, `directory-mutation-before-root-fix/`.
+
+## Erhaltene Verzeichnisidentitäten
+
+FD/CWD behalten das gelöschte Objekt und seine ursprüngliche Elternkette trotz Namenswiederverwendung. Punkt-Open hat einen unabhängigen Cursor,dup einen gemeinsamen; Doppelpunkt folgt dem ursprünglichen Elternobjekt. Normale Kinder eines gelöschten Verzeichnisses liefern ENOENT. LOOKUP darf erhaltene gelöschte Eltern durchlaufen,Erzeugung/Löschung/Umbenennung dagegen ENOENT. Abschließender Punkt/Doppelpunkt im Umbenennungsziel liefert EINVAL vor diesem Schritt,nach früheren Vorfahrenfehlern. F_GETPATH behält den letzten Pfad; vollständiges stat/Auflisten bleibt unbekannt. Pfad+NUL und ein Eintrag bleiben bis zur letzten FD/CWD/Kindreferenz berechnet. Close/dup2/CWD-Wechsel/Änderungszulassung geben unerreichbare Ketten frei; Anfangskosten und Dateileases bleiben getrennt. `deleted-directories` vergleicht dies nativ und in fünf Gästen.
+
+### Prüfung der Verzeichnislebensdauer, 2026-10-06
+
+Release Darwin1.051 Fälle,631 bestanden,420 nicht verfügbare übersprungen,keine Fehler;105 erforderliche ARM64 HVF ausgeführt. Gezielt98 bestanden/12 übersprungen,anfangs64/64 direkte einschließlich14 neuer. C/CLI/Report183/183,davon133 Darwin;Python fünf Kombinationen 18.691s,nativ25/25,Skripte66/66. Zusätzliche native Umbenennungsprobe korrigiert abschließende Punkt-Reihenfolge;frühere Quellen/Ergebnisse/Snapshots erhalten. Primärer Agent prüfte Belege;abschließende unabhängige Prüfung nicht verfügbar. Zahlen überlappen,Fristen unverändert,vollständigeCI/physisches iOS separat,Intel HVF Actions ausgesetzt.
+
+`build-hvf-arm64/directory-lifetime-validation-summary.json`, `directory-lifetime-darwin-final-evidence/`, `directory-lifetime-focused-final.xml`, `directory-lifetime-public.xml`, `directory-lifetime-native/`, `directory-lifetime-before-rename-fix/`.

@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: fb48643220c4133abaf1152bc583f4341f626a9d62e4c61f583d43af2c3ad145 -->
+<!-- i18n-source: 2fb61c4299cd9e0d2292a80e45a5655cf97a5598165087d2d61c18176bd13248 -->
 
 [← 文档索引](README.md)
 
@@ -121,7 +121,7 @@ DarwinMemory 持有映射租约；所有映射区间解除前，write、truncate
 
 `unlink(10)` / `unlinkat(472)` 删除现有普通名称；普通文件删除仅接受低 32 位 flags=0 或 `AT_SYMLINK_NOFOLLOW_ANY=0x800`。未知位先返回 EINVAL；AT_REMOVEDIR 使用下述受限目录删除；DATALESS、SYSTEM_DISCARDED 仍不支持。共用解析器保留路径故障、目录 FD、CWD 和绝对路径的优先级；缺失为 ENOENT，文件后斜杠为 ENOTDIR，普通目录为 EPERM，纯斜杠根路径为 EISDIR，末尾带 `.` / `..` 的根路径为 EBUSY。原生探针也检查末尾 `.` / `..`。
 
-名称删除后，旧 FD、dup、独立打开对象仍保留数据、游标和状态标志，新打开返回 ENOENT；隐式父目录与 CWD 继续存在。F_GETPATH 保留已捕获旧路径，与原生对照一致。写授权属于文件对象。只有所有描述符和最后一段映射均释放后，close/dup2 或下一次修改才回收当前文件字节预算；初始路径/引用费用仍保留。权限强制检查、跨父目录重命名、硬链接、初始目录及被目录 FD/CWD 持有的目录删除仍待实现。
+名称删除后，旧 FD、dup、独立打开对象仍保留数据、游标和状态标志，新打开返回 ENOENT；隐式父目录与 CWD 继续存在。F_GETPATH 保留已捕获旧路径，与原生对照一致。写授权属于文件对象。只有所有描述符和最后一段映射均释放后，close/dup2 或下一次修改才回收当前文件字节预算；初始路径/引用费用仍保留。权限强制检查、跨父目录重命名、硬链接、初始目录删除仍待实现。
 
 成功删除使直接父目录的 stat/列举观察失效，涵盖旧/新 FD、dup 和路径查询；stat/readdir/SEEK_END 在复制和移动游标前停止。read/pread 仍为 EISDIR，SET/CUR、F_GETPATH、fchdir、相对查找继续可用。有仍可信的文件修改策略时，仅将 nlink 改为 0、ctime 改为固定时间，保留 mtime/atime、数据和分配；后续写入不能恢复 nlink=1。缺少策略或曾发生整段 EFAULT 时，完整文件元数据仍未知。失败不改变状态。原生 `unlinked-file` 比较名称/描述符行为；策略时间与目录失效是明确的模型规则。
 
@@ -541,9 +541,9 @@ Release Darwin 共971项：575通过、396因后端不可用跳过、零失败�
 
 所有调用共用逐组件解析器。mkdir 可创建末尾仅跟斜杠的缺失名字；缺失祖先后跟点/双点仍为 ENOENT，普通文件祖先为 ENOTDIR，已存在名字为 EEXIST。相对路径沿用 FD/CWD，绝对路径忽略 dirfd，字符串故障先于相对 FD 错误。创建不需要可用 FD；路径、授权、字节/条目预算或内存传输拒绝不发布名字、不使父观察失效。
 
-`rmdir(137)` 及带 AT_REMOVEDIR(0x80) 的 `unlinkat(472)` 可删除本进程创建的空目录，可同时带 AT_SYMLINK_NOFOLLOW_ANY(0x800)。未知低32位标志先返回 EINVAL；DATALESS、SYSTEM_DISCARDED 仍不支持。保留已知路径/类型/根目录错误；初始目录删除为 UnsupportedService。新目录末尾点为 EINVAL，双点或非空为 ENOTEMPTY。目录 FD（含 dup）或 CWD 仍持有目标时明确不支持删除，等待完整目录对象生命周期。已 unlink 的普通文件 FD/映射不算目录项；原生对照确认其字节、inode 与最后链接 F_GETPATH 在父目录删除及名字复用后保持。
+`rmdir(137)` 及带 AT_REMOVEDIR(0x80) 的 `unlinkat(472)` 可删除本进程创建的空目录，可同时带 AT_SYMLINK_NOFOLLOW_ANY(0x800)。未知低32位标志先返回 EINVAL；DATALESS、SYSTEM_DISCARDED 仍不支持。保留已知路径/类型/根目录错误；初始目录删除为 UnsupportedService。新目录末尾点为 EINVAL，从仍有名字的目录出发的双点或非空目标为 ENOTEMPTY。目录 FD（含 dup）或 CWD 保留原目录对象，不再阻止删除。已 unlink 的普通文件 FD/映射不算目录项；原生对照确认其字节、inode 与最后链接 F_GETPATH 在父目录删除及名字复用后保持。
 
-每个新目录以规范路径加 NUL 和一个条目计入共享16 MiB/256条目预算。成功删除仅退回自身费用，保留孤立文件字节与映射租约。成功修改使直接父目录完整 stat/枚举观察失效，失败则保留。即使配置普通文件创建策略，新目录元数据和快照仍未知。原创 `directory-mutations` 经原生 macOS、五种客户机及 C++/C/CLI/Python 验证嵌套创建、重命名、unlink、删除与孤立对象复用。
+每个新目录以规范路径加 NUL 和一个条目计入共享16 MiB/256条目预算。已删除目录不可达后仅退回自身费用，保留孤立文件字节与映射租约。成功修改使直接父目录完整 stat/枚举观察失效，失败则保留。即使配置普通文件创建策略，新目录元数据和快照仍未知。原创 `directory-mutations` 经原生 macOS、五种客户机及 C++/C/CLI/Python 验证嵌套创建、重命名、unlink、删除与孤立对象复用。
 
 [XNU mkdir/rmdir](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU directory creation lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c).
 
@@ -552,3 +552,13 @@ Release Darwin 共971项：575通过、396因后端不可用跳过、零失败�
 Release Darwin 共1,017项：609通过、408因后端不可用跳过、零失败；102项必需 ARM64 HVF 全部执行。定向测试58通过、12跳过，含26项新增4K/16K直接测试。公开 C/CLI/报告178/178通过，含128项 Darwin 输入对照；Python 在17.255秒内通过五种组合，原生工作负载24/24、验证脚本66/66通过。独立审查核对预算、名字复用、父身份、文件租约与失败回滚。初始完整测试通过后，额外原生探针发现纯斜杠根删除应为 EISDIR，而末尾点/双点根为 EBUSY；已统一判断并补充原生/客户机共用断言，保留初始测试及源文件/二进制快照。计数重叠，时限未放宽；Intel HVF Actions 继续暂停，完整 GitHub CI 与 iOS 真机另行验证。
 
 `build-hvf-arm64/directory-mutation-validation-summary.json`, `directory-mutation-darwin-final-evidence/`, `directory-mutation-focused-final.xml`, `directory-mutation-public-final.xml`, `directory-mutation-native-final/`, `directory-mutation-before-root-fix/`.
+
+## 保留的目录身份
+
+已删除目录通过 FD/CWD 保留原父目录链，父名字被删除并复用也不改变身份。打开点路径产生独立游标，dup 共用游标；双点沿原父对象遍历，已删除目录中的普通子名称返回 ENOENT，不会看到替代目录。普通 LOOKUP 可穿过保留的已删除父对象，创建/删除/重命名查找则返回 ENOENT。重命名目标末尾点/双点在该组件遍历前返回 EINVAL，但更早祖先错误优先。F_GETPATH 保留最后路径，完整 stat/枚举仍未知。删除的新目录在 FD、CWD 或旧子目录引用全部释放前，持续占用路径+NUL及一个条目；close、dup2、CWD 修改和修改准入会回收不可达链。初始输入费用和普通文件租约独立保留。原创 `deleted-directories` 在原生 macOS 与五种配置对照持有删除、父链/名字复用、查找意图和仅 CWD 持有。
+
+### 目录生命周期验证，2026-10-06
+
+Release Darwin 共1,051项：631通过、420因后端不可用跳过、零失败；105项必需 ARM64 HVF 全部执行。定向98通过、12跳过；初始直接测试64/64，含14项新增及持有删除更新。公开 C/CLI/报告183/183，含133项 Darwin 输入对照；Python 五种配置18.691秒通过，原生25/25、脚本66/66。初始定向通过后，额外原生重命名探针纠正末尾点错误顺序；原始源文件、结果和先前快照保留。主代理完成源码/证据核对，最终独立审查不可用。计数重叠、时限不变；完整 GitHub CI 与 iOS 真机另验，Intel HVF Actions 暂停。
+
+`build-hvf-arm64/directory-lifetime-validation-summary.json`, `directory-lifetime-darwin-final-evidence/`, `directory-lifetime-focused-final.xml`, `directory-lifetime-public.xml`, `directory-lifetime-native/`, `directory-lifetime-before-rename-fix/`.

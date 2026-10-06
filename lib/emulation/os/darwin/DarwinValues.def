@@ -214,9 +214,6 @@ NEVERD_DARWIN_DIAGNOSTIC(DirectoryCreationLimit,
 NEVERD_DARWIN_DIAGNOSTIC(
     DirectoryRemovalInitial,
     "Darwin removal of initial directories is not configured")
-NEVERD_DARWIN_DIAGNOSTIC(
-    DirectoryRemovalHeld,
-    "Darwin removal of open or current directories is unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(FileInput, "Darwin standard input is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(FileMetadataOption,
                          "invalid Darwin file or directory metadata or size")
