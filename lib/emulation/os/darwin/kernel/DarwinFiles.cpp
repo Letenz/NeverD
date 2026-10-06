@@ -509,6 +509,25 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
 }
 
 llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::access(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
+                    ProcessResult &Result) {
+  auto Resolved = resolvePath(Path, DirectoryFD);
+  if (!Resolved)
+    return Resolved.takeError();
+  if (auto *Error = std::get_if<uint32_t>(&*Resolved))
+    return returned(*Error, true);
+  if (auto *Reason = std::get_if<const char *>(&*Resolved))
+    return unsupported(Result, *Reason);
+  // Native access1 requests authorization only for R/W/X or extended access
+  // bits. Other low-carrier bits are ignored, not an EINVAL or a grant. The
+  // catalogue proves name existence; stat observations do not prove ACL/MAC
+  // authorization, including when mutation grants permit model operations.
+  if (Mode & AccessPermissionMask)
+    return unsupported(Result, diagnostic::FileAccessPermissions);
+  return returned(0);
+}
+
+llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::copyout(uint64_t Address, llvm::ArrayRef<uint8_t> Bytes,
                      const char *PartialDiagnostic, ProcessResult &Result) {
   return copyUserMemory(Memory, Address, Bytes, PartialDiagnostic, Result);
@@ -887,6 +906,14 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return open(A[0], A[1], AtCurrentDirectory, A[2], Result);
   if (Service == ServiceKind::OpenAt)
     return open(A[1], A[2], A[0], A[3], Result);
+  if (Service == ServiceKind::Access)
+    return access(A[0], AtCurrentDirectory, A[1], Result);
+  if (Service == ServiceKind::FaccessAt) {
+    const uint32_t Flags = A[3];
+    if (Flags & ~uint32_t(AtEffectiveAccess | AtNoFollow | AtNoFollowAny))
+      return returned(InvalidArgument, true);
+    return access(A[1], A[0], A[2], Result);
+  }
   if (Service == ServiceKind::Rename)
     return rename(A[0], AtCurrentDirectory, A[1], AtCurrentDirectory, Result);
   if (Service == ServiceKind::RenameAt || Service == ServiceKind::RenameAtX) {

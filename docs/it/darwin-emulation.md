@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 8828ab2cc1f47bed24529d8d47a05ee929790480d47f96fcb54d6ebc101ae2ce -->
+<!-- i18n-source: db2f5a72fda6a5195b548852dda4cebabfdea38e499c54e1b88f809dd2fc1055 -->
 
 [← Indice della documentazione](README.md)
 
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-La verifica autonoma richiede tutti i 96 casi nativi ARM64 o 64 x64, compresi `LC_MAIN` e `LC_UNIXTHREAD` su ogni piattaforma. Casi obbligatori mancanti/saltati o assenza di `ld64.lld` causano errore.
+La verifica autonoma richiede tutti i 99 casi nativi ARM64 o 66 x64, compresi `LC_MAIN` e `LC_UNIXTHREAD` su ogni piattaforma. Casi obbligatori mancanti/saltati o assenza di `ld64.lld` causano errore.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -412,3 +412,21 @@ La cattura verifica prima il budget comune stdout/stderr. Un elemento che oltrep
 Release Darwin:937 registrazioni,553 superate,384 saltate per backend indisponibile, zero errori; tutte96 le identità ARM64 HVF richieste eseguite. Mirati45/57 superati,12 saltati. C/CLI/report168/168, inclusi118 confronti Darwin; Python copre cinque combinazioni in 20.397s. Nativi22/22, script66/66. La revisione indipendente ha aggiunto un errore di scrittura posizionata sparsa, verificando cursore, EOF reale, rifiuto dei metadati e capacità residua esatta. La prima compilazione usava ancora una query interna rimossa in un vecchio test, ora sostituita dal controllo dell’output reale. Un errore optional<bool> nella nuova asserzione degli eventi ha segnalato otto esecuzioni guest riuscite come fallite; dopo la correzione tutti i controlli interessati sono passati. Fonti e log di entrambi gli errori conservati. Conteggi sovrapposti, scadenze immutate. GitHub CI completa e iOS fisico separati; Intel HVF Actions sospeso.
 
 `build-hvf-arm64/vector-validation-summary.json`, `vector-darwin-final-evidence/`, `vector-focused-final.xml`, `vector-public.xml`, `vector-native-initial/`, `vector-initial-build-failure/`, `vector-initial-assertion-evidence/`.
+
+## Query di esistenza dei file
+
+`access(33)` e `faccessat(466)` interrogano il catalogo virtuale corrente senza allocare descrittori o cambiare contenuto, cursori, flag e metadati. F_OK conferma il nome secondo il contratto di percorso esistente. I metadati non concedono o revocano accesso al catalogo; non vengono verificati i permessi nativi di ricerca degli antenati, ACL o MAC. Osservazioni stat mancanti o invalidate non impediscono la query. I nomi rimossi restituiscono ENOENT anche se vecchi FD o mapping mantengono l’oggetto; creazione, riuso e rinomina seguono lo spazio corrente.
+
+Il modo usa i 32 bit bassi. R/W/X occupa i bit 0–2, i diritti estesi 9–21. `(mode & 0x003ffe07) == 0` indica esistenza; gli altri bit, incluso il segno, vengono ignorati senza EINVAL. Le richieste di permessi restano UnsupportedService dopo una ricerca riuscita, senza dedurli da metadati o concessioni di modifica. Gli errori noti di percorso/descrittore vengono prima.
+
+Faccessat accetta qualsiasi combinazione dei flag bassi AT_EACCESS(0x10), AT_SYMLINK_NOFOLLOW(0x20), AT_SYMLINK_NOFOLLOW_ANY(0x800). Altri flag danno EINVAL prima di percorso o FD, anche senza catalogo. Il catalogo ammesso non contiene link simbolici e le identità reale/effettiva sono fisse. I percorsi assoluti ignorano dirfd; quelli relativi mantengono le regole CWD/FD di directory. La copia fino al primo NUL precede il controllo del FD relativo; un byte mancante dà EFAULT. Anche il percorso relativo vuoto verifica il FD: sconosciuto EBADF, file normale ENOTDIR, altrimenti ENOENT. Catalogo assente e identità directory dello stream sconosciuta restano non supportati.
+
+L’originale `file-access` confronta entrambe le chiamate, bit ignorati, flag e ordine su macOS nativo e cinque guest tramite C++/C/CLI/Python. NOFOLLOW_ANY usa un FD relativo per evitare i link host `/tmp` o `/var`. Test diretti coprono nomi vivi, bit misti, FD esauriti, indipendenza dei metadati ed errori di memoria.
+
+[XNU access and faccessat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU access mode bits](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/unistd.h).
+
+### Verifica dell’esistenza dei file, 2026-10-06
+
+Release Darwin:971 registrazioni,575 superate,396 saltate per backend indisponibile, zero errori; tutte99 le identità ARM64 HVF richieste eseguite. Mirati23/35 superati,12 saltati, inclusi14 diretti. C/CLI/report173/173, inclusi123 confronti Darwin. Python ha verificato cinque combinazioni in 16.235s; nativi23/23 e script66/66. Revisione indipendente di progetto e codice senza blocchi. Conservati il risultato NOFOLLOW_ANY iniziale dovuto al link host /tmp e il confronto con percorso canonico; il programma comune usa un FD di directory relativo. Conteggi sovrapposti, scadenze immutate, nessun errore di esecuzione da riprovare. GitHub CI completa e iOS fisico separati; Intel HVF Actions sospeso.
+
+`build-hvf-arm64/access-validation-summary.json`, `access-darwin-final-evidence/`, `access-focused-final.xml`, `access-public.xml`, `access-native-initial/`, `access-evidence/`.

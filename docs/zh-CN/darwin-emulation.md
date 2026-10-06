@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 8828ab2cc1f47bed24529d8d47a05ee929790480d47f96fcb54d6ebc101ae2ce -->
+<!-- i18n-source: db2f5a72fda6a5195b548852dda4cebabfdea38e499c54e1b88f809dd2fc1055 -->
 
 [← 文档索引](README.md)
 
@@ -266,7 +266,7 @@ Intel HVF 的 10 项原生 transport 和全部 26 个 Darwin 工作负载均已�
 [HVF 验证记录](macos-hvf.md)，不能把内核参考程序成功当作后端通过。
 
 新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
-ARM64 三个平台共 96 项，x64 的 macOS 和 Simulator 共 64 项。
+ARM64 三个平台共 99 项，x64 的 macOS 和 Simulator 共 66 项。
 每种平台都必须执行 `LC_MAIN` 和独立编写的 `LC_UNIXTHREAD` 程序；源码清单回归确保
 以后新增的 Darwin 进程用例也进入必需集合。
 macOS 本机构建还会把同一份自编目标文件链接为宿主参考程序，对照返回、退出、内存保护/
@@ -516,3 +516,21 @@ Release Darwin 共881项：509通过、372因后端不可用跳过、零失败�
 Release Darwin 共937项：553通过、384因后端不可用跳过、零失败；96项必需 ARM64 HVF 全部执行。专项57项中45通过、12跳过。公开 C/CLI/报告168/168通过，含118项 Darwin 输入对照；Python 在20.397秒内覆盖五种配置。原生工作负载22/22、验证脚本66/66通过。独立审查补充稀疏定位写入故障测试，验证游标、实际 EOF、元数据拒绝及精确剩余存储容量。初次构建因旧测试仍调用已移除的内部查询而失败，现改为验证实际捕获输出；新增服务事件断言的 optional<bool> 误用曾使8项本已成功的客户机运行报失败，修正后相关检查全部通过。两次失败均保留源码与日志。计数重叠、时限不变；完整 GitHub CI 与 iOS 真机另行验证，Intel HVF Actions 保持暂停。
 
 `build-hvf-arm64/vector-validation-summary.json`, `vector-darwin-final-evidence/`, `vector-focused-final.xml`, `vector-public.xml`, `vector-native-initial/`, `vector-initial-build-failure/`, `vector-initial-assertion-evidence/`.
+
+## 文件存在性查询
+
+`access(33)` 与 `faccessat(466)` 查询当前虚拟目录，不分配描述符、不改变文件字节、游标、标志或元数据。F_OK 按现有目录遍历合同确认名字存在。元数据不会授予或撤销目录访问权；这些调用不验证原生祖先搜索权限、ACL 或 MAC。缺少或已失效的 stat 观察值不影响存在性查询。即使旧 FD 或映射仍持有对象，删除的名字仍返回 ENOENT；创建、同名重建和重命名查询当前命名空间。
+
+模式取低32位。R/W/X 使用位0–2，扩展权限使用位9–21；`(mode & 0x003ffe07) == 0` 时是存在性查询，其余位（含符号位）按原生规则忽略，不误报 EINVAL。实际权限请求在成功查找后明确返回 UnsupportedService，即使元数据或修改授权看似允许；已知路径和描述符错误先返回，不猜测权限结果。
+
+Faccessat 接受低位标志 AT_EACCESS(0x10)、AT_SYMLINK_NOFOLLOW(0x20)、AT_SYMLINK_NOFOLLOW_ANY(0x800) 的任意组合。其余标志在访问路径或 FD 前返回 EINVAL，即使未配置目录。当前目录没有符号链接，真实/有效身份固定。绝对路径忽略 dirfd；相对路径沿用配置的 CWD/目录 FD 规则。先复制至首个 NUL，再检查相对 FD；字符串中缺页返回 EFAULT。相对空路径仍检查 FD：未知 FD 为 EBADF、普通文件为 ENOTDIR，其余为 ENOENT。目录未配置或流的目录身份未知时仍明确不支持。
+
+独立 `file-access` 工作负载在原生 macOS、五种客户机及 C++、C/CLI/Python 比较两个调用、忽略位、标志组合和查找顺序。原生 NOFOLLOW_ANY 使用相对目录 FD，避免宿主 `/tmp`、`/var` 符号链接影响对照。直接测试覆盖命名空间变化、混合权限位、描述符耗尽、元数据独立性和客户机内存失败。
+
+[XNU access and faccessat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU access mode bits](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/unistd.h).
+
+### 文件存在性验证，2026-10-06
+
+Release Darwin 共971项：575通过、396因后端不可用跳过、零失败；99项必需 ARM64 HVF 全部执行。专项35项中23通过、12跳过，含全部14项直接测试。公开 C/CLI/报告173/173通过，含123项 Darwin 输入对照。Python 在16.235秒内通过五种配置；原生工作负载23/23、验证脚本66/66通过。独立设计与实现审查未发现阻塞。原生探针保留宿主 /tmp 符号链接导致的初始 NOFOLLOW_ANY 结果及后续规范路径对照；共用工作负载使用相对目录 FD。计数重叠、时限不变，无需运行失败重测；完整 GitHub CI 与 iOS 真机另行验证，Intel HVF Actions 保持暂停。
+
+`build-hvf-arm64/access-validation-summary.json`, `access-darwin-final-evidence/`, `access-focused-final.xml`, `access-public.xml`, `access-native-initial/`, `access-evidence/`.

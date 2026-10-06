@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 8828ab2cc1f47bed24529d8d47a05ee929790480d47f96fcb54d6ebc101ae2ce -->
+<!-- i18n-source: db2f5a72fda6a5195b548852dda4cebabfdea38e499c54e1b88f809dd2fc1055 -->
 
 [← 문서 목록](README.md)
 
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-독립 워크로드 검증은 ARM64 96개 또는 x64 64개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
+독립 워크로드 검증은 ARM64 99개 또는 x64 66개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -412,3 +412,21 @@ Release Darwin 881개: 통과509, 백엔드 미지원 건너뜀372, 실패0. ARM
 Release Darwin 937개 등록:553개 통과, 백엔드 미제공384개 건너뜀, 실패 없음. 필수 ARM64 HVF 96개를 모두 실행했습니다. 집중 검사는45/57개 통과,12개 건너뜀. 공개 C/CLI/report 168/168개 통과, Darwin 입력 비교118개 포함. Python은20.397초에5개 구성을 검증했고 네이티브22/22, 검증 스크립트66/66 통과. 독립 검토로 희소 위치 지정 쓰기 실패 테스트를 추가해 커서·실제 EOF·메타데이터 거부·정확한 남은 용량을 확인했습니다. 첫 빌드는 기존 테스트가 삭제된 내부 조회를 참조해 실패했으며 실제 캡처 출력 검사로 바꿨습니다. 새 이벤트 단언의 optional<bool> 오용은 성공한 게스트8개를 실패로 보고했지만 수정 후 관련 검사는 모두 통과했습니다. 두 실패의 소스와 로그를 보존합니다. 수치는 중복되고 기한은 그대로입니다. 전체 GitHub CI와 실제 iOS는 별도이며 Intel HVF Actions는 계속 중지합니다.
 
 `build-hvf-arm64/vector-validation-summary.json`, `vector-darwin-final-evidence/`, `vector-focused-final.xml`, `vector-public.xml`, `vector-native-initial/`, `vector-initial-build-failure/`, `vector-initial-assertion-evidence/`.
+
+## 파일 존재 여부 조회
+
+`access(33)`과 `faccessat(466)`은 현재 가상 카탈로그를 조회하며 설명자 할당이나 파일 내용·커서·플래그·메타데이터 변경을 하지 않습니다. F_OK는 기존 탐색 계약에 따른 이름의 존재를 확인합니다. 메타데이터는 카탈로그 접근 권한을 부여·취소하지 않으며, 이 조회는 원시 상위 디렉터리 검색 권한·ACL·MAC 검증이 아닙니다. stat 관측값이 없거나 무효여도 조회할 수 있습니다. 이전 FD나 매핑이 객체를 유지해도 삭제된 이름은 ENOENT이며 생성·이름 재사용·변경은 현재 네임스페이스를 따릅니다.
+
+모드는 하위32비트입니다. R/W/X는 비트0–2, 확장 권한은9–21을 사용합니다. `(mode & 0x003ffe07) == 0`이면 존재 조회이며 부호 비트 등 나머지는 EINVAL로 거부하지 않고 무시합니다. 권한 요청은 조회 성공 뒤 UnsupportedService로 중단하며, 메타데이터나 변경 허가로 권한을 추측하지 않습니다. 알려진 경로·설명자 오류가 먼저입니다.
+
+Faccessat는 AT_EACCESS(0x10), AT_SYMLINK_NOFOLLOW(0x20), AT_SYMLINK_NOFOLLOW_ANY(0x800) 하위 플래그의 모든 조합을 허용합니다. 나머지는 카탈로그가 없어도 경로·FD 접근 전에 EINVAL입니다. 현재 카탈로그에는 심볼릭 링크가 없고 실제/유효 ID는 고정입니다. 절대 경로는 dirfd를 무시하며 상대 경로는 설정된 CWD/디렉터리 FD 규칙을 유지합니다. 첫 NUL까지 복사한 뒤 상대 FD를 검사하고 문자열의 누락 바이트는 EFAULT입니다. 빈 상대 경로에서도 미지 FD는 EBADF, 일반 파일 FD는 ENOTDIR, 그 외에는 ENOENT입니다. 미설정 카탈로그와 미지 스트림 디렉터리 종류는 미지원입니다.
+
+독자 `file-access`는 네이티브 macOS와5개 게스트, C++/C/CLI/Python에서 두 진입점·무시 비트·플래그·순서를 비교합니다. NOFOLLOW_ANY는 상대 디렉터리 FD로 시험해 호스트 `/tmp`, `/var` 링크의 영향을 피합니다. 직접 테스트는 이름 변경, 혼합 권한 비트, FD 고갈, 메타데이터 독립성과 메모리 실패를 다룹니다.
+
+[XNU access and faccessat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU access mode bits](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/unistd.h).
+
+### 파일 존재 여부 검증, 2026-10-06
+
+Release Darwin 971개 등록:575개 통과, 백엔드 미제공396개 건너뜀, 실패 없음. 필수 ARM64 HVF 99개를 모두 실행했습니다. 집중35개 중23개 통과·12개 건너뜀이며 직접14개를 포함합니다. 공개 C/CLI/report 173/173개 통과, Darwin 입력 비교123개 포함. Python은16.235초에5개 구성을 검증했고 네이티브23/23, 검증 스크립트66/66 통과. 독립 설계·구현 검토에 차단 문제는 없습니다. 호스트 /tmp 링크로 인한 초기 NOFOLLOW_ANY 결과와 정규 경로 비교를 보존하며 공통 작업은 상대 디렉터리 FD를 사용합니다. 수치는 중복되고 기한은 동일하며 실행 실패 재검사는 불필요했습니다. 전체 GitHub CI와 실제 iOS는 별도이며 Intel HVF Actions는 계속 중지합니다.
+
+`build-hvf-arm64/access-validation-summary.json`, `access-darwin-final-evidence/`, `access-focused-final.xml`, `access-public.xml`, `access-native-initial/`, `access-evidence/`.

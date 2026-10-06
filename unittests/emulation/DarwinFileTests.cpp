@@ -131,6 +131,161 @@ protected:
   }
 };
 
+TEST_P(DarwinFileTest,
+       AccessZeroActionBitsAndRequestedPermissionsStayDistinct) {
+  const uint64_t Ignored[] = {
+      0,        8,          0x80,       0x100,
+      0x400000, 0x80000000, 0xffc001f8, 0x1234567800000000ULL};
+  for (auto Mode : Ignored) {
+    EXPECT_EQ(ok(ServiceKind::Access, {Base, Mode}), 0u);
+    EXPECT_EQ(ok(ServiceKind::FaccessAt, {UINT64_MAX, Base, Mode, 0x830}), 0u);
+  }
+  const uint32_t Rights[] = {
+      1,      2,      4,       0x200,   0x400,   0x800,   0x1000,   0x2000,
+      0x4000, 0x8000, 0x10000, 0x20000, 0x40000, 0x80000, 0x100000, 0x200000};
+  for (auto Right : Rights) {
+    for (uint64_t Mode : {uint64_t(Right), 0xffc001f8ULL | Right}) {
+      EXPECT_FALSE(invoke(ServiceKind::Access, {Base, Mode}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::FileAccessPermissions);
+      EXPECT_FALSE(invoke(ServiceKind::FaccessAt, {UINT64_MAX, Base, Mode}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::FileAccessPermissions);
+      error(ServiceKind::Access, {1, Mode}, 14);
+      path("/missing", Base + 128);
+      error(ServiceKind::Access, {Base + 128, Mode}, 2);
+      error(ServiceKind::FaccessAt, {UINT64_MAX, Base + 128, Mode}, 2);
+    }
+  }
+  EXPECT_FALSE(invoke(ServiceKind::Access, {Base, 0x80001000}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileAccessPermissions);
+}
+
+TEST_P(DarwinFileTest, FaccessFlagsPrecedePathAndUseOnlyLowCarrierBits) {
+  Options.reset();
+  for (uint32_t Flags : {1u, 0x40u, 0x400u, UINT32_MAX})
+    error(ServiceKind::FaccessAt, {UINT64_MAX, 1, UINT64_MAX, Flags}, 22);
+  EXPECT_FALSE(invoke(ServiceKind::Access, {1, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileInputs);
+  EXPECT_FALSE(invoke(ServiceKind::FaccessAt, {UINT64_MAX, 1, 0, 0x830}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileInputs);
+  Options.emplace();
+  Options->DescriptorLimit = 3;
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/");
+  for (uint32_t Flags :
+       {0u, 0x10u, 0x20u, 0x30u, 0x800u, 0x810u, 0x820u, 0x830u}) {
+    EXPECT_EQ(ok(ServiceKind::FaccessAt,
+                 {UINT64_MAX, Base, 0, 0xfedcba9800000000ULL | Flags}),
+              0u);
+    error(ServiceKind::FaccessAt, {UINT64_MAX, 1, 0, Flags}, 14);
+  }
+  path("/missing");
+  error(ServiceKind::Access, {Base}, 2);
+  // No available FD is required, and no query consumes a descriptor.
+  error(ServiceKind::Open, {Base}, 24);
+}
+
+TEST_P(DarwinFileTest, AccessRelativePathsRetainFDAndAncestorErrorOrder) {
+  const auto File = ok(ServiceKind::Open, {Base});
+  path("/", Base + 128);
+  const auto Directory = ok(ServiceKind::Open, {Base + 128});
+  path("data");
+  EXPECT_FALSE(invoke(ServiceKind::Access, {Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileWorkingDirectory);
+  EXPECT_EQ(ok(ServiceKind::FaccessAt, {Directory, Base, 0, 0x830}), 0u);
+  EXPECT_EQ(
+      ok(ServiceKind::FaccessAt, {0x1234567800000000ULL | Directory, Base}),
+      0u);
+  error(ServiceKind::FaccessAt, {File, Base}, 20);
+  error(ServiceKind::FaccessAt, {UINT64_MAX, Base}, 9);
+  EXPECT_FALSE(invoke(ServiceKind::FaccessAt, {1, Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileDirectoryKind);
+  EXPECT_EQ(ok(ServiceKind::Chdir, {Base + 128}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+  for (const char *Text : {"data/", "data/..", "data/.", "data/child"}) {
+    path(Text);
+    error(ServiceKind::FaccessAt, {Directory, Base}, 20);
+  }
+  path("missing/..");
+  error(ServiceKind::FaccessAt, {Directory, Base}, 2);
+  path("");
+  error(ServiceKind::FaccessAt, {Directory, Base}, 2);
+  error(ServiceKind::FaccessAt, {File, Base}, 20);
+  error(ServiceKind::FaccessAt, {UINT64_MAX, Base}, 9);
+  error(ServiceKind::FaccessAt, {UINT64_MAX, 1}, 14);
+  error(ServiceKind::Access, {Base}, 2);
+  EXPECT_EQ(ok(ServiceKind::Close, {Directory}), 0u);
+  path("data");
+  error(ServiceKind::FaccessAt, {Directory, Base}, 9);
+  path("/data");
+  EXPECT_EQ(ok(ServiceKind::FaccessAt, {Directory, Base}), 0u);
+}
+
+TEST_P(DarwinFileTest, ExistenceDoesNotReadMetadataOrAlterDescriptionState) {
+  mutationPolicy();
+  Options->Metadata["/data"].Mode = 0x8000; // Observation, not an access grant.
+  Options->DescriptorLimit = 5;
+  const auto FD = ok(ServiceKind::Open, {Base, 2});
+  const auto Dup = ok(ServiceKind::Dup, {FD});
+  const auto Before = status(FD);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 2, 0}), 2u);
+  for (unsigned I = 0; I != 3; ++I) {
+    EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+    EXPECT_EQ(ok(ServiceKind::FaccessAt, {Dup, Base}), 0u);
+    EXPECT_EQ(status(FD), Before);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {Dup, 0, 1}), 2u);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {FD, 3}), 2u);
+  }
+  error(ServiceKind::Open, {Base}, 24);
+  error(ServiceKind::Write, {FD, 1, 1}, 14);
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {FD, Base + 256}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutatedMetadata);
+  EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Access, {Base, 4}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileAccessPermissions);
+}
+
+TEST_P(DarwinFileTest, AccessUsesLiveNamesAcrossRemovalReuseAndRename) {
+  mutationPolicy();
+  creationPolicy();
+  const auto Old = ok(ServiceKind::Open, {Base});
+  auto Lease = Files->mappingSource(Old);
+  ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(Lease));
+  EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  error(ServiceKind::Access, {Base}, 2);
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes.size(), 6u);
+  contents(Old, {'a', 'b', 0, 0xff, 'e', 'f'});
+  const auto New = ok(ServiceKind::Open, {Base, 0x202, 0600});
+  EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+  contents(New, {});
+  renameFile("/data", "/moved");
+  error(ServiceKind::Access, {Base}, 2);
+  EXPECT_EQ(ok(ServiceKind::Access, {Base + 128}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base + 128}), 0u);
+  error(ServiceKind::Access, {Base + 128}, 2);
+  path("/");
+  EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+}
+
+TEST_P(DarwinFileTest, AccessStringCopyStopsAtNULAndPreservesPathFaults) {
+  const auto End = Base + Page * 2;
+  path("/data", End - 6);
+  EXPECT_EQ(ok(ServiceKind::Access, {End - 6}), 0u);
+  ASSERT_FALSE(bool(Space->write(End - 1, {'x'})));
+  error(ServiceKind::Access, {End - 6}, 14);
+  error(ServiceKind::Access, {UINT64_MAX}, 14);
+  error(ServiceKind::Access, {0x800000000000ULL}, 14);
+  ASSERT_FALSE(bool(Space->write(Base, std::vector<uint8_t>(1024, 'x'))));
+  error(ServiceKind::Access, {Base}, 63);
+  path("/" + std::string(256, 'x'));
+  error(ServiceKind::Access, {Base}, 63);
+  path("/data");
+  ASSERT_FALSE(bool(Space->protect(Base, Page, Read | UserAccessible)));
+  EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+  ASSERT_FALSE(bool(Space->protect(Base, Page, Write | UserAccessible)));
+  error(ServiceKind::Access, {Base}, 14);
+}
+
 TEST_P(DarwinFileTest, RenameMovesSharedIdentityAndRetainsReplacedObjects) {
   mutationPolicy();
   Options->MutableDirectories.insert("/");
@@ -1944,6 +2099,29 @@ public:
     return Memory.canAccess(A, S, P);
   }
 };
+
+TEST_P(DarwinFileTest, AccessTransportFailuresPreserveFilesAndDescriptors) {
+  mutationPolicy();
+  FailingFileInput Input(*Space);
+  Files = std::make_unique<DarwinFiles>(Input, Options);
+  const auto FD = ok(ServiceKind::Open, {Base});
+  const auto Before = status(FD);
+  path("/data", Base + 128);
+  for (bool Preflight : {true, false}) {
+    Input.FailureAddress = Base + 130;
+    Input.FailAccess = Preflight;
+    Input.FailRead = !Preflight;
+    auto Failed = Files->handle(ServiceKind::Access,
+                                {0, 33, {Base + 128}, std::nullopt}, Result);
+    ASSERT_FALSE(bool(Failed));
+    llvm::consumeError(Failed.takeError());
+    Input.FailAccess = Input.FailRead = false;
+    EXPECT_EQ(ok(ServiceKind::Access, {Base + 128}), 0u);
+    EXPECT_EQ(status(FD), Before);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 0u);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {FD, 3}), 0u);
+  }
+}
 
 TEST_P(DarwinFileTest, RenameTargetInputFailuresPreserveBothObjects) {
   mutationPolicy();

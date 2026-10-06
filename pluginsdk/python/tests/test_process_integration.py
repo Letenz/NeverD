@@ -506,6 +506,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("created-file-metadata", b"q"),
                                            ("renamed-file", b"r"),
                                            ("vectored-io", b"v!"),
+                                           ("file-access", b"a"),
                                            ("system-info", b"i"),
                                            ("virtual-system", bytes.fromhex(
                                                "44617277696e0032342e746573740000000080"

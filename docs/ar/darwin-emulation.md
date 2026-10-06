@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 8828ab2cc1f47bed24529d8d47a05ee929790480d47f96fcb54d6ebc101ae2ce -->
+<!-- i18n-source: db2f5a72fda6a5195b548852dda4cebabfdea38e499c54e1b88f809dd2fc1055 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-يشترط فحص الأعباء المستقل جميع الحالات الأصلية، وعددها 96 على ARM64 أو 64 على x64، بما فيها `LC_MAIN` و`LC_UNIXTHREAD` على كل منصة. غياب حالة إلزامية أو تخطيها أو غياب `ld64.lld` يؤدي إلى الفشل.
+يشترط فحص الأعباء المستقل جميع الحالات الأصلية، وعددها 99 على ARM64 أو 66 على x64، بما فيها `LC_MAIN` و`LC_UNIXTHREAD` على كل منصة. غياب حالة إلزامية أو تخطيها أو غياب `ld64.lld` يؤدي إلى الفشل.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -412,3 +412,21 @@ Release Darwin: عدد الحالات 881، نجحت 509 وتُخطيت 372 لع
 Release Darwin:937 حالة مسجلة،553 ناجحة،384 متخطاة لغياب الخلفية، بلا إخفاقات؛ نُفذت جميع هويات ARM64 HVF الإلزامية وعددها96. المركزة45/57 ناجحة و12 متخطاة. C/CLI/report:168/168، منها118 مقارنة Darwin؛ غطى Python خمس تركيبات في20.397ث. الأصلية22/22 والسكربتات66/66. أضافت المراجعة المستقلة فشل كتابة موضعية متفرقة يتحقق من المؤشر وEOF الفعلي ورفض البيانات الوصفية والسعة المتبقية الدقيقة. أخفق البناء الأول لأن اختباراً قديماً أشار إلى استعلام داخلي محذوف، وأصبح يفحص المخرجات الفعلية. أخطأ تأكيد الحدث الجديد في استخدام optional<bool> فاعتبر ثمانية تشغيلات ضيف ناجحة فاشلة؛ وبعد التصحيح نجحت الفحوص المتأثرة. حُفظ المصدر والسجل لكلا الإخفاقين. الأعداد متداخلة والمهل ثابتة. GitHub CI الكاملة وiOS الفعلي منفصلان؛ Intel HVF Actions معلقة.
 
 `build-hvf-arm64/vector-validation-summary.json`, `vector-darwin-final-evidence/`, `vector-focused-final.xml`, `vector-public.xml`, `vector-native-initial/`, `vector-initial-build-failure/`, `vector-initial-assertion-evidence/`.
+
+## استعلامات وجود الملفات
+
+يفحص `access(33)` و`faccessat(466)` الفهرس الافتراضي الحالي دون تخصيص واصف أو تغيير المحتوى والمؤشرات والأعلام والبيانات الوصفية. يثبت F_OK وجود الاسم وفق عقد الاجتياز الحالي. لا تمنح البيانات الوصفية الوصول إلى الفهرس أو تسحبه؛ ولا يجري التحقق من صلاحيات البحث الأصلية في الأسلاف أو ACL أو MAC. لا تمنع ملاحظات stat الغائبة أو المبطلة الاستعلام. يعيد الاسم المحذوف ENOENT حتى لو احتفظت به واصفات أو خرائط قديمة؛ ويتبع الإنشاء وإعادة استخدام الاسم وإعادة التسمية النطاق الحالي.
+
+يستخدم الوضع البتات32 الدنيا. تشغل R/W/X البتات0–2 والحقوق الموسعة9–21. يعني `(mode & 0x003ffe07) == 0` استعلام وجود؛ وتُتجاهل بقية البتات، بما فيها الإشارة، دون EINVAL. تبقى طلبات الصلاحيات UnsupportedService بعد نجاح البحث، دون استنتاجها من البيانات الوصفية أو تفويض التعديل. تسبقها أخطاء المسار والواصف المعروفة.
+
+يقبل Faccessat أي تركيب من الأعلام الدنيا AT_EACCESS(0x10) وAT_SYMLINK_NOFOLLOW(0x20) وAT_SYMLINK_NOFOLLOW_ANY(0x800). تعيد الأعلام الأخرى EINVAL قبل المسار أو FD، حتى بلا فهرس. لا يتضمن الفهرس المقبول روابط رمزية والهويتان الحقيقية والفعالة ثابتتان. يتجاهل المسار المطلق dirfd؛ ويحافظ النسبي على قواعد CWD وFD المجلد. تسبق النسخة حتى أول NUL فحص FD النسبي؛ ويعطي البايت المفقود EFAULT. حتى المسار النسبي الفارغ يفحص FD: المجهول EBADF والملف العادي ENOTDIR وإلا ENOENT. يبقى الفهرس الغائب وهوية مجلد التدفق المجهولة غير مدعومين.
+
+يقارن `file-access` الأصلي الاستدعاءين والبتات المتجاهلة والأعلام والترتيب على macOS الأصلي وخمس تركيبات ضيف عبر C++/C/CLI/Python. يستخدم NOFOLLOW_ANY واصف مجلد نسبياً لتجنب روابط المضيف `/tmp` أو `/var`. تغطي الاختبارات المباشرة الأسماء الحالية والبتات المختلطة ونفاد الواصفات واستقلال البيانات الوصفية وأخطاء الذاكرة.
+
+[XNU access and faccessat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU access mode bits](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/unistd.h).
+
+### التحقق من وجود الملفات، 2026-10-06
+
+Release Darwin:971 حالة مسجلة،575 ناجحة،396 متخطاة لغياب الخلفية، بلا إخفاقات؛ نُفذت جميع هويات ARM64 HVF الإلزامية وعددها99. المركزة23/35 ناجحة و12 متخطاة، وتشمل14 مباشرة. C/CLI/report:173/173، منها123 مقارنة Darwin. تحقق Python من خمس تركيبات في16.235ث؛ الأصلية23/23 والسكربتات66/66. لم تجد مراجعة التصميم والتنفيذ المستقلة عائقاً. حُفظت نتيجة NOFOLLOW_ANY الأولى بسبب رابط المضيف /tmp والمقارنة مع المسار المعياري؛ يستخدم البرنامج المشترك واصف مجلد نسبياً. الأعداد متداخلة والمهل ثابتة ولا إخفاق تشغيل يتطلب الإعادة. GitHub CI الكاملة وiOS الفعلي منفصلان؛ Intel HVF Actions معلقة.
+
+`build-hvf-arm64/access-validation-summary.json`, `access-darwin-final-evidence/`, `access-focused-final.xml`, `access-public.xml`, `access-native-initial/`, `access-evidence/`.

@@ -1501,6 +1501,89 @@ static int system_info(int emit_values) {
   return 37;
 }
 
+static int file_access(const char *path) {
+  unsigned error;
+  char parent[1024];
+  u64 length = 0, slash = 0;
+  while (path[length] && length + 1 < sizeof(parent)) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      slash = length;
+    ++length;
+  }
+  if (path[0] != '/' || path[length])
+    return 51;
+  parent[slash ? slash : 1] = 0;
+  const char *leaf = path + slash + 1;
+  int check = 51;
+#define ACCESS_EXPECT(expression)                                              \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 dir = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  ACCESS_EXPECT(!error && dir >= 3);
+  u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  ACCESS_EXPECT(!error && fd != dir);
+  ACCESS_EXPECT(call(199, fd, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  const u64 modes[] = {0,        8,          0x80,       0x100,
+                       0x400000, 0x80000000, 0xffc001f8, 0x1234567800000000UL};
+  for (unsigned i = 0; i != sizeof(modes) / sizeof(*modes); ++i) {
+    ACCESS_EXPECT(call(33, (u64)path, modes[i], 0, 0, 0, 0, &error) == 0 &&
+                  !error && !secondary);
+    ACCESS_EXPECT(call(466, dir, (u64)leaf, modes[i], 0, 0, 0, &error) == 0 &&
+                  !error && !secondary);
+    ACCESS_EXPECT(call(33, 1, modes[i], 0, 0, 0, 0, &error) == 14 && error);
+  }
+  const u64 flags[] = {0, 0x10, 0x20, 0x30, 0x800, 0x810, 0x820, 0x830};
+  for (unsigned i = 0; i != sizeof(flags) / sizeof(*flags); ++i) {
+    // Relative lookup avoids host /tmp or /var symlinks under NOFOLLOW_ANY.
+    ACCESS_EXPECT(call(466, 0x1234567800000000UL | dir, (u64)leaf, 0,
+                       0xfedcba9800000000UL | flags[i], 0, 0, &error) == 0 &&
+                  !error);
+  }
+  const u64 invalid[] = {1, 0x40, 0x400, 0xffffffff};
+  for (unsigned i = 0; i != sizeof(invalid) / sizeof(*invalid); ++i)
+    ACCESS_EXPECT(call(466, (u64)-1, 1, 0, invalid[i], 0, 0, &error) == 22 &&
+                  error);
+  ACCESS_EXPECT(call(466, (u64)-1, (u64)path, 0, 0, 0, 0, &error) == 0 &&
+                !error);
+  ACCESS_EXPECT(call(466, fd, (u64)path, 0, 0x30, 0, 0, &error) == 0 && !error);
+  ACCESS_EXPECT(call(466, (u64)-1, (u64)leaf, 0, 0, 0, 0, &error) == 9 &&
+                error);
+  ACCESS_EXPECT(call(466, fd, (u64)leaf, 0, 0, 0, 0, &error) == 20 && error);
+  ACCESS_EXPECT(call(466, (u64)-1, 1, 0, 0, 0, 0, &error) == 14 && error);
+  const char empty[] = "", missing[] = "no-access-entry", current[] = ".";
+  ACCESS_EXPECT(call(466, (u64)-1, (u64)empty, 0, 0, 0, 0, &error) == 9 &&
+                error);
+  ACCESS_EXPECT(call(466, fd, (u64)empty, 0, 0, 0, 0, &error) == 20 && error);
+  ACCESS_EXPECT(call(466, dir, (u64)empty, 0, 0, 0, 0, &error) == 2 && error);
+  ACCESS_EXPECT(call(466, dir, (u64)missing, 0, 0, 0, 0, &error) == 2 && error);
+  ACCESS_EXPECT(call(466, dir, (u64)current, 0, 0x830, 0, 0, &error) == 0 &&
+                !error);
+  char child[64];
+  unsigned n = 0;
+  while (leaf[n] && n + 4 < sizeof(child)) {
+    child[n] = leaf[n];
+    ++n;
+  }
+  ACCESS_EXPECT(!leaf[n]);
+  child[n] = '/';
+  child[n + 1] = '.';
+  child[n + 2] = '.';
+  child[n + 3] = 0;
+  ACCESS_EXPECT(call(466, dir, (u64)child, 0, 0, 0, 0, &error) == 20 && error);
+  ACCESS_EXPECT(call(199, fd, 0, 1, 0, 0, 0, &error) == 1 && !error);
+  ACCESS_EXPECT(call(92, fd, 3, 0, 0, 0, 0, &error) == 0 && !error);
+  ACCESS_EXPECT(call(6, fd, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ACCESS_EXPECT(call(6, dir, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  const char marker = 'a';
+  ACCESS_EXPECT(call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error);
+#undef ACCESS_EXPECT
+  return 37;
+}
+
 /* Independent LP64 records: no SDK types or model constants. */
 struct vector_span {
   u64 address, length;
@@ -1666,6 +1749,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "file-access"))
+    return argc < 3 ? 79 : file_access(argv[2]);
   if (equal(argv[1], "vectored-io"))
     return argc < 3 ? 79 : vectored_io(argv[2]);
   if (equal(argv[1], "system-info") || equal(argv[1], "virtual-system"))

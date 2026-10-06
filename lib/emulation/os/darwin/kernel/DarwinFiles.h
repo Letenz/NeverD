@@ -105,6 +105,10 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD, uint32_t Mode,
        ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>> access(uint64_t Path,
+                                                      uint32_t DirectoryFD,
+                                                      uint32_t Mode,
+                                                      ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   status(const Description &File, uint64_t Address, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>

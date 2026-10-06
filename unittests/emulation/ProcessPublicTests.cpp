@@ -416,6 +416,7 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"created-file-metadata", "71"},
           std::pair{"renamed-file", "72"},
           std::pair{"vectored-io", "7621"},
+          std::pair{"file-access", "61"},
           std::pair{"virtual-created-metadata",
                     emulation::darwin_test::CreationMetadataHex},
           std::pair{"stdin", "00ff78"},
