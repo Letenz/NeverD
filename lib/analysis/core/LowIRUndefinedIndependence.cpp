@@ -3144,18 +3144,10 @@ class LoopPlanInference {
     return Mask;
   }
 
-  bool preservesOutsideLane(SymRef Before, SymRef After, unsigned Offset,
-                            unsigned Width, unsigned Total) {
-    auto &Ctx = Session.Context;
-    return (!Offset || Ctx.mkExtract(Before, 0, Offset) ==
-                           Ctx.mkExtract(After, 0, Offset)) &&
-           (Offset + Width == Total ||
-            Ctx.mkExtract(Before, Offset + Width, Total - Offset - Width) ==
-                Ctx.mkExtract(After, Offset + Width, Total - Offset - Width));
-  }
-
   // A zero mask denotes a full-width recurrence. Narrow zero-extended updates
-  // and preserved lanes supply their endpoint mask for guards and ranks.
+  // and exact projected updates supply their mask for guards and ranks.
+  // Other bits can be rebuilt or change: only the projection is proposed, and
+  // the complete transition domain must still prove every invariant and rank.
   std::optional<uint64_t> unitStepLane(SymRef Before, SymRef After,
                                        uint16_t Bytes, bool Increment) {
     auto &Ctx = Session.Context;
@@ -3174,9 +3166,7 @@ class LoopPlanInference {
         const auto Input = Ctx.mkExtract(Before, Offset, Width);
         const auto Step = Ctx.mkConst(Width, Increment ? 1 : UINT64_MAX);
         const auto Updated = Ctx.mkAdd(Input, Step);
-        const bool Matches =
-            Ctx.mkExtract(After, Offset, Width) == Updated &&
-            preservesOutsideLane(Before, After, Offset, Width, Total);
+        const bool Matches = Ctx.mkExtract(After, Offset, Width) == Updated;
         checker().nodes();
         if (Matches)
           return (UINT64_MAX >> (64 - Width)) << Offset;
@@ -3208,11 +3198,9 @@ class LoopPlanInference {
       for (unsigned Offset = 0; Offset + Width <= Total; Offset += 8) {
         const auto Value = Ctx.mkExtract(After, Offset, Width);
         const auto Input = Ctx.mkExtract(Before, Offset, Width);
-        const bool Preserved =
-            Ctx.op(Value) == SymOp::Add &&
-            preservesOutsideLane(Before, After, Offset, Width, Total);
+        const bool Additive = Ctx.op(Value) == SymOp::Add;
         checker().nodes();
-        if (!Preserved)
+        if (!Additive)
           continue;
         const auto Terms = Ctx.operands(Value);
         if (std::find(Terms.begin(), Terms.end(), Input) != Terms.end())
