@@ -12,6 +12,7 @@ NEVERD_EXECUTION_PRIVILEGE(User, "user")
 NEVERD_EXECUTION_MEMORY_OBSERVATION(EngineCallbacks, "engine_memory_callbacks")
 NEVERD_EXECUTION_MEMORY_OBSERVATION(InstructionPreflight,
                                     "whole_instruction_preflight")
+NEVERD_EXECUTION_MEMORY_OBSERVATION(Unobserved, "unobserved")
 #endif
 #ifdef NEVERD_EXECUTION_CONTROL_PRECISION
 NEVERD_EXECUTION_CONTROL_PRECISION(EngineRequest, "engine_request")

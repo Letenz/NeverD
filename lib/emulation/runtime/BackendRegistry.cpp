@@ -162,9 +162,11 @@ createCheckedBackend(ExecutionBackendKind Kind,
             : createUnicornX64Machine(**Memory, UserMode);
     if (!Machine)
       return Machine.takeError();
+    // A native profile without an instruction allowlist is a direct one.
     return CheckedX64Backend::create(
         std::move(*Memory), std::move(*Machine), UserMode,
-        Capabilities.supports(ExecutionFeature::SIMDExceptions));
+        Capabilities.supports(ExecutionFeature::SIMDExceptions),
+        !Capabilities.HasInstructionAllowlist);
   }
   auto Machine =
       Kind == ExecutionBackendKind::KVM   ? createKvmAArch64Machine(**Memory)

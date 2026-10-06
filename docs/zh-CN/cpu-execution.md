@@ -22,7 +22,7 @@ CPU 执行独立于来宾 OS、映像加载器和调用约定。启用 `NEVERD_E
 | `page_size` | 4096 | 来宾映射粒度；其他值会被拒绝 |
 | `required_features` | `[]` | [`ExecutionConfiguration.def`](../../include/neverd/emulation/ExecutionConfiguration.def) 中的必需功能名 |
 
-`driver-strict` 支持 x64；`software-cpu-v1` 支持 x64 与 ARM64。`checked-x64-v1` 与 `checked-aarch64-v1` 要求对应架构并以 supervisor 特权运行。`checked-user-x64-v1` 与 `checked-user-aarch64-v1` 分别在 CPL3 和 EL0 执行与契约对应的有界指令集，具备 MMU 隔离和显式服务请求退出。支持 Unicorn 以及与主机匹配的 KVM/WHP；`auto` 遵循现有主机选择。flat 配置不承诺架构级 user/supervisor MMU 隔离。checked ARM64 与 x64 配置支持下文列出的受限 FP/SIMD 指令族。supervisor x64 另支持受限 MMIO 事务和预备读取的字符串传输；user 配置拒绝设备映射。端口 I/O 仍不支持。只有 user 配置会报告 `service_traps`。
+`driver-strict` 支持 x64；`software-cpu-v1` 支持 x64 与 ARM64。`checked-x64-v1` 与 `checked-aarch64-v1` 要求对应架构并以 supervisor 特权运行。`checked-user-x64-v1` 与 `checked-user-aarch64-v1` 分别在 CPL3 和 EL0 执行与契约对应的有界指令集，具备 MMU 隔离和显式服务请求退出。支持 Unicorn 以及与主机匹配的 KVM/WHP；`auto` 遵循现有主机选择。`direct-user-x64-v1` 在硬件传输上于架构事件之间运行 x64 user 指令集，而非逐指令单步，面向启动需要数十亿条指令的工作负载。它不准入任何指令，也不观察指令或内存访问；仅由来宾页表提供 CPL3 隔离。其服务边界与 `checked-user-x64-v1` 一致：系统调用扩展保持禁用，因此服务指令在来宾请求服务的地址上表现为未定义操作码事件，并作为相同的挂起服务上报。该运行采用时间预算，而非指令预算或配额。KVM 与主机匹配的 WHP 实现该契约；Unicorn 和 HVF 报告其不受支持，而不会以不同语义运行它。执行监视仍然生效：其页面被标记为不可执行，因此首次取指进入被监视范围会在与受检指令监视相同的边界处触发缺页。基于观察的脱壳在该契约下无需单步即可恢复入口。flat 配置不承诺架构级 user/supervisor MMU 隔离。checked ARM64 与 x64 配置支持下文列出的受限 FP/SIMD 指令族。supervisor x64 另支持受限 MMIO 事务和预备读取的字符串传输；user 配置拒绝设备映射。端口 I/O 仍不支持。只有 user 配置会报告 `service_traps`。
 
 用户态执行要求**每个**映射页同时具有 `UserAccessible` 和相应的 `Read`、`Write` 或 `Execute` 权限。已有映射默认仅 supervisor 可访问；即使别名共享物理字节，其权限仍彼此独立。仅有 `UserAccessible` 不会授权访问。可信宿主操作和 supervisor CPU 使用 RWX。例如：
 
