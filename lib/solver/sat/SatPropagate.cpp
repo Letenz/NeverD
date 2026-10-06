@@ -47,7 +47,7 @@ namespace {
 /// down.  Watch order is not part of the specification of anything, and it
 /// stays a deterministic function of the operations performed, so reproducible
 /// behaviour survives the reordering.
-void removeWatch(std::vector<Watcher> &List, ClauseRef Ref) {
+void removeWatch(llvm::SmallVectorImpl<Watcher> &List, ClauseRef Ref) {
   for (size_t I = 0, E = List.size(); I < E; ++I) {
     if (List[I].Clause != Ref)
       continue;
@@ -157,7 +157,7 @@ ClauseRef SatEngine::propagate() {
     // falsified and has to be looked at.  Survivors are compacted forward as
     // the scan goes, so a clause that finds a new literal to watch is removed
     // from this list by simply not being copied.
-    std::vector<Watcher> &List = Watches[P.index()];
+    auto &List = Watches[P.index()];
     size_t Read = 0;
     size_t Write = 0;
     const size_t Count = List.size();

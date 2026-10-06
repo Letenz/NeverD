@@ -32,6 +32,8 @@ and reject a changed original loop body.
 
 `BitVectorSolver::cloneEncoding()` copies a complete encoding before any SAT search attempt. It returns null after search or an encoding failure. Copies own their mutable clauses, root propagation, gates and bit mappings; they preserve variable order, gate accounting and solver settings. The context must outlive both solvers, while the source solver can be modified or destroyed independently.
 
+The SAT engine keeps four watch entries inline per literal list; longer lists grow dynamically. This avoids separate allocations for short lists during construction, pristine copying and destruction. Propagation order, clause contents, independent ownership and all work limits stay unchanged.
+
 <!-- i18n-section: z3-build -->
 
 ## Optional Z3 build

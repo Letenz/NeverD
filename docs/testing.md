@@ -2954,3 +2954,5 @@ The string witness reader in `scripts.tests.test_generate_swift_witness_contract
 `PreparedFiniteKeys.*` checks context destruction and renaming, projection order and limits, explicit invalidation after moves, malformed and incomplete results, empty and nonunique domains, and exact capacity boundaries. Existing cache and frame regressions also cover the prepared-key route.
 
 `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults` rejects changed carriers, layouts, context roles and indirect results on both architectures. `SourceABI.SwiftPointForwardingPreservesBothIEEECarriers` compiles and runs forwarded source at -O0/-O2, checking signed zero, subnormals, infinities and NaN payloads in both fields. The declaration test accepts compiler and named-argument forms and rejects altered method signatures and ambiguous image identities.
+
+`BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource` grows literal tables and shared watch lists after copying and destroying the source, mutates a sibling independently, interrupts propagation at one watch visit, and checks resumed full models against original clauses and independent Boolean relations.
