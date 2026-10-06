@@ -2048,6 +2048,135 @@ static int system_info(int emit_values) {
   return 37;
 }
 
+static int initial_directory_move(const char *path) {
+  unsigned error;
+  int check = 51;
+#define INITIAL_MOVE_EXPECT(expression)                                        \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+#define INITIAL_MOVE_CLOSE(fd)                                                 \
+  INITIAL_MOVE_EXPECT(call(6, fd, 0, 0, 0, 0, 0, &error) == 0 && !error)
+  char parent[1024], before[1024], after[1024], byte = 0;
+  u64 input = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(call(92, input, 50, (u64)parent, 0, 0, 0, &error) == 0 &&
+                      !error);
+  unsigned size = 0, slash = 0;
+  while (parent[size]) {
+    if (parent[size] == '/')
+      slash = size;
+    ++size;
+  }
+  parent[slash ? slash : 1] = 0;
+  INITIAL_MOVE_CLOSE(input);
+  u64 root = call(5, (u64)parent, 0, 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  u64 original = call(463, root, (u64) "empty", 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  u64 duplicate = call(41, original, 0, 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(call(92, original, 2, 1, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(call(199, original, 31, 0, 0, 0, 0, &error) == 31 &&
+                      !error);
+  INITIAL_MOVE_EXPECT(
+      call(92, original, 50, (u64)before, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(
+      call(475, original, (u64) "sub", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 child = call(463, original, (u64) "sub", 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  u64 file = call(463, child, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(call(4, file, (u64) "abc", 3, 0, 0, 0, &error) == 3 &&
+                      !error);
+  u64 filedup = call(41, file, 0, 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  u64 independent = call(463, child, (u64) "data", 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(call(199, file, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  u64 mapping = call(197, 0, PAGE, 1, 0x40002, file, 0, &error);
+  INITIAL_MOVE_EXPECT(!error && *(volatile char *)mapping == 'a');
+  INITIAL_MOVE_EXPECT(
+      call(475, root, (u64) "dest", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 destination = call(463, root, (u64) "dest", 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(call(13, child, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(call(465, root, (u64) "empty", destination, (u64) "moved",
+                           0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_MOVE_EXPECT(call(466, root, (u64) "empty", 0, 0, 0, 0, &error) == 2 &&
+                      error);
+  INITIAL_MOVE_EXPECT(call(92, original, 50, (u64)after, 0, 0, 0, &error) ==
+                          0 &&
+                      !error && !equal(before, after));
+  INITIAL_MOVE_EXPECT(call(199, duplicate, 0, 1, 0, 0, 0, &error) == 31 &&
+                      !error);
+  INITIAL_MOVE_EXPECT(call(92, original, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  INITIAL_MOVE_EXPECT(call(92, duplicate, 1, 0, 0, 0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_MOVE_EXPECT(call(3, filedup, (u64)&byte, 1, 0, 0, 0, &error) == 1 &&
+                      !error && byte == 'b');
+  INITIAL_MOVE_EXPECT(call(199, file, 0, 1, 0, 0, 0, &error) == 2 && !error);
+  INITIAL_MOVE_EXPECT(call(199, independent, 0, 1, 0, 0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_MOVE_EXPECT(*(volatile char *)mapping == 'a');
+  u64 ancestor = call(5, (u64) "..", 0, 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(call(92, ancestor, 50, (u64)parent, 0, 0, 0, &error) ==
+                          0 &&
+                      !error && equal(parent, after));
+  INITIAL_MOVE_EXPECT(call(465, destination, (u64) "moved", child,
+                           (u64) "cycle", 0, 0, &error) == 22 &&
+                      error);
+  u64 fresh = call(463, original, (u64) "fresh", 0xa02, 0600, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(
+      call(475, root, (u64) "empty", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 replaced = call(463, root, (u64) "empty", 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(call(465, destination, (u64) "moved", root, (u64) "empty",
+                           0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_MOVE_EXPECT(call(92, original, 50, (u64)after, 0, 0, 0, &error) ==
+                          0 &&
+                      !error && equal(before, after));
+  INITIAL_MOVE_EXPECT(
+      call(466, replaced, (u64) "sub", 0, 0, 0, 0, &error) == 2 && error);
+  INITIAL_MOVE_EXPECT(
+      call(466, original, (u64) "sub", 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(call(472, child, (u64) "data", 0, 0, 0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_MOVE_EXPECT(
+      call(472, original, (u64) "sub", 0x80, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(*(volatile char *)mapping == 'a');
+  INITIAL_MOVE_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(
+      call(472, original, (u64) "fresh", 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(
+      call(472, root, (u64) "dest", 0x80, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(call(73, mapping, PAGE, 0, 0, 0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_MOVE_CLOSE(fresh);
+  INITIAL_MOVE_CLOSE(ancestor);
+  INITIAL_MOVE_CLOSE(independent);
+  INITIAL_MOVE_CLOSE(filedup);
+  INITIAL_MOVE_CLOSE(file);
+  INITIAL_MOVE_CLOSE(child);
+  INITIAL_MOVE_CLOSE(replaced);
+  INITIAL_MOVE_CLOSE(duplicate);
+  INITIAL_MOVE_CLOSE(original);
+  INITIAL_MOVE_CLOSE(destination);
+  INITIAL_MOVE_CLOSE(root);
+  const char marker = 'p';
+  INITIAL_MOVE_EXPECT(call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 &&
+                      !error);
+#undef INITIAL_MOVE_CLOSE
+#undef INITIAL_MOVE_EXPECT
+  return 37;
+}
+
 static int initial_directory_removal(const char *path) {
   unsigned error;
   char parent[1024], before[1024], after[1024], byte = 0;
@@ -2601,6 +2730,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
   bss = 99;
   if (equal(argv[1], "initial-directory-removal"))
     return argc < 3 ? 79 : initial_directory_removal(argv[2]);
+  if (equal(argv[1], "initial-directory-move"))
+    return argc < 3 ? 79 : initial_directory_move(argv[2]);
   if (equal(argv[1], "deleted-directories"))
     return argc < 3 ? 79 : deleted_directories(argv[2]);
   if (equal(argv[1], "directory-mutations"))

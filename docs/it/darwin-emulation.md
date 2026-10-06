@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 3b19ce4b03ad45c168e0ca6db9fa8217c4da568d6d01ae23d3ef52545ed69fc9 -->
+<!-- i18n-source: 2508a1d6463f7db7523313b46488a3a8da4d456a3ec0281743f6ae9793bfe82b -->
 
 [← Indice della documentazione](README.md)
 
@@ -548,3 +548,24 @@ La prima esecuzione mirata corretta conserva tre timeout HVF di cinque secondi. 
 `build-hvf-arm64/directory-swap-research/`: `darwin-final-evidence/`, `darwin-evidence/`, `focused-v5.xml`, `file-owner-v5.xml`, `native-workload-fixed-evidence/`, `native-probe-v2-results.json`, `fixture-fixups-before/`, `hvf-controls.json`.
 
 I binari finali collegati hanno ripetuto con successo la verifica Darwin completa. L’integrazione fissata di dev 0a9a1d28d registra 4.515 casi su 20 componenti condivisi: 4.489 superati, sei Z3 facoltativi e 20 del corpus Windows EH indisponibile saltati, zero errori. Include C/CLI 170/170 e report 32/32. Python copre i cinque profili in 30,780s. Tutte le 12 varianti mobili native architettura/fixup corrispondono a 4.532 osservazioni dei programmi originali; sessione unica e metadati Swift completi corrispondono 12/12. Il generatore di witness Swift riproduce il catalogo con SDK/compilatore registrati dopo la correzione dell’indentazione di un commento. È accettazione locale Release LLVM 23/Apple Clang 17, non di dev successivo o Linux Clang 18.
+
+
+## Spostamento ordinario dei sottoalberi iniziali dichiarati
+
+Il Boolean rigoroso `"movable": true` su una directory iniziale esplicita diversa dalla radice autorizza il suo rename ordinario e dichiara l’intero sottoalbero iniziale composto da directory ordinarie senza mount o alias di nome. `DarwinFileOptions::MovableDirectories` viene aggiunto dopo i membri aggregati C++ esistenti. Il genitore immediato deve essere mutable. Assenza/false mantiene l’incertezza; altri tipi JSON sono rifiutati. I discendenti conservano i propri diritti mutable/removable/movable e di scrittura. Non autorizza SWAP di directory iniziali, permessi generali o mount. Si rifiutano flags noti, modalità speciali delle directory, file ordinari con più link e alias inode da stat/istantanee. Ogni dominio connesso dalle dichiarazioni può avere al massimo un dispositivo noto, inclusi sottoalberi fratelli e file sotto un antenato senza stat. L’uguaglianza dei dispositivi non connette altri domini.
+
+Gli oggetti conservano nomi, genitori, stat/istantanee e diritti originali. I vecchi percorsi d’ingresso non ricreano nomi spostati o rimossi. Discendenti non aperti, FD/dup/CWD, mapping e discendenti rimossi seguono i loro oggetti. I discendenti immutati conservano stat, istantanee, cookie e SEEK_END; radice spostata e genitori modificati perdono le osservazioni complete. Riutilizzare un nome non eredita osservazioni o diritti. L’input iniziale descrive una singola esecuzione sincrona, senza API di sostituzione durante l’esecuzione. SWAP resta separato: dichiarazione diretta swap_rename degli oggetti iniziali, copia dal genitore a mkdir e conservazione durante lo spostamento. Entrambi i genitori SWAP devono avere supporto dichiarato.
+
+Sostituire una destinazione iniziale vuota richiede anche removable. Prima della pubblicazione si verificano 1023 byte per percorso e il budget comune di 16 MiB. Ogni riferimento movable riserva il percorso originale più NUL senza un’altra voce. Percorsi, riferimenti, istantanee e voci delle directory iniziali restano riservati dopo la rimozione. PathCharge dinamico parte da zero e addebita una volta il percorso corrente di ogni membro collegato o trattenuto. Solo il costo dinamico esistente di un obiettivo subito liberabile fornisce credito; FD/CWD/figli/mapping orfani trattenuti non lo forniscono. Il recupero finale rimborsa una volta. Gli antenati iniziali impliciti non aumentano il limite di 256 voci; il recupero dei file ordinari iniziali è invariato.
+
+Esempio:
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/work","mutable":true,"movable":true}]}}
+```
+
+initial-directory-move verifica senza SDK spostamento, cursori condivisi/indipendenti, flags FD, CWD, mapping privato, sostituzione e ripristino dei nomi. Profili guest locali e iOS fisico hanno verifiche separate.
+
+Il limite sullo SWAP iniziale riguarda gli oggetti radice sorgente e destinazione della chiamata. Lo scambio di antenati creati può trasportare discendenti iniziali già spostati, mantenendone lo stato e i costi dinamici. Le restrizioni precedenti si applicano in assenza delle dichiarazioni richieste.
+
+Dopo la revisione indipendente finale su macOS ARM64, il gate Darwin registra 1.264 test: 796 superati, 468 saltati per backend indisponibile, zero errori. Tutti i 117 carichi ARM64 HVF obbligatori sono stati eseguiti. Il sottoinsieme file passa 342/342, con 22 nuovi casi 4K/16K e tre controlli di ammissione. CreationPolicy conserva Device/GID del padre spostato; riuso del nome, sequenza inode e umask corrente restano distinti. Al limite esatto di 16 MiB, 16 scambi avanti/indietro non accumulano costi; il ritorno libera solo la differenza effettiva di sei byte. C/CLI pubblico: 175/175; report: 33/33; kernel nativo: 29/29; sonda originale indipendente: 19 osservazioni riuscite. Le cinque configurazioni Python passano in 27.865 secondi; API pura 71, deriva SDK e runner 49 passano anche. I conteggi si sovrappongono. Sorgenti, binari, tentativi e risultati sono conservati in build-hvf-arm64/initial-directory-move/ e legati al commit. iOS fisico, Intel HVF sospeso, SWAP delle radici iniziali, permessi/mount/case, EOF condiviso, Mach/thread/dyld e framework restano lavori separati.

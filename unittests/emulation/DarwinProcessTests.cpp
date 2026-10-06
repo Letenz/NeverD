@@ -263,6 +263,23 @@ TEST_P(DarwinProcess, DirectorySwapPreservesBothSubtreesAndMixedObjectState) {
   EXPECT_TRUE(Result->StandardError.empty());
 }
 
+TEST_P(DarwinProcess, InitialDirectoryMovePreservesObjectsGrantsAndNameReuse) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->Directories.insert("/empty");
+  Options.DarwinFiles->MutableDirectories = {"/", "/empty"};
+  Options.DarwinFiles->MovableDirectories.insert("/empty");
+  Options.Arguments[2] = "/data";
+  auto Result = run("initial-directory-move");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "p");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+}
+
 TEST_P(DarwinProcess, CreationMetadataUsesExplicitIdentityUmaskAndParentGroup) {
   Options.DarwinFiles.emplace();
   Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',

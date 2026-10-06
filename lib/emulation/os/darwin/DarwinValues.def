@@ -266,7 +266,14 @@ NEVERD_DARWIN_DIAGNOSTIC(RenameDotCaseSensitivity,
                          "filesystem case sensitivity")
 NEVERD_DARWIN_DIAGNOSTIC(
     RenameKind,
-    "Darwin rename of initial or removed directories is unsupported")
+    "Darwin rename requires a live created or declared movable directory")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryMovableOption,
+    "Darwin movable directories require an explicit non-root directory and "
+    "mutable parent")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryMoveDevice,
+    "Darwin movable directory subtree has conflicting device observations")
 NEVERD_DARWIN_DIAGNOSTIC(
     RenameSwapKind,
     "Darwin swap rename of initial or removed directories is unsupported")

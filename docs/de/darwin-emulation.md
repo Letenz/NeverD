@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 3b19ce4b03ad45c168e0ca6db9fa8217c4da568d6d01ae23d3ef52545ed69fc9 -->
+<!-- i18n-source: 2508a1d6463f7db7523313b46488a3a8da4d456a3ec0281743f6ae9793bfe82b -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -548,3 +548,24 @@ Der erste korrigierte gezielte Lauf bewahrt drei HVF-Zeitüberschreitungen von f
 `build-hvf-arm64/directory-swap-research/`: `darwin-final-evidence/`, `darwin-evidence/`, `focused-v5.xml`, `file-owner-v5.xml`, `native-workload-fixed-evidence/`, `native-probe-v2-results.json`, `fixture-fixups-before/`, `hvf-controls.json`.
 
 Die endgültig gelinkten Binärdateien bestanden die vollständige Darwin-Prüfung erneut. Die eingefrorene dev-Integration 0a9a1d28d erfasst 4.515 Fälle in 20 gemeinsamen Komponenten: 4.489 bestanden, sechs optionale Z3-Fälle und 20 nicht verfügbare Windows-EH-Korpusfälle übersprungen, keine Fehler. C/CLI 170/170 und Berichte 32/32 sind enthalten. Python prüft alle fünf Profile in 30,780s. Alle zwölf nativen mobilen Architektur/Fixup-Varianten stimmen in 4.532 Beobachtungen mit den Originalprogrammen überein; Einzelsitzung und vollständige Swift-Metadaten stimmen 12/12 überein. Der Swift-Witness-Generator reproduziert seinen Katalog nach einer Kommentar-Einrückungskorrektur mit dem dokumentierten SDK/Compiler. Dies ist lokale Release-LLVM-23/Apple-Clang-17-Abnahme, keine Abnahme späterer dev-Stände oder Linux Clang 18.
+
+
+## Gewöhnliches Verschieben deklarierter anfänglicher Verzeichnisbäume
+
+Das strikte Boolean `"movable": true` an einem expliziten anfänglichen Nicht-Wurzelverzeichnis erlaubt dessen gewöhnliches rename und deklariert den gesamten anfänglichen Teilbaum als gewöhnliche Verzeichnisse ohne Mounts oder Namensaliase. `DarwinFileOptions::MovableDirectories` wird hinter den bisherigen C++-Aggregatfeldern ergänzt. Der direkte Elternknoten muss mutable sein. Fehlend/false bleibt unbekannt; andere JSON-Typen werden abgelehnt. Nachfahren behalten ihre eigenen mutable/removable/movable- und Dateischreibrechte. Dies erlaubt weder anfängliche Verzeichnis-SWAPs noch allgemeine Rechte oder Mounts. Bekannte flags, spezielle Verzeichnismodi, mehrfach verlinkte reguläre Dateien und inode-Aliase aus stat/Snapshots werden abgelehnt. Jede durch die Deklarationen verbundene Domäne darf nur eine bekannte Gerätenummer enthalten, einschließlich benachbarter Teilbäume und Dateien unter Vorfahren ohne stat. Gleiche Nummern verbinden keine andere Domäne.
+
+Objekte behalten Namen, Eltern, ursprüngliche stat/Snapshots und Rechte. Alte Eingabepfade erzeugen verschobene oder entfernte Namen nicht erneut. Ungeöffnete Nachfahren, FD/dup/CWD, Mappings und entfernte Nachfahren folgen ihrem Objekt. Unveränderte Nachfahren behalten stat, Snapshot, Cookie und SEEK_END; verschobene Wurzeln und geänderte Eltern verlieren vollständige Beobachtungen. Namenswiederverwendung übernimmt keine Beobachtungen oder Rechte. Die Anfangseingabe gilt für einen synchronen Aufruf, nicht für einen Austausch während der Ausführung. SWAP bleibt getrennt: direkte swap_rename-Deklaration anfänglicher Objekte, Übernahme vom Elternobjekt bei mkdir, keine Neuberechnung beim Verschieben. Beide SWAP-Eltern benötigen Unterstützung.
+
+Ein leeres anfängliches Ersetzungsziel braucht zusätzlich removable. Vor Veröffentlichung gelten 1023 Byte je Pfad und das gemeinsame 16-MiB-Budget. Jede movable-Referenz reserviert den ursprünglichen Pfad plus NUL dauerhaft, ohne zusätzlichen Eintrag. Anfängliche Verzeichnispfade, Referenzen, Snapshots und Einträge bleiben nach Entfernung reserviert. Dynamisches PathCharge beginnt bei null und berechnet beim Verschieben einmal den aktuellen Pfad jedes verbundenen oder gehaltenen Mitglieds. Nur die vorhandene dynamische Gebühr eines sofort freigebbaren Ziels ist Guthaben; FD/CWD/Kinder/verwaiste Mappings liefern keines. Endgültige Rückgewinnung erstattet einmal. Implizite Anfangsvorfahren zählen nicht zusätzlich zur Grenze von 256 Einträgen; die Rückgewinnung anfänglicher regulärer Dateien bleibt bestehen.
+
+Beispiel:
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/work","mutable":true,"movable":true}]}}
+```
+
+initial-directory-move prüft ohne SDK Verschieben, geteilte/unabhängige Cursor, FD-flags, CWD, privates Mapping, Ersetzen und Namenswiederherstellung. Lokale Guest-Profile und physisches iOS sind getrennte Nachweise.
+
+Die Grenze für SWAP von Anfangsverzeichnissen betrifft die Quell- und Zielwurzel des Systemaufrufs. Der Austausch erstellter Vorfahren darf bereits verschobene anfängliche Nachkommen mitnehmen; Objektzustand und dynamische Kosten bleiben erhalten. Die vorherigen Einschränkungen gelten, wenn die erforderlichen Deklarationen fehlen.
+
+Nach der unabhängigen Abschlussprüfung auf ARM64 macOS umfasst das Darwin-Gate 1.264 Tests: 796 bestanden, 468 wegen nicht verfügbarer Backends übersprungen, keine Fehler. Alle 117 verpflichtenden ARM64-HVF-Arbeitslasten wurden ausgeführt. Der Dateibereich besteht 342/342, einschließlich 22 neuer 4K/16K-Fälle und drei Zulassungsprüfungen. CreationPolicy behält Device/GID des verschobenen Elternobjekts; Namenswiederverwendung, Inodefolge und aktuelle umask bleiben getrennt. Bei exakt 16 MiB erzeugen 16 Hin- und Rücktausche keine kumulativen Kosten; das Zurückverschieben gibt nur die tatsächliche Differenz von sechs Bytes frei. Öffentliche C/CLI-Prüfungen: 175/175; Berichte: 33/33; nativer Kernel: 29/29; unabhängige Originalsonde: 19 erfolgreiche Beobachtungen. Fünf Python-Konfigurationen bestehen in 27.865 Sekunden, ebenso 71 reine API-Tests, SDK-Abgleich und 49 Runnerprüfungen. Die Zahlen überschneiden sich. Quellen, Binärdateien, Versuche und Ergebnisse liegen unter build-hvf-arm64/initial-directory-move/ und sind an den Commit gebunden. Physisches iOS, pausiertes Intel HVF, SWAP anfänglicher Wurzeln, Rechte/Mounts/Großschreibung, gemeinsames EOF, Mach/Threads/dyld und Frameworks bleiben eigenständige Lücken.

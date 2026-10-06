@@ -422,6 +422,7 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"directory-mutations", "6d"},
           std::pair{"deleted-directories", "68"},
           std::pair{"initial-directory-removal", "6a"},
+          std::pair{"initial-directory-move", "70"},
           std::pair{"virtual-created-metadata",
                     emulation::darwin_test::CreationMetadataHex},
           std::pair{"stdin", "00ff78"},
@@ -484,6 +485,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       llvm::StringRef(Mode) == "directory-mutations" ||
       llvm::StringRef(Mode) == "deleted-directories" ||
       llvm::StringRef(Mode) == "initial-directory-removal" ||
+      llvm::StringRef(Mode) == "initial-directory-move" ||
       llvm::StringRef(Mode) == "created-file-metadata" ||
       llvm::StringRef(Mode) == "virtual-created-metadata" ||
       llvm::StringRef(Mode) == "renamed-file" ||
@@ -505,6 +507,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::StringRef(Mode) == "directory-mutations" ||
         llvm::StringRef(Mode) == "deleted-directories" ||
         llvm::StringRef(Mode) == "initial-directory-removal" ||
+        llvm::StringRef(Mode) == "initial-directory-move" ||
         llvm::StringRef(Mode) == "created-file-metadata" ||
         llvm::StringRef(Mode) == "virtual-created-metadata" ||
         llvm::StringRef(Mode) == "renamed-file" ||
@@ -519,6 +522,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::StringRef(Mode) == "directory-mutations" ||
         llvm::StringRef(Mode) == "deleted-directories" ||
         llvm::StringRef(Mode) == "initial-directory-removal" ||
+        llvm::StringRef(Mode) == "initial-directory-move" ||
         llvm::StringRef(Mode) == "created-file-metadata" ||
         llvm::StringRef(Mode) == "virtual-created-metadata" ||
         llvm::StringRef(Mode) == "renamed-file" ||
@@ -557,6 +561,15 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       (*Files->getArray(field::Directories)
             ->front()
             .getAsObject())[field::FileMetadata] = std::move(Parent);
+    }
+    if (llvm::StringRef(Mode) == "initial-directory-move") {
+      auto *Directory = Input.getAsObject()
+                            ->getObject(field::DarwinFiles)
+                            ->getArray(field::Directories)
+                            ->back()
+                            .getAsObject();
+      (*Directory)[field::DirectoryMutable] = true;
+      (*Directory)[field::DirectoryMovable] = true;
     }
     if (llvm::StringRef(Mode) == "initial-directory-removal")
       (*Input.getAsObject()

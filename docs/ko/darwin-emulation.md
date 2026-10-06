@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 3b19ce4b03ad45c168e0ca6db9fa8217c4da568d6d01ae23d3ef52545ed69fc9 -->
+<!-- i18n-source: 2508a1d6463f7db7523313b46488a3a8da4d456a3ec0281743f6ae9793bfe82b -->
 
 [← 문서 목록](README.md)
 
@@ -550,3 +550,24 @@ Release Darwin 등록 1,219개를 대조했다. 763개 통과, 사용할 수 없
 `build-hvf-arm64/directory-swap-research/`: `darwin-final-evidence/`, `darwin-evidence/`, `focused-v5.xml`, `file-owner-v5.xml`, `native-workload-fixed-evidence/`, `native-probe-v2-results.json`, `fixture-fixups-before/`, `hvf-controls.json`.
 
 최종 링크된 바이너리로 전체 Darwin 검증을 다시 통과했다. 고정 dev 0a9a1d28d 통합 검증은 공통 구성요소 20그룹의 4,515개를 기록했다. 4,489개 통과, 선택적 Z3 6개 및 없는 Windows EH 코퍼스 20개 건너뜀, 실패 0개다. 이 집계에 C/CLI 170/170과 보고서 32/32가 포함된다. Python은 30.780초에 다섯 프로필을 모두 검증했다. 네이티브 모바일 아키텍처/fixup 변형 12개 모두에서 원본 프로그램 관찰 4,532개가 일치했고 단일 세션 및 전체 Swift 메타데이터 일치는 12/12다. Swift witness 생성기도 주석 들여쓰기를 수정한 뒤 기록된 SDK/컴파일러로 카탈로그를 재현했다. 이는 로컬 Release LLVM 23/Apple Clang 17 인수이며 이후 dev 또는 Linux Clang 18 인수를 의미하지 않는다.
+
+
+## 명시한 초기 디렉터리 하위 트리의 일반 이동
+
+명시적인 초기 비루트 디렉터리의 엄격한 Boolean `"movable": true`는 해당 루트의 일반 rename을 허용하고 초기 하위 트리 전체가 고유한 이름의 일반 비마운트 디렉터리임을 선언합니다. C++ `DarwinFileOptions::MovableDirectories`는 기존 aggregate 멤버 뒤에 추가합니다. 바로 위 부모는 mutable이어야 합니다. 생략/false는 미상이며 다른 JSON 타입은 거부합니다. 후손의 mutable/removable/movable 및 파일 쓰기 권한은 그대로 별개입니다. 초기 디렉터리 SWAP, 일반 권한 판단이나 마운트를 허용하지 않습니다. 알려진 flags, 특수 디렉터리 모드, 다중 링크 일반 파일, stat/스냅샷의 inode 별칭을 거부합니다. 선언으로 연결한 비마운트 영역 전체에는 알려진 장치 번호가 하나만 있어야 합니다. stat 없는 공통 조상의 형제 트리와 파일도 포함하며, 장치 번호 일치만으로 별도 영역을 연결하지 않습니다.
+
+이름, 부모, 원래 stat/스냅샷, 권한은 객체가 소유합니다. 이전 입력 경로로 이동·삭제된 이름을 복원하지 않습니다. 열지 않은 후손, FD/dup/CWD, 매핑, 삭제된 후손도 원래 객체를 유지합니다. 변경되지 않은 후손은 stat, 스냅샷, cookie와 SEEK_END를 유지하고 이동 루트와 이름이 변경된 부모의 전체 관측은 미상이 됩니다. 옛 이름 재사용은 관측이나 권한을 상속하지 않습니다. 초기 입력은 한 번의 동기 실행을 위한 선언이며 실행 중 카탈로그 교체 API가 아닙니다. SWAP 능력은 별개입니다. 초기 객체는 직접 swap_rename 선언을 유지하고 mkdir은 부모 능력을 복사하며 이동은 이를 다시 계산하지 않습니다. 양쪽 SWAP 부모 모두 지원 선언이 필요합니다.
+
+빈 초기 대상 교체에는 별도 removable이 필요합니다. 이름 공개 전에 모든 경로의 1023바이트 한도와 공유 16 MiB 예산을 검사합니다. movable 참조는 원래 경로와 NUL을 고정 예약하며 항목을 늘리지 않습니다. 초기 디렉터리 경로·참조·스냅샷·항목은 삭제 후에도 예약됩니다. 동적 PathCharge는 0에서 시작해 이동할 때 연결되거나 보존된 각 객체의 현재 경로를 한 번 청구합니다. 즉시 해제 가능한 대상의 기존 동적 비용만 공제합니다. FD/CWD/자식/고아 매핑 보존은 공제 근거가 아니며 최종 회수는 한 번만 환급합니다. 암묵적 초기 조상은 256항목 한도에 추가하지 않고 초기 일반 파일 항목 회수는 유지합니다.
+
+예:
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/work","mutable":true,"movable":true}]}}
+```
+
+SDK 없는 initial-directory-move는 이동, 공유/독립 커서, FD flags, CWD, 사설 매핑, 교체와 원래 이름 복원을 확인합니다. 로컬 guest 설정과 실제 iOS 비교는 별도 검증입니다.
+
+초기 디렉터리 SWAP 미지원은 시스템 호출의 원본 또는 대상 루트 객체를 뜻합니다. 생성한 조상을 교환하면 그 아래로 이동한 초기 자손도 객체 상태와 동적 비용을 유지하며 함께 이동합니다. 앞서 설명한 초기 디렉터리 제한은 필요한 선언이 없는 경우에 적용됩니다.
+
+최종 독립 검토 후 ARM64 macOS 검증은 Darwin 1,264개 중 796개 통과, 사용할 수 없는 백엔드 468개 건너뜀, 실패 0개입니다. 필수 ARM64 HVF 117개는 모두 실행했습니다. 파일 소유 계층은 342/342이며 새 4K/16K 동작 22개와 승인 조건 3개를 포함합니다. CreationPolicy는 이동한 부모의 원래 Device/GID를 유지하고 이름 재사용, inode 순서, 현재 umask를 구분합니다. 정확한 16 MiB 한도에서 16회 왕복 교환은 비용을 누적하지 않으며 원위치 이동은 실제 6바이트 차이만 반환합니다. 공개 C/CLI 175/175, 보고서 파싱 33/33, 네이티브 커널 29/29, 독립 원시 프로브 19개 관측이 통과했습니다. Python 5개 설정은 27.865초에 통과했고 순수 API 71개, SDK 차이, runner 49개도 통과했습니다. 집계는 중복됩니다. 소스, 바이너리, 실패 시도, 최종 결과는 build-hvf-arm64/initial-directory-move/에 보존하고 커밋에 연결합니다. 실제 iOS, 중단된 Intel HVF, 초기 루트 SWAP, 권한·마운트·대소문자, 공유 매핑 EOF, Mach·스레드·dyld와 프레임워크 런타임은 별도 미완료 범위입니다.

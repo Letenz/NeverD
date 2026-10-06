@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 3b19ce4b03ad45c168e0ca6db9fa8217c4da568d6d01ae23d3ef52545ed69fc9 -->
+<!-- i18n-source: 2508a1d6463f7db7523313b46488a3a8da4d456a3ec0281743f6ae9793bfe82b -->
 
 [← ドキュメント一覧](README.md)
 
@@ -550,3 +550,24 @@ Release Darwin の登録 1,219 件を照合し、763 件成功、利用できな
 `build-hvf-arm64/directory-swap-research/`: `darwin-final-evidence/`, `darwin-evidence/`, `focused-v5.xml`, `file-owner-v5.xml`, `native-workload-fixed-evidence/`, `native-probe-v2-results.json`, `fixture-fixups-before/`, `hvf-controls.json`.
 
 最終リンク済みバイナリで完全 Darwin 検証を再度成功させた。固定 dev 0a9a1d28d の統合検証は共通担当 20 組の 4,515 件を記録し、4,489 件成功、任意 Z3 6 件と利用できない Windows EH コーパス 20 件をスキップ、失敗ゼロだった。この数に C/CLI 170/170 とレポート 32/32 を含む。Python は 30.780 秒で全 5 プロファイルを検証。ネイティブモバイルの全 12 アーキテクチャ/fixup 変種で 4,532 件の結果が元のプログラムと一致し、単一セッションと Swift メタデータ全体の一致は 12/12。Swift witness ジェネレーターもコメントの字下げ修正後に記録済み SDK/コンパイラでカタログを再現した。これはローカル Release LLVM 23/Apple Clang 17 の受け入れであり、後続 dev や Linux Clang 18 の受け入れは意味しない。
+
+
+## 明示した初期ディレクトリ部分木の通常移動
+
+明示的な初期非ルートディレクトリの厳密な Boolean `"movable": true` は、その根の通常 rename を許可し、初期部分木全体を一意の名前を持つ通常の非マウントディレクトリと宣言します。C++ の `DarwinFileOptions::MovableDirectories` は既存の集成体メンバーの末尾に追加されます。直接の親は mutable が必須です。省略・false は未知、他の JSON 型は無効です。子孫の mutable/removable/movable・ファイル書き込み権限は別々に維持します。初期ディレクトリ SWAP、権限判定や一般的なマウントは許可しません。既知の flags、特殊なディレクトリモード、複数リンクの通常ファイル、stat/スナップショットの inode 別名を拒否します。宣言で結合した非マウント領域全体の既知デバイス番号は一種類までです。stat がない祖先の兄弟部分木やファイルも含み、番号の一致だけでは別領域を結合しません。
+
+名前・親・元の stat/スナップショット・権限はオブジェクトが保持し、古い入力パスから移動済みや削除済みの名前を再生成しません。未オープンの子孫、FD/dup/CWD、マッピング、削除済み子孫も元のオブジェクトを保持します。未変更の子孫は元の stat、スナップショット、cookie、SEEK_END を維持し、移動根と変更された親の完全な観測は未知になります。旧名の再利用に観測や権限は継承されません。初期入力は一回の同期実行の宣言であり、実行中のカタログ置換 API ではありません。SWAP は別の能力です。初期オブジェクトの直接 swap_rename 宣言を保持し、mkdir は親の能力をコピーし、移動では再計算しません。両方の SWAP 親に支持宣言が必要です。
+
+空の初期ターゲットの置換には別の removable が必要です。全パスの 1023 バイト上限と共有 16 MiB を公開前に確認します。movable 参照は元のパス＋NUL を固定予約し、エントリを追加しません。初期ディレクトリのパス・参照・スナップショット・エントリは削除後も固定予約されます。動的 PathCharge はゼロから始まり、リンク中・保持中の各メンバーの現在パスを移動時に一度課金します。即時解放できる置換先の既存動的料金のみを差し引けます。FD/CWD/子オブジェクト/孤児マッピングの保持は信用を供給せず、最終回収は一度だけ返金します。暗黙の初期祖先は 256 エントリ制限に追加されず、初期通常ファイルの回収は従来どおりです。
+
+例：
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/work","mutable":true,"movable":true}]}}
+```
+
+SDK 不要の initial-directory-move は移動、カーソル共有と独立、FD flags、CWD、私有マッピング、置換、元の名前の復元を確認します。ローカル guest 設定の検証と物理 iOS の比較は別です。
+
+初期ディレクトリの SWAP 未対応は、システムコールの交換元または交換先となる根オブジェクトを指します。作成した祖先を交換する場合は、その配下に移動済みの初期の子孫を含め、オブジェクト状態と動的費用を維持します。前述の初期ディレクトリの制限は、必要な宣言がない場合に適用されます。
+
+最終独立レビュー後の ARM64 macOS 検証は Darwin 1,264 件中 796 成功、利用不能バックエンドによる 468 スキップ、失敗ゼロです。必須 ARM64 HVF 117 件はすべて実行済み。ファイル所有層は 342/342（新しい 4K/16K 動作 22 例、受入れ条件 3 件を含む）。CreationPolicy は移動した親の元 Device/GID を維持し、名前再利用、inode 順序、現在の umask を区別します。厳密な 16 MiB 上限で 16 往復の交換は費用を蓄積せず、戻す際は実際の 6 バイト差分だけを解放します。公開 C/CLI 175/175、レポート解析 33/33、ネイティブカーネル 29/29、独立の原始プローブ 19 観測が成功。Python の 5 設定は 27.865 秒で成功し、純粋 API 71 件、SDK 差分、runner 49 件も成功しました。件数は重複します。ソース、バイナリ、失敗試行、最終結果は build-hvf-arm64/initial-directory-move/ に保存し、コミットに結び付けます。実機 iOS、停止中の Intel HVF、初期根 SWAP、権限・マウント・大文字小文字、共有マッピング EOF、Mach・スレッド・dyld とフレームワーク実行環境は別の未完了範囲です。

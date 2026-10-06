@@ -333,13 +333,13 @@ The original `created-file-metadata` workload compares native modes, umask retur
 
 ## Regular-file rename
 
-`rename(128)`, `renameat(465)` and `renameatx_np(488)` move or replace a regular file within one mutable initial directory and its process-created descendants. Both immediate parents require namespace authority, even for a same-name no-op. The low 32 flag bits accept `RENAME_EXCL=0x4` or `RENAME_SWAP=0x2`, optionally combined with `RENAME_NOFOLLOW_ANY=0x10`; flags 0 or 0x10 perform ordinary rename. Unknown bits or EXCL+SWAP return EINVAL before reading paths; SECLUDE remains unsupported. The EXCL and SWAP contracts follow below. The component walker preserves source-before-target errors, directory-FD rules and original trailing-slash/dot checks. Initial or removed directory sources stop explicitly. Live process-created directory sources use the subtree contract below. A resolved terminal target dot/dotdot returns EINVAL before mount or grant checks; missing or non-directory ancestors keep their earlier errors. An ordinary regular-file rename to a directory within the admitted namespace returns EISDIR.
+`rename(128)`, `renameat(465)` and `renameatx_np(488)` move or replace a regular file within one mutable initial directory and its process-created descendants. Both immediate parents require namespace authority, even for a same-name no-op. The low 32 flag bits accept `RENAME_EXCL=0x4` or `RENAME_SWAP=0x2`, optionally combined with `RENAME_NOFOLLOW_ANY=0x10`; flags 0 or 0x10 perform ordinary rename. Unknown bits or EXCL+SWAP return EINVAL before reading paths; SECLUDE remains unsupported. The EXCL and SWAP contracts follow below. The component walker preserves source-before-target errors, directory-FD rules and original trailing-slash/dot checks. Removed directory sources stop explicitly. Live process-created directories and declared movable initial directories use the subtree contracts below. A resolved terminal target dot/dotdot returns EINVAL before mount or grant checks; missing or non-directory ancestors keep their earlier errors. An ordinary regular-file rename to a directory within the admitted namespace returns EISDIR.
 
 All existing source descriptions, including independent opens and dup, share the current `F_GETPATH` name. A removed or replaced target keeps its own last linked path, bytes, offsets, flags and mapping lifetime, even when the source moves again. Replacement never transfers the target's write grant or metadata to the source. Each object's known mutation policy updates only its ctime, plus nlink=0 for the replaced target; identity, ownership, birthtime, bytes and allocation remain attached to that object. Without a policy or after whole-EFAULT, complete metadata stays unknown. An actual move invalidates both parents' complete stat/enumeration observations; a no-op does not.
 
 Rename consumes neither a creation inode nor a new entry, and needs no free FD. The destination canonical path/NUL replaces the source's dynamic path charge. Initial input/reference costs stay reserved. Replaced bytes and dynamic path costs can fund admission only if no old description or mapping retains that target, and are reclaimed once. Partial unmap retains the full object's byte charge until its final range is gone. Paths of 1024 bytes or more and insufficient aggregate 16 MiB capacity stop before name, metadata or descriptor changes.
 
-Moves between distinct initial directory domains and contradictory known device observations remain unsupported: equal stat device numbers do not establish shared mount identity, so the model does not invent EXDEV. Initial-directory moves, SECLUDE and permission enforcement remain future work. The original `renamed-file` program compares native and guest identity, path, replacement and mapping behavior; policy timestamps and budget rules are explicit virtual behavior.
+Moves between distinct initial directory domains and contradictory known device observations remain unsupported: equal stat device numbers do not establish shared mount identity, so the model does not invent EXDEV. Initial-directory moves require the movable declaration below; initial-directory SWAP, SECLUDE and permission enforcement remain future work. The original `renamed-file` program compares native and guest identity, path, replacement and mapping behavior; policy timestamps and budget rules are explicit virtual behavior.
 
 ## Directories and relative paths
 
@@ -601,7 +601,7 @@ or physical iOS acceptance. Intel HVF Actions remain suspended.
 
 ### Remaining environment work
 
-1. Extend the bounded writable-file model with permission enforcement, initial-directory moves, rename between distinct initial directory domains and remaining directory operations,
+1. Extend the bounded writable-file model with permission enforcement, initial-directory SWAP, rename between separate undeclared directory domains and remaining directory operations,
    shared mappings and EOF fault delivery. Keep native acceptance for cursor,
    mapping lifetime and error-order interactions as the supported set grows.
 2. Extend fixed time inputs with advancing clocks and additional system observations,
@@ -971,7 +971,7 @@ Verification, 2026-10-06 (Release): 1,097 Darwin registrations, 665 passed, 432 
 
 ## Cross-parent rename in created directories
 
-An initial directory and all descendants created from it by this process share one virtual namespace domain. `rename`, `renameat` and `renameatx_np` may move a regular file or a live process-created directory subtree between those parents; no additional JSON field is needed. For example, after creating `/work/left` and `/work/right` with mkdir/mkdirat under a mutable initial `/work`, `/work/data` can move into either child, and files can move between the children. A separately supplied initial `/work/left` is its own domain, even when its device matches `/work`. General mount topology is unknown, so movement between distinct initial domains remains explicitly unsupported.
+An initial directory and all descendants created from it by this process share one virtual namespace domain. `rename`, `renameat` and `renameatx_np` may move a regular file or a live process-created directory subtree between those parents; no additional JSON field is needed. For example, after creating `/work/left` and `/work/right` with mkdir/mkdirat under a mutable initial `/work`, `/work/data` can move into either child, and files can move between the children. A separately supplied initial `/work/left` is its own domain unless a movable declaration supplies its non-mount parent relation, as described below; matching devices alone do not join domains. General mount topology is unknown, so movement between separate undeclared domains remains explicitly unsupported.
 
 Both immediate parents require namespace authority. Created directories inherit that authority and known device/group observations; rename preserves the file's own identity, owner/group, write grant and allocation. Known device conflicts still refuse. An actual move invalidates both parents' full metadata and enumeration. Removed initial directories and reused paths remain different objects; held old directory FDs/CWD do not acquire the replacement's domain.
 
@@ -1018,7 +1018,7 @@ Two initial direct-test instances used incorrect expectations for unknown write 
 
 ## Process-created directory rename
 
-Ordinary `rename`, `renameat` and `renameatx_np` move a live process-created directory and its subtree within one initial directory object's domain. Both immediate parents require namespace authority. A missing final directory target may have trailing slashes; a regular-file target returns ENOTDIR, a nonempty directory target ENOTEMPTY, and moving into a descendant EINVAL. An authorized ordinary same-name rename is a no-op. EXCL still returns EEXIST for a distinct existing target before type, cycle, domain or grant checks. Target lookup errors precede source-dot/dotdot rejection. A source dot/dotdot naming the same target object stays UnsupportedService because filesystem case sensitivity can change the native result. Initial or removed directory sources, initial-directory replacement targets, separate initial domains, links, permission enforcement and SECLUDE remain explicitly unsupported.
+Ordinary `rename`, `renameat` and `renameatx_np` move a live process-created directory and its subtree within one initial directory object's domain. Both immediate parents require namespace authority. A missing final directory target may have trailing slashes; a regular-file target returns ENOTDIR, a nonempty directory target ENOTEMPTY, and moving into a descendant EINVAL. An authorized ordinary same-name rename is a no-op. EXCL still returns EEXIST for a distinct existing target before type, cycle, domain or grant checks. Target lookup errors precede source-dot/dotdot rejection. A source dot/dotdot naming the same target object stays UnsupportedService because filesystem case sensitivity can change the native result. Without the initial-directory declarations below, initial directory sources and replacement targets remain unsupported. Removed sources, separate undeclared domains, links, permission enforcement and SECLUDE remain explicitly unsupported.
 
 The transaction follows parent objects rather than matching text prefixes. Live children, FD-held removed child directories and unlinked files retained by descriptions or mapping leases acquire the moved ancestor's new canonical paths. Source directory FDs, duplicates, CWD and dotdot follow that same object and its new parent. A replaced empty created target keeps its own last path and original parent; its ordinary children stay absent, while dot/dotdot and CWD retain the removed object. If the new source later moves again, old target orphans at identical path strings stay attached to the old target.
 
@@ -1050,3 +1050,81 @@ The first fixed-fixture focused run retained three five-second HVF timeouts. Ind
 `build-hvf-arm64/directory-swap-research/`, including `darwin-final-evidence/`, `darwin-evidence/`, `focused-v5.xml`, `file-owner-v5.xml`, `native-workload-fixed-evidence/`, `native-probe-v2-results.json`, `fixture-fixups-before/` and `hvf-controls.json`.
 
 The final linked binaries repeated the complete Darwin gate successfully. Frozen dev 0a9a1d28d integration checks recorded 4,515 cases across 20 shared owners: 4,489 passed, six optional Z3 and 20 unavailable Windows EH corpus cases skipped, zero failures. Public C/CLI passed 170/170 and reports 32/32, included in that count. Python exercised all five profiles in 30.780s. All 12 native mobile architecture/fixup variants matched 4,532 original-program observations; single-session and whole Swift metadata parity passed 12/12. The Swift witness generator also reproduced its catalogue with the recorded SDK/compiler after a comment-indentation repair. This is local Release LLVM 23/Apple Clang 17 acceptance, not acceptance of later dev revisions or Linux Clang 18.
+
+
+## Ordinary moves of declared initial directory subtrees
+
+A strict Boolean `"movable": true` on an explicit non-root initial directory
+authorizes ordinary rename of that root and declares its entire initial subtree
+to contain ordinary non-mount directories with unique namespace identities.
+C++ uses `DarwinFileOptions::MovableDirectories`, appended after existing aggregate
+fields. The immediate parent must already be mutable. Omission or false keeps
+moving that initial root unknown; other JSON types fail admission. Descendants
+retain their own mutable, removable, movable and byte-write grants. The declaration
+does not authorize an initial directory as either SWAP operand root, general
+permission checks or mounts. Swapping created ancestors may carry previously
+moved initial descendants; object state and dynamic charges follow the same
+subtree transaction. Earlier initial-directory restrictions apply when the
+required declaration is absent.
+
+Known flags, special directory modes, regular-file link counts other than one,
+and inode aliases from stat records or directory snapshots reject admission.
+Each non-mount component joined by the declaration must have at most one known
+device number, including observations on sibling subtrees and files under an
+ancestor without stat metadata. Matching devices alone never join another initial
+domain. Both immediate parents still need namespace authority at the actual
+rename. SWAP capability remains separate: initial objects keep their direct
+`swap_rename` declaration, mkdir copies its parent's capability into the created
+object, and movement does not replace it. Both SWAP parents require support.
+
+The live directory graph owns names and parent identities. Old input paths never
+reconstruct moved or removed names. Unopened descendants, FD/dup/CWD references,
+regular-file mappings and removed descendants follow their original objects.
+Untouched descendants keep their original full stat, enumeration snapshots,
+cookies and SEEK_END observations after an ancestor moves. The moved root and
+changed parents invalidate full stat/enumeration. Reusing an old path supplies
+no old metadata, snapshot or grant. Initial input is a complete declaration for
+one synchronous execution; it is not a runtime catalogue-replacement API.
+
+An empty initial replacement target needs its separate `removable` grant.
+All current canonical paths must fit 1023 bytes, and the entire transaction
+preflights the shared 16 MiB budget before publishing any names. Each movable
+reference reserves its original path plus NUL, without another entry. Fixed
+initial directory paths, references, snapshots and entries remain reserved after
+removal. Initial directory names start with zero dynamic PathCharge; a move
+charges the current path once for every linked or retained member. Only an
+immediately releasable replacement's existing dynamic charge supplies credit.
+FD/CWD/child/orphan-mapping retention supplies no credit, and final reclamation
+refunds each dynamic charge once. Implicit initial ancestors add no new entries
+to the existing 256-entry cap; initial regular-file entry reclamation is unchanged.
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/work","mutable":true,"movable":true}]}}
+```
+
+The original `initial-directory-move` workload moves the native harness's existing
+empty directory, retains subdirectories, shared/independent cursors, descriptor
+flags, CWD and a private file mapping, replaces a created empty target and restores
+the original names. It uses no SDK or libSystem calls in the guest. Native macOS
+comparison is separate from physical iOS and other unavailable transports.
+
+Validation on native macOS ARM64 after the final independent review records
+1,264 Darwin registrations: 796 passed, 468 unavailable-backend skips, zero
+failures. All 117 required ARM64 HVF workloads executed. The file-owner subset
+passed 342/342, including 22 new 4K/16K behavior instances and three admission
+checks. CreationPolicy inherits the moved parent object's original Device/GID;
+name reuse, inode sequencing and current umask remain independent. At the exact
+16 MiB limit, 16 forward/reverse created-ancestor exchanges preserve initial
+descendants and release only the actual six-byte delta when moved back.
+Public C/CLI passed 175/175, report/parser checks 33/33, and the original native
+kernel workloads 29/29. The separate original probe recorded 19 successful
+observations. These counts overlap.
+
+Python integration passed all five guest configurations in 27.865 seconds; the
+pure API suite passed 71 cases, SDK drift passed, and native inventory/reference
+runners passed 49 unit checks. New sources, binaries, attempts and final results
+are preserved under `build-hvf-arm64/initial-directory-move/` with hashes bound
+to the committed revision. This establishes local guest-profile behavior, not
+physical iOS or suspended Intel HVF acceptance. Initial operand SWAP, permissions,
+undeclared mounts/case rules, shared-map EOF faults, Mach/thread/dyld dependencies
+and framework runtime remain separate unfinished work.

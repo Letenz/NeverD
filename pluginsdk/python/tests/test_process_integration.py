@@ -551,6 +551,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("directory-mutations", b"m"),
                                            ("deleted-directories", b"h"),
                                            ("initial-directory-removal", b"j"),
+                                           ("initial-directory-move", b"p"),
                                            ("system-info", b"i"),
                                            ("virtual-system", bytes.fromhex(
                                                "44617277696e0032342e746573740000000080"
@@ -619,19 +620,24 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                           "type": 8, "next_offset": 99, "seek_offset": 0}]}}],
                                              "working_directory": "/empty",
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
-                        if mode.startswith("writable-files") or mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "created-file-metadata", "virtual-created-metadata", "renamed-file", "renamed-directory", "swapped-directory", "vectored-io"):
+                        if mode.startswith("writable-files") or mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "initial-directory-move", "created-file-metadata", "virtual-created-metadata", "renamed-file", "renamed-directory", "swapped-directory", "vectored-io"):
                             writable_options = json.loads(file_options)
                             writable_file = writable_options["darwin_files"]["files"][0]
                             writable_file["writable"] = True
                             writable_file["metadata"]["flags"] = 0
-                            if mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "created-file-metadata", "virtual-created-metadata", "renamed-file", "renamed-directory", "swapped-directory"):
+                            if mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "initial-directory-move", "created-file-metadata", "virtual-created-metadata", "renamed-file", "renamed-directory", "swapped-directory"):
                                 writable_file["metadata"]["link_count"] = 1
                                 writable_file["mutation_policy"] = {
                                     "allocation_unit": 4096,
                                     "mutation_time": {"seconds": -7, "nanoseconds": 123456789}}
-                            if mode in ("unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "created-file-metadata", "virtual-created-metadata", "renamed-file", "renamed-directory", "swapped-directory"):
+                            if mode in ("unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "initial-directory-move", "created-file-metadata", "virtual-created-metadata", "renamed-file", "renamed-directory", "swapped-directory"):
                                 next(d for d in writable_options["darwin_files"]["directories"]
                                      if d["path"] == "/")["mutable"] = True
+                            if mode == "initial-directory-move":
+                                initial = next(d for d in writable_options["darwin_files"]["directories"]
+                                               if d["path"] == "/empty")
+                                initial["mutable"] = True
+                                initial["movable"] = True
                             if mode == "initial-directory-removal":
                                 next(d for d in writable_options["darwin_files"]["directories"]
                                      if d["path"] == "/empty")["removable"] = True

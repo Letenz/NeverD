@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 3b19ce4b03ad45c168e0ca6db9fa8217c4da568d6d01ae23d3ef52545ed69fc9 -->
+<!-- i18n-source: 2508a1d6463f7db7523313b46488a3a8da4d456a3ec0281743f6ae9793bfe82b -->
 
 [← 文档索引](README.md)
 
@@ -652,3 +652,24 @@ Release Darwin 验证核对了 1,219 项注册：763 项通过、456 项因后�
 `build-hvf-arm64/directory-swap-research/`: `darwin-final-evidence/`, `darwin-evidence/`, `focused-v5.xml`, `file-owner-v5.xml`, `native-workload-fixed-evidence/`, `native-probe-v2-results.json`, `fixture-fixups-before/`, `hvf-controls.json`.
 
 最终链接后的二进制再次通过完整 Darwin 验证。固定 dev 0a9a1d28d 的 20 组共享组件检查共记录 4,515 项：4,489 项通过、6 项可选 Z3 与 20 项缺失 Windows EH 样本跳过、零失败。其中公共 C/CLI 为 170/170，报告为 32/32。Python 在 30.780 秒内验证全部五种配置。12 种原生移动端架构/重定位组合的 4,532 项结果与原程序一致；单会话及完整 Swift 元数据对照为 12/12。Swift witness 生成器在修正注释缩进后，使用记录的 SDK/编译器重现了目录。这是本地 Release LLVM 23/Apple Clang 17 的验收，不代表后续 dev 修订或 Linux Clang 18 已验收。
+
+
+## 显式预置目录子树的普通移动
+
+预置的非根目录可用严格布尔值 `"movable": true` 授权该根的普通 rename，并声明整个初始子树都是具有唯一名称的普通非挂载目录。C++ 的 `DarwinFileOptions::MovableDirectories` 追加在原聚合成员之后；直接父目录必须可变。省略或 false 保持未知，其他 JSON 类型无效。后代保留各自的 mutable、removable、movable 和文件写入授权；此声明不授权预置目录 SWAP、权限判断或一般挂载语义。已知 flags、特殊目录权限、多链接普通文件和 stat/目录快照中的 inode 别名拒绝准入。声明连接的整个非挂载域只能有一个已知设备编号，包括没有 stat 的共同祖先下的兄弟目录及文件；设备相等本身不能连接其他域。
+
+目录对象持有名称、父关系、原 stat/快照和授权。旧输入路径不会重新构造已移动或删除的名称。未打开的后代、FD/dup/CWD、映射及已删除后代都保留原对象；未改变的后代继续使用原 stat、快照、cookie 和 SEEK_END。移动根及发生名称变化的父目录使完整观察变为未知。旧名复用不继承原观察或授权。初始输入只声明一次同步执行的环境，不是运行期替换目录的 API。SWAP 支持独立保存：初始对象保留直接 swap_rename 声明，mkdir 从父对象复制能力，移动不重算；两侧 SWAP 父对象都必须已声明支持。
+
+替换空的预置目标另需 removable 授权。事务在发布名称前检查所有路径不超过 1023 字节及共享 16 MiB 预算。每个 movable 引用固定预留原路径加 NUL，不增加条目。初始目录的路径、引用、快照和条目删除后仍固定预留；其动态 PathCharge 从零开始，移动时为所有已链接或保留成员的当前路径计费一次。替换只能抵扣可立即释放目标已有的动态费用；FD/CWD/子对象/孤儿映射保留不提供抵扣，最终回收只退一次动态费用。隐式初始祖先不增加 256 条目上限的计数，初始普通文件的条目回收行为不变。
+
+例：
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/work","mutable":true,"movable":true}]}}
+```
+
+SDK 无关的 initial-directory-move 工作负载检查原目录移动、共享和独立游标、FD 标志、CWD、私有映射、替换及原名恢复；本地 guest 配置与物理 iOS 对照是独立验收。
+
+这里的“初始目录 SWAP 不支持”指系统调用的源或目标根对象；交换创建出的祖先目录可以携带先前移动进去的初始后代，保留对象状态和动态费用。前文的初始目录限制适用于未提供所需声明的情况。
+
+最终独立复审后的 ARM64 macOS 验证登记 1,264 项 Darwin 测试：796 通过、468 项因后端不可用跳过、零失败；117 项必需 ARM64 HVF 工作负载全部执行。文件服务子集 342/342，包含 22 个新增 4K/16K 行为实例及三项准入检查。CreationPolicy 沿用移动父对象原 Device/GID，旧名复用、inode 序列和当前 umask 互不混淆；精确 16 MiB 容量下的 16 次往返交换不累计收费，移回只释放实际的六字节差额。公共 C/CLI 175/175、报告解析 33/33、原生内核工作负载 29/29，独立原始探针有 19 项成功观察。Python 五种配置在 27.865 秒内通过，纯 API 71 项、SDK 漂移及 runner 49 项检查通过。计数有重叠；源码、二进制、失败尝试和最终结果保留在 build-hvf-arm64/initial-directory-move/ 并绑定提交。物理 iOS、暂停的 Intel HVF、初始根 SWAP、权限/挂载/大小写、共享映射 EOF、Mach/线程/dyld 及框架运行时仍是独立缺口。

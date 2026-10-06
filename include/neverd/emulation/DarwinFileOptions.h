@@ -156,6 +156,13 @@ struct DarwinFileOptions {
   /// Initial process mask, including all 07777 bits returned by Darwin umask.
   /// Independent of creation authority. Absence is unknown, not a host default.
   std::optional<uint16_t> InitialUmask;
+  /// Ordinary rename authority for explicit non-root initial directory roots.
+  /// Their complete initial subtree is declared non-mount and uniquely named;
+  /// the immediate parent must be mutable. Descendants keep their own grants.
+  /// Fixed input costs stay reserved, while moved names acquire dynamic
+  /// charges. This does not authorize initial-directory SWAP or directory
+  /// removal.
+  std::set<std::string> MovableDirectories;
 };
 } // namespace neverd::emulation
 #endif

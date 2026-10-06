@@ -55,14 +55,24 @@ private:
     std::string Path;
     std::shared_ptr<DirectoryNode> Parent;
     std::optional<DirectoryIdentity> Identity;
+    const DarwinFileMetadata *Metadata = nullptr;
+    const DarwinDirectoryContents *Snapshot = nullptr;
+    uint64_t PathCharge = 0;
     bool Created = false;
     bool Linked = true;
     bool Changed = false;
-    /// mkdir cannot introduce a mount. Compare objects, including after a
-    /// removed initial directory's path is reused by a new directory.
-    const DirectoryNode *initialAncestor() const {
+    bool Mutable = false;
+    bool Removable = false;
+    bool Movable = false;
+    bool NonMount = false;
+    /// Initial objects keep their direct declaration. mkdir inherits its
+    /// parent's capability; moving the object does not replace this grant.
+    bool SwapSupport = false;
+    /// Only mkdir or an explicit initial-subtree declaration establishes a
+    /// non-mount parent relation. Neither device equality nor SWAP does so.
+    const DirectoryNode *mountAncestor() const {
       const auto *Node = this;
-      while (Node && Node->Created)
+      while (Node && (Node->Created || Node->NonMount))
         Node = Node->Parent.get();
       return Node;
     }
@@ -122,8 +132,7 @@ private:
   std::map<uint32_t, Descriptor> Descriptors;
   std::map<std::string, std::shared_ptr<Contents>> Nodes;
   std::vector<std::shared_ptr<Contents>> Unlinked;
-  std::map<std::string, std::shared_ptr<DirectoryNode>> CreatedDirectories;
-  std::map<std::string, std::shared_ptr<DirectoryNode>> InitialDirectories;
+  std::map<std::string, std::shared_ptr<DirectoryNode>> Directories;
   std::vector<std::shared_ptr<DirectoryNode>> UnlinkedDirectories;
   bool NamespaceReady = false;
   uint64_t NextCreatedInode = 0;
@@ -139,7 +148,7 @@ private:
   void reclaimUnlinked();
   std::shared_ptr<DirectoryNode> directoryNode(const std::string &Path);
   std::shared_ptr<DirectoryNode> initialDirectoryNode(const std::string &Path);
-  bool hasInitialDirectoryChild(const std::string &Path);
+  uint32_t dynamicDirectoryEntries() const;
   bool mutableDirectory(const std::string &Path) const;
   std::optional<DirectoryIdentity> directoryIdentity(const std::string &Path);
   llvm::Expected<Pathname> readPath(uint64_t Address);
