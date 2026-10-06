@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 2fb61c4299cd9e0d2292a80e45a5655cf97a5598165087d2d61c18176bd13248 -->
+<!-- i18n-source: 3f76a3e6151ec21bc77d197148addb31fa72a77a4c00d2de278ac8b894043e82 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -98,7 +98,6 @@ allocation_unit、mutation_time、seconds/nanoseconds は必須で、整数は�
 ```
 
 
-
 ## 疎ファイルの位置指定
 
 通常ファイルに mutation_policy があり割り当てが既知なら、lseek は SEEK_HOLE=3 と SEEK_DATA=4 を受け付け、stat と同じ台帳を参照します。初回変更前はゼロ値も含む密割り当てです。指定種別の単位内なら入力位置、なければ次の一致単位の先頭を返し、終端の穴は EOF です。負値は EINVAL、EOF 以降（空ファイル含む）または後続データなしは ENXIO=6。失敗は位置を保持し、成功はその open 記述と dup のみ変更します。別 open は独立、再 open は現在の割り当てを見ます。メタデータ・フラグ・内容は不変、whence 上位ビットは無視します。
@@ -113,7 +112,7 @@ allocation_unit、mutation_time、seconds/nanoseconds は必須で、整数は�
 
 `unlink(10)` / `unlinkat(472)` は既存の通常名を削除。通常ファイル削除の下位32ビットは0または `0x800` のみ対応し、未知ビットはパス/FDより先に EINVAL、AT_REMOVEDIR は後述の制限付き削除、DATALESS と SYSTEM_DISCARDED は未対応です。共通パス解決を使い、不在 ENOENT、ファイル末尾スラッシュ ENOTDIR、通常ディレクトリ EPERM、スラッシュのみのルート EISDIR、末尾が `.`/`..` のルート EBUSY。ネイティブで末尾 `.`/`..` も確認。
 
-古い FD/dup/独立 open はデータ・カーソル・フラグを維持し、F_GETPATH は捕捉した旧パスを返します。新規 open は失敗し、暗黙の親と CWD は残ります。書込み権限はオブジェクトに属し、最後の記述子とマップ範囲の解放後だけ close/dup2/次の変更で現在のバイト予算を回収。初期パス費用は残り、権限強制・親をまたぐ改名・ハードリンク・初期ディレクトリの削除は未完了。
+古い FD/dup/独立 open はデータ・カーソル・フラグを維持し、F_GETPATH は捕捉した旧パスを返します。新規 open は失敗し、暗黙の親と CWD は残ります。書込み権限はオブジェクトに属し、最後の記述子とマップ範囲の解放後だけ close/dup2/次の変更で現在のバイト予算を回収。初期パス費用は残り、権限強制・親をまたぐ改名・ハードリンクは未完了です。初期ディレクトリの削除には後述の明示許可が必要です。
 
 親の stat/readdir/SEEK_END は旧/新 FD とパス全体で未知となり、コピー/カーソル変更前に停止。read/pread は EISDIR、SET/CUR/F_GETPATH/fchdir/相対解決は継続。既知の変更ポリシーでは nlink=0、ctime=固定時刻のみ変更し、後の書込みでも nlink=1 に戻りません。ポリシーなし/EFAULT 後はメタデータ不明。失敗は状態を保持。元の `unlinked-file` はネイティブの名前/FD規則を比較し、時刻と親の失効は明示的モデル規則です。
 
@@ -157,7 +156,6 @@ O_CREAT と O_EXCL=0x800 の併用は既存ファイル・ディレクトリに�
 
 新規 inode・項目・空き FD は不要。新パス/NUL がソースの動的費用を置き換え、初期費用は残ります。古い FD/マップのない置換先だけが容量回収に使え、回収は一度だけです。部分 unmap では全物体の費用が残ります。1024バイト以上のパスや16 MiB超過は変更前に停止。親をまたぐ移動、既知 device の矛盾、ディレクトリ移動、swap/exclusive/seclude、権限強制は未対応です。同じ stat device は同じマウントを証明せず、EXDEV を推測しません。`renamed-file` はネイティブ/ゲストの識別・パス・置換・マップを比較し、時刻と予算は仮想規則です。
 
-
 ## ディレクトリと相対パス
 
 任意の `directories` は正規の絶対 `path` と任意の完全な `metadata` を持ち、空ディレクトリを指定できます。ルートと祖先は暗黙に存在し、メタデータで未存在パスは作れません。mode は `0x4000` と権限、size は [0, INT64_MAX] の明示的観測です。`working_directory` は既存の正規ディレクトリを指定し、省略時の CWD は未知です。ホストから継承しません。指定パスは最大256（祖先メタデータを含む）、パス/NUL/内容/入力/CWD は計16 MiBです。
@@ -198,7 +196,6 @@ O_CREAT と O_EXCL=0x800 の併用は既存ファイル・ディレクトリに�
 [XNU getdirentries64](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [dirent ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent.h), [extended flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent_private.h).
 
 列挙検証（2026-10-05、Release）：Darwin 498件中246成功、利用不能バックエンド252件スキップ、失敗0。ARM64 HVF 必須63/63件を実行。ネイティブmacOS 11プログラム、C/CLI/レポート40件（スキップなし）、Python 5構成で各8ファイルワークロード、ランナー66件が成功しました。計数は重複します。証跡：`build-hvf-arm64/darwin-dirents-merged-evidence/`。Intel HVF Actions は停止中で、他のネイティブバックエンドとiOS実機は未検証です。
-
 
 ## プライベートファイルマッピング
 
@@ -437,7 +434,7 @@ Release Darwin は971登録、575成功、未提供バックエンド396スキ�
 
 共通の要素別探索で、mkdir は末尾スラッシュだけが続く欠落名を作成できます。欠落祖先後の点/二点は ENOENT、ファイル祖先は ENOTDIR、既存名は EEXIST。相対 FD/CWD、絶対パスの FD 無視、文字列障害優先を維持します。空き FD は不要で、探索・許可・容量・転送の拒否は名前や親観測を変更しません。
 
-`rmdir(137)` と AT_REMOVEDIR(0x80) 付き `unlinkat(472)` はこのプロセスが作った空ディレクトリを削除し、AT_SYMLINK_NOFOLLOW_ANY(0x800) も併用可能です。未知の下位32ビットは入力前に EINVAL、DATALESS と SYSTEM_DISCARDED は未対応。既知のパス/型/ルートエラーを保持し、初期ディレクトリ削除は UnsupportedService。作成済み対象の末尾点は EINVAL、リンク中のディレクトリからの二点・非空対象は ENOTEMPTY。ディレクトリ FD、dup、CWD は元のオブジェクトを保持し、削除を妨げません。unlink 済み通常ファイルの FD/マッピングは名前ではなく、親削除・再利用後も内容、inode、最終 F_GETPATH が残ることをネイティブ対照で確認します。
+`rmdir(137)` と AT_REMOVEDIR(0x80) 付き `unlinkat(472)` はこのプロセスが作った空ディレクトリを削除し、AT_SYMLINK_NOFOLLOW_ANY(0x800) も併用可能です。未知の下位32ビットは入力前に EINVAL、DATALESS と SYSTEM_DISCARDED は未対応。既知のパス/型/ルートエラーを保持し、removable 許可のない初期ディレクトリ削除は引き続き UnsupportedService。許可された対象の末尾点は EINVAL、リンク中のディレクトリからの二点・非空対象は ENOTEMPTY。ディレクトリ FD、dup、CWD は元のオブジェクトを保持し、削除を妨げません。unlink 済み通常ファイルの FD/マッピングは名前ではなく、親削除・再利用後も内容、inode、最終 F_GETPATH が残ることをネイティブ対照で確認します。
 
 新規ディレクトリの正規パス+NUL と1項目を共通16 MiB/256項目予算に計上し、削除後に参照がなくなるとそれだけ返却します。孤立ファイルとマッピングは保持します。成功時だけ直接の親の stat/列挙観測を無効化し、新規ディレクトリの完全な観測は常に未知です。独自 `directory-mutations` はネイティブ macOS、5ゲスト、C++/C/CLI/Python で入れ子作成・改名・unlink・削除・孤立物体の再利用を比較します。
 
@@ -458,3 +455,23 @@ Release Darwin: 1,017登録、609成功、未提供バックエンド408スキ�
 Release Darwin1,051登録、631成功、未提供420スキップ、失敗なし；必須 ARM64 HVF105件実行。対象98成功・12スキップ、初期直接64/64（新規14件と保持中削除更新）。C/CLI/report183/183、Darwin133件；Python5構成18.691秒、ネイティブ25/25、スクリプト66/66。追加ネイティブ改名検査で末尾点の順序を修正し、初期ソース/結果/スナップショットを保持。主エージェントが証拠を照合し、最終独立レビューは利用不可でした。件数重複、期限不変、完全CIと実機iOSは別、Intel HVF Actions停止継続。
 
 `build-hvf-arm64/directory-lifetime-validation-summary.json`, `directory-lifetime-darwin-final-evidence/`, `directory-lifetime-focused-final.xml`, `directory-lifetime-public.xml`, `directory-lifetime-native/`, `directory-lifetime-before-rename-fix/`.
+
+## 明示的に許可した初期ディレクトリの削除
+
+ディレクトリ項目の厳密な真偽値 `"removable": true`（C++ は `DarwinFileOptions::RemovableDirectories`）は、名前空間上の識別対象が一つで、マウントではない通常のディレクトリを宣言します。ルート以外の明示的な初期 `directories` 項目と、変更を明示許可した直接の親が必要です。既知の特殊モード/フラグ、スナップショットを含む inode 別名、親子の既知デバイス番号の矛盾は拒否します。番号の一致だけではマウント不在の証明になりません。省略/false は未対応のまま、他の JSON 型は無効です。一般的な権限やマウントのモデルではありません。
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/empty","removable":true}],"working_directory":"/empty"}}
+```
+
+削除には現在の名前空間が空であることが必要です。初期の暗黙的な子ディレクトリは、最後の元ファイルを unlink しても残ります。成功すると対象と直接の親の完全な stat/列挙は不明になりますが、旧 FD/dup/CWD は元のオブジェクトと親チェーンを保持します。不変入力から削除名を復活させません。同名の新しいファイル/ディレクトリは別の識別対象で、旧メタデータやスナップショットを継承せず、呼出元の入力も変更しません。
+
+各 removable 参照のパスと NUL は初期 16 MiB 費用に含まれます。初期項目、パス、参照、スナップショットの費用と256項目上限の初期枠は、削除や最後の close でも返却しません。新しいオブジェクトには独自の動的費用を適用します。独自の `initial-directory-removal` はネイティブ試験の既存空ディレクトリを保持中に削除し、同名ファイル、次いでディレクトリを作成して CWD 単独保持を確認し、空ディレクトリを復元します。同じプログラムを C++/C/CLI/Python の5構成で実行します。
+
+### 初期ディレクトリ削除の検証、2026-10-06
+
+最終 Release ソースで Darwin 登録 1,089 件を照合し、657 件成功、バックエンド利用不可によるスキップ 432 件、失敗 0 件となった。必須 ARM64 HVF 108 件はすべて実行した。重点検証は 27/39 件成功、12 件利用不可スキップで、追加のスナップショットのみの別名検証も成功した。公開 C/CLI/レポートは 191/191、Python は 76.276 秒で 5 組合せ、独自ネイティブ負荷は 26/26、証拠ランナーは 66/66 成功。初回の inode/スナップショットが矛盾したテスト入力は修正し、失敗記録を保存した。
+
+先行する完全検証 2 回では既存のファイル/rename ケースに 1 件と 3 件のタイムアウトがあり、診断付き実行でも実時間 5.008 秒、プロセス CPU 時間 0.171 秒のファイルタイムアウトを再現した。同一メソッドと旧プログラムの比較は成功したが、遅延原因は未解明であり、最終成功はタイムアウトの安定性を証明しない。一時診断を除去し、フィクスチャのハッシュを復元し、元のゲスト 5 秒制限を維持した。主担当によるソース/証拠監査を完了し、独立レビューは利用不可だった。件数は重複する。完全 GitHub CI、実機 iOS、停止中の Intel HVF Actions はこのローカル受入範囲外である。
+
+`build-hvf-arm64/initial-directory-validation-summary.json`, `initial-directory-darwin-restored-evidence/`, `initial-directory-public.xml`, `initial-directory-native-evidence/`, `initial-directory-timeout-probe/`.

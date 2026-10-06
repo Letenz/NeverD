@@ -1501,6 +1501,86 @@ static int system_info(int emit_values) {
   return 37;
 }
 
+static int initial_directory_removal(const char *path) {
+  unsigned error;
+  char parent[1024], before[1024], after[1024], byte = 0;
+  u64 length = 0, slash = 0;
+  while (path[length] && length + 1 < sizeof(parent)) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      slash = length;
+    ++length;
+  }
+  if (path[0] != '/' || path[length])
+    return 51;
+  parent[slash ? slash : 1] = 0;
+  int check = 51;
+#define INITIAL_EXPECT(expression)                                             \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  const char name[] = "empty", child[] = "child", dot[] = ".";
+  const char escape[] = "../empty/child";
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  INITIAL_EXPECT(!error && root >= 3);
+  u64 old = call(463, root, (u64)name, 0x100000, 0, 0, 0, &error);
+  INITIAL_EXPECT(!error && old >= 3);
+  u64 duplicate = call(41, old, 0, 0, 0, 0, 0, &error);
+  INITIAL_EXPECT(!error && duplicate != old);
+  INITIAL_EXPECT(call(92, old, 50, (u64)before, 0, 0, 0, &error) == 0 &&
+                 !error);
+  INITIAL_EXPECT(call(13, old, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(137, (u64)before, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(466, root, (u64)name, 0, 0, 0, 0, &error) == 2 && error);
+  INITIAL_EXPECT(call(466, old, (u64)dot, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(475, old, (u64)child, 0700, 0, 0, 0, &error) == 2 &&
+                 error);
+  INITIAL_EXPECT(call(475, old, (u64)dot, 0700, 0, 0, 0, &error) == 17 &&
+                 error);
+  INITIAL_EXPECT(call(472, old, (u64)dot, 0x80, 0, 0, 0, &error) == 22 &&
+                 error);
+  u64 file = call(463, root, (u64)name, 0xa02, 0600, 0, 0, &error);
+  INITIAL_EXPECT(!error && file >= 3);
+  const char value = 'z';
+  INITIAL_EXPECT(call(4, file, (u64)&value, 1, 0, 0, 0, &error) == 1 && !error);
+  u64 same = call(5, (u64)dot, 0x100000, 0, 0, 0, 0, &error);
+  INITIAL_EXPECT(!error && same >= 3 && same != old);
+  INITIAL_EXPECT(call(92, same, 50, (u64)after, 0, 0, 0, &error) == 0 &&
+                 !error && equal(before, after));
+  INITIAL_EXPECT(call(6, same, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(472, root, (u64)name, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(199, file, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(3, file, (u64)&byte, 1, 0, 0, 0, &error) == 1 && !error &&
+                 byte == value);
+  INITIAL_EXPECT(call(475, root, (u64)name, 0700, 0, 0, 0, &error) == 0 &&
+                 !error);
+  u64 newer = call(463, root, (u64)name, 0x100000, 0, 0, 0, &error);
+  INITIAL_EXPECT(!error && newer >= 3);
+  INITIAL_EXPECT(call(475, newer, (u64)child, 0700, 0, 0, 0, &error) == 0 &&
+                 !error);
+  INITIAL_EXPECT(call(466, duplicate, (u64)child, 0, 0, 0, 0, &error) == 2 &&
+                 error);
+  INITIAL_EXPECT(call(33, (u64)escape, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(6, old, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(6, duplicate, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  // The current directory alone keeps the removed initial object alive.
+  INITIAL_EXPECT(call(33, (u64)child, 0, 0, 0, 0, 0, &error) == 2 && error);
+  INITIAL_EXPECT(call(33, (u64)escape, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(472, newer, (u64)child, 0x80, 0, 0, 0, &error) == 0 &&
+                 !error);
+  INITIAL_EXPECT(call(6, file, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(6, newer, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_EXPECT(call(6, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  // Restore the empty-directory precondition for the other native workloads.
+  const char marker = 'j';
+  INITIAL_EXPECT(call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error);
+#undef INITIAL_EXPECT
+  return 37;
+}
+
 static int deleted_directories(const char *path) {
   unsigned error;
   char parent[1024], before[1024], after[1024];
@@ -1972,6 +2052,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "initial-directory-removal"))
+    return argc < 3 ? 79 : initial_directory_removal(argv[2]);
   if (equal(argv[1], "deleted-directories"))
     return argc < 3 ? 79 : deleted_directories(argv[2]);
   if (equal(argv[1], "directory-mutations"))

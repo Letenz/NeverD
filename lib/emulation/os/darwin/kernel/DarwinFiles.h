@@ -125,6 +125,8 @@ private:
   llvm::Error prepareMutation();
   void reclaimUnlinked();
   std::shared_ptr<DirectoryNode> directoryNode(const std::string &Path);
+  std::shared_ptr<DirectoryNode> initialDirectoryNode(const std::string &Path);
+  bool hasInitialDirectoryChild(const std::string &Path);
   bool mutableDirectory(const std::string &Path) const;
   std::optional<DirectoryIdentity> directoryIdentity(const std::string &Path);
   llvm::Expected<Pathname> readPath(uint64_t Address);

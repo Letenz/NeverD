@@ -215,6 +215,13 @@ NEVERD_DARWIN_DIAGNOSTIC(DirectoryCreationLimit,
 NEVERD_DARWIN_DIAGNOSTIC(
     DirectoryRemovalInitial,
     "Darwin removal of initial directories is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryRemovableOption,
+    "Darwin removable directories require an explicit non-root directory and "
+    "mutable parent")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryRemovalDevice,
+    "Darwin removable directory conflicts with its parent's device identity")
 NEVERD_DARWIN_DIAGNOSTIC(FileInput, "Darwin standard input is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(FileMetadataOption,
                          "invalid Darwin file or directory metadata or size")

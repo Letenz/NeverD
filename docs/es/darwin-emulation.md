@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 2fb61c4299cd9e0d2292a80e45a5655cf97a5598165087d2d61c18176bd13248 -->
+<!-- i18n-source: 3f76a3e6151ec21bc77d197148addb31fa72a77a4c00d2de278ac8b894043e82 -->
 
 [← Índice de documentación](README.md)
 
@@ -98,7 +98,6 @@ Escritura vacía, rechazo por presupuesto/mapas, entrada parcial rechazada y fal
 ```
 
 
-
 ## Posicionamiento en archivos dispersos
 
 Con mutation_policy y asignación conocida, lseek admite SEEK_HOLE=3 y SEEK_DATA=4 en archivos regulares usando el mismo registro que stat. La entrada inicial es densa, incluso sus ceros. Devuelve la posición de entrada dentro de una unidad del tipo buscado, o el inicio de la siguiente coincidente. El hueco final comienza en EOF. Un negativo da EINVAL; en/después de EOF, archivo vacío o sin datos posteriores, ENXIO=6. El fallo conserva el cursor; el éxito solo cambia la descripción y sus dup. Otros open conservan sus cursores y reabrir ve la asignación actual. Metadatos, flags y bytes no cambian; se ignoran bits altos de whence.
@@ -113,7 +112,7 @@ Sin política, para directorios o tras EFAULT completo con asignación desconoci
 
 `unlink(10)` / `unlinkat(472)` eliminan nombres regulares existentes. el borrado de archivos acepta los32 bits bajos 0 o `0x800`; bits desconocidos dan EINVAL antes de ruta/FD y AT_REMOVEDIR usa el contrato limitado de abajo; DATALESS y SYSTEM_DISCARDED siguen excluidos. Resolución común: ENOENT, ENOTDIR tras archivo con `/`, EPERM en directorio ordinario, EISDIR para raíz con solo barras, EBUSY para raíz terminada en `.`/`..`. Se verificaron nativamente finales `.`/`..`.
 
-FD/dup/aperturas independientes previos conservan datos, cursores y flags; F_GETPATH devuelve la ruta anterior capturada. Nuevas aperturas fallan, padres implícitos y CWD permanecen. La autorización de escritura pertenece al objeto; close/dup2/la siguiente mutación recuperan sus bytes actuales sólo tras el último descriptor y mapa. Los costes iniciales de rutas permanecen; aplicación de permisos, renombrado entre padres, enlaces físicos y borrado de directorios iniciales siguen pendientes.
+FD/dup/aperturas independientes previos conservan datos, cursores y flags; F_GETPATH devuelve la ruta anterior capturada. Nuevas aperturas fallan, padres implícitos y CWD permanecen. La autorización de escritura pertenece al objeto; close/dup2/la siguiente mutación recuperan sus bytes actuales sólo tras el último descriptor y mapa. Los costes iniciales de rutas permanecen; aplicación de permisos, renombrado entre padres y enlaces físicos siguen pendientes; los directorios iniciales usan la autorización explícita descrita más abajo.
 
 stat/readdir/SEEK_END del padre quedan desconocidos para todo FD/ruta y paran antes de copiar o mover cursores. read/pread mantienen EISDIR; SET/CUR/F_GETPATH/fchdir/resolución relativa continúan. La política conocida establece nlink=0 y ctime fijo; posteriores escrituras no restauran nlink=1. Sin política/tras EFAULT, metadatos desconocidos. Los fallos preservan estado. `unlinked-file` compara reglas nativas de nombre/FD; tiempos e invalidación son reglas explícitas del modelo.
 
@@ -157,7 +156,6 @@ FD antiguos, open independientes y dup siguen el nuevo nombre mediante `F_GETPAT
 
 No consume inode, entrada nueva ni FD libre. La ruta/NUL sustituye el coste dinámico del origen; los iniciales quedan reservados. Solo un destino sin FD/mapas antiguos aporta capacidad inmediata, recuperada una sola vez; unmap parcial conserva el coste completo. Ruta de 1024 bytes o exceso de 16 MiB detiene antes de modificar. Otros padres, devices conocidos contradictorios, directorios, swap/exclusive/seclude y permisos siguen pendientes. Igual device stat no prueba igual montaje; no se inventa EXDEV. `renamed-file` compara identidad, rutas, reemplazo y mapas nativos/invitados; tiempos y presupuestos son reglas virtuales.
 
-
 ## Directorios y rutas relativas
 
 `directories` permite `path` absolutos canónicos con `metadata` completo opcional, incluidos directorios vacíos. Raíz y antecesores son implícitos; los metadatos no crean rutas ausentes. Mode usa `0x4000` y permisos; size es una observación explícita en [0, INT64_MAX]. `working_directory` debe existir; omitirlo deja CWD desconocido, sin heredar el host. Máximo 256 rutas declaradas, incluidos antecesores con metadatos; rutas/NUL/contenido/entrada/CWD suman 16 MiB.
@@ -198,7 +196,6 @@ Open independientes tienen cursores propios, dup los comparte. Solo cero o valor
 [XNU getdirentries64](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [dirent ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent.h), [extended flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent_private.h).
 
 Validación de enumeración (2026-10-05, Release): 498 casos Darwin, 246 aprobados, 252 omitidos por backend no disponible, cero fallos; 63/63 casos ARM64 HVF obligatorios ejecutados. Pasaron 11 programas macOS nativos, 40 controles C/CLI/informes sin omisiones, cinco combinaciones Python con ocho escenarios de archivos cada una y 66 tests de herramientas. Los conteos se superponen. Evidencia: `build-hvf-arm64/darwin-dirents-merged-evidence/`. Intel HVF Actions sigue suspendido; otros transportes nativos e iOS físico no están validados.
-
 
 ## Mapeos privados de archivos
 
@@ -437,7 +434,7 @@ Release Darwin:971 registros,575 aprobados,396 omitidos por backend no disponibl
 
 El recorrido común admite para mkdir un nombre final ausente seguido solo por barras. Antecesor ausente antes de punto/doble punto da ENOENT, archivo antecesor ENOTDIR y nombre existente EEXIST. Se mantienen FD/CWD relativos, independencia del FD en rutas absolutas y prioridad de fallos de cadena. No requiere FD libre; rechazos de búsqueda, autorización, presupuesto o transporte no publican cambios.
 
-`rmdir(137)` y `unlinkat(472)` con AT_REMOVEDIR(0x80), opcionalmente AT_SYMLINK_NOFOLLOW_ANY(0x800), eliminan directorios vacíos creados por este proceso. Bits bajos32 desconocidos dan EINVAL antes de entradas; DATALESS y SYSTEM_DISCARDED quedan fuera. Se mantienen errores conocidos de ruta/tipo/raíz; eliminar directorios iniciales es UnsupportedService. En los creados, punto final da EINVAL, doble punto desde un directorio enlazado o destino no vacío ENOTEMPTY. Los FD de directorio, dup y CWD conservan el objeto original y ya no impiden borrarlo. Archivos regulares ya unlink y sus mapeos no cuentan como nombres: comparaciones nativas conservan bytes, inode y último F_GETPATH tras eliminar/reutilizar el padre.
+`rmdir(137)` y `unlinkat(472)` con AT_REMOVEDIR(0x80), opcionalmente AT_SYMLINK_NOFOLLOW_ANY(0x800), eliminan directorios vacíos creados por este proceso. Bits bajos32 desconocidos dan EINVAL antes de entradas; DATALESS y SYSTEM_DISCARDED quedan fuera. Se mantienen errores conocidos de ruta/tipo/raíz; eliminar directorios iniciales sin autorización removable sigue siendo UnsupportedService. En los admitidos, punto final da EINVAL, doble punto desde un directorio enlazado o destino no vacío ENOTEMPTY. Los FD de directorio, dup y CWD conservan el objeto original y ya no impiden borrarlo. Archivos regulares ya unlink y sus mapeos no cuentan como nombres: comparaciones nativas conservan bytes, inode y último F_GETPATH tras eliminar/reutilizar el padre.
 
 Cada ruta canónica+NUL y una entrada cuentan en el presupuesto común16 MiB/256 entradas. Solo se devuelve ese coste tras eliminar y liberar todas las referencias, conservando archivos huérfanos/mapeos. Solo el éxito invalida stat/enumeración del padre; observaciones completas del directorio nuevo siguen desconocidas. El original `directory-mutations` compara creación anidada, renombrado, unlink, eliminación y reutilización en macOS nativo y cinco invitados mediante C++/C/CLI/Python.
 
@@ -458,3 +455,23 @@ FD/CWD conservan el objeto borrado y su cadena de padres aunque se reutilicen no
 Release Darwin1.051 casos,631 aprobados,420 omitidos no disponibles,cero fallos;105 ARM64 HVF obligatorios ejecutados. Focalizados98 aprobados/12 omitidos,directos iniciales64/64 con14 nuevos. C/CLI/report183/183,133 Darwin;Python cinco combinaciones 18.691s,nativos25/25,scripts66/66. Sonda nativa adicional corrigió orden del punto final de renombrado;fuentes/resultados/copias iniciales conservados. Agente principal cotejó evidencias;revisión independiente final no disponible. Conteos solapados,límites iguales,CI completa/iOS físico separados,Intel HVF Actions suspendido.
 
 `build-hvf-arm64/directory-lifetime-validation-summary.json`, `directory-lifetime-darwin-final-evidence/`, `directory-lifetime-focused-final.xml`, `directory-lifetime-public.xml`, `directory-lifetime-native/`, `directory-lifetime-before-rename-fix/`.
+
+## Eliminar directorios iniciales admitidos explícitamente
+
+El booleano estricto `"removable": true` de una entrada de directorio (C++ `DarwinFileOptions::RemovableDirectories`) declara un directorio ordinario sin montaje y con una sola identidad en el espacio de nombres. Debe ser una entrada inicial explícita de `directories`, distinta de la raíz, con padre inmediato explícitamente mutable. Se rechazan modos/flags especiales conocidos, alias de inode (incluidas las instantáneas) y números de dispositivo conocidos incompatibles entre padre y destino. Su igualdad no demuestra por sí sola que no haya montaje. La omisión o false mantiene el límite no admitido; otros tipos JSON son inválidos. No proporciona un modelo general de permisos ni montajes.
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/empty","removable":true}],"working_directory":"/empty"}}
+```
+
+El espacio de nombres actual debe estar vacío. Los subdirectorios iniciales implícitos permanecen tras unlink de su último archivo original. El éxito invalida las observaciones completas stat/enumeración del objeto y su padre inmediato; los FD/dup/CWD anteriores conservan el objeto y la cadena original de padres. Las entradas inmutables nunca hacen reaparecer un nombre eliminado. Un archivo o directorio nuevo con ese nombre tiene identidad independiente y no recupera metadatos ni instantáneas anteriores. Los datos del llamador permanecen intactos.
+
+Cada referencia removable carga su ruta y NUL al presupuesto inicial fijo de 16 MiB. Las entradas, rutas, referencias e instantáneas iniciales siguen contándose después del borrado y último cierre, incluido su espacio dentro del límite de 256 entradas. Los objetos nuevos mantienen su contabilidad dinámica propia. El programa original `initial-directory-removal` elimina el directorio vacío preexistente de la prueba nativa mientras sigue abierto, reutiliza el nombre para un archivo y luego un directorio, comprueba la retención exclusiva por CWD y restaura el directorio vacío. El mismo programa se ejecuta mediante C++/C/CLI/Python en las cinco combinaciones invitadas.
+
+### Verificación de eliminación de directorios iniciales, 2026-10-06
+
+Las fuentes finales en Release conciliaron 1.089 pruebas Darwin: 657 aprobadas, 432 omitidas por backend no disponible, cero fallos; se ejecutaron los 108 casos ARM64 HVF obligatorios. Las pruebas enfocadas aprobaron 27/39 con 12 omisiones, y también pasó la comprobación adicional de alias derivados solo de instantáneas. C/CLI/informes públicos: 191/191; Python: cinco combinaciones en 76,276 s; programas nativos originales: 26/26; ejecutores de evidencias: 66/66. Se corrigió una entrada de prueba incoherente de inode/instantánea y se conservaron sus fallos.
+
+Dos ejecuciones completas anteriores tuvieron uno y tres tiempos agotados en casos existentes de archivos/renombrado. Una ejecución instrumentada reprodujo uno con 5,008 s reales y 0,171 s de CPU del proceso. Las comparaciones del mismo método y de programas anteriores pasaron, pero la causa de la latencia sigue sin resolverse; la aprobación final no demuestra estabilidad temporal. Se retiraron los diagnósticos temporales, se restauraron los hashes de los programas y se mantuvo el límite original de 5 s del invitado. Auditoría principal de fuentes/evidencias completada; revisión independiente no disponible. Los recuentos se solapan. La CI completa de GitHub, iOS físico y las Actions Intel HVF suspendidas quedan fuera de esta aceptación local.
+
+`build-hvf-arm64/initial-directory-validation-summary.json`, `initial-directory-darwin-restored-evidence/`, `initial-directory-public.xml`, `initial-directory-native-evidence/`, `initial-directory-timeout-probe/`.
