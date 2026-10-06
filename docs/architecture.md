@@ -86,6 +86,20 @@ operation witness, complete mapped slot and relocation ownership, and exclusive
 consumption by the recovered branch. The unused prefix gains no suppression
 authority from sharing that origin.
 
+CFG construction also owns indirect tail-call classification. For an AArch64
+candidate without a proved dispatch, `IndirectTailFrame` checks the necessary
+incoming SP and link-word restoration under the existing native call ABI.
+Whole-word copies, bounded pointer-width stack arithmetic and exact spills
+carry these identities; all reaching predecessors and backedges must converge.
+Independent roots start unknown. Partial or overlapping writes invalidate whole
+restoration words; unknown memory writes and exposed frame storage invalidate
+spill evidence. Unsupported effects, incomplete graphs and exhausted work
+retain the original indirect branch. Call preservation comes from `TargetRegInfo`'s
+format-selected ranges. This condition supplies no callee identity or source
+ABI. Successful classification emits an explicit `INDIR_CALL + RETURN` pair;
+HighIR cannot infer another tail call from a successorless `INDIR_BR`. An
+unresolved transfer without a usable switch remains an explicit failure path.
+
 The CLI parses commands in `tools/neverd`, creates a `neverd_session_t`, and
 calls the public API in `include/neverd/sdk/NeverDCAPI.h`. Engine state lives in
 `lib/sdk/SessionImpl.h`; `neverd_session_load` selects a loader and builds a
