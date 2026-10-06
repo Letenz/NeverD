@@ -42,7 +42,7 @@ namespace neverd {
 void detectXMMParams(
     MedFunc &Func, const MedBlock &Entry, const TargetRegInfo &TRI,
     const std::map<std::pair<uint64_t, uint16_t>, int> &RegVarMap,
-    Arch TargetArch);
+    Arch TargetArch, BinaryFormat TargetFormat);
 void detectCdeclStackParams(MedFunc &Func, Arch TargetArch);
 
 // ---- variadic (...) prologue detection (MedVariadic.cpp) ----
@@ -1443,7 +1443,7 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
     // x86-64/x86: also check for XMM floating-point parameters (no-op on ARM).
     // A variadic function's FP register save area is not its parameter list.
     if (!Func.IsVariadic)
-      detectXMMParams(Func, Entry, TRI, RegVarMap, TargetArch);
+      detectXMMParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
   }
 
   // x86-64 / AArch64 / ARM: recover stack-passed arguments beyond the parameter

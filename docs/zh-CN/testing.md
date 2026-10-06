@@ -1399,3 +1399,5 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 `SwiftOnceSources.FoldedObjCGetterTailsExecuteOnceAndRetainsAtO0AndO2` 折叠实际 ARM64/x64 返回尾部，覆盖合并或分离的 retain 调用、独立或内联谓词，再以运行时替身在 O0/O2 执行输出 C。检查结果位、一次初始化、调用顺序及缓存值变化。`FoldedObjCGetterTailsRevalidateCurrentStorageAndCalls` 在保留旧计划时仍拒绝宽度、顺序、内建操作、存储、结果、调用及当前导入修改。这是受控源码与运行时替身检查，不是原始 WMF 机器码或原生 Swift 运行时执行。
 
 `SourceFrameAnalysis.CompleteOutput*` 覆盖完整和较短前缀、各返回路径合并、SDK 尾调用写入、缺写字节、指针逃逸及载体限制。调用方用例拒绝缺失或过短证明、错位、越过栈帧边界、覆盖保存寄存器、别名、后续写入失效和存活不透明值重叠。`NativeSourceHints.CompleteNativeOutput*` 重放汇编生成的 ARM64 生产方和消费方，要求完整 SDK 输入范围，并拒绝过期代码、控制流、ABI、审计、提供方和调用实例证据。这些检查验证字节初始化和源码门禁，不执行原始机器函数，也不证明原生逻辑返回值。
+
+`MedCallingConvValueFlow.FPInputsFollowOnlyAuthenticatedCallPrefixes` / `NativeSourceHints.PreservedFPPrefixesRetainAllEntryInputsAfterSDKCalls`: 保留前缀回归检查三个有效读取和十九个被拒绝的载体、前缀、调用归属及未消费值用例。汇编生成的 ARM64 调用方在 SDK 调用后保留全部四个入口 double 低位通道；重新提升检查完整参数 ABI 和源码门禁。未修改的已获准发布 WMF `0x36350` 方法还在 O0、O2 各通过 2048 例，与独立原生 CoreGraphics 翻转、平移、归一化、连接及应用表达式比较全部 32 字节结果，并检查接收者、选择器和输入保护区，覆盖零、负数、无穷和 NaN 尺寸。未执行原始 WMF 机器函数。
