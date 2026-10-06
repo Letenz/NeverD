@@ -314,6 +314,35 @@ TEST(ProcessReport, DarwinNamespaceAuthorityRequiresAnExplicitBoolean) {
   llvm::consumeError(Extra.takeError());
 }
 
+TEST(ProcessReport, DarwinInitialDirectoryRemovalRequiresExplicitBoolean) {
+  auto Good = processOptionsFromJSON(R"({"darwin_files":{"files":[],
+    "directories":[{"path":"/","mutable":true},
+    {"path":"/yes","removable":true},{"path":"/no","removable":false},
+    {"path":"/default"}]}})");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->DarwinFiles->RemovableDirectories,
+            (std::set<std::string>{"/yes"}));
+  EXPECT_EQ(Good->DarwinFiles->MutableDirectories,
+            (std::set<std::string>{"/"}));
+  for (auto Bad : {"null", "0", "1", "\"true\"", "[]", "{}"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"darwin_files":{"files":[],"directories":[
+          {"path":"/","mutable":true},{"path":"/yes","removable":)") +
+        Bad + "}]}}");
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+  for (
+      auto Bad :
+      {R"({"darwin_files":{"files":[],"directories":[{"path":"/yes","removable":true}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"removable":true}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/yes","removable":true,"unknown":0}]}})"}) {
+    auto Parsed = processOptionsFromJSON(Bad);
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+}
+
 TEST(ProcessReport, DarwinDirectorySnapshotsHaveStrictLosslessWireFields) {
   const auto Original =
       llvm::cantFail(llvm::json::parse(darwin_test::DirectoryContentsJSON));

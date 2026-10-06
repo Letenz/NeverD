@@ -5093,9 +5093,13 @@ class LoopPlanInference {
   void inferNativeSelectors(
       llvm::ArrayRef<detail::NativeLoopCutpointOrigin> Origins) {
     std::map<va_t, va_t> Native;
-    for (const auto &O : Origins)
+    std::set<va_t> Repeated;
+    for (const auto &O : Origins) {
       if (!Native.emplace(O.CandidateAddress, O.OriginalAddress).second)
         stop(Status::Invalid, "duplicate native loop origin mapping");
+      if (!O.UniqueOriginal)
+        Repeated.insert(O.OriginalAddress);
+    }
     std::map<va_t, std::vector<size_t>> Groups;
     for (size_t I = 0; I != Plan.Cutpoints.size(); ++I) {
       const auto It = Native.find(Plan.Cutpoints[I].CandidateAddress);
@@ -5155,7 +5159,7 @@ class LoopPlanInference {
       Cut.CandidateGuards = Guards;
     };
     for (const auto &[Address, Group] : Groups) {
-      if (Group.size() < 2)
+      if (Group.size() < 2 && !Repeated.count(Address))
         continue;
       for (size_t I : Group) {
         chargeCutSelection();
@@ -5171,6 +5175,27 @@ class LoopPlanInference {
         if (C.query(T.Candidate.Predicate) == solver::SatResult::Unsat)
           stop(Status::Invalid, "native selector has an empty template domain");
         Templates[I] = std::move(T.Candidate);
+      }
+      if (Group.size() == 1) {
+        const size_t I = Group.front();
+        ActiveCutpoint = I;
+        // An unselected occurrence of this native address can precede the
+        // chosen residual context. Retain literal bits of its reconstructed
+        // state as selector proposals; the full native checker must still
+        // establish every prefix, arrival, transition and observation.
+        for (const auto &L : locations()) {
+          chargeCutSelection();
+          if (L.Space == LowIRLoopSpace::FunctionTemporary)
+            continue;
+          chargeCutSelection(L.Bytes * 8);
+          const auto V = read(*Templates[I], L);
+          const auto Z = commonBits(V, Ctx.mkConst(L.Bytes * 8, 0), L.Bytes);
+          const auto O =
+              commonBits(V, Ctx.mkConst(L.Bytes * 8, ones(L.Bytes)), L.Bytes);
+          if (const auto Mask = Z | O)
+            Add(I, L, Mask, O);
+        }
+        continue;
       }
       for (size_t A = 0; A != Group.size(); ++A)
         for (size_t B = A + 1; B != Group.size(); ++B) {
