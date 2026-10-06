@@ -1481,3 +1481,5 @@ block とコピーの公開テストでは、独立した二つの 48 バイト�
 `DarwinIndirectRecordCalls.AffineInvertSnapshotsItsCompleteAliasedInput` は O0/O2 で各 2560 ケースを実行し、同一・重複・分離した入出力、入力ビット列、呼び出し 1 回、全 48 結果バイト、ガード付き格納領域全体を確認する。これは物理コピーとスナップショットのオラクルであり、元の機械コードやネイティブ SDK の実行ではない。現在の行列・アフィン契約テストは契約ごとに 22 変更の拒否を維持する。
 
 `DarwinIndirectRecordCalls.AffineTranslatePreservesScalarBitsAndSnapshotsAliasedInput` は O0、O2 でそれぞれ 2560 ケースを実行し、二つのスカラーのビット列、六つの入力フィールド、一回の呼び出し、全出力バイト、および同一・重複・分離配置の保護付きストレージを検査する。スカラー ABI の四つの変更と共有の 22 個のインポート／ABI 変更を拒否する。ビット単位のスタブは物理引数と事前コピーを検証するもので、平行移動の数学的オラクルや元の機械語の実行ではない。
+
+`NativeFloatingReturnProof.HFAResultFieldsNeedTheExactCompleteDefinedCall` は九つのフィールド選択と、呼び出し・キャリア・幅・オフセット・SSA の十七の拒否例を検査する。`HFAFieldExtractionNeedsADominatingCall` は兄弟経路の生成元を拒否する。`NativeSourceHints.HFAFieldTypeRequiresCurrentCallAndFrameProofForPublication` は五命令の ARM64 呼び出し元をリフトし、推論したスカラー結果を再リフトして公開条件を確認する。誤った提供元や LR/SP 復元の欠如は拒否される。これらはソース型と投影の検証であり、元の機械語本体の実行ではない。

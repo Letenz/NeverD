@@ -308,6 +308,50 @@ class Proof {
     return !Roots.empty();
   }
 
+  // A logical call result supplies a scalar type only for an exact complete
+  // double field of its current HFA declaration. This is not a definition of
+  // an upper register lane, a memory effect or a source publication receipt.
+  bool completeHFAExtraction(const MedOp &Op, int Block, int Position) {
+    if (Op.Opcode != NdOp::SUBBYTES || Op.NumInputs != 2 ||
+        Op.Output.Size != 8 || !Op.Inputs[1].isConst() ||
+        Op.Inputs[0].Kind != MedVar::Temp)
+      return false;
+    const auto &Value = Op.Inputs[0];
+    const auto It = Definitions.find(key(Value));
+    if (It == Definitions.end() || !It->second.Op ||
+        It->second.Value.Size != Value.Size ||
+        It->second.Value.TheArch != Value.TheArch ||
+        !available(It->second, Block, Position) || !call(*It->second.Op))
+      return false;
+    const auto &Producer = *It->second.Op;
+    const auto &Signature = Producer.SourceCallHint->Signature;
+    const auto &Type = Signature.ReturnType;
+    if (Producer.DoesNotReturn || Producer.PreservesCallerSaved || !Type ||
+        Type->Kind != NdTypeKind::Struct || Type->Size != Value.Size ||
+        Type->Alignment != 8 ||
+        Signature.Convention != SourceFunctionTypeHint::ConventionKind::C ||
+        Signature.ReturnLocation.Kind != SourceABICarrierKind::None ||
+        Signature.ReturnComponents.size() < 2 ||
+        Signature.ReturnComponents.size() > 4)
+      return false;
+    const auto Members = sourceAggregateMembers(Type);
+    if (Members.size() != Signature.ReturnComponents.size() ||
+        Type->Size != Members.size() * 8 || Op.Inputs[1].ConstVal % 8 ||
+        Op.Inputs[1].ConstVal >= Type->Size)
+      return false;
+    for (size_t I = 0; I != Members.size(); ++I) {
+      const auto &Member = Members[I];
+      const auto &Carrier = Signature.ReturnComponents[I];
+      if (!spend() || !Member.Type || Member.Type->Kind != NdTypeKind::Float ||
+          Member.Type->Size != 8 || Member.ByteOffset != I * 8 ||
+          Carrier.Kind != SourceABICarrierKind::FloatingRegister ||
+          Carrier.RegisterOffset != TRI.FPParamRegs[I] ||
+          Carrier.ValueBytes != 8)
+        return false;
+    }
+    return true;
+  }
+
   bool values() {
     for (size_t I = 0; I != Nodes.size(); ++I) {
       if (Nodes[I].Leaf)
@@ -352,6 +396,10 @@ class Proof {
               S.ReturnLocation.RegisterOffset != TRI.FPReturnReg ||
               S.ReturnLocation.ValueBytes != 8)
             return false;
+          Nodes[I].Leaf = Nodes[I].Typed = true;
+          continue;
+        }
+        if (completeHFAExtraction(Op, D.Block, D.Position)) {
           Nodes[I].Leaf = Nodes[I].Typed = true;
           continue;
         }

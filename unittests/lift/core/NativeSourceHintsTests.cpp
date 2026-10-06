@@ -10755,3 +10755,67 @@ TEST(NativeSourceHints, ConsumedIdentifierPublicationReplaysCurrentOperands) {
             .valid(Bound.Function));
   }
 }
+
+TEST(NativeSourceHints,
+     HFAFieldTypeRequiresCurrentCallAndFrameProofForPublication) {
+  constexpr auto Provider =
+      "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+  HFAImportVeneerFixture F("_CGRectStandardize", Provider);
+  constexpr va_t Caller = 0x1040;
+  const uint32_t Words[] = {0xa9bf7bfd, 0x910003fd, 0x97ffffee, 0xa8c17bfd,
+                            0xd65f03c0};
+  for (unsigned I = 0; I != 5; ++I)
+    llvm::support::endian::write32le(
+        F.Image.Segments[0].Data.data() + 0x40 + 4 * I, Words[I]);
+  F.Image.Symbols.push_back({"hfa_caller", Caller, 20, true});
+  F.Options.OnlyFunctionEntries.insert(Caller);
+  F.Result = Pipeline().run(F.Image, F.Context, F.Options);
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  std::map<va_t, std::string> Diagnostics;
+  ASSERT_GT(sdk::inferObjCNativeDependencies(F.Image, F.Result, F.Options,
+                                             Diagnostics, {Caller}),
+            0U);
+  ASSERT_TRUE(F.Options.SourceTypeHints.count(Caller)) << Diagnostics[Caller];
+  const auto Scalar = F.Options.SourceTypeHints.at(Caller);
+  ASSERT_TRUE(Scalar.ReturnType);
+  EXPECT_EQ(Scalar.ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Scalar.ReturnType->Size, 8U);
+  auto Relifted = Pipeline().run(F.Image, F.Context, F.Options);
+  ASSERT_TRUE(Relifted.Success) << Relifted.Error;
+  const auto H =
+      std::find_if(Relifted.HighFuncs.begin(), Relifted.HighFuncs.end(),
+                   [](const auto &Fn) { return Fn.Entry == Caller; });
+  const auto A = std::find_if(
+      Relifted.FunctionAudits.begin(), Relifted.FunctionAudits.end(),
+      [](const auto &Audit) { return Audit.Entry == Caller; });
+  ASSERT_NE(H, Relifted.HighFuncs.end());
+  ASSERT_NE(A, Relifted.FunctionAudits.end());
+  const auto Bound = sdk::bindObjCSourceReferences(*H, F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &Fn : Relifted.HighFuncs)
+    Functions.emplace(Fn.Entry, &Fn);
+  const auto Allowed = [&](const HighExpr &Call) {
+    return sdk::objcSourceCallBound(Call, F.Image, Functions);
+  };
+  EXPECT_TRUE(
+      sdk::sourceBodyLimitation(Bound.Function, Scalar, &*A, Allowed).empty());
+  // A field's type cannot authenticate another provider or a missing saved LR.
+  for (unsigned Mutation = 0; Mutation != 2; ++Mutation) {
+    auto Image = F.Image;
+    if (Mutation == 0)
+      Image.DyldBindSlots.at(F.Slot).Module = "/not/CoreGraphics";
+    else
+      llvm::support::endian::write32le(Image.Segments[0].Data.data() + 0x4c,
+                                       0xd503201f); // No saved LR/SP restore.
+    PipelineOptions Unbound;
+    Unbound.OnlyFunctionEntries = F.Options.OnlyFunctionEntries;
+    Unbound.EmitDumpOutput = false;
+    auto Result = Pipeline().run(Image, F.Context, Unbound);
+    ASSERT_TRUE(Result.Success);
+    Diagnostics.clear();
+    sdk::inferObjCNativeDependencies(Image, Result, Unbound, Diagnostics,
+                                     {Caller});
+    EXPECT_FALSE(Unbound.SourceTypeHints.count(Caller)) << Mutation;
+  }
+}
