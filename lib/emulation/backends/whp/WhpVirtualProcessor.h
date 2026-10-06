@@ -7,6 +7,7 @@
 #ifndef NEVERD_EMULATION_WHP_VIRTUALPROCESSOR_H
 #define NEVERD_EMULATION_WHP_VIRTUALPROCESSOR_H
 #include "../../core/ExecutionDiagnostics.h"
+#include "../../core/MemoryLayout.h"
 #include "../../core/MemoryProjection.h"
 #include "../RunDeadline.h"
 
