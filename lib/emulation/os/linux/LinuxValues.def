@@ -50,6 +50,11 @@ NEVERD_LINUX_VALUE(FilePermissionMask, 07777)
 NEVERD_LINUX_VALUE(FileAccessMask, 7)
 NEVERD_LINUX_VALUE(FileStatusSizeARM64, 128)
 NEVERD_LINUX_VALUE(FileStatusSizeX64, 144)
+NEVERD_LINUX_VALUE(AtCurrentDirectory, 0xffffff9c)
+NEVERD_LINUX_VALUE(AtSymlinkNoFollow, 0x100)
+NEVERD_LINUX_VALUE(AtNoAutomount, 0x800)
+NEVERD_LINUX_VALUE(AtEmptyPath, 0x1000)
+NEVERD_LINUX_VALUE(AtStatSyncMask, 0x6000)
 NEVERD_LINUX_VALUE(OpenCloseOnExec, 02000000)
 NEVERD_LINUX_VALUE(OpenLargeFileX64, 00100000)
 NEVERD_LINUX_VALUE(OpenLargeFileARM64, 0400000)
@@ -130,6 +135,7 @@ NEVERD_LINUX_SERVICE(Read, 0, 63, 3)
 NEVERD_LINUX_SERVICE(Close, 3, 57, 1)
 NEVERD_LINUX_SERVICE(Lseek, 8, 62, 3)
 NEVERD_LINUX_SERVICE(Fstat, 5, 80, 2)
+NEVERD_LINUX_SERVICE(FstatAt, 262, 79, 4)
 NEVERD_LINUX_SERVICE(Write, 1, 64, 3)
 NEVERD_LINUX_SERVICE(WriteV, 20, 66, 3)
 NEVERD_LINUX_SERVICE(GetTimeOfDay, 96, 169, 2)
@@ -203,6 +209,14 @@ NEVERD_LINUX_DIAGNOSTIC(FileStatusMissing,
                         "Linux file status requires explicit file metadata")
 NEVERD_LINUX_DIAGNOSTIC(FileStatusPartialOutput,
                         "partial Linux file-status output fault is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(FileStatusFlags,
+                        "Linux file-status synchronization flags are unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(FileStatusNullPath,
+                        "NULL empty-path Linux file status is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(FileStatusDirectory,
+                        "Linux directory status has no explicit metadata")
+NEVERD_LINUX_DIAGNOSTIC(FileCurrentDirectory,
+                        "Linux current-directory file status is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(
     FileSeekMode, "Linux memory-file SEEK_DATA and SEEK_HOLE are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(AndroidOptions,

@@ -588,9 +588,9 @@ TEST_F(ProcessPublic, AndroidMemoryFilesShareStateThroughCAPIAndCLI) {
   const auto Output = (Root / OutputFile).string();
   for (const char *Entry :
        {"files_sequence", "files_faults", "files_bionic", "files_status",
-        "files_status_bionic", "files_access", "files_access_faults",
-        "files_access_bionic", "files_directory_errors",
-        "files_directory_bionic"}) {
+        "files_status_bionic", "files_status_at", "files_status_at_bionic",
+        "files_access", "files_access_faults", "files_access_bionic",
+        "files_directory_errors", "files_directory_bionic"}) {
     SCOPED_TRACE(Entry);
     llvm::json::Object Request{
         {"backend", "unicorn"},
