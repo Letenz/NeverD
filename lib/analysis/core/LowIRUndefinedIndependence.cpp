@@ -378,6 +378,9 @@ class Checker {
   // One completed model-free query in this immutable DAG and fixed solver
   // configuration. No model, incomplete answer or cross-context fact escapes.
   SymRef LastCompletedQuery;
+  // Keep one completed SAT fact across intervening queries in this immutable
+  // DAG. A retained hit still consumes the same charged query request.
+  SymRef LastFeasibleQuery;
   solver::SatResult LastCompletedAnswer = solver::SatResult::Invalid;
   RefinementSession *Refinement = nullptr;
   bool CandidateExecution = false;
@@ -560,6 +563,11 @@ class Checker {
     if (Predicate && Predicate == LastCompletedQuery)
       return LastCompletedAnswer;
     chargeQuery();
+    if (Predicate && Predicate == LastFeasibleQuery) {
+      LastCompletedQuery = Predicate;
+      LastCompletedAnswer = solver::SatResult::Sat;
+      return LastCompletedAnswer;
+    }
     const bool Reused = EncodingCache && *EncodingCache;
     const auto Fresh = [&] {
       auto Options = Limits.Solver;
@@ -586,6 +594,8 @@ class Checker {
       fail(Status::Invalid, "invalid relational solver query");
     LastCompletedQuery = Predicate;
     LastCompletedAnswer = Answer;
+    if (Answer == solver::SatResult::Sat)
+      LastFeasibleQuery = Predicate;
     return Answer;
   }
 
