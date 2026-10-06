@@ -346,7 +346,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `DbgPrint`、`DbgPrintEx` | 經檢查的 Win64 可變參數格式化，最多輸出 512 位元組；啟用所有偵錯器篩選器 |
 | `IoGetCurrentIrpStackLocation` | 傳回目前建模 IRP 的堆疊位置；正常編譯的 WDM 巨集讀取相同客體欄位 |
 | `KeGetCurrentIrql` | 讀取目前 IRQL/CR8，包括明確升降級；派送與工作項目從 `PASSIVE_LEVEL` 開始，DPC 從 `DISPATCH_LEVEL` 開始 |
-| `KfRaiseIrql`, `KeLowerIrql` | 真正的 x64 WDK IRQL 升降匯入，包含內聯輔助函式；每個執行必須在返回前按 LIFO 順序恢復儲存值。IRQL <= APC_LEVEL 的合法等待保留升降配對，並按等待時的 IRQL 恢復；DISPATCH_LEVEL 持鎖不能暫停。CR8 反映每次變化；不模擬指令級中斷搶占。 |
+| `KfRaiseIrql`, `KeLowerIrql` | 真正的 x64 WDK IRQL 升降匯入，包含內聯輔助函式；每個執行必須在返回前按 LIFO 順序恢復儲存值。IRQL <= APC_LEVEL 的合法等待保留升降配對，並按等待時的 IRQL 恢復；DISPATCH_LEVEL 持鎖不能暫停。CR8 反映每次變化；設定的 CPU0 事件搶占使用 `scheduling`；任意巢狀中斷仍不受支援。 |
 | `KeInitializeSpinLock`, `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeAcquireSpinLockAtDpcLevel`, `KeReleaseSpinLockFromDpcLevel`, `KeTryToAcquireSpinLockAtDpcLevel` | CPU0 上常駐且對齊的執行自旋鎖；檢查擁有者、取得與釋放配對及 IRQL 恢復。競爭的阻塞取得會明確停止。 |
 | `IoAllocateWorkItem`, `IoQueueWorkItem`, `IoFreeWorkItem` | 裝置擁有的不透明工作項目；僅支援 `DelayedWorkQueue`，在 `PASSIVE_LEVEL` 將裝置與內容傳給回呼；禁止釋放仍在佇列中的項目 |
 | `KeInitializeDpc`, `KeInsertQueueDpc`, `KeRemoveQueueDpc`, `KeSetImportanceDpc`, `KeSetTargetProcessorDpc` | 不透明 DPC 儲存、四個客體回呼參數、`DISPATCH_LEVEL`、重複排入／移除及優先順序；僅目標 CPU0 |

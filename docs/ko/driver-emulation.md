@@ -343,7 +343,7 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `DbgPrint`, `DbgPrintEx` | 검증된 Win64 가변 인수 포맷팅, 최대 출력 512바이트. 모든 디버거 필터가 활성화됨 |
 | `IoGetCurrentIrpStackLocation` | 활성 모델 IRP의 스택 위치를 반환함. 일반적인 컴파일된 WDM 매크로도 동일한 게스트 필드를 읽음 |
 | `KeGetCurrentIrql` | 명시적인 상승과 복원을 포함한 현재 IRQL/CR8을 읽습니다. 디스패치와 작업 항목은 `PASSIVE_LEVEL`, DPC는 `DISPATCH_LEVEL`에서 시작합니다 |
-| `KfRaiseIrql`, `KeLowerIrql` | 실제 x64 WDK IRQL 상승·하강 임포트와 인라인 도우미입니다. 각 실행은 반환 전에 저장 값을 LIFO 순서로 복원합니다. IRQL <= APC_LEVEL의 유효한 대기는 상승 상태를 보존하고 대기 당시 IRQL에서 재개합니다. DISPATCH_LEVEL 잠금 보유 중에는 중단할 수 없습니다. CR8은 변경을 반영하며 명령 단위 인터럽트 선점은 모델링하지 않습니다. |
+| `KfRaiseIrql`, `KeLowerIrql` | 실제 x64 WDK IRQL 상승·하강 임포트와 인라인 도우미입니다. 각 실행은 반환 전에 저장 값을 LIFO 순서로 복원합니다. IRQL <= APC_LEVEL의 유효한 대기는 상승 상태를 보존하고 대기 당시 IRQL에서 재개합니다. DISPATCH_LEVEL 잠금 보유 중에는 중단할 수 없습니다. CR8은 변경을 반영하며 설정된 CPU0 이벤트 선점에는 `scheduling`을 사용합니다. 임의의 중첩 인터럽트는 지원하지 않습니다. |
 | `KeInitializeSpinLock`, `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeAcquireSpinLockAtDpcLevel`, `KeReleaseSpinLockFromDpcLevel`, `KeTryToAcquireSpinLockAtDpcLevel` | CPU0의 상주 정렬 실행 스핀록입니다. 소유자, 획득·해제 쌍, IRQL 복원을 검사하며, 경합 중 차단 획득은 명시적으로 중단합니다. |
 | `IoAllocateWorkItem`, `IoQueueWorkItem`, `IoFreeWorkItem` | 장치 소유의 불투명 작업 항목. `DelayedWorkQueue`만 지원하며 `PASSIVE_LEVEL`에서 장치와 컨텍스트를 콜백에 전달. 대기열에 있는 항목은 해제 불가 |
 | `KeInitializeDpc`, `KeInsertQueueDpc`, `KeRemoveQueueDpc`, `KeSetImportanceDpc`, `KeSetTargetProcessorDpc` | 불투명 DPC, 게스트 콜백 인수 네 개, `DISPATCH_LEVEL`, 중복/제거 동작과 중요도; 대상 CPU0만 지원 |
