@@ -1001,6 +1001,18 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_disasm_json_ex",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "int", "unsigned"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_code_refs_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "int"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_decompile",
     "const char *",
     ["neverd_session_t", "neverd_va_t"],
@@ -1075,6 +1087,12 @@ _declare(
 )
 _declare(
     "neverd_imports_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_import_slots_json",
     "const char *",
     ["neverd_session_t"],
     ownership=Ownership.OWNED_STRING,
