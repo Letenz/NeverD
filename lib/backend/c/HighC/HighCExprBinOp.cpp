@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../UnalignedMemory.h"
 #include "HighCWriter.h"
 
 #include "neverd/Limits.h"
@@ -64,37 +65,6 @@ int getOpPrecedence(NdOp Op) {
   default:
     return 0;
   }
-}
-
-/// \p Printed as the operand of a cast.  A name, a number or one balanced
-/// parenthesized whole binds as tightly as the cast already; anything else,
-/// an embedded assignment included, is parenthesized.
-std::string castOperandText(std::string Printed) {
-  const llvm::StringRef Text(Printed);
-  if (!Text.empty() &&
-      llvm::all_of(Text, [](char C) { return llvm::isAlnum(C) || C == '_'; }))
-    return Printed;
-  bool Whole = Text.size() >= 2 && Text.front() == '(' && Text.back() == ')';
-  int Depth = 0;
-  char Quote = 0;
-  for (size_t I = 0; Whole && I < Text.size(); ++I) {
-    const char C = Text[I];
-    if (Quote) {
-      if (C == '\\')
-        ++I;
-      else if (C == Quote)
-        Quote = 0;
-    } else if (C == '"' || C == '\'') {
-      Quote = C;
-    } else if (C == '(') {
-      ++Depth;
-    } else if (C == ')' && --Depth == 0 && I + 1 != Text.size()) {
-      Whole = false;
-    }
-  }
-  if (Whole && Depth == 0 && !Quote)
-    return Printed;
-  return "(" + Printed + ")";
 }
 
 } // anonymous namespace
@@ -528,9 +498,9 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
           return "(" + Carrier + ")(" +
                  typeToC(
                      NdType::makeInt(Value->Operands[0]->Type->Size, false)) +
-                 ")" + castOperandText(exprStr(*Value->Operands[0]));
+                 ")" + c_memory::castOperand(exprStr(*Value->Operands[0]));
         return "(" + Carrier + ")" + (Carrier == Bits ? "" : "(" + Bits + ")") +
-               castOperandText(exprStr(*Value));
+               c_memory::castOperand(exprStr(*Value));
       };
       // The literal keeps the carrier's width: a 32-bit carrier must not
       // meet a wider literal type.
@@ -626,7 +596,7 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       return "(" + ResultType + ")" + Value;
     };
     const auto Left =
-        "(" + SourceType + ")" + castOperandText(exprStr(*E.Operands[0]));
+        "(" + SourceType + ")" + c_memory::castOperand(exprStr(*E.Operands[0]));
     const auto Limit = std::to_string(Size * 8u);
     // The opcode determines sign extension independently of inferred types.
     // Preserve the count's own width, then guard C's undefined overshifts.
@@ -642,7 +612,7 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     const auto CountType = typeToC(NdType::makeInt(
         E.Operands[1]->Type ? E.Operands[1]->Type->Size : 8, false));
     const auto Right =
-        "(" + CountType + ")" + castOperandText(exprStr(*E.Operands[1]));
+        "(" + CountType + ")" + c_memory::castOperand(exprStr(*E.Operands[1]));
     return RestoreType("(" + Right + " < " + Limit + " ? " + Left + " >> " +
                        Right + " : " + Fallback + ")");
   }
@@ -658,8 +628,8 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     // least unsigned int, then restore the operation's exact result width.
     const auto CarrierType =
         typeToC(NdType::makeInt(Size < 4 ? 4 : Size, false));
-    const std::string Left = castOperandText(exprStr(*E.Operands[0]));
-    const std::string Right = castOperandText(exprStr(*E.Operands[1]));
+    const std::string Left = c_memory::castOperand(exprStr(*E.Operands[0]));
+    const std::string Right = c_memory::castOperand(exprStr(*E.Operands[1]));
     // At a carrier width the shifted carrier is the result already.
     const std::string Shifted =
         "(" + CarrierType + ")" +

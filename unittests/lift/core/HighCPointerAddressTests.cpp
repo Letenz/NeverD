@@ -304,8 +304,9 @@ std::vector<PortableStoreCall> portableStoreCalls(std::string_view Source) {
          Source.substr(Address, Source.find(';', Address) - Address),
          Source.substr(Value, Source.find(';', Value) - Value)});
   }
-  // `((*(neverd_unaligned_u32 *)(uintptr_t)(ADDRESS)) = VALUE);`, the
-  // aligned(1), may_alias spelling of a scalar store.
+  // `((*(neverd_unaligned_u32 *)ADDRESS) = VALUE);`, the aligned(1),
+  // may_alias spelling of a scalar store.  ADDRESS is a name, a
+  // parenthesized expression, or `(uintptr_t)(&OBJECT)`.
   static constexpr std::pair<std::string_view, std::string_view> Aliases[] = {
       {"neverd_unaligned_u8", "uint8_t"},
       {"neverd_unaligned_i8", "int8_t"},
@@ -330,7 +331,8 @@ std::vector<PortableStoreCall> portableStoreCalls(std::string_view Source) {
     return std::string_view::npos;
   };
   constexpr std::string_view AliasPrefix = "((*(neverd_unaligned_";
-  constexpr std::string_view Cast = " *)(uintptr_t)(";
+  constexpr std::string_view Cast = " *)";
+  constexpr std::string_view Integer = "(uintptr_t)(";
   for (size_t At = Source.find(AliasPrefix); At != std::string_view::npos;
        At = Source.find(AliasPrefix, At + AliasPrefix.size())) {
     const size_t NameStart = At + 4;
@@ -342,20 +344,32 @@ std::vector<PortableStoreCall> portableStoreCalls(std::string_view Source) {
         Aliases, [&](const auto &Entry) { return Entry.first == Alias; });
     if (Known == std::end(Aliases))
       continue;
-    const size_t AddressStart = NameEnd + Cast.size();
-    const size_t AddressEnd = Close(AddressStart);
+    // The address text, and the offset just past it where `) = ` follows.
+    size_t AddressStart = NameEnd + Cast.size();
+    size_t AddressStop = std::string_view::npos, Next = std::string_view::npos;
+    if (Source.substr(AddressStart, Integer.size()) == Integer) {
+      AddressStart += Integer.size();
+      if (const size_t End = Close(AddressStart); End != std::string_view::npos)
+        AddressStop = End - 1, Next = End;
+    } else if (AddressStart < Source.size() && Source[AddressStart] == '(') {
+      ++AddressStart;
+      if (const size_t End = Close(AddressStart); End != std::string_view::npos)
+        AddressStop = End - 1, Next = End;
+    } else {
+      AddressStop = Source.find(')', AddressStart);
+      Next = AddressStop;
+    }
     constexpr std::string_view Assign = ") = ";
-    if (AddressEnd == std::string_view::npos ||
-        Source.substr(AddressEnd, Assign.size()) != Assign)
+    if (Next == std::string_view::npos ||
+        Source.substr(Next, Assign.size()) != Assign)
       continue;
-    const size_t ValueStart = AddressEnd + Assign.size();
+    const size_t ValueStart = Next + Assign.size();
     const size_t ValueEnd = Close(ValueStart);
     if (ValueEnd == std::string_view::npos)
       continue;
-    Stores.push_back(
-        {Known->second,
-         Source.substr(AddressStart, AddressEnd - 1 - AddressStart),
-         Source.substr(ValueStart, ValueEnd - 1 - ValueStart)});
+    Stores.push_back({Known->second,
+                      Source.substr(AddressStart, AddressStop - AddressStart),
+                      Source.substr(ValueStart, ValueEnd - 1 - ValueStart)});
   }
   return Stores;
 }
