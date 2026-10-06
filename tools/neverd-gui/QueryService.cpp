@@ -1,11 +1,10 @@
 #include "QueryService.h"
 
-#include <QElapsedTimer>
-#include <QLoggingCategory>
-
 #include <QCache>
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLoggingCategory>
 #include <QQueue>
 #include <QSet>
 #include <QTimer>
@@ -535,9 +534,8 @@ struct QueryService::State {
       emit q->loadProgress(response.value("payload").toObject());
       return;
     }
-    qCDebug(lcQueries).noquote()
-        << "done" << job->wireOperation << job->wireId << status
-        << job->sent.elapsed() << "ms";
+    qCDebug(lcQueries).noquote() << "done" << job->wireOperation << job->wireId
+                                 << status << job->sent.elapsed() << "ms";
     if (status != "ok" && status != "error" && status != "cancelled" &&
         status != "budget_exceeded") {
       finish(job, error("invalid_response",
