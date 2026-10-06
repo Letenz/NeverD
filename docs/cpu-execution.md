@@ -47,7 +47,10 @@ extension stays disabled, so a service instruction is the undefined-opcode event
 at the address the guest requests it, reported as the same pending service. The
 run takes a time budget, never an instruction budget or quantum. KVM and
 matching-host WHP implement it; Unicorn and HVF report it unsupported rather than
-run it under different semantics.
+run it under different semantics. Execution watches are still honored: their
+pages are made non-executable, so the first fetch into a watched range faults at
+the same boundary a checked instruction watch stops on. Observation-driven
+unpacking recovers an entry under this contract without single-stepping.
 Flat profiles have no architectural user/supervisor MMU isolation contract;
 their address width describes the direct mapping interface, not a claim of a
 64-bit hardware virtual-address mode. Checked x64 advertises bounded SIMD and

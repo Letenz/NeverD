@@ -439,8 +439,9 @@ CheckedX64Backend::decodeServiceRequest(const cs_insn &I) const {
 }
 
 llvm::Error CheckedX64Backend::executeDirect() {
-  auto Root = buildX64PageTables(*Memory, UserMode,
-                                 Machine->requiresExceptionMonitor());
+  auto Root =
+      buildX64PageTables(*Memory, UserMode, Machine->requiresExceptionMonitor(),
+                         ExecutionWatches, WatchEpoch);
   if (!Root)
     return Root.takeError();
   auto Next = CPU;
@@ -476,6 +477,19 @@ llvm::Error CheckedX64Backend::executeDirect() {
   }
 #include "X64ServiceInstructions.def"
 #undef NEVERD_X64_SERVICE
+        }
+        // A fetch into a watched page faults only because the overlay made an
+        // otherwise executable page non-executable. That is the watch boundary,
+        // reported exactly as the checked contract reports an instruction
+        // watch: the instruction has not run, and the observer decides what to
+        // do next.
+        if (Raised.exception().Vector ==
+                unsigned(x64::ExceptionVector::PageFault) &&
+            Raised.exception().FaultAddress == PC && executionWatched(PC) &&
+            !Memory->check(PC, 1, executionPermissions(Execute))) {
+          if (Hooks.Instruction)
+            Hooks.Instruction(PC, 0);
+          return llvm::Error::success();
         }
         BackendFault Fault{BackendFaultKind::Interrupt, PC};
         Fault.Interrupt = Raised.exception().Vector;
