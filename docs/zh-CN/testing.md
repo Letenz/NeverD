@@ -1392,4 +1392,12 @@ block/副本发布测试还覆盖两个独立的 48 字节范围、描述符重�
 
 `DarwinIndirectRecordCalls.AffineTranslatePreservesScalarBitsAndSnapshotsAliasedInput` 在 O0、O2 各运行 2560 组输入，检查两个标量的位模式、六个输入字段、单次调用、全部输出字节，以及同址、重叠和分离布局的带守卫存储。四种标量 ABI 修改和共享的 22 种导入/ABI 修改均被拒绝。位操作替身验证物理参数和输入快照，不是平移数学判据或原始机器码执行。
 
+`NativeFloatingReturnProof.HFAResultFieldsNeedTheExactCompleteDefinedCall` 覆盖九个字段选择及十七种调用、载体、宽度、偏移或 SSA 修改拒绝案例。`HFAFieldExtractionNeedsADominatingCall` 拒绝来自兄弟路径的生产者。`NativeSourceHints.HFAFieldTypeRequiresCurrentCallAndFrameProofForPublication` 提升五条指令的 ARM64 调用者，按推断的标量结果重新提升并检查源码发布门槛；错误提供者或缺少 LR/SP 恢复均被拒绝。这验证源码类型与投影行为，不是原始机器码正文执行。
+
 CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-scheduling.md)。
+
+`SwiftOnceSources.FoldedObjCGetterTailsExecuteOnceAndRetainsAtO0AndO2` 折叠实际 ARM64/x64 返回尾部，覆盖合并或分离的 retain 调用、独立或内联谓词，再以运行时替身在 O0/O2 执行输出 C。检查结果位、一次初始化、调用顺序及缓存值变化。`FoldedObjCGetterTailsRevalidateCurrentStorageAndCalls` 在保留旧计划时仍拒绝宽度、顺序、内建操作、存储、结果、调用及当前导入修改。这是受控源码与运行时替身检查，不是原始 WMF 机器码或原生 Swift 运行时执行。
+
+`SourceFrameAnalysis.CompleteOutput*` 覆盖完整和较短前缀、各返回路径合并、SDK 尾调用写入、缺写字节、指针逃逸及载体限制。调用方用例拒绝缺失或过短证明、错位、越过栈帧边界、覆盖保存寄存器、别名、后续写入失效和存活不透明值重叠。`NativeSourceHints.CompleteNativeOutput*` 重放汇编生成的 ARM64 生产方和消费方，要求完整 SDK 输入范围，并拒绝过期代码、控制流、ABI、审计、提供方和调用实例证据。这些检查验证字节初始化和源码门禁，不执行原始机器函数，也不证明原生逻辑返回值。
+
+`MedCallingConvValueFlow.FPInputsFollowOnlyAuthenticatedCallPrefixes` / `NativeSourceHints.PreservedFPPrefixesRetainAllEntryInputsAfterSDKCalls`: 保留前缀回归检查三个有效读取和十九个被拒绝的载体、前缀、调用归属及未消费值用例。汇编生成的 ARM64 调用方在 SDK 调用后保留全部四个入口 double 低位通道；重新提升检查完整参数 ABI 和源码门禁。未修改的已获准发布 WMF `0x36350` 方法还在 O0、O2 各通过 2048 例，与独立原生 CoreGraphics 翻转、平移、归一化、连接及应用表达式比较全部 32 字节结果，并检查接收者、选择器和输入保护区，覆盖零、负数、无穷和 NaN 尺寸。未执行原始 WMF 机器函数。

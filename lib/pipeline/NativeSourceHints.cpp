@@ -1,11 +1,13 @@
 #include "neverd/pipeline/NativeSourceHints.h"
 
+#include "../loader/MachO/ImmutableNativeFrame.h"
 #include "../loader/Swift/SwiftBooleanProjection.h"
 #include "../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "../loader/Swift/SwiftMangledClassMethodABI.h"
 #include "../loader/Swift/SwiftMangledValueConstructorABI.h"
 #include "NativeSourceFloatingReturn.h"
 #include "NativeSourceIntegerPrefixReturn.h"
+#include "NativeSourceOutputFrame.h"
 #include "NativeSourcePreservation.h"
 
 #include "neverd/ir/SourceABI.h"
@@ -54,14 +56,135 @@ nativeSourceCalleeContracts(const BinaryImage &Image,
   for (const auto &Med : Result.MedFuncs)
     if (auto It = Contracts.CurrentCallees.find(Med.Entry);
         It != Contracts.CurrentCallees.end() && Med.SourceTypeHint &&
-        Med.SourceParametersBound)
+        Med.SourceParametersBound) {
       It->second.Signature = &*Med.SourceTypeHint;
+      It->second.Med = &Med;
+    }
   for (const auto &Audit : Result.FunctionAudits)
     if (auto It = Contracts.CurrentCallees.find(Audit.Entry);
         It != Contracts.CurrentCallees.end())
       It->second.Audit = &Audit;
   return Contracts;
 }
+
+namespace detail {
+std::optional<SourceFrameEffects>
+nativeOutputFrameEffects(const BinaryImage &Image,
+                         const SourceCallTypeHint &Binding,
+                         const NativeSourceCalleeContracts *Callees) {
+  if (!Callees || Callees->SourceImage != &Image ||
+      Binding.CallKind != SourceCallTypeHint::Kind::Native ||
+      Binding.DoesNotReturn || Binding.WeakImport ||
+      Binding.Signature.Origin !=
+          SourceFunctionTypeHint::OriginKind::NativeAnalysis ||
+      !Image.isCodeAddress(Binding.TargetAddress))
+    return std::nullopt;
+  const auto Found = Callees->CurrentCallees.find(Binding.TargetAddress);
+  if (Found == Callees->CurrentCallees.end())
+    return std::nullopt;
+  const auto &C = Found->second;
+  if (!C.Low || !C.Med || !C.Signature || !C.Audit ||
+      C.Low->Entry != Binding.TargetAddress || C.Med->Entry != C.Low->Entry ||
+      !C.Med->SourceTypeHint || !C.Med->SourceParametersBound ||
+      !completeNativeAudit(C.Low->Entry, *C.Audit) ||
+      C.Low->DecodedInstructionCount != C.Audit->DecodedInstructions ||
+      !equalSourceABIs(*C.Signature, *C.Med->SourceTypeHint) ||
+      !equalSourceABIs(*C.Signature, Binding.Signature))
+    return std::nullopt;
+  const auto &Signature = *C.Signature;
+  if (Signature.Architecture != Arch::AArch64 ||
+      Signature.Convention != SourceFunctionTypeHint::ConventionKind::C ||
+      !Signature.ReturnType || Signature.ReturnType->Kind != NdTypeKind::Void)
+    return std::nullopt;
+  std::optional<size_t> Output;
+  for (size_t I = 0; I != Signature.Parameters.size(); ++I) {
+    const auto &P = Signature.Parameters[I];
+    if (!P.Type || P.Type->Size != 8 || P.IndirectByValue ||
+        !P.Components.empty() ||
+        P.TheRole != SourceParameterTypeHint::Role::Ordinary)
+      return std::nullopt;
+    if (P.Type->Kind == NdTypeKind::Ptr) {
+      if (Output || P.Location.Kind != SourceABICarrierKind::IntegerRegister ||
+          P.Location.ValueBytes != 8)
+        return std::nullopt;
+      Output = I;
+    } else if (P.Type->Kind != NdTypeKind::Float ||
+               P.Location.Kind != SourceABICarrierKind::FloatingRegister) {
+      return std::nullopt;
+    }
+  }
+  size_t Budget = 262144;
+  if (!Output || !immutableNativeFrameMachineMatches(Image, *C.Low, Budget))
+    return std::nullopt;
+  const auto Current = buildObjCSourceCallHints(Image, *C.Low);
+  NativeSourceCalls Calls;
+  for (const auto &B : C.Med->Blocks)
+    for (const auto &Op : B.Ops) {
+      if (!Budget)
+        return std::nullopt;
+      --Budget;
+      if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+        continue;
+      if (Op.Opcode != NdOp::CALL || !Op.NumInputs || !Op.Inputs[0].isConst() ||
+          !Op.SourceCallHint || !Op.CallSiteId || Op.DoesNotReturn ||
+          Op.PreservesCallerSaved)
+        return std::nullopt;
+      const auto &H = *Op.SourceCallHint;
+      const auto Expected = Current.find(Op.Addr);
+      if (Expected == Current.end() || H.DoesNotReturn || H.WeakImport ||
+          H.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall ||
+          Expected->second.CallKind != H.CallKind ||
+          Expected->second.TargetAddress != H.TargetAddress ||
+          Expected->second.TargetName != H.TargetName ||
+          Expected->second.Signature.Origin != H.Signature.Origin ||
+          !equalSourceABIs(Expected->second.Signature, H.Signature) ||
+          Op.NumInputs != sourceABIParameters(H.Signature).size() + 1)
+        return std::nullopt;
+      const auto Effects = darwinMatrixSourceFrameEffects(Image, H);
+      if (!Effects)
+        return std::nullopt;
+      if (Op.Inputs[0].Size != 8 || !H.Signature.ReturnType ||
+          Op.Output.Size != H.Signature.ReturnType->Size)
+        return std::nullopt;
+      const auto Physical = sourceABIParameters(H.Signature);
+      for (size_t I = 0; I != Physical.size(); ++I)
+        if (Op.Inputs[I + 1].Size != Physical[I].Location.ValueBytes)
+          return std::nullopt;
+      NativeSourceCallContract Call;
+      Call.Signature = &H.Signature;
+      static_cast<SourceFrameEffects &>(Call) = *Effects;
+      if (!Calls
+               .emplace(NativeSourceCallKey{Op.Addr, Op.OriginSeq, Op.Opcode,
+                                            Op.Inputs[0].ConstVal},
+                        Call)
+               .second)
+        return std::nullopt;
+    }
+  std::set<NativeSourceCallKey> Seen;
+  for (const auto &B : C.Low->Blocks)
+    for (const auto &Op : B.Ops) {
+      if (!Budget)
+        return std::nullopt;
+      --Budget;
+      if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+        continue;
+      const auto Site = nativeSourceCallKey(Op);
+      if (!Site || !Calls.count(*Site) || !Seen.insert(*Site).second)
+        return std::nullopt;
+    }
+  if (Seen.size() != Calls.size())
+    return std::nullopt;
+  const auto Bytes = sourceFrameCompleteOutputBytes(*C.Low, Image.Arch, Calls,
+                                                    Signature, *Output);
+  if (!Bytes)
+    return std::nullopt;
+  SourceFrameEffects Result;
+  Result.WritableFrameParameters.emplace(*Output, *Bytes);
+  Result.InitializesFrameParameters.insert(*Output);
+  return sourceFrameEffectsMatchABI(Result, Signature) ? std::optional(Result)
+                                                       : std::nullopt;
+}
+} // namespace detail
 
 bool validateSwiftValueConstructorBindings(
     const BinaryImage &Image, const LowFunc *Low, const MedFunc &Med,
@@ -852,6 +975,7 @@ bool hasNativeSourceStateContract(
     }
   }
   size_t Remaining = 262144;
+  bool OutputCallerReplayed = false;
   for (const auto &Block : Med.Blocks)
     for (const auto &Op : Block.Ops) {
       if (!Remaining--)
@@ -1046,6 +1170,16 @@ bool hasNativeSourceStateContract(
             Op.PreservesCallerSaved)
           return false;
         static_cast<SourceFrameEffects &>(Contract) = *Effects;
+      }
+      if (StaticNative && Contract.empty()) {
+        if (const auto Effects =
+                detail::nativeOutputFrameEffects(Image, Binding, Callees)) {
+          if (!OutputCallerReplayed &&
+              !immutableNativeFrameMachineMatches(Image, *Low, Remaining))
+            return false;
+          OutputCallerReplayed = true;
+          static_cast<SourceFrameEffects &>(Contract) = *Effects;
+        }
       }
       // Hasher's 72-byte value is written through x8, then passed inout to
       // String.hash and _finalize. Revalidate its current import and ABI.

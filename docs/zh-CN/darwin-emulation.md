@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 2fb61c4299cd9e0d2292a80e45a5655cf97a5598165087d2d61c18176bd13248 -->
+<!-- i18n-source: 34d34e187ac46720dfc5b061a28605b13c368d0ab705c3d1a43465497ac1b4fe -->
 
 [← 文档索引](README.md)
 
@@ -106,7 +106,6 @@ DarwinMemory 持有映射租约；所有映射区间解除前，write、truncate
 ```
 
 
-
 ## 稀疏文件定位
 
 普通文件配置 mutation_policy 且分配状态仍已知时，lseek 支持 SEEK_HOLE=3、SEEK_DATA=4，读取与 stat 相同的单位账本。首次修改前初始文件明确为密集分配，零字节也不表示洞。输入位于所求类型单位内时返回原偏移，否则返回下一匹配单位起点；末尾洞从 EOF 开始。负偏移返回 EINVAL，到达/越过 EOF（含空文件）或找不到后续数据返回 ENXIO=6。错误保留游标，成功只改变当前 open 描述及其 dup；独立 open 保留自己的游标，重开读取当前分配。元数据、标志和字节不变，whence 高位忽略。
@@ -121,7 +120,7 @@ DarwinMemory 持有映射租约；所有映射区间解除前，write、truncate
 
 `unlink(10)` / `unlinkat(472)` 删除现有普通名称；普通文件删除仅接受低 32 位 flags=0 或 `AT_SYMLINK_NOFOLLOW_ANY=0x800`。未知位先返回 EINVAL；AT_REMOVEDIR 使用下述受限目录删除；DATALESS、SYSTEM_DISCARDED 仍不支持。共用解析器保留路径故障、目录 FD、CWD 和绝对路径的优先级；缺失为 ENOENT，文件后斜杠为 ENOTDIR，普通目录为 EPERM，纯斜杠根路径为 EISDIR，末尾带 `.` / `..` 的根路径为 EBUSY。原生探针也检查末尾 `.` / `..`。
 
-名称删除后，旧 FD、dup、独立打开对象仍保留数据、游标和状态标志，新打开返回 ENOENT；隐式父目录与 CWD 继续存在。F_GETPATH 保留已捕获旧路径，与原生对照一致。写授权属于文件对象。只有所有描述符和最后一段映射均释放后，close/dup2 或下一次修改才回收当前文件字节预算；初始路径/引用费用仍保留。权限强制检查、跨父目录重命名、硬链接、初始目录删除仍待实现。
+名称删除后，旧 FD、dup、独立打开对象仍保留数据、游标和状态标志，新打开返回 ENOENT；隐式父目录与 CWD 继续存在。F_GETPATH 保留已捕获旧路径，与原生对照一致。写授权属于文件对象。只有所有描述符和最后一段映射均释放后，close/dup2 或下一次修改才回收当前文件字节预算；初始路径/引用费用仍保留。权限强制检查、跨父目录重命名与硬链接仍待实现；初始目录删除采用下文的显式授权。
 
 成功删除使直接父目录的 stat/列举观察失效，涵盖旧/新 FD、dup 和路径查询；stat/readdir/SEEK_END 在复制和移动游标前停止。read/pread 仍为 EISDIR，SET/CUR、F_GETPATH、fchdir、相对查找继续可用。有仍可信的文件修改策略时，仅将 nlink 改为 0、ctime 改为固定时间，保留 mtime/atime、数据和分配；后续写入不能恢复 nlink=1。缺少策略或曾发生整段 EFAULT 时，完整文件元数据仍未知。失败不改变状态。原生 `unlinked-file` 比较名称/描述符行为；策略时间与目录失效是明确的模型规则。
 
@@ -161,14 +160,13 @@ O_CREAT 配合 `O_EXCL=0x800` 对已有文件或目录先返回 EEXIST，不截�
 
 ## 同一父目录中的普通文件重命名
 
-`rename(128)`、`renameat(465)`、`renameatx_np(488)` 可在同一明确可修改的直接父目录中改名或覆盖普通文件。同名空操作也需要授权，通过后保留全部观察。低 32 位 flags 支持 0 或 `RENAME_NOFOLLOW_ANY=0x10`；未知位及 EXCL+SWAP 在读取路径前返回 EINVAL，其余已知标志明确不支持。共用解析器保留源先于目标、目录 FD、原始斜杠与点组件的错误顺序。目录源立即报告不支持；普通文件目标的末尾点/双点在解析成功后、挂载与授权检查前返回 EINVAL，涵盖嵌套及其他父目录。缺失或非目录祖先仍优先报原错误；获准父目录内的普通目录目标为 EISDIR。
+`rename(128)`、`renameat(465)`、`renameatx_np(488)` 可在同一明确可修改的直接父目录中改名或覆盖普通文件。同名空操作也需要授权，通过后保留全部观察。低 32 位 flags 支持 `RENAME_EXCL=0x4`、`RENAME_NOFOLLOW_ANY=0x10` 及其组合。未知位及 EXCL+SWAP 在读取路径前返回 EINVAL；SECLUDE 和 SWAP 仍不支持。这里的空操作和 EISDIR 规则适用于未指定 EXCL 的调用，EXCL 的独立契约见下文。共用解析器保留源先于目标、目录 FD、原始斜杠与点组件的错误顺序。目录源立即报告不支持；普通文件目标的末尾点/双点在解析成功后、挂载与授权检查前返回 EINVAL，涵盖嵌套及其他父目录。缺失或非目录祖先仍优先报原错误；获准父目录内的普通目录目标为 EISDIR。
 
 源对象的独立打开、dup 和旧 FD 的 `F_GETPATH` 一起跟随新名；被覆盖对象保留最后关联路径、字节、游标、标志与映射寿命。目标的写授权或元数据不会转移给源。可信策略只改各自 ctime，被覆盖者另设 nlink=0；身份、所有权、创建时间、数据和分配归原对象。缺少策略或整段 EFAULT 后完整元数据仍未知。实际改名使父目录 stat/列举观察失效，同名空操作不改变观察。
 
 改名不消耗新 inode、目录项或空闲 FD。新规范路径/NUL 替换源的动态路径费用，初始输入费用始终保留。只有没有旧描述符和映射持有的目标才能提前计入可回收容量，并仅回收一次；部分 unmap 仍保留整对象费用。规范路径达到 1024 字节或总量超过 16 MiB 时，在修改名称、元数据和描述符前停止。
 
 跨父目录、已知设备冲突、目录移动、swap/exclusive/seclude 和权限强制检查仍待实现。相同 stat 设备号不能证明同一挂载，模型不会猜测 EXDEV。原生/来宾 `renamed-file` 对照身份、路径、覆盖和映射；策略时间与预算属于显式虚拟规则。
-
 
 ## 目录与相对路径
 
@@ -210,7 +208,6 @@ O_CREAT 配合 `O_EXCL=0x800` 对已有文件或目录先返回 EEXIST，不截�
 [XNU getdirentries64](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [dirent ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent.h), [extended flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent_private.h).
 
 目录枚举验收（2026-10-05，Release）：Darwin 共 498 项，246 通过、252 项因后端不可用跳过、零失败；ARM64 HVF 必需项 63/63 实际执行。11 个原生 macOS 程序、40 项公共 C/CLI/报告（无跳过）、Python 五种来宾组合各八种文件场景和 66 项验收脚本通过，计数有重叠。证据：`build-hvf-arm64/darwin-dirents-merged-evidence/`。Intel HVF Actions 保持暂停；其他原生后端和 iOS 真机未验收。
-
 
 ## 私有文件映射
 
@@ -266,7 +263,7 @@ Intel HVF 的 10 项原生 transport 和全部 26 个 Darwin 工作负载均已�
 [HVF 验证记录](macos-hvf.md)，不能把内核参考程序成功当作后端通过。
 
 新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
-ARM64 三个平台共 102 项，x64 的 macOS 和 Simulator 共 68 项。
+ARM64 三个平台共 108 项，x64 的 macOS 和 Simulator 共 72 项。
 每种平台都必须执行 `LC_MAIN` 和独立编写的 `LC_UNIXTHREAD` 程序；源码清单回归确保
 以后新增的 Darwin 进程用例也进入必需集合。
 macOS 本机构建还会把同一份自编目标文件链接为宿主参考程序，对照返回、退出、内存保护/
@@ -541,7 +538,7 @@ Release Darwin 共971项：575通过、396因后端不可用跳过、零失败�
 
 所有调用共用逐组件解析器。mkdir 可创建末尾仅跟斜杠的缺失名字；缺失祖先后跟点/双点仍为 ENOENT，普通文件祖先为 ENOTDIR，已存在名字为 EEXIST。相对路径沿用 FD/CWD，绝对路径忽略 dirfd，字符串故障先于相对 FD 错误。创建不需要可用 FD；路径、授权、字节/条目预算或内存传输拒绝不发布名字、不使父观察失效。
 
-`rmdir(137)` 及带 AT_REMOVEDIR(0x80) 的 `unlinkat(472)` 可删除本进程创建的空目录，可同时带 AT_SYMLINK_NOFOLLOW_ANY(0x800)。未知低32位标志先返回 EINVAL；DATALESS、SYSTEM_DISCARDED 仍不支持。保留已知路径/类型/根目录错误；初始目录删除为 UnsupportedService。新目录末尾点为 EINVAL，从仍有名字的目录出发的双点或非空目标为 ENOTEMPTY。目录 FD（含 dup）或 CWD 保留原目录对象，不再阻止删除。已 unlink 的普通文件 FD/映射不算目录项；原生对照确认其字节、inode 与最后链接 F_GETPATH 在父目录删除及名字复用后保持。
+`rmdir(137)` 及带 AT_REMOVEDIR(0x80) 的 `unlinkat(472)` 可删除本进程创建的空目录，可同时带 AT_SYMLINK_NOFOLLOW_ANY(0x800)。未知低32位标志先返回 EINVAL；DATALESS、SYSTEM_DISCARDED 仍不支持。保留已知路径/类型/根目录错误；没有 removable 授权的初始目录删除仍为 UnsupportedService。已准入目录末尾点为 EINVAL，从仍有名字的目录出发的双点或非空目标为 ENOTEMPTY。目录 FD（含 dup）或 CWD 保留原目录对象，不再阻止删除。已 unlink 的普通文件 FD/映射不算目录项；原生对照确认其字节、inode 与最后链接 F_GETPATH 在父目录删除及名字复用后保持。
 
 每个新目录以规范路径加 NUL 和一个条目计入共享16 MiB/256条目预算。已删除目录不可达后仅退回自身费用，保留孤立文件字节与映射租约。成功修改使直接父目录完整 stat/枚举观察失效，失败则保留。即使配置普通文件创建策略，新目录元数据和快照仍未知。原创 `directory-mutations` 经原生 macOS、五种客户机及 C++/C/CLI/Python 验证嵌套创建、重命名、unlink、删除与孤立对象复用。
 
@@ -562,3 +559,31 @@ Release Darwin 共1,017项：609通过、408因后端不可用跳过、零失败
 Release Darwin 共1,051项：631通过、420因后端不可用跳过、零失败；105项必需 ARM64 HVF 全部执行。定向98通过、12跳过；初始直接测试64/64，含14项新增及持有删除更新。公开 C/CLI/报告183/183，含133项 Darwin 输入对照；Python 五种配置18.691秒通过，原生25/25、脚本66/66。初始定向通过后，额外原生重命名探针纠正末尾点错误顺序；原始源文件、结果和先前快照保留。主代理完成源码/证据核对，最终独立审查不可用。计数重叠、时限不变；完整 GitHub CI 与 iOS 真机另验，Intel HVF Actions 暂停。
 
 `build-hvf-arm64/directory-lifetime-validation-summary.json`, `directory-lifetime-darwin-final-evidence/`, `directory-lifetime-focused-final.xml`, `directory-lifetime-public.xml`, `directory-lifetime-native/`, `directory-lifetime-before-rename-fix/`.
+
+## 显式准入的初始目录删除
+
+目录项可使用严格布尔值 `"removable": true`，C++ 对应 `DarwinFileOptions::RemovableDirectories`。这声明目标是只有一个命名空间身份的普通非挂载目录。目标必须是显式配置的初始 `directories` 项且不是根，其直接父目录必须显式允许修改。已知特殊模式/标志、inode 别名（包括目录快照中的身份）或父子已知设备号冲突均拒绝准入。设备号相同本身不能证明没有挂载。省略或 false 保持不支持，其他 JSON 类型非法；此选项不提供通用权限或挂载模型。
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/empty","removable":true}],"working_directory":"/empty"}}
+```
+
+删除要求当前命名空间为空；初始隐式子目录不会因最后一个原始文件被 unlink 而消失。成功删除使对象及直接父目录的完整 stat/枚举失效，旧 FD/dup/CWD 仍保留原对象和父链。删除的初始名字不会由不可变输入重新出现；同名新文件或目录拥有独立身份，不继承旧元数据或快照，调用方输入保持不变。
+
+每个 removable 引用的路径和 NUL 计入初始 16 MiB 预算。初始目录项、路径、引用和快照在删除及最终关闭后仍保留费用，也不返还 256 项上限中的初始项；新对象继续单独计算动态费用。原创 `initial-directory-removal` 在持有原生测试已有空目录时删除它，先重建为文件再建为目录，验证仅 CWD 保留的行为并恢复空目录；同一程序通过 C++/C/CLI/Python 覆盖五种来宾组合。
+
+### 初始目录删除验证，2026-10-06
+
+最终 Release 源码核对了 1,089 项 Darwin 注册测试：657 项通过、432 项因后端不可用跳过、零失败；108 项必需的 ARM64 HVF 测试全部执行。聚焦验证为 27/39 通过、12 项不可用跳过，新增的仅快照别名检查也通过。公共 C/CLI/报告测试为 191/191；Python 在 76.276 秒内覆盖五种组合；原生独立工作负载 26/26、证据运行器测试 66/66。初次测试中不一致的 inode/快照输入已修正，失败记录仍保留。
+
+此前两轮完整验证分别在既有文件/重命名用例中出现 1 次和 3 次超时；带诊断的验证复现了一次文件超时，实际耗时 5.008 秒、进程 CPU 用时 0.171 秒。相同方法及旧程序对照均通过，但延迟根因仍未确定，最终通过不代表超时稳定性已解决。临时诊断已移除，程序文件哈希已恢复，客体原有 5 秒限时未变。已完成主代理源码/证据核查；独立审查不可用。计数相互重叠；完整 GitHub CI、物理 iOS 和已暂停的 Intel HVF Actions 不属于本地验收。
+
+`build-hvf-arm64/initial-directory-validation-summary.json`, `initial-directory-darwin-restored-evidence/`, `initial-directory-public.xml`, `initial-directory-native-evidence/`, `initial-directory-timeout-probe/`.
+
+## 普通文件的独占重命名
+
+完成源和目标查找后，RENAME_EXCL 对不同的已有文件或目录返回 EEXIST，先于挂载和命名空间修改检查。更早的路径错误仍优先，包括末尾点/双点的 EINVAL。目标不存在时复用同一个有界重命名事务，保留已打开描述、游标、标志、映射租约和配置的元数据变化。同对象独占重命名仍明确不支持：原生结果依赖文件系统大小写敏感性，精确目录键无法证明这一属性。大小写折叠、目录源重命名、SECLUDE 和 SWAP 尚未纳入。已有原生 `renamed-file` 工作负载现验证拒绝时元数据不变，以及 EXCL|NOFOLLOW_ANY 成功移动，覆盖原生 macOS 和 C++/C/CLI/Python。
+
+验证，2026-10-06（Release）：1,097 项 Darwin 注册测试，665 项通过、432 项因后端不可用跳过、零失败；108 项必需 ARM64 HVF 测试全部执行。聚焦测试 44 项通过、12 项不可用跳过，含八项新增直接测试。公共 C/CLI/报告 191/191；Python 五种组合耗时 19.241 秒。独立原始调用探针通过 26 项检查。首次完整原生验证中，既有 return 用例超时，其余 25 项（含 renamed-file）通过。同一未修改程序的 return 三次复查耗时 0.014–0.034 秒，随后全部 26 项原生用例在原有 5 秒限时内通过。初次失败保留且根因未明；这些结果和此前最终 HVF 通过均不构成延迟稳定性保证。已完成主代理核查，独立审查不可用。计数重叠；物理 iOS、完整 GitHub CI 和暂停的 Intel HVF Actions 不属于本地验收。
+
+`build-hvf-arm64/exclusive-rename-validation-summary.json`, `exclusive-rename-darwin-evidence/`, `exclusive-rename-public.xml`, `exclusive-rename-native-evidence/`, `exclusive-rename-native-rechecked-summary.json`, `exclusive-rename-probe/`.

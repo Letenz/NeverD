@@ -1484,4 +1484,12 @@ block とコピーの公開テストでは、独立した二つの 48 バイト�
 
 `DarwinIndirectRecordCalls.AffineTranslatePreservesScalarBitsAndSnapshotsAliasedInput` は O0、O2 でそれぞれ 2560 ケースを実行し、二つのスカラーのビット列、六つの入力フィールド、一回の呼び出し、全出力バイト、および同一・重複・分離配置の保護付きストレージを検査する。スカラー ABI の四つの変更と共有の 22 個のインポート／ABI 変更を拒否する。ビット単位のスタブは物理引数と事前コピーを検証するもので、平行移動の数学的オラクルや元の機械語の実行ではない。
 
+`NativeFloatingReturnProof.HFAResultFieldsNeedTheExactCompleteDefinedCall` は九つのフィールド選択と、呼び出し・キャリア・幅・オフセット・SSA の十七の拒否例を検査する。`HFAFieldExtractionNeedsADominatingCall` は兄弟経路の生成元を拒否する。`NativeSourceHints.HFAFieldTypeRequiresCurrentCallAndFrameProofForPublication` は五命令の ARM64 呼び出し元をリフトし、推論したスカラー結果を再リフトして公開条件を確認する。誤った提供元や LR/SP 復元の欠如は拒否される。これらはソース型と投影の検証であり、元の機械語本体の実行ではない。
+
 CPU0 の明示的プリエンプション、仮想時計と制約は[ドライバースケジューリング](driver-scheduling.md)を参照してください。
+
+`SwiftOnceSources.FoldedObjCGetterTailsExecuteOnceAndRetainsAtO0AndO2` は実際の ARM64/x64 戻り末尾を畳み込み、結合または別々の retain 呼び出しと、独立またはインラインの述語を検査し、生成 C をランタイムのスタブで O0/O2 実行する。結果ビット、一度の初期化、呼び出し順序、キャッシュ値の変更を確認する。`FoldedObjCGetterTailsRevalidateCurrentStorageAndCalls` は保存済み計画があっても幅・順序・組み込み操作・格納領域・結果・呼び出し・現在のインポートの変更を拒否する。制御されたソースとスタブの検査であり、元の WMF 機械語やネイティブ Swift ランタイムの実行ではない。
+
+`SourceFrameAnalysis.CompleteOutput*` は完全・短い先頭領域、全復帰経路の合流、SDK 末尾呼び出しの書き込み、欠落バイト、ポインター逸出、ABI キャリア制約を確認する。呼び出し側のケースは証明の欠落・不足、不整列、フレーム境界超過、保存レジスターとの重なり、別名、後続書き込みによる無効化、生存する不透明値との重なりを拒否する。`NativeSourceHints.CompleteNativeOutput*` は組み立てた ARM64 の生成側と消費側を再検証し、完全な SDK 入力領域を要求して、古いコード、CFG、ABI、監査、提供元、呼び出し箇所の証拠を拒否する。これはバイト初期化とソース受理の確認であり、元の機械コード本体の実行やネイティブの論理戻り値の証明ではない。
+
+`MedCallingConvValueFlow.FPInputsFollowOnlyAuthenticatedCallPrefixes` / `NativeSourceHints.PreservedFPPrefixesRetainAllEntryInputsAfterSDKCalls`: 保留プレフィックスの回帰テストは三つの有効な読み取りと、キャリア、プレフィックス、呼び出し所有情報、未使用値の十九の拒否ケースを確認する。組み立てた ARM64 呼び出し側は SDK 呼び出しを跨いで四つの入口 double レーンを保ち、再リフトで完全なパラメーター ABI とソース受理を確認する。未変更の受理済み WMF `0x36350` メソッドも、独立したネイティブ CoreGraphics の反転・平行移動・正規化・合成・適用式に対して O0 と O2 で各 2048 ケースを通過する。結果の全 32 バイト、受信者・セレクター、入力保護領域を確認し、寸法のゼロ、負値、無限大、NaN を含む。元の WMF 機械コード本体は実行しない。

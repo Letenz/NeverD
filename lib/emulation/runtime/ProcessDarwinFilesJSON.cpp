@@ -236,7 +236,8 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         if (!D ||
             D->size() != 1 + unsigned(bool(D->get(field::FileMetadata))) +
                              unsigned(bool(D->get(field::DirectoryContents))) +
-                             unsigned(bool(D->get(field::DirectoryMutable))))
+                             unsigned(bool(D->get(field::DirectoryMutable))) +
+                             unsigned(bool(D->get(field::DirectoryRemovable))))
           return invalid(Name);
         auto Path = D->getString(field::Path);
         if (!Path || Path->size() >= Remaining ||
@@ -249,6 +250,13 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
             return invalid(field::DirectoryMutable);
           if (*Mutable)
             Out.MutableDirectories.insert(Path->str());
+        }
+        if (const auto *R = D->get(field::DirectoryRemovable)) {
+          auto Removable = R->getAsBoolean();
+          if (!Removable)
+            return invalid(field::DirectoryRemovable);
+          if (*Removable)
+            Out.RemovableDirectories.insert(Path->str());
         }
         if (const auto *C = D->get(field::DirectoryContents)) {
           auto Parsed = directoryContents(*C);

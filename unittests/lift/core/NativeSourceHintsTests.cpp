@@ -1,4 +1,5 @@
 #include "../../../lib/loader/Swift/SwiftBooleanProjection.h"
+#include "../../../lib/pipeline/NativeSourceOutputFrame.h"
 #include "../../../lib/pipeline/NativeSourcePreservation.h"
 #include "../../../lib/sdk/capi/ObjCNativeDependencies.h"
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
@@ -88,7 +89,351 @@ struct HFAImportVeneerFixture {
                                             {Entry});
   }
 };
+
+SourceFunctionTypeHint nativeOutputSignature() {
+  SourceFunctionTypeHint Signature;
+  Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Signature.ReturnType = NdType::makeVoid();
+  Signature.Parameters = {{"first", NdType::makeFloat(8)},
+                          {"second", NdType::makeFloat(8)},
+                          {"out", NdType::makePtr(NdType::makeVoid())}};
+  std::string Error;
+  EXPECT_TRUE(assignDarwinScalarSourceABI(Signature, Arch::AArch64, Error))
+      << Error;
+  Signature.Parameters.back().Location.RegisterOffset = a64reg::X8;
+  return Signature;
+}
+
+struct NativeOutputFixture : HFAImportVeneerFixture {
+  static constexpr va_t Caller = 0x1040, Helper = 0x1080;
+  static constexpr const char *Provider =
+      "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+  NativeOutputFixture(bool Complete = true)
+      : HFAImportVeneerFixture("_CGAffineTransformInvert", Provider) {
+    // Assembled ARM64: the helper writes three d0/d1 pairs through x8.
+    // Its caller lends 48 private bytes, then consumes them through the SDK
+    // affine bridge and forwards its explicit entry result address.
+    const uint32_t CallerWords[] = {
+        0xd10143ff, 0xa90353f3, 0xa9047bfd, 0xaa0803f3, 0x910003e8,
+        0x9400000b, 0x910003e0, 0xaa1303e8, 0x97ffffe8, 0xa9447bfd,
+        0xa94353f3, 0x910143ff, 0xd65f03c0};
+    const uint32_t HelperWords[] = {0x6d000500, 0x6d010500, 0x6d020500,
+                                    0xd65f03c0};
+    for (unsigned I = 0; I != std::size(CallerWords); ++I)
+      llvm::support::endian::write32le(Image.Segments[0].Data.data() + Caller -
+                                           Entry + 4 * I,
+                                       CallerWords[I]);
+    for (unsigned I = 0; I != std::size(HelperWords); ++I)
+      llvm::support::endian::write32le(Image.Segments[0].Data.data() + Helper -
+                                           Entry + 4 * I,
+                                       HelperWords[I]);
+    if (!Complete)
+      llvm::support::endian::write32le(
+          Image.Segments[0].Data.data() + Helper - Entry + 8, 0xd65f03c0);
+    Image.Symbols.push_back(
+        {"_native_output_consumer", Caller, sizeof(CallerWords), true});
+    Image.Symbols.push_back({"_native_output_producer", Helper,
+                             Complete ? sizeof(HelperWords) : 12, true});
+    const auto Signature = nativeOutputSignature();
+    Options.SourceTypeHints = {{Caller, Signature}, {Helper, Signature}};
+    Options.OnlyFunctionEntries = {Caller, Helper};
+    Result = Pipeline().run(Image, Context, Options);
+  }
+  SourceCallTypeHint binding() const {
+    SourceCallTypeHint B;
+    B.CallKind = SourceCallTypeHint::Kind::Native;
+    B.TargetAddress = Helper;
+    B.Signature = Options.SourceTypeHints.at(Helper);
+    return B;
+  }
+};
+
+struct NativeSDKOutputFixture : HFAImportVeneerFixture {
+  static constexpr va_t Helper = 0x1080;
+  NativeSDKOutputFixture()
+      : HFAImportVeneerFixture("_CGAffineTransformMakeScale",
+                               NativeOutputFixture::Provider) {
+    // Assembled b 0x1000 at 0x1080: the current SDK contract completely writes
+    // its 48-byte indirect result through the explicit entry x8 parameter.
+    llvm::support::endian::write32le(
+        Image.Segments[0].Data.data() + Helper - Entry, 0x17ffffe0);
+    Image.Symbols.push_back({"_native_sdk_output", Helper, 4, true});
+    Options.OnlyFunctionEntries = {Helper};
+    Options.SourceTypeHints = {{Helper, nativeOutputSignature()}};
+    Result = Pipeline().run(Image, Context, Options);
+  }
+  SourceCallTypeHint binding() const {
+    SourceCallTypeHint B;
+    B.CallKind = SourceCallTypeHint::Kind::Native;
+    B.TargetAddress = Helper;
+    B.Signature = Options.SourceTypeHints.at(Helper);
+    return B;
+  }
+};
 } // namespace
+
+TEST(NativeSourceHints,
+     CompleteNativeOutputReplaysMachineAndFeedsSDKFrameInput) {
+  for (bool Complete : {true, false}) {
+    SCOPED_TRACE(Complete);
+    NativeOutputFixture F(Complete);
+    ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+    const auto Contracts = nativeSourceCalleeContracts(F.Image, F.Result);
+    const auto Effects =
+        detail::nativeOutputFrameEffects(F.Image, F.binding(), &Contracts);
+    ASSERT_TRUE(Effects);
+    EXPECT_EQ(Effects->WritableFrameParameters.at(2), Complete ? 48U : 32U);
+    EXPECT_EQ(Effects->InitializesFrameParameters, std::set<size_t>{2});
+    const auto Current = Contracts.CurrentCallees.at(F.Caller);
+    ASSERT_TRUE(Current.Low && Current.Med && Current.Audit &&
+                Current.Signature);
+    const auto H =
+        std::find_if(F.Result.HighFuncs.begin(), F.Result.HighFuncs.end(),
+                     [](const HighFunc &HF) {
+                       return HF.Entry == NativeOutputFixture::Caller;
+                     });
+    ASSERT_NE(H, F.Result.HighFuncs.end());
+    std::map<va_t, const HighFunc *> Functions;
+    for (const auto &HF : F.Result.HighFuncs)
+      Functions.emplace(HF.Entry, &HF);
+    const auto Bound = sdk::bindObjCSourceReferences(*H, F.Image);
+    const auto Allowed = [&](const HighExpr &Call) {
+      return sdk::objcSourceCallBound(Call, F.Image, Functions);
+    };
+    // An explicit entry declaration alone does not authenticate native frame
+    // effects. Exercise the unbound caller's actual inference boundary below.
+    auto InferenceOptions = F.Options;
+    InferenceOptions.SourceTypeHints.erase(F.Caller);
+    auto Unbound = Pipeline().run(F.Image, F.Context, InferenceOptions);
+    ASSERT_TRUE(Unbound.Success) << Unbound.Error;
+    std::map<va_t, std::string> Diagnostics;
+    sdk::inferObjCNativeDependencies(F.Image, Unbound, InferenceOptions,
+                                     Diagnostics, {F.Caller});
+    EXPECT_EQ(InferenceOptions.SourceTypeHints.count(F.Caller),
+              Complete ? 1U : 0U)
+        << Diagnostics[F.Caller];
+    if (Complete) {
+      EXPECT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      EXPECT_TRUE(sdk::sourceBodyLimitation(Bound.Function, *Current.Signature,
+                                            Current.Audit, Allowed)
+                      .empty());
+      auto Relifted = Pipeline().run(F.Image, F.Context, F.Options);
+      ASSERT_TRUE(Relifted.Success) << Relifted.Error;
+      const auto Fresh = nativeSourceCalleeContracts(F.Image, Relifted);
+      const auto Replayed =
+          detail::nativeOutputFrameEffects(F.Image, F.binding(), &Fresh);
+      ASSERT_TRUE(Replayed);
+      EXPECT_EQ(*Effects, *Replayed);
+    }
+  }
+}
+
+TEST(NativeSourceHints, CompleteNativeOutputRejectsStaleCurrentEvidence) {
+  for (unsigned Mutation = 0; Mutation != 17; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    NativeOutputFixture F;
+    ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+    auto Contracts = nativeSourceCalleeContracts(F.Image, F.Result);
+    auto Binding = F.binding();
+    ASSERT_TRUE(detail::nativeOutputFrameEffects(F.Image, Binding, &Contracts));
+    auto &C = Contracts.CurrentCallees.at(F.Helper);
+    auto Low = *C.Low;
+    auto Med = *C.Med;
+    auto Audit = *C.Audit;
+    auto Signature = *C.Signature;
+    C.Low = &Low;
+    C.Med = &Med;
+    C.Audit = &Audit;
+    C.Signature = &Signature;
+    if (Mutation == 0)
+      Contracts.SourceImage = nullptr;
+    if (Mutation == 1)
+      C.Low = nullptr;
+    if (Mutation == 2)
+      C.Med = nullptr;
+    if (Mutation == 3)
+      C.Audit = nullptr;
+    if (Mutation == 4)
+      Med.SourceParametersBound = false;
+    if (Mutation == 5)
+      Audit.MedIRVerified = false;
+    if (Mutation == 6)
+      ++Audit.DecodedInstructions;
+    if (Mutation == 7)
+      Low.Blocks[0].Ops[0].Opcode = NdOp::INT_XOR;
+    if (Mutation == 8) {
+      F.Image.Segments[0].Data[F.Helper - F.Entry] ^= 1;
+    }
+    if (Mutation == 9)
+      F.Image.Segments[0].Flags =
+          F.Image.Segments[0].Flags | SegmentFlags::Writable;
+    if (Mutation == 10)
+      F.Image.Sections.push_back(F.Image.Sections[0]);
+    if (Mutation == 11)
+      F.Image.CodePtrRelocSlots.insert(F.Helper);
+    if (Mutation == 12)
+      Binding.Signature.Parameters[2].Location.RegisterOffset = a64reg::X0;
+    if (Mutation == 13)
+      Binding.Signature.Origin =
+          SourceFunctionTypeHint::OriginKind::ExplicitSource;
+    if (Mutation == 14)
+      Signature.ReturnType = NdType::makeInt(8);
+    if (Mutation == 15)
+      Binding.TargetAddress = F.Caller;
+    if (Mutation == 16)
+      Binding.WeakImport = true;
+    EXPECT_FALSE(
+        detail::nativeOutputFrameEffects(F.Image, Binding, &Contracts));
+  }
+}
+
+TEST(NativeSourceHints, CompleteNativeOutputAuthenticatesCurrentSDKTailCall) {
+  NativeSDKOutputFixture F;
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  const auto Contracts = nativeSourceCalleeContracts(F.Image, F.Result);
+  const auto Effects =
+      detail::nativeOutputFrameEffects(F.Image, F.binding(), &Contracts);
+  ASSERT_TRUE(Effects);
+  EXPECT_EQ(Effects->WritableFrameParameters.at(2), 48U);
+  EXPECT_EQ(Effects->InitializesFrameParameters, std::set<size_t>{2});
+
+  for (unsigned Mutation = 0; Mutation != 18; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = F.Image;
+    auto Current = Contracts;
+    Current.SourceImage = &Image;
+    auto &C = Current.CurrentCallees.at(F.Helper);
+    auto Med = *C.Med;
+    C.Med = &Med;
+    MedOp *Call = nullptr;
+    for (auto &B : Med.Blocks)
+      for (auto &Op : B.Ops)
+        if (Op.Opcode == NdOp::CALL)
+          Call = &Op;
+    ASSERT_TRUE(Call);
+    ASSERT_TRUE(Call->SourceCallHint);
+    auto Hint = *Call->SourceCallHint;
+    switch (Mutation) {
+    case 0:
+      Image.DyldBindSlots.at(F.Slot).Module = "/tmp/CoreGraphics";
+      break;
+    case 1:
+      Image.DyldBindSlots.at(F.Slot).WeakImport = true;
+      break;
+    case 2:
+      Image.DynInfo.NeededLibs.clear();
+      break;
+    case 3:
+      Image.ImportPtrSlots.at(F.Slot) = "_CGAffineTransformInvert";
+      break;
+    case 4:
+      Image.Segments[0].Data[0] ^= 1;
+      break;
+    case 5:
+      ++Call->OriginSeq;
+      break;
+    case 6:
+      Call->CallSiteId = 0;
+      break;
+    case 7:
+      --Call->Inputs[1].Size;
+      break;
+    case 8:
+      --Call->NumInputs;
+      break;
+    case 9:
+      --Call->Output.Size;
+      break;
+    case 10:
+      Hint.TargetName = "_CGAffineTransformMakeTranslation";
+      break;
+    case 11:
+      Hint.TargetAddress += 4;
+      break;
+    case 12:
+      Hint.Signature.ReturnLocation.RegisterOffset = a64reg::X0;
+      break;
+    case 13:
+      Call->DoesNotReturn = true;
+      break;
+    case 14:
+      Call->PreservesCallerSaved = true;
+      break;
+    case 15:
+      Hint.Signature.Origin =
+          SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      break;
+    case 16:
+      --Call->Inputs[0].Size;
+      break;
+    case 17:
+      Image.DyldBindSlots.at(F.Slot).Addend = 8;
+      break;
+    }
+    Call->SourceCallHint = std::make_shared<const SourceCallTypeHint>(Hint);
+    EXPECT_FALSE(
+        detail::nativeOutputFrameEffects(Image, F.binding(), &Current));
+  }
+}
+
+TEST(NativeSourceHints, PreservedFPPrefixesRetainAllEntryInputsAfterSDKCalls) {
+  HFAImportVeneerFixture F("_CGRectStandardize", NativeOutputFixture::Provider);
+  constexpr va_t Caller = 0x1040, Scale = 0x1010, ScaleSlot = 0x2088;
+  // Assembled ARM64: keep the four incoming rectangle lanes in v8-v11
+  // across a MakeScale call, then consume only their preserved low D views.
+  const uint32_t ScaleWords[] = {0xb0000010, 0xf9404610, 0xd61f0200};
+  const uint32_t CallerWords[] = {
+      0xd10183ff, 0x6d0327e8, 0x6d042fea, 0xa9057bfd, 0x4ea01c08, 0x4ea11c29,
+      0x4ea21c4a, 0x4ea31c6b, 0x910003e8, 0x1e6e1000, 0x1e601001, 0x97ffffe9,
+      0x4ea81d00, 0x4ea91d21, 0x4eaa1d42, 0x4eab1d63, 0x97ffffe0, 0xa9457bfd,
+      0x6d442fea, 0x6d4327e8, 0x910183ff, 0xd65f03c0};
+  for (unsigned I = 0; I < std::size(ScaleWords); ++I)
+    llvm::support::endian::write32le(F.Image.Segments[0].Data.data() + Scale -
+                                         F.Entry + I * 4,
+                                     ScaleWords[I]);
+  for (unsigned I = 0; I < std::size(CallerWords); ++I)
+    llvm::support::endian::write32le(F.Image.Segments[0].Data.data() + Caller -
+                                         F.Entry + I * 4,
+                                     CallerWords[I]);
+  F.Image.ImportPtrSlots[ScaleSlot] = "_CGAffineTransformMakeScale";
+  ASSERT_TRUE(F.Image.recordDyldBindSlot(ScaleSlot,
+                                         "_CGAffineTransformMakeScale", 0,
+                                         NativeOutputFixture::Provider, false));
+  F.Image.Symbols.push_back({"_scale_veneer", Scale, sizeof(ScaleWords), true});
+  F.Image.Symbols.push_back(
+      {"_preserved_rect_input", Caller, sizeof(CallerWords), true});
+  F.Options.OnlyFunctionEntries = {Caller};
+  F.Result = Pipeline().run(F.Image, F.Context, F.Options);
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  ASSERT_EQ(F.Result.MedFuncs.size(), 1U);
+  ASSERT_EQ(F.Result.MedFuncs[0].Params.size(), 4U);
+  std::map<va_t, std::string> Diagnostics;
+  ASSERT_EQ(sdk::inferObjCNativeDependencies(F.Image, F.Result, F.Options,
+                                             Diagnostics, {Caller}),
+            1U)
+      << Diagnostics[Caller];
+  const auto &Hint = F.Options.SourceTypeHints.at(Caller);
+  ASSERT_EQ(Hint.Parameters.size(), 4U);
+  for (size_t I = 0; I != 4; ++I) {
+    EXPECT_EQ(Hint.Parameters[I].Type->Kind, NdTypeKind::Float);
+    EXPECT_EQ(Hint.Parameters[I].Type->Size, 8U);
+    EXPECT_EQ(Hint.Parameters[I].Location.RegisterOffset, a64reg::V0 + I * 16);
+    EXPECT_EQ(Hint.Parameters[I].Location.ValueBytes, 8U);
+  }
+  auto Fresh = Pipeline().run(F.Image, F.Context, F.Options);
+  ASSERT_TRUE(Fresh.Success) << Fresh.Error;
+  ASSERT_EQ(Fresh.HighFuncs.size(), 1U);
+  EXPECT_TRUE(equalSourceABIs(*Fresh.MedFuncs[0].SourceTypeHint, Hint));
+  const auto Bound = sdk::bindObjCSourceReferences(Fresh.HighFuncs[0], F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  std::map<va_t, const HighFunc *> Functions{{Caller, &Fresh.HighFuncs[0]}};
+  const auto Allowed = [&](const HighExpr &Call) {
+    return sdk::objcSourceCallBound(Call, F.Image, Functions);
+  };
+  EXPECT_TRUE(sdk::sourceBodyLimitation(Bound.Function, Hint,
+                                        &Fresh.FunctionAudits[0], Allowed)
+                  .empty());
+}
 
 TEST(NativeSourceHints, HFAImportVeneerRetainsCompleteDeclaredResult) {
   struct Case {
@@ -10753,5 +11098,69 @@ TEST(NativeSourceHints, ConsumedIdentifierPublicationReplaysCurrentOperands) {
     EXPECT_FALSE(
         sdk::SourceSwiftConsumedInputProjectionValidator(F.Image, F.Result)
             .valid(Bound.Function));
+  }
+}
+
+TEST(NativeSourceHints,
+     HFAFieldTypeRequiresCurrentCallAndFrameProofForPublication) {
+  constexpr auto Provider =
+      "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+  HFAImportVeneerFixture F("_CGRectStandardize", Provider);
+  constexpr va_t Caller = 0x1040;
+  const uint32_t Words[] = {0xa9bf7bfd, 0x910003fd, 0x97ffffee, 0xa8c17bfd,
+                            0xd65f03c0};
+  for (unsigned I = 0; I != 5; ++I)
+    llvm::support::endian::write32le(
+        F.Image.Segments[0].Data.data() + 0x40 + 4 * I, Words[I]);
+  F.Image.Symbols.push_back({"hfa_caller", Caller, 20, true});
+  F.Options.OnlyFunctionEntries.insert(Caller);
+  F.Result = Pipeline().run(F.Image, F.Context, F.Options);
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  std::map<va_t, std::string> Diagnostics;
+  ASSERT_GT(sdk::inferObjCNativeDependencies(F.Image, F.Result, F.Options,
+                                             Diagnostics, {Caller}),
+            0U);
+  ASSERT_TRUE(F.Options.SourceTypeHints.count(Caller)) << Diagnostics[Caller];
+  const auto Scalar = F.Options.SourceTypeHints.at(Caller);
+  ASSERT_TRUE(Scalar.ReturnType);
+  EXPECT_EQ(Scalar.ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Scalar.ReturnType->Size, 8U);
+  auto Relifted = Pipeline().run(F.Image, F.Context, F.Options);
+  ASSERT_TRUE(Relifted.Success) << Relifted.Error;
+  const auto H =
+      std::find_if(Relifted.HighFuncs.begin(), Relifted.HighFuncs.end(),
+                   [](const auto &Fn) { return Fn.Entry == Caller; });
+  const auto A = std::find_if(
+      Relifted.FunctionAudits.begin(), Relifted.FunctionAudits.end(),
+      [](const auto &Audit) { return Audit.Entry == Caller; });
+  ASSERT_NE(H, Relifted.HighFuncs.end());
+  ASSERT_NE(A, Relifted.FunctionAudits.end());
+  const auto Bound = sdk::bindObjCSourceReferences(*H, F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &Fn : Relifted.HighFuncs)
+    Functions.emplace(Fn.Entry, &Fn);
+  const auto Allowed = [&](const HighExpr &Call) {
+    return sdk::objcSourceCallBound(Call, F.Image, Functions);
+  };
+  EXPECT_TRUE(
+      sdk::sourceBodyLimitation(Bound.Function, Scalar, &*A, Allowed).empty());
+  // A field's type cannot authenticate another provider or a missing saved LR.
+  for (unsigned Mutation = 0; Mutation != 2; ++Mutation) {
+    auto Image = F.Image;
+    if (Mutation == 0)
+      Image.DyldBindSlots.at(F.Slot).Module = "/not/CoreGraphics";
+    else
+      llvm::support::endian::write32le(Image.Segments[0].Data.data() + 0x4c,
+                                       0xd503201f); // No saved LR/SP restore.
+    PipelineOptions Unbound;
+    Unbound.OnlyFunctionEntries = F.Options.OnlyFunctionEntries;
+    Unbound.EmitDumpOutput = false;
+    auto Result = Pipeline().run(Image, F.Context, Unbound);
+    ASSERT_TRUE(Result.Success);
+    Diagnostics.clear();
+    sdk::inferObjCNativeDependencies(Image, Result, Unbound, Diagnostics,
+                                     {Caller});
+    EXPECT_FALSE(Unbound.SourceTypeHints.count(Caller)) << Mutation;
   }
 }
