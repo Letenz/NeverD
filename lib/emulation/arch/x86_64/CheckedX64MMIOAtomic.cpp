@@ -12,7 +12,8 @@
 namespace neverd::emulation {
 llvm::Error CheckedX64Backend::deviceAtomic(const cs_insn &I, uint64_t Address,
                                             unsigned Size) {
-  if (UserMode || Address % Size)
+  if (UserMode || Address % Size ||
+      !MMIOAtomicTransaction::hasProvider(*Memory, Address))
     return llvm::make_error<UnsupportedExecutionError>();
   if (Hooks.Read)
     Hooks.Read(Address, Size);

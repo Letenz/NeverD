@@ -360,7 +360,14 @@ TEST_P(MMIOAtomic, MissingProviderNeverCallsLegacyReadOrWrite) {
   llvm::cantFail(CPU->mapMMIO(Data, memory::PageSize, std::move(Callbacks)));
   setupSwap();
   auto Before = state(*CPU);
+  unsigned Observations = 0;
+  Device.OnValidate = [&] { ++Observations; };
+  BackendHooks Hooks;
+  Hooks.Read = [&](uint64_t, unsigned) { ++Observations; };
+  Hooks.Write = [&](uint64_t, unsigned, uint64_t) { ++Observations; };
+  llvm::cantFail(CPU->installHooks(std::move(Hooks)));
   run(*CPU, ExecutionExitKind::UnsupportedOperation);
+  EXPECT_EQ(Observations, 0u);
   EXPECT_EQ(Device.Legacy, 0u);
   EXPECT_EQ(Device.Prepares, 0u);
   EXPECT_EQ(state(*CPU), Before);

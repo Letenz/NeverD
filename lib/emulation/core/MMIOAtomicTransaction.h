@@ -14,6 +14,8 @@ namespace neverd::emulation {
 /// faults and result computation; the provider owns all device effects.
 class MMIOAtomicTransaction final {
 public:
+  /// Pure capability admission before invoking any device or CPU observer.
+  static bool hasProvider(const MemoryProjection &, uint64_t Address);
   static llvm::Expected<std::unique_ptr<MMIOAtomicTransaction>>
   prepare(MemoryProjection &, uint64_t Address, unsigned Size,
           MachineRunControl, bool &DeviceFailed);

@@ -32,6 +32,13 @@ llvm::Error deviceError(bool &Failed, llvm::Error E) {
 }
 } // namespace
 
+bool MMIOAtomicTransaction::hasProvider(const MemoryProjection &Memory,
+                                        uint64_t Address) {
+  const auto P = Memory.mappings().find(Address & ~(memory::PageSize - 1));
+  return P != Memory.mappings().end() && P->second.IO &&
+         bool(P->second.IO->Callbacks.PrepareAtomic);
+}
+
 MMIOAtomicTransaction::MMIOAtomicTransaction(
     std::unique_lock<std::recursive_mutex> Lease, uint64_t Address,
     GuestMMIOPreparedAtomic Prepared, MachineRunControl Control,
@@ -55,7 +62,7 @@ MMIOAtomicTransaction::prepare(MemoryProjection &Memory, uint64_t Address,
     return llvm::make_error<UnsupportedExecutionError>();
   const auto D = P->second.IO;
   if (Address < D->Address || Address - D->Address >= D->Size ||
-      Size > D->Size - (Address - D->Address) || !D->Callbacks.PrepareAtomic)
+      Size > D->Size - (Address - D->Address) || !hasProvider(Memory, Address))
     return llvm::make_error<UnsupportedExecutionError>();
   const auto Offset = Address - D->Address;
   for (bool Write : {false, true}) {

@@ -32,7 +32,8 @@ NEVERD_MMIO_TEST_VALUE(KernelWidth, 4)
 #endif
 #ifdef NEVERD_MMIO_TEST_TEXT
 NEVERD_MMIO_TEST_TEXT(LegacyAccess, "legacy device callback must not execute")
-NEVERD_MMIO_TEST_TEXT(InvalidPreview, "device preview is stale or already consumed")
+NEVERD_MMIO_TEST_TEXT(InvalidPreview,
+                      "device preview is stale or already consumed")
 NEVERD_MMIO_TEST_TEXT(InjectedFailure, "injected device transaction failure")
 NEVERD_MMIO_TEST_TEXT(BankName, "atomic-bank")
 NEVERD_MMIO_TEST_TEXT(ResourceName, "atomic-registers")

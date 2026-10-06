@@ -29,7 +29,8 @@ llvm::Error executeAArch64Atomic(const AArch64AtomicInstruction &I,
     Fault.Cause = BackendFaultCause::OperandAlignment;
     return Access.RaiseFault(Fault);
   }
-  if (Device && !Access.DeviceFailed)
+  if (Device && (!Access.DeviceFailed ||
+                 !MMIOAtomicTransaction::hasProvider(Memory, I.Address)))
     return llvm::make_error<UnsupportedExecutionError>();
   if (Access.Hooks.Read)
     Access.Hooks.Read(I.Address, Size);
