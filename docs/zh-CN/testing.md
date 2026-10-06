@@ -1368,6 +1368,8 @@ block/副本发布测试还覆盖两个独立的 48 字节范围、描述符重�
 
 `LowIRLoopInference.CompletedEntailments*` 在两种字节序的终止及不终止帧循环之间检查会话隔离、求解器和节点耗尽，以及独立证明预算。可变边界回归在缓存命中时验证精确与少一单位的逻辑查询预算；原生重复上下文证明检查带域的复用。
 
+`LowIRLoopInference.IncrementalEntailmentsKeepRollingBudgets` 检查同一约束域内的编码器复用。切换域会丢弃编码器；累计逻辑门容量耗尽时，仅用新编码器重试一次，并额外计入一次查询。两种字节序都保留对完整计数器和边界字的观测，并检查精确及少一次的查询预算、逻辑门／宽度／搜索超限拒绝，以及独立的最终证明预算。
+
 `LowIRLoopRefinement.GuardedCuts*` 和 `BinaryLowIRLoopRefinement.GuardedCuts*` 覆盖同址切点、寄存器、帧及原生系统标志、两种字节序、未匹配的有限及循环路径、重叠和错配拒绝、前缀泛化、未定义值见证、错误元数据、摘要及共享预算。独立原生测试证明两个 R10 上下文共用循环地址，并确认未审计边界检查先于选择条件。普通 ABI 认证仍是独立工作。
 
 `BinaryLowIRLoopInference.NativeSelectors*` 覆盖两个寄存器上下文、仅靠帧区分的上下文、三域合取、无法区分的模板、来源及原生循环体变异，以及推断和证明各自的精确与少一预算。循环次数任意，不引入入口常量。
