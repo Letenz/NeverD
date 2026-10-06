@@ -1896,7 +1896,27 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
       for (size_t K = I + 1; K <= PrefixEnd && K < End; ++K)
         if (Stmts[K].Addr == Target)
           TargetOk = true;
-      if (PhiCount > 0 && TargetOk) {
+      // The fold prints the copies but not the removed statements and
+      // anchors between them, nor their labels.  Only the folded jump may
+      // reach such a label.
+      std::function<bool(const HighStmt &)> DropsLabel =
+          [&](const HighStmt &P) {
+            if (P.Addr && P.Addr != InvalidVA && GotoTargets.count(P.Addr)) {
+              auto Uses = GotoTargetUses.find(P.Addr);
+              if (P.Addr != Target ||
+                  (Uses != GotoTargetUses.end() && Uses->second > 1))
+                return true;
+            }
+            return llvm::any_of(P.Body, DropsLabel);
+          };
+      bool KeepsLabels = true;
+      for (size_t K = I + 1; K < PrefixEnd && KeepsLabels; ++K) {
+        const HighStmt &P = Stmts[K];
+        if (stmtHiddenFromC(P) || P.Kind == StmtKind::Nop ||
+            P.Kind == StmtKind::Block)
+          KeepsLabels = !DropsLabel(P);
+      }
+      if (PhiCount > 0 && TargetOk && KeepsLabels) {
         emitIndent(Indent);
         OS << "if (" << invertCondStr(*S.Cond) << ") {\n";
         std::vector<HighStmt> Taken(S.ElseBody.begin(), S.ElseBody.end() - 1);

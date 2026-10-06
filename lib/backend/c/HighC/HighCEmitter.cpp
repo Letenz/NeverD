@@ -378,6 +378,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   AtomicLoadTypes.clear();
   AtomicStoreTypes.clear();
   HasSegmentedMemory = false;
+  NeedsUnalignedTypes = false;
   Has256BitInteger = false;
   Has512BitInteger = false;
   // Native AArch64 vector carriers are projected to SVE ACLE types.  x86
@@ -437,6 +438,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       const bool OrdinaryMemory =
           E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
           E.MemoryOrdering == NdMemoryOrdering::None;
+      NeedsUnalignedTypes |= OrdinaryMemory && !c_memory::alias(Type).empty();
       const TypeRef AddressType =
           !E.Operands.empty() && E.Operands[0] ? E.Operands[0]->Type : nullptr;
       const bool DirectTypedLoad =
@@ -462,6 +464,10 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       std::string Type = memoryTypeName(E.Operands[1]->Type);
       validateMemoryAddressSpaceForC(E.MemoryAddressSpace, Opts.TheArch);
       Names.insert(Type);
+      NeedsUnalignedTypes |=
+          E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          E.MemoryOrdering == NdMemoryOrdering::None &&
+          !c_memory::alias(Type).empty();
       if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         SegmentedMemoryTypes.insert({Type, E.MemoryAddressSpace});
       if (E.MemoryOrdering != NdMemoryOrdering::None)
@@ -495,6 +501,10 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
         std::string Type = memoryTypeName(Stmt.StoreVal->Type);
         validateMemoryAddressSpaceForC(Stmt.MemoryAddressSpace, Opts.TheArch);
         Names.insert(Type);
+        NeedsUnalignedTypes |=
+            Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+            Stmt.MemoryOrdering == NdMemoryOrdering::None &&
+            !c_memory::alias(Type).empty();
         if (Stmt.MemoryAddressSpace != NdMemoryAddressSpace::Default)
           SegmentedMemoryTypes.insert({Type, Stmt.MemoryAddressSpace});
         if (Stmt.MemoryOrdering != NdMemoryOrdering::None)
@@ -507,6 +517,10 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
         validateMemoryAddressSpaceForC(Stmt.Dst->MemoryAddressSpace,
                                        Opts.TheArch);
         Names.insert(Type);
+        NeedsUnalignedTypes |=
+            Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+            Stmt.Dst->MemoryOrdering == NdMemoryOrdering::None &&
+            !c_memory::alias(Type).empty();
         if (Stmt.Dst->MemoryAddressSpace != NdMemoryAddressSpace::Default)
           SegmentedMemoryTypes.insert({Type, Stmt.Dst->MemoryAddressSpace});
         if (Stmt.Dst->MemoryOrdering != NdMemoryOrdering::None)
@@ -531,7 +545,10 @@ void HighCWriter::writeMemoryHelpers() {
     c_float::writeConversion(
         OS, Name, {Bits, FloatBits, Signed, fpToIntegerPolicy(Opts.TheArch)});
   }
-  if (Opts.UseUnalignedPointers)
+  // The aliases are declared only when an access can use one; without the
+  // declarations every access keeps its portable byte copy.
+  UnalignedTypesWritten = Opts.UseUnalignedPointers && NeedsUnalignedTypes;
+  if (UnalignedTypesWritten)
     c_memory::writeTypes(OS);
   if (HasSegmentedMemory)
     OS << "#if !defined(__clang__)\n"
@@ -666,7 +683,7 @@ std::string HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
         !Seg.empty())
       return Seg;
   }
-  if (Opts.UseUnalignedPointers && Ordering == NdMemoryOrdering::None &&
+  if (UnalignedTypesWritten && Ordering == NdMemoryOrdering::None &&
       AddressSpace == NdMemoryAddressSpace::Default)
     if (auto Alias = c_memory::alias(Type); !Alias.empty())
       return c_memory::access(Alias, Addr, true);
@@ -709,7 +726,7 @@ std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
                                 ? "(" + Type + ")(uintptr_t)(" + Val.str() + ")"
                                 : Val.str();
   // A machine address does not establish C alignment or effective type.
-  if (Opts.UseUnalignedPointers && Ordering == NdMemoryOrdering::None &&
+  if (UnalignedTypesWritten && Ordering == NdMemoryOrdering::None &&
       AddressSpace == NdMemoryAddressSpace::Default)
     if (auto Alias = c_memory::alias(Type); !Alias.empty())
       return "(" + c_memory::access(Alias, Addr, false) + " = " + Value + ")";
@@ -748,7 +765,7 @@ void HighCWriter::writeMemoryStore(const TypeRef &Ty, llvm::StringRef Addr,
   if (Ordering != NdMemoryOrdering::None ||
       AddressSpace != NdMemoryAddressSpace::Default ||
       PartialIntegerBytes.count(Type) ||
-      (Opts.UseUnalignedPointers && !c_memory::alias(Type).empty())) {
+      (UnalignedTypesWritten && !c_memory::alias(Type).empty())) {
     emitIndent(Indent);
     OS << memoryStoreExpr(Ty, Addr, Val, Ordering, AddressSpace,
                           ExactImageBytes)

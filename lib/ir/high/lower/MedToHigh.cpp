@@ -1177,6 +1177,9 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   duplicateSmallReturnTails(Func.Body, /*PrintedSize=*/true);
   foldTempsInReturnTails(Func.Body);
   mergeJumpsIntoNextIfArms(Func);
+  // Names merge last: every earlier pass may still move statements as if
+  // each local had the definitions it had in SSA.
+  coalesceHighPhiCopies(Func);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
 

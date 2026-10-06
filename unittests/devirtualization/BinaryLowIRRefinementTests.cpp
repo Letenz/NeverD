@@ -215,6 +215,101 @@ TEST(BinaryLowIRRefinement, ProvedNativeBranchChoiceKeepsTheIncomingDomain) {
   }
 }
 
+TEST(BinaryLowIRRefinement, NativeBranchEncodingsHaveBoundedLifetimes) {
+  for (bool Taken : {false, true}) {
+    SCOPED_TRACE(Taken);
+    auto P = guardedNativeChain(48, Taken);
+    const auto Recovery = P.recover();
+    ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+    LowIRRefinementLimits Limits;
+    // Each branch fits this search budget. Retaining unrelated earlier
+    // branch encodings makes later queries run out of propagations.
+    Limits.Execution.Solver.Sat.MaxPropagations = 512;
+    const auto Good = P.check(Recovery.Residual, Witness::LiftedBits, Limits);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    EXPECT_EQ(Good.Proof.OriginalPaths, 1U);
+    EXPECT_EQ(Good.Proof.CandidatePaths, 1U);
+    EXPECT_EQ(Good.Proof.TerminalPairs, 1U);
+    ASSERT_GT(Good.Proof.SolverQueries, 0U);
+    Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
+    ASSERT_TRUE(
+        P.check(Recovery.Residual, Witness::LiftedBits, Limits).proved());
+    --Limits.Execution.MaxSolverQueries;
+    refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+            Status::BudgetExceeded);
+    Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
+
+    auto Bad = Recovery.Residual;
+    bool Changed = false;
+    for (auto &B : Bad.Blocks)
+      for (auto &O : B.Ops)
+        if ((O.Opcode == NdOp::COPY || O.Opcode == NdOp::INT_ZEXT) &&
+            O.Output.isReg() && O.Output.Offset == x86reg::RAX &&
+            O.NumInputs == 1 && O.Inputs[0] == NdVar::scalar(7, 4)) {
+          O.Inputs[0].Offset = 9;
+          Changed = true;
+        }
+    ASSERT_TRUE(Changed);
+    refused(P.check(Bad, Witness::LiftedBits, Limits), Status::Different);
+  }
+}
+
+TEST(BinaryLowIRRefinement, InterveningQueriesRetainFeasibleDomains) {
+  for (unsigned Count : {8U, 32U}) {
+    for (bool Taken : {false, true}) {
+      SCOPED_TRACE(Count);
+      SCOPED_TRACE(Taken);
+      auto P = guardedNativeChain(Count, Taken);
+      auto &Code = P.Image.Segments.front();
+      // LEA RDI,[RDI+RSI*4]; XOR RDI,RSI; TEST RDI,RDI; JE alternate.
+      // Each arm has a data-dependent domain. Proved branches in the chain
+      // interleave UNSAT obligations with repeated feasibility checks.
+      std::vector<uint8_t> Bytes{0x48, 0x8d, 0x3c, 0xb7, 0x48, 0x31,
+                                 0xf7, 0x48, 0x85, 0xff, 0x0f, 0x84};
+      const uint32_t Skip = Code.Data.size();
+      for (unsigned I = 0; I != 4; ++I)
+        Bytes.push_back(static_cast<uint8_t>(Skip >> (8 * I)));
+      Bytes.insert(Bytes.end(), Code.Data.begin(), Code.Data.end());
+      Bytes.insert(Bytes.end(), {0xb8, 11, 0, 0, 0, 0xc3});
+      Code.Data = std::move(Bytes);
+      Code.Size = Code.FileSz = Code.Data.size();
+      P.Contract.ObserveWrittenFrameBytes = true;
+      const auto Recovery = P.recover();
+      ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+      const auto Good = P.check(Recovery.Residual);
+      ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+      ASSERT_GT(Good.Proof.SolverQueries, 0U);
+      LowIRRefinementLimits Limits;
+      Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
+      ASSERT_TRUE(
+          P.check(Recovery.Residual, Witness::LiftedBits, Limits).proved());
+      --Limits.Execution.MaxSolverQueries;
+      refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+              Status::BudgetExceeded);
+      Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
+      Limits.Execution.Solver.Blast.MaxGates = 1;
+      refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+              Status::BudgetExceeded);
+      for (unsigned Value : {7U, 11U}) {
+        auto Bad = Recovery.Residual;
+        bool Changed = false;
+        for (auto &B : Bad.Blocks)
+          for (auto &O : B.Ops)
+            if ((O.Opcode == NdOp::COPY || O.Opcode == NdOp::INT_ZEXT) &&
+                O.Output.isReg() && O.Output.Offset == x86reg::RAX &&
+                O.NumInputs == 1 && O.Inputs[0].isConst() &&
+                O.Inputs[0].Offset == Value) {
+              O.Inputs[0].Offset += 2;
+              Changed = true;
+            }
+        ASSERT_TRUE(Changed);
+        // Both terminal observations still need independent equality proofs.
+        refused(P.check(Bad), Status::Different);
+      }
+    }
+  }
+}
+
 TEST(BinaryLowIRRefinement, SingletonTargetsRetainTheirBranchDomains) {
   // TEST EDI,1; JNZ odd. Each arm computes a distinct singleton target from
   // the symbolic entry stack, then returns a distinct ECX value.

@@ -552,6 +552,11 @@ public:
   std::set<std::tuple<std::string, NdMemoryOrdering, NdMemoryAddressSpace>>
       AtomicStoreTypes;
   bool HasSegmentedMemory = false;
+  /// An ordinary load or store has a type with an aligned(1), may_alias
+  /// alias, so the aliases are declared when UseUnalignedPointers is set.
+  bool NeedsUnalignedTypes = false;
+  /// The aliases were declared; an access spelled through one needs that.
+  bool UnalignedTypesWritten = false;
   bool Has256BitInteger = false;
   bool Has512BitInteger = false;
 

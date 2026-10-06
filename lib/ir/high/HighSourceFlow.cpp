@@ -8,7 +8,11 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/bit.h"
+
 #include <algorithm>
+#include <functional>
 #include <limits>
 #include <map>
 #include <optional>
@@ -102,6 +106,7 @@ class SourceFlow {
   size_t Operations = 0, EdgeCount = 0, CaseCount = 0;
   std::set<size_t> AddressTaken;
   std::set<const HighStmt *> *DeadCopies;
+  std::map<HighSourceLocalIdentity, HighSourceLocalIdentity> *Merges = nullptr;
 
   [[noreturn]] void
   fail(const char *Reason,
@@ -1165,6 +1170,253 @@ class SourceFlow {
     }
   }
 
+  // A copy `D = S` between two values of one register, both plain locals of
+  // the same type: the copy that lowering made for a PHI.
+  struct RegisterCopy {
+    size_t Destination, Source;
+  };
+  std::optional<RegisterCopy> registerCopy(const Node &N) {
+    const HighStmt *S = N.Statement;
+    if (!N.PhiCopy || !N.Definition || !S || S->Kind != StmtKind::Assign ||
+        !S->Dst || !S->Val || S->Dst->Kind != ExprKind::Var ||
+        S->Val->Kind != ExprKind::Var || !scalarLocal(S->Dst) ||
+        !scalarLocal(S->Val))
+      return std::nullopt;
+    const MedVar &D = S->Dst->Var, &V = S->Val->Var;
+    if (D.Kind != MedVar::Reg || V.Kind != MedVar::Reg || D.RenameTag < 0 ||
+        V.RenameTag < 0 || D.RegOff != V.RegOff || D.Size != V.Size ||
+        S->Dst->Type->Kind != S->Val->Type->Kind ||
+        S->Dst->Type->Size != S->Val->Type->Size ||
+        S->Dst->Type->IsSigned != S->Val->Type->IsSigned || entryValue(V))
+      return std::nullopt;
+    const size_t Source = local(V);
+    if (Source == *N.Definition)
+      return std::nullopt;
+    return RegisterCopy{*N.Definition, Source};
+  }
+
+  // Whether \p E may evaluate to an address in the frame: the frame base, a
+  // local that may hold one, or arithmetic and casts on either.  A load
+  // yields what memory holds, not its address.
+  bool carriesFrameAddress(const HighExpr *E, const std::vector<bool> &Frame,
+                           unsigned Depth = 0) {
+    spend();
+    if (!E || Depth > 32)
+      return E != nullptr;
+    switch (E->Kind) {
+    case ExprKind::Var:
+    case ExprKind::Phi:
+      if (highSourceFrameBase(Function, E->Var))
+        return true;
+      if (entryValue(E->Var))
+        return false;
+      // A local the graph has not seen is not known to hold no address.
+      if (const size_t L = local(E->Var); L < Frame.size())
+        return Frame[L];
+      return true;
+    case ExprKind::Addr:
+      return true;
+    case ExprKind::Cast:
+    case ExprKind::BitCast:
+    case ExprKind::UnaryOp:
+    case ExprKind::BinOp:
+      for (const auto &Operand : E->Operands)
+        if (carriesFrameAddress(Operand.get(), Frame, Depth + 1))
+          return true;
+      return false;
+    default:
+      return false;
+    }
+  }
+
+  // Locals joined by same-register PHI copies whose live ranges never
+  // overlap become one local.  Two locals interfere when one is live after a
+  // definition of the other, except for the source of the copy defining it.
+  // Locals that a copy cannot fully describe stay apart: address-taken ones,
+  // ones written other than by assignment, never assigned, possibly assigned
+  // an unknown value, or able to hold a frame address, whose name the C
+  // writer ties to frame slots.
+  void coalesce(const std::vector<bool> &Reachable, size_t Words) {
+    const size_t Count = Locals.size();
+    std::vector<unsigned> Definitions(Count);
+    std::vector<bool> Excluded(Count), Frame(Count);
+    for (size_t I = 0; I < Nodes.size(); ++I) {
+      spend();
+      const Node &N = Nodes[I];
+      for (size_t Written : N.Writes)
+        if (!N.Definition || Written != *N.Definition)
+          Excluded[Written] = true;
+      if (!N.Definition)
+        continue;
+      ++Definitions[*N.Definition];
+      const HighStmt *S = N.Statement;
+      if (S && S->Kind == StmtKind::Assign && S->Val &&
+          S->Val->Kind == ExprKind::Undef)
+        Excluded[*N.Definition] = true;
+    }
+    for (bool Grew = true; Grew;) {
+      Grew = false;
+      for (size_t I = 0; I < Nodes.size(); ++I) {
+        const Node &N = Nodes[I];
+        if (!N.Definition || Frame[*N.Definition] || !N.Statement ||
+            N.Statement->Kind != StmtKind::Assign)
+          continue;
+        if (carriesFrameAddress(N.Statement->Val.get(), Frame)) {
+          Frame[*N.Definition] = true;
+          Grew = true;
+        }
+      }
+    }
+    // A value the C writer may print as unknown: an unknown value, or a copy
+    // of a local that is never assigned or may itself be unknown.  The writer
+    // decides that per name, so merging such a local with another would
+    // change which reads fail at run time.
+    std::vector<bool> Unknown(Count);
+    auto ViewOf = [](const HighExpr *E) {
+      while (E && (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast) &&
+             E->Operands.size() == 1)
+        E = E->Operands[0].get();
+      return E;
+    };
+    for (bool Grew = true; Grew;) {
+      Grew = false;
+      for (size_t I = 0; I < Nodes.size(); ++I) {
+        spend();
+        const Node &N = Nodes[I];
+        if (!N.Definition || Unknown[*N.Definition] || !N.Statement ||
+            N.Statement->Kind != StmtKind::Assign)
+          continue;
+        const HighExpr *V = ViewOf(N.Statement->Val.get());
+        bool Maybe = !V || V->Kind == ExprKind::Undef;
+        if (!Maybe && (V->Kind == ExprKind::Var || V->Kind == ExprKind::Phi) &&
+            !entryValue(V->Var)) {
+          const size_t L = local(V->Var);
+          Maybe = L >= Count || Unknown[L] || !Definitions[L];
+        }
+        if (Maybe) {
+          Unknown[*N.Definition] = true;
+          Grew = true;
+        }
+      }
+    }
+    auto Candidate = [&](size_t Local) {
+      return !Excluded[Local] && !Frame[Local] && !Unknown[Local] &&
+             Definitions[Local] && !AddressTaken.count(Local);
+    };
+    std::vector<std::pair<size_t, RegisterCopy>> Copies;
+    std::vector<bool> Involved(Count);
+    for (size_t I = 0; I < Nodes.size(); ++I)
+      if (Reachable[I])
+        if (auto Copy = registerCopy(Nodes[I]);
+            Copy && Candidate(Copy->Destination) && Candidate(Copy->Source)) {
+          Copies.emplace_back(I, *Copy);
+          Involved[Copy->Destination] = Involved[Copy->Source] = true;
+        }
+    if (Copies.empty())
+      return;
+    // Live[N]: the locals live into node N.
+    spend(Nodes.size() * Words);
+    std::vector<uint64_t> Live(Nodes.size() * Words, 0);
+    std::vector<uint64_t> Out(Words);
+    auto LiveOut = [&](size_t Index) {
+      std::fill(Out.begin(), Out.end(), 0);
+      for (size_t Next : Nodes[Index].Next) {
+        spend(Words + 1);
+        for (size_t W = 0; W < Words; ++W)
+          Out[W] |= Live[Next * Words + W];
+      }
+    };
+    std::vector<size_t> Pending;
+    std::vector<bool> Queued = Reachable;
+    for (size_t I = 0; I < Nodes.size(); ++I)
+      if (Reachable[I])
+        Pending.push_back(I);
+    while (!Pending.empty()) {
+      spend();
+      const size_t Index = Pending.back();
+      Pending.pop_back();
+      Queued[Index] = false;
+      LiveOut(Index);
+      if (auto Definition = Nodes[Index].Definition)
+        Out[*Definition / 64] &= ~(uint64_t{1} << (*Definition % 64));
+      for (size_t Use : Nodes[Index].Uses)
+        Out[Use / 64] |= uint64_t{1} << (Use % 64);
+      bool Changed = false;
+      spend(Words);
+      for (size_t W = 0; W < Words; ++W) {
+        auto &State = Live[Index * Words + W];
+        Changed |= State != Out[W];
+        State = Out[W];
+      }
+      if (Changed)
+        for (size_t Previous : Nodes[Index].Previous) {
+          spend();
+          if (Reachable[Previous] && !Queued[Previous]) {
+            Queued[Previous] = true;
+            Pending.push_back(Previous);
+          }
+        }
+    }
+    // Interference among the locals copies join, in every context.
+    std::vector<std::set<size_t>> Interferes(Count);
+    for (size_t I = 0; I < Nodes.size(); ++I) {
+      if (!Reachable[I] || !Nodes[I].Definition ||
+          !Involved[*Nodes[I].Definition])
+        continue;
+      const size_t Defined = *Nodes[I].Definition;
+      std::optional<size_t> Exempt;
+      if (auto Copy = registerCopy(Nodes[I]))
+        Exempt = Copy->Source;
+      LiveOut(I);
+      for (size_t W = 0; W < Words; ++W)
+        for (uint64_t Bits = Out[W]; Bits; Bits &= Bits - 1) {
+          spend();
+          const size_t Other = W * 64 + llvm::countr_zero(Bits);
+          if (Other == Defined || !Involved[Other] || Other == Exempt)
+            continue;
+          Interferes[Defined].insert(Other);
+          Interferes[Other].insert(Defined);
+        }
+    }
+    // Merge greedily, in statement order; a class interferes with every
+    // local any member interferes with.
+    std::vector<size_t> Parent(Count);
+    std::vector<std::vector<size_t>> Members(Count);
+    for (size_t L = 0; L < Count; ++L) {
+      Parent[L] = L;
+      Members[L] = {L};
+    }
+    std::function<size_t(size_t)> Find = [&](size_t L) {
+      while (Parent[L] != L)
+        L = Parent[L] = Parent[Parent[L]];
+      return L;
+    };
+    bool Merged = false;
+    for (const auto &[Index, Copy] : Copies) {
+      spend();
+      const size_t A = Find(Copy.Destination), B = Find(Copy.Source);
+      if (A == B)
+        continue;
+      const bool Conflict = llvm::any_of(
+          Members[A], [&](size_t M) { return Interferes[B].count(M) != 0; });
+      if (Conflict)
+        continue;
+      Parent[B] = A;
+      Members[A].insert(Members[A].end(), Members[B].begin(), Members[B].end());
+      Members[B].clear();
+      Interferes[A].insert(Interferes[B].begin(), Interferes[B].end());
+      Merged = true;
+    }
+    if (!Merged)
+      return;
+    std::vector<const HighSourceLocalIdentity *> Identity(Count);
+    for (const auto &[Key, Local] : Locals)
+      Identity[Local] = &Key;
+    for (size_t L = 0; L < Count; ++L)
+      if (const size_t Root = Find(L); Root != L)
+        (*Merges)[*Identity[L]] = *Identity[Root];
+  }
+
   std::optional<size_t> build() {
     node(); // Node zero is the emitted function's fallthrough exit.
     size_t Entry = block(Function.Body, 0, {}, 1);
@@ -1232,6 +1484,10 @@ class SourceFlow {
       deadPhiCopies(Reachable, Words);
       return;
     }
+    if (Merges) {
+      coalesce(Reachable, Words);
+      return;
+    }
     spend(Nodes.size() * Words);
     std::vector<uint64_t> States(Nodes.size() * Words, ~uint64_t{0});
     std::vector<uint64_t> Incoming(Words);
@@ -1296,6 +1552,11 @@ public:
   SourceFlow(const HighFunc &Function, HighSourceFlowReport &Diagnostics,
              std::set<const HighStmt *> *DeadCopies = nullptr)
       : Function(Function), Diagnostics(Diagnostics), DeadCopies(DeadCopies) {}
+
+  void coalescing(
+      std::map<HighSourceLocalIdentity, HighSourceLocalIdentity> &Result) {
+    Merges = &Result;
+  }
 
   void bounds(const std::vector<HighSourceUnsignedRangeQuery> &Queries,
               std::vector<std::optional<uint64_t>> &Result) {
@@ -1452,6 +1713,65 @@ bool eliminateHighDeadPhiCopies(HighFunc &Function) {
       S->Kind = StmtKind::Nop;
       S->Addr = Address; // A goto may still target this source label.
     }
+  return true;
+}
+bool coalesceHighPhiCopies(HighFunc &Function) {
+  if (Function.StructuredExceptionRegions ||
+      Function.UnstructuredExceptionRegions)
+    return false;
+  bool HasPhiCopy = false;
+  walkStmts(Function.Body, [&](const HighStmt &S) {
+    HasPhiCopy |= S.Kind == StmtKind::Assign && S.IsPhiCopy;
+  });
+  if (!HasPhiCopy)
+    return false;
+  HighSourceFlowReport Report;
+  std::map<HighSourceLocalIdentity, HighSourceLocalIdentity> Merges;
+  SourceFlow Flow(Function, Report);
+  Flow.coalescing(Merges);
+  Flow.collect(false);
+  if (!Report.Complete || Merges.empty())
+    return false;
+  // Each merged local takes the identity of its class's representative.
+  std::map<HighSourceLocalIdentity, MedVar> Representatives;
+  std::set<const HighExpr *> Seen;
+  std::function<void(const ExprPtr &)> Record = [&](const ExprPtr &E) {
+    if (!E || !Seen.insert(E.get()).second)
+      return;
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi)
+      Representatives.emplace(highSourceLocalIdentity(E->Var), E->Var);
+    E->forEachChildExpr(Record);
+  };
+  walkStmts(Function.Body, [&](const HighStmt &S) { forEachExpr(S, Record); });
+  Seen.clear();
+  std::function<void(ExprPtr &)> Rename = [&](ExprPtr &E) {
+    if (!E || !Seen.insert(E.get()).second)
+      return;
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi)
+      if (auto It = Merges.find(highSourceLocalIdentity(E->Var));
+          It != Merges.end()) {
+        const MedVar &Root = Representatives.at(It->second);
+        E->Var.Id = Root.Id;
+        E->Var.SSAVer = Root.SSAVer;
+        E->Var.RenameTag = Root.RenameTag;
+      }
+    for (auto &Operand : E->Operands)
+      Rename(Operand);
+    Rename(E->IndirectTarget);
+  };
+  walkStmts(Function.Body, [&](HighStmt &S) { forEachExpr(S, Rename); });
+  // A copy between members of one class now copies a local to itself.
+  walkStmts(Function.Body, [&](HighStmt &S) {
+    if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val ||
+        S.Dst->Kind != ExprKind::Var || S.Val->Kind != ExprKind::Var ||
+        highSourceLocalIdentity(S.Dst->Var) !=
+            highSourceLocalIdentity(S.Val->Var))
+      return;
+    const va_t Address = S.Addr;
+    S = HighStmt{};
+    S.Kind = StmtKind::Nop;
+    S.Addr = Address; // A goto may still target this source label.
+  });
   return true;
 }
 } // namespace neverd

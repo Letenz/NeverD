@@ -49,11 +49,18 @@ template <typename Stream> inline void writeTypes(Stream &OS) {
         "#error \"unaligned pointer output requires Clang or GCC\"\n"
         "#endif\n";
   for (const auto &S : Scalars) {
+    // 32-bit targets have no __int128; an access of that width could not be
+    // spelled in either form there.
+    const bool Wide = S.Bytes == 16;
+    if (Wide)
+      OS << "#if defined(__SIZEOF_INT128__)\n";
     OS << "typedef " << S.Type << " " << S.Alias
        << " __attribute__((aligned(1), may_alias));\n"
        << "_Static_assert(sizeof(" << S.Alias << ") == " << S.Bytes
        << " && _Alignof(" << S.Alias
        << ") == 1, \"unaligned scalar layout\");\n";
+    if (Wide)
+      OS << "#endif\n";
   }
   OS << "#endif\n\n";
 }

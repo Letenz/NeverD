@@ -893,9 +893,11 @@ Finite-value enumeration may observe feasible tuples without changing the proof 
 
 Frame-offset checks reuse the existing bounded `FiniteQueryCache` within each relation checker. Key construction and retained proofs are limited to `MaxSymbolicNodes` words, as in recovery. Keys preserve the full predicate and relative-expression relationships; only completed domains or proved nonuniqueness are reusable. Every access still checks address independence and frame bounds.
 
-The relation checker retains one completed model-free SAT answer for the identical predicate reference in the same immutable symbolic context and fixed solver configuration. Node limits are checked before reuse; query budgets count actual solver calls. Unknown/Invalid results and models are never retained, and reuse ends with that checker. Different predicates still require proof.
+The relation checker retains the latest completed model-free query answer and one completed SAT fact for exact predicate-reference reuse in the same immutable symbolic context and fixed solver configuration. Immediate repeated queries keep their existing uncharged reuse; a SAT hit after intervening queries still consumes one query request before avoiding re-encoding and search. Node limits are checked before either lookup. Unknown/Invalid results and models are never retained, and reuse ends with that checker. Different predicates still require proof.
 
-`FrameOffsets` reduces constant additions, masks and matching split-register slices to exact modular remainders before finite enumeration. For alignment, it extracts only the removed low bits instead of bit-blasting the whole frame root. Inspection is bounded to sixteen levels of binary forms; new DAG nodes remain charged. The original path predicate, singleton-domain proof, mapping/frame bounds and incomplete-result refusals remain mandatory. The rewrite assumes neither a residue nor reachability, and it leaves residual address expressions unchanged.
+A native conditional branch shares one model-free encoder between its taken and fallthrough feasibility queries. Each query checks its complete predicate under separate assumptions; encoding reuse ends with that branch. Earlier branches therefore cannot accumulate clauses in a later branch’s search. The existing charged fresh retry applies only to encoding-gate exhaustion; search exhaustion and malformed inputs still refuse. Query, node and observation budgets remain enforced.
+
+`FrameOffsets` reduces binary additions with constant or symbolic addends, masks and matching split-register slices to exact modular remainders before finite enumeration. For alignment, it extracts only the removed low bits instead of bit-blasting the whole frame root. A symbolic index remains complete, including any dependence on the root or path predicate. Both operand choices share a sixteen-visit inspection budget; new DAG nodes remain charged. The original path predicate, singleton-domain proof, mapping/frame bounds and incomplete-result refusals remain mandatory. The rewrite assumes neither a residue nor reachability, and it leaves residual address expressions unchanged.
 
 `LowIRIndependenceFrame::EntryAlignment` declares an optional power-of-two entry-root congruence. The shared relation checker intersects its low-bit predicate with entry constants, nonwrapping bounds and exclusions before either execution or induction; it never rewrites the root. Invalid or infeasible domains produce no certificate. Native APIs require the exact same optional alignment in recovery options and a valid RSP root. Native-to-LLVM composition retains that frame domain in both freshly checked relations, including all state, status and preservation obligations. The common certificate digest binds presence, alignment and residue under semantic schema 13; object-cache recipes are unchanged. This contract grants no memory accessibility, frame privacy, native ABI or automatic partition aggregation.
 
@@ -1094,7 +1096,9 @@ BFMMLA intrinsic retains native float/bfloat lanes and emits the ACLE operation;
 its matrix arithmetic is not approximated with scalar multiply/add.
 Inline and materialized LLVM GEP expressions share data-layout-derived byte
 offsets, including nested aggregates and signed dynamic indices. Ordinary raw
-scalar accesses with insufficient alignment use exact-width byte copies.
+scalar accesses with insufficient alignment use Clang/GCC `aligned(1)`,
+`may_alias` scalar types by default (`CEmitterOptions::UseUnalignedPointers`),
+and exact-width byte copies for other widths or when that option is cleared.
 Integer comparisons share one LLVMC rendering rule across inline expressions,
 assigned results, and inverted branches. Operands retain their LLVM bit width
 before C integer promotion, and signed predicates interpret that width's sign

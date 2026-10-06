@@ -23,6 +23,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <algorithm>
 #include <functional>
 
 using namespace neverd::solver;
@@ -182,6 +183,55 @@ TEST(CnfEncoder, WideExclusiveOrStaysLinear) {
     }
     ASSERT_EQ(S.solve(Assumptions), SatResult::Sat);
     EXPECT_EQ(S.modelValue(Parity) == SatValue::True, (Ones & 1) != 0);
+  }
+}
+
+TEST(CnfEncoder, OperandPermutationsKeepSharingAndTruthTables) {
+  for (unsigned Count : {2U, 3U, 5U}) {
+    SCOPED_TRACE(Count);
+    for (unsigned Signs = 0; Signs < (1U << Count); ++Signs) {
+      SCOPED_TRACE(Signs);
+      SatSolver S;
+      CnfEncoder E(S);
+      llvm::SmallVector<SatLit, 8> Variables, Inputs;
+      llvm::SmallVector<unsigned, 8> Order;
+      for (unsigned I = 0; I != Count; ++I) {
+        Variables.push_back(E.freshLit());
+        Inputs.push_back(Variables.back().withPolarity(!(Signs & (1U << I))));
+        Order.push_back(I);
+      }
+      const auto And = E.mkAnd(Inputs), Xor = E.mkXor(Inputs);
+      const auto Majority =
+          Count == 3 ? E.mkMajority(Inputs[0], Inputs[1], Inputs[2]) : SatLit{};
+      const auto Gates = E.numGates();
+      do {
+        llvm::SmallVector<SatLit, 8> Permuted;
+        for (unsigned I : Order)
+          Permuted.push_back(Inputs[I]);
+        EXPECT_EQ(E.mkAnd(Permuted), And);
+        EXPECT_EQ(E.mkXor(Permuted), Xor);
+        if (Count == 3)
+          EXPECT_EQ(E.mkMajority(Permuted[0], Permuted[1], Permuted[2]),
+                    Majority);
+      } while (std::next_permutation(Order.begin(), Order.end()));
+      EXPECT_EQ(E.numGates(), Gates);
+
+      for (unsigned Assignment = 0; Assignment < (1U << Count); ++Assignment) {
+        SCOPED_TRACE(Assignment);
+        llvm::SmallVector<SatLit, 8> Assumptions;
+        unsigned Ones = 0;
+        for (unsigned I = 0; I != Count; ++I) {
+          const bool Bit = (Assignment & (1U << I)) != 0;
+          Assumptions.push_back(Variables[I].withPolarity(Bit));
+          Ones += Bit != ((Signs & (1U << I)) != 0);
+        }
+        ASSERT_EQ(S.solve(Assumptions), SatResult::Sat);
+        EXPECT_EQ(S.modelValue(And) == SatValue::True, Ones == Count);
+        EXPECT_EQ(S.modelValue(Xor) == SatValue::True, (Ones & 1) != 0);
+        if (Count == 3)
+          EXPECT_EQ(S.modelValue(Majority) == SatValue::True, Ones >= 2);
+      }
+    }
   }
 }
 

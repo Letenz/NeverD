@@ -118,6 +118,8 @@ TEST_F(COFFARMPipeline, HighCLoadLvaluesAndAddressesRemainValidC) {
   std::string C;
   llvm::raw_string_ostream OS(C);
   CEmitterOptions Opts;
+  // The checks read the portable byte-copy spelling.
+  Opts.UseUnalignedPointers = false;
   Opts.TheArch = Arch::AArch64;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Opts));
   OS.flush();
@@ -238,6 +240,8 @@ TEST_F(COFFARMPipeline, HighCForwardingPreservesFrameLvaluesAndAddresses) {
   std::string C;
   llvm::raw_string_ostream OS(C);
   CEmitterOptions Opts;
+  // The checks read the portable byte-copy spelling.
+  Opts.UseUnalignedPointers = false;
   Opts.TheArch = Arch::AArch64;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Opts));
   OS.flush();
@@ -259,7 +263,8 @@ TEST_F(COFFARMPipeline, HighCForwardingPreservesFrameLvaluesAndAddresses) {
   ASSERT_NE(ReturnAt, std::string::npos) << *Body;
   EXPECT_NE(Body->substr(ReturnAt).find("frame_base"), std::string::npos)
       << *Body;
-  EXPECT_NE(Body->find("uint8_t stack_storage[16]"), std::string::npos) << *Body;
+  EXPECT_NE(Body->find("uint8_t stack_storage[16]"), std::string::npos)
+      << *Body;
 
   const fs::path CPath = tmpFile("frame_lvalue_address.c");
   std::ofstream Out(CPath);
@@ -305,6 +310,8 @@ TEST_F(COFFARMPipeline, HighCAddressOfLoadDoesNotDeleteStore) {
   std::string C;
   llvm::raw_string_ostream OS(C);
   CEmitterOptions Opts;
+  // The checks read the portable byte-copy spelling.
+  Opts.UseUnalignedPointers = false;
   Opts.TheArch = Arch::AArch64;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Opts));
   OS.flush();

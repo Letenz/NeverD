@@ -78,5 +78,12 @@ std::vector<std::optional<uint64_t>> highSourceUnsignedUpperBounds(
 /// leave the function unchanged. This includes unused scalar unknowns, without
 /// defining any unknown bits. Retains addresses used as source labels.
 bool eliminateHighDeadPhiCopies(HighFunc &Function);
+/// Give the locals that same-register PHI copies join one name when their
+/// live ranges never overlap, and drop the copies that become self-copies.
+/// Address-taken locals, locals that may hold frame addresses, ones written
+/// other than by assignment or assigned unknown values stay separate.
+/// Functions with exception regions, unknown control flow or exhausted
+/// budgets are unchanged.  Returns true when a local was merged.
+bool coalesceHighPhiCopies(HighFunc &Function);
 } // namespace neverd
 #endif
