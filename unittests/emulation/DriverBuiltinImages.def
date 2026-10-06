@@ -28,6 +28,8 @@ NEVERD_PARITY_IMAGE(BuiltinDriverRegistry,
                     NEVERD_DRIVER_FIXTURES "/driver_registry.sys")
 NEVERD_PARITY_IMAGE(BuiltinDriverRuntime,
                     NEVERD_DRIVER_FIXTURES "/driver_runtime.sys")
+NEVERD_PARITY_IMAGE(BuiltinDriverThreadPriority,
+                    NEVERD_DRIVER_FIXTURES "/driver_thread_priority.sys")
 NEVERD_PARITY_IMAGE(BuiltinFailure, NEVERD_DRIVER_FIXTURES "/failure.sys")
 NEVERD_PARITY_IMAGE(BuiltinFault, NEVERD_DRIVER_FIXTURES "/fault.sys")
 NEVERD_PARITY_IMAGE(BuiltinGs, NEVERD_DRIVER_FIXTURES "/gs.sys")

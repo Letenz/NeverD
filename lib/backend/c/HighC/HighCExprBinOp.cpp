@@ -11,6 +11,8 @@
 
 #include "HighCWriter.h"
 
+#include "neverd/Limits.h"
+
 #include "llvm/Support/ErrorHandling.h"
 
 namespace neverd {
@@ -62,6 +64,37 @@ int getOpPrecedence(NdOp Op) {
   default:
     return 0;
   }
+}
+
+/// \p Printed as the operand of a cast.  A name, a number or one balanced
+/// parenthesized whole binds as tightly as the cast already; anything else,
+/// an embedded assignment included, is parenthesized.
+std::string castOperandText(std::string Printed) {
+  const llvm::StringRef Text(Printed);
+  if (!Text.empty() &&
+      llvm::all_of(Text, [](char C) { return llvm::isAlnum(C) || C == '_'; }))
+    return Printed;
+  bool Whole = Text.size() >= 2 && Text.front() == '(' && Text.back() == ')';
+  int Depth = 0;
+  char Quote = 0;
+  for (size_t I = 0; Whole && I < Text.size(); ++I) {
+    const char C = Text[I];
+    if (Quote) {
+      if (C == '\\')
+        ++I;
+      else if (C == Quote)
+        Quote = 0;
+    } else if (C == '"' || C == '\'') {
+      Quote = C;
+    } else if (C == '(') {
+      ++Depth;
+    } else if (C == ')' && --Depth == 0 && I + 1 != Text.size()) {
+      Whole = false;
+    }
+  }
+  if (Whole && Depth == 0 && !Quote)
+    return Printed;
+  return "(" + Printed + ")";
 }
 
 } // anonymous namespace
@@ -440,20 +473,94 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       // and integer promotions do not: even uint16_t multiplication can
       // overflow promoted int. Compute in an unsigned carrier, truncate,
       // then restore the signed interpretation without a numeric conversion.
-      const auto Carrier = typeToC(NdType::makeInt(Size < 4 ? 4 : Size, false));
+      const uint16_t CarrierSize = Size < 4 ? 4 : Size;
+      const auto Carrier = typeToC(NdType::makeInt(CarrierSize, false));
+      // A literal printed as a plain number converts to the carrier with the
+      // other operand, so it needs no cast of its own: only its bits at its
+      // own width matter, zero-extended when that is narrower than the
+      // result.  The value is that of a signed literal when the widths match.
+      auto PlainLiteral = [&](const ExprPtr &Value) -> std::optional<int64_t> {
+        const uint16_t Width = Value->Type->Size;
+        if (Value->Kind != ExprKind::Const || Width > 8)
+          return std::nullopt;
+        // A symbol, enumerator or address prints as something else.
+        const std::string Printed = exprStr(*Value);
+        llvm::StringRef Digits = llvm::StringRef(Printed).ltrim('-');
+        const bool Hex = Digits.consume_front("0x");
+        if (Digits.empty() || !llvm::all_of(Digits, [Hex](char C) {
+              return Hex ? llvm::isHexDigit(C) : llvm::isDigit(C);
+            }))
+          return std::nullopt;
+        const uint64_t Mask =
+            Width == 8 ? ~uint64_t{0} : (uint64_t{1} << (8 * Width)) - 1;
+        const uint64_t Bits = Value->ConstVal & Mask;
+        if (Width != Size || !(Bits >> (8 * Width - 1)))
+          return Bits <= uint64_t(std::numeric_limits<int64_t>::max())
+                     ? std::optional<int64_t>(static_cast<int64_t>(Bits))
+                     : std::nullopt;
+        return static_cast<int64_t>(Bits | ~Mask);
+      };
       auto Operand = [&](const ExprPtr &Value) {
         const auto Bits = typeToC(NdType::makeInt(Value->Type->Size, false));
-        return (Carrier == Bits ? "" : "(" + Carrier + ")") + "(" + Bits +
-               ")(" + exprStr(*Value) + ")";
+        // A zero-extension printed as `(T)(uintN_t)x` only needs the carrier
+        // in place of T.
+        if (Value->Kind == ExprKind::UnaryOp && Value->Op == NdOp::INT_ZEXT &&
+            Value->Type->Size == CarrierSize && !typedCallResult(Value.get()) &&
+            !Value->Operands.empty() && Value->Operands[0] &&
+            Value->Operands[0]->Kind != ExprKind::Const &&
+            Value->Operands[0]->Type &&
+            Value->Operands[0]->Type->Size < CarrierSize)
+          return "(" + Carrier + ")(" +
+                 typeToC(
+                     NdType::makeInt(Value->Operands[0]->Type->Size, false)) +
+                 ")" + castOperandText(exprStr(*Value->Operands[0]));
+        return "(" + Carrier + ")" + (Carrier == Bits ? "" : "(" + Bits + ")") +
+               castOperandText(exprStr(*Value));
       };
-      const char *Symbol = E.Op == NdOp::INT_ADD   ? " + "
-                           : E.Op == NdOp::INT_SUB ? " - "
-                                                   : " * ";
-      const auto Value = "(" + Unsigned + ")(" + Operand(E.Operands[0]) +
-                         Symbol + Operand(E.Operands[1]) + ")";
-      return E.Type->IsSigned
-                 ? "__builtin_bit_cast(" + typeToC(E.Type) + ", " + Value + ")"
-                 : "(" + Value + ")";
+      // The literal keeps the carrier's width: a 32-bit carrier must not
+      // meet a wider literal type.
+      auto LiteralText = [&](int64_t Literal) {
+        if (Literal < 0 &&
+            Literal >= -static_cast<int64_t>(limits::kDecimalConstThreshold))
+          return std::to_string(Literal);
+        uint64_t Bits = static_cast<uint64_t>(Literal);
+        if (CarrierSize == 4)
+          Bits &= 0xFFFFFFFFu;
+        return constStr(Bits);
+      };
+      NdOp Op = E.Op;
+      std::string Left, Right;
+      const auto LeftLiteral = PlainLiteral(E.Operands[0]);
+      const auto RightLiteral = PlainLiteral(E.Operands[1]);
+      if (RightLiteral && !LeftLiteral) {
+        Left = Operand(E.Operands[0]);
+        int64_t Literal = *RightLiteral;
+        // `x + -8` reads as the `x - 8` it computes, and the other way round.
+        if (Literal < 0 && Literal != std::numeric_limits<int64_t>::min() &&
+            (Op == NdOp::INT_ADD || Op == NdOp::INT_SUB)) {
+          Op = Op == NdOp::INT_ADD ? NdOp::INT_SUB : NdOp::INT_ADD;
+          Literal = -Literal;
+        }
+        Right = LiteralText(Literal);
+      } else if (LeftLiteral && !RightLiteral) {
+        Left = LiteralText(*LeftLiteral);
+        Right = Operand(E.Operands[1]);
+      } else {
+        Left = Operand(E.Operands[0]);
+        Right = Operand(E.Operands[1]);
+      }
+      const char *Symbol = Op == NdOp::INT_ADD   ? " + "
+                           : Op == NdOp::INT_SUB ? " - "
+                                                 : " * ";
+      // At a carrier width the unsigned carrier is the result already.
+      const bool AtCarrier = CarrierSize == Size;
+      std::string Value = Left + Symbol + Right;
+      if (!AtCarrier)
+        Value = "(" + Unsigned + ")(" + Value + ")";
+      if (E.Type->IsSigned)
+        return "__builtin_bit_cast(" + typeToC(E.Type) + ", " + Value + ")";
+      return AtCarrier && getOpPrecedence(Op) <= ParentPrec ? "(" + Value + ")"
+                                                            : Value;
     }
   }
 
@@ -493,27 +600,36 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     const auto SourceType = typeToC(NdType::makeInt(Size, Arithmetic));
     const auto ResultType =
         typeToC(E.Type ? E.Type : NdType::makeInt(Size, false));
+    // A shift of at least an int keeps its source type, so a result of that
+    // very type needs no conversion back.
+    const bool KeepsType =
+        Size >= 4 && E.Type && E.Type->Kind == NdTypeKind::Int &&
+        E.Type->Size == Size && E.Type->IsSigned == Arithmetic;
     const auto RestoreType = [&](const std::string &Value) {
-      return "(" + ResultType + ")(" + Value + ")";
+      if (KeepsType)
+        return Value;
+      return "(" + ResultType + ")" + Value;
     };
-    const auto Left = "(" + SourceType + ")(" + exprStr(*E.Operands[0]) + ")";
+    const auto Left =
+        "(" + SourceType + ")" + castOperandText(exprStr(*E.Operands[0]));
     const auto Limit = std::to_string(Size * 8u);
     // The opcode determines sign extension independently of inferred types.
     // Preserve the count's own width, then guard C's undefined overshifts.
     const auto Fallback =
-        Arithmetic ? "((" + Left + ") >> " + std::to_string(Size * 8u - 1) + ")"
+        Arithmetic ? "(" + Left + " >> " + std::to_string(Size * 8u - 1) + ")"
                    : "0";
     if (E.Operands[1]->Kind == ExprKind::Const) {
       const uint64_t Count = E.Operands[1]->ConstVal;
-      return RestoreType(Count < Size * 8u ? "((" + Left + ") >> " +
-                                                 std::to_string(Count) + ")"
-                                           : Fallback);
+      return RestoreType(Count < Size * 8u
+                             ? "(" + Left + " >> " + std::to_string(Count) + ")"
+                             : Fallback);
     }
     const auto CountType = typeToC(NdType::makeInt(
         E.Operands[1]->Type ? E.Operands[1]->Type->Size : 8, false));
-    const auto Right = "(" + CountType + ")(" + exprStr(*E.Operands[1]) + ")";
-    return RestoreType("((" + Right + ") < " + Limit + " ? ((" + Left +
-                       ") >> (" + Right + ")) : " + Fallback + ")");
+    const auto Right =
+        "(" + CountType + ")" + castOperandText(exprStr(*E.Operands[1]));
+    return RestoreType("(" + Right + " < " + Limit + " ? " + Left + " >> " +
+                       Right + " : " + Fallback + ")");
   }
   case NdOp::INT_LEFT: {
     const uint16_t Size = E.Type ? E.Type->Size : 0;
@@ -527,16 +643,26 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     // least unsigned int, then restore the operation's exact result width.
     const auto CarrierType =
         typeToC(NdType::makeInt(Size < 4 ? 4 : Size, false));
-    const std::string Left = exprStr(*E.Operands[0]);
-    const std::string Right = exprStr(*E.Operands[1]);
-    const auto Shift = "(" + ResultType + ")((" + CarrierType + ")(" +
-                       SourceType + ")(" + Left + ") << (" + Right + "))";
-    if (E.Operands[1]->Kind == ExprKind::Const)
-      return E.Operands[1]->ConstVal < Size * 8u ? Shift : "0";
+    const std::string Left = castOperandText(exprStr(*E.Operands[0]));
+    const std::string Right = castOperandText(exprStr(*E.Operands[1]));
+    // At a carrier width the shifted carrier is the result already.
+    const std::string Shifted =
+        "(" + CarrierType + ")" +
+        (SourceType == CarrierType ? "" : "(" + SourceType + ")") + Left +
+        " << " + Right;
+    const bool AtCarrier = ResultType == CarrierType;
+    const auto Shift = AtCarrier ? "(" + Shifted + ")"
+                                 : "(" + ResultType + ")(" + Shifted + ")";
+    if (E.Operands[1]->Kind == ExprKind::Const) {
+      if (E.Operands[1]->ConstVal >= Size * 8u)
+        return "0";
+      return AtCarrier && getOpPrecedence(NdOp::INT_LEFT) > ParentPrec ? Shifted
+                                                                       : Shift;
+    }
     const auto CountType = typeToC(NdType::makeInt(
         E.Operands[1]->Type ? E.Operands[1]->Type->Size : 8, false));
-    return "((" + CountType + ")(" + Right + ") < " +
-           std::to_string(Size * 8u) + " ? " + Shift + " : 0)";
+    return "((" + CountType + ")" + Right + " < " + std::to_string(Size * 8u) +
+           " ? " + Shift + " : 0)";
   }
   case NdOp::SUBBYTES: {
     if (const HighExpr *Call = typedCallResult(&E))

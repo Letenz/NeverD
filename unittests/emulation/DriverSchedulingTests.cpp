@@ -368,6 +368,80 @@ TEST(DriverSchedulingPolicy, PassiveQueuesAndResumptionsShareReadyOrder) {
   EXPECT_EQ(Next->ID, Worker);
   llvm::cantFail(S.finish(Next->ID));
 }
+TEST(DriverSchedulingPolicy, HighestPriorityPrecedesOlderPassiveWork) {
+  KernelScheduler S(KernelScheduler::Limits{}, true);
+  KernelScheduler::Callback Call{1, 1, 1, CallbackPC, {}};
+  const auto First = llvm::cantFail(S.enqueueWorkItem(Call));
+  Call.Object++;
+  const auto Second = llvm::cantFail(S.enqueueSystemThread(Call));
+  Call.Object++;
+  const auto Third = llvm::cantFail(S.enqueueWorkItem(Call));
+  llvm::cantFail(S.setThreadPriority(Second, thread_priority::Maximum));
+  llvm::cantFail(S.setThreadPriority(Third, thread_priority::Maximum));
+  for (auto ID : {Second, Third, First}) {
+    auto Next = llvm::cantFail(S.next(false));
+    ASSERT_TRUE(Next);
+    EXPECT_EQ(Next->ID, ID);
+    llvm::cantFail(S.finish(ID));
+  }
+}
+TEST(DriverSchedulingPolicy,
+     PriorityChangesReevaluateQueuedAndSuspendedThreads) {
+  KernelScheduler S(KernelScheduler::Limits{}, true);
+  KernelScheduler::Callback Call{1, 1, 1, CallbackPC, {}};
+  const auto First = llvm::cantFail(S.enqueueSystemThread(Call));
+  Call.Object++;
+  const auto Second = llvm::cantFail(S.enqueueSystemThread(Call));
+  const auto SecondOrder = S.nextPassiveThread()->ReadyOrder + 1;
+  llvm::cantFail(S.setThreadPriority(Second, thread_priority::Maximum));
+  EXPECT_EQ(S.nextPassiveThread()->ReadyOrder, SecondOrder);
+  llvm::cantFail(S.setThreadPriority(Second, thread_priority::Minimum));
+  auto Next = llvm::cantFail(S.next(false));
+  ASSERT_TRUE(Next);
+  ASSERT_EQ(Next->ID, First);
+  llvm::cantFail(S.suspend(First));
+  llvm::cantFail(S.setThreadPriority(First, thread_priority::Maximum));
+  llvm::cantFail(S.resume(First));
+  EXPECT_EQ(S.threadPriority(First), thread_priority::Maximum);
+  EXPECT_TRUE(
+      S.readyThread(First, Next->ReadyOrder).precedes(*S.nextPassiveThread()));
+  llvm::cantFail(S.finish(First));
+  Next = llvm::cantFail(S.next(false));
+  ASSERT_TRUE(Next);
+  EXPECT_EQ(Next->ID, Second);
+  llvm::cantFail(S.finish(Second));
+}
+TEST(DriverSchedulingPolicy, InvalidPriorityPreservesCanonicalState) {
+  KernelScheduler S;
+  constexpr uint64_t Key = CallbackPC;
+  EXPECT_EQ(llvm::cantFail(S.setThreadPriority(Key, thread_priority::Maximum)),
+            thread_priority::Default);
+  for (int32_t Priority : {-1, 0, thread_priority::Maximum + 1, INT32_MAX}) {
+    auto Refused = S.setThreadPriority(Key, Priority);
+    ASSERT_FALSE(bool(Refused));
+    EXPECT_EQ(llvm::toString(Refused.takeError()),
+              thread_priority::InvalidPriority);
+    EXPECT_EQ(S.threadPriority(Key), thread_priority::Maximum);
+  }
+  S.forgetThreadPriority(Key);
+  EXPECT_EQ(S.threadPriority(Key), thread_priority::Default);
+}
+TEST(DriverSchedulingPolicy, CooperativeDefaultRetainsWorkerFIFO) {
+  KernelScheduler S;
+  KernelScheduler::Callback Call{1, 1, 1, CallbackPC, {}};
+  const auto Thread = llvm::cantFail(S.enqueueSystemThread(Call));
+  Call.Object++;
+  const auto Worker = llvm::cantFail(S.enqueueWorkItem(Call));
+  llvm::cantFail(S.setThreadPriority(Thread, thread_priority::Maximum));
+  auto Next = llvm::cantFail(S.next(false));
+  ASSERT_TRUE(Next);
+  EXPECT_EQ(Next->ID, Worker);
+  llvm::cantFail(S.finish(Worker));
+  Next = llvm::cantFail(S.next(false));
+  ASSERT_TRUE(Next);
+  EXPECT_EQ(Next->ID, Thread);
+  llvm::cantFail(S.finish(Thread));
+}
 TEST(DriverSchedulingPolicy, RunningClockKeepsEveryPeriodicBoundary) {
   KernelScheduler S;
   const KernelScheduler::Callback Work{1, 1, 1, CallbackPC, {}};

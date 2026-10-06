@@ -492,6 +492,8 @@ Windows 모델은 독립적인 비페이지 풀 MDL도 관리하며, 설명자�
 
 `KernelScheduler`는 준비 큐 순서, 콜백 식별자와 타이머 기한을, `KernelDispatcher`는 불투명 DPC·타이머·이벤트 객체와 신호를 관리합니다. `KernelModel`은 대기 등록, 작업 항목/장치 수명과 IRP 완료를 관리합니다. `DriverSession`은 Win64 스택 인수를 포함한 별도 콜백 스택과 전체 CPU 컨텍스트를 중단·복원하며 게스트 메모리는 공유합니다. 기본적으로 준비된 프레임이 없을 때만 가상 시간은 타이머/대기/취소 경계에서 진행하고 CPU0의 결정적 협력 스케줄링으로 DPC는 `DISPATCH_LEVEL`, 작업 항목은 `PASSIVE_LEVEL`에서 실행합니다. 일반 스레드/APC/스핀락, 설명된 계약 밖의 WDM/PnP 취소, 임의의 동시 공개 시나리오 제출, 전체 PnP/전원 또는 일반 하드웨어 지원은 포함하지 않습니다. API IRQL 상한은 `KernelAPIIRQL.def`에 정의되며 인수별 제한은 담당 모델이 검사합니다.
 
+`KernelScheduler`가 실행 우선순위와 우선순위/준비 순서 비교를 일원화합니다. `KernelModelThreadPriorities`는 `KeSetPriorityThread`와 `KeQueryPriorityThread`의 스레드 객체를 검증하며 중지된 CPU 컨텍스트에 우선순위를 복사하지 않습니다. `DriverSession`은 콜백 동기화 진입 전과 API/이벤트 경계에서 높은 우선순위의 준비 스레드를 확인합니다. 범위와 제한은 [드라이버 스케줄링](driver-scheduling.md)을 참조하세요.
+
 `KernelModelDeviceStack`은 장치의 드라이버 소유자, 할당, 상하 연결, 삭제 대기 상태, 내부 참조를 하나의 레코드로 관리합니다. 게스트 `NextDevice` 목록과 호스트 소유 연결 그래프는 별개입니다. 이름 확인은 이름 있는 하위 장치를 `FILE_OBJECT`와 보고서에 유지하고 초기 디스패치와 READ/WRITE 방식은 현재 최상단을 선택하며 요청 경로 전체를 보존합니다. 분리·삭제 후에도 요청/콜백이 참조하는 장치는 만료되지 않으며 공개 `ReferenceCount`는 열린 핸들만 셉니다.
 
 `KernelModelIRPStack`은 원래 게스트 패킷의 제한된 커서, 정확한 대상 디스패치, 완료 해제를 관리하고 인라인 Copy/Skip/SetCompletion 쓰기를 단일 근거로 사용합니다. 디스패치 상태, 완료 제어값, 최종 `IoStatus`는 별개이며 반환 후에도 pending을 전달할 수 있습니다. `STATUS_MORE_PROCESSING_REQUIRED`는 중첩 완료를 포함해 최종 해제를 재개할 때까지 IRP/MDL/버퍼를 보존합니다. `KernelGuestCall`의 소유 하위 시스템과 로컬 토큰이 WDM/WDF continuation 충돌을 막고 `DriverSession`은 CPU 프레임과 상속 IRQL을 유지합니다. 단일 게스트 드라이버를 별도 소유의 시나리오 PDO 위에 연결할 수 있습니다. 드라이버 할당 IRP, WDF 연결/전달, 사용 중 스택 연결, 중간 계층 분리, 주 기능 변경, 경로 외부 대상은 지원하지 않습니다. 상위 완료 콜백 전에 소비된 하위 스택 위치를 0으로 지웁니다.
