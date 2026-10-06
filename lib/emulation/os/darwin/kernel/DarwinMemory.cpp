@@ -1,9 +1,11 @@
-//===- DarwinMemory.cpp - Darwin anonymous virtual memory ----------------===//
+//===- DarwinMemory.cpp - Darwin virtual memory --------------------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 #include "DarwinMemory.h"
+
+#include "DarwinFiles.h"
 
 #include <algorithm>
 
@@ -40,20 +42,57 @@ DarwinMemory::DarwinMemory(AddressSpace &Space, const MemoryLayout &Layout,
   Maximum.push_back({ReturnGate, PageSize, 5});
 }
 
-llvm::Expected<ServiceResult> DarwinMemory::map(const ProcessServiceEvent &E) {
+llvm::Expected<std::optional<ServiceResult>>
+DarwinMemory::map(const ProcessServiceEvent &E, DarwinFiles &Files,
+                  ProcessResult &Result) {
   const auto [Hint, Length, Prot, Flags, FD, Offset] = E.Arguments;
+  auto Error = [](uint64_t Code) {
+    return std::optional<ServiceResult>(error(Code));
+  };
+  auto Unsupported = [&](const char *Diagnostic) {
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic = Diagnostic;
+    return std::optional<ServiceResult>();
+  };
+  const bool Anonymous = Flags & MapAnonymous;
+  // Raw legacy mmap allows unaligned file offsets; UNIX03 rejects them.
+  // Check file-end rounding before looking up the descriptor, as XNU does.
+  if (((Flags & MapUnix03) && (!Length || Offset % PageSize)) ||
+      Length > UINT64_MAX - Offset || !rounded(Offset + Length, PageSize))
+    return Error(InvalidArgument);
   if (Offset % PageSize)
-    return error(InvalidArgument);
-  // The raw legacy BSD mmap entry (without MAP_UNIX03) accepts zero length.
-  // Both kernel result words start at zero; no mapping is created.
-  if (!Length)
-    return ServiceResult{0};
+    return Unsupported(diagnostic::MemoryFileOffset);
   auto Size = rounded(Length, PageSize);
   if (!Size || *Size > UserLimit)
-    return error(InvalidArgument);
+    return Error(InvalidArgument);
+  llvm::ArrayRef<uint8_t> Bytes;
+  std::shared_ptr<const unsigned> FileLease;
+  if (!Anonymous) {
+    auto Source = Files.mappingSource(uint32_t(FD));
+    if (auto *Code = std::get_if<uint32_t>(&Source))
+      return Error(*Code);
+    if (auto *Diagnostic = std::get_if<const char *>(&Source))
+      return Unsupported(*Diagnostic);
+    const auto &Mapping = std::get<DarwinFiles::Mapping>(Source);
+    if (!Mapping.Readable && (normalizedProtection(Prot) & ProtRead))
+      return Error(PermissionDenied);
+    const auto File = Mapping.Bytes;
+    FileLease = Mapping.Lease;
+    // A complete page beyond EOF would fault through the vnode pager. Until
+    // that fault model exists, refuse before allocating instead of zeroing it.
+    if (Length && (Offset >= File.size() ||
+                   *Size > *rounded(File.size(), PageSize) - Offset))
+      return Unsupported(diagnostic::MemoryFileExtent);
+    if (Length)
+      Bytes =
+          File.slice(Offset, std::min<uint64_t>(*Size, File.size() - Offset));
+  }
+  // Legacy zero length still validates the file descriptor and its kind.
+  if (!Length)
+    return std::optional<ServiceResult>({0, false});
   if (*Size > Limit || Space.mappedBytes() > Limit - *Size ||
       Space.physicalMemory()->allocatedBytes() > Limit - *Size)
-    return error(NoMemory);
+    return Error(NoMemory);
   auto Ranges = Space.mappings();
   if (!Ranges)
     return Ranges.takeError();
@@ -81,17 +120,17 @@ llvm::Expected<ServiceResult> DarwinMemory::map(const ProcessServiceEvent &E) {
   if (!Found && Hint)
     Found = Find(MmapBase);
   if (!Found)
-    return error(NoMemory);
+    return Error(NoMemory);
   const uint64_t Address = *Found;
   std::vector<std::shared_ptr<MemoryRegion>> Pages;
   for (uint64_t Offset = 0; Offset < *Size; Offset += PageSize) {
     auto Page = Space.physicalMemory()->allocate(PageSize);
     if (!Page) {
-      auto Error = Page.takeError();
-      if (!Error.isA<GuestMemoryLimitError>())
-        return std::move(Error);
-      llvm::consumeError(std::move(Error));
-      return error(NoMemory);
+      auto AllocationError = Page.takeError();
+      if (!AllocationError.isA<GuestMemoryLimitError>())
+        return std::move(AllocationError);
+      llvm::consumeError(std::move(AllocationError));
+      return Error(NoMemory);
     }
     Pages.push_back(std::move(*Page));
   }
@@ -107,8 +146,18 @@ llvm::Expected<ServiceResult> DarwinMemory::map(const ProcessServiceEvent &E) {
     }
     Mapped += PageSize;
   }
+  // Initialize physical backing while the CPU is stopped, including PROT_NONE
+  // and read-only mappings. The catalogue is never shared as writable RAM.
+  if (!Bytes.empty())
+    if (auto CopyError = Space.writeBacking(Address, Bytes))
+      return llvm::joinErrors(std::move(CopyError),
+                              Space.unmap(Address, *Size));
   Maximum.push_back({Address, *Size, 7});
-  return ServiceResult{Address};
+  // Private maxprot gains WRITE and EXECUTE before XNU implies READ, even
+  // for a write-only descriptor initially mapped with PROT_NONE.
+  if (FileLease)
+    FileMappings.push_back({Address, *Size, std::move(FileLease)});
+  return std::optional<ServiceResult>({Address, false});
 }
 
 llvm::Expected<ServiceResult>
@@ -190,18 +239,38 @@ DarwinMemory::unmap(const ProcessServiceEvent &E) {
     if (auto Error = Space.unmap(Begin, End - Begin))
       return std::move(Error);
     forgetMaximum(Begin, End - Begin);
+    forgetFileMappings(Begin, End - Begin);
   }
   return ServiceResult{0};
 }
 
+void DarwinMemory::forgetFileMappings(uint64_t Address, uint64_t Size) {
+  std::vector<FileMapping> Kept;
+  for (const auto &R : FileMappings) {
+    if (!overlaps(Address, Size, R.Address, R.Size)) {
+      Kept.push_back(R);
+      continue;
+    }
+    if (R.Address < Address)
+      Kept.push_back({R.Address, Address - R.Address, R.Lease});
+    if (R.Address + R.Size > Address + Size)
+      Kept.push_back(
+          {Address + Size, R.Address + R.Size - Address - Size, R.Lease});
+  }
+  FileMappings = std::move(Kept);
+}
+
 llvm::Expected<std::optional<ServiceResult>>
 DarwinMemory::handle(ServiceKind Kind, const ProcessServiceEvent &E,
-                     ProcessResult &Result) {
+                     DarwinFiles &Files, ProcessResult &Result) {
   const bool IsMap = Kind == ServiceKind::Mmap;
   const bool HasProtection = IsMap || Kind == ServiceKind::Mprotect;
+  const auto Flags = E.Arguments[3] & ~uint64_t(MapUnix03);
   if ((HasProtection && (E.Arguments[2] & ~uint64_t(7))) ||
-      (IsMap && (E.Arguments[3] != (MapPrivate | MapAnonymous) ||
-                 uint32_t(E.Arguments[4]) != UINT32_MAX || E.Arguments[5])) ||
+      (IsMap &&
+       (Flags != MapPrivate && Flags != (MapPrivate | MapAnonymous))) ||
+      (IsMap && (Flags & MapAnonymous) &&
+       (uint32_t(E.Arguments[4]) != UINT32_MAX || E.Arguments[5])) ||
       (HasProtection && (E.Arguments[2] & ProtExecute)) ||
       (!IsMap && E.Arguments[0] < UserLimit &&
        E.Arguments[1] <= UserLimit - E.Arguments[0] &&
@@ -210,10 +279,10 @@ DarwinMemory::handle(ServiceKind Kind, const ProcessServiceEvent &E,
     Result.Diagnostic = diagnostic::MemoryMode;
     return std::optional<ServiceResult>();
   }
-  llvm::Expected<ServiceResult> Value = IsMap ? map(E)
-                                        : Kind == ServiceKind::Mprotect
-                                            ? protect(E)
-                                            : unmap(E);
+  if (IsMap)
+    return map(E, Files, Result);
+  llvm::Expected<ServiceResult> Value =
+      Kind == ServiceKind::Mprotect ? protect(E) : unmap(E);
   if (!Value)
     return Value.takeError();
   return std::optional<ServiceResult>(*Value);

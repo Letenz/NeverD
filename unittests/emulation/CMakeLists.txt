@@ -45,6 +45,12 @@ add_neverd_unittest(NeverDAArch64CacheTests
   NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationCPU EmulationRuntime)
 
+add_neverd_unittest(NeverDAArch64NZCVTests
+  AArch64NZCVTests.cpp
+  TIMEOUT 20
+  NO_PRETTY_VALUES
+  LINK_COMPONENTS EmulationCPU EmulationRuntime)
+
 add_neverd_unittest(NeverDAArch64MemoryTests
   AArch64CrossPageTests.cpp
   AArch64VectorMemoryTests.cpp
@@ -199,6 +205,10 @@ add_neverd_unittest(NeverDDarwinProcessTests
   DarwinProcessTests.cpp
   DarwinImageTests.cpp
   DarwinMemoryTests.cpp
+  DarwinFileTests.cpp
+  DarwinVectorTests.cpp
+  DarwinTimeTests.cpp
+  DarwinSystemTests.cpp
   DarwinNativeTests.cpp
   TIMEOUT 30
   NO_PRETTY_VALUES

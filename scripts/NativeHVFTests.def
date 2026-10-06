@@ -8,6 +8,7 @@ NEVERD_NATIVE_HVF_OWNER(NeverDHvfTests)
 NEVERD_NATIVE_HVF_OWNER(NeverDAArch64FPTests)
 NEVERD_NATIVE_HVF_OWNER(NeverDAArch64MemoryTests)
 NEVERD_NATIVE_HVF_OWNER(NeverDAArch64CacheTests)
+NEVERD_NATIVE_HVF_OWNER(NeverDAArch64NZCVTests)
 NEVERD_NATIVE_HVF_OWNER(NeverDX64FPTests)
 NEVERD_NATIVE_HVF_OWNER(NeverDX64IntegerTests)
 NEVERD_NATIVE_HVF_OWNER(NeverDX64ExceptionTests)
@@ -28,6 +29,46 @@ NEVERD_NATIVE_HVF_OWNER(NeverDDarwinProcessTests)
 NEVERD_NATIVE_HVF_OWNER(NeverDRunControlTests)
 #endif
 #ifdef NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64,
+    "AArch64NZCVOracle.OriginalInstructionsSelectOnlyTheFourConditionBits")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Transports/AArch64NZCV."
+           "ReadsOnlyChangeTheDestinationAndDiscardThroughXZR/hvfSupervisor")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Transports/AArch64NZCV."
+           "ReadsOnlyChangeTheDestinationAndDiscardThroughXZR/hvfUser")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Transports/AArch64NZCV."
+           "WritesIgnoreOtherInputBitsAndXZRDoesNotReadSP/hvfSupervisor")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Transports/AArch64NZCV."
+           "WritesIgnoreOtherInputBitsAndXZRDoesNotReadSP/hvfUser")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Transports/AArch64NZCV."
+           "NearbySystemRegistersRemainUnsupportedWithoutEffects/hvfSupervisor")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Transports/AArch64NZCV."
+           "NearbySystemRegistersRemainUnsupportedWithoutEffects/hvfUser")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Transports/AArch64NZCV."
+           "ObserverStopAndContextRestoreKeepTheInstructionBoundary/"
+           "hvfSupervisor")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Transports/AArch64NZCV."
+           "ObserverStopAndContextRestoreKeepTheInstructionBoundary/hvfUser")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Transports/AArch64NZCV."
+           "ObserverFailurePreservesCompleteState/hvfSupervisor")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Transports/AArch64NZCV."
+           "ObserverFailurePreservesCompleteState/hvfUser")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Transports/AArch64NZCV."
+           "EveryReadAndWriteConsumesOneSharedBudgetAttempt/hvfSupervisor")
+NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
+    ARM64, "Transports/AArch64NZCV."
+           "EveryReadAndWriteConsumesOneSharedBudgetAttempt/hvfUser")
 NEVERD_NATIVE_HVF_REQUIRED_HOST_TEST(
     ARM64, "Transports/"
            "AArch64Cache.GuestStoresUpdateExecutableAliasesAcrossTwoPages/"

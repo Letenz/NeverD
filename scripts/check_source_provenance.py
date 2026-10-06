@@ -18,6 +18,7 @@ a decision somebody made rather than a pattern nobody tightened.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -26,7 +27,6 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatch
-import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -351,6 +351,8 @@ class HistoryAllowance:
     commits: frozenset[str]
     line: str
     reason: str
+    # Exact UTF-8 line hashes let a reviewed cleanup avoid republishing private
+    # text in this table. Path and full commit restrictions still apply.
     line_sha256: frozenset[str] = frozenset()
 
 
@@ -358,13 +360,17 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
         path="docs/benchmarks/2026-10-05-arm64-hvf-completion-atomic.json",
         rule="private-path",
-        commits=frozenset({"ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120"}),
+        commits=frozenset({
+            "a50bff6e89aae6514cfb82464531a2738651e1c6",
+            "72e28d1c99e49fe067eb7a485d2605c2f200a100",
+            "ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120",
+        }),
         line="",
         reason=(
-            "This commit replaced private benchmark paths with documented "
-            "placeholders while preserving measurements and original hashes. "
-            "Only these exact historical lines are reviewed; digests avoid "
-            "republishing the private paths in the policy."
+            "Reviewed historical ARM64 HVF benchmark paths. Publication "
+            "normalizes only checkout/cache prefixes and preserves measurements "
+            "and binary hashes. Exact line digests avoid republishing the "
+            "private prefixes; no current or future occurrence is permitted."
         ),
         line_sha256=frozenset({
             "117b049ad55781d3b77eb19f2f5b2bdae9fbb3fb71dd45ae6332152912bfb86c",
@@ -380,13 +386,17 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
         path="docs/benchmarks/2026-10-05-arm64-hvf-completion-blocking.json",
         rule="private-path",
-        commits=frozenset({"ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120"}),
+        commits=frozenset({
+            "a50bff6e89aae6514cfb82464531a2738651e1c6",
+            "72e28d1c99e49fe067eb7a485d2605c2f200a100",
+            "ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120",
+        }),
         line="",
         reason=(
-            "This commit replaced private benchmark paths with documented "
-            "placeholders while preserving measurements and original hashes. "
-            "Only these exact historical lines are reviewed; digests avoid "
-            "republishing the private paths in the policy."
+            "Reviewed historical ARM64 HVF benchmark paths. Publication "
+            "normalizes only checkout/cache prefixes and preserves measurements "
+            "and binary hashes. Exact line digests avoid republishing the "
+            "private prefixes; no current or future occurrence is permitted."
         ),
         line_sha256=frozenset({
             "6749c867ff97a650cf2d55e195158269ca59f96946c8280979e3e1b1e1b12d6a",
@@ -402,13 +412,17 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
         path="docs/benchmarks/2026-10-05-arm64-hvf-completion-metadata.json",
         rule="private-path",
-        commits=frozenset({"ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120"}),
+        commits=frozenset({
+            "a50bff6e89aae6514cfb82464531a2738651e1c6",
+            "72e28d1c99e49fe067eb7a485d2605c2f200a100",
+            "ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120",
+        }),
         line="",
         reason=(
-            "This commit replaced private benchmark paths with documented "
-            "placeholders while preserving measurements and original hashes. "
-            "Only these exact historical lines are reviewed; digests avoid "
-            "republishing the private paths in the policy."
+            "Reviewed historical ARM64 HVF benchmark paths. Publication "
+            "normalizes only checkout/cache prefixes and preserves measurements "
+            "and binary hashes. Exact line digests avoid republishing the "
+            "private prefixes; no current or future occurrence is permitted."
         ),
         line_sha256=frozenset({
             "30cce435771a4e82d1bd7ba6270a12cdcc12f0695681bdae63235a2259f293e1",
@@ -427,13 +441,17 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
         path="docs/benchmarks/2026-10-05-arm64-hvf-watchdog.json",
         rule="private-path",
-        commits=frozenset({"ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120"}),
+        commits=frozenset({
+            "1655143e6cbac4e080aadb65f6a6fbff05c63cd8",
+            "72e28d1c99e49fe067eb7a485d2605c2f200a100",
+            "ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120",
+        }),
         line="",
         reason=(
-            "This commit replaced private benchmark paths with documented "
-            "placeholders while preserving measurements and original hashes. "
-            "Only these exact historical lines are reviewed; digests avoid "
-            "republishing the private paths in the policy."
+            "Reviewed historical ARM64 HVF benchmark paths. Publication "
+            "normalizes only checkout/cache prefixes and preserves measurements "
+            "and binary hashes. Exact line digests avoid republishing the "
+            "private prefixes; no current or future occurrence is permitted."
         ),
         line_sha256=frozenset({
             "1af51e627f88bc5e24c1fb921cb43d2520c2604e1760e5cdf925a128c77869c6",
@@ -489,8 +507,10 @@ def is_allowed_history_line(
         a.rule == rule.name
         and history_commit in a.commits
         and path == a.path
-        and (line == a.line or hashlib.sha256(line.encode("utf-8")).hexdigest()
-             in a.line_sha256)
+        and (
+            line == a.line
+            or hashlib.sha256(line.encode("utf-8")).hexdigest() in a.line_sha256
+        )
         for a in HISTORY_ALLOWED
     )
 

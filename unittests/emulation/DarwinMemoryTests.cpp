@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "gtest/gtest.h"
+#include "os/darwin/kernel/DarwinFiles.h"
 #include "os/darwin/kernel/DarwinMemory.h"
 
 namespace neverd::emulation::darwin_model {
@@ -12,6 +13,8 @@ class DarwinMemoryTest : public testing::TestWithParam<uint64_t> {
 protected:
   std::shared_ptr<AddressSpace> Space;
   std::unique_ptr<DarwinMemory> Memory;
+  ProcessOptions Options;
+  std::unique_ptr<DarwinFiles> Files;
   ProcessResult Result{ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
                        ExecutionBackendKind::Unicorn, "test"};
   uint64_t Page = 0;
@@ -22,15 +25,15 @@ protected:
     auto Created = AddressSpace::create(*Physical, Page * 4);
     ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
     Space = std::move(*Created);
-    ProcessOptions Options;
     Options.MemoryLimit = Page * 4;
     Options.StackSize = Page;
     MemoryLayout Layout{Page, 0x100000000ULL, {}};
     Memory = std::make_unique<DarwinMemory>(*Space, Layout, Options);
+    Files = std::make_unique<DarwinFiles>(*Space, Options.DarwinFiles);
   }
   ServiceResult call(ServiceKind Kind, std::array<uint64_t, 6> Args) {
     ProcessServiceEvent E{0, 0, Args, std::nullopt};
-    auto Value = Memory->handle(Kind, E, Result);
+    auto Value = Memory->handle(Kind, E, *Files, Result);
     EXPECT_TRUE(bool(Value))
         << (Value ? "" : llvm::toString(Value.takeError()));
     if (!Value || !*Value)
@@ -43,7 +46,247 @@ protected:
     EXPECT_EQ(Value.Value % Page, 0u);
     return Value.Value;
   }
+  ServiceResult fileCall(ServiceKind Kind, std::array<uint64_t, 6> Args) {
+    auto Value = Files->handle(Kind, {0, 0, Args, std::nullopt}, Result);
+    EXPECT_TRUE(bool(Value))
+        << (Value ? "" : llvm::toString(Value.takeError()));
+    if (!Value || !*Value)
+      return {UINT64_MAX, true};
+    return **Value;
+  }
+  uint64_t openFile(std::vector<uint8_t> Bytes, uint32_t Flags = 0) {
+    if (!Options.DarwinFiles)
+      Options.DarwinFiles.emplace();
+    Options.DarwinFiles->Files["/data"] = std::move(Bytes);
+    const uint64_t Address = 0x100000;
+    llvm::cantFail(Space->map(Address, Page, Read | Write | UserAccessible));
+    const uint8_t Path[] = {'/', 'd', 'a', 't', 'a', 0};
+    llvm::cantFail(Space->write(Address, Path));
+    auto FD = fileCall(ServiceKind::Open, {Address, Flags});
+    EXPECT_FALSE(FD.Error);
+    llvm::cantFail(Space->unmap(Address, Page));
+    return FD.Value;
+  }
 };
+TEST_P(DarwinMemoryTest,
+       FileMutationWaitsForAllMappedRangesAfterDescriptorClose) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->WritableFiles.insert("/data");
+  auto FD = openFile(std::vector<uint8_t>(Page * 2, 'x'), 2);
+  auto A = call(ServiceKind::Mmap, {0, Page * 2, 3, 2, FD, 0});
+  auto B = call(ServiceKind::Mmap, {0, Page, 0, 2, FD, 0});
+  ASSERT_FALSE(A.Error);
+  ASSERT_FALSE(B.Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {FD, 0}).Value, UINT64_MAX);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationMapping);
+  EXPECT_FALSE(fileCall(ServiceKind::Close, {FD}).Error);
+  const auto Scratch = allocate(Page);
+  const uint8_t Path[] = {'/', 'd', 'a', 't', 'a', 0};
+  llvm::cantFail(Space->write(Scratch, Path));
+  EXPECT_EQ(fileCall(ServiceKind::Open, {Scratch, 0x402}).Value, UINT64_MAX);
+  auto Reopened = fileCall(ServiceKind::Open, {Scratch, 2});
+  ASSERT_FALSE(Reopened.Error);
+  EXPECT_EQ(Reopened.Value, FD);
+  EXPECT_FALSE(call(ServiceKind::Munmap, {A.Value, Page}).Error);
+  EXPECT_FALSE(call(ServiceKind::Mprotect, {B.Value, Page, 3}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Write, {FD, Scratch, 1}).Value, UINT64_MAX);
+  EXPECT_FALSE(call(ServiceKind::Munmap, {A.Value + Page, Page}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {FD, 0}).Value, UINT64_MAX);
+  EXPECT_FALSE(call(ServiceKind::Munmap, {B.Value, Page}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Pwrite, {FD, Scratch + 1, 1, 0}).Value, 1u);
+  auto Fresh = call(ServiceKind::Mmap, {0, Page, 1, 2, FD, 0});
+  ASSERT_FALSE(Fresh.Error);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Fresh.Value, 1)), 'd');
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Fresh.Value, Page}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {FD, 0}).Error);
+}
+
+TEST_P(DarwinMemoryTest, WriteOnlyNoneMappingRetainsLeaseAndCanGainReadWrite) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->WritableFiles.insert("/data");
+  auto FD = openFile({'a', 'b'}, 1);
+  for (auto Prot : {1u, 2u, 3u}) {
+    for (auto Length : {uint64_t(0), Page}) {
+      auto Denied = call(ServiceKind::Mmap, {0, Length, Prot, 2, FD, 0});
+      EXPECT_TRUE(Denied.Error);
+      EXPECT_EQ(Denied.Value, 13u);
+    }
+  }
+  EXPECT_FALSE(call(ServiceKind::Mmap, {0, 0, 0, 2, FD, 0}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {FD, 2}).Error);
+  auto M = call(ServiceKind::Mmap, {0, Page, 0, 2, FD, 0});
+  ASSERT_FALSE(M.Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {FD, 0}).Value, UINT64_MAX);
+  EXPECT_FALSE(call(ServiceKind::Mprotect, {M.Value, Page, 3}).Error);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(M.Value, 1)), 'a');
+  EXPECT_FALSE(call(ServiceKind::Mprotect, {M.Value, Page, 0}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {FD, 0}).Value, UINT64_MAX);
+  EXPECT_FALSE(call(ServiceKind::Munmap, {M.Value, Page}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {FD, 0}).Error);
+}
+
+TEST_P(DarwinMemoryTest, UnlinkedFileBudgetSurvivesPartialUnmapAndFinalClose) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/other"] = {};
+  Options.DarwinFiles->WritableFiles = {"/data", "/other"};
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  const auto FD = openFile(std::vector<uint8_t>(Page * 2, 'x'), 2);
+  auto Mapping = call(ServiceKind::Mmap, {0, Page * 2, 1, 2, FD, 0});
+  ASSERT_FALSE(Mapping.Error);
+  const auto Scratch = allocate(Page);
+  const uint8_t Other[] = {'/', 'o', 't', 'h', 'e', 'r', 0};
+  llvm::cantFail(Space->write(Scratch, Other));
+  const auto B = fileCall(ServiceKind::Open, {Scratch, 2});
+  ASSERT_FALSE(B.Error);
+  const uint64_t Capacity = darwin_file_limits::Bytes - 2 * 6 - 2 * 7 - 2;
+  EXPECT_FALSE(
+      fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Page * 2}).Error);
+  const uint8_t Path[] = {'/', 'd', 'a', 't', 'a', 0};
+  llvm::cantFail(Space->write(Scratch, Path));
+  EXPECT_FALSE(fileCall(ServiceKind::Unlink, {Scratch}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Close, {FD}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Page * 2 + 1})
+                .Value,
+            UINT64_MAX);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Mapping.Value, 1)), 'x');
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Mapping.Value, Page}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Page * 2 + 1})
+                .Value,
+            UINT64_MAX);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Mapping.Value + Page, 1)), 'x');
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Mapping.Value + Page, Page}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {B.Value, Capacity}).Error);
+  auto Missing = fileCall(ServiceKind::Open, {Scratch});
+  EXPECT_TRUE(Missing.Error);
+  EXPECT_EQ(Missing.Value, 2u);
+}
+
+TEST_P(DarwinMemoryTest,
+       RecreatedNamesKeepMappingsAndStorageLifetimesSeparate) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/other"] = {};
+  Options.DarwinFiles->WritableFiles = {"/data", "/other"};
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  const auto OldFD = openFile(std::vector<uint8_t>(Page * 2, 'x'), 2);
+  auto Old = call(ServiceKind::Mmap, {0, Page * 2, 1, 2, OldFD, 0});
+  ASSERT_FALSE(Old.Error);
+  const auto Scratch = allocate(Page);
+  const uint8_t Path[] = {'/', 'd', 'a', 't', 'a', 0};
+  llvm::cantFail(Space->write(Scratch, Path));
+  EXPECT_FALSE(fileCall(ServiceKind::Unlink, {Scratch}).Error);
+  const auto NewFD = fileCall(ServiceKind::Open, {Scratch, 0xa02});
+  ASSERT_FALSE(NewFD.Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {NewFD.Value, Page}).Error);
+  EXPECT_EQ(
+      fileCall(ServiceKind::Pwrite, {NewFD.Value, Scratch + 1, 1, 0}).Value,
+      1u);
+  auto Fresh = call(ServiceKind::Mmap, {0, Page, 1, 2, NewFD.Value, 0});
+  ASSERT_FALSE(Fresh.Error);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Old.Value, 1)), 'x');
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Fresh.Value, 1)), 'd');
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {OldFD, 0}).Value, UINT64_MAX);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationMapping);
+  EXPECT_FALSE(fileCall(ServiceKind::Close, {OldFD}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Unlink, {Scratch}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Close, {NewFD.Value}).Error);
+  const uint8_t Other[] = {'/', 'o', 't', 'h', 'e', 'r', 0};
+  llvm::cantFail(Space->write(Scratch, Other));
+  const auto B = fileCall(ServiceKind::Open, {Scratch, 2});
+  ASSERT_FALSE(B.Error);
+  const uint64_t Capacity = darwin_file_limits::Bytes - 2 * 6 - 2 * 7 - 2;
+  const uint64_t Occupied = Page * 3 + 6;
+  EXPECT_FALSE(
+      fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Occupied}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Occupied + 1})
+                .Value,
+            UINT64_MAX);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Old.Value, Page}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Occupied + 1})
+                .Value,
+            UINT64_MAX);
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Old.Value + Page, Page}).Error);
+  EXPECT_FALSE(
+      fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Page - 6}).Error);
+  EXPECT_EQ(
+      fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Page - 5}).Value,
+      UINT64_MAX);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Fresh.Value, 1)), 'd');
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Fresh.Value, Page}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {B.Value, Capacity}).Error);
+}
+
+TEST_P(DarwinMemoryTest, RenameReplacementRetainsEachMappedObjectUntilRelease) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/target"] = std::vector<uint8_t>(Page * 2, 'T');
+  Options.DarwinFiles->Files["/other"] = {};
+  Options.DarwinFiles->WritableFiles = {"/data", "/other"};
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  const auto A = openFile(std::vector<uint8_t>(Page, 'S'), 2);
+  const auto Source = call(ServiceKind::Mmap, {0, Page, 1, 2, A, 0});
+  ASSERT_FALSE(Source.Error);
+  const auto Scratch = allocate(Page);
+  const uint8_t Data[] = {'/', 'd', 'a', 't', 'a', 0};
+  const uint8_t Target[] = {'/', 't', 'a', 'r', 'g', 'e', 't', 0};
+  const uint8_t Other[] = {'/', 'o', 't', 'h', 'e', 'r', 0};
+  llvm::cantFail(Space->write(Scratch, Data));
+  llvm::cantFail(Space->write(Scratch + 32, Target));
+  llvm::cantFail(Space->write(Scratch + 64, Other));
+  const auto T = fileCall(ServiceKind::Open, {Scratch + 32});
+  ASSERT_FALSE(T.Error);
+  const auto Old = call(ServiceKind::Mmap, {0, Page * 2, 1, 2, T.Value, 0});
+  ASSERT_FALSE(Old.Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Close, {T.Value}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Rename, {Scratch, Scratch + 32}).Error);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Source.Value, 1)), 'S');
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Old.Value, 1)), 'T');
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {A, 0}).Value, UINT64_MAX);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationMapping);
+  const auto B = fileCall(ServiceKind::Open, {Scratch + 64, 2});
+  ASSERT_FALSE(B.Error);
+  // 36 bytes of fixed paths/references/grant and an eight-byte renamed path.
+  const uint64_t Capacity = darwin_file_limits::Bytes - 44;
+  EXPECT_FALSE(
+      fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Page * 3}).Error);
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Old.Value, Page}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Page * 3 + 1})
+                .Value,
+            UINT64_MAX);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Old.Value + Page, 1)), 'T');
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Old.Value + Page, Page}).Error);
+  EXPECT_FALSE(
+      fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Page}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Close, {A}).Error);
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Source.Value, Page}).Error);
+  EXPECT_EQ(
+      fileCall(ServiceKind::Ftruncate, {B.Value, Capacity - Page + 1}).Value,
+      UINT64_MAX);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  EXPECT_FALSE(fileCall(ServiceKind::Unlink, {Scratch + 32}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {B.Value, Capacity + 8}).Error);
+  EXPECT_EQ(fileCall(ServiceKind::Ftruncate, {B.Value, Capacity + 9}).Value,
+            UINT64_MAX);
+}
+
+TEST_P(DarwinMemoryTest, FailedAndLegacyZeroFileMappingsDoNotRetainLeases) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->WritableFiles.insert("/data");
+  auto FD = openFile({'a'}, 2);
+  EXPECT_FALSE(call(ServiceKind::Mmap, {0, 0, 1, 2, FD, 0}).Error);
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {FD, Page}).Error);
+  EXPECT_EQ(call(ServiceKind::Mmap, {0, Page * 2, 1, 2, FD, 0}).Value,
+            UINT64_MAX);
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {FD, Page * 4}).Error);
+  auto Full = allocate(Page * 4);
+  auto NoSpace = call(ServiceKind::Mmap, {0, Page, 1, 2, FD, 0});
+  EXPECT_TRUE(NoSpace.Error);
+  EXPECT_EQ(NoSpace.Value, 12u);
+  EXPECT_FALSE(fileCall(ServiceKind::Ftruncate, {FD, 0}).Error);
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Full, Page * 4}).Error);
+}
+
 TEST_P(DarwinMemoryTest, PartialUnmapRetiresBudgetAndFreshMappingIsZero) {
   const auto Address = allocate(Page * 4);
   ASSERT_FALSE(bool(Space->writeInteger(Address + Page, 0xff, 1)));
@@ -110,7 +353,7 @@ TEST_P(DarwinMemoryTest, UnsupportedModesHaveNoMappingEffects) {
                     std::array<uint64_t, 6>{0, Page, 3, 0x1012, UINT64_MAX, 0},
                     std::array<uint64_t, 6>{0, Page, 3, 2, 0, 0}}) {
     ProcessServiceEvent E{0, 197, Args, std::nullopt};
-    auto Value = Memory->handle(ServiceKind::Mmap, E, Result);
+    auto Value = Memory->handle(ServiceKind::Mmap, E, *Files, Result);
     ASSERT_TRUE(bool(Value)) << llvm::toString(Value.takeError());
     EXPECT_FALSE(*Value);
     EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
@@ -144,6 +387,104 @@ TEST_P(DarwinMemoryTest, NonfixedHintRoundsUpAndSearchesAboveOccupiedHint) {
                        {value::UserLimit - 1, Page, 3, 0x1002, UINT64_MAX, 0});
   ASSERT_FALSE(Fallback.Error);
   EXPECT_LT(Fallback.Value, Hint);
+}
+TEST_P(DarwinMemoryTest, PrivateFileMappingsCopyPagesWithoutChangingFileState) {
+  std::vector<uint8_t> Bytes(Page + 19);
+  for (size_t I = 0; I < Bytes.size(); ++I)
+    Bytes[I] = uint8_t(I * 17 + 5);
+  const auto FD = openFile(Bytes);
+  EXPECT_EQ(fileCall(ServiceKind::Lseek, {FD, 7, 0}).Value, 7u);
+  const auto First = call(ServiceKind::Mmap, {0, 1, 3, 2, FD, 0});
+  ASSERT_FALSE(First.Error);
+  // mmap admits a whole page even when the requested byte count is one.
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(First.Value + Page - 1, 1)),
+            Bytes[Page - 1]);
+  const auto Tail = call(ServiceKind::Mmap, {0, 19, 0, 0x40002, FD, Page});
+  ASSERT_FALSE(Tail.Error);
+  EXPECT_FALSE(
+      llvm::cantFail(Space->canAccess(Tail.Value, 1, Read | UserAccessible)));
+  EXPECT_FALSE(call(ServiceKind::Mprotect, {Tail.Value, Page, 2}).Error);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Tail.Value, 1)), Bytes[Page]);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Tail.Value + 18, 1)),
+            Bytes.back());
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Tail.Value + 19, 1)), 0u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Tail.Value + Page - 1, 1)), 0u);
+  llvm::cantFail(Space->writeInteger(First.Value, 0xaa, 1));
+  llvm::cantFail(Space->writeInteger(Tail.Value + Page - 1, 0xbb, 1));
+  const auto Second = call(ServiceKind::Mmap, {0, Page, 1, 2, FD, 0});
+  ASSERT_FALSE(Second.Error);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Second.Value, 1)), Bytes[0]);
+  EXPECT_EQ(Options.DarwinFiles->Files.at("/data"), Bytes);
+  EXPECT_EQ(fileCall(ServiceKind::Lseek, {FD, 0, 1}).Value, 7u);
+  EXPECT_FALSE(fileCall(ServiceKind::Close, {FD}).Error);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(First.Value, 1)), 0xaau);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Tail.Value + Page - 1, 1)),
+            0xbbu);
+  EXPECT_EQ(call(ServiceKind::Mmap, {0, 1, 1, 2, FD, 0}).Value, 9u);
+}
+TEST_P(DarwinMemoryTest, FileMappingValidationPrecedesDescriptorAndBudget) {
+  const auto FD = openFile({1, 2, 3});
+  const auto Address = allocate(Page * 4);
+  for (auto Args : {std::array<uint64_t, 6>{0, 0, 1, 0x40002, 99, 0},
+                    std::array<uint64_t, 6>{0, 1, 1, 0x40002, 99, 1},
+                    std::array<uint64_t, 6>{0, UINT64_MAX, 1, 2, 99, 0},
+                    std::array<uint64_t, 6>{0, Page, 1, 2, 99, 0 - Page}}) {
+    const auto V = call(ServiceKind::Mmap, Args);
+    EXPECT_TRUE(V.Error);
+    EXPECT_EQ(V.Value, 22u);
+  }
+  for (uint64_t Length : {uint64_t(0), Page}) {
+    auto Bad = call(ServiceKind::Mmap, {0, Length, 1, 2, 99, 0});
+    EXPECT_TRUE(Bad.Error);
+    EXPECT_EQ(Bad.Value, 9u);
+  }
+  const auto Zero = call(ServiceKind::Mmap, {0, 0, 1, 2, FD, 0});
+  EXPECT_FALSE(Zero.Error);
+  EXPECT_EQ(Zero.Value, 0u);
+  const auto Full = call(ServiceKind::Mmap, {0, Page, 1, 2, FD, 0});
+  EXPECT_TRUE(Full.Error);
+  EXPECT_EQ(Full.Value, 12u);
+  EXPECT_EQ(Space->mappedBytes(), Page * 4);
+  EXPECT_EQ(Space->physicalMemory()->allocatedBytes(), Page * 4);
+  EXPECT_FALSE(call(ServiceKind::Munmap, {Address, Page}).Error);
+  const auto Reused = call(ServiceKind::Mmap, {Address, 3, 1, 2, FD, 0});
+  EXPECT_FALSE(Reused.Error);
+  EXPECT_EQ(Reused.Value, Address);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Address, 1)), 1u);
+}
+TEST_P(DarwinMemoryTest, UnknownFileMappingEffectsStopBeforeAllocation) {
+  const auto FD = openFile({1, 2, 3});
+  for (auto Args : {std::array<uint64_t, 6>{0, 1, 1, 2, FD, 1},
+                    std::array<uint64_t, 6>{0, Page + 1, 1, 2, FD, 0},
+                    std::array<uint64_t, 6>{0, Page, 1, 2, FD, Page},
+                    std::array<uint64_t, 6>{0, 1, 1, 2, FD, uint64_t(1) << 63},
+                    std::array<uint64_t, 6>{0, Page, 1, 1, FD, 0},
+                    std::array<uint64_t, 6>{0, Page, 5, 2, FD, 0},
+                    std::array<uint64_t, 6>{0, Page, 1, 0x12, FD, 0},
+                    std::array<uint64_t, 6>{0, Page, 1, 2, 1, 0}}) {
+    auto V = Memory->handle(ServiceKind::Mmap, {0, 197, Args, std::nullopt},
+                            *Files, Result);
+    ASSERT_TRUE(bool(V)) << llvm::toString(V.takeError());
+    EXPECT_FALSE(*V);
+    EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_FALSE(Result.Diagnostic.empty());
+    EXPECT_EQ(Space->mappedBytes(), 0u);
+    EXPECT_EQ(Space->physicalMemory()->allocatedBytes(), 0u);
+    EXPECT_EQ(fileCall(ServiceKind::Lseek, {FD, 0, 1}).Value, 0u);
+  }
+}
+TEST_P(DarwinMemoryTest, EmptyFilesHaveNoMappablePageButAllowLegacyZeroLength) {
+  const auto FD = openFile({});
+  const auto Zero = call(ServiceKind::Mmap, {0, 0, 1, 2, FD, 0});
+  EXPECT_FALSE(Zero.Error);
+  EXPECT_EQ(Zero.Value, 0u);
+  auto V = Memory->handle(ServiceKind::Mmap,
+                          {0, 197, {0, 1, 1, 2, FD, 0}, std::nullopt}, *Files,
+                          Result);
+  ASSERT_TRUE(bool(V)) << llvm::toString(V.takeError());
+  EXPECT_FALSE(*V);
+  EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Space->mappedBytes(), 0u);
 }
 INSTANTIATE_TEST_SUITE_P(Pages, DarwinMemoryTest, testing::Values(4096, 16384));
 } // namespace
