@@ -1234,6 +1234,7 @@ set(_driver_execution_fixture_definitions
   ${_driver_wdm_neither_definitions}
   ${_driver_wdm_user_mapping_definitions})
 add_neverd_unittest(NeverDNativeDriverTests
+  NO_PRETTY_VALUES
   DriverNativeExecutionTests.cpp
   DriverSchedulingTests.cpp
   DriverThreadPriorityTests.cpp
