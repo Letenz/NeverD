@@ -7,6 +7,8 @@ add_neverd_component_library(NeverDEmulationCore
   core/PhysicalMemory.cpp
   core/AddressSpace.cpp
   core/MemoryProjection.cpp
+  core/ParallelExecution.cpp
+  core/MMIOAtomicTransaction.cpp
   core/RAMTransaction.cpp
   core/RAMReservation.cpp
   core/MemoryView.cpp
@@ -29,6 +31,7 @@ add_neverd_component_library(NeverDEmulationArch
   arch/aarch64/AArch64ExclusiveExecution.cpp
   arch/x86_64/CheckedX64Backend.cpp
   arch/x86_64/CheckedX64Memory.cpp
+  arch/x86_64/CheckedX64MMIOAtomic.cpp
   arch/x86_64/CheckedX64Stack.cpp
   arch/x86_64/CheckedX64Frame.cpp
   arch/aarch64/CheckedAArch64Backend.cpp

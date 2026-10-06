@@ -20,7 +20,7 @@ llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
       ExceptionMonitor ? x64::gateway::ProjectionVariant : 0;
   const uint64_t PreviousRoot = Memory.projectionRoot(GuestArchitecture::X64);
   if (!Memory.needsProjection(GuestArchitecture::X64, UserMode, Variant))
-    return PreviousRoot;
+    return Memory.transportPhysical(PreviousRoot);
   if (auto E = Memory.validateMappings(x64::canonicalRange, !UserMode))
     return E;
   // Updating backing bytes alone does not invalidate cached translations.
@@ -42,11 +42,12 @@ llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
       if (!Child) {
         if (Next == x64::TableReserve)
           return diagnostic::error(diagnostic::PageTables);
-        Child = Next | x64::Present | x64::Writable | x64::UserPage;
+        Child = Memory.transportPhysical(Next) | x64::Present | x64::Writable |
+                x64::UserPage;
         Next += x64::PageSize;
         llvm::support::endian::write64le(Slot, Child);
       }
-      Table = Child & x64::AddressMask;
+      Table = Memory.transportOffset(Child & x64::AddressMask);
     }
     auto Index = (VA >> x64::PageBits) & (x64::TableEntries - 1);
     llvm::support::endian::write64le(
@@ -54,11 +55,18 @@ llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
     return llvm::Error::success();
   };
   for (const auto &[VA, P] : Memory.mappings()) {
-    // Admitted device transactions are completed by the architecture. Device
-    // pages never alias private monitor memory or enter native RAM.
-    if (P.IO)
+    if (P.IO) {
+      // One bounded operand may use private scratch to obtain the original
+      // instruction's exact flags/registers. No device backing enters the VM.
+      const auto Operand = Memory.deviceOperand();
+      if (!UserMode && Operand && Operand->first == VA)
+        if (auto E =
+                MapPage(VA, Memory.transportPhysical(Operand->second) |
+                                x64::Present | x64::Writable | x64::NoExecute))
+          return E;
       continue;
-    uint64_t Entry = P.Physical;
+    }
+    uint64_t Entry = Memory.transportPhysical(P.Physical);
     if (P.Permissions & GuestAccessPermissions)
       Entry |= x64::Present;
     if (UserMode && (P.Permissions & UserAccessible))
@@ -82,11 +90,12 @@ llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
           Physical == x64::gateway::CodeGPA
               ? x64::Present
               : x64::Present | x64::Writable | x64::NoExecute;
-      if (auto E = MapPage(*Base + Page * x64::PageSize, Physical | Rights))
+      if (auto E = MapPage(*Base + Page * x64::PageSize,
+                           Memory.transportPhysical(Physical) | Rights))
         return E;
     }
   }
   Memory.commitProjection(GuestArchitecture::X64, UserMode, Variant, Root);
-  return Root;
+  return Memory.transportPhysical(Root);
 }
 } // namespace neverd::emulation

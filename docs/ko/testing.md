@@ -283,6 +283,13 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 ARM64 하드웨어나 hypervisor가 없으면 native coverage skip이며 통과가 아닙니다. Unicorn과 교차 컴파일은 native KVM/WHP 실행 증거가 아닙니다.
 
+`NeverDParallelExecutionTests`는 처리기 호출 중첩, 쓰기 대기 중 취소, 독립 CPU 상태, 물리 별칭 경쟁과 전용 전송 준비를 검사합니다. `NeverDRunControlTests`는 독립 WHP binding의 동시 자원 임대와 공유 binding의 직렬화를 검사합니다. `NeverDMMIOAtomicTests`는 원래 x64 원자/갱신 명령과 전체 ARM64 LSE 사례의 장치/RAM 결과, 넓은 쓰기 관찰 두 번, 오래된 미리보기, 제공자 실패와 commit/stop 경쟁을 비교합니다. `KernelMMIOFailure`는 별칭, 동일 값 쓰기, 중복 커밋, 전원, 매핑 해제와 소유자 소멸을 검사합니다. 사용 불가 플랫폼은 명시적으로 건너뜁니다. 래퍼의 합류는 동시 호출을 증명할 뿐 하드웨어의 동시 명령 완료를 증명하지 않습니다. ARM64 KVM/WHP에는 해당 호스트가 필요합니다.
+
+```bash
+cmake --build build-cpu --target NeverDParallelExecutionTests NeverDMMIOAtomicTests NeverDRunControlTests --parallel 4
+ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMIOAtomic|RunControl)Tests$' --output-on-failure
+```
+
 ## Linux 프로세스 프로필 테스트
 
 [독립 프로세스 테스트](process-emulation.md#검증)는 실제 x64/AArch64 ELF fixture를 빌드합니다. `NeverDLinuxProcessTests`는 시작, 프로그램 헤더 정책, 서비스 이어달리기, 바이너리 출력, 게스트 fault, 자원 중지를 확인합니다. `NeverDProcessPublicTests`는 분석 이미지를 바꾸지 않고 C API/CLI를 확인합니다. `NeverDExecutionSessionTests`는 메모리/예산을 공유하는 CPU 두 개와 요청/fault exactly-once 소비를 검사합니다. `NeverDX64MemoryUpdateTests`는 메모리 산술, SETcc, BT, XMM/MXCSR, 쓰기 observer, REP 경계, 준비된 장치 읽기를 검사합니다. `DriverBackendParityTests.cpp`는 원본/재배치 WDK fixture를 실행하고 관찰 가능한 전체 보고서를 Unicorn과 비교합니다. fixture/backend가 없으면 명시적으로 skip합니다.
@@ -1175,7 +1182,7 @@ x64 KVM/WHP/HVF 네이티브 초기화는 비공개 supervisor 페이지에서 `
 
 `X64StringInstructions.def`는 일반 RAM의 8/16/32/64비트 `CMPS/SCAS`와 `REPE/REPNE`도 관리합니다. 각 요소는 관찰 전에 전체 읽기 범위를 검사하고 여섯 산술 플래그를 갱신하며 첫 종료 조건에서 멈춥니다. 데이터 오류는 이번 연속 REP 시작 시점의 플래그를 복원하면서 완료된 포인터와 카운터 변경을 유지합니다. 공개 API로 재개하면 게시된 CPU 상태에서 다시 시작합니다. 중지와 관찰 예외는 현재 요소를 변경하지 않으며 조기 종료 후 다음 요소를 읽지 않습니다. FS/GS는 CMPS 소스에만 적용되고 SCAS는 누산기와 사용하지 않는 소스 레지스터를 유지합니다. 장치 피연산자와 모호한 32비트 0회 반복 상위 비트는 제외됩니다. `X64StringComparisonTests.cpp`는 독립 호스트 명령으로 플래그, 방향, 별칭, 주소 순환, 권한과 복구를 비교하고 Linux x64 신호로 실제 오류 시점의 레지스터를 검사합니다. 자체 WDK 리소스 드라이버는 `driver_resource_strings.def`로 네 폭의 두 조건 반복 형식을 실행합니다. [Intel 명령 참조](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)를 참고하세요. Linux 네이티브 검증은 첫 요소 실행 전후의 오류를 검사하며, Intel의 진입 flags 복원과 Hyper-V의 AMD EPYC 7763에서 관측한 마지막 비교 flags 유지를 구분합니다([네이티브 관측](https://github.com/NeverSight/NeverD/actions/runs/37202522130)). 알 수 없는 CPU 제조사는 명시적으로 실패합니다. checked 게스트는 모든 백엔드에서 진입 flags를 복원합니다.
 
-`WhpResourceCache.h`는 논리 CPU 상태와 WHP 파티션을 분리합니다. 런타임은 활성 네이티브 파티션 하나를 유지하며 같은 CPU의 연속 단계에서 재사용합니다. CPU를 전환할 때 이전 파티션을 먼저 제거한 다음 매핑과 가상 프로세서를 다시 만들고 전체 상태를 복원합니다. 논리 CPU는 독립적인 `MemoryProjection` 뷰와 권위 있는 RAM을 유지합니다. 임대 획득은 취소와 현재 기한을 따르며 비활성 CPU를 제거해도 다른 CPU의 파티션은 제거되지 않습니다. x64는 호스트의 기본 XSAVE 기능 조합을 보존하고 `WHvGetPartitionProperty`로 실제 파티션을 검증하며 종속 기능을 지워 마스크를 축소하지 않습니다. 협력적 CPU 전환은 병렬 하드웨어 SMP를 제공하지 않습니다.
+활성 WHP CPU는 하나의 네이티브 파티션을 공유하며 마지막 해제와 재생성은 같은 레지스트리 잠금으로 직렬화합니다. `WhpResourceCache.h`는 협력 실행용 VP 0을 재사용하며 논리 CPU를 전환하기 전에 해당 VP와 매핑을 해제합니다. 병렬 CPU는 별도의 VP와 전용 GPA 영역을 유지합니다. 레지스터 전송, XSAVE 및 취소는 각각의 VP를 대상으로 합니다. x64는 호스트의 기본 XSAVE 기능 집합을 유지하고 `WHvGetPartitionProperty`로 실제 구성을 검증합니다. 기본 스케줄링은 협력 방식입니다.
 
 `NeverDX64FPTests`는 전체 79개 시작 상태 손상 위치와 독립적으로 어셈블한 `X64ProbeCases.def`의 네이티브 실행, 단일 기한 및 게스트 RAM 보존을 검사합니다. `NeverDProjectionCacheTests`는 호출자 변경, ISA 순서, 루트 이력, 권한/모니터 구성, 매핑 세대, 주소 공간 식별 및 재구축 실패를 검사합니다. `NeverDRunControlTests`의 `WhpXsaveTests.cpp`는 새 API와 이전 API 패킷, 모든 TOP, 크기 범위 및 실패 시 상태 보존을 검사합니다. 이 메모리 프로토콜 테스트는 네이티브 WHP 증거를 대체하지 않으며 사용 불가능한 네이티브 전송은 명시적으로 건너뜁니다.
 
@@ -1203,7 +1210,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 46개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 4835개와 SEH 회귀 검사 17개를 포함하면 필수 결과는 5076개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `4835 CPU + 224 WHP + 17 SEH = 5076`.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 4852개와 SEH 회귀 검사 17개를 포함하면 필수 결과는 5093개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `4852 CPU + 224 WHP + 17 SEH = 5093`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 

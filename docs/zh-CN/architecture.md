@@ -752,13 +752,13 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 页面执行 `X64MachineProb
 
 `CheckedX64Instructions.def` 通过既有 CPU 后端准入 8/16/32/64 位无符号 `MUL` 和 `CBW/CWDE/CDQE/CWD/CDQ/CQO`。`NeverDX64IntegerTests` 使用独立的 `X64IntegerCases.def` 编码和预期值，在两种特权级验证部分寄存器保留、32 位零扩展、乘积高低两部分、已定义的 CF/OF 结果及符号扩展不改变标志位。普通 RAM 乘法保留完整访问范围的权限检查和读观察回调；故障或观察回调中止会保留隐式输出寄存器及 PC。设备操作数仍不支持。这些用例也在 checked Unicorn 上运行；不可用的原生后端明确跳过。
 
-`X64BitInstructions.def` 支持 16/32/64 位寄存器及普通 RAM 的 `BT/BTS/BTR/BTC`。寄存器位索引按操作数宽度解释为有符号数并选中完整数据字；立即数索引限制在基址的数据字内。地址宽度截断先于 FS/GS 基址相加。CF 与写入值由处理器提供；`RAMTransaction` 在观察回调接受前保留私有执行结果。完整范围权限检查覆盖独立页面分配和别名。停止、回调失败或页面权限不足均保留原始 CPU 和 RAM。LOCK 仅支持自然对齐的内存修改形式；MMIO 和硬件并行 SMP 仍不支持。`X64BitStringTests.cpp` 使用独立编码与 x64 本机实际执行对照，检查负索引、宽度截断、跨页访问、取消及非法 LOCK 形式。参见 [Intel 指令参考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
+`X64BitInstructions.def` 支持 16/32/64 位寄存器及普通 RAM 的 `BT/BTS/BTR/BTC`。寄存器位索引按操作数宽度解释为有符号数并选中完整数据字；立即数索引限制在基址的数据字内。地址宽度截断先于 FS/GS 基址相加。CF 与写入值由处理器提供；`RAMTransaction` 在观察回调接受前保留私有执行结果。完整范围权限检查覆盖独立页面分配和别名。停止、回调失败或页面权限不足均保留原始 CPU 和 RAM。LOCK 要求自然对齐；修改型 MMIO 操作要求明确的预备原子事务提供方。`X64BitStringTests.cpp` 使用独立编码与 x64 本机实际执行对照，检查负索引、宽度截断、跨页访问、取消及非法 LOCK 形式。参见 [Intel 指令参考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
 
 `X64StringInstructions.def` 统一管理普通 RAM 上 8/16/32/64 位的 `MOVS/STOS/LODS`；`CLD/STD` 只改变方向标志。每个 REP 元素在观察回调前验证整个操作数，并在一个可恢复边界提交。后续故障保留此前完成的元素；取消或回调异常不改变当前元素。FS/GS 仅作用于源地址，且在地址宽度截断之后相加。AL/AX 加载保留高位，EAX 加载零扩展。32 位地址模式的零次 REP 要求计数高位为零，MOVS/STOS 还要求参与的地址寄存器高位为零，否则不同真实 CPU 实现会产生不同结果。MOVS/STOS/LODS 的 REPNE 形式及 STOS/LODS 设备操作数仍不支持。`X64StringTransferTests.cpp` 用独立的主机指令对照宽度、方向、重叠和零次数，并分别检查权限、别名、回绕、故障和恢复。原创 WDK 资源驱动通过 `driver_resource_strings.def` 执行四种宽度的 STOS/LODS。
 
 `X64StringInstructions.def` 还统一管理普通 RAM 上 8/16/32/64 位的 `CMPS/SCAS` 及 `REPE/REPNE`。每个元素在观察回调前验证全部读取操作数，更新六个算术标志，并在首次满足终止条件时退出。数据故障恢复本次连续 REP 执行开始时的标志，同时保留已完成的指针和计数更新；公开接口恢复执行时，以已发布的 CPU 状态重新开始。停止和观察回调异常不改变当前元素，提前终止也不会读取下一个元素。FS/GS 仅影响 CMPS 源地址；SCAS 保留累加器和未使用的源寄存器。设备操作数及有歧义的 32 位零次数高位状态仍不支持。`X64StringComparisonTests.cpp` 用独立主机指令对照标志、方向、别名、回绕、权限和恢复，并通过 Linux x64 信号测试读取真实故障时的寄存器。原创 WDK 资源驱动通过 `driver_resource_strings.def` 执行四种宽度的两类条件重复形式。参见 [Intel 指令参考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。 Linux 原生验证覆盖首元素执行前后发生的故障，并区分 Intel 恢复入口 flags 与 Hyper-V 下 AMD EPYC 7763 保留最后一次比较 flags 的行为（[原生观测](https://github.com/NeverSight/NeverD/actions/runs/37202522130)）；未知 CPU 厂商会明确失败。所有后端的 checked 来宾仍统一恢复入口 flags。
 
-`WhpResourceCache.h` 将逻辑 CPU 状态与 WHP 分区分离。运行时保留一个活动原生分区：同一 CPU 连续单步复用它；切换 CPU 时先销毁旧分区，再重建映射、虚拟处理器并恢复完整状态。逻辑 CPU 保留独立的 `MemoryProjection` 视图和权威 RAM。获取租约遵守取消信号和当前截止时间；销毁非活动 CPU 不会销毁其他 CPU 的分区。x64 保留宿主默认 XSAVE 特性组合，并通过 `WHvGetPartitionProperty` 验证实际分区，不通过清除依赖特性强制缩减掩码。CPU 协作式切换不提供并行硬件 SMP。
+存活的 WHP CPU 共享一个原生分区；最终关闭与重新创建由同一注册表锁串行保护。`WhpResourceCache.h` 复用协作式 VP 0；切换逻辑 CPU 前先销毁该 VP 并撤销其映射。并行 CPU 保留独立 VP 和私有 GPA 区间。寄存器、XSAVE 和取消请求均指向各自的 VP。x64 保留宿主默认 XSAVE 功能集，并通过 `WHvGetPartitionProperty` 验证实际分区配置。默认调度仍为协作式。
 
 `CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接纳有界的基础 FP32/FP64 算术、比较、移动和定宽 SIMD 运算。FPCR 支持四种舍入模式、FZ 和 DN；FPSR 保留累积状态及 QC。未支持的控制位和状态位在修改前拒绝。FP16 算术、SVE/SME、未屏蔽异常、可选扩展及未列出的形式明确失败。这些 CPU 能力不代表已经支持 Windows ARM64 驱动加载或新增 OS 环境。
 
@@ -769,6 +769,16 @@ KVM x64 从已确认完成的同步捕获或显式 `KVM_GET_SREGS` 读取中取�
 KVM x64/ARM64 通过 `KvmRunControl` 在同一专用 vCPU 工作线程上准备状态、进入 `KVM_RUN` 和读取状态。`EINTR` 重试只准备一次；取消进入或读取失败不能发布状态。`KvmAArch64Machine.cpp` 在该线程上执行地址转换维护及完整标量、向量传递，并共用一次单步期限。调用线程只在确认完成后提交；ISA 解码、RAM 事务、OS 策略和观察器仍属于调用线程。ARM64 原生运行仍缺少实机证据。
 
 `KvmHandoffPolicy` 将每次轮询等待限制为 8 μs，连续两次未命中后改用阻塞等待，并在 256 次交接后重试。调用线程和工作线程分别自适应；调用线程同时遵守原始期限和停止标记。原子就绪标记只提示调度：数据包、回调生命周期和取消确认仍由互斥量管理。`NeverDKvmRunTests` 检查无效轮询的上限、恢复、对端延迟变化及数据包复用前的取消确认。
+
+<a id="parallel-cpus-and-mmio"></a>
+
+## 并行 CPU 与设备原子事务
+
+KVM、WHP 和 Unicorn 的 checked x64/ARM64 可请求 `ExecutionFeature::ParallelCPUs`（`parallel_cpus`）。独立 CPU 可在不同宿主线程上共享物理 RAM；已证明不写 RAM 的原生指令可重叠执行，待处理写入阻止新指令进入，等待读取结束后再发布。指令效果采用顺序一致性，支持等待取消和回滚。所有运行结束前，映射修改与宿主写入仍被禁止。同一 CPU 对象只有 `stop()` 支持跨线程调用。默认执行和 OS 调度仍为协作式，弱内存模型探索属于独立契约。
+
+并行 WHP CPU 在一个共享分区内使用独立 VP，最多同时保留 31 个并行 CPU，另加协作式 VP。私有 GPA 区间和传输 RAM 隔离各自投影；ARM64 使用不同 ASID 和非全局地址转换。每次原生执行前复制代码及已声明的操作数，只有已声明的输出字节进入共享 RAM 事务。观察者读取权威 RAM。KVM 和 checked Unicorn 直接使用共享后备内存。HVF 和 Unicorn 的 `Software` 契约不声明此能力。
+
+`MMIOAtomics`（`mmio_atomics`）要求设备明确提供 `GuestMMIOCallbacks::PrepareAtomic`。checked supervisor x64 支持已接纳的交换、比较交换、整数更新和修改型位操作；ARM64 支持包含 `CASP` 的 LSE。操作数须自然对齐，宽度限于 1/2/4/8/16 字节。x64 在私有临时页执行原指令，保留精确寄存器与 FLAGS；ARM64 复用统一 LSE 语义。准备阶段无设备副作用，提交验证生命周期和版本并只生效一次。提交前停止或失败保留 CPU/设备状态，成功提交优先于同时到来的停止。禁止退化成普通 Read+Write。内核寄存器库仍使用声明的 1/2/4 字节宽度，并拒绝同值写入、电源变化或所有者销毁后留下的旧预览。ARM64 普通设备访问、设备独占监视器、用户态 MMIO 和任意真实硬件不在此能力内。
 
 ## 严格提升契约
 
@@ -1033,7 +1043,7 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 
 ## 分阶段提交 RAM 效果
 
-`RAMTransaction` 在物理执行租约内，只保存一条指令明确声明的写入范围的物理并集。结果观察器运行前恢复原始 RAM；取消、后端传输错误和观察器异常不会发布部分 RAM 或寄存器。对于 RAM 效果具有原子性的指令，CPU 异常在 RAM 回滚后保留架构异常状态。ARM64 的单次和成对写入共用该内存权威层。x64 支持 8/16/32/64 位 `XCHG`、`XADD`、`CMPXCHG`，LOCK 或隐式锁定形式要求自然对齐。`NeverDRAMTransactionTests` 将结果与独立宿主 CPU 对照，并验证回滚、别名和权限；不可用的平台明确跳过。设备事务和并行 SMP 仍不在此契约内；CPU 快照不会撤销已经提交的 RAM。
+`RAMTransaction` 在物理执行租约内，只保存一条指令明确声明的写入范围的物理并集。结果观察器运行前恢复原始 RAM；取消、后端传输错误和观察器异常不会发布部分 RAM 或寄存器。对于 RAM 效果具有原子性的指令，CPU 异常在 RAM 回滚后保留架构异常状态。ARM64 的单次和成对写入共用该内存权威层。x64 支持 8/16/32/64 位 `XCHG`、`XADD`、`CMPXCHG`，LOCK 或隐式锁定形式要求自然对齐。`NeverDRAMTransactionTests` 将结果与独立宿主 CPU 对照，并验证回滚、别名和权限；不可用的平台明确跳过。设备原子事务使用独立提供方；CPU 快照不会撤销已提交的 RAM。
 
 `CMPXCHG8B` 和 `CMPXCHG16B` 在 KVM、WHP 和 checked Unicorn 的驱动及用户模式中执行原始指令。比较成功或失败都需要读写权限，故障按写访问分类。`CMPXCHG16B` 在访问内存前检查 16 字节对齐，不满足时报告 `#GP(0)`。两次结果观察属于同一 RAM 事务；任一次停止或抛出异常，都不会发布寄存器或内存变化。未加锁的 `CMPXCHG8B` 可以跨页，加锁操作仍要求自然对齐。`X64WideAtomicTests.cpp` 对照宿主机原始执行结果和直接原生故障，并检查别名、前缀、寻址、修复重试和取消。原创 Windows 驱动及 ring3 PE 样例覆盖两种宽度，WDK 样例还执行 `_InterlockedCompareExchange128`。CPU 模型必须支持 `CMPXCHG16B`。
 

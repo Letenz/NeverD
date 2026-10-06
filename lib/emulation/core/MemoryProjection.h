@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_EMULATION_CORE_MEMORYPROJECTION_H
 #define NEVERD_EMULATION_CORE_MEMORYPROJECTION_H
+#include "MachineRunControl.h"
 #include "MemoryStorage.h"
 
 #include "neverd/emulation/ExecutionBackend.h"
@@ -27,6 +28,20 @@ enum class RAMWriteTracking { Opaque, Declared };
 /// authority; physical allocations are shared and retained by every projection.
 class MemoryProjection {
 public:
+  class InstructionLease {
+  public:
+    InstructionLease(InstructionLease &&Other) noexcept;
+    ~InstructionLease();
+    InstructionLease(const InstructionLease &) = delete;
+    InstructionLease &operator=(const InstructionLease &) = delete;
+
+  private:
+    friend class MemoryProjection;
+    InstructionLease(MemoryProjection *Memory,
+                     std::unique_lock<std::recursive_mutex> Lock);
+    MemoryProjection *Memory;
+    std::unique_lock<std::recursive_mutex> Lock;
+  };
   using Page = AddressSpace::Impl::Page;
   using Device = AddressSpace::Impl::Device;
   static llvm::Expected<std::unique_ptr<MemoryProjection>>
@@ -48,6 +63,27 @@ public:
                    bool AllowDevices = false);
   llvm::Error beginRun(RAMWriteTracking Tracking = RAMWriteTracking::Opaque);
   void endRun();
+  /// Configure before constructing the transport. Independent WHP processors
+  /// use private registration bytes; all observations still use shared RAM.
+  llvm::Error enableParallel(bool PrivateTransportRAM = false);
+  bool parallelEnabled() const { return ParallelEnabled; }
+  llvm::Error beginParallelRun(MachineRunControl Control);
+  llvm::Expected<InstructionLease> beginInstruction();
+  /// Called before a write transaction borrows an additional recursive lock.
+  llvm::Error prepareWrite();
+  /// The caller has proven a zero-write footprint and released extra borrows.
+  /// All native state capture and interrupt acknowledgement finish inside F.
+  llvm::Error executeReadOnly(llvm::function_ref<llvm::Error()> F);
+  llvm::Error prepareTransportRead(uint64_t Address, uint64_t Size);
+  void captureTransportWrite(uint64_t Physical, uint64_t Size);
+  /// Temporarily project one already admitted device operand into private
+  /// processor scratch. This never changes AddressSpace or invokes a device.
+  llvm::Error stageDeviceOperand(uint64_t Address, uint64_t Physical,
+                                 llvm::ArrayRef<uint8_t> Bytes);
+  void retireDeviceOperand();
+  std::optional<std::pair<uint64_t, uint64_t>> deviceOperand() const {
+    return DeviceOperand;
+  }
   /// Establish/test a reservation under a declared physical execution lease.
   /// The ISA selects a power-of-two granule within one physical page and owns
   /// instruction permissions, alignment, local monitor lifetime and status.
@@ -107,6 +143,15 @@ public:
     return I == ProjectedRoots.end() ? 0 : I->second;
   }
   uint8_t *data() const { return static_cast<uint8_t *>(Projection.base()); }
+  /// Relocate only the transport's physical window. Guest mappings, RAM
+  /// transaction offsets and private-storage offsets retain their identities.
+  llvm::Error relocateTransport(uint64_t Base);
+  uint64_t transportPhysical(uint64_t Offset) const {
+    return TransportBase + Offset;
+  }
+  uint64_t transportOffset(uint64_t Physical) const {
+    return Physical - TransportBase;
+  }
   std::array<MemoryRegistration, 2> registrations() const;
   uint8_t *physicalPointer(uint64_t GPA) const;
 
@@ -124,6 +169,14 @@ private:
   // Keep old allocations pinned until the transport retires the old mapping.
   std::map<uint64_t, Page> ProjectedPages;
   RAMWriteTracking WriteTracking = RAMWriteTracking::Opaque;
+  bool ParallelEnabled = false, ParallelRunning = false;
+  bool InstructionActive = false;
+  std::thread::id RunThread;
+  MachineRunControl ParallelControl{};
+  llvm::sys::MemoryBlock TransportRAM;
+  uint64_t TransportBase = 0;
+  std::optional<std::pair<uint64_t, uint64_t>> DeviceOperand;
+  void finishInstruction();
 };
 } // namespace neverd::emulation
 #endif

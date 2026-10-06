@@ -123,6 +123,18 @@ add_neverd_unittest(NeverDRAMTransactionTests
 target_include_directories(NeverDRAMTransactionTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
 
+add_neverd_unittest(NeverDParallelExecutionTests
+  ParallelExecutionTests.cpp
+  TIMEOUT 30
+  LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDParallelExecutionTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
+add_neverd_unittest(NeverDMMIOAtomicTests
+  MMIOAtomicTests.cpp TIMEOUT 60 LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDMMIOAtomicTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
 add_neverd_unittest(NeverDThreadPointerTests
   ThreadPointerTests.cpp
   TIMEOUT 15

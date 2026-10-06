@@ -27,7 +27,9 @@ llvm::Expected<bool> CheckedAArch64Backend::executeAtomic(const cs_insn &I) {
                                    Raise,
                                    Check,
                                    executionPermissions(Write),
-                                   AArch64AtomicAlignment::LSE2};
+                                   AArch64AtomicAlignment::LSE2,
+                                   UserMode ? nullptr : &DeviceFailed,
+                                   {Deadline, &StopRequested}};
   if (auto E = *Atomic ? executeAArch64Atomic(**Atomic, CPU, *Memory, Access)
                        : executeAArch64Exclusive(**Local, CPU, Exclusive,
                                                  *Memory, Access))

@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "../../core/MMIOAtomicTransaction.h"
 #include "AArch64Atomic.h"
 
 #include "llvm/Support/MathExtras.h"
@@ -17,15 +18,19 @@ llvm::Error executeAArch64Atomic(const AArch64AtomicInstruction &I,
                                  const AArch64AtomicAccess &Access) {
   using Operation = AArch64AtomicInstruction::Operation;
   const unsigned Size = I.size();
-  if (!isAArch64AtomicAligned(I.Address, Size, Access.Alignment)) {
+  const auto Page = Memory.mappings().find(I.Address & ~(memory::PageSize - 1));
+  const bool Device = Page != Memory.mappings().end() && Page->second.IO;
+  const auto Alignment =
+      Device ? AArch64AtomicAlignment::Natural : Access.Alignment;
+  if (!isAArch64AtomicAligned(I.Address, Size, Alignment)) {
     BackendFault Fault{BackendFaultKind::Alignment,
                        CPU.reg(AArch64Register::PC), I.Address, Size,
                        BackendAccessKind::Write};
     Fault.Cause = BackendFaultCause::OperandAlignment;
     return Access.RaiseFault(Fault);
   }
-  const auto Page = Memory.mappings().find(I.Address & ~(memory::PageSize - 1));
-  if (Page != Memory.mappings().end() && Page->second.IO)
+  if (Device && (!Access.DeviceFailed ||
+                 !MMIOAtomicTransaction::hasProvider(Memory, I.Address)))
     return llvm::make_error<UnsupportedExecutionError>();
   if (Access.Hooks.Read)
     Access.Hooks.Read(I.Address, Size);
@@ -40,8 +45,16 @@ llvm::Error executeAArch64Atomic(const AArch64AtomicInstruction &I,
       return llvm::Error::success();
   }
   std::array<uint8_t, aarch64::AtomicAlignmentGranule> Bytes{};
-  if (auto E =
-          Memory.read(I.Address, llvm::MutableArrayRef(Bytes).take_front(Size)))
+  std::unique_ptr<MMIOAtomicTransaction> Transaction;
+  if (Device) {
+    auto T = MMIOAtomicTransaction::prepare(
+        Memory, I.Address, Size, Access.Control, *Access.DeviceFailed);
+    if (!T)
+      return T.takeError();
+    Transaction = std::move(*T);
+    llvm::copy(Transaction->original(), Bytes.begin());
+  } else if (auto E = Memory.read(
+                 I.Address, llvm::MutableArrayRef(Bytes).take_front(Size)))
     return E;
   const uint64_t Mask = llvm::maskTrailingOnes<uint64_t>(I.Width * CHAR_BIT);
   auto Register = [&](unsigned R) {
@@ -107,8 +120,13 @@ llvm::Error executeAArch64Atomic(const AArch64AtomicInstruction &I,
     if (Result != aarch64::GPRCount)
       Next.Registers[Result] = Old;
   }
-  auto Committed = commitAArch64AtomicWrite(
-      I.Address, llvm::ArrayRef(Bytes).take_front(Size), Memory, Access);
+  auto Committed =
+      Transaction
+          ? Transaction->commit(llvm::ArrayRef(Bytes).take_front(Size),
+                                Access.Hooks, Access.Stopped)
+          : commitAArch64AtomicWrite(I.Address,
+                                     llvm::ArrayRef(Bytes).take_front(Size),
+                                     Memory, Access);
   if (!Committed)
     return Committed.takeError();
   if (!*Committed)
