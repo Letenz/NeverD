@@ -1535,3 +1535,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 يتحقق `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` من المعماريتين والمورّدين وحوامل المعاملات والنتيجة، ويرفض الواردات الضعيفة والإزاحات والمورّدين الأجانب والرموز القديمة وتأثيرات الاستعارة المختلقة.
 
 يتحقق قارئ الشاهد في `scripts.tests.test_generate_swift_witness_contracts` من التدفق الكامل ويرفض 28 تغييراً في التخزين وABI والتدفق وسبعة تصريحات ملتبسة، ويفرض حد الإدخال. تغطي اختبارات الربط الواصفات الثلاثة على المعماريتين مع 33 تغييراً لكل زوج. لا يمنح الواصف تخطيط إطار أو إذن استعارة.
+
+يرفض `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults` تغييرات السجلات والتخطيط ودور السياق والنتائج غير المباشرة على المعماريتين. ينفّذ `SourceABI.SwiftPointForwardingPreservesBothIEEECarriers` المصدر الممرّر عند -O0/-O2 ويتحقق من الأصفار الموقّعة والأعداد دون الطبيعية واللانهايات وحمولات NaN في الحقلين. تقبل اختبارات التصريح أشكال المترجم والمعاملات المسماة وترفض التوقيعات المعدّلة وهويات الصور الغامضة.
