@@ -14,6 +14,12 @@ Vergleiche über mehr als acht Bits vergleichen zuerst die oberen Hälften und v
 
 `BitBlaster.WidePredicatesAgreeWithTheEvaluator` prüft vorzeichenbehaftete und vorzeichenlose Prädikate gegen den Ausdrucksauswerter bei ausgewählten Breiten von 8 bis 256 Bits, einschließlich ungerader Breiten, benachbarter Grenzwerte und signifikanter Bits oberhalb von 64 Bits. Falsche Ausgabewerte werden ebenfalls ausgeschlossen. Tests für Teilzähler prüfen vollständige Abfragen, Gegenbeispielmodelle und erschöpfte Gatterbudgets. Native Regressionen mit gespeichertem Vergleich beweisen beide Reihenfolgen von Vergleich und Aktualisierung unter Beobachtung aller Register und Flags und weisen einen geänderten ursprünglichen Schleifenrumpf zurück.
 
+<!-- i18n-section: pristine-encoding -->
+
+## Kopien der Kodierung vor der Suche
+
+`BitVectorSolver::cloneEncoding()` kopiert eine vollständige Kodierung vor jedem SAT-Suchversuch. Nach einer Suche oder einem Kodierungsfehler liefert die Methode null. Kopien besitzen ihre veränderlichen Klauseln, Wurzelpropagation, Gatter und Bitzuordnungen selbst; Variablenreihenfolge, Gatterzählung und Solver-Einstellungen bleiben erhalten. Der Kontext muss beide Solver überleben; der Quellsolver darf unabhängig geändert oder zerstört werden.
+
 <!-- i18n-section: z3-build -->
 
 ## Optionaler Z3-Build

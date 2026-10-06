@@ -153,6 +153,8 @@ public:
   size_t numGates() const { return Gates.size(); }
 
 private:
+  friend class BitVectorSolver;
+  CnfEncoder(SatSolver &Solver, const CnfEncoder &Other);
   /// The operators a gate node can carry.  Or-gates are stored as and-gates
   /// over complemented operands, so one shape covers both and a formula
   /// written either way finds the same node.

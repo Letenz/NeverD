@@ -138,6 +138,8 @@ public:
   CnfEncoder &encoder() { return Enc; }
 
 private:
+  friend class BitVectorSolver;
+  BitBlaster(CnfEncoder &Enc, const BitBlaster &Other);
   /// Where one node's bits live in \c BitPool.
   struct Slice {
     size_t First = 0;

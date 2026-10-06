@@ -144,6 +144,9 @@ public:
   explicit ActivityQueue(const std::vector<double> &Activity)
       : Activity(Activity) {}
 
+  ActivityQueue(const ActivityQueue &Other, const std::vector<double> &Activity)
+      : Activity(Activity), Heap(Other.Heap), Position(Other.Position) {}
+
   bool empty() const { return Heap.empty(); }
   size_t size() const { return Heap.size(); }
 
@@ -202,6 +205,7 @@ uint64_t restartTerm(uint64_t I);
 class SatEngine {
 public:
   explicit SatEngine(const SatOptions &Opts);
+  SatEngine(const SatEngine &Other);
 
   //===--------------------------------------------------------------------===//
   // Building the formula — SatSolver.cpp
@@ -284,6 +288,9 @@ public:
 
   SatOptions Opts;
   SatStats Stats;
+  /// Even an immediately rejected solve closes the pristine-clone boundary.
+  /// Root propagation during clause construction does not search.
+  bool SearchAttempted = false;
 
   /// Set once the clauses alone are contradictory.  Never cleared: a formula
   /// that has been shown unsatisfiable stays so however many clauses are added

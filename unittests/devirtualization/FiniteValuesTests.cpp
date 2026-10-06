@@ -574,4 +574,102 @@ TEST(FiniteValues, CompleteMaskedColumnsNeedIndependentCartesianFactors) {
       hasUnconstrainedProjectionInput(Ctx, Predicate, Partial, 3, 100, {B}));
 }
 
+TEST(FiniteValues, PristineDomainCopiesKeepTuplesObserversAndQueryCharges) {
+  SymContext Ctx;
+  const auto X = Ctx.mkVar("x", 4), Y = Ctx.mkVar("y", 4);
+  const auto Predicate = Ctx.mkEq(Ctx.mkAdd(X, Y), Ctx.mkConst(4, 7));
+  neverd::solver::SolverOptions Settings;
+  Settings.BuildModel = false;
+  FiniteDomainEncoding Encoding(Ctx, Settings);
+  for (unsigned Run = 0; Run != 12; ++Run) {
+    const std::vector<SymRef> Values =
+        Run % 2 ? std::vector<SymRef>{Y, X}
+                : std::vector<SymRef>{X, Ctx.mkAdd(X, Y)};
+    uint64_t FreshQueries = 0, CopyQueries = 0;
+    std::vector<std::vector<uint64_t>> FreshSeen, CopySeen;
+    const auto Limit = Run % 3 == 0 ? 16U : 17U;
+    const bool Abandon = Run % 4 == 0;
+    const auto Fresh = enumerateFiniteValues(
+        Ctx, Predicate, Values, 16, Settings, Limit, 100000, FreshQueries,
+        [&](llvm::ArrayRef<uint64_t> Tuple) {
+          FreshSeen.emplace_back(Tuple.begin(), Tuple.end());
+          return !Abandon;
+        });
+    const auto Copy = enumerateFiniteValues(
+        Encoding, Predicate, Values, 16, Limit, 100000, CopyQueries,
+        [&](llvm::ArrayRef<uint64_t> Tuple) {
+          CopySeen.emplace_back(Tuple.begin(), Tuple.end());
+          return !Abandon;
+        });
+    EXPECT_EQ(Copy.Status, Fresh.Status);
+    EXPECT_EQ(Copy.Tuples, Fresh.Tuples);
+    EXPECT_EQ(CopySeen, FreshSeen);
+    EXPECT_EQ(CopyQueries, FreshQueries);
+    if (!Abandon && Limit == 17) {
+      EXPECT_EQ(Copy.Status, FiniteValueStatus::Complete);
+      ASSERT_EQ(Copy.Tuples.size(), 16U);
+      for (unsigned J = 0; J != 16; ++J) {
+        EXPECT_EQ(Copy.Tuples[J][0], J);
+        EXPECT_EQ(Copy.Tuples[J][1], Run % 2 ? ((7U - J) & 15U) : 7U);
+      }
+      EXPECT_EQ(CopyQueries, 17U);
+    } else {
+      EXPECT_TRUE(Copy.Tuples.empty());
+      EXPECT_EQ(Copy.Status, Abandon ? FiniteValueStatus::Unknown
+                                     : FiniteValueStatus::QueryBudgetExceeded);
+    }
+  }
+}
+
+TEST(FiniteValues, DomainReplacementAndSeparateContextsRetainExactPredicates) {
+  for (unsigned Bias : {0U, 1U}) {
+    SymContext Ctx;
+    const auto X = Ctx.mkVar("x", 8);
+    FiniteDomainEncoding Encoding(Ctx, {});
+    for (unsigned Value : {5U, 9U, 5U, 13U}) {
+      auto Predicate = Ctx.mkEq(X, Ctx.mkConst(8, Value + Bias));
+      uint64_t Queries = 0;
+      const auto Result =
+          enumerateFiniteValues(Encoding, Predicate, {X}, 1, 2, 10000, Queries);
+      EXPECT_EQ(Result.Status, FiniteValueStatus::Complete);
+      EXPECT_EQ(Result.Tuples,
+                (std::vector<std::vector<uint64_t>>{{Value + Bias}}));
+      EXPECT_EQ(Queries, 2U);
+      Queries = 0;
+      const auto Limited =
+          enumerateFiniteValues(Encoding, Predicate, {X}, 1, 1, 10000, Queries);
+      EXPECT_EQ(Limited.Status, FiniteValueStatus::QueryBudgetExceeded);
+      EXPECT_TRUE(Limited.Tuples.empty());
+      EXPECT_EQ(Queries, 1U);
+    }
+  }
+}
+
+TEST(FiniteValues, FailedProjectionNeverPoisonsThePristineDomain) {
+  SymContext Ctx;
+  const auto X = Ctx.mkVar("x", 8), Y = Ctx.mkVar("y", 8);
+  const auto Predicate = Ctx.mkEq(X, Ctx.mkConst(8, 5));
+  const auto Product = Ctx.mkMul(X, Y);
+  neverd::solver::SolverOptions Settings;
+  Settings.Blast.MaxGates = 64;
+  FiniteDomainEncoding Encoding(Ctx, Settings);
+  for (SymRef Value : {Product, X, Product, X}) {
+    uint64_t FreshQueries = 0, CopyQueries = 0;
+    const auto Fresh = enumerateFiniteValues(Ctx, Predicate, {Value}, 1,
+                                             Settings, 2, 10000, FreshQueries);
+    const auto Copy = enumerateFiniteValues(Encoding, Predicate, {Value}, 1, 2,
+                                            10000, CopyQueries);
+    EXPECT_EQ(Copy.Status, Fresh.Status);
+    EXPECT_EQ(Copy.Tuples, Fresh.Tuples);
+    EXPECT_EQ(CopyQueries, FreshQueries);
+    if (Value == X) {
+      EXPECT_EQ(Copy.Status, FiniteValueStatus::Complete);
+      EXPECT_EQ(Copy.Tuples, (std::vector<std::vector<uint64_t>>{{5}}));
+    } else {
+      EXPECT_EQ(Copy.Status, FiniteValueStatus::Unknown);
+      EXPECT_TRUE(Copy.Tuples.empty());
+    }
+  }
+}
+
 } // namespace

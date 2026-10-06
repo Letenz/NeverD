@@ -14,6 +14,12 @@ I confronti più larghi di otto bit confrontano prima le metà alte e usano quel
 
 `BitBlaster.WidePredicatesAgreeWithTheEvaluator` confronta i predicati con e senza segno con il valutatore delle espressioni a larghezze selezionate da 8 a 256 bit, comprese larghezze dispari, valori adiacenti ai confini e bit significativi oltre i 64 bit. Esclude anche risultati errati. I test dei contatori parziali verificano query complete, modelli di controesempio ed esaurimento del budget di porte. Le regressioni native con confronto memorizzato provano entrambi gli ordini di confronto e aggiornamento osservando tutti i registri e flag, e rifiutano un corpo originale del ciclo modificato.
 
+<!-- i18n-section: pristine-encoding -->
+
+## Copie della codifica prima della ricerca
+
+`BitVectorSolver::cloneEncoding()` copia una codifica completa prima di qualsiasi tentativo di ricerca SAT. Restituisce null dopo una ricerca o un errore di codifica. Ogni copia possiede clausole mutabili, propagazione alla radice, porte e corrispondenze dei bit indipendenti; conserva ordine delle variabili, conteggio delle porte e impostazioni del risolutore. Il contesto deve sopravvivere a entrambi i risolutori; quello originale può essere modificato o distrutto indipendentemente.
+
 <!-- i18n-section: z3-build -->
 
 ## Build Z3 facoltativa

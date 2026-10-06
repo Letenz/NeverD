@@ -390,4 +390,46 @@ TEST(FrameOffsets, SymbolicAddendProofsStillRequireCompleteBudgets) {
   }
 }
 
+TEST(FrameOffsets, DomainEncodingReuseKeepsFullFrameProofsAndBudgets) {
+  SymContext Ctx;
+  const auto Root = Ctx.mkVar("entry", 64);
+  const auto Pointer = Ctx.mkVar("pointer", 64);
+  neverd::solver::SolverOptions Settings;
+  FiniteDomainEncoding Encoding(Ctx, Settings);
+  for (unsigned Offset : {7U, 7U, 19U, 7U}) {
+    const auto Predicate =
+        Ctx.mkEq(Pointer, Ctx.mkAdd(Root, Ctx.mkConst(64, Offset)));
+    for (unsigned Bias = 0; Bias != 8; ++Bias) {
+      const auto Value = Ctx.mkAdd(Pointer, Ctx.mkConst(64, Bias));
+      uint64_t FreshQueries = 0, CopyQueries = 0;
+      const auto Fresh = proveFrameOffset(Ctx, Predicate, Value, Root, Settings,
+                                          2, 100000, FreshQueries);
+      const auto Copy = proveFrameOffset(Encoding, Predicate, Value, Root, 2,
+                                         100000, CopyQueries);
+      EXPECT_EQ(Copy.Status, FrameOffsetStatus::Exact);
+      EXPECT_EQ(Copy.Status, Fresh.Status);
+      EXPECT_EQ(Copy.Offset, Offset + Bias);
+      EXPECT_EQ(Copy.Offset, Fresh.Offset);
+      EXPECT_EQ(CopyQueries, FreshQueries);
+      EXPECT_EQ(CopyQueries, 2U);
+      uint64_t LimitedQueries = 0;
+      EXPECT_EQ(proveFrameOffset(Encoding, Predicate, Value, Root, 1, 100000,
+                                 LimitedQueries)
+                    .Status,
+                FrameOffsetStatus::BudgetExceeded);
+      EXPECT_EQ(LimitedQueries, 1U);
+    }
+  }
+  uint64_t Queries = 0;
+  EXPECT_EQ(proveFrameOffset(Encoding, Ctx.mkTrue(), Pointer, Root, 3, 100000,
+                             Queries)
+                .Status,
+            FrameOffsetStatus::NonUnique);
+  Queries = 0;
+  EXPECT_EQ(proveFrameOffset(Encoding, Ctx.mkFalse(), Pointer, Root, 2, 100000,
+                             Queries)
+                .Status,
+            FrameOffsetStatus::Infeasible);
+}
+
 } // namespace
