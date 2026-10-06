@@ -1099,6 +1099,17 @@ target_include_directories(NeverDLowInstructionBoundaryTests PRIVATE
 target_compile_definitions(NeverDLowInstructionBoundaryTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 
+# Calls into a function's own body: push-and-jump lifting and the proof that a
+# return never pops an address the function pushed itself.
+add_neverd_unittest(NeverDOwnInteriorCallTests
+  core/OwnInteriorCallTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM Pipeline
+)
+target_include_directories(NeverDOwnInteriorCallTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(NeverDOwnInteriorCallTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+
 # Exercise shared source control-flow and SSA invariants independently of the
 # aggregate lift inventory when fixing mobile source reconstruction.
 add_neverd_unittest(NeverDHighControlFlowTests

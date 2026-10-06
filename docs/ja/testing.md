@@ -1413,6 +1413,8 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `NeverDLowInstructionBoundaryTests` は集約リフトの全フィクスチャを構築せずに LowIR の命令由来テストを実行します。`BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame` は整列した ADD と後置インデックス LDP によるスタック解放、および呼び出し元でリンクレジスタを復元する形を確認し、元の RET X30 と共有入口を独立して保持します。`BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership` は別の戻り先レジスタ、BR X30、欠落または非整列の解放、狭い復元、内部入口、修正情報、書き込み可能または曖昧なマッピング、再配置可能入力、別形式を拒否します。共有末尾のデコードはネイティブ ABI の証明ではなく、呼び出し元の保存や領域確保が欠ければ既存のフレーム証明は失敗します。
 
+`NeverDOwnInteriorCallTests` は、x64 関数が自身の unwind 範囲内のラベルを直接 call する場合を扱います。積んだ戻りアドレスのためだけの call はプッシュとジャンプとして持ち上げ、直線とループの両ケースで生成した C を `-O0` と `-O2` で AddressSanitizer と未定義動作トラップ付きで実行します。戻りがその call 自身の戻りアドレスを取り出すターゲットは通常の呼び出しのままです。関数が自分で積んだアドレスを取り出しうる戻り（不均衡な復元やスタック切り替えの後）があれば、関数を拒否し、その戻り命令を示します。
+
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` は CoreImage のプロバイダー、CIImage ファクトリー、完全な 48 バイトの論理レコード、x2 ポインターを検証し、欠落・不正なプロバイダー、x86_64、矛盾する宣言を拒否する。`ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` は同じ機械アドレスを持つ結果代入と元の呼び出しを区別する。`RejectsChangedCopyCallBodyAndCurrentImage` は証明、引数、ストア、フレーム、メタデータ、インポート、重複呼び出し、保存 IR に対する 24 種類の変更を拒否し、MedIR と HighIR の整合した同時変更も含む。`GeneratedCExecutesAgainstIndependentPhysicalCopyABI` は ARM64 上で変更しない生成 C を O0/O2 で実行し、コンパイラーから独立に観測した x2 ポインターを受け取る関数と比較する。6 個すべての浮動小数点ビット列、セレクターとレシーバーの識別、1 回の評価、戻りオブジェクト、コピーへの適法な書き込み、入力の不変性、境界ガードを検証する。他のホストではこの物理 ABI 実行テストをスキップする。
 
 `ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration` は、現在の空でないメソッド符号化またはセレクターと異なるキャッシュ ABI を拒否する。宣言のみを提供するクライアントの従来の契約は維持する。
