@@ -1581,9 +1581,14 @@ class Checker {
             // covers the incoming domain. Keep that domain without making
             // later queries reprove this branch fact. Unknown still refuses,
             // and two feasible edges retain their distinct predicates.
-            if (query(Taken) == solver::SatResult::Unsat) {
+            // These two complementary queries share one incoming domain.
+            // End encoding reuse with the branch so unrelated native history
+            // cannot make a later small query search a much larger formula.
+            std::unique_ptr<solver::BitVectorSolver> BranchEncoding;
+            if (query(Taken, &BranchEncoding) == solver::SatResult::Unsat) {
               scheduleNative(std::move(P), Fallthrough, Incoming);
-            } else if (query(Other) == solver::SatResult::Unsat) {
+            } else if (query(Other, &BranchEncoding) ==
+                       solver::SatResult::Unsat) {
               nativeTargets(std::move(P), Left.branchTarget(), Incoming);
             } else {
               nativeTargets(P, Left.branchTarget(), Taken);
