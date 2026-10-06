@@ -1370,10 +1370,12 @@ bool definedReturnPaths(const MedFunc &Function, Arch Architecture,
 }
 
 std::optional<SourceFunctionTypeHint>
-nativePairReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar,
-                 SourceABICarrierKind Kind) {
+nativeRecordReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar,
+                   SourceABICarrierKind Kind, unsigned Count = 2) {
   const auto Architecture = Scalar.Architecture;
   const bool Floating = Kind == SourceABICarrierKind::FloatingRegister;
+  if (Count != 2 && (!Floating || Count != 4))
+    return std::nullopt;
   if (Architecture != Arch::AArch64 && Architecture != Arch::X64)
     return std::nullopt;
   if (Floating && Architecture != Arch::AArch64)
@@ -1386,7 +1388,7 @@ nativePairReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar,
       (Floating ? Scalar.ReturnType->Kind != NdTypeKind::Float
                 : !integerCarrier(Scalar.ReturnType)) ||
       Scalar.ReturnType->Size != 8 || !Scalar.ReturnComponents.empty() ||
-      Scalar.ReturnLocation.Kind != Kind || Registers.size() < 2 ||
+      Scalar.ReturnLocation.Kind != Kind || Registers.size() < Count ||
       Med.DoesNotReturn || Med.IsVariadic ||
       Scalar.ReturnLocation.RegisterOffset != Registers[0] ||
       Scalar.ReturnLocation.ValueBytes != 8 || !Med.MultiReturn.empty() ||
@@ -1412,16 +1414,18 @@ nativePairReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar,
           return std::nullopt;
     }
   }
-  SourceFunctionTypeHint Pair = Scalar;
-  Pair.ReturnType = NdType::makeStruct(
-      {Scalar.ReturnType,
-       Floating ? NdType::makeFloat(8) : NdType::makeInt(8, false)});
-  Pair.ReturnLocation = {};
-  for (unsigned I = 0; I < 2; ++I) {
+  SourceFunctionTypeHint Record = Scalar;
+  std::vector<TypeRef> Fields(Count, Floating ? NdType::makeFloat(8)
+                                              : NdType::makeInt(8, false));
+  Fields[0] = Scalar.ReturnType;
+  Record.ReturnType = NdType::makeStruct(Fields);
+  Record.ReturnLocation = {};
+  for (unsigned I = 0; I < Count; ++I) {
     SourceABIValueLocation Location{Kind, Registers[I], 0, 8};
     std::optional<MedVar> Incoming;
-    // Floating pair refinement deliberately requires computed results. An
-    // unchanged incoming d1 is not evidence that a scalar function returns it.
+    // Floating record refinement deliberately requires computed results. An
+    // unchanged incoming lane is not evidence that a scalar function returns
+    // it.
     if (!Floating)
       for (const auto &Parameter : Med.Params)
         if (Parameter.Kind == MedVar::Param && Parameter.Id >= 0 &&
@@ -1429,10 +1433,10 @@ nativePairReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar,
           Incoming = Parameter;
     if (!definedReturnPaths(Med, Architecture, Location, Incoming))
       return std::nullopt;
-    Pair.ReturnComponents.push_back(Location);
+    Record.ReturnComponents.push_back(Location);
   }
-  return validateSourceABI(Pair, Error)
-             ? std::optional<SourceFunctionTypeHint>(std::move(Pair))
+  return validateSourceABI(Record, Error)
+             ? std::optional<SourceFunctionTypeHint>(std::move(Record))
              : std::nullopt;
 }
 
@@ -1648,6 +1652,67 @@ std::set<va_t> observedNativeIntegerPairReturns(const LowFunc &Function,
 std::set<va_t> observedNativeFloatingPairReturns(const LowFunc &Function,
                                                  Arch Architecture) {
   return observedNativePairReturns(Function, Architecture, true);
+}
+
+std::set<va_t>
+observedNativeFourDoubleReturns(const LowFunc &Function,
+                                const SourceFunctionTypeHint &CallerSignature) {
+  std::string Error;
+  if (CallerSignature.Architecture != Arch::AArch64 ||
+      Function.Blocks.size() > 16384 ||
+      !validateSourceABI(CallerSignature, Error) ||
+      CallerSignature.ReturnComponents.size() != 4)
+    return {};
+  const auto &Registers = getTargetRegInfo(Arch::AArch64).FPParamRegs;
+  const auto Members = sourceAggregateMembers(CallerSignature.ReturnType);
+  if (Members.size() != 4 || Registers.size() < 4)
+    return {};
+  for (unsigned I = 0; I != 4; ++I) {
+    const auto &Location = CallerSignature.ReturnComponents[I];
+    if (!Members[I].Type || Members[I].Type->Kind != NdTypeKind::Float ||
+        Members[I].Type->Size != 8 || Members[I].ByteOffset != 8 * I ||
+        Location.Kind != SourceABICarrierKind::FloatingRegister ||
+        Location.RegisterOffset != Registers[I] || Location.ValueBytes != 8)
+      return {};
+  }
+  std::set<va_t> Targets;
+  size_t Budget = 262144;
+  for (const auto &Block : Function.Blocks) {
+    if (!Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
+      return {};
+    std::optional<va_t> Target;
+    unsigned Available = 0;
+    for (const auto &Op : Block.Ops) {
+      if (!Budget-- || Op.NumInputs > 6)
+        return {};
+      if (Op.Opcode == NdOp::RETURN) {
+        if (Target && Available == 15 && Block.Succs.empty())
+          Targets.insert(*Target);
+        Target.reset();
+        Available = 0;
+        continue;
+      }
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+          Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::INDIR_BR ||
+          Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR) {
+        Target.reset();
+        Available = 0;
+        if (Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
+            Op.Inputs[0].isConst() && Op.Inputs[0].Size == 8) {
+          Target = Op.Inputs[0].Offset;
+          Available = 15;
+        }
+        continue;
+      }
+      if (Target && Op.Output.isReg() && Op.Output.Size)
+        for (unsigned I = 0; I != 4; ++I)
+          if (Op.Output.Offset <= Registers[I]
+                  ? Registers[I] - Op.Output.Offset < Op.Output.Size
+                  : Op.Output.Offset - Registers[I] < 8)
+            Available &= ~(1U << I);
+    }
+  }
+  return Targets;
 }
 
 std::set<va_t> observedNativeFourWordReturns(const LowFunc &Function,
@@ -2047,17 +2112,17 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
   if (Exact.Recognized)
     return Exact.Signature;
   if (ObserveIntegerPair)
-    if (auto Pair =
-            nativePairReturn(Med, Hint, SourceABICarrierKind::IntegerRegister))
+    if (auto Pair = nativeRecordReturn(Med, Hint,
+                                       SourceABICarrierKind::IntegerRegister))
       return Pair;
   return Hint;
 }
 
 namespace {
 std::optional<SourceFunctionTypeHint>
-refineNativePairReturnHint(const MedFunc &Med, const HighFunc &High,
-                           const PipelineFunctionAudit &Audit,
-                           SourceABICarrierKind Kind) {
+refineNativeRecordReturnHint(const MedFunc &Med, const HighFunc &High,
+                             const PipelineFunctionAudit &Audit,
+                             SourceABICarrierKind Kind, unsigned Count = 2) {
   if (Med.Entry != High.Entry || !completeNativeAudit(Med.Entry, Audit) ||
       !Med.SourceParametersBound || !Med.SourceTypeHint ||
       !High.SourceTypeHint || High.DoesNotReturn || High.Body.empty() ||
@@ -2065,22 +2130,29 @@ refineNativePairReturnHint(const MedFunc &Med, const HighFunc &High,
       !equalSourceTypes(Med.ReturnType, Med.SourceTypeHint->ReturnType) ||
       !equalSourceTypes(High.ReturnType, Med.SourceTypeHint->ReturnType))
     return std::nullopt;
-  return nativePairReturn(Med, *Med.SourceTypeHint, Kind);
+  return nativeRecordReturn(Med, *Med.SourceTypeHint, Kind, Count);
 }
 } // namespace
 
 std::optional<SourceFunctionTypeHint>
 refineNativeIntegerPairReturnHint(const MedFunc &Med, const HighFunc &High,
                                   const PipelineFunctionAudit &Audit) {
-  return refineNativePairReturnHint(Med, High, Audit,
-                                    SourceABICarrierKind::IntegerRegister);
+  return refineNativeRecordReturnHint(Med, High, Audit,
+                                      SourceABICarrierKind::IntegerRegister);
 }
 
 std::optional<SourceFunctionTypeHint>
 refineNativeFloatingPairReturnHint(const MedFunc &Med, const HighFunc &High,
                                    const PipelineFunctionAudit &Audit) {
-  return refineNativePairReturnHint(Med, High, Audit,
-                                    SourceABICarrierKind::FloatingRegister);
+  return refineNativeRecordReturnHint(Med, High, Audit,
+                                      SourceABICarrierKind::FloatingRegister);
+}
+
+std::optional<SourceFunctionTypeHint>
+refineNativeFourDoubleReturnHint(const MedFunc &Med, const HighFunc &High,
+                                 const PipelineFunctionAudit &Audit) {
+  return refineNativeRecordReturnHint(
+      Med, High, Audit, SourceABICarrierKind::FloatingRegister, 4);
 }
 
 std::optional<SourceFunctionTypeHint>

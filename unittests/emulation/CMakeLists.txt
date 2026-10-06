@@ -45,6 +45,12 @@ add_neverd_unittest(NeverDAArch64CacheTests
   NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationCPU EmulationRuntime)
 
+add_neverd_unittest(NeverDAArch64NZCVTests
+  AArch64NZCVTests.cpp
+  TIMEOUT 20
+  NO_PRETTY_VALUES
+  LINK_COMPONENTS EmulationCPU EmulationRuntime)
+
 add_neverd_unittest(NeverDAArch64MemoryTests
   AArch64CrossPageTests.cpp
   AArch64VectorMemoryTests.cpp
@@ -153,6 +159,7 @@ add_neverd_unittest(NeverDX64IntegerTests
   X64StackTests.cpp
   X64FrameExitTests.cpp
   X64FrameEntryTests.cpp
+  X64ReturnPrefixTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDX64IntegerTests PRIVATE
@@ -193,12 +200,30 @@ if(TARGET neverd_shared AND TARGET neverd)
     target_link_libraries(NeverDProcessPublicTests PRIVATE LLVMSupport)
   endif()
   add_dependencies(NeverDProcessPublicTests neverd)
+  add_neverd_unittest(NeverDUnpackPublicTests
+    UnpackPublicTests.cpp
+    TIMEOUT 120
+    LINK_LIBS neverd_shared)
+  target_include_directories(NeverDUnpackPublicTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/unittests/unpack)
+  target_compile_definitions(NeverDUnpackPublicTests PRIVATE
+    NEVERD_UNPACK_CLI="$<TARGET_FILE:neverd>"
+    NEVERD_UNPACK_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/unittests/unpack/fixtures/binaries")
+  if(NOT APPLE)
+    target_link_libraries(NeverDUnpackPublicTests PRIVATE LLVMSupport LLVMObject)
+  endif()
+  add_dependencies(NeverDUnpackPublicTests neverd)
 endif()
 include(ProcessFixtures.cmake)
 add_neverd_unittest(NeverDDarwinProcessTests
   DarwinProcessTests.cpp
   DarwinImageTests.cpp
   DarwinMemoryTests.cpp
+  DarwinFileTests.cpp
+  DarwinVectorTests.cpp
+  DarwinTimeTests.cpp
+  DarwinSystemTests.cpp
   DarwinNativeTests.cpp
   TIMEOUT 30
   NO_PRETTY_VALUES
@@ -249,6 +274,7 @@ add_neverd_unittest(NeverDWindowsProcessTests
   WindowsSIMDMappingTests.cpp
   WindowsSIMDExecutionTests.cpp
   WindowsContinuationTests.cpp
+  WindowsDeferredTests.cpp
   WindowsSEHTests.cpp
   WindowsContextTests.cpp
   WindowsNativeTestSupport.cpp
@@ -266,6 +292,21 @@ include(WindowsSystemFixtures.cmake)
 include(WindowsExceptionFixtures.cmake)
 include(WindowsSEHFixtures.cmake)
 include(WindowsContextFixtures.cmake)
+include(WindowsDeferredFixtures.cmake)
+
+# Recovery of packed images runs whole stubs on each backend. The protector
+# fixtures are checked-in images, so they need no cross toolchain; the
+# generated-code fixture is built for every guest instruction set.
+add_neverd_unittest(NeverDUnpackExecutionTests
+  UnpackExecutionTests.cpp
+  UnpackGeneratedTests.cpp
+  TIMEOUT 300
+  LINK_COMPONENTS Unpack)
+target_include_directories(NeverDUnpackExecutionTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests/unpack)
+target_compile_definitions(NeverDUnpackExecutionTests PRIVATE
+  NEVERD_UNPACK_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/unittests/unpack/fixtures/binaries")
+include(UnpackGeneratedFixtures.cmake)
 
 add_neverd_unittest(NeverDExecutionBudgetTests
   ExecutionBudgetTests.cpp

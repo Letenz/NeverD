@@ -3214,10 +3214,21 @@ class RepositoryCapabilityTests(unittest.TestCase):
                 "mobile.source-recovery": "experimental",
                 "translation.executable-engine": "experimental",
                 "translation.runtime-contract": "experimental",
+                "unpack.observed-entry": "experimental",
             },
         )
         no_surfaces = {"c": [], "python": [], "cli": [], "json": []}
         expected_surfaces = {
+            "unpack.observed-entry": {
+                "c": ["neverd_unpack_json"],
+                "python": ["Session.unpack"],
+                "cli": [
+                    "neverd unpack",
+                    "neverd unpack --o",
+                    "neverd unpack --options",
+                ],
+                "json": ["neverd_unpack_json"],
+            },
             "emulation.darwin-process": {
                 "c": ["neverd_emulate_process_json"],
                 "python": ["Session.emulate_process"],

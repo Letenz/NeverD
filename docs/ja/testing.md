@@ -1220,7 +1220,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 4852 検査とSEH 回帰検査 17 件を合わせ、必須の結果は 5093 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `4852 CPU + 224 WHP + 17 SEH = 5093`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 4852 検査とSEH 回帰検査 17 件を合わせ、必須の結果は 5093 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `4884 CPU + 224 WHP + 17 SEH = 5125`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1327,6 +1327,8 @@ Windows ring3 は独立したネイティブ観測に従い、checked x64 の `o
 
 `WindowsLifetimeTests.cpp` は固定トレースを独立したネイティブ Windows プロセスと KVM/WHP/Unicorn で照合します。通常終了、入口 return、両 DLL の初期化失敗、4 箇所の早期終了、入口なし DLL を含みます。回呼障害、共通予算、再配置 TLS フィールド、TLS 総容量も検証します。ネイティブ入口 return のプローブは初期スレッドのハンドルを保持し、終了コードと正確なスレッド／プロセス通知列を 64 回検証します。残る子スレッドは観測後に終了させ、プロセス終了値を入口の戻り値として扱いません。
 
+`NeverDUnpackTests`、`NeverDUnpackExecutionTests`、`NeverDUnpackPublicTests` はパックされたイメージの復元を対象とします。[アンパック](unpack.md)を参照してください。`UnpackGeneratedTests.cpp` は、テスト自身がパックしたプログラムを使って、x86-64 と ARM64 でエントリの規則を検査します。`X64ReturnPrefixTests.cpp` は 2 バイトの近リターンをすべてのトランスポートで検査し、それ以外のプレフィックス付きリターンが拒否されたままであることを確認します。`WindowsDeferredTests.cpp` は不透明なエントリと停止したプロセスの観測を、`ExecutionSessionTests.cpp` は実行ウォッチを検査します。
+
 Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
@@ -1415,7 +1417,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration` は、現在の空でないメソッド符号化またはセレクターと異なるキャッシュ ABI を拒否する。宣言のみを提供するクライアントの従来の契約は維持する。
 
-`DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract` は四つの行列・アフィン生成関数と、拒否すべき 22 種類の契約変更を検証します。`ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy` は SDK 結果が CoreImage のコピーおよび公開用の独立再構築まで届くことを証明します。`RejectsWrongProducerFrameAndSavedIR` は各生成関数の 12 種類の変更を検証し、入力書き込み不足、フレーム外の結果、不正な提供元・ABI キャリア、消費済み Concat 入力の再使用を拒否します。`GeneratedCMatchesOriginalMachineAndSDKResults` は Apple ARM64 の O0/O2 で未変更の生成 C と元の ARM64 命令語をネイティブ CoreGraphics に対して実行します。各関数 1000 ケースで、結果の全 48 バイト、二つの入力、セレクタ・受信者の識別、一度の呼び出し、戻り値、私有コピーへの書き込み、境界ガードを比較します。他のホストではこの SDK 実行テストをスキップします。
+`DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract` は現在の行列・アフィン契約と、拒否すべき 22 種類の契約変更を検証します。`ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy` は SDK 結果が CoreImage のコピーおよび公開用の独立再構築まで届くことを証明します。`RejectsWrongProducerFrameAndSavedIR` は各生成関数の 12 種類の変更を検証し、入力書き込み不足、フレーム外の結果、不正な提供元・ABI キャリア、消費済み Concat 入力の再使用を拒否します。`GeneratedCMatchesOriginalMachineAndSDKResults` は Apple ARM64 の O0/O2 で未変更の生成 C と元の ARM64 命令語をネイティブ CoreGraphics に対して実行します。各関数 1000 ケースで、結果の全 48 バイト、二つの入力、セレクタ・受信者の識別、一度の呼び出し、戻り値、私有コピーへの書き込み、境界ガードを比較します。他のホストではこの SDK 実行テストをスキップします。
 
 `MatrixFrameEffectsRequireExactCurrentContract` は CGRect 消費関数と拒否すべき 22 種類の変更も検証します。`ObjCAffineImageValueCopy.CGRectInputUsesTheSameCurrentFrameOwner` は回転 → CGRect 借用 → 回転による再初期化 → CoreImage 公開を検証します。`CGRectBorrowRejectsExpiredInputsAndChangedABI` は初期化、範囲、インポート、キャリアの八つの変更を拒否します。`GeneratedCMatchesOriginalMachineAndSDKResults` はこの全体を O0/O2、1000 ケースで元の命令語とネイティブ SDK に対して実行し、保存した角度、結果の全 48 バイト、オブジェクト、境界ガードを比較します。
 
@@ -1466,10 +1468,20 @@ block とコピーの公開テストでは、独立した二つの 48 バイト�
 
 `LowIRLoopInference.ProjectedCounterCopies*` は、独立したタグを持つワードを介してカウンタのレーンをコピーしてから加算する入れ子ループを検証します。完全状態の 144 ケースは、レジスタ、フレーム、関数一時値、両バイト順、1/3/4 バイトのレーン、直接／キャッシュされた終了条件、比較用のワード全体のコピーを対象にします。投影された等価関係は保存済みの到達状態とすべての流入遷移で成立する必要があり、上位ビットは独立したままです。遷移ドメインでの含意証明により、異なるパラメータを介した加算漸化式を認識できます。上位タグの欠落、不正な更新、ガードの欠落、推論または最終証明の予算が 1 単位不足する場合は引き続き拒否します。
 
+`LowIRLoopInference.TransferredCounters*` は、各カットポイントを迂回するループがある中で、カウンタの格納場所がカットポイント間で変わる場合を検証します。正確な記号的単位ステップ転送から、転送元カウンタのガードと、1 つのカットポイントで別の場所を読む代替ランキングを提案します。すべてのガードとランキングには完全な遷移証明が必要です。完全状態の 96 ケースは、レジスタ、フレーム、関数一時値、両バイト順、1/3/4/8 バイトのカウンタ、独立したタグ、格納場所を変えない対照を対象にします。結果やタグの変更、不正なランキング対応、非停止更新、ガード欠落、推論や最終証明の予算不足は拒否します。探索には既存の記号ノード制限を使い、任意のグラフ選択処理の予算はゼロにできます。
+
 `LowIRLoopRefinement.GuardedCuts*` と `BinaryLowIRLoopRefinement.GuardedCuts*` は同一 PC、レジスタ・フレーム・システムフラグ、両バイト順、未選択の有限・循環経路、重複と誤配対、プレフィックス一般化、未定義値の証人、メタデータ、ダイジェスト、共有予算を検査する。独立ネイティブテストは同じループアドレスの二つの R10 文脈を証明し、未監査境界が先に検査されることも確認する。通常 ABI 認証は別途必要。
 
 `BinaryLowIRLoopInference.NativeSelectors*` は二つのレジスタ文脈、フレームのみの文脈、三領域の論理積、区別不能なテンプレート、由来・ネイティブ本体の変更、推論と証明の独立した厳密予算および一不足予算を検査する。ループ回数は任意で入口定数を追加しない。
 
 `DarwinIndirectRecordCalls` は現在の MakeScale 契約と 22 種類のインポート/ABI 変更を検査し、共有の値渡しコピー証明で 48 バイト全体の私有結果を使用します。非整列、変位、重複、フレーム外の結果範囲は拒否されます。完全な戻り値 ABI が残っていても、確実な書き込み効果を除去すると拒否されます。
+
+`SourceFrameAnalysis.IncomingResultAddressNeedsCompleteEntryIdentity` は入口・キャリア・書き込みの 10 変更と入口 ABI の欠落を拒否する。`NativeSourceHints.IndirectResultTailCallRetainsExplicitOutputAddress` は直接末尾呼び出しを再リフトし、明示的出力引数、6 書き込み、公開ゲートを確認する。
+
+`NativeSourceHints.FourDoubleCallerDemandNeedsEveryUnchangedCarrier` は 4 低位レーン、独立した上位書き込み、宣言・制御の 9 変更を確認する。`FourDoubleReturnRequiresEveryComputedLowLane` は不完全な結果や無効な契約の 12 ケースを拒否する。`DarwinNativeRecordReturns.FourComputedDoublesExecuteAtO0AndO2` は各最適化レベルで 2048 ケースを実行し、独立した算術オラクルと全 32 結果バイトを比較する。
+
+`DarwinIndirectRecordCalls.AffineInvertSnapshotsItsCompleteAliasedInput` は O0/O2 で各 2560 ケースを実行し、同一・重複・分離した入出力、入力ビット列、呼び出し 1 回、全 48 結果バイト、ガード付き格納領域全体を確認する。これは物理コピーとスナップショットのオラクルであり、元の機械コードやネイティブ SDK の実行ではない。現在の行列・アフィン契約テストは契約ごとに 22 変更の拒否を維持する。
+
+`DarwinIndirectRecordCalls.AffineTranslatePreservesScalarBitsAndSnapshotsAliasedInput` は O0、O2 でそれぞれ 2560 ケースを実行し、二つのスカラーのビット列、六つの入力フィールド、一回の呼び出し、全出力バイト、および同一・重複・分離配置の保護付きストレージを検査する。スカラー ABI の四つの変更と共有の 22 個のインポート／ABI 変更を拒否する。ビット単位のスタブは物理引数と事前コピーを検証するもので、平行移動の数学的オラクルや元の機械語の実行ではない。
 
 CPU0 の明示的プリエンプション、仮想時計と制約は[ドライバースケジューリング](driver-scheduling.md)を参照してください。

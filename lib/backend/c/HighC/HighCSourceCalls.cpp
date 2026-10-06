@@ -236,6 +236,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
        Hint.TargetName == "CGAffineTransformScale" ||
        Hint.TargetName == "CGAffineTransformRotate" ||
        Hint.TargetName == "CGAffineTransformConcat" ||
+       Hint.TargetName == "CGAffineTransformInvert" ||
        Hint.TargetName == "CATransform3DScale" ||
        Hint.TargetName == "CGRectApplyAffineTransform")) {
     const auto Expected =

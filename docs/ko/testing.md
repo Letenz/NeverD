@@ -1210,7 +1210,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 46개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 4852개와 SEH 회귀 검사 17개를 포함하면 필수 결과는 5093개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `4852 CPU + 224 WHP + 17 SEH = 5093`.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 4852개와 SEH 회귀 검사 17개를 포함하면 필수 결과는 5093개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `4884 CPU + 224 WHP + 17 SEH = 5125`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 
@@ -1317,6 +1317,8 @@ Windows ring3는 독립적인 네이티브 관측에 따라 checked x64의 `oper
 
 `WindowsLifetimeTests.cpp`는 고정된 추적을 독립 네이티브 Windows 프로세스 및 KVM/WHP/Unicorn 실행과 비교합니다. 정상 종료, 진입점 반환, 두 DLL의 초기화 실패, 네 곳의 조기 종료와 진입점 없는 DLL을 포함합니다. 콜백 오류, 공용 예산, 재배치 TLS 필드와 TLS 총용량도 확인합니다. 네이티브 진입점 반환 프로브는 초기 스레드 핸들을 보존하고 종료 코드와 정확한 스레드/프로세스 통지 순서를 64회 검증합니다. 남은 자식 스레드는 관찰 후 종료하며 프로세스 종료 코드를 진입점 반환값으로 취급하지 않습니다.
 
+`NeverDUnpackTests`, `NeverDUnpackExecutionTests`, `NeverDUnpackPublicTests`는 패킹된 이미지의 복구를 다룹니다. [언패킹](unpack.md)을 참고하십시오. `UnpackGeneratedTests.cpp`는 테스트가 직접 패킹한 프로그램으로 x86-64와 ARM64에서 진입점 규칙을 검사합니다. `X64ReturnPrefixTests.cpp`는 2바이트 근거리 복귀를 모든 전송 계층에서 검사하고, 그 밖의 접두사 붙은 복귀가 계속 거부되는지 확인합니다. `WindowsDeferredTests.cpp`는 불투명 진입점과 멈춘 프로세스의 관찰을, `ExecutionSessionTests.cpp`는 실행 감시를 검사합니다.
+
 Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`와 현재 프로세스의 `FlushInstructionCache`를 지원합니다. OS 계층은 예약 영역을 소유하고 `AddressSpace`는 커밋된 페이지, 권한, 실제 저장 공간을 관리합니다. 테스트는 동적 코드 수정, 접근 오류, 메모리 한도 재사용을 검증합니다.
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
@@ -1405,7 +1407,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration`는 현재의 비어 있지 않은 메서드 인코딩 또는 선택자와 다른 캐시 ABI를 거부한다. 선언만 제공하는 클라이언트의 기존 계약은 유지한다.
 
-`DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract`는 네 행렬·아핀 생성 함수와 거부해야 하는 계약 변경 22개를 검사합니다. `ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy`는 SDK 결과가 CoreImage 복사와 게시용 독립 재구축에 도달함을 증명합니다. `RejectsWrongProducerFrameAndSavedIR`는 생성 함수마다 12개 변경을 검사하며 입력 쓰기 누락, 프레임 밖 결과, 잘못된 공급자·ABI 전달 위치 및 소비된 Concat 입력 재사용을 거부합니다. `GeneratedCMatchesOriginalMachineAndSDKResults`는 Apple ARM64의 O0/O2에서 변경하지 않은 생성 C와 원본 ARM64 명령어를 네이티브 CoreGraphics로 실행합니다. 함수마다 1000개 사례로 결과의 모든 48바이트, 두 입력, 선택자·수신자 식별, 한 번의 호출, 반환 객체, 비공개 복사 쓰기 및 경계 보호값을 비교합니다. 다른 호스트는 이 네이티브 SDK 실행 테스트를 건너뜁니다.
+`DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract`는 현재 행렬·아핀 계약와 거부해야 하는 계약 변경 22개를 검사합니다. `ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy`는 SDK 결과가 CoreImage 복사와 게시용 독립 재구축에 도달함을 증명합니다. `RejectsWrongProducerFrameAndSavedIR`는 생성 함수마다 12개 변경을 검사하며 입력 쓰기 누락, 프레임 밖 결과, 잘못된 공급자·ABI 전달 위치 및 소비된 Concat 입력 재사용을 거부합니다. `GeneratedCMatchesOriginalMachineAndSDKResults`는 Apple ARM64의 O0/O2에서 변경하지 않은 생성 C와 원본 ARM64 명령어를 네이티브 CoreGraphics로 실행합니다. 함수마다 1000개 사례로 결과의 모든 48바이트, 두 입력, 선택자·수신자 식별, 한 번의 호출, 반환 객체, 비공개 복사 쓰기 및 경계 보호값을 비교합니다. 다른 호스트는 이 네이티브 SDK 실행 테스트를 건너뜁니다.
 
 `MatrixFrameEffectsRequireExactCurrentContract`는 CGRect 소비 함수와 거부해야 하는 변경 22개도 검사합니다. `ObjCAffineImageValueCopy.CGRectInputUsesTheSameCurrentFrameOwner`는 회전 → CGRect 대여 → 회전 재초기화 → CoreImage 게시를 검증합니다. `CGRectBorrowRejectsExpiredInputsAndChangedABI`는 초기화, 범위, 가져오기, 전달 위치에 대한 여덟 변경을 거부합니다. `GeneratedCMatchesOriginalMachineAndSDKResults`는 전체 순서를 O0/O2에서 1000개 사례로 원본 명령어 및 네이티브 SDK와 실행하여 저장된 각도, 결과의 모든 48바이트, 객체 및 경계 보호값을 비교합니다.
 
@@ -1456,10 +1458,20 @@ block과 복사본 게시 테스트는 독립된 두 48바이트 범위, 기술�
 
 `LowIRLoopInference.ProjectedCounterCopies*`는 카운터 레인을 독립된 태그가 있는 워드를 통해 복사한 뒤 증가시키는 중첩 루프를 검사합니다. 전체 상태 사례 144개는 레지스터, 프레임, 함수 임시 값, 두 바이트 순서, 1/3/4바이트 레인, 직접 또는 캐시된 종료 조건과 비교용 전체 워드 복사를 포함합니다. 투영된 동등 관계는 저장된 도달 상태와 모든 유입 전이에서 성립해야 하며 상위 비트는 독립적으로 유지됩니다. 전이 도메인의 함의 증명으로 서로 다른 매개변수를 통한 덧셈 점화식을 인식할 수 있습니다. 상위 태그 누락, 잘못된 갱신, 보호 조건 누락, 추론 또는 최종 증명 예산이 한 단위 부족한 경우는 계속 거부됩니다.
 
+`LowIRLoopInference.TransferredCounters*`는 각 절단점을 우회하는 루프가 있는 상태에서 카운터 저장 위치가 절단점 사이에서 바뀌는 경우를 검사합니다. 정확한 기호 단위 스텝 전송으로 원본 카운터의 보호 조건과 한 절단점에서 다른 위치를 읽는 대체 순위를 제안하며, 모든 조건과 순위는 전체 전이 증명이 필요합니다. 전체 상태 사례 96개는 레지스터, 프레임, 함수 임시 값, 두 바이트 순서, 1/3/4/8바이트 카운터, 독립 태그와 위치가 고정된 대조 사례를 포함합니다. 결과나 태그 변경, 잘못된 순위 매핑, 비종료 갱신, 보호 조건 누락, 추론 또는 최종 증명 예산 부족은 거부됩니다. 탐색은 기존 기호 노드 한도를 사용하므로 선택적 그래프 선택 작업 예산은 0으로 유지할 수 있습니다.
+
 `LowIRLoopRefinement.GuardedCuts*`와 `BinaryLowIRLoopRefinement.GuardedCuts*`는 같은 PC, 레지스터·프레임·시스템 플래그, 두 바이트 순서, 미일치 유한·순환 경로, 중첩과 잘못된 쌍, 접두 일반화, 미정의 값 증인, 메타데이터, 다이제스트와 공통 예산을 검사한다. 독립 네이티브 테스트는 같은 루프 주소의 두 R10 문맥을 증명하고 미감사 경계가 먼저 검사됨을 확인한다. 일반 ABI 인증은 별도다.
 
 `BinaryLowIRLoopInference.NativeSelectors*`는 두 레지스터 문맥, 프레임만으로 구분되는 문맥, 세 영역의 논리곱, 구분 불가능한 템플릿, 출처 및 네이티브 본문 변이, 추론과 증명의 독립적인 정확한 예산 및 하나 부족한 예산을 검사한다. 루프 횟수는 임의이며 진입 상수를 추가하지 않는다.
 
 `DarwinIndirectRecordCalls`는 현재 MakeScale 계약과 22가지 가져오기/ABI 변경을 검사하고, 공유 값 복사 증명으로 완전한 48바이트 비공개 결과를 소비합니다. 정렬되지 않거나 이동, 겹침 또는 프레임 범위를 벗어난 결과는 거부됩니다. 완전한 반환 ABI를 유지하더라도 확정 쓰기 효과를 제거하면 거부됩니다.
+
+`SourceFrameAnalysis.IncomingResultAddressNeedsCompleteEntryIdentity`는 진입·캐리어·쓰기 변경 열 가지와 진입 ABI 누락을 거부한다. `NativeSourceHints.IndirectResultTailCallRetainsExplicitOutputAddress`는 직접 꼬리 호출을 재리프팅하고 명시적 출력 매개변수, 쓰기 여섯 번과 게시 게이트를 확인한다.
+
+`NativeSourceHints.FourDoubleCallerDemandNeedsEveryUnchangedCarrier`는 네 하위 레인, 독립적인 상위 쓰기와 선언·제어 변경 아홉 가지를 확인한다. `FourDoubleReturnRequiresEveryComputedLowLane`는 불완전한 결과나 무효 계약 열두 가지를 거부한다. `DarwinNativeRecordReturns.FourComputedDoublesExecuteAtO0AndO2`는 각 최적화 수준에서 2048개 사례의 32바이트 전체 결과를 독립 산술 오라클과 비교한다.
+
+`DarwinIndirectRecordCalls.AffineInvertSnapshotsItsCompleteAliasedInput`는 O0/O2 각각 2560개 사례에서 동일·중첩·분리된 입력과 출력, 입력 비트 패턴, 한 번의 호출, 48바이트 전체 결과와 보호된 저장 공간 전체를 확인한다. 이는 물리 복사와 스냅샷 오라클이며 원본 기계 코드나 네이티브 SDK 실행은 아니다. 현재 행렬·아핀 계약 테스트는 계약마다 변경 22개의 거부를 유지한다.
+
+`DarwinIndirectRecordCalls.AffineTranslatePreservesScalarBitsAndSnapshotsAliasedInput`은 O0와 O2에서 각각 2560개 사례를 실행한다. 두 스칼라의 비트 패턴, 여섯 입력 필드, 한 번의 호출, 전체 출력 바이트와 동일·중첩·분리 배치의 보호된 저장 공간을 검사한다. 스칼라 ABI 변경 네 가지와 공유된 임포트/ABI 변경 22가지를 거부한다. 비트 단위 스텁은 물리 인수와 사전 복사를 검증하며, 평행 이동의 수학적 판정이나 원래 기계어 실행은 아니다.
 
 CPU0 명시적 선점, 가상 시계 의미와 현재 한계는 [드라이버 스케줄링](driver-scheduling.md)을 참조하세요.

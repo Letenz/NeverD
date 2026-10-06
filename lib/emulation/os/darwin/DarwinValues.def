@@ -15,6 +15,7 @@ NEVERD_DARWIN_VALUE(MmapBase, 0x1000000000ULL)
 NEVERD_DARWIN_VALUE(PageSizeX64, 4096)
 NEVERD_DARWIN_VALUE(PageSizeARM64, 16384)
 NEVERD_DARWIN_VALUE(BSDClass, 0x02000000)
+NEVERD_DARWIN_VALUE(MachClass, 0x01000000)
 NEVERD_DARWIN_VALUE(SVCImmediate, 0x80)
 NEVERD_DARWIN_VALUE(CarryARM64, 0x20000000)
 NEVERD_DARWIN_VALUE(ProcessID, 1000)
@@ -22,13 +23,69 @@ NEVERD_DARWIN_VALUE(ParentID, 1)
 NEVERD_DARWIN_VALUE(UserID, 1000)
 NEVERD_DARWIN_VALUE(GroupID, 1000)
 NEVERD_DARWIN_VALUE(BadDescriptor, 9)
+NEVERD_DARWIN_VALUE(NoEntry, 2)
+NEVERD_DARWIN_VALUE(OperationNotPermitted, 1)
+NEVERD_DARWIN_VALUE(ResourceBusy, 16)
+NEVERD_DARWIN_VALUE(FileExists, 17)
+NEVERD_DARWIN_VALUE(NoSuchAddress, 6)
+NEVERD_DARWIN_VALUE(NotDirectory, 20)
+NEVERD_DARWIN_VALUE(IsDirectory, 21)
+NEVERD_DARWIN_VALUE(TooManyFiles, 24)
+NEVERD_DARWIN_VALUE(IllegalSeek, 29)
+NEVERD_DARWIN_VALUE(SeekHole, 3)
+NEVERD_DARWIN_VALUE(SeekData, 4)
+NEVERD_DARWIN_VALUE(NameTooLong, 63)
+NEVERD_DARWIN_VALUE(DirectoryNotEmpty, 66)
+NEVERD_DARWIN_VALUE(Overflow, 84)
+NEVERD_DARWIN_VALUE(OpenCloseOnExec, 0x01000000)
+NEVERD_DARWIN_VALUE(OpenDirectory, 0x00100000)
+NEVERD_DARWIN_VALUE(OpenAccessMask, 3)
+NEVERD_DARWIN_VALUE(OpenWriteOnly, 1)
+NEVERD_DARWIN_VALUE(OpenReadWrite, 2)
+NEVERD_DARWIN_VALUE(OpenAppend, 8)
+NEVERD_DARWIN_VALUE(OpenTruncate, 0x400)
+NEVERD_DARWIN_VALUE(OpenCreate, 0x200)
+NEVERD_DARWIN_VALUE(OpenExclusive, 0x800)
+NEVERD_DARWIN_VALUE(FileTooLarge, 27)
+NEVERD_DARWIN_VALUE(FileWasWritten, 0x10000)
+NEVERD_DARWIN_VALUE(FileRestrictedFlags, 0x60006)
+NEVERD_DARWIN_VALUE(AtCurrentDirectory, 0xfffffffe)
+NEVERD_DARWIN_VALUE(AtEffectiveAccess, 0x10)
+NEVERD_DARWIN_VALUE(AtNoFollow, 0x20)
+NEVERD_DARWIN_VALUE(AccessPermissionMask, 0x003ffe07)
+NEVERD_DARWIN_VALUE(AtRealDevice, 0x200)
+NEVERD_DARWIN_VALUE(AtFDOnly, 0x400)
+NEVERD_DARWIN_VALUE(AtNoFollowAny, 0x800)
+NEVERD_DARWIN_VALUE(AtRemoveDirectory, 0x80)
+NEVERD_DARWIN_VALUE(AtRemoveDatalessDirectory, 0x100)
+NEVERD_DARWIN_VALUE(AtSystemDiscarded, 0x1000)
+NEVERD_DARWIN_VALUE(RenameSeclude, 1)
+NEVERD_DARWIN_VALUE(RenameSwap, 2)
+NEVERD_DARWIN_VALUE(RenameExclusive, 4)
+NEVERD_DARWIN_VALUE(RenameNoFollowAny, 0x10)
+NEVERD_DARWIN_VALUE(GetPath, 50)
+NEVERD_DARWIN_VALUE(DuplicateFD, 0)
+NEVERD_DARWIN_VALUE(GetDescriptorFlags, 1)
+NEVERD_DARWIN_VALUE(SetDescriptorFlags, 2)
+NEVERD_DARWIN_VALUE(GetFileFlags, 3)
+NEVERD_DARWIN_VALUE(SetFileFlags, 4)
+NEVERD_DARWIN_VALUE(DuplicateCloseOnExec, 67)
+NEVERD_DARWIN_VALUE(FileStatusSize, 144)
+NEVERD_DARWIN_VALUE(FileRegularMode, 0x8000)
+NEVERD_DARWIN_VALUE(FileDirectoryMode, 0x4000)
+NEVERD_DARWIN_VALUE(FilePermissionMask, 0x0fff)
 NEVERD_DARWIN_VALUE(MaxWriteBytes, 0x7fffffff)
+NEVERD_DARWIN_VALUE(MaxIOVectors, 1024)
 NEVERD_DARWIN_VALUE(BadAddress, 14)
 NEVERD_DARWIN_VALUE(InvalidArgument, 22)
 NEVERD_DARWIN_VALUE(NoMemory, 12)
 NEVERD_DARWIN_VALUE(PermissionDenied, 13)
+NEVERD_DARWIN_VALUE(ResultTooLarge, 34)
+NEVERD_DARWIN_VALUE(SystemStringLimit, 1024)
+NEVERD_DARWIN_VALUE(SystemMIBLimit, 12)
 NEVERD_DARWIN_VALUE(MapPrivate, 0x2)
 NEVERD_DARWIN_VALUE(MapAnonymous, 0x1000)
+NEVERD_DARWIN_VALUE(MapUnix03, 0x40000)
 NEVERD_DARWIN_VALUE(ProtRead, 1)
 NEVERD_DARWIN_VALUE(ProtWrite, 2)
 NEVERD_DARWIN_VALUE(ProtExecute, 4)
@@ -40,22 +97,232 @@ NEVERD_DARWIN_TEXT(ExecutablePathPrefix, "executable_path=")
 #endif
 #ifdef NEVERD_DARWIN_SERVICE
 NEVERD_DARWIN_SERVICE(Exit, 1, None)
+NEVERD_DARWIN_SERVICE(Read, 3, Wide)
 NEVERD_DARWIN_SERVICE(Write, 4, Wide)
+NEVERD_DARWIN_SERVICE(Readv, 120, Wide)
+NEVERD_DARWIN_SERVICE(Writev, 121, Wide)
+NEVERD_DARWIN_SERVICE(Preadv, 540, Wide)
+NEVERD_DARWIN_SERVICE(Pwritev, 541, Wide)
+NEVERD_DARWIN_SERVICE(Open, 5, Int)
+NEVERD_DARWIN_SERVICE(Close, 6, Int)
+NEVERD_DARWIN_SERVICE(Unlink, 10, Int)
+NEVERD_DARWIN_SERVICE(Mkdir, 136, Int)
+NEVERD_DARWIN_SERVICE(MkdirAt, 475, Int)
+NEVERD_DARWIN_SERVICE(Rmdir, 137, Int)
+NEVERD_DARWIN_SERVICE(Rename, 128, Int)
+NEVERD_DARWIN_SERVICE(RenameAt, 465, Int)
+NEVERD_DARWIN_SERVICE(RenameAtX, 488, Int)
+NEVERD_DARWIN_SERVICE(Umask, 60, Int)
+NEVERD_DARWIN_SERVICE(Chdir, 12, Int)
+NEVERD_DARWIN_SERVICE(Fchdir, 13, Int)
 NEVERD_DARWIN_SERVICE(GetPID, 20, Int)
 NEVERD_DARWIN_SERVICE(GetUID, 24, UInt)
 NEVERD_DARWIN_SERVICE(GetEUID, 25, UInt)
 NEVERD_DARWIN_SERVICE(GetPPID, 39, Int)
+NEVERD_DARWIN_SERVICE(Access, 33, Int)
+NEVERD_DARWIN_SERVICE(FaccessAt, 466, Int)
+NEVERD_DARWIN_SERVICE(Dup, 41, Int)
 NEVERD_DARWIN_SERVICE(GetEGID, 43, UInt)
 NEVERD_DARWIN_SERVICE(GetGID, 47, UInt)
+NEVERD_DARWIN_SERVICE(Dup2, 90, Int)
+NEVERD_DARWIN_SERVICE(Fcntl, 92, Int)
+NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
+NEVERD_DARWIN_SERVICE(Pwrite, 154, Wide)
+NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
+NEVERD_DARWIN_SERVICE(Truncate, 200, Int)
+NEVERD_DARWIN_SERVICE(Ftruncate, 201, Int)
+NEVERD_DARWIN_SERVICE(Sysctl, 202, Int)
+NEVERD_DARWIN_SERVICE(SysctlByName, 274, Int)
+NEVERD_DARWIN_SERVICE(Stat64, 338, Int)
+NEVERD_DARWIN_SERVICE(Fstat64, 339, Int)
+NEVERD_DARWIN_SERVICE(Lstat64, 340, Int)
+NEVERD_DARWIN_SERVICE(GetDirEntries64, 344, Wide)
+NEVERD_DARWIN_SERVICE(GetTimeOfDay, 116, Int)
+NEVERD_DARWIN_SERVICE(OpenAt, 463, Int)
+NEVERD_DARWIN_SERVICE(FstatAt64, 470, Int)
+NEVERD_DARWIN_SERVICE(UnlinkAt, 472, Int)
 NEVERD_DARWIN_SERVICE(Munmap, 73, Int)
 NEVERD_DARWIN_SERVICE(Mprotect, 74, Int)
 NEVERD_DARWIN_SERVICE(Mmap, 197, Wide)
 #endif
 
+// Positive trap indices. ARM64 encodes their negative low-32-bit value;
+// x64 uses the Mach syscall class. Fast ARM64 clocks have no x64 trap slot.
+#ifdef NEVERD_DARWIN_MACH_SERVICE
+NEVERD_DARWIN_MACH_SERVICE(TimebaseInfo, 89, false)
+NEVERD_DARWIN_MACH_SERVICE(AbsoluteTime, 3, true)
+NEVERD_DARWIN_MACH_SERVICE(ContinuousTime, 4, true)
+#endif
+
+// Cancellation is outside this single-thread profile; both entry numbers
+// share the exact same service owner and retain the original report number.
+#ifdef NEVERD_DARWIN_SERVICE_ALIAS
+NEVERD_DARWIN_SERVICE_ALIAS(Read, 396)
+NEVERD_DARWIN_SERVICE_ALIAS(Write, 397)
+NEVERD_DARWIN_SERVICE_ALIAS(Open, 398)
+NEVERD_DARWIN_SERVICE_ALIAS(Close, 399)
+NEVERD_DARWIN_SERVICE_ALIAS(Fcntl, 406)
+NEVERD_DARWIN_SERVICE_ALIAS(Readv, 411)
+NEVERD_DARWIN_SERVICE_ALIAS(Writev, 412)
+NEVERD_DARWIN_SERVICE_ALIAS(Preadv, 542)
+NEVERD_DARWIN_SERVICE_ALIAS(Pwritev, 543)
+NEVERD_DARWIN_SERVICE_ALIAS(Pread, 414)
+NEVERD_DARWIN_SERVICE_ALIAS(Pwrite, 415)
+NEVERD_DARWIN_SERVICE_ALIAS(OpenAt, 464)
+#endif
+
 #ifdef NEVERD_DARWIN_DIAGNOSTIC
 NEVERD_DARWIN_DIAGNOSTIC(
-    MemoryMode, "unsupported Darwin memory mode (only private anonymous "
-                "data mappings; no JIT, file or private-gate mutation)")
+    SystemString,
+    "Darwin system strings must be at most 1023 bytes without NUL")
+NEVERD_DARWIN_DIAGNOSTIC(
+    SystemCPUCount, "Darwin system cpu_count must be between 1 and INT32_MAX")
+NEVERD_DARWIN_DIAGNOSTIC(SystemPartialInput,
+                         "Darwin sysctl input is partially readable")
+NEVERD_DARWIN_DIAGNOSTIC(
+    SystemLengthMemory,
+    "Darwin sysctl requires a fully readable and writable 8-byte length")
+NEVERD_DARWIN_DIAGNOSTIC(SystemKey, "unsupported Darwin sysctl key")
+NEVERD_DARWIN_DIAGNOSTIC(SystemObservation,
+                         "Darwin sysctl observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(SystemPartialOutput,
+                         "Darwin sysctl output is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(
+    TimebaseRatio, "Darwin timebase numerator and denominator must be nonzero")
+NEVERD_DARWIN_DIAGNOSTIC(TimebaseMissing, "Darwin timebase is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(TimeContinuousMissing,
+                         "Darwin mach_continuous_time is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(TimebasePartialOutput,
+                         "Darwin timebase output buffer is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(TimeServiceKind, "invalid Darwin Mach time service")
+NEVERD_DARWIN_DIAGNOSTIC(TimeMicroseconds,
+                         "Darwin time microseconds must be below 1000000")
+NEVERD_DARWIN_DIAGNOSTIC(TimeOfDayMissing,
+                         "Darwin time_of_day is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(TimeZoneMissing, "Darwin timezone is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(TimeAbsoluteMissing,
+                         "Darwin mach_absolute_time is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(TimePartialOutput,
+                         "Darwin time output buffer is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(FileOptionsLimit, "invalid Darwin file input limits")
+NEVERD_DARWIN_DIAGNOSTIC(FileOptionPath,
+                         "invalid or conflicting Darwin catalogue path")
+NEVERD_DARWIN_DIAGNOSTIC(FileAccessPermissions,
+                         "Darwin access permission checks are not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileInputs, "Darwin file catalogue is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryCreationLimit,
+                         "Darwin directory creation exceeds catalogue limits")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryRemovalInitial,
+    "Darwin removal of initial directories is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileInput, "Darwin standard input is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileMetadataOption,
+                         "invalid Darwin file or directory metadata or size")
+NEVERD_DARWIN_DIAGNOSTIC(FileMetadataPath,
+                         "Darwin metadata requires an existing catalogue path")
+NEVERD_DARWIN_DIAGNOSTIC(FileMetadata, "Darwin file metadata is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FilePartialStatus,
+    "Darwin stat64 into a partially writable buffer is unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(FileOpenFlags, "unsupported Darwin open flags")
+NEVERD_DARWIN_DIAGNOSTIC(FileWritableOption,
+                         "Darwin writable path must name a regular file")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileWritableAlias, "Darwin writable file identity aliases are unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileWritableFlags,
+    "Darwin writable immutable or append-only file flags are unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(FileNotWritable,
+                         "Darwin file write access is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryMutableOption,
+                         "Darwin mutable path must name a directory")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryNotMutable,
+    "Darwin directory namespace mutation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryMutated, "Darwin post-mutation directory observations are unknown")
+NEVERD_DARWIN_DIAGNOSTIC(
+    NamespaceFlags,
+    "Darwin namespace metadata flags or special permissions are unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(
+    NamespaceAlias, "Darwin mutable namespace identity aliases are unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(UnlinkFlags, "unsupported Darwin unlinkat flags")
+NEVERD_DARWIN_DIAGNOSTIC(RenameFlags, "unsupported Darwin rename flags")
+NEVERD_DARWIN_DIAGNOSTIC(RenameKind, "Darwin directory rename is unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(
+    RenameMount,
+    "Darwin cross-parent or conflicting-device rename requires mount identity")
+NEVERD_DARWIN_DIAGNOSTIC(RenameLimit,
+                         "Darwin rename exceeds the path or storage budget")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileCreationLimit,
+    "Darwin creation exceeds the file entry, path or storage budget")
+NEVERD_DARWIN_DIAGNOSTIC(FileMutationLimit,
+                         "Darwin mutation exceeds the file storage budget")
+NEVERD_DARWIN_DIAGNOSTIC(FileCreationPolicy,
+                         "invalid Darwin virtual file creation policy")
+NEVERD_DARWIN_DIAGNOSTIC(FileCreationParent,
+                         "Darwin creation requires explicit parent metadata")
+NEVERD_DARWIN_DIAGNOSTIC(FileCreationInode,
+                         "Darwin creation inode sequence is exhausted")
+NEVERD_DARWIN_DIAGNOSTIC(FileUmask, "Darwin initial umask is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileUmaskOption, "invalid Darwin initial umask")
+NEVERD_DARWIN_DIAGNOSTIC(FileMutatedMetadata,
+                         "Darwin post-mutation file metadata is unknown")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileMutationPolicy,
+    "Darwin mutation policy requires a writable regular file, complete "
+    "ordinary metadata and coherent dense allocation")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileMutationMapping,
+    "Darwin mutation with live file mappings is unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(FilePartialVectors,
+                         "Darwin iovec array is partially readable")
+NEVERD_DARWIN_DIAGNOSTIC(FilePartialWrite,
+                         "Darwin file write input is partially readable")
+NEVERD_DARWIN_DIAGNOSTIC(FileWorkingDirectory,
+                         "Darwin working directory is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileWorkingDirectoryOption,
+    "Darwin working directory must name a catalogue directory")
+NEVERD_DARWIN_DIAGNOSTIC(FileDirectoryKind,
+                         "Darwin stream directory identity is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FilePathIdentity,
+                         "Darwin stream path identity is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileStatFlags,
+                         "Darwin real-device metadata is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FilePartialPath,
+    "Darwin F_GETPATH into a partially writable buffer is unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryContents,
+                         "Darwin directory contents are not configured")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryContentsOption,
+                         "invalid or incoherent Darwin directory contents")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryPosition,
+                         "Darwin directory position is not in the snapshot")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryPartialData,
+                         "Darwin directory record buffer is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryPartialPosition,
+    "Darwin directory position buffer is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryPartialFlags,
+                         "Darwin directory flags buffer is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(FileControl, "unsupported Darwin fcntl command")
+NEVERD_DARWIN_DIAGNOSTIC(FileSeek, "unsupported Darwin data/hole seek")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FilePartialRead,
+    "Darwin read into a partially writable buffer is unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(
+    MemoryMode,
+    "unsupported Darwin memory mode (only private anonymous or "
+    "catalogue-file data mappings; no JIT or private-gate mutation)")
+NEVERD_DARWIN_DIAGNOSTIC(MemoryFileKind,
+                         "Darwin mapping requires a regular catalogue file")
+NEVERD_DARWIN_DIAGNOSTIC(MemoryFileOffset,
+                         "Darwin legacy unaligned file mapping is unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(
+    MemoryFileExtent,
+    "Darwin mapping of complete pages beyond EOF is unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(MemoryDevice,
                          "Darwin memory service encountered device memory")
 NEVERD_DARWIN_DIAGNOSTIC(MemoryMaximum,

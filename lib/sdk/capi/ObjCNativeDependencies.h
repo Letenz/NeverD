@@ -176,7 +176,8 @@ inline size_t inferObjCNativeDependencies(
   std::map<va_t, const MedFunc *> Med;
   std::map<va_t, const HighFunc *> High;
   std::map<va_t, const PipelineFunctionAudit *> Audits;
-  std::set<va_t> IntegerPairReturns, FloatingPairReturns, FourWordReturns;
+  std::set<va_t> IntegerPairReturns, FloatingPairReturns, FourWordReturns,
+      FourDoubleReturns;
   for (const auto &Function : Result.LowFuncs) {
     Low.emplace(Function.Entry, &Function);
     const auto Observed =
@@ -188,6 +189,13 @@ inline size_t inferObjCNativeDependencies(
     const auto FourWords = observedNativeFourWordReturns(Function, Image.Arch);
     FourWordReturns.insert(FourWords.begin(), FourWords.end());
   }
+  for (const auto &Function : Result.MedFuncs)
+    if (Function.SourceTypeHint && Function.SourceParametersBound)
+      if (const auto L = Low.find(Function.Entry); L != Low.end()) {
+        const auto Observed = observedNativeFourDoubleReturns(
+            *L->second, *Function.SourceTypeHint);
+        FourDoubleReturns.insert(Observed.begin(), Observed.end());
+      }
   std::vector<va_t> PairDemand(IntegerPairReturns.begin(),
                                IntegerPairReturns.end());
   for (size_t Index = 0; Index < PairDemand.size(); ++Index) {
@@ -229,6 +237,14 @@ inline size_t inferObjCNativeDependencies(
           L != Low.end() && M != Med.end() && A != Audits.end())
         if (auto Record = refineNativeFourWordReturnHint(
                 Image, *L->second, *M->second, *Found->second, *A->second)) {
+          Existing->second = std::move(*Record);
+          ++Added;
+          continue;
+        }
+      if (FourDoubleReturns.count(Target) && Found != High.end() &&
+          M != Med.end() && A != Audits.end())
+        if (auto Record = refineNativeFourDoubleReturnHint(
+                *M->second, *Found->second, *A->second)) {
           Existing->second = std::move(*Record);
           ++Added;
           continue;

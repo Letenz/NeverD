@@ -1,0 +1,50 @@
+//===- X64ReturnPrefixCases.def - Two-byte near return encodings ----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_RETURN_PREFIX_VALUE
+NEVERD_RETURN_PREFIX_VALUE(Limit, 1024 * 1024)
+NEVERD_RETURN_PREFIX_VALUE(Page, 4096)
+NEVERD_RETURN_PREFIX_VALUE(Code, 0x10000)
+NEVERD_RETURN_PREFIX_VALUE(Target, 0x10400)
+NEVERD_RETURN_PREFIX_VALUE(Data, 0x100020000ULL)
+NEVERD_RETURN_PREFIX_VALUE(Offset, 1024)
+NEVERD_RETURN_PREFIX_VALUE(WordBytes, 8)
+NEVERD_RETURN_PREFIX_VALUE(Seed, 0x1122334455667788ULL)
+NEVERD_RETURN_PREFIX_VALUE(Fill, 0xa5)
+NEVERD_RETURN_PREFIX_VALUE(Nop, 0x90)
+NEVERD_RETURN_PREFIX_VALUE(Flags, 0xed7)
+NEVERD_RETURN_PREFIX_VALUE(Timeout, 1'000'000)
+#endif
+#ifdef NEVERD_RETURN_PREFIX_BACKEND
+NEVERD_RETURN_PREFIX_BACKEND(kvmSupervisor, KVM, CheckedX64)
+NEVERD_RETURN_PREFIX_BACKEND(kvmUser, KVM, CheckedUserX64)
+NEVERD_RETURN_PREFIX_BACKEND(kvmDriver, KVM, Legacy)
+NEVERD_RETURN_PREFIX_BACKEND(whpSupervisor, WHP, CheckedX64)
+NEVERD_RETURN_PREFIX_BACKEND(whpUser, WHP, CheckedUserX64)
+NEVERD_RETURN_PREFIX_BACKEND(whpDriver, WHP, Legacy)
+NEVERD_RETURN_PREFIX_BACKEND(unicornSupervisor, Unicorn, CheckedX64)
+NEVERD_RETURN_PREFIX_BACKEND(unicornUser, Unicorn, CheckedUserX64)
+#endif
+// The admitted form: the repeat prefix compilers emit before a near return
+// that is a branch target. The processor ignores it.
+#ifdef NEVERD_RETURN_PREFIX_BYTES
+NEVERD_RETURN_PREFIX_BYTES(Admitted, 0xf3, 0xc3)
+#endif
+// The count register plays no part, whatever it holds.
+#ifdef NEVERD_RETURN_PREFIX_COUNT
+NEVERD_RETURN_PREFIX_COUNT(0)
+NEVERD_RETURN_PREFIX_COUNT(1)
+NEVERD_RETURN_PREFIX_COUNT(0x1122334455667788ULL)
+#endif
+// Every other prefixed return stays outside the contract: a different
+// prefix, a second prefix, an operand-size override or a stack adjustment.
+#ifdef NEVERD_RETURN_PREFIX_REJECTED
+NEVERD_RETURN_PREFIX_REJECTED(RepeatNotEqual, 0xf2, 0xc3)
+NEVERD_RETURN_PREFIX_REJECTED(Lock, 0xf0, 0xc3)
+NEVERD_RETURN_PREFIX_REJECTED(RepeatTwice, 0xf3, 0xf3, 0xc3)
+NEVERD_RETURN_PREFIX_REJECTED(RepeatOperandSize, 0xf3, 0x66, 0xc3)
+NEVERD_RETURN_PREFIX_REJECTED(OperandSizeRepeat, 0x66, 0xf3, 0xc3)
+NEVERD_RETURN_PREFIX_REJECTED(RepeatAdjusting, 0xf3, 0xc2, 0x08, 0x00)
+#endif

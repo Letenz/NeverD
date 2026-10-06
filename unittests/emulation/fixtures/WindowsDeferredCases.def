@@ -1,0 +1,78 @@
+//===- WindowsDeferredCases.def - Deferred loader fact contracts ----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// The fixture imports one export the model does not implement and one module
+// no catalogue supplies. Nothing here is a Windows observation: opaque
+// entries are model policy, so there is no native oracle to compare with.
+#ifdef NEVERD_DEFERRED_VALUE
+NEVERD_DEFERRED_VALUE(ExitStatus, 37)
+NEVERD_DEFERRED_VALUE(FailureStatus, 91)
+NEVERD_DEFERRED_VALUE(StderrSelector, 0xfffffff4)
+NEVERD_DEFERRED_VALUE(ModePrefix, '!')
+NEVERD_DEFERRED_VALUE(DOSMagic, 0x5a4d)
+NEVERD_DEFERRED_VALUE(DynamicOrdinal, 7)
+NEVERD_DEFERRED_VALUE(InstructionLimit, 200000)
+NEVERD_DEFERRED_VALUE(TimeoutMicroseconds, 20000000)
+NEVERD_DEFERRED_VALUE(ProgramBaseAddress, 0x140000000)
+NEVERD_DEFERRED_VALUE(UnmappedAddress, 0x10000)
+NEVERD_DEFERRED_VALUE(HeaderBytes, 2)
+#endif
+#ifdef NEVERD_DEFERRED_BUILD
+NEVERD_DEFERRED_BUILD(OutputDirectory, "windows-deferred-fixtures")
+NEVERD_DEFERRED_BUILD(ProgramEntry, "entry")
+NEVERD_DEFERRED_BUILD(ProgramBase, "0x140000000")
+NEVERD_DEFERRED_BUILD(X64Target, "x86_64-pc-windows-msvc")
+NEVERD_DEFERRED_BUILD(X64Machine, "x64")
+NEVERD_DEFERRED_BUILD(AArch64Target, "aarch64-pc-windows-msvc")
+NEVERD_DEFERRED_BUILD(AArch64Machine, "arm64")
+#endif
+#ifdef NEVERD_DEFERRED_TEXT
+NEVERD_DEFERRED_TEXT(ProgramFile, "deferred.exe")
+NEVERD_DEFERRED_TEXT(X64Dir, "X64")
+NEVERD_DEFERRED_TEXT(AArch64Dir, "AArch64")
+NEVERD_DEFERRED_TEXT(MissingTools,
+                     "requires Clang and lld-link deferred fixtures")
+NEVERD_DEFERRED_TEXT(KernelModule, "kernel32.dll")
+NEVERD_DEFERRED_TEXT(AbsentModule, "absent.dll")
+NEVERD_DEFERRED_TEXT(DynamicModule, "dynamic.dll")
+NEVERD_DEFERRED_TEXT(UnmodeledExport, "GetTickCount")
+NEVERD_DEFERRED_TEXT(AbsentExport, "AbsentRoutine")
+NEVERD_DEFERRED_TEXT(ModeledExport, "ExitProcess")
+NEVERD_DEFERRED_TEXT(FirstExport, "First")
+NEVERD_DEFERRED_TEXT(SecondExport, "Second")
+NEVERD_DEFERRED_TEXT(QueryArgument, "!Q")
+NEVERD_DEFERRED_TEXT(ObserverFailure, "observer refused the process")
+#endif
+// Each executing mode calls exactly one opaque entry, named by the
+// diagnostic the run must stop with.
+#ifdef NEVERD_DEFERRED_MODE
+NEVERD_DEFERRED_MODE(QueryMode, 'Q')
+NEVERD_DEFERRED_MODE(StaticMode, 'S')
+NEVERD_DEFERRED_MODE(ModuleMode, 'M')
+NEVERD_DEFERRED_MODE(DynamicMode, 'D')
+NEVERD_DEFERRED_MODE(OrdinalMode, 'O')
+#endif
+#ifdef NEVERD_DEFERRED_CALL
+NEVERD_DEFERRED_CALL(Static, "!S", "kernel32.dll!GetTickCount")
+NEVERD_DEFERRED_CALL(Module, "!M", "absent.dll!AbsentRoutine")
+NEVERD_DEFERRED_CALL(Dynamic, "!D", "dynamic.dll!First")
+NEVERD_DEFERRED_CALL(Ordinal, "!O", "dynamic.dll!#7")
+#endif
+// Import libraries: the modeled kernel32 exports the fixture uses, the one it
+// uses without a model, and the module nobody supplies.
+#ifdef NEVERD_DEFERRED_KERNEL_API
+NEVERD_DEFERRED_KERNEL_API(ExitProcess)
+NEVERD_DEFERRED_KERNEL_API(GetCommandLineW)
+NEVERD_DEFERRED_KERNEL_API(GetStdHandle)
+NEVERD_DEFERRED_KERNEL_API(WriteFile)
+NEVERD_DEFERRED_KERNEL_API(LoadLibraryA)
+NEVERD_DEFERRED_KERNEL_API(FreeLibrary)
+NEVERD_DEFERRED_KERNEL_API(GetModuleHandleA)
+NEVERD_DEFERRED_KERNEL_API(GetProcAddress)
+NEVERD_DEFERRED_KERNEL_API(GetTickCount)
+#endif
+#ifdef NEVERD_DEFERRED_ABSENT_API
+NEVERD_DEFERRED_ABSENT_API(AbsentRoutine)
+#endif

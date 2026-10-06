@@ -84,11 +84,21 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
                                          Budget, *CPU, text::ExportChanged))
         return std::move(E);
     const auto &Module = Program.Modules[Index];
+    auto Opaque = [&]() -> llvm::Expected<ExportResolution> {
+      auto Entry =
+          opaqueEntry(Program, Program.Identities[Index].Name, Symbol, Ordinal);
+      if (!Entry)
+        return Entry.takeError();
+      return ExportResolution{*Entry, 0};
+    };
+    // An opaque module has identities but no export inventory to consult.
+    if (Module.Opaque && (Ordinal || !Symbol.empty()))
+      return Opaque();
     // The model declares names, not a Windows build's ordinal assignment or
     // complete export inventory. Only declared provider restrictions establish
     // a known absence; missing coverage must not become an API miss.
     if (Module.System && Ordinal)
-      return failure(text::SystemOrdinal);
+      return Program.DeferUnmodeled ? Opaque() : failure(text::SystemOrdinal);
     const uint32_t MissingError =
         Ordinal ? ErrorInvalidOrdinal : ErrorProcedureNotFound;
     std::optional<size_t> Entry;
@@ -106,8 +116,10 @@ resolveExport(Program &Program, size_t Index, llvm::StringRef Name,
         !llvm::any_of(Module.Names, [&](const auto &E) {
           return llvm::StringRef(E.first).equals_insensitive(Symbol);
         }))
-      return failure(text::SystemExport + Program.Identities[Index].Name +
-                     text::ImportSeparator + Symbol);
+      return Program.DeferUnmodeled
+                 ? Opaque()
+                 : failure(text::SystemExport + Program.Identities[Index].Name +
+                           text::ImportSeparator + Symbol);
     if (!Entry)
       return ExportResolution{std::nullopt, MissingError};
     if (!Visited.emplace(Index, *Entry).second)

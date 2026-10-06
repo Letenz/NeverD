@@ -12808,6 +12808,222 @@
           "neverd_emulate_process_json"
         ]
       }
+    },
+    {
+      "id": "unpack.observed-entry",
+      "kind": "execution",
+      "status": "experimental",
+      "owner": "unpack",
+      "targets": [
+        "x86_64",
+        "aarch64"
+      ],
+      "docs": [
+        "docs/unpack.md",
+        "docs/process-emulation.md",
+        "docs/architecture.md",
+        "docs/testing.md"
+      ],
+      "limitations": [
+        "Unpacking observes a bounded `windows-pe64-v1` guest process and rebuilds its PE32+ image at the transfer accepted as the entry: the first transfer into generated code on the stack the process started with, an explicitly selected transfer, or the address an identified stub names as its final jump. It removes no virtualization and predicts no entry; a run that ends first reports `no_entry` with the process stop reason and writes nothing.",
+        "Only PE32+ executables for x86-64 and ARM64 are accepted; other containers and machines are rejected by name, and DLLs are not run. UPX identification and its declared entry cover x86-64 stubs only. VMProtect loaders are not supported. Checked execution admits one instruction at a time, so stubs that need billions of instructions exceed practical budgets, and execution is tracked per 4 KiB page.",
+        "The rebuilt image is fixed at its observed base: relocations of generated content are not observed, so the relocation directory is removed. The original section table and import directory layout are not reconstructed; a new import directory in an appended `.neverd` section names the cells the program already calls through. Program code that runs before the entry, such as a TLS callback that calls an unmodeled API, stops the run unless the identified stub declares its entry.",
+        "KVM and WHP run x86-64 guests on matching hosts and Unicorn runs both instruction sets; every available backend must produce byte-identical images. ARM64 guests have Unicorn evidence only."
+      ],
+      "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackTests",
+          "source": "unittests/unpack/UnpackIdentifyTests.cpp",
+          "filter": "UnpackIdentify.EveryPackedFixtureShowsEachObservation",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackTests",
+          "source": "unittests/unpack/UnpackIdentifyTests.cpp",
+          "filter": "UnpackIdentify.OneObservationDoesNotNameThePacker",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackTests",
+          "source": "unittests/unpack/UnpackIdentifyTests.cpp",
+          "filter": "UnpackIdentify.StubEvidenceIsBoundToItsInstructionSet",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackTests",
+          "source": "unittests/unpack/UnpackIdentifyTests.cpp",
+          "filter": "UnpackIdentify.ContainerWithoutAFormatModuleIsANamedError",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackExecutionTests",
+          "source": "unittests/emulation/UnpackExecutionTests.cpp",
+          "filter": "*/UnpackFixture.RecoversEntrySectionsAndImports/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackExecutionTests",
+          "source": "unittests/emulation/UnpackExecutionTests.cpp",
+          "filter": "*/Unpack.RecoveredImageRunsExactlyLikeTheOriginal/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackExecutionTests",
+          "source": "unittests/emulation/UnpackExecutionTests.cpp",
+          "filter": "*/Unpack.StubCallIntoTheProgramIsNotItsEntry/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackExecutionTests",
+          "source": "unittests/emulation/UnpackExecutionTests.cpp",
+          "filter": "*/Unpack.ProgramCodeBeyondTheModelStopsInsteadOfBeingSkipped/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackExecutionTests",
+          "source": "unittests/emulation/UnpackExecutionTests.cpp",
+          "filter": "UnpackBackends.ProduceIdenticalImages",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackExecutionTests",
+          "source": "unittests/emulation/UnpackGeneratedTests.cpp",
+          "filter": "*/UnpackGenerated.LoaderThatLeavesForTheProgramYieldsTheLinkedImage/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackExecutionTests",
+          "source": "unittests/emulation/UnpackGeneratedTests.cpp",
+          "filter": "*/UnpackGenerated.LoaderCallIntoTheProgramPrecedesItsEntry/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackExecutionTests",
+          "source": "unittests/emulation/UnpackGeneratedTests.cpp",
+          "filter": "*/UnpackGenerated.SecondLoaderIsTheEntryUntilALaterTransferIsNamed/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackPublicTests",
+          "source": "unittests/emulation/UnpackPublicTests.cpp",
+          "filter": "UnpackPublic.CAPIAndCLIWriteTheSameImageAndReport",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackPublicTests",
+          "source": "unittests/emulation/UnpackPublicTests.cpp",
+          "filter": "UnpackPublic.RunWithoutAnEntryWritesNothingAndIsIncomplete",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackPublicTests",
+          "source": "unittests/emulation/UnpackPublicTests.cpp",
+          "filter": "UnpackPublic.SetupFailuresAreErrorsNotReports",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "python-unittest",
+          "target": "NeverDPythonSDKUnitTests",
+          "source": "pluginsdk/python/tests/test_api.py",
+          "filter": "SessionTests.test_unpack_forwards_paths_and_returns_the_native_report",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        }
+      ],
+      "public_surfaces": {
+        "c": [
+          "neverd_unpack_json"
+        ],
+        "python": [
+          "Session.unpack"
+        ],
+        "cli": [
+          "neverd unpack",
+          "neverd unpack --o",
+          "neverd unpack --options"
+        ],
+        "json": [
+          "neverd_unpack_json"
+        ]
+      }
     }
   ]
 }

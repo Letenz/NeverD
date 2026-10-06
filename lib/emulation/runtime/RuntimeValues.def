@@ -9,15 +9,24 @@ NEVERD_RUNTIME_VALUE(MicrosecondsPerMillisecond, 1000)
 #ifdef NEVERD_RUNTIME_DIAGNOSTIC
 NEVERD_RUNTIME_DIAGNOSTIC(ProcessProfile, "unknown guest process profile")
 NEVERD_RUNTIME_DIAGNOSTIC(ProcessOutcome, "unknown guest process stop reason")
-NEVERD_RUNTIME_DIAGNOSTIC(SessionResources, "execution session requires a CPU and workload budget")
-NEVERD_RUNTIME_DIAGNOSTIC(SessionState, "execution session has an unconsumed continuation or terminal exit")
-NEVERD_RUNTIME_DIAGNOSTIC(SessionQuantum, "execution session requires a positive instruction quantum")
-NEVERD_RUNTIME_DIAGNOSTIC(SessionService, "execution session has no owned pending service request")
-NEVERD_RUNTIME_DIAGNOSTIC(SessionFault, "execution session has no owned recoverable fault")
+NEVERD_RUNTIME_DIAGNOSTIC(
+    SessionResources, "execution session requires a CPU and workload budget")
+NEVERD_RUNTIME_DIAGNOSTIC(
+    SessionState,
+    "execution session has an unconsumed continuation or terminal exit")
+NEVERD_RUNTIME_DIAGNOSTIC(
+    SessionQuantum, "execution session requires a positive instruction quantum")
+NEVERD_RUNTIME_DIAGNOSTIC(
+    SessionService, "execution session has no owned pending service request")
+NEVERD_RUNTIME_DIAGNOSTIC(SessionFault,
+                          "execution session has no owned recoverable fault")
 NEVERD_RUNTIME_DIAGNOSTIC(SessionExit, "unknown execution session exit")
+NEVERD_RUNTIME_DIAGNOSTIC(
+    SessionWatch, "execution watches must be nonempty ranges that do not wrap")
 NEVERD_RUNTIME_DIAGNOSTIC(
     Limits, "workload instruction and event limits must be positive")
 NEVERD_RUNTIME_DIAGNOSTIC(InstructionLimit, "guest instruction limit reached")
 NEVERD_RUNTIME_DIAGNOSTIC(EventLimit, "behavior event limit reached")
 NEVERD_RUNTIME_DIAGNOSTIC(Timeout, "execution time limit reached")
+NEVERD_RUNTIME_DIAGNOSTIC(ObserverStop, "process observer ended the run")
 #endif

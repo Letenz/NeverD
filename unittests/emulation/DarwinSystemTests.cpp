@@ -1,0 +1,465 @@
+//===- DarwinSystemTests.cpp - sysctl widths and ordered copies -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#include "DarwinSystemTestData.h"
+#include "gtest/gtest.h"
+#include "os/darwin/kernel/DarwinSystem.h"
+
+#include "neverd/emulation/AddressSpace.h"
+
+#include "llvm/ADT/StringExtras.h"
+
+namespace neverd::emulation::darwin_model {
+namespace {
+class DarwinSystemTest : public testing::TestWithParam<uint64_t> {
+protected:
+  static constexpr uint64_t Base = 0x100000, Output = Base + 128,
+                            Length = Base + 256;
+  std::shared_ptr<AddressSpace> Space;
+  std::optional<DarwinSystemOptions> Options = darwin_test::systemOptions();
+  ProcessResult Result{ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+                       ExecutionBackendKind::Unicorn, "memory-only test"};
+  uint64_t Page;
+  void SetUp() override {
+    Page = GetParam();
+    auto Physical = PhysicalMemory::create(Page * 4);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Created = AddressSpace::create(*Physical, Page * 4);
+    ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+    Space = std::move(*Created);
+    ASSERT_FALSE(
+        bool(Space->map(Base, Page * 2, Read | Write | UserAccessible)));
+    fill();
+  }
+  void fill() {
+    ASSERT_FALSE(
+        bool(Space->write(Base, std::vector<uint8_t>(Page * 2, 0xa5))));
+  }
+  void put(uint64_t Address, llvm::StringRef Bytes) {
+    ASSERT_FALSE(
+        bool(Space->write(Address, llvm::arrayRefFromStringRef(Bytes))));
+  }
+  void capacity(uint64_t Value) {
+    ASSERT_FALSE(bool(Space->writeInteger(Length, Value, 8)));
+  }
+  uint64_t length() { return llvm::cantFail(Space->readInteger(Length, 8)); }
+  std::string bytes(uint64_t Address, size_t Count) {
+    std::vector<uint8_t> Data(Count);
+    auto E = Space->read(Address, Data);
+    EXPECT_FALSE(bool(E));
+    llvm::consumeError(std::move(E));
+    return std::string(Data.begin(), Data.end());
+  }
+  std::optional<ServiceResult> invoke(ServiceKind Kind,
+                                      std::array<uint64_t, 6> Arguments) {
+    auto Out = systemService(*Space, Page, Kind,
+                             {0, 0, Arguments, std::nullopt}, Options, Result);
+    EXPECT_TRUE(bool(Out)) << (Out ? "" : llvm::toString(Out.takeError()));
+    return Out ? *Out : std::nullopt;
+  }
+  std::optional<ServiceResult> named(llvm::StringRef Name,
+                                     uint64_t Old = Output,
+                                     uint64_t Len = Length, uint64_t New = 0,
+                                     uint64_t NewLen = 0) {
+    put(Base, Name);
+    return invoke(ServiceKind::SysctlByName,
+                  {Base, Name.size(), Old, Len, New, NewLen});
+  }
+  std::optional<ServiceResult> mib(uint32_t Root, uint32_t Leaf,
+                                   uint64_t Old = Output) {
+    EXPECT_FALSE(bool(Space->writeInteger(Base, Root, 4)));
+    EXPECT_FALSE(bool(Space->writeInteger(Base + 4, Leaf, 4)));
+    return invoke(ServiceKind::Sysctl, {Base, 2, Old, Length});
+  }
+  void result(std::optional<ServiceResult> Out, uint64_t Error = 0) {
+    ASSERT_TRUE(Out) << Result.Diagnostic;
+    EXPECT_EQ(Out->Error, Error != 0);
+    EXPECT_EQ(Out->Value, Error);
+  }
+};
+
+TEST_P(DarwinSystemTest, NamedAndStableNumericBindingsHaveIndependentBytes) {
+  struct Sample {
+    const char *Name;
+    uint32_t Root, Leaf;
+    const char *Hex;
+  };
+  const Sample Samples[] = {
+      {"kern.ostype", 1, 1, "44617277696e00"},
+      {"kern.osrelease", 1, 2, "32342e7465737400"},
+      {"kern.osrevision", 1, 3, "00000080"},
+      {"kern.version", 1, 4, "4e6576657244207669727475616c206b65726e656c00"},
+      {"kern.osversion", 1, 65, "56343200"},
+      {"hw.machine", 6, 1, "7669727475616c363400"},
+      {"hw.model", 6, 2, "5669727475616c4d6f64656c00"},
+      {"hw.ncpu", 6, 3, "07000000"},
+      {"hw.memsize", 6, 24, "1032547698badcfe"}};
+  std::string Combined;
+  for (const auto &S : Samples) {
+    SCOPED_TRACE(S.Name);
+    const auto Expected = llvm::fromHex(S.Hex);
+    Combined += Expected;
+    for (bool Named : {true, false}) {
+      fill();
+      capacity(Expected.size());
+      result(Named ? named(S.Name, Output + 1)
+                   : mib(S.Root, S.Leaf, Output + 1));
+      EXPECT_EQ(length(), Expected.size());
+      EXPECT_EQ(bytes(Output + 1, Expected.size()), Expected);
+      EXPECT_EQ(bytes(Output, 1), std::string(1, '\xa5'));
+      EXPECT_EQ(bytes(Output + 1 + Expected.size(), 8), std::string(8, '\xa5'));
+    }
+  }
+  EXPECT_EQ(Combined, llvm::fromHex(darwin_test::SystemHex));
+}
+
+TEST_P(DarwinSystemTest, PagePolicyDistinguishesNamedQuadFromLegacyInteger) {
+  Options.reset();
+  const auto PageHex = Page == 4096 ? "00100000" : "00400000";
+  for (unsigned Cap : {0, 3, 4, 5, 7, 8, 9}) {
+    for (unsigned Kind : {0, 1, 2}) {
+      fill();
+      capacity(Cap);
+      const unsigned Size = Kind != 0 || Cap == 4 ? 4 : 8;
+      result(Kind == 0   ? named("hw.pagesize")
+             : Kind == 1 ? named("hw.pagesize_compat")
+                         : mib(6, 7),
+             Cap < Size ? 12 : 0);
+      EXPECT_EQ(length(), Cap < Size ? 0u : Size);
+      EXPECT_EQ(bytes(Output, Size),
+                Cap < Size ? std::string(Size, '\xa5')
+                           : llvm::fromHex(PageHex) + std::string(Size - 4, 0));
+      EXPECT_EQ(bytes(Output + Size, 8), std::string(8, '\xa5'));
+    }
+  }
+  capacity(4);
+  result(named("hw.pagesize", 0));
+  EXPECT_EQ(length(), 8u);
+}
+
+TEST_P(DarwinSystemTest,
+       QuadNarrowingUsesSignedBitsAndRangeErrorsPreserveLength) {
+  for (uint64_t Value :
+       {0ULL, 0x7fffffffULL, 0xffffffff80000000ULL, 0xffffffffffffffffULL,
+        0x80000000ULL, 0x100000000ULL, 0xffffffff7fffffffULL}) {
+    SCOPED_TRACE(Value);
+    Options->MemorySize = Value;
+    const bool Fits = Value == 0 || Value == INT32_MAX ||
+                      Value == 0xffffffff80000000ULL || Value == UINT64_MAX;
+    for (bool Named : {true, false}) {
+      fill();
+      capacity(4);
+      result(Named ? named("hw.memsize") : mib(6, 24), Fits ? 0 : 34);
+      EXPECT_EQ(length(), 4u);
+      EXPECT_EQ(llvm::cantFail(Space->readInteger(Output, 4)),
+                Fits ? uint32_t(Value) : 0xa5a5a5a5u);
+      EXPECT_EQ(bytes(Output + 4, 8), std::string(8, '\xa5'));
+      capacity(7);
+      result(named("hw.memsize"), 12);
+      EXPECT_EQ(length(), 0u);
+      capacity(8);
+      result(named("hw.memsize"));
+      EXPECT_EQ(llvm::cantFail(Space->readInteger(Output, 8)), Value);
+    }
+  }
+}
+
+TEST_P(DarwinSystemTest, StringCapacitiesSizeOnlyAndNullLengthFollowCopyOrder) {
+  for (unsigned Cap = 0; Cap != 10; ++Cap) {
+    fill();
+    capacity(Cap);
+    result(named("kern.ostype"), Cap < 7 ? 12 : 0);
+    EXPECT_EQ(length(), Cap < 7 ? 0u : 7u);
+    EXPECT_EQ(bytes(Output, 7),
+              Cap < 7 ? std::string(7, '\xa5') : std::string("Darwin\0", 7));
+    EXPECT_EQ(bytes(Output + 7, 8), std::string(8, '\xa5'));
+    capacity(Cap);
+    result(named("kern.ostype", 0));
+    EXPECT_EQ(length(), 7u);
+  }
+  fill();
+  result(named("kern.ostype", Output, 0), 12);
+  result(named("kern.ostype", 0, 0));
+  EXPECT_EQ(bytes(Output, 16), std::string(16, '\xa5'));
+  Options->OSType = "";
+  capacity(1);
+  result(named("kern.ostype"));
+  EXPECT_EQ(length(), 1u);
+  EXPECT_EQ(bytes(Output, 2), std::string("\0\xa5", 2));
+  Options->OSType = std::string(1023, 'x');
+  capacity(1024);
+  result(named("kern.ostype", Base + 4093));
+  EXPECT_EQ(length(), 1024u);
+  EXPECT_EQ(bytes(Base + 4093, 1025),
+            std::string(1023, 'x') + std::string("\0\xa5", 2));
+}
+
+TEST_P(DarwinSystemTest,
+       MissingObservationsAndUnknownKeysNeverAcquireDefaults) {
+  Options.reset();
+  for (bool Present : {false, true}) {
+    if (Present)
+      Options.emplace();
+    capacity(100);
+    EXPECT_FALSE(named("kern.ostype"));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::SystemObservation);
+    EXPECT_FALSE(named("kern.ostype", 0, 0));
+    EXPECT_FALSE(mib(6, 24));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::SystemObservation);
+    EXPECT_FALSE(named("kern.unmodeled"));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::SystemKey);
+    EXPECT_FALSE(mib(0, 0));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::SystemKey);
+    EXPECT_EQ(length(), 100u);
+    EXPECT_EQ(bytes(Output, 16), std::string(16, '\xa5'));
+  }
+  Options->OSType = "";
+  Options->MemorySize = 0;
+  Options->OSRevision = 0;
+  result(named("kern.ostype"));
+  EXPECT_EQ(length(), 1u);
+  capacity(8);
+  result(mib(6, 24));
+  EXPECT_EQ(bytes(Output, 8), std::string(8, 0));
+  result(mib(1, 3));
+  EXPECT_EQ(length(), 4u);
+}
+
+TEST_P(DarwinSystemTest, WritesRequireBothNewArgumentsAndPrecedeValueOrOutput) {
+  for (const char *Name :
+       {"kern.ostype", "kern.osversion", "hw.memsize", "hw.pagesize"}) {
+    capacity(32);
+    result(named(Name, Output, Length, UINT64_MAX, 0));
+    capacity(32);
+    result(named(Name, Output, Length, 0, UINT64_MAX));
+    for (bool Missing : {false, true}) {
+      if (Missing)
+        Options.reset();
+      capacity(0);
+      const auto Before = bytes(Output, 32);
+      result(named(Name, UINT64_MAX, Length, UINT64_MAX, 1), 1);
+      EXPECT_EQ(length(), 0u);
+      EXPECT_EQ(bytes(Output, 32), Before);
+    }
+    Options = darwin_test::systemOptions();
+  }
+}
+
+TEST_P(DarwinSystemTest, LengthLimitsAndHighCarriersPrecedeInputMemory) {
+  for (auto Count : {0ULL, 1ULL, 13ULL, 0xffffffffffffffffULL})
+    result(invoke(ServiceKind::Sysctl, {UINT64_MAX, Count, 1, 1, 1, 1}), 22);
+  for (auto Count : {1024ULL, 0x100000000ULL, 0xffffffffffffffffULL})
+    result(invoke(ServiceKind::SysctlByName, {UINT64_MAX, Count, 1, 1, 1, 1}),
+           63);
+  for (auto Bad : {uint64_t(1), value::UserLimit, UINT64_MAX}) {
+    result(invoke(ServiceKind::Sysctl, {Bad, 2, 1, 1, 1, 1}), 14);
+    result(invoke(ServiceKind::SysctlByName, {Bad, 1, 1, 1, 1, 1}), 14);
+    capacity(8);
+    result(invoke(ServiceKind::SysctlByName, {Bad, 0, 1, Length, 1, 1}), 2);
+    EXPECT_EQ(length(), 8u);
+  }
+  capacity(4);
+  result(mib(6, 3));
+  capacity(4);
+  result(invoke(ServiceKind::Sysctl,
+                {Base, 0xfedcba9800000002ULL, Output, Length}));
+  EXPECT_EQ(bytes(Output, 4), llvm::fromHex("07000000"));
+  capacity(8);
+  EXPECT_FALSE(invoke(ServiceKind::Sysctl, {Base, 12, Output, Length}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SystemKey);
+  EXPECT_EQ(length(), 8u);
+}
+
+TEST_P(DarwinSystemTest, FirstNULAndOneTrailingDotStillRequireAllInputBytes) {
+  for (auto Name :
+       {std::string("kern.ostype."), std::string("kern.ostype\0junk", 16),
+        std::string("kern.ostype.\0junk", 17)}) {
+    capacity(8);
+    result(named(Name));
+    EXPECT_EQ(bytes(Output, 7), std::string("Darwin\0", 7));
+  }
+  capacity(8);
+  EXPECT_FALSE(named("kern.ostype.."));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SystemKey);
+  std::string Full("kern.ostype\0", 12);
+  Full.resize(1023, 'x');
+  result(named(Full));
+  const auto End = Base + 2 * Page;
+  put(End - 12, std::string("kern.ostype\0", 12));
+  capacity(8);
+  EXPECT_FALSE(
+      invoke(ServiceKind::SysctlByName, {End - 12, 13, Output, Length}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SystemPartialInput);
+  EXPECT_EQ(length(), 8u);
+}
+
+TEST_P(DarwinSystemTest,
+       InaccessibleLengthIsExplicitlyOutsideSupportedBoundary) {
+  for (auto Bad :
+       {uint64_t(1), value::UserLimit, UINT64_MAX, Base + 2 * Page - 4}) {
+    EXPECT_FALSE(named("kern.ostype", Output, Bad, 1, 1));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::SystemLengthMemory);
+    EXPECT_EQ(bytes(Output, 16), std::string(16, '\xa5'));
+  }
+  for (auto Permissions :
+       {unsigned(Read | UserAccessible), unsigned(Write | UserAccessible),
+        unsigned(Read | Write)}) {
+    ASSERT_FALSE(bool(Space->protect(Base + Page, Page, Permissions)));
+    EXPECT_FALSE(named("kern.ostype", Output, Base + Page));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::SystemLengthMemory);
+    ASSERT_FALSE(
+        bool(Space->protect(Base + Page, Page, Read | Write | UserAccessible)));
+  }
+}
+
+TEST_P(DarwinSystemTest,
+       OutputFaultsPreserveLengthAndShortCopyAvoidsOutputFault) {
+  Options->MemorySize = 0x80000000;
+  capacity(4);
+  result(named("hw.memsize", UINT64_MAX), 34);
+  EXPECT_EQ(length(), 4u);
+  EXPECT_EQ(bytes(Output, 8), std::string(8, '\xa5'));
+  for (auto Bad : {uint64_t(1), value::UserLimit, UINT64_MAX}) {
+    capacity(8);
+    result(named("kern.ostype", Bad), 14);
+    EXPECT_EQ(length(), 8u);
+    capacity(6);
+    result(named("kern.ostype", Bad), 12);
+    EXPECT_EQ(length(), 0u);
+    capacity(8);
+    result(named("kern.ostype", Bad, Length, UINT64_MAX, 0), 14);
+    EXPECT_EQ(length(), 8u);
+    capacity(6);
+    result(named("kern.ostype", Bad, Length, UINT64_MAX, 0), 12);
+    EXPECT_EQ(length(), 0u);
+  }
+  const auto End = Base + 2 * Page;
+  capacity(8);
+  EXPECT_FALSE(named("kern.ostype", End - 4));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SystemPartialOutput);
+  EXPECT_EQ(length(), 8u);
+  EXPECT_EQ(bytes(End - 4, 4), std::string(4, '\xa5'));
+  for (auto Permissions :
+       {unsigned(Read | UserAccessible), unsigned(Read | Write)}) {
+    ASSERT_FALSE(bool(Space->protect(Base + Page, Page, Permissions)));
+    result(named("kern.ostype", Base + Page), 14);
+    EXPECT_EQ(length(), 8u);
+    ASSERT_FALSE(
+        bool(Space->protect(Base + Page, Page, Read | Write | UserAccessible)));
+  }
+}
+
+TEST_P(DarwinSystemTest, AliasesCaptureInputAndCapacityBeforeDataThenLength) {
+  capacity(64);
+  result(named("kern.version", Length, Length));
+  EXPECT_EQ(length(), 22u);
+  EXPECT_EQ(bytes(Length + 8, 14), std::string("irtual kernel\0", 14));
+  EXPECT_EQ(bytes(Length + 22, 8), std::string(8, '\xa5'));
+  capacity(64);
+  result(named("kern.ostype", Base));
+  EXPECT_EQ(bytes(Base, 7), std::string("Darwin\0", 7));
+  capacity(64);
+  result(mib(6, 24, Base));
+  EXPECT_EQ(bytes(Base, 8), llvm::fromHex("1032547698badcfe"));
+  put(Base, "kern.ostype");
+  // Both MIB words also encode a large capacity. The final length overwrites
+  // them only after [6,3] has selected the CPU count and copied its value.
+  ASSERT_FALSE(bool(Space->writeInteger(Base + 32, 0x300000006ULL, 8)));
+  result(invoke(ServiceKind::Sysctl, {Base + 32, 2, Output, Base + 32}));
+  EXPECT_EQ(bytes(Output, 4), llvm::fromHex("07000000"));
+  EXPECT_EQ(bytes(Base + 32, 8), llvm::fromHex("0400000000000000"));
+}
+
+// Failures are transport errors, not invented guest errno. Delegation keeps
+// earlier real copies observable when the later length write fails.
+class FailingSystemMemory : public GuestMemory {
+  GuestMemory &Memory;
+
+public:
+  unsigned FailAccess = 0, FailRead = 0, FailWrite = 0;
+  mutable unsigned Accesses = 0;
+  unsigned Reads = 0, Writes = 0;
+  explicit FailingSystemMemory(GuestMemory &Memory) : Memory(Memory) {}
+  llvm::Error map(uint64_t, uint64_t, unsigned) override {
+    return failure("map");
+  }
+  llvm::Error protect(uint64_t, uint64_t, unsigned) override {
+    return failure("protect");
+  }
+  llvm::Expected<bool> canAccess(uint64_t A, uint64_t N,
+                                 unsigned P) const override {
+    if (++Accesses == FailAccess)
+      return failure("transport access");
+    return Memory.canAccess(A, N, P);
+  }
+  llvm::Error read(uint64_t A, llvm::MutableArrayRef<uint8_t> B) override {
+    if (++Reads == FailRead)
+      return failure("transport read");
+    return Memory.read(A, B);
+  }
+  llvm::Error write(uint64_t A, llvm::ArrayRef<uint8_t> B) override {
+    if (++Writes == FailWrite)
+      return failure("transport write");
+    return Memory.write(A, B);
+  }
+};
+TEST_P(DarwinSystemTest,
+       TransportFailuresKeepCompletedCopiesAndDoNotBecomeErrno) {
+  for (unsigned Phase = 0; Phase != 3; ++Phase) {
+    for (unsigned At = 1; At <= (Phase == 0 ? 4u : 2u); ++At) {
+      fill();
+      capacity(8);
+      put(Base, "kern.ostype");
+      FailingSystemMemory Memory(*Space);
+      (Phase == 0   ? Memory.FailAccess
+       : Phase == 1 ? Memory.FailRead
+                    : Memory.FailWrite) = At;
+      auto Out = systemService(
+          Memory, Page, ServiceKind::SysctlByName,
+          {0, 274, {Base, 11, Output, Length}, std::nullopt}, Options, Result);
+      ASSERT_FALSE(bool(Out));
+      EXPECT_EQ(llvm::toString(Out.takeError()), Phase == 0 ? "transport access"
+                                                 : Phase == 1
+                                                     ? "transport read"
+                                                     : "transport write");
+      const bool Copied = (Phase == 0 && At == 4) || (Phase == 2 && At == 2);
+      EXPECT_EQ(bytes(Output, 7),
+                Copied ? std::string("Darwin\0", 7) : std::string(7, '\xa5'));
+      EXPECT_EQ(length(), 8u);
+    }
+  }
+}
+
+TEST(DarwinSystemOptions, TypedFieldsUseTheSameBoundedContract) {
+  auto O = darwin_test::systemOptions();
+  EXPECT_FALSE(bool(validateSystemOptions(O)));
+  for (auto Member :
+       {&DarwinSystemOptions::OSType, &DarwinSystemOptions::OSRelease,
+        &DarwinSystemOptions::OSVersion, &DarwinSystemOptions::KernelVersion,
+        &DarwinSystemOptions::Machine, &DarwinSystemOptions::Model}) {
+    for (const auto &Bad : {std::string(1024, 'x'), std::string("x\0y", 3)}) {
+      O.*Member = Bad;
+      EXPECT_EQ(llvm::toString(validateSystemOptions(O)),
+                diagnostic::SystemString);
+    }
+    O.*Member = std::string(1023, 'x');
+    EXPECT_FALSE(bool(validateSystemOptions(O)));
+    O.*Member = "";
+    EXPECT_FALSE(bool(validateSystemOptions(O)));
+  }
+  for (auto Bad : {0u, 0x80000000u, UINT32_MAX}) {
+    O.CPUCount = Bad;
+    EXPECT_EQ(llvm::toString(validateSystemOptions(O)),
+              diagnostic::SystemCPUCount);
+  }
+  O.CPUCount = INT32_MAX;
+  O.MemorySize = UINT64_MAX;
+  EXPECT_FALSE(bool(validateSystemOptions(O)));
+}
+
+INSTANTIATE_TEST_SUITE_P(OSPages, DarwinSystemTest,
+                         testing::Values(4096, 16384));
+} // namespace
+} // namespace neverd::emulation::darwin_model

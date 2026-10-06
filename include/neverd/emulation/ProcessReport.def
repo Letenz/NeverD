@@ -20,11 +20,32 @@ NEVERD_PROCESS_OPTION_STRINGS(Environment, "environment", Environment)
 #endif
 #ifdef NEVERD_PROCESS_REPORT_FIELD
 NEVERD_PROCESS_REPORT_FIELD(Modules, "modules")
+NEVERD_PROCESS_REPORT_FIELD(DeferUnmodeled, "defer_unmodeled")
 NEVERD_PROCESS_REPORT_FIELD(Path, "path")
 NEVERD_PROCESS_REPORT_FIELD(Android, "android")
 NEVERD_PROCESS_REPORT_FIELD(LinuxTime, "linux_time")
 NEVERD_PROCESS_REPORT_FIELD(AdvanceOnIdle, "advance_on_idle")
 NEVERD_PROCESS_REPORT_FIELD(LinuxFiles, "linux_files")
+NEVERD_PROCESS_REPORT_FIELD(DarwinFiles, "darwin_files")
+NEVERD_PROCESS_REPORT_FIELD(DarwinTime, "darwin_time")
+NEVERD_PROCESS_REPORT_FIELD(DarwinSystem, "darwin_system")
+NEVERD_PROCESS_REPORT_FIELD(SystemOSType, "os_type")
+NEVERD_PROCESS_REPORT_FIELD(SystemOSRelease, "os_release")
+NEVERD_PROCESS_REPORT_FIELD(SystemOSRevision, "os_revision")
+NEVERD_PROCESS_REPORT_FIELD(SystemOSVersion, "os_version")
+NEVERD_PROCESS_REPORT_FIELD(SystemKernelVersion, "kernel_version")
+NEVERD_PROCESS_REPORT_FIELD(SystemMachine, "machine")
+NEVERD_PROCESS_REPORT_FIELD(SystemModel, "model")
+NEVERD_PROCESS_REPORT_FIELD(SystemCPUCount, "cpu_count")
+NEVERD_PROCESS_REPORT_FIELD(SystemMemorySize, "memory_size")
+NEVERD_PROCESS_REPORT_FIELD(TimeOfDay, "time_of_day")
+NEVERD_PROCESS_REPORT_FIELD(Microseconds, "microseconds")
+NEVERD_PROCESS_REPORT_FIELD(MachAbsoluteTime, "mach_absolute_time")
+NEVERD_PROCESS_REPORT_FIELD(MachContinuousTime, "mach_continuous_time")
+NEVERD_PROCESS_REPORT_FIELD(Timebase, "timebase")
+NEVERD_PROCESS_REPORT_FIELD(Numerator, "numerator")
+NEVERD_PROCESS_REPORT_FIELD(Denominator, "denominator")
+NEVERD_PROCESS_REPORT_FIELD(StandardInput, "stdin_hex")
 NEVERD_PROCESS_REPORT_FIELD(LinuxSignals, "linux_signals")
 NEVERD_PROCESS_REPORT_FIELD(SignalActions, "actions")
 NEVERD_PROCESS_REPORT_FIELD(SignalNumber, "signal")
@@ -33,8 +54,25 @@ NEVERD_PROCESS_REPORT_FIELD(SignalFlags, "flags")
 NEVERD_PROCESS_REPORT_FIELD(SignalRestorer, "restorer")
 NEVERD_PROCESS_REPORT_FIELD(SignalMask, "mask")
 NEVERD_PROCESS_REPORT_FIELD(Files, "files")
+NEVERD_PROCESS_REPORT_FIELD(Directories, "directories")
+NEVERD_PROCESS_REPORT_FIELD(DirectoryContents, "contents")
+NEVERD_PROCESS_REPORT_FIELD(DirectoryMutable, "mutable")
+NEVERD_PROCESS_REPORT_FIELD(DirectoryEntries, "entries")
+NEVERD_PROCESS_REPORT_FIELD(DirectoryType, "type")
+NEVERD_PROCESS_REPORT_FIELD(DirectoryNextOffset, "next_offset")
+NEVERD_PROCESS_REPORT_FIELD(DirectorySeekOffset, "seek_offset")
+NEVERD_PROCESS_REPORT_FIELD(DirectoryMinimumBuffer, "minimum_buffer_size")
+NEVERD_PROCESS_REPORT_FIELD(WorkingDirectory, "working_directory")
 NEVERD_PROCESS_REPORT_FIELD(DescriptorLimit, "descriptor_limit")
 NEVERD_PROCESS_REPORT_FIELD(FileMetadata, "metadata")
+NEVERD_PROCESS_REPORT_FIELD(FileWritable, "writable")
+NEVERD_PROCESS_REPORT_FIELD(FileMutationPolicy, "mutation_policy")
+NEVERD_PROCESS_REPORT_FIELD(FileAllocationUnit, "allocation_unit")
+NEVERD_PROCESS_REPORT_FIELD(FileMutationTime, "mutation_time")
+NEVERD_PROCESS_REPORT_FIELD(FileCreationPolicy, "creation_policy")
+NEVERD_PROCESS_REPORT_FIELD(FileFirstInode, "first_inode")
+NEVERD_PROCESS_REPORT_FIELD(FileUmask, "umask")
+NEVERD_PROCESS_REPORT_FIELD(FileCreationTime, "creation_time")
 NEVERD_PROCESS_REPORT_FIELD(FileDevice, "device")
 NEVERD_PROCESS_REPORT_FIELD(FileInode, "inode")
 NEVERD_PROCESS_REPORT_FIELD(FileMode, "mode")
@@ -46,6 +84,9 @@ NEVERD_PROCESS_REPORT_FIELD(FileBlocks, "blocks")
 NEVERD_PROCESS_REPORT_FIELD(FileAccessTime, "access_time")
 NEVERD_PROCESS_REPORT_FIELD(FileModificationTime, "modification_time")
 NEVERD_PROCESS_REPORT_FIELD(FileChangeTime, "change_time")
+NEVERD_PROCESS_REPORT_FIELD(FileBirthTime, "birth_time")
+NEVERD_PROCESS_REPORT_FIELD(FileFlags, "flags")
+NEVERD_PROCESS_REPORT_FIELD(FileGeneration, "generation")
 NEVERD_PROCESS_REPORT_FIELD(Clocks, "clocks")
 NEVERD_PROCESS_REPORT_FIELD(ClockID, "id")
 NEVERD_PROCESS_REPORT_FIELD(Seconds, "seconds")
@@ -123,6 +164,16 @@ NEVERD_PROCESS_REPORT_LIMIT(SchemaVersion, NEVERD_PROCESS_SCHEMA_VERSION, 1)
 NEVERD_PROCESS_REPORT_LIMIT(JSONLimit, NEVERD_PROCESS_OPTIONS_JSON_LIMIT, 65536)
 #endif
 #ifdef NEVERD_PROCESS_REPORT_TEXT
+NEVERD_PROCESS_REPORT_TEXT(DarwinTimeOptions, "invalid darwin_time option: ")
+NEVERD_PROCESS_REPORT_TEXT(DarwinSystemOptions,
+                           "invalid darwin_system option: ")
+NEVERD_PROCESS_REPORT_TEXT(DarwinSystemProfile,
+                           "darwin_system requires a Darwin process profile")
+NEVERD_PROCESS_REPORT_TEXT(DarwinTimeProfile,
+                           "darwin_time requires a macOS or iOS profile")
+NEVERD_PROCESS_REPORT_TEXT(DarwinFilesOptions, "invalid darwin_files option: ")
+NEVERD_PROCESS_REPORT_TEXT(DarwinFilesProfile,
+                           "darwin_files requires a macOS or iOS profile")
 NEVERD_PROCESS_REPORT_TEXT(LinuxSignalsOptions,
                            "invalid linux_signals option: ")
 NEVERD_PROCESS_REPORT_TEXT(
@@ -170,10 +221,11 @@ NEVERD_PROCESS_CLI_STRING(
     "ios-simulator-macho64-v1")
 NEVERD_PROCESS_CLI_STRING(ProfileValue, "name")
 NEVERD_PROCESS_CLI_STRING(OptionsOption, "options")
-NEVERD_PROCESS_CLI_STRING(
-    OptionsHelp, "Options JSON: backend, resource limits, "
-                 "arguments/environment, Linux clocks/files, Android native "
-                 "or Windows module options")
+NEVERD_PROCESS_CLI_STRING(OptionsHelp,
+                          "Options JSON: backend, resource limits, "
+                          "arguments/environment, Linux clocks/files, Darwin "
+                          "clocks/files, Android native "
+                          "or Windows module options")
 NEVERD_PROCESS_CLI_STRING(OptionsValue, "json")
 #endif
 #ifdef NEVERD_PROCESS_CLI_STATUS
@@ -188,6 +240,8 @@ NEVERD_PROCESS_REPORT_TEXT(AndroidOptions, "invalid Android native option: ")
 NEVERD_PROCESS_REPORT_TEXT(WindowsOptions, "invalid Windows process option: ")
 NEVERD_PROCESS_REPORT_TEXT(WindowsProfile,
                            "Windows options require windows-pe64-v1")
+NEVERD_PROCESS_REPORT_TEXT(ObserverProfile,
+                           "process observation requires windows-pe64-v1")
 NEVERD_PROCESS_REPORT_TEXT(LinuxTimeOptions, "invalid linux_time option: ")
 NEVERD_PROCESS_REPORT_TEXT(
     LinuxTimeProfile,

@@ -19,6 +19,13 @@ windowsOptionsFromJSON(const llvm::json::Value &Value) {
     return Invalid(field::Windows);
   WindowsProcessOptions Out;
   for (const auto &[Key, V] : *Object) {
+    if (Key == field::DeferUnmodeled) {
+      auto Defer = V.getAsBoolean();
+      if (!Defer)
+        return Invalid(Key);
+      Out.DeferUnmodeled = *Defer;
+      continue;
+    }
     if (Key != field::Modules)
       return Invalid(Key);
     const auto *Modules = V.getAsArray();

@@ -30,6 +30,7 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPIConcolic.cpp
     capi/NeverDCAPITargetConfig.cpp
     capi/NeverDCAPITranslate.cpp
+    capi/NeverDCAPIUnpack.cpp
     plugin/PluginManager.cpp)
 
 # The Python host translation units include <Python.h> unconditionally, so they
@@ -91,6 +92,7 @@ target_link_libraries(neverd_shared PRIVATE
     NeverDTranslate
     NeverDSigs
     NeverDSBF
+    NeverDUnpack
     ${CMAKE_DL_LIBS}
     ${NEVERD_COMMON_LIBS})
 
@@ -177,6 +179,7 @@ set(NEVERD_SDK_HEADERS
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPISimplify.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPISynth.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPITranslate.h
+    ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIUnpack.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDPlugin.h)
 
 set(NEVERD_STAGED_SDK_DIRECTORY
@@ -205,6 +208,11 @@ add_custom_command(TARGET neverd_shared POST_BUILD
         "${CMAKE_SOURCE_DIR}/include/neverd/emulation/ExecutionReport.def"
         "${CMAKE_SOURCE_DIR}/include/neverd/emulation/ProcessReport.def"
         "${NEVERD_STAGED_SDK_DIRECTORY}/neverd/emulation"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "${NEVERD_STAGED_SDK_DIRECTORY}/neverd/unpack"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/include/neverd/unpack/Unpack.def"
+        "${NEVERD_STAGED_SDK_DIRECTORY}/neverd/unpack"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/LICENSE"
         "${CMAKE_SOURCE_DIR}/NOTICE"

@@ -1,0 +1,172 @@
+//===- Unpack.def - Unpacking vocabulary, limits and report fields --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Container formats whose images can be unpacked. Each one has a module that
+// validates its files and writes observed memory back as a file. An input in
+// any other container is an error; no format is guessed.
+#ifdef NEVERD_UNPACK_FORMAT
+NEVERD_UNPACK_FORMAT(PE64, "pe64")
+#endif
+
+// Identification names a protector only from evidence that is present in the
+// input. An unidentified input can still be unpacked by observing execution.
+#ifdef NEVERD_UNPACK_PACKER
+NEVERD_UNPACK_PACKER(Unidentified, "unidentified")
+NEVERD_UNPACK_PACKER(UPX, "upx")
+#endif
+
+#ifdef NEVERD_UNPACK_EVIDENCE
+NEVERD_UNPACK_EVIDENCE(UPXSectionNames, "upx_section_names")
+NEVERD_UNPACK_EVIDENCE(UPXPackHeader, "upx_pack_header")
+NEVERD_UNPACK_EVIDENCE(UPXEntryStub, "upx_entry_stub")
+#endif
+
+// Unpacked: a transfer into generated code was accepted as the entry and the
+// image at that boundary was rebuilt. NoEntry: the bounded run ended first;
+// the transfers it did observe and the process stop reason say why.
+#ifdef NEVERD_UNPACK_OUTCOME
+NEVERD_UNPACK_OUTCOME(Unpacked, "unpacked")
+NEVERD_UNPACK_OUTCOME(NoEntry, "no_entry")
+#endif
+
+// Transfer: the entry is the observed transfer that was accepted. Stub: the
+// identified protector's stub names the entry as the operand of its final
+// jump; the run entered generated code on a deeper stack, so the stub was
+// calling into the program it had finished rather than leaving for it.
+#ifdef NEVERD_UNPACK_ENTRY_SOURCE
+NEVERD_UNPACK_ENTRY_SOURCE(Transfer, "transfer")
+NEVERD_UNPACK_ENTRY_SOURCE(Stub, "stub")
+#endif
+
+// Static: bound by the guest loader from the input's own import directory.
+// Runtime: stored by guest code after the image was mapped.
+#ifdef NEVERD_UNPACK_IMPORT_ORIGIN
+NEVERD_UNPACK_IMPORT_ORIGIN(Static, "static")
+NEVERD_UNPACK_IMPORT_ORIGIN(Runtime, "runtime")
+#endif
+
+#ifdef NEVERD_UNPACK_LIMIT
+NEVERD_UNPACK_LIMIT(Instructions, 100000000)
+NEVERD_UNPACK_LIMIT(Events, 1000000)
+NEVERD_UNPACK_LIMIT(TimeoutMicroseconds, 600000000)
+NEVERD_UNPACK_LIMIT(Memory, 512ull * 1024 * 1024)
+NEVERD_UNPACK_LIMIT(Quantum, 65536)
+NEVERD_UNPACK_LIMIT(MaxTransfers, 64)
+NEVERD_UNPACK_LIMIT(InputBytes, 1024ull * 1024 * 1024)
+NEVERD_UNPACK_LIMIT(Imports, 1 << 20)
+#endif
+
+#ifdef NEVERD_UNPACK_REPORT_LIMIT
+NEVERD_UNPACK_REPORT_LIMIT(SchemaVersion, NEVERD_UNPACK_SCHEMA_VERSION, 1)
+NEVERD_UNPACK_REPORT_LIMIT(JSONLimit, NEVERD_UNPACK_OPTIONS_JSON_LIMIT, 65536)
+#endif
+
+// Guest process options whose unpacking default differs from a plain guest
+// run, for every profile.
+#ifdef NEVERD_UNPACK_PROCESS_DEFAULT
+NEVERD_UNPACK_PROCESS_DEFAULT("instruction_limit", Limits.Instructions,
+                              Instructions)
+NEVERD_UNPACK_PROCESS_DEFAULT("event_limit", Limits.Events, Events)
+NEVERD_UNPACK_PROCESS_DEFAULT("timeout_microseconds",
+                              Limits.TimeoutMicroseconds, TimeoutMicroseconds)
+NEVERD_UNPACK_PROCESS_DEFAULT("memory_limit", MemoryLimit, Memory)
+NEVERD_UNPACK_PROCESS_DEFAULT("instruction_quantum", InstructionQuantum,
+                              Quantum)
+#endif
+
+// Options of one guest OS model that unpacking needs. Only a stub runs, and
+// it resolves the whole import table of the program it carries; its lookups
+// must not depend on which exports the OS model implements.
+// Option group member, option member, JSON group, JSON field, value.
+#ifdef NEVERD_UNPACK_PROFILE_DEFAULT
+NEVERD_UNPACK_PROFILE_DEFAULT(Windows, DeferUnmodeled, "windows",
+                              "defer_unmodeled", true)
+#endif
+
+#ifdef NEVERD_UNPACK_REPORT_FIELD
+NEVERD_UNPACK_REPORT_FIELD(Version, "schema_version")
+NEVERD_UNPACK_REPORT_FIELD(Format, "format")
+NEVERD_UNPACK_REPORT_FIELD(Profile, "profile")
+NEVERD_UNPACK_REPORT_FIELD(Backend, "backend")
+NEVERD_UNPACK_REPORT_FIELD(Transfer, "transfer")
+NEVERD_UNPACK_REPORT_FIELD(Transfers, "transfers")
+NEVERD_UNPACK_REPORT_FIELD(Generation, "generation")
+NEVERD_UNPACK_REPORT_FIELD(Packer, "packer")
+NEVERD_UNPACK_REPORT_FIELD(Kind, "kind")
+NEVERD_UNPACK_REPORT_FIELD(Evidence, "evidence")
+NEVERD_UNPACK_REPORT_FIELD(Outcome, "outcome")
+NEVERD_UNPACK_REPORT_FIELD(Diagnostic, "diagnostic")
+NEVERD_UNPACK_REPORT_FIELD(Architecture, "architecture")
+NEVERD_UNPACK_REPORT_FIELD(ImageBase, "image_base")
+NEVERD_UNPACK_REPORT_FIELD(PackedEntry, "packed_entry_rva")
+NEVERD_UNPACK_REPORT_FIELD(Entry, "entry_rva")
+NEVERD_UNPACK_REPORT_FIELD(EntrySource, "entry_source")
+NEVERD_UNPACK_REPORT_FIELD(StackBalanced, "stack_balanced")
+NEVERD_UNPACK_REPORT_FIELD(GeneratedBytes, "generated_bytes")
+NEVERD_UNPACK_REPORT_FIELD(Sections, "sections")
+NEVERD_UNPACK_REPORT_FIELD(Name, "name")
+NEVERD_UNPACK_REPORT_FIELD(RVA, "rva")
+NEVERD_UNPACK_REPORT_FIELD(VirtualSize, "virtual_size")
+NEVERD_UNPACK_REPORT_FIELD(FileSize, "file_size")
+NEVERD_UNPACK_REPORT_FIELD(Imports, "imports")
+NEVERD_UNPACK_REPORT_FIELD(Module, "module")
+NEVERD_UNPACK_REPORT_FIELD(Ordinal, "ordinal")
+NEVERD_UNPACK_REPORT_FIELD(Slot, "slot_rva")
+NEVERD_UNPACK_REPORT_FIELD(Origin, "origin")
+NEVERD_UNPACK_REPORT_FIELD(Execution, "execution")
+NEVERD_UNPACK_REPORT_FIELD(SelectionReason, "backend_selection_reason")
+NEVERD_UNPACK_REPORT_FIELD(Stop, "stop_reason")
+NEVERD_UNPACK_REPORT_FIELD(ProcessDiagnostic, "process_diagnostic")
+NEVERD_UNPACK_REPORT_FIELD(PC, "pc")
+NEVERD_UNPACK_REPORT_FIELD(Instructions, "instructions")
+NEVERD_UNPACK_REPORT_FIELD(Events, "events")
+NEVERD_UNPACK_REPORT_FIELD(Output, "output")
+NEVERD_UNPACK_REPORT_FIELD(Path, "path")
+NEVERD_UNPACK_REPORT_FIELD(Size, "size")
+NEVERD_UNPACK_REPORT_FIELD(SHA256, "sha256")
+#endif
+
+#ifdef NEVERD_UNPACK_TEXT
+NEVERD_UNPACK_TEXT(Prefix, "unpack: ")
+NEVERD_UNPACK_TEXT(EmptyOptions, "{}")
+NEVERD_UNPACK_TEXT(TooLarge, "unpack options JSON exceeds 64 KiB")
+NEVERD_UNPACK_TEXT(ObjectRequired, "unpack options must be a JSON object")
+NEVERD_UNPACK_TEXT(UnknownField, "unknown unpack option: ")
+NEVERD_UNPACK_TEXT(FieldType, "invalid unpack option type or value: ")
+NEVERD_UNPACK_TEXT(PathRequired, "unpacking requires a nonempty input path")
+NEVERD_UNPACK_TEXT(OutputRequired, "unpacking requires a nonempty output path")
+NEVERD_UNPACK_TEXT(SamePath, "the unpacked output must not replace its input")
+NEVERD_UNPACK_TEXT(Disabled, "unpacking by execution is disabled; rebuild "
+                             "with -DNEVERD_ENABLE_CPU_EMULATION=ON")
+NEVERD_UNPACK_TEXT(AllocationFailed, "could not allocate unpack report")
+NEVERD_UNPACK_TEXT(RunFailed, "unpacking failed: ")
+NEVERD_UNPACK_TEXT(UnexpectedException,
+                   "unpacking failed with an unexpected exception")
+NEVERD_UNPACK_TEXT(SessionFailed, "could not create unpack session")
+NEVERD_UNPACK_TEXT(InvalidReport, "invalid unpack report")
+NEVERD_UNPACK_TEXT(WriteFailed, "cannot write unpacked image: ")
+#endif
+
+#ifdef NEVERD_UNPACK_CLI_STRING
+NEVERD_UNPACK_CLI_STRING(Command, "unpack")
+NEVERD_UNPACK_CLI_STRING(
+    Help, "Recover the image a packed executable builds at run time and emit "
+          "a JSON report")
+NEVERD_UNPACK_CLI_STRING(Input, "packed executable")
+NEVERD_UNPACK_CLI_STRING(OutputOption, "o")
+NEVERD_UNPACK_CLI_STRING(OutputHelp, "Path of the rebuilt image (required)")
+NEVERD_UNPACK_CLI_STRING(OutputValue, "path")
+NEVERD_UNPACK_CLI_STRING(OptionsOption, "options")
+NEVERD_UNPACK_CLI_STRING(OptionsHelp,
+                         "Options JSON: backend, resource limits, transfer, "
+                         "arguments/environment and Windows module inputs")
+NEVERD_UNPACK_CLI_STRING(OptionsValue, "json")
+#endif
+
+#ifdef NEVERD_UNPACK_CLI_STATUS
+NEVERD_UNPACK_CLI_STATUS(Success, 0)
+NEVERD_UNPACK_CLI_STATUS(Error, 1)
+NEVERD_UNPACK_CLI_STATUS(Incomplete, 3)
+#endif

@@ -8,7 +8,10 @@
 #include "../core/ExecutionDiagnostics.h"
 #include "RuntimeValues.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
+
+#include <algorithm>
 
 namespace neverd::emulation {
 llvm::Expected<std::unique_ptr<ExecutionSession>> ExecutionSession::create(
@@ -24,7 +27,13 @@ llvm::Expected<std::unique_ptr<ExecutionSession>> ExecutionSession::create(
   Hooks.Instruction =
       [S = Session.get(),
        Observer = std::move(InstructionObserver)](uint64_t PC, uint32_t Size) {
-        if (!S->Budget->hasInstructions())
+        // A resumed watch stop executes exactly its own instruction.
+        const bool Resumed = S->WatchResume == PC;
+        S->WatchResume.reset();
+        if (!Resumed && S->watched(PC)) {
+          S->WatchedPC = PC;
+          S->AdmissionStop = SessionExitKind::ExecutionWatch;
+        } else if (!S->Budget->hasInstructions())
           S->AdmissionStop = SessionExitKind::InstructionLimit;
         else if (S->Admitted == S->Quantum)
           S->AdmissionStop = SessionExitKind::Quantum;
@@ -63,6 +72,12 @@ llvm::Expected<SessionExit> ExecutionSession::run(uint64_t PC,
   Quantum = InstructionQuantum;
   Admitted = 0;
   AdmissionStop.reset();
+  // Only a continuation at the reported PC steps over its own watch.
+  if (WatchedPC != PC)
+    WatchResume.reset();
+  else
+    WatchResume = WatchedPC;
+  WatchedPC.reset();
   auto Exit = CPU->runUntilExit(PC, Remaining);
   if (!Exit) {
     Current = State::Terminal;
@@ -87,6 +102,43 @@ llvm::Expected<SessionExit> ExecutionSession::run(uint64_t PC,
     break;
   }
   return SessionExit{Kind, std::move(*Exit)};
+}
+
+bool ExecutionSession::watched(uint64_t PC) const {
+  auto I =
+      llvm::upper_bound(Watches, PC, [](uint64_t PC, const ExecutionWatch &W) {
+        return PC < W.Address;
+      });
+  return I != Watches.begin() &&
+         PC - std::prev(I)->Address < std::prev(I)->Size;
+}
+
+llvm::Error ExecutionSession::watchExecution(std::vector<ExecutionWatch> New) {
+  if (Current != State::Ready)
+    return diagnostic::error(runtime::SessionState);
+  for (const auto &W : New)
+    if (!W.Size || W.Size - 1 > UINT64_MAX - W.Address)
+      return diagnostic::error(runtime::SessionWatch);
+  llvm::sort(New, [](const ExecutionWatch &A, const ExecutionWatch &B) {
+    return A.Address < B.Address;
+  });
+  std::vector<ExecutionWatch> Merged;
+  for (const auto &W : New) {
+    // The last byte is representable even when the exclusive end is not.
+    if (!Merged.empty() &&
+        W.Address - Merged.back().Address <= Merged.back().Size) {
+      const uint64_t Last =
+          std::max(Merged.back().Address + (Merged.back().Size - 1),
+                   W.Address + (W.Size - 1));
+      Merged.back().Size = Last - Merged.back().Address + 1;
+      // A range covering the whole address space cannot state its size.
+      if (!Merged.back().Size)
+        return diagnostic::error(runtime::SessionWatch);
+    } else
+      Merged.push_back(W);
+  }
+  Watches = std::move(Merged);
+  return llvm::Error::success();
 }
 
 llvm::Expected<ServiceRequest> ExecutionSession::takeServiceRequest() {

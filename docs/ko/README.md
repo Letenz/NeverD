@@ -1,6 +1,6 @@
 **언어**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 6a7456cc606f8f98767b33ad15e7c852cd0cb7e1bf8367759b0ad0cc03503470 -->
+<!-- i18n-source: 1f7e768c64fd7b3fd697260f693c68ca3b71562bf43cb0db4970c98487c270be -->
 
 [← NeverD 프로젝트](project.md)
 
@@ -40,3 +40,4 @@
 | [Solana SBF 디컴파일](sbf.md) | SBF v0-v4, LLVM IR, C/Rust 출력, 검증 및 알려진 제한 사항 |
 | [로드맵](roadmap.md) | 상태: native format, EVM, Solana SBF 구현 완료 |
 | 다국어 문서 | 위의 언어 링크에서 각 언어의 색인과 프로젝트 개요를 열 수 있습니다 |
+| [패킹된 실행 파일 언패킹](unpack.md) | 유한한 게스트 프로세스 관찰을 통한 패킹된 PE32+ 이미지 복구: 진입점 규칙, 재구성된 이미지, 식별, 제한 |
