@@ -1524,3 +1524,5 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 `BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource` はコピー元を破棄した後のリテラル表と共有監視リストの拡張、兄弟コピーの独立した変更、一回の監視訪問での伝播中断を検査し、再開後の完全モデルを元の節と独立した論理関係で確認します。
 
 `ObjCCallHints.SwiftPublishedAccessorsKeepOpaqueValueAndAllKeyPaths` は ARM64/x86-64 と両方の正規 Combine 提供元で二つのアクセサーを検証し、各組合せで九つの ABI 変異と八つのインポート識別変異を拒否します。独立 SDK 検証では ARM64 ホスト上で両ソース構成の生成 C を O0/O2 で実行し、128 回の呼出しで 24 バイト全部、入出力ガード、二つの owner 識別を比較します。八つのクロスコンパイル構成が macOS/Mac Catalyst の両アーキテクチャーを検査します。ランタイム検証は setter が消費する参照を保持し、製品コードに借用や所有権の省略を認めません。
+
+`ObjCCallHints.SwiftMainActorSharedKeepsObjectAndMetatypeContext` は ARM64/x86-64 の完全な戻り値と swiftself のキャリアを検証し、各アーキテクチャで ABI の改変 10 件とインポート識別情報の改変 10 件を拒否します。独立した SDK 検証では、両方のソースアーキテクチャ設定から生成した未変更の C を ARM64 ホスト上の O0/O2 で実行し、128 回の呼び出しで単一インスタンスとメタタイプの同一性、および参照所有権の釣り合いを確認します。8 構成のクロスコンパイルで両アーキテクチャの macOS と Mac Catalyst を確認し、x86-64 のネイティブ実行は別の検証範囲として扱います。

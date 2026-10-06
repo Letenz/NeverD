@@ -1398,3 +1398,5 @@ Swift CGPoint 实例变换具有两个双精度输入、两个双精度结果和
 固定的 `MainActor: Actor` SDK 契约在外部数据和见证目录间共用完整的编译器读器。四种目标必须保留元数据响应并使用同一公开静态表；元数据访问器、配对的 conformance 描述符与见证表均须由 `libswift_Concurrency` 导出。Swift 6.1.2 的静态及非泛型依赖运行时路径不使用调用方的实例化参数 2。原有三指针查询 ABI、元数据输入和缓存发布副作用保持完整；此契约不提供其他 Actor conformance、值布局或栈帧效果的证明。
 
 Swift SDK Published 的 enclosing-instance 访问器保留四个指针载体：读取器的首参是 opaque 间接结果，写入器的首参是被消费值的地址，随后依次是对象、wrapped key path 和 storage key path。四种 Swift 6.1.2 macOS/Mac Catalyst 编译器及导出配置认证精确的读写器符号和 Combine 提供方。两种 ABI 均不添加泛型元数据或 swiftself；原有引用所有权、不透明值布局及栈帧义务仍由现有层负责。
+
+精确的 `MainActor.shared` SDK getter 返回一个对象指针，并通过 swiftself 接收元类型（ARM64 的 `x20`、x86-64 的 `r13`）。四种 Swift 6.1.2 macOS/Mac Catalyst 编译与导出配置认证完整 ABI 及 `libswift_Concurrency` 强导入提供方。所有权、执行器调度和私有栈帧分析仍由各自现有契约约束。
