@@ -1223,6 +1223,8 @@ La matrice degli spill copre anche x86-32 (ELF/COFF/Mach-O), ARM32 (ARM e Thumb 
 
 `HighIntegerSignedness.*` in `NeverDHighControlFlowTests` verifica il passaggio tardivo che dichiara ogni variabile locale di registro o temporanea con o senza segno secondo ciò che legge la maggior parte dei suoi usi. L'aritmetica modulare, gli spostamenti logici e i confronti senza segno favoriscono senza segno; i confronti, le divisioni e gli spostamenti aritmetici con segno e l'estensione di segno favoriscono con segno; una locale con un uso non intero mantiene i suoi tipi. Il C emesso gira a `-O0` e `-O2` con trap di comportamento indefinito contro un'aritmetica di riferimento indipendente, incluso un confronto con segno di una locale diventata senza segno.
 
+`HighValueForward.*` in `NeverDHighControlFlowTests` verifica quando lo scrittore HighC può ripiegare un valore a uso singolo nel suo uso. Una condizione di ciclo mantiene un valore di cui il ciclo assegna le variabili, poiché un nome può indicare più valori SSA; uno slot di stack riletto mantiene il suo valore attraverso una scrittura in quello slot e si ripiega oltre una scrittura in un altro. Ogni caso gira a `-O0` e `-O2` con trap di comportamento indefinito.
+
 La proiezione del sorgente riconvalida anche gli elenchi di oggetti variadici dopo questa pulizia: ammette ancoraggi di istruzione vuoti e rifiuta effetti nascosti o trasferimenti di controllo. La pulizia sincronizzata ammette una sola vista `int64_t` o `uint64_t` dello stesso ricevitore salvato; restringimenti, conversioni in virgola mobile, aritmetica degli indirizzi e riassegnazioni restano esclusi. Gli insiemi Foundation e le tracce di sblocco normale ed eccezionale vengono eseguiti a `-O0` e `-O2`.
 
 ## Eccezioni sincrone native x64
