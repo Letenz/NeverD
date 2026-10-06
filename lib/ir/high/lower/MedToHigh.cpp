@@ -1120,6 +1120,9 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   loopsForArmsJumpingBack(Func.Body);
   loopsForNestedJumpsBack(Func.Body);
   loopJumpsAsBreakAndContinue(Func.Body);
+  // Jumps to a return tail that structuring left become copies of it when
+  // the tail prints short; earlier, such a jump may still become a break.
+  duplicateSmallReturnTails(Func.Body, /*PrintedSize=*/true);
   foldTempsInReturnTails(Func.Body);
   mergeJumpsIntoNextIfArms(Func);
   Trace.high(Func, "after-exceptions");
