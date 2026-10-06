@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "MachOThumbFixture.h"
 #include "NeverDLiftFixture.h"
 #include "gtest/gtest.h"
 
@@ -1269,12 +1270,13 @@ TEST_F(COFFRelocatableAbsoluteRelocation,
        }) {
     SCOPED_TRACE(Current.Triple);
     const fs::path Object = tmpFile("macho_thumb_only.o");
-    const RunResult Compiled =
-        exec(NEVERD_TEST_CLANG,
-             {"-target", Current.Triple, "-c",
-              (fs::path(TEST_SOURCE_DIR) / "core" / Current.Fixture).string(),
-              "-o", Object.string()});
+    const RunResult Compiled = exec(
+        NEVERD_TEST_CLANG,
+        {"-target", neverd::test::thumbFixtureAssemblerTriple(Current.Fixture),
+         "-c", (fs::path(TEST_SOURCE_DIR) / "core" / Current.Fixture).string(),
+         "-o", Object.string()});
     ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+    ASSERT_TRUE(neverd::test::setThumbFixtureSubtype(Object, Current.Triple));
 
     auto BufferOrErr = llvm::MemoryBuffer::getFile(Object.string());
     ASSERT_TRUE(static_cast<bool>(BufferOrErr));

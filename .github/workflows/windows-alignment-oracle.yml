@@ -9,6 +9,16 @@ on:
       - 'scripts/tests/test_check_windows_alignment.py'
       - 'unittests/emulation/fixtures/windows_alignment.*'
       - 'unittests/emulation/fixtures/WindowsAlignmentCases.def'
+      - 'scripts/check_aarch64_exclusives.py'
+      - 'scripts/tests/test_check_aarch64_exclusives.py'
+      - 'unittests/emulation/AArch64ExclusiveCases.def'
+      - 'unittests/emulation/fixtures/aarch64_exclusive*'
+      - 'unittests/emulation/fixtures/AArch64ExclusiveOracle.def'
+      - 'scripts/check_aarch64_atomics.py'
+      - 'scripts/tests/test_check_aarch64_atomics.py'
+      - 'unittests/emulation/AArch64AtomicCases.def'
+      - 'unittests/emulation/fixtures/aarch64_atomic*'
+      - 'unittests/emulation/fixtures/AArch64AtomicOracle.def'
   push:
     branches: [dev]
     paths:
@@ -17,6 +27,16 @@ on:
       - 'scripts/tests/test_check_windows_alignment.py'
       - 'unittests/emulation/fixtures/windows_alignment.*'
       - 'unittests/emulation/fixtures/WindowsAlignmentCases.def'
+      - 'scripts/check_aarch64_exclusives.py'
+      - 'scripts/tests/test_check_aarch64_exclusives.py'
+      - 'unittests/emulation/AArch64ExclusiveCases.def'
+      - 'unittests/emulation/fixtures/aarch64_exclusive*'
+      - 'unittests/emulation/fixtures/AArch64ExclusiveOracle.def'
+      - 'scripts/check_aarch64_atomics.py'
+      - 'scripts/tests/test_check_aarch64_atomics.py'
+      - 'unittests/emulation/AArch64AtomicCases.def'
+      - 'unittests/emulation/fixtures/aarch64_atomic*'
+      - 'unittests/emulation/fixtures/AArch64AtomicOracle.def'
 
 permissions:
   contents: read
@@ -47,5 +67,38 @@ jobs:
         with:
           name: windows-alignment-x64
           path: build-windows-alignment/
+          if-no-files-found: error
+          retention-days: 14
+
+  observe-arm64:
+    runs-on: windows-11-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Verify ARM64 observation integrity rules
+        run: python -m unittest scripts.tests.test_check_aarch64_exclusives -v
+      - name: Collect original ARM64 alignment and permission observations
+        run: python scripts/check_aarch64_exclusives.py --output build-arm64-alignment
+      - name: Verify ARM64 atomic observation integrity rules
+        run: python -m unittest scripts.tests.test_check_aarch64_atomics -v
+      - name: Collect original ARM64 atomic observations
+        run: python scripts/check_aarch64_atomics.py --output build-arm64-atomics
+      - name: Preserve original ARM64 atomic observations
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-atomics-arm64
+          path: build-arm64-atomics/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve original ARM64 native observations
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-alignment-arm64
+          path: build-arm64-alignment/
           if-no-files-found: error
           retention-days: 14

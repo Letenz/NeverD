@@ -15,6 +15,7 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidMutex.cpp
   AndroidThreadAttributes.cpp
   AndroidThreads.cpp
+  AndroidThreadWaits.cpp
   AndroidThreadCalls.cpp
   AndroidMemory.cpp
   AndroidFinalizers.cpp

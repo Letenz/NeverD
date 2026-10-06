@@ -64,6 +64,21 @@ inline std::string access(llvm::StringRef Alias, llvm::StringRef Address,
          " *)(uintptr_t)(" + Address.str() + "))";
 }
 
+// The caller supplies a fresh, exact-type value carrier. In particular, a
+// source local whose address escapes cannot be the destination of a load:
+// memcpy forbids overlapping source and destination objects.
+inline std::string loadCopy(llvm::StringRef Value, llvm::StringRef Address,
+                            llvm::StringRef Size) {
+  return "__builtin_memcpy(&" + Value.str() + ", (const void *)(uintptr_t)(" +
+         Address.str() + "), " + Size.str() + ")";
+}
+
+inline std::string storeCopy(llvm::StringRef Address, llvm::StringRef Value,
+                             llvm::StringRef Size) {
+  return "__builtin_memcpy((void *)(uintptr_t)(" + Address.str() + "), &" +
+         Value.str() + ", " + Size.str() + ")";
+}
+
 } // namespace neverd::c_memory
 
 #endif

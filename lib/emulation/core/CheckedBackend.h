@@ -73,6 +73,7 @@ protected:
   virtual uint64_t programCounter() const = 0;
   virtual void setProgramCounter(uint64_t PC) = 0;
   virtual llvm::Error execute(const cs_insn &) = 0;
+  virtual void onGuestException() {}
   virtual std::optional<ServiceRequest>
   decodeServiceRequest(const cs_insn &) const = 0;
   /// Context capture may occur in an instruction observer, but no mutation or

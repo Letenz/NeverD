@@ -22,6 +22,7 @@
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/symbolic/SymExpr.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Analysis/ConstantFolding.h"
@@ -193,6 +194,56 @@ TEST(LowInstructionBoundary, GuardEvaluatorRejectsValuesWiderThanU64) {
   const std::array<uint16_t, 1> W128{16};
   EXPECT_FALSE(
       evaluateJumpTableGuardPrimitive(NdOp::INT_NEGATE, 16, Value, W128));
+}
+
+TEST(LowInstructionBoundary, GuardBooleansUseNonzeroTruthAcrossWidths) {
+  for (uint16_t LSize : {1, 2, 4, 8})
+    for (uint16_t RSize : {1, 2, 4, 8})
+      for (uint64_t L : {UINT64_C(0), UINT64_C(1), UINT64_C(2), UINT64_MAX})
+        for (uint64_t R : {UINT64_C(0), UINT64_C(1), UINT64_C(4), UINT64_MAX})
+          for (NdOp Op : {NdOp::BOOL_AND, NdOp::BOOL_OR, NdOp::BOOL_XOR}) {
+            const bool Expected = Op == NdOp::BOOL_AND  ? L && R
+                                  : Op == NdOp::BOOL_OR ? L || R
+                                                        : bool(L) != bool(R);
+            const std::array<uint64_t, 2> Values{L, R};
+            const std::array<uint16_t, 2> Sizes{LSize, RSize};
+            EXPECT_EQ(evaluateJumpTableGuardPrimitive(Op, 1, Values, Sizes),
+                      uint64_t(Expected));
+            symbolic::SymContext Context;
+            const std::array<symbolic::SymRef, 2> Inputs{
+                Context.mkConst(LSize * 8, L), Context.mkConst(RSize * 8, R)};
+            const auto Result =
+                symbolizeJumpTableIntegerOperation(Context, Op, 1, Inputs);
+            ASSERT_TRUE(Result);
+            const auto Constant = Context.asConst(*Result);
+            ASSERT_TRUE(Constant);
+            EXPECT_EQ(Constant->getZExtValue(), uint64_t(Expected));
+          }
+}
+
+TEST(LowInstructionBoundary, PartialGuardFoldingRetainsUnknownConditions) {
+  const std::array<uint16_t, 2> Sizes{1, 8};
+  for (unsigned Unknown : {0u, 1u}) {
+    std::array<std::optional<uint64_t>, 2> Inputs{0, 0};
+    Inputs[Unknown] = std::nullopt;
+    EXPECT_EQ(evaluateJumpTableGuardPartialPrimitive(NdOp::BOOL_AND, 1, Inputs,
+                                                     Sizes),
+              0u);
+    EXPECT_FALSE(evaluateJumpTableGuardPartialPrimitive(NdOp::BOOL_OR, 1,
+                                                        Inputs, Sizes));
+    Inputs[1 - Unknown] = 2;
+    EXPECT_EQ(
+        evaluateJumpTableGuardPartialPrimitive(NdOp::BOOL_OR, 1, Inputs, Sizes),
+        1u);
+    EXPECT_FALSE(evaluateJumpTableGuardPartialPrimitive(NdOp::BOOL_AND, 1,
+                                                        Inputs, Sizes));
+    EXPECT_FALSE(evaluateJumpTableGuardPartialPrimitive(NdOp::INT_EQUAL, 1,
+                                                        Inputs, Sizes));
+  }
+  const std::array<std::optional<uint64_t>, 2> Truncated{256, std::nullopt};
+  EXPECT_EQ(evaluateJumpTableGuardPartialPrimitive(NdOp::BOOL_AND, 1, Truncated,
+                                                   Sizes),
+            0u);
 }
 
 TEST(LowInstructionBoundary,

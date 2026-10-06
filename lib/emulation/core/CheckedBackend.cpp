@@ -109,10 +109,12 @@ llvm::Error CheckedBackend::raiseFault(BackendFault Fault, bool Recoverable) {
   if (FirstFault || RecoverableFault)
     return error(diagnostic::Faulted);
   if (Recoverable && Hooks.RecoverableFault && Hooks.RecoverableFault(Fault)) {
+    onGuestException();
     RecoverableFault = Fault;
     StopRequested = true;
     return llvm::Error::success();
   }
+  onGuestException();
   FirstFault = Fault;
   if (Fault.Interrupt && Hooks.Interrupt)
     Hooks.Interrupt(*Fault.Interrupt);
@@ -234,7 +236,7 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
   auto Limit = makeExecutionDeadline(Timeout);
   if (!Limit)
     return Limit.takeError();
-  if (auto E = Memory->beginRun())
+  if (auto E = Memory->beginRun(RAMWriteTracking::Declared))
     return E;
   auto Release = llvm::scope_exit([&] { Memory->endRun(); });
   if (auto E = Memory->validateMappings(
@@ -289,8 +291,10 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
         break;
       if (UserMode) {
         PendingService = decodeServiceRequest(*Decoded);
-        if (PendingService)
+        if (PendingService) {
+          onGuestException();
           break;
+        }
       }
       if (auto E = execute(*Decoded)) {
         if (!FirstFault && E.isA<MachineInterruptedError>()) {

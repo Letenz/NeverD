@@ -28,9 +28,12 @@ struct PendingCallback {
 /// Bionic process state is shared; TLS, waits and callbacks belong to threads.
 class GuestThreads {
 public:
+  enum class WaitSource { NativeCall, KernelService };
   GuestThreads(ExecutionBackend &CPU, const IntegerABI &Calls,
-               const ProcessOptions &Options, ProcessResult &Result)
-      : CPU(CPU), Calls(Calls), Options(Options), Result(Result) {}
+               const ProcessOptions &Options, ProcessResult &Result,
+               linux_model::LinuxClock &Clock)
+      : CPU(CPU), Calls(Calls), Options(Options), Result(Result), Clock(Clock) {
+  }
   llvm::Error initialize(uint64_t StackBase);
   llvm::Error validateTLS();
   bool enabled() const { return Options.Android->ThreadLimit > 1; }
@@ -49,7 +52,9 @@ public:
   void completeOnce(uint64_t Control);
   void waitMutex(uint64_t Address, uint16_t Attributes);
   void wakeMutex(uint64_t Address);
-  void suspend(const ServiceRequest &Request, size_t Event);
+  bool waitSleep();
+  void suspend(const ServiceRequest &Request, size_t Event,
+               WaitSource Source = WaitSource::NativeCall);
   llvm::Error finish(uint64_t Value, uint32_t ExitStatus = 0);
   /// Round robin, including the current thread if it is the only runnable
   /// owner. False classifies all-finished or a wait cycle in Result.
@@ -71,10 +76,14 @@ private:
     uint16_t Attributes;
     bool Ready = false;
   };
+  struct Sleep {
+    uint64_t Deadline;
+  };
   struct Wait {
-    std::variant<Join, Once, Mutex> Operation;
+    std::variant<Join, Once, Mutex, Sleep> Operation;
     std::optional<ServiceRequest> Request;
     size_t Event = 0;
+    WaitSource Source = WaitSource::NativeCall;
   };
   struct Thread {
     NativeThreadSnapshot Report;
@@ -90,6 +99,7 @@ private:
   const IntegerABI &Calls;
   const ProcessOptions &Options;
   ProcessResult &Result;
+  linux_model::LinuxClock &Clock;
   std::deque<Thread> Threads;
   size_t Current = 0;
   uint32_t LastExitStatus = 0;
@@ -102,8 +112,10 @@ private:
   std::optional<size_t> onceOwner(uint64_t Control) const;
   bool ready(const Wait &Pending) const;
   std::optional<size_t> nextRunnable() const;
+  std::optional<uint64_t> nextWake() const;
   llvm::Error switchTo(size_t Next);
   llvm::Error prepareJoin(const Join &Pending);
+  BionicResult resumeOnce(const Once &Pending);
   BionicResult resumeWait(Bionic &LibC);
   llvm::Error completeWait(uint64_t Value);
   static std::optional<BionicValue> value(uint64_t Value) {

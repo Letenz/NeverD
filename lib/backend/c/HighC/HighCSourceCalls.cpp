@@ -9,6 +9,7 @@
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -450,8 +451,18 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Hint.CallKind == Kind::RuntimeObjCMetadataFactory ||
       Hint.CallKind == Kind::RuntimeObjCMergedSetter ||
       Hint.CallKind == Kind::RuntimeObjCForwardedInitializer) {
+    const bool Getter = Hint.CallKind == Kind::RuntimeObjCSuperGetter;
+    const auto GetterSignature =
+        Getter ? objcSuperGetterHelperSourceDeclaration(Signature.Architecture,
+                                                        Signature.ReturnType)
+               : std::nullopt;
     const bool Factory = Hint.CallKind == Kind::RuntimeObjCMetadataFactory;
     const bool Setter = Hint.CallKind == Kind::RuntimeObjCMergedSetter;
+    const auto SetterSignature =
+        Setter && Signature.Parameters.size() == 7
+            ? objcMergedSetterHelperSourceDeclaration(
+                  Signature.Architecture, Signature.Parameters[2].Type)
+            : std::nullopt;
     const bool Forwarded =
         Hint.CallKind == Kind::RuntimeObjCForwardedInitializer;
     const auto Name =
@@ -459,8 +470,15 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                     : Forwarded ? "neverd_objc_forwarded_initializer_"
                     : Setter    ? "neverd_objc_merged_setter_"
                                 : "neverd_objc_super_getter_") +
-        llvm::utohexstr(Hint.TargetAddress, true);
+        llvm::utohexstr(Hint.TargetAddress, true) +
+        (GetterSignature && !GetterSignature->ReturnComponents.empty()
+             ? "_cgrect"
+             : "");
     if (!Hint.TargetAddress || Hint.TargetName != Name ||
+        (Getter &&
+         (!GetterSignature || !equalSourceABIs(Signature, *GetterSignature))) ||
+        (Setter &&
+         (!SetterSignature || !equalSourceABIs(Signature, *SetterSignature))) ||
         E.CallAddr != Hint.TargetAddress || !E.CallTarget.empty() ||
         E.IsIndirectCall || !E.IntrinsicOutputs.empty() ||
         Signature.Architecture != Arch::AArch64 ||
@@ -468,12 +486,10 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         Signature.Origin !=
             SourceFunctionTypeHint::OriginKind::NativeAnalysis ||
         !Signature.ReturnType ||
-        Signature.ReturnType->Kind != (Factory || Forwarded ? NdTypeKind::Ptr
-                                       : Setter ? NdTypeKind::Void
-                                                : NdTypeKind::Int) ||
-        Signature.ReturnType->Size != (Factory || Forwarded ? 8U
-                                       : Setter             ? 0U
-                                                            : 1U) ||
+        (!Getter &&
+         (Signature.ReturnType->Kind !=
+              (Factory || Forwarded ? NdTypeKind::Ptr : NdTypeKind::Void) ||
+          Signature.ReturnType->Size != (Factory || Forwarded ? 8U : 0U))) ||
         Signature.Parameters.size() != (Factory  ? 2U
                                         : Setter ? 7U
                                                  : 4U) ||
@@ -494,14 +510,17 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                       const bool Value =
                           Setter && &Parameter == &Signature.Parameters[2];
                       return !Parameter.Type ||
-                             Parameter.Type->Kind !=
-                                 (Value ? NdTypeKind::Int : NdTypeKind::Ptr) ||
-                             Parameter.Type->Size != (Value ? 1U : 8U);
+                             (!Value &&
+                              (Parameter.Type->Kind != NdTypeKind::Ptr ||
+                               Parameter.Type->Size != 8U));
                     }))
       return bad("invalid compiler getter/factory declaration");
     auto Expected = Signature;
     std::string Diagnostic;
-    if (!assignDarwinScalarSourceABI(Expected, Arch::AArch64, Diagnostic) ||
+    if (!(Getter || Setter
+              ? assignDarwinFixedSourceABI(Expected, Arch::AArch64, Diagnostic)
+              : assignDarwinScalarSourceABI(Expected, Arch::AArch64,
+                                            Diagnostic)) ||
         !equalSourceABIs(Signature, Expected))
       return bad("compiler getter/factory ABI is not canonical");
   }

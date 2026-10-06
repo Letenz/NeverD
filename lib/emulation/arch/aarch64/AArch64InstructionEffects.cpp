@@ -199,9 +199,10 @@ getAArch64InstructionEffects(const cs_insn &I,
         (I.id == AARCH64_INS_MRS && isReadCacheType(Word)) ||
         (I.id == AARCH64_INS_MSR && isWriteThreadPointer(Word)) ||
         (I.id == AARCH64_INS_MRS &&
-         (isReadFPControl(Word) || isReadFPStatus(Word))) ||
+         (isReadNZCV(Word) || isReadFPControl(Word) || isReadFPStatus(Word))) ||
         (I.id == AARCH64_INS_MSR &&
-         (isWriteFPControl(Word) || isWriteFPStatus(Word)))))
+         (isWriteNZCV(Word) || isWriteFPControl(Word) ||
+          isWriteFPStatus(Word)))))
     return llvm::make_error<UnsupportedExecutionError>();
   const auto Source = Word & RegisterMask;
   if (Kind == CacheMaintenance) {

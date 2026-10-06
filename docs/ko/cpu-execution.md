@@ -203,3 +203,8 @@ checked Unicorn은 `MachineRunControl`을 사용하며 ARM64 유지보수, 게�
 `hvf` · Hypervisor.framework · Apple Silicon → ARM64 · Intel Mac → x86-64.
 
 [Setup, signing and native hardware validation (English)](../macos-hvf.md)
+
+checked ARM64는 8/16/32/64비트 `LDXR/STXR`, 32/64비트 레지스터 쌍 `LDXP/STXP`, acquire/release 형태와 `CLREX`를 지원합니다. KVM, WHP, checked Unicorn은 ISA 계층의 독점 모니터를 공유하며 16바이트 물리 범위로 예약을 추적합니다. 전송 계층의 단일 단계 종료가 루프 진행을 막지 않습니다. 동일 값 쓰기도 커밋되면 예약을 무효화하며 별칭과 보존 뷰에도 같은 규칙을 적용합니다. 중지는 미공개 상태를 보존하며 스냅샷은 중간에 발생한 쓰기를 취소하지 못합니다. checked 독점 명령은 FEAT_LSE2 정렬 규칙을 사용합니다. 정렬된 16바이트 블록 안의 비정렬 피연산자는 실행되며, 블록을 넘으면 `alignment` 오류가 발생합니다. 같은 폭의 조건부 저장은 예약된 물리 단위로 일치 여부를 판단합니다. 예약이 만료된 경우에도 조건부 저장 판정 전에 정렬과 권한을 검사합니다. MMIO와 병렬 SMP는 포함하지 않습니다. ARM64 Unicorn의 `Software` 계약도 이 모니터를 사용하며 소프트웨어 CPU와 checked CPU가 물리 RAM을 공유하는 경우를 포함합니다. Unicorn의 `Software` 계약은 엔진의 자연 정렬 모델을 유지합니다.
+
+
+같은 ISA 계층은 FEAT_LSE `CAS/CASP`, `SWP`, `LDADD/LDCLR/LDEOR/LDSET`, 부호 있는/없는 min/max의 바이트·하프워드·워드·더블워드 및 acquire/release 형식을 지원합니다. checked는 위의 정렬 정책을, Unicorn `Software`는 자연 정렬을 사용합니다. 비교는 피연산자 폭에 따르고 반환되는 이전 값은 0으로 확장합니다. CAS 비교가 실패해도 쓰기 권한을 확인하고, Arm이 허용하는 이전 값 쓰기를 선택하여 물리 예약을 무효화합니다. 콜백은 커밋 전 CPU/RAM을 보며 취소와 동기 오류는 부분 결과를 공개하지 않습니다. 물리 실행 잠금은 협력적 CPU의 순서를 보장하며 병렬 SMP나 MMIO 원자 연산을 제공하지 않습니다. `MRS/MSR NZCV`는 예약 비트와 영 레지스터 규칙에 따라 네 조건 플래그를 전송합니다. 읽기 권한을 먼저 검사합니다. 읽을 수 없는 피연산자는 읽기 오류, 읽기 전용 피연산자는 쓰기 오류를 보고하며 원본 Windows ARM64 관측과 일치합니다.

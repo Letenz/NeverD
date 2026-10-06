@@ -121,6 +121,7 @@ NEVERD_LINUX_AUX(NULL, 0, 0)
 #endif
 #ifdef NEVERD_LINUX_SERVICE
 NEVERD_LINUX_SERVICE(SignalAction, 13, 134, 4)
+NEVERD_LINUX_SERVICE(Mincore, 27, 232, 3)
 // Linux UAPI: x86-64 and asm-generic numbers, followed by fixed arity.
 NEVERD_LINUX_SERVICE(OpenAt, 257, 56, 4)
 NEVERD_LINUX_SERVICE(FaccessAt, 269, 48, 3)
@@ -133,6 +134,7 @@ NEVERD_LINUX_SERVICE(Write, 1, 64, 3)
 NEVERD_LINUX_SERVICE(WriteV, 20, 66, 3)
 NEVERD_LINUX_SERVICE(GetTimeOfDay, 96, 169, 2)
 NEVERD_LINUX_SERVICE(ClockGetTime, 228, 113, 2)
+NEVERD_LINUX_SERVICE(Nanosleep, 35, 101, 2)
 NEVERD_LINUX_SERVICE(Exit, 60, 93, 1)
 NEVERD_LINUX_SERVICE(ExitGroup, 231, 94, 1)
 NEVERD_LINUX_SERVICE(GetPID, 39, 172, 0)
@@ -163,6 +165,8 @@ NEVERD_LINUX_DYNAMIC_DEPENDENCY(Audit, 0x6ffffefc)
 NEVERD_LINUX_DYNAMIC_DEPENDENCY(DependencyAudit, 0x6ffffefb)
 #endif
 #ifdef NEVERD_LINUX_DIAGNOSTIC
+NEVERD_LINUX_DIAGNOSTIC(MemoryResidency,
+                        "unmodeled Linux page residency observation")
 NEVERD_LINUX_DIAGNOSTIC(SignalOptions, "invalid Linux signal disposition input")
 NEVERD_LINUX_DIAGNOSTIC(SignalInputMissing,
                         "signal actions require explicit linux_signals input")
@@ -258,4 +262,14 @@ NEVERD_LINUX_DIAGNOSTIC(TimeDynamicClock,
                         "dynamic and encoded Linux clocks are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(TimezoneMissing,
                         "Linux timezone has no explicit linux_time input")
+NEVERD_LINUX_DIAGNOSTIC(
+    TimeAdvanceClock,
+    "advance_on_idle supports realtime, monotonic and boottime clocks only")
+NEVERD_LINUX_DIAGNOSTIC(
+    TimeAdvanceOverflow,
+    "Linux virtual clock advancement exceeds its modeled range")
+NEVERD_LINUX_DIAGNOSTIC(SleepPolicy,
+                        "Linux nanosleep requires linux_time.advance_on_idle")
+NEVERD_LINUX_DIAGNOSTIC(
+    SleepRange, "Linux sleep deadline exceeds the modeled virtual time range")
 #endif

@@ -165,7 +165,11 @@ TEST(ProcessReport, LinuxClockInputIsLosslessAndRestrictedToLinuxProfiles) {
 TEST(ProcessReport, MalformedClockInputsFailBeforeExecution) {
   for (
       const char *Bad :
-      {"null",
+      {R"({"advance_on_idle":1})",
+       R"({"advance_on_idle":"true"})",
+       R"({"advance_on_idle":null})",
+       R"({"advance_on_idle":true,"clocks":[{"id":2,"seconds":0,"nanoseconds":0}]})",
+       "null",
        "[]",
        "true",
        R"({"unknown":0})",
@@ -192,6 +196,34 @@ TEST(ProcessReport, MalformedClockInputsFailBeforeExecution) {
     EXPECT_FALSE(bool(R));
     llvm::consumeError(R.takeError());
   }
+}
+
+TEST(ProcessReport, AndroidSnapshotsRequireInitialMappingsUnlessExplicit) {
+  auto O = processOptionsFromJSON(R"({"android":{"entry_symbol":"inspect",
+    "read_memory":[{"address":4096,"size":64},
+      {"address":8192,"size":64,"require_mapped_at_entry":false},
+      {"address":12288,"size":64,"require_mapped_at_entry":true}]}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->Android);
+  const auto &Reads = O->Android->ReadMemory;
+  ASSERT_EQ(Reads.size(), 3u);
+  EXPECT_TRUE(Reads[0].RequireMappedAtEntry);
+  EXPECT_FALSE(Reads[1].RequireMappedAtEntry);
+  EXPECT_EQ(Reads[1].Address, 8192u);
+  EXPECT_EQ(Reads[1].Size, 64u);
+  EXPECT_TRUE(Reads[2].RequireMappedAtEntry);
+  for (const char *Bad : {"null", "0", "\"false\"", "[]", "{}"}) {
+    auto R = processOptionsFromJSON(
+        std::string(R"({"android":{"entry_symbol":"inspect","read_memory":[
+          {"address":4096,"size":64,"require_mapped_at_entry":)") +
+        Bad + "}]}}");
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+  auto R = processOptionsFromJSON(R"({"android":{"entry_symbol":"inspect",
+    "memory":[{"address":4096,"size":4096,"require_mapped_at_entry":false}]}})");
+  EXPECT_FALSE(bool(R));
+  llvm::consumeError(R.takeError());
 }
 
 TEST(ProcessReport, ExplicitSignalActionsAreLosslessAndLinuxOnly) {

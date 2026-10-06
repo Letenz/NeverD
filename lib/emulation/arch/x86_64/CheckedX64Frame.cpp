@@ -126,8 +126,10 @@ llvm::Error CheckedX64Backend::executeEnter(const cs_insn &I) {
     // A guest fault commits only stores preceding the first failing access.
     // RSP/RBP/PC retain their entry values; repair and restart must consume
     // the resulting RAM, which may differ from the first attempt's input.
-    for (const auto &[P, Byte] : Pending)
+    for (const auto &[P, Byte] : Pending) {
+      Memory->recordRAMWrite(P, sizeof(Byte));
       *Memory->physicalPointer(P) = Byte;
+    }
     const auto &A = Accesses[Completed];
     return access(A.Address, Width, A.Permission, true, true);
   }

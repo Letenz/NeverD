@@ -242,7 +242,8 @@ bool LLVMCWriter::cursorSlotIsObserved(const llvm::AllocaInst *Slot) const {
 }
 
 const llvm::Value *
-LLVMCWriter::allocaStoredValueBefore(const llvm::LoadInst *Load) const {
+LLVMCWriter::allocaStoredValueBefore(const llvm::LoadInst *Load,
+                                     bool BoundExpansion) const {
   if (!Load || !Load->isSimple() || !Load->getFunction())
     return nullptr;
   const auto *Slot = asAllocaPointer(Load->getPointerOperand());
@@ -250,11 +251,12 @@ LLVMCWriter::allocaStoredValueBefore(const llvm::LoadInst *Load) const {
     return nullptr;
   // Printing a stored expression may revisit a load from before that store.
   // The current printer state is not reaching-definition evidence for it.
-  // Index the immutable instruction order once, keeping only exact local
-  // stores; cross-block joins retain their explicit load.
+  // Index exact local stores once. Cross-block loads need the separate
+  // reaching-definition proof below.
   if (LocalLoadValuesFor != Load->getFunction()) {
     LocalLoadValuesFor = Load->getFunction();
     LocalLoadValues.clear();
+    LocalReachingValues.clear();
     ExactLocalLoadSlots.clear();
     for (const auto &B : *LocalLoadValuesFor) {
       llvm::DenseMap<const llvm::AllocaInst *, const llvm::Value *> Stores;
@@ -295,6 +297,9 @@ LLVMCWriter::allocaStoredValueBefore(const llvm::LoadInst *Load) const {
           const auto *A = asAllocaPointer(L->getPointerOperand());
           auto It = Stores.find(A);
           if (It != Stores.end() && It->second &&
+              It->second->getType() == L->getType())
+            LocalReachingValues[L] = It->second;
+          if (It != Stores.end() && It->second &&
               It->second->getType() == L->getType() &&
               Expansion(It->second).first < MaxForwardDepth &&
               Expansion(It->second).second < MaxForwardCost) {
@@ -330,8 +335,82 @@ LLVMCWriter::allocaStoredValueBefore(const llvm::LoadInst *Load) const {
   }
   if (!Exact->second)
     return nullptr;
-  auto It = LocalLoadValues.find(Load);
-  return It == LocalLoadValues.end() ? nullptr : It->second;
+  const auto &Definitions =
+      BoundExpansion ? LocalLoadValues : LocalReachingValues;
+  auto It = Definitions.find(Load);
+  if (It != Definitions.end())
+    return It->second;
+  if (InitializedAllocaLoads.count(Load))
+    return CrossBlockLoadValues.lookup(Load);
+  if (!Dominators.isReachableFromEntry(Load->getParent()))
+    return nullptr;
+  // A cross-block replacement needs the same reaching value on every path.
+  // Query immutable stores, never the state left by printing another block.
+  const llvm::Value *Common = nullptr;
+  bool Conflicting = false;
+  unsigned Budget = 4096;
+  auto FindStore = [&](const llvm::Instruction *End) {
+    for (const auto *I = End; I; I = I->getPrevNode()) {
+      if (Budget == 0)
+        return false;
+      --Budget;
+      if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(I);
+          Store && Store->getPointerOperand() == Slot) {
+        const auto *Value = Store->getValueOperand();
+        Conflicting |= Common && Common != Value;
+        Common = Value;
+        return true;
+      }
+    }
+    return false;
+  };
+  bool Initialized = true;
+  if (!FindStore(Load->getPrevNode())) {
+    llvm::SmallVector<const llvm::BasicBlock *, 16> Pending;
+    llvm::SmallPtrSet<const llvm::BasicBlock *, 32> Seen;
+    if (llvm::pred_empty(Load->getParent()))
+      Initialized = false;
+    else
+      llvm::append_range(Pending, llvm::predecessors(Load->getParent()));
+    while (Initialized && !Pending.empty()) {
+      const auto *Predecessor = Pending.pop_back_val();
+      if (!Seen.insert(Predecessor).second)
+        continue;
+      if (FindStore(Predecessor->getTerminator()))
+        continue;
+      if (Budget == 0 || llvm::pred_empty(Predecessor))
+        Initialized = false;
+      else
+        llvm::append_range(Pending, llvm::predecessors(Predecessor));
+    }
+  }
+  Initialized &= Budget != 0;
+  InitializedAllocaLoads[Load] = Initialized;
+  if (!Initialized || Conflicting || !Common)
+    return nullptr;
+  // Reprinting a memory read or call would move its observation past effects.
+  // Admit only bounded, immutable arithmetic/address expressions here.
+  unsigned Work = 32;
+  auto Stable = [&](auto &&Self, const llvm::Value *Value,
+                    unsigned Depth) -> bool {
+    if (Work == 0 || Depth > 8)
+      return false;
+    --Work;
+    if (llvm::isa<llvm::Constant, llvm::Argument, llvm::AllocaInst>(Value))
+      return true;
+    const auto *Instruction = llvm::dyn_cast<llvm::Instruction>(Value);
+    if (!Instruction ||
+        !llvm::isa<llvm::BinaryOperator, llvm::CastInst,
+                   llvm::GetElementPtrInst, llvm::ICmpInst>(Instruction))
+      return false;
+    return llvm::all_of(Instruction->operands(), [&](const llvm::Use &Operand) {
+      return Self(Self, Operand.get(), Depth + 1);
+    });
+  };
+  if (!Stable(Stable, Common, 0))
+    return nullptr;
+  CrossBlockLoadValues[Load] = Common;
+  return Common;
 }
 
 void LLVMCWriter::noteAllocaStore(const llvm::AllocaInst *Slot,
@@ -366,6 +445,17 @@ void LLVMCWriter::noteAllocaStore(const llvm::AllocaInst *Slot,
     AllocaTypes.erase(Slot);
     AllocaTexts.erase(Slot);
   }
+}
+
+bool LLVMCWriter::allocaLoadHasReachingStore(const llvm::LoadInst *Load) const {
+  if (!Load || !Load->isSimple())
+    return false;
+  if (auto It = InitializedAllocaLoads.find(Load);
+      It != InitializedAllocaLoads.end())
+    return It->second;
+  if (allocaStoredValueBefore(Load))
+    return true;
+  return InitializedAllocaLoads.lookup(Load);
 }
 
 bool LLVMCWriter::computedAllocaLoadIsForwarded(
@@ -903,8 +993,9 @@ LLVMCWriter::impliedPointerSuccessor(const llvm::CondBrInst *Br) const {
   struct Key {
     const llvm::Value *Base = nullptr;
     uint64_t Off = 0;
+    uint64_t Bits = 0;
     bool operator==(const Key &O) const {
-      return Base == O.Base && Off == O.Off;
+      return Base == O.Base && Off == O.Off && Bits == O.Bits;
     }
   };
   auto KeyOfPtr = [&](const llvm::Value *Ptr) -> std::optional<Key> {
@@ -919,13 +1010,14 @@ LLVMCWriter::impliedPointerSuccessor(const llvm::CondBrInst *Br) const {
   struct Fact {
     Key K;
     bool TrueMeansNonZero = false;
+    const llvm::LoadInst *Observation = nullptr;
   };
-  auto LastStored = [](const llvm::LoadInst *Load) -> const llvm::Value * {
+  auto LastStored = [&](const llvm::LoadInst *Load) -> const llvm::Value * {
     const llvm::AllocaInst *Slot = nullptr;
     if (Load)
       Slot = llvm::dyn_cast<llvm::AllocaInst>(
           Load->getPointerOperand()->stripPointerCasts());
-    if (!Load || !Slot)
+    if (!Load || !Load->isSimple() || !Slot || allocaAddressTaken(Slot))
       return nullptr;
     const llvm::Value *Last = nullptr;
     for (const llvm::Instruction &Inst : *Load->getParent()) {
@@ -936,26 +1028,35 @@ LLVMCWriter::impliedPointerSuccessor(const llvm::CondBrInst *Br) const {
         continue;
       if (llvm::dyn_cast<llvm::AllocaInst>(
               SI->getPointerOperand()->stripPointerCasts()) == Slot)
-        Last = SI->getValueOperand();
+        Last = SI->isSimple() ? SI->getValueOperand() : nullptr;
     }
     return Last;
   };
-  auto Canonical = [&](const llvm::LoadInst *Load) -> std::optional<Key> {
-    if (!Load)
+  auto Canonical =
+      [&](const llvm::LoadInst *Load,
+          const llvm::LoadInst *&Observation) -> std::optional<Key> {
+    Observation = Load;
+    if (!Load || !Load->isSimple())
       return std::nullopt;
-    const std::optional<Key> Own = KeyOfPtr(Load->getPointerOperand());
+    std::optional<Key> Own = KeyOfPtr(Load->getPointerOperand());
     if (!Own)
       return std::nullopt;
+    Own->Bits = Load->getType()->getScalarSizeInBits();
     const llvm::Value *Stored = LastStored(Load);
     while (const auto *Cast = llvm::dyn_cast_or_null<llvm::CastInst>(Stored)) {
-      if (!llvm::isa<llvm::ZExtInst, llvm::SExtInst, llvm::TruncInst>(Cast))
+      if (!llvm::isa<llvm::ZExtInst, llvm::SExtInst>(Cast))
         break;
       Stored = Cast->getOperand(0);
     }
     if (const auto *Src = llvm::dyn_cast_or_null<llvm::LoadInst>(Stored)) {
-      if (const std::optional<Key> Inner = KeyOfPtr(Src->getPointerOperand()))
-        if (!(*Inner == *Own))
-          return Inner;
+      if (Src->isSimple())
+        if (std::optional<Key> Inner = KeyOfPtr(Src->getPointerOperand())) {
+          Inner->Bits = Src->getType()->getScalarSizeInBits();
+          if (!(*Inner == *Own)) {
+            Observation = Src;
+            return Inner;
+          }
+        }
     }
     return Own;
   };
@@ -974,7 +1075,7 @@ LLVMCWriter::impliedPointerSuccessor(const llvm::CondBrInst *Br) const {
     if (!Val)
       return std::nullopt;
     while (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Val)) {
-      if (!llvm::isa<llvm::ZExtInst, llvm::SExtInst, llvm::TruncInst>(Cast))
+      if (!llvm::isa<llvm::ZExtInst, llvm::SExtInst>(Cast))
         break;
       Val = Cast->getOperand(0);
     }
@@ -984,7 +1085,7 @@ LLVMCWriter::impliedPointerSuccessor(const llvm::CondBrInst *Br) const {
       if (const llvm::Value *Stored = LastStored(Load)) {
         const llvm::Value *Peeled = Stored;
         while (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Peeled)) {
-          if (!llvm::isa<llvm::ZExtInst, llvm::SExtInst, llvm::TruncInst>(Cast))
+          if (!llvm::isa<llvm::ZExtInst, llvm::SExtInst>(Cast))
             break;
           Peeled = Cast->getOperand(0);
         }
@@ -1004,25 +1105,28 @@ LLVMCWriter::impliedPointerSuccessor(const llvm::CondBrInst *Br) const {
         PtrVal = InnerCmp->getOperand(1);
       while (const auto *Cast =
                  llvm::dyn_cast_or_null<llvm::CastInst>(PtrVal)) {
-        if (!llvm::isa<llvm::ZExtInst, llvm::SExtInst, llvm::TruncInst>(Cast))
+        if (!llvm::isa<llvm::ZExtInst, llvm::SExtInst>(Cast))
           break;
         PtrVal = Cast->getOperand(0);
       }
       if (const auto *PtrLoad =
               llvm::dyn_cast_or_null<llvm::LoadInst>(PtrVal)) {
-        if (const std::optional<Key> K = Canonical(PtrLoad)) {
+        const llvm::LoadInst *Observation = nullptr;
+        if (const std::optional<Key> K = Canonical(PtrLoad, Observation)) {
           const bool InnerNonZero =
               InnerCmp->getPredicate() == llvm::CmpInst::ICMP_NE;
           const bool OuterNonZero =
               Cmp->getPredicate() == llvm::CmpInst::ICMP_NE;
-          return Fact{*K, InnerNonZero == OuterNonZero};
+          return Fact{*K, InnerNonZero == OuterNonZero, Observation};
         }
       }
     }
-    if (!Load)
+    if (!Load || !Load->isSimple())
       return std::nullopt;
-    if (const std::optional<Key> K = Canonical(Load))
-      return Fact{*K, Cmp->getPredicate() == llvm::CmpInst::ICMP_NE};
+    const llvm::LoadInst *Observation = nullptr;
+    if (const std::optional<Key> K = Canonical(Load, Observation))
+      return Fact{*K, Cmp->getPredicate() == llvm::CmpInst::ICMP_NE,
+                  Observation};
     return std::nullopt;
   };
   const auto *Here = llvm::dyn_cast<llvm::ICmpInst>(Br->getCondition());
@@ -1030,15 +1134,34 @@ LLVMCWriter::impliedPointerSuccessor(const llvm::CondBrInst *Br) const {
   if (!Here || !HereFact)
     return nullptr;
   const Key &HereKey = HereFact->K;
-  auto Writes = [&](const llvm::BasicBlock *BB, const llvm::Instruction *Stop) {
+  const auto *PrivateSlot = llvm::dyn_cast<llvm::AllocaInst>(HereKey.Base);
+  const bool Private = PrivateSlot && !allocaAddressTaken(PrivateSlot);
+  auto Writes = [&](const llvm::BasicBlock *BB, const llvm::Instruction *Stop,
+                    const llvm::Instruction *After = nullptr) {
+    bool Active = !After;
     for (const llvm::Instruction &Inst : *BB) {
+      if (&Inst == After) {
+        Active = true;
+        continue;
+      }
+      if (!Active)
+        continue;
       if (Stop && &Inst == Stop)
         break;
-      const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst);
-      if (!SI)
+      if (!Inst.mayWriteToMemory())
         continue;
-      const std::optional<Key> Stored = KeyOfPtr(SI->getPointerOperand());
-      if (Stored && *Stored == HereKey)
+      if (const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst)) {
+        const std::optional<Key> Stored = KeyOfPtr(SI->getPointerOperand());
+        if (Stored && Stored->Base == HereKey.Base &&
+            Stored->Off == HereKey.Off)
+          return true;
+        // An unescaped register home cannot alias an object field or another
+        // home. Any other store or writing call can invalidate a field fact.
+        const auto *Slot = asAllocaPointer(SI->getPointerOperand());
+        if (Slot && !allocaAddressTaken(Slot))
+          continue;
+      }
+      if (!Private)
         return true;
     }
     return false;
@@ -1061,6 +1184,12 @@ LLVMCWriter::impliedPointerSuccessor(const llvm::CondBrInst *Br) const {
         const bool TrueEdge = PBr->getSuccessor(0) == Cur;
         const bool FalseEdge = PBr->getSuccessor(1) == Cur;
         if (DomFact && DomFact->K == HereKey && (TrueEdge || FalseEdge)) {
+          // A condition tests its captured load. A later write in that same
+          // block invalidates the memory fact before control leaves it.
+          if (!DomFact->Observation ||
+              DomFact->Observation->getParent() != Pred ||
+              Writes(Pred, PBr, DomFact->Observation))
+            return nullptr;
           const bool DomNonZero =
               TrueEdge ? DomFact->TrueMeansNonZero : !DomFact->TrueMeansNonZero;
           const bool TakenTrue = DomNonZero == HereNonZero;
@@ -2163,8 +2292,16 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
           if (Local.isTerminator())
             break;
           const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Local);
-          if (!SI)
+          if (!SI) {
+            // A ternary replaces the entire arm. A materialized load or
+            // expression still needs its assignment in that arm, so retain
+            // the if/else when any such statement would be discarded.
+            if (instructionIsPrinted(Local))
+              return nullptr;
             continue;
+          }
+          if (!SI->isSimple())
+            return nullptr;
           if (!asAllocaPointer(SI->getPointerOperand()))
             return nullptr;
           if (!instructionIsPrinted(*SI))
@@ -3251,32 +3388,42 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
                        Type->isIntegerTy(32) || Type->isIntegerTy(64) ||
                        Type->isIntegerTy(128);
   if (!Integer && !Type->isFloatTy() && !Type->isDoubleTy() &&
-      !Type->isBFloatTy())
+      !Type->isHalfTy() && !Type->isBFloatTy() && !Type->isPointerTy())
     return false;
   const auto &Layout = CurMod->getDataLayout();
-  const auto Alignment = Load ? Load->getAlign() : Store->getAlign();
   const auto Size = Layout.getTypeStoreSize(Type);
   const auto *Address =
       Load ? Load->getPointerOperand() : Store->getPointerOperand();
-  const auto Base = peelPointerOffset(Address);
-  const auto *Alloca =
-      Base ? llvm::dyn_cast<llvm::AllocaInst>(Base->first) : nullptr;
-  const auto *Array =
-      Alloca ? llvm::dyn_cast<llvm::ArrayType>(Alloca->getAllocatedType())
-             : nullptr;
-  const bool ByteBacking = Array && Array->getElementType()->isIntegerTy(8);
-  // The source ABI can allow weaker alignment than the emitted C carrier
-  // (for example i64:32). Its exact object size is a conservative alignment
-  // bound for each native scalar type admitted above.
-  // A byte array also needs representation copies for aligned, overlapping
-  // accesses of different scalar types; alignment alone does not establish
-  // the C effective type of its contents.
-  if (Size.isScalable() ||
-      (!ByteBacking && Alignment.value() >= Size.getFixedValue()))
+  // Proven source objects are projected before reaching this fallback.
+  // LLVM alignment alone does not establish a C effective type, even for an
+  // aligned inttoptr address or overlapping views of a byte array.
+  if (Size.isScalable())
     return false;
+  // Immutable image values have their own projection below. A folded image
+  // address need not have a runtime object in the recompiled program.
+  if (Load && Integer)
+    if (auto VA = imageDataVA(Address))
+      if (foldReadonlyScalar(*VA, Size.getFixedValue()))
+        return false;
   std::string Pointer = valueStr(Address);
   if (std::string Image = imageDataCName(Address); !Image.empty())
     Pointer = "&" + Image;
+  else if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Address)) {
+    // Named globals denote C objects, not addresses. An exact type match
+    // permits direct access; differently typed views still copy object bytes.
+    if (Global->getValueType() == Type) {
+      emitIndent(Indent);
+      if (Load)
+        OS << getName(Load) << " = " << Pointer << ";\n";
+      else
+        OS << Pointer << " = "
+           << (Integer ? integerPointerOperandStr(Store->getValueOperand())
+                       : valueStr(Store->getValueOperand()))
+           << ";\n";
+      return true;
+    }
+    Pointer = "&" + Pointer;
+  }
   emitIndent(Indent);
   if (Opts.UseUnalignedPointers) {
     if (auto Alias = c_memory::alias(typeToCLLVM(Type)); !Alias.empty()) {
@@ -3292,8 +3439,9 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
     }
   }
   if (Load) {
-    OS << "__builtin_memcpy(&" << getName(Load) << ", (const void*)(" << Pointer
-       << "), " << Size.getFixedValue() << ");\n";
+    OS << c_memory::loadCopy(getName(Load), Pointer,
+                             std::to_string(Size.getFixedValue()))
+       << ";\n";
   } else {
     const std::string Value = freshVar("memory_value");
     OS << "{ " << typeToCLLVM(Type) << " " << Value << " = "
@@ -3301,8 +3449,9 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
                    : valueStr(Store->getValueOperand()))
        << ";\n";
     emitIndent(Indent + 1);
-    OS << "__builtin_memcpy((void*)(" << Pointer << "), &" << Value << ", "
-       << Size.getFixedValue() << ");\n";
+    OS << c_memory::storeCopy(Pointer, Value,
+                              std::to_string(Size.getFixedValue()))
+       << ";\n";
     emitIndent(Indent);
     OS << "}\n";
   }
@@ -3485,7 +3634,8 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
   }
   if (IID == llvm::Intrinsic::memcpy || IID == llvm::Intrinsic::memmove) {
     emitIndent(Indent);
-    OS << "memcpy(" << valueStr(Call.getArgOperand(0)) << ", "
+    OS << (IID == llvm::Intrinsic::memmove ? "memmove(" : "memcpy(")
+       << valueStr(Call.getArgOperand(0)) << ", "
        << valueStr(Call.getArgOperand(1)) << ", "
        << valueStr(Call.getArgOperand(2)) << ");\n";
     return true;
@@ -5803,7 +5953,7 @@ void LLVMCWriter::writeCatchSwitch(llvm::CatchSwitchInst &CS, int Indent) {
 
 void LLVMCWriter::writeCleanupRet(llvm::CleanupReturnInst &CR, int Indent) {
   llvm::BasicBlock *Dest = CR.getUnwindDest();
-  if (Dest && OmitCleanupRetTo.count(Dest))
+  if (OmitCleanupRetTo.count(Dest))
     return;
   emitIndent(Indent);
   if (!Dest)

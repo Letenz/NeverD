@@ -156,7 +156,7 @@ bool useMsvcSegmentedRead(const CEmitterOptions &Opts, const HighFunc *Func) {
          (Opts.Image && Opts.Image->Format == BinaryFormat::COFF);
 }
 
-std::string memoryHelperName(llvm::StringRef Operation, unsigned TypeIndex,
+std::string memoryHelperName(llvm::StringRef Operation, llvm::StringRef Type,
                              NdMemoryOrdering Ordering,
                              NdMemoryAddressSpace AddressSpace) {
   std::string Name = "neverd_mem_" + Operation.str() + "_";
@@ -164,7 +164,13 @@ std::string memoryHelperName(llvm::StringRef Operation, unsigned TypeIndex,
     Name += std::string(memoryAddressSpaceName(AddressSpace)) + "_";
   if (Ordering != NdMemoryOrdering::None)
     Name += std::string(memoryOrderingName(Ordering)) + "_";
-  return Name + std::to_string(TypeIndex);
+  if (auto Alias = c_memory::alias(Type); !Alias.empty())
+    return Name + llvm::StringRef(Alias).drop_front(17).str();
+  if (Type.consume_front("unsigned _BitInt(") && Type.consume_back(")"))
+    return Name + "u" + Type.str();
+  if (Type.consume_front("_BitInt(") && Type.consume_back(")"))
+    return Name + "i" + Type.str();
+  return Name + canonicalizeCProjectionIdentifier(Type);
 }
 
 bool isBareCIntegerLiteral(llvm::StringRef S) {
@@ -514,10 +520,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   CurrentFunc = nullptr;
   FrameSlots.clear();
 
-  MemoryTypes.clear();
-  unsigned Index = 0;
-  for (const std::string &Name : Names)
-    MemoryTypes.emplace(Name, Index++);
+  MemoryTypes = std::move(Names);
 }
 
 void HighCWriter::writeMemoryHelpers() {
@@ -534,11 +537,10 @@ void HighCWriter::writeMemoryHelpers() {
           "spaces\"\n"
           "#endif\n\n";
 
-  auto WriteHelpers = [&](const std::string &Type, unsigned Index,
+  auto WriteHelpers = [&](const std::string &Type,
                           NdMemoryAddressSpace AddressSpace) {
-    if (Opts.UseUnalignedPointers &&
-        AddressSpace == NdMemoryAddressSpace::Default &&
-        !c_memory::alias(Type).empty())
+    if (AddressSpace == NdMemoryAddressSpace::Default &&
+        !PartialIntegerBytes.count(Type))
       return;
     const auto ReadPtr =
         AddressSpace == NdMemoryAddressSpace::Default
@@ -554,9 +556,9 @@ void HighCWriter::writeMemoryHelpers() {
                           ? "memcpy"
                           : "__builtin_memcpy";
     const auto LoadName =
-        memoryHelperName("load", Index, NdMemoryOrdering::None, AddressSpace);
+        memoryHelperName("load", Type, NdMemoryOrdering::None, AddressSpace);
     const auto StoreName =
-        memoryHelperName("store", Index, NdMemoryOrdering::None, AddressSpace);
+        memoryHelperName("store", Type, NdMemoryOrdering::None, AddressSpace);
     // A bit-precise integer can have object padding. Assemble its numeric
     // value from exactly the IR bytes instead of copying sizeof(_BitInt(N)).
     // The generated C uses its target's native memory byte order, just as the
@@ -603,11 +605,11 @@ void HighCWriter::writeMemoryHelpers() {
     }
     OS << "    return value;\n}\n\n";
   };
-  for (const auto &[Type, Index] : MemoryTypes)
-    WriteHelpers(Type, Index, NdMemoryAddressSpace::Default);
+  for (const auto &Type : MemoryTypes)
+    WriteHelpers(Type, NdMemoryAddressSpace::Default);
   for (const auto &[Type, AddressSpace] : SegmentedMemoryTypes) {
     validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
-    WriteHelpers(Type, MemoryTypes.at(Type), AddressSpace);
+    WriteHelpers(Type, AddressSpace);
   }
 
   for (const auto &[Type, Ordering, AddressSpace] : AtomicLoadTypes) {
@@ -616,9 +618,8 @@ void HighCWriter::writeMemoryHelpers() {
           "HighC atomic access requires a supported machine width");
     validateAtomicLoadOrdering(Ordering);
     validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
-    unsigned Index = MemoryTypes.at(Type);
     OS << "static inline " << Type << " "
-       << memoryHelperName("load", Index, Ordering, AddressSpace)
+       << memoryHelperName("load", Type, Ordering, AddressSpace)
        << "(uintptr_t address) {\n"
        << "    return __atomic_load_n("
        << memoryPointerCast(Type, "address", AddressSpace, true) << ", "
@@ -632,9 +633,8 @@ void HighCWriter::writeMemoryHelpers() {
           "HighC atomic access requires a supported machine width");
     validateAtomicStoreOrdering(Ordering);
     validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
-    unsigned Index = MemoryTypes.at(Type);
     OS << "static inline " << Type << " "
-       << memoryHelperName("store", Index, Ordering, AddressSpace)
+       << memoryHelperName("store", Type, Ordering, AddressSpace)
        << "(uintptr_t address, " << Type << " value) {\n"
        << "    __atomic_store_n("
        << memoryPointerCast(Type, "address", AddressSpace, false) << ", value, "
@@ -647,7 +647,8 @@ void HighCWriter::writeMemoryHelpers() {
 std::string HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
                                         NdMemoryOrdering Ordering,
                                         NdMemoryAddressSpace AddressSpace,
-                                        bool ExactImageBytes) const {
+                                        bool ExactImageBytes,
+                                        MemoryLoadDestination *Destination) {
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
   if (ExactImageBytes && (Ordering != NdMemoryOrdering::None ||
                           AddressSpace != NdMemoryAddressSpace::Default))
@@ -667,13 +668,26 @@ std::string HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
       AddressSpace == NdMemoryAddressSpace::Default)
     if (auto Alias = c_memory::alias(Type); !Alias.empty())
       return c_memory::access(Alias, Addr, true);
+  if (Ordering == NdMemoryOrdering::None &&
+      AddressSpace == NdMemoryAddressSpace::Default &&
+      !PartialIntegerBytes.count(Type)) {
+    if (Destination && !Destination->Name.empty()) {
+      Destination->Written = true;
+      return c_memory::loadCopy(Destination->Name, Addr,
+                                "sizeof(" + Destination->Name + ")");
+    }
+    const auto Value = memoryTemporary(Type, "memory_value");
+    // Keep the copy at the expression's original evaluation point. Hoisting
+    // it above a conditional or loop would execute guarded loads eagerly.
+    return "(" + c_memory::loadCopy(Value, Addr, "sizeof(" + Value + ")") +
+           ", " + Value + ")";
+  }
   auto It = MemoryTypes.find(Type);
   if (It == MemoryTypes.end())
     llvm::report_fatal_error("HighC memory load type was not collected");
-  unsigned Index = It->second;
   if (Ordering != NdMemoryOrdering::None)
     validateAtomicLoadOrdering(Ordering);
-  return memoryHelperName("load", Index, Ordering, AddressSpace) +
+  return memoryHelperName("load", Type, Ordering, AddressSpace) +
          "((uintptr_t)(" + Addr.str() + "))";
 }
 
@@ -682,7 +696,7 @@ std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
                                          llvm::StringRef Val,
                                          NdMemoryOrdering Ordering,
                                          NdMemoryAddressSpace AddressSpace,
-                                         bool ExactImageBytes) const {
+                                         bool ExactImageBytes) {
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
   if (ExactImageBytes && (Ordering != NdMemoryOrdering::None ||
                           AddressSpace != NdMemoryAddressSpace::Default))
@@ -693,20 +707,72 @@ std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
                                 ? "(" + Type + ")(uintptr_t)(" + Val.str() + ")"
                                 : Val.str();
   // A machine address does not establish C alignment or effective type.
-  // The byte-copy helper also returns the stored value, so expression stores
-  // preserve their assignment result while evaluating address/value once.
   if (Opts.UseUnalignedPointers && Ordering == NdMemoryOrdering::None &&
       AddressSpace == NdMemoryAddressSpace::Default)
     if (auto Alias = c_memory::alias(Type); !Alias.empty())
       return "(" + c_memory::access(Alias, Addr, false) + " = " + Value + ")";
+  if (Ordering == NdMemoryOrdering::None &&
+      AddressSpace == NdMemoryAddressSpace::Default &&
+      !PartialIntegerBytes.count(Type)) {
+    const auto Address = memoryTemporary("uintptr_t", "memory_address");
+    const auto Stored = memoryTemporary(Type, "memory_value");
+    return "(" + Address + " = (uintptr_t)(" + Addr.str() + "), " + Stored +
+           " = " + Value + ", " +
+           c_memory::storeCopy(Address, Stored, "sizeof(" + Stored + ")") +
+           ", " + Stored + ")";
+  }
   auto It = MemoryTypes.find(Type);
   if (It == MemoryTypes.end())
     llvm::report_fatal_error("HighC memory store type was not collected");
-  unsigned Index = It->second;
   if (Ordering != NdMemoryOrdering::None)
     validateAtomicStoreOrdering(Ordering);
-  return memoryHelperName("store", Index, Ordering, AddressSpace) +
+  return memoryHelperName("store", Type, Ordering, AddressSpace) +
          "((uintptr_t)(" + Addr.str() + "), " + Value + ")";
+}
+
+std::string HighCWriter::memoryTemporary(llvm::StringRef Type,
+                                         llvm::StringRef Base) {
+  const auto Name = MemoryIdentifiers.allocate(Base);
+  MemoryTemporaries.emplace(Name, Type.str());
+  return Name;
+}
+
+void HighCWriter::writeMemoryStore(const TypeRef &Ty, llvm::StringRef Addr,
+                                   llvm::StringRef Val,
+                                   NdMemoryOrdering Ordering,
+                                   NdMemoryAddressSpace AddressSpace,
+                                   bool ExactImageBytes, int Indent) {
+  const std::string Type = memoryTypeName(Ty);
+  if (Ordering != NdMemoryOrdering::None ||
+      AddressSpace != NdMemoryAddressSpace::Default ||
+      PartialIntegerBytes.count(Type) ||
+      (Opts.UseUnalignedPointers && !c_memory::alias(Type).empty())) {
+    emitIndent(Indent);
+    OS << memoryStoreExpr(Ty, Addr, Val, Ordering, AddressSpace,
+                          ExactImageBytes)
+       << ";\n";
+    return;
+  }
+  // A fresh carrier cannot overlap the destination, even for a self-store
+  // through an escaped source local. Its initialization also applies the
+  // store's exact-width conversion before copying bytes.
+  const auto Address = MemoryIdentifiers.allocate("memory_address");
+  const auto Value = MemoryIdentifiers.allocate("memory_value");
+  emitIndent(Indent);
+  OS << "{\n";
+  emitIndent(Indent + 1);
+  OS << "uintptr_t " << Address << " = (uintptr_t)(" << Addr << ");\n";
+  emitIndent(Indent + 1);
+  OS << Type << " " << Value << " = ";
+  if (Ty && Ty->Kind == NdTypeKind::Ptr)
+    OS << "(" << Type << ")(uintptr_t)(" << Val << ")";
+  else
+    OS << Val;
+  OS << ";\n";
+  emitIndent(Indent + 1);
+  OS << c_memory::storeCopy(Address, Value, "sizeof(" + Value + ")") << ";\n";
+  emitIndent(Indent);
+  OS << "}\n";
 }
 
 std::string

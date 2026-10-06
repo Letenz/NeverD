@@ -1,18 +1,26 @@
-//===- KernelInterruptAPIs.def - Interrupt API names and arities ---------===//
+//===- KernelInterruptAPIs.def - Interrupt API contracts       ---------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Genuine fixed-arity WDK interrupt registration and synchronization APIs.
+/// Fixed-arity WDK interrupt registration and synchronization APIs, including
+/// their IRQL ceilings and typed operations.
 ///
 //===----------------------------------------------------------------------===//
 
-NEVERD_KERNEL_INTERRUPT_API(IoConnectInterrupt, 11, Passive)
-NEVERD_KERNEL_INTERRUPT_API(IoDisconnectInterrupt, 1, Passive)
-NEVERD_KERNEL_INTERRUPT_API(IoConnectInterruptEx, 1, Passive)
-NEVERD_KERNEL_INTERRUPT_API(IoDisconnectInterruptEx, 1, Passive)
-NEVERD_KERNEL_INTERRUPT_API(KeSynchronizeExecution, 3, Any)
-NEVERD_KERNEL_INTERRUPT_API(KeAcquireInterruptSpinLock, 1, Any)
-NEVERD_KERNEL_INTERRUPT_API(KeReleaseInterruptSpinLock, 2, Any)
+NEVERD_KERNEL_INTERRUPT_API(IoConnectInterrupt, 11, Passive,
+                            connectInterrupt(A))
+NEVERD_KERNEL_INTERRUPT_API(IoDisconnectInterrupt, 1, Passive,
+                            disconnectInterrupt(A[0]))
+NEVERD_KERNEL_INTERRUPT_API(IoConnectInterruptEx, 1, Passive,
+                            connectInterruptEx(A[0]))
+NEVERD_KERNEL_INTERRUPT_API(IoDisconnectInterruptEx, 1, Passive,
+                            disconnectInterruptEx(A[0]))
+NEVERD_KERNEL_INTERRUPT_API(KeSynchronizeExecution, 3, Any,
+                            synchronizeInterrupt(A[0], A[1], A[2]))
+NEVERD_KERNEL_INTERRUPT_API(KeAcquireInterruptSpinLock, 1, Any,
+                            acquireInterruptSpinLock(A[0]))
+NEVERD_KERNEL_INTERRUPT_API(KeReleaseInterruptSpinLock, 2, Any,
+                            releaseInterruptSpinLock(A[0], uint8_t(A[1])))

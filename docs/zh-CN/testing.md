@@ -77,6 +77,8 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 
 `LowIRLoopInference.*` 和 `BinaryLowIRLoopInference.*` 使用独立编写的计数器、栈存储、提前返回、原生调用和打包标志位用例，覆盖窄位宽算术拓宽以及表达式不同但语义相等的标志状态。畸形图、缺失或伪造的来源、不终止／回绕循环，以及推导或证明预算耗尽均不得产生证书。
 
+零前缀回归检查拼接分组、非标准位宽及穷举字节对，并保留未知和非零位。独立编写的帧循环覆盖两种字节序中分开写入低位值和高位零、窄位宽、错误算术与填充、恰好及不足的推断预算，以及独立的完整证明查询预算。
+
 共享入口与共享回跳块的回归覆盖零扩展的 32 位及完整的 64 位计数器、非单位步长标量排名、错误结果、不进展与回绕路径，以及标量和组合排名搜索之间恰好足够或耗尽的累计预算。`LowIRLoopInference.SharedHeaderAndLatchNeedLexicographicRanks`。 另有递增与重置回归，要求无需每轮只展开一个计数器位即可收敛，并拒绝缺失进展和无符号回绕。 调度回归覆盖循环携带的非单位步长累加器、有效非单位步长标量排名旁可能回绕的单位计数器，以及有效组合排在早期窗口之后的三个计数器。恰好足够和少一次的排名预算检查确定性的继续搜索，并防止重复候选。
 
 同一目标中的 `LowIRLoopPlanPairing.*` 检查寄存器重命名、不同算术体、双方独立前缀快照、谓词保留、共享帧输入、嵌套切点覆盖和独立证明预算。缺失关系、错误写入、无效临时值绑定、不完整配对或元数据预算耗尽均不得产生证书。
@@ -1119,7 +1121,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 4569 项 CPU 检查及 17 项 SEH 回归，共有 4810 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `4825 CPU + 224 WHP + 17 SEH = 5066`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 4835 项 CPU 检查及 17 项 SEH 回归，共有 5076 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `4835 CPU + 224 WHP + 17 SEH = 5076`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1320,6 +1322,11 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `FrameMetadataAccessorUsesCurrentCatalogAndABI` 检查共享元数据声明、两个响应载体和当前帧见证的发布。`FrameMetadataAccessorRejectsChangedImportAndBytes` 拒绝弱导入、provider/名称/addend 变更、私有地址请求、部分 spill、错误重载及原始调用变更。原始 ARM64 与生成 C 的见证 oracle 还会实际调用 Foundation URL 元数据访问器：两个分支均在 O0/O2 下运行 2048 组，检查动态见证选择、完整输出字节、输入保持、调用次数和保护字。这些检查不证明动态栈分配或见证内存效应。
 
+`AArch64ExclusiveTests.cpp` 覆盖标量及成对宽度、acquire/release 形式、寄存器重叠、别名、对齐与权限故障、快照、观察回调取消或失败以及双 CPU 竞争。`RAMReservationTests.cpp` 覆盖相同值写入、ABA、分配复用、回滚，以及 KVM/Unicorn 字符串和 `ENTER` 写入的干扰。原始 ARM64 Windows 进程样例执行独占循环；`scripts/check_aarch64_exclusives.py` 在 Windows ARM64 CI 上执行原始指令并保存对齐异常记录。原生指令证据不代表已验证 ARM64 KVM/WHP 后端执行；不可用配置仍明确记为跳过。 相同的独占指令用例还覆盖软件 Unicorn、跨契约干扰、同值及 ABA 写入、同次执行中的可执行别名，以及 `DC ZVA` 写入和观察回调取消。
+ `windows-alignment-oracle.yml` 也运行 ARM64 探针：1,320 条观察记录覆盖所有未对齐偏移、四种读写序列，以及可写、只读、不可访问和跨页内存。探针保留完整位宽的寄存器测试值，并记录故障前已提交的部分写入。 `WindowsExclusiveProcessTests.cpp` 将 1,320 条原始 Windows ARM64 观察结果与 `WindowsExclusiveNative.def` 中的原生摘要逐项核对，保留寄存器值、异常元数据和 RAM 效果，仅归一化代码与数据的放置地址。
+
+`AArch64AtomicTests.cpp` 覆盖 168 种独立汇编的 LSE 编码、寄存器别名、有符号比较、权限、取消、物理保留状态及 NZCV 传输。`scripts/check_aarch64_atomics.py` 收集 1,100 条原始 Windows ARM64 记录，包含完整操作数结果、异常上下文和 RAM 写入范围；解析测试拒绝缺失或不一致的证据。原生 KVM/WHP 执行仍需单独验证。 checked 进程回归由 `WindowsAtomicProcessTests.cpp` 执行，完整记录摘要保存在 `WindowsAtomicResults.def`。
+
 结构上已为常量的原生目标直接使用现有的可达性检查调度。符号单目标只有在穷尽枚举后才复用传入谓词。回归在直线执行的查询预算内验证 128 次常量跳转，并按每次转移两次枚举查询的预算验证 32 次计算目标跳转，保留未约束的地址高位和分支域。完整状态结果被修改、缺少对齐约束、目标数量上限为零或查询与指令预算不足时必须拒绝。多目标和未完成枚举的现有拒绝检查仍然必需。
 
 只有完成 UNSAT 证明、排除另一条边后，原生分支才在当前边保留传入域。测试在 512 个求解门内验证两个方向各 32 次带条件跳转，并检查精确与少一次的查询预算及求解门耗尽。修改或删除对齐条件、反转比较以及修改终态都必须拒绝；任意未定义控制和两条边均可达的现有测试仍然必需。
@@ -1329,3 +1336,29 @@ build-release/bin/NeverDByteCellScalarizationTests
 `SourceFrameAnalysis.CallStorage*` 覆盖精确调用、到达定义、初始化、填充、逃逸、边界和循环，不授予来源发布权限。`ObjCFrameBlockBorrows.*` 覆盖描述符限定的同步借用，以及 19 种导入、头部、ABI 和机器指令修改。测试保留未证明的填充字节并拒绝未初始化的所有权字段；block 构造、捕获读取及回调依赖闭包仍各自接受发布验证。
 
 block/副本发布测试还覆盖两个独立的 48 字节范围、描述符重叠、回调本体变化、过期机器指令与 IR、脱离本体的调用位置，以及精确投影顺序。`MixedWidthFrameCopiesMeetEveryInitializedByte` 与 `FrameCoverageCannotHideMissingBytesOrPointerJoins` 检查两种合并顺序下的 8/16 字节写入、缺失字节、可写借用失效和部分覆盖后仍保留的指针身份。
+
+循环关系测试覆盖任意迭代次数下固定及变化的函数临时值、两侧独立偏移、配对方案、部分和非对齐范围、两种字节序及基于临时值的排名。原生组合只在候选侧保留新增存储。缺少前缀、未声明或未定义字节、错误投影、遗漏赋值、程序行为变化及定义集合冲突均须拒绝认证。执行、查询及观察项预算在精确上限通过，少一单位失败；推断不能为后续证明补充预算。生存期仍绑定摘要。这些检查不建立普通原生 ABI。
+
+原生循环关系测试在任意迭代次数下检查延迟条件分支收集和保留未审核拒绝边界。手工及推断方案必须重新检查完整入口域和归纳域；可达的坏分支、被修改的原生更新及查询或指令预算耗尽都拒绝证书。测试绑定被修改的不可达边界字节，保留严格默认值和无效方案拒绝，检查两种见证及组合收集选项，并继续拒绝静态 API 和重叠指令。证书语义模式 17 绑定此准入；普通原生 ABI 和源码组合仍是独立义务。
+
+`ObjCSuperGetterSources` 覆盖四载体 CGRect getter、十项发布变更拒绝用例，以及布尔/CGRect 调用者共用机器代码的情况。O0、O2 执行验证检查精确返回位（含负零、无穷及 NaN 载荷）、接收者/类身份和元数据调用之后的选择子加载。Apple ARM64 同时执行原始编译器 thunk 和生成的 C；其他平台使用本机记录 ABI 执行生成的 C。
+
+`LowIRLoopInference` 覆盖带任意初始高位的 8、24、32 位计数器投影、递增及递减、寄存器、栈帧、函数临时值和两种字节序。完整自证明通过，结果变化、停滞、窄位宽回绕及跳过相等退出条件均被拒绝。操作、查询、路径、排名候选及拓宽预算在精确上限通过，少一单位失败；最终证明的操作、查询及观察预算单独检查。
+
+`ObjCCallHints.SDKRecordData*` 检查两种外部记录、每个 double 的偏移、两种 Darwin 架构及提供者别名，并覆盖导入变化、弱链接、缺少库、修复冲突、可写存储及不完整范围。`python3 -m unittest scripts.tests.test_generate_darwin_record_data_declarations scripts.tests.test_generate_darwin_data_declarations` 检查配置冲突、替代布局、无效大小/对齐、TLS 和各架构导出。用固定 SDK、libclang、输出路径及 `--check` 运行 `generate_darwin_record_data_declarations.py` 可复现目录；声明检查不证明原生间接结果已初始化，也不建立方法恢复。
+
+`LowIRLoopInference.ProjectedBounds*` 覆盖计数器与边界高位任意的窄位域等值退出，包含 8、24、32 位、三种存储位置和两种字节序。完整证明拒绝边界变化、停滞、跳过退出、回绕及被观察的输入高位字节变化。推断与证明预算保持独立，并检查精确上限和少一单位的情形。
+
+`LowIRLoopInference.LateCounter*` 覆盖常量初始化后仅在泛化时才显现的 8、24、32 位计数器，包含寄存器、帧、函数临时量、两种字节序及任意边界高位。等值退出通过完整证明；停滞、跳过退出、变化的边界及可观察高位字节被改动均被拒绝。推断与最终证明分别检查精确预算和少一单位预算。
+
+`LowIRLoopInference.ProjectedComparisonBits*` 覆盖循环头处缓存的窄位域等值条件，边界高位可任意，包含 8、24、32 位计数器、三种存储位置、两种字节序和常量或高位填充初始化。完整证明拒绝缓存值、可观察高位字节、边界被改动，以及停滞或跳过退出。推断与最终证明分别检查精确预算和少一单位预算。
+
+`LowIRLoopInference.OrderedComparisonBits*` 覆盖两种布尔编码下缓存的无符号大小比较退出，包含 8、24、32 位计数器、三种存储位置和两种字节序。完整证明拒绝不终止的更新、比较条件变化、边界变化和可观察高位字节被改动。推断与证明分别检查精确及少一单位预算。改变布尔编码的测试夹具在证明前重新绑定原始操作摘要。
+
+`LowIRLoopInference.MutablePrefixBounds*` 覆盖高位持续变化的 8、24、32 位派生边界、三种计数器存储、两种字节序和直接或缓存退出条件，检查不终止、移动的等值边界、可观察高位及缓存改动，以及精确和少一单位预算。移动的无符号大小比较边界可能在回绕时终止，另有完整证明回归。
+
+`LowIRLoopRefinement.GuardedCuts*` 和 `BinaryLowIRLoopRefinement.GuardedCuts*` 覆盖同址切点、寄存器、帧及原生系统标志、两种字节序、未匹配的有限及循环路径、重叠和错配拒绝、前缀泛化、未定义值见证、错误元数据、摘要及共享预算。独立原生测试证明两个 R10 上下文共用循环地址，并确认未审计边界检查先于选择条件。普通 ABI 认证仍是独立工作。
+
+`BinaryLowIRLoopInference.NativeSelectors*` 覆盖两个寄存器上下文、仅靠帧区分的上下文、三域合取、无法区分的模板、来源及原生循环体变异，以及推断和证明各自的精确与少一预算。循环次数任意，不引入入口常量。
+
+`DarwinIndirectRecordCalls` 检查当前 MakeScale 契约及 22 项导入/ABI 变更拒绝案例，再通过共享按值副本证明消费完整的 48 字节私有结果。未对齐、偏移、重叠或越出栈帧的结果范围均被拒绝。即使保留完整返回 ABI，移除确定写入效果也会被拒绝。

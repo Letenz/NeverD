@@ -603,6 +603,104 @@ bool usesFramework(const BinaryImage &Image,
 }
 } // namespace
 
+std::optional<SourceFunctionTypeHint>
+objcSuperGetterSourceDeclaration(Arch Architecture, const TypeRef &ReturnType) {
+  if (Architecture != Arch::AArch64)
+    return std::nullopt;
+  for (const auto Encoding :
+       {"B16@0:8", "{CGRect={CGPoint=dd}{CGSize=dd}}16@0:8"}) {
+    auto Expected = parseObjCMethodEncoding("value", Encoding);
+    std::string Error;
+    if (Expected && equalSourceTypes(Expected->ReturnType, ReturnType) &&
+        assignDarwinObjCSourceABI(*Expected, Architecture, Error))
+      return Expected;
+  }
+  return std::nullopt;
+}
+
+std::optional<SourceFunctionTypeHint>
+objcSuperGetterHelperSourceDeclaration(Arch Architecture,
+                                       const TypeRef &ReturnType) {
+  auto Expected = objcSuperGetterSourceDeclaration(Architecture, ReturnType);
+  if (!Expected)
+    return std::nullopt;
+  Expected->Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Expected->Parameters.clear();
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  for (const auto Name : {"self", "command", "selector_slot", "metadata"})
+    Expected->Parameters.push_back({Name, Pointer});
+  std::string Error;
+  return assignDarwinFixedSourceABI(*Expected, Architecture, Error)
+             ? Expected
+             : std::nullopt;
+}
+
+std::optional<SourceFunctionTypeHint>
+objcMergedSetterSourceDeclaration(Arch Architecture, const TypeRef &ValueType) {
+  if (Architecture != Arch::AArch64)
+    return std::nullopt;
+  for (const auto Encoding :
+       {"v20@0:8B16", "v48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16"}) {
+    auto Expected = parseObjCMethodEncoding("value:", Encoding);
+    std::string Error;
+    if (Expected && Expected->Parameters.size() == 3 &&
+        equalSourceTypes(Expected->Parameters[2].Type, ValueType) &&
+        assignDarwinObjCSourceABI(*Expected, Architecture, Error))
+      return Expected;
+  }
+  return std::nullopt;
+}
+
+std::optional<SourceFunctionTypeHint>
+objcMergedSetterHelperSourceDeclaration(Arch Architecture,
+                                        const TypeRef &ValueType) {
+  auto Expected = objcMergedSetterSourceDeclaration(Architecture, ValueType);
+  if (!Expected)
+    return std::nullopt;
+  const bool Rect = !Expected->Parameters[2].Components.empty();
+  Expected->Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  Expected->Parameters = {
+      {"self", Pointer},
+      {"command", Pointer},
+      {"value", ValueType},
+      {"selector_slot", Pointer},
+      {"storage", Pointer},
+      {"metadata", Pointer},
+      {Rect ? "layout_selector_slot" : "isa_mask", Pointer}};
+  std::string Error;
+  return assignDarwinFixedSourceABI(*Expected, Architecture, Error)
+             ? Expected
+             : std::nullopt;
+}
+
+static std::optional<SourceFunctionTypeHint>
+currentMethodSourceTypeHint(const auto &Method, Arch Architecture) {
+  if (!Method.TypeHint)
+    return std::nullopt;
+  auto Hint = *Method.TypeHint;
+  std::string Diagnostic;
+  if (!assignDarwinObjCSourceABI(Hint, Architecture, Diagnostic))
+    return std::nullopt;
+  // The current encoding owns the declaration for entry and selector queries,
+  // including protocol methods. Declaration-only clients may omit it.
+  if (!Method.TypeEncoding.empty()) {
+    auto Declared =
+        parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+    if (!Declared ||
+        !assignDarwinObjCSourceABI(*Declared, Architecture, Diagnostic) ||
+        Hint.Parameters.size() != Declared->Parameters.size())
+      return std::nullopt;
+    // Encodings carry positions and types, not source parameter names.
+    for (size_t I = 0; I < Hint.Parameters.size(); ++I)
+      Declared->Parameters[I].Name = Hint.Parameters[I].Name;
+    if (!equalSourceABIs(Hint, *Declared))
+      return std::nullopt;
+    Hint = std::move(*Declared);
+  }
+  return Hint;
+}
+
 static std::optional<SelectorSignatures>
 selectorSourceTypeHints(const BinaryImage &Image, llvm::StringRef Selector,
                         const SourceFunctionTypeHint *FormatSignature) {
@@ -630,13 +728,10 @@ selectorSourceTypeHints(const BinaryImage &Image, llvm::StringRef Selector,
   auto Include = [&](const auto &Method) {
     if (Method.Selector != Selector)
       return true;
-    if (!Method.TypeHint)
+    auto Hint = currentMethodSourceTypeHint(Method, Image.Arch);
+    if (!Hint)
       return false;
-    auto Hint = *Method.TypeHint;
-    std::string Diagnostic;
-    if (!assignDarwinObjCSourceABI(Hint, Image.Arch, Diagnostic))
-      return false;
-    Add(std::move(Hint));
+    Add(std::move(*Hint));
     return true;
   };
   for (const auto &Method : Image.ObjCMethods)
@@ -761,32 +856,10 @@ objcMethodSourceTypeHint(const BinaryImage &Image, va_t Entry) {
   for (const auto &Method : Image.ObjCMethods) {
     if (Method.Implementation != Entry)
       continue;
-    if (!Method.TypeHint)
+    auto Hint = currentMethodSourceTypeHint(Method, Image.Arch);
+    if (!Hint || (Result && !equalSourceABIs(*Result, *Hint)))
       return std::nullopt;
-    auto Hint = *Method.TypeHint;
-    std::string Diagnostic;
-    if (!assignDarwinObjCSourceABI(Hint, Image.Arch, Diagnostic))
-      return std::nullopt;
-    // A loader cache cannot authenticate a changed current declaration.
-    // Synthetic clients may supply only TypeHint; when encoding is present,
-    // its complete selector/ABI must still agree with that cached value.
-    if (!Method.TypeEncoding.empty()) {
-      auto Declared =
-          parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
-      if (!Declared ||
-          !assignDarwinObjCSourceABI(*Declared, Image.Arch, Diagnostic) ||
-          Hint.Parameters.size() != Declared->Parameters.size())
-        return std::nullopt;
-      // Encodings carry positions and types, not source parameter names.
-      for (size_t I = 0; I < Hint.Parameters.size(); ++I)
-        Declared->Parameters[I].Name = Hint.Parameters[I].Name;
-      if (!equalSourceABIs(Hint, *Declared))
-        return std::nullopt;
-      Hint = std::move(*Declared);
-    }
-    if (Result && !equalSourceABIs(*Result, Hint))
-      return std::nullopt;
-    Result = std::move(Hint);
+    Result = std::move(*Hint);
   }
   return Result;
 }

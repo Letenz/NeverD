@@ -14,6 +14,14 @@
 #include <mutex>
 
 namespace neverd::emulation {
+/// A retained physical interval and its write witness. All validity changes
+/// are serialized by the physical owner's execution mutex. Keeping the view
+/// alive prevents allocation reuse from making an old reservation match.
+struct RAMReservation {
+  MemoryView Bytes;
+  uint64_t Granule, GranuleSize;
+  bool Valid = true;
+};
 struct PhysicalMemory::Impl {
   llvm::sys::MemoryBlock Backing;
   uint64_t Limit = 0;
@@ -25,6 +33,11 @@ struct PhysicalMemory::Impl {
   // mutations and recursive CPU execution still reject the Running state.
   mutable std::recursive_mutex Mutex;
   bool Running = false;
+  std::vector<std::weak_ptr<RAMReservation>> Reservations;
+  // Called only for committed guest writes, including identical-value stores.
+  // Neither invalidation operation allocates or invokes observers.
+  void invalidateReservations(uint64_t Physical, uint64_t Size);
+  void invalidateReservations();
 };
 struct MemoryAccessFailure {
   BackendFaultKind Kind;

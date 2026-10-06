@@ -98,6 +98,16 @@ evaluateJumpTableGuardPrimitive(NdOp Opcode, uint16_t OutputSize,
     return *std::max_element(InputSizes.begin(), InputSizes.end());
   };
   switch (Opcode) {
+  case NdOp::BOOL_AND:
+  case NdOp::BOOL_OR:
+  case NdOp::BOOL_XOR:
+    if (Inputs.size() != 2)
+      return std::nullopt;
+    if (Opcode == NdOp::BOOL_AND)
+      return input(0) != 0 && input(1) != 0;
+    if (Opcode == NdOp::BOOL_OR)
+      return input(0) != 0 || input(1) != 0;
+    return (input(0) != 0) != (input(1) != 0);
   case NdOp::INT_NEGATE:
   case NdOp::INT_NOT:
     return truncateToWidth(~input(0), InputSizes[0]) & widthMask(OutputSize);
@@ -143,6 +153,33 @@ evaluateJumpTableGuardPrimitive(NdOp Opcode, uint16_t OutputSize,
   default:
     return std::nullopt;
   }
+}
+
+std::optional<uint64_t> evaluateJumpTableGuardPartialPrimitive(
+    NdOp Opcode, uint16_t OutputSize,
+    llvm::ArrayRef<std::optional<uint64_t>> Inputs,
+    llvm::ArrayRef<uint16_t> InputSizes) {
+  if (OutputSize == 0 || OutputSize > sizeof(uint64_t) ||
+      Inputs.size() != InputSizes.size() || Inputs.empty() ||
+      std::any_of(InputSizes.begin(), InputSizes.end(), [](uint16_t Size) {
+        return Size == 0 || Size > sizeof(uint64_t);
+      }))
+    return std::nullopt;
+  if (Inputs.size() == 2 &&
+      (Opcode == NdOp::BOOL_AND || Opcode == NdOp::BOOL_OR))
+    for (unsigned I = 0; I != 2; ++I)
+      if (Inputs[I]) {
+        const bool Truth = truncateToWidth(*Inputs[I], InputSizes[I]) != 0;
+        if (Truth == (Opcode == NdOp::BOOL_OR))
+          return Truth;
+      }
+  std::vector<uint64_t> Known;
+  for (const auto &Input : Inputs) {
+    if (!Input)
+      return std::nullopt;
+    Known.push_back(*Input);
+  }
+  return evaluateJumpTableGuardPrimitive(Opcode, OutputSize, Known, InputSizes);
 }
 
 namespace {
@@ -248,6 +285,17 @@ symbolizeJumpTableIntegerOperation(SymContext &Ctx, NdOp Opcode,
       return std::nullopt;
     return predicateResult(
         Ctx.mkEq(RawInputs[0], Ctx.mkZero(Ctx.width(RawInputs[0]))));
+  case NdOp::BOOL_AND:
+  case NdOp::BOOL_OR:
+  case NdOp::BOOL_XOR: {
+    if (RawInputs.size() != 2)
+      return std::nullopt;
+    const auto L = Ctx.mkNe(RawInputs[0], Ctx.mkZero(Ctx.width(RawInputs[0])));
+    const auto R = Ctx.mkNe(RawInputs[1], Ctx.mkZero(Ctx.width(RawInputs[1])));
+    return predicateResult(Opcode == NdOp::BOOL_AND  ? Ctx.mkAnd(L, R)
+                           : Opcode == NdOp::BOOL_OR ? Ctx.mkOr(L, R)
+                                                     : Ctx.mkXor(L, R));
+  }
   default:
     break;
   }
@@ -279,13 +327,10 @@ symbolizeJumpTableIntegerOperation(SymContext &Ctx, NdOp Opcode,
   case NdOp::INT_SREM:
     return finish(Ctx.mkSRem(L, R));
   case NdOp::INT_AND:
-  case NdOp::BOOL_AND:
     return finish(Ctx.mkAnd(L, R));
   case NdOp::INT_OR:
-  case NdOp::BOOL_OR:
     return finish(Ctx.mkOr(L, R));
   case NdOp::INT_XOR:
-  case NdOp::BOOL_XOR:
     return finish(Ctx.mkXor(L, R));
   case NdOp::INT_LEFT:
     return finish(Ctx.mkShl(L, R));
