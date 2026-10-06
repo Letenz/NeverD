@@ -1,6 +1,6 @@
 **言語**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: b269d1f316b2dffb502ea0ed075d6255ed7c03d722bb9129b55578cf8a25acbd -->
+<!-- i18n-source: 0e490a01b7c701ed5c4ec7324feba7b113de2d5ccbc4713f2cef24397f7800d2 -->
 
 <div align="center">
 
@@ -262,7 +262,7 @@ cmake --build build --target check-neverd
 
 ## デスクトップワークベンチ
 
-オプションの [Qt Quick デスクトップワークベンチ (英語)](../gui.md)は、ドッキング可能な命令・CFG・16進・C・IR ビュー、全11言語の UI、注釈の保存、MCP 接続を提供します。解析は Qt に依存しない別ワーカープロセスで動作し、CLI のみのビルドは独立しています。対応ワークフローとリリース前に必要なプラットフォーム検証は[適格性記録 (英語)](../gui-qualification.md)を参照してください。
+オプションの[デスクトップワークベンチ (英語)](../gui.md)は、従来の対話型逆アセンブラのレイアウトとショートカットを踏襲し、逆アセンブル・グラフ・疑似コード・IR・16進・一覧ビュー、Visual Studio Code 風のテーマ、全11言語の UI、`.nddb` プロジェクトデータベースを提供します。解析は Qt に依存しない別ワーカープロセスで動作し、CLI のみのビルドは独立しています。対応ワークフローとリリース前に必要なプラットフォーム検証は[適格性記録 (英語)](../gui-qualification.md)を参照してください。
 
 <!-- i18n-section: cli -->
 

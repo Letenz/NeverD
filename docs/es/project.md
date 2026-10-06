@@ -1,6 +1,6 @@
 **Idiomas**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: b269d1f316b2dffb502ea0ed075d6255ed7c03d722bb9129b55578cf8a25acbd -->
+<!-- i18n-source: 0e490a01b7c701ed5c4ec7324feba7b113de2d5ccbc4713f2cef24397f7800d2 -->
 
 <div align="center">
 
@@ -262,7 +262,7 @@ Para conocer los objetivos específicos, las etiquetas CTest, los requisitos de 
 
 ## Entorno de escritorio
 
-El [entorno Qt Quick (inglés)](../gui.md) opcional ofrece vistas acoplables de instrucciones, CFG, hexadecimal, C e IR, los 11 idiomas de interfaz, anotaciones guardadas y conexiones MCP. El análisis se ejecuta en un proceso separado sin Qt; las compilaciones solo de CLI siguen siendo independientes. Consulte el [registro de validación (inglés)](../gui-qualification.md) para los flujos compatibles y las verificaciones de plataforma pendientes antes de publicar.
+El [entorno de escritorio (inglés)](../gui.md) opcional sigue la disposición y los atajos del desensamblador interactivo clásico, con vistas de desensamblado, grafo, pseudocódigo, IR, hexadecimal y listas, un tema al estilo de Visual Studio Code, los 11 idiomas de interfaz y bases de datos de proyecto `.nddb`. El análisis se ejecuta en un proceso separado sin Qt; las compilaciones solo de CLI siguen siendo independientes. Consulte el [registro de validación (inglés)](../gui-qualification.md) para los flujos compatibles y las verificaciones de plataforma pendientes antes de publicar.
 
 <!-- i18n-section: cli -->
 

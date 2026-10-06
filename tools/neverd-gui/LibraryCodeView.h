@@ -31,6 +31,8 @@ public:
   Q_INVOKABLE QString regionAt(int position) const;
   Q_INVOKABLE int sourceLineAt(int position) const;
   Q_INVOKABLE QString originalSelection(int begin, int end) const;
+  /// Display ranges [begin, end) of folded summaries.
+  QVector<QPair<int, int>> foldedRanges() const;
   Q_INVOKABLE void copySelection(int begin, int end) const;
 signals:
   void changed();

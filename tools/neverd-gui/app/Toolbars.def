@@ -1,0 +1,69 @@
+//===- Toolbars.def - Workbench toolbars ------------------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Toolbars and their commands, left to right.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_TOOLBAR(Id, Title)
+// NEVERD_TOOLBAR_ITEM(Toolbar, Action)
+// NEVERD_TOOLBAR_SEPARATOR(Toolbar)
+#ifndef NEVERD_TOOLBAR
+#define NEVERD_TOOLBAR(Id, Title)
+#endif
+#ifndef NEVERD_TOOLBAR_ITEM
+#define NEVERD_TOOLBAR_ITEM(Toolbar, Action)
+#endif
+#ifndef NEVERD_TOOLBAR_SEPARATOR
+#define NEVERD_TOOLBAR_SEPARATOR(Toolbar)
+#endif
+
+NEVERD_TOOLBAR(FileTools, QT_TRANSLATE_NOOP("Toolbars", "File"))
+NEVERD_TOOLBAR_ITEM(FileTools, FileOpen)
+NEVERD_TOOLBAR_ITEM(FileTools, FileSave)
+
+NEVERD_TOOLBAR(NavigationTools, QT_TRANSLATE_NOOP("Toolbars", "Navigation"))
+NEVERD_TOOLBAR_ITEM(NavigationTools, JumpBack)
+NEVERD_TOOLBAR_ITEM(NavigationTools, JumpForward)
+
+NEVERD_TOOLBAR(JumpTools, QT_TRANSLATE_NOOP("Toolbars", "Jump"))
+NEVERD_TOOLBAR_ITEM(JumpTools, JumpAnywhere)
+NEVERD_TOOLBAR_ITEM(JumpTools, JumpFunction)
+NEVERD_TOOLBAR_ITEM(JumpTools, JumpByName)
+NEVERD_TOOLBAR_ITEM(JumpTools, JumpSegment)
+NEVERD_TOOLBAR_ITEM(JumpTools, JumpEntry)
+
+NEVERD_TOOLBAR(SearchTools, QT_TRANSLATE_NOOP("Toolbars", "Search"))
+NEVERD_TOOLBAR_ITEM(SearchTools, SearchText)
+NEVERD_TOOLBAR_ITEM(SearchTools, SearchBytes)
+NEVERD_TOOLBAR_ITEM(SearchTools, SearchNextText)
+
+NEVERD_TOOLBAR(ViewTools, QT_TRANSLATE_NOOP("Toolbars", "Views"))
+NEVERD_TOOLBAR_ITEM(ViewTools, ViewToggleGraph)
+NEVERD_TOOLBAR_ITEM(ViewTools, ViewPseudocode)
+NEVERD_TOOLBAR_ITEM(ViewTools, ViewMedIR)
+NEVERD_TOOLBAR_ITEM(ViewTools, ViewHex)
+NEVERD_TOOLBAR_SEPARATOR(ViewTools)
+NEVERD_TOOLBAR_ITEM(ViewTools, ViewFunctions)
+NEVERD_TOOLBAR_ITEM(ViewTools, ViewNames)
+NEVERD_TOOLBAR_ITEM(ViewTools, ViewStrings)
+NEVERD_TOOLBAR_ITEM(ViewTools, ViewImports)
+NEVERD_TOOLBAR_ITEM(ViewTools, ViewExports)
+NEVERD_TOOLBAR_ITEM(ViewTools, ViewSegments)
+NEVERD_TOOLBAR_ITEM(ViewTools, JumpXrefsTo)
+
+NEVERD_TOOLBAR(AnalysisTools, QT_TRANSLATE_NOOP("Toolbars", "Analysis"))
+NEVERD_TOOLBAR_ITEM(AnalysisTools, OptionsAnalyze)
+NEVERD_TOOLBAR_ITEM(AnalysisTools, OptionsCancel)
+NEVERD_TOOLBAR_ITEM(AnalysisTools, FileLoadSignatures)
+NEVERD_TOOLBAR_SEPARATOR(AnalysisTools)
+NEVERD_TOOLBAR_ITEM(AnalysisTools, OptionsPalette)
+NEVERD_TOOLBAR_ITEM(AnalysisTools, OptionsGeneral)
+
+#undef NEVERD_TOOLBAR
+#undef NEVERD_TOOLBAR_ITEM
+#undef NEVERD_TOOLBAR_SEPARATOR

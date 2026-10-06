@@ -1,6 +1,6 @@
 **Languages**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1f7e768c64fd7b3fd697260f693c68ca3b71562bf43cb0db4970c98487c270be -->
+<!-- i18n-source: 88b72dd8f373ee05729ab1db29a51d3837d123853880c232431f70eade967be3 -->
 
 [← NeverD プロジェクト](project.md)
 
@@ -18,7 +18,7 @@
 | [貢献ガイド](CONTRIBUTING.md) | 開発環境、ビルドプロファイル、ワークフロー、スタイル、PR 要件 |
 | [アーキテクチャ](architecture.md) | IR 経路、コンポーネント境界、strict lifting、サポート深度、変更箇所 |
 | [テスト](testing.md) | テストスイート、生成 fixture、Unicorn ラウンドトリップ、増分コマンド |
-| [デスクトップワークベンチ (英語)](../gui.md) | 任意の Qt Quick UI、独立ワーカー、C ABI、注釈、MCP ワークフロー |
+| [デスクトップワークベンチ (英語)](../gui.md) | 従来の逆アセンブラ風レイアウト、独立ワーカー、プロジェクトデータベース、多言語対応、MCP 接続 |
 | [ライブラリ認識（英語）](../library-recognition.md) | 証拠に基づく STL、ATL/MFC、COM、libc の識別、プロファイル、元に戻せる C コードの折りたたみ |
 | [デスクトップ検証記録 (英語)](../gui-qualification.md) | GUI の実測証拠、パッケージの境界、残るプラットフォーム検証 |
 | [インタープリターのソース復元](interpreter-recovery.md) | 実験的な x64 インタープリター特化、HighC/LLVMC 出力、実行前提、証拠と制限; 入れ子ループの証明候補; 明示的な探索予算とバージョン付き C API; 正確なネイティブから LLVM への証明 API |

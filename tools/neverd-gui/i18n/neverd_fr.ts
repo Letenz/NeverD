@@ -1,1357 +1,1963 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
 <TS version="2.1" language="fr" sourcelanguage="en">
-    <context>
-        <name>ConnectionsPane</name>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="20" />
-            <source>Pending</source>
-            <translation>En attente</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="21" />
-            <source>Completed</source>
-            <translation>Terminé</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="22" />
-            <source>Failed</source>
-            <translation>Échec</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="23" />
-            <source>Cancelled</source>
-            <translation>Annulé</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="24" />
-            <source>Timed out</source>
-            <translation>Délai dépassé</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="25" />
-            <source>Disconnected</source>
-            <translation>Déconnecté</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="36" />
-            <source>MCP connections</source>
-            <translation>Connexions MCP</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="37" />
-            <source>No server connected</source>
-            <translation>Aucun serveur connecté</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="38" />
-            <source>Current session is available to external agents.</source>
-            <translation>La session actuelle est accessible aux agents externes.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="38" />
-            <source>Connect tools and resources, or share this session with an external agent.</source>
-            <translation>Connectez des outils et des ressources, ou partagez cette session avec un agent externe.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="41" />
-            <source>Manage Connections…</source>
-            <translation>Gérer les connexions…</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="46" />
-            <source>MCP Connections</source>
-            <translation>Connexions MCP</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="59" />
-            <source>Current GUI session</source>
-            <translation>Session graphique actuelle</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="60" />
-            <source>Disable Sharing</source>
-            <translation>Désactiver le partage</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="60" />
-            <source>Enable Sharing</source>
-            <translation>Activer le partage</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="61" />
-            <source>Copy Credential Path</source>
-            <translation>Copier le chemin des identifiants</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="63" />
-            <source>Sharing is off. Enabling it grants local agents access to this session using its private credential file.</source>
-            <translation>Le partage est désactivé. Son activation permet aux agents locaux d'accéder à cette session à l'aide de son fichier d'identifiants privé.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="67" />
-            <source>Transport</source>
-            <translation>Transport</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="68" />
-            <source>Absolute path to server executable</source>
-            <translation>Chemin absolu de l'exécutable du serveur</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="68" />
-            <source>Server endpoint</source>
-            <translation>Point de connexion du serveur</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="70" />
-            <source>Disconnect</source>
-            <translation>Déconnecter</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="70" />
-            <source>Connect</source>
-            <translation>Connecter</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="80" />
-            <source>Arguments must be a JSON array of strings.</source>
-            <translation>Les arguments doivent être un tableau JSON de chaînes de caractères.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="87" />
-            <source>Arguments as JSON, for example ["--help"]</source>
-            <translation>Arguments au format JSON, par exemple ["--help"]</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="87" />
-            <source>Server arguments</source>
-            <translation>Arguments du serveur</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="91" />
-            <source>Bearer token (optional)</source>
-            <translation>Jeton Bearer (facultatif)</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="91" />
-            <source>Bearer token</source>
-            <translation>Jeton Bearer</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="92" />
-            <source>CA certificate path (optional)</source>
-            <translation>Chemin du certificat CA (facultatif)</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="92" />
-            <source>CA certificate path</source>
-            <translation>Chemin du certificat CA</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="106" />
-            <source>Tools</source>
-            <translation>Outils</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="106" />
-            <source>Resources</source>
-            <translation>Ressources</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="106" />
-            <source>History</source>
-            <translation>Historique</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="146" />
-            <source>No items published by this server.</source>
-            <translation>Aucun élément publié par ce serveur.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="146" />
-            <source>Connect a server to browse its tools and resources.</source>
-            <translation>Connectez un serveur pour parcourir ses outils et ses ressources.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="146" />
-            <source>No calls yet.</source>
-            <translation>Aucun appel pour le moment.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="156" />
-            <source>Result</source>
-            <translation>Résultat</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="157" />
-            <source>Schema</source>
-            <translation>Schéma</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="158" />
-            <source>Call Tool</source>
-            <translation>Appeler l'outil</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="159" />
-            <source>Cancel Call</source>
-            <translation>Annuler l’appel</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="167" />
-            <source>Tool arguments as JSON</source>
-            <translation>Arguments de l'outil au format JSON</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="169" />
-            <source>Select a resource or call a tool to inspect its response.</source>
-            <translation>Sélectionnez une ressource ou appelez un outil pour consulter sa réponse.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="177" />
-            <source>Tool Input Schema</source>
-            <translation>Schéma d'entrée de l'outil</translation>
-        </message>
-    </context>
-    <context>
-        <name>DisassemblyPane</name>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="22" />
-            <source>Address</source>
-            <translation>Adresse</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="23" />
-            <source>Instruction</source>
-            <translation>Instruction</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="87" />
-            <source>Load more instructions</source>
-            <translation>Charger plus d'instructions</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="93" />
-            <source>Disassembly</source>
-            <translation>Désassemblage</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="94" />
-            <source>Select a function to inspect its instructions.</source>
-            <translation>Sélectionnez une fonction pour examiner ses instructions.</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="94" />
-            <source>Addresses, instructions, and control flow in one place.</source>
-            <translation>Adresses, instructions et flot de contrôle au même endroit.</translation>
-        </message>
-    </context>
-    <context>
-        <name>DockTitleBar</name>
-        <message>
-            <location filename="../qml/DockTitleBar.qml" line="17" />
-            <source>Float or Dock Panel</source>
-            <translation>Détacher ou ancrer le panneau</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockTitleBar.qml" line="18" />
-            <source>Close Panel</source>
-            <translation>Fermer le panneau</translation>
-        </message>
-    </context>
-    <context>
-        <name>ExtensionsPane</name>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="25" />
-            <source>Import Manifest…</source>
-            <translation>Importer un manifeste…</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="26" />
-            <source>Run</source>
-            <translation>Exécuter</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="27" />
-            <source>Unload</source>
-            <translation>Décharger</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="55" />
-            <source>Import a declarative manifest to add analysis commands and views.</source>
-            <translation>Importez un manifeste déclaratif pour ajouter des commandes et des vues d'analyse.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="59" />
-            <source>Select an extension command to inspect its result.</source>
-            <translation>Sélectionnez une commande d'extension pour consulter son résultat.</translation>
-        </message>
-    </context>
-    <context>
-        <name>FunctionsPane</name>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="84" />
-            <location filename="../qml/FunctionsPane.qml" line="22" />
-            <location filename="../qml/Main.qml" line="106" />
-            <source>FUNCTIONS</source>
-            <translation>FONCTIONS</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="42" />
-            <source>Filter functions…</source>
-            <translation>Filtrer les fonctions…</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="43" />
-            <source>Filter functions</source>
-            <translation>Filtrer les fonctions</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="58" />
-            <source>Name</source>
-            <translation>Nom</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="59" />
-            <source>Address</source>
-            <translation>Adresse</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="128" />
-            <source>No functions</source>
-            <translation>Aucune fonction</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="129" />
-            <source>Try another filter or wait for analysis.</source>
-            <translation>Essayez un autre filtre ou attendez la fin de l'analyse.</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="129" />
-            <source>Open a binary to browse its functions.</source>
-            <translation>Ouvrez un binaire pour parcourir ses fonctions.</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="157" />
-            <source>Rename</source>
-            <translation>Renommer</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="158" />
-            <source>Comment</source>
-            <translation>Commentaire</translation>
-        </message>
-    </context>
-    <context>
-        <name>GraphPane</name>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="54" />
-            <source>Zoom out</source>
-            <translation>Zoom arrière</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="55" />
-            <source>Reset zoom</source>
-            <translation>Réinitialiser le zoom</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="56" />
-            <source>Zoom in</source>
-            <translation>Zoom avant</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="57" />
-            <source>Fit</source>
-            <translation>Ajuster</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="57" />
-            <source>Fit graph in viewport</source>
-            <translation>Ajuster le graphe à la vue</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="59" />
-            <source>%1 blocks · %2 edges</source>
-            <translation>%1 blocs · %2 arêtes</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="96" />
-            <location filename="../qml/GraphPane.qml" line="119" />
-            <source>Control flow</source>
-            <translation>Flot de contrôle</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="120" />
-            <source>Select a function to inspect its basic blocks.</source>
-            <translation>Sélectionnez une fonction pour examiner ses blocs de base.</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="120" />
-            <source>Explore the paths through a function.</source>
-            <translation>Explorez les chemins d'exécution d'une fonction.</translation>
-        </message>
-    </context>
-    <context>
-        <name>GuiSessionBroker</name>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="22" />
-            <location filename="../mcp/GuiSessionBroker.cpp" line="98" />
-            <source>Session sharing disabled</source>
-            <translation>Partage de session désactivé</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="57" />
-            <source>Cannot create private session directory</source>
-            <translation>Impossible de créer le répertoire privé de la session</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="72" />
-            <source>Cannot open local session broker: %1</source>
-            <translation>Impossible d'ouvrir le relais de session local : %1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="78" />
-            <location filename="../mcp/GuiSessionBroker.cpp" line="83" />
-            <source>Cannot write private session credentials</source>
-            <translation>Impossible d'écrire les identifiants privés de la session</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="87" />
-            <source>Session sharing enabled</source>
-            <translation>Partage de session activé</translation>
-        </message>
-    </context>
-    <context>
-        <name>Main</name>
-        <message>
-            <location filename="../qml/Main.qml" line="16" />
-            <source>NeverD — Binary Analysis</source>
-            <translation>NeverD — Analyse binaire</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="61" />
-            <source>Unsaved annotations</source>
-            <translation>Annotations non enregistrées</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="70" />
-            <source>Save annotation changes before continuing?</source>
-            <translation>Enregistrer les modifications des annotations avant de continuer ?</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="76" />
-            <source>Open Binary…</source>
-            <translation>Ouvrir un binaire…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="77" />
-            <source>Go to Address or Symbol…</source>
-            <translation>Aller à une adresse ou un symbole…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="78" />
-            <source>Back</source>
-            <translation>Précédent</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="79" />
-            <source>Forward</source>
-            <translation>Suivant</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="80" />
-            <source>Settings…</source>
-            <translation>Paramètres…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="81" />
-            <source>Rename Function…</source>
-            <translation>Renommer la fonction…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="82" />
-            <source>Edit Comment…</source>
-            <translation>Modifier le commentaire…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="83" />
-            <source>Undo</source>
-            <translation>Annuler</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="84" />
-            <source>Redo</source>
-            <translation>Rétablir</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="85" />
-            <source>Cancel Analysis</source>
-            <translation>Annuler l'analyse</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="86" />
-            <location filename="../qml/Main.qml" line="196" />
-            <source>Restart Worker</source>
-            <translation>Redémarrer le processus d'analyse</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="87" />
-            <source>Toggle Bottom Panel</source>
-            <translation>Afficher/masquer le panneau inférieur</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="88" />
-            <source>Quit NeverD</source>
-            <translation>Quitter NeverD</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="97" />
-            <source>File</source>
-            <translation>Fichier</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="98" />
-            <source>Navigate</source>
-            <translation>Navigation</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="99" />
-            <source>Edit</source>
-            <translation>Édition</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="99" />
-            <source>Save Annotations</source>
-            <translation>Enregistrer les annotations</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="99" />
-            <source>Reload Annotations</source>
-            <translation>Recharger les annotations</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="101" />
-            <source>View</source>
-            <translation>Affichage</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="112" />
-            <source>Focus Panel</source>
-            <translation>Isoler un panneau</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="98" />
-            <location filename="../qml/MachinePane.qml" line="22" />
-            <location filename="../qml/Main.qml" line="103" />
-            <location filename="../qml/Main.qml" line="113" />
-            <source>Disassembly</source>
-            <translation>Désassemblage</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="104" />
-            <source>Control Flow</source>
-            <translation>Flot de contrôle</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="22" />
-            <location filename="../qml/Main.qml" line="105" />
-            <source>Hex</source>
-            <translation>Hex</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="117" />
-            <source>Reset Layout</source>
-            <translation>Réinitialiser la disposition</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="119" />
-            <source>Analysis</source>
-            <translation>Analyse</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="122" />
-            <source>Import Manifest…</source>
-            <translation>Importer un manifeste…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="125" />
-            <source>Help</source>
-            <translation>Aide</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="125" />
-            <location filename="../qml/Main.qml" line="356" />
-            <source>Keyboard Shortcuts</source>
-            <translation>Raccourcis clavier</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="125" />
-            <location filename="../qml/Main.qml" line="366" />
-            <source>About NeverD</source>
-            <translation>À propos de NeverD</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="141" />
-            <location filename="../qml/Main.qml" line="253" />
-            <source>Open Binary</source>
-            <translation>Ouvrir un binaire</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="152" />
-            <source>Go to address or symbol…</source>
-            <translation>Aller à une adresse ou un symbole…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="153" />
-            <source>Address or symbol</source>
-            <translation>Adresse ou symbole</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="162" />
-            <source>Cancel</source>
-            <translation>Annuler</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="163" />
-            <location filename="../qml/Main.qml" line="320" />
-            <source>Settings</source>
-            <translation>Paramètres</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="163" />
-            <source>Language and editor preferences</source>
-            <translation>Préférences de langue et de l'éditeur</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="172" />
-            <source>WORKSPACE</source>
-            <translation>ESPACE DE TRAVAIL</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="174" />
-            <source>No binary open</source>
-            <translation>Aucun binaire ouvert</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="176" />
-            <source>%1 functions</source>
-            <translation>%1 fonctions</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="176" />
-            <source>Local analysis</source>
-            <translation>Analyse locale</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="22" />
-            <source>CFG</source>
-            <translation>CFG</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="32" />
-            <source>Hex view</source>
-            <translation>Vue hexadécimale</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="32" />
-            <source>Select an address to inspect its bytes.</source>
-            <translation>Sélectionnez une adresse pour examiner ses octets.</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="105" />
-            <location filename="../qml/Main.qml" line="107" />
-            <location filename="../qml/Main.qml" line="114" />
-            <location filename="../qml/RepresentationPane.qml" line="30" />
-            <source>Pseudocode &amp; intermediate representations</source>
-            <translation>Pseudocode et représentations intermédiaires</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="46" />
-            <source>No representation available</source>
-            <translation>Aucune représentation disponible</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="46" />
-            <source>Read beyond assembly</source>
-            <translation>Au-delà de l'assembleur</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="49" />
-            <source>Compare recovered C, LLVM C, LowIR, MedIR, HighIR, and LLVM IR. Select a function to begin.</source>
-            <translation>Comparez le code C récupéré, LLVM C, LowIR, MedIR, HighIR et LLVM IR. Sélectionnez une fonction pour commencer.</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="112" />
-            <location filename="../qml/Main.qml" line="108" />
-            <source>References</source>
-            <translation>Références</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="119" />
-            <location filename="../qml/Main.qml" line="109" />
-            <source>Output</source>
-            <translation>Sortie</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="126" />
-            <location filename="../qml/Main.qml" line="110" />
-            <source>Connections</source>
-            <translation>Connexions</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="133" />
-            <location filename="../qml/Main.qml" line="121" />
-            <location filename="../qml/Main.qml" line="123" />
-            <source>Extensions</source>
-            <translation>Extensions</translation>
-        </message>
-        <message>
-            <location filename="../qml/ReferencesPane.qml" line="42" />
-            <source>No references for this selection.</source>
-            <translation>Aucune référence pour cette sélection.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ReferencesPane.qml" line="42" />
-            <source>References to the selected address appear here.</source>
-            <translation>Les références à l'adresse sélectionnée apparaissent ici.</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="120" />
-            <source>Worker events and analysis messages appear here.</source>
-            <translation>Les événements du processus d'analyse et les messages d'analyse apparaissent ici.</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="221" />
-            <source>Worker connected</source>
-            <translation>Processus d'analyse connecté</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="221" />
-            <source>Worker offline</source>
-            <translation>Processus d'analyse hors ligne</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="255" />
-            <location filename="../qml/Main.qml" line="262" />
-            <source>All files (*)</source>
-            <translation>Tous les fichiers (*)</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="260" />
-            <source>Import Manifest</source>
-            <translation>Importer un manifeste</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="262" />
-            <source>JSON files (*.json)</source>
-            <translation>Fichiers JSON (*.json)</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="273" />
-            <source>Rename Function</source>
-            <translation>Renommer la fonction</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="283" />
-            <location filename="../qml/Main.qml" line="283" />
-            <source>Function name</source>
-            <translation>Nom de la fonction</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="289" />
-            <source>Edit Comment</source>
-            <translation>Modifier le commentaire</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="306" />
-            <source>Add a comment for this address…</source>
-            <translation>Ajouter un commentaire à cette adresse…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="311" />
-            <source>Comment</source>
-            <translation>Commentaire</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="329" />
-            <source>Appearance</source>
-            <translation>Apparence</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="332" />
-            <source>Theme</source>
-            <translation>Thème</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="337" />
-            <source>Code font size</source>
-            <translation>Taille de police du code</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="341" />
-            <source>Language</source>
-            <translation>Langue</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="349" />
-            <source>Interface language</source>
-            <translation>Langue de l'interface</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="351" />
-            <source>Changes apply immediately. Code, symbols, and comments keep their original language.</source>
-            <translation>Les modifications s'appliquent immédiatement. Le code, les symboles et les commentaires conservent leur langue d'origine.</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="372" />
-            <source>NeverD
-Binary analysis workbench
-
-Explore disassembly, control flow, recovered C, and intermediate representations with a local analysis worker.</source>
-            <translation>NeverD
-Atelier d'analyse binaire
-
-Explorez le désassemblage, le flot de contrôle, le C reconstruit et les représentations intermédiaires avec un processus d'analyse local.</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="288" />
-            <source>Library features and byte signatures (*.json *.pat)</source>
-            <translation>Caractéristiques de bibliothèques et signatures binaires (*.json *.pat)</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="286" />
-            <source>Load Signature Pack</source>
-            <translation>Charger un pack de signatures</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="131" />
-            <source>Load Signature Pack…</source>
-            <translation>Charger un pack de signatures…</translation>
-        </message>
-    </context>
-    <context>
-        <name>McpConnectionManager</name>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="18" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="145" />
-            <source>Disconnected</source>
-            <translation>Déconnecté</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="22" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="300" />
-            <source>MCP message exceeds 8 MiB</source>
-            <translation>Le message MCP dépasse 8 Mio</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="31" />
-            <source>Invalid MCP JSON-RPC message</source>
-            <translation>Message JSON-RPC MCP invalide</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="41" />
-            <source>MCP process error: %1</source>
-            <translation>Erreur du processus MCP : %1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="45" />
-            <source>MCP process exited (%1): %2</source>
-            <translation>Le processus MCP s'est terminé (%1) : %2</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="58" />
-            <source>MCP request timed out: %1</source>
-            <translation>La requête MCP a expiré : %1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="76" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="95" />
-            <source>Disconnect the running MCP process before reconnecting</source>
-            <translation>Déconnectez le processus MCP en cours avant de vous reconnecter</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="81" />
-            <source>Choose an absolute MCP executable path</source>
-            <translation>Choisissez un chemin absolu vers l'exécutable MCP</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="84" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="118" />
-            <source>Connecting</source>
-            <translation>Connexion en cours</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="102" />
-            <source>MCP HTTP requires HTTPS, or HTTP on localhost</source>
-            <translation>MCP HTTP nécessite HTTPS, ou HTTP sur localhost</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="105" />
-            <source>Invalid authentication token</source>
-            <translation>Jeton d'authentification invalide</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="110" />
-            <source>Cannot load CA certificate</source>
-            <translation>Impossible de charger le certificat CA</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="182" />
-            <source>MCP request queue is full</source>
-            <translation>La file de requêtes MCP est pleine</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="194" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="220" />
-            <source>MCP outgoing message budget exceeded</source>
-            <translation>Le message MCP sortant dépasse la limite autorisée</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="199" />
-            <source>MCP server is disconnected</source>
-            <translation>Le serveur MCP est déconnecté</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="245" />
-            <source>MCP session expired; reconnecting</source>
-            <translation>La session MCP a expiré ; reconnexion en cours</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="250" />
-            <source>MCP HTTP error %1: %2</source>
-            <translation>Erreur HTTP MCP %1 : %2</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="259" />
-            <source>MCP event stream ended before its response</source>
-            <translation>Le flux d'événements MCP s'est terminé avant la réponse</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="276" />
-            <source>Invalid MCP HTTP response</source>
-            <translation>Réponse HTTP MCP invalide</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="292" />
-            <source>Invalid MCP session identifier</source>
-            <translation>Identifiant de session MCP invalide</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="294" />
-            <source>MCP session identifier is too large</source>
-            <translation>L'identifiant de session MCP est trop long</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="318" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="333" />
-            <source>Invalid MCP event data</source>
-            <translation>Données d'événement MCP invalides</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="347" />
-            <source>Invalid MCP protocol version</source>
-            <translation>Version du protocole MCP invalide</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="364" />
-            <source>MCP request failed: %1</source>
-            <translation>Échec de la requête MCP : %1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="367" />
-            <source>MCP response has no result object</source>
-            <translation>La réponse MCP ne contient aucun objet de résultat</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="371" />
-            <source>Unsupported MCP protocol version</source>
-            <translation>Version du protocole MCP non prise en charge</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="377" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="387" />
-            <source>Connected</source>
-            <translation>Connecté</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="380" />
-            <source>Connected; tool list is partial</source>
-            <translation>Connecté ; liste des outils partielle</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="383" />
-            <source>Connected; resource list is partial</source>
-            <translation>Connecté ; liste des ressources partielle</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="387" />
-            <source>MCP tool reported an error</source>
-            <translation>L'outil MCP a signalé une erreur</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="397" />
-            <source>Connect an MCP server first</source>
-            <translation>Connectez d'abord un serveur MCP</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="398" />
-            <source>Tool arguments exceed the size limit</source>
-            <translation>Les arguments de l'outil dépassent la taille maximale</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="402" />
-            <source>Tool arguments must be a JSON object</source>
-            <translation>Les arguments de l'outil doivent être un objet JSON</translation>
-        </message>
-    </context>
-    <context>
-        <name>PaneRegistry</name>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="417" />
-            <source>Default</source>
-            <translation>Par défaut</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="424" />
-            <source>Cannot create pane: invalid kind or pane limit reached.</source>
-            <translation>Impossible de créer le panneau : type invalide ou nombre maximal de panneaux atteint.</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="429" />
-            <source>The source pane is unavailable.</source>
-            <translation>Le panneau source est indisponible.</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="553" />
-            <source>Cannot create group: invalid name or group limit reached.</source>
-            <translation>Impossible de créer le groupe : nom invalide ou nombre maximal de groupes atteint.</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="1004" />
-            <source>The saved pane catalog is invalid.</source>
-            <translation>Le catalogue de panneaux enregistré est invalide.</translation>
-        </message>
-    </context>
-    <context>
-        <name>RepresentationPane</name>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="31" />
-            <source>Refresh</source>
-            <translation>Actualiser</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="32" />
-            <source>Unpin</source>
-            <translation>Désépingler</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="32" />
-            <source>Pin</source>
-            <translation>Épingler</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="32" />
-            <source>Keep this function while navigating</source>
-            <translation>Conserver cette fonction pendant la navigation</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="54" />
-            <source>Load more lines</source>
-            <translation>Charger plus de lignes</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="91" />
-            <source>Close</source>
-            <translation>Fermer</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="54" />
-            <source>Details</source>
-            <translation>Détails</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="110" />
-            <source>Evidence SHA-256</source>
-            <translation>SHA-256 des preuves</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="87" />
-            <source>Expand</source>
-            <translation>Déplier</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="49" />
-            <source>Expand all</source>
-            <translation>Tout déplier</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="87" />
-            <source>Fold</source>
-            <translation>Replier</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="49" />
-            <source>Fold all</source>
-            <translation>Tout replier</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="51" />
-            <source>Fold mapped library operations. Copy and export retain the full source.</source>
-            <translation>Replier les opérations de bibliothèque associées au code. La copie et l’export conservent le code source complet.</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="105" />
-            <source>Identity evidence</source>
-            <translation>Preuves d’identité</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="46" />
-            <source>Library operations</source>
-            <translation>Opérations de bibliothèque</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="107" />
-            <source>Linkage</source>
-            <translation>Nom de liaison</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="103" />
-            <source>Mapped to original source</source>
-            <translation>Associé au code source original</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="106" />
-            <source>Original instructions</source>
-            <translation>Instructions originales</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="103" />
-            <source>Original source stays expanded; mapping is incomplete or outside the loaded page</source>
-            <translation>Le code source reste déplié : la correspondance est incomplète ou hors de la page chargée</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="108" />
-            <source>Pack</source>
-            <translation>Pack</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="109" />
-            <source>Profile SHA-256</source>
-            <translation>SHA-256 du profil</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="84" />
-            <source>Recognized library operation</source>
-            <translation>Opération de bibliothèque reconnue</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="104" />
-            <source>Rule</source>
-            <translation>Règle</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="111" />
-            <source>Source</source>
-            <translation>Origine</translation>
-        </message>
-    </context>
-    <context>
-        <name>Workbench</name>
-        <message>
-            <location filename="../Workbench.cpp" line="71" />
-            <source>Loading debug symbols…</source>
-            <translation>Chargement des symboles de débogage…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="17" />
-            <source>Open a binary to begin</source>
-            <translation>Ouvrez un binaire pour commencer</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="87" />
-            <source>Action failed</source>
-            <translation>Échec de l'action</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="147" />
-            <source>Incompatible analysis worker protocol.</source>
-            <translation>Protocole du processus d'analyse incompatible.</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="150" />
-            <source>Connected to %1</source>
-            <translation>Connecté à %1</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="214" />
-            <source>Select an existing binary file.</source>
-            <translation>Sélectionnez un fichier binaire existant.</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="217" />
-            <source>Starting analysis worker…</source>
-            <translation>Démarrage du processus d'analyse…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="223" />
-            <source>Opening binary…</source>
-            <translation>Ouverture du binaire…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="228" />
-            <source>Binary loaded</source>
-            <translation>Binaire chargé</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="311" />
-            <location filename="../Workbench.cpp" line="352" />
-            <location filename="../Workbench.cpp" line="445" />
-            <source>Ready</source>
-            <translation>Prêt</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="328" />
-            <source>No function at this address</source>
-            <translation>Aucune fonction à cette adresse</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="330" />
-            <location filename="../Workbench.cpp" line="443" />
-            <source>Analyzing…</source>
-            <translation>Analyse en cours…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="351" />
-            <source>Complete</source>
-            <translation>Terminé</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="351" />
-            <source>More lines available</source>
-            <translation>D'autres lignes sont disponibles</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="361" />
-            <source>Mapping belongs to an earlier revision; reload the representation</source>
-            <translation>La correspondance appartient à une révision antérieure ; rechargez la représentation</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="363" />
-            <source>Linked instruction addresses; synthetic rows may be unmapped</source>
-            <translation>Adresses des instructions liées ; certaines lignes synthétiques peuvent ne pas avoir de correspondance</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="364" />
-            <source>Instruction mapping unavailable for this representation</source>
-            <translation>Correspondance des instructions indisponible pour cette représentation</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="416" />
-            <source>Loading graph viewport…</source>
-            <translation>Chargement de la vue du graphe…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="418" />
-            <source>Viewport limit reached; zoom in for details</source>
-            <translation>Limite de la vue atteinte ; zoomez pour afficher les détails</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="419" />
-            <source>%1 visible blocks · %2 edges</source>
-            <translation>%1 blocs visibles · %2 arêtes</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="452" />
-            <source>Cancellation requested; restart stops the worker immediately.</source>
-            <translation>Annulation demandée ; le redémarrage arrête immédiatement le processus d'analyse.</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="453" />
-            <source>Cancellation requested</source>
-            <translation>Annulation demandée</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="488" />
-            <source>Restarting analysis worker…</source>
-            <translation>Redémarrage du processus d'analyse…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="495" />
-            <source>Rename saved</source>
-            <translation>Renommage enregistré</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="502" />
-            <source>Comment changed; save annotations to keep it.</source>
-            <translation>Commentaire modifié ; enregistrez les annotations pour le conserver.</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="506" />
-            <source>Annotations saved</source>
-            <translation>Annotations enregistrées</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="479" />
-            <location filename="../Workbench.cpp" line="510" />
-            <source>Annotations reloaded</source>
-            <translation>Annotations rechargées</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="193" />
-            <source>Finish opening the binary before editing.</source>
-            <translation>Attendez la fin de l'ouverture du binaire avant d'apporter des modifications.</translation>
-        </message>
-        <message>
-            <location filename="../PaneController.cpp" line="414" />
-            <source>Library regions link to original instructions; other source may be unmapped</source>
-            <translation>Les régions de bibliothèque renvoient aux instructions originales ; le reste du code peut ne pas être associé</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="730" />
-            <source>Signature pack loaded</source>
-            <translation>Pack de signatures chargé</translation>
-        </message>
-    </context>
-    <context>
-        <name>WorkerTransport</name>
-        <message>
-            <location filename="../EngineClient.cpp" line="28" />
-            <source>Analysis worker exited (%1). Restart to continue.</source>
-            <translation>Le processus d'analyse s'est terminé (%1). Redémarrez-le pour continuer.</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="36" />
-            <source>Analysis worker is not running.</source>
-            <translation>Le processus d'analyse n'est pas en cours d'exécution.</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="41" />
-            <source>Analysis request queue is full.</source>
-            <translation>La file de requêtes d'analyse est pleine.</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="57" />
-            <source>Invalid analysis protocol frame.</source>
-            <translation>Trame du protocole d'analyse invalide.</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="67" />
-            <source>Invalid analysis protocol JSON.</source>
-            <translation>JSON du protocole d'analyse invalide.</translation>
-        </message>
-    </context>
-    <context>
-        <name>TextPane</name>
-        <message>
-            <location filename="../qml/TextPane.qml" line="158" />
-            <source>Copy</source>
-            <translation>Copier</translation>
-        </message>
-        <message>
-            <location filename="../qml/TextPane.qml" line="159" />
-            <source>Select all</source>
-            <translation>Tout sélectionner</translation>
-        </message>
-    </context>
+<context>
+    <name>Actions</name>
+    <message>
+        <source>&amp;Open...</source>
+        <translation>&amp;Ouvrir...</translation>
+    </message>
+    <message>
+        <source>Open a binary for analysis</source>
+        <translation>Ouvrir un binaire pour l&apos;analyser</translation>
+    </message>
+    <message>
+        <source>&amp;Reload the input file</source>
+        <translation>&amp;Recharger le fichier d&apos;entrée</translation>
+    </message>
+    <message>
+        <source>Reload the binary and its saved annotations</source>
+        <translation>Recharger le binaire et ses annotations enregistrées</translation>
+    </message>
+    <message>
+        <source>&amp;FLIRT signature file...</source>
+        <translation>Fichier de signatures &amp;FLIRT...</translation>
+    </message>
+    <message>
+        <source>Apply a byte signature (.pat) or library feature (.json) pack</source>
+        <translation>Appliquer un pack de signatures d&apos;octets (.pat) ou de caractéristiques de bibliothèque (.json)</translation>
+    </message>
+    <message>
+        <source>Signature &amp;directory...</source>
+        <translation>Ré&amp;pertoire de signatures...</translation>
+    </message>
+    <message>
+        <source>Apply every matching pack from a signature tree</source>
+        <translation>Appliquer tous les packs correspondants d&apos;une arborescence de signatures</translation>
+    </message>
+    <message>
+        <source>Create &amp;LST file...</source>
+        <translation>Créer un fichier &amp;LST...</translation>
+    </message>
+    <message>
+        <source>Write the current function&apos;s listing to a text file</source>
+        <translation>Écrire le listing de la fonction actuelle dans un fichier texte</translation>
+    </message>
+    <message>
+        <source>Create &amp;C file...</source>
+        <translation>Créer un fichier &amp;C...</translation>
+    </message>
+    <message>
+        <source>Write the current function&apos;s pseudocode to a C file</source>
+        <translation>Écrire le pseudo-code de la fonction actuelle dans un fichier C</translation>
+    </message>
+    <message>
+        <source>&amp;Save</source>
+        <translation>&amp;Enregistrer</translation>
+    </message>
+    <message>
+        <source>Save comments and history beside the binary</source>
+        <translation>Enregistrer les commentaires et l&apos;historique à côté du binaire</translation>
+    </message>
+    <message>
+        <source>&amp;Close</source>
+        <translation>&amp;Fermer</translation>
+    </message>
+    <message>
+        <source>Close the current binary</source>
+        <translation>Fermer le binaire actuel</translation>
+    </message>
+    <message>
+        <source>&amp;Quick start</source>
+        <translation>&amp;Démarrage rapide</translation>
+    </message>
+    <message>
+        <source>Show the quick start window</source>
+        <translation>Afficher la fenêtre de démarrage rapide</translation>
+    </message>
+    <message>
+        <source>E&amp;xit</source>
+        <translation>&amp;Quitter</translation>
+    </message>
+    <message>
+        <source>Quit NeverD</source>
+        <translation>Quitter NeverD</translation>
+    </message>
+    <message>
+        <source>&amp;Undo</source>
+        <translation>&amp;Annuler</translation>
+    </message>
+    <message>
+        <source>Undo the last comment or rename</source>
+        <translation>Annuler le dernier commentaire ou le dernier renommage</translation>
+    </message>
+    <message>
+        <source>&amp;Redo</source>
+        <translation>&amp;Rétablir</translation>
+    </message>
+    <message>
+        <source>Redo the last undone change</source>
+        <translation>Rétablir la dernière modification annulée</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>&amp;Copier</translation>
+    </message>
+    <message>
+        <source>Copy the selection or current line</source>
+        <translation>Copier la sélection ou la ligne actuelle</translation>
+    </message>
+    <message>
+        <source>Copy &amp;address</source>
+        <translation>Copier l&apos;a&amp;dresse</translation>
+    </message>
+    <message>
+        <source>Copy the current address</source>
+        <translation>Copier l&apos;adresse actuelle</translation>
+    </message>
+    <message>
+        <source>Re&amp;name...</source>
+        <translation>Re&amp;nommer...</translation>
+    </message>
+    <message>
+        <source>Rename the current function</source>
+        <translation>Renommer la fonction actuelle</translation>
+    </message>
+    <message>
+        <source>Enter &amp;comment...</source>
+        <translation>Saisir un &amp;commentaire...</translation>
+    </message>
+    <message>
+        <source>Comment the current address</source>
+        <translation>Commenter l&apos;adresse actuelle</translation>
+    </message>
+    <message>
+        <source>Enter re&amp;peatable comment...</source>
+        <translation>Saisir un commentaire &amp;répétable...</translation>
+    </message>
+    <message>
+        <source>&amp;Mark position...</source>
+        <translation>Marquer la &amp;position...</translation>
+    </message>
+    <message>
+        <source>Bookmark the current address</source>
+        <translation>Ajouter un signet à l&apos;adresse actuelle</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;operand</source>
+        <translation>Aller à l&apos;&amp;opérande</translation>
+    </message>
+    <message>
+        <source>Follow the name or address under the cursor</source>
+        <translation>Suivre le nom ou l&apos;adresse sous le curseur</translation>
+    </message>
+    <message>
+        <source>Jump in a new &amp;window</source>
+        <translation>Aller dans une nouvelle &amp;fenêtre</translation>
+    </message>
+    <message>
+        <source>Open the target in a new disassembly view</source>
+        <translation>Ouvrir la cible dans une nouvelle vue de désassemblage</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;previous position</source>
+        <translation>Aller à la position &amp;précédente</translation>
+    </message>
+    <message>
+        <source>Go back in the navigation history</source>
+        <translation>Revenir en arrière dans l&apos;historique de navigation</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;next position</source>
+        <translation>Aller à la position &amp;suivante</translation>
+    </message>
+    <message>
+        <source>Go forward in the navigation history</source>
+        <translation>Avancer dans l&apos;historique de navigation</translation>
+    </message>
+    <message>
+        <source>Next f&amp;unction</source>
+        <translation>Fonction s&amp;uivante</translation>
+    </message>
+    <message>
+        <source>Move to the start of the next function</source>
+        <translation>Aller au début de la fonction suivante</translation>
+    </message>
+    <message>
+        <source>Pre&amp;vious function</source>
+        <translation>Fonct&amp;ion précédente</translation>
+    </message>
+    <message>
+        <source>Move to the start of the previous function</source>
+        <translation>Aller au début de la fonction précédente</translation>
+    </message>
+    <message>
+        <source>Jump to ps&amp;eudocode</source>
+        <translation>Aller au pseudo-&amp;code</translation>
+    </message>
+    <message>
+        <source>Switch between disassembly and pseudocode</source>
+        <translation>Basculer entre le désassemblage et le pseudo-code</translation>
+    </message>
+    <message>
+        <source>Jump &amp;anywhere...</source>
+        <translation>Aller &amp;n&apos;importe où...</translation>
+    </message>
+    <message>
+        <source>Jump to an address, name or expression</source>
+        <translation>Aller à une adresse, un nom ou une expression</translation>
+    </message>
+    <message>
+        <source>Jump by na&amp;me...</source>
+        <translation>Aller à un no&amp;m...</translation>
+    </message>
+    <message>
+        <source>Choose a name to jump to</source>
+        <translation>Choisir le nom de destination</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;function...</source>
+        <translation>Aller à une fonc&amp;tion...</translation>
+    </message>
+    <message>
+        <source>Choose a function to jump to</source>
+        <translation>Choisir la fonction de destination</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;segment...</source>
+        <translation>Aller à un se&amp;gment...</translation>
+    </message>
+    <message>
+        <source>Choose a segment to jump to</source>
+        <translation>Choisir le segment de destination</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;entry point...</source>
+        <translation>Aller à un point d&apos;&amp;entrée...</translation>
+    </message>
+    <message>
+        <source>Choose an entry point to jump to</source>
+        <translation>Choisir le point d&apos;entrée de destination</translation>
+    </message>
+    <message>
+        <source>List cross references &amp;to...</source>
+        <translation>Lister les références croisées &amp;vers...</translation>
+    </message>
+    <message>
+        <source>List references to the current item</source>
+        <translation>Lister les références vers l&apos;élément actuel</translation>
+    </message>
+    <message>
+        <source>List cross references f&amp;rom...</source>
+        <translation>Lister les références croisées &amp;depuis...</translation>
+    </message>
+    <message>
+        <source>List references made by the current instruction</source>
+        <translation>Lister les références issues de l&apos;instruction actuelle</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;xref to operand...</source>
+        <translation>Aller à une &amp;référence croisée vers l&apos;opérande...</translation>
+    </message>
+    <message>
+        <source>List references to the name under the cursor</source>
+        <translation>Lister les références vers le nom sous le curseur</translation>
+    </message>
+    <message>
+        <source>Jump to mar&amp;ked position...</source>
+        <translation>Aller à une position mar&amp;quée...</translation>
+    </message>
+    <message>
+        <source>Choose a bookmark to jump to</source>
+        <translation>Choisir le signet de destination</translation>
+    </message>
+    <message>
+        <source>&amp;Text...</source>
+        <translation>&amp;Texte...</translation>
+    </message>
+    <message>
+        <source>Search the binary for text</source>
+        <translation>Rechercher du texte dans le binaire</translation>
+    </message>
+    <message>
+        <source>Next te&amp;xt</source>
+        <translation>Te&amp;xte suivant</translation>
+    </message>
+    <message>
+        <source>Repeat the last text search</source>
+        <translation>Répéter la dernière recherche de texte</translation>
+    </message>
+    <message>
+        <source>Sequence of &amp;bytes...</source>
+        <translation>Séquence d&apos;&amp;octets...</translation>
+    </message>
+    <message>
+        <source>Search the binary for a byte sequence</source>
+        <translation>Rechercher une séquence d&apos;octets dans le binaire</translation>
+    </message>
+    <message>
+        <source>Next seq&amp;uence of bytes</source>
+        <translation>Séquence d&apos;octets s&amp;uivante</translation>
+    </message>
+    <message>
+        <source>Repeat the last byte search</source>
+        <translation>Répéter la dernière recherche d&apos;octets</translation>
+    </message>
+    <message>
+        <source>Search highlight &amp;up</source>
+        <translation>Rechercher la surbrillance vers le &amp;haut</translation>
+    </message>
+    <message>
+        <source>Move to the previous occurrence of the highlighted identifier</source>
+        <translation>Aller à l&apos;occurrence précédente de l&apos;identifiant en surbrillance</translation>
+    </message>
+    <message>
+        <source>Search highlight &amp;down</source>
+        <translation>Rechercher la surbrillance vers le &amp;bas</translation>
+    </message>
+    <message>
+        <source>Move to the next occurrence of the highlighted identifier</source>
+        <translation>Aller à l&apos;occurrence suivante de l&apos;identifiant en surbrillance</translation>
+    </message>
+    <message>
+        <source>&amp;Find in view...</source>
+        <translation>&amp;Rechercher dans la vue...</translation>
+    </message>
+    <message>
+        <source>Find text among the loaded lines of the current view</source>
+        <translation>Rechercher du texte parmi les lignes chargées de la vue actuelle</translation>
+    </message>
+    <message>
+        <source>&amp;Quick view...</source>
+        <translation>&amp;Vue rapide...</translation>
+    </message>
+    <message>
+        <source>Choose a view to open</source>
+        <translation>Choisir une vue à ouvrir</translation>
+    </message>
+    <message>
+        <source>&amp;Disassembly</source>
+        <translation>&amp;Désassemblage</translation>
+    </message>
+    <message>
+        <source>Open a new disassembly view</source>
+        <translation>Ouvrir une nouvelle vue de désassemblage</translation>
+    </message>
+    <message>
+        <source>Toggle &amp;graph view</source>
+        <translation>Basculer la vue &amp;graphique</translation>
+    </message>
+    <message>
+        <source>Switch between text and graph views</source>
+        <translation>Basculer entre la vue texte et la vue graphique</translation>
+    </message>
+    <message>
+        <source>Generate &amp;pseudocode</source>
+        <translation>Générer le &amp;pseudo-code</translation>
+    </message>
+    <message>
+        <source>Decompile the current function</source>
+        <translation>Décompiler la fonction actuelle</translation>
+    </message>
+    <message>
+        <source>Generate &amp;LowIR</source>
+        <translation>Générer &amp;LowIR</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s LowIR</source>
+        <translation>Afficher le LowIR de la fonction actuelle</translation>
+    </message>
+    <message>
+        <source>Generate &amp;MedIR</source>
+        <translation>Générer &amp;MedIR</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s MedIR</source>
+        <translation>Afficher le MedIR de la fonction actuelle</translation>
+    </message>
+    <message>
+        <source>Generate &amp;HighIR</source>
+        <translation>Générer &amp;HighIR</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s HighIR</source>
+        <translation>Afficher le HighIR de la fonction actuelle</translation>
+    </message>
+    <message>
+        <source>Generate LLVM &amp;IR</source>
+        <translation>Générer LLVM &amp;IR</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s LLVM IR</source>
+        <translation>Afficher le LLVM IR de la fonction actuelle</translation>
+    </message>
+    <message>
+        <source>Generate LLVM &amp;C</source>
+        <translation>Générer LLVM &amp;C</translation>
+    </message>
+    <message>
+        <source>Decompile the current function through LLVM</source>
+        <translation>Décompiler la fonction actuelle via LLVM</translation>
+    </message>
+    <message>
+        <source>&amp;Hex dump</source>
+        <translation>Vidage he&amp;xadécimal</translation>
+    </message>
+    <message>
+        <source>Show the hex view</source>
+        <translation>Afficher la vue hexadécimale</translation>
+    </message>
+    <message>
+        <source>E&amp;xports</source>
+        <translation>&amp;Exportations</translation>
+    </message>
+    <message>
+        <source>Show exported names and entry points</source>
+        <translation>Afficher les noms exportés et les points d&apos;entrée</translation>
+    </message>
+    <message>
+        <source>&amp;Imports</source>
+        <translation>&amp;Importations</translation>
+    </message>
+    <message>
+        <source>Show imported names</source>
+        <translation>Afficher les noms importés</translation>
+    </message>
+    <message>
+        <source>&amp;Names</source>
+        <translation>&amp;Noms</translation>
+    </message>
+    <message>
+        <source>Show every named location</source>
+        <translation>Afficher tous les emplacements nommés</translation>
+    </message>
+    <message>
+        <source>&amp;Functions</source>
+        <translation>&amp;Fonctions</translation>
+    </message>
+    <message>
+        <source>Show the functions window</source>
+        <translation>Afficher la fenêtre des fonctions</translation>
+    </message>
+    <message>
+        <source>&amp;Strings</source>
+        <translation>Chaîne&amp;s</translation>
+    </message>
+    <message>
+        <source>Show the strings window</source>
+        <translation>Afficher la fenêtre des chaînes</translation>
+    </message>
+    <message>
+        <source>S&amp;egments</source>
+        <translation>Seg&amp;ments</translation>
+    </message>
+    <message>
+        <source>Show the segments window</source>
+        <translation>Afficher la fenêtre des segments</translation>
+    </message>
+    <message>
+        <source>&amp;Cross references</source>
+        <translation>&amp;Références croisées</translation>
+    </message>
+    <message>
+        <source>Show references to the current item</source>
+        <translation>Afficher les références vers l&apos;élément actuel</translation>
+    </message>
+    <message>
+        <source>&amp;Bookmarks</source>
+        <translation>Si&amp;gnets</translation>
+    </message>
+    <message>
+        <source>Show bookmarks</source>
+        <translation>Afficher les signets</translation>
+    </message>
+    <message>
+        <source>&amp;Output</source>
+        <translation>&amp;Sortie</translation>
+    </message>
+    <message>
+        <source>Show the output window</source>
+        <translation>Afficher la fenêtre de sortie</translation>
+    </message>
+    <message>
+        <source>Graph &amp;overview</source>
+        <translation>&amp;Aperçu du graphe</translation>
+    </message>
+    <message>
+        <source>Show the graph overview</source>
+        <translation>Afficher l&apos;aperçu du graphe</translation>
+    </message>
+    <message>
+        <source>MCP &amp;connections</source>
+        <translation>C&amp;onnexions MCP</translation>
+    </message>
+    <message>
+        <source>Manage MCP connections and session sharing</source>
+        <translation>Gérer les connexions MCP et le partage de session</translation>
+    </message>
+    <message>
+        <source>E&amp;xtensions</source>
+        <translation>Ex&amp;tensions</translation>
+    </message>
+    <message>
+        <source>Manage declarative extensions</source>
+        <translation>Gérer les extensions déclaratives</translation>
+    </message>
+    <message>
+        <source>&amp;Undo history</source>
+        <translation>&amp;Historique des annulations</translation>
+    </message>
+    <message>
+        <source>Show the comment and rename history</source>
+        <translation>Afficher l&apos;historique des commentaires et des renommages</translation>
+    </message>
+    <message>
+        <source>&amp;Calculator...</source>
+        <translation>&amp;Calculatrice...</translation>
+    </message>
+    <message>
+        <source>Evaluate an expression</source>
+        <translation>Évaluer une expression</translation>
+    </message>
+    <message>
+        <source>F&amp;ull screen</source>
+        <translation>&amp;Plein écran</translation>
+    </message>
+    <message>
+        <source>Toggle full screen</source>
+        <translation>Activer ou désactiver le plein écran</translation>
+    </message>
+    <message>
+        <source>&amp;Increase font size</source>
+        <translation>&amp;Augmenter la taille de police</translation>
+    </message>
+    <message>
+        <source>Increase the code font size</source>
+        <translation>Augmenter la taille de police du code</translation>
+    </message>
+    <message>
+        <source>&amp;Decrease font size</source>
+        <translation>&amp;Diminuer la taille de police</translation>
+    </message>
+    <message>
+        <source>Decrease the code font size</source>
+        <translation>Diminuer la taille de police du code</translation>
+    </message>
+    <message>
+        <source>&amp;Reset font size</source>
+        <translation>Réi&amp;nitialiser la taille de police</translation>
+    </message>
+    <message>
+        <source>Restore the default code font size</source>
+        <translation>Rétablir la taille de police par défaut du code</translation>
+    </message>
+    <message>
+        <source>&amp;General...</source>
+        <translation>&amp;Général...</translation>
+    </message>
+    <message>
+        <source>Listing, analysis and language options</source>
+        <translation>Options de listing, d&apos;analyse et de langue</translation>
+    </message>
+    <message>
+        <source>&amp;Colors...</source>
+        <translation>&amp;Couleurs...</translation>
+    </message>
+    <message>
+        <source>Choose the color theme</source>
+        <translation>Choisir le thème de couleurs</translation>
+    </message>
+    <message>
+        <source>&amp;Font...</source>
+        <translation>&amp;Police...</translation>
+    </message>
+    <message>
+        <source>Choose the code font</source>
+        <translation>Choisir la police du code</translation>
+    </message>
+    <message>
+        <source>&amp;Shortcuts...</source>
+        <translation>&amp;Raccourcis...</translation>
+    </message>
+    <message>
+        <source>List keyboard shortcuts</source>
+        <translation>Lister les raccourcis clavier</translation>
+    </message>
+    <message>
+        <source>Show command &amp;palette...</source>
+        <translation>Afficher la palette de co&amp;mmandes...</translation>
+    </message>
+    <message>
+        <source>Search and run any command</source>
+        <translation>Rechercher et exécuter n&apos;importe quelle commande</translation>
+    </message>
+    <message>
+        <source>&amp;Repeat last palette command</source>
+        <translation>Répé&amp;ter la dernière commande de la palette</translation>
+    </message>
+    <message>
+        <source>Run the last command chosen in the palette again</source>
+        <translation>Exécuter à nouveau la dernière commande choisie dans la palette</translation>
+    </message>
+    <message>
+        <source>&amp;Whole-program analysis</source>
+        <translation>Analyse du &amp;programme entier</translation>
+    </message>
+    <message>
+        <source>Analyze every function together in the background</source>
+        <translation>Analyser toutes les fonctions ensemble en arrière-plan</translation>
+    </message>
+    <message>
+        <source>Ca&amp;ncel pending requests</source>
+        <translation>&amp;Annuler les requêtes en attente</translation>
+    </message>
+    <message>
+        <source>Cancel queued analysis requests</source>
+        <translation>Annuler les requêtes d&apos;analyse en file d&apos;attente</translation>
+    </message>
+    <message>
+        <source>&amp;Restart analysis worker</source>
+        <translation>&amp;Redémarrer le processus d&apos;analyse</translation>
+    </message>
+    <message>
+        <source>Restart the analysis process and reopen the binary</source>
+        <translation>Redémarrer le processus d&apos;analyse et rouvrir le binaire</translation>
+    </message>
+    <message>
+        <source>&amp;Save desktop</source>
+        <translation>&amp;Enregistrer le bureau</translation>
+    </message>
+    <message>
+        <source>Save the window layout</source>
+        <translation>Enregistrer la disposition des fenêtres</translation>
+    </message>
+    <message>
+        <source>&amp;Load desktop</source>
+        <translation>&amp;Charger le bureau</translation>
+    </message>
+    <message>
+        <source>Restore the saved window layout</source>
+        <translation>Restaurer la disposition des fenêtres enregistrée</translation>
+    </message>
+    <message>
+        <source>&amp;Reset desktop</source>
+        <translation>&amp;Réinitialiser le bureau</translation>
+    </message>
+    <message>
+        <source>Restore the default window layout</source>
+        <translation>Restaurer la disposition des fenêtres par défaut</translation>
+    </message>
+    <message>
+        <source>&amp;Next window</source>
+        <translation>Fenêtre &amp;suivante</translation>
+    </message>
+    <message>
+        <source>Activate the next window</source>
+        <translation>Activer la fenêtre suivante</translation>
+    </message>
+    <message>
+        <source>&amp;Previous window</source>
+        <translation>Fenêtre &amp;précédente</translation>
+    </message>
+    <message>
+        <source>Activate the previous window</source>
+        <translation>Activer la fenêtre précédente</translation>
+    </message>
+    <message>
+        <source>&amp;Close window</source>
+        <translation>&amp;Fermer la fenêtre</translation>
+    </message>
+    <message>
+        <source>Close the current window</source>
+        <translation>Fermer la fenêtre actuelle</translation>
+    </message>
+    <message>
+        <source>&amp;Focus command line</source>
+        <translation>Activer la &amp;ligne de commande</translation>
+    </message>
+    <message>
+        <source>Move the keyboard focus to the command line</source>
+        <translation>Placer le focus clavier sur la ligne de commande</translation>
+    </message>
+    <message>
+        <source>&amp;Help</source>
+        <translation>&amp;Aide</translation>
+    </message>
+    <message>
+        <source>Open the NeverD documentation</source>
+        <translation>Ouvrir la documentation de NeverD</translation>
+    </message>
+    <message>
+        <source>&amp;About NeverD</source>
+        <translation>À &amp;propos de NeverD</translation>
+    </message>
+    <message>
+        <source>Version and license information</source>
+        <translation>Informations de version et de licence</translation>
+    </message>
+</context>
+<context>
+    <name>Choosers</name>
+    <message>
+        <source>Functions</source>
+        <translation>Fonctions</translation>
+    </message>
+    <message>
+        <source>Function name</source>
+        <translation>Nom de la fonction</translation>
+    </message>
+    <message>
+        <source>Segment</source>
+        <translation>Segment</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>Début</translation>
+    </message>
+    <message>
+        <source>Length</source>
+        <translation>Longueur</translation>
+    </message>
+    <message>
+        <source>Names</source>
+        <translation>Noms</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Nom</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>Adresse</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Type</translation>
+    </message>
+    <message>
+        <source>Strings</source>
+        <translation>Chaînes</translation>
+    </message>
+    <message>
+        <source>String</source>
+        <translation>Chaîne</translation>
+    </message>
+    <message>
+        <source>Segments</source>
+        <translation>Segments</translation>
+    </message>
+    <message>
+        <source>End</source>
+        <translation>Fin</translation>
+    </message>
+    <message>
+        <source>R</source>
+        <translation>R</translation>
+    </message>
+    <message>
+        <source>W</source>
+        <translation>W</translation>
+    </message>
+    <message>
+        <source>X</source>
+        <translation>X</translation>
+    </message>
+    <message>
+        <source>Align</source>
+        <translation>Alignement</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>Classe</translation>
+    </message>
+    <message>
+        <source>Imports</source>
+        <translation>Importations</translation>
+    </message>
+    <message>
+        <source>Ordinal</source>
+        <translation>Ordinal</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>Bibliothèque</translation>
+    </message>
+    <message>
+        <source>Exports</source>
+        <translation>Exportations</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>Nature</translation>
+    </message>
+    <message>
+        <source>Cross references</source>
+        <translation>Références croisées</translation>
+    </message>
+    <message>
+        <source>Direction</source>
+        <translation>Direction</translation>
+    </message>
+    <message>
+        <source>Location</source>
+        <translation>Emplacement</translation>
+    </message>
+    <message>
+        <source>Search results</source>
+        <translation>Résultats de la recherche</translation>
+    </message>
+    <message>
+        <source>Context</source>
+        <translation>Contexte</translation>
+    </message>
+    <message>
+        <source>Bookmarks</source>
+        <translation>Signets</translation>
+    </message>
+    <message>
+        <source>Description</source>
+        <translation>Description</translation>
+    </message>
+</context>
+<context>
+    <name>GuiSessionBroker</name>
+    <message>
+        <source>Session sharing disabled</source>
+        <translation>Partage de session désactivé</translation>
+    </message>
+    <message>
+        <source>Cannot create private session directory</source>
+        <translation>Impossible de créer le répertoire privé de la session</translation>
+    </message>
+    <message>
+        <source>Cannot open local session broker: %1</source>
+        <translation>Impossible d&apos;ouvrir le relais de session local : %1</translation>
+    </message>
+    <message>
+        <source>Cannot write private session credentials</source>
+        <translation>Impossible d&apos;écrire les identifiants privés de la session</translation>
+    </message>
+    <message>
+        <source>Session sharing enabled</source>
+        <translation>Partage de session activé</translation>
+    </message>
+</context>
+<context>
+    <name>McpConnectionManager</name>
+    <message>
+        <source>Disconnected</source>
+        <translation>Déconnecté</translation>
+    </message>
+    <message>
+        <source>MCP message exceeds 8 MiB</source>
+        <translation>Le message MCP dépasse 8 Mio</translation>
+    </message>
+    <message>
+        <source>Invalid MCP JSON-RPC message</source>
+        <translation>Message JSON-RPC MCP invalide</translation>
+    </message>
+    <message>
+        <source>MCP process error: %1</source>
+        <translation>Erreur du processus MCP : %1</translation>
+    </message>
+    <message>
+        <source>MCP process exited (%1): %2</source>
+        <translation>Le processus MCP s&apos;est terminé (%1) : %2</translation>
+    </message>
+    <message>
+        <source>MCP request timed out: %1</source>
+        <translation>La requête MCP a expiré : %1</translation>
+    </message>
+    <message>
+        <source>Disconnect the running MCP process before reconnecting</source>
+        <translation>Déconnectez le processus MCP en cours avant de vous reconnecter</translation>
+    </message>
+    <message>
+        <source>Choose an absolute MCP executable path</source>
+        <translation>Choisissez un chemin absolu vers l&apos;exécutable MCP</translation>
+    </message>
+    <message>
+        <source>Connecting</source>
+        <translation>Connexion en cours</translation>
+    </message>
+    <message>
+        <source>MCP HTTP requires HTTPS, or HTTP on localhost</source>
+        <translation>MCP HTTP nécessite HTTPS, ou HTTP sur localhost</translation>
+    </message>
+    <message>
+        <source>Invalid authentication token</source>
+        <translation>Jeton d&apos;authentification invalide</translation>
+    </message>
+    <message>
+        <source>Cannot load CA certificate</source>
+        <translation>Impossible de charger le certificat CA</translation>
+    </message>
+    <message>
+        <source>MCP request queue is full</source>
+        <translation>La file de requêtes MCP est pleine</translation>
+    </message>
+    <message>
+        <source>MCP outgoing message budget exceeded</source>
+        <translation>Le message MCP sortant dépasse la limite autorisée</translation>
+    </message>
+    <message>
+        <source>MCP server is disconnected</source>
+        <translation>Le serveur MCP est déconnecté</translation>
+    </message>
+    <message>
+        <source>MCP session expired; reconnecting</source>
+        <translation>La session MCP a expiré ; reconnexion en cours</translation>
+    </message>
+    <message>
+        <source>MCP HTTP error %1: %2</source>
+        <translation>Erreur HTTP MCP %1 : %2</translation>
+    </message>
+    <message>
+        <source>MCP event stream ended before its response</source>
+        <translation>Le flux d&apos;événements MCP s&apos;est terminé avant la réponse</translation>
+    </message>
+    <message>
+        <source>Invalid MCP HTTP response</source>
+        <translation>Réponse HTTP MCP invalide</translation>
+    </message>
+    <message>
+        <source>Invalid MCP session identifier</source>
+        <translation>Identifiant de session MCP invalide</translation>
+    </message>
+    <message>
+        <source>MCP session identifier is too large</source>
+        <translation>L&apos;identifiant de session MCP est trop long</translation>
+    </message>
+    <message>
+        <source>Invalid MCP event data</source>
+        <translation>Données d&apos;événement MCP invalides</translation>
+    </message>
+    <message>
+        <source>Invalid MCP protocol version</source>
+        <translation>Version du protocole MCP invalide</translation>
+    </message>
+    <message>
+        <source>MCP request failed: %1</source>
+        <translation>Échec de la requête MCP : %1</translation>
+    </message>
+    <message>
+        <source>MCP response has no result object</source>
+        <translation>La réponse MCP ne contient aucun objet de résultat</translation>
+    </message>
+    <message>
+        <source>Unsupported MCP protocol version</source>
+        <translation>Version du protocole MCP non prise en charge</translation>
+    </message>
+    <message>
+        <source>Connected</source>
+        <translation>Connecté</translation>
+    </message>
+    <message>
+        <source>Connected; tool list is partial</source>
+        <translation>Connecté ; liste des outils partielle</translation>
+    </message>
+    <message>
+        <source>Connected; resource list is partial</source>
+        <translation>Connecté ; liste des ressources partielle</translation>
+    </message>
+    <message>
+        <source>MCP tool reported an error</source>
+        <translation>L&apos;outil MCP a signalé une erreur</translation>
+    </message>
+    <message>
+        <source>Connect an MCP server first</source>
+        <translation>Connectez d&apos;abord un serveur MCP</translation>
+    </message>
+    <message>
+        <source>Tool arguments exceed the size limit</source>
+        <translation>Les arguments de l&apos;outil dépassent la taille maximale</translation>
+    </message>
+    <message>
+        <source>Tool arguments must be a JSON object</source>
+        <translation>Les arguments de l&apos;outil doivent être un objet JSON</translation>
+    </message>
+</context>
+<context>
+    <name>Menus</name>
+    <message>
+        <source>&amp;File</source>
+        <translation>&amp;Fichier</translation>
+    </message>
+    <message>
+        <source>&amp;Load file</source>
+        <translation>&amp;Charger un fichier</translation>
+    </message>
+    <message>
+        <source>&amp;Produce file</source>
+        <translation>&amp;Générer un fichier</translation>
+    </message>
+    <message>
+        <source>&amp;Edit</source>
+        <translation>É&amp;dition</translation>
+    </message>
+    <message>
+        <source>Co&amp;mments</source>
+        <translation>Co&amp;mmentaires</translation>
+    </message>
+    <message>
+        <source>&amp;Jump</source>
+        <translation>&amp;Aller à</translation>
+    </message>
+    <message>
+        <source>&amp;Search</source>
+        <translation>&amp;Recherche</translation>
+    </message>
+    <message>
+        <source>&amp;View</source>
+        <translation>Affic&amp;hage</translation>
+    </message>
+    <message>
+        <source>Open &amp;subviews</source>
+        <translation>Ouvrir les sous-&amp;vues</translation>
+    </message>
+    <message>
+        <source>&amp;Intermediate representations</source>
+        <translation>&amp;Représentations intermédiaires</translation>
+    </message>
+    <message>
+        <source>&amp;Graphs</source>
+        <translation>&amp;Graphes</translation>
+    </message>
+    <message>
+        <source>&amp;Toolbars</source>
+        <translation>&amp;Barres d&apos;outils</translation>
+    </message>
+    <message>
+        <source>&amp;Options</source>
+        <translation>&amp;Options</translation>
+    </message>
+    <message>
+        <source>&amp;Language</source>
+        <translation>&amp;Langue</translation>
+    </message>
+    <message>
+        <source>&amp;Analysis</source>
+        <translation>&amp;Analyse</translation>
+    </message>
+    <message>
+        <source>&amp;Windows</source>
+        <translation>Fe&amp;nêtres</translation>
+    </message>
+    <message>
+        <source>&amp;Help</source>
+        <translation>Aid&amp;e</translation>
+    </message>
+</context>
+<context>
+    <name>NavigationBand</name>
+    <message>
+        <source>Library function</source>
+        <translation>Fonction de bibliothèque</translation>
+    </message>
+    <message>
+        <source>Regular function</source>
+        <translation>Fonction normale</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>Instruction</translation>
+    </message>
+    <message>
+        <source>Data</source>
+        <translation>Données</translation>
+    </message>
+    <message>
+        <source>Unexplored</source>
+        <translation>Inexploré</translation>
+    </message>
+    <message>
+        <source>External symbol</source>
+        <translation>Symbole externe</translation>
+    </message>
+</context>
+<context>
+    <name>ProjectDatabase</name>
+    <message>
+        <source>Cannot read %1: %2</source>
+        <translation>Impossible de lire %1 : %2</translation>
+    </message>
+    <message>
+        <source>Cannot read %1</source>
+        <translation>Impossible de lire %1</translation>
+    </message>
+    <message>
+        <source>%1 uses database format %2, which this NeverD cannot update.</source>
+        <translation>%1 utilise le format de base de données %2, que cette version de NeverD ne peut pas mettre à jour.</translation>
+    </message>
+    <message>
+        <source>Cannot create %1</source>
+        <translation>Impossible de créer %1</translation>
+    </message>
+    <message>
+        <source>%1 is not a NeverD database.</source>
+        <translation>%1 n&apos;est pas une base de données NeverD.</translation>
+    </message>
+    <message>
+        <source>%1 does not exist.</source>
+        <translation>%1 n&apos;existe pas.</translation>
+    </message>
+    <message>
+        <source>%1 uses database format %2, which this NeverD cannot read.</source>
+        <translation>%1 utilise le format de base de données %2, que cette version de NeverD ne peut pas lire.</translation>
+    </message>
+    <message>
+        <source>%1 names an invalid input file.</source>
+        <translation>%1 désigne un fichier d&apos;entrée non valide.</translation>
+    </message>
+    <message>
+        <source>Cannot write %1: %2</source>
+        <translation>Impossible d&apos;écrire %1 : %2</translation>
+    </message>
+    <message>
+        <source>The input stored in %1 is damaged.</source>
+        <translation>L&apos;entrée stockée dans %1 est endommagée.</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>Impossible d&apos;écrire %1</translation>
+    </message>
+</context>
+<context>
+    <name>Representations</name>
+    <message>
+        <source>Pseudocode</source>
+        <translation>Pseudo-code</translation>
+    </message>
+    <message>
+        <source>LLVM C</source>
+        <translation>LLVM C</translation>
+    </message>
+    <message>
+        <source>LowIR</source>
+        <translation>LowIR</translation>
+    </message>
+    <message>
+        <source>MedIR</source>
+        <translation>MedIR</translation>
+    </message>
+    <message>
+        <source>HighIR</source>
+        <translation>HighIR</translation>
+    </message>
+    <message>
+        <source>LLVM IR</source>
+        <translation>LLVM IR</translation>
+    </message>
+</context>
+<context>
+    <name>Toolbars</name>
+    <message>
+        <source>File</source>
+        <translation>Fichier</translation>
+    </message>
+    <message>
+        <source>Navigation</source>
+        <translation>Navigation</translation>
+    </message>
+    <message>
+        <source>Jump</source>
+        <translation>Aller à</translation>
+    </message>
+    <message>
+        <source>Search</source>
+        <translation>Recherche</translation>
+    </message>
+    <message>
+        <source>Views</source>
+        <translation>Vues</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>Analyse</translation>
+    </message>
+</context>
+<context>
+    <name>WorkerTransport</name>
+    <message>
+        <source>Analysis worker exited (%1). Restart to continue.</source>
+        <translation>Le processus d&apos;analyse s&apos;est terminé (%1). Redémarrez-le pour continuer.</translation>
+    </message>
+    <message>
+        <source>Analysis worker is not running.</source>
+        <translation>Le processus d&apos;analyse n&apos;est pas en cours d&apos;exécution.</translation>
+    </message>
+    <message>
+        <source>Analysis request queue is full.</source>
+        <translation>La file de requêtes d&apos;analyse est pleine.</translation>
+    </message>
+    <message>
+        <source>Invalid analysis protocol frame.</source>
+        <translation>Trame du protocole d&apos;analyse invalide.</translation>
+    </message>
+    <message>
+        <source>Invalid analysis protocol JSON.</source>
+        <translation>JSON du protocole d&apos;analyse invalide.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ChooserModel</name>
+    <message>
+        <source>References are still being indexed…</source>
+        <translation>Les références sont encore en cours d&apos;indexation…</translation>
+    </message>
+    <message>
+        <source>Up</source>
+        <translation>Haut</translation>
+    </message>
+    <message>
+        <source>Down</source>
+        <translation>Bas</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ChooserView</name>
+    <message>
+        <source>Quick filter</source>
+        <translation>Filtre rapide</translation>
+    </message>
+    <message>
+        <source>Line %1 of %2</source>
+        <translation>Ligne %1 sur %2</translation>
+    </message>
+    <message>
+        <source>1 item</source>
+        <translation>1 élément</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n items</source>
+        <translation>
+            <numerusform>%n élément</numerusform>
+            <numerusform>%n éléments</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::CodeText</name>
+    <message>
+        <source>Decompiling…</source>
+        <translation>Décompilation en cours…</translation>
+    </message>
+    <message>
+        <source>Function-level analysis</source>
+        <translation>Analyse au niveau de la fonction</translation>
+    </message>
+    <message>
+        <source>rows linked to instructions</source>
+        <translation>lignes liées aux instructions</translation>
+    </message>
+    <message>
+        <source>%1
+Recognized library operation; click to show its code.</source>
+        <translation>%1
+Opération de bibliothèque reconnue ; cliquez pour afficher son code.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::CodeView</name>
+    <message>
+        <source>Fold library code</source>
+        <translation>Replier le code de bibliothèque</translation>
+    </message>
+    <message>
+        <source>Show each recognized library operation as a one-line summary; copy and export keep the full code.</source>
+        <translation>Affiche chaque opération de bibliothèque reconnue sous forme de résumé d&apos;une ligne ; la copie et l&apos;exportation conservent le code complet.</translation>
+    </message>
+    <message>
+        <source>Keep this function while the disassembly moves on</source>
+        <translation>Conserver cette fonction pendant que le désassemblage se déplace</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ConnectionsDialog</name>
+    <message>
+        <source>Pending</source>
+        <translation>En attente</translation>
+    </message>
+    <message>
+        <source>Completed</source>
+        <translation>Terminé</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>Échec</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>Annulé</translation>
+    </message>
+    <message>
+        <source>Timed out</source>
+        <translation>Délai dépassé</translation>
+    </message>
+    <message>
+        <source>Disconnected</source>
+        <translation>Déconnecté</translation>
+    </message>
+    <message>
+        <source>MCP Connections</source>
+        <translation>Connexions MCP</translation>
+    </message>
+    <message>
+        <source>Current GUI session</source>
+        <translation>Session graphique actuelle</translation>
+    </message>
+    <message>
+        <source>Copy Credential Path</source>
+        <translation>Copier le chemin des identifiants</translation>
+    </message>
+    <message>
+        <source>Transport</source>
+        <translation>Transport</translation>
+    </message>
+    <message>
+        <source>Arguments as JSON, for example [&quot;--help&quot;]</source>
+        <translation>Arguments au format JSON, par exemple [&quot;--help&quot;]</translation>
+    </message>
+    <message>
+        <source>Bearer token (optional)</source>
+        <translation>Jeton Bearer (facultatif)</translation>
+    </message>
+    <message>
+        <source>Bearer token</source>
+        <translation>Jeton Bearer</translation>
+    </message>
+    <message>
+        <source>CA certificate path (optional)</source>
+        <translation>Chemin du certificat CA (facultatif)</translation>
+    </message>
+    <message>
+        <source>CA certificate path</source>
+        <translation>Chemin du certificat CA</translation>
+    </message>
+    <message>
+        <source>Tools</source>
+        <translation>Outils</translation>
+    </message>
+    <message>
+        <source>Resources</source>
+        <translation>Ressources</translation>
+    </message>
+    <message>
+        <source>History</source>
+        <translation>Historique</translation>
+    </message>
+    <message>
+        <source>Result</source>
+        <translation>Résultat</translation>
+    </message>
+    <message>
+        <source>Schema</source>
+        <translation>Schéma</translation>
+    </message>
+    <message>
+        <source>Call Tool</source>
+        <translation>Appeler l&apos;outil</translation>
+    </message>
+    <message>
+        <source>Cancel Call</source>
+        <translation>Annuler l&apos;appel</translation>
+    </message>
+    <message>
+        <source>Select a resource or call a tool to inspect its response.</source>
+        <translation>Sélectionnez une ressource ou appelez un outil pour consulter sa réponse.</translation>
+    </message>
+    <message>
+        <source>Disable Sharing</source>
+        <translation>Désactiver le partage</translation>
+    </message>
+    <message>
+        <source>Enable Sharing</source>
+        <translation>Activer le partage</translation>
+    </message>
+    <message>
+        <source>Sharing is off. Enabling it grants local agents access to this session using its private credential file.</source>
+        <translation>Le partage est désactivé. Son activation permet aux agents locaux d&apos;accéder à cette session à l&apos;aide de son fichier d&apos;identifiants privé.</translation>
+    </message>
+    <message>
+        <source>Absolute path to server executable</source>
+        <translation>Chemin absolu de l&apos;exécutable du serveur</translation>
+    </message>
+    <message>
+        <source>Disconnect</source>
+        <translation>Déconnecter</translation>
+    </message>
+    <message>
+        <source>Connect</source>
+        <translation>Connecter</translation>
+    </message>
+    <message>
+        <source>No server connected</source>
+        <translation>Aucun serveur connecté</translation>
+    </message>
+    <message>
+        <source>No calls yet.</source>
+        <translation>Aucun appel pour le moment.</translation>
+    </message>
+    <message>
+        <source>No items published by this server.</source>
+        <translation>Aucun élément publié par ce serveur.</translation>
+    </message>
+    <message>
+        <source>Connect to a server to list its catalog.</source>
+        <translation>Connectez-vous à un serveur pour afficher son catalogue.</translation>
+    </message>
+    <message>
+        <source>Arguments must be a JSON array of strings.</source>
+        <translation>Les arguments doivent être un tableau JSON de chaînes de caractères.</translation>
+    </message>
+    <message>
+        <source>Tool Input Schema</source>
+        <translation>Schéma d&apos;entrée de l&apos;outil</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DisassemblyView</name>
+    <message>
+        <source>Graph view requires a location inside a function.</source>
+        <translation>La vue graphique nécessite un emplacement à l&apos;intérieur d&apos;une fonction.</translation>
+    </message>
+    <message>
+        <source> (Synchronized with %1)</source>
+        <translation> (synchronisée avec %1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::Expression</name>
+    <message>
+        <source>Unexpected character &apos;%1&apos;</source>
+        <translation>Caractère inattendu « %1 »</translation>
+    </message>
+    <message>
+        <source>Empty expression</source>
+        <translation>Expression vide</translation>
+    </message>
+    <message>
+        <source>Unexpected text after the expression</source>
+        <translation>Texte inattendu après l&apos;expression</translation>
+    </message>
+    <message>
+        <source>Unknown name &apos;%1&apos;</source>
+        <translation>Nom inconnu « %1 »</translation>
+    </message>
+    <message>
+        <source>Missing &apos;)&apos;</source>
+        <translation>Parenthèse fermante « ) » manquante</translation>
+    </message>
+    <message>
+        <source>Expected a value</source>
+        <translation>Valeur attendue</translation>
+    </message>
+    <message>
+        <source>Division by zero</source>
+        <translation>Division par zéro</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExtensionsView</name>
+    <message>
+        <source>Import Manifest…</source>
+        <translation>Importer un manifeste…</translation>
+    </message>
+    <message>
+        <source>Run</source>
+        <translation>Exécuter</translation>
+    </message>
+    <message>
+        <source>Unload</source>
+        <translation>Décharger</translation>
+    </message>
+    <message>
+        <source>Import a declarative manifest to add analysis commands and views.</source>
+        <translation>Importez un manifeste déclaratif pour ajouter des commandes et des vues d&apos;analyse.</translation>
+    </message>
+    <message>
+        <source>Select an extension command to inspect its result.</source>
+        <translation>Sélectionnez une commande d&apos;extension pour consulter son résultat.</translation>
+    </message>
+    <message>
+        <source>Import extension manifest</source>
+        <translation>Importer un manifeste d&apos;extension</translation>
+    </message>
+    <message>
+        <source>Manifests (*.json)</source>
+        <translation>Manifestes (*.json)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::GraphView</name>
+    <message>
+        <source>Laying out graph…</source>
+        <translation>Disposition du graphe en cours…</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::JumpDialog</name>
+    <message>
+        <source>Jump anywhere</source>
+        <translation>Aller n&apos;importe où</translation>
+    </message>
+    <message>
+        <source>Address, name or expression (0x401000, main, sub_401000+10)</source>
+        <translation>Adresse, nom ou expression (0x401000, main, sub_401000+10)</translation>
+    </message>
+    <message>
+        <source>Enter jumps to the expression; arrows choose a match.</source>
+        <translation>Entrée : aller à l&apos;expression ; flèches : choisir une correspondance.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>%n correspondance</numerusform>
+            <numerusform>%n correspondances</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Navigation band</source>
+        <translation>Bande de navigation</translation>
+    </message>
+    <message>
+        <source>Extensions</source>
+        <translation>Extensions</translation>
+    </message>
+    <message>
+        <source>Hex View-1</source>
+        <translation>Vue hexadécimale-1</translation>
+    </message>
+    <message>
+        <source>NeverD View-A</source>
+        <translation>Vue NeverD-A</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>Fonctions</translation>
+    </message>
+    <message>
+        <source>Output</source>
+        <translation>Sortie</translation>
+    </message>
+    <message>
+        <source>Graph overview</source>
+        <translation>Aperçu du graphe</translation>
+    </message>
+    <message>
+        <source>Background analysis: references and labels are indexed while you browse</source>
+        <translation>Analyse en arrière-plan : les références et les étiquettes sont indexées pendant la navigation</translation>
+    </message>
+    <message>
+        <source>Unsaved changes</source>
+        <translation>Modifications non enregistrées</translation>
+    </message>
+    <message>
+        <source>Comments were changed. Save them before continuing?</source>
+        <translation>Les commentaires ont été modifiés. Les enregistrer avant de continuer ?</translation>
+    </message>
+    <message>
+        <source>Cannot jump to %1: %2</source>
+        <translation>Impossible d&apos;aller à %1 : %2</translation>
+    </message>
+    <message>
+        <source>Load signature pack</source>
+        <translation>Charger un pack de signatures</translation>
+    </message>
+    <message>
+        <source>Signature packs (*.pat *.json);;All files (*)</source>
+        <translation>Packs de signatures (*.pat *.json);;Tous les fichiers (*)</translation>
+    </message>
+    <message>
+        <source>Signature directory</source>
+        <translation>Répertoire de signatures</translation>
+    </message>
+    <message>
+        <source>Mark position</source>
+        <translation>Marquer la position</translation>
+    </message>
+    <message>
+        <source>Description:</source>
+        <translation>Description :</translation>
+    </message>
+    <message>
+        <source>Find in view</source>
+        <translation>Rechercher dans la vue</translation>
+    </message>
+    <message>
+        <source>Text:</source>
+        <translation>Texte :</translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; was not found among the loaded lines</source>
+        <translation>« %1 » est introuvable parmi les lignes chargées</translation>
+    </message>
+    <message>
+        <source>History: %1 entries, cursor %2</source>
+        <translation>Historique : %1 entrées, position %2</translation>
+    </message>
+    <message>
+        <source>AU: idle</source>
+        <translation>AU: inactif</translation>
+    </message>
+    <message>
+        <source>AU: busy %1%</source>
+        <translation>AU: occupé %1%</translation>
+    </message>
+    <message>
+        <source>AU: busy</source>
+        <translation>AU: occupé</translation>
+    </message>
+    <message>
+        <source>Down</source>
+        <translation>Vers le bas</translation>
+    </message>
+    <message>
+        <source>Up</source>
+        <translation>Vers le haut</translation>
+    </message>
+    <message>
+        <source>Disk: %1GB</source>
+        <translation>Disque : %1 Go</translation>
+    </message>
+    <message>
+        <source> · read-only</source>
+        <translation> · lecture seule</translation>
+    </message>
+    <message>
+        <source>%1 is not a function entry; only functions can be renamed.</source>
+        <translation>%1 n&apos;est pas le début d&apos;une fonction ; seules les fonctions peuvent être renommées.</translation>
+    </message>
+    <message>
+        <source>Rename function</source>
+        <translation>Renommer la fonction</translation>
+    </message>
+    <message>
+        <source>Name of %1:</source>
+        <translation>Nom de %1 :</translation>
+    </message>
+    <message>
+        <source>Please enter text</source>
+        <translation>Veuillez saisir du texte</translation>
+    </message>
+    <message>
+        <source>Comment at %1:</source>
+        <translation>Commentaire à %1 :</translation>
+    </message>
+    <message>
+        <source>xrefs to %1</source>
+        <translation>Références croisées vers %1</translation>
+    </message>
+    <message>
+        <source>xrefs from %1</source>
+        <translation>Références croisées depuis %1</translation>
+    </message>
+    <message>
+        <source>Place the cursor inside a function to decompile it.</source>
+        <translation>Placez le curseur dans une fonction pour la décompiler.</translation>
+    </message>
+    <message>
+        <source>Text search</source>
+        <translation>Recherche de texte</translation>
+    </message>
+    <message>
+        <source>Binary search</source>
+        <translation>Recherche d&apos;octets</translation>
+    </message>
+    <message>
+        <source>String:</source>
+        <translation>Chaîne :</translation>
+    </message>
+    <message>
+        <source>Hex bytes (e.g. 48 8B 05):</source>
+        <translation>Octets hexadécimaux (p. ex. 48 8B 05) :</translation>
+    </message>
+    <message>
+        <source>Search failed: %1 not found</source>
+        <translation>Échec de la recherche : %1 introuvable</translation>
+    </message>
+    <message>
+        <source>Evaluate expression</source>
+        <translation>Évaluer une expression</translation>
+    </message>
+    <message>
+        <source>Expression:</source>
+        <translation>Expression :</translation>
+    </message>
+    <message>
+        <source>Hex: %1h
+Decimal: %2
+Octal: %3
+Signed: %4</source>
+        <translation>Hexadécimal : %1h
+Décimal : %2
+Octal : %3
+Signé : %4</translation>
+    </message>
+    <message>
+        <source>About NeverD</source>
+        <translation>À propos de NeverD</translation>
+    </message>
+    <message>
+        <source>&lt;h3&gt;NeverD %1&lt;/h3&gt;&lt;p&gt;Interactive disassembler and decompiler workbench.&lt;/p&gt;&lt;p&gt;Licensed under the GNU Affero General Public License v3. Icons are original NeverD artwork.&lt;/p&gt;&lt;p&gt;&lt;a href=&quot;https://github.com/NeverSight/NeverD&quot;&gt;github.com/NeverSight/NeverD&lt;/a&gt;&lt;/p&gt;</source>
+        <translation>&lt;h3&gt;NeverD %1&lt;/h3&gt;&lt;p&gt;Atelier interactif de désassemblage et de décompilation.&lt;/p&gt;&lt;p&gt;Distribué sous licence GNU Affero General Public License v3. Les icônes sont des créations originales de NeverD.&lt;/p&gt;&lt;p&gt;&lt;a href=&quot;https://github.com/NeverSight/NeverD&quot;&gt;github.com/NeverSight/NeverD&lt;/a&gt;&lt;/p&gt;</translation>
+    </message>
+    <message>
+        <source>Code font</source>
+        <translation>Police du code</translation>
+    </message>
+    <message>
+        <source>Dark (Visual Studio Code Dark+)</source>
+        <translation>Sombre (Visual Studio Code Dark+)</translation>
+    </message>
+    <message>
+        <source>Light (Visual Studio Code Light+)</source>
+        <translation>Clair (Visual Studio Code Light+)</translation>
+    </message>
+    <message>
+        <source>Colors</source>
+        <translation>Couleurs</translation>
+    </message>
+    <message>
+        <source>Theme:</source>
+        <translation>Thème :</translation>
+    </message>
+    <message>
+        <source>General options</source>
+        <translation>Options générales</translation>
+    </message>
+    <message>
+        <source>Number of opcode bytes:</source>
+        <translation>Nombre d&apos;octets d&apos;opcode :</translation>
+    </message>
+    <message>
+        <source>Show segment:address line prefixes</source>
+        <translation>Afficher les préfixes de ligne segment:adresse</translation>
+    </message>
+    <message>
+        <source>Shortcuts</source>
+        <translation>Raccourcis</translation>
+    </message>
+    <message>
+        <source>Action</source>
+        <translation>Action</translation>
+    </message>
+    <message>
+        <source>Shortcut</source>
+        <translation>Raccourci</translation>
+    </message>
+    <message>
+        <source>Command palette</source>
+        <translation>Palette de commandes</translation>
+    </message>
+    <message>
+        <source>Type a command</source>
+        <translation>Saisissez une commande</translation>
+    </message>
+    <message>
+        <source>Create C file</source>
+        <translation>Créer un fichier C</translation>
+    </message>
+    <message>
+        <source>Create LST file</source>
+        <translation>Créer un fichier LST</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>Impossible d&apos;écrire %1</translation>
+    </message>
+    <message>
+        <source>Wrote %1</source>
+        <translation>%1 écrit</translation>
+    </message>
+    <message>
+        <source>Desktop saved</source>
+        <translation>Bureau enregistré</translation>
+    </message>
+    <message>
+        <source>No saved desktop</source>
+        <translation>Aucun bureau enregistré</translation>
+    </message>
+    <message>
+        <source>NeverD: Quick start</source>
+        <translation>NeverD : Démarrage rapide</translation>
+    </message>
+    <message>
+        <source>New</source>
+        <translation>Nouveau</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>Désassembler un nouveau fichier</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation>Continuer</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>Travailler sans fichier</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Précédent</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>Charger le fichier récent sélectionné</translation>
+    </message>
+    <message>
+        <source>Recent files:</source>
+        <translation>Fichiers récents :</translation>
+    </message>
+    <message>
+        <source>Open binary or database</source>
+        <translation>Ouvrir un binaire ou une base de données</translation>
+    </message>
+    <message>
+        <source>All files (*);;NeverD databases (*.nddb)</source>
+        <translation>Tous les fichiers (*);;Bases de données NeverD (*.nddb)</translation>
+    </message>
+    <message>
+        <source>The saved desktop of this database could not be restored.</source>
+        <translation>Le bureau enregistré de cette base de données n&apos;a pas pu être restauré.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::OutputWindow</name>
+    <message>
+        <source>Command line language: NeverD expressions and commands. Type help for a list.</source>
+        <translation>Langage de la ligne de commande : expressions et commandes NeverD. Tapez help pour en afficher la liste.</translation>
+    </message>
+    <message>
+        <source>Expression or command (help)</source>
+        <translation>Expression ou commande (help)</translation>
+    </message>
+    <message>
+        <source>Commands:</source>
+        <translation>Commandes :</translation>
+    </message>
+    <message>
+        <source>  g &lt;expr&gt;          jump to an address or name</source>
+        <translation>  g &lt;expr&gt;          aller à une adresse ou à un nom</translation>
+    </message>
+    <message>
+        <source>  x [expr]          list references to the current item or expr</source>
+        <translation>  x [expr]          lister les références vers l&apos;élément actuel ou vers expr</translation>
+    </message>
+    <message>
+        <source>  n &lt;name&gt;          rename the current function</source>
+        <translation>  n &lt;nom&gt;           renommer la fonction actuelle</translation>
+    </message>
+    <message>
+        <source>  c &lt;text&gt;          comment the current address</source>
+        <translation>  c &lt;texte&gt;         commenter l&apos;adresse actuelle</translation>
+    </message>
+    <message>
+        <source>  d [expr]          decompile the current or given function</source>
+        <translation>  d [expr]          décompiler la fonction actuelle ou indiquée</translation>
+    </message>
+    <message>
+        <source>  f &lt;hex|&quot;text&quot;&gt;    search the binary</source>
+        <translation>  f &lt;hex|&quot;texte&quot;&gt;   rechercher dans le binaire</translation>
+    </message>
+    <message>
+        <source>  graph, hex        show the graph or hex view</source>
+        <translation>  graph, hex        afficher la vue graphique ou hexadécimale</translation>
+    </message>
+    <message>
+        <source>  analyze, save     whole-program analysis, save comments</source>
+        <translation>  analyze, save     analyse du programme entier, enregistrer les commentaires</translation>
+    </message>
+    <message>
+        <source>  &lt;expr&gt;            evaluate: 0x10, 10h, #16, names, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</source>
+        <translation>  &lt;expr&gt;            évaluer : 0x10, 10h, #16, noms, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::Session</name>
+    <message>
+        <source>Starting analysis worker…</source>
+        <translation>Démarrage du processus d&apos;analyse…</translation>
+    </message>
+    <message>
+        <source>Incompatible analysis worker protocol.</source>
+        <translation>Protocole du processus d&apos;analyse incompatible.</translation>
+    </message>
+    <message>
+        <source>Analysis engine %1 ready</source>
+        <translation>Moteur d&apos;analyse %1 prêt</translation>
+    </message>
+    <message>
+        <source>Select an existing binary file.</source>
+        <translation>Sélectionnez un fichier binaire existant.</translation>
+    </message>
+    <message>
+        <source>Loading %1…</source>
+        <translation>Chargement de %1…</translation>
+    </message>
+    <message>
+        <source>%1: %2 %3, %4 functions</source>
+        <translation>%1 : %2 %3, %4 fonctions</translation>
+    </message>
+    <message>
+        <source>Annotations reloaded</source>
+        <translation>Annotations rechargées</translation>
+    </message>
+    <message>
+        <source>Comments and history saved</source>
+        <translation>Commentaires et historique enregistrés</translation>
+    </message>
+    <message>
+        <source>The edit was prepared for a session that is no longer open and was not applied.</source>
+        <translation>La modification a été préparée pour une session qui n&apos;est plus ouverte et n&apos;a pas été appliquée.</translation>
+    </message>
+    <message>
+        <source>Edits are paused while the pending save, open or close completes.</source>
+        <translation>Les modifications sont suspendues jusqu&apos;à la fin de l&apos;enregistrement, de l&apos;ouverture ou de la fermeture en cours.</translation>
+    </message>
+    <message>
+        <source>Renamed %1 to %2</source>
+        <translation>%1 renommé en %2</translation>
+    </message>
+    <message>
+        <source>Signature pack applied: %1 byte matches</source>
+        <translation>Pack de signatures appliqué : %1 correspondances d&apos;octets</translation>
+    </message>
+    <message>
+        <source>Whole-program analysis started; views stay available.</source>
+        <translation>Analyse du programme entier démarrée ; les vues restent disponibles.</translation>
+    </message>
+    <message>
+        <source>Whole-program analysis finished</source>
+        <translation>Analyse du programme entier terminée</translation>
+    </message>
+    <message>
+        <source>Queued requests cancelled; a running engine call finishes unless the worker is restarted.</source>
+        <translation>Requêtes en file d&apos;attente annulées ; un appel au moteur déjà en cours se termine, sauf si le processus d&apos;analyse est redémarré.</translation>
+    </message>
+    <message>
+        <source>%1 describes a different version of this file and was not used; saving replaces it.</source>
+        <translation>%1 décrit une autre version de ce fichier et n&apos;a pas été utilisée ; l&apos;enregistrement la remplace.</translation>
+    </message>
+    <message>
+        <source>Could not restore %1 from the database.</source>
+        <translation>Impossible de restaurer %1 depuis la base de données.</translation>
+    </message>
+    <message>
+        <source>Database saved: %1</source>
+        <translation>Base de données enregistrée : %1</translation>
+    </message>
+    <message>
+        <source>Could not save the database: %1</source>
+        <translation>Impossible d&apos;enregistrer la base de données : %1</translation>
+    </message>
+    <message>
+        <source>Could not update the database: %1</source>
+        <translation>Impossible de mettre à jour la base de données : %1</translation>
+    </message>
+</context>
 </TS>

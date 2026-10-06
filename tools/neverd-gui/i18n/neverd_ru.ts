@@ -1,1357 +1,1965 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
 <TS version="2.1" language="ru" sourcelanguage="en">
-    <context>
-        <name>ConnectionsPane</name>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="20" />
-            <source>Pending</source>
-            <translation>Ожидание</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="21" />
-            <source>Completed</source>
-            <translation>Завершён</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="22" />
-            <source>Failed</source>
-            <translation>Ошибка</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="23" />
-            <source>Cancelled</source>
-            <translation>Отменён</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="24" />
-            <source>Timed out</source>
-            <translation>Время ожидания истекло</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="25" />
-            <source>Disconnected</source>
-            <translation>Соединение разорвано</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="36" />
-            <source>MCP connections</source>
-            <translation>Подключения MCP</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="37" />
-            <source>No server connected</source>
-            <translation>Нет подключённых серверов</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="38" />
-            <source>Current session is available to external agents.</source>
-            <translation>Текущий сеанс доступен внешним агентам.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="38" />
-            <source>Connect tools and resources, or share this session with an external agent.</source>
-            <translation>Подключите инструменты и ресурсы или предоставьте внешнему агенту доступ к этому сеансу.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="41" />
-            <source>Manage Connections…</source>
-            <translation>Управление подключениями…</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="46" />
-            <source>MCP Connections</source>
-            <translation>Подключения MCP</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="59" />
-            <source>Current GUI session</source>
-            <translation>Текущий сеанс интерфейса</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="60" />
-            <source>Disable Sharing</source>
-            <translation>Отключить общий доступ</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="60" />
-            <source>Enable Sharing</source>
-            <translation>Включить общий доступ</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="61" />
-            <source>Copy Credential Path</source>
-            <translation>Копировать путь к учётным данным</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="63" />
-            <source>Sharing is off. Enabling it grants local agents access to this session using its private credential file.</source>
-            <translation>Общий доступ отключён. При его включении локальные агенты смогут подключаться к этому сеансу через закрытый файл учётных данных.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="67" />
-            <source>Transport</source>
-            <translation>Транспорт</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="68" />
-            <source>Absolute path to server executable</source>
-            <translation>Абсолютный путь к исполняемому файлу сервера</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="68" />
-            <source>Server endpoint</source>
-            <translation>Адрес подключения сервера</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="70" />
-            <source>Disconnect</source>
-            <translation>Отключить</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="70" />
-            <source>Connect</source>
-            <translation>Подключить</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="80" />
-            <source>Arguments must be a JSON array of strings.</source>
-            <translation>Аргументы должны быть массивом строк JSON.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="87" />
-            <source>Arguments as JSON, for example ["--help"]</source>
-            <translation>Аргументы в JSON, например ["--help"]</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="87" />
-            <source>Server arguments</source>
-            <translation>Аргументы сервера</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="91" />
-            <source>Bearer token (optional)</source>
-            <translation>Токен Bearer (необязательно)</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="91" />
-            <source>Bearer token</source>
-            <translation>Токен Bearer</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="92" />
-            <source>CA certificate path (optional)</source>
-            <translation>Путь к сертификату CA (необязательно)</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="92" />
-            <source>CA certificate path</source>
-            <translation>Путь к сертификату CA</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="106" />
-            <source>Tools</source>
-            <translation>Инструменты</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="106" />
-            <source>Resources</source>
-            <translation>Ресурсы</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="106" />
-            <source>History</source>
-            <translation>История</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="146" />
-            <source>No items published by this server.</source>
-            <translation>Этот сервер не опубликовал ни одного элемента.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="146" />
-            <source>Connect a server to browse its tools and resources.</source>
-            <translation>Подключите сервер, чтобы просмотреть его инструменты и ресурсы.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="146" />
-            <source>No calls yet.</source>
-            <translation>Вызовов пока нет.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="156" />
-            <source>Result</source>
-            <translation>Результат</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="157" />
-            <source>Schema</source>
-            <translation>Схема</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="158" />
-            <source>Call Tool</source>
-            <translation>Вызвать инструмент</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="159" />
-            <source>Cancel Call</source>
-            <translation>Отменить вызов</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="167" />
-            <source>Tool arguments as JSON</source>
-            <translation>Аргументы инструмента в JSON</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="169" />
-            <source>Select a resource or call a tool to inspect its response.</source>
-            <translation>Выберите ресурс или вызовите инструмент, чтобы просмотреть ответ.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="177" />
-            <source>Tool Input Schema</source>
-            <translation>Схема входных данных инструмента</translation>
-        </message>
-    </context>
-    <context>
-        <name>DisassemblyPane</name>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="22" />
-            <source>Address</source>
-            <translation>Адрес</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="23" />
-            <source>Instruction</source>
-            <translation>Инструкция</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="87" />
-            <source>Load more instructions</source>
-            <translation>Загрузить ещё инструкции</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="93" />
-            <source>Disassembly</source>
-            <translation>Дизассемблирование</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="94" />
-            <source>Select a function to inspect its instructions.</source>
-            <translation>Выберите функцию, чтобы просмотреть её инструкции.</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="94" />
-            <source>Addresses, instructions, and control flow in one place.</source>
-            <translation>Адреса, инструкции и поток управления в одном месте.</translation>
-        </message>
-    </context>
-    <context>
-        <name>DockTitleBar</name>
-        <message>
-            <location filename="../qml/DockTitleBar.qml" line="17" />
-            <source>Float or Dock Panel</source>
-            <translation>Открепить или закрепить панель</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockTitleBar.qml" line="18" />
-            <source>Close Panel</source>
-            <translation>Закрыть панель</translation>
-        </message>
-    </context>
-    <context>
-        <name>ExtensionsPane</name>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="25" />
-            <source>Import Manifest…</source>
-            <translation>Импортировать манифест…</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="26" />
-            <source>Run</source>
-            <translation>Выполнить</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="27" />
-            <source>Unload</source>
-            <translation>Выгрузить</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="55" />
-            <source>Import a declarative manifest to add analysis commands and views.</source>
-            <translation>Импортируйте декларативный манифест, чтобы добавить команды и представления анализа.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="59" />
-            <source>Select an extension command to inspect its result.</source>
-            <translation>Выберите команду расширения, чтобы просмотреть её результат.</translation>
-        </message>
-    </context>
-    <context>
-        <name>FunctionsPane</name>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="84" />
-            <location filename="../qml/FunctionsPane.qml" line="22" />
-            <location filename="../qml/Main.qml" line="106" />
-            <source>FUNCTIONS</source>
-            <translation>ФУНКЦИИ</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="42" />
-            <source>Filter functions…</source>
-            <translation>Фильтр функций…</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="43" />
-            <source>Filter functions</source>
-            <translation>Фильтр функций</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="58" />
-            <source>Name</source>
-            <translation>Имя</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="59" />
-            <source>Address</source>
-            <translation>Адрес</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="128" />
-            <source>No functions</source>
-            <translation>Нет функций</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="129" />
-            <source>Try another filter or wait for analysis.</source>
-            <translation>Измените фильтр или дождитесь завершения анализа.</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="129" />
-            <source>Open a binary to browse its functions.</source>
-            <translation>Откройте двоичный файл, чтобы просмотреть его функции.</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="157" />
-            <source>Rename</source>
-            <translation>Переименовать</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="158" />
-            <source>Comment</source>
-            <translation>Комментарий</translation>
-        </message>
-    </context>
-    <context>
-        <name>GraphPane</name>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="54" />
-            <source>Zoom out</source>
-            <translation>Уменьшить</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="55" />
-            <source>Reset zoom</source>
-            <translation>Сбросить масштаб</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="56" />
-            <source>Zoom in</source>
-            <translation>Увеличить</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="57" />
-            <source>Fit</source>
-            <translation>Вписать</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="57" />
-            <source>Fit graph in viewport</source>
-            <translation>Вписать граф в область просмотра</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="59" />
-            <source>%1 blocks · %2 edges</source>
-            <translation>Блоки: %1 · рёбра: %2</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="96" />
-            <location filename="../qml/GraphPane.qml" line="119" />
-            <source>Control flow</source>
-            <translation>Поток управления</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="120" />
-            <source>Select a function to inspect its basic blocks.</source>
-            <translation>Выберите функцию, чтобы просмотреть её базовые блоки.</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="120" />
-            <source>Explore the paths through a function.</source>
-            <translation>Исследуйте пути выполнения функции.</translation>
-        </message>
-    </context>
-    <context>
-        <name>GuiSessionBroker</name>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="22" />
-            <location filename="../mcp/GuiSessionBroker.cpp" line="98" />
-            <source>Session sharing disabled</source>
-            <translation>Общий доступ к сеансу отключён</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="57" />
-            <source>Cannot create private session directory</source>
-            <translation>Не удалось создать закрытый каталог сеанса</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="72" />
-            <source>Cannot open local session broker: %1</source>
-            <translation>Не удалось открыть локальный посредник сеанса: %1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="78" />
-            <location filename="../mcp/GuiSessionBroker.cpp" line="83" />
-            <source>Cannot write private session credentials</source>
-            <translation>Не удалось записать закрытые учётные данные сеанса</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="87" />
-            <source>Session sharing enabled</source>
-            <translation>Общий доступ к сеансу включён</translation>
-        </message>
-    </context>
-    <context>
-        <name>Main</name>
-        <message>
-            <location filename="../qml/Main.qml" line="16" />
-            <source>NeverD — Binary Analysis</source>
-            <translation>NeverD — Анализ двоичных файлов</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="61" />
-            <source>Unsaved annotations</source>
-            <translation>Несохранённые аннотации</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="70" />
-            <source>Save annotation changes before continuing?</source>
-            <translation>Сохранить изменения аннотаций перед продолжением?</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="76" />
-            <source>Open Binary…</source>
-            <translation>Открыть двоичный файл…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="77" />
-            <source>Go to Address or Symbol…</source>
-            <translation>Перейти к адресу или символу…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="78" />
-            <source>Back</source>
-            <translation>Назад</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="79" />
-            <source>Forward</source>
-            <translation>Вперёд</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="80" />
-            <source>Settings…</source>
-            <translation>Настройки…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="81" />
-            <source>Rename Function…</source>
-            <translation>Переименовать функцию…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="82" />
-            <source>Edit Comment…</source>
-            <translation>Изменить комментарий…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="83" />
-            <source>Undo</source>
-            <translation>Отменить</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="84" />
-            <source>Redo</source>
-            <translation>Повторить</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="85" />
-            <source>Cancel Analysis</source>
-            <translation>Отменить анализ</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="86" />
-            <location filename="../qml/Main.qml" line="196" />
-            <source>Restart Worker</source>
-            <translation>Перезапустить процесс анализа</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="87" />
-            <source>Toggle Bottom Panel</source>
-            <translation>Показать/скрыть нижнюю панель</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="88" />
-            <source>Quit NeverD</source>
-            <translation>Выйти из NeverD</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="97" />
-            <source>File</source>
-            <translation>Файл</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="98" />
-            <source>Navigate</source>
-            <translation>Навигация</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="99" />
-            <source>Edit</source>
-            <translation>Правка</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="99" />
-            <source>Save Annotations</source>
-            <translation>Сохранить аннотации</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="99" />
-            <source>Reload Annotations</source>
-            <translation>Перезагрузить аннотации</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="101" />
-            <source>View</source>
-            <translation>Вид</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="112" />
-            <source>Focus Panel</source>
-            <translation>Выделить панель</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="98" />
-            <location filename="../qml/MachinePane.qml" line="22" />
-            <location filename="../qml/Main.qml" line="103" />
-            <location filename="../qml/Main.qml" line="113" />
-            <source>Disassembly</source>
-            <translation>Дизассемблирование</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="104" />
-            <source>Control Flow</source>
-            <translation>Поток управления</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="22" />
-            <location filename="../qml/Main.qml" line="105" />
-            <source>Hex</source>
-            <translation>Hex</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="117" />
-            <source>Reset Layout</source>
-            <translation>Сбросить расположение</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="119" />
-            <source>Analysis</source>
-            <translation>Анализ</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="122" />
-            <source>Import Manifest…</source>
-            <translation>Импортировать манифест…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="125" />
-            <source>Help</source>
-            <translation>Справка</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="125" />
-            <location filename="../qml/Main.qml" line="356" />
-            <source>Keyboard Shortcuts</source>
-            <translation>Сочетания клавиш</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="125" />
-            <location filename="../qml/Main.qml" line="366" />
-            <source>About NeverD</source>
-            <translation>О NeverD</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="141" />
-            <location filename="../qml/Main.qml" line="253" />
-            <source>Open Binary</source>
-            <translation>Открыть двоичный файл</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="152" />
-            <source>Go to address or symbol…</source>
-            <translation>Перейти к адресу или символу…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="153" />
-            <source>Address or symbol</source>
-            <translation>Адрес или символ</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="162" />
-            <source>Cancel</source>
-            <translation>Отмена</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="163" />
-            <location filename="../qml/Main.qml" line="320" />
-            <source>Settings</source>
-            <translation>Настройки</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="163" />
-            <source>Language and editor preferences</source>
-            <translation>Настройки языка и редактора</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="172" />
-            <source>WORKSPACE</source>
-            <translation>РАБОЧАЯ ОБЛАСТЬ</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="174" />
-            <source>No binary open</source>
-            <translation>Двоичный файл не открыт</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="176" />
-            <source>%1 functions</source>
-            <translation>Функций: %1</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="176" />
-            <source>Local analysis</source>
-            <translation>Локальный анализ</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="22" />
-            <source>CFG</source>
-            <translation>CFG</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="32" />
-            <source>Hex view</source>
-            <translation>Шестнадцатеричный вид</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="32" />
-            <source>Select an address to inspect its bytes.</source>
-            <translation>Выберите адрес, чтобы просмотреть его байты.</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="105" />
-            <location filename="../qml/Main.qml" line="107" />
-            <location filename="../qml/Main.qml" line="114" />
-            <location filename="../qml/RepresentationPane.qml" line="30" />
-            <source>Pseudocode &amp; intermediate representations</source>
-            <translation>Псевдокод и промежуточные представления</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="46" />
-            <source>No representation available</source>
-            <translation>Представление недоступно</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="46" />
-            <source>Read beyond assembly</source>
-            <translation>За пределами ассемблера</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="49" />
-            <source>Compare recovered C, LLVM C, LowIR, MedIR, HighIR, and LLVM IR. Select a function to begin.</source>
-            <translation>Сравните восстановленный C, LLVM C, LowIR, MedIR, HighIR и LLVM IR. Выберите функцию, чтобы начать.</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="112" />
-            <location filename="../qml/Main.qml" line="108" />
-            <source>References</source>
-            <translation>Ссылки</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="119" />
-            <location filename="../qml/Main.qml" line="109" />
-            <source>Output</source>
-            <translation>Вывод</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="126" />
-            <location filename="../qml/Main.qml" line="110" />
-            <source>Connections</source>
-            <translation>Подключения</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="133" />
-            <location filename="../qml/Main.qml" line="121" />
-            <location filename="../qml/Main.qml" line="123" />
-            <source>Extensions</source>
-            <translation>Расширения</translation>
-        </message>
-        <message>
-            <location filename="../qml/ReferencesPane.qml" line="42" />
-            <source>No references for this selection.</source>
-            <translation>Нет ссылок для текущего выбора.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ReferencesPane.qml" line="42" />
-            <source>References to the selected address appear here.</source>
-            <translation>Здесь появятся ссылки на выбранный адрес.</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="120" />
-            <source>Worker events and analysis messages appear here.</source>
-            <translation>Здесь появятся события процесса анализа и сообщения анализа.</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="221" />
-            <source>Worker connected</source>
-            <translation>Процесс анализа подключён</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="221" />
-            <source>Worker offline</source>
-            <translation>Процесс анализа отключён</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="255" />
-            <location filename="../qml/Main.qml" line="262" />
-            <source>All files (*)</source>
-            <translation>Все файлы (*)</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="260" />
-            <source>Import Manifest</source>
-            <translation>Импортировать манифест</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="262" />
-            <source>JSON files (*.json)</source>
-            <translation>Файлы JSON (*.json)</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="273" />
-            <source>Rename Function</source>
-            <translation>Переименовать функцию</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="283" />
-            <location filename="../qml/Main.qml" line="283" />
-            <source>Function name</source>
-            <translation>Имя функции</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="289" />
-            <source>Edit Comment</source>
-            <translation>Изменить комментарий</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="306" />
-            <source>Add a comment for this address…</source>
-            <translation>Добавить комментарий к этому адресу…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="311" />
-            <source>Comment</source>
-            <translation>Комментарий</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="329" />
-            <source>Appearance</source>
-            <translation>Внешний вид</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="332" />
-            <source>Theme</source>
-            <translation>Тема</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="337" />
-            <source>Code font size</source>
-            <translation>Размер шрифта кода</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="341" />
-            <source>Language</source>
-            <translation>Язык</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="349" />
-            <source>Interface language</source>
-            <translation>Язык интерфейса</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="351" />
-            <source>Changes apply immediately. Code, symbols, and comments keep their original language.</source>
-            <translation>Изменения применяются сразу. Код, символы и комментарии сохраняют исходный язык.</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="372" />
-            <source>NeverD
-Binary analysis workbench
-
-Explore disassembly, control flow, recovered C, and intermediate representations with a local analysis worker.</source>
-            <translation>NeverD
-Среда анализа двоичных файлов
-
-Исследуйте дизассемблирование, поток управления, восстановленный C и промежуточные представления с помощью локального процесса анализа.</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="288" />
-            <source>Library features and byte signatures (*.json *.pat)</source>
-            <translation>Признаки библиотек и байтовые сигнатуры (*.json *.pat)</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="286" />
-            <source>Load Signature Pack</source>
-            <translation>Загрузить пакет сигнатур</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="131" />
-            <source>Load Signature Pack…</source>
-            <translation>Загрузить пакет сигнатур…</translation>
-        </message>
-    </context>
-    <context>
-        <name>McpConnectionManager</name>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="18" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="145" />
-            <source>Disconnected</source>
-            <translation>Отключено</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="22" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="300" />
-            <source>MCP message exceeds 8 MiB</source>
-            <translation>Сообщение MCP превышает 8 МиБ</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="31" />
-            <source>Invalid MCP JSON-RPC message</source>
-            <translation>Некорректное сообщение JSON-RPC MCP</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="41" />
-            <source>MCP process error: %1</source>
-            <translation>Ошибка процесса MCP: %1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="45" />
-            <source>MCP process exited (%1): %2</source>
-            <translation>Процесс MCP завершён (%1): %2</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="58" />
-            <source>MCP request timed out: %1</source>
-            <translation>Время ожидания запроса MCP истекло: %1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="76" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="95" />
-            <source>Disconnect the running MCP process before reconnecting</source>
-            <translation>Перед повторным подключением отключите работающий процесс MCP</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="81" />
-            <source>Choose an absolute MCP executable path</source>
-            <translation>Выберите абсолютный путь к исполняемому файлу MCP</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="84" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="118" />
-            <source>Connecting</source>
-            <translation>Подключение</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="102" />
-            <source>MCP HTTP requires HTTPS, or HTTP on localhost</source>
-            <translation>Для MCP HTTP требуется HTTPS либо HTTP на localhost</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="105" />
-            <source>Invalid authentication token</source>
-            <translation>Некорректный токен аутентификации</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="110" />
-            <source>Cannot load CA certificate</source>
-            <translation>Не удалось загрузить сертификат CA</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="182" />
-            <source>MCP request queue is full</source>
-            <translation>Очередь запросов MCP заполнена</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="194" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="220" />
-            <source>MCP outgoing message budget exceeded</source>
-            <translation>Исходящее сообщение MCP превышает допустимый размер</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="199" />
-            <source>MCP server is disconnected</source>
-            <translation>Сервер MCP отключён</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="245" />
-            <source>MCP session expired; reconnecting</source>
-            <translation>Сеанс MCP истёк; выполняется повторное подключение</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="250" />
-            <source>MCP HTTP error %1: %2</source>
-            <translation>Ошибка HTTP MCP %1: %2</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="259" />
-            <source>MCP event stream ended before its response</source>
-            <translation>Поток событий MCP завершился до получения ответа</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="276" />
-            <source>Invalid MCP HTTP response</source>
-            <translation>Некорректный ответ HTTP MCP</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="292" />
-            <source>Invalid MCP session identifier</source>
-            <translation>Некорректный идентификатор сеанса MCP</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="294" />
-            <source>MCP session identifier is too large</source>
-            <translation>Идентификатор сеанса MCP слишком велик</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="318" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="333" />
-            <source>Invalid MCP event data</source>
-            <translation>Некорректные данные события MCP</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="347" />
-            <source>Invalid MCP protocol version</source>
-            <translation>Некорректная версия протокола MCP</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="364" />
-            <source>MCP request failed: %1</source>
-            <translation>Сбой запроса MCP: %1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="367" />
-            <source>MCP response has no result object</source>
-            <translation>Ответ MCP не содержит объекта результата</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="371" />
-            <source>Unsupported MCP protocol version</source>
-            <translation>Версия протокола MCP не поддерживается</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="377" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="387" />
-            <source>Connected</source>
-            <translation>Подключено</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="380" />
-            <source>Connected; tool list is partial</source>
-            <translation>Подключено; список инструментов неполный</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="383" />
-            <source>Connected; resource list is partial</source>
-            <translation>Подключено; список ресурсов неполный</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="387" />
-            <source>MCP tool reported an error</source>
-            <translation>Инструмент MCP сообщил об ошибке</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="397" />
-            <source>Connect an MCP server first</source>
-            <translation>Сначала подключите сервер MCP</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="398" />
-            <source>Tool arguments exceed the size limit</source>
-            <translation>Аргументы инструмента превышают допустимый размер</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="402" />
-            <source>Tool arguments must be a JSON object</source>
-            <translation>Аргументы инструмента должны быть объектом JSON</translation>
-        </message>
-    </context>
-    <context>
-        <name>PaneRegistry</name>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="417" />
-            <source>Default</source>
-            <translation>По умолчанию</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="424" />
-            <source>Cannot create pane: invalid kind or pane limit reached.</source>
-            <translation>Не удалось создать панель: недопустимый тип или достигнуто максимальное число панелей.</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="429" />
-            <source>The source pane is unavailable.</source>
-            <translation>Исходная панель недоступна.</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="553" />
-            <source>Cannot create group: invalid name or group limit reached.</source>
-            <translation>Не удалось создать группу: недопустимое имя или достигнуто максимальное число групп.</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="1004" />
-            <source>The saved pane catalog is invalid.</source>
-            <translation>Сохранённый каталог панелей некорректен.</translation>
-        </message>
-    </context>
-    <context>
-        <name>RepresentationPane</name>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="31" />
-            <source>Refresh</source>
-            <translation>Обновить</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="32" />
-            <source>Unpin</source>
-            <translation>Открепить</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="32" />
-            <source>Pin</source>
-            <translation>Закрепить</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="32" />
-            <source>Keep this function while navigating</source>
-            <translation>Сохранить эту функцию при навигации</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="54" />
-            <source>Load more lines</source>
-            <translation>Загрузить ещё строки</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="91" />
-            <source>Close</source>
-            <translation>Закрыть</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="54" />
-            <source>Details</source>
-            <translation>Подробности</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="110" />
-            <source>Evidence SHA-256</source>
-            <translation>SHA-256 доказательств</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="87" />
-            <source>Expand</source>
-            <translation>Развернуть</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="49" />
-            <source>Expand all</source>
-            <translation>Развернуть всё</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="87" />
-            <source>Fold</source>
-            <translation>Свернуть</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="49" />
-            <source>Fold all</source>
-            <translation>Свернуть всё</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="51" />
-            <source>Fold mapped library operations. Copy and export retain the full source.</source>
-            <translation>Свернуть сопоставленные операции библиотек. При копировании и экспорте сохраняется полный исходный код.</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="105" />
-            <source>Identity evidence</source>
-            <translation>Доказательства идентичности</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="46" />
-            <source>Library operations</source>
-            <translation>Операции библиотек</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="107" />
-            <source>Linkage</source>
-            <translation>Имя компоновки</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="103" />
-            <source>Mapped to original source</source>
-            <translation>Сопоставлено с исходным кодом</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="106" />
-            <source>Original instructions</source>
-            <translation>Исходные инструкции</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="103" />
-            <source>Original source stays expanded; mapping is incomplete or outside the loaded page</source>
-            <translation>Исходный код остаётся развёрнутым: сопоставление неполное или находится вне загруженной страницы</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="108" />
-            <source>Pack</source>
-            <translation>Пакет</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="109" />
-            <source>Profile SHA-256</source>
-            <translation>SHA-256 профиля</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="84" />
-            <source>Recognized library operation</source>
-            <translation>Распознанная операция библиотеки</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="104" />
-            <source>Rule</source>
-            <translation>Правило</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="111" />
-            <source>Source</source>
-            <translation>Источник</translation>
-        </message>
-    </context>
-    <context>
-        <name>Workbench</name>
-        <message>
-            <location filename="../Workbench.cpp" line="71" />
-            <source>Loading debug symbols…</source>
-            <translation>Загрузка отладочных символов…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="17" />
-            <source>Open a binary to begin</source>
-            <translation>Для начала откройте двоичный файл</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="87" />
-            <source>Action failed</source>
-            <translation>Действие не выполнено</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="147" />
-            <source>Incompatible analysis worker protocol.</source>
-            <translation>Несовместимый протокол процесса анализа.</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="150" />
-            <source>Connected to %1</source>
-            <translation>Подключено к %1</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="214" />
-            <source>Select an existing binary file.</source>
-            <translation>Выберите существующий двоичный файл.</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="217" />
-            <source>Starting analysis worker…</source>
-            <translation>Запуск процесса анализа…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="223" />
-            <source>Opening binary…</source>
-            <translation>Открытие двоичного файла…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="228" />
-            <source>Binary loaded</source>
-            <translation>Двоичный файл загружен</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="311" />
-            <location filename="../Workbench.cpp" line="352" />
-            <location filename="../Workbench.cpp" line="445" />
-            <source>Ready</source>
-            <translation>Готово</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="328" />
-            <source>No function at this address</source>
-            <translation>По этому адресу нет функции</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="330" />
-            <location filename="../Workbench.cpp" line="443" />
-            <source>Analyzing…</source>
-            <translation>Выполняется анализ…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="351" />
-            <source>Complete</source>
-            <translation>Завершено</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="351" />
-            <source>More lines available</source>
-            <translation>Доступны дополнительные строки</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="361" />
-            <source>Mapping belongs to an earlier revision; reload the representation</source>
-            <translation>Сопоставление относится к предыдущей ревизии; перезагрузите представление</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="363" />
-            <source>Linked instruction addresses; synthetic rows may be unmapped</source>
-            <translation>Адреса инструкций связаны; для синтетических строк сопоставление может отсутствовать</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="364" />
-            <source>Instruction mapping unavailable for this representation</source>
-            <translation>Сопоставление инструкций недоступно для этого представления</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="416" />
-            <source>Loading graph viewport…</source>
-            <translation>Загрузка области просмотра графа…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="418" />
-            <source>Viewport limit reached; zoom in for details</source>
-            <translation>Достигнут предел области просмотра; увеличьте масштаб для просмотра деталей</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="419" />
-            <source>%1 visible blocks · %2 edges</source>
-            <translation>Видимых блоков: %1 · рёбер: %2</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="452" />
-            <source>Cancellation requested; restart stops the worker immediately.</source>
-            <translation>Запрошена отмена; перезапуск немедленно останавливает процесс анализа.</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="453" />
-            <source>Cancellation requested</source>
-            <translation>Запрошена отмена</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="488" />
-            <source>Restarting analysis worker…</source>
-            <translation>Перезапуск процесса анализа…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="495" />
-            <source>Rename saved</source>
-            <translation>Переименование сохранено</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="502" />
-            <source>Comment changed; save annotations to keep it.</source>
-            <translation>Комментарий изменён; сохраните аннотации, чтобы его не потерять.</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="506" />
-            <source>Annotations saved</source>
-            <translation>Аннотации сохранены</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="479" />
-            <location filename="../Workbench.cpp" line="510" />
-            <source>Annotations reloaded</source>
-            <translation>Аннотации перезагружены</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="193" />
-            <source>Finish opening the binary before editing.</source>
-            <translation>Дождитесь завершения открытия двоичного файла перед внесением изменений.</translation>
-        </message>
-        <message>
-            <location filename="../PaneController.cpp" line="414" />
-            <source>Library regions link to original instructions; other source may be unmapped</source>
-            <translation>Области библиотек связаны с исходными инструкциями; остальной код может не иметь сопоставления</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="730" />
-            <source>Signature pack loaded</source>
-            <translation>Пакет сигнатур загружен</translation>
-        </message>
-    </context>
-    <context>
-        <name>WorkerTransport</name>
-        <message>
-            <location filename="../EngineClient.cpp" line="28" />
-            <source>Analysis worker exited (%1). Restart to continue.</source>
-            <translation>Процесс анализа завершён (%1). Перезапустите его, чтобы продолжить.</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="36" />
-            <source>Analysis worker is not running.</source>
-            <translation>Процесс анализа не запущен.</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="41" />
-            <source>Analysis request queue is full.</source>
-            <translation>Очередь запросов анализа заполнена.</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="57" />
-            <source>Invalid analysis protocol frame.</source>
-            <translation>Некорректный кадр протокола анализа.</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="67" />
-            <source>Invalid analysis protocol JSON.</source>
-            <translation>Некорректный JSON протокола анализа.</translation>
-        </message>
-    </context>
-    <context>
-        <name>TextPane</name>
-        <message>
-            <location filename="../qml/TextPane.qml" line="158" />
-            <source>Copy</source>
-            <translation>Копировать</translation>
-        </message>
-        <message>
-            <location filename="../qml/TextPane.qml" line="159" />
-            <source>Select all</source>
-            <translation>Выделить всё</translation>
-        </message>
-    </context>
+<context>
+    <name>Actions</name>
+    <message>
+        <source>&amp;Open...</source>
+        <translation>&amp;Открыть...</translation>
+    </message>
+    <message>
+        <source>Open a binary for analysis</source>
+        <translation>Открыть двоичный файл для анализа</translation>
+    </message>
+    <message>
+        <source>&amp;Reload the input file</source>
+        <translation>&amp;Перезагрузить входной файл</translation>
+    </message>
+    <message>
+        <source>Reload the binary and its saved annotations</source>
+        <translation>Перезагрузить двоичный файл и его сохранённые аннотации</translation>
+    </message>
+    <message>
+        <source>&amp;FLIRT signature file...</source>
+        <translation>&amp;Файл сигнатур FLIRT...</translation>
+    </message>
+    <message>
+        <source>Apply a byte signature (.pat) or library feature (.json) pack</source>
+        <translation>Применить пакет байтовых сигнатур (.pat) или признаков библиотек (.json)</translation>
+    </message>
+    <message>
+        <source>Signature &amp;directory...</source>
+        <translation>&amp;Каталог сигнатур...</translation>
+    </message>
+    <message>
+        <source>Apply every matching pack from a signature tree</source>
+        <translation>Применить все подходящие пакеты из дерева сигнатур</translation>
+    </message>
+    <message>
+        <source>Create &amp;LST file...</source>
+        <translation>&amp;Создать файл LST...</translation>
+    </message>
+    <message>
+        <source>Write the current function&apos;s listing to a text file</source>
+        <translation>Записать листинг текущей функции в текстовый файл</translation>
+    </message>
+    <message>
+        <source>Create &amp;C file...</source>
+        <translation>Создать &amp;файл C...</translation>
+    </message>
+    <message>
+        <source>Write the current function&apos;s pseudocode to a C file</source>
+        <translation>Записать псевдокод текущей функции в файл C</translation>
+    </message>
+    <message>
+        <source>&amp;Save</source>
+        <translation>&amp;Сохранить</translation>
+    </message>
+    <message>
+        <source>Save comments and history beside the binary</source>
+        <translation>Сохранить комментарии и историю рядом с двоичным файлом</translation>
+    </message>
+    <message>
+        <source>&amp;Close</source>
+        <translation>За&amp;крыть</translation>
+    </message>
+    <message>
+        <source>Close the current binary</source>
+        <translation>Закрыть текущий двоичный файл</translation>
+    </message>
+    <message>
+        <source>&amp;Quick start</source>
+        <translation>&amp;Быстрый старт</translation>
+    </message>
+    <message>
+        <source>Show the quick start window</source>
+        <translation>Показать окно быстрого старта</translation>
+    </message>
+    <message>
+        <source>E&amp;xit</source>
+        <translation>&amp;Выход</translation>
+    </message>
+    <message>
+        <source>Quit NeverD</source>
+        <translation>Выйти из NeverD</translation>
+    </message>
+    <message>
+        <source>&amp;Undo</source>
+        <translation>&amp;Отменить</translation>
+    </message>
+    <message>
+        <source>Undo the last comment or rename</source>
+        <translation>Отменить последний комментарий или переименование</translation>
+    </message>
+    <message>
+        <source>&amp;Redo</source>
+        <translation>&amp;Повторить</translation>
+    </message>
+    <message>
+        <source>Redo the last undone change</source>
+        <translation>Повторить последнее отменённое изменение</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>&amp;Копировать</translation>
+    </message>
+    <message>
+        <source>Copy the selection or current line</source>
+        <translation>Копировать выделенный фрагмент или текущую строку</translation>
+    </message>
+    <message>
+        <source>Copy &amp;address</source>
+        <translation>Копировать &amp;адрес</translation>
+    </message>
+    <message>
+        <source>Copy the current address</source>
+        <translation>Копировать текущий адрес</translation>
+    </message>
+    <message>
+        <source>Re&amp;name...</source>
+        <translation>Пере&amp;именовать...</translation>
+    </message>
+    <message>
+        <source>Rename the current function</source>
+        <translation>Переименовать текущую функцию</translation>
+    </message>
+    <message>
+        <source>Enter &amp;comment...</source>
+        <translation>Ввести &amp;комментарий...</translation>
+    </message>
+    <message>
+        <source>Comment the current address</source>
+        <translation>Прокомментировать текущий адрес</translation>
+    </message>
+    <message>
+        <source>Enter re&amp;peatable comment...</source>
+        <translation>Ввести &amp;повторяемый комментарий...</translation>
+    </message>
+    <message>
+        <source>&amp;Mark position...</source>
+        <translation>Отметить по&amp;зицию...</translation>
+    </message>
+    <message>
+        <source>Bookmark the current address</source>
+        <translation>Добавить текущий адрес в закладки</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;operand</source>
+        <translation>Перейти к &amp;операнду</translation>
+    </message>
+    <message>
+        <source>Follow the name or address under the cursor</source>
+        <translation>Перейти по имени или адресу под курсором</translation>
+    </message>
+    <message>
+        <source>Jump in a new &amp;window</source>
+        <translation>Перейти &amp;в новом окне</translation>
+    </message>
+    <message>
+        <source>Open the target in a new disassembly view</source>
+        <translation>Открыть цель в новом представлении дизассемблирования</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;previous position</source>
+        <translation>Перейти к &amp;предыдущей позиции</translation>
+    </message>
+    <message>
+        <source>Go back in the navigation history</source>
+        <translation>Вернуться назад по истории навигации</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;next position</source>
+        <translation>Перейти к &amp;следующей позиции</translation>
+    </message>
+    <message>
+        <source>Go forward in the navigation history</source>
+        <translation>Перейти вперёд по истории навигации</translation>
+    </message>
+    <message>
+        <source>Next f&amp;unction</source>
+        <translation>Следующая &amp;функция</translation>
+    </message>
+    <message>
+        <source>Move to the start of the next function</source>
+        <translation>Перейти к началу следующей функции</translation>
+    </message>
+    <message>
+        <source>Pre&amp;vious function</source>
+        <translation>Пре&amp;дыдущая функция</translation>
+    </message>
+    <message>
+        <source>Move to the start of the previous function</source>
+        <translation>Перейти к началу предыдущей функции</translation>
+    </message>
+    <message>
+        <source>Jump to ps&amp;eudocode</source>
+        <translation>Перейти к пс&amp;евдокоду</translation>
+    </message>
+    <message>
+        <source>Switch between disassembly and pseudocode</source>
+        <translation>Переключиться между дизассемблированием и псевдокодом</translation>
+    </message>
+    <message>
+        <source>Jump &amp;anywhere...</source>
+        <translation>Перейти &amp;куда угодно...</translation>
+    </message>
+    <message>
+        <source>Jump to an address, name or expression</source>
+        <translation>Перейти к адресу, имени или выражению</translation>
+    </message>
+    <message>
+        <source>Jump by na&amp;me...</source>
+        <translation>Перейти по и&amp;мени...</translation>
+    </message>
+    <message>
+        <source>Choose a name to jump to</source>
+        <translation>Выбрать имя для перехода</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;function...</source>
+        <translation>Перейти к ф&amp;ункции...</translation>
+    </message>
+    <message>
+        <source>Choose a function to jump to</source>
+        <translation>Выбрать функцию для перехода</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;segment...</source>
+        <translation>Перейти к се&amp;гменту...</translation>
+    </message>
+    <message>
+        <source>Choose a segment to jump to</source>
+        <translation>Выбрать сегмент для перехода</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;entry point...</source>
+        <translation>Перейти к &amp;точке входа...</translation>
+    </message>
+    <message>
+        <source>Choose an entry point to jump to</source>
+        <translation>Выбрать точку входа для перехода</translation>
+    </message>
+    <message>
+        <source>List cross references &amp;to...</source>
+        <translation>Список перекрёстных ссылок &amp;на...</translation>
+    </message>
+    <message>
+        <source>List references to the current item</source>
+        <translation>Вывести список ссылок на текущий элемент</translation>
+    </message>
+    <message>
+        <source>List cross references f&amp;rom...</source>
+        <translation>Список перекрёстных ссылок &amp;из...</translation>
+    </message>
+    <message>
+        <source>List references made by the current instruction</source>
+        <translation>Вывести список ссылок из текущей инструкции</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;xref to operand...</source>
+        <translation>Перейти к пе&amp;рекрёстной ссылке на операнд...</translation>
+    </message>
+    <message>
+        <source>List references to the name under the cursor</source>
+        <translation>Вывести список ссылок на имя под курсором</translation>
+    </message>
+    <message>
+        <source>Jump to mar&amp;ked position...</source>
+        <translation>Перейти к отмеченной по&amp;зиции...</translation>
+    </message>
+    <message>
+        <source>Choose a bookmark to jump to</source>
+        <translation>Выбрать закладку для перехода</translation>
+    </message>
+    <message>
+        <source>&amp;Text...</source>
+        <translation>&amp;Текст...</translation>
+    </message>
+    <message>
+        <source>Search the binary for text</source>
+        <translation>Искать текст в двоичном файле</translation>
+    </message>
+    <message>
+        <source>Next te&amp;xt</source>
+        <translation>Следующий те&amp;кст</translation>
+    </message>
+    <message>
+        <source>Repeat the last text search</source>
+        <translation>Повторить последний поиск текста</translation>
+    </message>
+    <message>
+        <source>Sequence of &amp;bytes...</source>
+        <translation>Последовательность &amp;байтов...</translation>
+    </message>
+    <message>
+        <source>Search the binary for a byte sequence</source>
+        <translation>Искать последовательность байтов в двоичном файле</translation>
+    </message>
+    <message>
+        <source>Next seq&amp;uence of bytes</source>
+        <translation>&amp;Следующая последовательность байтов</translation>
+    </message>
+    <message>
+        <source>Repeat the last byte search</source>
+        <translation>Повторить последний поиск байтов</translation>
+    </message>
+    <message>
+        <source>Search highlight &amp;up</source>
+        <translation>Поиск выделенного &amp;вверх</translation>
+    </message>
+    <message>
+        <source>Move to the previous occurrence of the highlighted identifier</source>
+        <translation>Перейти к предыдущему вхождению выделенного идентификатора</translation>
+    </message>
+    <message>
+        <source>Search highlight &amp;down</source>
+        <translation>Поиск выделенного вн&amp;из</translation>
+    </message>
+    <message>
+        <source>Move to the next occurrence of the highlighted identifier</source>
+        <translation>Перейти к следующему вхождению выделенного идентификатора</translation>
+    </message>
+    <message>
+        <source>&amp;Find in view...</source>
+        <translation>&amp;Найти в представлении...</translation>
+    </message>
+    <message>
+        <source>Find text among the loaded lines of the current view</source>
+        <translation>Найти текст среди загруженных строк текущего представления</translation>
+    </message>
+    <message>
+        <source>&amp;Quick view...</source>
+        <translation>&amp;Быстрый просмотр...</translation>
+    </message>
+    <message>
+        <source>Choose a view to open</source>
+        <translation>Выбрать представление для открытия</translation>
+    </message>
+    <message>
+        <source>&amp;Disassembly</source>
+        <translation>&amp;Дизассемблирование</translation>
+    </message>
+    <message>
+        <source>Open a new disassembly view</source>
+        <translation>Открыть новое представление дизассемблирования</translation>
+    </message>
+    <message>
+        <source>Toggle &amp;graph view</source>
+        <translation>Переключить &amp;графическое представление</translation>
+    </message>
+    <message>
+        <source>Switch between text and graph views</source>
+        <translation>Переключиться между текстовым и графическим представлениями</translation>
+    </message>
+    <message>
+        <source>Generate &amp;pseudocode</source>
+        <translation>Сгенерировать &amp;псевдокод</translation>
+    </message>
+    <message>
+        <source>Decompile the current function</source>
+        <translation>Декомпилировать текущую функцию</translation>
+    </message>
+    <message>
+        <source>Generate &amp;LowIR</source>
+        <translation>&amp;Сгенерировать LowIR</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s LowIR</source>
+        <translation>Показать LowIR текущей функции</translation>
+    </message>
+    <message>
+        <source>Generate &amp;MedIR</source>
+        <translation>С&amp;генерировать MedIR</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s MedIR</source>
+        <translation>Показать MedIR текущей функции</translation>
+    </message>
+    <message>
+        <source>Generate &amp;HighIR</source>
+        <translation>Сг&amp;енерировать HighIR</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s HighIR</source>
+        <translation>Показать HighIR текущей функции</translation>
+    </message>
+    <message>
+        <source>Generate LLVM &amp;IR</source>
+        <translation>Сге&amp;нерировать LLVM IR</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s LLVM IR</source>
+        <translation>Показать LLVM IR текущей функции</translation>
+    </message>
+    <message>
+        <source>Generate LLVM &amp;C</source>
+        <translation>С&amp;генерировать LLVM C</translation>
+    </message>
+    <message>
+        <source>Decompile the current function through LLVM</source>
+        <translation>Декомпилировать текущую функцию через LLVM</translation>
+    </message>
+    <message>
+        <source>&amp;Hex dump</source>
+        <translation>&amp;Шестнадцатеричный дамп</translation>
+    </message>
+    <message>
+        <source>Show the hex view</source>
+        <translation>Показать шестнадцатеричное представление</translation>
+    </message>
+    <message>
+        <source>E&amp;xports</source>
+        <translation>&amp;Экспорт</translation>
+    </message>
+    <message>
+        <source>Show exported names and entry points</source>
+        <translation>Показать экспортируемые имена и точки входа</translation>
+    </message>
+    <message>
+        <source>&amp;Imports</source>
+        <translation>&amp;Импорт</translation>
+    </message>
+    <message>
+        <source>Show imported names</source>
+        <translation>Показать импортируемые имена</translation>
+    </message>
+    <message>
+        <source>&amp;Names</source>
+        <translation>И&amp;мена</translation>
+    </message>
+    <message>
+        <source>Show every named location</source>
+        <translation>Показать все именованные адреса</translation>
+    </message>
+    <message>
+        <source>&amp;Functions</source>
+        <translation>&amp;Функции</translation>
+    </message>
+    <message>
+        <source>Show the functions window</source>
+        <translation>Показать окно функций</translation>
+    </message>
+    <message>
+        <source>&amp;Strings</source>
+        <translation>&amp;Строки</translation>
+    </message>
+    <message>
+        <source>Show the strings window</source>
+        <translation>Показать окно строк</translation>
+    </message>
+    <message>
+        <source>S&amp;egments</source>
+        <translation>С&amp;егменты</translation>
+    </message>
+    <message>
+        <source>Show the segments window</source>
+        <translation>Показать окно сегментов</translation>
+    </message>
+    <message>
+        <source>&amp;Cross references</source>
+        <translation>Перекрёс&amp;тные ссылки</translation>
+    </message>
+    <message>
+        <source>Show references to the current item</source>
+        <translation>Показать ссылки на текущий элемент</translation>
+    </message>
+    <message>
+        <source>&amp;Bookmarks</source>
+        <translation>&amp;Закладки</translation>
+    </message>
+    <message>
+        <source>Show bookmarks</source>
+        <translation>Показать закладки</translation>
+    </message>
+    <message>
+        <source>&amp;Output</source>
+        <translation>&amp;Вывод</translation>
+    </message>
+    <message>
+        <source>Show the output window</source>
+        <translation>Показать окно вывода</translation>
+    </message>
+    <message>
+        <source>Graph &amp;overview</source>
+        <translation>&amp;Обзор графа</translation>
+    </message>
+    <message>
+        <source>Show the graph overview</source>
+        <translation>Показать обзор графа</translation>
+    </message>
+    <message>
+        <source>MCP &amp;connections</source>
+        <translation>Под&amp;ключения MCP</translation>
+    </message>
+    <message>
+        <source>Manage MCP connections and session sharing</source>
+        <translation>Управление подключениями MCP и общим доступом к сеансу</translation>
+    </message>
+    <message>
+        <source>E&amp;xtensions</source>
+        <translation>&amp;Расширения</translation>
+    </message>
+    <message>
+        <source>Manage declarative extensions</source>
+        <translation>Управление декларативными расширениями</translation>
+    </message>
+    <message>
+        <source>&amp;Undo history</source>
+        <translation>История &amp;отмены</translation>
+    </message>
+    <message>
+        <source>Show the comment and rename history</source>
+        <translation>Показать историю комментариев и переименований</translation>
+    </message>
+    <message>
+        <source>&amp;Calculator...</source>
+        <translation>&amp;Калькулятор...</translation>
+    </message>
+    <message>
+        <source>Evaluate an expression</source>
+        <translation>Вычислить выражение</translation>
+    </message>
+    <message>
+        <source>F&amp;ull screen</source>
+        <translation>Полный &amp;экран</translation>
+    </message>
+    <message>
+        <source>Toggle full screen</source>
+        <translation>Включить или выключить полноэкранный режим</translation>
+    </message>
+    <message>
+        <source>&amp;Increase font size</source>
+        <translation>&amp;Увеличить размер шрифта</translation>
+    </message>
+    <message>
+        <source>Increase the code font size</source>
+        <translation>Увеличить размер шрифта кода</translation>
+    </message>
+    <message>
+        <source>&amp;Decrease font size</source>
+        <translation>Уме&amp;ньшить размер шрифта</translation>
+    </message>
+    <message>
+        <source>Decrease the code font size</source>
+        <translation>Уменьшить размер шрифта кода</translation>
+    </message>
+    <message>
+        <source>&amp;Reset font size</source>
+        <translation>&amp;Сбросить размер шрифта</translation>
+    </message>
+    <message>
+        <source>Restore the default code font size</source>
+        <translation>Восстановить размер шрифта кода по умолчанию</translation>
+    </message>
+    <message>
+        <source>&amp;General...</source>
+        <translation>&amp;Общие...</translation>
+    </message>
+    <message>
+        <source>Listing, analysis and language options</source>
+        <translation>Параметры листинга, анализа и языка</translation>
+    </message>
+    <message>
+        <source>&amp;Colors...</source>
+        <translation>&amp;Цвета...</translation>
+    </message>
+    <message>
+        <source>Choose the color theme</source>
+        <translation>Выбрать цветовую тему</translation>
+    </message>
+    <message>
+        <source>&amp;Font...</source>
+        <translation>&amp;Шрифт...</translation>
+    </message>
+    <message>
+        <source>Choose the code font</source>
+        <translation>Выбрать шрифт кода</translation>
+    </message>
+    <message>
+        <source>&amp;Shortcuts...</source>
+        <translation>&amp;Сочетания клавиш...</translation>
+    </message>
+    <message>
+        <source>List keyboard shortcuts</source>
+        <translation>Вывести список сочетаний клавиш</translation>
+    </message>
+    <message>
+        <source>Show command &amp;palette...</source>
+        <translation>Показать &amp;палитру команд...</translation>
+    </message>
+    <message>
+        <source>Search and run any command</source>
+        <translation>Найти и выполнить любую команду</translation>
+    </message>
+    <message>
+        <source>&amp;Repeat last palette command</source>
+        <translation>По&amp;вторить последнюю команду палитры</translation>
+    </message>
+    <message>
+        <source>Run the last command chosen in the palette again</source>
+        <translation>Повторно выполнить последнюю команду, выбранную в палитре</translation>
+    </message>
+    <message>
+        <source>&amp;Whole-program analysis</source>
+        <translation>&amp;Анализ всей программы</translation>
+    </message>
+    <message>
+        <source>Analyze every function together in the background</source>
+        <translation>Проанализировать все функции совместно в фоновом режиме</translation>
+    </message>
+    <message>
+        <source>Ca&amp;ncel pending requests</source>
+        <translation>&amp;Отменить ожидающие запросы</translation>
+    </message>
+    <message>
+        <source>Cancel queued analysis requests</source>
+        <translation>Отменить запросы анализа в очереди</translation>
+    </message>
+    <message>
+        <source>&amp;Restart analysis worker</source>
+        <translation>&amp;Перезапустить процесс анализа</translation>
+    </message>
+    <message>
+        <source>Restart the analysis process and reopen the binary</source>
+        <translation>Перезапустить процесс анализа и снова открыть двоичный файл</translation>
+    </message>
+    <message>
+        <source>&amp;Save desktop</source>
+        <translation>&amp;Сохранить рабочий стол</translation>
+    </message>
+    <message>
+        <source>Save the window layout</source>
+        <translation>Сохранить расположение окон</translation>
+    </message>
+    <message>
+        <source>&amp;Load desktop</source>
+        <translation>За&amp;грузить рабочий стол</translation>
+    </message>
+    <message>
+        <source>Restore the saved window layout</source>
+        <translation>Восстановить сохранённое расположение окон</translation>
+    </message>
+    <message>
+        <source>&amp;Reset desktop</source>
+        <translation>Сб&amp;росить рабочий стол</translation>
+    </message>
+    <message>
+        <source>Restore the default window layout</source>
+        <translation>Восстановить расположение окон по умолчанию</translation>
+    </message>
+    <message>
+        <source>&amp;Next window</source>
+        <translation>Следующее &amp;окно</translation>
+    </message>
+    <message>
+        <source>Activate the next window</source>
+        <translation>Активировать следующее окно</translation>
+    </message>
+    <message>
+        <source>&amp;Previous window</source>
+        <translation>&amp;Предыдущее окно</translation>
+    </message>
+    <message>
+        <source>Activate the previous window</source>
+        <translation>Активировать предыдущее окно</translation>
+    </message>
+    <message>
+        <source>&amp;Close window</source>
+        <translation>&amp;Закрыть окно</translation>
+    </message>
+    <message>
+        <source>Close the current window</source>
+        <translation>Закрыть текущее окно</translation>
+    </message>
+    <message>
+        <source>&amp;Focus command line</source>
+        <translation>Перейти в &amp;командную строку</translation>
+    </message>
+    <message>
+        <source>Move the keyboard focus to the command line</source>
+        <translation>Переместить фокус клавиатуры в командную строку</translation>
+    </message>
+    <message>
+        <source>&amp;Help</source>
+        <translation>&amp;Справка</translation>
+    </message>
+    <message>
+        <source>Open the NeverD documentation</source>
+        <translation>Открыть документацию NeverD</translation>
+    </message>
+    <message>
+        <source>&amp;About NeverD</source>
+        <translation>&amp;О программе NeverD</translation>
+    </message>
+    <message>
+        <source>Version and license information</source>
+        <translation>Сведения о версии и лицензии</translation>
+    </message>
+</context>
+<context>
+    <name>Choosers</name>
+    <message>
+        <source>Functions</source>
+        <translation>Функции</translation>
+    </message>
+    <message>
+        <source>Function name</source>
+        <translation>Имя функции</translation>
+    </message>
+    <message>
+        <source>Segment</source>
+        <translation>Сегмент</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>Начало</translation>
+    </message>
+    <message>
+        <source>Length</source>
+        <translation>Длина</translation>
+    </message>
+    <message>
+        <source>Names</source>
+        <translation>Имена</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Имя</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>Адрес</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>Тип</translation>
+    </message>
+    <message>
+        <source>Strings</source>
+        <translation>Строки</translation>
+    </message>
+    <message>
+        <source>String</source>
+        <translation>Строка</translation>
+    </message>
+    <message>
+        <source>Segments</source>
+        <translation>Сегменты</translation>
+    </message>
+    <message>
+        <source>End</source>
+        <translation>Конец</translation>
+    </message>
+    <message>
+        <source>R</source>
+        <translation>R</translation>
+    </message>
+    <message>
+        <source>W</source>
+        <translation>W</translation>
+    </message>
+    <message>
+        <source>X</source>
+        <translation>X</translation>
+    </message>
+    <message>
+        <source>Align</source>
+        <translation>Выравнивание</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>Класс</translation>
+    </message>
+    <message>
+        <source>Imports</source>
+        <translation>Импорт</translation>
+    </message>
+    <message>
+        <source>Ordinal</source>
+        <translation>Ординал</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>Библиотека</translation>
+    </message>
+    <message>
+        <source>Exports</source>
+        <translation>Экспорт</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>Тип</translation>
+    </message>
+    <message>
+        <source>Cross references</source>
+        <translation>Перекрёстные ссылки</translation>
+    </message>
+    <message>
+        <source>Direction</source>
+        <translation>Направление</translation>
+    </message>
+    <message>
+        <source>Location</source>
+        <translation>Расположение</translation>
+    </message>
+    <message>
+        <source>Search results</source>
+        <translation>Результаты поиска</translation>
+    </message>
+    <message>
+        <source>Context</source>
+        <translation>Контекст</translation>
+    </message>
+    <message>
+        <source>Bookmarks</source>
+        <translation>Закладки</translation>
+    </message>
+    <message>
+        <source>Description</source>
+        <translation>Описание</translation>
+    </message>
+</context>
+<context>
+    <name>GuiSessionBroker</name>
+    <message>
+        <source>Session sharing disabled</source>
+        <translation>Общий доступ к сеансу отключён</translation>
+    </message>
+    <message>
+        <source>Cannot create private session directory</source>
+        <translation>Не удалось создать закрытый каталог сеанса</translation>
+    </message>
+    <message>
+        <source>Cannot open local session broker: %1</source>
+        <translation>Не удалось открыть локальный посредник сеанса: %1</translation>
+    </message>
+    <message>
+        <source>Cannot write private session credentials</source>
+        <translation>Не удалось записать закрытые учётные данные сеанса</translation>
+    </message>
+    <message>
+        <source>Session sharing enabled</source>
+        <translation>Общий доступ к сеансу включён</translation>
+    </message>
+</context>
+<context>
+    <name>McpConnectionManager</name>
+    <message>
+        <source>Disconnected</source>
+        <translation>Отключено</translation>
+    </message>
+    <message>
+        <source>MCP message exceeds 8 MiB</source>
+        <translation>Сообщение MCP превышает 8 МиБ</translation>
+    </message>
+    <message>
+        <source>Invalid MCP JSON-RPC message</source>
+        <translation>Некорректное сообщение JSON-RPC MCP</translation>
+    </message>
+    <message>
+        <source>MCP process error: %1</source>
+        <translation>Ошибка процесса MCP: %1</translation>
+    </message>
+    <message>
+        <source>MCP process exited (%1): %2</source>
+        <translation>Процесс MCP завершён (%1): %2</translation>
+    </message>
+    <message>
+        <source>MCP request timed out: %1</source>
+        <translation>Время ожидания запроса MCP истекло: %1</translation>
+    </message>
+    <message>
+        <source>Disconnect the running MCP process before reconnecting</source>
+        <translation>Перед повторным подключением отключите работающий процесс MCP</translation>
+    </message>
+    <message>
+        <source>Choose an absolute MCP executable path</source>
+        <translation>Выберите абсолютный путь к исполняемому файлу MCP</translation>
+    </message>
+    <message>
+        <source>Connecting</source>
+        <translation>Подключение</translation>
+    </message>
+    <message>
+        <source>MCP HTTP requires HTTPS, or HTTP on localhost</source>
+        <translation>Для MCP HTTP требуется HTTPS либо HTTP на localhost</translation>
+    </message>
+    <message>
+        <source>Invalid authentication token</source>
+        <translation>Некорректный токен аутентификации</translation>
+    </message>
+    <message>
+        <source>Cannot load CA certificate</source>
+        <translation>Не удалось загрузить сертификат CA</translation>
+    </message>
+    <message>
+        <source>MCP request queue is full</source>
+        <translation>Очередь запросов MCP заполнена</translation>
+    </message>
+    <message>
+        <source>MCP outgoing message budget exceeded</source>
+        <translation>Исходящее сообщение MCP превышает допустимый размер</translation>
+    </message>
+    <message>
+        <source>MCP server is disconnected</source>
+        <translation>Сервер MCP отключён</translation>
+    </message>
+    <message>
+        <source>MCP session expired; reconnecting</source>
+        <translation>Сеанс MCP истёк; выполняется повторное подключение</translation>
+    </message>
+    <message>
+        <source>MCP HTTP error %1: %2</source>
+        <translation>Ошибка HTTP MCP %1: %2</translation>
+    </message>
+    <message>
+        <source>MCP event stream ended before its response</source>
+        <translation>Поток событий MCP завершился до получения ответа</translation>
+    </message>
+    <message>
+        <source>Invalid MCP HTTP response</source>
+        <translation>Некорректный ответ HTTP MCP</translation>
+    </message>
+    <message>
+        <source>Invalid MCP session identifier</source>
+        <translation>Некорректный идентификатор сеанса MCP</translation>
+    </message>
+    <message>
+        <source>MCP session identifier is too large</source>
+        <translation>Идентификатор сеанса MCP слишком велик</translation>
+    </message>
+    <message>
+        <source>Invalid MCP event data</source>
+        <translation>Некорректные данные события MCP</translation>
+    </message>
+    <message>
+        <source>Invalid MCP protocol version</source>
+        <translation>Некорректная версия протокола MCP</translation>
+    </message>
+    <message>
+        <source>MCP request failed: %1</source>
+        <translation>Сбой запроса MCP: %1</translation>
+    </message>
+    <message>
+        <source>MCP response has no result object</source>
+        <translation>Ответ MCP не содержит объекта результата</translation>
+    </message>
+    <message>
+        <source>Unsupported MCP protocol version</source>
+        <translation>Версия протокола MCP не поддерживается</translation>
+    </message>
+    <message>
+        <source>Connected</source>
+        <translation>Подключено</translation>
+    </message>
+    <message>
+        <source>Connected; tool list is partial</source>
+        <translation>Подключено; список инструментов неполный</translation>
+    </message>
+    <message>
+        <source>Connected; resource list is partial</source>
+        <translation>Подключено; список ресурсов неполный</translation>
+    </message>
+    <message>
+        <source>MCP tool reported an error</source>
+        <translation>Инструмент MCP сообщил об ошибке</translation>
+    </message>
+    <message>
+        <source>Connect an MCP server first</source>
+        <translation>Сначала подключите сервер MCP</translation>
+    </message>
+    <message>
+        <source>Tool arguments exceed the size limit</source>
+        <translation>Аргументы инструмента превышают допустимый размер</translation>
+    </message>
+    <message>
+        <source>Tool arguments must be a JSON object</source>
+        <translation>Аргументы инструмента должны быть объектом JSON</translation>
+    </message>
+</context>
+<context>
+    <name>Menus</name>
+    <message>
+        <source>&amp;File</source>
+        <translation>&amp;Файл</translation>
+    </message>
+    <message>
+        <source>&amp;Load file</source>
+        <translation>&amp;Загрузить файл</translation>
+    </message>
+    <message>
+        <source>&amp;Produce file</source>
+        <translation>Соз&amp;дать файл</translation>
+    </message>
+    <message>
+        <source>&amp;Edit</source>
+        <translation>&amp;Правка</translation>
+    </message>
+    <message>
+        <source>Co&amp;mments</source>
+        <translation>Ко&amp;мментарии</translation>
+    </message>
+    <message>
+        <source>&amp;Jump</source>
+        <translation>Пере&amp;ход</translation>
+    </message>
+    <message>
+        <source>&amp;Search</source>
+        <translation>По&amp;иск</translation>
+    </message>
+    <message>
+        <source>&amp;View</source>
+        <translation>&amp;Вид</translation>
+    </message>
+    <message>
+        <source>Open &amp;subviews</source>
+        <translation>Открыть &amp;подокна</translation>
+    </message>
+    <message>
+        <source>&amp;Intermediate representations</source>
+        <translation>Пр&amp;омежуточные представления</translation>
+    </message>
+    <message>
+        <source>&amp;Graphs</source>
+        <translation>&amp;Графы</translation>
+    </message>
+    <message>
+        <source>&amp;Toolbars</source>
+        <translation>Панели &amp;инструментов</translation>
+    </message>
+    <message>
+        <source>&amp;Options</source>
+        <translation>Пара&amp;метры</translation>
+    </message>
+    <message>
+        <source>&amp;Language</source>
+        <translation>&amp;Язык</translation>
+    </message>
+    <message>
+        <source>&amp;Analysis</source>
+        <translation>&amp;Анализ</translation>
+    </message>
+    <message>
+        <source>&amp;Windows</source>
+        <translation>&amp;Окна</translation>
+    </message>
+    <message>
+        <source>&amp;Help</source>
+        <translation>&amp;Справка</translation>
+    </message>
+</context>
+<context>
+    <name>NavigationBand</name>
+    <message>
+        <source>Library function</source>
+        <translation>Библиотечная функция</translation>
+    </message>
+    <message>
+        <source>Regular function</source>
+        <translation>Обычная функция</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>Инструкция</translation>
+    </message>
+    <message>
+        <source>Data</source>
+        <translation>Данные</translation>
+    </message>
+    <message>
+        <source>Unexplored</source>
+        <translation>Неисследованные</translation>
+    </message>
+    <message>
+        <source>External symbol</source>
+        <translation>Внешний символ</translation>
+    </message>
+</context>
+<context>
+    <name>ProjectDatabase</name>
+    <message>
+        <source>Cannot read %1: %2</source>
+        <translation>Не удаётся прочитать %1: %2</translation>
+    </message>
+    <message>
+        <source>Cannot read %1</source>
+        <translation>Не удаётся прочитать %1</translation>
+    </message>
+    <message>
+        <source>%1 uses database format %2, which this NeverD cannot update.</source>
+        <translation>%1 использует формат базы данных %2, который эта версия NeverD не может обновить.</translation>
+    </message>
+    <message>
+        <source>Cannot create %1</source>
+        <translation>Не удаётся создать %1</translation>
+    </message>
+    <message>
+        <source>%1 is not a NeverD database.</source>
+        <translation>%1 не является базой данных NeverD.</translation>
+    </message>
+    <message>
+        <source>%1 does not exist.</source>
+        <translation>%1 не существует.</translation>
+    </message>
+    <message>
+        <source>%1 uses database format %2, which this NeverD cannot read.</source>
+        <translation>%1 использует формат базы данных %2, который эта версия NeverD не может прочитать.</translation>
+    </message>
+    <message>
+        <source>%1 names an invalid input file.</source>
+        <translation>%1 указывает недопустимый входной файл.</translation>
+    </message>
+    <message>
+        <source>Cannot write %1: %2</source>
+        <translation>Не удаётся записать %1: %2</translation>
+    </message>
+    <message>
+        <source>The input stored in %1 is damaged.</source>
+        <translation>Входные данные, сохранённые в %1, повреждены.</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>Не удаётся записать %1</translation>
+    </message>
+</context>
+<context>
+    <name>Representations</name>
+    <message>
+        <source>Pseudocode</source>
+        <translation>Псевдокод</translation>
+    </message>
+    <message>
+        <source>LLVM C</source>
+        <translation>LLVM C</translation>
+    </message>
+    <message>
+        <source>LowIR</source>
+        <translation>LowIR</translation>
+    </message>
+    <message>
+        <source>MedIR</source>
+        <translation>MedIR</translation>
+    </message>
+    <message>
+        <source>HighIR</source>
+        <translation>HighIR</translation>
+    </message>
+    <message>
+        <source>LLVM IR</source>
+        <translation>LLVM IR</translation>
+    </message>
+</context>
+<context>
+    <name>Toolbars</name>
+    <message>
+        <source>File</source>
+        <translation>Файл</translation>
+    </message>
+    <message>
+        <source>Navigation</source>
+        <translation>Навигация</translation>
+    </message>
+    <message>
+        <source>Jump</source>
+        <translation>Переход</translation>
+    </message>
+    <message>
+        <source>Search</source>
+        <translation>Поиск</translation>
+    </message>
+    <message>
+        <source>Views</source>
+        <translation>Представления</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>Анализ</translation>
+    </message>
+</context>
+<context>
+    <name>WorkerTransport</name>
+    <message>
+        <source>Analysis worker exited (%1). Restart to continue.</source>
+        <translation>Процесс анализа завершён (%1). Перезапустите его, чтобы продолжить.</translation>
+    </message>
+    <message>
+        <source>Analysis worker is not running.</source>
+        <translation>Процесс анализа не запущен.</translation>
+    </message>
+    <message>
+        <source>Analysis request queue is full.</source>
+        <translation>Очередь запросов анализа заполнена.</translation>
+    </message>
+    <message>
+        <source>Invalid analysis protocol frame.</source>
+        <translation>Некорректный кадр протокола анализа.</translation>
+    </message>
+    <message>
+        <source>Invalid analysis protocol JSON.</source>
+        <translation>Некорректный JSON протокола анализа.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ChooserModel</name>
+    <message>
+        <source>References are still being indexed…</source>
+        <translation>Ссылки ещё индексируются…</translation>
+    </message>
+    <message>
+        <source>Up</source>
+        <translation>Вверх</translation>
+    </message>
+    <message>
+        <source>Down</source>
+        <translation>Вниз</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ChooserView</name>
+    <message>
+        <source>Quick filter</source>
+        <translation>Быстрый фильтр</translation>
+    </message>
+    <message>
+        <source>Line %1 of %2</source>
+        <translation>Строка %1 из %2</translation>
+    </message>
+    <message>
+        <source>1 item</source>
+        <translation>1 элемент</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n items</source>
+        <translation>
+            <numerusform>%n элемент</numerusform>
+            <numerusform>%n элемента</numerusform>
+            <numerusform>%n элементов</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::CodeText</name>
+    <message>
+        <source>Decompiling…</source>
+        <translation>Декомпиляция…</translation>
+    </message>
+    <message>
+        <source>Function-level analysis</source>
+        <translation>Анализ на уровне функции</translation>
+    </message>
+    <message>
+        <source>rows linked to instructions</source>
+        <translation>строки связаны с инструкциями</translation>
+    </message>
+    <message>
+        <source>%1
+Recognized library operation; click to show its code.</source>
+        <translation>%1
+Распознанная библиотечная операция; щёлкните, чтобы показать её код.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::CodeView</name>
+    <message>
+        <source>Fold library code</source>
+        <translation>Свернуть библиотечный код</translation>
+    </message>
+    <message>
+        <source>Show each recognized library operation as a one-line summary; copy and export keep the full code.</source>
+        <translation>Показывать каждую распознанную библиотечную операцию одной строкой; при копировании и экспорте сохраняется полный код.</translation>
+    </message>
+    <message>
+        <source>Keep this function while the disassembly moves on</source>
+        <translation>Оставлять эту функцию при перемещении по дизассемблированию</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ConnectionsDialog</name>
+    <message>
+        <source>Pending</source>
+        <translation>Ожидание</translation>
+    </message>
+    <message>
+        <source>Completed</source>
+        <translation>Завершён</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>Ошибка</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>Отменён</translation>
+    </message>
+    <message>
+        <source>Timed out</source>
+        <translation>Время ожидания истекло</translation>
+    </message>
+    <message>
+        <source>Disconnected</source>
+        <translation>Соединение разорвано</translation>
+    </message>
+    <message>
+        <source>MCP Connections</source>
+        <translation>Подключения MCP</translation>
+    </message>
+    <message>
+        <source>Current GUI session</source>
+        <translation>Текущий сеанс интерфейса</translation>
+    </message>
+    <message>
+        <source>Copy Credential Path</source>
+        <translation>Копировать путь к учётным данным</translation>
+    </message>
+    <message>
+        <source>Transport</source>
+        <translation>Транспорт</translation>
+    </message>
+    <message>
+        <source>Arguments as JSON, for example [&quot;--help&quot;]</source>
+        <translation>Аргументы в JSON, например [&quot;--help&quot;]</translation>
+    </message>
+    <message>
+        <source>Bearer token (optional)</source>
+        <translation>Токен Bearer (необязательно)</translation>
+    </message>
+    <message>
+        <source>Bearer token</source>
+        <translation>Токен Bearer</translation>
+    </message>
+    <message>
+        <source>CA certificate path (optional)</source>
+        <translation>Путь к сертификату CA (необязательно)</translation>
+    </message>
+    <message>
+        <source>CA certificate path</source>
+        <translation>Путь к сертификату CA</translation>
+    </message>
+    <message>
+        <source>Tools</source>
+        <translation>Инструменты</translation>
+    </message>
+    <message>
+        <source>Resources</source>
+        <translation>Ресурсы</translation>
+    </message>
+    <message>
+        <source>History</source>
+        <translation>История</translation>
+    </message>
+    <message>
+        <source>Result</source>
+        <translation>Результат</translation>
+    </message>
+    <message>
+        <source>Schema</source>
+        <translation>Схема</translation>
+    </message>
+    <message>
+        <source>Call Tool</source>
+        <translation>Вызвать инструмент</translation>
+    </message>
+    <message>
+        <source>Cancel Call</source>
+        <translation>Отменить вызов</translation>
+    </message>
+    <message>
+        <source>Select a resource or call a tool to inspect its response.</source>
+        <translation>Выберите ресурс или вызовите инструмент, чтобы просмотреть ответ.</translation>
+    </message>
+    <message>
+        <source>Disable Sharing</source>
+        <translation>Отключить общий доступ</translation>
+    </message>
+    <message>
+        <source>Enable Sharing</source>
+        <translation>Включить общий доступ</translation>
+    </message>
+    <message>
+        <source>Sharing is off. Enabling it grants local agents access to this session using its private credential file.</source>
+        <translation>Общий доступ отключён. При его включении локальные агенты смогут подключаться к этому сеансу через закрытый файл учётных данных.</translation>
+    </message>
+    <message>
+        <source>Absolute path to server executable</source>
+        <translation>Абсолютный путь к исполняемому файлу сервера</translation>
+    </message>
+    <message>
+        <source>Disconnect</source>
+        <translation>Отключить</translation>
+    </message>
+    <message>
+        <source>Connect</source>
+        <translation>Подключить</translation>
+    </message>
+    <message>
+        <source>No server connected</source>
+        <translation>Нет подключённых серверов</translation>
+    </message>
+    <message>
+        <source>No calls yet.</source>
+        <translation>Вызовов пока нет.</translation>
+    </message>
+    <message>
+        <source>No items published by this server.</source>
+        <translation>Этот сервер не опубликовал ни одного элемента.</translation>
+    </message>
+    <message>
+        <source>Connect to a server to list its catalog.</source>
+        <translation>Подключитесь к серверу, чтобы просмотреть его каталог.</translation>
+    </message>
+    <message>
+        <source>Arguments must be a JSON array of strings.</source>
+        <translation>Аргументы должны быть массивом строк JSON.</translation>
+    </message>
+    <message>
+        <source>Tool Input Schema</source>
+        <translation>Схема входных данных инструмента</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DisassemblyView</name>
+    <message>
+        <source>Graph view requires a location inside a function.</source>
+        <translation>Для графического представления нужен адрес внутри функции.</translation>
+    </message>
+    <message>
+        <source> (Synchronized with %1)</source>
+        <translation> (синхронизировано с %1)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::Expression</name>
+    <message>
+        <source>Unexpected character &apos;%1&apos;</source>
+        <translation>Неожиданный символ «%1»</translation>
+    </message>
+    <message>
+        <source>Empty expression</source>
+        <translation>Пустое выражение</translation>
+    </message>
+    <message>
+        <source>Unexpected text after the expression</source>
+        <translation>Неожиданный текст после выражения</translation>
+    </message>
+    <message>
+        <source>Unknown name &apos;%1&apos;</source>
+        <translation>Неизвестное имя «%1»</translation>
+    </message>
+    <message>
+        <source>Missing &apos;)&apos;</source>
+        <translation>Отсутствует «)»</translation>
+    </message>
+    <message>
+        <source>Expected a value</source>
+        <translation>Ожидалось значение</translation>
+    </message>
+    <message>
+        <source>Division by zero</source>
+        <translation>Деление на ноль</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExtensionsView</name>
+    <message>
+        <source>Import Manifest…</source>
+        <translation>Импортировать манифест…</translation>
+    </message>
+    <message>
+        <source>Run</source>
+        <translation>Выполнить</translation>
+    </message>
+    <message>
+        <source>Unload</source>
+        <translation>Выгрузить</translation>
+    </message>
+    <message>
+        <source>Import a declarative manifest to add analysis commands and views.</source>
+        <translation>Импортируйте декларативный манифест, чтобы добавить команды и представления анализа.</translation>
+    </message>
+    <message>
+        <source>Select an extension command to inspect its result.</source>
+        <translation>Выберите команду расширения, чтобы просмотреть её результат.</translation>
+    </message>
+    <message>
+        <source>Import extension manifest</source>
+        <translation>Импорт манифеста расширения</translation>
+    </message>
+    <message>
+        <source>Manifests (*.json)</source>
+        <translation>Манифесты (*.json)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::GraphView</name>
+    <message>
+        <source>Laying out graph…</source>
+        <translation>Построение графа…</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::JumpDialog</name>
+    <message>
+        <source>Jump anywhere</source>
+        <translation>Перейти куда угодно</translation>
+    </message>
+    <message>
+        <source>Address, name or expression (0x401000, main, sub_401000+10)</source>
+        <translation>Адрес, имя или выражение (0x401000, main, sub_401000+10)</translation>
+    </message>
+    <message>
+        <source>Enter jumps to the expression; arrows choose a match.</source>
+        <translation>Enter — переход к выражению; стрелки — выбор совпадения.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>%n совпадение</numerusform>
+            <numerusform>%n совпадения</numerusform>
+            <numerusform>%n совпадений</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Navigation band</source>
+        <translation>Полоса навигации</translation>
+    </message>
+    <message>
+        <source>Extensions</source>
+        <translation>Расширения</translation>
+    </message>
+    <message>
+        <source>Hex View-1</source>
+        <translation>Шестнадцатеричное представление-1</translation>
+    </message>
+    <message>
+        <source>NeverD View-A</source>
+        <translation>Представление NeverD-A</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>Функции</translation>
+    </message>
+    <message>
+        <source>Output</source>
+        <translation>Вывод</translation>
+    </message>
+    <message>
+        <source>Graph overview</source>
+        <translation>Обзор графа</translation>
+    </message>
+    <message>
+        <source>Background analysis: references and labels are indexed while you browse</source>
+        <translation>Фоновый анализ: ссылки и метки индексируются во время просмотра</translation>
+    </message>
+    <message>
+        <source>Unsaved changes</source>
+        <translation>Несохранённые изменения</translation>
+    </message>
+    <message>
+        <source>Comments were changed. Save them before continuing?</source>
+        <translation>Комментарии изменены. Сохранить их перед продолжением?</translation>
+    </message>
+    <message>
+        <source>Cannot jump to %1: %2</source>
+        <translation>Не удалось перейти к %1: %2</translation>
+    </message>
+    <message>
+        <source>Load signature pack</source>
+        <translation>Загрузить пакет сигнатур</translation>
+    </message>
+    <message>
+        <source>Signature packs (*.pat *.json);;All files (*)</source>
+        <translation>Пакеты сигнатур (*.pat *.json);;Все файлы (*)</translation>
+    </message>
+    <message>
+        <source>Signature directory</source>
+        <translation>Каталог сигнатур</translation>
+    </message>
+    <message>
+        <source>Mark position</source>
+        <translation>Отметить позицию</translation>
+    </message>
+    <message>
+        <source>Description:</source>
+        <translation>Описание:</translation>
+    </message>
+    <message>
+        <source>Find in view</source>
+        <translation>Найти в представлении</translation>
+    </message>
+    <message>
+        <source>Text:</source>
+        <translation>Текст:</translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; was not found among the loaded lines</source>
+        <translation>«%1» не найдено среди загруженных строк</translation>
+    </message>
+    <message>
+        <source>History: %1 entries, cursor %2</source>
+        <translation>История: записей — %1, курсор — %2</translation>
+    </message>
+    <message>
+        <source>AU: idle</source>
+        <translation>AU: свободен</translation>
+    </message>
+    <message>
+        <source>AU: busy %1%</source>
+        <translation>AU: занят %1%</translation>
+    </message>
+    <message>
+        <source>AU: busy</source>
+        <translation>AU: занят</translation>
+    </message>
+    <message>
+        <source>Down</source>
+        <translation>Вниз</translation>
+    </message>
+    <message>
+        <source>Up</source>
+        <translation>Вверх</translation>
+    </message>
+    <message>
+        <source>Disk: %1GB</source>
+        <translation>Диск: %1 ГБ</translation>
+    </message>
+    <message>
+        <source> · read-only</source>
+        <translation> · только чтение</translation>
+    </message>
+    <message>
+        <source>%1 is not a function entry; only functions can be renamed.</source>
+        <translation>%1 не является началом функции; переименовывать можно только функции.</translation>
+    </message>
+    <message>
+        <source>Rename function</source>
+        <translation>Переименовать функцию</translation>
+    </message>
+    <message>
+        <source>Name of %1:</source>
+        <translation>Имя для %1:</translation>
+    </message>
+    <message>
+        <source>Please enter text</source>
+        <translation>Введите текст</translation>
+    </message>
+    <message>
+        <source>Comment at %1:</source>
+        <translation>Комментарий по адресу %1:</translation>
+    </message>
+    <message>
+        <source>xrefs to %1</source>
+        <translation>Перекрёстные ссылки на %1</translation>
+    </message>
+    <message>
+        <source>xrefs from %1</source>
+        <translation>Перекрёстные ссылки из %1</translation>
+    </message>
+    <message>
+        <source>Place the cursor inside a function to decompile it.</source>
+        <translation>Поместите курсор внутрь функции, чтобы декомпилировать её.</translation>
+    </message>
+    <message>
+        <source>Text search</source>
+        <translation>Поиск текста</translation>
+    </message>
+    <message>
+        <source>Binary search</source>
+        <translation>Поиск байтов</translation>
+    </message>
+    <message>
+        <source>String:</source>
+        <translation>Строка:</translation>
+    </message>
+    <message>
+        <source>Hex bytes (e.g. 48 8B 05):</source>
+        <translation>Шестнадцатеричные байты (например, 48 8B 05):</translation>
+    </message>
+    <message>
+        <source>Search failed: %1 not found</source>
+        <translation>Поиск не удался: %1 не найдено</translation>
+    </message>
+    <message>
+        <source>Evaluate expression</source>
+        <translation>Вычисление выражения</translation>
+    </message>
+    <message>
+        <source>Expression:</source>
+        <translation>Выражение:</translation>
+    </message>
+    <message>
+        <source>Hex: %1h
+Decimal: %2
+Octal: %3
+Signed: %4</source>
+        <translation>Шестнадцатеричное: %1h
+Десятичное: %2
+Восьмеричное: %3
+Со знаком: %4</translation>
+    </message>
+    <message>
+        <source>About NeverD</source>
+        <translation>О программе NeverD</translation>
+    </message>
+    <message>
+        <source>&lt;h3&gt;NeverD %1&lt;/h3&gt;&lt;p&gt;Interactive disassembler and decompiler workbench.&lt;/p&gt;&lt;p&gt;Licensed under the GNU Affero General Public License v3. Icons are original NeverD artwork.&lt;/p&gt;&lt;p&gt;&lt;a href=&quot;https://github.com/NeverSight/NeverD&quot;&gt;github.com/NeverSight/NeverD&lt;/a&gt;&lt;/p&gt;</source>
+        <translation>&lt;h3&gt;NeverD %1&lt;/h3&gt;&lt;p&gt;Интерактивная среда для дизассемблирования и декомпиляции.&lt;/p&gt;&lt;p&gt;Распространяется по лицензии GNU Affero General Public License v3. Значки — оригинальная графика NeverD.&lt;/p&gt;&lt;p&gt;&lt;a href=&quot;https://github.com/NeverSight/NeverD&quot;&gt;github.com/NeverSight/NeverD&lt;/a&gt;&lt;/p&gt;</translation>
+    </message>
+    <message>
+        <source>Code font</source>
+        <translation>Шрифт кода</translation>
+    </message>
+    <message>
+        <source>Dark (Visual Studio Code Dark+)</source>
+        <translation>Тёмная (Visual Studio Code Dark+)</translation>
+    </message>
+    <message>
+        <source>Light (Visual Studio Code Light+)</source>
+        <translation>Светлая (Visual Studio Code Light+)</translation>
+    </message>
+    <message>
+        <source>Colors</source>
+        <translation>Цвета</translation>
+    </message>
+    <message>
+        <source>Theme:</source>
+        <translation>Тема:</translation>
+    </message>
+    <message>
+        <source>General options</source>
+        <translation>Общие параметры</translation>
+    </message>
+    <message>
+        <source>Number of opcode bytes:</source>
+        <translation>Количество байтов опкода:</translation>
+    </message>
+    <message>
+        <source>Show segment:address line prefixes</source>
+        <translation>Показывать префиксы строк «сегмент:адрес»</translation>
+    </message>
+    <message>
+        <source>Shortcuts</source>
+        <translation>Сочетания клавиш</translation>
+    </message>
+    <message>
+        <source>Action</source>
+        <translation>Действие</translation>
+    </message>
+    <message>
+        <source>Shortcut</source>
+        <translation>Сочетание клавиш</translation>
+    </message>
+    <message>
+        <source>Command palette</source>
+        <translation>Палитра команд</translation>
+    </message>
+    <message>
+        <source>Type a command</source>
+        <translation>Введите команду</translation>
+    </message>
+    <message>
+        <source>Create C file</source>
+        <translation>Создать файл C</translation>
+    </message>
+    <message>
+        <source>Create LST file</source>
+        <translation>Создать файл LST</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>Не удалось записать %1</translation>
+    </message>
+    <message>
+        <source>Wrote %1</source>
+        <translation>Файл записан: %1</translation>
+    </message>
+    <message>
+        <source>Desktop saved</source>
+        <translation>Рабочий стол сохранён</translation>
+    </message>
+    <message>
+        <source>No saved desktop</source>
+        <translation>Нет сохранённого рабочего стола</translation>
+    </message>
+    <message>
+        <source>NeverD: Quick start</source>
+        <translation>NeverD: быстрый старт</translation>
+    </message>
+    <message>
+        <source>New</source>
+        <translation>Новый</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>Дизассемблировать новый файл</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation>Начать</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>Работать самостоятельно</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>Предыдущий</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>Загрузить выбранный недавний файл</translation>
+    </message>
+    <message>
+        <source>Recent files:</source>
+        <translation>Недавние файлы:</translation>
+    </message>
+    <message>
+        <source>Open binary or database</source>
+        <translation>Открыть двоичный файл или базу данных</translation>
+    </message>
+    <message>
+        <source>All files (*);;NeverD databases (*.nddb)</source>
+        <translation>Все файлы (*);;Базы данных NeverD (*.nddb)</translation>
+    </message>
+    <message>
+        <source>The saved desktop of this database could not be restored.</source>
+        <translation>Не удалось восстановить сохранённый рабочий стол этой базы данных.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::OutputWindow</name>
+    <message>
+        <source>Command line language: NeverD expressions and commands. Type help for a list.</source>
+        <translation>Язык командной строки: выражения и команды NeverD. Введите help, чтобы увидеть список.</translation>
+    </message>
+    <message>
+        <source>Expression or command (help)</source>
+        <translation>Выражение или команда (help)</translation>
+    </message>
+    <message>
+        <source>Commands:</source>
+        <translation>Команды:</translation>
+    </message>
+    <message>
+        <source>  g &lt;expr&gt;          jump to an address or name</source>
+        <translation>  g &lt;expr&gt;          перейти к адресу или имени</translation>
+    </message>
+    <message>
+        <source>  x [expr]          list references to the current item or expr</source>
+        <translation>  x [expr]          вывести ссылки на текущий элемент или expr</translation>
+    </message>
+    <message>
+        <source>  n &lt;name&gt;          rename the current function</source>
+        <translation>  n &lt;name&gt;          переименовать текущую функцию</translation>
+    </message>
+    <message>
+        <source>  c &lt;text&gt;          comment the current address</source>
+        <translation>  c &lt;text&gt;          прокомментировать текущий адрес</translation>
+    </message>
+    <message>
+        <source>  d [expr]          decompile the current or given function</source>
+        <translation>  d [expr]          декомпилировать текущую или указанную функцию</translation>
+    </message>
+    <message>
+        <source>  f &lt;hex|&quot;text&quot;&gt;    search the binary</source>
+        <translation>  f &lt;hex|&quot;text&quot;&gt;    искать в двоичном файле</translation>
+    </message>
+    <message>
+        <source>  graph, hex        show the graph or hex view</source>
+        <translation>  graph, hex        показать графическое или шестнадцатеричное представление</translation>
+    </message>
+    <message>
+        <source>  analyze, save     whole-program analysis, save comments</source>
+        <translation>  analyze, save     анализ всей программы, сохранение комментариев</translation>
+    </message>
+    <message>
+        <source>  &lt;expr&gt;            evaluate: 0x10, 10h, #16, names, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</source>
+        <translation>  &lt;expr&gt;            вычислить: 0x10, 10h, #16, имена, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::Session</name>
+    <message>
+        <source>Starting analysis worker…</source>
+        <translation>Запуск процесса анализа…</translation>
+    </message>
+    <message>
+        <source>Incompatible analysis worker protocol.</source>
+        <translation>Несовместимый протокол процесса анализа.</translation>
+    </message>
+    <message>
+        <source>Analysis engine %1 ready</source>
+        <translation>Механизм анализа %1 готов</translation>
+    </message>
+    <message>
+        <source>Select an existing binary file.</source>
+        <translation>Выберите существующий двоичный файл.</translation>
+    </message>
+    <message>
+        <source>Loading %1…</source>
+        <translation>Загрузка %1…</translation>
+    </message>
+    <message>
+        <source>%1: %2 %3, %4 functions</source>
+        <translation>%1: %2 %3, функций: %4</translation>
+    </message>
+    <message>
+        <source>Annotations reloaded</source>
+        <translation>Аннотации перезагружены</translation>
+    </message>
+    <message>
+        <source>Comments and history saved</source>
+        <translation>Комментарии и история сохранены</translation>
+    </message>
+    <message>
+        <source>The edit was prepared for a session that is no longer open and was not applied.</source>
+        <translation>Изменение было подготовлено для сеанса, который больше не открыт, и не было применено.</translation>
+    </message>
+    <message>
+        <source>Edits are paused while the pending save, open or close completes.</source>
+        <translation>Изменения приостановлены до завершения текущего сохранения, открытия или закрытия.</translation>
+    </message>
+    <message>
+        <source>Renamed %1 to %2</source>
+        <translation>%1 переименовано в %2</translation>
+    </message>
+    <message>
+        <source>Signature pack applied: %1 byte matches</source>
+        <translation>Пакет сигнатур применён, совпадений по байтам: %1</translation>
+    </message>
+    <message>
+        <source>Whole-program analysis started; views stay available.</source>
+        <translation>Анализ всей программы запущен; представления остаются доступными.</translation>
+    </message>
+    <message>
+        <source>Whole-program analysis finished</source>
+        <translation>Анализ всей программы завершён</translation>
+    </message>
+    <message>
+        <source>Queued requests cancelled; a running engine call finishes unless the worker is restarted.</source>
+        <translation>Запросы в очереди отменены; выполняющийся вызов механизма анализа завершится, если не перезапустить процесс анализа.</translation>
+    </message>
+    <message>
+        <source>%1 describes a different version of this file and was not used; saving replaces it.</source>
+        <translation>%1 описывает другую версию этого файла и не использовалась; при сохранении она будет заменена.</translation>
+    </message>
+    <message>
+        <source>Could not restore %1 from the database.</source>
+        <translation>Не удалось восстановить %1 из базы данных.</translation>
+    </message>
+    <message>
+        <source>Database saved: %1</source>
+        <translation>База данных сохранена: %1</translation>
+    </message>
+    <message>
+        <source>Could not save the database: %1</source>
+        <translation>Не удалось сохранить базу данных: %1</translation>
+    </message>
+    <message>
+        <source>Could not update the database: %1</source>
+        <translation>Не удалось обновить базу данных: %1</translation>
+    </message>
+</context>
 </TS>

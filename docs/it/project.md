@@ -1,6 +1,6 @@
 **Lingue**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: b269d1f316b2dffb502ea0ed075d6255ed7c03d722bb9129b55578cf8a25acbd -->
+<!-- i18n-source: 0e490a01b7c701ed5c4ec7324feba7b113de2d5ccbc4713f2cef24397f7800d2 -->
 
 <div align="center">
 
@@ -263,7 +263,7 @@ Per target mirati, etichette CTest, requisiti delle fixture e griglia di riscrit
 
 ## Ambiente desktop
 
-L’[ambiente Qt Quick (inglese)](../gui.md) opzionale offre viste agganciabili di istruzioni, CFG, esadecimale, C e IR, tutte le 11 lingue dell’interfaccia, annotazioni salvate e connessioni MCP. L’analisi viene eseguita in un processo separato senza Qt; le build solo CLI rimangono indipendenti. Il [registro di qualificazione (inglese)](../gui-qualification.md) descrive i flussi supportati e le verifiche di piattaforma ancora necessarie prima del rilascio.
+L’[ambiente desktop (inglese)](../gui.md) opzionale segue la disposizione e le scorciatoie del disassemblatore interattivo classico, con viste di disassemblato, grafo, pseudocodice, IR, esadecimale ed elenchi, un tema in stile Visual Studio Code, tutte le 11 lingue dell’interfaccia e database di progetto `.nddb`. L’analisi viene eseguita in un processo separato senza Qt; le build solo CLI rimangono indipendenti. Il [registro di qualificazione (inglese)](../gui-qualification.md) descrive i flussi supportati e le verifiche di piattaforma ancora necessarie prima del rilascio.
 
 <!-- i18n-section: cli -->
 

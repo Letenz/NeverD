@@ -1,0 +1,124 @@
+//===- ThemeColors.def - Analysis view color roles -------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Color roles of the custom-painted analysis views and their values in the
+/// Light and Dark themes.  The palettes follow the Visual Studio Code Light+
+/// and Dark+ color themes (token colors and editor surfaces); widget chrome is
+/// in ChromeColors.def.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_THEME_COLOR(Role, Light, Dark)
+#ifndef NEVERD_THEME_COLOR
+#error "Define NEVERD_THEME_COLOR before including ThemeColors.def"
+#endif
+
+// Listing spans: one role per entry of ListingRoles.def, named Listing<Role>.
+NEVERD_THEME_COLOR(ListingPlain, "#3B3B3B", "#D4D4D4")
+NEVERD_THEME_COLOR(ListingMnemonic, "#0000FF", "#569CD6")
+NEVERD_THEME_COLOR(ListingRegister, "#001080", "#9CDCFE")
+NEVERD_THEME_COLOR(ListingNumber, "#098658", "#B5CEA8")
+NEVERD_THEME_COLOR(ListingKeyword, "#0000FF", "#569CD6")
+NEVERD_THEME_COLOR(ListingPunctuation, "#3B3B3B", "#D4D4D4")
+NEVERD_THEME_COLOR(ListingCodeName, "#795E26", "#DCDCAA")
+NEVERD_THEME_COLOR(ListingDummyCodeName, "#795E26", "#DCDCAA")
+NEVERD_THEME_COLOR(ListingDataName, "#0070C1", "#4FC1FF")
+NEVERD_THEME_COLOR(ListingDummyDataName, "#0070C1", "#4FC1FF")
+NEVERD_THEME_COLOR(ListingImportName, "#AF00DB", "#C586C0")
+NEVERD_THEME_COLOR(ListingLibraryName, "#267F99", "#4EC9B0")
+NEVERD_THEME_COLOR(ListingString, "#A31515", "#CE9178")
+NEVERD_THEME_COLOR(ListingComment, "#008000", "#6A9955")
+NEVERD_THEME_COLOR(ListingAutoComment, "#808080", "#858585")
+NEVERD_THEME_COLOR(ListingXref, "#008000", "#6A9955")
+NEVERD_THEME_COLOR(ListingDirective, "#0000FF", "#569CD6")
+NEVERD_THEME_COLOR(ListingSeparator, "#7FAA7F", "#4E6E3E")
+NEVERD_THEME_COLOR(ListingSegmentName, "#267F99", "#4EC9B0")
+NEVERD_THEME_COLOR(ListingOpcodeBytes, "#808080", "#858585")
+NEVERD_THEME_COLOR(ListingLabel, "#795E26", "#DCDCAA")
+NEVERD_THEME_COLOR(ListingError, "#CD3131", "#F44747")
+NEVERD_THEME_COLOR(ListingFlowMnemonic, "#AF00DB", "#C586C0")
+
+// Listing surfaces.
+NEVERD_THEME_COLOR(ListingBackground, "#FFFFFF", "#1E1E1E")
+NEVERD_THEME_COLOR(ListingCurrentLine, "#F0F0F0", "#2A2D2E")
+NEVERD_THEME_COLOR(ListingSelection, "#ADD6FF", "#264F78")
+NEVERD_THEME_COLOR(ListingHighlight, "#F8C9AA", "#623314")
+NEVERD_THEME_COLOR(ListingHighlightText, "#000000", "#FFFFFF")
+NEVERD_THEME_COLOR(ListingCursor, "#000000", "#AEAFAD")
+NEVERD_THEME_COLOR(ArrowsBackground, "#F7F7F7", "#1E1E1E")
+NEVERD_THEME_COLOR(ArrowJump, "#6E6E6E", "#808080")
+NEVERD_THEME_COLOR(ArrowConditional, "#0070C1", "#569CD6")
+NEVERD_THEME_COLOR(ArrowCurrent, "#E51400", "#F48771")
+NEVERD_THEME_COLOR(ArrowMarker, "#007ACC", "#007ACC")
+
+// Listing prefix colors: one per entry of AddressClasses.def.
+NEVERD_THEME_COLOR(PrefixUnmapped, "#A0A0A0", "#5A5A5A")
+NEVERD_THEME_COLOR(PrefixRegularFunction, "#237893", "#858585")
+NEVERD_THEME_COLOR(PrefixLibraryFunction, "#267F99", "#4EC9B0")
+NEVERD_THEME_COLOR(PrefixInstruction, "#A31515", "#CE9178")
+NEVERD_THEME_COLOR(PrefixData, "#808080", "#6E7681")
+NEVERD_THEME_COLOR(PrefixUnexplored, "#8A8A3C", "#9A9A5A")
+NEVERD_THEME_COLOR(PrefixExternal, "#AF00DB", "#C586C0")
+
+// Navigation band: one per entry of AddressClasses.def, plus markers.
+NEVERD_THEME_COLOR(NavUnmapped, "#E5E5E5", "#2D2D2D")
+NEVERD_THEME_COLOR(NavRegularFunction, "#007ACC", "#007ACC")
+NEVERD_THEME_COLOR(NavLibraryFunction, "#4EC9B0", "#4EC9B0")
+NEVERD_THEME_COLOR(NavInstruction, "#C97C55", "#CE9178")
+NEVERD_THEME_COLOR(NavData, "#A0A0A0", "#6E6E6E")
+NEVERD_THEME_COLOR(NavUnexplored, "#B4B464", "#7A7A3A")
+NEVERD_THEME_COLOR(NavExternal, "#C586C0", "#C586C0")
+NEVERD_THEME_COLOR(NavCursor, "#FFCC00", "#FFD700")
+NEVERD_THEME_COLOR(NavCursorOutline, "#3B3B3B", "#000000")
+
+// Choosers: row tints for import thunks and recognized library functions.
+NEVERD_THEME_COLOR(ChooserThunkRow, "#F6E3F5", "#3A2638")
+NEVERD_THEME_COLOR(ChooserLibraryRow, "#DFF3EF", "#1D3531")
+
+// Graph view.
+NEVERD_THEME_COLOR(GraphBackground, "#F3F3F3", "#181818")
+NEVERD_THEME_COLOR(GraphNodeBody, "#FFFFFF", "#1E1E1E")
+NEVERD_THEME_COLOR(GraphNodeTitle, "#E8E8E8", "#2D2D2D")
+NEVERD_THEME_COLOR(GraphNodeTitleCurrent, "#CCE4F7", "#04395E")
+NEVERD_THEME_COLOR(GraphNodeBorder, "#C8C8C8", "#454545")
+NEVERD_THEME_COLOR(GraphNodeBorderSelected, "#0090F1", "#007FD4")
+NEVERD_THEME_COLOR(GraphNodeShadow, "#D6D6D6", "#0A0A0A")
+NEVERD_THEME_COLOR(GraphEdgeNormal, "#0070C1", "#569CD6")
+NEVERD_THEME_COLOR(GraphEdgeTrue, "#388A34", "#89D185")
+NEVERD_THEME_COLOR(GraphEdgeFalse, "#CD3131", "#F48771")
+NEVERD_THEME_COLOR(GraphEdgeHighlight, "#E2A700", "#FFD700")
+NEVERD_THEME_COLOR(GraphOverviewViewport, "#0090F1", "#007FD4")
+NEVERD_THEME_COLOR(GraphOverviewNode, "#A6A6A6", "#6E7681")
+
+// Hex view.
+NEVERD_THEME_COLOR(HexBackground, "#FFFFFF", "#1E1E1E")
+NEVERD_THEME_COLOR(HexAddress, "#237893", "#858585")
+NEVERD_THEME_COLOR(HexByte, "#3B3B3B", "#D4D4D4")
+NEVERD_THEME_COLOR(HexZero, "#A0A0A0", "#6E6E6E")
+NEVERD_THEME_COLOR(HexAscii, "#A31515", "#CE9178")
+NEVERD_THEME_COLOR(HexUnmapped, "#C8C8C8", "#4A4A4A")
+NEVERD_THEME_COLOR(HexCurrent, "#ADD6FF", "#264F78")
+NEVERD_THEME_COLOR(HexCurrentText, "#000000", "#FFFFFF")
+
+// Pseudocode and IR text.
+NEVERD_THEME_COLOR(CodeBackground, "#FFFFFF", "#1E1E1E")
+NEVERD_THEME_COLOR(CodeDefault, "#3B3B3B", "#D4D4D4")
+NEVERD_THEME_COLOR(CodeKeyword, "#0000FF", "#569CD6")
+NEVERD_THEME_COLOR(CodeControl, "#AF00DB", "#C586C0")
+NEVERD_THEME_COLOR(CodeType, "#267F99", "#4EC9B0")
+NEVERD_THEME_COLOR(CodeNumber, "#098658", "#B5CEA8")
+NEVERD_THEME_COLOR(CodeString, "#A31515", "#CE9178")
+NEVERD_THEME_COLOR(CodeComment, "#008000", "#6A9955")
+NEVERD_THEME_COLOR(CodeFunction, "#795E26", "#DCDCAA")
+NEVERD_THEME_COLOR(CodeVariable, "#001080", "#9CDCFE")
+NEVERD_THEME_COLOR(CodeConstant, "#0070C1", "#4FC1FF")
+NEVERD_THEME_COLOR(CodePunctuation, "#3B3B3B", "#D4D4D4")
+NEVERD_THEME_COLOR(CodePreprocessor, "#AF00DB", "#C586C0")
+NEVERD_THEME_COLOR(CodeLineNumber, "#237893", "#858585")
+NEVERD_THEME_COLOR(CodeFold, "#E8F0FE", "#2A3A4A")
+
+#undef NEVERD_THEME_COLOR

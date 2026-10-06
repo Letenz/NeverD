@@ -18,8 +18,8 @@ The checked-in Qt license catalog matches Qt 6.11.1; a different Qt build requir
 its matching `--qt-licenses` directory. Homebrew component notices and available
 SPDX catalogs are collected from the libraries actually copied into the bundle.
 
-The helper copies the GUI, worker, engine, QML modules, Qt plugins and recursive
-non-system dependencies. It rewrites library IDs and dependencies, supplies
+The helper copies the GUI, worker, engine, Qt plugins and recursive non-system
+dependencies. It rewrites library IDs and dependencies, supplies
 bundle-relative search paths, rejects unresolved references and escaping or
 dangling symlinks, and derives `LSMinimumSystemVersion` from every bundled
 Mach-O image. `Contents/Resources/dependency-audit.json` records that audit;
@@ -53,11 +53,11 @@ produce a universal binary, or publish a release. A public distribution also
 needs the matching complete corresponding sources and dependency sources
 required by the licenses preserved in `Contents/Resources/Licenses`.
 
-Qt SQL deployment is limited to the local SQLite driver used by the deployed
-QtQuick.LocalStorage module. After `macdeployqt`, the helper validates the whole
+Qt SQL deployment is limited to the local SQLite driver that reads and writes
+`.nddb` project databases. After `macdeployqt`, the helper validates the whole
 SQL-driver directory before removing the known Mimer, ODBC and PostgreSQL
-drivers. SQLite, QtSql and LocalStorage remain in the bundle; external SQL
-connectors are outside this GUI's deployment scope. Unknown entries, symbolic
+drivers. SQLite and QtSql remain in the bundle; external SQL connectors are
+outside this GUI's deployment scope. Unknown entries, symbolic
 links, invalid directories or a missing required SQLite driver stop packaging
 before any optional driver is removed. Dependency repair and auditing remain
 strict for all retained components.
