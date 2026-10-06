@@ -120,8 +120,7 @@ llvm::Error KernelModel::validateExecutionReturn(uint64_t Identity,
                                                  bool Nested) const {
   if (Identity != CurrentExecution)
     return apiError("return does not own the active execution identity");
-  if (!ProcessAttachments.empty() &&
-      ProcessAttachments.back().Execution == Identity)
+  if (hasProcessAttachment(Identity))
     return apiError("guest return has an unmatched process attachment");
   for (const auto &[Address, Lock] : ExecutiveSpinLocks)
     if (Lock.Execution == Identity)
@@ -153,7 +152,7 @@ llvm::Error KernelModel::validateExecutionReturn(uint64_t Identity,
     return E;
   if (CancelLock.Callback && CancelLock.CallbackExecution == Identity) {
     if (!CancelLock.Callback || CancelLock.Held ||
-        CurrentIRQL != CancelLock.OldIRQL)
+        CurrentIRQL != CancelLock.CallbackIRQL)
       return apiError(
           "WDM cancel callback must release the cancel spin lock and "
           "restore its caller IRQL");

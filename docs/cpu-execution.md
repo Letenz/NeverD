@@ -441,3 +441,5 @@ Checked Unicorn uses `MachineRunControl`: one allowance covers ARM64 maintenance
 The `hvf` backend uses Hypervisor.framework for the native host ISA: ARM64 on
 Apple Silicon and x86-64 on Intel. See [HVF setup and validation](macos-hvf.md)
 for executable signing, ownership, cancellation, tests and validation limits.
+
+Explicit CPU0 preemption, clock semantics and current limits are described in [driver scheduling](driver-scheduling.md).

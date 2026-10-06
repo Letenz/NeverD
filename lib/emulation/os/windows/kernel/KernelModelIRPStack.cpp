@@ -601,7 +601,8 @@ KernelModel::finishWdmGuestCallBody(uint64_t Token, uint64_t ResultValue) {
     return finishPowerCompletion(Token);
   if (Call->second.Kind == IRPCallKind::Cancel) {
     if (!CancelLock.Callback || CancelLock.Held ||
-        CancelLock.IRP != Call->second.IRP || CurrentIRQL != CancelLock.OldIRQL)
+        CancelLock.IRP != Call->second.IRP ||
+        CurrentIRQL != CancelLock.CallbackIRQL)
       return stackError("IoCancelIrp callback did not release its cancel lock");
     const uint64_t IRP = Call->second.IRP;
     CancelLock = {};

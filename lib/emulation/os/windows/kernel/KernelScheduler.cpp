@@ -15,6 +15,8 @@
 
 #include "KernelScheduler.h"
 
+#include "neverd/emulation/DriverScheduling.h"
+
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
@@ -59,6 +61,22 @@ bool KernelScheduler::isDMACallbackKind(CallbackKind Kind) {
 bool KernelScheduler::isFrameworkInterruptCallbackKind(CallbackKind Kind) {
   return Kind == CallbackKind::FrameworkInterruptDPC ||
          Kind == CallbackKind::FrameworkInterruptWorkItem;
+}
+
+llvm::Expected<uint64_t> KernelScheduler::issueReadyOrder() {
+  if (NextReadyOrder == UINT64_MAX)
+    return schedulerError(driver_scheduling::ReadyOverflow);
+  return NextReadyOrder++;
+}
+
+std::optional<uint64_t> KernelScheduler::nextPassiveReadyOrder() const {
+  if (Workers.empty() && SystemThreads.empty())
+    return std::nullopt;
+  if (SystemThreads.empty())
+    return Workers.front().ReadyOrder;
+  if (Workers.empty())
+    return SystemThreads.front().ReadyOrder;
+  return std::min(Workers.front().ReadyOrder, SystemThreads.front().ReadyOrder);
 }
 
 llvm::Error KernelScheduler::validateTime() const {
@@ -116,6 +134,8 @@ llvm::Error KernelScheduler::checkCapacity(uint64_t Additional) const {
     return schedulerError("scheduler pending callback limit exhausted");
   if (Additional > UINT64_MAX - NextID)
     return schedulerError("scheduler callback identity overflow");
+  if (Additional > UINT64_MAX - NextReadyOrder)
+    return schedulerError(driver_scheduling::ReadyOverflow);
   return llvm::Error::success();
 }
 
@@ -125,6 +145,7 @@ KernelScheduler::Invocation KernelScheduler::makeInvocation(Callback Work,
   Invocation Call;
   static_cast<Callback &>(Call) = std::move(Work);
   Call.ID = NextID++;
+  Call.ReadyOrder = NextReadyOrder++;
   Call.Kind = Kind;
   Call.IRQL = Kind == CallbackKind::DPC ||
                       Kind == CallbackKind::FrameworkInterruptDPC ||
@@ -900,14 +921,18 @@ KernelScheduler::next(bool AdvanceTime,
     if (queuedCallbackCount()) {
       if (Dispatches >= Bounds.MaxDispatches)
         return schedulerError("scheduler callback dispatch limit exhausted");
-      auto &Queue = !Interrupts.empty() && Interrupts.front().IRQL ? Interrupts
-                    : !DPCs.empty()                                ? DPCs
-                    : !ReadyDMA.empty()                            ? ReadyDMA
-                    : !Cancellations.empty() ? Cancellations
-                    : !Completions.empty()   ? Completions
-                    : !Interrupts.empty()    ? Interrupts
-                    : !Workers.empty()       ? Workers
-                                             : SystemThreads;
+      auto &Queue =
+          !Interrupts.empty() && Interrupts.front().IRQL ? Interrupts
+          : !DPCs.empty()                                ? DPCs
+          : !ReadyDMA.empty()                            ? ReadyDMA
+          : !Cancellations.empty()                       ? Cancellations
+          : !Completions.empty()                         ? Completions
+          : !Interrupts.empty()                          ? Interrupts
+          : !Workers.empty() && (!OrderedPassive || SystemThreads.empty() ||
+                                 Workers.front().ReadyOrder <
+                                     SystemThreads.front().ReadyOrder)
+              ? Workers
+              : SystemThreads;
       Active = std::move(Queue.front());
       Queue.pop_front();
       ++Dispatches;
@@ -950,11 +975,24 @@ KernelScheduler::canAdvanceTo100ns(uint64_t Time,
   if (Time > Now) {
     if (Active || !InlineDMA.empty() || queuedCallbackCount())
       return schedulerError("cannot advance virtual time with runnable work");
+  }
+  return canAdvanceExecutionTo100ns(Time, AdditionalCallbacks);
+}
+
+llvm::Error KernelScheduler::canAdvanceExecutionTo100ns(
+    uint64_t Time, uint64_t AdditionalCallbacks) const {
+  if (Time > Now) {
     auto Earliest = nextEventTime100ns();
     if (Earliest && Time > *Earliest)
       return schedulerError("cannot advance past an earlier timer boundary");
   }
   return validateTimerExpirations(Time, AdditionalCallbacks);
+}
+
+llvm::Error KernelScheduler::advanceExecutionTo100ns(uint64_t Time) {
+  if (auto E = canAdvanceExecutionTo100ns(Time))
+    return E;
+  return expireTimers(Time);
 }
 
 llvm::Error KernelScheduler::advanceTo100ns(uint64_t Time) {

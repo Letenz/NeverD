@@ -448,7 +448,7 @@ Unicorn 透過 `cmake/NeverDUnicorn.cmake` 統一設定一次，與語義測試�
 
 Windows 模型亦管理獨立的非分頁池 MDL；釋放描述符不會釋放底層緩衝區。MDL 鏈結與 IRP 關聯仍未建模。獨立登錄模型管理明確場景樹、控制代碼權限與機碼值生命週期，與靜態匯出目錄分開。場景預檢與執行使用相同登錄驗證規則，報告保留最終機碼值；卸載檢查遺留控制代碼。
 
-`KernelScheduler` 管理就緒佇列順序、回呼識別與計時器期限；`KernelDispatcher` 管理不透明 DPC、計時器、事件及其訊號。`KernelModel` 管理等待登記、工作項目／裝置生命週期與 IRP 完成。`DriverSession` 儲存並還原各回呼的獨立堆疊及完整 CPU 內容，包括 Win64 堆疊參數，客體記憶體保持共用。僅在沒有就緒執行框架時，虛擬時間才推進至計時器／等待／取消邊界；CPU0 以確定性的合作排程執行 `DISPATCH_LEVEL` 的 DPC 和 `PASSIVE_LEVEL` 的工作項目。這不提供一般執行緒／APC／自旋鎖排程、超出已描述契約的 WDM／PnP 取消、任意並行公開情境提交、完整 PnP／電源或硬體。 API 的 IRQL 上限來自 `KernelAPIIRQL.def`，參數相關限制由所屬模型檢查。
+`KernelScheduler` 管理就緒佇列順序、回呼識別與計時器期限；`KernelDispatcher` 管理不透明 DPC、計時器、事件及其訊號。`KernelModel` 管理等待登記、工作項目／裝置生命週期與 IRP 完成。`DriverSession` 儲存並還原各回呼的獨立堆疊及完整 CPU 內容，包括 Win64 堆疊參數，客體記憶體保持共用。預設設定下，僅在沒有就緒執行框架時，虛擬時間才推進至計時器／等待／取消邊界；CPU0 以確定性的合作排程執行 `DISPATCH_LEVEL` 的 DPC 和 `PASSIVE_LEVEL` 的工作項目。這不提供一般執行緒／APC／自旋鎖排程、超出已描述契約的 WDM／PnP 取消、任意並行公開情境提交、完整 PnP／電源或硬體。 API 的 IRQL 上限來自 `KernelAPIIRQL.def`，參數相關限制由所屬模型檢查。
 
 `KernelModelDeviceStack` 以單一記錄管理各裝置的驅動程式擁有者、配置、上下層鄰居、待刪除狀態與內部參考。客體 `NextDevice` 列舉串列與宿主擁有的附加圖意義不同。名稱解析保留具名下層裝置作為 `FILE_OBJECT` 和報告身分，選擇目前堆疊頂端進行初始派送及 READ/WRITE 緩衝設定，並保留整條請求路徑。解除附加或刪除不會讓請求／回呼仍持有的裝置失效；公開 `ReferenceCount` 仍只計算開啟的控制代碼。
 
@@ -1294,3 +1294,5 @@ CoreImage 的強 SDK 宣告保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 Darwin 仿射橋接的權威實作也支援 `CGAffineTransformInvert`：x0 承載完整 48 位元組實體輸入，x8 承載結果儲存位址。目前強 CoreGraphics 匯入、提供者、必要函式庫與 SDK 宣告必須一致。共用框架效果層要求輸入全部初始化，並驗證完整結果範圍；HighC 在呼叫前建立輸入快照，保留六個結果寫入。
 
 同一份已認證的仿射框架契約也涵蓋 `CGAffineTransformTranslate`。x0 中完整的 48 位元組輸入副本必須已初始化；允許的寫入會使該副本失效，結果使用 x8。兩個 double 純量保留獨立的 d0/d1 載體。現有橋接在呼叫前快照全部六個輸入欄位，並寫入六個輸出欄位。此 SDK 呼叫契約不認證任意原生輸出緩衝區，也不授予相依函式主體發佈權限。
+
+CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](driver-scheduling.md)。

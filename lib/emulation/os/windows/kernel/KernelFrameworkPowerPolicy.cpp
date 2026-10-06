@@ -377,6 +377,8 @@ llvm::Error KernelFramework::processPowerPolicy() {
   return llvm::Error::success();
 }
 std::optional<uint64_t> KernelFramework::nextPowerPolicyTime() const {
+  if (PendingCall || !PnpTransitions.empty())
+    return std::nullopt;
   std::optional<uint64_t> Next;
   for (const auto &[Handle, D] : Devices) {
     if (D.Policy.DevicePowerPending)

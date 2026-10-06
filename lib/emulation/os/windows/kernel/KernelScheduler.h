@@ -105,11 +105,18 @@ public:
     /// A native USB task keeps its IRP identity while executing the real
     /// framework callback that replaced it in this slot.
     bool FrameworkUsbIdleContinuation = false;
+    uint64_t ReadyOrder = 0;
   };
 
   KernelScheduler() = default;
-  explicit KernelScheduler(Limits Bounds)
-      : Bounds(Bounds), Now(Bounds.InitialTime100ns) {}
+  explicit KernelScheduler(Limits Bounds, bool OrderedPassive = false)
+      : Bounds(Bounds), Now(Bounds.InitialTime100ns),
+        OrderedPassive(OrderedPassive) {}
+
+  /// One order shared by fresh passive callbacks and execution continuations.
+  /// Allocate only when an owner becomes ready or exhausts its time slice.
+  llvm::Expected<uint64_t> issueReadyOrder();
+  std::optional<uint64_t> nextPassiveReadyOrder() const;
 
   /// Already-queued work items are a driver error. Once next() dequeues an
   /// item, that object may be freed or queued again by its callback.
@@ -277,6 +284,13 @@ public:
   llvm::Error canAdvanceTo100ns(uint64_t Time,
                                 uint64_t AdditionalCallbacks = 0) const;
   llvm::Error advanceTo100ns(uint64_t Time);
+  /// Running time may advance with active/ready work. Each caller must visit
+  /// every earlier timer boundary and admit external producers at that same
+  /// boundary before selecting callbacks. Idle callers retain stricter rules.
+  llvm::Error
+  canAdvanceExecutionTo100ns(uint64_t Time,
+                             uint64_t AdditionalCallbacks = 0) const;
+  llvm::Error advanceExecutionTo100ns(uint64_t Time);
 
   /// Nonnegative DueTime100ns is absolute; negative is relative. Period is
   /// milliseconds and must fit Windows LONG. Resetting an armed timer replaces
@@ -325,9 +339,11 @@ private:
   Limits Bounds;
   uint64_t Now = 0;
   uint64_t NextID = 1;
+  uint64_t NextReadyOrder = 1;
   uint64_t NextTimerSequence = 1;
   uint64_t Dispatches = 0;
   uint64_t TimerExpirations = 0;
+  bool OrderedPassive = false;
   std::deque<Invocation> Workers;
   std::deque<Invocation> SystemThreads;
   std::deque<Invocation> DPCs;

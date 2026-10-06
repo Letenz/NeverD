@@ -260,6 +260,28 @@ static VOID PolicyIoControl(WDFQUEUE Queue, WDFREQUEST Request) {
   }
   WDFDEVICE Device = WdfIoQueueGetDevice(Queue);
   switch (*Input) {
+  case KmdfPowerPassiveBusy:
+  case KmdfPowerAPCBusy:
+  case KmdfPowerDispatchBusy: {
+    const KIRQL Level = *Input == KmdfPowerDispatchBusy ? DISPATCH_LEVEL
+                        : *Input == KmdfPowerAPCBusy    ? APC_LEVEL
+                                                        : PASSIVE_LEVEL;
+    KIRQL Previous = PASSIVE_LEVEL;
+    if (Level != PASSIVE_LEVEL)
+      KeRaiseIrql(Level, &Previous);
+    for (volatile ULONG I = 0; I < KmdfPowerBusyIterations; ++I) {
+    }
+    if (KeGetCurrentIrql() != Level || (Level == DISPATCH_LEVEL && PolicyArms))
+      ExRaiseStatus(STATUS_INVALID_DEVICE_STATE);
+    if (Level != PASSIVE_LEVEL)
+      KeLowerIrql(Previous);
+    // The real policy callback must run on another logical thread while this
+    // request remains inside its original callback.
+    while (!*(volatile ULONG *)&PolicyArms) {
+    }
+    Status = STATUS_SUCCESS;
+    break;
+  }
   case KmdfPowerSnapshot:
     Status = STATUS_SUCCESS;
     break;
