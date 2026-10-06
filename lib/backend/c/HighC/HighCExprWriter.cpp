@@ -182,6 +182,16 @@ std::string HighCWriter::constStr(uint64_t Val, TypeRef Type) {
   return "0x" + llvm::utohexstr(Val);
 }
 
+bool HighCWriter::declaredLocalInteger(const HighExpr &E, uint16_t Width,
+                                       bool Signed) {
+  if (E.Kind != ExprKind::Var && E.Kind != ExprKind::Phi)
+    return false;
+  const auto It = DeclaredCTypes.find(exprStr(E));
+  return It != DeclaredCTypes.end() && It->second &&
+         It->second->Kind == NdTypeKind::Int && !It->second->IsEnum &&
+         It->second->IsSigned == Signed && It->second->Size == Width;
+}
+
 std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   if (E.Operands.empty())
     return "/* bad unary */";
@@ -351,6 +361,10 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
       return exprStr(Inner, ParentPrec);
     if (Inner.Type && E.Type && Inner.Type->Size == E.Type->Size)
       return exprStr(Inner, ParentPrec);
+    // A local declared unsigned at the source width converts by zero
+    // extension already.
+    if (Inner.Type && declaredLocalInteger(Inner, Inner.Type->Size, false))
+      return "(" + typeToC(E.Type) + ")" + exprStr(Inner, 99);
     if (Inner.Type)
       return "(" + typeToC(E.Type) + ")(" +
              typeToC(NdType::makeInt(Inner.Type->Size, false)) + ")" +
@@ -371,6 +385,10 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
     auto &Inner = *E.Operands[0];
     if (Inner.Type && E.Type && Inner.Type->Size == E.Type->Size)
       return exprStr(Inner, ParentPrec);
+    // A local declared signed at the source width converts by sign
+    // extension already.
+    if (Inner.Type && declaredLocalInteger(Inner, Inner.Type->Size, true))
+      return "(" + typeToC(E.Type) + ")" + exprStr(Inner, 99);
     return "(" + typeToC(E.Type) + ")(" +
            (Inner.Type ? typeToC(NdType::makeInt(Inner.Type->Size, true))
                        : "int32_t") +
@@ -984,7 +1002,24 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
                            BaseTy->Pointee &&
                            BaseTy->Pointee->Kind == NdTypeKind::Int &&
                            BaseTy->Pointee->Size == 1;
-      if (!BytePtr && !llvm::StringRef(B).starts_with("(uintptr_t)"))
+      // Byte offsets from an unsigned pointer-width integer already wrap
+      // like the machine address: the frame base, or a local or parameter
+      // declared that way.
+      const uint16_t PointerBytes = getTargetRegInfo(Opts.TheArch).PointerSize;
+      const auto Declared = DeclaredCTypes.find(B);
+      const bool UnsignedWord =
+          B == "frame_base" ||
+          (Declared != DeclaredCTypes.end() && Declared->second &&
+           Declared->second->Kind == NdTypeKind::Int &&
+           !Declared->second->IsSigned && !Declared->second->IsEnum &&
+           Declared->second->Size == PointerBytes) ||
+          ((Base->Kind == ExprKind::Var || Base->Kind == ExprKind::Phi) &&
+           Base->Var.Kind == MedVar::Param && BaseTy &&
+           BaseTy->Kind == NdTypeKind::Int && !BaseTy->IsSigned &&
+           !BaseTy->IsEnum && BaseTy->Size == PointerBytes &&
+           B == varName(Base->Var));
+      if (!BytePtr && !UnsignedWord &&
+          !llvm::StringRef(B).starts_with("(uintptr_t)"))
         B = "(uintptr_t)(" + B + ")";
       std::string S = B + (Minus ? " - " : " + ") + constStr(Off->ConstVal);
       if (ParentPrec >= AddPrec)
