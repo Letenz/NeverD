@@ -2562,14 +2562,14 @@ TEST(LowIRLoopInference, AlternativeLoopsReachBothPrefixesWithinSharedBudgets) {
   }
 }
 
-Program projectedCounterLoops(uint16_t Bytes, bool Ascending, unsigned Step = 1,
-                              bool Guarded = true,
-                              LowIRLoopSpace Space = LowIRLoopSpace::Register,
-                              bool EqualityExit = false, unsigned BoundStep = 0,
-                              bool PadBounds = false,
-                              bool ZeroInitialize = false,
-                              bool CachedExit = false, bool OrderedExit = false,
-                              bool MutableBounds = false) {
+enum class CounterTag { Zero, Prefix, Changing };
+
+Program projectedCounterLoops(
+    uint16_t Bytes, bool Ascending, unsigned Step = 1, bool Guarded = true,
+    LowIRLoopSpace Space = LowIRLoopSpace::Register, bool EqualityExit = false,
+    unsigned BoundStep = 0, bool PadBounds = false, bool ZeroInitialize = false,
+    bool CachedExit = false, bool OrderedExit = false,
+    bool MutableBounds = false, CounterTag Tag = CounterTag::Zero) {
   Program P;
   const uint64_t Mask = (uint64_t{1} << (Bytes * 8)) - 1;
   if (Space == LowIRLoopSpace::Frame)
@@ -2617,6 +2617,9 @@ Program projectedCounterLoops(uint16_t Bytes, bool Ascending, unsigned Step = 1,
                    Write(Level, NdVar::tmp(16, 8))});
     CacheExit(Level);
   };
+  if (Tag != CounterTag::Zero)
+    P.instruction({op(NdOp::INT_LEFT, r(96), {r(96), n(Bytes * 8)}),
+                   op(NdOp::INT_LEFT, r(104), {r(104), n(Bytes * 8)})});
   P.Function.Blocks[0].Succs = {1};
   P.instruction({op(NdOp::INT_ZEXT, r(64), {r(112, Bytes)}),
                  op(NdOp::INT_ZEXT, r(72), {r(120, Bytes)}),
@@ -2652,13 +2655,30 @@ Program projectedCounterLoops(uint16_t Bytes, bool Ascending, unsigned Step = 1,
          op(NdOp::COND_BR, {}, {n(Done), NdVar::tmp(32, 1)})});
   };
   const auto Update = [&](unsigned Level) {
-    P.instruction(
-        {Address(Level), Read(Level),
-         op(NdOp::SUBBYTES, NdVar::tmp(16, Bytes), {NdVar::tmp(8, 8), n(0)}),
-         op(Ascending ? NdOp::INT_ADD : NdOp::INT_SUB, NdVar::tmp(24, Bytes),
-            {NdVar::tmp(16, Bytes), n(Step, Bytes)}),
-         op(NdOp::INT_ZEXT, NdVar::tmp(32, 8), {NdVar::tmp(24, Bytes)}),
-         Write(Level, NdVar::tmp(32, 8))});
+    if (Tag == CounterTag::Zero) {
+      P.instruction(
+          {Address(Level), Read(Level),
+           op(NdOp::SUBBYTES, NdVar::tmp(16, Bytes), {NdVar::tmp(8, 8), n(0)}),
+           op(Ascending ? NdOp::INT_ADD : NdOp::INT_SUB, NdVar::tmp(24, Bytes),
+              {NdVar::tmp(16, Bytes), n(Step, Bytes)}),
+           op(NdOp::INT_ZEXT, NdVar::tmp(32, 8), {NdVar::tmp(24, Bytes)}),
+           Write(Level, NdVar::tmp(32, 8))});
+    } else {
+      P.instruction(
+          {Address(Level), Read(Level),
+           op(NdOp::SUBBYTES, NdVar::tmp(16, Bytes), {NdVar::tmp(8, 8), n(0)}),
+           op(Ascending ? NdOp::INT_ADD : NdOp::INT_SUB, NdVar::tmp(24, Bytes),
+              {NdVar::tmp(16, Bytes), n(Step, Bytes)}),
+           op(NdOp::INT_ZEXT, NdVar::tmp(32, 8), {NdVar::tmp(24, Bytes)}),
+           Tag == CounterTag::Changing
+               ? op(NdOp::INT_ADD, r(96 + 8 * Level),
+                    {r(96 + 8 * Level), n(Mask + 1)})
+               : op(NdOp::COPY, r(96 + 8 * Level), {r(96 + 8 * Level)}),
+           op(NdOp::INT_AND, NdVar::tmp(40, 8), {r(96 + 8 * Level), n(~Mask)}),
+           op(NdOp::INT_OR, NdVar::tmp(32, 8),
+              {NdVar::tmp(32, 8), NdVar::tmp(40, 8)}),
+           Write(Level, NdVar::tmp(32, 8))});
+    }
     if (BoundStep)
       P.instruction({op(NdOp::INT_ADD, r(64 + 8 * Level),
                         {r(64 + 8 * Level), n(BoundStep)})});
@@ -2684,6 +2704,101 @@ Program projectedCounterLoops(uint16_t Bytes, bool Ascending, unsigned Step = 1,
   P.block(6, 0x700);
   P.finish();
   return P;
+}
+
+TEST(LowIRLoopInference, RebuiltCounterLanesPreserveCompleteState) {
+  for (uint16_t Bytes : {1, 3, 4})
+    for (auto Space : {LowIRLoopSpace::Register, LowIRLoopSpace::Frame,
+                       LowIRLoopSpace::FunctionTemporary})
+      for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+        for (bool Cached : {false, true})
+          for (auto Tag : {CounterTag::Prefix, CounterTag::Changing}) {
+            SCOPED_TRACE(Bytes);
+            SCOPED_TRACE(static_cast<unsigned>(Space));
+            SCOPED_TRACE(static_cast<unsigned>(Order));
+            SCOPED_TRACE(Cached);
+            SCOPED_TRACE(static_cast<unsigned>(Tag));
+            auto P =
+                projectedCounterLoops(Bytes, true, 1, true, Space, true, 0,
+                                      true, false, Cached, false, false, Tag);
+            P.Contract.ByteOrder = Order;
+            for (uint64_t Offset : {8, 16, 64, 72, 96, 104})
+              P.Contract.ReturnRegisters.push_back({Offset, 8});
+            const std::vector<va_t> Cuts =
+                Cached ? std::vector<va_t>{0x200, 0x400}
+                       : std::vector<va_t>{0x300, 0x500};
+            const auto R =
+                inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
+            ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+            const auto Proof = loopCheck(P, P, *R.Plan);
+            ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+            // Rank projection never hides the remainder of an observed word.
+            // Keep the counter lane and tag registers unchanged, but omit the
+            // high tag when writing each updated counter.
+            auto Wrong = P;
+            for (auto &B : Wrong.Function.Blocks)
+              for (auto &O : B.Ops)
+                if (O.Opcode == NdOp::INT_OR && O.Output == NdVar::tmp(32, 8) &&
+                    O.Inputs[1] == NdVar::tmp(40, 8))
+                  O.Inputs[1] = n(0);
+            loopRefused(loopCheck(P, Wrong, *R.Plan), Status::Different);
+          }
+}
+
+TEST(LowIRLoopInference, RebuiltCounterLanesKeepProofBoundaries) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (auto Tag : {CounterTag::Prefix, CounterTag::Changing}) {
+      const auto Make = [&](unsigned Step, bool Guarded) {
+        auto P = projectedCounterLoops(1, true, Step, Guarded,
+                                       LowIRLoopSpace::Register, true, 0, true,
+                                       false, false, false, false, Tag);
+        P.Contract.ByteOrder = Order;
+        for (uint64_t Offset : {8, 16, 64, 72, 96, 104})
+          P.Contract.ReturnRegisters.push_back({Offset, 8});
+        return P;
+      };
+      const auto P = Make(1, true);
+      const std::vector<va_t> Cuts{0x300, 0x500};
+      const auto Good =
+          inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
+      ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+      for (const auto &Bad : {Make(0, true), Make(2, true), Make(1, false)}) {
+        const auto R =
+            inferLowIRLoopRefinementPlan(Bad.Function, Bad.Contract, {}, Cuts);
+        EXPECT_FALSE(R.inferred());
+        EXPECT_FALSE(R.Plan);
+        loopRefused(loopCheck(Bad, Bad, *Good.Plan), Status::Different);
+      }
+      LowIRLoopInferenceLimits Exact;
+      Exact.Execution.MaxOperations = Good.Operations;
+      Exact.Execution.MaxSolverQueries = Good.SolverQueries;
+      Exact.MaxRankCandidates = Good.RankCandidates;
+      Exact.MaxWideningRounds = Good.WideningRounds;
+      const auto AtLimit =
+          inferLowIRLoopRefinementPlan(P.Function, P.Contract, Exact, Cuts);
+      ASSERT_TRUE(AtLimit.inferred()) << AtLimit.Diagnostic;
+      for (unsigned Case = 0; Case != 4; ++Case) {
+        auto Short = Exact;
+        if (Case == 0)
+          --Short.Execution.MaxOperations;
+        else if (Case == 1)
+          --Short.Execution.MaxSolverQueries;
+        else if (Case == 2)
+          --Short.MaxRankCandidates;
+        else
+          --Short.MaxWideningRounds;
+        const auto R =
+            inferLowIRLoopRefinementPlan(P.Function, P.Contract, Short, Cuts);
+        EXPECT_EQ(R.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+        EXPECT_FALSE(R.Plan);
+      }
+      const auto Proof = loopCheck(P, P, *Good.Plan);
+      ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+      LowIRRefinementLimits ShortProof;
+      ShortProof.Execution.MaxSolverQueries = Proof.SolverQueries - 1;
+      loopRefused(loopCheck(P, P, *Good.Plan, ShortProof),
+                  Status::BudgetExceeded);
+    }
 }
 
 TEST(LowIRLoopInference, ZeroExtendedUpdatesUseTheirObservedCounterLanes) {
