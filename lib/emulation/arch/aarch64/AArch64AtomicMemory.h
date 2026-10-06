@@ -22,6 +22,9 @@ struct AArch64AtomicAccess {
   llvm::function_ref<llvm::Error(uint64_t, uint64_t, unsigned)> CheckAccess;
   unsigned WritePermissions;
   AArch64AtomicAlignment Alignment;
+  /// Only a checked supervisor may request explicit atomic device providers.
+  bool *DeviceFailed = nullptr;
+  MachineRunControl Control{};
 };
 /// Validate the complete typed alignment outcome before guest OS translation.
 bool isAArch64AtomicAlignmentFault(const BackendFault &);

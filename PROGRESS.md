@@ -1,5 +1,156 @@
 # NeverD Daily Progress
 
+Last verified: **2026-10-06 09:03 Asia/Shanghai (UTC+08:00)** / **2026-10-06 01:03 UTC**
+
+This is a point-in-time source and existing-evidence review. The [roadmap](docs/roadmap.md), [architecture](docs/architecture.md), [testing guide](docs/testing.md) and [contribution guidance](CONTRIBUTING.md) remain authoritative. No completion percentage or release-readiness claim is implied.
+
+## Current snapshot
+
+Source review is pinned to [6f885ebb](https://github.com/NeverSight/NeverD/commit/6f885ebb7fda032077838950be03e31b90ffa593), observed at October 6 00:59 UTC. The prior reviewed source was [253e5519](https://github.com/NeverSight/NeverD/commit/253e551961b18a784971244882e36f60eff64b96). Activity counts run from the previous publication sample, October 5 01:20 UTC, to today's collection; they precede this report-only proposal.
+
+| Measure | Verified state |
+| --- | --- |
+| Open ordinary issues | 17, unchanged; 14 epics, no milestones, only #12 assigned |
+| Open PRs | 2: #525 and #565, up from zero before yesterday's proposal |
+| PRs merged in the activity window | 78: #487–494, #496–524, #526–564 and #566–567 |
+| Closed PRs without merge | 0 |
+| Ordinary issue activity | #495 was opened and closed; no other ordinary issue updated |
+| Raw source inventory | 338 distinct commits; 744 changed file/submodule paths |
+| Path classification | 513 modified, 229 added, 2 removed |
+| Report-only exclusion | 337 commits and 743 paths after excluding the one PROGRESS-only commit/path; these are not all implementation commits |
+| New statically proven code defects / fixes | 0 / 0 in the bounded scope |
+| Existing documentation discrepancy | The Android guide still describes all NULL handle lookups as ESRCH; current getTID returns -1 |
+
+The [source comparison](https://github.com/NeverSight/NeverD/compare/253e551961b18a784971244882e36f60eff64b96...6f885ebb7fda032077838950be03e31b90ffa593) was enumerated as 100 + 100 + 100 + 38 commits, then an empty fifth page. GitHub's comparison file list stops at 300, so the path count comes from complete recursive trees of 5,871 and 6,099 entries, neither truncated, excluding directories and comparing path/blob identities. Rename pairs count as old/new paths. Three changed submodules (`signatures`, Capstone and Unicorn) are inventoried, not audited internally.
+
+[7e68c9f8](https://github.com/NeverSight/NeverD/commit/7e68c9f8aea965b41b303ac180ce8d0f1ffb62a6) changes only PROGRESS.md and is excluded from implementation advancement. Its parent proposal [#487](https://github.com/NeverSight/NeverD/pull/487) also contained three real corrections, so its mixed-purpose merge is retained rather than falsely counted as a report-only merge. The inventory is not an exhaustive review count.
+
+### Changes since the previous snapshot
+
+- Yesterday's [#487](https://github.com/NeverSight/NeverD/pull/487) merged at October 5 03:26:15 UTC as [6f798326](https://github.com/NeverSight/NeverD/commit/6f7983261cfc546d26bdc06100210cc29c55cfa1). Its null TID and typed allocation-failure corrections survive the Bionic/thread dispatch refactor. The current dev PROGRESS blob exactly matches the published October 5 content; all 113,981 characters of that history are preserved below.
+- Linux/Android gained shared bounded memory files, status/existence/pathname queries, explicit signal actions and opt-in relative sleep/virtual clocks ([#497](https://github.com/NeverSight/NeverD/pull/497), [#507](https://github.com/NeverSight/NeverD/pull/507), [#545](https://github.com/NeverSight/NeverD/pull/545), [#563](https://github.com/NeverSight/NeverD/pull/563), [#566](https://github.com/NeverSight/NeverD/pull/566)). File/status and sleep ownership were reviewed below; signal delivery and the complete Android surface were not.
+- Native/checked instruction coverage added x64 flags, shifts, frame operations and wide compare-exchange, plus ARM64 exclusives and LSE atomics ([#510](https://github.com/NeverSight/NeverD/pull/510), [#534](https://github.com/NeverSight/NeverD/pull/534), [#538](https://github.com/NeverSight/NeverD/pull/538), [#543](https://github.com/NeverSight/NeverD/pull/543), [#552](https://github.com/NeverSight/NeverD/pull/552)). These changes are inventoried, not independently certified here.
+- Loop inference gained projected counters/bounds, guarded repeated-PC contexts and completed-query reuse ([#555](https://github.com/NeverSight/NeverD/pull/555)–[#561](https://github.com/NeverSight/NeverD/pull/561), [#564](https://github.com/NeverSight/NeverD/pull/564), [#567](https://github.com/NeverSight/NeverD/pull/567)). Today's focused review covers the final entailment-cache boundary.
+- Library recognition/presentation [#537](https://github.com/NeverSight/NeverD/pull/537) and its validation follow-up [#547](https://github.com/NeverSight/NeverD/pull/547) merged; [issue #495](https://github.com/NeverSight/NeverD/issues/495) closed at October 5 15:54:19 UTC. This is delivered recognition/presentation work, not proof of all library behavior or completion of the older epics.
+- ARM64 HVF research retained additional correctness regressions but rejected the proposed watchdog/completion performance changes. The [published guide](docs/macos-hvf.md#request-completion-research-2026-10-05) reports final source `a63d57e6a`: CPU 1,434 passed / 12,693 skipped with 29/29 required; separate Darwin 65 passed / 221 skipped with 39/39 required. These are published local evidence, not artifacts independently re-audited today; overlapping inventories must not be added or transferred to this head. Intel complete acceptance remains open.
+
+## Bounded static review
+
+**Mode:** Source, interfaces, callers, declared regressions, configuration and already-existing CI only. No project execution, build, test, benchmark, linter, formatter, repository script or dynamic analyzer was run. No workflow was dispatched or rerun. This publication contains no CI-skip marker; ordinary automatic checks may run.
+
+### Linux file/status and Android sleep boundaries
+
+Full source reads:
+- `lib/emulation/os/linux/kernel/{LinuxFiles.h,LinuxFiles.cpp,LinuxFilePaths.cpp,LinuxFileOptions.cpp,LinuxFileIO.cpp,LinuxFileStatus.cpp,LinuxUserMemory.cpp,LinuxTime.h,LinuxTime.cpp,LinuxClock.cpp,LinuxSleep.cpp,LinuxServices.cpp}`
+- `lib/emulation/os/linux/android/{AndroidThreads.cpp,AndroidThreadCalls.cpp,AndroidThreadWaits.cpp,AndroidKernelCalls.cpp}`
+- `unittests/emulation/{AndroidFileStatusAtTests.cpp,AndroidSleepTests.cpp,LinuxClockTests.cpp}`
+- Focused current `AndroidFinalizerTests.cpp:222–243`, architecture/testing contracts and the Android guide's NULL-handle wording
+
+Static conclusions:
+- One `LinuxFiles` instance owns descriptors and immutable catalogue observations. Path import stops at the first NUL and bounds addresses before reads. Catalogue validation rejects file/ancestor conflicts; status imports its pathname before output, so overlapping pathname/output is handled deliberately. Absolute paths ignore dirfd, empty-path descriptor queries use the same serializer, and unmodeled relative paths, CWD/directory metadata and version-specific flags fail explicitly.
+- `LinuxUserMemory` distinguishes wholly inaccessible output from mixed access without guessing native partial-copy bytes. File reads retain completed page prefixes and cursor updates; original address/signed extent checks precede EOF/clamping. Metadata is explicit rather than fabricated from contents.
+- `LinuxSleep` copies both request fields before value checks, preserves the successful remaining-time pointer and retains the consumed deadline. `LinuxClock::advanceTo` checks every supplied epoch for overflow before committing elapsed time.
+- `GuestThreads::schedule` advances only with no runnable thread, choosing the earliest sleep deadline. Typed waits preserve request/event attribution; completion updates the original native-call or raw-service event. Bionic alone converts errno. The reviewed source does not introduce host sleeps or host filesystem access.
+- The existing `getTID(NULL)` returns `UINT32_MAX`; child mapping converts only `GuestMemoryLimitError` to EAGAIN before identity/output publication. No duplicate fix is needed.
+
+Declared regressions cover direct/variadic/raw ABI routes, output/path aliases, missing metadata, low-word arguments, dynamic-provider lifetime, shared cursor state, consumed sleep inputs, deadline order, TLS/errno/context retention, joins/mutexes/once, budget stops and overflow. Native comparisons explicitly skip unavailable transports. They were read, not executed.
+
+**Result:** No new statically proven defect in this scope; no speculative code patch. The [Android guide](https://github.com/NeverSight/NeverD/blob/6f885ebb7fda032077838950be03e31b90ffa593/docs/android-native-emulation.md#L528) still says NULL lookup returns ESRCH, which conflicts with the narrow TID exception. This known documentation discrepancy remains unchanged because only this tracker is authorized for documentation maintenance. No stable return contract is inferred for other malformed native handles.
+
+### Completed loop entailments
+
+Reviewed `lib/analysis/core/LowIRUndefinedIndependence.cpp` (`Checker::chargeQuery/query`, session binding, `LoopPlanInference::entails/run`, template/native-selector consumers and independent `runRefinement`), the budget contract in `include/neverd/analysis/LowIRRefinement.h`, stable interned references in `include/neverd/symbolic/SymExpr.h`, and the changed regression assertions/CMake ownership from [#567](https://github.com/NeverSight/NeverD/pull/567).
+
+- The [cache key](https://github.com/NeverSight/NeverD/blob/6f885ebb7fda032077838950be03e31b90ffa593/lib/analysis/core/LowIRUndefinedIndependence.cpp#L3026-L3040) is the complete domain AND NOT fact, scoped to one inference's append-only symbolic context; a fact cannot be reused under a different domain by itself.
+- The hit path checks node limits and [charges the shared logical-query budget](https://github.com/NeverSight/NeverD/blob/6f885ebb7fda032077838950be03e31b90ffa593/lib/analysis/core/LowIRUndefinedIndependence.cpp#L544-L568) before recording a hit. Misses use a fresh checker. Unknown/invalid answers are rejected before insertion.
+- [Final refinement](https://github.com/NeverSight/NeverD/blob/6f885ebb7fda032077838950be03e31b90ffa593/lib/analysis/core/LowIRUndefinedIndependence.cpp#L2827-L2835) starts a separate session: inference results/budgets do not fund the proof.
+- `CompletedEntailmentsStayInInferenceSession`, `CompletedEntailmentsKeepUnknownAndNodeLimits`, `MutablePrefixBoundsKeepIndependentBudgets` and `NativeSelectorsProveRepeatedContexts` declare session, nontermination, exact/one-short, node/query exhaustion and context-domain checks in `NeverDLowIRRefinementTests`. Author-reported passes are not independently executed evidence.
+
+**Result:** No statically provable new cache defect; no fix proposed. This is a bounded review of cache ownership/budgets, not a proof of the complete solver, all loop inference or native refinement.
+
+## Existing CI and review evidence
+
+### Exact reviewed head
+
+At **October 6 01:03:15 UTC**, `6f885ebb7fda032077838950be03e31b90ffa593` had **four all-event workflows** (one successful, one skipped, one running, one queued) and **19 checks: four successful, ten skipped, four running, one queued, zero failed**. Both collections used 100/page and an explicitly empty second page.
+
+- [Main CI 37396172858](https://github.com/NeverSight/NeverD/actions/runs/37396172858): all three main platform legs were still at the Debug/Release-target preflight; their configure/build/native test stages had not run. Both Windows caller-context checks passed; the optional Native CPU job skipped.
+- [Mobile Decompilation 37396172710](https://github.com/NeverSight/NeverD/actions/runs/37396172710): overall queued; Linux passed, macOS running, Windows queued. The [Linux job](https://github.com/NeverSight/NeverD/actions/runs/37396172710/job/112052630164) independently reports 366/366 CTest tests and separate 197-test/240-test Python suites passing. This is narrower mobile/prebuilt coverage, not the integrated-LLVM/native aggregate.
+- [LLVM Style 37396172784](https://github.com/NeverSight/NeverD/actions/runs/37396172784): passed.
+- [Mobile Real Applications 37396204608](https://github.com/NeverSight/NeverD/actions/runs/37396204608): all nine jobs skipped, including qualification; its graph skips cancelled upstream producers. It supplies no current-head application-recovery result.
+
+Pending, skipped and partial results cannot establish a complete green gate.
+
+### Prior failures reconciled
+
+- **Android finalizers:** the previous O0 registry-capacity timeout is not verified resolved on this head. The unchanged current regression still makes two separate emulation calls, each with a 30-second allowance. No runtime cause is inferred and no timeout changed.
+- **External compiler IR:** merged [#547](https://github.com/NeverSight/NeverD/pull/547) reports compatible host-compiler serialization and successful focused/replay checks. Its own account separates an earlier failing aggregate from later repair runs. This is delivered remediation and author-reported validation, not an independently observed final-revision green aggregate.
+- **Real applications:** the [October 5 official Markor job](https://github.com/NeverSight/NeverD/actions/runs/37249288624/job/111577673147) retains failed complete-APK recovery with reconstruction/behavior incomplete. Yesterday's artifact-level RestrictTo diagnosis is preserved below; today's stdout did not independently expose that detail. No new pinned-head real-application pass was found.
+- The former [main CI 37247600637](https://github.com/NeverSight/NeverD/actions/runs/37247600637) and [application run 37249288624](https://github.com/NeverSight/NeverD/actions/runs/37249288624), both at `253e5519`, now conclude cancelled overall. Their previously observed individual failures remain failures; cancellation is not a retroactive pass.
+- A later [CI 37354456744](https://github.com/NeverSight/NeverD/actions/runs/37354456744), at `2b937f3192dce3d76bdabb7c18a2b56d4232f533`, failed all three main legs before build on 149 benchmark-provenance findings. Merged repairs `ac78f59` and `f053fbb` are present in today's ancestry. Independently, newer ancestor `ac8ae03` passed Linux preflight/configure in [job 112045285352](https://github.com/NeverSight/NeverD/actions/runs/37393906966/job/112045285352), before build cancellation. This supports the historical preflight repair, not complete current-head qualification.
+
+No complete historical workflow census was attempted today; these are targeted prior-blocker checks and an exhaustive exact-head census. The old Linux job-log fetch was unavailable, so the previous preserved artifact diagnosis was not independently repeated.
+
+### Open work awaiting review
+
+- [#565](https://github.com/NeverSight/NeverD/pull/565), head `bfb56d8f932b40df4935fed2bf0d17ff1f67ac15`: parallel checked CPUs and transactional MMIO atomics. At 01:02–01:03 UTC, 14 checks: seven successful, two skipped, five running; an already-existing [native WHP run](https://github.com/NeverSight/NeverD/actions/runs/37394631264) was running. The author reports KVM validation; full current-head completion and ARM64 native coverage remain distinct. This large open PR is outside today's source review.
+- [#525](https://github.com/NeverSight/NeverD/pull/525), head `d05bd3fb772c983cfe20f42e8e005aa15aad2841`: explicit Darwin file/directory/mapping/clock services. No exact-head workflow/check runs were returned. Its author records a full local Darwin gate with one HVF virtual-metadata timeout and a later unchanged-bound focused recheck; these must not be flattened into one all-green full gate. Its broad mutable filesystem/OS contract is outside today's source review.
+- Both PRs have no submitted reviews, inline review comments or conversation comments in the sampled 100/page endpoints. No independent approval is inferred. No reviewer was assigned and no PR state changed.
+
+## Suggested next priorities
+
+### 1. Establish one complete current-candidate qualification
+
+**Dependency:** Finish existing automatic CI and application producer/consumer chains for one identified source. Historical cancellation, optional Native CPU skips and separate replay receipts leave gaps.
+
+**Next action:** Inspect terminal results, then isolate any remaining finalizer cost/budget, host-compiler IR or real-application coverage failures without weakening strict rejection. Keep already-delivered provenance/owner repairs separate from unresolved behavior.
+
+**Acceptance:** One exact candidate has complete intended Linux/macOS/Windows execution and actual completed application recovery/reconstruction/behavior evidence, with required tests executed and skips/missing outcomes explicitly accounted for. No test or dispatch is initiated by this review.
+
+### 2. Review the two open integration boundaries
+
+**Dependency:** Stable heads and complete existing evidence for #565 and #525; platform-specific native results cannot substitute for each other.
+
+**Next action:** Review CPU/provider atomicity and ownership in #565, and Darwin namespace/content/mapping/metadata lifetimes in #525; reconcile each pending/failed full gate with focused rechecks before integration.
+
+**Acceptance:** Review conclusions and exact-head integration evidence preserve failure atomicity, bounded policy, complete required native outcomes and explicit unavailable-platform limits. No merge or deployment is authorized by this tracker.
+
+### 3. Keep native acceptance and public contracts evidence-aligned
+
+**Dependency:** Original Intel fresh-Executor recovery, complete CPU inventory and independent Darwin evidence on one coherent candidate remain required; diagnostic controls and ARM64 results cannot satisfy them.
+
+**Next action:** Reconcile the published native evidence without promoting incomplete prefixes or rejected performance candidates. Separately request the narrow Android guide wording correction through an authorized documentation change.
+
+**Acceptance:** Intel's original recovery and complete inventories have terminal outcomes with process retirement/source identity; otherwise the gate remains open. Android documentation states the null-TID exception accurately without guessing other malformed-handle contracts.
+
+## Daily log
+
+### 2026-10-06 — File/time boundaries and inference-cache review
+
+- Enumerated 338 commits and 744 changed paths; separated the single pure report commit/path from substantive advancement. Reconciled 78 merges, two open PRs and issue #495's opening/closure, with 17 ordinary issues still open.
+- Confirmed yesterday's merged Android corrections survive the source refactor. Completed the bounded file/status/sleep and loop-entailment cache reviews above; found no additional statically proven defect and made no speculative code change.
+- Recorded exact-head pending CI, independently observed Linux mobile success, existing application skips and targeted historical blocker/remediation evidence.
+- Preserved all previous tracker text, including manual edits/history; only this English PROGRESS.md is changed.
+- No execution, build, test, benchmark, repository script, formatter/linter, CI trigger/rerun, issue mutation, dependency/security change, merge or deployment.
+
+## Collection, publication and verification limits
+
+- Open issue collection: 19 records (17 ordinary issues + two PRs), then empty page 2. Separate open PR collection: two records, then empty page 2.
+- Activity collection since October 5 01:20 UTC: 81 records (80 PRs + issue #495), then empty page 2. The 100 PRs ordered by update cross that boundary and include all 80 in-window PR records: 78 merged, two open, none closed without merge. Older complete PR history was not enumerated.
+- Review submissions and inline comments were checked for #487, #525, #547, #563, #565, #566 and #567; all first pages were empty. Conversation comments were additionally checked for the two open PRs. Unsampled discussions are outside coverage.
+- Root AGENTS.md, CONTRIBUTING.md, relevant architecture/testing/roadmap sections and applicable debugging guidance were read. The complete tree has no nested AGENTS.md. GitHub reports dev unprotected and no rulesets; no settings were changed.
+- Publication uses a fresh focused topic branch and draft PR because yesterday's related #487 is merged; the two existing open PRs are unrelated. Latest dev/target file blobs are re-read before mutation, and remote content/commit/diff are checked after publication. The existing history blob is `5ebfc33554c723d17f2b07032d02b358f790b2a7`.
+- The report's source/CI snapshot remains the pinned source above. Its subsequent documentation commit is a different head with separate checks; publishing it does not validate the reviewed source or imply permission to merge.
+- Remaining 744-path inventory, full solver/loop/scalar proof machinery, library-recognition semantic correctness, all x64/ARM64 atomic instructions, broader OS/SDK/GUI surfaces, native backend internals, open PR source and submodule internals are not exhaustively reviewed.
+- Static inspection does not establish compilation, formatting, runtime equivalence, race freedom, latency, full ISA/OS coverage or release readiness. This is one bounded daily sample, not continuous monitoring.
+
+## Previous snapshots (preserved)
+
+<details>
+<summary>Complete October 5 tracker and earlier history, preserved verbatim</summary>
+
+# NeverD Daily Progress
+
 Last verified: **2026-10-05 09:20 Asia/Shanghai (UTC+08:00)** / **2026-10-05 01:20 UTC**
 
 This point-in-time tracker separates delivered implementation, bounded static review and observed execution evidence. The [roadmap](docs/roadmap.md), [architecture](docs/architecture.md), [testing guide](docs/testing.md) and [contribution guidance](CONTRIBUTING.md) remain authoritative. Suggested priorities are acceptance work, not deadlines or a completion percentage.
@@ -1052,6 +1203,8 @@ them are author reports unless separately confirmed by linked workflow results.
 - GitHub search and Actions may change after this timestamp. This document is a
   point-in-time record, not a claim of continuous monitoring or a committed
   delivery schedule
+
+</details>
 
 </details>
 

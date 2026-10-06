@@ -35,9 +35,6 @@ public:
   llvm::Expected<std::unique_ptr<BackendContext>> saveContext() override;
   llvm::Error saveContext(BackendContext &) override;
   llvm::Error restoreContext(const BackendContext &) override;
-  llvm::Error mapMMIO(uint64_t, uint64_t, GuestMMIOCallbacks) override;
-  llvm::Error unmapMMIO(uint64_t, uint64_t) override;
-  bool hasDeviceError() const override { return DeviceFailed; }
 
 private:
   CheckedX64Backend(bool UserMode, bool SIMDExceptions)
@@ -83,6 +80,7 @@ private:
                              unsigned, bool);
   llvm::Error deviceTransfer(const cs_insn &, uint64_t, unsigned, unsigned,
                              uint64_t);
+  llvm::Error deviceAtomic(const cs_insn &, uint64_t, unsigned);
   enum class StringOperation { Move, Store, Load, Compare, Scan };
   struct StringRestartState {
     uint64_t PC, Flags;
@@ -101,7 +99,6 @@ private:
   std::unique_ptr<X64Machine> Machine;
   X64MachineState CPU;
   const bool SIMDExceptions;
-  bool DeviceFailed = false;
 };
 } // namespace neverd::emulation
 #endif

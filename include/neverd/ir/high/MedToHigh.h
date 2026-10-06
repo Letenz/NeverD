@@ -138,6 +138,13 @@ bool loopsForNestedJumpsBack(std::vector<HighStmt> &Body);
 /// loop's body, become `continue`; each target starts exactly one statement.
 bool loopJumpsAsBreakAndContinue(std::vector<HighStmt> &Body);
 
+/// When NEVERD_HIGH_FLOW_ORACLE is set, print one FLOWPROTECT line for each
+/// structured SEH try of \p Func whose guarded range holds code outside its
+/// __try that may raise an exception: in C that code runs unprotected.  Run
+/// right after structuring the regions: later tail copies take the address
+/// of the jump they replace, which may lie in a range they do not belong to.
+void reportUnprotectedGuardedCode(const HighFunc &Func, const char *Stage);
+
 /// Once the other rewrites have settled: `if (c) goto L;` followed by an if
 /// whose then arm opens with L becomes `if (c || b)`, and one whose else arm
 /// opens with L becomes `if (!c && b)`.  L must start exactly one statement,

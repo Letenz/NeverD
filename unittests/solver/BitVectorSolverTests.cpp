@@ -330,6 +330,36 @@ TEST(BitVectorSolver, MalformedAssertionsPoisonAnIncrementalQuery) {
   EXPECT_EQ(AssumptionSolver.encodeError(), BlastError::Malformed);
 }
 
+TEST(BitVectorSolver, PartialCounterUpdatesPreserveWideBounds) {
+  for (uint32_t Width : {16u, 32u, 64u, 65u, 128u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto Counter = Ctx.mkVar("counter", Width);
+    const auto Bound = Ctx.mkVar("bound", Width);
+    const auto Low = Ctx.mkExtract(Counter, 0, 8);
+    const auto Updated = Ctx.mkConcat(Ctx.mkExtract(Counter, 8, Width - 8),
+                                      Ctx.mkAdd(Low, Ctx.mkOne(8)));
+    const auto Before = Ctx.mkUle(Counter, Bound);
+    const auto Exit = Ctx.mkEq(Low, Ctx.mkExtract(Bound, 0, 8));
+    const auto Bad = Ctx.mkNot(Ctx.mkUle(Updated, Bound));
+    const auto Query = Ctx.mkAnd(Ctx.mkAnd(Before, Ctx.mkNot(Exit)), Bad);
+    SolverOptions Limits;
+    Limits.Blast.MaxGates = 262144;
+    Limits.Sat.MaxConflicts = 10000;
+    Limits.Sat.MaxPropagations = 1000000;
+    Limits.Sat.MaxWatchVisits = 10000000;
+    EXPECT_EQ(checkSat(Ctx, Query, nullptr, Limits), SatResult::Unsat);
+
+    // Without the exit guard an equal counter can advance past its bound.
+    const auto Unguarded = Ctx.mkAnd(Before, Bad);
+    BitVectorModel Model;
+    ASSERT_EQ(checkSat(Ctx, Unguarded, &Model, Limits), SatResult::Sat);
+    EXPECT_TRUE(Ctx.eval(Unguarded, Model.asVarValues(Ctx)).isOne());
+    Limits.Blast.MaxGates = 1;
+    EXPECT_EQ(checkSat(Ctx, Query, nullptr, Limits), SatResult::Unknown);
+  }
+}
+
 TEST(BitVectorSolver, EncodingLimitsRemainRetryableUnknownResults) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", W32);

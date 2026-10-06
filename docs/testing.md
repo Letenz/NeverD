@@ -912,6 +912,13 @@ same original scalar/SSE instruction bytes and a REP copy natively in child
 processes to establish independent store-fault behavior. Other native-oracle
 hosts skip explicitly; backend cells distinguish unavailable execution.
 
+`NeverDParallelExecutionTests` forces overlapping processor calls, cancellation while a writer waits, independent CPU state, physical-alias atomic contention and private transport staging. `NeverDRunControlTests` checks that independent WHP bindings can retain two resource leases while the shared binding serializes them. `NeverDMMIOAtomicTests` compares device and RAM results for original x64 atomic/update encodings and all ARM64 LSE cases, and checks both wide write observations, stale previews, provider failures and commit/stop races. `KernelMMIOFailure` covers aliases, identical writes, repeated commits, power changes, unmapping and retired owners. Platform-unavailable cases are explicit skips; a wrapper rendezvous proves concurrent processor calls, not simultaneous hardware retirement. Native ARM64 KVM/WHP needs the corresponding host.
+
+```bash
+cmake --build build-cpu --target NeverDParallelExecutionTests NeverDMMIOAtomicTests NeverDRunControlTests --parallel 4
+ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMIOAtomic|RunControl)Tests$' --output-on-failure
+```
+
 ## Process emulation checks
 
 `AndroidSleepTests.cpp` compiles independent O0/O2 callers with ordinary, APS2 and
@@ -1093,6 +1100,13 @@ Use the
 [`emulate-driver` CLI](driver-emulation.md) to verify JSON and process exit
 codes. Production builds may enable this feature with `BUILD_TESTING=OFF`;
 test-only Unicorn configuration must not be required by `libneverd`.
+
+For changes to shared kernel API dispatch or its call adapters, include
+`NeverDNativeDriverTests` and `NeverDDriverGuardMetadataTests` with the two
+driver emulation suites above. These checks cover common validation, strict
+execution policy, request ownership and backend-visible outcomes as well as
+individual API behavior. Unavailable native backends and external WDK images
+remain explicit skips.
 
 Explicit nested user-memory tests cover strict JSON/native graph validation,
 shared and cyclic references, unaligned pointer slots, page rights, request and
@@ -2351,7 +2365,7 @@ The shared `encodeX64XsaveState` / `decodeX64XsaveState` codec owns standard/com
 
 `X64StringInstructions.def` also owns ordinary-RAM `CMPS/SCAS` at 8/16/32/64 bits with `REPE/REPNE`. Every element validates both complete read operands before observers, updates all six arithmetic flags, and stops on the first matching termination condition. A data fault restores the flags from entry to this uninterrupted REP while retaining completed pointer/count changes; a public resume starts from the published CPU state. Stops and observer exceptions leave the current element untouched. Early termination never reads the next element. FS/GS affects only the CMPS source; SCAS leaves the accumulator and unused source register unchanged. Device operands and ambiguous inactive 32-bit upper halves remain excluded. `X64StringComparisonTests.cpp` compares independent host instructions, flags, direction, aliases, wrapping, permissions and recovery; its Linux x64 signal oracle checks actual fault-time registers. The original WDK resource driver executes both conditional-repeat forms at all four widths through `driver_resource_strings.def`. See the [Intel instruction reference](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html). The Linux native oracle checks faults before and after the first element. It distinguishes Intel entry-flag restoration from the last-comparison flags observed on AMD EPYC 7763 under Hyper-V ([native observations](https://github.com/NeverSight/NeverD/actions/runs/37202522130)); unknown CPU vendors fail explicitly. Checked guests keep entry-flag restoration on every backend.
 
-`WhpResourceCache.h` separates logical CPU state from WHP partitions. The runtime keeps one active native partition: consecutive steps on the same CPU reuse it; switching CPU retires the old partition before rebuilding mappings, a virtual processor and full state. Logical CPUs retain independent `MemoryProjection` views and authoritative RAM. Lease acquisition observes cancellation and the current deadline; retiring an inactive CPU cannot destroy another CPU's partition. x64 preserves the host's default XSAVE feature set and validates the effective partition via `WHvGetPartitionProperty`; it does not clear dependent features to force a reduced mask. Cooperative CPU switching does not provide parallel hardware SMP.
+Live WHP CPUs share one native partition. Its final close and replacement creation use the same registry lock. `WhpResourceCache.h` reuses cooperative VP 0; switching its logical owner first retires that VP and its mappings. Parallel bindings retain separate VPs and private GPA windows. Every register transfer, XSAVE operation and cancellation targets its own VP. x64 preserves the host’s default XSAVE feature set and validates the effective partition with `WHvGetPartitionProperty`. Cooperative scheduling remains the default.
 
 `NeverDX64FPTests` checks all 79 startup corruption positions and executes independently assembled `X64ProbeCases.def` instructions on native transports with one deadline and unchanged guest RAM. `NeverDProjectionCacheTests` checks caller changes, ISA order, root history, privilege/monitor variants, mapping generations, address-space identity and failed replacement. `NeverDRunControlTests` includes `WhpXsaveTests.cpp` for modern/legacy API packets, every TOP, size bounds and unchanged state on failure; these in-memory protocol tests do not establish native WHP evidence. Unavailable native transports skip explicitly.
 
@@ -2379,7 +2393,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 46 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 224 WHP outcomes from all 112 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 26 built-in images, 46 WDK images and 40 request scenarios, each at original and rebased addresses. Together with the 4835 CPU checks and 17 SEH regressions, 5076 outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build. `4835 CPU + 224 WHP + 17 SEH = 5076`.
+`NativeDriverTests.def` requires 224 WHP outcomes from all 112 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 26 built-in images, 46 WDK images and 40 request scenarios, each at original and rebased addresses. Together with the 4852 CPU checks and 17 SEH regressions, 5093 outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build. `4852 CPU + 224 WHP + 17 SEH = 5093`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 
@@ -2764,6 +2778,36 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `AndroidFileTests.cpp` and the original `linux_files.c` fixture exercise O0/O2 code, ordinary/APS2/RELR Android relocation formats and x64/AArch64 Linux processes. Cases cover binary bytes, independent opens, cross-thread/raw/Bionic cursor sharing, errno, lowest descriptor reuse (including standard streams), capacity/error precedence, signed seek boundaries, page-fault prefixes, EOF and page-tail path termination. Dynamic bindings preserve provider identity and closed-provider refusal. `ProcessReportTests.cpp` checks strict catalogue fields, limits, conflicting paths and profile restrictions. C API/Python/CLI checks use the same explicit inputs. Unavailable transports remain skips; these memory-file cases do not establish host filesystem or procfs equivalence.
 
+`AndroidFileStatusAtTests.cpp` checks `fstatat` and `fstatat64`, variadic syscall
+and raw SVC against the same explicit observations. Independent full-structure
+and byte expectations cover padding, wide timestamps, unaligned and overlapping
+path/output buffers, terminated page tails, untouched output on errors, low-word
+arguments, descriptor lifetime and unchanged cursors. Unmodeled directory/CWD
+metadata, version-specific NULL and synchronization flags, and mixed output
+permissions remain pending calls. The shared fixture also runs as O0/O2 x64 and
+AArch64 Linux executables; C API, Python and CLI execute its success and missing
+path cases. Available native ARM64 transports compare complete reports with
+Unicorn, normalizing only backend identity and its selection reason.
+
+Trailing-separator cases distinguish regular files, implicit directories,
+root-only slash paths, absent names and file ancestors across open, access,
+status and mkdir. They check creation's final-name `EEXIST`, query `ENOTDIR`,
+first-NUL faults, flag and descriptor-limit priority, untouched status bytes
+and unchanged cursors. Relative, dot-component and internally repeated-slash
+forms stay unsupported; directory state and permissions are not inferred.
+
+`AndroidFileSystemStatusTests.cpp` verifies `statfs`/`fstatfs` pathname and
+descriptor errors through both Bionic aliases, variadic syscall and raw SVC.
+Complete byte comparisons cover invalid and overlapping outputs, trailing
+slashes, missing names and file ancestors. Live files with stat metadata,
+directories and standard streams remain pending without filesystem observations;
+absent catalogue input takes priority over invalid arguments. Dynamic providers
+retain identity and closed-provider refusal. Raw fixtures also cover low-word
+descriptors, close/reuse, cursor preservation and page-tail NUL/fault ordering on
+x64/AArch64 O0/O2 Linux. Available native ARM64 transports compare full reports
+with Unicorn, excluding only backend identity and its selection reason. C API,
+CLI and Python exercise the same bounded query-error cases.
+
 File-existence cases cover raw x64 `access`, x64/AArch64 `faccessat`, Bionic
 imports and variadic syscalls, shared catalogue queries from another guest
 thread, private errno, dynamic provider lifetime, implicit directories,
@@ -2848,7 +2892,19 @@ Native loop refinement exercises deferred conditional collection and retained un
 
 `LowIRLoopInference.MutablePrefixBounds*` covers derived 8/24/32-bit bounds with changing upper bits, three counter storage kinds, both byte orders and direct/cached exits. It checks nontermination, moving equality bounds, observed upper-bit/cache mutations and exact/one-short budgets. A moving unsigned-order bound can terminate on wraparound and has its own complete proof regression.
 
-`LowIRLoopRefinement.GuardedCuts*` and `BinaryLowIRLoopRefinement.GuardedCuts*` cover repeated PCs, register/frame/profiled-system selectors, both byte orders, unmatched finite and cyclic paths, overlap and wrong-side refusal, prefix generalization, selected undefined-value witnesses, malformed metadata, digest binding and shared budgets. Independent native tests prove both R10 contexts at one original loop address and keep unaudited boundaries ahead of selectors. Automatic native selector discovery and ordinary ABI certification remain separate.
+`LowIRLoopInference.SharedTemplatesFitIndependentOperationBudgets` proves nested partial counters within 1,024 inference operations and 640 independent proof operations. Exact pure expressions and immutable prefix reads are shared only within one cut rebuild, retaining operand identity, output widths and location spaces. Tests observe full counter and bound words, reject a changed prefix computation and refuse one-short operation budgets. Existing register, frame, function-temporary, byte-order and nontermination cases remain required.
+
+`LowIRLoopInference.CompletedEntailments*` checks session isolation across terminating and nonterminating frame loops in both byte orders, solver/node exhaustion and independent proof budgets. Mutable-bound regressions verify exact and one-short logical query limits with cache hits; native repeated-context proofs check domain-sensitive reuse.
+
+`LowIRLoopInference.IncrementalEntailmentsKeepRollingBudgets` checks encoder reuse within one constraint domain. Switching domains discards the encoder; exhausting accumulated gate capacity retries once with a fresh encoder and charges another query. Full counter and bound words remain observed in both byte orders, with exact and one-short query limits, gate/width/search refusal, and independent final-proof budgets.
+
+`LowIRLoopInference.RebuiltCounterLanes*` covers exact projected updates when other counter bits are reconstructed from prefix values or change independently. Register, frame and function-temporary cases span both byte orders, 1/3/4-byte counters and direct/cached exits, with complete counter, bound and tag observations. Removing an observed high tag, nonterminating updates, missing exit guards and one-short inference/proof budgets must still be refused. Structural recurrence matching only proposes widening and ranks; complete transition and final proofs remain required. Fixed operation and query budgets also cover symbolic projected counters without expanding incidental constant-prefix matches into relations.
+
+`LowIRLoopInference.ProjectedCounterCopies*` covers nested loops that copy a counter lane through a separately tagged word before incrementing it. The 144 complete-state cases span registers, frames, function temporaries, both byte orders, 1/3/4-byte lanes, direct/cached exits and whole-word controls. Projected equalities must hold on saved arrivals and every incoming transition; high bits remain independent. Transition-domain entailment can identify an additive recurrence through distinct parameters. Dropped high tags, invalid updates, missing guards and one-short inference/final-proof budgets still refuse.
+
+`LowIRLoopRefinement.GuardedCuts*` and `BinaryLowIRLoopRefinement.GuardedCuts*` cover repeated PCs, register/frame/profiled-system selectors, both byte orders, unmatched finite and cyclic paths, overlap and wrong-side refusal, prefix generalization, selected undefined-value witnesses, malformed metadata, digest binding and shared budgets. Independent native tests prove both R10 contexts at one original loop address and keep unaudited boundaries ahead of selectors. Ordinary ABI certification remains separate.
+
+`BinaryLowIRLoopInference.NativeSelectors*` covers two register contexts, frame-only contexts, three-domain conjunctions, inseparable templates, origin/native-body mutations and exact/one-short independent inference and proof budgets. The tests use arbitrary loop counts and introduce no entry constants.
 
 `DarwinIndirectRecordCalls` checks the current MakeScale contract and its 22 import/ABI mutations, then consumes a complete 48-byte private result through the shared by-value-copy proof. Misaligned, displaced, overlapping or out-of-frame result ranges refuse. Removing the definite-write effect also refuses, even with the complete return ABI retained.
 

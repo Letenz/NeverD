@@ -798,14 +798,14 @@ BinaryAutomaticLowIRRefinementResult inferAndCheckBinaryLowIRLoopRefinement(
     ++ResidualCounts[Origin.ResidualAddress];
     Origins[Origin.ResidualAddress] = Origin.NativeInstruction.Address;
   }
-  std::vector<va_t> Eligible;
+  std::vector<detail::NativeLoopCutpointOrigin> Eligible;
   for (const auto &B : Recovery.Residual.Blocks)
-    if (ResidualCounts[B.StartAddr] == 1 &&
-        NativeCounts[Origins[B.StartAddr]] == 1)
-      Eligible.push_back(B.StartAddr);
+    if (ResidualCounts[B.StartAddr] == 1)
+      Eligible.push_back({B.StartAddr, Origins.at(B.StartAddr),
+                          NativeCounts[Origins.at(B.StartAddr)] == 1});
   if (Eligible.empty()) {
     Refuse(LowIRLoopInferenceStatus::Unsupported,
-           "loop inference has no unique native cutpoint origins");
+           "loop inference has no uniquely mapped residual cutpoint origins");
     return Result;
   }
   ImageProvider Provider(Image, Options);

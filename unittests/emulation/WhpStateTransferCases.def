@@ -5,6 +5,7 @@
 //
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_WHP_TRANSFER_VALUE
+NEVERD_WHP_TRANSFER_VALUE(ProcessorIndex, 7)
 NEVERD_WHP_TRANSFER_VALUE(Root, 0x1000)
 NEVERD_WHP_TRANSFER_VALUE(OtherRoot, 0x2000)
 NEVERD_WHP_TRANSFER_VALUE(PC, 0x100000)

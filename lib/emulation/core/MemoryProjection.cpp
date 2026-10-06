@@ -12,12 +12,15 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstring>
 
 namespace neverd::emulation {
 MemoryProjection::MemoryProjection(std::shared_ptr<AddressSpace> Space,
                                    llvm::sys::MemoryBlock Projection)
     : Space(std::move(Space)), Projection(Projection) {}
 MemoryProjection::~MemoryProjection() {
+  if (TransportRAM.base())
+    (void)llvm::sys::Memory::releaseMappedMemory(TransportRAM);
   (void)llvm::sys::Memory::releaseMappedMemory(Projection);
 }
 llvm::Expected<std::unique_ptr<MemoryProjection>>
@@ -55,7 +58,10 @@ MemoryProjection::executionLock() const {
   auto Lease = lock();
   if (!Lease)
     return Lease.takeError();
-  if (!Space->State->Memory->State->Running)
+  const auto &RAM = *Space->State->Memory->State;
+  if (!RAM.Running || (!RAM.ParallelRuns.empty() && !ParallelRunning) ||
+      (ParallelRunning &&
+       (RunThread != std::this_thread::get_id() || !InstructionActive)))
     return diagnostic::error(diagnostic::RAMTransactionLease);
   return std::move(*Lease);
 }
@@ -115,6 +121,16 @@ llvm::Error MemoryProjection::beginRun(RAMWriteTracking Tracking) {
 }
 void MemoryProjection::endRun() {
   auto &RAM = *Space->State->Memory->State;
+  if (ParallelRunning) {
+    std::lock_guard Lock(RAM.Mutex);
+    assert(RunThread == std::this_thread::get_id() && !InstructionActive);
+    RAM.ParallelRuns.erase(RunThread);
+    RAM.Running = !RAM.ParallelRuns.empty();
+    ParallelRunning = false;
+    RunThread = {};
+    RAM.Changed.notify_all();
+    return;
+  }
   if (WriteTracking == RAMWriteTracking::Opaque)
     RAM.invalidateReservations();
   RAM.Running = false;
@@ -189,10 +205,26 @@ void MemoryProjection::commitProjection(GuestArchitecture Architecture,
   ProjectedSpace = Space;
 }
 std::array<MemoryRegistration, 2> MemoryProjection::registrations() const {
-  auto &Backing = Space->State->Memory->State->Backing;
-  return {{{0, data(), memory::ProjectionReserve},
-           {memory::ProjectionReserve, static_cast<uint8_t *>(Backing.base()),
-            Backing.allocatedSize()}}};
+  const auto &Backing =
+      TransportRAM.base() ? TransportRAM : Space->State->Memory->State->Backing;
+  return {{{transportPhysical(0), data(), memory::ProjectionReserve},
+           {transportPhysical(memory::ProjectionReserve),
+            static_cast<uint8_t *>(Backing.base()), Backing.allocatedSize()}}};
+}
+llvm::Error MemoryProjection::relocateTransport(uint64_t Base) {
+  auto Lease = lock();
+  if (!Lease)
+    return Lease.takeError();
+  if (auto E = mutableMemory())
+    return E;
+  const auto Size = memory::ProjectionReserve +
+                    Space->State->Memory->State->Backing.allocatedSize();
+  if (Base % memory::PageSize || Base > memory::MaxTransportAddress ||
+      Size - 1 > memory::MaxTransportAddress - Base)
+    return diagnostic::error(diagnostic::InvalidMapping);
+  TransportBase = Base;
+  invalidateProjection();
+  return llvm::Error::success();
 }
 uint8_t *MemoryProjection::physicalPointer(uint64_t GPA) const {
   if (GPA < memory::ProjectionReserve)
@@ -201,5 +233,29 @@ uint8_t *MemoryProjection::physicalPointer(uint64_t GPA) const {
   const uint64_t Offset = GPA - memory::ProjectionReserve;
   assert(Offset < Backing.allocatedSize());
   return static_cast<uint8_t *>(Backing.base()) + Offset;
+}
+llvm::Error
+MemoryProjection::stageDeviceOperand(uint64_t Address, uint64_t Physical,
+                                     llvm::ArrayRef<uint8_t> Bytes) {
+  auto Lease = executionLock();
+  if (!Lease)
+    return Lease.takeError();
+  const uint64_t Offset = Address % memory::PageSize;
+  const auto P = mappings().find(Address - Offset);
+  if (DeviceOperand || Bytes.empty() ||
+      Bytes.size() > execution_limits::MMIOAtomicBytes ||
+      Bytes.size() > memory::PageSize - Offset || Physical % memory::PageSize ||
+      Physical > memory::ProjectionReserve - memory::PageSize ||
+      P == mappings().end() || !P->second.IO)
+    return diagnostic::error(diagnostic::DeviceOperand);
+  std::memset(data() + Physical, 0, memory::PageSize);
+  std::memcpy(data() + Physical + Offset, Bytes.data(), Bytes.size());
+  DeviceOperand = std::pair(Address - Offset, Physical);
+  invalidateProjection();
+  return llvm::Error::success();
+}
+void MemoryProjection::retireDeviceOperand() {
+  DeviceOperand.reset();
+  invalidateProjection();
 }
 } // namespace neverd::emulation

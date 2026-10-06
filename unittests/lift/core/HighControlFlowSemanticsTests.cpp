@@ -6338,6 +6338,37 @@ TEST(HighControlFlowSemantics, LoopJumpsBecomeBreakAndContinue) {
   }
 }
 
+TEST(HighControlFlowSemantics, TrimmedJoinJumpKeepsTheLabelOthersEnter) {
+  // v = 0; if (x & 4) goto J; if (x & 1) { v = 1; J: goto Out; } else {
+  // v = 2; } Out: return v;
+  // The arm's trailing jump to Out is redundant once Out follows the if,
+  // but `goto J` still lands on that jump, so its label must stay.
+  HighStmt Enter;
+  Enter.Kind = StmtKind::If;
+  Enter.Addr = 0x1000;
+  Enter.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(4, 8));
+  Enter.Body = {jump(0x1002, 0x1018)};
+  HighStmt Split;
+  Split.Kind = StmtKind::IfElse;
+  Split.Addr = 0x1004;
+  Split.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  Split.Body = {assign(0x1008, 1, 1), jump(0x1018, 0x1030)};
+  Split.ElseBody = {assign(0x1020, 1, 2)};
+  HighFunc F;
+  F.Body = {assign(0x0ff0, 1, 0), Enter, Split, result(0x1030, local(1))};
+  structureIfElse(F, 10);
+  std::set<va_t> Starts, Targets;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    Starts.insert(S.Addr);
+    if (S.Kind == StmtKind::Goto)
+      Targets.insert(S.GotoTarget);
+  });
+  for (va_t Target : Targets)
+    EXPECT_TRUE(Starts.count(Target)) << "no statement at " << Target;
+}
+
 TEST(HighControlFlowSemantics, JumpToWhatFollowsATryBecomesAnElseArm) {
   // __try { if (x & 1) { v = 1; goto out; } v = 2; } __except (1) { v = 9; }
   // out: return v;

@@ -120,8 +120,7 @@ TEST(ExecutionReport, RoundTripPreservesRequirementsAndContractFacts) {
         Feature.getAsString() == executionFeatureName(ExecutionFeature::SIMD);
     FloatingPoint |= Feature.getAsString() ==
                      executionFeatureName(ExecutionFeature::FloatingPoint);
-    EXPECT_NE(Feature.getAsString(),
-              executionFeatureName(ExecutionFeature::ParallelCPUs));
+    EXPECT_TRUE(Feature.getAsString().has_value());
   }
   EXPECT_TRUE(SIMD);
   EXPECT_TRUE(FloatingPoint);

@@ -137,16 +137,19 @@ class ProcessIntegrationTests(unittest.TestCase):
         session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
         for optimization in ("O0", "O2"):
             for entry in ("files_sequence", "files_faults", "files_bionic",
-                          "files_status", "files_status_bionic", "files_access",
+                          "files_status", "files_status_bionic", "files_status_at",
+                          "files_status_at_bionic", "files_access",
                           "files_access_faults", "files_access_bionic",
-                          "files_directory_errors", "files_directory_bionic"):
+                          "files_directory_errors", "files_directory_bionic",
+                          "files_trailing_paths", "files_trailing_paths_bionic",
+                          "files_filesystem_status", "files_filesystem_status_bionic"):
                 with self.subTest(optimization=optimization, entry=entry):
                     options = {
                         "backend": "unicorn", "instruction_quantum": 31,
                         "linux_files": {"files": [{"path": "/fixture/data", "bytes_hex": "00ff410a805a"}]},
                         "android": {"entry_symbol": entry, "initialize": False, "thread_limit": 2},
                     }
-                    if entry in ("files_access", "files_directory_errors"):
+                    if entry in ("files_access", "files_directory_errors", "files_trailing_paths"):
                         options["linux_files"]["descriptor_limit"] = 4
                     if entry.startswith("files_status"):
                         options["linux_files"]["files"][0]["metadata"] = {

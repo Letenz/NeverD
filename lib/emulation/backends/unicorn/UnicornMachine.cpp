@@ -61,7 +61,8 @@ public:
     if (UserMode)
       return llvm::Error::success();
     if (MappedSpace.lock() == Memory.addressSpace() &&
-        Generation == Memory.mappingGeneration())
+        Generation == Memory.mappingGeneration() &&
+        DeviceOperand == Memory.deviceOperand())
       return llvm::Error::success();
     if (auto E = forEachUnicornRAMRange(
             Mapped, [&](uint64_t Address, uint64_t Size, const auto &) {
@@ -69,6 +70,12 @@ public:
             }))
       return E;
     Mapped = Memory.mappings();
+    if (const auto Operand = Memory.deviceOperand()) {
+      auto &Page = Mapped.at(Operand->first);
+      Page.IO.reset();
+      Page.Physical = Operand->second;
+      Page.Permissions = Read | Write;
+    }
     if (auto E = forEachUnicornRAMRange(
             Mapped, [&](uint64_t Address, uint64_t Size, const auto &Page) {
               return check(
@@ -79,6 +86,7 @@ public:
       return E;
     Generation = Memory.mappingGeneration();
     MappedSpace = Memory.addressSpace();
+    DeviceOperand = Memory.deviceOperand();
     return llvm::Error::success();
   }
   llvm::Error run(uint64_t PC, size_t Count = 1,
@@ -128,6 +136,7 @@ private:
   uint64_t Generation = 0;
   std::weak_ptr<AddressSpace> MappedSpace;
   std::map<uint64_t, MemoryProjection::Page> Mapped;
+  std::optional<std::pair<uint64_t, uint64_t>> DeviceOperand;
 };
 class UnicornX64Machine final : public X64Machine {
 public:

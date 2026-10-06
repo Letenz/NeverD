@@ -37,6 +37,7 @@
 namespace neverd::emulation {
 struct DriverImage;
 class KernelExportRegistry;
+enum class KernelAPIKind;
 class KernelModel {
 public:
   KernelModel(GuestMemory &Memory, DriverResult &Result,
@@ -236,6 +237,27 @@ public:
                                   bool IsWrite) const;
 
 private:
+  llvm::Expected<uint64_t> setCancelRoutine(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> mapMDL(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> unmapMDL(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> callPowerDriver(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> completeDriverRequest(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t>
+  currentDriverRequestStack(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> initializeUnicodeString(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> allocatePool(llvm::ArrayRef<uint64_t> A,
+                                        bool Modern);
+  llvm::Expected<uint64_t> freePool(llvm::ArrayRef<uint64_t> A, bool Tagged);
+  llvm::Expected<uint64_t>
+  deleteSymbolicLinkFromGuest(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t>
+  createSymbolicLinkFromGuest(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> debugMessage(
+      llvm::ArrayRef<uint64_t> A, unsigned FormatIndex,
+      llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument);
+  llvm::Expected<uint64_t> memoryCall(KernelAPIKind Kind,
+                                      llvm::ArrayRef<uint64_t> A);
+
   GuestMemory &Memory;
   DriverResult &Result;
   KernelExportRegistry *Exports;

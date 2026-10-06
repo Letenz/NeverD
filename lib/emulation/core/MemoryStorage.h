@@ -10,8 +10,10 @@
 #include "llvm/Support/Memory.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <map>
 #include <mutex>
+#include <thread>
 
 namespace neverd::emulation {
 /// A retained physical interval and its write witness. All validity changes
@@ -33,6 +35,13 @@ struct PhysicalMemory::Impl {
   // mutations and recursive CPU execution still reject the Running state.
   mutable std::recursive_mutex Mutex;
   bool Running = false;
+  // Parallel checked CPUs retain the mapping authority for their whole run.
+  // Only proven read-only machine entries release Mutex. Writers drain those
+  // entries and block new instruction admission before publishing any bytes.
+  std::map<std::thread::id, const MemoryProjection *> ParallelRuns;
+  unsigned Readers = 0;
+  const MemoryProjection *Writer = nullptr;
+  std::condition_variable_any Changed;
   std::vector<std::weak_ptr<RAMReservation>> Reservations;
   // Called only for committed guest writes, including identical-value stores.
   // Neither invalidation operation allocates or invokes observers.

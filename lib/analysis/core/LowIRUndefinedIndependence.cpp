@@ -30,6 +30,7 @@
 #include <deque>
 #include <limits>
 #include <map>
+#include <memory>
 #include <set>
 #include <tuple>
 #include <unordered_map>
@@ -546,15 +547,39 @@ class Checker {
       fail(Status::BudgetExceeded, "symbolic-node budget exhausted");
   }
 
-  solver::SatResult query(SymRef Predicate) {
-    nodes();
-    if (Predicate && Predicate == LastCompletedQuery)
-      return LastCompletedAnswer;
+  void chargeQuery() {
     if (Result.SolverQueries >= Limits.MaxSolverQueries)
       fail(Status::BudgetExceeded, "solver-query budget exhausted");
     ++Result.SolverQueries;
-    const auto Answer =
-        solver::checkSat(Ctx, Predicate, nullptr, Limits.Solver);
+  }
+
+  solver::SatResult
+  query(SymRef Predicate,
+        std::unique_ptr<solver::BitVectorSolver> *EncodingCache = nullptr) {
+    nodes();
+    if (Predicate && Predicate == LastCompletedQuery)
+      return LastCompletedAnswer;
+    chargeQuery();
+    const bool Reused = EncodingCache && *EncodingCache;
+    const auto Fresh = [&] {
+      auto Options = Limits.Solver;
+      Options.BuildModel = false;
+      return std::make_unique<solver::BitVectorSolver>(Ctx, Options);
+    };
+    if (EncodingCache && !*EncodingCache)
+      *EncodingCache = Fresh();
+    auto Answer = EncodingCache ? (*EncodingCache)->check({Predicate})
+                                : solver::checkSat(Ctx, Predicate, nullptr,
+                                                   Limits.Solver);
+    // Accumulated encodings can fill a session although this query alone fits.
+    // Charge the second attempt and retry once with an empty encoder. Width,
+    // malformed-input and SAT-search exhaustion are never retried here.
+    if (Reused && Answer == solver::SatResult::Unknown &&
+        (*EncodingCache)->encodeError() == solver::BlastError::TooManyGates) {
+      chargeQuery();
+      *EncodingCache = Fresh();
+      Answer = (*EncodingCache)->check({Predicate});
+    }
     if (Answer == solver::SatResult::Unknown)
       fail(Status::BudgetExceeded, "relational solver budget exhausted");
     if (Answer == solver::SatResult::Invalid)
@@ -2940,6 +2965,15 @@ class LoopPlanInference {
   std::vector<int> ReachableBlocks;
   bool MultipleCycles = false;
   bool GeneralContractFailure = false;
+  // Complete model-free answers in this session's immutable DAG and solver
+  // configuration. Keys include the full domain, not only the proposed fact.
+  // Every hit still consumes a query request, bounding both search work and
+  // retained entries by the existing query and symbolic-node limits.
+  std::map<SymRef, bool> CompleteEntailments;
+  // Assumptions disappear after each check. Changing domains also drops the
+  // retained clauses and decision variables from unrelated earlier queries.
+  std::unique_ptr<solver::BitVectorSolver> EntailmentEncoding;
+  SymRef EntailmentDomain;
   std::string Stage;
   SpecializationProvider *ReadProvider;
   detail::NativeUndefinedIndependenceResult ReadEvidence;
@@ -2967,6 +3001,11 @@ class LoopPlanInference {
     };
     std::vector<BoundAttempt> CounterBoundAttempts;
     std::vector<LowIRLoopLocation> Equalities;
+    struct ProjectedEquality {
+      LowIRLoopLocation Location;
+      uint64_t Mask;
+    };
+    std::vector<ProjectedEquality> ProjectedEqualities;
     struct BitRelation {
       unsigned Bit;
       LowIRLoopLocation Counter, Bound;
@@ -2984,6 +3023,11 @@ class LoopPlanInference {
   };
   std::vector<std::vector<EqualitySeed>> EqualitySeeds;
   std::vector<std::vector<EqualitySeed>> EqualityAttempts;
+  struct ProjectedEqualityAttempt {
+    LowIRLoopLocation Source, Target;
+    uint64_t Mask;
+  };
+  std::vector<std::vector<ProjectedEqualityAttempt>> ProjectedEqualityAttempts;
   std::vector<LowIRLoopLocation> RelationCounters;
   struct LaneCounter {
     LowIRLoopLocation Location;
@@ -3016,9 +3060,24 @@ class LoopPlanInference {
 
   bool entails(SymRef Domain, SymRef Fact) {
     auto C = checker();
-    return C.query(
-               Session.Context.mkAnd(Domain, Session.Context.mkNot(Fact))) ==
-           solver::SatResult::Unsat;
+    const auto Query =
+        Session.Context.mkAnd(Domain, Session.Context.mkNot(Fact));
+    C.nodes();
+    if (auto It = CompleteEntailments.find(Query);
+        It != CompleteEntailments.end()) {
+      C.chargeQuery();
+      ++Result.EntailmentCacheHits;
+      return It->second;
+    }
+    if (EntailmentDomain != Domain) {
+      EntailmentEncoding.reset();
+      EntailmentDomain = Domain;
+    }
+    // Unknown and invalid answers throw in the shared checker, before store.
+    const bool Holds =
+        C.query(Query, &EntailmentEncoding) == solver::SatResult::Unsat;
+    CompleteEntailments.emplace(Query, Holds);
+    return Holds;
   }
 
   void initializePrefixBounds(Word &W) {
@@ -3106,7 +3165,9 @@ class LoopPlanInference {
   }
 
   // A zero mask denotes a full-width recurrence. Narrow zero-extended updates
-  // and preserved lanes supply their endpoint mask for guards and ranks.
+  // and exact projected updates supply their mask for guards and ranks.
+  // Other bits can be rebuilt or change: only the projection is proposed, and
+  // the complete transition domain must still prove every invariant and rank.
   std::optional<uint64_t> unitStepLane(SymRef Before, SymRef After,
                                        uint16_t Bytes, bool Increment) {
     auto &Ctx = Session.Context;
@@ -3125,9 +3186,13 @@ class LoopPlanInference {
         const auto Input = Ctx.mkExtract(Before, Offset, Width);
         const auto Step = Ctx.mkConst(Width, Increment ? 1 : UINT64_MAX);
         const auto Updated = Ctx.mkAdd(Input, Step);
+        // Constant lane coincidences with unrelated surrounding changes are
+        // poor recurrence proposals. Preserve isolated constant-lane updates;
+        // rebuilt lanes can be discovered after their input is generalized.
         const bool Matches =
             Ctx.mkExtract(After, Offset, Width) == Updated &&
-            preservesOutsideLane(Before, After, Offset, Width, Total);
+            (!Ctx.isConst(Input) ||
+             preservesOutsideLane(Before, After, Offset, Width, Total));
         checker().nodes();
         if (Matches)
           return (UINT64_MAX >> (64 - Width)) << Offset;
@@ -3159,15 +3224,43 @@ class LoopPlanInference {
       for (unsigned Offset = 0; Offset + Width <= Total; Offset += 8) {
         const auto Value = Ctx.mkExtract(After, Offset, Width);
         const auto Input = Ctx.mkExtract(Before, Offset, Width);
-        const bool Preserved =
-            Ctx.op(Value) == SymOp::Add &&
-            preservesOutsideLane(Before, After, Offset, Width, Total);
+        const bool Additive = Ctx.op(Value) == SymOp::Add;
         checker().nodes();
-        if (!Preserved)
+        if (!Additive)
           continue;
         const auto Terms = Ctx.operands(Value);
         if (std::find(Terms.begin(), Terms.end(), Input) != Terms.end())
           return true;
+      }
+    return false;
+  }
+
+  // Distinct template parameters can represent the same counter lane. Prove
+  // that alias in the complete transition domain before proposing additive
+  // widening; this does not add a relation or certify any rank.
+  bool additiveRecurrenceUnder(SymRef Before, SymRef After, uint16_t Bytes,
+                               SymRef Domain) {
+    auto &Ctx = Session.Context;
+    const auto InputSlice = [&](SymRef V) {
+      return Ctx.isVar(V) || (Ctx.op(V) == SymOp::Extract &&
+                              Ctx.isVar(Ctx.operands(V).front()));
+    };
+    const unsigned Total = Bytes * 8;
+    for (unsigned Width = Total; Width; Width -= 8)
+      for (unsigned Offset = 0; Offset + Width <= Total; Offset += 8) {
+        const auto Value = Ctx.mkExtract(After, Offset, Width);
+        checker().nodes();
+        if (Ctx.op(Value) != SymOp::Add)
+          continue;
+        const auto Input = Ctx.mkExtract(Before, Offset, Width);
+        checker().nodes();
+        if (!InputSlice(Input))
+          continue;
+        const auto Operands = Ctx.operands(Value);
+        const std::vector<SymRef> Terms(Operands.begin(), Operands.end());
+        for (const auto Term : Terms)
+          if (InputSlice(Term) && entails(Domain, Ctx.mkEq(Input, Term)))
+            return true;
       }
     return false;
   }
@@ -3263,6 +3356,14 @@ class LoopPlanInference {
         Holds &= entails(State.Predicate, Ctx.mkEq(Ctx.mkAnd(Initial, Mask),
                                                    Ctx.mkAnd(After, Mask)));
       }
+      if (!Holds && !Additive)
+        for (auto &State : Session.CandidateReturns)
+          if (State.Cutpoint == static_cast<int>(ActiveCutpoint) &&
+              additiveRecurrenceUnder(Before, read(State, W.Location),
+                                      W.Location.Bytes, State.Predicate)) {
+            Additive = true;
+            break;
+          }
       // One additive arm can invalidate spurious prefix bits even when a
       // sibling stutters or resets. Structural bits still intersect every
       // returning arm, and an already valid mask is never weakened here.
@@ -3338,14 +3439,40 @@ class LoopPlanInference {
       Next += 8;
       return V;
     };
+    // These expressions are pure and consume immutable inputs or earlier
+    // temporaries. Share exact operands only within this template rebuild;
+    // widths and address provenance remain part of the value identity.
+    using ValueKey = std::tuple<VnodeSpace, uint64_t, uint16_t,
+                                ConstantAddressProvenance, uint64_t>;
+    const auto Key = [](NdVar V) -> ValueKey {
+      return {V.Space, V.Offset, V.Size, V.Provenance, V.AddressOwnerVA};
+    };
+    using ExpressionKey = std::tuple<NdOp, ValueKey, ValueKey, uint16_t>;
+    std::map<ExpressionKey, NdVar> Expressions;
     const auto Expr = [&](NdOp Opcode, NdVar A, NdVar B, uint16_t Bytes) {
+      const ExpressionKey K{Opcode, Key(A), Key(B), Bytes};
+      if (const auto It = Expressions.find(K); It != Expressions.end())
+        return It->second;
       LowOp Op;
       Op.Opcode = Opcode;
       Op.Output = Temp(Bytes);
       Op.addInput(A);
       Op.addInput(B);
       Cut.Expressions.push_back(Op);
+      Expressions.emplace(K, Op.Output);
       return Op.Output;
+    };
+    // Prefix snapshots are distinct from the represented current-state words.
+    using PrefixKey = std::tuple<LowIRLoopSpace, uint64_t, uint16_t>;
+    std::map<PrefixKey, NdVar> Prefixes;
+    const auto PrefixAt = [&](const LowIRLoopLocation &L) {
+      const PrefixKey K{L.Space, L.Offset, L.Bytes};
+      if (const auto It = Prefixes.find(K); It != Prefixes.end())
+        return It->second;
+      const auto Value = Temp(L.Bytes);
+      Cut.Inputs.push_back({LowIRLoopSide::OriginalPrefix, L, Value});
+      Prefixes.emplace(K, Value);
+      return Value;
     };
     // Bind each represented word once. Relations between words must reuse
     // those parameters, rather than introduce unrelated copies of an input.
@@ -3362,9 +3489,7 @@ class LoopPlanInference {
       Cut.OriginalState.push_back({W.Location, Parameter});
       Cut.CandidateState.push_back({W.Location, Parameter});
       if (W.FixedMask) {
-        const auto Prefix = Temp(Bytes);
-        Cut.Inputs.push_back(
-            {LowIRLoopSide::OriginalPrefix, W.Location, Prefix});
+        const auto Prefix = PrefixAt(W.Location);
         const auto Mask = NdVar::scalar(W.FixedMask, Bytes);
         const auto A = Expr(NdOp::INT_AND, Parameter, Mask, Bytes);
         const auto B = Expr(NdOp::INT_AND, Prefix, Mask, Bytes);
@@ -3372,9 +3497,7 @@ class LoopPlanInference {
         Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Same, 1);
       }
       if (W.UpperBound || W.LowerBound) {
-        const auto Prefix = Temp(Bytes);
-        Cut.Inputs.push_back(
-            {LowIRLoopSide::OriginalPrefix, W.Location, Prefix});
+        const auto Prefix = PrefixAt(W.Location);
         if (W.UpperBound) {
           const auto Bound = Expr(NdOp::INT_LESSEQUAL, Parameter, Prefix, 1);
           Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Bound, 1);
@@ -3391,9 +3514,7 @@ class LoopPlanInference {
             });
         if (Target != words().end())
           return Parameters[std::distance(words().begin(), Target)];
-        const auto Value = Temp(L.Bytes);
-        Cut.Inputs.push_back({LowIRLoopSide::OriginalPrefix, L, Value});
-        return Value;
+        return PrefixAt(L);
       };
       for (const auto &B : W.BitRelations) {
         auto Counter = ValueAt(B.Counter), Bound = ValueAt(B.Bound);
@@ -3421,10 +3542,15 @@ class LoopPlanInference {
         const auto Same = Expr(NdOp::INT_EQUAL, Parameter, ValueAt(L), 1);
         Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Same, 1);
       }
+      for (const auto &E : W.ProjectedEqualities) {
+        const auto Mask = NdVar::scalar(E.Mask, Bytes);
+        const auto A = Expr(NdOp::INT_AND, Parameter, Mask, Bytes);
+        const auto B = Expr(NdOp::INT_AND, ValueAt(E.Location), Mask, Bytes);
+        const auto Same = Expr(NdOp::INT_EQUAL, A, B, 1);
+        Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Same, 1);
+      }
       for (const auto &B : W.CounterBounds) {
-        auto Limit = Temp(Bytes);
-        Cut.Inputs.push_back(
-            {LowIRLoopSide::OriginalPrefix, B.Location, Limit});
+        auto Limit = PrefixAt(B.Location);
         auto Value = Parameter;
         if (B.Mask) {
           const auto Mask = NdVar::scalar(B.Mask, Bytes);
@@ -3465,8 +3591,7 @@ class LoopPlanInference {
         Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Guard, 1);
       }
       if (Bound) {
-        const auto Limit = Temp(Bound->Bytes);
-        Cut.Inputs.push_back({LowIRLoopSide::OriginalPrefix, *Bound, Limit});
+        const auto Limit = PrefixAt(*Bound);
         const auto Guard = Complement
                                ? Expr(NdOp::INT_LESS, Parameter, Limit, 1)
                                : Expr(NdOp::INT_LESS, Limit, Parameter, 1);
@@ -4189,6 +4314,88 @@ class LoopPlanInference {
     return Changed;
   }
 
+  // Masks come from byte-aligned contiguous lanes discovered by unitStepLane.
+  SymRef copyProjection(SymRef Value, uint64_t Mask) {
+    return Session.Context.mkExtract(Value, std::countr_zero(Mask),
+                                     std::popcount(Mask));
+  }
+
+  bool seedProjectedWordCopies(std::vector<Edge> &Edges) {
+    if (RelationArrivals[ActiveCutpoint].empty())
+      return false;
+    auto &Ctx = Session.Context;
+    auto &Prefix = Session.LoopPrefixes[ActiveCutpoint]->Candidate;
+    auto &Attempts = ProjectedEqualityAttempts[ActiveCutpoint];
+    bool Changed = false;
+    for (auto &W : words())
+      for (const auto &C : LaneCounters) {
+        const auto &Target = C.Location;
+        const auto Mask = C.Guard.Mask;
+        if (W.Location.Bytes != Target.Bytes ||
+            sameLocation(W.Location, Target) ||
+            read(Prefix, W.Location) == read(Prefix, Target))
+          continue;
+        if (std::any_of(Attempts.begin(), Attempts.end(), [&](const auto &A) {
+              return sameLocation(A.Source, W.Location) &&
+                     sameLocation(A.Target, Target) && A.Mask == Mask;
+            }))
+          continue;
+        const auto SourcePrefix =
+            copyProjection(read(Prefix, W.Location), Mask);
+        const auto TargetPrefix = copyProjection(read(Prefix, Target), Mask);
+        checker().nodes();
+        if (SourcePrefix != TargetPrefix)
+          continue;
+        // A symbolic copy on an incoming edge must support the proposal.
+        // Equal initial constants alone would create unrelated cross-products.
+        bool WitnessedCopy = false;
+        for (auto &E : Edges) {
+          if (E.After.Cutpoint != static_cast<int>(ActiveCutpoint))
+            continue;
+          const auto SourceValue =
+              copyProjection(read(E.After, W.Location), Mask);
+          const auto TargetValue = copyProjection(read(E.After, Target), Mask);
+          checker().nodes();
+          WitnessedCopy |=
+              !Ctx.isConst(SourceValue) && SourceValue == TargetValue;
+        }
+        if (!WitnessedCopy)
+          continue;
+        // Rejected or later-pruned copies are not retried on narrower domains.
+        Attempts.push_back({W.Location, Target, Mask});
+        const auto Equal = [&](TerminalState &State) {
+          return Ctx.mkEq(copyProjection(read(State, W.Location), Mask),
+                          copyProjection(read(State, Target), Mask));
+        };
+        bool Holds = true;
+        for (auto &State : RelationArrivals[ActiveCutpoint])
+          if (!entails(State.Predicate, Equal(State))) {
+            Holds = false;
+            break;
+          }
+        if (!Holds)
+          continue;
+        for (auto &E : Edges) {
+          if (E.After.Cutpoint != static_cast<int>(ActiveCutpoint))
+            continue;
+          auto Domain = E.After.Predicate;
+          // A new invariant may use itself on a self edge. Other incoming
+          // cuts must establish it without borrowing that destination fact.
+          if (E.Source == ActiveCutpoint)
+            Domain = Ctx.mkAnd(Domain, Equal(E.Before));
+          if (!entails(Domain, Equal(E.After))) {
+            Holds = false;
+            break;
+          }
+        }
+        if (Holds) {
+          W.ProjectedEqualities.push_back({Target, Mask});
+          Changed = true;
+        }
+      }
+    return Changed;
+  }
+
   bool findNewCounters(std::vector<Edge> &Edges) {
     bool Changed = false;
     for (const auto &L : locations()) {
@@ -4379,6 +4586,15 @@ class LoopPlanInference {
                 entails(E.After.Predicate, Ctx.mkEq(Ctx.mkAnd(Initial, Mask),
                                                     Ctx.mkAnd(After, Mask)));
         }
+        if (!Holds && !Additive)
+          for (auto &E : Edges)
+            if (E.After.Cutpoint == static_cast<int>(I) &&
+                additiveRecurrenceUnder(read(E.Before, W.Location),
+                                        read(E.After, W.Location),
+                                        W.Location.Bytes, E.After.Predicate)) {
+              Additive = true;
+              break;
+            }
         if (!Holds && !Additive) {
           Stable = W.FixedMask;
           for (auto &State : Incoming)
@@ -4423,6 +4639,17 @@ class LoopPlanInference {
                          return true;
                      return false;
                    }) != 0;
+        Changed |=
+            std::erase_if(W.ProjectedEqualities, [&](const auto &E) {
+              for (auto &State : Incoming)
+                if (!entails(
+                        State.Predicate,
+                        Ctx.mkEq(
+                            copyProjection(read(State, W.Location), E.Mask),
+                            copyProjection(read(State, E.Location), E.Mask))))
+                  return true;
+              return false;
+            }) != 0;
         Changed |= std::erase_if(W.CounterBounds, [&](const auto &B) {
                      const auto Limit =
                          counterProjection(read(Prefix, B.Location), B.Mask);
@@ -4447,6 +4674,13 @@ class LoopPlanInference {
         Changed |= seedCounterBounds(W);
         Changed |= seedBitRelations(W, Incoming);
       }
+    }
+    // Install newly proved inductive copies after pruning the old templates.
+    // The next round executes every cut with these predicates, and the final
+    // checker must independently establish them on all original arrivals.
+    for (size_t I = 0; I != Plan.Cutpoints.size(); ++I) {
+      ActiveCutpoint = I;
+      Changed |= seedProjectedWordCopies(Edges);
     }
     return Changed;
   }
@@ -4715,11 +4949,125 @@ class LoopPlanInference {
     return TupleRankStatus::Paused;
   }
 
+  void inferNativeSelectors(
+      llvm::ArrayRef<detail::NativeLoopCutpointOrigin> Origins) {
+    std::map<va_t, va_t> Native;
+    for (const auto &O : Origins)
+      if (!Native.emplace(O.CandidateAddress, O.OriginalAddress).second)
+        stop(Status::Invalid, "duplicate native loop origin mapping");
+    std::map<va_t, std::vector<size_t>> Groups;
+    for (size_t I = 0; I != Plan.Cutpoints.size(); ++I) {
+      const auto It = Native.find(Plan.Cutpoints[I].CandidateAddress);
+      if (It == Native.end())
+        stop(Status::Invalid, "missing native loop origin mapping");
+      Groups[It->second].push_back(I);
+    }
+    auto &Ctx = Session.Context;
+    std::vector<std::optional<TerminalState>> Templates(Plan.Cutpoints.size());
+    using LocationKey = std::tuple<LowIRLoopSpace, uint64_t, uint16_t>;
+    using ConstantBits = std::pair<uint64_t, uint64_t>; // Known zero / one.
+    std::vector<std::map<LocationKey, ConstantBits>> Constants(
+        Plan.Cutpoints.size());
+    const auto Bits = [&](size_t I, const LowIRLoopLocation &L) {
+      ActiveCutpoint = I;
+      auto [It, Added] = Constants[I].try_emplace({L.Space, L.Offset, L.Bytes});
+      if (!Added)
+        return It->second;
+      chargeCutSelection(L.Bytes * 8);
+      auto &State = *Templates[I];
+      const auto V = read(State, L);
+      const auto Zero = Ctx.mkConst(L.Bytes * 8, 0);
+      const auto One = Ctx.mkConst(L.Bytes * 8, ones(L.Bytes));
+      auto Z = commonBits(V, Zero, L.Bytes);
+      auto O = commonBits(V, One, L.Bytes);
+      const auto Pending = ones(L.Bytes) & ~(Z | O);
+      if (Pending) {
+        const auto &Vars = relationVars(V);
+        const auto &DomainVars = relationVars(State.Predicate);
+        chargeCutSelection(Vars.size());
+        // Independent unconstrained inputs cannot supply another literal bit.
+        // This only filters proposals; all retained constants are proved.
+        if (std::any_of(Vars.begin(), Vars.end(), [&](uint32_t Var) {
+              return std::binary_search(DomainVars.begin(), DomainVars.end(),
+                                        Var);
+            })) {
+          Z |= commonBitsUnder(V, Zero, L.Bytes, State.Predicate, Pending);
+          O |= commonBitsUnder(V, One, L.Bytes, State.Predicate, Pending & ~Z);
+        }
+      }
+      It->second = {Z, O};
+      return It->second;
+    };
+    const auto Add = [&](size_t I, const LowIRLoopLocation &L, uint64_t Mask,
+                         uint64_t Value) {
+      auto &Cut = Plan.Cutpoints[I];
+      auto &Guards = Cut.OriginalGuards;
+      auto It = std::find_if(Guards.begin(), Guards.end(), [&](const auto &G) {
+        return sameLocation(G.Location, L);
+      });
+      if (It == Guards.end())
+        Guards.push_back({L, Mask, Value});
+      else {
+        It->Mask |= Mask;
+        It->Value |= Value;
+      }
+      Cut.CandidateGuards = Guards;
+    };
+    for (const auto &[Address, Group] : Groups) {
+      if (Group.size() < 2)
+        continue;
+      for (size_t I : Group) {
+        chargeCutSelection();
+        auto C = checker();
+        if (!C.validateInput())
+          throw Stop{};
+        C.EntryRoot = Session.EntryRoot;
+        C.MemoryRoot = Session.MemoryRoot;
+        // Use the complete reconstructed induction domain, never just a
+        // concrete prefix witness or a recovery context's identity.
+        auto T = C.loopTemplate(I, nullptr, nullptr, Session.Predicate);
+        T.Candidate.Predicate = Ctx.mkAnd(Session.Predicate, T.Predicate);
+        if (C.query(T.Candidate.Predicate) == solver::SatResult::Unsat)
+          stop(Status::Invalid, "native selector has an empty template domain");
+        Templates[I] = std::move(T.Candidate);
+      }
+      for (size_t A = 0; A != Group.size(); ++A)
+        for (size_t B = A + 1; B != Group.size(); ++B) {
+          const auto I = Group[A], J = Group[B];
+          ActiveCutpoint = I;
+          bool Separated = false;
+          for (const auto &L : locations()) {
+            chargeCutSelection();
+            if (L.Space == LowIRLoopSpace::FunctionTemporary)
+              continue;
+            const auto [AZ, AO] = Bits(I, L);
+            const auto [BZ, BO] = Bits(J, L);
+            const auto Different = (AZ & BO) | (AO & BZ);
+            if (!Different)
+              continue;
+            const uint64_t Mask = uint64_t{1} << std::countr_zero(Different);
+            Add(I, L, Mask, AO & Mask);
+            Add(J, L, Mask, BO & Mask);
+            Separated = true;
+            break;
+          }
+          if (!Separated)
+            stop(Status::Unsupported,
+                 "native loop contexts have no proved literal-bit selector");
+        }
+    }
+    if (std::any_of(Plan.Cutpoints.begin(), Plan.Cutpoints.end(),
+                    [](const auto &C) { return !C.OriginalGuards.empty(); }) &&
+        !checker().validateInput())
+      throw Stop{};
+  }
+
   bool inferMultiple(llvm::ArrayRef<va_t> Cuts) {
     Result.CutpointAttempts += Cuts.size();
     Models.assign(Cuts.size(), {});
     EqualitySeeds.assign(Cuts.size(), {});
     EqualityAttempts.assign(Cuts.size(), {});
+    ProjectedEqualityAttempts.assign(Cuts.size(), {});
     RelationCounters.clear();
     LaneCounters.clear();
     RelationBounds.assign(Cuts.size(), {});
@@ -4815,7 +5163,8 @@ public:
   LowIRLoopInferenceResult
   run(llvm::ArrayRef<va_t> Eligible,
       detail::LowIRLoopCutFamily Family = detail::LowIRLoopCutFamily::Default,
-      llvm::ArrayRef<const LowIRLoopRefinementPlan *> PreviousPlans = {}) {
+      llvm::ArrayRef<const LowIRLoopRefinementPlan *> PreviousPlans = {},
+      llvm::ArrayRef<detail::NativeLoopCutpointOrigin> NativeOrigins = {}) {
     std::string LastTemplateFailure;
     const bool BranchArms = Family != detail::LowIRLoopCutFamily::Default;
     const bool FilterBranches =
@@ -4840,6 +5189,20 @@ public:
           !Limits.MaxRankCandidates)
         stop(Status::BudgetExceeded, "loop inference search budget exhausted");
       findChoices(Eligible, BranchArms, FilterBranches);
+      if (!NativeOrigins.empty()) {
+        std::set<va_t> Unique;
+        for (const auto &O : NativeOrigins) {
+          chargeCutSelection();
+          if (O.UniqueOriginal)
+            Unique.insert(O.CandidateAddress);
+        }
+        // Preserve the previous unique-origin search order before expanding
+        // the candidate family. All attempts still share the same budgets.
+        std::stable_partition(Choices.begin(), Choices.end(), [&](va_t A) {
+          chargeCutSelection();
+          return Unique.count(A);
+        });
+      }
       if (BranchArms && BranchArmEntries.empty())
         stop(Status::Unsupported, "no cyclic branch-arm cutpoints");
       // A complete branch-arm set can preserve phases that a shared header
@@ -4861,12 +5224,10 @@ public:
           stop(Status::Unsupported,
                FilterBranches ? "filtered cuts duplicate previous plan"
                               : "branch-arm cuts duplicate previous plan");
-      if (Feedback->size() > 1 || MultipleCycles) {
-        if (inferMultiple(*Feedback)) {
-          Result.Status = LowIRLoopInferenceStatus::Inferred;
-          Result.Plan = Plan;
-        }
-      } else
+      bool Inferred = false;
+      if (Feedback->size() > 1 || MultipleCycles)
+        Inferred = inferMultiple(*Feedback);
+      else
         for (va_t Address : BranchArms ? *Feedback : Choices) {
           if (Result.CutpointAttempts >= Limits.MaxCutpointAttempts)
             stop(Status::BudgetExceeded,
@@ -4876,8 +5237,7 @@ public:
             continue;
           try {
             if (inferAt(Address)) {
-              Result.Status = LowIRLoopInferenceStatus::Inferred;
-              Result.Plan = Plan;
+              Inferred = true;
               break;
             }
           } catch (const Stop &) {
@@ -4890,7 +5250,14 @@ public:
             LastTemplateFailure = Session.Statistics.Diagnostic;
           }
         }
-      if (!Result.inferred())
+      if (Inferred) {
+        if (!NativeOrigins.empty()) {
+          Stage = "native cutpoint selectors";
+          inferNativeSelectors(NativeOrigins);
+        }
+        Result.Status = LowIRLoopInferenceStatus::Inferred;
+        Result.Plan = Plan;
+      } else
         Result.Diagnostic = LastTemplateFailure.empty()
                                 ? "no loop template and unsigned rank inferred"
                                 : LastTemplateFailure;
@@ -4946,9 +5313,12 @@ LowIRLoopInferenceResult detail::inferNativeLowIRLoopRefinementPlan(
     SpecializationProvider &Provider, const LowFunc &Candidate,
     const LowIRIndependenceContract &Contract,
     const LowIRLoopInferenceLimits &Limits,
-    llvm::ArrayRef<va_t> EligibleCutpoints) {
+    llvm::ArrayRef<NativeLoopCutpointOrigin> EligibleOrigins) {
+  std::vector<va_t> Eligible;
+  for (const auto &O : EligibleOrigins)
+    Eligible.push_back(O.CandidateAddress);
   return LoopPlanInference(Candidate, Contract, Limits, &Provider)
-      .run(EligibleCutpoints);
+      .run(Eligible, LowIRLoopCutFamily::Default, {}, EligibleOrigins);
 }
 
 LowIRIndependenceResult checkLowIRUndefinedIndependence(

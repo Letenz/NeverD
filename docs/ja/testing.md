@@ -284,6 +284,13 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 ARM64 hardware や hypervisor がない場合は native coverage の skip であり、pass ではありません。Unicorn と cross-compilation は native KVM/WHP 実行の証拠になりません。
 
+`NeverDParallelExecutionTests` は処理器呼び出しの重なり、書き込み待機中のキャンセル、独立 CPU 状態、物理エイリアスの競合、私有転送を検証します。`NeverDRunControlTests` は独立 WHP binding の二つの同時リースと共有 binding の直列化を検証します。`NeverDMMIOAtomicTests` は原 x64 原子／更新命令と全 ARM64 LSE ケースの RAM／デバイス結果、二つの広幅観測、失効、プロバイダー失敗、commit/stop 競合を比較します。`KernelMMIOFailure` はエイリアス、同値書き込み、重複コミット、電源、unmap、所有者破棄を検証します。利用不能な環境は明示的にスキップします。ラッパーの合流は呼び出しの並行性を示し、ハードウェアの同時リタイアを証明しません。ARM64 KVM/WHP は対応ホストが必要です。
+
+```bash
+cmake --build build-cpu --target NeverDParallelExecutionTests NeverDMMIOAtomicTests NeverDRunControlTests --parallel 4
+ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMIOAtomic|RunControl)Tests$' --output-on-failure
+```
+
 ## Linux process profile のテスト
 
 [独立 process suite](process-emulation.md#検証) は x64/AArch64 の実際の ELF fixture を compile します。`NeverDLinuxProcessTests` は起動、program-header policy、service continuation、binary output、guest fault、resource stop を検証します。`NeverDProcessPublicTests` は分析用 image を変更せず C API/CLI を確認します。`NeverDExecutionSessionTests` は memory/budget を共有する CPU と request/fault の exactly-once 消費を扱います。`NeverDX64MemoryUpdateTests` は memory arithmetic、SETcc、BT、XMM/MXCSR、write observer、REP boundary、prepared device read を確認します。`DriverBackendParityTests.cpp` は original/relocated WDK fixture を実行し、観測可能な完全 report を Unicorn と比較します。fixture/backend 不在は明示的に skip します。
@@ -1185,7 +1192,7 @@ x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ペー�
 
 `X64StringInstructions.def` は通常 RAM 上の 8/16/32/64 ビット `CMPS/SCAS` と `REPE/REPNE` も管理します。各要素は観測前に読み取り範囲全体を検証し、六つの算術フラグを更新して最初の終了条件で停止します。データ障害では、この連続した REP の開始時のフラグを復元し、完了済みのポインタとカウント更新は保持します。公開 API からの再開は公開済み CPU 状態を出発点とします。停止や観測例外は現在の要素を変更せず、早期終了後は次の要素を読みません。FS/GS は CMPS のソースだけに作用し、SCAS は累算器と未使用のソースレジスタを保持します。デバイス操作数と曖昧な 32 ビットゼロ回実行時の上位ビットは対象外です。`X64StringComparisonTests.cpp` は独立したホスト命令とフラグ、方向、エイリアス、折り返し、権限、再開を照合し、Linux x64 シグナルで実際の障害時レジスタも検証します。独自 WDK リソースドライバは `driver_resource_strings.def` で全四幅の両条件反復を実行します。[Intel 命令リファレンス](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)を参照してください。 Linux のネイティブ検証は最初の要素の実行前後の障害を対象とし、Intel の開始時 flags 復元と Hyper-V 上の AMD EPYC 7763 で観測された直前の比較 flags の保持を区別します（[ネイティブ観測](https://github.com/NeverSight/NeverD/actions/runs/37202522130)）。未知の CPU ベンダーは明示的に失敗します。checked ゲストは全バックエンドで開始時 flags を復元します。
 
-`WhpResourceCache.h` は論理 CPU の状態と WHP パーティションを分離します。ランタイムは一つのネイティブパーティションを保持し、同じ CPU の連続ステップでは再利用します。CPU 切り替え時は古いパーティションを破棄してから、マッピングと仮想プロセッサを再構築し、完全な状態を復元します。各論理 CPU は独立した `MemoryProjection` ビューと正本の RAM を保持します。リース取得はキャンセルと現在の期限を守り、非アクティブ CPU の破棄は別の CPU のパーティションを破棄しません。x64 はホスト既定の XSAVE 機能群を保持し、`WHvGetPartitionProperty` で実効設定を検証します。依存機能を消してマスクを縮小しません。協調的な CPU 切り替えは並列ハードウェア SMP を提供しません。
+存続中の WHP CPU は一つのネイティブパーティションを共有し、最終解放と再作成を同じレジストリロックで直列化します。`WhpResourceCache.h` は協調実行用 VP 0 を再利用し、論理 CPU の切り替え前にその VP とマッピングを破棄します。並列 CPU は専用 VP と GPA 領域を保持します。レジスター転送、XSAVE、キャンセルは各 VP を対象にします。x64 はホスト既定の XSAVE 機能セットを保持し、`WHvGetPartitionProperty` で実際の設定を検証します。既定のスケジューリングは協調式です。
 
 `NeverDX64FPTests` は起動状態の全 79 破損位置を検査し、独立にアセンブルした `X64ProbeCases.def` をネイティブ実行して単一期限とゲスト RAM 保持を確認します。`NeverDProjectionCacheTests` は呼び出し側変更、ISA 順序、ルート履歴、権限・モニター構成、マッピング世代、アドレス空間識別、再構築失敗を検査します。`NeverDRunControlTests` の `WhpXsaveTests.cpp` は新旧 API パケット、全 TOP、サイズ上限、失敗時の状態保持を検査します。このメモリ内プロトコル検査は WHP ネイティブ実行の証拠ではなく、利用できないネイティブ転送は明示的にスキップします。
 
@@ -1213,7 +1220,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 4835 検査とSEH 回帰検査 17 件を合わせ、必須の結果は 5076 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `4835 CPU + 224 WHP + 17 SEH = 5076`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 4852 検査とSEH 回帰検査 17 件を合わせ、必須の結果は 5093 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `4852 CPU + 224 WHP + 17 SEH = 5093`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1449,7 +1456,19 @@ block とコピーの公開テストでは、独立した二つの 48 バイト�
 
 `LowIRLoopInference.MutablePrefixBounds*` は上位ビットが変化する 8・24・32 ビットの導出境界、3 種のカウンタ格納先、両バイト順、直接・キャッシュ終了を検査する。非停止、動く等値境界、観測上位ビットとキャッシュの変更、予算ちょうどと 1 少ない場合を含む。動く符号なし順序境界は回り込みで停止でき、別の完全証明回帰で確認する。
 
-`LowIRLoopRefinement.GuardedCuts*` と `BinaryLowIRLoopRefinement.GuardedCuts*` は同一 PC、レジスタ・フレーム・システムフラグ、両バイト順、未選択の有限・循環経路、重複と誤配対、プレフィックス一般化、未定義値の証人、メタデータ、ダイジェスト、共有予算を検査する。独立ネイティブテストは同じループアドレスの二つの R10 文脈を証明し、未監査境界が先に検査されることも確認する。自動条件発見と通常 ABI 認証は別途必要。
+`LowIRLoopInference.SharedTemplatesFitIndependentOperationBudgets` は、推論 1,024 操作と独立証明 640 操作以内で入れ子の部分カウンターを証明します。同一の純粋式と不変なプレフィックス読み取りは、同じカットポイントの再構築内でのみ共有され、オペランドの同一性、出力幅、位置空間を保持します。テストはカウンターと上限のワード全体を観測し、変更されたプレフィックス計算と操作数が一つ不足する予算を拒否します。既存のレジスター、フレーム、関数一時値、バイト順、非停止のケースも引き続き必須です。
+
+`LowIRLoopInference.CompletedEntailments*` は、両バイト順の終了するフレームループと終了しないループ間のセッション分離、ソルバー／ノード上限、独立した証明予算を確認します。可変境界の回帰はキャッシュヒットを含む論理クエリ予算のちょうどの値と一つ不足する値を検証し、ネイティブの反復コンテキスト証明は領域を含む再利用を確認します。
+
+`LowIRLoopInference.IncrementalEntailmentsKeepRollingBudgets` は同じ制約領域内でのエンコーダーの再利用を検証します。領域を切り替えるとエンコーダーを破棄し、累積ゲート数の上限に達した場合は新しいエンコーダーで一度だけ再試行して追加のクエリを計上します。両方のバイト順でカウンターと境界ワード全体の観測を維持し、クエリ予算の厳密な境界と一回不足、ゲート数・幅・探索の上限超過による拒否、独立した最終証明の予算を検証します。
+
+`LowIRLoopInference.RebuiltCounterLanes*` は、カウンターの他のビットをプレフィックス値から再構築する場合や独立に変更する場合の、厳密に一致する射影更新を扱います。レジスター、フレーム、関数一時値について、両バイト順、1／3／4 バイトのカウンター、直接およびキャッシュされた終了条件を検証し、カウンター・境界・タグ全体を観測します。観測対象の上位タグの削除、非停止更新、終了ガードの欠落、推論または証明の予算が一単位不足する場合は拒否します。構造的な漸化式の一致は汎化とランクの候補を提案するだけで、完全な遷移証明と最終証明が必要です。 固定の操作数・クエリ数予算でも記号的な射影カウンターを検証し、定数プレフィックスでの偶然の一致から余分な関係が増えないことを確認します。
+
+`LowIRLoopInference.ProjectedCounterCopies*` は、独立したタグを持つワードを介してカウンタのレーンをコピーしてから加算する入れ子ループを検証します。完全状態の 144 ケースは、レジスタ、フレーム、関数一時値、両バイト順、1/3/4 バイトのレーン、直接／キャッシュされた終了条件、比較用のワード全体のコピーを対象にします。投影された等価関係は保存済みの到達状態とすべての流入遷移で成立する必要があり、上位ビットは独立したままです。遷移ドメインでの含意証明により、異なるパラメータを介した加算漸化式を認識できます。上位タグの欠落、不正な更新、ガードの欠落、推論または最終証明の予算が 1 単位不足する場合は引き続き拒否します。
+
+`LowIRLoopRefinement.GuardedCuts*` と `BinaryLowIRLoopRefinement.GuardedCuts*` は同一 PC、レジスタ・フレーム・システムフラグ、両バイト順、未選択の有限・循環経路、重複と誤配対、プレフィックス一般化、未定義値の証人、メタデータ、ダイジェスト、共有予算を検査する。独立ネイティブテストは同じループアドレスの二つの R10 文脈を証明し、未監査境界が先に検査されることも確認する。通常 ABI 認証は別途必要。
+
+`BinaryLowIRLoopInference.NativeSelectors*` は二つのレジスタ文脈、フレームのみの文脈、三領域の論理積、区別不能なテンプレート、由来・ネイティブ本体の変更、推論と証明の独立した厳密予算および一不足予算を検査する。ループ回数は任意で入口定数を追加しない。
 
 `DarwinIndirectRecordCalls` は現在の MakeScale 契約と 22 種類のインポート/ABI 変更を検査し、共有の値渡しコピー証明で 48 バイト全体の私有結果を使用します。非整列、変位、重複、フレーム外の結果範囲は拒否されます。完全な戻り値 ABI が残っていても、確実な書き込み効果を除去すると拒否されます。
 

@@ -32,6 +32,7 @@ private:
     std::shared_ptr<RAMReservation> Exclusive;
   };
   bool canonicalRange(uint64_t, uint64_t) const override;
+  bool supportsDeviceMappings() const override { return !UserMode; }
   uint64_t programCounter() const override {
     return CPU.reg(AArch64Register::PC);
   }

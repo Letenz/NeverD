@@ -30,6 +30,9 @@ llvm::Error executeAArch64Exclusive(const AArch64ExclusiveInstruction &I,
   }
   const unsigned Size = I.size();
   const bool Load = I.Kind == Operation::Load;
+  const auto Page = Memory.mappings().find(I.Address & ~(memory::PageSize - 1));
+  if (Page != Memory.mappings().end() && Page->second.IO)
+    return llvm::make_error<UnsupportedExecutionError>();
   // Checked execution selects FEAT_LSE2's single-copy atomic quantity. Raw
   // Unicorn retains its engine's baseline alignment/feature-register model.
   // Alignment faults precede permissions even when the monitor has expired.

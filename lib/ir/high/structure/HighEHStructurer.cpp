@@ -26,12 +26,15 @@
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <iterator>
 #include <map>
@@ -1040,6 +1043,27 @@ bool hasCrossingRegions(const std::vector<RegionCandidate> &Candidates,
   return false;
 }
 
+/// Whether \p Stmts, outside the slice taken for a try over \p Range, still
+/// hold a statement of that range that may raise an exception.
+bool guardedStatementLeftOut(const std::vector<HighStmt> &Stmts,
+                             const ExceptionAddressRange &Range) {
+  for (const HighStmt &S : Stmts) {
+    if (S.Addr && S.Addr != InvalidVA && Range.contains(S.Addr) &&
+        highStmtMayFault(S))
+      return true;
+    for (const auto *List : {&S.Body, &S.ElseBody, &S.DefaultBody})
+      if (guardedStatementLeftOut(*List, Range))
+        return true;
+    for (const SwitchCase &Case : S.Cases)
+      if (guardedStatementLeftOut(Case.Body, Range))
+        return true;
+    for (const std::vector<HighStmt> &ClauseBody : S.EHClauseBodies)
+      if (guardedStatementLeftOut(ClauseBody, Range))
+        return true;
+  }
+  return false;
+}
+
 /// The list and index of the try statement of \p Kind over \p Range.  A
 /// slice extraction moves statements, so callers look it up again after one.
 std::optional<std::pair<std::vector<HighStmt> *, size_t>>
@@ -1315,6 +1339,36 @@ unsigned statementsStarting(const std::vector<HighStmt> &Stmts, va_t Addr,
 
 } // anonymous namespace
 
+void reportUnprotectedGuardedCode(const HighFunc &Func, const char *Stage) {
+  if (!std::getenv("NEVERD_HIGH_FLOW_ORACLE"))
+    return;
+  std::vector<const HighStmt *> Trys;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::SEHTry && S.EHIsReducible && S.EHRange.isValid())
+      Trys.push_back(&S);
+  });
+  for (const HighStmt *Try : Trys) {
+    std::set<const HighStmt *> Inside;
+    walkStmts(Try->Body, [&](const HighStmt &S) { Inside.insert(&S); });
+    unsigned Outside = 0;
+    va_t First = 0;
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (S.Addr && S.Addr != InvalidVA && Try->EHRange.contains(S.Addr) &&
+          !Inside.count(&S) && highStmtMayFault(S)) {
+        if (!Outside++)
+          First = S.Addr;
+      }
+    });
+    if (Outside)
+      llvm::errs() << "FLOWPROTECT stage=" << Stage << " entry="
+                   << llvm::utohexstr(Func.Entry, /*LowerCase=*/true)
+                   << " try=[" << llvm::utohexstr(Try->EHRange.Begin, true)
+                   << "," << llvm::utohexstr(Try->EHRange.End, true)
+                   << ") outside=" << Outside
+                   << " first=" << llvm::utohexstr(First, true) << "\n";
+  }
+}
+
 void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
                                                    const MedFunc &Med) {
   if (!Func.ExceptionMetadata)
@@ -1495,8 +1549,12 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
       continue;
     }
     // A jump from outside into the protected statements has no C spelling;
-    // keep that range unstructured instead of emitting one.
-    if (jumpEntersSlice(Func.Body, ProtectedBody, Candidate.Range.Begin)) {
+    // keep that range unstructured instead of emitting one.  So is a guarded
+    // statement left outside the slice that may raise: in C it would run
+    // unprotected.
+    if (jumpEntersSlice(Func.Body, ProtectedBody, Candidate.Range.Begin) ||
+        (Candidate.Kind == StmtKind::SEHTry &&
+         guardedStatementLeftOut(Func.Body, Candidate.Range))) {
       Host->insert(Host->begin() + static_cast<ptrdiff_t>(InsertAt),
                    std::make_move_iterator(ProtectedBody.begin()),
                    std::make_move_iterator(ProtectedBody.end()));
@@ -1803,6 +1861,7 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     if (Func.UnstructuredExceptionRegions == 0)
       Func.UnstructuredExceptionRegions = 1;
   }
+  reportUnprotectedGuardedCode(Func, "after-exceptions");
   // Invert-skip of `if (c) goto L; work; L:` inside a try body is blocked
   // before wrapping: Med blocks in the try have ExceptionalPreds. After the
   // handler is a clause, the try list is a closed HighIR run.
