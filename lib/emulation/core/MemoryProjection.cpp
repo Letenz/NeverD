@@ -207,9 +207,24 @@ void MemoryProjection::commitProjection(GuestArchitecture Architecture,
 std::array<MemoryRegistration, 2> MemoryProjection::registrations() const {
   const auto &Backing =
       TransportRAM.base() ? TransportRAM : Space->State->Memory->State->Backing;
-  return {{{0, data(), memory::ProjectionReserve},
-           {memory::ProjectionReserve, static_cast<uint8_t *>(Backing.base()),
-            Backing.allocatedSize()}}};
+  return {{{transportPhysical(0), data(), memory::ProjectionReserve},
+           {transportPhysical(memory::ProjectionReserve),
+            static_cast<uint8_t *>(Backing.base()), Backing.allocatedSize()}}};
+}
+llvm::Error MemoryProjection::relocateTransport(uint64_t Base) {
+  auto Lease = lock();
+  if (!Lease)
+    return Lease.takeError();
+  if (auto E = mutableMemory())
+    return E;
+  const auto Size = memory::ProjectionReserve +
+                    Space->State->Memory->State->Backing.allocatedSize();
+  if (Base % memory::PageSize || Base > memory::MaxTransportAddress ||
+      Size - 1 > memory::MaxTransportAddress - Base)
+    return diagnostic::error(diagnostic::InvalidMapping);
+  TransportBase = Base;
+  invalidateProjection();
+  return llvm::Error::success();
 }
 uint8_t *MemoryProjection::physicalPointer(uint64_t GPA) const {
   if (GPA < memory::ProjectionReserve)

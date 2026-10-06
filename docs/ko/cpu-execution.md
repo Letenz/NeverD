@@ -43,7 +43,7 @@ llvm::cantFail(CPU->map(Code, 4096, Read | Write | Execute | UserAccessible));
 
 KVM, WHP, Unicorn의 checked x64/ARM64에서 `ExecutionFeature::ParallelCPUs`(`parallel_cpus`)를 명시적으로 요청할 수 있습니다. 독립 CPU는 서로 다른 호스트 스레드에서 물리 RAM을 공유하며, RAM 쓰기가 없다고 검증한 네이티브 명령은 겹쳐 실행할 수 있습니다. 대기 중인 쓰기는 새 명령 진입을 막고 기존 읽기가 끝난 뒤 게시합니다. 효과는 순차 일관성을 따르며 대기 취소와 롤백을 지원합니다. 모든 실행이 끝날 때까지 매핑 변경과 호스트 쓰기는 금지됩니다. 한 CPU 객체의 스레드 간 호출은 `stop()`만 지원합니다. 기본 실행과 OS 스케줄링은 협력 방식이며 약한 메모리 순서 탐색은 별도 계약입니다.
 
-병렬 WHP CPU는 독립 파티션과 전용 전송 RAM을 사용합니다. 각 단계에서 코드와 선언된 모든 피연산자를 동기화하고 선언된 출력만 준비합니다. 관찰자는 항상 공유 RAM의 원본 상태를 읽습니다. KVM과 checked Unicorn은 backing을 직접 공유합니다. HVF와 Unicorn `Software` 계약에는 적용하지 않습니다.
+병렬 WHP CPU는 공유 파티션 안에서 독립적인 VP를 사용하며, 협력 실행용 VP 외에 최대 31개의 병렬 CPU를 동시에 유지합니다. 전용 GPA 영역과 전송 RAM으로 투영을 분리하고 ARM64는 서로 다른 ASID와 비전역 변환을 사용합니다. 네이티브 실행 전에 코드와 선언된 피연산자를 복사하며 선언된 출력 바이트만 공유 RAM 트랜잭션에 전달합니다. 관찰자는 기준 RAM을 읽습니다. KVM과 checked Unicorn은 공유 메모리를 직접 사용합니다. HVF와 Unicorn의 `Software` 계약은 이 기능을 제공하지 않습니다.
 
 `MMIOAtomics`(`mmio_atomics`)는 명시적인 `GuestMMIOCallbacks::PrepareAtomic` 제공자가 필요합니다. checked supervisor x64는 허용된 교환, 비교 교환, 정수 갱신과 수정 비트 연산을, ARM64는 `CASP`를 포함한 LSE를 지원합니다. 자연 정렬된 1/2/4/8/16바이트만 허용합니다. x64는 전용 임시 페이지에서 원래 명령을 실행하여 레지스터와 FLAGS를 계산하며 ARM64는 공통 LSE 의미론을 사용합니다. 준비는 부작용이 없고 커밋은 수명과 버전을 검증하여 한 번만 반영합니다. 커밋 전 중지와 실패는 CPU/장치 상태를 보존하며 성공한 커밋은 동시에 도착한 중지보다 우선합니다. 일반 Read+Write 대체는 금지합니다. 커널 레지스터 뱅크는 선언된 1/2/4바이트 폭을 유지하고 동일 값 쓰기, 전원 변경, 소유자 소멸 뒤의 미리보기를 거부합니다. ARM64 일반 장치 전송과 장치 독점 모니터, 사용자 MMIO, 임의의 실제 하드웨어는 포함하지 않습니다.
 
@@ -184,7 +184,7 @@ x64 KVM/WHP/HVF 네이티브 초기화는 비공개 supervisor 페이지에서 `
 
 `X64StringInstructions.def`는 일반 RAM의 8/16/32/64비트 `CMPS/SCAS`와 `REPE/REPNE`도 관리합니다. 각 요소는 관찰 전에 전체 읽기 범위를 검사하고 여섯 산술 플래그를 갱신하며 첫 종료 조건에서 멈춥니다. 데이터 오류는 이번 연속 REP 시작 시점의 플래그를 복원하면서 완료된 포인터와 카운터 변경을 유지합니다. 공개 API로 재개하면 게시된 CPU 상태에서 다시 시작합니다. 중지와 관찰 예외는 현재 요소를 변경하지 않으며 조기 종료 후 다음 요소를 읽지 않습니다. FS/GS는 CMPS 소스에만 적용되고 SCAS는 누산기와 사용하지 않는 소스 레지스터를 유지합니다. 장치 피연산자와 모호한 32비트 0회 반복 상위 비트는 제외됩니다. `X64StringComparisonTests.cpp`는 독립 호스트 명령으로 플래그, 방향, 별칭, 주소 순환, 권한과 복구를 비교하고 Linux x64 신호로 실제 오류 시점의 레지스터를 검사합니다. 자체 WDK 리소스 드라이버는 `driver_resource_strings.def`로 네 폭의 두 조건 반복 형식을 실행합니다. [Intel 명령 참조](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)를 참고하세요. Linux 네이티브 검증은 첫 요소 실행 전후의 오류를 검사하며, Intel의 진입 flags 복원과 Hyper-V의 AMD EPYC 7763에서 관측한 마지막 비교 flags 유지를 구분합니다([네이티브 관측](https://github.com/NeverSight/NeverD/actions/runs/37202522130)). 알 수 없는 CPU 제조사는 명시적으로 실패합니다. checked 게스트는 모든 백엔드에서 진입 flags를 복원합니다.
 
-기본 협력 모드: `WhpResourceCache.h`는 논리 CPU 상태와 WHP 파티션을 분리합니다. 런타임은 활성 네이티브 파티션 하나를 유지하며 같은 CPU의 연속 단계에서 재사용합니다. CPU를 전환할 때 이전 파티션을 먼저 제거한 다음 매핑과 가상 프로세서를 다시 만들고 전체 상태를 복원합니다. 논리 CPU는 독립적인 `MemoryProjection` 뷰와 권위 있는 RAM을 유지합니다. 임대 획득은 취소와 현재 기한을 따르며 비활성 CPU를 제거해도 다른 CPU의 파티션은 제거되지 않습니다. x64는 호스트의 기본 XSAVE 기능 조합을 보존하고 `WHvGetPartitionProperty`로 실제 파티션을 검증하며 종속 기능을 지워 마스크를 축소하지 않습니다. 협력적 CPU 전환은 병렬 하드웨어 SMP를 제공하지 않습니다.
+활성 WHP CPU는 하나의 네이티브 파티션을 공유하며 마지막 해제와 재생성은 같은 레지스트리 잠금으로 직렬화합니다. `WhpResourceCache.h`는 협력 실행용 VP 0을 재사용하며 논리 CPU를 전환하기 전에 해당 VP와 매핑을 해제합니다. 병렬 CPU는 별도의 VP와 전용 GPA 영역을 유지합니다. 레지스터 전송, XSAVE 및 취소는 각각의 VP를 대상으로 합니다. x64는 호스트의 기본 XSAVE 기능 집합을 유지하고 `WHvGetPartitionProperty`로 실제 구성을 검증합니다. 기본 스케줄링은 협력 방식입니다.
 
 `CheckedBackend`는 CPU마다 명령어 인출 버퍼와 `cs_disasm_iter` 명령어 레코드를 유지합니다. 매 단계 실행 권한이 있는 바이트를 다시 읽고 디코딩하며, 코드 쓰기·별칭 변경·실행 재개 뒤에 이전 디코딩 결과를 재사용하지 않습니다. 실행 임대는 재사용 저장소에 접근하기 전에 재귀 실행을 거부합니다. 명령어마다 이루어지는 버퍼와 레코드 할당을 제거하면서 명령어 관찰, 시스템 서비스 가로채기, 정확한 오류 처리를 유지합니다. 고정 버전 Unicorn의 단일 단계는 간접 변환 조회를 포함해 후속 명령어 인출 전에 끝나며 내부 코드 쓰기 재시도를 완료된 명령어로 세지 않습니다.
 

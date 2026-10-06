@@ -58,6 +58,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/MMIOAtomic.ParallelCPUsCommitEveryDeviceUpdateExactlyOnce/{backend}x86_64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "WhpResources.IndependentBindingsRetainSimultaneousResourceLeases")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProjectionCache.RelocatedWindowsKeepRAMIdentityAndInvalidateCachedRoots")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.RetainsPhysicalIdentityAcrossAliasesAndPermissionChanges")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.SameValueAndABAHostWritesInvalidateEveryOlderWitness")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.FullGranuleIsObservedButUnrelatedWritesDoNotBreakProgress")
@@ -2149,6 +2151,10 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST
+NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST(
+    "WhpMemoryProtocol.SharedHostRetiresBeforeReplacementAndRetriesFailedSetup")
+NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST(
+    "WhpEntryControl.CancellationTargetsTheRetainedNonzeroProcessor")
 NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST(
     "WindowsAlignmentNative.RunsOriginalFaultAndRetryExecutable")
 // Windows-only transport protocols and independent native OS observations.

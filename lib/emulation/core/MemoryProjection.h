@@ -63,7 +63,7 @@ public:
                    bool AllowDevices = false);
   llvm::Error beginRun(RAMWriteTracking Tracking = RAMWriteTracking::Opaque);
   void endRun();
-  /// Configure before constructing the transport. Independent WHP partitions
+  /// Configure before constructing the transport. Independent WHP processors
   /// use private registration bytes; all observations still use shared RAM.
   llvm::Error enableParallel(bool PrivateTransportRAM = false);
   bool parallelEnabled() const { return ParallelEnabled; }
@@ -143,6 +143,15 @@ public:
     return I == ProjectedRoots.end() ? 0 : I->second;
   }
   uint8_t *data() const { return static_cast<uint8_t *>(Projection.base()); }
+  /// Relocate only the transport's physical window. Guest mappings, RAM
+  /// transaction offsets and private-storage offsets retain their identities.
+  llvm::Error relocateTransport(uint64_t Base);
+  uint64_t transportPhysical(uint64_t Offset) const {
+    return TransportBase + Offset;
+  }
+  uint64_t transportOffset(uint64_t Physical) const {
+    return Physical - TransportBase;
+  }
   std::array<MemoryRegistration, 2> registrations() const;
   uint8_t *physicalPointer(uint64_t GPA) const;
 
@@ -165,6 +174,7 @@ private:
   std::thread::id RunThread;
   MachineRunControl ParallelControl{};
   llvm::sys::MemoryBlock TransportRAM;
+  uint64_t TransportBase = 0;
   std::optional<std::pair<uint64_t, uint64_t>> DeviceOperand;
   void finishInstruction();
 };

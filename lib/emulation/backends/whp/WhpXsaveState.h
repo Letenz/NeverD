@@ -7,7 +7,7 @@
 #define NEVERD_EMULATION_WHP_XSAVESTATE_H
 
 #include "../../arch/x86_64/X64Machine.h"
-#include "WhpPartition.h"
+#include "WhpVirtualProcessor.h"
 
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Memory.h"
@@ -32,9 +32,11 @@ public:
   WhpXsaveState(const WhpXsaveState &) = delete;
   WhpXsaveState &operator=(const WhpXsaveState &) = delete;
   ~WhpXsaveState() { (void)llvm::sys::Memory::releaseMappedMemory(Buffer); }
-  llvm::Error initialize(WhpAPI &API, WHV_PARTITION_HANDLE Partition) {
+  llvm::Error initialize(WhpAPI &API, WHV_PARTITION_HANDLE Partition,
+                         uint32_t Index = 0) {
     if (Buffer.base())
       return diagnostic::error(diagnostic::WhpState);
+    ProcessorIndex = Index;
     Modern = API.WHvGetVirtualProcessorState && API.WHvSetVirtualProcessorState;
     if (!API.WHvGetPartitionProperty || !API.WHvGetVirtualProcessorRegisters ||
         !API.WHvSetVirtualProcessorRegisters ||
@@ -83,11 +85,12 @@ public:
                                                    setOperation(), Size)
                                          .str());
     const auto Status =
-        Modern ? API.WHvSetVirtualProcessorState(
-                     Partition, 0, WHvVirtualProcessorStateTypeXsaveState,
-                     Buffer.base(), Size)
-               : API.WHvSetVirtualProcessorXsaveState(Partition, 0,
-                                                      Buffer.base(), Size);
+        Modern
+            ? API.WHvSetVirtualProcessorState(
+                  Partition, ProcessorIndex,
+                  WHvVirtualProcessorStateTypeXsaveState, Buffer.base(), Size)
+            : API.WHvSetVirtualProcessorXsaveState(Partition, ProcessorIndex,
+                                                   Buffer.base(), Size);
     if (FAILED(Status))
       return whpError(diagnostic::WhpState, Status, setOperation());
     WHV_REGISTER_VALUE Metadata[std::size(MetadataNames)]{};
@@ -98,7 +101,8 @@ public:
     Metadata[XmmControlStatus].XmmControlStatus.XmmStatusControlMask =
         MXCSRMask;
     const auto MetadataStatus = API.WHvSetVirtualProcessorRegisters(
-        Partition, 0, MetadataNames, std::size(MetadataNames), Metadata);
+        Partition, ProcessorIndex, MetadataNames, std::size(MetadataNames),
+        Metadata);
     return FAILED(MetadataStatus)
                ? whpError(diagnostic::WhpState, MetadataStatus,
                           whp::operation::WHvSetVirtualProcessorRegisters)
@@ -138,7 +142,7 @@ public:
     MetadataPacket OwnedMetadata{};
     if (!CapturedMetadata) {
       const auto MetadataStatus = API.WHvGetVirtualProcessorRegisters(
-          Partition, 0, MetadataNames, std::size(MetadataNames),
+          Partition, ProcessorIndex, MetadataNames, std::size(MetadataNames),
           OwnedMetadata.data());
       if (FAILED(MetadataStatus))
         return whpError(diagnostic::WhpState, MetadataStatus,
@@ -194,13 +198,15 @@ private:
   HRESULT get(WhpAPI &API, WHV_PARTITION_HANDLE Partition, void *Bytes,
               UINT32 Capacity, UINT32 &Written) {
     return Modern ? API.WHvGetVirtualProcessorState(
-                        Partition, 0, WHvVirtualProcessorStateTypeXsaveState,
-                        Bytes, Capacity, &Written)
-                  : API.WHvGetVirtualProcessorXsaveState(Partition, 0, Bytes,
-                                                         Capacity, &Written);
+                        Partition, ProcessorIndex,
+                        WHvVirtualProcessorStateTypeXsaveState, Bytes, Capacity,
+                        &Written)
+                  : API.WHvGetVirtualProcessorXsaveState(
+                        Partition, ProcessorIndex, Bytes, Capacity, &Written);
   }
   llvm::sys::MemoryBlock Buffer;
   UINT32 Size = 0;
+  uint32_t ProcessorIndex = 0;
   bool Modern = false;
 };
 } // namespace neverd::emulation

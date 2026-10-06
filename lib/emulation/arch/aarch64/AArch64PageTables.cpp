@@ -65,16 +65,16 @@ llvm::Error buildAArch64PageTables(MemoryProjection &Memory, bool UserMode) {
       if (!Entry) {
         if (Next == memory::ProjectionReserve)
           return diagnostic::error(diagnostic::PageTables);
-        Entry = Next | TableDescriptor;
+        Entry = Memory.transportPhysical(Next) | TableDescriptor;
         Next += memory::PageSize;
         llvm::support::endian::write64le(Slot, Entry);
       }
-      Table = Entry & AddressMask;
+      Table = Memory.transportOffset(Entry & AddressMask);
     }
     // GP (bit 50) stays clear in every leaf, including monitor and alias pages.
     // The checked CPU does not expose guarded translations or BTYPE state.
-    uint64_t Entry =
-        PA | TableDescriptor | AccessFlag | InnerShareable | UserNX;
+    uint64_t Entry = Memory.transportPhysical(PA) | TableDescriptor |
+                     AccessFlag | InnerShareable | UserNX | NonGlobal;
     if (!(Permissions & GuestAccessPermissions))
       Entry = 0;
     else {

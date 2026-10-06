@@ -735,7 +735,7 @@ x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ペー�
 
 `X64StringInstructions.def` は通常 RAM 上の 8/16/32/64 ビット `CMPS/SCAS` と `REPE/REPNE` も管理します。各要素は観測前に読み取り範囲全体を検証し、六つの算術フラグを更新して最初の終了条件で停止します。データ障害では、この連続した REP の開始時のフラグを復元し、完了済みのポインタとカウント更新は保持します。公開 API からの再開は公開済み CPU 状態を出発点とします。停止や観測例外は現在の要素を変更せず、早期終了後は次の要素を読みません。FS/GS は CMPS のソースだけに作用し、SCAS は累算器と未使用のソースレジスタを保持します。デバイス操作数と曖昧な 32 ビットゼロ回実行時の上位ビットは対象外です。`X64StringComparisonTests.cpp` は独立したホスト命令とフラグ、方向、エイリアス、折り返し、権限、再開を照合し、Linux x64 シグナルで実際の障害時レジスタも検証します。独自 WDK リソースドライバは `driver_resource_strings.def` で全四幅の両条件反復を実行します。[Intel 命令リファレンス](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)を参照してください。 Linux のネイティブ検証は最初の要素の実行前後の障害を対象とし、Intel の開始時 flags 復元と Hyper-V 上の AMD EPYC 7763 で観測された直前の比較 flags の保持を区別します（[ネイティブ観測](https://github.com/NeverSight/NeverD/actions/runs/37202522130)）。未知の CPU ベンダーは明示的に失敗します。checked ゲストは全バックエンドで開始時 flags を復元します。
 
-既定の協調モード：`WhpResourceCache.h` は論理 CPU の状態と WHP パーティションを分離します。ランタイムは一つのネイティブパーティションを保持し、同じ CPU の連続ステップでは再利用します。CPU 切り替え時は古いパーティションを破棄してから、マッピングと仮想プロセッサを再構築し、完全な状態を復元します。各論理 CPU は独立した `MemoryProjection` ビューと正本の RAM を保持します。リース取得はキャンセルと現在の期限を守り、非アクティブ CPU の破棄は別の CPU のパーティションを破棄しません。x64 はホスト既定の XSAVE 機能群を保持し、`WHvGetPartitionProperty` で実効設定を検証します。依存機能を消してマスクを縮小しません。協調的な CPU 切り替えは並列ハードウェア SMP を提供しません。
+存続中の WHP CPU は一つのネイティブパーティションを共有し、最終解放と再作成を同じレジストリロックで直列化します。`WhpResourceCache.h` は協調実行用 VP 0 を再利用し、論理 CPU の切り替え前にその VP とマッピングを破棄します。並列 CPU は専用 VP と GPA 領域を保持します。レジスター転送、XSAVE、キャンセルは各 VP を対象にします。x64 はホスト既定の XSAVE 機能セットを保持し、`WHvGetPartitionProperty` で実際の設定を検証します。既定のスケジューリングは協調式です。
 
 `CheckedAArch64Instructions.def` と `AArch64InstructionEffects` は EL0/EL1 で範囲を限定した基本 FP32/FP64 演算、比較、転送、固定幅 SIMD を許可します。FPCR は4種類の丸め、FZ、DN に対応し、FPSR は累積状態と QC を保持します。未対応の制御・状態ビットは変更前に拒否します。FP16 演算、SVE/SME、非マスク例外、追加拡張、未列挙の形式は明示的なエラーです。Windows ARM64 ドライバーのロードや新しい OS 環境は追加しません。
 
@@ -753,7 +753,7 @@ KVM x64/ARM64 は `KvmRunControl` により同じ専用 vCPU worker で状態準
 
 KVM、WHP、Unicorn の checked x64/ARM64 は `ExecutionFeature::ParallelCPUs`（`parallel_cpus`）を明示要求できます。独立した CPU が別々のホストスレッドで物理 RAM を共有し、RAM を書かないと証明されたネイティブ命令は並行実行できます。書き込み待ちは新規命令を止め、既存の読み取りが終了してから公開します。効果は逐次一貫で、待機のキャンセルとロールバックに対応します。全実行が終了するまでマッピング変更とホスト書き込みは禁止されます。同一 CPU へのスレッド間操作は `stop()` のみです。既定の実行と OS スケジューリングは協調式で、弱いメモリ順序の探索は別契約です。
 
-並列 WHP は CPU ごとに独立パーティションと私有転送 RAM を持ち、各ステップでコードと全宣言オペランドを同期し、宣言された出力だけをステージングします。観測対象は常に共有 RAM の正本です。KVM と checked Unicorn は backing を直接共有します。HVF と Unicorn `Software` は対象外です。
+並列 WHP CPU は共有パーティション内の独立した VP を使い、協調実行用 VP に加えて最大 31 個の並列 CPU を保持できます。専用 GPA 領域と転送 RAM が投影を分離し、ARM64 は異なる ASID と非グローバル変換を使います。各ネイティブ実行前にコードと宣言済みオペランドをコピーし、宣言済み出力だけを共有 RAM トランザクションに渡します。オブザーバーは正本の RAM を読みます。KVM と checked Unicorn は共有メモリーを直接使います。HVF と Unicorn の `Software` 契約はこの機能を提供しません。
 
 `MMIOAtomics`（`mmio_atomics`）は明示的な `GuestMMIOCallbacks::PrepareAtomic` を要求します。checked supervisor x64 は許可された交換、比較交換、整数更新、変更型ビット操作、ARM64 は `CASP` を含む LSE に対応します。自然整列された 1/2/4/8/16 バイトに限定します。x64 は私有領域で原命令を実行してレジスタと FLAGS を計算し、ARM64 は共通 LSE 意味論を使います。準備は副作用なし、コミットは寿命と版を検証し一度だけ公開します。コミット前の停止や失敗は CPU/デバイスを保持し、成功済みコミットは競合する停止に優先します。通常の Read+Write への代替は禁止です。カーネルのレジスタバンクは宣言済み 1/2/4 バイトに限定し、同値書き込み、電源変更、所有者破棄による古いプレビューを拒否します。ARM64 の通常デバイス転送とデバイス排他モニター、ユーザー MMIO、任意の実機デバイスは対象外です。
 

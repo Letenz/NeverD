@@ -14,10 +14,10 @@
 #include <utility>
 
 namespace neverd::emulation {
-/// Cache one host execution resource independently of the logical CPUs. WHP
-/// can reject a second mapped partition in the same process. Retiring the old
-/// partition before constructing the next also discards its hidden CPU state
-/// and translations. A machine's explicit state and RAM remain authoritative.
+/// Cache one cooperative VP independently of the logical CPUs. Retiring the
+/// old VP and its GPA window before constructing the next discards hidden CPU
+/// state and translations. Parallel bindings retain separate VP leases within
+/// the same native partition. Explicit CPU state and RAM remain authoritative.
 template <typename Resource> class WhpResourceCache final {
 public:
   using Factory = std::function<llvm::Expected<std::unique_ptr<Resource>>()>;
@@ -50,7 +50,7 @@ public:
       return diagnostic::interrupted(diagnostic::WhpRun, Control);
     if (ActiveOwner != Owner) {
       // Native callbacks have retired before the previous lease was released.
-      // Never overlap mapped partitions or retain a failed partial replacement.
+      // Never overlap cooperative VP windows or retain a partial replacement.
       Active.reset();
       ActiveOwner = nullptr;
       auto Next = Create();
@@ -80,9 +80,9 @@ private:
   std::unique_ptr<Resource> Active;
 };
 
-/// One pool per native resource type. All WHP machines bind the common
-/// WhpPartition base so different ISA-specific configuration factories cannot
-/// accidentally create independent pools in the same process.
+/// One cooperative cache per native resource type. All WHP machines bind the
+/// common WhpVirtualProcessor lease so ISA factories cannot allocate VP zero
+/// twice.
 template <typename Resource>
 std::shared_ptr<WhpResourceCache<Resource>> sharedWhpResources() {
   static std::mutex Mutex;
