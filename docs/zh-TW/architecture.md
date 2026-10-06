@@ -456,6 +456,8 @@ Windows 模型亦管理獨立的非分頁池 MDL；釋放描述符不會釋放�
 
 `KernelScheduler` 管理就緒佇列順序、回呼識別與計時器期限；`KernelDispatcher` 管理不透明 DPC、計時器、事件及其訊號。`KernelModel` 管理等待登記、工作項目／裝置生命週期與 IRP 完成。`DriverSession` 儲存並還原各回呼的獨立堆疊及完整 CPU 內容，包括 Win64 堆疊參數，客體記憶體保持共用。預設設定下，僅在沒有就緒執行框架時，虛擬時間才推進至計時器／等待／取消邊界；CPU0 以確定性的合作排程執行 `DISPATCH_LEVEL` 的 DPC 和 `PASSIVE_LEVEL` 的工作項目。這不提供一般執行緒／APC／自旋鎖排程、超出已描述契約的 WDM／PnP 取消、任意並行公開情境提交、完整 PnP／電源或硬體。 API 的 IRQL 上限來自 `KernelAPIIRQL.def`，參數相關限制由所屬模型檢查。
 
+`KernelScheduler` 統一持有即時執行緒優先順序及優先順序／就緒順序比較規則。`KernelModelThreadPriorities` 為 `KeSetPriorityThread` 與 `KeQueryPriorityThread` 驗證執行緒物件；暫停的 CPU 上下文不複製優先順序狀態。`DriverSession` 在回呼同步入口及 API／事件邊界檢查較高優先順序的就緒執行緒。範圍與限制見[驅動程式排程](driver-scheduling.md)。
+
 `KernelModelDeviceStack` 以單一記錄管理各裝置的驅動程式擁有者、配置、上下層鄰居、待刪除狀態與內部參考。客體 `NextDevice` 列舉串列與宿主擁有的附加圖意義不同。名稱解析保留具名下層裝置作為 `FILE_OBJECT` 和報告身分，選擇目前堆疊頂端進行初始派送及 READ/WRITE 緩衝設定，並保留整條請求路徑。解除附加或刪除不會讓請求／回呼仍持有的裝置失效；公開 `ReferenceCount` 仍只計算開啟的控制代碼。
 
 `KernelModelIRPStack` 管理原始客體封包的有界堆疊游標、確切目標派送及完成展開；內嵌 Copy/Skip/SetCompletion 寫入仍為權威資料。派送狀態、完成回呼控制值與最終 `IoStatus` 分離，pending 可在派送傳回後傳播。`STATUS_MORE_PROCESSING_REQUIRED` 保留封包、MDL 與緩衝區，直到繼續執行並到達最終展開邊界，包括巢狀完成。`KernelGuestCall` 攜帶子系統擁有者及區域 token，防止 WDM／WDF 續接身分碰撞；`DriverSession` 保留 CPU 框架與繼承的 IRQL。一個客體驅動程式可附加於獨立擁有的情境 PDO；驅動程式自行配置的 IRP 仍不支援。WDF 附加／轉送、活動堆疊附加、中間層移除、變更主要功能及路徑外目標仍不支援。 呼叫上層完成回呼之前，已消耗的下層堆疊位置會清零。

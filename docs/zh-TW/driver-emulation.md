@@ -354,7 +354,8 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `KeInitializeEvent`, `KeSetEvent`, `KeResetEvent`, `KeClearEvent`, `KeReadStateEvent` | 通知／同步事件保留不同訊號消耗行為；`KeSetEvent` 僅接受 Increment=0、Wait=FALSE |
 | `KeInitializeSemaphore`, `KeReleaseSemaphore`, `KeReadStateSemaphore` | 常駐的計數號誌，上限必須為正；每次成功等待消耗一個計數。釋放僅接受 Increment=0、Wait=FALSE；超過上限時擲出 `STATUS_SEMAPHORE_LIMIT_EXCEEDED`。 |
 | `KeInitializeMutex`, `KeReleaseMutex`, `KeReadStateMutex` | 常駐的 KMUTEX 依執行影格持有並支援遞迴取得；KeReleaseMutex 回傳先前的有號訊號狀態，要求持有者與相符的 DISPATCH_LEVEL 取得情境，且僅接受 Wait=FALSE。持有期間禁止返回、重新初始化或釋放儲存。 非持有者釋放會觸發 `STATUS_MUTANT_NOT_OWNED`。 |
-| `PsCreateSystemThread`, `PsTerminateSystemThread`, `ObReferenceObjectByHandle`, `ObfDereferenceObject`, `ZwClose` | 系統處理程序中的有界執行緒在 PASSIVE_LEVEL 執行。控制代碼與不透明執行緒物件的參照各自維持生命週期；PsTerminateSystemThread 不返回客體程式碼，並使可等待的執行緒物件進入訊號狀態。APC、執行緒優先順序及具型別的物件參照尚未建模。 |
+| `PsCreateSystemThread`, `PsTerminateSystemThread`, `ObReferenceObjectByHandle`, `ObfDereferenceObject`, `ZwClose` | 系統處理程序中的有界執行緒在 PASSIVE_LEVEL 執行。控制代碼與不透明執行緒物件的參照各自維持生命週期；PsTerminateSystemThread 不返回客體程式碼，並使可等待的執行緒物件進入訊號狀態。APC 傳遞、處理程序優先順序類別及具型別的物件參照尚未建模。 |
+| `KeSetPriorityThread`, `KeQueryPriorityThread` | 在 `PASSIVE_LEVEL` 存取執行階段優先順序；設定接受 1..31 並傳回原值，確定性初始值為 8，要求已知執行緒物件。`scheduling` 啟用優先順序排程；尚未支援動態提升與處理程序優先順序類別。 [driver-scheduling.md](driver-scheduling.md) |
 | `KeEnterCriticalRegion`, `KeLeaveCriticalRegion`, `KeEnterGuardedRegion`, `KeLeaveGuardedRegion`, `KeAreApcsDisabled`, `KeAreAllApcsDisabled` | 依執行緒追蹤可巢狀的 APC 停用狀態。臨界區及持有的 KMUTEX 停用一般核心 APC；保護區和 IRQL >= APC_LEVEL 停用所有 APC。系統執行緒啟動時處於一層臨界區。未配對的離開及帶有未平衡狀態返回都會失敗；尚未實作 APC 投遞。 |
 | `KeWaitForSingleObject` | 單個已初始化的事件、計時器、號誌或互斥體；非警示 `KernelMode`、原因 `Executive`；零逾時輪詢、有限相對／絕對或無限等待；非零／無限等待要求 IRQL <= APC_LEVEL |
 | `KeDelayExecutionThread` | IRQL <= APC_LEVEL 的非警示 `KernelMode` 相對／絕對延遲；虛擬時間推進後還原儲存的客體執行框架 |

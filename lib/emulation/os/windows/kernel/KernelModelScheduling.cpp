@@ -224,7 +224,18 @@ void KernelModel::retireThreadIfUnreferenced(uint64_t Object) {
       !Thread->second.HandleOpen && !Thread->second.PointerReferences &&
       !WaitReferences.contains(Object)) {
     FreedRanges.emplace(Object, profile::ProcessTokenSize);
+    Scheduler.forgetThreadPriority(Thread->second.CallbackID);
     SystemThreads.erase(Thread);
+  }
+}
+
+void KernelModel::retireBorrowedThread(uint64_t Key) {
+  Scheduler.forgetThreadPriority(Key);
+  ApcStates.erase(Key);
+  if (const auto Object = CurrentThreadObjects.find(Key);
+      Object != CurrentThreadObjects.end()) {
+    FreedRanges.emplace(Object->second, profile::ProcessTokenSize);
+    CurrentThreadObjects.erase(Object);
   }
 }
 
@@ -550,6 +561,7 @@ llvm::Error KernelModel::finishScheduled(uint64_t ID) {
     retireThreadIfUnreferenced(Invocation.Object);
     return llvm::Error::success();
   }
+  retireBorrowedThread(ID);
   if (Invocation.Kind == KernelScheduler::CallbackKind::WorkItem) {
     auto Reference = WorkReferences.find(Invocation.Owner);
     if (Reference == WorkReferences.end() || !Reference->second)
@@ -911,6 +923,14 @@ llvm::Error KernelModel::activateStack(uint64_t Base, uint64_t Size) {
 llvm::Error KernelModel::retireStack(uint64_t Base, uint64_t Size) {
   if (auto E = prepareReleaseRange(Base, Size))
     return E;
+  // Detached callbacks use their private stack as the thread key. Retire that
+  // lifetime before its stack slot is reused. A nested/SEH stack shares another
+  // thread's key and must not retire its parent's priority or object.
+  if (const auto Thread = ExecutionThreadKeys.find(Base);
+      Thread != ExecutionThreadKeys.end() && Thread->second == Base &&
+      Base != profile::StackBase) {
+    retireBorrowedThread(Base);
+  }
   ExecutionThreadKeys.erase(Base);
   InheritedExecutionContexts.erase(Base);
   FreedRanges.emplace(Base, Size);

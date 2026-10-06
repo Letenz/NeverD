@@ -610,7 +610,7 @@ foreach(_driver_name success failure unknown fault loop devices readonly privile
 endforeach()
 # The loader fixture deliberately retains relocations and a compiler-inserted
 # stack protector. The WDM fixture covers the complete synchronous lifecycle.
-foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_async driver_dispatcher driver_context_limits driver_preemptive)
+foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority)
   set(_driver_object "${_driver_fixture_dir}/${_driver_name}.obj")
   set(_driver_image "${_driver_fixture_dir}/${_driver_name}.sys")
   if(_driver_name STREQUAL "loader")
@@ -650,6 +650,14 @@ foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl dr
       fixtures/driver_io.c fixtures/DriverContextLimitCases.def
       "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelValues.def"
       "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelPoolFlags.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/WindowsKernelLayout.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelDispatcherValues.def")
+  endif()
+  if(_driver_name STREQUAL "driver_thread_priority")
+    list(APPEND _driver_additional_dependencies
+      fixtures/driver_io.c fixtures/DriverThreadPriorityCases.def
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelThreadPriorities.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelValues.def"
       "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/WindowsKernelLayout.def"
       "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelDispatcherValues.def")
   endif()
@@ -1228,6 +1236,7 @@ set(_driver_execution_fixture_definitions
 add_neverd_unittest(NeverDNativeDriverTests
   DriverNativeExecutionTests.cpp
   DriverSchedulingTests.cpp
+  DriverThreadPriorityTests.cpp
   DriverSIMDSEHTests.cpp
   KernelSEHTests.cpp
   TIMEOUT 30
