@@ -527,7 +527,8 @@ TEST(AndroidThreadMemory, CapacityRefusalKeepsInputsAndGenericMappingFailures) {
                          {}};
     auto Calls = IntegerABI::get(IntegerCallingConvention::AAPCS64);
     ASSERT_TRUE(bool(Calls)) << llvm::toString(Calls.takeError());
-    android_model::GuestThreads Threads(CPU, *Calls, Options, Result);
+    linux_model::LinuxClock Clock(Options.LinuxTime);
+    android_model::GuestThreads Threads(CPU, *Calls, Options, Result, Clock);
     ASSERT_EQ(llvm::toString(Threads.initialize(Buffer + Page)), "");
 
     std::vector<std::shared_ptr<MemoryRegion>> Owners;

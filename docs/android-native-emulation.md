@@ -250,6 +250,12 @@ The supported Bionic subset is:
   Unknown numbers and unsupported memory or networking services stop explicitly.
   Static and dynamic calls retain their native import event; only an actual
   `svc #0` produces a raw service event.
+- `nanosleep` shares the explicit
+  [idle clock advancement policy](process-emulation.md#explicit-guest-clocks)
+  with raw and variadic calls. It retains the thread's original continuation
+  while other guest threads run, and preserves remaining-time storage and errno
+  on success. The policy is disabled by default; signal interruption and
+  absolute sleeps remain unmodeled.
 
 TLS uses the API 28 Bionic layout: TPIDR_EL0 points to a guest TLS block,
 `__errno` addresses slot 2, and the stack guard occupies slot 5. The guard is a
@@ -521,7 +527,9 @@ then publishes the full pointer result and releases its storage. Detached
 threads release storage on completion. Invalid non-null or retired handles
 fail at the API 28 target boundary; NULL lookup returns ESRCH, self-join
 returns EDEADLK, and detached or already claimed targets return EINVAL.
-No runnable thread with outstanding join, once or mutex waits is an explicit unsupported stop.
+If no thread is runnable, an admitted sleep can advance virtual time to its
+deadline. With no such deadline, outstanding join, once or mutex waits produce
+an explicit unsupported stop.
 `pthread_exit` returns its pointer to a joiner; raw `SYS_exit` terminates only
 the current thread and leaves its pthread result zero. When the last thread
 exits without an entry return, its low eight status bits become the workload
