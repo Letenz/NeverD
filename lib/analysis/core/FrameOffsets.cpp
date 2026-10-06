@@ -126,8 +126,9 @@ proveFrameOffsetImpl(SymContext &Ctx, SymRef Predicate, SymRef Value,
   if (const auto Constant = Ctx.asConst(Difference))
     return {FrameOffsetStatus::Exact, Constant->getZExtValue()};
 
-  auto Cached =
-      Cache ? Cache->lookup(Ctx, Predicate, {Difference}, 1) : std::nullopt;
+  auto Prepared = Cache ? Cache->prepare(Ctx, Predicate, {Difference}, 1)
+                        : FiniteQueryCache::PreparedQuery{};
+  auto Cached = Cache ? Cache->lookup(Prepared) : std::nullopt;
   const auto Domain =
       Cached ? std::move(*Cached)
       : Encoding
@@ -138,7 +139,7 @@ proveFrameOffsetImpl(SymContext &Ctx, SymRef Predicate, SymRef Value,
   if (Ctx.numNodes() > MaxSymbolicNodes)
     return {FrameOffsetStatus::BudgetExceeded};
   if (Cache && !Cached)
-    Cache->store(Ctx, Predicate, {Difference}, 1, Domain);
+    Cache->store(std::move(Prepared), Domain);
   switch (Domain.Status) {
   case FiniteValueStatus::Complete:
     if (Domain.Tuples.empty())

@@ -1628,4 +1628,6 @@ Les générateurs de witness Swift vérifient `CurrentValueSubject: Publisher` e
 
 Le lecteur String de `scripts.tests.test_generate_swift_witness_contracts` vérifie le flux complet, rejette 28 modifications du stockage, de l’ABI et du flux ainsi que sept déclarations ambiguës et borne l’entrée. Les tests de liaison couvrent trois descripteurs sur les deux architectures avec 33 mutations par paire. L’identité n’accorde aucun agencement de pile ni emprunt.
 
+`PreparedFiniteKeys.*` vérifie la destruction du contexte et le renommage, l’ordre et les limites des projections, l’invalidation explicite après déplacement, les résultats malformés ou incomplets, les domaines vides ou non uniques et les limites exactes de capacité. Les régressions existantes du cache et des décalages couvrent aussi ce chemin.
+
 `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults` rejette les changements de registres, de disposition, de contexte et de résultat indirect sur les deux architectures. `SourceABI.SwiftPointForwardingPreservesBothIEEECarriers` exécute le code de transfert avec -O0/-O2 et vérifie les zéros signés, sous-normaux, infinis et charges NaN des deux champs. Les tests de déclaration acceptent les formes du compilateur et les arguments nommés, et rejettent les signatures modifiées et les identités ambiguës.
