@@ -344,6 +344,7 @@ void DarwinFiles::initializeNamespace() {
     auto Node = std::make_shared<Contents>();
     Node->Initial = Bytes;
     Node->Path = Path;
+    Node->Parent = directoryNode(parentPath(Path));
     Node->Writable = Options->WritableFiles.contains(Path);
     const auto Metadata = Options->Metadata.find(Path);
     if (Metadata != Options->Metadata.end())
@@ -585,7 +586,9 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
       continue;
     // RENAME rejects its terminal dot before looking up that component.
     // Earlier missing/file/removed ancestors still take precedence.
-    if (Mode == LookupMode::RenameTarget && (Part == "." || Part == "..") &&
+    if ((Mode == LookupMode::RenameTarget ||
+         Mode == LookupMode::RenameDirectoryTarget) &&
+        (Part == "." || Part == "..") &&
         llvm::all_of(
             llvm::ArrayRef<llvm::StringRef>(Parts).drop_front(Index + 1),
             [](llvm::StringRef Part) { return Part.empty(); }))
@@ -616,7 +619,8 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
     if (Type == PathKind::Missing) {
       const bool CreatesFile =
           Mode == LookupMode::CreateFile || Mode == LookupMode::RenameTarget;
-      const bool CreatesDirectory = Mode == LookupMode::CreateDirectory;
+      const bool CreatesDirectory = Mode == LookupMode::CreateDirectory ||
+                                    Mode == LookupMode::RenameDirectoryTarget;
       const bool Final = Index + 1 == Parts.size();
       const bool DirectoryTail =
           CreatesDirectory &&
@@ -856,11 +860,17 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   if (auto *Reason = std::get_if<const char *>(&*From))
     return unsupported(Result, *Reason);
   auto &Source = std::get<Description>(*From);
-  // Directory sources require WILLBEDIR lookup, including different missing
-  // trailing-slash rules. Do not apply a regular-file target lookup to them.
-  if (Source.Type != Kind::File)
+  if (Source.Type == Kind::Directory &&
+      (!Source.Directory->Created || !Source.Directory->Linked))
     return unsupported(Result, diagnostic::RenameKind);
-  auto To = resolvePath(TargetPath, TargetDirectory, LookupMode::RenameTarget);
+  if (Source.Type == Kind::Directory && Mode == RenameMode::Swap)
+    return unsupported(Result, diagnostic::RenameSwapKind);
+  // Directory sources set WILLBEDIR for target lookup, permitting a missing
+  // final directory with trailing slashes while retaining ancestor errors.
+  auto To = resolvePath(TargetPath, TargetDirectory,
+                        Source.Type == Kind::Directory
+                            ? LookupMode::RenameDirectoryTarget
+                            : LookupMode::RenameTarget);
   if (!To)
     return To.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*To))
@@ -871,9 +881,21 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   if (Mode == RenameMode::Exclusive && (Target.File || Target.Directory)) {
     // Same-object exclusive rename depends on filesystem case sensitivity.
     // Exact catalogue keys do not supply that missing filesystem property.
-    if (Target.File == Source.File)
+    if ((Source.File && Target.File == Source.File) ||
+        (Source.Directory && Target.Directory == Source.Directory))
       return unsupported(Result, diagnostic::RenameCaseSensitivity);
     return returned(FileExists, true);
+  }
+  // Source dots reach the rename checks after target lookup and EXCL. A bad
+  // target pointer or an existing EXCL target still takes precedence.
+  if (Source.Type == Kind::Directory &&
+      Source.FinalComponent != Terminal::Ordinary) {
+    // XNU can finish a same-vnode rename on a case-sensitive filesystem
+    // before its filesystem rejects the source dot. No such property is
+    // supplied by exact catalogue keys, so do not generalize APFS's EINVAL.
+    if (Source.Directory == Target.Directory)
+      return unsupported(Result, diagnostic::RenameDotCaseSensitivity);
+    return returned(InvalidArgument, true);
   }
   if (Mode == RenameMode::Swap) {
     if (Target.Type == Kind::Missing)
@@ -883,7 +905,8 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
     if (Target.Type != Kind::File)
       return unsupported(Result, diagnostic::RenameSwapKind);
   }
-  const auto Parent = directoryNode(parentPath(Source.Path));
+  const auto Parent =
+      Source.File ? Source.File->Parent : Source.Directory->Parent;
   const auto TargetParent = directoryNode(parentPath(Target.Path));
   // Separate initial directories do not establish a shared mount, even when
   // stat devices match. Only mkdir descendants inherit their parent's domain.
@@ -904,15 +927,21 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
     if (const auto Identity = directoryIdentity(Directory->Path);
         Identity && !SameDevice(Identity->Device))
       return unsupported(Result, diagnostic::RenameMount);
+  for (const auto &Directory : {Source.Directory, Target.Directory})
+    if (Directory && Directory->Identity &&
+        !SameDevice(Directory->Identity->Device))
+      return unsupported(Result, diagnostic::RenameMount);
   for (const auto *Metadata :
-       {Source.File->metadata(),
+       {Source.File ? Source.File->metadata() : Source.Metadata,
         Target.File ? Target.File->metadata() : Target.Metadata})
     if (Metadata && !SameDevice(Metadata->Device))
       return unsupported(Result, diagnostic::RenameMount);
-  if (Target.Type == Kind::Directory)
-    return returned(IsDirectory, true);
   if (Source.Path == Target.Path)
     return returned(0);
+  if (Source.Type == Kind::Directory)
+    return renameDirectory(Source, Target, Parent, TargetParent, Result);
+  if (Target.Type == Kind::Directory)
+    return returned(IsDirectory, true);
   if (Mode == RenameMode::Swap &&
       !Options->SwapRenameDirectories.contains(Parent->initialAncestor()->Path))
     return unsupported(Result, diagnostic::RenameSwapSupport);
@@ -943,6 +972,8 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
     Target.File->Path.swap(TargetIdentity);
     Source.File->PathCharge = SourceCharge;
     Target.File->PathCharge = TargetCharge;
+    Source.File->Parent = TargetParent;
+    Target.File->Parent = Parent;
     *StorageUsed = Other + SourceCharge + TargetCharge;
     updateNamespaceMetadata(*Source.File, false);
     updateNamespaceMetadata(*Target.File, false);
@@ -975,8 +1006,148 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   // Reclaim below deducts Credit exactly once, after the lookup releases it.
   *StorageUsed = *StorageUsed - Source.File->PathCharge + Charge;
   Source.File->PathCharge = Charge;
+  Source.File->Parent = TargetParent;
   Parent->Changed = TargetParent->Changed = true;
   Target.File.reset();
+  reclaimUnlinked();
+  return returned(0);
+}
+
+llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::renameDirectory(Description &Source, Description &Target,
+                             const std::shared_ptr<DirectoryNode> &Parent,
+                             const std::shared_ptr<DirectoryNode> &TargetParent,
+                             ProcessResult &Result) {
+  if (Target.Type == Kind::File)
+    return returned(NotDirectory, true);
+  if (Target.Directory && !Target.Directory->Created)
+    return unsupported(Result, diagnostic::RenameKind);
+  auto Descendant = [&](const std::shared_ptr<DirectoryNode> &Directory) {
+    for (const auto *Node = Directory.get(); Node; Node = Node->Parent.get())
+      if (Node == Source.Directory.get())
+        return true;
+    return false;
+  };
+  if (Descendant(TargetParent))
+    return returned(InvalidArgument, true);
+  if (Target.Directory) {
+    const auto Prefix = Target.Path + '/';
+    const auto File = Nodes.lower_bound(Prefix);
+    const auto Directory = CreatedDirectories.lower_bound(Prefix);
+    if ((File != Nodes.end() &&
+         llvm::StringRef(File->first).starts_with(Prefix)) ||
+        (Directory != CreatedDirectories.end() &&
+         llvm::StringRef(Directory->first).starts_with(Prefix)) ||
+        hasInitialDirectoryChild(Target.Path))
+      return returned(DirectoryNotEmpty, true);
+  }
+  // Reclaim before transaction references are collected. A held orphan file
+  // or directory retains its original parent, including an empty target.
+  if (auto E = prepareMutation())
+    return std::move(E);
+  const uint64_t Credit = Target.Directory && Target.Directory.use_count() == 2
+                              ? Target.Directory->Path.size() + 1
+                              : 0;
+  struct DirectoryMove {
+    std::shared_ptr<DirectoryNode> Node;
+    std::string Path, Key;
+    bool Linked;
+  };
+  struct FileMove {
+    std::shared_ptr<Contents> Node;
+    std::string Path, Key;
+    bool Linked;
+  };
+  std::vector<DirectoryMove> Directories;
+  std::vector<FileMove> Files;
+  uint64_t OldCharge = 0, NewCharge = 0;
+  auto NewPath = [&](const std::string &Path) -> std::optional<std::string> {
+    if (Path != Source.Path &&
+        !llvm::StringRef(Path).starts_with(Source.Path + '/'))
+      return std::nullopt;
+    return Target.Path + Path.substr(Source.Path.size());
+  };
+  auto Directory = [&](const std::shared_ptr<DirectoryNode> &Node,
+                       bool Linked) -> const char * {
+    if (!Descendant(Node))
+      return nullptr;
+    auto Path = NewPath(Node->Path);
+    if (!Path || !Node->Created)
+      return diagnostic::NamespaceAlias;
+    if (Path->size() >= limits::Path)
+      return diagnostic::RenameLimit;
+    OldCharge += Node->Path.size() + 1;
+    NewCharge += Path->size() + 1;
+    auto Key = Linked ? *Path : std::string();
+    Directories.push_back({Node, std::move(*Path), std::move(Key), Linked});
+    return nullptr;
+  };
+  auto File = [&](const std::shared_ptr<Contents> &Node,
+                  bool Linked) -> const char * {
+    if (!Descendant(Node->Parent))
+      return nullptr;
+    auto Path = NewPath(Node->Path);
+    if (!Path)
+      return diagnostic::NamespaceAlias;
+    if (Path->size() >= limits::Path)
+      return diagnostic::RenameLimit;
+    OldCharge += Node->PathCharge;
+    NewCharge += Path->size() + 1;
+    auto Key = Linked ? *Path : std::string();
+    Files.push_back({Node, std::move(*Path), std::move(Key), Linked});
+    return nullptr;
+  };
+  for (const auto &[Path, Node] : CreatedDirectories)
+    if (auto Reason = Directory(Node, true))
+      return unsupported(Result, Reason);
+  for (const auto &Node : UnlinkedDirectories)
+    if (auto Reason = Directory(Node, false))
+      return unsupported(Result, Reason);
+  for (const auto &[Path, Node] : Nodes)
+    if (auto Reason = File(Node, true))
+      return unsupported(Result, Reason);
+  for (const auto &Node : Unlinked)
+    if (auto Reason = File(Node, false))
+      return unsupported(Result, Reason);
+  const uint64_t Other = *StorageUsed - OldCharge - Credit;
+  if (NewCharge > limits::Bytes - Other)
+    return unsupported(Result, diagnostic::RenameLimit);
+  if (Target.Directory)
+    UnlinkedDirectories.reserve(UnlinkedDirectories.size() + 1);
+  // All strings and vectors are allocated before effects. Destination keys
+  // are disjoint from the source subtree, and an existing target is empty.
+  if (Target.Directory) {
+    Target.Directory->Linked = false;
+    Target.Directory->Changed = true;
+    UnlinkedDirectories.push_back(Target.Directory);
+    CreatedDirectories.erase(Target.Path);
+  }
+  for (auto &Move : Directories) {
+    if (Move.Linked) {
+      auto Node = CreatedDirectories.extract(Move.Node->Path);
+      Node.key().swap(Move.Key);
+      CreatedDirectories.insert(std::move(Node));
+    }
+    Move.Node->Path.swap(Move.Path);
+  }
+  for (auto &Move : Files) {
+    if (Move.Linked) {
+      auto Node = Nodes.extract(Move.Node->Path);
+      Node.key().swap(Move.Key);
+      Nodes.insert(std::move(Node));
+    }
+    Move.Node->Path.swap(Move.Path);
+    Move.Node->PathCharge = Move.Node->Path.size() + 1;
+  }
+  Source.Directory->Parent = TargetParent;
+  Source.Directory->Changed = true;
+  Parent->Changed = TargetParent->Changed = true;
+  // The replaced target remains charged until its real final reference is
+  // released. Reclaim deducts Credit once, after lookup/plan references end.
+  *StorageUsed = *StorageUsed - OldCharge + NewCharge;
+  Directories.clear();
+  Files.clear();
+  Target.Directory.reset();
   reclaimUnlinked();
   return returned(0);
 }
@@ -1000,6 +1171,7 @@ DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
   auto Node = std::make_shared<Contents>();
   Node->Writable = true;
   Node->Path = File.Path;
+  Node->Parent = directoryNode(Parent);
   Node->PathCharge = Charge;
   if (Options->CreationPolicy) {
     const auto &Policy = *Options->CreationPolicy;
@@ -1408,7 +1580,9 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
       FD.CloseOnExec = A[2] & 1;
       return returned(0);
     case GetPath: {
-      const auto &Path = File.File ? File.File->Path : File.Path;
+      const auto &Path = File.File        ? File.File->Path
+                         : File.Directory ? File.Directory->Path
+                                          : File.Path;
       if (Path.empty())
         return unsupported(Result, diagnostic::FilePathIdentity);
       return copyout(

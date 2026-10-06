@@ -42,7 +42,8 @@ private:
     CreateDirectory,
     DeleteFile,
     DeleteDirectory,
-    RenameTarget
+    RenameTarget,
+    RenameDirectoryTarget
   };
   enum class Terminal { Ordinary, Dot, DotDot };
   enum class RenameMode { Replace, Exclusive, Swap };
@@ -76,6 +77,9 @@ private:
     bool Writable = false;
     /// Last linked name. All descriptions follow rename; unlink retains it.
     std::string Path;
+    /// Retain the parent object, including after unlink/name reuse. Moving an
+    /// ancestor also changes paths of its held orphan files and mappings.
+    std::shared_ptr<DirectoryNode> Parent;
     uint64_t PathCharge = 0;
     bool MetadataInvalidated = false;
     std::shared_ptr<const unsigned> Lease = std::make_shared<const unsigned>(0);
@@ -163,6 +167,11 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   rename(uint64_t SourcePath, uint32_t SourceDirectory, uint64_t TargetPath,
          uint32_t TargetDirectory, RenameMode Mode, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  renameDirectory(Description &Source, Description &Target,
+                  const std::shared_ptr<DirectoryNode> &Parent,
+                  const std::shared_ptr<DirectoryNode> &TargetParent,
+                  ProcessResult &Result);
   void updateNamespaceMetadata(Contents &Node, bool Removed);
   llvm::Expected<std::optional<ServiceResult>>
   create(Description &File, uint32_t Mode, ProcessResult &Result);

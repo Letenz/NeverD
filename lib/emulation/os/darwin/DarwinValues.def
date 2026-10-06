@@ -261,7 +261,12 @@ NEVERD_DARWIN_DIAGNOSTIC(RenameFlags, "unsupported Darwin rename flags")
 NEVERD_DARWIN_DIAGNOSTIC(
     RenameCaseSensitivity,
     "Darwin same-object exclusive rename requires filesystem case sensitivity")
-NEVERD_DARWIN_DIAGNOSTIC(RenameKind, "Darwin directory rename is unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(RenameDotCaseSensitivity,
+                         "Darwin same-object directory dot rename requires "
+                         "filesystem case sensitivity")
+NEVERD_DARWIN_DIAGNOSTIC(
+    RenameKind,
+    "Darwin rename of initial or removed directories is unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(RenameSwapKind,
                          "Darwin swap rename supports two regular files only")
 NEVERD_DARWIN_DIAGNOSTIC(

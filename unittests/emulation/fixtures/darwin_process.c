@@ -716,8 +716,270 @@ static int created_file_metadata(const char *path, int virtual_record) {
   return 37;
 }
 
-/* Original native/guest same- and cross-parent rename/swap comparison.
- */
+static unsigned directory_path(u64 fd, const char *parent, const char *tail) {
+  unsigned error;
+  char found[1024];
+  if (call(92, fd, 50, (u64)found, 0, 0, 0, &error) || error)
+    return 0;
+  unsigned i = 0, j = 0;
+  while (parent[i]) {
+    if (found[i] != parent[i])
+      return 0;
+    ++i;
+  }
+  if (i == 1 && parent[0] == '/' && tail[0] == '/')
+    i = 0;
+  do {
+    if (found[i + j] != tail[j])
+      return 0;
+  } while (tail[j++]);
+  return 1;
+}
+
+/* Original SDK-free native/guest directory subtree and retained-object test. */
+static int renamed_directory(const char *path) {
+  unsigned error;
+  int check = 80;
+#define DIRECTORY_RENAME_EXPECT(expression)                                    \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  char parent[1024], new_path[1024], bytes[3];
+  u64 input = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(92, input, 50, (u64)parent, 0, 0, 0, &error) == 0 && !error);
+  unsigned size = 0, slash = 0;
+  while (parent[size]) {
+    if (parent[size] == '/')
+      slash = size;
+    ++size;
+  }
+  parent[slash ? slash : 1] = 0;
+  u64 root = call(5, (u64)parent, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(475, root, (u64) "left", 0700, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(475, root, (u64) "right", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 left = call(463, root, (u64) "left", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  u64 right = call(463, root, (u64) "right", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(475, left, (u64) "source", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 source = call(463, left, (u64) "source", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  u64 duplicate = call(41, source, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(call(92, source, 2, 1, 0, 0, 0, &error) == 0 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(475, source, (u64) "child", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 child = call(463, source, (u64) "child", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  u64 file = call(463, child, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(call(4, file, (u64) "abc", 3, 0, 0, 0, &error) == 3 &&
+                          !error);
+  u64 file_duplicate = call(41, file, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  u64 independent = call(463, child, (u64) "data", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(call(199, file, 1, 0, 0, 0, 0, &error) == 1 &&
+                          !error);
+  unsigned char before[144] = {0}, after[144] = {0};
+  DIRECTORY_RENAME_EXPECT(
+      call(339, file, (u64)before, 0, 0, 0, 0, &error) == 0 && !error);
+  u64 mapping = call(197, 0, PAGE, 1, 2, file, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  u64 dead = call(463, source, (u64) "dead", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, source, (u64) "dead", 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(475, source, (u64) "gone", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 gone = call(463, source, (u64) "gone", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, source, (u64) "gone", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(475, right, (u64) "empty", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 target = call(463, right, (u64) "empty", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  u64 target_dead = call(463, target, (u64) "dead", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, target, (u64) "dead", 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(475, right, (u64) "busy", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 member = call(463, right, (u64) "busy/member", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(488, left, (u64) "missing", 999, (u64)-1, 0, 0, &error) == 2 &&
+      error);
+  DIRECTORY_RENAME_EXPECT(
+      call(488, left, (u64) "source", 999, (u64)-1, 0, 0, &error) == 14 &&
+      error);
+  DIRECTORY_RENAME_EXPECT(
+      call(488, left, (u64) "source/.", 999, (u64)-1, 0, 0, &error) == 14 &&
+      error);
+  DIRECTORY_RENAME_EXPECT(call(488, left, (u64) "source", child, (u64) "data",
+                               0, 0, &error) == 20 &&
+                          error);
+  DIRECTORY_RENAME_EXPECT(call(488, left, (u64) "source", right, (u64) "busy",
+                               0, 0, &error) == 66 &&
+                          error);
+  DIRECTORY_RENAME_EXPECT(call(488, left, (u64) "source/.", right,
+                               (u64) "empty", 4, 0, &error) == 17 &&
+                          error);
+  DIRECTORY_RENAME_EXPECT(call(488, left, (u64) "source", source,
+                               (u64) "inside", 0, 0, &error) == 22 &&
+                          error);
+  DIRECTORY_RENAME_EXPECT(call(488, left, (u64) "source", source, (u64) "child",
+                               4, 0, &error) == 17 &&
+                          error);
+  DIRECTORY_RENAME_EXPECT(
+      call(488, left, (u64) "source", right, (u64) ".", 0, 0, &error) == 22 &&
+      error);
+  DIRECTORY_RENAME_EXPECT(
+      call(488, 999, (u64)-1, 999, (u64)-1, 6, 0, &error) == 22 && error);
+  DIRECTORY_RENAME_EXPECT(call(13, child, 0, 0, 0, 0, 0, &error) == 0 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(call(488, left, (u64) "source", right,
+                               (u64) "moved///", 0x1234567800000010UL, 0,
+                               &error) == 0 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(directory_path(source, parent, "/right/moved"));
+  DIRECTORY_RENAME_EXPECT(directory_path(duplicate, parent, "/right/moved"));
+  DIRECTORY_RENAME_EXPECT(directory_path(child, parent, "/right/moved/child"));
+  DIRECTORY_RENAME_EXPECT(
+      directory_path(file, parent, "/right/moved/child/data"));
+  DIRECTORY_RENAME_EXPECT(
+      directory_path(file_duplicate, parent, "/right/moved/child/data"));
+  DIRECTORY_RENAME_EXPECT(
+      directory_path(independent, parent, "/right/moved/child/data"));
+  DIRECTORY_RENAME_EXPECT(directory_path(dead, parent, "/right/moved/dead"));
+  DIRECTORY_RENAME_EXPECT(directory_path(gone, parent, "/right/moved/gone"));
+  u64 cwd = call(463, (u64)-2, (u64) ".", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(directory_path(cwd, parent, "/right/moved/child"));
+  u64 up = call(463, source, (u64) "..", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(directory_path(up, parent, "/right"));
+  u64 removed_up = call(463, gone, (u64) "..", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(directory_path(removed_up, parent, "/right/moved"));
+  DIRECTORY_RENAME_EXPECT(
+      call(339, file, (u64)after, 0, 0, 0, 0, &error) == 0 && !error);
+  unsigned unchanged = 1;
+  for (unsigned i = 0; i != 124; ++i)
+    if (i < 32 || i >= 48)
+      unchanged &= before[i] == after[i];
+  DIRECTORY_RENAME_EXPECT(unchanged);
+  DIRECTORY_RENAME_EXPECT(call(92, source, 1, 0, 0, 0, 0, &error) == 1 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(call(92, duplicate, 1, 0, 0, 0, 0, &error) == 0 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(199, file_duplicate, 0, 1, 0, 0, 0, &error) == 1 && !error);
+  DIRECTORY_RENAME_EXPECT(call(199, independent, 0, 1, 0, 0, 0, &error) == 0 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(((volatile char *)mapping)[0] == 'a' &&
+                          ((volatile char *)mapping)[2] == 'c');
+  DIRECTORY_RENAME_EXPECT(call(465, right, (u64) "moved", right, (u64) "empty",
+                               0, 0, &error) == 0 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(directory_path(dead, parent, "/right/empty/dead"));
+  DIRECTORY_RENAME_EXPECT(
+      directory_path(target_dead, parent, "/right/empty/dead"));
+  DIRECTORY_RENAME_EXPECT(
+      call(463, target, (u64) "missing", 0x202, 0600, 0, 0, &error) == 2 &&
+      error);
+  u64 old_dot = call(463, target, (u64) ".", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(call(13, target, 0, 0, 0, 0, 0, &error) == 0 &&
+                          !error);
+  // Use full buffers for the absolute rename; no pointer-table rebases.
+  char old_path[1024];
+  DIRECTORY_RENAME_EXPECT(
+      call(92, source, 50, (u64)old_path, 0, 0, 0, &error) == 0 && !error);
+  unsigned n = 0;
+  while (parent[n]) {
+    new_path[n] = parent[n];
+    ++n;
+  }
+  if (n == 1 && parent[0] == '/')
+    n = 0;
+  const char final_tail[] = "/right/final";
+  unsigned j = 0;
+  do {
+    new_path[n + j] = final_tail[j];
+  } while (final_tail[j++]);
+  DIRECTORY_RENAME_EXPECT(
+      call(128, (u64)old_path, (u64)new_path, 0, 0, 0, 0, &error) == 0 &&
+      !error);
+  DIRECTORY_RENAME_EXPECT(directory_path(source, parent, "/right/final"));
+  DIRECTORY_RENAME_EXPECT(
+      directory_path(file, parent, "/right/final/child/data"));
+  DIRECTORY_RENAME_EXPECT(directory_path(dead, parent, "/right/final/dead"));
+  DIRECTORY_RENAME_EXPECT(directory_path(gone, parent, "/right/final/gone"));
+  DIRECTORY_RENAME_EXPECT(directory_path(target, parent, "/right/empty"));
+  DIRECTORY_RENAME_EXPECT(directory_path(old_dot, parent, "/right/empty"));
+  DIRECTORY_RENAME_EXPECT(
+      directory_path(target_dead, parent, "/right/empty/dead"));
+  u64 old_cwd = call(463, (u64)-2, (u64) ".", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(directory_path(old_cwd, parent, "/right/empty"));
+  u64 old_up = call(463, target, (u64) "..", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(directory_path(old_up, parent, "/right"));
+  u64 reopened = call(463, source, (u64) "child/data", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(153, reopened, (u64)bytes, 3, 0, 0, 0, &error) == 3 && !error);
+  DIRECTORY_RENAME_EXPECT(bytes[0] == 'a' && bytes[2] == 'c');
+  u64 fresh = call(463, source, (u64) "fresh", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(call(4, fresh, (u64) "x", 1, 0, 0, 0, &error) == 1 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(directory_path(fresh, parent, "/right/final/fresh"));
+  DIRECTORY_RENAME_EXPECT(call(73, mapping, PAGE, 0, 0, 0, 0, &error) == 0 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, child, (u64) "data", 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, source, (u64) "child", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, source, (u64) "fresh", 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, right, (u64) "final", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, right, (u64) "busy/member", 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, right, (u64) "busy", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, root, (u64) "left", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, root, (u64) "right", 0x80, 0, 0, 0, &error) == 0 && !error);
+  const u64 fds[] = {
+      input,   root,        left,           right,       source, duplicate,
+      child,   file,        file_duplicate, independent, dead,   gone,
+      target,  target_dead, member,         cwd,         up,     removed_up,
+      old_dot, old_cwd,     old_up,         reopened,    fresh};
+  for (unsigned i = 0; i != sizeof(fds) / sizeof(fds[0]); ++i)
+    DIRECTORY_RENAME_EXPECT(call(6, fds[i], 0, 0, 0, 0, 0, &error) == 0 &&
+                            !error);
+  DIRECTORY_RENAME_EXPECT(call(4, 1, (u64) "d", 1, 0, 0, 0, &error) == 1 &&
+                          !error);
+#undef DIRECTORY_RENAME_EXPECT
+  return 37;
+}
+
+/* Original native/guest same- and cross-parent rename/swap comparison. */
 static int renamed_file(const char *path) {
   unsigned error;
   int check = 80;
@@ -2163,6 +2425,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
         .value;
   if (equal(argv[1], "renamed-file"))
     return argc < 3 ? 79 : renamed_file(argv[2]);
+  if (equal(argv[1], "renamed-directory"))
+    return argc < 3 ? 79 : renamed_directory(argv[2]);
   if (equal(argv[1], "created-file-metadata") ||
       equal(argv[1], "virtual-created-metadata"))
     return argc < 3 ? 79

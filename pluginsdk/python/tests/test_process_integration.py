@@ -544,6 +544,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("created-file", b"c"),
                                            ("created-file-metadata", b"q"),
                                            ("renamed-file", b"r"),
+                                           ("renamed-directory", b"d"),
                                            ("vectored-io", b"v!"),
                                            ("file-access", b"a"),
                                            ("directory-mutations", b"m"),
@@ -617,17 +618,17 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                           "type": 8, "next_offset": 99, "seek_offset": 0}]}}],
                                              "working_directory": "/empty",
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
-                        if mode.startswith("writable-files") or mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "created-file-metadata", "virtual-created-metadata", "renamed-file", "vectored-io"):
+                        if mode.startswith("writable-files") or mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "created-file-metadata", "virtual-created-metadata", "renamed-file", "renamed-directory", "vectored-io"):
                             writable_options = json.loads(file_options)
                             writable_file = writable_options["darwin_files"]["files"][0]
                             writable_file["writable"] = True
                             writable_file["metadata"]["flags"] = 0
-                            if mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "created-file-metadata", "virtual-created-metadata", "renamed-file"):
+                            if mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "created-file-metadata", "virtual-created-metadata", "renamed-file", "renamed-directory"):
                                 writable_file["metadata"]["link_count"] = 1
                                 writable_file["mutation_policy"] = {
                                     "allocation_unit": 4096,
                                     "mutation_time": {"seconds": -7, "nanoseconds": 123456789}}
-                            if mode in ("unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "created-file-metadata", "virtual-created-metadata", "renamed-file"):
+                            if mode in ("unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "created-file-metadata", "virtual-created-metadata", "renamed-file", "renamed-directory"):
                                 next(d for d in writable_options["darwin_files"]["directories"]
                                      if d["path"] == "/")["mutable"] = True
                             if mode == "initial-directory-removal":
@@ -636,7 +637,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                             if mode == "renamed-file":
                                 next(d for d in writable_options["darwin_files"]["directories"]
                                      if d["path"] == "/")["swap_rename"] = True
-                            if mode in ("created-file-metadata", "virtual-created-metadata", "renamed-file"):
+                            if mode in ("created-file-metadata", "virtual-created-metadata", "renamed-file", "renamed-directory"):
                                 files = writable_options["darwin_files"]
                                 files["umask"] = 0o27
                                 files["creation_policy"] = {

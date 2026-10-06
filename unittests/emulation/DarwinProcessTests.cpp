@@ -226,6 +226,24 @@ TEST_P(DarwinProcess,
   EXPECT_TRUE(Result->StandardError.empty());
 }
 
+TEST_P(DarwinProcess,
+       DirectoryRenamePreservesSubtreesAndRetainedObjectParents) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->Metadata["/"] = darwin_test::creationParentMetadata();
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.DarwinFiles->InitialUmask = 0027;
+  Options.DarwinFiles->CreationPolicy = darwin_test::CreationPolicy;
+  Options.Arguments[2] = "/data";
+  auto Result = run("renamed-directory");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "d");
+  EXPECT_TRUE(Result->StandardError.empty());
+}
+
 TEST_P(DarwinProcess, CreationMetadataUsesExplicitIdentityUmaskAndParentGroup) {
   Options.DarwinFiles.emplace();
   Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',

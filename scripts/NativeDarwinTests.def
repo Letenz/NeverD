@@ -72,4 +72,6 @@ NEVERD_NATIVE_DARWIN_CASE(
     CreationMetadataUsesExplicitIdentityUmaskAndParentGroup)
 NEVERD_NATIVE_DARWIN_CASE(
     RenamePreservesReplacementIdentityPathsAndMappedLifetime)
+NEVERD_NATIVE_DARWIN_CASE(
+    DirectoryRenamePreservesSubtreesAndRetainedObjectParents)
 #endif
