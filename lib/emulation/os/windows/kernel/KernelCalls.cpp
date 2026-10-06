@@ -36,6 +36,12 @@ llvm::Error modelError(const llvm::Twine &Message) {
 }
 } // namespace
 
+std::optional<unsigned> KernelModel::argumentCount(const std::string &Name) {
+  if (const auto *API = lookupKernelAPI(Name))
+    return API->Arity;
+  return std::nullopt;
+}
+
 llvm::Expected<uint64_t> KernelModel::call(
     const std::string &Name, llvm::ArrayRef<uint64_t> A,
     llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument) {

@@ -239,12 +239,6 @@ llvm::Error KernelModel::finishEntry() {
   return llvm::Error::success();
 }
 
-std::optional<unsigned> KernelModel::argumentCount(const std::string &Name) {
-  if (const auto *API = lookupKernelAPI(Name))
-    return API->Arity;
-  return std::nullopt;
-}
-
 llvm::Expected<std::string> KernelModel::readObjectName(uint64_t Address) {
   if (auto E = runtime::checkBufferRange(Address, 16))
     return E;
