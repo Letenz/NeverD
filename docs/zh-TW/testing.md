@@ -1433,3 +1433,5 @@ block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符�
 `NativeFloatingReturnProof.HFAResultFieldsNeedTheExactCompleteDefinedCall` 涵蓋九個欄位選擇及十七種呼叫、載體、寬度、位移或 SSA 修改拒絕案例。`HFAFieldExtractionNeedsADominatingCall` 拒絕來自兄弟路徑的產生者。`NativeSourceHints.HFAFieldTypeRequiresCurrentCallAndFrameProofForPublication` 提升五條指令的 ARM64 呼叫者，依推斷的純量結果重新提升並檢查原始碼發佈門檻；錯誤提供者或缺少 LR/SP 恢復均被拒絕。這驗證原始碼型別與投影行為，並非原始機器碼主體執行。
 
 CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](driver-scheduling.md)。
+
+`SwiftOnceSources.FoldedObjCGetterTailsExecuteOnceAndRetainsAtO0AndO2` 折疊實際 ARM64/x64 返回尾部，涵蓋合併或分離的 retain 呼叫、獨立或內聯謂詞，再以執行時替身於 O0/O2 執行輸出 C。檢查結果位元、一次初始化、呼叫順序及快取值變化。`FoldedObjCGetterTailsRevalidateCurrentStorageAndCalls` 在保留舊計畫時仍拒絕寬度、順序、內建操作、儲存、結果、呼叫及目前匯入修改。這是受控原始碼與執行時替身檢查，不是原始 WMF 機器碼或原生 Swift 執行時執行。

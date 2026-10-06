@@ -1172,10 +1172,9 @@ objcGetterThunkContract(const HighFunc &Original, const BinaryImage &Image) {
       !F.Body.empty() && (F.Body.front().Kind == StmtKind::If ||
                           F.Body.front().Kind == StmtKind::IfElse);
   const size_t Offset = InlinedPredicate ? 0 : 1;
-  const bool SeparateRetain = F.Body.size() == Offset + 6;
   if (!Method || F.Params.size() != 3 || !F.ReturnType ||
-      F.ReturnType->Size != 8 ||
-      (F.Body.size() != Offset + 5 && !SeparateRetain))
+      F.ReturnType->Size != 8 || F.Body.size() < Offset + 4 ||
+      F.Body.size() > Offset + 6)
     return std::nullopt;
   const auto Parameters = sourceABIParameters(*Method->TypeHint);
   if (Parameters.size() != 2 || !Method->TypeHint->ReturnType ||
@@ -1242,12 +1241,27 @@ objcGetterThunkContract(const HighFunc &Original, const BinaryImage &Image) {
   };
 
   const auto *PredicateAssignment = InlinedPredicate ? nullptr : Assignment(0);
+  // Copied return tails may fold the storage load into the retain operand.
+  // Authenticate that load at its current use, with the same storage and
+  // retain obligations as a separate assignment.
   const auto *StorageAssignment = Assignment(Offset + 2);
-  const auto *RetainAssignment = Assignment(Offset + 3);
-  const auto *ResultAssignment = Assignment(Offset + (SeparateRetain ? 4 : 3));
+  if (StorageAssignment) {
+    const auto Value = Plain(StorageAssignment->Val);
+    if (!Value)
+      return std::nullopt;
+    if (Value->Kind != ExprKind::Load)
+      StorageAssignment = nullptr;
+  }
+  const size_t RetainIndex = Offset + 2 + bool(StorageAssignment);
+  const bool SeparateRetain = F.Body.size() == RetainIndex + 3;
+  if (F.Body.size() != RetainIndex + 2 && !SeparateRetain)
+    return std::nullopt;
+  const auto *RetainAssignment = Assignment(RetainIndex);
+  const auto *ResultAssignment =
+      Assignment(RetainIndex + (SeparateRetain ? 1 : 0));
   const auto &Branch = F.Body[Offset];
   const auto &Label = F.Body[Offset + 1];
-  const auto &Return = F.Body[Offset + (SeparateRetain ? 5 : 4)];
+  const auto &Return = F.Body.back();
   const size_t OnceIndex = Branch.Body.size() == 3 ? 1 : 0;
   const bool BranchGoto = Branch.ElseBody.empty() &&
                           Branch.Body.size() == OnceIndex + 2 &&
@@ -1287,8 +1301,8 @@ objcGetterThunkContract(const HighFunc &Original, const BinaryImage &Image) {
            Label.MemoryOrdering == NdMemoryOrdering::None &&
            Label.MemoryAddressSpace == NdMemoryAddressSpace::Default;
   };
-  if ((!InlinedPredicate && !PredicateAssignment) || !StorageAssignment ||
-      !RetainAssignment || !ResultAssignment ||
+  if ((!InlinedPredicate && !PredicateAssignment) || !RetainAssignment ||
+      !ResultAssignment ||
       (Branch.Kind != StmtKind::If &&
        !(SharedReturn && Branch.Kind == StmtKind::IfElse)) ||
       !Branch.Cond || (!BranchGoto && !SharedReturn && !InlinedBranchCall) ||
@@ -1298,7 +1312,16 @@ objcGetterThunkContract(const HighFunc &Original, const BinaryImage &Image) {
       !SameLocal(Return.RetVal, ResultAssignment->Dst))
     return std::nullopt;
 
-  const auto Storage = LoadAddress(StorageAssignment->Val);
+  const auto Retain = Plain(RetainAssignment->Val);
+  if (!Retain || Retain->Kind != ExprKind::Call || Retain->IsIndirectCall ||
+      Retain->Operands.size() != 1 || !Retain->SourceCallHint ||
+      Retain->IntrinsicId != Intrinsic::None ||
+      !Retain->IntrinsicOutputs.empty() ||
+      Retain->MemoryOrdering != NdMemoryOrdering::None ||
+      Retain->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return std::nullopt;
+  const auto Storage = LoadAddress(
+      StorageAssignment ? StorageAssignment->Val : Retain->Operands.front());
   if (!Storage)
     return std::nullopt;
   auto Condition = Plain(Branch.Cond);
@@ -1341,17 +1364,15 @@ objcGetterThunkContract(const HighFunc &Original, const BinaryImage &Image) {
       !Context || *Context != 2 || !Image.isCodeAddress(*Initializer))
     return std::nullopt;
 
-  const auto Retain = Plain(RetainAssignment->Val);
-  if (!Retain || Retain->Kind != ExprKind::Call || Retain->IsIndirectCall ||
-      Retain->Operands.size() != 1 || !Retain->SourceCallHint ||
-      Retain->SourceCallHint->CallKind !=
+  if (Retain->SourceCallHint->CallKind !=
           (SeparateRetain ? SourceCallTypeHint::Kind::SwiftRuntimeCall
                           : SourceCallTypeHint::Kind::ObjCRuntimeCall) ||
       Retain->SourceCallHint->TargetName !=
           (SeparateRetain ? "swift_retain"
                           : "objc_retainAutoreleaseReturnValue") ||
       (!SeparateRetain && Retain->SourceCallHint->ReturnedArgument != 0) ||
-      !SameLocal(Retain->Operands[0], StorageAssignment->Dst))
+      (StorageAssignment &&
+       !SameLocal(Retain->Operands[0], StorageAssignment->Dst)))
     return std::nullopt;
   const auto ExpectedRetain =
       SeparateRetain

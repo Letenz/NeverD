@@ -1360,3 +1360,5 @@ Darwin 仿射桥接的权威实现也支持 `CGAffineTransformInvert`：x0 承�
 共享原生浮点结果证明也能识别从当前逻辑 C HFA 调用结果中提取的完整八字节 double 字段，结果记录包含二至四个 double。完整布局、浮点载体、调用发生位置、定义宽度和支配关系必须一致。这只提供标量类型候选，不定义寄存器高位，不授予原生输出存储效果或发布权限；仍须独立认证当前调用、保留帧状态、重新提升并闭合依赖。
 
 CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-scheduling.md)。
+
+Swift once Objective-C getter 证明允许存储读取独立赋值，或在返回尾部折叠后直接作为已认证 retain 的操作数。两种形式都要求相同且精确的存储、谓词和初始化器身份、当前运行时提供者与 ABI、返回值以及上下文独立性。合并的 Objective-C retain/autorelease，或分离的 Swift retain 与 Objective-C autorelease，仍保留为显式效果。投影上下文前，提前返回与后续尾部必须一致；表达式折叠不豁免回调正文或依赖闭包检查。

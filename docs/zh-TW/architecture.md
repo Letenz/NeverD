@@ -1298,3 +1298,5 @@ Darwin 仿射橋接的權威實作也支援 `CGAffineTransformInvert`：x0 承�
 共用原生浮點結果證明也能辨識從目前邏輯 C HFA 呼叫結果中擷取的完整八位元組 double 欄位，結果記錄包含二至四個 double。完整配置、浮點載體、呼叫發生位置、定義寬度和支配關係必須一致。這只提供純量型別候選，不定義暫存器高位，不授予原生輸出儲存效果或發佈權限；仍須獨立認證目前呼叫、保留框架狀態、重新提升並閉合相依關係。
 
 CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](driver-scheduling.md)。
+
+Swift once Objective-C getter 證明允許儲存讀取獨立賦值，或在返回尾部折疊後直接作為已認證 retain 的運算元。兩種形式都要求相同且精確的儲存、謂詞與初始化器身分、目前執行時提供者與 ABI、返回值及上下文獨立性。合併的 Objective-C retain/autorelease，或分離的 Swift retain 與 Objective-C autorelease，仍保留為明確效果。投影上下文前，提前返回與後續尾部必須一致；運算式折疊不豁免回呼本文或相依閉包檢查。

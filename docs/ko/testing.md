@@ -1477,3 +1477,5 @@ block과 복사본 게시 테스트는 독립된 두 48바이트 범위, 기술�
 `NativeFloatingReturnProof.HFAResultFieldsNeedTheExactCompleteDefinedCall`은 아홉 필드 선택과 호출·캐리어·너비·오프셋·SSA 변경에 대한 열일곱 거부 사례를 다룬다. `HFAFieldExtractionNeedsADominatingCall`은 형제 경로의 생성자를 거부한다. `NativeSourceHints.HFAFieldTypeRequiresCurrentCallAndFrameProofForPublication`은 다섯 명령의 ARM64 호출자를 리프팅하고 추론된 스칼라 결과를 재리프팅하여 게시 조건을 확인한다. 잘못된 제공자나 LR/SP 복원 누락은 거부된다. 소스 타입과 투영 검증이며 원래 기계어 본문 실행은 아니다.
 
 CPU0 명시적 선점, 가상 시계 의미와 현재 한계는 [드라이버 스케줄링](driver-scheduling.md)을 참조하세요.
+
+`SwiftOnceSources.FoldedObjCGetterTailsExecuteOnceAndRetainsAtO0AndO2` 는 실제 ARM64/x64 반환 꼬리를 접고 결합 또는 분리된 retain 호출과 독립 또는 인라인 조건값을 다루며, 출력 C를 런타임 스텁으로 O0/O2에서 실행한다. 결과 비트, 한 번의 초기화, 호출 순서와 캐시값 변경을 검사한다. `FoldedObjCGetterTailsRevalidateCurrentStorageAndCalls`는 저장된 계획이 있어도 너비, 순서, 내장 연산, 저장소, 결과, 호출과 현재 가져오기 변경을 거부한다. 이는 통제된 소스와 스텁 검사이며 원래 WMF 기계어나 네이티브 Swift 런타임 실행은 아니다.

@@ -3,6 +3,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/ir/high/MedToHigh.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 
 #include "llvm/Support/FileSystem.h"
@@ -4155,6 +4156,163 @@ TEST(SwiftOnceSources, EarlyReturnsKeepExactObjCOnceThunkProofs) {
       }
     }
   }
+}
+
+bool foldObjCGetterReturnTails(HighFunc &Thunk, bool SeparateRetain,
+                               bool InlinedPredicate) {
+  auto Guard = Thunk.Body[1];
+  const auto Invoke = Guard.Body[SeparateRetain ? 1 : 0];
+  Guard.Cond = std::make_shared<HighExpr>(*Guard.Cond);
+  Guard.Cond->Op = NdOp::INT_EQUAL;
+  Guard.Body.assign(Thunk.Body.begin() + 3, Thunk.Body.end());
+  Thunk.Body[1] = Guard;
+  Thunk.Body.insert(Thunk.Body.begin() + 2, Invoke);
+  if (InlinedPredicate) {
+    Guard.Cond->Operands[0]->Operands[0] = Thunk.Body[0].Val;
+    Thunk.Body.erase(Thunk.Body.begin());
+  }
+  return foldTempsInReturnTails(Thunk.Body);
+}
+
+TEST(SwiftOnceSources, FoldedObjCGetterTailsExecuteOnceAndRetainsAtO0AndO2) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (bool SeparateRetain : {false, true})
+      for (bool InlinedPredicate : {false, true}) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(SeparateRetain);
+        SCOPED_TRACE(InlinedPredicate);
+        ObjCThunkFixture F(Architecture, SeparateRetain);
+        auto &Thunk = F.Pipeline.HighFuncs[0];
+        ASSERT_TRUE(
+            foldObjCGetterReturnTails(Thunk, SeparateRetain, InlinedPredicate));
+        // The current structurer folds both copies, including their loads.
+        unsigned Loads = 0;
+        walkStmts(Thunk.Body, [&](const HighStmt &S) {
+          if (S.Kind == StmtKind::Assign && S.Val &&
+              S.Val->Kind == ExprKind::Load)
+            ++Loads;
+        });
+        EXPECT_EQ(Loads, InlinedPredicate ? 0U : 1U);
+        const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+        ASSERT_EQ(Plan.ObjCThunks.count(Thunk.Entry), 1U);
+        ASSERT_EQ(Plan.CallbackHints.count(F.InitializerAddress), 1U);
+        const auto Functions = F.functions();
+        auto Bound =
+            bindSwiftOnceSourceReferences(Thunk, F.Image, Plan, Functions);
+        EXPECT_EQ(Bound.Dependencies, std::set<va_t>{F.InitializerAddress});
+        ASSERT_TRUE(finalizeSwiftOnceObjCThunkProjection(Bound.Function, Plan));
+        ASSERT_EQ(Bound.Function.Params.size(), 2U);
+        auto Projection = bindObjCSourceReferences(Bound.Function, F.Image,
+                                                   nullptr, &Functions);
+        ASSERT_TRUE(Projection.Limitation.empty()) << Projection.Limitation;
+        Projection.Function.Name = "folded_once_getter";
+        const auto Initializer = bindSwiftOnceSourceReferences(
+            F.Pipeline.HighFuncs[1], F.Image, Plan, Functions);
+        const auto Callback =
+            bindObjCSourceReferences(Initializer.Function, F.Image);
+        ASSERT_TRUE(Callback.Limitation.empty()) << Callback.Limitation;
+        CEmitterOptions Options;
+        Options.TheArch = F.Image.Arch;
+        Options.Format = F.Image.Format;
+        Options.Image = &F.Image;
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        HighCEmitter Emitter;
+        Emitter.prepareImageFunctionNames(F.Image);
+        ASSERT_TRUE(Emitter.emit({Callback.Function, Projection.Function}, Out,
+                                 Options));
+        Source += R"C(
+#include <stdlib.h>
+static int64_t predicate;
+static uintptr_t object;
+static unsigned once_calls, initializations, retains, autoreleases;
+uintptr_t neverd_local_storage_2000_address(void) { return (uintptr_t)&predicate; }
+uintptr_t neverd_local_storage_2010_address(void) { return (uintptr_t)&object; }
+void swift_once(void *p, void (*callback)(void *), void *context) {
+  if (p != &predicate || context || predicate == -1) abort();
+  ++once_calls; ++initializations; predicate = -1; callback(context);
+}
+void *objc_retainAutoreleaseReturnValue(void *p) {
+  if ((uintptr_t)p != object) abort();
+  ++retains; ++autoreleases; return p;
+}
+void *swift_retain(void *p) {
+  if ((uintptr_t)p != object || autoreleases >= retains + 1) abort();
+  ++retains; return p;
+}
+void *objc_autoreleaseReturnValue(void *p) {
+  if ((uintptr_t)p != object || retains != autoreleases + 1) abort();
+  ++autoreleases; return p;
+}
+int main(void) {
+  const uintptr_t values[] = {0, 7, UINT64_MAX, UINT64_C(0x123456789ABCDEF0)};
+  for (unsigned i = 0; i < 4; ++i) {
+    object = values[i]; predicate = 0;
+    once_calls = initializations = retains = autoreleases = 0;
+    if ((uintptr_t)folded_once_getter(0, 0) != object || once_calls != 1 ||
+        initializations != 1 || retains != 1 || autoreleases != 1) return 1;
+    object = values[(i + 1) % 4];
+    if ((uintptr_t)folded_once_getter(0, 0) != object || once_calls != 1 ||
+        initializations != 1 || retains != 2 || autoreleases != 2) return 2;
+  }
+  return 0;
+}
+)C";
+        executeOnceSource(Source);
+      }
+}
+
+TEST(SwiftOnceSources, FoldedObjCGetterTailsRevalidateCurrentStorageAndCalls) {
+  for (bool SeparateRetain : {false, true})
+    for (unsigned Mutation = 0; Mutation < 14; ++Mutation) {
+      SCOPED_TRACE(SeparateRetain);
+      SCOPED_TRACE(Mutation);
+      ObjCThunkFixture F(Arch::AArch64, SeparateRetain);
+      auto &Thunk = F.Pipeline.HighFuncs[0];
+      ASSERT_TRUE(foldObjCGetterReturnTails(Thunk, SeparateRetain, true));
+      const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+      ASSERT_EQ(Plan.ObjCThunks.count(Thunk.Entry), 1U);
+      auto &Retain = Thunk.Body[3].Val;
+      auto Load = Retain->Operands.front();
+      if (Mutation == 0)
+        Load->Type = NdType::makeInt(4);
+      if (Mutation == 1)
+        Load->MemoryOrdering = NdMemoryOrdering::Acquire;
+      if (Mutation == 2)
+        Load->IntrinsicOutputs.push_back(Thunk.Body.back().RetVal->Var);
+      if (Mutation == 3)
+        Load->Operands[0] = HighExpr::makeConst(F.PredicateAddress, 8);
+      if (Mutation == 4)
+        Thunk.Body.back().RetVal = HighExpr::makeConst(0, 8);
+      if (Mutation == 5)
+        Thunk.Body.insert(Thunk.Body.begin() + 2, Thunk.Body[1]);
+      if (Mutation == 6)
+        F.Image.DyldBindSlots[F.RetainSlot].Module = "/tmp/forged.dylib";
+      if (Mutation == 7)
+        F.Image.DyldBindSlots[F.RetainSlot].WeakImport = true;
+      if (Mutation == 8)
+        F.Image.Symbols.back().Name = "forged_thunk";
+      if (Mutation == 9)
+        Retain->MemoryOrdering = NdMemoryOrdering::Acquire;
+      if (Mutation == 10)
+        Retain->IsIndirectCall = true;
+      if (Mutation == 11)
+        Retain->Operands.push_back(HighExpr::makeConst(0, 8));
+      if (Mutation == 12)
+        Load->Operands.clear();
+      if (Mutation == 13) {
+        auto Cast = std::make_shared<HighExpr>();
+        Cast->Kind = ExprKind::Cast;
+        Cast->Operands = {nullptr};
+        Retain->Operands[0] = Cast;
+      }
+      const auto Bound =
+          bindSwiftOnceSourceReferences(Thunk, F.Image, Plan, F.functions());
+      EXPECT_TRUE(Bound.SwiftOnceObjCThunks.empty());
+      EXPECT_FALSE(Bound.Function.SourceTypeHint);
+      EXPECT_FALSE(
+          swift_once_source_detail::objcGetterThunkContract(Thunk, F.Image));
+    }
 }
 
 TEST(SwiftOnceSources, EarlyStringGetterReturnsKeepOnlyInertOnceAnchors) {
