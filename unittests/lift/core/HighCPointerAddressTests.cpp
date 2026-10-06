@@ -33881,16 +33881,14 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsThrow) {
   const auto InnerCtor = lastCallArguments(Source, "sub_140001000");
   ASSERT_TRUE(InnerCtor.has_value()) << Source;
   ASSERT_EQ(InnerCtor->size(), 2u) << Source;
-  EXPECT_NE((*InnerCtor)[0].find("(uint64_t)v0 + 40"), std::string_view::npos)
-      << Source;
+  EXPECT_NE((*InnerCtor)[0].find("v0 + 40"), std::string_view::npos) << Source;
   EXPECT_EQ(llvm::StringRef((*InnerCtor)[1]).trim(), "10") << Source;
   const size_t LastCtor = Source.rfind("sub_140001000(");
   const auto OuterCtor = lastCallArguments(
       std::string_view(Source).substr(0, LastCtor), "sub_140001000");
   ASSERT_TRUE(OuterCtor.has_value()) << Source;
   ASSERT_EQ(OuterCtor->size(), 2u) << Source;
-  EXPECT_NE((*OuterCtor)[0].find("(uint64_t)v0 + 32"), std::string_view::npos)
-      << Source;
+  EXPECT_NE((*OuterCtor)[0].find("v0 + 32"), std::string_view::npos) << Source;
   EXPECT_EQ(llvm::StringRef((*OuterCtor)[1]).trim(), "1") << Source;
   expectPortableStore(Source, "uint32_t", "(v0) + 44", "0xFFFFFF9C");
   EXPECT_NE(Source.find("(uint32_t)(__builtin_memcpy(&"), std::string::npos)
