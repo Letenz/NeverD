@@ -305,10 +305,13 @@ static FiniteValues enumerateFiniteValuesImpl(
     uint32_t Limit, SolverOptions Settings, uint64_t MaxQueries,
     uint64_t MaxSymbolicNodes, uint64_t &Queries, FiniteValueObserver Observe,
     FiniteDomainEncoding *Encoding) {
-  if (!Predicate || Ctx.width(Predicate) != 1 || !Limit)
+  const auto Valid = [&](SymRef Value) {
+    return Value && Value.index() < Ctx.numNodes() && Ctx.width(Value);
+  };
+  if (!Valid(Predicate) || Ctx.width(Predicate) != 1 || !Limit)
     return {FiniteValueStatus::Invalid, {}};
   for (SymRef Value : Values)
-    if (!Value || !Ctx.width(Value) || Ctx.width(Value) > 64)
+    if (!Valid(Value) || Ctx.width(Value) > 64)
       return {FiniteValueStatus::Invalid, {}};
   if (Ctx.isConstZero(Predicate))
     return {FiniteValueStatus::Complete, {}};

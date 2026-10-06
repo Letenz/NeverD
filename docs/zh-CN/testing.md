@@ -1439,4 +1439,6 @@ MainActor 测试数据检查完整的固定元数据与静态表流程，拒绝�
 
 `ObjCCallHints.SwiftPublishedAccessorsKeepOpaqueValueAndAllKeyPaths` 在 ARM64/x86-64 和两种规范 Combine 提供方上检查两个访问器，每个组合拒绝九项 ABI 变异和八项导入身份变异。独立 SDK 验证在 ARM64 主机上以 O0/O2 执行两种源码架构配置生成的 C，在 128 次访问器调用中比较全部 24 个载荷字节、输入输出保护区和两个对象身份。八种交叉编译配置覆盖两种架构的 macOS 与 Mac Catalyst。运行时检查保留写入器消费的引用，不授予生产代码借用或所有权捷径。
 
+`ObjCCallHints.SwiftMainActorSharedKeepsObjectAndMetatypeContext` 在 ARM64/x86-64 上检查完整结果与 swiftself 载体，每种架构拒绝十项 ABI 变异和十项导入身份变异。独立 SDK 验证在 ARM64 主机上以 O0/O2 执行两种源码架构配置的原样生成 C：128 次调用保持单例与元类型身份，并平衡引用所有权。八种交叉编译配置覆盖两种架构的 macOS 与 Mac Catalyst；x86-64 原生执行仍是独立覆盖项。
+
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` 检查根层已赋值与未决变量混合、非决策根变量、副本再次复制、源对象销毁、后续变量增长、两种默认极性、预算中断与恢复、冲突及重启。完整模型与全部搜索计数必须与全新编码一致。

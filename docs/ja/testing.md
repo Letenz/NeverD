@@ -1531,4 +1531,6 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 
 `ObjCCallHints.SwiftPublishedAccessorsKeepOpaqueValueAndAllKeyPaths` は ARM64/x86-64 と両方の正規 Combine 提供元で二つのアクセサーを検証し、各組合せで九つの ABI 変異と八つのインポート識別変異を拒否します。独立 SDK 検証では ARM64 ホスト上で両ソース構成の生成 C を O0/O2 で実行し、128 回の呼出しで 24 バイト全部、入出力ガード、二つの owner 識別を比較します。八つのクロスコンパイル構成が macOS/Mac Catalyst の両アーキテクチャーを検査します。ランタイム検証は setter が消費する参照を保持し、製品コードに借用や所有権の省略を認めません。
 
+`ObjCCallHints.SwiftMainActorSharedKeepsObjectAndMetatypeContext` は ARM64/x86-64 の完全な戻り値と swiftself のキャリアを検証し、各アーキテクチャで ABI の改変 10 件とインポート識別情報の改変 10 件を拒否します。独立した SDK 検証では、両方のソースアーキテクチャ設定から生成した未変更の C を ARM64 ホスト上の O0/O2 で実行し、128 回の呼び出しで単一インスタンスとメタタイプの同一性、および参照所有権の釣り合いを確認します。8 構成のクロスコンパイルで両アーキテクチャの macOS と Mac Catalyst を確認し、x86-64 のネイティブ実行は別の検証範囲として扱います。
+
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` は、根で割り当て済みの変数と未決定変数の混在、非決定根変数、コピーの再コピー、元の破棄、変数追加、両方の既定極性、予算による中断と再開、競合と再始動を検査します。完全なモデルとすべての探索カウンターは新規符号化と一致する必要があります。
