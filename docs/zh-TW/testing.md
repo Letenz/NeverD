@@ -1160,6 +1160,8 @@ WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及
 
 `ci.yml` 的手動模式 `native_cpu_only` 透過 `native_cpu_backend=whp` 選擇 Windows x64（預設），或透過 `native_cpu_backend=kvm` 選擇 Ubuntu x64。`NativeCPUTests.def` 共用 CPU／行程驗收要求，分別宣告後端專屬目標和案例。`run_native_cpu_ci.py --require-whp` 或 `--require-kvm` 驗證宿主，先建置全部目標再執行 CTest，並保留清單、JUnit、日誌和結果分類。即使 CTest 成功結束，缺少或略過必測案例仍會失敗。CI 停用 Unicorn；`--with-drivers` 要求所選後端執行相同的原址／重定位驅動程式範例。編譯和建立探測不能證明來賓執行或 ARM64 驗收。 Ubuntu 設定使用上游簽署的 Clang/LLD 21 套件；Clang 18/19 的 CR8 宣告與固定版本的 WDK 標頭衝突。 Linux 原生驗收使用 CMake 4.2.3。`NeverDNativeDriverTests` 明確設定 `NO_PRETTY_VALUES`，讓 CTest 保留已宣告的案例名稱，不依賴參數診斷輸出。
 
+原生 CI 在建置前探測 `sccache --zero-stats`。探測失敗時會清空 C 與 C++ 編譯器啟動器，保留原有編譯器設定和全部必測清單。設定或編譯失敗仍會使工作失敗。
+
 KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransferCases.def` 中 48 項狀態傳輸結果，包括 ioctl 擷取和選用能力查詢失敗。其他同步暫存器模式在宿主支援時執行，否則明確略過。穩定的參數名稱不依賴 ioctl 數值或元組格式。協定測試補充原生執行證據，不能取代它。
 
 `native-host-probe.yml` 在 Linux 與 Windows x64/ARM64 託管 runner 上執行獨立的 `probe_native_host.py`。`NativeHostProbe.def` 宣告能力查詢、VM/vCPU 建立及清理證據的順序。報告保留原始碼/二進位雜湊、原生宿主 ISA 及每一步宿主狀態碼。`setup_ready` 只證明初始化成功，不執行客體指令。缺少 API/裝置能力記為 `unavailable`；建置、初始化、清理、逾時或證據格式錯誤會使工作失敗。ARM64 託管環境的可用性須逐次觀察，此探測不構成 ARM64 工作負載驗收。 兩個 Linux 工作流程均透過 `prepare_kvm_ci.py`，只授予目前託管 runner 帳戶既有 KVM 字元裝置的存取權限，並記錄裝置身分及權限；腳本拒絕本機與自管機器，不會建立缺少的裝置。
@@ -1472,5 +1474,7 @@ MainActor 測試資料檢查完整的固定中繼資料與靜態表流程，拒�
 `BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource` 在複製並銷毀來源後擴展文字表及共享 watch 串列，獨立修改同源副本，在一次 watch 存取處中斷傳播，並依據原始子句和獨立布林關係檢查恢復後的完整模型。
 
 `ObjCCallHints.SwiftPublishedAccessorsKeepOpaqueValueAndAllKeyPaths` 在 ARM64/x86-64 與兩種規範 Combine 提供方上檢查兩個存取器，每個組合拒絕九項 ABI 變異與八項匯入身分變異。獨立 SDK 驗證在 ARM64 主機以 O0/O2 執行兩種原始碼架構設定產生的 C，在 128 次存取器呼叫中比較全部 24 個資料位元組、輸入輸出保護區與兩個物件身分。八種交叉編譯設定涵蓋兩種架構的 macOS 與 Mac Catalyst。執行階段檢查保留寫入器消耗的參照，不授予正式程式碼借用或所有權捷徑。
+
+`ObjCCallHints.SwiftMainActorSharedKeepsObjectAndMetatypeContext` 在 ARM64/x86-64 上檢查完整結果與 swiftself 載體，每種架構拒絕十項 ABI 變異和十項匯入身分變異。獨立 SDK 驗證在 ARM64 主機上以 O0/O2 執行兩種原始碼架構設定的原樣生成 C：128 次呼叫保持單例與中繼型別身分，並平衡參考所有權。八種交叉編譯設定涵蓋兩種架構的 macOS 與 Mac Catalyst；x86-64 原生執行仍是獨立覆蓋項目。
 
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` 檢查根層已賦值與未決變數混合、非決策根變數、副本再次複製、來源物件銷毀、後續變數增長、兩種預設極性、預算中斷與恢復、衝突及重新啟動。完整模型與全部搜尋計數必須與全新編碼一致。

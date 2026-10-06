@@ -1387,3 +1387,5 @@ Swift CGPoint 인스턴스 변환은 double 입력 두 개, 결과 두 개와 sw
 고정된 `MainActor: Actor` SDK 계약은 외부 데이터 및 witness 카탈로그에서 완전한 컴파일러 판독기를 공유합니다. 네 대상 모두 메타데이터 응답과 동일한 공개 정적 테이블을 유지해야 하며, 메타데이터 접근자와 대응 conformance 설명자 및 테이블을 `libswift_Concurrency`가 모두 내보내야 합니다. Swift 6.1.2의 정적 및 비의존 런타임 경로는 호출자의 인스턴스화 인수 2를 사용하지 않습니다. 기존 세 포인터 ABI, 메타데이터 입력과 캐시 게시 효과는 유지됩니다. 다른 Actor conformance, 값 배치 또는 프레임 효과에 대한 증명은 제공하지 않습니다.
 
 Swift SDK Published의 enclosing-instance 접근자는 포인터 네 개를 유지합니다. 첫 인수는 getter의 불투명한 간접 결과 또는 setter가 소비하는 값의 주소이며, 이후 owner, wrapped key path, storage key path가 이어집니다. Swift 6.1.2 macOS/Mac Catalyst의 네 컴파일러 및 내보내기 구성에서 정확한 심볼과 Combine 제공자를 확인합니다. 제네릭 메타데이터나 swiftself를 추가하지 않으며 참조 소유권, 불투명 값 배치 및 프레임 의무는 기존 담당 계층에 남습니다.
+
+정확히 인증된 `MainActor.shared` SDK getter는 객체 포인터 하나를 반환하고 메타타입을 swiftself(ARM64의 `x20`, x86-64의 `r13`)로 받습니다. Swift 6.1.2의 macOS/Mac Catalyst 네 가지 컴파일 및 내보내기 구성으로 전체 ABI와 `libswift_Concurrency`의 강한 가져오기 제공자를 확인합니다. 소유권, 실행기 스케줄링 및 전용 스택 프레임 분석에는 기존 계약이 적용됩니다.

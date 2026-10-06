@@ -364,6 +364,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/usr/lib/swift/libswiftCore.dylib", "pzp"},
     {"$sSa37_appendElementAssumeUniqueAndCapacity_03newB0ySi_xntFyXl_Ts5",
      "/usr/lib/swift/libswiftCore.dylib", "vzpC"},
+    // All four Swift 6.1.2 macOS/Mac Catalyst profiles return the MainActor
+    // object in one pointer carrier and keep its metatype in swiftself.
+    // This is a synchronous getter, with no executor or frame effects.
+    {"$sScM6sharedScMvgZ", "/usr/lib/swift/libswift_Concurrency.dylib", "pC"},
     // Swift 6.1.2 arm64 and x86_64 client IR passes CGPoint as two
     // doubles followed by the CGContext receiver in swiftself. These
     // actions return void and keep the original imported Swift entry.
