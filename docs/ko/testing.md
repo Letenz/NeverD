@@ -1210,7 +1210,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 46개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 4852개와 SEH 회귀 검사 17개를 포함하면 필수 결과는 5093개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `4852 CPU + 224 WHP + 17 SEH = 5093`.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 4852개와 SEH 회귀 검사 17개를 포함하면 필수 결과는 5093개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `4884 CPU + 224 WHP + 17 SEH = 5125`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 
@@ -1316,6 +1316,8 @@ Windows ring3는 독립적인 네이티브 관측에 따라 checked x64의 `oper
 `WindowsExportTests.cpp`는 원본 x64/ARM64 DLL과 EXE로 전달 코드/데이터/서수 호출, 별칭, 초기화 중 조회, 재배치, 대소문자별 누락, LastError, 순환 및 비상주 대상, 잘못된 포인터와 성공한 조회 이후 메타데이터 변경을 확인합니다. 같은 EXE를 독립 네이티브 Windows 기준으로 실행하며 네이티브 CI는 WHP 사례를 필수로 요구합니다. C ABI/CLI 테스트는 전체 보고서를 비교합니다. 네이티브 ARM64 하드웨어 증거는 아직 없습니다. 내보내기 표가 있는 EXE와 없는 EXE로 두 의존 그래프, PEB 목록 순서, detach 순서, 이름/서수/NULL 오류 코드를 확인합니다.
 
 `WindowsLifetimeTests.cpp`는 고정된 추적을 독립 네이티브 Windows 프로세스 및 KVM/WHP/Unicorn 실행과 비교합니다. 정상 종료, 진입점 반환, 두 DLL의 초기화 실패, 네 곳의 조기 종료와 진입점 없는 DLL을 포함합니다. 콜백 오류, 공용 예산, 재배치 TLS 필드와 TLS 총용량도 확인합니다. 네이티브 진입점 반환 프로브는 초기 스레드 핸들을 보존하고 종료 코드와 정확한 스레드/프로세스 통지 순서를 64회 검증합니다. 남은 자식 스레드는 관찰 후 종료하며 프로세스 종료 코드를 진입점 반환값으로 취급하지 않습니다.
+
+`NeverDUnpackTests`, `NeverDUnpackExecutionTests`, `NeverDUnpackPublicTests`는 패킹된 이미지의 복구를 다룹니다. [언패킹](unpack.md)을 참고하십시오. `UnpackGeneratedTests.cpp`는 테스트가 직접 패킹한 프로그램으로 x86-64와 ARM64에서 진입점 규칙을 검사합니다. `X64ReturnPrefixTests.cpp`는 2바이트 근거리 복귀를 모든 전송 계층에서 검사하고, 그 밖의 접두사 붙은 복귀가 계속 거부되는지 확인합니다. `WindowsDeferredTests.cpp`는 불투명 진입점과 멈춘 프로세스의 관찰을, `ExecutionSessionTests.cpp`는 실행 감시를 검사합니다.
 
 Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`와 현재 프로세스의 `FlushInstructionCache`를 지원합니다. OS 계층은 예약 영역을 소유하고 `AddressSpace`는 커밋된 페이지, 권한, 실제 저장 공간을 관리합니다. 테스트는 동적 코드 수정, 접근 오류, 메모리 한도 재사용을 검증합니다.
 

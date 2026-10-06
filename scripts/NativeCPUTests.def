@@ -23,6 +23,7 @@ NEVERD_NATIVE_CPU_OWNER(NeverDServiceRequestTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDProjectionCacheTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDThreadPointerTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDUserExecutionTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDUnpackExecutionTests)
 #endif
 #ifdef NEVERD_NATIVE_CPU_HOST
 NEVERD_NATIVE_CPU_HOST(KVM, "Linux", "x86_64", "AMD64")
@@ -3817,4 +3818,123 @@ NEVERD_NATIVE_CPU_REQUIRED_CASES(
     "ExplicitBackends/NativeX64WideAtomic.HardwareFaultsRetainStateAndClassifyWriteAccess/"
     "{backend}User_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
+#endif
+
+// The two-byte near return, deferred loader facts and stopped-process
+// observation carry packed-image recovery on each native transport.
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64ReturnPrefix."
+    "RepeatPrefixedReturnIsTheOrdinaryNearReturn/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64ReturnPrefix."
+    "RepeatPrefixedReturnIsTheOrdinaryNearReturn/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64ReturnPrefix."
+    "RepeatPrefixedReturnIsTheOrdinaryNearReturn/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64ReturnPrefix."
+    "ReadObserverStopsBeforeTheTransfer/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64ReturnPrefix."
+    "ReadObserverStopsBeforeTheTransfer/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64ReturnPrefix."
+    "ReadObserverStopsBeforeTheTransfer/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64ReturnPrefix."
+    "OtherPrefixedReturnsPublishNoObservationsOrEffects/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64ReturnPrefix."
+    "OtherPrefixedReturnsPublishNoObservationsOrEffects/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64ReturnPrefix."
+    "OtherPrefixedReturnsPublishNoObservationsOrEffects/"
+    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsDeferred."
+    "UnmodeledImportsAreRejectedUnlessDeferred/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsDeferred."
+    "ResolvingOpaqueEntriesNeverExecutesThem/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsDeferred."
+    "ExecutingAnOpaqueEntryStopsAndNamesIt/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsDeferred."
+    "ObserverSeesTheProcessBeforeItsFirstInstruction/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsDeferred."
+    "ResumedObservationRunsTheProcessUnchanged/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsDeferred."
+    "ObserverFailuresAreNotGuestOutcomes/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsDeferred."
+    "ProfilesWithoutObservationRefuseAnObserver/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/Unpack."
+    "RecoveredImageRunsExactlyLikeTheOriginal/"
+    "{backend_title}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/Unpack."
+    "DirectJumpToTheProgramIsObservedAsItsEntry/"
+    "{backend_title}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/Unpack."
+    "StubCallIntoTheProgramIsNotItsEntry/"
+    "{backend_title}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/Unpack."
+    "ExplicitTransferOverridesTheEntryStack/"
+    "{backend_title}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/Unpack."
+    "RunThatEndsInsideTheStubReportsWhy/"
+    "{backend_title}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/Unpack."
+    "ProgramThatGeneratesNoCodeHasNoEntryToRecover/"
+    "{backend_title}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/Unpack."
+    "ProgramCodeBeyondTheModelStopsInsteadOfBeingSkipped/"
+    "{backend_title}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "PackedProgramRunsLikeTheLinkedOne/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "LoaderThatLeavesForTheProgramYieldsTheLinkedImage/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "LoaderCallIntoTheProgramPrecedesItsEntry/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "SecondLoaderIsTheEntryUntilALaterTransferIsNamed/"
+    "{backend_title}X64")
+#endif
+// One case per packed fixture: every stub runs whole under its own limit.
+#ifdef NEVERD_NATIVE_CPU_REQUIRED_CASES
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "Backends/UnpackFixture.RecoversEntrySectionsAndImports/{backend_title}_",
+    "unittests/unpack/UnpackCases.def", "NEVERD_UNPACK_TEST_FIXTURE")
 #endif

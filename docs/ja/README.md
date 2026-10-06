@@ -1,6 +1,6 @@
 **Languages**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 6a7456cc606f8f98767b33ad15e7c852cd0cb7e1bf8367759b0ad0cc03503470 -->
+<!-- i18n-source: 1f7e768c64fd7b3fd697260f693c68ca3b71562bf43cb0db4970c98487c270be -->
 
 [← NeverD プロジェクト](project.md)
 
@@ -40,3 +40,4 @@
 | [Solana SBF 逆コンパイル](sbf.md) | SBF v0-v4、LLVM IR、C/Rust 出力、検証、既知の制限 |
 | [ロードマップ](roadmap.md) | 状態：native format、EVM、Solana SBF を実装済み |
 | 各言語のドキュメント | 上部の言語リンクから各言語の索引とプロジェクト概要を開けます |
+| [パックされた実行ファイルのアンパック](unpack.md) | 有界なゲストプロセスの観測によるパックされた PE32+ イメージの復元：エントリの規則、再構築されたイメージ、識別、制限 |

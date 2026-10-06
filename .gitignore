@@ -33,6 +33,9 @@
 # The memory-safety matrix ships prebuilt images so every host runs PE, ELF,
 # and Mach-O, not just the formats it can compile.
 !unittests/safety/fixtures/binaries/*.exe
+# Unpacking fixtures come from a packer the build cannot assume.
+!unittests/unpack/fixtures/binaries/*.exe
+unittests/unpack/fixtures/binaries/.work/
 unittests/safety/fixtures/.fixture-build/
 unittests/safety/fixtures/safety_cases_native
 unittests/safety/fixtures/binaries/*.dSYM/Contents/Resources/Relocations/

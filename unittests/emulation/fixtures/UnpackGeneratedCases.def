@@ -1,0 +1,78 @@
+//===- UnpackGeneratedCases.def - A program whose loader writes its code --===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// The fixture links as an ordinary program and carries a loader that is not
+// its entry. A test packs it: the bytes of the program's code section move,
+// transformed, into the pack record, the section is cleared and the loader
+// becomes the entry. The linked file is therefore an exact oracle for what
+// unpacking must recover, on every instruction set the fixture is built for.
+// It imitates no product.
+#ifdef NEVERD_GENERATED_VALUE
+NEVERD_GENERATED_VALUE(ExitStatus, 43)
+NEVERD_GENERATED_VALUE(FailureStatus, 91)
+NEVERD_GENERATED_VALUE(StdoutSelector, 0xfffffff5)
+NEVERD_GENERATED_VALUE(InitializeResult, 7)
+NEVERD_GENERATED_VALUE(Key, 0xa5)
+// The pack record: four words, then the program's bytes and the second
+// loader's bytes, each in a fixed capacity.
+NEVERD_GENERATED_VALUE(Capacity, 4096)
+NEVERD_GENERATED_VALUE(ModeOffset, 0)
+NEVERD_GENERATED_VALUE(KeyOffset, 4)
+NEVERD_GENERATED_VALUE(ProgramBytesOffset, 8)
+NEVERD_GENERATED_VALUE(RelayBytesOffset, 12)
+NEVERD_GENERATED_VALUE(ProgramOffset, 16)
+NEVERD_GENERATED_VALUE(RelayOffset, 16 + 4096)
+NEVERD_GENERATED_VALUE(InstructionLimit, 2000000)
+NEVERD_GENERATED_VALUE(TimeoutMicroseconds, 60000000)
+NEVERD_GENERATED_VALUE(SecondTransfer, 2)
+#endif
+
+// What the loader does once the code it wrote exists.
+#ifdef NEVERD_GENERATED_MODE
+// Leaves for the program.
+NEVERD_GENERATED_MODE(Jump, 1)
+// Calls into the program on its own stack, then leaves for it.
+NEVERD_GENERATED_MODE(Call, 2)
+// Writes a second loader and leaves for it; that one writes the program.
+NEVERD_GENERATED_MODE(Staged, 3)
+#endif
+
+#ifdef NEVERD_GENERATED_BUILD
+NEVERD_GENERATED_BUILD(OutputDirectory, "unpack-generated-fixtures")
+NEVERD_GENERATED_BUILD(ProgramEntry, "program")
+NEVERD_GENERATED_BUILD(ProgramBase, "0x140000000")
+NEVERD_GENERATED_BUILD(X64Target, "x86_64-pc-windows-msvc")
+NEVERD_GENERATED_BUILD(X64Machine, "x64")
+NEVERD_GENERATED_BUILD(AArch64Target, "aarch64-pc-windows-msvc")
+NEVERD_GENERATED_BUILD(AArch64Machine, "arm64")
+// A loader writes into both code sections, so both are writable.
+NEVERD_GENERATED_BUILD(ProgramAccess, ".prog,ERW")
+NEVERD_GENERATED_BUILD(RelayAccess, ".relay,ERW")
+#endif
+
+#ifdef NEVERD_GENERATED_TEXT
+NEVERD_GENERATED_TEXT(ProgramFile, "generated.exe")
+NEVERD_GENERATED_TEXT(PackedFile, "packed.exe")
+NEVERD_GENERATED_TEXT(RebuiltFile, "rebuilt.exe")
+NEVERD_GENERATED_TEXT(X64Dir, "X64")
+NEVERD_GENERATED_TEXT(AArch64Dir, "AArch64")
+NEVERD_GENERATED_TEXT(MissingTools,
+                      "requires Clang and lld-link generated-code fixtures")
+NEVERD_GENERATED_TEXT(KernelModule, "kernel32.dll")
+NEVERD_GENERATED_TEXT(PackSection, ".pay")
+NEVERD_GENERATED_TEXT(ProgramSection, ".prog")
+NEVERD_GENERATED_TEXT(RelaySection, ".relay")
+NEVERD_GENERATED_TEXT(LoaderExport, "loader")
+NEVERD_GENERATED_TEXT(Message, "generated code ran\n")
+NEVERD_GENERATED_TEXT(ScratchPrefix, "neverd-unpack-generated")
+NEVERD_GENERATED_TEXT(MissingRecord, "the fixture has no pack record or loader")
+NEVERD_GENERATED_TEXT(RecordOverflow, " does not fit the pack record")
+#endif
+
+#ifdef NEVERD_GENERATED_KERNEL_API
+NEVERD_GENERATED_KERNEL_API(ExitProcess)
+NEVERD_GENERATED_KERNEL_API(GetStdHandle)
+NEVERD_GENERATED_KERNEL_API(WriteFile)
+#endif

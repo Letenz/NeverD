@@ -178,6 +178,7 @@ extern llvm::cl::SubCommand TranslateObjectCmd;
 extern llvm::cl::SubCommand EmulateDriverCmd;
 extern llvm::cl::SubCommand CPUCapabilitiesCmd;
 extern llvm::cl::SubCommand EmulateProcessCmd;
+extern llvm::cl::SubCommand UnpackCmd;
 extern llvm::cl::SubCommand AuditCmd;
 extern llvm::cl::SubCommand HuntCmd;
 extern llvm::cl::SubCommand ConcolicCmd;
@@ -458,6 +459,9 @@ extern llvm::cl::opt<bool> CPUProbeHost;
 extern llvm::cl::opt<std::string> ProcessInput;
 extern llvm::cl::opt<std::string> ProcessProfile;
 extern llvm::cl::opt<std::string> ProcessOptions;
+extern llvm::cl::opt<std::string> UnpackInput;
+extern llvm::cl::opt<std::string> UnpackOutput;
+extern llvm::cl::opt<std::string> UnpackOptions;
 
 //===----------------------------------------------------------------------===//
 // Command handlers
@@ -542,6 +546,7 @@ int runTranslateObject();
 int runEmulateDriver();
 int runCPUCapabilities();
 int runEmulateProcess();
+int runUnpack();
 
 // NeverDCmdPipeline.cpp — engine-driven operations.
 bool configureAnalysisSession(neverd_session_t Sess);

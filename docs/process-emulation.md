@@ -570,6 +570,8 @@ The `windows.native_calls` report preserves module/function names, declared scal
 
 `WriteFile` with a nonempty unreadable input buffer returns `ERROR_INVALID_USER_BUFFER` (1784), zeros the completion count and publishes no bytes.
 
+`windows.defer_unmodeled` loads an image whose loader facts the model does not implement and stops only if execution depends on one. Exports outside the API inventory and modules outside the catalogue bind to opaque entries: each identity resolves to one address, and executing it stops as `unsupported_service` naming `module!export`. Directories the model does not interpret stay uninterpreted, metadata the file does not back is not read at load, and frame-based exception dispatch through such an image stops. `observeProcess` adds a `ProcessObserver` that reads the stopped process at its start and at each execution watch; it cannot change guest state, and ending the run reports `observer`. [Unpacking](unpack.md) is built on both.
+
 [PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c). [GetProcAddress](https://learn.microsoft.com/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress).
 
 <!-- i18n-section: verification -->

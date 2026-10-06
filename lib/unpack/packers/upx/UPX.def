@@ -1,0 +1,65 @@
+//===- UPX.def - UPX pack header, stub and evidence constants -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// The pack header is the same record in every container: a magic, four
+// descriptor bytes, five little-endian words, three filter bytes and a
+// checksum over all but the magic.
+#ifdef NEVERD_UNPACK_UPX_VALUE
+NEVERD_UNPACK_UPX_VALUE(HeaderBytes, 32)
+NEVERD_UNPACK_UPX_VALUE(FormatOffset, 5)
+NEVERD_UNPACK_UPX_VALUE(MethodOffset, 6)
+NEVERD_UNPACK_UPX_VALUE(UnpackedSizeOffset, 16)
+NEVERD_UNPACK_UPX_VALUE(PackedSizeOffset, 20)
+NEVERD_UNPACK_UPX_VALUE(FileSizeOffset, 24)
+NEVERD_UNPACK_UPX_VALUE(ChecksumModulus, 251)
+// In a PE image the header sits between the section table and the packed
+// data.
+NEVERD_UNPACK_UPX_VALUE(PEHeaderWindow, 1024)
+NEVERD_UNPACK_UPX_VALUE(StubDisplacementBytes, 4)
+// One observation alone, such as a section name, can be imitated or erased.
+NEVERD_UNPACK_UPX_VALUE(RequiredEvidence, 2)
+#endif
+
+// The stubs this module knows: container, instruction set and the format
+// byte their pack header carries. An image of any other pair gets no stub
+// evidence and no declared entry from this module.
+#ifdef NEVERD_UNPACK_UPX_TARGET
+NEVERD_UNPACK_UPX_TARGET(PE64, X64, 36)
+#endif
+
+#ifdef NEVERD_UNPACK_UPX_BYTES
+NEVERD_UNPACK_UPX_BYTES(Magic, 'U', 'P', 'X', '!')
+// The x64 PE stub begins: push rbx; push rsi; push rdi; push rbp;
+// lea rsi, [rip + compressed]
+NEVERD_UNPACK_UPX_BYTES(PEX64StubHead, 0x53, 0x56, 0x57, 0x55, 0x48, 0x8d, 0x35)
+// lea rdi, [rsi + destination]
+NEVERD_UNPACK_UPX_BYTES(PEX64StubTail, 0x48, 0x8d, 0xbe)
+// and ends: lea rax, [rsp - 0x80]; push 0; cmp rsp, rax; jne push;
+// sub rsp, -0x80; jmp program
+NEVERD_UNPACK_UPX_BYTES(PEX64StubExit, 0x48, 0x8d, 0x44, 0x24, 0x80, 0x6a, 0x00,
+                        0x48, 0x39, 0xc4, 0x75, 0xf9, 0x48, 0x83, 0xec, 0x80,
+                        0xe9)
+#endif
+
+#ifdef NEVERD_UNPACK_UPX_METHOD
+NEVERD_UNPACK_UPX_METHOD(NRV2B32, 2)
+NEVERD_UNPACK_UPX_METHOD(NRV2B8, 3)
+NEVERD_UNPACK_UPX_METHOD(NRV2B16, 4)
+NEVERD_UNPACK_UPX_METHOD(NRV2D32, 5)
+NEVERD_UNPACK_UPX_METHOD(NRV2D8, 6)
+NEVERD_UNPACK_UPX_METHOD(NRV2D16, 7)
+NEVERD_UNPACK_UPX_METHOD(NRV2E32, 8)
+NEVERD_UNPACK_UPX_METHOD(NRV2E8, 9)
+NEVERD_UNPACK_UPX_METHOD(NRV2E16, 10)
+NEVERD_UNPACK_UPX_METHOD(LZMA, 14)
+NEVERD_UNPACK_UPX_METHOD(Deflate, 15)
+NEVERD_UNPACK_UPX_METHOD(Zstandard, 16)
+NEVERD_UNPACK_UPX_METHOD(Bzip2, 17)
+#endif
+
+#ifdef NEVERD_UNPACK_UPX_TEXT
+NEVERD_UNPACK_UPX_TEXT(PEFirstSection, "UPX0")
+NEVERD_UNPACK_UPX_TEXT(PESecondSection, "UPX1")
+#endif

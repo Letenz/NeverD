@@ -655,6 +655,32 @@ class SessionTests(unittest.TestCase):
         with self.assertRaisesRegex(NeverDError, "unsupported guest profile"):
             session.emulate_process("guest.elf", "unknown")
 
+    def test_unpack_forwards_paths_and_returns_the_native_report(self) -> None:
+        from neverd_plugin import NeverDError, Session
+
+        host = mock.Mock()
+        host.owned_string.return_value = '{"outcome":"unpacked","entry_rva":"1770"}'
+        session = Session(object(), _native=_FakeNativeBridge(), _host=host)
+        self.assertEqual(
+            session.unpack("packed.exe", "out.exe"),
+            {"outcome": "unpacked", "entry_rva": "1770"},
+        )
+        self.assertEqual(host.owned_string.call_args.args[0], "neverd_unpack_json")
+        self.assertEqual(host.owned_string.call_args.args[2:], (b"packed.exe", b"out.exe", None))
+        options = '{"backend":"unicorn","transfer":2}'
+        session.unpack("packed.exe", "out.exe", options)
+        self.assertEqual(host.owned_string.call_args.args[-1], options.encode())
+        for invalid in ("", "bad\0value", "bad\ud800value"):
+            with self.assertRaises(ValueError):
+                session.unpack(invalid, "out.exe")
+            with self.assertRaises(ValueError):
+                session.unpack("packed.exe", invalid)
+            with self.assertRaises(ValueError):
+                session.unpack("packed.exe", "out.exe", invalid)
+        host.owned_string.side_effect = [None, "input is not a PE image"]
+        with self.assertRaisesRegex(NeverDError, "not a PE image"):
+            session.unpack("packed.exe", "out.exe")
+
     def test_cpu_query_preserves_native_validation_and_unloaded_session(self) -> None:
         from neverd_plugin import NeverDError, Session
 
