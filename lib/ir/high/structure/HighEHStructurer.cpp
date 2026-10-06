@@ -1548,13 +1548,25 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
       Rejected += Candidate.NativeRegionCount;
       continue;
     }
+    // A try joined from split parts may start with a part's statements: its
+    // entry, and the label it carries, is its first statement's address.
+    va_t Entry = Candidate.Range.Begin;
+    if (!NestedParts.empty())
+      for (const HighStmt &S : ProtectedBody)
+        if (S.Addr && S.Addr != InvalidVA) {
+          Entry = S.Addr;
+          break;
+        }
     // A jump from outside into the protected statements has no C spelling;
     // keep that range unstructured instead of emitting one.  So is a guarded
     // statement left outside the slice that may raise: in C it would run
     // unprotected.
-    if (jumpEntersSlice(Func.Body, ProtectedBody, Candidate.Range.Begin) ||
-        (Candidate.Kind == StmtKind::SEHTry &&
-         guardedStatementLeftOut(Func.Body, Candidate.Range))) {
+    bool LeftOut = Candidate.Kind == StmtKind::SEHTry &&
+                   guardedStatementLeftOut(Func.Body, Candidate.Range);
+    for (size_t Part : NestedParts)
+      LeftOut |= Candidate.Kind == StmtKind::SEHTry &&
+                 guardedStatementLeftOut(Func.Body, Candidates[Part].Range);
+    if (jumpEntersSlice(Func.Body, ProtectedBody, Entry) || LeftOut) {
       Host->insert(Host->begin() + static_cast<ptrdiff_t>(InsertAt),
                    std::make_move_iterator(ProtectedBody.begin()),
                    std::make_move_iterator(ProtectedBody.end()));
@@ -1564,7 +1576,7 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
 
     HighStmt Try;
     Try.Kind = Candidate.Kind;
-    Try.Addr = Candidate.Range.Begin;
+    Try.Addr = Entry;
     Try.Body = std::move(ProtectedBody);
     Try.EHRange = Candidate.Range;
     std::vector<std::optional<va_t>> ClauseTargets;
