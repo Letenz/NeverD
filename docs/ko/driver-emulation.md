@@ -343,7 +343,7 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `DbgPrint`, `DbgPrintEx` | 검증된 Win64 가변 인수 포맷팅, 최대 출력 512바이트. 모든 디버거 필터가 활성화됨 |
 | `IoGetCurrentIrpStackLocation` | 활성 모델 IRP의 스택 위치를 반환함. 일반적인 컴파일된 WDM 매크로도 동일한 게스트 필드를 읽음 |
 | `KeGetCurrentIrql` | 명시적인 상승과 복원을 포함한 현재 IRQL/CR8을 읽습니다. 디스패치와 작업 항목은 `PASSIVE_LEVEL`, DPC는 `DISPATCH_LEVEL`에서 시작합니다 |
-| `KfRaiseIrql`, `KeLowerIrql` | 실제 x64 WDK IRQL 상승·하강 임포트와 인라인 도우미입니다. 각 실행은 반환 전에 저장 값을 LIFO 순서로 복원합니다. IRQL <= APC_LEVEL의 유효한 대기는 상승 상태를 보존하고 대기 당시 IRQL에서 재개합니다. DISPATCH_LEVEL 잠금 보유 중에는 중단할 수 없습니다. CR8은 변경을 반영하며 명령 단위 인터럽트 선점은 모델링하지 않습니다. |
+| `KfRaiseIrql`, `KeLowerIrql` | 실제 x64 WDK IRQL 상승·하강 임포트와 인라인 도우미입니다. 각 실행은 반환 전에 저장 값을 LIFO 순서로 복원합니다. IRQL <= APC_LEVEL의 유효한 대기는 상승 상태를 보존하고 대기 당시 IRQL에서 재개합니다. DISPATCH_LEVEL 잠금 보유 중에는 중단할 수 없습니다. CR8은 변경을 반영하며 설정된 CPU0 이벤트 선점에는 `scheduling`을 사용합니다. 임의의 중첩 인터럽트는 지원하지 않습니다. |
 | `KeInitializeSpinLock`, `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeAcquireSpinLockAtDpcLevel`, `KeReleaseSpinLockFromDpcLevel`, `KeTryToAcquireSpinLockAtDpcLevel` | CPU0의 상주 정렬 실행 스핀록입니다. 소유자, 획득·해제 쌍, IRQL 복원을 검사하며, 경합 중 차단 획득은 명시적으로 중단합니다. |
 | `IoAllocateWorkItem`, `IoQueueWorkItem`, `IoFreeWorkItem` | 장치 소유의 불투명 작업 항목. `DelayedWorkQueue`만 지원하며 `PASSIVE_LEVEL`에서 장치와 컨텍스트를 콜백에 전달. 대기열에 있는 항목은 해제 불가 |
 | `KeInitializeDpc`, `KeInsertQueueDpc`, `KeRemoveQueueDpc`, `KeSetImportanceDpc`, `KeSetTargetProcessorDpc` | 불투명 DPC, 게스트 콜백 인수 네 개, `DISPATCH_LEVEL`, 중복/제거 동작과 중요도; 대상 CPU0만 지원 |
@@ -351,7 +351,8 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `KeInitializeEvent`, `KeSetEvent`, `KeResetEvent`, `KeClearEvent`, `KeReadStateEvent` | 알림/동기화 이벤트의 서로 다른 신호 소비; `KeSetEvent`는 Increment=0, Wait=FALSE만 허용 |
 | `KeInitializeSemaphore`, `KeReleaseSemaphore`, `KeReadStateSemaphore` | 양의 상한이 있는 상주 카운팅 세마포입니다. 성공한 대기는 1을 소비합니다. 해제는 Increment=0, Wait=FALSE만 허용하며 상한 초과 시 `STATUS_SEMAPHORE_LIMIT_EXCEEDED`를 발생시킵니다. |
 | `KeInitializeMutex`, `KeReleaseMutex`, `KeReadStateMutex` | 상주 KMUTEX는 실행 프레임이 소유하며 재귀적으로 획득할 수 있습니다. KeReleaseMutex는 이전 부호 있는 신호 상태를 반환하고 소유자와 일치하는 DISPATCH_LEVEL 획득 상태를 요구하며 Wait=FALSE만 허용합니다. 보유 중 반환, 재초기화 및 저장 공간 해제를 금지합니다. 소유자가 아닌 해제는 `STATUS_MUTANT_NOT_OWNED`를 발생시킵니다. |
-| `PsCreateSystemThread`, `PsTerminateSystemThread`, `ObReferenceObjectByHandle`, `ObfDereferenceObject`, `ZwClose` | PASSIVE_LEVEL에서 실행되는 제한된 시스템 프로세스 스레드. 핸들과 불투명 스레드 객체 참조의 수명은 독립적이다. PsTerminateSystemThread는 복귀하지 않고 종료하며 대기 가능한 객체를 신호 상태로 만든다. APC, 우선순위 및 타입 지정 객체 참조는 지원하지 않는다. |
+| `PsCreateSystemThread`, `PsTerminateSystemThread`, `ObReferenceObjectByHandle`, `ObfDereferenceObject`, `ZwClose` | PASSIVE_LEVEL에서 실행되는 제한된 시스템 프로세스 스레드. 핸들과 불투명 스레드 객체 참조의 수명은 독립적이다. PsTerminateSystemThread는 복귀하지 않고 종료하며 대기 가능한 객체를 신호 상태로 만든다. APC 전달, 프로세스 우선순위 클래스 및 타입 지정 객체 참조는 지원하지 않는다. |
+| `KeSetPriorityThread`, `KeQueryPriorityThread` | `PASSIVE_LEVEL` 실행 우선순위이며 1..31을 설정하고 이전 값을 반환합니다. 결정적 초기값은 8이고 알려진 스레드 객체가 필요합니다. `scheduling`으로 우선순위 스케줄링을 사용하며 동적 부스트와 프로세스 우선순위 클래스는 지원하지 않습니다. [driver-scheduling.md](driver-scheduling.md) |
 | `KeEnterCriticalRegion`, `KeLeaveCriticalRegion`, `KeEnterGuardedRegion`, `KeLeaveGuardedRegion`, `KeAreApcsDisabled`, `KeAreAllApcsDisabled` | 스레드별 중첩 APC 비활성화 상태. 중요 영역과 보유한 KMUTEX는 일반 APC를, 보호 영역과 IRQL >= APC_LEVEL은 모든 APC를 비활성화한다. 시스템 스레드는 중요 영역 하나 안에서 시작한다. 짝이 없는 종료와 균형이 맞지 않는 복귀는 실패한다. APC 전달은 모델링하지 않는다. |
 | `KeWaitForSingleObject` | 초기화된 이벤트, 타이머, 세마포 또는 뮤텍스 하나, 비경고 `KernelMode`, 사유 `Executive`; 0 폴링, 유한 상대/절대 또는 무한 대기; 0이 아닌/무한 대기는 IRQL <= APC_LEVEL |
 | `KeDelayExecutionThread` | IRQL <= APC_LEVEL에서 비경고 `KernelMode` 상대/절대 지연; 가상 시간 진행 후 저장된 게스트 프레임 재개 |

@@ -351,6 +351,8 @@ fixture 覆盖来宾初始化、成功与失败返回、不支持的行为、内
 
 后端测试验证完整 CPU 上下文（寄存器、标志、SIMD、FPU、CR8）、共享内存及跨后端／故障上下文拒绝。编译后的 `driver_dispatcher.c` 样例实际执行 DPC 与工作项回调，覆盖定时器边界、通知／同步事件与定时器、原因 `Executive` 的非警报 `KernelMode` 等待、超时／延迟、多个阻塞栈、置位后重置仍保留唤醒、回调参数及非法 IRQL／生命周期。工作项测试继续覆盖待处理／完成、队列、停滞和共享预算。这些用例证明所述子集，不代表完整 Windows 异步支持。
 
+`DriverThreadPriorityTests.cpp` 使用原创编译驱动 `driver_thread_priority.c`，在显式 Unicorn／KVM／WHP 的 driver 和 checked 契约下验证排队及阻塞线程的优先级修改、时间片内事件／计时器唤醒、同级轮转、DISPATCH_LEVEL 屏蔽，以及低优先级线程饥饿时计时器仍推进。成对计数循环对照证明抢占后保留准确的剩余时间片。模型测试覆盖有符号 ABI 参数、失败不改变状态、已退出对象引用、嵌套线程身份和独立回调栈复用。原生用例纳入 `NativeDriverTests.def` 强制清单；本地不可用后端明确跳过。
+
 `driver_context_limits.c`: API 的 IRQL 上限来自 `KernelAPIIRQL.def`，参数相关限制由所属模型检查。DPC 不能调用注册表 API，也不能分配、释放或访问分页池；Unicode `DbgPrint` 转换要求 `PASSIVE_LEVEL`，支持的 ANSI 输出和非分页操作仍可在 `DISPATCH_LEVEL` 使用。回调栈有明确边界，越界栈指针不能进入另一阻塞工作项的栈。设备扩展中的已启动定时器会阻止设备提前回收。这些检查并未开放通用 IRQL 切换。
 
 `KernelDeviceStackTests.cpp` 检查独立的所有者／附着关系、栈顶选择、失败原子性、栈容量、不透明字段、打开句柄计数、拆链／删除时的工作项及请求保活，以及文件身份与派发栈顶的区别。原创 `driver_wdm_stack.c` 使用真实 WDK 头文件和内联 Copy/Skip/SetCompletion；普通／启用 CFG 映像由可选 `NEVERD_WDM_STACK_FIXTURE`／`NEVERD_WDM_STACK_CFG_FIXTURE` 配置。`DriverWDMStackTests.cpp` 覆盖重定位、真实下层状态、完成顺序和标志、延迟 pending 传播、工作项／DPC、等待、`STATUS_MORE_PROCESSING_REQUIRED`、直接 MDL 保留、嵌套完成及畸形游标／控制值。`DriverScenarioPublicTests.cpp` 覆盖 C API／CLI 转发及 C API 保留／嵌套完成，包括已配置 CFG 映像。缺少产物会明确跳过；Linux 证据仅证明同驱动设备栈子集，不代表 PDO／PnP／电源支持。 `KernelIRPStackTests.cpp` 检查计数游标、完整内联 Copy 前缀、已消耗栈位置清零、状态／pending 传播、MPR 与嵌套完成、续接所有者检查及保留路径。真实 READ/WRITE 与文件生命周期也使用内联 Copy 验证。
@@ -1118,7 +1120,7 @@ WHP 在能力查询、分区/虚拟 CPU 初始化、寄存器/XSAVE 传输及执
 
 仅原生 CPU 的 CI 检出初始化固定版本的 Capstone 源码，并使用校验过的预构建 LLVM 包。设置 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` 且禁用 Unicorn 后端后，CPU 测试目标的配置、构建和链接均不需要 Unicorn 源码，也不依赖签名库及外部语料。默认 CI 仍启用完整语义测试组。
 
-`ci.yml` 的手动模式 `native_cpu_only` 通过 `native_cpu_backend=whp` 选择 Windows x64（默认），或通过 `native_cpu_backend=kvm` 选择 Ubuntu x64。`NativeCPUTests.def` 共享 CPU／进程验收要求，分别声明后端专属目标和用例。`run_native_cpu_ci.py --require-whp` 或 `--require-kvm` 校验宿主，先构建全部目标再执行 CTest，并保留清单、JUnit、日志和结果分类。即使 CTest 成功退出，缺少或跳过必测用例仍会失败。CI 禁用 Unicorn；`--with-drivers` 要求所选后端执行同一组原址／重定位驱动样例。编译和建立探测不能证明来宾执行或 ARM64 验收。 Ubuntu 配置使用上游签名的 Clang/LLD 21 软件包；Clang 18/19 的 CR8 声明与固定版本的 WDK 头文件冲突。 Linux 原生验收使用 CMake 4.2.3，避免 GoogleTest 参数注释进入 CTest 测试身份。
+`ci.yml` 的手动模式 `native_cpu_only` 通过 `native_cpu_backend=whp` 选择 Windows x64（默认），或通过 `native_cpu_backend=kvm` 选择 Ubuntu x64。`NativeCPUTests.def` 共享 CPU／进程验收要求，分别声明后端专属目标和用例。`run_native_cpu_ci.py --require-whp` 或 `--require-kvm` 校验宿主，先构建全部目标再执行 CTest，并保留清单、JUnit、日志和结果分类。即使 CTest 成功退出，缺少或跳过必测用例仍会失败。CI 禁用 Unicorn；`--with-drivers` 要求所选后端执行同一组原址／重定位驱动样例。编译和建立探测不能证明来宾执行或 ARM64 验收。 Ubuntu 配置使用上游签名的 Clang/LLD 21 软件包；Clang 18/19 的 CR8 声明与固定版本的 WDK 头文件冲突。 Linux 原生验收使用 CMake 4.2.3。`NeverDNativeDriverTests` 显式设置 `NO_PRETTY_VALUES`，使 CTest 保留已声明的用例名称，不依赖参数诊断输出。
 
 KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferCases.def` 中 48 项状态传输结果，包括 ioctl 捕获和可选能力查询失败。其他同步寄存器模式在宿主支持时执行，否则明确跳过。稳定的参数名称不依赖 ioctl 数值或元组格式。协议测试补充原生执行证据，不能替代它。
 
@@ -1128,7 +1130,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 112 个工作负载产生 224 个 WHP 结果：26 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 4884 项 CPU 检查及 17 项 SEH 回归及 53 项调度检查，共有 5178 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `4884 CPU + 224 WHP + 17 SEH + 53 scheduling = 5178`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 113 个工作负载产生 226 个 WHP 结果：27 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 4884 项 CPU 检查及 17 项 SEH 回归及 77 项调度检查，共有 5204 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `4884 CPU + 226 WHP + 17 SEH + 77 scheduling = 5204`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 

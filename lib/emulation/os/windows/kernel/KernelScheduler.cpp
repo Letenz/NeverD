@@ -9,7 +9,9 @@
 /// by Microsoft's System Worker Threads, KeInsertQueueDpc, KeSetImportanceDpc,
 /// KeSetTimerEx and KeCancelTimer documentation. This implementation chooses
 /// a reproducible schedule within those object-lifetime contracts; it does not
-/// model processor preemption, timer coalescing, or the Windows thread pool.
+/// supply processor preemption, timer coalescing, or the Windows thread pool.
+/// The driver session owns preemption and consumes this owner's priority
+/// policy.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -70,13 +72,47 @@ llvm::Expected<uint64_t> KernelScheduler::issueReadyOrder() {
 }
 
 std::optional<uint64_t> KernelScheduler::nextPassiveReadyOrder() const {
-  if (Workers.empty() && SystemThreads.empty())
-    return std::nullopt;
-  if (SystemThreads.empty())
-    return Workers.front().ReadyOrder;
-  if (Workers.empty())
-    return SystemThreads.front().ReadyOrder;
-  return std::min(Workers.front().ReadyOrder, SystemThreads.front().ReadyOrder);
+  if (auto Next = nextPassiveThread())
+    return Next->ReadyOrder;
+  return std::nullopt;
+}
+
+int32_t KernelScheduler::threadPriority(uint64_t Key) const {
+  const auto Found = ThreadPriorities.find(Key);
+  return Found == ThreadPriorities.end() ? thread_priority::Default
+                                         : Found->second;
+}
+
+llvm::Expected<int32_t> KernelScheduler::setThreadPriority(uint64_t Key,
+                                                           int32_t Priority) {
+  if (Priority < thread_priority::Minimum ||
+      Priority > thread_priority::Maximum)
+    return schedulerError(thread_priority::InvalidPriority);
+  const int32_t Previous = threadPriority(Key);
+  ThreadPriorities.insert_or_assign(Key, Priority);
+  return Previous;
+}
+
+const KernelScheduler::Invocation *
+KernelScheduler::nextPassiveInvocation() const {
+  if (!OrderedPassive)
+    return !Workers.empty()         ? &Workers.front()
+           : !SystemThreads.empty() ? &SystemThreads.front()
+                                    : nullptr;
+  const Invocation *Best = nullptr;
+  for (const auto *Queue : {&Workers, &SystemThreads})
+    for (const auto &Call : *Queue)
+      if (!Best || readyThread(Call.ID, Call.ReadyOrder)
+                       .precedes(readyThread(Best->ID, Best->ReadyOrder)))
+        Best = &Call;
+  return Best;
+}
+
+std::optional<KernelScheduler::ReadyThread>
+KernelScheduler::nextPassiveThread() const {
+  if (const auto *Call = nextPassiveInvocation())
+    return readyThread(Call->ID, Call->ReadyOrder);
+  return std::nullopt;
 }
 
 llvm::Error KernelScheduler::validateTime() const {
@@ -921,20 +957,24 @@ KernelScheduler::next(bool AdvanceTime,
     if (queuedCallbackCount()) {
       if (Dispatches >= Bounds.MaxDispatches)
         return schedulerError("scheduler callback dispatch limit exhausted");
-      auto &Queue =
-          !Interrupts.empty() && Interrupts.front().IRQL ? Interrupts
-          : !DPCs.empty()                                ? DPCs
-          : !ReadyDMA.empty()                            ? ReadyDMA
-          : !Cancellations.empty()                       ? Cancellations
-          : !Completions.empty()                         ? Completions
-          : !Interrupts.empty()                          ? Interrupts
-          : !Workers.empty() && (!OrderedPassive || SystemThreads.empty() ||
-                                 Workers.front().ReadyOrder <
-                                     SystemThreads.front().ReadyOrder)
-              ? Workers
-              : SystemThreads;
-      Active = std::move(Queue.front());
-      Queue.pop_front();
+      const auto *Passive = nextPassiveInvocation();
+      auto &Queue = !Interrupts.empty() && Interrupts.front().IRQL ? Interrupts
+                    : !DPCs.empty()                                ? DPCs
+                    : !ReadyDMA.empty()                            ? ReadyDMA
+                    : !Cancellations.empty() ? Cancellations
+                    : !Completions.empty()   ? Completions
+                    : !Interrupts.empty()    ? Interrupts
+                    : Passive->Kind == CallbackKind::SystemThread
+                        ? SystemThreads
+                        : Workers;
+      auto Position = (&Queue == &Workers || &Queue == &SystemThreads)
+                          ? llvm::find_if(Queue,
+                                          [Passive](const auto &Call) {
+                                            return Call.ID == Passive->ID;
+                                          })
+                          : Queue.begin();
+      Active = std::move(*Position);
+      Queue.erase(Position);
       ++Dispatches;
       return Active;
     }

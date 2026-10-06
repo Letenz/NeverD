@@ -504,6 +504,8 @@ Windows モデルは独立した非ページプール MDL も管理し、記述�
 
 `KernelScheduler` は実行待ちキューの順序、コールバック識別、タイマー期限を管理し、`KernelDispatcher` は不透明な DPC・タイマー・イベントとシグナルを管理します。`KernelModel` は待機登録、ワーク項目／デバイスの寿命、IRP 完了を管理します。`DriverSession` は Win64 スタック引数を含む独立スタックと完全な CPU コンテキストを中断・復元し、ゲストメモリを共有します。既定では実行可能なフレームがないときだけ仮想時間はタイマー／待機／キャンセル境界で進み、CPU0 の決定的な協調スケジューリングで DPC は `DISPATCH_LEVEL`、ワーク項目は `PASSIVE_LEVEL` となります。一般のスレッド／APC／スピンロック、ここで定義した契約を超える WDM／PnP のキャンセル、公開シナリオの任意の並行送信、完全な PnP／電源、一般のハードウェアは含みません。 API の IRQL 上限は `KernelAPIIRQL.def` にあり、引数依存の制約は担当モデルが検査します。
 
+`KernelScheduler` が実行時優先度と優先度／実行可能順序の比較を一元管理します。`KernelModelThreadPriorities` が `KeSetPriorityThread` と `KeQueryPriorityThread` のスレッドオブジェクトを検証し、停止した CPU コンテキストには優先度をコピーしません。`DriverSession` はコールバック同期の入口と API／イベント境界で高優先度スレッドを確認します。範囲と制限は[ドライバースケジューリング](driver-scheduling.md)を参照してください。
+
 `KernelModelDeviceStack` はデバイスのドライバー所有者、割り当て、上下の接続、削除待ち状態、内部参照を一つの記録で管理します。ゲストの `NextDevice` 一覧とホストが所有する接続グラフは別の意味を持ちます。名前解決は名前付き下位デバイスを `FILE_OBJECT` とレポートに保持し、初期ディスパッチと READ/WRITE の方式には現在の最上位を選び、要求経路全体を保持します。切断・削除しても要求やコールバックが保持中のデバイスは失効せず、公開 `ReferenceCount` は開いたハンドル数だけを表します。
 
 `KernelModelIRPStack` は元のゲストパケット上で有界カーソル、指定対象へのディスパッチ、完了展開を管理し、インライン Copy/Skip/SetCompletion の書き込みが正本です。ディスパッチ状態、完了制御、最終 `IoStatus` を分離し、pending はディスパッチ復帰後にも伝播できます。`STATUS_MORE_PROCESSING_REQUIRED` は入れ子の完了も含め、最終展開を再開するまで IRP／MDL／バッファーを保持します。`KernelGuestCall` の所有サブシステムとローカルトークンが WDM／WDF 継続の衝突を防ぎ、`DriverSession` は CPU フレームと継承 IRQL を保存します。単一のゲストドライバーを、別所有のシナリオ PDO 上に接続できます。ドライバー割り当て IRP、WDF 接続／転送、使用中スタックへの接続、中間層切断、メジャー変更、経路外対象は未対応です。 上位の完了コールバックを実行する前に、消費済みの下位スタック位置をゼロにします。
