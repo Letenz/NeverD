@@ -368,13 +368,13 @@ class Checker {
   int NextNativeBlock = 0;
   const LowIRIndependenceContract &Contract;
   const LowIRIndependenceLimits &Limits;
-  // The existing cache bounds key construction and retained complete domains
-  // in words, using the same capacity convention as recovery.
-  detail::FiniteQueryCache FrameProofs{Limits.MaxSymbolicNodes};
   LowIRIndependenceResult OwnedResult;
   LowIRIndependenceResult &Result = OwnedResult;
   SymContext OwnedContext;
   SymContext &Ctx = OwnedContext;
+  // Exact query identities stay within this checker and its actual immutable
+  // context. Retain only completed domains under the existing word ceiling.
+  detail::FiniteQueryCache FrameProofs{Limits.MaxSymbolicNodes, Ctx};
   detail::FiniteDomainEncoding FrameDomain{Ctx, Limits.Solver};
   // One completed model-free query in this immutable DAG and fixed solver
   // configuration. No model, incomplete answer or cross-context fact escapes.
