@@ -1506,3 +1506,5 @@ Swift witness 생성기는 ARM64/x86-64 macOS와 Mac Catalyst에서 `CurrentValu
 `PreparedFiniteKeys.*`는 문맥 소멸과 이름 변경, 투영 순서와 한도, 이동 후 명시적 무효화, 잘못되거나 불완전한 결과, 빈 도메인과 비단일 도메인, 정확한 용량 경계를 검사합니다. 기존 캐시와 프레임 회귀도 준비된 키 경로를 검사합니다.
 
 `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults`는 두 아키텍처에서 레지스터, 배치, 컨텍스트 역할 및 간접 결과 변경을 거부한다. `SourceABI.SwiftPointForwardingPreservesBothIEEECarriers`는 -O0/-O2에서 전달 소스를 실행하여 두 필드의 부호 있는 0, 비정규 수, 무한대와 NaN 페이로드를 검사한다. 선언 테스트는 컴파일러 및 이름 있는 인자 형태를 허용하고 변경된 서명과 모호한 이미지 식별을 거부한다.
+
+`BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource`는 복사 후 원본 소멸, 리터럴 테이블과 공유 감시 목록 확장, 형제 복사본의 독립 변경, 감시 방문 한 번에서의 전파 중단을 검사합니다. 재개된 전체 모델을 원래 절과 독립적인 불리언 관계로 검증합니다.

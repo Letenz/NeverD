@@ -20,6 +20,8 @@ Vergleiche über mehr als acht Bits vergleichen zuerst die oberen Hälften und v
 
 `BitVectorSolver::cloneEncoding()` kopiert eine vollständige Kodierung vor jedem SAT-Suchversuch. Nach einer Suche oder einem Kodierungsfehler liefert die Methode null. Kopien besitzen ihre veränderlichen Klauseln, Wurzelpropagation, Gatter und Bitzuordnungen selbst; Variablenreihenfolge, Gatterzählung und Solver-Einstellungen bleiben erhalten. Der Kontext muss beide Solver überleben; der Quellsolver darf unabhängig geändert oder zerstört werden.
 
+Die SAT-Engine speichert vier Watch-Einträge direkt in jeder Literalliste; längere Listen wachsen dynamisch. Das vermeidet separate Allokationen kurzer Listen beim Aufbau, Kopieren vor der Suche und Freigeben. Propagationsreihenfolge, Klauseln, unabhängiger Besitz und alle Arbeitsgrenzen bleiben unverändert.
+
 <!-- i18n-section: z3-build -->
 
 ## Optionaler Z3-Build

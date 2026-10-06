@@ -1462,3 +1462,5 @@ Swift witness 產生器在 ARM64/x86-64 macOS 和 Mac Catalyst 上同時驗證 `
 `PreparedFiniteKeys.*` 檢查上下文銷毀和重新命名、投影順序與上限、移動後明確失效、格式錯誤及不完整結果、空值域和非唯一值域，以及精確容量邊界。既有快取和堆疊偏移回歸也涵蓋預備鍵路徑。
 
 `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults` 在兩種架構上拒絕載體、佈局、上下文角色與間接結果變更。`SourceABI.SwiftPointForwardingPreservesBothIEEECarriers` 在 -O0/-O2 下編譯執行轉發原始碼，驗證兩個欄位的正負零、次正規數、無窮與 NaN 酬載。宣告測試接受編譯器及具名參數形式，拒絕簽名變更與歧義映像身分。
+
+`BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource` 在複製並銷毀來源後擴展文字表及共享 watch 串列，獨立修改同源副本，在一次 watch 存取處中斷傳播，並依據原始子句和獨立布林關係檢查恢復後的完整模型。
