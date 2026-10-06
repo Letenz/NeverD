@@ -30,6 +30,7 @@
 #include <deque>
 #include <limits>
 #include <map>
+#include <memory>
 #include <set>
 #include <tuple>
 #include <unordered_map>
@@ -552,13 +553,33 @@ class Checker {
     ++Result.SolverQueries;
   }
 
-  solver::SatResult query(SymRef Predicate) {
+  solver::SatResult
+  query(SymRef Predicate,
+        std::unique_ptr<solver::BitVectorSolver> *EncodingCache = nullptr) {
     nodes();
     if (Predicate && Predicate == LastCompletedQuery)
       return LastCompletedAnswer;
     chargeQuery();
-    const auto Answer =
-        solver::checkSat(Ctx, Predicate, nullptr, Limits.Solver);
+    const bool Reused = EncodingCache && *EncodingCache;
+    const auto Fresh = [&] {
+      auto Options = Limits.Solver;
+      Options.BuildModel = false;
+      return std::make_unique<solver::BitVectorSolver>(Ctx, Options);
+    };
+    if (EncodingCache && !*EncodingCache)
+      *EncodingCache = Fresh();
+    auto Answer = EncodingCache ? (*EncodingCache)->check({Predicate})
+                                : solver::checkSat(Ctx, Predicate, nullptr,
+                                                   Limits.Solver);
+    // Accumulated encodings can fill a session although this query alone fits.
+    // Charge the second attempt and retry once with an empty encoder. Width,
+    // malformed-input and SAT-search exhaustion are never retried here.
+    if (Reused && Answer == solver::SatResult::Unknown &&
+        (*EncodingCache)->encodeError() == solver::BlastError::TooManyGates) {
+      chargeQuery();
+      *EncodingCache = Fresh();
+      Answer = (*EncodingCache)->check({Predicate});
+    }
     if (Answer == solver::SatResult::Unknown)
       fail(Status::BudgetExceeded, "relational solver budget exhausted");
     if (Answer == solver::SatResult::Invalid)
@@ -2949,6 +2970,10 @@ class LoopPlanInference {
   // Every hit still consumes a query request, bounding both search work and
   // retained entries by the existing query and symbolic-node limits.
   std::map<SymRef, bool> CompleteEntailments;
+  // Assumptions disappear after each check. Changing domains also drops the
+  // retained clauses and decision variables from unrelated earlier queries.
+  std::unique_ptr<solver::BitVectorSolver> EntailmentEncoding;
+  SymRef EntailmentDomain;
   std::string Stage;
   SpecializationProvider *ReadProvider;
   detail::NativeUndefinedIndependenceResult ReadEvidence;
@@ -3034,8 +3059,13 @@ class LoopPlanInference {
       ++Result.EntailmentCacheHits;
       return It->second;
     }
+    if (EntailmentDomain != Domain) {
+      EntailmentEncoding.reset();
+      EntailmentDomain = Domain;
+    }
     // Unknown and invalid answers throw in the shared checker, before store.
-    const bool Holds = C.query(Query) == solver::SatResult::Unsat;
+    const bool Holds =
+        C.query(Query, &EntailmentEncoding) == solver::SatResult::Unsat;
     CompleteEntailments.emplace(Query, Holds);
     return Holds;
   }

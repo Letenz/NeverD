@@ -1406,6 +1406,8 @@ block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符�
 
 `LowIRLoopInference.CompletedEntailments*` 在兩種位元組序的終止及不終止框架迴圈之間檢查工作階段隔離、求解器與節點耗盡，以及獨立證明預算。可變邊界回歸在快取命中時驗證精確與少一單位的邏輯查詢預算；原生重複上下文證明檢查含域的重用。
 
+`LowIRLoopInference.IncrementalEntailmentsKeepRollingBudgets` 檢查同一約束域內的編碼器重用。切換域會捨棄編碼器；累計邏輯閘容量耗盡時，僅以新編碼器重試一次，並額外計入一次查詢。兩種位元組順序皆保留對完整計數器和邊界字的觀測，並檢查精確及少一次的查詢預算、邏輯閘／寬度／搜尋超限拒絕，以及獨立的最終證明預算。
+
 `LowIRLoopRefinement.GuardedCuts*` 與 `BinaryLowIRLoopRefinement.GuardedCuts*` 涵蓋同址切點、暫存器、框架及原生系統旗標、兩種位元組序、未匹配的有限與循環路徑、重疊及錯配拒絕、前綴泛化、未定義值見證、錯誤中繼資料、摘要與共用預算。獨立原生測試證明兩個 R10 上下文共用循環位址，並確認未稽核邊界檢查先於選擇條件。一般 ABI 認證仍是獨立工作。
 
 `BinaryLowIRLoopInference.NativeSelectors*` 涵蓋兩個暫存器上下文、僅靠框架區分的上下文、三域合取、無法區分的範本、來源及原生迴圈本體變異，以及推導與證明各自的精確和少一預算。迴圈次數任意，不引入入口常數。

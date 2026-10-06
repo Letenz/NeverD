@@ -3223,6 +3223,61 @@ TEST(LowIRLoopInference, SharedTemplatesFitIndependentOperationBudgets) {
   loopRefused(loopCheck(P, Wrong, *Good.Plan), Status::Different);
 }
 
+TEST(LowIRLoopInference, IncrementalEntailmentsKeepRollingBudgets) {
+  bool SawCapacityRetry = false;
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    SCOPED_TRACE(static_cast<unsigned>(Order));
+    auto P = projectedCounterLoops(4, true, 1, true, LowIRLoopSpace::Register,
+                                   true, 0, true, true, false, false, true);
+    P.Contract.ByteOrder = Order;
+    for (uint64_t Offset : {8, 16, 64, 72})
+      P.Contract.ReturnRegisters.push_back({Offset, 8});
+    const std::vector<va_t> Cuts{0x300, 0x500};
+    const auto Default =
+        inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
+    ASSERT_TRUE(Default.inferred()) << Default.Diagnostic;
+    LowIRLoopInferenceLimits Limits;
+    // Each complete query fits, while all encodings retained together do not.
+    Limits.Execution.Solver.Blast.MaxGates = 1344;
+    const auto Good =
+        inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits, Cuts);
+    ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+    EXPECT_GE(Good.SolverQueries, Default.SolverQueries);
+    SawCapacityRetry |= Good.SolverQueries > Default.SolverQueries;
+    const auto Proof = loopCheck(P, P, *Good.Plan);
+    ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+    Limits.Execution.MaxSolverQueries = Good.SolverQueries;
+    EXPECT_TRUE(
+        inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits, Cuts)
+            .inferred());
+    --Limits.Execution.MaxSolverQueries;
+    const auto Short =
+        inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits, Cuts);
+    EXPECT_EQ(Short.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+    EXPECT_FALSE(Short.Plan);
+    EXPECT_EQ(Short.SolverQueries, Limits.Execution.MaxSolverQueries);
+    for (unsigned Case = 0; Case != 3; ++Case) {
+      LowIRLoopInferenceLimits Tiny;
+      if (Case == 0)
+        Tiny.Execution.Solver.Blast.MaxGates = 512;
+      else if (Case == 1)
+        Tiny.Execution.Solver.Blast.MaxWidth = 4;
+      else
+        Tiny.Execution.Solver.Sat.MaxPropagations = 1;
+      const auto Refused =
+          inferLowIRLoopRefinementPlan(P.Function, P.Contract, Tiny, Cuts);
+      EXPECT_EQ(Refused.Status, LowIRLoopInferenceStatus::BudgetExceeded)
+          << Refused.Diagnostic;
+      EXPECT_FALSE(Refused.Plan);
+    }
+    LowIRRefinementLimits TinyProof;
+    TinyProof.Execution.MaxSolverQueries = 0;
+    loopRefused(loopCheck(P, P, *Good.Plan, TinyProof), Status::BudgetExceeded);
+    ASSERT_TRUE(loopCheck(P, P, *Good.Plan).proved());
+  }
+  EXPECT_TRUE(SawCapacityRetry);
+}
+
 TEST(LowIRLoopInference, CompletedEntailmentsStayInInferenceSession) {
   for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
     const auto Make = [&](unsigned Step) {
