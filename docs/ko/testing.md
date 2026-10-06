@@ -1504,3 +1504,5 @@ Swift witness 생성기는 ARM64/x86-64 macOS와 Mac Catalyst에서 `CurrentValu
 `scripts.tests.test_generate_swift_witness_contracts`의 String 리더는 완전한 흐름을 검증하고 저장소·ABI·흐름 변형 28개와 모호한 선언 7개를 거부하며 입력 예산을 적용합니다. 바인딩 테스트는 두 아키텍처의 세 서술자에 각각 33개 변형을 적용합니다. 서술자 식별은 프레임 레이아웃이나 대여를 허용하지 않습니다.
 
 `PreparedFiniteKeys.*`는 문맥 소멸과 이름 변경, 투영 순서와 한도, 이동 후 명시적 무효화, 잘못되거나 불완전한 결과, 빈 도메인과 비단일 도메인, 정확한 용량 경계를 검사합니다. 기존 캐시와 프레임 회귀도 준비된 키 경로를 검사합니다.
+
+`SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults`는 두 아키텍처에서 레지스터, 배치, 컨텍스트 역할 및 간접 결과 변경을 거부한다. `SourceABI.SwiftPointForwardingPreservesBothIEEECarriers`는 -O0/-O2에서 전달 소스를 실행하여 두 필드의 부호 있는 0, 비정규 수, 무한대와 NaN 페이로드를 검사한다. 선언 테스트는 컴파일러 및 이름 있는 인자 형태를 허용하고 변경된 서명과 모호한 이미지 식별을 거부한다.
