@@ -3,11 +3,14 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "../LLVMHostFixture.h"
 #include "../lift/NeverDLiftFixture.h"
 #include "LLVMScalarEquivalenceTest.h"
 
+#include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Verifier.h"
 
 namespace neverd::analysis::scalar_test {
 namespace {
@@ -328,6 +331,153 @@ TEST(LLVMScalarDecision, MaskAndAnnotationChangesCannotReuseEarlierFacts) {
       Status::Proved);
 }
 
+TEST(LLVMScalarDecision, HostCompilerCopyRetainsConversionPoisonGuards) {
+  Source Input(Recurrence);
+  ASSERT_TRUE(Input.Module);
+  const auto Before = Input.text();
+  const auto Text = neverd::test::printHostCompilerFixture(*Input.Module);
+  EXPECT_EQ(Input.text(), Before);
+  EXPECT_NE(Before.find("trunc nuw nsw"), std::string::npos);
+  EXPECT_NE(Before.find("zext nneg"), std::string::npos);
+  EXPECT_EQ(Text.find("trunc nuw"), std::string::npos);
+  EXPECT_EQ(Text.find("trunc nsw"), std::string::npos);
+  EXPECT_EQ(Text.find("zext nneg"), std::string::npos);
+  EXPECT_NE(Text.find("lshr exact"), std::string::npos);
+  EXPECT_NE(Text.find("add nuw nsw"), std::string::npos);
+  EXPECT_NE(Text.find("i64 noundef %x"), std::string::npos);
+  Source Copy(Text);
+  ASSERT_TRUE(Copy.Module);
+  EXPECT_FALSE(llvm::verifyModule(*Copy.Module, &llvm::errs()));
+}
+
+TEST(LLVMScalarDecision, HostCompilerCopyPreservesScalarConversionPoison) {
+  auto Evaluate = [](Source &Input, uint64_t Word) {
+    auto *Argument = Input.function().getArg(0);
+    Argument->replaceAllUsesWith(
+        llvm::ConstantInt::get(Argument->getType(), Word));
+    for (auto &Instruction : Input.function().getEntryBlock()) {
+      if (auto *Return = llvm::dyn_cast<llvm::ReturnInst>(&Instruction)) {
+        auto *Value = Return->getReturnValue();
+        if (llvm::isa<llvm::PoisonValue>(Value))
+          return std::pair{true, uint64_t(0)};
+        auto *Integer = llvm::dyn_cast<llvm::ConstantInt>(Value);
+        EXPECT_TRUE(Integer);
+        return std::pair{false,
+                         Integer ? Integer->getZExtValue() : uint64_t(0)};
+      }
+      auto *Folded = llvm::ConstantFoldInstruction(
+          &Instruction, Input.Module->getDataLayout());
+      EXPECT_TRUE(Folded);
+      if (Folded)
+        Instruction.replaceAllUsesWith(Folded);
+    }
+    ADD_FAILURE() << "constant conversion fixture did not return";
+    return std::pair{false, uint64_t(0)};
+  };
+  for (unsigned Width : {1u, 8u})
+    for (const char *Flags : {"nuw", "nsw", "nuw nsw"}) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Flags);
+      Source Original("define i" + std::to_string(Width) +
+                      " @f(i16 noundef %x) { %v = trunc " + Flags +
+                      " i16 %x to i" + std::to_string(Width) + "\nret i" +
+                      std::to_string(Width) + " %v }");
+      ASSERT_TRUE(Original.Module);
+      const auto Text =
+          neverd::test::printHostCompilerFixture(*Original.Module);
+      for (uint64_t Word : {0u, 1u, 2u, 63u, 64u, 127u, 128u, 255u, 256u,
+                            32767u, 32768u, 65407u, 65408u, 65534u, 65535u}) {
+        SCOPED_TRACE(Word);
+        Source Copy(Text);
+        ASSERT_TRUE(Copy.Module);
+        EXPECT_FALSE(llvm::verifyModule(*Copy.Module, &llvm::errs()));
+        const int64_t Signed =
+            Word < 32768 ? int64_t(Word) : int64_t(Word) - 65536;
+        const uint64_t Mask = (uint64_t(1) << Width) - 1;
+        const int64_t Bound = int64_t(1) << (Width - 1);
+        const bool Poison =
+            (llvm::StringRef(Flags).contains("nuw") && Word > Mask) ||
+            (llvm::StringRef(Flags).contains("nsw") &&
+             (Signed < -Bound || Signed >= Bound));
+        const auto Result = Evaluate(Copy, Word);
+        EXPECT_EQ(Result.first, Poison);
+        if (!Poison)
+          EXPECT_EQ(Result.second, Word & Mask);
+      }
+    }
+  Source Original(R"(define i16 @f(i8 noundef %x) {
+    %v = zext nneg i8 %x to i16
+    ret i16 %v })");
+  ASSERT_TRUE(Original.Module);
+  const auto Text = neverd::test::printHostCompilerFixture(*Original.Module);
+  for (uint64_t Word : {0u, 1u, 127u, 128u, 255u}) {
+    SCOPED_TRACE(Word);
+    Source Copy(Text);
+    ASSERT_TRUE(Copy.Module);
+    const auto Result = Evaluate(Copy, Word);
+    EXPECT_EQ(Result.first, Word >= 128);
+    if (Word < 128)
+      EXPECT_EQ(Result.second, Word);
+  }
+}
+
+TEST(LLVMScalarDecision, HostCompilerCopyPreservesVectorConversionPoison) {
+  auto Check = [](Source &Copy, llvm::ArrayRef<uint64_t> Words, unsigned Width,
+                  llvm::ArrayRef<bool> Poison) {
+    auto *Argument = Copy.function().getArg(0);
+    auto *Element = Argument->getType()->getScalarType();
+    llvm::SmallVector<llvm::Constant *> Values;
+    for (auto Word : Words)
+      Values.push_back(llvm::ConstantInt::get(Element, Word));
+    Argument->replaceAllUsesWith(llvm::ConstantVector::get(Values));
+    for (auto &Instruction : Copy.function().getEntryBlock()) {
+      if (auto *Return = llvm::dyn_cast<llvm::ReturnInst>(&Instruction)) {
+        auto *Value = llvm::dyn_cast<llvm::Constant>(Return->getReturnValue());
+        ASSERT_TRUE(Value);
+        for (unsigned Lane = 0; Lane != Words.size(); ++Lane) {
+          SCOPED_TRACE(Lane);
+          auto *Result = Value->getAggregateElement(Lane);
+          ASSERT_TRUE(Result);
+          EXPECT_EQ(llvm::isa<llvm::PoisonValue>(Result), Poison[Lane]);
+          if (!Poison[Lane]) {
+            auto *Integer = llvm::dyn_cast<llvm::ConstantInt>(Result);
+            ASSERT_TRUE(Integer);
+            EXPECT_EQ(Integer->getZExtValue(),
+                      Words[Lane] & ((uint64_t(1) << Width) - 1));
+          }
+        }
+        return;
+      }
+      auto *Folded = llvm::ConstantFoldInstruction(
+          &Instruction, Copy.Module->getDataLayout());
+      ASSERT_TRUE(Folded);
+      Instruction.replaceAllUsesWith(Folded);
+    }
+    FAIL() << "constant vector fixture did not return";
+  };
+  for (const char *Flags : {"nuw", "nsw", "nuw nsw"}) {
+    SCOPED_TRACE(Flags);
+    Source Original(std::string("define <4 x i8> @f(<4 x i16> noundef %x) {") +
+                    " %v = trunc " + Flags +
+                    " <4 x i16> %x to <4 x i8>\nret <4 x i8> %v }");
+    ASSERT_TRUE(Original.Module);
+    Source Copy(neverd::test::printHostCompilerFixture(*Original.Module));
+    ASSERT_TRUE(Copy.Module);
+    ASSERT_FALSE(llvm::verifyModule(*Copy.Module, &llvm::errs()));
+    const bool Unsigned = llvm::StringRef(Flags).contains("nuw");
+    const bool Signed = llvm::StringRef(Flags).contains("nsw");
+    Check(Copy, {127, 128, 65408, 65407}, 8, {false, Signed, Unsigned, true});
+  }
+  Source Original(R"(define <4 x i16> @f(<4 x i8> noundef %x) {
+    %v = zext nneg <4 x i8> %x to <4 x i16>
+    ret <4 x i16> %v })");
+  ASSERT_TRUE(Original.Module);
+  Source Copy(neverd::test::printHostCompilerFixture(*Original.Module));
+  ASSERT_TRUE(Copy.Module);
+  ASSERT_FALSE(llvm::verifyModule(*Copy.Module, &llvm::errs()));
+  Check(Copy, {0, 127, 128, 255}, 16, {false, false, true, true});
+}
+
 class LLVMScalarDecisionCompiled : public NeverDLiftTest {};
 
 TEST_F(LLVMScalarDecisionCompiled, ProductRecurrenceMatchesIndependentOracle) {
@@ -424,7 +574,12 @@ TEST_F(LLVMScalarDecisionCompiled, DeepOneAndTwoBackedgeOracles) {
     ASSERT_EQ(self(IR).Status, Status::Proved);
     const auto Source = tmpFile("recurrence.ll");
     const auto Harness = tmpFile("oracle.c");
-    std::ofstream(Source) << IR;
+    scalar_test::Source Input(IR);
+    ASSERT_TRUE(Input.Module);
+    const auto Original = Input.text();
+    std::ofstream(Source) << neverd::test::printHostCompilerFixture(
+        *Input.Module);
+    EXPECT_EQ(Input.text(), Original);
     std::ofstream(Harness) << R"(
 #include <stdint.h>
 uint64_t f(uint64_t, uint32_t);
