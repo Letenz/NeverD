@@ -377,12 +377,7 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     // A local printed under a name declared unsigned at \p Width, as the
     // signedness pass leaves most locals that wrapping arithmetic reads.
     auto DeclaredUnsignedLocal = [&](const ExprPtr &Value, uint16_t Width) {
-      if (Value->Kind != ExprKind::Var && Value->Kind != ExprKind::Phi)
-        return false;
-      const auto It = DeclaredCTypes.find(exprStr(*Value));
-      return It != DeclaredCTypes.end() && It->second &&
-             It->second->Kind == NdTypeKind::Int && !It->second->IsSigned &&
-             !It->second->IsEnum && It->second->Size == Width;
+      return declaredLocalInteger(*Value, Width, false);
     };
     if (Size == 4 || Size == 8) {
       auto NaturalUnsignedOperand =
