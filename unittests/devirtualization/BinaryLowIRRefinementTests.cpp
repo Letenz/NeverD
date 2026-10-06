@@ -78,6 +78,64 @@ Program repeatedNativeContexts() {
   return P;
 }
 
+struct SingleNativeContext {
+  Program Input;
+  unsigned Shared = 0, Update = 0;
+
+  SingleNativeContext(bool Frame, bool Byte, bool Reverse) : Input({}) {
+    auto &Code = Input.Image.Segments.front();
+    const auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+      Code.Data.insert(Code.Data.end(), Bytes);
+    };
+    const uint8_t Initial = Reverse ? 1 : 0, Steady = Initial ^ 1;
+    const auto Store = [&](uint8_t Value) {
+      if (Frame && Byte)
+        Emit({0xc6, 0x44, 0x24, 0xfb, Value}); // movb [rsp-5], imm8
+      else if (Frame)
+        Emit({0x48, 0xc7, 0x44, 0x24, 0xf8, Value, 0, 0, 0});
+      else if (Byte)
+        Emit({0x41, 0xb2, Value}); // mov r10b, imm8
+      else
+        Emit({0x49, 0xc7, 0xc2, Value, 0, 0, 0});
+    };
+    const auto Jump = [&] {
+      const auto Address = Code.Data.size();
+      Emit({0xeb, static_cast<uint8_t>(Shared - (Address + 2))});
+    };
+    Store(Initial);
+    Emit({0x48, 0x89, 0xf9, 0x39, 0xff, 0xeb, 0}); // rcx=rdi; cmp edi,edi
+    Shared = Code.Data.size();
+    if (Frame && Byte)
+      Emit({0x80, 0x7c, 0x24, 0xfb, Steady});
+    else if (Frame)
+      Emit({0x48, 0x83, 0x7c, 0x24, 0xf8, Steady});
+    else if (Byte)
+      Emit({0x41, 0x80, 0xfa, Steady});
+    else
+      Emit({0x49, 0x83, 0xfa, Steady});
+    const auto Enter = Code.Data.size();
+    Emit({0x74, 0}); // je loop
+    Store(Steady);
+    Emit({0x39, 0xff}); // Match entry flags; only the stored phase differs.
+    Jump();
+    Code.Data[Enter + 1] = static_cast<uint8_t>(Code.Data.size() - (Enter + 2));
+    const auto Exit = Code.Data.size();
+    Emit({0xe3, 0}); // jrcxz done
+    Update = Code.Data.size();
+    Emit({0x48, 0x01, 0xc8, 0x48, 0x8d, 0x49, 0xff, 0x39, 0xff});
+    Jump();
+    Code.Data[Exit + 1] = static_cast<uint8_t>(Code.Data.size() - (Exit + 2));
+    Emit({0xc3});
+    Code.Size = Code.FileSz = Code.Data.size();
+    const uint16_t Width = Byte ? 1 : 8;
+    if (Frame)
+      Input.Options.ControlFrameSlots = {{Byte ? -5 : -8, Width}};
+    else
+      Input.Options.ControlRegisters = {{x86reg::R10, Width}};
+    Input.Contract.ObserveWrittenFrameBytes = true;
+  }
+};
+
 Program guardedNativeChain(unsigned Count, bool Taken) {
   Program P({});
   P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {128, 8};
@@ -1696,6 +1754,66 @@ TEST(BinaryLowIRLoopRefinement, GuardedCutsProveRepeatedNativeContexts) {
                      .proved());
   }
   EXPECT_EQ(Proved, 1U);
+}
+
+TEST(BinaryLowIRLoopInference,
+     SingleChosenContextSkipsEarlierNativeOccurrences) {
+  for (bool Frame : {false, true})
+    for (bool Byte : {false, true})
+      for (bool Reverse : {false, true}) {
+        SCOPED_TRACE(Frame);
+        SCOPED_TRACE(Byte);
+        SCOPED_TRACE(Reverse);
+        SingleNativeContext Fixture(Frame, Byte, Reverse);
+        auto &P = Fixture.Input;
+        auto Recovery = P.recover();
+        ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+        // Retain both actual occurrences of this origin as candidates. The
+        // earlier initialization context is not part of the selected loop.
+        std::erase_if(Recovery.Origins, [&](const auto &O) {
+          return O.NativeInstruction.Address != Entry + Fixture.Shared;
+        });
+        ASSERT_EQ(Recovery.Origins.size(), 2U);
+        const auto Check = [&](const LowIRLoopInferenceLimits &Limits) {
+          return inferAndCheckBinaryLowIRLoopRefinement(
+              P.Image, Entry, P.Options, Recovery, P.Contract,
+              Witness::LiftedBits, {}, Limits);
+        };
+        const auto Good = Check({});
+        ASSERT_TRUE(Good.Inference.inferred()) << Good.Inference.Diagnostic;
+        ASSERT_TRUE(Good.proved()) << Good.Refinement.Proof.Diagnostic;
+        ASSERT_EQ(Good.Inference.Plan->Cutpoints.size(), 1U);
+        EXPECT_FALSE(Good.Inference.Plan->Cutpoints[0].OriginalGuards.empty());
+
+        LowIRLoopInferenceLimits Exact;
+        Exact.MaxCutSelectionWork = Good.Inference.CutSelectionWork;
+        Exact.Execution.MaxOperations = Good.Inference.Operations;
+        Exact.Execution.MaxSolverQueries = Good.Inference.SolverQueries;
+        ASSERT_TRUE(Check(Exact).proved());
+        for (unsigned Kind = 0; Kind != 3; ++Kind) {
+          auto Short = Exact;
+          if (Kind == 0)
+            --Short.MaxCutSelectionWork;
+          else if (Kind == 1)
+            --Short.Execution.MaxOperations;
+          else
+            --Short.Execution.MaxSolverQueries;
+          const auto R = Check(Short);
+          EXPECT_EQ(R.Inference.Status,
+                    LowIRLoopInferenceStatus::BudgetExceeded);
+          EXPECT_FALSE(R.Inference.Plan);
+          EXPECT_FALSE(R.Refinement.Certificate);
+        }
+        auto &Bytes = P.Image.Segments.front().Data;
+        ASSERT_EQ(Bytes[Fixture.Update + 1], 0x01U);
+        Bytes[Fixture.Update + 1] =
+            0x29; // ADD -> SUB under the same selectors.
+        const auto Bad = checkBinaryLowIRLoopRefinement(
+            P.Image, Entry, P.Options, Recovery.Residual, P.Contract,
+            *Good.Inference.Plan);
+        EXPECT_FALSE(Bad.proved());
+        EXPECT_FALSE(Bad.Certificate);
+      }
 }
 
 TEST(BinaryLowIRLoopInference, NativeSelectorsProveRepeatedContexts) {
