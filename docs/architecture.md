@@ -86,6 +86,18 @@ operation witness, complete mapped slot and relocation ownership, and exclusive
 consumption by the recovered branch. The unused prefix gains no suppression
 authority from sharing that origin.
 
+A bounded group of AArch64 absolute dispatches in one relocatable ELF function
+can share an exact read-only pointer object. Each selector first proves its
+finite domain with every independent root retained and all group edges absent.
+The joint graph then replays every selector, target LOAD and address role.
+Three immutable rounds establish and replay the complete consumer inventory;
+every member audits the whole physical object, but suppression is limited to
+the independently proved runtime coordinates of the group. Unused slots keep
+their independent roots. The group publishes and withdraws atomically; a
+missing owner, changed member, observable table use or exhausted proof retains
+the unresolved transfers. Module-wide mutation and consumer arbitration still
+owns the final publication decision.
+
 CFG construction also owns indirect tail-call classification. For an AArch64
 candidate without a proved dispatch, `IndirectTailFrame` checks the necessary
 incoming SP and link-word restoration under the existing native call ABI.
