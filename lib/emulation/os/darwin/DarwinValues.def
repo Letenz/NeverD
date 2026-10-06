@@ -56,6 +56,10 @@ NEVERD_DARWIN_VALUE(AtNoFollowAny, 0x800)
 NEVERD_DARWIN_VALUE(AtRemoveDirectory, 0x80)
 NEVERD_DARWIN_VALUE(AtRemoveDatalessDirectory, 0x100)
 NEVERD_DARWIN_VALUE(AtSystemDiscarded, 0x1000)
+NEVERD_DARWIN_VALUE(RenameSeclude, 1)
+NEVERD_DARWIN_VALUE(RenameSwap, 2)
+NEVERD_DARWIN_VALUE(RenameExclusive, 4)
+NEVERD_DARWIN_VALUE(RenameNoFollowAny, 0x10)
 NEVERD_DARWIN_VALUE(GetPath, 50)
 NEVERD_DARWIN_VALUE(DuplicateFD, 0)
 NEVERD_DARWIN_VALUE(GetDescriptorFlags, 1)
@@ -91,6 +95,9 @@ NEVERD_DARWIN_SERVICE(Write, 4, Wide)
 NEVERD_DARWIN_SERVICE(Open, 5, Int)
 NEVERD_DARWIN_SERVICE(Close, 6, Int)
 NEVERD_DARWIN_SERVICE(Unlink, 10, Int)
+NEVERD_DARWIN_SERVICE(Rename, 128, Int)
+NEVERD_DARWIN_SERVICE(RenameAt, 465, Int)
+NEVERD_DARWIN_SERVICE(RenameAtX, 488, Int)
 NEVERD_DARWIN_SERVICE(Umask, 60, Int)
 NEVERD_DARWIN_SERVICE(Chdir, 12, Int)
 NEVERD_DARWIN_SERVICE(Fchdir, 13, Int)
@@ -196,6 +203,13 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(
     NamespaceAlias, "Darwin mutable namespace identity aliases are unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(UnlinkFlags, "unsupported Darwin unlinkat flags")
+NEVERD_DARWIN_DIAGNOSTIC(RenameFlags, "unsupported Darwin rename flags")
+NEVERD_DARWIN_DIAGNOSTIC(RenameKind, "Darwin directory rename is unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(
+    RenameMount,
+    "Darwin cross-parent or conflicting-device rename requires mount identity")
+NEVERD_DARWIN_DIAGNOSTIC(RenameLimit,
+                         "Darwin rename exceeds the path or storage budget")
 NEVERD_DARWIN_DIAGNOSTIC(
     FileCreationLimit,
     "Darwin creation exceeds the file entry, path or storage budget")

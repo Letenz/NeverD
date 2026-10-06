@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 71f1445e8040ae70a58f6f21c2049f8f451f3d23b1a2fa7fefc86478bc5712bd -->
+<!-- i18n-source: b74bd2f7b34b6ece4aa72cf1abb0aa64b9d5941e8927df99c9f49fe673dd4c02 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -75,7 +75,7 @@ Teilweise lesbare Eingaben stoppen vor Effekten. Vollständiges EFAULT erhält B
 
 DarwinMemory hält Mapping-Leases bis zum letzten unmap, auch bei PROT_NONE oder geschlossenen FDs; Änderungen bleiben bis dahin gesperrt. Fehler und alte Null-Längen-Mappings behalten keine Lease. Neue Mappings sehen aktuelle Bytes. O_WRONLY mit READ/WRITE ergibt EACCES; PROT_NONE darf später per mprotect lesen/schreiben.
 
-Originale normale/nocancel-Programme vergleichen den nativen Kernel; 4K/16K-Tests sowie C/CLI/Python prüfen fünf Kombinationen. Rechteprüfung, Verzeichnislöschung, Umbenennen, Hardlinks, native Dateisystem-Metadaten, Mapping-Kohärenz und EOF-SIGBUS fehlen weiterhin. Vollständige Umgebung, iOS-Gerät und Intel HVF sind nicht abgenommen; Intel-Actions bleiben ausgesetzt.
+Originale normale/nocancel-Programme vergleichen den nativen Kernel; 4K/16K-Tests sowie C/CLI/Python prüfen fünf Kombinationen. Rechteprüfung, Verzeichnislöschung, Umbenennen zwischen Elternverzeichnissen, Hardlinks, native Dateisystem-Metadaten, Mapping-Kohärenz und EOF-SIGBUS fehlen weiterhin. Vollständige Umgebung, iOS-Gerät und Intel HVF sind nicht abgenommen; Intel-Actions bleiben ausgesetzt.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -113,7 +113,7 @@ Ohne Policy, bei Verzeichnissen oder nach vollständigem EFAULT mit unbekannter 
 
 `unlink(10)` / `unlinkat(472)` entfernen vorhandene reguläre Namen. unlinkat unterstützt nur die unteren32 Bits 0 oder `0x800`; unbekannte Bits liefern EINVAL vor Pfad/FD, andere bekannte Löschmodi bleiben unmodelliert. Gemeinsame Auflösung: ENOENT, ENOTDIR nach Datei mit `/`, EPERM für normale Verzeichnisse, EBUSY für die Wurzel. Endkomponenten `.`/`..` wurden nativ geprüft.
 
-Alte FD/dup/unabhängige Opens behalten Daten, Position und Flags; F_GETPATH liefert den erfassten alten Pfad. Neue Opens scheitern, implizite Eltern und CWD bleiben. Schreibfreigaben gehören zum Objekt; das aktuelle Bytebudget wird erst nach letztem Deskriptor und letzter Mapping-Range durch close/dup2/nächste Mutation zurückgewonnen. Ursprüngliche Pfadkosten bleiben; Rechteprüfung, Umbenennung, Hardlinks und Verzeichnislöschung fehlen noch.
+Alte FD/dup/unabhängige Opens behalten Daten, Position und Flags; F_GETPATH liefert den erfassten alten Pfad. Neue Opens scheitern, implizite Eltern und CWD bleiben. Schreibfreigaben gehören zum Objekt; das aktuelle Bytebudget wird erst nach letztem Deskriptor und letzter Mapping-Range durch close/dup2/nächste Mutation zurückgewonnen. Ursprüngliche Pfadkosten bleiben; Rechteprüfung, Umbenennung zwischen Elternverzeichnissen, Hardlinks und Verzeichnislöschung fehlen noch.
 
 Eltern-stat/readdir/SEEK_END werden für alte/neue FD und Pfade unbekannt und stoppen vor Kopie/Cursoränderung. read/pread bleiben EISDIR; SET/CUR/F_GETPATH/fchdir/relative Auflösung funktionieren weiter. Eine bekannte Richtlinie setzt nur nlink=0 und feste ctime; spätere Schreibvorgänge stellen nlink=1 nicht wieder her. Ohne Richtlinie/nach EFAULT bleiben Metadaten unbekannt. Fehler erhalten den Zustand. `unlinked-file` vergleicht native Namen-/FD-Regeln; Zeit und Invalidierung sind explizite Modellregeln.
 
@@ -129,7 +129,7 @@ O_CREAT=0x200 erstellt eine leere Datei direkt unter einem explizit mutable Elte
 
 O_EXCL=0x800 mit O_CREAT liefert bei vorhandenen Dateien/Verzeichnissen EEXIST vor Kürzung; allein ist es wirkungslos. Ein vorhandenes Verzeichnis lässt sich mit Nur-Lese-O_CREAT öffnen. Reihenfolge: ungültiger Zugriffsmodus, FD-Platz, EINVAL für O_CREAT|O_DIRECTORY, Pfad. Nur die letzte ursprüngliche fehlende Komponente kann entstehen; fehlende Vorfahren und `/`, `//`, `/.`, `/..` am Ende liefern ENOENT. Neues O_CREAT|O_TRUNC setzt FWASWRITTEN nicht, Kürzung vorhandener Dateien dagegen schon.
 
-Nur Einfügen invalidiert Elternbeobachtungen. Gleichnamige alte/neue Objekte behalten getrennte Daten, FD, Metadaten und Mapping-Leases. 256 Einträge umfassen feste ursprüngliche Nicht-Datei-Einträge und lebende Dateien; dynamische kanonische Pfade/NUL und aktuelle Bytes zählen zu 16 MiB. Nach unlink gibt erst der letzte FD/Mapping die dynamischen Kosten frei, ursprüngliche Kosten bleiben. Budgetende oder kanonische Pfade ab 1024 Bytes stoppen ausdrücklich ohne erfundenes ENOSPC oder natives Pfad-errno, ohne Namen/FD zu veröffentlichen. created-file vergleicht natives macOS und fünf Profile; 4K/16K-Tests prüfen Grenzen. Rechteprüfung, Umbenennung, Links und Verzeichnismutation bleiben offen.
+Nur Einfügen invalidiert Elternbeobachtungen. Gleichnamige alte/neue Objekte behalten getrennte Daten, FD, Metadaten und Mapping-Leases. 256 Einträge umfassen feste ursprüngliche Nicht-Datei-Einträge und lebende Dateien; dynamische kanonische Pfade/NUL und aktuelle Bytes zählen zu 16 MiB. Nach unlink gibt erst der letzte FD/Mapping die dynamischen Kosten frei, ursprüngliche Kosten bleiben. Budgetende oder kanonische Pfade ab 1024 Bytes stoppen ausdrücklich ohne erfundenes ENOSPC oder natives Pfad-errno, ohne Namen/FD zu veröffentlichen. created-file vergleicht natives macOS und fünf Profile; 4K/16K-Tests prüfen Grenzen. Rechteprüfung, Umbenennung zwischen Elternverzeichnissen, Links und Verzeichnismutation bleiben offen.
 
 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
@@ -147,7 +147,15 @@ Neue Knoten besitzen eigene Metadaten/Allokation und erben nichts vom alten glei
 {"darwin_files":{"files":[],"umask":18}}
 ```
 
-[XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+[XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c). [XNU rename / renameat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
+## Reguläre Dateien innerhalb desselben Elternverzeichnisses umbenennen
+
+`rename(128)`, `renameat(465)` und `renameatx_np(488)` benennen reguläre Dateien im selben ausdrücklich veränderbaren direkten Elternverzeichnis um oder ersetzen sie. Auch derselbe Name braucht diese Freigabe; danach bleiben alle Beobachtungen unverändert. Die unteren 32 Flag-Bits erlauben 0 oder `RENAME_NOFOLLOW_ANY=0x10`. Unbekannte Bits und EXCL+SWAP liefern EINVAL vor dem Pfadzugriff, andere bekannte Flags sind nicht unterstützt. Der gemeinsame Resolver behält Quellpriorität, FD- und ursprüngliche Komponentenprüfungen. Verzeichnisquellen werden sofort abgelehnt; erfolgreich aufgelöste abschließende Punkt- oder Zwei-Punkt-Komponenten liefern EINVAL vor Mount/Freigabe, auch bei verschachtelten oder anderen Eltern. Fehlende oder nicht als Verzeichnis nutzbare Vorfahren behalten Vorrang. Gewöhnliche Verzeichnisziele im zugelassenen Elternverzeichnis liefern EISDIR.
+
+Alte FD, unabhängige open und dup folgen dem neuen Quellnamen über `F_GETPATH`. Das ersetzte Objekt behält letzten Pfad, Bytes, Cursor, Flags und Mapping-Lebensdauer; Schreibrechte und Metadaten gehen nicht auf die Quelle über. Bekannte Richtlinien ändern nur den jeweiligen ctime und beim Ziel nlink=0; Identität, Eigentümer, Geburtszeit und Belegung bleiben erhalten. Ohne Richtlinie/nach vollständigem EFAULT bleiben Metadaten unbekannt. Nur echtes Verschieben invalidiert Eltern-stat/Aufzählung.
+
+Keine neue inode, Eintragskapazität oder freie FD nötig. Neuer Pfad/NUL ersetzt dynamische Quellkosten; ursprüngliche Kosten bleiben. Nur Ziele ohne alte FD/Mappings geben sofort Kapazität frei, genau einmal; teilweises unmap behält die vollen Objektkosten. Pfade ab 1024 Bytes oder mehr als 16 MiB stoppen vor Änderungen. Andere Eltern, widersprüchliche bekannte Geräte, Verzeichnisverschiebung, swap/exclusive/seclude und Rechteprüfung bleiben offen. Gleiche stat-Geräte beweisen keinen gemeinsamen Mount; EXDEV wird nicht erfunden. `renamed-file` vergleicht native/Gast-Identität, Pfade, Ersatz und Mappings; Zeiten/Budgets sind virtuelle Regeln.
 
 
 ## Verzeichnisse und relative Pfade
@@ -241,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-Die eigene Workload-Prüfung verlangt alle 87 nativen ARM64- beziehungsweise 58 x64-Fälle, einschließlich `LC_MAIN` und `LC_UNIXTHREAD` auf jeder Plattform. Fehlende/übersprungene Pflichtfälle oder fehlendes `ld64.lld` führen zum Fehlschlag.
+Die eigene Workload-Prüfung verlangt alle 90 nativen ARM64- beziehungsweise 60 x64-Fälle, einschließlich `LC_MAIN` und `LC_UNIXTHREAD` auf jeder Plattform. Fehlende/übersprungene Pflichtfälle oder fehlendes `ld64.lld` führen zum Fehlschlag.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -340,3 +348,9 @@ Release Darwin:748 Fälle,412 bestanden,336 wegen fehlender Backends übersprung
 Release Darwin: 787 Registrierungen, 439 bestanden, 348 wegen nicht verfügbarer Backends übersprungen, keine Fehler; alle 87 ARM64-HVF-Pflichtfälle ausgeführt. Gezielt: 139/151 bestanden, 12 übersprungen. C/CLI/Bericht: 145/145 einschließlich 98 Darwin-Eingabevergleichen; unveränderte Python-Methode mit fünf Profilen in 12.211 Sekunden bestanden. Native Programme 19/19, Prüfrunner 66/66. Unabhängige Prüfung ohne Blocker; zusätzliche Fälle prüfen verschiedene Eltern-device/GID und globale inode-Folge, unlink vor erstem Schreiben sowie umask ohne freien FD/lesbare Eingabe. Zahlen überlappen, Zeitlimits unverändert, keine Fehlerwiederholung nötig. Feste Erstellungs-/Änderungszeit und Allokation bleiben virtuelle Richtlinien. Vollständige GitHub CI und physisches iOS bleiben separat; Intel HVF Actions ausgesetzt.
 
 `build-hvf-arm64/creation-metadata-validation-summary.json`, `creation-metadata-darwin-evidence/`, `creation-metadata-focused.xml`, `creation-metadata-public.xml`, `creation-metadata-native/`.
+
+### Umbenennung geprüft, 2026-10-06
+
+Release Darwin: 835 Registrierungen,474 bestanden,360 nicht verfügbare Backends, ein bestehender macOS-ARM 64-HVF-Timeout für virtuelle Metadaten (5.087 s). Unveränderte Methode/Argumente und 5 s-Limit erneut geprüft: 8 bestanden,12 übersprungen, betroffene Identität 0.113 s. Alle 90 erforderlichen ARM 64-HVF-Identitäten haben erfolgreiche Beobachtungen über beide Läufe; das vollständige Gate bleibt als fehlgeschlagen dokumentiert. Fokus 42/54 bestanden,12 übersprungen; C/CLI/Bericht 150/150, davon 103 Darwin-Vergleiche; unverändertes Python mit fünf Profilen 18.478 s; native 20/20, Skripte 66/66. Unabhängige Prüfung fand verschachtelte Punkt-Klassifikation: 4 K/16 K vor Korrektur fehlgeschlagen, danach bestanden. Frühere readonly-ftruncate-Testannahme auf EINVAL korrigiert. Fehler und Probeversionen bleiben erhalten, Zählungen überlappen, Fristen unverändert. Vollständige GitHub CI/iOS-Geräte separat; Intel HVF Actions ausgesetzt.
+
+`build-hvf-arm64/rename-validation-summary.json`, `rename-focused-final.xml`, `rename-darwin-final-evidence/`, `rename-metadata-recheck.xml`, `rename-public.xml`, `rename-native-final/`, `rename-review-initial-evidence/`.

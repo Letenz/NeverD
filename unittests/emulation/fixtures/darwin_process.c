@@ -716,6 +716,151 @@ static int created_file_metadata(const char *path, int virtual_record) {
   return 37;
 }
 
+/* Original native/guest same-parent rename and replacement comparison. */
+static int renamed_file(const char *path) {
+  unsigned error;
+  int check = 80;
+#define RENAME_EXPECT(expression)                                              \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 old = call(5, (u64)path, 2, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error);
+  char original[1024], parent[1024], temporary[1024], final[1024], after[1024],
+      trailing[1024], bytes[10];
+  RENAME_EXPECT(call(92, old, 50, (u64)original, 0, 0, 0, &error) == 0 &&
+                !error);
+  unsigned size = 0, slash = 0;
+  while (original[size]) {
+    parent[size] = original[size];
+    if (original[size] == '/')
+      slash = size;
+    ++size;
+  }
+  RENAME_EXPECT(slash + 12 < sizeof(temporary));
+  parent[slash ? slash : 1] = 0;
+  for (unsigned i = 0; i <= slash; ++i)
+    temporary[i] = final[i] = trailing[i] = original[i];
+  const char names[][12] = {"rename.tmp", "rename.end", "rename.end/"};
+  for (unsigned i = 0; i != 12; ++i) {
+    temporary[slash + 1 + i] = names[0][i];
+    final[slash + 1 + i] = names[1][i];
+    trailing[slash + 1 + i] = names[2][i];
+  }
+  u64 directory = call(5, (u64)parent, 0, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error);
+  unsigned char old_status[144], source_status[144], status[144];
+  RENAME_EXPECT(call(339, old, (u64)old_status, 0, 0, 0, 0, &error) == 0 &&
+                !error);
+  u64 a = call(5, (u64)temporary, 0x01000a02, 0600, 0, 0, 0, &error);
+  RENAME_EXPECT(!error);
+  RENAME_EXPECT(call(4, a, (u64) "new", 3, 0, 0, 0, &error) == 3 && !error);
+  u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error);
+  u64 independent = call(5, (u64)temporary, 0, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error);
+  RENAME_EXPECT(call(339, a, (u64)source_status, 0, 0, 0, 0, &error) == 0 &&
+                !error);
+  RENAME_EXPECT(call(199, old, 4, 0, 0, 0, 0, &error) == 4 && !error);
+  u64 source_map = call(197, 0, PAGE, 1, 2, a, 0, &error);
+  RENAME_EXPECT(!error);
+  u64 old_map = call(197, 0, PAGE, 1, 2, old, 0, &error);
+  RENAME_EXPECT(!error);
+  RENAME_EXPECT(call(128, (u64)temporary, (u64)temporary, 0, 0, 0, 0, &error) ==
+                    0 &&
+                !error);
+  RENAME_EXPECT(call(128, (u64) final, (u64)-1, 0, 0, 0, 0, &error) == 2 &&
+                error);
+  RENAME_EXPECT(call(128, (u64)temporary, (u64)trailing, 0, 0, 0, 0, &error) ==
+                    2 &&
+                error);
+  RENAME_EXPECT(call(465, directory, (u64)(temporary + slash + 1), directory,
+                     (u64) ".", 0, 0, &error) == 22 &&
+                error);
+  RENAME_EXPECT(call(465, directory, (u64)(temporary + slash + 1), directory,
+                     (u64) "..", 0, 0, &error) == 22 &&
+                error);
+  RENAME_EXPECT(call(488, (u64)-1, (u64)-1, (u64)-1, (u64)-1, 8, 0, &error) ==
+                    22 &&
+                error);
+  RENAME_EXPECT(call(488, (u64)-1, (u64)-1, (u64)-1, (u64)-1, 6, 0, &error) ==
+                    22 &&
+                error);
+  RENAME_EXPECT(call(465, directory, (u64)(temporary + slash + 1), directory,
+                     (u64)(final + slash + 1), 0, 0, &error) == 0 &&
+                !error);
+  const u64 source_fds[] = {a, d, independent};
+  for (unsigned i = 0; i != 3; ++i) {
+    RENAME_EXPECT(call(92, source_fds[i], 50, (u64)after, 0, 0, 0, &error) ==
+                      0 &&
+                  !error);
+    RENAME_EXPECT(equal(after, final));
+  }
+  RENAME_EXPECT(call(488, (u64)-1, (u64) final, (u64)-1, (u64)original,
+                     0x1234567800000010UL, 0, &error) == 0 &&
+                !error);
+  RENAME_EXPECT(call(339, old, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  RENAME_EXPECT(little_integer(status + 8, 8) ==
+                    little_integer(old_status + 8, 8) &&
+                little_integer(status + 6, 2) == 0 &&
+                little_integer(status + 96, 8) == 10);
+  RENAME_EXPECT(call(339, a, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  RENAME_EXPECT(little_integer(status + 8, 8) ==
+                    little_integer(source_status + 8, 8) &&
+                little_integer(status + 6, 2) == 1 &&
+                little_integer(status + 96, 8) == 3);
+  unsigned preserved = 1;
+  for (unsigned i = 0; i != sizeof(status); ++i)
+    // Identity, ownership, mtime, birth time and size survive the new name.
+    if (i < 24 || (i >= 48 && i < 64) || (i >= 80 && i < 104))
+      preserved &= status[i] == source_status[i];
+  RENAME_EXPECT(preserved);
+  RENAME_EXPECT(
+      call(128, (u64)original, (u64) final, 0, 0, 0, 0, &error) == 0 && !error);
+  for (unsigned i = 0; i != 3; ++i) {
+    RENAME_EXPECT(call(92, source_fds[i], 50, (u64)after, 0, 0, 0, &error) ==
+                      0 &&
+                  !error);
+    RENAME_EXPECT(equal(after, final));
+  }
+  RENAME_EXPECT(call(92, old, 50, (u64)after, 0, 0, 0, &error) == 0 && !error);
+  RENAME_EXPECT(equal(after, original));
+  RENAME_EXPECT(call(92, a, 3, 0, 0, 0, 0, &error) == 0x10002 && !error);
+  RENAME_EXPECT(call(92, a, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  RENAME_EXPECT(call(92, d, 1, 0, 0, 0, 0, &error) == 0 && !error);
+  RENAME_EXPECT(call(199, d, 0, 1, 0, 0, 0, &error) == 3 && !error);
+  RENAME_EXPECT(call(199, independent, 0, 1, 0, 0, 0, &error) == 0 && !error);
+  RENAME_EXPECT(call(199, old, 0, 1, 0, 0, 0, &error) == 4 && !error);
+  RENAME_EXPECT(call(153, old, (u64)bytes, 10, 0, 0, 0, &error) == 10 &&
+                !error);
+  RENAME_EXPECT(bytes[0] == '0' && bytes[9] == '9');
+  RENAME_EXPECT(((volatile char *)source_map)[0] == 'n' &&
+                ((volatile char *)source_map)[2] == 'w' &&
+                ((volatile char *)old_map)[0] == '0');
+  RENAME_EXPECT(call(3, independent, (u64)bytes, 10, 0, 0, 0, &error) == 3 &&
+                !error);
+  RENAME_EXPECT(bytes[0] == 'n' && bytes[2] == 'w');
+  RENAME_EXPECT(call(5, (u64)original, 0, 0, 0, 0, 0, &error) == 2 && error);
+  u64 fresh = call(5, (u64) final, 0, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error);
+  RENAME_EXPECT(call(3, fresh, (u64)bytes, 10, 0, 0, 0, &error) == 3 && !error);
+  RENAME_EXPECT(bytes[0] == 'n' && bytes[2] == 'w');
+  RENAME_EXPECT(call(73, source_map, PAGE, 0, 0, 0, 0, &error) == 0 && !error);
+  RENAME_EXPECT(call(73, old_map, PAGE, 0, 0, 0, 0, &error) == 0 && !error);
+  RENAME_EXPECT(call(154, old, (u64) "x", 1, 0, 0, 0, &error) == 1 && !error);
+  RENAME_EXPECT(call(153, a, (u64)bytes, 10, 0, 0, 0, &error) == 3 && !error);
+  RENAME_EXPECT(bytes[0] == 'n' && bytes[2] == 'w');
+  RENAME_EXPECT(call(10, (u64) final, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 fds[] = {old, a, d, independent, fresh, directory};
+  for (unsigned i = 0; i != 6; ++i)
+    RENAME_EXPECT(call(6, fds[i], 0, 0, 0, 0, 0, &error) == 0 && !error);
+  RENAME_EXPECT(call(4, 1, (u64) "r", 1, 0, 0, 0, &error) == 1 && !error);
+#undef RENAME_EXPECT
+  return 37;
+}
+
 /* Original native/guest creation and same-name object lifetime comparison. */
 static int created_file(const char *path) {
   unsigned error;
@@ -1280,6 +1425,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
 #endif
                0, mach_flags(1))
         .value;
+  if (equal(argv[1], "renamed-file"))
+    return argc < 3 ? 79 : renamed_file(argv[2]);
   if (equal(argv[1], "created-file-metadata") ||
       equal(argv[1], "virtual-created-metadata"))
     return argc < 3 ? 79

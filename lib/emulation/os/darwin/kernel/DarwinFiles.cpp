@@ -330,6 +330,7 @@ void DarwinFiles::initializeNamespace() {
   for (const auto &[Path, Bytes] : Options->Files) {
     auto Node = std::make_shared<Contents>();
     Node->Initial = Bytes;
+    Node->Path = Path;
     Node->Writable = Options->WritableFiles.contains(Path);
     const auto Metadata = Options->Metadata.find(Path);
     if (Metadata != Options->Metadata.end())
@@ -512,6 +513,11 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
     File.File = Nodes.at(File.Path);
     File.Metadata = nullptr;
   }
+  const auto Trimmed = llvm::StringRef(Path).rtrim('/');
+  const auto Slash = Trimmed.rfind('/');
+  const auto Leaf =
+      Slash == llvm::StringRef::npos ? Trimmed : Trimmed.substr(Slash + 1);
+  File.FinalSpecialComponent = Leaf == "." || Leaf == "..";
   return File;
 }
 
@@ -580,18 +586,111 @@ DarwinFiles::unlink(uint64_t Path, uint32_t DirectoryFD,
     return unsupported(Result, diagnostic::DirectoryNotMutable);
   if (auto E = prepareMutation())
     return std::move(E);
-  auto &Node = *File.File;
+  updateNamespaceMetadata(*File.File, true);
+  ChangedDirectories.insert(Parent);
+  Unlinked.push_back(File.File);
+  Nodes.erase(File.Path);
+  return returned(0);
+}
+
+void DarwinFiles::updateNamespaceMetadata(Contents &Node, bool Removed) {
   if (Node.Policy && !Node.MetadataInvalidated) {
     if (!Node.CurrentMetadata)
       Node.CurrentMetadata = *Node.InitialMetadata;
-    Node.CurrentMetadata->LinkCount = 0;
+    if (Removed)
+      Node.CurrentMetadata->LinkCount = 0;
     Node.CurrentMetadata->ChangeTime = Node.Policy->Time;
   } else {
     Node.MetadataInvalidated = true;
   }
+}
+
+llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
+                    uint64_t TargetPath, uint32_t TargetDirectory,
+                    ProcessResult &Result) {
+  auto From = resolvePath(SourcePath, SourceDirectory);
+  if (!From)
+    return From.takeError();
+  if (auto *Error = std::get_if<uint32_t>(&*From))
+    return returned(*Error, true);
+  if (auto *Reason = std::get_if<const char *>(&*From))
+    return unsupported(Result, *Reason);
+  auto &Source = std::get<Description>(*From);
+  // Directory sources require WILLBEDIR lookup, including different missing
+  // trailing-slash rules. Do not apply a regular-file target lookup to them.
+  if (Source.Type != Kind::File)
+    return unsupported(Result, diagnostic::RenameKind);
+  auto To = resolvePath(TargetPath, TargetDirectory, true);
+  if (!To)
+    return To.takeError();
+  if (auto *Error = std::get_if<uint32_t>(&*To))
+    return returned(*Error, true);
+  if (auto *Reason = std::get_if<const char *>(&*To))
+    return unsupported(Result, *Reason);
+  auto &Target = std::get<Description>(*To);
+  // RENAME lookup rejects a final dot/dotdot before mount or authorization
+  // checks. Canonical reduction can otherwise make it look like another parent.
+  if (Target.FinalSpecialComponent)
+    return returned(InvalidArgument, true);
+  const auto Parent = parentPath(Source.Path);
+  if (parentPath(Target.Path) != Parent)
+    return unsupported(Result, diagnostic::RenameMount);
+  // Even a same-name native rename performs authorization. The namespace
+  // grant excludes known restricted flags, aliases and special parent modes.
+  if (!Options->MutableDirectories.contains(Parent))
+    return unsupported(Result, diagnostic::DirectoryNotMutable);
+  std::optional<int32_t> Device;
+  auto SameDevice = [&](const DarwinFileMetadata *M) {
+    if (!M)
+      return true;
+    if (Device && *Device != M->Device)
+      return false;
+    Device = M->Device;
+    return true;
+  };
+  const auto ParentMetadata = Options->Metadata.find(Parent);
+  if (!SameDevice(ParentMetadata == Options->Metadata.end()
+                      ? nullptr
+                      : &ParentMetadata->second) ||
+      !SameDevice(Source.File->metadata()) ||
+      !SameDevice(Target.File ? Target.File->metadata() : Target.Metadata))
+    return unsupported(Result, diagnostic::RenameMount);
+  if (Target.Type == Kind::Directory)
+    return returned(IsDirectory, true);
+  if (Source.Path == Target.Path)
+    return returned(0);
+  if (auto E = prepareMutation())
+    return std::move(E);
+  // Only Nodes and this lookup may own an immediately reclaimable target.
+  // A mapping retains a separate lease even after all descriptors close.
+  const uint64_t Credit = Target.File && Target.File.use_count() == 2 &&
+                                  Target.File->Lease.use_count() == 1
+                              ? Target.bytes().size() + Target.File->PathCharge
+                              : 0;
+  const uint64_t Other = *StorageUsed - Source.File->PathCharge - Credit;
+  const uint64_t Charge = Target.Path.size() + 1;
+  if (Target.Path.size() >= limits::Path || Charge > limits::Bytes - Other)
+    return unsupported(Result, diagnostic::RenameLimit);
+  std::string NewKey = Target.Path, NewIdentity = Target.Path;
+  if (Target.File)
+    Unlinked.reserve(Unlinked.size() + 1);
+  auto Moved = Nodes.extract(Source.Path);
+  if (Target.File) {
+    updateNamespaceMetadata(*Target.File, true);
+    Unlinked.push_back(Target.File);
+    Nodes.erase(Target.Path);
+  }
+  Moved.key().swap(NewKey);
+  Nodes.insert(std::move(Moved));
+  updateNamespaceMetadata(*Source.File, false);
+  Source.File->Path.swap(NewIdentity);
+  // Reclaim below deducts Credit exactly once, after the lookup releases it.
+  *StorageUsed = *StorageUsed - Source.File->PathCharge + Charge;
+  Source.File->PathCharge = Charge;
   ChangedDirectories.insert(Parent);
-  Unlinked.push_back(File.File);
-  Nodes.erase(File.Path);
+  Target.File.reset();
+  reclaimUnlinked();
   return returned(0);
 }
 
@@ -611,6 +710,7 @@ DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
     return unsupported(Result, diagnostic::FileCreationInode);
   auto Node = std::make_shared<Contents>();
   Node->Writable = true;
+  Node->Path = File.Path;
   Node->PathCharge = Charge;
   if (Options->CreationPolicy) {
     const auto &Policy = *Options->CreationPolicy;
@@ -890,6 +990,21 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return open(A[0], A[1], AtCurrentDirectory, A[2], Result);
   if (Service == ServiceKind::OpenAt)
     return open(A[1], A[2], A[0], A[3], Result);
+  if (Service == ServiceKind::Rename)
+    return rename(A[0], AtCurrentDirectory, A[1], AtCurrentDirectory, Result);
+  if (Service == ServiceKind::RenameAt || Service == ServiceKind::RenameAtX) {
+    if (Service == ServiceKind::RenameAtX) {
+      const uint32_t Flags = A[4];
+      if ((Flags & ~(RenameSeclude | RenameSwap | RenameExclusive |
+                     RenameNoFollowAny)) ||
+          (Flags & (RenameSwap | RenameExclusive)) ==
+              (RenameSwap | RenameExclusive))
+        return returned(InvalidArgument, true);
+      if (Flags & ~RenameNoFollowAny)
+        return unsupported(Result, diagnostic::RenameFlags);
+    }
+    return rename(A[1], A[0], A[3], A[2], Result);
+  }
   if (Service == ServiceKind::Unlink)
     return unlink(A[0], AtCurrentDirectory, Result);
   if (Service == ServiceKind::UnlinkAt) {
@@ -1029,13 +1144,14 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
       FD.CloseOnExec = A[2] & 1;
       return returned(0);
     case GetPath: {
-      if (File.Path.empty())
+      const auto &Path = File.File ? File.File->Path : File.Path;
+      if (Path.empty())
         return unsupported(Result, diagnostic::FilePathIdentity);
-      return copyout(A[2],
-                     llvm::ArrayRef<uint8_t>(
-                         reinterpret_cast<const uint8_t *>(File.Path.c_str()),
-                         File.Path.size() + 1),
-                     diagnostic::FilePartialPath, Result);
+      return copyout(
+          A[2],
+          llvm::ArrayRef<uint8_t>(
+              reinterpret_cast<const uint8_t *>(Path.c_str()), Path.size() + 1),
+          diagnostic::FilePartialPath, Result);
     }
     case GetFileFlags:
       return returned(File.Flags);

@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 71f1445e8040ae70a58f6f21c2049f8f451f3d23b1a2fa7fefc86478bc5712bd -->
+<!-- i18n-source: b74bd2f7b34b6ece4aa72cf1abb0aa64b9d5941e8927df99c9f49fe673dd4c02 -->
 
 [← Índice de documentación](README.md)
 
@@ -75,7 +75,7 @@ La entrada parcialmente legible se detiene antes de efectos. EFAULT completo con
 
 DarwinMemory mantiene reservas hasta el último unmap, incluso PROT_NONE y FD cerrados; las mutaciones paran mientras existan. Fallos y mmap antiguo de longitud cero no retienen reservas. Nuevos mapas ven bytes actuales. O_WRONLY con READ/WRITE da EACCES; PROT_NONE puede ganar lectura/escritura mediante mprotect.
 
-Programas originales normal/nocancel comparan el kernel nativo; pruebas 4K/16K y C/CLI/Python cubren cinco combinaciones. Aplicación de permisos, borrar directorios, renombrar, enlaces físicos, metadatos del sistema de archivos nativo, coherencia de mapas y SIGBUS EOF siguen pendientes. El entorno completo, dispositivos iOS e Intel HVF no están validados; Actions Intel permanece suspendido.
+Programas originales normal/nocancel comparan el kernel nativo; pruebas 4K/16K y C/CLI/Python cubren cinco combinaciones. Aplicación de permisos, borrar directorios, renombrar entre padres, enlaces físicos, metadatos del sistema de archivos nativo, coherencia de mapas y SIGBUS EOF siguen pendientes. El entorno completo, dispositivos iOS e Intel HVF no están validados; Actions Intel permanece suspendido.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -113,7 +113,7 @@ Sin política, para directorios o tras EFAULT completo con asignación desconoci
 
 `unlink(10)` / `unlinkat(472)` eliminan nombres regulares existentes. unlinkat acepta los32 bits bajos 0 o `0x800`; bits desconocidos dan EINVAL antes de ruta/FD y otros modos de borrado conocidos siguen sin soporte. Resolución común: ENOENT, ENOTDIR tras archivo con `/`, EPERM en directorio ordinario, EBUSY en raíz. Se verificaron nativamente finales `.`/`..`.
 
-FD/dup/aperturas independientes previos conservan datos, cursores y flags; F_GETPATH devuelve la ruta anterior capturada. Nuevas aperturas fallan, padres implícitos y CWD permanecen. La autorización de escritura pertenece al objeto; close/dup2/la siguiente mutación recuperan sus bytes actuales sólo tras el último descriptor y mapa. Los costes iniciales de rutas permanecen; aplicación de permisos, renombrado, enlaces físicos y borrado de directorios siguen pendientes.
+FD/dup/aperturas independientes previos conservan datos, cursores y flags; F_GETPATH devuelve la ruta anterior capturada. Nuevas aperturas fallan, padres implícitos y CWD permanecen. La autorización de escritura pertenece al objeto; close/dup2/la siguiente mutación recuperan sus bytes actuales sólo tras el último descriptor y mapa. Los costes iniciales de rutas permanecen; aplicación de permisos, renombrado entre padres, enlaces físicos y borrado de directorios siguen pendientes.
 
 stat/readdir/SEEK_END del padre quedan desconocidos para todo FD/ruta y paran antes de copiar o mover cursores. read/pread mantienen EISDIR; SET/CUR/F_GETPATH/fchdir/resolución relativa continúan. La política conocida establece nlink=0 y ctime fijo; posteriores escrituras no restauran nlink=1. Sin política/tras EFAULT, metadatos desconocidos. Los fallos preservan estado. `unlinked-file` compara reglas nativas de nombre/FD; tiempos e invalidación son reglas explícitas del modelo.
 
@@ -129,7 +129,7 @@ O_CREAT=0x200 crea un archivo vacío bajo un padre directo explícitamente mutab
 
 O_EXCL=0x800 con O_CREAT devuelve EEXIST para archivos/directorios existentes antes de truncar; solo no tiene efecto. O_CREAT de lectura abre directorios existentes. Orden: modo inválido, capacidad FD, EINVAL por O_CREAT|O_DIRECTORY, ruta. Solo se crea el último componente original ausente; ancestros ausentes y sufijos `/`, `//`, `/.`, `/..` dan ENOENT. O_CREAT|O_TRUNC nuevo no marca FWASWRITTEN; truncar uno existente sí.
 
-Solo insertar invalida las observaciones del padre. Objetos nuevos/antiguos homónimos mantienen datos, FD, metadatos y mapas independientes. Las 256 entradas incluyen elementos iniciales no archivo y objetos vivos; rutas canónicas/NUL dinámicas y bytes actuales cuentan en 16 MiB. Tras unlink, el último FD/mapa libera costes dinámicos; los iniciales permanecen. Agotar presupuesto o llegar a 1024 bytes de ruta canónica detiene explícitamente sin inventar ENOSPC o errno de ruta nativo ni publicar nombre/FD. created-file compara macOS nativo y cinco perfiles; pruebas 4K/16K verifican límites. Quedan aplicación de permisos, renombrado, enlaces y mutación de directorios.
+Solo insertar invalida las observaciones del padre. Objetos nuevos/antiguos homónimos mantienen datos, FD, metadatos y mapas independientes. Las 256 entradas incluyen elementos iniciales no archivo y objetos vivos; rutas canónicas/NUL dinámicas y bytes actuales cuentan en 16 MiB. Tras unlink, el último FD/mapa libera costes dinámicos; los iniciales permanecen. Agotar presupuesto o llegar a 1024 bytes de ruta canónica detiene explícitamente sin inventar ENOSPC o errno de ruta nativo ni publicar nombre/FD. created-file compara macOS nativo y cinco perfiles; pruebas 4K/16K verifican límites. Quedan aplicación de permisos, renombrado entre padres, enlaces y mutación de directorios.
 
 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
@@ -147,7 +147,15 @@ Cada nodo posee metadatos/asignación propios, sin heredar el antiguo homónimo.
 {"darwin_files":{"files":[],"umask":18}}
 ```
 
-[XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+[XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c). [XNU rename / renameat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
+## Renombrar archivos normales dentro del mismo padre
+
+`rename(128)`, `renameat(465)` y `renameatx_np(488)` renombran o reemplazan dentro del mismo padre inmediato explícitamente mutable. Incluso no cambiar el nombre requiere autorización; una vez admitido conserva las observaciones. Los 32 bits bajos aceptan 0 o `RENAME_NOFOLLOW_ANY=0x10`; bits desconocidos y EXCL+SWAP dan EINVAL antes de leer rutas, otros flags conocidos no están soportados. El resolvedor conserva prioridad del origen, FD y comprobaciones de componentes originales. Un origen directorio se rechaza inmediatamente; un punto/doble punto final resuelto da EINVAL antes de montaje y autorización, incluso con padres anidados o distintos. Los errores de ancestros ausentes/no directorios conservan prioridad. Un directorio ordinario dentro del padre admitido da EISDIR.
+
+FD antiguos, open independientes y dup siguen el nuevo nombre mediante `F_GETPATH`. El objeto reemplazado conserva última ruta, bytes, posiciones, flags y mapas; no transfiere permiso de escritura ni metadatos al origen. Cada política conocida cambia su ctime y nlink=0 del destino, conservando identidad, propietario, nacimiento y asignación. Sin política/tras EFAULT completo, los metadatos siguen desconocidos. Solo un cambio real invalida stat/enumeración del padre.
+
+No consume inode, entrada nueva ni FD libre. La ruta/NUL sustituye el coste dinámico del origen; los iniciales quedan reservados. Solo un destino sin FD/mapas antiguos aporta capacidad inmediata, recuperada una sola vez; unmap parcial conserva el coste completo. Ruta de 1024 bytes o exceso de 16 MiB detiene antes de modificar. Otros padres, devices conocidos contradictorios, directorios, swap/exclusive/seclude y permisos siguen pendientes. Igual device stat no prueba igual montaje; no se inventa EXDEV. `renamed-file` compara identidad, rutas, reemplazo y mapas nativos/invitados; tiempos y presupuestos son reglas virtuales.
 
 
 ## Directorios y rutas relativas
@@ -241,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-La validación independiente exige los 87 casos nativos ARM64 o 58 x64, con `LC_MAIN` y `LC_UNIXTHREAD` en cada plataforma. Casos obligatorios ausentes/omitidos o falta de `ld64.lld` producen fallo.
+La validación independiente exige los 90 casos nativos ARM64 o 60 x64, con `LC_MAIN` y `LC_UNIXTHREAD` en cada plataforma. Casos obligatorios ausentes/omitidos o falta de `ld64.lld` producen fallo.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -340,3 +348,9 @@ Release Darwin:748 casos,412 aprobados,336 omitidos por backend ausente, cero fa
 Release Darwin: 787 registros, 439 aprobados, 348 omitidos por backend no disponible, cero fallos; ejecutados los 87 ARM64 HVF obligatorios. Específicos: 139/151 aprobados, 12 omitidos. C/CLI/informe: 145/145, incluidos 98 contrastes de entrada Darwin; método Python sin cambios, cinco perfiles en 12.211 segundos. Nativos 19/19 y verificadores 66/66 aprobados. Revisión independiente sin bloqueos; nuevos casos cubren device/GID de distintos padres y secuencia inode global, unlink antes de escribir, umask sin FD libre/entrada utilizable. Recuentos solapados, plazos intactos, sin repetición por fallo. Tiempos fijos de creación/mutación y asignación son política virtual. GitHub CI completa e iOS físico se validan aparte; Intel HVF Actions suspendido.
 
 `build-hvf-arm64/creation-metadata-validation-summary.json`, `creation-metadata-darwin-evidence/`, `creation-metadata-focused.xml`, `creation-metadata-public.xml`, `creation-metadata-native/`.
+
+### Verificación del renombrado, 2026-10-06
+
+Release Darwin: 835 registros,474 aprobados,360 omitidos y un timeout existente de metadatos virtuales macOS ARM 64 HVF (5.087 s). Repetición con mismos argumentos y límite de 5 s: 8 aprobados,12 omitidos; identidad afectada 0.113 s. Las 90 identidades ARM 64 HVF obligatorias tienen observaciones aprobadas entre ambas ejecuciones; el gate completo sigue registrado como fallido. Específicos 42/54 aprobados,12 omitidos; C/CLI/informe 150/150, incluidas 103 comparaciones Darwin; Python sin cambios, cinco perfiles en 18.478 s; nativos 20/20, scripts 66/66. Revisión independiente corrigió clasificación de puntos anidados, con regresión 4 K/16 K fallida antes y aprobada después. Una expectativa anterior de ftruncate de solo lectura se corrigió a EINVAL. Se conservan fallos y versiones de sondas, conteos superpuestos y plazos iguales. GitHub CI completo e iOS físico separados; Intel HVF Actions suspendido.
+
+`build-hvf-arm64/rename-validation-summary.json`, `rename-focused-final.xml`, `rename-darwin-final-evidence/`, `rename-metadata-recheck.xml`, `rename-public.xml`, `rename-native-final/`, `rename-review-initial-evidence/`.

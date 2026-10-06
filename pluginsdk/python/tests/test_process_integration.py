@@ -504,6 +504,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("unlinked-file", b"u"),
                                            ("created-file", b"c"),
                                            ("created-file-metadata", b"q"),
+                                           ("renamed-file", b"r"),
                                            ("virtual-created-metadata", bytes.fromhex(
                                                "85ffffffe88100001132547698badcfee803000098badcfe0000000000000000edffffffffffffffb168de3a00000000f9ffffffffffffff15cd5b0700000000f9ffffffffffffff15cd5b0700000000edffffffffffffffb168de3a00000000082000000000000008000000000000000020000000000000efcdab890000000000000000000000000000000000000000")),
                                            ("virtual-file-metadata", bytes.fromhex(
@@ -560,20 +561,20 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                           "type": 8, "next_offset": 99, "seek_offset": 0}]}}],
                                              "working_directory": "/empty",
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
-                        if mode.startswith("writable-files") or mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "created-file-metadata", "virtual-created-metadata"):
+                        if mode.startswith("writable-files") or mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "created-file-metadata", "virtual-created-metadata", "renamed-file"):
                             writable_options = json.loads(file_options)
                             writable_file = writable_options["darwin_files"]["files"][0]
                             writable_file["writable"] = True
                             writable_file["metadata"]["flags"] = 0
-                            if mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "created-file-metadata", "virtual-created-metadata"):
+                            if mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "created-file-metadata", "virtual-created-metadata", "renamed-file"):
                                 writable_file["metadata"]["link_count"] = 1
                                 writable_file["mutation_policy"] = {
                                     "allocation_unit": 4096,
                                     "mutation_time": {"seconds": -7, "nanoseconds": 123456789}}
-                            if mode in ("unlinked-file", "created-file", "created-file-metadata", "virtual-created-metadata"):
+                            if mode in ("unlinked-file", "created-file", "created-file-metadata", "virtual-created-metadata", "renamed-file"):
                                 next(d for d in writable_options["darwin_files"]["directories"]
                                      if d["path"] == "/")["mutable"] = True
-                            if mode in ("created-file-metadata", "virtual-created-metadata"):
+                            if mode in ("created-file-metadata", "virtual-created-metadata", "renamed-file"):
                                 files = writable_options["darwin_files"]
                                 files["umask"] = 0o27
                                 files["creation_policy"] = {

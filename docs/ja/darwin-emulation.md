@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 71f1445e8040ae70a58f6f21c2049f8f451f3d23b1a2fa7fefc86478bc5712bd -->
+<!-- i18n-source: b74bd2f7b34b6ece4aa72cf1abb0aa64b9d5941e8927df99c9f49fe673dd4c02 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -75,7 +75,7 @@ F_SETFL は O_APPEND のみを変更し、アクセスモード、close-on-exec�
 
 DarwinMemory の全マッピング区間を unmap するまで変更を拒否します。PROT_NONE と close 済み FD も含み、失敗・旧式ゼロ長マップはリースを残しません。新しいマップは現在の内容を使います。O_WRONLY の READ/WRITE mmap は EACCES、PROT_NONE は成功し後から mprotect で読み書きを許可できます。
 
-元の通常/nocancel プログラムをネイティブと比較し、4K/16K 単体テストと C/CLI/Python の5構成を検証します。権限強制・ディレクトリ削除・改名・ハードリンク、実ファイルシステムのメタデータ更新、マップ整合性、EOF SIGBUS、完全な環境と iOS 実機は未完了です。Intel HVF は未検証、Actions は停止中です。
+元の通常/nocancel プログラムをネイティブと比較し、4K/16K 単体テストと C/CLI/Python の5構成を検証します。権限強制・ディレクトリ削除・親をまたぐ改名・ハードリンク、実ファイルシステムのメタデータ更新、マップ整合性、EOF SIGBUS、完全な環境と iOS 実機は未完了です。Intel HVF は未検証、Actions は停止中です。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -113,7 +113,7 @@ allocation_unit、mutation_time、seconds/nanoseconds は必須で、整数は�
 
 `unlink(10)` / `unlinkat(472)` は既存の通常名を削除。unlinkat の下位32ビットは0または `0x800` のみ対応し、未知ビットはパス/FDより先に EINVAL、既知のディレクトリ削除等は未対応です。共通パス解決を使い、不在 ENOENT、ファイル末尾スラッシュ ENOTDIR、通常ディレクトリ EPERM、ルート EBUSY。ネイティブで末尾 `.`/`..` も確認。
 
-古い FD/dup/独立 open はデータ・カーソル・フラグを維持し、F_GETPATH は捕捉した旧パスを返します。新規 open は失敗し、暗黙の親と CWD は残ります。書込み権限はオブジェクトに属し、最後の記述子とマップ範囲の解放後だけ close/dup2/次の変更で現在のバイト予算を回収。初期パス費用は残り、権限強制・改名・ハードリンク・ディレクトリ削除は未完了。
+古い FD/dup/独立 open はデータ・カーソル・フラグを維持し、F_GETPATH は捕捉した旧パスを返します。新規 open は失敗し、暗黙の親と CWD は残ります。書込み権限はオブジェクトに属し、最後の記述子とマップ範囲の解放後だけ close/dup2/次の変更で現在のバイト予算を回収。初期パス費用は残り、権限強制・親をまたぐ改名・ハードリンク・ディレクトリ削除は未完了。
 
 親の stat/readdir/SEEK_END は旧/新 FD とパス全体で未知となり、コピー/カーソル変更前に停止。read/pread は EISDIR、SET/CUR/F_GETPATH/fchdir/相対解決は継続。既知の変更ポリシーでは nlink=0、ctime=固定時刻のみ変更し、後の書込みでも nlink=1 に戻りません。ポリシーなし/EFAULT 後はメタデータ不明。失敗は状態を保持。元の `unlinked-file` はネイティブの名前/FD規則を比較し、時刻と親の失効は明示的モデル規則です。
 
@@ -129,7 +129,7 @@ O_CREAT=0x200 は明示的な mutable 親の直下に空ファイルを作成し
 
 O_CREAT と O_EXCL=0x800 の併用は既存ファイル・ディレクトリに切詰め前の EEXIST。O_EXCL 単独は無効です。既存ディレクトリの読取り専用 O_CREAT は成功します。無効アクセスモード→FD 空き→O_CREAT|O_DIRECTORY の EINVAL→パスの順です。作成できるのは元パスの最後の欠落要素だけで、欠落祖先や末尾 `/`・`//`・`/.`・`/..` は ENOENT。新規 O_CREAT|O_TRUNC は FWASWRITTEN を設定せず、既存切詰めは設定します。
 
-実際の挿入だけが親の観測を無効化。同名の新旧データ・FD・メタデータ・マップ寿命は独立です。256 項は初期非ファイル項と生存ファイルを数え、新しい正規パス/NUL とデータは 16 MiB に課金。削除後、最後の FD/マップ解放で動的費用を回収し、初期費用は保持します。予算超過や1024バイト以上の正規パスは明示的に停止し、ENOSPC やネイティブのパスエラーを捏造しません。失敗時は名前/FD を公開しません。created-file のネイティブ/5構成、4K/16K 境界試験が対象。権限強制・改名・リンク・ディレクトリ変更は残っています。
+実際の挿入だけが親の観測を無効化。同名の新旧データ・FD・メタデータ・マップ寿命は独立です。256 項は初期非ファイル項と生存ファイルを数え、新しい正規パス/NUL とデータは 16 MiB に課金。削除後、最後の FD/マップ解放で動的費用を回収し、初期費用は保持します。予算超過や1024バイト以上の正規パスは明示的に停止し、ENOSPC やネイティブのパスエラーを捏造しません。失敗時は名前/FD を公開しません。created-file のネイティブ/5構成、4K/16K 境界試験が対象。権限強制・親をまたぐ改名・リンク・ディレクトリ変更は残っています。
 
 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
@@ -147,7 +147,15 @@ O_CREAT と O_EXCL=0x800 の併用は既存ファイル・ディレクトリに�
 {"darwin_files":{"files":[],"umask":18}}
 ```
 
-[XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+[XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c). [XNU rename / renameat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
+## 同一親ディレクトリ内の通常ファイル改名
+
+`rename(128)`、`renameat(465)`、`renameatx_np(488)` は、同じ明示的に変更可能な直近の親内で通常ファイルを改名・置換します。同名の無操作にも許可が必要で、許可後は観測を保持します。下位32ビットの flags は 0 または `RENAME_NOFOLLOW_ANY=0x10`。未知ビットと EXCL+SWAP はパス読取り前に EINVAL、その他の既知フラグは未対応です。共通解析器はソース優先、FD、元のスラッシュ・ドットの検査順序を保持します。ディレクトリソースは即座に未対応。通常ファイルのターゲット末尾ドット/二重ドットは解決成功後、マウント・許可検査より先に EINVAL となり、入れ子や別親も対象です。存在しない/非ディレクトリの祖先のエラーが優先します。許可された親内の通常ディレクトリターゲットは EISDIR です。
+
+独立 open・dup・既存 FD の `F_GETPATH` はソースの新しい名前に追従します。置換された物体は最後の名前、データ、カーソル、フラグ、マップ寿命を保持し、書込み権限やメタデータをソースへ渡しません。既知ポリシーは各 ctime と置換先の nlink=0 だけを変更し、識別子・所有権・作成時刻・割当を維持します。ポリシーなし/全体 EFAULT 後は完全なメタデータ不明のまま。実際の改名だけが親の stat/列挙を無効にします。
+
+新規 inode・項目・空き FD は不要。新パス/NUL がソースの動的費用を置き換え、初期費用は残ります。古い FD/マップのない置換先だけが容量回収に使え、回収は一度だけです。部分 unmap では全物体の費用が残ります。1024バイト以上のパスや16 MiB超過は変更前に停止。親をまたぐ移動、既知 device の矛盾、ディレクトリ移動、swap/exclusive/seclude、権限強制は未対応です。同じ stat device は同じマウントを証明せず、EXDEV を推測しません。`renamed-file` はネイティブ/ゲストの識別・パス・置換・マップを比較し、時刻と予算は仮想規則です。
 
 
 ## ディレクトリと相対パス
@@ -241,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-独立したワークロード検証は ARM64 87 件または x64 58 件をすべて要求し、各プラットフォームの `LC_MAIN` と `LC_UNIXTHREAD` を含みます。必須項目の欠落、スキップ、`ld64.lld` の不足はいずれも失敗です。
+独立したワークロード検証は ARM64 90 件または x64 60 件をすべて要求し、各プラットフォームの `LC_MAIN` と `LC_UNIXTHREAD` を含みます。必須項目の欠落、スキップ、`ld64.lld` の不足はいずれも失敗です。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -340,3 +348,9 @@ Release Darwin は748登録、412成功、336バックエンド不在のスキ�
 Release Darwin は登録 787 件：成功 439、利用不可バックエンドのスキップ 348、失敗 0。必須 ARM64 HVF 87 件をすべて実行。対象 151 件は成功 139、スキップ 12。公開 C/CLI/レポートは 145/145（Darwin 入力比較 98）、未変更の Python メソッドは5構成を 12.211 秒で成功。ネイティブ 19/19、検証スクリプト 66/66 成功。独立レビューに阻害事項なし。別親の device/GID と全体 inode、最初の書込み前 unlink、FD/入力が使えない umask を追加検証。件数は重複し、期限不変、失敗再試行は不要。固定作成/変更時刻と割当は仮想ポリシーです。完全 GitHub CI と iOS 実機は別途必要、Intel HVF Actions は停止中です。
 
 `build-hvf-arm64/creation-metadata-validation-summary.json`, `creation-metadata-darwin-evidence/`, `creation-metadata-focused.xml`, `creation-metadata-public.xml`, `creation-metadata-native/`.
+
+### 改名の検証、2026-10-06
+
+Release Darwin は835件：成功474、利用不可スキップ360、既存 macOS ARM64 HVF 仮想メタデータ1件が5.087秒で期限超過。同じ引数・5秒制限の20件再確認は成功8、スキップ12、該当項目0.113秒。両実行で必須 ARM64 HVF 90件の成功観測を網羅しますが、完全ゲートの失敗記録は維持します。改名対象は42/54成功、12スキップ。C/CLI/レポート150/150（Darwin比較103）、未変更Pythonの5構成18.478秒、ネイティブ20/20、スクリプト66/66。独立レビューで入れ子のドット分類を修正し、4K/16K回帰は修正前失敗・後成功。以前の読取り専用 ftruncate テスト期待値を EINVAL に訂正。失敗とプローブ各版を保持し、件数は重複、期限は不変。完全GitHub CI・iOS実機は別途、Intel HVF Actionsは停止中。
+
+`build-hvf-arm64/rename-validation-summary.json`, `rename-focused-final.xml`, `rename-darwin-final-evidence/`, `rename-metadata-recheck.xml`, `rename-public.xml`, `rename-native-final/`, `rename-review-initial-evidence/`.

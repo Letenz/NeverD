@@ -113,7 +113,422 @@ protected:
     llvm::cantFail(Space->read(Base + 256, Bytes));
     return Bytes;
   }
+  void identity(uint64_t FD, llvm::StringRef Expected) {
+    std::vector<uint8_t> Bytes(Expected.size() + 2, 0xcc);
+    llvm::cantFail(Space->write(Base + Page, Bytes));
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {FD, 50, Base + Page}), 0u);
+    llvm::cantFail(Space->read(Base + Page, Bytes));
+    EXPECT_EQ(llvm::StringRef(reinterpret_cast<const char *>(Bytes.data()),
+                              Expected.size()),
+              Expected);
+    EXPECT_EQ(Bytes[Expected.size()], 0u);
+    EXPECT_EQ(Bytes.back(), 0xccu);
+  }
+  void renameFile(llvm::StringRef Source, llvm::StringRef Target) {
+    path(Source);
+    path(Target, Base + 128);
+    EXPECT_EQ(ok(ServiceKind::Rename, {Base, Base + 128}), 0u);
+  }
 };
+
+TEST_P(DarwinFileTest, RenameMovesSharedIdentityAndRetainsReplacedObjects) {
+  mutationPolicy();
+  Options->MutableDirectories.insert("/");
+  Options->Metadata["/"] = darwin_test::creationParentMetadata();
+  Options->Files["/target"] = {'T', 'G'};
+  Options->WritableFiles.insert("/target");
+  auto TargetMetadata = darwin_test::mutationMetadata(2);
+  TargetMetadata.Inode++;
+  TargetMetadata.Blocks = 1;
+  Options->Metadata["/target"] = TargetMetadata;
+  Options->MutationPolicies["/target"] = {512, {9, 42}};
+  const auto A = ok(ServiceKind::Open, {Base, 0x100000a});
+  const auto B = ok(ServiceKind::Open, {Base});
+  const auto D = ok(ServiceKind::Dup, {A});
+  auto SourceBefore = status(A);
+  path("/target");
+  const auto T = ok(ServiceKind::Open, {Base, 2});
+  auto TargetBefore = status(T);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 4, 0}), 4u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {T, 1, 0}), 1u);
+  auto SourceLease = Files->mappingSource(A);
+  auto TargetLease = Files->mappingSource(T);
+  renameFile("/data", "/moved");
+  for (auto FD : {A, B, D})
+    identity(FD, "/moved");
+  llvm::support::endian::write64le(SourceBefore.data() + 64, uint64_t(-7));
+  llvm::support::endian::write64le(SourceBefore.data() + 72, 123456789);
+  EXPECT_EQ(status(B), SourceBefore);
+  EXPECT_EQ(status(T), TargetBefore);
+  renameFile("/moved", "/target");
+  llvm::support::endian::write16le(TargetBefore.data() + 6, 0);
+  llvm::support::endian::write64le(TargetBefore.data() + 64, 9);
+  llvm::support::endian::write64le(TargetBefore.data() + 72, 42);
+  EXPECT_EQ(status(A), SourceBefore);
+  EXPECT_EQ(status(T), TargetBefore);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {D, 0, 1}), 4u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {T, 0, 1}), 1u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 1}), 1u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {D, 3}), 10u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {T, 3}), 2u);
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(SourceLease).Bytes[0], 'a');
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(TargetLease).Bytes[0], 'T');
+  contents(B, {'a', 'b', 0, 0xff, 'e', 'f'});
+  contents(T, {'T', 'G'});
+  renameFile("/target", "/next");
+  for (auto FD : {A, B, D})
+    identity(FD, "/next");
+  identity(T, "/target");
+  path("/data");
+  error(ServiceKind::Open, {Base}, 2);
+  path("/target");
+  error(ServiceKind::Open, {Base}, 2);
+  path("/");
+  const auto Parent = ok(ServiceKind::Open, {Base});
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Parent, UINT64_MAX}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {A, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationMapping);
+  SourceLease = TargetLease = uint32_t(0);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {D, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {T, 0}), 0u);
+  EXPECT_EQ(llvm::support::endian::read16le(status(T).data() + 6), 0u);
+  EXPECT_EQ(Options->Files.at("/data").size(), 6u);
+  EXPECT_EQ(Options->Metadata.at("/target").LinkCount, 1u);
+  EXPECT_EQ(Options->MutationPolicies.at("/target").Time.Seconds, 9);
+}
+
+TEST_P(DarwinFileTest, RenameNoopPreservesObservationsAndCreationSequence) {
+  mutationPolicy();
+  creationPolicy();
+  const auto A = ok(ServiceKind::Open, {Base});
+  const auto Before = status(A);
+  path("/");
+  const auto Parent = ok(ServiceKind::Open, {Base});
+  const auto ParentBefore = status(Parent);
+  auto Lease = Files->mappingSource(A);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 3, 0}), 3u);
+  renameFile("/data", "/./data");
+  EXPECT_EQ(status(A), Before);
+  EXPECT_EQ(status(Parent), ParentBefore);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 3u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 0u);
+  identity(A, "/data");
+  path("/new");
+  const auto B = ok(ServiceKind::Open, {Base, 0x202, 0600});
+  EXPECT_EQ(llvm::support::endian::read64le(status(B).data() + 8),
+            darwin_test::CreationPolicy.FirstInode);
+}
+
+TEST_P(DarwinFileTest, RenameEvenNoopRequiresNamespaceAuthority) {
+  Options->Metadata["/data"] = darwin_test::mutationMetadata(6);
+  Options->Metadata["/data"].Flags = 2;
+  const auto A = ok(ServiceKind::Open, {Base});
+  const auto Before = status(A);
+  path("/./data", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryNotMutable);
+  EXPECT_EQ(status(A), Before);
+  identity(A, "/data");
+}
+
+TEST_P(DarwinFileTest,
+       RenameExhaustedInodesAndVirginMetadataRemainIndependent) {
+  creationPolicy(UINT64_MAX - 1);
+  path("/source");
+  const auto A = ok(ServiceKind::Open, {Base, 0x202, 0755});
+  auto Source = status(A);
+  path("/target");
+  const auto B = ok(ServiceKind::Open, {Base, 0x202, 0600});
+  auto Target = status(B);
+  renameFile("/source", "/target");
+  for (auto *Bytes : {&Source, &Target}) {
+    llvm::support::endian::write64le(Bytes->data() + 64, uint64_t(-7));
+    llvm::support::endian::write64le(Bytes->data() + 72, 123456789);
+  }
+  llvm::support::endian::write16le(Target.data() + 6, 0);
+  EXPECT_EQ(status(A), Source);
+  EXPECT_EQ(status(B), Target);
+  path("x", Base + 512);
+  EXPECT_EQ(ok(ServiceKind::Write, {A, Base + 512, 1}), 1u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {B, 0}), 0u);
+  llvm::support::endian::write64le(Source.data() + 96, 1);
+  llvm::support::endian::write64le(Source.data() + 104, 8);
+  for (auto *Bytes : {&Source, &Target}) {
+    llvm::support::endian::write64le(Bytes->data() + 48, uint64_t(-7));
+    llvm::support::endian::write64le(Bytes->data() + 56, 123456789);
+  }
+  EXPECT_EQ(status(A), Source);
+  EXPECT_EQ(status(B), Target);
+  renameFile("/target", "/source");
+  identity(A, "/source");
+  identity(B, "/target");
+  EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {B}), 0u);
+  path("/fresh");
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x202, 0600}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationInode);
+}
+
+TEST_P(DarwinFileTest, RenameBalancesDynamicPathsAndRetiredTargetCredit) {
+  for (bool Dynamic : {false, true}) {
+    for (unsigned Retained = 0; Retained != 4; ++Retained) {
+      SCOPED_TRACE(testing::Message() << Dynamic << ":" << Retained);
+      Options.emplace();
+      Options->Files["/data"] = std::vector<uint8_t>(6);
+      Options->WritableFiles.insert("/data");
+      Options->MutableDirectories.insert("/");
+      if (!Dynamic)
+        Options->Files["/target"] =
+            std::vector<uint8_t>(darwin_file_limits::Bytes - 35);
+      Files = std::make_unique<DarwinFiles>(*Space, Options);
+      path("/data");
+      const auto A = ok(ServiceKind::Open, {Base, 2});
+      path("/target");
+      const auto T = ok(ServiceKind::Open, {Base, Dynamic ? 0x202u : 0u});
+      if (Dynamic)
+        EXPECT_EQ(
+            ok(ServiceKind::Ftruncate, {T, darwin_file_limits::Bytes - 35}),
+            0u);
+      DarwinFiles::MappingSource Lease = uint32_t(0);
+      if (Retained == 2)
+        Lease = Files->mappingSource(T);
+      if (Retained != 1 && Retained != 3)
+        EXPECT_EQ(ok(ServiceKind::Close, {T}), 0u);
+      path("/data");
+      path("/target", Base + 128);
+      if (Retained) {
+        // Exactly seven spare bytes cannot admit the eight-byte new path.
+        EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+        EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+        identity(A, "/data");
+        EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, 5}), 0u);
+      }
+      EXPECT_EQ(ok(ServiceKind::Rename, {Base, Base + 128}), 0u);
+      identity(A, "/target");
+      if (Retained) {
+        EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {A, 6}));
+        EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+      }
+      if (Retained == 1)
+        EXPECT_EQ(ok(ServiceKind::Close, {T}), 0u);
+      if (Retained == 3)
+        EXPECT_EQ(ok(ServiceKind::Dup2, {A, T}), T);
+      Lease = uint32_t(0);
+      // Initial paths/grants/references stay charged: 14 or 22 bytes.
+      const uint64_t Maximum =
+          darwin_file_limits::Bytes - (Dynamic ? 14 : 22) - 8;
+      EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, Maximum}), 0u);
+      EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {A, Maximum + 1}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+      renameFile("/target", "/x");
+      EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, Maximum + 5}), 0u);
+      path("/x");
+      path("/target", Base + 128);
+      EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+      EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, Maximum}), 0u);
+      EXPECT_EQ(ok(ServiceKind::Rename, {Base, Base + 128}), 0u);
+      EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {A, Maximum + 1}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+    }
+  }
+}
+
+TEST_P(DarwinFileTest, RenameKeepsEntryCountAndNeedsNoFreeDescriptor) {
+  Options->Files.clear();
+  for (unsigned I = 0; I != 255; ++I)
+    Options->Files["/f" + std::to_string(I)] = {};
+  Options->MutableDirectories.insert("/");
+  renameFile("/f0", "/new");
+  path("/another");
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x202}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationLimit);
+  Options->DescriptorLimit = 3;
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  renameFile("/f0", "/new");
+  path("/new");
+  error(ServiceKind::Open, {Base}, 24);
+}
+
+TEST_P(DarwinFileTest, RenamePreservesOriginalPathErrorsAndFlagOrdering) {
+  mutationPolicy();
+  Options->MutableDirectories.insert("/");
+  Options->Metadata["/"] = darwin_test::creationParentMetadata();
+  Options->Directories.insert("/folder");
+  Options->WorkingDirectory = "/";
+  const auto A = ok(ServiceKind::Open, {Base, 2});
+  const auto Before = status(A);
+  path("/");
+  const auto Parent = ok(ServiceKind::Open, {Base});
+  const auto ParentBefore = status(Parent);
+  path("/missing");
+  error(ServiceKind::Rename, {Base, UINT64_MAX}, 2);
+  error(ServiceKind::Rename, {UINT64_MAX, UINT64_MAX}, 14);
+  path("/data/");
+  error(ServiceKind::Rename, {Base, UINT64_MAX}, 20);
+  path("/data");
+  error(ServiceKind::Rename, {Base, UINT64_MAX}, 14);
+  for (auto [Name, Code] : {std::pair{"/missing/../new", 2u},
+                            {"/data/../new", 20u},
+                            {"/new/", 2u},
+                            {"/new/.", 2u},
+                            {"/data/", 20u},
+                            {"/folder", 21u},
+                            {"/folder/", 21u},
+                            {"/folder/.", 22u},
+                            {"/folder/.//", 22u},
+                            {"/folder/..", 22u},
+                            {"/folder/..//", 22u}}) {
+    path(Name, Base + 128);
+    error(ServiceKind::Rename, {Base, Base + 128}, Code);
+  }
+  path("/" + std::string(256, 'x'), Base + 128);
+  error(ServiceKind::Rename, {Base, Base + 128}, 63);
+  path("");
+  error(ServiceKind::RenameAt, {999, Base, Parent, UINT64_MAX}, 9);
+  error(ServiceKind::RenameAt, {999, UINT64_MAX, Parent, UINT64_MAX}, 14);
+  path("data");
+  error(ServiceKind::RenameAt, {A, Base, Parent, UINT64_MAX}, 20);
+  path("", Base + 128);
+  error(ServiceKind::RenameAt, {Parent, Base, 999, Base + 128}, 9);
+  error(ServiceKind::RenameAt, {Parent, Base, 999, UINT64_MAX}, 14);
+  path("new", Base + 128);
+  error(ServiceKind::RenameAt, {Parent, Base, A, Base + 128}, 20);
+  for (uint64_t Flags : {8u, 6u, 0x80000000u})
+    error(ServiceKind::RenameAtX, {999, UINT64_MAX, 999, UINT64_MAX, Flags},
+          22);
+  for (uint64_t Flags : {1u, 2u, 4u, 0x11u, 0x12u, 0x14u}) {
+    EXPECT_FALSE(invoke(ServiceKind::RenameAtX,
+                        {999, UINT64_MAX, 999, UINT64_MAX, Flags}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::RenameFlags);
+  }
+  EXPECT_EQ(status(A), Before);
+  EXPECT_EQ(status(Parent), ParentBefore);
+  path("/renamed", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::RenameAtX, {Parent, Base, 0x12345678000003e7ULL,
+                                        Base + 128, 0x1234567800000010ULL}),
+            0u);
+  identity(A, "/renamed");
+  path("/renamed");
+  EXPECT_EQ(ok(ServiceKind::RenameAt, {999, Base, 999, Base + 128}), 0u);
+}
+
+TEST_P(DarwinFileTest, RenameDirectoryAndCrossParentMovesRemainExplicit) {
+  Options->MutableDirectories = {"/", "/folder"};
+  Options->Directories.insert("/folder");
+  Options->Metadata["/"] = darwin_test::creationParentMetadata();
+  auto Other = darwin_test::creationParentMetadata();
+  Other.Inode++;
+  Options->Metadata["/folder"] = Other;
+  const auto A = ok(ServiceKind::Open, {Base});
+  path("/folder/new", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameMount);
+  identity(A, "/data");
+  path("/folder");
+  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, UINT64_MAX}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameKind);
+  path("/new/", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameKind);
+}
+
+TEST_P(DarwinFileTest, RenameNestedDotTargetsFailBeforeNamespaceAdmission) {
+  Options->Files["/dir/data"] = {'x'};
+  Options->Directories = {"/dir/sub", "/other"};
+  // These lookup failures precede both namespace grants and mount checks.
+  path("/dir/data");
+  const auto A = ok(ServiceKind::Open, {Base});
+  path("/dir");
+  const auto D = ok(ServiceKind::Open, {Base});
+  path("/dir/data");
+  for (auto [Name, Code] : {std::pair{"/dir/.", 22u},
+                            {"/dir/sub/..", 22u},
+                            {"/dir/..", 22u},
+                            {"/other/.", 22u},
+                            {"/other/..//", 22u},
+                            {"/dir/missing/.", 2u},
+                            {"/dir/data/..", 20u}}) {
+    path(Name, Base + 128);
+    error(ServiceKind::Rename, {Base, Base + 128}, Code);
+  }
+  path("data");
+  for (const char *Name : {".", "sub/..", "..//"}) {
+    path(Name, Base + 128);
+    error(ServiceKind::RenameAt, {D, Base, D, Base + 128}, 22);
+  }
+  identity(A, "/dir/data");
+  contents(A, {'x'});
+  path("/dir/data");
+  EXPECT_EQ(ok(ServiceKind::Open, {Base}), D + 1);
+}
+
+TEST_P(DarwinFileTest, RenameChecksOwnedDeviceAfterAnOldNameIsReused) {
+  mutationPolicy();
+  Options->MutableDirectories.insert("/");
+  Options->Metadata["/"] = darwin_test::creationParentMetadata();
+  Options->Files["/old"] = {};
+  auto Other = darwin_test::mutationMetadata(0);
+  Other.Inode++;
+  Other.Device = 456;
+  Options->Metadata["/old"] = Other;
+  const auto A = ok(ServiceKind::Open, {Base, 2});
+  path("/old", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameMount);
+  identity(A, "/data");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base + 128}), 0u);
+  renameFile("/data", "/old");
+  // Whole-EFAULT loses the full stat record, but cannot change its device.
+  error(ServiceKind::Write, {A, UINT64_MAX, 1}, 14);
+  renameFile("/old", "/new");
+  identity(A, "/new");
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {A, Base + 256}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutatedMetadata);
+  EXPECT_FALSE(invoke(ServiceKind::Lseek, {A, 0, 4}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileSeek);
+  EXPECT_EQ(Options->Metadata.at("/old").Device, 456);
+}
+
+TEST_P(DarwinFileTest, RenameNeverInheritsTargetWriteAuthority) {
+  Options->MutableDirectories.insert("/");
+  Options->Files["/target"] = {'T'};
+  Options->WritableFiles.insert("/target");
+  const auto A = ok(ServiceKind::Open, {Base});
+  path("/target");
+  const auto T = ok(ServiceKind::Open, {Base, 2});
+  renameFile("/data", "/target");
+  path("/target");
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileNotWritable);
+  error(ServiceKind::Ftruncate, {A, 0}, 22);
+  EXPECT_FALSE(invoke(ServiceKind::Truncate, {Base, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileNotWritable);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {T, 0}), 0u);
+  contents(A, {'a', 'b', 0, 0xff, 'e', 'f'});
+}
+
+TEST_P(DarwinFileTest, RenameCanonicalPathLimitPreservesRelativeSource) {
+  std::string Parent;
+  for (unsigned I = 0; I != 4; ++I)
+    Parent += '/' + std::string(250, 'a');
+  Parent += '/' + std::string(10, 'b');
+  Options.emplace();
+  Options->Files[Parent + "/s"] = {'x'};
+  Options->MutableDirectories.insert(Parent);
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path(Parent);
+  const auto P = ok(ServiceKind::Open, {Base});
+  path("s");
+  const auto A = ok(ServiceKind::OpenAt, {P, Base});
+  path("0123456789", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::RenameAt, {P, Base, P, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+  identity(A, Parent + "/s");
+  EXPECT_EQ(ok(ServiceKind::OpenAt, {P, Base}), A + 1);
+}
 
 TEST_P(DarwinFileTest, UmaskKeepsAllPermissionBitsWithoutCreationAuthority) {
   EXPECT_FALSE(invoke(ServiceKind::Umask, {0}));
@@ -1503,6 +1918,7 @@ class FailingFileInput : public GuestMemory {
 
 public:
   bool FailAccess = false, FailRead = false;
+  uint64_t FailureAddress = 0;
   explicit FailingFileInput(GuestMemory &Memory) : Memory(Memory) {}
   llvm::Error map(uint64_t A, uint64_t S, unsigned P) override {
     return Memory.map(A, S, P);
@@ -1511,7 +1927,7 @@ public:
     return Memory.protect(A, S, P);
   }
   llvm::Error read(uint64_t A, llvm::MutableArrayRef<uint8_t> B) override {
-    if (FailRead) {
+    if (FailRead && A >= FailureAddress) {
       // A transport may fill part of the scratch span before failing.
       B.front() = 'x';
       return failure("file input transport failed");
@@ -1523,11 +1939,45 @@ public:
   }
   llvm::Expected<bool> canAccess(uint64_t A, uint64_t S,
                                  unsigned P) const override {
-    if (FailAccess)
+    if (FailAccess && A >= FailureAddress)
       return failure("file input preflight failed");
     return Memory.canAccess(A, S, P);
   }
 };
+
+TEST_P(DarwinFileTest, RenameTargetInputFailuresPreserveBothObjects) {
+  mutationPolicy();
+  Options->MutableDirectories.insert("/");
+  Options->Files["/target"] = {'T'};
+  FailingFileInput Input(*Space);
+  Files = std::make_unique<DarwinFiles>(Input, Options);
+  const auto A = ok(ServiceKind::Open, {Base, 2});
+  const auto Before = status(A);
+  path("/target", Base + 128);
+  const auto T = ok(ServiceKind::Open, {Base + 128});
+  for (bool Preflight : {true, false}) {
+    Input.FailureAddress = Base + 128;
+    Input.FailAccess = Preflight;
+    Input.FailRead = !Preflight;
+    auto Failed =
+        Files->handle(ServiceKind::Rename,
+                      {0, 128, {Base, Base + 128}, std::nullopt}, Result);
+    ASSERT_FALSE(bool(Failed));
+    EXPECT_EQ(llvm::toString(Failed.takeError()),
+              Preflight ? "file input preflight failed"
+                        : "file input transport failed");
+    Input.FailAccess = Input.FailRead = false;
+    identity(A, "/data");
+    identity(T, "/target");
+    EXPECT_EQ(status(A), Before);
+    contents(T, {'T'});
+  }
+  error(ServiceKind::Rename, {Base, UINT64_MAX}, 14);
+  EXPECT_EQ(status(A), Before);
+  EXPECT_EQ(ok(ServiceKind::Rename, {Base, Base + 128}), 0u);
+  identity(A, "/target");
+  contents(T, {'T'});
+}
 
 TEST_P(DarwinFileTest, UmaskNeedsNeitherGuestMemoryNorAvailableDescriptors) {
   Options->InitialUmask = 0027;

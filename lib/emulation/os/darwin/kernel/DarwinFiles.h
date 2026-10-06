@@ -46,6 +46,8 @@ private:
     const DarwinFileMutationPolicy *Policy = nullptr;
     std::optional<llvm::BitVector> Allocated;
     bool Writable = false;
+    /// Last linked name. All descriptions follow rename; unlink retains it.
+    std::string Path;
     uint64_t PathCharge = 0;
     bool MetadataInvalidated = false;
     std::shared_ptr<const unsigned> Lease = std::make_shared<const unsigned>(0);
@@ -64,6 +66,7 @@ private:
     std::string Path;
     std::shared_ptr<Contents> File;
     uint32_t Flags = 0;
+    bool FinalSpecialComponent = false;
     llvm::ArrayRef<uint8_t> bytes() const {
       return File ? File->bytes() : Input;
     }
@@ -105,6 +108,10 @@ private:
              ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   unlink(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  rename(uint64_t SourcePath, uint32_t SourceDirectory, uint64_t TargetPath,
+         uint32_t TargetDirectory, ProcessResult &Result);
+  void updateNamespaceMetadata(Contents &Node, bool Removed);
   llvm::Expected<std::optional<ServiceResult>>
   create(Description &File, uint32_t Mode, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>

@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 71f1445e8040ae70a58f6f21c2049f8f451f3d23b1a2fa7fefc86478bc5712bd -->
+<!-- i18n-source: b74bd2f7b34b6ece4aa72cf1abb0aa64b9d5941e8927df99c9f49fe673dd4c02 -->
 
 [← 文档索引](README.md)
 
@@ -83,7 +83,7 @@ F_SETFL 只改变 O_APPEND，保留访问模式、close-on-exec 和 FWASWRITTEN�
 
 DarwinMemory 持有映射租约；所有映射区间解除前，write、truncate 和 O_TRUNC 均停止，包括 PROT_NONE 和 FD 已关闭的映射。失败映射和旧式零长度映射不留租约；新映射读取当前内容。只写 FD 直接请求 READ/WRITE mmap 返回 EACCES，PROT_NONE 可成功并经 mprotect 获得读写权限。
 
-原生 writable-files 与 nocancel 程序比较字节、游标、标志和错误顺序；单元测试覆盖 4K/16K，C/CLI/Python 覆盖五种组合。权限强制检查、目录删除、重命名、硬链接、真实文件系统的元数据更新、映射一致性和 EOF SIGBUS 仍待实现。完整 macOS/iOS 目标尚未完成，iOS 真机与 Intel HVF 仍无验收，Intel Actions 保持暂停。
+原生 writable-files 与 nocancel 程序比较字节、游标、标志和错误顺序；单元测试覆盖 4K/16K，C/CLI/Python 覆盖五种组合。权限强制检查、目录删除、跨父目录重命名、硬链接、真实文件系统的元数据更新、映射一致性和 EOF SIGBUS 仍待实现。完整 macOS/iOS 目标尚未完成，iOS 真机与 Intel HVF 仍无验收，Intel Actions 保持暂停。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -121,7 +121,7 @@ DarwinMemory 持有映射租约；所有映射区间解除前，write、truncate
 
 `unlink(10)` / `unlinkat(472)` 删除现有普通名称；unlinkat 仅接受低 32 位 flags=0 或 `AT_SYMLINK_NOFOLLOW_ANY=0x800`。未知位先返回 EINVAL；已知的删除目录/系统丢弃模式仍不支持。共用解析器保留路径故障、目录 FD、CWD 和绝对路径的优先级；缺失为 ENOENT，文件后斜杠为 ENOTDIR，普通目录为 EPERM，来宾根目录为 EBUSY。原生探针也检查末尾 `.` / `..`。
 
-名称删除后，旧 FD、dup、独立打开对象仍保留数据、游标和状态标志，新打开返回 ENOENT；隐式父目录与 CWD 继续存在。F_GETPATH 保留已捕获旧路径，与原生对照一致。写授权属于文件对象。只有所有描述符和最后一段映射均释放后，close/dup2 或下一次修改才回收当前文件字节预算；初始路径/引用费用仍保留。权限强制检查、重命名、硬链接、目录删除仍待实现。
+名称删除后，旧 FD、dup、独立打开对象仍保留数据、游标和状态标志，新打开返回 ENOENT；隐式父目录与 CWD 继续存在。F_GETPATH 保留已捕获旧路径，与原生对照一致。写授权属于文件对象。只有所有描述符和最后一段映射均释放后，close/dup2 或下一次修改才回收当前文件字节预算；初始路径/引用费用仍保留。权限强制检查、跨父目录重命名、硬链接、目录删除仍待实现。
 
 成功删除使直接父目录的 stat/列举观察失效，涵盖旧/新 FD、dup 和路径查询；stat/readdir/SEEK_END 在复制和移动游标前停止。read/pread 仍为 EISDIR，SET/CUR、F_GETPATH、fchdir、相对查找继续可用。有仍可信的文件修改策略时，仅将 nlink 改为 0、ctime 改为固定时间，保留 mtime/atime、数据和分配；后续写入不能恢复 nlink=1。缺少策略或曾发生整段 EFAULT 时，完整文件元数据仍未知。失败不改变状态。原生 `unlinked-file` 比较名称/描述符行为；策略时间与目录失效是明确的模型规则。
 
@@ -139,7 +139,7 @@ O_CREAT 配合 `O_EXCL=0x800` 对已有文件或目录先返回 EEXIST，不截�
 
 只有实际插入才使父目录 stat/枚举失效。同名重建与仍打开或映射的旧对象拥有独立字节、元数据、描述和映射租约。256 项上限计入固定初始非文件项、具名对象及仍存活的孤立对象；新对象的规范路径/NUL 和当前字节计入 16 MiB，删除且最后 FD/映射释放后才回收动态费用。关闭具名对象不释放名额，初始输入/引用费用仍保留。预算不足或规范路径达到 1024 字节会明确停止，不虚构 ENOSPC 或原生路径错误；失败不留下名称或 FD。
 
-原生 created-file 与五种来宾组合对照，4K/16K 测试覆盖精确容量、失败原子性和旧映射存活时重建。权限强制检查、重命名、链接及目录修改仍待完善。
+原生 created-file 与五种来宾组合对照，4K/16K 测试覆盖精确容量、失败原子性和旧映射存活时重建。权限强制检查、跨父目录重命名、链接及目录修改仍待完善。
 
 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
@@ -157,7 +157,17 @@ O_CREAT 配合 `O_EXCL=0x800` 对已有文件或目录先返回 EEXIST，不截�
 {"darwin_files":{"files":[],"umask":18}}
 ```
 
-[XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+[XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c). [XNU rename / renameat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
+## 同一父目录中的普通文件重命名
+
+`rename(128)`、`renameat(465)`、`renameatx_np(488)` 可在同一明确可修改的直接父目录中改名或覆盖普通文件。同名空操作也需要授权，通过后保留全部观察。低 32 位 flags 支持 0 或 `RENAME_NOFOLLOW_ANY=0x10`；未知位及 EXCL+SWAP 在读取路径前返回 EINVAL，其余已知标志明确不支持。共用解析器保留源先于目标、目录 FD、原始斜杠与点组件的错误顺序。目录源立即报告不支持；普通文件目标的末尾点/双点在解析成功后、挂载与授权检查前返回 EINVAL，涵盖嵌套及其他父目录。缺失或非目录祖先仍优先报原错误；获准父目录内的普通目录目标为 EISDIR。
+
+源对象的独立打开、dup 和旧 FD 的 `F_GETPATH` 一起跟随新名；被覆盖对象保留最后关联路径、字节、游标、标志与映射寿命。目标的写授权或元数据不会转移给源。可信策略只改各自 ctime，被覆盖者另设 nlink=0；身份、所有权、创建时间、数据和分配归原对象。缺少策略或整段 EFAULT 后完整元数据仍未知。实际改名使父目录 stat/列举观察失效，同名空操作不改变观察。
+
+改名不消耗新 inode、目录项或空闲 FD。新规范路径/NUL 替换源的动态路径费用，初始输入费用始终保留。只有没有旧描述符和映射持有的目标才能提前计入可回收容量，并仅回收一次；部分 unmap 仍保留整对象费用。规范路径达到 1024 字节或总量超过 16 MiB 时，在修改名称、元数据和描述符前停止。
+
+跨父目录、已知设备冲突、目录移动、swap/exclusive/seclude 和权限强制检查仍待实现。相同 stat 设备号不能证明同一挂载，模型不会猜测 EXDEV。原生/来宾 `renamed-file` 对照身份、路径、覆盖和映射；策略时间与预算属于显式虚拟规则。
 
 
 ## 目录与相对路径
@@ -256,7 +266,7 @@ Intel HVF 的 10 项原生 transport 和全部 26 个 Darwin 工作负载均已�
 [HVF 验证记录](macos-hvf.md)，不能把内核参考程序成功当作后端通过。
 
 新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
-ARM64 三个平台共 87 项，x64 的 macOS 和 Simulator 共 58 项。
+ARM64 三个平台共 90 项，x64 的 macOS 和 Simulator 共 60 项。
 每种平台都必须执行 `LC_MAIN` 和独立编写的 `LC_UNIXTHREAD` 程序；源码清单回归确保
 以后新增的 Darwin 进程用例也进入必需集合。
 macOS 本机构建还会把同一份自编目标文件链接为宿主参考程序，对照返回、退出、内存保护/
@@ -442,3 +452,9 @@ Release Darwin 共 748 项：412 通过、336 项后端不可用跳过、零失�
 Release Darwin 共 787 项：439 通过、348 项后端不可用跳过、零失败，87 项必需 ARM64 HVF 全部执行。专项 151 项中 139 通过、12 跳过。公共 C/CLI/报告 145/145 通过，含 98 项 Darwin 输入比较；未改动的 Python 方法在 12.211 秒内通过五组配置。原生程序 19/19、验收脚本 66/66 通过。独立审查无剩余阻塞，新增跨父目录设备/组与全局 inode、首次写入前删除、FD 满且输入不可用时修改 umask 的测试。计数重叠、时限未改，无需失败重试。固定创建/修改时间及分配仍是显式虚拟策略；完整 GitHub CI 与 iOS 真机单独验收，Intel HVF Actions 继续暂停。
 
 `build-hvf-arm64/creation-metadata-validation-summary.json`, `creation-metadata-darwin-evidence/`, `creation-metadata-focused.xml`, `creation-metadata-public.xml`, `creation-metadata-native/`.
+
+### 重命名验证，2026-10-06
+
+Release Darwin 共 835 项：474 通过、360 项后端不可用跳过，既有 macOS ARM64 HVF 虚拟元数据用例超时一次（5.087 秒）。原参数、原 5 秒时限复查该方法：8 通过、12 跳过，受影响项耗时 0.113 秒。两次运行合计覆盖全部 90 个必需 ARM64 HVF 身份；完整门禁仍记录为失败。重命名专项 42/54 通过、12 跳过。公共 C/CLI/报告 150/150，含 103 项 Darwin 输入比较；未改动的 Python 方法在 18.478 秒内通过五组配置。原生 20/20、验收脚本 66/66 通过。独立审查发现嵌套点路径分类错误，4K/16K 回归先复现失败，修复后通过；更早的只读 ftruncate 测试预期已纠正为 EINVAL。保留全部失败和探针版本，计数重叠、时限未改。完整 GitHub CI、iOS 真机另行验收，Intel HVF Actions 继续暂停。
+
+`build-hvf-arm64/rename-validation-summary.json`, `rename-focused-final.xml`, `rename-darwin-final-evidence/`, `rename-metadata-recheck.xml`, `rename-public.xml`, `rename-native-final/`, `rename-review-initial-evidence/`.

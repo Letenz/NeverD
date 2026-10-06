@@ -413,6 +413,7 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"unlinked-file", "75"},
           std::pair{"created-file", "63"},
           std::pair{"created-file-metadata", "71"},
+          std::pair{"renamed-file", "72"},
           std::pair{"virtual-created-metadata",
                     emulation::darwin_test::CreationMetadataHex},
           std::pair{"stdin", "00ff78"},
@@ -470,7 +471,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       llvm::StringRef(Mode) == "unlinked-file" ||
       llvm::StringRef(Mode) == "created-file" ||
       llvm::StringRef(Mode) == "created-file-metadata" ||
-      llvm::StringRef(Mode) == "virtual-created-metadata") {
+      llvm::StringRef(Mode) == "virtual-created-metadata" ||
+      llvm::StringRef(Mode) == "renamed-file") {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     auto *File = Input.getAsObject()
                      ->getObject(field::DarwinFiles)
@@ -484,7 +486,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::StringRef(Mode) == "unlinked-file" ||
         llvm::StringRef(Mode) == "created-file" ||
         llvm::StringRef(Mode) == "created-file-metadata" ||
-        llvm::StringRef(Mode) == "virtual-created-metadata") {
+        llvm::StringRef(Mode) == "virtual-created-metadata" ||
+        llvm::StringRef(Mode) == "renamed-file") {
       (*File->getObject(field::FileMetadata))[field::FileLinkCount] = 1;
       (*File)[field::FileMutationPolicy] = llvm::cantFail(
           llvm::json::parse(emulation::darwin_test::MutationPolicyJSON));
@@ -492,14 +495,16 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     if (llvm::StringRef(Mode) == "unlinked-file" ||
         llvm::StringRef(Mode) == "created-file" ||
         llvm::StringRef(Mode) == "created-file-metadata" ||
-        llvm::StringRef(Mode) == "virtual-created-metadata")
+        llvm::StringRef(Mode) == "virtual-created-metadata" ||
+        llvm::StringRef(Mode) == "renamed-file")
       (*Input.getAsObject()
             ->getObject(field::DarwinFiles)
             ->getArray(field::Directories)
             ->front()
             .getAsObject())[field::DirectoryMutable] = true;
     if (llvm::StringRef(Mode) == "created-file-metadata" ||
-        llvm::StringRef(Mode) == "virtual-created-metadata") {
+        llvm::StringRef(Mode) == "virtual-created-metadata" ||
+        llvm::StringRef(Mode) == "renamed-file") {
       auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
       (*Files)[field::FileUmask] = 0027;
       (*Files)[field::FileCreationPolicy] = llvm::cantFail(

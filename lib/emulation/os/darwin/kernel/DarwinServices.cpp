@@ -190,6 +190,9 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::OpenAt:
   case ServiceKind::Unlink:
   case ServiceKind::UnlinkAt:
+  case ServiceKind::Rename:
+  case ServiceKind::RenameAt:
+  case ServiceKind::RenameAtX:
   case ServiceKind::Umask:
   case ServiceKind::Chdir:
   case ServiceKind::Fchdir:
