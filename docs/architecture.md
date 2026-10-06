@@ -1031,7 +1031,11 @@ Native packed-flags proof requires matching `X64FlagsProfile = UserX64NoFaultV1`
 
 The prefix-predicate preservation requirement below applies when `GeneralizeEntryPrefix = false`.
 
-`inferLowIRLoopRefinementPlan` proposes bounded templates using the shared symbolic executor. Feedback cutpoints cover every CFG cycle; widening retains proved fixed bits and prunes unsigned prefix bounds. Observed unit counters and inferred phases form lexicographic ranks for nested ascending or descending loops. `OriginalPrefix` and `CandidatePrefix` require `UseEntryPrefix`. A cut behind earlier cuts can use a separate bounded replay from the real entry to establish a feasible paired prefix witness. This witness does not cover the entry domain: every actual arrival must imply its predicate, and complete entry and transition coverage remain mandatory. `inferAndCheckBinaryLowIRLoopRefinement` requires complete recovery and unique native origins, then independently reruns the full original/candidate checker. Proposals and origin mappings are untrusted; only `Refinement` can contain a certificate. Inference and proof keep separate explicit budgets. This C++ API does not run automatically with `--devirtualize`. Unreachable prefixes, arbitrary control alignment, rank families outside the search, C-backend equivalence and physical CPU choices for undefined bits remain unsupported.
+`inferLowIRLoopRefinementPlan` proposes bounded templates using the shared symbolic executor. Feedback cutpoints cover every CFG cycle; widening retains proved fixed bits and prunes unsigned prefix bounds. Observed unit counters and inferred phases form lexicographic ranks for nested ascending or descending loops. `OriginalPrefix` and `CandidatePrefix` require `UseEntryPrefix`. A cut behind earlier cuts can use a separate bounded replay from the real entry to establish a feasible paired prefix witness. This witness does not cover the entry domain: every actual arrival must imply its predicate, and complete entry and transition coverage remain mandatory. `inferAndCheckBinaryLowIRLoopRefinement` requires complete recovery and uniquely mapped residual origins, then independently reruns the full original/candidate checker. Proposals and origin mappings are untrusted; only `Refinement` can contain a certificate. Inference and proof keep separate explicit budgets. This C++ API does not run automatically with `--devirtualize`. Unreachable prefixes, arbitrary control alignment, rank families outside the search, C-backend equivalence and physical CPU choices for undefined bits remain unsupported.
+
+Loop inference reuses completed, model-free SAT/UNSAT answers only within one symbolic context and fixed solver configuration. Each key contains the entire domain-and-negated-fact query. Unknown or invalid answers are never stored. Every hit still checks the node limit and consumes the shared logical query budget; `SolverQueries` includes these requests, while `EntailmentCacheHits` reports reuse separately. The existing limits bound retained entries. The independent final checker receives no cached answers, and proof/object schemas remain 17/16.
+
+Native loop inference also admits repeated original addresses when each residual origin is uniquely mapped. After state and rank inference, it proves opposite literal bits over the complete reconstructed candidate templates and proposes masked Register, Frame or SystemFlags selectors. Context identities and concrete prefix values are never assumptions. Inseparable domains refuse; metadata, bit scans and dependency walks consume existing budgets. The independent original/candidate checker still proves every admitted path, state observation and rank transition. Proof/object schemas remain 17/16; automatic source and ordinary ABI composition remain separate. Unique native origins retain their previous search priority; additional contexts share the same cumulative search budget.
 
 Unit-counter discovery also recognizes byte-aligned subword updates that preserve every outside bit, after trying the existing full-word and zero-extended forms. For multiple cuts, lane endpoint exclusions are proposed only after proof on saved concrete arrivals and all current incoming states. Widening removes failed guards without reseeding them and can discover another lane after its word is already known. Masks use the existing whole-word parameter; full-word ranks and state observations remain intact. All proposals retain shared node/query limits and require independent complete refinement.
 
@@ -2105,6 +2109,14 @@ requested unload rejects leaked handles.
 The runtime reads guest varargs through the session's checked Win64 argument
 reader. Backend faults retain their first structured cause; observation and
 reporting do not resume a faulted CPU or imply Windows exception handling.
+
+`KernelCalls.cpp` resolves the kernel API inventory into a typed operation and
+performs the common argument, initialization, IRQL and execution-context checks
+before dispatch. IRP, MDL, pool, object, runtime and memory call adapters live in
+separate files; `KernelModel` retains the shared state and lifecycle authority.
+The adapters preserve each API's validation and mutation order, including the
+different ownership rules for WDM and framework requests. Buffer range checks
+are shared by memory operations and the model's object accessors.
 
 `X64ExecutionPolicy` admits read-only, absolute 8-byte accesses to `GS:[0x188]`, including compiler forms such as MOV and CMP. A private read-only processor field supplies `KernelModel::currentThreadObject`; the backend executes the original instruction with its original register and flag semantics. This exposes one field, not a complete KPCR/KTHREAD layout. The identity follows the existing logical thread key through nested continuations; system threads reuse their existing borrowed object. The memory guard rejects opaque-object dereferences. Other GS offsets, all FS accesses, indexed/partial reads and stores remain rejected by the common CPU environment policy.
 
@@ -3339,6 +3351,20 @@ If/else structuring visits existing child lists before rewriting their parent. A
 
 `LinuxServices` owns one workload's Linux memory service state and file descriptor table. Linux process traps and Android Bionic wrappers share this instance; thread identity is supplied at each service boundary. `LinuxMemory` retains mapping ownership, while `LinuxFiles` owns immutable catalogue descriptions, open cursors and descriptor lifetime. Bionic alone owns errno conversion. Explicit `LinuxFileOptions` and strict JSON validation share one Linux contract; neither catalogue lookup nor guest file I/O reaches the host filesystem. Unsupported inputs do not acquire default file contents.
 
+`LinuxFiles.cpp` dispatches typed file operations. Catalogue validation lives in
+`LinuxFileOptions.cpp`, path import and lookup in `LinuxFilePaths.cpp`, descriptor
+ownership and transfers in `LinuxFileIO.cpp`, and metadata serialization in
+`LinuxFileStatus.cpp`. These files implement the same process-owned `LinuxFiles`
+object; they do not maintain separate catalogues or cursors. `fstatat` reuses the
+path classifier and `fstat` serializer, while Bionic only adapts arguments and
+errno through its existing service registry.
+
+Guest path parsing retains a trailing separator's directory requirement
+separately from the catalogue key. Open, access and status share this lookup
+constraint. Directory creation resolves the parent and final name separately,
+so an existing final name still returns `EEXIST`. Catalogue configuration
+continues to require canonical file keys.
+
 `LinuxFiles` shares pathname import and catalogue classification between open
 and existence queries. The catalogue's files, ancestor directories and root
 define the bounded `F_OK` namespace. Existence checks consume no descriptor;
@@ -3392,6 +3418,6 @@ Cached-bit candidates also include unsigned current-counter < current-bound and 
 
 Bound discovery also examines represented prefix locations. A word may change while its bound lane stays fixed. Counter bounds use saved prefix values; cached comparisons use current values. Each fact is still seeded, pruned and independently checked, without assuming the two states are equal.
 
-Manual cutpoint plans may use per-side conjunctions of masked Register, entry-root-relative Frame or native SystemFlags equality selectors. The shared checker validates their shape, paired control agreement, feasible disjointness and each template’s starting selector; unmatched states continue normally and unknown results refuse. Guards consume existing budgets and bind proof semantic schema 17. The unaudited-native gate remains earlier. Unique self-plan pairing preserves guards and charges both sides; repeated-address pairing and automatic native selector discovery remain unsupported.
+Manual cutpoint plans may use per-side conjunctions of masked Register, entry-root-relative Frame or native SystemFlags equality selectors. The shared checker validates their shape, paired control agreement, feasible disjointness and each template’s starting selector; unmatched states continue normally and unknown results refuse. Guards consume existing budgets and bind proof semantic schema 17. The unaudited-native gate remains earlier. Unique self-plan pairing preserves guards and charges both sides; repeated-address pairing remains unsupported.
 
 The shared Darwin matrix effect owner also authenticates `CGAffineTransformMakeScale` as a complete 48-byte indirect-result producer. Its two double arguments retain separate floating-register carriers; current strong CoreGraphics imports, providers, required libraries and the complete SDK ABI must agree. The private-frame proof checks the entire result range, initialization and preservation independently. This call effect grants no native entry return projection or permission to use an arbitrary incoming `x8` buffer.

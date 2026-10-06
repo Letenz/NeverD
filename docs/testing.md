@@ -1101,6 +1101,13 @@ Use the
 codes. Production builds may enable this feature with `BUILD_TESTING=OFF`;
 test-only Unicorn configuration must not be required by `libneverd`.
 
+For changes to shared kernel API dispatch or its call adapters, include
+`NeverDNativeDriverTests` and `NeverDDriverGuardMetadataTests` with the two
+driver emulation suites above. These checks cover common validation, strict
+execution policy, request ownership and backend-visible outcomes as well as
+individual API behavior. Unavailable native backends and external WDK images
+remain explicit skips.
+
 Explicit nested user-memory tests cover strict JSON/native graph validation,
 shared and cyclic references, unaligned pointer slots, page rights, request and
 process revocation, and WDF caller-context ownership. Genuine WDK WDM/KMDF tests
@@ -2771,6 +2778,24 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `AndroidFileTests.cpp` and the original `linux_files.c` fixture exercise O0/O2 code, ordinary/APS2/RELR Android relocation formats and x64/AArch64 Linux processes. Cases cover binary bytes, independent opens, cross-thread/raw/Bionic cursor sharing, errno, lowest descriptor reuse (including standard streams), capacity/error precedence, signed seek boundaries, page-fault prefixes, EOF and page-tail path termination. Dynamic bindings preserve provider identity and closed-provider refusal. `ProcessReportTests.cpp` checks strict catalogue fields, limits, conflicting paths and profile restrictions. C API/Python/CLI checks use the same explicit inputs. Unavailable transports remain skips; these memory-file cases do not establish host filesystem or procfs equivalence.
 
+`AndroidFileStatusAtTests.cpp` checks `fstatat` and `fstatat64`, variadic syscall
+and raw SVC against the same explicit observations. Independent full-structure
+and byte expectations cover padding, wide timestamps, unaligned and overlapping
+path/output buffers, terminated page tails, untouched output on errors, low-word
+arguments, descriptor lifetime and unchanged cursors. Unmodeled directory/CWD
+metadata, version-specific NULL and synchronization flags, and mixed output
+permissions remain pending calls. The shared fixture also runs as O0/O2 x64 and
+AArch64 Linux executables; C API, Python and CLI execute its success and missing
+path cases. Available native ARM64 transports compare complete reports with
+Unicorn, normalizing only backend identity and its selection reason.
+
+Trailing-separator cases distinguish regular files, implicit directories,
+root-only slash paths, absent names and file ancestors across open, access,
+status and mkdir. They check creation's final-name `EEXIST`, query `ENOTDIR`,
+first-NUL faults, flag and descriptor-limit priority, untouched status bytes
+and unchanged cursors. Relative, dot-component and internally repeated-slash
+forms stay unsupported; directory state and permissions are not inferred.
+
 File-existence cases cover raw x64 `access`, x64/AArch64 `faccessat`, Bionic
 imports and variadic syscalls, shared catalogue queries from another guest
 thread, private errno, dynamic provider lifetime, implicit directories,
@@ -2855,6 +2880,10 @@ Native loop refinement exercises deferred conditional collection and retained un
 
 `LowIRLoopInference.MutablePrefixBounds*` covers derived 8/24/32-bit bounds with changing upper bits, three counter storage kinds, both byte orders and direct/cached exits. It checks nontermination, moving equality bounds, observed upper-bit/cache mutations and exact/one-short budgets. A moving unsigned-order bound can terminate on wraparound and has its own complete proof regression.
 
-`LowIRLoopRefinement.GuardedCuts*` and `BinaryLowIRLoopRefinement.GuardedCuts*` cover repeated PCs, register/frame/profiled-system selectors, both byte orders, unmatched finite and cyclic paths, overlap and wrong-side refusal, prefix generalization, selected undefined-value witnesses, malformed metadata, digest binding and shared budgets. Independent native tests prove both R10 contexts at one original loop address and keep unaudited boundaries ahead of selectors. Automatic native selector discovery and ordinary ABI certification remain separate.
+`LowIRLoopInference.CompletedEntailments*` checks session isolation across terminating and nonterminating frame loops in both byte orders, solver/node exhaustion and independent proof budgets. Mutable-bound regressions verify exact and one-short logical query limits with cache hits; native repeated-context proofs check domain-sensitive reuse.
+
+`LowIRLoopRefinement.GuardedCuts*` and `BinaryLowIRLoopRefinement.GuardedCuts*` cover repeated PCs, register/frame/profiled-system selectors, both byte orders, unmatched finite and cyclic paths, overlap and wrong-side refusal, prefix generalization, selected undefined-value witnesses, malformed metadata, digest binding and shared budgets. Independent native tests prove both R10 contexts at one original loop address and keep unaudited boundaries ahead of selectors. Ordinary ABI certification remains separate.
+
+`BinaryLowIRLoopInference.NativeSelectors*` covers two register contexts, frame-only contexts, three-domain conjunctions, inseparable templates, origin/native-body mutations and exact/one-short independent inference and proof budgets. The tests use arbitrary loop counts and introduce no entry constants.
 
 `DarwinIndirectRecordCalls` checks the current MakeScale contract and its 22 import/ABI mutations, then consumes a complete 48-byte private result through the shared by-value-copy proof. Misaligned, displaced, overlapping or out-of-frame result ranges refuse. Removing the definite-write effect also refuses, even with the complete return ABI retained.

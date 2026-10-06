@@ -730,6 +730,36 @@ static bool exprMayFault(const HighExpr *E) {
   return false;
 }
 
+bool highStmtMayFault(const HighStmt &S) {
+  switch (S.Kind) {
+  case StmtKind::Nop:
+  case StmtKind::Block:
+  case StmtKind::Goto:
+  case StmtKind::Break:
+  case StmtKind::Continue:
+  case StmtKind::SEHTry:
+  case StmtKind::CxxTry:
+  case StmtKind::ItaniumTry:
+    return false;
+  case StmtKind::Assign:
+    return !S.Dst ||
+           (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi) ||
+           exprMayFault(S.Val.get());
+  case StmtKind::Return:
+    return exprMayFault(S.RetVal.get());
+  case StmtKind::If:
+  case StmtKind::IfElse:
+  case StmtKind::While:
+  case StmtKind::DoWhile:
+  case StmtKind::For:
+    return exprMayFault(S.Cond.get());
+  case StmtKind::Switch:
+    return exprMayFault(S.SwitchExpr.get());
+  default:
+    return true;
+  }
+}
+
 /// Whether running \p Tail may raise an exception.
 static bool tailMayFault(const std::vector<HighStmt> &Tail) {
   for (const HighStmt &S : Tail) {

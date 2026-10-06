@@ -3974,6 +3974,31 @@ TEST(COFFExceptionIR, SEHHandlerEndingAnArmContinuesAfterTheIfElse) {
   EXPECT_NE(Source.find("sub_14000D000();"), std::string::npos) << Source;
 }
 
+TEST(COFFExceptionIR, SEHRangeLeavingAGuardedCallOutsideStaysUnstructured) {
+  // X(); if (c) Z(); else Y(); with X and Y guarded and Z not.  The if/else
+  // crosses the range, so the only slice a __try could wrap is Y alone, and
+  // the guarded X would run unprotected.  The region is reported
+  // unstructured instead, and every call, the handler's included, prints.
+  constexpr va_t F = 0x140001000;
+  const NestedSEHBlockSpec Specs[] = {
+      {F, F + 0x10, 0x140008000, false, 0, F + 0x30},
+      {F + 0x10, F + 0x20, 0x140009000, false, F + 0x40},
+      {F + 0x30, F + 0x40, 0x14000A000, false, 0},
+      {F + 0x40, F + 0x41, 0, true, 0},
+      {F + 0x50, F + 0x60, 0x14000B000, false, F + 0x40}};
+  const SEHScopeRecord Scopes[] = {catchAllScope(F, F + 0x20, F + 0x50)};
+  MedFunc Func =
+      makeNestedSEHFixture("seh_range_crossing_if", Specs, Scopes, F + 0x60);
+
+  HighFunc High = MedToHighConverter().convert(Func, Arch::X64);
+  EXPECT_EQ(High.StructuredExceptionRegions, 0u);
+  EXPECT_EQ(High.UnstructuredExceptionRegions, 1u);
+  const std::string Source = emitHighC({High});
+  for (const char *Call : {"sub_140008000();", "sub_140009000();",
+                           "sub_14000A000();", "sub_14000B000();"})
+    EXPECT_NE(Source.find(Call), std::string::npos) << Call << "\n" << Source;
+}
+
 TEST(COFFExceptionIR, OuterSEHRangeIsNeverNestedInsideTheTryItHolds) {
   // The inner handler runs into a copy of the tail and sits after the
   // return, so the outer range's statements are not one slice.  The inner
@@ -5032,8 +5057,10 @@ TEST(COFFExceptionIR, ExceptHandlerSeesTheEstablishedFrame) {
 TEST(COFFExceptionIR, ExceptBodyKeepsTheBlockItRanInto) {
   // PoGetRequesterOld: the __except handler (`and qword [rsp+48h], 0;
   // mov r8, [rsp+40h]`) runs on into a tail its try body also jumps to.  The
-  // try ends up last in the `if (arg0)` arm, whose end falls into the other
-  // path's `*arg2 = 0; ...`, so the clause has to jump to the tail itself.
+  // structured tree puts part of the guarded range, statements that may
+  // fault, outside the only slice a __try could wrap, so that __try would
+  // leave them unprotected.  The region is reported unstructured instead,
+  // and the handler and the tail it runs on into stay printed.
   constexpr va_t F = 0x1403F75E4;
   BinaryImage Img;
   Img.Arch = Arch::X64;
@@ -5115,23 +5142,12 @@ TEST(COFFExceptionIR, ExceptBodyKeepsTheBlockItRanInto) {
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS));
   OS.flush();
-  const size_t Except = Source.find("__except");
-  ASSERT_NE(Except, std::string::npos) << Source;
-  const size_t Open = Source.find('{', Except);
-  ASSERT_NE(Open, std::string::npos) << Source;
-  size_t Close = Open;
-  for (int Depth = 0; Close < Source.size(); ++Close) {
-    Depth += Source[Close] == '{';
-    Depth -= Source[Close] == '}';
-    if (Depth == 0)
-      break;
-  }
-  // The tail is shared with the try body, so the clause leaves for it
-  // explicitly instead of falling out of the arm into the other path.
-  const std::string Clause = Source.substr(Open, Close - Open);
-  EXPECT_TRUE(Clause.find("goto ") != std::string::npos ||
-              Clause.find("return") != std::string::npos)
+  EXPECT_EQ(Result.HighFuncs.front().StructuredExceptionRegions, 0u);
+  EXPECT_EQ(Result.HighFuncs.front().UnstructuredExceptionRegions, 1u);
+  EXPECT_NE(Source.find("unstructured SEH region"), std::string::npos)
       << Source;
+  EXPECT_NE(Source.find("L_1403F76AC:"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("L_1403F76B7:"), std::string::npos) << Source;
 }
 
 TEST(COFFExceptionIR, HandlerWhoseFirstCopyIsDeadKeepsItsLabel) {

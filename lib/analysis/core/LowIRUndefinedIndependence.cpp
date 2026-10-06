@@ -546,13 +546,17 @@ class Checker {
       fail(Status::BudgetExceeded, "symbolic-node budget exhausted");
   }
 
+  void chargeQuery() {
+    if (Result.SolverQueries >= Limits.MaxSolverQueries)
+      fail(Status::BudgetExceeded, "solver-query budget exhausted");
+    ++Result.SolverQueries;
+  }
+
   solver::SatResult query(SymRef Predicate) {
     nodes();
     if (Predicate && Predicate == LastCompletedQuery)
       return LastCompletedAnswer;
-    if (Result.SolverQueries >= Limits.MaxSolverQueries)
-      fail(Status::BudgetExceeded, "solver-query budget exhausted");
-    ++Result.SolverQueries;
+    chargeQuery();
     const auto Answer =
         solver::checkSat(Ctx, Predicate, nullptr, Limits.Solver);
     if (Answer == solver::SatResult::Unknown)
@@ -2940,6 +2944,11 @@ class LoopPlanInference {
   std::vector<int> ReachableBlocks;
   bool MultipleCycles = false;
   bool GeneralContractFailure = false;
+  // Complete model-free answers in this session's immutable DAG and solver
+  // configuration. Keys include the full domain, not only the proposed fact.
+  // Every hit still consumes a query request, bounding both search work and
+  // retained entries by the existing query and symbolic-node limits.
+  std::map<SymRef, bool> CompleteEntailments;
   std::string Stage;
   SpecializationProvider *ReadProvider;
   detail::NativeUndefinedIndependenceResult ReadEvidence;
@@ -3016,9 +3025,19 @@ class LoopPlanInference {
 
   bool entails(SymRef Domain, SymRef Fact) {
     auto C = checker();
-    return C.query(
-               Session.Context.mkAnd(Domain, Session.Context.mkNot(Fact))) ==
-           solver::SatResult::Unsat;
+    const auto Query =
+        Session.Context.mkAnd(Domain, Session.Context.mkNot(Fact));
+    C.nodes();
+    if (auto It = CompleteEntailments.find(Query);
+        It != CompleteEntailments.end()) {
+      C.chargeQuery();
+      ++Result.EntailmentCacheHits;
+      return It->second;
+    }
+    // Unknown and invalid answers throw in the shared checker, before store.
+    const bool Holds = C.query(Query) == solver::SatResult::Unsat;
+    CompleteEntailments.emplace(Query, Holds);
+    return Holds;
   }
 
   void initializePrefixBounds(Word &W) {
@@ -4715,6 +4734,119 @@ class LoopPlanInference {
     return TupleRankStatus::Paused;
   }
 
+  void inferNativeSelectors(
+      llvm::ArrayRef<detail::NativeLoopCutpointOrigin> Origins) {
+    std::map<va_t, va_t> Native;
+    for (const auto &O : Origins)
+      if (!Native.emplace(O.CandidateAddress, O.OriginalAddress).second)
+        stop(Status::Invalid, "duplicate native loop origin mapping");
+    std::map<va_t, std::vector<size_t>> Groups;
+    for (size_t I = 0; I != Plan.Cutpoints.size(); ++I) {
+      const auto It = Native.find(Plan.Cutpoints[I].CandidateAddress);
+      if (It == Native.end())
+        stop(Status::Invalid, "missing native loop origin mapping");
+      Groups[It->second].push_back(I);
+    }
+    auto &Ctx = Session.Context;
+    std::vector<std::optional<TerminalState>> Templates(Plan.Cutpoints.size());
+    using LocationKey = std::tuple<LowIRLoopSpace, uint64_t, uint16_t>;
+    using ConstantBits = std::pair<uint64_t, uint64_t>; // Known zero / one.
+    std::vector<std::map<LocationKey, ConstantBits>> Constants(
+        Plan.Cutpoints.size());
+    const auto Bits = [&](size_t I, const LowIRLoopLocation &L) {
+      ActiveCutpoint = I;
+      auto [It, Added] = Constants[I].try_emplace({L.Space, L.Offset, L.Bytes});
+      if (!Added)
+        return It->second;
+      chargeCutSelection(L.Bytes * 8);
+      auto &State = *Templates[I];
+      const auto V = read(State, L);
+      const auto Zero = Ctx.mkConst(L.Bytes * 8, 0);
+      const auto One = Ctx.mkConst(L.Bytes * 8, ones(L.Bytes));
+      auto Z = commonBits(V, Zero, L.Bytes);
+      auto O = commonBits(V, One, L.Bytes);
+      const auto Pending = ones(L.Bytes) & ~(Z | O);
+      if (Pending) {
+        const auto &Vars = relationVars(V);
+        const auto &DomainVars = relationVars(State.Predicate);
+        chargeCutSelection(Vars.size());
+        // Independent unconstrained inputs cannot supply another literal bit.
+        // This only filters proposals; all retained constants are proved.
+        if (std::any_of(Vars.begin(), Vars.end(), [&](uint32_t Var) {
+              return std::binary_search(DomainVars.begin(), DomainVars.end(),
+                                        Var);
+            })) {
+          Z |= commonBitsUnder(V, Zero, L.Bytes, State.Predicate, Pending);
+          O |= commonBitsUnder(V, One, L.Bytes, State.Predicate, Pending & ~Z);
+        }
+      }
+      It->second = {Z, O};
+      return It->second;
+    };
+    const auto Add = [&](size_t I, const LowIRLoopLocation &L, uint64_t Mask,
+                         uint64_t Value) {
+      auto &Cut = Plan.Cutpoints[I];
+      auto &Guards = Cut.OriginalGuards;
+      auto It = std::find_if(Guards.begin(), Guards.end(), [&](const auto &G) {
+        return sameLocation(G.Location, L);
+      });
+      if (It == Guards.end())
+        Guards.push_back({L, Mask, Value});
+      else {
+        It->Mask |= Mask;
+        It->Value |= Value;
+      }
+      Cut.CandidateGuards = Guards;
+    };
+    for (const auto &[Address, Group] : Groups) {
+      if (Group.size() < 2)
+        continue;
+      for (size_t I : Group) {
+        chargeCutSelection();
+        auto C = checker();
+        if (!C.validateInput())
+          throw Stop{};
+        C.EntryRoot = Session.EntryRoot;
+        C.MemoryRoot = Session.MemoryRoot;
+        // Use the complete reconstructed induction domain, never just a
+        // concrete prefix witness or a recovery context's identity.
+        auto T = C.loopTemplate(I, nullptr, nullptr, Session.Predicate);
+        T.Candidate.Predicate = Ctx.mkAnd(Session.Predicate, T.Predicate);
+        if (C.query(T.Candidate.Predicate) == solver::SatResult::Unsat)
+          stop(Status::Invalid, "native selector has an empty template domain");
+        Templates[I] = std::move(T.Candidate);
+      }
+      for (size_t A = 0; A != Group.size(); ++A)
+        for (size_t B = A + 1; B != Group.size(); ++B) {
+          const auto I = Group[A], J = Group[B];
+          ActiveCutpoint = I;
+          bool Separated = false;
+          for (const auto &L : locations()) {
+            chargeCutSelection();
+            if (L.Space == LowIRLoopSpace::FunctionTemporary)
+              continue;
+            const auto [AZ, AO] = Bits(I, L);
+            const auto [BZ, BO] = Bits(J, L);
+            const auto Different = (AZ & BO) | (AO & BZ);
+            if (!Different)
+              continue;
+            const uint64_t Mask = uint64_t{1} << std::countr_zero(Different);
+            Add(I, L, Mask, AO & Mask);
+            Add(J, L, Mask, BO & Mask);
+            Separated = true;
+            break;
+          }
+          if (!Separated)
+            stop(Status::Unsupported,
+                 "native loop contexts have no proved literal-bit selector");
+        }
+    }
+    if (std::any_of(Plan.Cutpoints.begin(), Plan.Cutpoints.end(),
+                    [](const auto &C) { return !C.OriginalGuards.empty(); }) &&
+        !checker().validateInput())
+      throw Stop{};
+  }
+
   bool inferMultiple(llvm::ArrayRef<va_t> Cuts) {
     Result.CutpointAttempts += Cuts.size();
     Models.assign(Cuts.size(), {});
@@ -4815,7 +4947,8 @@ public:
   LowIRLoopInferenceResult
   run(llvm::ArrayRef<va_t> Eligible,
       detail::LowIRLoopCutFamily Family = detail::LowIRLoopCutFamily::Default,
-      llvm::ArrayRef<const LowIRLoopRefinementPlan *> PreviousPlans = {}) {
+      llvm::ArrayRef<const LowIRLoopRefinementPlan *> PreviousPlans = {},
+      llvm::ArrayRef<detail::NativeLoopCutpointOrigin> NativeOrigins = {}) {
     std::string LastTemplateFailure;
     const bool BranchArms = Family != detail::LowIRLoopCutFamily::Default;
     const bool FilterBranches =
@@ -4840,6 +4973,20 @@ public:
           !Limits.MaxRankCandidates)
         stop(Status::BudgetExceeded, "loop inference search budget exhausted");
       findChoices(Eligible, BranchArms, FilterBranches);
+      if (!NativeOrigins.empty()) {
+        std::set<va_t> Unique;
+        for (const auto &O : NativeOrigins) {
+          chargeCutSelection();
+          if (O.UniqueOriginal)
+            Unique.insert(O.CandidateAddress);
+        }
+        // Preserve the previous unique-origin search order before expanding
+        // the candidate family. All attempts still share the same budgets.
+        std::stable_partition(Choices.begin(), Choices.end(), [&](va_t A) {
+          chargeCutSelection();
+          return Unique.count(A);
+        });
+      }
       if (BranchArms && BranchArmEntries.empty())
         stop(Status::Unsupported, "no cyclic branch-arm cutpoints");
       // A complete branch-arm set can preserve phases that a shared header
@@ -4861,12 +5008,10 @@ public:
           stop(Status::Unsupported,
                FilterBranches ? "filtered cuts duplicate previous plan"
                               : "branch-arm cuts duplicate previous plan");
-      if (Feedback->size() > 1 || MultipleCycles) {
-        if (inferMultiple(*Feedback)) {
-          Result.Status = LowIRLoopInferenceStatus::Inferred;
-          Result.Plan = Plan;
-        }
-      } else
+      bool Inferred = false;
+      if (Feedback->size() > 1 || MultipleCycles)
+        Inferred = inferMultiple(*Feedback);
+      else
         for (va_t Address : BranchArms ? *Feedback : Choices) {
           if (Result.CutpointAttempts >= Limits.MaxCutpointAttempts)
             stop(Status::BudgetExceeded,
@@ -4876,8 +5021,7 @@ public:
             continue;
           try {
             if (inferAt(Address)) {
-              Result.Status = LowIRLoopInferenceStatus::Inferred;
-              Result.Plan = Plan;
+              Inferred = true;
               break;
             }
           } catch (const Stop &) {
@@ -4890,7 +5034,14 @@ public:
             LastTemplateFailure = Session.Statistics.Diagnostic;
           }
         }
-      if (!Result.inferred())
+      if (Inferred) {
+        if (!NativeOrigins.empty()) {
+          Stage = "native cutpoint selectors";
+          inferNativeSelectors(NativeOrigins);
+        }
+        Result.Status = LowIRLoopInferenceStatus::Inferred;
+        Result.Plan = Plan;
+      } else
         Result.Diagnostic = LastTemplateFailure.empty()
                                 ? "no loop template and unsigned rank inferred"
                                 : LastTemplateFailure;
@@ -4946,9 +5097,12 @@ LowIRLoopInferenceResult detail::inferNativeLowIRLoopRefinementPlan(
     SpecializationProvider &Provider, const LowFunc &Candidate,
     const LowIRIndependenceContract &Contract,
     const LowIRLoopInferenceLimits &Limits,
-    llvm::ArrayRef<va_t> EligibleCutpoints) {
+    llvm::ArrayRef<NativeLoopCutpointOrigin> EligibleOrigins) {
+  std::vector<va_t> Eligible;
+  for (const auto &O : EligibleOrigins)
+    Eligible.push_back(O.CandidateAddress);
   return LoopPlanInference(Candidate, Contract, Limits, &Provider)
-      .run(EligibleCutpoints);
+      .run(Eligible, LowIRLoopCutFamily::Default, {}, EligibleOrigins);
 }
 
 LowIRIndependenceResult checkLowIRUndefinedIndependence(

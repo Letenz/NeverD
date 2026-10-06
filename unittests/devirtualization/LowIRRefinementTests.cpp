@@ -3056,14 +3056,21 @@ void checkProjectedCounterBudgets(bool EqualityExit,
   const auto Good =
       inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
   ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+  if (MutableBounds) {
+    EXPECT_GT(Good.EntailmentCacheHits, 0U);
+    EXPECT_LT(Good.EntailmentCacheHits, Good.SolverQueries);
+  }
   LowIRLoopInferenceLimits Exact;
   Exact.Execution.MaxOperations = Good.Operations;
   Exact.Execution.MaxSolverQueries = Good.SolverQueries;
   Exact.Execution.MaxPaths = Good.ScheduledPaths;
   Exact.MaxRankCandidates = Good.RankCandidates;
   Exact.MaxWideningRounds = Good.WideningRounds;
-  ASSERT_TRUE(inferLowIRLoopRefinementPlan(P.Function, P.Contract, Exact, Cuts)
-                  .inferred());
+  const auto AtLimit =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, Exact, Cuts);
+  ASSERT_TRUE(AtLimit.inferred()) << AtLimit.Diagnostic;
+  EXPECT_EQ(AtLimit.SolverQueries, Good.SolverQueries);
+  EXPECT_EQ(AtLimit.EntailmentCacheHits, Good.EntailmentCacheHits);
   for (unsigned Case = 0; Case != 5; ++Case) {
     auto Short = Exact;
     if (Case == 0)
@@ -3081,6 +3088,11 @@ void checkProjectedCounterBudgets(bool EqualityExit,
     EXPECT_EQ(Refused.Status, LowIRLoopInferenceStatus::BudgetExceeded)
         << Refused.Diagnostic;
     EXPECT_FALSE(Refused.Plan);
+    if (Case == 1) {
+      EXPECT_EQ(Refused.SolverQueries, Short.Execution.MaxSolverQueries);
+      if (MutableBounds)
+        EXPECT_GT(Refused.EntailmentCacheHits, 0U);
+    }
   }
   const auto Proof = loopCheck(P, P, *Good.Plan);
   ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
@@ -3174,6 +3186,70 @@ TEST(LowIRLoopInference, MutablePrefixBoundsPreserveFullStateAndCache) {
 TEST(LowIRLoopInference, MutablePrefixBoundsKeepIndependentBudgets) {
   for (bool Cached : {false, true})
     checkProjectedCounterBudgets(true, true, Cached, false, true);
+}
+
+TEST(LowIRLoopInference, CompletedEntailmentsStayInInferenceSession) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    const auto Make = [&](unsigned Step) {
+      auto P = projectedCounterLoops(1, true, Step, true, LowIRLoopSpace::Frame,
+                                     true, 0, true, true, true, false, true);
+      P.Contract.ByteOrder = Order;
+      return P;
+    };
+    const std::vector<va_t> Cuts{0x200, 0x400};
+    const auto P = Make(1);
+    const auto Good =
+        inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
+    ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+    EXPECT_GT(Good.EntailmentCacheHits, 0U);
+    ASSERT_TRUE(loopCheck(P, P, *Good.Plan).proved());
+    for (unsigned Step : {0, 2}) {
+      const auto Infinite = Make(Step);
+      const auto Refused = inferLowIRLoopRefinementPlan(
+          Infinite.Function, Infinite.Contract, {}, Cuts);
+      EXPECT_FALSE(Refused.inferred());
+      EXPECT_FALSE(Refused.Plan);
+      loopRefused(loopCheck(Infinite, Infinite, *Good.Plan), Status::Different);
+    }
+    const auto Again =
+        inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
+    ASSERT_TRUE(Again.inferred()) << Again.Diagnostic;
+    EXPECT_EQ(Again.SolverQueries, Good.SolverQueries);
+    EXPECT_EQ(Again.EntailmentCacheHits, Good.EntailmentCacheHits);
+    ASSERT_TRUE(loopCheck(P, P, *Again.Plan).proved());
+  }
+}
+
+TEST(LowIRLoopInference, CompletedEntailmentsKeepUnknownAndNodeLimits) {
+  const auto P =
+      projectedCounterLoops(1, true, 1, true, LowIRLoopSpace::Register, true, 0,
+                            true, true, true, false, true);
+  const std::vector<va_t> Cuts{0x200, 0x400};
+  const auto Good =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
+  ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+  EXPECT_GT(Good.EntailmentCacheHits, 0U);
+  // A previous successful run must not bypass a new session's query, solver
+  // or symbolic-node limits. An incomplete answer must never become a fact.
+  for (unsigned Case = 0; Case != 3; ++Case) {
+    LowIRLoopInferenceLimits Tiny;
+    if (Case == 0)
+      Tiny.Execution.MaxSolverQueries = 0;
+    else if (Case == 1)
+      Tiny.Execution.Solver.Blast.MaxGates = 1;
+    else
+      Tiny.Execution.MaxSymbolicNodes = 1;
+    const auto Refused =
+        inferLowIRLoopRefinementPlan(P.Function, P.Contract, Tiny, Cuts);
+    EXPECT_EQ(Refused.Status, LowIRLoopInferenceStatus::BudgetExceeded)
+        << Refused.Diagnostic;
+    EXPECT_FALSE(Refused.Plan);
+    EXPECT_EQ(Refused.EntailmentCacheHits, 0U);
+  }
+  LowIRRefinementLimits TinyProof;
+  TinyProof.Execution.MaxSolverQueries = 0;
+  loopRefused(loopCheck(P, P, *Good.Plan, TinyProof), Status::BudgetExceeded);
+  ASSERT_TRUE(loopCheck(P, P, *Good.Plan).proved());
 }
 
 struct CachedComparisonOptions {

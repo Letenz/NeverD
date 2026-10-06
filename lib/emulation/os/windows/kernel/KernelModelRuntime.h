@@ -5,7 +5,8 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Bounded string operations and debugger formatting for the Windows model.
+/// Bounded memory, string operations and debugger formatting for the Windows
+/// model.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -25,6 +26,10 @@ namespace runtime {
   inline constexpr unsigned Name = Value;
 #include "KernelRuntimeLimits.def"
 #undef NEVERD_KERNEL_RUNTIME_LIMIT
+
+llvm::Error checkBufferRange(uint64_t Address, uint64_t Size);
+llvm::Error writeBytes(GuestMemory &Memory, uint64_t Address, uint64_t Size,
+                       uint8_t Value = 0);
 
 using ArgumentReader = llvm::function_ref<llvm::Expected<uint64_t>(unsigned)>;
 enum class UnicodeOperation { Copy, Compare, Equal };
