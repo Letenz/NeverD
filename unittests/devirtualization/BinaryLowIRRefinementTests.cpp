@@ -215,6 +215,45 @@ TEST(BinaryLowIRRefinement, ProvedNativeBranchChoiceKeepsTheIncomingDomain) {
   }
 }
 
+TEST(BinaryLowIRRefinement, NativeBranchEncodingsHaveBoundedLifetimes) {
+  for (bool Taken : {false, true}) {
+    SCOPED_TRACE(Taken);
+    auto P = guardedNativeChain(48, Taken);
+    const auto Recovery = P.recover();
+    ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+    LowIRRefinementLimits Limits;
+    // Each branch fits this search budget. Retaining unrelated earlier
+    // branch encodings makes later queries run out of propagations.
+    Limits.Execution.Solver.Sat.MaxPropagations = 512;
+    const auto Good = P.check(Recovery.Residual, Witness::LiftedBits, Limits);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    EXPECT_EQ(Good.Proof.OriginalPaths, 1U);
+    EXPECT_EQ(Good.Proof.CandidatePaths, 1U);
+    EXPECT_EQ(Good.Proof.TerminalPairs, 1U);
+    ASSERT_GT(Good.Proof.SolverQueries, 0U);
+    Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
+    ASSERT_TRUE(
+        P.check(Recovery.Residual, Witness::LiftedBits, Limits).proved());
+    --Limits.Execution.MaxSolverQueries;
+    refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+            Status::BudgetExceeded);
+    Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
+
+    auto Bad = Recovery.Residual;
+    bool Changed = false;
+    for (auto &B : Bad.Blocks)
+      for (auto &O : B.Ops)
+        if ((O.Opcode == NdOp::COPY || O.Opcode == NdOp::INT_ZEXT) &&
+            O.Output.isReg() && O.Output.Offset == x86reg::RAX &&
+            O.NumInputs == 1 && O.Inputs[0] == NdVar::scalar(7, 4)) {
+          O.Inputs[0].Offset = 9;
+          Changed = true;
+        }
+    ASSERT_TRUE(Changed);
+    refused(P.check(Bad, Witness::LiftedBits, Limits), Status::Different);
+  }
+}
+
 TEST(BinaryLowIRRefinement, InterveningQueriesRetainFeasibleDomains) {
   for (unsigned Count : {8U, 32U}) {
     for (bool Taken : {false, true}) {
