@@ -25289,8 +25289,7 @@ TEST(HighCPointerAddresses, Win64SameBlockRdxRecoversPredSetupR8) {
   EXPECT_EQ(Args->size(), 3u) << Source << "\nHighIR:\n" << HighDump;
   if (Args->size() == 3) {
     EXPECT_NE((*Args)[1].find("3313"), std::string_view::npos) << Source;
-    EXPECT_NE((*Args)[2].find("+ (uint64_t)(64)"), std::string_view::npos)
-        << Source;
+    EXPECT_NE((*Args)[2].find("+ 64)"), std::string_view::npos) << Source;
   }
   EXPECT_EQ(Source.find(", 42"), std::string::npos) << Source;
 }
@@ -25429,8 +25428,7 @@ TEST(HighCPointerAddresses, Win64CallJoinRecoversDominatingR8) {
   ASSERT_TRUE(Args) << Source;
   EXPECT_EQ(Args->size(), 3u) << Source << "\nHighIR:\n" << HighDump;
   if (Args->size() == 3)
-    EXPECT_NE((*Args)[2].find("+ (uint64_t)(64)"), std::string_view::npos)
-        << Source;
+    EXPECT_NE((*Args)[2].find("+ 64)"), std::string_view::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, Win64IpMapSplitCallKeepsPredLeaArgs) {
@@ -27060,8 +27058,8 @@ TEST(HighCPointerAddresses, GotoJoinDefaultAssignKeepsMemberAddressIncoming) {
   structureIfElse(Func, 8);
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ (uint64_t)(40)"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ (uint64_t)(240)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 40)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 240)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("table("), std::string::npos) << Source;
   EXPECT_NE(Source.find("Find("), std::string::npos) << Source;
   EXPECT_NE(Source.find("arg3 == 0"), std::string::npos) << Source;
@@ -27108,7 +27106,7 @@ TEST(HighCPointerAddresses, GotoJoinLabelAddIsNotInvertSkip) {
   structureIfElse(Func, 8);
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ (uint64_t)(40)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 40)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("table("), std::string::npos) << Source;
   EXPECT_NE(Source.find("arg3 == 0"), std::string::npos) << Source;
 }
@@ -27222,7 +27220,7 @@ TEST(HighCPointerAddresses, GotoJoinDefaultAssignSinksPastPadHeavyTree) {
   structureIfElse(Func, 8);
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ (uint64_t)(40)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 40)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("table("), std::string::npos) << Source;
   EXPECT_NE(Source.find("arg3 == 0"), std::string::npos) << Source;
 }
@@ -27325,7 +27323,7 @@ TEST(HighCPointerAddresses, GotoJoinVirtPrefixKeepsIncomingAcrossEmptyClobber) {
   structureIfElse(Func, 8);
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ (uint64_t)(240)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 240)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("table(arg0)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("CStringT_ctor("), std::string::npos) << Source;
 }
@@ -27557,12 +27555,10 @@ TEST(HighCPointerAddresses, GotoJoinPhiKeepsPointerAddIncoming) {
   llvm::raw_string_ostream HighOS(HighDump);
   Pipeline::dumpHighIR({High}, HighOS);
   const std::string Source = emitFunctions({High}, Arch::X64, &Img);
-  EXPECT_NE(Source.find("+ (uint64_t)(40)"), std::string::npos)
-      << Source << "\nHighIR:\n"
-      << HighDump;
-  EXPECT_NE(Source.find("+ (uint64_t)(240)"), std::string::npos)
-      << Source << "\nHighIR:\n"
-      << HighDump;
+  EXPECT_NE(Source.find("+ 40)"), std::string::npos) << Source << "\nHighIR:\n"
+                                                     << HighDump;
+  EXPECT_NE(Source.find("+ 240)"), std::string::npos) << Source << "\nHighIR:\n"
+                                                      << HighDump;
   EXPECT_NE(Source.find("table("), std::string::npos) << Source << "\nHighIR:\n"
                                                       << HighDump;
   EXPECT_NE(Source.find("CStringT_ctor("), std::string::npos)
@@ -27698,9 +27694,9 @@ TEST(HighCPointerAddresses, GotoJoinNestedVirtIncomingSurvivesLabelFold) {
                Ctor};
   structureIfElse(Func, 10);
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("+ (uint64_t)(40)"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ (uint64_t)(240)"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ (uint64_t)(64)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 40)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 240)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 64)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("CStringT_ctor("), std::string::npos) << Source;
   EXPECT_NE(Source.find("IsEmpty("), std::string::npos) << Source;
 }
@@ -32484,8 +32480,7 @@ TEST(HighCPointerAddresses, FrameAddressValueDeclaresSlot) {
   Func.Body.push_back(std::move(Ret));
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return ((uint64_t)((uint64_t)(frame_base)"),
-            std::string::npos)
+  EXPECT_NE(Source.find("return (uint64_t)frame_base - 8;"), std::string::npos)
       << Source;
   expectPortableStore(Source, "int64_t", "- 8", "arg0");
 }
@@ -33878,8 +33873,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsThrow) {
   // The prologue's -104 and the reload's +112 address the arg0 home at +8.
   EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
   expectPortableStore(Source, "int32_t", "frame_base) + 8", "arg0");
-  EXPECT_NE(Source.find("(uint64_t)(frame_base) - (uint64_t)(104)"),
-            std::string::npos)
+  EXPECT_NE(Source.find("(uint64_t)frame_base - 104"), std::string::npos)
       << Source;
   const auto Condition = sourceLineContaining(Source, "if ((__builtin_memcpy(");
   EXPECT_NE(Condition.find("(v0) + 112"), std::string_view::npos) << Source;
@@ -33887,8 +33881,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsThrow) {
   const auto InnerCtor = lastCallArguments(Source, "sub_140001000");
   ASSERT_TRUE(InnerCtor.has_value()) << Source;
   ASSERT_EQ(InnerCtor->size(), 2u) << Source;
-  EXPECT_NE((*InnerCtor)[0].find("(v0) + (uint64_t)(40)"),
-            std::string_view::npos)
+  EXPECT_NE((*InnerCtor)[0].find("(uint64_t)v0 + 40"), std::string_view::npos)
       << Source;
   EXPECT_EQ(llvm::StringRef((*InnerCtor)[1]).trim(), "10") << Source;
   const size_t LastCtor = Source.rfind("sub_140001000(");
@@ -33896,8 +33889,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsThrow) {
       std::string_view(Source).substr(0, LastCtor), "sub_140001000");
   ASSERT_TRUE(OuterCtor.has_value()) << Source;
   ASSERT_EQ(OuterCtor->size(), 2u) << Source;
-  EXPECT_NE((*OuterCtor)[0].find("(v0) + (uint64_t)(32)"),
-            std::string_view::npos)
+  EXPECT_NE((*OuterCtor)[0].find("(uint64_t)v0 + 32"), std::string_view::npos)
       << Source;
   EXPECT_EQ(llvm::StringRef((*OuterCtor)[1]).trim(), "1") << Source;
   expectPortableStore(Source, "uint32_t", "(v0) + 44", "0xFFFFFF9C");
@@ -34195,7 +34187,7 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   // load/add/store when the value passes through the SEH clause boundary.
   auto ExceptStore = sourceLineContaining(Source, "+= 20;");
   if (ExceptStore.empty())
-    ExceptStore = sourceLineContaining(Source, "(uint32_t)(20)");
+    ExceptStore = sourceLineContaining(Source, ") + 20)");
   ASSERT_NE(Store, Stores.end()) << Source;
   ASSERT_FALSE(Clear.empty()) << Source;
   ASSERT_FALSE(Home.empty()) << Source;
@@ -34470,8 +34462,8 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsUnwindDestructor) {
   EXPECT_NE(After.find("sub_"), std::string::npos) << After;
   // Unwind funclets address the same established frame as the constructors.
   EXPECT_NE(After.find("frame_base - 104"), std::string::npos) << After;
-  EXPECT_NE(After.find("+ (uint64_t)(40)"), std::string::npos) << After;
-  EXPECT_NE(After.find("+ (uint64_t)(32)"), std::string::npos) << After;
+  EXPECT_NE(After.find("+ 40)"), std::string::npos) << After;
+  EXPECT_NE(After.find("+ 32)"), std::string::npos) << After;
   EXPECT_EQ(After.find("arg1"), std::string::npos) << After;
 }
 
