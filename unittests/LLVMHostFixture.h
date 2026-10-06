@@ -52,15 +52,19 @@ inline void lowerHostConversionAnnotations(llvm::Instruction &Instruction) {
 inline void printHostCompilerFixture(const llvm::Module &Module,
                                      llvm::raw_ostream &Out) {
   // The embedded LLVM can be newer than the host Clang used to compile an
-  // executable oracle. These function/call optimization annotations have
-  // newer IR spellings; omitting their guarantees is conservative. Conversion
-  // poison conditions use explicit guards. The module under test is unchanged.
+  // executable oracle over source-defined samples. These function/call
+  // guarantees have newer IR spellings; omitting them is conservative for
+  // those samples. Conversion poison conditions use explicit guards. Semantic
+  // proofs keep the unchanged module, including its original range contracts.
   auto Fixture = llvm::CloneModule(Module);
   auto RemoveNewAnnotations = [](auto &FunctionOrCall, unsigned Parameters) {
     FunctionOrCall.removeFnAttr(llvm::Attribute::NoCreateUndefOrPoison);
     FunctionOrCall.removeFnAttr(llvm::Attribute::Memory);
-    for (unsigned I = 0; I != Parameters; ++I)
+    FunctionOrCall.removeRetAttr(llvm::Attribute::Range);
+    for (unsigned I = 0; I != Parameters; ++I) {
       FunctionOrCall.removeParamAttr(I, llvm::Attribute::Captures);
+      FunctionOrCall.removeParamAttr(I, llvm::Attribute::Range);
+    }
   };
   for (auto &Function : *Fixture) {
     RemoveNewAnnotations(Function, Function.arg_size());

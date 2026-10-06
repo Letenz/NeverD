@@ -350,6 +350,37 @@ TEST(LLVMScalarDecision, HostCompilerCopyRetainsConversionPoisonGuards) {
   EXPECT_FALSE(llvm::verifyModule(*Copy.Module, &llvm::errs()));
 }
 
+TEST(LLVMScalarDecision, HostCompilerCopyKeepsOriginalRangeContracts) {
+  Source Input(R"(
+define noundef range(i8 0, 4) i8 @f(i8 noundef range(i8 0, 4) %x) {
+  %v = call noundef range(i8 0, 4) i8 @callee(i8 noundef range(i8 0, 4) %x)
+  ret i8 %v
+}
+declare noundef range(i8 0, 4) i8 @callee(i8 noundef range(i8 0, 4))
+)");
+  ASSERT_TRUE(Input.Module);
+  ASSERT_FALSE(llvm::verifyModule(*Input.Module, &llvm::errs()));
+  const auto Before = Input.text();
+  const auto Text = neverd::test::printHostCompilerFixture(*Input.Module);
+  EXPECT_EQ(Input.text(), Before);
+  EXPECT_NE(Before.find("range("), std::string::npos);
+  EXPECT_EQ(Text.find("range("), std::string::npos);
+  Source Copy(Text);
+  ASSERT_TRUE(Copy.Module);
+  ASSERT_FALSE(llvm::verifyModule(*Copy.Module, &llvm::errs()));
+  for (const char *Name : {"f", "callee"}) {
+    auto *Function = Copy.Module->getFunction(Name);
+    ASSERT_TRUE(Function);
+    EXPECT_TRUE(Function->getAttributes().hasRetAttr(llvm::Attribute::NoUndef));
+    EXPECT_TRUE(Function->hasParamAttribute(0, llvm::Attribute::NoUndef));
+  }
+  auto *Call =
+      llvm::dyn_cast<llvm::CallBase>(&Copy.function().getEntryBlock().front());
+  ASSERT_TRUE(Call);
+  EXPECT_TRUE(Call->getAttributes().hasRetAttr(llvm::Attribute::NoUndef));
+  EXPECT_TRUE(Call->paramHasAttr(0, llvm::Attribute::NoUndef));
+}
+
 TEST(LLVMScalarDecision, HostCompilerCopyPreservesScalarConversionPoison) {
   auto Evaluate = [](Source &Input, uint64_t Word) {
     auto *Argument = Input.function().getArg(0);
