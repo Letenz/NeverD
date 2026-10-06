@@ -13,6 +13,7 @@
 #include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
 #include "os/windows/driver/DriverImage.h"
+#include "os/windows/kernel/KernelAPINames.h"
 #include "os/windows/kernel/KernelExportRegistry.h"
 #include "os/windows/kernel/KernelModel.h"
 #include "os/windows/kernel/WindowsKernelLayout.h"
@@ -96,7 +97,7 @@ protected:
   }
   void initialize(std::vector<DriverPowerOperation> Responses,
                   std::optional<DriverWakeCapabilities> Wake = std::nullopt,
-                  bool Start = true) {
+                  bool Start = true, bool Preemptive = false) {
     Memory = take(UnicornBackend::create(8 * 1024 * 1024));
     ASSERT_TRUE(Memory);
     success(Memory->map(Scratch, 0x10000, Read | Write));
@@ -105,6 +106,8 @@ protected:
     Image.Entry = DispatchPC;
     Image.Size = 0x3000;
     DriverOptions Options;
+    if (Preemptive)
+      Options.Scheduling.emplace();
     DriverPnpDevice Device;
     Device.ID = "power0";
     Device.InitialDevicePower = DevicePowerState::D0;
@@ -146,6 +149,43 @@ protected:
     EXPECT_EQ(call("IofCallDriver", {PDO, IRP}), 0u);
     success(Model->recordDispatchReturn(IRP, 0));
     success(Model->finalizeRequest(IRP));
+  }
+  void passiveCompletionService(uint8_t Level, bool HoldCancelLock) {
+    constexpr uint64_t Delay = driver_scheduling::DefaultQuantumInstructions;
+    initialize({operation(DevicePowerState::D3, Delay)}, std::nullopt, true,
+               true);
+    const auto Old =
+        call(kernel_api::KfRaiseIrql.data(), {scheduler::DispatchLevel});
+    const uint64_t IRP = queuePower(DevicePowerState::D3);
+    ASSERT_NE(IRP, 0u);
+    call(kernel_api::KeLowerIrql.data(), {Old});
+    const auto Dispatch = powerWorker();
+    ASSERT_TRUE(Dispatch);
+    copyDown(IRP);
+    EXPECT_EQ(call(kernel_api::PoCallDriver.data(), {PDO, IRP}), StatusPending);
+    finishWorker(*Dispatch, StatusPending);
+    Model->enterExecution(profile::StackBase);
+    const auto Previous = call(kernel_api::KfRaiseIrql.data(), {Level});
+    if (HoldCancelLock)
+      call(kernel_api::IoAcquireCancelSpinLock.data(), {Scratch});
+    success(Model->advanceExecutionTo100ns(Delay));
+    EXPECT_EQ(Model->now100ns(), Delay);
+    EXPECT_FALSE(Result.Requests.back().Completed);
+    EXPECT_FALSE(Result.Requests.back().Power->BusCompletedAt100ns);
+    EXPECT_FALSE(Model->nextEventTime());
+    success(Model->advanceExecutionTo100ns(2 * Delay));
+    if (HoldCancelLock)
+      call(kernel_api::IoReleaseCancelSpinLock.data(), {get(Scratch, 1)});
+    call(kernel_api::KeLowerIrql.data(), {Previous});
+    EXPECT_EQ(Model->nextEventTime(), 2 * Delay);
+    success(Model->advanceExecutionTo100ns(2 * Delay));
+    const auto Completion = take(Model->nextScheduled(false));
+    ASSERT_TRUE(Completion);
+    EXPECT_EQ(Completion->PC, PowerPC);
+    EXPECT_EQ(Completion->IRQL, scheduler::PassiveLevel);
+    finishWorker(*Completion, StatusSuccess);
+    EXPECT_TRUE(Result.Requests.back().Completed);
+    EXPECT_EQ(Result.Requests.back().Power->BusCompletedAt100ns, 2 * Delay);
   }
   KernelGuestCall request(DevicePowerState State, uint64_t Callback = PowerPC,
                           uint64_t Device = 0,
@@ -1143,5 +1183,15 @@ TEST_F(KernelPowerCompletion, QueuedPowerDelayedProviderKeepsRealPendingState) {
   EXPECT_EQ(Result.Requests.back().Power->DeviceStateAfter,
             DevicePowerState::D3);
 }
+TEST_F(KernelPowerCompletion, RunningAPCDefersPageableProviderService) {
+  passiveCompletionService(APCLevel, false);
+}
+TEST_F(KernelPowerCompletion, RunningDispatchDefersPageableProviderService) {
+  passiveCompletionService(scheduler::DispatchLevel, false);
+}
+TEST_F(KernelPowerCompletion, RunningCancelLockDefersProviderService) {
+  passiveCompletionService(APCLevel, true);
+}
+
 } // namespace
 } // namespace neverd::emulation

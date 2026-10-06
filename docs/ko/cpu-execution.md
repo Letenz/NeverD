@@ -41,7 +41,7 @@ llvm::cantFail(CPU->map(Code, 4096, Read | Write | Execute | UserAccessible));
 
 ## 병렬 CPU와 장치 원자 트랜잭션
 
-KVM, WHP, Unicorn의 checked x64/ARM64에서 `ExecutionFeature::ParallelCPUs`(`parallel_cpus`)를 명시적으로 요청할 수 있습니다. 독립 CPU는 서로 다른 호스트 스레드에서 물리 RAM을 공유하며, RAM 쓰기가 없다고 검증한 네이티브 명령은 겹쳐 실행할 수 있습니다. 대기 중인 쓰기는 새 명령 진입을 막고 기존 읽기가 끝난 뒤 게시합니다. 효과는 순차 일관성을 따르며 대기 취소와 롤백을 지원합니다. 모든 실행이 끝날 때까지 매핑 변경과 호스트 쓰기는 금지됩니다. 한 CPU 객체의 스레드 간 호출은 `stop()`만 지원합니다. 기본 실행과 OS 스케줄링은 협력 방식이며 약한 메모리 순서 탐색은 별도 계약입니다.
+KVM, WHP, Unicorn의 checked x64/ARM64에서 `ExecutionFeature::ParallelCPUs`(`parallel_cpus`)를 명시적으로 요청할 수 있습니다. 독립 CPU는 서로 다른 호스트 스레드에서 물리 RAM을 공유하며, RAM 쓰기가 없다고 검증한 네이티브 명령은 겹쳐 실행할 수 있습니다. 대기 중인 쓰기는 새 명령 진입을 막고 기존 읽기가 끝난 뒤 게시합니다. 효과는 순차 일관성을 따르며 대기 취소와 롤백을 지원합니다. 모든 실행이 끝날 때까지 매핑 변경과 호스트 쓰기는 금지됩니다. 한 CPU 객체의 스레드 간 호출은 `stop()`만 지원합니다. 기본 CPU 실행은 협력 방식입니다. [OS 스케줄링](driver-scheduling.md)과 약한 메모리 순서 탐색은 별도 계약입니다.
 
 병렬 WHP CPU는 공유 파티션 안에서 독립적인 VP를 사용하며, 협력 실행용 VP 외에 최대 31개의 병렬 CPU를 동시에 유지합니다. 전용 GPA 영역과 전송 RAM으로 투영을 분리하고 ARM64는 서로 다른 ASID와 비전역 변환을 사용합니다. 네이티브 실행 전에 코드와 선언된 피연산자를 복사하며 선언된 출력 바이트만 공유 RAM 트랜잭션에 전달합니다. 관찰자는 기준 RAM을 읽습니다. KVM과 checked Unicorn은 공유 메모리를 직접 사용합니다. HVF와 Unicorn의 `Software` 계약은 이 기능을 제공하지 않습니다.
 
@@ -220,3 +220,5 @@ checked ARM64는 8/16/32/64비트 `LDXR/STXR`, 32/64비트 레지스터 쌍 `LDX
 
 
 같은 ISA 계층은 FEAT_LSE `CAS/CASP`, `SWP`, `LDADD/LDCLR/LDEOR/LDSET`, 부호 있는/없는 min/max의 바이트·하프워드·워드·더블워드 및 acquire/release 형식을 지원합니다. checked는 위의 정렬 정책을, Unicorn `Software`는 자연 정렬을 사용합니다. 비교는 피연산자 폭에 따르고 반환되는 이전 값은 0으로 확장합니다. CAS 비교가 실패해도 쓰기 권한을 확인하고, Arm이 허용하는 이전 값 쓰기를 선택하여 물리 예약을 무효화합니다. 콜백은 커밋 전 CPU/RAM을 보며 취소와 동기 오류는 부분 결과를 공개하지 않습니다. 병렬 CPU와 MMIO 원자 연산은 동시 커밋 계약을 따릅니다. `MRS/MSR NZCV`는 예약 비트와 영 레지스터 규칙에 따라 네 조건 플래그를 전송합니다. 읽기 권한을 먼저 검사합니다. 읽을 수 없는 피연산자는 읽기 오류, 읽기 전용 피연산자는 쓰기 오류를 보고하며 원본 Windows ARM64 관측과 일치합니다.
+
+CPU0 명시적 선점, 가상 시계 의미와 현재 한계는 [드라이버 스케줄링](driver-scheduling.md)을 참조하세요.

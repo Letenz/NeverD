@@ -18,6 +18,7 @@
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
 
+#include <regex>
 #include <set>
 
 namespace {
@@ -546,9 +547,19 @@ TEST(MedSEHEstablisherFrame, HighCPreservesTheCertifiedHandlerSlot) {
   const size_t Handler = Source.find("__except");
   ASSERT_NE(Handler, std::string::npos) << Source;
   EXPECT_NE(Source.find("var_m64 = 1;"), std::string::npos) << Source;
-  EXPECT_NE(Source.substr(Handler).find("var_m64 += 20;"), std::string::npos)
+  // The handler adds 20 to the certified slot, as an update or folded into
+  // the return that reads it.
+  EXPECT_TRUE(Source.substr(Handler).find("var_m64 += 20;") !=
+                  std::string::npos ||
+              Source.substr(Handler).find("var_m64 + 20") != std::string::npos)
       << Source;
-  EXPECT_NE(Source.substr(Handler).find("return var_m64;"), std::string::npos)
+  // The handler returns the slot, directly, through a copy of it, or with
+  // the update folded in.
+  const std::string AfterHandler = Source.substr(Handler);
+  EXPECT_TRUE(AfterHandler.find("return var_m64;") != std::string::npos ||
+              AfterHandler.find("var_m64 + 20);") != std::string::npos ||
+              std::regex_search(AfterHandler,
+                                std::regex(R"((\w+) = var_m64;\s+return \1;)")))
       << Source;
   EXPECT_EQ(Source.find("var_mEC"), std::string::npos) << Source;
 }

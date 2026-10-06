@@ -1580,6 +1580,230 @@ bool loopJumpsAsBreakAndContinue(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
+bool foldTempsInReturnTails(std::vector<HighStmt> &Body) {
+  std::set<va_t> Entered = gotoTargets(Body);
+  walkStmts(Body, [&](const HighStmt &S) {
+    for (const HighEHClause &Clause : S.EHClauses)
+      Entered.insert(Clause.HandlerVA);
+  });
+  // How often \p E reads \p K, and which variables it reads.
+  std::function<unsigned(const HighExpr *, const VarKey &)> Reads =
+      [&](const HighExpr *E, const VarKey &K) -> unsigned {
+    if (!E)
+      return 0;
+    unsigned N = E->Kind == ExprKind::Var && varKey(E->Var) == K;
+    E->forEachChildExpr([&](const ExprPtr &Op) { N += Reads(Op.get(), K); });
+    return N;
+  };
+  std::function<void(const HighExpr *, std::set<VarKey> &)> ReadSet =
+      [&](const HighExpr *E, std::set<VarKey> &Out) {
+        if (!E)
+          return;
+        if (E->Kind == ExprKind::Var)
+          Out.insert(varKey(E->Var));
+        E->forEachChildExpr([&](const ExprPtr &Op) { ReadSet(Op.get(), Out); });
+      };
+  // \p E with its reads of \p K replaced by \p With; nodes off that path are
+  // shared, the ones on it copied.
+  std::function<ExprPtr(const ExprPtr &, const VarKey &, const ExprPtr &)>
+      Replace = [&](const ExprPtr &E, const VarKey &K,
+                    const ExprPtr &With) -> ExprPtr {
+    if (!E || !Reads(E.get(), K))
+      return E;
+    if (E->Kind == ExprKind::Var)
+      return With;
+    auto Copy = std::make_shared<HighExpr>(*E);
+    for (ExprPtr &Op : Copy->Operands)
+      Op = Replace(Op, K, With);
+    return Copy;
+  };
+  auto ReadOf = [](HighStmt &S) -> ExprPtr * {
+    if (S.Kind == StmtKind::Return)
+      return &S.RetVal;
+    if (S.Kind == StmtKind::Assign)
+      return &S.Val;
+    return nullptr;
+  };
+  auto WrittenVar = [](const HighStmt &S) -> std::optional<VarKey> {
+    if (S.Kind == StmtKind::Assign && S.Dst &&
+        (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi))
+      return varKey(S.Dst->Var);
+    return std::nullopt;
+  };
+  // Whether \p E calls, stores or orders memory (and so must stay put), or
+  // reads memory (and so may move only past statements that write none).
+  std::function<bool(const HighExpr *)> Pinned = [&](const HighExpr *E) {
+    if (!E)
+      return false;
+    if (E->Kind == ExprKind::Call || E->Kind == ExprKind::Store ||
+        E->MemoryOrdering != NdMemoryOrdering::None)
+      return true;
+    bool Found = false;
+    E->forEachChildExpr([&](const ExprPtr &Op) { Found |= Pinned(Op.get()); });
+    return Found;
+  };
+  std::function<bool(const HighExpr *)> ReadsMemory = [&](const HighExpr *E) {
+    if (!E)
+      return false;
+    if (E->Kind == ExprKind::Load)
+      return true;
+    bool Found = false;
+    E->forEachChildExpr(
+        [&](const ExprPtr &Op) { Found |= ReadsMemory(Op.get()); });
+    return Found;
+  };
+  // Only temporaries a copied tail assigns again are left for this pass:
+  // one assignment and one read the general inlining already takes.  Each of
+  // their reads must also follow an assignment in its own run, as in copies
+  // of a tail; a temporary read elsewhere may hold a frame slot another path
+  // or a handler sees.
+  std::map<VarKey, unsigned> Defs, Reads_, Covered;
+  walkStmts(Body, [&](HighStmt &S) {
+    if (std::optional<VarKey> W = WrittenVar(S))
+      ++Defs[*W];
+    forEachExpr(S, [&](ExprPtr &E) {
+      // An assigned variable is written, not read.
+      if (&E == &S.Dst && S.Kind == StmtKind::Assign)
+        return;
+      std::set<VarKey> Seen;
+      ReadSet(E.get(), Seen);
+      for (const VarKey &K : Seen)
+        Reads_[K] += Reads(E.get(), K);
+    });
+  });
+  std::function<void(std::vector<HighStmt> &)> CountCovered =
+      [&](std::vector<HighStmt> &L) {
+        for (HighStmt &S : L) {
+          CountCovered(S.Body);
+          CountCovered(S.ElseBody);
+          for (auto &C : S.Cases)
+            CountCovered(C.Body);
+          CountCovered(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            CountCovered(ClauseBody);
+        }
+        for (size_t R = 0; R < L.size(); ++R) {
+          if (L[R].Kind != StmtKind::Return)
+            continue;
+          size_t Start = R;
+          while (Start > 0 && (L[Start - 1].Kind == StmtKind::Nop ||
+                               (L[Start - 1].Kind == StmtKind::Block &&
+                                L[Start - 1].Body.empty()) ||
+                               WrittenVar(L[Start - 1])))
+            --Start;
+          std::set<VarKey> Assigned;
+          for (size_t J = Start; J <= R; ++J) {
+            if (ExprPtr *Read = ReadOf(L[J])) {
+              std::set<VarKey> Seen;
+              ReadSet(Read->get(), Seen);
+              for (const VarKey &K : Seen)
+                if (Assigned.count(K))
+                  Covered[K] += Reads(Read->get(), K);
+            }
+            if (std::optional<VarKey> W = WrittenVar(L[J]))
+              Assigned.insert(*W);
+          }
+        }
+      };
+  CountCovered(Body);
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (HighStmt &S : L) {
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
+        }
+        for (size_t R = 0; R < L.size(); ++R) {
+          if (L[R].Kind != StmtKind::Return)
+            continue;
+          size_t Start = R;
+          while (Start > 0) {
+            const HighStmt &P = L[Start - 1];
+            if (P.Kind != StmtKind::Nop &&
+                !(P.Kind == StmtKind::Block && P.Body.empty()) &&
+                !WrittenVar(P))
+              break;
+            --Start;
+          }
+          // Whether control can enter at \p J without running what precedes.
+          auto EnteredAt = [&](size_t J) {
+            return L[J].Addr && L[J].Addr != InvalidVA &&
+                   Entered.count(L[J].Addr) && L[J - 1].Addr != L[J].Addr;
+          };
+          for (size_t I = Start; I < R;) {
+            HighStmt &Def = L[I];
+            if (Def.Kind != StmtKind::Assign || !Def.Dst || !Def.Val ||
+                Def.Dst->Kind != ExprKind::Var ||
+                Def.Dst->Var.Kind != MedVar::Temp ||
+                Defs[varKey(Def.Dst->Var)] < 2 ||
+                Covered[varKey(Def.Dst->Var)] != Reads_[varKey(Def.Dst->Var)] ||
+                Pinned(Def.Val.get()) ||
+                (Def.Addr && Def.Addr != InvalidVA && Entered.count(Def.Addr) &&
+                 (I == 0 || L[I - 1].Addr != Def.Addr))) {
+              ++I;
+              continue;
+            }
+            const VarKey K = varKey(Def.Dst->Var);
+            // `v = v + x` updates a variable, typically a frame slot; that
+            // write stays visible.
+            std::set<VarKey> Sources;
+            ReadSet(Def.Val.get(), Sources);
+            if (llvm::any_of(Sources, [&](const VarKey &S) {
+                  return S.first == K.first;
+                })) {
+              ++I;
+              continue;
+            }
+            unsigned Uses = 0;
+            size_t UseAt = 0;
+            bool Rewritten = false;
+            for (size_t J = I + 1; J <= R && !Rewritten; ++J) {
+              if (ExprPtr *Read = ReadOf(L[J]))
+                if (const unsigned N = Reads(Read->get(), K)) {
+                  Uses += N;
+                  UseAt = J;
+                }
+              Rewritten = WrittenVar(L[J]) == K;
+            }
+            bool Fold = false;
+            if (!Rewritten && Uses == 1) {
+              std::set<VarKey> Operands;
+              ReadSet(Def.Val.get(), Operands);
+              const bool Memory = ReadsMemory(Def.Val.get());
+              Fold = true;
+              for (size_t J = I + 1; J <= UseAt && Fold; ++J) {
+                if (EnteredAt(J))
+                  Fold = false;
+                else if (J < UseAt)
+                  if (std::optional<VarKey> W = WrittenVar(L[J]))
+                    // A variable other than a temporary may live in memory
+                    // the moved read sees.
+                    Fold = !Operands.count(*W) &&
+                           (!Memory || L[J].Dst->Var.Kind == MedVar::Temp);
+              }
+              if (Fold)
+                *ReadOf(L[UseAt]) = Replace(*ReadOf(L[UseAt]), K, Def.Val);
+            }
+            if (Fold ||
+                (!Rewritten && Uses == 0 && !exprMayFault(Def.Val.get()))) {
+              L.erase(L.begin() + static_cast<ptrdiff_t>(I));
+              --R;
+              Changed = true;
+              continue;
+            }
+            ++I;
+          }
+        }
+      };
+  Visit(Body);
+  return Changed;
+}
+
 /// True when \p Stmts contains a continue that would restart a loop wrapped
 /// around it. Only a nested loop owns a continue.
 static bool hasLooseContinue(const std::vector<HighStmt> &Stmts) {
@@ -2286,6 +2510,356 @@ bool moveLoopTailsToTheirBreak(std::vector<HighStmt> &Body) {
         }
       };
   Visit(Body);
+  return Changed;
+}
+
+bool busiestExitFollowsTheSwitch(std::vector<HighStmt> &Body) {
+  constexpr unsigned kMaxRounds = 64;
+  auto IsTry = [](const HighStmt &S) {
+    return S.Kind == StmtKind::SEHTry || S.Kind == StmtKind::CxxTry ||
+           S.Kind == StmtKind::ItaniumTry;
+  };
+  auto Transparent = [](const HighStmt &S) {
+    return S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse ||
+           S.Kind == StmtKind::Block;
+  };
+  auto OwnsBreaks = [](const HighStmt &S) {
+    return S.Kind == StmtKind::While || S.Kind == StmtKind::DoWhile ||
+           S.Kind == StmtKind::For || S.Kind == StmtKind::Switch;
+  };
+  // The jumps breakToTheLoopFollow turns into breaks once their target
+  // follows the switch: those reached through ifs and blocks only.
+  std::function<void(const std::vector<HighStmt> &, std::map<va_t, unsigned> &)>
+      Convertible =
+          [&](const std::vector<HighStmt> &L, std::map<va_t, unsigned> &Count) {
+            for (const HighStmt &S : L) {
+              if (S.Kind == StmtKind::Goto) {
+                ++Count[S.GotoTarget];
+              } else if (Transparent(S)) {
+                Convertible(S.Body, Count);
+                Convertible(S.ElseBody, Count);
+              }
+            }
+          };
+  // Every jump and handler entry in \p L, at any depth.
+  auto CountEntries = [](const std::vector<HighStmt> &L,
+                         std::map<va_t, unsigned> &Jumps,
+                         std::map<va_t, unsigned> &Handlers) {
+    walkStmts(L, [&](const HighStmt &S) {
+      if (S.Kind == StmtKind::Goto)
+        ++Jumps[S.GotoTarget];
+      for (const HighEHClause &Clause : S.EHClauses)
+        ++Handlers[Clause.HandlerVA];
+    });
+  };
+  std::set<va_t> Refused;
+  bool Changed = false;
+  for (unsigned Round = 0; Round < kMaxRounds; ++Round) {
+    const LabelStarts Labels(Body);
+    std::map<va_t, unsigned> AllJumps, AllHandlers;
+    CountEntries(Body, AllJumps, AllHandlers);
+    // The addresses a jump can name to reach L[N]: those of the empty
+    // anchors before the first statement, of that statement, and of a
+    // block's first statements.  False when L ends first.
+    std::function<bool(const std::vector<HighStmt> &, size_t, std::set<va_t> &)>
+        Collect =
+            [&](const std::vector<HighStmt> &L, size_t N, std::set<va_t> &Out) {
+              auto Name = [&](va_t A) {
+                if (A != 0 && A != InvalidVA && Labels.unique(A))
+                  Out.insert(A);
+              };
+              for (; N < L.size(); ++N) {
+                const HighStmt &T = L[N];
+                Name(T.Addr);
+                if (isEmptyAnchor(T)) {
+                  walkStmts(T.Body, [&](const HighStmt &C) { Name(C.Addr); });
+                  continue;
+                }
+                if (T.Kind == StmtKind::Block)
+                  Collect(T.Body, 0, Out);
+                return true;
+              }
+              return false;
+            };
+    struct Frame {
+      std::vector<HighStmt> *List;
+      size_t Index;
+      // Falling off the child list runs List[Index + 1], and nothing else
+      // falls into it: the child is a block's body, or an if/else arm whose
+      // other arm never falls out.
+      bool Open;
+    };
+    std::vector<Frame> Frames;
+    enum class Outcome { Kept, Moved, Reverted };
+    auto TryMove = [&](std::vector<HighStmt> &L, size_t K) {
+      HighStmt &Switch = L[K];
+      if (!Switch.SwitchExpr || Switch.Cases.empty() ||
+          Refused.count(Switch.Addr))
+        return Outcome::Kept;
+      // C: what runs once the switch falls out, up a list end only where
+      // nothing else falls into what follows.
+      struct Segment {
+        std::vector<HighStmt> *List;
+        size_t Begin;
+      };
+      std::vector<Segment> Chain{{&L, K + 1}};
+      for (size_t F = Frames.size(); F > 0 && Frames[F - 1].Open; --F)
+        Chain.push_back({Frames[F - 1].List, Frames[F - 1].Index + 1});
+      auto Reach = [&](size_t I, size_t N, std::set<va_t> &Out) {
+        while (I < Chain.size()) {
+          if (Collect(*Chain[I].List, N, Out))
+            return true;
+          if (++I < Chain.size())
+            N = Chain[I].Begin;
+        }
+        return false;
+      };
+      // The ways the switch falls out: a break leaving it from any depth
+      // short of a nested loop or switch (under a try or in a clause it
+      // stays a jump), a body running off its end, and no case matching.
+      struct Way {
+        std::vector<HighStmt> *List;
+        size_t Index;
+        bool Guarded;
+      };
+      std::vector<Way> Breaks;
+      std::function<void(std::vector<HighStmt> &, bool)> FindBreaks =
+          [&](std::vector<HighStmt> &B, bool Guarded) {
+            for (size_t I = 0; I < B.size(); ++I) {
+              HighStmt &T = B[I];
+              if (T.Kind == StmtKind::Break) {
+                Breaks.push_back({&B, I, Guarded});
+                continue;
+              }
+              if (OwnsBreaks(T))
+                continue;
+              FindBreaks(T.Body, Guarded || IsTry(T));
+              FindBreaks(T.ElseBody, Guarded || IsTry(T));
+              for (auto &ClauseBody : T.EHClauseBodies)
+                FindBreaks(ClauseBody, true);
+            }
+          };
+      std::vector<std::vector<HighStmt> *> Arms, FallOffs;
+      for (SwitchCase &C : Switch.Cases)
+        if (!C.FallsThrough)
+          Arms.push_back(&C.Body);
+      if (!Switch.DefaultBody.empty())
+        Arms.push_back(&Switch.DefaultBody);
+      for (std::vector<HighStmt> *Arm : Arms) {
+        FindBreaks(*Arm, false);
+        if (!armNeverFallsOut(*Arm))
+          FallOffs.push_back(Arm);
+      }
+      const bool NoDefault = Switch.DefaultBody.empty();
+      const unsigned Ways = Breaks.size() + FallOffs.size() + NoDefault;
+      const Way *InlineBreak = nullptr;
+      for (const Way &W : Breaks)
+        if (!W.Guarded) {
+          InlineBreak = &W;
+          break;
+        }
+      // One way out runs C in place; each other one jumps to it.
+      const bool InlineAtWay =
+          !FallOffs.empty() || NoDefault || InlineBreak != nullptr;
+      const unsigned AddedJumps = InlineAtWay ? Ways - 1 : Ways;
+      std::map<va_t, unsigned> Conv;
+      for (SwitchCase &C : Switch.Cases)
+        Convertible(C.Body, Conv);
+      Convertible(Switch.DefaultBody, Conv);
+      auto Sum = [&](const std::set<va_t> &Addrs) {
+        unsigned N = 0;
+        for (va_t A : Addrs)
+          if (auto It = Conv.find(A); It != Conv.end())
+            N += It->second;
+        return N;
+      };
+      size_t StartSeg = 0;
+      while (StartSeg < Chain.size() &&
+             Chain[StartSeg].Begin >= Chain[StartSeg].List->size())
+        ++StartSeg;
+      if (StartSeg == Chain.size())
+        return Outcome::Kept;
+      std::set<va_t> StartAddrs;
+      Reach(StartSeg, Chain[StartSeg].Begin, StartAddrs);
+      const unsigned StartJumps = Sum(StartAddrs);
+      const va_t Start = (*Chain[StartSeg].List)[Chain[StartSeg].Begin].Addr;
+      const bool StartNamed =
+          Start != 0 && Start != InvalidVA && Labels.unique(Start);
+      if (AddedJumps && !StartNamed)
+        return Outcome::Kept;
+      // Candidates for J, best first: a statement C runs into that the
+      // switch jumps to.
+      struct Candidate {
+        size_t Seg, Index;
+        std::set<va_t> Addrs;
+        int Gain;
+      };
+      std::vector<Candidate> Candidates;
+      for (size_t I = StartSeg; I < Chain.size(); ++I) {
+        std::vector<HighStmt> &List = *Chain[I].List;
+        for (size_t N = Chain[I].Begin; N < List.size(); ++N) {
+          if (I == StartSeg && N == Chain[I].Begin)
+            continue;
+          if (N > Chain[I].Begin && isEmptyAnchor(List[N - 1]))
+            continue;
+          std::set<va_t> Addrs;
+          if (!Reach(I, N, Addrs) || Addrs.empty())
+            continue;
+          const int Gain = static_cast<int>(Sum(Addrs)) -
+                           static_cast<int>(StartJumps) -
+                           static_cast<int>(AddedJumps);
+          if (Gain > 0)
+            Candidates.push_back({I, N, std::move(Addrs), Gain});
+        }
+      }
+      std::stable_sort(Candidates.begin(), Candidates.end(),
+                       [](const Candidate &A, const Candidate &B) {
+                         return A.Gain > B.Gain;
+                       });
+      auto ForEachMoved = [&](const Candidate &J, auto &&Fn) {
+        for (size_t I = StartSeg; I <= J.Seg; ++I) {
+          std::vector<HighStmt> &List = *Chain[I].List;
+          const size_t End = I == J.Seg ? J.Index : List.size();
+          for (size_t N = Chain[I].Begin; N < End; ++N)
+            Fn(List[N]);
+        }
+      };
+      const Candidate *Chosen = nullptr;
+      for (const Candidate &J : Candidates) {
+        std::vector<HighStmt> C;
+        ForEachMoved(J, [&](const HighStmt &S) { C.push_back(S); });
+        // A loose break or continue would bind to the switch once inside.
+        if (hasLooseBreakOrContinue(C))
+          continue;
+        // Only the switch and C itself may enter C.
+        std::map<va_t, unsigned> InJumps, InHandlers;
+        for (SwitchCase &Case : Switch.Cases)
+          CountEntries(Case.Body, InJumps, InHandlers);
+        CountEntries(Switch.DefaultBody, InJumps, InHandlers);
+        CountEntries(C, InJumps, InHandlers);
+        bool Outside = false;
+        walkStmts(C, [&](const HighStmt &S) {
+          if (S.Addr == 0 || S.Addr == InvalidVA ||
+              !Labels.entered().count(S.Addr))
+            return;
+          Outside |= AllJumps[S.Addr] != InJumps[S.Addr] ||
+                     AllHandlers[S.Addr] != InHandlers[S.Addr];
+        });
+        if (!Outside) {
+          Chosen = &J;
+          break;
+        }
+      }
+      if (!Chosen)
+        return Outcome::Kept;
+      std::vector<HighStmt> Saved = Body;
+      const va_t SwitchAddr = Switch.Addr;
+      std::vector<HighStmt> C;
+      for (size_t I = StartSeg; I <= Chosen->Seg; ++I) {
+        std::vector<HighStmt> &List = *Chain[I].List;
+        const size_t End = I == Chosen->Seg ? Chosen->Index : List.size();
+        const auto First =
+            List.begin() + static_cast<ptrdiff_t>(Chain[I].Begin);
+        const auto Last = List.begin() + static_cast<ptrdiff_t>(End);
+        C.insert(C.end(), std::make_move_iterator(First),
+                 std::make_move_iterator(Last));
+        List.erase(First, Last);
+      }
+      auto JumpToC = [&](va_t Addr) {
+        HighStmt Jump;
+        Jump.Kind = StmtKind::Goto;
+        Jump.Addr = Addr;
+        Jump.GotoTarget = Start;
+        return Jump;
+      };
+      // A break keeps its address: a jump to it still reaches C.
+      for (const Way &W : Breaks) {
+        HighStmt &Break = (*W.List)[W.Index];
+        if (&W == InlineBreak && FallOffs.empty() && !NoDefault) {
+          HighStmt Moved;
+          Moved.Kind = StmtKind::Block;
+          Moved.Addr = Break.Addr;
+          Moved.Body = std::move(C);
+          HighStmt Leave;
+          Leave.Kind = StmtKind::Break;
+          Moved.Body.push_back(std::move(Leave));
+          Break = std::move(Moved);
+        } else {
+          Break = JumpToC(Break.Addr);
+        }
+      }
+      for (std::vector<HighStmt> *Arm : FallOffs)
+        if (Arm != FallOffs.back())
+          Arm->push_back(JumpToC(0));
+      if (!FallOffs.empty()) {
+        FallOffs.back()->insert(FallOffs.back()->end(),
+                                std::make_move_iterator(C.begin()),
+                                std::make_move_iterator(C.end()));
+        if (NoDefault)
+          Switch.DefaultBody.push_back(JumpToC(0));
+      } else if (NoDefault) {
+        Switch.DefaultBody = std::move(C);
+      } else if (!InlineBreak) {
+        // Every way out sits under a try, or there is none: C follows the
+        // last body, which never falls out, and only jumps reach it.
+        Arms.back()->insert(Arms.back()->end(),
+                            std::make_move_iterator(C.begin()),
+                            std::make_move_iterator(C.end()));
+      }
+      // Moving statements next to others can change which statement a
+      // label lands on; keep the move only if no entered label changed.
+      const LabelStarts After(Body);
+      bool Same = !AddedJumps || After.unique(Start);
+      for (va_t A : Labels.entered())
+        Same &= A == 0 || A == InvalidVA ||
+                (After.unique(A) == Labels.unique(A) &&
+                 After.starts(A) == Labels.starts(A));
+      if (!Same) {
+        Body = std::move(Saved);
+        Refused.insert(SwitchAddr);
+        return Outcome::Reverted;
+      }
+      return Outcome::Moved;
+    };
+    Outcome Result = Outcome::Kept;
+    std::function<void(std::vector<HighStmt> &)> Visit =
+        [&](std::vector<HighStmt> &L) {
+          for (size_t K = 0; K < L.size() && Result == Outcome::Kept; ++K) {
+            if (L[K].Kind == StmtKind::Switch) {
+              Result = TryMove(L, K);
+              if (Result != Outcome::Kept)
+                return;
+            }
+            // A change may free every statement; nothing below may touch
+            // one once a child reports it.
+            HighStmt &S = L[K];
+            auto Into = [&](std::vector<HighStmt> &Child, bool Open) {
+              Frames.push_back({&L, K, Open});
+              Visit(Child);
+              Frames.pop_back();
+              return Result == Outcome::Kept;
+            };
+            const bool Both = S.Kind == StmtKind::IfElse;
+            const bool BodyOpen = S.Kind == StmtKind::Block ||
+                                  (Both && armNeverFallsOut(S.ElseBody));
+            const bool ElseOpen = Both && armNeverFallsOut(S.Body);
+            if (!Into(S.Body, BodyOpen) || !Into(S.ElseBody, ElseOpen))
+              return;
+            for (auto &Case : S.Cases)
+              if (!Into(Case.Body, false))
+                return;
+            if (!Into(S.DefaultBody, false))
+              return;
+            for (auto &ClauseBody : S.EHClauseBodies)
+              if (!Into(ClauseBody, false))
+                return;
+          }
+        };
+    Visit(Body);
+    if (Result == Outcome::Kept)
+      break;
+    Changed |= Result == Outcome::Moved;
+  }
   return Changed;
 }
 

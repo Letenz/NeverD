@@ -12,6 +12,7 @@
 #include "DriverScenario.h"
 
 #include "../kernel/WindowsKernelLayout.h"
+#include "DriverSchedulingJSON.h"
 
 #include "neverd/emulation/DriverReportFields.h"
 #include "neverd/emulation/DriverSession.h"
@@ -2066,6 +2067,9 @@ llvm::Error validateDriverUserMemory(const DriverRequest &Request) {
 }
 
 llvm::Error validateDriverScenario(const DriverOptions &Options) {
+  if (Options.Scheduling)
+    if (auto E = validateDriverScheduling(*Options.Scheduling))
+      return E;
   if (Options.ServiceName.empty() ||
       Options.ServiceName.size() > profile::MaxServiceNameSize ||
       !std::all_of(Options.ServiceName.begin(), Options.ServiceName.end(),
@@ -2410,6 +2414,12 @@ driverOptionsFromScenarioJSON(llvm::StringRef JSON, DriverOptions Base) {
     return invalid("root must be an object");
   if (auto E = fields(*Object, RootFields))
     return std::move(E);
+  if (const auto *Scheduling = Object->get(SchedulingField)) {
+    auto Policy = parseDriverScheduling(*Scheduling);
+    if (!Policy)
+      return Policy.takeError();
+    Base.Scheduling = *Policy;
+  }
   if (const auto *Devices = Object->get(PnpDevicesField)) {
     auto ParsedDevices = pnpDevices(*Devices);
     if (!ParsedDevices)

@@ -54,6 +54,47 @@ TEST(FiniteQueryCache, AlphaRenamingIgnoresContextAndInputMetadata) {
   EXPECT_EQ(Independent.Tuples, Result.Tuples);
 }
 
+TEST(FiniteQueryCache, LargeSparseDagsKeepRenamingAndSharedRoots) {
+  struct Query {
+    SymRef Predicate;
+    std::vector<SymRef> Values;
+    SymRef Other;
+  };
+  const auto Build = [](SymContext &Ctx, bool Sparse) {
+    std::vector<SymRef> Variables, Conditions;
+    for (unsigned I = 0; I != 512; ++I) {
+      if (Sparse)
+        for (unsigned J = 0; J != 7; ++J)
+          Ctx.mkFreshVar(64, "unrelated");
+      const auto X = Ctx.mkFreshVar(8, Sparse ? "renamed" : "source");
+      Variables.push_back(X);
+      Conditions.push_back(Ctx.mkEq(X, Ctx.mkConst(8, I % 251)));
+    }
+    return Query{Ctx.mkAnd(Conditions),
+                 {Variables[17], Variables[233],
+                  Ctx.mkConcat(Variables[17], Variables[233])},
+                 Variables[18]};
+  };
+  SymContext First, Second;
+  const auto A = Build(First, false), B = Build(Second, true);
+  ASSERT_GT(Second.numNodes(), First.numNodes() + 3000);
+  const auto Expected = prove(First, A.Predicate, A.Values, 2);
+  ASSERT_EQ(Expected.Status, FiniteValueStatus::Complete);
+  ASSERT_EQ(Expected.Tuples,
+            (std::vector<std::vector<uint64_t>>{{17, 233, 0x11e9}}));
+  FiniteQueryCache Cache(65536);
+  Cache.store(First, A.Predicate, A.Values, 2, Expected);
+  expectHit(Cache.lookup(Second, B.Predicate, B.Values, 2), Expected);
+  EXPECT_EQ(prove(Second, B.Predicate, B.Values, 2).Tuples, Expected.Tuples);
+  // The first two roots are also operands of the third root. Replacing only
+  // one with a different predicate variable must not reuse that proof.
+  auto Changed = B.Values;
+  Changed[0] = B.Other;
+  EXPECT_FALSE(Cache.lookup(Second, B.Predicate, Changed, 2));
+  EXPECT_FALSE(Cache.lookup(Second, B.Predicate, B.Values, 1));
+  expectHit(Cache.lookup(First, A.Predicate, A.Values, 2), Expected);
+}
+
 TEST(FiniteQueryCache, SharedAndIndependentVariablesCannotShareAKey) {
   FiniteQueryCache Cache(4096);
   SymContext Ctx;

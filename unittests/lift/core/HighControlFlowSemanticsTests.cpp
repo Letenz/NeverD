@@ -6369,6 +6369,75 @@ TEST(HighControlFlowSemantics, TrimmedJoinJumpKeepsTheLabelOthersEnter) {
     EXPECT_TRUE(Starts.count(Target)) << "no statement at " << Target;
 }
 
+TEST(HighControlFlowSemantics, CopiedReturnTailsFoldTheirTemporaries) {
+  // if (x & 1) { t = v; return t + 1; } t = v; return t + 1;
+  // Both copies of the tail assign t, so neither is a single assignment,
+  // yet each run ends in a return: its read takes v directly.  A temporary
+  // also read outside its own run, and an update of a variable, stay.
+  auto Temp = [](int Id, int Ver) {
+    MedVar V;
+    V.Kind = MedVar::Temp;
+    V.Id = Id;
+    V.SSAVer = Ver;
+    V.Size = 8;
+    V.TheArch = Arch::X64;
+    return HighExpr::makeVar(V, NdType::makeInt(8));
+  };
+  auto Copy = [&](va_t Address, ExprPtr Dst, ExprPtr Val) {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Addr = Address;
+    S.Dst = std::move(Dst);
+    S.Val = std::move(Val);
+    return S;
+  };
+  auto Plus = [](ExprPtr A, uint64_t N) {
+    return HighExpr::makeBinop(NdOp::INT_ADD, std::move(A),
+                               HighExpr::makeConst(N, 8));
+  };
+  enum class Variant { Copies, ReadElsewhere, Update };
+  auto Build = [&](Variant Kind) {
+    HighStmt Arm;
+    Arm.Kind = StmtKind::If;
+    Arm.Addr = 0x1000;
+    Arm.Cond =
+        HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+    Arm.Body = {Copy(0x1004, Temp(7, 1), local(1)),
+                result(0x1008, Plus(Temp(7, 1), 1))};
+    HighFunc F;
+    F.Body = {assign(0x0ff0, 1, 5), Arm};
+    if (Kind == Variant::ReadElsewhere)
+      F.Body.push_back(Copy(0x1010, local(2), Temp(7, 1)));
+    if (Kind == Variant::Update) {
+      F.Body.front() = Copy(0x0ff0, Temp(7, 1), HighExpr::makeConst(5, 8));
+      F.Body[1].Body.front() = Copy(0x1004, Temp(7, 2), Plus(Temp(7, 1), 20));
+      F.Body[1].Body.back() = result(0x1008, Temp(7, 2));
+    }
+    F.Body.push_back(
+        Copy(0x1014, Temp(7, Kind == Variant::Update ? 2 : 1),
+             Kind == Variant::Update ? Plus(Temp(7, 1), 20) : local(1)));
+    F.Body.push_back(result(
+        0x1018, Kind == Variant::Update ? Temp(7, 2) : Plus(Temp(7, 1), 1)));
+    return F;
+  };
+  for (Variant Kind :
+       {Variant::Copies, Variant::ReadElsewhere, Variant::Update}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    HighFunc F = Build(Kind);
+    EXPECT_EQ(foldTempsInReturnTails(F.Body), Kind == Variant::Copies);
+    if (Kind != Variant::Copies)
+      continue;
+    size_t Assigns = 0;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      Assigns += S.Kind == StmtKind::Assign && S.Dst &&
+                 S.Dst->Kind == ExprKind::Var && S.Dst->Var.Id == 7;
+    });
+    EXPECT_EQ(Assigns, 0u);
+    for (uint64_t X = 0; X < 2; ++X)
+      EXPECT_EQ(execute(F, X), 6u) << X;
+  }
+}
+
 TEST(HighControlFlowSemantics, JumpToWhatFollowsATryBecomesAnElseArm) {
   // __try { if (x & 1) { v = 1; goto out; } v = 2; } __except (1) { v = 9; }
   // out: return v;
@@ -8068,6 +8137,15 @@ TEST(HighControlFlowSemantics, BlockLayoutFollowsForwardEdgesUnlessUnsure) {
       ExceptionPersonality::CSpecificHandler;
   Handled.ExceptionMetadata->SEH.emplace();
   Handled.ExceptionMetadata->SEH->Scopes.push_back({{0x1100, 0x1140}});
+  // A frame with only SEH scopes keeps reverse postorder, which leaves the
+  // guarded block in one piece; address order when asked for, or when
+  // reverse postorder would split a guarded range (the cold block 3 between
+  // blocks 1 and 2).
+  EXPECT_EQ(highBlockLayout(Handled, {}), (std::vector<int>{0, 1, 3, 2}));
+  EXPECT_EQ(highBlockLayout(Handled, {}, /*SEHReversePostorder=*/false),
+            (std::vector<int>{0, 1, 2, 3}));
+  Handled.ExceptionMetadata->SEH->Scopes.front().GuardedRange = {0x1100,
+                                                                 0x1300};
   EXPECT_EQ(highBlockLayout(Handled, {}), (std::vector<int>{0, 1, 2, 3}));
   // A frame that only unwinds has no region to keep: the stack-cookie check,
   // or a personality with no table NeverD reads.

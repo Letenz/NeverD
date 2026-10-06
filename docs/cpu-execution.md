@@ -191,7 +191,7 @@ invalid numeric widths and unsupported combinations fail. Input is limited to
 
 ## Parallel CPUs and atomic devices
 
-Request `ExecutionFeature::ParallelCPUs` (`parallel_cpus`) for checked x64/ARM64 on KVM, WHP or Unicorn. Separately owned CPUs may run on different host threads over shared physical RAM. Proven read-only native instructions can overlap; a pending writer blocks new admissions and drains readers before publishing. This gives sequentially consistent instruction effects, with cancellation-aware waits and rollback. Mappings and host writes remain blocked until all runs stop. Only `stop()` is safe across threads on one CPU object. Default execution remains cooperative; OS scheduling and weak-memory exploration are separate contracts.
+Request `ExecutionFeature::ParallelCPUs` (`parallel_cpus`) for checked x64/ARM64 on KVM, WHP or Unicorn. Separately owned CPUs may run on different host threads over shared physical RAM. Proven read-only native instructions can overlap; a pending writer blocks new admissions and drains readers before publishing. This gives sequentially consistent instruction effects, with cancellation-aware waits and rollback. Mappings and host writes remain blocked until all runs stop. Only `stop()` is safe across threads on one CPU object. Default execution remains cooperative; [OS scheduling](driver-scheduling.md) and weak-memory exploration are separate contracts.
 
 Parallel WHP CPUs use independent VPs in one shared partition, with up to 31 simultaneous parallel bindings plus the cooperative VP. Private GPA windows and transport RAM keep their projections separate; ARM64 uses distinct ASIDs and non-global translations. Before each native step, the projection copies code and declared operands; only declared output bytes enter the shared RAM transaction. Observers read authoritative RAM. KVM and checked Unicorn use shared backing directly. HVF and Unicorn’s `Software` contract do not advertise this capability.
 
@@ -441,3 +441,5 @@ Checked Unicorn uses `MachineRunControl`: one allowance covers ARM64 maintenance
 The `hvf` backend uses Hypervisor.framework for the native host ISA: ARM64 on
 Apple Silicon and x86-64 on Intel. See [HVF setup and validation](macos-hvf.md)
 for executable signing, ownership, cancellation, tests and validation limits.
+
+Explicit CPU0 preemption, clock semantics and current limits are described in [driver scheduling](driver-scheduling.md).

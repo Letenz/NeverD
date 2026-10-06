@@ -41,7 +41,7 @@ llvm::cantFail(CPU->map(Code, 4096, Read | Write | Execute | UserAccessible));
 
 ## 平行 CPU 與裝置原子交易
 
-KVM、WHP 與 Unicorn 的 checked x64/ARM64 可要求 `ExecutionFeature::ParallelCPUs`（`parallel_cpus`）。獨立 CPU 可在不同主機執行緒共享實體 RAM；已證明不寫 RAM 的原生指令可重疊執行，待處理寫入阻止新指令進入，等待讀取結束後才發布。指令效果採順序一致性，支援等待取消和回復。所有執行結束前仍禁止映射修改與主機寫入。同一 CPU 物件只有 `stop()` 支援跨執行緒呼叫。預設執行及 OS 排程仍為協作式，弱記憶體模型探索屬於獨立契約。
+KVM、WHP 與 Unicorn 的 checked x64/ARM64 可要求 `ExecutionFeature::ParallelCPUs`（`parallel_cpus`）。獨立 CPU 可在不同主機執行緒共享實體 RAM；已證明不寫 RAM 的原生指令可重疊執行，待處理寫入阻止新指令進入，等待讀取結束後才發布。指令效果採順序一致性，支援等待取消和回復。所有執行結束前仍禁止映射修改與主機寫入。同一 CPU 物件只有 `stop()` 支援跨執行緒呼叫。預設 CPU 執行仍為協作式；[OS 排程](driver-scheduling.md)與弱記憶體模型探索屬於獨立契約。
 
 平行 WHP CPU 在一個共用分割區內使用獨立 VP，最多同時保留 31 個平行 CPU，另加協作式 VP。私有 GPA 區間與傳輸 RAM 隔離各自投影；ARM64 使用不同 ASID 與非全域位址轉換。每次原生執行前複製程式碼及已宣告的運算元，只有已宣告的輸出位元組進入共用 RAM 交易。觀察者讀取權威 RAM。KVM 與 checked Unicorn 直接使用共用後備記憶體。HVF 與 Unicorn 的 `Software` 契約不宣告此能力。
 
@@ -220,3 +220,5 @@ checked ARM64 支援 8/16/32/64 位元 `LDXR/STXR`、32/64 位元暫存器對 `L
 
 
 同一 ISA 層支援 FEAT_LSE `CAS/CASP`、`SWP`、`LDADD/LDCLR/LDEOR/LDSET` 與有符號/無符號 min/max，包含位元組、半字、字、雙字及 acquire/release 形式。checked 設定採用上述對齊策略，Unicorn `Software` 保留自然對齊。比較依運算元寬度執行，傳回的舊值零擴展。CAS 比較失敗仍要求寫入權限，並選擇 Arm 允許的舊值回寫，使實體保留狀態失效。回呼看到提交前的 CPU/RAM；取消與同步故障不發布部分原子結果。平行 CPU 與 MMIO 原子交易遵循並行提交契約。`MRS/MSR NZCV` 依架構規則傳輸四個條件旗標，正確處理保留位與零暫存器。 先檢查讀取權限，再檢查寫入權限：不可讀的運算元回報讀取故障，唯讀運算元回報寫入故障，與原始 Windows ARM64 觀測一致。
+
+CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](driver-scheduling.md)。

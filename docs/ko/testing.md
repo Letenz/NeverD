@@ -1210,7 +1210,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 46개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 4852개와 SEH 회귀 검사 17개를 포함하면 필수 결과는 5093개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `4884 CPU + 224 WHP + 17 SEH = 5125`.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 4884개와 SEH 회귀 검사 17개와 스케줄링 검사 53개를 포함하면 필수 결과는 5178개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `4884 CPU + 224 WHP + 17 SEH + 53 scheduling = 5178`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 
@@ -1475,3 +1475,5 @@ block과 복사본 게시 테스트는 독립된 두 48바이트 범위, 기술�
 `DarwinIndirectRecordCalls.AffineTranslatePreservesScalarBitsAndSnapshotsAliasedInput`은 O0와 O2에서 각각 2560개 사례를 실행한다. 두 스칼라의 비트 패턴, 여섯 입력 필드, 한 번의 호출, 전체 출력 바이트와 동일·중첩·분리 배치의 보호된 저장 공간을 검사한다. 스칼라 ABI 변경 네 가지와 공유된 임포트/ABI 변경 22가지를 거부한다. 비트 단위 스텁은 물리 인수와 사전 복사를 검증하며, 평행 이동의 수학적 판정이나 원래 기계어 실행은 아니다.
 
 `NativeFloatingReturnProof.HFAResultFieldsNeedTheExactCompleteDefinedCall`은 아홉 필드 선택과 호출·캐리어·너비·오프셋·SSA 변경에 대한 열일곱 거부 사례를 다룬다. `HFAFieldExtractionNeedsADominatingCall`은 형제 경로의 생성자를 거부한다. `NativeSourceHints.HFAFieldTypeRequiresCurrentCallAndFrameProofForPublication`은 다섯 명령의 ARM64 호출자를 리프팅하고 추론된 스칼라 결과를 재리프팅하여 게시 조건을 확인한다. 잘못된 제공자나 LR/SP 복원 누락은 거부된다. 소스 타입과 투영 검증이며 원래 기계어 본문 실행은 아니다.
+
+CPU0 명시적 선점, 가상 시계 의미와 현재 한계는 [드라이버 스케줄링](driver-scheduling.md)을 참조하세요.

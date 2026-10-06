@@ -9,6 +9,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "DriverSchedulingJSON.h"
+
 #include "neverd/emulation/DriverReportFields.h"
 #include "neverd/emulation/DriverSession.h"
 
@@ -765,6 +767,9 @@ std::string driverResultJSON(const DriverResult &Result) {
       {userField::UserMemory,
        userMemoryConfigurationJSON(Result.Configuration)},
       {field::KernelExports, std::move(Exports)}};
+  if (Result.Configuration.Scheduling)
+    (*Root[field::Configuration].getAsObject())[driver_scheduling::Scheduling] =
+        driverSchedulingJSON(*Result.Configuration.Scheduling);
   if (Result.Fault) {
     const auto &Fault = *Result.Fault;
     llvm::json::Object Item{

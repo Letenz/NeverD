@@ -263,6 +263,10 @@ void reportHighFlowOracle(const HighFunc &Func, const MedFunc &Med,
     case StmtKind::Break:
     case StmtKind::Continue:
     case StmtKind::Nop:
+    // A try opens protection and runs nothing; its address names its range.
+    case StmtKind::SEHTry:
+    case StmtKind::CxxTry:
+    case StmtKind::ItaniumTry:
     case StmtKind::While:
     case StmtKind::DoWhile:
     case StmtKind::For:

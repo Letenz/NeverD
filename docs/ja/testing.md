@@ -1220,7 +1220,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 4852 検査とSEH 回帰検査 17 件を合わせ、必須の結果は 5093 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `4884 CPU + 224 WHP + 17 SEH = 5125`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 4884 検査とSEH 回帰検査 17 件とスケジューリング検査 53 件を合わせ、必須の結果は 5178 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `4884 CPU + 224 WHP + 17 SEH + 53 scheduling = 5178`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1485,3 +1485,5 @@ block とコピーの公開テストでは、独立した二つの 48 バイト�
 `DarwinIndirectRecordCalls.AffineTranslatePreservesScalarBitsAndSnapshotsAliasedInput` は O0、O2 でそれぞれ 2560 ケースを実行し、二つのスカラーのビット列、六つの入力フィールド、一回の呼び出し、全出力バイト、および同一・重複・分離配置の保護付きストレージを検査する。スカラー ABI の四つの変更と共有の 22 個のインポート／ABI 変更を拒否する。ビット単位のスタブは物理引数と事前コピーを検証するもので、平行移動の数学的オラクルや元の機械語の実行ではない。
 
 `NativeFloatingReturnProof.HFAResultFieldsNeedTheExactCompleteDefinedCall` は九つのフィールド選択と、呼び出し・キャリア・幅・オフセット・SSA の十七の拒否例を検査する。`HFAFieldExtractionNeedsADominatingCall` は兄弟経路の生成元を拒否する。`NativeSourceHints.HFAFieldTypeRequiresCurrentCallAndFrameProofForPublication` は五命令の ARM64 呼び出し元をリフトし、推論したスカラー結果を再リフトして公開条件を確認する。誤った提供元や LR/SP 復元の欠如は拒否される。これらはソース型と投影の検証であり、元の機械語本体の実行ではない。
+
+CPU0 の明示的プリエンプション、仮想時計と制約は[ドライバースケジューリング](driver-scheduling.md)を参照してください。
