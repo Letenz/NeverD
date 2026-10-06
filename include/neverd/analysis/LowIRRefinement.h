@@ -215,7 +215,11 @@ struct LowIRLoopInferenceResult {
   va_t InstructionAddress = 0;
   int OpSeq = -1;
   uint64_t Operations = 0;
+  /// Charged query requests, including completed entailment reuse.
   uint32_t SolverQueries = 0;
+  /// Completed model-free entailments reused within this inference session.
+  /// These requests remain included in SolverQueries and its shared limit.
+  uint32_t EntailmentCacheHits = 0;
   uint64_t ScheduledPaths = 0;
   /// Cumulative traversal work, also bounded by Execution.MaxSymbolicNodes.
   uint64_t PredicateNodes = 0;
