@@ -1059,6 +1059,23 @@ private:
   /// Rewrite an unconditional-branch instruction record into an explicit
   /// CALL + RETURN pair (tail call to another function).
   void rewriteAsTailCall(InsnRecord &Rec);
+  /// A direct x86 call to a label strictly inside this function's own
+  /// primary unwind range, which no function entry claims, is lifted as what
+  /// the instruction does: push the return address and jump.
+  void rewriteOwnInteriorCall(const BinaryImage &Img, InsnRecord &Rec,
+                              va_t Next);
+  struct OwnInteriorCallVerdict {
+    /// Targets a return pops the call's own return address for.
+    std::set<va_t> Subroutines;
+    /// The first return no proof covers, or the target whose returns
+    /// disagree.
+    std::optional<va_t> Unproven;
+  };
+  /// Tracks the stack pointer from each target's pushed return-address slot
+  /// and classifies how the returns reached from it treat that slot.
+  OwnInteriorCallVerdict classifyOwnInteriorCalls(const LowFunc &Func) const;
+  LowFunc buildOnce(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
+                    const std::string &FuncName);
 
   /// Rewrite an unconditional indirect branch (`bx reg` / `br reg` / `jmp *reg`
   /// through a function pointer, not a jump table) into an INDIR_CALL + RETURN
@@ -2405,6 +2422,11 @@ private:
   // reserved DenseMap sentinels (~0 / ~0-1).
   llvm::DenseSet<va_t> ExploredAddrs;
   llvm::DenseSet<va_t> CallTargets;
+  /// Calls into this function's own body lifted as a push and a jump (see
+  /// rewriteOwnInteriorCall), by target.
+  std::map<va_t, std::set<va_t>> OwnInteriorCallSites;
+  /// Targets proven to be subroutines, whose calls stay calls.
+  std::set<va_t> KeptOwnInteriorCallTargets;
   /// Executable addresses taken via a relocation-free PC-relative `lea` while
   /// exploring this function (same-section function pointers); copied into the
   /// LowFunc so the pipeline merges them into the image's CodeRefTargets (a
