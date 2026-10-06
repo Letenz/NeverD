@@ -160,8 +160,12 @@ std::string HighCWriter::constStr(uint64_t Val, TypeRef Type) {
     const unsigned Bits = Type->Size * 8;
     const uint64_t Mask = (UINT64_C(1) << Bits) - 1;
     Val &= Mask;
-    if (Type->IsSigned && (Val & (UINT64_C(1) << (Bits - 1))))
+    if (Type->IsSigned && (Val & (UINT64_C(1) << (Bits - 1)))) {
       Val |= ~Mask;
+      // A sign-extended hex word is unsigned in C and changes value when
+      // implicitly narrowed. The signed value itself fits the declared type.
+      return std::to_string(static_cast<int64_t>(Val));
+    }
   }
   if (Val == 0)
     return "0";

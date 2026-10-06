@@ -1382,4 +1382,48 @@ TEST(HighCIntegerWidths, LinuxX64ExitOmitsUnusedUnknownRegisterInputs) {
 #endif
 }
 
+TEST(HighCIntegerWidths, LargeSignedLiteralsCompileWithTheirDeclaredWidths) {
+  struct Literal {
+    const char *Name;
+    unsigned Width;
+    bool Signed;
+    uint64_t Bits;
+    const char *Expected;
+  };
+  const Literal Literals[] = {
+      {"literal_s8", 1, true, UINT64_C(0xffffffffffffff91),
+       "0xffffffffffffff91"},
+      {"literal_s16", 2, true, UINT64_C(0xffffffffffff8123),
+       "0xffffffffffff8123"},
+      {"literal_s32", 4, true, UINT64_C(0x81234567), "0xffffffff81234567"},
+      {"literal_extended_s32", 4, true, UINT64_C(0xffffffff81234567),
+       "0xffffffff81234567"},
+      {"literal_s64", 8, true, UINT64_C(0x8123456789abcdef),
+       "0x8123456789abcdef"},
+      {"literal_min64", 8, true, UINT64_C(0x8000000000000000),
+       "0x8000000000000000"},
+      {"literal_u8", 1, false, UINT64_C(0xffffffffffffff91), "0x91"},
+      {"literal_u16", 2, false, UINT64_C(0xffffffffffff8123), "0x8123"},
+      {"literal_u32", 4, false, UINT64_C(0xffffffff81234567), "0x81234567"},
+      {"literal_u64", 8, false, UINT64_C(0x8123456789abcdef),
+       "0x8123456789abcdef"},
+  };
+  std::vector<HighFunc> Functions;
+  std::string Checks;
+  for (const Literal &L : Literals) {
+    HighFunc Function;
+    Function.Name = L.Name;
+    Function.ReturnType = NdType::makeInt(L.Width, L.Signed);
+    auto Value = HighExpr::makeConst(L.Bits, L.Width);
+    Value->Type = Function.ReturnType;
+    returnValue(Function, Value);
+    appendCheck(Checks, L.Name, "", L.Expected);
+    Functions.push_back(std::move(Function));
+  }
+  const std::string Source =
+      "#pragma clang diagnostic error \"-Wconstant-conversion\"\n" +
+      emitFunctions(Functions) + executionHarness(Checks);
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndExecute(Source, false, true, Optimization);
+}
 } // namespace

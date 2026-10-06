@@ -1002,6 +1002,7 @@ target_include_directories(NeverDLiftTests PRIVATE
 )
 
 add_neverd_unittest(NeverDJumpTableTests
+  core/IndirectTailFrameTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
   core/JumpTableProposalLFPTests.cpp
@@ -1015,6 +1016,7 @@ target_compile_definitions(NeverDJumpTableTests PRIVATE
 )
 target_include_directories(NeverDJumpTableTests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include
+  ${CMAKE_SOURCE_DIR}/lib/ir/low
   ${CMAKE_SOURCE_DIR}/lib/pipeline ${LLVM_INCLUDE_DIRS})
 add_dependencies(NeverDJumpTableTests neverd)
 
