@@ -34,22 +34,35 @@ constantOperand(const SymContext &Ctx, SymRef Value, SymOp Op) {
 // particular, (X & Mask) - Root == (X - Root) - (X & ~Mask). Alignment then
 // projects only the removed low bits; the solver still proves their complete
 // domain under the original predicate. No residue or feasibility is assumed.
-// Only binary constant operations and one split are inspected per level. The
-// fixed depth bounds inspection; the caller charges every created DAG node.
+// Only binary operations and one matching split are inspected per visit. The
+// shared visit budget bounds inspection; the caller charges every created node.
 std::optional<SymRef> relativeRemainder(SymContext &Ctx, SymRef Value,
-                                        SymRef Root, unsigned Depth) {
-  if (!Depth || Ctx.width(Value) != 64)
+                                        SymRef Root, unsigned &Remaining) {
+  if (!Remaining || Ctx.width(Value) != 64)
     return std::nullopt;
+  --Remaining;
   if (Value == Root)
     return Ctx.mkZero(64);
   if (const auto Add = constantOperand(Ctx, Value, SymOp::Add)) {
-    if (const auto Inner = relativeRemainder(Ctx, Add->first, Root, Depth - 1))
+    if (const auto Inner = relativeRemainder(Ctx, Add->first, Root, Remaining))
       return Ctx.mkAdd(*Inner, Ctx.mkConst(Add->second));
+    return std::nullopt;
+  }
+  // (Base + Index) - Root == (Base - Root) + Index. The other operand
+  // remains symbolic, including any dependence on Root or on the predicate.
+  // Share the inspection budget across both choices to bound branching work.
+  if (Ctx.op(Value) == SymOp::Add && Ctx.numOperands(Value) == 2) {
+    for (unsigned I = 0; I != 2; ++I) {
+      const auto Base = Ctx.operand(Value, I);
+      const auto Index = Ctx.operand(Value, 1 - I);
+      if (const auto Inner = relativeRemainder(Ctx, Base, Root, Remaining))
+        return Ctx.mkAdd(*Inner, Index);
+    }
     return std::nullopt;
   }
   const auto Masked = [&](SymRef Base,
                           const llvm::APInt &Mask) -> std::optional<SymRef> {
-    const auto Inner = relativeRemainder(Ctx, Base, Root, Depth - 1);
+    const auto Inner = relativeRemainder(Ctx, Base, Root, Remaining);
     if (!Inner)
       return std::nullopt;
     const auto RemovedMask = ~Mask;
@@ -103,7 +116,8 @@ FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,
     return {FrameOffsetStatus::Infeasible};
   if (const auto Offset = frameRelativeOffset(Ctx, Value, Root))
     return {FrameOffsetStatus::Exact, *Offset};
-  const auto Remainder = relativeRemainder(Ctx, Value, Root, 16);
+  unsigned Remaining = 16;
+  const auto Remainder = relativeRemainder(Ctx, Value, Root, Remaining);
   const SymRef Difference = Remainder ? *Remainder : Ctx.mkSub(Value, Root);
   if (Ctx.numNodes() > MaxSymbolicNodes)
     return {FrameOffsetStatus::BudgetExceeded};
