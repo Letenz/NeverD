@@ -4,6 +4,9 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../TestProcess.h"
+#include "DarwinFileTestData.h"
+#include "DarwinSystemTestData.h"
+#include "DarwinTimeTestData.h"
 #include "LinuxFileTestMetadata.h"
 #include "gtest/gtest.h"
 
@@ -385,6 +388,205 @@ TEST_F(ProcessPublic, DarwinProfilesPreserveBSDResultsAcrossSDKAndCLI) {
   }
 #endif
 }
+
+struct DarwinPublicCase {
+  const char *File, *Profile, *Mode, *Expected;
+};
+void PrintTo(const DarwinPublicCase &Case, std::ostream *OS) {
+  *OS << Case.File << '/' << Case.Mode;
+}
+std::vector<DarwinPublicCase> darwinPublicCases() {
+  std::vector<DarwinPublicCase> Cases;
+  for (const auto &[File, Profile] :
+       {std::pair{"macos-arm64", MacOSMachO64},
+        std::pair{"macos-x86_64", MacOSMachO64},
+        std::pair{"ios-arm64", IOSMachO64},
+        std::pair{"ios-simulator-arm64", IOSSimulatorMachO64},
+        std::pair{"ios-simulator-x86_64", IOSSimulatorMachO64}})
+    for (const auto &[Mode, Expected] :
+         {std::pair{"files", "66"},
+          std::pair{"files-nocancel", "66"},
+          std::pair{"writable-files", "303030303665"},
+          std::pair{"writable-files-nocancel", "303030303665"},
+          std::pair{"virtual-file-metadata",
+                    emulation::darwin_test::MutationMetadataHex},
+          std::pair{"sparse-file-seek", "73"},
+          std::pair{"unlinked-file", "75"},
+          std::pair{"created-file", "63"},
+          std::pair{"created-file-metadata", "71"},
+          std::pair{"renamed-file", "72"},
+          std::pair{"vectored-io", "7621"},
+          std::pair{"file-access", "61"},
+          std::pair{"directory-mutations", "6d"},
+          std::pair{"deleted-directories", "68"},
+          std::pair{"virtual-created-metadata",
+                    emulation::darwin_test::CreationMetadataHex},
+          std::pair{"stdin", "00ff78"},
+          std::pair{"output-descriptors", "6f6b"},
+          std::pair{"file-status", "73"},
+          std::pair{"file-mapping", "6d"},
+          std::pair{"directories", "64"},
+          std::pair{"directory-entries", "65"},
+          std::pair{"time-values", emulation::darwin_test::TimeHex},
+          std::pair{"system-info", "69"},
+          std::pair{"virtual-system", emulation::darwin_test::SystemHex},
+          std::pair{"mach-time", "68"},
+          std::pair{"mach-timebase-values",
+                    emulation::darwin_test::TimebaseHex},
+          std::pair{"mach-clock-values",
+                    emulation::darwin_test::MachClockHex}}) {
+      const bool X64 = llvm::StringRef(File).ends_with("x86_64");
+      if (X64 && llvm::StringRef(Mode) == "mach-clock-values")
+        continue;
+      Cases.push_back({File, Profile, Mode, Expected});
+    }
+  return Cases;
+}
+class DarwinInputsPublic
+    : public ProcessPublic,
+      public testing::WithParamInterface<DarwinPublicCase> {};
+
+TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
+#ifndef NEVERD_DARWIN_FIXTURE_DIR
+  GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const auto &[File, Profile, Mode, Expected] = GetParam();
+  const bool X64 = llvm::StringRef(File).ends_with("x86_64");
+  SCOPED_TRACE(File);
+  Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
+  SCOPED_TRACE(Mode);
+  // This is a byte/ABI comparison. A separate process suite tests deadline
+  // expiry; allow scheduling headroom here without changing product defaults.
+  std::string Options =
+      std::string(
+          R"({"backend":"unicorn","timeout_microseconds":10000000,"darwin_time":)") +
+      emulation::darwin_test::TimeJSON + R"(,"darwin_system":)" +
+      emulation::darwin_test::SystemJSON +
+      R"(,"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":)" +
+      emulation::darwin_test::MetadataJSON +
+      R"(}],"directories":[{"path":"/","contents":)" +
+      emulation::darwin_test::DirectoryContentsJSON +
+      R"(},{"path":"/empty"}],"working_directory":"/empty","stdin_hex":"00ff78","descriptor_limit":32},"arguments":["guest",")" +
+      Mode + R"(","/data"]})";
+  if (llvm::StringRef(Mode).starts_with("writable-files") ||
+      llvm::StringRef(Mode) == "virtual-file-metadata" ||
+      llvm::StringRef(Mode) == "sparse-file-seek" ||
+      llvm::StringRef(Mode) == "unlinked-file" ||
+      llvm::StringRef(Mode) == "created-file" ||
+      llvm::StringRef(Mode) == "directory-mutations" ||
+      llvm::StringRef(Mode) == "deleted-directories" ||
+      llvm::StringRef(Mode) == "created-file-metadata" ||
+      llvm::StringRef(Mode) == "virtual-created-metadata" ||
+      llvm::StringRef(Mode) == "renamed-file" ||
+      llvm::StringRef(Mode) == "vectored-io") {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    auto *File = Input.getAsObject()
+                     ->getObject(field::DarwinFiles)
+                     ->getArray(field::Files)
+                     ->front()
+                     .getAsObject();
+    (*File)[field::FileWritable] = true;
+    (*File->getObject(field::FileMetadata))[field::FileFlags] = 0;
+    if (llvm::StringRef(Mode) == "virtual-file-metadata" ||
+        llvm::StringRef(Mode) == "sparse-file-seek" ||
+        llvm::StringRef(Mode) == "unlinked-file" ||
+        llvm::StringRef(Mode) == "created-file" ||
+        llvm::StringRef(Mode) == "directory-mutations" ||
+        llvm::StringRef(Mode) == "deleted-directories" ||
+        llvm::StringRef(Mode) == "created-file-metadata" ||
+        llvm::StringRef(Mode) == "virtual-created-metadata" ||
+        llvm::StringRef(Mode) == "renamed-file") {
+      (*File->getObject(field::FileMetadata))[field::FileLinkCount] = 1;
+      (*File)[field::FileMutationPolicy] = llvm::cantFail(
+          llvm::json::parse(emulation::darwin_test::MutationPolicyJSON));
+    }
+    if (llvm::StringRef(Mode) == "unlinked-file" ||
+        llvm::StringRef(Mode) == "created-file" ||
+        llvm::StringRef(Mode) == "directory-mutations" ||
+        llvm::StringRef(Mode) == "deleted-directories" ||
+        llvm::StringRef(Mode) == "created-file-metadata" ||
+        llvm::StringRef(Mode) == "virtual-created-metadata" ||
+        llvm::StringRef(Mode) == "renamed-file")
+      (*Input.getAsObject()
+            ->getObject(field::DarwinFiles)
+            ->getArray(field::Directories)
+            ->front()
+            .getAsObject())[field::DirectoryMutable] = true;
+    if (llvm::StringRef(Mode) == "created-file-metadata" ||
+        llvm::StringRef(Mode) == "virtual-created-metadata" ||
+        llvm::StringRef(Mode) == "renamed-file") {
+      auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
+      (*Files)[field::FileUmask] = 0027;
+      (*Files)[field::FileCreationPolicy] = llvm::cantFail(
+          llvm::json::parse(emulation::darwin_test::CreationPolicyJSON));
+      auto Parent = llvm::cantFail(
+          llvm::json::parse(emulation::darwin_test::MetadataJSON));
+      auto *M = Parent.getAsObject();
+      (*M)[field::FileInode] = 41;
+      (*M)[field::FileMode] = 0040755;
+      (*M)[field::FileFlags] = 0;
+      (*M)[field::FileLinkCount] = 1;
+      (*M)[field::Size] = 0;
+      (*M)[field::FileBlocks] = 0;
+      (*Files->getArray(field::Directories)
+            ->front()
+            .getAsObject())[field::FileMetadata] = std::move(Parent);
+    }
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  auto Text = takeString(neverd_emulate_process_json(Session, Path.c_str(),
+                                                     Profile, Options.c_str()));
+  ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+  auto Report = llvm::json::parse(Text);
+  ASSERT_TRUE(bool(Report)) << llvm::toString(Report.takeError());
+  EXPECT_EQ(Report->getAsObject()->getString(field::Stop), "exited");
+  EXPECT_EQ(Report->getAsObject()->getInteger(field::ExitStatus), 37);
+  EXPECT_EQ(Report->getAsObject()->getString(field::Stdout), Expected);
+  if (llvm::StringRef(Mode).starts_with("mach-")) {
+    const auto *Services = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Services, nullptr);
+    const bool Clocks = llvm::StringRef(Mode) == "mach-clock-values";
+    ASSERT_GE(Services->size(), Clocks ? 3u : 13u);
+    for (unsigned I = 0; I != (Clocks ? 2u : 12u); ++I)
+      EXPECT_EQ((*Services)[I].getAsObject()->get(field::Error), nullptr);
+    EXPECT_EQ(Services->back().getAsObject()->getBoolean(field::Error), false);
+    if (Clocks) {
+      EXPECT_EQ((*Services)[0].getAsObject()->getString(field::Result),
+                "fedcba9876543210");
+      EXPECT_EQ((*Services)[1].getAsObject()->getString(field::Result),
+                "ffffffffffffffff");
+    } else {
+      EXPECT_EQ((*Services)[5].getAsObject()->getString(field::Number),
+                X64 ? "1234567801000059" : "12345678ffffffa7");
+    }
+  }
+  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " " +
+                       process_cli::Command + " " + test::shellQuote(Path) +
+                       " --" + process_cli::ProfileOption + "=" + Profile +
+                       " --" + process_cli::OptionsOption + "=" +
+                       test::shellQuote(Options) +
+                       test::redirectStdout(Output) + test::silenceStderr();
+  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
+            process_cli::GuestFailure);
+  auto Buffer = llvm::MemoryBuffer::getFile(Output);
+  ASSERT_TRUE(bool(Buffer));
+  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Buffer)->getBuffer())), *Report);
+#endif
+}
+INSTANTIATE_TEST_SUITE_P(
+    Platforms, DarwinInputsPublic, testing::ValuesIn(darwinPublicCases()),
+    [](const testing::TestParamInfo<DarwinPublicCase> &Info) {
+      std::string Name = std::string(Info.param.File) + "_" + Info.param.Mode;
+      for (char &C : Name)
+        if (C == '-')
+          C = '_';
+      return Name;
+    });
 
 TEST_F(ProcessPublic, AndroidNativeFunctionReturnsThroughSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR

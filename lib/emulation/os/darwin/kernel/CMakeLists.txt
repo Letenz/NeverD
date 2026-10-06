@@ -1,6 +1,12 @@
 add_neverd_component_library(NeverDEmulationDarwinKernel
   DarwinServices.cpp
   DarwinMemory.cpp
+  DarwinFiles.cpp
+  DarwinFileIO.cpp
+  DarwinDirectory.cpp
+  DarwinUserMemory.cpp
+  DarwinTime.cpp
+  DarwinSystem.cpp
   LINK_COMPONENTS EmulationCore
   LLVM_COMPONENTS Support)
 if(WIN32)
