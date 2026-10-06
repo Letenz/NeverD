@@ -467,8 +467,7 @@ void CnfEncoder::emitXor(const Gate &G) {
   // assignment that breaks it, one clause each.  That is exponential in the
   // number of operands, which is why the builder keeps this to three.
   llvm::SmallVector<SatLit, 8> Clause;
-  for (uint32_t Assignment = 0, End = 1u << N; Assignment < End;
-       ++Assignment) {
+  for (uint32_t Assignment = 0, End = 1u << N; Assignment < End; ++Assignment) {
     Clause.clear();
     bool Parity = false;
     for (uint32_t I = 0; I < N; ++I) {

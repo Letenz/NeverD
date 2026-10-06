@@ -206,6 +206,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     // combines them, so record macro guards are unnecessary and would weaken
     // its deliberately macro-free parsing boundary.
     COptions.EmitRecordGuards = false;
+    // Portable byte copies also keep scalar memory helpers macro-free.
+    COptions.UseUnalignedPointers = false;
     COptions.UseDebugNames = false;
     HighCEmitter Emitter;
     Emitter.prepareImageFunctionNames(S->Img);
