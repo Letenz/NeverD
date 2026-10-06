@@ -87,7 +87,9 @@ NEVERD_API void neverd_session_set_debug_info_enabled(neverd_session_t Sess,
 /// Limit the next `neverd_session_load()` PE exception-table decode to this
 /// function entry.  Catch funclets named by that frame are still decoded.
 /// Pass 0 to clear.  Analysis of a different entry after load decodes that
-/// entry on demand.
+/// entry on demand.  Changing the restriction after an analysis ran discards
+/// that analysis, so a later query (including neverd_session_analyze())
+/// recomputes it for the new restriction instead of reusing stale results.
 NEVERD_API void neverd_session_restrict_function(neverd_session_t Sess,
                                                  neverd_va_t Entry);
 

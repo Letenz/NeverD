@@ -37,8 +37,17 @@ extern "C" {
 // Info panels (return JSON)
 // ===--------------------------------------------------------------------===//
 
+/// Imports as [{"module","name","ordinal","iat_addr","stubs"}].  "iat_addr"
+/// is the format-native data slot; "stubs" lists the executable veneers (ELF
+/// PLT entries, Mach-O stubs, import thunks) known to forward to the import,
+/// in ascending address order.
 NEVERD_API const char *neverd_imports_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_exports_json(neverd_session_t Sess);
+/// Exact pointer slots that hold an imported symbol's address, from every
+/// format's binding metadata (ELF GLOB_DAT and JUMP_SLOT GOT entries, PE IAT
+/// entries, Mach-O bindings): [{"addr","name","addend"}] in address order.
+/// Slots whose metadata names conflicting symbols are omitted.
+NEVERD_API const char *neverd_import_slots_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_segments_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_strings_json(neverd_session_t Sess,
                                            int MinLength);

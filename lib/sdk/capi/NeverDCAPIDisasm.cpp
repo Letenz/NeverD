@@ -15,12 +15,14 @@
 #include "neverd/evm/analysis/EVMAnalyzer.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/sbf/analysis/SBFFunctionBody.h"
+#include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/BitVector.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/JSON.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <optional>
 
@@ -61,6 +63,125 @@ llvm::BitVector functionSlots(const sbf::SBFProgram &Program,
   return Slots;
 }
 
+/// Linear native decode from \p Addr, bounded by \p Span bytes when nonzero
+/// and by \p Limit instructions.  Mode selection, segment bounds and ARM state
+/// checks are those of the published disassembly; \p Visit returns false to
+/// stop after an instruction.
+template <typename VisitorT>
+bool decodeNativeRange(const BinaryImage &Img, Decoder &Dec, va_t Addr,
+                       uint64_t Span, uint64_t Limit, VisitorT Visit) {
+  va_t Cur = Addr;
+  std::optional<InstructionMode> PathMode = Img.instructionModeAt(Addr);
+  for (uint64_t I = 0; I < Limit; ++I) {
+    if (Cur < Addr)
+      break;
+    const Segment *Seg = Img.getSegmentFor(Cur);
+    if (!Seg || !Seg->isExecutable())
+      break;
+
+    uint64_t Consumed = Cur - Addr;
+    if (Span > 0 && Consumed >= Span)
+      break;
+
+    uint64_t Off64 = Cur - Seg->VA;
+    if (Off64 >= Seg->Data.size())
+      break;
+    size_t Off = static_cast<size_t>(Off64);
+    uint64_t Avail64 = std::min<uint64_t>(
+        16, std::min<uint64_t>(Seg->Size - Off64, Seg->Data.size() - Off));
+    if (Span > 0)
+      Avail64 = std::min(Avail64, Span - Consumed);
+    if (Avail64 == 0)
+      break;
+    const uint8_t *Bytes = Seg->Data.data() + Off;
+
+    if (!Dec.selectMode(Img, Cur, PathMode))
+      return false; // Unknown or conflicting instruction mode.
+    PathMode = Dec.currentMode();
+    DecodedInsn DI;
+    int Sz = Dec.decodeOne(Bytes, static_cast<size_t>(Avail64), Cur, DI);
+    if (Sz <= 0)
+      break;
+    if (Img.Arch == Arch::ARM &&
+        Img.instructionModeAt(Cur + Sz - 1, Dec.currentMode()) !=
+            Dec.currentMode())
+      break;
+    if (!Visit(DI, Bytes, Sz))
+      break;
+    if (static_cast<uint64_t>(Sz) > InvalidVA - Cur)
+      break;
+    Cur += Sz;
+  }
+  return true;
+}
+
+/// Control transfer and constant memory references of one decoded native
+/// instruction.  They come from the instruction's own LowIR lift, so a listing
+/// agrees with the operations the pipeline consumes.  Kind is empty for a
+/// fall-through instruction.
+struct InstructionFlow {
+  llvm::StringRef Kind;
+  va_t Target = InvalidVA;
+  llvm::SmallVector<std::pair<va_t, llvm::StringRef>, 2> Refs;
+};
+
+InstructionFlow summarizeInstructionFlow(Decoder &Dec, const DecodedInsn &DI) {
+  InstructionFlow Flow;
+  std::vector<LowOp> Ops;
+  // Each row is lifted independently of its neighbours.
+  Dec.resetX86FpuState();
+  Dec.liftToLow(DI, Ops);
+  const auto ConstantInput = [](const LowOp &Op) -> std::optional<va_t> {
+    if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
+      return std::nullopt;
+    return static_cast<va_t>(Op.Inputs[0].Offset);
+  };
+  for (const LowOp &Op : Ops) {
+    switch (Op.Opcode) {
+    case NdOp::CALL:
+      if (auto Target = ConstantInput(Op)) {
+        Flow.Kind = "call";
+        Flow.Target = *Target;
+      } else {
+        Flow.Kind = "icall";
+      }
+      break;
+    case NdOp::INDIR_CALL:
+      Flow.Kind = "icall";
+      if (auto Slot = ConstantInput(Op))
+        Flow.Refs.push_back({*Slot, "read"});
+      break;
+    case NdOp::BRANCH:
+    case NdOp::COND_BR:
+      Flow.Kind = Op.Opcode == NdOp::BRANCH ? "jump" : "cjump";
+      if (auto Target = ConstantInput(Op))
+        Flow.Target = *Target;
+      break;
+    case NdOp::INDIR_BR:
+      Flow.Kind = "ijump";
+      if (auto Slot = ConstantInput(Op))
+        Flow.Refs.push_back({*Slot, "read"});
+      break;
+    case NdOp::RETURN:
+      Flow.Kind = "ret";
+      break;
+    case NdOp::LOAD:
+    case NdOp::STORE: {
+      const LowMemoryOperandView Memory = lowMemoryOperands(Op);
+      if (Memory.Complete && Memory.Address && Memory.Address->isConst())
+        Flow.Refs.push_back({static_cast<va_t>(Memory.Address->Offset),
+                             Op.Opcode == NdOp::LOAD ? "read" : "write"});
+      break;
+    }
+    default:
+      break;
+    }
+  }
+  if (va_t Address = Dec.pcRelCodeRefTarget(DI); Address != InvalidVA)
+    Flow.Refs.push_back({Address, "offset"});
+  return Flow;
+}
+
 } // namespace
 
 // ===--------------------------------------------------------------------===//
@@ -69,6 +190,11 @@ llvm::BitVector functionSlots(const sbf::SBFProgram &Program,
 
 const char *neverd_disasm_json(neverd_session_t Sess, neverd_va_t Addr,
                                int MaxInsns) {
+  return neverd_disasm_json_ex(Sess, Addr, MaxInsns, 0);
+}
+
+const char *neverd_disasm_json_ex(neverd_session_t Sess, neverd_va_t Addr,
+                                  int MaxInsns, unsigned Options) {
   auto *S = toSession(Sess);
   if (!S)
     return nullptr;
@@ -141,8 +267,6 @@ const char *neverd_disasm_json(neverd_session_t Sess, neverd_va_t Addr,
     return dupStr(std::string("[]"));
 
   llvm::json::Array Arr;
-  va_t Cur = Addr;
-  std::optional<InstructionMode> PathMode = S->Img.instructionModeAt(Addr);
   uint64_t Span = 0;
   for (const auto &F : S->Functions) {
     if (F.Entry == Addr) {
@@ -153,64 +277,134 @@ const char *neverd_disasm_json(neverd_session_t Sess, neverd_va_t Addr,
   uint64_t Limit =
       MaxInsns > 0 ? static_cast<uint64_t>(MaxInsns) : (Span > 0 ? Span : 256);
 
-  for (uint64_t I = 0; I < Limit; ++I) {
-    if (Cur < Addr)
-      break;
-    const Segment *Seg = S->Img.getSegmentFor(Cur);
-    if (!Seg || !Seg->isExecutable())
-      break;
+  const bool ModeKnown = decodeNativeRange(
+      S->Img, S->Dec, Addr, Span, Limit,
+      [&](const DecodedInsn &DI, const uint8_t *Bytes, int Sz) {
+        std::string BytesHex;
+        for (int J = 0; J < Sz; ++J) {
+          char Buf[4];
+          snprintf(Buf, sizeof(Buf), "%02x", Bytes[J]);
+          BytesHex += Buf;
+        }
 
-    uint64_t Consumed = Cur - Addr;
-    if (Span > 0 && Consumed >= Span)
-      break;
-
-    uint64_t Off64 = Cur - Seg->VA;
-    if (Off64 >= Seg->Data.size())
-      break;
-    size_t Off = static_cast<size_t>(Off64);
-    uint64_t Avail64 = std::min<uint64_t>(
-        16, std::min<uint64_t>(Seg->Size - Off64, Seg->Data.size() - Off));
-    if (Span > 0)
-      Avail64 = std::min(Avail64, Span - Consumed);
-    if (Avail64 == 0)
-      break;
-    const uint8_t *Bytes = Seg->Data.data() + Off;
-
-    if (!S->Dec.selectMode(S->Img, Cur, PathMode)) {
-      S->setError("unknown or conflicting instruction mode at address");
-      break;
-    }
-    PathMode = S->Dec.currentMode();
-    DecodedInsn DI;
-    int Sz = S->Dec.decodeOne(Bytes, static_cast<size_t>(Avail64), Cur, DI);
-    if (Sz <= 0)
-      break;
-    if (S->Img.Arch == Arch::ARM &&
-        S->Img.instructionModeAt(Cur + Sz - 1, S->Dec.currentMode()) !=
-            S->Dec.currentMode())
-      break;
-
-    std::string BytesHex;
-    for (int J = 0; J < Sz; ++J) {
-      char Buf[4];
-      snprintf(Buf, sizeof(Buf), "%02x", Bytes[J]);
-      BytesHex += Buf;
-    }
-
-    llvm::json::Object Obj;
-    Obj["addr"] = vaHex(Cur);
-    Obj["size"] = Sz;
-    Obj["mnemonic"] = std::string(DI.Raw ? DI.Raw->mnemonic : "");
-    Obj["op_str"] = std::string(DI.Raw ? DI.Raw->op_str : "");
-    Obj["bytes"] = BytesHex;
-
-    Arr.push_back(std::move(Obj));
-    if (static_cast<uint64_t>(Sz) > InvalidVA - Cur)
-      break;
-    Cur += Sz;
-  }
+        llvm::json::Object Obj;
+        Obj["addr"] = vaHex(DI.Addr);
+        Obj["size"] = Sz;
+        Obj["mnemonic"] = std::string(DI.Raw ? DI.Raw->mnemonic : "");
+        Obj["op_str"] = std::string(DI.Raw ? DI.Raw->op_str : "");
+        Obj["bytes"] = BytesHex;
+        if (Options & NEVERD_DISASM_FLOW) {
+          const InstructionFlow Flow = summarizeInstructionFlow(S->Dec, DI);
+          if (!Flow.Kind.empty())
+            Obj["flow"] = Flow.Kind.str();
+          if (Flow.Target != InvalidVA)
+            Obj["target"] = vaHex(Flow.Target);
+          if (!Flow.Refs.empty()) {
+            llvm::json::Array Refs;
+            for (const auto &[To, Kind] : Flow.Refs)
+              Refs.push_back(
+                  llvm::json::Object{{"to", vaHex(To)}, {"kind", Kind.str()}});
+            Obj["refs"] = std::move(Refs);
+          }
+        }
+        Arr.push_back(std::move(Obj));
+        return true;
+      });
+  if (!ModeKnown)
+    S->setError("unknown or conflicting instruction mode at address");
 
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
+}
+
+// ===--------------------------------------------------------------------===//
+// Direct references (JSON object)
+// ===--------------------------------------------------------------------===//
+
+const char *neverd_code_refs_json(neverd_session_t Sess, neverd_va_t FirstEntry,
+                                  int MaxFunctions) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return nullptr;
+  }
+  if (S->Img.Arch == Arch::EVM || S->Img.Arch == Arch::SBF) {
+    S->setError("direct references are only published for native images");
+    return nullptr;
+  }
+  if (!S->synchronizeFunctions())
+    return nullptr;
+  constexpr int MaxFunctionsPerQuery = 4096;
+  // A function without a recorded size is decoded only up to its first
+  // terminator; this bounds a corrupt or missing extent.
+  constexpr uint64_t MaxUnsizedInstructions = 65536;
+  std::vector<const FuncInfo *> Ordered;
+  Ordered.reserve(S->Functions.size());
+  for (const FuncInfo &F : S->Functions)
+    if (F.Entry >= FirstEntry)
+      Ordered.push_back(&F);
+  std::sort(Ordered.begin(), Ordered.end(),
+            [](const FuncInfo *Left, const FuncInfo *Right) {
+              return Left->Entry < Right->Entry;
+            });
+  Ordered.erase(std::unique(Ordered.begin(), Ordered.end(),
+                            [](const FuncInfo *Left, const FuncInfo *Right) {
+                              return Left->Entry == Right->Entry;
+                            }),
+                Ordered.end());
+  const size_t End = std::min(
+      Ordered.size(),
+      static_cast<size_t>(std::clamp(MaxFunctions, 1, MaxFunctionsPerQuery)));
+
+  // Functions decode independently: each thread owns its decoder and writes
+  // only its function's slot, and slots merge in entry order, so the result
+  // is identical for any thread count.
+  struct Ref {
+    va_t From, To;
+    llvm::StringRef Kind;
+  };
+  std::vector<std::vector<Ref>> Slots(End);
+  std::atomic<bool> DecoderFailed{false};
+  parallelForEach(End, [&](auto Claim, size_t Total) {
+    Decoder Local;
+    if (!Local.init(S->Img)) {
+      DecoderFailed = true;
+      return;
+    }
+    for (size_t Index = Claim(); Index < Total; Index = Claim()) {
+      const FuncInfo &F = *Ordered[Index];
+      const uint64_t Limit = F.Size > 0 ? F.Size : MaxUnsizedInstructions;
+      auto &Out = Slots[Index];
+      (void)decodeNativeRange(
+          S->Img, Local, F.Entry, F.Size, Limit,
+          [&](const DecodedInsn &DI, const uint8_t *, int) {
+            const InstructionFlow Flow = summarizeInstructionFlow(Local, DI);
+            if (Flow.Target != InvalidVA && !Flow.Kind.empty())
+              Out.push_back({DI.Addr, Flow.Target, Flow.Kind});
+            for (const auto &[To, Kind] : Flow.Refs)
+              Out.push_back({DI.Addr, To, Kind});
+            return F.Size > 0 || !Local.isFunctionTerminator(DI);
+          });
+    }
+  });
+  if (DecoderFailed) {
+    S->setError("failed to initialize a decoder for the image");
+    return nullptr;
+  }
+  llvm::json::Array Refs;
+  for (const auto &Slot : Slots)
+    for (const Ref &R : Slot)
+      Refs.push_back(
+          llvm::json::Array{vaHex(R.From), vaHex(R.To), R.Kind.str()});
+  llvm::json::Object Result;
+  Result["refs"] = std::move(Refs);
+  Result["next_entry"] = End < Ordered.size()
+                             ? llvm::json::Value(vaHex(Ordered[End]->Entry))
+                             : nullptr;
+  Result["function_count"] = static_cast<int64_t>(S->Functions.size());
+  return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
 }
 
 // ===--------------------------------------------------------------------===//

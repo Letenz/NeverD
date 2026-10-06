@@ -374,9 +374,14 @@ void neverd_session_restrict_function(neverd_session_t Sess,
   auto *S = toSession(Sess);
   if (!S)
     return;
-  S->OnlyFunctionEntries.clear();
+  std::set<va_t> Next;
   if (Entry)
-    S->OnlyFunctionEntries.insert(Entry);
+    Next.insert(Entry);
+  // A pipeline computed for another restriction must not answer queries for
+  // this one.
+  if (S->PipeRan && Next != S->OnlyFunctionEntries)
+    S->invalidatePipeline();
+  S->OnlyFunctionEntries = std::move(Next);
 }
 
 int neverd_session_set_arm_function_mode(neverd_session_t Sess,

@@ -67,6 +67,39 @@ NEVERD_API int neverd_read_bytes(neverd_session_t Sess, neverd_va_t Addr,
 NEVERD_API const char *neverd_disasm_json(neverd_session_t Sess,
                                           neverd_va_t Addr, int MaxInsns);
 
+/// Options for neverd_disasm_json_ex().
+enum {
+  /// Add each native instruction's control transfer and constant memory
+  /// references, read from the instruction's own LowIR lift.  "flow" is one of
+  /// "call", "icall", "jump", "cjump", "ijump" or "ret" and is absent for a
+  /// fall-through instruction; "target" is the direct transfer target when the
+  /// lift names one.  "refs" lists {"to","kind"} for constant addresses the
+  /// instruction reads ("read"), writes ("write") or takes the address of
+  /// ("offset").  EVM and SBF rows never carry these fields.
+  NEVERD_DISASM_FLOW = 1u
+};
+
+/// neverd_disasm_json() with additive row fields selected by \p Options.
+/// Rows and their order are identical to neverd_disasm_json().
+NEVERD_API const char *neverd_disasm_json_ex(neverd_session_t Sess,
+                                             neverd_va_t Addr, int MaxInsns,
+                                             unsigned Options);
+
+/// Direct references of up to \p MaxFunctions native functions whose entries
+/// are at or above \p FirstEntry, in ascending entry order, from the same
+/// LowIR lift as NEVERD_DISASM_FLOW.  The address cursor stays valid when lazy
+/// analysis adds a function to the list between calls.  A function with a
+/// known size is decoded across its whole extent; one without a size stops at
+/// its first function terminator.  Returns
+/// {"refs":[["from","to","kind"],...],"next_entry":"0x..."|null,
+/// "function_count":int}, where kind is "call", "jump", "cjump", "read",
+/// "write" or "offset".  MaxFunctions is clamped to 1..4096.  EVM and SBF
+/// images return NULL with an error, because their analyzers own a different
+/// instruction model.  This query never starts analysis.
+NEVERD_API const char *neverd_code_refs_json(neverd_session_t Sess,
+                                             neverd_va_t FirstEntry,
+                                             int MaxFunctions);
+
 // ===--------------------------------------------------------------------===//
 // Decompilation
 // ===--------------------------------------------------------------------===//
