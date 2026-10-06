@@ -94,7 +94,18 @@ public:
   bool requiresExceptionMonitor() const override { return true; }
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control) override {
-    Control = Control.forNativeStep();
+    return enter(State, Root, Control.forNativeStep(), true);
+  }
+  llvm::Error run(X64MachineState &State, uint64_t Root,
+                  MachineRunControl Control) override {
+    return enter(State, Root, Control, false);
+  }
+
+private:
+  /// One hardware entry. A single step ends at the next instruction boundary;
+  /// a free entry ends only at a synchronous exception or an interruption.
+  llvm::Error enter(X64MachineState &State, uint64_t Root,
+                    MachineRunControl Control, bool Single) {
     // Only a completely captured debug exit proves the next entry runnable.
     // Failed, cancelled and exception entries must reestablish it explicitly.
     const bool WasRunnable = Runnable;
@@ -171,9 +182,12 @@ public:
       // KVM associates software single stepping with the current linear RIP.
       // Arm it after any required register installation, including on resume.
       // A reused capture already describes the actual RIP at this boundary.
+      // A free entry disarms it: the guest then owns its own trap flag, and
+      // its debug exceptions arrive through the private gateway like others.
       kvm_guest_debug Debug{};
-      Debug.control =
-          KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP | KVM_GUESTDBG_BLOCKIRQ;
+      if (Single)
+        Debug.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP |
+                        KVM_GUESTDBG_BLOCKIRQ;
       if (ioctl(CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
         return diagnostic::unavailable(diagnostic::KvmCapabilities,
                                        BackendAvailability::MissingCapability);
@@ -183,7 +197,7 @@ public:
       return llvm::Error::success();
     };
     auto Capture = [&]() -> llvm::Error {
-      const bool Stepped = Run->exit_reason == KVM_EXIT_DEBUG &&
+      const bool Stepped = Single && Run->exit_reason == KVM_EXIT_DEBUG &&
                            Run->debug.arch.exception == x64::DebugVector &&
                            (Run->debug.arch.dr6 & x64::DebugSingleStep);
       const bool Exception = Run->exit_reason == KVM_EXIT_HLT;
@@ -230,7 +244,8 @@ public:
       if (Run->exit_reason == KVM_EXIT_HLT) {
         if (S.cs.selector != x64::CodeSelector)
           return diagnostic::error(x64::exceptiontext::Gateway);
-        auto Trap = consumeX64ExceptionMonitor(Memory, Next, State, S.cr2);
+        auto Trap =
+            consumeX64ExceptionMonitor(Memory, Next, State, S.cr2, Single);
         if (!Trap)
           return Trap.takeError();
         State = Next;
@@ -238,8 +253,24 @@ public:
       }
       return llvm::Error::success();
     };
-    if (auto E = runUntilExit(Control, Prepare, Capture, Complete))
+    if (auto E = runUntilExit(Control, Prepare, Capture, Complete)) {
+      // A cancelled free entry stopped at an instruction boundary inside the
+      // kernel. Its registers are the only record of the work done so far.
+      if (!Single && E.isA<MachineInterruptedError>()) {
+        if (ioctl(CPU, KVM_GET_REGS, &R) < 0 ||
+            ioctl(CPU, KVM_GET_XSAVE, &F) < 0)
+          return diagnostic::error(diagnostic::KvmState);
+        if (auto Decoded =
+                decodeX64XsaveState(Next, {Bytes, sizeof(F.region)}, MXCSRMask))
+          return Decoded;
+#define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
+  Next.reg(X64Register::Name) = R.Field;
+#include "../../arch/x86_64/X64HostRegisters.def"
+#undef NEVERD_X64_HOST_REGISTER
+        State = Next;
+      }
       return E;
+    }
     if (Control.interrupted())
       return diagnostic::interrupted(diagnostic::KvmRun, Control);
     State = Next;
@@ -252,7 +283,6 @@ public:
     return llvm::Error::success();
   }
 
-private:
   MemoryProjection &Memory;
   X64MachineState CapturedState;
   kvm_sregs CapturedSpecial{};

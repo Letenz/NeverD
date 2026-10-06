@@ -22,14 +22,32 @@ class WhpX64Processor final : public WhpVirtualProcessor {
 public:
   WhpXsaveState Xsave;
 
-  /// Control already includes preparation and acquisition of the VP.
+  /// One single step. Control already includes preparation and VP acquisition.
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control,
                    uint32_t MXCSRMask = x64::fp::BaselineMXCSRMask) {
+    return enter(State, Root, Control, MXCSRMask, true);
+  }
+
+  /// Native user execution that nothing admitted, from \p State until the
+  /// processor raises an exception or \p Control interrupts it. The guest's
+  /// trap flag is its own, so a debug exception is reported like any other.
+  llvm::Error run(X64MachineState &State, uint64_t Root,
+                  MachineRunControl Control,
+                  uint32_t MXCSRMask = x64::fp::BaselineMXCSRMask) {
+    return enter(State, Root, Control, MXCSRMask, false);
+  }
+
+private:
+  /// A step arms the trap flag and ends on the debug trap it armed; a free
+  /// entry (\p Step false) ends on the first architectural exception, which
+  /// the guest's own trap flag may be, and returns its captured state.
+  llvm::Error enter(X64MachineState &State, uint64_t Root,
+                    MachineRunControl Control, uint32_t MXCSRMask, bool Step) {
     const bool Reuse = std::exchange(Runnable, false);
     if (auto E = validateX64FPState(State.FP))
       return E;
-    const auto Input = registers(State, Root);
+    const auto Input = registers(State, Root, Step);
     if (auto E = installRegisters(Input, Reuse))
       return E;
     if (!Reuse || State.FP != CapturedState.FP ||
@@ -42,48 +60,48 @@ public:
     auto Complete = [&]() -> llvm::Error {
       if (Exit.ExitReason != WHvRunVpExitReasonException)
         return diagnostic::error(diagnostic::WhpExit);
-      // Read control and segment state too. The next comparison uses the
-      // actual host values, not an assumption that prior inputs survived.
-      if (const auto Status = API.WHvGetVirtualProcessorRegisters(
-              Partition, ProcessorIndex, CaptureNames.data(),
-              CaptureNames.size(), Actual.data());
-          FAILED(Status))
-        return whpError(diagnostic::WhpState, Status,
-                        whp::operation::WHvGetVirtualProcessorRegisters);
-      size_t Index = 0;
-#define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
-  Next.reg(X64Register::Name) = Actual[Index++].Reg64;
-#include "../../arch/x86_64/X64HostRegisters.def"
-#undef NEVERD_X64_HOST_REGISTER
-      WhpXsaveState::MetadataPacket Metadata{};
-      std::copy(Actual.begin() + std::size(Names), Actual.end(),
-                Metadata.begin());
-      if (auto E = Xsave.capture(API, Partition, Next, &Metadata, MXCSRMask))
+      if (auto E = capture(Next, Actual, MXCSRMask))
         return E;
-      Next.reg(X64Register::FLAGS) &= ~x64::TrapFlag;
       const unsigned Vector = Exit.VpException.ExceptionType;
-      if (Vector != x64::DebugVector) {
-        if (!x64::isExceptionVector(Vector) ||
-            !(x64::ExceptionExitBitmap & (uint64_t(1) << Vector)))
-          return diagnostic::error(diagnostic::WhpExit);
+      // A step completes on its own debug trap. A free entry has no trap of
+      // its own, so every exception is the boundary it stopped on.
+      if (Step) {
+        Next.reg(X64Register::FLAGS) &= ~x64::TrapFlag;
+        if (Vector == x64::DebugVector)
+          return llvm::Error::success();
+      } else
+        Next.reg(X64Register::FLAGS) &= ~x64::ResumeFlag;
+      if (!x64::isExceptionVector(Vector) ||
+          !(x64::ExceptionExitBitmap & (uint64_t(1) << Vector)))
+        return diagnostic::error(diagnostic::WhpExit);
+      if (Step) {
+        // The guest never observes the instrumentation trap flag; restore the
+        // bits it set itself.
         const uint64_t Instrumentation = x64::TrapFlag | x64::ResumeFlag;
         Next.reg(X64Register::FLAGS) =
             (Next.reg(X64Register::FLAGS) & ~Instrumentation) |
             (State.reg(X64Register::FLAGS) & Instrumentation);
-        State = Next;
-        return llvm::make_error<X64ExceptionError>(X64Exception{
-            Vector,
-            Exit.VpException.ExceptionInfo.ErrorCodeValid
-                ? std::optional<uint64_t>(Exit.VpException.ErrorCode)
-                : std::nullopt,
-            Vector == unsigned(x64::ExceptionVector::PageFault)
-                ? std::optional<uint64_t>(Exit.VpException.ExceptionParameter)
-                : std::nullopt});
       }
-      return llvm::Error::success();
+      State = Next;
+      return llvm::make_error<X64ExceptionError>(X64Exception{
+          Vector,
+          Exit.VpException.ExceptionInfo.ErrorCodeValid
+              ? std::optional<uint64_t>(Exit.VpException.ErrorCode)
+              : std::nullopt,
+          Vector == unsigned(x64::ExceptionVector::PageFault)
+              ? std::optional<uint64_t>(Exit.VpException.ExceptionParameter)
+              : std::nullopt});
     };
-    if (auto E = run(Exit, Control, Complete))
+    // The processor's own run() (the free-execution entry) hides the base
+    // VP-exit driver of the same name; name the base explicitly.
+    if (auto E = WhpVirtualProcessor::run(Exit, Control, Complete)) {
+      // A cancelled free entry stopped at an instruction boundary; its
+      // registers are the only record of the work done so far.
+      if (!Step && E.isA<MachineInterruptedError>())
+        if (auto Failed = capture(State, Actual, MXCSRMask))
+          return Failed;
       return E;
+    }
     if (Control.interrupted())
       return diagnostic::interrupted(diagnostic::WhpRun, Control);
     State = Next;
@@ -94,7 +112,6 @@ public:
     return llvm::Error::success();
   }
 
-private:
   inline static constexpr WHV_REGISTER_NAME Names[] = {
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP) WHvX64Register##WHP,
 #include "../../arch/x86_64/X64HostRegisters.def"
@@ -122,13 +139,37 @@ private:
   }();
   using CapturePacket = std::array<WHV_REGISTER_VALUE, CaptureNames.size()>;
 
-  static RegisterPacket registers(const X64MachineState &State, uint64_t Root) {
+  /// Read the processor's defined register, control, segment and FP/SSE state
+  /// into \p Into. Control and segment state are read too, so the reuse
+  /// comparison uses actual host values, not an assumption that inputs
+  /// survived.
+  llvm::Error capture(X64MachineState &Into, CapturePacket &Actual,
+                      uint32_t MXCSRMask) {
+    if (const auto Status = API.WHvGetVirtualProcessorRegisters(
+            Partition, ProcessorIndex, CaptureNames.data(), CaptureNames.size(),
+            Actual.data());
+        FAILED(Status))
+      return whpError(diagnostic::WhpState, Status,
+                      whp::operation::WHvGetVirtualProcessorRegisters);
+    size_t Index = 0;
+#define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
+  Into.reg(X64Register::Name) = Actual[Index++].Reg64;
+#include "../../arch/x86_64/X64HostRegisters.def"
+#undef NEVERD_X64_HOST_REGISTER
+    WhpXsaveState::MetadataPacket Metadata{};
+    std::copy(Actual.begin() + std::size(Names), Actual.end(),
+              Metadata.begin());
+    return Xsave.capture(API, Partition, Into, &Metadata, MXCSRMask);
+  }
+
+  static RegisterPacket registers(const X64MachineState &State, uint64_t Root,
+                                  bool Step) {
     RegisterPacket Values{};
     size_t Index = 0;
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
   Values[Index++].Reg64 =                                                      \
       State.reg(X64Register::Name) |                                           \
-      (X64Register::Name == X64Register::FLAGS ? x64::TrapFlag : 0);
+      (Step && X64Register::Name == X64Register::FLAGS ? x64::TrapFlag : 0);
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
 #define NEVERD_WHP_X64_CONTROL(Name, Value) Values[Index++].Reg64 = Value;

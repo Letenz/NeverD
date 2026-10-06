@@ -42,6 +42,11 @@ namespace process_defaults {
 
 struct ProcessOptions {
   ExecutionBackendKind Backend = ExecutionBackendKind::Auto;
+  /// The user execution contract. Absent selects the profile's checked
+  /// contract for the guest instruction set. A profile rejects a contract it
+  /// cannot honor; a direct contract has a time budget but no instruction
+  /// budget, quantum or instruction count.
+  std::optional<ExecutionContract> Contract;
   ExecutionLimits Limits{process_defaults::Instructions,
                          process_defaults::Events,
                          process_defaults::TimeoutMicroseconds};
