@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 2508a1d6463f7db7523313b46488a3a8da4d456a3ec0281743f6ae9793bfe82b -->
+<!-- i18n-source: 783dce3a095c35e7e39fa67d1d6d4214ed5504a0ae65fae3d00af6fd9f2277c3 -->
 
 [← 文档索引](README.md)
 
@@ -673,3 +673,22 @@ SDK 无关的 initial-directory-move 工作负载检查原目录移动、共享�
 这里的“初始目录 SWAP 不支持”指系统调用的源或目标根对象；交换创建出的祖先目录可以携带先前移动进去的初始后代，保留对象状态和动态费用。前文的初始目录限制适用于未提供所需声明的情况。
 
 最终独立复审后的 ARM64 macOS 验证登记 1,264 项 Darwin 测试：796 通过、468 项因后端不可用跳过、零失败；117 项必需 ARM64 HVF 工作负载全部执行。文件服务子集 342/342，包含 22 个新增 4K/16K 行为实例及三项准入检查。CreationPolicy 沿用移动父对象原 Device/GID，旧名复用、inode 序列和当前 umask 互不混淆；精确 16 MiB 容量下的 16 次往返交换不累计收费，移回只释放实际的六字节差额。公共 C/CLI 175/175、报告解析 33/33、原生内核工作负载 29/29，独立原始探针有 19 项成功观察。Python 五种配置在 27.865 秒内通过，纯 API 71 项、SDK 漂移及 runner 49 项检查通过。计数有重叠；源码、二进制、失败尝试和最终结果保留在 build-hvf-arm64/initial-directory-move/ 并绑定提交。物理 iOS、暂停的 Intel HVF、初始根 SWAP、权限/挂载/大小写、共享映射 EOF、Mach/线程/dyld 及框架运行时仍是独立缺口。
+
+## 显式初始目录根的原子交换
+
+严格布尔值 exchangeable:true（C++ DarwinFileOptions::ExchangeableDirectories，追加在聚合末尾）仅授权显式非根初始目录对象作为 RENAME_SWAP 操作数；直接初始父目录必须可变。省略/false 保持不支持，其他类型无效。它与 movable 共用普通非挂载、唯一名称子树及 flags/特殊模式/别名/硬链接/整连接域设备准入，但并集只定义拓扑。两个声明各固定预留原路径加 NUL，同一根重复声明也分别收费，不增加条目；设备相等不连接其他域。
+
+普通及 EXCL 初始源仍需 movable，普通初始替换目标仍需 removable。exchangeable 不授予这些权限、后代 mutable、文件写入或通用权限/挂载语义。不同对象交换时，两侧实际父对象须可变且分别支持 swap_rename；已授权普通组件同名 SWAP 在父授权/设备检查后无副作用，不首次计费，也不要求不同对象的交换能力。同对象 dot/大小写仍未知，缺失目标与 dot 的顺序不变。
+
+支持两个初始非空根、初始/创建目录和目录/文件的两个方向。双方完整已链接及保留子树先预检，再全部摘取后发布；两根保持链接，不抵扣替换目标或文件内容，不分配 FD/inode/条目。原 FD/dup/CWD/游标、父对象、映射租约和授权保持归属；未改变后代保留 stat/快照，同名删除旧对象与新对象互不混淆。初始动态路径费用为零，首次交换计一次当前路径，后续替换旧动态费用；固定费用不退。路径或预算失败保留双方状态。
+
+原始 SDK 无关 initial-directory-swap 工作负载交换预置 empty 目录与 data 文件并换回，检查子树、映射、CWD、游标、FD 标志、移动后创建和清理。前节 f98068c07 是独立冻结的普通移动验收；初始根 SWAP 仅由此声明扩展。
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"swap_rename":true},{"path":"/left","exchangeable":true},{"path":"/right","exchangeable":true}]}}
+```
+
+
+本轮在 macOS ARM64 Release 上核对 1,303 项 Darwin 注册：823 项通过、480 项因后端不可用跳过、零失败；120 项必需 ARM64 HVF 检查均已执行。文件检查 361/361（含 16 个新增 4K/16K 行为实例和 3 项准入检查），C/CLI 180/180、报告解析 34/34、原始内核程序 30/30，独立探针 35 项观测通过。Python 五种配置用时 33.894 秒，71 项纯 API、49 项清单/对照单元检查及 SDK 漂移、格式、能力、来源和文档检查通过。计数相互重叠。
+
+精确容量下，同名操作与 16 次往返交换保留对象及费用；需要 6 字节而只余 5 字节时，双向拒绝均保留两棵树、游标和后续创建预算。独立计划与最终源码审查通过。原始尝试、源码、二进制和结果保存在 `build-hvf-arm64/initial-directory-swap/` 并绑定提交；误重叠的报告检查已排除并串行重跑，翻译标记已同步，未放宽时限或负控。权限、未声明挂载/大小写、共享映射/EOF、推进时钟、Mach/线程/dyld/框架仍有缺口；真实 iOS、暂停的 Intel HVF 和远端合并 CI 属于独立验收。

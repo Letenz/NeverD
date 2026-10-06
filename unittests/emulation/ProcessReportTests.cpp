@@ -402,6 +402,36 @@ TEST(ProcessReport, DarwinInitialDirectoryMoveRequiresExplicitBoolean) {
   }
 }
 
+TEST(ProcessReport, DarwinInitialDirectoryExchangeRequiresExplicitBoolean) {
+  auto Good = processOptionsFromJSON(R"({"darwin_files":{"files":[],
+    "directories":[{"path":"/","mutable":true},
+    {"path":"/yes","exchangeable":true},{"path":"/no","exchangeable":false},
+    {"path":"/default"}]}})");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->DarwinFiles->ExchangeableDirectories,
+            (std::set<std::string>{"/yes"}));
+  EXPECT_TRUE(Good->DarwinFiles->RemovableDirectories.empty());
+  EXPECT_TRUE(Good->DarwinFiles->MovableDirectories.empty());
+  EXPECT_TRUE(Good->DarwinFiles->SwapRenameDirectories.empty());
+  for (auto Bad : {"null", "0", "1", "\"true\"", "[]", "{}"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"darwin_files":{"files":[],"directories":[
+          {"path":"/","mutable":true},{"path":"/yes","exchangeable":)") +
+        Bad + "}]}}");
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+  for (
+      auto Bad :
+      {R"({"darwin_files":{"files":[],"directories":[{"path":"/yes","exchangeable":true}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"exchangeable":true}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/yes","exchangeable":true,"unknown":0}]}})"}) {
+    auto Parsed = processOptionsFromJSON(Bad);
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+}
+
 TEST(ProcessReport, DarwinDirectorySnapshotsHaveStrictLosslessWireFields) {
   const auto Original =
       llvm::cantFail(llvm::json::parse(darwin_test::DirectoryContentsJSON));

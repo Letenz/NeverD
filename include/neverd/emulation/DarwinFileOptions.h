@@ -163,6 +163,12 @@ struct DarwinFileOptions {
   /// charges. This does not authorize initial-directory SWAP or directory
   /// removal.
   std::set<std::string> MovableDirectories;
+  /// SWAP operand authority for explicit non-root initial directory objects.
+  /// Declares the same ordinary non-mount, unique initial subtree as Movable,
+  /// while keeping ordinary rename and removal grants separate. The immediate
+  /// parent must be mutable; both actual parents still need SWAP support for
+  /// distinct-object exchange. Fixed references charge path+NUL independently.
+  std::set<std::string> ExchangeableDirectories;
 };
 } // namespace neverd::emulation
 #endif

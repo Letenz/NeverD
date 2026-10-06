@@ -34,14 +34,19 @@ enum class PathKind { Missing, File, Directory };
 std::string parentPath(const std::string &Path) {
   return Path.substr(0, std::max<size_t>(1, Path.rfind('/')));
 }
-bool movableSubtree(const DarwinFileOptions &Options, llvm::StringRef Path) {
-  return llvm::any_of(Options.MovableDirectories, [&](const auto &Root) {
-    return Path == Root || Path.starts_with(Root + '/');
-  });
+bool declaredNonMountSubtree(const DarwinFileOptions &Options,
+                             llvm::StringRef Path) {
+  for (const auto *Roots :
+       {&Options.MovableDirectories, &Options.ExchangeableDirectories})
+    if (llvm::any_of(*Roots, [&](const auto &Root) {
+          return Path == Root || Path.starts_with(Root + '/');
+        }))
+      return true;
+  return false;
 }
 std::string initialMountDomain(const DarwinFileOptions &Options,
                                std::string Directory) {
-  while (Directory != "/" && movableSubtree(Options, Directory))
+  while (Directory != "/" && declaredNonMountSubtree(Options, Directory))
     Directory = parentPath(Directory);
   return Directory;
 }
@@ -270,28 +275,33 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
       return failure(diagnostic::DirectoryRemovalDevice);
   }
   std::set<std::string> MoveDomains;
-  for (const auto &Path : Options.MovableDirectories) {
-    if (Path == "/" || !Options.Directories.contains(Path) ||
-        !Options.MutableDirectories.contains(parentPath(Path)))
-      return failure(diagnostic::DirectoryMovableOption);
-    if (auto E = PathInput(Path, true))
-      return E;
-    MoveDomains.insert(initialMountDomain(Options, Path));
-    const auto Prefix = Path + '/';
-    for (const auto &[Child, M] : Options.Metadata) {
-      if (Child != Path && !llvm::StringRef(Child).starts_with(Prefix))
-        continue;
-      const bool Directory =
-          (M.Mode & ~FilePermissionMask) == FileDirectoryMode;
-      if (M.Flags || (Directory && (M.Mode & 07000)))
-        return failure(diagnostic::NamespaceFlags);
-      if (!Directory && M.LinkCount != 1)
-        return failure(diagnostic::NamespaceAlias);
+  for (const auto *Roots :
+       {&Options.MovableDirectories, &Options.ExchangeableDirectories}) {
+    for (const auto &Path : *Roots) {
+      if (Path == "/" || !Options.Directories.contains(Path) ||
+          !Options.MutableDirectories.contains(parentPath(Path)))
+        return failure(Roots == &Options.MovableDirectories
+                           ? diagnostic::DirectoryMovableOption
+                           : diagnostic::DirectoryExchangeableOption);
+      if (auto E = PathInput(Path, true))
+        return E;
+      MoveDomains.insert(initialMountDomain(Options, Path));
+      const auto Prefix = Path + '/';
+      for (const auto &[Child, M] : Options.Metadata) {
+        if (Child != Path && !llvm::StringRef(Child).starts_with(Prefix))
+          continue;
+        const bool Directory =
+            (M.Mode & ~FilePermissionMask) == FileDirectoryMode;
+        if (M.Flags || (Directory && (M.Mode & 07000)))
+          return failure(diagnostic::NamespaceFlags);
+        if (!Directory && M.LinkCount != 1)
+          return failure(diagnostic::NamespaceAlias);
+      }
+      for (const auto &[Child, Inode] : Inodes)
+        if ((Child == Path || llvm::StringRef(Child).starts_with(Prefix)) &&
+            HasAlias(Child))
+          return failure(diagnostic::NamespaceAlias);
     }
-    for (const auto &[Child, Inode] : Inodes)
-      if ((Child == Path || llvm::StringRef(Child).starts_with(Prefix)) &&
-          HasAlias(Child))
-        return failure(diagnostic::NamespaceAlias);
   }
   // Declarations can join sibling subtrees through an unobserved ancestor.
   // Validate the entire joined component, including files at its domain root,
@@ -465,7 +475,8 @@ DarwinFiles::initialDirectoryNode(const std::string &Path) {
   Node->Mutable = Options->MutableDirectories.contains(Path);
   Node->Removable = Options->RemovableDirectories.contains(Path);
   Node->Movable = Options->MovableDirectories.contains(Path);
-  Node->NonMount = movableSubtree(*Options, Path);
+  Node->Exchangeable = Options->ExchangeableDirectories.contains(Path);
+  Node->NonMount = declaredNonMountSubtree(*Options, Path);
   Node->SwapSupport = Options->SwapRenameDirectories.contains(Path);
   Directories.emplace(Path, Node);
   return Node;
@@ -905,7 +916,8 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   if (Source.Type == Kind::Directory &&
       (!Source.Directory->Linked ||
        (!Source.Directory->Created &&
-        (Mode == RenameMode::Swap || !Source.Directory->Movable))))
+        !(Mode == RenameMode::Swap ? Source.Directory->Exchangeable
+                                   : Source.Directory->Movable))))
     return unsupported(Result, diagnostic::RenameKind);
   // Directory sources set WILLBEDIR for target lookup, permitting a missing
   // final directory with trailing slashes while retaining ancestor errors.
@@ -944,14 +956,15 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   if (Mode == RenameMode::Swap) {
     if ((Target.Type != Kind::File && Target.Type != Kind::Directory) ||
         (Target.Directory &&
-         (!Target.Directory->Created || !Target.Directory->Linked)))
+         (!Target.Directory->Linked ||
+          (!Target.Directory->Created && !Target.Directory->Exchangeable))))
       return unsupported(Result, diagnostic::RenameSwapKind);
   }
   const auto Parent =
       Source.File ? Source.File->Parent : Source.Directory->Parent;
   const auto TargetParent = directoryNode(parentPath(Target.Path));
   // Device equality alone does not establish one mount. Only mkdir and
-  // declared movable subtrees supply non-mount parent relationships.
+  // declared initial subtrees supply non-mount parent relationships.
   if (Parent->mountAncestor() != TargetParent->mountAncestor())
     return unsupported(Result, diagnostic::RenameMount);
   // Even a same-name native rename performs authorization. The namespace
@@ -1065,7 +1078,7 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
   if (!Swap && Target.Type == Kind::File)
     return returned(NotDirectory, true);
   if (Target.Directory && !Target.Directory->Created &&
-      (Swap || !Target.Directory->Removable))
+      !(Swap ? Target.Directory->Exchangeable : Target.Directory->Removable))
     return unsupported(Result, diagnostic::RenameKind);
   auto Descendant = [](const std::shared_ptr<DirectoryNode> &Directory,
                        const std::shared_ptr<DirectoryNode> &Root) {

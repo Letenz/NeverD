@@ -64,6 +64,7 @@ private:
     bool Mutable = false;
     bool Removable = false;
     bool Movable = false;
+    bool Exchangeable = false;
     bool NonMount = false;
     /// Initial objects keep their direct declaration. mkdir inherits its
     /// parent's capability; moving the object does not replace this grant.

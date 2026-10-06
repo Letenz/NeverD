@@ -601,7 +601,7 @@ or physical iOS acceptance. Intel HVF Actions remain suspended.
 
 ### Remaining environment work
 
-1. Extend the bounded writable-file model with permission enforcement, initial-directory SWAP, rename between separate undeclared directory domains and remaining directory operations,
+1. Extend the bounded writable-file model with permission enforcement, rename between separate undeclared directory domains and remaining directory operations,
    shared mappings and EOF fault delivery. Keep native acceptance for cursor,
    mapping lifetime and error-order interactions as the supported set grows.
 2. Extend fixed time inputs with advancing clocks and additional system observations,
@@ -971,7 +971,7 @@ Verification, 2026-10-06 (Release): 1,097 Darwin registrations, 665 passed, 432 
 
 ## Cross-parent rename in created directories
 
-An initial directory and all descendants created from it by this process share one virtual namespace domain. `rename`, `renameat` and `renameatx_np` may move a regular file or a live process-created directory subtree between those parents; no additional JSON field is needed. For example, after creating `/work/left` and `/work/right` with mkdir/mkdirat under a mutable initial `/work`, `/work/data` can move into either child, and files can move between the children. A separately supplied initial `/work/left` is its own domain unless a movable declaration supplies its non-mount parent relation, as described below; matching devices alone do not join domains. General mount topology is unknown, so movement between separate undeclared domains remains explicitly unsupported.
+An initial directory and all descendants created from it by this process share one virtual namespace domain. `rename`, `renameat` and `renameatx_np` may move a regular file or a live process-created directory subtree between those parents; no additional JSON field is needed. For example, after creating `/work/left` and `/work/right` with mkdir/mkdirat under a mutable initial `/work`, `/work/data` can move into either child, and files can move between the children. A separately supplied initial `/work/left` is its own domain unless a movable or exchangeable declaration supplies its non-mount parent relation, as described below; matching devices alone do not join domains. General mount topology is unknown, so movement between separate undeclared domains remains explicitly unsupported.
 
 Both immediate parents require namespace authority. Created directories inherit that authority and known device/group observations; rename preserves the file's own identity, owner/group, write grant and allocation. Known device conflicts still refuse. An actual move invalidates both parents' full metadata and enumeration. Removed initial directories and reused paths remain different objects; held old directory FDs/CWD do not acquire the replacement's domain.
 
@@ -989,9 +989,9 @@ Four LP64 test initializer-list conflicts found by full Linux CI now use explici
 
 ## Atomic exchange of file and created-directory names
 
-RENAME_SWAP=0x2 exchanges two existing regular files, two live process-created directories, or a file and created directory through renameatx_np, optionally with RENAME_NOFOLLOW_ANY. An explicit initial directory must declare both mutable:true and swap_rename:true. DarwinFileOptions::SwapRenameDirectories supplies the C++ declaration. Created descendants inherit the original directory object's capability; deleting and reusing a path does not transfer the removed object's declaration. False or omission leaves support unknown. Matching devices and namespace grants alone do not establish support, and distinct initial directory domains remain unsupported.
+RENAME_SWAP=0x2 exchanges two existing regular files, live process-created directories, declared exchangeable initial roots, or mixed file/directory pairs through renameatx_np, optionally with RENAME_NOFOLLOW_ANY. Initial roots require the separate declaration below. An explicit initial directory providing the filesystem capability must declare both mutable:true and swap_rename:true. DarwinFileOptions::SwapRenameDirectories supplies the C++ declaration. Created descendants inherit the original directory object's capability; deleting and reusing a path does not transfer the removed object's declaration. False or omission leaves support unknown. Matching devices and namespace grants alone do not establish support, and distinct undeclared initial directory domains remain unsupported.
 
-Source and target use the existing component walker. A missing target returns ENOENT before source-dot/dotdot, domain, grant or capability checks, including a missing target with trailing slashes. Initial or removed directory operands remain explicitly unsupported. Either ancestor order, including a directory and its child file, returns EINVAL in the admitted domain. A regular-file target with trailing slashes retains ENOTDIR. An authorized ordinary-component same-object swap is a no-op, even without the capability declaration; same-object source-dot/dotdot still needs an unknown filesystem case-sensitivity property. EXCL+SWAP and unknown flags retain EINVAL before path input; SECLUDE remains unsupported.
+Source and target use the existing component walker. For an admitted source root, a missing target returns ENOENT before source-dot/dotdot, domain, parent-grant or filesystem-capability checks, including a missing target with trailing slashes. Undeclared initial roots or removed directory operands remain explicitly unsupported. Either ancestor order, including a directory and its child file, returns EINVAL in the admitted domain. A regular-file target with trailing slashes retains ENOTDIR. An authorized ordinary-component same-object swap is a no-op, even without the capability declaration; same-object source-dot/dotdot still needs an unknown filesystem case-sensitivity property. EXCL+SWAP and unknown flags retain EINVAL before path input; SECLUDE remains unsupported.
 
 All exchanged roots stay linked. Regular files retain their own identity, owner/group, bytes, write grants, descriptions, cursors, flags and mapping leases. Configured virtual policies update each file's own ctime; absent or invalidated policies leave full metadata unknown. Both parents' full metadata and enumeration become unknown after an actual exchange. No creation inode, entry or FD is consumed, and caller input stays unchanged.
 
@@ -1128,3 +1128,78 @@ to the committed revision. This establishes local guest-profile behavior, not
 physical iOS or suspended Intel HVF acceptance. Initial operand SWAP, permissions,
 undeclared mounts/case rules, shared-map EOF faults, Mach/thread/dyld dependencies
 and framework runtime remain separate unfinished work.
+
+## Atomic exchange of declared initial directory roots
+
+A strict Boolean `"exchangeable": true` on an explicit non-root initial directory
+authorizes that object as a `RENAME_SWAP` operand. C++ uses the appended
+`DarwinFileOptions::ExchangeableDirectories` field. Its immediate initial parent
+must be mutable. Omission/false keep that root unsupported; other JSON types fail.
+It declares an ordinary non-mount initial subtree with unique namespace identities,
+using the same flags, special-mode, alias, hard-link and connected-device admission
+as movable. The union of these declarations supplies topology, not root authority.
+Each movable and exchangeable reference reserves its own path plus NUL, even when
+both name one root; neither adds an entry. Matching devices alone do not join domains.
+
+Ordinary/EXCL initial sources still require movable. An ordinary initial replacement
+target still requires removable. Exchangeable grants neither of those, nor mutable
+descendant names, file writes, permission checks or general mount knowledge. Both
+actual parents of a distinct exchange must be mutable and separately support
+`swap_rename`. An authorized ordinary-component same-name SWAP checks parent
+authority/device compatibility, then does nothing without a first dynamic charge
+or a distinct-object filesystem capability. Same-object dot/case behavior remains
+unknown. Missing target and source-dot ordering stay unchanged.
+
+Two initial roots, initial/created roots, and initial directory/file pairs exchange
+complete nonempty subtrees in either direction. Initial descendants may travel
+without gaining direct root authority. Original FD/dup/CWD/cursors, parent object
+relationships, leases and object grants remain attached. Untouched descendants
+retain stat/snapshots; root namespace metadata follows the existing invalidation
+and regular-file policy. Reused paths cannot reconstruct input objects. Both old
+and new same-named removed descendants remain separate objects.
+
+The existing transaction preflights all linked and retained members of both trees
+before withdrawing every moving live name and inserting either tree. Both roots
+stay linked. There is no replacement credit, file-byte refund or new descriptor,
+inode or entry. Initial paths start with zero dynamic charge; first exchange
+charges current paths once while all fixed input costs remain reserved. Subsequent
+exchanges replace the two old dynamic charges rather than accumulate them. Path
+or byte-budget failure leaves both trees and their observations unchanged.
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"swap_rename":true},{"path":"/left","exchangeable":true},{"path":"/right","exchangeable":true}]}}
+```
+
+The original SDK-free `initial-directory-swap` workload exchanges the native
+harness's pre-existing empty directory with its regular file and then exchanges
+them back. It checks subtree movement, private mappings, CWD/parent identity,
+shared and independent cursors, descriptor flags, creation under the moved
+original directory, retained removed children and restoration of original names.
+The earlier ordinary-move acceptance at f98068c07 is a separate frozen result;
+its initial-root SWAP limitation is extended only by this explicit declaration.
+
+
+Validation on native macOS ARM64 (Release) reconciles 1,303 Darwin registrations:
+823 passed, 480 unavailable-backend skips, zero failures; all 120 required ARM64
+HVF workloads executed. File-owner checks pass 361/361, including 16 new 4K/16K
+behavior instances and three admission checks. At exact capacity, no-op and 16
+round-trip exchanges retain the original objects and charges. A first exchange
+requiring six bytes with only five available rejects both orientations without
+changing either path/cursor or the remaining creation budget.
+
+Public C/CLI passes 180/180, report/parser 34/34, original native kernel workloads
+30/30, and the separate original probe records 35 successful observations. Python
+integration covers five guest configurations in 33.894 seconds; 71 pure API and
+49 inventory/reference runner checks, SDK drift, pinned formatting, capability,
+provenance and documentation checks pass. Counts overlap. Independent plan and
+final source reviews found no remaining blocker. Sources, binaries, attempts and
+actual results are frozen under `build-hvf-arm64/initial-directory-swap/` and bound
+to the committed revision. An early build was interrupted to correct a known
+invalid report field; an accidentally overlapping report run is excluded and was
+repeated serially. Stale translation markers were corrected before final checks.
+No deadline or semantic negative control was weakened.
+
+This completes the declared initial-root exchange contract. Permissions,
+undeclared mounts/case behavior, coherent shared maps/EOF faults, advancing
+clocks, Mach/thread/dyld dependencies and framework runtime remain unfinished.
+Physical iOS, suspended Intel HVF and remote merge CI are separate acceptance.

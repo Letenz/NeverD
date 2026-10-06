@@ -77,4 +77,6 @@ NEVERD_NATIVE_DARWIN_CASE(
 NEVERD_NATIVE_DARWIN_CASE(DirectorySwapPreservesBothSubtreesAndMixedObjectState)
 NEVERD_NATIVE_DARWIN_CASE(
     InitialDirectoryMovePreservesObjectsGrantsAndNameReuse)
+NEVERD_NATIVE_DARWIN_CASE(
+    InitialDirectorySwapPreservesRootsSubtreesAndMixedObjects)
 #endif

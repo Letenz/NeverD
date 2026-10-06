@@ -233,13 +233,14 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         return invalid(Name);
       for (const auto &Directory : *Directories) {
         const auto *D = Directory.getAsObject();
-        if (!D ||
-            D->size() != 1 + unsigned(bool(D->get(field::FileMetadata))) +
-                             unsigned(bool(D->get(field::DirectoryContents))) +
-                             unsigned(bool(D->get(field::DirectoryMutable))) +
-                             unsigned(bool(D->get(field::DirectoryRemovable))) +
-                             unsigned(bool(D->get(field::DirectoryMovable))) +
-                             unsigned(bool(D->get(field::DirectorySwapRename))))
+        if (!D || D->size() !=
+                      1 + unsigned(bool(D->get(field::FileMetadata))) +
+                          unsigned(bool(D->get(field::DirectoryContents))) +
+                          unsigned(bool(D->get(field::DirectoryMutable))) +
+                          unsigned(bool(D->get(field::DirectoryRemovable))) +
+                          unsigned(bool(D->get(field::DirectoryMovable))) +
+                          unsigned(bool(D->get(field::DirectoryExchangeable))) +
+                          unsigned(bool(D->get(field::DirectorySwapRename))))
           return invalid(Name);
         auto Path = D->getString(field::Path);
         if (!Path || Path->size() >= Remaining ||
@@ -273,6 +274,13 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
             return invalid(field::DirectoryMovable);
           if (*Movable)
             Out.MovableDirectories.insert(Path->str());
+        }
+        if (const auto *E = D->get(field::DirectoryExchangeable)) {
+          auto Exchangeable = E->getAsBoolean();
+          if (!Exchangeable)
+            return invalid(field::DirectoryExchangeable);
+          if (*Exchangeable)
+            Out.ExchangeableDirectories.insert(Path->str());
         }
         if (const auto *C = D->get(field::DirectoryContents)) {
           auto Parsed = directoryContents(*C);

@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 2508a1d6463f7db7523313b46488a3a8da4d456a3ec0281743f6ae9793bfe82b -->
+<!-- i18n-source: 783dce3a095c35e7e39fa67d1d6d4214ed5504a0ae65fae3d00af6fd9f2277c3 -->
 
 [← Índice de documentación](README.md)
 
@@ -569,3 +569,22 @@ initial-directory-move verifica sin SDK movimiento, cursores compartidos/indepen
 La restricción de SWAP inicial se refiere a los objetos raíz de origen y destino de la llamada. El intercambio de ancestros creados puede transportar descendientes iniciales ya movidos, conservando su estado y sus costes dinámicos. Las restricciones anteriores se aplican cuando faltan las declaraciones necesarias.
 
 Tras la revisión independiente final en macOS ARM64, el control Darwin registra 1.264 pruebas: 796 pasan, 468 se omiten por backend no disponible, cero fallos. Se ejecutaron las 117 cargas ARM64 HVF obligatorias. El subconjunto de archivos pasa 342/342, incluidos 22 casos nuevos 4K/16K y tres controles de admisión. CreationPolicy conserva Device/GID del padre movido; reutilización del nombre, secuencia de inodes y umask actual permanecen separados. Con el límite exacto de 16 MiB, 16 intercambios de ida y vuelta no acumulan costes; volver libera solo la diferencia real de seis bytes. C/CLI público: 175/175; informes: 33/33; núcleo nativo: 29/29; sonda original independiente: 19 observaciones correctas. Las cinco configuraciones Python pasan en 27.865 segundos; API pura 71, deriva SDK y runners 49 también pasan. Los recuentos se solapan. Fuentes, binarios, intentos y resultados se guardan en build-hvf-arm64/initial-directory-move/ y se vinculan al commit. iOS físico, Intel HVF suspendido, SWAP de raíces iniciales, permisos/montajes/case, EOF compartido, Mach/hilos/dyld y frameworks siguen pendientes por separado.
+
+## Intercambio atómico de raíces iniciales declaradas
+
+El Boolean estricto exchangeable:true (C++ DarwinFileOptions::ExchangeableDirectories, al final del agregado) autoriza solo una raíz inicial explícita distinta de / como operando RENAME_SWAP. Su padre inicial directo debe ser mutable. Ausencia/false siguen excluidos; otros tipos son inválidos. Comparte con movable el subárbol ordinario sin montajes y con nombres únicos, y la validación flags/modos especiales/alias/enlaces físicos/dispositivos de todo el componente. La unión determina solo la topología. Cada referencia reserva ruta original+NUL por separado, incluso sobre la misma raíz, sin otra entrada. Igualdad de dispositivos no une dominios.
+
+El origen inicial normal/EXCL todavía exige movable y el reemplazo inicial normal exige removable. exchangeable no concede estos derechos, mutable a descendientes, escritura ni permisos/montajes generales. Objetos distintos requieren ambos padres reales mutables y con swap_rename independiente. Un SWAP homónimo autorizado de componente normal comprueba padres/dispositivos y no cambia nada, sin primer cargo ni capacidad para objetos distintos. Dot/mayúsculas del mismo objeto siguen desconocidos; se conserva el orden de destino ausente y dot.
+
+Raíces iniciales no vacías, iniciales/creadas y directorio/archivo se intercambian en ambos sentidos. Se prevalidan completos ambos árboles enlazados y retenidos, retirando todos los nombres antes de publicar. Ambas raíces siguen enlazadas: sin crédito de reemplazo/contenido ni FD/inode/entrada nueva. FD/dup/CWD/cursores, objetos padre, leases y derechos siguen sus objetos; descendientes intactos mantienen stat/instantáneas. Objetos borrados antiguos y nuevos homónimos permanecen separados. Costes dinámicos comienzan en cero, se cargan una vez y luego sustituyen los anteriores; los fijos quedan reservados. Un fallo de ruta/presupuesto conserva ambos estados.
+
+La carga original sin SDK initial-directory-swap intercambia empty y data preexistentes y los restaura, verificando descendientes, mapping, CWD, cursores, flags y creación tras mover. La aceptación anterior f98068c07 es un resultado normal congelado separado; esta declaración es la única ampliación del SWAP de raíces iniciales.
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"swap_rename":true},{"path":"/left","exchangeable":true},{"path":"/right","exchangeable":true}]}}
+```
+
+
+La validación Release en macOS ARM64 registra 1,303 casos Darwin: 823 aprobados, 480 omitidos por motores no disponibles y cero fallos; se ejecutaron los 120 casos ARM64 HVF obligatorios. Archivos 361/361 (16 nuevos casos 4K/16K y 3 admisiones), C/CLI 180/180, análisis de informes 34/34, programas originales del núcleo 30/30 y sonda independiente 35 observaciones pasan. Python cubre cinco configuraciones en 33.894 segundos; pasan 71 pruebas API puras, 49 unidades de inventario/referencia y las comprobaciones SDK, formato, capacidades, procedencia y documentación. Los recuentos se solapan.
+
+Con capacidad exacta, el mismo nombre y 16 intercambios de ida y vuelta conservan objetos y cargos. Si hacen falta seis bytes y quedan cinco, ambos rechazos conservan árboles, cursores y presupuesto de creación. Las revisiones independientes del plan y del código final están aceptadas. Intentos, fuentes, binarios y resultados se congelan en `build-hvf-arm64/initial-directory-swap/` y se vinculan al commit. Un informe ejecutado con solapamiento se excluyó y repitió en serie; se sincronizaron los marcadores de traducción. No se ampliaron plazos ni relajaron controles negativos. Permisos, montajes/mayúsculas no declarados, mapas compartidos/EOF, relojes progresivos, Mach/hilos/dyld/frameworks siguen pendientes; iOS físico, Intel HVF suspendido y CI remota de fusión son validaciones distintas.

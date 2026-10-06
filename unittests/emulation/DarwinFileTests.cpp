@@ -130,6 +130,109 @@ TEST(DarwinFileOptions,
 }
 
 TEST(DarwinFileOptions,
+     ExchangeableDeclarationsRequireExplicitRootsAndMutableParents) {
+  DarwinFileOptions O;
+  O.Directories = {"/a", "/a/sub"};
+  O.MutableDirectories.insert("/");
+  O.ExchangeableDirectories.insert("/a");
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  auto Refused = [](const DarwinFileOptions &Input) {
+    auto E = validateFileOptions(Input);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+  };
+  auto Bad = O;
+  Bad.MutableDirectories.clear();
+  Refused(Bad);
+  for (const char *Path : {"/", "/missing", "/a/implicit", "/file"}) {
+    Bad = O;
+    Bad.Files["/file"] = {};
+    Bad.Files["/a/implicit/data"] = {};
+    Bad.ExchangeableDirectories = {Path};
+    Refused(Bad);
+  }
+  for (unsigned Kind = 0; Kind != 4; ++Kind) {
+    Bad = O;
+    auto M = darwin_test::creationParentMetadata();
+    M.Inode = 77;
+    if (Kind == 0)
+      M.Flags = 1;
+    if (Kind == 1)
+      M.Mode |= 02000;
+    Bad.Metadata["/a/sub"] = M;
+    if (Kind == 2)
+      Bad.Metadata["/a"] = M;
+    if (Kind == 3) {
+      M.Mode = 0100644;
+      M.Size = 0;
+      M.LinkCount = 2;
+      Bad.Files["/a/file"] = {};
+      Bad.Metadata["/a/file"] = M;
+    }
+    Refused(Bad);
+  }
+  Bad = O;
+  Bad.DirectoryContents["/a"] = {
+      {{".", 7, 4, 1, 0}, {"..", 2, 4, 2, 0}, {"sub", 7, 4, 3, 0}}, 1};
+  Refused(Bad);
+  Bad.ExchangeableDirectories.clear();
+  EXPECT_FALSE(bool(validateFileOptions(Bad)));
+}
+
+TEST(DarwinFileOptions, MixedMoveAndExchangeDomainsRejectDeviceConflicts) {
+  DarwinFileOptions O;
+  O.Directories = {"/a", "/b"};
+  O.MutableDirectories.insert("/");
+  O.MovableDirectories.insert("/a");
+  O.ExchangeableDirectories.insert("/b");
+  auto M = darwin_test::creationParentMetadata();
+  M.Inode = 7;
+  M.Device = 1;
+  O.Metadata["/a"] = M;
+  M.Inode = 8;
+  M.Device = 2;
+  O.Metadata["/b"] = M;
+  auto E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  O.ExchangeableDirectories.clear();
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.ExchangeableDirectories.insert("/b");
+  O.Metadata["/b"].Device = 1;
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Files["/side"] = {};
+  O.Metadata["/side"] = darwin_test::mutationMetadata(0);
+  O.Metadata["/side"].Device = 2;
+  E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  O.Metadata["/side"].Device = 1;
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+}
+
+TEST(DarwinFileOptions, MoveAndExchangeReferencesChargeIndependently) {
+  DarwinFileOptions O;
+  O.Directories.insert("/a");
+  O.MutableDirectories.insert("/");
+  O.MovableDirectories.insert("/a");
+  O.ExchangeableDirectories.insert("/a");
+  O.Files["/data"] = std::vector<uint8_t>(darwin_file_limits::Bytes - 17);
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Files["/data"].push_back(0);
+  auto E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  O.Files.clear();
+  for (unsigned I = 0; I != 254; ++I)
+    O.Files["/f" + std::to_string(I)] = {};
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Files["/last"] = {};
+  E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+}
+
+TEST(DarwinFileOptions,
      MovableDomainsRejectConflictingDevicesWithoutParentStat) {
   DarwinFileOptions O;
   O.Directories = {"/a", "/b"};
@@ -282,6 +385,12 @@ protected:
               Bytes.size());
     return FD;
   }
+  void exchangeableRoots() {
+    Options->Directories = {"/", "/a", "/b"};
+    Options->MutableDirectories = {"/"};
+    Options->SwapRenameDirectories = {"/"};
+    Options->ExchangeableDirectories = {"/a", "/b"};
+  }
   void swapFiles(llvm::StringRef Source, llvm::StringRef Target) {
     path(Source);
     path(Target, Base + 128);
@@ -290,6 +399,439 @@ protected:
               0u);
   }
 };
+
+TEST_P(DarwinFileTest,
+       InitialDirectoryExchangeRetainsBothTreesAndObjectGrants) {
+  exchangeableRoots();
+  Options->MutableDirectories.insert("/a");
+  Options->SwapRenameDirectories.insert("/a");
+  for (const char *Root : {"/a", "/b"}) {
+    const bool A = llvm::StringRef(Root) == "/a";
+    const std::string Leaf = std::string(Root) + "/sub";
+    Options->Directories.insert(Leaf);
+    Options->Files[Leaf + "/f"] = {uint8_t(A ? 'L' : 'R')};
+    auto M = darwin_test::creationParentMetadata();
+    M.Inode = A ? 101 : 201;
+    M.Size = 64;
+    Options->Metadata[Leaf] = M;
+    M = darwin_test::mutationMetadata(1);
+    M.Inode = A ? 103 : 203;
+    Options->Metadata[Leaf + "/f"] = M;
+    Options->DirectoryContents[Leaf] = {{{".", A ? 101u : 201u, 4, 11, 0},
+                                         {"..", A ? 102u : 202u, 4, 22, 0},
+                                         {"f", A ? 103u : 203u, 8, 33, 0}},
+                                        1};
+  }
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  path("/a");
+  const auto A = ok(ServiceKind::Open, {Base});
+  path("/b");
+  const auto B = ok(ServiceKind::Open, {Base});
+  path("/a/sub");
+  const auto Left = ok(ServiceKind::Open, {Base});
+  const auto Dup = ok(ServiceKind::Dup, {Left});
+  const auto LeftStat = status(Left);
+  path("/b/sub");
+  const auto Right = ok(ServiceKind::Open, {Base});
+  const auto RightStat = status(Right);
+  EXPECT_EQ(
+      ok(ServiceKind::GetDirEntries64, {Left, Base + Page, 32, Base + 512}),
+      32u);
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {Left}), 0u);
+  swapFiles("/a", "/b");
+  identity(A, "/b");
+  identity(B, "/a");
+  identity(Left, "/b/sub");
+  identity(Right, "/a/sub");
+  EXPECT_EQ(status(Left), LeftStat);
+  EXPECT_EQ(status(Right), RightStat);
+  EXPECT_EQ(
+      ok(ServiceKind::GetDirEntries64, {Dup, Base + Page, 32, Base + 512}),
+      32u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 8)), 102u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Left, 0, 1}), 22u);
+  path("..");
+  identity(ok(ServiceKind::Open, {Base}), "/b");
+  path("/a/sub/f");
+  contents(ok(ServiceKind::Open, {Base}), {'R'});
+  path("/b/sub/f");
+  contents(ok(ServiceKind::Open, {Base}), {'L'});
+  makeFile("/b/fresh", "x");
+  path("/a/fresh");
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x202, 0600}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryNotMutable);
+  const auto C = makeDirectory("/b/left");
+  makeDirectory("/b/right");
+  swapFiles("/b/left", "/b/right");
+  identity(C, "/b/right");
+  path("/b/sub");
+  path("/a", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameKind);
+  swapFiles("/a", "/b");
+  identity(Left, "/a/sub");
+  identity(Right, "/b/sub");
+  EXPECT_EQ(status(Left), LeftStat);
+  EXPECT_EQ(status(Right), RightStat);
+}
+
+TEST_P(DarwinFileTest,
+       InitialAndCreatedDirectoryExchangePreservesBothOrientations) {
+  exchangeableRoots();
+  Options->Files["/a/f"] = {'L'};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  path("/a");
+  const auto A = ok(ServiceKind::Open, {Base});
+  path("/a/f");
+  const auto F = ok(ServiceKind::Open, {Base});
+  const auto Created = makeDirectory("/created");
+  makeFile("/created/f", "R");
+  swapFiles("/a", "/created");
+  identity(A, "/created");
+  identity(Created, "/a");
+  identity(F, "/created/f");
+  contents(F, {'L'});
+  path("/a/f");
+  contents(ok(ServiceKind::Open, {Base}), {'R'});
+  swapFiles("/a", "/created");
+  identity(A, "/a");
+  identity(Created, "/created");
+  identity(F, "/a/f");
+  contents(F, {'L'});
+}
+
+TEST_P(DarwinFileTest,
+       InitialDirectoryFileExchangeKeepsMetadataAndCreationSequence) {
+  exchangeableRoots();
+  creationPolicy();
+  mutationPolicy();
+  Options->MutableDirectories.insert("/a");
+  auto M = Options->Metadata["/"];
+  M.Inode = 42;
+  M.GID = 77;
+  Options->Metadata["/a"] = M;
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  path("/a");
+  const auto A = ok(ServiceKind::Open, {Base});
+  path("/data");
+  const auto F = ok(ServiceKind::Open, {Base});
+  const auto D = ok(ServiceKind::Dup, {F});
+  auto Expected = status(F);
+  llvm::support::endian::write64le(Expected.data() + 64, uint64_t(-7));
+  llvm::support::endian::write64le(Expected.data() + 72, 123456789);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {F, 1, 0}), 1u);
+  auto Lease = Files->mappingSource(F);
+  ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(Lease));
+  swapFiles("/a", "/data");
+  identity(A, "/data");
+  identity(F, "/a");
+  EXPECT_EQ(ok(ServiceKind::Lseek, {D, 0, 1}), 1u);
+  EXPECT_EQ(status(F), Expected);
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes,
+            llvm::ArrayRef<uint8_t>({'a', 'b', 0, 0xff, 'e', 'f'}));
+  path("/data/new");
+  const auto New = ok(ServiceKind::Open, {Base, 0x202, 0666});
+  auto S = status(New);
+  EXPECT_EQ(llvm::support::endian::read32le(S.data() + 20), 77u);
+  EXPECT_EQ(llvm::support::endian::read16le(S.data() + 4), 0100640u);
+  EXPECT_EQ(llvm::support::endian::read64le(S.data() + 8),
+            darwin_test::CreationPolicy.FirstInode);
+  swapFiles("/a", "/data");
+  identity(A, "/a");
+  identity(F, "/data");
+  identity(New, "/a/new");
+  EXPECT_EQ(status(F), Expected);
+  path("/next");
+  S = status(ok(ServiceKind::Open, {Base, 0x202, 0666}));
+  EXPECT_EQ(llvm::support::endian::read64le(S.data() + 8),
+            darwin_test::CreationPolicy.FirstInode + 1);
+  EXPECT_EQ(Options->CreationPolicy->FirstInode,
+            darwin_test::CreationPolicy.FirstInode);
+}
+
+TEST_P(DarwinFileTest,
+       InitialDirectoryExchangeKeepsModeAndParentAuthoritySeparate) {
+  exchangeableRoots();
+  const auto Baseline = *Options;
+  for (unsigned Case = 0; Case != 7; ++Case) {
+    Files.reset();
+    Options = Baseline;
+    if (Case == 0 || Case == 3)
+      Options->ExchangeableDirectories.erase("/a");
+    if (Case == 1)
+      Options->ExchangeableDirectories.erase("/b");
+    if (Case == 2)
+      Options->SwapRenameDirectories.clear();
+    if (Case == 3)
+      Options->MovableDirectories.insert("/a");
+    if (Case >= 5) {
+      Options->Files["/b/f"] = {'x'};
+      if (Case == 6)
+        Options->MutableDirectories.insert("/b");
+    }
+    ASSERT_FALSE(bool(validateFileOptions(*Options)));
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    path("/a");
+    const auto A = ok(ServiceKind::Open, {Base});
+    path("/b");
+    const auto B = ok(ServiceKind::Open, {Base});
+    path("/a");
+    path(Case >= 5 ? "/b/f" : "/b", Base + 128);
+    if (Case != 4) {
+      EXPECT_FALSE(
+          invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+      EXPECT_EQ(Result.Diagnostic, Case == 1 ? diagnostic::RenameSwapKind
+                                   : Case == 2 || Case == 6
+                                       ? diagnostic::RenameSwapSupport
+                                   : Case == 5 ? diagnostic::DirectoryNotMutable
+                                               : diagnostic::RenameKind);
+      identity(A, "/a");
+      identity(B, "/b");
+    }
+    if (Case == 2)
+      swapFiles("/a", "/a");
+    if (Case == 3) {
+      renameFile("/a", "/moved");
+      identity(A, "/moved");
+    }
+    if (Case == 4) {
+      path("/a");
+      path("/moved", Base + 128);
+      EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::RenameKind);
+      makeDirectory("/created");
+      path("/created");
+      path("/b", Base + 128);
+      EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::RenameKind);
+      identity(B, "/b");
+    }
+  }
+}
+
+TEST_P(DarwinFileTest,
+       InitialDirectoryExchangeNoOpAndChargesRespectExactCapacity) {
+  for (unsigned Case = 0; Case != 3; ++Case) {
+    const bool NoOp = Case == 0, Short = Case == 2;
+    Files.reset();
+    Options.emplace();
+    exchangeableRoots();
+    if (NoOp)
+      Options->SwapRenameDirectories.clear();
+    // No-op has 22 fixed bytes and no dynamic path charge. Distinct exchange
+    // reserves another two-byte SWAP reference and six dynamic path bytes.
+    // The short case leaves only five dynamic bytes and must roll back both.
+    Options->Files["/data"] =
+        std::vector<uint8_t>(darwin_file_limits::Bytes - (NoOp    ? 22
+                                                          : Short ? 29
+                                                                  : 30));
+    ASSERT_FALSE(bool(validateFileOptions(*Options)));
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    path("/a");
+    const auto A = ok(ServiceKind::Open, {Base});
+    path("/b");
+    const auto B = ok(ServiceKind::Open, {Base});
+    EXPECT_EQ(ok(ServiceKind::Lseek, {A, 31, 0}), 31u);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {B, 77, 0}), 77u);
+    if (Short) {
+      for (bool Reverse : {false, true}) {
+        path(Reverse ? "/b" : "/a");
+        path(Reverse ? "/a" : "/b", Base + 128);
+        EXPECT_FALSE(
+            invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+        EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+        identity(A, "/a");
+        identity(B, "/b");
+        EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 31u);
+        EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 77u);
+      }
+      swapFiles("/a", "/a");
+      path("/x");
+      EXPECT_EQ(
+          ok(ServiceKind::Close, {ok(ServiceKind::Open, {Base, 0x202, 0600})}),
+          0u);
+      path("/y");
+      EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x202, 0600}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationLimit);
+      continue;
+    }
+    for (unsigned I = 0; I != 16; ++I) {
+      swapFiles("/a", NoOp ? "/a" : "/b");
+      if (!NoOp)
+        swapFiles("/a", "/b");
+    }
+    identity(A, "/a");
+    identity(B, "/b");
+    EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 31u);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 77u);
+    path("/x");
+    EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x202, 0600}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationLimit);
+  }
+}
+
+TEST_P(DarwinFileTest, InitialDirectoryExchangePreflightsBothCanonicalPaths) {
+  exchangeableRoots();
+  Options->Directories.erase("/b");
+  Options->Directories.insert("/longer");
+  Options->ExchangeableDirectories = {"/a", "/longer"};
+  std::string Long = "/a";
+  for (unsigned I = 0; I != 4; ++I)
+    Long += '/' + std::string(250, 'd');
+  Long += '/' + std::string(13, 'f');
+  ASSERT_EQ(Long.size(), 1020u);
+  Options->Files[Long] = {'L'};
+  Options->Files["/longer/f"] = {'R'};
+  auto M = darwin_test::mutationMetadata(1);
+  M.Inode = 101;
+  Options->Metadata[Long] = M;
+  M.Inode = 102;
+  Options->Metadata["/longer/f"] = M;
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  path("/a");
+  const auto A = ok(ServiceKind::Open, {Base});
+  path("/longer");
+  const auto B = ok(ServiceKind::Open, {Base});
+  path(Long);
+  const auto Left = ok(ServiceKind::Open, {Base});
+  path("/longer/f");
+  const auto Right = ok(ServiceKind::Open, {Base});
+  const auto L = status(Left), R = status(Right);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 31, 0}), 31u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {B, 77, 0}), 77u);
+  for (bool Reverse : {false, true}) {
+    path(Reverse ? "/longer" : "/a");
+    path(Reverse ? "/a" : "/longer", Base + 128);
+    EXPECT_FALSE(
+        invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+    identity(A, "/a");
+    identity(B, "/longer");
+    identity(Left, Long);
+    identity(Right, "/longer/f");
+    EXPECT_EQ(status(Left), L);
+    EXPECT_EQ(status(Right), R);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 31u);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 77u);
+    contents(Left, {'L'});
+    contents(Right, {'R'});
+  }
+  makeDirectory("/c");
+  swapFiles("/a", "/c");
+  identity(A, "/c");
+  identity(B, "/longer");
+  EXPECT_EQ(status(Left), L);
+}
+
+TEST_P(DarwinFileTest,
+       InitialDirectoryExchangeRejectsCyclesAndPreservesLookupOrder) {
+  exchangeableRoots();
+  Options->Directories.insert("/a/sub");
+  Options->ExchangeableDirectories.insert("/a/sub");
+  Options->MutableDirectories.insert("/a");
+  Options->SwapRenameDirectories.insert("/a");
+  Options->Files["/a/f"] = {'x'};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  path("/a");
+  const auto A = ok(ServiceKind::Open, {Base});
+  path("/b");
+  const auto B = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 31, 0}), 31u);
+  for (auto Pair : {std::pair{"/a", "/a/sub"}, std::pair{"/a/sub", "/a"},
+                    std::pair{"/a/f", "/a"}}) {
+    path(Pair.first);
+    path(Pair.second, Base + 128);
+    error(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2},
+          value::InvalidArgument);
+  }
+  for (const char *Source : {"/a/.", "/a/sub/.."}) {
+    path(Source);
+    path("/missing/", Base + 128);
+    error(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2},
+          value::NoEntry);
+    path("/b", Base + 128);
+    error(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2},
+          value::InvalidArgument);
+  }
+  path("/a/.");
+  path("/a", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameDotCaseSensitivity);
+  identity(A, "/a");
+  identity(B, "/b");
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 31u);
+  path("/a/f");
+  contents(ok(ServiceKind::Open, {Base}), {'x'});
+}
+
+TEST_P(DarwinFileTest, InitialDirectoryExchangeCarriesSameNamedRemovedOrphans) {
+  exchangeableRoots();
+  Options->Directories.insert("/a/held");
+  Options->Directories.insert("/b/held");
+  Options->MutableDirectories.insert("/a");
+  Options->MutableDirectories.insert("/b");
+  Options->MutableDirectories.insert("/a/held");
+  Options->MutableDirectories.insert("/b/held");
+  Options->RemovableDirectories = {"/a/held", "/b/held"};
+  Options->Files["/a/held/f"] = {'L'};
+  Options->Files["/b/held/f"] = {'R'};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  path("/a/held");
+  const auto A = ok(ServiceKind::Open, {Base});
+  path("/b/held");
+  const auto B = ok(ServiceKind::Open, {Base});
+  path("/a/held/f");
+  const auto Left = ok(ServiceKind::Open, {Base});
+  path("/b/held/f");
+  const auto Right = ok(ServiceKind::Open, {Base});
+  auto L = Files->mappingSource(Left), R = Files->mappingSource(Right);
+  ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(L));
+  ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(R));
+  EXPECT_EQ(ok(ServiceKind::Close, {Left}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Right}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {A}), 0u);
+  for (const char *Root : {"/a/held", "/b/held"}) {
+    path(std::string(Root) + "/f");
+    EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+    path(Root);
+    EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  }
+  swapFiles("/a", "/b");
+  identity(A, "/b/held");
+  identity(B, "/a/held");
+  const auto ReusedA = makeDirectory("/b/held");
+  const auto ReusedB = makeDirectory("/a/held");
+  makeFile("/b/held/new", "x");
+  makeFile("/a/held/new", "y");
+  path("new");
+  error(ServiceKind::OpenAt, {A, Base}, value::NoEntry);
+  error(ServiceKind::OpenAt, {B, Base}, value::NoEntry);
+  path("..");
+  identity(ok(ServiceKind::Open, {Base}), "/b");
+  swapFiles("/a", "/b");
+  identity(A, "/a/held");
+  identity(B, "/b/held");
+  identity(ReusedA, "/a/held");
+  identity(ReusedB, "/b/held");
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(L).Bytes,
+            llvm::ArrayRef<uint8_t>({'L'}));
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(R).Bytes,
+            llvm::ArrayRef<uint8_t>({'R'}));
+  path("/");
+  EXPECT_EQ(ok(ServiceKind::Chdir, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {B}), 0u);
+  L = uint32_t(value::BadDescriptor);
+  swapFiles("/a", "/b");
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(R).Bytes,
+            llvm::ArrayRef<uint8_t>({'R'}));
+  R = uint32_t(value::BadDescriptor);
+  swapFiles("/a", "/b");
+  path("/a/held/new");
+  contents(ok(ServiceKind::Open, {Base}), {'x'});
+  path("/b/held/new");
+  contents(ok(ServiceKind::Open, {Base}), {'y'});
+}
 
 TEST_P(DarwinFileTest,
        InitialDirectoryMoveKeepsCreationIdentityOnTheOriginalParent) {

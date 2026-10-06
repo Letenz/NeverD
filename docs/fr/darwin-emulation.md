@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 2508a1d6463f7db7523313b46488a3a8da4d456a3ec0281743f6ae9793bfe82b -->
+<!-- i18n-source: 783dce3a095c35e7e39fa67d1d6d4214ed5504a0ae65fae3d00af6fd9f2277c3 -->
 
 [← Index de la documentation](README.md)
 
@@ -569,3 +569,22 @@ initial-directory-move, sans SDK, contrôle déplacement, curseurs partagés/ind
 La limite concernant le SWAP initial vise les objets racines source et cible de l’appel. L’échange d’ancêtres créés peut transporter des descendants initiaux déjà déplacés, tout en conservant leur état et leurs coûts dynamiques. Les restrictions initiales précédentes s’appliquent en l’absence des déclarations requises.
 
 Après la revue indépendante finale sur macOS ARM64, le contrôle Darwin compte 1 264 tests : 796 réussites, 468 ignorés pour backend indisponible, aucun échec. Les 117 charges ARM64 HVF obligatoires ont été exécutées. Le sous-ensemble fichiers passe 342/342, dont 22 nouveaux cas 4K/16K et trois contrôles d’admission. CreationPolicy conserve le Device/GID du parent déplacé, sans confondre réutilisation du nom, suite d’inodes et umask courant. À la limite exacte de 16 MiB, 16 échanges aller-retour ne cumulent pas les frais ; le retour libère seulement les six octets réellement économisés. C/CLI public : 175/175 ; rapports : 33/33 ; noyau natif : 29/29 ; sonde originale indépendante : 19 observations réussies. Les cinq configurations Python passent en 27.865 secondes ; API pure 71, dérive SDK et runners 49 passent aussi. Les comptes se recoupent. Sources, binaires, tentatives et résultats sont conservés sous build-hvf-arm64/initial-directory-move/ et liés au commit. iOS physique, Intel HVF suspendu, SWAP de racines initiales, permissions/montages/casse, EOF partagé, Mach/threads/dyld et frameworks restent des travaux distincts.
+
+## Échange atomique des racines initiales déclarées
+
+Le Boolean strict exchangeable:true (C++ DarwinFileOptions::ExchangeableDirectories, ajouté en fin d’agrégat) autorise seulement une racine initiale explicite non racine comme opérande RENAME_SWAP. Son parent initial direct doit être mutable. Absence/false restent exclus ; les autres types sont invalides. Il partage avec movable la déclaration ordinaire sans montage et à noms uniques ainsi que les contrôles flags/modes spéciaux/alias/liens physiques/appareils du composant entier. Leur union ne détermine que la topologie. Chaque référence réserve chemin original+NUL, même si les deux visent la même racine, sans nouvelle entrée. Des appareils égaux ne joignent pas les domaines.
+
+Une source initiale ordinaire/EXCL exige toujours movable ; une cible initiale de remplacement ordinaire exige removable. exchangeable n’accorde ni ces droits, ni mutable aux descendants, ni écriture, ni permissions/montages généraux. Pour deux objets distincts, les deux parents réels doivent être mutables et chacun soutenir swap_rename. Un SWAP homonyme autorisé avec composant ordinaire vérifie parent/appareil puis ne change rien, sans première charge ni capacité d’échange distinct. Dot/casse du même objet restent inconnus ; l’ordre cible absente/dot demeure.
+
+Deux racines initiales non vides, initiale/créée et répertoire/fichier s’échangent dans les deux sens. Les deux arbres liés et conservés sont intégralement prévalidés, puis tous les noms retirés avant publication. Les racines restent liées : aucun crédit de remplacement/contenu ni nouveau FD/inode/entrée. FD/dup/CWD/curseurs, parents objets, baux et droits suivent leurs objets ; descendants inchangés gardent stat/instantanés. Anciens objets supprimés et nouveaux homonymes restent distincts. Les chemins dynamiques commencent à zéro, sont chargés une fois puis remplacent l’ancienne charge ; les coûts fixes restent réservés. Un échec de chemin/budget préserve les deux états.
+
+La charge originale sans SDK initial-directory-swap échange empty et data préexistants puis les rétablit, vérifiant descendants, mapping, CWD, curseurs, flags et création après déplacement. L’acceptation f98068c07 précédente est un résultat ordinaire figé distinct ; seul ce contrat étend le SWAP des racines initiales.
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"swap_rename":true},{"path":"/left","exchangeable":true},{"path":"/right","exchangeable":true}]}}
+```
+
+
+Cette validation Release sur macOS ARM64 compte 1,303 inscriptions Darwin : 823 réussites, 480 exclusions pour moteur indisponible et aucun échec ; les 120 cas ARM64 HVF obligatoires sont exécutés. Les contrôles fichiers passent 361/361 (16 nouveaux cas 4K/16K et 3 admissions), C/CLI 180/180, analyse des rapports 34/34, programmes noyau originaux 30/30 et sonde indépendante 35 observations. Python couvre cinq configurations en 33.894 secondes ; 71 tests API purs, 49 unités d’inventaire/référence et les contrôles SDK, format, capacités, provenance et documentation passent. Les comptes se recoupent.
+
+À capacité exacte, la même cible et 16 allers-retours conservent objets et charges. Si six octets sont nécessaires mais cinq disponibles, les deux refus conservent les arbres, curseurs et budget de création. Les revues indépendantes du plan et des sources finales sont acceptées. Essais, sources, binaires et résultats sont figés dans `build-hvf-arm64/initial-directory-swap/` et liés au commit. Un rapport exécuté avec chevauchement est exclu puis répété séquentiellement ; les marqueurs de traduction sont synchronisés. Aucun délai ni contrôle négatif n’est assoupli. Permissions, montages/casse non déclarés, mappings partagés/EOF, horloges évolutives, Mach/threads/dyld/frameworks restent incomplets ; iOS physique, Intel HVF suspendu et CI de fusion distante sont des validations distinctes.
