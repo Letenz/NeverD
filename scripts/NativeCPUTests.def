@@ -9,6 +9,8 @@ NEVERD_NATIVE_CPU_OUTPUT_LIMIT(65536)
 #endif
 #ifdef NEVERD_NATIVE_CPU_OWNER
 NEVERD_NATIVE_CPU_OWNER(NeverDRunControlTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDParallelExecutionTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDMMIOAtomicTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDWindowsProcessTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDX64FPTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDX64IntegerTests)
@@ -28,6 +30,36 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/ParallelCPU.ProcessorCallsOverlapAndPublishIndependentRegisters/{backend}x86_64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/ParallelCPU.ReentryCannotChangeAnActiveCPUsState/{backend}x86_64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/ParallelCPU.AtomicContendersSharePhysicalRAMAcrossAddressSpaces/{backend}x86_64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/MMIOAtomic.OriginalInstructionResultsMatchRAMAcrossAllAtomicFamilies/{backend}x86_64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/MMIOAtomic.StopsBeforeCommitPreserveCPUAndBothWideWords/{backend}x86_64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/MMIOAtomic.SuccessfulCommitWinsARacingStop/{backend}x86_64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/MMIOAtomic.MissingProviderNeverCallsLegacyReadOrWrite/{backend}x86_64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/MMIOAtomic.IdenticalValueWritesInvalidateOldPreviews/{backend}x86_64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/MMIOAtomic.ProviderFailuresAndExceptionsHaveNoEffects/{backend}x86_64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/MMIOAtomic.UnalignedOperandsNeverReachDeviceCallbacks/{backend}x86_64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/MMIOAtomic.ObserverExceptionsPreserveCPUAndDevice/{backend}x86_64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/MMIOAtomic.RepeatedAliasTransactionsRetirePrivateOperands/{backend}x86_64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/MMIOAtomic.ParallelCPUsCommitEveryDeviceUpdateExactlyOnce/{backend}x86_64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WhpResources.IndependentBindingsRetainSimultaneousResourceLeases")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProjectionCache.RelocatedWindowsKeepRAMIdentityAndInvalidateCachedRoots")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.RetainsPhysicalIdentityAcrossAliasesAndPermissionChanges")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.SameValueAndABAHostWritesInvalidateEveryOlderWitness")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.FullGranuleIsObservedButUnrelatedWritesDoNotBreakProgress")
@@ -2119,6 +2151,10 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST
+NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST(
+    "WhpMemoryProtocol.SharedHostRetiresBeforeReplacementAndRetriesFailedSetup")
+NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST(
+    "WhpEntryControl.CancellationTargetsTheRetainedNonzeroProcessor")
 NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST(
     "WindowsAlignmentNative.RunsOriginalFaultAndRetryExecutable")
 // Windows-only transport protocols and independent native OS observations.

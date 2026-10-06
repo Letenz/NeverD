@@ -281,6 +281,13 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 缺少 ARM64 硬體或 hypervisor 表示原生覆蓋被略過，不是通過。Unicorn 與交叉編譯不能證明原生 KVM/WHP 執行。
 
+`NeverDParallelExecutionTests` 強制處理器呼叫重疊與寫入等待期間取消，並驗證獨立 CPU 狀態、實體別名原子競爭和私有傳輸暫存。`NeverDRunControlTests` 檢查獨立 WHP binding 可同時持有兩份資源租約，而共享 binding 序列化存取。`NeverDMMIOAtomicTests` 比較原始 x64 原子／更新指令與全部 ARM64 LSE 案例的裝置及 RAM 結果，涵蓋寬寫入兩次觀察、過期預覽、提供者失敗與提交／停止競爭。`KernelMMIOFailure` 涵蓋別名、同值寫入、重複提交、電源變化、解除映射與擁有者銷毀。不可用平台明確跳過；包裝層會合只證明處理器呼叫能並行，不證明硬體同時退休指令。ARM64 KVM/WHP 原生驗證仍需對應主機。
+
+```bash
+cmake --build build-cpu --target NeverDParallelExecutionTests NeverDMMIOAtomicTests NeverDRunControlTests --parallel 4
+ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMIOAtomic|RunControl)Tests$' --output-on-failure
+```
+
 ## Linux 程序設定檔測試
 
 獨立[程序測試套件](process-emulation.md#驗證)會編譯真實 x64/AArch64 ELF fixture。`NeverDLinuxProcessTests` 檢查啟動、program-header 政策、服務續接、二進位輸出、客體錯誤與資源停止。`NeverDProcessPublicTests` 經由 C API/CLI 測試且不變更分析映像。`NeverDExecutionSessionTests` 檢查兩個 CPU 共用記憶體／預算，以及要求／錯誤恰好消耗一次。`NeverDX64MemoryUpdateTests` 檢查記憶體算術、SETcc、BT、XMM/MXCSR、寫入 observer、REP 邊界及預備裝置讀取。`DriverBackendParityTests.cpp` 執行原始與重定位 WDK fixture，並將完整可觀察報告與 Unicorn 比較；缺少映像／後端會明確略過。
@@ -1131,7 +1138,7 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 頁面執行 `X64MachineProb
 
 `X64StringInstructions.def` 也統一管理一般 RAM 上 8/16/32/64 位元的 `CMPS/SCAS` 與 `REPE/REPNE`。每個元素在觀察回呼前驗證全部讀取運算元，更新六個算術旗標，並於首次符合終止條件時退出。資料錯誤會恢復本次連續 REP 執行開始時的旗標，同時保留已完成的指標與計數更新；公開介面恢復執行時，以已發布的 CPU 狀態重新開始。停止與觀察回呼例外不改變目前元素，提前終止也不會讀取下一個元素。FS/GS 僅影響 CMPS 來源位址；SCAS 保留累加器與未使用的來源暫存器。裝置運算元及有歧義的 32 位元零次數高位元狀態仍不支援。`X64StringComparisonTests.cpp` 以獨立主機指令對照旗標、方向、別名、回繞、權限與恢復，並透過 Linux x64 訊號測試讀取實際錯誤時的暫存器。原創 WDK 資源驅動程式透過 `driver_resource_strings.def` 執行四種寬度的兩類條件重複形式。參見 [Intel 指令參考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。 Linux 原生驗證涵蓋首元素執行前後發生的故障，並區分 Intel 還原入口 flags 與 Hyper-V 下 AMD EPYC 7763 保留最後一次比較 flags 的行為（[原生觀測](https://github.com/NeverSight/NeverD/actions/runs/37202522130)）；未知 CPU 廠商會明確失敗。所有後端的 checked 來賓仍統一還原入口 flags。
 
-`WhpResourceCache.h` 將邏輯 CPU 狀態與 WHP 分割區分離。執行階段保留一個作用中的原生分割區：同一 CPU 連續單步會重用它；切換 CPU 時先銷毀舊分割區，再重建映射、虛擬處理器並還原完整狀態。邏輯 CPU 保留獨立的 `MemoryProjection` 檢視和權威 RAM。取得租約遵守取消訊號和目前截止時間；銷毀非作用中 CPU 不會銷毀其他 CPU 的分割區。x64 保留主機預設 XSAVE 特性組合，並透過 `WHvGetPartitionProperty` 驗證實際分割區，不透過清除相依特性強制縮減遮罩。CPU 協作式切換不提供平行硬體 SMP。
+存活的 WHP CPU 共用一個原生分割區；最終關閉與重新建立由同一登錄表鎖序列化。`WhpResourceCache.h` 重用協作式 VP 0；切換邏輯 CPU 前先銷毀該 VP 並撤銷其映射。平行 CPU 保留獨立 VP 與私有 GPA 區間。暫存器、XSAVE 與取消請求均指向各自的 VP。x64 保留主機預設 XSAVE 功能集，並透過 `WHvGetPartitionProperty` 驗證實際分割區設定。預設排程仍為協作式。
 
 `NeverDX64FPTests` 檢查全部 79 個啟動狀態損壞位置，並在原生傳輸上執行獨立組譯的 `X64ProbeCases.def` 指令，驗證單一時限及客體 RAM 不變。`NeverDProjectionCacheTests` 涵蓋呼叫者切換、ISA 順序、頁表根歷史、權限/監控變體、映射世代、位址空間身分及失敗重建。`NeverDRunControlTests` 的 `WhpXsaveTests.cpp` 檢查新舊 API 封包、所有 TOP、大小邊界及失敗時狀態不變；記憶體協定測試不能取代 WHP 原生證據。不可用的原生傳輸明確略過。
 
@@ -1159,7 +1166,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 4835 項 CPU 檢查及 17 項 SEH 回歸，共有 5076 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `4835 CPU + 224 WHP + 17 SEH = 5076`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 4852 項 CPU 檢查及 17 項 SEH 回歸，共有 5093 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `4852 CPU + 224 WHP + 17 SEH = 5093`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1354,7 +1361,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration` 拒絕與目前非空方法編碼或選擇器不一致的快取 ABI；僅提供明確型別宣告的用戶端保留原有約定。
 
-`DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract` 涵蓋四個矩陣/仿射產生函式及 22 種必須拒絕的契約竄改。`ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy` 證明 SDK 結果進入 CoreImage 副本並通過獨立發布重建；`RejectsWrongProducerFrameAndSavedIR` 對每個產生函式檢查 12 種竄改，包括輸入寫入缺漏、結果越界、錯誤提供者/ABI 載體及重用已消耗的 Concat 輸入。`GeneratedCMatchesOriginalMachineAndSDKResults` 在 Apple ARM64 上以 O0/O2 執行未修改的產生 C 與原始 ARM64 機器字，並呼叫原生 CoreGraphics：每個函式 1000 組資料比對全部 48 個結果位元組、兩個輸入記錄、選擇子/接收者身分、單次呼叫、回傳物件、私有副本改寫及邊界保護值。其他主機略過此原生 SDK 執行測試。
+`DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract` 涵蓋目前矩陣/仿射契約及 22 種必須拒絕的契約竄改。`ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy` 證明 SDK 結果進入 CoreImage 副本並通過獨立發布重建；`RejectsWrongProducerFrameAndSavedIR` 對每個產生函式檢查 12 種竄改，包括輸入寫入缺漏、結果越界、錯誤提供者/ABI 載體及重用已消耗的 Concat 輸入。`GeneratedCMatchesOriginalMachineAndSDKResults` 在 Apple ARM64 上以 O0/O2 執行未修改的產生 C 與原始 ARM64 機器字，並呼叫原生 CoreGraphics：每個函式 1000 組資料比對全部 48 個結果位元組、兩個輸入記錄、選擇子/接收者身分、單次呼叫、回傳物件、私有副本改寫及邊界保護值。其他主機略過此原生 SDK 執行測試。
 
 `MatrixFrameEffectsRequireExactCurrentContract` 也涵蓋 CGRect 使用者及 22 種必須拒絕的竄改。`ObjCAffineImageValueCopy.CGRectInputUsesTheSameCurrentFrameOwner` 驗證「旋轉 → CGRect 借用 → 旋轉重新初始化 → CoreImage 發布」；`CGRectBorrowRejectsExpiredInputsAndChangedABI` 拒絕初始化、輸入範圍、匯入及載體的八種修改。`GeneratedCMatchesOriginalMachineAndSDKResults` 也以 O0/O2、1000 組資料，將此完整順序的產生 C 與原始機器字、原生 SDK 比對，檢查儲存的角度、全部 48 個最終位元組、物件及保護值。
 
@@ -1395,8 +1402,24 @@ block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符�
 
 `LowIRLoopInference.MutablePrefixBounds*` 涵蓋高位持續改變的 8、24、32 位元衍生邊界、三種計數器儲存、兩種位元組序及直接或快取退出條件，檢查不終止、移動的等值邊界、可觀察高位與快取變更，以及精確和少一單位預算。移動的無符號大小比較邊界可能在回繞時終止，另有完整證明回歸。
 
+`LowIRLoopInference.SharedTemplatesFitIndependentOperationBudgets` 在 1,024 次推斷操作及 640 次獨立證明操作內證明巢狀的部分計數器。完全相同的純運算式與不可變前綴讀取僅在同一次切點重建內共用，保留運算元身分、輸出寬度及位置空間。測試觀測完整的計數器與界限字，拒絕被修改的前綴計算及少一次操作的預算。現有暫存器、框架、函式暫存值、位元組序及不終止案例仍須執行。
+
+`LowIRLoopInference.CompletedEntailments*` 在兩種位元組序的終止及不終止框架迴圈之間檢查工作階段隔離、求解器與節點耗盡，以及獨立證明預算。可變邊界回歸在快取命中時驗證精確與少一單位的邏輯查詢預算；原生重複上下文證明檢查含域的重用。
+
+`LowIRLoopInference.IncrementalEntailmentsKeepRollingBudgets` 檢查同一約束域內的編碼器重用。切換域會捨棄編碼器；累計邏輯閘容量耗盡時，僅以新編碼器重試一次，並額外計入一次查詢。兩種位元組順序皆保留對完整計數器和邊界字的觀測，並檢查精確及少一次的查詢預算、邏輯閘／寬度／搜尋超限拒絕，以及獨立的最終證明預算。
+
+`LowIRLoopInference.RebuiltCounterLanes*` 涵蓋計數器其他位元從前綴值重建或獨立變化時，精確匹配的投影更新。暫存器、堆疊框架和函式暫存值案例包含兩種位元組順序、1／3／4 位元組計數器及直接／快取退出條件，並觀測完整計數器、邊界和標記。刪除可觀測的高位元標記、不終止更新、缺少退出守衛及少一單位的推斷／證明預算仍須拒絕。結構遞推匹配僅提出泛化和秩候選，仍必須通過完整轉移證明和最終證明。 固定的操作數與查詢數預算也涵蓋符號投影計數器，避免將常量前綴中的偶然匹配擴展為額外關係。
+
+`LowIRLoopInference.ProjectedCounterCopies*` 涵蓋在遞增前經由帶獨立標籤的字複製計數器位段的巢狀迴圈。144 組完整狀態案例涵蓋暫存器、框架、函式暫存量、兩種位元組順序、1/3/4 位元組位段、直接或快取退出條件，以及整字複製對照。投影相等關係必須在儲存的到達狀態和每條傳入轉移上成立；高位保持獨立。轉移域蘊含證明可辨識由不同參數表示的加法遞推。捨棄高位標籤、無效更新、缺少保護，以及推斷或最終證明預算少一單位時仍會拒絕。
+
 `LowIRLoopRefinement.GuardedCuts*` 與 `BinaryLowIRLoopRefinement.GuardedCuts*` 涵蓋同址切點、暫存器、框架及原生系統旗標、兩種位元組序、未匹配的有限與循環路徑、重疊及錯配拒絕、前綴泛化、未定義值見證、錯誤中繼資料、摘要與共用預算。獨立原生測試證明兩個 R10 上下文共用循環位址，並確認未稽核邊界檢查先於選擇條件。一般 ABI 認證仍是獨立工作。
 
 `BinaryLowIRLoopInference.NativeSelectors*` 涵蓋兩個暫存器上下文、僅靠框架區分的上下文、三域合取、無法區分的範本、來源及原生迴圈本體變異，以及推導與證明各自的精確和少一預算。迴圈次數任意，不引入入口常數。
 
 `DarwinIndirectRecordCalls` 檢查目前 MakeScale 契約與 22 項匯入/ABI 變更拒絕案例，再透過共用按值副本證明使用完整的 48 位元組私有結果。未對齊、偏移、重疊或超出堆疊框架的結果範圍皆被拒絕。即使保留完整回傳 ABI，移除確定寫入效果也會被拒絕。
+
+`SourceFrameAnalysis.IncomingResultAddressNeedsCompleteEntryIdentity` 拒絕十種入口、載體或寫入修改以及缺少的入口 ABI。`NativeSourceHints.IndirectResultTailCallRetainsExplicitOutputAddress` 重新提升直接尾呼叫，檢查明確輸出參數、六次寫入與發布門檻。
+
+`NativeSourceHints.FourDoubleCallerDemandNeedsEveryUnchangedCarrier` 檢查四個低位通道、獨立高位寫入及九種宣告或控制修改。`FourDoubleReturnRequiresEveryComputedLowLane` 拒絕十二種結果不完整或契約失效的情況。`DarwinNativeRecordReturns.FourComputedDoublesExecuteAtO0AndO2` 在每個最佳化等級執行 2048 組輸入，與獨立算術判據比較全部 32 位元組結果。
+
+`DarwinIndirectRecordCalls.AffineInvertSnapshotsItsCompleteAliasedInput` 在 O0、O2 各執行 2560 個同址、重疊或分離的輸入輸出配置，檢查輸入位元模式、單次呼叫、全部 48 位元組結果與完整含守衛儲存。它驗證實體複製與快照，不是原始機器碼或原生 SDK 執行。目前矩陣/仿射契約測試對每個契約保留 22 種拒絕修改。

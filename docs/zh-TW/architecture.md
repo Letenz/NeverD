@@ -214,6 +214,8 @@ LLVM 模型負責驗證 `initializes` 參數契約，重用狀態指標投影，
 
 `inferLowIRLoopRefinementPlan` 共用符號執行器，在預算內產生範本。回饋切點涵蓋 CFG 的每個環；拓寬保留已證明的固定位元，並淘汰無法維持的無號前綴邊界。觀察到的單位步長計數器與推導的階段常數組成字典序排名，支援遞增或遞減的巢狀迴圈。`OriginalPrefix` 與 `CandidatePrefix` 要求 `UseEntryPrefix`。位於其他切點之後的切點可從真實入口另行有限重播，取得可行的成對前綴證據。此證據不代表入口域涵蓋：每次實際到達都必須蘊含其述詞，完整入口與轉換路徑涵蓋仍是必要條件。`inferAndCheckBinaryLowIRLoopRefinement` 要求完整恢復與唯一映射的殘餘來源，再獨立重跑完整原程式／候選程式檢查器。候選方案與來源映射均不可信；只有 `Refinement` 可包含憑證。推導與證明保留各自的明確預算。此 C++ API 不會隨 `--devirtualize` 自動執行。不可達前綴、任意控制流程對齊、搜尋範圍外的排名類型、C 後端等價性及實體 CPU 的未定義位元選擇仍不受支援。
 
+迴圈推斷僅在同一符號上下文及固定求解器設定內重用完整、無需模型的 SAT/UNSAT 答案。鍵包含整個「域與事實取反」查詢，未知或無效答案不納入快取。每次命中仍檢查節點上限並消耗共用的邏輯查詢預算；`SolverQueries` 包含這些請求，`EntailmentCacheHits` 另行回報重用次數。既有預算限制快取項目數。獨立最終檢查器不接收快取答案，證明／物件 schema 維持 17／16。
+
 原生迴圈推導也接受重複的原始位址，但每個殘餘來源必須有唯一映射。在狀態與排名推導後，它在完整重建的候選範本域上證明相反的常數位元，並提出暫存器、框架或 SystemFlags 的遮罩選擇條件。上下文識別及具體前綴值均不作為假設；無法區分的域會被拒絕。中繼資料、位元掃描及相依遍歷計入現有預算。獨立的原程式／候選程式檢查器仍須證明所有允許路徑、狀態觀察與排名轉換。證明／物件綱要維持 17／16；自動原始碼與一般 ABI 組合仍是獨立工作。 唯一原生來源保留原有搜尋優先順序；新增上下文共用同一累計搜尋預算。
 
 單位步長計數器發現亦支援按位元組對齊的局部更新，要求更新區間之外的所有位元保持不變，並優先嘗試既有整字及零擴展形式。多切點的窄位端點排除條件，僅在保存的實際到達狀態和全部目前入邊狀態上獲得證明後提出。拓寬會移除失敗條件且不重新播種；某個字已被辨識為計數器後，仍可發現另一個窄位區間。遮罩重用既有整字參數，保留整字排名及完整狀態觀測。所有候選仍受共用節點／查詢預算限制，並須通過獨立的完整精化檢查。
@@ -666,13 +668,13 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 頁面執行 `X64MachineProb
 
 `CheckedX64Instructions.def` 透過既有 CPU 後端准入 8/16/32/64 位元無號 `MUL` 和 `CBW/CWDE/CDQE/CWD/CDQ/CQO`。`NeverDX64IntegerTests` 使用獨立的 `X64IntegerCases.def` 編碼和預期值，在兩種特權級驗證部分暫存器保留、32 位元零擴展、乘積高低兩部分、已定義的 CF/OF 結果及符號擴展不改變旗標。一般 RAM 乘法保留完整存取範圍的權限檢查和讀取觀察回呼；故障或觀察回呼停止會保留隱式輸出暫存器及 PC。裝置運算元仍不支援。這些案例也在 checked Unicorn 上執行；不可用的原生後端明確略過。
 
-`X64BitInstructions.def` 支援 16/32/64 位元暫存器及一般 RAM 的 `BT/BTS/BTR/BTC`。暫存器位元索引依運算元寬度解讀為有號數並選取完整資料字；立即數索引限制於基底位址的資料字內。位址寬度截斷先於 FS/GS 基底位址相加。CF 與寫入值由處理器提供；`RAMTransaction` 在觀察回呼接受前保留私有執行結果。完整範圍權限檢查涵蓋獨立頁面配置與別名。停止、回呼失敗或頁面權限不足均保留原始 CPU 與 RAM。LOCK 僅支援自然對齊的記憶體修改形式；MMIO 與硬體平行 SMP 仍不支援。`X64BitStringTests.cpp` 使用獨立編碼與 x64 本機實際執行對照，檢查負索引、寬度截斷、跨頁存取、取消及非法 LOCK 形式。參見 [Intel 指令參考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
+`X64BitInstructions.def` 支援 16/32/64 位元暫存器及一般 RAM 的 `BT/BTS/BTR/BTC`。暫存器位元索引依運算元寬度解讀為有號數並選取完整資料字；立即數索引限制於基底位址的資料字內。位址寬度截斷先於 FS/GS 基底位址相加。CF 與寫入值由處理器提供；`RAMTransaction` 在觀察回呼接受前保留私有執行結果。完整範圍權限檢查涵蓋獨立頁面配置與別名。停止、回呼失敗或頁面權限不足均保留原始 CPU 與 RAM。LOCK 要求自然對齊；修改型 MMIO 操作要求明確的預備原子交易提供者。`X64BitStringTests.cpp` 使用獨立編碼與 x64 本機實際執行對照，檢查負索引、寬度截斷、跨頁存取、取消及非法 LOCK 形式。參見 [Intel 指令參考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
 
 `X64StringInstructions.def` 統一管理一般 RAM 上 8/16/32/64 位元的 `MOVS/STOS/LODS`；`CLD/STD` 只改變方向旗標。每個 REP 元素在觀察回呼前驗證整個運算元，並於一個可恢復邊界提交。後續錯誤保留先前完成的元素；取消或回呼例外不改變目前元素。FS/GS 僅作用於來源位址，且在位址寬度截斷之後相加。AL/AX 載入保留高位元，EAX 載入零擴展。32 位元位址模式的零次 REP 要求計數高位元為零，MOVS/STOS 還要求參與的位址暫存器高位元為零，否則不同真實 CPU 實作會產生不同結果。MOVS/STOS/LODS 的 REPNE 形式與 STOS/LODS 裝置運算元仍不支援。`X64StringTransferTests.cpp` 用獨立的主機指令對照寬度、方向、重疊和零次數，並分別檢查權限、別名、回繞、錯誤與恢復。原創 WDK 資源驅動程式透過 `driver_resource_strings.def` 執行四種寬度的 STOS/LODS。
 
 `X64StringInstructions.def` 也統一管理一般 RAM 上 8/16/32/64 位元的 `CMPS/SCAS` 與 `REPE/REPNE`。每個元素在觀察回呼前驗證全部讀取運算元，更新六個算術旗標，並於首次符合終止條件時退出。資料錯誤會恢復本次連續 REP 執行開始時的旗標，同時保留已完成的指標與計數更新；公開介面恢復執行時，以已發布的 CPU 狀態重新開始。停止與觀察回呼例外不改變目前元素，提前終止也不會讀取下一個元素。FS/GS 僅影響 CMPS 來源位址；SCAS 保留累加器與未使用的來源暫存器。裝置運算元及有歧義的 32 位元零次數高位元狀態仍不支援。`X64StringComparisonTests.cpp` 以獨立主機指令對照旗標、方向、別名、回繞、權限與恢復，並透過 Linux x64 訊號測試讀取實際錯誤時的暫存器。原創 WDK 資源驅動程式透過 `driver_resource_strings.def` 執行四種寬度的兩類條件重複形式。參見 [Intel 指令參考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。 Linux 原生驗證涵蓋首元素執行前後發生的故障，並區分 Intel 還原入口 flags 與 Hyper-V 下 AMD EPYC 7763 保留最後一次比較 flags 的行為（[原生觀測](https://github.com/NeverSight/NeverD/actions/runs/37202522130)）；未知 CPU 廠商會明確失敗。所有後端的 checked 來賓仍統一還原入口 flags。
 
-`WhpResourceCache.h` 將邏輯 CPU 狀態與 WHP 分割區分離。執行階段保留一個作用中的原生分割區：同一 CPU 連續單步會重用它；切換 CPU 時先銷毀舊分割區，再重建映射、虛擬處理器並還原完整狀態。邏輯 CPU 保留獨立的 `MemoryProjection` 檢視和權威 RAM。取得租約遵守取消訊號和目前截止時間；銷毀非作用中 CPU 不會銷毀其他 CPU 的分割區。x64 保留主機預設 XSAVE 特性組合，並透過 `WHvGetPartitionProperty` 驗證實際分割區，不透過清除相依特性強制縮減遮罩。CPU 協作式切換不提供平行硬體 SMP。
+存活的 WHP CPU 共用一個原生分割區；最終關閉與重新建立由同一登錄表鎖序列化。`WhpResourceCache.h` 重用協作式 VP 0；切換邏輯 CPU 前先銷毀該 VP 並撤銷其映射。平行 CPU 保留獨立 VP 與私有 GPA 區間。暫存器、XSAVE 與取消請求均指向各自的 VP。x64 保留主機預設 XSAVE 功能集，並透過 `WHvGetPartitionProperty` 驗證實際分割區設定。預設排程仍為協作式。
 
 `CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接納有界的基礎 FP32/FP64 算術、比較、移動與定寬 SIMD 運算。FPCR 支援四種捨入模式、FZ 和 DN；FPSR 保留累積狀態與 QC。不支援的控制位元及狀態位元在修改前拒絕。FP16 算術、SVE/SME、未遮罩例外、選用擴充及未列出的形式明確失敗。這些 CPU 能力不代表已支援 Windows ARM64 驅動程式載入或新增 OS 環境。
 
@@ -683,6 +685,16 @@ KVM x64 從已確認完成的同步擷取或明確的 `KVM_GET_SREGS` 讀取取�
 KVM x64/ARM64 透過 `KvmRunControl` 在同一專用 vCPU 工作執行緒準備狀態、進入 `KVM_RUN` 並讀取狀態。`EINTR` 重試僅準備一次；取消進入或讀取失敗不能發布。`KvmAArch64Machine.cpp` 在該執行緒執行位址轉換維護與完整純量、向量傳遞，共用一次單步期限。呼叫執行緒僅在確認完成後提交；ISA 解碼、RAM 交易、OS 策略和觀察器仍屬於呼叫執行緒。ARM64 原生執行仍缺少實機證據。
 
 `KvmHandoffPolicy` 將每次輪詢等待限制為 8 μs，連續兩次未命中後改用阻塞等待，並在 256 次交接後重試。呼叫執行緒和工作執行緒分別自適應；呼叫執行緒同時遵守原始期限與停止標記。原子就緒標記只提示排程：資料包、回呼生命週期和取消確認仍由互斥鎖管理。`NeverDKvmRunTests` 檢查無效輪詢的上限、恢復、對端延遲變化及資料包重用前的取消確認。
+
+<a id="parallel-cpus-and-mmio"></a>
+
+## 平行 CPU 與裝置原子交易
+
+KVM、WHP 與 Unicorn 的 checked x64/ARM64 可要求 `ExecutionFeature::ParallelCPUs`（`parallel_cpus`）。獨立 CPU 可在不同主機執行緒共享實體 RAM；已證明不寫 RAM 的原生指令可重疊執行，待處理寫入阻止新指令進入，等待讀取結束後才發布。指令效果採順序一致性，支援等待取消和回復。所有執行結束前仍禁止映射修改與主機寫入。同一 CPU 物件只有 `stop()` 支援跨執行緒呼叫。預設執行及 OS 排程仍為協作式，弱記憶體模型探索屬於獨立契約。
+
+平行 WHP CPU 在一個共用分割區內使用獨立 VP，最多同時保留 31 個平行 CPU，另加協作式 VP。私有 GPA 區間與傳輸 RAM 隔離各自投影；ARM64 使用不同 ASID 與非全域位址轉換。每次原生執行前複製程式碼及已宣告的運算元，只有已宣告的輸出位元組進入共用 RAM 交易。觀察者讀取權威 RAM。KVM 與 checked Unicorn 直接使用共用後備記憶體。HVF 與 Unicorn 的 `Software` 契約不宣告此能力。
+
+`MMIOAtomics`（`mmio_atomics`）要求裝置明確提供 `GuestMMIOCallbacks::PrepareAtomic`。checked supervisor x64 支援已接納的交換、比較交換、整數更新與修改型位元操作；ARM64 支援包含 `CASP` 的 LSE。運算元須自然對齊，寬度限 1/2/4/8/16 位元組。x64 在私有暫存頁執行原指令，保留精確暫存器與 FLAGS；ARM64 重用統一 LSE 語義。準備階段無裝置副作用，提交驗證生命週期與版本且只生效一次。提交前停止或失敗保留 CPU/裝置狀態，成功提交優先於同時抵達的停止。禁止退化為普通 Read+Write。核心暫存器庫仍使用宣告的 1/2/4 位元組寬度，並拒絕同值寫入、電源變化或擁有者銷毀後的舊預覽。ARM64 普通裝置存取、裝置獨占監視器、使用者態 MMIO 與任意真實硬體不在此能力內。
 
 ## 嚴格提升契約
 
@@ -971,7 +983,7 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 
 ## 分階段提交 RAM 效果
 
-`RAMTransaction` 在物理執行租約內，只保存一條指令明確宣告之寫入範圍的物理聯集。結果觀察器執行前恢復原始 RAM；取消、後端傳輸錯誤和觀察器例外不會發布部分 RAM 或暫存器。對於 RAM 效果具有原子性的指令，CPU 例外在 RAM 回復後保留架構例外狀態。ARM64 的單次與成對寫入共用此記憶體權威層。x64 支援 8/16/32/64 位元 `XCHG`、`XADD`、`CMPXCHG`，LOCK 或隱式鎖定形式要求自然對齊。`NeverDRAMTransactionTests` 將結果與獨立宿主 CPU 對照，並驗證回復、別名和權限；不可用的平台明確跳過。裝置交易與平行 SMP 仍不在此契約內；CPU 快照不會撤銷已提交的 RAM。
+`RAMTransaction` 在物理執行租約內，只保存一條指令明確宣告之寫入範圍的物理聯集。結果觀察器執行前恢復原始 RAM；取消、後端傳輸錯誤和觀察器例外不會發布部分 RAM 或暫存器。對於 RAM 效果具有原子性的指令，CPU 例外在 RAM 回復後保留架構例外狀態。ARM64 的單次與成對寫入共用此記憶體權威層。x64 支援 8/16/32/64 位元 `XCHG`、`XADD`、`CMPXCHG`，LOCK 或隱式鎖定形式要求自然對齊。`NeverDRAMTransactionTests` 將結果與獨立宿主 CPU 對照，並驗證回復、別名和權限；不可用的平台明確跳過。裝置原子交易使用獨立提供者；CPU 快照不會撤銷已提交的 RAM。
 
 `CMPXCHG8B` 與 `CMPXCHG16B` 在 KVM、WHP 和 checked Unicorn 的驅動及使用者模式中執行原始指令。比較成功或失敗都需要讀寫權限，故障按寫入存取分類。`CMPXCHG16B` 在存取記憶體前檢查 16 位元組對齊，不滿足時回報 `#GP(0)`。兩次結果觀察屬於同一 RAM 交易；任一次停止或擲出例外，都不會發布暫存器或記憶體變更。未加鎖的 `CMPXCHG8B` 可以跨頁，加鎖操作仍要求自然對齊。`X64WideAtomicTests.cpp` 對照主機原始執行結果和直接原生故障，並檢查別名、前綴、定址、修復重試及取消。原創 Windows 驅動及 ring3 PE 範例涵蓋兩種寬度，WDK 範例也執行 `_InterlockedCompareExchange128`。CPU 模型必須支援 `CMPXCHG16B`。
 
@@ -1270,3 +1282,9 @@ CoreImage 的強 SDK 宣告保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 手工切點方案可在每側使用暫存器、相對入口根的框架或原生 SystemFlags 遮罩等值條件的合取。共用檢查器驗證格式、雙執行控制一致性、可達條件互斥及範本起始選擇條件；未匹配狀態繼續正常執行，未知結果拒絕證明。選擇條件計入現有預算，並綁定證明語意綱要 17；原生未稽核邊界檢查仍先執行。唯一位址自方案配對保留兩側選擇條件並計費；重複位址配對仍不支援。
 
 共用 Darwin 矩陣效果層也認證 `CGAffineTransformMakeScale` 為完整的 48 位元組間接結果產生者。兩個 double 參數維持獨立的浮點暫存器載體；目前 CoreGraphics 強匯入、提供者、所需程式庫與完整 SDK ABI 必須一致。私有堆疊框架證明獨立檢查整個結果範圍、初始化與狀態保留。此呼叫效果不授予原生入口回傳投影，也不允許使用任意傳入的 `x8` 緩衝區。
+
+共用框架分析可以將未改變的 ARM64 入口 x8 位址傳給已認證的間接結果產生函式，前提是目前入口 ABI 將它宣告為一般八位元組純量參數，且八個位元組都保留入口身分。這允許使用明確輸出位址的內部 void 投影；實際讀取與結果寫入仍由呼叫降低保留。它不授予邏輯入口記錄回傳、私有框架初始化或緩衝區內容假設。
+
+呼叫端完整的四 double HFA 回傳，可以在直接呼叫後 d0–d3 未被改變並到達回傳時，提出 32 位元組原生結果候選。共用回傳路徑證明隨後要求被呼叫函式在每條回傳路徑計算全部四個低位通道。僅有入口值或未知 Q 暫存器高位不能作為結果證據；仍須重新提升、驗證目前 ABI、發布主體並閉合相依性。
+
+Darwin 仿射橋接的權威實作也支援 `CGAffineTransformInvert`：x0 承載完整 48 位元組實體輸入，x8 承載結果儲存位址。目前強 CoreGraphics 匯入、提供者、必要函式庫與 SDK 宣告必須一致。共用框架效果層要求輸入全部初始化，並驗證完整結果範圍；HighC 在呼叫前建立輸入快照，保留六個結果寫入。

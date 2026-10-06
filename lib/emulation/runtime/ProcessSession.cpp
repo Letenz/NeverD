@@ -6,6 +6,9 @@
 #include "neverd/emulation/ProcessSession.h"
 
 #include "../core/ExecutionDiagnostics.h"
+#include "../os/darwin/kernel/DarwinFiles.h"
+#include "../os/darwin/kernel/DarwinSystem.h"
+#include "../os/darwin/kernel/DarwinTime.h"
 #include "../os/darwin/process/DarwinProcess.h"
 #include "../os/linux/android/AndroidInternal.h"
 #include "../os/linux/kernel/LinuxSignals.h"
@@ -52,6 +55,30 @@ llvm::Expected<ProcessResult> emulateProcess(const std::filesystem::path &Path,
                                              const ProcessOptions &Options) {
   if (Options.Windows && Profile != ProcessProfile::WindowsPE64)
     return diagnostic::error(process_report::WindowsProfile);
+  if (Options.DarwinSystem) {
+    if (Profile != ProcessProfile::MacOSMachO64 &&
+        Profile != ProcessProfile::IOSMachO64 &&
+        Profile != ProcessProfile::IOSSimulatorMachO64)
+      return diagnostic::error(process_report::DarwinSystemProfile);
+    if (auto E = darwin_model::validateSystemOptions(*Options.DarwinSystem))
+      return std::move(E);
+  }
+  if (Options.DarwinTime) {
+    if (Profile != ProcessProfile::MacOSMachO64 &&
+        Profile != ProcessProfile::IOSMachO64 &&
+        Profile != ProcessProfile::IOSSimulatorMachO64)
+      return diagnostic::error(process_report::DarwinTimeProfile);
+    if (auto E = darwin_model::validateTimeOptions(*Options.DarwinTime))
+      return std::move(E);
+  }
+  if (Options.DarwinFiles) {
+    if (Profile != ProcessProfile::MacOSMachO64 &&
+        Profile != ProcessProfile::IOSMachO64 &&
+        Profile != ProcessProfile::IOSSimulatorMachO64)
+      return diagnostic::error(process_report::DarwinFilesProfile);
+    if (auto E = darwin_model::validateFileOptions(*Options.DarwinFiles))
+      return std::move(E);
+  }
   if (Options.LinuxSignals) {
     if (Profile != ProcessProfile::LinuxELF64 &&
         Profile != ProcessProfile::AndroidNativeAArch64)

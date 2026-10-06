@@ -803,15 +803,48 @@ public:
           }
         }
         if (Found->second.InitializesIndirectResult) {
-          const auto Address = FrameOffset(
-              NdVar::reg(Signature.ReturnLocation.RegisterOffset, 8));
+          const auto ResultRegister = Signature.ReturnLocation.RegisterOffset;
+          const auto Address = FrameOffset(NdVar::reg(ResultRegister, 8));
           const size_t Bytes = Signature.ReturnType->Size;
-          if (Tail || !Address || *Address % 8 || *Address < *SP ||
-              *Address > -static_cast<int64_t>(Bytes))
-            return false;
-          InitializedResult = {*Address, Bytes};
-          WritableFrameRanges.emplace_back(*Address, Bytes);
-          BorrowedRanges.emplace_back(*Address, Bytes);
+          if (Address) {
+            if (Tail || *Address % 8 || *Address < *SP ||
+                *Address > -static_cast<int64_t>(Bytes))
+              return false;
+            InitializedResult = {*Address, Bytes};
+            WritableFrameRanges.emplace_back(*Address, Bytes);
+            BorrowedRanges.emplace_back(*Address, Bytes);
+          } else {
+            // An internal source projection can expose the unchanged incoming
+            // result address as an explicit scalar parameter. Authenticate all
+            // eight entry bytes, rather than treating an unknown x8 value or a
+            // return ABI as storage evidence. Real result writes remain in call
+            // lowering. This grants no private-frame initialization or entry
+            // record return and does not guess the external buffer's contents.
+            if (!EntrySignature ||
+                (RequirePrivateFrame && !ExternalMemoryDisjoint) ||
+                std::none_of(
+                    EntrySignature->Parameters.begin(),
+                    EntrySignature->Parameters.end(), [&](const auto &P) {
+                      return P.Type && P.Type->Size == 8 &&
+                             (P.Type->Kind == NdTypeKind::Ptr ||
+                              P.Type->Kind == NdTypeKind::Int) &&
+                             !P.IndirectByValue && P.Components.empty() &&
+                             P.TheRole ==
+                                 SourceParameterTypeHint::Role::Ordinary &&
+                             P.Location.Kind ==
+                                 SourceABICarrierKind::IntegerRegister &&
+                             P.Location.RegisterOffset == ResultRegister &&
+                             P.Location.ValueBytes == 8;
+                    }))
+              return false;
+            for (unsigned I = 0; I < 8; ++I)
+              if (lookup(Current.Registers, ResultRegister + I) !=
+                  ByteFact{ByteFact::Entry,
+                           static_cast<int64_t>(ResultRegister + I)})
+                return false;
+            if (UsedEntryRegisters)
+              UsedEntryRegisters->insert(ResultRegister);
+          }
         }
         // A source-level copy changes the address seen by the callee. Another
         // frame argument must not expose an alias of that disposable storage.

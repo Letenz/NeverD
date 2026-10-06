@@ -45,6 +45,12 @@ add_neverd_unittest(NeverDAArch64CacheTests
   NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationCPU EmulationRuntime)
 
+add_neverd_unittest(NeverDAArch64NZCVTests
+  AArch64NZCVTests.cpp
+  TIMEOUT 20
+  NO_PRETTY_VALUES
+  LINK_COMPONENTS EmulationCPU EmulationRuntime)
+
 add_neverd_unittest(NeverDAArch64MemoryTests
   AArch64CrossPageTests.cpp
   AArch64VectorMemoryTests.cpp
@@ -123,6 +129,18 @@ add_neverd_unittest(NeverDRAMTransactionTests
 target_include_directories(NeverDRAMTransactionTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
 
+add_neverd_unittest(NeverDParallelExecutionTests
+  ParallelExecutionTests.cpp
+  TIMEOUT 30
+  LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDParallelExecutionTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
+add_neverd_unittest(NeverDMMIOAtomicTests
+  MMIOAtomicTests.cpp TIMEOUT 60 LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDMMIOAtomicTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
 add_neverd_unittest(NeverDThreadPointerTests
   ThreadPointerTests.cpp
   TIMEOUT 15
@@ -187,6 +205,10 @@ add_neverd_unittest(NeverDDarwinProcessTests
   DarwinProcessTests.cpp
   DarwinImageTests.cpp
   DarwinMemoryTests.cpp
+  DarwinFileTests.cpp
+  DarwinVectorTests.cpp
+  DarwinTimeTests.cpp
+  DarwinSystemTests.cpp
   DarwinNativeTests.cpp
   TIMEOUT 30
   NO_PRETTY_VALUES
@@ -207,6 +229,8 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidSnapshotTests.cpp
   AndroidResidencyTests.cpp
   AndroidFileTests.cpp
+  AndroidFileStatusAtTests.cpp
+  AndroidFileSystemStatusTests.cpp
   AndroidSyscallTests.cpp
   AndroidFormattingTests.cpp
   AndroidScanningTests.cpp

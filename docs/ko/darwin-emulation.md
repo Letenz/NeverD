@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b3b4285b341fef4afed8cfe49f7fe8396536b9e63f924d14402ec7d0d3eb0b01 -->
+<!-- i18n-source: 2fb61c4299cd9e0d2292a80e45a5655cf97a5598165087d2d61c18176bd13248 -->
 
 [← 문서 목록](README.md)
 
@@ -37,17 +37,210 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 ## Darwin 서비스
 
-ARM64는 X16, X0–X5와 `svc #0x80`을 사용하고 x64는 BSD 클래스 `0x02000000`, RAX, RDI/RSI/RDX/R10/R8/R9를 사용합니다. 성공 시 carry를 지우고 오류 시 carry와 양수 errno를 반환합니다. ARM64는 X1을 지우고 x64는 성공 시 RDX를 지우며 오류 시 보존합니다. SYSCALL의 레지스터 변경은 명시적입니다. 보고서의 `result`와 `error=true`는 BSD 오류를 나타내며 반환하지 않거나 미지원인 요청에는 두 필드가 없습니다. XNU [ARM64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/arm/systemcalls.c)와 [x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/i386/systemcalls.c)의 규칙을 따르며 Apple 구현 코드를 포함하지 않습니다.
+BSD 호출에서 ARM64는 X16, X0–X5와 `svc #0x80`을 사용하고 x64는 BSD 클래스 `0x02000000`, RAX, RDI/RSI/RDX/R10/R8/R9를 사용합니다. 성공 시 carry를 지우고 오류 시 carry와 양수 errno를 반환합니다. ARM64는 X1을 지우고 x64는 성공 시 RDX를 지우며 오류 시 보존합니다. SYSCALL의 레지스터 변경은 명시적입니다. 보고서의 `result`와 `error=true`는 BSD 오류를 나타내며 반환하지 않거나 미지원인 요청에는 두 필드가 없습니다. XNU [ARM64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/arm/systemcalls.c)와 [x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/i386/systemcalls.c)의 규칙을 따르며 Apple 구현 코드를 포함하지 않습니다.
 
-지원 서비스는 `exit`, `write`, `getpid`, `getppid`, `getuid`, `geteuid`, `getgid`, `getegid`, `mmap`, `mprotect`, `munmap`입니다. PID/UID/GID는 1000, PPID는 1입니다. 설명자 1과 2는 NUL과 비 UTF8을 포함한 바이트를 캡처하고 나머지는 EBADF를 반환합니다. 부분 복사된 바이트는 유지하지만 이후 오류는 EFAULT로 남습니다. 길이가 `INT_MAX`를 넘으면 설명자, 포인터, 예산을 검사하기 전에 EINVAL을 반환합니다. 근거는 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c)입니다.
+지원 서비스는 `exit`, `write`, `getpid`, `getppid`, `getuid`, `geteuid`, `getgid`, `getegid`, `mmap`, `mprotect`, `munmap`입니다. PID/UID/GID는 1000, PPID는 1입니다. 설명자 1과 2는 NUL과 비 UTF8을 포함한 바이트를 캡처하고 닫혔거나 읽기 전용인 설명자는 EBADF를 반환합니다. 부분 복사된 바이트는 유지하지만 이후 오류는 EFAULT로 남습니다. 길이가 `INT_MAX`를 넘으면 설명자, 포인터, 예산을 검사하기 전에 EINVAL을 반환합니다. 근거는 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c)입니다.
 
-메모리 서비스는 `flags=0x1002`, 설명자 -1, 오프셋 0의 전용 익명 데이터 매핑을 지원합니다. 길이와 고정되지 않은 주소 힌트는 OS 페이지로 올림합니다. 점유된 힌트는 높은 주소부터 검색한 뒤 기본 배치로 돌아갑니다. 기존 raw mmap은 길이 0에서 할당 없이 0을 반환하며 `MAP_UNIX03`은 제외됩니다. Unmap/protect는 정렬된 주소를 요구합니다. NONE/READ/WRITE를 지원하고 WRITE는 READ를 포함합니다. 물리 메모리는 OS 페이지별로 소유하므로 부분 해제는 예산을 반환하고 새 페이지는 0으로 채워집니다. 빈 구간이나 최대 권한을 넘는 protect가 실패하면 전체 범위를 변경하지 않습니다. 출처: [XNU VM 서비스](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
+메모리 서비스는 `flags=0x1002`, 설명자 -1, 오프셋 0의 전용 익명 데이터 매핑을 지원합니다. 길이와 고정되지 않은 주소 힌트는 OS 페이지로 올림합니다. 점유된 힌트는 높은 주소부터 검색한 뒤 기본 배치로 돌아갑니다. 기존 raw mmap은 길이 0에서 할당 없이 0을 반환하며 `MAP_UNIX03`을 지원하며 길이 0은 EINVAL입니다. Unmap/protect는 정렬된 주소를 요구합니다. NONE/READ/WRITE를 지원하고 WRITE는 READ를 포함합니다. 물리 메모리는 OS 페이지별로 소유하므로 부분 해제는 예산을 반환하고 새 페이지는 0으로 채워집니다. 빈 구간이나 최대 권한을 넘는 protect가 실패하면 전체 범위를 변경하지 않습니다. 출처: [XNU VM 서비스](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
 
-파일/공유/고정/JIT 매핑, 실행 가능한 익명 메모리, Mach trap, 간접 syscall, 스레드, 신호, 파일/네트워크, dyld, Objective-C/Swift runtime, Foundation/UIKit은 지원하지 않으며 명시적으로 중지합니다. 전체 Apple OS나 iOS Simulator 애플리케이션이 아닙니다.
+공유/고정/JIT 매핑, 실행 가능한 익명 메모리, 기타 Mach trap, 간접 syscall, 스레드, 신호, 호스트 파일/네트워크, dyld, Objective-C/Swift runtime, Foundation/UIKit은 지원하지 않으며 명시적으로 중지합니다. 전체 Apple OS나 iOS Simulator 애플리케이션이 아닙니다.
 
 ## 검증
 
 직접 작성한 C 테스트 입력을 Clang과 `ld64.lld`로 만들며 Apple SDK나 독점 바이너리가 필요하지 않습니다. 플랫폼/ISA 다섯 조합, 잘못된 Mach-O 레코드, 4/16 KiB 페이지, 예산이 가득 찬 상태의 부분 해제를 검사합니다. `NeverDProcessPublicTests`가 C API/CLI를 비교하며 `NEVERD_TEST_LIBNEVERD`와 `NEVERD_TEST_DARWIN_FIXTURES`는 Python SDK의 동일한 다섯 조합을 활성화합니다.
+
+## 명시적 파일 입력과 설명자
+
+`darwin_files`는 세 프로필에 기본적으로 읽기 전용인 닫힌 파일 목록을 제공합니다. 필수 `files` 항목에는 정규 절대 게스트 `path`와 16진수 `bytes_hex`가 있으며 선택적 `stdin_hex`는 유한 입력입니다. 입력 생략은 알 수 없는 상태로 비영 읽기를 중지하며 빈 문자열은 EOF입니다. 목록 생략 시 open을 중지하고 명시적 빈 목록의 없는 절대 경로는 ENOENT를 반환합니다. 호스트 파일이나 입력을 사용하지 않습니다.
+
+`open`, `read`, `pread`, `lseek`, `close`, `dup`, `dup2`, `fcntl`을 추가합니다. read/write/open/close/fcntl/pread의 nocancel도 같은 구현을 사용합니다. O_RDONLY/O_CLOEXEC와 F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL을 지원합니다. 개별 open은 독립 위치를, dup은 공유 위치와 독립 close-on-exec 플래그를 가지며 pread는 위치를 바꾸지 않습니다. 0/1/2의 닫기와 교체는 이후 I/O에 적용되고 복제 출력은 원래 캡처 대상과 예산을 유지합니다.
+
+최대 256개 파일, 경로/NUL/파일/입력 합계 16 MiB, 1024바이트 미만 경로와 255바이트 이하 구성 요소를 허용합니다. 배타적 상한 `descriptor_limit`은 3–4096, 기본 256이며 JSON은 64 KiB입니다. 잘못된 설정은 로드 전에 거부합니다. INT_MAX 초과 읽기는 FD 조회 전에 EINVAL이며 EOF는 목적지에 접근하지 않고 잘못된 목적지는 EFAULT입니다. 일부만 쓰기 가능한 버퍼는 복사와 위치 변경 전에 중지합니다. SET/CUR/END 실패는 위치를 보존합니다. 구형 stat와 기타 fcntl은 미지원입니다. 파일을 경로 조상으로 쓰면 ENOTDIR입니다. 같은 오브젝트를 네이티브 macOS와 비교하고 C/CLI/Python으로 다섯 게스트 조합을 검사하며 iOS 실기기 검증은 아닙니다.
+
+2026-10-05 Release 검증은 381개 중 177개 통과, 204개 건너뜀, 실패 0이며 ARM64 HVF 필수 51/51을 실행했습니다. 네이티브 macOS 7개 프로그램, 공개 C/CLI 및 보고서 35개, Python 다섯 게스트 조합과 검증 스크립트 66개도 통과했습니다. 집계는 겹칩니다. 새 파일 서비스의 Intel HVF/KVM/WHP 네이티브 증거는 없으며 Intel HVF는 미검증 상태로 Actions가 중지되어 있습니다. iOS SDK와 실기기 대조도 없습니다.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"stdin_hex":"00ff78","descriptor_limit":32}}
+```
+
+## 기존 파일 내용 변경
+
+엄격한 불리언 `"writable":true` 또는 C++ `DarwinFileOptions::WritableFiles`로 프로세스 내 변경을 명시합니다. 생략/false는 읽기 전용이며 알 수 없는 권한은 중지합니다. 호스트나 입력 옵션을 바꾸지 않습니다. write(4/397), pwrite(154/415), truncate(200), ftruncate(201), O_TRUNC는 내용 노드를 공유합니다. 별도 open의 위치는 독립적이고 dup은 위치와 상태를 공유하며 마지막 close 뒤에도 내용이 남습니다. 확장은 0으로 채우고 절단은 위치를 보존하며 O_RDONLY|O_TRUNC도 절단합니다.
+
+F_SETFL은 O_APPEND만 바꾸고 접근 모드, close-on-exec, FWASWRITTEN을 보존합니다. 실제 비영 바이트 전송 뒤 F_GETFL에 0x10000이 나타나며 pwrite와 출력 캡처도 포함합니다. pwrite는 append를 무시하고 위치를 유지합니다. INT_MAX 길이 검사는 FD보다 앞서고 pwrite의 -1은 더 먼저 EINVAL입니다. INT64_MAX는 길이 0보다 먼저 EFBIG이며 길이를 제한한 뒤 EOF를 선택합니다.
+
+성공한 ftruncate는 크기가 같아도 호출 open 설명과 dup에 FWASWRITTEN을 설정합니다. O_TRUNC는 O_RDONLY를 포함해 새 설명에 설정하며 경로 truncate는 기존 설명의 플래그를 바꾸지 않습니다.
+
+일부만 읽을 수 있는 입력은 효과 전에 중지합니다. 전체 EFAULT는 바이트를 보존하지만 비어 있지 않은 append는 위치를 EOF로 옮깁니다. 전송 실패는 내용/위치를 확정하지 않습니다. `mutation_policy`가 없으면 비영 쓰기, 절단, 비영 전체 EFAULT는 완전한 stat 관측을 무효화해 후속 stat을 출력 전에 중지하며 0 쓰기는 유지합니다. 16 MiB는 경로/NUL, 입력, 디렉터리 레코드, CWD, 현재 내용 및 쓰기 경로 참조의 합계 논리 예산입니다. 축소 시 backing을 교체해 용량을 회수하고 초기 입력과 제한된 교체 버퍼는 별도입니다. 알려진 inode 별칭 및 immutable/append-only 플래그는 거부합니다.
+
+DarwinMemory의 모든 매핑 구간을 unmap하기 전에는 변경을 거부하며 PROT_NONE과 닫힌 FD도 포함합니다. 실패/구형 0 길이 매핑은 임대를 남기지 않습니다. 새 매핑은 현재 바이트를 봅니다. O_WRONLY의 READ/WRITE mmap은 EACCES, PROT_NONE은 성공하고 mprotect로 읽기/쓰기를 부여할 수 있습니다.
+
+원본 일반/nocancel 프로그램의 네이티브 비교, 4K/16K 단위 테스트, C/CLI/Python의 다섯 구성을 검사합니다. 권한 강제 검사/디렉터리 삭제/부모 간 이름 변경/하드링크, 실제 파일 시스템 메타데이터 갱신, 매핑 일관성, EOF SIGBUS와 완전한 환경은 아직 미완성입니다. iOS 실기기와 Intel HVF 증거는 없고 Intel Actions는 중지 상태입니다.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
+```
+
+[XNU write](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU vnode](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU mmap](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c).
+
+## 명시적 가변 메타데이터
+
+파일의 `writable: true` 및 완전한 metadata 옆에 mutation_policy를 지정할 수 있습니다. C++은 `DarwinFileOptions::MutationPolicies`를 사용합니다. 명시적 가상 희소 할당 계약이며 APFS를 추측하거나 호스트 시계를 읽지 않습니다. 생략 시 변경 후 메타데이터는 계속 알 수 없습니다.
+
+allocation_unit, mutation_time 및 seconds/nanoseconds는 필수이며 기존 무손실 정수 규칙을 따릅니다. 단위는512바이트~16 MiB의2의 거듭제곱이며 block_size/VM 페이지와 독립적입니다. 일반 권한(set-id/sticky 없음), flags=0, link_count=1 및 초기 밀집 할당 blocks=ceil(size/allocation_unit)*(allocation_unit/512)가 필요합니다. 0 바이트로 구멍을 추론하지 않습니다. 정책 경로 참조도16 MiB 논리 예산에 포함하며 할당 장부로 ENOSPC를 추론하지 않습니다.
+
+쓰기는 닿은 모든 단위를 할당하며 구멍에 0을 써도 할당합니다. truncate 확장은 0만 추가하고 축소는 올림 EOF 밖의 단위를 버리며 마지막 부분 단위는 유지합니다. 재확장은 버린 할당을 복원하지 않습니다. 비영 성공 쓰기와 모든 성공 truncate(같은 크기/빈 O_TRUNC 포함)는 size/blocks와 고정 mtime/ctime을 갱신합니다. 다른 필드와 초기 입력은 그대로이며 읽기는 atime을 진행하지 않습니다. 경로 stat, 별도 open, dup, 재열기는 노드를 공유합니다.
+
+0 쓰기, 예산/매핑 거부, 부분 입력 거부, 백엔드 실패는 알려진 상태를 보존합니다. 비영 전체 EFAULT 뒤에는 메타데이터를 알 수 없으며 이후 성공으로 복원하지 않습니다. stat 출력 실패는 노드를 바꾸지 않습니다. virtual-file-metadata는 다섯 구성 및 C/CLI/Python으로144바이트를 검사합니다. 할당 검사는 정책 테스트이며 APFS 동등성 증거가 아닙니다. 네이티브는 플래그/위치/오류 순서를 별도로 검증합니다. 네임스페이스, 실제 FS 일관성, Mach, 동적 런타임은 미완성입니다.
+
+```json
+{"mutation_policy":{"allocation_unit":4096,"mutation_time":{"seconds":-7,"nanoseconds":123456789}}}
+```
+
+
+
+## 희소 파일 위치 지정
+
+일반 파일에 mutation_policy가 있고 할당 상태가 알려져 있으면 lseek가 SEEK_HOLE=3, SEEK_DATA=4를 지원하며 stat과 같은 장부를 읽습니다. 첫 변경 전에는 0 값까지 밀집 할당입니다. 원하는 종류의 단위 안에서는 입력 위치, 아니면 다음 일치 단위의 시작을 반환하며 끝 구멍은 EOF입니다. 음수는 EINVAL, EOF 이상(빈 파일 포함) 또는 뒤 데이터 없음은 ENXIO=6입니다. 실패는 커서를 유지하고 성공은 해당 open 설명과 dup만 바꿉니다. 별도 open은 독립적이며 재열기는 현재 할당을 봅니다. 메타데이터/플래그/바이트는 그대로이고 whence 상위 비트는 무시합니다.
+
+정책 없음, 디렉터리, 전체 EFAULT 뒤 알 수 없는 할당은 거부합니다. 0 값이나 거부된 변경으로 할당을 추론하지 않습니다. 자체 sparse-file-seek는 네이티브/게스트의 오류, 쓴 바이트, EOF와 설명 수명을 확인하며 앞선 FS별 구간 위치를 가정하지 않습니다. virtual-file-metadata는 정확한 정책 배치를 별도로 검사하고 C/CLI/Python은 다섯 구성을 검사합니다.
+
+[XNU lseek](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
+## 일반 파일 이름 삭제
+
+디렉터리 `mutable:true`(C++ `MutableDirectories`)는 바로 아래 이름 변경 권한이며 내용의 `writable`과 별개입니다. 권한이 없으면 미지원으로 중지합니다. 알려진 비영 flags, 부모 특수 권한, 자식 link_count≠1, 부모/자식의 알려진 별칭을 거부합니다. stat/스냅샷 inode를 함께 확인하고 명시적으로 다른 장치는 구별하며 경로 비용을 예산에 포함합니다.
+
+`unlink(10)` / `unlinkat(472)`는 기존 일반 이름을 제거합니다. 일반 파일 제거의 하위32비트는 0 또는 `0x800`만 지원합니다. 알 수 없는 비트는 경로/FD보다 먼저 EINVAL; AT_REMOVEDIR는 아래 제한된 제거를 사용하고 DATALESS와 SYSTEM_DISCARDED는 미지원입니다. 공통 경로 해석으로 ENOENT, 파일 뒤 슬래시 ENOTDIR, 일반 디렉터리 EPERM, 슬래시만 있는 루트 EISDIR, `.`/`..`로 끝나는 루트 EBUSY를 보존하며 네이티브로 마지막 `.`/`..`도 검사했습니다.
+
+기존 FD/dup/독립 open은 데이터·커서·플래그를 유지하고 F_GETPATH는 이전 경로를 반환합니다. 새 open은 실패하되 암시적 부모와 CWD는 남습니다. 쓰기 권한은 객체에 속하며 마지막 설명자와 매핑 범위가 해제된 뒤 close/dup2/다음 변경에서 현재 바이트 예산을 회수합니다. 초기 경로 비용은 유지하며 권한 강제 검사·부모 간 이름 변경·하드링크·초기 디렉터리 제거는 남아 있습니다.
+
+부모 stat/readdir/SEEK_END는 구·신 FD 및 경로 모두에서 무효화되어 복사/커서 변경 전에 중지합니다. read/pread의 EISDIR와 SET/CUR/F_GETPATH/fchdir/상대 조회는 유지됩니다. 알려진 변경 정책은 nlink=0 및 고정 ctime만 적용하며 후속 쓰기도 nlink=1을 복구하지 않습니다. 정책 없음/EFAULT 뒤 메타데이터는 미상입니다. 실패는 상태를 보존하고 원본 `unlinked-file`은 네이티브 이름/FD 동작을 비교합니다. 정책 시간과 부모 무효화는 명시적 모델 규칙입니다.
+
+```json
+{"darwin_files":{"files":[{"path":"/work/data","bytes_hex":"00"}],"directories":[{"path":"/work","mutable":true}]}}
+```
+
+[XNU unlink / unlinkat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [F_GETPATH](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+## 일반 파일 생성
+
+O_CREAT=0x200은 명시적 mutable 부모 바로 아래 빈 파일을 만듭니다. 일반/nocancel open·openat이 공유합니다. 새 객체는 쓰기 가능하고 기존 객체는 WritableFiles를 유지합니다. 읽기 전용 FD도 생성할 수 있으나 쓸 수 없습니다. 생성 정책이 없으면 stat64와 희소 탐색은 미상입니다. 새 객체는 같은 이름의 옛 metadata/mutation_policy를 상속하지 않습니다.
+
+O_CREAT과 O_EXCL=0x800의 조합은 기존 파일/디렉터리에 자르기 전 EEXIST를 반환하며 O_EXCL만으로는 효과가 없습니다. 기존 디렉터리의 읽기 전용 O_CREAT은 성공합니다. 잘못된 접근 모드→FD 여유→O_CREAT|O_DIRECTORY의 EINVAL→경로 순서입니다. 원래 경로의 마지막 누락 요소만 생성하고 누락 조상 및 끝 `/`, `//`, `/.`, `/..`는 ENOENT입니다. 새 O_CREAT|O_TRUNC는 FWASWRITTEN을 설정하지 않지만 기존 파일 자르기는 설정합니다.
+
+실제 삽입만 부모 관측을 무효화하며 같은 이름의 새/옛 데이터·FD·메타데이터·매핑 수명은 독립적입니다. 256개 제한에는 초기 비파일 항목과 살아 있는 파일 객체가 포함됩니다. 새 정규 경로/NUL과 현재 바이트는 16 MiB에 포함하고 삭제 후 마지막 FD/매핑 해제 때 동적 비용을 회수합니다. 초기 비용은 유지합니다. 예산 또는 1024바이트 정규 경로 한계는 명시적으로 중단하며 ENOSPC나 네이티브 경로 오류를 만들지 않습니다. 실패는 이름/FD를 남기지 않습니다. created-file 네이티브/다섯 프로필, 4K/16K 경계 테스트가 계약을 검사합니다. 권한 강제 검사·부모 간 이름 변경·링크·디렉터리 변경은 남아 있습니다.
+
+[XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+## 명시적 생성 메타데이터와 프로세스 umask
+
+선택적 `darwin_files.umask`(C++ `InitialUmask`)는 초기 마스크를 8진수 0..07777로 지정하며 생성 권한과 독립적입니다. `umask(60)`은 이전 마스크를 반환하고 입력의 하위 07777 비트를 저장합니다. 게스트 메모리나 빈 FD가 필요하지 않습니다. 생략은 미상이며 호스트 값이나 기본값을 추측하지 않습니다. 한 번만 초기화하고 이후 생성에만 영향을 주며 호출자 입력은 바꾸지 않습니다. 아래 10진수 18은 8진수 0022입니다.
+
+선택적 `darwin_files.creation_policy`(C++ `CreationPolicy`)는 새 객체에 완전한 메타데이터를 제공합니다. 엄격한 객체는 `first_inode`, `block_size`, `generation`, `creation_time`, `mutation_policy` 다섯 필드만 포함하며 시간과 변경 정책은 기존 형식을 사용합니다. 명시적 umask, 하나 이상의 mutable 부모와 모든 해당 부모의 완전한 metadata가 필요합니다. block_size는 1..INT32_MAX, generation은 uint32입니다. 할당 단위는 512..16 MiB 범위의 2의 거듭제곱이며 블록 크기/VM 페이지와 독립적이고 나노초는 [0,1000000000)입니다. first_inode는 0이 아닌 uint64로 다른 장치를 포함한 모든 stat/스냅샷 inode보다 커야 합니다. JSON의 정확한 정수 범위를 넘으면 10진수 문자열을 사용합니다.
+
+성공한 새 삽입만 전역 inode 순서를 진행합니다. UINT64_MAX 사용 후 영구 소진되며 close/unlink/이름 재사용/umask/이후 조회로 초기화되지 않습니다. 배타·FD·경로·항목·바이트 예산 실패는 이름/FD/번호 증가를 남기지 않고 기존 O_CREAT도 번호를 쓰지 않습니다. 새 stat64는 직계 부모 device/GID, 고정 게스트 유효 UID 1000, mode `S_IFREG | (mode & 0777 & ~umask)`, nlink=1, size/blocks/flags=0을 사용합니다. 블록 크기, generation, 네 초기 고정 시간은 정책에서 얻습니다. 부모 전체 stat/열거가 무효화되어도 불변 device/GID를 쓸 수 있지만 전체 기록은 복원하지 않습니다.
+
+새 노드는 자체 메타데이터/할당 상태를 가지며 옛 동명 객체를 상속하지 않습니다. write/truncate/unlink는 변경 정책을 공유하고 inode/mode/birthtime과 삭제 후 nlink=0을 보존합니다. 전체 EFAULT 후 영구 미상 상태는 유지하며 기존 노드에 소급 적용하지 않습니다. `created-file-metadata`는 다섯 구성에서 네이티브 권한, 이전 마스크, 유효 UID, 부모 장치/그룹과 수명을 비교하고 `virtual-created-metadata`는 144바이트 전체 기록을 별도로 비교합니다. 네이티브의 네 시간은 같지 않을 수 있습니다. 고정 시간/희소 할당은 가상 규칙이며 권한 강제 검사, 자격 증명 전환, ACL, 네이티브 APFS 동작은 아직 지원하지 않습니다.
+
+```json
+{"darwin_files":{"files":[],"umask":18}}
+```
+
+[XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c). [XNU rename / renameat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
+## 같은 부모 안의 일반 파일 이름 변경
+
+`rename(128)`, `renameat(465)`, `renameatx_np(488)`는 명시적으로 변경 가능한 같은 직접 부모 안에서 일반 파일을 이동하거나 덮어씁니다. 같은 이름의 무동작도 권한이 필요하며 승인되면 관측을 보존합니다. 하위 32비트 flags는 0 또는 `RENAME_NOFOLLOW_ANY=0x10`입니다. 알 수 없는 비트와 EXCL+SWAP은 경로 읽기 전에 EINVAL, 나머지 알려진 플래그는 미지원입니다. 공유 해석기는 원본 우선 오류, FD, 원래 슬래시와 점 검사를 보존합니다. 디렉터리 원본은 즉시 미지원으로 중단합니다. 일반 파일 대상의 마지막 점/두 점은 해석 성공 후 마운트·권한 검사 전에 EINVAL이며 중첩/다른 부모도 포함합니다. 없거나 디렉터리가 아닌 조상의 오류가 우선합니다. 승인된 부모의 일반 디렉터리 대상은 EISDIR입니다.
+
+독립 open, dup, 기존 FD의 `F_GETPATH`는 원본의 새 이름을 따릅니다. 덮어쓴 객체는 마지막 경로, 데이터, 커서, 플래그와 매핑 수명을 유지하며 쓰기 권한이나 메타데이터를 원본에 넘기지 않습니다. 알려진 정책은 각 ctime과 대상 nlink=0만 갱신하며 식별자·소유권·생성 시간·할당을 보존합니다. 정책 부재/전체 EFAULT 뒤에는 완전한 메타데이터가 계속 미상입니다. 실제 변경만 부모 stat/열거를 무효화합니다.
+
+새 inode·항목·빈 FD가 필요 없습니다. 새 경로/NUL이 동적 경로 비용을 대체하고 초기 비용은 남습니다. 옛 FD/매핑이 없는 대상만 용량에 기여하며 한 번만 회수합니다. 부분 unmap은 전체 객체 비용을 유지합니다. 1024바이트 경로 또는 16 MiB 초과는 변경 전에 중단합니다. 부모 간 이동, 알려진 장치 충돌, 디렉터리 이동, swap/exclusive/seclude, 권한 강제 검사는 미지원입니다. 같은 stat 장치는 같은 마운트를 증명하지 않으므로 EXDEV를 추측하지 않습니다. `renamed-file`은 네이티브/게스트 식별·경로·덮어쓰기·매핑을 비교하며 시간과 예산은 가상 정책입니다.
+
+
+## 디렉터리와 상대 경로
+
+선택적 `directories`는 정규 절대 `path`와 선택적 전체 `metadata`로 빈 디렉터리를 지정합니다. 루트와 조상은 암시적이며 메타데이터가 없는 경로를 만들지는 않습니다. mode는 `0x4000`과 권한, size는 [0, INT64_MAX]의 명시적 관측입니다. `working_directory`는 기존 정규 디렉터리여야 하며 생략한 CWD는 미지정입니다. 호스트에서 상속하지 않습니다. 지정 경로는 조상 메타데이터를 포함해 최대 256개, 경로/NUL/내용/입력/CWD 합계는 16 MiB입니다.
+
+`openat` (463), `openat_nocancel` (464), `chdir` (12), `fchdir` (13), `fstatat64` (470)는 해석기를 공유합니다. 상대 경로는 디렉터리 FD 또는 `AT_FDCWD=-2`를 사용하고 절대 경로는 FD를 무시합니다. 반복 슬래시, `.`, `..`, 끝 슬래시도 조상을 검사하여 `/file/..`는 ENOTDIR, `/missing/..`는 ENOENT입니다. 실패나 원래 FD의 닫기·재사용·교체는 CWD를 바꾸지 않습니다. `F_GETPATH=50`은 복제 FD에도 정규 경로와 NUL을 복사하며 이후 바이트는 보존합니다.
+
+디렉터리 read/pread는 길이 0에도 EISDIR이며 음수 pread 오프셋은 EINVAL이 우선합니다. SET/CUR은 커서를 공유하고 END는 명시 size가 필요하며 mmap은 EINVAL입니다. fstatat64는 0, `AT_SYMLINK_NOFOLLOW=0x20`, `AT_SYMLINK_NOFOLLOW_ANY=0x800`, `AT_FDONLY=0x400`(경로 무시)을 지원합니다. 잘못된 비트는 EINVAL, `AT_REALDEV=0x200`은 미지원입니다. 스트림 정체성은 미지정이며 권한은 접근 제어 모델이 아닙니다. 디렉터리 생성과 제한된 삭제는 아래 명시 허가를 사용합니다. 같은 `directories`를 네이티브와 다섯 게스트로 비교하고 stat은 실제 파일과 디렉터리를 비교합니다. Intel HVF Actions는 중지 상태입니다.
+
+[XNU VFS](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h).
+
+디렉터리 검증(2026-10-05, Release): 등록 467건, 통과 227, 건너뜀 240, 실패 0이며 ARM64 HVF 필수 60/60건을 실행했습니다. 네이티브 macOS 프로그램 10개, 공개 C/CLI/보고서 37건(건너뜀 없음), Python 다섯 게스트, 검증 스크립트 66건이 통과했습니다. 집계는 중복됩니다. 증거: `build-hvf-arm64/darwin-directory-verified-evidence/`. 다른 네이티브 백엔드와 iOS 실기기는 미검증입니다.
+
+```json
+{"darwin_files":{"files":[{"path":"/work/data","bytes_hex":"3031"}],"directories":[{"path":"/work/empty"}],"working_directory":"/work"}}
+```
+
+## 명시적 디렉터리 스냅샷
+
+`getdirentries64` (344)는 기존 `directories` 항목의 선택적 불변 `contents`를 열거합니다. C++에서는 `DarwinFileOptions::DirectoryContents`를 사용합니다. `entries`는 `.`과 `..`, 모든 직접 자식을 명시한 순서대로 포함해야 합니다. 빈 디렉터리도 스냅샷이 없으면 미지정입니다. 경로나 stat 정보를 생성하거나 호스트를 조회하지 않습니다.
+
+각 항목은 `name`, 0이 아닌 `inode`, `type`(0 미지정, 4 디렉터리, 8 일반 파일), `next_offset`, `seek_offset`이 필수입니다. 타입은 경로와, 같은 경로의 inode는 다른 스냅샷·메타데이터와 일치해야 합니다. `next_offset`은 디렉터리 내 유일한 0 초과 INT64_MAX 이하 값이며 증가할 필요는 없습니다. 0은 되감기입니다. 별도 관측값 `seek_offset`은 부호 없는 64비트 d_seekoff이며 중복 0도 허용합니다. 정수는 stat과 같은 무손실 십진 문자열 규칙을 사용합니다.
+
+필수 `contents.minimum_buffer_size`는 EOF를 포함한 페이로드 최소값 1–128 MiB입니다. 항목별 선택적 `minimum_buffer_size`(기본 0)는 해당 위치에서 시작할 때 추가 제한입니다. 예제는 APFS 시작 점 항목 쌍에 64바이트, EOF에 1바이트가 필요한 관측을 담습니다. 다른 위치도 완전한 기록 하나가 필요합니다. LP64 기록은 8바이트 정렬이며 길이는 `roundUp(25 + nameBytes, 8)`입니다. 전체 4096항목 한도, 기록 바이트도 16 MiB 예산에 포함됩니다. 메타데이터/스냅샷만 명시한 조상 경로는 중복 없이 256경로 한도에 포함되며 JSON은 64 KiB입니다.
+
+독립 open은 별도 커서, dup는 공유 커서를 사용합니다. 0 또는 제공한 값에서만 재개하며 알 수 없는 위치는 중단합니다. 들어가는 완전한 기록의 최대 접두부를 반환합니다. 길이 >=1024이면 원래 요청 끝 4바이트에 EOF(끝이면 1, 아니면 0)를 예약하며 기록 페이로드만 128 MiB로 제한합니다. 플래그 주소는 원래 부호 없는 연산과 래핑을 유지합니다. 데이터 복사, 커서 갱신, 읽기 전 위치 복사, 플래그 순서입니다. 뒤의 EFAULT는 앞선 효과를 유지하고 EOF는 빈 데이터 복사를 생략합니다. 개별 복사가 일부만 쓰기 가능하면 그 복사 전에 미지원으로 중단하며 이전 효과는 유지합니다.
+
+동일한 `directory-entries`는 원본 macOS와 기록, dup/되감기, 작은 읽기, EOF 및 복사 순서를 비교합니다. 별도 테스트는 SDK 배치와 긴 이름을 포함한 원본 기록의 전체 바이트를 비교합니다. 고정 스냅샷 값은 되감기에도 유지되어 APFS의 동적 세대를 재현하지 않습니다. 이전 `getdirentries` (196), 변경 후 열거, 다른 네이티브 백엔드와 iOS 실기기는 이 검증 밖입니다.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"directories":[{"path":"/empty"},{"path":"/","contents":{
+  "minimum_buffer_size":1,"entries":[
+    {"name":".","inode":41,"type":4,"next_offset":11,"seek_offset":0,"minimum_buffer_size":64},
+    {"name":"..","inode":41,"type":4,"next_offset":22,"seek_offset":0},
+    {"name":"empty","inode":42,"type":4,"next_offset":7,"seek_offset":0},
+    {"name":"data","inode":73,"type":8,"next_offset":99,"seek_offset":0}]}}]}}
+```
+
+[XNU getdirentries64](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [dirent ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent.h), [extended flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent_private.h).
+
+열거 검증(2026-10-05, Release): Darwin 498개 중 246개 통과, 사용 불가 백엔드 252개 건너뜀, 실패 0개입니다. ARM64 HVF 필수 63/63개를 실행했습니다. 네이티브 macOS 프로그램 11개, C/CLI/보고서 40개(건너뜀 없음), Python 5개 조합의 파일 작업 각 8개, 실행기 66개가 통과했습니다. 수치는 중복됩니다. 증거: `build-hvf-arm64/darwin-dirents-merged-evidence/`. Intel HVF Actions는 중지 상태이며 다른 네이티브 백엔드와 iOS 실기기는 미검증입니다.
+
+
+## 전용 파일 매핑
+
+`mmap`은 일반 카탈로그 파일의 `MAP_PRIVATE`를 지원합니다. `flags=0x2` 또는 `MAP_UNIX03`을 더한 `0x40002`를 쓰며 오프셋은 OS 페이지에 정렬해야 합니다. 짧은 길이를 요청해도 페이지의 원본 파일 바이트를 유지하고 EOF 마지막 페이지의 나머지는 0으로 채웁니다. 전용 쓰기는 해당 매핑만 변경하며 원본, 다른 매핑, 고정 메타데이터와 공유 커서를 바꾸지 않습니다. close 또는 설명자 재사용 후에도 매핑은 유지됩니다. 읽기 전용과 PROT_NONE도 초기 바이트를 보존하며 `mprotect`로 쓰기를 허용할 수 있습니다.
+
+파일 끝 산술 오버플로, UNIX03의 길이 0 및 미정렬 오프셋은 FD 조회 전 EINVAL, 잘못된 FD는 예산 검사 전 EBADF입니다. 기존 길이 0도 FD를 검사한 뒤 할당 없이 0을 반환합니다. 기존 미정렬 오프셋, 스트림, 빈 파일 페이지, 완전히 EOF 밖인 페이지는 할당 전에 미지원으로 중지합니다. macOS는 EOF 밖 매핑을 허용하지만 접근 시 SIGBUS가 발생하므로 모델은 읽을 수 있는 0 페이지나 신호 전달을 만들지 않습니다. 공유, 고정, 실행 가능, JIT 매핑은 미지원입니다.
+
+`DarwinFiles`는 설명자와 바이트를, `DarwinMemory`는 배치·권한·예산·롤백을 소유합니다. 데이터는 `darwin_files`만 사용합니다. 동일한 `file-mapping` 프로그램으로 전용 쓰기, close 이후 수명, 커서, 오류와 익명 페이지 재사용을 검증합니다. 별도 네이티브 비교는 0이 아닌 파일 오프셋, 전체 페이지와 실제 SIGBUS 경계를 검사합니다.
+
+[XNU mmap](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mman.c)
+
+### 전용 매핑 검증 (2026-10-05)
+
+Release Darwin은 고유 등록 438건 중 210건 통과, 228건 건너뜀, 실패 0건입니다. ARM64 HVF 필수 57/57건을 실행했고 Unicorn은 다섯 게스트 조합을 검증했습니다. 네이티브 macOS 프로그램 9개, 비영 오프셋 전체 페이지 비교와 격리 자식 프로세스의 SIGBUS 검증이 통과했습니다. 공개 API/보고서 36건은 건너뜀 없이 통과했고 Python 다섯 조합의 `file-mapping`, 검증 스크립트 66건과 출처 회귀 38건도 통과했습니다. 집계는 중복됩니다. 증거: `build-hvf-arm64/darwin-mmap-verified-evidence/`. 새 Intel HVF/KVM/WHP 및 iOS 실기기 증거는 없으며 Intel HVF Actions는 중지 상태입니다.
+
+## 명시적 파일 메타데이터
+
+파일 항목에 `metadata`를 추가할 수 있으며 아래 필드는 모두 필수입니다. 십진 문자열은 정수의 전체 폭을 보존하고 JSON 숫자는 ±(2^53−1) 내 정확한 정수로 제한됩니다. device는 부호 있는 32비트, mode/link_count는 부호 없는 16비트, inode는 부호 없는 64비트, uid/gid/flags/generation은 부호 없는 32비트입니다. size는 파일 바이트 수와 같아야 하며 blocks는 부호 있는 64비트 상한 이하, block_size는 음수가 아닌 부호 있는 32비트입니다. 시간은 부호 있는 64비트 초와 0–999999999 나노초입니다.
+
+`stat64` (338), `fstat64` (339), `lstat64` (340)는 ARM64/x64에서 동일한 144바이트 LP64 레코드를 반환합니다. open과 경로 해석을 공유하며 FD 복제와 닫기를 따릅니다. FD를 할당하거나 커서를 바꾸지 않고 rdev, 패딩, 예약 필드는 0입니다. 입력은 초기 메타데이터를 제공하고 변경은 선택적 정책을 따릅니다. 읽기가 시간을 갱신하지 않고 mode가 접근 허가를 바꾸지 않습니다. 미지정 메타데이터, 스트림 상태, 심볼릭 링크, 구형 stat, 확장 보안은 미지원입니다. 경로/FD 오류를 출력 포인터보다 먼저 처리하며 부분 쓰기 가능 출력은 변경 전에 중지합니다. 네이티브 테스트는 실제 파일의 모든 바이트와 SDK 배치를 비교하고 동일한 자체 프로그램으로 세 호출을 검증합니다.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":{
+  "device":1,"inode":"18364758544493064720","mode":33188,"link_count":1,
+  "uid":1000,"gid":1000,"size":10,"block_size":4096,"blocks":8,
+  "flags":0,"generation":0,
+  "access_time":{"seconds":-1,"nanoseconds":1},
+  "modification_time":{"seconds":2,"nanoseconds":3},
+  "change_time":{"seconds":4,"nanoseconds":5},
+  "birth_time":{"seconds":6,"nanoseconds":7}
+}}]}}
+```
+
+[XNU stat.h](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/sys/stat.h)
+
+### 메타데이터 검증과 남은 작업 (2026-10-05)
+
+stat64 추가 후 Release 검증은 고유 409건 중 193건 통과, 216건 건너뜀, 실패 0건입니다. ARM64 HVF 필수 54/54건을 실행했고 Unicorn은 다섯 게스트 조합을 검증했습니다. SDK 배치 및 실제 레코드 전체 비교, 네이티브 프로그램 8개, 공개 API/보고서 36건(건너뜀 없음), Python 다섯 조합, 검증 스크립트 66건도 통과했습니다. 집계는 중복됩니다. 네이티브 테스트의 출력 파일을 사례별로 분리해 짧은 출력에 이전 끝 바이트가 남는 문제를 수정했습니다. 추가 기능의 Intel HVF/KVM/WHP 및 iOS 실기기 증거는 없습니다.
+
+다음은 공유 매핑과 EOF 페이지 오류, 제한된 쓰기(EOF 페이지, close 이후 수명, 오류 순서 검증), 명시적 시간/시스템 정보, 필수 Mach/스레드 서비스, Mach-O 의존성·재배치/바인딩·초기화/TLS 순입니다. 이후 실제 네이티브 프로그램으로 Objective-C/Swift와 Foundation/UIKit을 검증합니다. iOS 실기기는 SDK와 장치가 필요하며 Intel HVF는 미검증이고 Actions는 계속 중지합니다.
+
+
 
 ```sh
 cmake --build build-hvf --target NeverDDarwinProcessTests NeverDProcessPublicTests --parallel 8
@@ -56,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-독립 워크로드 검증은 ARM64 39개 또는 x64 26개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
+독립 워크로드 검증은 ARM64 105개 또는 x64 70개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -79,3 +272,189 @@ Linux에서는 `kvm`, Windows에서는 `whp`를 사용합니다. [Darwin 워크�
 [Intel 실행](https://github.com/NeverSight/NeverD/actions/runs/37106013999)은 CTest 식별자 286개와 프로세스 32개를 원본 XML과 대조했습니다. 건너뛴 234개는 비활성 Unicorn 65개, ARM64 게스트 39개, 다른 호스트 플랫폼 130개입니다. 산출물 `11267489438`의 SHA-256은 `cd8fabbd7d031ac4ad7b891b8e5a52f3e3abe3c39306d9c4a1893e40912e78ef`로 검증했습니다. [KVM/WHP](https://github.com/NeverSight/NeverD/actions/runs/37062839703)도 독립 확인했습니다. [커널 참조](https://github.com/NeverSight/NeverD/actions/runs/37064795867)는 ISA마다 4/4 프로그램을 통과했으며 종료 상태 37, 정확한 출력, 빈 stderr를 확인했습니다.
 
 Unicorn을 켠 C API/CLI는 138개 통과, 156개 건너뜀, 실패 0개입니다. Python은 다섯 조합을 다룹니다. 패키지 엔진은 ARM64 CLI 보고서 18개와 일치하고 Mach-O 186개 서명을 검증했습니다. HVF/Unicorn OFF는 38개 통과, 231개 건너뜀이며 Hypervisor.framework를 링크하지 않습니다. 이는 통합 증거로 추가 네이티브 실행 수에 포함하지 않습니다. 전체 Intel CPU는 아직 검증되지 않았습니다. [HVF](macos-hvf.md)와 [상세 기록](../darwin-emulation.md#hosted-native-verification-2026-10-03)을 참고하세요.
+
+## 명시적 시간 관측값
+
+`ProcessOptions::DarwinTime` / `darwin_time`은 모든 Darwin profile에서 raw `gettimeofday` (116)에 고정 관측값을 제공합니다. 세 번째 `mach_absolute_time` 출력도 포함합니다. `time_of_day`, `timezone`, `mach_absolute_time`은 각각 선택 사항이며 생략은 알 수 없음을, 명시적 0은 값을 뜻합니다. 빈 객체는 기본 시계를 만들지 않습니다. 호스트 시계 조회, 시간대 추론, 시간 진행, 절대 tick 변환은 하지 않습니다.
+
+제공하는 레코드는 모든 멤버가 필요합니다. `seconds`는 부호 없는 32비트, `microseconds`는 [0, 999999], `minutes_west` / `dst_time`은 부호 있는 32비트, 절대 tick은 부호 없는 64비트입니다. JSON은 공통 무손실 정수 규칙을 따르며 안전한 정수 범위 밖은 십진 문자열로 전달합니다. 알 수 없는 필드, 범위 초과, Darwin 이외 profile은 이미지 로드 전에 거부됩니다.
+
+LP64 `timeval`은 16바이트입니다. 오프셋 0에는 0 확장 초, 8에는 32비트 마이크로초, 12에는 4바이트 0 패딩이 있습니다. 시간대는 부호 있는 32비트 필드 둘이며 tick은 8바이트입니다. 달력 시간과 절대 시간은 먼저 함께 관측하므로 요청한 두 관측값이 복사나 포인터 검사 전에 있어야 합니다. 이후 timeval, timezone, absolute ticks 순서로 씁니다. 시간대 누락과 뒤따르는 EFAULT는 앞선 쓰기를 유지하며 겹치는 주소도 같은 순서입니다. 개별 출력이 일부만 쓰기 가능하면 해당 복사 전에 미지원으로 중지하고 앞선 복사는 유지합니다. 포인터가 모두 null이면 설정 없이 성공하며 선택적 조회는 요청한 값만 필요합니다.
+
+직접 작성한 `time` 작업으로 네이티브 동작을 확인하고, `time-values`는 다섯 게스트 조합의 C/CLI/Python에서 설정한 32바이트를 정확히 출력합니다. 별도 SDK 비교는 한 번의 네이티브 raw 호출에서 세 출력을 얻어 모든 바이트를 비교합니다. 진행하는 시계, 변환, commpage 카운터, 타이머, Mach 시계 객체/IPC는 포함하지 않습니다. dyld, 스레드, Objective-C/Swift, Foundation/UIKit은 남은 작업입니다. Intel HVF Actions는 중단 상태이며 네이티브 Intel이나 실제 iOS 기기 검증을 추가하지 않습니다.
+
+```json
+{"darwin_time":{"time_of_day":{"seconds":4045620583,"microseconds":654321},"timezone":{"minutes_west":-480,"dst_time":-1},"mach_absolute_time":"18364758544493064720"}}
+```
+
+[XNU gettimeofday](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_time.c), [time ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h).
+
+시간 검증(2026-10-06, Release): Darwin 등록 538개 중 274개 통과, 사용 불가 백엔드로 264개 건너뜀, 실패 없음. 필수 ARM64 HVF 66/66개를 모두 실행했습니다. 원본 네이티브 macOS 작업 12개와 단일 표본 SDK 바이트 비교도 통과했습니다. 공개 C/CLI/보고서 43/43개 통과, 건너뜀 없음. Python은 정확한 시간 바이트 및 기존 파일 모드 8개를 포함한 다섯 게스트 조합에서 통과했습니다. 실행기 66개, 현지화, 기능 목록, 서식 검사도 통과했습니다. 집계는 중복됩니다. 증거: `build-hvf-arm64/darwin-time-verified-evidence/`, `darwin-time-native-first/`, `darwin-time-public.xml`.
+
+## Mach 시간과 반환 규약
+
+`darwin_time.timebase`의 `numerator`와 `denominator`는 0이 아닌 부호 없는 32비트 값이며 약분하거나 변환하지 않습니다. `mach_timebase_info_trap` 번호 89는 ARM64 X16=-89 또는 x64 RAX=0x01000059입니다. 분자와 분모를 리틀 엔디언 8바이트로 쓰고 0을 반환합니다. 완전히 잘못된 출력 주소도 0을 반환하지만 일부만 쓸 수 있으면 복사 전에 중지하고 전송 자체의 오류는 전파합니다. timebase가 없으면 null을 포함한 포인터 검사보다 먼저 중지합니다.
+
+ARM64 X16=-3과 X16=-4는 `mach_absolute_time`과 `mach_continuous_time`의 부호 없는 64비트 전체를 반환합니다. 각각 자기 관측값만 필요하며 명시적 0도 유효합니다. x64의 해당 네이티브 표 항목은 EXC_SYSCALL을 발생시키므로 지원하지 않습니다. 시간 진행, commpage, 타이머, Mach 시계 객체/IPC는 미구현입니다.
+
+분기는 번호의 하위 32비트만 사용하고 보고서는 원래 64비트를 보존합니다. ARM64 음수는 Mach, x64 Mach 클래스는 0x01000000, BSD는 0x02000000입니다. BSD 3/4는 read/write이며 알 수 없는 번호와 외부 클래스는 중지합니다. 해석된 바인딩이 반환 규약을 결정합니다. Mach는 플래그와 X1/RDX를 보존하고 BSD는 기존 carry 규칙을 따르며 x64 RCX/R11 갱신은 유지합니다. Mach 보고서는 입력 carry와 관계없이 `result`를 포함하고 `error`를 생략합니다.
+
+`mach-time`은 ARM64 네이티브에서 플래그, 보조 결과, 번호 상위 비트, 잘못된 포인터와 BSD 전환을 비교합니다. `mach-timebase-values`는 다섯 게스트, `mach-clock-values`는 ARM64에서 정확한 바이트를 확인하고 SDK는 배치와 관측 비율을 검증합니다. Intel HVF Actions는 중단 상태입니다. x64 소프트웨어 및 구문 검사는 네이티브 Intel이나 실제 iOS 검증을 의미하지 않습니다.
+
+```json
+{"darwin_time":{"timebase":{"numerator":125,"denominator":3},"mach_absolute_time":"18364758544493064720","mach_continuous_time":"18446744073709551615"}}
+```
+
+[XNU clock traps](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/clock.c), [ARM64 entry](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/bsd_arm64.c), [ARM64 special traps](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/sleh.c), [x64 entry](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/x86_64/idt64.s).
+
+Mach 검증(2026-10-06, Release): Darwin 569개 중 성공 293, 사용 불가 백엔드 건너뛰기 276, 실패 0이며 필수 ARM64 HVF 69/69를 실행했습니다. 최종 실행에서 네이티브 13개 작업과 시간 SDK 비교 2개가 통과했습니다. 공개 C/CLI/report는 100/100, 건너뛰기 없음이며 Python은 다섯 게스트를 검증했습니다. 공개 비교는 플랫폼과 작업별로 분리하고 명시적인 10초 게스트 예산을 사용합니다. 제품 기본값과 기한 회귀는 유지합니다. 집계는 중복됩니다.
+
+처음 네이티브 실행은 기존 5초 제한을 넘었으며 별도 측정은 6.056초, 재사용은 0.010초였습니다. 같은 바이너리는 원래 제한에서 13개 모두 통과했고 실패 기록을 보존합니다. 호스트 부하 중 시간 초과 후 별도 순차 검증은 통과했습니다. 증거: `build-hvf-arm64/darwin-mach-time-final-evidence/`, `darwin-mach-time-native-recheck/existing-binary-recheck.json`, `darwin-mach-time-public-accepted.xml`. 커밋 전 작업 트리입니다. 당시 ARM64 MRS/MSR NZCV는 미지원이어서 정수 명령으로 플래그를 관찰했습니다. 아래 변경으로 이 CPU 공백을 해소합니다.
+
+## ARM64 조건 플래그 레지스터
+
+공유 checked ARM64 계약은 EL0/EL1에서 정확한 `MRS Xt, NZCV` 및 `MSR NZCV, Xt` 인코딩을 허용합니다. 읽기는 비트 31–28만 반환하고 쓰기는 입력의 그 네 비트만 사용하며 나머지는 무시합니다. `XZR`로 읽으면 결과를 버리고 `XZR`에서 쓰면 SP를 읽지 않고 네 플래그를 지웁니다. 각 백엔드는 원래 명령을 실행합니다. 호스트 레지스터 설정 검증과 FPCR/FPSR 제한은 유지하며 인접한 미등록 시스템 레지스터는 계속 미지원입니다.
+
+`NeverDAArch64NZCVTests`는 모든 플래그 조합을 호스트 명령과 비교하고 전체 스칼라/벡터 상태, 메모리, 레지스터 경계, 관찰자 중지/실패, 컨텍스트 복원 재시도와 공유 명령 예산을 검사합니다. ARM64 `mach-time`은 SVC 전후에 실제 MSR/MRS를 사용하여 Mach 플래그 보존과 BSD 전환을 확인합니다. 네이티브 HVF 필수 항목은 두 권한의 여섯 메서드 및 호스트 비교를 포함합니다. ARM64 KVM/WHP와 실제 iOS는 미검증입니다. 쓰기 파일, 시스템 정보, 진행하는 시계, Mach IPC/스레드, dyld/런타임/프레임워크 및 기기 검증은 후속 환경 작업입니다.
+
+[Arm NZCV (DDI0601, 2025-06)](https://developer.arm.com/documentation/ddi0601/2025-06/AArch64-Registers/NZCV--Condition-Flags).
+
+
+변경 가능한 파일 검증(2026-10-06): Release Darwin 610개 중 322개 통과, 사용 불가 백엔드 288개 건너뜀, 실패 0. ARM64 HVF 필수 72/72를 실행했습니다. 마지막 EFAULT 메타데이터 검사를 포함한 집중 테스트는 114개 중 102개 통과, 12개 건너뜀이며 네이티브 15개 프로그램과 공개 C/CLI/보고서 111개도 통과했습니다. 집계는 겹칩니다. 최초 네이티브 실행이 발견한 FWASWRITTEN 누락을 수정했으며 실패 증거도 보존합니다. 제한 시간은 바꾸지 않았고 전체 GitHub CI 및 iOS 실기기는 별도 검증이 필요합니다. Intel Actions는 중지 상태입니다.
+
+`build-hvf-arm64/writable-darwin-evidence/` · `writable-native-final/` · `writable-focused-final.xml` · `writable-public.xml`
+
+첫 Python 전체 테스트에서 ARM64 디렉터리 세 사례가 시간 초과했습니다. 인수를 바꾸지 않은 진단에서 새 쓰기 10/10은 통과했지만 iOS 한 사례는 경과 5.005초/CPU 1.263초 후 중지했습니다. 동일 5초 제한의 개별 재검사는 세 사례 모두 통과했습니다(2.43–3.17초, 10,941명령, 출력65). 논리 CPU16개에 부하54–70은 스케줄링 압력을 뒷받침하지만 지연 안정성을 보장하지 않으며 최초 실패도 보존합니다.
+
+마지막 변경 없는 Python 통합 메서드는 다섯 구성을 모두 통과했고 총41.118초였습니다. 프로세스별5초 제한은 그대로이며 앞선 실패와 진단 기록도 따로 보존합니다.
+
+
+메타데이터 검증(2026-10-06): Release 집중148개는124통과/24백엔드skip. 전체Darwin645개는343통과/300skip/기존ARM64 HVF디렉터리2개timeout. 동일한20개와 원래5초 제한 재검사는8통과/12skip, 해당 사례3.818/3.949초. 필수HVF75개 모두 통과 관측이 있으나 최초 실패를 보존합니다. 공개C/CLI/보고117/117(Darwin73), Python5구성27.359초, 네이티브15/15, runner66/66통과. 할당은APFS증거가 아니며 시한을 바꾸지 않았습니다. 전체CI/Intel/iOS실기기/완전한 환경은 미완성입니다.
+
+`build-hvf-arm64/mutation-metadata-validation-summary.json`; `mutation-metadata-darwin-evidence/`; `mutation-metadata-directory-recheck/`; `mutation-metadata-focused.xml`; `mutation-metadata-public.xml`.
+
+희소 파일 위치 검증(2026-10-06): Release Darwin 671개 중 359개 통과, 사용 불가 백엔드 312개 건너뜀, 실패 0개. 필수 ARM64 HVF 78개를 모두 실행했고 Unicorn은 다섯 게스트를 검증했습니다. 집중 검사 147개 중 123개 통과, 24개 건너뜀. 네이티브 16개, 공개 C/CLI/report 122개(Darwin 비교 78개), Python 다섯 구성(12.344초), runner 66개가 통과했습니다. 집계는 중복되며 제한 시간과 과거 실패 기록을 유지합니다. 증거: `build-hvf-arm64/sparse-seek-validation-summary.json`. 할당 규칙은 명시적 가상 정책이며 APFS 동등성을 뜻하지 않습니다. 전체 CI와 실제 iOS 검증은 별도로 필요하고 Intel HVF Actions는 중지 상태입니다.
+
+unlink 검증(2026-10-06): Release Darwin 708개 중 384개 통과, 사용 불가324개 건너뜀, 실패0개. 필수 ARM64 HVF81개 모두 실행. 집중156개는137통과/19건너뜀; 네이티브17/17, C/CLI/report128/128(Darwin83), Python 다섯 구성16.268초, runner66/66 통과. 독립 설계·구현 검토에서 남은 차단 사항이 없었습니다. 집계 중복, 제한 시간 유지, 재시도 불필요. 증거: `build-hvf-arm64/unlink-validation-summary.json`. 부모 무효화와 고정 시간은 모델 규칙이며 전체 파일 시스템/런타임 및 실제 iOS 검증은 남아 있습니다. Intel HVF Actions는 중지, 전체 CI는 별도입니다.
+
+### 생성 검증, 2026-10-06
+
+Release Darwin 748개: 412 통과, 백엔드 부재 336 건너뜀, 실패 없음. 필수 ARM64 HVF 84개 실행. 집중162개:150 통과/12 건너뜀. C/CLI/보고133/133(Darwin88), Python5구성9.982초, 원본 네이티브18/18, runner66/66 통과. 초기 ARM64는 테스트 포인터 표의 재배치를 올바르게 거절했고 인라인 바이트로 고쳐 통과했습니다. 로더 허용 범위를 바꾸지 않았고 최초 실패와 바이너리는 보존합니다. runner 예상 목록27→28 갱신. 부모 관측을 보존하는 용량 실패도 검사했고 독립 검토에 남은 차단 사항이 없습니다. 수치는 중복되며 시간 제한은 그대로입니다. 전체 CI·iOS 실기기는 별도, Intel HVF Actions는 중지 상태입니다.
+
+`build-hvf-arm64/create-validation-summary.json`, `create-darwin-evidence/`, `create-focused.xml`, `create-public.xml`, `create-native-final/`, `create-initial-evidence/`.
+
+### 생성 메타데이터 검증, 2026-10-06
+
+Release Darwin 등록 787개: 439개 통과, 백엔드 사용 불가 348개 건너뜀, 실패 0개. 필수 ARM64 HVF 87개 모두 실행. 집중 151개 중 139개 통과, 12개 건너뜀. 공개 C/CLI/보고서 145/145(Darwin 입력 비교 98개), 변경 없는 Python 메서드 다섯 구성 12.211초 통과. 네이티브 19/19, 검증 스크립트 66/66 통과. 독립 검토에서 차단 사항 없음. 서로 다른 부모 device/GID와 전역 inode, 첫 쓰기 전 unlink, FD/입력이 없는 umask를 추가 검증했습니다. 집계 중복, 제한 시간 유지, 실패 재실행 불필요. 고정 생성/변경 시간과 할당은 가상 정책입니다. 전체 GitHub CI와 실제 iOS 검증은 별도이며 Intel HVF Actions는 중지 상태입니다.
+
+`build-hvf-arm64/creation-metadata-validation-summary.json`, `creation-metadata-darwin-evidence/`, `creation-metadata-focused.xml`, `creation-metadata-public.xml`, `creation-metadata-native/`.
+
+### 이름 변경 검증, 2026-10-06
+
+Release Darwin 835개: 통과474, 백엔드 미지원 건너뜀360, 기존 macOS ARM64 HVF 가상 메타데이터 한 건이5.087초에 시간 초과. 같은 인자와5초 제한으로20개 재검사: 통과8, 건너뜀12, 해당 항목0.113초. 두 실행에서 필수 ARM64 HVF90개 성공을 관측했지만 전체 게이트 실패 기록은 유지합니다. 이름 변경42/54 통과,12 건너뜀; C/CLI/보고150/150(Darwin 비교103), 변경 없는 Python 다섯 구성18.478초, 네이티브20/20, 검증 스크립트66/66. 독립 검토에서 중첩 점 경로 분류를 수정했으며4K/16K 회귀는 수정 전 실패·후 통과했습니다. 이전 읽기 전용 ftruncate 테스트 기대값을 EINVAL로 수정했습니다. 실패와 프로브 버전을 보존하고 집계는 중복되며 시간 제한은 그대로입니다. 전체 GitHub CI와 iOS 실기기는 별도, Intel HVF Actions는 중단 상태입니다.
+
+`build-hvf-arm64/rename-validation-summary.json`, `rename-focused-final.xml`, `rename-darwin-final-evidence/`, `rename-metadata-recheck.xml`, `rename-public.xml`, `rename-native-final/`, `rename-review-initial-evidence/`.
+
+## 명시적 시스템 관측값
+
+`ProcessOptions::DarwinSystem` / `darwin_system`은 모든 Darwin 프로필의 `sysctl(202)`과 raw `sysctlbyname(274)`에 고정 관측값을 제공합니다. 필드는 모두 선택 사항이며, 누락된 값이나 목록 밖의 키는 지원되지 않음으로 중단합니다. 호스트 조회나 버전·모델 추정은 없습니다. 엄격한 JSON 및 C++ 검증은 이미지 로드 전에 잘못된 값과 비 Darwin 프로필을 거부합니다.
+
+`os_revision`은 부호 있는32비트, `cpu_count`는1～INT32_MAX, `memory_size`는 부호 없는64비트를 모두 보존합니다. 나머지는 내부 NUL 없는 최대1023바이트 문자열이며 명시적 빈 문자열도 허용합니다. 출력은 끝 NUL을 포함합니다. CPU·메모리 보고값은 스케줄링이나 할당 예산을 바꾸지 않습니다.
+
+| JSON 필드 | sysctl 이름 | MIB |
+| --- | --- | --- |
+| `os_type` | `kern.ostype` | `1,1` |
+| `os_release` | `kern.osrelease` | `1,2` |
+| `os_revision` | `kern.osrevision` | `1,3` |
+| `kernel_version` | `kern.version` | `1,4` |
+| `os_version` | `kern.osversion` | `1,65` |
+| `machine` | `hw.machine` | `6,1` |
+| `model` | `hw.model` | `6,2` |
+| `cpu_count` | `hw.ncpu` | `6,3` |
+| `memory_size` | `hw.memsize` | `6,24` |
+
+`hw.pagesize`는 기존 게스트 메모리 정책을 따르며 보통8바이트, null이 아닌 출력의 용량이 정확히4이면4바이트입니다. 기존 MIB `[6,7]`과 `hw.pagesize_compat`는 항상4바이트입니다. `hw.pagesize`의 동적 숫자 OID는 지원하지 않습니다. `hw.memsize`도 용량4에서64비트 패턴이 부호 있는32비트 값의 부호 확장과 일치할 때만 축소합니다. 그렇지 않으면 ERANGE34이며 출력과 길이를 유지합니다.
+
+MIB 개수는 하위32비트로2～12, 이름 길이는 전체64비트로1024 미만이어야 합니다. 지정된 모든 바이트를 검사한 뒤 첫 NUL을 해석하고 끝의 점 하나를 제거합니다. 빈 이름은 ENOENT, 부분적으로 읽을 수 있는 입력은 미지원입니다. null이 아닌 `oldlenp`는 효과 발생 전에8바이트 전체를 읽고 쓸 수 있어야 합니다. 잘못된 길이 포인터의 네이티브 실험이 제한 시간 안에 반환하지 않아 명시적으로 지원 범위 밖에 둡니다. null `oldlenp`는 용량0, null `oldp`는 크기 조회입니다. 짧은 버퍼는 ENOMEM12, 데이터 불변, 길이0입니다. 데이터 EFAULT는 이전 길이를 보존합니다. 입력과 용량을 먼저 캡처하고 데이터 다음 길이를 쓰므로 별칭 순서와 후속 전송 실패 전의 복사를 보존합니다.
+
+`newp`와 `newlen`이 모두0이 아닐 때만 쓰기입니다. 선택된 노드는 모델의 고정된 비 root 신원에 대해 관측값·출력 검사 전에 EPERM1을 반환합니다. 네이티브에서 특권 쓰기가 가능한 `kern.osversion`도 포함합니다. 새 길이0이면 포인터를 무시합니다. 알 수 없는 키, 다른 트리, 동적 OID를 ENOENT로 추정하지 않습니다.
+
+자체 작성 `system-info`는 네이티브 macOS와 게스트 ABI를 검사하고 `virtual-system`은 C++·C/CLI·Python에서 설정 바이트를 비교합니다. 별도 SDK 검사는 호스트의 아홉 관측값을 명시적 테스트 입력으로 삼아 이름·숫자 출력을 비교합니다. iOS 실기기나 Intel HVF 검증을 뜻하지 않습니다.
+
+```json
+{"darwin_system":{"os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
+```
+
+[XNU sysctl](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_newsysctl.c), [XNU hardware MIB](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mib.c), [Apple sysctl(3)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/sysctl.3.html).
+
+### 시스템 조회 검증, 2026-10-06
+
+Release Darwin 881개: 통과509, 백엔드 미지원 건너뜀372, 실패0. ARM64 HVF 필수93개를 모두 실행했습니다. 집중49개는37 통과·12 건너뜀. C/CLI/보고163/163(Darwin 비교113), 변경 없는 Python 다섯 구성15.302초, 원본 네이티브21/21, 검증 스크립트66/66 통과. 독립 검토에 차단 문제는 없으며 추가 오류 우선순위 조합과 SDK 캡처 비교도 통과했습니다. 새 SDK 검사의 StringExtras 헤더 누락으로 한 번 컴파일 실패 후 추가하여 성공했고 원본 로그·소스를 보존했습니다. 잘못된 길이 포인터의 네이티브 실험도 보존하며 명시적으로 지원 범위 밖입니다. 통과 후 파일 머리말 주석 두 개만 정리하고 재빌드했습니다. 집계는 중복, 시간 제한은 그대로이며 실행 실패 재검사는 없었습니다. 전체 GitHub CI·iOS 실기기는 별도, Intel HVF Actions는 중단 상태입니다.
+
+`build-hvf-arm64/sysctl-validation-summary.json`, `sysctl-darwin-final-evidence/`, `sysctl-focused-final.xml`, `sysctl-public.xml`, `sysctl-native-final/`, `sysctl-sdk-build-failure/`, `sysctl-initial-probe-evidence/`.
+
+## 벡터 파일 I/O와 출력 캡처
+
+`readv`/`writev`, `preadv`/`pwritev` 및 nocancel 진입점은 스칼라 파일·출력 캡처 구현을 공유합니다. 새 설정이나 호스트 접근은 없습니다. LP64 iovec는 8바이트 주소와 8바이트 길이이며, iovcnt의 부호 있는 하위32비트는1–1024입니다. 설명자 조회 전에 전체 배열을 복사하여 출력 별칭이 요청을 바꾸지 못합니다. 일부만 읽을 수 있는 배열은 미지원입니다.
+
+접근 권한과 스트림 위치 지정 여부를 먼저 검사한 뒤 각 길이와 합계를 INT64_MAX 이하로 제한합니다. 일반 파일·디렉터리는 합계가 INT_MAX 이하여야 합니다. 유한 stdin은 남은 입력으로 줄이고 캡처는 출력 예산을 적용합니다. pwritev의 모든 음수 위치는 배열 전에 거부하고, preadv는 설명자·길이 뒤에 위치를 검사합니다. 빈 항목은 주소를 무시하지만 설명자·종류·위치 규칙은 유지합니다. EOF 뒤 항목은 접근하지 않습니다. 위치 지정 호출은 커서를 보존하고 pwritev는 추가 쓰기를 무시합니다. 일반 추가 쓰기는 원래 커서로 전체 요청을 한 번 자른 뒤 EOF를 선택합니다.
+
+뒤의 완전히 잘못된 항목은 EFAULT를 반환하면서 앞서 완료한 바이트와 일반 커서 진행, 0보다 많은 바이트를 쓴 경우의 FWASWRITTEN을 보존합니다. 허용된 비어 있지 않은 파일 쓰기가 데이터 버퍼 EFAULT를 반환하면 전체 메타데이터를 무효화합니다. 인수 오류, 모델 허용 거부 및 백엔드 실패는 메타데이터를 유지합니다. 일부만 쓸 수 있는 읽기 목적지는 UnsupportedService로 중단하며 현재 항목은 복사하지 않고 이전 복사는 보존합니다. 일부만 읽을 수 있는 파일 쓰기 원본은 모든 파일 효과 전에 미지원으로 중단합니다. 권한·매핑 임대·전체 저장 예산을 먼저 검사하며, 백엔드 사전 검사나 읽기 실패는 파일·캡처 바이트를 게시하지 않습니다.
+
+캡처는 stdout/stderr 공유 예산을 먼저 검사합니다. 사용자 주소 한계를 넘는 항목은 복사하지 않고 이전 항목만 보존합니다. 다른 부분 입력은 확인된 접두부와 EFAULT를 남깁니다. 스칼라 범위 오류는 계속 예산보다 우선합니다. 복제·리디렉션된 설명자는 원래 출력 대상을 유지합니다. 독자 `vectored-io`는 원시 macOS와5개 게스트 구성, 공개 C/CLI/Python에서8개 진입점을 검증합니다. 취소·파이프·스레드·실제 iOS 검증은 추가하지 않습니다.
+
+`readv`: 120/411; `writev`: 121/412; `preadv`: 540/542; `pwritev`: 541/543.
+
+[XNU vector calls](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU iovec lengths](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_subr.c), [XNU vnode I/O](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+### 벡터 I/O 검증, 2026-10-06
+
+Release Darwin 937개 등록:553개 통과, 백엔드 미제공384개 건너뜀, 실패 없음. 필수 ARM64 HVF 96개를 모두 실행했습니다. 집중 검사는45/57개 통과,12개 건너뜀. 공개 C/CLI/report 168/168개 통과, Darwin 입력 비교118개 포함. Python은20.397초에5개 구성을 검증했고 네이티브22/22, 검증 스크립트66/66 통과. 독립 검토로 희소 위치 지정 쓰기 실패 테스트를 추가해 커서·실제 EOF·메타데이터 거부·정확한 남은 용량을 확인했습니다. 첫 빌드는 기존 테스트가 삭제된 내부 조회를 참조해 실패했으며 실제 캡처 출력 검사로 바꿨습니다. 새 이벤트 단언의 optional<bool> 오용은 성공한 게스트8개를 실패로 보고했지만 수정 후 관련 검사는 모두 통과했습니다. 두 실패의 소스와 로그를 보존합니다. 수치는 중복되고 기한은 그대로입니다. 전체 GitHub CI와 실제 iOS는 별도이며 Intel HVF Actions는 계속 중지합니다.
+
+`build-hvf-arm64/vector-validation-summary.json`, `vector-darwin-final-evidence/`, `vector-focused-final.xml`, `vector-public.xml`, `vector-native-initial/`, `vector-initial-build-failure/`, `vector-initial-assertion-evidence/`.
+
+## 파일 존재 여부 조회
+
+`access(33)`과 `faccessat(466)`은 현재 가상 카탈로그를 조회하며 설명자 할당이나 파일 내용·커서·플래그·메타데이터 변경을 하지 않습니다. F_OK는 기존 탐색 계약에 따른 이름의 존재를 확인합니다. 메타데이터는 카탈로그 접근 권한을 부여·취소하지 않으며, 이 조회는 원시 상위 디렉터리 검색 권한·ACL·MAC 검증이 아닙니다. stat 관측값이 없거나 무효여도 조회할 수 있습니다. 이전 FD나 매핑이 객체를 유지해도 삭제된 이름은 ENOENT이며 생성·이름 재사용·변경은 현재 네임스페이스를 따릅니다.
+
+모드는 하위32비트입니다. R/W/X는 비트0–2, 확장 권한은9–21을 사용합니다. `(mode & 0x003ffe07) == 0`이면 존재 조회이며 부호 비트 등 나머지는 EINVAL로 거부하지 않고 무시합니다. 권한 요청은 조회 성공 뒤 UnsupportedService로 중단하며, 메타데이터나 변경 허가로 권한을 추측하지 않습니다. 알려진 경로·설명자 오류가 먼저입니다.
+
+Faccessat는 AT_EACCESS(0x10), AT_SYMLINK_NOFOLLOW(0x20), AT_SYMLINK_NOFOLLOW_ANY(0x800) 하위 플래그의 모든 조합을 허용합니다. 나머지는 카탈로그가 없어도 경로·FD 접근 전에 EINVAL입니다. 현재 카탈로그에는 심볼릭 링크가 없고 실제/유효 ID는 고정입니다. 절대 경로는 dirfd를 무시하며 상대 경로는 설정된 CWD/디렉터리 FD 규칙을 유지합니다. 첫 NUL까지 복사한 뒤 상대 FD를 검사하고 문자열의 누락 바이트는 EFAULT입니다. 빈 상대 경로에서도 미지 FD는 EBADF, 일반 파일 FD는 ENOTDIR, 그 외에는 ENOENT입니다. 미설정 카탈로그와 미지 스트림 디렉터리 종류는 미지원입니다.
+
+독자 `file-access`는 네이티브 macOS와5개 게스트, C++/C/CLI/Python에서 두 진입점·무시 비트·플래그·순서를 비교합니다. NOFOLLOW_ANY는 상대 디렉터리 FD로 시험해 호스트 `/tmp`, `/var` 링크의 영향을 피합니다. 직접 테스트는 이름 변경, 혼합 권한 비트, FD 고갈, 메타데이터 독립성과 메모리 실패를 다룹니다.
+
+[XNU access and faccessat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU access mode bits](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/unistd.h).
+
+### 파일 존재 여부 검증, 2026-10-06
+
+Release Darwin 971개 등록:575개 통과, 백엔드 미제공396개 건너뜀, 실패 없음. 필수 ARM64 HVF 99개를 모두 실행했습니다. 집중35개 중23개 통과·12개 건너뜀이며 직접14개를 포함합니다. 공개 C/CLI/report 173/173개 통과, Darwin 입력 비교123개 포함. Python은16.235초에5개 구성을 검증했고 네이티브23/23, 검증 스크립트66/66 통과. 독립 설계·구현 검토에 차단 문제는 없습니다. 호스트 /tmp 링크로 인한 초기 NOFOLLOW_ANY 결과와 정규 경로 비교를 보존하며 공통 작업은 상대 디렉터리 FD를 사용합니다. 수치는 중복되고 기한은 동일하며 실행 실패 재검사는 불필요했습니다. 전체 GitHub CI와 실제 iOS는 별도이며 Intel HVF Actions는 계속 중지합니다.
+
+`build-hvf-arm64/access-validation-summary.json`, `access-darwin-final-evidence/`, `access-focused-final.xml`, `access-public.xml`, `access-native-initial/`, `access-evidence/`.
+
+## 디렉터리 생성과 삭제
+
+`mkdir(136)`과 `mkdirat(475)`는 명시적으로 변경 가능한 바로 위 부모에 디렉터리를 만듭니다. 새 디렉터리는 네임스페이스 변경 권한을 상속하고 초기 디렉터리는 별도 허가를 유지합니다. 알려진 부모 장치/GID만 상속하며 전체 stat·크기·할당·시간·열거 커서는 추측하지 않습니다. 재사용한 파일 이름의 이전 관측을 가립니다. `creation_policy`는 일반 파일 전용으로, 하위 파일은 상속된 부모 식별과 기존 전역 inode 순서를 사용하고 mkdir는 파일 inode를 소비하지 않습니다. 권한 강제와 원시 디렉터리 메타데이터는 범위 밖입니다.
+
+공통 구성요소 탐색에서 mkdir는 끝 슬래시만 뒤따르는 누락 이름을 생성합니다. 누락 조상 뒤 점/두 점은 ENOENT, 파일 조상은 ENOTDIR, 기존 이름은 EEXIST입니다. 상대 FD/CWD, 절대 경로의 FD 무시, 문자열 실패 우선순위를 유지합니다. 사용 가능한 FD가 필요 없고 탐색·허가·예산·전송 거부는 이름이나 부모 관측을 변경하지 않습니다.
+
+`rmdir(137)`와 AT_REMOVEDIR(0x80)를 준 `unlinkat(472)`는 이 프로세스가 생성한 빈 디렉터리를 제거하며 AT_SYMLINK_NOFOLLOW_ANY(0x800)를 함께 쓸 수 있습니다. 미지 하위32비트는 입력 전에 EINVAL, DATALESS와 SYSTEM_DISCARDED는 미지원입니다. 알려진 경로/종류/루트 오류는 유지하고 초기 디렉터리 삭제는 UnsupportedService입니다. 생성된 대상의 끝 점은 EINVAL, 연결된 디렉터리에서의 두 점/비어 있지 않은 대상은 ENOTEMPTY입니다. 디렉터리 FD(dup 포함)와 CWD는 원래 객체를 유지하며 삭제를 막지 않습니다. unlink된 일반 파일 FD/매핑은 이름에 포함하지 않으며 부모 삭제와 재사용 후 내용·inode·마지막 F_GETPATH가 유지됨을 네이티브로 비교합니다.
+
+새 정규 경로+NUL과1개 항목을 공통16 MiB/256개 예산에 합산하고 삭제 후 모든 참조가 없어질 때 해당 비용만 반환합니다. 고아 파일·매핑은 유지합니다. 성공할 때만 부모의 전체 stat/열거를 무효화하며 새 디렉터리 관측은 계속 미지입니다. 독자 `directory-mutations`는 네이티브 macOS,5개 게스트,C++/C/CLI/Python에서 중첩 생성·이름 변경·unlink·삭제·고아 객체 재사용을 비교합니다.
+
+[XNU mkdir/rmdir](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU directory creation lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c).
+
+### 디렉터리 변경 검증, 2026-10-06
+
+Release Darwin:1,017개 등록,609개 통과,백엔드 미제공408개 건너뜀,실패 없음. 필수 ARM64 HVF102개 실행. 집중58개 통과·12개 건너뜀,새4K/16K 직접26개 포함. 공개 C/CLI/report178/178(Darwin 입력128),Python5개 구성17.255초,네이티브24/24,스크립트66/66 통과. 독립 검토는 예산·이름 재사용·부모 식별·파일 임대·롤백을 확인했습니다. 초기 성공 후 추가 네이티브 검사가 슬래시 전용 루트 삭제 EISDIR와 끝 점/두 점 루트 EBUSY 차이를 발견해 공통 판단과 테스트를 수정했습니다. 초기 결과·소스·바이너리는 보존합니다. 수치는 중복,기한 불변,Intel HVF Actions 중지 유지. 전체 GitHub CI와 실제 iOS는 별도입니다.
+
+`build-hvf-arm64/directory-mutation-validation-summary.json`, `directory-mutation-darwin-final-evidence/`, `directory-mutation-focused-final.xml`, `directory-mutation-public-final.xml`, `directory-mutation-native-final/`, `directory-mutation-before-root-fix/`.
+
+## 유지된 디렉터리 식별
+
+삭제된 디렉터리의 FD/CWD는 원래 부모 체인을 유지하며 이름 재사용으로 다른 객체에 연결되지 않습니다. 점 open은 독립 커서,dup는 공유 커서,두 점은 원래 부모를 사용합니다. 삭제된 디렉터리의 일반 자식은 ENOENT입니다. LOOKUP은 보존된 삭제 부모를 통과하지만 생성/삭제/이름 변경 탐색은 ENOENT입니다. 이름 변경의 끝 점/두 점은 해당 구성요소 탐색 전에 EINVAL이며 앞선 조상 오류가 우선합니다. F_GETPATH는 마지막 경로를 유지하고 전체 stat/열거는 미지입니다. 경로+NUL과 한 항목 비용은 FD/CWD/이전 자식 참조가 모두 해제될 때까지 유지합니다. close/dup2/CWD변경/수정 허용 시 도달 불가 체인을 회수하며 초기 비용과 파일 임대는 별개입니다. 독자 `deleted-directories`는 네이티브 macOS와5개 구성에서 보유 중 삭제·부모와 이름 재사용·탐색 의도·CWD 단독 유지를 비교합니다.
+
+### 디렉터리 수명 검증, 2026-10-06
+
+Release Darwin1,051개,631통과,백엔드 미제공420건너뜀,실패 없음;필수 ARM64 HVF105개 실행. 집중98통과·12건너뜀,초기 직접64/64(신규14개와 보유 삭제 갱신). C/CLI/report183/183,Darwin133개;Python5구성18.691초,네이티브25/25,스크립트66/66. 추가 원시 이름 변경 검사로 끝 점 오류 순서를 수정하고 초기 소스·결과·스냅샷을 보존했습니다. 주 에이전트가 증거를 대조했으며 최종 독립 검토는 이용 불가했습니다. 수치 중복,기한 불변,전체CI/실제iOS 별도,Intel HVF Actions 중지 유지.
+
+`build-hvf-arm64/directory-lifetime-validation-summary.json`, `directory-lifetime-darwin-final-evidence/`, `directory-lifetime-focused-final.xml`, `directory-lifetime-public.xml`, `directory-lifetime-native/`, `directory-lifetime-before-rename-fix/`.

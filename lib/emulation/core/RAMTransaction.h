@@ -22,6 +22,10 @@ public:
   create(MemoryProjection &Memory, llvm::ArrayRef<RAMWriteRange> Writes,
          uint64_t ByteBudget, unsigned Permissions = Write);
   ~RAMTransaction();
+  /// Run the admitted instruction, synchronizing private transport bytes and
+  /// overlapping native entries only when this transaction cannot write RAM.
+  llvm::Error execute(llvm::function_ref<llvm::Error()> F,
+                      llvm::ArrayRef<RAMWriteRange> Inputs);
   llvm::Error stage();
   llvm::Error read(uint64_t Address,
                    llvm::MutableArrayRef<uint8_t> Bytes) const;

@@ -233,7 +233,7 @@ The supported Bionic subset is:
   `madvise` supports the shared [KSM eligibility contract](process-emulation.md#linux-elf64-profile)
   for `MADV_MERGEABLE` and `MADV_UNMERGEABLE`; other advice stops explicitly.
 - `open`/`open64`, `openat`/`openat64`, `read`, `close`, `lseek`/`lseek64`
-  and `fstat`/`fstat64`
+  and `fstat`/`fstat64`, `fstatat`/`fstatat64`
   use the explicit [`linux_files` catalogue](process-emulation.md#explicit-memory-files).
   Raw traps, imported calls and guest threads share descriptors and cursors;
   only Bionic converts negative errors into `-1` and TLS errno. No host files or

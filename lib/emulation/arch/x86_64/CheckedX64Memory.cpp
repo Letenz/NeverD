@@ -43,21 +43,6 @@ CheckedX64Backend::operandAddress(const cs_insn &I, const cs_x86_op &O,
     Address += CPU.FSBase;
   return Address;
 }
-llvm::Error CheckedX64Backend::mapMMIO(uint64_t A, uint64_t N,
-                                       GuestMMIOCallbacks Callbacks) {
-  if (auto E = mutableMemory())
-    return E;
-  if (UserMode)
-    return diagnostic::error(diagnostic::DeviceMapping);
-  if (!canonicalRange(A, N))
-    return diagnostic::error(diagnostic::InvalidMapping);
-  return addressSpace()->mapMMIO(A, N, std::move(Callbacks));
-}
-llvm::Error CheckedX64Backend::unmapMMIO(uint64_t A, uint64_t N) {
-  if (auto E = mutableMemory())
-    return E;
-  return addressSpace()->unmapMMIO(A, N);
-}
 std::shared_ptr<MemoryProjection::Device>
 CheckedX64Backend::deviceAt(uint64_t Address) const {
   auto I = Memory->mappings().find(Address & ~(x64::PageSize - 1));
@@ -100,6 +85,8 @@ llvm::Error CheckedX64Backend::deviceTransfer(const cs_insn &I,
                                               uint64_t Address, unsigned Size,
                                               unsigned Permission,
                                               uint64_t Value) {
+  if (auto E = Memory->prepareWrite())
+    return E;
   auto D = deviceAt(Address);
   if (auto E = validateDevice(*D, Address, Size, Permission == Write))
     return E;
@@ -160,6 +147,9 @@ llvm::Error CheckedX64Backend::executeString(const cs_insn &I, unsigned Size,
     StringRestart.reset();
     return llvm::Error::success();
   }
+  if (Writes)
+    if (auto E = Memory->prepareWrite())
+      return E;
   if (Compare && Repeat && !StringRestart)
     StringRestart = StringRestartState{I.address, CPU.reg(X64Register::FLAGS)};
   auto CheckAccess = [&](uint64_t A, unsigned Permission) {
@@ -201,6 +191,9 @@ llvm::Error CheckedX64Backend::executeString(const cs_insn &I, unsigned Size,
   }
   auto Input = Reads ? deviceAt(Source) : nullptr;
   auto Output = UsesDestination ? deviceAt(Destination) : nullptr;
+  if (Input || Output)
+    if (auto E = Memory->prepareWrite())
+      return E;
   if (Operation != StringOperation::Move && (Input || Output))
     return llvm::make_error<UnsupportedExecutionError>();
   if (Input && !Input->Callbacks.PrepareRead)

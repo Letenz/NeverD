@@ -12,6 +12,8 @@
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/pipeline/NativeSourceHints.h"
+#include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
@@ -278,6 +280,81 @@ void executeSource(const std::string &Source) {
               0)
         << Error << Source;
   }
+}
+
+TEST(DarwinNativeRecordReturns, FourComputedDoublesExecuteAtO0AndO2) {
+  SourceFunctionTypeHint Scalar;
+  Scalar.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Scalar.ReturnType = NdType::makeFloat(8);
+  Scalar.Parameters = {{"a", NdType::makeFloat(8)},
+                       {"b", NdType::makeFloat(8)}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(Scalar, Arch::AArch64, Error));
+  LowFunc Low;
+  Low.Entry = 0x1000;
+  Low.Name = "computed_quad";
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Low.Entry;
+  const NdOp Operations[] = {NdOp::FLOAT_ADD, NdOp::FLOAT_SUB, NdOp::FLOAT_MULT,
+                             NdOp::FLOAT_DIV};
+  for (unsigned I = 0; I != 4; ++I)
+    Block.Ops.push_back(
+        operation(Operations[I], NdVar::tmp(I * 8, 8),
+                  {NdVar::reg(a64reg::V(0), 8), NdVar::reg(a64reg::V(1), 8)},
+                  Low.Entry + I * 4));
+  for (unsigned I = 0; I != 4; ++I)
+    Block.Ops.push_back(operation(NdOp::INT_ZEXT, NdVar::reg(a64reg::V(I), 16),
+                                  {NdVar::tmp(I * 8, 8)},
+                                  Low.Entry + 16 + I * 4));
+  Block.Ops.push_back(operation(NdOp::RETURN, {}, {NdVar::reg(a64reg::X30, 8)},
+                                Low.Entry + 32));
+  Block.EndAddr = Low.Entry + 36;
+  Low.Blocks = {Block};
+  PipelineFunctionAudit Audit;
+  Audit.Entry = Low.Entry;
+  Audit.Disposition = PipelineFunctionDisposition::Accepted;
+  Audit.HasLowIR = Audit.HasMedIR = Audit.MedIRVerified = true;
+  Audit.DecodedInstructions = Audit.LiftedInstructions = 9;
+  const auto Bind = [&](const SourceFunctionTypeHint &Hint) {
+    const std::map<va_t, SourceFunctionTypeHint> Entries{{Low.Entry, Hint}};
+    LowToMedConverter Converter;
+    Converter.setSourceCallHintsEnabled(true);
+    Converter.setSourceEntryTypeHints(&Entries);
+    auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+    Med.SourceTypeHint = Hint;
+    recoverCallAbi(Med, Arch::AArch64, {});
+    inferMedTypes(Med, Arch::AArch64);
+    return Med;
+  };
+  auto Med = Bind(Scalar);
+  auto High = MedToHighConverter().convert(Med, Arch::AArch64);
+  const auto Record = refineNativeFourDoubleReturnHint(Med, High, Audit);
+  ASSERT_TRUE(Record);
+  Med = Bind(*Record);
+  High = MedToHighConverter().convert(Med, Arch::AArch64);
+  ASSERT_TRUE(Med.SourceParametersBound);
+  const auto Limitation = sdk::sourceBodyLimitation(High, *Record, &Audit);
+  ASSERT_TRUE(Limitation.empty()) << Limitation;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+  Source += "\n#include <string.h>\nint main(void) {\n"
+            "  for (unsigned i = 0; i != 2048; ++i) {\n"
+            "    double a = ((int)(i % 127) - 63) / 8.0;\n"
+            "    double b = ((int)(i % 61) - 30) / 4.0;\n"
+            "    if (b == 0) b = -0.5;\n"
+            "    volatile double first = a, second = b;\n"
+            "    double expected[4] = {first + second, first - second,\n"
+            "                           first * second, first / second};\n"
+            "    " +
+            typeToC(Record->ReturnType) +
+            " actual = computed_quad(a, b);\n"
+            "    if (memcmp(&actual, expected, sizeof(expected))) return 1;\n"
+            "  }\n  return 0;\n}\n";
+  executeSource(Source);
 }
 
 TEST(DarwinUIKitSourceCalls, BoundOptionsConsumeAllFourScalarCarriers) {
@@ -977,6 +1054,108 @@ TEST(DarwinIndirectRecordCalls,
   executeSource(Source);
 }
 
+TEST(DarwinIndirectRecordCalls, AffineInvertSnapshotsItsCompleteAliasedInput) {
+  constexpr auto CoreGraphics =
+      "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+  auto Image = image("_CGAffineTransformInvert");
+  Image.DynInfo.NeededLibs = {CoreGraphics};
+  Image.DyldBindSlots.at(0x2180).Module = CoreGraphics;
+  const auto Hint = darwinRuntimeSourceCallHint(Image, 0x2180);
+  ASSERT_TRUE(Hint);
+  const auto Effects = darwinMatrixSourceFrameEffects(Image, *Hint);
+  ASSERT_TRUE(Effects);
+  ASSERT_EQ(Hint->Signature.Parameters.size(), 1U);
+  EXPECT_EQ(Hint->Signature.Parameters[0].Location.RegisterOffset, a64reg::X0);
+  EXPECT_EQ(Hint->Signature.ReturnLocation.RegisterOffset, a64reg::X8);
+  EXPECT_EQ(Hint->ByteCount, 48U);
+  EXPECT_EQ(Effects->WritableFrameParameters,
+            (std::map<size_t, size_t>{{0, 48}}));
+  EXPECT_EQ(Effects->InitializedFrameParameters, (std::set<size_t>{0}));
+  EXPECT_TRUE(Effects->InitializesIndirectResult);
+  SourceFunctionTypeHint Entry;
+  Entry.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Entry.ReturnType = NdType::makeVoid();
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  Entry.Parameters = {{"input", Pointer}, {"output", Pointer}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(Entry, Arch::AArch64, Error));
+  LowFunc Low;
+  Low.Entry = 0x1200;
+  Low.Name = "invert_affine";
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Low.Entry;
+  Block.EndAddr = Low.Entry + 12;
+  Block.Ops = {
+      operation(NdOp::COPY, NdVar::reg(a64reg::X8, 8),
+                {NdVar::reg(a64reg::X1, 8)}, Low.Entry),
+      operation(NdOp::CALL, {}, {NdVar::cst(0x1100, 8)}, Low.Entry + 4),
+      operation(NdOp::RETURN, {}, {NdVar::reg(a64reg::X30, 8)}, Low.Entry + 8)};
+  Low.Blocks = {Block};
+  const std::map<va_t, SourceFunctionTypeHint> Entries{{Low.Entry, Entry}};
+  LowToMedConverter Converter;
+  Converter.setBinaryImage(&Image);
+  Converter.setSourceCallHintsEnabled(true);
+  Converter.setSourceEntryTypeHints(&Entries);
+  auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+  Med.SourceTypeHint = Entry;
+  recoverCallAbi(Med, Arch::AArch64, {}, &Image);
+  inferMedTypes(Med, Arch::AArch64);
+  const auto High = MedToHighConverter().convert(Med, Arch::AArch64);
+  unsigned Calls = 0, Stores = 0;
+  walkStmts(High.Body, [&](const HighStmt &Statement) {
+    Stores += Statement.Kind == StmtKind::Store;
+    forEachExpr(Statement, [&](const ExprPtr &Expression) {
+      if (Expression && Expression->Kind == ExprKind::Call) {
+        ++Calls;
+        EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+      }
+    });
+  });
+  EXPECT_EQ(Calls, 1U);
+  EXPECT_EQ(Stores, 6U);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+  const auto Record = typeToC(Hint->Signature.ReturnType);
+  Source +=
+      "\n#include <string.h>\n"
+      "static uint64_t input_bits[6]; static unsigned calls, mismatch;\n" +
+      Record + " inverse_probe(" + Record +
+      ") __asm__(\"_CGAffineTransformInvert\");\n" + Record +
+      " inverse_probe(" + Record +
+      " input) {\n"
+      "  ++calls; mismatch |= memcmp(&input, input_bits, 48) != 0;\n"
+      "  uint64_t bits[6]; memcpy(bits, &input, 48);\n"
+      "  for (unsigned j = 0; j != 6; ++j) bits[j] ^= "
+      "0x123456789abcdef0ULL + j;\n  " +
+      Record +
+      " result; memcpy(&result, bits, 48); return result;\n}\n"
+      "int main(void) {\n"
+      "  static const uint64_t cases[] = {0, 0x8000000000000000ULL, "
+      "0x3ff0000000000000ULL, 0x7ff0000000000000ULL, "
+      "0xfff0000000000000ULL, 0x7ff8000000001234ULL, 1, "
+      "0x8000000000000001ULL};\n"
+      "  static const unsigned outputs[] = {1, 3, 4, 5, 9};\n"
+      "  for (unsigned i = 0; i != 512; ++i) {\n"
+      "    for (unsigned j = 0; j != 6; ++j) input_bits[j] = "
+      "cases[(i + j) % 8] ^ ((uint64_t)(i / 8) << 8) ^ j;\n"
+      "    for (unsigned k = 0; k != 5; ++k) {\n"
+      "      uint64_t storage[16], expected[16];\n"
+      "      memset(storage, 0xa5, sizeof(storage));\n"
+      "      memcpy(storage + 3, input_bits, 48);\n"
+      "      memcpy(expected, storage, sizeof(storage));\n"
+      "      for (unsigned j = 0; j != 6; ++j) "
+      "expected[outputs[k] + j] = input_bits[j] ^ "
+      "(0x123456789abcdef0ULL + j);\n"
+      "      invert_affine(storage + 3, storage + outputs[k]);\n"
+      "      if (memcmp(storage, expected, sizeof(storage))) return 1;\n"
+      "    }\n  }\n  return mismatch || calls != 2560;\n}\n";
+  executeSource(Source);
+}
+
 TEST(DarwinIndirectRecordCalls,
      MatrixConstructorsWriteAllSixteenFieldsWithExactScalarArguments) {
   constexpr auto QuartzCore =
@@ -1503,7 +1682,8 @@ TEST(DarwinIndirectRecordCalls, MatrixFrameEffectsRequireExactCurrentContract) {
   for (const char *Name :
        {"CATransform3DMakeTranslation", "CATransform3DScale",
         "CGAffineTransformMakeRotation", "CGAffineTransformMakeScale",
-        "CGAffineTransformConcat", "CGRectApplyAffineTransform"}) {
+        "CGAffineTransformConcat", "CGAffineTransformInvert",
+        "CGRectApplyAffineTransform"}) {
     SCOPED_TRACE(Name);
     const bool Rect = llvm::StringRef(Name) == "CGRectApplyAffineTransform";
     const bool Affine = llvm::StringRef(Name).starts_with("CGAffine") || Rect;
@@ -1516,10 +1696,12 @@ TEST(DarwinIndirectRecordCalls, MatrixFrameEffectsRequireExactCurrentContract) {
     auto Effects = darwinMatrixSourceFrameEffects(Image, *Binding);
     ASSERT_TRUE(Effects);
     EXPECT_EQ(Effects->InitializesIndirectResult, !Rect);
-    const unsigned Inputs = std::string(Name) == "CGAffineTransformConcat" ? 2U
-                            : std::string(Name) == "CATransform3DScale" || Rect
-                                ? 1U
-                                : 0U;
+    const unsigned Inputs =
+        std::string(Name) == "CGAffineTransformConcat" ? 2U
+        : std::string(Name) == "CATransform3DScale" || Rect ||
+                std::string(Name) == "CGAffineTransformInvert"
+            ? 1U
+            : 0U;
     EXPECT_EQ(Binding->Signature.ReturnType->Size, Rect     ? 32U
                                                    : Affine ? 48U
                                                             : 128U);

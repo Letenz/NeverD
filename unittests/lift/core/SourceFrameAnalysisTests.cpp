@@ -1316,6 +1316,65 @@ TEST(SourceFrameAnalysis, ProvesInitializedCopiesFromIndependentResultEffects) {
   EXPECT_FALSE(F.query());
 }
 
+TEST(SourceFrameAnalysis, IncomingResultAddressNeedsCompleteEntryIdentity) {
+  RecordCopyFixture F;
+  auto Entry = F.Entry;
+  Entry.Parameters = {
+      {"output",
+       NdType::makeInt(8),
+       {SourceABICarrierKind::IntegerRegister, a64reg::X8, 0, 8}}};
+  const auto Call = op(NdOp::CALL, X0, {NdVar::cst(0x4000, 8)}, 0x1000);
+  LowFunc Low;
+  Low.Entry = 0x1000;
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Low.Entry;
+  Block.Ops = {Call, op(NdOp::RETURN, {}, {X0}, 0x1000)};
+  Low.Blocks.push_back(Block);
+  SourceFrameEffects Effect;
+  Effect.InitializesIndirectResult = true;
+  auto Calls = callsAt(Call.Addr, F.Producer, Effect);
+  std::set<uint64_t> Used;
+  ASSERT_TRUE(
+      restoresNativeSourceState(Low, Arch::AArch64, Calls, &Used, &Entry));
+  EXPECT_EQ(Used, (std::set<uint64_t>{a64reg::X8}));
+  Entry.Parameters[0].Type = NdType::makePtr(NdType::makeVoid());
+  EXPECT_TRUE(
+      restoresNativeSourceState(Low, Arch::AArch64, Calls, nullptr, &Entry));
+  EXPECT_FALSE(restoresNativeSourceState(Low, Arch::AArch64, Calls));
+  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Low;
+    auto ABI = Entry;
+    auto Contracts = Calls;
+    auto &P = ABI.Parameters[0];
+    if (Mutation == 0)
+      P.Location.RegisterOffset = a64reg::X7;
+    if (Mutation == 1)
+      P.Type = NdType::makeFloat(8);
+    if (Mutation == 2)
+      P.Type = NdType::makeInt(4);
+    if (Mutation == 3)
+      P.Location.ValueBytes = 4;
+    if (Mutation == 4)
+      ABI.Parameters.clear();
+    if (Mutation == 5)
+      Contracts.begin()->second.InitializesIndirectResult = false;
+    if (Mutation >= 6) {
+      const auto Write =
+          Mutation == 6   ? op(NdOp::COPY, F.X8, {NdVar::scalar(0, 8)}, 0xffc)
+          : Mutation == 7 ? op(NdOp::COPY, NdVar::reg(a64reg::X8, 4),
+                               {NdVar::scalar(0, 4)}, 0xffc)
+          : Mutation == 8
+              ? op(NdOp::INT_ADD, F.X8, {F.X8, NdVar::scalar(8, 8)}, 0xffc)
+              : op(NdOp::COPY, F.X8, {SP}, 0xffc);
+      Changed.Blocks[0].Ops.insert(Changed.Blocks[0].Ops.begin(), Write);
+    }
+    EXPECT_FALSE(restoresNativeSourceState(Changed, Arch::AArch64, Contracts,
+                                           nullptr, &ABI));
+  }
+}
+
 TEST(SourceFrameAnalysis, CopyQueryAcceptsCompleteDeclaredEntryABI) {
   RecordCopyFixture F;
   F.Entry.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;

@@ -69,6 +69,11 @@ bool hasNativeScalarIntrinsicEvidence(const LowOp &Operation,
 /// including volatile inputs forwarded through a call's physical ABI. Calls
 /// invalidate volatile identities; exact private spills can preserve them.
 /// These use facts neither add restoration obligations nor declare parameters.
+/// A complete explicit entry scalar in ARM64 x8 can be forwarded unchanged to
+/// an independently authenticated indirect-result producer. Every entry byte
+/// must retain its identity on that path. This checks external result writes
+/// only; it grants neither private-frame initialization nor a logical entry
+/// record return. Ordinary call lowering retains those writes.
 /// This does not prove a result type or authorize machine-code rewriting.
 bool restoresNativeSourceState(
     const LowFunc &Function, Arch Architecture, const NativeSourceCalls &Calls,

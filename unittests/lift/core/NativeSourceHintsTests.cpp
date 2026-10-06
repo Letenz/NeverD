@@ -268,6 +268,66 @@ TEST(NativeSourceHints, HFAImportVeneerDoesNotGuessOtherDeclarations) {
   EXPECT_FALSE(darwinHFAImportVeneerSourceABI(Indirect.Image, Indirect.Entry));
 }
 
+TEST(NativeSourceHints, IndirectResultTailCallRetainsExplicitOutputAddress) {
+  HFAImportVeneerFixture F(
+      "_CGAffineTransformMakeScale",
+      "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics");
+  // The source function owns a direct tail, independently of the import
+  // veneer's indirect transfer. Keep that original veneer as its target.
+  auto &Code = F.Image.Segments[0];
+  Code.Size = Code.FileSz = 0x200;
+  Code.Data.resize(0x200);
+  std::copy_n(Code.Data.begin(), 12, Code.Data.begin() + 0x100);
+  llvm::support::endian::write32le(Code.Data.data(), 0x14000040);
+  F.Image.Sections[0].Size = F.Image.Sections[0].FileSz = 0x200;
+  F.Image.Segments[1].FileOff = F.Image.Sections[1].FileOff = 0x200;
+  F.Image.Symbols[0].Size = 4;
+  F.Image.Symbols.push_back({"import_veneer", F.Entry + 0x100, 12, true});
+  F.Options.OnlyFunctionEntries.insert(F.Entry + 0x100);
+  F.Result = Pipeline().run(F.Image, F.Context, F.Options);
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  std::map<va_t, std::string> Diagnostics;
+  ASSERT_EQ(sdk::inferObjCNativeDependencies(F.Image, F.Result, F.Options,
+                                             Diagnostics, {F.Entry}),
+            1U)
+      << Diagnostics[F.Entry];
+  const auto &Hint = F.Options.SourceTypeHints.at(F.Entry);
+  EXPECT_EQ(Hint.Origin, SourceFunctionTypeHint::OriginKind::NativeAnalysis);
+  EXPECT_EQ(Hint.ReturnType->Kind, NdTypeKind::Void);
+  EXPECT_EQ(Hint.ReturnLocation.Kind, SourceABICarrierKind::None);
+  ASSERT_EQ(Hint.Parameters.size(), 3U);
+  EXPECT_EQ(Hint.Parameters[0].Type->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Hint.Parameters[1].Type->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Hint.Parameters[2].Location.RegisterOffset, a64reg::X8);
+  EXPECT_EQ(Hint.Parameters[2].Location.ValueBytes, 8U);
+  auto Fresh = Pipeline().run(F.Image, F.Context, F.Options);
+  ASSERT_TRUE(Fresh.Success) << Fresh.Error;
+  const auto Found = std::find_if(
+      Fresh.HighFuncs.begin(), Fresh.HighFuncs.end(),
+      [&](const auto &Function) { return Function.Entry == F.Entry; });
+  ASSERT_NE(Found, Fresh.HighFuncs.end());
+  const auto &Function = *Found;
+  ASSERT_TRUE(Function.SourceTypeHint);
+  EXPECT_TRUE(equalSourceABIs(*Function.SourceTypeHint, Hint));
+  unsigned Stores = 0;
+  walkStmts(Function.Body, [&](const HighStmt &Statement) {
+    Stores += Statement.Kind == StmtKind::Store;
+  });
+  EXPECT_EQ(Stores, 6U);
+  const auto Bound = sdk::bindObjCSourceReferences(Function, F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  std::map<va_t, const HighFunc *> Functions{{F.Entry, &Function}};
+  const auto Allowed = [&](const HighExpr &Call) {
+    return sdk::objcSourceCallBound(Call, F.Image, Functions);
+  };
+  const auto Audit =
+      std::find_if(Fresh.FunctionAudits.begin(), Fresh.FunctionAudits.end(),
+                   [&](const auto &A) { return A.Entry == F.Entry; });
+  ASSERT_NE(Audit, Fresh.FunctionAudits.end());
+  EXPECT_TRUE(sdk::sourceBodyLimitation(Bound.Function, Hint, &*Audit, Allowed)
+                  .empty());
+}
+
 TEST(NativeSourceHints, CFunctionParameterCallKeepsTheCompleteVoidCallback) {
   using namespace c_function_parameter_test;
   Fixture F;
@@ -7050,6 +7110,118 @@ TEST(NativeSourceHints, FloatingPairReliftingPublishesBothComputedDoubles) {
   Low.Blocks[0].Ops[1].Inputs[1] = NdVar::tmp(99, 8);
   Bind(*Pair);
   EXPECT_FALSE(sdk::sourceBodyLimitation(F.High, *Pair, &F.Audit).empty());
+}
+
+TEST(NativeSourceHints, FourDoubleCallerDemandNeedsEveryUnchangedCarrier) {
+  SourceFunctionTypeHint Signature;
+  Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Signature.ReturnType =
+      NdType::makeStruct(std::vector<TypeRef>(4, NdType::makeFloat(8)));
+  std::string Error;
+  ASSERT_TRUE(assignDarwinFixedSourceABI(Signature, Arch::AArch64, Error))
+      << Error;
+  LowFunc Caller;
+  Caller.Entry = 0x1000;
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Caller.Entry;
+  Block.Ops = {NativeVoidFrameFixture::op(NdOp::CALL, NdVar::reg(a64reg::X0, 8),
+                                          {NdVar::cst(0x3000, 8)}),
+               NativeVoidFrameFixture::op(NdOp::RETURN, {},
+                                          {NdVar::reg(a64reg::X30, 8)})};
+  Caller.Blocks = {Block};
+  EXPECT_EQ(observedNativeFourDoubleReturns(Caller, Signature),
+            (std::set<va_t>{0x3000}));
+  for (unsigned I = 0; I != 4; ++I) {
+    auto Changed = Caller;
+    Changed.Blocks[0].Ops.insert(
+        Changed.Blocks[0].Ops.begin() + 1,
+        NativeVoidFrameFixture::op(NdOp::COPY, NdVar::reg(a64reg::V(I), 4),
+                                   {NdVar::scalar(0, 4)}));
+    EXPECT_TRUE(observedNativeFourDoubleReturns(Changed, Signature).empty());
+    // Unknown upper Q lanes are outside the four low-double observations.
+    Changed.Blocks[0].Ops[1].Output.Offset += 8;
+    EXPECT_EQ(observedNativeFourDoubleReturns(Changed, Signature),
+              (std::set<va_t>{0x3000}));
+  }
+  for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Caller;
+    auto ABI = Signature;
+    if (Mutation == 0)
+      ABI.Architecture = Arch::X64;
+    if (Mutation == 1)
+      ABI.ReturnComponents.pop_back();
+    if (Mutation == 2)
+      ABI.ReturnComponents[3].RegisterOffset = a64reg::V(4);
+    if (Mutation == 3)
+      ABI.ReturnComponents[2].ValueBytes = 4;
+    if (Mutation == 4)
+      Changed.Blocks[0].Ops[0].Opcode = NdOp::INDIR_CALL;
+    if (Mutation == 5)
+      Changed.Blocks[0].Ops[0].Inputs[0] = NdVar::reg(a64reg::X7, 8);
+    if (Mutation == 6)
+      Changed.Blocks[0].Ops.insert(
+          Changed.Blocks[0].Ops.begin() + 1,
+          NativeVoidFrameFixture::op(NdOp::INTRINSIC, {}, {}));
+    if (Mutation == 7)
+      Changed.Blocks[0].Ops.insert(
+          Changed.Blocks[0].Ops.begin() + 1,
+          NativeVoidFrameFixture::op(NdOp::BRANCH, {},
+                                     {NdVar::cst(0x4000, 8)}));
+    if (Mutation == 8)
+      Changed.Blocks[0].ExceptionalSuccs.emplace_back();
+    EXPECT_TRUE(observedNativeFourDoubleReturns(Changed, ABI).empty());
+  }
+}
+
+TEST(NativeSourceHints, FourDoubleReturnRequiresEveryComputedLowLane) {
+  for (unsigned Mutation = 0; Mutation != 13; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    NativeFloatingFixture F(Arch::AArch64, 8);
+    const auto First = F.Med.Blocks[0].Ops[0];
+    for (unsigned I = 1; I != 4; ++I) {
+      auto Write = First;
+      Write.Output.RegOff = a64reg::V(I);
+      Write.Output.Id = 10 + I;
+      F.Med.Blocks[0].Ops.insert(F.Med.Blocks[0].Ops.end() - 1, Write);
+    }
+    std::string Error;
+    const auto Scalar = F.infer(Error);
+    ASSERT_TRUE(Scalar) << Error;
+    F.Med.SourceTypeHint = F.High.SourceTypeHint = *Scalar;
+    F.Med.SourceParametersBound = true;
+    auto &Ops = F.Med.Blocks[0].Ops;
+    if (Mutation >= 1 && Mutation <= 4)
+      Ops[Mutation - 1].Output.Size = 4;
+    if (Mutation >= 5 && Mutation <= 8)
+      Ops.erase(Ops.begin() + Mutation - 5);
+    if (Mutation == 9)
+      F.Audit.MedIRVerified = false;
+    if (Mutation == 10)
+      F.Med.SourceParametersBound = false;
+    if (Mutation == 11)
+      F.Med.SourceTypeHint->Origin = F.High.SourceTypeHint->Origin =
+          SourceFunctionTypeHint::OriginKind::DarwinSDK;
+    if (Mutation == 12) {
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.addInput(MedVar::makeConst(0x1080, 8));
+      Ops.insert(Ops.end() - 1, Call);
+    }
+    const auto Record =
+        refineNativeFourDoubleReturnHint(F.Med, F.High, F.Audit);
+    EXPECT_EQ(bool(Record), Mutation == 0);
+    if (Record) {
+      ASSERT_EQ(Record->ReturnComponents.size(), 4U);
+      EXPECT_EQ(Record->ReturnType->Size, 32U);
+      for (unsigned I = 0; I != 4; ++I) {
+        EXPECT_EQ(Record->ReturnComponents[I].RegisterOffset, a64reg::V(I));
+        EXPECT_EQ(Record->ReturnComponents[I].ValueBytes, 8U);
+      }
+      EXPECT_TRUE(equalSourceABIs(*F.Med.SourceTypeHint, *Scalar));
+    }
+  }
 }
 
 TEST(NativeSourceHints,

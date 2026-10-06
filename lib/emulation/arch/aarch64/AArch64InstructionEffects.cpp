@@ -228,6 +228,8 @@ getAArch64InstructionEffects(const cs_insn &I,
   if (UsesFloatingState &&
       (State.reg(AArch64Register::FPCR) & ~aarch64::AllowedFPCR))
     return llvm::make_error<UnsupportedExecutionError>();
+  // MSR NZCV selects only source bits31:28. Its other input bits are ignored
+  // by the original instruction, unlike this bounded FP control contract.
   if (Kind == System && I.id == AARCH64_INS_MSR &&
       Source != aarch64::GPRCount &&
       ((isWriteFPControl(Word) &&

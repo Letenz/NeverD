@@ -8,8 +8,8 @@
 #include "../MachineFactories.h"
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(__aarch64__)) &&          \
     defined(NEVERD_EMULATION_WHP)
-#include "WhpPartition.h"
 #include "WhpResourceCache.h"
+#include "WhpVirtualProcessor.h"
 
 #include "llvm/Support/ErrorHandling.h"
 
@@ -41,12 +41,20 @@ WHV_REGISTER_NAME scalarRegister(AArch64Register Register, bool UserMode) {
     llvm_unreachable(diagnostic::Register);
   }
 }
-llvm::Expected<std::unique_ptr<WhpPartition>>
-createWhpArmPartition(MemoryProjection &Memory);
+llvm::Expected<std::unique_ptr<WhpVirtualProcessor>>
+createWhpArmProcessor(MemoryProjection &Memory);
 class WhpAArch64Machine final : public AArch64Machine {
 public:
   explicit WhpAArch64Machine(MemoryProjection &Memory)
-      : Binding([&Memory] { return createWhpArmPartition(Memory); }) {}
+      : Memory(Memory),
+        Binding([&Memory] { return createWhpArmProcessor(Memory); },
+                Memory.parallelEnabled()) {}
+  llvm::Error initialize() {
+    auto Active = Binding.acquire(
+        {std::chrono::steady_clock::now() +
+         std::chrono::microseconds(aarch64::ProbeTimeoutMicroseconds)});
+    return Active ? llvm::Error::success() : Active.takeError();
+  }
   llvm::Error step(AArch64MachineState &State,
                    MachineRunControl Control) override {
     Control = Control.forNativeStep();
@@ -90,15 +98,20 @@ public:
     Add(WHvArm64RegisterPstate, PStateEL1h | PStateDAIF);
     Add(WHvArm64RegisterMdscrEl1,
         MDSCRSingleStep | MDSCRKernelDebug | MDSCRMonitorDebug);
-    Add(WHvArm64RegisterTtbr0El1, LowRoot);
-    Add(WHvArm64RegisterTtbr1El1, HighRoot);
+    // A slot keeps the same ASID and physical window on reuse. Its immutable
+    // entry VA therefore remains valid even before the first TLBI in the
+    // maintenance gateway; that TLBI retires all former guest translations.
+    const uint64_t ASID = uint64_t(Host.ProcessorIndex + 1) << ASIDShift;
+    Add(WHvArm64RegisterTtbr0El1, Memory.transportPhysical(LowRoot) | ASID);
+    Add(WHvArm64RegisterTtbr1El1, Memory.transportPhysical(HighRoot) | ASID);
     Add(WHvArm64RegisterTcrEl1, TCR);
     Add(WHvArm64RegisterMairEl1, MAIR);
     Add(WHvArm64RegisterSctlrEl1, SCTLR);
     Add(WHvArm64RegisterVbarEl1, VectorGPA);
     Add(WHvArm64RegisterCpacrEl1, CPACR);
     if (const auto Status = API.WHvSetVirtualProcessorRegisters(
-            Partition, 0, Names.data(), Names.size(), Values.data());
+            Partition, Host.ProcessorIndex, Names.data(), Names.size(),
+            Values.data());
         FAILED(Status))
       return whpError(diagnostic::WhpState, Status,
                       whp::operation::WHvSetVirtualProcessorRegisters);
@@ -116,7 +129,8 @@ public:
       Values.resize(StateCount);
       const auto Syndrome = Add(WHvArm64RegisterEsrEl1, 0);
       if (const auto Status = API.WHvGetVirtualProcessorRegisters(
-              Partition, 0, Names.data(), Names.size(), Values.data());
+              Partition, Host.ProcessorIndex, Names.data(), Names.size(),
+              Values.data());
           FAILED(Status))
         return whpError(diagnostic::WhpState, Status,
                         whp::operation::WHvGetVirtualProcessorRegisters);
@@ -143,15 +157,15 @@ public:
   }
 
 private:
-  WhpResourceBinding<WhpPartition> Binding;
+  MemoryProjection &Memory;
+  WhpResourceBinding<WhpVirtualProcessor> Binding;
 };
-llvm::Expected<std::unique_ptr<WhpPartition>>
-createWhpArmPartition(MemoryProjection &Memory) {
-  auto M = std::make_unique<WhpPartition>();
-  if (auto E = M->API.load())
+llvm::Error configureWhpArmPartition(WhpAPI &API,
+                                     WHV_PARTITION_HANDLE &Partition) {
+  if (auto E = API.load())
     return E;
   WHV_CAPABILITY C{};
-  if (const auto Status = M->API.WHvGetCapability(
+  if (const auto Status = API.WHvGetCapability(
           WHvCapabilityCodeHypervisorPresent, &C, sizeof(C), nullptr);
       FAILED(Status))
     return whpUnavailable(diagnostic::WhpArmCapability, Status,
@@ -159,29 +173,28 @@ createWhpArmPartition(MemoryProjection &Memory) {
   if (!C.HypervisorPresent)
     return diagnostic::unavailable(diagnostic::WhpArmCapability,
                                    BackendAvailability::MissingCapability);
-  if (const auto Status = M->API.WHvGetCapability(
-          WHvCapabilityCodeExtendedVmExits, &C, sizeof(C), nullptr);
+  if (const auto Status = API.WHvGetCapability(WHvCapabilityCodeExtendedVmExits,
+                                               &C, sizeof(C), nullptr);
       FAILED(Status))
     return whpUnavailable(diagnostic::WhpArmCapability, Status,
                           whp::operation::WHvGetCapability);
   if (!C.ExtendedVmExits.HypercallExit)
     return diagnostic::unavailable(diagnostic::WhpArmCapability,
                                    BackendAvailability::MissingCapability);
-  if (const auto Status = M->API.WHvCreatePartition(&M->Partition);
-      FAILED(Status))
+  if (const auto Status = API.WHvCreatePartition(&Partition); FAILED(Status))
     return whpError(diagnostic::WhpCreate, Status,
                     whp::operation::WHvCreatePartition);
   WHV_PARTITION_PROPERTY P{};
-  P.ProcessorCount = 1;
-  if (const auto Status = M->API.WHvSetPartitionProperty(
-          M->Partition, WHvPartitionPropertyCodeProcessorCount, &P, sizeof(P));
+  P.ProcessorCount = ProcessorCount;
+  if (const auto Status = API.WHvSetPartitionProperty(
+          Partition, WHvPartitionPropertyCodeProcessorCount, &P, sizeof(P));
       FAILED(Status))
     return whpError(diagnostic::WhpCreate, Status,
                     whp::operation::WHvSetPartitionProperty);
   P = {};
   P.ExtendedVmExits.HypercallExit = 1;
-  if (const auto Status = M->API.WHvSetPartitionProperty(
-          M->Partition, WHvPartitionPropertyCodeExtendedVmExits, &P, sizeof(P));
+  if (const auto Status = API.WHvSetPartitionProperty(
+          Partition, WHvPartitionPropertyCodeExtendedVmExits, &P, sizeof(P));
       FAILED(Status))
     return whpError(diagnostic::WhpCreate, Status,
                     whp::operation::WHvSetPartitionProperty);
@@ -190,46 +203,47 @@ createWhpArmPartition(MemoryProjection &Memory) {
   auto &GIC = P.Arm64IcParameters.GicV3Parameters;
   GIC.GicdBaseAddress = aarch64::GicDistributor;
   GIC.GitsTranslaterBaseAddress = aarch64::GicITS;
-  if (const auto Status = M->API.WHvGetCapability(
-          WHvCapabilityCodeGicLpiIntIdBits, &C, sizeof(C), nullptr);
+  if (const auto Status = API.WHvGetCapability(WHvCapabilityCodeGicLpiIntIdBits,
+                                               &C, sizeof(C), nullptr);
       FAILED(Status))
     return whpUnavailable(diagnostic::WhpArmCapability, Status,
                           whp::operation::WHvGetCapability);
   GIC.GicLpiIntIdBits = C.GicLpiIntIdBits;
   GIC.GicPpiOverflowInterruptFromCntv = aarch64::GicVirtualTimerPPI;
   GIC.GicPpiPerformanceMonitorsInterrupt = aarch64::GicPerformancePPI;
-  if (const auto Status = M->API.WHvSetPartitionProperty(
-          M->Partition, WHvPartitionPropertyCodeArm64IcParameters, &P,
-          sizeof(P));
+  if (const auto Status = API.WHvSetPartitionProperty(
+          Partition, WHvPartitionPropertyCodeArm64IcParameters, &P, sizeof(P));
       FAILED(Status))
     return whpError(diagnostic::WhpCreate, Status,
                     whp::operation::WHvSetPartitionProperty);
-  if (const auto Status = M->API.WHvSetupPartition(M->Partition);
-      FAILED(Status))
+  if (const auto Status = API.WHvSetupPartition(Partition); FAILED(Status))
     return whpError(diagnostic::WhpCreate, Status,
                     whp::operation::WHvSetupPartition);
-  if (auto E = M->mapMemory(Memory))
+  return llvm::Error::success();
+}
+llvm::Expected<std::unique_ptr<WhpVirtualProcessor>>
+createWhpArmProcessor(MemoryProjection &Memory) {
+  auto M = std::make_unique<WhpVirtualProcessor>();
+  if (auto E = M->attach(Memory, configureWhpArmPartition))
     return E;
-  if (const auto Status = M->API.WHvCreateVirtualProcessor(M->Partition, 0, 0);
-      FAILED(Status))
-    return whpError(diagnostic::WhpCreate, Status,
-                    whp::operation::WHvCreateVirtualProcessor);
   WHV_REGISTER_NAME Name = WHvArm64RegisterGicrBaseGpa;
   WHV_REGISTER_VALUE Value{};
-  Value.Reg64 = aarch64::GicRedistributor;
+  Value.Reg64 = RedistributorBase + M->ProcessorIndex * RedistributorStride;
   if (const auto Status = M->API.WHvSetVirtualProcessorRegisters(
-          M->Partition, 0, &Name, 1, &Value);
+          M->Partition, M->ProcessorIndex, &Name, 1, &Value);
       FAILED(Status))
     return whpError(diagnostic::WhpState, Status,
                     whp::operation::WHvSetVirtualProcessorRegisters);
   if (auto E = M->initializeRunControl())
     return E;
-  return std::unique_ptr<WhpPartition>(std::move(M));
+  return std::unique_ptr<WhpVirtualProcessor>(std::move(M));
 }
 } // namespace
 llvm::Expected<std::unique_ptr<AArch64Machine>>
 createWhpAArch64Machine(MemoryProjection &Memory) {
   auto M = std::make_unique<WhpAArch64Machine>(Memory);
+  if (auto E = M->initialize())
+    return E;
   if (auto E = verifyAArch64Machine(*M, Memory))
     return E;
   return std::unique_ptr<AArch64Machine>(std::move(M));
