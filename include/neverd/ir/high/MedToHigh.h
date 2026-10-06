@@ -138,6 +138,11 @@ bool loopsForNestedJumpsBack(std::vector<HighStmt> &Body);
 /// loop's body, become `continue`; each target starts exactly one statement.
 bool loopJumpsAsBreakAndContinue(std::vector<HighStmt> &Body);
 
+/// In a run of plain assignments ending in a return, a temporary assigned in
+/// the run can only be read in the run, even when copies of the run assign it
+/// elsewhere: one read takes its value directly and an unread one goes.
+bool foldTempsInReturnTails(std::vector<HighStmt> &Body);
+
 /// When NEVERD_HIGH_FLOW_ORACLE is set, print one FLOWPROTECT line for each
 /// structured SEH try of \p Func whose guarded range holds code outside its
 /// __try that may raise an exception: in C that code runs unprotected.  Run
@@ -163,11 +168,14 @@ bool hoistSharedArmTails(std::vector<HighStmt> &Body);
 /// code moved away from its branch or a tail shared with later code, comes
 /// after the blocks that reach it; blocks the entry never reaches follow in
 /// address order.  \p Dispatched blocks transfer only explicitly (a compare
-/// tree's switch).  Address order when the function has an exception
-/// handler, whose regions follow addresses, or when a block's fall-through
-/// edge is unknown.
+/// tree's switch).  Address order when a block's fall-through edge is unknown
+/// or the function has exception regions, except that with
+/// \p SEHReversePostorder a frame with only Windows SEH scopes keeps reverse
+/// postorder when it leaves every guarded range's blocks next to each other,
+/// since a __try wraps one run of statements.
 std::vector<int> highBlockLayout(const MedFunc &Med,
-                                 const std::set<int> &Dispatched);
+                                 const std::set<int> &Dispatched,
+                                 bool SEHReversePostorder = true);
 
 /// Emit a label-per-block goto/return skeleton.  Used when structuring would
 /// exceed SSA limits, or when conversion fails and identity alone would leave
@@ -176,6 +184,10 @@ void fillUnstructuredGotoSkeleton(HighFunc &Func, const MedFunc &Med);
 
 class MedToHighConverter {
 public:
+  /// Convert \p Med.  A frame with only Windows SEH scopes is laid out in
+  /// reverse postorder; when that leaves a guarded range unstructured, it is
+  /// converted again in address order, which is kept only if it leaves fewer
+  /// ranges unstructured.
   HighFunc convert(const MedFunc &Med, Arch TheArch = Arch::Unknown);
 
   void setBinaryImage(const BinaryImage *Img) { Image = Img; }
@@ -216,6 +228,9 @@ public:
   };
 
 private:
+  HighFunc convertOnce(const MedFunc &Med, Arch TheArch);
+  /// Lay out an SEH frame in address order for this conversion.
+  bool SEHAddressOrder = false;
   void buildExpressions(const MedFunc &Med);
   void structureControlFlow(HighFunc &Func, const MedFunc &Med);
   void structureExceptionRegions(HighFunc &Func, const MedFunc &Med);

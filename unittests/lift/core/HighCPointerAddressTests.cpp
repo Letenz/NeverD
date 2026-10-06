@@ -34111,7 +34111,6 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   const auto Store = llvm::find_if(Stores, [](const PortableStoreCall &S) {
     return S.Type == "uint8_t" && S.Value == "3";
   });
-  const auto Load = sourceLineContaining(Source, "__builtin_memcpy(&t38_3,");
   const auto Clear = sourceLineContaining(Source, "neverd_di =");
   const auto HomeStore = llvm::find_if(
       Stores, [](const PortableStoreCall &S) { return S.Value == "arg0"; });
@@ -34123,7 +34122,6 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   if (ExceptStore.empty())
     ExceptStore = sourceLineContaining(Source, "(uint32_t)(20)");
   ASSERT_NE(Store, Stores.end()) << Source;
-  ASSERT_FALSE(Load.empty()) << Source;
   ASSERT_FALSE(Clear.empty()) << Source;
   ASSERT_FALSE(Home.empty()) << Source;
   ASSERT_FALSE(ExceptStore.empty()) << Source;
@@ -34138,15 +34136,23 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
       << Source;
   EXPECT_NE(Store->Address.find("frame_base"), std::string_view::npos)
       << Source;
-  EXPECT_NE(Load.find("frame_base"), std::string_view::npos) << Source;
-  const auto LoadArgs = callArguments(Load, "__builtin_memcpy", false);
-  ASSERT_TRUE(LoadArgs.has_value()) << Source;
-  ASSERT_EQ(LoadArgs->size(), 3u) << Source;
-  auto LoadAddress = llvm::StringRef((*LoadArgs)[1]).trim();
-  ASSERT_TRUE(LoadAddress.consume_front("(const void *)")) << Source;
-  EXPECT_EQ(normalizeMemoryTemporaries(Store->Address),
-            normalizeMemoryTemporaries(LoadAddress))
-      << Source;
+  // A later load reads the byte back through the same frame address, as a
+  // statement or inside the return that uses it.
+  bool SameAddress = false;
+  const std::string Wanted = normalizeMemoryTemporaries(Store->Address);
+  for (size_t At = Source.find("__builtin_memcpy(&");
+       At != std::string::npos && !SameAddress;
+       At = Source.find("__builtin_memcpy(&", At + 1)) {
+    const auto Args = callArguments(std::string_view(Source).substr(At),
+                                    "__builtin_memcpy", false);
+    if (!Args || Args->size() != 3u)
+      continue;
+    auto Address = llvm::StringRef((*Args)[1]).trim();
+    SameAddress = Address.consume_front("(const void *)") &&
+                  Address.contains("frame_base") &&
+                  normalizeMemoryTemporaries(Address) == Wanted;
+  }
+  EXPECT_TRUE(SameAddress) << Source;
   EXPECT_NE(Clear.find("frame_base - 72"), std::string_view::npos) << Source;
   EXPECT_NE(Home.find("frame_base + 8"), std::string_view::npos) << Source;
   EXPECT_EQ(Source.find("var_m48"), std::string::npos) << Source;

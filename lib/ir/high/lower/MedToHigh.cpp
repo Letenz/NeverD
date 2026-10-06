@@ -939,6 +939,44 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
 }
 
 HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
+  const ExceptionFunction *EH =
+      Med.ExceptionMetadata ? &*Med.ExceptionMetadata : nullptr;
+  if (!EH || !EH->SEH || EH->SEH->Scopes.empty() || EH->Cxx || EH->Itanium ||
+      EH->Registration)
+    return convertOnce(Med, TheArch);
+  // Reverse postorder can scatter a guarded range so that no __try holds it,
+  // which address order may keep whole.  The layout that leaves fewer guarded
+  // ranges unstructured is kept; on a tie reverse postorder stays.  How many
+  // gotos either prints never enters the choice.  The observers see only the
+  // conversion that is kept.
+  auto SavedExpression = std::move(ExpressionObserver);
+  auto SavedClone = std::move(ExpressionCloneObserver);
+  auto SavedStatement = std::move(StatementObserver);
+  ExpressionObserver = {};
+  ExpressionCloneObserver = {};
+  StatementObserver = {};
+  const bool Observed = SavedExpression || SavedClone || SavedStatement;
+  SEHAddressOrder = false;
+  HighFunc Func = convertOnce(Med, TheArch);
+  if (Func.UnstructuredExceptionRegions) {
+    SEHAddressOrder = true;
+    HighFunc Ordered = convertOnce(Med, TheArch);
+    if (Ordered.UnstructuredExceptionRegions <
+        Func.UnstructuredExceptionRegions)
+      Func = std::move(Ordered);
+    else
+      SEHAddressOrder = false;
+  }
+  ExpressionObserver = std::move(SavedExpression);
+  ExpressionCloneObserver = std::move(SavedClone);
+  StatementObserver = std::move(SavedStatement);
+  if (Observed)
+    Func = convertOnce(Med, TheArch);
+  SEHAddressOrder = false;
+  return Func;
+}
+
+HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   HighConversionTrace Trace(Med, TheArch);
   Trace.med();
   auto TStart = std::chrono::steady_clock::now();
@@ -1079,6 +1117,7 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   loopsForArmsJumpingBack(Func.Body);
   loopsForNestedJumpsBack(Func.Body);
   loopJumpsAsBreakAndContinue(Func.Body);
+  foldTempsInReturnTails(Func.Body);
   mergeJumpsIntoNextIfArms(Func);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();

@@ -1580,6 +1580,230 @@ bool loopJumpsAsBreakAndContinue(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
+bool foldTempsInReturnTails(std::vector<HighStmt> &Body) {
+  std::set<va_t> Entered = gotoTargets(Body);
+  walkStmts(Body, [&](const HighStmt &S) {
+    for (const HighEHClause &Clause : S.EHClauses)
+      Entered.insert(Clause.HandlerVA);
+  });
+  // How often \p E reads \p K, and which variables it reads.
+  std::function<unsigned(const HighExpr *, const VarKey &)> Reads =
+      [&](const HighExpr *E, const VarKey &K) -> unsigned {
+    if (!E)
+      return 0;
+    unsigned N = E->Kind == ExprKind::Var && varKey(E->Var) == K;
+    E->forEachChildExpr([&](const ExprPtr &Op) { N += Reads(Op.get(), K); });
+    return N;
+  };
+  std::function<void(const HighExpr *, std::set<VarKey> &)> ReadSet =
+      [&](const HighExpr *E, std::set<VarKey> &Out) {
+        if (!E)
+          return;
+        if (E->Kind == ExprKind::Var)
+          Out.insert(varKey(E->Var));
+        E->forEachChildExpr([&](const ExprPtr &Op) { ReadSet(Op.get(), Out); });
+      };
+  // \p E with its reads of \p K replaced by \p With; nodes off that path are
+  // shared, the ones on it copied.
+  std::function<ExprPtr(const ExprPtr &, const VarKey &, const ExprPtr &)>
+      Replace = [&](const ExprPtr &E, const VarKey &K,
+                    const ExprPtr &With) -> ExprPtr {
+    if (!E || !Reads(E.get(), K))
+      return E;
+    if (E->Kind == ExprKind::Var)
+      return With;
+    auto Copy = std::make_shared<HighExpr>(*E);
+    for (ExprPtr &Op : Copy->Operands)
+      Op = Replace(Op, K, With);
+    return Copy;
+  };
+  auto ReadOf = [](HighStmt &S) -> ExprPtr * {
+    if (S.Kind == StmtKind::Return)
+      return &S.RetVal;
+    if (S.Kind == StmtKind::Assign)
+      return &S.Val;
+    return nullptr;
+  };
+  auto WrittenVar = [](const HighStmt &S) -> std::optional<VarKey> {
+    if (S.Kind == StmtKind::Assign && S.Dst &&
+        (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi))
+      return varKey(S.Dst->Var);
+    return std::nullopt;
+  };
+  // Whether \p E calls, stores or orders memory (and so must stay put), or
+  // reads memory (and so may move only past statements that write none).
+  std::function<bool(const HighExpr *)> Pinned = [&](const HighExpr *E) {
+    if (!E)
+      return false;
+    if (E->Kind == ExprKind::Call || E->Kind == ExprKind::Store ||
+        E->MemoryOrdering != NdMemoryOrdering::None)
+      return true;
+    bool Found = false;
+    E->forEachChildExpr([&](const ExprPtr &Op) { Found |= Pinned(Op.get()); });
+    return Found;
+  };
+  std::function<bool(const HighExpr *)> ReadsMemory = [&](const HighExpr *E) {
+    if (!E)
+      return false;
+    if (E->Kind == ExprKind::Load)
+      return true;
+    bool Found = false;
+    E->forEachChildExpr(
+        [&](const ExprPtr &Op) { Found |= ReadsMemory(Op.get()); });
+    return Found;
+  };
+  // Only temporaries a copied tail assigns again are left for this pass:
+  // one assignment and one read the general inlining already takes.  Each of
+  // their reads must also follow an assignment in its own run, as in copies
+  // of a tail; a temporary read elsewhere may hold a frame slot another path
+  // or a handler sees.
+  std::map<VarKey, unsigned> Defs, Reads_, Covered;
+  walkStmts(Body, [&](HighStmt &S) {
+    if (std::optional<VarKey> W = WrittenVar(S))
+      ++Defs[*W];
+    forEachExpr(S, [&](ExprPtr &E) {
+      // An assigned variable is written, not read.
+      if (&E == &S.Dst && S.Kind == StmtKind::Assign)
+        return;
+      std::set<VarKey> Seen;
+      ReadSet(E.get(), Seen);
+      for (const VarKey &K : Seen)
+        Reads_[K] += Reads(E.get(), K);
+    });
+  });
+  std::function<void(std::vector<HighStmt> &)> CountCovered =
+      [&](std::vector<HighStmt> &L) {
+        for (HighStmt &S : L) {
+          CountCovered(S.Body);
+          CountCovered(S.ElseBody);
+          for (auto &C : S.Cases)
+            CountCovered(C.Body);
+          CountCovered(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            CountCovered(ClauseBody);
+        }
+        for (size_t R = 0; R < L.size(); ++R) {
+          if (L[R].Kind != StmtKind::Return)
+            continue;
+          size_t Start = R;
+          while (Start > 0 && (L[Start - 1].Kind == StmtKind::Nop ||
+                               (L[Start - 1].Kind == StmtKind::Block &&
+                                L[Start - 1].Body.empty()) ||
+                               WrittenVar(L[Start - 1])))
+            --Start;
+          std::set<VarKey> Assigned;
+          for (size_t J = Start; J <= R; ++J) {
+            if (ExprPtr *Read = ReadOf(L[J])) {
+              std::set<VarKey> Seen;
+              ReadSet(Read->get(), Seen);
+              for (const VarKey &K : Seen)
+                if (Assigned.count(K))
+                  Covered[K] += Reads(Read->get(), K);
+            }
+            if (std::optional<VarKey> W = WrittenVar(L[J]))
+              Assigned.insert(*W);
+          }
+        }
+      };
+  CountCovered(Body);
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (HighStmt &S : L) {
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
+        }
+        for (size_t R = 0; R < L.size(); ++R) {
+          if (L[R].Kind != StmtKind::Return)
+            continue;
+          size_t Start = R;
+          while (Start > 0) {
+            const HighStmt &P = L[Start - 1];
+            if (P.Kind != StmtKind::Nop &&
+                !(P.Kind == StmtKind::Block && P.Body.empty()) &&
+                !WrittenVar(P))
+              break;
+            --Start;
+          }
+          // Whether control can enter at \p J without running what precedes.
+          auto EnteredAt = [&](size_t J) {
+            return L[J].Addr && L[J].Addr != InvalidVA &&
+                   Entered.count(L[J].Addr) && L[J - 1].Addr != L[J].Addr;
+          };
+          for (size_t I = Start; I < R;) {
+            HighStmt &Def = L[I];
+            if (Def.Kind != StmtKind::Assign || !Def.Dst || !Def.Val ||
+                Def.Dst->Kind != ExprKind::Var ||
+                Def.Dst->Var.Kind != MedVar::Temp ||
+                Defs[varKey(Def.Dst->Var)] < 2 ||
+                Covered[varKey(Def.Dst->Var)] != Reads_[varKey(Def.Dst->Var)] ||
+                Pinned(Def.Val.get()) ||
+                (Def.Addr && Def.Addr != InvalidVA && Entered.count(Def.Addr) &&
+                 (I == 0 || L[I - 1].Addr != Def.Addr))) {
+              ++I;
+              continue;
+            }
+            const VarKey K = varKey(Def.Dst->Var);
+            // `v = v + x` updates a variable, typically a frame slot; that
+            // write stays visible.
+            std::set<VarKey> Sources;
+            ReadSet(Def.Val.get(), Sources);
+            if (llvm::any_of(Sources, [&](const VarKey &S) {
+                  return S.first == K.first;
+                })) {
+              ++I;
+              continue;
+            }
+            unsigned Uses = 0;
+            size_t UseAt = 0;
+            bool Rewritten = false;
+            for (size_t J = I + 1; J <= R && !Rewritten; ++J) {
+              if (ExprPtr *Read = ReadOf(L[J]))
+                if (const unsigned N = Reads(Read->get(), K)) {
+                  Uses += N;
+                  UseAt = J;
+                }
+              Rewritten = WrittenVar(L[J]) == K;
+            }
+            bool Fold = false;
+            if (!Rewritten && Uses == 1) {
+              std::set<VarKey> Operands;
+              ReadSet(Def.Val.get(), Operands);
+              const bool Memory = ReadsMemory(Def.Val.get());
+              Fold = true;
+              for (size_t J = I + 1; J <= UseAt && Fold; ++J) {
+                if (EnteredAt(J))
+                  Fold = false;
+                else if (J < UseAt)
+                  if (std::optional<VarKey> W = WrittenVar(L[J]))
+                    // A variable other than a temporary may live in memory
+                    // the moved read sees.
+                    Fold = !Operands.count(*W) &&
+                           (!Memory || L[J].Dst->Var.Kind == MedVar::Temp);
+              }
+              if (Fold)
+                *ReadOf(L[UseAt]) = Replace(*ReadOf(L[UseAt]), K, Def.Val);
+            }
+            if (Fold ||
+                (!Rewritten && Uses == 0 && !exprMayFault(Def.Val.get()))) {
+              L.erase(L.begin() + static_cast<ptrdiff_t>(I));
+              --R;
+              Changed = true;
+              continue;
+            }
+            ++I;
+          }
+        }
+      };
+  Visit(Body);
+  return Changed;
+}
+
 /// True when \p Stmts contains a continue that would restart a loop wrapped
 /// around it. Only a nested loop owns a continue.
 static bool hasLooseContinue(const std::vector<HighStmt> &Stmts) {
