@@ -209,6 +209,8 @@ neverd emulate guest.exe --profile=windows-pe64-v1 \
 
 عندما يكون مخزن الإدخال المؤقت غير فارغ وغير قابل للقراءة، تُرجع `WriteFile` الخطأ `ERROR_INVALID_USER_BUFFER` (1784)، وتصفّر عدد البايتات المكتوبة ولا تُخرج أي بايتات.
 
+يحمّل `windows.defer_unmodeled` صورة لا ينفّذ النموذج بعض حقائق تحميلها، ولا يتوقف إلا إذا اعتمد التنفيذ على إحداها. تُربط الصادرات الواقعة خارج جرد واجهات API والوحدات الواقعة خارج الفهرس بمداخل معتمة: كل هوية تُحلّ إلى عنوان واحد، وتنفيذه يوقف التشغيل بوصفه `unsupported_service` مع تسمية `module!export`. تبقى الأدلة التي لا يفسّرها النموذج دون تفسير، ولا تُقرأ عند التحميل البيانات الوصفية التي لا يوفّرها الملف، ويتوقف توزيع الاستثناءات المعتمد على الإطارات عبر صورة كهذه. يضيف `observeProcess` كائن `ProcessObserver` يقرأ العملية المتوقفة عند بدايتها وعند كل مراقبة تنفيذ؛ ولا يستطيع تغيير حالة الضيف، وعندما ينهي التشغيل يُبلَّغ عن `observer`. يقوم [فك الحزم](unpack.md) على الاثنين معًا.
+
 [PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c). [GetProcAddress](https://learn.microsoft.com/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress).
 
 <!-- i18n-section: verification -->

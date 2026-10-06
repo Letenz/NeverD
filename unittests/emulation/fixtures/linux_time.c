@@ -6,9 +6,23 @@
 typedef unsigned long U64;
 extern U64 linux_service(U64, U64, U64, U64);
 #if defined(__aarch64__)
-enum { GetTV = 169, GetClock = 113, Protect = 226, Write = 64, Exit = 93 };
+enum {
+  Sleep = 101,
+  GetTV = 169,
+  GetClock = 113,
+  Protect = 226,
+  Write = 64,
+  Exit = 93
+};
 #else
-enum { GetTV = 96, GetClock = 228, Protect = 10, Write = 1, Exit = 60 };
+enum {
+  Sleep = 35,
+  GetTV = 96,
+  GetClock = 228,
+  Protect = 10,
+  Write = 1,
+  Exit = 60
+};
 #endif
 static unsigned char Pages[8192] __attribute__((aligned(4096)));
 static void finish(U64 Status) {
@@ -26,7 +40,21 @@ void process_main(U64 *Stack) {
   if (Stack[0] != 2)
     finish(91);
   char Mode = ((const char **)(Stack + 1))[1][0];
-  if (Mode == 'n') {
+  if (Mode == 's') {
+    long Request[2] = {-1, 0};
+    check(linux_service(Sleep, (U64)Request, 1, 0), (U64)-22);
+    check(linux_service(Sleep, 1, 0, 0), (U64)-14);
+    Request[0] = 0;
+    check(linux_service(Sleep, (U64)Request, (U64)Request, 0), 0);
+    Request[0] = 1;
+    Request[1] = 7;
+    check(linux_service(Sleep, (U64)Request, (U64)Request, 0), 0);
+    check(Request[0], 1);
+    check(Request[1], 7);
+    check(linux_service(GetClock, 0, (U64)Pages, 0), 0);
+    check(linux_service(GetClock, 1, (U64)Pages + 16, 0), 0);
+    output(Pages, 32);
+  } else if (Mode == 'n') {
     check(linux_service(GetTV, (U64)Pages, (U64)Pages + 16, 0), 0);
     check(linux_service(GetClock, 0, (U64)Pages + 24, 0), 0);
     check(linux_service(GetClock, 0x1122334400000001UL, (U64)Pages + 40, 0), 0);

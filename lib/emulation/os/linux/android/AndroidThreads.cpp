@@ -95,127 +95,6 @@ llvm::Error GuestThreads::retire(size_t Index) {
   T.Report.Retired = true;
   return llvm::Error::success();
 }
-std::optional<size_t> GuestThreads::onceOwner(uint64_t Control) const {
-  for (size_t I = 0; I < Threads.size(); ++I)
-    for (const auto &Pending : Threads[I].Callbacks)
-      if (const auto *Once =
-              std::get_if<OnceCallback>(&Pending.Call.Continuation))
-        if (Once->Control == Control)
-          return I;
-  return std::nullopt;
-}
-bool GuestThreads::onceActive(uint64_t Control) const {
-  return onceOwner(Control).has_value();
-}
-BionicResult GuestThreads::waitOnce(uint64_t Control) {
-  const auto Owner = onceOwner(Control);
-  // A raw running value is not evidence of an initializer that can finish.
-  // Same-thread recursion and externally forged controls remain unsupported.
-  if (!Owner || *Owner == Current)
-    return unsupported(diagnostic::OnceInProgress);
-  assert(!current().Waiting && "running thread already has a pending wait");
-  current().Waiting = Wait{Once{*Owner, Control}, std::nullopt};
-  return std::optional<BionicValue>(GuestThreadWait{});
-}
-void GuestThreads::completeOnce(uint64_t Control) {
-  // Bionic calls this only after the actual initializer returns and the
-  // completion word has been written successfully to shared guest memory.
-  for (auto &T : Threads)
-    if (T.Waiting)
-      if (auto *Once = std::get_if<GuestThreads::Once>(&T.Waiting->Operation))
-        if (Once->Owner == Current && Once->Control == Control)
-          Once->Ready = true;
-}
-void GuestThreads::waitMutex(uint64_t Address, uint16_t Attributes) {
-  auto &Waiting = current().Waiting;
-  if (Waiting) {
-    auto &Mutex = std::get<GuestThreads::Mutex>(Waiting->Operation);
-    assert(Mutex.Address == Address && Mutex.Attributes == Attributes);
-    // A wake does not grant ownership. Preserve the suspended request and
-    // its event when another thread acquires the lock before this one runs.
-    Mutex.Ready = false;
-    return;
-  }
-  Waiting = Wait{Mutex{Address, Attributes}, std::nullopt};
-}
-
-void GuestThreads::wakeMutex(uint64_t Address) {
-  // FUTEX_WAKE(1) has no guest ordering guarantee. Choose one sleeper in the
-  // same deterministic round-robin order used to schedule runnable threads.
-  for (size_t Offset = 1; Offset <= Threads.size(); ++Offset) {
-    auto &Waiting = Threads[(Current + Offset) % Threads.size()].Waiting;
-    if (!Waiting)
-      continue;
-    auto *Mutex = std::get_if<GuestThreads::Mutex>(&Waiting->Operation);
-    if (Mutex && Mutex->Address == Address && !Mutex->Ready) {
-      Mutex->Ready = true;
-      return;
-    }
-  }
-}
-
-bool GuestThreads::ready(const Wait &Pending) const {
-  if (const auto *J = std::get_if<Join>(&Pending.Operation))
-    return Threads[J->Target].Report.Finished;
-  if (const auto *O = std::get_if<Once>(&Pending.Operation))
-    return O->Ready;
-  return std::get<Mutex>(Pending.Operation).Ready;
-}
-
-llvm::Error GuestThreads::prepareJoin(const Join &Pending) {
-  if (!Pending.Output)
-    return llvm::Error::success();
-  if (auto E = access(Pending.Output, 8, Write))
-    return E;
-  return put64(Pending.Output, *Threads[Pending.Target].Report.ReturnValue);
-}
-
-BionicResult GuestThreads::resumeWait(Bionic &LibC) {
-  const auto &Pending = *current().Waiting;
-  assert(Pending.Request && "scheduled wait has no suspended service");
-  // Resumption can fail before another guest instruction executes. Attribute
-  // that stop to this service, not the previous thread's last instruction.
-  Result.PC = Pending.Request->PC;
-  const auto &Operation = Pending.Operation;
-  if (const auto *M = std::get_if<Mutex>(&Operation))
-    return LibC.resumeMutex(M->Address, M->Attributes);
-  if (const auto *J = std::get_if<Join>(&Operation)) {
-    if (auto E = prepareJoin(*J))
-      return std::move(E);
-    return value(0);
-  }
-  const auto &Once = std::get<GuestThreads::Once>(Operation);
-  // Recheck memory after suspension: a different thread may have unmapped
-  // or modified it. Failure must leave the original import incomplete.
-  if (auto E = access(Once.Control, once_abi::ControlBytes, Read,
-                      once_abi::ControlBytes))
-    return std::move(E);
-  uint8_t Bytes[once_abi::ControlBytes];
-  if (auto E = CPU.read(Once.Control, Bytes))
-    return std::move(E);
-  if (llvm::support::endian::read32le(Bytes) != once_abi::Complete)
-    return failure(diagnostic::OnceWaitControl);
-  return value(0);
-}
-
-llvm::Error GuestThreads::completeWait(uint64_t Value) {
-  const auto &Pending = *current().Waiting;
-  if (Pending.Request) {
-    if (auto E = linux_model::returnService(CPU, *Pending.Request, Value))
-      return E;
-    Result.NativeCalls[Pending.Event].Result = Value;
-  }
-  if (const auto *J = std::get_if<Join>(&Pending.Operation))
-    if (auto E = retire(J->Target))
-      return E;
-  current().Waiting.reset();
-  return llvm::Error::success();
-}
-void GuestThreads::suspend(const ServiceRequest &Request, size_t Event) {
-  assert(current().Waiting && !current().Waiting->Request);
-  current().Waiting->Request = Request;
-  current().Waiting->Event = Event;
-}
 llvm::Error GuestThreads::finish(uint64_t Value, uint32_t ExitStatus) {
   LastExitStatus = ExitStatus;
   current().Report.Finished = true;
@@ -256,7 +135,17 @@ llvm::Error GuestThreads::switchTo(size_t Next) {
 }
 
 llvm::Expected<bool> GuestThreads::schedule(Bionic &LibC) {
-  while (auto Next = nextRunnable()) {
+  for (;;) {
+    auto Next = nextRunnable();
+    if (!Next) {
+      auto Deadline = nextWake();
+      if (!Deadline)
+        break;
+      if (!Clock.advanceTo(*Deadline, Result))
+        return false;
+      Next = nextRunnable();
+      assert(Next && "earliest sleep did not become runnable");
+    }
     if (auto E = switchTo(*Next))
       return std::move(E);
     if (!current().Waiting)

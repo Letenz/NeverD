@@ -22,6 +22,8 @@
 #include "neverd/emulation/ProcessCLIStrings.h"
 #include "neverd/emulation/ProcessReportFields.h"
 #include "neverd/loader/ARMModeCLIStrings.h"
+#include "neverd/unpack/UnpackCLIStrings.h"
+#include "neverd/unpack/UnpackStrings.h"
 
 using namespace llvm;
 
@@ -147,6 +149,7 @@ cl::SubCommand
 cl::SubCommand CPUCapabilitiesCmd(execution_cli::CapabilitiesCommand,
                                   execution_cli::CapabilitiesHelp);
 cl::SubCommand EmulateProcessCmd(process_cli::Command, process_cli::Help);
+cl::SubCommand UnpackCmd(unpack_cli::Command, unpack_cli::Help);
 cl::SubCommand TranslateObjectCmd(
     "translate-object",
     "Compile canonical legacy-prefix-free x86-64 v1 REX.W full-width GPR MOV, "
@@ -1218,6 +1221,17 @@ cl::opt<std::string>
                    cl::value_desc(process_cli::OptionsValue),
                    cl::init(emulation::process_report::EmptyOptions),
                    cl::sub(EmulateProcessCmd));
+cl::opt<std::string> UnpackInput(cl::Positional, cl::desc(unpack_cli::Input),
+                                 cl::Required, cl::sub(UnpackCmd));
+cl::opt<std::string> UnpackOutput(unpack_cli::OutputOption,
+                                  cl::desc(unpack_cli::OutputHelp),
+                                  cl::value_desc(unpack_cli::OutputValue),
+                                  cl::Required, cl::sub(UnpackCmd));
+cl::opt<std::string> UnpackOptions(unpack_cli::OptionsOption,
+                                   cl::desc(unpack_cli::OptionsHelp),
+                                   cl::value_desc(unpack_cli::OptionsValue),
+                                   cl::init(unpack::strings::EmptyOptions),
+                                   cl::sub(UnpackCmd));
 
 //===----------------------------------------------------------------------===//
 // Translate-object-specific options

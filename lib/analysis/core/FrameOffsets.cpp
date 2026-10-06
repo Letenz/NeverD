@@ -34,22 +34,35 @@ constantOperand(const SymContext &Ctx, SymRef Value, SymOp Op) {
 // particular, (X & Mask) - Root == (X - Root) - (X & ~Mask). Alignment then
 // projects only the removed low bits; the solver still proves their complete
 // domain under the original predicate. No residue or feasibility is assumed.
-// Only binary constant operations and one split are inspected per level. The
-// fixed depth bounds inspection; the caller charges every created DAG node.
+// Only binary operations and one matching split are inspected per visit. The
+// shared visit budget bounds inspection; the caller charges every created node.
 std::optional<SymRef> relativeRemainder(SymContext &Ctx, SymRef Value,
-                                        SymRef Root, unsigned Depth) {
-  if (!Depth || Ctx.width(Value) != 64)
+                                        SymRef Root, unsigned &Remaining) {
+  if (!Remaining || Ctx.width(Value) != 64)
     return std::nullopt;
+  --Remaining;
   if (Value == Root)
     return Ctx.mkZero(64);
   if (const auto Add = constantOperand(Ctx, Value, SymOp::Add)) {
-    if (const auto Inner = relativeRemainder(Ctx, Add->first, Root, Depth - 1))
+    if (const auto Inner = relativeRemainder(Ctx, Add->first, Root, Remaining))
       return Ctx.mkAdd(*Inner, Ctx.mkConst(Add->second));
+    return std::nullopt;
+  }
+  // (Base + Index) - Root == (Base - Root) + Index. The other operand
+  // remains symbolic, including any dependence on Root or on the predicate.
+  // Share the inspection budget across both choices to bound branching work.
+  if (Ctx.op(Value) == SymOp::Add && Ctx.numOperands(Value) == 2) {
+    for (unsigned I = 0; I != 2; ++I) {
+      const auto Base = Ctx.operand(Value, I);
+      const auto Index = Ctx.operand(Value, 1 - I);
+      if (const auto Inner = relativeRemainder(Ctx, Base, Root, Remaining))
+        return Ctx.mkAdd(*Inner, Index);
+    }
     return std::nullopt;
   }
   const auto Masked = [&](SymRef Base,
                           const llvm::APInt &Mask) -> std::optional<SymRef> {
-    const auto Inner = relativeRemainder(Ctx, Base, Root, Depth - 1);
+    const auto Inner = relativeRemainder(Ctx, Base, Root, Remaining);
     if (!Inner)
       return std::nullopt;
     const auto RemovedMask = ~Mask;
@@ -88,10 +101,12 @@ std::optional<SymRef> relativeRemainder(SymContext &Ctx, SymRef Value,
 
 } // namespace
 
-FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,
-                             SymRef Root, solver::SolverOptions Settings,
-                             uint64_t MaxQueries, uint64_t MaxSymbolicNodes,
-                             uint64_t &Queries, FiniteQueryCache *Cache) {
+static FrameOffset
+proveFrameOffsetImpl(SymContext &Ctx, SymRef Predicate, SymRef Value,
+                     SymRef Root, solver::SolverOptions Settings,
+                     uint64_t MaxQueries, uint64_t MaxSymbolicNodes,
+                     uint64_t &Queries, FiniteQueryCache *Cache,
+                     FiniteDomainEncoding *Encoding) {
   const auto Valid = [&](SymRef R, unsigned Width) {
     return R && R.index() < Ctx.numNodes() && Ctx.width(R) == Width;
   };
@@ -103,23 +118,28 @@ FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,
     return {FrameOffsetStatus::Infeasible};
   if (const auto Offset = frameRelativeOffset(Ctx, Value, Root))
     return {FrameOffsetStatus::Exact, *Offset};
-  const auto Remainder = relativeRemainder(Ctx, Value, Root, 16);
+  unsigned Remaining = 16;
+  const auto Remainder = relativeRemainder(Ctx, Value, Root, Remaining);
   const SymRef Difference = Remainder ? *Remainder : Ctx.mkSub(Value, Root);
   if (Ctx.numNodes() > MaxSymbolicNodes)
     return {FrameOffsetStatus::BudgetExceeded};
   if (const auto Constant = Ctx.asConst(Difference))
     return {FrameOffsetStatus::Exact, Constant->getZExtValue()};
 
-  auto Cached =
-      Cache ? Cache->lookup(Ctx, Predicate, {Difference}, 1) : std::nullopt;
+  auto Prepared = Cache ? Cache->prepare(Ctx, Predicate, {Difference}, 1)
+                        : FiniteQueryCache::PreparedQuery{};
+  auto Cached = Cache ? Cache->lookup(Prepared) : std::nullopt;
   const auto Domain =
       Cached ? std::move(*Cached)
-             : enumerateFiniteValues(Ctx, Predicate, {Difference}, 1, Settings,
-                                     MaxQueries, MaxSymbolicNodes, Queries);
+      : Encoding
+          ? enumerateFiniteValues(*Encoding, Predicate, {Difference}, 1,
+                                  MaxQueries, MaxSymbolicNodes, Queries)
+          : enumerateFiniteValues(Ctx, Predicate, {Difference}, 1, Settings,
+                                  MaxQueries, MaxSymbolicNodes, Queries);
   if (Ctx.numNodes() > MaxSymbolicNodes)
     return {FrameOffsetStatus::BudgetExceeded};
   if (Cache && !Cached)
-    Cache->store(Ctx, Predicate, {Difference}, 1, Domain);
+    Cache->store(std::move(Prepared), Domain);
   switch (Domain.Status) {
   case FiniteValueStatus::Complete:
     if (Domain.Tuples.empty())
@@ -136,6 +156,23 @@ FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,
     return {FrameOffsetStatus::BudgetExceeded};
   }
   llvm_unreachable("invalid finite value status");
+}
+
+FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,
+                             SymRef Root, solver::SolverOptions Settings,
+                             uint64_t MaxQueries, uint64_t MaxSymbolicNodes,
+                             uint64_t &Queries, FiniteQueryCache *Cache) {
+  return proveFrameOffsetImpl(Ctx, Predicate, Value, Root, Settings, MaxQueries,
+                              MaxSymbolicNodes, Queries, Cache, nullptr);
+}
+
+FrameOffset proveFrameOffset(FiniteDomainEncoding &Encoding, SymRef Predicate,
+                             SymRef Value, SymRef Root, uint64_t MaxQueries,
+                             uint64_t MaxSymbolicNodes, uint64_t &Queries,
+                             FiniteQueryCache *Cache) {
+  return proveFrameOffsetImpl(Encoding.context(), Predicate, Value, Root,
+                              Encoding.settings(), MaxQueries, MaxSymbolicNodes,
+                              Queries, Cache, &Encoding);
 }
 
 FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,

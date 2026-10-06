@@ -100,8 +100,6 @@ NEVERD_CONFIGURATION_REJECTION(UserIsolation, RequiredFeatures,
                                ExecutionFeature::UserSupervisorIsolation)
 NEVERD_CONFIGURATION_REJECTION(ServiceTraps, RequiredFeatures,
                                ExecutionFeature::ServiceTraps)
-NEVERD_CONFIGURATION_REJECTION(ParallelCPUs, RequiredFeatures,
-                               ExecutionFeature::ParallelCPUs)
 NEVERD_CONFIGURATION_REJECTION(UnknownFeature, RequiredFeatures,
                                static_cast<ExecutionFeature>(uint64_t(1) << 63))
 NEVERD_CONFIGURATION_REJECTION(UnknownBackend, Backend,

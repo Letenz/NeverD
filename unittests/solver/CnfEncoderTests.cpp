@@ -23,6 +23,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <algorithm>
 #include <functional>
 
 using namespace neverd::solver;
@@ -182,6 +183,152 @@ TEST(CnfEncoder, WideExclusiveOrStaysLinear) {
     }
     ASSERT_EQ(S.solve(Assumptions), SatResult::Sat);
     EXPECT_EQ(S.modelValue(Parity) == SatValue::True, (Ones & 1) != 0);
+  }
+}
+
+TEST(CnfEncoder, CollidingGateIdentitiesStayDistinctAfterGrowth) {
+  for (auto Polarity : {GatePolarity::Positive, GatePolarity::Negative}) {
+    SatSolver S;
+    CnfEncoder E(S);
+    llvm::SmallVector<SatLit, 72> Inputs;
+    for (unsigned I = 0; I != 69; ++I)
+      Inputs.push_back(E.freshLit());
+
+    // These different input pairs have the same complete identity hash.
+    // They must remain separate gates, including after a table expansion.
+    const auto First = E.mkAnd(Inputs[1], Inputs[68], Polarity);
+    const auto Second = E.mkAnd(Inputs[2], Inputs[3], Polarity);
+    ASSERT_NE(First, Second);
+    for (unsigned I = 0; I + 2 < Inputs.size(); ++I) {
+      E.mkXor(Inputs[I], Inputs[I + 1]);
+      E.mkMajority(Inputs[I], Inputs[I + 1], Inputs[I + 2]);
+    }
+    const auto Gates = E.numGates();
+    EXPECT_EQ(E.mkAnd(Inputs[68], Inputs[1]), First);
+    EXPECT_EQ(E.mkAnd(Inputs[3], Inputs[2]), Second);
+    EXPECT_EQ(E.numGates(), Gates);
+
+    for (unsigned Assignment = 0; Assignment != 16; ++Assignment) {
+      SCOPED_TRACE(Assignment);
+      llvm::SmallVector<SatLit, 5> Assumptions;
+      unsigned Bit = 0;
+      for (unsigned I : {1U, 68U, 2U, 3U})
+        Assumptions.push_back(
+            Inputs[I].withPolarity((Assignment >> Bit++) & 1));
+      const bool FirstValue = (Assignment & 3) == 3;
+      const bool SecondValue = (Assignment & 12) == 12;
+      ASSERT_EQ(S.solve(Assumptions), SatResult::Sat);
+      EXPECT_EQ(S.modelValue(First) == SatValue::True, FirstValue);
+      EXPECT_EQ(S.modelValue(Second) == SatValue::True, SecondValue);
+      Assumptions.push_back(First.withPolarity(!FirstValue));
+      EXPECT_EQ(S.solve(Assumptions), SatResult::Unsat);
+      Assumptions.back() = Second.withPolarity(!SecondValue);
+      EXPECT_EQ(S.solve(Assumptions), SatResult::Unsat);
+    }
+  }
+}
+
+TEST(CnfEncoder, SharingAndPolarityCompletionSurviveRepeatedGrowth) {
+  SatSolver S;
+  CnfEncoder E(S);
+  llvm::SmallVector<SatLit, 10> Inputs;
+  for (unsigned I = 0; I != 10; ++I)
+    Inputs.push_back(E.freshLit().withPolarity((I & 1) == 0));
+
+  struct GateCase {
+    unsigned A, B, C;
+    SatLit And, Xor, Selected, Majority;
+  };
+  llvm::SmallVector<GateCase, 128> Cases;
+  for (unsigned I = 0; I != Inputs.size(); ++I)
+    for (unsigned J = I + 1; J != Inputs.size(); ++J)
+      for (unsigned K = J + 1; K != Inputs.size(); ++K) {
+        const SatLit Terms[] = {Inputs[I], Inputs[J], Inputs[K]};
+        const auto Polarity =
+            (I + J + K) & 1 ? GatePolarity::Positive : GatePolarity::Negative;
+        Cases.push_back({I, J, K, E.mkAnd(Terms, Polarity), E.mkXor(Terms),
+                         E.mkIte(Terms[2], Terms[0], Terms[1]),
+                         E.mkMajority(Terms[0], Terms[1], Terms[2])});
+      }
+  ASSERT_EQ(E.numGates(), 480u);
+
+  // Revisit every old gate in reverse creation order. Complete each AND
+  // definition and ask for equivalent spellings without making new gates.
+  for (auto It = Cases.rbegin(); It != Cases.rend(); ++It) {
+    const auto &G = *It;
+    const SatLit Reversed[] = {Inputs[G.C], Inputs[G.B], Inputs[G.A]};
+    EXPECT_EQ(E.mkAnd(Reversed), G.And);
+    EXPECT_EQ(E.mkXor(Reversed), G.Xor);
+    EXPECT_EQ(E.mkIte(~Inputs[G.C], Inputs[G.B], Inputs[G.A]), G.Selected);
+    EXPECT_EQ(E.mkMajority(Reversed[0], Reversed[1], Reversed[2]), G.Majority);
+  }
+  EXPECT_EQ(E.numGates(), 480u);
+
+  for (unsigned Assignment = 0; Assignment != 1024; ++Assignment) {
+    SCOPED_TRACE(Assignment);
+    llvm::SmallVector<SatLit, 10> Assumptions;
+    for (unsigned I = 0; I != Inputs.size(); ++I)
+      Assumptions.push_back(Inputs[I].withPolarity((Assignment >> I) & 1));
+    ASSERT_EQ(S.solve(Assumptions), SatResult::Sat);
+    for (const auto &G : Cases) {
+      const bool A = (Assignment >> G.A) & 1;
+      const bool B = (Assignment >> G.B) & 1;
+      const bool C = (Assignment >> G.C) & 1;
+      EXPECT_EQ(S.modelValue(G.And) == SatValue::True, A && B && C);
+      EXPECT_EQ(S.modelValue(G.Xor) == SatValue::True, A ^ B ^ C);
+      EXPECT_EQ(S.modelValue(G.Selected) == SatValue::True, C ? A : B);
+      EXPECT_EQ(S.modelValue(G.Majority) == SatValue::True,
+                unsigned(A) + unsigned(B) + unsigned(C) >= 2);
+    }
+  }
+}
+
+TEST(CnfEncoder, OperandPermutationsKeepSharingAndTruthTables) {
+  for (unsigned Count : {2U, 3U, 5U}) {
+    SCOPED_TRACE(Count);
+    for (unsigned Signs = 0; Signs < (1U << Count); ++Signs) {
+      SCOPED_TRACE(Signs);
+      SatSolver S;
+      CnfEncoder E(S);
+      llvm::SmallVector<SatLit, 8> Variables, Inputs;
+      llvm::SmallVector<unsigned, 8> Order;
+      for (unsigned I = 0; I != Count; ++I) {
+        Variables.push_back(E.freshLit());
+        Inputs.push_back(Variables.back().withPolarity(!(Signs & (1U << I))));
+        Order.push_back(I);
+      }
+      const auto And = E.mkAnd(Inputs), Xor = E.mkXor(Inputs);
+      const auto Majority =
+          Count == 3 ? E.mkMajority(Inputs[0], Inputs[1], Inputs[2]) : SatLit{};
+      const auto Gates = E.numGates();
+      do {
+        llvm::SmallVector<SatLit, 8> Permuted;
+        for (unsigned I : Order)
+          Permuted.push_back(Inputs[I]);
+        EXPECT_EQ(E.mkAnd(Permuted), And);
+        EXPECT_EQ(E.mkXor(Permuted), Xor);
+        if (Count == 3)
+          EXPECT_EQ(E.mkMajority(Permuted[0], Permuted[1], Permuted[2]),
+                    Majority);
+      } while (std::next_permutation(Order.begin(), Order.end()));
+      EXPECT_EQ(E.numGates(), Gates);
+
+      for (unsigned Assignment = 0; Assignment < (1U << Count); ++Assignment) {
+        SCOPED_TRACE(Assignment);
+        llvm::SmallVector<SatLit, 8> Assumptions;
+        unsigned Ones = 0;
+        for (unsigned I = 0; I != Count; ++I) {
+          const bool Bit = (Assignment & (1U << I)) != 0;
+          Assumptions.push_back(Variables[I].withPolarity(Bit));
+          Ones += Bit != ((Signs & (1U << I)) != 0);
+        }
+        ASSERT_EQ(S.solve(Assumptions), SatResult::Sat);
+        EXPECT_EQ(S.modelValue(And) == SatValue::True, Ones == Count);
+        EXPECT_EQ(S.modelValue(Xor) == SatValue::True, (Ones & 1) != 0);
+        if (Count == 3)
+          EXPECT_EQ(S.modelValue(Majority) == SatValue::True, Ones >= 2);
+      }
+    }
   }
 }
 

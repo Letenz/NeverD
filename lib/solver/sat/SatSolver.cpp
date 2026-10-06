@@ -54,6 +54,29 @@ uint64_t budgetEndpoint(uint64_t Used, uint64_t Allowance) {
 
 SatEngine::SatEngine(const SatOptions &Opts) : Opts(Opts), Order(Activity) {}
 
+SatEngine::SatEngine(const SatEngine &Other)
+    : Opts(Other.Opts), Stats(Other.Stats),
+      SearchAttempted(Other.SearchAttempted), Falsified(Other.Falsified),
+      OutOfSpace(Other.OutOfSpace), Arena(Other.Arena), Clauses(Other.Clauses),
+      Learnt(Other.Learnt), WastedWords(Other.WastedWords),
+      Watches(Other.Watches), Value(Other.Value), Level(Other.Level),
+      Reason(Other.Reason), Phase(Other.Phase), Decidable(Other.Decidable),
+      Seen(Other.Seen), Activity(Other.Activity), Order(Other.Order, Activity),
+      Trail(Other.Trail), TrailLim(Other.TrailLim), QueueHead(Other.QueueHead),
+      VarInc(Other.VarInc), ClauseInc(Other.ClauseInc),
+      MaxLearnt(Other.MaxLearnt), ConflictBudgetAt(Other.ConflictBudgetAt),
+      PropagationBudgetAt(Other.PropagationBudgetAt),
+      WatchVisitBudgetAt(Other.WatchVisitBudgetAt), Model(Other.Model),
+      FailedAssumptions(Other.FailedAssumptions),
+      LearntScratch(Other.LearntScratch), ToClear(Other.ToClear),
+      RedundancyStack(Other.RedundancyStack),
+      ClauseScratch(Other.ClauseScratch), LevelScratch(Other.LevelScratch) {
+  // A pristine encoding can already have many root assignments. Remove them
+  // once from this independent copy instead of repeatedly popping them during
+  // search. Strict activity/index priority preserves every actual decision.
+  Order.discardRootAssigned(Value, Level);
+}
+
 //===----------------------------------------------------------------------===//
 // Building the formula
 //===----------------------------------------------------------------------===//
@@ -256,6 +279,7 @@ SatResult SatEngine::search(uint64_t ConflictBudget,
 }
 
 SatResult SatEngine::solve(llvm::ArrayRef<SatLit> Assumptions) {
+  SearchAttempted = true;
   Model.clear();
   FailedAssumptions.clear();
 
@@ -315,6 +339,13 @@ SatResult SatEngine::solve(llvm::ArrayRef<SatLit> Assumptions) {
 
 SatSolver::SatSolver(const SatOptions &Opts)
     : Engine(std::make_unique<detail::SatEngine>(Opts)) {}
+
+SatSolver::SatSolver(const SatSolver &Other)
+    : Engine(std::make_unique<detail::SatEngine>(*Other.Engine)) {}
+
+bool SatSolver::canCloneEncoding() const {
+  return Engine && !Engine->SearchAttempted && !Engine->OutOfSpace;
+}
 
 SatSolver::~SatSolver() = default;
 SatSolver::SatSolver(SatSolver &&) noexcept = default;

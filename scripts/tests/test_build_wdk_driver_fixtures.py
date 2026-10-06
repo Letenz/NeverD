@@ -154,13 +154,44 @@ class WDKDriverFixtureTests(unittest.TestCase):
                 "Native/DriverSIMDSEH.OriginalDriverCatchesAndRetriesSSEFaults/"
                 f"whp_{contract}_{mode}" for mode in modes
             )
+        scheduling_required = {
+            test for test in required
+            if test.startswith(("DriverSchedulingPolicy.",
+                                "Preemptive/DriverScheduling"))
+        }
+        scheduled_cases = set()
+        families = (
+            ("DriverThreadPriorityCases.def", "NEVERD_DRIVER_PRIORITY_CASE",
+             "DriverSchedulingPriority.RuntimePriorityControlsDispatchAndPreemption"),
+            ("DriverPreemptiveCases.def", "NEVERD_PREEMPT_CASE",
+             "DriverScheduling.BusyGuestMakesProgressWithoutCooperativeYield"),
+            ("DriverPreemptiveCases.def", "NEVERD_PREEMPT_POFX",
+             "DriverSchedulingPoFx.BlockingCallbacksRetainTheirOriginalThread"),
+            ("DriverPowerPreemptiveCases.def", "NEVERD_POWER_PREEMPT_CASE",
+             "DriverSchedulingPower.BusyDispatchAllowsIndependentPassivePowerCallbacks"),
+        )
+        for filename, macro, suite in families:
+            cases = re.findall(rf"^{macro}\(\s*(\w+),",
+                               (source.parent / "fixtures" / filename).read_text(),
+                               re.M)
+            self.assertTrue(cases)
+            for contract in ("driver", "checked"):
+                scheduled_cases.update(
+                    f"Preemptive/{suite}/whp_{contract}_{case}" for case in cases
+                )
+        self.assertTrue(scheduled_cases <= scheduling_required)
+        self.assertEqual(
+            scheduling_required - scheduled_cases,
+            {test for test in required if test.startswith("DriverSchedulingPolicy.")},
+        )
         arguments = {row[0]: row[1:] for row in inventory["ARGUMENTS"]}
         self.assertIn("-fasynchronous-unwind-tables", arguments["seh_compile"])
         self.assertTrue(seh_required <= required)
         self.assertEqual(len(required), len(cpu_required) + 2 * len(names)
-                         + len(seh_required))
+                         + len(seh_required) + len(scheduling_required))
         formula = (f"{len(cpu_required)} CPU + {2 * len(names)} WHP + "
-                   f"{len(seh_required)} SEH = {len(required)}")
+                   f"{len(seh_required)} SEH + {len(scheduling_required)} scheduling "
+                   f"= {len(required)}")
         definitions = (fixtures.ROOT / "scripts/EmulationDocumentation.def")
         self.assertIn(formula, definitions.read_text(encoding="utf-8"))
         guides = [fixtures.ROOT / "docs/testing.md"]
@@ -170,6 +201,7 @@ class WDKDriverFixtureTests(unittest.TestCase):
                 paragraph = next(
                     part for part in guide.read_text(encoding="utf-8").split("\n\n")
                     if "`NativeDriverTests.def`" in part
+                    and "`DriverBuiltinImages.def`" in part
                 )
                 self.assertIn(formula, paragraph)
                 for count in (len(names), len(images), len(scenarios)):

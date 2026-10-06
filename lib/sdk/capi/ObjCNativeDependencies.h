@@ -176,7 +176,8 @@ inline size_t inferObjCNativeDependencies(
   std::map<va_t, const MedFunc *> Med;
   std::map<va_t, const HighFunc *> High;
   std::map<va_t, const PipelineFunctionAudit *> Audits;
-  std::set<va_t> IntegerPairReturns, FloatingPairReturns, FourWordReturns;
+  std::set<va_t> IntegerPairReturns, FloatingPairReturns, FourWordReturns,
+      FourDoubleReturns;
   for (const auto &Function : Result.LowFuncs) {
     Low.emplace(Function.Entry, &Function);
     const auto Observed =
@@ -188,6 +189,13 @@ inline size_t inferObjCNativeDependencies(
     const auto FourWords = observedNativeFourWordReturns(Function, Image.Arch);
     FourWordReturns.insert(FourWords.begin(), FourWords.end());
   }
+  for (const auto &Function : Result.MedFuncs)
+    if (Function.SourceTypeHint && Function.SourceParametersBound)
+      if (const auto L = Low.find(Function.Entry); L != Low.end()) {
+        const auto Observed = observedNativeFourDoubleReturns(
+            *L->second, *Function.SourceTypeHint);
+        FourDoubleReturns.insert(Observed.begin(), Observed.end());
+      }
   std::vector<va_t> PairDemand(IntegerPairReturns.begin(),
                                IntegerPairReturns.end());
   for (size_t Index = 0; Index < PairDemand.size(); ++Index) {
@@ -213,6 +221,50 @@ inline size_t inferObjCNativeDependencies(
     // call-only hint must not be promoted back into an entry SourceTypeHint.
     if (CallOnlyTargets.count(Target))
       continue;
+    const auto AuditForTarget = Audits.find(Target);
+    const auto LowForTarget = Low.find(Target);
+    const auto MedForTarget = Med.find(Target);
+    const auto HighForTarget = High.find(Target);
+    const bool CompleteEntryAudit =
+        AuditForTarget != Audits.end() && LowForTarget != Low.end() &&
+        MedForTarget != Med.end() && HighForTarget != High.end() &&
+        AuditForTarget->second->Entry == Target &&
+        AuditForTarget->second->Disposition ==
+            PipelineFunctionDisposition::Accepted &&
+        AuditForTarget->second->HasLowIR && AuditForTarget->second->HasMedIR &&
+        AuditForTarget->second->MedIRVerified &&
+        AuditForTarget->second->DecodedInstructions &&
+        AuditForTarget->second->DecodedInstructions ==
+            AuditForTarget->second->LiftedInstructions &&
+        AuditForTarget->second->DecodeFailures.empty() &&
+        AuditForTarget->second->UnsupportedInstructions.empty() &&
+        AuditForTarget->second->TruncatedPaths.empty();
+    if (CompleteEntryAudit)
+      if (auto Mangled = swiftMangledRegularExpressionInitializerSourceABI(
+              Image, Target, &FunctionSymbols)) {
+        const auto Existing = Options.SourceTypeHints.find(Target);
+        const bool HasAuthoritativeIRHint =
+            (MedForTarget->second->SourceTypeHint &&
+             MedForTarget->second->SourceTypeHint->Origin !=
+                 SourceFunctionTypeHint::OriginKind::NativeAnalysis) ||
+            (HighForTarget->second->SourceTypeHint &&
+             HighForTarget->second->SourceTypeHint->Origin !=
+                 SourceFunctionTypeHint::OriginKind::NativeAnalysis);
+        // Compiler-owned transport refines an observed scalar guess. An
+        // explicit source contract or another declaration keeps its authority.
+        if (!HasAuthoritativeIRHint &&
+            (Existing == Options.SourceTypeHints.end() ||
+             Existing->second.Origin ==
+                 SourceFunctionTypeHint::OriginKind::NativeAnalysis)) {
+          if (Existing == Options.SourceTypeHints.end() ||
+              !equalSourceABIs(Existing->second, *Mangled)) {
+            Options.SourceTypeHints.insert_or_assign(Target,
+                                                     std::move(*Mangled));
+            ++Added;
+          }
+          continue;
+        }
+      }
     if (const auto Existing = Options.SourceTypeHints.find(Target);
         Existing != Options.SourceTypeHints.end()) {
       const auto Found = High.find(Target);
@@ -229,6 +281,14 @@ inline size_t inferObjCNativeDependencies(
           L != Low.end() && M != Med.end() && A != Audits.end())
         if (auto Record = refineNativeFourWordReturnHint(
                 Image, *L->second, *M->second, *Found->second, *A->second)) {
+          Existing->second = std::move(*Record);
+          ++Added;
+          continue;
+        }
+      if (FourDoubleReturns.count(Target) && Found != High.end() &&
+          M != Med.end() && A != Audits.end())
+        if (auto Record = refineNativeFourDoubleReturnHint(
+                *M->second, *Found->second, *A->second)) {
           Existing->second = std::move(*Record);
           ++Added;
           continue;
@@ -277,15 +337,6 @@ inline size_t inferObjCNativeDependencies(
     // A closed, compiler-observed Swift function shape supplies its own
     // source ABI. Native scalar inference must not erase its second return
     // word or reinterpret its stack and swiftcc argument carriers.
-    const bool CompleteEntryAudit =
-        A->second->Entry == Target &&
-        A->second->Disposition == PipelineFunctionDisposition::Accepted &&
-        A->second->HasLowIR && A->second->HasMedIR &&
-        A->second->MedIRVerified && A->second->DecodedInstructions &&
-        A->second->DecodedInstructions == A->second->LiftedInstructions &&
-        A->second->DecodeFailures.empty() &&
-        A->second->UnsupportedInstructions.empty() &&
-        A->second->TruncatedPaths.empty();
     if (CompleteEntryAudit) {
       // An ordinary import veneer preserves the SDK's complete record ABI.
       // It must not acquire a scalar result from generic register inference.
@@ -358,6 +409,12 @@ inline size_t inferObjCNativeDependencies(
         continue;
       }
       if (auto Mangled = swiftMangledCGContextCGRectClassMethodSourceABI(
+              Image, Target, &FunctionSymbols)) {
+        Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
+        ++Added;
+        continue;
+      }
+      if (auto Mangled = swiftMangledCGPointClassMethodSourceABI(
               Image, Target, &FunctionSymbols)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;

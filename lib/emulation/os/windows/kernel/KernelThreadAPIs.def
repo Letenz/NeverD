@@ -1,0 +1,12 @@
+//===- KernelThreadAPIs.def - Thread priority API contracts ---------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-kequeryprioritythread
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-kesetprioritythread
+NEVERD_KERNEL_THREAD_API(KeQueryPriorityThread, 1, Passive,
+                         queryThreadPriority(A[0]))
+NEVERD_KERNEL_THREAD_API(KeSetPriorityThread, 2, Passive,
+                         setThreadPriority(A[0], int32_t(uint32_t(A[1]))))

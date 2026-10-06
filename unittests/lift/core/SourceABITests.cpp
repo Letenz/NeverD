@@ -6,6 +6,7 @@
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
@@ -298,6 +299,190 @@ TEST(SourceABI, SwiftArm64HomogeneousFloatRecordUsesFourFPLanes) {
   Hint.Parameters[0].Type =
       NdType::makeStruct({Double, NdType::makeInt(8), Double, Double});
   EXPECT_FALSE(validateSourceABI(Hint, Error));
+}
+
+TEST(SourceABI, SwiftPointTransformKeepsTwoFloatingInputsAndResults) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SourceFunctionTypeHint Hint;
+    Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+    const auto Double = NdType::makeFloat(8);
+    const auto Point = NdType::makeStruct({Double, Double});
+    Hint.ReturnType = Point;
+    Hint.Parameters = {{"point", Point},
+                       {"self", NdType::makePtr(NdType::makeVoid())}};
+    Hint.Parameters[1].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+    std::string Error;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Hint, Architecture, Error)) << Error;
+    const auto &TRI = getTargetRegInfo(Architecture);
+    ASSERT_EQ(Hint.ReturnComponents.size(), 2U);
+    ASSERT_EQ(Hint.Parameters[0].Components.size(), 2U);
+    for (size_t I = 0; I != 2; ++I) {
+      for (const auto &Location :
+           {Hint.ReturnComponents[I], Hint.Parameters[0].Components[I]}) {
+        EXPECT_EQ(Location.Kind, SourceABICarrierKind::FloatingRegister);
+        EXPECT_EQ(Location.RegisterOffset, TRI.FPParamRegs[I]);
+        EXPECT_EQ(Location.ValueBytes, 8U);
+      }
+    }
+    EXPECT_EQ(Hint.Parameters[1].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+    ASSERT_EQ(sourceABIParameters(Hint).size(), 3U);
+    EXPECT_TRUE(validateSourceABI(Hint, Error)) << Error;
+    for (unsigned Mutation = 0; Mutation != 18; ++Mutation) {
+      auto Wrong = Hint;
+      switch (Mutation) {
+      case 0:
+        Wrong.ReturnComponents[1].RegisterOffset = TRI.FPParamRegs[2];
+        break;
+      case 1:
+        Wrong.Parameters[0].Components[1].RegisterOffset = TRI.FPParamRegs[0];
+        break;
+      case 2:
+        Wrong.Parameters[0].Components[0].Kind =
+            SourceABICarrierKind::IntegerRegister;
+        break;
+      case 3:
+        Wrong.ReturnComponents[0].ValueBytes = 4;
+        break;
+      case 4:
+        Wrong.Parameters[1].Location.RegisterOffset = TRI.IntParamRegs[0];
+        break;
+      case 5:
+        Wrong.ReturnType = NdType::makeStruct({Double, NdType::makeInt(8)});
+        break;
+      case 6:
+        Wrong.Parameters[0].Type =
+            NdType::makeStruct({NdType::makeFloat(4), NdType::makeFloat(4)});
+        break;
+      case 7:
+        Wrong.ReturnType = NdType::makeStruct({Double, Double, Double});
+        break;
+      case 8:
+        Wrong.Parameters[0].IndirectByValue = true;
+        break;
+      case 9:
+        Wrong.Parameters[1].TheRole = SourceParameterTypeHint::Role::Ordinary;
+        break;
+      case 10:
+        Wrong.Parameters.push_back({"hidden", NdType::makeInt(8)});
+        break;
+      case 11:
+        Wrong.ReturnLocation = {SourceABICarrierKind::IndirectResultPointer,
+                                TRI.indirectResultReg(), 0, 8};
+        break;
+      case 12:
+        Wrong.ReturnType =
+            NdType::makeStruct({NdType::makeStruct({Double}), Double});
+        break;
+      case 13:
+        Wrong.Parameters[0].Type =
+            NdType::makeStruct({Double, NdType::makeStruct({Double})});
+        break;
+      case 14:
+        Wrong.ReturnType = NdType::makeStruct({Double, Double});
+        Wrong.ReturnType->Alignment = 16;
+        break;
+      case 15:
+        Wrong.Parameters[0].Type = NdType::makeStruct({Double, Double});
+        Wrong.Parameters[0].Type->Alignment = 4;
+        break;
+      case 16:
+        Wrong.ReturnType = NdType::makeStruct({Double, Double});
+        Wrong.ReturnType->FieldOffsets[1] = 4;
+        break;
+      case 17:
+        Wrong.Parameters[0].Type = NdType::makeStruct({Double, Double});
+        Wrong.Parameters[0].Type->FieldOffsets[1] = 0;
+        break;
+      }
+      EXPECT_FALSE(validateSourceABI(Wrong, Error)) << Mutation;
+    }
+    auto Wrong = Hint;
+    Wrong.Parameters[0].Type = NdType::makeStruct({Double, Double, Double});
+    EXPECT_FALSE(assignDarwinSwiftSourceABI(Wrong, Architecture, Error));
+  }
+}
+
+TEST(SourceABI, SwiftPointForwardingPreservesBothIEEECarriers) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SourceFunctionTypeHint Hint;
+    Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+    const auto Double = NdType::makeFloat(8);
+    const auto Point = NdType::makeStruct({Double, Double});
+    Hint.ReturnType = Point;
+    Hint.Parameters = {{"point", Point},
+                       {"self", NdType::makePtr(NdType::makeVoid())}};
+    Hint.Parameters[1].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+    std::string Error;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Hint, Architecture, Error)) << Error;
+    const auto &TRI = getTargetRegInfo(Architecture);
+    const std::map<va_t, SourceFunctionTypeHint> Hints{{0x1000, Hint},
+                                                       {0x2000, Hint}};
+    const std::map<va_t, std::string> Names{{0x1000, "point_forward"},
+                                            {0x2000, "point_identity"}};
+    std::vector<HighFunc> Functions;
+    for (const auto Entry : {va_t(0x2000), va_t(0x1000)}) {
+      LowFunc Low;
+      Low.Entry = Entry;
+      Low.Name = Names.at(Entry);
+      LowBlock Block;
+      Block.Id = 0;
+      Block.StartAddr = Entry;
+      Block.EndAddr = Entry + 8;
+      if (Entry == 0x1000) {
+        LowOp Call;
+        Call.Opcode = NdOp::CALL;
+        Call.Addr = Entry;
+        Call.addInput(NdVar::cst(0x2000, 8));
+        Block.Ops.push_back(Call);
+      }
+      LowOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = Entry + 4;
+      Return.addInput(NdVar::reg(TRI.IntReturnReg, 8));
+      Block.Ops.push_back(Return);
+      Low.Blocks = {Block};
+      LowToMedConverter Converter;
+      Converter.setSourceCalleeTypeHints(&Hints);
+      Converter.setSourceCallHintsEnabled(true);
+      auto Med = Converter.convert(Low, Architecture, BinaryFormat::MachO);
+      Med.SourceTypeHint = Hint;
+      recoverCallAbi(Med, Architecture, Names);
+      inferMedTypes(Med, Architecture);
+      MedToHighConverter HighConverter;
+      HighConverter.setFuncNames(&Names);
+      Functions.push_back(HighConverter.convert(Med, Architecture));
+      ASSERT_TRUE(Functions.back().SourceTypeHint);
+      EXPECT_TRUE(equalSourceTypes(Functions.back().ReturnType, Point));
+    }
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(HighCEmitter().emit(Functions, OS, Options));
+    OS.flush();
+    Source += "\ntypedef " + typeToC(Point) + " PointResult;\n";
+    executeC(Source + R"(
+int main(void) {
+  const uint64_t bits[] = {UINT64_C(0), UINT64_C(0x8000000000000000),
+      UINT64_C(0x3ff0000000000000), UINT64_C(0xbff0000000000000),
+      UINT64_C(1), UINT64_C(0x7ff0000000000000),
+      UINT64_C(0x7ff8000000000123), UINT64_C(0xfff8000000000456)};
+  for (unsigned i = 0; i != 8; ++i) for (unsigned j = 0; j != 8; ++j) {
+    PointResult input;
+    __builtin_memcpy(&input.field_0, &bits[i], 8);
+    __builtin_memcpy(&input.field_1, &bits[j], 8);
+    PointResult output = point_forward(input, (void*)(uintptr_t)0x112233);
+    uint64_t left, right;
+    __builtin_memcpy(&left, &output.field_0, 8);
+    __builtin_memcpy(&right, &output.field_1, 8);
+    if (left != bits[i] || right != bits[j]) return 1;
+  }
+  return 0;
+}
+)",
+             false);
+  }
 }
 
 TEST(SourceABI, BoundRecordCallAbiRetainsEveryRenamedComponent) {
@@ -949,6 +1134,323 @@ TEST(SourceABI, SwiftErrorSlotIsAnInOutValueCarrierNotAnOrdinaryPointer) {
     for (const auto &Block : Med.Blocks)
       for (const auto &Op : Block.Ops)
         EXPECT_FALSE(Op.SourceCallHint);
+  }
+}
+
+std::pair<LowFunc, SourceFunctionTypeHint>
+swiftErrorEntryFixture(Arch Architecture) {
+  const auto &TRI = getTargetRegInfo(Architecture);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  SourceFunctionTypeHint Signature;
+  Signature.Origin = SourceFunctionTypeHint::OriginKind::ExplicitSource;
+  Signature.ReturnType = NdType::makeInt(8, false);
+  Signature.Parameters = {{"flag", NdType::makeInt(8, false)},
+                          {"context", Pointer},
+                          {"error_slot", NdType::makePtr(Pointer)}};
+  Signature.Parameters[1].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+  Signature.Parameters[2].TheRole =
+      SourceParameterTypeHint::Role::SwiftErrorResult;
+  std::string Diagnostic;
+  if (!assignDarwinSwiftSourceABI(Signature, Architecture, Diagnostic))
+    throw std::invalid_argument(Diagnostic);
+  const auto Error = sourceABIErrorResult(Signature);
+  if (!Error)
+    throw std::invalid_argument("missing Swift error carrier");
+  auto Operation = [](NdOp Opcode, NdVar Output,
+                      std::initializer_list<NdVar> Inputs, va_t Address) {
+    LowOp Op;
+    Op.Opcode = Opcode;
+    Op.Output = Output;
+    Op.Addr = Address;
+    for (const auto &Input : Inputs)
+      Op.addInput(Input);
+    return Op;
+  };
+  LowFunc Low;
+  Low.Entry = 0x1000;
+  Low.Name = "error_entry";
+  Low.Blocks.resize(3);
+  auto &Entry = Low.Blocks[0];
+  Entry.Id = 0;
+  Entry.StartAddr = Low.Entry;
+  Entry.EndAddr = 0x1010;
+  Entry.Succs = {1, 2};
+  Entry.Ops = {
+      Operation(
+          NdOp::LOAD, NdVar::tmp(0, 8),
+          {NdVar::reg(Signature.Parameters[1].Location.RegisterOffset, 8)},
+          0x1000),
+      Operation(NdOp::INT_ADD, NdVar::tmp(1, 8),
+                {NdVar::tmp(0, 8), NdVar::cst(1, 8)}, 0x1004),
+      Operation(NdOp::STORE, {},
+                {NdVar::reg(Signature.Parameters[1].Location.RegisterOffset, 8),
+                 NdVar::tmp(1, 8)},
+                0x1008),
+      Operation(NdOp::COND_BR, {},
+                {NdVar::cst(0x1100, 8), NdVar::reg(TRI.IntParamRegs[0], 8)},
+                0x100c)};
+  for (unsigned I = 1; I != 3; ++I) {
+    auto &Block = Low.Blocks[I];
+    Block.Id = I;
+    Block.StartAddr = 0x1000 + I * 0x100;
+    Block.EndAddr = Block.StartAddr + 12;
+    Block.Preds = {0};
+    if (I == 1)
+      Block.Ops.push_back(
+          Operation(NdOp::COPY, NdVar::reg(Error->Location.RegisterOffset, 8),
+                    {NdVar::cst(0x1234, 8)}, Block.StartAddr));
+    Block.Ops.push_back(Operation(NdOp::COPY, NdVar::reg(TRI.IntReturnReg, 8),
+                                  {NdVar::cst(I == 1 ? 23 : 17, 8)},
+                                  Block.StartAddr + 4));
+    Block.Ops.push_back(Operation(NdOp::RETURN, {}, {}, Block.StartAddr + 8));
+  }
+  return {Low, Signature};
+}
+
+TEST(SourceABI, SwiftEntryCapturesAndReturnsTheErrorRegisterOnEveryPath) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto [Low, Signature] = swiftErrorEntryFixture(Architecture);
+    const auto Pointer = NdType::makePtr(NdType::makeVoid());
+    const std::map<va_t, SourceFunctionTypeHint> Hints{{Low.Entry, Signature}};
+    LowToMedConverter Converter;
+    Converter.setSourceCallHintsEnabled(true);
+    Converter.setSourceEntryTypeHints(&Hints);
+    auto Med = Converter.convert(Low, Architecture, BinaryFormat::MachO);
+    Med.SourceTypeHint = Signature;
+    inferMedTypes(Med, Architecture);
+    ASSERT_TRUE(Med.SourceParametersBound);
+    for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+      auto Bad = Med;
+      unsigned Returns = 0;
+      for (auto &Block : Bad.Blocks)
+        for (auto &Op : Block.Ops)
+          if (Op.Opcode == NdOp::RETURN) {
+            ++Returns;
+            ASSERT_TRUE(Op.HasSourceErrorResult);
+            ASSERT_GT(Op.NumInputs, 0U);
+            if (Mutation == 0)
+              Op.HasSourceErrorResult = false;
+            else if (Mutation == 1)
+              Op.Inputs[Op.NumInputs - 1].Size = 4;
+            else
+              Op.NumInputs = 0;
+          }
+      ASSERT_EQ(Returns, 2U);
+      EXPECT_THROW(MedToHighConverter().convert(Bad, Architecture),
+                   std::invalid_argument);
+    }
+    auto High = MedToHighConverter().convert(Med, Architecture);
+    ASSERT_TRUE(isSwiftErrorEntryProjected(High, Architecture));
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    Options.Format = BinaryFormat::MachO;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+    EXPECT_NE(Source.find("swift_error_result"), std::string::npos);
+    class EntryDebug final : public NullDebugContext {
+    public:
+      FunctionSym Entry;
+      std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+        return Address == Entry.Addr ? std::optional(Entry) : std::nullopt;
+      }
+    } Debug;
+    Debug.Entry.Name = High.Name;
+    Debug.Entry.Addr = High.Entry;
+    Debug.Entry.ReturnType = NdType::makeFloat(8);
+    Debug.Entry.CallConv = DebugCallConv::Cdecl;
+    Debug.Entry.Params = {{"flag", Pointer},
+                          {"context", NdType::makeInt(4)},
+                          {"error_slot", Pointer}};
+    std::string WithDebug;
+    llvm::raw_string_ostream DebugOS(WithDebug);
+    ASSERT_TRUE(HighCEmitter().emit({High}, DebugOS, Options, &Debug));
+    EXPECT_NE(WithDebug.find("__attribute__((swiftcall))"), std::string::npos);
+    EXPECT_NE(WithDebug.find("swift_context"), std::string::npos);
+    EXPECT_NE(WithDebug.find("swift_error_result"), std::string::npos);
+    for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+      auto Bad = High;
+      if (Mutation == 0)
+        Bad.SwiftErrorEntry.reset();
+      else if (Mutation == 1)
+        Bad.SwiftErrorEntry->Input.Id++;
+      else if (Mutation == 2)
+        Bad.Body.erase(Bad.Body.begin());
+      else if (Mutation == 3)
+        Bad.SwiftErrorEntry->Signature.Parameters.back()
+            .Location.RegisterOffset++;
+      else if (Mutation == 4)
+        walkStmts(Bad.Body, [](HighStmt &Stmt) {
+          if (Stmt.Kind == StmtKind::Store && Stmt.StoreAddr &&
+              Stmt.StoreAddr->Kind == ExprKind::Var &&
+              Stmt.StoreAddr->Var.Kind == MedVar::Param &&
+              Stmt.StoreAddr->Var.Id == 2)
+            Stmt.Kind = StmtKind::Nop;
+        });
+      else
+        Bad.Params.back().Type = Pointer;
+      EXPECT_FALSE(isSwiftErrorEntryProjected(Bad, Architecture)) << Mutation;
+      std::string Rejected;
+      llvm::raw_string_ostream RejectedOS(Rejected);
+      EXPECT_THROW(HighCEmitter().emit({Bad}, RejectedOS, Options),
+                   std::invalid_argument);
+    }
+#if defined(__APPLE__) && (defined(__aarch64__) || defined(__x86_64__))
+#if defined(__aarch64__)
+    if (Architecture != Arch::AArch64)
+      continue;
+#else
+    if (Architecture != Arch::X64)
+      continue;
+#endif
+    const std::string Oracle = R"(
+int main(void) {
+  for (uintptr_t value = 0; value != 257; ++value) {
+    void *slot = (void *)(value * 16);
+    uintptr_t touched = 0;
+    if (error_entry(0, &touched, &slot) != 17 ||
+        slot != (void *)(value * 16) || touched != 1) return 1;
+    slot = (void *)(value * 16);
+    if (error_entry(1, &touched, &slot) != 23 || slot != (void *)0x1234) return 2;
+  }
+  return 0;
+}
+)";
+    executeC(Source + Oracle, false);
+    executeC(WithDebug + Oracle, false);
+#endif
+  }
+}
+
+TEST(SourceABI, NativeSwiftCallsKeepBothResultsAndPostCallErrorBranches) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto [CalleeLow, CalleeABI] = swiftErrorEntryFixture(Architecture);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    const auto Error = sourceABIErrorResult(CalleeABI);
+    ASSERT_TRUE(Error);
+    SourceFunctionTypeHint CallerABI;
+    CallerABI.Origin = SourceFunctionTypeHint::OriginKind::ExplicitSource;
+    CallerABI.ReturnType = NdType::makeInt(8, false);
+    CallerABI.Parameters = {
+        {"nd_error", NdType::makeInt(8, false)},
+        {"nd_result", NdType::makePtr(NdType::makeVoid())},
+        {"incoming_error", NdType::makePtr(NdType::makeVoid())}};
+    std::string Diagnostic;
+    ASSERT_TRUE(
+        assignDarwinFixedSourceABI(CallerABI, Architecture, Diagnostic));
+    auto Operation = [](NdOp Opcode, NdVar Output,
+                        std::initializer_list<NdVar> Inputs, va_t Address) {
+      LowOp Op;
+      Op.Opcode = Opcode;
+      Op.Output = Output;
+      Op.Addr = Address;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      return Op;
+    };
+    LowFunc CallerLow;
+    CallerLow.Entry = 0x2000;
+    CallerLow.Name = "error_caller";
+    CallerLow.Blocks.resize(3);
+    auto &Entry = CallerLow.Blocks[0];
+    Entry.Id = 0;
+    Entry.StartAddr = 0x2000;
+    Entry.EndAddr = 0x2010;
+    Entry.Succs = {1, 2};
+    Entry.Ops = {
+        Operation(
+            NdOp::COPY,
+            NdVar::reg(CalleeABI.Parameters[1].Location.RegisterOffset, 8),
+            {NdVar::reg(TRI.IntParamRegs[1], 8)}, 0x2000),
+        Operation(NdOp::COPY, NdVar::reg(Error->Location.RegisterOffset, 8),
+                  {NdVar::reg(TRI.IntParamRegs[2], 8)}, 0x2004),
+        Operation(NdOp::CALL, {}, {NdVar::cst(CalleeLow.Entry, 8)}, 0x2008),
+        Operation(NdOp::COND_BR, {},
+                  {NdVar::cst(0x2100, 8),
+                   NdVar::reg(Error->Location.RegisterOffset, 8)},
+                  0x200c)};
+    for (unsigned I = 1; I != 3; ++I) {
+      auto &Block = CallerLow.Blocks[I];
+      Block.Id = I;
+      Block.StartAddr = 0x2000 + I * 0x100;
+      Block.EndAddr = Block.StartAddr + 8;
+      Block.Preds = {0};
+      if (I == 1)
+        Block.Ops.push_back(
+            Operation(NdOp::INT_XOR, NdVar::reg(TRI.IntReturnReg, 8),
+                      {NdVar::reg(TRI.IntReturnReg, 8),
+                       NdVar::reg(Error->Location.RegisterOffset, 8)},
+                      Block.StartAddr));
+      Block.Ops.push_back(Operation(NdOp::RETURN, {}, {}, Block.StartAddr + 4));
+    }
+    std::map<va_t, SourceFunctionTypeHint> ABIs{{CalleeLow.Entry, CalleeABI},
+                                                {CallerLow.Entry, CallerABI}};
+    std::map<va_t, const LowFunc *> Functions{{CalleeLow.Entry, &CalleeLow}};
+    LowToMedConverter Converter;
+    Converter.setSourceCallHintsEnabled(true);
+    Converter.setSourceEntryTypeHints(&ABIs);
+    Converter.setSourceCalleeTypeHints(&ABIs);
+    Converter.setSourceCalleeFunctions(&Functions);
+    auto Callee =
+        Converter.convert(CalleeLow, Architecture, BinaryFormat::MachO);
+    Callee.SourceTypeHint = CalleeABI;
+    inferMedTypes(Callee, Architecture);
+    auto Caller =
+        Converter.convert(CallerLow, Architecture, BinaryFormat::MachO);
+    Caller.SourceTypeHint = CallerABI;
+    recoverCallAbi(Caller, Architecture, {{CalleeLow.Entry, CalleeLow.Name}});
+    inferMedTypes(Caller, Architecture);
+    ASSERT_TRUE(Caller.SourceParametersBound);
+    unsigned Calls = 0;
+    for (const auto &Block : Caller.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::CALL) {
+          ++Calls;
+          ASSERT_TRUE(Op.SourceCallHint);
+          EXPECT_EQ(Op.Output.Size, 16);
+        }
+    EXPECT_EQ(Calls, 1U);
+    MedToHighConverter HighConverter;
+    auto CallerHigh = HighConverter.convert(Caller, Architecture);
+    auto CalleeHigh = HighConverter.convert(Callee, Architecture);
+    ASSERT_TRUE(isSwiftErrorEntryProjected(CalleeHigh, Architecture));
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    Options.Format = BinaryFormat::MachO;
+    for (const bool Reverse : {false, true}) {
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      ASSERT_TRUE(HighCEmitter().emit(
+          Reverse ? std::vector<HighFunc>{CalleeHigh, CallerHigh}
+                  : std::vector<HighFunc>{CallerHigh, CalleeHigh},
+          OS, Options));
+      EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+#if defined(__APPLE__) && (defined(__aarch64__) || defined(__x86_64__))
+#if defined(__aarch64__)
+      if (Architecture != Arch::AArch64)
+        continue;
+#else
+      if (Architecture != Arch::X64)
+        continue;
+#endif
+      executeC(Source + R"(
+int main(void) {
+  for (uintptr_t flag = 0; flag != 2; ++flag) {
+    for (uintptr_t error = 0; error != 257; ++error) {
+      uintptr_t touched = 0;
+      uintptr_t expected_error = flag ? 0x1234 : error * 16;
+      uintptr_t expected_value = flag ? 23 : 17;
+      if (expected_error) expected_value ^= expected_error;
+      if (error_caller(flag, &touched, (void *)(error * 16)) != expected_value ||
+          touched != 1) return 1;
+    }
+  }
+  return 0;
+}
+)",
+               false);
+#endif
+    }
   }
 }
 

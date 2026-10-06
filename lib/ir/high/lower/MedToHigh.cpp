@@ -18,6 +18,8 @@
 
 #include "neverd/ir/high/MedToHigh.h"
 
+#include "../../../loader/Swift/SwiftErrorSourceProjection.h"
+
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -317,6 +319,11 @@ ExprPtr MedToHighConverter::inlineableDefinition(VarKey Key) const {
 }
 
 TypeRef MedToHighConverter::sourceCallResultType(const MedOp &Op) const {
+  if (Op.SourceCallHint &&
+      isNativeSwiftErrorSourceCall(*Op.SourceCallHint, TargetArch))
+    if (auto Type = swiftErrorCallResultType(Op.SourceCallHint->Signature);
+        Type && Type->Size == Op.Output.Size)
+      return Type;
   if (Op.SourceCallHint)
     if (auto Type = sourceABICallResultType(Op.SourceCallHint->Signature);
         Type && Type->Size == Op.Output.Size)
@@ -339,6 +346,14 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
     const auto &Binding = Bindings[Index];
     const auto &Declared =
         CurMed->SourceTypeHint->Parameters[Binding.ParameterIndex];
+    if (Declared.TheRole == SourceParameterTypeHint::Role::SwiftErrorResult) {
+      // The machine input is the slot's value, not its address. A dedicated
+      // entry capture prevents a later memory effect from causing a reload.
+      if (!SwiftErrorEntryInput)
+        return HighExpr::makeUndef(V.Size);
+      return sourceBitSlice(
+          HighExpr::makeVar(*SwiftErrorEntryInput, Binding.Type), 0, V.Size);
+    }
     Parameter.Id = static_cast<int>(Binding.ParameterIndex);
     Parameter.Size = Declared.Type->Size;
     if (!Declared.Components.empty())
@@ -717,6 +732,7 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
   PhiOutputVars.clear();
   MemoryReadOutputs.clear();
   NextHighTempId = 0;
+  SwiftErrorEntryInput.reset();
   auto ReserveIdentity = [&](const MedVar &Value) {
     if (Value.Id >= NextHighTempId && Value.Id < INT_MAX)
       NextHighTempId = Value.Id + 1;
@@ -733,6 +749,16 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
         ReserveIdentity(Value);
     }
   }
+
+  if (Med.SourceParametersBound && Med.SourceTypeHint)
+    if (const auto Error = sourceABIErrorResult(*Med.SourceTypeHint)) {
+      MedVar Input;
+      Input.Kind = MedVar::Temp;
+      Input.Id = NextHighTempId++;
+      Input.Size = Error->Type->Size;
+      Input.TheArch = TargetArch;
+      SwiftErrorEntryInput = Input;
+    }
 
   for (const MedCallClobber &Clobber : Med.CallClobbers)
     if (Clobber.PreservedPrefixSize > 0 && Clobber.PreservedInput.Id >= 0)
@@ -904,9 +930,12 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
       bool Rewritten;
       if (Phase == 3)
         Rewritten = loopifyBackwardGotos(Func.Body);
-      else if (Phase == 5)
-        Rewritten = breakToTheLoopFollow(Func.Body);
-      else
+      else if (Phase == 5) {
+        // A switch first takes the exit most of its jumps go to as what
+        // follows it, so those jumps become its breaks.
+        Rewritten = busiestExitFollowsTheSwitch(Func.Body);
+        Rewritten |= breakToTheLoopFollow(Func.Body);
+      } else
         Rewritten = duplicateSmallReturnTails(Func.Body) |
                     duplicateSmallJumpTails(Func.Body);
       // The last phase always runs its rounds: the dead-code cleanup above
@@ -939,6 +968,44 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
 }
 
 HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
+  const ExceptionFunction *EH =
+      Med.ExceptionMetadata ? &*Med.ExceptionMetadata : nullptr;
+  if (!EH || !EH->SEH || EH->SEH->Scopes.empty() || EH->Cxx || EH->Itanium ||
+      EH->Registration)
+    return convertOnce(Med, TheArch);
+  // Reverse postorder can scatter a guarded range so that no __try holds it,
+  // which address order may keep whole.  The layout that leaves fewer guarded
+  // ranges unstructured is kept; on a tie reverse postorder stays.  How many
+  // gotos either prints never enters the choice.  The observers see only the
+  // conversion that is kept.
+  auto SavedExpression = std::move(ExpressionObserver);
+  auto SavedClone = std::move(ExpressionCloneObserver);
+  auto SavedStatement = std::move(StatementObserver);
+  ExpressionObserver = {};
+  ExpressionCloneObserver = {};
+  StatementObserver = {};
+  const bool Observed = SavedExpression || SavedClone || SavedStatement;
+  SEHAddressOrder = false;
+  HighFunc Func = convertOnce(Med, TheArch);
+  if (Func.UnstructuredExceptionRegions) {
+    SEHAddressOrder = true;
+    HighFunc Ordered = convertOnce(Med, TheArch);
+    if (Ordered.UnstructuredExceptionRegions <
+        Func.UnstructuredExceptionRegions)
+      Func = std::move(Ordered);
+    else
+      SEHAddressOrder = false;
+  }
+  ExpressionObserver = std::move(SavedExpression);
+  ExpressionCloneObserver = std::move(SavedClone);
+  StatementObserver = std::move(SavedStatement);
+  if (Observed)
+    Func = convertOnce(Med, TheArch);
+  SEHAddressOrder = false;
+  return Func;
+}
+
+HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   HighConversionTrace Trace(Med, TheArch);
   Trace.med();
   auto TStart = std::chrono::steady_clock::now();
@@ -974,6 +1041,30 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   auto PtrParamRegOffs = detectPtrParamRegs(Med);
   auto PtrParamIds = detectPtrParamIds(Med);
   const auto &TRI = getTargetRegInfo(TheArch);
+
+  auto CaptureSwiftError = [&] {
+    if (!SwiftErrorEntryInput || !Med.SourceTypeHint)
+      return;
+    const auto Error = sourceABIErrorResult(*Med.SourceTypeHint);
+    if (!Error)
+      return;
+    MedVar Slot;
+    Slot.Kind = MedVar::Param;
+    Slot.Id = static_cast<int>(Error->ParameterIndex);
+    Slot.RegOff = Error->Location.RegisterOffset;
+    Slot.Size = 8;
+    Slot.TheArch = TheArch;
+    HighStmt Capture;
+    Capture.Kind = StmtKind::Assign;
+    Capture.Dst = HighExpr::makeVar(*SwiftErrorEntryInput, Error->Type);
+    Capture.Val = HighExpr::makeLoad(
+        HighExpr::makeVar(
+            Slot, Med.SourceTypeHint->Parameters[Error->ParameterIndex].Type),
+        Error->Type);
+    Func.Body.insert(Func.Body.begin(), std::move(Capture));
+    Func.SwiftErrorEntry = HighFunc::SwiftErrorEntryProjection{
+        *Med.SourceTypeHint, *SwiftErrorEntryInput};
+  };
 
   if (Med.SourceTypeHint) {
     for (const auto &P : Med.SourceTypeHint->Parameters)
@@ -1017,6 +1108,7 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
     }
     buildExpressions(Med);
     structureControlFlow(Func, Med);
+    CaptureSwiftError();
     Trace.high(Func, "structured");
     inferTypes(Func);
     eraseKeepingBranchEntries(
@@ -1037,6 +1129,7 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   buildExpressions(Med);
   auto TStruct = std::chrono::steady_clock::now();
   structureControlFlow(Func, Med);
+  CaptureSwiftError();
   Trace.high(Func, "structured");
   auto TSimp = std::chrono::steady_clock::now();
   simplifyControlFlow(Func, Med);
@@ -1079,7 +1172,16 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   loopsForArmsJumpingBack(Func.Body);
   loopsForNestedJumpsBack(Func.Body);
   loopJumpsAsBreakAndContinue(Func.Body);
+  // Jumps to a return tail that structuring left become copies of it when
+  // the tail prints short; earlier, such a jump may still become a break.
+  duplicateSmallReturnTails(Func.Body, /*PrintedSize=*/true);
+  foldTempsInReturnTails(Func.Body);
   mergeJumpsIntoNextIfArms(Func);
+  // Names merge last: every earlier pass may still move statements as if
+  // each local had the definitions it had in SSA.
+  coalesceHighPhiCopies(Func);
+  // Signedness follows the merged names: one declaration, one type.
+  chooseIntegerSignedness(Func);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
 

@@ -107,22 +107,31 @@ private:
     }
     const bool DLL = Main == nullptr;
     const auto Input = P.Catalogue.find(Name.str());
-    if (DLL && Input == P.Catalogue.end())
+    // A module outside the catalogue is either a guest load failure or, when
+    // unmodeled facts are deferred, an identity without any file behind it.
+    const bool Opaque = DLL && Input == P.Catalogue.end();
+    if (Opaque && !P.DeferUnmodeled)
       return llvm::make_error<ModuleLoadError>(uint32_t(ErrorModuleNotFound));
-    const auto &File = DLL ? Input->second : *Main;
-    auto Image = loadProgramImage(File, P.Reads, DLL);
+    auto Image = Opaque ? makeOpaqueImage(P, Memory, Name)
+                        : loadProgramImage(DLL ? Input->second : *Main, P.Reads,
+                                           DLL, P.DeferUnmodeled);
     if (!Image)
       return Image.takeError();
     if (auto E = checkTime())
-      return std::move(E);
-    if (DLL && Image->Architecture != P.Modules.front().Loaded.Architecture)
-      return failure(text::ModuleISA);
-    auto Base = Memory.reserveImage(Image->Base, Image->Size,
-                                    DLL && Image->Relocatable);
-    if (!Base)
-      return Base.takeError();
-    if (auto E = relocateImage(*Image, *Base, P.Reads))
-      return llvm::joinErrors(std::move(E), Memory.releaseImage(*Base));
+      return Opaque ? llvm::joinErrors(std::move(E),
+                                       Memory.releaseImage(Image->Base))
+                    : std::move(E);
+    llvm::Expected<uint64_t> Base = Image->Base;
+    if (!Opaque) {
+      if (DLL && Image->Architecture != P.Modules.front().Loaded.Architecture)
+        return failure(text::ModuleISA);
+      Base = Memory.reserveImage(Image->Base, Image->Size,
+                                 DLL && Image->Relocatable);
+      if (!Base)
+        return Base.takeError();
+      if (auto E = relocateImage(*Image, *Base, P.Reads))
+        return llvm::joinErrors(std::move(E), Memory.releaseImage(*Base));
+    }
     auto Slot = P.Slots.find(Name.lower());
     size_t Index;
     if (Slot == P.Slots.end()) {
@@ -139,6 +148,7 @@ private:
     M.Loaded = std::move(*Image);
     M.Generation = P.NextGeneration++;
     M.State = ModuleState::Prepared;
+    M.Opaque = Opaque;
     P.Identities[Index] = {Name.str(), M.Loaded.Base, M.Loaded.Size,
                            M.Loaded.Entry};
     Change.Added.push_back(moduleRef(P, Index));
@@ -265,6 +275,7 @@ llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
                                     const ExecutionBudget &Budget,
                                     VirtualMemory &Memory) {
   Program Out;
+  Out.DeferUnmodeled = Options.Windows && Options.Windows->DeferUnmodeled;
   if (Options.Windows) {
     if (Options.Windows->Modules.size() > windows_process_limits::Modules)
       return failure(text::ModuleBudget);

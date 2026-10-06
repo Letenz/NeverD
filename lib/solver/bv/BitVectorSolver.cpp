@@ -142,6 +142,17 @@ BitVectorSolver::BitVectorSolver(SymContext &Ctx, const SolverOptions &Opts)
     : Ctx(Ctx), Opts(Opts), Sat(Opts.Sat), Enc(Sat),
       Blaster(Ctx, Enc, Opts.Blast) {}
 
+BitVectorSolver::BitVectorSolver(const BitVectorSolver &Other, EncodingClone)
+    : Ctx(Other.Ctx), Opts(Other.Opts), Sat(Other.Sat), Enc(Sat, Other.Enc),
+      Blaster(Enc, Other.Blaster), Error(Other.Error) {}
+
+std::unique_ptr<BitVectorSolver> BitVectorSolver::cloneEncoding() const {
+  if (!ok() || !Blaster.ok() || !Sat.canCloneEncoding())
+    return nullptr;
+  return std::unique_ptr<BitVectorSolver>(
+      new BitVectorSolver(*this, EncodingClone{}));
+}
+
 BitVectorSolver::~BitVectorSolver() = default;
 
 std::optional<SatLit> BitVectorSolver::literalFor(SymRef Pred) {

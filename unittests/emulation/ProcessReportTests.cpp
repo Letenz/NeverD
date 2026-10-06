@@ -3,6 +3,9 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "DarwinFileTestData.h"
+#include "DarwinSystemTestData.h"
+#include "DarwinTimeTestData.h"
 #include "LinuxFileTestMetadata.h"
 #include "gtest/gtest.h"
 
@@ -76,6 +79,404 @@ TEST(ProcessReport, RejectsMalformedRequestsBeforeWorkloadConstruction) {
   EXPECT_FALSE(bool(Large));
   EXPECT_EQ(llvm::toString(Large.takeError()), field::TooLarge);
 }
+TEST(ProcessReport, DarwinFileInputsAreLosslessAndRequireDarwinProfiles) {
+  auto O = processOptionsFromJSON(R"({"darwin_files":{"files":[
+    {"path":"/data","bytes_hex":"00FF78"}],"stdin_hex":"00ff",
+    "descriptor_limit":32}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->DarwinFiles);
+  EXPECT_EQ(O->DarwinFiles->Files.at("/data"),
+            (std::vector<uint8_t>{0, 255, 'x'}));
+  ASSERT_TRUE(O->DarwinFiles->StandardInput);
+  EXPECT_EQ(*O->DarwinFiles->StandardInput, (std::vector<uint8_t>{0, 255}));
+  EXPECT_EQ(O->DarwinFiles->DescriptorLimit, 32u);
+  for (auto P : {ProcessProfile::LinuxELF64, ProcessProfile::WindowsPE64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinFilesProfile);
+  }
+  O->DarwinFiles->Files["/data/child"] = {};
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64}) {
+    auto R = emulateProcess("missing", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("catalogue path"),
+              std::string::npos);
+  }
+  auto Empty = processOptionsFromJSON(R"({"darwin_files":{"files":[]}})");
+  ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
+  EXPECT_FALSE(Empty->DarwinFiles->StandardInput);
+  auto EOFInput =
+      processOptionsFromJSON(R"({"darwin_files":{"files":[],"stdin_hex":""}})");
+  ASSERT_TRUE(bool(EOFInput)) << llvm::toString(EOFInput.takeError());
+  ASSERT_TRUE(EOFInput->DarwinFiles->StandardInput);
+  EXPECT_TRUE(EOFInput->DarwinFiles->StandardInput->empty());
+}
+TEST(ProcessReport, DarwinWritableFilesRequireExplicitBooleanAdmission) {
+  auto Good = processOptionsFromJSON(R"({"darwin_files":{"files":[
+    {"path":"/a","bytes_hex":"00ff","writable":true},
+    {"path":"/b","bytes_hex":"","writable":false},
+    {"path":"/c","bytes_hex":""}]}})");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->DarwinFiles->WritableFiles, (std::set<std::string>{"/a"}));
+  for (auto Value : {"null", "0", "1", "\"true\"", "[]", "{}"}) {
+    auto Bad = processOptionsFromJSON(
+        std::string(
+            R"({"darwin_files":{"files":[{"path":"/a","bytes_hex":"","writable":)") +
+        Value + "}]}}");
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+}
+
+TEST(ProcessReport, DarwinMutationPolicyIsExplicitStrictAndLossless) {
+  auto M = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  (*M.getAsObject())["flags"] = 0;
+  (*M.getAsObject())["link_count"] = 1;
+  auto Parse = [&](llvm::StringRef Policy) {
+    return processOptionsFromJSON(
+        R"({"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","writable":true,"metadata":)" +
+        llvm::formatv("{0}", M).str() + R"(,"mutation_policy":)" +
+        Policy.str() + "}]}}");
+  };
+  auto Good = Parse(darwin_test::MutationPolicyJSON);
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  const auto &P = Good->DarwinFiles->MutationPolicies.at("/data");
+  EXPECT_EQ(P.AllocationUnit, 4096u);
+  EXPECT_EQ(P.Time.Seconds, -7);
+  EXPECT_EQ(P.Time.Nanoseconds, 123456789);
+  for (auto Seconds : {INT64_MIN, int64_t(0), INT64_MAX}) {
+    auto Boundary =
+        Parse(R"({"allocation_unit":"4096","mutation_time":{"seconds":")" +
+              std::to_string(Seconds) + R"(","nanoseconds":999999999}})");
+    ASSERT_TRUE(bool(Boundary)) << llvm::toString(Boundary.takeError());
+    EXPECT_EQ(Boundary->DarwinFiles->MutationPolicies.at("/data").Time.Seconds,
+              Seconds);
+  }
+  for (
+      auto Bad :
+      {"null", "[]", "true", "{}", R"({"allocation_unit":4096})",
+       R"({"allocation_unit":4096,"mutation_time":null})",
+       R"({"allocation_unit":4096,"mutation_time":{"seconds":0}})",
+       R"({"allocation_unit":4096,"mutation_time":{"seconds":0,"nanoseconds":0,"extra":0}})",
+       R"({"allocation_unit":4096,"mutation_time":{"seconds":0,"nanoseconds":0},"extra":0})",
+       R"({"allocation_unit":4096.5,"mutation_time":{"seconds":0,"nanoseconds":0}})",
+       R"({"allocation_unit":true,"mutation_time":{"seconds":0,"nanoseconds":0}})",
+       R"({"allocation_unit":4294967296,"mutation_time":{"seconds":0,"nanoseconds":0}})",
+       R"({"allocation_unit":4096,"mutation_time":{"seconds":"9223372036854775808","nanoseconds":0}})",
+       R"({"allocation_unit":4096,"mutation_time":{"seconds":0,"nanoseconds":1000000000}})",
+       R"({"allocation_unit":4096,"mutation_time":{"seconds":0,"nanoseconds":-1}})",
+       R"({"allocation_unit":4096,"mutation_time":{"seconds":0.5,"nanoseconds":0}})",
+       R"({"allocation_unit":0,"mutation_time":{"seconds":0,"nanoseconds":0}})"}) {
+    auto Rejected = Parse(Bad);
+    EXPECT_FALSE(bool(Rejected)) << Bad;
+    llvm::consumeError(Rejected.takeError());
+  }
+  (*M.getAsObject())["blocks"] = 0;
+  auto Incoherent = Parse(darwin_test::MutationPolicyJSON);
+  EXPECT_FALSE(bool(Incoherent));
+  llvm::consumeError(Incoherent.takeError());
+}
+
+TEST(ProcessReport, DarwinUmaskIsIndependentExplicitAndStrict) {
+  for (auto Mask : {"0", "4095", "\"4095\""}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"darwin_files":{"files":[],"umask":)") + Mask + "}}");
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    EXPECT_TRUE(Parsed->DarwinFiles->InitialUmask);
+    EXPECT_FALSE(Parsed->DarwinFiles->CreationPolicy);
+    EXPECT_TRUE(Parsed->DarwinFiles->MutableDirectories.empty());
+  }
+  for (auto Mask : {"null", "true", "[]", "{}", "4096", "65536", "-1", "0.5",
+                    "\"4095x\""}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"darwin_files":{"files":[],"umask":)") + Mask + "}}");
+    EXPECT_FALSE(bool(Parsed)) << Mask;
+    llvm::consumeError(Parsed.takeError());
+  }
+}
+
+TEST(ProcessReport, DarwinCreationPolicyIsStrictAndPreservesUnsignedInodes) {
+  auto Parent = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  auto *M = Parent.getAsObject();
+  (*M)["inode"] = 41;
+  (*M)["mode"] = 0040755;
+  (*M)["flags"] = 0;
+  (*M)["size"] = 0;
+  (*M)["blocks"] = 0;
+  auto Parse = [&](llvm::StringRef Policy) {
+    return processOptionsFromJSON(
+        R"({"darwin_files":{"files":[],"umask":23,"directories":[{"path":"/","mutable":true,"metadata":)" +
+        llvm::formatv("{0}", Parent).str() + R"(}],"creation_policy":)" +
+        Policy.str() + "}}");
+  };
+  auto Good = Parse(darwin_test::CreationPolicyJSON);
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  const auto &P = *Good->DarwinFiles->CreationPolicy;
+  EXPECT_EQ(P.FirstInode, 0xfedcba9876543211ULL);
+  EXPECT_EQ(P.BlockSize, 8192u);
+  EXPECT_EQ(P.Generation, 0x89abcdefu);
+  EXPECT_EQ(P.Time.Seconds, -19);
+  EXPECT_EQ(P.Time.Nanoseconds, 987654321);
+  EXPECT_EQ(P.Mutation.AllocationUnit, 4096u);
+  EXPECT_EQ(P.Mutation.Time.Seconds, -7);
+  for (auto Key : {"first_inode", "block_size", "generation", "creation_time",
+                   "mutation_policy"}) {
+    auto Value =
+        llvm::cantFail(llvm::json::parse(darwin_test::CreationPolicyJSON));
+    Value.getAsObject()->erase(Key);
+    auto Missing = Parse(llvm::formatv("{0}", Value).str());
+    EXPECT_FALSE(bool(Missing)) << Key;
+    llvm::consumeError(Missing.takeError());
+    (*Value.getAsObject())[Key] = nullptr;
+    auto Null = Parse(llvm::formatv("{0}", Value).str());
+    EXPECT_FALSE(bool(Null)) << Key;
+    llvm::consumeError(Null.takeError());
+  }
+  for (auto Key : {"first_inode", "block_size", "generation"}) {
+    for (auto Bad : {"true", "1.5", "-1", "\"18446744073709551616\""}) {
+      auto Value =
+          llvm::cantFail(llvm::json::parse(darwin_test::CreationPolicyJSON));
+      (*Value.getAsObject())[Key] = llvm::cantFail(llvm::json::parse(Bad));
+      auto Parsed = Parse(llvm::formatv("{0}", Value).str());
+      EXPECT_FALSE(bool(Parsed)) << Key << ':' << Bad;
+      llvm::consumeError(Parsed.takeError());
+    }
+  }
+  auto Value =
+      llvm::cantFail(llvm::json::parse(darwin_test::CreationPolicyJSON));
+  (*Value.getAsObject())["first_inode"] = "18446744073709551615";
+  auto Last = Parse(llvm::formatv("{0}", Value).str());
+  ASSERT_TRUE(bool(Last)) << llvm::toString(Last.takeError());
+  EXPECT_EQ(Last->DarwinFiles->CreationPolicy->FirstInode, UINT64_MAX);
+  (*Value.getAsObject())["unknown"] = 0;
+  auto Extra = Parse(llvm::formatv("{0}", Value).str());
+  EXPECT_FALSE(bool(Extra));
+  llvm::consumeError(Extra.takeError());
+}
+
+TEST(ProcessReport, DarwinDirectoriesAndWorkingDirectoryAreExplicitAndStrict) {
+  auto O = processOptionsFromJSON(R"({"darwin_files":{"files":[],
+    "directories":[{"path":"/empty/deep"}],"working_directory":"/empty"}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  EXPECT_EQ(O->DarwinFiles->WorkingDirectory, "/empty");
+  EXPECT_EQ(O->DarwinFiles->Directories,
+            (std::set<std::string>{"/empty/deep"}));
+  auto M = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  (*M.getAsObject())["mode"] = 0040755;
+  (*M.getAsObject())["size"] = "9223372036854775807";
+  auto Directory = processOptionsFromJSON(
+      R"({"darwin_files":{"files":[],"directories":[{"path":"/","metadata":)" +
+      llvm::formatv("{0}", M).str() + R"(}],"working_directory":"/"}})");
+  ASSERT_TRUE(bool(Directory)) << llvm::toString(Directory.takeError());
+  EXPECT_EQ(Directory->DarwinFiles->Metadata.at("/").Size, uint64_t(INT64_MAX));
+  for (
+      auto Bad :
+      {R"({"files":[],"directories":null})",
+       R"({"files":[],"directories":["/empty"]})",
+       R"({"files":[],"directories":[{"path":"/empty","extra":1}]})",
+       R"({"files":[],"directories":[{"path":"/empty"},{"path":"/empty"}]})",
+       R"({"files":[],"directories":[{"path":"/empty/"}]})",
+       R"({"files":[{"path":"/a","bytes_hex":""}],"directories":[{"path":"/a"}]})",
+       R"({"files":[{"path":"/a","bytes_hex":""}],"directories":[{"path":"/a/b"}]})",
+       R"({"files":[],"working_directory":null})",
+       R"({"files":[],"working_directory":""})",
+       R"({"files":[],"working_directory":"relative"})",
+       R"({"files":[],"working_directory":"/missing"})"}) {
+    SCOPED_TRACE(Bad);
+    auto Parsed =
+        processOptionsFromJSON(std::string("{\"darwin_files\":") + Bad + '}');
+    EXPECT_FALSE(bool(Parsed));
+    llvm::consumeError(Parsed.takeError());
+  }
+}
+
+TEST(ProcessReport, DarwinNamespaceAuthorityRequiresAnExplicitBoolean) {
+  auto Good = processOptionsFromJSON(R"({"darwin_files":{"files":[],
+    "directories":[{"path":"/","mutable":true},
+    {"path":"/no","mutable":false},{"path":"/default"}]}})");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->DarwinFiles->MutableDirectories,
+            (std::set<std::string>{"/"}));
+  EXPECT_TRUE(Good->DarwinFiles->WritableFiles.empty());
+  for (auto Bad : {"null", "0", "1", "\"true\"", "[]", "{}"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(
+            R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":)") +
+        Bad + "}]}}");
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+  auto Extra = processOptionsFromJSON(R"({"darwin_files":{"files":[],
+    "directories":[{"path":"/","mutable":true,"unknown":0}]}})");
+  EXPECT_FALSE(bool(Extra));
+  llvm::consumeError(Extra.takeError());
+}
+
+TEST(ProcessReport, DarwinInitialDirectoryRemovalRequiresExplicitBoolean) {
+  auto Good = processOptionsFromJSON(R"({"darwin_files":{"files":[],
+    "directories":[{"path":"/","mutable":true},
+    {"path":"/yes","removable":true},{"path":"/no","removable":false},
+    {"path":"/default"}]}})");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->DarwinFiles->RemovableDirectories,
+            (std::set<std::string>{"/yes"}));
+  EXPECT_EQ(Good->DarwinFiles->MutableDirectories,
+            (std::set<std::string>{"/"}));
+  for (auto Bad : {"null", "0", "1", "\"true\"", "[]", "{}"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"darwin_files":{"files":[],"directories":[
+          {"path":"/","mutable":true},{"path":"/yes","removable":)") +
+        Bad + "}]}}");
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+  for (
+      auto Bad :
+      {R"({"darwin_files":{"files":[],"directories":[{"path":"/yes","removable":true}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"removable":true}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/yes","removable":true,"unknown":0}]}})"}) {
+    auto Parsed = processOptionsFromJSON(Bad);
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+}
+
+TEST(ProcessReport, DarwinDirectorySnapshotsHaveStrictLosslessWireFields) {
+  const auto Original =
+      llvm::cantFail(llvm::json::parse(darwin_test::DirectoryContentsJSON));
+  auto Parse = [&](const llvm::json::Value &Contents) {
+    return processOptionsFromJSON(
+        R"({"darwin_files":{"files":[{"path":"/data","bytes_hex":""}],"directories":[{"path":"/empty"},{"path":"/","contents":)" +
+        llvm::formatv("{0}", Contents).str() + "}]}}");
+  };
+  auto Good = Parse(Original);
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->DarwinFiles->DirectoryContents.at("/").Entries[3].Inode,
+            0xfedcba9876543210ULL);
+  for (auto Field : {"inode", "type", "next_offset", "seek_offset", "name"}) {
+    auto V = Original;
+    auto *Entries = V.getAsObject()->getArray("entries");
+    (*Entries)[0].getAsObject()->erase(Field);
+    auto Bad = Parse(V);
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+  for (const char *BadValue : {"null", "[]", "-1", "1.5", "9007199254740992",
+                               "\"18446744073709551616\""}) {
+    auto V = Original;
+    (*V.getAsObject()->getArray("entries"))[3].getAsObject()->operator[](
+        "inode") = llvm::cantFail(llvm::json::parse(BadValue));
+    auto Bad = Parse(V);
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+  for (auto Text :
+       {"null", "[]", "{}", R"({"entries":[],"minimum_buffer_size":0})",
+        R"({"entries":[],"minimum_buffer_size":1,"unknown":0})"}) {
+    auto Bad = Parse(llvm::cantFail(llvm::json::parse(Text)));
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+}
+
+TEST(ProcessReport, MalformedDarwinFilesFailBeforeExecution) {
+  for (
+      const char *Bad :
+      {"null", "[]", "{}", R"({"files":{}})", R"({"files":[],"unknown":1})",
+       R"({"files":[],"descriptor_limit":2})",
+       R"({"files":[],"descriptor_limit":4097})",
+       R"({"files":[],"descriptor_limit":4294967296})",
+       R"({"files":[],"descriptor_limit":3.5})",
+       R"({"files":[],"stdin_hex":null})", R"({"files":[],"stdin_hex":"0"})",
+       R"({"files":[],"stdin_hex":"zz"})",
+       R"({"files":[{"path":"/x","bytes_hex":"00","extra":1}]})",
+       R"({"files":[{"path":"x","bytes_hex":""}]})",
+       R"({"files":[{"path":"/x\u0000","bytes_hex":""}]})",
+       R"({"files":[{"path":"/x/../y","bytes_hex":""}]})",
+       R"({"files":[{"path":"/x/","bytes_hex":""}]})",
+       R"({"files":[{"path":"/x","bytes_hex":""},{"path":"/x","bytes_hex":"00"}]})",
+       R"({"files":[{"path":"/x","bytes_hex":""},{"path":"/x/y","bytes_hex":""}]})"}) {
+    SCOPED_TRACE(Bad);
+    auto O =
+        processOptionsFromJSON(std::string("{\"darwin_files\":") + Bad + '}');
+    EXPECT_FALSE(bool(O));
+    llvm::consumeError(O.takeError());
+  }
+  ProcessOptions O;
+  O.DarwinFiles.emplace();
+  O.DarwinFiles->StandardInput =
+      std::vector<uint8_t>(darwin_file_limits::Bytes + 1);
+  auto R = emulateProcess("missing", ProcessProfile::MacOSMachO64, O);
+  ASSERT_FALSE(bool(R));
+  EXPECT_NE(llvm::toString(R.takeError()).find("file input limits"),
+            std::string::npos);
+}
+
+TEST(ProcessReport, DarwinMetadataIntegersAreLosslessAndStrictlyAdmitted) {
+  const auto Original =
+      llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  auto Parse = [&](const llvm::json::Value &Metadata) {
+    return processOptionsFromJSON(
+        R"({"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":)" +
+        llvm::formatv("{0}", Metadata).str() + "}]}}");
+  };
+  auto Good = Parse(Original);
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  const auto &M = Good->DarwinFiles->Metadata.at("/data");
+  EXPECT_EQ(M.Device, -123);
+  EXPECT_EQ(M.Inode, 0xfedcba9876543210ULL);
+  EXPECT_EQ(M.Mode, 0100644);
+  EXPECT_EQ(M.UID, 0x89abcdefu);
+  EXPECT_EQ(M.GID, 0xfedcba98u);
+  EXPECT_EQ(M.Generation, 0x89abcdefu);
+  EXPECT_EQ(M.AccessTime.Seconds, INT64_MIN + 1);
+  EXPECT_EQ(M.ModificationTime.Seconds, INT64_MAX);
+  EXPECT_EQ(M.ModificationTime.Nanoseconds, 999999999);
+  EXPECT_EQ(M.BirthTime.Seconds, -5);
+  EXPECT_EQ(M.BirthTime.Nanoseconds, 6);
+  const std::pair<llvm::StringRef, llvm::json::Value> Invalid[] = {
+      {"device", uint64_t(2147483648)},
+      {"mode", 65536},
+      {"mode", 0040644},
+      {"link_count", 65536},
+      {"uid", -1},
+      {"gid", uint64_t(4294967296)},
+      {"inode", 9007199254740992.0},
+      {"inode", "18446744073709551616"},
+      {"size", 9},
+      {"blocks", "9223372036854775808"},
+      {"block_size", uint64_t(2147483648)},
+      {"flags", true},
+      {"generation", 1.25},
+      {"birth_time", nullptr},
+      {"unknown", 0}};
+  for (const auto &[Name, Value] : Invalid) {
+    SCOPED_TRACE(Name.str());
+    auto Changed = Original;
+    (*Changed.getAsObject())[Name] = Value;
+    auto Bad = Parse(Changed);
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+  for (const auto &[Name, Value] : *Original.getAsObject()) {
+    auto Missing = Original;
+    Missing.getAsObject()->erase(Name);
+    auto Bad = Parse(Missing);
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+  for (auto Time :
+       {"access_time", "modification_time", "change_time", "birth_time"})
+    for (auto Number : {-1, 1000000000}) {
+      auto Changed = Original;
+      (*Changed.getAsObject()->getObject(Time))["nanoseconds"] = Number;
+      auto Bad = Parse(Changed);
+      EXPECT_FALSE(bool(Bad));
+      llvm::consumeError(Bad.takeError());
+    }
+}
 
 TEST(ProcessReport, PreservesBinaryOutputRawRegisterBitsAndNullableStatus) {
   ProcessResult Result{ProcessProfile::LinuxELF64,
@@ -131,6 +532,251 @@ TEST(ProcessReport, PreservesExplicitWindowsCatalogueAndRejectsOtherProfiles) {
       EXPECT_EQ(llvm::toString(R.takeError()), field::WindowsProfile);
   }
 }
+TEST(ProcessReport, DarwinSystemInputsAreLosslessAndRequireDarwinProfiles) {
+  auto O = processOptionsFromJSON(std::string("{\"darwin_system\":") +
+                                  darwin_test::SystemJSON + "}");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->DarwinSystem);
+  const auto &S = *O->DarwinSystem;
+  EXPECT_EQ(S.OSType, "Darwin");
+  EXPECT_EQ(S.OSRelease, "24.test");
+  EXPECT_EQ(S.OSRevision, INT32_MIN);
+  EXPECT_EQ(S.OSVersion, "V42");
+  EXPECT_EQ(S.KernelVersion, "NeverD virtual kernel");
+  EXPECT_EQ(S.Machine, "virtual64");
+  EXPECT_EQ(S.Model, "VirtualModel");
+  EXPECT_EQ(S.CPUCount, 7u);
+  EXPECT_EQ(S.MemorySize, 0xfedcba9876543210ULL);
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64}) {
+    O->DarwinSystem->CPUCount = 0;
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("cpu_count"),
+              std::string::npos);
+    O->DarwinSystem->CPUCount.reset();
+    O->DarwinSystem->Model = std::string("x\0y", 3);
+    R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("strings"), std::string::npos);
+    O->DarwinSystem->Model.reset();
+  }
+}
+
+TEST(ProcessReport, DarwinSystemMissingEmptyZeroAndLimitsStayDistinct) {
+  auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");
+  ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
+  ASSERT_TRUE(Empty->DarwinSystem);
+  EXPECT_FALSE(Empty->DarwinSystem->OSType);
+  EXPECT_FALSE(Empty->DarwinSystem->CPUCount);
+  EXPECT_FALSE(Empty->DarwinSystem->MemorySize);
+  auto Zero = processOptionsFromJSON(R"({"darwin_system":{
+      "os_type":"","os_revision":0,"memory_size":0,"cpu_count":1}})");
+  ASSERT_TRUE(bool(Zero)) << llvm::toString(Zero.takeError());
+  EXPECT_EQ(Zero->DarwinSystem->OSType, "");
+  EXPECT_EQ(Zero->DarwinSystem->OSRevision, 0);
+  EXPECT_EQ(Zero->DarwinSystem->MemorySize, 0u);
+  EXPECT_EQ(Zero->DarwinSystem->CPUCount, 1u);
+  auto Limits = processOptionsFromJSON(R"({"darwin_system":{
+      "os_revision":"2147483647","memory_size":"18446744073709551615",
+      "cpu_count":"2147483647"}})");
+  ASSERT_TRUE(bool(Limits)) << llvm::toString(Limits.takeError());
+  EXPECT_EQ(Limits->DarwinSystem->OSRevision, INT32_MAX);
+  EXPECT_EQ(Limits->DarwinSystem->MemorySize, UINT64_MAX);
+  EXPECT_EQ(Limits->DarwinSystem->CPUCount, INT32_MAX);
+}
+
+TEST(ProcessReport, MalformedDarwinSystemFailsBeforeExecution) {
+  for (const char *Bad : {"null",
+                          "[]",
+                          "true",
+                          R"({"unknown":0})",
+                          R"({"os_type":null})",
+                          R"({"os_type":3})",
+                          R"({"os_type":true})",
+                          R"({"os_release":"x\u0000y"})",
+                          R"({"os_revision":null})",
+                          R"({"os_revision":-2147483649})",
+                          R"({"os_revision":2147483648})",
+                          R"({"os_revision":1.5})",
+                          R"({"os_revision":true})",
+                          R"({"cpu_count":0})",
+                          R"({"cpu_count":-1})",
+                          R"({"cpu_count":2147483648})",
+                          R"({"cpu_count":null})",
+                          R"({"cpu_count":true})",
+                          R"({"cpu_count":1.5})",
+                          R"({"memory_size":-1})",
+                          R"({"memory_size":9007199254740992})",
+                          R"({"memory_size":"18446744073709551616"})",
+                          R"({"memory_size":true})",
+                          R"({"memory_size":"0x1"})",
+                          R"({"memory_size":null})",
+                          R"({"memory_size":1.5})"}) {
+    SCOPED_TRACE(Bad);
+    auto R =
+        processOptionsFromJSON(std::string("{\"darwin_system\":") + Bad + "}");
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+  for (const char *Name : {"os_type", "os_release", "os_version",
+                           "kernel_version", "machine", "model"}) {
+    for (unsigned Size : {1023, 1024}) {
+      auto R =
+          processOptionsFromJSON(std::string("{\"darwin_system\":{\"") + Name +
+                                 "\":\"" + std::string(Size, 'x') + "\"}}");
+      EXPECT_EQ(bool(R), Size == 1023);
+      llvm::consumeError(R.takeError());
+    }
+  }
+}
+
+TEST(ProcessReport, DarwinTimeInputIsLosslessAndRestrictedToDarwinProfiles) {
+  auto O = processOptionsFromJSON(std::string("{\"darwin_time\":") +
+                                  darwin_test::TimeJSON + "}");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->DarwinTime);
+  EXPECT_EQ(O->DarwinTime->TimeOfDay->Seconds, 0xf1234567u);
+  EXPECT_EQ(O->DarwinTime->TimeOfDay->Microseconds, 654321u);
+  EXPECT_EQ(O->DarwinTime->Timezone->MinutesWest, -480);
+  EXPECT_EQ(O->DarwinTime->Timezone->DSTTime, -1);
+  EXPECT_EQ(O->DarwinTime->MachAbsoluteTime, 0xfedcba9876543210ULL);
+  EXPECT_EQ(O->DarwinTime->MachContinuousTime, UINT64_MAX);
+  ASSERT_TRUE(O->DarwinTime->Timebase);
+  EXPECT_EQ(O->DarwinTime->Timebase->Numerator, 0xf1234567u);
+  EXPECT_EQ(O->DarwinTime->Timebase->Denominator, 0xe2345679u);
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinTimeProfile);
+  }
+  O->DarwinTime->TimeOfDay->Microseconds = 1000000;
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("microseconds"),
+              std::string::npos);
+  }
+  O->DarwinTime->TimeOfDay.reset();
+  for (auto Ratio : {DarwinTimebase{0, 1}, DarwinTimebase{1, 0}}) {
+    O->DarwinTime->Timebase = Ratio;
+    for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                   ProcessProfile::IOSSimulatorMachO64}) {
+      auto R = emulateProcess("missing.macho", P, *O);
+      ASSERT_FALSE(bool(R));
+      EXPECT_NE(llvm::toString(R.takeError()).find("timebase"),
+                std::string::npos);
+    }
+  }
+}
+
+TEST(ProcessReport, DarwinTimeDistinguishesMissingZeroAndIntegerBoundaries) {
+  auto Empty = processOptionsFromJSON(R"({"darwin_time":{}})");
+  ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
+  ASSERT_TRUE(Empty->DarwinTime);
+  EXPECT_FALSE(Empty->DarwinTime->TimeOfDay);
+  EXPECT_FALSE(Empty->DarwinTime->Timezone);
+  EXPECT_FALSE(Empty->DarwinTime->MachAbsoluteTime);
+  EXPECT_FALSE(Empty->DarwinTime->Timebase);
+  EXPECT_FALSE(Empty->DarwinTime->MachContinuousTime);
+  auto Zero = processOptionsFromJSON(R"({"darwin_time":{
+    "time_of_day":{"seconds":0,"microseconds":0},
+    "timezone":{"minutes_west":0,"dst_time":0},"mach_absolute_time":0,
+    "mach_continuous_time":0}})");
+  ASSERT_TRUE(bool(Zero)) << llvm::toString(Zero.takeError());
+  EXPECT_EQ(Zero->DarwinTime->TimeOfDay->Seconds, 0u);
+  EXPECT_EQ(Zero->DarwinTime->TimeOfDay->Microseconds, 0u);
+  EXPECT_EQ(Zero->DarwinTime->Timezone->MinutesWest, 0);
+  EXPECT_EQ(Zero->DarwinTime->Timezone->DSTTime, 0);
+  ASSERT_TRUE(Zero->DarwinTime->MachAbsoluteTime);
+  EXPECT_EQ(*Zero->DarwinTime->MachAbsoluteTime, 0u);
+  ASSERT_TRUE(Zero->DarwinTime->MachContinuousTime);
+  EXPECT_EQ(*Zero->DarwinTime->MachContinuousTime, 0u);
+  auto Limits = processOptionsFromJSON(R"({"darwin_time":{
+    "time_of_day":{"seconds":"4294967295","microseconds":999999},
+    "timezone":{"minutes_west":-2147483648,"dst_time":2147483647},
+    "mach_absolute_time":"18446744073709551615",
+    "mach_continuous_time":"18446744073709551615",
+    "timebase":{"numerator":"4294967295","denominator":4294967295}}})");
+  ASSERT_TRUE(bool(Limits)) << llvm::toString(Limits.takeError());
+  EXPECT_EQ(Limits->DarwinTime->TimeOfDay->Seconds, UINT32_MAX);
+  EXPECT_EQ(Limits->DarwinTime->TimeOfDay->Microseconds, 999999u);
+  EXPECT_EQ(Limits->DarwinTime->Timezone->MinutesWest, INT32_MIN);
+  EXPECT_EQ(Limits->DarwinTime->Timezone->DSTTime, INT32_MAX);
+  EXPECT_EQ(Limits->DarwinTime->MachAbsoluteTime, UINT64_MAX);
+  EXPECT_EQ(Limits->DarwinTime->MachContinuousTime, UINT64_MAX);
+  EXPECT_EQ(Limits->DarwinTime->Timebase->Numerator, UINT32_MAX);
+  EXPECT_EQ(Limits->DarwinTime->Timebase->Denominator, UINT32_MAX);
+}
+
+TEST(ProcessReport, MalformedDarwinTimeIsRejectedBeforeExecution) {
+  for (const char *Bad :
+       {"null",
+        "[]",
+        "true",
+        R"({"unknown":0})",
+        R"({"time_of_day":null})",
+        R"({"time_of_day":[]})",
+        R"({"time_of_day":{}})",
+        R"({"time_of_day":{"seconds":0}})",
+        R"({"time_of_day":{"microseconds":0}})",
+        R"({"time_of_day":{"seconds":0,"microseconds":0,"extra":0}})",
+        R"({"time_of_day":{"seconds":-1,"microseconds":0}})",
+        R"({"time_of_day":{"seconds":4294967296,"microseconds":0}})",
+        R"({"time_of_day":{"seconds":0,"microseconds":-1}})",
+        R"({"time_of_day":{"seconds":0,"microseconds":1000000}})",
+        R"({"time_of_day":{"seconds":0,"microseconds":1.5}})",
+        R"({"timezone":null})",
+        R"({"timezone":{}})",
+        R"({"timezone":{"minutes_west":0}})",
+        R"({"timezone":{"minutes_west":0,"dst_time":0,"extra":0}})",
+        R"({"timezone":{"minutes_west":-2147483649,"dst_time":0}})",
+        R"({"timezone":{"minutes_west":0,"dst_time":2147483648}})",
+        R"({"mach_absolute_time":null})",
+        R"({"mach_absolute_time":true})",
+        R"({"mach_absolute_time":-1})",
+        R"({"mach_absolute_time":9007199254740992})",
+        R"({"mach_absolute_time":"18446744073709551616"})",
+        R"({"mach_absolute_time":"0x1"})",
+        R"({"mach_absolute_time":1.5})",
+        R"({"mach_continuous_time":null})",
+        R"({"mach_continuous_time":true})",
+        R"({"mach_continuous_time":-1})",
+        R"({"mach_continuous_time":9007199254740992})",
+        R"({"mach_continuous_time":"18446744073709551616"})",
+        R"({"mach_continuous_time":"0x1"})",
+        R"({"mach_continuous_time":1.5})",
+        R"({"timebase":null})",
+        R"({"timebase":[]})",
+        R"({"timebase":{}})",
+        R"({"timebase":{"numerator":1}})",
+        R"({"timebase":{"denominator":1}})",
+        R"({"timebase":{"numerator":1,"denominator":1,"extra":0}})",
+        R"({"timebase":{"numerator":0,"denominator":1}})",
+        R"({"timebase":{"numerator":1,"denominator":0}})",
+        R"({"timebase":{"numerator":-1,"denominator":1}})",
+        R"({"timebase":{"numerator":1,"denominator":-1}})",
+        R"({"timebase":{"numerator":4294967296,"denominator":1}})",
+        R"({"timebase":{"numerator":1,"denominator":"4294967296"}})",
+        R"({"timebase":{"numerator":true,"denominator":1}})",
+        R"({"timebase":{"numerator":1,"denominator":1.5}})",
+        R"({"timebase":{"numerator":"0x1","denominator":1}})"}) {
+    SCOPED_TRACE(Bad);
+    auto R =
+        processOptionsFromJSON(std::string("{\"darwin_time\":") + Bad + "}");
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+}
+
 TEST(ProcessReport, LinuxClockInputIsLosslessAndRestrictedToLinuxProfiles) {
   auto O = processOptionsFromJSON(R"({"linux_time":{"clocks":[
     {"id":0,"seconds":"-9223372036854775808","nanoseconds":999999999},
@@ -165,7 +811,11 @@ TEST(ProcessReport, LinuxClockInputIsLosslessAndRestrictedToLinuxProfiles) {
 TEST(ProcessReport, MalformedClockInputsFailBeforeExecution) {
   for (
       const char *Bad :
-      {"null",
+      {R"({"advance_on_idle":1})",
+       R"({"advance_on_idle":"true"})",
+       R"({"advance_on_idle":null})",
+       R"({"advance_on_idle":true,"clocks":[{"id":2,"seconds":0,"nanoseconds":0}]})",
+       "null",
        "[]",
        "true",
        R"({"unknown":0})",

@@ -50,7 +50,14 @@ enum class LowIRRefinementScope : uint8_t {
   InductiveNativeToLowIRLoops,
 };
 
-enum class LowIRLoopSpace : uint8_t { Register, Frame, SystemFlags };
+enum class LowIRLoopSpace : uint8_t {
+  Register,
+  Frame,
+  SystemFlags,
+  /// Declared storage on the selected LowIR side, defined by a checked prefix.
+  /// Native state and the shared function entry have no such storage.
+  FunctionTemporary,
+};
 enum class LowIRLoopSide : uint8_t {
   Entry,
   Original,
@@ -63,8 +70,9 @@ enum class LowIRLoopSide : uint8_t {
 
 struct LowIRLoopLocation {
   LowIRLoopSpace Space = LowIRLoopSpace::Register;
-  /// Register byte offset; for Frame, the two's-complement entry-root offset.
-  /// SystemFlags requires Offset == 0 and Bytes == 8 and a native profile.
+  /// Register or function-temporary byte offset; for Frame, the
+  /// two's-complement entry-root offset. SystemFlags requires Offset == 0 and
+  /// Bytes == 8 and a native profile.
   uint64_t Offset = 0;
   uint16_t Bytes = 0;
 };
@@ -80,6 +88,14 @@ struct LowIRLoopAssignment {
   NdVar Value;
 };
 
+/// A current-state selector, not an entry assumption or invariant. Only
+/// Register, entry-root-relative Frame and SystemFlags locations are allowed.
+/// Mask is nonzero and fits the location; Value has no bits outside Mask.
+struct LowIRLoopGuard {
+  LowIRLoopLocation Location;
+  uint64_t Mask = 0, Value = 0;
+};
+
 /// A candidate state template, never an assumed invariant. Start with the real
 /// shared entry state (or the checked prefix selected below), then apply the
 /// assignments separately to each program.
@@ -90,7 +106,8 @@ struct LowIRLoopAssignment {
 /// a canonical byte Boolean. Rank is a nonempty unsigned lexicographic tuple.
 struct LowIRLoopCutpoint {
   /// LowIR block entries, or an original native instruction entry. Each side's
-  /// addresses must be unique. A segment stops before executing its next cut.
+  /// addresses are unique unless every cut sharing one has explicit guards.
+  /// A segment stops before executing its next selected cut.
   va_t OriginalAddress = 0;
   va_t CandidateAddress = 0;
   /// Use the first feasible paired entry-prefix arrival as the template base
@@ -99,9 +116,11 @@ struct LowIRLoopCutpoint {
   /// by a separate bounded replay from the real entry. That replay establishes
   /// only a feasible paired witness; complete entry/transition coverage is
   /// still required. No abstract state is invented for an unreached cut.
-  /// Defined function-temporary bytes retain this prefix's fixed expressions.
-  /// Every arrival checks their definedness and values; declarations alone
-  /// provide no initial state, and temporary induction inputs are unsupported.
+  /// Defined function-temporary bytes retain this prefix's expressions unless
+  /// explicitly assigned. Temporary inputs and assignments require declared,
+  /// prefix-defined bytes on their own side; they cannot initialize storage.
+  /// Every arrival checks exact definedness and all values, and arbitrary
+  /// temporary inputs must pass the same projection checks as other state.
   bool UseEntryPrefix = false;
   std::vector<LowIRLoopInput> Inputs;
   std::vector<LowOp> Expressions;
@@ -115,6 +134,12 @@ struct LowIRLoopCutpoint {
   /// expanded induction domain must pass projection, coverage, transition,
   /// observation and strict rank checks. A feasible paired prefix is required.
   bool GeneralizeEntryPrefix = false;
+  /// Each side selects this cut when all masked equalities hold on its current
+  /// state. Empty lists select unconditionally. At a shared address, feasible
+  /// selections must be disjoint; unmatched states continue normal execution.
+  /// The reconstructed induction state must prove its own selector before a
+  /// segment starts. Complete entry/transition coverage is still mandatory.
+  std::vector<LowIRLoopGuard> OriginalGuards, CandidateGuards;
 };
 
 struct LowIRLoopRefinementPlan {
@@ -137,8 +162,9 @@ struct LowIRLoopCutpointPair {
 
 /// Combine two independently proposed self-relation plans into one untrusted
 /// original/candidate proposal. Pairings must cover each plan exactly once.
-/// Each input plan uses identical original/candidate addresses and assignments,
-/// Entry/Original/OriginalPrefix inputs, and nonoverlapping temporary
+/// Each input plan uses identical original/candidate addresses, assignments
+/// and guards. Addresses remain unique even when guarded. Inputs use
+/// Entry/Original/OriginalPrefix, with nonoverlapping temporary
 /// definitions with exact-width uses. Prefix policies must agree on
 /// UseEntryPrefix; GeneralizeEntryPrefix is enabled if either proposal requires
 /// it.
@@ -152,7 +178,7 @@ struct LowIRLoopCutpointPair {
 /// including input domain, state/frame equality, coverage, termination and
 /// observation checks. MaxMetadata bounds the total input cuts, bindings,
 /// expressions, assignments, ranking components and requested pairs before
-/// construction allocates copies.
+/// construction allocates copies, including both sides' guard entries.
 llvm::Expected<LowIRLoopRefinementPlan>
 pairLowIRLoopRefinementPlans(const LowIRLoopRefinementPlan &Original,
                              const LowIRLoopRefinementPlan &Candidate,
@@ -173,8 +199,8 @@ struct LowIRLoopInferenceLimits {
   uint32_t MaxCutpointAttempts = 16;
   uint32_t MaxWideningRounds = 8;
   uint32_t MaxRankCandidates = 128;
-  /// Extra analysis for filtered branch arms: graph lookups, common-path
-  /// set construction and comparisons. Other cut selectors are unchanged.
+  /// Extra analysis for filtered branch arms and native context selectors:
+  /// graph lookups, common-path sets, literal-bit scans and comparisons.
   uint64_t MaxCutSelectionWork = 262144;
 };
 
@@ -189,7 +215,11 @@ struct LowIRLoopInferenceResult {
   va_t InstructionAddress = 0;
   int OpSeq = -1;
   uint64_t Operations = 0;
+  /// Charged query requests, including completed entailment reuse.
   uint32_t SolverQueries = 0;
+  /// Completed model-free entailments reused within this inference session.
+  /// These requests remain included in SolverQueries and its shared limit.
+  uint32_t EntailmentCacheHits = 0;
   uint64_t ScheduledPaths = 0;
   /// Cumulative traversal work, also bounded by Execution.MaxSymbolicNodes.
   uint64_t PredicateNodes = 0;

@@ -32,6 +32,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -261,6 +262,50 @@ TEST(BitBlaster, Predicates) {
               [](SymContext &C, SymRef X, SymRef Y) { return C.mkSle(X, Y); });
 }
 
+TEST(BitBlaster, WidePredicatesAgreeWithTheEvaluator) {
+  for (uint32_t Width : {8u, 9u, 15u, 16u, 17u, 31u, 32u, 33u, 63u, 64u, 65u,
+                         127u, 128u, 129u, 255u, 256u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto X = Ctx.mkVar("x", Width);
+    const auto Y = Ctx.mkVar("y", Width);
+    const auto Expr =
+        Ctx.mkConcat(Ctx.mkConcat(Ctx.mkUlt(X, Y), Ctx.mkUle(X, Y)),
+                     Ctx.mkConcat(Ctx.mkSlt(X, Y), Ctx.mkSle(X, Y)));
+    const auto Result = Ctx.mkVar("comparisons", 4);
+    BitVectorSolver Solver(Ctx);
+    ASSERT_TRUE(Solver.assertEqual(Result, Expr));
+
+    // Cross byte, half-word and sign boundaries, including odd widths and
+    // significant bits above 64. Neighbours force carries across each boundary.
+    std::vector<llvm::APInt> Values{llvm::APInt::getZero(Width),
+                                    llvm::APInt::getAllOnes(Width)};
+    for (unsigned Bit :
+         {0u, 7u, std::min(8u, Width - 1), Width / 2, Width - 1}) {
+      const auto Power = llvm::APInt::getOneBitSet(Width, Bit);
+      for (const auto &Value : {Power - 1, Power, Power + 1})
+        if (std::find(Values.begin(), Values.end(), Value) == Values.end())
+          Values.push_back(Value);
+    }
+    for (size_t A = 0; A != Values.size(); ++A)
+      for (size_t B = 0; B != Values.size(); ++B) {
+        SCOPED_TRACE(A);
+        SCOPED_TRACE(B);
+        llvm::SmallVector<SymRef, 3> Pins{Ctx.mkEq(X, Ctx.mkConst(Values[A])),
+                                          Ctx.mkEq(Y, Ctx.mkConst(Values[B]))};
+        ASSERT_EQ(Solver.check(Pins), SatResult::Sat);
+        const auto &Model = Solver.model();
+        ASSERT_EQ(Model.value(Ctx.varId(X)), Values[A]);
+        ASSERT_EQ(Model.value(Ctx.varId(Y)), Values[B]);
+        const auto Expected = Ctx.eval(Expr, Model.asVarValues(Ctx));
+        EXPECT_EQ(Model.value(Ctx.varId(Result)), Expected);
+        // A plausible model alone would miss an unconstrained output bit.
+        Pins.push_back(Ctx.mkNe(Result, Ctx.mkConst(Expected)));
+        EXPECT_EQ(Solver.check(Pins), SatResult::Unsat);
+      }
+  }
+}
+
 TEST(BitBlaster, StructuralOperators) {
   checkBinary("concat", W4, [](SymContext &C, SymRef X, SymRef Y) {
     return C.mkConcat(X, Y);
@@ -439,6 +484,86 @@ TEST(BitBlaster, LateNodesKeepCachedBitsAndEncodingRefusals) {
   BitBlaster Invalid(Ctx, InvalidEnc);
   EXPECT_FALSE(Invalid.blast(SymRef(UINT32_MAX), After));
   EXPECT_EQ(Invalid.error(), BlastError::Malformed);
+}
+
+TEST(BitBlaster, LargeReachableGraphsKeepIncrementalEncodingOrder) {
+  for (unsigned Padding : {0U, 65500U}) {
+    for (unsigned Count : {1022U, 1023U, 1024U, 2048U}) {
+      SCOPED_TRACE(Padding);
+      SCOPED_TRACE(Count);
+      SymContext Ctx;
+      for (unsigned I = 0; I != Padding; ++I)
+        Ctx.mkConst(64, (uint64_t(1) << 40) + I);
+      std::vector<SymRef> Inputs;
+      for (unsigned I = 0; I != Count; ++I)
+        Inputs.push_back(Ctx.mkFreshVar(1, "bit"));
+      const auto Parity = Ctx.mkXor(Inputs);
+
+      SatSolver BatchSat, IncrementalSat;
+      CnfEncoder BatchEnc(BatchSat), IncrementalEnc(IncrementalSat);
+      BlastLimits Limits;
+      Limits.MaxWidth = 1;
+      Limits.MaxGates = Count;
+      BitBlaster Batch(Ctx, BatchEnc, Limits);
+      BitBlaster Incremental(Ctx, IncrementalEnc, Limits);
+      BitLits BatchBits, IncrementalBits;
+
+      // Encoding each input separately fixes the reference variable order
+      // without depending on traversal or a large-node sort. Unrelated wide
+      // nodes must not consume gates or cause a width refusal.
+      for (auto Input : Inputs)
+        ASSERT_TRUE(Incremental.blast(Input, IncrementalBits));
+      ASSERT_TRUE(Incremental.blast(Parity, IncrementalBits));
+      ASSERT_TRUE(Batch.blast(Parity, BatchBits));
+      EXPECT_EQ(BatchBits, IncrementalBits);
+      EXPECT_EQ(Batch.encodedVars(), Incremental.encodedVars());
+      EXPECT_EQ(BatchEnc.numGates(), Count - 1);
+      EXPECT_EQ(BatchEnc.numGates(), IncrementalEnc.numGates());
+      EXPECT_EQ(BatchSat.numVars(), IncrementalSat.numVars());
+      EXPECT_EQ(BatchSat.numClauses(), IncrementalSat.numClauses());
+      for (auto Input : Inputs)
+        EXPECT_EQ(Batch.variableBits(Ctx.varId(Input)),
+                  Incremental.variableBits(Ctx.varId(Input)));
+
+      // A later small traversal must keep the old bits after large traversal
+      // scratch was reused, and must still fit the exact gate limit.
+      const auto Tail = Ctx.mkFreshVar(1, "tail");
+      const auto Result = Ctx.mkAnd(Parity, Tail);
+      ASSERT_TRUE(Batch.blast(Result, BatchBits));
+      ASSERT_TRUE(Incremental.blast(Result, IncrementalBits));
+      EXPECT_EQ(BatchBits, IncrementalBits);
+      EXPECT_EQ(BatchEnc.numGates(), Count);
+      EXPECT_EQ(BatchSat.numVars(), IncrementalSat.numVars());
+      EXPECT_EQ(BatchSat.numClauses(), IncrementalSat.numClauses());
+      for (unsigned Pattern = 0; Pattern != 8; ++Pattern) {
+        llvm::SmallVector<SatLit, 8> Assumptions;
+        bool ExpectedParity = false;
+        for (unsigned I = 0; I != Count; ++I) {
+          const bool Value = ((I * 17 + Pattern) >> (Pattern % 5)) & 1;
+          ExpectedParity ^= Value;
+          Assumptions.push_back(
+              Batch.variableBits(Ctx.varId(Inputs[I]))[0].withPolarity(Value));
+        }
+        const bool TailValue = (Pattern & 1) != 0;
+        Assumptions.push_back(
+            Batch.variableBits(Ctx.varId(Tail))[0].withPolarity(TailValue));
+        ASSERT_EQ(BatchSat.solve(Assumptions), SatResult::Sat);
+        EXPECT_EQ(BatchSat.modelValue(BatchBits[0]) == SatValue::True,
+                  ExpectedParity && TailValue);
+        Assumptions.push_back(
+            BatchBits[0].withPolarity(!(ExpectedParity && TailValue)));
+        EXPECT_EQ(BatchSat.solve(Assumptions), SatResult::Unsat);
+      }
+
+      // The next gate exceeds the same budget in both construction paths.
+      const auto Extra = Ctx.mkAnd(Result, Ctx.mkFreshVar(1, "extra"));
+      EXPECT_FALSE(Batch.blast(Extra, BatchBits));
+      EXPECT_FALSE(Incremental.blast(Extra, IncrementalBits));
+      EXPECT_EQ(Batch.error(), BlastError::TooManyGates);
+      EXPECT_EQ(Incremental.error(), BlastError::TooManyGates);
+      EXPECT_EQ(BatchEnc.numGates(), IncrementalEnc.numGates());
+    }
+  }
 }
 
 } // namespace

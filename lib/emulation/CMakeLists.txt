@@ -7,7 +7,10 @@ add_neverd_component_library(NeverDEmulationCore
   core/PhysicalMemory.cpp
   core/AddressSpace.cpp
   core/MemoryProjection.cpp
+  core/ParallelExecution.cpp
+  core/MMIOAtomicTransaction.cpp
   core/RAMTransaction.cpp
+  core/RAMReservation.cpp
   core/MemoryView.cpp
   LLVM_COMPONENTS Support)
 
@@ -21,11 +24,18 @@ add_neverd_component_library(NeverDEmulationArch
   arch/aarch64/AArch64State.cpp
   arch/aarch64/AArch64MachineProbe.cpp
   arch/aarch64/AArch64InstructionEffects.cpp
+  arch/aarch64/AArch64Atomic.cpp
+  arch/aarch64/AArch64AtomicExecution.cpp
+  arch/aarch64/AArch64AtomicMemory.cpp
+  arch/aarch64/AArch64Exclusive.cpp
+  arch/aarch64/AArch64ExclusiveExecution.cpp
   arch/x86_64/CheckedX64Backend.cpp
   arch/x86_64/CheckedX64Memory.cpp
+  arch/x86_64/CheckedX64MMIOAtomic.cpp
   arch/x86_64/CheckedX64Stack.cpp
   arch/x86_64/CheckedX64Frame.cpp
   arch/aarch64/CheckedAArch64Backend.cpp
+  arch/aarch64/CheckedAArch64Atomic.cpp
   LINK_COMPONENTS EmulationCore
   LLVM_COMPONENTS Support)
 
@@ -46,6 +56,7 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
     backends/unicorn/UnicornBackend.cpp
     backends/unicorn/UnicornMachine.cpp
     backends/unicorn/UnicornArchitecture.cpp
+    backends/unicorn/UnicornAArch64Atomic.cpp
     LINK_COMPONENTS EmulationArch
     LLVM_COMPONENTS Support
     LINK_LIBS unicorn)
@@ -86,6 +97,9 @@ add_subdirectory(os/darwin)
 add_neverd_component_library(NeverDEmulationProcess
   runtime/ProcessSession.cpp
   runtime/ProcessReport.cpp
+  runtime/ProcessDarwinFilesJSON.cpp
+  runtime/ProcessDarwinSystemJSON.cpp
+  runtime/ProcessDarwinTimeJSON.cpp
   runtime/ProcessLinuxTimeJSON.cpp
   runtime/ProcessLinuxSignalsJSON.cpp
   runtime/ProcessLinuxFilesJSON.cpp

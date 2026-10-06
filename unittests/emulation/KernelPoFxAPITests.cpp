@@ -13,6 +13,7 @@
 #include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
 #include "os/windows/driver/DriverImage.h"
+#include "os/windows/kernel/KernelAPINames.h"
 #include "os/windows/kernel/KernelModel.h"
 #include "os/windows/kernel/WindowsKernelLayout.h"
 
@@ -308,7 +309,7 @@ TEST_F(KernelPoFxPoweredDownAPI, StartedDeviceMustBePhysicallyPoweredOn) {
 
 TEST_F(KernelPoFxAPI,
        CentralDispatchDeclaresTheCompleteSupportedArgumentCounts) {
-#define NEVERD_KERNEL_POFX_API(Name, Arity, IRQL)                              \
+#define NEVERD_KERNEL_POFX_API(Name, Arity, IRQL, Operation)                   \
   EXPECT_EQ(KernelModel::argumentCount(#Name), Arity);
 #include "os/windows/kernel/KernelPoFxAPIs.def"
 #undef NEVERD_KERNEL_POFX_API
@@ -499,9 +500,52 @@ TEST_F(KernelPoFxAPI, BlockingCallbacksStayOnTheCallingThreadAndWaitForReturn) {
   EXPECT_FALSE(take(Model->nextScheduled(false)));
 }
 
+TEST_F(KernelPoFxAPI, ProviderDeadlinePreservesSameThreadBlockingCallback) {
+  startIdle();
+  constexpr uint64_t Delay = driver_scheduling::DefaultQuantumInstructions;
+  enum class RequestMajor {
+#define NEVERD_DRIVER_REQUEST_KIND(Name, Spelling, Major) Name = Major,
+#include "neverd/emulation/DriverRequestKinds.def"
+#undef NEVERD_DRIVER_REQUEST_KIND
+  };
+  put(Model->driverObject() + DriverDispatchOffset +
+          unsigned(RequestMajor::Power) * sizeof(uint64_t),
+      DispatchPC);
+  DriverRequest Power;
+  Power.Kind = DriverRequestKind::Power;
+  Power.DeviceID = Result.PnpDevices.front().ID;
+  DriverPowerOperation Operation;
+  Operation.Minor = DevicePowerRequest::Query;
+  Operation.State = uint32_t(DevicePowerState::D0);
+  Operation.BusCompletion = {StatusSuccess, Delay};
+  Power.Power = Operation;
+  const uint64_t IRP = take(Model->beginRequest(Power)).IRP;
+  const uint64_t Stack = get(IRP + IRPStackPointerOffset);
+  std::array<uint8_t, StackCompletionOffset> Prefix;
+  success(Memory->read(Stack, Prefix));
+  success(Memory->write(Stack - StackSize, Prefix));
+  put(Stack - StackSize + StackControlOffset, 0, 1);
+  EXPECT_EQ(call(kernel_api::IofCallDriver, {PDO, IRP}), StatusPending);
+  success(Model->recordDispatchReturn(IRP, StatusPending));
+  Model->enterExecution(CallerThread);
+  call(kernel_api::PoFxActivateComponent, {Handle, 0, pofx::FlagBlocking});
+  EXPECT_FALSE(Model->takeIndependentGuestCall());
+  success(Model->advanceExecutionTo100ns(Delay));
+  EXPECT_TRUE(Result.Requests.back().Completed);
+  EXPECT_EQ(Result.Requests.back().Power->BusCompletedAt100ns, Delay);
+  const auto Active = inlineCall(ActivePC);
+  const auto Returned = take(Model->finishGuestCall(Active.Token, UINT64_MAX));
+  ASSERT_TRUE(Returned);
+  EXPECT_EQ(*Returned, 0u);
+  EXPECT_FALSE(Model->takeWait());
+  EXPECT_FALSE(Model->takeGuestCall());
+}
+
 TEST_F(KernelPoFxAPI,
        FlagsAndComponentFailuresDoNotConsumeActivationReferences) {
   startIdle();
+  reject(Model->call("PoFxActivateComponent", {0, UINT32_MAX, 4}),
+         "live PoFx handle");
   reject(Model->call("PoFxActivateComponent",
                      {Handle, 0, pofx::FlagBlocking | pofx::FlagAsyncOnly}),
          "invalid flags");

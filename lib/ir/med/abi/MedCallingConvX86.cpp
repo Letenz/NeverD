@@ -34,7 +34,7 @@ namespace neverd {
 void detectXMMParams(
     MedFunc &Func, const MedBlock &Entry, const TargetRegInfo &TRI,
     const std::map<std::pair<uint64_t, uint16_t>, int> &RegVarMap,
-    Arch TargetArch) {
+    Arch TargetArch, BinaryFormat TargetFormat) {
   // FP/vector arguments arrive in a dedicated vector register class under
   // clang's -O2 conventions: x86-64 XMM0-7, AArch64 V0-7, ARM VFP D0-7 — all
   // observed as live-in self-copies.
@@ -58,6 +58,7 @@ void detectXMMParams(
   struct ValueUse {
     const MedOp *Op = nullptr;
     const PhiNode *Phi = nullptr;
+    const MedCallClobber *Clobber = nullptr;
   };
   llvm::DenseMap<ValueKey, llvm::SmallVector<ValueUse, 2>> Uses;
   for (const MedBlock &Block : Func.Blocks) {
@@ -71,6 +72,33 @@ void detectXMMParams(
       for (uint8_t I = 0; I < Op.NumInputs; ++I)
         if (!Op.Inputs[I].isConst())
           Uses[valueKey(Op.Inputs[I])].push_back({&Op, nullptr});
+  }
+  // SSA records the low prefix that the call ABI preserves as an implicit
+  // value definition. Connect that exact prefix to its pre-call value, just
+  // like an explicit byte copy; the volatile upper lanes supply no input use.
+  std::map<uint32_t, const MedOp *> Calls;
+  std::set<uint32_t> AmbiguousCalls;
+  for (const auto &Block : Func.Blocks)
+    for (const auto &Op : Block.Ops)
+      if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+          Op.CallSiteId && !Calls.emplace(Op.CallSiteId, &Op).second)
+        AmbiguousCalls.insert(Op.CallSiteId);
+  for (const auto &Clobber : Func.CallClobbers) {
+    const auto Owner = Calls.find(Clobber.CallSiteId);
+    const auto &Output = Clobber.Value;
+    const auto &Input = Clobber.PreservedInput;
+    if (Owner == Calls.end() || AmbiguousCalls.count(Clobber.CallSiteId) ||
+        Owner->second->DoesNotReturn || Owner->second->PreservesCallerSaved ||
+        !Clobber.PreservedPrefixSize || Output.Kind != MedVar::Reg ||
+        Input.Kind != MedVar::Reg || Output.Id != Input.Id ||
+        Output.RegOff != Input.RegOff || Output.Size != Input.Size ||
+        valueKey(Output) == valueKey(Input) || Output.Size > 64 ||
+        Clobber.PreservedPrefixSize >= Output.Size ||
+        Clobber.PreservedPrefixSize !=
+            TRI.callPreservedPrefixSize(Output.RegOff, Output.Size,
+                                        TargetFormat))
+      continue;
+    Uses[valueKey(Input)].push_back({nullptr, nullptr, &Clobber});
   }
   // A RETURN may read an FP return register.  i386 returns floating point in
   // x87 st0 and records through memory; XMM0 carries only a vector result
@@ -184,6 +212,13 @@ void detectXMMParams(
       if (It == Uses.end())
         continue;
       for (const ValueUse &Use : It->second) {
+        if (Use.Clobber) {
+          const auto &Clobber = *Use.Clobber;
+          if (!carry(Clobber.Value, carried(Clobber.PreservedInput) &
+                                        byteMask(Clobber.PreservedPrefixSize)))
+            return true;
+          continue;
+        }
         if (Use.Op) {
           if (observes(*Use.Op))
             return true;
@@ -559,6 +594,19 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
         Param.Size = Op.Output.Size > 0 ? Op.Output.Size : 4;
         Param.RegOff = kNoParamReg;
         Param.TheArch = TargetArch;
+        if (Param.Size == 8) {
+          // An eight-byte load spans two four-byte ABI parameters. Encode
+          // that composition in MedIR so both source routes retain the high
+          // word and agree about which incoming slots are actually used.
+          Param.Size = 4;
+          MedVar High = Param;
+          ++High.Id;
+          Op.Opcode = NdOp::CONCAT;
+          Op.Inputs[0] = High;
+          Op.Inputs[1] = Param;
+          Op.NumInputs = 2;
+          continue;
+        }
         Op.Opcode = NdOp::COPY;
         Op.Inputs[0] = Param;
         Op.NumInputs = 1;

@@ -209,6 +209,9 @@ struct MedOp {
   int OriginSeq = -1;
   uint32_t CallSiteId = 0;
   std::shared_ptr<const SourceCallTypeHint> SourceCallHint;
+  /// RETURN's final input is the separately published Swift error value.
+  /// Only source-call lowering may establish this transport before SSA.
+  bool HasSourceErrorResult = false;
   bool Dead = false;
   bool PreservesCallerSaved = false;
   /// GPR families (see CallRegisterEffects.h) the direct callee provably

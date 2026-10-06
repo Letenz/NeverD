@@ -6,7 +6,7 @@
 //===----------------------------------------------------------------------===//
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__)) &&             \
     defined(NEVERD_EMULATION_WHP)
-#include "backends/whp/WhpX64Partition.h"
+#include "backends/whp/WhpX64Processor.h"
 #include "gtest/gtest.h"
 
 #include "llvm/Support/Endian.h"
@@ -82,10 +82,11 @@ struct HostState {
     *Written = sizeof(Features);
     return S_OK;
   }
-  static HRESULT WINAPI setRegisters(WHV_PARTITION_HANDLE Handle, UINT32,
+  static HRESULT WINAPI setRegisters(WHV_PARTITION_HANDLE Handle, UINT32 CPU,
                                      const WHV_REGISTER_NAME *Names,
                                      UINT32 Count,
                                      const WHV_REGISTER_VALUE *Values) {
+    EXPECT_EQ(CPU, ProcessorIndex);
     auto &Self = *static_cast<HostState *>(Handle);
     const bool Metadata = Names[0] == WHvX64RegisterFpControlStatus;
     ++(Metadata ? Self.MetadataInstalls : Self.RegisterInstalls);
@@ -100,9 +101,10 @@ struct HostState {
     }
     return S_OK;
   }
-  static HRESULT WINAPI getRegisters(WHV_PARTITION_HANDLE Handle, UINT32,
+  static HRESULT WINAPI getRegisters(WHV_PARTITION_HANDLE Handle, UINT32 CPU,
                                      const WHV_REGISTER_NAME *Names,
                                      UINT32 Count, WHV_REGISTER_VALUE *Values) {
+    EXPECT_EQ(CPU, ProcessorIndex);
     auto &Self = *static_cast<HostState *>(Handle);
     ++Self.CaptureCalls;
     Self.LastCaptured.assign(Names, Names + Count);
@@ -129,8 +131,9 @@ struct HostState {
     }
     return S_OK;
   }
-  static HRESULT WINAPI getXsave(WHV_PARTITION_HANDLE Handle, UINT32,
+  static HRESULT WINAPI getXsave(WHV_PARTITION_HANDLE Handle, UINT32 CPU,
                                  VOID *Bytes, UINT32 Size, UINT32 *Written) {
+    EXPECT_EQ(CPU, ProcessorIndex);
     auto &Self = *static_cast<HostState *>(Handle);
     *Written = Self.Xsave.size();
     if (!Size)
@@ -146,8 +149,9 @@ struct HostState {
     }
     return Self.boundary(Stage::XsaveCapture) ? E_FAIL : S_OK;
   }
-  static HRESULT WINAPI setXsave(WHV_PARTITION_HANDLE Handle, UINT32,
+  static HRESULT WINAPI setXsave(WHV_PARTITION_HANDLE Handle, UINT32 CPU,
                                  const VOID *Bytes, UINT32 Size) {
+    EXPECT_EQ(CPU, ProcessorIndex);
     auto &Self = *static_cast<HostState *>(Handle);
     ++Self.XsaveInstalls;
     EXPECT_GE(Size, Self.Xsave.size());
@@ -164,8 +168,9 @@ struct HostState {
                                  const VOID *Bytes, UINT32 Size) {
     return setXsave(Handle, CPU, Bytes, Size);
   }
-  static HRESULT WINAPI run(WHV_PARTITION_HANDLE Handle, UINT32, VOID *Bytes,
-                            UINT32) {
+  static HRESULT WINAPI run(WHV_PARTITION_HANDLE Handle, UINT32 CPU,
+                            VOID *Bytes, UINT32) {
+    EXPECT_EQ(CPU, ProcessorIndex);
     auto &Self = *static_cast<HostState *>(Handle);
     ++Self.Entries;
     auto &Exit = *static_cast<WHV_RUN_VP_EXIT_CONTEXT *>(Bytes);
@@ -184,7 +189,8 @@ struct HostState {
     }
     return Self.boundary(Stage::Entry) ? E_FAIL : S_OK;
   }
-  static HRESULT WINAPI cancel(WHV_PARTITION_HANDLE, UINT32, UINT32) {
+  static HRESULT WINAPI cancel(WHV_PARTITION_HANDLE, UINT32 CPU, UINT32) {
+    EXPECT_EQ(CPU, ProcessorIndex);
     return S_OK;
   }
   static HRESULT WINAPI destroy(WHV_PARTITION_HANDLE) { return S_OK; }
@@ -193,11 +199,12 @@ struct HostState {
 class WhpStateTransfer : public testing::TestWithParam<bool> {
 protected:
   HostState Target;
-  std::unique_ptr<WhpX64Partition> Host;
+  std::unique_ptr<WhpX64Processor> Host;
   X64MachineState State;
   void initialize() {
-    Host = std::make_unique<WhpX64Partition>();
+    Host = std::make_unique<WhpX64Processor>();
     Host->Partition = &Target;
+    Host->ProcessorIndex = ProcessorIndex;
     auto &API = Host->API;
     API.WHvDeletePartition = HostState::destroy;
     API.WHvGetPartitionProperty = HostState::property;
@@ -212,7 +219,9 @@ protected:
       API.WHvGetVirtualProcessorXsaveState = HostState::getXsave;
       API.WHvSetVirtualProcessorXsaveState = HostState::setXsave;
     }
-    ASSERT_EQ(llvm::toString(Host->Xsave.initialize(API, Host->Partition)), "");
+    ASSERT_EQ(llvm::toString(Host->Xsave.initialize(API, Host->Partition,
+                                                    Host->ProcessorIndex)),
+              "");
     ASSERT_EQ(llvm::toString(Host->initializeRunControl()), "");
   }
   void SetUp() override {

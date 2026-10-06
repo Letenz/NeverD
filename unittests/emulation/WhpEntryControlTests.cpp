@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 #if defined(_WIN32) && defined(NEVERD_EMULATION_WHP)
 #include "arch/x86_64/X64Exception.h"
-#include "backends/whp/WhpPartition.h"
+#include "backends/whp/WhpVirtualProcessor.h"
 #include "gtest/gtest.h"
 
 #include <atomic>
@@ -13,21 +13,35 @@
 namespace neverd::emulation {
 namespace {
 using Clock = std::chrono::steady_clock;
+#define NEVERD_RUN_CONTROL_TEST_VALUE(Name, Value) constexpr auto Name = Value;
+#include "RunControlCases.def"
+#undef NEVERD_RUN_CONTROL_TEST_VALUE
 struct FakePartition {
   std::atomic<unsigned> Entries{0}, Cancels{0}, Deletes{0};
   std::atomic<bool> *StopAtReturn = nullptr;
   HRESULT Result = S_OK;
   WHV_RUN_VP_EXIT_REASON Reason = WHvRunVpExitReasonNone;
-  static HRESULT WINAPI run(WHV_PARTITION_HANDLE Handle, UINT32, VOID *Context,
-                            UINT32) {
+  bool WaitForCancel = false;
+  static HRESULT WINAPI run(WHV_PARTITION_HANDLE Handle, UINT32 CPU,
+                            VOID *Context, UINT32) {
+    EXPECT_EQ(CPU, ProcessorIndex);
     auto &Target = *static_cast<FakePartition *>(Handle);
     ++Target.Entries;
     static_cast<WHV_RUN_VP_EXIT_CONTEXT *>(Context)->ExitReason = Target.Reason;
     if (Target.StopAtReturn)
       *Target.StopAtReturn = true;
+    if (Target.WaitForCancel) {
+      const auto Deadline =
+          Clock::now() + std::chrono::milliseconds(WaitMilliseconds);
+      while (!Target.Cancels && Clock::now() < Deadline)
+        std::this_thread::yield();
+      EXPECT_NE(Target.Cancels.load(), 0u);
+    }
     return Target.Result;
   }
-  static HRESULT WINAPI cancel(WHV_PARTITION_HANDLE Handle, UINT32, UINT32) {
+  static HRESULT WINAPI cancel(WHV_PARTITION_HANDLE Handle, UINT32 CPU,
+                               UINT32) {
+    EXPECT_EQ(CPU, ProcessorIndex);
     ++static_cast<FakePartition *>(Handle)->Cancels;
     return S_OK;
   }
@@ -39,10 +53,11 @@ struct FakePartition {
 class WhpEntryControl : public testing::Test {
 protected:
   FakePartition Target;
-  WhpPartition Partition;
+  WhpVirtualProcessor Partition;
   WHV_RUN_VP_EXIT_CONTEXT Exit{};
   void SetUp() override {
     Partition.Partition = &Target;
+    Partition.ProcessorIndex = ProcessorIndex;
     Partition.API.WHvRunVirtualProcessor = FakePartition::run;
     Partition.API.WHvCancelRunVirtualProcessor = FakePartition::cancel;
     Partition.API.WHvDeletePartition = FakePartition::destroy;
@@ -62,6 +77,17 @@ protected:
     EXPECT_TRUE(Seen);
   }
 };
+TEST_F(WhpEntryControl, CancellationTargetsTheRetainedNonzeroProcessor) {
+  ASSERT_NO_FATAL_FAILURE(initialize());
+  std::atomic<bool> Stop{false};
+  Target.StopAtReturn = &Stop;
+  Target.WaitForCancel = true;
+  Target.Reason = WHvRunVpExitReasonCanceled;
+  interrupted(Partition.run(Exit, {Clock::time_point::max(), &Stop}), true,
+              false);
+  EXPECT_EQ(Target.Entries.load(), 1u);
+  EXPECT_NE(Target.Cancels.load(), 0u);
+}
 TEST_F(WhpEntryControl, UninitializedControlCannotEnterHost) {
   EXPECT_EQ(llvm::toString(Partition.run(Exit, {Clock::time_point::max()})),
             diagnostic::WhpRunControl);

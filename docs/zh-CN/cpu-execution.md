@@ -22,7 +22,7 @@ CPU 执行独立于来宾 OS、映像加载器和调用约定。启用 `NEVERD_E
 | `page_size` | 4096 | 来宾映射粒度；其他值会被拒绝 |
 | `required_features` | `[]` | [`ExecutionConfiguration.def`](../../include/neverd/emulation/ExecutionConfiguration.def) 中的必需功能名 |
 
-`driver-strict` 支持 x64；`software-cpu-v1` 支持 x64 与 ARM64。`checked-x64-v1` 与 `checked-aarch64-v1` 要求对应架构并以 supervisor 特权运行。`checked-user-x64-v1` 与 `checked-user-aarch64-v1` 分别在 CPL3 和 EL0 执行与契约对应的有界指令集，具备 MMU 隔离和显式服务请求退出。支持 Unicorn 以及与主机匹配的 KVM/WHP；`auto` 遵循现有主机选择。flat 配置不承诺架构级 user/supervisor MMU 隔离。checked ARM64 与 x64 配置支持下文列出的受限 FP/SIMD 指令族。supervisor x64 另支持受限 MMIO 事务和预备读取的字符串传输；user 配置拒绝设备映射。所有 checked 配置仍拒绝端口 I/O 和并行 CPU 要求。只有 user 配置会报告 `service_traps`。
+`driver-strict` 支持 x64；`software-cpu-v1` 支持 x64 与 ARM64。`checked-x64-v1` 与 `checked-aarch64-v1` 要求对应架构并以 supervisor 特权运行。`checked-user-x64-v1` 与 `checked-user-aarch64-v1` 分别在 CPL3 和 EL0 执行与契约对应的有界指令集，具备 MMU 隔离和显式服务请求退出。支持 Unicorn 以及与主机匹配的 KVM/WHP；`auto` 遵循现有主机选择。`direct-user-x64-v1` 在硬件传输上于架构事件之间运行 x64 user 指令集，而非逐指令单步，面向启动需要数十亿条指令的工作负载。它不准入任何指令，也不观察指令或内存访问；仅由来宾页表提供 CPL3 隔离。其服务边界与 `checked-user-x64-v1` 一致：系统调用扩展保持禁用，因此服务指令在来宾请求服务的地址上表现为未定义操作码事件，并作为相同的挂起服务上报。该运行采用时间预算，而非指令预算或配额。KVM 与主机匹配的 WHP 实现该契约；Unicorn 和 HVF 报告其不受支持，而不会以不同语义运行它。执行监视仍然生效：其页面被标记为不可执行，因此首次取指进入被监视范围会在与受检指令监视相同的边界处触发缺页。基于观察的脱壳在该契约下无需单步即可恢复入口。flat 配置不承诺架构级 user/supervisor MMU 隔离。checked ARM64 与 x64 配置支持下文列出的受限 FP/SIMD 指令族。supervisor x64 另支持受限 MMIO 事务和预备读取的字符串传输；user 配置拒绝设备映射。端口 I/O 仍不支持。只有 user 配置会报告 `service_traps`。
 
 用户态执行要求**每个**映射页同时具有 `UserAccessible` 和相应的 `Read`、`Write` 或 `Execute` 权限。已有映射默认仅 supervisor 可访问；即使别名共享物理字节，其权限仍彼此独立。仅有 `UserAccessible` 不会授权访问。可信宿主操作和 supervisor CPU 使用 RWX。例如：
 
@@ -36,6 +36,16 @@ llvm::cantFail(CPU->map(Code, 4096, Read | Write | Execute | UserAccessible));
 特权由契约固定。恢复上下文或绑定地址空间不会改变特权，写 x64 段选择子也不能提权。可恢复的数据访问故障会保留原指令和寄存器，直到所属模型处理。`canAccess` 严格检查请求的权限；查询 user 可见性时需包含 `UserAccessible`。页表是 CPU 私有投影，不开放可修改的来宾页表或特权切换 API；ARM64 的 user 页在 EL1 也不可执行。
 
 未知字段、null 字段值、无效名称或数值宽度、重复功能及不支持的组合都会失败。输入上限为 64 KiB；旧 CPU 工厂和驱动 C 选项保持兼容。
+
+<a id="parallel-cpus-and-mmio"></a>
+
+## 并行 CPU 与设备原子事务
+
+KVM、WHP 和 Unicorn 的 checked x64/ARM64 可请求 `ExecutionFeature::ParallelCPUs`（`parallel_cpus`）。独立 CPU 可在不同宿主线程上共享物理 RAM；已证明不写 RAM 的原生指令可重叠执行，待处理写入阻止新指令进入，等待读取结束后再发布。指令效果采用顺序一致性，支持等待取消和回滚。所有运行结束前，映射修改与宿主写入仍被禁止。同一 CPU 对象只有 `stop()` 支持跨线程调用。默认 CPU 执行仍为协作式；[OS 调度](driver-scheduling.md)和弱内存模型探索属于独立契约。
+
+并行 WHP CPU 在一个共享分区内使用独立 VP，最多同时保留 31 个并行 CPU，另加协作式 VP。私有 GPA 区间和传输 RAM 隔离各自投影；ARM64 使用不同 ASID 和非全局地址转换。每次原生执行前复制代码及已声明的操作数，只有已声明的输出字节进入共享 RAM 事务。观察者读取权威 RAM。KVM 和 checked Unicorn 直接使用共享后备内存。HVF 和 Unicorn 的 `Software` 契约不声明此能力。
+
+`MMIOAtomics`（`mmio_atomics`）要求设备明确提供 `GuestMMIOCallbacks::PrepareAtomic`。checked supervisor x64 支持已接纳的交换、比较交换、整数更新和修改型位操作；ARM64 支持包含 `CASP` 的 LSE。操作数须自然对齐，宽度限于 1/2/4/8/16 字节。x64 在私有临时页执行原指令，保留精确寄存器与 FLAGS；ARM64 复用统一 LSE 语义。准备阶段无设备副作用，提交验证生命周期和版本并只生效一次。提交前停止或失败保留 CPU/设备状态，成功提交优先于同时到来的停止。禁止退化成普通 Read+Write。内核寄存器库仍使用声明的 1/2/4 字节宽度，并拒绝同值写入、电源变化或所有者销毁后留下的旧预览。ARM64 普通设备访问、设备独占监视器、用户态 MMIO 和任意真实硬件不在此能力内。
 
 ## 不执行工作负载的能力查询
 
@@ -100,6 +110,8 @@ KVM、WHP 和 checked Unicorn 也支持 16/64 位 `LEAVE`。它始终通过完�
 
 KVM、WHP 和 checked Unicorn 支持 16/64 位 `ENTER`，分配量按无符号 16 位解释，嵌套级别取模 32。访问使用完整 RSP/RBP，并遵循有效前缀顺序。访客故障会保留已完成的栈写入，RSP、RBP 和 PC 则保持入口值。最终栈检查覆盖整个操作数宽度的写权限，但不写入数据。LOCK、REP、APX 前缀及设备栈帧仍不支持。
 
+受检 x64 放行双字节近返回 `F3 C3`。编译器会在作为分支目标的返回指令前加上重复前缀，而处理器忽略它，因此该指令就是已放行的 `C3` 转移，栈读取也相同。其它带前缀的返回，包括 `F2 C3`、第二个前缀、操作数大小覆盖以及 `F3 C2 iw`，仍在契约之外。`X64ReturnPrefixTests.cpp` 检查 KVM、WHP 和受检 Unicorn。
+
 `X64PackedIntegerInstructions.def` 准入 45 条 legacy SSE2 packed integer 指令，涵盖回绕／饱和加减、比较、乘法、平均值、极值、字节差、打包及解包。XMM 和对齐的 128 位 RAM 源操作数在 KVM、WHP、Unicorn 上共用现有 checked 路径。FLAGS 与 MXCSR 保持不变；故障或观察器取消保留状态。MMX、VEX/EVEX 和设备操作数仍不支持。
 
 `X64PackedShiftInstructions.def` 准入十种 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／对齐的 m128 计数，字节移位仅接受 imm8。变量计数使用无符号低 64 位，不按标量移位规则掩码；高 64 位不参与计算。即使计数为零或超出位宽，内存操作数仍须完整读取 16 字节。FLAGS 和 MXCSR 保持不变；MMX、VEX/EVEX 和设备操作数仍被排除。
@@ -136,7 +148,7 @@ checked x64 的 `DIV`/`IDIV` 使用处理器产生的结果和 `#DE`。KVM 通�
 
 ## 分阶段提交 RAM 效果
 
-`RAMTransaction` 在物理执行租约内，只保存一条指令明确声明的写入范围的物理并集。结果观察器运行前恢复原始 RAM；取消、后端传输错误和观察器异常不会发布部分 RAM 或寄存器。CPU 异常在 RAM 回滚后保留架构异常状态。ARM64 的单次和成对写入共用该内存权威层。x64 支持 8/16/32/64 位 `XCHG`、`XADD`、`CMPXCHG`，LOCK 或隐式锁定形式要求自然对齐。`NeverDRAMTransactionTests` 将结果与独立宿主 CPU 对照，并验证回滚、别名和权限；不可用的平台明确跳过。设备事务和并行 SMP 仍不在此契约内；CPU 快照不会撤销已经提交的 RAM。
+`RAMTransaction` 在物理执行租约内，只保存一条指令明确声明的写入范围的物理并集。结果观察器运行前恢复原始 RAM；取消、后端传输错误和观察器异常不会发布部分 RAM 或寄存器。CPU 异常在 RAM 回滚后保留架构异常状态。ARM64 的单次和成对写入共用该内存权威层。x64 支持 8/16/32/64 位 `XCHG`、`XADD`、`CMPXCHG`，LOCK 或隐式锁定形式要求自然对齐。`NeverDRAMTransactionTests` 将结果与独立宿主 CPU 对照，并验证回滚、别名和权限；不可用的平台明确跳过。设备原子事务使用独立提供方；CPU 快照不会撤销已提交的 RAM。
 
 `CMPXCHG8B` 和 `CMPXCHG16B` 在 KVM、WHP 和 checked Unicorn 的驱动及用户模式中执行原始指令。比较成功或失败都需要读写权限，故障按写访问分类。`CMPXCHG16B` 在访问内存前检查 16 字节对齐，不满足时报告 `#GP(0)`。两次结果观察属于同一 RAM 事务；任一次停止或抛出异常，都不会发布寄存器或内存变化。未加锁的 `CMPXCHG8B` 可以跨页，加锁操作仍要求自然对齐。`X64WideAtomicTests.cpp` 对照宿主机原始执行结果和直接原生故障，并检查别名、前缀、寻址、修复重试和取消。原创 Windows 驱动及 ring3 PE 样例覆盖两种宽度，WDK 样例还执行 `_InterlockedCompareExchange128`。CPU 模型必须支持 `CMPXCHG16B`。
 
@@ -168,17 +180,17 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 页面执行 `X64MachineProb
 
 `CheckedX64Instructions.def` 通过既有 CPU 后端准入 8/16/32/64 位无符号 `MUL` 和 `CBW/CWDE/CDQE/CWD/CDQ/CQO`。`NeverDX64IntegerTests` 使用独立的 `X64IntegerCases.def` 编码和预期值，在两种特权级验证部分寄存器保留、32 位零扩展、乘积高低两部分、已定义的 CF/OF 结果及符号扩展不改变标志位。普通 RAM 乘法保留完整访问范围的权限检查和读观察回调；故障或观察回调中止会保留隐式输出寄存器及 PC。设备操作数仍不支持。这些用例也在 checked Unicorn 上运行；不可用的原生后端明确跳过。
 
-`X64BitInstructions.def` 支持 16/32/64 位寄存器及普通 RAM 的 `BT/BTS/BTR/BTC`。寄存器位索引按操作数宽度解释为有符号数并选中完整数据字；立即数索引限制在基址的数据字内。地址宽度截断先于 FS/GS 基址相加。CF 与写入值由处理器提供；`RAMTransaction` 在观察回调接受前保留私有执行结果。完整范围权限检查覆盖独立页面分配和别名。停止、回调失败或页面权限不足均保留原始 CPU 和 RAM。LOCK 仅支持自然对齐的内存修改形式；MMIO 和硬件并行 SMP 仍不支持。`X64BitStringTests.cpp` 使用独立编码与 x64 本机实际执行对照，检查负索引、宽度截断、跨页访问、取消及非法 LOCK 形式。参见 [Intel 指令参考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
+`X64BitInstructions.def` 支持 16/32/64 位寄存器及普通 RAM 的 `BT/BTS/BTR/BTC`。寄存器位索引按操作数宽度解释为有符号数并选中完整数据字；立即数索引限制在基址的数据字内。地址宽度截断先于 FS/GS 基址相加。CF 与写入值由处理器提供；`RAMTransaction` 在观察回调接受前保留私有执行结果。完整范围权限检查覆盖独立页面分配和别名。停止、回调失败或页面权限不足均保留原始 CPU 和 RAM。LOCK 要求自然对齐；修改型 MMIO 操作要求明确的预备原子事务提供方。`X64BitStringTests.cpp` 使用独立编码与 x64 本机实际执行对照，检查负索引、宽度截断、跨页访问、取消及非法 LOCK 形式。参见 [Intel 指令参考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
 
 `X64StringInstructions.def` 统一管理普通 RAM 上 8/16/32/64 位的 `MOVS/STOS/LODS`；`CLD/STD` 只改变方向标志。每个 REP 元素在观察回调前验证整个操作数，并在一个可恢复边界提交。后续故障保留此前完成的元素；取消或回调异常不改变当前元素。FS/GS 仅作用于源地址，且在地址宽度截断之后相加。AL/AX 加载保留高位，EAX 加载零扩展。32 位地址模式的零次 REP 要求计数高位为零，MOVS/STOS 还要求参与的地址寄存器高位为零，否则不同真实 CPU 实现会产生不同结果。MOVS/STOS/LODS 的 REPNE 形式及 STOS/LODS 设备操作数仍不支持。`X64StringTransferTests.cpp` 用独立的主机指令对照宽度、方向、重叠和零次数，并分别检查权限、别名、回绕、故障和恢复。原创 WDK 资源驱动通过 `driver_resource_strings.def` 执行四种宽度的 STOS/LODS。
 
 `X64StringInstructions.def` 还统一管理普通 RAM 上 8/16/32/64 位的 `CMPS/SCAS` 及 `REPE/REPNE`。每个元素在观察回调前验证全部读取操作数，更新六个算术标志，并在首次满足终止条件时退出。数据故障恢复本次连续 REP 执行开始时的标志，同时保留已完成的指针和计数更新；公开接口恢复执行时，以已发布的 CPU 状态重新开始。停止和观察回调异常不改变当前元素，提前终止也不会读取下一个元素。FS/GS 仅影响 CMPS 源地址；SCAS 保留累加器和未使用的源寄存器。设备操作数及有歧义的 32 位零次数高位状态仍不支持。`X64StringComparisonTests.cpp` 用独立主机指令对照标志、方向、别名、回绕、权限和恢复，并通过 Linux x64 信号测试读取真实故障时的寄存器。原创 WDK 资源驱动通过 `driver_resource_strings.def` 执行四种宽度的两类条件重复形式。参见 [Intel 指令参考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。 Linux 原生验证覆盖首元素执行前后发生的故障，并区分 Intel 恢复入口 flags 与 Hyper-V 下 AMD EPYC 7763 保留最后一次比较 flags 的行为（[原生观测](https://github.com/NeverSight/NeverD/actions/runs/37202522130)）；未知 CPU 厂商会明确失败。所有后端的 checked 来宾仍统一恢复入口 flags。
 
-`WhpResourceCache.h` 将逻辑 CPU 状态与 WHP 分区分离。运行时保留一个活动原生分区：同一 CPU 连续单步复用它；切换 CPU 时先销毁旧分区，再重建映射、虚拟处理器并恢复完整状态。逻辑 CPU 保留独立的 `MemoryProjection` 视图和权威 RAM。获取租约遵守取消信号和当前截止时间；销毁非活动 CPU 不会销毁其他 CPU 的分区。x64 保留宿主默认 XSAVE 特性组合，并通过 `WHvGetPartitionProperty` 验证实际分区，不通过清除依赖特性强制缩减掩码。CPU 协作式切换不提供并行硬件 SMP。
+存活的 WHP CPU 共享一个原生分区；最终关闭与重新创建由同一注册表锁串行保护。`WhpResourceCache.h` 复用协作式 VP 0；切换逻辑 CPU 前先销毁该 VP 并撤销其映射。并行 CPU 保留独立 VP 和私有 GPA 区间。寄存器、XSAVE 和取消请求均指向各自的 VP。x64 保留宿主默认 XSAVE 功能集，并通过 `WHvGetPartitionProperty` 验证实际分区配置。默认调度仍为协作式。
 
 `CheckedBackend` 为每个 CPU 保留一块取指缓冲区和一条 `cs_disasm_iter` 指令记录。每一步重新读取有执行权限的字节并解码；代码写入、别名变更或恢复运行后不会复用旧的解码结果。执行租约在接触复用存储前拒绝递归执行。这样可消除逐指令的缓冲区和记录分配，同时保留指令观察、系统服务拦截和精确故障处理。 固定版本的 Unicorn 单步路径在读取后继指令前结束，包含间接翻译查找路径，并且不会把内部代码写入重试计为已完成指令。
 
-`WhpX64Partition.h` 将 x64 WHP 寄存器复用状态归属到实际分区。固定数据包采用 `WhpX64Registers.def` 和 `X64HostRegisters.def`；每个成功单步仍完整读取通用、控制、段寄存器和 FP/SSE 状态。只有完全确认的调试退出才能省略未变化的输入，比较忽略保留位和联合体填充。变化的 CR3、CPL、TLS、通用或 FP 输入会重新安装；部分失败、取消及异常使复用失效。分区重建从全量安装开始。这减少重复传输，不扩大指令准入，也不宣称端到端提速。
+`WhpX64Processor.h` 将 x64 WHP 寄存器复用状态归属到各个虚拟处理器。固定数据包采用 `WhpX64Registers.def` 和 `X64HostRegisters.def`；每个成功单步仍完整读取通用、控制、段寄存器和 FP/SSE 状态。只有完全确认的调试退出才能省略未变化的输入，比较忽略保留位和联合体填充。变化的 CR3、CPL、TLS、通用或 FP 输入会重新安装；部分失败、取消及异常使复用失效。VP 重建从全量安装开始。这减少重复传输，不扩大指令准入，也不宣称端到端提速。
 
 WHP 将 `WhpXsaveRegisters.def` 中的 x87/SSE 元数据与普通寄存器放入同一次 `WHvGetVirtualProcessorRegisters` 调用。停止的 vCPU 始终由同一个分区租约保护。发布前仍须完整捕获 XSAVE 并核对全部元数据一致性；每步减少一次宿主 API 调用，不据此宣称吞吐提升。
 
@@ -203,3 +215,10 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 `hvf` · Hypervisor.framework · Apple Silicon → ARM64 · Intel Mac → x86-64.
 
 [配置、签名与硬件验证](macos-hvf.md)
+
+checked ARM64 支持 8/16/32/64 位 `LDXR/STXR`、32/64 位寄存器对 `LDXP/STXP`、相应的 acquire/release 形式及 `CLREX`。KVM、WHP 和 checked Unicorn 共用 ISA 层的独占监视器，以 16 字节物理范围记录保留状态，传输层单步退出不会破坏循环进展。已提交的写入即使没有改变字节，也会使保留状态失效；别名和保留视图写入遵循同一规则。停止保留尚未发布的状态，快照不能撤销期间发生的写入。checked 独占指令采用 FEAT_LSE2 对齐规则：操作数可在同一个 16 字节对齐块内未对齐访问，跨越该块才产生 `alignment` 故障。同宽条件存储按保留的物理粒度匹配；即使监视器已失效，也先检查对齐和权限，再决定条件存储是否成功。独占指令仍只支持普通 RAM。 ARM64 Unicorn 的 `Software` 契约也使用此监视器，包括软件和 checked CPU 共用物理 RAM 的情况。 Unicorn 的 `Software` 配置保留引擎的自然对齐模型。
+
+
+同一 ISA 层支持 FEAT_LSE `CAS/CASP`、`SWP`、`LDADD/LDCLR/LDEOR/LDSET` 及有符号/无符号 min/max，包括字节、半字、字、双字和 acquire/release 形式。checked 配置采用上述对齐策略，Unicorn `Software` 保留自然对齐。比较按操作数宽度执行，返回的旧值零扩展。CAS 比较失败仍要求写权限，并选择 Arm 允许的旧值回写行为，使物理保留状态失效。回调看到提交前的 CPU/RAM 状态；取消和同步故障不会发布部分原子操作结果。并行 CPU 与 MMIO 原子事务遵循并发提交契约。`MRS/MSR NZCV` 按架构规则传输四个条件标志，正确处理保留位和零寄存器。 先检查读权限，再检查写权限：不可读操作数报告读故障，只读操作数报告写故障，与原始 Windows ARM64 观测一致。
+
+CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-scheduling.md)。

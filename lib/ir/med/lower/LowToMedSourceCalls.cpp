@@ -1,6 +1,7 @@
 #include "../../../loader/Swift/SwiftBooleanProjection.h"
 #include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "../../../loader/Swift/SwiftErrorRuntime.h"
+#include "../../../loader/Swift/SwiftErrorSourceProjection.h"
 #include "../../../loader/Swift/SwiftMangledValueConstructorABI.h"
 
 #include "neverd/ir/SourceABI.h"
@@ -258,6 +259,14 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
         Op.addInput(ndVarToMedVar(
             NdVar::reg(Return.RegisterOffset, Return.ValueBytes)));
       }
+      if (Op.Opcode == NdOp::RETURN && EntrySignature)
+        if (const auto Error = sourceABIErrorResult(*EntrySignature)) {
+          // This normally preserved register is also an observable Swift
+          // output. Publish it before SSA, separately from the ordinary result.
+          Op.addInput(ndVarToMedVar(NdVar::reg(Error->Location.RegisterOffset,
+                                               Error->Location.ValueBytes)));
+          Op.HasSourceErrorResult = true;
+        }
       if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
           Op.NumInputs != 1) {
         Ops.push_back(std::move(Op));
@@ -292,10 +301,19 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
           Hint->SwiftOpaqueValue = Found->second.SwiftOpaqueValue;
       }
       std::string Diagnostic;
+      const bool NativeError =
+          Hint && isNativeSwiftErrorSourceCall(*Hint, TargetArch) &&
+          Op.Opcode == NdOp::CALL && Op.Inputs[0].isConst() &&
+          Op.Inputs[0].ConstVal == Hint->TargetAddress &&
+          SourceCalleeFunctions &&
+          SourceCalleeFunctions->count(Hint->TargetAddress) &&
+          SourceCalleeFunctions->at(Hint->TargetAddress) &&
+          SourceCalleeFunctions->at(Hint->TargetAddress)->Entry ==
+              Hint->TargetAddress;
       if (!Hint || Hint->Signature.Architecture != TargetArch ||
           !validateSourceABI(Hint->Signature, Diagnostic) ||
           (hasSwiftErrorResult(Hint->Signature) &&
-           !isSwiftWillThrowSourceCall(*Hint, TargetArch)) ||
+           !isSwiftWillThrowSourceCall(*Hint, TargetArch) && !NativeError) ||
           // The ABI describes an address of a by-value copy. Until a call
           // owns a separate copy-storage proof, leave the original operation
           // unbound; a physical pointer is not its logical record argument.
@@ -440,7 +458,24 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
             ReturnOps.push_back(std::move(Upper));
             ReturnOps.push_back(std::move(Merge));
           };
-      if (IndirectResult) {
+      if (NativeError) {
+        // A single source operation owns both observable call results. Define
+        // x21/R12 explicitly before SSA can treat its incoming value as an
+        // ordinary preserved register and fold a following error test.
+        Op.Output = Temporary(16);
+        const auto Error = sourceABIErrorResult(Signature);
+        for (const auto &[Offset, Register] :
+             {std::pair<uint64_t, uint64_t>{0, Return.RegisterOffset},
+              {8, Error->Location.RegisterOffset}}) {
+          MedOp Extract;
+          Extract.Opcode = NdOp::SUBBYTES;
+          Extract.Addr = Op.Addr;
+          Extract.Output = ndVarToMedVar(NdVar::reg(Register, 8));
+          Extract.addInput(Op.Output);
+          Extract.addInput(MedVar::makeConst(Offset, 4));
+          ReturnOps.push_back(std::move(Extract));
+        }
+      } else if (IndirectResult) {
         // Preserve the pre-call hidden pointer before SSA introduces the
         // caller-saved x8 clobber. A declared result initializes every record
         // field; the logical call keeps the ordinary source parameter list.

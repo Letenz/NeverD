@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Extract standard Swift metadata, witness, and conformance identities.
 
-Only direct addresses of external, non-TLS globals qualify. Four
-Darwin compiler/export profiles must agree; no runtime layout is inferred.
+Direct external non-TLS globals and the exact paired descriptor of the fixed
+MainActor: Actor static table qualify. Four Darwin compiler/export profiles
+must agree; no runtime layout is inferred.
 """
 import argparse
 import json
@@ -24,6 +25,26 @@ METADATA_TYPES = ("Any", "AnyHashable", "ObjectIdentifier", "String", "Substring
                   "UInt8", "UInt16", "UInt32", "UInt64", "Float", "Double")
 HASHABLE_TYPES = tuple(name for name in METADATA_TYPES
                        if name not in ("Any", "Substring"))
+
+GENERIC_RANGE_SOURCE = '''@_silgen_name("neverd_range_probe")
+func observe<R: RangeExpression>(_ type: R.Type)
+@_silgen_name("neverd_generic_range_probe")
+public func generic<Bound: Comparable>(_ type: Range<Bound>.Type) {
+  observe(type)
+}
+'''
+STRING_INDEX_RANGE_SOURCE = '''@_cdecl("metadata_StringIndexRange")
+public func metadata_StringIndexRange() -> UnsafeRawPointer {
+  unsafeBitCast(Range<String.Index>.self, to: UnsafeRawPointer.self)
+}
+'''
+MAIN_ACTOR_SOURCE = '''@_silgen_name("neverd_actor_observer")
+func observe<A: Actor>(_ type: A.Type)
+@_silgen_name("neverd_main_actor_witness_probe")
+public func mainActorWitness() {
+  observe(MainActor.self)
+}
+'''
 
 
 def hashable_value(name):
@@ -197,7 +218,7 @@ def conformance_storage(ir, probes, metadata, protocol="StringProtocol"):
     return result
 
 
-def _normalized_body(body, parameter=None):
+def _normalized_body(body, parameter=None, type_names=()):
     """Compare complete compiler bodies modulo SSA/label names and hints."""
     quoted = r'"(?:[^"\\\n]|\\.)*"'
     body = re.sub(quoted + r'|;[^\n]*',
@@ -205,7 +226,14 @@ def _normalized_body(body, parameter=None):
     body = re.sub(r'(?m)^\s*([A-Za-z_0-9.]+):', r'%\1:', body)
     body = re.sub(quoted + r'| #[0-9]+\b|, !prof ![0-9]+\b',
                   lambda m: m[0] if m[0].startswith('"') else '', body)
-    names = {parameter: '%arg'} if parameter else {}
+    if isinstance(parameter, str):
+        names = {parameter: '%arg'}
+    else:
+        names = {name: '%arg' + str(index)
+                 for index, name in enumerate(parameter or ())}
+    # Named LLVM types carry ABI identity; the range probe must not accept a
+    # different aggregate by treating its type name as another SSA spelling.
+    names.update({name: name for name in type_names})
 
     def rename(match):
         value = match[0]
@@ -217,6 +245,104 @@ def _normalized_body(body, parameter=None):
 
     renamed = re.sub(quoted + r'|%[A-Za-z_0-9.]+', rename, body)
     return ' '.join(re.findall(quoted + r'|[^"\s]+', renamed))
+
+
+def generic_range_conformance_storage(ir):
+    """Prove the complete Range<Bound: Comparable>: RangeExpression probe.
+
+    Both generic inputs must reach Range's metadata accessor unchanged. The
+    metadata response, witness query with undef argument 2 and constrained
+    call must agree exactly. This proves direct external descriptor identity
+    and argument irrelevance, not descriptor layout or runtime call effects.
+    """
+    if len(ir) > 1024 * 1024:
+        raise ValueError('generic range IR exceeds its input budget')
+    name = '$sSnyxGSXsMc'
+    declarations = re.findall(r'^@"' + re.escape(name) + r'" = ([^\n]+)$',
+                              ir, re.M)
+    if declarations != [
+            'external global %swift.protocol_conformance_descriptor, align 4']:
+        raise ValueError('range descriptor is not exact direct external storage')
+    if re.findall(r'^%swift.metadata_response = ([^\n]+)$', ir, re.M) != [
+            'type { ptr, i64 }']:
+        raise ValueError('unexpected range metadata response ABI')
+    for symbol, declaration in (
+            ('"$sSnMa"', 'swiftcc %swift.metadata_response @"$sSnMa"(i64, ptr, ptr)'),
+            ('swift_getWitnessTable', 'ptr @swift_getWitnessTable(ptr, ptr, ptr)'),
+            ('neverd_range_probe', 'swiftcc void @neverd_range_probe(ptr, ptr, ptr)')):
+        rows = re.findall(r'^declare ([^\n]*@' + re.escape(symbol) +
+                          r'[^\n]*)$', ir, re.M)
+        if len(rows) != 1 or not re.fullmatch(
+                re.escape(declaration) + r'(?: local_unnamed_addr)?(?: #[0-9]+)?',
+                rows[0]):
+            raise ValueError('unexpected generic range call ABI')
+    functions = re.findall(
+        r'^define swiftcc void @neverd_generic_range_probe\(ptr '
+        r'(%[A-Za-z_0-9.]+), ptr (%[A-Za-z_0-9.]+)\)(?: #[0-9]+)? '
+        r'\{\n(.*?)^\}', ir, re.M | re.S)
+    headers = re.findall(r'^define [^\n]*@neverd_generic_range_probe[^\n]*$',
+                         ir, re.M)
+    if len(functions) != 1 or len(headers) != 1:
+        raise ValueError('missing or ambiguous generic range probe')
+    bound, comparable, body = functions[0]
+    if bound == comparable:
+        raise ValueError('range generic inputs must remain distinct')
+    expected = '''entry:
+ %response = tail call swiftcc %swift.metadata_response @"$sSnMa"(i64 0, ptr %bound, ptr %comparable)
+ %metadata = extractvalue %swift.metadata_response %response, 0
+ %witness = tail call ptr @swift_getWitnessTable(ptr nonnull @"$sSnyxGSXsMc", ptr %metadata, ptr undef)
+ tail call swiftcc void @neverd_range_probe(ptr %metadata, ptr %metadata, ptr %witness)
+ ret void
+'''
+    types = ('%swift.metadata_response',)
+    if _normalized_body(body, (bound, comparable), types) != _normalized_body(
+            expected, ('%bound', '%comparable'), types):
+        raise ValueError('generic range metadata/witness flow is not proved')
+    return {name}
+
+
+def main_actor_static_conformance_storage(ir):
+    """Verify the complete fixed MainActor: Actor query and its static table.
+
+    The compiler passes the public table directly, without generic inputs or
+    witness instantiation. Its exact paired conformance descriptor must also
+    be exported in every SDK profile. Neither symbol supplies runtime layout.
+    """
+    if len(ir) > 1024 * 1024:
+        raise ValueError('main actor IR exceeds its input budget')
+    witness = '$sScMScAsWP'
+    if re.findall(r'^@"' + re.escape(witness) + r'" = ([^\n]+)$',
+                  ir, re.M) != ['external global ptr, align 8']:
+        raise ValueError('main actor witness is not exact external storage')
+    if re.findall(r'^%swift.metadata_response = ([^\n]+)$', ir, re.M) != [
+            'type { ptr, i64 }']:
+        raise ValueError('unexpected main actor metadata response ABI')
+    for symbol, declaration in (
+            ('"$sScMMa"', 'swiftcc %swift.metadata_response @"$sScMMa"(i64)'),
+            ('neverd_actor_observer',
+             'swiftcc void @neverd_actor_observer(ptr, ptr, ptr)')):
+        rows = re.findall(r'^declare ([^\n]*@' + re.escape(symbol) +
+                          r'[^\n]*)$', ir, re.M)
+        if len(rows) != 1 or not re.fullmatch(
+                re.escape(declaration) + r'(?: local_unnamed_addr)?(?: #[0-9]+)?',
+                rows[0]):
+            raise ValueError('unexpected main actor call ABI')
+    name = 'neverd_main_actor_witness_probe'
+    headers = re.findall(r'^define [^\n]*@' + name + r'[^\n]*$', ir, re.M)
+    bodies = re.findall(r'^define swiftcc void @' + name +
+                        r'\(\)(?: local_unnamed_addr)?(?: #[0-9]+)? '
+                        r'\{\n(.*?)^\}', ir, re.M | re.S)
+    expected = '''entry:
+ %response = tail call swiftcc %swift.metadata_response @"$sScMMa"(i64 0)
+ %metadata = extractvalue %swift.metadata_response %response, 0
+ tail call swiftcc void @neverd_actor_observer(ptr %metadata, ptr %metadata, ptr nonnull @"$sScMScAsWP")
+ ret void
+'''
+    if len(headers) != 1 or len(bodies) != 1 or _normalized_body(
+            bodies[0], (), ('%swift.metadata_response',)) != _normalized_body(
+                expected, (), ('%swift.metadata_response',)):
+        raise ValueError('complete main actor static conformance flow is not proved')
+    return {'$sScMScAsMc', witness}
 
 
 def _pointer_function(ir, name, argument=False):
@@ -253,6 +379,63 @@ create:
   store atomic i64 %new, ptr %arg monotonic, align 8
   br label %done
 '''
+
+
+def range_index_descriptor_storage(ir):
+    """Extract String.Index's opaque descriptor from a complete type query.
+
+    Authenticate the entire symbolic Range<String.Index> recipe, its private
+    indirection cell, metadata record and runtime helper. Only the exported
+    descriptor identity survives; the compiler's private layouts do not.
+    """
+    if len(ir) > 1024 * 1024:
+        raise ValueError('range index IR exceeds its input budget')
+    descriptor = '$sSS5IndexVMn'
+    cell = 'got.' + descriptor
+    recipe = 'symbolic Sny_____G SS5IndexV'
+    record = '$sSnySS5IndexVGMD'
+    packed = '<{ [3 x i8], i8, i32, [1 x i8], i8 }>'
+    expected = {
+        descriptor: 'external global %swift.type_descriptor, align 4',
+        cell: 'private unnamed_addr constant ptr @"' + descriptor + '"',
+        recipe: ('linkonce_odr hidden constant ' + packed + ' <{ '
+                 '[3 x i8] c"Sny", i8 2, i32 trunc (i64 sub ('
+                 'i64 ptrtoint (ptr @"' + cell + '" to i64), '
+                 'i64 ptrtoint (ptr getelementptr inbounds (' + packed +
+                 ', ptr @"' + recipe + '", i32 0, i32 2) to i64)) to i32), '
+                 '[1 x i8] c"G", i8 0 }>, section "__TEXT,__swift5_typeref, regular", '
+                 'no_sanitize_address, align 2'),
+        record: ('linkonce_odr hidden global { i32, i32 } { i32 trunc ('
+                 'i64 sub (i64 ptrtoint (ptr @"' + recipe + '" to i64), '
+                 'i64 ptrtoint (ptr @"' + record + '" to i64)) to i32), '
+                 'i32 -9 }, align 8'),
+    }
+    for name, value in expected.items():
+        rows = re.findall(r'^@"' + re.escape(name) + r'" = ([^\n]+)$', ir, re.M)
+        if rows != [value]:
+            raise ValueError('incomplete or changed range descriptor storage: ' + name)
+    runtime = 'swift_getTypeByMangledNameInContext2'
+    declarations = re.findall(r'^declare ([^\n]*@' + runtime + r'[^\n]*)$', ir, re.M)
+    declaration = 'swiftcc ptr @' + runtime + '(ptr, i64, ptr, ptr)'
+    if len(declarations) != 1 or not re.fullmatch(
+            re.escape(declaration) + r'(?: local_unnamed_addr)?(?: #[0-9]+)?',
+            declarations[0]):
+        raise ValueError('unexpected range metadata runtime ABI')
+    helper = '__swift_instantiateConcreteTypeFromMangledName'
+    function = _pointer_function(ir, helper, argument=True)
+    headers = re.findall(r'^define [^\n]*@' + helper + r'[^\n]*$', ir, re.M)
+    body = _INSTANTIATOR_BODY.replace('RUNTIME', runtime).replace(
+        'ARGS', 'ptr %name, i64 %length, ptr null, ptr null')
+    if len(headers) != 1 or not function or _normalized_body(*function) != _normalized_body(body, '%arg'):
+        raise ValueError('range metadata helper is not complete')
+    probe = 'metadata_StringIndexRange'
+    query = _pointer_function(ir, probe)
+    headers = re.findall(r'^define [^\n]*@' + probe + r'[^\n]*$', ir, re.M)
+    body = ('entry:\n %metadata = tail call ptr @' + helper +
+            '(ptr nonnull @"' + record + '")\n ret ptr %metadata')
+    if len(headers) != 1 or not query or _normalized_body(query[0]) != _normalized_body(body):
+        raise ValueError('range metatype query does not preserve its exact record')
+    return {descriptor}
 
 
 def generic_conformance_storage(ir, probes):
@@ -369,12 +552,21 @@ done:
 def render(profiles, exports, version, compiler):
     if len(profiles) != 4 or len(exports) != 4:
         raise ValueError("all four compiler and export profiles are required")
+    if any('$sScMScAsMc' in profile for profile in profiles):
+        required = {'$sScMScAsMc', '$sScMScAsWP', '$sScMMa'}
+        provider = '/usr/lib/swift/libswift_Concurrency.dylib'
+        if any(not {'$sScMScAsMc', '$sScMScAsWP'} <= profile
+               for profile in profiles) or any(
+                any(provider not in export.get(name, set()) for name in required)
+                for export in exports):
+            raise ValueError('all main actor metadata/conformance/table exports are required')
     lines = ["// clang-format off",
              "// Generated by scripts/generate_swift_data_declarations.py.",
              f"// Compiler-derived external metadata/witness/conformance storage: MacOSX SDK {version}.",
              "// " + compiler.replace("\n", "; "),
              "// Target profiles: " + ", ".join(TARGETS),
-             "// Direct non-TLS global addresses; no runtime layout or implementation."]
+             "// Direct non-TLS globals and the exact paired MainActor: Actor descriptor.",
+             "// No runtime layout or implementation."]
     for name in sorted(set.intersection(*profiles)):
         modules = [exports[i].get(name, set()) & exports[i + 1].get(name, set())
                    for i in (0, 2)]
@@ -446,6 +638,12 @@ def main():
             '@_cdecl("witness_CurrentValueSubjectPublisher") public func '
             'witness_CurrentValueSubjectPublisher() { '
             'observe(CurrentValueSubject<Int, Never>.self) }\n')
+        range_source = Path(work) / 'range.swift'
+        range_source.write_text(GENERIC_RANGE_SOURCE)
+        range_index_source = Path(work) / 'range-index.swift'
+        range_index_source.write_text(STRING_INDEX_RANGE_SOURCE)
+        actor_source = Path(work) / 'main-actor.swift'
+        actor_source.write_text(MAIN_ACTOR_SOURCE)
         profiles = []
         for index, target in enumerate(TARGETS):
             ir = Path(work) / f'{index}.ll'
@@ -464,6 +662,18 @@ def main():
             run([str(args.swiftc), '-O', '-parse-as-library', '-target', target,
                  '-sdk', str(sdk), '-emit-ir', str(combine_source),
                  '-o', str(combine_ir)])
+            range_ir = Path(work) / f'range-{index}.ll'
+            run([str(args.swiftc), '-O', '-parse-as-library', '-target', target,
+                 '-sdk', str(sdk), '-emit-ir', str(range_source),
+                 '-o', str(range_ir)])
+            range_index_ir = Path(work) / f'range-index-{index}.ll'
+            run([str(args.swiftc), '-O', '-parse-as-library', '-target', target,
+                 '-sdk', str(sdk), '-emit-ir', str(range_index_source),
+                 '-o', str(range_index_ir)])
+            actor_ir = Path(work) / f'main-actor-{index}.ll'
+            run([str(args.swiftc), '-O', '-parse-as-library', '-target', target,
+                 '-sdk', str(sdk), '-emit-ir', str(actor_source),
+                 '-o', str(actor_ir)])
             profiles.append(metadata |
                             witness_storage(text, witnesses, metadata) |
                             conformance_storage(text, ['witness_StringProtocol'],
@@ -478,13 +688,17 @@ def main():
                             generic_conformance_storage(
                                 combine_ir.read_text(),
                                 [('metadata_CurrentValueSubject',
-                                  'witness_CurrentValueSubjectPublisher')]))
+                                  'witness_CurrentValueSubjectPublisher')]) |
+                            generic_range_conformance_storage(range_ir.read_text()) |
+                            range_index_descriptor_storage(range_index_ir.read_text()) |
+                            main_actor_static_conformance_storage(actor_ir.read_text()))
     class TBDLoader(yaml.SafeLoader):
         pass
     TBDLoader.add_constructor('!tapi-tbd', lambda loader, node:
                               loader.construct_mapping(node, deep=True))
     documents = []
     for tbd in ('usr/lib/swift/libswiftCore.tbd',
+                'usr/lib/swift/libswift_Concurrency.tbd',
                 'usr/lib/swift/libswiftFoundation.tbd',
                 'System/Library/Frameworks/Combine.framework/Versions/A/Combine.tbd',
                 'System/Library/Frameworks/Foundation.framework/Versions/C/Foundation.tbd'):
@@ -494,7 +708,7 @@ def main():
                     json.loads((sdk / 'SDKSettings.json').read_text())['Version'],
                     run([str(args.swiftc), '--version']).strip())
     count = sum(line.startswith('{') for line in output.splitlines())
-    expected = len(METADATA_TYPES) + len(HASHABLE_TYPES) + 4
+    expected = len(METADATA_TYPES) + len(HASHABLE_TYPES) + 8
     if count != expected:
         parser.error('not all standard storage queries have complete evidence '
                      f'({count}/{expected})')

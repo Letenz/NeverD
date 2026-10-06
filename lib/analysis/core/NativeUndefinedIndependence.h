@@ -43,12 +43,18 @@ NativeLowIRRefinementResult checkNativeLowIRRefinement(
     LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits,
     const LowIRLoopRefinementPlan *LoopPlan = nullptr);
 
-LowIRLoopInferenceResult
-inferNativeLowIRLoopRefinementPlan(SpecializationProvider &Provider,
-                                   const LowFunc &Candidate,
-                                   const LowIRIndependenceContract &Contract,
-                                   const LowIRLoopInferenceLimits &Limits,
-                                   llvm::ArrayRef<va_t> EligibleCutpoints);
+/// Untrusted one-to-one residual mappings; original addresses may repeat.
+struct NativeLoopCutpointOrigin {
+  va_t CandidateAddress, OriginalAddress;
+  /// Search priority only; this flag grants no semantic authority.
+  bool UniqueOriginal = false;
+};
+
+LowIRLoopInferenceResult inferNativeLowIRLoopRefinementPlan(
+    SpecializationProvider &Provider, const LowFunc &Candidate,
+    const LowIRIndependenceContract &Contract,
+    const LowIRLoopInferenceLimits &Limits,
+    llvm::ArrayRef<NativeLoopCutpointOrigin> EligibleOrigins);
 
 } // namespace neverd::analysis::detail
 

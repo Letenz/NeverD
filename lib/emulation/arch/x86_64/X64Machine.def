@@ -10,8 +10,12 @@ NEVERD_X64_MACHINE_VALUE(TableBits, 9)
 NEVERD_X64_MACHINE_VALUE(TableLevels, 4)
 NEVERD_X64_MACHINE_VALUE(TableEntries, 512)
 NEVERD_X64_MACHINE_VALUE(MonitorReservePages, 3)
-NEVERD_X64_MACHINE_VALUE(TableReserve, memory::ProjectionReserve -
-                                           MonitorReservePages * PageSize)
+NEVERD_X64_MACHINE_VALUE(DeviceOperandPages, 1)
+NEVERD_X64_MACHINE_VALUE(TableReserve,
+                         memory::ProjectionReserve -
+                             (MonitorReservePages + DeviceOperandPages) *
+                                 PageSize)
+NEVERD_X64_MACHINE_VALUE(DeviceOperandGPA, TableReserve)
 NEVERD_X64_MACHINE_VALUE(FirstTableRoot, memory::PageSize)
 NEVERD_X64_MACHINE_VALUE(SecondTableRoot, 2 * memory::PageSize)
 NEVERD_X64_MACHINE_VALUE(FirstChildTable, 3 * memory::PageSize)
@@ -19,6 +23,7 @@ NEVERD_X64_MACHINE_VALUE(MaxRAM, memory::MaxRAM)
 NEVERD_X64_MACHINE_VALUE(MaxInstructionBytes, 15)
 NEVERD_X64_MACHINE_VALUE(ShortBranchBytes, 2)
 NEVERD_X64_MACHINE_VALUE(WideAtomicOpcodeBytes, 2)
+NEVERD_X64_MACHINE_VALUE(NearReturnOpcode, 0xc3)
 NEVERD_X64_MACHINE_VALUE(WordBytes, 8)
 NEVERD_X64_MACHINE_VALUE(ByteBytes, 1)
 NEVERD_X64_MACHINE_VALUE(WordBits, 64)

@@ -49,11 +49,18 @@ template <typename Stream> inline void writeTypes(Stream &OS) {
         "#error \"unaligned pointer output requires Clang or GCC\"\n"
         "#endif\n";
   for (const auto &S : Scalars) {
+    // 32-bit targets have no __int128; an access of that width could not be
+    // spelled in either form there.
+    const bool Wide = S.Bytes == 16;
+    if (Wide)
+      OS << "#if defined(__SIZEOF_INT128__)\n";
     OS << "typedef " << S.Type << " " << S.Alias
        << " __attribute__((aligned(1), may_alias));\n"
        << "_Static_assert(sizeof(" << S.Alias << ") == " << S.Bytes
        << " && _Alignof(" << S.Alias
        << ") == 1, \"unaligned scalar layout\");\n";
+    if (Wide)
+      OS << "#endif\n";
   }
   OS << "#endif\n\n";
 }
@@ -62,6 +69,21 @@ inline std::string access(llvm::StringRef Alias, llvm::StringRef Address,
                           bool ReadOnly) {
   return "(*(" + std::string(ReadOnly ? "const " : "") + Alias.str() +
          " *)(uintptr_t)(" + Address.str() + "))";
+}
+
+// The caller supplies a fresh, exact-type value carrier. In particular, a
+// source local whose address escapes cannot be the destination of a load:
+// memcpy forbids overlapping source and destination objects.
+inline std::string loadCopy(llvm::StringRef Value, llvm::StringRef Address,
+                            llvm::StringRef Size) {
+  return "__builtin_memcpy(&" + Value.str() + ", (const void *)(uintptr_t)(" +
+         Address.str() + "), " + Size.str() + ")";
+}
+
+inline std::string storeCopy(llvm::StringRef Address, llvm::StringRef Value,
+                             llvm::StringRef Size) {
+  return "__builtin_memcpy((void *)(uintptr_t)(" + Address.str() + "), &" +
+         Value.str() + ", " + Size.str() + ")";
 }
 
 } // namespace neverd::c_memory

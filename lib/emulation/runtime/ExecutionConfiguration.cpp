@@ -88,8 +88,9 @@ ExecutionCapabilities profile(ExecutionContract Contract, GuestArchitecture ISA,
           Native,
           Allowlist,
           Instructions,
-          Checked ? ExecutionMemoryObservation::InstructionPreflight
-                  : ExecutionMemoryObservation::EngineCallbacks,
+          !Checked    ? ExecutionMemoryObservation::EngineCallbacks
+          : Allowlist ? ExecutionMemoryObservation::InstructionPreflight
+                      : ExecutionMemoryObservation::Unobserved,
           Checked ? ExecutionControlPrecision::InstructionBoundary
                   : ExecutionControlPrecision::EngineRequest,
           false};
@@ -141,16 +142,16 @@ executionCapabilities(ExecutionContract Contract,
   auto Capabilities = executionCapabilities(Contract, Architecture);
   if (!Capabilities)
     return Capabilities.takeError();
-  if (Backend == ExecutionBackendKind::Unicorn)
-    return Capabilities;
-  if (Backend != ExecutionBackendKind::KVM &&
-      Backend != ExecutionBackendKind::WHP &&
-      Backend != ExecutionBackendKind::HVF)
-    return diagnostic::error(diagnostic::BackendName);
-  if (auto Native = nativeProfile(Contract, Architecture))
-    *Capabilities = *Native;
-  if (!Capabilities->SupportsNativeExecution)
-    return diagnostic::error(diagnostic::Contract);
+  if (Backend != ExecutionBackendKind::Unicorn) {
+    if (Backend != ExecutionBackendKind::KVM &&
+        Backend != ExecutionBackendKind::WHP &&
+        Backend != ExecutionBackendKind::HVF)
+      return diagnostic::error(diagnostic::BackendName);
+    if (auto Native = nativeProfile(Contract, Architecture))
+      *Capabilities = *Native;
+    if (!Capabilities->SupportsNativeExecution)
+      return diagnostic::error(diagnostic::Contract);
+  }
 #define NEVERD_BACKEND_EXECUTION_FEATURE(BackendID, ISA, ContractID,           \
                                          FeatureID)                            \
   if (Backend == ExecutionBackendKind::BackendID &&                            \

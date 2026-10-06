@@ -6,6 +6,22 @@
 
 Per impostazione predefinita NeverD usa il solver bitvector integrato. La derivazione MBA esatta resta indipendente da un solver generale. La sintesi di espressioni accetta un candidato solo dopo una prova di equivalenza; controesempi o query inconclusive mantengono l’espressione originale.
 
+<!-- i18n-section: builtin-comparisons -->
+
+## Circuiti di confronto integrati
+
+I confronti più larghi di otto bit confrontano prima le metà alte e usano quelle basse quando le prime sono uguali. I piccoli blocchi usano i riporti della sottrazione. Il codificatore condiviso può riutilizzare le porte del prefisso alto quando un aggiornamento parziale di registro cambia solo i bit bassi. I confronti con segno continuano a invertire entrambi i bit di segno. La semantica delle espressioni e i limiti delle risorse restano invariati; l’esaurimento restituisce ancora `Unknown`.
+
+`BitBlaster.WidePredicatesAgreeWithTheEvaluator` confronta i predicati con e senza segno con il valutatore delle espressioni a larghezze selezionate da 8 a 256 bit, comprese larghezze dispari, valori adiacenti ai confini e bit significativi oltre i 64 bit. Esclude anche risultati errati. I test dei contatori parziali verificano query complete, modelli di controesempio ed esaurimento del budget di porte. Le regressioni native con confronto memorizzato provano entrambi gli ordini di confronto e aggiornamento osservando tutti i registri e flag, e rifiutano un corpo originale del ciclo modificato.
+
+<!-- i18n-section: pristine-encoding -->
+
+## Copie della codifica prima della ricerca
+
+`BitVectorSolver::cloneEncoding()` copia una codifica completa prima di qualsiasi tentativo di ricerca SAT. Restituisce null dopo una ricerca o un errore di codifica. Ogni copia possiede clausole mutabili, propagazione alla radice, porte e corrispondenze dei bit indipendenti; conserva ordine delle variabili, conteggio delle porte e impostazioni del risolutore. Il contesto deve sopravvivere a entrambi i risolutori; quello originale può essere modificato o distrutto indipendentemente.
+
+Il motore SAT conserva quattro elementi di sorveglianza in ogni lista di letterale; le liste più lunghe crescono dinamicamente. Questo evita allocazioni separate delle liste corte durante costruzione, copia prima della ricerca e distruzione. Ordine di propagazione, clausole, proprietà indipendente e tutti i limiti di lavoro restano invariati.
+
 <!-- i18n-section: z3-build -->
 
 ## Build Z3 facoltativa
@@ -61,3 +77,5 @@ build-release/bin/neverd-solver-bench \
 Ogni riga non commentata è `original ; candidate`; senza punto e virgola il candidato è il risultato del semplificatore MBA. Lo strumento riporta verdetti, replay del modello e tempi (include creazione sessione, traduzione e soluzione; esclude parsing, semplificazione MBA, export e teardown). Ogni ripetizione usa un solver nuovo. I modelli SAT devono riprodurre la differenza nell’evaluator. Verdetti decisivi opposti o query/modelli non validi fanno fallire il run; `unknown` viene registrato ma non prova equivalenza.
 
 L’SMT-LIB esportato include DAG originale, asserzioni permanenti e assunzioni dell’ultima query; replay con `z3 query-N.smt2`. Registrare limiti di risorse e versioni: i backend usano unità di budget diverse, quindi il confronto è tra workload limitati e non tra lavoro identico. Le prove bitvector usano la semantica totale a larghezza fissa del linguaggio. Eccezioni macchina, effetti di memoria e LLVM poison restano responsabilità dei confini di lifting e traduzione; una prova d’espressione non li certifica.
+
+Una copia della codifica non ancora esplorata rimuove dalla propria coda decisionale le variabili assegnate alla radice e ricostruisce l’ordine rigoroso dello heap per attività e indice. Assegnazioni e clausole restano intatte; i fatti alla radice sopravvivono a ogni backtracking. Proprietà della sorgente, decisioni effettive, modelli completi e tutti i budget di ricerca restano invariati.

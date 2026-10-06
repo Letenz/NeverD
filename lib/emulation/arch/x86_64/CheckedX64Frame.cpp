@@ -76,6 +76,8 @@ llvm::Error CheckedX64Backend::executeEnter(const cs_insn &I) {
                                 deviceAt(A.Address + Width - 1)))
       return llvm::make_error<UnsupportedExecutionError>();
   }
+  if (auto E = Memory->prepareWrite())
+    return E;
 
   // Plan values in architectural access order without changing backing RAM.
   // ENTER may read its earlier writes, even through a different virtual alias.
@@ -126,8 +128,10 @@ llvm::Error CheckedX64Backend::executeEnter(const cs_insn &I) {
     // A guest fault commits only stores preceding the first failing access.
     // RSP/RBP/PC retain their entry values; repair and restart must consume
     // the resulting RAM, which may differ from the first attempt's input.
-    for (const auto &[P, Byte] : Pending)
+    for (const auto &[P, Byte] : Pending) {
+      Memory->recordRAMWrite(P, sizeof(Byte));
       *Memory->physicalPointer(P) = Byte;
+    }
     const auto &A = Accesses[Completed];
     return access(A.Address, Width, A.Permission, true, true);
   }
@@ -145,7 +149,17 @@ llvm::Error CheckedX64Backend::executeEnter(const cs_insn &I) {
   if (!Transaction)
     return Transaction.takeError();
   auto Next = CPU;
-  if (auto E = Machine->step(Next, *Root, {Deadline, &StopRequested})) {
+  std::vector<RAMWriteRange> Inputs{{I.address, I.size}};
+  for (const auto &A : Accesses)
+    if (!A.Probe)
+      Inputs.push_back({A.Address, Width});
+  if (auto E = (*Transaction)
+                   ->execute(
+                       [&] {
+                         return Machine->step(Next, *Root,
+                                              {Deadline, &StopRequested});
+                       },
+                       Inputs)) {
     return llvm::handleErrors(
         std::move(E), [&](const X64ExceptionError &E) -> llvm::Error {
           if (auto Stage = (*Transaction)->stage())

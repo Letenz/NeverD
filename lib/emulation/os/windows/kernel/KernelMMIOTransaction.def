@@ -9,3 +9,5 @@ NEVERD_MMIO_TRANSACTION_TEXT(ChangedRead,
                              "prepared register read was invalidated")
 NEVERD_MMIO_TRANSACTION_TEXT(MissingRegister,
                              "validated register lost its identity")
+NEVERD_MMIO_TRANSACTION_TEXT(AtomicWidth,
+                             "atomic register value has an invalid width")

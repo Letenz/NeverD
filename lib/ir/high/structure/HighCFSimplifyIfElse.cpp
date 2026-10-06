@@ -826,11 +826,26 @@ static va_t inferMergeTarget(va_t IfTarget, va_t IfDest, va_t ElseTarget,
   return 0;
 }
 
-/// Strip a trailing goto that jumps to \p MergeTarget.
+/// Strip a trailing goto that jumps to \p MergeTarget.  A goto other jumps
+/// land on (a lone `jmp` block) leaves an empty block for its label: reached
+/// there, the arm still falls through to \p MergeTarget as the goto did.
 static void trimMergeGoto(std::vector<HighStmt> &Body, va_t MergeTarget) {
-  if (!Body.empty() && Body.back().Kind == StmtKind::Goto &&
-      Body.back().GotoTarget == MergeTarget)
+  if (Body.empty() || Body.back().Kind != StmtKind::Goto ||
+      Body.back().GotoTarget != MergeTarget)
+    return;
+  HighStmt &Jump = Body.back();
+  const bool Entered =
+      Jump.Addr && Jump.Addr != InvalidVA &&
+      (Body.size() == 1 || Body[Body.size() - 2].Addr != Jump.Addr) &&
+      IfElseFunctionBody && gotoTargets(*IfElseFunctionBody).count(Jump.Addr);
+  if (!Entered) {
     Body.pop_back();
+    return;
+  }
+  HighStmt Anchor;
+  Anchor.Kind = StmtKind::Block;
+  Anchor.Addr = Jump.Addr;
+  Jump = std::move(Anchor);
 }
 
 static bool stmtListFallsThrough(const std::vector<HighStmt> &Body);

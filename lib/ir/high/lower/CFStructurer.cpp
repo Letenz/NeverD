@@ -471,18 +471,24 @@ static bool hasExceptionRegions(const ExceptionFunction &EH) {
 }
 
 std::vector<int> highBlockLayout(const MedFunc &Med,
-                                 const std::set<int> &Dispatched) {
+                                 const std::set<int> &Dispatched,
+                                 bool SEHReversePostorder) {
   const int Count = static_cast<int>(Med.Blocks.size());
   std::vector<int> AddressOrder(Count);
   for (int I = 0; I < Count; ++I)
     AddressOrder[I] = I;
+  const ExceptionFunction *EH =
+      Med.ExceptionMetadata ? &*Med.ExceptionMetadata : nullptr;
+  const bool SEHOnly = SEHReversePostorder && EH && EH->SEH &&
+                       !EH->SEH->Scopes.empty() && !EH->Cxx && !EH->Itanium &&
+                       !EH->Registration;
   if (Count < 3 ||
       Count > static_cast<int>(limits::kMaxStructurableMedBlocks) ||
-      (Med.ExceptionMetadata && hasExceptionRegions(*Med.ExceptionMetadata)))
+      (EH && hasExceptionRegions(*EH) && !SEHOnly))
     return AddressOrder;
   for (int I = 0; I < Count; ++I) {
     const MedBlock &Block = Med.Blocks[I];
-    if (Block.Id != I || !Block.ExceptionalSuccs.empty() ||
+    if (Block.Id != I || (!SEHOnly && !Block.ExceptionalSuccs.empty()) ||
         (!Dispatched.count(I) && !fallThroughOf(Med, Block)))
       return AddressOrder;
   }
@@ -521,6 +527,26 @@ std::vector<int> highBlockLayout(const MedFunc &Med,
   for (int I = 0; I < Count; ++I)
     if (!Seen[I])
       Order.push_back(I);
+  if (SEHOnly) {
+    // A __try wraps one run of statements, so each guarded range's blocks
+    // must stay next to each other.
+    std::vector<int> Position(Count);
+    for (int P = 0; P < Count; ++P)
+      Position[Order[P]] = P;
+    for (const SEHScopeRecord &Scope : EH->SEH->Scopes) {
+      if (!Scope.GuardedRange.isValid())
+        return AddressOrder;
+      int First = Count, Last = -1, Members = 0;
+      for (int I = 0; I < Count; ++I)
+        if (Scope.GuardedRange.contains(blockEntry(Med.Blocks[I]))) {
+          First = std::min(First, Position[I]);
+          Last = std::max(Last, Position[I]);
+          ++Members;
+        }
+      if (Members && Last - First + 1 != Members)
+        return AddressOrder;
+    }
+  }
   return Order;
 }
 
@@ -577,7 +603,8 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
   std::set<int> Dispatched = TreeInterior;
   for (const auto &[Root, Tree] : TreeAt)
     Dispatched.insert(Root);
-  const std::vector<int> Order = highBlockLayout(Med, Dispatched);
+  const std::vector<int> Order =
+      highBlockLayout(Med, Dispatched, !SEHAddressOrder);
   // The block emitted after each position: a fall-through edge to any other
   // block needs an explicit jump.
   std::vector<int> NextEmitted(Order.size(), -1);

@@ -13,8 +13,74 @@
 
 namespace neverd::emulation::windows_process {
 using namespace value;
+namespace {
+/// Reads one stopped process for an observer. It owns nothing and exposes no
+/// operation that changes the CPU, guest memory or the loader.
+class StoppedProcess final : public ProcessView {
+public:
+  StoppedProcess(ExecutionBackend &CPU, AddressSpace &Space,
+                 const Program &Modules)
+      : CPU(CPU), Space(Space), Modules(Modules) {}
+  GuestArchitecture architecture() const override { return CPU.architecture(); }
+  llvm::Expected<RegisterValue> readRegister(CPURegister Register) override {
+    return CPU.readRegister(Register);
+  }
+  llvm::Error read(uint64_t Address,
+                   llvm::MutableArrayRef<uint8_t> Bytes) override {
+    return Space.snapshotBacking(Address, Bytes);
+  }
+  llvm::Expected<std::vector<AddressMapping>> mappings() override {
+    return Space.mappings();
+  }
+  std::vector<ProcessModuleView> modules() override {
+    std::vector<ProcessModuleView> Result;
+    auto Add = [&](size_t Index) {
+      const auto &M = Modules.Modules[Index];
+      if (resident(M))
+        Result.push_back({Modules.Identities[Index].Name, M.Loaded.Base,
+                          M.Loaded.Size, M.Loaded.Entry, Index == 0,
+                          M.System || M.Opaque});
+    };
+    Add(0);
+    for (size_t Index : Modules.LoaderInitializationOrder)
+      if (Index)
+        Add(Index);
+    return Result;
+  }
+  std::vector<ProcessExportView> exports() override {
+    std::vector<ProcessExportView> Result;
+    for (const auto &Gate : Modules.Gates)
+      Result.push_back({Gate.Gate, Gate.Module, Gate.Name, Gate.Ordinal});
+    for (size_t Index = 0; Index < Modules.Modules.size(); ++Index) {
+      const auto &M = Modules.Modules[Index];
+      // System providers publish exactly their gates. A forwarder or hole has
+      // no address of its own in the exporting image.
+      if (!resident(M) || M.System)
+        continue;
+      for (const auto &Export : M.Loaded.Exports.Entries) {
+        if (Export.Kind != PEExportKind::Address)
+          continue;
+        const uint64_t Address = M.Loaded.Base + Export.RVA;
+        const auto &Module = Modules.Identities[Index].Name;
+        if (Export.Names.empty())
+          Result.push_back({Address, Module, {}, uint16_t(Export.Ordinal)});
+        for (const auto &Name : Export.Names)
+          Result.push_back({Address, Module, Name, uint16_t(Export.Ordinal)});
+      }
+    }
+    return Result;
+  }
+
+private:
+  ExecutionBackend &CPU;
+  AddressSpace &Space;
+  const Program &Modules;
+};
+} // namespace
+
 llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
-                                         const ProcessOptions &Options) {
+                                         const ProcessOptions &Options,
+                                         ProcessObserver *Observer) {
   if (Options.Android || !Options.Limits.Instructions ||
       !Options.Limits.Events || !Options.Limits.TimeoutMicroseconds ||
       !Options.MemoryLimit || !Options.StackSize || !Options.OutputLimit ||
@@ -64,6 +130,16 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
                         ExceptionReturnGate, ExceptionDispatchGate})
     if (auto E = (*Space)->write(Gate, Trap))
       return std::move(E);
+  if (Program->DeferUnmodeled) {
+    // Every opaque entry is the same service trap; its address is its
+    // identity. Filling the region once lets later lookups bind without
+    // touching guest memory.
+    std::vector<uint8_t> Entries(OpaqueGateSize);
+    for (uint64_t Offset = 0; Offset < OpaqueGateSize; Offset += GateStride)
+      std::copy(Trap.begin(), Trap.end(), Entries.begin() + Offset);
+    if (auto E = (*Space)->write(OpaqueGateBase, Entries))
+      return std::move(E);
+  }
   for (const auto &Module : Program->Modules)
     for (const auto &Import : Module.Loaded.Imports)
       if (auto E =
@@ -88,11 +164,14 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     return ABI.takeError();
   if (!Resources->remainingMicroseconds())
     return failure(text::ModuleTimeout);
-  auto Backend =
-      createExecutionBackend(Options.Backend,
-                             X64 ? ExecutionContract::CheckedUserX64
-                                 : ExecutionContract::CheckedUserAArch64,
-                             *Space, Loaded->Architecture);
+  const ExecutionContract Checked = X64 ? ExecutionContract::CheckedUserX64
+                                        : ExecutionContract::CheckedUserAArch64;
+  const ExecutionContract Contract = Options.Contract.value_or(Checked);
+  if (Contract != Checked &&
+      !(X64 && Contract == ExecutionContract::DirectUserX64))
+    return failure(text::Contract);
+  auto Backend = createExecutionBackend(Options.Backend, Contract, *Space,
+                                        Loaded->Architecture);
   if (!Backend)
     return Backend.takeError();
   if (auto E = Backend->CPU->writeRegister(
@@ -208,6 +287,14 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   auto Prepared = Prepare();
   if (!Prepared)
     return Prepared.takeError();
+  StoppedProcess Stopped(CPU, **Space, *Program);
+  if (Observer) {
+    auto Watches = Observer->started(Stopped);
+    if (!Watches)
+      return Watches.takeError();
+    if (auto E = (*Session)->watchExecution(std::move(*Watches)))
+      return std::move(E);
+  }
   auto Failed = [&](llvm::Error E) {
     Result.Stop = ProcessStopReason::RuntimeFailure;
     Result.ExitStatus.reset();
@@ -232,6 +319,25 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     Result.PC = (*PC)[0];
     if (Exit->Kind == SessionExitKind::Quantum)
       continue;
+    if (Exit->Kind == SessionExitKind::ExecutionWatch) {
+      // Only an observer installs watches. The watched instruction has not
+      // been admitted, so the process is exactly at its boundary.
+      auto Next = Observer->watched(Stopped, Result.PC);
+      if (!Next) {
+        Failed(Next.takeError());
+        break;
+      }
+      if (!*Next) {
+        Result.Stop = ProcessStopReason::Observer;
+        Result.Diagnostic = runtime::ObserverStop;
+        break;
+      }
+      if (auto E = (*Session)->watchExecution(std::move(**Next))) {
+        Failed(std::move(E));
+        break;
+      }
+      continue;
+    }
     if (Exit->Kind == SessionExitKind::InstructionLimit) {
       Result.Stop = ProcessStopReason::InstructionLimit;
       Result.Diagnostic = runtime::InstructionLimit;
@@ -343,6 +449,18 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     if (!Import) {
       Result.Stop = ProcessStopReason::UnsupportedService;
       Result.Diagnostic = text::Service;
+      break;
+    }
+    if (!Import->Target) {
+      // The guest was free to resolve and store this address; only calling
+      // it requires behavior the model does not have.
+      Result.Stop = ProcessStopReason::UnsupportedService;
+      Result.Diagnostic =
+          (text::OpaqueEntry + Import->Module + text::ImportSeparator +
+           (Import->Ordinal
+                ? text::OpaqueOrdinal + llvm::Twine(*Import->Ordinal)
+                : llvm::Twine(Import->Name)))
+              .str();
       break;
     }
     const uint64_t StackPointer = (*SP)[0];

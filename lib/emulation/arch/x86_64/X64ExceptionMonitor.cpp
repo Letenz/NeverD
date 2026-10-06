@@ -85,10 +85,9 @@ initializeX64ExceptionMonitor(MemoryProjection &Memory) {
   return Base;
 }
 
-llvm::Expected<X64Exception>
-consumeX64ExceptionMonitor(const MemoryProjection &Memory,
-                           X64MachineState &State,
-                           const X64MachineState &Before, uint64_t CR2) {
+llvm::Expected<X64Exception> consumeX64ExceptionMonitor(
+    const MemoryProjection &Memory, X64MachineState &State,
+    const X64MachineState &Before, uint64_t CR2, bool Stepped) {
   using namespace x64::gateway;
   const uint64_t Base = x64ExceptionMonitorBase(Memory);
   const uint64_t Code = Base + x64::PageSize;
@@ -120,16 +119,19 @@ consumeX64ExceptionMonitor(const MemoryProjection &Memory,
   const uint64_t SS =
       Before.UserMode ? x64::UserDataSelector : x64::DataSelector;
   const uint64_t Instrumentation = x64::TrapFlag | x64::ResumeFlag;
-  if ((!FaultPC && !TrapPC) || Word(FrameCS) != CS || Word(FrameSS) != SS ||
-      Word(FrameSP) != Before.reg(X64Register::SP) ||
-      (Word(FrameFlags) & ~Instrumentation) !=
-          (Before.reg(X64Register::FLAGS) & ~Instrumentation))
+  if (Word(FrameCS) != CS || Word(FrameSS) != SS)
+    return diagnostic::error(x64::exceptiontext::Frame);
+  if (Stepped &&
+      ((!FaultPC && !TrapPC) || Word(FrameSP) != Before.reg(X64Register::SP) ||
+       (Word(FrameFlags) & ~Instrumentation) !=
+           (Before.reg(X64Register::FLAGS) & ~Instrumentation)))
     return diagnostic::error(x64::exceptiontext::Frame);
   State.reg(X64Register::PC) = SavedPC;
   State.reg(X64Register::SP) = Word(FrameSP);
   State.reg(X64Register::FLAGS) =
-      (Word(FrameFlags) & ~Instrumentation) |
-      (Before.reg(X64Register::FLAGS) & Instrumentation);
+      Stepped ? (Word(FrameFlags) & ~Instrumentation) |
+                    (Before.reg(X64Register::FLAGS) & Instrumentation)
+              : Word(FrameFlags) & ~x64::ResumeFlag;
   return X64Exception{Vector,
                       ErrorCode ? std::optional<uint64_t>(
                                       llvm::support::endian::read64le(Stack))

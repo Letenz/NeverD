@@ -6,6 +6,22 @@
 
 Par défaut, NeverD utilise son solveur bitvector intégré. La dérivation MBA exacte reste indépendante d’un solveur général. La synthèse d’expressions n’accepte un candidat qu’après preuve d’équivalence ; un contre-exemple ou une requête indécise conserve l’expression d’origine.
 
+<!-- i18n-section: builtin-comparisons -->
+
+## Circuits de comparaison intégrés
+
+Au-delà de huit bits, les comparaisons examinent d’abord les moitiés hautes et utilisent les moitiés basses si les premières sont égales. Les petits fragments utilisent les retenues de soustraction. L’encodeur partagé peut réutiliser les portes du préfixe haut lorsqu’une mise à jour partielle de registre ne change que les bits bas. Les comparaisons signées inversent toujours les deux bits de signe. La sémantique des expressions et les limites de ressources restent inchangées ; leur épuisement renvoie toujours `Unknown`.
+
+`BitBlaster.WidePredicatesAgreeWithTheEvaluator` confronte les prédicats signés et non signés à l’évaluateur pour des largeurs sélectionnées de 8 à 256 bits, avec des largeurs impaires, des valeurs voisines des frontières et des bits significatifs au-delà de 64 bits. Il exclut aussi les sorties incorrectes. Les tests de compteurs partiels vérifient les requêtes complètes, les modèles de contre-exemple et l’épuisement du budget de portes. Les régressions natives avec comparaison mémorisée prouvent les deux ordres de comparaison et de mise à jour en observant tous les registres et indicateurs, et rejettent un corps de boucle original modifié.
+
+<!-- i18n-section: pristine-encoding -->
+
+## Copies de l’encodage avant recherche
+
+`BitVectorSolver::cloneEncoding()` copie un encodage complet avant toute tentative de recherche SAT. La méthode renvoie null après une recherche ou un échec d’encodage. Chaque copie possède ses clauses modifiables, sa propagation à la racine, ses portes et ses correspondances de bits ; elle conserve l’ordre des variables, le décompte des portes et les paramètres du solveur. Le contexte doit survivre aux deux solveurs ; le solveur source peut être modifié ou détruit indépendamment.
+
+Le moteur SAT conserve quatre entrées de surveillance dans chaque liste de littéral ; les listes plus longues grandissent dynamiquement. Cela évite des allocations séparées pour les listes courtes lors de la construction, de la copie avant recherche et de la destruction. L’ordre de propagation, les clauses, la propriété indépendante et tous les plafonds de travail restent inchangés.
+
 <!-- i18n-section: z3-build -->
 
 ## Build Z3 facultatif
@@ -61,3 +77,5 @@ build-release/bin/neverd-solver-bench \
 Chaque ligne non commentée suit `original ; candidate` ; sans point-virgule, le résultat du simplificateur MBA sert de candidat. L’outil rapporte verdicts, rejeu de modèles et durées (construction de session, traduction et résolution incluses ; parsing, simplification MBA, export et destruction exclus). Chaque répétition crée un solveur neuf. Les modèles SAT doivent reproduire la différence dans l’évaluateur d’expressions. Des verdicts décisifs opposés ou des requêtes/modèles invalides font échouer l’exécution ; `unknown` est enregistré et ne prouve pas l’équivalence.
 
 Le SMT-LIB exporté comprend le DAG original, assertions permanentes et hypothèses de la dernière requête ; il se rejoue avec `z3 query-N.smt2`. Consigner limites de ressources et versions : les backends ont des unités de budget différentes, donc il s’agit de charges bornées, pas d’un travail identique. Les preuves bitvector utilisent la sémantique totale à largeur fixe du langage d’expressions. Exceptions machine, effets mémoire et LLVM poison restent du ressort des frontières de lifting/traduction ; une preuve d’expression ne les certifie pas.
+
+Une copie de l’encodage avant recherche retire de sa propre file de décision les variables affectées à la racine et reconstruit l’ordre strict du tas par activité puis indice. Les affectations et clauses restent intactes ; les faits racine survivent à tout retour arrière. La propriété de la source, les décisions effectives, les modèles complets et tous les budgets de recherche restent inchangés.

@@ -8,6 +8,8 @@
 #include "ExecutionDiagnostics.h"
 #include "MemoryLayout.h"
 
+#include "llvm/ADT/ScopeExit.h"
+
 #include <algorithm>
 #include <cstring>
 
@@ -26,6 +28,9 @@ llvm::Expected<std::unique_ptr<RAMTransaction>>
 RAMTransaction::create(MemoryProjection &Memory,
                        llvm::ArrayRef<RAMWriteRange> Writes,
                        uint64_t ByteBudget, unsigned Permissions) {
+  if (!Writes.empty())
+    if (auto E = Memory.prepareWrite())
+      return E;
   auto Lease = Memory.executionLock();
   if (!Lease)
     return Lease.takeError();
@@ -84,6 +89,27 @@ RAMTransaction::create(MemoryProjection &Memory,
   }
   return std::unique_ptr<RAMTransaction>(
       new RAMTransaction(Memory, std::move(*Lease), std::move(Slices)));
+}
+
+llvm::Error RAMTransaction::execute(llvm::function_ref<llvm::Error()> F,
+                                    llvm::ArrayRef<RAMWriteRange> Inputs) {
+  if (State != Phase::Executing)
+    return diagnostic::error(diagnostic::RAMTransactionPhase);
+  for (const auto &Input : Inputs)
+    if (auto E = Memory.prepareTransportRead(Input.Address, Input.Size))
+      return E;
+  if (Slices.empty()) {
+    Lease.unlock();
+    auto Restore = llvm::scope_exit([&] { Lease.lock(); });
+    return Memory.executeReadOnly(F);
+  }
+  // Capture even on an architectural exception: ENTER may have committed a
+  // prefix. The ISA decides whether to retain it; other failures roll it back.
+  auto Capture = llvm::scope_exit([&] {
+    for (const auto &S : Slices)
+      Memory.captureTransportWrite(S.Physical, S.Before.size());
+  });
+  return F();
 }
 
 void RAMTransaction::restore() {
@@ -146,9 +172,11 @@ llvm::Error RAMTransaction::read(uint64_t Address,
 llvm::Error RAMTransaction::commit() {
   if (State != Phase::Staged)
     return diagnostic::error(diagnostic::RAMTransactionPhase);
-  for (const auto &S : Slices)
+  for (const auto &S : Slices) {
+    Memory.recordRAMWrite(S.Physical, S.After.size());
     std::memcpy(Memory.physicalPointer(S.Physical), S.After.data(),
                 S.After.size());
+  }
   State = Phase::Committed;
   return llvm::Error::success();
 }

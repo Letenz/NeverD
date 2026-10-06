@@ -131,6 +131,12 @@ bool admitsLoopOperands(const cs_insn &I) {
       return false;
   return true;
 }
+bool isPrefixedReturn(const cs_insn &I) {
+  // The two-byte near return recommended for branch predictors: the processor
+  // ignores the repeat prefix, so this is exactly the admitted C3 transfer.
+  return I.id == X86_INS_RET && I.size == x64::ShortBranchBytes &&
+         I.bytes[0] == X86_PREFIX_REP && I.bytes[1] == x64::NearReturnOpcode;
+}
 std::optional<bool> condition(unsigned Instruction, uint64_t Flags) {
   const bool Carry = Flags & x64::CarryFlag;
   const bool Parity = Flags & x64::ParityFlag;
@@ -287,9 +293,9 @@ bool CheckedX64Backend::canonicalRange(uint64_t A, uint64_t N) const {
 llvm::Expected<std::unique_ptr<ExecutionBackend>>
 CheckedX64Backend::create(std::unique_ptr<MemoryProjection> Memory,
                           std::unique_ptr<X64Machine> Machine, bool UserMode,
-                          bool SIMDExceptions) {
+                          bool SIMDExceptions, bool Direct) {
   auto B = std::unique_ptr<CheckedX64Backend>(
-      new CheckedX64Backend(UserMode, SIMDExceptions));
+      new CheckedX64Backend(UserMode, SIMDExceptions, Direct));
   B->Memory = std::move(Memory);
   B->Machine = std::move(Machine);
   B->CPU.UserMode = UserMode;
@@ -432,6 +438,67 @@ CheckedX64Backend::decodeServiceRequest(const cs_insn &I) const {
   return std::nullopt;
 }
 
+llvm::Error CheckedX64Backend::executeDirect() {
+  auto Root =
+      buildX64PageTables(*Memory, UserMode, Machine->requiresExceptionMonitor(),
+                         ExecutionWatches, WatchEpoch);
+  if (!Root)
+    return Root.takeError();
+  auto Next = CPU;
+  auto E = Machine->run(Next, *Root, {Deadline, &StopRequested});
+  // Only an event ends a free run.
+  if (!E)
+    return diagnostic::error(diagnostic::DirectExecutionUnsupported);
+  if (E.isA<MachineInterruptedError>()) {
+    CPU = Next;
+    return E;
+  }
+  return llvm::handleErrors(
+      std::move(E), [&](const X64ExceptionError &Raised) -> llvm::Error {
+        CPU = Next;
+        const uint64_t PC = CPU.reg(X64Register::PC);
+        // The system call extension is disabled, so each service instruction
+        // is undefined exactly where the guest requests the service.
+        if (Raised.exception().Vector ==
+            unsigned(x64::ExceptionVector::InvalidOpcode)) {
+#define NEVERD_X64_SERVICE(Kind, Name, ...)                                    \
+  {                                                                            \
+    constexpr uint8_t Expected[] = {__VA_ARGS__};                              \
+    uint8_t Actual[sizeof(Expected)];                                          \
+    if (!Memory->check(PC, sizeof(Expected), executionPermissions(Execute))) { \
+      if (auto Failed = Memory->read(PC, Actual, Execute))                     \
+        return Failed;                                                         \
+      if (llvm::ArrayRef(Actual) == llvm::ArrayRef(Expected)) {                \
+        PendingService = ServiceRequest{ServiceRequestKind::Kind, PC,          \
+                                        PC + sizeof(Expected)};                \
+        return llvm::Error::success();                                         \
+      }                                                                        \
+    }                                                                          \
+  }
+#include "X64ServiceInstructions.def"
+#undef NEVERD_X64_SERVICE
+        }
+        // A fetch into a watched page faults only because the overlay made an
+        // otherwise executable page non-executable. That is the watch boundary,
+        // reported exactly as the checked contract reports an instruction
+        // watch: the instruction has not run, and the observer decides what to
+        // do next.
+        if (Raised.exception().Vector ==
+                unsigned(x64::ExceptionVector::PageFault) &&
+            Raised.exception().FaultAddress == PC && executionWatched(PC) &&
+            !Memory->check(PC, 1, executionPermissions(Execute))) {
+          if (Hooks.Instruction)
+            Hooks.Instruction(PC, 0);
+          return llvm::Error::success();
+        }
+        BackendFault Fault{BackendFaultKind::Interrupt, PC};
+        Fault.Interrupt = Raised.exception().Vector;
+        Fault.Address = Raised.exception().FaultAddress;
+        Fault.ErrorCode = Raised.exception().ErrorCode;
+        return raiseFault(Fault, true);
+      });
+}
+
 llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   const auto &X = I.detail->x86;
   if (StringRestart && StringRestart->PC != I.address)
@@ -519,7 +586,7 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
       if (Prefix == X86_PREFIX_REP || Prefix == X86_PREFIX_REPNE)
         return llvm::make_error<UnsupportedExecutionError>();
   }
-  if ((X.prefix[0] && !Locked) ||
+  if ((X.prefix[0] && !Locked && !isPrefixedReturn(I)) ||
       (Locked && ((!updateArity(I.id) && !Atomic && !BitWrites) ||
                   X.operands[0].type != X86_OP_MEM)) ||
       (X.addr_size != x64::DWordBytes && X.addr_size != x64::WordBytes) ||
@@ -717,6 +784,11 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   const Access *DeviceAccess = nullptr;
   for (const auto &A : Accesses)
     if (deviceAt(A.Address)) {
+      if ((Atomic || BitWrites || updateArity(I.id)) && Accesses.size() == 2 &&
+          Accesses[0].Permission == Read && Accesses[1].Permission == Write &&
+          Accesses[0].Address == Accesses[1].Address &&
+          Accesses[0].Size == Accesses[1].Size)
+        return deviceAtomic(I, A.Address, A.Size);
       if (Accesses.size() != 1 || Locked ||
           (I.id != X86_INS_MOV && I.id != X86_INS_MOVABS &&
            I.id != X86_INS_MOVZX && I.id != X86_INS_MOVSX) ||
@@ -817,16 +889,25 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   if (!Root)
     return Root.takeError();
   std::vector<RAMWriteRange> Writes;
+  std::vector<RAMWriteRange> Inputs{{I.address, I.size}};
   for (const auto &A : Accesses)
     if (A.Permission == Write)
       Writes.push_back({A.Address, A.Size});
+  for (const auto &A : Accesses)
+    Inputs.push_back({A.Address, A.Size});
   auto Transaction = RAMTransaction::create(
       *Memory, Writes, execution_limits::InstructionRAMWriteBytes,
       executionPermissions(Write));
   if (!Transaction)
     return Transaction.takeError();
   auto Next = CPU;
-  if (auto E = Machine->step(Next, *Root, {Deadline, &StopRequested})) {
+  if (auto E = (*Transaction)
+                   ->execute(
+                       [&] {
+                         return Machine->step(Next, *Root,
+                                              {Deadline, &StopRequested});
+                       },
+                       Inputs)) {
     // Discard speculative RAM before the OS receives a processor exception.
     // Its architectural fault state (including FP status) remains
     // authoritative.

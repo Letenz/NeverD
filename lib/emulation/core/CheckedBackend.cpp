@@ -9,9 +9,35 @@
 #include "ExecutionDiagnostics.h"
 #include "ExecutionExitBuilder.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 
+#include <iterator>
+
 namespace neverd::emulation {
+bool CheckedBackend::executionWatched(uint64_t Address) const {
+  const auto I = llvm::upper_bound(
+      ExecutionWatches, Address, [](uint64_t Address, const ExecutionWatch &W) {
+        return Address < W.Address;
+      });
+  return I != ExecutionWatches.begin() &&
+         Address - std::prev(I)->Address < std::prev(I)->Size;
+}
+llvm::Error CheckedBackend::mapMMIO(uint64_t A, uint64_t N,
+                                    GuestMMIOCallbacks Callbacks) {
+  if (auto E = mutableMemory())
+    return E;
+  if (!supportsDeviceMappings())
+    return diagnostic::error(diagnostic::DeviceMapping);
+  if (!canonicalRange(A, N))
+    return diagnostic::error(diagnostic::InvalidMapping);
+  return addressSpace()->mapMMIO(A, N, std::move(Callbacks));
+}
+llvm::Error CheckedBackend::unmapMMIO(uint64_t A, uint64_t N) {
+  if (auto E = mutableMemory())
+    return E;
+  return addressSpace()->unmapMMIO(A, N);
+}
 using diagnostic::error;
 llvm::Error CheckedBackend::initializeDecoder(cs_arch Arch, cs_mode Mode) {
   if (cs_open(Arch, Mode, &Decoder) != CS_ERR_OK ||
@@ -109,10 +135,12 @@ llvm::Error CheckedBackend::raiseFault(BackendFault Fault, bool Recoverable) {
   if (FirstFault || RecoverableFault)
     return error(diagnostic::Faulted);
   if (Recoverable && Hooks.RecoverableFault && Hooks.RecoverableFault(Fault)) {
+    onGuestException();
     RecoverableFault = Fault;
     StopRequested = true;
     return llvm::Error::success();
   }
+  onGuestException();
   FirstFault = Fault;
   if (Fault.Interrupt && Hooks.Interrupt)
     Hooks.Interrupt(*Fault.Interrupt);
@@ -202,6 +230,9 @@ std::optional<ServiceRequest> CheckedBackend::takeServiceRequest() {
 
 llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
                                                            uint64_t Timeout) {
+  if (Entered.test_and_set())
+    return error(diagnostic::Running);
+  auto Leave = llvm::scope_exit([&] { Entered.clear(); });
   bool Started = false, BackendFailed = false;
   auto E = runImpl(PC, Timeout, Started, BackendFailed);
   if (!Started) {
@@ -227,34 +258,88 @@ llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
                      .DeadlineReached = TimedOut});
 }
 
+llvm::Error CheckedBackend::executeDirect() {
+  return error(diagnostic::DirectExecutionUnsupported);
+}
+
 llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
                                     bool &Started, bool &BackendFailed) {
-  if (auto E = mutableMemory())
+  if (auto E = checkExecutionState())
     return E;
+  if (!Memory->parallelEnabled())
+    if (auto E = mutableMemory())
+      return E;
   auto Limit = makeExecutionDeadline(Timeout);
   if (!Limit)
     return Limit.takeError();
-  if (auto E = Memory->beginRun())
+  StopRequested = false;
+  Deadline = *Limit;
+  if (auto E = Memory->parallelEnabled()
+                   ? Memory->beginParallelRun({Deadline, &StopRequested})
+                   : Memory->beginRun(RAMWriteTracking::Declared))
     return E;
   auto Release = llvm::scope_exit([&] { Memory->endRun(); });
-  if (auto E = Memory->validateMappings(
-          [this](uint64_t A, uint64_t N) { return canonicalRange(A, N); },
-          supportsDeviceMappings()))
-    return E;
-  setProgramCounter(PC);
+  {
+    auto Startup = Memory->beginInstruction();
+    if (!Startup)
+      return Startup.takeError();
+    if (auto E = Memory->validateMappings(
+            [this](uint64_t A, uint64_t N) { return canonicalRange(A, N); },
+            supportsDeviceMappings()))
+      return E;
+    setProgramCounter(PC);
+  }
   Running = true;
   Started = true;
   TimedOut = false;
-  StopRequested = false;
   auto Reset = llvm::scope_exit([&] { Running = false; });
-  Deadline = *Limit;
+  auto Interrupted = [&](llvm::Error E) {
+    llvm::handleAllErrors(std::move(E),
+                          [&](const MachineInterruptedError &Interruption) {
+                            if (Interruption.stopRequested())
+                              StopRequested = true;
+                            TimedOut = Interruption.deadlineReached();
+                          });
+  };
   try {
     while (!StopRequested) {
       if (std::chrono::steady_clock::now() >= Deadline) {
         TimedOut = true;
         break;
       }
+      auto Instruction = Memory->beginInstruction();
+      if (!Instruction) {
+        auto E = Instruction.takeError();
+        if (!E.isA<MachineInterruptedError>())
+          return E;
+        Interrupted(std::move(E));
+        break;
+      }
       PC = programCounter();
+      if (Direct) {
+        if (auto E = executeDirect()) {
+          if (!FirstFault && E.isA<MachineInterruptedError>()) {
+            llvm::handleAllErrors(
+                std::move(E), [&](const MachineInterruptedError &Interrupted) {
+                  if (Interrupted.stopRequested())
+                    StopRequested = true;
+                  TimedOut = Interrupted.deadlineReached();
+                });
+            break;
+          }
+          if (!FirstFault) {
+            BackendFailed = true;
+            FirstFault = BackendFault{BackendFaultKind::UnhandledException,
+                                      programCounter()};
+          }
+          return E;
+        }
+        if (FirstFault)
+          return error(diagnostic::Faulted);
+        if (PendingService)
+          break;
+        continue;
+      }
       if (PC % InstructionAlignment) {
         FirstFault = BackendFault{BackendFaultKind::InvalidInstruction, PC};
         if (Hooks.InvalidInstruction)
@@ -289,17 +374,14 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
         break;
       if (UserMode) {
         PendingService = decodeServiceRequest(*Decoded);
-        if (PendingService)
+        if (PendingService) {
+          onGuestException();
           break;
+        }
       }
       if (auto E = execute(*Decoded)) {
         if (!FirstFault && E.isA<MachineInterruptedError>()) {
-          llvm::handleAllErrors(
-              std::move(E), [&](const MachineInterruptedError &Interrupted) {
-                if (Interrupted.stopRequested())
-                  StopRequested = true;
-                TimedOut = Interrupted.deadlineReached();
-              });
+          Interrupted(std::move(E));
           break;
         }
         if (!FirstFault) {

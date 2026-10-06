@@ -142,13 +142,24 @@ llvm::Expected<uint64_t> KernelModel::cancelIRP(uint64_t IRP) {
   CancelLock.CallbackExecution = 0;
   CancelLock.IRP = IRP;
   CancelLock.OldIRQL = OldIRQL;
+  CancelLock.CallbackIRQL = OldIRQL;
   CurrentIRQL = scheduler::DispatchLevel;
   return 0;
 }
 
+bool KernelModel::canDeliverCancellation(const ActiveRequest &Request) const {
+  // A due external cancellation is a pending service request. It cannot touch
+  // the packet under the guest's cancel lock, or before WDM dispatch returns.
+  return !Request.Completed && !Request.CancelRequested &&
+         Request.CancelDeadline && !CancelLock.Held && !CancelLock.Callback &&
+         CurrentIRQL < scheduler::DispatchLevel &&
+         ((Framework && FrameworkDevices.count(Request.Device)) ||
+          Request.DispatchReturned);
+}
+
 llvm::Error KernelModel::processRequestCancellations() {
   for (auto &[IRP, Request] : Requests) {
-    if (Request.Completed || !Request.CancelDeadline ||
+    if (!canDeliverCancellation(Request) ||
         *Request.CancelDeadline > Scheduler.now100ns())
       continue;
     const bool KMDF = Framework && FrameworkDevices.count(Request.Device);

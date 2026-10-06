@@ -209,6 +209,8 @@ x64 GS und ARM64 x18 zeigen auf den TEB mit Stack-Grenzen, Selbstzeiger, PID/TID
 
 Bei einem nicht leeren, nicht lesbaren Eingabepuffer liefert `WriteFile` den Fehler `ERROR_INVALID_USER_BUFFER` (1784), setzt die Anzahl geschriebener Bytes auf null und gibt keine Bytes aus.
 
+`windows.defer_unmodeled` lädt ein Abbild, dessen Laderfakten das Modell nicht implementiert, und stoppt nur, wenn die Ausführung von einem davon abhängt. Exporte außerhalb des API-Inventars und Module außerhalb des Katalogs werden an opake Einstiege gebunden: Jede Identität wird zu genau einer Adresse aufgelöst, und ihre Ausführung stoppt als `unsupported_service` unter Nennung von `module!export`. Verzeichnisse, die das Modell nicht interpretiert, bleiben uninterpretiert, Metadaten, die die Datei nicht hinterlegt, werden beim Laden nicht gelesen, und rahmenbasierte Ausnahmebehandlung durch ein solches Abbild stoppt. `observeProcess` ergänzt einen `ProcessObserver`, der den angehaltenen Prozess bei seinem Start und an jeder Ausführungsüberwachung liest; er kann den Gastzustand nicht ändern, und beendet er den Lauf, wird `observer` gemeldet. Das [Entpacken](unpack.md) baut auf beidem auf.
+
 [PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c). [GetProcAddress](https://learn.microsoft.com/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress).
 
 <!-- i18n-section: verification -->

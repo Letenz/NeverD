@@ -1316,6 +1316,65 @@ TEST(SourceFrameAnalysis, ProvesInitializedCopiesFromIndependentResultEffects) {
   EXPECT_FALSE(F.query());
 }
 
+TEST(SourceFrameAnalysis, IncomingResultAddressNeedsCompleteEntryIdentity) {
+  RecordCopyFixture F;
+  auto Entry = F.Entry;
+  Entry.Parameters = {
+      {"output",
+       NdType::makeInt(8),
+       {SourceABICarrierKind::IntegerRegister, a64reg::X8, 0, 8}}};
+  const auto Call = op(NdOp::CALL, X0, {NdVar::cst(0x4000, 8)}, 0x1000);
+  LowFunc Low;
+  Low.Entry = 0x1000;
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Low.Entry;
+  Block.Ops = {Call, op(NdOp::RETURN, {}, {X0}, 0x1000)};
+  Low.Blocks.push_back(Block);
+  SourceFrameEffects Effect;
+  Effect.InitializesIndirectResult = true;
+  auto Calls = callsAt(Call.Addr, F.Producer, Effect);
+  std::set<uint64_t> Used;
+  ASSERT_TRUE(
+      restoresNativeSourceState(Low, Arch::AArch64, Calls, &Used, &Entry));
+  EXPECT_EQ(Used, (std::set<uint64_t>{a64reg::X8}));
+  Entry.Parameters[0].Type = NdType::makePtr(NdType::makeVoid());
+  EXPECT_TRUE(
+      restoresNativeSourceState(Low, Arch::AArch64, Calls, nullptr, &Entry));
+  EXPECT_FALSE(restoresNativeSourceState(Low, Arch::AArch64, Calls));
+  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Low;
+    auto ABI = Entry;
+    auto Contracts = Calls;
+    auto &P = ABI.Parameters[0];
+    if (Mutation == 0)
+      P.Location.RegisterOffset = a64reg::X7;
+    if (Mutation == 1)
+      P.Type = NdType::makeFloat(8);
+    if (Mutation == 2)
+      P.Type = NdType::makeInt(4);
+    if (Mutation == 3)
+      P.Location.ValueBytes = 4;
+    if (Mutation == 4)
+      ABI.Parameters.clear();
+    if (Mutation == 5)
+      Contracts.begin()->second.InitializesIndirectResult = false;
+    if (Mutation >= 6) {
+      const auto Write =
+          Mutation == 6   ? op(NdOp::COPY, F.X8, {NdVar::scalar(0, 8)}, 0xffc)
+          : Mutation == 7 ? op(NdOp::COPY, NdVar::reg(a64reg::X8, 4),
+                               {NdVar::scalar(0, 4)}, 0xffc)
+          : Mutation == 8
+              ? op(NdOp::INT_ADD, F.X8, {F.X8, NdVar::scalar(8, 8)}, 0xffc)
+              : op(NdOp::COPY, F.X8, {SP}, 0xffc);
+      Changed.Blocks[0].Ops.insert(Changed.Blocks[0].Ops.begin(), Write);
+    }
+    EXPECT_FALSE(restoresNativeSourceState(Changed, Arch::AArch64, Contracts,
+                                           nullptr, &ABI));
+  }
+}
+
 TEST(SourceFrameAnalysis, CopyQueryAcceptsCompleteDeclaredEntryABI) {
   RecordCopyFixture F;
   F.Entry.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
@@ -2267,4 +2326,298 @@ TEST(SourceFrameAnalysis, ErrorOutputCannotSupplyAnEarlierFrameDefinition) {
   ASSERT_TRUE(Definition);
   EXPECT_EQ(Definition->Definition.Instruction, 0x1008U);
   EXPECT_EQ(Definition->FrameOffset, -32);
+}
+
+namespace {
+SourceFunctionTypeHint completeOutputSignature() {
+  SourceFunctionTypeHint Result;
+  Result.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Result.ReturnType = NdType::makeVoid();
+  Result.Parameters = {{"out", NdType::makePtr(NdType::makeVoid())}};
+  std::string Error;
+  EXPECT_TRUE(assignDarwinScalarSourceABI(Result, Arch::AArch64, Error))
+      << Error;
+  Result.Parameters[0].Location.RegisterOffset = a64reg::X8;
+  return Result;
+}
+LowFunc completeOutputFixture() {
+  LowFunc F;
+  F.Entry = 0x1000;
+  LowBlock B;
+  B.Id = 0;
+  B.StartAddr = F.Entry;
+  const auto Pointer = NdVar::reg(a64reg::X8, 8);
+  const auto Address = NdVar::tmp(0x10000, 8);
+  const auto FP =
+      NdVar::reg(getTargetRegInfo(Arch::AArch64).FPParamRegs[0], 16);
+  for (unsigned I = 0; I != 3; ++I) {
+    B.Ops.push_back(op(NdOp::INT_ADD, Address,
+                       {Pointer, NdVar::scalar(I * 16, 8)}, F.Entry));
+    B.Ops.push_back(op(NdOp::STORE, {}, {Address, FP}, F.Entry));
+  }
+  B.Ops.push_back(
+      op(NdOp::RETURN, {}, {NdVar::reg(a64reg::X30, 8)}, F.Entry + 4));
+  F.Blocks.push_back(std::move(B));
+  return F;
+}
+} // namespace
+
+TEST(SourceFrameAnalysis,
+     CompleteOutputPrefixRequiresEveryWrittenByteAndNoEscape) {
+  const auto Signature = completeOutputSignature();
+  auto Query = [&](const LowFunc &F) {
+    return sourceFrameCompleteOutputBytes(F, Arch::AArch64, {}, Signature, 0);
+  };
+  EXPECT_EQ(Query(completeOutputFixture()), 48U);
+  // A complete smaller prefix proves its own bound, never a 48-byte record.
+  auto Smaller = completeOutputFixture();
+  Smaller.Blocks[0].Ops.erase(Smaller.Blocks[0].Ops.begin() + 4,
+                              Smaller.Blocks[0].Ops.begin() + 6);
+  EXPECT_EQ(Query(Smaller), 32U);
+  for (unsigned Mutation = 0; Mutation != 16; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = completeOutputFixture();
+    auto &Ops = F.Blocks[0].Ops;
+    switch (Mutation) {
+    case 0:
+      Ops[3].Inputs[1].Size = 15;
+      break;
+    case 1:
+      Ops[0].Inputs[1] = NdVar::scalar(UINT64_MAX, 8);
+      break;
+    case 2:
+      Ops[4].Inputs[1] = NdVar::scalar(256, 8);
+      break;
+    case 3:
+      Ops[4].Inputs[1] = NdVar::scalar(INT64_MAX, 8);
+      break;
+    case 4:
+      Ops[3].Inputs[1] = NdVar::reg(a64reg::SP, 16);
+      break;
+    case 5:
+      Ops[3].Inputs[1] = NdVar::reg(a64reg::X8, 8);
+      break;
+    case 6:
+      Ops.insert(Ops.begin(), op(NdOp::LOAD, NdVar::reg(a64reg::X0, 8),
+                                 {NdVar::reg(a64reg::X8, 8)}, F.Entry));
+      break;
+    case 7:
+      Ops.insert(Ops.begin(),
+                 op(NdOp::STORE, {},
+                    {NdVar::reg(a64reg::X0, 8), NdVar::scalar(1, 8)}, F.Entry));
+      break;
+    case 8:
+      Ops[0].Output.Size = 4;
+      break;
+    case 9:
+      Ops[0].Inputs[0].Size = 4;
+      break;
+    case 10:
+      Ops[0].Opcode = NdOp::INT_XOR;
+      break;
+    case 11:
+      Ops[1].MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    case 12:
+      Ops.back().Inputs[0] = NdVar::reg(a64reg::X0, 8);
+      break;
+    case 13:
+      Ops.insert(Ops.end() - 1, op(NdOp::COPY, NdVar::reg(a64reg::X19, 8),
+                                   {NdVar::scalar(0, 8)}, F.Entry));
+      break;
+    case 14:
+      F.Blocks[0].Preds = {0};
+      F.Blocks[0].Succs = {0};
+      break;
+    case 15:
+      Ops.insert(Ops.begin() + 1, op(NdOp::LOAD, NdVar::reg(a64reg::X0, 8),
+                                     {NdVar::tmp(0x10000, 8)}, F.Entry));
+      break;
+    }
+    EXPECT_FALSE(Query(F));
+  }
+  EXPECT_FALSE(sourceFrameCompleteOutputBytes(completeOutputFixture(),
+                                              Arch::X64, {}, Signature, 0));
+}
+
+TEST(SourceFrameAnalysis,
+     CompleteOutputPrefixMeetsAllReturnsAndValidatesSDKTailWrites) {
+  const auto Signature = completeOutputSignature();
+  auto F = completeOutputFixture();
+  F.Blocks[0].Ops = {op(NdOp::COND_BR, {},
+                        {NdVar::cst(0x1010, 8), NdVar::scalar(1, 1)}, F.Entry)};
+  F.Blocks[0].Succs = {1, 2};
+  for (int I : {1, 2}) {
+    auto B = completeOutputFixture().Blocks[0];
+    B.Id = I;
+    B.StartAddr = F.Entry + 16 * I;
+    B.Preds = {0};
+    F.Blocks.push_back(std::move(B));
+  }
+  auto Query = [&](const LowFunc &Fn,
+                   const NativeSourceCalls &Calls = NativeSourceCalls{}) {
+    return sourceFrameCompleteOutputBytes(Fn, Arch::AArch64, Calls, Signature,
+                                          0);
+  };
+  EXPECT_EQ(Query(F), 48U);
+  std::swap(F.Blocks[1], F.Blocks[2]);
+  EXPECT_EQ(Query(F), 48U);
+  F.Blocks[2].Ops.erase(F.Blocks[2].Ops.begin() + 4,
+                        F.Blocks[2].Ops.begin() + 6);
+  EXPECT_FALSE(Query(F));
+  auto Tail = completeOutputFixture();
+  Tail.Blocks[0].Ops = {op(NdOp::CALL, X0, {NdVar::cst(0x2000, 8)}, Tail.Entry),
+                        op(NdOp::RETURN, {}, {X0}, Tail.Entry)};
+  SourceFunctionTypeHint Producer;
+  Producer.Origin = SourceFunctionTypeHint::OriginKind::ExplicitSource;
+  Producer.ReturnType =
+      NdType::makeStruct(std::vector<TypeRef>(6, NdType::makeFloat(8)));
+  std::string Error;
+  ASSERT_TRUE(assignDarwinFixedSourceABI(Producer, Arch::AArch64, Error))
+      << Error;
+  NativeSourceCallContract Contract;
+  Contract.Signature = &Producer;
+  Contract.InitializesIndirectResult = true;
+  NativeSourceCalls Calls{
+      {*nativeSourceCallKey(Tail.Blocks[0].Ops[0]), Contract}};
+  EXPECT_EQ(Query(Tail, Calls), 48U);
+  Calls.begin()->second.InitializesIndirectResult = false;
+  EXPECT_FALSE(Query(Tail, Calls));
+}
+
+TEST(SourceFrameAnalysis,
+     CompleteOutputCertificateFeedsOnlyItsPrivateWrittenRange) {
+  const auto Producer = completeOutputSignature();
+  SourceFunctionTypeHint Consumer, Entry;
+  Consumer.ReturnType = Entry.ReturnType = NdType::makeVoid();
+  Consumer.Parameters = {{"value", NdType::makeStruct(std::vector<TypeRef>(
+                                       6, NdType::makeFloat(8)))}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinFixedSourceABI(Consumer, Arch::AArch64, Error))
+      << Error;
+  ASSERT_TRUE(Consumer.Parameters[0].IndirectByValue);
+  ASSERT_TRUE(assignDarwinScalarSourceABI(Entry, Arch::AArch64, Error))
+      << Error;
+  const auto LR = NdVar::reg(a64reg::X30, 8),
+             Address = NdVar::reg(a64reg::X9, 8),
+             Output = NdVar::reg(a64reg::X8, 8);
+  for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto P = Producer;
+    LowFunc F;
+    F.Entry = 0x1000;
+    LowBlock B;
+    B.Id = 0;
+    B.StartAddr = F.Entry;
+    B.Ops = {op(NdOp::INT_SUB, SP, {SP, NdVar::scalar(80, 8)}, 0x1000),
+             op(NdOp::INT_ADD, Address, {SP, NdVar::scalar(64, 8)}, 0x1004),
+             op(NdOp::STORE, {}, {Address, LR}, 0x1008),
+             op(NdOp::COPY, Output, {SP}, 0x100c),
+             op(NdOp::CALL, {}, {NdVar::cst(0x2000, 8)}, 0x1010),
+             op(NdOp::COPY, X0, {SP}, 0x1014),
+             op(NdOp::CALL, {}, {NdVar::cst(0x3000, 8)}, 0x1018),
+             op(NdOp::INT_ADD, Address, {SP, NdVar::scalar(64, 8)}, 0x101c),
+             op(NdOp::LOAD, LR, {Address}, 0x1020),
+             op(NdOp::INT_ADD, SP, {SP, NdVar::scalar(80, 8)}, 0x1024),
+             op(NdOp::RETURN, {}, {LR}, 0x1028)};
+    NativeSourceCallContract Write, Read;
+    Write.Signature = &P;
+    Write.WritableFrameParameters[0] = 48;
+    Write.InitializesFrameParameters.insert(0);
+    Read.Signature = &Consumer;
+    Read.ByValueFrameParameters.insert(0);
+    NativeSourceCalls Calls;
+    if (Mutation == 1)
+      Write.InitializesFrameParameters.clear();
+    if (Mutation == 2)
+      Write.WritableFrameParameters[0] = 47;
+    if (Mutation == 3)
+      Write.WritableFrameParameters[0] = 32;
+    if (Mutation == 4)
+      Write.WritableFrameParameters.clear();
+    if (Mutation == 5 || Mutation == 6 || Mutation == 7)
+      B.Ops[3] = op(NdOp::INT_ADD, Output,
+                    {SP, NdVar::scalar(Mutation == 5   ? 1
+                                       : Mutation == 6 ? 40
+                                                       : 24,
+                                       8)},
+                    0x100c);
+    if (Mutation == 8)
+      B.Ops[3].Output.Size = 4;
+    if (Mutation == 9) {
+      P.Parameters.push_back({"alias", NdType::makePtr(NdType::makeVoid())});
+      P.Parameters.back().Location = {};
+      P.Parameters.back().Location.Kind = SourceABICarrierKind::IntegerRegister;
+      P.Parameters.back().Location.RegisterOffset = a64reg::X0;
+      P.Parameters.back().Location.ValueBytes = 8;
+      Write.ReadOnlyFrameParameters[1] = 8;
+      B.Ops.insert(B.Ops.begin() + 4, op(NdOp::COPY, X0, {SP}, 0x100e));
+    }
+    if (Mutation == 10 || Mutation == 11) {
+      auto Other = Write;
+      Other.InitializesFrameParameters.clear();
+      if (Mutation == 11)
+        Other.OpaqueValueParameters[0] = {
+            SourceFrameValueEffect::Action::Initialize, "opaque", 48};
+      const auto Call = op(NdOp::CALL, {}, {NdVar::cst(0x4000, 8)},
+                           Mutation == 10 ? 0x1013 : 0x100e);
+      Calls.emplace(*nativeSourceCallKey(Call), Other);
+      B.Ops.insert(B.Ops.begin() + 4, Call);
+      // A later ordinary may-write invalidates the complete initializer;
+      // a live opaque value cannot be overwritten by a byte certificate.
+      if (Mutation == 10) {
+        auto &Ops = B.Ops;
+        std::swap(Ops[4], Ops[5]);
+        Ops.insert(Ops.begin() + 5, op(NdOp::COPY, Output, {SP}, 0x1012));
+      } else
+        B.Ops.insert(B.Ops.begin() + 5, op(NdOp::COPY, Output, {SP}, 0x100f));
+    }
+    for (const auto &O : B.Ops) {
+      if (O.Addr == 0x1010)
+        Calls.emplace(*nativeSourceCallKey(O), Write);
+      if (O.Addr == 0x1018)
+        Calls.emplace(*nativeSourceCallKey(O), Read);
+    }
+    F.Blocks = {B};
+    const auto Site =
+        std::find_if(B.Ops.begin(), B.Ops.end(),
+                     [](const LowOp &O) { return O.Addr == 0x1018; });
+    ASSERT_NE(Site, B.Ops.end());
+    const auto Copies = sourceFrameByValueCopies(
+        F, Arch::AArch64, Calls, *nativeSourceCallKey(*Site), Entry);
+    EXPECT_EQ(bool(Copies), Mutation == 0);
+    if (Copies) {
+      ASSERT_EQ(Copies->size(), 1U);
+      EXPECT_EQ(Copies->front().Bytes, 48U);
+      EXPECT_EQ(Copies->front().FrameOffset, -80);
+    }
+  }
+}
+
+TEST(SourceFrameAnalysis,
+     CompleteOutputEffectsRequireAnOrdinaryWritablePointer) {
+  const auto Signature = completeOutputSignature();
+  for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto S = Signature;
+    SourceFrameEffects E;
+    E.WritableFrameParameters[0] = 48;
+    E.InitializesFrameParameters.insert(0);
+    if (Mutation == 1)
+      E.WritableFrameParameters.clear();
+    if (Mutation == 2)
+      S.Parameters[0].Type = NdType::makeInt(8);
+    if (Mutation == 3)
+      S.Parameters[0].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+    if (Mutation == 4)
+      E.OpaqueValueParameters[0] = {SourceFrameValueEffect::Action::Initialize,
+                                    "opaque", 48};
+    if (Mutation == 5)
+      E.ReturnFrameOrExternal = SourceFrameReturnAlias{0, 48};
+    if (Mutation == 6)
+      E.Scratch = SourceFrameScratchEffect{
+          SourceFrameScratchEffect::Domain::SwiftAccess,
+          SourceFrameScratchEffect::Action::Initialize, 0, 48};
+    EXPECT_EQ(sourceFrameEffectsMatchABI(E, S), Mutation == 0);
+  }
 }

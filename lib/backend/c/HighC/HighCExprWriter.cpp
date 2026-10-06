@@ -16,6 +16,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -2557,15 +2558,10 @@ std::optional<int64_t> HighCWriter::frameDisplacement(const HighExpr &E) const {
           Cur->Var.RegOff == getTargetRegInfo(Opts.TheArch).FramePointer) {
         const int64_t Slot =
             static_cast<int64_t>(getTargetRegInfo(Opts.TheArch).PointerSize);
-        // x86 _except_handler3 re-enters with the established EBP
-        // (`push ebp; mov ebp, esp`), which is entry ESP minus one slot.
-        // Treating that EBP as displacement 0 makes [ebp-0x1c] an adjacent
-        // slot from the try body's `(ESP-4)-0x1c`, and `v = EBP` aliases
-        // poison the join load. Name EBP as that established frame.
-        // This must run before the unassigned-SSA0 heuristic: incoming EBP
-        // is also SSA 0 and would otherwise keep Acc as [ebp-k].
+        // The x86 registration frame is restored explicitly by shared MedIR.
+        // Without that proof an arbitrary incoming EBP is not entry ESP - 4.
         if (Opts.TheArch == Arch::X86)
-          return Acc - Slot;
+          return std::nullopt;
         const int64_t Order[3] = {Acc - Slot, Acc, Acc + Slot};
         for (int64_t Adj : Order)
           if (Slots.count(Adj))
@@ -2689,15 +2685,17 @@ bool HighCWriter::isNamedFrameMemory(const HighExpr &E) const {
   return false;
 }
 
-std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
-  std::string Text = exprStrImpl(E, ParentPrec);
+std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec,
+                                 MemoryLoadDestination *Destination) {
+  std::string Text = exprStrImpl(E, ParentPrec, Destination);
   return SourceRecorder && CurrentFunc
              ? SourceRecorder->expression(CurrentFunc->Entry, E,
                                           std::move(Text))
              : Text;
 }
 
-std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec) {
+std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
+                                     MemoryLoadDestination *Destination) {
   static thread_local int Depth = 0;
   struct Guard {
     int &D;
@@ -2830,13 +2828,20 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec) {
   case ExprKind::UnaryOp:
     return renderUnaryOp(E, ParentPrec);
   case ExprKind::Load: {
+    if (CurrentFunc && E.Operands.size() == 1 &&
+        isSwiftErrorEntrySlot(*CurrentFunc, E.Operands.front()) && E.Type &&
+        E.Type->Kind == NdTypeKind::Ptr && E.Type->Size == 8 &&
+        E.MemoryOrdering == NdMemoryOrdering::None &&
+        E.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+      return "(*" + varName(E.Operands.front()->Var) + ")";
     if (E.Operands.empty())
       return "/* bad load */";
     if (E.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
       if (auto VA = constAddress(*E.Operands[0])) {
         if (imageBackingAddress(*VA))
           return memoryLoadExpr(E.Type, addrStr(*E.Operands[0]),
-                                E.MemoryOrdering, E.MemoryAddressSpace, true);
+                                E.MemoryOrdering, E.MemoryAddressSpace, true,
+                                Destination);
       }
     }
     if (E.MemoryOrdering == NdMemoryOrdering::None &&
@@ -2874,7 +2879,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec) {
           equalSourceTypes(AddressType->Pointee, E.Type))
         return "(*(" + memoryTypeName(E.Type) + " *)(" + Addr + "))";
     }
-    return memoryLoadExpr(E.Type, Addr, E.MemoryOrdering, E.MemoryAddressSpace);
+    return memoryLoadExpr(E.Type, Addr, E.MemoryOrdering, E.MemoryAddressSpace,
+                          false, Destination);
   }
   case ExprKind::Store: {
     if (E.Operands.size() < 2)

@@ -45,11 +45,19 @@ add_neverd_unittest(NeverDAArch64CacheTests
   NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationCPU EmulationRuntime)
 
+add_neverd_unittest(NeverDAArch64NZCVTests
+  AArch64NZCVTests.cpp
+  TIMEOUT 20
+  NO_PRETTY_VALUES
+  LINK_COMPONENTS EmulationCPU EmulationRuntime)
+
 add_neverd_unittest(NeverDAArch64MemoryTests
   AArch64CrossPageTests.cpp
   AArch64VectorMemoryTests.cpp
   AArch64StructureMemoryTests.cpp
   AArch64AcquireReleaseTests.cpp
+  AArch64ExclusiveTests.cpp
+  AArch64AtomicTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
@@ -113,11 +121,24 @@ target_include_directories(NeverDX64MemoryUpdateTests PRIVATE
 
 add_neverd_unittest(NeverDRAMTransactionTests
   RAMTransactionTests.cpp
+  RAMReservationTests.cpp
   X64AtomicTests.cpp
   X64WideAtomicTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDRAMTransactionTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
+add_neverd_unittest(NeverDParallelExecutionTests
+  ParallelExecutionTests.cpp
+  TIMEOUT 30
+  LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDParallelExecutionTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
+add_neverd_unittest(NeverDMMIOAtomicTests
+  MMIOAtomicTests.cpp TIMEOUT 60 LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDMMIOAtomicTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
 
 add_neverd_unittest(NeverDThreadPointerTests
@@ -138,6 +159,7 @@ add_neverd_unittest(NeverDX64IntegerTests
   X64StackTests.cpp
   X64FrameExitTests.cpp
   X64FrameEntryTests.cpp
+  X64ReturnPrefixTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDX64IntegerTests PRIVATE
@@ -159,6 +181,7 @@ add_neverd_unittest(NeverDLinuxProcessTests
   LinuxProcessTests.cpp
   LinuxProcessLayoutTests.cpp
   LinuxMemoryTests.cpp
+  LinuxClockTests.cpp
   LinuxOutputNativeTests.cpp
   ProcessReportTests.cpp
   TIMEOUT 20
@@ -177,12 +200,30 @@ if(TARGET neverd_shared AND TARGET neverd)
     target_link_libraries(NeverDProcessPublicTests PRIVATE LLVMSupport)
   endif()
   add_dependencies(NeverDProcessPublicTests neverd)
+  add_neverd_unittest(NeverDUnpackPublicTests
+    UnpackPublicTests.cpp
+    TIMEOUT 120
+    LINK_LIBS neverd_shared)
+  target_include_directories(NeverDUnpackPublicTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/unittests/unpack)
+  target_compile_definitions(NeverDUnpackPublicTests PRIVATE
+    NEVERD_UNPACK_CLI="$<TARGET_FILE:neverd>"
+    NEVERD_UNPACK_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/unittests/unpack/fixtures/binaries")
+  if(NOT APPLE)
+    target_link_libraries(NeverDUnpackPublicTests PRIVATE LLVMSupport LLVMObject)
+  endif()
+  add_dependencies(NeverDUnpackPublicTests neverd)
 endif()
 include(ProcessFixtures.cmake)
 add_neverd_unittest(NeverDDarwinProcessTests
   DarwinProcessTests.cpp
   DarwinImageTests.cpp
   DarwinMemoryTests.cpp
+  DarwinFileTests.cpp
+  DarwinVectorTests.cpp
+  DarwinTimeTests.cpp
+  DarwinSystemTests.cpp
   DarwinNativeTests.cpp
   TIMEOUT 30
   NO_PRETTY_VALUES
@@ -198,10 +239,13 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidThreadAttributeTests.cpp
   AndroidThreadTests.cpp
   AndroidTimeTests.cpp
+  AndroidSleepTests.cpp
   AndroidSignalTests.cpp
   AndroidSnapshotTests.cpp
   AndroidResidencyTests.cpp
   AndroidFileTests.cpp
+  AndroidFileStatusAtTests.cpp
+  AndroidFileSystemStatusTests.cpp
   AndroidSyscallTests.cpp
   AndroidFormattingTests.cpp
   AndroidScanningTests.cpp
@@ -225,9 +269,12 @@ add_neverd_unittest(NeverDWindowsProcessTests
   WindowsSystemTests.cpp
   WindowsExceptionTests.cpp
   WindowsAlignmentProcessTests.cpp
+  WindowsExclusiveProcessTests.cpp
+  WindowsAtomicProcessTests.cpp
   WindowsSIMDMappingTests.cpp
   WindowsSIMDExecutionTests.cpp
   WindowsContinuationTests.cpp
+  WindowsDeferredTests.cpp
   WindowsSEHTests.cpp
   WindowsContextTests.cpp
   WindowsNativeTestSupport.cpp
@@ -245,6 +292,21 @@ include(WindowsSystemFixtures.cmake)
 include(WindowsExceptionFixtures.cmake)
 include(WindowsSEHFixtures.cmake)
 include(WindowsContextFixtures.cmake)
+include(WindowsDeferredFixtures.cmake)
+
+# Recovery of packed images runs whole stubs on each backend. The protector
+# fixtures are checked-in images, so they need no cross toolchain; the
+# generated-code fixture is built for every guest instruction set.
+add_neverd_unittest(NeverDUnpackExecutionTests
+  UnpackExecutionTests.cpp
+  UnpackGeneratedTests.cpp
+  TIMEOUT 300
+  LINK_COMPONENTS Unpack)
+target_include_directories(NeverDUnpackExecutionTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests/unpack)
+target_compile_definitions(NeverDUnpackExecutionTests PRIVATE
+  NEVERD_UNPACK_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/unittests/unpack/fixtures/binaries")
+include(UnpackGeneratedFixtures.cmake)
 
 add_neverd_unittest(NeverDExecutionBudgetTests
   ExecutionBudgetTests.cpp
@@ -548,7 +610,7 @@ foreach(_driver_name success failure unknown fault loop devices readonly privile
 endforeach()
 # The loader fixture deliberately retains relocations and a compiler-inserted
 # stack protector. The WDM fixture covers the complete synchronous lifecycle.
-foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_async driver_dispatcher driver_context_limits)
+foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority)
   set(_driver_object "${_driver_fixture_dir}/${_driver_name}.obj")
   set(_driver_image "${_driver_fixture_dir}/${_driver_name}.sys")
   if(_driver_name STREQUAL "loader")
@@ -576,11 +638,26 @@ foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl dr
       "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelDispatcherValues.def"
       "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelValues.def")
   endif()
+  if(_driver_name STREQUAL "driver_preemptive")
+    list(APPEND _driver_additional_dependencies
+      fixtures/driver_io.c fixtures/DriverPreemptiveCases.def
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelValues.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/WindowsKernelLayout.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelDispatcherValues.def")
+  endif()
   if(_driver_name STREQUAL "driver_context_limits")
     list(APPEND _driver_additional_dependencies
       fixtures/driver_io.c fixtures/DriverContextLimitCases.def
       "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelValues.def"
       "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelPoolFlags.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/WindowsKernelLayout.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelDispatcherValues.def")
+  endif()
+  if(_driver_name STREQUAL "driver_thread_priority")
+    list(APPEND _driver_additional_dependencies
+      fixtures/driver_io.c fixtures/DriverThreadPriorityCases.def
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelThreadPriorities.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelValues.def"
       "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/WindowsKernelLayout.def"
       "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelDispatcherValues.def")
   endif()
@@ -1157,7 +1234,10 @@ set(_driver_execution_fixture_definitions
   ${_driver_wdm_neither_definitions}
   ${_driver_wdm_user_mapping_definitions})
 add_neverd_unittest(NeverDNativeDriverTests
+  NO_PRETTY_VALUES
   DriverNativeExecutionTests.cpp
+  DriverSchedulingTests.cpp
+  DriverThreadPriorityTests.cpp
   DriverSIMDSEHTests.cpp
   KernelSEHTests.cpp
   TIMEOUT 30

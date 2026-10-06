@@ -188,6 +188,7 @@ public:
   /// Same-block `store 0; store computed; load` must reprint the computed
   /// address. A later non-immediate store invalidates `AllocaImmediates`.
   bool computedAllocaLoadIsForwarded(const llvm::LoadInst *LI) const;
+  bool allocaLoadHasReachingStore(const llvm::LoadInst *LI) const;
   std::optional<std::pair<const llvm::Value *, uint64_t>>
   peelPointerOffset(const llvm::Value *V) const;
   struct TypedAccess {
@@ -574,7 +575,8 @@ public:
   std::string windowsCxxCatchType(const llvm::CatchPadInst &Pad);
   void emitIndent(int N);
   const llvm::AllocaInst *asAllocaPointer(const llvm::Value *V) const;
-  const llvm::Value *allocaStoredValueBefore(const llvm::LoadInst *Load) const;
+  const llvm::Value *allocaStoredValueBefore(const llvm::LoadInst *Load,
+                                             bool BoundExpansion = true) const;
   bool isThisFieldAddress(const llvm::Value *V) const;
   /// Last home is a load of `this+imm` (the field *value*, not the address).
   bool isThisFieldValueHome(const llvm::AllocaInst *Slot) const;
@@ -665,6 +667,11 @@ public:
   std::map<const llvm::BasicBlock *, size_t> DeferredBlockLabels;
   std::set<const llvm::BasicBlock *> ReferencedBlocks;
   bool HasCIntrinsics = false;
+  /// A simple load or store has a type with an aligned(1), may_alias alias,
+  /// so the aliases are declared when UseUnalignedPointers is set.
+  bool NeedsUnalignedTypes = false;
+  /// The aliases were declared; an access spelled through one needs that.
+  bool UnalignedTypesWritten = false;
   std::set<std::string> IntrinsicMappedNames;
   LLVMCAnalysisState Analysis;
   llvm::DominatorTree Dominators;
@@ -684,6 +691,13 @@ public:
   mutable llvm::DenseMap<const llvm::LoadInst *, const llvm::Value *>
       LocalLoadValues;
   mutable llvm::DenseMap<const llvm::AllocaInst *, bool> ExactLocalLoadSlots;
+  /// Exact local definitions for bounded address/type analysis, independent
+  /// of the expression-size limit used when printing an expanded value.
+  mutable llvm::DenseMap<const llvm::LoadInst *, const llvm::Value *>
+      LocalReachingValues;
+  mutable llvm::DenseMap<const llvm::LoadInst *, bool> InitializedAllocaLoads;
+  mutable llvm::DenseMap<const llvm::LoadInst *, const llvm::Value *>
+      CrossBlockLoadValues;
   mutable std::map<const llvm::AllocaInst *, std::string> AllocaImmediates;
   /// Value names and cast operands do not change while this function prints.
   mutable llvm::DenseMap<const llvm::Value *, bool> UnknownPlaceholderCache;
@@ -812,6 +826,7 @@ public:
   /// While printing a phi-fed call at an incoming edge, that slot's argument
   /// prints the value stored on the edge.
   const llvm::AllocaInst *PhiTailSlot = nullptr;
+  const llvm::Value *PhiTailIncoming = nullptr;
 };
 
 } // namespace neverd

@@ -1,6 +1,9 @@
 #include "../../../lib/sdk/capi/ObjCForwardedInitializerSources.h"
 #include "../../../lib/sdk/capi/ObjCSuperGetterSources.h"
+#include "../core/SourceCallExecution.h"
 #include "gtest/gtest.h"
+
+#include "neverd/backend/c/HighC/HighCEmitter.h"
 
 #include "llvm/BinaryFormat/MachO.h"
 
@@ -213,6 +216,27 @@ struct SuperGetterFixture {
     EXPECT_TRUE(Result.Success) << Result.Error;
   }
 };
+
+void makeCGRectGetter(SuperGetterFixture &F) {
+  auto &Method = F.Image.ObjCMethods.front();
+  Method.Selector = "frame";
+  Method.TypeEncoding = "{CGRect={CGPoint=dd}{CGSize=dd}}16@0:8";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  std::string Error;
+  ASSERT_TRUE(assignDarwinObjCSourceABI(*Method.TypeHint, F.Image.Arch, Error));
+  F.Image.ObjCSourceReferences[F.SelectorSlot].Name = Method.Selector;
+  const auto *Metadata =
+      objc_super_getter_detail::uniqueEntry(F.Result.HighFuncs, F.Metadata);
+  ASSERT_NE(Metadata, nullptr);
+  ASSERT_TRUE(Metadata->SourceTypeHint);
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  Options.OnlyFunctionEntries = {F.Root, F.Getter, F.Metadata};
+  Options.SourceTypeHints.emplace(F.Metadata, *Metadata->SourceTypeHint);
+  F.Result = Pipeline().run(F.Image, F.Context, Options);
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+}
 
 void makeForwardedInitializer(SuperGetterFixture &F) {
   F.word(F.Root, 0x90000002);
@@ -700,3 +724,233 @@ TEST(ObjCSuperGetterSources, BoundCallsRequireCurrentProjectionAndProvider) {
   EXPECT_TRUE(Helpers.empty());
 }
 } // namespace
+
+TEST(ObjCSuperGetterSources,
+     KeepsFourCGRectResultsInTheCurrentSelectorContract) {
+  SuperGetterFixture F;
+  makeCGRectGetter(F);
+  const auto Contract =
+      objc_super_getter_detail::prove(F.Image, F.Result, F.Getter, F.Root);
+  ASSERT_TRUE(Contract);
+  ASSERT_EQ(Contract->MessageSignature.ReturnComponents.size(), 4U);
+  const auto Plan = discoverObjCSuperGetterSources(F.Image, F.Result);
+  const auto *Root =
+      objc_super_getter_detail::uniqueEntry(F.Result.HighFuncs, F.Root);
+  ASSERT_NE(Root, nullptr);
+  auto Projection = projectObjCSuperGetter(*Root, F.Image, Plan);
+  ASSERT_TRUE(Projection.Projected);
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &Function : F.Result.HighFuncs)
+    Functions.emplace(Function.Entry, &Function);
+  const auto Bound = [&](const HighExpr &Expression) {
+    return objCSuperGetterSourceCallBound(Expression, F.Image, Plan,
+                                          Projection.Function, Functions);
+  };
+  const auto &Call = *Projection.Function.Body.front().RetVal;
+  EXPECT_TRUE(Bound(Call));
+  EXPECT_TRUE(Bound(*Call.Operands[2]));
+  EXPECT_TRUE(Bound(*Call.Operands[3]));
+  const auto *Audit =
+      objc_super_getter_detail::uniqueEntry(F.Result.FunctionAudits, F.Root);
+  ASSERT_NE(Audit, nullptr);
+  EXPECT_TRUE(sourceBodyLimitation(Projection.Function,
+                                   *Projection.Function.SourceTypeHint, Audit,
+                                   Bound)
+                  .empty());
+}
+
+TEST(ObjCSuperGetterSources,
+     CGRectPublicationRejectsChangedCarriersAndOccurrence) {
+  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    SuperGetterFixture F;
+    makeCGRectGetter(F);
+    const auto Plan = discoverObjCSuperGetterSources(F.Image, F.Result);
+    const auto *Root =
+        objc_super_getter_detail::uniqueEntry(F.Result.HighFuncs, F.Root);
+    ASSERT_NE(Root, nullptr);
+    auto P = projectObjCSuperGetter(*Root, F.Image, Plan);
+    ASSERT_TRUE(P.Projected);
+    std::map<va_t, const HighFunc *> Functions;
+    for (const auto &Function : F.Result.HighFuncs)
+      Functions.emplace(Function.Entry, &Function);
+    const auto Bound = [&](const HighExpr &Expression) {
+      return objCSuperGetterSourceCallBound(Expression, F.Image, Plan,
+                                            P.Function, Functions);
+    };
+    auto &Call = *P.Function.Body.front().RetVal;
+    ASSERT_TRUE(Bound(Call));
+    switch (Mutation) {
+    case 0:
+      P.Function.SourceTypeHint->ReturnComponents[3].RegisterOffset += 16;
+      break;
+    case 1:
+      P.Function.ReturnType = NdType::makeFloat(8);
+      break;
+    case 2:
+      P.Function.Body.front().Addr += 4;
+      break;
+    case 3:
+      P.Function.DoesNotReturn = true;
+      break;
+    case 4:
+      P.Function.StructuredExceptionRegions = 1;
+      break;
+    case 5: {
+      auto Hint = std::make_shared<SourceCallTypeHint>(*Call.SourceCallHint);
+      Hint->Signature.ReturnComponents[3].ValueBytes = 4;
+      Call.SourceCallHint = Hint;
+      break;
+    }
+    case 6:
+      Call.Operands[0]->Var.RegOff += 8;
+      break;
+    case 7:
+      F.Image.DyldBindSlots[0x2f08].WeakImport = true;
+      break;
+    case 8:
+      F.word(F.Getter + 44, 0xd503201f);
+      break;
+    case 9:
+      Functions.erase(F.Metadata);
+      break;
+    }
+    EXPECT_FALSE(Bound(Call));
+  }
+}
+
+TEST(ObjCSuperGetterSources,
+     MixedReturnsKeepSeparateHelpersForTheSameMachineBody) {
+  SuperGetterFixture F;
+  makeCGRectGetter(F);
+  constexpr va_t SecondRoot = 0x1020;
+  constexpr va_t SecondSlot = 0x2108;
+  F.word(SecondRoot, 0xb0000002);
+  F.word(SecondRoot + 4, 0x91042042);
+  F.word(SecondRoot + 8, F.branch(SecondRoot + 8, F.Getter, false));
+  F.Image.ObjCSourceReferences[SecondSlot] = {
+      ObjCSourceReference::Kind::Selector, SecondSlot, 8, "isHighlighted", {}};
+  auto Method = F.Image.ObjCMethods.front();
+  Method.Implementation = SecondRoot;
+  Method.Selector = "isHighlighted";
+  Method.TypeEncoding = "B16@0:8";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  std::string Error;
+  ASSERT_TRUE(assignDarwinObjCSourceABI(*Method.TypeHint, F.Image.Arch, Error));
+  F.Image.ObjCMethods.push_back(Method);
+  F.Image.Symbols.push_back({"second_root", SecondRoot, 0, true});
+  F.Image.Exports.push_back({"second_root", 0, SecondRoot});
+  const auto *Metadata =
+      objc_super_getter_detail::uniqueEntry(F.Result.HighFuncs, F.Metadata);
+  ASSERT_NE(Metadata, nullptr);
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  Options.OnlyFunctionEntries = {F.Root, SecondRoot, F.Getter, F.Metadata};
+  Options.SourceTypeHints.emplace(F.Metadata, *Metadata->SourceTypeHint);
+  F.Result = Pipeline().run(F.Image, F.Context, Options);
+  ASSERT_TRUE(F.Result.Success);
+  const auto Plan = discoverObjCSuperGetterSources(F.Image, F.Result);
+  ASSERT_EQ(Plan.Callers.size(), 2U);
+  std::set<std::string> Helpers;
+  const auto Source = renderObjCSuperGetterHelpers(
+      F.Image, Plan, {F.Root, SecondRoot}, Helpers);
+  EXPECT_TRUE(Helpers.count("neverd_objc_super_getter_1100"));
+  EXPECT_TRUE(Helpers.count("neverd_objc_super_getter_1100_cgrect"));
+  EXPECT_EQ(Helpers.size(), 4U);
+  EXPECT_NE(Source.find("_1100_cgrect("), std::string::npos);
+}
+
+TEST(ObjCSuperGetterSources, CGRectHelperMatchesNativeDispatchAtO0AndO2) {
+  SuperGetterFixture F;
+  makeCGRectGetter(F);
+  const auto Plan = discoverObjCSuperGetterSources(F.Image, F.Result);
+  const auto *Root =
+      objc_super_getter_detail::uniqueEntry(F.Result.HighFuncs, F.Root);
+  ASSERT_NE(Root, nullptr);
+  auto P = projectObjCSuperGetter(*Root, F.Image, Plan);
+  ASSERT_TRUE(P.Projected);
+  P.Function.Name = "projected_root";
+  std::string Emitted;
+  llvm::raw_string_ostream OS(Emitted);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  Options.Image = &F.Image;
+  ASSERT_TRUE(HighCEmitter().emit({P.Function}, OS, Options));
+  std::set<std::string> Helpers;
+  auto Source = renderObjCSuperGetterHelpers(F.Image, Plan, {F.Root}, Helpers);
+  const std::string Header = "#include <objc/runtime.h>";
+  const auto Position = Source.find(Header);
+  ASSERT_NE(Position, std::string::npos);
+  Source.replace(Position, Header.size(),
+                 "void *sel_registerName(const char *name);");
+  const auto Record = typeToC(P.Function.ReturnType);
+  const auto Name = objc_super_getter_detail::helperName(
+      *validatedObjCSuperGetter(F.Image, Plan, F.Root));
+  std::string Program = "#include <string.h>\n" + Emitted + Source;
+  Program += R"C(
+static void *slot;
+static unsigned metadata_calls, dispatch_calls, bad;
+static const uint64_t words[4] = {0x3fe0000000000000ULL, 0x8000000000000000ULL,
+                                 0x7ff0000000000000ULL, 0x7ff8000000000011ULL};
+void *sel_registerName(const char *name) { (void)name; return (void *)0x2220; }
+uint64_t metadata(void) {
+  ++metadata_calls;
+  slot = (void *)0x2220;
+  return 0x3330;
+}
+)C";
+  Program += Record + R"C( test_super(void *p, void *selector) {
+  void *receiver, *current_class;
+  memcpy(&receiver, p, 8);
+  memcpy(&current_class, (const unsigned char *)p + 8, 8);
+  if (receiver != (void *)0x1110 || current_class != (void *)0x3330 ||
+      selector != (void *)0x2220 || metadata_calls != dispatch_calls + 1)
+    ++bad;
+  ++dispatch_calls;
+)C" + Record +
+             R"C( result;
+  memcpy(&result, words, 32);
+  return result;
+}
+#if defined(__aarch64__) && defined(__APPLE__)
+__asm__(".text\n.p2align 2\n.globl _objc_msgSendSuper2\n"
+        "_objc_msgSendSuper2:\nb _test_super\n"
+        ".globl _original_getter\n_original_getter:\n"
+        "sub sp, sp, #48\nstp x20, x19, [sp, #16]\n"
+        "stp x29, x30, [sp, #32]\nadd x29, sp, #32\n"
+        "mov x19, x2\nmov x20, x0\nbl _metadata\n"
+        "stp x20, x0, [sp]\nldr x1, [x19]\nmov x0, sp\n"
+        "bl _objc_msgSendSuper2\nldp x29, x30, [sp, #32]\n"
+        "ldp x20, x19, [sp, #16]\nadd sp, sp, #48\nret\n");
+)C" + Record +
+             R"C( original_getter(void *, void *, void **);
+#else
+)C" + Record +
+             R"C( portable_super(void *, void *)
+#if defined(__APPLE__)
+__asm__("_objc_msgSendSuper2");
+#else
+__asm__("objc_msgSendSuper2");
+#endif
+)C" + Record +
+             R"C( portable_super(void *p, void *s) { return test_super(p, s); }
+#endif
+int main(void) {
+  slot = (void *)0x4440;
+)C" + Record +
+             " generated = " + Name +
+             R"C(((void *)0x1110, 0, &slot, (void *)metadata);
+  if (bad || metadata_calls != 1 || dispatch_calls != 1 || memcmp(&generated, words, 32)) return 1;
+#if defined(__aarch64__) && defined(__APPLE__)
+  slot = (void *)0x4440;
+)C" + Record +
+             R"C( original = original_getter((void *)0x1110, 0, &slot);
+  if (bad || metadata_calls != 2 || dispatch_calls != 2 || memcmp(&original, &generated, 32)) return 2;
+#endif
+  return 0;
+}
+)C";
+  source_call_execution_test::compileAndRun(Program, {"-O0"});
+  source_call_execution_test::compileAndRun(Program, {"-O2"});
+}

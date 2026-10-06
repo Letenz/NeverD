@@ -18,6 +18,7 @@ a decision somebody made rather than a pattern nobody tightened.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -350,9 +351,119 @@ class HistoryAllowance:
     commits: frozenset[str]
     line: str
     reason: str
+    # Exact UTF-8 line hashes let a reviewed cleanup avoid republishing private
+    # text in this table. Path and full commit restrictions still apply.
+    line_sha256: frozenset[str] = frozenset()
 
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
+    HistoryAllowance(
+        path="docs/benchmarks/2026-10-05-arm64-hvf-completion-atomic.json",
+        rule="private-path",
+        commits=frozenset({
+            "a50bff6e89aae6514cfb82464531a2738651e1c6",
+            "72e28d1c99e49fe067eb7a485d2605c2f200a100",
+            "ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120",
+        }),
+        line="",
+        reason=(
+            "Reviewed historical ARM64 HVF benchmark paths. Publication "
+            "normalizes only checkout/cache prefixes and preserves measurements "
+            "and binary hashes. Exact line digests avoid republishing the "
+            "private prefixes; no current or future occurrence is permitted."
+        ),
+        line_sha256=frozenset({
+            "117b049ad55781d3b77eb19f2f5b2bdae9fbb3fb71dd45ae6332152912bfb86c",
+            "5125e718871cef21f168a6449649f8a6bda61f76db780ed10c59de1c2ff2c1ae",
+            "71abb0673f1506ba1eff9aca60596139f32f841297c695ec00fd24c91828ec9f",
+            "8895bddb55b50a7a37ebb1bcfe56e442ed7f9d15dda200e917a1d35bdf028424",
+            "a93a76c6d5165b7409301cfda34eb7c8514fde1068e8e2cd970177f87ea90aff",
+            "d228c49e6de0d0ff8aa9aae5dcce3f46aa872bb0603e00a260c1a8b26a83c664",
+            "da5a7589b071e998ea2b3569eba3c21e4fd088225d158747ee7f367a23831914",
+            "ea7f836e085b39ab14cf8d7c67728b9292b772b1cac19cc45fe774060c24e5cf",
+        }),
+    ),
+    HistoryAllowance(
+        path="docs/benchmarks/2026-10-05-arm64-hvf-completion-blocking.json",
+        rule="private-path",
+        commits=frozenset({
+            "a50bff6e89aae6514cfb82464531a2738651e1c6",
+            "72e28d1c99e49fe067eb7a485d2605c2f200a100",
+            "ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120",
+        }),
+        line="",
+        reason=(
+            "Reviewed historical ARM64 HVF benchmark paths. Publication "
+            "normalizes only checkout/cache prefixes and preserves measurements "
+            "and binary hashes. Exact line digests avoid republishing the "
+            "private prefixes; no current or future occurrence is permitted."
+        ),
+        line_sha256=frozenset({
+            "6749c867ff97a650cf2d55e195158269ca59f96946c8280979e3e1b1e1b12d6a",
+            "71abb0673f1506ba1eff9aca60596139f32f841297c695ec00fd24c91828ec9f",
+            "ae135f6f4741c3dbcae82bd3038a408dcbfb15f3858ec55eb476ad5f5f30c45e",
+            "d228c49e6de0d0ff8aa9aae5dcce3f46aa872bb0603e00a260c1a8b26a83c664",
+            "d8fffa7dc8dd869deb39276ed89191cbcf64ad1da13ef308c755d9352e0c27a9",
+            "da5a7589b071e998ea2b3569eba3c21e4fd088225d158747ee7f367a23831914",
+            "df7dd3a9cd21b0e8e3153c31a14f91f6cbbdb8b3338b05a300988529da645e59",
+            "ea7f836e085b39ab14cf8d7c67728b9292b772b1cac19cc45fe774060c24e5cf",
+        }),
+    ),
+    HistoryAllowance(
+        path="docs/benchmarks/2026-10-05-arm64-hvf-completion-metadata.json",
+        rule="private-path",
+        commits=frozenset({
+            "a50bff6e89aae6514cfb82464531a2738651e1c6",
+            "72e28d1c99e49fe067eb7a485d2605c2f200a100",
+            "ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120",
+        }),
+        line="",
+        reason=(
+            "Reviewed historical ARM64 HVF benchmark paths. Publication "
+            "normalizes only checkout/cache prefixes and preserves measurements "
+            "and binary hashes. Exact line digests avoid republishing the "
+            "private prefixes; no current or future occurrence is permitted."
+        ),
+        line_sha256=frozenset({
+            "30cce435771a4e82d1bd7ba6270a12cdcc12f0695681bdae63235a2259f293e1",
+            "32068396a6531eed8ebe7d5cf6d8931d1919100d3c9f7aca7f50a8aef138a1b3",
+            "4c6cf7808a4c5b68083e1107750570ccc539f52873bd98b3b2d1795fd760eb1f",
+            "6b4bc77a6c220a20f6df0ecaa87db0476a2ef03ba2167297dddf1615c8d33b66",
+            "7d41e56a75b8b4ebd0b5fa0b14918ea4d8c455eecbb3a8bb46f086d852455231",
+            "b95a48a96ac1debfa8b7c43209118fb23fbef6fe63eeb546a5015031dac9df5f",
+            "c7ce6a2662ad1dad8c532c8909a45658d9ca24ae6247d10ea10c1c6f55451094",
+            "d11fb797aa844886e33cda5d2a58e9ef1c7f2b1b23cfdf8e66a692ecc33380e8",
+            "e3d1e9d5548f09c4756b3182364604c1ba8c42af9def4204dab2f777c50f4e6e",
+            "f87e91d4618b654be74d28cccbbfec76d6db122f6f35bb73e898714a7ef2c321",
+            "fdbd79b59897334a3cc92d4e3e5652c2c92696529da1dccfc34b9c3422f4ecb3",
+        }),
+    ),
+    HistoryAllowance(
+        path="docs/benchmarks/2026-10-05-arm64-hvf-watchdog.json",
+        rule="private-path",
+        commits=frozenset({
+            "1655143e6cbac4e080aadb65f6a6fbff05c63cd8",
+            "72e28d1c99e49fe067eb7a485d2605c2f200a100",
+            "ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120",
+        }),
+        line="",
+        reason=(
+            "Reviewed historical ARM64 HVF benchmark paths. Publication "
+            "normalizes only checkout/cache prefixes and preserves measurements "
+            "and binary hashes. Exact line digests avoid republishing the "
+            "private prefixes; no current or future occurrence is permitted."
+        ),
+        line_sha256=frozenset({
+            "1af51e627f88bc5e24c1fb921cb43d2520c2604e1760e5cdf925a128c77869c6",
+            "1b6b6a19768095b78684d9e67dd16f7abaae0acb99267bfaf0c0680660f963a6",
+            "2184761a48ce1860e7bbe302d4222c19aec4e59ecc767fc6211cbbad1e21a524",
+            "3d4748943838bba4e49a8def71577c79e0ebd6ebe51e5d5d437a13f38efe1ab0",
+            "758d4bec8e9496a3fab64903ec8f28c2e89c33b8b600d47078b47f7e30cd2df4",
+            "9761aea20a100092e8cdad8059623f6932dacd9524c894448a259e1686d83ab6",
+            "9b05769070913f2d16df97b8b5a2e72d530a25c33f84080c8f6ba2a7c624e227",
+            "aeacc6d5650dbc43883a24cff65d377e0665dc8613e2207bb04efbd1482fc49c",
+        }),
+    ),
     HistoryAllowance(
         path="unittests/semantic/x86/X86_X87TranscendentalRTTests.cpp",
         rule="provenance-phrase",
@@ -396,7 +507,10 @@ def is_allowed_history_line(
         a.rule == rule.name
         and history_commit in a.commits
         and path == a.path
-        and line == a.line
+        and (
+            line == a.line
+            or hashlib.sha256(line.encode("utf-8")).hexdigest() in a.line_sha256
+        )
         for a in HISTORY_ALLOWED
     )
 

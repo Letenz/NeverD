@@ -13,6 +13,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -46,6 +47,10 @@ inline void collectSourceBodyDiagnostics(
     const std::function<bool(const HighExpr &)> &CallAllowed,
     SourceProjectionDiagnostics &Diagnostics) {
   using namespace objc_projection_detail;
+  if (hasSwiftErrorResult(Hint) &&
+      !isSwiftErrorEntryProjected(Func, Hint.Architecture))
+    Diagnostics.add(SourceProjectionIssue::Signature,
+                    "Swift entry error output has no current projection proof");
   if (!Func.SourceTypeHint || !sameHint(*Func.SourceTypeHint, Hint) ||
       !equalSourceTypes(Func.ReturnType, Hint.ReturnType) ||
       Func.Params.size() != Hint.Parameters.size() ||

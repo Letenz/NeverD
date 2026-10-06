@@ -30,6 +30,7 @@
 #include <deque>
 #include <limits>
 #include <map>
+#include <memory>
 #include <set>
 #include <tuple>
 #include <unordered_map>
@@ -102,7 +103,7 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(15); // Certificate semantic schema, independent of report formatting.
+  Number(17); // Certificate semantic schema, independent of report formatting.
   Number(Contract.RetainUnauditedNativeBoundaries);
   Number(Contract.AllowOverlappingNativeInstructions);
   Number(Contract.DeferNativeConditionalEdges);
@@ -332,6 +333,7 @@ struct RefinementSession {
   bool NativeFinite = false;
   uint64_t NativeInputOperations = 0, NativeInputEffects = 0;
   uint64_t NativeInputBytes = 0;
+  const LowFunc *Original = nullptr;
 };
 
 class Checker {
@@ -373,9 +375,13 @@ class Checker {
   LowIRIndependenceResult &Result = OwnedResult;
   SymContext OwnedContext;
   SymContext &Ctx = OwnedContext;
+  detail::FiniteDomainEncoding FrameDomain{Ctx, Limits.Solver};
   // One completed model-free query in this immutable DAG and fixed solver
   // configuration. No model, incomplete answer or cross-context fact escapes.
   SymRef LastCompletedQuery;
+  // Keep one completed SAT fact across intervening queries in this immutable
+  // DAG. A retained hit still consumes the same charged query request.
+  SymRef LastFeasibleQuery;
   solver::SatResult LastCompletedAnswer = solver::SatResult::Invalid;
   RefinementSession *Refinement = nullptr;
   bool CandidateExecution = false;
@@ -419,6 +425,48 @@ class Checker {
       fail(Status::BudgetExceeded, "loop register metadata budget exhausted");
   }
 
+  void validateLoopLocation(const LowIRLoopLocation &L, LowIRLoopSide Side,
+                            bool UseEntryPrefix) {
+    if (!L.Bytes || L.Bytes > 8)
+      fail(Status::Invalid, "invalid loop location width");
+    switch (L.Space) {
+    case LowIRLoopSpace::Register:
+      if (!scalar(NdVar::reg(L.Offset, L.Bytes)))
+        fail(Status::Invalid, "invalid loop register location");
+      trackRegister(NdVar::reg(L.Offset, L.Bytes));
+      break;
+    case LowIRLoopSpace::Frame:
+      if (!Contract.Frame ||
+          std::bit_cast<int64_t>(L.Offset) < Contract.Frame->Begin ||
+          std::bit_cast<int64_t>(L.Offset) >= Contract.Frame->End ||
+          static_cast<uint64_t>(Contract.Frame->End) - L.Offset < L.Bytes)
+        fail(Status::Invalid, "loop location exceeds the certified frame");
+      break;
+    case LowIRLoopSpace::SystemFlags:
+      if (!Contract.X64FlagsProfile || L.Offset || L.Bytes != 8)
+        fail(Status::Invalid, "invalid loop system-flags location");
+      break;
+    case LowIRLoopSpace::FunctionTemporary: {
+      if (!UseEntryPrefix || Side == LowIRLoopSide::Entry)
+        fail(Status::Invalid,
+             "loop function-temporary state requires a checked prefix");
+      if (!scalar(NdVar::tmp(L.Offset, L.Bytes)))
+        fail(Status::Invalid, "invalid loop function-temporary location");
+      const auto *F = Side == LowIRLoopSide::Candidate ||
+                              Side == LowIRLoopSide::CandidatePrefix
+                          ? &Refinement->Candidate
+                          : Refinement->Original;
+      for (uint16_t I = 0; I != L.Bytes; ++I)
+        if (!F || !F->isFunctionTemporaryByte(L.Offset + I))
+          fail(Status::Invalid, "loop function-temporary location is not "
+                                "declared on its side");
+      break;
+    }
+    default:
+      fail(Status::Invalid, "unknown loop location space");
+    }
+  }
+
   bool stopAtCutpoint(Path &P) {
     if (!inductive() || P.SkipCutpoint) {
       P.SkipCutpoint = false;
@@ -427,6 +475,7 @@ class Checker {
     const va_t Address =
         Provider ? P.NativeAddress : Blocks.at(P.BlockId)->StartAddr;
     const auto &Cuts = Refinement->LoopPlan->Cutpoints;
+    SymRef Selected;
     for (size_t I = 0; I != Cuts.size(); ++I) {
       if (Refinement->PrefixSearchCutpoint >= 0 &&
           static_cast<size_t>(Refinement->PrefixSearchCutpoint) != I)
@@ -437,6 +486,37 @@ class Checker {
         continue;
       auto &Endpoints = CandidateExecution ? Refinement->CandidateReturns
                                            : Refinement->OriginalReturns;
+      const auto &Guards =
+          CandidateExecution ? Cuts[I].CandidateGuards : Cuts[I].OriginalGuards;
+      if (!Guards.empty()) {
+        const auto Left = loopGuard(P.Left, P.LeftSystemFlags, Guards);
+        const auto Right = loopGuard(P.Right, P.RightSystemFlags, Guards);
+        equal(P.Predicate, Left, Right, "loop cutpoint selector");
+        if (Selected &&
+            query(Ctx.mkAnd(P.Predicate, Ctx.mkAnd(Selected, Left))) !=
+                solver::SatResult::Unsat)
+          fail(Status::Invalid, "overlapping feasible loop cutpoint selectors");
+        Selected = Selected ? Ctx.mkOr(Selected, Left) : Left;
+        const auto Domain = Ctx.mkAnd(P.Predicate, Left);
+        if (query(Domain) == solver::SatResult::Unsat)
+          continue;
+        if (++ScheduledPaths > Limits.MaxPaths)
+          fail(Status::BudgetExceeded, "loop selector path budget exhausted");
+        Endpoints.push_back({P.Left,
+                             Domain,
+                             P.LeftSystemFlags,
+                             {},
+                             P.Written,
+                             static_cast<int>(I),
+                             P.DefinedFunctionTemporaries});
+        ++(CandidateExecution ? Refinement->CandidateCutpoints
+                              : Refinement->OriginalCutpoints);
+        if (Refinement->PrefixSearchCutpoint >= 0) {
+          Pending.clear();
+          return true;
+        }
+        continue;
+      }
       Endpoints.push_back({std::move(P.Left),
                            P.Predicate,
                            P.LeftSystemFlags,
@@ -449,6 +529,12 @@ class Checker {
       if (Refinement->PrefixSearchCutpoint >= 0)
         Pending.clear();
       return true;
+    }
+    if (Selected) {
+      const auto Unmatched = Ctx.mkAnd(P.Predicate, Ctx.mkNot(Selected));
+      if (query(Unmatched) == solver::SatResult::Unsat)
+        return true;
+      P.Predicate = Unmatched;
     }
     return false;
   }
@@ -465,21 +551,52 @@ class Checker {
       fail(Status::BudgetExceeded, "symbolic-node budget exhausted");
   }
 
-  solver::SatResult query(SymRef Predicate) {
-    nodes();
-    if (Predicate && Predicate == LastCompletedQuery)
-      return LastCompletedAnswer;
+  void chargeQuery() {
     if (Result.SolverQueries >= Limits.MaxSolverQueries)
       fail(Status::BudgetExceeded, "solver-query budget exhausted");
     ++Result.SolverQueries;
-    const auto Answer =
-        solver::checkSat(Ctx, Predicate, nullptr, Limits.Solver);
+  }
+
+  solver::SatResult
+  query(SymRef Predicate,
+        std::unique_ptr<solver::BitVectorSolver> *EncodingCache = nullptr) {
+    nodes();
+    if (Predicate && Predicate == LastCompletedQuery)
+      return LastCompletedAnswer;
+    chargeQuery();
+    if (Predicate && Predicate == LastFeasibleQuery) {
+      LastCompletedQuery = Predicate;
+      LastCompletedAnswer = solver::SatResult::Sat;
+      return LastCompletedAnswer;
+    }
+    const bool Reused = EncodingCache && *EncodingCache;
+    const auto Fresh = [&] {
+      auto Options = Limits.Solver;
+      Options.BuildModel = false;
+      return std::make_unique<solver::BitVectorSolver>(Ctx, Options);
+    };
+    if (EncodingCache && !*EncodingCache)
+      *EncodingCache = Fresh();
+    auto Answer = EncodingCache ? (*EncodingCache)->check({Predicate})
+                                : solver::checkSat(Ctx, Predicate, nullptr,
+                                                   Limits.Solver);
+    // Accumulated encodings can fill a session although this query alone fits.
+    // Charge the second attempt and retry once with an empty encoder. Width,
+    // malformed-input and SAT-search exhaustion are never retried here.
+    if (Reused && Answer == solver::SatResult::Unknown &&
+        (*EncodingCache)->encodeError() == solver::BlastError::TooManyGates) {
+      chargeQuery();
+      *EncodingCache = Fresh();
+      Answer = (*EncodingCache)->check({Predicate});
+    }
     if (Answer == solver::SatResult::Unknown)
       fail(Status::BudgetExceeded, "relational solver budget exhausted");
     if (Answer == solver::SatResult::Invalid)
       fail(Status::Invalid, "invalid relational solver query");
     LastCompletedQuery = Predicate;
     LastCompletedAnswer = Answer;
+    if (Answer == solver::SatResult::Sat)
+      LastFeasibleQuery = Predicate;
     return Answer;
   }
 
@@ -537,9 +654,8 @@ class Checker {
   std::optional<llvm::APInt> frameDifference(SymRef Predicate, SymRef Value) {
     uint64_t Queries = Result.SolverQueries;
     const auto Offset = detail::proveFrameOffset(
-        Ctx, Predicate, Value, EntryRoot, Limits.Solver,
-        Limits.MaxSolverQueries, Limits.MaxSymbolicNodes, Queries,
-        &FrameProofs);
+        FrameDomain, Predicate, Value, EntryRoot, Limits.MaxSolverQueries,
+        Limits.MaxSymbolicNodes, Queries, &FrameProofs);
     Result.SolverQueries = static_cast<uint32_t>(Queries);
     if (Offset.Status == detail::FrameOffsetStatus::Invalid)
       fail(Status::Invalid, "invalid frame-offset proof");
@@ -1465,9 +1581,14 @@ class Checker {
             // covers the incoming domain. Keep that domain without making
             // later queries reprove this branch fact. Unknown still refuses,
             // and two feasible edges retain their distinct predicates.
-            if (query(Taken) == solver::SatResult::Unsat) {
+            // These two complementary queries share one incoming domain.
+            // End encoding reuse with the branch so unrelated native history
+            // cannot make a later small query search a much larger formula.
+            std::unique_ptr<solver::BitVectorSolver> BranchEncoding;
+            if (query(Taken, &BranchEncoding) == solver::SatResult::Unsat) {
               scheduleNative(std::move(P), Fallthrough, Incoming);
-            } else if (query(Other) == solver::SatResult::Unsat) {
+            } else if (query(Other, &BranchEncoding) ==
+                       solver::SatResult::Unsat) {
               nativeTargets(std::move(P), Left.branchTarget(), Incoming);
             } else {
               nativeTargets(P, Left.branchTarget(), Taken);
@@ -1753,7 +1874,7 @@ public:
         fail(Status::Invalid, "loop proof requires a nonempty cutpoint plan");
       if (Cuts.size() > Limits.MaxBlockVisits || Cuts.size() > INT_MAX)
         fail(Status::BudgetExceeded, "loop cutpoint metadata budget exhausted");
-      std::set<va_t> OriginalAddresses, CandidateAddresses;
+      std::map<va_t, bool> OriginalAddresses, CandidateAddresses;
       uint64_t Metadata = 0, Operations = 0;
       const auto Charge = [&](uint64_t Count) {
         if (Count > Limits.MaxInstructions - Metadata)
@@ -1761,37 +1882,40 @@ public:
                "loop template metadata budget exhausted");
         Metadata += Count;
       };
-      const auto Location = [&](const LowIRLoopLocation &L) {
-        if (!L.Bytes || L.Bytes > 8)
-          fail(Status::Invalid, "invalid loop location width");
-        switch (L.Space) {
-        case LowIRLoopSpace::Register:
-          if (!scalar(NdVar::reg(L.Offset, L.Bytes)))
-            fail(Status::Invalid, "invalid loop register location");
-          trackRegister(NdVar::reg(L.Offset, L.Bytes));
-          break;
-        case LowIRLoopSpace::Frame:
-          if (!Contract.Frame ||
-              std::bit_cast<int64_t>(L.Offset) < Contract.Frame->Begin ||
-              std::bit_cast<int64_t>(L.Offset) >= Contract.Frame->End ||
-              static_cast<uint64_t>(Contract.Frame->End) - L.Offset < L.Bytes)
-            fail(Status::Invalid, "loop location exceeds the certified frame");
-          break;
-        case LowIRLoopSpace::SystemFlags:
-          if (!Contract.X64FlagsProfile || L.Offset || L.Bytes != 8)
-            fail(Status::Invalid, "invalid loop system-flags location");
-          break;
-        default:
-          fail(Status::Invalid, "unknown loop location space");
-        }
-      };
       for (const auto &C : Cuts) {
         if (C.GeneralizeEntryPrefix && !C.UseEntryPrefix)
           fail(Status::Invalid,
                "generalized loop template requires a checked prefix");
-        if (!OriginalAddresses.insert(C.OriginalAddress).second ||
-            !CandidateAddresses.insert(C.CandidateAddress).second)
-          fail(Status::Invalid, "duplicate loop cutpoint address");
+        const auto Address = [&](std::map<va_t, bool> &Seen, va_t Value,
+                                 bool Guarded) {
+          const auto [It, Added] = Seen.emplace(Value, Guarded);
+          if (!Added && (!It->second || !Guarded))
+            fail(Status::Invalid,
+                 "duplicate loop cutpoint address without guards");
+        };
+        Address(OriginalAddresses, C.OriginalAddress,
+                !C.OriginalGuards.empty());
+        Address(CandidateAddresses, C.CandidateAddress,
+                !C.CandidateGuards.empty());
+        for (const auto *Guards : {&C.OriginalGuards, &C.CandidateGuards}) {
+          Charge(Guards->size());
+          for (const auto &G : *Guards) {
+            if (G.Location.Space == LowIRLoopSpace::FunctionTemporary)
+              fail(Status::Invalid,
+                   "loop guards cannot read function temporaries");
+            validateLoopLocation(G.Location,
+                                 Guards == &C.OriginalGuards
+                                     ? LowIRLoopSide::Original
+                                     : LowIRLoopSide::Candidate,
+                                 C.UseEntryPrefix);
+            const auto WidthMask =
+                G.Location.Bytes == 8
+                    ? UINT64_MAX
+                    : (uint64_t{1} << (8 * G.Location.Bytes)) - 1;
+            if (!G.Mask || (G.Mask & ~WidthMask) || (G.Value & ~G.Mask))
+              fail(Status::Invalid, "invalid loop guard mask or value");
+          }
+        }
         Charge(C.Inputs.size());
         Charge(C.OriginalState.size());
         Charge(C.CandidateState.size());
@@ -1813,7 +1937,7 @@ public:
               !C.UseEntryPrefix)
             fail(Status::Invalid,
                  "loop prefix input requires a checked prefix");
-          Location(I.Location);
+          validateLoopLocation(I.Location, I.Side, C.UseEntryPrefix);
           if (!I.Temporary.isTemp() || !scalar(I.Temporary) ||
               I.Temporary.Size != I.Location.Bytes)
             fail(Status::Invalid, "invalid loop input binding");
@@ -1840,7 +1964,11 @@ public:
         for (const auto *Assignments : {&C.OriginalState, &C.CandidateState}) {
           std::set<std::pair<LowIRLoopSpace, uint64_t>> Bound;
           for (const auto &A : *Assignments) {
-            Location(A.Location);
+            validateLoopLocation(A.Location,
+                                 Assignments == &C.OriginalState
+                                     ? LowIRLoopSide::Original
+                                     : LowIRLoopSide::Candidate,
+                                 C.UseEntryPrefix);
             Operand(A.Value);
             if (A.Value.Size != A.Location.Bytes)
               fail(Status::Invalid, "loop assignment width mismatch");
@@ -1867,20 +1995,50 @@ public:
   }
 
 private:
-  SymRef loopRead(TerminalState &State, const LowIRLoopLocation &L) {
+  SymRef loopRead(SymState &State, SymRef SystemFlags,
+                  const std::set<uint64_t> &DefinedFunctionTemporaries,
+                  const LowIRLoopLocation &L) {
     switch (L.Space) {
     case LowIRLoopSpace::Register:
-      return State.State.read(SymSpace::Register, L.Offset, L.Bytes);
+      return State.read(SymSpace::Register, L.Offset, L.Bytes);
     case LowIRLoopSpace::Frame:
-      return State.State.load(
+      return State.load(
           Ctx.mkAdd(Refinement->MemoryRoot,
                     Ctx.mkConst(64, L.Offset - static_cast<uint64_t>(
                                                    Contract.Frame->Begin))),
           L.Bytes);
     case LowIRLoopSpace::SystemFlags:
-      return State.SystemFlags;
+      return SystemFlags;
+    case LowIRLoopSpace::FunctionTemporary:
+      checkTemporary(NdVar::tmp(L.Offset, L.Bytes), DefinedFunctionTemporaries);
+      return State.read(SymSpace::Temporary, L.Offset, L.Bytes);
     }
     fail(Status::Invalid, "unknown loop location space");
+  }
+
+  SymRef loopRead(TerminalState &State, const LowIRLoopLocation &L) {
+    return loopRead(State.State, State.SystemFlags,
+                    State.DefinedFunctionTemporaries, L);
+  }
+
+  SymRef loopGuard(SymState &State, SymRef SystemFlags,
+                   llvm::ArrayRef<LowIRLoopGuard> Guards) {
+    auto Predicate = Ctx.mkTrue();
+    for (const auto &G : Guards) {
+      // Mask, equality and conjunction each consume one operation. The shared
+      // reader and node budget also cover entry-relative frame addressing.
+      if (3 > Limits.MaxOperations - Result.Operations)
+        fail(Status::BudgetExceeded, "loop guard execution budget exhausted");
+      Result.Operations += 3;
+      const auto Value = loopRead(State, SystemFlags, {}, G.Location);
+      const auto Masked =
+          Ctx.mkAnd(Value, Ctx.mkConst(G.Location.Bytes * 8, G.Mask));
+      Predicate = Ctx.mkAnd(
+          Predicate,
+          Ctx.mkEq(Masked, Ctx.mkConst(G.Location.Bytes * 8, G.Value)));
+      nodes();
+    }
+    return Predicate;
   }
 
   struct LoopTemplate {
@@ -1977,6 +2135,13 @@ private:
             case LowIRLoopSpace::SystemFlags:
               State.SystemFlags = Value;
               break;
+            case LowIRLoopSpace::FunctionTemporary:
+              // A template replaces values in real prefix storage. It cannot
+              // turn a lifetime declaration into an initialization fact.
+              checkTemporary(NdVar::tmp(A.Location.Offset, A.Location.Bytes),
+                             State.DefinedFunctionTemporaries);
+              State.State.write(SymSpace::Temporary, A.Location.Offset, Value);
+              break;
             }
             nodes();
           }
@@ -2000,8 +2165,8 @@ private:
   void loopStateEqual(SymRef Predicate, TerminalState &Actual,
                       TerminalState &Expected, llvm::StringRef Side) {
     // A lifetime declaration never initializes storage. Only real prefix
-    // definitions survive a cut, and every arrival must retain their exact
-    // values. Templates currently have no temporary assignments or inputs.
+    // definitions survive a cut. Every arrival retains exactly those defined
+    // bytes and matches the fixed or explicitly assigned template values.
     if (Actual.DefinedFunctionTemporaries !=
         Expected.DefinedFunctionTemporaries)
       fail(Status::Dependent,
@@ -2038,6 +2203,17 @@ public:
       const auto Predicate = Ctx.mkAnd(Refinement->Predicate, T.Predicate);
       if (query(Predicate) == solver::SatResult::Unsat)
         fail(Status::Invalid, "loop invariant has an empty induction domain");
+      const auto &Cut = Refinement->LoopPlan->Cutpoints[Index];
+      if (!Cut.OriginalGuards.empty())
+        equal(Predicate,
+              loopGuard(T.Original.State, T.Original.SystemFlags,
+                        Cut.OriginalGuards),
+              Ctx.mkTrue(), "original loop starting selector");
+      if (!Cut.CandidateGuards.empty())
+        equal(Predicate,
+              loopGuard(T.Candidate.State, T.Candidate.SystemFlags,
+                        Cut.CandidateGuards),
+              Ctx.mkTrue(), "candidate loop starting selector");
       T.Original.Predicate = T.Candidate.Predicate = Predicate;
       Refinement->OriginalStart = std::move(T.Original);
       Refinement->CandidateStart = std::move(T.Candidate);
@@ -2597,6 +2773,14 @@ refinementResult(RefinementSession &Session,
       Number(Cut.CandidateAddress);
       Number(Cut.UseEntryPrefix);
       Number(Cut.GeneralizeEntryPrefix);
+      for (const auto *Guards : {&Cut.OriginalGuards, &Cut.CandidateGuards}) {
+        Number(Guards->size());
+        for (const auto &Guard : *Guards) {
+          Location(Guard.Location);
+          Number(Guard.Mask);
+          Number(Guard.Value);
+        }
+      }
       Number(Cut.Inputs.size());
       for (const auto &Input : Cut.Inputs) {
         Number(static_cast<unsigned>(Input.Side));
@@ -2685,6 +2869,7 @@ LowIRRefinementResult runRefinement(
     LowIRRefinementWitness Witness, const LowIRRefinementLimits &Limits,
     const LowIRLoopRefinementPlan *LoopPlan = nullptr) {
   RefinementSession Session{{}, {}, Candidate, Witness, Limits};
+  Session.Original = Original;
   Session.LoopPlan = LoopPlan;
   Session.NativeFinite = Provider && !LoopPlan;
   const auto Finish = [&](bool Success) {
@@ -2795,6 +2980,15 @@ class LoopPlanInference {
   std::vector<int> ReachableBlocks;
   bool MultipleCycles = false;
   bool GeneralContractFailure = false;
+  // Complete model-free answers in this session's immutable DAG and solver
+  // configuration. Keys include the full domain, not only the proposed fact.
+  // Every hit still consumes a query request, bounding both search work and
+  // retained entries by the existing query and symbolic-node limits.
+  std::map<SymRef, bool> CompleteEntailments;
+  // Assumptions disappear after each check. Changing domains also drops the
+  // retained clauses and decision variables from unrelated earlier queries.
+  std::unique_ptr<solver::BitVectorSolver> EntailmentEncoding;
+  SymRef EntailmentDomain;
   std::string Stage;
   SpecializationProvider *ReadProvider;
   detail::NativeUndefinedIndependenceResult ReadEvidence;
@@ -2803,6 +2997,7 @@ class LoopPlanInference {
     struct Bound {
       LowIRLoopLocation Location;
       bool Lower, Strict;
+      uint64_t Mask = 0;
     };
     LowIRLoopLocation Location;
     uint64_t FixedMask;
@@ -2815,12 +3010,23 @@ class LoopPlanInference {
     };
     std::vector<LaneGuard> LaneGuards, LaneAttempts;
     std::vector<Bound> CounterBounds;
-    bool CounterBoundsSeeded = false;
+    struct BoundAttempt {
+      LowIRLoopLocation Location;
+      uint64_t Mask;
+    };
+    std::vector<BoundAttempt> CounterBoundAttempts;
     std::vector<LowIRLoopLocation> Equalities;
+    struct ProjectedEquality {
+      LowIRLoopLocation Location;
+      uint64_t Mask;
+    };
+    std::vector<ProjectedEquality> ProjectedEqualities;
     struct BitRelation {
       unsigned Bit;
       LowIRLoopLocation Counter, Bound;
       bool Invert;
+      uint64_t Mask = 0;
+      bool UnsignedLess = false;
     };
     std::vector<BitRelation> BitRelations;
     std::vector<BitRelation> BitAttempts;
@@ -2832,6 +3038,11 @@ class LoopPlanInference {
   };
   std::vector<std::vector<EqualitySeed>> EqualitySeeds;
   std::vector<std::vector<EqualitySeed>> EqualityAttempts;
+  struct ProjectedEqualityAttempt {
+    LowIRLoopLocation Source, Target;
+    uint64_t Mask;
+  };
+  std::vector<std::vector<ProjectedEqualityAttempt>> ProjectedEqualityAttempts;
   std::vector<LowIRLoopLocation> RelationCounters;
   struct LaneCounter {
     LowIRLoopLocation Location;
@@ -2839,6 +3050,8 @@ class LoopPlanInference {
   };
   std::vector<LaneCounter> LaneCounters;
   std::vector<std::vector<LowIRLoopLocation>> RelationBounds;
+  std::set<SymRef> RelationPredicates;
+  std::vector<std::set<SymRef>> RelationBoundValues;
   std::vector<std::vector<TerminalState>> RelationArrivals;
   std::vector<std::map<SymRef, llvm::SmallVector<uint32_t, 16>>>
       RelationVariables;
@@ -2862,9 +3075,24 @@ class LoopPlanInference {
 
   bool entails(SymRef Domain, SymRef Fact) {
     auto C = checker();
-    return C.query(
-               Session.Context.mkAnd(Domain, Session.Context.mkNot(Fact))) ==
-           solver::SatResult::Unsat;
+    const auto Query =
+        Session.Context.mkAnd(Domain, Session.Context.mkNot(Fact));
+    C.nodes();
+    if (auto It = CompleteEntailments.find(Query);
+        It != CompleteEntailments.end()) {
+      C.chargeQuery();
+      ++Result.EntailmentCacheHits;
+      return It->second;
+    }
+    if (EntailmentDomain != Domain) {
+      EntailmentEncoding.reset();
+      EntailmentDomain = Domain;
+    }
+    // Unknown and invalid answers throw in the shared checker, before store.
+    const bool Holds =
+        C.query(Query, &EntailmentEncoding) == solver::SatResult::Unsat;
+    CompleteEntailments.emplace(Query, Holds);
+    return Holds;
   }
 
   void initializePrefixBounds(Word &W) {
@@ -2951,8 +3179,10 @@ class LoopPlanInference {
                 Ctx.mkExtract(After, Offset + Width, Total - Offset - Width));
   }
 
-  // A zero mask denotes the existing full/zero-extended recurrence. A proper
-  // preserved lane also supplies its endpoint mask for invariant proposals.
+  // A zero mask denotes a full-width recurrence. Narrow zero-extended updates
+  // and exact projected updates supply their mask for guards and ranks.
+  // Other bits can be rebuilt or change: only the projection is proposed, and
+  // the complete transition domain must still prove every invariant and rank.
   std::optional<uint64_t> unitStepLane(SymRef Before, SymRef After,
                                        uint16_t Bytes, bool Increment) {
     auto &Ctx = Session.Context;
@@ -2964,16 +3194,20 @@ class LoopPlanInference {
       const auto Expected = Ctx.mkZExtOrTrunc(Ctx.mkAdd(Input, Step), Total);
       checker().nodes();
       if (After == Expected)
-        return 0;
+        return Width == Total ? 0 : (UINT64_MAX >> (64 - Width));
     }
     for (unsigned Width = Total - 8; Width; Width -= 8)
       for (unsigned Offset = 0; Offset + Width <= Total; Offset += 8) {
         const auto Input = Ctx.mkExtract(Before, Offset, Width);
         const auto Step = Ctx.mkConst(Width, Increment ? 1 : UINT64_MAX);
         const auto Updated = Ctx.mkAdd(Input, Step);
+        // Constant lane coincidences with unrelated surrounding changes are
+        // poor recurrence proposals. Preserve isolated constant-lane updates;
+        // rebuilt lanes can be discovered after their input is generalized.
         const bool Matches =
             Ctx.mkExtract(After, Offset, Width) == Updated &&
-            preservesOutsideLane(Before, After, Offset, Width, Total);
+            (!Ctx.isConst(Input) ||
+             preservesOutsideLane(Before, After, Offset, Width, Total));
         checker().nodes();
         if (Matches)
           return (UINT64_MAX >> (64 - Width)) << Offset;
@@ -3005,15 +3239,43 @@ class LoopPlanInference {
       for (unsigned Offset = 0; Offset + Width <= Total; Offset += 8) {
         const auto Value = Ctx.mkExtract(After, Offset, Width);
         const auto Input = Ctx.mkExtract(Before, Offset, Width);
-        const bool Preserved =
-            Ctx.op(Value) == SymOp::Add &&
-            preservesOutsideLane(Before, After, Offset, Width, Total);
+        const bool Additive = Ctx.op(Value) == SymOp::Add;
         checker().nodes();
-        if (!Preserved)
+        if (!Additive)
           continue;
         const auto Terms = Ctx.operands(Value);
         if (std::find(Terms.begin(), Terms.end(), Input) != Terms.end())
           return true;
+      }
+    return false;
+  }
+
+  // Distinct template parameters can represent the same counter lane. Prove
+  // that alias in the complete transition domain before proposing additive
+  // widening; this does not add a relation or certify any rank.
+  bool additiveRecurrenceUnder(SymRef Before, SymRef After, uint16_t Bytes,
+                               SymRef Domain) {
+    auto &Ctx = Session.Context;
+    const auto InputSlice = [&](SymRef V) {
+      return Ctx.isVar(V) || (Ctx.op(V) == SymOp::Extract &&
+                              Ctx.isVar(Ctx.operands(V).front()));
+    };
+    const unsigned Total = Bytes * 8;
+    for (unsigned Width = Total; Width; Width -= 8)
+      for (unsigned Offset = 0; Offset + Width <= Total; Offset += 8) {
+        const auto Value = Ctx.mkExtract(After, Offset, Width);
+        checker().nodes();
+        if (Ctx.op(Value) != SymOp::Add)
+          continue;
+        const auto Input = Ctx.mkExtract(Before, Offset, Width);
+        checker().nodes();
+        if (!InputSlice(Input))
+          continue;
+        const auto Operands = Ctx.operands(Value);
+        const std::vector<SymRef> Terms(Operands.begin(), Operands.end());
+        for (const auto Term : Terms)
+          if (InputSlice(Term) && entails(Domain, Ctx.mkEq(Input, Term)))
+            return true;
       }
     return false;
   }
@@ -3039,6 +3301,20 @@ class LoopPlanInference {
       }
     if (Contract.X64FlagsProfile)
       Locations.push_back({LowIRLoopSpace::SystemFlags, 0, 8});
+    // Only real prefix definitions may become parameters. Missing bytes stay
+    // missing even when their declared lifetime spans the loop. Group adjacent
+    // defined bytes without rounding into an undefined or undeclared byte.
+    const auto &Defined = Session.LoopPrefixes[ActiveCutpoint]
+                              ->Candidate.DefinedFunctionTemporaries;
+    for (auto It = Defined.begin(); It != Defined.end();) {
+      const uint64_t Offset = *It++;
+      uint16_t Bytes = 1;
+      while (Bytes != 8 && It != Defined.end() && *It == Offset + Bytes) {
+        ++Bytes;
+        ++It;
+      }
+      Locations.push_back({LowIRLoopSpace::FunctionTemporary, Offset, Bytes});
+    }
     return Locations;
   }
 
@@ -3095,6 +3371,14 @@ class LoopPlanInference {
         Holds &= entails(State.Predicate, Ctx.mkEq(Ctx.mkAnd(Initial, Mask),
                                                    Ctx.mkAnd(After, Mask)));
       }
+      if (!Holds && !Additive)
+        for (auto &State : Session.CandidateReturns)
+          if (State.Cutpoint == static_cast<int>(ActiveCutpoint) &&
+              additiveRecurrenceUnder(Before, read(State, W.Location),
+                                      W.Location.Bytes, State.Predicate)) {
+            Additive = true;
+            break;
+          }
       // One additive arm can invalidate spurious prefix bits even when a
       // sibling stutters or resets. Structural bits still intersect every
       // returning arm, and an already valid mask is never weakened here.
@@ -3170,14 +3454,40 @@ class LoopPlanInference {
       Next += 8;
       return V;
     };
+    // These expressions are pure and consume immutable inputs or earlier
+    // temporaries. Share exact operands only within this template rebuild;
+    // widths and address provenance remain part of the value identity.
+    using ValueKey = std::tuple<VnodeSpace, uint64_t, uint16_t,
+                                ConstantAddressProvenance, uint64_t>;
+    const auto Key = [](NdVar V) -> ValueKey {
+      return {V.Space, V.Offset, V.Size, V.Provenance, V.AddressOwnerVA};
+    };
+    using ExpressionKey = std::tuple<NdOp, ValueKey, ValueKey, uint16_t>;
+    std::map<ExpressionKey, NdVar> Expressions;
     const auto Expr = [&](NdOp Opcode, NdVar A, NdVar B, uint16_t Bytes) {
+      const ExpressionKey K{Opcode, Key(A), Key(B), Bytes};
+      if (const auto It = Expressions.find(K); It != Expressions.end())
+        return It->second;
       LowOp Op;
       Op.Opcode = Opcode;
       Op.Output = Temp(Bytes);
       Op.addInput(A);
       Op.addInput(B);
       Cut.Expressions.push_back(Op);
+      Expressions.emplace(K, Op.Output);
       return Op.Output;
+    };
+    // Prefix snapshots are distinct from the represented current-state words.
+    using PrefixKey = std::tuple<LowIRLoopSpace, uint64_t, uint16_t>;
+    std::map<PrefixKey, NdVar> Prefixes;
+    const auto PrefixAt = [&](const LowIRLoopLocation &L) {
+      const PrefixKey K{L.Space, L.Offset, L.Bytes};
+      if (const auto It = Prefixes.find(K); It != Prefixes.end())
+        return It->second;
+      const auto Value = Temp(L.Bytes);
+      Cut.Inputs.push_back({LowIRLoopSide::OriginalPrefix, L, Value});
+      Prefixes.emplace(K, Value);
+      return Value;
     };
     // Bind each represented word once. Relations between words must reuse
     // those parameters, rather than introduce unrelated copies of an input.
@@ -3194,9 +3504,7 @@ class LoopPlanInference {
       Cut.OriginalState.push_back({W.Location, Parameter});
       Cut.CandidateState.push_back({W.Location, Parameter});
       if (W.FixedMask) {
-        const auto Prefix = Temp(Bytes);
-        Cut.Inputs.push_back(
-            {LowIRLoopSide::OriginalPrefix, W.Location, Prefix});
+        const auto Prefix = PrefixAt(W.Location);
         const auto Mask = NdVar::scalar(W.FixedMask, Bytes);
         const auto A = Expr(NdOp::INT_AND, Parameter, Mask, Bytes);
         const auto B = Expr(NdOp::INT_AND, Prefix, Mask, Bytes);
@@ -3204,9 +3512,7 @@ class LoopPlanInference {
         Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Same, 1);
       }
       if (W.UpperBound || W.LowerBound) {
-        const auto Prefix = Temp(Bytes);
-        Cut.Inputs.push_back(
-            {LowIRLoopSide::OriginalPrefix, W.Location, Prefix});
+        const auto Prefix = PrefixAt(W.Location);
         if (W.UpperBound) {
           const auto Bound = Expr(NdOp::INT_LESSEQUAL, Parameter, Prefix, 1);
           Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Bound, 1);
@@ -3223,14 +3529,21 @@ class LoopPlanInference {
             });
         if (Target != words().end())
           return Parameters[std::distance(words().begin(), Target)];
-        const auto Value = Temp(L.Bytes);
-        Cut.Inputs.push_back({LowIRLoopSide::OriginalPrefix, L, Value});
-        return Value;
+        return PrefixAt(L);
       };
       for (const auto &B : W.BitRelations) {
-        const auto Expected =
-            Expr(B.Invert ? NdOp::INT_NOTEQUAL : NdOp::INT_EQUAL,
-                 ValueAt(B.Counter), ValueAt(B.Bound), 1);
+        auto Counter = ValueAt(B.Counter), Bound = ValueAt(B.Bound);
+        if (B.Mask) {
+          const auto Mask = NdVar::scalar(B.Mask, B.Counter.Bytes);
+          Counter = Expr(NdOp::INT_AND, Counter, Mask, B.Counter.Bytes);
+          Bound = Expr(NdOp::INT_AND, Bound, Mask, B.Bound.Bytes);
+        }
+        auto Expected = Expr(B.UnsignedLess ? NdOp::INT_LESS
+                             : B.Invert     ? NdOp::INT_NOTEQUAL
+                                            : NdOp::INT_EQUAL,
+                             Counter, Bound, 1);
+        if (B.UnsignedLess && B.Invert)
+          Expected = Expr(NdOp::INT_EQUAL, Expected, NdVar::scalar(0, 1), 1);
         const auto Shifted = Expr(NdOp::INT_RIGHT, Parameter,
                                   NdVar::scalar(B.Bit, Bytes), Bytes);
         const auto Bit =
@@ -3244,13 +3557,24 @@ class LoopPlanInference {
         const auto Same = Expr(NdOp::INT_EQUAL, Parameter, ValueAt(L), 1);
         Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Same, 1);
       }
+      for (const auto &E : W.ProjectedEqualities) {
+        const auto Mask = NdVar::scalar(E.Mask, Bytes);
+        const auto A = Expr(NdOp::INT_AND, Parameter, Mask, Bytes);
+        const auto B = Expr(NdOp::INT_AND, ValueAt(E.Location), Mask, Bytes);
+        const auto Same = Expr(NdOp::INT_EQUAL, A, B, 1);
+        Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Same, 1);
+      }
       for (const auto &B : W.CounterBounds) {
-        const auto Limit = Temp(Bytes);
-        Cut.Inputs.push_back(
-            {LowIRLoopSide::OriginalPrefix, B.Location, Limit});
+        auto Limit = PrefixAt(B.Location);
+        auto Value = Parameter;
+        if (B.Mask) {
+          const auto Mask = NdVar::scalar(B.Mask, Bytes);
+          Value = Expr(NdOp::INT_AND, Value, Mask, Bytes);
+          Limit = Expr(NdOp::INT_AND, Limit, Mask, Bytes);
+        }
         const auto Guard =
             Expr(B.Strict ? NdOp::INT_LESS : NdOp::INT_LESSEQUAL,
-                 B.Lower ? Limit : Parameter, B.Lower ? Parameter : Limit, 1);
+                 B.Lower ? Limit : Value, B.Lower ? Value : Limit, 1);
         Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Guard, 1);
       }
       for (bool Maximum : {false, true}) {
@@ -3282,8 +3606,7 @@ class LoopPlanInference {
         Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Guard, 1);
       }
       if (Bound) {
-        const auto Limit = Temp(Bound->Bytes);
-        Cut.Inputs.push_back({LowIRLoopSide::OriginalPrefix, *Bound, Limit});
+        const auto Limit = PrefixAt(*Bound);
         const auto Guard = Complement
                                ? Expr(NdOp::INT_LESS, Parameter, Limit, 1)
                                : Expr(NdOp::INT_LESS, Limit, Parameter, 1);
@@ -3786,6 +4109,24 @@ class LoopPlanInference {
     return It->second;
   }
 
+  std::vector<uint64_t> counterMasks(const LowIRLoopLocation &Location) {
+    std::vector<uint64_t> Masks{0};
+    for (const auto &C : LaneCounters)
+      if (sameLocation(Location, C.Location) &&
+          std::find(Masks.begin(), Masks.end(), C.Guard.Mask) == Masks.end())
+        Masks.push_back(C.Guard.Mask);
+    return Masks;
+  }
+
+  SymRef bitComparison(TerminalState &State, const Word::BitRelation &B) {
+    auto &Ctx = Session.Context;
+    const auto Counter = counterProjection(read(State, B.Counter), B.Mask);
+    const auto Bound = counterProjection(read(State, B.Bound), B.Mask);
+    const auto Compared =
+        B.UnsignedLess ? Ctx.mkUlt(Counter, Bound) : Ctx.mkEq(Counter, Bound);
+    return B.Invert ? Ctx.mkNot(Compared) : Compared;
+  }
+
   bool seedBitRelations(Word &W,
                         llvm::ArrayRef<TerminalState> NewIncoming = {}) {
     if (RelationArrivals[ActiveCutpoint].empty() ||
@@ -3795,99 +4136,121 @@ class LoopPlanInference {
     auto Incoming = RelationArrivals[ActiveCutpoint];
     Incoming.insert(Incoming.end(), NewIncoming.begin(), NewIncoming.end());
     const auto OldSize = W.BitRelations.size();
-    // A cached field can first vary only after another cut generalizes. Its
-    // initializer can also be constant-folded under an entry guard. Use any
-    // incoming expression for the dependency filter, then prove the relation
-    // on every saved concrete arrival and every current incoming state.
+    // A cache may first vary after another cut generalizes. Use any saved or
+    // current arrival to discover its dependency, including only the observed
+    // lane of a wider bound. Every arrival must then prove the same comparison.
     for (unsigned Bit = 0; Bit != W.Location.Bytes * 8; ++Bit) {
-      const auto Mask = uint64_t{1} << Bit;
-      if (W.FixedMask & Mask)
+      if (W.FixedMask & (uint64_t{1} << Bit))
         continue;
-      for (const auto &L : RelationBounds[ActiveCutpoint]) {
-        bool Depends = false;
-        for (auto &S : Incoming) {
-          const auto Initial = Ctx.mkExtract(read(S, W.Location), Bit, 1);
-          if (Ctx.isConst(Initial))
-            continue;
-          const auto &BoundVars = relationVars(read(S, L));
-          if (BoundVars.empty())
-            continue;
-          const auto &Vars = relationVars(Initial);
-          if (std::includes(Vars.begin(), Vars.end(), BoundVars.begin(),
-                            BoundVars.end())) {
-            Depends = true;
-            break;
-          }
-        }
-        if (!Depends)
-          continue;
+      for (const auto &L : RelationBounds[ActiveCutpoint])
         for (const auto &C : RelationCounters) {
           if (C.Bytes != L.Bytes)
             continue;
-          for (bool Invert : {false, true}) {
-            // A later transition can reveal another comparison for this bit.
-            // Never retry a tuple whose relation was rejected or pruned.
-            if (std::any_of(W.BitAttempts.begin(), W.BitAttempts.end(),
-                            [&](const auto &A) {
-                              return A.Bit == Bit && A.Invert == Invert &&
-                                     sameLocation(A.Counter, C) &&
-                                     sameLocation(A.Bound, L);
-                            }))
+          for (uint64_t Mask : counterMasks(C)) {
+            bool Depends = false;
+            for (auto &S : Incoming) {
+              const auto Initial = Ctx.mkExtract(read(S, W.Location), Bit, 1);
+              if (Ctx.isConst(Initial))
+                continue;
+              auto Bound = read(S, L);
+              if (Mask)
+                Bound = Ctx.mkExtract(Bound, std::countr_zero(Mask),
+                                      std::popcount(Mask));
+              checker().nodes();
+              const auto &BoundVars = relationVars(Bound);
+              if (BoundVars.empty())
+                continue;
+              const auto &Vars = relationVars(Initial);
+              if (std::includes(Vars.begin(), Vars.end(), BoundVars.begin(),
+                                BoundVars.end())) {
+                Depends = true;
+                break;
+              }
+            }
+            if (!Depends)
               continue;
-            W.BitAttempts.push_back({Bit, C, L, Invert});
+            for (bool UnsignedLess : {false, true})
+              for (bool Invert : {false, true}) {
+                // Late lanes can add candidates, never retry rejected or pruned
+                // bit/counter/bound/comparison/polarity/projection tuples.
+                if (std::any_of(W.BitAttempts.begin(), W.BitAttempts.end(),
+                                [&](const auto &A) {
+                                  return A.Bit == Bit && A.Invert == Invert &&
+                                         A.Mask == Mask &&
+                                         A.UnsignedLess == UnsignedLess &&
+                                         sameLocation(A.Counter, C) &&
+                                         sameLocation(A.Bound, L);
+                                }))
+                  continue;
+                const Word::BitRelation Relation{Bit,    C,    L,
+                                                 Invert, Mask, UnsignedLess};
+                W.BitAttempts.push_back(Relation);
+                bool Holds = true;
+                for (auto &S : Incoming) {
+                  if (!entails(
+                          S.Predicate,
+                          Ctx.mkEq(Ctx.mkExtract(read(S, W.Location), Bit, 1),
+                                   bitComparison(S, Relation)))) {
+                    Holds = false;
+                    break;
+                  }
+                }
+                if (Holds)
+                  W.BitRelations.push_back(Relation);
+              }
+          }
+        }
+    }
+    return OldSize != W.BitRelations.size();
+  }
+
+  SymRef counterProjection(SymRef Value, uint64_t Mask) {
+    auto &Ctx = Session.Context;
+    return Mask ? Ctx.mkAnd(Value, Ctx.mkConst(Ctx.width(Value), Mask)) : Value;
+  }
+
+  bool seedCounterBounds(Word &W) {
+    if (RelationArrivals[ActiveCutpoint].empty() ||
+        std::none_of(
+            RelationCounters.begin(), RelationCounters.end(),
+            [&](const auto &L) { return sameLocation(W.Location, L); }))
+      return false;
+    auto &Ctx = Session.Context;
+    auto &Prefix = Session.LoopPrefixes[ActiveCutpoint]->Candidate;
+    // A newly discovered relation may be needed to constrain the source
+    // template itself. Seed only from the saved concrete arrivals, then force
+    // a fresh general transition round before accepting the template.
+    auto &Incoming = RelationArrivals[ActiveCutpoint];
+    const auto OldSize = W.CounterBounds.size();
+    for (uint64_t Mask : counterMasks(W.Location)) {
+      for (const auto &L : RelationBounds[ActiveCutpoint]) {
+        if (L.Bytes != W.Location.Bytes ||
+            std::any_of(W.CounterBoundAttempts.begin(),
+                        W.CounterBoundAttempts.end(), [&](const auto &A) {
+                          return A.Mask == Mask && sameLocation(A.Location, L);
+                        }))
+          continue;
+        // New lanes can reveal new bound sources. Each location/projection
+        // pair is tried once, including pairs whose bounds were pruned.
+        W.CounterBoundAttempts.push_back({L, Mask});
+        const auto Limit = counterProjection(read(Prefix, L), Mask);
+        for (bool Lower : {false, true})
+          for (bool Strict : {false, true}) {
             bool Holds = true;
             for (auto &S : Incoming) {
-              const auto A = read(S, C), B = read(S, L);
-              const auto Expected = Invert ? Ctx.mkNe(A, B) : Ctx.mkEq(A, B);
+              const auto Value = counterProjection(read(S, W.Location), Mask);
+              const auto A = Lower ? Limit : Value;
+              const auto B = Lower ? Value : Limit;
               if (!entails(S.Predicate,
-                           Ctx.mkEq(Ctx.mkExtract(read(S, W.Location), Bit, 1),
-                                    Expected))) {
+                           Strict ? Ctx.mkUlt(A, B) : Ctx.mkUle(A, B))) {
                 Holds = false;
                 break;
               }
             }
             if (Holds)
-              W.BitRelations.push_back({Bit, C, L, Invert});
+              W.CounterBounds.push_back({L, Lower, Strict, Mask});
           }
-        }
       }
-    }
-    return OldSize != W.BitRelations.size();
-  }
-
-  bool seedCounterBounds(Word &W,
-                         llvm::ArrayRef<TerminalState> NewIncoming = {}) {
-    if (W.CounterBoundsSeeded || RelationArrivals[ActiveCutpoint].empty() ||
-        std::none_of(
-            RelationCounters.begin(), RelationCounters.end(),
-            [&](const auto &L) { return sameLocation(W.Location, L); }))
-      return false;
-    W.CounterBoundsSeeded = true;
-    auto &Ctx = Session.Context;
-    auto &Prefix = Session.LoopPrefixes[ActiveCutpoint]->Candidate;
-    auto Incoming = RelationArrivals[ActiveCutpoint];
-    Incoming.insert(Incoming.end(), NewIncoming.begin(), NewIncoming.end());
-    const auto OldSize = W.CounterBounds.size();
-    for (const auto &L : RelationBounds[ActiveCutpoint]) {
-      if (L.Bytes != W.Location.Bytes)
-        continue;
-      const auto Limit = read(Prefix, L);
-      for (bool Lower : {false, true})
-        for (bool Strict : {false, true}) {
-          bool Holds = true;
-          for (auto &S : Incoming) {
-            const auto Value = read(S, W.Location);
-            const auto A = Lower ? Limit : Value;
-            const auto B = Lower ? Value : Limit;
-            if (!entails(S.Predicate,
-                         Strict ? Ctx.mkUlt(A, B) : Ctx.mkUle(A, B))) {
-              Holds = false;
-              break;
-            }
-          }
-          if (Holds)
-            W.CounterBounds.push_back({L, Lower, Strict});
-        }
     }
     return OldSize != W.CounterBounds.size();
   }
@@ -3966,6 +4329,116 @@ class LoopPlanInference {
     return Changed;
   }
 
+  // Masks come from byte-aligned contiguous lanes discovered by unitStepLane.
+  SymRef copyProjection(SymRef Value, uint64_t Mask) {
+    return Session.Context.mkExtract(Value, std::countr_zero(Mask),
+                                     std::popcount(Mask));
+  }
+
+  bool seedProjectedWordCopies(std::vector<Edge> &Edges) {
+    if (RelationArrivals[ActiveCutpoint].empty())
+      return false;
+    auto &Ctx = Session.Context;
+    auto &Prefix = Session.LoopPrefixes[ActiveCutpoint]->Candidate;
+    auto &Attempts = ProjectedEqualityAttempts[ActiveCutpoint];
+    bool Changed = false;
+    for (auto &W : words())
+      for (const auto &C : LaneCounters) {
+        const auto &Target = C.Location;
+        const auto Mask = C.Guard.Mask;
+        if (W.Location.Bytes != Target.Bytes ||
+            sameLocation(W.Location, Target) ||
+            read(Prefix, W.Location) == read(Prefix, Target))
+          continue;
+        if (std::any_of(Attempts.begin(), Attempts.end(), [&](const auto &A) {
+              return sameLocation(A.Source, W.Location) &&
+                     sameLocation(A.Target, Target) && A.Mask == Mask;
+            }))
+          continue;
+        const auto SourcePrefix =
+            copyProjection(read(Prefix, W.Location), Mask);
+        const auto TargetPrefix = copyProjection(read(Prefix, Target), Mask);
+        checker().nodes();
+        if (SourcePrefix != TargetPrefix)
+          continue;
+        // A symbolic copy on an incoming edge must support the proposal.
+        // Equal initial constants alone would create unrelated cross-products.
+        bool WitnessedCopy = false;
+        for (auto &E : Edges) {
+          if (E.After.Cutpoint != static_cast<int>(ActiveCutpoint))
+            continue;
+          const auto SourceValue =
+              copyProjection(read(E.After, W.Location), Mask);
+          const auto TargetValue = copyProjection(read(E.After, Target), Mask);
+          checker().nodes();
+          WitnessedCopy |=
+              !Ctx.isConst(SourceValue) && SourceValue == TargetValue;
+        }
+        if (!WitnessedCopy)
+          continue;
+        // Rejected or later-pruned copies are not retried on narrower domains.
+        Attempts.push_back({W.Location, Target, Mask});
+        const auto Equal = [&](TerminalState &State) {
+          return Ctx.mkEq(copyProjection(read(State, W.Location), Mask),
+                          copyProjection(read(State, Target), Mask));
+        };
+        bool Holds = true;
+        for (auto &State : RelationArrivals[ActiveCutpoint])
+          if (!entails(State.Predicate, Equal(State))) {
+            Holds = false;
+            break;
+          }
+        if (!Holds)
+          continue;
+        for (auto &E : Edges) {
+          if (E.After.Cutpoint != static_cast<int>(ActiveCutpoint))
+            continue;
+          auto Domain = E.After.Predicate;
+          // A new invariant may use itself on a self edge. Other incoming
+          // cuts must establish it without borrowing that destination fact.
+          if (E.Source == ActiveCutpoint)
+            Domain = Ctx.mkAnd(Domain, Equal(E.Before));
+          if (!entails(Domain, Equal(E.After))) {
+            Holds = false;
+            break;
+          }
+        }
+        if (Holds) {
+          W.ProjectedEqualities.push_back({Target, Mask});
+          Changed = true;
+        }
+      }
+    return Changed;
+  }
+
+  void chargeCounterTransferWork(uint64_t Count = 1) {
+    // These symbolic candidate traversals share predicate-analysis limits.
+    // Optional graph/context selector work remains a separate allowance.
+    if (Count > Limits.Execution.MaxSymbolicNodes - Result.PredicateNodes)
+      stop(Status::BudgetExceeded,
+           "loop inference counter transfer budget exhausted");
+    Result.PredicateNodes += Count;
+  }
+
+  // A transfer is only a proposal backed by an exact symbolic unit update.
+  // Its source must still satisfy every inferred guard and bound separately.
+  std::optional<uint64_t>
+  transferredCounterMask(Edge &E, const LowIRLoopLocation &Source,
+                         const LowIRLoopLocation &Target, bool Increment) {
+    chargeCounterTransferWork();
+    if (E.Source == static_cast<size_t>(E.After.Cutpoint) ||
+        Source.Bytes != Target.Bytes || sameLocation(Source, Target))
+      return {};
+    const auto Before = read(E.Before, Source);
+    const auto After = read(E.After, Target);
+    const auto Mask = unitStepLane(Before, After, Source.Bytes, Increment);
+    if (!Mask)
+      return {};
+    const auto Input = counterProjection(Before, *Mask);
+    checker().nodes();
+    return Session.Context.isConst(Input) ? std::nullopt : Mask;
+  }
+
   bool findNewCounters(std::vector<Edge> &Edges) {
     bool Changed = false;
     for (const auto &L : locations()) {
@@ -3993,7 +4466,72 @@ class LoopPlanInference {
         Changed = true;
       }
     }
+    // A known counter may occupy another word at an adjacent cut. Discovery
+    // adds only counter/guard proposals; saved arrivals and incoming edges
+    // must establish every resulting invariant in the usual shared layer.
+    const auto Targets = RelationCounters;
+    const auto Sources = locations();
+    for (const auto &Target : Targets)
+      for (auto &E : Edges)
+        for (const auto &Source : Sources)
+          for (bool Increment : {false, true}) {
+            const auto Mask =
+                transferredCounterMask(E, Source, Target, Increment);
+            if (!Mask)
+              continue;
+            if (std::none_of(
+                    RelationCounters.begin(), RelationCounters.end(),
+                    [&](const auto &C) { return sameLocation(C, Source); })) {
+              RelationCounters.push_back(Source);
+              Changed = true;
+            }
+            const Word::LaneGuard Guard{*Mask, Increment};
+            if (*Mask && std::none_of(LaneCounters.begin(), LaneCounters.end(),
+                                      [&](const auto &C) {
+                                        return sameLocation(C.Location,
+                                                            Source) &&
+                                               C.Guard == Guard;
+                                      })) {
+              LaneCounters.push_back({Source, Guard});
+              Changed = true;
+            }
+          }
     return Changed;
+  }
+
+  bool discoverRelationBounds() {
+    auto &Ctx = Session.Context;
+    auto &Prefix = Session.LoopPrefixes[ActiveCutpoint]->Candidate;
+    auto &Bounds = RelationBounds[ActiveCutpoint];
+    auto &Values = RelationBoundValues[ActiveCutpoint];
+    const auto OldSize = Bounds.size();
+    // A represented word can still supply a fixed prefix bound, or retain a
+    // bound lane while other bits change. Discovery does not assert that the
+    // current location equals its prefix; each consumer proves its own fact.
+    for (const auto &L : locations()) {
+      if (std::any_of(Bounds.begin(), Bounds.end(),
+                      [&](const auto &B) { return sameLocation(B, L); }))
+        continue;
+      const auto V = read(Prefix, L);
+      if (Ctx.isConst(V))
+        continue;
+      auto Referenced = RelationPredicates.count(V) ? V : SymRef{};
+      // Retain the whole prefix location even when the exit condition reads
+      // only a lane. Constant initialization can hide that lane until a later
+      // general transition; use the same saved predicate evidence then.
+      for (const auto &C : LaneCounters) {
+        if (Referenced || C.Location.Bytes != L.Bytes)
+          continue;
+        const auto Part = Ctx.mkExtract(V, std::countr_zero(C.Guard.Mask),
+                                        std::popcount(C.Guard.Mask));
+        checker().nodes();
+        if (RelationPredicates.count(Part))
+          Referenced = Part;
+      }
+      if (Referenced && Values.insert(Referenced).second)
+        Bounds.push_back(L);
+    }
+    return Bounds.size() != OldSize;
   }
 
   // Seed unsigned bounds and copies only from concrete reachable witnesses.
@@ -4002,7 +4540,6 @@ class LoopPlanInference {
   // predicates, pruned by widening and independently proved after inference.
   void seedCounterRelations(std::vector<Edge> &Edges) {
     auto &Ctx = Session.Context;
-    const auto Locations = locations();
     findNewCounters(Edges);
     const auto &Counters = RelationCounters;
     std::vector<SymRef> Pending;
@@ -4012,11 +4549,10 @@ class LoopPlanInference {
       Pending.push_back(S.Predicate);
     for (const auto &P : Session.LoopPrefixes)
       Pending.push_back(P->Predicate);
-    std::set<SymRef> Seen;
     while (!Pending.empty()) {
       const auto Ref = Pending.back();
       Pending.pop_back();
-      if (!Seen.insert(Ref).second)
+      if (!RelationPredicates.insert(Ref).second)
         continue;
       if (++Result.PredicateNodes > Limits.Execution.MaxSymbolicNodes)
         stop(Status::BudgetExceeded,
@@ -4041,18 +4577,7 @@ class LoopPlanInference {
       for (const auto &E : Edges)
         if (E.After.Cutpoint == static_cast<int>(I))
           Incoming.push_back(E.After);
-      std::vector<LowIRLoopLocation> Bounds;
-      std::set<SymRef> Values;
-      for (const auto &L : Locations) {
-        if (std::any_of(words().begin(), words().end(), [&](const auto &W) {
-              return sameLocation(W.Location, L);
-            }))
-          continue;
-        const auto V = read(Prefix, L);
-        if (!Ctx.isConst(V) && Seen.count(V) && Values.insert(V).second)
-          Bounds.push_back(L);
-      }
-      RelationBounds[I] = Bounds;
+      discoverRelationBounds();
       RelationArrivals[I] = Incoming;
       for (auto &W : words())
         seedBitRelations(W);
@@ -4072,7 +4597,8 @@ class LoopPlanInference {
     auto &Ctx = Session.Context;
     // An outer counter's first step may be hidden until an inner cut widens.
     // Discovery supplies candidates only; all predicates and ranks are proved.
-    bool Changed = findNewCounters(Edges);
+    const bool NewCounters = findNewCounters(Edges);
+    bool Changed = NewCounters;
     for (size_t I = 0; I != Plan.Cutpoints.size(); ++I) {
       ActiveCutpoint = I;
       auto &Prefix = Session.LoopPrefixes[I]->Candidate;
@@ -4106,6 +4632,8 @@ class LoopPlanInference {
           }
       for (size_t J = OldSize; J != words().size(); ++J)
         initializePrefixBounds(words()[J]);
+      if (NewCounters && !RelationArrivals[I].empty())
+        Changed |= discoverRelationBounds();
       Changed |= seedWordCopies(Incoming);
       for (auto &W : words()) {
         const auto Initial = read(Prefix, W.Location);
@@ -4131,6 +4659,15 @@ class LoopPlanInference {
                 entails(E.After.Predicate, Ctx.mkEq(Ctx.mkAnd(Initial, Mask),
                                                     Ctx.mkAnd(After, Mask)));
         }
+        if (!Holds && !Additive)
+          for (auto &E : Edges)
+            if (E.After.Cutpoint == static_cast<int>(I) &&
+                additiveRecurrenceUnder(read(E.Before, W.Location),
+                                        read(E.After, W.Location),
+                                        W.Location.Bytes, E.After.Predicate)) {
+              Additive = true;
+              break;
+            }
         if (!Holds && !Additive) {
           Stable = W.FixedMask;
           for (auto &State : Incoming)
@@ -4157,19 +4694,20 @@ class LoopPlanInference {
           Keep(W.Nonmax, Ctx.mkNe(Value, Ctx.mkConst(W.Location.Bytes * 8,
                                                      ones(W.Location.Bytes))));
         }
-        Changed |= std::erase_if(W.BitRelations, [&](const auto &B) {
-                     for (auto &S : Incoming) {
-                       const auto A = read(S, B.Counter), Z = read(S, B.Bound);
-                       const auto Expected =
-                           B.Invert ? Ctx.mkNe(A, Z) : Ctx.mkEq(A, Z);
-                       if (!entails(S.Predicate,
-                                    Ctx.mkEq(Ctx.mkExtract(read(S, W.Location),
-                                                           B.Bit, 1),
-                                             Expected)))
-                         return true;
-                     }
-                     return false;
-                   }) != 0;
+        // Keep one incoming domain active while checking its bit relations.
+        // Every survivor still passes every arrival, in the same arrival
+        // order; a refuted relation is removed before checking later domains.
+        // Grouping avoids rebuilding the same domain's solver encoding for
+        // each interleaved relation and does not reuse facts across domains.
+        for (auto &S : Incoming)
+          Changed |=
+              std::erase_if(W.BitRelations, [&](const auto &B) {
+                const auto Expected = bitComparison(S, B);
+                return !entails(
+                    S.Predicate,
+                    Ctx.mkEq(Ctx.mkExtract(read(S, W.Location), B.Bit, 1),
+                             Expected));
+              }) != 0;
         Changed |= std::erase_if(W.Equalities, [&](const auto &L) {
                      for (auto &S : Incoming)
                        if (!entails(S.Predicate,
@@ -4177,28 +4715,55 @@ class LoopPlanInference {
                          return true;
                      return false;
                    }) != 0;
-        Changed |= std::erase_if(W.CounterBounds, [&](const auto &B) {
-                     const auto Limit = read(Prefix, B.Location);
-                     for (auto &S : Incoming) {
-                       const auto Value = read(S, W.Location);
-                       const auto A = B.Lower ? Limit : Value;
-                       const auto Z = B.Lower ? Value : Limit;
-                       if (!entails(S.Predicate, B.Strict ? Ctx.mkUlt(A, Z)
-                                                          : Ctx.mkUle(A, Z)))
-                         return true;
-                     }
-                     return false;
-                   }) != 0;
-        Changed |= std::erase_if(W.LaneGuards, [&](const auto &Guard) {
-                     return std::any_of(
-                         Incoming.begin(), Incoming.end(), [&](auto &S) {
-                           return !entails(S.Predicate, laneGuard(S, W, Guard));
-                         });
-                   }) != 0;
+        Changed |=
+            std::erase_if(W.ProjectedEqualities, [&](const auto &E) {
+              for (auto &State : Incoming)
+                if (!entails(
+                        State.Predicate,
+                        Ctx.mkEq(
+                            copyProjection(read(State, W.Location), E.Mask),
+                            copyProjection(read(State, E.Location), E.Mask))))
+                  return true;
+              return false;
+            }) != 0;
+        // A late counter adds bound/guard proposals below. Transitions still
+        // describe the previous domain; check these mutually dependent
+        // predicates after every cut has been rebuilt with the new proposals.
+        // NewCounters forces another round and does not accept a plan.
+        if (!NewCounters) {
+          Changed |= std::erase_if(W.CounterBounds, [&](const auto &B) {
+                       const auto Limit =
+                           counterProjection(read(Prefix, B.Location), B.Mask);
+                       for (auto &S : Incoming) {
+                         const auto Value =
+                             counterProjection(read(S, W.Location), B.Mask);
+                         const auto A = B.Lower ? Limit : Value;
+                         const auto Z = B.Lower ? Value : Limit;
+                         if (!entails(S.Predicate, B.Strict ? Ctx.mkUlt(A, Z)
+                                                            : Ctx.mkUle(A, Z)))
+                           return true;
+                       }
+                       return false;
+                     }) != 0;
+          Changed |=
+              std::erase_if(W.LaneGuards, [&](const auto &Guard) {
+                return std::any_of(
+                    Incoming.begin(), Incoming.end(), [&](auto &S) {
+                      return !entails(S.Predicate, laneGuard(S, W, Guard));
+                    });
+              }) != 0;
+        }
         Changed |= seedLaneGuards(W, Incoming);
-        Changed |= seedCounterBounds(W, Incoming);
+        Changed |= seedCounterBounds(W);
         Changed |= seedBitRelations(W, Incoming);
       }
+    }
+    // Install newly proved inductive copies after pruning the old templates.
+    // The next round executes every cut with these predicates, and the final
+    // checker must independently establish them on all original arrivals.
+    for (size_t I = 0; I != Plan.Cutpoints.size(); ++I) {
+      ActiveCutpoint = I;
+      Changed |= seedProjectedWordCopies(Edges);
     }
     return Changed;
   }
@@ -4206,6 +4771,10 @@ class LoopPlanInference {
   struct Counter {
     LowIRLoopLocation Location;
     bool Complement;
+    uint64_t Mask = 0;
+    // Empty preserves common-location ranks. Relocation proposals can read
+    // a different location at one source cut without merging its full state.
+    std::vector<LowIRLoopLocation> CutLocations;
   };
   struct Phases {
     std::vector<std::vector<uint64_t>> Between;
@@ -4242,13 +4811,18 @@ class LoopPlanInference {
            std::tie(B.Space, B.Offset, B.Bytes);
   }
 
-  SymRef counterValue(TerminalState &State, const Counter &Rank) {
-    const auto Value = read(State, Rank.Location);
-    return Rank.Complement
-               ? Session.Context.mkXor(
-                     Value, Session.Context.mkConst(Rank.Location.Bytes * 8,
-                                                    ones(Rank.Location.Bytes)))
-               : Value;
+  const LowIRLoopLocation &rankLocation(const Counter &Rank, size_t Cut) {
+    return Rank.CutLocations.empty() ? Rank.Location : Rank.CutLocations[Cut];
+  }
+
+  SymRef counterValue(TerminalState &State, const Counter &Rank, size_t Cut) {
+    auto &Ctx = Session.Context;
+    auto Value =
+        counterProjection(read(State, rankLocation(Rank, Cut)), Rank.Mask);
+    const auto Mask =
+        Ctx.mkConst(Rank.Location.Bytes * 8,
+                    Rank.Mask ? Rank.Mask : ones(Rank.Location.Bytes));
+    return Rank.Complement ? Ctx.mkXor(Value, Mask) : Value;
   }
 
   SymRef tupleLess(Edge &E, llvm::ArrayRef<Counter> Ranks, const Phases &Phase,
@@ -4263,7 +4837,8 @@ class LoopPlanInference {
       Append(Ctx.mkConst(64, Phase.Leading[E.Source]),
              Ctx.mkConst(64, Phase.Leading[E.After.Cutpoint]));
     for (size_t I = First; I != Ranks.size(); ++I) {
-      Append(counterValue(E.Before, Ranks[I]), counterValue(E.After, Ranks[I]));
+      Append(counterValue(E.Before, Ranks[I], E.Source),
+             counterValue(E.After, Ranks[I], E.After.Cutpoint));
       if (I + 1 != Ranks.size())
         Append(Ctx.mkConst(64, Phase.Between[I][E.Source]),
                Ctx.mkConst(64, Phase.Between[I][E.After.Cutpoint]));
@@ -4283,8 +4858,10 @@ class LoopPlanInference {
       for (auto &E : Edges) {
         auto Domain = E.After.Predicate;
         for (size_t I = 0; I <= Level; ++I)
-          Domain = Ctx.mkAnd(Domain, Ctx.mkEq(counterValue(E.Before, Ranks[I]),
-                                              counterValue(E.After, Ranks[I])));
+          Domain = Ctx.mkAnd(
+              Domain,
+              Ctx.mkEq(counterValue(E.Before, Ranks[I], E.Source),
+                       counterValue(E.After, Ranks[I], E.After.Cutpoint)));
         if (entails(Domain, Ctx.mkFalse()))
           continue;
         Constraints.push_back(
@@ -4327,27 +4904,39 @@ class LoopPlanInference {
         Cut.Rank.push_back(NdVar::scalar(Phase.Leading[I], 8));
       for (size_t J = 0; J != Ranks.size(); ++J) {
         const auto &R = Ranks[J];
+        const auto &Location = rankLocation(R, I);
         auto Input = std::find_if(
             Cut.Inputs.begin(), Cut.Inputs.end(), [&](const auto &Input) {
               return Input.Side == LowIRLoopSide::Original &&
-                     sameLocation(Input.Location, R.Location);
+                     sameLocation(Input.Location, Location);
             });
         NdVar Value;
         if (Input != Cut.Inputs.end()) {
           Value = Input->Temporary;
         } else {
-          Value = NdVar::tmp(Next, R.Location.Bytes);
+          Value = NdVar::tmp(Next, Location.Bytes);
           Next += 8;
           Cut.Inputs.push_back(
-              {LowIRLoopSide::OriginalPrefix, R.Location, Value});
+              {LowIRLoopSide::OriginalPrefix, Location, Value});
+        }
+        if (R.Mask) {
+          LowOp Op;
+          Op.Opcode = NdOp::INT_AND;
+          Op.Output = NdVar::tmp(Next, Location.Bytes);
+          Next += 8;
+          Op.addInput(Value);
+          Op.addInput(NdVar::scalar(R.Mask, Location.Bytes));
+          Cut.Expressions.push_back(Op);
+          Value = Op.Output;
         }
         if (R.Complement) {
           LowOp Op;
           Op.Opcode = NdOp::INT_XOR;
-          Op.Output = NdVar::tmp(Next, R.Location.Bytes);
+          Op.Output = NdVar::tmp(Next, Location.Bytes);
           Next += 8;
           Op.addInput(Value);
-          Op.addInput(NdVar::scalar(ones(R.Location.Bytes), R.Location.Bytes));
+          Op.addInput(NdVar::scalar(R.Mask ? R.Mask : ones(Location.Bytes),
+                                    Location.Bytes));
           Cut.Expressions.push_back(Op);
           Value = Op.Output;
         }
@@ -4364,30 +4953,96 @@ class LoopPlanInference {
     std::vector<Counter> Candidates, Ranks;
     std::vector<size_t> Next{0};
     size_t Size = 1, MaxSize = 0;
-    bool Resume = false, PendingLeading = false;
+    bool Resume = false, PendingLeading = false, RequireRelocated = false;
   };
   enum class TupleRankStatus { Inferred, Exhausted, Paused };
 
   TupleRankSearch makeTupleSearch(std::vector<Edge> &Edges) {
     TupleRankSearch Search;
+    std::vector<Counter> Projected;
     for (const auto &Location : locations()) {
       const auto Before = Search.Candidates.size();
       for (bool Complement : {false, true}) {
         bool Unit = false;
-        for (auto &E : Edges)
-          Unit |= unitStep(read(E.Before, Location), read(E.After, Location),
+        std::set<uint64_t> Masks;
+        for (auto &E : Edges) {
+          const auto Mask =
+              unitStepLane(read(E.Before, Location), read(E.After, Location),
                            Location.Bytes, Complement);
+          Unit |= Mask.has_value();
+          if (Mask && *Mask)
+            Masks.insert(*Mask);
+        }
         if (Unit)
           Search.Candidates.push_back({Location, Complement});
+        for (uint64_t Mask : Masks)
+          Projected.push_back({Location, Complement, Mask});
       }
       Search.MaxSize += Search.Candidates.size() != Before;
     }
+    // Preserve whole-word proposal priority. A projection is only a guess:
+    // every transition must still decrease under the complete stable domain.
+    Search.Candidates.insert(Search.Candidates.end(), Projected.begin(),
+                             Projected.end());
+    return Search;
+  }
+
+  // Preserve ordinary search priority. After it exhausts, allow one source
+  // cut to read the location that supplies a known counter's unit update.
+  // Full phase/rank entailments check every edge with these local bindings.
+  std::optional<TupleRankSearch>
+  relocatedTupleSearch(std::vector<Edge> &Edges, const TupleRankSearch &Base) {
+    TupleRankSearch Search;
+    Search.Candidates = Base.Candidates;
+    Search.MaxSize = Base.MaxSize;
+    Search.RequireRelocated = true;
+    const auto Locations = locations();
+    for (const auto &C : Base.Candidates)
+      for (auto &E : Edges) {
+        chargeCounterTransferWork();
+        if (E.Source == static_cast<size_t>(E.After.Cutpoint))
+          continue;
+        for (const auto &Source : Locations) {
+          chargeCounterTransferWork();
+          if (Source.Bytes != C.Location.Bytes ||
+              sameLocation(Source, C.Location))
+            continue;
+          const auto Mask =
+              transferredCounterMask(E, Source, C.Location, C.Complement);
+          if (!Mask || *Mask != C.Mask)
+            continue;
+          auto Moved = C;
+          Moved.CutLocations.assign(Plan.Cutpoints.size(), C.Location);
+          Moved.CutLocations[E.Source] = Source;
+          chargeCounterTransferWork(Search.Candidates.size());
+          if (std::none_of(
+                  Search.Candidates.begin(), Search.Candidates.end(),
+                  [&](const auto &Old) {
+                    return Old.Complement == Moved.Complement &&
+                           Old.Mask == Moved.Mask &&
+                           sameLocation(Old.Location, Moved.Location) &&
+                           Old.CutLocations.size() ==
+                               Moved.CutLocations.size() &&
+                           std::equal(Old.CutLocations.begin(),
+                                      Old.CutLocations.end(),
+                                      Moved.CutLocations.begin(), sameLocation);
+                  })) {
+            if (Search.Candidates.size() - Base.Candidates.size() >=
+                Limits.MaxRankCandidates - Result.RankCandidates)
+              stop(Status::BudgetExceeded,
+                   "loop inference rank proposal budget exhausted");
+            Search.Candidates.push_back(std::move(Moved));
+          }
+        }
+      }
+    if (Search.Candidates.size() == Base.Candidates.size())
+      return {};
     return Search;
   }
 
   static bool nextTuple(TupleRankSearch &Search) {
-    auto &[Candidates, Ranks, Next, Size, MaxSize, Resume, PendingLeading] =
-        Search;
+    auto &[Candidates, Ranks, Next, Size, MaxSize, Resume, PendingLeading,
+           RequireRelocated] = Search;
     if (Resume) {
       Ranks.pop_back();
       Next.pop_back();
@@ -4395,6 +5050,14 @@ class LoopPlanInference {
     }
     while (Size <= MaxSize) {
       if (Ranks.size() == Size) {
+        if (RequireRelocated &&
+            std::none_of(Ranks.begin(), Ranks.end(), [](const auto &R) {
+              return !R.CutLocations.empty();
+            })) {
+          Ranks.pop_back();
+          Next.pop_back();
+          continue;
+        }
         Resume = true;
         return true;
       }
@@ -4442,14 +5105,155 @@ class LoopPlanInference {
     return TupleRankStatus::Paused;
   }
 
+  void inferNativeSelectors(
+      llvm::ArrayRef<detail::NativeLoopCutpointOrigin> Origins) {
+    std::map<va_t, va_t> Native;
+    std::set<va_t> Repeated;
+    for (const auto &O : Origins) {
+      if (!Native.emplace(O.CandidateAddress, O.OriginalAddress).second)
+        stop(Status::Invalid, "duplicate native loop origin mapping");
+      if (!O.UniqueOriginal)
+        Repeated.insert(O.OriginalAddress);
+    }
+    std::map<va_t, std::vector<size_t>> Groups;
+    for (size_t I = 0; I != Plan.Cutpoints.size(); ++I) {
+      const auto It = Native.find(Plan.Cutpoints[I].CandidateAddress);
+      if (It == Native.end())
+        stop(Status::Invalid, "missing native loop origin mapping");
+      Groups[It->second].push_back(I);
+    }
+    auto &Ctx = Session.Context;
+    std::vector<std::optional<TerminalState>> Templates(Plan.Cutpoints.size());
+    using LocationKey = std::tuple<LowIRLoopSpace, uint64_t, uint16_t>;
+    using ConstantBits = std::pair<uint64_t, uint64_t>; // Known zero / one.
+    std::vector<std::map<LocationKey, ConstantBits>> Constants(
+        Plan.Cutpoints.size());
+    const auto Bits = [&](size_t I, const LowIRLoopLocation &L) {
+      ActiveCutpoint = I;
+      auto [It, Added] = Constants[I].try_emplace({L.Space, L.Offset, L.Bytes});
+      if (!Added)
+        return It->second;
+      chargeCutSelection(L.Bytes * 8);
+      auto &State = *Templates[I];
+      const auto V = read(State, L);
+      const auto Zero = Ctx.mkConst(L.Bytes * 8, 0);
+      const auto One = Ctx.mkConst(L.Bytes * 8, ones(L.Bytes));
+      auto Z = commonBits(V, Zero, L.Bytes);
+      auto O = commonBits(V, One, L.Bytes);
+      const auto Pending = ones(L.Bytes) & ~(Z | O);
+      if (Pending) {
+        const auto &Vars = relationVars(V);
+        const auto &DomainVars = relationVars(State.Predicate);
+        chargeCutSelection(Vars.size());
+        // Independent unconstrained inputs cannot supply another literal bit.
+        // This only filters proposals; all retained constants are proved.
+        if (std::any_of(Vars.begin(), Vars.end(), [&](uint32_t Var) {
+              return std::binary_search(DomainVars.begin(), DomainVars.end(),
+                                        Var);
+            })) {
+          Z |= commonBitsUnder(V, Zero, L.Bytes, State.Predicate, Pending);
+          O |= commonBitsUnder(V, One, L.Bytes, State.Predicate, Pending & ~Z);
+        }
+      }
+      It->second = {Z, O};
+      return It->second;
+    };
+    const auto Add = [&](size_t I, const LowIRLoopLocation &L, uint64_t Mask,
+                         uint64_t Value) {
+      auto &Cut = Plan.Cutpoints[I];
+      auto &Guards = Cut.OriginalGuards;
+      auto It = std::find_if(Guards.begin(), Guards.end(), [&](const auto &G) {
+        return sameLocation(G.Location, L);
+      });
+      if (It == Guards.end())
+        Guards.push_back({L, Mask, Value});
+      else {
+        It->Mask |= Mask;
+        It->Value |= Value;
+      }
+      Cut.CandidateGuards = Guards;
+    };
+    for (const auto &[Address, Group] : Groups) {
+      if (Group.size() < 2 && !Repeated.count(Address))
+        continue;
+      for (size_t I : Group) {
+        chargeCutSelection();
+        auto C = checker();
+        if (!C.validateInput())
+          throw Stop{};
+        C.EntryRoot = Session.EntryRoot;
+        C.MemoryRoot = Session.MemoryRoot;
+        // Use the complete reconstructed induction domain, never just a
+        // concrete prefix witness or a recovery context's identity.
+        auto T = C.loopTemplate(I, nullptr, nullptr, Session.Predicate);
+        T.Candidate.Predicate = Ctx.mkAnd(Session.Predicate, T.Predicate);
+        if (C.query(T.Candidate.Predicate) == solver::SatResult::Unsat)
+          stop(Status::Invalid, "native selector has an empty template domain");
+        Templates[I] = std::move(T.Candidate);
+      }
+      if (Group.size() == 1) {
+        const size_t I = Group.front();
+        ActiveCutpoint = I;
+        // An unselected occurrence of this native address can precede the
+        // chosen residual context. Retain literal bits of its reconstructed
+        // state as selector proposals; the full native checker must still
+        // establish every prefix, arrival, transition and observation.
+        for (const auto &L : locations()) {
+          chargeCutSelection();
+          if (L.Space == LowIRLoopSpace::FunctionTemporary)
+            continue;
+          chargeCutSelection(L.Bytes * 8);
+          const auto V = read(*Templates[I], L);
+          const auto Z = commonBits(V, Ctx.mkConst(L.Bytes * 8, 0), L.Bytes);
+          const auto O =
+              commonBits(V, Ctx.mkConst(L.Bytes * 8, ones(L.Bytes)), L.Bytes);
+          if (const auto Mask = Z | O)
+            Add(I, L, Mask, O);
+        }
+        continue;
+      }
+      for (size_t A = 0; A != Group.size(); ++A)
+        for (size_t B = A + 1; B != Group.size(); ++B) {
+          const auto I = Group[A], J = Group[B];
+          ActiveCutpoint = I;
+          bool Separated = false;
+          for (const auto &L : locations()) {
+            chargeCutSelection();
+            if (L.Space == LowIRLoopSpace::FunctionTemporary)
+              continue;
+            const auto [AZ, AO] = Bits(I, L);
+            const auto [BZ, BO] = Bits(J, L);
+            const auto Different = (AZ & BO) | (AO & BZ);
+            if (!Different)
+              continue;
+            const uint64_t Mask = uint64_t{1} << std::countr_zero(Different);
+            Add(I, L, Mask, AO & Mask);
+            Add(J, L, Mask, BO & Mask);
+            Separated = true;
+            break;
+          }
+          if (!Separated)
+            stop(Status::Unsupported,
+                 "native loop contexts have no proved literal-bit selector");
+        }
+    }
+    if (std::any_of(Plan.Cutpoints.begin(), Plan.Cutpoints.end(),
+                    [](const auto &C) { return !C.OriginalGuards.empty(); }) &&
+        !checker().validateInput())
+      throw Stop{};
+  }
+
   bool inferMultiple(llvm::ArrayRef<va_t> Cuts) {
     Result.CutpointAttempts += Cuts.size();
     Models.assign(Cuts.size(), {});
     EqualitySeeds.assign(Cuts.size(), {});
     EqualityAttempts.assign(Cuts.size(), {});
+    ProjectedEqualityAttempts.assign(Cuts.size(), {});
     RelationCounters.clear();
     LaneCounters.clear();
     RelationBounds.assign(Cuts.size(), {});
+    RelationPredicates.clear();
+    RelationBoundValues.assign(Cuts.size(), {});
     RelationArrivals.assign(Cuts.size(), {});
     RelationVariables.assign(Cuts.size(), {});
     Plan.Cutpoints.assign(Cuts.size(), {});
@@ -4518,7 +5322,11 @@ class LoopPlanInference {
           return false;
       }
     auto Search = makeTupleSearch(Edges);
-    return inferTupleRanks(Edges, Search) == TupleRankStatus::Inferred;
+    if (inferTupleRanks(Edges, Search) == TupleRankStatus::Inferred)
+      return true;
+    if (auto Relocated = relocatedTupleSearch(Edges, Search))
+      return inferTupleRanks(Edges, *Relocated) == TupleRankStatus::Inferred;
+    return false;
   }
 
 public:
@@ -4533,13 +5341,15 @@ public:
         Plan.Cutpoints[ActiveCutpoint].CandidateAddress = F.Entry;
     Plan.Cutpoints[ActiveCutpoint].Rank = {NdVar::scalar(0, 8)};
     Session.LoopPlan = &Plan;
+    Session.Original = &F;
     Session.LoopPrefixes.resize(1);
   }
 
   LowIRLoopInferenceResult
   run(llvm::ArrayRef<va_t> Eligible,
       detail::LowIRLoopCutFamily Family = detail::LowIRLoopCutFamily::Default,
-      llvm::ArrayRef<const LowIRLoopRefinementPlan *> PreviousPlans = {}) {
+      llvm::ArrayRef<const LowIRLoopRefinementPlan *> PreviousPlans = {},
+      llvm::ArrayRef<detail::NativeLoopCutpointOrigin> NativeOrigins = {}) {
     std::string LastTemplateFailure;
     const bool BranchArms = Family != detail::LowIRLoopCutFamily::Default;
     const bool FilterBranches =
@@ -4564,6 +5374,20 @@ public:
           !Limits.MaxRankCandidates)
         stop(Status::BudgetExceeded, "loop inference search budget exhausted");
       findChoices(Eligible, BranchArms, FilterBranches);
+      if (!NativeOrigins.empty()) {
+        std::set<va_t> Unique;
+        for (const auto &O : NativeOrigins) {
+          chargeCutSelection();
+          if (O.UniqueOriginal)
+            Unique.insert(O.CandidateAddress);
+        }
+        // Preserve the previous unique-origin search order before expanding
+        // the candidate family. All attempts still share the same budgets.
+        std::stable_partition(Choices.begin(), Choices.end(), [&](va_t A) {
+          chargeCutSelection();
+          return Unique.count(A);
+        });
+      }
       if (BranchArms && BranchArmEntries.empty())
         stop(Status::Unsupported, "no cyclic branch-arm cutpoints");
       // A complete branch-arm set can preserve phases that a shared header
@@ -4585,12 +5409,10 @@ public:
           stop(Status::Unsupported,
                FilterBranches ? "filtered cuts duplicate previous plan"
                               : "branch-arm cuts duplicate previous plan");
-      if (Feedback->size() > 1 || MultipleCycles) {
-        if (inferMultiple(*Feedback)) {
-          Result.Status = LowIRLoopInferenceStatus::Inferred;
-          Result.Plan = Plan;
-        }
-      } else
+      bool Inferred = false;
+      if (Feedback->size() > 1 || MultipleCycles)
+        Inferred = inferMultiple(*Feedback);
+      else
         for (va_t Address : BranchArms ? *Feedback : Choices) {
           if (Result.CutpointAttempts >= Limits.MaxCutpointAttempts)
             stop(Status::BudgetExceeded,
@@ -4600,8 +5422,7 @@ public:
             continue;
           try {
             if (inferAt(Address)) {
-              Result.Status = LowIRLoopInferenceStatus::Inferred;
-              Result.Plan = Plan;
+              Inferred = true;
               break;
             }
           } catch (const Stop &) {
@@ -4614,7 +5435,14 @@ public:
             LastTemplateFailure = Session.Statistics.Diagnostic;
           }
         }
-      if (!Result.inferred())
+      if (Inferred) {
+        if (!NativeOrigins.empty()) {
+          Stage = "native cutpoint selectors";
+          inferNativeSelectors(NativeOrigins);
+        }
+        Result.Status = LowIRLoopInferenceStatus::Inferred;
+        Result.Plan = Plan;
+      } else
         Result.Diagnostic = LastTemplateFailure.empty()
                                 ? "no loop template and unsigned rank inferred"
                                 : LastTemplateFailure;
@@ -4670,9 +5498,12 @@ LowIRLoopInferenceResult detail::inferNativeLowIRLoopRefinementPlan(
     SpecializationProvider &Provider, const LowFunc &Candidate,
     const LowIRIndependenceContract &Contract,
     const LowIRLoopInferenceLimits &Limits,
-    llvm::ArrayRef<va_t> EligibleCutpoints) {
+    llvm::ArrayRef<NativeLoopCutpointOrigin> EligibleOrigins) {
+  std::vector<va_t> Eligible;
+  for (const auto &O : EligibleOrigins)
+    Eligible.push_back(O.CandidateAddress);
   return LoopPlanInference(Candidate, Contract, Limits, &Provider)
-      .run(EligibleCutpoints);
+      .run(Eligible, LowIRLoopCutFamily::Default, {}, EligibleOrigins);
 }
 
 LowIRIndependenceResult checkLowIRUndefinedIndependence(

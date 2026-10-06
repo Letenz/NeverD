@@ -1,6 +1,6 @@
 **語言**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 6a7456cc606f8f98767b33ad15e7c852cd0cb7e1bf8367759b0ad0cc03503470 -->
+<!-- i18n-source: 1f7e768c64fd7b3fd697260f693c68ca3b71562bf43cb0db4970c98487c270be -->
 
 [← NeverD 專案](project.md)
 
@@ -40,3 +40,4 @@
 | [Solana SBF 反編譯](sbf.md) | SBF v0-v4、LLVM IR、C/Rust 輸出、驗證與已知限制 |
 | [路線圖](roadmap.md) | 狀態：原生格式、EVM 與 Solana SBF 均已實作 |
 | 本地化文件 | 使用上方語言連結開啟各語言的文件索引與專案概覽 |
+| [加殼可執行檔的脫殼](unpack.md) | 透過觀察有界來賓行程還原加殼的 PE32+ 映像：入口規則、重建的映像、識別與限制 |

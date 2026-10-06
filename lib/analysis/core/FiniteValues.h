@@ -37,6 +37,36 @@ struct FiniteValues {
 /// symbolic context, symbolic state, predicate or solver state.
 using FiniteValueObserver = llvm::function_ref<bool(llvm::ArrayRef<uint64_t>)>;
 
+/// One complete predicate encoding before projection or search. The context
+/// and solver settings are fixed for this object's lifetime; a different
+/// predicate replaces the template. Each enumeration receives independent
+/// mutable state with the same gate and search budgets as a fresh encoding.
+/// No model, learned clause or incomplete encoding is retained. The context
+/// must outlive this object and every solver created from it.
+class FiniteDomainEncoding {
+public:
+  FiniteDomainEncoding(symbolic::SymContext &Ctx,
+                       solver::SolverOptions Settings)
+      : Ctx(Ctx), Settings(Settings) {
+    this->Settings.BuildModel = true;
+  }
+
+  symbolic::SymContext &context() const { return Ctx; }
+  const solver::SolverOptions &settings() const { return Settings; }
+
+  /// Returns an independent solver with Predicate asserted, including its
+  /// encoding error when the assertion fails. The caller must still check
+  /// that error and perform the complete finite enumeration.
+  std::unique_ptr<solver::BitVectorSolver>
+  createSolver(symbolic::SymRef Predicate);
+
+private:
+  symbolic::SymContext &Ctx;
+  solver::SolverOptions Settings;
+  symbolic::SymRef EncodedPredicate;
+  std::unique_ptr<solver::BitVectorSolver> Encoding;
+};
+
 /// True only when Value preserves enough independent variable bits to exceed
 /// Limit on every reachable path, and none of those bits influences Predicate
 /// or any RelatedValues expression. Whole-variable absence is the cheap path;
@@ -66,6 +96,13 @@ enumerateFiniteValues(symbolic::SymContext &Ctx, symbolic::SymRef Predicate,
                       solver::SolverOptions Settings, uint64_t MaxQueries,
                       uint64_t MaxSymbolicNodes, uint64_t &Queries,
                       FiniteValueObserver Observe = {});
+
+FiniteValues enumerateFiniteValues(FiniteDomainEncoding &Encoding,
+                                   symbolic::SymRef Predicate,
+                                   llvm::ArrayRef<symbolic::SymRef> Values,
+                                   uint32_t Limit, uint64_t MaxQueries,
+                                   uint64_t MaxSymbolicNodes, uint64_t &Queries,
+                                   FiniteValueObserver Observe = {});
 
 } // namespace neverd::analysis::detail
 

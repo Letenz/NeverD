@@ -7,6 +7,33 @@ remains independent of a general solver. Expression synthesis accepts a
 candidate only after an equivalence proof; a counterexample or inconclusive
 query retains the original expression.
 
+<!-- i18n-section: builtin-comparisons -->
+
+## Built-in comparison circuits
+
+Comparisons wider than eight bits compare high halves first and use the low
+halves when the high halves are equal. Small chunks use subtraction carries.
+The shared encoder can reuse high-prefix gates when a partial-register update
+changes only low bits. Signed comparisons still invert both sign bits. The
+expression semantics and existing resource limits are unchanged; exhaustion
+still returns `Unknown`.
+
+`BitBlaster.WidePredicatesAgreeWithTheEvaluator` checks signed and unsigned
+predicates against the expression evaluator at selected widths from 8 to 256,
+including odd widths, boundary neighbours and significant bits above 64. It
+also excludes incorrect output values. Partial-counter tests check full queries,
+counterexample models and gate exhaustion. Native cached-comparison regressions
+prove both comparison/update orders with all register and flag observations,
+and reject a changed original loop body.
+
+<!-- i18n-section: pristine-encoding -->
+
+## Pre-search encoding copies
+
+`BitVectorSolver::cloneEncoding()` copies a complete encoding before any SAT search attempt. It returns null after search or an encoding failure. Copies own their mutable clauses, root propagation, gates and bit mappings; they preserve variable order, gate accounting and solver settings. The context must outlive both solvers, while the source solver can be modified or destroyed independently.
+
+The SAT engine keeps four watch entries inline per literal list; longer lists grow dynamically. This avoids separate allocations for short lists during construction, pristine copying and destruction. Propagation order, clause contents, independent ownership and all work limits stay unchanged.
+
 <!-- i18n-section: z3-build -->
 
 ## Optional Z3 build
@@ -107,3 +134,5 @@ Bitvector proofs use the expression language's total fixed-width semantics.
 Machine exceptions, memory effects, and LLVM poison remain the responsibility
 of the lifting and translation boundaries; an expression proof does not certify
 those boundaries.
+
+An unsearched encoding copy removes root-assigned variables from its own decision queue and rebuilds the strict activity/index heap order. Assignments and clauses stay intact; root facts survive every backtrack. Source ownership, actual decisions, complete models and all search budgets remain unchanged.

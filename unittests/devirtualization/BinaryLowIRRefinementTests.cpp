@@ -11,6 +11,7 @@
 #include "neverd/lift/X86Regs.h"
 
 #include <algorithm>
+#include <bit>
 #include <set>
 
 using namespace neverd;
@@ -68,6 +69,72 @@ void refused(const BinaryLowIRRefinementResult &Result, Status S) {
   EXPECT_FALSE(Result.Certificate);
   EXPECT_FALSE(Result.Proof.Certificate);
 }
+
+Program repeatedNativeContexts() {
+  Program P({0x49, 0x89, 0xfa, 0x41, 0x83, 0xe2, 1,    0x45, 0x85,
+             0xd2, 0x74, 2,    0xeb, 0,    0xe3, 9,    0x48, 0x01,
+             0xc8, 0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf5, 0xc3});
+  P.Options.ControlRegisters = {{x86reg::R10, 8}};
+  return P;
+}
+
+struct SingleNativeContext {
+  Program Input;
+  unsigned Shared = 0, Update = 0;
+
+  SingleNativeContext(bool Frame, bool Byte, bool Reverse) : Input({}) {
+    auto &Code = Input.Image.Segments.front();
+    const auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+      Code.Data.insert(Code.Data.end(), Bytes);
+    };
+    const uint8_t Initial = Reverse ? 1 : 0, Steady = Initial ^ 1;
+    const auto Store = [&](uint8_t Value) {
+      if (Frame && Byte)
+        Emit({0xc6, 0x44, 0x24, 0xfb, Value}); // movb [rsp-5], imm8
+      else if (Frame)
+        Emit({0x48, 0xc7, 0x44, 0x24, 0xf8, Value, 0, 0, 0});
+      else if (Byte)
+        Emit({0x41, 0xb2, Value}); // mov r10b, imm8
+      else
+        Emit({0x49, 0xc7, 0xc2, Value, 0, 0, 0});
+    };
+    const auto Jump = [&] {
+      const auto Address = Code.Data.size();
+      Emit({0xeb, static_cast<uint8_t>(Shared - (Address + 2))});
+    };
+    Store(Initial);
+    Emit({0x48, 0x89, 0xf9, 0x39, 0xff, 0xeb, 0}); // rcx=rdi; cmp edi,edi
+    Shared = Code.Data.size();
+    if (Frame && Byte)
+      Emit({0x80, 0x7c, 0x24, 0xfb, Steady});
+    else if (Frame)
+      Emit({0x48, 0x83, 0x7c, 0x24, 0xf8, Steady});
+    else if (Byte)
+      Emit({0x41, 0x80, 0xfa, Steady});
+    else
+      Emit({0x49, 0x83, 0xfa, Steady});
+    const auto Enter = Code.Data.size();
+    Emit({0x74, 0}); // je loop
+    Store(Steady);
+    Emit({0x39, 0xff}); // Match entry flags; only the stored phase differs.
+    Jump();
+    Code.Data[Enter + 1] = static_cast<uint8_t>(Code.Data.size() - (Enter + 2));
+    const auto Exit = Code.Data.size();
+    Emit({0xe3, 0}); // jrcxz done
+    Update = Code.Data.size();
+    Emit({0x48, 0x01, 0xc8, 0x48, 0x8d, 0x49, 0xff, 0x39, 0xff});
+    Jump();
+    Code.Data[Exit + 1] = static_cast<uint8_t>(Code.Data.size() - (Exit + 2));
+    Emit({0xc3});
+    Code.Size = Code.FileSz = Code.Data.size();
+    const uint16_t Width = Byte ? 1 : 8;
+    if (Frame)
+      Input.Options.ControlFrameSlots = {{Byte ? -5 : -8, Width}};
+    else
+      Input.Options.ControlRegisters = {{x86reg::R10, Width}};
+    Input.Contract.ObserveWrittenFrameBytes = true;
+  }
+};
 
 Program guardedNativeChain(unsigned Count, bool Taken) {
   Program P({});
@@ -145,6 +212,101 @@ TEST(BinaryLowIRRefinement, ProvedNativeBranchChoiceKeepsTheIncomingDomain) {
     // A different terminal observation must still be checked after coverage.
     refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
             Status::Different);
+  }
+}
+
+TEST(BinaryLowIRRefinement, NativeBranchEncodingsHaveBoundedLifetimes) {
+  for (bool Taken : {false, true}) {
+    SCOPED_TRACE(Taken);
+    auto P = guardedNativeChain(48, Taken);
+    const auto Recovery = P.recover();
+    ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+    LowIRRefinementLimits Limits;
+    // Each branch fits this search budget. Retaining unrelated earlier
+    // branch encodings makes later queries run out of propagations.
+    Limits.Execution.Solver.Sat.MaxPropagations = 512;
+    const auto Good = P.check(Recovery.Residual, Witness::LiftedBits, Limits);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    EXPECT_EQ(Good.Proof.OriginalPaths, 1U);
+    EXPECT_EQ(Good.Proof.CandidatePaths, 1U);
+    EXPECT_EQ(Good.Proof.TerminalPairs, 1U);
+    ASSERT_GT(Good.Proof.SolverQueries, 0U);
+    Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
+    ASSERT_TRUE(
+        P.check(Recovery.Residual, Witness::LiftedBits, Limits).proved());
+    --Limits.Execution.MaxSolverQueries;
+    refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+            Status::BudgetExceeded);
+    Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
+
+    auto Bad = Recovery.Residual;
+    bool Changed = false;
+    for (auto &B : Bad.Blocks)
+      for (auto &O : B.Ops)
+        if ((O.Opcode == NdOp::COPY || O.Opcode == NdOp::INT_ZEXT) &&
+            O.Output.isReg() && O.Output.Offset == x86reg::RAX &&
+            O.NumInputs == 1 && O.Inputs[0] == NdVar::scalar(7, 4)) {
+          O.Inputs[0].Offset = 9;
+          Changed = true;
+        }
+    ASSERT_TRUE(Changed);
+    refused(P.check(Bad, Witness::LiftedBits, Limits), Status::Different);
+  }
+}
+
+TEST(BinaryLowIRRefinement, InterveningQueriesRetainFeasibleDomains) {
+  for (unsigned Count : {8U, 32U}) {
+    for (bool Taken : {false, true}) {
+      SCOPED_TRACE(Count);
+      SCOPED_TRACE(Taken);
+      auto P = guardedNativeChain(Count, Taken);
+      auto &Code = P.Image.Segments.front();
+      // LEA RDI,[RDI+RSI*4]; XOR RDI,RSI; TEST RDI,RDI; JE alternate.
+      // Each arm has a data-dependent domain. Proved branches in the chain
+      // interleave UNSAT obligations with repeated feasibility checks.
+      std::vector<uint8_t> Bytes{0x48, 0x8d, 0x3c, 0xb7, 0x48, 0x31,
+                                 0xf7, 0x48, 0x85, 0xff, 0x0f, 0x84};
+      const uint32_t Skip = Code.Data.size();
+      for (unsigned I = 0; I != 4; ++I)
+        Bytes.push_back(static_cast<uint8_t>(Skip >> (8 * I)));
+      Bytes.insert(Bytes.end(), Code.Data.begin(), Code.Data.end());
+      Bytes.insert(Bytes.end(), {0xb8, 11, 0, 0, 0, 0xc3});
+      Code.Data = std::move(Bytes);
+      Code.Size = Code.FileSz = Code.Data.size();
+      P.Contract.ObserveWrittenFrameBytes = true;
+      const auto Recovery = P.recover();
+      ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+      const auto Good = P.check(Recovery.Residual);
+      ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+      ASSERT_GT(Good.Proof.SolverQueries, 0U);
+      LowIRRefinementLimits Limits;
+      Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
+      ASSERT_TRUE(
+          P.check(Recovery.Residual, Witness::LiftedBits, Limits).proved());
+      --Limits.Execution.MaxSolverQueries;
+      refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+              Status::BudgetExceeded);
+      Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
+      Limits.Execution.Solver.Blast.MaxGates = 1;
+      refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+              Status::BudgetExceeded);
+      for (unsigned Value : {7U, 11U}) {
+        auto Bad = Recovery.Residual;
+        bool Changed = false;
+        for (auto &B : Bad.Blocks)
+          for (auto &O : B.Ops)
+            if ((O.Opcode == NdOp::COPY || O.Opcode == NdOp::INT_ZEXT) &&
+                O.Output.isReg() && O.Output.Offset == x86reg::RAX &&
+                O.NumInputs == 1 && O.Inputs[0].isConst() &&
+                O.Inputs[0].Offset == Value) {
+              O.Inputs[0].Offset += 2;
+              Changed = true;
+            }
+        ASSERT_TRUE(Changed);
+        // Both terminal observations still need independent equality proofs.
+        refused(P.check(Bad), Status::Different);
+      }
+    }
   }
 }
 
@@ -1072,6 +1234,114 @@ TEST(BinaryLowIRLoopRefinement, CandidateTemporaryRetainsItsRealEntryValue) {
   refused(Check(), Status::Invalid);
 }
 
+TEST(BinaryLowIRLoopInference, ChangingTemporaryStateBelongsOnlyToCandidate) {
+  // nop; top: jrcxz done; add rax,rcx; lea rcx,[rcx-1]; jmp top; done: ret.
+  // The candidate maintains an additional private counter. Its changing bits
+  // still need an exact template, even though the native program has no slot.
+  Program P({0x90, 0xe3, 9, 0x48, 0x01, 0xc8, 0x48, 0x8d, 0x49, 0xff, 0xeb,
+             0xf5, 0xc3});
+  auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  constexpr uint64_t Saved = uint64_t{1} << 60;
+  Recovery.Residual.FunctionTemporaries = {{Saved, 8}};
+  unsigned Initialized = 0, Updated = 0;
+  for (auto &B : Recovery.Residual.Blocks) {
+    auto Previous = B.Ops;
+    B.Ops.clear();
+    for (auto &Boundary : B.InstructionBoundaries) {
+      const auto Origin = std::find_if(
+          Recovery.Origins.begin(), Recovery.Origins.end(),
+          [&](const auto &O) { return O.ResidualAddress == Boundary.Address; });
+      const auto Begin = Boundary.FirstOp;
+      Boundary.FirstOp = B.Ops.size();
+      B.Ops.insert(B.Ops.end(), Previous.begin() + Begin,
+                   Previous.begin() + Begin + Boundary.OpCount);
+      if (Origin == Recovery.Origins.end())
+        continue; // keep synthetic recovery control boundaries unchanged
+      const auto Native = Origin->NativeInstruction.Address;
+      if (Native != Entry && Native != Entry + 6)
+        continue;
+      LowOp Update;
+      Update.Addr = Boundary.Address;
+      Update.Seq = Boundary.OpCount++;
+      if (Native == Entry) {
+        Update.Opcode = NdOp::COPY;
+        Update.Output = NdVar::tmp(Saved, 8);
+        Update.addInput(NdVar::scalar(0, 8));
+        ++Initialized;
+      } else {
+        Update.Opcode = NdOp::INT_ADD;
+        Update.Output = NdVar::tmp(Saved, 3);
+        Update.addInput(Update.Output);
+        Update.addInput(NdVar::scalar(1, 3));
+        ++Updated;
+      }
+      B.Ops.push_back(Update);
+    }
+  }
+  ASSERT_GT(Initialized, 0U);
+  ASSERT_GT(Updated, 0U);
+  const auto Good = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  ASSERT_TRUE(Good.Inference.inferred()) << Good.Inference.Diagnostic;
+  ASSERT_TRUE(Good.proved()) << Good.Refinement.Proof.Diagnostic;
+  EXPECT_EQ(Good.Refinement.Certificate->Relation.Scope,
+            LowIRRefinementScope::InductiveNativeToLowIRLoops);
+  auto Plan = *Good.Inference.Plan;
+  bool Parameter = false;
+  for (const auto &Cut : Plan.Cutpoints) {
+    for (const auto &Input : Cut.Inputs)
+      if (Input.Location.Space == LowIRLoopSpace::FunctionTemporary) {
+        EXPECT_TRUE(Input.Side == LowIRLoopSide::Candidate ||
+                    Input.Side == LowIRLoopSide::CandidatePrefix);
+        Parameter |= Input.Side == LowIRLoopSide::Candidate;
+      }
+    for (const auto &Assignment : Cut.OriginalState)
+      EXPECT_NE(Assignment.Location.Space, LowIRLoopSpace::FunctionTemporary);
+  }
+  EXPECT_TRUE(Parameter);
+  const auto Check = [&](const LowIRLoopRefinementPlan &Proposal) {
+    return checkBinaryLowIRLoopRefinement(
+        P.Image, Entry, P.Options, Recovery.Residual, P.Contract, Proposal);
+  };
+  // Fixed prefix reads use the same candidate-only namespace, whether or not
+  // this particular inference heuristic retains a fixed-bit predicate.
+  for (auto &Cut : Plan.Cutpoints) {
+    uint64_t Next = 0;
+    for (const auto &Input : Cut.Inputs)
+      Next = std::max(Next, Input.Temporary.Offset + Input.Temporary.Size);
+    for (const auto &Expression : Cut.Expressions)
+      Next = std::max(Next, Expression.Output.Offset + Expression.Output.Size);
+    Cut.Inputs.push_back({LowIRLoopSide::CandidatePrefix,
+                          {LowIRLoopSpace::FunctionTemporary, Saved, 8},
+                          NdVar::tmp(Next, 8)});
+  }
+  ASSERT_TRUE(Check(Plan).proved());
+  for (bool Input : {false, true}) {
+    auto Bad = Plan;
+    for (auto &Cut : Bad.Cutpoints) {
+      if (Input) {
+        for (auto &I : Cut.Inputs)
+          if (I.Location.Space == LowIRLoopSpace::FunctionTemporary)
+            I.Side = LowIRLoopSide::Original;
+      } else {
+        for (const auto &Assignment : Cut.CandidateState)
+          if (Assignment.Location.Space == LowIRLoopSpace::FunctionTemporary)
+            Cut.OriginalState.push_back(Assignment);
+      }
+    }
+    refused(Check(Bad), Status::Invalid);
+  }
+  auto Missing = Plan;
+  for (auto &Cut : Missing.Cutpoints)
+    std::erase_if(Cut.CandidateState, [](const auto &A) {
+      return A.Location.Space == LowIRLoopSpace::FunctionTemporary;
+    });
+  refused(Check(Missing), Status::Different);
+  P.Image.Segments[0].Data[9] = 0xfe; // the original now decrements by two
+  refused(Check(Plan), Status::Different);
+}
+
 TEST(BinaryLowIRLoopRefinement, NativeCollectionChecksEveryInductionDomain) {
   for (bool Deferred : {false, true}) {
     SCOPED_TRACE(Deferred);
@@ -1329,6 +1599,15 @@ TEST(BinaryLowIRLoopInference, CounterAndCallsUseInferredCheckedPlans) {
     ASSERT_TRUE(R.proved()) << R.Refinement.Proof.Diagnostic;
     EXPECT_EQ(R.Refinement.Certificate->Relation.Scope,
               LowIRRefinementScope::InductiveNativeToLowIRLoops);
+    // Adding repeated-origin candidates must retain the successful unique
+    // native cuts before attempting a different context correspondence.
+    for (const auto &C : R.Inference.Plan->Cutpoints)
+      EXPECT_EQ(std::count_if(Recovery.Origins.begin(), Recovery.Origins.end(),
+                              [&](const auto &O) {
+                                return O.NativeInstruction.Address ==
+                                       C.OriginalAddress;
+                              }),
+                1);
     // Origin metadata cannot excuse a different original instruction.
     P.Image.Segments[0].Data[Calls ? 10 : 8] = 0xfe;
     const auto Changed = inferAndCheckBinaryLowIRLoopRefinement(
@@ -1447,6 +1726,400 @@ TEST(BinaryLowIRLoopInference, PackedFlagsStayConstrainedAcrossWidening) {
   ASSERT_TRUE(R.proved()) << R.Refinement.Proof.Diagnostic;
   EXPECT_GT(R.Inference.WideningRounds, 1U);
   EXPECT_GT(R.Refinement.Proof.RankingChecks, 0U);
+}
+
+TEST(BinaryLowIRLoopRefinement, GuardedCutsReadProfiledSystemFlags) {
+  Program P(
+      {0xe3, 9, 0x48, 0x01, 0xc8, 0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf5, 0xc3});
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Inferred = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  ASSERT_TRUE(Inferred.proved()) << Inferred.Refinement.Proof.Diagnostic;
+  ASSERT_EQ(Inferred.Inference.Plan->Cutpoints.size(), 1U);
+  const auto Original = Inferred.Inference.Plan->Cutpoints.front();
+  LowIRLoopRefinementPlan Plan;
+  const LowIRLoopLocation Flags{LowIRLoopSpace::SystemFlags, 0, 8};
+  for (uint64_t Value : {0, 512}) {
+    auto Cut = Original;
+    uint64_t Next = 0;
+    for (const auto &I : Cut.Inputs)
+      Next = std::max(Next, I.Temporary.Offset + 8);
+    for (const auto &O : Cut.Expressions)
+      Next = std::max(Next, O.Output.Offset + 8);
+    const auto Input = NdVar::tmp(Next, 8);
+    Cut.Inputs.push_back({LowIRLoopSide::Entry, Flags, Input});
+    Next += 8;
+    const auto Expr = [&](NdOp Code, NdVar A, NdVar B, uint16_t Bytes) {
+      LowOp O;
+      O.Opcode = Code;
+      O.Output = NdVar::tmp(Next, Bytes);
+      Next += 8;
+      O.addInput(A);
+      O.addInput(B);
+      Cut.Expressions.push_back(O);
+      return O.Output;
+    };
+    const auto Bit = Expr(NdOp::INT_AND, Input, NdVar::scalar(512, 8), 8);
+    const auto Selected =
+        Expr(NdOp::INT_EQUAL, Bit, NdVar::scalar(Value, 8), 1);
+    Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Selected, 1);
+    Cut.OriginalGuards = Cut.CandidateGuards = {{Flags, 512, Value}};
+    Plan.Cutpoints.push_back(std::move(Cut));
+  }
+  const auto Good = checkBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery.Residual, P.Contract, Plan);
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  EXPECT_EQ(Good.Proof.LoopInitiations, 2U);
+  for (auto Location : {LowIRLoopLocation{LowIRLoopSpace::SystemFlags, 1, 8},
+                        LowIRLoopLocation{LowIRLoopSpace::SystemFlags, 0, 4}}) {
+    auto Wrong = Plan;
+    Wrong.Cutpoints[0].OriginalGuards[0].Location = Location;
+    refused(checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                           Recovery.Residual, P.Contract,
+                                           Wrong),
+            Status::Invalid);
+  }
+}
+
+TEST(BinaryLowIRLoopRefinement, GuardedCutsCannotBypassUnauditedBoundaries) {
+  Program P({0xd1, 0xd2, 0xc3}); // RCL EDX,1 has missing effect coverage.
+  Program Safe({0xc3});
+  const auto Candidate = Safe.recover();
+  ASSERT_TRUE(Candidate.complete()) << Candidate.Diagnostic;
+  P.Contract.RetainUnauditedNativeBoundaries = true;
+  LowIRLoopCutpoint Cut;
+  Cut.OriginalAddress = Entry;
+  Cut.CandidateAddress = Candidate.Residual.Entry;
+  Cut.UseEntryPrefix = true;
+  Cut.Rank = {NdVar::scalar(0, 8)};
+  // Bit 1 is set in every admitted system-flags image, so this selector never
+  // matches. Its failure still cannot justify skipping unaudited native bytes.
+  Cut.OriginalGuards = {{{LowIRLoopSpace::SystemFlags, 0, 8}, 2, 0}};
+  const auto R = checkBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Candidate.Residual, P.Contract, {{Cut}});
+  refused(R, Status::Unsupported);
+  EXPECT_NE(R.Proof.Diagnostic.find("unaudited native boundary"),
+            std::string::npos);
+  EXPECT_EQ(R.Proof.Operations, 0U);
+}
+
+TEST(BinaryLowIRLoopRefinement, GuardedCutsProveRepeatedNativeContexts) {
+  // R10 selects two recovered copies of the same original loop. RCX remains
+  // arbitrary on both paths; no specialization entry constant is a premise.
+  auto P = repeatedNativeContexts();
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  std::vector<va_t> Headers;
+  for (const auto &O : Recovery.Origins)
+    if (O.NativeInstruction.Address == Entry + 14)
+      Headers.push_back(O.ResidualAddress);
+  ASSERT_EQ(Headers.size(), 2U);
+  const auto Inferred =
+      inferLowIRLoopRefinementPlan(Recovery.Residual, P.Contract, {}, Headers);
+  ASSERT_TRUE(Inferred.inferred()) << Inferred.Diagnostic;
+  ASSERT_EQ(Inferred.Plan->Cutpoints.size(), 2U);
+  auto Unguarded = *Inferred.Plan;
+  for (auto &C : Unguarded.Cutpoints)
+    C.OriginalAddress = Entry + 14;
+  refused(checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                         Recovery.Residual, P.Contract,
+                                         Unguarded),
+          Status::Invalid);
+  unsigned Proved = 0;
+  // Try both explicit selector assignments. These are untrusted proposals;
+  // only the complete original/candidate checker may accept a correspondence.
+  for (unsigned Reverse : {0, 1}) {
+    auto Plan = Unguarded;
+    for (unsigned I = 0; I != 2; ++I)
+      Plan.Cutpoints[I].OriginalGuards = Plan.Cutpoints[I].CandidateGuards = {
+          {{LowIRLoopSpace::Register, x86reg::R10, 8}, 1, I ^ Reverse}};
+    const auto R = checkBinaryLowIRLoopRefinement(
+        P.Image, Entry, P.Options, Recovery.Residual, P.Contract, Plan);
+    if (!R.proved())
+      continue;
+    ++Proved;
+    EXPECT_EQ(R.Proof.LoopInitiations, 2U);
+    EXPECT_GT(R.Proof.RankingChecks, 0U);
+    auto Wrong = Plan;
+    Wrong.Cutpoints[1].OriginalGuards = Wrong.Cutpoints[0].OriginalGuards;
+    EXPECT_FALSE(checkBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                                Recovery.Residual, P.Contract,
+                                                Wrong)
+                     .proved());
+  }
+  EXPECT_EQ(Proved, 1U);
+}
+
+TEST(BinaryLowIRLoopInference,
+     SingleChosenContextSkipsEarlierNativeOccurrences) {
+  for (bool Frame : {false, true})
+    for (bool Byte : {false, true})
+      for (bool Reverse : {false, true}) {
+        SCOPED_TRACE(Frame);
+        SCOPED_TRACE(Byte);
+        SCOPED_TRACE(Reverse);
+        SingleNativeContext Fixture(Frame, Byte, Reverse);
+        auto &P = Fixture.Input;
+        auto Recovery = P.recover();
+        ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+        // Retain both actual occurrences of this origin as candidates. The
+        // earlier initialization context is not part of the selected loop.
+        std::erase_if(Recovery.Origins, [&](const auto &O) {
+          return O.NativeInstruction.Address != Entry + Fixture.Shared;
+        });
+        ASSERT_EQ(Recovery.Origins.size(), 2U);
+        const auto Check = [&](const LowIRLoopInferenceLimits &Limits) {
+          return inferAndCheckBinaryLowIRLoopRefinement(
+              P.Image, Entry, P.Options, Recovery, P.Contract,
+              Witness::LiftedBits, {}, Limits);
+        };
+        const auto Good = Check({});
+        ASSERT_TRUE(Good.Inference.inferred()) << Good.Inference.Diagnostic;
+        ASSERT_TRUE(Good.proved()) << Good.Refinement.Proof.Diagnostic;
+        ASSERT_EQ(Good.Inference.Plan->Cutpoints.size(), 1U);
+        EXPECT_FALSE(Good.Inference.Plan->Cutpoints[0].OriginalGuards.empty());
+
+        LowIRLoopInferenceLimits Exact;
+        Exact.MaxCutSelectionWork = Good.Inference.CutSelectionWork;
+        Exact.Execution.MaxOperations = Good.Inference.Operations;
+        Exact.Execution.MaxSolverQueries = Good.Inference.SolverQueries;
+        ASSERT_TRUE(Check(Exact).proved());
+        for (unsigned Kind = 0; Kind != 3; ++Kind) {
+          auto Short = Exact;
+          if (Kind == 0)
+            --Short.MaxCutSelectionWork;
+          else if (Kind == 1)
+            --Short.Execution.MaxOperations;
+          else
+            --Short.Execution.MaxSolverQueries;
+          const auto R = Check(Short);
+          EXPECT_EQ(R.Inference.Status,
+                    LowIRLoopInferenceStatus::BudgetExceeded);
+          EXPECT_FALSE(R.Inference.Plan);
+          EXPECT_FALSE(R.Refinement.Certificate);
+        }
+        auto &Bytes = P.Image.Segments.front().Data;
+        ASSERT_EQ(Bytes[Fixture.Update + 1], 0x01U);
+        Bytes[Fixture.Update + 1] =
+            0x29; // ADD -> SUB under the same selectors.
+        const auto Bad = checkBinaryLowIRLoopRefinement(
+            P.Image, Entry, P.Options, Recovery.Residual, P.Contract,
+            *Good.Inference.Plan);
+        EXPECT_FALSE(Bad.proved());
+        EXPECT_FALSE(Bad.Certificate);
+      }
+}
+
+TEST(BinaryLowIRLoopInference, NativeSelectorsProveRepeatedContexts) {
+  auto P = repeatedNativeContexts();
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto R = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  ASSERT_TRUE(R.Inference.inferred()) << R.Inference.Diagnostic;
+  EXPECT_GT(R.Inference.EntailmentCacheHits, 0U);
+  ASSERT_TRUE(R.proved()) << R.Refinement.Proof.Diagnostic;
+  ASSERT_EQ(R.Inference.Plan->Cutpoints.size(), 2U);
+  const auto &A = R.Inference.Plan->Cutpoints[0];
+  const auto &B = R.Inference.Plan->Cutpoints[1];
+  EXPECT_EQ(A.OriginalAddress, B.OriginalAddress);
+  EXPECT_NE(A.CandidateAddress, B.CandidateAddress);
+  EXPECT_FALSE(A.OriginalGuards.empty());
+  EXPECT_FALSE(B.OriginalGuards.empty());
+  EXPECT_GT(R.Inference.CutSelectionWork, 0U);
+  EXPECT_EQ(R.Refinement.Proof.LoopInitiations, 2U);
+}
+
+TEST(BinaryLowIRLoopInference, NativeSelectorsProveFrameContexts) {
+  // Split on one input bit, store the context in the entry-relative frame,
+  // then erase the input register and normalize arithmetic flags before the
+  // loop. The frame is the only machine-state location separating both cuts.
+  Program P({0x83, 0xe7, 1,    0x85, 0xff, 0x74, 11,   0x48, 0xc7, 0x44, 0x24,
+             0xf8, 1,    0,    0,    0,    0xeb, 9,    0x48, 0xc7, 0x44, 0x24,
+             0xf8, 0,    0,    0,    0,    0x31, 0xff, 0x39, 0xff, 0xe3, 9,
+             0x48, 0x01, 0xc8, 0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf5, 0xc3});
+  P.Options.ControlFrameSlots = {{-8, 8}};
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto R = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  ASSERT_TRUE(R.Inference.inferred()) << R.Inference.Diagnostic;
+  ASSERT_TRUE(R.proved()) << R.Refinement.Proof.Diagnostic;
+  ASSERT_EQ(R.Inference.Plan->Cutpoints.size(), 2U);
+  for (const auto &C : R.Inference.Plan->Cutpoints) {
+    ASSERT_EQ(C.OriginalGuards.size(), 1U);
+    EXPECT_EQ(C.OriginalGuards[0].Location.Space, LowIRLoopSpace::Frame);
+    EXPECT_EQ(C.OriginalGuards[0].Location.Offset, uint64_t(-8));
+  }
+}
+
+TEST(BinaryLowIRLoopInference, NativeSelectorsSeparateThreeDomains) {
+  // The three arms set r10 to 0, 1 or 2, then share one arbitrary-count loop.
+  Program P({0x83, 0xff, 0,    0x74, 13,   0x83, 0xff, 1,    0x74, 13,   0x41,
+             0xba, 2,    0,    0,    0,    0xeb, 11,   0x45, 0x31, 0xd2, 0xeb,
+             6,    0x41, 0xba, 1,    0,    0,    0,    0xe3, 9,    0x48, 0x01,
+             0xc8, 0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf5, 0xc3});
+  P.Options.ControlRegisters = {{x86reg::R10, 8}};
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto R = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  ASSERT_TRUE(R.Inference.inferred()) << R.Inference.Diagnostic;
+  ASSERT_TRUE(R.proved()) << R.Refinement.Proof.Diagnostic;
+  ASSERT_EQ(R.Inference.Plan->Cutpoints.size(), 3U);
+  EXPECT_EQ(R.Refinement.Proof.LoopInitiations, 3U);
+  bool Conjunction = false;
+  for (const auto &C : R.Inference.Plan->Cutpoints) {
+    unsigned Bits = 0;
+    for (const auto &G : C.OriginalGuards)
+      Bits += std::popcount(G.Mask);
+    Conjunction |= Bits > 1;
+  }
+  EXPECT_TRUE(Conjunction);
+}
+
+TEST(BinaryLowIRLoopInference, NativeSelectorsRefuseInseparableTemplates) {
+  // Two real loop addresses split at unsigned rdi < 5. Their reconstructed
+  // states have no opposite literal bits: the second interval leaves every
+  // rdi bit variable and both arms normalize the arithmetic flags.
+  Program P({0x48, 0x83, 0xff, 5,    0x72, 15,   0x31, 0xc0, 0xe3,
+             10,   0x48, 0x8d, 4,    8,    0x48, 0x8d, 0x49, 0xff,
+             0xeb, 0xf4, 0xc3, 0x31, 0xc0, 0xe3, 10,   0x48, 0x8d,
+             4,    8,    0x48, 0x8d, 0x49, 0xff, 0xeb, 0xf4, 0xc3});
+  auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Good = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  ASSERT_TRUE(Good.proved())
+      << Good.Inference.Diagnostic << ": " << Good.Refinement.Proof.Diagnostic;
+  ASSERT_EQ(Good.Inference.Plan->Cutpoints.size(), 2U);
+  const auto &A = Good.Inference.Plan->Cutpoints[0];
+  const auto &B = Good.Inference.Plan->Cutpoints[1];
+  for (auto &O : Recovery.Origins)
+    if (O.ResidualAddress == B.CandidateAddress)
+      O.NativeInstruction.Address = A.OriginalAddress;
+  const auto Bad = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  EXPECT_EQ(Bad.Inference.Status, LowIRLoopInferenceStatus::Unsupported)
+      << Bad.Inference.Diagnostic;
+  EXPECT_NE(Bad.Inference.Diagnostic.find("no proved literal-bit selector"),
+            std::string::npos);
+  EXPECT_FALSE(Bad.Inference.Plan);
+  EXPECT_FALSE(Bad.Refinement.Certificate);
+  EXPECT_EQ(Bad.Refinement.Proof.Operations, 0U);
+}
+
+TEST(BinaryLowIRLoopInference, NativeSelectorsKeepIndependentBudgets) {
+  auto P = repeatedNativeContexts();
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Check = [&](const LowIRLoopInferenceLimits &I,
+                         const LowIRRefinementLimits &L = {}) {
+    return inferAndCheckBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                                  Recovery, P.Contract,
+                                                  Witness::LiftedBits, L, I);
+  };
+  const auto Good = Check({});
+  ASSERT_TRUE(Good.proved())
+      << Good.Inference.Diagnostic << ": " << Good.Refinement.Proof.Diagnostic;
+  LowIRLoopInferenceLimits Exact;
+  Exact.Execution.MaxOperations = Good.Inference.Operations;
+  Exact.Execution.MaxSolverQueries = Good.Inference.SolverQueries;
+  Exact.Execution.MaxPaths = Good.Inference.ScheduledPaths;
+  Exact.MaxCutSelectionWork = Good.Inference.CutSelectionWork;
+  ASSERT_TRUE(Check(Exact).proved());
+  for (unsigned Limit = 0; Limit != 3; ++Limit) {
+    auto Short = Exact;
+    if (Limit == 0)
+      --Short.MaxCutSelectionWork;
+    else if (Limit == 1)
+      --Short.Execution.MaxOperations;
+    else
+      --Short.Execution.MaxSolverQueries;
+    const auto R = Check(Short);
+    EXPECT_EQ(R.Inference.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+    EXPECT_FALSE(R.Inference.Plan);
+    EXPECT_FALSE(R.Refinement.Certificate);
+  }
+  LowIRRefinementLimits ExactProof;
+  ExactProof.Execution.MaxOperations = Good.Refinement.Proof.Operations;
+  ExactProof.Execution.MaxSolverQueries = Good.Refinement.Proof.SolverQueries;
+  ExactProof.Execution.MaxObservations = Good.Refinement.Proof.Observations;
+  ExactProof.MaxTerminalPairs = Good.Refinement.Proof.TerminalPairs;
+  ASSERT_TRUE(Check(Exact, ExactProof).proved());
+  --ExactProof.Execution.MaxSolverQueries;
+  const auto ShortProof = Check(Exact, ExactProof);
+  EXPECT_TRUE(ShortProof.Inference.inferred());
+  refused(ShortProof.Refinement, Status::BudgetExceeded);
+}
+
+TEST(BinaryLowIRLoopInference, NativeSelectorsDoNotTrustOriginsOrBodies) {
+  auto P = repeatedNativeContexts();
+  const auto Recovery = P.recover();
+  ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+  const auto Good = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  ASSERT_TRUE(Good.proved())
+      << Good.Inference.Diagnostic << ": " << Good.Refinement.Proof.Diagnostic;
+  auto Wrong = Recovery;
+  const auto &Cut = Good.Inference.Plan->Cutpoints.front();
+  ASSERT_NE(Cut.OriginalAddress, Entry + 3);
+  for (auto &O : Wrong.Origins)
+    if (O.ResidualAddress == Cut.CandidateAddress)
+      O.NativeInstruction.Address = Entry + 3; // Before the entry AND.
+  const auto BadOrigin = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Wrong, P.Contract);
+  EXPECT_FALSE(BadOrigin.proved());
+  EXPECT_FALSE(BadOrigin.Refinement.Certificate);
+  // The recovered candidate and selectors cannot authorize a changed native
+  // update, even though candidate-only inference still succeeds.
+  P.Image.Segments.front().Data[22] = 0xfe;
+  const auto BadBody = inferAndCheckBinaryLowIRLoopRefinement(
+      P.Image, Entry, P.Options, Recovery, P.Contract);
+  EXPECT_TRUE(BadBody.Inference.inferred()) << BadBody.Inference.Diagnostic;
+  EXPECT_FALSE(BadBody.proved());
+  EXPECT_FALSE(BadBody.Refinement.Certificate);
+}
+
+TEST(BinaryLowIRLoopInference, NativeByteCountersKeepCachedComparisons) {
+  for (bool Lagged : {false, true}) {
+    SCOPED_TRACE(Lagged);
+    // MOVZX R8D,DIL; MOVZX R9D,SIL; two nested byte counters starting at
+    // zero. Each header tests a cached SETE result. ADD EAX,EDX observes the
+    // inner counter. Both input bytes are unconstrained; all 16 GPRs and seven
+    // flags remain observed.
+    Program P({0x44, 0x0f, 0xb6, 0xc7, 0x44, 0x0f, 0xb6, 0xce, 0x31, 0xc0, 0x31,
+               0xc9, 0x44, 0x38, 0xc1, 0x41, 0x0f, 0x94, 0xc2, 0x45, 0x84, 0xd2,
+               0x75, 0x26, 0x31, 0xd2, 0x44, 0x38, 0xca, 0x41, 0x0f, 0x94, 0xc3,
+               0x45, 0x84, 0xdb, 0x75, 0x0d, 0x01, 0xd0, 0xfe, 0xc2, 0x44, 0x38,
+               0xca, 0x41, 0x0f, 0x94, 0xc3, 0xeb, 0xee, 0xfe, 0xc1, 0x44, 0x38,
+               0xc1, 0x41, 0x0f, 0x94, 0xc2, 0xeb, 0xd5, 0xc3});
+    auto &Bytes = P.Image.Segments.front().Data;
+    if (Lagged)
+      // Move each INC after CMP/SETE. A stale comparison permits the byte
+      // counter to wrap before exit, so it cannot be treated as a fresh flag.
+      for (unsigned Begin : {0x28, 0x33})
+        std::rotate(Bytes.begin() + Begin, Bytes.begin() + Begin + 2,
+                    Bytes.begin() + Begin + 9);
+    const auto Recovery = P.recover();
+    ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+    EXPECT_TRUE(P.Options.EntryConstants.empty());
+    EXPECT_TRUE(P.Contract.EntryConstants.empty());
+    const auto Check = [&] {
+      return inferAndCheckBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                                    Recovery, P.Contract);
+    };
+    const auto Good = Check();
+    ASSERT_TRUE(Good.Inference.inferred()) << Good.Inference.Diagnostic;
+    ASSERT_TRUE(Good.proved()) << Good.Refinement.Proof.Diagnostic;
+    EXPECT_GE(Good.Refinement.Proof.RankingChecks, 2U);
+    // Candidate-only inference cannot authorize a changed original body.
+    Bytes[0x26] = 0x29; // SUB EAX,EDX, instead of ADD EAX,EDX.
+    const auto Bad = Check();
+    ASSERT_TRUE(Bad.Inference.inferred()) << Bad.Inference.Diagnostic;
+    refused(Bad.Refinement, Status::Different);
+  }
 }
 
 TEST(BinaryLowIRLoopInference, NativeEqualityExitsUseInductiveCounterBounds) {

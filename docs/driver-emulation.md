@@ -131,7 +131,7 @@ paths are supported. The API table below is the authoritative supported subset.
 
 ## Execution contract
 
-The profile models an x64 WDM lifecycle on CPU0 with deterministic cooperative scheduling. Execution begins at the PE entry point, retaining a compiler's entry wrapper
+The profile models an x64 WDM lifecycle on CPU0 with deterministic cooperative scheduling by default. Execution begins at the PE entry point, retaining a compiler's entry wrapper
 when present. DriverEntry must return `STATUS_SUCCESS` to initialize; a
 nonzero successful or pending status stops as an unsupported initialization
 contract. A failing status is retained as a completed initialization result.
@@ -154,7 +154,7 @@ images or unsupported loading requirements fail before execution.
 
 Queued `DelayedWorkQueue` workers execute at `PASSIVE_LEVEL`; guest DPC
 callbacks execute at `DISPATCH_LEVEL` with the documented four arguments.
-Scheduling is deterministic and cooperative on CPU0, at returned-call and
+By default, scheduling is deterministic and cooperative on CPU0, at returned-call and
 blocking-wait boundaries. Relative, absolute and periodic timers use virtual
 time, advancing to the next timer, wait or cancellation deadline when no frame
 can run.
@@ -278,8 +278,9 @@ READ/WRITE/IOCTL requests may declare `interrupt_events`, each with explicit
 field even when empty. At most 64 events per request / 1024 total are accepted,
 with nonnegative delay through INT64_MAX. Successful submission captures the
 live connections and PDO resource epoch. Source IRP completion does not cancel
-an event. Due events run at supported callback boundaries; time advances only
-while idle, without instruction-level preemption. Provider hardware publication
+an event. By default, due events run at supported callback boundaries and time
+advances only while idle. The `scheduling` policy also advances deadlines during
+instruction execution; arbitrary interrupt nesting remains unsupported. Provider hardware publication
 precedes eligibility, and ISRs precede DPCs/workers according to assigned DIRQL.
 A lost connection, stale/unavailable epoch or physical D3 records an
 `undelivered_reason` and stops without rebinding the event.
@@ -312,8 +313,8 @@ unclaimed observation. `KeSynchronizeExecution` runs the actual callback under
 the same lock at synchronization IRQL, restoring caller IRQL/CR8 afterward.
 Manual acquire/release enforce nonrecursive ownership, original execution and
 saved IRQL. Connected locks cannot be accessed through executive spin-lock
-APIs or outlive their storage. DIRQL waits, floating-state save and instruction-level preemption remain
-unsupported. Failed START and successful
+APIs or outlive their storage. DIRQL waits, floating-state save for ISRs and arbitrary interrupt nesting
+remain unsupported. Failed START and successful
 STOP/REMOVE require disconnection before terminal completion; disconnect never
 silently discards queued DPCs.
 
@@ -376,7 +377,7 @@ remains Linux-only.
 
 `KeFlushIoBuffers` validates a live locked/nonpaged MDL. The modeled platform is coherent, so either ReadOperation or DmaOperation value needs no separate cache copy; this call does not release DMA ownership or replace FlushAdapterBuffers. The [channel scenario](examples/driver-dma-channel-scenario.json) runs original `driver_wdm_dma_channel.c` through two MapTransfer calls, one cross-page device transaction, a separately declared IRQ/DPC, aggregate flush and exact register release. Genuine normal/CFG images use `NEVERD_WDM_DMA_CHANNEL_FIXTURE` and `NEVERD_WDM_DMA_CHANNEL_CFG_FIXTURE`.
 
-Only READ/WRITE/IOCTL requests accept `dma_events`. Each event requires `after_100ns`, `device_id`, `logical_address`, `direction` and `length`; `write_memory` additionally requires exact-length `data_hex`, while `read_memory` rejects that field. Directions are from the device's perspective. Limits are 64 events per request, 1024 total, 16 MiB of total transaction bytes and 1 MiB per transaction; delay is nonnegative through INT64_MAX. Submission captures the PDO's current assigned epoch and anchors virtual time, but does not require a mapping that the forthcoming dispatch has yet to create. Delivery resolves the complete live logical range and direction, requires physical D0, and validates all backing bytes before any transaction effect. Source IRP completion does not cancel an event. Missing/released mappings, stale epochs, surprise removal or non-D0 power record a failure and stop; events neither rebind nor invent an interrupt, register protocol or IRP completion. At one scheduled boundary, provider hardware publication precedes DMA bytes, which precede independently declared interrupt pulses. Timing remains cooperative, not instruction-level preemption.
+Only READ/WRITE/IOCTL requests accept `dma_events`. Each event requires `after_100ns`, `device_id`, `logical_address`, `direction` and `length`; `write_memory` additionally requires exact-length `data_hex`, while `read_memory` rejects that field. Directions are from the device's perspective. Limits are 64 events per request, 1024 total, 16 MiB of total transaction bytes and 1 MiB per transaction; delay is nonnegative through INT64_MAX. Submission captures the PDO's current assigned epoch and anchors virtual time, but does not require a mapping that the forthcoming dispatch has yet to create. Delivery resolves the complete live logical range and direction, requires physical D0, and validates all backing bytes before any transaction effect. Source IRP completion does not cancel an event. Missing/released mappings, stale epochs, surprise removal or non-D0 power record a failure and stop; events neither rebind nor invent an interrupt, register protocol or IRP completion. At one scheduled boundary, provider hardware publication precedes DMA bytes, which precede independently declared interrupt pulses. The default clock is cooperative; `scheduling` enables instruction-driven deadlines and thread preemption.
 
 Reports retain `configuration.pnp_devices[].dma` and flattened `configuration.dma_events`. Root `dma_transfers` rows identify `source_request_index`, `event_index`, `device_id`, `epoch`, `logical_address`, `direction`, `length` and `due_at_100ns`, with nullable `occurred_at_100ns`, `completed_at_100ns`, `mapping`, `adapter` and `failure_reason`; `data_hex` contains actual transferred bytes. Every declared transaction must finish without failure for `scenario_success`. The [DMA scenario](examples/driver-dma-scenario.json) uses original genuine-WDK `driver_wdm_dma.c` with optional `NEVERD_WDM_DMA_FIXTURE` / `NEVERD_WDM_DMA_CFG_FIXTURE`, exercising a common buffer through actual adapter pointers and a separately declared ISR→DPC completion. C/Python still use `scenario_json` without changing `neverd_driver_options_v1`. Missing artifacts skip explicitly; evidence is Linux-only. Subordinate controllers, V2/V3 methods, hardware descriptor engines, general KMDF DMA and other device models remain unsupported.
 
@@ -555,11 +556,12 @@ The initial API model deliberately has a finite contract:
 | `DbgPrint`, `DbgPrintEx` | Checked Win64 variadic formatting, at most 512 output bytes; all debugger filters enabled |
 | `IoGetCurrentIrpStackLocation` | Returns the stack location of the active modeled IRP; normal compiled WDM macros read the same guest field |
 | `KeGetCurrentIrql` | Reads current guest IRQL/CR8, including explicit raises and restores; dispatch and workers start at `PASSIVE_LEVEL`, DPCs at `DISPATCH_LEVEL` |
-| `KfRaiseIrql`, `KeLowerIrql` | Actual x64 WDK raise/lower imports, including inline helpers; each execution restores saved IRQL values in LIFO order before return. Legal waits at IRQL <= APC_LEVEL preserve their saved raises and resume at the waiting IRQL. Dispatch-level holds cannot suspend. CR8 observes each change; instruction-level interrupt preemption is not modeled. |
+| `KfRaiseIrql`, `KeLowerIrql` | Actual x64 WDK raise/lower imports, including inline helpers; each execution restores saved IRQL values in LIFO order before return. Legal waits at IRQL <= APC_LEVEL preserve their saved raises and resume at the waiting IRQL. Dispatch-level holds cannot suspend. CR8 observes each change; configured CPU0 event preemption uses `scheduling`; arbitrary nested interrupts remain unsupported. |
 | `KeEnterCriticalRegion`, `KeLeaveCriticalRegion`, `KeEnterGuardedRegion`, `KeLeaveGuardedRegion`, `KeAreApcsDisabled`, `KeAreAllApcsDisabled` | Nested per-thread APC-disable state. Critical regions and held KMUTEX objects disable normal kernel APCs; guarded regions and IRQL >= APC_LEVEL disable all APCs. New system threads begin inside one critical region. Unmatched leaves and unbalanced callback returns fail; APC delivery is not modeled. |
-| `KeInitializeSpinLock`, `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeAcquireSpinLockAtDpcLevel`, `KeReleaseSpinLockFromDpcLevel`, `KeTryToAcquireSpinLockAtDpcLevel` | Resident, aligned executive locks on cooperative CPU0; exact owner and acquire/release pairing, saved IRQL restoration, and nonblocking try-acquire. Contended blocking acquisitions stop explicitly because the scheduler cannot make progress while spinning. |
+| `KeInitializeSpinLock`, `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeAcquireSpinLockAtDpcLevel`, `KeReleaseSpinLockFromDpcLevel`, `KeTryToAcquireSpinLockAtDpcLevel` | Resident, aligned executive locks on CPU0; exact owner and acquire/release pairing, saved IRQL restoration, and nonblocking try-acquire. Contended blocking acquisitions stop explicitly because the scheduler cannot make progress while spinning. |
 | `IoAllocateWorkItem`, `IoQueueWorkItem`, `IoFreeWorkItem` | Device-owned opaque work items; `DelayedWorkQueue` only, callbacks receive the device and context at `PASSIVE_LEVEL`; queued items cannot be freed |
-| `PsCreateSystemThread`, `PsTerminateSystemThread`, `ObReferenceObjectByHandle`, `ObfDereferenceObject`, `ZwClose` | Bounded system-process threads run at `PASSIVE_LEVEL` with a separate guest stack. Kernel handles and referenced opaque thread objects have independent lifetimes. Termination does not return to the guest, signals the thread object, and a normal start-routine return stops explicitly. NULL process/client IDs and NULL or kernel-handle-only object attributes are supported; APCs, thread priorities and typed object references are not. |
+| `PsCreateSystemThread`, `PsTerminateSystemThread`, `ObReferenceObjectByHandle`, `ObfDereferenceObject`, `ZwClose` | Bounded system-process threads run at `PASSIVE_LEVEL` with a separate guest stack. Kernel handles and referenced opaque thread objects have independent lifetimes. Termination does not return to the guest, signals the thread object, and a normal start-routine return stops explicitly. NULL process/client IDs and NULL or kernel-handle-only object attributes are supported; APC delivery, process priority classes and typed object references are not. |
+| `KeSetPriorityThread`, `KeQueryPriorityThread` | Runtime priorities at `PASSIVE_LEVEL`; setters accept 1..31 and return the previous priority. The deterministic initial priority is 8. Known thread objects are required. Priority scheduling is enabled by `scheduling`; dynamic boosts and process priority classes remain unsupported. [driver-scheduling.md](driver-scheduling.md) |
 | `KeInitializeDpc`, `KeInsertQueueDpc`, `KeRemoveQueueDpc`, `KeSetImportanceDpc`, `KeSetTargetProcessorDpc` | Opaque DPC storage, four guest callback arguments, `DISPATCH_LEVEL`, duplicate/remove semantics and importance; target CPU0 only |
 | `KeInitializeTimer`, `KeInitializeTimerEx`, `KeSetTimer`, `KeSetTimerEx`, `KeCancelTimer`, `KeReadStateTimer` | Notification/synchronization timers; relative/absolute 100 ns deadlines, periodic milliseconds, rearm/cancel and signal queries in virtual time |
 | `KeInitializeEvent`, `KeSetEvent`, `KeResetEvent`, `KeClearEvent`, `KeReadStateEvent` | Notification/synchronization events with distinct signal consumption; `KeSetEvent` accepts Increment=0 and Wait=FALSE only |
@@ -1152,7 +1154,7 @@ The shared `encodeX64XsaveState` / `decodeX64XsaveState` codec owns standard/com
 
 `X64StringInstructions.def` also owns ordinary-RAM `CMPS/SCAS` at 8/16/32/64 bits with `REPE/REPNE`. Every element validates both complete read operands before observers, updates all six arithmetic flags, and stops on the first matching termination condition. A data fault restores the flags from entry to this uninterrupted REP while retaining completed pointer/count changes; a public resume starts from the published CPU state. Stops and observer exceptions leave the current element untouched. Early termination never reads the next element. FS/GS affects only the CMPS source; SCAS leaves the accumulator and unused source register unchanged. Device operands and ambiguous inactive 32-bit upper halves remain excluded. `X64StringComparisonTests.cpp` compares independent host instructions, flags, direction, aliases, wrapping, permissions and recovery; its Linux x64 signal oracle checks actual fault-time registers. The original WDK resource driver executes both conditional-repeat forms at all four widths through `driver_resource_strings.def`. See the [Intel instruction reference](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html).
 
-`WhpResourceCache.h` separates logical CPU state from WHP partitions. The runtime keeps one active native partition: consecutive steps on the same CPU reuse it; switching CPU retires the old partition before rebuilding mappings, a virtual processor and full state. Logical CPUs retain independent `MemoryProjection` views and authoritative RAM. Lease acquisition observes cancellation and the current deadline; retiring an inactive CPU cannot destroy another CPU's partition. x64 preserves the host's default XSAVE feature set and validates the effective partition via `WHvGetPartitionProperty`; it does not clear dependent features to force a reduced mask. Cooperative CPU switching does not provide parallel hardware SMP.
+Live WHP CPUs share one native partition. Its final close and replacement creation use the same registry lock. `WhpResourceCache.h` reuses cooperative VP 0; switching its logical owner first retires that VP and its mappings. Parallel bindings retain separate VPs and private GPA windows. Every register transfer, XSAVE operation and cancellation targets its own VP. x64 preserves the host’s default XSAVE feature set and validates the effective partition with `WHvGetPartitionProperty`. Cooperative scheduling remains the default.
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
@@ -1177,3 +1179,5 @@ a matching macOS host ISA; x64 driver execution on Apple Silicon continues to
 use Unicorn. The existing ISA and OS contracts remain authoritative. See
 [HVF ownership, signing and hardware tests](macos-hvf.md). ARM64 hardware
 evidence and Intel runtime coverage are reported separately.
+
+Explicit CPU0 preemption, clock semantics and current limits are described in [driver scheduling](driver-scheduling.md).

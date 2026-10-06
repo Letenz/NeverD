@@ -9,12 +9,18 @@ from scripts.generate_swift_data_declarations import (conformance_storage,
                                                         hashable_value,
                                                         METADATA_TYPES,
                                                         metadata_storage,
+                                                        main_actor_static_conformance_storage,
+                                                        range_index_descriptor_storage,
                                                         render,
                                                         witness_storage)
 
 
 MODULE = '/usr/lib/swift/libswiftCore.dylib'
 NAME = '$sSSN'
+ACTOR_IR = (Path(__file__).parent / 'fixtures/swift_main_actor_witness.ll').read_text()
+ACTOR_DESCRIPTOR = '$sScMScAsMc'
+ACTOR_TABLE = '$sScMScAsWP'
+ACTOR_MODULE = '/usr/lib/swift/libswift_Concurrency.dylib'
 IR = ('@"$sSSN" = external global %swift.type, align 8\n'
       'define nonnull ptr @metadata_String() #0 {\nentry:\n'
       '  ret ptr @"$sSSN"\n}\n')
@@ -74,9 +80,64 @@ PUBLISHER_PROBES = [('metadata_CurrentValueSubject',
                      'witness_CurrentValueSubjectPublisher')]
 PUBLISHER_IR = (Path(__file__).parent / 'fixtures' /
                 'swift_publisher_conformance.ll').read_text()
+RANGE_INDEX_IR = (Path(__file__).parent / 'fixtures' /
+                  'swift_range_index_descriptor.ll').read_text()
 
 
 class SwiftDataDeclarationTests(unittest.TestCase):
+    def test_range_index_descriptor_preserves_complete_symbolic_type_query(self):
+        self.assertEqual(range_index_descriptor_storage(RANGE_INDEX_IR),
+                         {'$sSS5IndexVMn'})
+        renamed = re.sub(r'%(\d+)\b', r'%renamed_\1', RANGE_INDEX_IR)
+        renamed = re.sub(r'(?m)^(\d+):', r'renamed_\1:', renamed)
+        self.assertEqual(range_index_descriptor_storage(renamed),
+                         {'$sSS5IndexVMn'})
+
+    def test_range_index_descriptor_rejects_altered_or_incomplete_evidence(self):
+        changes = [
+            ('external global %swift.type_descriptor', 'extern_weak global %swift.type_descriptor'),
+            ('external global %swift.type_descriptor', 'external thread_local global %swift.type_descriptor'),
+            ('external global %swift.type_descriptor', 'external global ptr'),
+            ('align 4', 'align 8'),
+            ('private unnamed_addr constant ptr', 'private unnamed_addr global ptr'),
+            ('constant ptr @"$sSS5IndexVMn"', 'constant ptr @"$sOtherMn"'),
+            ('i8 2, i32 trunc', 'i8 1, i32 trunc'),
+            ('[3 x i8] c"Sny"', '[3 x i8] c"Say"'),
+            ('[1 x i8] c"G"', '[1 x i8] c"x"'),
+            ('i32 0, i32 2) to i64', 'i32 0, i32 1) to i64'),
+            ('i32 -9 }, align 8', 'i32 -8 }, align 8'),
+            ('ptr nonnull @"$sSnySS5IndexVGMD"', 'ptr nonnull @"other"'),
+            ('load atomic i64', 'load i64'),
+            ('icmp slt i64', 'icmp ult i64'),
+            ('ashr i64 %1, 32', 'lshr i64 %1, 32'),
+            ('sub nsw i64 0, %7', 'sub nsw i64 %7, 0'),
+            ('ashr exact i64 %sext, 32', 'ashr exact i64 %sext, 16'),
+            ('ptr %12, i64 %8, ptr null, ptr null', 'ptr %12, i64 %8, ptr %0, ptr null'),
+            ('ptr %12, i64 %8, ptr null, ptr null', 'ptr %0, i64 %8, ptr null, ptr null'),
+            ('store atomic i64 %14', 'store atomic i64 %1'),
+            ('[ %14, %6 ]', '[ %1, %6 ]'),
+            ('ret ptr %0', 'ret ptr null'),
+            ('declare swiftcc ptr @swift_getTypeByMangledNameInContext2(ptr, i64, ptr, ptr)', 'declare ptr @swift_getTypeByMangledNameInContext2(ptr, i64, ptr, ptr)'),
+            ('declare swiftcc ptr @swift_getTypeByMangledNameInContext2(ptr, i64, ptr, ptr)', 'declare swiftcc ptr @swift_getTypeByMangledNameInContext2(ptr, i64, ptr)'),
+            ('ret ptr %5', 'call void @escape(ptr %0)\n  ret ptr %5'),
+        ]
+        for before, after in changes:
+            with self.subTest(before=before, after=after):
+                self.assertIn(before, RANGE_INDEX_IR)
+                with self.assertRaises(ValueError):
+                    range_index_descriptor_storage(RANGE_INDEX_IR.replace(before, after))
+        for suffix in [
+            '\n@"$sSS5IndexVMn" = external global %swift.type_descriptor, align 4\n',
+            '\ndefine void @metadata_StringIndexRange() {\nret void\n}\n',
+            '\ndefine void @__swift_instantiateConcreteTypeFromMangledName() {\nret void\n}\n',
+            '\ndeclare swiftcc ptr @swift_getTypeByMangledNameInContext2(ptr, i64, ptr, ptr)\n',
+            RANGE_INDEX_IR,
+        ]:
+            with self.subTest(suffix=suffix[:50]), self.assertRaises(ValueError):
+                range_index_descriptor_storage(RANGE_INDEX_IR + suffix)
+        with self.assertRaises(ValueError):
+            range_index_descriptor_storage(' ' * (1024 * 1024 + 1))
+
     def test_object_identifier_uses_metatype_value_and_direct_storage_probes(self):
         self.assertIn('ObjectIdentifier', METADATA_TYPES)
         self.assertIn('ObjectIdentifier', HASHABLE_TYPES)
@@ -378,6 +439,69 @@ class SwiftDataDeclarationTests(unittest.TestCase):
             render(profiles[:3], exports, 'test', 'compiler')
         with self.assertRaises(ValueError):
             render(profiles, exports[:3], 'test', 'compiler')
+
+
+class MainActorStaticConformance(unittest.TestCase):
+    def test_complete_static_table_query_and_paired_exports(self):
+        names = {ACTOR_DESCRIPTOR, ACTOR_TABLE}
+        self.assertEqual(main_actor_static_conformance_storage(ACTOR_IR), names)
+        renamed = re.sub(r'%([0-9]+)', r'%value_\1', ACTOR_IR).replace('entry:', 'start:')
+        self.assertEqual(main_actor_static_conformance_storage(renamed), names)
+        exports = [{name: {ACTOR_MODULE} for name in names | {'$sScMMa'}} for _ in range(4)]
+        rendered = render([names] * 4, exports, 'test', 'compiler')
+        for name in names:
+            self.assertIn('{"' + name + '",', rendered)
+        for index in range(4):
+            for name in names | {'$sScMMa'}:
+                changed = copy.deepcopy(exports)
+                changed[index][name] = {'/usr/lib/swift/libswiftCore.dylib'}
+                with self.subTest(index=index, name=name), self.assertRaises(ValueError):
+                    render([names] * 4, changed, 'test', 'compiler')
+            changed = [set(names) for _ in range(4)]
+            changed[index].remove(ACTOR_TABLE)
+            with self.assertRaises(ValueError):
+                render(changed, exports, 'test', 'compiler')
+
+    def test_changed_abi_storage_and_complete_flow_reject(self):
+        changes = [
+            ('define swiftcc void', 'define void'),
+            ('@neverd_main_actor_witness_probe()', '@neverd_main_actor_witness_probe(ptr %context)'),
+            ('external global ptr', 'extern_weak global ptr'),
+            ('external global ptr', 'external thread_local global ptr'),
+            ('external global ptr', 'external constant ptr'),
+            ('global ptr, align 8', 'global ptr, align 4'),
+            ('type { ptr, i64 }', 'type { i64, ptr }'),
+            ('type { ptr, i64 }', 'type { ptr, i32 }'),
+            ('type { ptr, i64 }', 'type { ptr, i64, ptr }'),
+            ('@"$sScMMa"(i64)', '@"$sScMMa"(ptr)'),
+            ('declare swiftcc %swift.metadata_response', 'declare %swift.metadata_response'),
+            ('@"$sScMMa"(i64 0)', '@"$sScMMa"(i64 255)'),
+            ('extractvalue %swift.metadata_response %0, 0', 'extractvalue %swift.metadata_response %0, 1'),
+            ('extractvalue %swift.metadata_response %0, 0', 'extractvalue %swift.metadata_response %other, 0'),
+            ('@neverd_actor_observer(ptr %1, ptr %1,', '@neverd_actor_observer(ptr %1, ptr %other,'),
+            ('ptr nonnull @"$sScMScAsWP"', 'ptr undef'),
+            ('ptr nonnull @"$sScMScAsWP"', 'ptr null'),
+            ('ptr nonnull @"$sScMScAsWP"', 'ptr nonnull @"OtherActorWP"'),
+            ('@neverd_actor_observer(ptr, ptr, ptr)', '@neverd_actor_observer(ptr, ptr)'),
+            ('declare swiftcc void', 'declare void'),
+            ('  ret void', '  call void @extra_effect()\n  ret void'),
+            ('  ret void', '  unreachable'),
+        ]
+        for before, after in changes:
+            with self.subTest(after=after):
+                self.assertIn(before, ACTOR_IR)
+                with self.assertRaises(ValueError):
+                    main_actor_static_conformance_storage(ACTOR_IR.replace(before, after))
+        for prefix in ('@"$sScMScAsWP" =', '%swift.metadata_response =',
+                       'declare swiftcc %swift.metadata_response',
+                       'declare swiftcc void @neverd_actor_observer',
+                       'define swiftcc void @neverd_main_actor_witness_probe'):
+            line = next(line for line in ACTOR_IR.splitlines() if line.startswith(prefix))
+            for changed in (ACTOR_IR.replace(line, ''), line + '\n' + ACTOR_IR):
+                with self.subTest(prefix=prefix), self.assertRaises(ValueError):
+                    main_actor_static_conformance_storage(changed)
+        with self.assertRaises(ValueError):
+            main_actor_static_conformance_storage(' ' * (1024 * 1024 + 1))
 
 
 if __name__ == '__main__':

@@ -78,7 +78,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 ## 执行契约
 
-此配置在 CPU0 上以确定性的协作调度模拟 x64 WDM 生命周期。 执行从 PE 入口点开始；若存在编译器生成的入口包装函数，也会保留并执行。DriverEntry 必须返回 `STATUS_SUCCESS` 才能完成初始化；非零的成功状态或待处理状态会因初始化契约不受支持而停止。失败状态则作为已完成的初始化结果保留。所有对象、字符串、栈、函数指针与分配均位于来宾内存。模型根据配置的服务名（默认为 `NeverDDriver`）提供 `DRIVER_OBJECT` 和注册表路径。
+此配置在 CPU0 上默认以确定性的协作调度模拟 x64 WDM 生命周期。 执行从 PE 入口点开始；若存在编译器生成的入口包装函数，也会保留并执行。DriverEntry 必须返回 `STATUS_SUCCESS` 才能完成初始化；非零的成功状态或待处理状态会因初始化契约不受支持而停止。失败状态则作为已完成的初始化结果保留。所有对象、字符串、栈、函数指针与分配均位于来宾内存。模型根据配置的服务名（默认为 `NeverDDriver`）提供 `DRIVER_OBJECT` 和注册表路径。
 
 适配器使用 Unicorn 的虚拟 TLB 模式保留来宾虚拟地址，包括规范的高位内核地址，无需合成 Windows 页表。初始 RFLAGS 为 `0x202`；软件设备配置采用固定的 64 字节缓存行。这些都是本执行场景的显式属性。内联 x64 CR8 读取观察到相同的 `PASSIVE_LEVEL` / `DISPATCH_LEVEL`；CR8 写入及其他控制寄存器操作仍不受支持。
 
@@ -86,7 +86,7 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 未知导入项绑定到延迟陷阱。未使用的导入项不会阻止执行；执行其 thunk 或读取未建模的导出数据值时，会以 `unsupported_api` 停止。不支持的 CPU 环境效果也会明确停止。NeverD 不会用成功返回值替代未实现的调用。格式错误的映像或不支持的加载要求会在执行前失败。
 
-排队的 `DelayedWorkQueue` 工作项在 `PASSIVE_LEVEL` 执行，来宾 DPC 回调在 `DISPATCH_LEVEL` 接收规定的四个参数。CPU0 在调用返回和阻塞等待的边界进行确定性的协作调度。相对、绝对和周期定时器使用虚拟时间；没有可运行的执行帧时，时间推进到下一定时器、等待或取消期限。通知型与同步型事件／定时器保留各自的信号消耗语义。每个回调拥有独立的来宾栈；多个阻塞帧保留局部变量和完整 CPU 上下文，来宾内存仍然共享。Win64 回调入口将前四个参数放入寄存器，其余参数放入栈。请求默认串行处理：标记 IRP 为待处理的派发函数必须返回 `STATUS_PENDING`。跨文件或同一异步文件上的 WDM 传输可显式设置 `defer_callback_drain`，在回调运行前提交下一个请求。待处理请求或无限等待没有可用生产者时，以停滞的 `model_error` 停止。指令、内存、观察记录与墙钟时间预算仍共用。
+排队的 `DelayedWorkQueue` 工作项在 `PASSIVE_LEVEL` 执行，来宾 DPC 回调在 `DISPATCH_LEVEL` 接收规定的四个参数。CPU0 在调用返回和阻塞等待的边界默认进行确定性的协作调度。相对、绝对和周期定时器使用虚拟时间；没有可运行的执行帧时，时间推进到下一定时器、等待或取消期限。通知型与同步型事件／定时器保留各自的信号消耗语义。每个回调拥有独立的来宾栈；多个阻塞帧保留局部变量和完整 CPU 上下文，来宾内存仍然共享。Win64 回调入口将前四个参数放入寄存器，其余参数放入栈。请求默认串行处理：标记 IRP 为待处理的派发函数必须返回 `STATUS_PENDING`。跨文件或同一异步文件上的 WDM 传输可显式设置 `defer_callback_drain`，在回调运行前提交下一个请求。待处理请求或无限等待没有可用生产者时，以停滞的 `model_error` 停止。指令、内存、观察记录与墙钟时间预算仍共用。
 
 这是有界调度模型，并不代表完整 Windows 异步支持。可警报或用户模式等待、APC、通用 WDM 请求取消、任意并发场景提交、UMDF、通用 KMDF PnP 设备及通用队列调度、完整 PnP／电源、通用硬件、其他 DMA 接口仍不支持。仅初始化调用会执行显式排队的回调，不会隐式生成请求或卸载。
 
@@ -156,9 +156,9 @@ START 接收独立、只读的原始与转换后 `CM_RESOURCE_LIST` 分配；对
 
 同一 `register_bank` 提供者可单独声明 `interrupts`，或与 `resources` 一起声明；至少一份列表必须非空。`resource_free` 拒绝显式 `interrupts`，包括 `[]`。每个中断提供 `id`、`raw_vector`、`raw_level`、`raw_affinity`、`translated_vector`、`translated_level`、`translated_affinity`、`mode` 和 `share`。`DriverInterrupts.h`／`DriverInterrupts.def` 统一类型、拼写和限制：每 PDO 最多 8 个、总计 32 个中断；PDO 内 ID 为唯一的有界 ASCII 字符串；raw level 为 0–65535，translated DIRQL 为 3–12。向量保留完整 32 位，不推测它与 IRQL 的关系；两份 affinity 都必须为 1，仅模拟 CPU0／group0。`mode` 支持 `latched` 和 `level_sensitive`，`share` 支持 `device_exclusive` 和 `shared`。共享同一转译向量的资源必须全部声明 shared，且模式、转译层级、affinity 和重触发周期一致。电平模式必须显式提供正数 `retrigger_after_100ns`，不超过 `INT64_MAX`。raw 与 translated 值独立；`CM_RESOURCE_LIST` 保留内存描述符顺序，随后放置 type 2 中断描述符，其共享属性和触发标志反映声明。
 
-READ／WRITE／IOCTL 可声明 `interrupt_events`，每项指定 `after_100ns`、`device_id`、`interrupt_id` 和可选 `action`；其他请求种类即使提供空列表也拒绝。延迟为不超过 `INT64_MAX` 的非负值，从请求成功提交开始计时并捕获当时的连接及 PDO 资源代次。latched 使用默认 `action: "pulse"`，每个脉冲调用全部已捕获 ISR；level_sensitive 只接受显式 `assert`／`deassert`。电平由各 PDO／资源／代次的来源状态取 OR 得到，重复 assert 幂等；同一边界先应用全部外部状态变化，再采样。每轮 ISR 后在当前虚拟时间加 `retrigger_after_100ns` 时重新采样，按注册顺序调用直到 ISR 返回 TRUE；TRUE 只表示认领，不会撤销来源电平。来源 IRP 完成不取消事件，寄存器写入不推导 enable、status 或 acknowledgment。时间只在空闲时推进，ISR 在受支持的回调边界先于 DPC／工作项运行；`after_100ns: 0` 不保证指令级抢占。每请求最多 64 个事件、总计 1024 个声明事件；实际递送批次另限 4096，每批最多 32 个处理器，并继续受调度与指令预算约束。连接丢失、资源代次失效或物理 D3 记录 `undelivered_reason` 并以 `model_error` 停止，不重新绑定或静默延期。
+READ／WRITE／IOCTL 可声明 `interrupt_events`，每项指定 `after_100ns`、`device_id`、`interrupt_id` 和可选 `action`；其他请求种类即使提供空列表也拒绝。延迟为不超过 `INT64_MAX` 的非负值，从请求成功提交开始计时并捕获当时的连接及 PDO 资源代次。latched 使用默认 `action: "pulse"`，每个脉冲调用全部已捕获 ISR；level_sensitive 只接受显式 `assert`／`deassert`。电平由各 PDO／资源／代次的来源状态取 OR 得到，重复 assert 幂等；同一边界先应用全部外部状态变化，再采样。每轮 ISR 后在当前虚拟时间加 `retrigger_after_100ns` 时重新采样，按注册顺序调用直到 ISR 返回 TRUE；TRUE 只表示认领，不会撤销来源电平。来源 IRP 完成不取消事件，寄存器写入不推导 enable、status 或 acknowledgment。默认仅在空闲时推进时间；`scheduling` 也会在指令执行中推进期限。ISR 在受支持的回调边界先于 DPC／工作项运行；`after_100ns: 0` 不保证指令级抢占。每请求最多 64 个事件、总计 1024 个声明事件；实际递送批次另限 4096，每批最多 32 个处理器，并继续受调度与指令预算约束。连接丢失、资源代次失效或物理 D3 记录 `undelivered_reason` 并以 `model_error` 停止，不重新绑定或静默延期。
 
-`IoConnectInterrupt` 使用真实十一参数 ABI 并精确匹配转译资源；`IoConnectInterruptEx` 支持 FullySpecified（1）、LineBased（2，显式 PDO 上的一条线）及 FullySpecifiedGroup（4，group0），断开时必须匹配版本和上下文。连接与断开要求 `PASSIVE_LEVEL`。独占及共享 latched／level_sensitive 线路可使用私有锁或调用者已初始化的共享 `KSPIN_LOCK`；共同 `SynchronizeIrql` 不低于各自配置 DIRQL，LineBased 的零值选择配置层级。ISR 调度优先级仍按配置 DIRQL，执行时遵循同步锁层级。`KINTERRUPT` 不透明且地址不复用。ISR 接收 `(Interrupt, ServiceContext)`，AL 的 BOOLEAN 表示是否认领，FALSE 不是 NTSTATUS 失败。`KeSynchronizeExecution` 在同一锁下执行真实单参数回调，返回 BOOLEAN 并恢复调用者 IRQL／CR8。ISR、同步回调及手动 `KeAcquireInterruptSpinLock`／`KeReleaseInterruptSpinLock` 共享实际锁所有权，验证非递归、执行身份和保存的 IRQL，不能持锁返回。仍不支持浮点保存或指令级抢占。失败 START 和成功 STOP／REMOVE 要求最终完成前断开，上层完成回调可先清理；断开不丢弃已排队 DPC。
+`IoConnectInterrupt` 使用真实十一参数 ABI 并精确匹配转译资源；`IoConnectInterruptEx` 支持 FullySpecified（1）、LineBased（2，显式 PDO 上的一条线）及 FullySpecifiedGroup（4，group0），断开时必须匹配版本和上下文。连接与断开要求 `PASSIVE_LEVEL`。独占及共享 latched／level_sensitive 线路可使用私有锁或调用者已初始化的共享 `KSPIN_LOCK`；共同 `SynchronizeIrql` 不低于各自配置 DIRQL，LineBased 的零值选择配置层级。ISR 调度优先级仍按配置 DIRQL，执行时遵循同步锁层级。`KINTERRUPT` 不透明且地址不复用。ISR 接收 `(Interrupt, ServiceContext)`，AL 的 BOOLEAN 表示是否认领，FALSE 不是 NTSTATUS 失败。`KeSynchronizeExecution` 在同一锁下执行真实单参数回调，返回 BOOLEAN 并恢复调用者 IRQL／CR8。ISR、同步回调及手动 `KeAcquireInterruptSpinLock`／`KeReleaseInterruptSpinLock` 共享实际锁所有权，验证非递归、执行身份和保存的 IRQL，不能持锁返回。仍不支持 ISR 浮点保存和任意嵌套中断。失败 START 和成功 STOP／REMOVE 要求最终完成前断开，上层完成回调可先清理；断开不丢弃已排队 DPC。
 
 报告区分声明与观测：`configuration.pnp_devices[].interrupts` 保留资源，`configuration.interrupt_events` 保留事件及 `action`、从零开始的 `source_request_index` 和 `event_index`。根 `interrupts` 记录设备／资源、代次、到期时间和状态应用时间；`occurred_at_100ns` 表示外部状态已应用。`handlers[]` 对每次真实 ISR 记录中断对象、递送／返回时间、BOOLEAN 返回值、`claimed` 和 `delivery_index`；assert 可产生多轮。deassert 或同边界被抵消的 assert 没有 ISR 时，不虚构 ISR 字段。未认领的 ISR 是有效结果；DPC 效果通过真实请求完成、API 调用及消息体现。行字段保留 `device_id`、`interrupt_id`、`epoch`、`due_at_100ns`、`occurred_at_100ns`、`interrupt_object` 和 `undelivered_reason`。`delivered_at_100ns` 记录首次处理器入口；顶层 `returned_at_100ns`、`return_value` 与 `claimed` 汇总最近一批，`handlers` 保留完整历史。首次 assert 承载来源持续有效期间的观测，重复 assert 可无自己的 ISR 记录。可执行的[中断场景](../examples/driver-interrupt-scenario.json)使用原创真实 WDK `driver_wdm_interrupts.c`，由可选 `NEVERD_WDM_INTERRUPT_FIXTURE`／`NEVERD_WDM_INTERRUPT_CFG_FIXTURE` 指定：七个请求包括延迟 START、由 ISR→DPC 完成的 pending IOCTL、文件清理／关闭及移除。现有 C／Python `scenario_json` 边界和 `neverd_driver_options_v1` 布局不变。缺少真实产物明确跳过，执行证据仅来自 Linux。
 
@@ -178,7 +178,7 @@ READ／WRITE／IOCTL 可声明 `interrupt_events`，每项指定 `after_100ns`�
 
 `GetScatterGatherList` 按 MDL 原始范围验证 CurrentVa／Length，并在现有底层 RAM 上生成逻辑页片段。映射寄存器可用时，真实的四参数 void `AdapterListControl` 在 API 返回前内嵌执行；否则接纳过程保留数据／描述符，并为 PDO 的 FIFO 预留回调，直到资源释放。此范围没有 StartIo 所有权，因此回调第二个 IRP 参数为 NULL。回调返回不会释放映射。`PutScatterGatherList` 可以在回调内执行；Put 后驱动可以完成请求并释放最后一个适配器，而回调续接和设备引用持续到返回。有效 SG 映射期间，CPU 必须先 Put 才能访问数据；仍在等待映射寄存器的回调尚未把字节交给设备独占。释放公共缓冲区必须匹配原适配器、长度、逻辑地址和 CPU 地址。逻辑地址在整个会话中永不复用，重启也不例外。缺少真实生产者的资源等待会明确停滞，不虚构完成或截止时间。
 
-只有 READ／WRITE／IOCTL 请求接受 `dma_events`。每个事件必须提供 `after_100ns`、`device_id`、`logical_address`、`direction` 和 `length`；`write_memory` 还必须提供长度准确的 `data_hex`，`read_memory` 则拒绝该字段。方向以设备为视角。上限为每请求 64 个事件、合计 1024 个、事务字节总计 16 MiB、每事务 1 MiB；延迟范围为非负至 INT64_MAX。提交捕捉 PDO 当前已分配资源代次并确定虚拟时间起点，但不要求后续派发尚未创建的映射已经存在。递送时解析完整有效逻辑范围及方向，要求物理 D0，并在任何事务效果前验证全部底层字节。源 IRP 完成不会取消事件。映射缺失或已释放、陈旧资源代次、突然移除或 D3 都会记录失败并停止；不会重新绑定，也不虚构中断、寄存器协议或 IRP 完成。在同一调度边界，提供者先发布硬件状态，然后执行 DMA 字节访问，最后处理独立声明的中断脉冲。时间仍为协作式，不提供指令级抢占。
+只有 READ／WRITE／IOCTL 请求接受 `dma_events`。每个事件必须提供 `after_100ns`、`device_id`、`logical_address`、`direction` 和 `length`；`write_memory` 还必须提供长度准确的 `data_hex`，`read_memory` 则拒绝该字段。方向以设备为视角。上限为每请求 64 个事件、合计 1024 个、事务字节总计 16 MiB、每事务 1 MiB；延迟范围为非负至 INT64_MAX。提交捕捉 PDO 当前已分配资源代次并确定虚拟时间起点，但不要求后续派发尚未创建的映射已经存在。递送时解析完整有效逻辑范围及方向，要求物理 D0，并在任何事务效果前验证全部底层字节。源 IRP 完成不会取消事件。映射缺失或已释放、陈旧资源代次、突然移除或 D3 都会记录失败并停止；不会重新绑定，也不虚构中断、寄存器协议或 IRP 完成。在同一调度边界，提供者先发布硬件状态，然后执行 DMA 字节访问，最后处理独立声明的中断脉冲。默认采用协作式时间；`scheduling` 启用指令驱动的期限与抢占。
 
 报告保留 `configuration.pnp_devices[].dma` 和平铺的 `configuration.dma_events`。根级 `dma_transfers` 行标明 `source_request_index`、`event_index`、`device_id`、`epoch`、`logical_address`、`direction`、`length` 和 `due_at_100ns`，并提供可空的 `occurred_at_100ns`、`completed_at_100ns`、`mapping`、`adapter`、`failure_reason`；`data_hex` 仅包含实际传输字节。所有声明的事务都必须无失败完成，`scenario_success` 才能成立。[DMA 场景](../examples/driver-dma-scenario.json)使用原创真实 WDK `driver_wdm_dma.c` 和可选 `NEVERD_WDM_DMA_FIXTURE`／`NEVERD_WDM_DMA_CFG_FIXTURE`，通过真实适配器指针操作公共缓冲区，并以独立声明的 ISR→DPC 完成请求。C／Python 仍使用 `scenario_json`，不修改 `neverd_driver_options_v1`。缺少产物明确跳过，证据仅限 Linux。从属控制器、V2／V3 方法、硬件描述符引擎、通用 KMDF DMA 及其他设备模型仍不支持。
 
@@ -346,7 +346,7 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `DbgPrint`、`DbgPrintEx` | 经检查的 Win64 可变参数格式化，最多输出 512 字节；启用所有调试器过滤器 |
 | `IoGetCurrentIrpStackLocation` | 返回当前建模 IRP 的栈位置；正常编译的 WDM 宏读取相同来宾字段 |
 | `KeGetCurrentIrql` | 读取当前 IRQL/CR8，包括显式升降级；派发和工作项从 `PASSIVE_LEVEL` 开始，DPC 从 `DISPATCH_LEVEL` 开始 |
-| `KfRaiseIrql`, `KeLowerIrql` | 真实的 x64 WDK IRQL 升降导入，包含内联辅助函数；每个执行必须在返回前按 LIFO 顺序恢复保存值。IRQL <= APC_LEVEL 的合法等待保留升降配对，并按等待时的 IRQL 恢复；DISPATCH_LEVEL 持锁不能挂起。CR8 反映每次变化；不模拟指令级中断抢占。 |
+| `KfRaiseIrql`, `KeLowerIrql` | 真实的 x64 WDK IRQL 升降导入，包含内联辅助函数；每个执行必须在返回前按 LIFO 顺序恢复保存值。IRQL <= APC_LEVEL 的合法等待保留升降配对，并按等待时的 IRQL 恢复；DISPATCH_LEVEL 持锁不能挂起。CR8 反映每次变化；配置的 CPU0 事件抢占使用 `scheduling`；任意嵌套中断仍不受支持。 |
 | `KeInitializeSpinLock`, `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeAcquireSpinLockAtDpcLevel`, `KeReleaseSpinLockFromDpcLevel`, `KeTryToAcquireSpinLockAtDpcLevel` | CPU0 上驻留且对齐的执行自旋锁；检查所有者、获取与释放配对和 IRQL 恢复。竞争的阻塞获取会显式停止。 |
 | `IoAllocateWorkItem`, `IoQueueWorkItem`, `IoFreeWorkItem` | 设备拥有的不透明工作项；仅支持 `DelayedWorkQueue`，在 `PASSIVE_LEVEL` 将设备和上下文传给回调；禁止释放仍在队列中的项 |
 | `KeInitializeDpc`, `KeInsertQueueDpc`, `KeRemoveQueueDpc`, `KeSetImportanceDpc`, `KeSetTargetProcessorDpc` | 不透明 DPC 存储、四个来宾回调参数、`DISPATCH_LEVEL`、重复入队／移除及优先级；仅目标 CPU0 |
@@ -354,7 +354,8 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `KeInitializeEvent`, `KeSetEvent`, `KeResetEvent`, `KeClearEvent`, `KeReadStateEvent` | 通知／同步事件保留不同信号消耗行为；`KeSetEvent` 仅接受 Increment=0、Wait=FALSE |
 | `KeInitializeSemaphore`, `KeReleaseSemaphore`, `KeReadStateSemaphore` | 驻留的计数信号量，上限必须为正；每次成功等待消耗一个计数。释放仅接受 Increment=0、Wait=FALSE；超过上限时抛出 `STATUS_SEMAPHORE_LIMIT_EXCEEDED`。 |
 | `KeInitializeMutex`, `KeReleaseMutex`, `KeReadStateMutex` | 驻留的 KMUTEX 按执行帧持有并支持递归获取；KeReleaseMutex 返回先前的有符号信号状态，要求持有者和匹配的 DISPATCH_LEVEL 获取上下文，且仅接受 Wait=FALSE。持有期间禁止返回、重新初始化或释放存储。 非持有者释放触发 `STATUS_MUTANT_NOT_OWNED`。 |
-| `PsCreateSystemThread`, `PsTerminateSystemThread`, `ObReferenceObjectByHandle`, `ObfDereferenceObject`, `ZwClose` | 系统进程中的有界线程在 PASSIVE_LEVEL 运行。句柄与不透明线程对象的引用各自持有生命周期；PsTerminateSystemThread 不返回客体代码，并使线程对象可等待且进入信号状态。APC、线程优先级和带类型的对象引用尚未建模。 |
+| `PsCreateSystemThread`, `PsTerminateSystemThread`, `ObReferenceObjectByHandle`, `ObfDereferenceObject`, `ZwClose` | 系统进程中的有界线程在 PASSIVE_LEVEL 运行。句柄与不透明线程对象的引用各自持有生命周期；PsTerminateSystemThread 不返回客体代码，并使线程对象可等待且进入信号状态。APC 交付、进程优先级类别和带类型的对象引用尚未建模。 |
+| `KeSetPriorityThread`, `KeQueryPriorityThread` | 在 `PASSIVE_LEVEL` 访问运行时优先级；设置接受 1..31 并返回原值，确定性初始值为 8，要求已知线程对象。`scheduling` 启用优先级调度；动态提升与进程优先级类别尚未支持。 [driver-scheduling.md](driver-scheduling.md) |
 | `KeEnterCriticalRegion`, `KeLeaveCriticalRegion`, `KeEnterGuardedRegion`, `KeLeaveGuardedRegion`, `KeAreApcsDisabled`, `KeAreAllApcsDisabled` | 按线程跟踪可嵌套的 APC 禁用状态。临界区及持有的 KMUTEX 禁用普通内核 APC；保护区和 IRQL >= APC_LEVEL 禁用全部 APC。系统线程启动时处于一层临界区内。未匹配的离开和带未平衡状态返回都会失败；尚未实现 APC 投递。 |
 | `KeWaitForSingleObject` | 单个已初始化的事件、定时器、信号量或互斥体；非警报 `KernelMode`、原因 `Executive`；零超时轮询、有限相对／绝对或无限等待；非零／无限等待要求 IRQL <= APC_LEVEL |
 | `KeDelayExecutionThread` | IRQL <= APC_LEVEL 的非警报 `KernelMode` 相对／绝对延迟；虚拟时间推进后恢复保存的来宾执行帧 |
@@ -554,7 +555,7 @@ x64 KVM/WHP 原生初始化在私有 supervisor 页面执行 `X64MachineProbe.de
 
 `X64StringInstructions.def` 还统一管理普通 RAM 上 8/16/32/64 位的 `CMPS/SCAS` 及 `REPE/REPNE`。每个元素在观察回调前验证全部读取操作数，更新六个算术标志，并在首次满足终止条件时退出。数据故障恢复本次连续 REP 执行开始时的标志，同时保留已完成的指针和计数更新；公开接口恢复执行时，以已发布的 CPU 状态重新开始。停止和观察回调异常不改变当前元素，提前终止也不会读取下一个元素。FS/GS 仅影响 CMPS 源地址；SCAS 保留累加器和未使用的源寄存器。设备操作数及有歧义的 32 位零次数高位状态仍不支持。`X64StringComparisonTests.cpp` 用独立主机指令对照标志、方向、别名、回绕、权限和恢复，并通过 Linux x64 信号测试读取真实故障时的寄存器。原创 WDK 资源驱动通过 `driver_resource_strings.def` 执行四种宽度的两类条件重复形式。参见 [Intel 指令参考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
 
-`WhpResourceCache.h` 将逻辑 CPU 状态与 WHP 分区分离。运行时保留一个活动原生分区：同一 CPU 连续单步复用它；切换 CPU 时先销毁旧分区，再重建映射、虚拟处理器并恢复完整状态。逻辑 CPU 保留独立的 `MemoryProjection` 视图和权威 RAM。获取租约遵守取消信号和当前截止时间；销毁非活动 CPU 不会销毁其他 CPU 的分区。x64 保留宿主默认 XSAVE 特性组合，并通过 `WHvGetPartitionProperty` 验证实际分区，不通过清除依赖特性强制缩减掩码。CPU 协作式切换不提供并行硬件 SMP。
+存活的 WHP CPU 共享一个原生分区；最终关闭与重新创建由同一注册表锁串行保护。`WhpResourceCache.h` 复用协作式 VP 0；切换逻辑 CPU 前先销毁该 VP 并撤销其映射。并行 CPU 保留独立 VP 和私有 GPA 区间。寄存器、XSAVE 和取消请求均指向各自的 VP。x64 保留宿主默认 XSAVE 功能集，并通过 `WHvGetPartitionProperty` 验证实际分区配置。默认调度仍为协作式。
 
 `CheckedAArch64Instructions.def` 和 `AArch64InstructionEffects` 在 EL0/EL1 接纳有界的基础 FP32/FP64 算术、比较、移动和定宽 SIMD 运算。FPCR 支持四种舍入模式、FZ 和 DN；FPSR 保留累积状态及 QC。未支持的控制位和状态位在修改前拒绝。FP16 算术、SVE/SME、未屏蔽异常、可选扩展及未列出的形式明确失败。这些 CPU 能力不代表已经支持 Windows ARM64 驱动加载或新增 OS 环境。
 
@@ -571,3 +572,5 @@ KVM 根据 `X64HostRegisters.def` 和 `X64FPState.def` 将通用寄存器及完�
 checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完整状态回读共用一次单步额度。`UC_HOOK_CODE` 在指令入口检查借用的停止令牌和期限；同步引擎调用返回前解除 hook 借用，而机器单步保留控制直到发布状态。Unicorn 与 WHP 暂存完整 CPU 状态，并在成功步骤发布前检查同一个控制条件。WHP 在准备前只创建一次额度。已确认的 x64 CPU 异常优先于回读期间到来的停止请求。回读取消时，checked RAM 事务丢弃推测写入；非受限软件契约不变。 `MachineInterruptedError` 区分已确认取消与主机或回读失败。共享 checked CPU 返回 `Stopped` 或 `Deadline`，保留 CPU/RAM 并允许重试；真实故障即使伴随停止请求也仍是 `BackendFailure`。
 
 `RunDeadline::invoke` 在 WHP 入口已停止或过期时拒绝调用宿主，取消期间保留真实宿主结果，并在释放借用的停止标记前确认中断回调结束。KVM 和 WHP 在持有执行租约的调用线程上验证完整捕获的私有状态，然后分类同时到达的停止或超时。真实宿主错误、捕获失败以及经过认证的 x64 CPU 异常保持更高优先级。普通成功状态在取消检查结束前保持私有；已确认的中断丢弃推测性的 CPU/RAM 效果并允许重试。准备、原生执行和捕获共用一次单步宽限。这些控制提供协作式取消，不保证硬性墙钟时限。
+
+CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-scheduling.md)。

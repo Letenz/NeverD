@@ -88,6 +88,8 @@ if(TARGET neverd_shared)
   target_compile_definitions(NeverDObjCRuntimeSourceTests PRIVATE
     NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
     NEVERD_MOBILE_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/scripts/tests/fixtures/mobile")
+  set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/ObjCRuntimeTestProperties.cmake")
   add_neverd_unittest(NeverDSessionCAPITests
     SessionCAPITests.cpp
     LINK_LIBS neverd_shared
@@ -198,6 +200,7 @@ endif()
 if(NEVERD_ENABLE_CPU_EMULATION OR NEVERD_ENABLE_DRIVER_EMULATION)
   add_subdirectory(emulation)
 endif()
+add_subdirectory(unpack)
 add_subdirectory(evm)
 add_subdirectory(sbf)
 add_subdirectory(plugin)

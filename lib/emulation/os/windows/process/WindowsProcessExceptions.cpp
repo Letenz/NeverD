@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "WindowsProcessExceptions.h"
 
+#include "../../../arch/aarch64/AArch64AtomicMemory.h"
 #include "../../../arch/x86_64/X64Exception.h"
 #include "../exception/X64SIMDException.h"
 #include "WindowsProcessContext.h"
@@ -86,6 +87,9 @@ std::optional<ExceptionDispatcher::Exception>
 ExceptionDispatcher::exception(GuestArchitecture Architecture,
                                const BackendFault &Fault,
                                std::optional<uint64_t> MXCSR) {
+  if (Architecture == GuestArchitecture::AArch64 &&
+      isAArch64AtomicAlignmentFault(Fault))
+    return Exception{StatusDatatypeMisalignment, 0, Fault.PC, {}};
   if (Fault.Cause) {
     // The shared architecture owns the cause. Other #GP(0) results remain
     // unclassified: their Windows status cannot be inferred from the vector.

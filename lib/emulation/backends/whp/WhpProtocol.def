@@ -25,6 +25,16 @@ NEVERD_WHP_TEXT(XsaveMetadataMismatch,
 #ifdef NEVERD_WHP_VALUE
 // WHP's documented status is not declared by every Windows SDK.
 NEVERD_WHP_VALUE(InsufficientBuffer, 0x80370301)
+// VP zero serves the cooperative cache; the other slots retain parallel CPUs.
+NEVERD_WHP_VALUE(ProcessorCount, 32)
+#endif
+#ifdef NEVERD_WHP_ADDRESS
+// Leave the low MMIO aperture available to the ARM64 interrupt controller.
+NEVERD_WHP_ADDRESS(ParallelWindowBase, 0x100000000ull)
+NEVERD_WHP_ADDRESS(ProcessorWindowSize,
+                   memory::MaxRAM + memory::ProjectionReserve)
+NEVERD_WHP_ADDRESS(RedistributorBase, 0x81000000ull)
+NEVERD_WHP_ADDRESS(RedistributorStride, 0x20000ull)
 #endif
 #ifdef NEVERD_WHP_FUNCTION
 NEVERD_WHP_FUNCTION(WHvGetCapability)
@@ -34,7 +44,9 @@ NEVERD_WHP_FUNCTION(WHvGetPartitionProperty)
 NEVERD_WHP_FUNCTION(WHvSetPartitionProperty)
 NEVERD_WHP_FUNCTION(WHvSetupPartition)
 NEVERD_WHP_FUNCTION(WHvMapGpaRange)
+NEVERD_WHP_FUNCTION(WHvUnmapGpaRange)
 NEVERD_WHP_FUNCTION(WHvCreateVirtualProcessor)
+NEVERD_WHP_FUNCTION(WHvDeleteVirtualProcessor)
 NEVERD_WHP_FUNCTION(WHvGetVirtualProcessorRegisters)
 NEVERD_WHP_FUNCTION(WHvSetVirtualProcessorRegisters)
 NEVERD_WHP_FUNCTION(WHvRunVirtualProcessor)

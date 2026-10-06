@@ -16,6 +16,9 @@ enum {
   Close = 57,
   Seek = 62,
   Fstat = 80,
+  FstatAt = 79,
+  StatFS = 43,
+  FstatFS = 44,
   Write = 64,
   Protect = 226,
   Exit = 93,
@@ -31,6 +34,9 @@ enum {
   Close = 3,
   Seek = 8,
   Fstat = 5,
+  FstatAt = 262,
+  StatFS = 137,
+  FstatFS = 138,
   Write = 1,
   Protect = 10,
   Exit = 60,
@@ -223,7 +229,9 @@ U64 files_access_faults(void) {
 
 U64 files_access_empty(void) {
   CHECK(raw(FaccessAt, 0, (U64) "/", 0, 0), 0);
+  CHECK(raw(FaccessAt, 0, (U64) "///", 0, 0), 0);
   CHECK(raw(FaccessAt, 0, (U64) "/fixture", 0, 0), (U64)-2);
+  CHECK(raw(FaccessAt, 0, (U64) "/fixture/", 0, 0), (U64)-2);
   CHECK(raw(FaccessAt, 0, (U64)Path, 0, 0), (U64)-2);
   return 0;
 }
@@ -268,6 +276,77 @@ U64 files_directory_unsupported(U64 Mode) {
   static const char *const Paths[] = {"/missing/child", "/new", "/fixture/new",
                                       "relative", "/fixture/../new"};
   return raw(MkdirAt, (U64)-1, (U64)Paths[Mode], 0777, 0);
+}
+
+U64 files_trailing_paths(void) {
+  static const struct {
+    const char *Name;
+    I64 Query, Create;
+  } Cases[] = {{"/fixture/data/", -20, -17},
+               {"/fixture/data////", -20, -17},
+               {"/fixture/data/child/", -20, -20},
+               {"/missing/child/", -2, -2},
+               {"/missing/child/deep///", -2, -2}};
+  for (unsigned I = 0; I < sizeof(Cases) / sizeof(Cases[0]); ++I) {
+    U64 Name = (U64)Cases[I].Name;
+    CHECK(raw(OpenAt, (U64)-1, Name, 0, 0), Cases[I].Query);
+    CHECK(raw(FaccessAt, 0, Name, 0, 0), Cases[I].Query);
+    CHECK(raw(FstatAt, 0, Name, 1, 0), Cases[I].Query);
+    CHECK(raw(MkdirAt, 0, Name, 0777, 0), Cases[I].Create);
+  }
+  for (unsigned I = 0; I < 2; ++I) {
+    const char *Directory = I ? "////" : "/fixture///";
+    CHECK(raw(FaccessAt, 0, (U64)Directory, 0, 0), 0);
+    CHECK(raw(MkdirAt, 0, (U64)Directory, 0777, 0), (U64)-17);
+  }
+  // A trailing separator does not alter flag or descriptor-limit priority.
+  CHECK(raw(FstatAt, 0, (U64) "/fixture/data/", 1, 0x40000000), (U64)-22);
+  CHECK(raw(FaccessAt, 0, (U64) "/fixture/data/", 8, 0), (U64)-22);
+  U64 F = raw(OpenAt, 0, (U64)Path, 0, 0);
+  CHECK(F, 3);
+  CHECK(raw(Read, F, (U64)Pages, 1, 0), 1);
+  CHECK(raw(OpenAt, 0, (U64) "/fixture/data/", 0, 0), (U64)-24);
+  CHECK(raw(FaccessAt, 0, (U64) "/fixture/data/", 0, 0), (U64)-20);
+  CHECK(raw(FstatAt, 0, (U64) "/missing/", 1, 0), (U64)-2);
+  CHECK(raw(Seek, F, 0, 1, 0), 1);
+  CHECK(raw(Close, F, 0, 0, 0), 0);
+  CHECK(raw(OpenAt, 0, (U64)Path, 0, 0), F);
+  // Import stops at the first NUL even when the next byte is inaccessible.
+  static const char Edge[] = "/fixture/data///";
+  CHECK(raw(Protect, (U64)Pages + 4096, 4096, 0, 0), 0);
+  for (unsigned I = 0; I < sizeof(Edge); ++I)
+    Pages[4096 - sizeof(Edge) + I] = Edge[I];
+  U64 Name = (U64)Pages + 4096 - sizeof(Edge);
+  CHECK(raw(FstatAt, 0, Name, 1, 0), (U64)-20);
+  CHECK(raw(MkdirAt, 0, Name, 0777, 0), (U64)-17);
+  Pages[4095] = '/';
+  CHECK(raw(FstatAt, 0, Name, 1, 0), (U64)-14);
+  return 0;
+}
+
+U64 files_trailing_unsupported(U64 Mode) {
+  switch (Mode) {
+  case 0:
+    return raw(OpenAt, 0, (U64) "/fixture/", 0, 0);
+  case 1:
+    return raw(FstatAt, 0, (U64) "/fixture/", (U64)Pages, 0);
+  case 2:
+    return raw(MkdirAt, 0, (U64) "/fixture/new///", 0777, 0);
+  case 3:
+    return raw(FaccessAt, 0, (U64) "/fixture/", 4, 0);
+  case 4:
+    return raw(FaccessAt, 0, (U64) "/fixture//data/", 0, 0);
+  case 5:
+    return raw(FaccessAt, 0, (U64) "fixture/data/", 0, 0);
+  case 6:
+    return raw(OpenAt, 0, (U64) "///", 0, 0);
+  case 7:
+    return raw(FstatAt, 0, (U64) "///", (U64)Pages, 0);
+  case 8:
+    return raw(MkdirAt, 0, (U64) "/new///", 0777, 0);
+  default:
+    return raw(FaccessAt, 0, (U64) "/fixture/../data/", 0, 0);
+  }
 }
 
 struct FileTime {
@@ -367,6 +446,103 @@ U64 files_status(void) {
   return 0;
 }
 
+U64 files_filesystem_status(void) {
+  unsigned char Output[256];
+  for (unsigned I = 0; I < sizeof(Output); ++I)
+    Output[I] = 0xa5;
+  static const struct {
+    const char *Name;
+    U64 Error;
+  } Cases[] = {{"/missing", 2},
+               {"/missing/child///", 2},
+               {"/fixture/data/", 20},
+               {"/fixture/data/child", 20},
+               {"", 2}};
+  U64 F = raw(OpenAt, -1UL, (U64)Path, 0, 0);
+  CHECK(F, 3);
+  CHECK(raw(Read, F, (U64)Pages, 1, 0), 1);
+  for (unsigned I = 0; I < sizeof(Cases) / sizeof(Cases[0]); ++I) {
+    CHECK(raw(StatFS, (U64)Cases[I].Name, (U64)Output, 0, 0), -Cases[I].Error);
+    CHECK(raw(StatFS, (U64)Cases[I].Name, 1, 0, 0), -Cases[I].Error);
+  }
+  CHECK(raw(StatFS, 1, 1, 0, 0), (U64)-14);
+  CHECK(raw(FstatFS, 0x12345678ffffffffUL, (U64)Output, 0, 0), (U64)-9);
+  CHECK(raw(Seek, F, 0, 1, 0), 1);
+  CHECK(raw(Close, F, 0, 0, 0), 0);
+  CHECK(raw(FstatFS, F | 0x1234567800000000UL, 1, 0, 0), (U64)-9);
+  CHECK(raw(OpenAt, -1UL, (U64)Path, 0, 0), F);
+  CHECK(raw(Seek, F, 0, 1, 0), 0);
+  CHECK(raw(Close, 0, 0, 0, 0), 0);
+  CHECK(raw(FstatFS, 0xabcdef1200000000UL, 1, 0, 0), (U64)-9);
+  CHECK(raw(Protect, (U64)Pages + 4096, 4096, 0, 0), 0);
+  static const char Missing[] = "/missing/";
+  for (unsigned I = 0; I < sizeof(Missing); ++I)
+    Pages[4096 - sizeof(Missing) + I] = Missing[I];
+  U64 Name = (U64)Pages + 4096 - sizeof(Missing);
+  CHECK(raw(StatFS, Name, (U64)Output, 0, 0), (U64)-2);
+  Pages[4095] = 'x';
+  CHECK(raw(StatFS, Name, 1, 0, 0), (U64)-14);
+  for (unsigned I = 0; I < sizeof(Output); ++I)
+    CHECK(Output[I], 0xa5);
+  return 0;
+}
+
+U64 files_status_at(void) {
+  struct {
+    U64 Before;
+    struct FileStatus Status;
+    U64 After;
+  } Out;
+  for (unsigned I = 0; I < sizeof(Out); ++I)
+    ((volatile unsigned char *)&Out)[I] = 0xa5;
+  // Absolute paths ignore dirfd and use only the int-width flag bits.
+  CHECK(raw(FstatAt, 0x12345678ffffffffUL, (U64)Path, (U64)&Out.Status,
+            0xabcdef0000000900UL),
+        0);
+  CHECK(verify_status(&Out.Status), 0);
+  CHECK(Out.Before, 0xa5a5a5a5a5a5a5a5UL);
+  CHECK(Out.After, 0xa5a5a5a5a5a5a5a5UL);
+  U64 F = raw(OpenAt, (U64)-100, (U64)Path, 0, 0);
+  CHECK(F, 3);
+  CHECK(raw(Read, F, (U64)Pages, 1, 0), 1);
+  CHECK(raw(FstatAt, F | 0x9876543200000000UL, (U64) "", (U64)&Out.Status,
+            0x1000),
+        0);
+  CHECK(verify_status(&Out.Status), 0);
+  CHECK(raw(Seek, F, 0, 1, 0), 1);
+  CHECK(raw(Read, F, (U64)Pages, 1, 0), 1);
+  CHECK(Pages[0], 0xff);
+  // Import the complete path before writing overlapping status bytes.
+  for (unsigned I = 0; I < sizeof(Path); ++I)
+    Pages[I + 1] = Path[I];
+  CHECK(raw(FstatAt, F, (U64)Pages + 1, (U64)Pages + 1, 0), 0);
+  for (unsigned I = 0; I < sizeof(Out.Status); ++I)
+    CHECK(Pages[I + 1], ((unsigned char *)&Out.Status)[I]);
+  CHECK(raw(FstatAt, F, 1, (U64)&Out.Status, 0x40000000), (U64)-22);
+  CHECK(raw(FstatAt, F, 1, (U64)&Out.Status, 0), (U64)-14);
+  CHECK(raw(FstatAt, F, (U64) "/missing", 1, 0), (U64)-2);
+  CHECK(raw(FstatAt, F, (U64) "/fixture/data/child", 1, 0), (U64)-20);
+  CHECK(raw(FstatAt, F, (U64) "", 1, 0), (U64)-2);
+  CHECK(raw(FstatAt, F, (U64)Path, 1, 0), (U64)-14);
+  CHECK(raw(Close, F, 0, 0, 0), 0);
+  CHECK(raw(FstatAt, F, (U64) "", 1, 0x1000), (U64)-9);
+  CHECK(verify_status(&Out.Status), 0);
+  // The first NUL is the last readable byte, followed by an inaccessible page.
+  for (unsigned I = 0; I < sizeof(Path); ++I)
+    Pages[4096 - sizeof(Path) + I] = Path[I];
+  CHECK(raw(Protect, (U64)Pages + 4096, 4096, 0, 0), 0);
+  CHECK(raw(FstatAt, (U64)-100, (U64)Pages + 4096 - sizeof(Path),
+            (U64)&Out.Status, 0),
+        0);
+  CHECK(verify_status(&Out.Status), 0);
+  CHECK(raw(FstatAt, F, (U64)Path, (U64)Pages + 4096, 0), (U64)-14);
+  Pages[4095] = 'x';
+  CHECK(raw(FstatAt, F, (U64)Pages + 4095, 1, 0), (U64)-14);
+  CHECK(Out.Before, 0xa5a5a5a5a5a5a5a5UL);
+  CHECK(Out.After, 0xa5a5a5a5a5a5a5a5UL);
+  return 0;
+}
+
 U64 files_status_unsupported(U64 Mode, U64 Buffer) {
   if (Mode == 1)
     return raw(Fstat, 1, Buffer, 0, 0);
@@ -405,6 +581,8 @@ extern I64 lseek(int, I64, int);
 extern I64 lseek64(int, I64, int);
 extern int fstat(int, struct FileStatus *);
 extern int fstat64(int, struct FileStatus *);
+extern int fstatat(int, const char *, struct FileStatus *, int);
+extern int fstatat64(int, const char *, struct FileStatus *, int);
 extern int access(const char *, int);
 extern int faccessat(int, const char *, int, int);
 extern int mkdir(const char *, U32);
@@ -505,6 +683,132 @@ U64 files_status_bionic(void) {
   CHECK(fstat64(F, &Status), 0);
   CHECK(verify_status(&Status), 0);
   return 0;
+}
+
+extern int statfs(const char *, void *);
+extern int statfs64(const char *, void *);
+extern int fstatfs(int, void *);
+extern int fstatfs64(int, void *);
+
+U64 files_filesystem_status_call(U64 Route, U64 Descriptor, U64 Input,
+                                 U64 Output, U64 ObservedErrno) {
+  *__errno() = 83;
+  I64 Result;
+  switch (Route) {
+  case 0:
+    Result = Descriptor ? fstatfs(Input, (void *)Output)
+                        : statfs((const char *)Input, (void *)Output);
+    break;
+  case 1:
+    Result = Descriptor ? fstatfs64(Input, (void *)Output)
+                        : statfs64((const char *)Input, (void *)Output);
+    break;
+  case 2:
+    Result = syscall(Descriptor ? FstatFS : StatFS, Input, Output);
+    break;
+  default:
+    Result = raw(Descriptor ? FstatFS : StatFS, Input, Output, 0, 0);
+    break;
+  }
+  *(U64 *)ObservedErrno = *__errno();
+  return Result;
+}
+
+U64 files_filesystem_status_bionic(void) {
+  U64 Output = 0x123456789abcdef0UL, ObservedErrno;
+  for (U64 Route = 0; Route < 4; ++Route) {
+    CHECK(files_filesystem_status_call(Route, 0, (U64) "/missing/",
+                                       (U64)&Output, (U64)&ObservedErrno),
+          Route == 3 ? (U64)-2 : -1UL);
+    CHECK(ObservedErrno, Route == 3 ? 83 : 2);
+    CHECK(files_filesystem_status_call(Route, 1, 0x87654321ffffffffUL,
+                                       (U64)&Output, (U64)&ObservedErrno),
+          Route == 3 ? (U64)-9 : -1UL);
+    CHECK(ObservedErrno, Route == 3 ? 83 : 9);
+    CHECK(Output, 0x123456789abcdef0UL);
+  }
+  return 0;
+}
+
+U64 files_filesystem_status_live(U64 Route, U64 Output, U64 ObservedErrno) {
+  U64 F = open(Path, 0);
+  CHECK(F, 3);
+  return files_filesystem_status_call(Route, 1, F | 0xabcdef1200000000UL,
+                                      Output, ObservedErrno);
+}
+
+U64 files_filesystem_status_dynamic(U64 Closed, U64 Alias, U64 Descriptor) {
+  void *Library = dlopen("libfiles.so", 2);
+  CHECK(Library != 0, 1);
+  const char *Name = Descriptor ? (Alias ? "fstatfs64" : "fstatfs")
+                                : (Alias ? "statfs64" : "statfs");
+  void *Call = dlsym(Library, Name);
+  CHECK(Call != 0, 1);
+  if (Closed)
+    CHECK(dlclose(Library), 0);
+  U64 Output = 0x123456789abcdef0UL;
+  int Result =
+      Descriptor ? ((int (*)(int, void *))Call)(-1, &Output)
+                 : ((int (*)(const char *, void *))Call)("/missing/", &Output);
+  CHECK(Result, -1);
+  CHECK(*__errno(), Descriptor ? 9 : 2);
+  CHECK(Output, 0x123456789abcdef0UL);
+  return 0;
+}
+
+U64 files_status_at_call(U64 Route, U64 Directory, U64 Name, U64 Output,
+                         U64 Flags, U64 ObservedErrno) {
+  *__errno() = 83;
+  I64 Result;
+  switch (Route) {
+  case 0:
+    Result = fstatat(Directory, (const char *)Name, (struct FileStatus *)Output,
+                     Flags);
+    break;
+  case 1:
+    Result = fstatat64(Directory, (const char *)Name,
+                       (struct FileStatus *)Output, Flags);
+    break;
+  case 2:
+    Result = syscall(FstatAt, Directory, Name, Output, Flags);
+    break;
+  default:
+    Result = raw(FstatAt, Directory, Name, Output, Flags);
+    break;
+  }
+  *(U64 *)ObservedErrno = *__errno();
+  return Result;
+}
+
+U64 files_status_at_bionic(void) {
+  struct FileStatus Status;
+  U64 ObservedErrno;
+  for (U64 Route = 0; Route < 4; ++Route) {
+    CHECK(files_status_at_call(Route, (U64)-100, (U64)Path, (U64)&Status, 0,
+                               (U64)&ObservedErrno),
+          0);
+    CHECK(ObservedErrno, 83);
+    CHECK(verify_status(&Status), 0);
+    CHECK(files_status_at_call(Route, (U64)-100, (U64) "/missing", (U64)&Status,
+                               0, (U64)&ObservedErrno),
+          Route == 3 ? (U64)-2 : (U64)-1);
+    CHECK(ObservedErrno, Route == 3 ? 83 : 2);
+    CHECK(verify_status(&Status), 0);
+  }
+  return 0;
+}
+
+U64 files_status_at_dynamic(U64 Closed, U64 Alias) {
+  void *Library = dlopen("libfiles.so", 2);
+  CHECK(Library != 0, 1);
+  int (*Call)(int, const char *, struct FileStatus *, int) =
+      dlsym(Library, Alias ? "fstatat64" : "fstatat");
+  CHECK(Call != 0, 1);
+  if (Closed)
+    CHECK(dlclose(Library), 0);
+  struct FileStatus Status;
+  CHECK(Call(-1, Path, &Status, 0), 0);
+  return verify_status(&Status);
 }
 
 U64 files_status_dynamic(U64 Closed) {
@@ -612,6 +916,40 @@ U64 files_directory_bionic(void) {
   return 0;
 }
 
+U64 files_trailing_paths_bionic(void) {
+  const char *Name = "/fixture/data///";
+  *__errno() = 83;
+  CHECK(open(Name, 0), -1);
+  CHECK(*__errno(), 20);
+  CHECK(open64(Name, 0), -1);
+  CHECK(*__errno(), 20);
+  CHECK(openat(-1, Name, 0), -1);
+  CHECK(*__errno(), 20);
+  CHECK(openat64(-1, Name, 0), -1);
+  CHECK(*__errno(), 20);
+  CHECK(access(Name, 0), -1);
+  CHECK(*__errno(), 20);
+  CHECK(faccessat(-1, Name, 0, 0), -1);
+  CHECK(*__errno(), 20);
+  CHECK(fstatat(-1, Name, (struct FileStatus *)1, 0), -1);
+  CHECK(*__errno(), 20);
+  CHECK(fstatat64(-1, "/missing/", (struct FileStatus *)1, 0), -1);
+  CHECK(*__errno(), 2);
+  CHECK(mkdir(Name, 0777), -1);
+  CHECK(*__errno(), 17);
+  CHECK(mkdirat(-1, Name, 0777), -1);
+  CHECK(*__errno(), 17);
+  CHECK(syscall(FstatAt, -1UL, "/missing/", 1UL, 0UL), -1);
+  CHECK(*__errno(), 2);
+  CHECK(syscall(MkdirAt, -1UL, Name, 0777UL), -1);
+  CHECK(*__errno(), 17);
+  CHECK(access("/fixture/", 0), 0);
+  CHECK(*__errno(), 17);
+  CHECK(open(Path, 0), 3);
+  CHECK(*__errno(), 17);
+  return 0;
+}
+
 U64 files_directory_dynamic(U64 Closed, U64 At) {
   void *Library = dlopen("libfiles.so", 2);
   if (!Library)
@@ -637,9 +975,12 @@ void process_main(U64 *Stack) {
                : Mode == 'f' ? files_faults()
                : Mode == 'c' ? files_capacity()
                : Mode == 't' ? files_status()
+               : Mode == 'n' ? files_status_at()
                : Mode == 'a' ? files_access()
                : Mode == 'p' ? files_access_faults()
                : Mode == 'd' ? files_directory_errors()
+               : Mode == 'q' ? files_trailing_paths()
+               : Mode == 'v' ? files_filesystem_status()
                              : files_unsupported(Mode - '0');
   raw(Exit, Status, 0, 0, 0);
   __builtin_trap();

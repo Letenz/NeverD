@@ -91,6 +91,7 @@ add_neverd_tool(neverd
   cmd/NeverDCmdEmulation.cpp
   cmd/NeverDCmdCPU.cpp
   cmd/NeverDCmdProcess.cpp
+  cmd/NeverDCmdUnpack.cpp
   cmd/NeverDCmdSafety.cpp
   cmd/NeverDCmdConcolic.cpp
   cmd/NeverDCmdMobile.cpp

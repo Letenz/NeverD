@@ -399,6 +399,10 @@ llvm::Error KernelModel::completeFrameworkTransitionIfReady() {
 std::optional<KernelGuestCall> KernelModel::takeGuestCall() {
   if (auto Call = takePoFxThreadCall(CurrentThreadKey))
     return Call;
+  return takeIndependentGuestCall();
+}
+
+std::optional<KernelGuestCall> KernelModel::takeIndependentGuestCall() {
   if (PendingDMACall)
     return std::exchange(PendingDMACall, std::nullopt);
   if (PendingInterruptCall)

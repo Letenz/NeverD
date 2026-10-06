@@ -428,3 +428,155 @@ TEST(NativeFloatingReturnProof,
   F.Blocks[0].Succs.push_back(0);
   EXPECT_FALSE(proves(F));
 }
+
+namespace {
+MedVar hfaExtractionValue(MedVar::VarKind k, int id, unsigned size,
+                          uint64_t reg = 0) {
+  MedVar v;
+  v.Kind = k;
+  v.TheArch = Arch::AArch64;
+  v.Id = id;
+  v.Size = size;
+  v.RegOff = reg;
+  return v;
+}
+MedFunc hfaExtractionFixture(unsigned count, unsigned field) {
+  SourceFunctionTypeHint sig;
+  sig.Origin = SourceFunctionTypeHint::OriginKind::ExplicitSource;
+  sig.ReturnType =
+      NdType::makeStruct(std::vector<TypeRef>(count, NdType::makeFloat(8)));
+  std::string error;
+  EXPECT_TRUE(assignDarwinFixedSourceABI(sig, Arch::AArch64, error)) << error;
+  MedOp c;
+  c.Opcode = NdOp::CALL;
+  c.CallSiteId = 1;
+  c.Addr = 0x1000;
+  c.Output = hfaExtractionValue(MedVar::Temp, 0, count * 8);
+  c.addInput(MedVar::makeConst(0x2000, 8));
+  auto hint = std::make_shared<SourceCallTypeHint>();
+  hint->Signature = sig;
+  c.SourceCallHint = hint;
+  MedOp e;
+  e.Opcode = NdOp::SUBBYTES;
+  e.Addr = 0x1000;
+  e.Output = hfaExtractionValue(MedVar::Temp, 1, 8);
+  e.addInput(c.Output);
+  e.addInput(MedVar::makeConst(field * 8, 8));
+  MedOp w;
+  w.Opcode = NdOp::COPY;
+  w.Addr = 0x1004;
+  w.Output = hfaExtractionValue(MedVar::Reg, 2, 8, 0x200);
+  w.addInput(e.Output);
+  MedOp r;
+  r.Opcode = NdOp::RETURN;
+  r.Addr = 0x1008;
+  r.addInput(hfaExtractionValue(MedVar::Reg, 3, 8, 0xf0));
+  MedBlock b;
+  b.Id = 0;
+  b.StartAddr = 0x1000;
+  b.Ops = {c, e, w, r};
+  MedFunc f;
+  f.Entry = 0x1000;
+  f.Blocks = {b};
+  return f;
+}
+} // namespace
+
+TEST(NativeFloatingReturnProof,
+     HFAResultFieldsNeedTheExactCompleteDefinedCall) {
+  for (unsigned count : {2U, 3U, 4U})
+    for (unsigned field = 0; field != count; ++field) {
+      SCOPED_TRACE(count);
+      SCOPED_TRACE(field);
+      const auto f = hfaExtractionFixture(count, field);
+      EXPECT_TRUE(detail::hasProvenNativeSourceFloat64Return(f, Arch::AArch64));
+    }
+  for (unsigned mutation = 0; mutation != 17; ++mutation) {
+    SCOPED_TRACE(mutation);
+    auto f = hfaExtractionFixture(4, 0);
+    auto &o = f.Blocks[0].Ops;
+    auto hint = std::make_shared<SourceCallTypeHint>(*o[0].SourceCallHint);
+    o[0].SourceCallHint = hint;
+    auto &s = hint->Signature;
+    switch (mutation) {
+    case 0:
+      o[0].SourceCallHint.reset();
+      break;
+    case 1:
+      o[0].CallSiteId = 0;
+      break;
+    case 2:
+      o[0].addInput(MedVar::makeConst(1, 8));
+      break;
+    case 3:
+      o[0].DoesNotReturn = true;
+      break;
+    case 4:
+      o[0].PreservesCallerSaved = true;
+      break;
+    case 5:
+      s.ReturnComponents[0].RegisterOffset = 0;
+      break;
+    case 6:
+      o[1].Inputs[1].ConstVal = 4;
+      break;
+    case 7:
+      o[1].Inputs[1].ConstVal = 32;
+      break;
+    case 8:
+      o[1].Output.Size = o[2].Inputs[0].Size = o[2].Output.Size = 4;
+      break;
+    case 9:
+      o[1].Inputs[0].Size = 16;
+      break;
+    case 10:
+      o[0].Output.Kind = o[1].Inputs[0].Kind = MedVar::Reg;
+      break;
+    case 11:
+      std::swap(o[0], o[1]);
+      break;
+    case 12:
+      s.ReturnType =
+          NdType::makeStruct(std::vector<TypeRef>(4, NdType::makeInt(8)));
+      break;
+    case 13:
+      s.ReturnType =
+          NdType::makeStruct(std::vector<TypeRef>(4, NdType::makeFloat(4)));
+      break;
+    case 14:
+      s.ReturnComponents.pop_back();
+      break;
+    case 15:
+      o[1].Inputs[0].SSAVer = 1;
+      break;
+    case 16: {
+      MedOp late = o[0];
+      late.CallSiteId = 2;
+      late.Output.Id = 8;
+      o.insert(o.end() - 1, late);
+      break;
+    }
+    }
+    EXPECT_FALSE(detail::hasProvenNativeSourceFloat64Return(f, Arch::AArch64));
+  }
+  EXPECT_FALSE(detail::hasProvenNativeSourceFloat64Return(
+      hfaExtractionFixture(4, 0), Arch::X64));
+}
+
+TEST(NativeFloatingReturnProof, HFAFieldExtractionNeedsADominatingCall) {
+  const auto Record =
+      NdType::makeStruct(std::vector<TypeRef>(4, NdType::makeFloat(8)));
+  MedFunc F;
+  F.Entry = 0x1000;
+  F.Blocks = {block(0, {}, {1, 2}), block(1, {0}, {3}), block(2, {0}, {3}),
+              block(3, {1, 2}, {})};
+  F.Blocks[1].Ops = {call(1, temp(100, 32), Record)};
+  F.Blocks[3].Ops = {operation(NdOp::SUBBYTES, temp(200, 8),
+                               {temp(100, 32), MedVar::makeConst(24, 8)}),
+                     operation(NdOp::COPY, fpReg(0, 1, 0, 8), {temp(200, 8)}),
+                     operation(NdOp::RETURN, {})};
+  EXPECT_FALSE(proves(F));
+  F.Blocks[0].Ops = std::move(F.Blocks[1].Ops);
+  F.Blocks[1].Ops.clear();
+  EXPECT_TRUE(proves(F));
+}

@@ -760,6 +760,8 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     DeclaredNames.insert(Name);
     emitIndent(1);
     auto ExplicitTy = ExplicitDeclarations.find(Name);
+    if (ExplicitTy == ExplicitDeclarations.end())
+      DeclaredCTypes.emplace(Name, cDisplayType(Ty));
     OS << (ExplicitTy == ExplicitDeclarations.end()
                ? declarationToC(cDisplayType(Ty), Name)
                : ExplicitTy->second)
@@ -4484,6 +4486,29 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         ParamDisplayNames[static_cast<int>(I)] =
             Identifiers.allocate("arg" + std::to_string(I), "nd_arg");
   }
+  MemoryIdentifiers = GlobalIdentifierAllocator;
+  MemoryTemporaries.clear();
+  AddressTakenNames.clear();
+  DeclaredCTypes.clear();
+  for (const auto &Param : Func.Params)
+    MemoryIdentifiers.allocate(Param.Name);
+  for (const auto &Local : Func.Locals)
+    MemoryIdentifiers.allocate(Local.Name);
+  std::set<const HighExpr *> MemorySeen;
+  std::function<void(const ExprPtr &)> ReserveNames = [&](const ExprPtr &E) {
+    if (!E || !MemorySeen.insert(E.get()).second)
+      return;
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi)
+      MemoryIdentifiers.allocate(varName(E->Var));
+    if (E->Kind == ExprKind::Addr && E->Operands.size() == 1 &&
+        E->Operands[0] &&
+        (E->Operands[0]->Kind == ExprKind::Var ||
+         E->Operands[0]->Kind == ExprKind::Phi))
+      AddressTakenNames.insert(varName(E->Operands[0]->Var));
+    E->forEachChildExpr(ReserveNames);
+  };
+  walkStmts(Func.Body,
+            [&](const HighStmt &Stmt) { forEachExpr(Stmt, ReserveNames); });
   IndirectReturnName.clear();
   if (const auto DebugFn = debugFunction(Dbg, Func.Entry);
       !Func.SourceTypeHint && DebugFn &&
@@ -4708,6 +4733,11 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   };
   WalkFrameUses(Func.Body, false);
   FrameStorageActive = NeedsFrameStorage;
+  // Rebuilt storage has the host's pointer width. A target-width integer
+  // temporary would truncate its address when 32-bit source is recompiled
+  // on a 64-bit host. Keep certified aliases on that same byte backing.
+  if (NeedsFrameStorage && getTargetRegInfo(Opts.TheArch).PointerSize == 4)
+    ProjectFrameAliasesIntoStorage = true;
   if (NeedsFrameStorage || !Analysis.StoreFwd.empty()) {
     // Integer store-to-load forwarding and named C locals are exclusive.
     // Mixing them leaves later loads on `frame_base` after the seed `arg0`
@@ -4830,7 +4860,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
 
     if (Func.DoesNotReturn)
       OS << "_Noreturn ";
-    if (Opts.TheArch == Arch::X64 && DebugFn) {
+    if (Func.SourceTypeHint)
+      OS << sourceConventionAttribute(Func.SourceTypeHint->Convention);
+    else if (Opts.TheArch == Arch::X64 && DebugFn) {
       const bool Member =
           !DebugFn->Params.empty() && DebugFn->Params[0].first == "this";
       const bool Sret = isMsvcIndirectReturn(DebugFn->ReturnType);
@@ -4841,12 +4873,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         OS << "__fastcall ";
       else if (CC != DebugCallConv::Cdecl && CC != DebugCallConv::Unknown)
         OS << debugCallConvAttribute(CC);
-      else if (Func.SourceTypeHint)
-        OS << sourceConventionAttribute(Func.SourceTypeHint->Convention);
     } else if (DebugFn && DebugFn->CallConv != DebugCallConv::Unknown) {
       OS << debugCallConvAttribute(DebugFn->CallConv);
-    } else if (Func.SourceTypeHint)
-      OS << sourceConventionAttribute(Func.SourceTypeHint->Convention);
+    }
     CProjectionIdentifierAllocator ParameterIdentifiers;
     std::string Declarator = FName + "(";
     const std::vector<size_t> ParamIndices = emittedParamIndices(Func);
@@ -4870,7 +4899,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       if (auto It = ParamDisplayNames.find(static_cast<int>(PI));
           It != ParamDisplayNames.end())
         Name = It->second;
-      if (DebugFn) {
+      if (DebugFn && !Func.SourceTypeHint) {
         size_t DI = PI;
         if (HighIRIncludesSret && static_cast<int>(PI) > SretId)
           DI = PI - 1;
@@ -4882,7 +4911,16 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
             Name = DebugFn->Params[DI].first;
         }
       }
-      emitParam(Ty, Name);
+      if (Func.SourceTypeHint && PI < Func.SourceTypeHint->Parameters.size()) {
+        if (Emitted)
+          Declarator += ", ";
+        auto Parameter = Func.SourceTypeHint->Parameters[PI];
+        Parameter.Type = Ty;
+        Declarator += sourceParameterType(
+            Parameter, ParameterIdentifiers.allocate(Name, "nd_arg"));
+        ++Emitted;
+      } else
+        emitParam(Ty, Name);
     };
     if (MemberSret && HighIRIncludesSret) {
       if (!ParamIndices.empty())
@@ -5277,6 +5315,12 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
        << ";\n";
   }
   emitLocalDecls(Func, ParamNames);
+  for (const auto &Name : DeclaredCNames)
+    MemoryIdentifiers.allocate(Name);
+  for (const auto &[Name, Decl] : DeferredDecls)
+    MemoryIdentifiers.allocate(Name);
+  for (const auto &Name : ParamNames)
+    MemoryIdentifiers.allocate(Name);
 
   // Render the body first: a name the declaration pass expected to be
   // forwarded or dead may still be printed, and it must be declared.
@@ -5288,7 +5332,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     Out.redirect(Saved);
   }
   std::unordered_set<std::string_view> BodyIdents;
-  if (!DeferredDecls.empty()) {
+  if (!DeferredDecls.empty() || !MemoryTemporaries.empty()) {
     auto IsIdent = [](char C) {
       return std::isalnum(static_cast<unsigned char>(C)) || C == '_';
     };
@@ -5313,6 +5357,12 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
        << ";\n";
   }
   DeferredDecls.clear();
+  for (const auto &[Name, Type] : MemoryTemporaries) {
+    if (!BodyIdents.count(Name))
+      continue;
+    emitIndent(1);
+    OS << Type << " " << Name << ";\n";
+  }
   OS << Body;
   if (EmitFunctionWrapper && !IndirectReturnName.empty() &&
       !PrintedIndirectReturn) {

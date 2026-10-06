@@ -54,3 +54,19 @@ EXPORTS
   RtlCopyUnicodeString
   RtlCompareUnicodeString
   RtlEqualUnicodeString
+  KfRaiseIrql
+  KeLowerIrql
+  KeQueryPriorityThread
+  KeSetPriorityThread
+  ObReferenceObjectByHandle
+  ObfDereferenceObject
+  PsCreateSystemThread
+  PsTerminateSystemThread
+  KeAreApcsDisabled
+  KeAreAllApcsDisabled
+  KeLeaveCriticalRegion
+  KeEnterGuardedRegion
+  KeLeaveGuardedRegion
+  IoGetCurrentProcess
+  KeStackAttachProcess
+  KeUnstackDetachProcess

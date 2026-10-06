@@ -421,6 +421,10 @@ constexpr int64_t kMaxFrameSize = 16 * 1024 * 1024; // 16 MiB
 /// indirect-tail frame guard. Exhaustion retains the original indirect branch.
 constexpr size_t kMaxIndirectTailFrameWork = 262144;
 
+/// Joins at one block after which a stack-offset bound that is still moving
+/// (a stack pointer that drifts around a loop) becomes unbounded.
+constexpr unsigned kStackOffsetWideningJoins = 8;
+
 /// How many stores before a call to scan for stack-passed arguments.
 constexpr int kCallArgStoreScanWindow = 12;
 

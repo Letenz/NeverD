@@ -5,8 +5,9 @@
 //===----------------------------------------------------------------------===//
 // The baseline register subsets exclude SVE/SME, optional ISA extensions,
 // half-precision FP and constrained-unpredictable writeback. System access
-// admits only the exact thread-pointer and FP control/status encodings below.
-// FP arithmetic requires masked exceptions and baseline rounding/FZ/DN control.
+// admits only the exact flags, thread-pointer and FP control/status encodings
+// below. FP arithmetic requires masked exceptions and baseline rounding/FZ/DN
+// control.
 #ifdef NEVERD_AARCH64_INSTRUCTION
 NEVERD_AARCH64_INSTRUCTION(ADC, Integer)
 NEVERD_AARCH64_INSTRUCTION(ADCS, Integer)
@@ -149,13 +150,15 @@ NEVERD_AARCH64_INSTRUCTION(ST3, StructureMemory)
 NEVERD_AARCH64_INSTRUCTION(ST4, StructureMemory)
 #endif
 #ifdef NEVERD_AARCH64_ENCODING
-// MRS/MSR TPIDR_EL0, Xt. Only the general-register field is variable.
+// Exact admitted system registers. Only the general-register field varies.
 NEVERD_AARCH64_ENCODING(ReadThreadPointer, 0xffffffe0, 0xd53bd040)
 NEVERD_AARCH64_ENCODING(WriteThreadPointer, 0xffffffe0, 0xd51bd040)
 NEVERD_AARCH64_ENCODING(ReadFPControl, 0xffffffe0, 0xd53b4400)
 NEVERD_AARCH64_ENCODING(WriteFPControl, 0xffffffe0, 0xd51b4400)
 NEVERD_AARCH64_ENCODING(ReadFPStatus, 0xffffffe0, 0xd53b4420)
 NEVERD_AARCH64_ENCODING(WriteFPStatus, 0xffffffe0, 0xd51b4420)
+NEVERD_AARCH64_ENCODING(ReadNZCV, 0xffffffe0, 0xd53b4200)
+NEVERD_AARCH64_ENCODING(WriteNZCV, 0xffffffe0, 0xd51b4200)
 NEVERD_AARCH64_ENCODING(ReadCacheType, 0xffffffe0, 0xd53b0020)
 NEVERD_AARCH64_ENCODING(CleanDataToUnification, 0xffffffe0, 0xd50b7b20)
 NEVERD_AARCH64_ENCODING(InvalidateInstructionToUnification, 0xffffffe0,

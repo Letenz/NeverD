@@ -74,6 +74,34 @@ TEST(SwiftFunctionSymbols, RebuildingObservesChangedStorageAndFunctionFlags) {
   EXPECT_EQ(uniqueSwiftFunctionSymbol(Image, 0x1000, &Empty), nullptr);
 }
 
+TEST(SwiftFunctionSymbols, RepeatedDeclarationsKeepEveryRecordField) {
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    BinaryImage Image;
+    Image.Symbols = {{"declared", 0x1000, 32, true},
+                     {"declared", 0x1000, 32, true}};
+    if (Mutation == 1)
+      Image.Symbols.back().Name += "alias";
+    if (Mutation == 2)
+      ++Image.Symbols.back().Size;
+    if (Mutation == 3)
+      Image.Symbols.back().IsBoundaryGuess = true;
+    if (Mutation == 4)
+      Image.Symbols.back().Origin = NameOrigin::Analysis;
+    for (bool Reverse : {false, true}) {
+      if (Reverse)
+        std::reverse(Image.Symbols.begin(), Image.Symbols.end());
+      const SwiftFunctionSymbolIndex Index(Image);
+      BinaryImage Foreign;
+      const SwiftFunctionSymbolIndex ForeignIndex(Foreign);
+      EXPECT_FALSE(uniqueSwiftFunctionSymbol(Image, 0x1000, &Index));
+      for (const auto *Selected : {&Index, &ForeignIndex})
+        EXPECT_EQ(bool(consistentSwiftFunctionDeclarationSymbol(Image, 0x1000,
+                                                                Selected)),
+                  Mutation == 0);
+    }
+  }
+}
+
 TEST(SwiftFunctionSymbols, IndexedDeclarationsRetainTypeAndCarrierProofs) {
   constexpr const char *Name =
       "_$s4main9localized_12languageCode6bundle5value7commentS2S_SSSgSo8"
@@ -133,6 +161,65 @@ TEST(SwiftFunctionSymbols, IndexedDeclarationsRetainTypeAndCarrierProofs) {
       EXPECT_FALSE(
           swiftMangledStringBundleSourceABI(Wrong, 0x1000, true, &Index));
       EXPECT_FALSE(swiftMangledStringBundleSourceABI(Wrong, 0x1000, true));
+    }
+  }
+}
+
+TEST(SwiftFunctionSymbols, RegularExpressionInitializerRetainsContextAndError) {
+  constexpr const char *Name =
+      "_$sSo19NSRegularExpressionC7pattern7optionsABSS_So0aB7OptionsVtKcfcTO";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    BinaryImage Image;
+    Image.Format = BinaryFormat::MachO;
+    Image.Arch = Architecture;
+    Image.Bits = Bitness::Bits64;
+    Segment Text;
+    Text.VA = 0x1000;
+    Text.Size = Text.FileSz = 16;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.resize(16);
+    Image.Segments.push_back(Text);
+    Image.Symbols = {{Name, 0x1000, 16, true}};
+    const auto Hint =
+        sdk::swiftMangledRegularExpressionInitializerSourceABI(Image, 0x1000);
+    ASSERT_TRUE(Hint);
+    ASSERT_EQ(Hint->Parameters.size(), 5U);
+    EXPECT_EQ(Hint->Parameters[3].TheRole,
+              SourceParameterTypeHint::Role::SwiftContext);
+    EXPECT_TRUE(sourceABIErrorResult(*Hint));
+    auto Repeated = Image;
+    Repeated.Symbols.push_back(Repeated.Symbols.front());
+    const SwiftFunctionSymbolIndex RepeatedIndex(Repeated);
+    const auto RepeatedHint =
+        sdk::swiftMangledRegularExpressionInitializerSourceABI(Repeated, 0x1000,
+                                                               &RepeatedIndex);
+    ASSERT_TRUE(RepeatedHint);
+    EXPECT_TRUE(equalSourceABIs(*RepeatedHint, *Hint));
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      auto Wrong = Image;
+      if (Mutation == 0)
+        Wrong.Symbols.push_back(
+            {std::string(Name) + "alias", 0x1000, 16, true});
+      else if (Mutation == 1)
+        Wrong.Symbols[0].IsFunc = false;
+      else if (Mutation == 2)
+        Wrong.Symbols[0].Name += "x";
+      else if (Mutation == 3)
+        Wrong.Symbols[0].Name =
+            "_$sSo19NSRegularExpressionC7pattern7optionsABSS_"
+            "So0aB7OptionsVtKcfc";
+      else if (Mutation == 4)
+        Wrong.IsRelocatable = true;
+      else if (Mutation == 5)
+        Wrong.Format = BinaryFormat::ELF;
+      else if (Mutation == 6)
+        Wrong.Bits = Bitness::Bits32;
+      else
+        Wrong.Segments[0].Flags = SegmentFlags::Readable;
+      const SwiftFunctionSymbolIndex Changed(Wrong);
+      EXPECT_FALSE(sdk::swiftMangledRegularExpressionInitializerSourceABI(
+          Wrong, 0x1000, &Changed))
+          << Mutation;
     }
   }
 }

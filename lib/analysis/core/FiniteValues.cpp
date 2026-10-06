@@ -283,16 +283,35 @@ FiniteValues enumerateFiniteValues(SymContext &Ctx, SymRef Predicate,
                                Options.MaxSymbolicNodes, Queries, Observe);
 }
 
-FiniteValues enumerateFiniteValues(SymContext &Ctx, SymRef Predicate,
-                                   llvm::ArrayRef<SymRef> Values,
-                                   uint32_t Limit, SolverOptions Settings,
-                                   uint64_t MaxQueries,
-                                   uint64_t MaxSymbolicNodes, uint64_t &Queries,
-                                   FiniteValueObserver Observe) {
-  if (!Predicate || Ctx.width(Predicate) != 1 || !Limit)
+std::unique_ptr<BitVectorSolver>
+FiniteDomainEncoding::createSolver(SymRef Predicate) {
+  if (Encoding && Predicate == EncodedPredicate)
+    if (auto Copy = Encoding->cloneEncoding())
+      return Copy;
+
+  // Release the previous domain before building its replacement. Search and
+  // projection only mutate the returned solver, never this template.
+  Encoding.reset();
+  auto Solver = std::make_unique<BitVectorSolver>(Ctx, Settings);
+  if (Solver->assertTrue(Predicate)) {
+    Encoding = Solver->cloneEncoding();
+    EncodedPredicate = Predicate;
+  }
+  return Solver;
+}
+
+static FiniteValues enumerateFiniteValuesImpl(
+    SymContext &Ctx, SymRef Predicate, llvm::ArrayRef<SymRef> Values,
+    uint32_t Limit, SolverOptions Settings, uint64_t MaxQueries,
+    uint64_t MaxSymbolicNodes, uint64_t &Queries, FiniteValueObserver Observe,
+    FiniteDomainEncoding *Encoding) {
+  const auto Valid = [&](SymRef Value) {
+    return Value && Value.index() < Ctx.numNodes() && Ctx.width(Value);
+  };
+  if (!Valid(Predicate) || Ctx.width(Predicate) != 1 || !Limit)
     return {FiniteValueStatus::Invalid, {}};
   for (SymRef Value : Values)
-    if (!Value || !Ctx.width(Value) || Ctx.width(Value) > 64)
+    if (!Valid(Value) || Ctx.width(Value) > 64)
       return {FiniteValueStatus::Invalid, {}};
   if (Ctx.isConstZero(Predicate))
     return {FiniteValueStatus::Complete, {}};
@@ -322,7 +341,10 @@ FiniteValues enumerateFiniteValues(SymContext &Ctx, SymRef Predicate,
   // Enumeration needs actual models even if other callers use decision-only
   // queries. Never fill an absent projected value with an arbitrary default.
   Settings.BuildModel = true;
-  BitVectorSolver Solver(Ctx, Settings);
+  auto OwnedSolver = Encoding
+                         ? Encoding->createSolver(Predicate)
+                         : std::make_unique<BitVectorSolver>(Ctx, Settings);
+  BitVectorSolver &Solver = *OwnedSolver;
   const auto EncodingFailure = [&] {
     return FiniteValues{Solver.encodeError() == BlastError::Malformed
                             ? FiniteValueStatus::Invalid
@@ -381,6 +403,28 @@ FiniteValues enumerateFiniteValues(SymContext &Ctx, SymRef Predicate,
                                              : Ctx.mkOr(Different)))
       return EncodingFailure();
   }
+}
+
+FiniteValues enumerateFiniteValues(SymContext &Ctx, SymRef Predicate,
+                                   llvm::ArrayRef<SymRef> Values,
+                                   uint32_t Limit, SolverOptions Settings,
+                                   uint64_t MaxQueries,
+                                   uint64_t MaxSymbolicNodes, uint64_t &Queries,
+                                   FiniteValueObserver Observe) {
+  return enumerateFiniteValuesImpl(Ctx, Predicate, Values, Limit, Settings,
+                                   MaxQueries, MaxSymbolicNodes, Queries,
+                                   Observe, nullptr);
+}
+
+FiniteValues enumerateFiniteValues(FiniteDomainEncoding &Encoding,
+                                   SymRef Predicate,
+                                   llvm::ArrayRef<SymRef> Values,
+                                   uint32_t Limit, uint64_t MaxQueries,
+                                   uint64_t MaxSymbolicNodes, uint64_t &Queries,
+                                   FiniteValueObserver Observe) {
+  return enumerateFiniteValuesImpl(
+      Encoding.context(), Predicate, Values, Limit, Encoding.settings(),
+      MaxQueries, MaxSymbolicNodes, Queries, Observe, &Encoding);
 }
 
 } // namespace neverd::analysis::detail

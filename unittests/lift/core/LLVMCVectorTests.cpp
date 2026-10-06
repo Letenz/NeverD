@@ -431,7 +431,10 @@ TEST(LLVMCValues, UnalignedIntegerStorePreservesPointerAddressRepresentation) {
   ASSERT_FALSE(llvm::verifyModule(Module));
   std::string Source;
   llvm::raw_string_ostream Out(Source);
-  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  neverd::CEmitterOptions Options;
+  // The checks read the portable byte-copy spelling.
+  Options.UseUnalignedPointers = false;
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
   // The frame printer deliberately gives this integer IR value a pointer
   // expression. Capturing it for byte copying must keep the integer view.
   EXPECT_NE(Source.find("memory_value"), std::string::npos) << Source;

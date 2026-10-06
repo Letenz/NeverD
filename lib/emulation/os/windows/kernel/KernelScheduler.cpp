@@ -9,11 +9,15 @@
 /// by Microsoft's System Worker Threads, KeInsertQueueDpc, KeSetImportanceDpc,
 /// KeSetTimerEx and KeCancelTimer documentation. This implementation chooses
 /// a reproducible schedule within those object-lifetime contracts; it does not
-/// model processor preemption, timer coalescing, or the Windows thread pool.
+/// supply processor preemption, timer coalescing, or the Windows thread pool.
+/// The driver session owns preemption and consumes this owner's priority
+/// policy.
 ///
 //===----------------------------------------------------------------------===//
 
 #include "KernelScheduler.h"
+
+#include "neverd/emulation/DriverScheduling.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -59,6 +63,56 @@ bool KernelScheduler::isDMACallbackKind(CallbackKind Kind) {
 bool KernelScheduler::isFrameworkInterruptCallbackKind(CallbackKind Kind) {
   return Kind == CallbackKind::FrameworkInterruptDPC ||
          Kind == CallbackKind::FrameworkInterruptWorkItem;
+}
+
+llvm::Expected<uint64_t> KernelScheduler::issueReadyOrder() {
+  if (NextReadyOrder == UINT64_MAX)
+    return schedulerError(driver_scheduling::ReadyOverflow);
+  return NextReadyOrder++;
+}
+
+std::optional<uint64_t> KernelScheduler::nextPassiveReadyOrder() const {
+  if (auto Next = nextPassiveThread())
+    return Next->ReadyOrder;
+  return std::nullopt;
+}
+
+int32_t KernelScheduler::threadPriority(uint64_t Key) const {
+  const auto Found = ThreadPriorities.find(Key);
+  return Found == ThreadPriorities.end() ? thread_priority::Default
+                                         : Found->second;
+}
+
+llvm::Expected<int32_t> KernelScheduler::setThreadPriority(uint64_t Key,
+                                                           int32_t Priority) {
+  if (Priority < thread_priority::Minimum ||
+      Priority > thread_priority::Maximum)
+    return schedulerError(thread_priority::InvalidPriority);
+  const int32_t Previous = threadPriority(Key);
+  ThreadPriorities.insert_or_assign(Key, Priority);
+  return Previous;
+}
+
+const KernelScheduler::Invocation *
+KernelScheduler::nextPassiveInvocation() const {
+  if (!OrderedPassive)
+    return !Workers.empty()         ? &Workers.front()
+           : !SystemThreads.empty() ? &SystemThreads.front()
+                                    : nullptr;
+  const Invocation *Best = nullptr;
+  for (const auto *Queue : {&Workers, &SystemThreads})
+    for (const auto &Call : *Queue)
+      if (!Best || readyThread(Call.ID, Call.ReadyOrder)
+                       .precedes(readyThread(Best->ID, Best->ReadyOrder)))
+        Best = &Call;
+  return Best;
+}
+
+std::optional<KernelScheduler::ReadyThread>
+KernelScheduler::nextPassiveThread() const {
+  if (const auto *Call = nextPassiveInvocation())
+    return readyThread(Call->ID, Call->ReadyOrder);
+  return std::nullopt;
 }
 
 llvm::Error KernelScheduler::validateTime() const {
@@ -116,6 +170,8 @@ llvm::Error KernelScheduler::checkCapacity(uint64_t Additional) const {
     return schedulerError("scheduler pending callback limit exhausted");
   if (Additional > UINT64_MAX - NextID)
     return schedulerError("scheduler callback identity overflow");
+  if (Additional > UINT64_MAX - NextReadyOrder)
+    return schedulerError(driver_scheduling::ReadyOverflow);
   return llvm::Error::success();
 }
 
@@ -125,6 +181,7 @@ KernelScheduler::Invocation KernelScheduler::makeInvocation(Callback Work,
   Invocation Call;
   static_cast<Callback &>(Call) = std::move(Work);
   Call.ID = NextID++;
+  Call.ReadyOrder = NextReadyOrder++;
   Call.Kind = Kind;
   Call.IRQL = Kind == CallbackKind::DPC ||
                       Kind == CallbackKind::FrameworkInterruptDPC ||
@@ -900,16 +957,24 @@ KernelScheduler::next(bool AdvanceTime,
     if (queuedCallbackCount()) {
       if (Dispatches >= Bounds.MaxDispatches)
         return schedulerError("scheduler callback dispatch limit exhausted");
+      const auto *Passive = nextPassiveInvocation();
       auto &Queue = !Interrupts.empty() && Interrupts.front().IRQL ? Interrupts
                     : !DPCs.empty()                                ? DPCs
                     : !ReadyDMA.empty()                            ? ReadyDMA
                     : !Cancellations.empty() ? Cancellations
                     : !Completions.empty()   ? Completions
                     : !Interrupts.empty()    ? Interrupts
-                    : !Workers.empty()       ? Workers
-                                             : SystemThreads;
-      Active = std::move(Queue.front());
-      Queue.pop_front();
+                    : Passive->Kind == CallbackKind::SystemThread
+                        ? SystemThreads
+                        : Workers;
+      auto Position = (&Queue == &Workers || &Queue == &SystemThreads)
+                          ? llvm::find_if(Queue,
+                                          [Passive](const auto &Call) {
+                                            return Call.ID == Passive->ID;
+                                          })
+                          : Queue.begin();
+      Active = std::move(*Position);
+      Queue.erase(Position);
       ++Dispatches;
       return Active;
     }
@@ -950,11 +1015,24 @@ KernelScheduler::canAdvanceTo100ns(uint64_t Time,
   if (Time > Now) {
     if (Active || !InlineDMA.empty() || queuedCallbackCount())
       return schedulerError("cannot advance virtual time with runnable work");
+  }
+  return canAdvanceExecutionTo100ns(Time, AdditionalCallbacks);
+}
+
+llvm::Error KernelScheduler::canAdvanceExecutionTo100ns(
+    uint64_t Time, uint64_t AdditionalCallbacks) const {
+  if (Time > Now) {
     auto Earliest = nextEventTime100ns();
     if (Earliest && Time > *Earliest)
       return schedulerError("cannot advance past an earlier timer boundary");
   }
   return validateTimerExpirations(Time, AdditionalCallbacks);
+}
+
+llvm::Error KernelScheduler::advanceExecutionTo100ns(uint64_t Time) {
+  if (auto E = canAdvanceExecutionTo100ns(Time))
+    return E;
+  return expireTimers(Time);
 }
 
 llvm::Error KernelScheduler::advanceTo100ns(uint64_t Time) {

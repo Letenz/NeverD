@@ -99,7 +99,7 @@ public:
   }
 };
 llvm::Error readImports(const Reader &R, const data_directory &D, Image &Out,
-                        bool GuestImports) {
+                        bool GuestImports, bool Deferred) {
   if (!D.Size)
     return llvm::Error::success();
   auto Data = R.bytes(D.RelativeVirtualAddress, D.Size);
@@ -132,7 +132,10 @@ llvm::Error readImports(const Reader &R, const data_directory &D, Image &Out,
     const uint64_t Lookup = Entry.ImportLookupTableRVA
                                 ? uint32_t(Entry.ImportLookupTableRVA)
                                 : uint32_t(Entry.ImportAddressTableRVA);
-    if (Lookup % PointerSize || Entry.ImportAddressTableRVA % PointerSize)
+    // Linkers align thunk arrays, but the Windows loader does not require
+    // it; a deferred image keeps whatever placement its producer chose.
+    if (!Deferred &&
+        (Lookup % PointerSize || Entry.ImportAddressTableRVA % PointerSize))
       return failure(text::Imports);
     bool End = false;
     for (uint64_t I = 0; I <= MaxImports; ++I) {
@@ -173,7 +176,8 @@ llvm::Error readImports(const Reader &R, const data_directory &D, Image &Out,
         Name = std::move(*SymbolName);
       }
       const auto *Target = Ordinal ? nullptr : findService(*Module, Name);
-      if ((!GuestImports || findProvider(*Module)) && !Target)
+      // A deferred image binds such an import to an opaque entry at link.
+      if ((!GuestImports || findProvider(*Module)) && !Target && !Deferred)
         return failure(text::Import + *Module +
                        llvm::Twine(text::ImportSeparator) + Name);
       Out.Imports.push_back({Out.Base + Slot, Target,
@@ -299,7 +303,7 @@ template <class View> llvm::Error readTLS(const View &R, Image &Out) {
 }
 llvm::Expected<Image> readImage(const std::filesystem::path &Path,
                                 ImageReadBudget &Budget, bool DLL,
-                                bool GuestImports) {
+                                bool GuestImports, bool Deferred = false) {
   std::error_code EC;
   const uint64_t FileSize = std::filesystem::file_size(Path, EC);
   if (EC || FileSize > Budget.FileBytes)
@@ -342,8 +346,11 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
       !(COFF.Characteristics & llvm::COFF::IMAGE_FILE_EXECUTABLE_IMAGE) ||
       bool(COFF.Characteristics & llvm::COFF::IMAGE_FILE_DLL) != DLL ||
       (COFF.Characteristics & llvm::COFF::IMAGE_FILE_SYSTEM) ||
+      // No window station is modeled. A deferred graphical image still
+      // loads; it stops if it reaches a graphical service.
       (PE.Subsystem != llvm::COFF::IMAGE_SUBSYSTEM_WINDOWS_CUI &&
-       (!DLL || PE.Subsystem != llvm::COFF::IMAGE_SUBSYSTEM_WINDOWS_GUI)) ||
+       ((!DLL && !Deferred) ||
+        PE.Subsystem != llvm::COFF::IMAGE_SUBSYSTEM_WINDOWS_GUI)) ||
       PE.LoaderFlags || PE.Win32VersionValue ||
       (PE.DLLCharacteristics & llvm::COFF::IMAGE_DLL_CHARACTERISTICS_GUARD_CF))
     return failure(text::Image);
@@ -439,8 +446,15 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
         I == llvm::COFF::DELAY_IMPORT_DESCRIPTOR ||
         I == llvm::COFF::BOUND_IMPORT || I == llvm::COFF::CLR_RUNTIME_HEADER ||
         I == llvm::COFF::ARCHITECTURE || I == llvm::COFF::GLOBAL_PTR ||
-        I == MaxDirectories - 1)
+        I == MaxDirectories - 1) {
+      // The model does not interpret these directories. Deferred, they stay
+      // bytes of the image that only the guest's own code may consult.
+      if (Deferred) {
+        D = {};
+        continue;
+      }
       return failure(text::Directory + llvm::Twine(I));
+    }
     if (I == llvm::COFF::CERTIFICATE_TABLE) {
       if (D.RelativeVirtualAddress > R.Raw.size() ||
           D.Size > R.Raw.size() - D.RelativeVirtualAddress)
@@ -454,8 +468,20 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
     }
     auto Data =
         R.bytes(D.RelativeVirtualAddress, D.Size, I != llvm::COFF::TLS_TABLE);
-    if (!Data)
-      return Data.takeError();
+    if (!Data) {
+      // A directory the file does not back is produced at run time. Only the
+      // import and TLS directories are needed before the first instruction.
+      if (!Deferred || I == llvm::COFF::IMPORT_TABLE ||
+          I == llvm::COFF::TLS_TABLE)
+        return Data.takeError();
+      llvm::consumeError(Data.takeError());
+      Out.ExceptionsDeferred |= I == llvm::COFF::EXCEPTION_TABLE;
+      // Without its fixups the image cannot be placed anywhere else.
+      if (I == llvm::COFF::BASE_RELOCATION_TABLE)
+        Out.Relocatable = false;
+      D = {};
+      continue;
+    }
     if (I == llvm::COFF::DEBUG_DIRECTORY) {
       if (D.Size % sizeof(debug_directory))
         return failure(text::Metadata);
@@ -519,7 +545,7 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
     }
   }
   if (auto E = readImports(R, Directories[llvm::COFF::IMPORT_TABLE], Out,
-                           GuestImports))
+                           GuestImports, Deferred))
     return std::move(E);
   if (auto E = readTLS(R, Out))
     return std::move(E);
@@ -643,8 +669,9 @@ llvm::Expected<Image> loadImage(const std::filesystem::path &Path,
   return readImage(Path, Budget, false, false);
 }
 llvm::Expected<Image> loadProgramImage(const std::filesystem::path &Path,
-                                       ImageReadBudget &Budget, bool DLL) {
-  return readImage(Path, Budget, DLL, true);
+                                       ImageReadBudget &Budget, bool DLL,
+                                       bool DeferUnmodeled) {
+  return readImage(Path, Budget, DLL, true, DeferUnmodeled);
 }
 llvm::Error relocateImage(Image &Loaded, uint64_t Base,
                           ImageReadBudget &Budget) {

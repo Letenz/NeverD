@@ -1,6 +1,6 @@
 **语言**: [English](../README.md) | [简体中文](README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 6a7456cc606f8f98767b33ad15e7c852cd0cb7e1bf8367759b0ad0cc03503470 -->
+<!-- i18n-source: 1f7e768c64fd7b3fd697260f693c68ca3b71562bf43cb0db4970c98487c270be -->
 
 [← NeverD 项目](project.md)
 
@@ -40,3 +40,4 @@
 | [Solana SBF 反编译](sbf.md) | SBF v0-v4、LLVM IR、C/Rust 输出、验证与已知限制 |
 | [路线图](roadmap.md) | 状态：原生格式、EVM 与 Solana SBF 均已实现 |
 | 本地化文档 | 使用上方语言链接打开各语言的文档索引和项目概览 |
+| [加壳可执行文件的脱壳](unpack.md) | 通过观察有界来宾进程恢复加壳的 PE32+ 镜像：入口规则、重建的镜像、识别与限制 |

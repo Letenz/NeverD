@@ -35,6 +35,7 @@
 
 #include <algorithm>
 #include <array>
+#include <deque>
 #include <map>
 #include <memory>
 
@@ -249,12 +250,15 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     }
     return true;
   };
+  uint64_t RunInstructions = 0, RunAllowance = UINT64_MAX;
+  bool AdmissionBoundary = false;
   auto RecordInstruction = [&]() {
     if (!Resources.consumeInstructions()) {
       Stop(DriverStopReason::InstructionLimit, runtime::InstructionLimit);
       return false;
     }
     Result.Instructions = Resources.instructions();
+    ++RunInstructions;
     return true;
   };
   BackendHooks Hooks;
@@ -290,6 +294,11 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         InvocationReturn = *AX;
         Stop(DriverStopReason::Returned, "");
       }
+      return;
+    }
+    if (Options.Scheduling && RunInstructions >= RunAllowance) {
+      AdmissionBoundary = true;
+      CPU.stop();
       return;
     }
     if (Image->Guard.Enabled &&
@@ -456,6 +465,10 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     std::unique_ptr<BackendContext> Original;
     bool CanContinue = false;
   };
+  struct TimeSlice {
+    uint64_t Remaining;
+    uint64_t ReadyOrder = 0;
+  };
   struct Execution {
     uint64_t ID = 0; // Zero denotes the foreground driver invocation.
     uint64_t Base = 0;
@@ -463,6 +476,10 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     uint64_t InitialSP = 0;
     uint64_t PC = 0;
     uint8_t EntryIRQL = 0;
+    uint64_t ThreadKey = 0;
+    std::shared_ptr<TimeSlice> Slice;
+    std::optional<KernelModel::ExecutionContext> PausedModel;
+    bool Boundary = false;
     std::string Phase;
     std::unique_ptr<BackendContext> Context;
     std::optional<KernelModel::Wait> Wait;
@@ -484,6 +501,24 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     std::unique_ptr<Execution> Parent;
   };
   std::vector<std::unique_ptr<Execution>> Waiting;
+  struct ClockCall {
+    KernelGuestCall Call;
+    std::optional<KernelModel::Wait> Wait;
+    uint64_t ReadyOrder;
+  };
+  std::deque<ClockCall> ClockCalls;
+  uint64_t AccountedInstructions = 0;
+  auto NextExecutionDeadline = [&]() {
+    auto Deadline = Kernel.nextEventTime();
+    for (const auto &Frame : Waiting) {
+      if (!Frame->Wait || !Frame->Wait->Deadline)
+        continue;
+      const auto Time = std::max(*Frame->Wait->Deadline, Kernel.now100ns());
+      if (!Deadline || Time < *Deadline)
+        Deadline = Time;
+    }
+    return Deadline;
+  };
   std::array<bool, MaxConcurrentCallbacks> StackMapped{}, StackInUse{};
   auto NewExecution = [&](uint64_t PC, llvm::ArrayRef<uint64_t> Arguments,
                           const std::string &Phase, uint64_t ID,
@@ -531,6 +566,16 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     if (!Layout)
       return Layout.takeError();
     Frame->InitialSP = Layout->StackPointer;
+    Frame->ThreadKey =
+        ID ? ID : (Nested && Options.Scheduling ? Frame->Base : StackBase);
+    if (Options.Scheduling) {
+      Frame->Slice = std::make_shared<TimeSlice>(
+          TimeSlice{Options.Scheduling->QuantumInstructions});
+      auto Order = Kernel.issueReadyOrder();
+      if (!Order)
+        return Order.takeError();
+      Frame->Slice->ReadyOrder = *Order;
+    }
     if (auto E = CPU.setReg(X64Register::CR8, Kernel.currentIRQL()))
       return std::move(E);
     return Frame;
@@ -678,6 +723,12 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
           Frame->ChildCall = std::move(*Call);
           Frame->ResumeIRQL = Frame->Wait->IRQL;
           Frame->Wait.reset();
+          if (Options.Scheduling) {
+            auto Order = Kernel.issueReadyOrder();
+            if (!Order)
+              return Order.takeError();
+            Frame->Slice->ReadyOrder = *Order;
+          }
           continue;
         }
       }
@@ -693,6 +744,12 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
                 KernelModel::Wait::Kind::InterruptSynchronization ||
             Frame->Wait->Type == KernelModel::Wait::Kind::FrameworkCallback;
         Frame->Wait.reset();
+        if (Options.Scheduling) {
+          auto Order = Kernel.issueReadyOrder();
+          if (!Order)
+            return Order.takeError();
+          Frame->Slice->ReadyOrder = *Order;
+        }
         if (!BeforeChild) {
           Frame->ResumeValue = **Status;
           Result.Calls[Frame->WaitEvent].Result = **Status;
@@ -701,11 +758,62 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     }
     return llvm::Error::success();
   };
+  auto AdvanceClock = [&]() -> llvm::Error {
+    if (!Options.Scheduling)
+      return llvm::Error::success();
+    const uint64_t Count = Result.Instructions - AccountedInstructions;
+    const uint64_t Unit = Options.Scheduling->InstructionTime100ns;
+    if (Count > (UINT64_MAX - Kernel.now100ns()) / Unit)
+      return failure(driver_scheduling::ClockOverflow);
+    const uint64_t End = Kernel.now100ns() + Count * Unit;
+    for (;;) {
+      const auto Deadline = NextExecutionDeadline();
+      const uint64_t Boundary = Deadline ? std::min(*Deadline, End) : End;
+      if (auto E = Kernel.advanceExecutionTo100ns(Boundary))
+        return E;
+      // Time producers are independent invocations, never inline children of
+      // the thread whose instructions advanced the clock.
+      if (auto Call = Kernel.takeIndependentGuestCall()) {
+        auto Order = Kernel.issueReadyOrder();
+        if (!Order)
+          return Order.takeError();
+        ClockCalls.push_back({std::move(*Call), Kernel.takeWait(), *Order});
+      }
+      // Complete each wait at its deadline, even when the running thread
+      // keeps the remainder of its quantum or one attempt spans more events.
+      if (auto E = RefreshWaiters())
+        return E;
+      if (Boundary == End)
+        break;
+      if (auto Next = NextExecutionDeadline(); Next && *Next <= Boundary)
+        return failure(driver_scheduling::StalledClock);
+    }
+    AccountedInstructions = Result.Instructions;
+    return llvm::Error::success();
+  };
+  auto NextReadyThread = [&]() {
+    auto Best = Kernel.nextPassiveThread();
+    auto Consider = [&](KernelScheduler::ReadyThread Candidate) {
+      if (!Best || Candidate.precedes(*Best))
+        Best = Candidate;
+    };
+    if (!ClockCalls.empty())
+      Consider(Kernel.readyThread(0, ClockCalls.front().ReadyOrder));
+    for (const auto &Frame : Waiting)
+      if (!Frame->Wait)
+        Consider(
+            Kernel.readyThread(Frame->ThreadKey, Frame->Slice->ReadyOrder));
+    return Best;
+  };
+  auto HasHigherReadyThread = [&](const Execution &Frame) {
+    const auto Best = NextReadyThread();
+    return Best && Best->Priority > Kernel.threadPriority(Frame.ThreadKey);
+  };
   auto RunExecution = [&](Execution &Frame) -> llvm::Error {
     const Execution *Owner = &Frame;
     while (Owner->ExceptionCallback && Owner->Parent)
       Owner = Owner->Parent.get();
-    Kernel.enterExecution(Frame.Base, Frame.ID ? Frame.ID : profile::StackBase,
+    Kernel.enterExecution(Frame.Base, Frame.ThreadKey,
                           Owner->ReturnToken.ID
                               ? Owner->ReturnToken
                               : Kernel.scheduledGuestCall(Owner->ID));
@@ -718,6 +826,21 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         Frame.ResumeValue.reset();
       }
     }
+    auto SaveBoundary = [&](uint64_t PC) -> llvm::Error {
+      auto Context = CPU.saveContext();
+      if (!Context)
+        return Context.takeError();
+      Frame.Context = std::move(*Context);
+      Frame.PC = PC;
+      Frame.Boundary = true;
+      return llvm::Error::success();
+    };
+    // Idle advancement can select a fresh callback at the same deadline that
+    // wakes a higher-priority thread. Recheck before callback synchronization
+    // acquires a lock or raises IRQL, even before the first guest instruction.
+    if (Options.Scheduling && Kernel.currentIRQL() < scheduler::DispatchLevel &&
+        HasHigherReadyThread(Frame))
+      return SaveBoundary(Frame.PC);
     if (Frame.SynchronizationObject && !Frame.SynchronizationEntered) {
       auto Entered = Kernel.beginFrameworkCallback(Frame.SynchronizationObject);
       if (!Entered)
@@ -731,6 +854,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         if (!Context)
           return Context.takeError();
         Frame.Context = std::move(*Context);
+        if (Options.Scheduling)
+          Frame.PausedModel = Kernel.captureExecutionContext();
         if (Frame.ID)
           if (auto E = Kernel.suspendScheduled(Frame.ID))
             return E;
@@ -766,8 +891,31 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     ActiveStackSize = Frame.Size;
     Stopped = false;
     InvocationReturn.reset();
+    Frame.Boundary = false;
+    RunInstructions = 0;
+    AdmissionBoundary = false;
+    RunAllowance = UINT64_MAX;
+    if (Options.Scheduling) {
+      const bool CanPreempt = Kernel.currentIRQL() < scheduler::DispatchLevel;
+      if (Frame.Slice->Remaining || CanPreempt)
+        RunAllowance = Frame.Slice->Remaining;
+      if (CanPreempt &&
+          (Kernel.hasQueuedPriorityCallback() || HasHigherReadyThread(Frame)))
+        RunAllowance = 0;
+      auto Deadline = NextExecutionDeadline();
+      if (Deadline) {
+        const uint64_t Distance =
+            *Deadline > Kernel.now100ns() ? *Deadline - Kernel.now100ns() : 0;
+        const uint64_t Unit = Options.Scheduling->InstructionTime100ns;
+        const uint64_t Attempts = Distance / Unit + (Distance % Unit != 0);
+        RunAllowance = std::min(RunAllowance, std::max(uint64_t(1), Attempts));
+      }
+    }
+    bool Ran = false;
     uint64_t NextPC = Frame.PC;
     while (!Stopped) {
+      if (Options.Scheduling && Ran)
+        return SaveBoundary(NextPC);
       const uint64_t Remaining = Resources.remainingMicroseconds();
       if (!Remaining) {
         Stop(DriverStopReason::Timeout, runtime::Timeout);
@@ -784,8 +932,15 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
                                       : DriverStopReason::EngineError,
                Message);
       }
+      Ran = true;
       if (Stopped)
         break;
+      if (AdmissionBoundary)
+        return SaveBoundary(Result.PC);
+      // An import observes time after all preceding machine instructions.
+      // Its implementation and any nested continuation remain indivisible.
+      if (Options.Scheduling && Pending && RunInstructions)
+        return SaveBoundary(Result.PC);
       if (auto Fault = CPU.takeRecoverableFault()) {
         auto Status =
             Fault->Kind == BackendFaultKind::Interrupt && Fault->Interrupt
@@ -1048,6 +1203,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         if (!Context)
           return Context.takeError();
         Frame.Context = std::move(*Context);
+        if (Options.Scheduling)
+          Frame.PausedModel = Kernel.captureExecutionContext();
         if (Frame.ID)
           if (auto E = Kernel.suspendScheduled(Frame.ID))
             return E;
@@ -1069,8 +1226,11 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
   auto Pump = [&](std::unique_ptr<Execution> Current,
                   const std::string &ParentPhase) -> llvm::Error {
     const bool Foreground = bool(Current) && !Current->ID;
-    auto StartDetachedCall = [&](const KernelGuestCall &Call) -> llvm::Error {
-      auto Wait = Kernel.takeWait();
+    auto StartDetachedCall =
+        [&](const KernelGuestCall &Call,
+            std::optional<KernelModel::Wait> ClockWait = {},
+            uint64_t ReadyOrder = 0) -> llvm::Error {
+      auto Wait = ReadyOrder ? std::move(ClockWait) : Kernel.takeWait();
       if (Wait &&
           Wait->Type != KernelModel::Wait::Kind::InterruptSynchronization)
         return failure(session_diagnostic::DetachedCallbackWait);
@@ -1082,6 +1242,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       if (!Frame)
         return Frame.takeError();
       (*Frame)->ReturnToken = Call.Token;
+      if (ReadyOrder)
+        (*Frame)->Slice->ReadyOrder = ReadyOrder;
       (*Frame)->SynchronizationObject = Call.SynchronizationObject;
       if (Wait) {
         auto Context = CPU.saveContext();
@@ -1095,6 +1257,16 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       } else {
         Current = std::move(*Frame);
       }
+      return llvm::Error::success();
+    };
+    auto ReadyDetachedCall = [&](const KernelGuestCall &Call) -> llvm::Error {
+      if (!Options.Scheduling)
+        return StartDetachedCall(Call);
+      auto Order = Kernel.issueReadyOrder();
+      if (!Order)
+        return Order.takeError();
+      ClockCalls.push_back({Call, Kernel.takeWait(), *Order});
+      Current.reset();
       return llvm::Error::success();
     };
     auto CommitException = [&](X64SEH::Context Registers,
@@ -1118,8 +1290,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       if (!Context)
         return Context.takeError();
       while (Current->Base != DestinationBase) {
-        Kernel.enterExecution(Current->Base,
-                              Current->ID ? Current->ID : profile::StackBase);
+        Kernel.enterExecution(Current->Base, Current->ThreadKey);
         if (auto E = Kernel.validateExecutionReturn(Current->Base,
                                                     Current->EntryIRQL, true))
           return E;
@@ -1164,6 +1335,13 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     };
     while (!DeadlineExceeded()) {
       if (Current) {
+        if (Current->PausedModel) {
+          if (auto E = Kernel.restoreExecutionContext(*Current->PausedModel)) {
+            ModelFailure(std::move(E));
+            return llvm::Error::success();
+          }
+          Current->PausedModel.reset();
+        }
         if (Current->ResumeIRQL) {
           if (auto E = Kernel.restoreWaitIRQL(*Current->ResumeIRQL)) {
             ModelFailure(std::move(E));
@@ -1183,6 +1361,39 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
             ModelFailure(std::move(E));
             return llvm::Error::success();
           }
+        if (Options.Scheduling) {
+          const uint64_t Count = Result.Instructions - AccountedInstructions;
+          Current->Slice->Remaining -=
+              std::min(Current->Slice->Remaining, Count);
+          if (auto E = AdvanceClock()) {
+            ModelFailure(std::move(E));
+            return llvm::Error::success();
+          }
+        }
+        if (Current->Boundary) {
+          if (Kernel.currentIRQL() >= scheduler::DispatchLevel ||
+              (Current->Slice->Remaining &&
+               !Kernel.hasQueuedPriorityCallback() &&
+               !HasHigherReadyThread(*Current)))
+            continue;
+          Current->PausedModel = Kernel.captureExecutionContext();
+          if (auto E = Kernel.preemptScheduled(Current->ID)) {
+            ModelFailure(std::move(E));
+            return llvm::Error::success();
+          }
+          if (!Current->Slice->Remaining) {
+            auto Order = Kernel.issueReadyOrder();
+            if (!Order) {
+              ModelFailure(Order.takeError());
+              return llvm::Error::success();
+            }
+            Current->Slice->ReadyOrder = *Order;
+            Current->Slice->Remaining = Options.Scheduling->QuantumInstructions;
+          }
+          Waiting.push_back(std::move(Current));
+        }
+        if (!Current)
+          continue;
         if (Current->Exception) {
           auto &State = *Current->Exception;
           if (State.Next.Kind == X64SEH::ActionKind::Handler) {
@@ -1223,6 +1434,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
             return llvm::Error::success();
           }
           (*Child)->PowerManagedCallback = Current->PowerManagedCallback;
+          (*Child)->Slice = Current->Slice;
+          (*Child)->ThreadKey = Current->ThreadKey;
           (*Child)->Parent = std::move(Current);
           Current = std::move(*Child);
           continue;
@@ -1231,6 +1444,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
           if (Current->Wait &&
               Current->Wait->Type ==
                   KernelModel::Wait::Kind::InterruptSynchronization) {
+            if (Options.Scheduling)
+              Current->PausedModel = Kernel.captureExecutionContext();
             if (Current->ID)
               if (auto E = Kernel.suspendScheduled(Current->ID)) {
                 ModelFailure(std::move(E));
@@ -1242,8 +1457,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
           auto Call = std::move(*Current->ChildCall);
           Current->ChildCall.reset();
           if (Call.Token.Owner == GuestCallOwner::PoFx)
-            Kernel.enterExecution(
-                Current->Base, Current->ID ? Current->ID : profile::StackBase);
+            Kernel.enterExecution(Current->Base, Current->ThreadKey);
           if (auto E = Kernel.beginGuestCall(Call.Token)) {
             ModelFailure(std::move(E));
             return llvm::Error::success();
@@ -1258,6 +1472,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
           (*Child)->ReturnToken = Call.Token;
           (*Child)->SynchronizationObject = Call.SynchronizationObject;
           (*Child)->PowerManagedCallback = Current->PowerManagedCallback;
+          (*Child)->Slice = Current->Slice;
+          (*Child)->ThreadKey = Current->ThreadKey;
           (*Child)->Parent = std::move(Current);
           Current = std::move(*Child);
           continue;
@@ -1371,8 +1587,9 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
                 Parent->ResumeValue = **Completion;
                 Result.Calls[Parent->WaitEvent].Result = **Completion;
               } else {
-                Kernel.enterExecution(
-                    Parent->Base, Parent->ID ? Parent->ID : profile::StackBase);
+                Kernel.enterExecution(Parent->Base, Parent->ThreadKey);
+                if (Options.Scheduling)
+                  Parent->PausedModel = Kernel.captureExecutionContext();
                 if (Parent->ID)
                   if (auto E = Kernel.suspendScheduled(Parent->ID)) {
                     ModelFailure(std::move(E));
@@ -1415,7 +1632,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
                 ModelFailure(failure(session_diagnostic::MissingModelCallback));
                 return llvm::Error::success();
               }
-              if (auto E = StartDetachedCall(*Call)) {
+              if (auto E = ReadyDetachedCall(*Call)) {
                 ModelFailure(std::move(E));
                 return llvm::Error::success();
               }
@@ -1461,6 +1678,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
             }
             (*Frame)->SynchronizationObject =
                 (**Continuation).SynchronizationObject;
+            (*Frame)->Slice = Current->Slice;
+            (*Frame)->ThreadKey = Current->ThreadKey;
             if (Wait) {
               auto Context = CPU.saveContext();
               if (!Context) {
@@ -1470,6 +1689,10 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
               (*Frame)->Context = std::move(*Context);
               (*Frame)->Wait = std::move(Wait);
               (*Frame)->PendingEntry = (**Continuation).Token;
+              if (Options.Scheduling) {
+                Kernel.enterExecution((*Frame)->Base, (*Frame)->ThreadKey);
+                (*Frame)->PausedModel = Kernel.captureExecutionContext();
+              }
               if (auto E = Kernel.suspendScheduled(Current->ID)) {
                 ModelFailure(std::move(E));
                 return llvm::Error::success();
@@ -1488,18 +1711,47 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
           Current.reset();
         }
       }
+      if (Options.Scheduling) {
+        Kernel.enterForeground();
+        if (auto E = Kernel.setUserRequestContext(false)) {
+          ModelFailure(std::move(E));
+          return llvm::Error::success();
+        }
+        if (auto E = AdvanceClock()) {
+          ModelFailure(std::move(E));
+          return llvm::Error::success();
+        }
+      }
       // Waiters retain independent stacks and CPU state. Ready passive frames
       // yield to interrupts, DPCs, cancellation and provider completions.
       if (auto E = RefreshWaiters()) {
         ModelFailure(std::move(E));
         return llvm::Error::success();
       }
+      std::optional<size_t> Ready;
+      auto Best =
+          Options.Scheduling ? Kernel.nextPassiveThread() : std::nullopt;
+      if (Options.Scheduling && !ClockCalls.empty() &&
+          (!Best || Kernel.readyThread(0, ClockCalls.front().ReadyOrder)
+                        .precedes(*Best)))
+        Best = Kernel.readyThread(0, ClockCalls.front().ReadyOrder);
       for (size_t I = 0;
            I < Waiting.size() && !Kernel.hasQueuedPriorityCallback(); ++I) {
-        if (Waiting[I]->Wait)
+        if (Waiting[I]->Wait ||
+            (Best && !Kernel
+                          .readyThread(Waiting[I]->ThreadKey,
+                                       Waiting[I]->Slice->ReadyOrder)
+                          .precedes(*Best)))
           continue;
-        Current = std::move(Waiting[I]);
-        Waiting.erase(Waiting.begin() + I);
+        Ready = I;
+        if (!Options.Scheduling)
+          break;
+        Best = Kernel.readyThread(Waiting[I]->ThreadKey,
+                                  Waiting[I]->Slice->ReadyOrder);
+      }
+      if (Ready) {
+        Current = std::move(Waiting[*Ready]);
+        Waiting.erase(Waiting.begin() + *Ready);
         if (Current->ID) {
           if (auto E = Kernel.resumeScheduled(Current->ID)) {
             ModelFailure(std::move(E));
@@ -1508,12 +1760,22 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         } else {
           Kernel.enterForeground();
         }
-        break;
+      }
+      if (!Current && !ClockCalls.empty() &&
+          !Kernel.hasQueuedPriorityCallback() && Best &&
+          Best->ReadyOrder == ClockCalls.front().ReadyOrder) {
+        auto Call = std::move(ClockCalls.front());
+        ClockCalls.pop_front();
+        if (auto E = StartDetachedCall(Call.Call, std::move(Call.Wait),
+                                       Call.ReadyOrder)) {
+          ModelFailure(std::move(E));
+          return llvm::Error::success();
+        }
       }
       if (Current)
         continue;
       if (auto Call = Kernel.takeGuestCall()) {
-        if (auto E = StartDetachedCall(*Call)) {
+        if (auto E = ReadyDetachedCall(*Call)) {
           ModelFailure(std::move(E));
           return llvm::Error::success();
         }
@@ -1530,7 +1792,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       }
       if (!*Next) {
         if (auto Call = Kernel.takeGuestCall()) {
-          if (auto E = StartDetachedCall(*Call)) {
+          if (auto E = ReadyDetachedCall(*Call)) {
             ModelFailure(std::move(E));
             return llvm::Error::success();
           }
@@ -1569,7 +1831,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         }
         if (!*Next) {
           if (auto Call = Kernel.takeGuestCall()) {
-            if (auto E = StartDetachedCall(*Call)) {
+            if (auto E = ReadyDetachedCall(*Call)) {
               ModelFailure(std::move(E));
               return llvm::Error::success();
             }
@@ -1586,6 +1848,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         return llvm::Error::success();
       }
       (*Frame)->SynchronizationObject = (**Next).SynchronizationObject;
+      if (Options.Scheduling)
+        (*Frame)->Slice->ReadyOrder = (**Next).ReadyOrder;
       Current = std::move(*Frame);
     }
     return llvm::Error::success();

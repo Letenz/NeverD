@@ -27,6 +27,15 @@ struct WindowsProcessOptions {
   /// Only reachable startup dependencies are read. API providers cannot be
   /// overridden. DLL initialization and dynamic loading are separate contracts.
   std::vector<WindowsModuleInput> Modules;
+  /// Load an image whose loader facts the model does not implement, and stop
+  /// only if execution depends on one. Exports outside the API inventory and
+  /// modules outside the catalogue bind to opaque entries: they resolve to
+  /// distinct addresses, and executing one stops as an unsupported service
+  /// that names it. Directories the model does not interpret stay
+  /// uninterpreted, metadata the file does not back is not read at load, and
+  /// frame-based exception dispatch through such an image stops. Nothing is
+  /// skipped or answered on behalf of an unmodeled behavior.
+  bool DeferUnmodeled = false;
 };
 } // namespace neverd::emulation
 #endif

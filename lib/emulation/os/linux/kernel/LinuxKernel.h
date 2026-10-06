@@ -36,6 +36,8 @@ struct MemoryLayout {
 struct ThreadContext {
   uint64_t ID = ThreadID;
   std::optional<uint64_t> Exit;
+  /// Consumed by the scheduler before another service can run on this thread.
+  std::optional<uint64_t> SleepDeadline;
 };
 struct ServiceABI {
   ServiceRequestKind Trap;

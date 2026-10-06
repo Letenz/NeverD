@@ -15,16 +15,33 @@ struct Contract {
   ObjCClassAccessorContract Accessor;
   SourceFunctionTypeHint Method, Helper, Message, Virtual;
   SourceCallTypeHint Mask;
+  SourceCallTypeHint Layout;
 };
 
-inline bool canonicalBoolSetter(const SourceFunctionTypeHint &Signature) {
-  auto Expected = parseObjCMethodEncoding("value:", "v20@0:8B16");
-  std::string Error;
-  if (!Expected || !assignDarwinObjCSourceABI(*Expected, Arch::AArch64, Error))
+inline bool canonicalSetter(const SourceFunctionTypeHint &Signature) {
+  if (Signature.Parameters.size() != 3)
+    return false;
+  const auto Expected = objcMergedSetterSourceDeclaration(
+      Signature.Architecture, Signature.Parameters[2].Type);
+  if (!Expected)
     return false;
   auto Normalized = Signature;
   Normalized.Origin = Expected->Origin;
   return equalSourceABIs(Normalized, *Expected);
+}
+
+inline bool canonicalBoolSetter(const SourceFunctionTypeHint &Signature) {
+  return canonicalSetter(Signature) &&
+         Signature.Parameters[2].Components.empty();
+}
+
+inline bool canonicalCGRectSetter(const SourceFunctionTypeHint &Signature) {
+  return canonicalSetter(Signature) &&
+         Signature.Parameters[2].Components.size() == 4;
+}
+
+inline bool isCGRect(const Contract &C) {
+  return canonicalCGRectSetter(C.Method);
 }
 
 inline const LowFunc *machine(const BinaryImage &Image,
@@ -43,10 +60,10 @@ inline const LowFunc *machine(const BinaryImage &Image,
 // A complete compiler body is proved in the context of one typed Objective-C
 // tail caller. This never invents an ABI from a merged Swift symbol and never
 // makes that ABI available to another, unproved caller of the same helper.
-inline std::optional<Contract> prove(const BinaryImage &Image,
-                                     const PipelineResult &Result,
-                                     const ObjCProfileStorage &Storage,
-                                     va_t Root) {
+inline std::optional<Contract> proveBool(const BinaryImage &Image,
+                                         const PipelineResult &Result,
+                                         const ObjCProfileStorage &Storage,
+                                         va_t Root) {
   if (Result.SourceImage != &Image || Image.Format != BinaryFormat::MachO ||
       Image.Arch != Arch::AArch64 || Image.Bits != Bitness::Bits64 ||
       Image.IsRelocatable || Root % 4 ||
@@ -247,6 +264,196 @@ inline std::optional<Contract> prove(const BinaryImage &Image,
   return C;
 }
 
+// This compiler body preserves four CGRect parameter carriers across the class
+// accessor and ARC call, dispatches to the superclass, updates numeric profile
+// storage and then requests layout on the retained receiver. All operations,
+// including the selector-loading layout stub, are checked anew for each caller.
+inline std::optional<Contract> proveCGRect(const BinaryImage &Image,
+                                           const PipelineResult &Result,
+                                           const ObjCProfileStorage &Storage,
+                                           va_t Root) {
+  if (Result.SourceImage != &Image || Image.Format != BinaryFormat::MachO ||
+      Image.Arch != Arch::AArch64 || Image.Bits != Bitness::Bits64 ||
+      Image.IsRelocatable || Root % 4 ||
+      !objc::RuntimeData(Image).supportsPlainObjectPointers())
+    return std::nullopt;
+  const auto Caller = readImmutableCodeBytes(Image, Root, 20);
+  if (!Caller)
+    return std::nullopt;
+  const auto CW = [&](unsigned I) {
+    return llvm::support::endian::read32le(Caller->data() + I * 4);
+  };
+  const auto Selector = pageAddress(CW(0), CW(1), Root, 2);
+  const auto Counter = pageAddress(CW(2), CW(3), Root + 8, 3);
+  const auto Entry = branch(CW(4), Root + 16, false);
+  const auto Base = Counter && *Counter % 8 == 0
+                        ? Storage.sectionFor(*Counter, 8)
+                        : std::nullopt;
+  if (!Selector || !Counter || !Entry || !Base)
+    return std::nullopt;
+  const ObjCMethod *Method = nullptr;
+  for (const auto &M : Image.ObjCMethods)
+    if (M.Implementation == Root) {
+      if (Method || M.Status != "supported" || M.IsClassMethod || !M.TypeHint)
+        return std::nullopt;
+      Method = &M;
+    }
+  const auto Declaration = objcMethodSourceTypeHint(Image, Root);
+  const auto *High = uniqueEntry(Result.HighFuncs, Root);
+  const auto Ref = Image.ObjCSourceReferences.find(*Selector);
+  if (!Method || !Declaration || !canonicalCGRectSetter(*Declaration) ||
+      !High || !High->SourceTypeHint || High->Params.size() != 3 ||
+      !equalSourceABIs(*Declaration, *High->SourceTypeHint) ||
+      !equalSourceTypes(High->ReturnType, Declaration->ReturnType) ||
+      Ref == Image.ObjCSourceReferences.end() ||
+      Ref->second.Address != *Selector || Ref->second.Size != 8 ||
+      Ref->second.TheKind != ObjCSourceReference::Kind::Selector ||
+      Ref->second.Name != Method->Selector)
+    return std::nullopt;
+  for (unsigned I = 0; I != 3; ++I)
+    if (!equalSourceTypes(High->Params[I].Type,
+                          Declaration->Parameters[I].Type))
+      return std::nullopt;
+  const auto Message = objcSelectorSourceTypeHint(Image, Method->Selector);
+  if (!Message || !canonicalCGRectSetter(*Message))
+    return std::nullopt;
+  auto Normalized = *Message;
+  Normalized.Origin = Declaration->Origin;
+  if (!equalSourceABIs(Normalized, *Declaration))
+    return std::nullopt;
+  constexpr unsigned Count = 39;
+  const auto Bytes = readImmutableCodeBytes(Image, *Entry, Count * 4);
+  if (!Bytes || !isMachOLocalFunctionRange(Image, *Entry, Count * 4))
+    return std::nullopt;
+  const auto Word = [&](unsigned I) {
+    return llvm::support::endian::read32le(Bytes->data() + I * 4);
+  };
+  constexpr std::pair<unsigned, uint32_t> Fixed[] = {
+      {0, 0xd10183ff},  {1, 0x6d012beb},  {2, 0x6d0223e9},  {3, 0xa90357f6},
+      {4, 0xa9044ff4},  {5, 0xa9057bfd},  {6, 0x910143fd},  {7, 0xaa0303f3},
+      {8, 0xaa0203f4},  {9, 0x4ea31c68},  {10, 0x4ea21c49}, {11, 0x4ea11c2a},
+      {12, 0x4ea01c0b}, {13, 0xaa0003f5}, {15, 0xa90003f5}, {16, 0xf9400294},
+      {18, 0xaa0003f5}, {19, 0x910003e0}, {20, 0xaa1403e1}, {21, 0x4eab1d60},
+      {22, 0x4eaa1d41}, {23, 0x4ea91d22}, {24, 0x4ea81d03}, {26, 0xf9400268},
+      {27, 0x91000508}, {28, 0xf9000268}, {29, 0xaa1503e0}, {32, 0xa9457bfd},
+      {33, 0xa9444ff4}, {34, 0xa94357f6}, {35, 0x6d4223e9}, {36, 0x6d412beb},
+      {37, 0x910183ff}, {38, 0xd65f03c0}};
+  for (const auto &[I, Bits] : Fixed)
+    if (Word(I) != Bits)
+      return std::nullopt;
+  const auto AccessorTarget = branch(Word(14), *Entry + 56, true);
+  const auto RetainTarget = branch(Word(17), *Entry + 68, true);
+  const auto SuperTarget = branch(Word(25), *Entry + 100, true);
+  const auto LayoutTarget = branch(Word(30), *Entry + 120, true);
+  const auto ReleaseTarget = branch(Word(31), *Entry + 124, true);
+  const auto Accessor =
+      AccessorTarget ? validatedClassAccessor(Image, Result, *AccessorTarget)
+                     : std::nullopt;
+  const auto RetainSlot =
+      RetainTarget ? runtimeSlot(Image, *RetainTarget, "_objc_retain_x21")
+                   : std::nullopt;
+  const auto ReleaseSlot =
+      ReleaseTarget ? runtimeSlot(Image, *ReleaseTarget, "_objc_release_x21")
+                    : std::nullopt;
+  const auto Retain =
+      RetainSlot ? objcRuntimeSourceCallHint(Image, *RetainSlot) : std::nullopt;
+  const auto Release = ReleaseSlot
+                           ? objcRuntimeSourceCallHint(Image, *ReleaseSlot)
+                           : std::nullopt;
+  const auto Layout =
+      LayoutTarget
+          ? objcImmutableSelectorStubSourceCallHint(Image, *LayoutTarget)
+          : std::nullopt;
+  auto VoidMessage = parseObjCMethodEncoding("setNeedsLayout", "v16@0:8");
+  std::string Error;
+  if (!Accessor || Accessor->ClassAddress != Method->ClassAddress || !Retain ||
+      !Release || Retain->DoesNotReturn || Release->DoesNotReturn ||
+      !SuperTarget ||
+      !runtimeSlot(Image, *SuperTarget, "_objc_msgSendSuper2") || !Layout ||
+      Layout->Selector != "setNeedsLayout" || !VoidMessage ||
+      !assignDarwinObjCSourceABI(*VoidMessage, Image.Arch, Error))
+    return std::nullopt;
+  auto LayoutSignature = Layout->Signature;
+  LayoutSignature.Origin = VoidMessage->Origin;
+  if (!equalSourceABIs(LayoutSignature, *VoidMessage))
+    return std::nullopt;
+  const ObjCClass *Class = nullptr;
+  for (const auto &Candidate : Image.ObjCClasses)
+    if (Candidate.Address == Method->ClassAddress ||
+        Candidate.Name == Method->ClassName) {
+      if (Class || Candidate.Address != Method->ClassAddress ||
+          Candidate.Name != Method->ClassName || Candidate.RootClass ||
+          Candidate.InheritanceStatus != "resolved" ||
+          Candidate.SuperclassName.empty())
+        return std::nullopt;
+      Class = &Candidate;
+    }
+  if (!Class)
+    return std::nullopt;
+  size_t Budget = 1U << 18;
+  const auto *CallerLow = machine(Image, Result, Root, 5, Budget);
+  const auto *Low = machine(Image, Result, *Entry, Count, Budget);
+  if (!CallerLow || !Low || !machine(Image, Result, Accessor->Entry, 8, Budget))
+    return std::nullopt;
+  Contract C;
+  C.Root = Root;
+  C.Entry = *Entry;
+  C.SelectorSlot = *Selector;
+  C.Counter = *Counter;
+  C.ProfileBase = *Base;
+  C.Accessor = *Accessor;
+  C.Method = *Declaration;
+  C.Message = *Message;
+  C.Layout = *Layout;
+  const auto Helper = objcMergedSetterHelperSourceDeclaration(
+      Image.Arch, Declaration->Parameters[2].Type);
+  if (!Helper)
+    return std::nullopt;
+  C.Helper = *Helper;
+  C.Helper.Parameters.resize(5);
+  C.Helper.Parameters[4].Name = "counter";
+  if (!assignDarwinFixedSourceABI(C.Helper, Image.Arch, Error))
+    return std::nullopt;
+  NativeSourceCalls Calls;
+  for (const auto &Op : Low->Blocks.front().Ops) {
+    if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+      continue;
+    const auto Key = nativeSourceCallKey(Op);
+    if (!Key || Op.Opcode != NdOp::CALL || Op.NumInputs != 1 ||
+        !Op.Inputs[0].isConst())
+      return std::nullopt;
+    NativeSourceCallContract Call;
+    const auto Target = Op.Inputs[0].Offset;
+    if (Op.Addr == *Entry + 56 && Target == Accessor->Entry)
+      Call.Signature = &C.Accessor.Signature;
+    else if (Op.Addr == *Entry + 68 && Target == *RetainTarget)
+      Call.Signature = &Retain->Signature;
+    else if (Op.Addr == *Entry + 100 && Target == *SuperTarget) {
+      Call.Signature = &C.Message;
+      Call.ReadOnlyFrameParameters.emplace(0, 16);
+    } else if (Op.Addr == *Entry + 120 && Target == *LayoutTarget)
+      Call.Signature = &C.Layout.Signature;
+    else if (Op.Addr == *Entry + 124 && Target == *ReleaseTarget)
+      Call.Signature = &Release->Signature;
+    if (!Call.Signature || !Calls.emplace(*Key, Call).second)
+      return std::nullopt;
+  }
+  if (Calls.size() != 5 ||
+      !restoresNativeSourceState(*Low, Image.Arch, Calls) ||
+      !callsRestore(*CallerLow, Root + 16, *Entry, C.Helper))
+    return std::nullopt;
+  return C;
+}
+
+inline std::optional<Contract> prove(const BinaryImage &Image,
+                                     const PipelineResult &Result,
+                                     const ObjCProfileStorage &Storage,
+                                     va_t Root) {
+  if (const auto C = proveBool(Image, Result, Storage, Root))
+    return C;
+  return proveCGRect(Image, Result, Storage, Root);
+}
+
 inline std::string helperName(va_t Root) {
   return "neverd_objc_merged_setter_" + llvm::utohexstr(Root, true);
 }
@@ -256,14 +463,11 @@ inline SourceCallTypeHint setterHint(const Contract &C) {
   Hint.CallKind = SourceCallTypeHint::Kind::RuntimeObjCMergedSetter;
   Hint.TargetAddress = C.Root;
   Hint.TargetName = helperName(C.Root);
-  Hint.Signature = C.Helper;
-  Hint.Signature.Parameters[4].Name = "storage";
-  for (const auto Name : {"metadata", "isa_mask"})
-    Hint.Signature.Parameters.push_back(
-        {Name, NdType::makePtr(NdType::makeVoid())});
-  std::string Error;
-  if (!assignDarwinScalarSourceABI(Hint.Signature, Arch::AArch64, Error))
+  const auto Signature = objcMergedSetterHelperSourceDeclaration(
+      Arch::AArch64, C.Method.Parameters[2].Type);
+  if (!Signature)
     throw std::runtime_error("invalid merged setter source ABI");
+  Hint.Signature = *Signature;
   return Hint;
 }
 
@@ -278,7 +482,12 @@ inline std::vector<SourceCallTypeHint> addressHints(const BinaryImage &Image,
           *Profile,
           addressHint(SourceCallTypeHint::Kind::NativeAddress, C.Accessor.Entry,
                       {}),
-          C.Mask};
+          isCGRect(C)
+              ? addressHint(
+                    SourceCallTypeHint::Kind::RuntimeSelectorReferenceAddress,
+                    C.Layout.SelectorReferenceAddress,
+                    selectorName(C.Layout.SelectorReferenceAddress))
+              : C.Mask};
 }
 } // namespace objc_merged_setter_detail
 
@@ -297,26 +506,30 @@ inline size_t seedObjCMergedSetterAccessorHints(const BinaryImage &Image,
   size_t Added = 0;
   for (const auto &M : Image.ObjCMethods) {
     if (M.Status != "supported" || M.IsClassMethod || !M.TypeHint ||
-        !canonicalBoolSetter(*M.TypeHint))
+        !canonicalSetter(*M.TypeHint))
       continue;
+    const bool Rect = canonicalCGRectSetter(*M.TypeHint);
     const auto Caller = readImmutableCodeBytes(Image, M.Implementation, 20);
     if (!Caller ||
         !pageAddress(llvm::support::endian::read32le(Caller->data()),
                      llvm::support::endian::read32le(Caller->data() + 4),
-                     M.Implementation, 3) ||
+                     M.Implementation, Rect ? 2 : 3) ||
         !pageAddress(llvm::support::endian::read32le(Caller->data() + 8),
                      llvm::support::endian::read32le(Caller->data() + 12),
-                     M.Implementation + 8, 4))
+                     M.Implementation + 8, Rect ? 3 : 4))
       continue;
     const auto Entry =
         branch(llvm::support::endian::read32le(Caller->data() + 16),
                M.Implementation + 16, false);
+    const unsigned CallOffset = Rect ? 56 : 36;
     const auto Body =
-        Entry ? readImmutableCodeBytes(Image, *Entry, 40) : std::nullopt;
+        Entry ? readImmutableCodeBytes(Image, *Entry, CallOffset + 4)
+              : std::nullopt;
     const auto Target =
-        Body ? branch(llvm::support::endian::read32le(Body->data() + 36),
-                      *Entry + 36, true)
-             : std::nullopt;
+        Body
+            ? branch(llvm::support::endian::read32le(Body->data() + CallOffset),
+                     *Entry + CallOffset, true)
+            : std::nullopt;
     const auto A =
         Target ? objcClassAccessorMachine(Image, *Target) : std::nullopt;
     const auto Identity = A ? Classes.find(A->ClassAddress) : Classes.end();
@@ -340,7 +553,9 @@ discoverObjCMergedSetterSources(const BinaryImage &Image,
   for (const auto &Method : Image.ObjCMethods) {
     const auto *Bytes = Image.readVA(Method.Implementation, 4);
     if (Bytes &&
-        (llvm::support::endian::read32le(Bytes) & 0x9f00001f) == 0x90000003u &&
+        ((llvm::support::endian::read32le(Bytes) & 0x9f00001f) == 0x90000003u ||
+         (llvm::support::endian::read32le(Bytes) & 0x9f00001f) ==
+             0x90000002u) &&
         objc_merged_setter_detail::prove(Image, Result, Storage,
                                          Method.Implementation))
       Plan.Callers.insert(Method.Implementation);
@@ -439,7 +654,8 @@ inline bool objCMergedSetterSourceCallBound(
       !Function.Locals.empty() || Function.Body.size() != 2 ||
       Function.Body[0].Kind != StmtKind::Call || !Function.Body[0].CallExpr ||
       Function.Body[0].Addr != C->Root + 16 ||
-      Function.Body[1].Kind != StmtKind::Return || Function.Body[1].RetVal)
+      Function.Body[1].Kind != StmtKind::Return ||
+      Function.Body[1].Addr != C->Root + 16 || Function.Body[1].RetVal)
     return false;
   const auto &Call = *Function.Body[0].CallExpr;
   if (!callMatches(Call, setterHint(*C), C->Root))
@@ -448,11 +664,15 @@ inline bool objCMergedSetterSourceCallBound(
     if (!Call.Operands[I] || !equalSourceTypes(Function.Params[I].Type,
                                                C->Method.Parameters[I].Type))
       return false;
-    // Reuse the exact parameter identity validator with the declared byte
-    // extent, including the one defined BOOL byte of x2.
+    // A logical HFA parameter has a component list instead of one physical
+    // word. Its complete current ABI was independently authenticated above;
+    // retain its actual logical location and reuse the expression validator.
     const auto &E = *Call.Operands[I];
+    auto Identity = E;
+    Identity.Var.RegOff = I * 8;
     if (E.Var.TheArch != Image.Arch ||
-        !parameter(E, I, C->Method.Parameters[I].Type,
+        E.Var.RegOff != C->Method.Parameters[I].Location.RegisterOffset ||
+        !parameter(Identity, I, C->Method.Parameters[I].Type,
                    C->Method.Parameters[I].Type->Size))
       return false;
   }
@@ -494,20 +714,25 @@ inline std::string renderObjCMergedSetterHelpers(
     Contracts.emplace(Root, *C);
     Selectors.emplace(C->SelectorSlot,
                       Image.ObjCSourceReferences.at(C->SelectorSlot).Name);
+    if (objc_merged_setter_detail::isCGRect(*C))
+      Selectors.emplace(C->Layout.SelectorReferenceAddress, C->Layout.Selector);
   }
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   OS << "\n#include <objc/runtime.h>\nextern void objc_msgSendSuper2(void);\n"
+        "extern void objc_msgSend(void);\n"
         "extern void *objc_retain(void *);\nextern void objc_release(void "
         "*);\n";
   OS << renderObjCSelectorReferenceHelpers(Selectors, SharedFunctions);
   for (const auto &[Root, C] : Contracts) {
+    const bool Rect = objc_merged_setter_detail::isCGRect(C);
     const auto Name = objc_merged_setter_detail::helperName(Root);
     SharedFunctions.insert(Name);
     OS << "\nvoid " << Name << "(void *self, void *command, "
        << typeToC(C.Method.Parameters[2].Type)
-       << " value, void *selector_slot, void *storage, void *metadata, void "
-          "*isa_mask) {\n"
+       << " value, void *selector_slot, void *storage, void *metadata, void *"
+       << (Rect ? "layout_selector_slot" : "isa_mask")
+       << ") {\n"
           "  (void)command;\n"
           "  struct { void *receiver; void *current_class; } super;\n"
           "  super.receiver = self;\n"
@@ -524,16 +749,22 @@ inline std::string renderObjCMergedSetterHelpers(
        << C.Counter - C.ProfileBase
        << ";\n"
           "  uint64_t count;\n  __builtin_memcpy(&count, counter, 8);\n"
-          "  ++count;\n  __builtin_memcpy(counter, &count, 8);\n"
-          "  uintptr_t isa, mask, target;\n"
-          "  __builtin_memcpy(&isa, retained, 8);\n"
-          "  __builtin_memcpy(&mask, isa_mask, 8);\n"
-          "  __builtin_memcpy(&target, (const void *)((isa & mask) + "
-       << C.VirtualSlot
-       << "), 8);\n"
-          "  ((void __attribute__((swiftcall)) (*)(void * "
-          "__attribute__((swift_context))))target)(retained);\n"
-          "  objc_release(retained);\n}\n";
+          "  ++count;\n  __builtin_memcpy(counter, &count, 8);\n";
+    if (Rect)
+      OS << "  void *layout_selector;\n"
+            "  __builtin_memcpy(&layout_selector, layout_selector_slot, 8);\n"
+            "  ((void (*)(void *, void *))objc_msgSend)(retained, "
+            "layout_selector);\n";
+    else
+      OS << "  uintptr_t isa, mask, target;\n"
+            "  __builtin_memcpy(&isa, retained, 8);\n"
+            "  __builtin_memcpy(&mask, isa_mask, 8);\n"
+            "  __builtin_memcpy(&target, (const void *)((isa & mask) + "
+         << C.VirtualSlot
+         << "), 8);\n"
+            "  ((void __attribute__((swiftcall)) (*)(void * "
+            "__attribute__((swift_context))))target)(retained);\n";
+    OS << "  objc_release(retained);\n}\n";
   }
   return Source;
 }

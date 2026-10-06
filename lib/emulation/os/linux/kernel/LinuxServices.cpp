@@ -67,11 +67,16 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Close:
   case ServiceKind::Lseek:
   case ServiceKind::Fstat:
+  case ServiceKind::FstatAt:
+  case ServiceKind::StatFS:
+  case ServiceKind::FstatFS:
     return Files.handle(Kind, Event, Result);
   case ServiceKind::Time:
   case ServiceKind::GetTimeOfDay:
   case ServiceKind::ClockGetTime:
-    return timeService(CPU, Kind, Event, Layout, Options, Result);
+    return timeService(CPU, Kind, Event, Layout, Options, Clock, Result);
+  case ServiceKind::Nanosleep:
+    return sleepService(CPU, Event, Layout, Clock, Thread, Result);
   case ServiceKind::Exit:
     if (Thread) {
       Thread->Exit = Event.Arguments[0] & ExitMask;

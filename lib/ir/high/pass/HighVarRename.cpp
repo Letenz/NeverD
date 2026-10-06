@@ -151,7 +151,8 @@ static bool eliminateDeadAssignsLocal(std::vector<HighStmt> &Stmts,
   return Changed;
 }
 
-void postRenameCleanup(std::vector<HighStmt> &Stmts) {
+static void postRenameCleanupImpl(std::vector<HighStmt> &Stmts,
+                                  const MedVar *SourceCapture) {
   const std::set<va_t> Entered = enteredAddresses(Stmts);
   std::function<void(std::vector<HighStmt> &)> RemoveSelfAssigns;
   RemoveSelfAssigns = [&](std::vector<HighStmt> &Body) {
@@ -226,8 +227,19 @@ void postRenameCleanup(std::vector<HighStmt> &Stmts) {
   PostConsecElim(Stmts);
 
   VarKeySet FinalRefs;
+  if (SourceCapture)
+    FinalRefs.insert(VK(*SourceCapture));
   collectStmtRefsLocal(Stmts, FinalRefs);
   eliminateDeadAssignsLocal(Stmts, FinalRefs, Entered);
+}
+
+void postRenameCleanup(std::vector<HighStmt> &Stmts) {
+  postRenameCleanupImpl(Stmts, nullptr);
+}
+
+void postRenameCleanup(HighFunc &Func) {
+  postRenameCleanupImpl(
+      Func.Body, Func.SwiftErrorEntry ? &Func.SwiftErrorEntry->Input : nullptr);
 }
 
 } // namespace neverd

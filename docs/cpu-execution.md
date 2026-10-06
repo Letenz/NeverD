@@ -38,6 +38,19 @@ and execute at supervisor privilege. `checked-user-x64-v1` and
 at CPL3 and EL0, respectively, with architectural MMU isolation and explicit
 service-request exits. They support Unicorn and matching-host KVM/WHP/HVF; `auto`
 follows the existing host selection.
+`direct-user-x64-v1` runs the x64 user inventory on the hardware transport
+between architectural events instead of single-stepping it, for workloads whose
+startup needs billions of instructions. It admits nothing and observes neither
+instructions nor memory accesses; guest page tables alone provide the CPL3
+isolation. Its service boundary matches `checked-user-x64-v1`: the system-call
+extension stays disabled, so a service instruction is the undefined-opcode event
+at the address the guest requests it, reported as the same pending service. The
+run takes a time budget, never an instruction budget or quantum. KVM and
+matching-host WHP implement it; Unicorn and HVF report it unsupported rather than
+run it under different semantics. Execution watches are still honored: their
+pages are made non-executable, so the first fetch into a watched range faults at
+the same boundary a checked instruction watch stops on. Observation-driven
+unpacking recovers an entry under this contract without single-stepping.
 Flat profiles have no architectural user/supervisor MMU isolation contract;
 their address width describes the direct mapping interface, not a claim of a
 64-bit hardware virtual-address mode. Checked x64 advertises bounded SIMD and
@@ -46,7 +59,7 @@ and masked scalar CVTTSS2SI/CVTTSD2SI/SUBSS/SUBSD. MXCSR preserves sticky status
 rounding and FTZ; portable execution rejects unmasked exceptions. Supervisor x64
 additionally supports checked scalar
 MMIO and prepared-read string transfers; checked user profiles reject device
-mappings. All checked profiles reject port I/O and parallel CPU requirements.
+mappings. Port I/O remains unsupported.
 The instruction inventory remains authoritative; a feature flag does not
 admit every encoding in a family. Only checked user profiles
 advertise `service_traps`, meaning the interception boundary described below;
@@ -82,6 +95,8 @@ KVM, WHP and checked Unicorn also admit 16/64-bit `LEAVE`. It reads the saved fr
 
 KVM, WHP and checked Unicorn admit 16/64-bit `ENTER`, with unsigned 16-bit allocation and nesting modulo 32. Full RSP/RBP and effective prefix order determine the accesses. On a guest fault, completed stack stores remain visible while RSP, RBP and PC retain their entry values. The final stack check validates write permission over the operand width without storing data. LOCK, REP, APX prefixes and device frames remain unsupported.
 
+Checked x64 admits the two-byte near return `F3 C3`. Compilers emit the repeat prefix before a return that is a branch target, and the processor ignores it, so the instruction is the admitted `C3` transfer with the same stack read. Every other prefixed return, including `F2 C3`, a second prefix, an operand-size override and `F3 C2 iw`, remains outside the contract. `X64ReturnPrefixTests.cpp` checks KVM, WHP and checked Unicorn.
+
 `X64PackedIntegerInstructions.def` admits 45 legacy SSE2 packed integer operations: wrapping and saturating addition/subtraction, comparisons, multiplication, averages, extrema, byte differences, packing and unpacking. XMM and aligned 128-bit RAM sources share the existing checked path on KVM, WHP and Unicorn. FLAGS and MXCSR remain unchanged; faults or observer cancellation preserve state. MMX, VEX/EVEX and device operands remain excluded.
 
 `X64PackedShiftInstructions.def` admits ten legacy SSE2 packed shifts. Lane shifts accept imm8 or XMM/aligned m128 counts; byte shifts accept imm8 only. Variable counts use the unsigned low 64 bits without scalar count masking; the high 64 bits are ignored. Memory operands still require a complete 16-byte read for zero or oversized counts. FLAGS and MXCSR remain unchanged; MMX, VEX/EVEX and device operands remain excluded.
@@ -116,8 +131,7 @@ observers accept it; result callbacks see original state and exact processor
 write values. Cancellation, callback failure or a transport error discards
 speculative effects. On a processor exception, RAM rolls back before OS
 delivery while architectural exception status is retained. ARM64 scalar/pair
-stores use the same RAM authority. Devices, unknown footprints and parallel
-hardware SMP remain outside this transaction. CPU snapshots do not undo already
+stores use the same RAM authority. Devices and unknown footprints remain outside the RAM transaction; device atomics use their explicit provider. CPU snapshots do not undo already
 committed RAM.
 
 `CMPXCHG8B` and `CMPXCHG16B` execute their original encodings on KVM, WHP and checked Unicorn in driver and user profiles. Successful and failed comparisons both require read/write access; faults are classified as writes. `CMPXCHG16B` checks 16-byte alignment before memory access and reports `#GP(0)`. Its two result observations share one RAM transaction: stopping or throwing in either publishes no registers or RAM. Unlocked `CMPXCHG8B` may cross pages; locked operands retain the natural-alignment contract. `X64WideAtomicTests.cpp` compares original host results and direct native faults, aliases, prefixes, address rules, repair and cancellation. Original Windows driver and ring3 PE fixtures exercise both widths; the WDK fixture also executes `_InterlockedCompareExchange128`. The CPU model must support `CMPXCHG16B`.
@@ -185,6 +199,16 @@ of the selected CPU transport.
 Unknown fields, null field values, invalid names, duplicate required features,
 invalid numeric widths and unsupported combinations fail. Input is limited to
 64 KiB. The old CPU factories and driver C options remain compatible.
+
+<a id="parallel-cpus-and-mmio"></a>
+
+## Parallel CPUs and atomic devices
+
+Request `ExecutionFeature::ParallelCPUs` (`parallel_cpus`) for checked x64/ARM64 on KVM, WHP or Unicorn. Separately owned CPUs may run on different host threads over shared physical RAM. Proven read-only native instructions can overlap; a pending writer blocks new admissions and drains readers before publishing. This gives sequentially consistent instruction effects, with cancellation-aware waits and rollback. Mappings and host writes remain blocked until all runs stop. Only `stop()` is safe across threads on one CPU object. Default execution remains cooperative; [OS scheduling](driver-scheduling.md) and weak-memory exploration are separate contracts.
+
+Parallel WHP CPUs use independent VPs in one shared partition, with up to 31 simultaneous parallel bindings plus the cooperative VP. Private GPA windows and transport RAM keep their projections separate; ARM64 uses distinct ASIDs and non-global translations. Before each native step, the projection copies code and declared operands; only declared output bytes enter the shared RAM transaction. Observers read authoritative RAM. KVM and checked Unicorn use shared backing directly. HVF and Unicorn’s `Software` contract do not advertise this capability.
+
+`MMIOAtomics` (`mmio_atomics`) requires an explicit `GuestMMIOCallbacks::PrepareAtomic` provider. Checked supervisor x64 supports admitted exchanges, compare-exchanges, integer updates and modifying bit operations; ARM64 supports LSE, including `CASP`. Operands are naturally aligned and bounded to 1/2/4/8/16 bytes. x64 runs the original instruction against private scratch for exact register/FLAGS results; ARM64 uses the shared LSE semantics. Preparation has no device effects; commit validates lifetime/version and publishes once. Stops or failures before commit preserve CPU/device state; a successful commit wins a racing stop. No ordinary Read+Write fallback is allowed. Kernel register banks retain their declared 1/2/4-byte widths and reject stale previews, including identical writes, power changes and owner retirement. ARM64 ordinary device transfers and exclusive-device monitors, user MMIO and arbitrary hardware devices remain outside this capability.
 
 ## Query without executing a workload
 
@@ -358,17 +382,17 @@ The shared `encodeX64XsaveState` / `decodeX64XsaveState` codec owns standard/com
 
 `CheckedX64Instructions.def` admits unsigned `MUL` at 8/16/32/64 bits and `CBW/CWDE/CDQE/CWD/CDQ/CQO` through the existing processor transport. `NeverDX64IntegerTests` uses independent `X64IntegerCases.def` encodings and expected values at both privilege levels: partial-register preservation, 32-bit zero extension, both product halves, defined CF/OF results and unchanged flags for sign extension. Ordinary-RAM multiplication retains whole-span permission checks and read observers; a fault or observer stop preserves implicit output registers and PC. Device operands remain unsupported. These cases also run on checked Unicorn; unavailable native transports skip explicitly.
 
-`X64BitInstructions.def` admits register and ordinary-RAM `BT/BTS/BTR/BTC` at 16/32/64 bits. A register bit index is signed at the operand width and selects a complete word; an immediate stays within the base word. Address-size wrapping occurs before FS/GS base addition. The processor supplies CF and written values; `RAMTransaction` keeps the result private until observers accept it. Whole-span permission checks cover separate page allocations and aliases. Stops, callback failures and denied pages preserve the original CPU and RAM. LOCK is limited to naturally aligned modifying memory forms; MMIO and parallel hardware SMP remain unsupported. `X64BitStringTests.cpp` compares independent encodings with actual x64 host execution and checks negative indices, width truncation, cross-page accesses, cancellation and invalid LOCK forms. See the [Intel instruction reference](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html).
+`X64BitInstructions.def` admits register and ordinary-RAM `BT/BTS/BTR/BTC` at 16/32/64 bits. A register bit index is signed at the operand width and selects a complete word; an immediate stays within the base word. Address-size wrapping occurs before FS/GS base addition. The processor supplies CF and written values; `RAMTransaction` keeps the result private until observers accept it. Whole-span permission checks cover separate page allocations and aliases. Stops, callback failures and denied pages preserve the original CPU and RAM. LOCK requires natural alignment; modifying MMIO forms require an explicit prepared-atomic provider. `X64BitStringTests.cpp` compares independent encodings with actual x64 host execution and checks negative indices, width truncation, cross-page accesses, cancellation and invalid LOCK forms. See the [Intel instruction reference](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html).
 
 `X64StringInstructions.def` owns ordinary-RAM `MOVS/STOS/LODS` at 8/16/32/64 bits; `CLD/STD` controls direction without changing other flags. Each REP element validates the entire operand before observations and commits at one restart boundary. Earlier completed elements survive a later fault; cancellation or observer failure leaves the current element untouched. FS/GS applies only to the source, after address-size truncation. AL/AX loads preserve upper bits and EAX loads zero-extend. Zero-count address-size-32 REP requires zero upper count bits and, for MOVS/STOS, zero upper participating address bits: real CPU implementations differ otherwise. REPNE on MOVS/STOS/LODS and STOS/LODS device operands remain unsupported. `X64StringTransferTests.cpp` uses independent host instructions for widths, direction, overlap and zero counts, with separate checks for permissions, aliases, wraparound, faults and resumption. The original WDK resource driver executes all four STOS/LODS widths through `driver_resource_strings.def`.
 
 `X64StringInstructions.def` also owns ordinary-RAM `CMPS/SCAS` at 8/16/32/64 bits with `REPE/REPNE`. Every element validates both complete read operands before observers, updates all six arithmetic flags, and stops on the first matching termination condition. A data fault restores the flags from entry to this uninterrupted REP while retaining completed pointer/count changes; a public resume starts from the published CPU state. Stops and observer exceptions leave the current element untouched. Early termination never reads the next element. FS/GS affects only the CMPS source; SCAS leaves the accumulator and unused source register unchanged. Device operands and ambiguous inactive 32-bit upper halves remain excluded. `X64StringComparisonTests.cpp` compares independent host instructions, flags, direction, aliases, wrapping, permissions and recovery; its Linux x64 signal oracle checks actual fault-time registers. The original WDK resource driver executes both conditional-repeat forms at all four widths through `driver_resource_strings.def`. See the [Intel instruction reference](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html). The Linux native oracle checks faults before and after the first element. It distinguishes Intel entry-flag restoration from the last-comparison flags observed on AMD EPYC 7763 under Hyper-V ([native observations](https://github.com/NeverSight/NeverD/actions/runs/37202522130)); unknown CPU vendors fail explicitly. Checked guests keep entry-flag restoration on every backend.
 
-`WhpResourceCache.h` separates logical CPU state from WHP partitions. The runtime keeps one active native partition: consecutive steps on the same CPU reuse it; switching CPU retires the old partition before rebuilding mappings, a virtual processor and full state. Logical CPUs retain independent `MemoryProjection` views and authoritative RAM. Lease acquisition observes cancellation and the current deadline; retiring an inactive CPU cannot destroy another CPU's partition. x64 preserves the host's default XSAVE feature set and validates the effective partition via `WHvGetPartitionProperty`; it does not clear dependent features to force a reduced mask. Cooperative CPU switching does not provide parallel hardware SMP.
+Live WHP CPUs share one native partition. Its final close and replacement creation use the same registry lock. `WhpResourceCache.h` reuses cooperative VP 0; switching its logical owner first retires that VP and its mappings. Parallel bindings retain separate VPs and private GPA windows. Every register transfer, XSAVE operation and cancellation targets its own VP. x64 preserves the host’s default XSAVE feature set and validates the effective partition with `WHvGetPartitionProperty`. Cooperative scheduling remains the default.
 
 `CheckedBackend` owns one fetch buffer and one `cs_disasm_iter` instruction record per CPU. Every step rereads permitted bytes and decodes again; no decoded instruction is cached across code writes, alias changes or resumption. The execution lease rejects recursive entry before reused storage is touched. This removes per-instruction buffer/record allocation while preserving instruction observations, service interception and precise fault handling. The pinned Unicorn single-step path ends before fetching a successor, including indirect translation lookup, and avoids counting an internal code-write retry as a completed instruction.
 
-`WhpX64Partition.h` owns x64 WHP register reuse for one actual partition. Fixed packets use `WhpX64Registers.def` and `X64HostRegisters.def`; every successful step still captures general, control, segment and complete FP/SSE state. Only fully acknowledged debug exits permit skipping unchanged inputs. Comparison ignores reserved bits and union padding. Changed CR3, CPL, TLS, GPR or FP inputs are installed; partial failure, cancellation and exceptions invalidate reuse. Partition replacement starts with a full install. This reduces redundant transfers, without extending instruction admission or claiming an end-to-end speedup.
+`WhpX64Processor.h` owns x64 WHP register reuse for one virtual processor. Fixed packets use `WhpX64Registers.def` and `X64HostRegisters.def`; every successful step still captures general, control, segment and complete FP/SSE state. Only fully acknowledged debug exits permit skipping unchanged inputs. Comparison ignores reserved bits and union padding. Changed CR3, CPL, TLS, GPR or FP inputs are installed; partial failure, cancellation and exceptions invalidate reuse. VP replacement starts with a full install. This reduces redundant transfers, without extending instruction admission or claiming an end-to-end speedup.
 
 WHP captures the x87/SSE metadata from `WhpXsaveRegisters.def` in the same `WHvGetVirtualProcessorRegisters` call as the ordinary registers. The stopped vCPU remains under one partition lease. Complete XSAVE capture and all metadata consistency checks still precede publication; this removes one host API call per step, without a measured throughput claim.
 
@@ -405,19 +429,11 @@ Admission does not enable guarded-page branch-target checking, interpret GNU
 BTI properties as enforcement, or advertise the BTI hardware capability to a
 guest OS. Unlisted HINTs and system-control writes remain unsupported.
 
-Checked ARM64 admits the baseline no-offset `LDAR`, `LDARB`, `LDARH`, `STLR`,
-`STLRB` and `STLRH` encodings for naturally aligned ordinary RAM. The ISA owner
-declares the exact 1/2/4/8-byte read or write before the original instruction
-executes through the transport. Zero-register operands still access memory;
-narrow loads clear the remaining destination bits. Permission faults and
-observer stops preserve the full CPU and RAM state. Misalignment, exclusive
-operations, RCpc, limited ordering and optional pre-indexed release encodings
-remain unsupported before effects. The physical execution lease and sequential
-RAM commits preserve ordering within this cooperative single-CPU contract;
-this does not model parallel SMP or an exclusive monitor. The fixed machine
-disables SP alignment traps, so SP bases require only the admitted data
-alignment. See Arm's [instruction definitions](https://documentation-service.arm.com/static/67e40f3398aa3c3b6eea6a85)
-and [memory ordering guide](https://developer.arm.com/documentation/102336/0100/Load-Acquire-and-Store-Release-instructions).
+The original baseline `LDAR`, `LDARB`, `LDARH`, `STLR`, `STLRB` and `STLRH` execute through the selected transport on naturally aligned ordinary RAM. Their narrow loads zero-extend; invalid alignment and optional ordered encodings remain unsupported.
+
+Checked ARM64 supports 8/16/32/64-bit `LDXR/STXR`, 32/64-bit register pairs `LDXP/STXP`, their acquire/release variants, and `CLREX`. A shared ISA monitor models 16-byte physical reservation granules for KVM, WHP and checked Unicorn; transport single-step exits do not destroy loop progress. Committed writes invalidate reservations even when bytes remain unchanged, including writes through aliases and retained views. Stops preserve unpublished state; snapshots cannot undo intervening writes. Checked exclusives use FEAT_LSE2 alignment: unaligned operands within one 16-byte aligned block execute; crossing that block raises an `alignment` fault. Equal-width stores match the reserved physical granule. Alignment and permissions are checked before conditional-store success, including when the monitor has expired. Exclusive instructions still require ordinary RAM. ARM64 Unicorn also uses this monitor in the `Software` contract, including mixed software/checked CPUs sharing physical RAM. See the [Arm instruction definitions](https://documentation-service.arm.com/static/67e40f3398aa3c3b6eea6a85). Unicorn’s `Software` profile retains its engine’s natural-alignment model.
+
+The same shared ISA layer supports FEAT_LSE `CAS/CASP`, `SWP`, `LDADD/LDCLR/LDEOR/LDSET` and signed/unsigned min/max, including byte/halfword/word/doubleword and acquire/release variants. Checked profiles use the alignment policy above; Unicorn `Software` uses natural alignment. Comparisons use the operand width, while returned old values zero-extend. Failed CAS still requires write permission and selects Arm’s permitted old-value writeback, invalidating physical reservations. Callbacks see old CPU/RAM state; cancellation and synchronous faults publish no partial atomic effects. The parallel CPU and MMIO atomic contracts define concurrent completion. `MRS/MSR NZCV` transfers the four condition flags with architectural reserved-bit and zero-register behavior. Read permission is checked before write permission: unreadable operands report a read fault, while read-only operands report a write fault, matching the original Windows ARM64 observations.
 
 `AArch64InstructionEffects` owns scalar and FP/SIMD single/pair RAM footprints, including operands up to 128 bits. The shared address space validates every page before CPU entry; `RAMTransaction` commits only complete declared physical writes. A 128-bit write observer receives two ordered 64-bit words before effects. Stops and faults preserve RAM, vectors and writeback. Numeric Xn/Vn overlap is valid; wrapping pair footprints are rejected. `NeverDAArch64MemoryTests` uses independent `AArch64CrossPageCases.def` and `AArch64VectorMemoryCases.def` encodings.
 
@@ -438,3 +454,5 @@ Checked Unicorn uses `MachineRunControl`: one allowance covers ARM64 maintenance
 The `hvf` backend uses Hypervisor.framework for the native host ISA: ARM64 on
 Apple Silicon and x86-64 on Intel. See [HVF setup and validation](macos-hvf.md)
 for executable signing, ownership, cancellation, tests and validation limits.
+
+Explicit CPU0 preemption, clock semantics and current limits are described in [driver scheduling](driver-scheduling.md).

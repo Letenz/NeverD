@@ -853,9 +853,9 @@ jobs:
                   ("IsNoReturnTarget.NewIndexObservesChangedImageAndMismatchUsesLiveLookup",
                    "NeverDLibCTests"),
                   ("LowInstructionBoundary.ConditionalNoReturnCallKeepsFalsePath",
-                   "NeverDLiftTests"),
+                   "NeverDLiftTests", "NeverDLowInstructionBoundaryTests"),
                   ("LowInstructionBoundary.IndexedNoReturnPreservesConditionalAndReturningPaths",
-                   "NeverDLiftTests"),
+                   "NeverDLiftTests", "NeverDLowInstructionBoundaryTests"),
                   ("ExecutableCodeOwnerIndex.PreservesMetadataBoundariesAndRawThumbSpelling",
                    "NeverDLiftTests"),
                   ("ExecutableCodeOwnerIndex.FreshScopeObservesEditsAndMismatchUsesLiveImage",
@@ -877,11 +877,11 @@ jobs:
                   ("MedVariadic.ProofAndCopyDepthLimitsRemainPerRoot",
                    "NeverDLiftTests"),
                   ("LowInstructionBoundary.IndexedAArch64PagesKeepExactDereferenceAndTypedCodeOwnership",
-                   "NeverDLiftTests"),
+                   "NeverDLiftTests", "NeverDLowInstructionBoundaryTests"),
                   ("LowInstructionBoundary.AArch64BarePageBaseCompletesOnlyForExactDereference",
-                   "NeverDLiftTests"),
+                   "NeverDLiftTests", "NeverDLowInstructionBoundaryTests"),
                   ("LowInstructionBoundary.AArch64PageStartCollisionDoesNotCompleteOffsetAddress",
-                   "NeverDLiftTests"),
+                   "NeverDLiftTests", "NeverDLowInstructionBoundaryTests"),
                   ("FunctionDiscoveryAlignment.DataPrologueCandidatesKeepExactOwnershipAndExistingSymbols",
                    "NeverDLiftTests"),
                   ("FunctionDiscoveryAlignment.UsesVirtualAddressForEveryArchitecture",
@@ -1909,6 +1909,18 @@ jobs:
             -DNEVERD_EMULATION_BACKEND_UNICORN=OFF \
             -DNEVERD_LLVM_PREBUILT=ON
 
+      - name: Check native compiler cache availability
+        shell: bash
+        run: |
+          # --zero-stats connects to or starts the server; --show-stats can
+          # succeed without one. Startup errors may contain signed cache URLs.
+          if ! sccache --zero-stats > "$RUNNER_TEMP/neverd-sccache-probe.log" 2>&1; then
+            echo "::warning::Compiler cache unavailable; continuing with the configured compiler."
+            cmake -S . -B build-ci-native \
+              -DCMAKE_C_COMPILER_LAUNCHER= \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=
+          fi
+
       - name: Build and verify native CPU owners
         shell: bash
         run: |
@@ -1956,6 +1968,9 @@ jobs:
       - name: Verify original nonempty x87 capture
         if: ${{ matrix.arch == 'X64' }}
         run: python scripts/check_windows_context.py --arch X64 --floating-point --output build-context-fp
+      - name: Verify original ARM64 exclusive loops
+        if: ${{ matrix.arch == 'AArch64' }}
+        run: python scripts/check_aarch64_exclusives.py --output build-exclusive-oracle
       - name: Observe original SIMD exception masks and sticky status
         if: ${{ matrix.arch == 'X64' }}
         run: |
@@ -1971,5 +1986,6 @@ jobs:
             build-context-oracle/
             build-context-fp/
             build-simd-oracle/
+            build-exclusive-oracle/
           if-no-files-found: error
           retention-days: 14

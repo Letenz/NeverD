@@ -3,7 +3,10 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "DarwinFiles.h"
 #include "DarwinMemory.h"
+#include "DarwinSystem.h"
+#include "DarwinTime.h"
 
 #include "neverd/emulation/CPU.h"
 
@@ -17,74 +20,47 @@ constexpr CPURegister X64Arguments[] = {X64DI,  X64SI, X64DX,
                                         X64R10, X64R8, X64R9};
 constexpr CPURegister ARMArguments[] = {AArch64X0, AArch64X1, AArch64X2,
                                         AArch64X3, AArch64X4, AArch64X5};
-std::optional<ServiceKind> serviceKind(GuestArchitecture ISA, uint64_t Number) {
+struct ServiceBinding {
+  uint32_t Number;
+  ServiceKind Kind;
+  ServiceConvention Convention;
+  bool ARM64Only;
+};
+std::optional<ServiceBinding> resolveService(GuestArchitecture ISA,
+                                             uint64_t RawNumber) {
+  // Both native entry paths decode only the low 32 bits. Keep the original
+  // register value in the event; normalization belongs solely to resolution.
+  uint32_t Number = RawNumber;
+  auto Convention = ServiceConvention::BSD;
   if (ISA == GuestArchitecture::X64) {
-    if ((Number & ~uint64_t(0x00ffffff)) != BSDClass)
+    const uint32_t Class = Number & 0xff000000;
+    if (Class == MachClass)
+      Convention = ServiceConvention::Mach;
+    else if (Class != BSDClass)
       return std::nullopt;
-    Number -= BSDClass;
+    Number &= 0x00ffffff;
+  } else if (Number & 0x80000000) {
+    Convention = ServiceConvention::Mach;
+    // Unsigned negation also handles the unknown INT32_MIN trap safely.
+    Number = 0u - Number;
   }
-  struct Binding {
-    uint64_t Number;
-    ServiceKind Kind;
-  };
-  static constexpr Binding Bindings[] = {
-#define NEVERD_DARWIN_SERVICE(Name, Code, ReturnType) {Code, ServiceKind::Name},
+  static constexpr ServiceBinding Bindings[] = {
+#define NEVERD_DARWIN_SERVICE(Name, Code, ReturnType)                          \
+  {Code, ServiceKind::Name, ServiceConvention::BSD, false},
+#define NEVERD_DARWIN_SERVICE_ALIAS(Name, Code)                                \
+  {Code, ServiceKind::Name, ServiceConvention::BSD, false},
+#define NEVERD_DARWIN_MACH_SERVICE(Name, Code, ARM64Only)                      \
+  {Code, ServiceKind::Name, ServiceConvention::Mach, ARM64Only},
 #include "../DarwinValues.def"
+#undef NEVERD_DARWIN_MACH_SERVICE
+#undef NEVERD_DARWIN_SERVICE_ALIAS
 #undef NEVERD_DARWIN_SERVICE
   };
   for (const auto &Entry : Bindings)
-    if (Entry.Number == Number)
-      return Entry.Kind;
+    if (Entry.Number == Number && Entry.Convention == Convention &&
+        (!Entry.ARM64Only || ISA == GuestArchitecture::AArch64))
+      return Entry;
   return std::nullopt;
-}
-llvm::Expected<std::optional<ServiceResult>>
-writeOutput(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
-            const ProcessOptions &Options, ProcessResult &Result) {
-  const uint32_t FD = Event.Arguments[0];
-  const uint64_t Address = Event.Arguments[1], Count = Event.Arguments[2];
-  // XNU write_internal validates nbyte before descriptor lookup or copying.
-  // An invalid request cannot consume the output allowance or publish bytes.
-  if (Count > MaxWriteBytes)
-    return std::optional<ServiceResult>({InvalidArgument, true});
-  if (FD != 1 && FD != 2)
-    return std::optional<ServiceResult>({BadDescriptor, true});
-  if (!Count)
-    return std::optional<ServiceResult>({0, false});
-  if (Address >= UserLimit || Count > UserLimit - Address)
-    return std::optional<ServiceResult>({BadAddress, true});
-  const uint64_t Used =
-      Result.StandardOutput.size() + Result.StandardError.size();
-  if (Used > Options.OutputLimit || Count > Options.OutputLimit - Used) {
-    Result.Stop = ProcessStopReason::OutputLimit;
-    Result.Diagnostic = diagnostic::OutputLimit;
-    return std::optional<ServiceResult>();
-  }
-  uint64_t Readable = 0;
-  // Access granules remain the CPU's 4 KiB mappings. Querying permissions must
-  // not publish a CPU fault while delivering a recoverable BSD errno.
-  while (Readable < Count) {
-    const uint64_t Start = Address + Readable;
-    const uint64_t Size = std::min(Count - Readable, 4096 - Start % 4096);
-    auto Access = CPU.canAccess(Start, Size, Read | UserAccessible);
-    if (!Access)
-      return Access.takeError();
-    if (!*Access)
-      break;
-    Readable += Size;
-  }
-  if (!Readable)
-    return std::optional<ServiceResult>({BadAddress, true});
-  std::string Bytes(Readable, '\0');
-  if (auto E = CPU.read(Address, llvm::MutableArrayRef<uint8_t>(
-                                     reinterpret_cast<uint8_t *>(Bytes.data()),
-                                     Bytes.size())))
-    return std::move(E);
-  (FD == 1 ? Result.StandardOutput : Result.StandardError).append(Bytes);
-  // XNU's write path retains EFAULT after a partial copy; unlike interruption
-  // errors, it does not convert that error into a successful short write.
-  return std::optional<ServiceResult>(Readable == Count
-                                          ? ServiceResult{Readable, false}
-                                          : ServiceResult{BadAddress, true});
 }
 } // namespace
 
@@ -111,14 +87,18 @@ llvm::Error returnService(ExecutionBackend &CPU, const ServiceRequest &Request,
   auto Flags = CPU.readRegister(FlagRegister);
   if (!Flags)
     return Flags.takeError();
-  const uint64_t Carry = X64 ? 1 : CarryARM64;
-  (*Flags)[0] = ((*Flags)[0] & ~Carry) | (Result.Error ? Carry : 0);
-  if (auto E = CPU.writeRegister(FlagRegister, *Flags))
-    return E;
+  const bool BSD = Result.Convention == ServiceConvention::BSD;
+  if (BSD) {
+    const uint64_t Carry = X64 ? 1 : CarryARM64;
+    (*Flags)[0] = ((*Flags)[0] & ~Carry) | (Result.Error ? Carry : 0);
+    if (auto E = CPU.writeRegister(FlagRegister, *Flags))
+      return E;
+  }
   if (auto E = CPU.writeRegister(X64 ? X64AX : AArch64X0, {Result.Value, 0}))
     return E;
-  // XNU preserves RDX on x64 error; ARM64 clears X1 on both paths.
-  if (!X64 || !Result.Error)
+  // Mach preserves the secondary carrier and flags. BSD preserves RDX on
+  // x64 error; ARM64 BSD clears X1 on both paths.
+  if (BSD && (!X64 || !Result.Error))
     if (auto E = CPU.writeRegister(X64 ? X64DX : AArch64X1, {0, 0}))
       return E;
   if (X64) {
@@ -130,24 +110,62 @@ llvm::Error returnService(ExecutionBackend &CPU, const ServiceRequest &Request,
   return CPU.writeRegister(X64 ? X64PC : AArch64PC, {Request.NextPC, 0});
 }
 
+namespace {
 llvm::Expected<std::optional<ServiceResult>>
-handleService(ExecutionBackend &CPU, DarwinMemory &Memory,
-              const ProcessServiceEvent &Event, const ProcessOptions &Options,
-              ProcessResult &Result) {
-  auto Kind = serviceKind(CPU.architecture(), Event.Number);
-  if (!Kind) {
-    Result.Stop = ProcessStopReason::UnsupportedService;
-    Result.Diagnostic =
-        llvm::formatv(diagnostic::UnsupportedService, Event.Number).str();
-    return std::optional<ServiceResult>();
-  }
-  switch (*Kind) {
+dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
+                DarwinFiles &Files, const ProcessServiceEvent &Event,
+                const ProcessOptions &Options, ProcessResult &Result) {
+  switch (Kind) {
+  case ServiceKind::Sysctl:
+  case ServiceKind::SysctlByName:
+    return systemService(CPU, Memory.pageSize(), Kind, Event,
+                         Options.DarwinSystem, Result);
+  case ServiceKind::TimebaseInfo:
+  case ServiceKind::AbsoluteTime:
+  case ServiceKind::ContinuousTime:
+    return machTimeService(CPU, Kind, Event, Options.DarwinTime, Result);
+  case ServiceKind::GetTimeOfDay:
+    return timeService(CPU, Event, Options.DarwinTime, Result);
   case ServiceKind::Exit:
     Result.Stop = ProcessStopReason::Exited;
     Result.ExitStatus = Event.Arguments[0] & 0xff;
     return std::optional<ServiceResult>();
   case ServiceKind::Write:
-    return writeOutput(CPU, Event, Options, Result);
+  case ServiceKind::Readv:
+  case ServiceKind::Writev:
+  case ServiceKind::Preadv:
+  case ServiceKind::Pwritev:
+  case ServiceKind::Pwrite:
+  case ServiceKind::Truncate:
+  case ServiceKind::Ftruncate:
+  case ServiceKind::Read:
+  case ServiceKind::Pread:
+  case ServiceKind::Open:
+  case ServiceKind::OpenAt:
+  case ServiceKind::Access:
+  case ServiceKind::FaccessAt:
+  case ServiceKind::Mkdir:
+  case ServiceKind::MkdirAt:
+  case ServiceKind::Rmdir:
+  case ServiceKind::Unlink:
+  case ServiceKind::UnlinkAt:
+  case ServiceKind::Rename:
+  case ServiceKind::RenameAt:
+  case ServiceKind::RenameAtX:
+  case ServiceKind::Umask:
+  case ServiceKind::Chdir:
+  case ServiceKind::Fchdir:
+  case ServiceKind::FstatAt64:
+  case ServiceKind::GetDirEntries64:
+  case ServiceKind::Close:
+  case ServiceKind::Lseek:
+  case ServiceKind::Dup:
+  case ServiceKind::Dup2:
+  case ServiceKind::Fcntl:
+  case ServiceKind::Stat64:
+  case ServiceKind::Fstat64:
+  case ServiceKind::Lstat64:
+    return Files.handle(Kind, Event, Result);
   case ServiceKind::GetPID:
     return std::optional<ServiceResult>({ProcessID, false});
   case ServiceKind::GetPPID:
@@ -161,8 +179,27 @@ handleService(ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::Mmap:
   case ServiceKind::Mprotect:
   case ServiceKind::Munmap:
-    return Memory.handle(*Kind, Event, Result);
+    return Memory.handle(Kind, Event, Files, Result);
   }
   llvm_unreachable("unknown Darwin service");
+}
+} // namespace
+
+llvm::Expected<std::optional<ServiceResult>>
+handleService(ExecutionBackend &CPU, DarwinMemory &Memory, DarwinFiles &Files,
+              const ProcessServiceEvent &Event, const ProcessOptions &Options,
+              ProcessResult &Result) {
+  const auto Binding = resolveService(CPU.architecture(), Event.Number);
+  if (!Binding) {
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic =
+        llvm::formatv(diagnostic::UnsupportedService, Event.Number).str();
+    return std::optional<ServiceResult>();
+  }
+  auto Returned = dispatchService(Binding->Kind, CPU, Memory, Files, Event,
+                                  Options, Result);
+  if (Returned && *Returned)
+    (**Returned).Convention = Binding->Convention;
+  return Returned;
 }
 } // namespace neverd::emulation::darwin_model

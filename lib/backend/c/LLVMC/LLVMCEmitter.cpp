@@ -20,6 +20,7 @@
 #include "../pass/LLVMC/LLVMCCommonBranches.h"
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
+#include "LLVMCFrameLayout.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
 #include "LLVMCWriter.h"
@@ -31,6 +32,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
@@ -45,6 +47,7 @@
 #include "llvm/Transforms/Scalar/Scalarizer.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
+#include "llvm/Transforms/Utils/PromoteMemToReg.h"
 
 #define DEBUG_TYPE "neverd-llvmc-emitter"
 
@@ -179,6 +182,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
 void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   std::set<std::string> Headers;
   Headers.insert("stdint.h");
+  NeedsUnalignedTypes = false;
   std::map<std::string, std::pair<unsigned, bool>> FunnelShifts;
   std::map<std::string, ScalarIntegerMinMax> IntegerMinMax;
   std::map<std::string, ScalarUnary> ScalarUnaries;
@@ -204,7 +208,15 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
         if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
           if (isLLVMX86SegmentedAddressSpace(LI->getPointerAddressSpace()))
             HasCIntrinsics = true;
+          NeedsUnalignedTypes |=
+              LI->isSimple() && LI->getPointerAddressSpace() == 0 &&
+              !c_memory::alias(typeToCLLVM(LI->getType())).empty();
         }
+        if (const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst))
+          NeedsUnalignedTypes |=
+              SI->isSimple() && SI->getPointerAddressSpace() == 0 &&
+              !c_memory::alias(typeToCLLVM(SI->getValueOperand()->getType()))
+                   .empty();
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
           if (llvm::dyn_cast<llvm::InlineAsm>(CI->getCalledOperand()))
             continue;
@@ -264,7 +276,10 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
       OS << "#include <" << H << ">\n";
     OS << "\n";
   }
-  if (Opts.UseUnalignedPointers)
+  // The aliases are declared only when an access can use one; without the
+  // declarations every access keeps its portable byte copy.
+  UnalignedTypesWritten = Opts.UseUnalignedPointers && NeedsUnalignedTypes;
+  if (UnalignedTypesWritten)
     c_memory::writeTypes(OS);
   for (const auto &[Name, Shape] : ScalarUnaries) {
     const unsigned CarrierBits = Shape.carrierBits();
@@ -980,6 +995,45 @@ static void validateArrayValueBoundaries(const llvm::Module &Mod,
   }
 }
 
+// Keep call-result register homes in SSA on the private scalar projection.
+// Repeating after promotion also exposes narrow views of the same result;
+// LLVM owns the dominance/initialization proof for every promoted load.
+static void promoteCallResultHomes(llvm::Function &Function) {
+  llvm::DominatorTree Dominators(Function);
+  for (unsigned Round = 0; Round != 8; ++Round) {
+    llvm::SmallVector<llvm::AllocaInst *, 8> Homes;
+    for (auto &Instruction : Function.getEntryBlock()) {
+      auto *Home = llvm::dyn_cast<llvm::AllocaInst>(&Instruction);
+      if (!Home || !llvm::isAllocaPromotable(Home))
+        continue;
+      const llvm::StoreInst *Definition = nullptr;
+      bool Multiple = false;
+      bool Read = false;
+      for (auto *User : Home->users())
+        if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(User)) {
+          Multiple |= Definition != nullptr;
+          Definition = Store;
+        } else {
+          Read |= llvm::isa<llvm::LoadInst>(User);
+        }
+      if (!Read || Multiple || !Definition)
+        continue;
+      const llvm::Value *Value = Definition->getValueOperand();
+      unsigned Depth = 0;
+      while (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Value)) {
+        if (++Depth > 8)
+          break;
+        Value = Cast->getOperand(0);
+      }
+      if (llvm::isa<llvm::CallInst>(Value))
+        Homes.push_back(Home);
+    }
+    if (Homes.empty())
+      break;
+    llvm::PromoteMemToReg(Homes, Dominators);
+  }
+}
+
 bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
                         const CEmitterOptions &Opts, DebugContext *Dbg,
                         const BinaryImage *Img, const llvm::Function *Only) {
@@ -1020,6 +1074,21 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
   // tables. LLVM DCE retains volatile/atomic accesses and side-effecting calls.
   llvm::ValueToValueMapTy ValueMap;
   auto Projection = llvm::CloneModule(Mod, ValueMap);
+  // Normalization can remove an otherwise unused frame_end/rsp_init marker.
+  // Capture its display context on the private allocation before DCE so
+  // debug stack offsets still name the same bytes after normalization.
+  for (auto &Function : *Projection)
+    for (auto &Block : Function)
+      for (auto &Instruction : Block)
+        if (auto *Frame = llvm::dyn_cast<llvm::AllocaInst>(&Instruction))
+          if (auto Base = llvmc::syntheticFrameBaseOffset(
+                  *Frame, Projection->getDataLayout()))
+            Frame->setMetadata(
+                llvmc::CapturedFrameBase,
+                llvm::MDNode::get(
+                    Mod.getContext(),
+                    llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                        llvm::Type::getInt64Ty(Mod.getContext()), *Base))));
   std::optional<LLVMSourceMap> Sources;
   if (Opts.SourceMap && Opts.SourceMap->LLVMSources) {
     Sources = *Opts.SourceMap->LLVMSources;
@@ -1042,6 +1111,11 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
   // into this private clone and retains the existing path on refusal.
   if (!Dbg && !Img && !Opts.Image)
     llvmc::recoverScalarLoops(*Projection, ProjectionOnly);
+  if (!Dbg && !Img && !Opts.Image)
+    for (auto &Function : *Projection)
+      if (!Function.isDeclaration() &&
+          (!ProjectionOnly || &Function == ProjectionOnly))
+        promoteCallResultHomes(Function);
   for (auto &Function : *Projection)
     if (!ProjectionOnly || &Function == ProjectionOnly) {
       llvmc::factorCommonBranchTests(Function);

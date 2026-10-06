@@ -9,6 +9,8 @@
 #include "neverd/emulation/CPU.h"
 #include "neverd/emulation/ExecutionBudget.h"
 
+#include <vector>
+
 namespace neverd::emulation {
 enum class SessionExitKind {
 #define NEVERD_SESSION_EXIT(Name, Text) Name,
@@ -16,6 +18,9 @@ enum class SessionExitKind {
 #undef NEVERD_SESSION_EXIT
 };
 const char *sessionExitKindName(SessionExitKind Kind);
+
+// ExecutionWatch is defined with the backend interface in CPU.h: the direct
+// contract enforces watches below the session, in the CPU's page tables.
 
 struct SessionExit {
   SessionExitKind Kind;
@@ -47,6 +52,12 @@ public:
   ExecutionBackend &cpu() { return *CPU; }
   ExecutionBudget &budget() { return *Budget; }
   llvm::Expected<SessionExit> run(uint64_t PC, uint64_t InstructionQuantum);
+  /// Replace every execution watch while the CPU is stopped. Ranges must be
+  /// nonempty and must not wrap; overlapping ranges are merged. A watched
+  /// instruction ends the run with SessionExitKind::ExecutionWatch and leaves
+  /// the CPU at that PC. Resuming at the reported PC executes that one
+  /// instruction without matching again, so an owner may keep the range.
+  llvm::Error watchExecution(std::vector<ExecutionWatch> Watches);
   llvm::Expected<ServiceRequest> takeServiceRequest();
   llvm::Expected<BackendFault> takeRecoverableFault();
   /// The sole thread-safe operation; follows the selected CPU's stop contract.
@@ -57,9 +68,13 @@ private:
   ExecutionSession(std::unique_ptr<ExecutionBackend> CPU,
                    std::shared_ptr<ExecutionBudget> Budget)
       : Budget(std::move(Budget)), CPU(std::move(CPU)) {}
+  bool watched(uint64_t PC) const;
   State Current = State::Ready;
   uint64_t Quantum = 0, Admitted = 0;
   std::optional<SessionExitKind> AdmissionStop;
+  /// Sorted, disjoint and nonadjacent.
+  std::vector<ExecutionWatch> Watches;
+  std::optional<uint64_t> WatchedPC, WatchResume;
   std::shared_ptr<ExecutionBudget> Budget;
   // Destroy the CPU/hook closures before the state they observe.
   std::unique_ptr<ExecutionBackend> CPU;

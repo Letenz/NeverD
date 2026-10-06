@@ -68,55 +68,62 @@ TEST_P(DriverSIMDSEH, OriginalDriverCatchesAndRetriesSSEFaults) {
 #undef NEVERD_SEH_SIMD_CASE
       ;
   for (const auto *Image : Images)
-    for (uint64_t Base : {uint64_t(SehSIMDBase), uint64_t(SehSIMDRebased)}) {
-      SCOPED_TRACE(Image);
-      SCOPED_TRACE(Base);
-      DriverOptions Options;
-      Options.Backend = Parameter.Backend;
-      Options.Contract = Parameter.Contract;
-      Options.LoadAddress = Base;
-      Options.Unload = true;
-      Options.ServiceName =
-          std::string(SehSIMDService) + char(SehSIMDMarker) + Parameter.Mode;
-      auto Result = emulateDriver(Image, Options);
-      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
-      SCOPED_TRACE(Result->PC);
-      SCOPED_TRACE(Result->Diagnostic);
-      if (Parameter.Mode == SehSIMDRejectX87) {
-        EXPECT_EQ(Result->Stop, DriverStopReason::ModelError);
-        EXPECT_NE(Result->Diagnostic.find(
-                      seh::text::
-                          ContinuationChangesUnsupportedExceptionContextFields),
-                  std::string::npos)
+    for (uint64_t Base : {uint64_t(SehSIMDBase), uint64_t(SehSIMDRebased)})
+      for (uint64_t Quantum :
+           {uint64_t(0), uint64_t(SehSIMDPreemptiveQuantum)}) {
+        SCOPED_TRACE(Quantum);
+        SCOPED_TRACE(Image);
+        SCOPED_TRACE(Base);
+        DriverOptions Options;
+        Options.Backend = Parameter.Backend;
+        Options.Contract = Parameter.Contract;
+        if (Quantum)
+          Options.Scheduling = DriverScheduling{Quantum};
+        Options.LoadAddress = Base;
+        Options.Unload = true;
+        Options.ServiceName =
+            std::string(SehSIMDService) + char(SehSIMDMarker) + Parameter.Mode;
+        auto Result = emulateDriver(Image, Options);
+        ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+        SCOPED_TRACE(Result->PC);
+        SCOPED_TRACE(Result->Diagnostic);
+        if (Parameter.Mode == SehSIMDRejectX87) {
+          EXPECT_EQ(Result->Stop, DriverStopReason::ModelError);
+          EXPECT_NE(
+              Result->Diagnostic.find(
+                  seh::text::
+                      ContinuationChangesUnsupportedExceptionContextFields),
+              std::string::npos)
+              << Result->Diagnostic;
+          EXPECT_FALSE(Result->UnloadCompleted);
+          continue;
+        }
+        ASSERT_EQ(Result->Stop, DriverStopReason::Returned)
             << Result->Diagnostic;
-        EXPECT_FALSE(Result->UnloadCompleted);
-        continue;
+        EXPECT_EQ(Result->NTStatus, 0u);
+        EXPECT_EQ(Result->ImageBase, Base);
+        EXPECT_FALSE(Result->Fault);
+        EXPECT_TRUE(Result->UnloadCompleted);
+        EXPECT_TRUE(Result->Requests.empty());
+        EXPECT_TRUE(Result->Devices.empty());
+        for (const auto &Message : Result->Messages)
+          EXPECT_EQ(Message.find(SehSIMDFailure), std::string::npos) << Message;
+        for (const auto *Format : {SehSIMDFilterMessage, SehSIMDFinallyMessage,
+                                   SehSIMDCompleteMessage}) {
+          const llvm::StringRef Text(Format);
+          const auto Prefix = Text.take_front(Text.find('%'));
+          const size_t Expected = Parameter.Mode == SehSIMDConstant &&
+                                          Format != SehSIMDCompleteMessage
+                                      ? 0
+                                      : Cases;
+          EXPECT_EQ(std::count_if(
+                        Result->Messages.begin(), Result->Messages.end(),
+                        [&](const auto &Message) {
+                          return llvm::StringRef(Message).starts_with(Prefix);
+                        }),
+                    Expected);
+        }
       }
-      ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
-      EXPECT_EQ(Result->NTStatus, 0u);
-      EXPECT_EQ(Result->ImageBase, Base);
-      EXPECT_FALSE(Result->Fault);
-      EXPECT_TRUE(Result->UnloadCompleted);
-      EXPECT_TRUE(Result->Requests.empty());
-      EXPECT_TRUE(Result->Devices.empty());
-      for (const auto &Message : Result->Messages)
-        EXPECT_EQ(Message.find(SehSIMDFailure), std::string::npos) << Message;
-      for (const auto *Format : {SehSIMDFilterMessage, SehSIMDFinallyMessage,
-                                 SehSIMDCompleteMessage}) {
-        const llvm::StringRef Text(Format);
-        const auto Prefix = Text.take_front(Text.find('%'));
-        const size_t Expected = Parameter.Mode == SehSIMDConstant &&
-                                        Format != SehSIMDCompleteMessage
-                                    ? 0
-                                    : Cases;
-        EXPECT_EQ(
-            std::count_if(Result->Messages.begin(), Result->Messages.end(),
-                          [&](const auto &Message) {
-                            return llvm::StringRef(Message).starts_with(Prefix);
-                          }),
-            Expected);
-      }
-    }
 #else
   GTEST_SKIP() << SehSIMDMissing;
 #endif

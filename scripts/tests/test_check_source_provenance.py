@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import subprocess
@@ -389,6 +390,80 @@ class ReviewedRunnerHistoryTests(unittest.TestCase):
             deleted_only=False, history_commit=self.ADDED)
         self.assertEqual(len(findings), 1)
         self.assertIn("private-path", findings[0])
+
+
+class ReviewedDigestHistoryTests(unittest.TestCase):
+    PATH = "docs/benchmarks/reviewed.json"
+    COMMIT = "1234567890abcdef" * 2 + "12345678"
+    LINE = '  "path": "/Users/example/checkout/build/program",'
+
+    def setUp(self) -> None:
+        allowance = provenance.HistoryAllowance(
+            path=self.PATH, rule="private-path",
+            commits=frozenset({self.COMMIT}), line="",
+            reason="An exact reviewed historical publication cleanup.",
+            line_sha256=frozenset({hashlib.sha256(self.LINE.encode()).hexdigest()}),
+        )
+        patch = mock.patch.object(provenance, "HISTORY_ALLOWED", (allowance,))
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_exact_digest_allows_only_the_reviewed_history_line(self) -> None:
+        self.assertEqual(provenance._scan_text(
+            self.PATH, self.LINE, provenance.RULES,
+            history_commit=self.COMMIT), [])
+        for path, line, commit in (
+            (self.PATH, self.LINE, None),
+            (self.PATH, self.LINE, self.COMMIT[:12]),
+            (self.PATH, self.LINE, "0" * 40),
+            (self.PATH, self.LINE + " ", self.COMMIT),
+            (self.PATH, self.LINE.replace("program", "another"), self.COMMIT),
+            ("copy/" + self.PATH, self.LINE, self.COMMIT),
+        ):
+            with self.subTest(path=path, line=line, commit=commit):
+                self.assertEqual(len(provenance._scan_text(
+                    path, line, provenance.RULES, history_commit=commit)), 1)
+
+    def test_digest_does_not_override_external_policy_or_adjacent_lines(self) -> None:
+        rule = ProvenanceScanTests.term_rule("private-path", "checkout")
+        findings = provenance._scan_text(
+            self.PATH, self.LINE, (*provenance.RULES, rule),
+            history_commit=self.COMMIT)
+        self.assertEqual(len(findings), 1)
+        text = self.LINE + '\n  "other": "/Users/example/other",'
+        self.assertEqual(len(provenance._scan_text(
+            self.PATH, text, provenance.RULES, history_commit=self.COMMIT)), 1)
+
+
+class ReviewedBenchmarkRedactionTests(unittest.TestCase):
+    PATH = 'docs/benchmarks/2026-10-05-arm64-hvf-completion-atomic.json'
+    REMOVED = 'ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120'
+    LINE = '      "path": "/Users/gmh/.codex/worktrees/hvf-native-verification-docs/NeverD/build-hvf-arm64/phase-costs/baseline",'
+
+    def test_only_reviewed_commit_path_and_line_are_exempt(self) -> None:
+        self.assertEqual(provenance._scan_text(
+            self.PATH, self.LINE, provenance.RULES,
+            history_commit=self.REMOVED), [])
+        cases = (
+            (self.PATH, self.LINE, None),
+            (self.PATH, self.LINE, "0" * 40),
+            (self.PATH, self.LINE, self.REMOVED[:12]),
+            ("docs/benchmarks/other.json", self.LINE, self.REMOVED),
+            (self.PATH, self.LINE + " extra", self.REMOVED),
+            (self.PATH, self.LINE.lstrip(), self.REMOVED),
+        )
+        for path, line, commit in cases:
+            with self.subTest(path=path, line=line, commit=commit):
+                self.assertEqual(len(provenance._scan_text(
+                    path, line, provenance.RULES,
+                    history_commit=commit)), 1)
+
+    def test_external_policy_still_applies_to_redacted_history(self) -> None:
+        rule = ProvenanceScanTests.term_rule("private-path", "baseline")
+        findings = provenance._scan_text(
+            self.PATH, self.LINE, (*provenance.RULES, rule),
+            history_commit=self.REMOVED)
+        self.assertEqual(len(findings), 1)
 
 
 class ReviewedFpremHistoryTests(unittest.TestCase):

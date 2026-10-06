@@ -1,14 +1,17 @@
 #include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "../../../loader/Swift/SwiftErrorRuntime.h"
+#include "../../../loader/Swift/SwiftErrorSourceProjection.h"
 #include "HighCWriter.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
+#include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/libc/LibCObjC.h"
 #include "neverd/loader/MachO/CFunctionParameterCalls.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -99,11 +102,14 @@ llvm::StringRef HighCWriter::sourceConventionAttribute(
 }
 
 std::string
-HighCWriter::sourceParameterType(const SourceParameterTypeHint &Parameter) {
+HighCWriter::sourceParameterType(const SourceParameterTypeHint &Parameter,
+                                 llvm::StringRef Name) {
   if (Parameter.IndirectByValue)
     throw std::invalid_argument(
         "Indirect by-value source parameters require a copy storage proof");
-  std::string Result = typeToC(Parameter.Type);
+  std::string Result = Name.empty()
+                           ? typeToC(Parameter.Type)
+                           : declarationToC(Parameter.Type, Name.str());
   switch (Parameter.TheRole) {
   case SourceParameterTypeHint::Role::Ordinary:
     return Result;
@@ -190,16 +196,29 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
   }
   const auto &Signature = Hint.Signature;
   const bool ErrorSlot = hasSwiftErrorResult(Signature);
+  const bool NativeError = isNativeSwiftErrorSourceCall(Hint, Opts.TheArch);
   if (ErrorSlot) {
-    if (!isSwiftWillThrowSourceCall(Hint, Opts.TheArch) || E.IsIndirectCall ||
-        E.Operands.size() != 2 ||
-        !equalSourceTypes(E.Type, Signature.ReturnType))
+    const auto ResultType = NativeError ? swiftErrorCallResultType(Signature)
+                                        : Signature.ReturnType;
+    if ((!NativeError && !isSwiftWillThrowSourceCall(Hint, Opts.TheArch)) ||
+        E.IsIndirectCall || (NativeError && E.CallAddr != Hint.TargetAddress) ||
+        E.Operands.size() != Signature.Parameters.size() ||
+        !equalSourceTypes(E.Type, ResultType))
       return bad("unsupported Swift in/out error binding");
     for (const auto &Argument : E.Operands)
-      if (!Argument || !Argument->Type || Argument->Type->Size != 8 ||
-          (Argument->Type->Kind != NdTypeKind::Ptr &&
-           Argument->Type->Kind != NdTypeKind::Int))
+      if (!Argument || !Argument->Type ||
+          (!NativeError && (Argument->Type->Size != 8 ||
+                            (Argument->Type->Kind != NdTypeKind::Ptr &&
+                             Argument->Type->Kind != NdTypeKind::Int))))
         return bad("incomplete Swift error-register input");
+    if (NativeError) {
+      const auto *Definition = sourceCallDefinition(Hint, E.CallTarget);
+      if (!Definition ||
+          !isSwiftErrorEntryProjected(*Definition, Opts.TheArch) ||
+          !equalSourceABIs(*Definition->SourceTypeHint, Signature))
+        return bad(
+            "Swift error call has no current projected native definition");
+    }
   }
   if (Hint.CallKind == Kind::CFunctionParameterCall) {
     if (!CurrentFunc ||
@@ -235,6 +254,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
        Hint.TargetName == "CGAffineTransformScale" ||
        Hint.TargetName == "CGAffineTransformRotate" ||
        Hint.TargetName == "CGAffineTransformConcat" ||
+       Hint.TargetName == "CGAffineTransformInvert" ||
        Hint.TargetName == "CATransform3DScale" ||
        Hint.TargetName == "CGRectApplyAffineTransform")) {
     const auto Expected =
@@ -450,8 +470,18 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Hint.CallKind == Kind::RuntimeObjCMetadataFactory ||
       Hint.CallKind == Kind::RuntimeObjCMergedSetter ||
       Hint.CallKind == Kind::RuntimeObjCForwardedInitializer) {
+    const bool Getter = Hint.CallKind == Kind::RuntimeObjCSuperGetter;
+    const auto GetterSignature =
+        Getter ? objcSuperGetterHelperSourceDeclaration(Signature.Architecture,
+                                                        Signature.ReturnType)
+               : std::nullopt;
     const bool Factory = Hint.CallKind == Kind::RuntimeObjCMetadataFactory;
     const bool Setter = Hint.CallKind == Kind::RuntimeObjCMergedSetter;
+    const auto SetterSignature =
+        Setter && Signature.Parameters.size() == 7
+            ? objcMergedSetterHelperSourceDeclaration(
+                  Signature.Architecture, Signature.Parameters[2].Type)
+            : std::nullopt;
     const bool Forwarded =
         Hint.CallKind == Kind::RuntimeObjCForwardedInitializer;
     const auto Name =
@@ -459,8 +489,15 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                     : Forwarded ? "neverd_objc_forwarded_initializer_"
                     : Setter    ? "neverd_objc_merged_setter_"
                                 : "neverd_objc_super_getter_") +
-        llvm::utohexstr(Hint.TargetAddress, true);
+        llvm::utohexstr(Hint.TargetAddress, true) +
+        (GetterSignature && !GetterSignature->ReturnComponents.empty()
+             ? "_cgrect"
+             : "");
     if (!Hint.TargetAddress || Hint.TargetName != Name ||
+        (Getter &&
+         (!GetterSignature || !equalSourceABIs(Signature, *GetterSignature))) ||
+        (Setter &&
+         (!SetterSignature || !equalSourceABIs(Signature, *SetterSignature))) ||
         E.CallAddr != Hint.TargetAddress || !E.CallTarget.empty() ||
         E.IsIndirectCall || !E.IntrinsicOutputs.empty() ||
         Signature.Architecture != Arch::AArch64 ||
@@ -468,12 +505,10 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         Signature.Origin !=
             SourceFunctionTypeHint::OriginKind::NativeAnalysis ||
         !Signature.ReturnType ||
-        Signature.ReturnType->Kind != (Factory || Forwarded ? NdTypeKind::Ptr
-                                       : Setter ? NdTypeKind::Void
-                                                : NdTypeKind::Int) ||
-        Signature.ReturnType->Size != (Factory || Forwarded ? 8U
-                                       : Setter             ? 0U
-                                                            : 1U) ||
+        (!Getter &&
+         (Signature.ReturnType->Kind !=
+              (Factory || Forwarded ? NdTypeKind::Ptr : NdTypeKind::Void) ||
+          Signature.ReturnType->Size != (Factory || Forwarded ? 8U : 0U))) ||
         Signature.Parameters.size() != (Factory  ? 2U
                                         : Setter ? 7U
                                                  : 4U) ||
@@ -494,14 +529,17 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                       const bool Value =
                           Setter && &Parameter == &Signature.Parameters[2];
                       return !Parameter.Type ||
-                             Parameter.Type->Kind !=
-                                 (Value ? NdTypeKind::Int : NdTypeKind::Ptr) ||
-                             Parameter.Type->Size != (Value ? 1U : 8U);
+                             (!Value &&
+                              (Parameter.Type->Kind != NdTypeKind::Ptr ||
+                               Parameter.Type->Size != 8U));
                     }))
       return bad("invalid compiler getter/factory declaration");
     auto Expected = Signature;
     std::string Diagnostic;
-    if (!assignDarwinScalarSourceABI(Expected, Arch::AArch64, Diagnostic) ||
+    if (!(Getter || Setter
+              ? assignDarwinFixedSourceABI(Expected, Arch::AArch64, Diagnostic)
+              : assignDarwinScalarSourceABI(Expected, Arch::AArch64,
+                                            Diagnostic)) ||
         !equalSourceABIs(Signature, Expected))
       return bad("compiler getter/factory ABI is not canonical");
   }
@@ -947,7 +985,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                          Hint.CallKind == Kind::RuntimeObjCForwardedInitializer;
     if (Runtime)
       Name = Hint.TargetName;
-    if (ErrorSlot)
+    if (ErrorSlot && !NativeError)
       Name = SwiftWillThrowValueSourceName;
     else if (Hint.CallKind == Kind::SwiftStringBridge)
       Name = "neverd_swift_string_to_nsstring";
@@ -1033,6 +1071,11 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
            ")";
   }
   std::string Call = Name + "(";
+  std::string IncomingError;
+  const std::string ErrorName =
+      NativeError ? MemoryIdentifiers.allocate("nd_error") : "";
+  const std::string ResultName =
+      NativeError ? MemoryIdentifiers.allocate("nd_result") : "";
   const size_t FirstArgument = Block ? 1 : 0;
   for (size_t I = FirstArgument; I < E.Operands.size(); ++I) {
     if (!E.Operands[I])
@@ -1087,9 +1130,23 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     else if (I == 0 && Hint.CallKind == Kind::ObjCRuntimeCall &&
              libc::objcHasObjectStorageArgument(Hint.TargetName))
       Call += "(id *)";
-    Call += *Value;
+    if (NativeError &&
+        Parameter.TheRole == SourceParameterTypeHint::Role::SwiftErrorResult) {
+      IncomingError = *Value;
+      Call += "&" + ErrorName;
+    } else
+      Call += *Value;
   }
   Call += ")";
+  if (NativeError) {
+    const auto ResultType = swiftErrorCallResultType(Signature);
+    if (IncomingError.empty())
+      return bad("Swift call lost its incoming error value");
+    return "({ void *" + ErrorName + " = " + IncomingError + "; " +
+           declarationToC(ResultType, ResultName) + "; " + ResultName +
+           ".field_0 = (uint64_t)(uintptr_t)(" + Call + "); " + ResultName +
+           ".field_1 = " + ErrorName + "; " + ResultName + "; })";
+  }
   if (Signature.ReturnType->Kind == NdTypeKind::Void)
     return Call;
   auto Result = sourceValue(Call, Signature.ReturnType, E.Type);

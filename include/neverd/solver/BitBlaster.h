@@ -10,7 +10,7 @@
 ///
 /// Every operator in the expression language is a finite circuit over the bits
 /// of its operands: an addition is a chain of full adders, a comparison is a
-/// chain that walks from the most significant bit down, a shift by a value
+/// circuit that compares high halves before low halves, a shift by a value
 /// that is not known is a ladder of multiplexers, a multiplication is an array
 /// of shifted partial products.  Writing those circuits out and handing them
 /// to a satisfiability engine decides any question about the expression
@@ -28,8 +28,7 @@
 /// encodes each subterm once.
 ///
 /// Bits are ordered least significant first throughout, which is the order the
-/// carries run in and therefore the order that keeps every loop in the
-/// implementation forward.
+/// carries run in and the order used to split low and high halves.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -139,6 +138,8 @@ public:
   CnfEncoder &encoder() { return Enc; }
 
 private:
+  friend class BitVectorSolver;
+  BitBlaster(CnfEncoder &Enc, const BitBlaster &Other);
   /// Where one node's bits live in \c BitPool.
   struct Slice {
     size_t First = 0;

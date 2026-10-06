@@ -61,7 +61,11 @@ void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med = nullptr);
 /// Replace `goto L` with a copy of L's tail when L is a few pure
 /// assignments followed by a return, or ending in a call that never returns.
 /// The original stays for other paths. Returns true when a goto was replaced.
-bool duplicateSmallReturnTails(std::vector<HighStmt> &Body);
+/// With \p PrintedSize, a temporary read once later in the tail does not
+/// count toward the limit, since it prints inside that read; that is meant
+/// for the jumps left once structuring is done, where each copy removes one.
+bool duplicateSmallReturnTails(std::vector<HighStmt> &Body,
+                               bool PrintedSize = false);
 
 /// Move the jump that ends a `__try` body after the try statement when every
 /// `__except` body ends in a jump or return of its own, so the protected code
@@ -94,6 +98,14 @@ bool dropJumpsToTheNextStatement(std::vector<HighStmt> &Body);
 /// or switch, exactly as falling out of it would, becomes `break`. Code that
 /// runs only after a loop's one break or a switch's one falling case moves
 /// there first. Returns true when anything changed.
+/// `switch (..) { ..goto J.. } C...; J:` where more of the switch's jumps go
+/// to J than reach C: C moves into the switch at one of its ways out, the
+/// others jump to C, and J becomes what follows the switch, so
+/// breakToTheLoopFollow turns the jumps to J into breaks.  C runs past the
+/// end of its list where nothing else falls into what follows: a block's
+/// body, or an if/else arm whose other arm never falls out.  Nothing outside
+/// the switch and C may enter C.  Returns true when a switch changed.
+bool busiestExitFollowsTheSwitch(std::vector<HighStmt> &Body);
 bool breakToTheLoopFollow(std::vector<HighStmt> &Body);
 /// `X: S...` where jumps from inside S return to X becomes
 /// `while (1) { S...; break; }` with those jumps as `continue`. A jump to X
@@ -138,11 +150,27 @@ bool loopsForNestedJumpsBack(std::vector<HighStmt> &Body);
 /// loop's body, become `continue`; each target starts exactly one statement.
 bool loopJumpsAsBreakAndContinue(std::vector<HighStmt> &Body);
 
+/// In a run of plain assignments ending in a return, a temporary assigned in
+/// the run can only be read in the run, even when copies of the run assign it
+/// elsewhere: one read takes its value directly and an unread one goes.
+bool foldTempsInReturnTails(std::vector<HighStmt> &Body);
+
+/// When NEVERD_HIGH_FLOW_ORACLE is set, print one FLOWPROTECT line for each
+/// structured SEH try of \p Func whose guarded range holds code outside its
+/// __try that may raise an exception: in C that code runs unprotected.  Run
+/// right after structuring the regions: later tail copies take the address
+/// of the jump they replace, which may lie in a range they do not belong to.
+void reportUnprotectedGuardedCode(const HighFunc &Func, const char *Stage);
+
 /// Once the other rewrites have settled: `if (c) goto L;` followed by an if
 /// whose then arm opens with L becomes `if (c || b)`, and one whose else arm
 /// opens with L becomes `if (!c && b)`.  L must start exactly one statement,
 /// and nothing but the first test may jump to the second if.
 bool mergeJumpsIntoNextIfArms(HighFunc &Func);
+/// Declares each register or temporary local signed or unsigned by what most
+/// of its uses read, so that wrapping arithmetic, logical shifts and
+/// unsigned comparisons print without casts.  Value bits do not change.
+void chooseIntegerSignedness(HighFunc &Func);
 /// `if (a) {..} else { ..; jump; X: S.. }` followed by `if (c) goto X;`
 /// becomes `while (c) { S.. }` in place of the test.
 bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);
@@ -156,11 +184,14 @@ bool hoistSharedArmTails(std::vector<HighStmt> &Body);
 /// code moved away from its branch or a tail shared with later code, comes
 /// after the blocks that reach it; blocks the entry never reaches follow in
 /// address order.  \p Dispatched blocks transfer only explicitly (a compare
-/// tree's switch).  Address order when the function has an exception
-/// handler, whose regions follow addresses, or when a block's fall-through
-/// edge is unknown.
+/// tree's switch).  Address order when a block's fall-through edge is unknown
+/// or the function has exception regions, except that with
+/// \p SEHReversePostorder a frame with only Windows SEH scopes keeps reverse
+/// postorder when it leaves every guarded range's blocks next to each other,
+/// since a __try wraps one run of statements.
 std::vector<int> highBlockLayout(const MedFunc &Med,
-                                 const std::set<int> &Dispatched);
+                                 const std::set<int> &Dispatched,
+                                 bool SEHReversePostorder = true);
 
 /// Emit a label-per-block goto/return skeleton.  Used when structuring would
 /// exceed SSA limits, or when conversion fails and identity alone would leave
@@ -169,6 +200,10 @@ void fillUnstructuredGotoSkeleton(HighFunc &Func, const MedFunc &Med);
 
 class MedToHighConverter {
 public:
+  /// Convert \p Med.  A frame with only Windows SEH scopes is laid out in
+  /// reverse postorder; when that leaves a guarded range unstructured, it is
+  /// converted again in address order, which is kept only if it leaves fewer
+  /// ranges unstructured.
   HighFunc convert(const MedFunc &Med, Arch TheArch = Arch::Unknown);
 
   void setBinaryImage(const BinaryImage *Img) { Image = Img; }
@@ -209,6 +244,9 @@ public:
   };
 
 private:
+  HighFunc convertOnce(const MedFunc &Med, Arch TheArch);
+  /// Lay out an SEH frame in address order for this conversion.
+  bool SEHAddressOrder = false;
   void buildExpressions(const MedFunc &Med);
   void structureControlFlow(HighFunc &Func, const MedFunc &Med);
   void structureExceptionRegions(HighFunc &Func, const MedFunc &Med);
@@ -355,6 +393,7 @@ private:
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;
   std::vector<JumpTable> JumpTables;
   int NextHighTempId = 0;
+  std::optional<MedVar> SwiftErrorEntryInput;
   int ExprRecurseDepth = 0;
   static constexpr int kMaxExprDepth = limits::kMaxExprDepth;
 };

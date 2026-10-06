@@ -1,16 +1,20 @@
 #include "neverd/pipeline/NativeSourceHints.h"
 
+#include "../loader/MachO/ImmutableNativeFrame.h"
 #include "../loader/Swift/SwiftBooleanProjection.h"
 #include "../loader/Swift/SwiftBooleanSourceBinding.h"
+#include "../loader/Swift/SwiftErrorSourceProjection.h"
 #include "../loader/Swift/SwiftMangledClassMethodABI.h"
 #include "../loader/Swift/SwiftMangledValueConstructorABI.h"
 #include "NativeSourceFloatingReturn.h"
 #include "NativeSourceIntegerPrefixReturn.h"
+#include "NativeSourceOutputFrame.h"
 #include "NativeSourcePreservation.h"
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/med/MedNoReturn.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
 #include "neverd/lift/AArch64Regs.h"
@@ -54,14 +58,139 @@ nativeSourceCalleeContracts(const BinaryImage &Image,
   for (const auto &Med : Result.MedFuncs)
     if (auto It = Contracts.CurrentCallees.find(Med.Entry);
         It != Contracts.CurrentCallees.end() && Med.SourceTypeHint &&
-        Med.SourceParametersBound)
+        Med.SourceParametersBound) {
       It->second.Signature = &*Med.SourceTypeHint;
+      It->second.Med = &Med;
+    }
   for (const auto &Audit : Result.FunctionAudits)
     if (auto It = Contracts.CurrentCallees.find(Audit.Entry);
         It != Contracts.CurrentCallees.end())
       It->second.Audit = &Audit;
+  for (const auto &High : Result.HighFuncs)
+    if (auto It = Contracts.CurrentCallees.find(High.Entry);
+        It != Contracts.CurrentCallees.end())
+      It->second.High = &High;
   return Contracts;
 }
+
+namespace detail {
+std::optional<SourceFrameEffects>
+nativeOutputFrameEffects(const BinaryImage &Image,
+                         const SourceCallTypeHint &Binding,
+                         const NativeSourceCalleeContracts *Callees) {
+  if (!Callees || Callees->SourceImage != &Image ||
+      Binding.CallKind != SourceCallTypeHint::Kind::Native ||
+      Binding.DoesNotReturn || Binding.WeakImport ||
+      Binding.Signature.Origin !=
+          SourceFunctionTypeHint::OriginKind::NativeAnalysis ||
+      !Image.isCodeAddress(Binding.TargetAddress))
+    return std::nullopt;
+  const auto Found = Callees->CurrentCallees.find(Binding.TargetAddress);
+  if (Found == Callees->CurrentCallees.end())
+    return std::nullopt;
+  const auto &C = Found->second;
+  if (!C.Low || !C.Med || !C.Signature || !C.Audit ||
+      C.Low->Entry != Binding.TargetAddress || C.Med->Entry != C.Low->Entry ||
+      !C.Med->SourceTypeHint || !C.Med->SourceParametersBound ||
+      !completeNativeAudit(C.Low->Entry, *C.Audit) ||
+      C.Low->DecodedInstructionCount != C.Audit->DecodedInstructions ||
+      !equalSourceABIs(*C.Signature, *C.Med->SourceTypeHint) ||
+      !equalSourceABIs(*C.Signature, Binding.Signature))
+    return std::nullopt;
+  const auto &Signature = *C.Signature;
+  if (Signature.Architecture != Arch::AArch64 ||
+      Signature.Convention != SourceFunctionTypeHint::ConventionKind::C ||
+      !Signature.ReturnType || Signature.ReturnType->Kind != NdTypeKind::Void)
+    return std::nullopt;
+  std::optional<size_t> Output;
+  for (size_t I = 0; I != Signature.Parameters.size(); ++I) {
+    const auto &P = Signature.Parameters[I];
+    if (!P.Type || P.Type->Size != 8 || P.IndirectByValue ||
+        !P.Components.empty() ||
+        P.TheRole != SourceParameterTypeHint::Role::Ordinary)
+      return std::nullopt;
+    if (P.Type->Kind == NdTypeKind::Ptr) {
+      if (Output || P.Location.Kind != SourceABICarrierKind::IntegerRegister ||
+          P.Location.ValueBytes != 8)
+        return std::nullopt;
+      Output = I;
+    } else if (P.Type->Kind != NdTypeKind::Float ||
+               P.Location.Kind != SourceABICarrierKind::FloatingRegister) {
+      return std::nullopt;
+    }
+  }
+  size_t Budget = 262144;
+  if (!Output || !immutableNativeFrameMachineMatches(Image, *C.Low, Budget))
+    return std::nullopt;
+  const auto Current = buildObjCSourceCallHints(Image, *C.Low);
+  NativeSourceCalls Calls;
+  for (const auto &B : C.Med->Blocks)
+    for (const auto &Op : B.Ops) {
+      if (!Budget)
+        return std::nullopt;
+      --Budget;
+      if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+        continue;
+      if (Op.Opcode != NdOp::CALL || !Op.NumInputs || !Op.Inputs[0].isConst() ||
+          !Op.SourceCallHint || !Op.CallSiteId || Op.DoesNotReturn ||
+          Op.PreservesCallerSaved)
+        return std::nullopt;
+      const auto &H = *Op.SourceCallHint;
+      const auto Expected = Current.find(Op.Addr);
+      if (Expected == Current.end() || H.DoesNotReturn || H.WeakImport ||
+          H.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall ||
+          Expected->second.CallKind != H.CallKind ||
+          Expected->second.TargetAddress != H.TargetAddress ||
+          Expected->second.TargetName != H.TargetName ||
+          Expected->second.Signature.Origin != H.Signature.Origin ||
+          !equalSourceABIs(Expected->second.Signature, H.Signature) ||
+          Op.NumInputs != sourceABIParameters(H.Signature).size() + 1)
+        return std::nullopt;
+      const auto Effects = darwinMatrixSourceFrameEffects(Image, H);
+      if (!Effects)
+        return std::nullopt;
+      if (Op.Inputs[0].Size != 8 || !H.Signature.ReturnType ||
+          Op.Output.Size != H.Signature.ReturnType->Size)
+        return std::nullopt;
+      const auto Physical = sourceABIParameters(H.Signature);
+      for (size_t I = 0; I != Physical.size(); ++I)
+        if (Op.Inputs[I + 1].Size != Physical[I].Location.ValueBytes)
+          return std::nullopt;
+      NativeSourceCallContract Call;
+      Call.Signature = &H.Signature;
+      static_cast<SourceFrameEffects &>(Call) = *Effects;
+      if (!Calls
+               .emplace(NativeSourceCallKey{Op.Addr, Op.OriginSeq, Op.Opcode,
+                                            Op.Inputs[0].ConstVal},
+                        Call)
+               .second)
+        return std::nullopt;
+    }
+  std::set<NativeSourceCallKey> Seen;
+  for (const auto &B : C.Low->Blocks)
+    for (const auto &Op : B.Ops) {
+      if (!Budget)
+        return std::nullopt;
+      --Budget;
+      if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+        continue;
+      const auto Site = nativeSourceCallKey(Op);
+      if (!Site || !Calls.count(*Site) || !Seen.insert(*Site).second)
+        return std::nullopt;
+    }
+  if (Seen.size() != Calls.size())
+    return std::nullopt;
+  const auto Bytes = sourceFrameCompleteOutputBytes(*C.Low, Image.Arch, Calls,
+                                                    Signature, *Output);
+  if (!Bytes)
+    return std::nullopt;
+  SourceFrameEffects Result;
+  Result.WritableFrameParameters.emplace(*Output, *Bytes);
+  Result.InitializesFrameParameters.insert(*Output);
+  return sourceFrameEffectsMatchABI(Result, Signature) ? std::optional(Result)
+                                                       : std::nullopt;
+}
+} // namespace detail
 
 bool validateSwiftValueConstructorBindings(
     const BinaryImage &Image, const LowFunc *Low, const MedFunc &Med,
@@ -736,10 +865,10 @@ nativeEntryRegisters(const BinaryImage &Image, const LowFunc *Low,
   return {Reads.begin(), Reads.end()};
 }
 
-// A complete declared call can return additional fields after its two full
-// integer result words. Authenticate both word extracts against that full ABI
-// before treating them as definitions; ordinary SUBBYTES are only views. This
-// never changes the callee's result shape or defines any later narrow carrier.
+// Authenticate the two complete word extracts against the declared physical
+// results. Swift's internal result/error pair is separate from its logical
+// scalar result; other calls may return additional fields. Ordinary SUBBYTES
+// remain views and cannot establish a machine result by themselves.
 bool completeCallWordPairPrefix(llvm::ArrayRef<MedOp> Ops, size_t Index,
                                 Arch Architecture) {
   const auto &Call = Ops[Index];
@@ -750,19 +879,37 @@ bool completeCallWordPairPrefix(llvm::ArrayRef<MedOp> Ops, size_t Index,
   const auto &TRI = getTargetRegInfo(Architecture);
   std::string Error;
   if (!Signature.HasExplicitABI || Signature.Architecture != Architecture ||
-      !validateSourceABI(Signature, Error) ||
-      Signature.ReturnType->Size != Call.Output.Size ||
-      Signature.ReturnComponents.size() < 2 || TRI.IntReturnRegs.size() < 2)
+      !validateSourceABI(Signature, Error))
     return false;
+  std::array<SourceABIValueLocation, 2> Locations;
+  const bool SwiftError =
+      isNativeSwiftErrorSourceCall(*Call.SourceCallHint, Architecture);
+  if (SwiftError) {
+    if (Call.Opcode != NdOp::CALL || !Call.NumInputs ||
+        !Call.Inputs[0].isConst() ||
+        Call.Inputs[0].ConstVal != Call.SourceCallHint->TargetAddress ||
+        Call.NumInputs != sourceABIParameters(Signature).size() + 1 ||
+        Call.Output.Size != 16 || Call.DoesNotReturn ||
+        Call.PreservesCallerSaved)
+      return false;
+    Locations = {Signature.ReturnLocation,
+                 sourceABIErrorResult(Signature)->Location};
+  } else {
+    if (Signature.ReturnType->Size != Call.Output.Size ||
+        Signature.ReturnComponents.size() < 2 || TRI.IntReturnRegs.size() < 2)
+      return false;
+    Locations = {Signature.ReturnComponents[0], Signature.ReturnComponents[1]};
+  }
   const auto Members = sourceAggregateMembers(Signature.ReturnType);
   for (unsigned I = 0; I < 2; ++I) {
-    const auto &Location = Signature.ReturnComponents[I];
+    const auto &Location = Locations[I];
     const auto &Extract = Ops[Index + I + 1];
-    if ((!Members.empty() && Members[I].ByteOffset != I * 8U) ||
+    if ((!SwiftError && !Members.empty() && Members[I].ByteOffset != I * 8U) ||
         Location.Kind != SourceABICarrierKind::IntegerRegister ||
-        Location.RegisterOffset != TRI.IntReturnRegs[I] ||
+        (!SwiftError && Location.RegisterOffset != TRI.IntReturnRegs[I]) ||
         Location.ValueBytes != 8 || Extract.Opcode != NdOp::SUBBYTES ||
-        Extract.NumInputs != 2 || Extract.Output.Kind != MedVar::Reg ||
+        (SwiftError && Extract.Addr != Call.Addr) || Extract.NumInputs != 2 ||
+        Extract.Output.Kind != MedVar::Reg ||
         Extract.Output.RegOff != Location.RegisterOffset ||
         Extract.Output.Size != 8 || Extract.Inputs[0] != Call.Output ||
         Extract.Inputs[0].Size != Call.Output.Size ||
@@ -770,6 +917,78 @@ bool completeCallWordPairPrefix(llvm::ArrayRef<MedOp> Ops, size_t Index,
       return false;
   }
   return true;
+}
+
+// A transport shape or a Swift origin cannot certify native call state.
+// Require this round's complete callee, matching entry projection and ABI,
+// and replay its original LowIR against the current immutable machine body.
+bool currentNativeSwiftErrorCallee(const BinaryImage &Image, const MedOp &Call,
+                                   const NativeSourceCalleeContracts *Callees) {
+  if (!Callees || Callees->SourceImage != &Image || Call.Opcode != NdOp::CALL ||
+      !Call.NumInputs || !Call.Inputs[0].isConst() || !Call.SourceCallHint ||
+      !isNativeSwiftErrorSourceCall(*Call.SourceCallHint, Image.Arch) ||
+      Call.Inputs[0].ConstVal != Call.SourceCallHint->TargetAddress ||
+      Call.DoesNotReturn || Call.PreservesCallerSaved)
+    return false;
+  const auto Target = Call.SourceCallHint->TargetAddress;
+  const auto Found = Callees->CurrentCallees.find(Target);
+  if (Found == Callees->CurrentCallees.end() || !Image.isCodeAddress(Target))
+    return false;
+  const auto &C = Found->second;
+  const auto &Signature = Call.SourceCallHint->Signature;
+  if (!C.Low || !C.Med || !C.High || !C.Signature || !C.Audit ||
+      C.Low->Entry != Target || C.Med->Entry != Target ||
+      C.High->Entry != Target || !C.Med->SourceParametersBound ||
+      !C.Med->SourceTypeHint || !C.High->SourceTypeHint ||
+      !completeNativeAudit(Target, *C.Audit) ||
+      C.Low->DecodedInstructionCount != C.Audit->DecodedInstructions ||
+      !equalSourceABIs(*C.Signature, Signature) ||
+      !equalSourceABIs(*C.Med->SourceTypeHint, Signature) ||
+      !equalSourceABIs(*C.High->SourceTypeHint, Signature) ||
+      !isSwiftErrorEntryProjected(*C.High, Image.Arch) ||
+      Call.NumInputs != sourceABIParameters(Signature).size() + 1)
+    return false;
+  size_t Budget = 262144;
+  return immutableNativeInstructionOperationsMatch(Image, *C.Low, Budget);
+}
+
+bool validateNativeSwiftErrorBindings(
+    const BinaryImage &Image, const LowFunc *Low, const MedFunc &Med,
+    const NativeSourceCalleeContracts *Callees) {
+  std::set<SourceCallOccurrenceKey> Required, Seen;
+  size_t Budget = 262144;
+  if (Low && Callees && Callees->SourceImage == &Image)
+    for (const auto &Block : Low->Blocks)
+      for (const auto &Op : Block.Ops) {
+        if (!Budget--)
+          return false;
+        if (const auto Site = sourceCallOccurrenceKey(Op);
+            Site && Site->StaticTarget) {
+          const auto C = Callees->CurrentCallees.find(*Site->StaticTarget);
+          if (C != Callees->CurrentCallees.end() && C->second.Signature &&
+              hasSwiftErrorResult(*C->second.Signature))
+            Required.insert(*Site);
+        }
+      }
+  for (const auto &Block : Med.Blocks)
+    for (size_t I = 0; I < Block.Ops.size(); ++I) {
+      if (!Budget--)
+        return false;
+      const auto &Op = Block.Ops[I];
+      if (!Op.SourceCallHint ||
+          Op.SourceCallHint->CallKind != SourceCallTypeHint::Kind::Native ||
+          !hasSwiftErrorResult(Op.SourceCallHint->Signature))
+        continue;
+      if (!Low || Low->Entry != Med.Entry || Op.OriginSeq < 0 ||
+          !currentNativeSwiftErrorCallee(Image, Op, Callees) ||
+          !completeCallWordPairPrefix(Block.Ops, I, Image.Arch))
+        return false;
+      const SourceCallOccurrenceKey Site{Op.Addr, Op.OriginSeq, Op.Opcode,
+                                         Op.Inputs[0].ConstVal};
+      if (!Required.count(Site) || !Seen.insert(Site).second)
+        return false;
+    }
+  return Seen == Required;
 }
 
 // Call-only declarations have a separate producer-owned authority. Matching a
@@ -820,6 +1039,7 @@ bool hasNativeSourceStateContract(
     return false;
   NativeSourceCalls Calls;
   if (!validateSwiftValueConstructorBindings(Image, Low, Med, Callees) ||
+      !validateNativeSwiftErrorBindings(Image, Low, Med, Callees) ||
       !validateSwiftOpaqueValueBindings(Image, Low, Med, Callees) ||
       !validateSwiftConsumedInputBindings(Image, Low, Med) ||
       !validateSwiftWitnessFrameBindings(Image, Low, Med) ||
@@ -852,6 +1072,7 @@ bool hasNativeSourceStateContract(
     }
   }
   size_t Remaining = 262144;
+  bool OutputCallerReplayed = false;
   for (const auto &Block : Med.Blocks)
     for (const auto &Op : Block.Ops) {
       if (!Remaining--)
@@ -894,6 +1115,9 @@ bool hasNativeSourceStateContract(
       const bool CertifiedNative = Binding.TargetAddress != Med.Entry &&
                                    !TerminalContext &&
                                    certifiedNativeCallee(Image, Op, Callees);
+      const bool SwiftErrorNative =
+          Binding.TargetAddress != Med.Entry && !TerminalContext &&
+          currentNativeSwiftErrorCallee(Image, Op, Callees);
       const bool ImmutableNative = [&] {
         if (TerminalContext || Op.Opcode != NdOp::INDIR_CALL ||
             Op.Inputs[0].isConst() || Op.DoesNotReturn ||
@@ -1047,6 +1271,16 @@ bool hasNativeSourceStateContract(
           return false;
         static_cast<SourceFrameEffects &>(Contract) = *Effects;
       }
+      if (StaticNative && Contract.empty()) {
+        if (const auto Effects =
+                detail::nativeOutputFrameEffects(Image, Binding, Callees)) {
+          if (!OutputCallerReplayed &&
+              !immutableNativeFrameMachineMatches(Image, *Low, Remaining))
+            return false;
+          OutputCallerReplayed = true;
+          static_cast<SourceFrameEffects &>(Contract) = *Effects;
+        }
+      }
       // Hasher's 72-byte value is written through x8, then passed inout to
       // String.hash and _finalize. Revalidate its current import and ABI.
       if (StaticRuntime && Binding.CallKind == Kind::SwiftRuntimeCall &&
@@ -1146,8 +1380,8 @@ bool hasNativeSourceStateContract(
             NativeSourceCallContract::TerminationKind::SwiftDictionaryViolation;
       }
       if ((!StaticRuntime && !StaticNative && !CertifiedNative &&
-           !StaticBoolean && !StaticMessage && !DynamicWitness &&
-           !DynamicVoidBlock && !ImmutableNative) ||
+           !SwiftErrorNative && !StaticBoolean && !StaticMessage &&
+           !DynamicWitness && !DynamicVoidBlock && !ImmutableNative) ||
           (Binding.DoesNotReturn && !Contract.terminates()) ||
           !Binding.Signature.ReturnType || !Image.isCodeAddress(Op.Addr) ||
           !Calls
@@ -1370,10 +1604,12 @@ bool definedReturnPaths(const MedFunc &Function, Arch Architecture,
 }
 
 std::optional<SourceFunctionTypeHint>
-nativePairReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar,
-                 SourceABICarrierKind Kind) {
+nativeRecordReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar,
+                   SourceABICarrierKind Kind, unsigned Count = 2) {
   const auto Architecture = Scalar.Architecture;
   const bool Floating = Kind == SourceABICarrierKind::FloatingRegister;
+  if (Count != 2 && (!Floating || Count != 4))
+    return std::nullopt;
   if (Architecture != Arch::AArch64 && Architecture != Arch::X64)
     return std::nullopt;
   if (Floating && Architecture != Arch::AArch64)
@@ -1386,7 +1622,7 @@ nativePairReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar,
       (Floating ? Scalar.ReturnType->Kind != NdTypeKind::Float
                 : !integerCarrier(Scalar.ReturnType)) ||
       Scalar.ReturnType->Size != 8 || !Scalar.ReturnComponents.empty() ||
-      Scalar.ReturnLocation.Kind != Kind || Registers.size() < 2 ||
+      Scalar.ReturnLocation.Kind != Kind || Registers.size() < Count ||
       Med.DoesNotReturn || Med.IsVariadic ||
       Scalar.ReturnLocation.RegisterOffset != Registers[0] ||
       Scalar.ReturnLocation.ValueBytes != 8 || !Med.MultiReturn.empty() ||
@@ -1412,16 +1648,18 @@ nativePairReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar,
           return std::nullopt;
     }
   }
-  SourceFunctionTypeHint Pair = Scalar;
-  Pair.ReturnType = NdType::makeStruct(
-      {Scalar.ReturnType,
-       Floating ? NdType::makeFloat(8) : NdType::makeInt(8, false)});
-  Pair.ReturnLocation = {};
-  for (unsigned I = 0; I < 2; ++I) {
+  SourceFunctionTypeHint Record = Scalar;
+  std::vector<TypeRef> Fields(Count, Floating ? NdType::makeFloat(8)
+                                              : NdType::makeInt(8, false));
+  Fields[0] = Scalar.ReturnType;
+  Record.ReturnType = NdType::makeStruct(Fields);
+  Record.ReturnLocation = {};
+  for (unsigned I = 0; I < Count; ++I) {
     SourceABIValueLocation Location{Kind, Registers[I], 0, 8};
     std::optional<MedVar> Incoming;
-    // Floating pair refinement deliberately requires computed results. An
-    // unchanged incoming d1 is not evidence that a scalar function returns it.
+    // Floating record refinement deliberately requires computed results. An
+    // unchanged incoming lane is not evidence that a scalar function returns
+    // it.
     if (!Floating)
       for (const auto &Parameter : Med.Params)
         if (Parameter.Kind == MedVar::Param && Parameter.Id >= 0 &&
@@ -1429,10 +1667,10 @@ nativePairReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar,
           Incoming = Parameter;
     if (!definedReturnPaths(Med, Architecture, Location, Incoming))
       return std::nullopt;
-    Pair.ReturnComponents.push_back(Location);
+    Record.ReturnComponents.push_back(Location);
   }
-  return validateSourceABI(Pair, Error)
-             ? std::optional<SourceFunctionTypeHint>(std::move(Pair))
+  return validateSourceABI(Record, Error)
+             ? std::optional<SourceFunctionTypeHint>(std::move(Record))
              : std::nullopt;
 }
 
@@ -1650,6 +1888,67 @@ std::set<va_t> observedNativeFloatingPairReturns(const LowFunc &Function,
   return observedNativePairReturns(Function, Architecture, true);
 }
 
+std::set<va_t>
+observedNativeFourDoubleReturns(const LowFunc &Function,
+                                const SourceFunctionTypeHint &CallerSignature) {
+  std::string Error;
+  if (CallerSignature.Architecture != Arch::AArch64 ||
+      Function.Blocks.size() > 16384 ||
+      !validateSourceABI(CallerSignature, Error) ||
+      CallerSignature.ReturnComponents.size() != 4)
+    return {};
+  const auto &Registers = getTargetRegInfo(Arch::AArch64).FPParamRegs;
+  const auto Members = sourceAggregateMembers(CallerSignature.ReturnType);
+  if (Members.size() != 4 || Registers.size() < 4)
+    return {};
+  for (unsigned I = 0; I != 4; ++I) {
+    const auto &Location = CallerSignature.ReturnComponents[I];
+    if (!Members[I].Type || Members[I].Type->Kind != NdTypeKind::Float ||
+        Members[I].Type->Size != 8 || Members[I].ByteOffset != 8 * I ||
+        Location.Kind != SourceABICarrierKind::FloatingRegister ||
+        Location.RegisterOffset != Registers[I] || Location.ValueBytes != 8)
+      return {};
+  }
+  std::set<va_t> Targets;
+  size_t Budget = 262144;
+  for (const auto &Block : Function.Blocks) {
+    if (!Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
+      return {};
+    std::optional<va_t> Target;
+    unsigned Available = 0;
+    for (const auto &Op : Block.Ops) {
+      if (!Budget-- || Op.NumInputs > 6)
+        return {};
+      if (Op.Opcode == NdOp::RETURN) {
+        if (Target && Available == 15 && Block.Succs.empty())
+          Targets.insert(*Target);
+        Target.reset();
+        Available = 0;
+        continue;
+      }
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+          Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::INDIR_BR ||
+          Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR) {
+        Target.reset();
+        Available = 0;
+        if (Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
+            Op.Inputs[0].isConst() && Op.Inputs[0].Size == 8) {
+          Target = Op.Inputs[0].Offset;
+          Available = 15;
+        }
+        continue;
+      }
+      if (Target && Op.Output.isReg() && Op.Output.Size)
+        for (unsigned I = 0; I != 4; ++I)
+          if (Op.Output.Offset <= Registers[I]
+                  ? Registers[I] - Op.Output.Offset < Op.Output.Size
+                  : Op.Output.Offset - Registers[I] < 8)
+            Available &= ~(1U << I);
+    }
+  }
+  return Targets;
+}
+
 std::set<va_t> observedNativeFourWordReturns(const LowFunc &Function,
                                              Arch Architecture) {
   if (Architecture != Arch::AArch64 || Function.Blocks.size() > 16384)
@@ -1746,6 +2045,8 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
       !validateSwiftConsumedInputBindings(Image, Low, Med) ||
       !validateSwiftWitnessFrameBindings(Image, Low, Med))
     return Reject("Swift witness frame proof is no longer valid");
+  if (!validateNativeSwiftErrorBindings(Image, Low, Med, CalleeContracts))
+    return Reject("native Swift error result lacks current paired call proof");
   if (!validateNativeSwiftReceiverBindings(Image, Low, Med))
     return Reject("native Swift receiver proof is no longer valid");
   if (!validateObjCByValueCopyBindings(Image, Low, Med))
@@ -2047,17 +2348,17 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
   if (Exact.Recognized)
     return Exact.Signature;
   if (ObserveIntegerPair)
-    if (auto Pair =
-            nativePairReturn(Med, Hint, SourceABICarrierKind::IntegerRegister))
+    if (auto Pair = nativeRecordReturn(Med, Hint,
+                                       SourceABICarrierKind::IntegerRegister))
       return Pair;
   return Hint;
 }
 
 namespace {
 std::optional<SourceFunctionTypeHint>
-refineNativePairReturnHint(const MedFunc &Med, const HighFunc &High,
-                           const PipelineFunctionAudit &Audit,
-                           SourceABICarrierKind Kind) {
+refineNativeRecordReturnHint(const MedFunc &Med, const HighFunc &High,
+                             const PipelineFunctionAudit &Audit,
+                             SourceABICarrierKind Kind, unsigned Count = 2) {
   if (Med.Entry != High.Entry || !completeNativeAudit(Med.Entry, Audit) ||
       !Med.SourceParametersBound || !Med.SourceTypeHint ||
       !High.SourceTypeHint || High.DoesNotReturn || High.Body.empty() ||
@@ -2065,22 +2366,29 @@ refineNativePairReturnHint(const MedFunc &Med, const HighFunc &High,
       !equalSourceTypes(Med.ReturnType, Med.SourceTypeHint->ReturnType) ||
       !equalSourceTypes(High.ReturnType, Med.SourceTypeHint->ReturnType))
     return std::nullopt;
-  return nativePairReturn(Med, *Med.SourceTypeHint, Kind);
+  return nativeRecordReturn(Med, *Med.SourceTypeHint, Kind, Count);
 }
 } // namespace
 
 std::optional<SourceFunctionTypeHint>
 refineNativeIntegerPairReturnHint(const MedFunc &Med, const HighFunc &High,
                                   const PipelineFunctionAudit &Audit) {
-  return refineNativePairReturnHint(Med, High, Audit,
-                                    SourceABICarrierKind::IntegerRegister);
+  return refineNativeRecordReturnHint(Med, High, Audit,
+                                      SourceABICarrierKind::IntegerRegister);
 }
 
 std::optional<SourceFunctionTypeHint>
 refineNativeFloatingPairReturnHint(const MedFunc &Med, const HighFunc &High,
                                    const PipelineFunctionAudit &Audit) {
-  return refineNativePairReturnHint(Med, High, Audit,
-                                    SourceABICarrierKind::FloatingRegister);
+  return refineNativeRecordReturnHint(Med, High, Audit,
+                                      SourceABICarrierKind::FloatingRegister);
+}
+
+std::optional<SourceFunctionTypeHint>
+refineNativeFourDoubleReturnHint(const MedFunc &Med, const HighFunc &High,
+                                 const PipelineFunctionAudit &Audit) {
+  return refineNativeRecordReturnHint(
+      Med, High, Audit, SourceABICarrierKind::FloatingRegister, 4);
 }
 
 std::optional<SourceFunctionTypeHint>

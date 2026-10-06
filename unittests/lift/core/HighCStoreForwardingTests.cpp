@@ -75,7 +75,8 @@ size_t countOccurrences(llvm::StringRef Text, llvm::StringRef Needle) {
 }
 
 size_t countPointerDerefStores(llvm::StringRef Text) {
-  size_t Count = countOccurrences(Text, "neverd_mem_store_");
+  size_t Count = countOccurrences(Text, "neverd_mem_store_") +
+                 countOccurrences(Text, "__builtin_memcpy((void *)");
   size_t From = 0;
   while ((From = Text.find("*(", From)) != llvm::StringRef::npos) {
     const size_t Eq = Text.find('=', From);
@@ -98,7 +99,8 @@ size_t countPointerDerefStores(llvm::StringRef Text) {
 }
 
 size_t countPointerDerefLoads(llvm::StringRef Text) {
-  size_t Count = countOccurrences(Text, "neverd_mem_load_");
+  size_t Count = countOccurrences(Text, "neverd_mem_load_") +
+                 countOccurrences(Text, "__builtin_memcpy(&");
   size_t From = 0;
   while ((From = Text.find("*(", From)) != llvm::StringRef::npos) {
     const size_t Eq = Text.find('=', From);
@@ -169,11 +171,15 @@ TEST(HighCStoreForwarding, BoundsRepeatedTransitiveExpansion) {
       << Body->take_front(4096).str();
 }
 
-std::string emitBody(const HighFunc &Func, Arch Architecture = Arch::X64) {
+// \p Portable prints memory accesses as byte copies instead of the default
+// aligned(1), may_alias pointers, for tests that inspect that spelling.
+std::string emitBody(const HighFunc &Func, Arch Architecture = Arch::X64,
+                     bool Portable = false) {
   std::string Output;
   llvm::raw_string_ostream OS(Output);
   CEmitterOptions Options;
   Options.TheArch = Architecture;
+  Options.UseUnalignedPointers = !Portable;
   EXPECT_TRUE(HighCEmitter().emit({Func}, OS, Options));
   OS.flush();
   auto Body = functionBody(Output, Func.Name);
@@ -576,17 +582,18 @@ TEST(HighCStoreForwarding,
   Address->Operands.push_back(HighExpr::makeLoad(frameSlot(8), I32));
   Func.Body.push_back(ret(std::move(Address)));
 
-  const auto Body = emitBody(Func);
+  const auto Body = emitBody(Func, Arch::X64, /*Portable=*/true);
   // Escaped frame addresses use the common backing buffer so the store and
   // returned pointer retain the same memory identity.
   EXPECT_NE(Body.find("uint8_t stack_storage["), std::string::npos) << Body;
   EXPECT_NE(Body.find("frame_base = (uintptr_t)(stack_storage +"),
             std::string::npos)
       << Body;
-  EXPECT_NE(Body.find("neverd_mem_store_0((uintptr_t)((uintptr_t)(frame_base) "
-                      "- 8), arg0);"),
+  EXPECT_NE(Body.find("= (uintptr_t)((uintptr_t)(frame_base) - 8);"),
             std::string::npos)
       << Body;
+  EXPECT_NE(Body.find("= arg0;"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("__builtin_memcpy((void *)"), std::string::npos) << Body;
   EXPECT_NE(Body.find("return (int32_t *)"), std::string::npos) << Body;
   EXPECT_NE(Body.find("(uint64_t)(frame_base) - (uint64_t)(8)"),
             std::string::npos)

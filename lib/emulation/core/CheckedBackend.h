@@ -29,6 +29,8 @@ public:
   llvm::Error replaceAliases(llvm::ArrayRef<GuestAliasRange>,
                              llvm::ArrayRef<GuestAliasMapping>) override;
   llvm::Error protect(uint64_t, uint64_t, unsigned) override;
+  llvm::Error mapMMIO(uint64_t, uint64_t, GuestMMIOCallbacks) override;
+  llvm::Error unmapMMIO(uint64_t, uint64_t) override;
   llvm::Error read(uint64_t, llvm::MutableArrayRef<uint8_t>) override;
   llvm::Error write(uint64_t, llvm::ArrayRef<uint8_t>) override;
   llvm::Error fetch(uint64_t, llvm::MutableArrayRef<uint8_t>) override;
@@ -39,13 +41,19 @@ public:
   llvm::Error snapshotBacking(uint64_t,
                               llvm::MutableArrayRef<uint8_t>) override;
   llvm::Error installHooks(BackendHooks) override;
+  void setExecutionWatches(const std::vector<ExecutionWatch> &W) override {
+    // A new epoch forces the direct page tables to be rebuilt with this set
+    // marked non-executable; the checked path reads the set per instruction.
+    ExecutionWatches = W;
+    ++WatchEpoch;
+  }
   llvm::Expected<ExecutionExit> runUntilExit(uint64_t, uint64_t) override;
   void stop() override { StopRequested.store(true); }
   bool timedOut() const override { return TimedOut; }
   bool hasMemoryFault() const override {
     return FirstFault && FirstFault->Access.has_value();
   }
-  bool hasDeviceError() const override { return false; }
+  bool hasDeviceError() const override { return DeviceFailed; }
   bool executable(uint64_t Address) const override {
     auto Result = Memory->addressSpace()->canAccess(
         Address, 1, executionPermissions(Execute));
@@ -64,8 +72,9 @@ public:
 
 protected:
   CheckedBackend(unsigned MaxInstructionBytes, unsigned InstructionAlignment,
-                 bool UserMode)
-      : UserMode(UserMode), InstructionBytes(MaxInstructionBytes),
+                 bool UserMode, bool Direct = false)
+      : UserMode(UserMode), Direct(Direct),
+        InstructionBytes(MaxInstructionBytes),
         InstructionAlignment(InstructionAlignment) {}
   llvm::Error initializeDecoder(cs_arch, cs_mode);
   virtual bool canonicalRange(uint64_t, uint64_t) const = 0;
@@ -73,6 +82,11 @@ protected:
   virtual uint64_t programCounter() const = 0;
   virtual void setProgramCounter(uint64_t PC) = 0;
   virtual llvm::Error execute(const cs_insn &) = 0;
+  virtual void onGuestException() {}
+  /// A direct contract admits nothing. The transport runs guest code until
+  /// the processor raises an event, which this call publishes as a pending
+  /// service request or a fault before it returns.
+  virtual llvm::Error executeDirect();
   virtual std::optional<ServiceRequest>
   decodeServiceRequest(const cs_insn &) const = 0;
   /// Context capture may occur in an instruction observer, but no mutation or
@@ -82,10 +96,14 @@ protected:
   llvm::Error access(uint64_t, uint64_t, unsigned, bool Recoverable = false,
                      bool Guest = false);
   llvm::Error raiseFault(BackendFault, bool Recoverable);
+  /// Whether \p Address lies in a current execution watch. A direct run uses
+  /// this to tell a watched-page fetch fault from a real one.
+  bool executionWatched(uint64_t Address) const;
   unsigned executionPermissions(unsigned P) const {
     return P | (UserMode ? UserAccessible : 0);
   }
   const bool UserMode;
+  const bool Direct;
   std::unique_ptr<MemoryProjection> Memory;
   BackendHooks Hooks;
   csh Decoder = 0;
@@ -93,8 +111,13 @@ protected:
   std::optional<BackendFault> FirstFault, RecoverableFault;
   std::optional<ServiceRequest> PendingService;
   bool Running = false, TimedOut = false;
+  bool DeviceFailed = false;
   std::atomic<bool> StopRequested{false};
   std::chrono::steady_clock::time_point Deadline;
+  // Watches a direct run marks non-executable, and a counter that changes
+  // whenever the set does, so the page-table projection is rebuilt for it.
+  std::vector<ExecutionWatch> ExecutionWatches;
+  uint64_t WatchEpoch = 0;
 
 private:
   llvm::Error runImpl(uint64_t PC, uint64_t Timeout, bool &Started,
@@ -104,6 +127,7 @@ private:
   std::vector<uint8_t> InstructionBytes;
   cs_insn *Decoded = nullptr;
   unsigned InstructionAlignment;
+  std::atomic_flag Entered = ATOMIC_FLAG_INIT;
 };
 } // namespace neverd::emulation
 #endif

@@ -3,13 +3,18 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "DarwinFileTestData.h"
+#include "DarwinSystemTestData.h"
 #include "DarwinTestImage.h"
+#include "DarwinTimeTestData.h"
 #include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 #include "os/darwin/process/DarwinProcess.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
 #include "neverd/emulation/ProcessSession.h"
+
+#include "llvm/ADT/StringExtras.h"
 
 namespace neverd::emulation {
 namespace {
@@ -119,6 +124,512 @@ TEST_P(DarwinProcess, MainReturnAndBSDExitHaveRealStatus) {
     EXPECT_EQ(Result->ExitStatus, 37);
   }
 }
+TEST_P(DarwinProcess,
+       FilesShareOffsetsAcrossDupAndKeepPositionedReadsIndependent) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.Arguments[2] = "/data";
+  for (auto Mode : {"files", "files-nocancel"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(Result->StandardOutput, "f");
+    ASSERT_FALSE(Result->Services.empty());
+    EXPECT_EQ(Result->Services.front().Number,
+              (GetParam().ISA == GuestArchitecture::X64 ? 0x2000000u : 0u) +
+                  (Mode == llvm::StringRef("files") ? 5u : 398u));
+    EXPECT_EQ(Result->Services.front().Error, false);
+  }
+}
+TEST_P(DarwinProcess,
+       WritableFilesPreserveSharedContentsOffsetsAndNativeErrorOrder) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->WritableFiles.insert("/data");
+  Options.Arguments[2] = "/data";
+  for (auto Mode : {"writable-files", "writable-files-nocancel"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(Result->StandardOutput, "00006e");
+    EXPECT_TRUE(Result->StandardError.empty());
+    const uint64_t Class =
+        GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+    const uint64_t Pwrite =
+        Class + (llvm::StringRef(Mode).ends_with("nocancel") ? 415 : 154);
+    unsigned Positioned = 0;
+    for (const auto &Event : Result->Services)
+      if (Event.Number == Pwrite)
+        ++Positioned;
+    EXPECT_EQ(Positioned, 5u);
+  }
+}
+TEST_P(DarwinProcess,
+       VirtualFileMetadataTracksConfiguredAllocationAndSharedLifetime) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->WritableFiles.insert("/data");
+  Options.DarwinFiles->Metadata["/data"] = darwin_test::mutationMetadata();
+  Options.DarwinFiles->MutationPolicies["/data"] = darwin_test::MutationPolicy;
+  Options.Arguments[2] = "/data";
+  auto Result = run("virtual-file-metadata");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+            darwin_test::MutationMetadataHex);
+  EXPECT_TRUE(Result->StandardError.empty());
+}
+TEST_P(DarwinProcess,
+       SparseSeekPreservesNativeBoundariesAndDescriptionLifetime) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->WritableFiles.insert("/data");
+  Options.DarwinFiles->Metadata["/data"] = darwin_test::mutationMetadata();
+  Options.DarwinFiles->MutationPolicies["/data"] = darwin_test::MutationPolicy;
+  Options.Arguments[2] = "/data";
+  auto Result = run("sparse-file-seek");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "s");
+  EXPECT_TRUE(Result->StandardError.empty());
+}
+TEST_P(DarwinProcess,
+       RenamePreservesReplacementIdentityPathsAndMappedLifetime) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->WritableFiles.insert("/data");
+  Options.DarwinFiles->Metadata["/data"] = darwin_test::mutationMetadata();
+  Options.DarwinFiles->MutationPolicies["/data"] = darwin_test::MutationPolicy;
+  Options.DarwinFiles->Metadata["/"] = darwin_test::creationParentMetadata();
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.DarwinFiles->InitialUmask = 0027;
+  Options.DarwinFiles->CreationPolicy = darwin_test::CreationPolicy;
+  Options.Arguments[2] = "/data";
+  auto Result = run("renamed-file");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "r");
+  EXPECT_TRUE(Result->StandardError.empty());
+}
+
+TEST_P(DarwinProcess, CreationMetadataUsesExplicitIdentityUmaskAndParentGroup) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->Metadata["/data"] = darwin_test::mutationMetadata();
+  Options.DarwinFiles->Metadata["/"] = darwin_test::creationParentMetadata();
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.DarwinFiles->InitialUmask = 0027;
+  Options.DarwinFiles->CreationPolicy = darwin_test::CreationPolicy;
+  Options.Arguments[2] = "/data";
+  for (const char *Mode :
+       {"created-file-metadata", "virtual-created-metadata"}) {
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+              llvm::StringRef(Mode) == "created-file-metadata"
+                  ? "71"
+                  : darwin_test::CreationMetadataHex);
+    EXPECT_TRUE(Result->StandardError.empty());
+  }
+}
+
+TEST_P(DarwinProcess, CreatePreservesExclusiveChecksAndReusedNameLifetime) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->WritableFiles.insert("/data");
+  Options.DarwinFiles->Metadata["/data"] = darwin_test::mutationMetadata();
+  Options.DarwinFiles->MutationPolicies["/data"] = darwin_test::MutationPolicy;
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.Arguments[2] = "/data";
+  auto Result = run("created-file");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "c");
+  EXPECT_TRUE(Result->StandardError.empty());
+}
+
+TEST_P(DarwinProcess, UnlinkPreservesOpenObjectsAndNativeNameLifetime) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->WritableFiles.insert("/data");
+  Options.DarwinFiles->Metadata["/data"] = darwin_test::mutationMetadata();
+  Options.DarwinFiles->MutationPolicies["/data"] = darwin_test::MutationPolicy;
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.Arguments[2] = "/data";
+  auto Result = run("unlinked-file");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "u");
+  EXPECT_TRUE(Result->StandardError.empty());
+}
+TEST_P(DarwinProcess,
+       PrivateFileMappingsRetainCopiesAfterCloseAndPreserveOffsets) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.Arguments[2] = "/data";
+  auto Result = run("file-mapping");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "m");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+}
+TEST_P(DarwinProcess, DirectoryRelativePathsAndCWDMatchNativeLifetime) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->Metadata["/data"] = darwin_test::metadata();
+  Options.DarwinFiles->Directories.insert("/empty");
+  Options.DarwinFiles->WorkingDirectory = "/empty";
+  Options.Arguments[2] = "/data";
+  auto Result = run("directories");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "d");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+}
+TEST_P(DarwinProcess, DirectoryEnumerationPreservesRecordsCookiesAndCopyOrder) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->Metadata["/data"] = darwin_test::metadata();
+  Options.DarwinFiles->Directories.insert("/empty");
+  Options.DarwinFiles->DirectoryContents["/"] =
+      darwin_test::directoryContents();
+  Options.Arguments[2] = "/data";
+  auto Result = run("directory-entries");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "e");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+}
+TEST_P(DarwinProcess, InitialDirectoryRemovalRetainsObjectsAfterNameReuse) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.DarwinFiles->Directories.insert("/empty");
+  Options.DarwinFiles->RemovableDirectories.insert("/empty");
+  Options.Arguments[2] = "/data";
+  auto Result = run("initial-directory-removal");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "j");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {137u, 475u, 472u, 13u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Result == 0 &&
+             Event.Error == false;
+    })) << Number;
+}
+TEST_P(DarwinProcess,
+       DeletedDirectoriesRetainObjectsParentsAndWorkingDirectory) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.Arguments[2] = "/data";
+  auto Result = run("deleted-directories");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "h");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {475u, 472u, 13u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Result == 0 &&
+             Event.Error == false;
+    })) << Number;
+}
+TEST_P(DarwinProcess, DirectoryMutationsPreserveNamespaceAndOrphanFiles) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.Arguments[2] = "/data";
+  auto Result = run("directory-mutations");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "m");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {136u, 475u, 137u, 472u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Result == 0 &&
+             Event.Error == false;
+    })) << Number;
+}
+TEST_P(DarwinProcess, FileExistenceUsesNativeModeBitsAndPathErrorOrder) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.Arguments[2] = "/data";
+  auto Result = run("file-access");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "a");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {33u, 466u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Result == 0 &&
+             Event.Error == false;
+    })) << Number;
+}
+TEST_P(DarwinProcess,
+       VectorIOPreservesCopyOrderFaultPrefixesAndAggregateOffsets) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->WritableFiles.insert("/data");
+  Options.Arguments[2] = "/data";
+  auto Result = run("vectored-io");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "v!");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {120u, 121u, 411u, 412u, 540u, 541u, 542u, 543u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Result &&
+             Event.Error == false;
+    })) << Number;
+}
+TEST_P(DarwinProcess, SystemQueriesPreserveExplicitValuesWidthsAndCopyOrder) {
+  auto Missing = run("system-info");
+  ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+  EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Missing->Diagnostic, "Darwin sysctl observation is not configured");
+  EXPECT_TRUE(Missing->StandardOutput.empty());
+  Options.DarwinSystem = darwin_test::systemOptions();
+  for (auto Mode : {"system-info", "virtual-system"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(Result->StandardOutput,
+              Mode == llvm::StringRef("system-info")
+                  ? "i"
+                  : llvm::fromHex(darwin_test::SystemHex));
+    EXPECT_TRUE(Result->StandardError.empty());
+    EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+    ASSERT_GE(Result->Services.size(), 3u);
+    const uint64_t Class =
+        GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+    EXPECT_EQ(Result->Services[0].Number, Class + 274);
+    EXPECT_EQ(Result->Services[2].Number, Class + 202);
+    EXPECT_EQ(Result->Services[2].Arguments[1], 0x1234567800000002ULL);
+    EXPECT_EQ(Result->Services[2].Result, 0u);
+    EXPECT_EQ(Result->Services[2].Error, false);
+  }
+}
+TEST_P(DarwinProcess, ExplicitTimeObservationsPreserveBytesErrorsAndCopyOrder) {
+  auto Null = run("time-null");
+  ASSERT_TRUE(bool(Null)) << llvm::toString(Null.takeError());
+  EXPECT_EQ(Null->Stop, ProcessStopReason::Exited) << Null->Diagnostic;
+  EXPECT_EQ(Null->ExitStatus, 37);
+  auto Missing = run("time");
+  ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+  EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_TRUE(Missing->StandardOutput.empty());
+  Options.DarwinTime = darwin_test::timeOptions();
+  for (auto Mode : {"time", "time-values"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(Result->StandardOutput,
+              Mode == llvm::StringRef("time")
+                  ? "t"
+                  : llvm::fromHex(darwin_test::TimeHex));
+    EXPECT_TRUE(Result->StandardError.empty());
+    EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+    ASSERT_FALSE(Result->Services.empty());
+    EXPECT_EQ(Result->Services.front().Number,
+              (GetParam().ISA == GuestArchitecture::X64 ? 0x2000000u : 0u) +
+                  116u);
+    EXPECT_EQ(Result->Services.front().Result, 0u);
+    EXPECT_EQ(Result->Services.front().Error, false);
+  }
+}
+TEST_P(DarwinProcess, MachTimePreservesReturnStateAndExplicitObservations) {
+  auto Missing = run("mach-time");
+  ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+  EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Missing->Diagnostic, "Darwin timebase is not configured");
+  const bool X64 = GetParam().ISA == GuestArchitecture::X64;
+  const uint64_t Timebase = X64 ? 0x01000059ULL : uint64_t(-89);
+  Options.DarwinTime = darwin_test::timeOptions();
+  for (auto Mode : {"mach-time", "mach-timebase-values"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(Result->StandardOutput,
+              Mode == llvm::StringRef("mach-time")
+                  ? "h"
+                  : llvm::fromHex(darwin_test::TimebaseHex));
+    ASSERT_GE(Result->Services.size(), 13u);
+    for (size_t I = 0; I != 12; ++I) {
+      EXPECT_EQ(Result->Services[I].Result, 0u);
+      EXPECT_FALSE(Result->Services[I].Error.has_value());
+    }
+    EXPECT_EQ(Result->Services[0].Number, Timebase);
+    EXPECT_EQ(Result->Services[4].Number, uint32_t(Timebase));
+    EXPECT_EQ(Result->Services[5].Number,
+              0x1234567800000000ULL | uint32_t(Timebase));
+    EXPECT_EQ(Result->Services.back().Error, false); // BSD write
+    if (Mode == llvm::StringRef("mach-time")) {
+      EXPECT_EQ(Result->Services[12].Result, 1000u);
+      EXPECT_EQ(Result->Services[13].Number,
+                X64 ? 0x1234567802000014ULL : 0x1234567800000014ULL);
+      EXPECT_EQ(Result->Services[13].Error, false);
+      EXPECT_EQ(Result->Services[14].Error, true); // BSD read(999)
+      EXPECT_EQ(Result->Services[15].Error, true); // BSD write(999)
+    }
+  }
+  auto Clocks = run("mach-clock-values");
+  ASSERT_TRUE(bool(Clocks)) << llvm::toString(Clocks.takeError());
+  if (X64) {
+    EXPECT_EQ(Clocks->Stop, ProcessStopReason::UnsupportedService);
+  } else {
+    ASSERT_EQ(Clocks->Stop, ProcessStopReason::Exited) << Clocks->Diagnostic;
+    EXPECT_EQ(Clocks->ExitStatus, 37);
+    EXPECT_EQ(Clocks->StandardOutput, llvm::fromHex(darwin_test::MachClockHex));
+    ASSERT_EQ(Clocks->Services.size(), 3u);
+    EXPECT_EQ(Clocks->Services[0].Result, 0xfedcba9876543210ULL);
+    EXPECT_EQ(Clocks->Services[1].Result, UINT64_MAX);
+    EXPECT_FALSE(Clocks->Services[0].Error);
+    EXPECT_FALSE(Clocks->Services[1].Error);
+  }
+  for (auto Mode : {"mach-absolute", "mach-continuous"}) {
+    SCOPED_TRACE(Mode);
+    Options.DarwinTime.emplace();
+    for (bool Configured : {false, true}) {
+      if (Configured) {
+        if (Mode == llvm::StringRef("mach-absolute"))
+          Options.DarwinTime->MachAbsoluteTime = 0;
+        else
+          Options.DarwinTime->MachContinuousTime = 0;
+      }
+      auto Result = run(Mode);
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      if (X64 || !Configured) {
+        EXPECT_EQ(Result->Stop, ProcessStopReason::UnsupportedService);
+        EXPECT_TRUE(Result->StandardOutput.empty());
+      } else {
+        EXPECT_EQ(Result->Stop, ProcessStopReason::Exited)
+            << Result->Diagnostic;
+        EXPECT_EQ(Result->ExitStatus, 37);
+        EXPECT_EQ(Result->StandardOutput, std::string(8, '\0'));
+      }
+    }
+  }
+}
+TEST_P(DarwinProcess, FiniteStandardInputRetainsBinaryBytesAndSharedCursor) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->StandardInput = {0, 0xff, 'x'};
+  auto Result = run("stdin");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, std::string("\0\xffx", 3));
+  EXPECT_TRUE(Result->StandardError.empty());
+}
+TEST_P(DarwinProcess,
+       Stat64ObservationsPreserveLayoutErrorsAndDescriptorState) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.Arguments[2] = "/data";
+  auto Missing = run("file-status");
+  ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+  EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Missing->Services.size(), 1u);
+  EXPECT_TRUE(Missing->StandardOutput.empty());
+  Options.DarwinFiles->Metadata["/data"] = darwin_test::metadata();
+  auto Result = run("file-status");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "s");
+  EXPECT_TRUE(Result->StandardError.empty());
+  ASSERT_FALSE(Result->Services.empty());
+  EXPECT_EQ(Result->Services.front().Number,
+            (GetParam().ISA == GuestArchitecture::X64 ? 0x2000000u : 0u) +
+                338u);
+  EXPECT_EQ(Result->Services.front().Result, 0u);
+  EXPECT_EQ(Result->Services.front().Error, false);
+}
+TEST_P(DarwinProcess, OutputDescriptorsCanBeClosedReusedAndRedirected) {
+  auto Result = run("output-descriptors");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "ok");
+  EXPECT_TRUE(Result->StandardError.empty());
+  Options.OutputLimit = 1;
+  Result = run("output-descriptors");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  EXPECT_EQ(Result->Stop, ProcessStopReason::OutputLimit);
+  EXPECT_EQ(Result->StandardOutput, "o");
+}
+TEST_P(DarwinProcess, MissingFileAndInputConfigurationStopWithoutHostAccess) {
+  for (auto Mode : {"files", "stdin"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    EXPECT_EQ(Result->Stop, ProcessStopReason::UnsupportedService);
+    ASSERT_FALSE(Result->Services.empty());
+    EXPECT_FALSE(Result->Services.back().Result);
+    EXPECT_FALSE(Result->Services.back().Error);
+    EXPECT_TRUE(Result->StandardOutput.empty());
+  }
+}
 TEST_P(DarwinProcess, PartialCopyRetainsEFAULTAndSubsequentWriteRecovers) {
   auto Result = run("partial");
   ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
@@ -184,7 +695,9 @@ TEST_P(DarwinProcess, FaultAndReadOnlyStoreRemainCPUFailures) {
   }
 }
 TEST_P(DarwinProcess, UnknownBSDMachAndForeignTrapFailExplicitly) {
-  for (auto Mode : {"unknown", "mach", "badtrap"}) {
+  Options.DarwinTime = darwin_test::timeOptions();
+  for (auto Mode : {"unknown", "mach", "badtrap", "mach-int32-min",
+                    "mach-wrong-class", "mach-foreign-class"}) {
     SCOPED_TRACE(Mode);
     auto Result = run(Mode);
     ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());

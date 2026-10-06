@@ -1,0 +1,63 @@
+//===- WindowsAtomicResults.def - Original LSE program result contract ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Original clean-source native Windows ARM64 observations:
+// https://github.com/NeverSight/NeverD/actions/runs/37362062927
+// Source: 38f69732af94def5e2304fb30bee3d46c6584a8a
+// Program SHA-256:
+// 56a8a9d7acea40c125c82cf37d2e4a519e8b02d5364ebca3e93765a312a9cbdc
+// All 1,100 native records pass the corrected read/write fault validator.
+// Hashes retain operand results, NZCV, exception metadata and every RAM byte;
+// only verified code/data placement is normalized.
+#ifdef NEVERD_ATOMIC_RESULT_GROUP
+NEVERD_ATOMIC_RESULT_GROUP(
+    Add, 100,
+    "4e3a7be9d1411f7101e6662c27282e80d5977c9b6c9e7eb298a14b7284380e00")
+NEVERD_ATOMIC_RESULT_GROUP(
+    Clear, 100,
+    "c4b9f3e6cb6aa65325d0d5506729711ceefd6aefbd28fd62f75aa1162c23b364")
+NEVERD_ATOMIC_RESULT_GROUP(
+    Xor, 100,
+    "6e30afd8c8994d02ec85f1bf7f9cf6e104d6554aad5e9ace1cf03e2692800f95")
+NEVERD_ATOMIC_RESULT_GROUP(
+    Set, 100,
+    "8ad77a20fad64b8039167bd42ffa4b1a731dad907ee773b7af26979fc297dbff")
+NEVERD_ATOMIC_RESULT_GROUP(
+    SignedMax, 100,
+    "ec45e0306beb1e9cfacf302cefc9e3870132b692f6c19936eba0db0a021b6533")
+NEVERD_ATOMIC_RESULT_GROUP(
+    SignedMin, 100,
+    "d2e7d0395eb43352e6f93e5cbdf5aa5ecce97911774e1fd0d239d5003d811dc7")
+NEVERD_ATOMIC_RESULT_GROUP(
+    UnsignedMax, 100,
+    "8c5af1bc51c50c84f80f64b8bbee2596f003dbe7f3c40b405d3755f0ee30b0c1")
+NEVERD_ATOMIC_RESULT_GROUP(
+    UnsignedMin, 100,
+    "8afba7310779aa4cbf34b90df83d3ac2d330d01e4393e5daecba851c8a7fac16")
+NEVERD_ATOMIC_RESULT_GROUP(
+    Swap, 100,
+    "f72d90e8019f3e7edd784b0ec47aed52159b8a6fbb7df3ccb6870204291c0e8f")
+NEVERD_ATOMIC_RESULT_GROUP(
+    Compare, 132,
+    "c22d35f97571ea355ac6fb486172e42055fab34da4f213be2a1a4e2382b4d7ed")
+NEVERD_ATOMIC_RESULT_GROUP(
+    ComparePair, 68,
+    "a0d9a5e9cd42b61ea20a9d57378fae72c252360b92b35b2ba904d375224d787f")
+#endif
+#ifdef NEVERD_ATOMIC_RESULT_VALUE
+NEVERD_ATOMIC_RESULT_VALUE(InstructionLimit, 10000000)
+NEVERD_ATOMIC_RESULT_VALUE(EventLimit, 100000)
+NEVERD_ATOMIC_RESULT_VALUE(TimeoutMicroseconds, 120000000)
+NEVERD_ATOMIC_RESULT_VALUE(OutputLimit, 1048576)
+#endif
+#ifdef NEVERD_ATOMIC_RESULT_TEXT
+NEVERD_ATOMIC_RESULT_TEXT(
+    MissingTools, "Clang and lld-link are required for original PE fixtures")
+#endif
+#ifdef NEVERD_ATOMIC_RESULT_BACKEND
+NEVERD_ATOMIC_RESULT_BACKEND(KVM)
+NEVERD_ATOMIC_RESULT_BACKEND(WHP)
+NEVERD_ATOMIC_RESULT_BACKEND(Unicorn)
+#endif

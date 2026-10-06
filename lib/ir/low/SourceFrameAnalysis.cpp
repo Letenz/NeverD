@@ -88,6 +88,7 @@ struct ByteFact {
     Entry,
     Frame,
     FrameOrExternal,
+    BorrowedOutput,
     Constant,
     Definition
   } TheKind = Unknown;
@@ -105,6 +106,7 @@ struct State {
   // A written unknown value has no identity in Stack, but still initializes
   // its bytes. Private-frame and by-value-copy proofs share this must-set.
   std::set<int64_t> InitializedStack;
+  std::set<int64_t> OutputWrites;
   struct ScratchIdentity {
     SourceFrameScratchEffect::Domain Domain;
     size_t Bytes;
@@ -239,7 +241,8 @@ public:
         EntrySignature(EntrySignature) {
     TrackInitializedFrame = RequirePrivateFrame;
     for (const auto &[Site, Contract] : Calls)
-      TrackInitializedFrame |= !Contract.InitializedFrameParameters.empty() ||
+      TrackInitializedFrame |= !Contract.InitializesFrameParameters.empty() ||
+                               !Contract.InitializedFrameParameters.empty() ||
                                !Contract.OpaqueValueParameters.empty() ||
                                !Contract.ByValueFrameParameters.empty() ||
                                Contract.InitializesIndirectResult;
@@ -292,6 +295,14 @@ public:
   int64_t RequiredFrameSize = 0;
   bool TrackDefinitions = false;
   bool TrackInitializedFrame = false;
+  bool OutputQuery = false;
+  size_t OutputExtent = 0;
+  void outputParameter(uint64_t Register) {
+    OutputQuery = TrackInitializedFrame = true;
+    for (unsigned I = 0; I != 8; ++I)
+      Initial.Registers[Register + I] = {ByteFact::BorrowedOutput, 0, I, true};
+  }
+
   std::optional<NativeSourceCallKey> CopyQuery;
   std::optional<std::vector<SourceFrameByValueCopy>> Copies;
   std::optional<SourceFrameLoadDefinition> LoadedDefinition;
@@ -363,6 +374,28 @@ public:
           return std::nullopt;
       return First.Value;
     };
+    auto OutputOffset = [&](const NdVar &Value) -> std::optional<int64_t> {
+      if (!OutputQuery || Value.Size != 8)
+        return std::nullopt;
+      const auto First = Read(Value, 0);
+      if (First.TheKind != ByteFact::BorrowedOutput)
+        return std::nullopt;
+      for (unsigned I = 0; I != 8; ++I)
+        if (Read(Value, I) !=
+            ByteFact{ByteFact::BorrowedOutput, First.Value, I, true})
+          return std::nullopt;
+      return First.Value;
+    };
+    auto WriteOutput = [&](int64_t Address, size_t Bytes) {
+      if (Address < 0 || !Bytes || Bytes > 256 ||
+          Address > 256 - int64_t(Bytes) || Remaining < Bytes)
+        return false;
+      Remaining -= Bytes;
+      OutputExtent = std::max(OutputExtent, size_t(Address) + Bytes);
+      for (size_t I = 0; I != Bytes; ++I)
+        Current.OutputWrites.insert(Address + int64_t(I));
+      return true;
+    };
     auto BorrowedFrame = [&](const NdVar &Value,
                              size_t Bytes) -> std::optional<int64_t> {
       if (const auto Exact = FrameOffset(Value))
@@ -427,8 +460,9 @@ public:
       Remaining -= Cost;
       // Scalar frame arithmetic may build private addresses, but its result
       // must never influence a source-visible control or value effect.
-      if (RequirePrivateFrame && MayBeFrame && Op.Opcode != NdOp::LOAD &&
-          Op.Opcode != NdOp::STORE && !privateFrameScalarTransfer(Op.Opcode))
+      if ((RequirePrivateFrame || OutputQuery) && MayBeFrame &&
+          Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE &&
+          !privateFrameScalarTransfer(Op.Opcode))
         return false;
       if (UsedEntryRegisters && Op.Opcode != NdOp::COPY &&
           Op.Opcode != NdOp::RETURN) {
@@ -588,6 +622,7 @@ public:
         std::map<int64_t, State::ValueIdentity> InitializedValues;
         std::set<int64_t> DestroyedValues;
         std::vector<std::pair<int64_t, size_t>> ValueWrites;
+        std::vector<std::pair<int64_t, size_t>> CompleteWrites;
         const auto Initialized = [&](int64_t Address, size_t Bytes) {
           if (Remaining < Bytes)
             return false;
@@ -711,6 +746,15 @@ public:
                  !Initialized(*Address, BorrowedBytes)))
               return false;
             BorrowedRanges.emplace_back(*Address, BorrowedBytes);
+            if (Found->second.InitializesFrameParameters.count(
+                    ParameterIndex)) {
+              if (Writable == Found->second.WritableFrameParameters.end() ||
+                  !FrameOffset(NdVar::reg(Location.RegisterOffset, 8)) ||
+                  *Address % 8)
+                return false;
+              CompleteWrites.emplace_back(*Address, BorrowedBytes);
+            }
+
             if (const auto Value =
                     Found->second.OpaqueValueParameters.find(ParameterIndex);
                 Value != Found->second.OpaqueValueParameters.end()) {
@@ -803,15 +847,52 @@ public:
           }
         }
         if (Found->second.InitializesIndirectResult) {
-          const auto Address = FrameOffset(
-              NdVar::reg(Signature.ReturnLocation.RegisterOffset, 8));
+          const auto ResultRegister = Signature.ReturnLocation.RegisterOffset;
+          const auto Address = FrameOffset(NdVar::reg(ResultRegister, 8));
           const size_t Bytes = Signature.ReturnType->Size;
-          if (Tail || !Address || *Address % 8 || *Address < *SP ||
-              *Address > -static_cast<int64_t>(Bytes))
-            return false;
-          InitializedResult = {*Address, Bytes};
-          WritableFrameRanges.emplace_back(*Address, Bytes);
-          BorrowedRanges.emplace_back(*Address, Bytes);
+          const auto Output = OutputOffset(NdVar::reg(ResultRegister, 8));
+          if (Output) {
+            if (*Output % 8 || !WriteOutput(*Output, Bytes))
+              return false;
+          } else if (Address) {
+            if (Tail || *Address % 8 || *Address < *SP ||
+                *Address > -static_cast<int64_t>(Bytes))
+              return false;
+            InitializedResult = {*Address, Bytes};
+            WritableFrameRanges.emplace_back(*Address, Bytes);
+            BorrowedRanges.emplace_back(*Address, Bytes);
+          } else {
+            // An internal source projection can expose the unchanged incoming
+            // result address as an explicit scalar parameter. Authenticate all
+            // eight entry bytes, rather than treating an unknown x8 value or a
+            // return ABI as storage evidence. Real result writes remain in call
+            // lowering. This grants no private-frame initialization or entry
+            // record return and does not guess the external buffer's contents.
+            if (!EntrySignature ||
+                (RequirePrivateFrame && !ExternalMemoryDisjoint) ||
+                std::none_of(
+                    EntrySignature->Parameters.begin(),
+                    EntrySignature->Parameters.end(), [&](const auto &P) {
+                      return P.Type && P.Type->Size == 8 &&
+                             (P.Type->Kind == NdTypeKind::Ptr ||
+                              P.Type->Kind == NdTypeKind::Int) &&
+                             !P.IndirectByValue && P.Components.empty() &&
+                             P.TheRole ==
+                                 SourceParameterTypeHint::Role::Ordinary &&
+                             P.Location.Kind ==
+                                 SourceABICarrierKind::IntegerRegister &&
+                             P.Location.RegisterOffset == ResultRegister &&
+                             P.Location.ValueBytes == 8;
+                    }))
+              return false;
+            for (unsigned I = 0; I < 8; ++I)
+              if (lookup(Current.Registers, ResultRegister + I) !=
+                  ByteFact{ByteFact::Entry,
+                           static_cast<int64_t>(ResultRegister + I)})
+                return false;
+            if (UsedEntryRegisters)
+              UsedEntryRegisters->insert(ResultRegister);
+          }
         }
         // A source-level copy changes the address seen by the callee. Another
         // frame argument must not expose an alias of that disposable storage.
@@ -821,6 +902,17 @@ public:
                 Address < Copy.FrameOffset + int64_t(Copy.Bytes))
               return false;
           BorrowedRanges.emplace_back(Copy.FrameOffset, Copy.Bytes);
+        }
+        for (const auto &[Start, Size] : CompleteWrites) {
+          size_t Overlaps = 0;
+          if (Remaining < BorrowedRanges.size())
+            return false;
+          Remaining -= BorrowedRanges.size();
+          for (const auto &[Address, Bytes] : BorrowedRanges)
+            Overlaps += Start < Address + int64_t(Bytes) &&
+                        Address < Start + int64_t(Size);
+          if (Overlaps != 1)
+            return false;
         }
         for (const auto &[Start, Size] : ValueWrites) {
           // The producer/destroyer certificate does not authorize aliases
@@ -871,6 +963,15 @@ public:
           std::erase_if(Current.InitializedStack, [&](int64_t Byte) {
             return Byte >= Address && Byte - Address < int64_t(Bytes);
           });
+        }
+        for (const auto &[Address, Bytes] : CompleteWrites) {
+          if (Remaining < Bytes)
+            return false;
+          Remaining -= Bytes;
+          for (size_t I = 0; I != Bytes; ++I) {
+            Current.Stack.erase(Address + int64_t(I));
+            Current.InitializedStack.insert(Address + int64_t(I));
+          }
         }
         if (InitializedResult) {
           const auto [Address, Bytes] = *InitializedResult;
@@ -963,6 +1064,13 @@ public:
         if (Index + 1 != Block.Ops.size() || !Block.Succs.empty() ||
             (CheckExits && !IsRestored()))
           return false;
+        if (CheckExits && OutputQuery) {
+          if (!OutputExtent || Current.OutputWrites.size() != OutputExtent)
+            return false;
+          for (size_t I = 0; I != OutputExtent; ++I)
+            if (!Current.OutputWrites.count(int64_t(I)))
+              return false;
+        }
         if (CheckExits && EntrySignature) {
           const auto Escapes = [&](const SourceABIValueLocation &Location) {
             if (Location.Kind != SourceABICarrierKind::IntegerRegister &&
@@ -1027,6 +1135,18 @@ public:
           std::swap(Base, Constant);
         const auto Address = FrameOffset(Op.Inputs[Base]);
         const auto Delta = signedConstant(Op.Inputs[Constant]);
+        if (const auto Output = OutputOffset(Op.Inputs[Base]);
+            Output && Delta) {
+          if (*Delta < -256 || *Delta > 256)
+            return false;
+          const auto Next =
+              *Output + (Op.Opcode == NdOp::INT_SUB ? -*Delta : *Delta);
+          if (Next < 0 || Next > 256)
+            return false;
+          for (unsigned I = 0; I != 8; ++I)
+            Value[I] = {ByteFact::BorrowedOutput, Next, I, true};
+        }
+
         if (Address && Delta && *Delta >= -MaxFrame && *Delta <= MaxFrame) {
           const int64_t Next =
               *Address + (Op.Opcode == NdOp::INT_SUB ? -*Delta : *Delta);
@@ -1044,6 +1164,23 @@ public:
         if (!Memory.Complete || !Memory.Address || Memory.AccessSize > 64)
           return false;
         const auto Address = FrameOffset(*Memory.Address);
+        if (const auto Output = OutputOffset(*Memory.Address)) {
+          if (Op.Opcode != NdOp::STORE || Op.Output.Size ||
+              !Memory.StoredValue || !WriteOutput(*Output, Memory.AccessSize))
+            return false;
+          for (unsigned I = 0; I != Memory.AccessSize; ++I)
+            if (Read(*Memory.StoredValue, I).MayBeFrame)
+              return false;
+          continue;
+        }
+        if (OutputQuery && !Address) {
+          if (Op.Opcode == NdOp::STORE)
+            return false;
+          for (unsigned I = 0; I != Memory.Address->Size; ++I)
+            if (Read(*Memory.Address, I).MayBeFrame)
+              return false;
+        }
+
         if (RequirePrivateFrame && !Address && !ExternalMemoryDisjoint)
           return false;
         if (RequirePrivateFrame && !Address)
@@ -1482,6 +1619,11 @@ static bool meetFrameState(State &Next, const State &Other, size_t &Remaining,
     const auto Found = Other.Scratch.find(Item.first);
     return Found == Other.Scratch.end() || Found->second != Item.second;
   });
+  if (Remaining < Next.OutputWrites.size())
+    return false;
+  Remaining -= Next.OutputWrites.size();
+  std::erase_if(Next.OutputWrites,
+                [&](int64_t Byte) { return !Other.OutputWrites.count(Byte); });
   if (RequirePrivateFrame) {
     if (Remaining < Next.InitializedStack.size())
       return false;
@@ -2161,5 +2303,77 @@ bool preservesNativeSourceLeafState(const LowFunc &Function, Arch Architecture,
     if (!Incoming[I])
       return false;
   return true;
+}
+
+std::optional<size_t> sourceFrameCompleteOutputBytes(
+    const LowFunc &Function, Arch Architecture, const NativeSourceCalls &Calls,
+    const SourceFunctionTypeHint &Signature, size_t Parameter) {
+  std::string Error;
+  if (Architecture != Arch::AArch64 || Signature.Architecture != Architecture ||
+      Signature.Convention != SourceFunctionTypeHint::ConventionKind::C ||
+      !Signature.ReturnType || Signature.ReturnType->Kind != NdTypeKind::Void ||
+      !validateSourceABI(Signature, Error) ||
+      Parameter >= Signature.Parameters.size())
+    return std::nullopt;
+  for (size_t I = 0; I != Signature.Parameters.size(); ++I) {
+    const auto &P = Signature.Parameters[I];
+    if (!P.Type || P.IndirectByValue || !P.Components.empty() ||
+        P.TheRole != SourceParameterTypeHint::Role::Ordinary ||
+        P.Type->Size != 8)
+      return std::nullopt;
+    if (I == Parameter) {
+      if (P.Type->Kind != NdTypeKind::Ptr ||
+          P.Location.Kind != SourceABICarrierKind::IntegerRegister ||
+          P.Location.ValueBytes != 8)
+        return std::nullopt;
+    } else if (P.Type->Kind != NdTypeKind::Float ||
+               P.Location.Kind != SourceABICarrierKind::FloatingRegister) {
+      return std::nullopt;
+    }
+  }
+  bool HasStackStore = false;
+  if (!validateFrameCalls(Function, Architecture, Calls, HasStackStore))
+    return std::nullopt;
+  PreservationProof Proof(Architecture, Calls, false, {}, false, false,
+                          &Signature);
+  Proof.outputParameter(
+      Signature.Parameters[Parameter].Location.RegisterOffset);
+  const auto Graph = frameGraph(Function, Architecture, Calls, Proof.Remaining);
+  if (!Graph || !Graph->HasReturn || Function.Blocks.size() > 128 ||
+      !Graph->Preds[Graph->Entry].empty())
+    return std::nullopt;
+  const size_t Count = Function.Blocks.size();
+  std::vector<size_t> Degree(Count);
+  std::deque<size_t> Pending{Graph->Entry};
+  for (size_t I = 0; I != Count; ++I)
+    Degree[I] = Graph->Preds[I].size();
+  std::vector<std::optional<State>> Incoming(Count);
+  Incoming[Graph->Entry] = Proof.Initial;
+  size_t Visited = 0;
+  while (!Pending.empty()) {
+    const auto I = Pending.front();
+    Pending.pop_front();
+    ++Visited;
+    if (!Incoming[I])
+      return std::nullopt;
+    State Out = *Incoming[I];
+    if (!Proof.transfer(Function.Blocks[I], Out, false))
+      return std::nullopt;
+    for (const auto Successor : Graph->Succs[I]) {
+      if (!Incoming[Successor])
+        Incoming[Successor] = Out;
+      else if (!meetFrameState(*Incoming[Successor], Out, Proof.Remaining,
+                               true))
+        return std::nullopt;
+      if (!--Degree[Successor])
+        Pending.push_back(Successor);
+    }
+  }
+  if (Visited != Count || !Proof.OutputExtent)
+    return std::nullopt;
+  for (size_t I = 0; I != Count; ++I)
+    if (!Incoming[I] || !Proof.transfer(Function.Blocks[I], *Incoming[I], true))
+      return std::nullopt;
+  return Proof.OutputExtent;
 }
 } // namespace neverd

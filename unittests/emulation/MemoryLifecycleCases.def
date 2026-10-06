@@ -17,6 +17,8 @@ NEVERD_MEMORY_TEST_VALUE(Updated, 22)
 NEVERD_MEMORY_TEST_VALUE(Timeout, 2000000)
 NEVERD_MEMORY_TEST_VALUE(SparsePages, 2048)
 NEVERD_MEMORY_TEST_VALUE(SparseStride, 1ull << 30)
+NEVERD_MEMORY_TEST_VALUE(TransportBase, 0x100000000ull)
+NEVERD_MEMORY_TEST_VALUE(NextTransportBase, 0x200000000ull)
 #endif
 #ifdef NEVERD_MEMORY_TEST_X64
 // mov rax, [rcx]; add rax, 1; mov [rcx], rax; nop

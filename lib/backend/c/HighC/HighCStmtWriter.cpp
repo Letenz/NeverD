@@ -14,6 +14,7 @@
 #include "HighCWriter.h"
 
 #include "neverd/Common.h"
+#include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExceptionInfo.h"
@@ -516,7 +517,6 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           }
         }
       }
-      emitIndent(Indent);
       std::string Value = exprStr(*Stmt.Val);
       if (Stmt.Dst->Type && Stmt.Val->Type &&
           Stmt.Dst->Type->Kind == NdTypeKind::Int &&
@@ -526,13 +526,12 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       if (Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default)
         if (auto VA = constAddress(*Stmt.Dst->Operands[0]))
           ExactImageBytes = imageBackingAddress(*VA).has_value();
-      OS << memoryStoreExpr(Stmt.Dst->Type,
-                            addrStr(*Stmt.Dst->Operands[0], 0,
-                                    Stmt.Dst->MemoryAddressSpace ==
-                                        NdMemoryAddressSpace::Default),
-                            Value, Stmt.Dst->MemoryOrdering,
-                            Stmt.Dst->MemoryAddressSpace, ExactImageBytes)
-         << ";\n";
+      writeMemoryStore(Stmt.Dst->Type,
+                       addrStr(*Stmt.Dst->Operands[0], 0,
+                               Stmt.Dst->MemoryAddressSpace ==
+                                   NdMemoryAddressSpace::Default),
+                       Value, Stmt.Dst->MemoryOrdering,
+                       Stmt.Dst->MemoryAddressSpace, ExactImageBytes, Indent);
       break;
     }
     if (Stmt.Dst->Kind == ExprKind::Var &&
@@ -576,10 +575,6 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           break;
         }
       }
-      if (auto Field = scalarRecordFieldDest(DestName, *Stmt.Val))
-        OS << *Field << " = ";
-      else
-        OS << DestName << " = ";
       auto DeclaredType = declaredParamType(Stmt.Dst->Var);
       if (!DeclaredType)
         DeclaredType = Stmt.Dst->Type;
@@ -610,8 +605,27 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           PointerTypeFromCall ? addrStr(*Stmt.Val) : std::string();
       const bool DirectAddress =
           !AddressText.empty() && AddressText.front() == '&';
+      MemoryLoadDestination LoadDestination;
+      const auto DestinationType = DeclaredCTypes.find(DestName);
+      if (Stmt.Val->Kind == ExprKind::Load &&
+          (Stmt.Dst->Var.Kind == MedVar::Temp ||
+           Stmt.Dst->Var.Kind == MedVar::Reg) &&
+          DestName == varName(Stmt.Dst->Var) &&
+          DestinationType != DeclaredCTypes.end() &&
+          !AddressTakenNames.count(DestName) && !isAddressTakenSlot(DestName) &&
+          !scalarRecordFieldDest(DestName, *Stmt.Val) && Stmt.Val->Type &&
+          typeToC(DestinationType->second) == memoryTypeName(Stmt.Val->Type))
+        LoadDestination.Name = DestName;
       const std::string ValueText =
-          DirectAddress ? AddressText : exprStr(*Stmt.Val);
+          DirectAddress ? AddressText : exprStr(*Stmt.Val, 0, &LoadDestination);
+      if (LoadDestination.Written) {
+        OS << ValueText << ";\n";
+        break;
+      }
+      if (auto Field = scalarRecordFieldDest(DestName, *Stmt.Val))
+        OS << *Field << " = ";
+      else
+        OS << DestName << " = ";
       if (DeclaredType && DeclaredType->Kind == NdTypeKind::Ptr) {
         if (DirectAddress)
           OS << "(" << typeToC(DeclaredType) << ")(" << ValueText << ")";
@@ -646,6 +660,16 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
   }
 
   case StmtKind::Store: {
+    if (CurrentFunc && isSwiftErrorEntrySlot(*CurrentFunc, Stmt.StoreAddr) &&
+        Stmt.StoreVal && Stmt.StoreVal->Type &&
+        Stmt.StoreVal->Type->Size == 8 &&
+        Stmt.MemoryOrdering == NdMemoryOrdering::None &&
+        Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+      emitIndent(Indent);
+      OS << "*" << varName(Stmt.StoreAddr->Var) << " = (void *)(uintptr_t)("
+         << exprStr(*Stmt.StoreVal) << ");\n";
+      break;
+    }
     if (!Stmt.StoreAddr || !Stmt.StoreVal)
       return;
     {
@@ -786,20 +810,17 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         }
       }
     }
-    emitIndent(Indent);
     bool ExactImageBytes = false;
     if (Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
       if (auto VA = constAddress(*Stmt.StoreAddr))
         ExactImageBytes = imageBackingAddress(*VA).has_value();
-    OS << memoryStoreExpr(
-              Stmt.StoreVal->Type,
-              addrStr(*Stmt.StoreAddr, 0,
-                      Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default),
-              isUnknownCallOperand(Stmt.StoreVal.get())
-                  ? "0"
-                  : exprStr(*Stmt.StoreVal),
-              Stmt.MemoryOrdering, Stmt.MemoryAddressSpace, ExactImageBytes)
-       << ";\n";
+    writeMemoryStore(
+        Stmt.StoreVal->Type,
+        addrStr(*Stmt.StoreAddr, 0,
+                Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default),
+        isUnknownCallOperand(Stmt.StoreVal.get()) ? "0"
+                                                  : exprStr(*Stmt.StoreVal),
+        Stmt.MemoryOrdering, Stmt.MemoryAddressSpace, ExactImageBytes, Indent);
     break;
   }
 
@@ -1875,7 +1896,27 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
       for (size_t K = I + 1; K <= PrefixEnd && K < End; ++K)
         if (Stmts[K].Addr == Target)
           TargetOk = true;
-      if (PhiCount > 0 && TargetOk) {
+      // The fold prints the copies but not the removed statements and
+      // anchors between them, nor their labels.  Only the folded jump may
+      // reach such a label.
+      std::function<bool(const HighStmt &)> DropsLabel =
+          [&](const HighStmt &P) {
+            if (P.Addr && P.Addr != InvalidVA && GotoTargets.count(P.Addr)) {
+              auto Uses = GotoTargetUses.find(P.Addr);
+              if (P.Addr != Target ||
+                  (Uses != GotoTargetUses.end() && Uses->second > 1))
+                return true;
+            }
+            return llvm::any_of(P.Body, DropsLabel);
+          };
+      bool KeepsLabels = true;
+      for (size_t K = I + 1; K < PrefixEnd && KeepsLabels; ++K) {
+        const HighStmt &P = Stmts[K];
+        if (stmtHiddenFromC(P) || P.Kind == StmtKind::Nop ||
+            P.Kind == StmtKind::Block)
+          KeepsLabels = !DropsLabel(P);
+      }
+      if (PhiCount > 0 && TargetOk && KeepsLabels) {
         emitIndent(Indent);
         OS << "if (" << invertCondStr(*S.Cond) << ") {\n";
         std::vector<HighStmt> Taken(S.ElseBody.begin(), S.ElseBody.end() - 1);

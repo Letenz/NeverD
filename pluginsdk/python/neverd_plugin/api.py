@@ -922,6 +922,31 @@ class Session:
             raise NeverDError(self.last_error)
         return _decode_json("process emulation", value)
 
+    def unpack(
+        self, path: str, output: str, options: str | None = None
+    ) -> object:
+        """Recover the image a packed PE32+ executable builds at run time.
+
+        The input runs as a bounded guest process and is rebuilt at the
+        transfer into generated code that is accepted as its entry. ``output``
+        is written only when the report's ``outcome`` is ``unpacked``;
+        ``no_entry`` means the run ended first, and ``transfers`` and
+        ``execution`` say why. ``options`` is the native JSON request: every
+        process option plus ``transfer``. The loaded image is neither required
+        nor changed. Setup failures raise NeverDError.
+        """
+        value = self._owned_string(
+            "neverd_unpack_json",
+            _utf8_argument("packed input path", path, allow_empty=False),
+            _utf8_argument("unpacked output path", output, allow_empty=False),
+            None if options is None else _utf8_argument(
+                "unpack options", options, allow_empty=False
+            ),
+        )
+        if value is None:
+            raise NeverDError(self.last_error)
+        return _decode_json("unpacking", value)
+
     @property
     def imports(self) -> object:
         return self._json("neverd_imports_json", "imports")

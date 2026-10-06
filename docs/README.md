@@ -42,3 +42,4 @@ and `roadmap.md`. Shared images remain in `assets/`.
 | [Solana SBF decompilation](sbf.md) | SBF v0-v4 ELF rules, staged IR, syscalls, C/Rust/LLVM backends, and host contracts |
 | [Roadmap](roadmap.md) | Status: native formats, EVM, and Solana SBF implemented |
 | Localized documentation | Use the language links above to open each language's index and project overview |
+| [Unpacking packed executables](unpack.md) | Recovery of packed PE32+ images by observing a bounded guest process: entry rules, rebuilt image, identification and limits |

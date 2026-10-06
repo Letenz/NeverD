@@ -1,0 +1,22 @@
+//===- KernelThreadPriorities.def - Thread priority policy ----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#ifdef NEVERD_THREAD_PRIORITY_VALUE
+// Priority zero is reserved for the Windows zero-page thread. The initial
+// priority is an explicit deterministic model profile, not process inheritance.
+NEVERD_THREAD_PRIORITY_VALUE(Minimum, 1)
+NEVERD_THREAD_PRIORITY_VALUE(Default, 8)
+NEVERD_THREAD_PRIORITY_VALUE(Maximum, 31)
+#endif
+
+#ifdef NEVERD_THREAD_PRIORITY_TEXT
+NEVERD_THREAD_PRIORITY_TEXT(InvalidPriority,
+                            "thread runtime priority must be in 1..31")
+NEVERD_THREAD_PRIORITY_TEXT(UnknownThread,
+                            "thread priority requires a known thread object")
+NEVERD_THREAD_PRIORITY_TEXT(
+    ExitedThread, "cannot change a terminating or exited thread priority")
+#endif

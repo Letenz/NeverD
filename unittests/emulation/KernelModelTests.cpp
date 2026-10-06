@@ -12,6 +12,7 @@
 #include "backends/unicorn/UnicornBackend.h"
 #include "gtest/gtest.h"
 #include "os/windows/driver/DriverImage.h"
+#include "os/windows/kernel/KernelAPINames.h"
 #include "os/windows/kernel/KernelModel.h"
 #include "os/windows/kernel/WindowsKernelLayout.h"
 
@@ -49,20 +50,21 @@ protected:
       ADD_FAILURE() << llvm::toString(std::move(Error));
   }
 
-  uint64_t invoke(const char *Name, std::initializer_list<uint64_t> Arguments) {
-    auto Value = Model->call(Name, Arguments);
+  uint64_t invoke(llvm::StringRef Name,
+                  std::initializer_list<uint64_t> Arguments) {
+    auto Value = Model->call(Name.str(), Arguments);
     if (!Value) {
-      ADD_FAILURE() << Name << ": " << llvm::toString(Value.takeError());
+      ADD_FAILURE() << Name.str() << ": " << llvm::toString(Value.takeError());
       return 0;
     }
     return *Value;
   }
 
-  std::string failure(const char *Name,
+  std::string failure(llvm::StringRef Name,
                       std::initializer_list<uint64_t> Arguments) {
-    auto Value = Model->call(Name, Arguments);
+    auto Value = Model->call(Name.str(), Arguments);
     if (Value) {
-      ADD_FAILURE() << Name << " unexpectedly succeeded";
+      ADD_FAILURE() << Name.str() << " unexpectedly succeeded";
       return {};
     }
     return llvm::toString(Value.takeError());
@@ -277,6 +279,140 @@ TEST_F(DriverKernelModel, CriticalAndGuardedAPCRegionsPairOnOneThread) {
   success(Model->validateExecutionReturn(profile::StackBase, 0));
 }
 
+TEST_F(DriverKernelModel,
+       ThreadPriorityUsesSignedABIAndCanonicalNestedIdentity) {
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Object = llvm::cantFail(Model->currentThreadObject());
+  EXPECT_EQ(invoke(kernel_api::KeQueryPriorityThread, {Object}),
+            thread_priority::Default);
+  EXPECT_EQ(invoke(kernel_api::KeSetPriorityThread,
+                   {Object, 0xaabbccdd00000000ULL | thread_priority::Maximum}),
+            thread_priority::Default);
+  const auto Saved = Model->captureExecutionContext();
+  Model->enterExecution(Scratch, profile::StackBase);
+  EXPECT_EQ(llvm::cantFail(Model->currentThreadObject()), Object);
+  EXPECT_EQ(invoke(kernel_api::KeSetPriorityThread,
+                   {Object, thread_priority::Minimum}),
+            thread_priority::Maximum);
+  success(Model->retireStack(Scratch, profile::PageSize));
+  success(Model->restoreExecutionContext(Saved));
+  EXPECT_EQ(invoke(kernel_api::KeQueryPriorityThread, {Object}),
+            thread_priority::Minimum);
+  for (uint64_t Priority : {uint64_t(0), uint64_t(UINT32_MAX),
+                            uint64_t(thread_priority::Maximum + 1)}) {
+    EXPECT_EQ(failure(kernel_api::KeSetPriorityThread, {Object, Priority}),
+              thread_priority::InvalidPriority);
+    EXPECT_EQ(invoke(kernel_api::KeQueryPriorityThread, {Object}),
+              thread_priority::Minimum);
+  }
+  EXPECT_EQ(failure(kernel_api::KeQueryPriorityThread, {Scratch}),
+            thread_priority::UnknownThread);
+  EXPECT_EQ(failure(kernel_api::KeSetPriorityThread,
+                    {Scratch, thread_priority::Maximum}),
+            thread_priority::UnknownThread);
+  invoke(kernel_api::KfRaiseIrql, {windows::APCLevel});
+  EXPECT_NE(failure(kernel_api::KeSetPriorityThread,
+                    {Object, thread_priority::Maximum})
+                .find(kernel_api::KeSetPriorityThread),
+            std::string::npos);
+  EXPECT_NE(failure(kernel_api::KeQueryPriorityThread, {Object})
+                .find(kernel_api::KeQueryPriorityThread),
+            std::string::npos);
+  invoke(kernel_api::KeLowerIrql, {scheduler::PassiveLevel});
+  EXPECT_EQ(invoke(kernel_api::KeQueryPriorityThread, {Object}),
+            thread_priority::Minimum);
+}
+
+TEST_F(DriverKernelModel, DetachedStackReuseStartsWithFreshThreadPriority) {
+  const uint64_t Base = Scratch + profile::PageSize;
+  const uint64_t Child = Scratch + 2 * profile::PageSize;
+  Model->enterExecution(Base);
+  const uint64_t Object = llvm::cantFail(Model->currentThreadObject());
+  invoke(kernel_api::KeSetPriorityThread, {Object, thread_priority::Maximum});
+  Model->enterExecution(Child, Base);
+  success(Model->retireStack(Child, profile::PageSize));
+  EXPECT_EQ(invoke(kernel_api::KeQueryPriorityThread, {Object}),
+            thread_priority::Maximum);
+  Model->enterExecution(Base);
+  success(Model->retireStack(Base, profile::PageSize));
+  EXPECT_EQ(failure(kernel_api::KeQueryPriorityThread, {Object}),
+            thread_priority::UnknownThread);
+  success(Model->activateStack(Base, profile::PageSize));
+  Model->enterExecution(Base);
+  const uint64_t Fresh = llvm::cantFail(Model->currentThreadObject());
+  EXPECT_NE(Fresh, Object);
+  EXPECT_EQ(invoke(kernel_api::KeQueryPriorityThread, {Fresh}),
+            thread_priority::Default);
+  EXPECT_EQ(failure(kernel_api::KeSetPriorityThread,
+                    {Object, thread_priority::Maximum}),
+            thread_priority::UnknownThread);
+}
+
+TEST_F(DriverKernelModel,
+       RetainedExitedThreadKeepsPriorityUntilObjectRetirement) {
+  invoke(kernel_api::PsCreateSystemThread,
+         {Scratch, windows::ThreadAllAccess, 0, 0, 0, Entry, 0});
+  const uint64_t Handle = integer(Scratch);
+  invoke(kernel_api::ObReferenceObjectByHandle,
+         {Handle, 0, 0, windows::KernelMode, Scratch + 8, 0});
+  const uint64_t Object = integer(Scratch + 8);
+  invoke(kernel_api::KeSetPriorityThread, {Object, thread_priority::Maximum});
+  auto Next = llvm::cantFail(Model->nextScheduled(false));
+  ASSERT_TRUE(Next);
+  Model->enterExecution(Scratch + 2 * profile::PageSize, Next->ID);
+  EXPECT_EQ(invoke(kernel_api::KeQueryPriorityThread, {Object}),
+            thread_priority::Maximum);
+  invoke(kernel_api::PsTerminateSystemThread, {0});
+  EXPECT_EQ(failure(kernel_api::KeSetPriorityThread,
+                    {Object, thread_priority::Minimum}),
+            thread_priority::ExitedThread);
+  ASSERT_TRUE(Model->takeThreadTermination());
+  success(Model->finishScheduled(Next->ID));
+  EXPECT_EQ(invoke(kernel_api::KeQueryPriorityThread, {Object}),
+            thread_priority::Maximum);
+  invoke(kernel_api::ZwClose, {Handle});
+  EXPECT_EQ(invoke(kernel_api::KeQueryPriorityThread, {Object}),
+            thread_priority::Maximum);
+  invoke(kernel_api::ObfDereferenceObject, {Object});
+  EXPECT_EQ(failure(kernel_api::KeQueryPriorityThread, {Object}),
+            thread_priority::UnknownThread);
+}
+
+TEST_F(DriverKernelModel, SpinLockFailuresPreserveOwnershipAndValidationOrder) {
+  Model->enterExecution(profile::StackBase);
+  constexpr uint32_t Tag = 0x4c4f434b;
+  const uint64_t Lock = invoke("ExAllocatePoolWithTag", {0, 8, Tag});
+  ASSERT_NE(Lock, 0u);
+  invoke("KeInitializeSpinLock", {Lock});
+  EXPECT_EQ(invoke("KeAcquireSpinLockRaiseToDpc", {Lock}), 0u);
+
+  // Simulate corrupted storage independently of the model's write guard.
+  // Release must check its variant and saved IRQL before inspecting the word.
+  success(Memory->writeInteger(Lock, 2, 8));
+  EXPECT_EQ(failure("KeReleaseSpinLockFromDpcLevel", {Lock}),
+            "executive spin lock release variant does not match acquisition");
+  EXPECT_EQ(failure("KeReleaseSpinLock", {Lock, 1}),
+            "executive spin lock release must restore the saved IRQL");
+  EXPECT_EQ(failure("KeReleaseSpinLock", {Lock, 0}),
+            "executive spin lock storage was modified");
+  EXPECT_EQ(Model->currentIRQL(), 2u);
+  EXPECT_EQ(integer(Lock), 2u);
+  EXPECT_EQ(invoke("KeTryToAcquireSpinLockAtDpcLevel", {Lock}), 0u);
+
+  success(Memory->writeInteger(Lock, 1, 8));
+  invoke("KeReleaseSpinLock", {Lock, 0xaabbccdd12345600});
+  EXPECT_EQ(Model->currentIRQL(), 0u);
+  EXPECT_EQ(integer(Lock), 0u);
+  EXPECT_EQ(failure("KeReleaseSpinLock", {profile::UserArenaBase, 0}),
+            "executive spin lock is not owned by this thread");
+  EXPECT_EQ(failure("KeAcquireSpinLockAtDpcLevel", {profile::UserArenaBase}),
+            "executive spin lock requires kernel storage");
+  EXPECT_EQ(failure("KeAcquireSpinLockAtDpcLevel", {Lock}),
+            "DPC-level spin-lock acquisition requires DISPATCH_LEVEL");
+  success(Model->validateExecutionReturn(profile::StackBase, 0));
+  invoke("ExFreePoolWithTag", {Lock, Tag});
+}
+
 TEST_F(DriverKernelModel, MDLMappingIgnoresUnspecifiedNarrowArgumentHighBits) {
   using namespace windows;
   invoke("IoCreateDevice",
@@ -409,9 +545,14 @@ TEST_F(DriverKernelModel,
   ASSERT_TRUE(bool(Next)) << llvm::toString(Next.takeError());
   ASSERT_TRUE(Next->has_value());
   EXPECT_EQ((**Next).Arguments, (std::vector<uint64_t>{Device, Scratch}));
+  Model->enterExecution(Scratch + 2 * profile::PageSize, (**Next).ID);
+  const auto Thread = llvm::cantFail(Model->currentThreadObject());
+  invoke(kernel_api::KeSetPriorityThread, {Thread, thread_priority::Maximum});
   invoke("IoFreeWorkItem", {Item});
   success(Model->validateGuestAccess(Device, 2, false));
   success(Model->finishScheduled((**Next).ID));
+  EXPECT_EQ(failure(kernel_api::KeQueryPriorityThread, {Thread}),
+            thread_priority::UnknownThread);
   success(Model->snapshot());
   EXPECT_TRUE(Result.Devices.empty());
   EXPECT_NE(denied(Device, 1).find("freed"), std::string::npos);

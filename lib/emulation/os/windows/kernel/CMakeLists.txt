@@ -24,7 +24,9 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelDriverIRPRequests.cpp
   KernelPoFx.cpp
   KernelModelPoFx.cpp
+  KernelModelPoFxCalls.cpp
   KernelModelPoFxPolicy.cpp
+  KernelModelPoFxRegistration.cpp
   KernelFrameworkControl.cpp
   KernelFrameworkDeviceInitCalls.cpp
   KernelFrameworkDeviceCalls.cpp
@@ -44,6 +46,13 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelFrameworkRequests.cpp
   KernelModelExports.cpp
   KernelModel.cpp
+  KernelCalls.cpp
+  KernelIRPCalls.cpp
+  KernelMDLCalls.cpp
+  KernelRuntimeCalls.cpp
+  KernelPoolCalls.cpp
+  KernelObjectCalls.cpp
+  KernelMemoryCalls.cpp
   KernelModelIO.cpp
   KernelModelUserMemory.cpp
   KernelModelPhysicalMemory.cpp
@@ -59,6 +68,8 @@ target_sources(NeverDEmulation PRIVATE
   KernelModelResources.cpp
   KernelInterrupts.cpp
   KernelModelInterrupts.cpp
+  KernelModelInterruptParameters.cpp
+  KernelModelInterruptRegistration.cpp
   KernelModelInterruptEvents.cpp
   KernelResources.cpp
   KernelPhysicalMemory.cpp
@@ -73,9 +84,11 @@ target_sources(NeverDEmulation PRIVATE
   KernelRemoveLocks.cpp
   KernelModelRuntime.cpp
   KernelModelScheduling.cpp
+  KernelModelThreadPriorities.cpp
   KernelModelFrameworkSynchronization.cpp
   KernelModelSpinLocks.cpp
   KernelModelIRQL.cpp
+  KernelModelAPC.cpp
   KernelModelCancellation.cpp
   KernelScheduler.cpp
   KernelDispatcher.cpp

@@ -77,7 +77,8 @@ public:
   static llvm::StringRef
   sourceConventionAttribute(SourceFunctionTypeHint::ConventionKind Convention);
   static std::string
-  sourceParameterType(const SourceParameterTypeHint &Parameter);
+  sourceParameterType(const SourceParameterTypeHint &Parameter,
+                      llvm::StringRef Name = {});
   static std::optional<std::string> sourceValue(llvm::StringRef Text,
                                                 const TypeRef &Carrier,
                                                 const TypeRef &Source);
@@ -114,16 +115,26 @@ public:
   void writeX87FpremHelpers();
   void writeX64SyscallHelper();
   void writeX64WindowsSyscallHelper();
+  struct MemoryLoadDestination {
+    std::string Name;
+    bool Written = false;
+  };
   std::string memoryLoadExpr(
       const TypeRef &Ty, llvm::StringRef Addr,
       NdMemoryOrdering MemoryOrdering = NdMemoryOrdering::None,
       NdMemoryAddressSpace MemoryAddressSpace = NdMemoryAddressSpace::Default,
-      bool ExactImageBytes = false) const;
+      bool ExactImageBytes = false,
+      MemoryLoadDestination *Destination = nullptr);
   std::string memoryStoreExpr(
       const TypeRef &Ty, llvm::StringRef Addr, llvm::StringRef Val,
       NdMemoryOrdering MemoryOrdering = NdMemoryOrdering::None,
       NdMemoryAddressSpace MemoryAddressSpace = NdMemoryAddressSpace::Default,
-      bool ExactImageBytes = false) const;
+      bool ExactImageBytes = false);
+  std::string memoryTemporary(llvm::StringRef Type, llvm::StringRef Base);
+  void writeMemoryStore(const TypeRef &Ty, llvm::StringRef Addr,
+                        llvm::StringRef Val, NdMemoryOrdering Ordering,
+                        NdMemoryAddressSpace AddressSpace, bool ExactImageBytes,
+                        int Indent);
   std::string atomicExchangeExpr(const TypeRef &Ty, llvm::StringRef Addr,
                                  llvm::StringRef Val,
                                  NdMemoryOrdering MemoryOrdering,
@@ -194,8 +205,10 @@ public:
                                     size_t Index) const;
 
   //--- Expression rendering (HighCExprWriter.cpp) ---
-  std::string exprStr(const HighExpr &Expr, int ParentPrec = 0);
-  std::string exprStrImpl(const HighExpr &Expr, int ParentPrec);
+  std::string exprStr(const HighExpr &Expr, int ParentPrec = 0,
+                      MemoryLoadDestination *Destination = nullptr);
+  std::string exprStrImpl(const HighExpr &Expr, int ParentPrec,
+                          MemoryLoadDestination *Destination = nullptr);
   /// Operands of the integer operator being printed. A string literal among
   /// them is an array in C and prints as its integer address instead.
   std::set<const HighExpr *> LiteralAddressOperands;
@@ -430,6 +443,10 @@ public:
     std::string Text;
   };
   std::map<std::string, DeferredDecl> DeferredDecls;
+  CProjectionIdentifierAllocator MemoryIdentifiers;
+  std::map<std::string, std::string> MemoryTemporaries;
+  std::set<std::string> AddressTakenNames;
+  std::map<std::string, TypeRef> DeclaredCTypes;
   CEmitterOptions Opts;
   DebugContext *Dbg;
   bool GuardAnalysisOnlyFunctions;
@@ -525,7 +542,7 @@ public:
   std::set<std::string> ConflictingDebugExternSigs;
   /// Pointer-to-class TPI callees whose call sites pass a real hidden result.
   std::set<std::string> DebugExternHiddenSret;
-  std::map<std::string, unsigned> MemoryTypes;
+  std::set<std::string> MemoryTypes;
   std::map<std::tuple<unsigned, unsigned, bool>, std::string>
       FloatToIntegerHelpers;
   std::map<std::string, unsigned> PartialIntegerBytes;
@@ -535,6 +552,11 @@ public:
   std::set<std::tuple<std::string, NdMemoryOrdering, NdMemoryAddressSpace>>
       AtomicStoreTypes;
   bool HasSegmentedMemory = false;
+  /// An ordinary load or store has a type with an aligned(1), may_alias
+  /// alias, so the aliases are declared when UseUnalignedPointers is set.
+  bool NeedsUnalignedTypes = false;
+  /// The aliases were declared; an access spelled through one needs that.
+  bool UnalignedTypesWritten = false;
   bool Has256BitInteger = false;
   bool Has512BitInteger = false;
 

@@ -26,6 +26,14 @@
 #include <algorithm>
 #include <tuple>
 
+namespace neverd {
+// Internal parameter detector shared by the calling-convention pass.
+void detectXMMParams(
+    MedFunc &Func, const MedBlock &Entry, const TargetRegInfo &TRI,
+    const std::map<std::pair<uint64_t, uint16_t>, int> &RegVarMap,
+    Arch TargetArch, BinaryFormat TargetFormat);
+} // namespace neverd
+
 namespace {
 
 using namespace neverd;
@@ -74,6 +82,93 @@ MedOp binary(NdOp Opcode, MedVar Output, MedVar Left, MedVar Right) {
 
 void addLiveIn(MedBlock &Entry, const MedVar &LiveIn) {
   Entry.Ops.push_back(unary(NdOp::COPY, LiveIn, LiveIn));
+}
+
+TEST(MedCallingConvValueFlow, FPInputsFollowOnlyAuthenticatedCallPrefixes) {
+  constexpr auto A = Arch::AArch64;
+  const auto &TRI = getTargetRegInfo(A);
+  for (unsigned Mutation = 0; Mutation != 22; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    MedFunc F;
+    F.Entry = 0x1000;
+    F.Blocks.resize(1);
+    auto &B = F.Blocks[0];
+    B.Id = 0;
+    B.StartAddr = F.Entry;
+    const auto Incoming = reg(10, 0, 16, TRI.FPParamRegs[1], A);
+    addLiveIn(B, Incoming);
+    const auto SavedOffset = TRI.VecRegBase + 13 * TRI.VecRegStride;
+    const auto Saved = reg(20, 0, 16, SavedOffset, A);
+    B.Ops.push_back(unary(NdOp::COPY, Saved, Incoming));
+    for (unsigned I = 1; I <= 2; ++I) {
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Addr = 0x1004 + I * 4;
+      Call.CallSiteId = I;
+      Call.addInput(MedVar::makeConst(0x2000 + I * 4, 8));
+      B.Ops.push_back(Call);
+      auto Before = Saved;
+      Before.SSAVer = I - 1;
+      auto After = Saved;
+      After.SSAVer = I;
+      F.CallClobbers.push_back({After, I, Before, 8});
+    }
+    auto Final = Saved;
+    Final.SSAVer = 2;
+    const auto Narrow = temp(30, 0, Mutation == 1 || Mutation == 2 ? 4 : 8, A);
+    B.Ops.push_back(binary(NdOp::SUBBYTES, Narrow, Final,
+                           MedVar::makeConst(Mutation == 2   ? 4
+                                             : Mutation == 3 ? 8
+                                                             : 0,
+                                             4)));
+    if (Mutation != 15)
+      B.Ops.push_back(
+          binary(Mutation == 14 ? NdOp::INT_XOR : NdOp::INT_ADD,
+                 temp(31, 0, Narrow.Size, A), Narrow,
+                 Mutation == 14 ? Narrow : MedVar::makeConst(1, Narrow.Size)));
+    auto &C = F.CallClobbers[0];
+    if (Mutation == 4)
+      C.PreservedPrefixSize = 0;
+    if (Mutation == 5)
+      C.PreservedPrefixSize = 4;
+    if (Mutation == 6)
+      C.PreservedInput.RegOff += TRI.VecRegStride;
+    if (Mutation == 7)
+      ++C.PreservedInput.Id;
+    if (Mutation == 8)
+      C.PreservedInput.SSAVer = C.Value.SSAVer;
+    if (Mutation == 9)
+      C.Value.Size = 8;
+    if (Mutation == 10)
+      C.CallSiteId = 3;
+    if (Mutation == 11)
+      B.Ops[3].CallSiteId = 1;
+    if (Mutation == 12)
+      B.Ops[2].DoesNotReturn = true;
+    if (Mutation == 13)
+      B.Ops[2].PreservesCallerSaved = true;
+    if (Mutation == 16)
+      F.CallClobbers[1].PreservedPrefixSize = 0;
+    if (Mutation == 17)
+      F.CallClobbers[1].PreservedPrefixSize = 12;
+    if (Mutation == 18)
+      C.PreservedInput.Kind = MedVar::Temp;
+    if (Mutation == 19)
+      C.Value.Kind = MedVar::Temp;
+    if (Mutation == 20)
+      C.PreservedInput.Size = 8;
+    if (Mutation == 21)
+      C.PreservedPrefixSize = 64;
+    const std::map<std::pair<uint64_t, uint16_t>, int> Vars{
+        {{Incoming.RegOff, Incoming.Size}, Incoming.Id},
+        {{Saved.RegOff, Saved.Size}, Saved.Id}};
+    detectXMMParams(F, B, TRI, Vars, A, BinaryFormat::MachO);
+    EXPECT_EQ(F.Params.size(), Mutation <= 2 ? 1U : 0U);
+    if (!F.Params.empty()) {
+      EXPECT_EQ(F.Params[0].RegOff, Incoming.RegOff);
+      EXPECT_EQ(F.Params[0].Id, Incoming.Id);
+    }
+  }
 }
 
 MedFunc recoverDirectCallWithArgumentPhis(Arch TheArch, int ArgIdx,

@@ -110,7 +110,7 @@ foreach(_optimization O0 O2)
 endforeach()
 foreach(_optimization O0 O2)
   foreach(_file_source android_time.c linux_files.c android_search.c
-      android_signals.c android_snapshots.c linux_residency.c)
+      android_signals.c android_snapshots.c linux_residency.c android_sleep.c)
     get_filename_component(_file_kind "${_file_source}" NAME_WE)
     string(REGEX REPLACE "^(android|linux)_" "" _file_kind "${_file_kind}")
     set(_service_object "${_android_fixture_dir}/${_file_kind}-${_optimization}.o")
