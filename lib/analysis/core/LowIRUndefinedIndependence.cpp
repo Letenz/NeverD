@@ -3357,14 +3357,40 @@ class LoopPlanInference {
       Next += 8;
       return V;
     };
+    // These expressions are pure and consume immutable inputs or earlier
+    // temporaries. Share exact operands only within this template rebuild;
+    // widths and address provenance remain part of the value identity.
+    using ValueKey = std::tuple<VnodeSpace, uint64_t, uint16_t,
+                                ConstantAddressProvenance, uint64_t>;
+    const auto Key = [](NdVar V) -> ValueKey {
+      return {V.Space, V.Offset, V.Size, V.Provenance, V.AddressOwnerVA};
+    };
+    using ExpressionKey = std::tuple<NdOp, ValueKey, ValueKey, uint16_t>;
+    std::map<ExpressionKey, NdVar> Expressions;
     const auto Expr = [&](NdOp Opcode, NdVar A, NdVar B, uint16_t Bytes) {
+      const ExpressionKey K{Opcode, Key(A), Key(B), Bytes};
+      if (const auto It = Expressions.find(K); It != Expressions.end())
+        return It->second;
       LowOp Op;
       Op.Opcode = Opcode;
       Op.Output = Temp(Bytes);
       Op.addInput(A);
       Op.addInput(B);
       Cut.Expressions.push_back(Op);
+      Expressions.emplace(K, Op.Output);
       return Op.Output;
+    };
+    // Prefix snapshots are distinct from the represented current-state words.
+    using PrefixKey = std::tuple<LowIRLoopSpace, uint64_t, uint16_t>;
+    std::map<PrefixKey, NdVar> Prefixes;
+    const auto PrefixAt = [&](const LowIRLoopLocation &L) {
+      const PrefixKey K{L.Space, L.Offset, L.Bytes};
+      if (const auto It = Prefixes.find(K); It != Prefixes.end())
+        return It->second;
+      const auto Value = Temp(L.Bytes);
+      Cut.Inputs.push_back({LowIRLoopSide::OriginalPrefix, L, Value});
+      Prefixes.emplace(K, Value);
+      return Value;
     };
     // Bind each represented word once. Relations between words must reuse
     // those parameters, rather than introduce unrelated copies of an input.
@@ -3381,9 +3407,7 @@ class LoopPlanInference {
       Cut.OriginalState.push_back({W.Location, Parameter});
       Cut.CandidateState.push_back({W.Location, Parameter});
       if (W.FixedMask) {
-        const auto Prefix = Temp(Bytes);
-        Cut.Inputs.push_back(
-            {LowIRLoopSide::OriginalPrefix, W.Location, Prefix});
+        const auto Prefix = PrefixAt(W.Location);
         const auto Mask = NdVar::scalar(W.FixedMask, Bytes);
         const auto A = Expr(NdOp::INT_AND, Parameter, Mask, Bytes);
         const auto B = Expr(NdOp::INT_AND, Prefix, Mask, Bytes);
@@ -3391,9 +3415,7 @@ class LoopPlanInference {
         Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Same, 1);
       }
       if (W.UpperBound || W.LowerBound) {
-        const auto Prefix = Temp(Bytes);
-        Cut.Inputs.push_back(
-            {LowIRLoopSide::OriginalPrefix, W.Location, Prefix});
+        const auto Prefix = PrefixAt(W.Location);
         if (W.UpperBound) {
           const auto Bound = Expr(NdOp::INT_LESSEQUAL, Parameter, Prefix, 1);
           Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Bound, 1);
@@ -3410,9 +3432,7 @@ class LoopPlanInference {
             });
         if (Target != words().end())
           return Parameters[std::distance(words().begin(), Target)];
-        const auto Value = Temp(L.Bytes);
-        Cut.Inputs.push_back({LowIRLoopSide::OriginalPrefix, L, Value});
-        return Value;
+        return PrefixAt(L);
       };
       for (const auto &B : W.BitRelations) {
         auto Counter = ValueAt(B.Counter), Bound = ValueAt(B.Bound);
@@ -3441,9 +3461,7 @@ class LoopPlanInference {
         Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Same, 1);
       }
       for (const auto &B : W.CounterBounds) {
-        auto Limit = Temp(Bytes);
-        Cut.Inputs.push_back(
-            {LowIRLoopSide::OriginalPrefix, B.Location, Limit});
+        auto Limit = PrefixAt(B.Location);
         auto Value = Parameter;
         if (B.Mask) {
           const auto Mask = NdVar::scalar(B.Mask, Bytes);
@@ -3484,8 +3502,7 @@ class LoopPlanInference {
         Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Guard, 1);
       }
       if (Bound) {
-        const auto Limit = Temp(Bound->Bytes);
-        Cut.Inputs.push_back({LowIRLoopSide::OriginalPrefix, *Bound, Limit});
+        const auto Limit = PrefixAt(*Bound);
         const auto Guard = Complement
                                ? Expr(NdOp::INT_LESS, Parameter, Limit, 1)
                                : Expr(NdOp::INT_LESS, Limit, Parameter, 1);

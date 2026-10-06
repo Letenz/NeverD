@@ -3188,6 +3188,41 @@ TEST(LowIRLoopInference, MutablePrefixBoundsKeepIndependentBudgets) {
     checkProjectedCounterBudgets(true, true, Cached, false, true);
 }
 
+TEST(LowIRLoopInference, SharedTemplatesFitIndependentOperationBudgets) {
+  auto P = projectedCounterLoops(3, true, 1, true, LowIRLoopSpace::Register,
+                                 true, 0, true, true, false, false, true);
+  for (uint64_t Offset : {8, 16, 64, 72})
+    P.Contract.ReturnRegisters.push_back({Offset, 8});
+  const std::vector<va_t> Cuts{0x300, 0x500};
+  // Repeated projections and prefix reads must fit these bounds without
+  // dropping predicates or narrowing the observed counters and bound words.
+  LowIRLoopInferenceLimits Limits;
+  Limits.Execution.MaxOperations = 1024;
+  const auto Good =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits, Cuts);
+  ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+  LowIRRefinementLimits ProofLimits;
+  ProofLimits.Execution.MaxOperations = 640;
+  const auto Proof = loopCheck(P, P, *Good.Plan, ProofLimits);
+  ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+
+  Limits.Execution.MaxOperations = Good.Operations - 1;
+  const auto Short =
+      inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits, Cuts);
+  EXPECT_EQ(Short.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+  EXPECT_FALSE(Short.Plan);
+  ProofLimits.Execution.MaxOperations = Proof.Operations - 1;
+  loopRefused(loopCheck(P, P, *Good.Plan, ProofLimits), Status::BudgetExceeded);
+
+  // Prefix inputs retain the derived value at this cut, including the XOR.
+  // Reusing them must not equate that value with the raw entry input.
+  auto Wrong = P;
+  for (auto &O : Wrong.Function.Blocks.front().Ops)
+    if (O.Opcode == NdOp::INT_XOR && O.Output == r(64))
+      O.Inputs[1] = n(0);
+  loopRefused(loopCheck(P, Wrong, *Good.Plan), Status::Different);
+}
+
 TEST(LowIRLoopInference, CompletedEntailmentsStayInInferenceSession) {
   for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
     const auto Make = [&](unsigned Step) {
