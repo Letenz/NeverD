@@ -591,7 +591,8 @@ TEST_F(ProcessPublic, AndroidMemoryFilesShareStateThroughCAPIAndCLI) {
         "files_status_bionic", "files_status_at", "files_status_at_bionic",
         "files_access", "files_access_faults", "files_access_bionic",
         "files_directory_errors", "files_directory_bionic",
-        "files_trailing_paths", "files_trailing_paths_bionic"}) {
+        "files_trailing_paths", "files_trailing_paths_bionic",
+        "files_filesystem_status", "files_filesystem_status_bionic"}) {
     SCOPED_TRACE(Entry);
     llvm::json::Object Request{
         {"backend", "unicorn"},

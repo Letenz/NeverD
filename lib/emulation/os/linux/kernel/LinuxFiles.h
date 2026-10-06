@@ -79,6 +79,10 @@ private:
   llvm::Expected<std::optional<uint64_t>>
   statusAt(uint32_t Directory, uint64_t Path, uint64_t Address, uint32_t Flags,
            ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>>
+  fileSystemStatus(uint64_t Path, ProcessResult &Result);
+  std::optional<uint64_t> fileSystemStatusDescriptor(uint32_t FD,
+                                                     ProcessResult &Result);
 };
 } // namespace neverd::emulation::linux_model
 #endif

@@ -82,6 +82,10 @@ TEST_P(AndroidFiles, TrailingSeparatorsRetainDirectoryAndCreationSemantics) {
   returned(run("files_trailing_paths"));
   returned(run("files_trailing_paths_bionic"));
 }
+TEST_P(AndroidFiles, FileSystemQueriesPreserveCursorsAndLookupErrorPrecedence) {
+  returned(run("files_filesystem_status"));
+  returned(run("files_filesystem_status_bionic"));
+}
 TEST_P(AndroidFiles, TrailingSeparatorsDoNotInventDirectoryStateOrPermissions) {
   for (uint64_t Mode = 0; Mode < 10; ++Mode) {
     SCOPED_TRACE(Mode);

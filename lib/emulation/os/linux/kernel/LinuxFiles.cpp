@@ -50,6 +50,10 @@ LinuxFiles::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     return statusDescriptor(A0, A1, Result);
   case ServiceKind::FstatAt:
     return statusAt(A0, A1, A2, A3, Result);
+  case ServiceKind::StatFS:
+    return fileSystemStatus(A0, Result);
+  case ServiceKind::FstatFS:
+    return fileSystemStatusDescriptor(A0, Result);
   default:
     llvm_unreachable("not a Linux file service");
   }

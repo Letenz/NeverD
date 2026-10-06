@@ -15,6 +15,7 @@ add_neverd_component_library(NeverDEmulationLinuxKernel
   LinuxFilePaths.cpp
   LinuxFileIO.cpp
   LinuxFileStatus.cpp
+  LinuxFileSystemStatus.cpp
   LINK_COMPONENTS EmulationCore
   LLVM_COMPONENTS Support)
 if(WIN32)

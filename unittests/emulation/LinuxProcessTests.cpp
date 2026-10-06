@@ -245,7 +245,7 @@ TEST_P(LinuxProcess, MemoryFilesPreserveBinaryBytesCursorsAndFaultPrefixes) {
   for (const char *Optimization : {"O0", "O2"}) {
     auto FilePath = Path.parent_path() /
                     (Path.stem().string() + "-files-" + Optimization + ".elf");
-    for (char Mode : {'s', 'f', 'c', 't', 'n', 'a', 'p', 'd', 'q'}) {
+    for (char Mode : {'s', 'f', 'c', 't', 'n', 'a', 'p', 'd', 'q', 'v'}) {
       SCOPED_TRACE(testing::Message() << Optimization << ':' << Mode);
       Options.Arguments = {"files", std::string(1, Mode)};
       Options.LinuxFiles->DescriptorLimit =
