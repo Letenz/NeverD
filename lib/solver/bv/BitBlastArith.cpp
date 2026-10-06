@@ -333,6 +333,21 @@ SatLit equalBits(CnfEncoder &E, LitSpan A, LitSpan B) {
 SatLit unsignedAtLeast(CnfEncoder &E, LitSpan A, LitSpan B) {
   assert(A.size() == B.size() && "comparison of unequal widths");
 
+  // Keep high comparisons independent of low carries. The encoder can then
+  // share them across comparisons whose operands differ only in the low bits,
+  // as with a partial-register counter update. Small chunks retain the cheap
+  // carry chain below; odd widths simply give the high half the extra bit.
+  if (A.size() > 8) {
+    const size_t LowSize = A.size() / 2;
+    const auto HighA = A.drop_front(LowSize);
+    const auto HighB = B.drop_front(LowSize);
+    const auto HighEqual = equalBits(E, HighA, HighB);
+    const auto HighAtLeast = unsignedAtLeast(E, HighA, HighB);
+    const auto LowAtLeast =
+        unsignedAtLeast(E, A.take_front(LowSize), B.take_front(LowSize));
+    return E.mkIte(HighEqual, LowAtLeast, HighAtLeast);
+  }
+
   // The carry chain of `A + ~B + 1`.  Its sums are the difference, which
   // nobody wants here, so only the carries are built.
   SatLit Carry = E.trueLit();

@@ -1869,6 +1869,46 @@ TEST(BinaryLowIRLoopInference, NativeSelectorsDoNotTrustOriginsOrBodies) {
   EXPECT_FALSE(BadBody.Refinement.Certificate);
 }
 
+TEST(BinaryLowIRLoopInference, NativeByteCountersKeepCachedComparisons) {
+  for (bool Lagged : {false, true}) {
+    SCOPED_TRACE(Lagged);
+    // MOVZX R8D,DIL; MOVZX R9D,SIL; two nested byte counters starting at
+    // zero. Each header tests a cached SETE result. ADD EAX,EDX observes the
+    // inner counter. Both input bytes are unconstrained; all 16 GPRs and seven
+    // flags remain observed.
+    Program P({0x44, 0x0f, 0xb6, 0xc7, 0x44, 0x0f, 0xb6, 0xce, 0x31, 0xc0, 0x31,
+               0xc9, 0x44, 0x38, 0xc1, 0x41, 0x0f, 0x94, 0xc2, 0x45, 0x84, 0xd2,
+               0x75, 0x26, 0x31, 0xd2, 0x44, 0x38, 0xca, 0x41, 0x0f, 0x94, 0xc3,
+               0x45, 0x84, 0xdb, 0x75, 0x0d, 0x01, 0xd0, 0xfe, 0xc2, 0x44, 0x38,
+               0xca, 0x41, 0x0f, 0x94, 0xc3, 0xeb, 0xee, 0xfe, 0xc1, 0x44, 0x38,
+               0xc1, 0x41, 0x0f, 0x94, 0xc2, 0xeb, 0xd5, 0xc3});
+    auto &Bytes = P.Image.Segments.front().Data;
+    if (Lagged)
+      // Move each INC after CMP/SETE. A stale comparison permits the byte
+      // counter to wrap before exit, so it cannot be treated as a fresh flag.
+      for (unsigned Begin : {0x28, 0x33})
+        std::rotate(Bytes.begin() + Begin, Bytes.begin() + Begin + 2,
+                    Bytes.begin() + Begin + 9);
+    const auto Recovery = P.recover();
+    ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+    EXPECT_TRUE(P.Options.EntryConstants.empty());
+    EXPECT_TRUE(P.Contract.EntryConstants.empty());
+    const auto Check = [&] {
+      return inferAndCheckBinaryLowIRLoopRefinement(P.Image, Entry, P.Options,
+                                                    Recovery, P.Contract);
+    };
+    const auto Good = Check();
+    ASSERT_TRUE(Good.Inference.inferred()) << Good.Inference.Diagnostic;
+    ASSERT_TRUE(Good.proved()) << Good.Refinement.Proof.Diagnostic;
+    EXPECT_GE(Good.Refinement.Proof.RankingChecks, 2U);
+    // Candidate-only inference cannot authorize a changed original body.
+    Bytes[0x26] = 0x29; // SUB EAX,EDX, instead of ADD EAX,EDX.
+    const auto Bad = Check();
+    ASSERT_TRUE(Bad.Inference.inferred()) << Bad.Inference.Diagnostic;
+    refused(Bad.Refinement, Status::Different);
+  }
+}
+
 TEST(BinaryLowIRLoopInference, NativeEqualityExitsUseInductiveCounterBounds) {
   // Two independent unsigned loops, both exiting on equality with an input.
   // xor eax,eax; xor ecx,ecx; outer: cmp rcx,r8; je done; xor edx,edx;

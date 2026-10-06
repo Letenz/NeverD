@@ -105,11 +105,11 @@ void divideSignedBits(CnfEncoder &E, LitSpan A, LitSpan B, LitVec *Quotient,
 /// True when every bit agrees.
 SatLit equalBits(CnfEncoder &E, LitSpan A, LitSpan B);
 
-/// Unsigned `A >= B`, as the carry out of `A - B`.
+/// Unsigned `A >= B`, with independently shareable high-prefix comparisons.
 ///
-/// Comparing through a subtraction rather than by walking down from the top
-/// bit costs one majority gate per bit and nothing else, because the sums are
-/// never built — only the carry chain is.
+/// Compare high halves first, choosing the low comparison when they are equal.
+/// Chunks of eight bits or fewer use the carry out of `A - B`, one majority
+/// gate per bit without building the unused sums.
 SatLit unsignedAtLeast(CnfEncoder &E, LitSpan A, LitSpan B);
 
 /// `A < B` or `A <= B`, signed or unsigned.  A signed comparison is the
