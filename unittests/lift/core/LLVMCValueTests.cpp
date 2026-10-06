@@ -2684,3 +2684,58 @@ entry:
   EXPECT_FALSE(neverd::llvmc::syntheticFrameBaseOffset(
       Frame, llvm::DataLayout("e-p:128:128")));
 }
+
+TEST(LLVMCValues, SelectedScalarCallsDeclareExternalAndUnemittedProviders) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("scalar-fragment", Context);
+  Module.setDataLayout("e-p:64:64");
+  Module.setTargetTriple(llvm::Triple(llvm::sys::getDefaultTargetTriple()));
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Signature = llvm::FunctionType::get(Word, {Word}, false);
+  auto *External =
+      llvm::Function::Create(Signature, llvm::GlobalValue::ExternalLinkage,
+                             "fragment_external", Module);
+  auto *Caller = llvm::Function::Create(
+      Signature, llvm::GlobalValue::ExternalLinkage, "fragment_call", Module);
+  auto *Defined =
+      llvm::Function::Create(Signature, llvm::GlobalValue::ExternalLinkage,
+                             "fragment_defined", Module);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Defined));
+  B.CreateRet(B.CreateAdd(Defined->getArg(0), B.getInt64(11)));
+  B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Caller));
+  auto *First = B.CreateCall(External, {Caller->getArg(0)});
+  auto *Second = B.CreateCall(Defined, {Caller->getArg(0)});
+  B.CreateRet(B.CreateXor(First, Second));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options, nullptr,
+                                          nullptr, Caller));
+  EXPECT_NE(Source.find("fragment_external(uint64_t);"), std::string::npos);
+  EXPECT_NE(Source.find("fragment_defined(uint64_t);"), std::string::npos);
+  const std::string Reference = R"(
+define i64 @fragment_external(i64 %x) {
+  %value = xor i64 %x, 2305843009213693952
+  ret i64 %value
+}
+define i64 @fragment_defined(i64 %x) {
+  %value = add i64 %x, 11
+  ret i64 %value
+}
+)";
+  const std::string Main = R"(
+int main(void) {
+  const uint64_t inputs[] = {0, 1, 77, UINT64_MAX, UINT64_C(1) << 63};
+  for (unsigned i = 0; i < 5; ++i) {
+    uint64_t x = inputs[i];
+    if (fragment_call(x) != ((x ^ (UINT64_C(1) << 61)) ^ (x + 11)))
+      return 1;
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + Main, Optimization, Reference);
+}

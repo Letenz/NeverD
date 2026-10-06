@@ -20,6 +20,8 @@ Vergleiche über mehr als acht Bits vergleichen zuerst die oberen Hälften und v
 
 `BitVectorSolver::cloneEncoding()` kopiert eine vollständige Kodierung vor jedem SAT-Suchversuch. Nach einer Suche oder einem Kodierungsfehler liefert die Methode null. Kopien besitzen ihre veränderlichen Klauseln, Wurzelpropagation, Gatter und Bitzuordnungen selbst; Variablenreihenfolge, Gatterzählung und Solver-Einstellungen bleiben erhalten. Der Kontext muss beide Solver überleben; der Quellsolver darf unabhängig geändert oder zerstört werden.
 
+Die SAT-Engine speichert vier Watch-Einträge direkt in jeder Literalliste; längere Listen wachsen dynamisch. Das vermeidet separate Allokationen kurzer Listen beim Aufbau, Kopieren vor der Suche und Freigeben. Propagationsreihenfolge, Klauseln, unabhängiger Besitz und alle Arbeitsgrenzen bleiben unverändert.
+
 <!-- i18n-section: z3-build -->
 
 ## Optionaler Z3-Build
@@ -75,3 +77,5 @@ build-release/bin/neverd-solver-bench \
 Jede Nicht-Kommentarzeile lautet `original ; candidate`; ohne Semikolon wird das Ergebnis des MBA-Vereinfachers als Kandidat verwendet. Das Tool meldet Urteile, Modell-Replay und Zeiten für Sessionaufbau, Übersetzung und Lösung, nicht aber Parsing, MBA-Vereinfachung, Export oder Abbau. Jede Wiederholung nutzt einen frischen Solver. SAT-Modelle müssen die Differenz im Ausdrucksevaluator reproduzieren. Widersprüchliche eindeutige Urteile sowie ungültige Abfragen/Modelle lassen den Lauf scheitern; `unknown` wird protokolliert und ist kein Äquivalenzbeweis.
 
 SMT-LIB-Export enthält ursprünglichen DAG, dauerhafte Assertions und Annahmen der letzten Abfrage; Replay mit `z3 query-N.smt2`. Ressourcenlimits und Solversionen mitprotokollieren. Die Backends verwenden unterschiedliche Budgeteinheiten: Verglichen werden begrenzte Workloads, nicht identische Arbeit. Bitvektorbeweise folgen der totalen Fixed-Width-Semantik der Ausdruckssprache. Maschinenfehler, Speichereffekte und LLVM poison bleiben Verantwortung der Lift-/Übersetzungsgrenzen; ein Ausdrucksbeweis zertifiziert sie nicht.
+
+Eine Kopie der noch nicht durchsuchten Kodierung entfernt auf Wurzelebene belegte Variablen aus ihrer eigenen Entscheidungswarteschlange und stellt die strikte Heap-Reihenfolge nach Aktivität und Index wieder her. Belegungen und Klauseln bleiben erhalten; Wurzelfakten überstehen jedes Backtracking. Besitz der Quelle, tatsächliche Entscheidungen, vollständige Modelle und alle Suchbudgets bleiben unverändert.

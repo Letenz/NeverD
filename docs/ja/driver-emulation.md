@@ -346,7 +346,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `DbgPrint`、`DbgPrintEx` | 検査付き Win64 可変引数の書式処理。出力は最大 512 バイトで、デバッガーフィルターはすべて有効 |
 | `IoGetCurrentIrpStackLocation` | 現在モデル化している IRP のスタック位置を返す。通常コンパイルされた WDM マクロも同じゲストフィールドを読む |
 | `KeGetCurrentIrql` | 明示的な引き上げと復元を含む現在の IRQL/CR8 を読みます。ディスパッチとワーク項目は `PASSIVE_LEVEL`、DPC は `DISPATCH_LEVEL` で開始します |
-| `KfRaiseIrql`, `KeLowerIrql` | 実際の x64 WDK IRQL 昇降インポートとインライン補助関数。各実行は復帰前に保存値を LIFO 順に復元します。IRQL <= APC_LEVEL の合法な待機は保存した昇降状態を維持し、待機時の IRQL で再開します。DISPATCH_LEVEL のロック保持中は中断できません。CR8 は各変更を反映し、命令単位の割り込み先取りは再現しません。 |
+| `KfRaiseIrql`, `KeLowerIrql` | 実際の x64 WDK IRQL 昇降インポートとインライン補助関数。各実行は復帰前に保存値を LIFO 順に復元します。IRQL <= APC_LEVEL の合法な待機は保存した昇降状態を維持し、待機時の IRQL で再開します。DISPATCH_LEVEL のロック保持中は中断できません。CR8 は各変更を反映し、設定した CPU0 イベントの先取りには `scheduling` を使用します。任意の割り込みネストは未対応です。 |
 | `KeInitializeSpinLock`, `KeAcquireSpinLockRaiseToDpc`, `KeReleaseSpinLock`, `KeAcquireSpinLockAtDpcLevel`, `KeReleaseSpinLockFromDpcLevel`, `KeTryToAcquireSpinLockAtDpcLevel` | CPU0 上の常駐・整列済み実行スピンロック。所有者、取得と解放の対応、IRQL の復元を検査します。競合するブロッキング取得は明示的に停止します。 |
 | `IoAllocateWorkItem`, `IoQueueWorkItem`, `IoFreeWorkItem` | デバイスが所有する不透明なワーク項目。`DelayedWorkQueue` のみ。`PASSIVE_LEVEL` でデバイスとコンテキストをコールバックに渡す。キュー内の項目は解放不可 |
 | `KeInitializeDpc`, `KeInsertQueueDpc`, `KeRemoveQueueDpc`, `KeSetImportanceDpc`, `KeSetTargetProcessorDpc` | 不透明な DPC、四つのゲスト引数、`DISPATCH_LEVEL`、重複登録／削除と重要度。対象は CPU0 のみ |
@@ -354,7 +354,8 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `KeInitializeEvent`, `KeSetEvent`, `KeResetEvent`, `KeClearEvent`, `KeReadStateEvent` | 通知／同期イベントの異なるシグナル消費。`KeSetEvent` は Increment=0、Wait=FALSE のみ |
 | `KeInitializeSemaphore`, `KeReleaseSemaphore`, `KeReadStateSemaphore` | 正の上限を持つ常駐カウントセマフォです。成功した待機ごとに 1 減算します。解放は Increment=0 と Wait=FALSE に限定し、上限超過は `STATUS_SEMAPHORE_LIMIT_EXCEEDED` を発生させます。 |
 | `KeInitializeMutex`, `KeReleaseMutex`, `KeReadStateMutex` | 常駐 KMUTEX は実行フレームが所有し、再帰取得できます。KeReleaseMutex は直前の符号付きシグナル状態を返し、所有者と一致する DISPATCH_LEVEL 取得状態を要求し、Wait=FALSE のみ受け付けます。保持中の復帰、再初期化、領域解放は禁止します。 所有者以外の解放は `STATUS_MUTANT_NOT_OWNED` を発生させます。 |
-| `PsCreateSystemThread`, `PsTerminateSystemThread`, `ObReferenceObjectByHandle`, `ObfDereferenceObject`, `ZwClose` | PASSIVE_LEVEL で動く限定的なシステムプロセススレッド。ハンドルと不透明なスレッドオブジェクトの参照は別々の寿命を持つ。PsTerminateSystemThread は復帰せずに終了し、待機対象をシグナル状態にする。APC、優先度、型付きオブジェクト参照は未対応。 |
+| `PsCreateSystemThread`, `PsTerminateSystemThread`, `ObReferenceObjectByHandle`, `ObfDereferenceObject`, `ZwClose` | PASSIVE_LEVEL で動く限定的なシステムプロセススレッド。ハンドルと不透明なスレッドオブジェクトの参照は別々の寿命を持つ。PsTerminateSystemThread は復帰せずに終了し、待機対象をシグナル状態にする。APC 配信、プロセス優先度クラス、型付きオブジェクト参照は未対応。 |
+| `KeSetPriorityThread`, `KeQueryPriorityThread` | `PASSIVE_LEVEL` の実行時優先度。設定は 1..31 で以前の値を返し、決定的な初期値は 8 です。既知のスレッドオブジェクトが必要です。`scheduling` で優先度スケジューリングを有効にします。動的ブーストとプロセス優先度クラスは未対応です。 [driver-scheduling.md](driver-scheduling.md) |
 | `KeEnterCriticalRegion`, `KeLeaveCriticalRegion`, `KeEnterGuardedRegion`, `KeLeaveGuardedRegion`, `KeAreApcsDisabled`, `KeAreAllApcsDisabled` | スレッドごとの入れ子の APC 無効化状態。クリティカル領域と保持中の KMUTEX は通常の APC を、ガード領域と IRQL >= APC_LEVEL は全 APC を無効化する。システムスレッドは一つのクリティカル領域内で開始する。不一致の終了や領域を残した復帰は失敗する。APC 配信は未対応。 |
 | `KeWaitForSingleObject` | 初期化済みイベント、タイマー、セマフォまたはミューテックス一個。非アラート `KernelMode`、理由 `Executive`。ゼロのポーリング、有限の相対／絶対または無限待機。非ゼロ／無限待機は IRQL <= APC_LEVEL |
 | `KeDelayExecutionThread` | IRQL <= APC_LEVEL で非アラート `KernelMode` の相対／絶対遅延。仮想時間が進むと保存したゲストフレームを再開 |

@@ -301,6 +301,190 @@ TEST(SourceABI, SwiftArm64HomogeneousFloatRecordUsesFourFPLanes) {
   EXPECT_FALSE(validateSourceABI(Hint, Error));
 }
 
+TEST(SourceABI, SwiftPointTransformKeepsTwoFloatingInputsAndResults) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SourceFunctionTypeHint Hint;
+    Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+    const auto Double = NdType::makeFloat(8);
+    const auto Point = NdType::makeStruct({Double, Double});
+    Hint.ReturnType = Point;
+    Hint.Parameters = {{"point", Point},
+                       {"self", NdType::makePtr(NdType::makeVoid())}};
+    Hint.Parameters[1].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+    std::string Error;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Hint, Architecture, Error)) << Error;
+    const auto &TRI = getTargetRegInfo(Architecture);
+    ASSERT_EQ(Hint.ReturnComponents.size(), 2U);
+    ASSERT_EQ(Hint.Parameters[0].Components.size(), 2U);
+    for (size_t I = 0; I != 2; ++I) {
+      for (const auto &Location :
+           {Hint.ReturnComponents[I], Hint.Parameters[0].Components[I]}) {
+        EXPECT_EQ(Location.Kind, SourceABICarrierKind::FloatingRegister);
+        EXPECT_EQ(Location.RegisterOffset, TRI.FPParamRegs[I]);
+        EXPECT_EQ(Location.ValueBytes, 8U);
+      }
+    }
+    EXPECT_EQ(Hint.Parameters[1].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+    ASSERT_EQ(sourceABIParameters(Hint).size(), 3U);
+    EXPECT_TRUE(validateSourceABI(Hint, Error)) << Error;
+    for (unsigned Mutation = 0; Mutation != 18; ++Mutation) {
+      auto Wrong = Hint;
+      switch (Mutation) {
+      case 0:
+        Wrong.ReturnComponents[1].RegisterOffset = TRI.FPParamRegs[2];
+        break;
+      case 1:
+        Wrong.Parameters[0].Components[1].RegisterOffset = TRI.FPParamRegs[0];
+        break;
+      case 2:
+        Wrong.Parameters[0].Components[0].Kind =
+            SourceABICarrierKind::IntegerRegister;
+        break;
+      case 3:
+        Wrong.ReturnComponents[0].ValueBytes = 4;
+        break;
+      case 4:
+        Wrong.Parameters[1].Location.RegisterOffset = TRI.IntParamRegs[0];
+        break;
+      case 5:
+        Wrong.ReturnType = NdType::makeStruct({Double, NdType::makeInt(8)});
+        break;
+      case 6:
+        Wrong.Parameters[0].Type =
+            NdType::makeStruct({NdType::makeFloat(4), NdType::makeFloat(4)});
+        break;
+      case 7:
+        Wrong.ReturnType = NdType::makeStruct({Double, Double, Double});
+        break;
+      case 8:
+        Wrong.Parameters[0].IndirectByValue = true;
+        break;
+      case 9:
+        Wrong.Parameters[1].TheRole = SourceParameterTypeHint::Role::Ordinary;
+        break;
+      case 10:
+        Wrong.Parameters.push_back({"hidden", NdType::makeInt(8)});
+        break;
+      case 11:
+        Wrong.ReturnLocation = {SourceABICarrierKind::IndirectResultPointer,
+                                TRI.indirectResultReg(), 0, 8};
+        break;
+      case 12:
+        Wrong.ReturnType =
+            NdType::makeStruct({NdType::makeStruct({Double}), Double});
+        break;
+      case 13:
+        Wrong.Parameters[0].Type =
+            NdType::makeStruct({Double, NdType::makeStruct({Double})});
+        break;
+      case 14:
+        Wrong.ReturnType = NdType::makeStruct({Double, Double});
+        Wrong.ReturnType->Alignment = 16;
+        break;
+      case 15:
+        Wrong.Parameters[0].Type = NdType::makeStruct({Double, Double});
+        Wrong.Parameters[0].Type->Alignment = 4;
+        break;
+      case 16:
+        Wrong.ReturnType = NdType::makeStruct({Double, Double});
+        Wrong.ReturnType->FieldOffsets[1] = 4;
+        break;
+      case 17:
+        Wrong.Parameters[0].Type = NdType::makeStruct({Double, Double});
+        Wrong.Parameters[0].Type->FieldOffsets[1] = 0;
+        break;
+      }
+      EXPECT_FALSE(validateSourceABI(Wrong, Error)) << Mutation;
+    }
+    auto Wrong = Hint;
+    Wrong.Parameters[0].Type = NdType::makeStruct({Double, Double, Double});
+    EXPECT_FALSE(assignDarwinSwiftSourceABI(Wrong, Architecture, Error));
+  }
+}
+
+TEST(SourceABI, SwiftPointForwardingPreservesBothIEEECarriers) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SourceFunctionTypeHint Hint;
+    Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+    const auto Double = NdType::makeFloat(8);
+    const auto Point = NdType::makeStruct({Double, Double});
+    Hint.ReturnType = Point;
+    Hint.Parameters = {{"point", Point},
+                       {"self", NdType::makePtr(NdType::makeVoid())}};
+    Hint.Parameters[1].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+    std::string Error;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Hint, Architecture, Error)) << Error;
+    const auto &TRI = getTargetRegInfo(Architecture);
+    const std::map<va_t, SourceFunctionTypeHint> Hints{{0x1000, Hint},
+                                                       {0x2000, Hint}};
+    const std::map<va_t, std::string> Names{{0x1000, "point_forward"},
+                                            {0x2000, "point_identity"}};
+    std::vector<HighFunc> Functions;
+    for (const auto Entry : {va_t(0x2000), va_t(0x1000)}) {
+      LowFunc Low;
+      Low.Entry = Entry;
+      Low.Name = Names.at(Entry);
+      LowBlock Block;
+      Block.Id = 0;
+      Block.StartAddr = Entry;
+      Block.EndAddr = Entry + 8;
+      if (Entry == 0x1000) {
+        LowOp Call;
+        Call.Opcode = NdOp::CALL;
+        Call.Addr = Entry;
+        Call.addInput(NdVar::cst(0x2000, 8));
+        Block.Ops.push_back(Call);
+      }
+      LowOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = Entry + 4;
+      Return.addInput(NdVar::reg(TRI.IntReturnReg, 8));
+      Block.Ops.push_back(Return);
+      Low.Blocks = {Block};
+      LowToMedConverter Converter;
+      Converter.setSourceCalleeTypeHints(&Hints);
+      Converter.setSourceCallHintsEnabled(true);
+      auto Med = Converter.convert(Low, Architecture, BinaryFormat::MachO);
+      Med.SourceTypeHint = Hint;
+      recoverCallAbi(Med, Architecture, Names);
+      inferMedTypes(Med, Architecture);
+      MedToHighConverter HighConverter;
+      HighConverter.setFuncNames(&Names);
+      Functions.push_back(HighConverter.convert(Med, Architecture));
+      ASSERT_TRUE(Functions.back().SourceTypeHint);
+      EXPECT_TRUE(equalSourceTypes(Functions.back().ReturnType, Point));
+    }
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(HighCEmitter().emit(Functions, OS, Options));
+    OS.flush();
+    Source += "\ntypedef " + typeToC(Point) + " PointResult;\n";
+    executeC(Source + R"(
+int main(void) {
+  const uint64_t bits[] = {UINT64_C(0), UINT64_C(0x8000000000000000),
+      UINT64_C(0x3ff0000000000000), UINT64_C(0xbff0000000000000),
+      UINT64_C(1), UINT64_C(0x7ff0000000000000),
+      UINT64_C(0x7ff8000000000123), UINT64_C(0xfff8000000000456)};
+  for (unsigned i = 0; i != 8; ++i) for (unsigned j = 0; j != 8; ++j) {
+    PointResult input;
+    __builtin_memcpy(&input.field_0, &bits[i], 8);
+    __builtin_memcpy(&input.field_1, &bits[j], 8);
+    PointResult output = point_forward(input, (void*)(uintptr_t)0x112233);
+    uint64_t left, right;
+    __builtin_memcpy(&left, &output.field_0, 8);
+    __builtin_memcpy(&right, &output.field_1, 8);
+    if (left != bits[i] || right != bits[j]) return 1;
+  }
+  return 0;
+}
+)",
+             false);
+  }
+}
+
 TEST(SourceABI, BoundRecordCallAbiRetainsEveryRenamedComponent) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (bool Floating : {false, true}) {

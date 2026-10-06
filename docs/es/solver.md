@@ -20,6 +20,8 @@ Las comparaciones de más de ocho bits comparan primero las mitades altas y usan
 
 `BitVectorSolver::cloneEncoding()` copia una codificación completa antes de cualquier intento de búsqueda SAT. Devuelve null después de buscar o de un fallo de codificación. Cada copia posee sus cláusulas mutables, propagación raíz, puertas y correspondencias de bits; conserva el orden de variables, el cómputo de puertas y la configuración del solucionador. El contexto debe sobrevivir a ambos solucionadores; el original puede modificarse o destruirse de forma independiente.
 
+El motor SAT mantiene cuatro entradas de vigilancia dentro de cada lista de literal; las listas mayores crecen dinámicamente. Esto evita asignaciones separadas para listas cortas al construir, copiar antes de buscar y destruir. El orden de propagación, las cláusulas, la propiedad independiente y todos los límites de trabajo permanecen iguales.
+
 <!-- i18n-section: z3-build -->
 
 ## Compilación opcional con Z3
@@ -75,3 +77,5 @@ build-release/bin/neverd-solver-bench \
 Cada línea no comentada es `original ; candidate`; si falta el punto y coma, se usa como candidato el resultado del simplificador MBA. La herramienta informa veredictos, reproducción de modelos y tiempos (incluyen creación de sesión, traducción y resolución; excluyen parsing, simplificación MBA, exportación y cierre). Cada repetición crea un solver nuevo. Los modelos SAT deben reproducir la diferencia en el evaluador de expresiones. Veredictos concluyentes opuestos o consultas/modelos inválidos hacen fallar la ejecución; `unknown` se registra, pero no prueba equivalencia.
 
 SMT-LIB exportado incluye el DAG original, aserciones permanentes y supuestos de la última consulta; se puede reproducir con `z3 query-N.smt2`. Registra límites y versiones: los backends usan unidades de presupuesto distintas, así que se comparan cargas acotadas, no trabajo idéntico. Las pruebas de bitvector usan semántica total de ancho fijo. Excepciones de máquina, efectos de memoria y LLVM poison siguen perteneciendo a los límites de lifting y traducción; una prueba de expresión no los certifica.
+
+Una copia de la codificación aún no explorada elimina de su propia cola de decisiones las variables asignadas en la raíz y reconstruye el orden estricto del montículo por actividad e índice. Las asignaciones y cláusulas permanecen intactas; los hechos raíz sobreviven a todo retroceso. La propiedad de la fuente, las decisiones reales, los modelos completos y todos los presupuestos de búsqueda no cambian.

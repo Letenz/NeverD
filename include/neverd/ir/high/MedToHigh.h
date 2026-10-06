@@ -167,6 +167,10 @@ void reportUnprotectedGuardedCode(const HighFunc &Func, const char *Stage);
 /// opens with L becomes `if (!c && b)`.  L must start exactly one statement,
 /// and nothing but the first test may jump to the second if.
 bool mergeJumpsIntoNextIfArms(HighFunc &Func);
+/// Declares each register or temporary local signed or unsigned by what most
+/// of its uses read, so that wrapping arithmetic, logical shifts and
+/// unsigned comparisons print without casts.  Value bits do not change.
+void chooseIntegerSignedness(HighFunc &Func);
 /// `if (a) {..} else { ..; jump; X: S.. }` followed by `if (c) goto X;`
 /// becomes `while (c) { S.. }` in place of the test.
 bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);

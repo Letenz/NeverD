@@ -3366,6 +3366,7 @@ void Pipeline::buildLowIR(
       AuditIt->LiftedInstructions = Low.LiftedInstructionCount;
       AuditIt->DecodeFailures = Low.DecodeFailureAddresses;
       AuditIt->UnsupportedInstructions = Low.UnsupportedInstructionAddresses;
+      AuditIt->UnprovenReturns = Low.UnprovenReturnAddresses;
       AuditIt->TruncatedPaths = Low.TruncatedPathAddresses;
     }
 

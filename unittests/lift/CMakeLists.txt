@@ -138,6 +138,7 @@ add_neverd_unittest(NeverDLiftTests
   core/SwiftTypeNameCallTests.cpp
   core/SwiftNSCoderCallTests.cpp
   core/SwiftCombineCallTests.cpp
+  core/SwiftConcurrencyCallTests.cpp
   core/SwiftCoreGraphicsCallTests.cpp
   core/SwiftStringValueCallTests.cpp
   core/SwiftStaticStringCallTests.cpp
@@ -1001,6 +1002,7 @@ target_include_directories(NeverDLiftTests PRIVATE
 )
 
 add_neverd_unittest(NeverDJumpTableTests
+  core/IndirectTailFrameTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
   core/JumpTableProposalLFPTests.cpp
@@ -1014,6 +1016,7 @@ target_compile_definitions(NeverDJumpTableTests PRIVATE
 )
 target_include_directories(NeverDJumpTableTests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include
+  ${CMAKE_SOURCE_DIR}/lib/ir/low
   ${CMAKE_SOURCE_DIR}/lib/pipeline ${LLVM_INCLUDE_DIRS})
 add_dependencies(NeverDJumpTableTests neverd)
 
@@ -1055,6 +1058,7 @@ add_neverd_unittest(NeverDObjCSourceCallTests
   core/SwiftTypeNameCallTests.cpp
   core/SwiftNSCoderCallTests.cpp
   core/SwiftCombineCallTests.cpp
+  core/SwiftConcurrencyCallTests.cpp
   core/SwiftCoreGraphicsCallTests.cpp
   core/SwiftStringValueCallTests.cpp
   core/SwiftStaticStringCallTests.cpp
@@ -1099,12 +1103,24 @@ target_include_directories(NeverDLowInstructionBoundaryTests PRIVATE
 target_compile_definitions(NeverDLowInstructionBoundaryTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 
+# Calls into a function's own body: push-and-jump lifting and the proof that a
+# return never pops an address the function pushed itself.
+add_neverd_unittest(NeverDOwnInteriorCallTests
+  core/OwnInteriorCallTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM Pipeline
+)
+target_include_directories(NeverDOwnInteriorCallTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(NeverDOwnInteriorCallTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+
 # Exercise shared source control-flow and SSA invariants independently of the
 # aggregate lift inventory when fixing mobile source reconstruction.
 add_neverd_unittest(NeverDHighControlFlowTests
   core/HighControlFlowSemanticsTests.cpp
   core/HighFrameStoreForwardingTests.cpp
   core/HighSwitchFollowTests.cpp
+  core/HighIntegerSignednessTests.cpp
   core/HighSSADefinitionTests.cpp
   core/HighSourceRangeTests.cpp
   core/HighFrameTemporaryTests.cpp

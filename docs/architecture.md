@@ -86,6 +86,20 @@ operation witness, complete mapped slot and relocation ownership, and exclusive
 consumption by the recovered branch. The unused prefix gains no suppression
 authority from sharing that origin.
 
+CFG construction also owns indirect tail-call classification. For an AArch64
+candidate without a proved dispatch, `IndirectTailFrame` checks the necessary
+incoming SP and link-word restoration under the existing native call ABI.
+Whole-word copies, bounded pointer-width stack arithmetic and exact spills
+carry these identities; all reaching predecessors and backedges must converge.
+Independent roots start unknown. Partial or overlapping writes invalidate whole
+restoration words; unknown memory writes and exposed frame storage invalidate
+spill evidence. Unsupported effects, incomplete graphs and exhausted work
+retain the original indirect branch. Call preservation comes from `TargetRegInfo`'s
+format-selected ranges. This condition supplies no callee identity or source
+ABI. Successful classification emits an explicit `INDIR_CALL + RETURN` pair;
+HighIR cannot infer another tail call from a successorless `INDIR_BR`. An
+unresolved transfer without a usable switch remains an explicit failure path.
+
 The CLI parses commands in `tools/neverd`, creates a `neverd_session_t`, and
 calls the public API in `include/neverd/sdk/NeverDCAPI.h`. Engine state lives in
 `lib/sdk/SessionImpl.h`; `neverd_session_load` selects a loader and builds a
@@ -2147,6 +2161,8 @@ thread/APC/spinlock scheduling, arbitrary concurrent request arrival, PnP
 cancellation, full PnP/power or general hardware. API IRQL ceilings come from `KernelAPIIRQL.def`, with
 argument-dependent checks in the owning model.
 
+`KernelScheduler` owns live runtime priority and the shared priority/ready-order comparison. `KernelModelThreadPriorities` validates thread objects for `KeSetPriorityThread` and `KeQueryPriorityThread`; paused CPU contexts never copy priority state. `DriverSession` checks higher-priority readiness before callback synchronization and at API/event boundaries. See [driver scheduling](driver-scheduling.md) for the bounded policy and remaining limits.
+
 `KernelModelDeviceStack` keeps each device's driver owner, allocation, attachment neighbors, delete-pending state and internal references in one record. The guest `NextDevice` inventory and the host-owned attachment graph have different meanings. Namespace resolution retains the named lower device for `FILE_OBJECT` and reports, selects the current top for initial dispatch and READ/WRITE buffer flags, and captures a retained route. Detach/delete cannot expire devices still owned by a request or callback; the public `ReferenceCount` remains an open-handle count.
 
 `DriverUserMemory.h/.def` own explicit user-region and pointer-reference facts;
@@ -3476,3 +3492,13 @@ The Swift SDK catalog authenticates the generic Foundation NSRange initializer w
 The same descriptor-specific witness contract covers the fixed `String: StringProtocol` conformance. Four complete compiler queries preserve the direct String metadata, descriptor and null-initialized cache; the lazy accessor checks the cache, calls the three-pointer runtime with an undef third operand, stores the new witness with release ordering and returns the matching PHI value. Changed storage, prototypes, branches, PHI inputs or additional effects invalidate the contract. Only that undef operand is projected; observed entry arguments and effectful expressions remain intact.
 
 Each relation checker owns one `FiniteDomainEncoding` bound to its context and fixed solver settings. Repeated cold frame queries with the same complete predicate clone its pre-search encoding; a changed predicate replaces it. Projection, blocking clauses, learned state and models remain local to each query. Full finite enumeration, the final UNSAT check, logical query charges and all existing limits remain mandatory.
+
+Frame-offset queries prepare one complete, context-independent finite-proof key for lookup and later insertion. The movable token keeps exact DAG identity and projection widths; it never retains symbolic references or incomplete results. A live token adds one bounded temporary key beside the retained cache storage. Result validation, eviction, complete enumeration and all solver budgets are unchanged.
+
+Swift CGPoint instance transforms use an exact two-double input and result with swiftself, as observed for ordinary and generic class receivers in four Swift 6.1.2 SDK configurations. The shared ABI owner supports this complete shape on ARM64 and x86-64; complete imported CGPoint declarations drive native inference and receiver binding. Thunks, async, throws, inout, optional and other nominal types remain outside this declaration contract.
+
+The fixed `MainActor: Actor` SDK contract shares a complete compiler reader between external-data and witness catalogs. All four targets must preserve the metadata response and use the same public static table; the metadata accessor, paired conformance descriptor and table must all be exported by `libswift_Concurrency`. The static/nondependent Swift 6.1.2 runtime paths leave caller instantiation argument 2 unused. The original three-pointer query ABI, metadata input and cache publication effects remain; this supplies no contract for other Actor conformances, value layout or frame effects.
+
+Swift SDK Published enclosing-instance accessors preserve four pointer carriers: an opaque indirect result for the getter or a consumed value address for the setter, then owner, wrapped key path and storage key path. Four Swift 6.1.2 macOS/Mac Catalyst compiler and export profiles authenticate the exact getter/setter symbols and Combine providers. Neither ABI adds generic metadata or swiftself; original reference ownership, opaque value layout and frame obligations remain with their existing owners.
+
+The exact `MainActor.shared` SDK getter returns one object pointer and receives its metatype in swiftself (`x20` on ARM64, `r13` on x86-64). Four Swift 6.1.2 macOS/Mac Catalyst compiler and export profiles authenticate this complete ABI and the strong `libswift_Concurrency` provider. Ownership, executor scheduling and private-frame analysis retain their existing contracts.

@@ -247,6 +247,21 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Combine.framework/Combine|"
      "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
      "vIpp"},
+    // Four Swift 6.1.2 macOS/Mac Catalyst profiles pass owner and the two
+    // key paths as ordinary pointers. The getter has an opaque indirect
+    // result; the setter consumes an opaque value address instead. Neither
+    // entry carries generic metadata or swiftself. No value layout or frame
+    // borrowing effects follow from these declarations.
+    {"$s7Combine9PublishedV18_enclosingInstance7wrapped7storagexqd___s24"
+     "ReferenceWritableKeyPathCyqd__xGAHyqd__ACyxGGtcRld__CluigZ",
+     "/System/Library/Frameworks/Combine.framework/Combine|"
+     "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+     "vIppp"},
+    {"$s7Combine9PublishedV18_enclosingInstance7wrapped7storagexqd___s24"
+     "ReferenceWritableKeyPathCyqd__xGAHyqd__ACyxGGtcRld__CluisZ",
+     "/System/Library/Frameworks/Combine.framework/Combine|"
+     "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+     "vpppp"},
     // The Never-failing Publisher sink overload receives closure code and
     // context, Publisher metadata and its witness table, then the opaque
     // borrowed Publisher address in swiftself. The result is AnyCancellable.
@@ -349,6 +364,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/usr/lib/swift/libswiftCore.dylib", "pzp"},
     {"$sSa37_appendElementAssumeUniqueAndCapacity_03newB0ySi_xntFyXl_Ts5",
      "/usr/lib/swift/libswiftCore.dylib", "vzpC"},
+    // All four Swift 6.1.2 macOS/Mac Catalyst profiles return the MainActor
+    // object in one pointer carrier and keep its metatype in swiftself.
+    // This is a synchronous getter, with no executor or frame effects.
+    {"$sScM6sharedScMvgZ", "/usr/lib/swift/libswift_Concurrency.dylib", "pC"},
     // Swift 6.1.2 arm64 and x86_64 client IR passes CGPoint as two
     // doubles followed by the CGContext receiver in swiftself. These
     // actions return void and keep the original imported Swift entry.
@@ -804,9 +823,9 @@ bool declaredFixedABI(const BinaryImage &Image, va_t Slot, llvm::StringRef Name,
 bool swiftWitnessInstantiationArgumentUnused(const BinaryImage &Image,
                                              va_t DescriptorSlot) {
   // The data owner proves a strong, exact, non-TLS external address. This
-  // separate compiler catalog proves argument irrelevance for every legal
-  // instantiation of that exact conformance; the ordinary runtime ABI still has
-  // three pointers.
+  // separate compiler/runtime catalog proves argument irrelevance for every
+  // legal instantiation of that exact conformance; the ordinary runtime ABI
+  // still has three pointers.
   const auto Data = darwinRuntimeGlobalAddressHint(Image, DescriptorSlot);
   const auto Bind = Image.DyldBindSlots.find(DescriptorSlot);
   if (!Data ||

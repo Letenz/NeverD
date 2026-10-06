@@ -158,6 +158,15 @@ public:
   std::optional<uint64_t> nextPassiveReadyOrder() const {
     return Scheduler.nextPassiveReadyOrder();
   }
+  std::optional<KernelScheduler::ReadyThread> nextPassiveThread() const {
+    return Scheduler.nextPassiveThread();
+  }
+  KernelScheduler::ReadyThread readyThread(uint64_t Key, uint64_t Order) const {
+    return Scheduler.readyThread(Key, Order);
+  }
+  int32_t threadPriority(uint64_t Key) const {
+    return Scheduler.threadPriority(Key);
+  }
   uint64_t now100ns() const { return Scheduler.now100ns(); }
   /// Process exactly one chronological boundary, including during execution.
   llvm::Error advanceExecutionTo100ns(uint64_t Time);
@@ -706,6 +715,11 @@ private:
   llvm::Expected<uint64_t> dereferenceThread(uint64_t Object);
   llvm::Expected<uint64_t> closeHandle(uint64_t Handle);
   void retireThreadIfUnreferenced(uint64_t Object);
+  void retireBorrowedThread(uint64_t Key);
+  llvm::Expected<uint64_t> threadPriorityKey(uint64_t Object,
+                                             bool Changing) const;
+  llvm::Expected<uint64_t> queryThreadPriority(uint64_t Object) const;
+  llvm::Expected<uint64_t> setThreadPriority(uint64_t Object, int32_t Priority);
   std::map<uint64_t, size_t> RemoveLockWaitReferences;
   llvm::Expected<uint64_t>
   initializeRemoveLock(llvm::ArrayRef<uint64_t> Arguments);
