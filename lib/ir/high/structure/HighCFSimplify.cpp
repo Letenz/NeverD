@@ -985,7 +985,16 @@ bool hoistTryExitJumps(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
-bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
+/// How often \p E reads the variable \p K.
+static unsigned readsOf(const HighExpr *E, const VarKey &K) {
+  if (!E)
+    return 0;
+  unsigned N = E->Kind == ExprKind::Var && varKey(E->Var) == K;
+  E->forEachChildExpr([&](const ExprPtr &Op) { N += readsOf(Op.get(), K); });
+  return N;
+}
+
+bool duplicateSmallReturnTails(std::vector<HighStmt> &Body, bool PrintedSize) {
   constexpr size_t kMaxTailAssigns = limits::kMaxReturnTailStatements;
   constexpr size_t kMaxComposedTail = 2 * kMaxTailAssigns + 1;
   std::set<va_t> Targets;
@@ -1011,13 +1020,38 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
                                      Stmts[First].Body.empty()) ||
                                     Stmts[First].Kind == StmtKind::Nop))
       ++First;
+    // A temporary read once later in the tail prints inside that read, and
+    // foldTempsInReturnTails folds it in each copy, so by printed size it
+    // does not count toward the limit; the tail still holds at most
+    // kMaxComposedTail statements.
+    auto Weight = [&](size_t N, size_t Count) -> size_t {
+      const HighStmt &S = Stmts[N];
+      if (S.Kind != StmtKind::Assign || !S.Dst ||
+          S.Dst->Kind != ExprKind::Var || S.Dst->Var.Kind != MedVar::Temp)
+        return Count;
+      const VarKey K = varKey(S.Dst->Var);
+      unsigned Uses = 0;
+      for (size_t M = N + 1; M < Stmts.size(); ++M) {
+        forEachExpr(Stmts[M],
+                    [&](const ExprPtr &E) { Uses += readsOf(E.get(), K); });
+        if (Stmts[M].Kind == StmtKind::Return ||
+            Stmts[M].Kind == StmtKind::Goto)
+          break;
+      }
+      return Uses == 1 ? 0 : Count;
+    };
     size_t J = First;
-    size_t Assigns = 0;
+    size_t Assigns = 0, Statements = 0;
     while (J < Stmts.size()) {
       std::optional<size_t> Count = pureAssignCount(Stmts[J], Targets);
-      if (!Count || Assigns + *Count > kMaxTailAssigns)
+      if (!Count)
         break;
-      Assigns += *Count;
+      const size_t Cost = PrintedSize ? Weight(J, *Count) : *Count;
+      if (Assigns + Cost > kMaxTailAssigns ||
+          Statements + *Count > kMaxComposedTail)
+        break;
+      Assigns += Cost;
+      Statements += *Count;
       // Nothing runs after a call that never returns.
       if (endsItsBlock(Stmts[J]))
         return std::vector<HighStmt>(Stmts.begin() + First,
@@ -1587,14 +1621,7 @@ bool foldTempsInReturnTails(std::vector<HighStmt> &Body) {
       Entered.insert(Clause.HandlerVA);
   });
   // How often \p E reads \p K, and which variables it reads.
-  std::function<unsigned(const HighExpr *, const VarKey &)> Reads =
-      [&](const HighExpr *E, const VarKey &K) -> unsigned {
-    if (!E)
-      return 0;
-    unsigned N = E->Kind == ExprKind::Var && varKey(E->Var) == K;
-    E->forEachChildExpr([&](const ExprPtr &Op) { N += Reads(Op.get(), K); });
-    return N;
-  };
+  auto Reads = [](const HighExpr *E, const VarKey &K) { return readsOf(E, K); };
   std::function<void(const HighExpr *, std::set<VarKey> &)> ReadSet =
       [&](const HighExpr *E, std::set<VarKey> &Out) {
         if (!E)

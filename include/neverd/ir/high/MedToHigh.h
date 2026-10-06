@@ -61,7 +61,11 @@ void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med = nullptr);
 /// Replace `goto L` with a copy of L's tail when L is a few pure
 /// assignments followed by a return, or ending in a call that never returns.
 /// The original stays for other paths. Returns true when a goto was replaced.
-bool duplicateSmallReturnTails(std::vector<HighStmt> &Body);
+/// With \p PrintedSize, a temporary read once later in the tail does not
+/// count toward the limit, since it prints inside that read; that is meant
+/// for the jumps left once structuring is done, where each copy removes one.
+bool duplicateSmallReturnTails(std::vector<HighStmt> &Body,
+                               bool PrintedSize = false);
 
 /// Move the jump that ends a `__try` body after the try statement when every
 /// `__except` body ends in a jump or return of its own, so the protected code

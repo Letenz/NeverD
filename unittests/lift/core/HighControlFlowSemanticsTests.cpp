@@ -6554,6 +6554,57 @@ TEST(HighControlFlowSemantics, TailCopiesStayInTheirTryProtection) {
   EXPECT_EQ(F.Body.front().Body.back().Kind, StmtKind::Goto);
 }
 
+TEST(HighControlFlowSemantics, TemporariesReadOnceStayOutOfTheTailLimit) {
+  // v = 7; if (c) goto tail; v = 5;
+  // tail: t5 = v + 1; t6 = t5 * 3; m[0] = t6; m[1] = 1; m[2] = 2;
+  //       m[3] = 3; m[4] = 4; return v;
+  // Each temporary prints inside its one read, so by printed size the tail
+  // counts as its five stores and the jump becomes a copy of it.  A
+  // temporary read twice prints on its own and counts, which makes the tail
+  // too long.
+  auto Put = [](va_t Address, uint64_t Slot, ExprPtr Value) {
+    HighStmt S;
+    S.Kind = StmtKind::Store;
+    S.Addr = Address;
+    S.StoreAddr = HighExpr::makeConst(0x9000 + 8 * Slot, 8);
+    S.StoreVal = std::move(Value);
+    return S;
+  };
+  auto Compute = [](va_t Address, int Id, NdOp Op, ExprPtr From, uint64_t N) {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Addr = Address;
+    S.Dst = local(Id);
+    S.Val = HighExpr::makeBinop(Op, std::move(From), HighExpr::makeConst(N, 8));
+    return S;
+  };
+  for (bool ReadTwice : {false, true}) {
+    SCOPED_TRACE(ReadTwice);
+    ExprPtr Stored = local(6);
+    if (ReadTwice)
+      Stored = HighExpr::makeBinop(NdOp::INT_ADD, local(6), local(6));
+    HighFunc F;
+    F.Body = {assign(0x1000, 1, 7),
+              conditional(0x1004, 0x1020),
+              assign(0x1008, 1, 5),
+              Compute(0x1020, 5, NdOp::INT_ADD, local(1), 1),
+              Compute(0x1024, 6, NdOp::INT_MULT, local(5), 3),
+              Put(0x1028, 0, std::move(Stored)),
+              Put(0x102c, 1, HighExpr::makeConst(1, 8)),
+              Put(0x1030, 2, HighExpr::makeConst(2, 8)),
+              Put(0x1034, 3, HighExpr::makeConst(3, 8)),
+              Put(0x1038, 4, HighExpr::makeConst(4, 8)),
+              result(0x103c, local(1))};
+    // By statement count the tail is too long either way.
+    EXPECT_FALSE(duplicateSmallReturnTails(F.Body));
+    EXPECT_EQ(duplicateSmallReturnTails(F.Body, /*PrintedSize=*/true),
+              !ReadTwice);
+    EXPECT_EQ(countKind(F, StmtKind::Goto), ReadTwice ? 1u : 0u);
+    for (uint64_t X = 0; X < 2; ++X)
+      EXPECT_EQ(execute(F, X), std::optional<uint64_t>(X ? 7 : 5)) << X;
+  }
+}
+
 TEST(HighControlFlowSemantics, JumpToANoReturnCallBecomesItsCopy) {
   // if (c) goto fail; v = 5; return v; fail: abort(); -- the failing path
   // ends in the call, as a return tail ends in its return.
