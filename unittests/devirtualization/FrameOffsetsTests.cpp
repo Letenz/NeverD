@@ -292,4 +292,102 @@ TEST(FrameOffsets, InvalidShapesAreRejectedBeforeSymbolicOperations) {
   EXPECT_EQ(Queries, 0u);
 }
 
+TEST(FrameOffsets, SymbolicAddendsPreserveAlignmentAndWholeIndex) {
+  for (unsigned Width : {8U, 64U})
+    for (unsigned Split : {0U, 8U, 32U})
+      for (bool IndexFirst : {false, true})
+        for (uint64_t Bias : {uint64_t{37}, uint64_t{0} - 101}) {
+          SCOPED_TRACE(Width);
+          SCOPED_TRACE(Split);
+          SCOPED_TRACE(IndexFirst);
+          SCOPED_TRACE(Bias);
+          SymContext Ctx;
+          SymRef Root, Index;
+          if (IndexFirst) {
+            Index = Ctx.mkVar("index", Width);
+            Root = Ctx.mkVar("stack", 64);
+          } else {
+            Root = Ctx.mkVar("stack", 64);
+            Index = Ctx.mkVar("index", Width);
+          }
+          const auto Adjusted = Ctx.mkAdd(Root, Ctx.mkConst(64, Bias));
+          const auto Aligned =
+              Split ? Ctx.mkConcat(
+                          Ctx.mkExtract(Adjusted, Split, 64 - Split),
+                          Ctx.mkAnd(Ctx.mkExtract(Adjusted, 0, Split),
+                                    Ctx.mkConst(Split, uint64_t{0} - 16)))
+                    : Ctx.mkAnd(Adjusted, Ctx.mkConst(64, uint64_t{0} - 16));
+          const auto Value = Ctx.mkAdd(Aligned, Ctx.mkZExtOrTrunc(Index, 64));
+          SpecializationOptions Options;
+          Options.MaxSolverGates = 512;
+          for (uint64_t Low : {0U, 9U, 15U}) {
+            const uint64_t Number = Width == 8 ? 253 : UINT64_MAX - 6;
+            const auto Predicate =
+                Ctx.mkAnd(residue(Ctx, Root, 15, Low),
+                          Ctx.mkEq(Index, Ctx.mkConst(Width, Number)));
+            uint64_t Queries = 0;
+            const auto Good =
+                proveFrameOffset(Ctx, Predicate, Value, Root, Options, Queries);
+            ASSERT_EQ(Good.Status, FrameOffsetStatus::Exact);
+            EXPECT_EQ(Good.Offset, Bias + Number - ((Low + Bias) & 15));
+            EXPECT_EQ(Queries, 2U);
+          }
+        }
+}
+
+TEST(FrameOffsets, SymbolicAddendsDoNotDiscardConstraintsOrRootDependence) {
+  SymContext Ctx;
+  const auto Root = Ctx.mkVar("stack", 64);
+  const auto Other = Ctx.mkVar("other", 64);
+  const auto Index = Ctx.mkVar("index", 8);
+  const auto Aligned = Ctx.mkAnd(Root, Ctx.mkConst(64, -16));
+  const auto Predicate = residue(Ctx, Root, 15, 8);
+  for (const auto Addend : {Root, Ctx.mkZExt(Ctx.mkExtract(Root, 0, 8), 64),
+                            Ctx.mkZExt(Index, 64)}) {
+    uint64_t Queries = 0;
+    EXPECT_EQ(proveFrameOffset(Ctx, Predicate, Ctx.mkAdd(Aligned, Addend), Root,
+                               {}, Queries)
+                  .Status,
+              FrameOffsetStatus::NonUnique);
+    EXPECT_EQ(Queries, 2U);
+  }
+  const auto Fixed = Ctx.mkAnd(Predicate, Ctx.mkEq(Index, Ctx.mkConst(8, 17)));
+  const auto WrongRoot =
+      Ctx.mkAdd(Ctx.mkAnd(Other, Ctx.mkConst(64, -16)), Ctx.mkZExt(Index, 64));
+  uint64_t Queries = 0;
+  EXPECT_EQ(proveFrameOffset(Ctx, Fixed, WrongRoot, Root, {}, Queries).Status,
+            FrameOffsetStatus::NonUnique);
+  const auto Guard = Ctx.mkVar("unrelated_guard", 8);
+  const auto Contradiction = Ctx.mkAnd(Ctx.mkUlt(Guard, Ctx.mkConst(8, 3)),
+                                       Ctx.mkUlt(Ctx.mkConst(8, 5), Guard));
+  EXPECT_EQ(proveFrameOffset(Ctx, Ctx.mkAnd(Fixed, Contradiction),
+                             Ctx.mkAdd(Aligned, Ctx.mkZExt(Index, 64)), Root,
+                             {}, Queries)
+                .Status,
+            FrameOffsetStatus::Infeasible);
+}
+
+TEST(FrameOffsets, SymbolicAddendProofsStillRequireCompleteBudgets) {
+  for (unsigned Case = 0; Case != 4; ++Case) {
+    SymContext Ctx;
+    const auto Root = Ctx.mkVar("stack", 64), Index = Ctx.mkVar("index", 8);
+    const auto Value =
+        Ctx.mkAdd(Ctx.mkAnd(Root, Ctx.mkConst(64, -16)), Ctx.mkZExt(Index, 64));
+    const auto Predicate = Ctx.mkAnd(residue(Ctx, Root, 15, 8),
+                                     Ctx.mkEq(Index, Ctx.mkConst(8, 17)));
+    SpecializationOptions Options;
+    Options.MaxSolverGates = Case == 0 ? 1 : 512;
+    Options.MaxSymbolicNodes = Case == 1 ? Ctx.numNodes() : 65536;
+    Options.MaxSolverQueries = Case == 2 ? 1 : 2;
+    uint64_t Queries = 0;
+    const auto Result =
+        proveFrameOffset(Ctx, Predicate, Value, Root, Options, Queries);
+    EXPECT_EQ(Result.Status, Case == 3 ? FrameOffsetStatus::Exact
+                                       : FrameOffsetStatus::BudgetExceeded);
+    EXPECT_EQ(Queries, Case < 2 ? 0U : Case == 2 ? 1U : 2U);
+    if (Case == 3)
+      EXPECT_EQ(Result.Offset, 9U);
+  }
+}
+
 } // namespace
