@@ -64,6 +64,10 @@ struct SourceFrameEffects {
   // These scalar-pointer borrows must read completely initialized bytes.
   // Their existing bounds and write permissions still own the effect.
   std::set<size_t> InitializedFrameParameters;
+  // Independently proved complete pointer-free writes through an ordinary
+  // scalar pointer, on every normal return. The writable bound owns its
+  // extent. This establishes no logical record or byte-value identity.
+  std::set<size_t> InitializesFrameParameters;
   // Typed opaque value lifetimes are distinct from initialized raw bytes.
   std::map<size_t, SourceFrameValueEffect> OpaqueValueParameters;
   // Logical indirect records consume an initialized private by-value copy.
@@ -80,6 +84,7 @@ struct SourceFrameEffects {
   bool empty() const {
     return ReadOnlyFrameParameters.empty() && WritableFrameParameters.empty() &&
            InitializedFrameParameters.empty() &&
+           InitializesFrameParameters.empty() &&
            OpaqueValueParameters.empty() && ByValueFrameParameters.empty() &&
            !InitializesIndirectResult && !ReturnFrameOrExternal && !Scratch;
   }
@@ -120,6 +125,15 @@ sourceFrameEffectsMatchABI(const SourceFrameEffects &Effects,
   for (size_t Index : Effects.InitializedFrameParameters)
     if (!Effects.ReadOnlyFrameParameters.count(Index) &&
         !Effects.WritableFrameParameters.count(Index))
+      return false;
+  for (size_t Index : Effects.InitializesFrameParameters)
+    if (!Effects.WritableFrameParameters.count(Index) ||
+        Signature.Parameters[Index].Type->Kind != NdTypeKind::Ptr ||
+        Signature.Parameters[Index].TheRole !=
+            SourceParameterTypeHint::Role::Ordinary ||
+        Signature.Parameters[Index].IndirectByValue ||
+        Effects.OpaqueValueParameters.count(Index) || Effects.Scratch ||
+        Effects.ReturnFrameOrExternal)
       return false;
   for (const auto &[Index, Value] : Effects.OpaqueValueParameters) {
     using Action = SourceFrameValueEffect::Action;

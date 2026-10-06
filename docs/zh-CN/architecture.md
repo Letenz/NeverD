@@ -1364,3 +1364,5 @@ Darwin 仿射桥接的权威实现也支持 `CGAffineTransformInvert`：x0 承�
 CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-scheduling.md)。
 
 Swift once Objective-C getter 证明允许存储读取独立赋值，或在返回尾部折叠后直接作为已认证 retain 的操作数。两种形式都要求相同且精确的存储、谓词和初始化器身份、当前运行时提供者与 ABI、返回值以及上下文独立性。合并的 Objective-C retain/autorelease，或分离的 Swift retain 与 Objective-C autorelease，仍保留为显式效果。投影上下文前，提前返回与后续尾部必须一致；表达式折叠不豁免回调正文或依赖闭包检查。
+
+SourceFrameAnalysis 分别管理原生输出字节的完整写入证明和输入字节的初始化要求。对于只有一个普通指针和标量 double 参数的 AArch64 C void 投影，每条可达正常返回路径都必须完整写入有界连续前缀，且不得让栈帧或输出地址逃逸。流水线在授予 InitializesFrameParameters 前重新验证当前不可变机器代码及控制流、完整被调用方 ABI 和当前 SDK 调用实例。调用方只接受精确且对齐的私有范围，检查其他借用及存活值的重叠，废弃旧写入事实，再只标记获证字节已初始化。此证明不提供记录布局、字节值身份、入口返回投影或源码发布权限。

@@ -1479,3 +1479,5 @@ block과 복사본 게시 테스트는 독립된 두 48바이트 범위, 기술�
 CPU0 명시적 선점, 가상 시계 의미와 현재 한계는 [드라이버 스케줄링](driver-scheduling.md)을 참조하세요.
 
 `SwiftOnceSources.FoldedObjCGetterTailsExecuteOnceAndRetainsAtO0AndO2` 는 실제 ARM64/x64 반환 꼬리를 접고 결합 또는 분리된 retain 호출과 독립 또는 인라인 조건값을 다루며, 출력 C를 런타임 스텁으로 O0/O2에서 실행한다. 결과 비트, 한 번의 초기화, 호출 순서와 캐시값 변경을 검사한다. `FoldedObjCGetterTailsRevalidateCurrentStorageAndCalls`는 저장된 계획이 있어도 너비, 순서, 내장 연산, 저장소, 결과, 호출과 현재 가져오기 변경을 거부한다. 이는 통제된 소스와 스텁 검사이며 원래 WMF 기계어나 네이티브 Swift 런타임 실행은 아니다.
+
+`SourceFrameAnalysis.CompleteOutput*`는 완전하거나 짧은 접두 영역, 모든 반환 경로의 병합, SDK 꼬리 호출 쓰기, 누락 바이트, 포인터 탈출 및 ABI 전달 위치 제약을 검사한다. 호출자 사례는 없거나 짧은 인증서, 정렬 오류, 프레임 경계 위반 및 저장 레지스터 겹침, 별칭, 후속 쓰기로 인한 무효화와 살아 있는 불투명 값의 겹침을 거부한다. `NativeSourceHints.CompleteNativeOutput*`는 조립한 ARM64 생산자와 소비자를 재검증하고 완전한 SDK 입력 범위를 요구하며 오래된 코드, CFG, ABI, 감사, 공급자 및 호출 위치 증거를 거부한다. 이는 바이트 초기화와 소스 허용 검사이며 원래 기계 코드 본문을 실행하거나 네이티브 논리 반환값을 인증하지 않는다.

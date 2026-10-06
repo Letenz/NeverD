@@ -186,5 +186,20 @@ sourceFrameByValueCopies(const LowFunc &Function, Arch Architecture,
                          const NativeSourceCallKey &Site,
                          const SourceFunctionTypeHint &EntrySignature);
 
+/// Prove a synchronous, nonescaping complete output prefix through one exact
+/// scalar pointer in an ARM64 C void entry. The acyclic body may have at most
+/// 128 blocks and write at most 256 bytes; other entry parameters must be
+/// eight-byte floating scalars. Every normal return must write every byte of
+/// the same prefix and restore state. Output reads, unknown output addresses,
+/// pointer spills/escapes, other external stores and conflicting paths refuse.
+/// The caller must independently authenticate the current machine, complete
+/// entry/call ABIs and effects, and lend an aligned private pointer. External
+/// memory origins are assumed disjoint from that caller's private frame.
+/// This proves written bytes only, never a result type, byte values, complete
+/// source body or publication/dependency closure.
+std::optional<size_t> sourceFrameCompleteOutputBytes(
+    const LowFunc &Function, Arch Architecture, const NativeSourceCalls &Calls,
+    const SourceFunctionTypeHint &EntrySignature, size_t Parameter);
+
 } // namespace neverd
 #endif

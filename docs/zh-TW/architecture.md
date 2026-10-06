@@ -1302,3 +1302,5 @@ Darwin 仿射橋接的權威實作也支援 `CGAffineTransformInvert`：x0 承�
 CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](driver-scheduling.md)。
 
 Swift once Objective-C getter 證明允許儲存讀取獨立賦值，或在返回尾部折疊後直接作為已認證 retain 的運算元。兩種形式都要求相同且精確的儲存、謂詞與初始化器身分、目前執行時提供者與 ABI、返回值及上下文獨立性。合併的 Objective-C retain/autorelease，或分離的 Swift retain 與 Objective-C autorelease，仍保留為明確效果。投影上下文前，提前返回與後續尾部必須一致；運算式折疊不豁免回呼本文或相依閉包檢查。
+
+SourceFrameAnalysis 分別管理原生輸出位元組的完整寫入證明和輸入位元組的初始化要求。對於只有一個普通指標和純量 double 參數的 AArch64 C void 投影，每條可達正常返回路徑都必須完整寫入有界連續前綴，且不得讓堆疊框架或輸出位址逸出。管線在授予 InitializesFrameParameters 前重新驗證目前不可變機器碼及控制流程、完整被呼叫端 ABI 和目前 SDK 呼叫實例。呼叫端只接受精確且對齊的私有範圍，檢查其他借用及存活值的重疊，捨棄舊寫入事實，再只標記獲證位元組已初始化。此證明不提供記錄布局、位元組值身分、入口返回投影或原始碼發布權限。
