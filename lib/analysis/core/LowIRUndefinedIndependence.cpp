@@ -4708,26 +4708,33 @@ class LoopPlanInference {
                   return true;
               return false;
             }) != 0;
-        Changed |= std::erase_if(W.CounterBounds, [&](const auto &B) {
-                     const auto Limit =
-                         counterProjection(read(Prefix, B.Location), B.Mask);
-                     for (auto &S : Incoming) {
-                       const auto Value =
-                           counterProjection(read(S, W.Location), B.Mask);
-                       const auto A = B.Lower ? Limit : Value;
-                       const auto Z = B.Lower ? Value : Limit;
-                       if (!entails(S.Predicate, B.Strict ? Ctx.mkUlt(A, Z)
-                                                          : Ctx.mkUle(A, Z)))
-                         return true;
-                     }
-                     return false;
-                   }) != 0;
-        Changed |= std::erase_if(W.LaneGuards, [&](const auto &Guard) {
-                     return std::any_of(
-                         Incoming.begin(), Incoming.end(), [&](auto &S) {
-                           return !entails(S.Predicate, laneGuard(S, W, Guard));
-                         });
-                   }) != 0;
+        // A late counter adds bound/guard proposals below. Transitions still
+        // describe the previous domain; check these mutually dependent
+        // predicates after every cut has been rebuilt with the new proposals.
+        // NewCounters forces another round and does not accept a plan.
+        if (!NewCounters) {
+          Changed |= std::erase_if(W.CounterBounds, [&](const auto &B) {
+                       const auto Limit =
+                           counterProjection(read(Prefix, B.Location), B.Mask);
+                       for (auto &S : Incoming) {
+                         const auto Value =
+                             counterProjection(read(S, W.Location), B.Mask);
+                         const auto A = B.Lower ? Limit : Value;
+                         const auto Z = B.Lower ? Value : Limit;
+                         if (!entails(S.Predicate, B.Strict ? Ctx.mkUlt(A, Z)
+                                                            : Ctx.mkUle(A, Z)))
+                           return true;
+                       }
+                       return false;
+                     }) != 0;
+          Changed |=
+              std::erase_if(W.LaneGuards, [&](const auto &Guard) {
+                return std::any_of(
+                    Incoming.begin(), Incoming.end(), [&](auto &S) {
+                      return !entails(S.Predicate, laneGuard(S, W, Guard));
+                    });
+              }) != 0;
+        }
         Changed |= seedLaneGuards(W, Incoming);
         Changed |= seedCounterBounds(W);
         Changed |= seedBitRelations(W, Incoming);

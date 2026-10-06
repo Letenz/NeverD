@@ -4019,7 +4019,7 @@ TEST(LowIRLoopInference, ProjectedCounterCopiesKeepProofBoundaries) {
 
 Program relocatedCounterLoops(bool Relocate, uint16_t Bytes, bool Tagged,
                               LowIRLoopSpace Space, unsigned Step = 1,
-                              bool Guarded = true) {
+                              bool Guarded = true, bool Ascending = false) {
   Program P;
   const auto Mask = Bytes == 8 ? UINT64_MAX : (uint64_t{1} << (8 * Bytes)) - 1;
   P.Contract.ReturnRegisters.push_back({8, 8});
@@ -4080,16 +4080,20 @@ Program relocatedCounterLoops(bool Relocate, uint16_t Bytes, bool Tagged,
     P.instruction(Built);
   };
   P.Function.Blocks[0].Succs = {1};
-  Emit({op(NdOp::COPY, r(0), {n(0)}), op(NdOp::INT_AND, r(8), {r(16), n(Mask)}),
+  Emit({op(NdOp::COPY, r(0), {n(0)}),
+        Ascending ? op(NdOp::COPY, r(8), {n(0)})
+                  : op(NdOp::INT_AND, r(8), {r(16), n(Mask)}),
         op(NdOp::INT_AND, NdVar::tmp(80, 8), {Tagged ? r(96) : n(0), n(~Mask)}),
         op(NdOp::INT_OR, r(8), {r(8), NdVar::tmp(80, 8)}),
         op(NdOp::COPY, r(200), {n(0)}), op(NdOp::COPY, r(24), {n(0)}),
         op(NdOp::BRANCH, {}, {n(0x200)})});
   P.block(1, 0x200, {2, 6});
   Emit({op(NdOp::INT_AND, NdVar::tmp(64, 8), {r(8), n(Mask)}),
-        Guarded
-            ? op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {NdVar::tmp(64, 8), n(0)})
-            : op(NdOp::COPY, NdVar::tmp(0, 1), {n(0, 1)}),
+        op(NdOp::INT_AND, NdVar::tmp(88, 8),
+           {Ascending ? r(16) : n(0), n(Mask)}),
+        Guarded ? op(NdOp::INT_EQUAL, NdVar::tmp(0, 1),
+                     {NdVar::tmp(64, 8), NdVar::tmp(88, 8)})
+                : op(NdOp::COPY, NdVar::tmp(0, 1), {n(0, 1)}),
         op(NdOp::COND_BR, {}, {n(0x700), NdVar::tmp(0, 1)})});
   P.block(2, 0x300, {3, 5});
   if (Relocate)
@@ -4110,7 +4114,8 @@ Program relocatedCounterLoops(bool Relocate, uint16_t Bytes, bool Tagged,
         op(NdOp::BRANCH, {}, {n(0x400)})});
   P.block(5, 0x600, {1});
   const auto Count = Relocate ? r(200) : r(8);
-  Emit({op(NdOp::INT_SUB, NdVar::tmp(64, 8), {Count, n(Step)}),
+  Emit({op(Ascending ? NdOp::INT_ADD : NdOp::INT_SUB, NdVar::tmp(64, 8),
+           {Count, n(Step)}),
         op(NdOp::INT_AND, NdVar::tmp(72, 8), {NdVar::tmp(64, 8), n(Mask)}),
         op(NdOp::INT_AND, NdVar::tmp(80, 8), {Tagged ? r(96) : n(0), n(~Mask)}),
         op(NdOp::INT_OR, r(8), {NdVar::tmp(72, 8), NdVar::tmp(80, 8)}),
@@ -4124,115 +4129,122 @@ TEST(LowIRLoopInference, TransferredCountersPreserveCompleteState) {
   unsigned Cases = 0;
   for (auto Space : {LowIRLoopSpace::Register, LowIRLoopSpace::Frame,
                      LowIRLoopSpace::FunctionTemporary})
-    for (bool Relocate : {false, true})
-      for (uint16_t Bytes : {1, 3, 4, 8})
-        for (bool Tagged : {false, true})
-          for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
-            SCOPED_TRACE(static_cast<unsigned>(Space));
-            SCOPED_TRACE(Relocate);
-            SCOPED_TRACE(Bytes);
-            SCOPED_TRACE(Tagged);
-            SCOPED_TRACE(static_cast<unsigned>(Order));
-            auto P = relocatedCounterLoops(Relocate, Bytes, Tagged, Space);
-            P.Contract.ByteOrder = Order;
-            LowIRLoopInferenceLimits Limits;
-            Limits.MaxCutSelectionWork = 0;
-            const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract,
-                                                        Limits, {0x200, 0x400});
-            ASSERT_TRUE(R.inferred()) << R.Diagnostic;
-            EXPECT_EQ(R.CutSelectionWork, 0u);
-            ASSERT_TRUE(loopCheck(P, P, *R.Plan).proved());
-            if (Relocate) {
-              auto Wrong = P;
-              Wrong.Function.Blocks[4].Ops[0].Opcode = NdOp::INT_SUB;
-              loopRefused(loopCheck(P, Wrong, *R.Plan), Status::Different);
-              if (Tagged && Bytes != 8) {
-                Wrong = P;
-                bool Changed = false;
-                for (auto &B : Wrong.Function.Blocks)
-                  for (auto &O : B.Ops)
-                    if (O.Opcode == NdOp::INT_AND && O.Inputs[0] == r(104)) {
-                      O.Inputs[0] = n(0);
-                      Changed = true;
-                    }
-                ASSERT_TRUE(Changed);
+    for (bool Ascending : {false, true})
+      for (bool Relocate : {false, true})
+        for (uint16_t Bytes : {1, 3, 4, 8})
+          for (bool Tagged : {false, true})
+            for (auto Order :
+                 {llvm::endianness::little, llvm::endianness::big}) {
+              SCOPED_TRACE(static_cast<unsigned>(Space));
+              SCOPED_TRACE(Ascending);
+              SCOPED_TRACE(Relocate);
+              SCOPED_TRACE(Bytes);
+              SCOPED_TRACE(Tagged);
+              SCOPED_TRACE(static_cast<unsigned>(Order));
+              auto P = relocatedCounterLoops(Relocate, Bytes, Tagged, Space, 1,
+                                             true, Ascending);
+              P.Contract.ByteOrder = Order;
+              LowIRLoopInferenceLimits Limits;
+              Limits.MaxCutSelectionWork = 0;
+              const auto R = inferLowIRLoopRefinementPlan(
+                  P.Function, P.Contract, Limits, {0x200, 0x400});
+              ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+              EXPECT_EQ(R.CutSelectionWork, 0u);
+              ASSERT_TRUE(loopCheck(P, P, *R.Plan).proved());
+              if (Relocate) {
+                auto Wrong = P;
+                Wrong.Function.Blocks[4].Ops[0].Opcode = NdOp::INT_SUB;
                 loopRefused(loopCheck(P, Wrong, *R.Plan), Status::Different);
+                if (Tagged && Bytes != 8) {
+                  Wrong = P;
+                  bool Changed = false;
+                  for (auto &B : Wrong.Function.Blocks)
+                    for (auto &O : B.Ops)
+                      if (O.Opcode == NdOp::INT_AND && O.Inputs[0] == r(104)) {
+                        O.Inputs[0] = n(0);
+                        Changed = true;
+                      }
+                  ASSERT_TRUE(Changed);
+                  loopRefused(loopCheck(P, Wrong, *R.Plan), Status::Different);
+                }
               }
+              ++Cases;
             }
-            ++Cases;
-          }
-  EXPECT_EQ(Cases, 96u);
+  EXPECT_EQ(Cases, 192u);
 }
 
 TEST(LowIRLoopInference, TransferredCountersKeepProofBoundaries) {
   for (auto Space : {LowIRLoopSpace::Register, LowIRLoopSpace::Frame,
                      LowIRLoopSpace::FunctionTemporary})
-    for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
-      SCOPED_TRACE(static_cast<unsigned>(Space));
-      SCOPED_TRACE(static_cast<unsigned>(Order));
-      const auto Make = [&](unsigned Step, bool Guarded) {
-        auto P = relocatedCounterLoops(true, 1, true, Space, Step, Guarded);
-        P.Contract.ByteOrder = Order;
-        return P;
-      };
-      const auto P = Make(1, true);
-      LowIRLoopInferenceLimits Limits;
-      Limits.MaxCutSelectionWork = 0;
-      const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract,
-                                                  Limits, {0x200, 0x400});
-      ASSERT_TRUE(R.inferred()) << R.Diagnostic;
-      const auto Proof = loopCheck(P, P, *R.Plan);
-      ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
-      for (const auto &Bad : {Make(0, true), Make(2, true), Make(1, false)}) {
-        const auto Refused = inferLowIRLoopRefinementPlan(
-            Bad.Function, Bad.Contract, Limits, {0x200, 0x400});
-        EXPECT_FALSE(Refused.inferred());
-        EXPECT_FALSE(Refused.Plan);
-        loopRefused(loopCheck(Bad, Bad, *R.Plan), Status::Different);
+    for (bool Ascending : {false, true})
+      for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+        SCOPED_TRACE(static_cast<unsigned>(Space));
+        SCOPED_TRACE(Ascending);
+        SCOPED_TRACE(static_cast<unsigned>(Order));
+        const auto Make = [&](unsigned Step, bool Guarded) {
+          auto P = relocatedCounterLoops(true, 1, true, Space, Step, Guarded,
+                                         Ascending);
+          P.Contract.ByteOrder = Order;
+          return P;
+        };
+        const auto P = Make(1, true);
+        LowIRLoopInferenceLimits Limits;
+        Limits.MaxCutSelectionWork = 0;
+        const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract,
+                                                    Limits, {0x200, 0x400});
+        ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+        const auto Proof = loopCheck(P, P, *R.Plan);
+        ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+        for (const auto &Bad : {Make(0, true), Make(2, true), Make(1, false)}) {
+          const auto Refused = inferLowIRLoopRefinementPlan(
+              Bad.Function, Bad.Contract, Limits, {0x200, 0x400});
+          EXPECT_FALSE(Refused.inferred());
+          EXPECT_FALSE(Refused.Plan);
+          loopRefused(loopCheck(Bad, Bad, *R.Plan), Status::Different);
+        }
+        auto WrongRank = *R.Plan;
+        for (auto &V : WrongRank.Cutpoints[1].Rank)
+          V = n(0, V.Size);
+        loopRefused(loopCheck(P, P, WrongRank), Status::Different);
+        Limits.Execution.MaxOperations = R.Operations;
+        Limits.Execution.MaxSolverQueries = R.SolverQueries;
+        Limits.MaxRankCandidates = R.RankCandidates;
+        Limits.MaxWideningRounds = R.WideningRounds;
+        ASSERT_TRUE(inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits,
+                                                 {0x200, 0x400})
+                        .inferred());
+        for (unsigned Kind = 0; Kind != 5; ++Kind) {
+          auto Short = Limits;
+          if (Kind == 0)
+            --Short.Execution.MaxOperations;
+          if (Kind == 1)
+            --Short.Execution.MaxSolverQueries;
+          if (Kind == 2)
+            --Short.MaxRankCandidates;
+          if (Kind == 3)
+            --Short.MaxWideningRounds;
+          if (Kind == 4)
+            Short.Execution.MaxSymbolicNodes = 0;
+          const auto Refused = inferLowIRLoopRefinementPlan(
+              P.Function, P.Contract, Short, {0x200, 0x400});
+          EXPECT_EQ(Refused.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+          EXPECT_FALSE(Refused.Plan);
+        }
+        LowIRRefinementLimits Exact;
+        Exact.Execution.MaxOperations = Proof.Operations;
+        Exact.Execution.MaxSolverQueries = Proof.SolverQueries;
+        Exact.Execution.MaxObservations = Proof.Observations;
+        ASSERT_TRUE(loopCheck(P, P, *R.Plan, Exact).proved());
+        for (unsigned Kind = 0; Kind != 3; ++Kind) {
+          auto Short = Exact;
+          if (Kind == 0)
+            --Short.Execution.MaxOperations;
+          if (Kind == 1)
+            --Short.Execution.MaxSolverQueries;
+          if (Kind == 2)
+            --Short.Execution.MaxObservations;
+          loopRefused(loopCheck(P, P, *R.Plan, Short), Status::BudgetExceeded);
+        }
       }
-      auto WrongRank = *R.Plan;
-      for (auto &V : WrongRank.Cutpoints[1].Rank)
-        V = n(0, V.Size);
-      loopRefused(loopCheck(P, P, WrongRank), Status::Different);
-      Limits.Execution.MaxOperations = R.Operations;
-      Limits.Execution.MaxSolverQueries = R.SolverQueries;
-      Limits.MaxRankCandidates = R.RankCandidates;
-      Limits.MaxWideningRounds = R.WideningRounds;
-      ASSERT_TRUE(inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits,
-                                               {0x200, 0x400})
-                      .inferred());
-      for (unsigned Kind = 0; Kind != 5; ++Kind) {
-        auto Short = Limits;
-        if (Kind == 0)
-          --Short.Execution.MaxOperations;
-        if (Kind == 1)
-          --Short.Execution.MaxSolverQueries;
-        if (Kind == 2)
-          --Short.MaxRankCandidates;
-        if (Kind == 3)
-          --Short.MaxWideningRounds;
-        if (Kind == 4)
-          Short.Execution.MaxSymbolicNodes = 0;
-        const auto Refused = inferLowIRLoopRefinementPlan(
-            P.Function, P.Contract, Short, {0x200, 0x400});
-        EXPECT_EQ(Refused.Status, LowIRLoopInferenceStatus::BudgetExceeded);
-        EXPECT_FALSE(Refused.Plan);
-      }
-      LowIRRefinementLimits Exact;
-      Exact.Execution.MaxOperations = Proof.Operations;
-      Exact.Execution.MaxSolverQueries = Proof.SolverQueries;
-      Exact.Execution.MaxObservations = Proof.Observations;
-      ASSERT_TRUE(loopCheck(P, P, *R.Plan, Exact).proved());
-      for (unsigned Kind = 0; Kind != 3; ++Kind) {
-        auto Short = Exact;
-        if (Kind == 0)
-          --Short.Execution.MaxOperations;
-        if (Kind == 1)
-          --Short.Execution.MaxSolverQueries;
-        if (Kind == 2)
-          --Short.Execution.MaxObservations;
-        loopRefused(loopCheck(P, P, *R.Plan, Short), Status::BudgetExceeded);
-      }
-    }
 }
 } // namespace
