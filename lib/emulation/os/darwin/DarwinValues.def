@@ -255,6 +255,9 @@ NEVERD_DARWIN_DIAGNOSTIC(
     NamespaceAlias, "Darwin mutable namespace identity aliases are unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(UnlinkFlags, "unsupported Darwin unlinkat flags")
 NEVERD_DARWIN_DIAGNOSTIC(RenameFlags, "unsupported Darwin rename flags")
+NEVERD_DARWIN_DIAGNOSTIC(
+    RenameCaseSensitivity,
+    "Darwin same-object exclusive rename requires filesystem case sensitivity")
 NEVERD_DARWIN_DIAGNOSTIC(RenameKind, "Darwin directory rename is unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(
     RenameMount,

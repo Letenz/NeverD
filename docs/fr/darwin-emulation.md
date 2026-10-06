@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 3f76a3e6151ec21bc77d197148addb31fa72a77a4c00d2de278ac8b894043e82 -->
+<!-- i18n-source: 34d34e187ac46720dfc5b061a28605b13c368d0ab705c3d1a43465497ac1b4fe -->
 
 [← Index de la documentation](README.md)
 
@@ -150,7 +150,7 @@ Chaque nœud possède ses métadonnées/allocations, sans héritage de l’ancie
 
 ## Renommage de fichiers ordinaires dans un même parent
 
-`rename(128)`, `renameat(465)` et `renameatx_np(488)` renomment ou remplacent un fichier dans son parent immédiat explicitement modifiable. Même une opération sans effet sur le même nom exige cette autorisation et conserve les observations. Les 32 bits bas des flags acceptent 0 ou `RENAME_NOFOLLOW_ANY=0x10` ; bits inconnus et EXCL+SWAP donnent EINVAL avant les chemins, les autres flags connus sont non pris en charge. Le résolveur commun conserve priorité de la source, FD et vérifications des composants d’origine. Une source répertoire est immédiatement refusée ; un point/double point final résolu donne EINVAL avant montage et autorisation, même pour des parents imbriqués ou distincts. Les erreurs d’ancêtres absents/non répertoires restent prioritaires. Une cible répertoire ordinaire dans le parent admis donne EISDIR.
+`rename(128)`, `renameat(465)` et `renameatx_np(488)` renomment ou remplacent un fichier dans son parent immédiat explicitement modifiable. Même une opération sans effet sur le même nom exige cette autorisation et conserve les observations. Les 32 bits bas acceptent `RENAME_EXCL=0x4`, `RENAME_NOFOLLOW_ANY=0x10` ou leur combinaison. Bits inconnus et EXCL+SWAP donnent EINVAL avant les chemins ; SECLUDE et SWAP restent non pris en charge. Les règles de non-opération et EISDIR ici concernent les appels sans EXCL ; son contrat distinct suit ci-dessous. Le résolveur commun conserve priorité de la source, FD et vérifications des composants d’origine. Une source répertoire est immédiatement refusée ; un point/double point final résolu donne EINVAL avant montage et autorisation, même pour des parents imbriqués ou distincts. Les erreurs d’ancêtres absents/non répertoires restent prioritaires. Une cible répertoire ordinaire dans le parent admis donne EISDIR.
 
 Les anciens FD, open indépendants et dup suivent le nouveau nom source avec `F_GETPATH`. La cible remplacée conserve son dernier chemin, ses octets, positions, flags et mappings ; ses droits d’écriture et métadonnées ne passent pas à la source. Chaque politique connue modifie son ctime, et nlink=0 pour la cible, en préservant identité, propriétaire, naissance et allocation. Sans politique ou après EFAULT complet, les métadonnées restent inconnues. Seul un déplacement réel invalide stat/énumération du parent.
 
@@ -246,7 +246,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-La validation indépendante exige chacun des 105 cas natifs ARM64 ou 70 cas x64, dont `LC_MAIN` et `LC_UNIXTHREAD` sur chaque plateforme. Les cas obligatoires absents/ignorés ou un `ld64.lld` manquant font échouer la validation.
+La validation indépendante exige chacun des 108 cas natifs ARM64 ou 72 cas x64, dont `LC_MAIN` et `LC_UNIXTHREAD` sur chaque plateforme. Les cas obligatoires absents/ignorés ou un `ld64.lld` manquant font échouer la validation.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -475,3 +475,11 @@ Les sources finales en Release ont réconcilié 1 089 tests Darwin : 657 réussi
 Deux exécutions complètes antérieures ont produit un puis trois dépassements de délai dans les anciens cas de fichiers/renommage. Une exécution instrumentée en a reproduit un à 5,008 s réelles et 0,171 s de CPU du processus. Les comparaisons par méthode identique et avec les anciens programmes ont réussi, mais la cause de cette latence reste inconnue ; la réussite finale ne prouve pas la stabilité des délais. Les diagnostics temporaires ont été retirés, les empreintes des programmes restaurées et la limite invitée de 5 s conservée. Audit principal des sources/preuves effectué ; revue indépendante indisponible. Les comptes se recoupent. CI GitHub complète, iOS physique et Actions Intel HVF suspendues restent hors de cette validation locale.
 
 `build-hvf-arm64/initial-directory-validation-summary.json`, `initial-directory-darwin-restored-evidence/`, `initial-directory-public.xml`, `initial-directory-native-evidence/`, `initial-directory-timeout-probe/`.
+
+## Renommage exclusif des fichiers ordinaires
+
+Après résolution des deux chemins, RENAME_EXCL renvoie EEXIST pour un autre fichier ou répertoire existant, avant les contrôles de montage et de mutation. Les erreurs de chemin antérieures restent prioritaires, notamment EINVAL pour un point/double point terminal. Une cible absente utilise la même transaction bornée, conservant descriptions ouvertes, curseurs, flags, baux de mapping et transitions de métadonnées configurées. Le même objet reste explicitement non pris en charge : le résultat natif dépend de la sensibilité à la casse du système de fichiers, non établie par les clés exactes du catalogue. Casse, sources répertoires, SECLUDE et SWAP restent hors contrat. Le programme original `renamed-file` compare désormais refus sans changement de métadonnées et réussite EXCL|NOFOLLOW_ANY sur macOS natif et C++/C/CLI/Python.
+
+Validation, 2026-10-06 (Release) : 1 097 tests Darwin, 665 réussites, 432 omissions pour backend indisponible, aucun échec ; les 108 cas ARM64 HVF obligatoires ont été exécutés. Contrôles ciblés : 44 réussites, 12 omissions, dont huit nouveaux cas directs. C/CLI/rapports : 191/191 ; Python : cinq combinaisons en 19,241 s ; sonde indépendante : 26 contrôles réussis. La première exécution native a expiré sur le cas return existant ; les 25 autres, dont renamed-file, ont réussi. Trois contrôles return du même binaire inchangé ont pris 0,014–0,034 s, puis les 26 cas ont réussi avec la limite initiale de 5 s. L’échec initial est conservé et inexpliqué ; ces résultats et la réussite HVF précédente ne prouvent pas la stabilité de latence. Audit principal terminé, revue indépendante indisponible. Comptes chevauchants ; iOS physique, CI GitHub complète et Actions Intel HVF suspendues hors validation locale.
+
+`build-hvf-arm64/exclusive-rename-validation-summary.json`, `exclusive-rename-darwin-evidence/`, `exclusive-rename-public.xml`, `exclusive-rename-native-evidence/`, `exclusive-rename-native-rechecked-summary.json`, `exclusive-rename-probe/`.

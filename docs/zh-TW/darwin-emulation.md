@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 3f76a3e6151ec21bc77d197148addb31fa72a77a4c00d2de278ac8b894043e82 -->
+<!-- i18n-source: 34d34e187ac46720dfc5b061a28605b13c368d0ab705c3d1a43465497ac1b4fe -->
 
 [← 文件索引](README.md)
 
@@ -150,7 +150,7 @@ O_CREAT=0x200 在明確 mutable 的直接父目錄建立空檔案，涵蓋一般
 
 ## 同一父目錄內的一般檔案改名
 
-`rename(128)`、`renameat(465)`、`renameatx_np(488)` 可在同一明確可修改的直接父目錄改名或覆蓋一般檔案。同名空操作也需授權，通過後保留觀察。低 32 位 flags 支援 0 或 `RENAME_NOFOLLOW_ANY=0x10`；未知位及 EXCL+SWAP 在讀取路徑前回傳 EINVAL，其餘已知旗標明確不支援。共用解析器保留來源先於目標、目錄 FD、原始斜線與點元件的錯誤順序。目錄來源立即停止；一般檔案目標的末尾點/雙點解析成功後，在掛載及授權檢查前回傳 EINVAL，含巢狀與其他父目錄。缺少或非目錄祖先的錯誤仍優先；獲准父目錄內的一般目錄目標為 EISDIR。
+`rename(128)`、`renameat(465)`、`renameatx_np(488)` 可在同一明確可修改的直接父目錄改名或覆蓋一般檔案。同名空操作也需授權，通過後保留觀察。低 32 位 flags 支援 `RENAME_EXCL=0x4`、`RENAME_NOFOLLOW_ANY=0x10` 及其組合。未知位及 EXCL+SWAP 在讀取路徑前回傳 EINVAL；SECLUDE 和 SWAP 仍不支援。這裡的空操作和 EISDIR 規則適用於未指定 EXCL 的呼叫，EXCL 的獨立契約見下文。共用解析器保留來源先於目標、目錄 FD、原始斜線與點元件的錯誤順序。目錄來源立即停止；一般檔案目標的末尾點/雙點解析成功後，在掛載及授權檢查前回傳 EINVAL，含巢狀與其他父目錄。缺少或非目錄祖先的錯誤仍優先；獲准父目錄內的一般目錄目標為 EISDIR。
 
 來源的獨立開啟、dup 與舊 FD 的 `F_GETPATH` 一起跟隨新名；被覆蓋物件保留最後關聯路徑、資料、游標、旗標和映射壽命。寫授權與中繼資料不由目標轉給來源。可信策略只改各自 ctime，被覆蓋者另設 nlink=0；身分、擁有權、建立時間與配置不變。無策略或整段 EFAULT 後完整中繼資料仍未知。實際改名使父目錄 stat/列舉失效，同名操作不變。
 
@@ -246,7 +246,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-獨立工作負載驗收要求 ARM64 105 項或 x64 70 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
+獨立工作負載驗收要求 ARM64 108 項或 x64 72 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -475,3 +475,11 @@ Release Darwin 1,051項：631通過、420後端不可用略過、零失敗；105
 先前兩輪完整驗證分別在既有檔案/重新命名案例出現 1 次和 3 次逾時；帶診斷的驗證重現一次檔案逾時，實際耗時 5.008 秒、程序 CPU 用時 0.171 秒。相同方法及舊程式對照均通過，但延遲根因仍未確定，最終通過不代表逾時穩定性已解決。臨時診斷已移除，程式檔案雜湊已還原，客體原有 5 秒時限未變。已完成主代理原始碼/證據核查；獨立審查不可用。計數彼此重疊；完整 GitHub CI、實體 iOS 與已暫停的 Intel HVF Actions 不屬於本機驗收。
 
 `build-hvf-arm64/initial-directory-validation-summary.json`, `initial-directory-darwin-restored-evidence/`, `initial-directory-public.xml`, `initial-directory-native-evidence/`, `initial-directory-timeout-probe/`.
+
+## 一般檔案的獨占重新命名
+
+完成來源與目標查找後，RENAME_EXCL 對不同的既有檔案或目錄回傳 EEXIST，先於掛載及命名空間修改檢查。更早的路徑錯誤仍優先，包括末尾點/雙點的 EINVAL。目標不存在時重用相同的有界重新命名交易，保留已開啟描述、游標、旗標、映射租約和設定的中繼資料變化。同物件獨占重新命名仍明確不支援：原生結果依賴檔案系統是否區分大小寫，精確目錄鍵無法證明此屬性。大小寫折疊、目錄來源重新命名、SECLUDE 和 SWAP 尚未納入。既有原創 `renamed-file` 工作負載現驗證拒絕時中繼資料不變，以及 EXCL|NOFOLLOW_ANY 成功移動，涵蓋原生 macOS 和 C++/C/CLI/Python。
+
+驗證，2026-10-06（Release）：1,097 項 Darwin 註冊測試，665 項通過、432 項因後端不可用略過、零失敗；108 項必要 ARM64 HVF 測試全部執行。聚焦測試 44 項通過、12 項不可用略過，含八項新增直接測試。公共 C/CLI/報告 191/191；Python 五種組合耗時 19.241 秒。獨立原始呼叫探針通過 26 項檢查。首次完整原生驗證中，既有 return 案例逾時，其餘 25 項（含 renamed-file）通過。同一未修改程式的 return 三次複查耗時 0.014–0.034 秒，隨後全部 26 項原生案例在原有 5 秒時限內通過。初次失敗保留且根因未明；這些結果與先前最終 HVF 通過均不保證延遲穩定性。已完成主代理核查，獨立審查不可用。計數重疊；實體 iOS、完整 GitHub CI 與暫停的 Intel HVF Actions 不屬於本機驗收。
+
+`build-hvf-arm64/exclusive-rename-validation-summary.json`, `exclusive-rename-darwin-evidence/`, `exclusive-rename-public.xml`, `exclusive-rename-native-evidence/`, `exclusive-rename-native-rechecked-summary.json`, `exclusive-rename-probe/`.

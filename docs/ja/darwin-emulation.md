@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 3f76a3e6151ec21bc77d197148addb31fa72a77a4c00d2de278ac8b894043e82 -->
+<!-- i18n-source: 34d34e187ac46720dfc5b061a28605b13c368d0ab705c3d1a43465497ac1b4fe -->
 
 [← ドキュメント一覧](README.md)
 
@@ -150,7 +150,7 @@ O_CREAT と O_EXCL=0x800 の併用は既存ファイル・ディレクトリに�
 
 ## 同一親ディレクトリ内の通常ファイル改名
 
-`rename(128)`、`renameat(465)`、`renameatx_np(488)` は、同じ明示的に変更可能な直近の親内で通常ファイルを改名・置換します。同名の無操作にも許可が必要で、許可後は観測を保持します。下位32ビットの flags は 0 または `RENAME_NOFOLLOW_ANY=0x10`。未知ビットと EXCL+SWAP はパス読取り前に EINVAL、その他の既知フラグは未対応です。共通解析器はソース優先、FD、元のスラッシュ・ドットの検査順序を保持します。ディレクトリソースは即座に未対応。通常ファイルのターゲット末尾ドット/二重ドットは解決成功後、マウント・許可検査より先に EINVAL となり、入れ子や別親も対象です。存在しない/非ディレクトリの祖先のエラーが優先します。許可された親内の通常ディレクトリターゲットは EISDIR です。
+`rename(128)`、`renameat(465)`、`renameatx_np(488)` は、同じ明示的に変更可能な直近の親内で通常ファイルを改名・置換します。同名の無操作にも許可が必要で、許可後は観測を保持します。下位32ビットの flags は `RENAME_EXCL=0x4` と `RENAME_NOFOLLOW_ANY=0x10`、および両者の組合せを受け付けます。未知ビットと EXCL+SWAP はパス読取り前に EINVAL、SECLUDE と SWAP は未対応です。ここの無操作と EISDIR の規則は EXCL なしの場合に適用され、EXCL は後述の契約に従います。共通解析器はソース優先、FD、元のスラッシュ・ドットの検査順序を保持します。ディレクトリソースは即座に未対応。通常ファイルのターゲット末尾ドット/二重ドットは解決成功後、マウント・許可検査より先に EINVAL となり、入れ子や別親も対象です。存在しない/非ディレクトリの祖先のエラーが優先します。許可された親内の通常ディレクトリターゲットは EISDIR です。
 
 独立 open・dup・既存 FD の `F_GETPATH` はソースの新しい名前に追従します。置換された物体は最後の名前、データ、カーソル、フラグ、マップ寿命を保持し、書込み権限やメタデータをソースへ渡しません。既知ポリシーは各 ctime と置換先の nlink=0 だけを変更し、識別子・所有権・作成時刻・割当を維持します。ポリシーなし/全体 EFAULT 後は完全なメタデータ不明のまま。実際の改名だけが親の stat/列挙を無効にします。
 
@@ -246,7 +246,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-独立したワークロード検証は ARM64 105 件または x64 70 件をすべて要求し、各プラットフォームの `LC_MAIN` と `LC_UNIXTHREAD` を含みます。必須項目の欠落、スキップ、`ld64.lld` の不足はいずれも失敗です。
+独立したワークロード検証は ARM64 108 件または x64 72 件をすべて要求し、各プラットフォームの `LC_MAIN` と `LC_UNIXTHREAD` を含みます。必須項目の欠落、スキップ、`ld64.lld` の不足はいずれも失敗です。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -475,3 +475,11 @@ Release Darwin1,051登録、631成功、未提供420スキップ、失敗なし�
 先行する完全検証 2 回では既存のファイル/rename ケースに 1 件と 3 件のタイムアウトがあり、診断付き実行でも実時間 5.008 秒、プロセス CPU 時間 0.171 秒のファイルタイムアウトを再現した。同一メソッドと旧プログラムの比較は成功したが、遅延原因は未解明であり、最終成功はタイムアウトの安定性を証明しない。一時診断を除去し、フィクスチャのハッシュを復元し、元のゲスト 5 秒制限を維持した。主担当によるソース/証拠監査を完了し、独立レビューは利用不可だった。件数は重複する。完全 GitHub CI、実機 iOS、停止中の Intel HVF Actions はこのローカル受入範囲外である。
 
 `build-hvf-arm64/initial-directory-validation-summary.json`, `initial-directory-darwin-restored-evidence/`, `initial-directory-public.xml`, `initial-directory-native-evidence/`, `initial-directory-timeout-probe/`.
+
+## 通常ファイルの排他的な改名
+
+ソースとターゲットの検索後、RENAME_EXCL は別の既存ファイルまたはディレクトリに EEXIST を返し、マウントや名前空間変更の検査に先行します。末尾ドット/二重ドットの EINVAL など先のパスエラーは優先されます。ターゲットがなければ既存の有界改名トランザクションを使用し、保持された記述、カーソル、フラグ、マッピングリースと設定済みメタデータ遷移を保ちます。同一オブジェクトへの排他的改名は、ファイルシステムの大文字小文字区別に依存するため明示的に未対応です。正確なカタログキーからこの性質を推定しません。大小文字の同一視、ディレクトリソース、SECLUDE と SWAP は範囲外です。既存の独自 `renamed-file` は拒否時のメタデータ保持と EXCL|NOFOLLOW_ANY の成功をネイティブ macOS と C++/C/CLI/Python で比較します。
+
+検証、2026-10-06（Release）：Darwin 登録 1,097 件、成功 665 件、利用不可スキップ 432 件、失敗なし。必須 ARM64 HVF 108 件すべて実行。重点検証は成功 44 件、利用不可 12 件で、新規直接検証 8 件を含む。公開 C/CLI/レポート 191/191、Python 5 組合せ 19.241 秒、独立した生呼出しプローブ 26 件成功。最初のネイティブ全体実行は既存 return がタイムアウトし、renamed-file を含む他の 25 件は成功。同じ未変更バイナリの return 再確認 3 回は 0.014–0.034 秒、その後全 26 件が元の 5 秒制限で成功した。初回失敗は保存し原因は未解明で、以前の最終 HVF 成功を含め遅延安定性の証明ではない。主担当監査済み、独立レビュー利用不可。件数は重複する。実機 iOS、完全 GitHub CI、停止中の Intel HVF Actions はローカル受入範囲外。
+
+`build-hvf-arm64/exclusive-rename-validation-summary.json`, `exclusive-rename-darwin-evidence/`, `exclusive-rename-public.xml`, `exclusive-rename-native-evidence/`, `exclusive-rename-native-rechecked-summary.json`, `exclusive-rename-probe/`.

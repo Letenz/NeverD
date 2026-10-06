@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 3f76a3e6151ec21bc77d197148addb31fa72a77a4c00d2de278ac8b894043e82 -->
+<!-- i18n-source: 34d34e187ac46720dfc5b061a28605b13c368d0ab705c3d1a43465497ac1b4fe -->
 
 [← 문서 목록](README.md)
 
@@ -150,7 +150,7 @@ O_CREAT과 O_EXCL=0x800의 조합은 기존 파일/디렉터리에 자르기 전
 
 ## 같은 부모 안의 일반 파일 이름 변경
 
-`rename(128)`, `renameat(465)`, `renameatx_np(488)`는 명시적으로 변경 가능한 같은 직접 부모 안에서 일반 파일을 이동하거나 덮어씁니다. 같은 이름의 무동작도 권한이 필요하며 승인되면 관측을 보존합니다. 하위 32비트 flags는 0 또는 `RENAME_NOFOLLOW_ANY=0x10`입니다. 알 수 없는 비트와 EXCL+SWAP은 경로 읽기 전에 EINVAL, 나머지 알려진 플래그는 미지원입니다. 공유 해석기는 원본 우선 오류, FD, 원래 슬래시와 점 검사를 보존합니다. 디렉터리 원본은 즉시 미지원으로 중단합니다. 일반 파일 대상의 마지막 점/두 점은 해석 성공 후 마운트·권한 검사 전에 EINVAL이며 중첩/다른 부모도 포함합니다. 없거나 디렉터리가 아닌 조상의 오류가 우선합니다. 승인된 부모의 일반 디렉터리 대상은 EISDIR입니다.
+`rename(128)`, `renameat(465)`, `renameatx_np(488)`는 명시적으로 변경 가능한 같은 직접 부모 안에서 일반 파일을 이동하거나 덮어씁니다. 같은 이름의 무동작도 권한이 필요하며 승인되면 관측을 보존합니다. 하위 32비트 flags는 `RENAME_EXCL=0x4`, `RENAME_NOFOLLOW_ANY=0x10`과 두 값의 조합을 허용합니다. 알 수 없는 비트와 EXCL+SWAP은 경로 읽기 전에 EINVAL이며 SECLUDE와 SWAP은 미지원입니다. 이곳의 무동작과 EISDIR 규칙은 EXCL이 없는 호출에 적용하고 EXCL은 아래 별도 계약을 따릅니다. 공유 해석기는 원본 우선 오류, FD, 원래 슬래시와 점 검사를 보존합니다. 디렉터리 원본은 즉시 미지원으로 중단합니다. 일반 파일 대상의 마지막 점/두 점은 해석 성공 후 마운트·권한 검사 전에 EINVAL이며 중첩/다른 부모도 포함합니다. 없거나 디렉터리가 아닌 조상의 오류가 우선합니다. 승인된 부모의 일반 디렉터리 대상은 EISDIR입니다.
 
 독립 open, dup, 기존 FD의 `F_GETPATH`는 원본의 새 이름을 따릅니다. 덮어쓴 객체는 마지막 경로, 데이터, 커서, 플래그와 매핑 수명을 유지하며 쓰기 권한이나 메타데이터를 원본에 넘기지 않습니다. 알려진 정책은 각 ctime과 대상 nlink=0만 갱신하며 식별자·소유권·생성 시간·할당을 보존합니다. 정책 부재/전체 EFAULT 뒤에는 완전한 메타데이터가 계속 미상입니다. 실제 변경만 부모 stat/열거를 무효화합니다.
 
@@ -475,3 +475,11 @@ removable 참조마다 경로와 NUL을 초기 16 MiB 비용에 더합니다. �
 앞선 전체 실행 두 번에서는 기존 파일/이름 변경 사례에 시간 초과가 각각 1개와 3개 있었다. 진단 실행에서도 실제 시간 5.008초, 프로세스 CPU 시간 0.171초의 파일 시간 초과를 재현했다. 동일 메서드와 이전 프로그램 비교는 통과했지만 지연 원인은 아직 밝혀지지 않았으며, 최종 통과가 시간 초과 안정성을 입증하지는 않는다. 임시 진단을 제거하고 프로그램 파일 해시를 복원했으며 원래 게스트 5초 제한을 유지했다. 주 담당자가 소스/증거를 검토했고 독립 검토는 불가능했다. 수치는 겹친다. 전체 GitHub CI, 실제 iOS 기기, 중단된 Intel HVF Actions는 이 로컬 검증 범위 밖이다.
 
 `build-hvf-arm64/initial-directory-validation-summary.json`, `initial-directory-darwin-restored-evidence/`, `initial-directory-public.xml`, `initial-directory-native-evidence/`, `initial-directory-timeout-probe/`.
+
+## 일반 파일의 배타적 이름 변경
+
+원본과 대상 조회 후 RENAME_EXCL은 서로 다른 기존 파일이나 디렉터리에 EEXIST를 반환하며 마운트 및 이름 공간 변경 검사보다 앞섭니다. 마지막 점/두 점의 EINVAL 등 앞선 경로 오류는 계속 우선합니다. 대상이 없으면 기존의 제한된 이름 변경 트랜잭션을 사용하며 열린 설명, 커서, 플래그, 매핑 임대 및 설정된 메타데이터 변경을 보존합니다. 동일 객체의 배타적 이름 변경은 파일 시스템의 대소문자 구분 여부에 의존하므로 명시적으로 미지원입니다. 정확한 카탈로그 키로 이 속성을 추정하지 않습니다. 대소문자 통합, 디렉터리 원본, SECLUDE와 SWAP은 범위 밖입니다. 기존 독자적 `renamed-file` 작업은 거부 시 메타데이터 유지와 EXCL|NOFOLLOW_ANY 성공을 네이티브 macOS 및 C++/C/CLI/Python에서 비교합니다.
+
+검증, 2026-10-06(Release): Darwin 등록 1,097개, 통과 665개, 사용 불가로 432개 건너뜀, 실패 없음. 필수 ARM64 HVF 108개를 모두 실행했다. 집중 검증은 새 직접 검사 8개를 포함해 44개 통과, 12개 건너뜀이었다. 공개 C/CLI/보고서 191/191, Python 5개 조합 19.241초, 독립 원시 호출 탐침 26개 통과. 첫 전체 네이티브 실행은 기존 return에서 시간 초과가 발생했고 renamed-file을 포함한 나머지 25개는 통과했다. 변경하지 않은 동일 바이너리의 return 재확인 3회는 0.014–0.034초였고 이후 전체 26개가 원래 5초 제한으로 통과했다. 최초 실패는 보존했고 원인은 미해결이며, 이전 최종 HVF 통과까지 포함해 지연 안정성을 입증하지 않는다. 주 담당 검토 완료, 독립 검토 불가. 수치는 겹친다. 실제 iOS, 전체 GitHub CI, 중단된 Intel HVF Actions는 로컬 검증 범위 밖이다.
+
+`build-hvf-arm64/exclusive-rename-validation-summary.json`, `exclusive-rename-darwin-evidence/`, `exclusive-rename-public.xml`, `exclusive-rename-native-evidence/`, `exclusive-rename-native-rechecked-summary.json`, `exclusive-rename-probe/`.

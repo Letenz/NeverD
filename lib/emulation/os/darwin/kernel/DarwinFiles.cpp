@@ -840,7 +840,7 @@ void DarwinFiles::updateNamespaceMetadata(Contents &Node, bool Removed) {
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
                     uint64_t TargetPath, uint32_t TargetDirectory,
-                    ProcessResult &Result) {
+                    bool Exclusive, ProcessResult &Result) {
   auto From = resolvePath(SourcePath, SourceDirectory, LookupMode::DeleteFile);
   if (!From)
     return From.takeError();
@@ -861,6 +861,13 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   if (auto *Reason = std::get_if<const char *>(&*To))
     return unsupported(Result, *Reason);
   auto &Target = std::get<Description>(*To);
+  if (Exclusive && (Target.File || Target.Directory)) {
+    // Same-object exclusive rename depends on filesystem case sensitivity.
+    // Exact catalogue keys do not supply that missing filesystem property.
+    if (Target.File == Source.File)
+      return unsupported(Result, diagnostic::RenameCaseSensitivity);
+    return returned(FileExists, true);
+  }
   const auto Parent = parentPath(Source.Path);
   if (parentPath(Target.Path) != Parent)
     return unsupported(Result, diagnostic::RenameMount);
@@ -1146,8 +1153,10 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return access(A[1], A[0], A[2], Result);
   }
   if (Service == ServiceKind::Rename)
-    return rename(A[0], AtCurrentDirectory, A[1], AtCurrentDirectory, Result);
+    return rename(A[0], AtCurrentDirectory, A[1], AtCurrentDirectory, false,
+                  Result);
   if (Service == ServiceKind::RenameAt || Service == ServiceKind::RenameAtX) {
+    bool Exclusive = false;
     if (Service == ServiceKind::RenameAtX) {
       const uint32_t Flags = A[4];
       if ((Flags & ~(RenameSeclude | RenameSwap | RenameExclusive |
@@ -1155,10 +1164,11 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
           (Flags & (RenameSwap | RenameExclusive)) ==
               (RenameSwap | RenameExclusive))
         return returned(InvalidArgument, true);
-      if (Flags & ~RenameNoFollowAny)
+      if (Flags & ~(RenameNoFollowAny | RenameExclusive))
         return unsupported(Result, diagnostic::RenameFlags);
+      Exclusive = Flags & RenameExclusive;
     }
-    return rename(A[1], A[0], A[3], A[2], Result);
+    return rename(A[1], A[0], A[3], A[2], Exclusive, Result);
   }
   if (Service == ServiceKind::Unlink)
     return unlink(A[0], AtCurrentDirectory, Result);

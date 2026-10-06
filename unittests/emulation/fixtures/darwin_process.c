@@ -761,13 +761,25 @@ static int renamed_file(const char *path) {
   RENAME_EXPECT(!error);
   u64 independent = call(5, (u64)temporary, 0, 0, 0, 0, 0, &error);
   RENAME_EXPECT(!error);
-  RENAME_EXPECT(call(339, a, (u64)source_status, 0, 0, 0, 0, &error) == 0 &&
-                !error);
   RENAME_EXPECT(call(199, old, 4, 0, 0, 0, 0, &error) == 4 && !error);
   u64 source_map = call(197, 0, PAGE, 1, 2, a, 0, &error);
   RENAME_EXPECT(!error);
   u64 old_map = call(197, 0, PAGE, 1, 2, old, 0, &error);
   RENAME_EXPECT(!error);
+  RENAME_EXPECT(call(339, a, (u64)source_status, 0, 0, 0, 0, &error) == 0 &&
+                !error);
+  RENAME_EXPECT(call(488, (u64)-1, (u64)temporary, (u64)-1, (u64)original,
+                     0x1234567800000014UL, 0, &error) == 17 &&
+                error);
+  RENAME_EXPECT(call(488, (u64)-1, (u64)temporary, (u64)-1, (u64)parent, 4, 0,
+                     &error) == 17 &&
+                error);
+  RENAME_EXPECT(call(339, a, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+  unsigned unchanged = 1;
+  for (unsigned i = 0; i != 124; ++i)
+    if (i < 24 || i >= 32)
+      unchanged &= status[i] == source_status[i];
+  RENAME_EXPECT(unchanged);
   RENAME_EXPECT(call(128, (u64)temporary, (u64)temporary, 0, 0, 0, 0, &error) ==
                     0 &&
                 !error);
@@ -788,8 +800,8 @@ static int renamed_file(const char *path) {
   RENAME_EXPECT(call(488, (u64)-1, (u64)-1, (u64)-1, (u64)-1, 6, 0, &error) ==
                     22 &&
                 error);
-  RENAME_EXPECT(call(465, directory, (u64)(temporary + slash + 1), directory,
-                     (u64)(final + slash + 1), 0, 0, &error) == 0 &&
+  RENAME_EXPECT(call(488, directory, (u64)(temporary + slash + 1), directory,
+                     (u64)(final + slash + 1), 0x14, 0, &error) == 0 &&
                 !error);
   const u64 source_fds[] = {a, d, independent};
   for (unsigned i = 0; i != 3; ++i) {

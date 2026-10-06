@@ -1483,11 +1483,14 @@ TEST_P(DarwinFileTest, RenamePreservesOriginalPathErrorsAndFlagOrdering) {
   for (uint64_t Flags : {8u, 6u, 0x80000000u})
     error(ServiceKind::RenameAtX, {999, UINT64_MAX, 999, UINT64_MAX, Flags},
           22);
-  for (uint64_t Flags : {1u, 2u, 4u, 0x11u, 0x12u, 0x14u}) {
+  for (uint64_t Flags : {1u, 2u, 0x11u, 0x12u}) {
     EXPECT_FALSE(invoke(ServiceKind::RenameAtX,
                         {999, UINT64_MAX, 999, UINT64_MAX, Flags}));
     EXPECT_EQ(Result.Diagnostic, diagnostic::RenameFlags);
   }
+  for (uint64_t Flags : {4u, 0x14u})
+    error(ServiceKind::RenameAtX, {999, UINT64_MAX, 999, UINT64_MAX, Flags},
+          14);
   EXPECT_EQ(status(A), Before);
   EXPECT_EQ(status(Parent), ParentBefore);
   path("/renamed", Base + 128);
@@ -1497,6 +1500,131 @@ TEST_P(DarwinFileTest, RenamePreservesOriginalPathErrorsAndFlagOrdering) {
   identity(A, "/renamed");
   path("/renamed");
   EXPECT_EQ(ok(ServiceKind::RenameAt, {999, Base, 999, Base + 128}), 0u);
+}
+
+TEST_P(DarwinFileTest, ExclusiveRenameChecksExistingTargetsBeforeMutation) {
+  mutationPolicy();
+  Options->Metadata["/"] = darwin_test::creationParentMetadata();
+  Options->Files["/target"] = {'t'};
+  auto TargetMetadata = darwin_test::mutationMetadata(1);
+  TargetMetadata.Inode++;
+  TargetMetadata.Device++;
+  Options->Metadata["/target"] = TargetMetadata;
+  Options->Directories.insert("/folder");
+  Options->Files["/other/target"] = {'o'};
+  const auto A = ok(ServiceKind::Open, {Base, 2});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 2, 0}), 2u);
+  const auto Before = status(A);
+  path("/target");
+  const auto B = ok(ServiceKind::Open, {Base});
+  const auto TargetBefore = status(B);
+  const auto Lease = Files->mappingSource(B);
+  ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(Lease));
+  path("/");
+  const auto Root = ok(ServiceKind::Open, {Base});
+  const auto RootBefore = status(Root);
+  path("/data");
+  // Distinct existing targets fail even without a mutable parent, or when a
+  // later mount/device decision would otherwise be outside the model.
+  for (uint64_t Flags : {4u, 0x14u}) {
+    for (const char *Name :
+         {"/target", "/folder", "/folder/", "/other/target"}) {
+      path(Name, Base + 128);
+      error(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, Flags}, 17);
+    }
+    for (auto [Name, Code] : {std::pair{"/folder/.", 22u},
+                              {"/folder/..", 22u},
+                              {"/new/", 2u},
+                              {"/target/", 20u},
+                              {"/missing/../target", 2u}}) {
+      path(Name, Base + 128);
+      error(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, Flags}, Code);
+    }
+    error(ServiceKind::RenameAtX, {999, Base, 999, UINT64_MAX, Flags}, 14);
+  }
+  path("/new", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 4}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryNotMutable);
+  path("/other/new", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 4}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameMount);
+  EXPECT_EQ(status(A), Before);
+  EXPECT_EQ(status(B), TargetBefore);
+  EXPECT_EQ(status(Root), RootBefore);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 2u);
+  identity(A, "/data");
+  identity(B, "/target");
+  contents(B, {'t'});
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes.front(), 't');
+}
+
+TEST_P(DarwinFileTest, ExclusiveRenameNeverGuessesSameObjectCaseSensitivity) {
+  mutationPolicy();
+  Options->MutableDirectories.insert("/");
+  const auto A = ok(ServiceKind::Open, {Base});
+  const auto Before = status(A);
+  for (const char *Name : {"/data", "/./data", "//data"}) {
+    path(Name, Base + 128);
+    EXPECT_FALSE(
+        invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 0x14}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::RenameCaseSensitivity);
+    EXPECT_EQ(status(A), Before);
+    identity(A, "/data");
+    // The original unflagged operation remains an admitted no-op.
+    EXPECT_EQ(ok(ServiceKind::Rename, {Base, Base + 128}), 0u);
+    EXPECT_EQ(status(A), Before);
+  }
+}
+
+TEST_P(DarwinFileTest, ExclusiveRenameRetainsDescriptionsLeasesAndMetadata) {
+  mutationPolicy();
+  creationPolicy();
+  const auto A = ok(ServiceKind::Open, {Base, 2});
+  const auto D = ok(ServiceKind::Dup, {A});
+  const auto Lease = Files->mappingSource(A);
+  ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(Lease));
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 2, 0}), 2u);
+  auto Before = status(A);
+  const auto Flags = ok(ServiceKind::Fcntl, {A, 3});
+  path("/renamed", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::RenameAtX, {0x12345678000003e7ULL, Base, 999,
+                                        Base + 128, 0x1234567800000014ULL}),
+            0u);
+  error(ServiceKind::Access, {Base}, 2);
+  EXPECT_EQ(ok(ServiceKind::Access, {Base + 128}), 0u);
+  for (const auto FD : {A, D}) {
+    identity(FD, "/renamed");
+    EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 2u);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {FD, 3}), Flags);
+  }
+  llvm::support::endian::write64le(Before.data() + 64, uint64_t(-7));
+  llvm::support::endian::write64le(Before.data() + 72, 123456789);
+  EXPECT_EQ(status(A), Before);
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes,
+            llvm::ArrayRef<uint8_t>(Options->Files.at("/data")));
+  EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
+  contents(D, {'a', 'b', 0, 0xff, 'e', 'f'});
+  EXPECT_TRUE(Options->Files.contains("/data"));
+  EXPECT_FALSE(Options->Files.contains("/renamed"));
+}
+
+TEST_P(DarwinFileTest, ExclusiveRenameUsesTheExistingBoundedTransaction) {
+  Options->MutableDirectories.insert("/");
+  Options->WritableFiles.insert("/data");
+  const auto A = ok(ServiceKind::Open, {Base, 2});
+  const auto Capacity = darwin_file_limits::Bytes - 14;
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, Capacity}), 0u);
+  path("/new", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 4}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+  identity(A, "/data");
+  EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+  error(ServiceKind::Access, {Base + 128}, 2);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, Capacity - 5}), 0u);
+  EXPECT_EQ(ok(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 4}), 0u);
+  identity(A, "/new");
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {A, Capacity - 4}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
 }
 
 TEST_P(DarwinFileTest, RenameDirectoryAndCrossParentMovesRemainExplicit) {
