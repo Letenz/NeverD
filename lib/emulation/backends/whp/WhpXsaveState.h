@@ -109,7 +109,7 @@ public:
                : llvm::Error::success();
   }
   /// CapturedMetadata, when present, must come from this stopped vCPU under
-  /// the same partition lease. It permits one combined register read; the
+  /// the same VP lease. It permits one combined register read; the
   /// complete XSAVE packet and all metadata checks remain mandatory.
   llvm::Error capture(WhpAPI &API, WHV_PARTITION_HANDLE Partition,
                       X64MachineState &State,
