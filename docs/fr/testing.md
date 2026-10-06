@@ -1627,3 +1627,5 @@ Les générateurs de witness Swift vérifient `CurrentValueSubject: Publisher` e
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` vérifie les deux architectures, fournisseurs et tous les arguments et résultats ; il rejette les imports faibles, décalages, fournisseurs étrangers, symboles périmés et effets d’emprunt inventés.
 
 Le lecteur String de `scripts.tests.test_generate_swift_witness_contracts` vérifie le flux complet, rejette 28 modifications du stockage, de l’ABI et du flux ainsi que sept déclarations ambiguës et borne l’entrée. Les tests de liaison couvrent trois descripteurs sur les deux architectures avec 33 mutations par paire. L’identité n’accorde aucun agencement de pile ni emprunt.
+
+`PreparedFiniteKeys.*` vérifie la destruction du contexte et le renommage, l’ordre et les limites des projections, l’invalidation explicite après déplacement, les résultats malformés ou incomplets, les domaines vides ou non uniques et les limites exactes de capacité. Les régressions existantes du cache et des décalages couvrent aussi ce chemin.

@@ -1458,3 +1458,5 @@ Swift witness 產生器在 ARM64/x86-64 macOS 和 Mac Catalyst 上同時驗證 `
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` 驗證兩種架構、匯出提供者及全部參數與結果載體，並拒絕弱匯入、附加位移、外來提供者、過期符號與虛構的借用效果。
 
 `scripts.tests.test_generate_swift_witness_contracts` 的 String 讀取器檢查完整快取與查詢流程，拒絕 28 項儲存、ABI、流程突變與七種歧義宣告，並限制輸入預算。現有見證繫結測試涵蓋三個描述符與兩種架構，每個組合包含 33 項突變。描述符身分不提供堆疊框架配置或借用權限。
+
+`PreparedFiniteKeys.*` 檢查上下文銷毀和重新命名、投影順序與上限、移動後明確失效、格式錯誤及不完整結果、空值域和非唯一值域，以及精確容量邊界。既有快取和堆疊偏移回歸也涵蓋預備鍵路徑。

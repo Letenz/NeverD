@@ -1628,3 +1628,5 @@ Die Swift-Witness-Generatoren prüfen `CurrentValueSubject: Publisher` und `Rang
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` prüft beide Architekturen und Anbieter sowie alle Argument- und Ergebnisregister und verwirft schwache Imports, Addenden, fremde Anbieter, veraltete Symbole und erfundene Borrowing-Effekte.
 
 Der String-Witness-Leser in `scripts.tests.test_generate_swift_witness_contracts` prüft vollständigen Cache- und Abfragefluss, verwirft 28 Speicher-, ABI- und Flussänderungen sowie sieben mehrdeutige Deklarationen und erzwingt das Eingabebudget. Die Bindungstests decken drei Deskriptoren auf beiden Architekturen mit je 33 Änderungen ab. Die Identität gewährt kein Frame-Layout oder Borrowing.
+
+`PreparedFiniteKeys.*` prüft Kontextzerstörung und Umbenennung, Projektionsreihenfolge und Grenzen, explizite Ungültigkeit nach Verschiebung, fehlerhafte und unvollständige Ergebnisse, leere und nicht eindeutige Wertebereiche sowie exakte Kapazitätsgrenzen. Bestehende Cache- und Frame-Regressionen decken diesen Pfad ebenfalls ab.

@@ -1512,3 +1512,5 @@ Swift witness の生成器は ARM64/x86-64 の macOS と Mac Catalyst で `Curre
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` は両アーキテクチャとプロバイダ、全引数と結果を検証し、弱いインポート、加算オフセット、別プロバイダ、古いシンボル、借用効果の捏造を拒否します。
 
 `scripts.tests.test_generate_swift_witness_contracts` の String リーダーは完全な流れを検証し、28 のストレージ・ABI・フロー変更と七つの曖昧な宣言を拒否して入力予算を守ります。結合テストは両アーキテクチャの三記述子にそれぞれ 33 の変更を適用します。記述子の識別はフレーム配置や借用を許可しません。
+
+`PreparedFiniteKeys.*` はコンテキスト破棄と変数改名、射影順序と上限、移動後の明示的な無効化、不正・不完全な結果、空集合と非一意な値域、正確な容量境界を検査します。既存のキャッシュとフレームの回帰テストも準備済みキーの経路を検査します。

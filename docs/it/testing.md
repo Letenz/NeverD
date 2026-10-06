@@ -1608,3 +1608,5 @@ I generatori di witness Swift verificano `CurrentValueSubject: Publisher` e `Ran
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` verifica entrambe le architetture e i provider e tutti i parametri e risultati; rifiuta import deboli, addendi, provider estranei, simboli obsoleti ed effetti di prestito inventati.
 
 Il lettore String in `scripts.tests.test_generate_swift_witness_contracts` verifica il flusso completo, rifiuta 28 modifiche a memoria, ABI e flusso e sette dichiarazioni ambigue, e limita l’input. I test di binding coprono tre descrittori su entrambe le architetture con 33 mutazioni per coppia. L’identità non concede layout del frame o prestiti.
+
+`PreparedFiniteKeys.*` verifica distruzione del contesto e rinomina, ordine e limiti delle proiezioni, invalidazione esplicita dopo lo spostamento, risultati malformati o incompleti, domini vuoti o non univoci e limiti esatti di capacità. Anche le regressioni esistenti della cache e del frame coprono questo percorso.
