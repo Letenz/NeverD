@@ -261,4 +261,32 @@ int main(void) { return other_slot(7) == 7 && other_slot(9) == 9 ? 0 : 1; }
 )");
 }
 
+TEST(HighValueForward, CopyKeepsTheValueItsSourceLoses) {
+  // t1 copies v3, then v3 changes under the same name; t1 must keep the old
+  // value, in straight-line code and around a loop.
+  HighFunc Straight =
+      function("copy_straight",
+               {assign(renamed(3), input()), assign(local(1), renamed(3)),
+                assign(renamed(3), op(NdOp::INT_ADD, renamed(3), constant(5))),
+                result(op(NdOp::INT_MULT, local(1), renamed(3)))});
+  HighFunc Looped = function(
+      "copy_looped",
+      {assign(renamed(3), input()), assign(local(1), renamed(3)),
+       loop(op(NdOp::INT_LESS, renamed(3), constant(20), true),
+            {assign(renamed(3), op(NdOp::INT_ADD, renamed(3), constant(7)))}),
+       result(op(NdOp::INT_SUB, renamed(3), local(1)))});
+  const std::string Source = emit({Straight, Looped});
+  EXPECT_NE(declarationOf(Source, "t1"), "") << Source;
+  compileAndRun(Source + R"(
+static uint64_t looped_ref(uint64_t x) { uint64_t c = x; while (x < 20) x += 7; return x - c; }
+int main(void) {
+  for (uint64_t x = 0; x < 30; ++x) {
+    if (copy_straight(x) != x * (x + 5)) return 1;
+    if (copy_looped(x) != looped_ref(x)) return 2;
+  }
+  return 0;
+}
+)");
+}
+
 } // namespace
