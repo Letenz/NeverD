@@ -173,7 +173,8 @@ NEVERD_DARWIN_SERVICE_ALIAS(OpenAt, 464)
 
 #ifdef NEVERD_DARWIN_DIAGNOSTIC
 NEVERD_DARWIN_DIAGNOSTIC(
-    SystemString, "Darwin system strings must be at most 1023 bytes without NUL")
+    SystemString,
+    "Darwin system strings must be at most 1023 bytes without NUL")
 NEVERD_DARWIN_DIAGNOSTIC(
     SystemCPUCount, "Darwin system cpu_count must be between 1 and INT32_MAX")
 NEVERD_DARWIN_DIAGNOSTIC(SystemPartialInput,

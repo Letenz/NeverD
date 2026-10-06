@@ -164,9 +164,10 @@ NEVERD_PROCESS_REPORT_LIMIT(JSONLimit, NEVERD_PROCESS_OPTIONS_JSON_LIMIT, 65536)
 #endif
 #ifdef NEVERD_PROCESS_REPORT_TEXT
 NEVERD_PROCESS_REPORT_TEXT(DarwinTimeOptions, "invalid darwin_time option: ")
-NEVERD_PROCESS_REPORT_TEXT(DarwinSystemOptions, "invalid darwin_system option: ")
+NEVERD_PROCESS_REPORT_TEXT(DarwinSystemOptions,
+                           "invalid darwin_system option: ")
 NEVERD_PROCESS_REPORT_TEXT(DarwinSystemProfile,
-                            "darwin_system requires a Darwin process profile")
+                           "darwin_system requires a Darwin process profile")
 NEVERD_PROCESS_REPORT_TEXT(DarwinTimeProfile,
                            "darwin_time requires a macOS or iOS profile")
 NEVERD_PROCESS_REPORT_TEXT(DarwinFilesOptions, "invalid darwin_files option: ")

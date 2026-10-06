@@ -8,8 +8,10 @@
 #ifdef NEVERD_DARWIN_SYSTEM_FIELD
 NEVERD_DARWIN_SYSTEM_FIELD(OSType, SystemOSType, "kern.ostype", 1, 1)
 NEVERD_DARWIN_SYSTEM_FIELD(OSRelease, SystemOSRelease, "kern.osrelease", 1, 2)
-NEVERD_DARWIN_SYSTEM_FIELD(OSRevision, SystemOSRevision, "kern.osrevision", 1, 3)
-NEVERD_DARWIN_SYSTEM_FIELD(KernelVersion, SystemKernelVersion, "kern.version", 1, 4)
+NEVERD_DARWIN_SYSTEM_FIELD(OSRevision, SystemOSRevision, "kern.osrevision", 1,
+                           3)
+NEVERD_DARWIN_SYSTEM_FIELD(KernelVersion, SystemKernelVersion, "kern.version",
+                           1, 4)
 // Native kern.osversion allows privileged writes. Our fixed non-root guest
 // identity cannot write it; the observation itself remains caller supplied.
 NEVERD_DARWIN_SYSTEM_FIELD(OSVersion, SystemOSVersion, "kern.osversion", 1, 65)
