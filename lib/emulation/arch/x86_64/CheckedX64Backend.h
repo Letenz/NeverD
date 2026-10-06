@@ -20,7 +20,7 @@ public:
   static llvm::Expected<std::unique_ptr<ExecutionBackend>>
   create(std::unique_ptr<MemoryProjection> Memory,
          std::unique_ptr<X64Machine> Machine, bool UserMode = false,
-         bool SIMDExceptions = false);
+         bool SIMDExceptions = false, bool Direct = false);
   GuestArchitecture architecture() const override {
     return GuestArchitecture::X64;
   }
@@ -37,8 +37,8 @@ public:
   llvm::Error restoreContext(const BackendContext &) override;
 
 private:
-  CheckedX64Backend(bool UserMode, bool SIMDExceptions)
-      : CheckedBackend(x64::MaxInstructionBytes, 1, UserMode),
+  CheckedX64Backend(bool UserMode, bool SIMDExceptions, bool Direct)
+      : CheckedBackend(x64::MaxInstructionBytes, 1, UserMode, Direct),
         SIMDExceptions(SIMDExceptions) {}
   bool permitsMXCSR(uint64_t Value) const {
     return supportsSIMDExceptions() ||
@@ -57,6 +57,7 @@ private:
     X64MachineState CPU;
   };
   llvm::Error execute(const cs_insn &Instruction) override;
+  llvm::Error executeDirect() override;
   std::optional<ServiceRequest>
   decodeServiceRequest(const cs_insn &) const override;
   llvm::Expected<uint64_t> operandRegister(unsigned Register) const;

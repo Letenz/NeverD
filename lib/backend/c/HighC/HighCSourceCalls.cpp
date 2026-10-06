@@ -1,9 +1,11 @@
 #include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "../../../loader/Swift/SwiftErrorRuntime.h"
+#include "../../../loader/Swift/SwiftErrorSourceProjection.h"
 #include "HighCWriter.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
+#include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/libc/LibCObjC.h"
 #include "neverd/loader/MachO/CFunctionParameterCalls.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
@@ -100,11 +102,14 @@ llvm::StringRef HighCWriter::sourceConventionAttribute(
 }
 
 std::string
-HighCWriter::sourceParameterType(const SourceParameterTypeHint &Parameter) {
+HighCWriter::sourceParameterType(const SourceParameterTypeHint &Parameter,
+                                 llvm::StringRef Name) {
   if (Parameter.IndirectByValue)
     throw std::invalid_argument(
         "Indirect by-value source parameters require a copy storage proof");
-  std::string Result = typeToC(Parameter.Type);
+  std::string Result = Name.empty()
+                           ? typeToC(Parameter.Type)
+                           : declarationToC(Parameter.Type, Name.str());
   switch (Parameter.TheRole) {
   case SourceParameterTypeHint::Role::Ordinary:
     return Result;
@@ -191,16 +196,29 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
   }
   const auto &Signature = Hint.Signature;
   const bool ErrorSlot = hasSwiftErrorResult(Signature);
+  const bool NativeError = isNativeSwiftErrorSourceCall(Hint, Opts.TheArch);
   if (ErrorSlot) {
-    if (!isSwiftWillThrowSourceCall(Hint, Opts.TheArch) || E.IsIndirectCall ||
-        E.Operands.size() != 2 ||
-        !equalSourceTypes(E.Type, Signature.ReturnType))
+    const auto ResultType = NativeError ? swiftErrorCallResultType(Signature)
+                                        : Signature.ReturnType;
+    if ((!NativeError && !isSwiftWillThrowSourceCall(Hint, Opts.TheArch)) ||
+        E.IsIndirectCall || (NativeError && E.CallAddr != Hint.TargetAddress) ||
+        E.Operands.size() != Signature.Parameters.size() ||
+        !equalSourceTypes(E.Type, ResultType))
       return bad("unsupported Swift in/out error binding");
     for (const auto &Argument : E.Operands)
-      if (!Argument || !Argument->Type || Argument->Type->Size != 8 ||
-          (Argument->Type->Kind != NdTypeKind::Ptr &&
-           Argument->Type->Kind != NdTypeKind::Int))
+      if (!Argument || !Argument->Type ||
+          (!NativeError && (Argument->Type->Size != 8 ||
+                            (Argument->Type->Kind != NdTypeKind::Ptr &&
+                             Argument->Type->Kind != NdTypeKind::Int))))
         return bad("incomplete Swift error-register input");
+    if (NativeError) {
+      const auto *Definition = sourceCallDefinition(Hint, E.CallTarget);
+      if (!Definition ||
+          !isSwiftErrorEntryProjected(*Definition, Opts.TheArch) ||
+          !equalSourceABIs(*Definition->SourceTypeHint, Signature))
+        return bad(
+            "Swift error call has no current projected native definition");
+    }
   }
   if (Hint.CallKind == Kind::CFunctionParameterCall) {
     if (!CurrentFunc ||
@@ -967,7 +985,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                          Hint.CallKind == Kind::RuntimeObjCForwardedInitializer;
     if (Runtime)
       Name = Hint.TargetName;
-    if (ErrorSlot)
+    if (ErrorSlot && !NativeError)
       Name = SwiftWillThrowValueSourceName;
     else if (Hint.CallKind == Kind::SwiftStringBridge)
       Name = "neverd_swift_string_to_nsstring";
@@ -1053,6 +1071,11 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
            ")";
   }
   std::string Call = Name + "(";
+  std::string IncomingError;
+  const std::string ErrorName =
+      NativeError ? MemoryIdentifiers.allocate("nd_error") : "";
+  const std::string ResultName =
+      NativeError ? MemoryIdentifiers.allocate("nd_result") : "";
   const size_t FirstArgument = Block ? 1 : 0;
   for (size_t I = FirstArgument; I < E.Operands.size(); ++I) {
     if (!E.Operands[I])
@@ -1107,9 +1130,23 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     else if (I == 0 && Hint.CallKind == Kind::ObjCRuntimeCall &&
              libc::objcHasObjectStorageArgument(Hint.TargetName))
       Call += "(id *)";
-    Call += *Value;
+    if (NativeError &&
+        Parameter.TheRole == SourceParameterTypeHint::Role::SwiftErrorResult) {
+      IncomingError = *Value;
+      Call += "&" + ErrorName;
+    } else
+      Call += *Value;
   }
   Call += ")";
+  if (NativeError) {
+    const auto ResultType = swiftErrorCallResultType(Signature);
+    if (IncomingError.empty())
+      return bad("Swift call lost its incoming error value");
+    return "({ void *" + ErrorName + " = " + IncomingError + "; " +
+           declarationToC(ResultType, ResultName) + "; " + ResultName +
+           ".field_0 = (uint64_t)(uintptr_t)(" + Call + "); " + ResultName +
+           ".field_1 = " + ErrorName + "; " + ResultName + "; })";
+  }
   if (Signature.ReturnType->Kind == NdTypeKind::Void)
     return Call;
   auto Result = sourceValue(Call, Signature.ReturnType, E.Type);

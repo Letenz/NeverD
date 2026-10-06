@@ -6,7 +6,9 @@
 // The fixed checked profiles select explicit supervisor or user ISA subsets.
 // Flat software profiles inherit the pinned engine's instruction model; they do
 // not establish architectural user/supervisor isolation or full OS
-// compatibility.
+// compatibility. The direct user profile admits nothing: user code runs on the
+// transport's own processor between architectural events, isolated by guest
+// page tables, and neither instructions nor memory accesses are observed.
 #ifdef NEVERD_EXECUTION_FEATURE_GROUP
 NEVERD_EXECUTION_FEATURE_GROUP(
     CommonFeatures,
@@ -23,6 +25,14 @@ NEVERD_EXECUTION_FEATURE_GROUP(UserFeatures,
                                CheckedFeatures |
                                    Feature::UserSupervisorIsolation |
                                    Feature::ServiceTraps)
+NEVERD_EXECUTION_FEATURE_GROUP(
+    DirectFeatures,
+    Feature::ScalarInteger | Feature::VectorRegisterState |
+        Feature::FloatingPoint | Feature::SIMD | Feature::SharedPhysicalMemory |
+        Feature::MultipleAddressSpaces | Feature::RetainedMemoryViews |
+        Feature::TypedExits | Feature::CooperativeCPUs |
+        Feature::ThreadPointer | Feature::UserSupervisorIsolation |
+        Feature::ServiceTraps)
 #endif
 
 #ifdef NEVERD_BACKEND_EXECUTION_FEATURE
@@ -85,6 +95,8 @@ NEVERD_EXECUTION_PROFILE(CheckedUserARM64, CheckedUserAArch64, AArch64, User,
                          Split,
                          UserFeatures | Feature::SIMD | Feature::FloatingPoint,
                          true, true)
+NEVERD_EXECUTION_PROFILE(DirectUserX64, DirectUserX64, X64, User, Canonical,
+                         DirectFeatures, true, false)
 #endif
 
 #ifdef NEVERD_NATIVE_EXECUTION_PROFILE

@@ -3,6 +3,7 @@
 #include "../loader/MachO/ImmutableNativeFrame.h"
 #include "../loader/Swift/SwiftBooleanProjection.h"
 #include "../loader/Swift/SwiftBooleanSourceBinding.h"
+#include "../loader/Swift/SwiftErrorSourceProjection.h"
 #include "../loader/Swift/SwiftMangledClassMethodABI.h"
 #include "../loader/Swift/SwiftMangledValueConstructorABI.h"
 #include "NativeSourceFloatingReturn.h"
@@ -13,6 +14,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/med/MedNoReturn.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
 #include "neverd/lift/AArch64Regs.h"
@@ -64,6 +66,10 @@ nativeSourceCalleeContracts(const BinaryImage &Image,
     if (auto It = Contracts.CurrentCallees.find(Audit.Entry);
         It != Contracts.CurrentCallees.end())
       It->second.Audit = &Audit;
+  for (const auto &High : Result.HighFuncs)
+    if (auto It = Contracts.CurrentCallees.find(High.Entry);
+        It != Contracts.CurrentCallees.end())
+      It->second.High = &High;
   return Contracts;
 }
 
@@ -859,10 +865,10 @@ nativeEntryRegisters(const BinaryImage &Image, const LowFunc *Low,
   return {Reads.begin(), Reads.end()};
 }
 
-// A complete declared call can return additional fields after its two full
-// integer result words. Authenticate both word extracts against that full ABI
-// before treating them as definitions; ordinary SUBBYTES are only views. This
-// never changes the callee's result shape or defines any later narrow carrier.
+// Authenticate the two complete word extracts against the declared physical
+// results. Swift's internal result/error pair is separate from its logical
+// scalar result; other calls may return additional fields. Ordinary SUBBYTES
+// remain views and cannot establish a machine result by themselves.
 bool completeCallWordPairPrefix(llvm::ArrayRef<MedOp> Ops, size_t Index,
                                 Arch Architecture) {
   const auto &Call = Ops[Index];
@@ -873,19 +879,37 @@ bool completeCallWordPairPrefix(llvm::ArrayRef<MedOp> Ops, size_t Index,
   const auto &TRI = getTargetRegInfo(Architecture);
   std::string Error;
   if (!Signature.HasExplicitABI || Signature.Architecture != Architecture ||
-      !validateSourceABI(Signature, Error) ||
-      Signature.ReturnType->Size != Call.Output.Size ||
-      Signature.ReturnComponents.size() < 2 || TRI.IntReturnRegs.size() < 2)
+      !validateSourceABI(Signature, Error))
     return false;
+  std::array<SourceABIValueLocation, 2> Locations;
+  const bool SwiftError =
+      isNativeSwiftErrorSourceCall(*Call.SourceCallHint, Architecture);
+  if (SwiftError) {
+    if (Call.Opcode != NdOp::CALL || !Call.NumInputs ||
+        !Call.Inputs[0].isConst() ||
+        Call.Inputs[0].ConstVal != Call.SourceCallHint->TargetAddress ||
+        Call.NumInputs != sourceABIParameters(Signature).size() + 1 ||
+        Call.Output.Size != 16 || Call.DoesNotReturn ||
+        Call.PreservesCallerSaved)
+      return false;
+    Locations = {Signature.ReturnLocation,
+                 sourceABIErrorResult(Signature)->Location};
+  } else {
+    if (Signature.ReturnType->Size != Call.Output.Size ||
+        Signature.ReturnComponents.size() < 2 || TRI.IntReturnRegs.size() < 2)
+      return false;
+    Locations = {Signature.ReturnComponents[0], Signature.ReturnComponents[1]};
+  }
   const auto Members = sourceAggregateMembers(Signature.ReturnType);
   for (unsigned I = 0; I < 2; ++I) {
-    const auto &Location = Signature.ReturnComponents[I];
+    const auto &Location = Locations[I];
     const auto &Extract = Ops[Index + I + 1];
-    if ((!Members.empty() && Members[I].ByteOffset != I * 8U) ||
+    if ((!SwiftError && !Members.empty() && Members[I].ByteOffset != I * 8U) ||
         Location.Kind != SourceABICarrierKind::IntegerRegister ||
-        Location.RegisterOffset != TRI.IntReturnRegs[I] ||
+        (!SwiftError && Location.RegisterOffset != TRI.IntReturnRegs[I]) ||
         Location.ValueBytes != 8 || Extract.Opcode != NdOp::SUBBYTES ||
-        Extract.NumInputs != 2 || Extract.Output.Kind != MedVar::Reg ||
+        (SwiftError && Extract.Addr != Call.Addr) || Extract.NumInputs != 2 ||
+        Extract.Output.Kind != MedVar::Reg ||
         Extract.Output.RegOff != Location.RegisterOffset ||
         Extract.Output.Size != 8 || Extract.Inputs[0] != Call.Output ||
         Extract.Inputs[0].Size != Call.Output.Size ||
@@ -893,6 +917,78 @@ bool completeCallWordPairPrefix(llvm::ArrayRef<MedOp> Ops, size_t Index,
       return false;
   }
   return true;
+}
+
+// A transport shape or a Swift origin cannot certify native call state.
+// Require this round's complete callee, matching entry projection and ABI,
+// and replay its original LowIR against the current immutable machine body.
+bool currentNativeSwiftErrorCallee(const BinaryImage &Image, const MedOp &Call,
+                                   const NativeSourceCalleeContracts *Callees) {
+  if (!Callees || Callees->SourceImage != &Image || Call.Opcode != NdOp::CALL ||
+      !Call.NumInputs || !Call.Inputs[0].isConst() || !Call.SourceCallHint ||
+      !isNativeSwiftErrorSourceCall(*Call.SourceCallHint, Image.Arch) ||
+      Call.Inputs[0].ConstVal != Call.SourceCallHint->TargetAddress ||
+      Call.DoesNotReturn || Call.PreservesCallerSaved)
+    return false;
+  const auto Target = Call.SourceCallHint->TargetAddress;
+  const auto Found = Callees->CurrentCallees.find(Target);
+  if (Found == Callees->CurrentCallees.end() || !Image.isCodeAddress(Target))
+    return false;
+  const auto &C = Found->second;
+  const auto &Signature = Call.SourceCallHint->Signature;
+  if (!C.Low || !C.Med || !C.High || !C.Signature || !C.Audit ||
+      C.Low->Entry != Target || C.Med->Entry != Target ||
+      C.High->Entry != Target || !C.Med->SourceParametersBound ||
+      !C.Med->SourceTypeHint || !C.High->SourceTypeHint ||
+      !completeNativeAudit(Target, *C.Audit) ||
+      C.Low->DecodedInstructionCount != C.Audit->DecodedInstructions ||
+      !equalSourceABIs(*C.Signature, Signature) ||
+      !equalSourceABIs(*C.Med->SourceTypeHint, Signature) ||
+      !equalSourceABIs(*C.High->SourceTypeHint, Signature) ||
+      !isSwiftErrorEntryProjected(*C.High, Image.Arch) ||
+      Call.NumInputs != sourceABIParameters(Signature).size() + 1)
+    return false;
+  size_t Budget = 262144;
+  return immutableNativeInstructionOperationsMatch(Image, *C.Low, Budget);
+}
+
+bool validateNativeSwiftErrorBindings(
+    const BinaryImage &Image, const LowFunc *Low, const MedFunc &Med,
+    const NativeSourceCalleeContracts *Callees) {
+  std::set<SourceCallOccurrenceKey> Required, Seen;
+  size_t Budget = 262144;
+  if (Low && Callees && Callees->SourceImage == &Image)
+    for (const auto &Block : Low->Blocks)
+      for (const auto &Op : Block.Ops) {
+        if (!Budget--)
+          return false;
+        if (const auto Site = sourceCallOccurrenceKey(Op);
+            Site && Site->StaticTarget) {
+          const auto C = Callees->CurrentCallees.find(*Site->StaticTarget);
+          if (C != Callees->CurrentCallees.end() && C->second.Signature &&
+              hasSwiftErrorResult(*C->second.Signature))
+            Required.insert(*Site);
+        }
+      }
+  for (const auto &Block : Med.Blocks)
+    for (size_t I = 0; I < Block.Ops.size(); ++I) {
+      if (!Budget--)
+        return false;
+      const auto &Op = Block.Ops[I];
+      if (!Op.SourceCallHint ||
+          Op.SourceCallHint->CallKind != SourceCallTypeHint::Kind::Native ||
+          !hasSwiftErrorResult(Op.SourceCallHint->Signature))
+        continue;
+      if (!Low || Low->Entry != Med.Entry || Op.OriginSeq < 0 ||
+          !currentNativeSwiftErrorCallee(Image, Op, Callees) ||
+          !completeCallWordPairPrefix(Block.Ops, I, Image.Arch))
+        return false;
+      const SourceCallOccurrenceKey Site{Op.Addr, Op.OriginSeq, Op.Opcode,
+                                         Op.Inputs[0].ConstVal};
+      if (!Required.count(Site) || !Seen.insert(Site).second)
+        return false;
+    }
+  return Seen == Required;
 }
 
 // Call-only declarations have a separate producer-owned authority. Matching a
@@ -943,6 +1039,7 @@ bool hasNativeSourceStateContract(
     return false;
   NativeSourceCalls Calls;
   if (!validateSwiftValueConstructorBindings(Image, Low, Med, Callees) ||
+      !validateNativeSwiftErrorBindings(Image, Low, Med, Callees) ||
       !validateSwiftOpaqueValueBindings(Image, Low, Med, Callees) ||
       !validateSwiftConsumedInputBindings(Image, Low, Med) ||
       !validateSwiftWitnessFrameBindings(Image, Low, Med) ||
@@ -1018,6 +1115,9 @@ bool hasNativeSourceStateContract(
       const bool CertifiedNative = Binding.TargetAddress != Med.Entry &&
                                    !TerminalContext &&
                                    certifiedNativeCallee(Image, Op, Callees);
+      const bool SwiftErrorNative =
+          Binding.TargetAddress != Med.Entry && !TerminalContext &&
+          currentNativeSwiftErrorCallee(Image, Op, Callees);
       const bool ImmutableNative = [&] {
         if (TerminalContext || Op.Opcode != NdOp::INDIR_CALL ||
             Op.Inputs[0].isConst() || Op.DoesNotReturn ||
@@ -1280,8 +1380,8 @@ bool hasNativeSourceStateContract(
             NativeSourceCallContract::TerminationKind::SwiftDictionaryViolation;
       }
       if ((!StaticRuntime && !StaticNative && !CertifiedNative &&
-           !StaticBoolean && !StaticMessage && !DynamicWitness &&
-           !DynamicVoidBlock && !ImmutableNative) ||
+           !SwiftErrorNative && !StaticBoolean && !StaticMessage &&
+           !DynamicWitness && !DynamicVoidBlock && !ImmutableNative) ||
           (Binding.DoesNotReturn && !Contract.terminates()) ||
           !Binding.Signature.ReturnType || !Image.isCodeAddress(Op.Addr) ||
           !Calls
@@ -1945,6 +2045,8 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
       !validateSwiftConsumedInputBindings(Image, Low, Med) ||
       !validateSwiftWitnessFrameBindings(Image, Low, Med))
     return Reject("Swift witness frame proof is no longer valid");
+  if (!validateNativeSwiftErrorBindings(Image, Low, Med, CalleeContracts))
+    return Reject("native Swift error result lacks current paired call proof");
   if (!validateNativeSwiftReceiverBindings(Image, Low, Med))
     return Reject("native Swift receiver proof is no longer valid");
   if (!validateObjCByValueCopyBindings(Image, Low, Med))

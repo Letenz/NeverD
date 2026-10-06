@@ -545,6 +545,14 @@ struct HighFunc {
   bool DoesNotReturn = false;
   TypeRef ReturnType;
   std::optional<SourceFunctionTypeHint> SourceTypeHint;
+  /// Source-only projection of Swift's in/out error register. The entry value
+  /// is captured once; every normal return writes its current value to the
+  /// logical error slot. Consumers must revalidate the current body and ABI.
+  struct SwiftErrorEntryProjection {
+    SourceFunctionTypeHint Signature;
+    MedVar Input;
+  };
+  std::optional<SwiftErrorEntryProjection> SwiftErrorEntry;
   SourceRegisterCopies RegisterCopyProjections;
   SourceClassGetterCalls ClassGetterCallFacts;
   std::vector<HighParam> Params;

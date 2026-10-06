@@ -149,6 +149,9 @@ NEVERD_EXECUTION_DIAGNOSTIC(UnknownExit, "unknown CPU exit kind")
 NEVERD_EXECUTION_DIAGNOSTIC(TypedExecutionUnsupported,
                             "CPU does not implement typed execution results")
 NEVERD_EXECUTION_DIAGNOSTIC(
+    DirectExecutionUnsupported,
+    "CPU transport does not implement direct user execution")
+NEVERD_EXECUTION_DIAGNOSTIC(
     MissingExecutionStart,
     "CPU returned without starting execution or reporting a setup failure")
 NEVERD_EXECUTION_DIAGNOSTIC(RAMTransactionLease,

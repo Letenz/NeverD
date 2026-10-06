@@ -8,16 +8,31 @@
 #include "X64ExceptionMonitor.h"
 #include "X64Machine.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Endian.h"
 
 #include <cstring>
+#include <iterator>
 
 namespace neverd::emulation {
-llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
-                                            bool UserMode,
-                                            bool ExceptionMonitor) {
+llvm::Expected<uint64_t> buildX64PageTables(
+    MemoryProjection &Memory, bool UserMode, bool ExceptionMonitor,
+    llvm::ArrayRef<ExecutionWatch> NoExecutePages, uint64_t WatchEpoch) {
+  // The watch epoch occupies the bits above the gateway variant, so a change
+  // to the non-executable overlay rebuilds the projection and never reuses it
+  // for a build without the overlay.
   const uint64_t Variant =
-      ExceptionMonitor ? x64::gateway::ProjectionVariant : 0;
+      (ExceptionMonitor ? x64::gateway::ProjectionVariant : 0) |
+      (WatchEpoch << 1);
+  // Watches are sorted and merged by the session; a page is covered when the
+  // last range starting at or before it still reaches it.
+  const auto watched = [&](uint64_t VA) {
+    const auto I = llvm::upper_bound(
+        NoExecutePages, VA,
+        [](uint64_t VA, const ExecutionWatch &W) { return VA < W.Address; });
+    return I != NoExecutePages.begin() &&
+           VA - std::prev(I)->Address < std::prev(I)->Size;
+  };
   const uint64_t PreviousRoot = Memory.projectionRoot(GuestArchitecture::X64);
   if (!Memory.needsProjection(GuestArchitecture::X64, UserMode, Variant))
     return Memory.transportPhysical(PreviousRoot);
@@ -73,7 +88,9 @@ llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
       Entry |= x64::UserPage;
     if (P.Permissions & Write)
       Entry |= x64::Writable;
-    if (!(P.Permissions & Execute))
+    // A watched page is non-executable whatever its permissions, so a direct
+    // run's first fetch into it faults at the watch boundary.
+    if (!(P.Permissions & Execute) || watched(VA))
       Entry |= x64::NoExecute;
     if (auto E = MapPage(VA, Entry))
       return E;

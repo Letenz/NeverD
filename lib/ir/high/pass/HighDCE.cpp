@@ -149,8 +149,13 @@ static bool removableAssignment(const HighStmt &S) {
   return true;
 }
 
-static void collectLiveRefs(const std::vector<HighStmt> &Stmts,
-                            VarKeySet &Live) {
+static void collectLiveRefs(const std::vector<HighStmt> &Stmts, VarKeySet &Live,
+                            const MedVar *SourceCapture = nullptr) {
+  // Swift's logical error slot is captured at entry even if the machine body
+  // overwrites its register on every path. The current projection proof owns
+  // this value; deleting it must not invalidate an otherwise complete entry.
+  if (SourceCapture)
+    Live.insert(VK(*SourceCapture));
   VarKeyMap<VarKeySet> Dependencies;
   walkStmts(Stmts, [&](const HighStmt &S) {
     if (removableAssignment(S)) {
@@ -318,11 +323,12 @@ void removeUnreachableCode(std::vector<HighStmt> &Stmts) {
 //===----------------------------------------------------------------------===//
 
 static void preDCE(std::vector<HighStmt> &Stmts,
-                   const std::unordered_set<va_t> &Entries) {
+                   const std::unordered_set<va_t> &Entries,
+                   const MedVar *SourceCapture = nullptr) {
   size_t Before = Stmts.size();
   for (int PreIter = 0; PreIter < 8; ++PreIter) {
     VarKeySet Refs;
-    collectLiveRefs(Stmts, Refs);
+    collectLiveRefs(Stmts, Refs, SourceCapture);
     if (!eliminateDeadAssigns(Stmts, Refs, Entries))
       break;
   }
@@ -334,6 +340,12 @@ static void preDCE(std::vector<HighStmt> &Stmts,
 void eliminateUnusedValues(std::vector<HighStmt> &Stmts) {
   coalesceBranchEntryStatements(Stmts);
   preDCE(Stmts, referencedStatementEntries(Stmts));
+}
+
+void eliminateUnusedValues(HighFunc &Func) {
+  coalesceBranchEntryStatements(Func.Body);
+  preDCE(Func.Body, referencedStatementEntries(Func.Body),
+         Func.SwiftErrorEntry ? &Func.SwiftErrorEntry->Input : nullptr);
 }
 
 //===----------------------------------------------------------------------===//
@@ -484,7 +496,9 @@ static void iterativeDCE(HighFunc &Func,
     bool DCEChanged = false;
     for (int Iter = 0; Iter < 10; ++Iter) {
       VarKeySet Refs;
-      collectLiveRefs(Func.Body, Refs);
+      collectLiveRefs(Func.Body, Refs,
+                      Func.SwiftErrorEntry ? &Func.SwiftErrorEntry->Input
+                                           : nullptr);
       if (!eliminateDeadAssigns(Func.Body, Refs, Entries))
         break;
       DCEChanged = true;
@@ -574,7 +588,8 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
                           << ", " << Func.Body.size() << " stmts)\n");
   removeUnreachableCode(Func.Body, Entries);
 
-  preDCE(Func.Body, Entries);
+  preDCE(Func.Body, Entries,
+         Func.SwiftErrorEntry ? &Func.SwiftErrorEntry->Input : nullptr);
 
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 1: alias (" << Func.Name << ", "
                           << Func.Body.size() << " stmts)\n");
@@ -644,7 +659,7 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
                           << ", " << Func.Body.size() << " stmts)\n");
   renameVars(Func.Body);
 
-  postRenameCleanup(Func.Body);
+  postRenameCleanup(Func);
 
   // Run semantic rewriting after every pass that substitutes expressions.
   // Its result is a shared DAG; feeding it back through alias propagation can
@@ -662,7 +677,9 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
   // copy propagation, which could create a cycle in the expression DAG.
   for (int Iter = 0; Iter < 10; ++Iter) {
     VarKeySet Refs;
-    collectLiveRefs(Func.Body, Refs);
+    collectLiveRefs(Func.Body, Refs,
+                    Func.SwiftErrorEntry ? &Func.SwiftErrorEntry->Input
+                                         : nullptr);
     if (!eliminateDeadAssigns(Func.Body, Refs,
                               referencedStatementEntries(Func.Body)))
       break;

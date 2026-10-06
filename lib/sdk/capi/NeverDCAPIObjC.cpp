@@ -422,7 +422,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
       // shared HighIR liveness cleanup on that final source view; observable
       // calls and stores and externally targeted branch entries are retained.
       if (!OnceBinding.Dependencies.empty())
-        eliminateUnusedValues(Binding.Function.Body);
+        eliminateUnusedValues(Binding.Function);
       if (Binding.Function.ExceptionMetadata) {
         if (const auto Low = LowFunctions.find(Entry);
             Low != LowFunctions.end()) {
@@ -544,7 +544,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
             &IgnoredNativeContexts, &Filled);
         if (!Filled)
           continue;
-        eliminateUnusedValues(Current.Function.Body);
+        eliminateUnusedValues(Current.Function);
         if (ImmutableStringInputs.count(Entry) &&
             !objCImmutableStringCallbackValid(Current.Function, S->Img, Result,
                                               OncePlan))

@@ -389,6 +389,7 @@ private:
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;
   std::vector<JumpTable> JumpTables;
   int NextHighTempId = 0;
+  std::optional<MedVar> SwiftErrorEntryInput;
   int ExprRecurseDepth = 0;
   static constexpr int kMaxExprDepth = limits::kMaxExprDepth;
 };

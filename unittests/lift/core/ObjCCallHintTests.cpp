@@ -1404,6 +1404,86 @@ BinaryImage runtimeImage(llvm::StringRef Name,
 }
 } // namespace
 
+TEST(ObjCCallHints, FoundationGenericNSRangeKeepsSixPointersAndTwoWords) {
+  constexpr llvm::StringLiteral Name = "$sSo8_NSRangeV10FoundationE_2inABx_q_"
+                                       "tcSXRzSyR_SS5IndexV5BoundRtzr0_lufC";
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    for (const char *Provider :
+         {"/System/Library/Frameworks/Foundation.framework/Foundation",
+          "/System/Library/Frameworks/Foundation.framework/Versions/C/"
+          "Foundation"}) {
+      const std::string Import = "_" + Name.str();
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Provider, false};
+      const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      const auto &S = Hint->Signature;
+      EXPECT_EQ(S.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+      EXPECT_EQ(S.Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+      ASSERT_TRUE(S.ReturnType);
+      EXPECT_EQ(S.ReturnType->Kind, NdTypeKind::Int);
+      EXPECT_EQ(S.ReturnType->Size, 16U);
+      ASSERT_EQ(S.ReturnComponents.size(), 2U);
+      for (unsigned I = 0; I < 2; ++I) {
+        EXPECT_EQ(S.ReturnComponents[I].Kind,
+                  SourceABICarrierKind::IntegerRegister);
+        EXPECT_EQ(S.ReturnComponents[I].ValueBytes, 8U);
+        EXPECT_EQ(S.ReturnComponents[I].RegisterOffset,
+                  I == 0                          ? TRI.IntReturnReg
+                  : Architecture == Arch::AArch64 ? a64reg::X1
+                                                  : x86reg::RDX);
+      }
+      ASSERT_EQ(S.Parameters.size(), 6U);
+      std::vector<ExprPtr> Arguments;
+      for (unsigned I = 0; I < 6; ++I) {
+        EXPECT_EQ(S.Parameters[I].Type->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(S.Parameters[I].Type->Size, 8U);
+        EXPECT_EQ(S.Parameters[I].TheRole,
+                  SourceParameterTypeHint::Role::Ordinary);
+        EXPECT_EQ(S.Parameters[I].Location.Kind,
+                  SourceABICarrierKind::IntegerRegister);
+        EXPECT_EQ(S.Parameters[I].Location.RegisterOffset, TRI.IntParamRegs[I]);
+        Arguments.push_back(HighExpr::makeConst(0, 8));
+      }
+      EXPECT_TRUE(Hint->BorrowedByteInputs.empty());
+      EXPECT_TRUE(Hint->SwiftStringInputs.empty());
+      EXPECT_FALSE(Hint->DoesNotReturn);
+      std::string Error;
+      EXPECT_TRUE(validateSourceABI(S, Error)) << Error;
+      auto Call = HighExpr::makeCall("untrusted_name", 0x2180, Arguments);
+      Call->Type = S.ReturnType;
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      auto Changed = std::make_shared<SourceCallTypeHint>(*Hint);
+      Changed->BorrowedByteInputs = {{0, 2}};
+      Call->SourceCallHint = Changed;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+      for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
+        auto Wrong = Image;
+        switch (Mutation) {
+        case 0:
+          Wrong.DyldBindSlots[0x2180].WeakImport = true;
+          break;
+        case 1:
+          Wrong.DyldBindSlots[0x2180].Addend = 8;
+          break;
+        case 2:
+          Wrong.DyldBindSlots[0x2180].Module =
+              "/usr/lib/swift/libswiftFoundation.dylib";
+          break;
+        case 3:
+          Wrong.ImportPtrSlots[0x2180] += "x";
+          break;
+        }
+        EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {}));
+      }
+    }
+  }
+}
+
 TEST(ObjCCallHints, FoundationNSNotFoundGetterRequiresExactStrongImport) {
   constexpr llvm::StringLiteral Name = "$s10Foundation10NSNotFoundSivg";
   constexpr llvm::StringLiteral Provider =

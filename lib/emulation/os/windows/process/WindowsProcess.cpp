@@ -164,11 +164,14 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     return ABI.takeError();
   if (!Resources->remainingMicroseconds())
     return failure(text::ModuleTimeout);
-  auto Backend =
-      createExecutionBackend(Options.Backend,
-                             X64 ? ExecutionContract::CheckedUserX64
-                                 : ExecutionContract::CheckedUserAArch64,
-                             *Space, Loaded->Architecture);
+  const ExecutionContract Checked = X64 ? ExecutionContract::CheckedUserX64
+                                        : ExecutionContract::CheckedUserAArch64;
+  const ExecutionContract Contract = Options.Contract.value_or(Checked);
+  if (Contract != Checked &&
+      !(X64 && Contract == ExecutionContract::DirectUserX64))
+    return failure(text::Contract);
+  auto Backend = createExecutionBackend(Options.Backend, Contract, *Space,
+                                        Loaded->Architecture);
   if (!Backend)
     return Backend.takeError();
   if (auto E = Backend->CPU->writeRegister(

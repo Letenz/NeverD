@@ -375,6 +375,7 @@ class Checker {
   LowIRIndependenceResult &Result = OwnedResult;
   SymContext OwnedContext;
   SymContext &Ctx = OwnedContext;
+  detail::FiniteDomainEncoding FrameDomain{Ctx, Limits.Solver};
   // One completed model-free query in this immutable DAG and fixed solver
   // configuration. No model, incomplete answer or cross-context fact escapes.
   SymRef LastCompletedQuery;
@@ -653,9 +654,8 @@ class Checker {
   std::optional<llvm::APInt> frameDifference(SymRef Predicate, SymRef Value) {
     uint64_t Queries = Result.SolverQueries;
     const auto Offset = detail::proveFrameOffset(
-        Ctx, Predicate, Value, EntryRoot, Limits.Solver,
-        Limits.MaxSolverQueries, Limits.MaxSymbolicNodes, Queries,
-        &FrameProofs);
+        FrameDomain, Predicate, Value, EntryRoot, Limits.MaxSolverQueries,
+        Limits.MaxSymbolicNodes, Queries, &FrameProofs);
     Result.SolverQueries = static_cast<uint32_t>(Queries);
     if (Offset.Status == detail::FrameOffsetStatus::Invalid)
       fail(Status::Invalid, "invalid frame-offset proof");

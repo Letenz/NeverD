@@ -19,12 +19,8 @@ enum class SessionExitKind {
 };
 const char *sessionExitKindName(SessionExitKind Kind);
 
-/// A half-open guest range [Address, Address + Size). The first instruction
-/// attempted inside it suspends the session before admission, budget charge or
-/// any instruction effect.
-struct ExecutionWatch {
-  uint64_t Address, Size;
-};
+// ExecutionWatch is defined with the backend interface in CPU.h: the direct
+// contract enforces watches below the session, in the CPU's page tables.
 
 struct SessionExit {
   SessionExitKind Kind;

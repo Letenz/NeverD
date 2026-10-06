@@ -1439,3 +1439,20 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 `SourceFrameAnalysis.CompleteOutput*` 涵蓋完整和較短前綴、各返回路徑合併、SDK 尾呼叫寫入、缺寫位元組、指標逸出及載體限制。呼叫端案例拒絕缺失或過短證明、錯位、超出堆疊框架邊界、覆寫保存暫存器、別名、後續寫入失效和存活不透明值重疊。`NativeSourceHints.CompleteNativeOutput*` 重播組譯產生的 ARM64 生產端和消費端，要求完整 SDK 輸入範圍，並拒絕過期程式碼、控制流程、ABI、稽核、提供端和呼叫實例證據。這些檢查驗證位元組初始化及原始碼門檻，不執行原始機器函式，也不證明原生邏輯返回值。
 
 `MedCallingConvValueFlow.FPInputsFollowOnlyAuthenticatedCallPrefixes` / `NativeSourceHints.PreservedFPPrefixesRetainAllEntryInputsAfterSDKCalls`: 保留前綴回歸檢查三個有效讀取和十九個被拒絕的載體、前綴、呼叫歸屬及未消費值案例。組譯產生的 ARM64 呼叫端在 SDK 呼叫後保留全部四個入口 double 低位通道；重新提升檢查完整參數 ABI 和原始碼門檻。未修改的已獲准發布 WMF `0x36350` 方法還在 O0、O2 各通過 2048 例，與獨立原生 CoreGraphics 翻轉、平移、正規化、串接及套用運算式比較全部 32 位元組結果，並檢查接收者、選擇器和輸入保護區，涵蓋零、負數、無窮和 NaN 尺寸。未執行原始 WMF 機器函式。
+
+`SourceABI.SwiftEntryCapturesAndReturnsTheErrorRegisterOnEveryPath` 檢查 ARM64/x64 入口擷取、兩條返回路徑，以及缺失或變更傳輸證明的拒絕。`NativeSwiftCallsKeepBothResultsAndPostCallErrorBranches` 保留呼叫結果、更新後的錯誤暫存器及後續條件判斷，並涵蓋私有名稱衝突與兩種輸出順序。產生的 C 在本機 Darwin 目標上以 O0/O2 執行，與獨立成功/失敗判據比較。`SwiftFunctionSymbols.RegularExpressionInitializerRetainsContextAndError` 拒絕別名、完整符號變更、非程式碼入口和不支援的映像格式。這些檢查不執行原始 WMF 建構函式，也不證明上層方法已完全恢復。
+
+`NativeSourceHints.SwiftErrorDeclaration*` 在以編譯器宣告細化觀測所得的純量 ABI 後，重新提升實際組裝的 ARM64/x64 入口。目前稽核缺失或不完整時拒絕替換；選項、MedIR 或 HighIR 中的明確原始碼契約仍保留優先權。入口測試也會在轉成 HighIR 前拒絕缺失的 MedIR 錯誤輸出標記或錯誤的運算元寬度。
+
+即使所有路徑都覆寫錯誤暫存器，入口捕獲仍作為存活值保留，包括 once 綁定後的最終原始碼清理。`NativeSourceHints.SwiftErrorCallsRequireCurrentDirectNativeProjection` 拒絕缺失、空值、被修改或未證明的被呼叫函式，以及目標變更、間接呼叫、不完整結果、缺失運算元和不相容效果。
+
+
+`SwiftFunctionSymbols.RepeatedDeclarationsKeepEveryRecordField` 檢查完全相同的重複記錄，並拒絕名稱、大小、邊界來源或名稱來源變化。`NativeSourceHints.SwiftErrorCallResults*` 涵蓋 ARM64/x64 呼叫者的自動推斷，拒絕缺失的目前被呼叫函式、被修改的機器操作、過期稽核、不完整 ABI，以及缺失、變窄或來自其他值的結果提取。入口原始碼執行也涵蓋互相衝突的可選除錯宣告，確保繫結的呼叫慣例及錯誤、上下文角色保持有效。
+
+Swift witness 產生器在 ARM64/x86-64 macOS 和 Mac Catalyst 上同時驗證 `CurrentValueSubject: Publisher` 與 `Range<Bound: Comparable>: RangeExpression`。`scripts.tests.test_generate_swift_witness_contracts` 拒絕泛型輸入、中繼資料回應型別或成員、原型、匯出提供方和完整資料流的變更。`ObjCSourceBindings.SwiftWitnessUndefRequiresGenericDescriptorContract` 與 `SwiftWitnessUndefRejectsUnprovedInputAndABI` 在兩種架構上驗證兩個描述符，每個描述符與架構包含 33 種 runtime/匯入身分、弱或衝突儲存、ABI 和副作用變更。這些目錄不授予框架配置或借用契約。
+
+`scripts.tests.test_generate_swift_data_declarations` 檢查完整 `String.Index` 描述符查詢，拒絕符號指標單元、配方位元組或長度、中繼資料與快取資料流、runtime ABI 的變更以及重複或缺失定義。`ObjCSourceBindings.SwiftRangeIndexDescriptorKeepsItsCompleteRecipe` 在兩種架構上檢查位於位移 3 的非首位描述符；`SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe` 拒絕每種架構的 20 種變更，並複核既有位址提示與 helper 輸出。
+
+`ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath` 涵蓋 PHI 合併後的物件區域變數循環，以及同一循環中可達的私有堆疊框架值。物件循環保留精確指標溢寫證明；攜帶框架的循環、部分覆寫與未知框架洩漏會拒絕證明。
+
+`ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` 驗證兩種架構、匯出提供者及全部參數與結果載體，並拒絕弱匯入、附加位移、外來提供者、過期符號與虛構的借用效果。

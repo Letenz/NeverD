@@ -109,6 +109,10 @@ CnfEncoder::CnfEncoder(SatSolver &Solver) : Solver(Solver) {
   Solver.addClause(True);
 }
 
+CnfEncoder::CnfEncoder(SatSolver &Solver, const CnfEncoder &Other)
+    : Solver(Solver), True(Other.True), Gates(Other.Gates),
+      OperandPool(Other.OperandPool), GateTable(Other.GateTable) {}
+
 SatLit CnfEncoder::freshLit() {
   SatVar V = Solver.newVar(/*Decision=*/true);
   assert(V != kInvalidSatVar && "the solver ran out of variables");

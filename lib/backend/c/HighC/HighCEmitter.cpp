@@ -19,6 +19,8 @@
 #include "../UnalignedMemory.h"
 #include "HighCWriter.h"
 
+#include "neverd/ir/high/HighSwiftErrorProjection.h"
+
 #define DEBUG_TYPE "neverd-highc-emitter"
 #include "neverd/Common.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
@@ -951,7 +953,7 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                                          : Ex.CallTarget;
           if (DeclaredC)
             ResolvedName = DeclaredName;
-          if (hasSwiftErrorResult(Hint.Signature))
+          if (isSwiftWillThrowSourceCall(Hint, Opts.TheArch))
             ResolvedName = SwiftWillThrowValueSourceName;
           bool IsDefinedIdentifier = false;
           if (!Runtime)
@@ -1512,7 +1514,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     for (size_t I = 0; I < ParamCount; ++I) {
       if (I)
         Declarator += ", ";
-      Declarator += typeToC(Function.Params[I].Type);
+      Declarator +=
+          Function.SourceTypeHint &&
+                  I < Function.SourceTypeHint->Parameters.size()
+              ? sourceParameterType(Function.SourceTypeHint->Parameters[I])
+              : typeToC(Function.Params[I].Type);
     }
     if (ParamCount == 0)
       Declarator += "void";
@@ -1532,7 +1538,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     for (size_t I = 0; I < ParamCount; ++I) {
       if (I)
         Declarator += ", ";
-      Declarator += typeToC(Function->Params[I].Type);
+      Declarator +=
+          Function->SourceTypeHint &&
+                  I < Function->SourceTypeHint->Parameters.size()
+              ? sourceParameterType(Function->SourceTypeHint->Parameters[I])
+              : typeToC(Function->Params[I].Type);
     }
     if (ParamCount == 0)
       Declarator += "void";
@@ -1562,7 +1572,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     for (size_t I = 0; I < ParamCount; ++I) {
       if (I)
         Declarator += ", ";
-      Declarator += typeToC(Function->Params[I].Type);
+      Declarator +=
+          Function->SourceTypeHint &&
+                  I < Function->SourceTypeHint->Parameters.size()
+              ? sourceParameterType(Function->SourceTypeHint->Parameters[I])
+              : typeToC(Function->Params[I].Type);
     }
     if (ParamCount == 0)
       Declarator += "void";
@@ -1710,7 +1724,9 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
               "}\n";
         continue;
       }
-      if (hasSwiftErrorResult(Signature)) {
+      if (hasSwiftErrorResult(Signature) &&
+          Signature.Origin ==
+              SourceFunctionTypeHint::OriginKind::SwiftRuntime) {
         const auto Expected = swiftWillThrowSourceSignature(Opts.TheArch);
         const auto Link = SourceRuntimeLinkNames.find(Name);
         if (!Expected || !equalSourceABIs(Signature, *Expected) ||
@@ -2191,7 +2207,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
   for (const auto &Func : Funcs)
     if (Func.SourceTypeHint &&
         (hasIndirectSourceParameters(*Func.SourceTypeHint) ||
-         hasSwiftErrorResult(*Func.SourceTypeHint)))
+         (hasSwiftErrorResult(*Func.SourceTypeHint) &&
+          !isSwiftErrorEntryProjected(Func, Opts.TheArch))))
       throw std::invalid_argument("Indirect record or error-register source "
                                   "entries need a projection proof");
   auto Render = [&](llvm::raw_ostream &OS, CSourceRecorder *Recorder) {
