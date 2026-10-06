@@ -1085,6 +1085,7 @@ target_compile_definitions(NeverDObjCSourceCallTests PRIVATE
 )
 if(MSVC)
   target_compile_options(NeverDLiftTests PRIVATE /bigobj)
+  target_compile_options(NeverDJumpTableTests PRIVATE /bigobj)
   target_compile_options(NeverDObjCSourceCallTests PRIVATE /bigobj)
 endif()
 
