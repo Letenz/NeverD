@@ -20,6 +20,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <map>
 #include <optional>
 
 #define DEBUG_TYPE "neverd-dwarf-eh"
@@ -191,6 +192,10 @@ void parseItaniumExceptions(BinaryImage &Img) {
   std::sort(FrameRanges.begin(), FrameRanges.end());
   // Frames whose function starts at the landing pad before them.
   llvm::DenseSet<va_t> PaddedFrameStarts;
+  // Most frames share a few CIEs, and naming a personality scans the image's
+  // relocations and symbols.  The loop below only adds auto-named function
+  // symbols, which never name a routine, so a name found once stays exact.
+  std::map<std::pair<va_t, va_t>, std::string> PersonalityNames;
 
   for (DwarfFDE &FDE : Frames.FDEs) {
     const DwarfCIE *CIE = Out.findCIE(FDE.CIESectionOffset);
@@ -233,8 +238,12 @@ void parseItaniumExceptions(BinaryImage &Img) {
 
     F.PersonalityVA = CIE->PersonalityVA;
     if (CIE->PersonalityVA != 0 || CIE->PersonalitySlotVA != 0) {
-      F.PersonalityName =
-          resolveRoutineName(Img, CIE->PersonalityVA, CIE->PersonalitySlotVA);
+      auto [Known, Inserted] = PersonalityNames.try_emplace(
+          {CIE->PersonalityVA, CIE->PersonalitySlotVA});
+      if (Inserted)
+        Known->second =
+            resolveRoutineName(Img, CIE->PersonalityVA, CIE->PersonalitySlotVA);
+      F.PersonalityName = Known->second;
       F.Personality = F.PersonalityName.empty()
                           ? ExceptionPersonality::Unknown
                           : classifyPersonalityName(F.PersonalityName);
