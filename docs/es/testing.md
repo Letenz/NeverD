@@ -1552,6 +1552,6 @@ Las pruebas de bucles nativos cubren la recopilación condicional diferida y las
 
 `LowIRLoopRefinement.GuardedCuts*` y `BinaryLowIRLoopRefinement.GuardedCuts*` cubren PC repetidos, registros/marco/banderas, ambos órdenes de bytes, rutas no seleccionadas finitas o cíclicas, solapamiento, lados erróneos, generalización, testigos de valores indefinidos, metadatos, resúmenes y presupuestos. Pruebas nativas independientes demuestran ambos contextos R10 en el mismo PC y la prioridad de las fronteras sin auditar. La certificación ABI queda separada.
 
-`DarwinIndirectRecordCalls` comprueba el contrato actual de MakeScale y sus 22 mutaciones de importación/ABI, y consume un resultado privado completo de 48 bytes mediante la prueba compartida de copia por valor. Se rechazan rangos desalineados, desplazados, superpuestos o fuera del marco. Quitar el efecto de escritura completa también se rechaza, aunque se conserve toda la ABI de retorno.
-
 `BinaryLowIRLoopInference.NativeSelectors*` cubre dos contextos de registro, contextos diferenciados solo por el marco, conjunciones de tres dominios, plantillas inseparables, mutaciones de orígenes y del cuerpo nativo, y presupuestos independientes exactos y una unidad menores. Las iteraciones son arbitrarias y no se añaden constantes de entrada.
+
+`DarwinIndirectRecordCalls` comprueba el contrato actual de MakeScale y sus 22 mutaciones de importación/ABI, y consume un resultado privado completo de 48 bytes mediante la prueba compartida de copia por valor. Se rechazan rangos desalineados, desplazados, superpuestos o fuera del marco. Quitar el efecto de escritura completa también se rechaza, aunque se conserve toda la ABI de retorno.
