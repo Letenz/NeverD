@@ -1492,3 +1492,9 @@ CPU0 명시적 선점, 가상 시계 의미와 현재 한계는 [드라이버 �
 
 
 `SwiftFunctionSymbols.RepeatedDeclarationsKeepEveryRecordField`는 동일한 중복 레코드를 검사하고 변경된 이름, 크기, 경계 출처 또는 이름 출처를 거부합니다. `NativeSourceHints.SwiftErrorCallResults*`는 ARM64/x64 호출자 자동 추론을 검사하며 현재 피호출자 누락, 변경된 기계 연산, 오래된 감사, 불완전한 ABI와 누락되거나 좁아지거나 관련 없는 결과 추출을 거부합니다. 진입 소스 실행은 충돌하는 선택적 디버그 선언이 있어도 연결된 규약과 오류·컨텍스트 역할을 유지하는지 확인합니다.
+
+Swift witness 생성기는 ARM64/x86-64 macOS와 Mac Catalyst에서 `CurrentValueSubject: Publisher`와 `Range<Bound: Comparable>: RangeExpression`을 검증합니다. `scripts.tests.test_generate_swift_witness_contracts`는 변경된 제네릭 입력, 메타데이터 응답 타입이나 멤버, 프로토타입, 내보내기 제공자와 불완전한 흐름을 거부합니다. `ObjCSourceBindings.SwiftWitnessUndefRequiresGenericDescriptorContract` 및 `SwiftWitnessUndefRejectsUnprovedInputAndABI`는 두 설명자를 두 아키텍처에서 확인하며, 설명자와 아키텍처마다 runtime/가져오기 식별, 약한 또는 충돌하는 저장소, ABI와 부수 효과에 관한 33개 변형을 검사합니다. 이 카탈로그는 프레임 배치나 빌림 계약을 부여하지 않습니다.
+
+`scripts.tests.test_generate_swift_data_declarations`는 완전한 `String.Index` 설명자 질의를 확인하고 기호 셀, 레시피 바이트나 길이, 메타데이터/캐시 흐름, runtime ABI 변경 및 중복되거나 누락된 정의를 거부합니다. `ObjCSourceBindings.SwiftRangeIndexDescriptorKeepsItsCompleteRecipe`는 두 아키텍처에서 선두가 아닌 오프셋 3의 설명자를 확인합니다. `SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe`는 각 아키텍처에서 20개 변형을 거부하고 기존 주소 힌트와 helper 출력을 재검증합니다.
+
+`ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath`는 PHI 병합 후 객체 로컬의 순환과 같은 순환에 비공개 프레임 값이 들어가는 경우를 검증합니다. 객체 순환은 정확한 포인터 저장을 보존하지만 프레임 값이 있는 순환, 부분 덮어쓰기와 알 수 없는 프레임 유출은 증명을 거부합니다.

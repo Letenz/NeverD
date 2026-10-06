@@ -1502,3 +1502,9 @@ CPU0 の明示的プリエンプション、仮想時計と制約は[ドライ�
 
 
 `SwiftFunctionSymbols.RepeatedDeclarationsKeepEveryRecordField` は同一の重複レコードを検証し、名前、サイズ、境界の由来、名前の由来の変更を拒否します。`NativeSourceHints.SwiftErrorCallResults*` は ARM64/x64 呼び出し側の自動推論を実行し、現在の呼び出し先の欠落、機械操作の変更、古い監査、不完全な ABI、および欠落・縮小・無関係な結果抽出を拒否します。入口ソースの実行では、競合する任意のデバッグ宣言があっても、結び付けられた規約とエラー・コンテキストの役割を維持することを確認します。
+
+Swift witness の生成器は ARM64/x86-64 の macOS と Mac Catalyst で `CurrentValueSubject: Publisher` と `Range<Bound: Comparable>: RangeExpression` を検証します。`scripts.tests.test_generate_swift_witness_contracts` はジェネリック入力、メタデータ応答の型やメンバー、プロトタイプ、エクスポート提供元、不完全なフローを検査します。`ObjCSourceBindings.SwiftWitnessUndefRequiresGenericDescriptorContract` と `SwiftWitnessUndefRejectsUnprovedInputAndABI` は両記述子を両アーキテクチャーで検証し、それぞれ runtime・インポート識別、弱いまたは競合するストレージ、ABI、副作用の 33 変異を拒否します。これらのカタログはフレーム配置や借用契約を認めません。
+
+`scripts.tests.test_generate_swift_data_declarations` は完全な `String.Index` 記述子クエリを検査し、シンボルセル、レシピのバイトや長さ、メタデータ・キャッシュのフロー、runtime ABI の変更と重複・欠落定義を拒否します。`ObjCSourceBindings.SwiftRangeIndexDescriptorKeepsItsCompleteRecipe` は両アーキテクチャーで先頭以外のオフセット 3 の記述子を検証します。`SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe` は各アーキテクチャーで 20 変異を拒否し、公開済みのアドレスヒントと helper 出力を再検証します。
+
+`ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath` は PHI 統合後のオブジェクト変数の循環と、同じ循環にプライベートフレーム由来の値が入る場合を検証します。オブジェクトの循環は正確なポインタ保存を維持しますが、フレーム由来の循環、部分的な上書き、未知のフレーム漏出は証明を拒否します。

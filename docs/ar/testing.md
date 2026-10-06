@@ -1525,3 +1525,9 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 
 يتحقق `SwiftFunctionSymbols.RepeatedDeclarationsKeepEveryRecordField` من السجلات المكررة المتطابقة ويرفض الأسماء والأحجام ومصدر الحدود والأصول المعدّلة. تختبر `NativeSourceHints.SwiftErrorCallResults*` الاستنتاج التلقائي لمتصل ARM64/x64 وترفض الدوال الحالية الغائبة والعمليات الآلية المعدّلة والتدقيق القديم وABI غير المكتمل واستخراج النتائج الغائب أو الضيق أو غير المرتبط. يشمل تنفيذ مصدر الدخول أيضاً تصريحات تصحيح اختيارية متعارضة مع الحفاظ على الاتفاقية المرتبطة ودوري الخطأ والسياق.
+
+تتحقق مولدات Swift witness من `CurrentValueSubject: Publisher` و`Range<Bound: Comparable>: RangeExpression` على ARM64/x86-64 في macOS وMac Catalyst. يرفض `scripts.tests.test_generate_swift_witness_contracts` تغييرات المدخلات العامة وأنواع استجابة البيانات الوصفية أو أعضائها والنماذج الأولية ومزودي الصادرات والتدفق غير الكامل. يفحص `ObjCSourceBindings.SwiftWitnessUndefRequiresGenericDescriptorContract` و`SwiftWitnessUndefRejectsUnprovedInputAndABI` الواصفين على المعماريتين، مع 33 طفرة لكل واصف ومعمارية لهوية runtime/الاستيراد والتخزين الضعيف أو المتعارض وABI والآثار. لا تمنح هذه الفهارس عقداً لتخطيط إطار المكدس أو استعارته.
+
+يفحص `scripts.tests.test_generate_swift_data_declarations` استعلام واصف `String.Index` الكامل ويرفض تغييرات الخلايا الرمزية وبايتات الوصفة أو طولها وتدفق البيانات الوصفية/المخبأ وABI الخاص بـ runtime والتعريفات المكررة أو المفقودة. يفحص `ObjCSourceBindings.SwiftRangeIndexDescriptorKeepsItsCompleteRecipe` الواصف غير الأول عند الإزاحة 3 على المعماريتين؛ ويرفض `SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe` عشرين طفرة لكل معمارية ويعيد التحقق من تلميحات العناوين المنشورة وإخراج helper.
+
+يغطي `ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath` دورات متغيرات الكائنات بعد دمج PHI وقيمة إطار خاص داخل الدورة نفسها. تحافظ دورة الكائن على تخزين المؤشر الدقيق؛ وترفض دورة الإطار والكتابات الجزئية وتسربات الإطار غير المعروفة الإثبات.

@@ -1111,6 +1111,10 @@ Swift 外部数据生成器也支持通过泛型记录实例化类型元数据�
 
 独立的 Swift 泛型编译探针证明：对任意合法的 `Output` 和 `Failure: Error`，`CurrentValueSubject: Publisher` 均不使用 `swift_getWitnessTable` 的第三个参数。四组编译器与导出配置必须一致。只有精确强导入的一致性描述符、完整三指针 runtime ABI 和裸八字节 `undef` 同时成立时，源码投影才可选择零。描述符必须来自当前导入或唯一定义、完整赋值且地址未暴露的局部值；部分写入、歧义定义和导入变更均拒绝。发布时重复核验，保留元数据表达式、runtime 调用、缓存操作及副作用，不授予纯函数、布局或帧契约。[Swift runtime](https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/Metadata.cpp) 会为条件要求和自定义实例化器使用此参数，因此不能推广为全局规则。
 
+同一描述符专属证明也覆盖 `Range<Bound: Comparable>: RangeExpression`。完整泛型探针将 `Bound` 元数据和 `Comparable` witness 原样传给 `Range` 元数据访问器，选取双字元数据响应中的指针成员，再将同一元数据、精确一致性描述符和 `undef` 传给 `swift_getWitnessTable`。四组编译器与导出配置共同认证 `libswiftCore` 中的外部描述符。泛型输入、响应类型或成员、调用 ABI 的变更以及不完整数据流均拒绝；该证明仅提供外部身份与第三个实参无关性的依据。
+
+`String.Index` 名义类型描述符的身份也由编译器导出。完整的 `Range<String.Index>` 元类型查询必须保留间接符号描述符指针单元、九字节配方、元数据记录和完整 runtime helper；四组 SDK 编译器与导出配置必须一致。现有类型配方绑定器在 ARM64 与 x86-64 上复核精确的 `libswiftCore` 强不可变导入，并重建新缓存与引用存储。该精确嵌套描述符不授予外部布局或其他嵌套 runtime 类型的权限。
+
 精确的强导入 `URL.path` 与 `String.count` 也要求四个 Swift 6.1.2 编译器及 SDK 导出配置一致。路径 getter 通过 `swiftself` 读取不透明 URL，并返回 String 的两个字；字符计数把这两个字作为普通参数，返回一个整数字。发布时重新验证当前导入及完整 ABI。这些声明不增加值布局、纯函数或帧借用契约。原样生成的 C 与原始 ARM64 调用在 O0/O2 下对照真实 Foundation/Swift 操作，覆盖 Unicode 字素、桥接字符串及 URL 结果生命周期。
 
 精确强导入 `AnyHashable.init<T: Hashable>` 同样要求 Swift 6.1.2 四组编译器与 SDK 导出证据一致。完整 Swift ABI 依次包含不透明间接结果地址、被消耗的值地址、类型元数据和 Hashable 一致性表，均不使用 `swiftself`。共享 Swift 声明所有者保留全部四个载体，发布时重验当前提供方和完整 ABI。编译器仅将结果地址标为 `nocapture`；此声明不提供输入借用、值布局、帧作用或纯函数契约。原样生成 C 在 O0/O2 与原始 ARM64 调用及真实 Swift 构造、所有权和哈希操作对照验证。
@@ -1378,3 +1382,5 @@ Swift once Objective-C getter 证明允许存储读取独立赋值，或在返�
 SourceFrameAnalysis 分别管理原生输出字节的完整写入证明和输入字节的初始化要求。对于只有一个普通指针和标量 double 参数的 AArch64 C void 投影，每条可达正常返回路径都必须完整写入有界连续前缀，且不得让栈帧或输出地址逃逸。流水线在授予 InitializesFrameParameters 前重新验证当前不可变机器代码及控制流、完整被调用方 ABI 和当前 SDK 调用实例。调用方只接受精确且对齐的私有范围，检查其他借用及存活值的重叠，废弃旧写入事实，再只标记获证字节已初始化。此证明不提供记录布局、字节值身份、入口返回投影或源码发布权限。
 
 浮点参数识别在 COPY 和 PHI 的同一字节使用图中跟踪当前 SSA 调用覆盖记录的保留前缀边。每条边都要求唯一的正常返回调用实例、匹配的调用前后寄存器身份与宽度、不同 SSA 版本，以及架构和格式的权威保留前缀。易失上位字节、缺失或不匹配的调用归属、自抵消及未被消费的路径不提供入口参数证据。标量宽度和逻辑结果仍须经过独立入口字节及返回证明、重新提升和正常发布及依赖闭合门禁。
+
+动态格式化和 NSFastEnumeration 的私有栈帧地址追踪使用包含当前全部局部定义的有界图。循环本身不产生栈地址；任何可达的合成入口 SP 仍将值标记为栈帧派生。深度或工作预算耗尽会拒绝证明。加载和调用结果仍作为独立值处理，精确栈槽写入、所有到达路径、完整源控制流和当前 SDK 效果仍须分别成立。

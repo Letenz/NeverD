@@ -1410,3 +1410,9 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 
 
 `SwiftFunctionSymbols.RepeatedDeclarationsKeepEveryRecordField` 检查完全相同的重复记录，并拒绝名称、大小、边界来源或名称来源变化。`NativeSourceHints.SwiftErrorCallResults*` 覆盖 ARM64/x64 调用者的自动推断，拒绝缺失的当前被调用函数、被修改的机器操作、过期审计、不完整 ABI，以及缺失、变窄或来自其他值的结果提取。入口源码执行还覆盖相冲突的可选调试声明，确保绑定的调用约定及错误、上下文角色保持有效。
+
+Swift witness 生成器在 ARM64/x86-64 macOS 和 Mac Catalyst 上同时验证 `CurrentValueSubject: Publisher` 与 `Range<Bound: Comparable>: RangeExpression`。`scripts.tests.test_generate_swift_witness_contracts` 拒绝泛型输入、元数据响应类型或成员、原型、导出提供方和完整数据流的变更。`ObjCSourceBindings.SwiftWitnessUndefRequiresGenericDescriptorContract` 与 `SwiftWitnessUndefRejectsUnprovedInputAndABI` 在两种架构上验证两个描述符，每个描述符与架构包含 33 种 runtime/导入身份、弱或冲突存储、ABI 和副作用变更。这些目录不授予帧布局或借用契约。
+
+`scripts.tests.test_generate_swift_data_declarations` 检查完整 `String.Index` 描述符查询，拒绝符号指针单元、配方字节或长度、元数据与缓存数据流、runtime ABI 的变更以及重复或缺失定义。`ObjCSourceBindings.SwiftRangeIndexDescriptorKeepsItsCompleteRecipe` 在两种架构上检查位于偏移 3 的非首位描述符；`SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe` 拒绝每种架构的 20 种变更，并复核既有地址提示与 helper 输出。
+
+`ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath` 覆盖 PHI 合并后的对象局部变量循环，以及同一循环中可达的私有栈帧值。对象循环保留精确指针溢写证明；携带栈帧的循环、部分覆盖和未知栈帧泄露会拒绝证明。
