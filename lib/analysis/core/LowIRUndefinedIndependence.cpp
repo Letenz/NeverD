@@ -4679,17 +4679,20 @@ class LoopPlanInference {
           Keep(W.Nonmax, Ctx.mkNe(Value, Ctx.mkConst(W.Location.Bytes * 8,
                                                      ones(W.Location.Bytes))));
         }
-        Changed |= std::erase_if(W.BitRelations, [&](const auto &B) {
-                     for (auto &S : Incoming) {
-                       const auto Expected = bitComparison(S, B);
-                       if (!entails(S.Predicate,
-                                    Ctx.mkEq(Ctx.mkExtract(read(S, W.Location),
-                                                           B.Bit, 1),
-                                             Expected)))
-                         return true;
-                     }
-                     return false;
-                   }) != 0;
+        // Keep one incoming domain active while checking its bit relations.
+        // Every survivor still passes every arrival, in the same arrival
+        // order; a refuted relation is removed before checking later domains.
+        // Grouping avoids rebuilding the same domain's solver encoding for
+        // each interleaved relation and does not reuse facts across domains.
+        for (auto &S : Incoming)
+          Changed |=
+              std::erase_if(W.BitRelations, [&](const auto &B) {
+                const auto Expected = bitComparison(S, B);
+                return !entails(
+                    S.Predicate,
+                    Ctx.mkEq(Ctx.mkExtract(read(S, W.Location), B.Bit, 1),
+                             Expected));
+              }) != 0;
         Changed |= std::erase_if(W.Equalities, [&](const auto &L) {
                      for (auto &S : Incoming)
                        if (!entails(S.Predicate,
