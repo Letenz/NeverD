@@ -4860,7 +4860,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
 
     if (Func.DoesNotReturn)
       OS << "_Noreturn ";
-    if (Opts.TheArch == Arch::X64 && DebugFn) {
+    if (Func.SourceTypeHint)
+      OS << sourceConventionAttribute(Func.SourceTypeHint->Convention);
+    else if (Opts.TheArch == Arch::X64 && DebugFn) {
       const bool Member =
           !DebugFn->Params.empty() && DebugFn->Params[0].first == "this";
       const bool Sret = isMsvcIndirectReturn(DebugFn->ReturnType);
@@ -4871,12 +4873,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
         OS << "__fastcall ";
       else if (CC != DebugCallConv::Cdecl && CC != DebugCallConv::Unknown)
         OS << debugCallConvAttribute(CC);
-      else if (Func.SourceTypeHint)
-        OS << sourceConventionAttribute(Func.SourceTypeHint->Convention);
     } else if (DebugFn && DebugFn->CallConv != DebugCallConv::Unknown) {
       OS << debugCallConvAttribute(DebugFn->CallConv);
-    } else if (Func.SourceTypeHint)
-      OS << sourceConventionAttribute(Func.SourceTypeHint->Convention);
+    }
     CProjectionIdentifierAllocator ParameterIdentifiers;
     std::string Declarator = FName + "(";
     const std::vector<size_t> ParamIndices = emittedParamIndices(Func);
@@ -4900,7 +4899,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       if (auto It = ParamDisplayNames.find(static_cast<int>(PI));
           It != ParamDisplayNames.end())
         Name = It->second;
-      if (DebugFn) {
+      if (DebugFn && !Func.SourceTypeHint) {
         size_t DI = PI;
         if (HighIRIncludesSret && static_cast<int>(PI) > SretId)
           DI = PI - 1;
@@ -4912,7 +4911,16 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
             Name = DebugFn->Params[DI].first;
         }
       }
-      emitParam(Ty, Name);
+      if (Func.SourceTypeHint && PI < Func.SourceTypeHint->Parameters.size()) {
+        if (Emitted)
+          Declarator += ", ";
+        auto Parameter = Func.SourceTypeHint->Parameters[PI];
+        Parameter.Type = Ty;
+        Declarator += sourceParameterType(
+            Parameter, ParameterIdentifiers.allocate(Name, "nd_arg"));
+        ++Emitted;
+      } else
+        emitParam(Ty, Name);
     };
     if (MemberSret && HighIRIncludesSret) {
       if (!ParamIndices.empty())

@@ -7,6 +7,7 @@
 #include "../../loader/ObjC/ObjCClassAccessorMachine.h"
 #include "../../loader/ObjC/ObjCRuntimeData.h"
 #include "../../loader/Swift/SwiftErrorRuntime.h"
+#include "../../loader/Swift/SwiftErrorSourceProjection.h"
 #include "BorrowedByteSources.h"
 #include "CStringStorageSources.h"
 #include "ObjCConstantObjectSources.h"
@@ -339,6 +340,44 @@ inline bool provenSourcePointerValue(
   return Valid;
 }
 
+/// Follow the complete current definition graph for private-frame carriers.
+/// A source-local cycle contributes only its reachable values: coalesced PHI
+/// copies do not manufacture a stack address. Loads and call results start a
+/// separate value; actual frame roots and exhausted bounds remain possible
+/// escapes. This is a carrier proof, not a pointer type or noescape contract.
+inline bool
+mayCarryPrivateFrameAddress(const HighFunc &Function,
+                            const VarKeyMap<std::vector<ExprPtr>> &Definitions,
+                            const ExprPtr &Expression, size_t &Budget) {
+  std::vector<std::pair<ExprPtr, unsigned>> Pending{{Expression, 0}};
+  std::set<VarKey> Variables;
+  std::set<const HighExpr *> Expressions;
+  while (!Pending.empty()) {
+    auto [E, Depth] = std::move(Pending.back());
+    Pending.pop_back();
+    if (!E || !Expressions.insert(E.get()).second)
+      continue;
+    if (!Budget || Depth > 64)
+      return true;
+    --Budget;
+    if (E->Kind == ExprKind::Load || E->Kind == ExprKind::Call)
+      continue;
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
+      if (highSourceFrameBase(Function, E->Var))
+        return true;
+      const auto Key = varKey(E->Var);
+      if (!Variables.insert(Key).second)
+        continue;
+      if (const auto It = Definitions.find(Key); It != Definitions.end())
+        for (const auto &Definition : It->second)
+          Pending.emplace_back(Definition, Depth + 1);
+    }
+    for (const auto &Child : E->Operands)
+      Pending.emplace_back(Child, Depth + 1);
+  }
+  return false;
+}
+
 /// A dynamic format argument can retain its pointer carrier through an exact
 /// private-frame store/load. Only accept a complete 8-byte slot with a proven
 /// pointer on every path to the load. An escaped frame address, unknown write,
@@ -416,38 +455,8 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
 
   // Inspect definitions as well as syntactic aliases: a PHI or renamed local
   // may carry a frame address even if the expression is not a direct SP sum.
-  const auto FrameDerived = [&](auto &&Self, const ExprPtr &E,
-                                std::set<VarKey> &Visiting,
-                                unsigned Depth) -> bool {
-    if (!E)
-      return false;
-    if (Depth > 64 || !Budget)
-      return true;
-    --Budget;
-    if (E->Kind == ExprKind::Load || E->Kind == ExprKind::Call)
-      return false;
-    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
-      if (highSourceFrameBase(Function, E->Var))
-        return true;
-      const auto Key = varKey(E->Var);
-      if (!Visiting.insert(Key).second)
-        return true;
-      auto It = Definitions.find(Key);
-      bool Derived = false;
-      if (It != Definitions.end())
-        for (const auto &Definition : It->second)
-          Derived |= Self(Self, Definition, Visiting, Depth + 1);
-      Visiting.erase(Key);
-      return Derived;
-    }
-    for (const auto &Child : E->Operands)
-      if (Self(Self, Child, Visiting, Depth + 1))
-        return true;
-    return false;
-  };
   const auto Derived = [&](const ExprPtr &E) {
-    std::set<VarKey> Visiting;
-    return FrameDerived(FrameDerived, E, Visiting, 0);
+    return mayCarryPrivateFrameAddress(Function, Definitions, E, Budget);
   };
   struct Fact {
     bool Pointer = false;
@@ -792,37 +801,8 @@ inline std::set<const HighExpr *> provenFastEnumerationObjectLoads(
       Graph.Nodes.size() > 100000)
     return {};
 
-  const auto FrameDerived = [&](auto &&Self, const ExprPtr &E,
-                                std::set<VarKey> &Visiting,
-                                unsigned Depth) -> bool {
-    if (!E)
-      return false;
-    if (!Budget || Depth > 64)
-      return true;
-    --Budget;
-    if (E->Kind == ExprKind::Load || E->Kind == ExprKind::Call)
-      return false;
-    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
-      if (highSourceFrameBase(Function, E->Var))
-        return true;
-      const auto Key = varKey(E->Var);
-      if (!Visiting.insert(Key).second)
-        return true;
-      bool Derived = false;
-      if (const auto It = Definitions.find(Key); It != Definitions.end())
-        for (const auto &Definition : It->second)
-          Derived |= Self(Self, Definition, Visiting, Depth + 1);
-      Visiting.erase(Key);
-      return Derived;
-    }
-    for (const auto &Child : E->Operands)
-      if (Self(Self, Child, Visiting, Depth + 1))
-        return true;
-    return false;
-  };
   const auto Derived = [&](const ExprPtr &E) {
-    std::set<VarKey> Visiting;
-    return FrameDerived(FrameDerived, E, Visiting, 0);
+    return mayCarryPrivateFrameAddress(Function, Definitions, E, Budget);
   };
   const auto LiteralCount = [](const ExprPtr &E) -> std::optional<uint64_t> {
     if (!E || E->IntrinsicId != Intrinsic::None ||
@@ -2064,6 +2044,19 @@ inline bool swiftImportedTypeDescriptor(const BinaryImage &Image, va_t Slot,
                                         llvm::StringRef Provider) {
   if (swiftSystemFrameworkNominalDescriptor(Symbol, Provider))
     return true;
+  // String.Index is nested in Swift.String, outside the top-level runtime
+  // rule below. Its complete Range<String.Index> compiler query and all four
+  // SDK export profiles authenticate this exact opaque descriptor identity.
+  // Keep the data owner's strong immutable import checks and grant no layout.
+  if (Symbol == "_$sSS5IndexVMn" &&
+      Provider == "/usr/lib/swift/libswiftCore.dylib") {
+    const auto Data = darwinRuntimeGlobalAddressHint(Image, Slot);
+    return isImmutableImageImportSlot(Image, Slot) && Data &&
+           !Data->WeakImport && Data->TargetName == "$sSS5IndexVMn" &&
+           Data->Signature.Origin ==
+               SourceFunctionTypeHint::OriginKind::SwiftRuntime &&
+           swiftExportedNominalDescriptor(Symbol);
+  }
   // Swift 6.1.2 emits this nominal descriptor in symbolic type references;
   // all four macOS/Mac Catalyst SDK targets export it from CoreFoundation's
   // overlay, despite its CoreGraphics declaration context. Authenticate only
@@ -8909,15 +8902,29 @@ inline bool objcSourceCallBound(
     return false; // Requires the current pipeline and caller proof.
   const auto &Hint = Binding.Signature;
   if (hasSwiftErrorResult(Hint)) {
-    if (!isSwiftWillThrowSourceCall(Binding, Image.Arch) ||
-        Expression.IsIndirectCall || Expression.Operands.size() != 2 ||
-        !equalSourceTypes(Expression.Type, Hint.ReturnType))
-      return false;
-    for (const auto &Argument : Expression.Operands)
-      if (!Argument || !Argument->Type || Argument->Type->Size != 8 ||
-          (Argument->Type->Kind != NdTypeKind::Int &&
-           Argument->Type->Kind != NdTypeKind::Ptr))
+    if (isNativeSwiftErrorSourceCall(Binding, Image.Arch)) {
+      const auto Found = Functions.find(Binding.TargetAddress);
+      if (Expression.IsIndirectCall || Expression.IndirectTarget ||
+          Expression.CallAddr != Binding.TargetAddress ||
+          !Expression.IntrinsicOutputs.empty() ||
+          Expression.Operands.size() != Hint.Parameters.size() ||
+          !equalSourceTypes(Expression.Type, swiftErrorCallResultType(Hint)) ||
+          Found == Functions.end() || !Found->second ||
+          Found->second->Entry != Binding.TargetAddress ||
+          !isSwiftErrorEntryProjected(*Found->second, Image.Arch) ||
+          !equalSourceABIs(*Found->second->SourceTypeHint, Hint))
         return false;
+    } else {
+      if (!isSwiftWillThrowSourceCall(Binding, Image.Arch) ||
+          Expression.IsIndirectCall || Expression.Operands.size() != 2 ||
+          !equalSourceTypes(Expression.Type, Hint.ReturnType))
+        return false;
+      for (const auto &Argument : Expression.Operands)
+        if (!Argument || !Argument->Type || Argument->Type->Size != 8 ||
+            (Argument->Type->Kind != NdTypeKind::Int &&
+             Argument->Type->Kind != NdTypeKind::Ptr))
+          return false;
+    }
   }
   if (Binding.NilTerminated &&
       (Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage ||

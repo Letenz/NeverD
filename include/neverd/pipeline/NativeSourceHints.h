@@ -46,6 +46,7 @@ struct NativeSourceCalleeContracts {
     const SourceFunctionTypeHint *Signature = nullptr;
     const PipelineFunctionAudit *Audit = nullptr;
     const MedFunc *Med = nullptr;
+    const HighFunc *High = nullptr;
   };
   /// Current complete pipeline evidence, never persisted call-only options.
   /// The effect owner replays the machine body and full physical ABI again.

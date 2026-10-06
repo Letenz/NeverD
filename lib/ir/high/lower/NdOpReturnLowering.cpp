@@ -79,7 +79,28 @@ const MedBlock *onlyPredecessor(const MedFunc &Med, const MedBlock &Block) {
 } // namespace
 
 void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
-                                     const MedOp &CurOp, const MedFunc &Med) {
+                                     const MedOp &InputOp, const MedFunc &Med) {
+  MedOp CurOp = InputOp;
+  if (Med.SourceParametersBound && Med.SourceTypeHint)
+    if (const auto Error = sourceABIErrorResult(*Med.SourceTypeHint)) {
+      if (!SwiftErrorEntryInput || !CurOp.HasSourceErrorResult ||
+          !CurOp.NumInputs || CurOp.Inputs[CurOp.NumInputs - 1].Size != 8)
+        throw std::invalid_argument("Swift entry has no error-output operand");
+      MedVar Slot;
+      Slot.Kind = MedVar::Param;
+      Slot.Id = static_cast<int>(Error->ParameterIndex);
+      Slot.RegOff = Error->Location.RegisterOffset;
+      Slot.Size = 8;
+      Slot.TheArch = TargetArch;
+      HighStmt Store;
+      Store.Kind = StmtKind::Store;
+      Store.Addr = CurOp.Addr;
+      Store.StoreAddr = HighExpr::makeVar(
+          Slot, Med.SourceTypeHint->Parameters[Error->ParameterIndex].Type);
+      Store.StoreVal =
+          sourceScalarValue(CurOp.Inputs[--CurOp.NumInputs], Error->Type);
+      Func.Body.push_back(std::move(Store));
+    }
   HighStmt S;
   S.Kind = StmtKind::Return;
   S.Addr = CurOp.Addr;

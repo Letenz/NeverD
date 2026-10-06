@@ -422,6 +422,15 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "pzC"},
+    // Swift 6.1.2 clients on all four macOS/Mac Catalyst SDK profiles keep
+    // the generic range and string addresses, both metadata values and both
+    // witnesses as ordinary pointers. The result is exactly two word
+    // carriers. This declaration supplies no layout, borrowing or noescape
+    // contract for either opaque value address.
+    {"$sSo8_NSRangeV10FoundationE_2inABx_q_tcSXRzSyR_SS5IndexV5BoundRtzr0_lufC",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+     "(zz)pppppp"},
     // Four Swift 6.1.2 macOS/Mac Catalyst profiles preserve the separator
     // address, both generic metadata and both witnesses as ordinary inputs;
     // the receiver address is swiftself. The complete Array result is a ptr.

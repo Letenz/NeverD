@@ -14,6 +14,7 @@
 #include "HighCWriter.h"
 
 #include "neverd/Common.h"
+#include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExceptionInfo.h"
@@ -659,6 +660,16 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
   }
 
   case StmtKind::Store: {
+    if (CurrentFunc && isSwiftErrorEntrySlot(*CurrentFunc, Stmt.StoreAddr) &&
+        Stmt.StoreVal && Stmt.StoreVal->Type &&
+        Stmt.StoreVal->Type->Size == 8 &&
+        Stmt.MemoryOrdering == NdMemoryOrdering::None &&
+        Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+      emitIndent(Indent);
+      OS << "*" << varName(Stmt.StoreAddr->Var) << " = (void *)(uintptr_t)("
+         << exprStr(*Stmt.StoreVal) << ");\n";
+      break;
+    }
     if (!Stmt.StoreAddr || !Stmt.StoreVal)
       return;
     {

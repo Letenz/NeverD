@@ -16,6 +16,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -2827,6 +2828,12 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
   case ExprKind::UnaryOp:
     return renderUnaryOp(E, ParentPrec);
   case ExprKind::Load: {
+    if (CurrentFunc && E.Operands.size() == 1 &&
+        isSwiftErrorEntrySlot(*CurrentFunc, E.Operands.front()) && E.Type &&
+        E.Type->Kind == NdTypeKind::Ptr && E.Type->Size == 8 &&
+        E.MemoryOrdering == NdMemoryOrdering::None &&
+        E.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+      return "(*" + varName(E.Operands.front()->Var) + ")";
     if (E.Operands.empty())
       return "/* bad load */";
     if (E.MemoryAddressSpace == NdMemoryAddressSpace::Default) {

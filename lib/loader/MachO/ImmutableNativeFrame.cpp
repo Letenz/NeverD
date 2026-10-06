@@ -74,6 +74,70 @@ bool sameOperation(const LowOp &A, const LowOp &B) {
 }
 } // namespace
 
+bool immutableNativeInstructionOperationsMatch(const BinaryImage &Image,
+                                               const LowFunc &Function,
+                                               size_t &Budget) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 ||
+      (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
+      !Image.isCodeAddress(Function.Entry) ||
+      !Function.DecodedInstructionCount ||
+      Function.DecodedInstructionCount > 4096 ||
+      !Function.hasCompleteLiftCoverage() ||
+      (!Function.ModuleAnalysisRoots.empty() &&
+       Function.ModuleAnalysisRoots != std::set<va_t>{Function.Entry}) ||
+      (!Function.OrdinaryModuleAnalysisRoots.empty() &&
+       Function.OrdinaryModuleAnalysisRoots != std::set<va_t>{Function.Entry}))
+    return false;
+  if (auto Error = validateLowInstructionBoundaries(
+          Function, LowInstructionBoundaryRequirement::Required)) {
+    llvm::consumeError(std::move(Error));
+    return false;
+  }
+  Decoder Dec;
+  if (!Dec.init(Image))
+    return false;
+  std::set<va_t> Instructions;
+  for (const auto &Block : Function.Blocks) {
+    va_t Next = Block.StartAddr;
+    for (const auto &B : Block.InstructionBoundaries) {
+      if (!Budget || B.OpCount > Budget - 1) {
+        Budget = 0;
+        return false;
+      }
+      Budget -= B.OpCount + 1;
+      if (B.Address != Next || !B.Size || B.Address > UINT64_MAX - B.Size ||
+          (Image.Arch == Arch::AArch64 ? B.Size != 4 || B.Address % 4
+                                       : B.Size > 15) ||
+          B.Mode != InstructionMode::Default ||
+          B.TargetMode != LowInstructionTargetMode::Preserve ||
+          B.Control == LowInstructionControl::TailCall ||
+          !Instructions.insert(B.Address).second)
+        return false;
+      const auto Bytes = readImmutableCodeBytes(Image, B.Address, B.Size);
+      DecodedInsn Insn;
+      if (!Bytes || Dec.decodeOneForLift(Bytes->data(), B.Size, B.Address,
+                                         Insn) != B.Size)
+        return false;
+      std::vector<LowOp> Ops;
+      try {
+        Dec.liftToLow(Insn, Ops);
+      } catch (const UnliftedInstruction &) {
+        return false;
+      }
+      if (Ops.size() != B.OpCount)
+        return false;
+      for (size_t I = 0; I < Ops.size(); ++I)
+        if (!sameOperation(Ops[I], Block.Ops[B.FirstOp + I]))
+          return false;
+      Next += B.Size;
+    }
+    if (Block.InstructionBoundaries.empty() || Next != Block.EndAddr)
+      return false;
+  }
+  return Instructions.size() == Function.DecodedInstructionCount;
+}
+
 bool immutableNativeFrameMachineMatches(
     const BinaryImage &Image, const LowFunc &Function, size_t &Budget,
     ImmutableNativeFrameTerminators Policy) {

@@ -20,6 +20,48 @@
 
 namespace neverd::sdk {
 
+// Swift 6.1.2 compiler IR for both Darwin arm64 and x86_64 gives this complete
+// Foundation constructor thunk three ordinary words, swiftself and swifterror.
+// Match the entire declaration and executable entry; repeated loader records
+// must be identical. The declaration does not replace current body,
+// error-transport or dependency-publication proofs.
+inline std::optional<SourceFunctionTypeHint>
+swiftMangledRegularExpressionInitializerSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 ||
+      (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
+      !Image.isCodeAddress(Entry))
+    return std::nullopt;
+  const auto *Symbol =
+      consistentSwiftFunctionDeclarationSymbol(Image, Entry, SymbolIndex);
+  if (!Symbol || Symbol->IsBoundaryGuess ||
+      Symbol->Origin != NameOrigin::Stated)
+    return std::nullopt;
+  llvm::StringRef Name(Symbol->Name);
+  Name.consume_front("_");
+  if (Name !=
+      "$sSo19NSRegularExpressionC7pattern7optionsABSS_So0aB7OptionsVtKcfcTO")
+    return std::nullopt;
+  SourceFunctionTypeHint Signature;
+  Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  Signature.ReturnType = Pointer;
+  Signature.Parameters = {{"string_bits", NdType::makeInt(8, false)},
+                          {"string_object", Pointer},
+                          {"options", NdType::makeInt(8, false)},
+                          {"self", Pointer},
+                          {"error_slot", NdType::makePtr(Pointer)}};
+  Signature.Parameters[3].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+  Signature.Parameters[4].TheRole =
+      SourceParameterTypeHint::Role::SwiftErrorResult;
+  std::string Diagnostic;
+  return assignDarwinSwiftSourceABI(Signature, Image.Arch, Diagnostic)
+             ? std::optional<SourceFunctionTypeHint>(std::move(Signature))
+             : std::nullopt;
+}
+
 // Swift's fully specialized [URL] -> [URL?] force cast carries each Array as
 // one object pointer. An -O Swift compilation of _arrayForceCast on these
 // exact types emits swiftcc ptr (ptr), without metadata or witness arguments.
