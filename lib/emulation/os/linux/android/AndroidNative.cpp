@@ -173,7 +173,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   auto &CPU = (*Session)->cpu();
   linux_model::LinuxServices Kernel(CPU, Layout, Linked->InitialBreak, Options,
                                     Result);
-  GuestThreads Threads(CPU, *Calls, Options, Result);
+  GuestThreads Threads(CPU, *Calls, Options, Result, Kernel.clock());
   if (auto E = Threads.initialize(StackBase))
     return std::move(E);
   Bionic LibC(CPU, Kernel, Layout, Options, Result, *Resources, *Linked,
@@ -486,6 +486,12 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       if (!*Value && Threads.kernel() && Threads.kernel()->Exit) {
         if (!FinishThread(0, *Threads.kernel()->Exit))
           break;
+        continue;
+      }
+      if (!*Value && Threads.waitSleep()) {
+        Threads.suspend(*Request, Result.Services.size() - 1,
+                        GuestThreads::WaitSource::KernelService);
+        NeedSchedule = true;
         continue;
       }
       if (!*Value)

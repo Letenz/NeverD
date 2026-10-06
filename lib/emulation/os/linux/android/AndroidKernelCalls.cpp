@@ -30,6 +30,8 @@ BionicResult Bionic::kernelCall(std::optional<linux_model::ServiceKind> Kind,
       Kind ? Kernel.handle(*Kind, Event, Thread) : Kernel.handle(Event, Thread);
   if (!Returned)
     return Returned.takeError();
+  if (!*Returned && Threads && Threads->waitSleep())
+    return std::optional<BionicValue>(GuestThreadWait{});
   if (!*Returned)
     return std::optional<BionicValue>();
   if (**Returned >= uint64_t(0) - 4095) {

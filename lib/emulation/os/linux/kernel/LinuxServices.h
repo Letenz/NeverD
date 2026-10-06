@@ -9,6 +9,7 @@
 #include "LinuxFiles.h"
 #include "LinuxMemory.h"
 #include "LinuxSignals.h"
+#include "LinuxTime.h"
 
 namespace neverd::emulation::linux_model {
 
@@ -21,13 +22,15 @@ public:
                 ProcessResult &Result)
       : CPU(CPU), Layout(Layout), Options(Options), Result(Result),
         Memory(*CPU.addressSpace(), Layout, InitialBreak, Options),
-        Files(CPU, Layout, Options.LinuxFiles), Signals(Options.LinuxSignals) {}
+        Files(CPU, Layout, Options.LinuxFiles), Signals(Options.LinuxSignals),
+        Clock(Options.LinuxTime) {}
 
   llvm::Expected<std::optional<uint64_t>>
   handle(const ProcessServiceEvent &Event, ThreadContext *Thread = nullptr);
   llvm::Expected<std::optional<uint64_t>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ThreadContext *Thread = nullptr);
+  LinuxClock &clock() { return Clock; }
 
   std::optional<SignalActionResult>
   signalAction(int32_t Signal, const LinuxSignalAction *NewAction,
@@ -43,6 +46,7 @@ private:
   LinuxMemory Memory;
   LinuxFiles Files;
   LinuxSignals Signals;
+  LinuxClock Clock;
 };
 
 } // namespace neverd::emulation::linux_model

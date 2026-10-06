@@ -134,6 +134,7 @@ NEVERD_LINUX_SERVICE(Write, 1, 64, 3)
 NEVERD_LINUX_SERVICE(WriteV, 20, 66, 3)
 NEVERD_LINUX_SERVICE(GetTimeOfDay, 96, 169, 2)
 NEVERD_LINUX_SERVICE(ClockGetTime, 228, 113, 2)
+NEVERD_LINUX_SERVICE(Nanosleep, 35, 101, 2)
 NEVERD_LINUX_SERVICE(Exit, 60, 93, 1)
 NEVERD_LINUX_SERVICE(ExitGroup, 231, 94, 1)
 NEVERD_LINUX_SERVICE(GetPID, 39, 172, 0)
@@ -261,4 +262,14 @@ NEVERD_LINUX_DIAGNOSTIC(TimeDynamicClock,
                         "dynamic and encoded Linux clocks are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(TimezoneMissing,
                         "Linux timezone has no explicit linux_time input")
+NEVERD_LINUX_DIAGNOSTIC(
+    TimeAdvanceClock,
+    "advance_on_idle supports realtime, monotonic and boottime clocks only")
+NEVERD_LINUX_DIAGNOSTIC(
+    TimeAdvanceOverflow,
+    "Linux virtual clock advancement exceeds its modeled range")
+NEVERD_LINUX_DIAGNOSTIC(SleepPolicy,
+                        "Linux nanosleep requires linux_time.advance_on_idle")
+NEVERD_LINUX_DIAGNOSTIC(
+    SleepRange, "Linux sleep deadline exceeds the modeled virtual time range")
 #endif

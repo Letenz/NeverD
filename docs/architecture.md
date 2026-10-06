@@ -1380,11 +1380,19 @@ transfer ownership of execution, thread or callback state out of the model.
 
 `os/linux/process/` and `os/darwin/process/` own image loading, initial stacks and execution continuations. `os/linux/kernel/` and `os/darwin/kernel/` own system-call ABI, services and memory policy, built as `NeverDEmulationLinuxKernel` and `NeverDEmulationDarwinKernel` with only the core memory/CPU boundary and LLVM Support. Their `MemoryLayout` contracts contain address policy, not executable images or startup ABIs. Android depends directly on the Linux kernel model; macOS and iOS retain separate platform profiles. Dependencies run from processes/platforms to kernel services. These kernel directories do not imply Linux/Darwin kernel-image or driver loading support. Shared OS vocabulary remains in the OS-level `.def` files.
 
-The Linux kernel component also owns validation and lookup of explicit fixed
+The Linux kernel component also owns validation and lookup of explicit
 clock observations in `LinuxTimeOptions`, plus time-service output ordering.
 The process wire parser validates representations and delegates value policy
 to that owner. Android reuses clock lookup and raw kernel services; Bionic
 alone owns errno conversion and `time`'s user-space destination store.
+`LinuxClock` holds elapsed virtual time for the opt-in idle advancement policy.
+`LinuxSleep` copies and validates relative sleep requests, leaving a deadline
+for the owning scheduler or advancing an otherwise single-threaded workload.
+Android's typed waits retain the consumed request, complete CPU context and
+native-call versus raw-service event identity. `AndroidThreadWaits` owns wake
+readiness and completion; `GuestThreads` advances to the earliest deadline only
+when no thread is runnable. All clock reads share `LinuxClock`; no timestamp or
+successful sleep is synthesized in the Bionic dispatcher.
 
 Android's `AndroidSymbols.def` owns Bionic symbol spellings and handler bindings;
 `AndroidDiagnostics.def` owns native-model diagnostics. The entry point validates
