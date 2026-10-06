@@ -404,6 +404,16 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     // at the same width or a small positive C int.
     // Do not apply this to narrow integers (C promotes them to int), signed
     // declarations (overflow is undefined), or two untyped constants.
+    // A local printed under a name declared unsigned at \p Width, as the
+    // signedness pass leaves most locals that wrapping arithmetic reads.
+    auto DeclaredUnsignedLocal = [&](const ExprPtr &Value, uint16_t Width) {
+      if (Value->Kind != ExprKind::Var && Value->Kind != ExprKind::Phi)
+        return false;
+      const auto It = DeclaredCTypes.find(exprStr(*Value));
+      return It != DeclaredCTypes.end() && It->second &&
+             It->second->Kind == NdTypeKind::Int && !It->second->IsSigned &&
+             !It->second->IsEnum && It->second->Size == Width;
+    };
     if (Size == 4 || Size == 8) {
       auto NaturalUnsignedOperand =
           [&](const ExprPtr &Value) -> std::optional<bool> {
@@ -427,6 +437,8 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
             return true;
           return std::nullopt;
         }
+        if (DeclaredUnsignedLocal(Value, Size))
+          return true;
         if (Printed->Kind == ExprKind::Load &&
             Printed->MemoryOrdering == NdMemoryOrdering::None &&
             Printed->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
@@ -502,6 +514,9 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       };
       auto Operand = [&](const ExprPtr &Value) {
         const auto Bits = typeToC(NdType::makeInt(Value->Type->Size, false));
+        if (Value->Type->Size == CarrierSize &&
+            DeclaredUnsignedLocal(Value, CarrierSize))
+          return exprStr(*Value);
         // A zero-extension printed as `(T)(uintN_t)x` only needs the carrier
         // in place of T.
         if (Value->Kind == ExprKind::UnaryOp && Value->Op == NdOp::INT_ZEXT &&
