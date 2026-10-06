@@ -55,6 +55,7 @@
 #include "llvm/ADT/ArrayRef.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -158,6 +159,14 @@ public:
                            const SolverOptions &Opts = SolverOptions());
   ~BitVectorSolver();
 
+  /// Copy an encoding before any search has been attempted. Independent
+  /// clauses, propagation state, gates and bit mappings retain the original
+  /// logical work and all budgets. The context must outlive both solvers;
+  /// the source solver may be changed or destroyed independently.
+  /// Returns null for searched or incompletely encoded state, including
+  /// a search attempted directly through sat().
+  std::unique_ptr<BitVectorSolver> cloneEncoding() const;
+
   BitVectorSolver(const BitVectorSolver &) = delete;
   BitVectorSolver &operator=(const BitVectorSolver &) = delete;
 
@@ -214,6 +223,8 @@ public:
   BitBlaster &blaster() { return Blaster; }
 
 private:
+  struct EncodingClone {};
+  BitVectorSolver(const BitVectorSolver &Other, EncodingClone);
   /// Encode \p Pred as the single literal that holds exactly when it does.
   std::optional<SatLit> literalFor(symbolic::SymRef Pred);
   SatResult finish(SatResult R, llvm::ArrayRef<symbolic::SymRef> Assumptions,

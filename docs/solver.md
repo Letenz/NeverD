@@ -26,6 +26,12 @@ counterexample models and gate exhaustion. Native cached-comparison regressions
 prove both comparison/update orders with all register and flag observations,
 and reject a changed original loop body.
 
+<!-- i18n-section: pristine-encoding -->
+
+## Pre-search encoding copies
+
+`BitVectorSolver::cloneEncoding()` copies a complete encoding before any SAT search attempt. It returns null after search or an encoding failure. Copies own their mutable clauses, root propagation, gates and bit mappings; they preserve variable order, gate accounting and solver settings. The context must outlive both solvers, while the source solver can be modified or destroyed independently.
+
 <!-- i18n-section: z3-build -->
 
 ## Optional Z3 build

@@ -14,6 +14,12 @@ NeverD 預設使用內建 bitvector solver。精確 MBA 推導不依賴一般 so
 
 `BitBlaster.WidePredicatesAgreeWithTheEvaluator` 在 8 至 256 位元之間選取多種寬度，將有號與無號述詞和運算式求值器比較，涵蓋奇數寬度、邊界相鄰值及第 64 位以上的有效位元，並排除錯誤輸出值。部分計數器測試檢查完整查詢、反例模型及邏輯閘預算耗盡。原生快取比較回歸保留所有暫存器與旗標觀測，證明比較與更新的兩種順序，並拒絕被修改的原始迴圈本體。
 
+<!-- i18n-section: pristine-encoding -->
+
+## 搜尋前的編碼副本
+
+`BitVectorSolver::cloneEncoding()` 複製尚未嘗試 SAT 搜尋的完整編碼；搜尋後或編碼失敗時傳回空指標。副本獨立持有可變子句、根傳播、閘和位元映射，保留變數順序、閘計費和求解器設定。上下文必須比兩個求解器存活更久；來源求解器可獨立修改或銷毀。
+
 <!-- i18n-section: z3-build -->
 
 ## 選用 Z3 建置

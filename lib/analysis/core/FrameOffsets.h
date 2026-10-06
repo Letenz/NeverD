@@ -49,6 +49,14 @@ FrameOffset proveFrameOffset(symbolic::SymContext &Ctx,
                              uint64_t &Queries,
                              FiniteQueryCache *Cache = nullptr);
 
+/// Uses the encoding owner's fixed context and settings. Every cold finite
+/// proof still runs independent search and charges all of its query requests.
+FrameOffset proveFrameOffset(FiniteDomainEncoding &Encoding,
+                             symbolic::SymRef Predicate, symbolic::SymRef Value,
+                             symbolic::SymRef Root, uint64_t MaxQueries,
+                             uint64_t MaxSymbolicNodes, uint64_t &Queries,
+                             FiniteQueryCache *Cache = nullptr);
+
 } // namespace neverd::analysis::detail
 
 #endif // NEVERD_ANALYSIS_INTERPRETER_FRAMEOFFSETS_H
