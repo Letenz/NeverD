@@ -233,6 +233,13 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
         (M != Options.Metadata.end() && M->second.LinkCount != 1))
       return failure(diagnostic::NamespaceAlias);
   }
+  for (const auto &Path : Options.SwapRenameDirectories) {
+    if (!Options.Directories.contains(Path) ||
+        !Options.MutableDirectories.contains(Path))
+      return failure(diagnostic::DirectorySwapOption);
+    if (auto E = PathInput(Path, true))
+      return E;
+  }
   for (const auto &Path : Options.RemovableDirectories) {
     const auto Parent = parentPath(Path);
     if (Path == "/" || !Options.Directories.contains(Path) ||
@@ -840,7 +847,7 @@ void DarwinFiles::updateNamespaceMetadata(Contents &Node, bool Removed) {
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
                     uint64_t TargetPath, uint32_t TargetDirectory,
-                    bool Exclusive, ProcessResult &Result) {
+                    RenameMode Mode, ProcessResult &Result) {
   auto From = resolvePath(SourcePath, SourceDirectory, LookupMode::DeleteFile);
   if (!From)
     return From.takeError();
@@ -861,12 +868,20 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   if (auto *Reason = std::get_if<const char *>(&*To))
     return unsupported(Result, *Reason);
   auto &Target = std::get<Description>(*To);
-  if (Exclusive && (Target.File || Target.Directory)) {
+  if (Mode == RenameMode::Exclusive && (Target.File || Target.Directory)) {
     // Same-object exclusive rename depends on filesystem case sensitivity.
     // Exact catalogue keys do not supply that missing filesystem property.
     if (Target.File == Source.File)
       return unsupported(Result, diagnostic::RenameCaseSensitivity);
     return returned(FileExists, true);
+  }
+  if (Mode == RenameMode::Swap) {
+    if (Target.Type == Kind::Missing)
+      return returned(NoEntry, true);
+    // Native swap may exchange a regular file with a directory. Its subtree
+    // semantics cannot use the ordinary regular-file EISDIR rule.
+    if (Target.Type != Kind::File)
+      return unsupported(Result, diagnostic::RenameSwapKind);
   }
   const auto Parent = directoryNode(parentPath(Source.Path));
   const auto TargetParent = directoryNode(parentPath(Target.Path));
@@ -898,8 +913,42 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
     return returned(IsDirectory, true);
   if (Source.Path == Target.Path)
     return returned(0);
+  if (Mode == RenameMode::Swap &&
+      !Options->SwapRenameDirectories.contains(Parent->initialAncestor()->Path))
+    return unsupported(Result, diagnostic::RenameSwapSupport);
   if (auto E = prepareMutation())
     return std::move(E);
+  if (Mode == RenameMode::Swap) {
+    // Both objects stay linked. Neither their bytes nor their mapping leases
+    // provide replacement credit; only their previous dynamic path charges do.
+    const uint64_t Other =
+        *StorageUsed - Source.File->PathCharge - Target.File->PathCharge;
+    const uint64_t SourceCharge = Target.Path.size() + 1;
+    const uint64_t TargetCharge = Source.Path.size() + 1;
+    if (Target.Path.size() >= limits::Path ||
+        Source.Path.size() >= limits::Path ||
+        SourceCharge + TargetCharge > limits::Bytes - Other)
+      return unsupported(Result, diagnostic::RenameLimit);
+    // Allocate every potentially throwing string before extracting either
+    // name. Node insertion and string swaps publish the bounded transaction.
+    std::string SourceKey = Target.Path, TargetKey = Source.Path;
+    std::string SourceIdentity = Target.Path, TargetIdentity = Source.Path;
+    auto SourceNode = Nodes.extract(Source.Path);
+    auto TargetNode = Nodes.extract(Target.Path);
+    SourceNode.key().swap(SourceKey);
+    TargetNode.key().swap(TargetKey);
+    Nodes.insert(std::move(SourceNode));
+    Nodes.insert(std::move(TargetNode));
+    Source.File->Path.swap(SourceIdentity);
+    Target.File->Path.swap(TargetIdentity);
+    Source.File->PathCharge = SourceCharge;
+    Target.File->PathCharge = TargetCharge;
+    *StorageUsed = Other + SourceCharge + TargetCharge;
+    updateNamespaceMetadata(*Source.File, false);
+    updateNamespaceMetadata(*Target.File, false);
+    Parent->Changed = TargetParent->Changed = true;
+    return returned(0);
+  }
   // Only Nodes and this lookup may own an immediately reclaimable target.
   // A mapping retains a separate lease even after all descriptors close.
   const uint64_t Credit = Target.File && Target.File.use_count() == 2 &&
@@ -1157,10 +1206,10 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return access(A[1], A[0], A[2], Result);
   }
   if (Service == ServiceKind::Rename)
-    return rename(A[0], AtCurrentDirectory, A[1], AtCurrentDirectory, false,
-                  Result);
+    return rename(A[0], AtCurrentDirectory, A[1], AtCurrentDirectory,
+                  RenameMode::Replace, Result);
   if (Service == ServiceKind::RenameAt || Service == ServiceKind::RenameAtX) {
-    bool Exclusive = false;
+    auto Mode = RenameMode::Replace;
     if (Service == ServiceKind::RenameAtX) {
       const uint32_t Flags = A[4];
       if ((Flags & ~(RenameSeclude | RenameSwap | RenameExclusive |
@@ -1168,11 +1217,13 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
           (Flags & (RenameSwap | RenameExclusive)) ==
               (RenameSwap | RenameExclusive))
         return returned(InvalidArgument, true);
-      if (Flags & ~(RenameNoFollowAny | RenameExclusive))
+      if (Flags & RenameSeclude)
         return unsupported(Result, diagnostic::RenameFlags);
-      Exclusive = Flags & RenameExclusive;
+      Mode = Flags & RenameSwap        ? RenameMode::Swap
+             : Flags & RenameExclusive ? RenameMode::Exclusive
+                                       : RenameMode::Replace;
     }
-    return rename(A[1], A[0], A[3], A[2], Exclusive, Result);
+    return rename(A[1], A[0], A[3], A[2], Mode, Result);
   }
   if (Service == ServiceKind::Unlink)
     return unlink(A[0], AtCurrentDirectory, Result);

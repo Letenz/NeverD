@@ -143,6 +143,11 @@ struct DarwinFileOptions {
   /// parent/target devices reject admission. Fixed initial costs stay reserved
   /// after removal; old observations never describe a reused name.
   std::set<std::string> RemovableDirectories;
+  /// Declared RENAME_SWAP support in these explicit mutable initial directory
+  /// domains. Created descendants inherit the original object's declaration.
+  /// Omission remains unknown; matching devices or mutable grants alone do not
+  /// supply filesystem support. Each reference has a fixed path+NUL charge.
+  std::set<std::string> SwapRenameDirectories;
   /// Optional virtual regular-file creation metadata; requires InitialUmask.
   /// New directories inherit only the parent's known device/group and do not
   /// consume regular-file inode values. Never applies to existing objects or

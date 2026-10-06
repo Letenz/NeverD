@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: e6367595a25cf61d5e804de3921795d6bb1cbdcda7fc056073387150bad7ddbc -->
+<!-- i18n-source: 3a7aa7d56ccb0927973e16e0c640b9cb4611593a80e5c6083dde3791ccdc88b8 -->
 
 [← Indice della documentazione](README.md)
 
@@ -150,11 +150,11 @@ Ogni nodo possiede metadati/allocazione propri, senza ereditare il vecchio omoni
 
 ## Rinomina di file regolari
 
-`rename(128)`, `renameat(465)` e `renameatx_np(488)` rinominano o sostituiscono nel medesimo genitore diretto esplicitamente modificabile. Anche lo stesso nome richiede autorizzazione; se ammesso conserva le osservazioni. I 32 bit bassi accettano `RENAME_EXCL=0x4`, `RENAME_NOFOLLOW_ANY=0x10` e la loro combinazione. Bit ignoti ed EXCL+SWAP danno EINVAL prima dei percorsi; SECLUDE e SWAP restano non supportati. Le regole di operazione nulla ed EISDIR qui valgono senza EXCL; il suo contratto separato segue sotto. Il risolutore condiviso conserva precedenza sorgente, FD e controlli dei componenti originali. Una sorgente directory si arresta subito; un punto/doppio punto finale risolto dà EINVAL prima di mount/autorizzazione, anche con genitori annidati o diversi. Gli errori degli antenati assenti/non directory conservano precedenza. Una directory ordinaria nel genitore ammesso dà EISDIR.
+`rename(128)`, `renameat(465)` e `renameatx_np(488)` spostano o sostituiscono un file regolare entro una directory iniziale modificabile e i discendenti creati dal processo. Entrambi i genitori immediati richiedono autorità sul namespace, anche per lo stesso nome. I 32 bit bassi accettano `RENAME_EXCL=0x4` oppure `RENAME_SWAP=0x2`, ciascuno facoltativamente con `RENAME_NOFOLLOW_ANY=0x10`; 0 oppure 0x10 esegue rename ordinario. Bit ignoti ed EXCL+SWAP danno EINVAL prima dei percorsi; SECLUDE resta non supportato. I contratti EXCL e SWAP seguono sotto. Il resolver preserva priorità della sorgente, FD di directory e componenti originali. Le sorgenti directory vengono rifiutate esplicitamente. Punto/doppio punto finale risolto dà EINVAL prima di mount e autorità; gli errori precedenti degli antenati mantengono priorità. Un target directory nel namespace ammesso dà EISDIR per rename ordinario.
 
 Vecchi FD, open indipendenti e dup seguono il nuovo nome con `F_GETPATH`. L’oggetto sostituito conserva ultimo percorso, byte, cursori, flag e mapping; permessi di scrittura e metadati non passano alla sorgente. Le politiche note aggiornano ciascun ctime e nlink=0 della destinazione, preservando identità, proprietario, nascita e allocazione. Senza politica/dopo EFAULT completo, i metadati restano ignoti. Solo una modifica reale invalida stat/elenco del genitore.
 
-Nessun nuovo inode, voce o FD libero necessario. Percorso/NUL sostituisce il costo dinamico sorgente; i costi iniziali restano. Solo una destinazione senza vecchi FD/mapping contribuisce subito alla capacità, recuperata una volta; unmap parziale conserva il costo intero. Percorso da 1024 byte o oltre 16 MiB arresta prima delle modifiche. Domini iniziali distinti, device noti discordanti, directory, SWAP/SECLUDE e permessi restano aperti. Stesso device stat non prova stesso mount; EXDEV non viene inventato. `renamed-file` confronta identità, percorsi, sostituzione e mapping nativi/guest; tempi e budget sono regole virtuali.
+Nessun nuovo inode, voce o FD libero necessario. Percorso/NUL sostituisce il costo dinamico sorgente; i costi iniziali restano. Solo una destinazione senza vecchi FD/mapping contribuisce subito alla capacità, recuperata una volta; unmap parziale conserva il costo intero. Percorso da 1024 byte o oltre 16 MiB arresta prima delle modifiche. Domini iniziali distinti, device noti discordanti, directory, SECLUDE e permessi restano aperti. Stesso device stat non prova stesso mount; EXDEV non viene inventato. `renamed-file` confronta identità, percorsi, sostituzione e mapping nativi/guest; tempi e budget sono regole virtuali.
 
 ## Directory e percorsi relativi
 
@@ -478,7 +478,7 @@ Due esecuzioni complete precedenti avevano uno e tre timeout nei casi esistenti 
 
 ## Rinomina esclusiva dei file regolari
 
-Dopo la risoluzione di origine e destinazione, RENAME_EXCL restituisce EEXIST per un altro file o directory esistente prima dei controlli di mount e mutazione. Restano prioritari gli errori precedenti del percorso, incluso EINVAL per punto/doppio punto finale. Una destinazione assente usa la stessa transazione limitata, conservando descrizioni aperte, cursori, flag, lease dei mapping e transizioni dei metadati configurate. Lo stesso oggetto resta esplicitamente non supportato: il risultato nativo dipende dalla distinzione maiuscole/minuscole del filesystem, non dimostrata dalle chiavi esatte. Normalizzazione del caso, sorgenti directory, SECLUDE e SWAP restano esclusi. Il programma originale `renamed-file` confronta rifiuto senza cambiamenti dei metadati e successo EXCL|NOFOLLOW_ANY su macOS nativo e C++/C/CLI/Python.
+Dopo la risoluzione di origine e destinazione, RENAME_EXCL restituisce EEXIST per un altro file o directory esistente prima dei controlli di mount e mutazione. Restano prioritari gli errori precedenti del percorso, incluso EINVAL per punto/doppio punto finale. Una destinazione assente usa la stessa transazione limitata, conservando descrizioni aperte, cursori, flag, lease dei mapping e transizioni dei metadati configurate. Lo stesso oggetto resta esplicitamente non supportato: il risultato nativo dipende dalla distinzione maiuscole/minuscole del filesystem, non dimostrata dalle chiavi esatte. Normalizzazione del caso, sorgenti directory e SECLUDE restano esclusi. Il programma originale `renamed-file` confronta rifiuto senza cambiamenti dei metadati e successo EXCL|NOFOLLOW_ANY su macOS nativo e C++/C/CLI/Python.
 
 Verifica, 2026-10-06 (Release): 1.097 test Darwin, 665 superati, 432 saltati per backend indisponibile, nessun errore; eseguiti tutti i 108 casi ARM64 HVF obbligatori. Mirati: 44 superati, 12 saltati, inclusi otto nuovi casi diretti. C/CLI/report: 191/191; Python: cinque combinazioni in 19,241 s; sonda indipendente: 26 controlli superati. Il primo tentativo nativo ha superato il tempo in return; gli altri 25, incluso renamed-file, sono passati. Tre ricontrolli return sullo stesso binario invariato hanno richiesto 0,014–0,034 s, poi tutti i 26 casi sono passati con il limite originale di 5 s. Il primo errore resta conservato e inspiegato; questi risultati e il precedente successo HVF non provano stabilità della latenza. Audit principale completato, revisione indipendente non disponibile. Conteggi sovrapposti; iOS fisico, CI GitHub completa e Actions Intel HVF sospese fuori dall’accettazione locale.
 
@@ -502,3 +502,27 @@ Le due verifiche complete precedenti conservano tre e due timeout nel metodo HVF
 Quattro conflitti LP64 nelle liste di inizializzazione rilevati dalla CI Linux completa ora usano valori uint64_t espliciti; NeverDJumpTableTests riceve /bigobj sotto MSVC. La compilazione effettiva Linux/Windows attende la CI. La precedente CI completa segnalava anche errori separati del corpus Windows EH e dell’annullamento di una PR chiusa. Completata l’autorevisione di sorgenti/prove; non si rivendicano revisione indipendente, iOS fisico o verifica Intel HVF sospesa.
 
 `build-hvf-arm64/cross-parent-rename-validation-summary.json`, `cross-parent-rename-darwin-synced-evidence/`, `cross-parent-rename-darwin-evidence/`, `cross-parent-rename-darwin-rechecked-evidence/`, `cross-parent-rename-public-synced.xml`, `cross-parent-rename-python-synced.log`, `cross-parent-rename-native-fixed-evidence/`, `cross-parent-rename-probe/`.
+
+## Scambio atomico di nomi di file regolari
+
+RENAME_SWAP=0x2 scambia i nomi di due file regolari esistenti tramite renameatx_np, facoltativamente con RENAME_NOFOLLOW_ANY. Una directory iniziale esplicita deve dichiarare mutable:true e swap_rename:true; C++ usa DarwinFileOptions::SwapRenameDirectories. I discendenti creati ereditano la capacità dell'oggetto originale. Eliminare e riutilizzare un percorso non trasferisce la vecchia dichiarazione. false o omissione lascia la capacità ignota; device uguali e autorità sul namespace non dimostrano supporto. Domini iniziali distinti restano esclusi.
+
+Entrambi i percorsi usano il resolver esistente. Un target assente dà ENOENT prima di dominio, autorità e capacità. Operandi directory restano esplicitamente non supportati: swap nativo può scambiare file e directory, quindi EISDIR del rename ordinario non si applica. Lo stesso oggetto autorizzato è un no-op anche senza dichiarazione della capacità. EXCL+SWAP e flags ignoti danno EINVAL prima dei percorsi; SECLUDE resta aperto.
+
+Entrambi i file restano collegati. Identità, proprietario/gruppo, byte, autorizzazione di scrittura, descrizioni, cursori, flags e lease dei mapping propri restano invariati. Le politiche virtuali configurate aggiornano ciascuna ctime; politiche assenti o invalidate lasciano i metadati completi ignoti. Uno scambio reale invalida metadati ed enumerazione completi di entrambi i genitori. Non consuma inode di creazione, voce o FD; l'input del chiamante resta invariato.
+
+Ogni riferimento di capacità riserva percorso+NUL nel budget iniziale fisso di 16 MiB. La transazione verifica entrambi i costi dinamici completi prima della pubblicazione; byte e lease ancora collegati non offrono credito di sostituzione. Scambi ripetuti riutilizzano tali costi. Il programma originale renamed-file scambia verso un figlio creato e torna, verifica entrambi gli oggetti e continua la sostituzione ordinaria su macOS nativo e tutti i profili C++/C/CLI/Python. Permessi, topologia dei mount, normalizzazione del caso e sorgenti directory restano lavori separati.
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/work","mutable":true,"swap_rename":true}]}}
+```
+
+[Apple volume swap capability](https://developer.apple.com/documentation/foundation/urlresourcevalues/volumesupportsswaprenaming?changes=__1_2), [XNU rename](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
+### Verifica swap, 2026-10-06
+
+Release Darwin: 1.133 registrazioni, 701 passate, 432 saltate per backend assente, nessun errore; tutti i 108 casi ARM64 HVF obbligatori eseguiti. Controlli diretti rename 68/68, inclusi 18 nuovi casi di opzioni e 4K/16K. C/CLI/report pubblico 192/192; il metodo Python ha coperto cinque profili in 16,153s. Programmi nativi originali 26/26, sonda indipendente di chiamate grezze 45 controlli. Conteggi sovrapposti; limiti guest invariati.
+
+Due test diretti iniziali avevano aspettative errate per autorità di scrittura ignota e metadati ignoti dopo mutazione; sono state corrette solo le aspettative. Un primo filtro JSON selezionava zero test e non conta; successivamente proprietario reale e suite pubblica completa sono passati. Fonti e risultati iniziali restano preservati. La latenza HVF/nativa precedente è ancora inspiegata; il passaggio non prova stabilità. Autorevisione di fonti/evidenze completata; nessuna revisione indipendente, accettazione iOS fisico, CI GitHub completa o Intel HVF sospeso rivendicata.
+
+`build-hvf-arm64/swap-rename-validation-summary.json`, `swap-rename-darwin-evidence/`, `swap-rename-public.xml`, `swap-rename-python.log`, `swap-rename-native-evidence/`, `swap-rename-probe/`.

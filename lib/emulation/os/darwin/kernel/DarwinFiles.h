@@ -45,6 +45,7 @@ private:
     RenameTarget
   };
   enum class Terminal { Ordinary, Dot, DotDot };
+  enum class RenameMode { Replace, Exclusive, Swap };
   struct DirectoryIdentity {
     int32_t Device;
     uint32_t GID;
@@ -161,7 +162,7 @@ private:
   removeDirectory(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   rename(uint64_t SourcePath, uint32_t SourceDirectory, uint64_t TargetPath,
-         uint32_t TargetDirectory, bool Exclusive, ProcessResult &Result);
+         uint32_t TargetDirectory, RenameMode Mode, ProcessResult &Result);
   void updateNamespaceMetadata(Contents &Node, bool Removed);
   llvm::Expected<std::optional<ServiceResult>>
   create(Description &File, uint32_t Mode, ProcessResult &Result);

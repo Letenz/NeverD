@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: e6367595a25cf61d5e804de3921795d6bb1cbdcda7fc056073387150bad7ddbc -->
+<!-- i18n-source: 3a7aa7d56ccb0927973e16e0c640b9cb4611593a80e5c6083dde3791ccdc88b8 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -150,11 +150,11 @@ O_CREAT と O_EXCL=0x800 の併用は既存ファイル・ディレクトリに�
 
 ## 通常ファイルの改名
 
-`rename(128)`、`renameat(465)`、`renameatx_np(488)` は、同じ明示的に変更可能な直近の親内で通常ファイルを改名・置換します。同名の無操作にも許可が必要で、許可後は観測を保持します。下位32ビットの flags は `RENAME_EXCL=0x4` と `RENAME_NOFOLLOW_ANY=0x10`、および両者の組合せを受け付けます。未知ビットと EXCL+SWAP はパス読取り前に EINVAL、SECLUDE と SWAP は未対応です。ここの無操作と EISDIR の規則は EXCL なしの場合に適用され、EXCL は後述の契約に従います。共通解析器はソース優先、FD、元のスラッシュ・ドットの検査順序を保持します。ディレクトリソースは即座に未対応。通常ファイルのターゲット末尾ドット/二重ドットは解決成功後、マウント・許可検査より先に EINVAL となり、入れ子や別親も対象です。存在しない/非ディレクトリの祖先のエラーが優先します。許可された親内の通常ディレクトリターゲットは EISDIR です。
+`rename(128)`、`renameat(465)`、`renameatx_np(488)` は、変更可能な初期ディレクトリとプロセスが作成した子孫の間で通常ファイルを移動・置換します。同名の無操作でも両方の直接の親に名前空間の許可が必要です。下位32ビットは `RENAME_EXCL=0x4` または `RENAME_SWAP=0x2` を受け付け、それぞれ `RENAME_NOFOLLOW_ANY=0x10` を追加できます。0 または 0x10 は通常の改名です。未知ビットや EXCL+SWAP はパス読取り前に EINVAL、SECLUDE は未対応です。EXCL と SWAP の契約は後述します。共通解析器はソース優先、ディレクトリ FD、元のスラッシュと点の検査を維持します。ディレクトリソースは明示的に停止します。解決済みの末尾ドット/二重ドットはマウント・許可検査より先に EINVAL、祖先の先行エラーは優先されます。許可された名前空間内で通常改名のターゲットがディレクトリなら EISDIR です。
 
 独立 open・dup・既存 FD の `F_GETPATH` はソースの新しい名前に追従します。置換された物体は最後の名前、データ、カーソル、フラグ、マップ寿命を保持し、書込み権限やメタデータをソースへ渡しません。既知ポリシーは各 ctime と置換先の nlink=0 だけを変更し、識別子・所有権・作成時刻・割当を維持します。ポリシーなし/全体 EFAULT 後は完全なメタデータ不明のまま。実際の改名だけが親の stat/列挙を無効にします。
 
-新規 inode・項目・空き FD は不要。新パス/NUL がソースの動的費用を置き換え、初期費用は残ります。古い FD/マップのない置換先だけが容量回収に使え、回収は一度だけです。部分 unmap では全物体の費用が残ります。1024バイト以上のパスや16 MiB超過は変更前に停止。異なる初期ディレクトリ領域間の移動、既知 device の矛盾、ディレクトリ移動、SWAP/SECLUDE、権限強制は未対応です。同じ stat device は同じマウントを証明せず、EXDEV を推測しません。`renamed-file` はネイティブ/ゲストの識別・パス・置換・マップを比較し、時刻と予算は仮想規則です。
+新規 inode・項目・空き FD は不要。新パス/NUL がソースの動的費用を置き換え、初期費用は残ります。古い FD/マップのない置換先だけが容量回収に使え、回収は一度だけです。部分 unmap では全物体の費用が残ります。1024バイト以上のパスや16 MiB超過は変更前に停止。異なる初期ディレクトリ領域間の移動、既知 device の矛盾、ディレクトリ移動、SECLUDE、権限強制は未対応です。同じ stat device は同じマウントを証明せず、EXDEV を推測しません。`renamed-file` はネイティブ/ゲストの識別・パス・置換・マップを比較し、時刻と予算は仮想規則です。
 
 ## ディレクトリと相対パス
 
@@ -478,7 +478,7 @@ Release Darwin1,051登録、631成功、未提供420スキップ、失敗なし�
 
 ## 通常ファイルの排他的な改名
 
-ソースとターゲットの検索後、RENAME_EXCL は別の既存ファイルまたはディレクトリに EEXIST を返し、マウントや名前空間変更の検査に先行します。末尾ドット/二重ドットの EINVAL など先のパスエラーは優先されます。ターゲットがなければ既存の有界改名トランザクションを使用し、保持された記述、カーソル、フラグ、マッピングリースと設定済みメタデータ遷移を保ちます。同一オブジェクトへの排他的改名は、ファイルシステムの大文字小文字区別に依存するため明示的に未対応です。正確なカタログキーからこの性質を推定しません。大小文字の同一視、ディレクトリソース、SECLUDE と SWAP は範囲外です。既存の独自 `renamed-file` は拒否時のメタデータ保持と EXCL|NOFOLLOW_ANY の成功をネイティブ macOS と C++/C/CLI/Python で比較します。
+ソースとターゲットの検索後、RENAME_EXCL は別の既存ファイルまたはディレクトリに EEXIST を返し、マウントや名前空間変更の検査に先行します。末尾ドット/二重ドットの EINVAL など先のパスエラーは優先されます。ターゲットがなければ既存の有界改名トランザクションを使用し、保持された記述、カーソル、フラグ、マッピングリースと設定済みメタデータ遷移を保ちます。同一オブジェクトへの排他的改名は、ファイルシステムの大文字小文字区別に依存するため明示的に未対応です。正確なカタログキーからこの性質を推定しません。大小文字の同一視、ディレクトリソースと SECLUDE は範囲外です。既存の独自 `renamed-file` は拒否時のメタデータ保持と EXCL|NOFOLLOW_ANY の成功をネイティブ macOS と C++/C/CLI/Python で比較します。
 
 検証、2026-10-06（Release）：Darwin 登録 1,097 件、成功 665 件、利用不可スキップ 432 件、失敗なし。必須 ARM64 HVF 108 件すべて実行。重点検証は成功 44 件、利用不可 12 件で、新規直接検証 8 件を含む。公開 C/CLI/レポート 191/191、Python 5 組合せ 19.241 秒、独立した生呼出しプローブ 26 件成功。最初のネイティブ全体実行は既存 return がタイムアウトし、renamed-file を含む他の 25 件は成功。同じ未変更バイナリの return 再確認 3 回は 0.014–0.034 秒、その後全 26 件が元の 5 秒制限で成功した。初回失敗は保存し原因は未解明で、以前の最終 HVF 成功を含め遅延安定性の証明ではない。主担当監査済み、独立レビュー利用不可。件数は重複する。実機 iOS、完全 GitHub CI、停止中の Intel HVF Actions はローカル受入範囲外。
 
@@ -502,3 +502,27 @@ Release Darwin1,051登録、631成功、未提供420スキップ、失敗なし�
 Linux 全体 CI が検出した LP64 初期化リスト四箇所は明示的 uint64_t に修正し、MSVC の NeverDJumpTableTests に /bigobj を追加した。実際の Linux/Windows コンパイルは CI 待ち。以前の全体 CI の Windows EH コーパスと閉じた PR のキャンセル失敗は別の問題として残る。主エージェントによるソース/証跡自己レビューのみ実施し、独立レビュー、実機 iOS、停止中の Intel HVF 検証の成功は主張しない。
 
 `build-hvf-arm64/cross-parent-rename-validation-summary.json`, `cross-parent-rename-darwin-synced-evidence/`, `cross-parent-rename-darwin-evidence/`, `cross-parent-rename-darwin-rechecked-evidence/`, `cross-parent-rename-public-synced.xml`, `cross-parent-rename-python-synced.log`, `cross-parent-rename-native-fixed-evidence/`, `cross-parent-rename-probe/`.
+
+## 通常ファイル名の原子的交換
+
+RENAME_SWAP=0x2 は renameatx_np で既存の通常ファイル二つの名前を交換し、RENAME_NOFOLLOW_ANY を追加できます。明示的な初期ディレクトリに mutable:true と swap_rename:true の両方が必要です。C++ は DarwinFileOptions::SwapRenameDirectories を使用します。作成された子孫は元のディレクトリオブジェクトの能力を継承します。削除後のパス再利用は古い宣言を移しません。false または省略は能力不明で、同じ device や名前空間の許可だけでは対応を証明できません。異なる初期領域は引き続き未対応です。
+
+両パスは既存のコンポーネント解析器を使います。ターゲットがなければ領域・許可・能力の検査前に ENOENT です。ディレクトリオペランドは明示的に未対応です。ネイティブ swap はファイルとディレクトリも交換できるため、通常改名の EISDIR は適用しません。同一オブジェクトは名前空間の許可後に無操作となり、能力宣言がなくても状態は変わりません。EXCL+SWAP と未知 flags はパス入力前に EINVAL、SECLUDE は未対応です。
+
+両ファイルはリンクされたままです。各自の識別、所有者/グループ、バイト、書込み許可、開いた記述、カーソル、flags、マッピングリースを保持します。設定済み仮想ポリシーは各自の ctime だけを更新し、ポリシーが欠落または無効なら完全なメタデータは不明のままです。実際の交換は両親の完全なメタデータと列挙観測を無効にします。作成 inode、項目、FD を消費せず、呼出元の入力も変えません。
+
+能力参照ごとのパス+NUL は固定の初期16 MiB予算に予約します。トランザクションは両方の完全な動的名前費用を検査してから公開し、まだリンクされたバイトやリースを置換回収に使いません。反復交換では動的費用を再利用します。独自の renamed-file は作成した子への交換と逆交換で両オブジェクトを検査した後、通常置換を続け、ネイティブ macOS と全 C++/C/CLI/Python プロファイルで実行します。権限強制、マウント構成、大小文字の同一視、ディレクトリソースは別作業です。
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/work","mutable":true,"swap_rename":true}]}}
+```
+
+[Apple volume swap capability](https://developer.apple.com/documentation/foundation/urlresourcevalues/volumesupportsswaprenaming?changes=__1_2), [XNU rename](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
+### 交換の検証、2026-10-06
+
+Release Darwin は1,133登録、701成功、後端利用不可432スキップ、失敗なし。必須ARM64 HVF108件をすべて実行しました。直接改名検査68/68、うち新規オプションと4K/16Kの18件。公開C/CLI/レポート192/192、Pythonの一つのメソッドは16.153秒で五つの構成を検証しました。独自ネイティブプログラム26/26、独立した生呼出しプローブ45検査。件数は重複し、ゲスト期限は不変です。
+
+初期の直接テスト二件は未知の書込み許可と変更後メタデータに誤った期待を持ち、期待だけを修正しました。最初のJSONフィルターは0件を選び、検証に数えません。その後、正しいテスト所有者と完全な公開検査は成功しました。初期ソースと結果を保存しています。過去のHVF/ネイティブ遅延は未解明で、今回の成功は安定性を証明しません。ソース/証拠の自己レビュー済みですが、独立レビュー、iOS実機、完全GitHub CI、停止中Intel HVFの受入れは主張しません。
+
+`build-hvf-arm64/swap-rename-validation-summary.json`, `swap-rename-darwin-evidence/`, `swap-rename-public.xml`, `swap-rename-python.log`, `swap-rename-native-evidence/`, `swap-rename-probe/`.

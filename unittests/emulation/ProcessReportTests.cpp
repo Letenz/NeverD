@@ -314,6 +314,36 @@ TEST(ProcessReport, DarwinNamespaceAuthorityRequiresAnExplicitBoolean) {
   llvm::consumeError(Extra.takeError());
 }
 
+TEST(ProcessReport, DarwinSwapRenameRequiresExplicitMutableDirectoryBoolean) {
+  auto Good = processOptionsFromJSON(R"({"darwin_files":{"files":[],
+    "directories":[{"path":"/","mutable":true,"swap_rename":true},
+    {"path":"/no","swap_rename":false},{"path":"/default"}]}})");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->DarwinFiles->SwapRenameDirectories,
+            (std::set<std::string>{"/"}));
+  EXPECT_EQ(Good->DarwinFiles->MutableDirectories,
+            (std::set<std::string>{"/"}));
+  EXPECT_TRUE(Good->DarwinFiles->RemovableDirectories.empty());
+  for (auto Bad : {"null", "0", "1", "\"true\"", "[]", "{}"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"darwin_files":{"files":[],"directories":[
+          {"path":"/","mutable":true,"swap_rename":)") +
+        Bad + "}]}}");
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+  for (
+      auto Bad :
+      {R"({"darwin_files":{"files":[],"directories":[{"path":"/","swap_rename":true}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":false,"swap_rename":true}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"swap_rename":true,"unknown":0}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"swap_rename":true},{"path":"/","mutable":true,"swap_rename":true}]}})"}) {
+    auto Parsed = processOptionsFromJSON(Bad);
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+}
+
 TEST(ProcessReport, DarwinInitialDirectoryRemovalRequiresExplicitBoolean) {
   auto Good = processOptionsFromJSON(R"({"darwin_files":{"files":[],
     "directories":[{"path":"/","mutable":true},

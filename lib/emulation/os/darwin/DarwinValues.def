@@ -222,6 +222,9 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(
     DirectoryRemovalDevice,
     "Darwin removable directory conflicts with its parent's device identity")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectorySwapOption,
+    "Darwin swap rename support requires an explicit mutable initial directory")
 NEVERD_DARWIN_DIAGNOSTIC(FileInput, "Darwin standard input is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(FileMetadataOption,
                          "invalid Darwin file or directory metadata or size")
@@ -259,6 +262,11 @@ NEVERD_DARWIN_DIAGNOSTIC(
     RenameCaseSensitivity,
     "Darwin same-object exclusive rename requires filesystem case sensitivity")
 NEVERD_DARWIN_DIAGNOSTIC(RenameKind, "Darwin directory rename is unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(RenameSwapKind,
+                         "Darwin swap rename supports two regular files only")
+NEVERD_DARWIN_DIAGNOSTIC(
+    RenameSwapSupport,
+    "Darwin swap rename requires declared filesystem support")
 NEVERD_DARWIN_DIAGNOSTIC(
     RenameMount,
     "Darwin rename requires shared initial directory ancestry and consistent "

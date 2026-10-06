@@ -212,7 +212,9 @@ TEST_P(DarwinProcess,
   Options.DarwinFiles->Metadata["/data"] = darwin_test::mutationMetadata();
   Options.DarwinFiles->MutationPolicies["/data"] = darwin_test::MutationPolicy;
   Options.DarwinFiles->Metadata["/"] = darwin_test::creationParentMetadata();
+  Options.DarwinFiles->Directories.insert("/");
   Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.DarwinFiles->SwapRenameDirectories.insert("/");
   Options.DarwinFiles->InitialUmask = 0027;
   Options.DarwinFiles->CreationPolicy = darwin_test::CreationPolicy;
   Options.Arguments[2] = "/data";

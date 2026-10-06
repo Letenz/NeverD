@@ -633,6 +633,9 @@ class ProcessIntegrationTests(unittest.TestCase):
                             if mode == "initial-directory-removal":
                                 next(d for d in writable_options["darwin_files"]["directories"]
                                      if d["path"] == "/empty")["removable"] = True
+                            if mode == "renamed-file":
+                                next(d for d in writable_options["darwin_files"]["directories"]
+                                     if d["path"] == "/")["swap_rename"] = True
                             if mode in ("created-file-metadata", "virtual-created-metadata", "renamed-file"):
                                 files = writable_options["darwin_files"]
                                 files["umask"] = 0o27

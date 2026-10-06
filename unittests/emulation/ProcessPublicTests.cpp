@@ -521,6 +521,12 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
             ->getArray(field::Directories)
             ->front()
             .getAsObject())[field::DirectoryMutable] = true;
+    if (llvm::StringRef(Mode) == "renamed-file")
+      (*Input.getAsObject()
+            ->getObject(field::DarwinFiles)
+            ->getArray(field::Directories)
+            ->front()
+            .getAsObject())[field::DirectorySwapRename] = true;
     if (llvm::StringRef(Mode) == "created-file-metadata" ||
         llvm::StringRef(Mode) == "virtual-created-metadata" ||
         llvm::StringRef(Mode) == "renamed-file") {
