@@ -209,6 +209,8 @@ GS en x64 y x18 en ARM64 apuntan a TEB: límites de pila, puntero propio, PID/TI
 
 Si el búfer de entrada no está vacío y no es legible, `WriteFile` devuelve `ERROR_INVALID_USER_BUFFER` (1784), pone a cero el número de bytes escritos y no produce salida.
 
+`windows.defer_unmodeled` carga una imagen cuyos hechos de carga el modelo no implementa y solo se detiene si la ejecución depende de alguno de ellos. Las exportaciones fuera del inventario de API y los módulos fuera del catálogo se enlazan a entradas opacas: cada identidad se resuelve en una única dirección, y ejecutarla detiene la ejecución como `unsupported_service` nombrando `module!export`. Los directorios que el modelo no interpreta quedan sin interpretar, los metadatos que el archivo no respalda no se leen en la carga, y el despacho de excepciones basado en marcos a través de una imagen así se detiene. `observeProcess` añade un `ProcessObserver` que lee el proceso detenido en su inicio y en cada vigilancia de ejecución; no puede cambiar el estado del invitado, y cuando finaliza la ejecución se informa `observer`. El [desempaquetado](unpack.md) se apoya en ambos.
+
 [PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c). [GetProcAddress](https://learn.microsoft.com/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress).
 
 <!-- i18n-section: verification -->

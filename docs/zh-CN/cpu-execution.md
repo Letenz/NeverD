@@ -110,6 +110,8 @@ KVM、WHP 和 checked Unicorn 也支持 16/64 位 `LEAVE`。它始终通过完�
 
 KVM、WHP 和 checked Unicorn 支持 16/64 位 `ENTER`，分配量按无符号 16 位解释，嵌套级别取模 32。访问使用完整 RSP/RBP，并遵循有效前缀顺序。访客故障会保留已完成的栈写入，RSP、RBP 和 PC 则保持入口值。最终栈检查覆盖整个操作数宽度的写权限，但不写入数据。LOCK、REP、APX 前缀及设备栈帧仍不支持。
 
+受检 x64 放行双字节近返回 `F3 C3`。编译器会在作为分支目标的返回指令前加上重复前缀，而处理器忽略它，因此该指令就是已放行的 `C3` 转移，栈读取也相同。其它带前缀的返回，包括 `F2 C3`、第二个前缀、操作数大小覆盖以及 `F3 C2 iw`，仍在契约之外。`X64ReturnPrefixTests.cpp` 检查 KVM、WHP 和受检 Unicorn。
+
 `X64PackedIntegerInstructions.def` 准入 45 条 legacy SSE2 packed integer 指令，涵盖回绕／饱和加减、比较、乘法、平均值、极值、字节差、打包及解包。XMM 和对齐的 128 位 RAM 源操作数在 KVM、WHP、Unicorn 上共用现有 checked 路径。FLAGS 与 MXCSR 保持不变；故障或观察器取消保留状态。MMX、VEX/EVEX 和设备操作数仍不支持。
 
 `X64PackedShiftInstructions.def` 准入十种 legacy SSE2 打包移位。元素移位接受 imm8 或 XMM／对齐的 m128 计数，字节移位仅接受 imm8。变量计数使用无符号低 64 位，不按标量移位规则掩码；高 64 位不参与计算。即使计数为零或超出位宽，内存操作数仍须完整读取 16 字节。FLAGS 和 MXCSR 保持不变；MMX、VEX/EVEX 和设备操作数仍被排除。

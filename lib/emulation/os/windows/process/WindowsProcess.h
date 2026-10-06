@@ -9,6 +9,7 @@
 
 #include "neverd/emulation/AddressSpace.h"
 #include "neverd/emulation/IntegerABI.h"
+#include "neverd/emulation/ProcessObserver.h"
 #include "neverd/emulation/ProcessSession.h"
 #include "neverd/loader/COFF/PEProgramExports.h"
 #include "neverd/loader/ExceptionTable.h"
@@ -102,6 +103,9 @@ struct Image {
   uint64_t PreferredBase = 0;
   std::shared_ptr<const ExceptionInfo> Exceptions;
   std::vector<PEMetadataRange> ExceptionMetadata;
+  /// The exception directory was not file backed at load, so no frame of
+  /// this image can be unwound from loader-owned metadata.
+  bool ExceptionsDeferred = false;
 };
 struct ModuleIdentity {
   std::string Name;
@@ -127,10 +131,13 @@ struct Environment {
 llvm::Expected<Image> loadImage(const std::filesystem::path &Path,
                                 uint64_t MemoryLimit);
 llvm::Expected<Image> loadProgramImage(const std::filesystem::path &Path,
-                                       ImageReadBudget &Budget, bool DLL);
+                                       ImageReadBudget &Budget, bool DLL,
+                                       bool DeferUnmodeled = false);
 llvm::Error relocateImage(Image &Image, uint64_t Base, ImageReadBudget &Budget);
+/// A null observer runs unobserved, without execution watches.
 llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
-                                         const ProcessOptions &Options);
+                                         const ProcessOptions &Options,
+                                         ProcessObserver *Observer = nullptr);
 
 struct Program;
 struct LoaderRequest {

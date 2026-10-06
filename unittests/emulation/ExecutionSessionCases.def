@@ -7,15 +7,23 @@
 NEVERD_SESSION_TEST_VALUE(Instructions, 9)
 NEVERD_SESSION_TEST_VALUE(Events, 3)
 NEVERD_SESSION_TEST_VALUE(Quantum, 3)
+// The counter loop is load, increment, store, branch. Its store is the third
+// instruction on both ISAs; only the encoded offset differs.
+NEVERD_SESSION_TEST_VALUE(StoreOffsetX64, 6)
+NEVERD_SESSION_TEST_VALUE(StoreOffsetARM, 8)
+NEVERD_SESSION_TEST_VALUE(BeforeStore, 2)
+NEVERD_SESSION_TEST_VALUE(LoopInstructions, 4)
+NEVERD_SESSION_TEST_VALUE(LoopBytes, 16)
 NEVERD_SESSION_TEST_VALUE(ImageOffset, 32)
 NEVERD_SESSION_TEST_VALUE(ImageFileSize, 16)
 NEVERD_SESSION_TEST_VALUE(FileByte, 0xa5)
 NEVERD_SESSION_TEST_VALUE(PatchedByte, 0x11)
 #endif
 #ifdef NEVERD_SESSION_TEST_X64
-NEVERD_SESSION_TEST_X64(CounterX64, 0x48, 0x8b, 0x01, 0x48, 0xff, 0xc0,
-                         0x48, 0x89, 0x01, 0xeb, 0xf5)
+NEVERD_SESSION_TEST_X64(CounterX64, 0x48, 0x8b, 0x01, 0x48, 0xff, 0xc0, 0x48,
+                        0x89, 0x01, 0xeb, 0xf5)
 #endif
 #ifdef NEVERD_SESSION_TEST_ARM
-NEVERD_SESSION_TEST_ARM(CounterARM, 0xf9400020, 0x91000400, 0xf9000020, 0x17fffffd)
+NEVERD_SESSION_TEST_ARM(CounterARM, 0xf9400020, 0x91000400, 0xf9000020,
+                        0x17fffffd)
 #endif

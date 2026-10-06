@@ -213,6 +213,8 @@ x64 的 GS、ARM64 的 x18 指向 TEB。 支持栈边界、自指针、PID/TID�
 
 `WriteFile` 的非空输入缓冲区不可读时返回 `ERROR_INVALID_USER_BUFFER`（1784），将完成计数清零，并且不输出任何字节。
 
+`windows.defer_unmodeled` 会加载那些含有模型未实现的加载器事实的镜像，只有当执行依赖其中某一项时才停止。API 清单之外的导出和目录之外的模块被绑定到不透明入口：每个标识解析为一个地址，执行它会以 `unsupported_service` 停止并指出 `module!export`。模型不解释的目录保持不解释，文件未提供后备的元数据不在加载时读取，穿过此类镜像的基于帧的异常分发会停止。`observeProcess` 增加一个 `ProcessObserver`，它在进程启动时和每个执行监视处读取已停止的进程；它不能改变来宾状态，由它结束运行时报告 `observer`。[脱壳](unpack.md)建立在这两者之上。
+
 [PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c). [GetProcAddress](https://learn.microsoft.com/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress).
 
 <!-- i18n-section: verification -->

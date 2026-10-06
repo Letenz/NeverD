@@ -209,6 +209,8 @@ x64 GS와 ARM64 x18은 TEB를 가리키며 스택 경계, self, PID/TID, PEB, �
 
 비어 있지 않은 입력 버퍼를 읽을 수 없으면 `WriteFile`은 `ERROR_INVALID_USER_BUFFER`(1784)를 반환하고, 기록한 바이트 수를 0으로 설정하며 아무 바이트도 출력하지 않습니다.
 
+`windows.defer_unmodeled`는 모델이 구현하지 않은 로더 사실을 가진 이미지를 적재하고, 실행이 그중 하나에 의존할 때에만 멈춥니다. API 목록 밖의 익스포트와 카탈로그 밖의 모듈은 불투명 진입점에 바인딩됩니다. 각 식별자는 하나의 주소로 해석되며, 이를 실행하면 `module!export`를 지목하면서 `unsupported_service`로 멈춥니다. 모델이 해석하지 않는 디렉터리는 해석되지 않은 채로 남고, 파일이 뒷받침하지 않는 메타데이터는 적재 시 읽지 않으며, 그러한 이미지를 지나는 프레임 기반 예외 디스패치는 멈춥니다. `observeProcess`는 `ProcessObserver`를 추가합니다. 이는 프로세스 시작 시점과 각 실행 감시에서 멈춘 프로세스를 읽지만 게스트 상태를 바꿀 수 없으며, 이것이 실행을 끝내면 `observer`가 보고됩니다. [언패킹](unpack.md)은 이 두 가지 위에 만들어졌습니다.
+
 [PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c). [GetProcAddress](https://learn.microsoft.com/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress).
 
 <!-- i18n-section: verification -->

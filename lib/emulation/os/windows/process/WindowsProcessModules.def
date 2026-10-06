@@ -62,3 +62,21 @@ NEVERD_WINDOWS_PROCESS_TEXT(LoaderReentrant,
 NEVERD_WINDOWS_PROCESS_VALUE(ErrorDLLInitFailed, 1114)
 NEVERD_WINDOWS_PROCESS_VALUE(MaxLoaderDepth, 64)
 #endif
+
+// Deferred loader facts. Opaque entries occupy the second half of the gate
+// region, so they need no mapping of their own and never collide with an
+// image. An opaque module is a header and an empty export directory.
+#ifdef NEVERD_WINDOWS_PROCESS_VALUE
+NEVERD_WINDOWS_PROCESS_VALUE(OpaqueGateBase, 0x71010000)
+NEVERD_WINDOWS_PROCESS_VALUE(OpaqueGateSize, 0x10000)
+NEVERD_WINDOWS_PROCESS_VALUE(OpaqueModuleBase, 0x71200000)
+#endif
+#ifdef NEVERD_WINDOWS_PROCESS_TEXT
+NEVERD_WINDOWS_PROCESS_TEXT(OpaqueEntry,
+                            "execution reached an unmodeled export: ")
+NEVERD_WINDOWS_PROCESS_TEXT(OpaqueOrdinal, "#")
+NEVERD_WINDOWS_PROCESS_TEXT(
+    ExceptionDeferred,
+    "frame-based exception dispatch needs unwind metadata that the image "
+    "file did not contain when it was loaded")
+#endif

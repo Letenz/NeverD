@@ -27,16 +27,17 @@ static_assert(std::size(Providers) == SystemModuleCount);
 
 llvm::Expected<Image> makeImage(const SystemProvider &Provider,
                                 GuestArchitecture Architecture,
-                                ImageReadBudget &Budget) {
+                                ImageReadBudget &Budget, bool Opaque = false) {
   std::vector<const Service *> Exports;
   for (const auto &S : services())
-    if (findService(Provider.Name, S.Name) == &S)
+    if (!Opaque && findService(Provider.Name, S.Name) == &S)
       Exports.push_back(&S);
   llvm::sort(Exports, [](const auto *A, const auto *B) {
     return llvm::StringRef(A->Name) < B->Name;
   });
   const uint64_t Count = Exports.size();
-  if (!Count || Count * GateStride > PageSize ||
+  // Only an opaque module has no modeled export; its directory is empty.
+  if ((!Count && !Opaque) || Count * GateStride > PageSize ||
       SystemImageSize > Budget.MappedBytes)
     return failure(text::SystemImage);
   // Raw offsets equal RVAs. Decode the completed bytes with the same loader
@@ -181,6 +182,36 @@ llvm::Expected<Image> makeImage(const SystemProvider &Provider,
 } // namespace
 
 llvm::ArrayRef<SystemProvider> systemProviders() { return Providers; }
+
+llvm::Expected<uint64_t> opaqueEntry(Program &P, llvm::StringRef Module,
+                                     llvm::StringRef Name,
+                                     std::optional<uint16_t> Ordinal) {
+  const std::string Key = Module.lower();
+  for (const auto &Gate : P.Gates)
+    if (!Gate.Target && Gate.Module == Key && Gate.Name == Name &&
+        Gate.Ordinal == Ordinal)
+      return Gate.Gate;
+  if (P.OpaqueEntries == OpaqueGateSize / GateStride)
+    return failure(text::ModuleBudget);
+  const uint64_t Gate = OpaqueGateBase + P.OpaqueEntries++ * GateStride;
+  P.Gates.push_back({0, nullptr, Key, Gate, Name.str(), Ordinal});
+  return Gate;
+}
+
+llvm::Expected<Image> makeOpaqueImage(Program &P, VirtualMemory &Memory,
+                                      llvm::StringRef Name) {
+  // Any free image slot identifies the module; the preferred one only keeps
+  // the layout stable for a given load order.
+  auto Base = Memory.reserveImage(OpaqueModuleBase, SystemImageSize, true);
+  if (!Base)
+    return Base.takeError();
+  const std::string Key = Name.lower();
+  auto Image = makeImage({Key.c_str(), APIProvider::Kernel, *Base},
+                         P.Modules.front().Loaded.Architecture, P.Reads, true);
+  if (!Image)
+    return llvm::joinErrors(Image.takeError(), Memory.releaseImage(*Base));
+  return Image;
+}
 
 llvm::Error prepareSystemModules(Program &P, VirtualMemory &Memory,
                                  const ExecutionBudget &Budget) {

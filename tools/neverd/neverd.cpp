@@ -95,6 +95,8 @@ static int realMain(int Argc, char *Argv[]) {
     return runCPUCapabilities();
   if (EmulateProcessCmd)
     return runEmulateProcess();
+  if (UnpackCmd)
+    return runUnpack();
   if (ConcolicCmd)
     return runConcolic();
   if (MobileCmd)
