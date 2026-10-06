@@ -3,7 +3,8 @@
 // Compiler-derived external metadata/witness/conformance storage: MacOSX SDK 15.5.
 // Apple Swift version 6.1.2 (swiftlang-6.1.2.1.2 clang-1700.0.13.5); Target: arm64-apple-macosx15.0
 // Target profiles: arm64-apple-macos15.0, arm64-apple-ios18.0-macabi, x86_64-apple-macos15.0, x86_64-apple-ios18.0-macabi
-// Direct non-TLS global addresses; no runtime layout or implementation.
+// Direct non-TLS globals and the exact paired MainActor: Actor descriptor.
+// No runtime layout or implementation.
 {"$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc", "/System/Library/Frameworks/Combine.framework/Combine|/System/Library/Frameworks/Combine.framework/Versions/A/Combine", "/System/Library/Frameworks/Combine.framework/Combine|/System/Library/Frameworks/Combine.framework/Versions/A/Combine"},
 {"$sSON", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$sSOSHsWP", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
@@ -14,6 +15,8 @@
 {"$sSSs7CVarArg10FoundationMc", "/System/Library/Frameworks/Foundation.framework/Foundation|/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|/usr/lib/swift/libswiftFoundation.dylib", "/System/Library/Frameworks/Foundation.framework/Foundation|/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|/usr/lib/swift/libswiftFoundation.dylib"},
 {"$sSbN", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$sSbSHsWP", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
+{"$sScMScAsMc", "/usr/lib/swift/libswift_Concurrency.dylib", "/usr/lib/swift/libswift_Concurrency.dylib"},
+{"$sScMScAsWP", "/usr/lib/swift/libswift_Concurrency.dylib", "/usr/lib/swift/libswift_Concurrency.dylib"},
 {"$sSdN", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$sSdSHsWP", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$sSfN", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},

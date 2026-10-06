@@ -1503,7 +1503,7 @@ CPU0 の明示的プリエンプション、仮想時計と制約は[ドライ�
 
 `SwiftFunctionSymbols.RepeatedDeclarationsKeepEveryRecordField` は同一の重複レコードを検証し、名前、サイズ、境界の由来、名前の由来の変更を拒否します。`NativeSourceHints.SwiftErrorCallResults*` は ARM64/x64 呼び出し側の自動推論を実行し、現在の呼び出し先の欠落、機械操作の変更、古い監査、不完全な ABI、および欠落・縮小・無関係な結果抽出を拒否します。入口ソースの実行では、競合する任意のデバッグ宣言があっても、結び付けられた規約とエラー・コンテキストの役割を維持することを確認します。
 
-Swift witness の生成器は ARM64/x86-64 の macOS と Mac Catalyst で `CurrentValueSubject: Publisher` と `Range<Bound: Comparable>: RangeExpression` を検証します。`scripts.tests.test_generate_swift_witness_contracts` はジェネリック入力、メタデータ応答の型やメンバー、プロトタイプ、エクスポート提供元、不完全なフローを検査します。`ObjCSourceBindings.SwiftWitnessUndefRequiresGenericDescriptorContract` と `SwiftWitnessUndefRejectsUnprovedInputAndABI` は両記述子を両アーキテクチャーで検証し、それぞれ runtime・インポート識別、弱いまたは競合するストレージ、ABI、副作用の 33 変異を拒否します。これらのカタログはフレーム配置や借用契約を認めません。
+Swift witness の生成器は ARM64/x86-64 の macOS と Mac Catalyst で `CurrentValueSubject: Publisher` と `Range<Bound: Comparable>: RangeExpression` を検証します。`scripts.tests.test_generate_swift_witness_contracts` はジェネリック入力、メタデータ応答の型やメンバー、プロトタイプ、エクスポート提供元、不完全なフローを検査します。`ObjCSourceBindings.SwiftWitnessUndefRequiresExactDescriptorContract` と `SwiftWitnessUndefRejectsUnprovedInputAndABI` は両記述子を両アーキテクチャーで検証し、それぞれ runtime・インポート識別、弱いまたは競合するストレージ、ABI、副作用の 33 変異を拒否します。これらのカタログはフレーム配置や借用契約を認めません。
 
 `scripts.tests.test_generate_swift_data_declarations` は完全な `String.Index` 記述子クエリを検査し、シンボルセル、レシピのバイトや長さ、メタデータ・キャッシュのフロー、runtime ABI の変更と重複・欠落定義を拒否します。`ObjCSourceBindings.SwiftRangeIndexDescriptorKeepsItsCompleteRecipe` は両アーキテクチャーで先頭以外のオフセット 3 の記述子を検証します。`SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe` は各アーキテクチャーで 20 変異を拒否し、公開済みのアドレスヒントと helper 出力を再検証します。
 
@@ -1511,6 +1511,8 @@ Swift witness の生成器は ARM64/x86-64 の macOS と Mac Catalyst で `Curre
 
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` は両アーキテクチャとプロバイダ、全引数と結果を検証し、弱いインポート、加算オフセット、別プロバイダ、古いシンボル、借用効果の捏造を拒否します。
 
-`scripts.tests.test_generate_swift_witness_contracts` の String リーダーは完全な流れを検証し、28 のストレージ・ABI・フロー変更と七つの曖昧な宣言を拒否して入力予算を守ります。結合テストは両アーキテクチャの三記述子にそれぞれ 33 の変更を適用します。記述子の識別はフレーム配置や借用を許可しません。
+`scripts.tests.test_generate_swift_witness_contracts` の String リーダーは完全な流れを検証し、28 のストレージ・ABI・フロー変更と七つの曖昧な宣言を拒否して入力予算を守ります。結合テストは両アーキテクチャの四記述子にそれぞれ 33 の変更を適用します。記述子の識別はフレーム配置や借用を許可しません。
 
 `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults` は両アーキテクチャでレジスタ、配置、コンテキストの役割、間接結果の変更を拒否する。`SourceABI.SwiftPointForwardingPreservesBothIEEECarriers` は -O0/-O2 で転送ソースを実行し、両フィールドの符号付きゼロ、非正規数、無限大、NaN ペイロードを確認する。宣言テストはコンパイラ形式と名前付き引数を認め、変更された署名や曖昧なイメージ識別を拒否する。
+
+MainActor のフィクスチャは固定メタデータと静的テーブルの完全な流れを検証し、ストレージ、ABI、メタデータ抽出、テーブル識別、追加の副作用、宣言の欠落・重複、入力予算超過を拒否します。両カタログで各ターゲットの 3 つの SDK 公開シンボルが必須です。arm64/x64 の witness バインド試験は 4 記述子すべてに対して各アーキテクチャで 33 の入力・インポート・ABI 変異を検証します。ホストのランタイム試験は 5 種の具現化引数ビットパターンで公開テーブルを比較します。

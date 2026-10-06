@@ -3,7 +3,8 @@ import re
 import unittest
 
 from scripts.generate_swift_witness_contracts import (
-    render, unused_instantiation_argument, string_protocol_instantiation_argument)
+    render, unused_instantiation_argument, string_protocol_instantiation_argument,
+    main_actor_instantiation_argument)
 from scripts.generate_swift_data_declarations import generic_range_conformance_storage
 
 IR = (Path(__file__).parent / 'fixtures/swift_generic_witness.ll').read_text()
@@ -14,9 +15,28 @@ RANGE = '$sSnyxGSXsMc'
 CORE = '/usr/lib/swift/libswiftCore.dylib'
 STRING_IR = (Path(__file__).parent / 'fixtures/swift_string_protocol_witness.ll').read_text()
 STRING = '$sSSSysMc'
+ACTOR_IR = (Path(__file__).parent / 'fixtures/swift_main_actor_witness.ll').read_text()
+ACTOR = '$sScMScAsMc'
+CONCURRENCY = '/usr/lib/swift/libswift_Concurrency.dylib'
 
 
 class SwiftWitnessContracts(unittest.TestCase):
+    def test_fixed_main_actor_requires_static_flow_and_all_paired_exports(self):
+        self.assertEqual(main_actor_instantiation_argument(ACTOR_IR), ACTOR)
+        profiles = [{NAME, RANGE, STRING, ACTOR}] * 4
+        exports = [{NAME: {MODULE}, RANGE: {CORE}, STRING: {CORE},
+                    **{name: {CONCURRENCY} for name in
+                       (ACTOR, '$sScMScAsWP', '$sScMMa')}} for _ in range(4)]
+        self.assertIn('"' + ACTOR + '"', render(profiles, exports, '15.5', 'Swift 6.1.2'))
+        for index in range(4):
+            for name in (ACTOR, '$sScMScAsWP', '$sScMMa'):
+                changed = [dict(export) for export in exports]
+                changed[index].pop(name)
+                with self.subTest(index=index, name=name), self.assertRaises(ValueError):
+                    render(profiles, changed, '15.5', 'Swift 6.1.2')
+        with self.assertRaises(ValueError):
+            main_actor_instantiation_argument(ACTOR_IR.replace('ptr nonnull @"$sScMScAsWP"', 'ptr undef'))
+
     def test_string_protocol_keeps_complete_cache_query(self):
         self.assertEqual(string_protocol_instantiation_argument(STRING_IR), STRING)
         renamed = re.sub(r'%([0-9]+)', r'%local_\1', STRING_IR)

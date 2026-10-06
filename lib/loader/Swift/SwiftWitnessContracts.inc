@@ -5,7 +5,10 @@
 // Target profiles: arm64-apple-macos15.0, arm64-apple-ios18.0-macabi, x86_64-apple-macos15.0, x86_64-apple-ios18.0-macabi
 // Only swift_getWitnessTable argument 2 is unused for these conformances.
 // No descriptor layout, purity, frame borrowing or value-witness ABI.
+// Fixed MainActor: Actor: complete static SDK table and nondependent runtime path.
+// https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/runtime/Metadata.cpp#L5980
 {"$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc", "/System/Library/Frameworks/Combine.framework/Combine|/System/Library/Frameworks/Combine.framework/Versions/A/Combine", "/System/Library/Frameworks/Combine.framework/Combine|/System/Library/Frameworks/Combine.framework/Versions/A/Combine"},
 {"$sSSSysMc", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
+{"$sScMScAsMc", "/usr/lib/swift/libswift_Concurrency.dylib", "/usr/lib/swift/libswift_Concurrency.dylib"},
 {"$sSnyxGSXsMc", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 // clang-format on

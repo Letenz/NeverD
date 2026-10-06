@@ -804,9 +804,9 @@ bool declaredFixedABI(const BinaryImage &Image, va_t Slot, llvm::StringRef Name,
 bool swiftWitnessInstantiationArgumentUnused(const BinaryImage &Image,
                                              va_t DescriptorSlot) {
   // The data owner proves a strong, exact, non-TLS external address. This
-  // separate compiler catalog proves argument irrelevance for every legal
-  // instantiation of that exact conformance; the ordinary runtime ABI still has
-  // three pointers.
+  // separate compiler/runtime catalog proves argument irrelevance for every
+  // legal instantiation of that exact conformance; the ordinary runtime ABI
+  // still has three pointers.
   const auto Data = darwinRuntimeGlobalAddressHint(Image, DescriptorSlot);
   const auto Bind = Image.DyldBindSlots.find(DescriptorSlot);
   if (!Data ||

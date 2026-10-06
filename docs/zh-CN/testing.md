@@ -1411,7 +1411,7 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 
 `SwiftFunctionSymbols.RepeatedDeclarationsKeepEveryRecordField` 检查完全相同的重复记录，并拒绝名称、大小、边界来源或名称来源变化。`NativeSourceHints.SwiftErrorCallResults*` 覆盖 ARM64/x64 调用者的自动推断，拒绝缺失的当前被调用函数、被修改的机器操作、过期审计、不完整 ABI，以及缺失、变窄或来自其他值的结果提取。入口源码执行还覆盖相冲突的可选调试声明，确保绑定的调用约定及错误、上下文角色保持有效。
 
-Swift witness 生成器在 ARM64/x86-64 macOS 和 Mac Catalyst 上同时验证 `CurrentValueSubject: Publisher` 与 `Range<Bound: Comparable>: RangeExpression`。`scripts.tests.test_generate_swift_witness_contracts` 拒绝泛型输入、元数据响应类型或成员、原型、导出提供方和完整数据流的变更。`ObjCSourceBindings.SwiftWitnessUndefRequiresGenericDescriptorContract` 与 `SwiftWitnessUndefRejectsUnprovedInputAndABI` 在两种架构上验证两个描述符，每个描述符与架构包含 33 种 runtime/导入身份、弱或冲突存储、ABI 和副作用变更。这些目录不授予帧布局或借用契约。
+Swift witness 生成器在 ARM64/x86-64 macOS 和 Mac Catalyst 上同时验证 `CurrentValueSubject: Publisher` 与 `Range<Bound: Comparable>: RangeExpression`。`scripts.tests.test_generate_swift_witness_contracts` 拒绝泛型输入、元数据响应类型或成员、原型、导出提供方和完整数据流的变更。`ObjCSourceBindings.SwiftWitnessUndefRequiresExactDescriptorContract` 与 `SwiftWitnessUndefRejectsUnprovedInputAndABI` 在两种架构上验证两个描述符，每个描述符与架构包含 33 种 runtime/导入身份、弱或冲突存储、ABI 和副作用变更。这些目录不授予帧布局或借用契约。
 
 `scripts.tests.test_generate_swift_data_declarations` 检查完整 `String.Index` 描述符查询，拒绝符号指针单元、配方字节或长度、元数据与缓存数据流、runtime ABI 的变更以及重复或缺失定义。`ObjCSourceBindings.SwiftRangeIndexDescriptorKeepsItsCompleteRecipe` 在两种架构上检查位于偏移 3 的非首位描述符；`SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe` 拒绝每种架构的 20 种变更，并复核既有地址提示与 helper 输出。
 
@@ -1419,6 +1419,8 @@ Swift witness 生成器在 ARM64/x86-64 macOS 和 Mac Catalyst 上同时验证 `
 
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` 验证两种架构、导出提供方及全部参数和结果载体，并拒绝弱导入、附加偏移、外来提供方、过期符号和虚构的借用效果。
 
-`scripts.tests.test_generate_swift_witness_contracts` 的 String 读取器检查完整缓存与查询流程，拒绝 28 项存储、ABI、流程突变和七种歧义声明，并限制输入预算。现有见证绑定测试覆盖三个描述符与两种架构，每个组合包含 33 项突变。描述符身份不提供栈帧布局或借用权限。
+`scripts.tests.test_generate_swift_witness_contracts` 的 String 读取器检查完整缓存与查询流程，拒绝 28 项存储、ABI、流程突变和七种歧义声明，并限制输入预算。现有见证绑定测试覆盖四个描述符与两种架构，每个组合包含 33 项突变。描述符身份不提供栈帧布局或借用权限。
 
 `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults` 在两种架构上拒绝载体、布局、上下文角色和间接结果变化。`SourceABI.SwiftPointForwardingPreservesBothIEEECarriers` 在 -O0/-O2 下编译运行转发源码，验证两个字段的正负零、次正规数、无穷和 NaN 载荷。声明测试接受编译器及具名参数形式，拒绝签名变化和歧义图像身份。
+
+MainActor 测试数据检查完整的固定元数据与静态表流程，拒绝存储、ABI、元数据提取、表身份的变化、额外副作用、缺失或重复声明以及输入预算耗尽。两个目录均要求每种目标提供全部三个配对 SDK 导出。见证绑定测试在 arm64/x64 上覆盖全部四种描述符，每种描述符和架构检查 33 项输入、导入及 ABI 变异；宿主运行时检查以五种实例化参数位模式核对公开表。

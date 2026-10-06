@@ -1493,7 +1493,7 @@ CPU0 명시적 선점, 가상 시계 의미와 현재 한계는 [드라이버 �
 
 `SwiftFunctionSymbols.RepeatedDeclarationsKeepEveryRecordField`는 동일한 중복 레코드를 검사하고 변경된 이름, 크기, 경계 출처 또는 이름 출처를 거부합니다. `NativeSourceHints.SwiftErrorCallResults*`는 ARM64/x64 호출자 자동 추론을 검사하며 현재 피호출자 누락, 변경된 기계 연산, 오래된 감사, 불완전한 ABI와 누락되거나 좁아지거나 관련 없는 결과 추출을 거부합니다. 진입 소스 실행은 충돌하는 선택적 디버그 선언이 있어도 연결된 규약과 오류·컨텍스트 역할을 유지하는지 확인합니다.
 
-Swift witness 생성기는 ARM64/x86-64 macOS와 Mac Catalyst에서 `CurrentValueSubject: Publisher`와 `Range<Bound: Comparable>: RangeExpression`을 검증합니다. `scripts.tests.test_generate_swift_witness_contracts`는 변경된 제네릭 입력, 메타데이터 응답 타입이나 멤버, 프로토타입, 내보내기 제공자와 불완전한 흐름을 거부합니다. `ObjCSourceBindings.SwiftWitnessUndefRequiresGenericDescriptorContract` 및 `SwiftWitnessUndefRejectsUnprovedInputAndABI`는 두 설명자를 두 아키텍처에서 확인하며, 설명자와 아키텍처마다 runtime/가져오기 식별, 약한 또는 충돌하는 저장소, ABI와 부수 효과에 관한 33개 변형을 검사합니다. 이 카탈로그는 프레임 배치나 빌림 계약을 부여하지 않습니다.
+Swift witness 생성기는 ARM64/x86-64 macOS와 Mac Catalyst에서 `CurrentValueSubject: Publisher`와 `Range<Bound: Comparable>: RangeExpression`을 검증합니다. `scripts.tests.test_generate_swift_witness_contracts`는 변경된 제네릭 입력, 메타데이터 응답 타입이나 멤버, 프로토타입, 내보내기 제공자와 불완전한 흐름을 거부합니다. `ObjCSourceBindings.SwiftWitnessUndefRequiresExactDescriptorContract` 및 `SwiftWitnessUndefRejectsUnprovedInputAndABI`는 두 설명자를 두 아키텍처에서 확인하며, 설명자와 아키텍처마다 runtime/가져오기 식별, 약한 또는 충돌하는 저장소, ABI와 부수 효과에 관한 33개 변형을 검사합니다. 이 카탈로그는 프레임 배치나 빌림 계약을 부여하지 않습니다.
 
 `scripts.tests.test_generate_swift_data_declarations`는 완전한 `String.Index` 설명자 질의를 확인하고 기호 셀, 레시피 바이트나 길이, 메타데이터/캐시 흐름, runtime ABI 변경 및 중복되거나 누락된 정의를 거부합니다. `ObjCSourceBindings.SwiftRangeIndexDescriptorKeepsItsCompleteRecipe`는 두 아키텍처에서 선두가 아닌 오프셋 3의 설명자를 확인합니다. `SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe`는 각 아키텍처에서 20개 변형을 거부하고 기존 주소 힌트와 helper 출력을 재검증합니다.
 
@@ -1501,6 +1501,8 @@ Swift witness 생성기는 ARM64/x86-64 macOS와 Mac Catalyst에서 `CurrentValu
 
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords`는 두 아키텍처와 공급자, 모든 인자와 결과를 검증하고 약한 가져오기, 가산 오프셋, 다른 공급자, 오래된 심볼과 만들어낸 대여 효과를 거부합니다.
 
-`scripts.tests.test_generate_swift_witness_contracts`의 String 리더는 완전한 흐름을 검증하고 저장소·ABI·흐름 변형 28개와 모호한 선언 7개를 거부하며 입력 예산을 적용합니다. 바인딩 테스트는 두 아키텍처의 세 서술자에 각각 33개 변형을 적용합니다. 서술자 식별은 프레임 레이아웃이나 대여를 허용하지 않습니다.
+`scripts.tests.test_generate_swift_witness_contracts`의 String 리더는 완전한 흐름을 검증하고 저장소·ABI·흐름 변형 28개와 모호한 선언 7개를 거부하며 입력 예산을 적용합니다. 바인딩 테스트는 두 아키텍처의 네 서술자에 각각 33개 변형을 적용합니다. 서술자 식별은 프레임 레이아웃이나 대여를 허용하지 않습니다.
 
 `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults`는 두 아키텍처에서 레지스터, 배치, 컨텍스트 역할 및 간접 결과 변경을 거부한다. `SourceABI.SwiftPointForwardingPreservesBothIEEECarriers`는 -O0/-O2에서 전달 소스를 실행하여 두 필드의 부호 있는 0, 비정규 수, 무한대와 NaN 페이로드를 검사한다. 선언 테스트는 컴파일러 및 이름 있는 인자 형태를 허용하고 변경된 서명과 모호한 이미지 식별을 거부한다.
+
+MainActor 픽스처는 고정 메타데이터와 정적 테이블의 전체 흐름을 확인하고 저장소, ABI, 메타데이터 추출, 테이블 식별, 추가 효과, 누락되거나 중복된 선언 및 입력 예산 초과를 거부합니다. 두 카탈로그는 모든 대상에서 세 SDK 내보내기를 요구합니다. arm64/x64 witness 바인딩 시험은 네 설명자 각각에 대해 아키텍처별 33개의 입력, 가져오기 및 ABI 변이를 확인합니다. 호스트 런타임 시험은 다섯 인스턴스화 인수 비트 패턴으로 공개 테이블을 비교합니다.
