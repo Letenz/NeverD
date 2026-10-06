@@ -375,6 +375,7 @@ class Checker {
   LowIRIndependenceResult &Result = OwnedResult;
   SymContext OwnedContext;
   SymContext &Ctx = OwnedContext;
+  detail::FiniteDomainEncoding FrameDomain{Ctx, Limits.Solver};
   // One completed model-free query in this immutable DAG and fixed solver
   // configuration. No model, incomplete answer or cross-context fact escapes.
   SymRef LastCompletedQuery;
@@ -653,9 +654,8 @@ class Checker {
   std::optional<llvm::APInt> frameDifference(SymRef Predicate, SymRef Value) {
     uint64_t Queries = Result.SolverQueries;
     const auto Offset = detail::proveFrameOffset(
-        Ctx, Predicate, Value, EntryRoot, Limits.Solver,
-        Limits.MaxSolverQueries, Limits.MaxSymbolicNodes, Queries,
-        &FrameProofs);
+        FrameDomain, Predicate, Value, EntryRoot, Limits.MaxSolverQueries,
+        Limits.MaxSymbolicNodes, Queries, &FrameProofs);
     Result.SolverQueries = static_cast<uint32_t>(Queries);
     if (Offset.Status == detail::FrameOffsetStatus::Invalid)
       fail(Status::Invalid, "invalid frame-offset proof");
@@ -1581,9 +1581,14 @@ class Checker {
             // covers the incoming domain. Keep that domain without making
             // later queries reprove this branch fact. Unknown still refuses,
             // and two feasible edges retain their distinct predicates.
-            if (query(Taken) == solver::SatResult::Unsat) {
+            // These two complementary queries share one incoming domain.
+            // End encoding reuse with the branch so unrelated native history
+            // cannot make a later small query search a much larger formula.
+            std::unique_ptr<solver::BitVectorSolver> BranchEncoding;
+            if (query(Taken, &BranchEncoding) == solver::SatResult::Unsat) {
               scheduleNative(std::move(P), Fallthrough, Incoming);
-            } else if (query(Other) == solver::SatResult::Unsat) {
+            } else if (query(Other, &BranchEncoding) ==
+                       solver::SatResult::Unsat) {
               nativeTargets(std::move(P), Left.branchTarget(), Incoming);
             } else {
               nativeTargets(P, Left.branchTarget(), Taken);

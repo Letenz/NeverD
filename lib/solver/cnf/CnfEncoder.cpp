@@ -73,6 +73,32 @@ GatePolarity flip(GatePolarity P) {
 /// at any width a caller might hand over.
 constexpr size_t kMaxXorFanIn = 3;
 
+// Table placement is separate from the complete identity hash. Mix high bits
+// into low bits before selecting a power-of-two bucket.
+size_t gateBucket(uint64_t Hash, size_t Mask) {
+  Hash = (Hash ^ (Hash >> 32)) * 0x9e3779b97f4a7c15ULL;
+  return static_cast<size_t>(Hash ^ (Hash >> 32)) & Mask;
+}
+
+// Gate operands are usually pairs or triples from adders. Keep their exact
+// canonical ordering inline instead of dispatching a tiny POD array to qsort.
+void sortGateInputs(llvm::MutableArrayRef<SatLit> Inputs) {
+  if (Inputs.size() <= 3) {
+    if (Inputs.size() < 2)
+      return;
+    if (Inputs[1] < Inputs[0])
+      std::swap(Inputs[0], Inputs[1]);
+    if (Inputs.size() == 3) {
+      if (Inputs[2] < Inputs[1])
+        std::swap(Inputs[1], Inputs[2]);
+      if (Inputs[1] < Inputs[0])
+        std::swap(Inputs[0], Inputs[1]);
+    }
+    return;
+  }
+  std::sort(Inputs.begin(), Inputs.end());
+}
+
 } // namespace
 
 CnfEncoder::CnfEncoder(SatSolver &Solver) : Solver(Solver) {
@@ -82,6 +108,10 @@ CnfEncoder::CnfEncoder(SatSolver &Solver) : Solver(Solver) {
   True = SatLit::positive(Solver.newVar(/*Decision=*/false));
   Solver.addClause(True);
 }
+
+CnfEncoder::CnfEncoder(SatSolver &Solver, const CnfEncoder &Other)
+    : Solver(Solver), True(Other.True), Gates(Other.Gates),
+      OperandPool(Other.OperandPool), GateTable(Other.GateTable) {}
 
 SatLit CnfEncoder::freshLit() {
   SatVar V = Solver.newVar(/*Decision=*/true);
@@ -103,7 +133,7 @@ SatLit CnfEncoder::mkAnd(llvm::ArrayRef<SatLit> Ins, GatePolarity P) {
 
   // Sorting puts duplicates and complementary pairs next to each other, and
   // fixes one spelling for operands that arrived in a different order.
-  llvm::sort(Terms);
+  sortGateInputs(Terms);
 
   size_t Kept = 0;
   SatLit Prev;
@@ -170,7 +200,7 @@ SatLit CnfEncoder::mkXor(llvm::ArrayRef<SatLit> Ins) {
     Terms.push_back(L);
   }
 
-  llvm::sort(Terms);
+  sortGateInputs(Terms);
 
   // A term appearing twice contributes nothing to a parity.
   size_t Kept = 0;
@@ -279,7 +309,7 @@ SatLit CnfEncoder::mkMajority(SatLit A, SatLit B, SatLit C) {
     return A;
 
   SatLit Ins[] = {A, B, C};
-  llvm::sort(Ins);
+  sortGateInputs(Ins);
   return gate(GateKind::Majority, Ins, GatePolarity::Both);
 }
 
@@ -312,23 +342,49 @@ bool CnfEncoder::assertImplies(SatLit A, SatLit B) {
 // The gate table
 //===----------------------------------------------------------------------===//
 
+void CnfEncoder::growGateTable() {
+  std::vector<GateBucket> Next(GateTable.empty() ? 64 : GateTable.size() * 2);
+  const auto Mask = Next.size() - 1;
+  for (const auto &Entry : GateTable) {
+    if (!Entry.Index)
+      continue;
+    auto Slot = gateBucket(Entry.Hash, Mask);
+    while (Next[Slot].Index)
+      Slot = (Slot + 1) & Mask;
+    Next[Slot] = Entry;
+  }
+  GateTable.swap(Next);
+}
+
 SatLit CnfEncoder::gate(GateKind Kind, llvm::ArrayRef<SatLit> Ins,
                         GatePolarity P) {
   uint64_t H = mixHash(0x51ed270bULL, static_cast<uint64_t>(Kind));
   for (SatLit L : Ins)
     H = mixHash(H, L.index());
-
-  auto &Bucket = GateTable[H];
-  for (uint32_t Index : Bucket) {
+  if (GateTable.empty())
+    growGateTable();
+  auto Mask = GateTable.size() - 1;
+  auto Slot = gateBucket(H, Mask);
+  while (const auto Stored = GateTable[Slot].Index) {
+    const uint32_t Index = Stored - 1;
     const Gate &G = Gates[Index];
-    if (G.Kind != Kind || G.NumOperands != Ins.size())
-      continue;
-    if (!std::equal(Ins.begin(), Ins.end(), operandsOf(G).begin()))
-      continue;
-    emit(Index, P);
-    return Gates[Index].Out;
+    if (GateTable[Slot].Hash == H && G.Kind == Kind &&
+        G.NumOperands == Ins.size() &&
+        std::equal(Ins.begin(), Ins.end(), operandsOf(G).begin())) {
+      emit(Index, P);
+      return Gates[Index].Out;
+    }
+    Slot = (Slot + 1) & Mask;
   }
-
+  // Keep an empty slot in every probe chain. Rehash only a new gate; a
+  // repeated polarity request neither allocates nor changes table capacity.
+  if (Gates.size() >= GateTable.size() - GateTable.size() / 4) {
+    growGateTable();
+    Mask = GateTable.size() - 1;
+    Slot = gateBucket(H, Mask);
+    while (GateTable[Slot].Index)
+      Slot = (Slot + 1) & Mask;
+  }
   Gate G;
   G.Kind = Kind;
   G.Emitted = 0;
@@ -336,11 +392,9 @@ SatLit CnfEncoder::gate(GateKind Kind, llvm::ArrayRef<SatLit> Ins,
   G.NumOperands = static_cast<uint32_t>(Ins.size());
   G.Out = freshLit();
   OperandPool.insert(OperandPool.end(), Ins.begin(), Ins.end());
-
-  auto Index = static_cast<uint32_t>(Gates.size());
+  const auto Index = static_cast<uint32_t>(Gates.size());
   Gates.push_back(G);
-  Bucket.push_back(Index);
-
+  GateTable[Slot] = {H, Index + 1};
   emit(Index, P);
   return G.Out;
 }

@@ -422,6 +422,15 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "pzC"},
+    // Swift 6.1.2 clients on all four macOS/Mac Catalyst SDK profiles keep
+    // the generic range and string addresses, both metadata values and both
+    // witnesses as ordinary pointers. The result is exactly two word
+    // carriers. This declaration supplies no layout, borrowing or noescape
+    // contract for either opaque value address.
+    {"$sSo8_NSRangeV10FoundationE_2inABx_q_tcSXRzSyR_SS5IndexV5BoundRtzr0_lufC",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+     "(zz)pppppp"},
     // Four Swift 6.1.2 macOS/Mac Catalyst profiles preserve the separator
     // address, both generic metadata and both witnesses as ordinary inputs;
     // the receiver address is swiftself. The complete Array result is a ptr.
@@ -796,7 +805,8 @@ bool swiftWitnessInstantiationArgumentUnused(const BinaryImage &Image,
                                              va_t DescriptorSlot) {
   // The data owner proves a strong, exact, non-TLS external address. This
   // separate compiler catalog proves argument irrelevance for every legal
-  // generic instantiation; the ordinary runtime ABI still has three pointers.
+  // instantiation of that exact conformance; the ordinary runtime ABI still has
+  // three pointers.
   const auto Data = darwinRuntimeGlobalAddressHint(Image, DescriptorSlot);
   const auto Bind = Image.DyldBindSlots.find(DescriptorSlot);
   if (!Data ||

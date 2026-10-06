@@ -88,8 +88,9 @@ ExecutionCapabilities profile(ExecutionContract Contract, GuestArchitecture ISA,
           Native,
           Allowlist,
           Instructions,
-          Checked ? ExecutionMemoryObservation::InstructionPreflight
-                  : ExecutionMemoryObservation::EngineCallbacks,
+          !Checked    ? ExecutionMemoryObservation::EngineCallbacks
+          : Allowlist ? ExecutionMemoryObservation::InstructionPreflight
+                      : ExecutionMemoryObservation::Unobserved,
           Checked ? ExecutionControlPrecision::InstructionBoundary
                   : ExecutionControlPrecision::EngineRequest,
           false};

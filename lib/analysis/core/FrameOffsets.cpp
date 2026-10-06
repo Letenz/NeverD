@@ -101,10 +101,12 @@ std::optional<SymRef> relativeRemainder(SymContext &Ctx, SymRef Value,
 
 } // namespace
 
-FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,
-                             SymRef Root, solver::SolverOptions Settings,
-                             uint64_t MaxQueries, uint64_t MaxSymbolicNodes,
-                             uint64_t &Queries, FiniteQueryCache *Cache) {
+static FrameOffset
+proveFrameOffsetImpl(SymContext &Ctx, SymRef Predicate, SymRef Value,
+                     SymRef Root, solver::SolverOptions Settings,
+                     uint64_t MaxQueries, uint64_t MaxSymbolicNodes,
+                     uint64_t &Queries, FiniteQueryCache *Cache,
+                     FiniteDomainEncoding *Encoding) {
   const auto Valid = [&](SymRef R, unsigned Width) {
     return R && R.index() < Ctx.numNodes() && Ctx.width(R) == Width;
   };
@@ -124,16 +126,20 @@ FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,
   if (const auto Constant = Ctx.asConst(Difference))
     return {FrameOffsetStatus::Exact, Constant->getZExtValue()};
 
-  auto Cached =
-      Cache ? Cache->lookup(Ctx, Predicate, {Difference}, 1) : std::nullopt;
+  auto Prepared = Cache ? Cache->prepare(Ctx, Predicate, {Difference}, 1)
+                        : FiniteQueryCache::PreparedQuery{};
+  auto Cached = Cache ? Cache->lookup(Prepared) : std::nullopt;
   const auto Domain =
       Cached ? std::move(*Cached)
-             : enumerateFiniteValues(Ctx, Predicate, {Difference}, 1, Settings,
-                                     MaxQueries, MaxSymbolicNodes, Queries);
+      : Encoding
+          ? enumerateFiniteValues(*Encoding, Predicate, {Difference}, 1,
+                                  MaxQueries, MaxSymbolicNodes, Queries)
+          : enumerateFiniteValues(Ctx, Predicate, {Difference}, 1, Settings,
+                                  MaxQueries, MaxSymbolicNodes, Queries);
   if (Ctx.numNodes() > MaxSymbolicNodes)
     return {FrameOffsetStatus::BudgetExceeded};
   if (Cache && !Cached)
-    Cache->store(Ctx, Predicate, {Difference}, 1, Domain);
+    Cache->store(std::move(Prepared), Domain);
   switch (Domain.Status) {
   case FiniteValueStatus::Complete:
     if (Domain.Tuples.empty())
@@ -150,6 +156,23 @@ FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,
     return {FrameOffsetStatus::BudgetExceeded};
   }
   llvm_unreachable("invalid finite value status");
+}
+
+FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,
+                             SymRef Root, solver::SolverOptions Settings,
+                             uint64_t MaxQueries, uint64_t MaxSymbolicNodes,
+                             uint64_t &Queries, FiniteQueryCache *Cache) {
+  return proveFrameOffsetImpl(Ctx, Predicate, Value, Root, Settings, MaxQueries,
+                              MaxSymbolicNodes, Queries, Cache, nullptr);
+}
+
+FrameOffset proveFrameOffset(FiniteDomainEncoding &Encoding, SymRef Predicate,
+                             SymRef Value, SymRef Root, uint64_t MaxQueries,
+                             uint64_t MaxSymbolicNodes, uint64_t &Queries,
+                             FiniteQueryCache *Cache) {
+  return proveFrameOffsetImpl(Encoding.context(), Predicate, Value, Root,
+                              Encoding.settings(), MaxQueries, MaxSymbolicNodes,
+                              Queries, Cache, &Encoding);
 }
 
 FrameOffset proveFrameOffset(SymContext &Ctx, SymRef Predicate, SymRef Value,

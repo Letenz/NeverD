@@ -41,6 +41,12 @@ public:
   llvm::Error snapshotBacking(uint64_t,
                               llvm::MutableArrayRef<uint8_t>) override;
   llvm::Error installHooks(BackendHooks) override;
+  void setExecutionWatches(const std::vector<ExecutionWatch> &W) override {
+    // A new epoch forces the direct page tables to be rebuilt with this set
+    // marked non-executable; the checked path reads the set per instruction.
+    ExecutionWatches = W;
+    ++WatchEpoch;
+  }
   llvm::Expected<ExecutionExit> runUntilExit(uint64_t, uint64_t) override;
   void stop() override { StopRequested.store(true); }
   bool timedOut() const override { return TimedOut; }
@@ -66,8 +72,9 @@ public:
 
 protected:
   CheckedBackend(unsigned MaxInstructionBytes, unsigned InstructionAlignment,
-                 bool UserMode)
-      : UserMode(UserMode), InstructionBytes(MaxInstructionBytes),
+                 bool UserMode, bool Direct = false)
+      : UserMode(UserMode), Direct(Direct),
+        InstructionBytes(MaxInstructionBytes),
         InstructionAlignment(InstructionAlignment) {}
   llvm::Error initializeDecoder(cs_arch, cs_mode);
   virtual bool canonicalRange(uint64_t, uint64_t) const = 0;
@@ -76,6 +83,10 @@ protected:
   virtual void setProgramCounter(uint64_t PC) = 0;
   virtual llvm::Error execute(const cs_insn &) = 0;
   virtual void onGuestException() {}
+  /// A direct contract admits nothing. The transport runs guest code until
+  /// the processor raises an event, which this call publishes as a pending
+  /// service request or a fault before it returns.
+  virtual llvm::Error executeDirect();
   virtual std::optional<ServiceRequest>
   decodeServiceRequest(const cs_insn &) const = 0;
   /// Context capture may occur in an instruction observer, but no mutation or
@@ -85,10 +96,14 @@ protected:
   llvm::Error access(uint64_t, uint64_t, unsigned, bool Recoverable = false,
                      bool Guest = false);
   llvm::Error raiseFault(BackendFault, bool Recoverable);
+  /// Whether \p Address lies in a current execution watch. A direct run uses
+  /// this to tell a watched-page fetch fault from a real one.
+  bool executionWatched(uint64_t Address) const;
   unsigned executionPermissions(unsigned P) const {
     return P | (UserMode ? UserAccessible : 0);
   }
   const bool UserMode;
+  const bool Direct;
   std::unique_ptr<MemoryProjection> Memory;
   BackendHooks Hooks;
   csh Decoder = 0;
@@ -99,6 +114,10 @@ protected:
   bool DeviceFailed = false;
   std::atomic<bool> StopRequested{false};
   std::chrono::steady_clock::time_point Deadline;
+  // Watches a direct run marks non-executable, and a counter that changes
+  // whenever the set does, so the page-table projection is rebuilt for it.
+  std::vector<ExecutionWatch> ExecutionWatches;
+  uint64_t WatchEpoch = 0;
 
 private:
   llvm::Error runImpl(uint64_t PC, uint64_t Timeout, bool &Started,

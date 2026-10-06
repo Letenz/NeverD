@@ -156,6 +156,37 @@ swiftBooleanTupleResultLocations(Arch Architecture) {
            Architecture == Arch::AArch64 ? a64reg::X2 : x86reg::RCX, 0, 1}};
 }
 
+// Swift 6.1.2 emits a CGPoint instance transform as
+// {double,double}(double,double,ptr swiftself) on both Darwin architectures.
+// Keep this complete input/result/context shape separate from general HFAs.
+bool swiftPointTransform(const SourceFunctionTypeHint &Hint) {
+  const auto Point = [](const TypeRef &Type) {
+    const auto Members = sourceAggregateMembers(Type);
+    return Type && Type->Kind == NdTypeKind::Struct && Type->Size == 16 &&
+           Type->Alignment == 8 && Type->Fields.size() == 2 &&
+           std::all_of(Type->Fields.begin(), Type->Fields.end(),
+                       [](const auto &Field) {
+                         return Field && Field->Kind == NdTypeKind::Float &&
+                                Field->Size == 8;
+                       }) &&
+           Members.size() == 2 && Members[0].ByteOffset == 0 &&
+           Members[1].ByteOffset == 8 &&
+           std::all_of(Members.begin(), Members.end(), [](const auto &M) {
+             return M.Type && M.Type->Kind == NdTypeKind::Float &&
+                    M.Type->Size == 8;
+           });
+  };
+  return Point(Hint.ReturnType) && Hint.Parameters.size() == 2 &&
+         Point(Hint.Parameters[0].Type) &&
+         Hint.Parameters[0].TheRole ==
+             SourceParameterTypeHint::Role::Ordinary &&
+         !Hint.Parameters[0].IndirectByValue &&
+         Hint.Parameters[1].TheRole ==
+             SourceParameterTypeHint::Role::SwiftContext &&
+         equalSourceTypes(Hint.Parameters[1].Type,
+                          NdType::makePtr(NdType::makeVoid()));
+}
+
 bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
   if (Architecture != Arch::AArch64 && Architecture != Arch::X64)
     return false;
@@ -170,6 +201,7 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
     return false;
   const auto ReturnMembers = sourceAggregateMembers(Hint.ReturnType);
   const bool MixedResult = mixedSwiftResult(Hint.ReturnType, ReturnMembers);
+  const bool PointTransform = swiftPointTransform(Hint);
   // Swift 6.1.2 CoreGraphics point actions on arm64 and x86_64 have exactly
   // void(double, double, ptr swiftself). This does not admit arbitrary x86_64
   // floating signatures, aggregate arguments, or stack-passed FP values.
@@ -200,18 +232,19 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
               getTargetRegInfo(Architecture).FPParamRegs.size())
         return false;
     } else if (Parameter.Type && Parameter.Type->Kind == NdTypeKind::Struct) {
-      // The closed CGRect shape lowers to four independent double lanes under
-      // arm64 swiftcc. Other records need their own compiler-backed contract.
+      // CGPoint transforms use two lanes on both architectures; CGRect uses
+      // four lanes on arm64. Other records need their own compiler contract.
       const auto Members = sourceAggregateMembers(Parameter.Type);
-      if (Architecture != Arch::AArch64 ||
+      if ((!PointTransform && Architecture != Arch::AArch64) ||
           Parameter.TheRole != SourceParameterTypeHint::Role::Ordinary ||
-          Members.size() != 4 || Parameter.Type->Size != 32 ||
+          Members.size() != (PointTransform ? 2U : 4U) ||
+          Parameter.Type->Size != (PointTransform ? 16U : 32U) ||
           !std::all_of(Members.begin(), Members.end(),
                        [](const auto &M) {
                          return M.Type && M.Type->Kind == NdTypeKind::Float &&
                                 M.Type->Size == 8;
                        }) ||
-          (FloatingParameters += 4) >
+          (FloatingParameters += Members.size()) >
               getTargetRegInfo(Architecture).FPParamRegs.size())
         return false;
     } else if (!Scalar(Parameter.Type)) {
@@ -254,7 +287,8 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
   if (Architecture == Arch::AArch64 &&
       Hint.ReturnType->Kind == NdTypeKind::Float && scalarType(Hint.ReturnType))
     return true;
-  if (MixedResult || swiftBooleanTupleResult(Hint.ReturnType, ReturnMembers))
+  if (MixedResult || PointTransform ||
+      swiftBooleanTupleResult(Hint.ReturnType, ReturnMembers))
     return true;
   return !ReturnMembers.empty() &&
          (ReturnMembers.size() <= 2 ||
@@ -592,7 +626,9 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
         Hint.Architecture == Arch::AArch64 && Members.size() == 4;
     if (!Floating && Members.size() > 2 && !SwiftFourWordReturn)
       return false;
-    if (Floating && Hint.Architecture != Arch::AArch64)
+    if (Floating && Hint.Architecture != Arch::AArch64 &&
+        !(Hint.Convention == SourceFunctionTypeHint::ConventionKind::Swift &&
+          swiftPointTransform(Hint)))
       return false;
     const auto Bank = Floating              ? TRI.FPParamRegs
                       : SwiftFourWordReturn ? TRI.IntParamRegs
@@ -752,6 +788,9 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
       !Hint.ReturnType || Hint.Parameters.size() > 64)
     return fail(Diagnostic, "Unsupported Darwin fixed source ABI");
   const auto &TRI = getTargetRegInfo(Architecture);
+  const bool PointTransform =
+      Convention == SourceFunctionTypeHint::ConventionKind::Swift &&
+      swiftPointTransform(Hint);
   size_t IntegerIndex = 0;
   size_t FloatIndex = 0;
   int64_t StackOffset = Architecture == Arch::X64 ? 8 : 0;
@@ -825,7 +864,7 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                              Parameter.Location);
         continue;
       }
-      if ((Floating && Architecture != Arch::AArch64) ||
+      if ((Floating && Architecture != Arch::AArch64 && !PointTransform) ||
           (!Floating && Members.size() > 2))
         return fail(Diagnostic, "Unsupported Darwin record parameter ABI");
       Parameter.Location = {};
@@ -895,7 +934,7 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
       if (Indirect)
         Hint.ReturnLocation = {SourceABICarrierKind::IndirectResultPointer,
                                TRI.indirectResultReg(), 0, 8};
-      else if ((Floating && Architecture != Arch::AArch64) ||
+      else if ((Floating && Architecture != Arch::AArch64 && !PointTransform) ||
                Members.size() > Bank.size())
         return fail(Diagnostic, "Unsupported Darwin record return ABI");
       for (size_t I = 0; !Indirect && I < Members.size(); ++I)

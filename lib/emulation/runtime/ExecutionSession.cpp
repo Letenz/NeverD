@@ -138,6 +138,9 @@ llvm::Error ExecutionSession::watchExecution(std::vector<ExecutionWatch> New) {
       Merged.push_back(W);
   }
   Watches = std::move(Merged);
+  // A direct contract enforces the watches in the CPU's page tables, so the
+  // backend needs the merged set; the checked path reads Watches directly.
+  CPU->setExecutionWatches(Watches);
   return llvm::Error::success();
 }
 

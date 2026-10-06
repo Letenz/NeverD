@@ -14,6 +14,12 @@ NeverD 默认使用内置 bitvector solver。精确 MBA 推导独立于通用 so
 
 `BitBlaster.WidePredicatesAgreeWithTheEvaluator` 在 8 至 256 位之间选取多种宽度，将有符号和无符号谓词与表达式求值器比较，覆盖奇数宽度、边界相邻值和第 64 位以上的有效位，并排除错误输出值。部分计数器测试检查完整查询、反例模型和门预算耗尽。原生缓存比较回归保留所有寄存器和标志观测，证明比较与更新的两种顺序，并拒绝被修改的原始循环体。
 
+<!-- i18n-section: pristine-encoding -->
+
+## 搜索前的编码副本
+
+`BitVectorSolver::cloneEncoding()` 复制尚未尝试 SAT 搜索的完整编码；搜索后或编码失败时返回空指针。副本独立持有可变子句、根传播、门和位映射，保留变量顺序、门计费和求解器设置。上下文必须比两个求解器存活更久；源求解器可独立修改或销毁。
+
 <!-- i18n-section: z3-build -->
 
 ## 可选 Z3 构建

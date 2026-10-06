@@ -323,6 +323,110 @@ swiftMangledCGContextCGRectClassMethodSourceABI(
                      : std::nullopt;
 }
 
+// Complete Swift 6.1.2 declarations for ordinary and generic class receivers
+// use two double input/result lanes and swiftself for CGPoint -> CGPoint.
+// Match the exact imported nominal type, excluding thunks, inout, async,
+// throwing and generic method signatures. No body or call effect is implied.
+inline std::optional<SwiftClassMethodDeclaration>
+swiftMangledCGPointClassMethodDeclaration(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 ||
+      (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
+      !Image.isCodeAddress(Entry))
+    return std::nullopt;
+  const auto *Only =
+      consistentSwiftFunctionDeclarationSymbol(Image, Entry, SymbolIndex);
+  if (!Only || Only->IsBoundaryGuess || Only->Origin != NameOrigin::Stated)
+    return std::nullopt;
+  llvm::StringRef Name(Only->Name);
+  Name.consume_front("_");
+  if (!Name.starts_with("$s"))
+    return std::nullopt;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 1024;
+  Options.MaxNodes = 128;
+  Options.MaxDepth = 24;
+  Options.MaxMemoryBytes = 65536;
+  Options.MaxOperations = 10000;
+  const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
+  using Node = llvm::SwiftDemangleNode;
+  const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
+    return N.Kind == Kind && !N.Text && !N.Index &&
+           N.Children.size() == Children;
+  };
+  const auto Text = [](const Node &N, llvm::StringRef Kind,
+                       llvm::StringRef Value) {
+    return N.Kind == Kind && N.Text && *N.Text == Value && !N.Index &&
+           N.Children.empty();
+  };
+  const auto Identifier = [](const Node &N, llvm::StringRef Kind) {
+    return N.Kind == Kind && N.Text && !N.Text->empty() && !N.Index &&
+           N.Children.empty();
+  };
+  if (!Parsed.Root || !Parsed.Error.empty() ||
+      !Shape(*Parsed.Root, "Global", 1) ||
+      !Shape(Parsed.Root->Children[0], "Function", 4))
+    return std::nullopt;
+  const auto &Function = Parsed.Root->Children[0];
+  const auto &Owner = Function.Children[0];
+  const auto &Member = Function.Children[1];
+  const auto &Labels = Function.Children[2];
+  const auto &Type = Function.Children[3];
+  if (!Shape(Owner, "Class", 2) || !Identifier(Owner.Children[0], "Module") ||
+      !Identifier(Owner.Children[1], "Identifier") ||
+      !(Identifier(Member, "Identifier") ||
+        (Shape(Member, "PrivateDeclName", 2) &&
+         Identifier(Member.Children[0], "Identifier") &&
+         Identifier(Member.Children[1], "Identifier"))) ||
+      Labels.Kind != "LabelList" || Labels.Text || Labels.Index ||
+      Labels.Children.size() > 1 ||
+      (!Labels.Children.empty() &&
+       !Identifier(Labels.Children[0], "Identifier") &&
+       !Shape(Labels.Children[0], "FirstElementMarker", 0)) ||
+      !Shape(Type, "Type", 1) || !Shape(Type.Children[0], "FunctionType", 2) ||
+      !Shape(Type.Children[0].Children[0], "ArgumentTuple", 1) ||
+      !Shape(Type.Children[0].Children[1], "ReturnType", 1))
+    return std::nullopt;
+  const auto Point = [&](const Node &N) {
+    return Shape(N, "Type", 1) && Shape(N.Children[0], "Structure", 2) &&
+           Text(N.Children[0].Children[0], "Module", "__C") &&
+           Text(N.Children[0].Children[1], "Identifier", "CGPoint");
+  };
+  const auto &Argument = Type.Children[0].Children[0].Children[0];
+  const bool NamedPoint =
+      Shape(Argument, "Type", 1) && Shape(Argument.Children[0], "Tuple", 1) &&
+      Shape(Argument.Children[0].Children[0], "TupleElement", 1) &&
+      Point(Argument.Children[0].Children[0].Children[0]);
+  if ((!Point(Argument) && !NamedPoint) ||
+      !Point(Type.Children[0].Children[1].Children[0]))
+    return std::nullopt;
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+  const auto Double = NdType::makeFloat(8);
+  Hint.ReturnType = NdType::makeStruct({Double, Double});
+  Hint.Parameters = {{"point", Hint.ReturnType},
+                     {"self", NdType::makePtr(NdType::makeVoid())}};
+  Hint.Parameters[1].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+  std::string Error;
+  if (!assignDarwinSwiftSourceABI(Hint, Image.Arch, Error))
+    return std::nullopt;
+  return SwiftClassMethodDeclaration{*Owner.Children[0].Text,
+                                     *Owner.Children[1].Text, std::move(Hint)};
+}
+
+inline std::optional<SourceFunctionTypeHint>
+swiftMangledCGPointClassMethodSourceABI(
+    const BinaryImage &Image, va_t Entry,
+    const SwiftFunctionSymbolIndex *SymbolIndex = nullptr) {
+  auto Declaration =
+      swiftMangledCGPointClassMethodDeclaration(Image, Entry, SymbolIndex);
+  return Declaration ? std::optional<SourceFunctionTypeHint>(
+                           std::move(Declaration->Signature))
+                     : std::nullopt;
+}
+
 // Receiver discovery and both publication replays consume the same complete
 // entry declaration, including the logical index of swiftself.
 inline std::optional<SwiftClassMethodDeclaration>
@@ -332,8 +436,10 @@ swiftMangledReceiverClassMethodDeclaration(
   if (auto Declaration =
           swiftMangledZeroArgClassMethodDeclaration(Image, Entry, SymbolIndex))
     return Declaration;
-  return swiftMangledCGContextCGRectClassMethodDeclaration(Image, Entry,
-                                                           SymbolIndex);
+  if (auto Declaration = swiftMangledCGContextCGRectClassMethodDeclaration(
+          Image, Entry, SymbolIndex))
+    return Declaration;
+  return swiftMangledCGPointClassMethodDeclaration(Image, Entry, SymbolIndex);
 }
 
 inline std::optional<SourceFunctionTypeHint>

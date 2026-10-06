@@ -36,8 +36,10 @@
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Compiler.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -46,6 +48,31 @@ namespace neverd::solver {
 
 using symbolic::SymOp;
 using symbolic::SymRef;
+
+namespace {
+
+// Keep the fixed radix buckets out of small traversals' stack frames.
+LLVM_ATTRIBUTE_NOINLINE void sortLargeNodeOrder(std::vector<uint32_t> &Order,
+                                                std::vector<uint32_t> &Work) {
+  const auto Maximum = *std::max_element(Order.begin(), Order.end());
+  Work.resize(Order.size());
+  for (unsigned Shift = 0; Shift < 32 && (Maximum >> Shift); Shift += 11) {
+    std::array<size_t, 1U << 11> Offsets{};
+    for (uint32_t Index : Order)
+      ++Offsets[(Index >> Shift) & ((1U << 11) - 1)];
+    size_t Begin = 0;
+    for (size_t &Count : Offsets) {
+      const auto Size = Count;
+      Count = Begin;
+      Begin += Size;
+    }
+    for (uint32_t Index : Order)
+      Work[Offsets[(Index >> Shift) & ((1U << 11) - 1)]++] = Index;
+    Order.swap(Work);
+  }
+}
+
+} // namespace
 
 const char *blastErrorName(BlastError E) {
   switch (E) {
@@ -64,6 +91,13 @@ const char *blastErrorName(BlastError E) {
 BitBlaster::BitBlaster(const symbolic::SymContext &Ctx, CnfEncoder &Enc,
                        const BlastLimits &Limits)
     : Ctx(Ctx), Enc(Enc), Limits(Limits), GateBase(Enc.numGates()) {}
+
+BitBlaster::BitBlaster(CnfEncoder &Enc, const BitBlaster &Other)
+    : Ctx(Other.Ctx), Enc(Enc), Limits(Other.Limits), Error(Other.Error),
+      GateBase(Other.GateBase), BitPool(Other.BitPool), Encoded(Other.Encoded),
+      VarSlices(Other.VarSlices), EncodedVars(Other.EncodedVars) {
+  // Reachability containers are per-call scratch, not encoded facts.
+}
 
 bool BitBlaster::withinGateBudget() const {
   return Limits.MaxGates == 0 || Enc.numGates() - GateBase <= Limits.MaxGates;
@@ -123,8 +157,14 @@ bool BitBlaster::encodeReachable(SymRef Root) {
   }
 
   // Interning appends a node only after its operands exist, so this is a
-  // topological order and one sort replaces a post-order walk.
-  llvm::sort(Order);
+  // topological order and one sort replaces a post-order walk. Large graphs
+  // use integer radix passes with the same ascending order. Traversal has
+  // emptied Work, so its storage can serve as the permutation scratch.
+  if (Order.size() < 1024) {
+    llvm::sort(Order);
+  } else {
+    sortLargeNodeOrder(Order, Work);
+  }
 
   for (uint32_t Index : Order) {
     if (!encodeNode(SymRef(Index)))

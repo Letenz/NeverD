@@ -152,8 +152,7 @@ std::optional<Key> makeKey(const SymContext &Ctx, SymRef Predicate,
   return Result;
 }
 
-std::optional<uint64_t> resultWords(const SymContext &Ctx,
-                                    llvm::ArrayRef<SymRef> Values,
+std::optional<uint64_t> resultWords(llvm::ArrayRef<uint32_t> Widths,
                                     uint32_t Limit, const FiniteValues &Result,
                                     uint64_t Budget) {
   // Account for entry/result containers as well as numeric tuple words, so
@@ -170,29 +169,74 @@ std::optional<uint64_t> resultWords(const SymContext &Ctx,
       Result.Tuples.size() > Limit)
     return std::nullopt;
   for (const auto &Tuple : Result.Tuples) {
-    if (Tuple.size() != Values.size() || Budget - Words < 3 ||
+    if (Tuple.size() != Widths.size() || Budget - Words < 3 ||
         Tuple.size() > Budget - Words - 3)
       return std::nullopt;
     Words += 3 + Tuple.size();
     for (size_t I = 0; I < Tuple.size(); ++I)
-      if (Ctx.width(Values[I]) < 64 && (Tuple[I] >> Ctx.width(Values[I])) != 0)
+      if (Widths[I] < 64 && (Tuple[I] >> Widths[I]) != 0)
         return std::nullopt;
   }
   return Words;
 }
 } // namespace
 
-std::optional<FiniteValues> FiniteQueryCache::lookup(
+FiniteQueryCache::PreparedQuery FiniteQueryCache::prepare(
     const symbolic::SymContext &Ctx, symbolic::SymRef Predicate,
     llvm::ArrayRef<symbolic::SymRef> Values, uint32_t Limit) const {
-  const auto Key = makeKey(Ctx, Predicate, Values, Limit, MaxWords);
+  PreparedQuery Query;
+  auto Key = makeKey(Ctx, Predicate, Values, Limit, MaxWords);
   if (!Key)
+    return Query;
+  Query.Words = std::move(*Key);
+  Query.Widths.reserve(Values.size());
+  for (auto Value : Values)
+    Query.Widths.push_back(Ctx.width(Value));
+  Query.Limit = Limit;
+  return Query;
+}
+
+std::optional<FiniteValues>
+FiniteQueryCache::lookup(const PreparedQuery &Query) const {
+  if (!Query.Limit || Query.Words.empty() || Query.Words.size() > MaxWords)
     return std::nullopt;
-  const auto Found = Entries.find(*Key);
+  const auto Found = Entries.find(Query.Words);
   if (Found == Entries.end())
     return std::nullopt;
   Recency.splice(Recency.end(), Recency, Found->second.Recent);
   return Found->second.Result;
+}
+
+std::optional<FiniteValues> FiniteQueryCache::lookup(
+    const symbolic::SymContext &Ctx, symbolic::SymRef Predicate,
+    llvm::ArrayRef<symbolic::SymRef> Values, uint32_t Limit) const {
+  return lookup(prepare(Ctx, Predicate, Values, Limit));
+}
+
+void FiniteQueryCache::store(PreparedQuery Query, const FiniteValues &Result) {
+  if (Result.Status != FiniteValueStatus::Complete &&
+      Result.Status != FiniteValueStatus::TooManyValues)
+    return;
+  if (!Query.Limit || Query.Words.empty() || Query.Words.size() > MaxWords ||
+      Entries.contains(Query.Words))
+    return;
+  const auto Words = resultWords(Query.Widths, Query.Limit, Result,
+                                 MaxWords - Query.Words.size());
+  if (!Words)
+    return;
+  const uint64_t Total = Query.Words.size() + *Words;
+  while (Total > MaxWords - StoredWords) {
+    assert(!Recency.empty());
+    const auto Oldest = Entries.find(*Recency.front());
+    StoredWords -= Oldest->second.Words;
+    Recency.pop_front();
+    Entries.erase(Oldest);
+  }
+  const auto Added =
+      Entries.emplace(std::move(Query.Words), Entry{Result, Total, {}}).first;
+  Recency.push_back(&Added->first);
+  Added->second.Recent = std::prev(Recency.end());
+  StoredWords += Total;
 }
 
 void FiniteQueryCache::store(const symbolic::SymContext &Ctx,
@@ -202,31 +246,7 @@ void FiniteQueryCache::store(const symbolic::SymContext &Ctx,
   if (Result.Status != FiniteValueStatus::Complete &&
       Result.Status != FiniteValueStatus::TooManyValues)
     return;
-  auto Key = makeKey(Ctx, Predicate, Values, Limit, MaxWords);
-  if (!Key || Entries.contains(*Key))
-    return;
-  // Validate the complete candidate against the standalone capacity before
-  // evicting any proof. A malformed or oversized result cannot flush useful
-  // entries, and the subtraction keeps the total charge overflow-safe.
-  if (Key->size() > MaxWords)
-    return;
-  const auto Words =
-      resultWords(Ctx, Values, Limit, Result, MaxWords - Key->size());
-  if (!Words)
-    return;
-  const uint64_t Total = Key->size() + *Words;
-  while (Total > MaxWords - StoredWords) {
-    assert(!Recency.empty());
-    const auto Oldest = Entries.find(*Recency.front());
-    StoredWords -= Oldest->second.Words;
-    Recency.pop_front();
-    Entries.erase(Oldest);
-  }
-  const auto Added =
-      Entries.emplace(std::move(*Key), Entry{Result, Total, {}}).first;
-  Recency.push_back(&Added->first);
-  Added->second.Recent = std::prev(Recency.end());
-  StoredWords += Total;
+  store(prepare(Ctx, Predicate, Values, Limit), Result);
 }
 
 } // namespace neverd::analysis::detail

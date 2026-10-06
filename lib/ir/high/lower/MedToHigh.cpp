@@ -18,6 +18,8 @@
 
 #include "neverd/ir/high/MedToHigh.h"
 
+#include "../../../loader/Swift/SwiftErrorSourceProjection.h"
+
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -317,6 +319,11 @@ ExprPtr MedToHighConverter::inlineableDefinition(VarKey Key) const {
 }
 
 TypeRef MedToHighConverter::sourceCallResultType(const MedOp &Op) const {
+  if (Op.SourceCallHint &&
+      isNativeSwiftErrorSourceCall(*Op.SourceCallHint, TargetArch))
+    if (auto Type = swiftErrorCallResultType(Op.SourceCallHint->Signature);
+        Type && Type->Size == Op.Output.Size)
+      return Type;
   if (Op.SourceCallHint)
     if (auto Type = sourceABICallResultType(Op.SourceCallHint->Signature);
         Type && Type->Size == Op.Output.Size)
@@ -339,6 +346,14 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
     const auto &Binding = Bindings[Index];
     const auto &Declared =
         CurMed->SourceTypeHint->Parameters[Binding.ParameterIndex];
+    if (Declared.TheRole == SourceParameterTypeHint::Role::SwiftErrorResult) {
+      // The machine input is the slot's value, not its address. A dedicated
+      // entry capture prevents a later memory effect from causing a reload.
+      if (!SwiftErrorEntryInput)
+        return HighExpr::makeUndef(V.Size);
+      return sourceBitSlice(
+          HighExpr::makeVar(*SwiftErrorEntryInput, Binding.Type), 0, V.Size);
+    }
     Parameter.Id = static_cast<int>(Binding.ParameterIndex);
     Parameter.Size = Declared.Type->Size;
     if (!Declared.Components.empty())
@@ -717,6 +732,7 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
   PhiOutputVars.clear();
   MemoryReadOutputs.clear();
   NextHighTempId = 0;
+  SwiftErrorEntryInput.reset();
   auto ReserveIdentity = [&](const MedVar &Value) {
     if (Value.Id >= NextHighTempId && Value.Id < INT_MAX)
       NextHighTempId = Value.Id + 1;
@@ -733,6 +749,16 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
         ReserveIdentity(Value);
     }
   }
+
+  if (Med.SourceParametersBound && Med.SourceTypeHint)
+    if (const auto Error = sourceABIErrorResult(*Med.SourceTypeHint)) {
+      MedVar Input;
+      Input.Kind = MedVar::Temp;
+      Input.Id = NextHighTempId++;
+      Input.Size = Error->Type->Size;
+      Input.TheArch = TargetArch;
+      SwiftErrorEntryInput = Input;
+    }
 
   for (const MedCallClobber &Clobber : Med.CallClobbers)
     if (Clobber.PreservedPrefixSize > 0 && Clobber.PreservedInput.Id >= 0)
@@ -1016,6 +1042,30 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   auto PtrParamIds = detectPtrParamIds(Med);
   const auto &TRI = getTargetRegInfo(TheArch);
 
+  auto CaptureSwiftError = [&] {
+    if (!SwiftErrorEntryInput || !Med.SourceTypeHint)
+      return;
+    const auto Error = sourceABIErrorResult(*Med.SourceTypeHint);
+    if (!Error)
+      return;
+    MedVar Slot;
+    Slot.Kind = MedVar::Param;
+    Slot.Id = static_cast<int>(Error->ParameterIndex);
+    Slot.RegOff = Error->Location.RegisterOffset;
+    Slot.Size = 8;
+    Slot.TheArch = TheArch;
+    HighStmt Capture;
+    Capture.Kind = StmtKind::Assign;
+    Capture.Dst = HighExpr::makeVar(*SwiftErrorEntryInput, Error->Type);
+    Capture.Val = HighExpr::makeLoad(
+        HighExpr::makeVar(
+            Slot, Med.SourceTypeHint->Parameters[Error->ParameterIndex].Type),
+        Error->Type);
+    Func.Body.insert(Func.Body.begin(), std::move(Capture));
+    Func.SwiftErrorEntry = HighFunc::SwiftErrorEntryProjection{
+        *Med.SourceTypeHint, *SwiftErrorEntryInput};
+  };
+
   if (Med.SourceTypeHint) {
     for (const auto &P : Med.SourceTypeHint->Parameters)
       Func.Params.push_back({P.Name, P.Type});
@@ -1058,6 +1108,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
     }
     buildExpressions(Med);
     structureControlFlow(Func, Med);
+    CaptureSwiftError();
     Trace.high(Func, "structured");
     inferTypes(Func);
     eraseKeepingBranchEntries(
@@ -1078,6 +1129,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   buildExpressions(Med);
   auto TStruct = std::chrono::steady_clock::now();
   structureControlFlow(Func, Med);
+  CaptureSwiftError();
   Trace.high(Func, "structured");
   auto TSimp = std::chrono::steady_clock::now();
   simplifyControlFlow(Func, Med);

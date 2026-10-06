@@ -93,12 +93,14 @@ void removeUnreachableCode(std::vector<HighStmt> &Stmts);
 /// provenance. Uses the same coalescer as final source normalization.
 void coalesceBranchEntryStatements(std::vector<HighStmt> &Stmts);
 void eliminateUnusedValues(std::vector<HighStmt> &Stmts);
+void eliminateUnusedValues(HighFunc &Func);
 
 //===----------------------------------------------------------------------===//
 // Variable renaming and post-rename cleanup  (defined in HighVarRename.cpp)
 //===----------------------------------------------------------------------===//
 
 void renameVars(std::vector<HighStmt> &Stmts);
+void postRenameCleanup(HighFunc &Func);
 void postRenameCleanup(std::vector<HighStmt> &Stmts);
 
 } // namespace neverd

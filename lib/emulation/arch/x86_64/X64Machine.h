@@ -29,9 +29,16 @@ inline bool canonicalRange(uint64_t Address, uint64_t Size) {
 }
 } // namespace x64
 class MemoryProjection;
-llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
-                                            bool UserMode = false,
-                                            bool ExceptionMonitor = false);
+/// Build the guest page tables and return the transport-physical root. When
+/// \p NoExecutePages is non-empty, those guest pages are additionally marked
+/// non-executable regardless of their permissions, so a direct run's first
+/// fetch into one faults; \p WatchEpoch distinguishes successive overlays so a
+/// cached projection is not reused across a change to the set.
+llvm::Expected<uint64_t>
+buildX64PageTables(MemoryProjection &Memory, bool UserMode = false,
+                   bool ExceptionMonitor = false,
+                   llvm::ArrayRef<ExecutionWatch> NoExecutePages = {},
+                   uint64_t WatchEpoch = 0);
 struct X64MachineState {
   bool UserMode = false;
   std::array<uint64_t, unsigned(X64Register::SS) + 1> Registers{};
@@ -67,6 +74,16 @@ public:
   virtual X64BranchModel branchModel() const { return X64BranchModel::Intel; }
   virtual llvm::Error step(X64MachineState &State, uint64_t PageTableRoot,
                            MachineRunControl Control) = 0;
+  /// Native execution of user code that nothing admitted, until the processor
+  /// raises a synchronous exception or \p Control interrupts it. A system
+  /// call instruction is such an exception: this profile leaves the system
+  /// call extension disabled, so the instruction is undefined and its address
+  /// is the reported program counter. An exception returns X64ExceptionError
+  /// with the architectural state at the faulting instruction; an interrupted
+  /// run publishes the state at the instruction boundary it stopped on.
+  /// Transports without this entry return an unsupported-contract error.
+  virtual llvm::Error run(X64MachineState &State, uint64_t PageTableRoot,
+                          MachineRunControl Control);
 };
 } // namespace neverd::emulation
 #endif

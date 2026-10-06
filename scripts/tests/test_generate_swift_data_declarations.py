@@ -9,6 +9,7 @@ from scripts.generate_swift_data_declarations import (conformance_storage,
                                                         hashable_value,
                                                         METADATA_TYPES,
                                                         metadata_storage,
+                                                        range_index_descriptor_storage,
                                                         render,
                                                         witness_storage)
 
@@ -74,9 +75,64 @@ PUBLISHER_PROBES = [('metadata_CurrentValueSubject',
                      'witness_CurrentValueSubjectPublisher')]
 PUBLISHER_IR = (Path(__file__).parent / 'fixtures' /
                 'swift_publisher_conformance.ll').read_text()
+RANGE_INDEX_IR = (Path(__file__).parent / 'fixtures' /
+                  'swift_range_index_descriptor.ll').read_text()
 
 
 class SwiftDataDeclarationTests(unittest.TestCase):
+    def test_range_index_descriptor_preserves_complete_symbolic_type_query(self):
+        self.assertEqual(range_index_descriptor_storage(RANGE_INDEX_IR),
+                         {'$sSS5IndexVMn'})
+        renamed = re.sub(r'%(\d+)\b', r'%renamed_\1', RANGE_INDEX_IR)
+        renamed = re.sub(r'(?m)^(\d+):', r'renamed_\1:', renamed)
+        self.assertEqual(range_index_descriptor_storage(renamed),
+                         {'$sSS5IndexVMn'})
+
+    def test_range_index_descriptor_rejects_altered_or_incomplete_evidence(self):
+        changes = [
+            ('external global %swift.type_descriptor', 'extern_weak global %swift.type_descriptor'),
+            ('external global %swift.type_descriptor', 'external thread_local global %swift.type_descriptor'),
+            ('external global %swift.type_descriptor', 'external global ptr'),
+            ('align 4', 'align 8'),
+            ('private unnamed_addr constant ptr', 'private unnamed_addr global ptr'),
+            ('constant ptr @"$sSS5IndexVMn"', 'constant ptr @"$sOtherMn"'),
+            ('i8 2, i32 trunc', 'i8 1, i32 trunc'),
+            ('[3 x i8] c"Sny"', '[3 x i8] c"Say"'),
+            ('[1 x i8] c"G"', '[1 x i8] c"x"'),
+            ('i32 0, i32 2) to i64', 'i32 0, i32 1) to i64'),
+            ('i32 -9 }, align 8', 'i32 -8 }, align 8'),
+            ('ptr nonnull @"$sSnySS5IndexVGMD"', 'ptr nonnull @"other"'),
+            ('load atomic i64', 'load i64'),
+            ('icmp slt i64', 'icmp ult i64'),
+            ('ashr i64 %1, 32', 'lshr i64 %1, 32'),
+            ('sub nsw i64 0, %7', 'sub nsw i64 %7, 0'),
+            ('ashr exact i64 %sext, 32', 'ashr exact i64 %sext, 16'),
+            ('ptr %12, i64 %8, ptr null, ptr null', 'ptr %12, i64 %8, ptr %0, ptr null'),
+            ('ptr %12, i64 %8, ptr null, ptr null', 'ptr %0, i64 %8, ptr null, ptr null'),
+            ('store atomic i64 %14', 'store atomic i64 %1'),
+            ('[ %14, %6 ]', '[ %1, %6 ]'),
+            ('ret ptr %0', 'ret ptr null'),
+            ('declare swiftcc ptr @swift_getTypeByMangledNameInContext2(ptr, i64, ptr, ptr)', 'declare ptr @swift_getTypeByMangledNameInContext2(ptr, i64, ptr, ptr)'),
+            ('declare swiftcc ptr @swift_getTypeByMangledNameInContext2(ptr, i64, ptr, ptr)', 'declare swiftcc ptr @swift_getTypeByMangledNameInContext2(ptr, i64, ptr)'),
+            ('ret ptr %5', 'call void @escape(ptr %0)\n  ret ptr %5'),
+        ]
+        for before, after in changes:
+            with self.subTest(before=before, after=after):
+                self.assertIn(before, RANGE_INDEX_IR)
+                with self.assertRaises(ValueError):
+                    range_index_descriptor_storage(RANGE_INDEX_IR.replace(before, after))
+        for suffix in [
+            '\n@"$sSS5IndexVMn" = external global %swift.type_descriptor, align 4\n',
+            '\ndefine void @metadata_StringIndexRange() {\nret void\n}\n',
+            '\ndefine void @__swift_instantiateConcreteTypeFromMangledName() {\nret void\n}\n',
+            '\ndeclare swiftcc ptr @swift_getTypeByMangledNameInContext2(ptr, i64, ptr, ptr)\n',
+            RANGE_INDEX_IR,
+        ]:
+            with self.subTest(suffix=suffix[:50]), self.assertRaises(ValueError):
+                range_index_descriptor_storage(RANGE_INDEX_IR + suffix)
+        with self.assertRaises(ValueError):
+            range_index_descriptor_storage(' ' * (1024 * 1024 + 1))
+
     def test_object_identifier_uses_metatype_value_and_direct_storage_probes(self):
         self.assertIn('ObjectIdentifier', METADATA_TYPES)
         self.assertIn('ObjectIdentifier', HASHABLE_TYPES)

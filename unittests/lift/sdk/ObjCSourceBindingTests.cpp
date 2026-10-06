@@ -3163,12 +3163,22 @@ struct SwiftWitnessAccessorFixture {
 } // namespace
 
 TEST(ObjCSourceBindings, SwiftWitnessUndefRequiresGenericDescriptorContract) {
-  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+  for (const auto &[Architecture, Range, StringProtocol] :
+       {std::tuple{Arch::AArch64, false, false},
+        std::tuple{Arch::X64, false, false},
+        std::tuple{Arch::AArch64, true, false},
+        std::tuple{Arch::X64, true, false},
+        std::tuple{Arch::AArch64, false, true},
+        std::tuple{Arch::X64, false, true}}) {
     SwiftWitnessAccessorFixture F(Architecture);
-    constexpr auto Descriptor =
-        "_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc";
-    constexpr auto Module =
-        "/System/Library/Frameworks/Combine.framework/Combine";
+    const auto Descriptor =
+        StringProtocol ? "_$sSSSysMc"
+        : Range        ? "_$sSnyxGSXsMc"
+                : "_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc";
+    const auto Module =
+        (Range || StringProtocol)
+            ? "/usr/lib/swift/libswiftCore.dylib"
+            : "/System/Library/Frameworks/Combine.framework/Combine";
     F.Image.ImportStorageSlots.erase(F.ConformanceSlot);
     F.Image.ImportPtrSlots[F.ConformanceSlot] = Descriptor;
     F.Image.DyldBindSlots[F.ConformanceSlot] = {Descriptor, 0, Module, false};
@@ -3192,6 +3202,7 @@ TEST(ObjCSourceBindings, SwiftWitnessUndefRequiresGenericDescriptorContract) {
               F.ConformanceSlot);
     EXPECT_EQ(F.WitnessCall->Operands[2]->Kind, ExprKind::Undef);
     EXPECT_EQ(Call->SourceCallHint->Signature.Parameters.size(), 3U);
+    EXPECT_TRUE(Call->SourceCallHint->BorrowedByteInputs.empty());
     EXPECT_TRUE(objcSourceCallBound(*Call, F.Image, {}, nullptr, nullptr,
                                     &Result.Function));
   }
@@ -3199,14 +3210,21 @@ TEST(ObjCSourceBindings, SwiftWitnessUndefRequiresGenericDescriptorContract) {
 
 namespace {
 struct GenericWitnessFixture : SwiftWitnessAccessorFixture {
-  explicit GenericWitnessFixture(Arch Architecture, bool Alias = false)
+  explicit GenericWitnessFixture(Arch Architecture, bool Alias = false,
+                                 bool Range = false,
+                                 bool StringProtocol = false)
       : SwiftWitnessAccessorFixture(Architecture) {
-    constexpr auto Descriptor =
-        "_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc";
+    const auto Descriptor =
+        StringProtocol ? "_$sSSSysMc"
+        : Range        ? "_$sSnyxGSXsMc"
+                : "_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc";
     Image.ImportStorageSlots.erase(ConformanceSlot);
     Image.ImportPtrSlots[ConformanceSlot] = Descriptor;
     Image.DyldBindSlots[ConformanceSlot] = {
-        Descriptor, 0, "/System/Library/Frameworks/Combine.framework/Combine",
+        Descriptor, 0,
+        (Range || StringProtocol)
+            ? "/usr/lib/swift/libswiftCore.dylib"
+            : "/System/Library/Frameworks/Combine.framework/Combine",
         false};
     WitnessCall->Operands[2] = HighExpr::makeUndef(8);
     Accessor.Body = {Accessor.Body[2], Accessor.Body[4]};
@@ -3227,10 +3245,17 @@ struct GenericWitnessFixture : SwiftWitnessAccessorFixture {
 } // namespace
 
 TEST(ObjCSourceBindings, SwiftWitnessUndefRejectsUnprovedInputAndABI) {
-  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+  for (const auto &[Architecture, Range, StringProtocol] :
+       {std::tuple{Arch::AArch64, false, false},
+        std::tuple{Arch::X64, false, false},
+        std::tuple{Arch::AArch64, true, false},
+        std::tuple{Arch::X64, true, false},
+        std::tuple{Arch::AArch64, false, true},
+        std::tuple{Arch::X64, false, true}}) {
+    SCOPED_TRACE(Range);
     for (unsigned Mutation = 0; Mutation != 33; ++Mutation) {
       SCOPED_TRACE(Mutation);
-      GenericWitnessFixture F(Architecture);
+      GenericWitnessFixture F(Architecture, false, Range, StringProtocol);
       auto Hint =
           std::make_shared<SourceCallTypeHint>(*F.WitnessCall->SourceCallHint);
       F.WitnessCall->SourceCallHint = Hint;
@@ -3327,7 +3352,7 @@ TEST(ObjCSourceBindings, SwiftWitnessUndefRejectsUnprovedInputAndABI) {
         F.Image.ConflictingImportStorageSlots.insert(F.ConformanceSlot);
         break;
       case 27:
-        Descriptor.Name = "_$sSSSysMc";
+        Descriptor.Name = "_$sS2sSTsMc";
         F.Image.ImportPtrSlots[F.ConformanceSlot] = Descriptor.Name;
         Descriptor.Module = "/usr/lib/swift/libswiftCore.dylib";
         break;
@@ -5422,7 +5447,146 @@ SwiftTypeMetadataFixture swiftCoreDescriptorFixture(llvm::StringRef Descriptor,
   Type[5 + Suffix.size()] = 0;
   return F;
 }
+
+SwiftTypeMetadataFixture swiftRangeIndexTypeMetadataFixture(Arch Architecture) {
+  auto F = swiftCoreDescriptorFixture("_$sSS5IndexVMn", "");
+  F.Image.Arch = Architecture;
+  F.Image.ImportPtrSlots[F.DescriptorSlot] = "_$sSS5IndexVMn";
+  auto Hint = std::make_shared<SourceCallTypeHint>(
+      *F.Function.Body[0].Val->SourceCallHint);
+  std::string Error;
+  EXPECT_TRUE(assignDarwinScalarSourceABI(Hint->Signature, Architecture, Error))
+      << Error;
+  F.Function.Body[0].Val->SourceCallHint = std::move(Hint);
+  F.Image.Symbols[0].Name = "_$sSnySS5IndexVGMR";
+  F.Image.Symbols[1].Name = "_$sSnySS5IndexVGMd";
+  auto &Data = F.Image.Segments[0].Data;
+  llvm::support::endian::write32le(Data.data() + F.Reference + 4 - 0x1000, 9);
+  auto *Type = Data.data() + F.TypeReference - 0x1000;
+  std::memcpy(Type, "Sny", 3);
+  Type[3] = 2;
+  llvm::support::endian::write32le(
+      Type + 4, uint32_t(F.DescriptorSlot - (F.TypeReference + 4)));
+  Type[8] = 'G';
+  Type[9] = 0;
+  return F;
+}
 } // namespace
+
+TEST(ObjCSourceBindings, SwiftRangeIndexDescriptorKeepsItsCompleteRecipe) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto F = swiftRangeIndexTypeMetadataFixture(Architecture);
+    ASSERT_TRUE(darwinRuntimeGlobalAddressHint(F.Image, F.DescriptorSlot))
+        << "compiler data identity";
+    ASSERT_TRUE(objc_binding_detail::swiftTypeMetadataDescriptor(
+        F.Image, F.DescriptorSlot))
+        << "nested descriptor identity";
+    const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference);
+    ASSERT_TRUE(Proof);
+    ASSERT_EQ(Proof->Descriptors.size(), 1U);
+    EXPECT_EQ(Proof->Descriptors[0].Offset, 3U);
+    EXPECT_EQ(Proof->Descriptors[0].Symbol, "_$sSS5IndexVMn");
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+    for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+      EXPECT_TRUE(objcSourceCallBound(*Arg, F.Image, {}));
+    std::set<std::string> Names;
+    const auto Source = renderObjCSwiftTypeMetadataHelpers(
+        F.Image, Bound.SwiftTypeMetadataPairs, Names);
+    EXPECT_NE(Source.find("__asm__(\"_$sSS5IndexVMn\")"), std::string::npos);
+    EXPECT_NE(Source.find(".type_reference[3] = 2"), std::string::npos);
+    EXPECT_NE(Source.find(".type_reference[8] = 71"), std::string::npos);
+    EXPECT_NE(Source.find(".reference.length = 9"), std::string::npos);
+  }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 20; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto F = swiftRangeIndexTypeMetadataFixture(Architecture);
+      const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_EQ(Bound.SwiftTypeMetadataPairs.size(), 1U);
+      auto &Bind = F.Image.DyldBindSlots[F.DescriptorSlot];
+      auto *Type = F.Image.Segments[0].Data.data() + F.TypeReference - 0x1000;
+      switch (Mutation) {
+      case 0:
+        Bind.WeakImport = true;
+        break;
+      case 1:
+        Bind.Addend = 8;
+        break;
+      case 2:
+        Bind.Module = "/tmp/libswiftCore.dylib";
+        break;
+      case 3:
+        Bind.Name = "_$sSS5IndexVMa";
+        break;
+      case 4:
+        Bind.Name = "_$s4Demo6StringV5IndexVMn";
+        break;
+      case 5:
+        F.Image.Segments[2].ReadOnlyAfterRelocations = false;
+        break;
+      case 6:
+        F.Image.ConflictingImportStorageSlots.insert(F.DescriptorSlot);
+        break;
+      case 7:
+        F.Image.Sections.push_back(F.Image.Sections[2]);
+        break;
+      case 8:
+        Type[8] = 'x';
+        break;
+      case 9:
+        Type[1] = 'a';
+        break;
+      case 10:
+        Type[4] += 8;
+        break;
+      case 11:
+        Type[9] = 1;
+        break;
+      case 12:
+        F.Image.Segments[1].Data[0x20] = 1;
+        break;
+      case 13:
+        F.Image.Symbols.push_back(F.Image.Symbols[0]);
+        break;
+      case 14:
+        F.Image.DyldBindSlots.erase(F.DescriptorSlot);
+        break;
+      case 15:
+        F.Image.Arch = Arch::ARM;
+        break;
+      case 16:
+        F.Image.Bits = Bitness::Bits32;
+        break;
+      case 17:
+        F.Image.MachOTwoLevelNamespace = false;
+        break;
+      case 18:
+        F.Image.MachOChainedFixupsAmbiguous = true;
+        break;
+      case 19:
+        F.Image.DataPtrRelocSlots.insert(F.DescriptorSlot);
+        break;
+      }
+      EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+          F.Image, F.Cache, F.Reference));
+      EXPECT_TRUE(bindObjCSourceReferences(F.Function, F.Image)
+                      .SwiftTypeMetadataPairs.empty());
+      for (const auto &Arg : Bound.Function.Body[0].Val->Operands)
+        EXPECT_FALSE(objcSourceCallBound(*Arg, F.Image, {}));
+      std::set<std::string> Names;
+      EXPECT_THROW(renderObjCSwiftTypeMetadataHelpers(
+                       F.Image, Bound.SwiftTypeMetadataPairs, Names),
+                   std::runtime_error);
+    }
+  }
+}
 
 TEST(ObjCSourceBindings,
      SwiftCoreDescriptorIdentitySupportsStructEnumClassAndProtocolRecipes) {
@@ -14701,6 +14865,33 @@ TEST(ObjCSourceBindings, PrivateFramePointerTailRequiresExactStoreOnEveryPath) {
         Reload, Definitions, Image, Budget, Active, 0, &Loads);
   };
   EXPECT_TRUE(Check());
+
+  // PHI coalescing can make ordinary object locals mutually recursive. Only
+  // a reachable frame root makes their argument expose this invocation's SP.
+  MedVar CycleAVar = ReloadVar;
+  CycleAVar.Id = 3;
+  MedVar CycleBVar = ReloadVar;
+  CycleBVar.Id = 4;
+  auto CycleA = HighExpr::makeVar(CycleAVar, Integer);
+  auto CycleB = HighExpr::makeVar(CycleBVar, Integer);
+  HighStmt Cycle;
+  Cycle.Kind = StmtKind::While;
+  MedVar CycleConditionVar = InputVar;
+  CycleConditionVar.Id = 4;
+  CycleConditionVar.Size = 1;
+  Cycle.Cond = HighExpr::makeVar(CycleConditionVar, NdType::makeInt(1, false));
+  Cycle.Body = {Assign(CycleA, CycleB), Assign(CycleB, CycleA)};
+  HighStmt CycleCall;
+  CycleCall.Kind = StmtKind::Call;
+  CycleCall.CallExpr = HighExpr::makeCall("unknown", 0x3000, {CycleA});
+  Function.Body.insert(Function.Body.begin() + 1,
+                       {Assign(CycleA, HighExpr::makeVar(InputVar, Pointer)),
+                        Assign(CycleB, CycleA), Cycle, CycleCall});
+  EXPECT_TRUE(Check());
+  // The same cycle must reject a frame-carrying seed on any reaching path.
+  Function.Body[1].Val = Frame;
+  EXPECT_FALSE(Check());
+  Function.Body.erase(Function.Body.begin() + 1, Function.Body.begin() + 5);
 
   HighStmt Disjoint;
   Disjoint.Kind = StmtKind::Store;
