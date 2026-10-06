@@ -67,6 +67,16 @@ public:
   virtual X64BranchModel branchModel() const { return X64BranchModel::Intel; }
   virtual llvm::Error step(X64MachineState &State, uint64_t PageTableRoot,
                            MachineRunControl Control) = 0;
+  /// Native execution of user code that nothing admitted, until the processor
+  /// raises a synchronous exception or \p Control interrupts it. A system
+  /// call instruction is such an exception: this profile leaves the system
+  /// call extension disabled, so the instruction is undefined and its address
+  /// is the reported program counter. An exception returns X64ExceptionError
+  /// with the architectural state at the faulting instruction; an interrupted
+  /// run publishes the state at the instruction boundary it stopped on.
+  /// Transports without this entry return an unsupported-contract error.
+  virtual llvm::Error run(X64MachineState &State, uint64_t PageTableRoot,
+                          MachineRunControl Control);
 };
 } // namespace neverd::emulation
 #endif

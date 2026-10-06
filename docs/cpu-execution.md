@@ -38,6 +38,16 @@ and execute at supervisor privilege. `checked-user-x64-v1` and
 at CPL3 and EL0, respectively, with architectural MMU isolation and explicit
 service-request exits. They support Unicorn and matching-host KVM/WHP/HVF; `auto`
 follows the existing host selection.
+`direct-user-x64-v1` runs the x64 user inventory on the hardware transport
+between architectural events instead of single-stepping it, for workloads whose
+startup needs billions of instructions. It admits nothing and observes neither
+instructions nor memory accesses; guest page tables alone provide the CPL3
+isolation. Its service boundary matches `checked-user-x64-v1`: the system-call
+extension stays disabled, so a service instruction is the undefined-opcode event
+at the address the guest requests it, reported as the same pending service. The
+run takes a time budget, never an instruction budget or quantum. KVM and
+matching-host WHP implement it; Unicorn and HVF report it unsupported rather than
+run it under different semantics.
 Flat profiles have no architectural user/supervisor MMU isolation contract;
 their address width describes the direct mapping interface, not a claim of a
 64-bit hardware virtual-address mode. Checked x64 advertises bounded SIMD and

@@ -247,6 +247,10 @@ llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
                      .DeadlineReached = TimedOut});
 }
 
+llvm::Error CheckedBackend::executeDirect() {
+  return error(diagnostic::DirectExecutionUnsupported);
+}
+
 llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
                                     bool &Started, bool &BackendFailed) {
   if (auto E = checkExecutionState())
@@ -301,6 +305,30 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
         break;
       }
       PC = programCounter();
+      if (Direct) {
+        if (auto E = executeDirect()) {
+          if (!FirstFault && E.isA<MachineInterruptedError>()) {
+            llvm::handleAllErrors(
+                std::move(E), [&](const MachineInterruptedError &Interrupted) {
+                  if (Interrupted.stopRequested())
+                    StopRequested = true;
+                  TimedOut = Interrupted.deadlineReached();
+                });
+            break;
+          }
+          if (!FirstFault) {
+            BackendFailed = true;
+            FirstFault = BackendFault{BackendFaultKind::UnhandledException,
+                                      programCounter()};
+          }
+          return E;
+        }
+        if (FirstFault)
+          return error(diagnostic::Faulted);
+        if (PendingService)
+          break;
+        continue;
+      }
       if (PC % InstructionAlignment) {
         FirstFault = BackendFault{BackendFaultKind::InvalidInstruction, PC};
         if (Hooks.InvalidInstruction)

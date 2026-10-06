@@ -47,6 +47,18 @@ public:
     return static_cast<WhpX64Processor &>(**Active).step(State, Root, Control,
                                                          MXCSRMask);
   }
+  // A free run owns the whole time budget: a native step's per-instruction
+  // transport grace would not bound guest code that nothing admits.
+  llvm::Error run(X64MachineState &State, uint64_t Root,
+                  MachineRunControl Control) override {
+    if (auto E = validateX64FPState(State.FP))
+      return E;
+    auto Active = Binding.acquire(Control);
+    if (!Active)
+      return Active.takeError();
+    return static_cast<WhpX64Processor &>(**Active).run(State, Root, Control,
+                                                        MXCSRMask);
+  }
 
 private:
   WhpResourceBinding<WhpVirtualProcessor> Binding;
