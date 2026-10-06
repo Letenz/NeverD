@@ -1423,3 +1423,5 @@ block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符�
 `NativeSourceHints.FourDoubleCallerDemandNeedsEveryUnchangedCarrier` 檢查四個低位通道、獨立高位寫入及九種宣告或控制修改。`FourDoubleReturnRequiresEveryComputedLowLane` 拒絕十二種結果不完整或契約失效的情況。`DarwinNativeRecordReturns.FourComputedDoublesExecuteAtO0AndO2` 在每個最佳化等級執行 2048 組輸入，與獨立算術判據比較全部 32 位元組結果。
 
 `DarwinIndirectRecordCalls.AffineInvertSnapshotsItsCompleteAliasedInput` 在 O0、O2 各執行 2560 個同址、重疊或分離的輸入輸出配置，檢查輸入位元模式、單次呼叫、全部 48 位元組結果與完整含守衛儲存。它驗證實體複製與快照，不是原始機器碼或原生 SDK 執行。目前矩陣/仿射契約測試對每個契約保留 22 種拒絕修改。
+
+`DarwinIndirectRecordCalls.AffineTranslatePreservesScalarBitsAndSnapshotsAliasedInput` 在 O0、O2 各執行 2560 組輸入，檢查兩個純量的位元模式、六個輸入欄位、單次呼叫、全部輸出位元組，以及同址、重疊和分離配置的受保護儲存空間。四種純量 ABI 修改和共用的 22 種匯入/ABI 修改均被拒絕。位元操作替身驗證實體參數和輸入快照，並非平移數學判據或原始機器碼執行。

@@ -126,7 +126,9 @@ darwinMatrixSourceFrameEffects(const BinaryImage &Image,
   const bool Affine = Binding.TargetName == "CGAffineTransformMakeRotation" ||
                       Binding.TargetName == "CGAffineTransformMakeScale" ||
                       Binding.TargetName == "CGAffineTransformConcat" ||
-                      Binding.TargetName == "CGAffineTransformInvert" || Rect;
+                      Binding.TargetName == "CGAffineTransformInvert" ||
+                      Binding.TargetName == "CGAffineTransformTranslate" ||
+                      Rect;
   const bool Matrix = Binding.TargetName == "CATransform3DMakeTranslation" ||
                       Binding.TargetName == "CATransform3DScale";
   if (Image.Arch != Arch::AArch64 ||
@@ -164,7 +166,8 @@ darwinMatrixSourceFrameEffects(const BinaryImage &Image,
   Effects.InitializesIndirectResult = !Rect;
   if (Binding.TargetName == "CATransform3DScale" ||
       Binding.TargetName == "CGAffineTransformConcat" ||
-      Binding.TargetName == "CGAffineTransformInvert" || Rect) {
+      Binding.TargetName == "CGAffineTransformInvert" ||
+      Binding.TargetName == "CGAffineTransformTranslate" || Rect) {
     const auto Bytes =
         darwinIndirectAffineTransformInputBytes(Image.Arch, Binding.TargetName);
     if (Bytes != (Matrix ? 128 : 48))

@@ -1467,3 +1467,5 @@ block과 복사본 게시 테스트는 독립된 두 48바이트 범위, 기술�
 `NativeSourceHints.FourDoubleCallerDemandNeedsEveryUnchangedCarrier`는 네 하위 레인, 독립적인 상위 쓰기와 선언·제어 변경 아홉 가지를 확인한다. `FourDoubleReturnRequiresEveryComputedLowLane`는 불완전한 결과나 무효 계약 열두 가지를 거부한다. `DarwinNativeRecordReturns.FourComputedDoublesExecuteAtO0AndO2`는 각 최적화 수준에서 2048개 사례의 32바이트 전체 결과를 독립 산술 오라클과 비교한다.
 
 `DarwinIndirectRecordCalls.AffineInvertSnapshotsItsCompleteAliasedInput`는 O0/O2 각각 2560개 사례에서 동일·중첩·분리된 입력과 출력, 입력 비트 패턴, 한 번의 호출, 48바이트 전체 결과와 보호된 저장 공간 전체를 확인한다. 이는 물리 복사와 스냅샷 오라클이며 원본 기계 코드나 네이티브 SDK 실행은 아니다. 현재 행렬·아핀 계약 테스트는 계약마다 변경 22개의 거부를 유지한다.
+
+`DarwinIndirectRecordCalls.AffineTranslatePreservesScalarBitsAndSnapshotsAliasedInput`은 O0와 O2에서 각각 2560개 사례를 실행한다. 두 스칼라의 비트 패턴, 여섯 입력 필드, 한 번의 호출, 전체 출력 바이트와 동일·중첩·분리 배치의 보호된 저장 공간을 검사한다. 스칼라 ABI 변경 네 가지와 공유된 임포트/ABI 변경 22가지를 거부한다. 비트 단위 스텁은 물리 인수와 사전 복사를 검증하며, 평행 이동의 수학적 판정이나 원래 기계어 실행은 아니다.

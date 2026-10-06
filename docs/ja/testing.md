@@ -1477,3 +1477,5 @@ block とコピーの公開テストでは、独立した二つの 48 バイト�
 `NativeSourceHints.FourDoubleCallerDemandNeedsEveryUnchangedCarrier` は 4 低位レーン、独立した上位書き込み、宣言・制御の 9 変更を確認する。`FourDoubleReturnRequiresEveryComputedLowLane` は不完全な結果や無効な契約の 12 ケースを拒否する。`DarwinNativeRecordReturns.FourComputedDoublesExecuteAtO0AndO2` は各最適化レベルで 2048 ケースを実行し、独立した算術オラクルと全 32 結果バイトを比較する。
 
 `DarwinIndirectRecordCalls.AffineInvertSnapshotsItsCompleteAliasedInput` は O0/O2 で各 2560 ケースを実行し、同一・重複・分離した入出力、入力ビット列、呼び出し 1 回、全 48 結果バイト、ガード付き格納領域全体を確認する。これは物理コピーとスナップショットのオラクルであり、元の機械コードやネイティブ SDK の実行ではない。現在の行列・アフィン契約テストは契約ごとに 22 変更の拒否を維持する。
+
+`DarwinIndirectRecordCalls.AffineTranslatePreservesScalarBitsAndSnapshotsAliasedInput` は O0、O2 でそれぞれ 2560 ケースを実行し、二つのスカラーのビット列、六つの入力フィールド、一回の呼び出し、全出力バイト、および同一・重複・分離配置の保護付きストレージを検査する。スカラー ABI の四つの変更と共有の 22 個のインポート／ABI 変更を拒否する。ビット単位のスタブは物理引数と事前コピーを検証するもので、平行移動の数学的オラクルや元の機械語の実行ではない。
