@@ -1401,3 +1401,12 @@ CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-sc
 `SourceFrameAnalysis.CompleteOutput*` 覆盖完整和较短前缀、各返回路径合并、SDK 尾调用写入、缺写字节、指针逃逸及载体限制。调用方用例拒绝缺失或过短证明、错位、越过栈帧边界、覆盖保存寄存器、别名、后续写入失效和存活不透明值重叠。`NativeSourceHints.CompleteNativeOutput*` 重放汇编生成的 ARM64 生产方和消费方，要求完整 SDK 输入范围，并拒绝过期代码、控制流、ABI、审计、提供方和调用实例证据。这些检查验证字节初始化和源码门禁，不执行原始机器函数，也不证明原生逻辑返回值。
 
 `MedCallingConvValueFlow.FPInputsFollowOnlyAuthenticatedCallPrefixes` / `NativeSourceHints.PreservedFPPrefixesRetainAllEntryInputsAfterSDKCalls`: 保留前缀回归检查三个有效读取和十九个被拒绝的载体、前缀、调用归属及未消费值用例。汇编生成的 ARM64 调用方在 SDK 调用后保留全部四个入口 double 低位通道；重新提升检查完整参数 ABI 和源码门禁。未修改的已获准发布 WMF `0x36350` 方法还在 O0、O2 各通过 2048 例，与独立原生 CoreGraphics 翻转、平移、归一化、连接及应用表达式比较全部 32 字节结果，并检查接收者、选择器和输入保护区，覆盖零、负数、无穷和 NaN 尺寸。未执行原始 WMF 机器函数。
+
+`SourceABI.SwiftEntryCapturesAndReturnsTheErrorRegisterOnEveryPath` 检查 ARM64/x64 入口捕获、两条返回路径以及缺失或变更传输证明的拒绝。`NativeSwiftCallsKeepBothResultsAndPostCallErrorBranches` 保留调用结果、更新后的错误寄存器及后续条件判断，并覆盖私有名称冲突和两种输出顺序。生成的 C 在本机 Darwin 目标上以 O0/O2 执行，与独立成功/失败判据比较。`SwiftFunctionSymbols.RegularExpressionInitializerRetainsContextAndError` 拒绝别名、完整符号变化、非代码入口和不支持的镜像格式。这些检查不执行原始 WMF 构造函数，也不证明上层方法已经完全恢复。
+
+`NativeSourceHints.SwiftErrorDeclaration*` 在用编译器声明细化观测得到的标量 ABI 后，重新提升实际组装的 ARM64/x64 入口。当前审计缺失或不完整时拒绝替换；选项、MedIR 或 HighIR 中的显式源码契约仍保留优先权。入口测试还会在转成 HighIR 前拒绝缺失的 MedIR 错误输出标记或错误的操作数宽度。
+
+即使所有路径都覆写错误寄存器，入口捕获仍作为活跃值保留，包括 once 绑定后的最终源码清理。`NativeSourceHints.SwiftErrorCallsRequireCurrentDirectNativeProjection` 拒绝缺失、空、被修改或未证明的被调用函数，以及目标变化、间接调用、不完整结果、缺失操作数和不兼容效果。
+
+
+`SwiftFunctionSymbols.RepeatedDeclarationsKeepEveryRecordField` 检查完全相同的重复记录，并拒绝名称、大小、边界来源或名称来源变化。`NativeSourceHints.SwiftErrorCallResults*` 覆盖 ARM64/x64 调用者的自动推断，拒绝缺失的当前被调用函数、被修改的机器操作、过期审计、不完整 ABI，以及缺失、变窄或来自其他值的结果提取。入口源码执行还覆盖相冲突的可选调试声明，确保绑定的调用约定及错误、上下文角色保持有效。

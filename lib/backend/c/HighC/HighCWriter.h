@@ -77,7 +77,8 @@ public:
   static llvm::StringRef
   sourceConventionAttribute(SourceFunctionTypeHint::ConventionKind Convention);
   static std::string
-  sourceParameterType(const SourceParameterTypeHint &Parameter);
+  sourceParameterType(const SourceParameterTypeHint &Parameter,
+                      llvm::StringRef Name = {});
   static std::optional<std::string> sourceValue(llvm::StringRef Text,
                                                 const TypeRef &Carrier,
                                                 const TypeRef &Source);

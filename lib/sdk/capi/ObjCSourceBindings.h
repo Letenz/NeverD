@@ -7,6 +7,7 @@
 #include "../../loader/ObjC/ObjCClassAccessorMachine.h"
 #include "../../loader/ObjC/ObjCRuntimeData.h"
 #include "../../loader/Swift/SwiftErrorRuntime.h"
+#include "../../loader/Swift/SwiftErrorSourceProjection.h"
 #include "BorrowedByteSources.h"
 #include "CStringStorageSources.h"
 #include "ObjCConstantObjectSources.h"
@@ -8909,15 +8910,29 @@ inline bool objcSourceCallBound(
     return false; // Requires the current pipeline and caller proof.
   const auto &Hint = Binding.Signature;
   if (hasSwiftErrorResult(Hint)) {
-    if (!isSwiftWillThrowSourceCall(Binding, Image.Arch) ||
-        Expression.IsIndirectCall || Expression.Operands.size() != 2 ||
-        !equalSourceTypes(Expression.Type, Hint.ReturnType))
-      return false;
-    for (const auto &Argument : Expression.Operands)
-      if (!Argument || !Argument->Type || Argument->Type->Size != 8 ||
-          (Argument->Type->Kind != NdTypeKind::Int &&
-           Argument->Type->Kind != NdTypeKind::Ptr))
+    if (isNativeSwiftErrorSourceCall(Binding, Image.Arch)) {
+      const auto Found = Functions.find(Binding.TargetAddress);
+      if (Expression.IsIndirectCall || Expression.IndirectTarget ||
+          Expression.CallAddr != Binding.TargetAddress ||
+          !Expression.IntrinsicOutputs.empty() ||
+          Expression.Operands.size() != Hint.Parameters.size() ||
+          !equalSourceTypes(Expression.Type, swiftErrorCallResultType(Hint)) ||
+          Found == Functions.end() || !Found->second ||
+          Found->second->Entry != Binding.TargetAddress ||
+          !isSwiftErrorEntryProjected(*Found->second, Image.Arch) ||
+          !equalSourceABIs(*Found->second->SourceTypeHint, Hint))
         return false;
+    } else {
+      if (!isSwiftWillThrowSourceCall(Binding, Image.Arch) ||
+          Expression.IsIndirectCall || Expression.Operands.size() != 2 ||
+          !equalSourceTypes(Expression.Type, Hint.ReturnType))
+        return false;
+      for (const auto &Argument : Expression.Operands)
+        if (!Argument || !Argument->Type || Argument->Type->Size != 8 ||
+            (Argument->Type->Kind != NdTypeKind::Int &&
+             Argument->Type->Kind != NdTypeKind::Ptr))
+          return false;
+    }
   }
   if (Binding.NilTerminated &&
       (Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage ||

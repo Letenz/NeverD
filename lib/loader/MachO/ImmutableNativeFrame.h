@@ -9,6 +9,14 @@
 namespace neverd {
 enum class ImmutableNativeFrameTerminators { ExcludeOpaque, MatchDecoder };
 
+/// Match every owned instruction's original operations against immutable
+/// ARM64/x64 code and the canonical decoder. This authenticates operation
+/// ownership only, without deriving CFG exits, frame effects or source ABI.
+/// Direct-tail rewrites require the separate CFG-aware frame proof below.
+bool immutableNativeInstructionOperationsMatch(const BinaryImage &Image,
+                                               const LowFunc &Function,
+                                               size_t &Budget);
+
 /// Loader-owned authentication only. Byte identities and frame effects remain
 /// in SourceFrameAnalysis and the individual effect owners.
 /// Opaque exits remain excluded unless a consumer separately proves their

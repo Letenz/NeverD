@@ -1483,3 +1483,12 @@ CPU0 명시적 선점, 가상 시계 의미와 현재 한계는 [드라이버 �
 `SourceFrameAnalysis.CompleteOutput*`는 완전하거나 짧은 접두 영역, 모든 반환 경로의 병합, SDK 꼬리 호출 쓰기, 누락 바이트, 포인터 탈출 및 ABI 전달 위치 제약을 검사한다. 호출자 사례는 없거나 짧은 인증서, 정렬 오류, 프레임 경계 위반 및 저장 레지스터 겹침, 별칭, 후속 쓰기로 인한 무효화와 살아 있는 불투명 값의 겹침을 거부한다. `NativeSourceHints.CompleteNativeOutput*`는 조립한 ARM64 생산자와 소비자를 재검증하고 완전한 SDK 입력 범위를 요구하며 오래된 코드, CFG, ABI, 감사, 공급자 및 호출 위치 증거를 거부한다. 이는 바이트 초기화와 소스 허용 검사이며 원래 기계 코드 본문을 실행하거나 네이티브 논리 반환값을 인증하지 않는다.
 
 `MedCallingConvValueFlow.FPInputsFollowOnlyAuthenticatedCallPrefixes` / `NativeSourceHints.PreservedFPPrefixesRetainAllEntryInputsAfterSDKCalls`: 보존 접두 영역 회귀는 유효한 읽기 세 가지와 전달 위치, 접두 영역, 호출 소유 정보 및 미사용 값에 관한 거부 사례 열아홉 가지를 검사한다. 조립한 ARM64 호출자는 SDK 호출을 거치면서 네 개의 진입 double 레인을 모두 유지하며 새 리프팅으로 완전한 매개변수 ABI와 소스 허용을 확인한다. 변경하지 않은 허용된 WMF `0x36350` 메서드는 독립적인 네이티브 CoreGraphics 뒤집기·이동·정규화·연결·적용 식과 비교하여 O0 및 O2에서 각각 2048 사례를 통과한다. 결과 32바이트 전체, 수신자/선택자 및 입력 보호 영역을 검사하며 0, 음수, 무한대와 NaN 크기를 포함한다. 원래 WMF 기계 코드 본문은 실행하지 않는다.
+
+`SourceABI.SwiftEntryCapturesAndReturnsTheErrorRegisterOnEveryPath`는 ARM64/x64 진입 캡처, 두 반환 경로 및 누락되거나 변경된 전달 증명의 거부를 검사합니다. `NativeSwiftCallsKeepBothResultsAndPostCallErrorBranches`는 호출 결과, 갱신된 오류 레지스터와 후속 조건을 유지하고 내부 이름 충돌과 두 출력 순서를 검사합니다. 생성 C는 호스트 Darwin 대상에서 O0/O2로 실행하여 독립적인 성공/실패 기준과 비교합니다. `SwiftFunctionSymbols.RegularExpressionInitializerRetainsContextAndError`는 별칭, 전체 심볼 변경, 비코드 진입과 미지원 이미지 형식을 거부합니다. 원래 WMF 생성자를 실행하거나 상위 메서드의 완전한 복원을 입증하지는 않습니다.
+
+`NativeSourceHints.SwiftErrorDeclaration*`는 관측으로 추정한 스칼라 ABI를 컴파일러 선언으로 바꾼 뒤 조립된 ARM64/x64 진입점을 다시 리프트합니다. 현재 감사가 없거나 불완전하면 교체를 거부하며, 옵션·MedIR·HighIR의 명시적 소스 계약은 우선권을 유지합니다. 진입점 테스트는 HighIR 변환 전에 MedIR 오류 출력 표식 누락이나 잘못된 피연산자 너비도 거부합니다.
+
+모든 경로가 오류 레지스터를 덮어써도 진입점의 캡처 값은 라이브니스 루트로 남으며, once 바인딩 뒤의 최종 소스 정리에서도 유지됩니다. `NativeSourceHints.SwiftErrorCallsRequireCurrentDirectNativeProjection`는 없거나 null이거나 변경되거나 증명되지 않은 피호출 함수와 변경된 대상, 간접 호출, 불완전한 결과, 누락된 피연산자 및 호환되지 않는 효과를 거부합니다.
+
+
+`SwiftFunctionSymbols.RepeatedDeclarationsKeepEveryRecordField`는 동일한 중복 레코드를 검사하고 변경된 이름, 크기, 경계 출처 또는 이름 출처를 거부합니다. `NativeSourceHints.SwiftErrorCallResults*`는 ARM64/x64 호출자 자동 추론을 검사하며 현재 피호출자 누락, 변경된 기계 연산, 오래된 감사, 불완전한 ABI와 누락되거나 좁아지거나 관련 없는 결과 추출을 거부합니다. 진입 소스 실행은 충돌하는 선택적 디버그 선언이 있어도 연결된 규약과 오류·컨텍스트 역할을 유지하는지 확인합니다.

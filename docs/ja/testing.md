@@ -1493,3 +1493,12 @@ CPU0 の明示的プリエンプション、仮想時計と制約は[ドライ�
 `SourceFrameAnalysis.CompleteOutput*` は完全・短い先頭領域、全復帰経路の合流、SDK 末尾呼び出しの書き込み、欠落バイト、ポインター逸出、ABI キャリア制約を確認する。呼び出し側のケースは証明の欠落・不足、不整列、フレーム境界超過、保存レジスターとの重なり、別名、後続書き込みによる無効化、生存する不透明値との重なりを拒否する。`NativeSourceHints.CompleteNativeOutput*` は組み立てた ARM64 の生成側と消費側を再検証し、完全な SDK 入力領域を要求して、古いコード、CFG、ABI、監査、提供元、呼び出し箇所の証拠を拒否する。これはバイト初期化とソース受理の確認であり、元の機械コード本体の実行やネイティブの論理戻り値の証明ではない。
 
 `MedCallingConvValueFlow.FPInputsFollowOnlyAuthenticatedCallPrefixes` / `NativeSourceHints.PreservedFPPrefixesRetainAllEntryInputsAfterSDKCalls`: 保留プレフィックスの回帰テストは三つの有効な読み取りと、キャリア、プレフィックス、呼び出し所有情報、未使用値の十九の拒否ケースを確認する。組み立てた ARM64 呼び出し側は SDK 呼び出しを跨いで四つの入口 double レーンを保ち、再リフトで完全なパラメーター ABI とソース受理を確認する。未変更の受理済み WMF `0x36350` メソッドも、独立したネイティブ CoreGraphics の反転・平行移動・正規化・合成・適用式に対して O0 と O2 で各 2048 ケースを通過する。結果の全 32 バイト、受信者・セレクター、入力保護領域を確認し、寸法のゼロ、負値、無限大、NaN を含む。元の WMF 機械コード本体は実行しない。
+
+`SourceABI.SwiftEntryCapturesAndReturnsTheErrorRegisterOnEveryPath` は ARM64/x64 の入口取り込み、両方の戻り経路、欠落または変更された転送証明の拒否を検証します。`NativeSwiftCallsKeepBothResultsAndPostCallErrorBranches` は呼び出し結果、更新されたエラーレジスタ、後続条件を保持し、内部名の衝突と両出力順序も検証します。生成 C はホストの Darwin ターゲット上で O0/O2 により実行し、独立した成功・失敗の判定と比較します。`SwiftFunctionSymbols.RegularExpressionInitializerRetainsContextAndError` は別名、完全なシンボルの変更、非コード入口、未対応の画像形式を拒否します。元の WMF コンストラクタの実行や、上位メソッドの完全復元を証明する検査ではありません。
+
+`NativeSourceHints.SwiftErrorDeclaration*` は、観測から推定したスカラー ABI をコンパイラの宣言で置き換えた後、アセンブル済みの ARM64/x64 エントリを再リフトします。現在の監査が欠落または不完全なら置き換えを拒否し、オプション、MedIR、HighIR の明示的なソース契約を優先します。エントリのテストでは、MedIR のエラー出力マーカーの欠落やオペランド幅の誤りも HighIR 変換前に拒否します。
+
+すべての経路がエラーレジスタを上書きする場合も、エントリの捕獲値はライブネスの根として残り、once バインド後の最終ソース整理でも保持されます。`NativeSourceHints.SwiftErrorCallsRequireCurrentDirectNativeProjection` は、呼び出し先の欠落、null、変更、未証明の状態、および変更されたターゲット、間接呼び出し、不完全な結果、オペランドの欠落、互換性のない効果を拒否します。
+
+
+`SwiftFunctionSymbols.RepeatedDeclarationsKeepEveryRecordField` は同一の重複レコードを検証し、名前、サイズ、境界の由来、名前の由来の変更を拒否します。`NativeSourceHints.SwiftErrorCallResults*` は ARM64/x64 呼び出し側の自動推論を実行し、現在の呼び出し先の欠落、機械操作の変更、古い監査、不完全な ABI、および欠落・縮小・無関係な結果抽出を拒否します。入口ソースの実行では、競合する任意のデバッグ宣言があっても、結び付けられた規約とエラー・コンテキストの役割を維持することを確認します。
