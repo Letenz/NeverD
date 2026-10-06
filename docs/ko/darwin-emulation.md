@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b74bd2f7b34b6ece4aa72cf1abb0aa64b9d5941e8927df99c9f49fe673dd4c02 -->
+<!-- i18n-source: adbad5fe5176c4b6c69ffc7eb9b7a9f7f981923e7eaf69b29400f0493cc9d380 -->
 
 [← 문서 목록](README.md)
 
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-독립 워크로드 검증은 ARM64 87개 또는 x64 58개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
+독립 워크로드 검증은 ARM64 93개 또는 x64 62개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -354,3 +354,41 @@ Release Darwin 등록 787개: 439개 통과, 백엔드 사용 불가 348개 건�
 Release Darwin 835개: 통과474, 백엔드 미지원 건너뜀360, 기존 macOS ARM64 HVF 가상 메타데이터 한 건이5.087초에 시간 초과. 같은 인자와5초 제한으로20개 재검사: 통과8, 건너뜀12, 해당 항목0.113초. 두 실행에서 필수 ARM64 HVF90개 성공을 관측했지만 전체 게이트 실패 기록은 유지합니다. 이름 변경42/54 통과,12 건너뜀; C/CLI/보고150/150(Darwin 비교103), 변경 없는 Python 다섯 구성18.478초, 네이티브20/20, 검증 스크립트66/66. 독립 검토에서 중첩 점 경로 분류를 수정했으며4K/16K 회귀는 수정 전 실패·후 통과했습니다. 이전 읽기 전용 ftruncate 테스트 기대값을 EINVAL로 수정했습니다. 실패와 프로브 버전을 보존하고 집계는 중복되며 시간 제한은 그대로입니다. 전체 GitHub CI와 iOS 실기기는 별도, Intel HVF Actions는 중단 상태입니다.
 
 `build-hvf-arm64/rename-validation-summary.json`, `rename-focused-final.xml`, `rename-darwin-final-evidence/`, `rename-metadata-recheck.xml`, `rename-public.xml`, `rename-native-final/`, `rename-review-initial-evidence/`.
+
+## 명시적 시스템 관측값
+
+`ProcessOptions::DarwinSystem` / `darwin_system`은 모든 Darwin 프로필의 `sysctl(202)`과 raw `sysctlbyname(274)`에 고정 관측값을 제공합니다. 필드는 모두 선택 사항이며, 누락된 값이나 목록 밖의 키는 지원되지 않음으로 중단합니다. 호스트 조회나 버전·모델 추정은 없습니다. 엄격한 JSON 및 C++ 검증은 이미지 로드 전에 잘못된 값과 비 Darwin 프로필을 거부합니다.
+
+`os_revision`은 부호 있는32비트, `cpu_count`는1～INT32_MAX, `memory_size`는 부호 없는64비트를 모두 보존합니다. 나머지는 내부 NUL 없는 최대1023바이트 문자열이며 명시적 빈 문자열도 허용합니다. 출력은 끝 NUL을 포함합니다. CPU·메모리 보고값은 스케줄링이나 할당 예산을 바꾸지 않습니다.
+
+| JSON 필드 | sysctl 이름 | MIB |
+| --- | --- | --- |
+| `os_type` | `kern.ostype` | `1,1` |
+| `os_release` | `kern.osrelease` | `1,2` |
+| `os_revision` | `kern.osrevision` | `1,3` |
+| `kernel_version` | `kern.version` | `1,4` |
+| `os_version` | `kern.osversion` | `1,65` |
+| `machine` | `hw.machine` | `6,1` |
+| `model` | `hw.model` | `6,2` |
+| `cpu_count` | `hw.ncpu` | `6,3` |
+| `memory_size` | `hw.memsize` | `6,24` |
+
+`hw.pagesize`는 기존 게스트 메모리 정책을 따르며 보통8바이트, null이 아닌 출력의 용량이 정확히4이면4바이트입니다. 기존 MIB `[6,7]`과 `hw.pagesize_compat`는 항상4바이트입니다. `hw.pagesize`의 동적 숫자 OID는 지원하지 않습니다. `hw.memsize`도 용량4에서64비트 패턴이 부호 있는32비트 값의 부호 확장과 일치할 때만 축소합니다. 그렇지 않으면 ERANGE34이며 출력과 길이를 유지합니다.
+
+MIB 개수는 하위32비트로2～12, 이름 길이는 전체64비트로1024 미만이어야 합니다. 지정된 모든 바이트를 검사한 뒤 첫 NUL을 해석하고 끝의 점 하나를 제거합니다. 빈 이름은 ENOENT, 부분적으로 읽을 수 있는 입력은 미지원입니다. null이 아닌 `oldlenp`는 효과 발생 전에8바이트 전체를 읽고 쓸 수 있어야 합니다. 잘못된 길이 포인터의 네이티브 실험이 제한 시간 안에 반환하지 않아 명시적으로 지원 범위 밖에 둡니다. null `oldlenp`는 용량0, null `oldp`는 크기 조회입니다. 짧은 버퍼는 ENOMEM12, 데이터 불변, 길이0입니다. 데이터 EFAULT는 이전 길이를 보존합니다. 입력과 용량을 먼저 캡처하고 데이터 다음 길이를 쓰므로 별칭 순서와 후속 전송 실패 전의 복사를 보존합니다.
+
+`newp`와 `newlen`이 모두0이 아닐 때만 쓰기입니다. 선택된 노드는 모델의 고정된 비 root 신원에 대해 관측값·출력 검사 전에 EPERM1을 반환합니다. 네이티브에서 특권 쓰기가 가능한 `kern.osversion`도 포함합니다. 새 길이0이면 포인터를 무시합니다. 알 수 없는 키, 다른 트리, 동적 OID를 ENOENT로 추정하지 않습니다.
+
+자체 작성 `system-info`는 네이티브 macOS와 게스트 ABI를 검사하고 `virtual-system`은 C++·C/CLI·Python에서 설정 바이트를 비교합니다. 별도 SDK 검사는 호스트의 아홉 관측값을 명시적 테스트 입력으로 삼아 이름·숫자 출력을 비교합니다. iOS 실기기나 Intel HVF 검증을 뜻하지 않습니다.
+
+```json
+{"darwin_system":{"os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
+```
+
+[XNU sysctl](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_newsysctl.c), [XNU hardware MIB](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mib.c), [Apple sysctl(3)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/sysctl.3.html).
+
+### 시스템 조회 검증, 2026-10-06
+
+Release Darwin 881개: 통과509, 백엔드 미지원 건너뜀372, 실패0. ARM64 HVF 필수93개를 모두 실행했습니다. 집중49개는37 통과·12 건너뜀. C/CLI/보고163/163(Darwin 비교113), 변경 없는 Python 다섯 구성15.302초, 원본 네이티브21/21, 검증 스크립트66/66 통과. 독립 검토에 차단 문제는 없으며 추가 오류 우선순위 조합과 SDK 캡처 비교도 통과했습니다. 새 SDK 검사의 StringExtras 헤더 누락으로 한 번 컴파일 실패 후 추가하여 성공했고 원본 로그·소스를 보존했습니다. 잘못된 길이 포인터의 네이티브 실험도 보존하며 명시적으로 지원 범위 밖입니다. 통과 후 파일 머리말 주석 두 개만 정리하고 재빌드했습니다. 집계는 중복, 시간 제한은 그대로이며 실행 실패 재검사는 없었습니다. 전체 GitHub CI·iOS 실기기는 별도, Intel HVF Actions는 중단 상태입니다.
+
+`build-hvf-arm64/sysctl-validation-summary.json`, `sysctl-darwin-final-evidence/`, `sysctl-focused-final.xml`, `sysctl-public.xml`, `sysctl-native-final/`, `sysctl-sdk-build-failure/`, `sysctl-initial-probe-evidence/`.

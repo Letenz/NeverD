@@ -6,12 +6,14 @@
 #include "gtest/gtest.h"
 #include "os/darwin/kernel/DarwinFiles.h"
 #include "os/darwin/kernel/DarwinMemory.h"
+#include "os/darwin/kernel/DarwinSystem.h"
 #include "os/darwin/kernel/DarwinTime.h"
 
 #include "neverd/emulation/AddressSpace.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -32,6 +34,7 @@
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -42,6 +45,104 @@ extern "C" ssize_t __getdirentries64(int, void *, size_t, off_t *);
 
 namespace neverd::emulation {
 namespace {
+TEST(DarwinNative, SystemValuesMatchSDKCapturesAndStableMIBWidths) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "Native system observation capture requires macOS";
+#else
+  EXPECT_EQ(sizeof(size_t), 8u);
+  struct Query {
+    const char *Name;
+    int MIB[2];
+    std::vector<uint8_t> Bytes;
+  };
+  Query Queries[] = {{"kern.ostype", {CTL_KERN, KERN_OSTYPE}, {}},
+                     {"kern.osrelease", {CTL_KERN, KERN_OSRELEASE}, {}},
+                     {"kern.osrevision", {CTL_KERN, KERN_OSREV}, {}},
+                     {"kern.version", {CTL_KERN, KERN_VERSION}, {}},
+                     {"kern.osversion", {CTL_KERN, KERN_OSVERSION}, {}},
+                     {"hw.machine", {CTL_HW, HW_MACHINE}, {}},
+                     {"hw.model", {CTL_HW, HW_MODEL}, {}},
+                     {"hw.ncpu", {CTL_HW, HW_NCPU}, {}},
+                     {"hw.memsize", {CTL_HW, HW_MEMSIZE}, {}}};
+  for (auto &Q : Queries) {
+    SCOPED_TRACE(Q.Name);
+    size_t Size = 0;
+    ASSERT_EQ(::sysctlbyname(Q.Name, nullptr, &Size, nullptr, 0), 0);
+    ASSERT_GT(Size, 0u);
+    ASSERT_LE(Size, 1024u);
+    Q.Bytes.resize(Size);
+    ASSERT_EQ(::sysctlbyname(Q.Name, Q.Bytes.data(), &Size, nullptr, 0), 0);
+    ASSERT_EQ(Size, Q.Bytes.size());
+    std::vector<uint8_t> Numeric(Size);
+    ASSERT_EQ(::sysctl(Q.MIB, 2, Numeric.data(), &Size, nullptr, 0), 0);
+    EXPECT_EQ(Size, Q.Bytes.size());
+    EXPECT_EQ(Numeric, Q.Bytes);
+  }
+  auto String = [&](unsigned I) {
+    EXPECT_EQ(Queries[I].Bytes.back(), 0u);
+    return std::string(Queries[I].Bytes.begin(), Queries[I].Bytes.end() - 1);
+  };
+  ASSERT_EQ(Queries[2].Bytes.size(), 4u);
+  ASSERT_EQ(Queries[7].Bytes.size(), 4u);
+  ASSERT_EQ(Queries[8].Bytes.size(), 8u);
+  using namespace llvm::support::endian;
+  DarwinSystemOptions O;
+  O.OSType = String(0);
+  O.OSRelease = String(1);
+  O.OSRevision = int32_t(read32le(Queries[2].Bytes.data()));
+  O.KernelVersion = String(3);
+  O.OSVersion = String(4);
+  O.Machine = String(5);
+  O.Model = String(6);
+  O.CPUCount = read32le(Queries[7].Bytes.data());
+  O.MemorySize = read64le(Queries[8].Bytes.data());
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(O)));
+  auto Physical = PhysicalMemory::create(4096);
+  ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+  auto Space = AddressSpace::create(*Physical, 4096);
+  ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
+  constexpr uint64_t Base = 0x100000, Length = Base + 64, Output = Base + 128;
+  ASSERT_FALSE(bool((*Space)->map(Base, 4096, Read | Write | UserAccessible)));
+  ProcessResult Result{ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+                       ExecutionBackendKind::Unicorn, "native sysctl capture"};
+  for (const auto &Q : Queries) {
+    SCOPED_TRACE(Q.Name);
+    for (bool Named : {true, false}) {
+      std::vector<uint8_t> Expected(Q.Bytes.size() + 2, 0xa5);
+      ASSERT_FALSE(bool((*Space)->write(Output, Expected)));
+      std::copy(Q.Bytes.begin(), Q.Bytes.end(), Expected.begin() + 1);
+      ASSERT_FALSE(bool((*Space)->writeInteger(Length, Q.Bytes.size(), 8)));
+      const auto Name = llvm::StringRef(Q.Name);
+      if (Named) {
+        ASSERT_FALSE(
+            bool((*Space)->write(Base, llvm::arrayRefFromStringRef(Name))));
+      } else {
+        ASSERT_FALSE(bool((*Space)->writeInteger(Base, Q.MIB[0], 4)));
+        ASSERT_FALSE(bool((*Space)->writeInteger(Base + 4, Q.MIB[1], 4)));
+      }
+      auto Stored = darwin_model::systemService(
+          **Space, ::getpagesize(),
+          Named ? darwin_model::ServiceKind::SysctlByName
+                : darwin_model::ServiceKind::Sysctl,
+          {0,
+           0,
+           {Base, Named ? Name.size() : 2, Output + 1, Length},
+           std::nullopt},
+          O, Result);
+      ASSERT_TRUE(bool(Stored)) << llvm::toString(Stored.takeError());
+      ASSERT_TRUE(*Stored) << Result.Diagnostic;
+      EXPECT_EQ((**Stored).Value, 0u);
+      EXPECT_FALSE((**Stored).Error);
+      std::vector<uint8_t> Actual(Expected.size());
+      ASSERT_FALSE(bool((*Space)->read(Output, Actual)));
+      EXPECT_EQ(Actual, Expected);
+      EXPECT_EQ(llvm::cantFail((*Space)->readInteger(Length, 8)),
+                Q.Bytes.size());
+    }
+  }
+#endif
+}
+
 TEST(DarwinNative, MachTimebaseMatchesSDKLayoutAndCapturedRatio) {
 #if !defined(__APPLE__)
   GTEST_SKIP() << "Native Darwin timebase capture requires macOS";

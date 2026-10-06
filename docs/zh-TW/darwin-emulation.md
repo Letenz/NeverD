@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b74bd2f7b34b6ece4aa72cf1abb0aa64b9d5941e8927df99c9f49fe673dd4c02 -->
+<!-- i18n-source: adbad5fe5176c4b6c69ffc7eb9b7a9f7f981923e7eaf69b29400f0493cc9d380 -->
 
 [← 文件索引](README.md)
 
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-獨立工作負載驗收要求 ARM64 90 項或 x64 60 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
+獨立工作負載驗收要求 ARM64 93 項或 x64 62 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -354,3 +354,41 @@ Release Darwin 共 787 項：439 通過、348 項後端不可用跳過、零失�
 Release Darwin 共 835 項：474 通過、360 項後端不可用跳過，既有 macOS ARM64 HVF 虛擬中繼資料案例逾時一次（5.087 秒）。原參數及 5 秒時限複查：8 通過、12 跳過，受影響項為 0.113 秒。兩次合計覆蓋全部 90 個必需 ARM64 HVF 身分；完整門檻仍記錄失敗。改名專項 42/54 通過、12 跳過；C/CLI/報告 150/150，含 103 項 Darwin 比較。未改動 Python 方法五組設定於 18.478 秒通過；原生 20/20、腳本 66/66。獨立審查發現巢狀點路徑分類錯誤，4K/16K 回歸先失敗後修正通過；較早的唯讀 ftruncate 測試預期改為 EINVAL。保留所有失敗與探針版本，計數重疊、時限不變。完整 GitHub CI 與 iOS 實機另行驗收，Intel HVF Actions 維持暫停。
 
 `build-hvf-arm64/rename-validation-summary.json`, `rename-focused-final.xml`, `rename-darwin-final-evidence/`, `rename-metadata-recheck.xml`, `rename-public.xml`, `rename-native-final/`, `rename-review-initial-evidence/`.
+
+## 明確的系統觀察值
+
+`ProcessOptions::DarwinSystem` / `darwin_system` 為所有 Darwin 設定的 `sysctl(202)` 與原始 `sysctlbyname(274)` 提供固定觀察值。各欄位皆可省略；缺少的值或未列出的鍵明確停止為不支援。不查詢主機、不推測版本或機型。嚴格 JSON 與 C++ 驗證在載入映像前拒絕非法值與非 Darwin 設定。
+
+`os_revision` 為帶符號32位；`cpu_count` 為1至 INT32_MAX；`memory_size` 保留完整無符號64位。其餘欄位是最多1023位元組、無內嵌 NUL 的字串，允許明確空字串。輸出含結尾 NUL。CPU 與記憶體報告不會改變排程或配置預算。
+
+| JSON 欄位 | sysctl 名稱 | MIB |
+| --- | --- | --- |
+| `os_type` | `kern.ostype` | `1,1` |
+| `os_release` | `kern.osrelease` | `1,2` |
+| `os_revision` | `kern.osrevision` | `1,3` |
+| `kernel_version` | `kern.version` | `1,4` |
+| `os_version` | `kern.osversion` | `1,65` |
+| `machine` | `hw.machine` | `6,1` |
+| `model` | `hw.model` | `6,2` |
+| `cpu_count` | `hw.ncpu` | `6,3` |
+| `memory_size` | `hw.memsize` | `6,24` |
+
+`hw.pagesize` 取自既有客體記憶體策略，通常為8位元組；非空輸出且容量恰為4時為4位元組。舊 MIB `[6,7]` 與 `hw.pagesize_compat` 固定回傳4位元組。`hw.pagesize` 的動態數字 OID 仍不支援。`hw.memsize` 在容量恰為4時，僅當64位模式是帶符號32位值的符號擴展才縮窄，否則 ERANGE34 保持輸出與長度不變。
+
+MIB 數量取低32位且須為2–12；名稱長度取完整64位且須小於1024。先檢查全部指定的位元組，再依首個 NUL 解讀並移除一個末尾點；空名稱回傳 ENOENT，部分可讀輸入不支援。非空 `oldlenp` 在副作用前須完整具備8位元組讀寫權限；原生錯誤長度指標探測未在期限內返回，因此明確不支援。空 `oldlenp` 表示容量0；空 `oldp` 僅查長度。短緩衝區回傳 ENOMEM12、不寫資料並將長度設0；資料 EFAULT 保持原長度。先擷取輸入與容量，再寫資料、最後寫長度，保留別名順序與後續傳輸失敗前完成的複製。
+
+`newp`、`newlen` 皆非零才是寫入請求。已選節點依模型固定非 root 身分，在觀察值與輸出檢查前回傳 EPERM1，包括原生允許特權寫入的 `kern.osversion`。新長度0時忽略指標。未知鍵、其他樹及動態 OID 不會被推測為 ENOENT。
+
+原創 `system-info` 檢查原生 macOS 與客體 ABI；`virtual-system` 透過 C++、C/CLI、Python 比對明確設定的位元組。獨立 SDK 對照將主機九項觀察值作為明確測試輸入，比較名稱與數字輸出；不代表 iOS 實機或 Intel HVF 驗收。
+
+```json
+{"darwin_system":{"os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
+```
+
+[XNU sysctl](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_newsysctl.c), [XNU hardware MIB](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mib.c), [Apple sysctl(3)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/sysctl.3.html).
+
+### 系統查詢驗證，2026-10-06
+
+Release Darwin 共881項：509通過、372因後端不可用跳過、零失敗；93項 ARM64 HVF 必需項全數執行。聚焦49項中37通過、12跳過。公開 C/CLI/報告163/163通過，含113項 Darwin 輸入比對。未更改的 Python 方法在15.302秒內通過五種設定；原生21/21、驗證腳本66/66通過。獨立審查無阻塞，補充錯誤優先序與 SDK 捕獲對照皆通過。新增對照曾因缺 StringExtras 標頭而編譯失敗，補上後通過，原始日誌與程式碼已保留。原生錯誤長度指標探測已保留且明確不在支援範圍。測試後只整理兩個檔頭註解，並成功重建。計數重疊、期限不變，不需執行失敗重測。完整 GitHub CI、iOS 實機另行驗證；Intel HVF Actions 維持暫停。
+
+`build-hvf-arm64/sysctl-validation-summary.json`, `sysctl-darwin-final-evidence/`, `sysctl-focused-final.xml`, `sysctl-public.xml`, `sysctl-native-final/`, `sysctl-sdk-build-failure/`, `sysctl-initial-probe-evidence/`.

@@ -76,6 +76,9 @@ NEVERD_DARWIN_VALUE(BadAddress, 14)
 NEVERD_DARWIN_VALUE(InvalidArgument, 22)
 NEVERD_DARWIN_VALUE(NoMemory, 12)
 NEVERD_DARWIN_VALUE(PermissionDenied, 13)
+NEVERD_DARWIN_VALUE(ResultTooLarge, 34)
+NEVERD_DARWIN_VALUE(SystemStringLimit, 1024)
+NEVERD_DARWIN_VALUE(SystemMIBLimit, 12)
 NEVERD_DARWIN_VALUE(MapPrivate, 0x2)
 NEVERD_DARWIN_VALUE(MapAnonymous, 0x1000)
 NEVERD_DARWIN_VALUE(MapUnix03, 0x40000)
@@ -115,6 +118,8 @@ NEVERD_DARWIN_SERVICE(Pwrite, 154, Wide)
 NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
 NEVERD_DARWIN_SERVICE(Truncate, 200, Int)
 NEVERD_DARWIN_SERVICE(Ftruncate, 201, Int)
+NEVERD_DARWIN_SERVICE(Sysctl, 202, Int)
+NEVERD_DARWIN_SERVICE(SysctlByName, 274, Int)
 NEVERD_DARWIN_SERVICE(Stat64, 338, Int)
 NEVERD_DARWIN_SERVICE(Fstat64, 339, Int)
 NEVERD_DARWIN_SERVICE(Lstat64, 340, Int)
@@ -150,6 +155,20 @@ NEVERD_DARWIN_SERVICE_ALIAS(OpenAt, 464)
 #endif
 
 #ifdef NEVERD_DARWIN_DIAGNOSTIC
+NEVERD_DARWIN_DIAGNOSTIC(
+    SystemString, "Darwin system strings must be at most 1023 bytes without NUL")
+NEVERD_DARWIN_DIAGNOSTIC(
+    SystemCPUCount, "Darwin system cpu_count must be between 1 and INT32_MAX")
+NEVERD_DARWIN_DIAGNOSTIC(SystemPartialInput,
+                         "Darwin sysctl input is partially readable")
+NEVERD_DARWIN_DIAGNOSTIC(
+    SystemLengthMemory,
+    "Darwin sysctl requires a fully readable and writable 8-byte length")
+NEVERD_DARWIN_DIAGNOSTIC(SystemKey, "unsupported Darwin sysctl key")
+NEVERD_DARWIN_DIAGNOSTIC(SystemObservation,
+                         "Darwin sysctl observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(SystemPartialOutput,
+                         "Darwin sysctl output is partially writable")
 NEVERD_DARWIN_DIAGNOSTIC(
     TimebaseRatio, "Darwin timebase numerator and denominator must be nonzero")
 NEVERD_DARWIN_DIAGNOSTIC(TimebaseMissing, "Darwin timebase is not configured")

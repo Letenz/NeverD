@@ -18,6 +18,7 @@ class DarwinMemory {
 public:
   DarwinMemory(AddressSpace &Space, const MemoryLayout &Layout,
                const ProcessOptions &Options);
+  uint64_t pageSize() const { return PageSize; }
   llvm::Expected<std::optional<ServiceResult>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event, DarwinFiles &Files,
          ProcessResult &Result);

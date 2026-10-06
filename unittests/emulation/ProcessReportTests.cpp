@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "DarwinFileTestData.h"
+#include "DarwinSystemTestData.h"
 #include "DarwinTimeTestData.h"
 #include "LinuxFileTestMetadata.h"
 #include "gtest/gtest.h"
@@ -502,6 +503,111 @@ TEST(ProcessReport, PreservesExplicitWindowsCatalogueAndRejectsOtherProfiles) {
       EXPECT_EQ(llvm::toString(R.takeError()), field::WindowsProfile);
   }
 }
+TEST(ProcessReport, DarwinSystemInputsAreLosslessAndRequireDarwinProfiles) {
+  auto O = processOptionsFromJSON(std::string("{\"darwin_system\":") +
+                                  darwin_test::SystemJSON + "}");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->DarwinSystem);
+  const auto &S = *O->DarwinSystem;
+  EXPECT_EQ(S.OSType, "Darwin");
+  EXPECT_EQ(S.OSRelease, "24.test");
+  EXPECT_EQ(S.OSRevision, INT32_MIN);
+  EXPECT_EQ(S.OSVersion, "V42");
+  EXPECT_EQ(S.KernelVersion, "NeverD virtual kernel");
+  EXPECT_EQ(S.Machine, "virtual64");
+  EXPECT_EQ(S.Model, "VirtualModel");
+  EXPECT_EQ(S.CPUCount, 7u);
+  EXPECT_EQ(S.MemorySize, 0xfedcba9876543210ULL);
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64}) {
+    O->DarwinSystem->CPUCount = 0;
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("cpu_count"),
+              std::string::npos);
+    O->DarwinSystem->CPUCount.reset();
+    O->DarwinSystem->Model = std::string("x\0y", 3);
+    R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("strings"), std::string::npos);
+    O->DarwinSystem->Model.reset();
+  }
+}
+
+TEST(ProcessReport, DarwinSystemMissingEmptyZeroAndLimitsStayDistinct) {
+  auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");
+  ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
+  ASSERT_TRUE(Empty->DarwinSystem);
+  EXPECT_FALSE(Empty->DarwinSystem->OSType);
+  EXPECT_FALSE(Empty->DarwinSystem->CPUCount);
+  EXPECT_FALSE(Empty->DarwinSystem->MemorySize);
+  auto Zero = processOptionsFromJSON(R"({"darwin_system":{
+      "os_type":"","os_revision":0,"memory_size":0,"cpu_count":1}})");
+  ASSERT_TRUE(bool(Zero)) << llvm::toString(Zero.takeError());
+  EXPECT_EQ(Zero->DarwinSystem->OSType, "");
+  EXPECT_EQ(Zero->DarwinSystem->OSRevision, 0);
+  EXPECT_EQ(Zero->DarwinSystem->MemorySize, 0u);
+  EXPECT_EQ(Zero->DarwinSystem->CPUCount, 1u);
+  auto Limits = processOptionsFromJSON(R"({"darwin_system":{
+      "os_revision":"2147483647","memory_size":"18446744073709551615",
+      "cpu_count":"2147483647"}})");
+  ASSERT_TRUE(bool(Limits)) << llvm::toString(Limits.takeError());
+  EXPECT_EQ(Limits->DarwinSystem->OSRevision, INT32_MAX);
+  EXPECT_EQ(Limits->DarwinSystem->MemorySize, UINT64_MAX);
+  EXPECT_EQ(Limits->DarwinSystem->CPUCount, INT32_MAX);
+}
+
+TEST(ProcessReport, MalformedDarwinSystemFailsBeforeExecution) {
+  for (const char *Bad : {"null",
+                          "[]",
+                          "true",
+                          R"({"unknown":0})",
+                          R"({"os_type":null})",
+                          R"({"os_type":3})",
+                          R"({"os_type":true})",
+                          R"({"os_release":"x\u0000y"})",
+                          R"({"os_revision":null})",
+                          R"({"os_revision":-2147483649})",
+                          R"({"os_revision":2147483648})",
+                          R"({"os_revision":1.5})",
+                          R"({"os_revision":true})",
+                          R"({"cpu_count":0})",
+                          R"({"cpu_count":-1})",
+                          R"({"cpu_count":2147483648})",
+                          R"({"cpu_count":null})",
+                          R"({"cpu_count":true})",
+                          R"({"cpu_count":1.5})",
+                          R"({"memory_size":-1})",
+                          R"({"memory_size":9007199254740992})",
+                          R"({"memory_size":"18446744073709551616"})",
+                          R"({"memory_size":true})",
+                          R"({"memory_size":"0x1"})",
+                          R"({"memory_size":null})",
+                          R"({"memory_size":1.5})"}) {
+    SCOPED_TRACE(Bad);
+    auto R =
+        processOptionsFromJSON(std::string("{\"darwin_system\":") + Bad + "}");
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+  for (const char *Name : {"os_type", "os_release", "os_version",
+                           "kernel_version", "machine", "model"}) {
+    for (unsigned Size : {1023, 1024}) {
+      auto R =
+          processOptionsFromJSON(std::string("{\"darwin_system\":{\"") + Name +
+                                 "\":\"" + std::string(Size, 'x') + "\"}}");
+      EXPECT_EQ(bool(R), Size == 1023);
+      llvm::consumeError(R.takeError());
+    }
+  }
+}
+
 TEST(ProcessReport, DarwinTimeInputIsLosslessAndRestrictedToDarwinProfiles) {
   auto O = processOptionsFromJSON(std::string("{\"darwin_time\":") +
                                   darwin_test::TimeJSON + "}");

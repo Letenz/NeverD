@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b74bd2f7b34b6ece4aa72cf1abb0aa64b9d5941e8927df99c9f49fe673dd4c02 -->
+<!-- i18n-source: adbad5fe5176c4b6c69ffc7eb9b7a9f7f981923e7eaf69b29400f0493cc9d380 -->
 
 [← Indice della documentazione](README.md)
 
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-La verifica autonoma richiede tutti i 90 casi nativi ARM64 o 60 x64, compresi `LC_MAIN` e `LC_UNIXTHREAD` su ogni piattaforma. Casi obbligatori mancanti/saltati o assenza di `ld64.lld` causano errore.
+La verifica autonoma richiede tutti i 93 casi nativi ARM64 o 62 x64, compresi `LC_MAIN` e `LC_UNIXTHREAD` su ogni piattaforma. Casi obbligatori mancanti/saltati o assenza di `ld64.lld` causano errore.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -354,3 +354,41 @@ Release Darwin: 787 registrazioni, 439 superate, 348 saltate per backend indispo
 Release Darwin: 835 registrazioni,474 superate,360 saltate e un timeout preesistente dei metadati virtuali macOS ARM 64 HVF (5.087 s). Ricontrollo con stessi argomenti e limite 5 s: 8 superate,12 saltate; identità interessata 0.113 s. Tutte 90 identità ARM 64 HVF obbligatorie hanno osservazioni riuscite tra i due avvii; il gate completo resta registrato come fallito. Mirati 42/54 superati,12 saltati; C/CLI/report 150/150, inclusi 103 confronti Darwin; Python invariato, cinque profili 18.478 s; nativi 20/20, script 66/66. Revisione indipendente ha corretto punti annidati: regressione 4 K/16 K fallita prima e riuscita dopo. Precedente aspettativa ftruncate sola lettura corretta a EINVAL. Errori e versioni delle sonde conservati, conteggi sovrapposti, scadenze invariate. GitHub CI completa e iOS fisico separati; Intel HVF Actions sospeso.
 
 `build-hvf-arm64/rename-validation-summary.json`, `rename-focused-final.xml`, `rename-darwin-final-evidence/`, `rename-metadata-recheck.xml`, `rename-public.xml`, `rename-native-final/`, `rename-review-initial-evidence/`.
+
+## Osservazioni esplicite del sistema
+
+`ProcessOptions::DarwinSystem` / `darwin_system` fornisce osservazioni fisse a `sysctl(202)` e al `sysctlbyname(274)` diretto in ogni profilo Darwin. Ogni campo è facoltativo; valori assenti o chiavi non elencate restano non supportati. Nessuna query all’host o versione/modello implicito. La validazione rigorosa JSON e C++ rifiuta valori errati e profili non Darwin prima del caricamento.
+
+`os_revision` è a 32 bit con segno; `cpu_count` va da 1 a INT32_MAX; `memory_size` conserva tutti i 64 bit senza segno. Gli altri campi sono stringhe fino a 1023 byte senza NUL interno; la stringa vuota esplicita è valida. L’output include il NUL finale. Le informazioni su CPU e memoria non modificano scheduling o budget di allocazione.
+
+| Campo JSON | Nome sysctl | MIB |
+| --- | --- | --- |
+| `os_type` | `kern.ostype` | `1,1` |
+| `os_release` | `kern.osrelease` | `1,2` |
+| `os_revision` | `kern.osrevision` | `1,3` |
+| `kernel_version` | `kern.version` | `1,4` |
+| `os_version` | `kern.osversion` | `1,65` |
+| `machine` | `hw.machine` | `6,1` |
+| `model` | `hw.model` | `6,2` |
+| `cpu_count` | `hw.ncpu` | `6,3` |
+| `memory_size` | `hw.memsize` | `6,24` |
+
+`hw.pagesize` deriva dalla politica di memoria guest esistente: normalmente otto byte, quattro con output non nullo e capacità esattamente quattro. Il MIB storico `[6,7]` e `hw.pagesize_compat` restituiscono sempre quattro byte. L’OID numerico dinamico di `hw.pagesize` non è supportato. Anche `hw.memsize` si restringe con capacità quattro solo se il suo schema a 64 bit è l’estensione del segno di un intero a 32 bit; altrimenti ERANGE34 preserva output e lunghezza.
+
+Il conteggio MIB usa i 32 bit inferiori e deve essere 2–12; la lunghezza del nome usa 64 bit e deve essere inferiore a 1024. Tutti i byte sono verificati prima di interpretare il primo NUL e rimuovere un punto finale. Il nome vuoto restituisce ENOENT; l’input parzialmente leggibile resta non supportato. `oldlenp` non nullo richiede otto byte interamente leggibili e scrivibili prima degli effetti. Le prove native con puntatori di lunghezza errati non sono tornate entro il limite: restano esplicitamente fuori ambito. `oldlenp` nullo significa capacità zero; `oldp` nullo richiede solo la dimensione. Un buffer corto restituisce ENOMEM12, lascia i dati intatti e scrive lunghezza zero. EFAULT sui dati conserva la lunghezza precedente. Input e capacità sono acquisiti prima dei dati e la lunghezza è copiata per ultima, preservando alias e copie già completate in caso di successivo errore di trasporto.
+
+Solo `newp` e `newlen` entrambi non zero costituiscono una scrittura. I nodi selezionati restituiscono EPERM1 per l’identità fissa non root prima dei controlli su valore e output, incluso `kern.osversion`, scrivibile nativamente con privilegi. Lunghezza nuova zero ignora il puntatore. Nessun ENOENT viene inventato per chiavi, alberi o OID dinamici sconosciuti.
+
+Il programma originale `system-info` verifica ABI nativa macOS e guest; `virtual-system` confronta byte configurati tramite C++, C/CLI e Python. Un oracolo SDK acquisisce nove osservazioni host come input espliciti del test e confronta output per nome e numero. Non certifica iOS fisico o Intel HVF.
+
+```json
+{"darwin_system":{"os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
+```
+
+[XNU sysctl](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_newsysctl.c), [XNU hardware MIB](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mib.c), [Apple sysctl(3)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man 3/sysctl.3.html).
+
+### Verifica delle query di sistema, 2026-10-06
+
+Release Darwin: 881 registrazioni, 509 superate, 372 saltate per backend indisponibile, nessun errore; eseguite tutte le 93 identità ARM64 HVF obbligatorie. Mirate: 37/49 superate, 12 saltate. C/CLI/report: 163/163, inclusi 113 confronti Darwin. Metodo Python invariato: cinque profili in 15.302 s; programmi nativi 21/21 e script 66/66. Revisione indipendente senza blocchi; priorità aggiuntive e oracolo SDK superati. Una compilazione del nuovo oracolo è fallita per StringExtras mancante, poi è riuscita aggiungendolo; codice e log preservati. Le sonde native con lunghezza non valida restano conservate e fuori contratto. Dopo i test sono stati sistemati solo due commenti iniziali, con ricompilazione riuscita. Conteggi sovrapposti, limiti invariati, nessuna ripetizione per errori runtime necessaria. GitHub CI completa e iOS fisico separati; Intel HVF Actions sospeso.
+
+`build-hvf-arm64/sysctl-validation-summary.json`, `sysctl-darwin-final-evidence/`, `sysctl-focused-final.xml`, `sysctl-public.xml`, `sysctl-native-final/`, `sysctl-sdk-build-failure/`, `sysctl-initial-probe-evidence/`.

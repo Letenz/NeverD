@@ -1373,6 +1373,134 @@ static int file_calls(const char *path, unsigned nocancel) {
   return 37;
 }
 
+/* Original system-query workload. Native runs check ABI shapes and repeated
+ * values without assuming this host's version, model, CPU count or RAM size.
+ * The same body emits explicitly configured guest observations on request. */
+static int system_info(int emit_values) {
+  static const struct {
+    char name[20];
+    unsigned mib[2], width;
+  } keys[] = {{"kern.ostype", {1, 1}, 0},     {"kern.osrelease", {1, 2}, 0},
+              {"kern.osrevision", {1, 3}, 4}, {"kern.version", {1, 4}, 0},
+              {"kern.osversion", {1, 65}, 0}, {"hw.machine", {6, 1}, 0},
+              {"hw.model", {6, 2}, 0},        {"hw.ncpu", {6, 3}, 4},
+              {"hw.memsize", {6, 24}, 8}};
+  unsigned char first[1026], second[1026];
+  unsigned error;
+  int check = 40;
+#define SYSTEM_EXPECT(expression)                                              \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  for (unsigned k = 0; k != sizeof(keys) / sizeof(keys[0]); ++k) {
+    u64 count = 0, length = 0;
+    while (keys[k].name[count])
+      ++count;
+    SYSTEM_EXPECT(call(274, (u64)keys[k].name, count, 0, (u64)&length, 0, 0,
+                       &error) == 0 &&
+                  !error && !secondary);
+    SYSTEM_EXPECT(length && length <= 1024 &&
+                  (!keys[k].width || length == keys[k].width));
+    const u64 size = length;
+    for (u64 i = 0; i != size + 2; ++i)
+      first[i] = second[i] = 0xa5;
+    SYSTEM_EXPECT(call(274, (u64)keys[k].name, count, (u64)(first + 1),
+                       (u64)&length, 0, 0, &error) == 0 &&
+                  !error && !secondary);
+    SYSTEM_EXPECT(length == size && first[0] == 0xa5 &&
+                  first[size + 1] == 0xa5 && (keys[k].width || !first[size]));
+    length = 1024;
+    SYSTEM_EXPECT(call(202, (u64)keys[k].mib, 0x1234567800000002UL,
+                       (u64)(second + 1), (u64)&length, 0, 0, &error) == 0 &&
+                  !error && !secondary && length == size);
+    for (u64 i = 0; i != size + 2; ++i)
+      if (first[i] != second[i])
+        return 211;
+    length = size - 1;
+    SYSTEM_EXPECT(call(274, (u64)keys[k].name, count, (u64)(second + 1),
+                       (u64)&length, 0, 0, &error) == 12 &&
+                  error && !length);
+    for (u64 i = 0; i != size + 2; ++i)
+      if (first[i] != second[i])
+        return 212;
+    length = size;
+    SYSTEM_EXPECT(call(274, (u64)keys[k].name, count, (u64)(second + 1),
+                       (u64)&length, (u64)-1, 0, &error) == 0 &&
+                  !error);
+    SYSTEM_EXPECT(
+        call(274, (u64)keys[k].name, count, 0, 0, 0, (u64)-1, &error) == 0 &&
+        !error);
+    if (emit_values)
+      SYSTEM_EXPECT(call(4, 1, (u64)(first + 1), size, 0, 0, 0, &error) ==
+                        size &&
+                    !error);
+  }
+  const char page[] = "hw.pagesize", compat[] = "hw.pagesize_compat";
+  for (u64 capacity = 0; capacity != 10; ++capacity) {
+    u64 length = capacity, value = 0xa5a5a5a5a5a5a5a5UL;
+    const u64 width = capacity == 4 ? 4 : 8;
+    const u64 expected = capacity < width ? 12 : 0;
+    SYSTEM_EXPECT(call(274, (u64)page, sizeof(page) - 1, (u64)&value,
+                       (u64)&length, 0, 0, &error) == expected &&
+                  error == (expected != 0));
+    SYSTEM_EXPECT(length == (expected ? 0 : width) &&
+                  value == (expected     ? 0xa5a5a5a5a5a5a5a5UL
+                            : width == 4 ? 0xa5a5a5a500000000UL | PAGE
+                                         : PAGE));
+  }
+  u64 length = 8, value = 0xa5a5a5a5a5a5a5a5UL;
+  SYSTEM_EXPECT(call(274, (u64)compat, sizeof(compat) - 1, (u64)&value,
+                     (u64)&length, 0, 0, &error) == 0 &&
+                !error && length == 4 &&
+                value == (0xa5a5a5a500000000UL | PAGE));
+  const unsigned mib[] = {6, 7};
+  length = 8;
+  SYSTEM_EXPECT(
+      call(202, (u64)mib, 2, (u64)&value, (u64)&length, 0, 0, &error) == 0 &&
+      !error && length == 4);
+  const char dotted[] = "hw.pagesize.", embedded[] = "hw.pagesize\0extra";
+  length = 8;
+  SYSTEM_EXPECT(call(274, (u64)dotted, sizeof(dotted) - 1, (u64)&value,
+                     (u64)&length, 0, 0, &error) == 0 &&
+                !error && length == 8 && value == PAGE);
+  SYSTEM_EXPECT(call(274, (u64)embedded, sizeof(embedded) - 1, (u64)&value,
+                     (u64)&length, 0, 0, &error) == 0 &&
+                !error && value == PAGE);
+  length = 8;
+  SYSTEM_EXPECT(call(274, (u64)page, sizeof(page) - 1, 1, (u64)&length, 0, 0,
+                     &error) == 14 &&
+                error && length == 8);
+  length = 3;
+  SYSTEM_EXPECT(call(274, (u64)page, sizeof(page) - 1, 1, (u64)&length, 0, 0,
+                     &error) == 12 &&
+                error && !length);
+  SYSTEM_EXPECT(call(274, (u64)page, sizeof(page) - 1, (u64)&value, 0, 0, 0,
+                     &error) == 12 &&
+                error);
+  const char ostype[] = "kern.ostype"; // Intrinsically read-only even as root.
+  SYSTEM_EXPECT(call(274, (u64)ostype, sizeof(ostype) - 1, 1, (u64)&length, 1,
+                     1, &error) == 1 &&
+                error && !length);
+  SYSTEM_EXPECT(call(202, 1, 1, 1, 1, 1, 1, &error) == 22 && error);
+  SYSTEM_EXPECT(call(274, 1, 1024, 1, 1, 1, 1, &error) == 63 && error);
+  length = 8;
+  SYSTEM_EXPECT(call(274, 1, 0, 1, (u64)&length, 0, 0, &error) == 2 && error &&
+                length == 8);
+  // Data is copied before its length overwrites that same output address.
+  length = 8;
+  SYSTEM_EXPECT(call(274, (u64)page, sizeof(page) - 1, (u64)&length,
+                     (u64)&length, 0, 0, &error) == 0 &&
+                !error && length == 8);
+  if (!emit_values) {
+    const char marker = 'i';
+    SYSTEM_EXPECT(call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error);
+  }
+#undef SYSTEM_EXPECT
+  return 37;
+}
+
 static int output_descriptors(void) {
   unsigned error;
   const char text[] = "ok";
@@ -1400,6 +1528,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "system-info") || equal(argv[1], "virtual-system"))
+    return system_info(equal(argv[1], "virtual-system"));
   if (equal(argv[1], "time-null"))
     return call(116, 0, 0, 0, 0, 0, 0, &error) || error || secondary ? 51 : 37;
   if (equal(argv[1], "time") || equal(argv[1], "time-values"))

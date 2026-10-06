@@ -1,0 +1,20 @@
+//===- DarwinSystemFields.def - Supported system observation bindings ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Member, wire field, native name, stable numeric MIB. The member type owns
+// encoding width. Derived page32/page64 bindings are separate kernel policy.
+#ifdef NEVERD_DARWIN_SYSTEM_FIELD
+NEVERD_DARWIN_SYSTEM_FIELD(OSType, SystemOSType, "kern.ostype", 1, 1)
+NEVERD_DARWIN_SYSTEM_FIELD(OSRelease, SystemOSRelease, "kern.osrelease", 1, 2)
+NEVERD_DARWIN_SYSTEM_FIELD(OSRevision, SystemOSRevision, "kern.osrevision", 1, 3)
+NEVERD_DARWIN_SYSTEM_FIELD(KernelVersion, SystemKernelVersion, "kern.version", 1, 4)
+// Native kern.osversion allows privileged writes. Our fixed non-root guest
+// identity cannot write it; the observation itself remains caller supplied.
+NEVERD_DARWIN_SYSTEM_FIELD(OSVersion, SystemOSVersion, "kern.osversion", 1, 65)
+NEVERD_DARWIN_SYSTEM_FIELD(Machine, SystemMachine, "hw.machine", 6, 1)
+NEVERD_DARWIN_SYSTEM_FIELD(Model, SystemModel, "hw.model", 6, 2)
+NEVERD_DARWIN_SYSTEM_FIELD(CPUCount, SystemCPUCount, "hw.ncpu", 6, 3)
+NEVERD_DARWIN_SYSTEM_FIELD(MemorySize, SystemMemorySize, "hw.memsize", 6, 24)
+#endif

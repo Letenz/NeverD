@@ -87,6 +87,7 @@ add_neverd_component_library(NeverDEmulationProcess
   runtime/ProcessSession.cpp
   runtime/ProcessReport.cpp
   runtime/ProcessDarwinFilesJSON.cpp
+  runtime/ProcessDarwinSystemJSON.cpp
   runtime/ProcessDarwinTimeJSON.cpp
   runtime/ProcessLinuxTimeJSON.cpp
   runtime/ProcessLinuxSignalsJSON.cpp

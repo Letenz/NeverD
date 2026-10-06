@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b74bd2f7b34b6ece4aa72cf1abb0aa64b9d5941e8927df99c9f49fe673dd4c02 -->
+<!-- i18n-source: adbad5fe5176c4b6c69ffc7eb9b7a9f7f981923e7eaf69b29400f0493cc9d380 -->
 
 [← 文档索引](README.md)
 
@@ -266,7 +266,7 @@ Intel HVF 的 10 项原生 transport 和全部 26 个 Darwin 工作负载均已�
 [HVF 验证记录](macos-hvf.md)，不能把内核参考程序成功当作后端通过。
 
 新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
-ARM64 三个平台共 90 项，x64 的 macOS 和 Simulator 共 60 项。
+ARM64 三个平台共 93 项，x64 的 macOS 和 Simulator 共 62 项。
 每种平台都必须执行 `LC_MAIN` 和独立编写的 `LC_UNIXTHREAD` 程序；源码清单回归确保
 以后新增的 Darwin 进程用例也进入必需集合。
 macOS 本机构建还会把同一份自编目标文件链接为宿主参考程序，对照返回、退出、内存保护/
@@ -458,3 +458,41 @@ Release Darwin 共 787 项：439 通过、348 项后端不可用跳过、零失�
 Release Darwin 共 835 项：474 通过、360 项后端不可用跳过，既有 macOS ARM64 HVF 虚拟元数据用例超时一次（5.087 秒）。原参数、原 5 秒时限复查该方法：8 通过、12 跳过，受影响项耗时 0.113 秒。两次运行合计覆盖全部 90 个必需 ARM64 HVF 身份；完整门禁仍记录为失败。重命名专项 42/54 通过、12 跳过。公共 C/CLI/报告 150/150，含 103 项 Darwin 输入比较；未改动的 Python 方法在 18.478 秒内通过五组配置。原生 20/20、验收脚本 66/66 通过。独立审查发现嵌套点路径分类错误，4K/16K 回归先复现失败，修复后通过；更早的只读 ftruncate 测试预期已纠正为 EINVAL。保留全部失败和探针版本，计数重叠、时限未改。完整 GitHub CI、iOS 真机另行验收，Intel HVF Actions 继续暂停。
 
 `build-hvf-arm64/rename-validation-summary.json`, `rename-focused-final.xml`, `rename-darwin-final-evidence/`, `rename-metadata-recheck.xml`, `rename-public.xml`, `rename-native-final/`, `rename-review-initial-evidence/`.
+
+## 显式系统观察值
+
+`ProcessOptions::DarwinSystem` / `darwin_system` 为所有 Darwin 配置的 `sysctl(202)` 和原始 `sysctlbyname(274)` 提供固定观察值。各字段均可省略；未提供的值或未列出的键明确停止为不支持。不会查询宿主或推测版本、机型。严格 JSON 与 C++ 校验在加载映像前拒绝非法值和非 Darwin 配置。
+
+`os_revision` 为有符号32位；`cpu_count` 范围为1至 INT32_MAX；`memory_size` 保留全部无符号64位。其余字段是最多1023字节、无内嵌 NUL 的字符串，允许显式空串。返回内容包含结尾 NUL。报告的 CPU 数和内存容量不会改变调度或分配预算。
+
+| JSON 字段 | sysctl 名称 | MIB |
+| --- | --- | --- |
+| `os_type` | `kern.ostype` | `1,1` |
+| `os_release` | `kern.osrelease` | `1,2` |
+| `os_revision` | `kern.osrevision` | `1,3` |
+| `kernel_version` | `kern.version` | `1,4` |
+| `os_version` | `kern.osversion` | `1,65` |
+| `machine` | `hw.machine` | `6,1` |
+| `model` | `hw.model` | `6,2` |
+| `cpu_count` | `hw.ncpu` | `6,3` |
+| `memory_size` | `hw.memsize` | `6,24` |
+
+`hw.pagesize` 来自现有客户机内存策略，通常返回8字节；非空输出且容量恰为4时返回4字节。旧 MIB `[6,7]` 与名称 `hw.pagesize_compat` 始终返回4字节。`hw.pagesize` 的动态数字 OID 仍不支持。`hw.memsize` 在容量恰为4时，仅当64位模式是有符号32位值的符号扩展才缩窄，否则返回 ERANGE34，保持输出和长度不变。
+
+MIB 数量取低32位，须为2–12；名称长度取完整64位且须小于1024。先检查全部指定字节，再按首个 NUL 解释名称并移除一个末尾点；空名称返回 ENOENT，部分可读输入仍不支持。非空 `oldlenp` 必须在任何副作用前完整具备8字节读写权限。原生非法长度指针探测未在时限内返回，因此这类指针明确留在不支持边界。空 `oldlenp` 表示容量0；空 `oldp` 仅查询长度。短缓冲区返回 ENOMEM12、不写数据并把长度置0；数据 EFAULT 保持旧长度。输入和容量先取快照，随后写数据，最后写长度，保留别名顺序及后续传输失败前已完成的复制。
+
+只有 `newp` 和 `newlen` 均非零才构成写请求。选中的节点按模型固定非 root 身份，在检查观察值或输出前返回 EPERM1；包括原生允许特权写入的 `kern.osversion`。新长度为0时忽略指针。未知键、其他树和动态 OID 不会被猜测为 ENOENT。
+
+原创 `system-info` 程序检查原生 macOS 与客户机 ABI；`virtual-system` 通过 C++、C/CLI、Python 比较配置的精确字节。独立 SDK 对照将宿主九项观察值显式作为测试输入，比较名称与数字查询输出。这不构成 iOS 真机或 Intel HVF 验收。
+
+```json
+{"darwin_system":{"os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
+```
+
+[XNU sysctl](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_newsysctl.c), [XNU hardware MIB](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mib.c), [Apple sysctl(3)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/sysctl.3.html).
+
+### 系统查询验证，2026-10-06
+
+Release Darwin 共881项：509通过、372因后端不可用跳过、零失败；93项 ARM64 HVF 必需项全部执行。聚焦检查49项中37通过、12跳过。公开 C/CLI/配置报告163/163通过，含113项 Darwin 输入对照。未改变的 Python 方法在15.302秒内通过五种配置；原生程序21/21、验证脚本66/66通过。独立审查无阻塞，补充的错误优先级组合与独立 SDK 捕获对照均通过。新增 SDK 对照曾因缺少 StringExtras 头文件而编译失败，补上后通过，原始日志和源码已保留。原生非法长度指针探测也已保留，明确在支持边界之外。通过测试后仅整理了两个文件头注释，并成功重建。计数重叠、时限不变，无需运行失败复测。完整 GitHub CI 与 iOS 真机仍待分别验证；Intel HVF Actions 保持暂停。
+
+`build-hvf-arm64/sysctl-validation-summary.json`, `sysctl-darwin-final-evidence/`, `sysctl-focused-final.xml`, `sysctl-public.xml`, `sysctl-native-final/`, `sysctl-sdk-build-failure/`, `sysctl-initial-probe-evidence/`.

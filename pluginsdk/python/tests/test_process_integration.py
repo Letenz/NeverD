@@ -505,6 +505,12 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("created-file", b"c"),
                                            ("created-file-metadata", b"q"),
                                            ("renamed-file", b"r"),
+                                           ("system-info", b"i"),
+                                           ("virtual-system", bytes.fromhex(
+                                               "44617277696e0032342e746573740000000080"
+                                               "4e6576657244207669727475616c206b65726e656c0056343200"
+                                               "7669727475616c3634005669727475616c4d6f64656c0007000000"
+                                               "1032547698badcfe")),
                                            ("virtual-created-metadata", bytes.fromhex(
                                                "85ffffffe88100001132547698badcfee803000098badcfe0000000000000000edffffffffffffffb168de3a00000000f9ffffffffffffff15cd5b0700000000f9ffffffffffffff15cd5b0700000000edffffffffffffffb168de3a00000000082000000000000008000000000000000020000000000000efcdab890000000000000000000000000000000000000000")),
                                            ("virtual-file-metadata", bytes.fromhex(
@@ -529,6 +535,12 @@ class ProcessIntegrationTests(unittest.TestCase):
                             continue
                         file_options = json.dumps({
                             "backend": "unicorn", "arguments": ["guest", mode, "/data"],
+                            "darwin_system": {
+                                "os_type": "Darwin", "os_release": "24.test",
+                                "os_revision": -2147483648, "os_version": "V42",
+                                "kernel_version": "NeverD virtual kernel",
+                                "machine": "virtual64", "model": "VirtualModel",
+                                "cpu_count": 7, "memory_size": "18364758544493064720"},
                             "darwin_time": {
                                 "time_of_day": {"seconds": 4045620583, "microseconds": 654321},
                                 "timezone": {"minutes_west": -480, "dst_time": -1},

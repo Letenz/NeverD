@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "DarwinFileTestData.h"
+#include "DarwinSystemTestData.h"
 #include "DarwinTestImage.h"
 #include "DarwinTimeTestData.h"
 #include "HvfTestPolicy.h"
@@ -326,6 +327,35 @@ TEST_P(DarwinProcess, DirectoryEnumerationPreservesRecordsCookiesAndCopyOrder) {
   EXPECT_EQ(Result->StandardOutput, "e");
   EXPECT_TRUE(Result->StandardError.empty());
   EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+}
+TEST_P(DarwinProcess, SystemQueriesPreserveExplicitValuesWidthsAndCopyOrder) {
+  auto Missing = run("system-info");
+  ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+  EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Missing->Diagnostic, "Darwin sysctl observation is not configured");
+  EXPECT_TRUE(Missing->StandardOutput.empty());
+  Options.DarwinSystem = darwin_test::systemOptions();
+  for (auto Mode : {"system-info", "virtual-system"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(Result->StandardOutput,
+              Mode == llvm::StringRef("system-info")
+                  ? "i"
+                  : llvm::fromHex(darwin_test::SystemHex));
+    EXPECT_TRUE(Result->StandardError.empty());
+    EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+    ASSERT_GE(Result->Services.size(), 3u);
+    const uint64_t Class =
+        GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+    EXPECT_EQ(Result->Services[0].Number, Class + 274);
+    EXPECT_EQ(Result->Services[2].Number, Class + 202);
+    EXPECT_EQ(Result->Services[2].Arguments[1], 0x1234567800000002ULL);
+    EXPECT_EQ(Result->Services[2].Result, 0u);
+    EXPECT_EQ(Result->Services[2].Error, false);
+  }
 }
 TEST_P(DarwinProcess, ExplicitTimeObservationsPreserveBytesErrorsAndCopyOrder) {
   auto Null = run("time-null");

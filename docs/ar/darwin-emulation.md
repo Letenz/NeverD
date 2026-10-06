@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: b74bd2f7b34b6ece4aa72cf1abb0aa64b9d5941e8927df99c9f49fe673dd4c02 -->
+<!-- i18n-source: adbad5fe5176c4b6c69ffc7eb9b7a9f7f981923e7eaf69b29400f0493cc9d380 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-يشترط فحص الأعباء المستقل جميع الحالات الأصلية، وعددها 90 على ARM64 أو 60 على x64، بما فيها `LC_MAIN` و`LC_UNIXTHREAD` على كل منصة. غياب حالة إلزامية أو تخطيها أو غياب `ld64.lld` يؤدي إلى الفشل.
+يشترط فحص الأعباء المستقل جميع الحالات الأصلية، وعددها 93 على ARM64 أو 62 على x64، بما فيها `LC_MAIN` و`LC_UNIXTHREAD` على كل منصة. غياب حالة إلزامية أو تخطيها أو غياب `ld64.lld` يؤدي إلى الفشل.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -354,3 +354,41 @@ Release Darwin: سُجلت 787 حالة؛ نجحت 439 وتُخطيت 348 لخل
 Release Darwin:835 حالة، نجحت474 وتُخطيت360، وتجاوز اختبار بيانات وصفية افتراضية قائم على macOS ARM64 HVF المهلة مرة (5.087ث). إعادة الطريقة بالوسائط نفسها وحد5ث: نجحت8 وتُخطيت12، واستغرقت الحالة المعنية0.113ث. توجد ملاحظات نجاح لجميع هويات ARM64 HVF الإلزامية الـ90 عبر التشغيلين؛ تبقى البوابة الكاملة مسجلة فاشلة. المركزة42/54 ناجحة و12 متخطاة؛ C/CLI/report150/150 منها103 مقارنات Darwin؛ Python دون تعديل، خمسة ملفات تعريفية خلال18.478ث؛ الأصلية20/20 والسكربتات66/66. أصلحت المراجعة المستقلة تصنيف النقاط المتداخلة بعد فشل رجعي4K/16K ثم نجاحه. صُحح توقع اختبار ftruncate للقراءة فقط إلى EINVAL. تبقى الإخفاقات وإصدارات المجسات محفوظة، الأعداد متداخلة والمهل ثابتة. GitHub CI الكاملة وiOS الفعلي منفصلان؛ Intel HVF Actions معلقة.
 
 `build-hvf-arm64/rename-validation-summary.json`, `rename-focused-final.xml`, `rename-darwin-final-evidence/`, `rename-metadata-recheck.xml`, `rename-public.xml`, `rename-native-final/`, `rename-review-initial-evidence/`.
+
+## ملاحظات النظام الصريحة
+
+يوفر `ProcessOptions::DarwinSystem` / `darwin_system` ملاحظات ثابتة لاستدعاء `sysctl(202)` و`sysctlbyname(274)` المباشر في جميع ملفات Darwin. كل حقل اختياري؛ القيمة الغائبة أو المفتاح غير المدرج يؤدي إلى توقف صريح لعدم الدعم. لا توجد استعلامات للمضيف أو افتراضات عن الإصدار والطراز. يرفض تحقق JSON الصارم وC++ القيم غير الصحيحة والملفات غير Darwin قبل تحميل الصورة.
+
+`os_revision` عدد بإشارة من 32 بت؛ `cpu_count` من 1 إلى INT32_MAX؛ ويحفظ `memory_size` جميع 64 بت دون إشارة. بقية الحقول سلاسل حتى 1023 بايت بلا NUL داخلي، مع السماح بالسلسلة الفارغة الصريحة. يشمل الخرج NUL النهائي. معلومات CPU والذاكرة لا تغير الجدولة أو ميزانية التخصيص.
+
+| حقل JSON | اسم sysctl | MIB |
+| --- | --- | --- |
+| `os_type` | `kern.ostype` | `1,1` |
+| `os_release` | `kern.osrelease` | `1,2` |
+| `os_revision` | `kern.osrevision` | `1,3` |
+| `kernel_version` | `kern.version` | `1,4` |
+| `os_version` | `kern.osversion` | `1,65` |
+| `machine` | `hw.machine` | `6,1` |
+| `model` | `hw.model` | `6,2` |
+| `cpu_count` | `hw.ncpu` | `6,3` |
+| `memory_size` | `hw.memsize` | `6,24` |
+
+يأتي `hw.pagesize` من سياسة ذاكرة الضيف الحالية: ثمانية بايت عادة، أو أربعة إذا كان مؤشر الخرج غير صفري والسعة أربعة بالضبط. يعيد MIB القديم `[6,7]` والاسم `hw.pagesize_compat` أربعة بايت دائماً. يبقى OID الرقمي الديناميكي لـ`hw.pagesize` غير مدعوم. يضيق `hw.memsize` عند سعة أربعة فقط إذا كان نمط 64 بت امتداد إشارة لقيمة 32 بت؛ وإلا يعيد ERANGE34 مع حفظ الخرج والطول.
+
+يستخدم عدد MIB أدنى 32 بت ويجب أن يكون 2–12؛ طول الاسم يستخدم 64 بت كاملة ويجب أن يقل عن 1024. تُفحص جميع البايتات المحددة قبل تفسير أول NUL وإزالة نقطة نهائية واحدة. الاسم الفارغ يعيد ENOENT والمدخل المقروء جزئياً غير مدعوم. يجب أن يتيح `oldlenp` غير الصفري قراءة وكتابة ثمانية بايت كاملة قبل أي أثر. لم ترجع تجارب مؤشرات الطول المعطوبة الأصلية ضمن المهلة، لذا تبقى هذه المؤشرات خارج حدود الدعم صراحة. `oldlenp` الصفري يعني سعة صفر و`oldp` الصفري يطلب الحجم فقط. المخزن القصير يعيد ENOMEM12 دون تغيير البيانات ويكتب طولاً صفرياً. يحفظ EFAULT للبيانات الطول القديم. تُلتقط المدخلات والسعة قبل البيانات ويُنسخ الطول أخيراً، مع حفظ ترتيب التداخل والنسخ المكتملة إذا فشل النقل لاحقاً.
+
+لا يكون الطلب كتابة إلا إذا كان كل من `newp` و`newlen` غير صفري. تعيد العقد المختارة EPERM1 لهوية النموذج الثابتة غير root قبل فحص القيمة أو الخرج، بما فيها `kern.osversion` القابل للكتابة بصلاحيات خاصة على النظام الأصلي. طول جديد صفري يتجاهل المؤشر. لا يُخمن ENOENT للمفاتيح والأشجار وOID الديناميكية المجهولة.
+
+يفحص البرنامج الأصلي `system-info` واجهة ABI على macOS الأصلي والضيف؛ ويقارن `virtual-system` البايتات المضبوطة عبر C++ وC/CLI وPython. يلتقط مرجع SDK مستقل ملاحظات المضيف التسع كمدخلات اختبار صريحة ويقارن المخرجات الاسمية والرقمية. هذا لا يثبت قبول iOS الفعلي أو Intel HVF.
+
+```json
+{"darwin_system":{"os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
+```
+
+[XNU sysctl](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_newsysctl.c), [XNU hardware MIB](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mib.c), [Apple sysctl(3)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man 3/sysctl.3.html).
+
+### التحقق من استعلامات النظام، 2026-10-06
+
+Release Darwin: عدد الحالات 881، نجحت 509 وتُخطيت 372 لعدم توفر الخلفية، بلا إخفاقات؛ نُفذت جميع هويات ARM64 HVF الإلزامية وعددها 93. الفحوص المركزة: 37 من49 ناجحة و12 متخطاة. C/CLI/report: نجحت163/163، منها113 مقارنة Darwin. طريقة Python دون تغيير: خمسة ملفات خلال15.302ث؛ البرامج الأصلية21/21 والسكربتات66/66. لا عوائق في المراجعة المستقلة؛ نجحت تركيبات الأولوية الإضافية ومرجع SDK. فشلت ترجمة المرجع الجديد مرة بسبب ترويسة StringExtras الناقصة ثم نجحت بعد إضافتها، مع حفظ المصدر والسجل. تجارب مؤشرات الطول المعطوبة محفوظة وخارج العقد المدعوم. بعد الاختبارات عُدل فقط تعليقان في رأسي ملفين وأعيد البناء بنجاح. الأعداد متداخلة والمهل ثابتة ولم تلزم إعادة بسبب إخفاق تنفيذ. GitHub CI الكاملة وiOS الفعلي منفصلان؛ Intel HVF Actions معلقة.
+
+`build-hvf-arm64/sysctl-validation-summary.json`, `sysctl-darwin-final-evidence/`, `sysctl-focused-final.xml`, `sysctl-public.xml`, `sysctl-native-final/`, `sysctl-sdk-build-failure/`, `sysctl-initial-probe-evidence/`.

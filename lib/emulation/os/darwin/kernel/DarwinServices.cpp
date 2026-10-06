@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "DarwinFiles.h"
 #include "DarwinMemory.h"
+#include "DarwinSystem.h"
 #include "DarwinTime.h"
 
 #include "neverd/emulation/CPU.h"
@@ -167,6 +168,10 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
                 DarwinFiles &Files, const ProcessServiceEvent &Event,
                 const ProcessOptions &Options, ProcessResult &Result) {
   switch (Kind) {
+  case ServiceKind::Sysctl:
+  case ServiceKind::SysctlByName:
+    return systemService(CPU, Memory.pageSize(), Kind, Event,
+                         Options.DarwinSystem, Result);
   case ServiceKind::TimebaseInfo:
   case ServiceKind::AbsoluteTime:
   case ServiceKind::ContinuousTime:
