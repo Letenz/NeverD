@@ -73,6 +73,25 @@ GatePolarity flip(GatePolarity P) {
 /// at any width a caller might hand over.
 constexpr size_t kMaxXorFanIn = 3;
 
+// Gate operands are usually pairs or triples from adders. Keep their exact
+// canonical ordering inline instead of dispatching a tiny POD array to qsort.
+void sortGateInputs(llvm::MutableArrayRef<SatLit> Inputs) {
+  if (Inputs.size() <= 3) {
+    if (Inputs.size() < 2)
+      return;
+    if (Inputs[1] < Inputs[0])
+      std::swap(Inputs[0], Inputs[1]);
+    if (Inputs.size() == 3) {
+      if (Inputs[2] < Inputs[1])
+        std::swap(Inputs[1], Inputs[2]);
+      if (Inputs[1] < Inputs[0])
+        std::swap(Inputs[0], Inputs[1]);
+    }
+    return;
+  }
+  std::sort(Inputs.begin(), Inputs.end());
+}
+
 } // namespace
 
 CnfEncoder::CnfEncoder(SatSolver &Solver) : Solver(Solver) {
@@ -103,7 +122,7 @@ SatLit CnfEncoder::mkAnd(llvm::ArrayRef<SatLit> Ins, GatePolarity P) {
 
   // Sorting puts duplicates and complementary pairs next to each other, and
   // fixes one spelling for operands that arrived in a different order.
-  llvm::sort(Terms);
+  sortGateInputs(Terms);
 
   size_t Kept = 0;
   SatLit Prev;
@@ -170,7 +189,7 @@ SatLit CnfEncoder::mkXor(llvm::ArrayRef<SatLit> Ins) {
     Terms.push_back(L);
   }
 
-  llvm::sort(Terms);
+  sortGateInputs(Terms);
 
   // A term appearing twice contributes nothing to a parity.
   size_t Kept = 0;
@@ -279,7 +298,7 @@ SatLit CnfEncoder::mkMajority(SatLit A, SatLit B, SatLit C) {
     return A;
 
   SatLit Ins[] = {A, B, C};
-  llvm::sort(Ins);
+  sortGateInputs(Ins);
   return gate(GateKind::Majority, Ins, GatePolarity::Both);
 }
 
