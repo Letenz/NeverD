@@ -1474,4 +1474,12 @@ block과 복사본 게시 테스트는 독립된 두 48바이트 범위, 기술�
 
 `DarwinIndirectRecordCalls.AffineTranslatePreservesScalarBitsAndSnapshotsAliasedInput`은 O0와 O2에서 각각 2560개 사례를 실행한다. 두 스칼라의 비트 패턴, 여섯 입력 필드, 한 번의 호출, 전체 출력 바이트와 동일·중첩·분리 배치의 보호된 저장 공간을 검사한다. 스칼라 ABI 변경 네 가지와 공유된 임포트/ABI 변경 22가지를 거부한다. 비트 단위 스텁은 물리 인수와 사전 복사를 검증하며, 평행 이동의 수학적 판정이나 원래 기계어 실행은 아니다.
 
+`NativeFloatingReturnProof.HFAResultFieldsNeedTheExactCompleteDefinedCall`은 아홉 필드 선택과 호출·캐리어·너비·오프셋·SSA 변경에 대한 열일곱 거부 사례를 다룬다. `HFAFieldExtractionNeedsADominatingCall`은 형제 경로의 생성자를 거부한다. `NativeSourceHints.HFAFieldTypeRequiresCurrentCallAndFrameProofForPublication`은 다섯 명령의 ARM64 호출자를 리프팅하고 추론된 스칼라 결과를 재리프팅하여 게시 조건을 확인한다. 잘못된 제공자나 LR/SP 복원 누락은 거부된다. 소스 타입과 투영 검증이며 원래 기계어 본문 실행은 아니다.
+
 CPU0 명시적 선점, 가상 시계 의미와 현재 한계는 [드라이버 스케줄링](driver-scheduling.md)을 참조하세요.
+
+`SwiftOnceSources.FoldedObjCGetterTailsExecuteOnceAndRetainsAtO0AndO2` 는 실제 ARM64/x64 반환 꼬리를 접고 결합 또는 분리된 retain 호출과 독립 또는 인라인 조건값을 다루며, 출력 C를 런타임 스텁으로 O0/O2에서 실행한다. 결과 비트, 한 번의 초기화, 호출 순서와 캐시값 변경을 검사한다. `FoldedObjCGetterTailsRevalidateCurrentStorageAndCalls`는 저장된 계획이 있어도 너비, 순서, 내장 연산, 저장소, 결과, 호출과 현재 가져오기 변경을 거부한다. 이는 통제된 소스와 스텁 검사이며 원래 WMF 기계어나 네이티브 Swift 런타임 실행은 아니다.
+
+`SourceFrameAnalysis.CompleteOutput*`는 완전하거나 짧은 접두 영역, 모든 반환 경로의 병합, SDK 꼬리 호출 쓰기, 누락 바이트, 포인터 탈출 및 ABI 전달 위치 제약을 검사한다. 호출자 사례는 없거나 짧은 인증서, 정렬 오류, 프레임 경계 위반 및 저장 레지스터 겹침, 별칭, 후속 쓰기로 인한 무효화와 살아 있는 불투명 값의 겹침을 거부한다. `NativeSourceHints.CompleteNativeOutput*`는 조립한 ARM64 생산자와 소비자를 재검증하고 완전한 SDK 입력 범위를 요구하며 오래된 코드, CFG, ABI, 감사, 공급자 및 호출 위치 증거를 거부한다. 이는 바이트 초기화와 소스 허용 검사이며 원래 기계 코드 본문을 실행하거나 네이티브 논리 반환값을 인증하지 않는다.
+
+`MedCallingConvValueFlow.FPInputsFollowOnlyAuthenticatedCallPrefixes` / `NativeSourceHints.PreservedFPPrefixesRetainAllEntryInputsAfterSDKCalls`: 보존 접두 영역 회귀는 유효한 읽기 세 가지와 전달 위치, 접두 영역, 호출 소유 정보 및 미사용 값에 관한 거부 사례 열아홉 가지를 검사한다. 조립한 ARM64 호출자는 SDK 호출을 거치면서 네 개의 진입 double 레인을 모두 유지하며 새 리프팅으로 완전한 매개변수 ABI와 소스 허용을 확인한다. 변경하지 않은 허용된 WMF `0x36350` 메서드는 독립적인 네이티브 CoreGraphics 뒤집기·이동·정규화·연결·적용 식과 비교하여 O0 및 O2에서 각각 2048 사례를 통과한다. 결과 32바이트 전체, 수신자/선택자 및 입력 보호 영역을 검사하며 0, 음수, 무한대와 NaN 크기를 포함한다. 원래 WMF 기계 코드 본문은 실행하지 않는다.
