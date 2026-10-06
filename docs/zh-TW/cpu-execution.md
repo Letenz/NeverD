@@ -41,7 +41,7 @@ llvm::cantFail(CPU->map(Code, 4096, Read | Write | Execute | UserAccessible));
 
 ## 平行 CPU 與裝置原子交易
 
-KVM、WHP 與 Unicorn 的 checked x64/ARM64 可要求 `ExecutionFeature::ParallelCPUs`（`parallel_cpus`）。獨立 CPU 可在不同主機執行緒共享實體 RAM；已證明不寫 RAM 的原生指令可重疊執行，待處理寫入阻止新指令進入，等待讀取結束後才發布。指令效果採順序一致性，支援等待取消和回復。所有執行結束前仍禁止映射修改與主機寫入。同一 CPU 物件只有 `stop()` 支援跨執行緒呼叫。預設執行及 OS 排程仍為協作式，弱記憶體模型探索屬於獨立契約。
+KVM、WHP 與 Unicorn 的 checked x64/ARM64 可要求 `ExecutionFeature::ParallelCPUs`（`parallel_cpus`）。獨立 CPU 可在不同主機執行緒共享實體 RAM；已證明不寫 RAM 的原生指令可重疊執行，待處理寫入阻止新指令進入，等待讀取結束後才發布。指令效果採順序一致性，支援等待取消和回復。所有執行結束前仍禁止映射修改與主機寫入。同一 CPU 物件只有 `stop()` 支援跨執行緒呼叫。預設 CPU 執行仍為協作式；[OS 排程](driver-scheduling.md)與弱記憶體模型探索屬於獨立契約。
 
 平行 WHP CPU 在一個共用分割區內使用獨立 VP，最多同時保留 31 個平行 CPU，另加協作式 VP。私有 GPA 區間與傳輸 RAM 隔離各自投影；ARM64 使用不同 ASID 與非全域位址轉換。每次原生執行前複製程式碼及已宣告的運算元，只有已宣告的輸出位元組進入共用 RAM 交易。觀察者讀取權威 RAM。KVM 與 checked Unicorn 直接使用共用後備記憶體。HVF 與 Unicorn 的 `Software` 契約不宣告此能力。
 
