@@ -710,13 +710,13 @@ x64 KVM/WHP/HVF 네이티브 초기화는 비공개 supervisor 페이지에서 `
 
 `CheckedX64Instructions.def`는 기존 CPU 백엔드에서 8/16/32/64비트 부호 없는 `MUL`과 `CBW/CWDE/CDQE/CWD/CDQ/CQO`를 허용합니다. `NeverDX64IntegerTests`는 독립적인 `X64IntegerCases.def` 인코딩과 예상값을 사용하여 두 권한 수준에서 부분 레지스터 보존, 32비트 제로 확장, 곱의 상위·하위 결과, 정의된 CF/OF 및 부호 확장 시 플래그 보존을 검증합니다. 일반 RAM 곱셈은 전체 접근 범위의 권한 검사와 읽기 관찰 콜백을 유지하며, 오류나 관찰 콜백의 중지는 암시적 출력 레지스터와 PC를 보존합니다. 장치 피연산자는 지원하지 않습니다. checked Unicorn에서도 실행하며 사용할 수 없는 네이티브 백엔드는 명시적으로 건너뜁니다.
 
-`X64BitInstructions.def`는 16/32/64비트 레지스터 및 일반 RAM의 `BT/BTS/BTR/BTC`를 허용합니다. 레지스터 비트 인덱스는 피연산자 너비의 부호 있는 값으로 전체 워드를 선택하며, 즉시값은 기준 워드 안에 머뭅니다. 주소 너비에 따른 절단은 FS/GS 기준 주소를 더하기 전에 적용됩니다. 프로세서가 CF와 쓰기 값을 제공하고, `RAMTransaction`은 관찰 콜백이 수락할 때까지 결과를 비공개로 유지합니다. 전체 범위 권한 검사는 독립 페이지 할당과 별칭을 포함하며, 중지·콜백 실패·페이지 접근 거부 시 원래 CPU와 RAM을 보존합니다. LOCK은 자연 정렬된 메모리 수정 형식만 허용하며 MMIO와 하드웨어 병렬 SMP는 지원하지 않습니다. `X64BitStringTests.cpp`는 독립 인코딩을 실제 x64 호스트 실행과 비교하고 음수 인덱스, 너비 절단, 페이지 경계 접근, 취소, 잘못된 LOCK 형식을 검사합니다. [Intel 명령어 참조](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)를 참고하세요.
+`X64BitInstructions.def`는 16/32/64비트 레지스터 및 일반 RAM의 `BT/BTS/BTR/BTC`를 허용합니다. 레지스터 비트 인덱스는 피연산자 너비의 부호 있는 값으로 전체 워드를 선택하며, 즉시값은 기준 워드 안에 머뭅니다. 주소 너비에 따른 절단은 FS/GS 기준 주소를 더하기 전에 적용됩니다. 프로세서가 CF와 쓰기 값을 제공하고, `RAMTransaction`은 관찰 콜백이 수락할 때까지 결과를 비공개로 유지합니다. 전체 범위 권한 검사는 독립 페이지 할당과 별칭을 포함하며, 중지·콜백 실패·페이지 접근 거부 시 원래 CPU와 RAM을 보존합니다. LOCK은 자연 정렬을 요구하며 수정 MMIO는 명시적인 준비형 원자 연산 제공자가 필요합니다. `X64BitStringTests.cpp`는 독립 인코딩을 실제 x64 호스트 실행과 비교하고 음수 인덱스, 너비 절단, 페이지 경계 접근, 취소, 잘못된 LOCK 형식을 검사합니다. [Intel 명령어 참조](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)를 참고하세요.
 
 `X64StringInstructions.def`는 일반 RAM의 8/16/32/64비트 `MOVS/STOS/LODS`를 관리하며, `CLD/STD`는 다른 플래그를 보존하면서 방향만 바꿉니다. REP의 각 요소는 관찰 전에 전체 피연산자를 검사하고 재개 경계에서 확정됩니다. 후속 오류가 발생해도 완료한 요소는 유지되며, 중지나 콜백 예외는 현재 요소를 변경하지 않습니다. FS/GS는 주소 폭을 자른 뒤 소스에만 더합니다. AL/AX 로드는 상위 비트를 보존하고 EAX 로드는 0으로 확장합니다. 32비트 주소 모드에서 반복 횟수가 0이면 카운터 상위 비트가 0이어야 하며 MOVS/STOS의 참여 주소 레지스터도 동일합니다. 그렇지 않으면 실제 CPU 구현마다 결과가 다릅니다. MOVS/STOS/LODS의 REPNE 형식과 STOS/LODS 장치 피연산자는 아직 지원하지 않습니다. `X64StringTransferTests.cpp`는 독립적인 호스트 명령으로 폭, 방향, 중첩, 0회 반복을 비교하고 권한, 별칭, 주소 순환, 오류와 재개도 검사합니다. 자체 WDK 리소스 드라이버는 `driver_resource_strings.def`로 STOS/LODS의 네 폭을 모두 실행합니다.
 
 `X64StringInstructions.def`는 일반 RAM의 8/16/32/64비트 `CMPS/SCAS`와 `REPE/REPNE`도 관리합니다. 각 요소는 관찰 전에 전체 읽기 범위를 검사하고 여섯 산술 플래그를 갱신하며 첫 종료 조건에서 멈춥니다. 데이터 오류는 이번 연속 REP 시작 시점의 플래그를 복원하면서 완료된 포인터와 카운터 변경을 유지합니다. 공개 API로 재개하면 게시된 CPU 상태에서 다시 시작합니다. 중지와 관찰 예외는 현재 요소를 변경하지 않으며 조기 종료 후 다음 요소를 읽지 않습니다. FS/GS는 CMPS 소스에만 적용되고 SCAS는 누산기와 사용하지 않는 소스 레지스터를 유지합니다. 장치 피연산자와 모호한 32비트 0회 반복 상위 비트는 제외됩니다. `X64StringComparisonTests.cpp`는 독립 호스트 명령으로 플래그, 방향, 별칭, 주소 순환, 권한과 복구를 비교하고 Linux x64 신호로 실제 오류 시점의 레지스터를 검사합니다. 자체 WDK 리소스 드라이버는 `driver_resource_strings.def`로 네 폭의 두 조건 반복 형식을 실행합니다. [Intel 명령 참조](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)를 참고하세요. Linux 네이티브 검증은 첫 요소 실행 전후의 오류를 검사하며, Intel의 진입 flags 복원과 Hyper-V의 AMD EPYC 7763에서 관측한 마지막 비교 flags 유지를 구분합니다([네이티브 관측](https://github.com/NeverSight/NeverD/actions/runs/37202522130)). 알 수 없는 CPU 제조사는 명시적으로 실패합니다. checked 게스트는 모든 백엔드에서 진입 flags를 복원합니다.
 
-`WhpResourceCache.h`는 논리 CPU 상태와 WHP 파티션을 분리합니다. 런타임은 활성 네이티브 파티션 하나를 유지하며 같은 CPU의 연속 단계에서 재사용합니다. CPU를 전환할 때 이전 파티션을 먼저 제거한 다음 매핑과 가상 프로세서를 다시 만들고 전체 상태를 복원합니다. 논리 CPU는 독립적인 `MemoryProjection` 뷰와 권위 있는 RAM을 유지합니다. 임대 획득은 취소와 현재 기한을 따르며 비활성 CPU를 제거해도 다른 CPU의 파티션은 제거되지 않습니다. x64는 호스트의 기본 XSAVE 기능 조합을 보존하고 `WHvGetPartitionProperty`로 실제 파티션을 검증하며 종속 기능을 지워 마스크를 축소하지 않습니다. 협력적 CPU 전환은 병렬 하드웨어 SMP를 제공하지 않습니다.
+기본 협력 모드: `WhpResourceCache.h`는 논리 CPU 상태와 WHP 파티션을 분리합니다. 런타임은 활성 네이티브 파티션 하나를 유지하며 같은 CPU의 연속 단계에서 재사용합니다. CPU를 전환할 때 이전 파티션을 먼저 제거한 다음 매핑과 가상 프로세서를 다시 만들고 전체 상태를 복원합니다. 논리 CPU는 독립적인 `MemoryProjection` 뷰와 권위 있는 RAM을 유지합니다. 임대 획득은 취소와 현재 기한을 따르며 비활성 CPU를 제거해도 다른 CPU의 파티션은 제거되지 않습니다. x64는 호스트의 기본 XSAVE 기능 조합을 보존하고 `WHvGetPartitionProperty`로 실제 파티션을 검증하며 종속 기능을 지워 마스크를 축소하지 않습니다. 협력적 CPU 전환은 병렬 하드웨어 SMP를 제공하지 않습니다.
 
 `CheckedAArch64Instructions.def`와 `AArch64InstructionEffects`는 EL0/EL1에서 제한된 기본 FP32/FP64 연산·비교·이동과 고정 폭 SIMD를 허용합니다. FPCR는 네 가지 반올림 모드, FZ, DN을 지원하고 FPSR는 누적 상태와 QC를 보존합니다. 미지원 제어·상태 비트는 변경 전에 거부합니다. FP16 연산, SVE/SME, 마스크되지 않은 예외, 선택적 확장과 목록 밖 형식은 명시적으로 실패합니다. Windows ARM64 드라이버 로딩이나 다른 OS 환경은 추가하지 않습니다.
 
@@ -727,6 +727,16 @@ KVM x64는 완료가 확인된 동기 캡처 또는 명시적인 `KVM_GET_SREGS`
 KVM x64/ARM64는 `KvmRunControl`을 통해 같은 전용 vCPU 작업 스레드에서 상태 준비, `KVM_RUN`, 상태 캡처를 수행합니다. `EINTR` 재시도에도 준비는 한 번이며 취소나 캡처 실패는 게시할 수 없습니다. `KvmAArch64Machine.cpp`의 주소 변환 유지와 전체 스칼라·벡터 전송도 하나의 단일 단계 기한을 공유합니다. 호출 스레드는 완료 확인 후 커밋하며 ISA 해석, RAM 트랜잭션, OS 정책과 관찰자를 담당합니다. 네이티브 ARM64 실기 증거는 아직 없습니다.
 
 `KvmHandoffPolicy`는 각 폴링 대기를 8 μs로 제한하고 연속 두 번 실패하면 블로킹 대기로 전환하며 256번의 인계 후 다시 시도합니다. 호출 스레드와 작업 스레드는 각각 적응하며 호출 스레드는 원래 기한과 중지 토큰도 확인합니다. 원자적 준비 플래그는 스케줄링 힌트일 뿐이며 패킷, 콜백 수명, 취소 확인은 계속 뮤텍스로 관리합니다. `NeverDKvmRunTests`는 무효 폴링의 상한, 복구, 상대 지연 변화, 패킷 재사용 전 취소 확인을 검사합니다.
+
+<a id="parallel-cpus-and-mmio"></a>
+
+## 병렬 CPU와 장치 원자 트랜잭션
+
+KVM, WHP, Unicorn의 checked x64/ARM64에서 `ExecutionFeature::ParallelCPUs`(`parallel_cpus`)를 명시적으로 요청할 수 있습니다. 독립 CPU는 서로 다른 호스트 스레드에서 물리 RAM을 공유하며, RAM 쓰기가 없다고 검증한 네이티브 명령은 겹쳐 실행할 수 있습니다. 대기 중인 쓰기는 새 명령 진입을 막고 기존 읽기가 끝난 뒤 게시합니다. 효과는 순차 일관성을 따르며 대기 취소와 롤백을 지원합니다. 모든 실행이 끝날 때까지 매핑 변경과 호스트 쓰기는 금지됩니다. 한 CPU 객체의 스레드 간 호출은 `stop()`만 지원합니다. 기본 실행과 OS 스케줄링은 협력 방식이며 약한 메모리 순서 탐색은 별도 계약입니다.
+
+병렬 WHP CPU는 독립 파티션과 전용 전송 RAM을 사용합니다. 각 단계에서 코드와 선언된 모든 피연산자를 동기화하고 선언된 출력만 준비합니다. 관찰자는 항상 공유 RAM의 원본 상태를 읽습니다. KVM과 checked Unicorn은 backing을 직접 공유합니다. HVF와 Unicorn `Software` 계약에는 적용하지 않습니다.
+
+`MMIOAtomics`(`mmio_atomics`)는 명시적인 `GuestMMIOCallbacks::PrepareAtomic` 제공자가 필요합니다. checked supervisor x64는 허용된 교환, 비교 교환, 정수 갱신과 수정 비트 연산을, ARM64는 `CASP`를 포함한 LSE를 지원합니다. 자연 정렬된 1/2/4/8/16바이트만 허용합니다. x64는 전용 임시 페이지에서 원래 명령을 실행하여 레지스터와 FLAGS를 계산하며 ARM64는 공통 LSE 의미론을 사용합니다. 준비는 부작용이 없고 커밋은 수명과 버전을 검증하여 한 번만 반영합니다. 커밋 전 중지와 실패는 CPU/장치 상태를 보존하며 성공한 커밋은 동시에 도착한 중지보다 우선합니다. 일반 Read+Write 대체는 금지합니다. 커널 레지스터 뱅크는 선언된 1/2/4바이트 폭을 유지하고 동일 값 쓰기, 전원 변경, 소유자 소멸 뒤의 미리보기를 거부합니다. ARM64 일반 장치 전송과 장치 독점 모니터, 사용자 MMIO, 임의의 실제 하드웨어는 포함하지 않습니다.
 
 ## strict lifting 계약
 
@@ -1018,7 +1028,7 @@ checked x64의 `DIV`/`IDIV`는 실제 프로세서 결과와 `#DE`를 사용합�
 
 ## 단계적으로 보관하는 RAM 효과
 
-`RAMTransaction`은 물리 실행 임대 아래에서 명령이 선언한 쓰기 범위의 물리적 합집합만 보관합니다. 결과 관찰자 호출 전에 원래 RAM을 복원하며 취소, 전송 오류, 관찰자 예외는 부분 RAM이나 레지스터를 공개하지 않습니다. RAM 효과가 원자적인 명령의 CPU 예외는 RAM 복원 후에도 아키텍처 예외 상태를 유지합니다. ARM64 단일·쌍 저장도 같은 계층을 사용합니다. x64는 8/16/32/64비트 `XCHG`, `XADD`, `CMPXCHG`를 실행하며 LOCK 또는 암시적 잠금 형식에는 자연 정렬을 요구합니다. `NeverDRAMTransactionTests`는 호스트 CPU와의 결과 비교, 복원, 별칭, 권한을 검증하며 사용할 수 없는 플랫폼은 명시적으로 건너뜁니다. 장치와 병렬 SMP는 제외되며 CPU 스냅샷은 이미 확정된 RAM을 복원하지 않습니다.
+`RAMTransaction`은 물리 실행 임대 아래에서 명령이 선언한 쓰기 범위의 물리적 합집합만 보관합니다. 결과 관찰자 호출 전에 원래 RAM을 복원하며 취소, 전송 오류, 관찰자 예외는 부분 RAM이나 레지스터를 공개하지 않습니다. RAM 효과가 원자적인 명령의 CPU 예외는 RAM 복원 후에도 아키텍처 예외 상태를 유지합니다. ARM64 단일·쌍 저장도 같은 계층을 사용합니다. x64는 8/16/32/64비트 `XCHG`, `XADD`, `CMPXCHG`를 실행하며 LOCK 또는 암시적 잠금 형식에는 자연 정렬을 요구합니다. `NeverDRAMTransactionTests`는 호스트 CPU와의 결과 비교, 복원, 별칭, 권한을 검증하며 사용할 수 없는 플랫폼은 명시적으로 건너뜁니다. 장치 원자 연산은 별도 제공자를 사용하며 CPU 스냅샷은 이미 확정된 RAM을 복원하지 않습니다.
 
 `CMPXCHG8B`와 `CMPXCHG16B`는 KVM, WHP 및 checked Unicorn의 드라이버·사용자 프로필에서 원래 명령을 실행합니다. 비교 성공 여부와 관계없이 읽기와 쓰기 권한이 모두 필요하며, 폴트는 쓰기 접근으로 분류합니다. `CMPXCHG16B`는 메모리 접근 전에 16바이트 정렬을 검사하고 위반 시 `#GP(0)`을 보고합니다. 두 결과 콜백은 하나의 RAM 트랜잭션에 속하므로 어느 쪽에서든 중지하거나 예외가 발생하면 레지스터와 RAM 변경을 공개하지 않습니다. 잠금 없는 `CMPXCHG8B`는 페이지 경계를 넘을 수 있지만 잠금 연산은 자연 정렬이 필요합니다. `X64WideAtomicTests.cpp`는 호스트 원본 명령 결과와 네이티브 폴트, 별칭, 접두사, 주소 계산, 복구 후 재시도와 취소를 검증합니다. 자체 Windows 드라이버와 ring3 PE 픽스처가 두 폭을 실행하며 WDK 픽스처는 `_InterlockedCompareExchange128`도 실행합니다. CPU 모델은 `CMPXCHG16B`를 지원해야 합니다.
 

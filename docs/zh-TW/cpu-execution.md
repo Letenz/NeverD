@@ -22,7 +22,7 @@ CPU 執行獨立於客體 OS、映像載入器與呼叫慣例。啟用 `NEVERD_E
 | `page_size` | 4096 | 客體對映粒度；拒絕其他值 |
 | `required_features` | `[]` | [`ExecutionConfiguration.def`](../../include/neverd/emulation/ExecutionConfiguration.def) 中的必要功能名稱 |
 
-`driver-strict` 接受 x64；`software-cpu-v1` 接受 x64 與 ARM64。`checked-x64-v1`、`checked-aarch64-v1` 要求相符架構並以 supervisor 權限執行。`checked-user-x64-v1`、`checked-user-aarch64-v1` 分別在 CPL3、EL0 執行與契約相符的有限指令集合，並具備 MMU 隔離與明確的服務要求退出。支援 Unicorn 與符合主機條件的 KVM/WHP；`auto` 沿用主機選擇。flat 設定不保證架構層級的 user/supervisor MMU 隔離。checked ARM64 與 x64 設定支援下文列出的有限 FP/SIMD 指令族。supervisor x64 另支援受限 MMIO 交易與預備讀取的字串傳輸；user 設定拒絕裝置對映。所有 checked 設定仍拒絕連接埠 I/O 與平行 CPU 需求。只有 user 設定會宣告 `service_traps`。
+`driver-strict` 接受 x64；`software-cpu-v1` 接受 x64 與 ARM64。`checked-x64-v1`、`checked-aarch64-v1` 要求相符架構並以 supervisor 權限執行。`checked-user-x64-v1`、`checked-user-aarch64-v1` 分別在 CPL3、EL0 執行與契約相符的有限指令集合，並具備 MMU 隔離與明確的服務要求退出。支援 Unicorn 與符合主機條件的 KVM/WHP；`auto` 沿用主機選擇。flat 設定不保證架構層級的 user/supervisor MMU 隔離。checked ARM64 與 x64 設定支援下文列出的有限 FP/SIMD 指令族。supervisor x64 另支援受限 MMIO 交易與預備讀取的字串傳輸；user 設定拒絕裝置對映。連接埠 I/O 仍不支援。只有 user 設定會宣告 `service_traps`。
 
 使用者執行要求**每個**對映頁同時具備 `UserAccessible` 與適當的 `Read`、`Write` 或 `Execute` 權限。既有對映預設供 supervisor 使用；即使別名共用實體位元組，權限仍各自獨立。只有 `UserAccessible` 不會授予存取權。可信任的主機操作與 supervisor CPU 使用 RWX。範例：
 
@@ -36,6 +36,16 @@ llvm::cantFail(CPU->map(Code, 4096, Read | Write | Execute | UserAccessible));
 權限由契約固定；還原內容或繫結位址空間不會改變權限，寫入 x64 區段選擇子也不能提升權限。可復原的資料存取錯誤會保留原指令與暫存器，直到所屬模型處理。`canAccess` 精確檢查要求的權限；查詢 user 可見性時要包含 `UserAccessible`。頁表是 CPU 私有投影，不開放可變更的客體頁表或權限切換 API。ARM64 的 user 頁在 EL1 也不可執行。
 
 未知/null 欄位、無效名稱或數字寬度、重複必要功能及不支援的組合都會失敗。輸入上限為 64 KiB；舊 CPU factory 和驅動程式 C 選項維持相容。
+
+<a id="parallel-cpus-and-mmio"></a>
+
+## 平行 CPU 與裝置原子交易
+
+KVM、WHP 與 Unicorn 的 checked x64/ARM64 可要求 `ExecutionFeature::ParallelCPUs`（`parallel_cpus`）。獨立 CPU 可在不同主機執行緒共享實體 RAM；已證明不寫 RAM 的原生指令可重疊執行，待處理寫入阻止新指令進入，等待讀取結束後才發布。指令效果採順序一致性，支援等待取消和回復。所有執行結束前仍禁止映射修改與主機寫入。同一 CPU 物件只有 `stop()` 支援跨執行緒呼叫。預設執行及 OS 排程仍為協作式，弱記憶體模型探索屬於獨立契約。
+
+平行 WHP CPU 使用獨立分割區與私有傳輸 RAM，每步同步程式碼及全部宣告的運算元，只暫存宣告的輸出位元組；觀察器始終讀取共享 RAM 的權威狀態。KVM 與 checked Unicorn 直接共享 backing。此能力不延伸至 HVF 或 Unicorn `Software` 契約。
+
+`MMIOAtomics`（`mmio_atomics`）要求裝置明確提供 `GuestMMIOCallbacks::PrepareAtomic`。checked supervisor x64 支援已接納的交換、比較交換、整數更新與修改型位元操作；ARM64 支援包含 `CASP` 的 LSE。運算元須自然對齊，寬度限 1/2/4/8/16 位元組。x64 在私有暫存頁執行原指令，保留精確暫存器與 FLAGS；ARM64 重用統一 LSE 語義。準備階段無裝置副作用，提交驗證生命週期與版本且只生效一次。提交前停止或失敗保留 CPU/裝置狀態，成功提交優先於同時抵達的停止。禁止退化為普通 Read+Write。核心暫存器庫仍使用宣告的 1/2/4 位元組寬度，並拒絕同值寫入、電源變化或擁有者銷毀後的舊預覽。ARM64 普通裝置存取、裝置獨占監視器、使用者態 MMIO 與任意真實硬體不在此能力內。
 
 ## 不執行工作負載的查詢
 
@@ -136,7 +146,7 @@ checked x64 的 `DIV`/`IDIV` 使用處理器結果與 `#DE`。KVM 透過私有 s
 
 ## 分階段提交 RAM 效果
 
-`RAMTransaction` 在物理執行租約內，只保存一條指令明確宣告之寫入範圍的物理聯集。結果觀察器執行前恢復原始 RAM；取消、後端傳輸錯誤和觀察器例外不會發布部分 RAM 或暫存器。CPU 例外在 RAM 回復後保留架構例外狀態。ARM64 的單次與成對寫入共用此記憶體權威層。x64 支援 8/16/32/64 位元 `XCHG`、`XADD`、`CMPXCHG`，LOCK 或隱式鎖定形式要求自然對齊。`NeverDRAMTransactionTests` 將結果與獨立宿主 CPU 對照，並驗證回復、別名和權限；不可用的平台明確跳過。裝置交易與平行 SMP 仍不在此契約內；CPU 快照不會撤銷已提交的 RAM。
+`RAMTransaction` 在物理執行租約內，只保存一條指令明確宣告之寫入範圍的物理聯集。結果觀察器執行前恢復原始 RAM；取消、後端傳輸錯誤和觀察器例外不會發布部分 RAM 或暫存器。CPU 例外在 RAM 回復後保留架構例外狀態。ARM64 的單次與成對寫入共用此記憶體權威層。x64 支援 8/16/32/64 位元 `XCHG`、`XADD`、`CMPXCHG`，LOCK 或隱式鎖定形式要求自然對齊。`NeverDRAMTransactionTests` 將結果與獨立宿主 CPU 對照，並驗證回復、別名和權限；不可用的平台明確跳過。裝置原子交易使用獨立提供者；CPU 快照不會撤銷已提交的 RAM。
 
 `CMPXCHG8B` 與 `CMPXCHG16B` 在 KVM、WHP 和 checked Unicorn 的驅動及使用者模式中執行原始指令。比較成功或失敗都需要讀寫權限，故障按寫入存取分類。`CMPXCHG16B` 在存取記憶體前檢查 16 位元組對齊，不滿足時回報 `#GP(0)`。兩次結果觀察屬於同一 RAM 交易；任一次停止或擲出例外，都不會發布暫存器或記憶體變更。未加鎖的 `CMPXCHG8B` 可以跨頁，加鎖操作仍要求自然對齊。`X64WideAtomicTests.cpp` 對照主機原始執行結果和直接原生故障，並檢查別名、前綴、定址、修復重試及取消。原創 Windows 驅動及 ring3 PE 範例涵蓋兩種寬度，WDK 範例也執行 `_InterlockedCompareExchange128`。CPU 模型必須支援 `CMPXCHG16B`。
 
@@ -168,13 +178,13 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 頁面執行 `X64MachineProb
 
 `CheckedX64Instructions.def` 透過既有 CPU 後端准入 8/16/32/64 位元無號 `MUL` 和 `CBW/CWDE/CDQE/CWD/CDQ/CQO`。`NeverDX64IntegerTests` 使用獨立的 `X64IntegerCases.def` 編碼和預期值，在兩種特權級驗證部分暫存器保留、32 位元零擴展、乘積高低兩部分、已定義的 CF/OF 結果及符號擴展不改變旗標。一般 RAM 乘法保留完整存取範圍的權限檢查和讀取觀察回呼；故障或觀察回呼停止會保留隱式輸出暫存器及 PC。裝置運算元仍不支援。這些案例也在 checked Unicorn 上執行；不可用的原生後端明確略過。
 
-`X64BitInstructions.def` 支援 16/32/64 位元暫存器及一般 RAM 的 `BT/BTS/BTR/BTC`。暫存器位元索引依運算元寬度解讀為有號數並選取完整資料字；立即數索引限制於基底位址的資料字內。位址寬度截斷先於 FS/GS 基底位址相加。CF 與寫入值由處理器提供；`RAMTransaction` 在觀察回呼接受前保留私有執行結果。完整範圍權限檢查涵蓋獨立頁面配置與別名。停止、回呼失敗或頁面權限不足均保留原始 CPU 與 RAM。LOCK 僅支援自然對齊的記憶體修改形式；MMIO 與硬體平行 SMP 仍不支援。`X64BitStringTests.cpp` 使用獨立編碼與 x64 本機實際執行對照，檢查負索引、寬度截斷、跨頁存取、取消及非法 LOCK 形式。參見 [Intel 指令參考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
+`X64BitInstructions.def` 支援 16/32/64 位元暫存器及一般 RAM 的 `BT/BTS/BTR/BTC`。暫存器位元索引依運算元寬度解讀為有號數並選取完整資料字；立即數索引限制於基底位址的資料字內。位址寬度截斷先於 FS/GS 基底位址相加。CF 與寫入值由處理器提供；`RAMTransaction` 在觀察回呼接受前保留私有執行結果。完整範圍權限檢查涵蓋獨立頁面配置與別名。停止、回呼失敗或頁面權限不足均保留原始 CPU 與 RAM。LOCK 要求自然對齊；修改型 MMIO 操作要求明確的預備原子交易提供者。`X64BitStringTests.cpp` 使用獨立編碼與 x64 本機實際執行對照，檢查負索引、寬度截斷、跨頁存取、取消及非法 LOCK 形式。參見 [Intel 指令參考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
 
 `X64StringInstructions.def` 統一管理一般 RAM 上 8/16/32/64 位元的 `MOVS/STOS/LODS`；`CLD/STD` 只改變方向旗標。每個 REP 元素在觀察回呼前驗證整個運算元，並於一個可恢復邊界提交。後續錯誤保留先前完成的元素；取消或回呼例外不改變目前元素。FS/GS 僅作用於來源位址，且在位址寬度截斷之後相加。AL/AX 載入保留高位元，EAX 載入零擴展。32 位元位址模式的零次 REP 要求計數高位元為零，MOVS/STOS 還要求參與的位址暫存器高位元為零，否則不同真實 CPU 實作會產生不同結果。MOVS/STOS/LODS 的 REPNE 形式與 STOS/LODS 裝置運算元仍不支援。`X64StringTransferTests.cpp` 用獨立的主機指令對照寬度、方向、重疊和零次數，並分別檢查權限、別名、回繞、錯誤與恢復。原創 WDK 資源驅動程式透過 `driver_resource_strings.def` 執行四種寬度的 STOS/LODS。
 
 `X64StringInstructions.def` 也統一管理一般 RAM 上 8/16/32/64 位元的 `CMPS/SCAS` 與 `REPE/REPNE`。每個元素在觀察回呼前驗證全部讀取運算元，更新六個算術旗標，並於首次符合終止條件時退出。資料錯誤會恢復本次連續 REP 執行開始時的旗標，同時保留已完成的指標與計數更新；公開介面恢復執行時，以已發布的 CPU 狀態重新開始。停止與觀察回呼例外不改變目前元素，提前終止也不會讀取下一個元素。FS/GS 僅影響 CMPS 來源位址；SCAS 保留累加器與未使用的來源暫存器。裝置運算元及有歧義的 32 位元零次數高位元狀態仍不支援。`X64StringComparisonTests.cpp` 以獨立主機指令對照旗標、方向、別名、回繞、權限與恢復，並透過 Linux x64 訊號測試讀取實際錯誤時的暫存器。原創 WDK 資源驅動程式透過 `driver_resource_strings.def` 執行四種寬度的兩類條件重複形式。參見 [Intel 指令參考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。 Linux 原生驗證涵蓋首元素執行前後發生的故障，並區分 Intel 還原入口 flags 與 Hyper-V 下 AMD EPYC 7763 保留最後一次比較 flags 的行為（[原生觀測](https://github.com/NeverSight/NeverD/actions/runs/37202522130)）；未知 CPU 廠商會明確失敗。所有後端的 checked 來賓仍統一還原入口 flags。
 
-`WhpResourceCache.h` 將邏輯 CPU 狀態與 WHP 分割區分離。執行階段保留一個作用中的原生分割區：同一 CPU 連續單步會重用它；切換 CPU 時先銷毀舊分割區，再重建映射、虛擬處理器並還原完整狀態。邏輯 CPU 保留獨立的 `MemoryProjection` 檢視和權威 RAM。取得租約遵守取消訊號和目前截止時間；銷毀非作用中 CPU 不會銷毀其他 CPU 的分割區。x64 保留主機預設 XSAVE 特性組合，並透過 `WHvGetPartitionProperty` 驗證實際分割區，不透過清除相依特性強制縮減遮罩。CPU 協作式切換不提供平行硬體 SMP。
+預設協作模式：`WhpResourceCache.h` 將邏輯 CPU 狀態與 WHP 分割區分離。執行階段保留一個作用中的原生分割區：同一 CPU 連續單步會重用它；切換 CPU 時先銷毀舊分割區，再重建映射、虛擬處理器並還原完整狀態。邏輯 CPU 保留獨立的 `MemoryProjection` 檢視和權威 RAM。取得租約遵守取消訊號和目前截止時間；銷毀非作用中 CPU 不會銷毀其他 CPU 的分割區。x64 保留主機預設 XSAVE 特性組合，並透過 `WHvGetPartitionProperty` 驗證實際分割區，不透過清除相依特性強制縮減遮罩。CPU 協作式切換不提供平行硬體 SMP。
 
 `CheckedBackend` 為每個 CPU 保留一塊取指緩衝區與一筆 `cs_disasm_iter` 指令記錄。每一步重新讀取具執行權限的位元組並解碼；程式碼寫入、別名變更或恢復執行後不會沿用舊解碼結果。執行租約在接觸重用儲存前拒絕遞迴執行。這可消除逐指令的緩衝區與記錄配置，同時保留指令觀察、系統服務攔截及精確故障處理。 固定版本的 Unicorn 單步路徑在讀取後繼指令前結束，包含間接翻譯查找路徑，且不會將內部程式碼寫入重試計為已完成指令。
 
@@ -204,7 +214,7 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完�
 
 [Setup, signing and native hardware validation (English)](../macos-hvf.md)
 
-checked ARM64 支援 8/16/32/64 位元 `LDXR/STXR`、32/64 位元暫存器對 `LDXP/STXP`、對應的 acquire/release 形式及 `CLREX`。KVM、WHP 與 checked Unicorn 共用 ISA 層的獨佔監視器，以 16 位元組實體範圍記錄保留狀態，傳輸層單步退出不會破壞迴圈進展。已提交的寫入即使未改變位元組，也會使保留狀態失效；別名及保留檢視的寫入遵循相同規則。停止保留尚未發布的狀態，快照無法撤銷期間的寫入。checked 獨佔指令採用 FEAT_LSE2 對齊規則：運算元可在同一個 16 位元組對齊區塊內未對齊存取，跨越該區塊才產生 `alignment` 錯誤。同寬條件儲存依保留的實體粒度比對；即使監視器已失效，也先檢查對齊及權限，再決定條件儲存是否成功。此設定仍不包含 MMIO 或平行 SMP。 ARM64 Unicorn 的 `Software` 契約也使用此監視器，包括軟體與 checked CPU 共用實體 RAM 的情況。 Unicorn 的 `Software` 設定保留引擎的自然對齊模型。
+checked ARM64 支援 8/16/32/64 位元 `LDXR/STXR`、32/64 位元暫存器對 `LDXP/STXP`、對應的 acquire/release 形式及 `CLREX`。KVM、WHP 與 checked Unicorn 共用 ISA 層的獨佔監視器，以 16 位元組實體範圍記錄保留狀態，傳輸層單步退出不會破壞迴圈進展。已提交的寫入即使未改變位元組，也會使保留狀態失效；別名及保留檢視的寫入遵循相同規則。停止保留尚未發布的狀態，快照無法撤銷期間的寫入。checked 獨佔指令採用 FEAT_LSE2 對齊規則：運算元可在同一個 16 位元組對齊區塊內未對齊存取，跨越該區塊才產生 `alignment` 錯誤。同寬條件儲存依保留的實體粒度比對；即使監視器已失效，也先檢查對齊及權限，再決定條件儲存是否成功。獨占指令仍只支援普通 RAM。 ARM64 Unicorn 的 `Software` 契約也使用此監視器，包括軟體與 checked CPU 共用實體 RAM 的情況。 Unicorn 的 `Software` 設定保留引擎的自然對齊模型。
 
 
-同一 ISA 層支援 FEAT_LSE `CAS/CASP`、`SWP`、`LDADD/LDCLR/LDEOR/LDSET` 與有符號/無符號 min/max，包含位元組、半字、字、雙字及 acquire/release 形式。checked 設定採用上述對齊策略，Unicorn `Software` 保留自然對齊。比較依運算元寬度執行，傳回的舊值零擴展。CAS 比較失敗仍要求寫入權限，並選擇 Arm 允許的舊值回寫，使實體保留狀態失效。回呼看到提交前的 CPU/RAM；取消與同步故障不發布部分原子結果。實體執行鎖確保協作式 CPU 的順序，不提供平行 SMP 或 MMIO 原子操作。`MRS/MSR NZCV` 依架構規則傳輸四個條件旗標，正確處理保留位與零暫存器。 先檢查讀取權限，再檢查寫入權限：不可讀的運算元回報讀取故障，唯讀運算元回報寫入故障，與原始 Windows ARM64 觀測一致。
+同一 ISA 層支援 FEAT_LSE `CAS/CASP`、`SWP`、`LDADD/LDCLR/LDEOR/LDSET` 與有符號/無符號 min/max，包含位元組、半字、字、雙字及 acquire/release 形式。checked 設定採用上述對齊策略，Unicorn `Software` 保留自然對齊。比較依運算元寬度執行，傳回的舊值零擴展。CAS 比較失敗仍要求寫入權限，並選擇 Arm 允許的舊值回寫，使實體保留狀態失效。回呼看到提交前的 CPU/RAM；取消與同步故障不發布部分原子結果。平行 CPU 與 MMIO 原子交易遵循並行提交契約。`MRS/MSR NZCV` 依架構規則傳輸四個條件旗標，正確處理保留位與零暫存器。 先檢查讀取權限，再檢查寫入權限：不可讀的運算元回報讀取故障，唯讀運算元回報寫入故障，與原始 Windows ARM64 觀測一致。

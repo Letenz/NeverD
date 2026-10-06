@@ -46,7 +46,8 @@ createWhpArmPartition(MemoryProjection &Memory);
 class WhpAArch64Machine final : public AArch64Machine {
 public:
   explicit WhpAArch64Machine(MemoryProjection &Memory)
-      : Binding([&Memory] { return createWhpArmPartition(Memory); }) {}
+      : Binding([&Memory] { return createWhpArmPartition(Memory); },
+                Memory.parallelEnabled()) {}
   llvm::Error step(AArch64MachineState &State,
                    MachineRunControl Control) override {
     Control = Control.forNativeStep();

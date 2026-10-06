@@ -16,7 +16,7 @@ namespace neverd::emulation {
 llvm::Error buildAArch64PageTables(MemoryProjection &Memory, bool UserMode) {
   if (!Memory.needsProjection(GuestArchitecture::AArch64, UserMode))
     return llvm::Error::success();
-  if (auto E = Memory.validateMappings(aarch64::canonicalRange))
+  if (auto E = Memory.validateMappings(aarch64::canonicalRange, !UserMode))
     return E;
   using namespace aarch64;
   static_assert(MaintenanceEntryGPA >=
@@ -98,8 +98,9 @@ llvm::Error buildAArch64PageTables(MemoryProjection &Memory, bool UserMode) {
   if (auto E = Map(EntryGPA, EntryGPA, Read | Execute))
     return E;
   for (const auto &[VA, Page] : Memory.mappings())
-    if (auto E = Map(VA, Page.Physical, Page.Permissions))
-      return E;
+    if (!Page.IO)
+      if (auto E = Map(VA, Page.Physical, Page.Permissions))
+        return E;
   Memory.commitProjection(GuestArchitecture::AArch64, UserMode);
   return llvm::Error::success();
 }

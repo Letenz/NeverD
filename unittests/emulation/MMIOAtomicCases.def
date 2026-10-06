@@ -1,0 +1,60 @@
+//===- MMIOAtomicCases.def - Device boundaries and independent encodings --===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_MMIO_TEST_VALUE
+NEVERD_MMIO_TEST_VALUE(Limit, 0x100000)
+NEVERD_MMIO_TEST_VALUE(Code, 0x10000)
+NEVERD_MMIO_TEST_VALUE(Data, 0x20000)
+NEVERD_MMIO_TEST_VALUE(Alias, 0x30000)
+NEVERD_MMIO_TEST_VALUE(Timeout, 10000000)
+NEVERD_MMIO_TEST_VALUE(Contenders, 2)
+NEVERD_MMIO_TEST_VALUE(Iterations, 128)
+NEVERD_MMIO_TEST_VALUE(Original, 0xfedcba9876543210ULL)
+NEVERD_MMIO_TEST_VALUE(Operand, 0x0123456789abcdefULL)
+NEVERD_MMIO_TEST_VALUE(X64Flags, 0x2c7)
+NEVERD_MMIO_TEST_VALUE(ArmFlags, 0xa0000000)
+NEVERD_MMIO_TEST_VALUE(ArmRegisterCount, 31)
+NEVERD_MMIO_TEST_VALUE(ArmNop, 0xd503201f)
+NEVERD_MMIO_TEST_VALUE(X64Nop, 0x90)
+NEVERD_MMIO_TEST_VALUE(X64Lock, 0xf0)
+NEVERD_MMIO_TEST_VALUE(Word, 8)
+NEVERD_MMIO_TEST_VALUE(Wide, 16)
+NEVERD_MMIO_TEST_VALUE(ArmInstruction, 4)
+NEVERD_MMIO_TEST_VALUE(ArmSwap, 0xf8208082)
+NEVERD_MMIO_TEST_VALUE(ArmComparePair, 0x48207c82)
+NEVERD_MMIO_TEST_VALUE(KernelPDO, 0x1230)
+NEVERD_MMIO_TEST_VALUE(KernelPhysical, 0xf0000000)
+NEVERD_MMIO_TEST_VALUE(KernelInitial, 17)
+NEVERD_MMIO_TEST_VALUE(KernelUpdated, 23)
+NEVERD_MMIO_TEST_VALUE(KernelWidth, 4)
+#endif
+#ifdef NEVERD_MMIO_TEST_TEXT
+NEVERD_MMIO_TEST_TEXT(LegacyAccess, "legacy device callback must not execute")
+NEVERD_MMIO_TEST_TEXT(InvalidPreview, "device preview is stale or already consumed")
+NEVERD_MMIO_TEST_TEXT(InjectedFailure, "injected device transaction failure")
+NEVERD_MMIO_TEST_TEXT(BankName, "atomic-bank")
+NEVERD_MMIO_TEST_TEXT(ResourceName, "atomic-registers")
+#endif
+#ifdef NEVERD_MMIO_X64_BYTES
+NEVERD_MMIO_X64_BYTES(Swap, 0x48, 0x87, 0x16)
+NEVERD_MMIO_X64_BYTES(ComparePair, 0xf0, 0x48, 0x0f, 0xc7, 0x0e)
+#endif
+#ifdef NEVERD_MMIO_X64_UPDATE
+// [RSI] memory, RDX source; carry starts set.
+NEVERD_MMIO_X64_UPDATE(Add, 8, 0xf0, 0x48, 0x01, 0x16)
+NEVERD_MMIO_X64_UPDATE(Adc, 8, 0xf0, 0x48, 0x11, 0x16)
+NEVERD_MMIO_X64_UPDATE(Sub, 8, 0xf0, 0x48, 0x29, 0x16)
+NEVERD_MMIO_X64_UPDATE(Sbb, 8, 0xf0, 0x48, 0x19, 0x16)
+NEVERD_MMIO_X64_UPDATE(And, 8, 0xf0, 0x48, 0x21, 0x16)
+NEVERD_MMIO_X64_UPDATE(Or, 8, 0xf0, 0x48, 0x09, 0x16)
+NEVERD_MMIO_X64_UPDATE(Xor, 8, 0xf0, 0x48, 0x31, 0x16)
+NEVERD_MMIO_X64_UPDATE(Inc, 8, 0xf0, 0x48, 0xff, 0x06)
+NEVERD_MMIO_X64_UPDATE(Dec, 8, 0xf0, 0x48, 0xff, 0x0e)
+NEVERD_MMIO_X64_UPDATE(Neg, 8, 0xf0, 0x48, 0xf7, 0x1e)
+NEVERD_MMIO_X64_UPDATE(Not, 8, 0xf0, 0x48, 0xf7, 0x16)
+NEVERD_MMIO_X64_UPDATE(Bts, 8, 0xf0, 0x48, 0x0f, 0xba, 0x2e, 0x3f)
+NEVERD_MMIO_X64_UPDATE(Btr, 8, 0xf0, 0x48, 0x0f, 0xba, 0x36, 0x3f)
+NEVERD_MMIO_X64_UPDATE(Btc, 8, 0xf0, 0x48, 0x0f, 0xba, 0x3e, 0x3f)
+#endif

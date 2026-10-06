@@ -293,6 +293,13 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 Fehlende ARM64-Hardware oder Hypervisoren bedeuten ausgelassene native Abdeckung, keinen Erfolg. Unicorn und Cross-Compilation belegen keine native KVM/WHP-Ausführung.
 
+`NeverDParallelExecutionTests` erzwingt überlappende Prozessoraufrufe, Abbruch wartender Schreiber, unabhängige CPU-Zustände, Alias-Konkurrenz und private Übertragung. `NeverDRunControlTests` prüft zwei gleichzeitige unabhängige WHP-Leases und den gemeinsamen seriellen Cache. `NeverDMMIOAtomicTests` vergleicht RAM/Gerät für originale x64-Atomic-/Update-Befehle und alle ARM64-LSE-Fälle, beide breiten Beobachtungen, veraltete Vorschauen, Fehler und Commit/Stop-Rennen. `KernelMMIOFailure` prüft Aliase, identische Schreibwerte, doppelte Commits, Stromwechsel, Unmap und freigegebene Besitzer. Fehlende Plattformen werden ausdrücklich übersprungen. Das Wrapper-Rendezvous beweist gleichzeitige Aufrufe, nicht gleichzeitigen Hardware-Retirement. ARM64-KVM/WHP benötigt passende Hosts.
+
+```bash
+cmake --build build-cpu --target NeverDParallelExecutionTests NeverDMMIOAtomicTests NeverDRunControlTests --parallel 4
+ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMIOAtomic|RunControl)Tests$' --output-on-failure
+```
+
 ## Tests des Linux-Prozessprofils
 
 Die unabhängigen [Prozesstests](process-emulation.md#verifikation) kompilieren echte x64-/AArch64-ELF-Fixtures. `NeverDLinuxProcessTests` prüft Start, Program-Header-Policy, Service-Fortsetzungen, Binärausgabe, Gastfehler und Ressourcenstopps. `NeverDProcessPublicTests` testet C-API/CLI ohne Änderung des Analyse-Images. `NeverDExecutionSessionTests` prüft zwei CPUs mit gemeinsamem Speicher/Budget sowie Exactly-once-Verbrauch von Requests/Fehlern. `NeverDX64MemoryUpdateTests` prüft Speicherarithmetik, SETcc, BT, XMM/MXCSR, Schreibbeobachter, REP-Grenzen und vorbereitete Geräte-Lesezugriffe. `DriverBackendParityTests.cpp` führt originale und relokierte WDK-Fixtures aus und vergleicht den vollständigen beobachtbaren Bericht mit Unicorn; fehlende Images/Backends werden übersprungen.

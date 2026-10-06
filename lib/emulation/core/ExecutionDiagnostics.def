@@ -158,3 +158,8 @@ NEVERD_EXECUTION_DIAGNOSTIC(RAMReservationTracking,
                             "RAM reservations require declared write tracking")
 NEVERD_EXECUTION_DIAGNOSTIC(
     RAMReservationRange, "RAM reservation must fit in one power-of-two granule")
+NEVERD_EXECUTION_DIAGNOSTIC(ParallelWait,
+                            "parallel CPU memory admission interrupted")
+NEVERD_EXECUTION_DIAGNOSTIC(DeviceAtomic, "invalid prepared atomic device transaction")
+NEVERD_EXECUTION_DIAGNOSTIC(DeviceAtomicInterrupted, "atomic device transaction interrupted before commit")
+NEVERD_EXECUTION_DIAGNOSTIC(DeviceOperand, "invalid private device operand projection")

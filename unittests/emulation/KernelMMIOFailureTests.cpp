@@ -13,6 +13,8 @@
 #include "gtest/gtest.h"
 #include "os/windows/kernel/KernelMMIO.h"
 
+#include "llvm/Support/Endian.h"
+
 #include <map>
 
 namespace neverd::emulation {
@@ -107,6 +109,9 @@ private:
   }
 };
 
+#define NEVERD_MMIO_TEST_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#include "MMIOAtomicCases.def"
+#undef NEVERD_MMIO_TEST_VALUE
 class KernelMMIOFailure : public ::testing::Test {
 protected:
   static constexpr uint64_t PDO = 0x1230;
@@ -192,6 +197,55 @@ TEST_F(KernelMMIOFailure, FailedUnmapPreservesAliasAndOwnershipForRetry) {
   ASSERT_EQ(llvm::toString(Model.unmap(Alias, 4)), "");
   EXPECT_TRUE(Memory.Regions.empty());
   ASSERT_EQ(llvm::toString(Model.canRemove(PDO)), "");
+}
+TEST_F(KernelMMIOFailure, AtomicAliasesRejectABAAndDuplicateCommit) {
+  const auto Address = take(map()), Alias = take(map());
+  const auto Base = Memory.MapAttempts.front();
+  auto &Callbacks = Memory.Regions.at(Base).Callbacks;
+  const auto Offset = Address - Base;
+  auto First = take(Callbacks.PrepareAtomic(Offset, KernelWidth));
+  std::array<uint8_t, KernelWidth> Value;
+  llvm::support::endian::write32le(Value.data(), KernelUpdated);
+  llvm::cantFail(Memory.writeInteger(Alias, KernelInitial, KernelWidth));
+  EXPECT_NE(llvm::toString(First.Commit(Value)), "");
+  EXPECT_EQ(take(Memory.readInteger(Alias, KernelWidth)), KernelInitial);
+  auto Next = take(Callbacks.PrepareAtomic(Offset, KernelWidth));
+  auto Copied = Next.Commit;
+  EXPECT_EQ(llvm::toString(Next.Commit(Value)), "");
+  EXPECT_NE(llvm::toString(Copied(Value)), "");
+  EXPECT_EQ(take(Memory.readInteger(Alias, KernelWidth)), KernelUpdated);
+}
+TEST_F(KernelMMIOFailure,
+       PreparedReadsAndAtomicsRejectPowerChangesAndUnmapping) {
+  const auto Address = take(map());
+  const auto Base = Memory.MapAttempts.front();
+  const auto Callbacks = Memory.Regions.at(Base).Callbacks;
+  const auto Offset = Address - Base;
+  auto Read = take(Callbacks.PrepareRead(Offset, KernelWidth));
+  auto Atomic = take(Callbacks.PrepareAtomic(Offset, KernelWidth));
+  Resources.setPhysicalPower(PDO, DevicePowerState::D3);
+  Resources.setPhysicalPower(PDO, DevicePowerState::D0);
+  EXPECT_NE(llvm::toString(Read.Commit()), "");
+  EXPECT_NE(llvm::toString(Atomic.Commit(Atomic.Value)), "");
+  auto Retired = take(Callbacks.PrepareAtomic(Offset, KernelWidth));
+  llvm::cantFail(Model.unmap(Address, KernelWidth));
+  EXPECT_NE(llvm::toString(Retired.Commit(Retired.Value)), "");
+}
+TEST_F(KernelMMIOFailure, RetiredOwnerInvalidatesCallbacksAndPreparedCommit) {
+  auto Owner = std::make_unique<KernelMMIO>(Memory, Resources);
+  llvm::cantFail(Owner->configure(PDO));
+  const auto Address =
+      take(Owner->map(Physical, KernelWidth, mmio::NonCached, false));
+  const auto Base = Memory.MapAttempts.front();
+  const auto Callbacks = Memory.Regions.at(Base).Callbacks;
+  const auto Offset = Address - Base;
+  auto Preview = take(Callbacks.PrepareAtomic(Offset, KernelWidth));
+  Owner.reset();
+  EXPECT_NE(llvm::toString(Preview.Commit(Preview.Value)), "");
+  EXPECT_NE(llvm::toString(Callbacks.Validate(Offset, KernelWidth, true)), "");
+  auto Late = Callbacks.PrepareAtomic(Offset, KernelWidth);
+  ASSERT_FALSE(bool(Late));
+  llvm::consumeError(Late.takeError());
 }
 } // namespace
 } // namespace neverd::emulation

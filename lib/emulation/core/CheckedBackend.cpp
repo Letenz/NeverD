@@ -12,6 +12,21 @@
 #include "llvm/ADT/ScopeExit.h"
 
 namespace neverd::emulation {
+llvm::Error CheckedBackend::mapMMIO(uint64_t A, uint64_t N,
+                                    GuestMMIOCallbacks Callbacks) {
+  if (auto E = mutableMemory())
+    return E;
+  if (!supportsDeviceMappings())
+    return diagnostic::error(diagnostic::DeviceMapping);
+  if (!canonicalRange(A, N))
+    return diagnostic::error(diagnostic::InvalidMapping);
+  return addressSpace()->mapMMIO(A, N, std::move(Callbacks));
+}
+llvm::Error CheckedBackend::unmapMMIO(uint64_t A, uint64_t N) {
+  if (auto E = mutableMemory())
+    return E;
+  return addressSpace()->unmapMMIO(A, N);
+}
 using diagnostic::error;
 llvm::Error CheckedBackend::initializeDecoder(cs_arch Arch, cs_mode Mode) {
   if (cs_open(Arch, Mode, &Decoder) != CS_ERR_OK ||
@@ -204,6 +219,9 @@ std::optional<ServiceRequest> CheckedBackend::takeServiceRequest() {
 
 llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
                                                            uint64_t Timeout) {
+  if (Entered.test_and_set())
+    return error(diagnostic::Running);
+  auto Leave = llvm::scope_exit([&] { Entered.clear(); });
   bool Started = false, BackendFailed = false;
   auto E = runImpl(PC, Timeout, Started, BackendFailed);
   if (!Started) {
@@ -231,29 +249,55 @@ llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
 
 llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
                                     bool &Started, bool &BackendFailed) {
-  if (auto E = mutableMemory())
+  if (auto E = checkExecutionState())
     return E;
+  if (!Memory->parallelEnabled())
+    if (auto E = mutableMemory())
+      return E;
   auto Limit = makeExecutionDeadline(Timeout);
   if (!Limit)
     return Limit.takeError();
-  if (auto E = Memory->beginRun(RAMWriteTracking::Declared))
+  StopRequested = false;
+  Deadline = *Limit;
+  if (auto E = Memory->parallelEnabled()
+                   ? Memory->beginParallelRun({Deadline, &StopRequested})
+                   : Memory->beginRun(RAMWriteTracking::Declared))
     return E;
   auto Release = llvm::scope_exit([&] { Memory->endRun(); });
-  if (auto E = Memory->validateMappings(
-          [this](uint64_t A, uint64_t N) { return canonicalRange(A, N); },
-          supportsDeviceMappings()))
-    return E;
-  setProgramCounter(PC);
+  {
+    auto Startup = Memory->beginInstruction();
+    if (!Startup)
+      return Startup.takeError();
+    if (auto E = Memory->validateMappings(
+            [this](uint64_t A, uint64_t N) { return canonicalRange(A, N); },
+            supportsDeviceMappings()))
+      return E;
+    setProgramCounter(PC);
+  }
   Running = true;
   Started = true;
   TimedOut = false;
-  StopRequested = false;
   auto Reset = llvm::scope_exit([&] { Running = false; });
-  Deadline = *Limit;
+  auto Interrupted = [&](llvm::Error E) {
+    llvm::handleAllErrors(std::move(E),
+                          [&](const MachineInterruptedError &Interruption) {
+                            if (Interruption.stopRequested())
+                              StopRequested = true;
+                            TimedOut = Interruption.deadlineReached();
+                          });
+  };
   try {
     while (!StopRequested) {
       if (std::chrono::steady_clock::now() >= Deadline) {
         TimedOut = true;
+        break;
+      }
+      auto Instruction = Memory->beginInstruction();
+      if (!Instruction) {
+        auto E = Instruction.takeError();
+        if (!E.isA<MachineInterruptedError>())
+          return E;
+        Interrupted(std::move(E));
         break;
       }
       PC = programCounter();
@@ -298,12 +342,7 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
       }
       if (auto E = execute(*Decoded)) {
         if (!FirstFault && E.isA<MachineInterruptedError>()) {
-          llvm::handleAllErrors(
-              std::move(E), [&](const MachineInterruptedError &Interrupted) {
-                if (Interrupted.stopRequested())
-                  StopRequested = true;
-                TimedOut = Interrupted.deadlineReached();
-              });
+          Interrupted(std::move(E));
           break;
         }
         if (!FirstFault) {

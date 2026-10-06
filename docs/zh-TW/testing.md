@@ -281,6 +281,13 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 缺少 ARM64 硬體或 hypervisor 表示原生覆蓋被略過，不是通過。Unicorn 與交叉編譯不能證明原生 KVM/WHP 執行。
 
+`NeverDParallelExecutionTests` 強制處理器呼叫重疊與寫入等待期間取消，並驗證獨立 CPU 狀態、實體別名原子競爭和私有傳輸暫存。`NeverDRunControlTests` 檢查獨立 WHP binding 可同時持有兩份資源租約，而共享 binding 序列化存取。`NeverDMMIOAtomicTests` 比較原始 x64 原子／更新指令與全部 ARM64 LSE 案例的裝置及 RAM 結果，涵蓋寬寫入兩次觀察、過期預覽、提供者失敗與提交／停止競爭。`KernelMMIOFailure` 涵蓋別名、同值寫入、重複提交、電源變化、解除映射與擁有者銷毀。不可用平台明確跳過；包裝層會合只證明處理器呼叫能並行，不證明硬體同時退休指令。ARM64 KVM/WHP 原生驗證仍需對應主機。
+
+```bash
+cmake --build build-cpu --target NeverDParallelExecutionTests NeverDMMIOAtomicTests NeverDRunControlTests --parallel 4
+ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMIOAtomic|RunControl)Tests$' --output-on-failure
+```
+
 ## Linux 程序設定檔測試
 
 獨立[程序測試套件](process-emulation.md#驗證)會編譯真實 x64/AArch64 ELF fixture。`NeverDLinuxProcessTests` 檢查啟動、program-header 政策、服務續接、二進位輸出、客體錯誤與資源停止。`NeverDProcessPublicTests` 經由 C API/CLI 測試且不變更分析映像。`NeverDExecutionSessionTests` 檢查兩個 CPU 共用記憶體／預算，以及要求／錯誤恰好消耗一次。`NeverDX64MemoryUpdateTests` 檢查記憶體算術、SETcc、BT、XMM/MXCSR、寫入 observer、REP 邊界及預備裝置讀取。`DriverBackendParityTests.cpp` 執行原始與重定位 WDK fixture，並將完整可觀察報告與 Unicorn 比較；缺少映像／後端會明確略過。

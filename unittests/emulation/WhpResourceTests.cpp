@@ -191,5 +191,33 @@ TEST_F(WhpResources, WaitingForAnotherOwnerObservesExternalStop) {
   interrupted(Waiting.get(), true, false);
   EXPECT_EQ(Stats.Attempts[Second], 0u);
 }
+TEST_F(WhpResources, IndependentBindingsRetainSimultaneousResourceLeases) {
+  // Hold the first lease while another host thread acquires the second.
+  // The shared-cache path is separately required to time out in this order.
+  auto Create = [&]() -> llvm::Expected<std::unique_ptr<FakeResource>> {
+    return std::make_unique<FakeResource>(Stats, First);
+  };
+  Binding A(Create, true), B(Create, true);
+  auto FirstLease = llvm::cantFail(A.acquire({Clock::time_point::max()}));
+  std::promise<void> Acquired, Release;
+  auto Ready = Acquired.get_future();
+  auto Finish = Release.get_future();
+  auto Other = std::async(std::launch::async, [&]() -> llvm::Error {
+    auto SecondLease =
+        B.acquire({Clock::now() + std::chrono::milliseconds(WaitMilliseconds)});
+    Acquired.set_value();
+    if (!SecondLease)
+      return SecondLease.takeError();
+    Finish.wait();
+    return llvm::Error::success();
+  });
+  const auto Status =
+      Ready.wait_for(std::chrono::milliseconds(WaitMilliseconds));
+  if (Status == std::future_status::ready)
+    EXPECT_EQ(Stats.Live, unsigned(OwnerCount));
+  Release.set_value();
+  EXPECT_EQ(Status, std::future_status::ready);
+  EXPECT_EQ(llvm::toString(Other.get()), "");
+}
 } // namespace
 } // namespace neverd::emulation

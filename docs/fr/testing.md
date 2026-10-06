@@ -293,6 +293,13 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 L’absence de matériel ARM64 ou d’hyperviseur est une couverture native omise, pas une réussite. Unicorn et la compilation croisée ne prouvent pas l’exécution native KVM/WHP.
 
+`NeverDParallelExecutionTests` force le chevauchement des appels, l’annulation d’un écrivain en attente, les états CPU indépendants, la concurrence par alias et la préparation privée. `NeverDRunControlTests` vérifie deux baux WHP indépendants simultanés et la sérialisation du cache commun. `NeverDMMIOAtomicTests` compare RAM/périphérique pour les instructions x64 atomiques/de mise à jour et tous les cas ARM64 LSE, les deux observations larges, les aperçus périmés, les erreurs et la course commit/stop. `KernelMMIOFailure` couvre alias, écritures identiques, double commit, alimentation, unmap et propriétaire détruit. Les plateformes absentes sont explicitement ignorées. Le rendez-vous du wrapper prouve des appels concurrents, pas un retrait matériel simultané. KVM/WHP ARM64 exige l’hôte correspondant.
+
+```bash
+cmake --build build-cpu --target NeverDParallelExecutionTests NeverDMMIOAtomicTests NeverDRunControlTests --parallel 4
+ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMIOAtomic|RunControl)Tests$' --output-on-failure
+```
+
 ## Tests du profil de processus Linux
 
 Les [suites indépendantes de processus](process-emulation.md) compilent de vraies fixtures ELF x64/AArch64. `NeverDLinuxProcessTests` vérifie démarrage, politique des en-têtes, requêtes de service, sortie binaire, défauts et limites. `NeverDProcessPublicTests` contrôle l’API C/CLI sans modifier l’image d’analyse. `NeverDExecutionSessionTests` couvre deux CPU partageant mémoire/budget et la consommation exactement unique des requêtes/défauts. `NeverDX64MemoryUpdateTests` contrôle arithmétique mémoire, SETcc, BT, XMM/MXCSR, observateurs d’écriture, frontières REP et lectures préparées de périphériques. `DriverBackendParityTests.cpp` exécute les fixtures WDK originales et relocalisées puis compare le rapport observable complet à Unicorn ; images/backends absents sont ignorés.

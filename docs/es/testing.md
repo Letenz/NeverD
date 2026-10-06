@@ -292,6 +292,13 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 La falta de CPU ARM64 o hipervisor es cobertura nativa omitida, no un aprobado. Unicorn y la compilación cruzada no prueban ejecución KVM/WHP nativa.
 
+`NeverDParallelExecutionTests` fuerza llamadas solapadas, cancelación de escritores en espera, estados CPU independientes, competencia por alias y transporte privado. `NeverDRunControlTests` verifica dos leases WHP independientes simultáneos y la serialización del caché compartido. `NeverDMMIOAtomicTests` compara dispositivo/RAM para instrucciones x64 atómicas/de actualización y todos los casos ARM64 LSE, ambas observaciones anchas, vistas caducadas, fallos y carreras commit/stop. `KernelMMIOFailure` cubre alias, escrituras idénticas, doble commit, energía, unmap y propietarios destruidos. Las plataformas no disponibles se omiten explícitamente. La barrera del wrapper prueba llamadas concurrentes, no retiro simultáneo de instrucciones hardware. ARM64 KVM/WHP necesita el host correspondiente.
+
+```bash
+cmake --build build-cpu --target NeverDParallelExecutionTests NeverDMMIOAtomicTests NeverDRunControlTests --parallel 4
+ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMIOAtomic|RunControl)Tests$' --output-on-failure
+```
+
 ## Pruebas del perfil de procesos Linux
 
 Las [suites independientes de procesos](process-emulation.md) compilan fixtures ELF reales x64/AArch64. `NeverDLinuxProcessTests` verifica inicio, política de cabeceras, solicitudes de servicio, salida binaria, fallos y límites. `NeverDProcessPublicTests` comprueba C API/CLI sin modificar la imagen de análisis. `NeverDExecutionSessionTests` cubre dos CPU que comparten memoria/presupuesto y consumo exactamente una vez de solicitudes/fallos. `NeverDX64MemoryUpdateTests` comprueba aritmética de memoria, SETcc, BT, XMM/MXCSR, observadores de escritura, límites REP y lecturas preparadas de dispositivos. `DriverBackendParityTests.cpp` ejecuta fixtures WDK originales y reubicadas y compara todo el informe observable con Unicorn; las imágenes/backends ausentes se omiten.

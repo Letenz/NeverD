@@ -283,6 +283,13 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 ARM64 하드웨어나 hypervisor가 없으면 native coverage skip이며 통과가 아닙니다. Unicorn과 교차 컴파일은 native KVM/WHP 실행 증거가 아닙니다.
 
+`NeverDParallelExecutionTests`는 처리기 호출 중첩, 쓰기 대기 중 취소, 독립 CPU 상태, 물리 별칭 경쟁과 전용 전송 준비를 검사합니다. `NeverDRunControlTests`는 독립 WHP binding의 동시 자원 임대와 공유 binding의 직렬화를 검사합니다. `NeverDMMIOAtomicTests`는 원래 x64 원자/갱신 명령과 전체 ARM64 LSE 사례의 장치/RAM 결과, 넓은 쓰기 관찰 두 번, 오래된 미리보기, 제공자 실패와 commit/stop 경쟁을 비교합니다. `KernelMMIOFailure`는 별칭, 동일 값 쓰기, 중복 커밋, 전원, 매핑 해제와 소유자 소멸을 검사합니다. 사용 불가 플랫폼은 명시적으로 건너뜁니다. 래퍼의 합류는 동시 호출을 증명할 뿐 하드웨어의 동시 명령 완료를 증명하지 않습니다. ARM64 KVM/WHP에는 해당 호스트가 필요합니다.
+
+```bash
+cmake --build build-cpu --target NeverDParallelExecutionTests NeverDMMIOAtomicTests NeverDRunControlTests --parallel 4
+ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMIOAtomic|RunControl)Tests$' --output-on-failure
+```
+
 ## Linux 프로세스 프로필 테스트
 
 [독립 프로세스 테스트](process-emulation.md#검증)는 실제 x64/AArch64 ELF fixture를 빌드합니다. `NeverDLinuxProcessTests`는 시작, 프로그램 헤더 정책, 서비스 이어달리기, 바이너리 출력, 게스트 fault, 자원 중지를 확인합니다. `NeverDProcessPublicTests`는 분석 이미지를 바꾸지 않고 C API/CLI를 확인합니다. `NeverDExecutionSessionTests`는 메모리/예산을 공유하는 CPU 두 개와 요청/fault exactly-once 소비를 검사합니다. `NeverDX64MemoryUpdateTests`는 메모리 산술, SETcc, BT, XMM/MXCSR, 쓰기 observer, REP 경계, 준비된 장치 읽기를 검사합니다. `DriverBackendParityTests.cpp`는 원본/재배치 WDK fixture를 실행하고 관찰 가능한 전체 보고서를 Unicorn과 비교합니다. fixture/backend가 없으면 명시적으로 skip합니다.

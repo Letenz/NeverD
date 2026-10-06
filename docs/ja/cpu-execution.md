@@ -22,7 +22,7 @@ CPU 実行はゲスト OS、イメージローダー、呼び出し規約から�
 | `page_size` | 4096 | ゲストマッピング粒度。ほかの値は拒否 |
 | `required_features` | `[]` | [`ExecutionConfiguration.def`](../../include/neverd/emulation/ExecutionConfiguration.def) の必須機能名 |
 
-`driver-strict` は x64、`software-cpu-v1` は x64 と ARM64 を受け付けます。`checked-x64-v1` と `checked-aarch64-v1` は指定 ISA と supervisor 権限を要求します。`checked-user-x64-v1` と `checked-user-aarch64-v1` は契約に対応する限定命令群をそれぞれ CPL3/EL0 で実行し、MMU 分離と明示的なサービス要求 exit を提供します。Unicorn とホストに一致する KVM/WHP をサポートし、`auto` は既存のホスト選択に従います。flat プロファイルにユーザー／supervisor の MMU 分離保証はありません。checked ARM64 と x64 は、以下に示す限定的な FP/SIMD 命令群を許可します。supervisor x64 は限定 MMIO と prepared-read の文字列転送を追加し、user profile は device mapping を拒否します。checked 全体で port I/O と並列 CPU 要件は引き続き拒否されます。`service_traps` を通知するのは user プロファイルだけです。
+`driver-strict` は x64、`software-cpu-v1` は x64 と ARM64 を受け付けます。`checked-x64-v1` と `checked-aarch64-v1` は指定 ISA と supervisor 権限を要求します。`checked-user-x64-v1` と `checked-user-aarch64-v1` は契約に対応する限定命令群をそれぞれ CPL3/EL0 で実行し、MMU 分離と明示的なサービス要求 exit を提供します。Unicorn とホストに一致する KVM/WHP をサポートし、`auto` は既存のホスト選択に従います。flat プロファイルにユーザー／supervisor の MMU 分離保証はありません。checked ARM64 と x64 は、以下に示す限定的な FP/SIMD 命令群を許可します。supervisor x64 は限定 MMIO と prepared-read の文字列転送を追加し、user profile は device mapping を拒否します。port I/O は未対応です。`service_traps` を通知するのは user プロファイルだけです。
 
 user 実行には、マップされた**各ページ**で `UserAccessible` と適切な `Read`、`Write` または `Execute` 権限が必要です。既存マッピングは既定で supervisor 用です。同じ物理バイトを共有する alias でも権限は独立し、`UserAccessible` だけではアクセスを許可しません。信頼されたホスト操作と supervisor CPU は RWX を使います。例:
 
@@ -36,6 +36,16 @@ llvm::cantFail(CPU->map(Code, 4096, Read | Write | Execute | UserAccessible));
 権限は契約で固定されます。コンテキスト復元やアドレス空間の切替では変化せず、x64 セグメントセレクターでも昇格できません。回復可能なデータアクセス fault は、所有者が処理するまで元の命令とレジスターを保持します。`canAccess` は要求された権限だけを正確に検査し、user 可視性の照会には `UserAccessible` を含めます。ページテーブルは CPU 内部の投影であり、変更可能なゲストページテーブルや権限切替 API は公開しません。ARM64 では user ページは EL1 でも実行不可です。
 
 未知/null フィールド、無効な名前や数値幅、必須機能の重複、未対応の組み合わせは失敗します。入力上限は64 KiBです。従来の CPU factory とドライバー C オプションは互換性を維持します。
+
+<a id="parallel-cpus-and-mmio"></a>
+
+## 並列 CPU とデバイスのアトミック処理
+
+KVM、WHP、Unicorn の checked x64/ARM64 は `ExecutionFeature::ParallelCPUs`（`parallel_cpus`）を明示要求できます。独立した CPU が別々のホストスレッドで物理 RAM を共有し、RAM を書かないと証明されたネイティブ命令は並行実行できます。書き込み待ちは新規命令を止め、既存の読み取りが終了してから公開します。効果は逐次一貫で、待機のキャンセルとロールバックに対応します。全実行が終了するまでマッピング変更とホスト書き込みは禁止されます。同一 CPU へのスレッド間操作は `stop()` のみです。既定の実行と OS スケジューリングは協調式で、弱いメモリ順序の探索は別契約です。
+
+並列 WHP は CPU ごとに独立パーティションと私有転送 RAM を持ち、各ステップでコードと全宣言オペランドを同期し、宣言された出力だけをステージングします。観測対象は常に共有 RAM の正本です。KVM と checked Unicorn は backing を直接共有します。HVF と Unicorn `Software` は対象外です。
+
+`MMIOAtomics`（`mmio_atomics`）は明示的な `GuestMMIOCallbacks::PrepareAtomic` を要求します。checked supervisor x64 は許可された交換、比較交換、整数更新、変更型ビット操作、ARM64 は `CASP` を含む LSE に対応します。自然整列された 1/2/4/8/16 バイトに限定します。x64 は私有領域で原命令を実行してレジスタと FLAGS を計算し、ARM64 は共通 LSE 意味論を使います。準備は副作用なし、コミットは寿命と版を検証し一度だけ公開します。コミット前の停止や失敗は CPU/デバイスを保持し、成功済みコミットは競合する停止に優先します。通常の Read+Write への代替は禁止です。カーネルのレジスタバンクは宣言済み 1/2/4 バイトに限定し、同値書き込み、電源変更、所有者破棄による古いプレビューを拒否します。ARM64 の通常デバイス転送とデバイス排他モニター、ユーザー MMIO、任意の実機デバイスは対象外です。
 
 ## ワークロードを実行せずに照会
 
@@ -136,7 +146,7 @@ checked x64 の `DIV`/`IDIV` は実際のプロセッサ結果と `#DE` を使�
 
 ## 段階的な RAM 効果
 
-`RAMTransaction` は物理実行リースの下で、命令が宣言した書き込み範囲の物理的な和集合だけを保持します。結果観測器を呼ぶ前に元の RAM を復元し、取消し、転送エラー、観測器の例外では部分的な RAM やレジスタを公開しません。CPU 例外では RAM を戻した後もアーキテクチャの例外状態を保持します。ARM64 の単一・ペアストアも同じ管理層を使います。x64 は 8/16/32/64 ビットの `XCHG`、`XADD`、`CMPXCHG` を実行し、LOCK または暗黙のロックを持つ形式には自然整列を要求します。`NeverDRAMTransactionTests` はホスト CPU との結果比較、復元、エイリアス、権限を検証し、利用できないプラットフォームを明示的にスキップします。デバイスと並列 SMP は対象外で、CPU スナップショットは確定済み RAM を戻しません。
+`RAMTransaction` は物理実行リースの下で、命令が宣言した書き込み範囲の物理的な和集合だけを保持します。結果観測器を呼ぶ前に元の RAM を復元し、取消し、転送エラー、観測器の例外では部分的な RAM やレジスタを公開しません。CPU 例外では RAM を戻した後もアーキテクチャの例外状態を保持します。ARM64 の単一・ペアストアも同じ管理層を使います。x64 は 8/16/32/64 ビットの `XCHG`、`XADD`、`CMPXCHG` を実行し、LOCK または暗黙のロックを持つ形式には自然整列を要求します。`NeverDRAMTransactionTests` はホスト CPU との結果比較、復元、エイリアス、権限を検証し、利用できないプラットフォームを明示的にスキップします。デバイスのアトミック処理は独立したプロバイダーを使い、CPU スナップショットは確定済み RAM を戻しません。
 
 `CMPXCHG8B` と `CMPXCHG16B` は、KVM、WHP、checked Unicorn のドライバーおよびユーザープロファイルで元の命令を実行します。比較の成否にかかわらず読み書き権限が必要で、障害は書き込みアクセスとして分類します。`CMPXCHG16B` はメモリアクセス前に 16 バイト境界を検査し、不整列なら `#GP(0)` を報告します。2 回の結果通知は同じ RAM トランザクションに属し、いずれかで停止または例外が発生すると、レジスターも RAM も変更を公開しません。ロックなしの `CMPXCHG8B` はページをまたげますが、ロック付きは自然アラインメントが必要です。`X64WideAtomicTests.cpp` はホストの元命令とネイティブ障害を比較し、エイリアス、プレフィックス、アドレス計算、修復後の再試行、キャンセルを検証します。独自の Windows ドライバーと ring3 PE フィクスチャが両幅を実行し、WDK フィクスチャは `_InterlockedCompareExchange128` も実行します。CPU モデルには `CMPXCHG16B` の対応が必要です。
 
@@ -168,13 +178,13 @@ x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ペー�
 
 `CheckedX64Instructions.def` は既存の CPU バックエンドで 8/16/32/64 ビットの符号なし `MUL` と `CBW/CWDE/CDQE/CWD/CDQ/CQO` を許可します。`NeverDX64IntegerTests` は独立した `X64IntegerCases.def` の命令列と期待値を使い、両特権レベルで部分レジスターの保持、32 ビットのゼロ拡張、積の上位・下位、定義された CF/OF、符号拡張によるフラグの不変性を検証します。通常 RAM の乗算はアクセス範囲全体の権限検査と読み取り観測を維持し、障害や観測コールバックによる停止では暗黙の出力レジスターと PC を保持します。デバイスオペランドは未対応です。checked Unicorn でも実行し、利用できないネイティブバックエンドは明示的にスキップします。
 
-`X64BitInstructions.def` は 16/32/64 ビットのレジスタと通常 RAM の `BT/BTS/BTR/BTC` を許可します。レジスタのビット索引はオペランド幅の符号付き値としてワード全体を選択し、即値は基底ワード内に限定されます。アドレス幅による切り詰めは FS/GS 基底の加算より前に行います。CF と書き込み値はプロセッサが生成し、`RAMTransaction` は観測コールバックの承認まで結果を非公開に保ちます。全範囲の権限検査は独立したページ割り当てとエイリアスを対象とし、停止、コールバック失敗、アクセス拒否では元の CPU と RAM を保持します。LOCK は自然整列されたメモリ変更形式に限られ、MMIO とハードウェア並列 SMP は未対応です。`X64BitStringTests.cpp` は独立した符号化を x64 ホストの実行と比較し、負の索引、幅の切り詰め、ページ境界、キャンセル、不正な LOCK 形式を検証します。[Intel 命令リファレンス](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)を参照してください。
+`X64BitInstructions.def` は 16/32/64 ビットのレジスタと通常 RAM の `BT/BTS/BTR/BTC` を許可します。レジスタのビット索引はオペランド幅の符号付き値としてワード全体を選択し、即値は基底ワード内に限定されます。アドレス幅による切り詰めは FS/GS 基底の加算より前に行います。CF と書き込み値はプロセッサが生成し、`RAMTransaction` は観測コールバックの承認まで結果を非公開に保ちます。全範囲の権限検査は独立したページ割り当てとエイリアスを対象とし、停止、コールバック失敗、アクセス拒否では元の CPU と RAM を保持します。LOCK は自然整列を要求し、変更型 MMIO は明示的な準備付きアトミックプロバイダーを要求します。`X64BitStringTests.cpp` は独立した符号化を x64 ホストの実行と比較し、負の索引、幅の切り詰め、ページ境界、キャンセル、不正な LOCK 形式を検証します。[Intel 命令リファレンス](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)を参照してください。
 
 `X64StringInstructions.def` は通常 RAM の 8/16/32/64 ビット `MOVS/STOS/LODS` を管理し、`CLD/STD` は他のフラグを変えずに方向を制御します。REP は各要素の全範囲を観測前に検証し、再開可能な境界で確定します。後続の障害でも完了済み要素は残り、停止やコールバック例外は現在の要素を変更しません。FS/GS はアドレス幅の切り詰め後にソースだけへ加算します。AL/AX のロードは上位ビットを保持し、EAX はゼロ拡張します。32 ビットアドレスのゼロ回 REP はカウントの上位ビットがゼロである必要があり、MOVS/STOS では使用するアドレスレジスタも同様です。それ以外は実 CPU ごとに結果が異なります。MOVS/STOS/LODS の REPNE 形式と STOS/LODS のデバイス操作数は未対応です。`X64StringTransferTests.cpp` は独立したホスト命令で幅、方向、重なり、ゼロ回を照合し、権限、エイリアス、折り返し、障害、再開も検証します。独自の WDK リソースドライバは `driver_resource_strings.def` を使い STOS/LODS の全四幅を実行します。
 
 `X64StringInstructions.def` は通常 RAM 上の 8/16/32/64 ビット `CMPS/SCAS` と `REPE/REPNE` も管理します。各要素は観測前に読み取り範囲全体を検証し、六つの算術フラグを更新して最初の終了条件で停止します。データ障害では、この連続した REP の開始時のフラグを復元し、完了済みのポインタとカウント更新は保持します。公開 API からの再開は公開済み CPU 状態を出発点とします。停止や観測例外は現在の要素を変更せず、早期終了後は次の要素を読みません。FS/GS は CMPS のソースだけに作用し、SCAS は累算器と未使用のソースレジスタを保持します。デバイス操作数と曖昧な 32 ビットゼロ回実行時の上位ビットは対象外です。`X64StringComparisonTests.cpp` は独立したホスト命令とフラグ、方向、エイリアス、折り返し、権限、再開を照合し、Linux x64 シグナルで実際の障害時レジスタも検証します。独自 WDK リソースドライバは `driver_resource_strings.def` で全四幅の両条件反復を実行します。[Intel 命令リファレンス](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)を参照してください。 Linux のネイティブ検証は最初の要素の実行前後の障害を対象とし、Intel の開始時 flags 復元と Hyper-V 上の AMD EPYC 7763 で観測された直前の比較 flags の保持を区別します（[ネイティブ観測](https://github.com/NeverSight/NeverD/actions/runs/37202522130)）。未知の CPU ベンダーは明示的に失敗します。checked ゲストは全バックエンドで開始時 flags を復元します。
 
-`WhpResourceCache.h` は論理 CPU の状態と WHP パーティションを分離します。ランタイムは一つのネイティブパーティションを保持し、同じ CPU の連続ステップでは再利用します。CPU 切り替え時は古いパーティションを破棄してから、マッピングと仮想プロセッサを再構築し、完全な状態を復元します。各論理 CPU は独立した `MemoryProjection` ビューと正本の RAM を保持します。リース取得はキャンセルと現在の期限を守り、非アクティブ CPU の破棄は別の CPU のパーティションを破棄しません。x64 はホスト既定の XSAVE 機能群を保持し、`WHvGetPartitionProperty` で実効設定を検証します。依存機能を消してマスクを縮小しません。協調的な CPU 切り替えは並列ハードウェア SMP を提供しません。
+既定の協調モード：`WhpResourceCache.h` は論理 CPU の状態と WHP パーティションを分離します。ランタイムは一つのネイティブパーティションを保持し、同じ CPU の連続ステップでは再利用します。CPU 切り替え時は古いパーティションを破棄してから、マッピングと仮想プロセッサを再構築し、完全な状態を復元します。各論理 CPU は独立した `MemoryProjection` ビューと正本の RAM を保持します。リース取得はキャンセルと現在の期限を守り、非アクティブ CPU の破棄は別の CPU のパーティションを破棄しません。x64 はホスト既定の XSAVE 機能群を保持し、`WHvGetPartitionProperty` で実効設定を検証します。依存機能を消してマスクを縮小しません。協調的な CPU 切り替えは並列ハードウェア SMP を提供しません。
 
 `CheckedBackend` は CPU ごとに命令フェッチ用バッファと `cs_disasm_iter` の命令レコードを保持します。各ステップで実行権限のあるバイトを読み直して再デコードし、コード書き込み、エイリアス変更、再開後に古いデコード結果を使いません。実行リースは再利用領域に触れる前に再帰実行を拒否します。命令ごとの領域確保をなくしつつ、命令観測、システムサービスの捕捉、正確な障害処理を維持します。 固定版 Unicorn の単一ステップは間接変換検索も含めて後続命令のフェッチ前に終了し、内部のコード書き込み再試行を完了済み命令として数えません。
 
@@ -204,7 +214,7 @@ checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト�
 
 [Setup, signing and native hardware validation (English)](../macos-hvf.md)
 
-checked ARM64 は 8/16/32/64 ビットの `LDXR/STXR`、32/64 ビットのレジスタ対 `LDXP/STXP`、acquire/release 形式、`CLREX` をサポートします。KVM、WHP、checked Unicorn は ISA 層の排他モニターを共有し、16 バイトの物理範囲で予約を管理します。転送層のシングルステップ終了でループの進行を妨げません。同じ値の書き込みも、エイリアスや保持ビューを含め、コミット時に予約を無効化します。停止は未公開状態を保ち、スナップショットは途中の書き込みを取り消せません。checked 排他命令は FEAT_LSE2 の整列規則を使います。16 バイト境界内の非整列アクセスは実行でき、境界を越えると `alignment` 障害になります。同じ幅の条件付きストアは予約された物理粒度で照合します。予約が失効していても、条件付きストアの判定前に整列と権限を検査します。MMIO、並列 SMP は対象外です。 ARM64 Unicorn の `Software` 契約もこのモニターを使用し、ソフトウェア CPU と checked CPU が物理 RAM を共有する場合にも対応します。 Unicorn の `Software` 契約はエンジンの自然整列モデルを維持します。
+checked ARM64 は 8/16/32/64 ビットの `LDXR/STXR`、32/64 ビットのレジスタ対 `LDXP/STXP`、acquire/release 形式、`CLREX` をサポートします。KVM、WHP、checked Unicorn は ISA 層の排他モニターを共有し、16 バイトの物理範囲で予約を管理します。転送層のシングルステップ終了でループの進行を妨げません。同じ値の書き込みも、エイリアスや保持ビューを含め、コミット時に予約を無効化します。停止は未公開状態を保ち、スナップショットは途中の書き込みを取り消せません。checked 排他命令は FEAT_LSE2 の整列規則を使います。16 バイト境界内の非整列アクセスは実行でき、境界を越えると `alignment` 障害になります。同じ幅の条件付きストアは予約された物理粒度で照合します。予約が失効していても、条件付きストアの判定前に整列と権限を検査します。排他命令は引き続き通常 RAM のみを対象とします。 ARM64 Unicorn の `Software` 契約もこのモニターを使用し、ソフトウェア CPU と checked CPU が物理 RAM を共有する場合にも対応します。 Unicorn の `Software` 契約はエンジンの自然整列モデルを維持します。
 
 
-同じ ISA 層は FEAT_LSE の `CAS/CASP`、`SWP`、`LDADD/LDCLR/LDEOR/LDSET`、符号付き・符号なし min/max を、バイト・半語・語・倍語および acquire/release 形式でサポートします。checked は上記の整列方針を、Unicorn `Software` は自然整列を使います。比較はオペランド幅に従い、返す旧値はゼロ拡張します。CAS の比較失敗でも書き込み権限を確認し、Arm が認める旧値の書き戻しを選択して物理予約を無効化します。コールバックはコミット前の CPU/RAM を参照し、取消しや同期障害で部分結果を公開しません。物理実行ロックが協調 CPU の順序を保証し、並列 SMP や MMIO アトミックは提供しません。`MRS/MSR NZCV` は予約ビットとゼロレジスタの規則に従い、4 個の条件フラグを転送します。 読み取り権限を先に検査します。読み取り不可なら読み取り障害、読み取り専用なら書き込み障害となり、元の Windows ARM64 観測と一致します。
+同じ ISA 層は FEAT_LSE の `CAS/CASP`、`SWP`、`LDADD/LDCLR/LDEOR/LDSET`、符号付き・符号なし min/max を、バイト・半語・語・倍語および acquire/release 形式でサポートします。checked は上記の整列方針を、Unicorn `Software` は自然整列を使います。比較はオペランド幅に従い、返す旧値はゼロ拡張します。CAS の比較失敗でも書き込み権限を確認し、Arm が認める旧値の書き戻しを選択して物理予約を無効化します。コールバックはコミット前の CPU/RAM を参照し、取消しや同期障害で部分結果を公開しません。並列 CPU と MMIO アトミックの確定は並行確定の契約に従います。`MRS/MSR NZCV` は予約ビットとゼロレジスタの規則に従い、4 個の条件フラグを転送します。 読み取り権限を先に検査します。読み取り不可なら読み取り障害、読み取り専用なら書き込み障害となり、元の Windows ARM64 観測と一致します。

@@ -19,6 +19,8 @@
 
 #include <functional>
 #include <map>
+#include <memory>
+#include <mutex>
 
 namespace neverd::emulation {
 namespace resources {
@@ -53,8 +55,14 @@ public:
     /// START assignment. MMIO consumers use this generation for power-on reset.
     uint64_t PowerGeneration = 0;
     bool Cold = false;
+    std::shared_ptr<const void> Revision = std::make_shared<unsigned char>(0);
   };
   const Device *find(uint64_t PDO) const;
+  /// Retain this lock across resource inspection and a device commit. Other
+  /// kernel-model objects remain confined to their coordinator thread.
+  std::shared_ptr<std::recursive_mutex> transactionMutex() const {
+    return Mutex;
+  }
   const std::map<uint64_t, Device> &devices() const { return Devices; }
   llvm::Error configure(uint64_t PDO, const DriverPnpDevice &Configuration);
   bool hasResources(uint64_t PDO) const;
@@ -77,6 +85,8 @@ public:
                           bool RequireWake);
 
 private:
+  std::shared_ptr<std::recursive_mutex> Mutex =
+      std::make_shared<std::recursive_mutex>();
   CheckRelease Check;
   CheckRelease StartCheck;
   CheckRelease ColdPowerDownCheck;

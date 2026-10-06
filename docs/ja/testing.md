@@ -284,6 +284,13 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 ARM64 hardware や hypervisor がない場合は native coverage の skip であり、pass ではありません。Unicorn と cross-compilation は native KVM/WHP 実行の証拠になりません。
 
+`NeverDParallelExecutionTests` は処理器呼び出しの重なり、書き込み待機中のキャンセル、独立 CPU 状態、物理エイリアスの競合、私有転送を検証します。`NeverDRunControlTests` は独立 WHP binding の二つの同時リースと共有 binding の直列化を検証します。`NeverDMMIOAtomicTests` は原 x64 原子／更新命令と全 ARM64 LSE ケースの RAM／デバイス結果、二つの広幅観測、失効、プロバイダー失敗、commit/stop 競合を比較します。`KernelMMIOFailure` はエイリアス、同値書き込み、重複コミット、電源、unmap、所有者破棄を検証します。利用不能な環境は明示的にスキップします。ラッパーの合流は呼び出しの並行性を示し、ハードウェアの同時リタイアを証明しません。ARM64 KVM/WHP は対応ホストが必要です。
+
+```bash
+cmake --build build-cpu --target NeverDParallelExecutionTests NeverDMMIOAtomicTests NeverDRunControlTests --parallel 4
+ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMIOAtomic|RunControl)Tests$' --output-on-failure
+```
+
 ## Linux process profile のテスト
 
 [独立 process suite](process-emulation.md#検証) は x64/AArch64 の実際の ELF fixture を compile します。`NeverDLinuxProcessTests` は起動、program-header policy、service continuation、binary output、guest fault、resource stop を検証します。`NeverDProcessPublicTests` は分析用 image を変更せず C API/CLI を確認します。`NeverDExecutionSessionTests` は memory/budget を共有する CPU と request/fault の exactly-once 消費を扱います。`NeverDX64MemoryUpdateTests` は memory arithmetic、SETcc、BT、XMM/MXCSR、write observer、REP boundary、prepared device read を確認します。`DriverBackendParityTests.cpp` は original/relocated WDK fixture を実行し、観測可能な完全 report を Unicorn と比較します。fixture/backend 不在は明示的に skip します。

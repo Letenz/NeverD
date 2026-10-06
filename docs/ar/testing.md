@@ -288,6 +288,13 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 الغياب عن مضيف ARM64 أو عن المحاكي الافتراضي تخطٍ للتغطية الأصلية وليس نجاحاً؛ Unicorn والتجميع المتقاطع لا يثبتان تنفيذ KVM/WHP أصلياً.
 
+`NeverDParallelExecutionTests` تداخل استدعاءات المعالج وإلغاء الكاتب المنتظر، ويفحص استقلال CPU والتنافس عبر الأسماء البديلة والنقل الخاص. يتحقق `NeverDRunControlTests` من إيجاري موارد WHP مستقلين متزامنين وتسلسل المخزن المشترك. يقارن `NeverDMMIOAtomicTests` نتائج الجهاز وRAM لتعليمات x64 الذرية والتحديث وجميع حالات ARM64 LSE، ومراقبتي الكتابة العريضة والمعاينات القديمة والفشل وسباق commit/stop. يغطي `KernelMMIOFailure` الأسماء البديلة والكتابات المتطابقة والاعتماد المكرر والطاقة وإلغاء الخريطة وانتهاء المالك. تُتجاوز المنصات غير المتاحة صراحة. يثبت حاجز الغلاف تزامن الاستدعاءات لا إنهاء التعليمات عتادياً في اللحظة نفسها. يتطلب ARM64 KVM/WHP المضيف المناسب.
+
+```bash
+cmake --build build-cpu --target NeverDParallelExecutionTests NeverDMMIOAtomicTests NeverDRunControlTests --parallel 4
+ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMIOAtomic|RunControl)Tests$' --output-on-failure
+```
+
 ## اختبارات ملف عمليات Linux
 
 تجمع مجموعة [محاكاة العمليات](process-emulation.md#التحقق) ملفات ELF حقيقية لـx64/AArch64. يتحقق `NeverDLinuxProcessTests` من البدء وسياسة program headers وطلبات الخدمة والمخرجات الثنائية والأعطال والموارد. يختبر `NeverDProcessPublicTests` C API وCLI دون تغيير صورة التحليل. ويغطي `NeverDExecutionSessionTests` CPUين يشتركان في الذاكرة والميزانية واستهلاك الطلب/العطل مرة واحدة؛ أما `NeverDX64MemoryUpdateTests` فيتحقق من حسابات الذاكرة وSETcc وBT وXMM/MXCSR ومراقبي الكتابة وحدود REP والقراءة المحضرة للأجهزة. وتعيد `DriverBackendParityTests.cpp` تشغيل صور WDK الأصلية والمعاد تموضعها وتقارن التقرير المرصود بالكامل بـUnicorn؛ الحالات والأجهزة غير المتاحة تُتخطى صراحة.
@@ -1469,3 +1476,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 تغطي اختبارات `LowIRLoopInference.OrderedComparisonBits*` الترميزين المنطقيين لمخارج الترتيب غير الموقع مع عدادات 8 و24 و32 بت، وثلاثة أنواع تخزين وترتيبي البايتات. ترفض البراهين التحديثات غير المنتهية وتغيير المقارنات أو الحدود أو البايتات العليا المرصودة. تبقى الميزانيات الدقيقة والأقل بوحدة واحدة مستقلة. تعيد تجهيزات الاختبار التي تغير الترميز ربط ملخص العمليات الأصلية قبل البرهان.
 
 تغطي اختبارات `LowIRLoopInference.MutablePrefixBounds*` حدودًا مشتقة من 8 و24 و32 بت مع تغير البتات العليا، وثلاثة أنواع تخزين للعداد، وترتيبي البايتات، ومخارج مباشرة أو مخزنة. وتفحص عدم الانتهاء وحدود المساواة المتحركة وتغييرات البتات العليا والمقارنات المرصودة والميزانيات الدقيقة والأقل بوحدة. قد ينتهي حد متحرك بمقارنة ترتيب غير موقعة عند الالتفاف، وله اختبار مستقل ببرهان كامل.
+
+يفرض

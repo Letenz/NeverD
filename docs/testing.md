@@ -912,6 +912,13 @@ same original scalar/SSE instruction bytes and a REP copy natively in child
 processes to establish independent store-fault behavior. Other native-oracle
 hosts skip explicitly; backend cells distinguish unavailable execution.
 
+`NeverDParallelExecutionTests` forces overlapping processor calls, cancellation while a writer waits, independent CPU state, physical-alias atomic contention and private transport staging. `NeverDRunControlTests` checks that independent WHP bindings can retain two resource leases while the shared binding serializes them. `NeverDMMIOAtomicTests` compares device and RAM results for original x64 atomic/update encodings and all ARM64 LSE cases, and checks both wide write observations, stale previews, provider failures and commit/stop races. `KernelMMIOFailure` covers aliases, identical writes, repeated commits, power changes, unmapping and retired owners. Platform-unavailable cases are explicit skips; a wrapper rendezvous proves concurrent processor calls, not simultaneous hardware retirement. Native ARM64 KVM/WHP needs the corresponding host.
+
+```bash
+cmake --build build-cpu --target NeverDParallelExecutionTests NeverDMMIOAtomicTests NeverDRunControlTests --parallel 4
+ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMIOAtomic|RunControl)Tests$' --output-on-failure
+```
+
 ## Process emulation checks
 
 `AndroidNative.FamilyFallbacksPreserveDiagnosticsAndProviderPrecedence` checks

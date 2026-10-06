@@ -26,6 +26,29 @@ NEVERD_EXECUTION_FEATURE_GROUP(UserFeatures,
 #endif
 
 #ifdef NEVERD_BACKEND_EXECUTION_FEATURE
+// Device atomics require a prepared provider independently of scalar MMIO.
+#define NEVERD_ATOMIC_DEVICE(Backend)                                         \
+  NEVERD_BACKEND_EXECUTION_FEATURE(Backend, X64, CheckedX64, MMIOAtomics)       \
+  NEVERD_BACKEND_EXECUTION_FEATURE(Backend, AArch64, CheckedAArch64, MMIOAtomics)
+NEVERD_ATOMIC_DEVICE(KVM)
+NEVERD_ATOMIC_DEVICE(WHP)
+NEVERD_ATOMIC_DEVICE(Unicorn)
+#undef NEVERD_ATOMIC_DEVICE
+NEVERD_BACKEND_EXECUTION_FEATURE(KVM, X64, Legacy, MMIOAtomics)
+NEVERD_BACKEND_EXECUTION_FEATURE(WHP, X64, Legacy, MMIOAtomics)
+// Explicitly requesting parallel_cpus selects concurrent checked runs with
+// read-only native overlap and sequentially consistent shared write commits.
+NEVERD_BACKEND_EXECUTION_FEATURE(KVM, X64, Legacy, ParallelCPUs)
+NEVERD_BACKEND_EXECUTION_FEATURE(WHP, X64, Legacy, ParallelCPUs)
+#define NEVERD_PARALLEL_CHECKED(Backend)                                      \
+  NEVERD_BACKEND_EXECUTION_FEATURE(Backend, X64, CheckedX64, ParallelCPUs)      \
+  NEVERD_BACKEND_EXECUTION_FEATURE(Backend, X64, CheckedUserX64, ParallelCPUs)  \
+  NEVERD_BACKEND_EXECUTION_FEATURE(Backend, AArch64, CheckedAArch64, ParallelCPUs) \
+  NEVERD_BACKEND_EXECUTION_FEATURE(Backend, AArch64, CheckedUserAArch64, ParallelCPUs)
+NEVERD_PARALLEL_CHECKED(KVM)
+NEVERD_PARALLEL_CHECKED(WHP)
+NEVERD_PARALLEL_CHECKED(Unicorn)
+#undef NEVERD_PARALLEL_CHECKED
 // Precise unmasked exceptions for the admitted legacy SSE instructions. This
 // extends these native contracts only; the portable engine remains masked.
 NEVERD_BACKEND_EXECUTION_FEATURE(KVM, X64, Legacy, SIMDExceptions)

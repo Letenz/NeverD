@@ -292,6 +292,13 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 L’assenza di hardware ARM64 o hypervisor è copertura nativa omessa, non un pass. Unicorn e cross-compilazione non provano KVM/WHP nativo.
 
+`NeverDParallelExecutionTests` forza chiamate sovrapposte, annullamento di scrittori in attesa, stati CPU indipendenti, contesa tramite alias e trasporto privato. `NeverDRunControlTests` verifica due lease WHP indipendenti simultanei e la serializzazione del cache comune. `NeverDMMIOAtomicTests` confronta dispositivo/RAM per istruzioni x64 atomiche/di aggiornamento e tutti i casi ARM64 LSE, entrambe le osservazioni ampie, anteprime scadute, errori e gare commit/stop. `KernelMMIOFailure` copre alias, scritture identiche, doppio commit, alimentazione, unmap e proprietari distrutti. Le piattaforme non disponibili sono saltate esplicitamente. Il rendezvous del wrapper prova chiamate concorrenti, non retirement hardware simultaneo. ARM64 KVM/WHP richiede l’host corrispondente.
+
+```bash
+cmake --build build-cpu --target NeverDParallelExecutionTests NeverDMMIOAtomicTests NeverDRunControlTests --parallel 4
+ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMIOAtomic|RunControl)Tests$' --output-on-failure
+```
+
 ## Test del profilo processi Linux
 
 Le [suite indipendenti dei processi](process-emulation.md#verifica) compilano vere fixture ELF x64/AArch64. `NeverDLinuxProcessTests` verifica avvio, policy degli header, service request, output binario, fault e limiti. `NeverDProcessPublicTests` controlla C API/CLI senza modificare l’immagine di analisi. `NeverDExecutionSessionTests` copre due CPU con memoria/budget condivisi e consumo exactly-once di richieste/fault. `NeverDX64MemoryUpdateTests` verifica aritmetica memoria, SETcc, BT, XMM/MXCSR, observer di scrittura, confini REP e letture dispositivo preparate. `DriverBackendParityTests.cpp` esegue fixture WDK originali e rilocate e confronta il report osservabile completo con Unicorn; immagini/backend assenti sono skip espliciti.

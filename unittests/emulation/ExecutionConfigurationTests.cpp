@@ -194,6 +194,32 @@ TEST(ExecutionConfiguration, BoundedFeaturesDependOnISAAndPrivilege) {
     }
   }
 }
+TEST(ExecutionConfiguration, ParallelAndAtomicFeaturesAreBackendQualified) {
+  for (auto Backend :
+       {ExecutionBackendKind::KVM, ExecutionBackendKind::WHP,
+        ExecutionBackendKind::Unicorn, ExecutionBackendKind::HVF})
+    for (auto ISA : {GuestArchitecture::X64, GuestArchitecture::AArch64})
+      for (bool User : {false, true}) {
+        auto Config = checked(ISA);
+        Config.Backend = Backend;
+        if (User) {
+          Config.Contract = ISA == GuestArchitecture::X64
+                                ? ExecutionContract::CheckedUserX64
+                                : ExecutionContract::CheckedUserAArch64;
+          Config.Privilege = ExecutionPrivilege::User;
+        }
+        for (auto Feature :
+             {ExecutionFeature::ParallelCPUs, ExecutionFeature::MMIOAtomics}) {
+          Config.RequiredFeatures = Feature;
+          auto Resolved = resolveExecutionConfiguration(Config);
+          EXPECT_EQ(bool(Resolved),
+                    Backend != ExecutionBackendKind::HVF &&
+                        (Feature == ExecutionFeature::ParallelCPUs || !User));
+          if (!Resolved)
+            llvm::consumeError(Resolved.takeError());
+        }
+      }
+}
 TEST(ExecutionConfiguration,
      UnknownISAAndMismatchedContractAreConfigurationErrors) {
   auto Config = checked(GuestArchitecture::X64);

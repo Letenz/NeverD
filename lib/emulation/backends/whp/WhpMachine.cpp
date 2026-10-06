@@ -28,7 +28,8 @@ public:
   X64BranchModel BranchModel = X64BranchModel::Intel;
   X64BranchModel branchModel() const override { return BranchModel; }
   explicit WhpMachine(MemoryProjection &Memory)
-      : Binding([&Memory] { return createWhpX64Partition(Memory); }) {}
+      : Binding([&Memory] { return createWhpX64Partition(Memory); },
+                Memory.parallelEnabled()) {}
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control) override {
     Control = Control.forNativeStep();

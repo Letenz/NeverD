@@ -102,8 +102,11 @@ std::shared_ptr<WhpResourceCache<Resource>> sharedWhpResources() {
 template <typename Resource> class WhpResourceBinding final {
 public:
   using Cache = WhpResourceCache<Resource>;
-  explicit WhpResourceBinding(typename Cache::Factory Create)
-      : Shared(sharedWhpResources<Resource>()), Create(std::move(Create)) {}
+  explicit WhpResourceBinding(typename Cache::Factory Create,
+                              bool Independent = false)
+      : Shared(Independent ? std::make_shared<Cache>()
+                           : sharedWhpResources<Resource>()),
+        Create(std::move(Create)) {}
   ~WhpResourceBinding() { Shared->retire(this); }
   WhpResourceBinding(const WhpResourceBinding &) = delete;
   WhpResourceBinding &operator=(const WhpResourceBinding &) = delete;

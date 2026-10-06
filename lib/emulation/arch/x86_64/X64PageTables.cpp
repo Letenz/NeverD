@@ -54,10 +54,16 @@ llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
     return llvm::Error::success();
   };
   for (const auto &[VA, P] : Memory.mappings()) {
-    // Admitted device transactions are completed by the architecture. Device
-    // pages never alias private monitor memory or enter native RAM.
-    if (P.IO)
+    if (P.IO) {
+      // One bounded operand may use private scratch to obtain the original
+      // instruction's exact flags/registers. No device backing enters the VM.
+      const auto Operand = Memory.deviceOperand();
+      if (!UserMode && Operand && Operand->first == VA)
+        if (auto E = MapPage(VA, Operand->second | x64::Present |
+                                     x64::Writable | x64::NoExecute))
+          return E;
       continue;
+    }
     uint64_t Entry = P.Physical;
     if (P.Permissions & GuestAccessPermissions)
       Entry |= x64::Present;

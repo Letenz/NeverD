@@ -53,6 +53,17 @@ struct GuestMMIOPreparedRead {
   uint64_t Value;
   std::function<llvm::Error()> Commit;
 };
+/// Explicit device support for one indivisible read/modify/write transaction.
+/// Value contains exactly the requested number of little-endian bytes.
+/// Preparation is pure. Commit must validate lifetime and version (including
+/// identical intervening writes), then publish all effects exactly once.
+/// Failure or an exception must precede every effect. A successful commit is
+/// final even when cancellation races with it. Providers must synchronize
+/// accesses through other mappings/physical owners as well as this CPU.
+struct GuestMMIOPreparedAtomic {
+  std::vector<uint8_t> Value;
+  std::function<llvm::Error(llvm::ArrayRef<uint8_t>)> Commit;
+};
 /// One device mapping. Validate is pure and receives the original transaction
 /// before any read/write effect. Offsets are relative to the mapped page base.
 /// Callbacks are shared by CPU contexts and live until successful unmap.
@@ -64,6 +75,11 @@ struct GuestMMIOCallbacks {
   /// preview the read result before offering another access's observer stop.
   std::function<llvm::Expected<GuestMMIOPreparedRead>(uint64_t, unsigned)>
       PrepareRead;
+  /// Optional, independently of ordinary reads/writes. No Read+Write fallback
+  /// is permitted. The checked supervisor profiles support naturally aligned
+  /// 1/2/4/8/16-byte operands when the provider admits that exact width.
+  std::function<llvm::Expected<GuestMMIOPreparedAtomic>(uint64_t, unsigned)>
+      PrepareAtomic;
 };
 struct GuestAliasRange {
   uint64_t Address, Size;

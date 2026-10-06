@@ -291,6 +291,13 @@ ctest --test-dir build-cpu -L '^NeverD(IntegerABI|ExecutionBudget|CPUEmulation|U
 
 Отсутствие ARM64-оборудования или гипервизора означает пропуск нативного покрытия, а не успешную проверку. Unicorn и кросс-компиляция не подтверждают нативное KVM/WHP.
 
+`NeverDParallelExecutionTests` проверяет перекрывающиеся вызовы, отмену ожидающей записи, независимые CPU, конкуренцию через алиасы и частный транспорт. `NeverDRunControlTests` проверяет две одновременные независимые аренды WHP и сериализацию общего кэша. `NeverDMMIOAtomicTests` сравнивает устройство/RAM для исходных x64 atomic/update и всех ARM64 LSE, обе широкие записи, устаревшие превью, ошибки и гонки commit/stop. `KernelMMIOFailure` покрывает алиасы, одинаковые записи, повторный commit, питание, unmap и уничтожение владельца. Недоступные платформы явно пропускаются. Барьер обёртки доказывает одновременные вызовы, а не одновременный retirement оборудования. ARM64 KVM/WHP требует соответствующий хост.
+
+```bash
+cmake --build build-cpu --target NeverDParallelExecutionTests NeverDMMIOAtomicTests NeverDRunControlTests --parallel 4
+ctest --test-dir build-cpu/unittests/emulation -L '^NeverD(ParallelExecution|MMIOAtomic|RunControl)Tests$' --output-on-failure
+```
+
 ## Тесты профиля Linux-процессов
 
 Независимые [тесты процессов](process-emulation.md#проверка) собирают реальные ELF-fixture x64/AArch64. `NeverDLinuxProcessTests` проверяет запуск, политику program headers, продолжение служб, двоичный вывод, гостевые ошибки и ресурсные остановки. `NeverDProcessPublicTests` проверяет C API/CLI без изменения образа анализа. `NeverDExecutionSessionTests` проверяет два CPU с общей памятью/бюджетом и однократное потребление запросов/ошибок. `NeverDX64MemoryUpdateTests` проверяет арифметику памяти, SETcc, BT, XMM/MXCSR, наблюдатели записи, границы REP и подготовленные чтения устройств. `DriverBackendParityTests.cpp` запускает исходные и перемещённые WDK-fixture и сравнивает полный наблюдаемый отчёт с Unicorn; отсутствующие образы/backend явно пропускаются.

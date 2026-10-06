@@ -32,8 +32,8 @@ namespace mmio {
 
 class KernelMMIO {
 public:
-  KernelMMIO(GuestMemory &Memory, const KernelResources &Resources)
-      : Memory(Memory), Resources(Resources) {}
+  KernelMMIO(GuestMemory &Memory, const KernelResources &Resources);
+  ~KernelMMIO();
   KernelMMIO(const KernelMMIO &) = delete;
   KernelMMIO &operator=(const KernelMMIO &) = delete;
   /// Seed mutable register values from the immutable assignment inventory.
@@ -47,6 +47,7 @@ private:
   struct Device {
     std::vector<DriverMemoryResource> Resources;
     uint64_t PowerGeneration = 0;
+    std::shared_ptr<const void> Revision = std::make_shared<unsigned char>(0);
   };
   struct Mapping {
     uint64_t PDO;
@@ -61,11 +62,18 @@ private:
   };
   GuestMemory &Memory;
   const KernelResources &Resources;
-  std::shared_ptr<unsigned char> Lifetime = std::make_shared<unsigned char>(0);
+  struct CallbackState {
+    std::shared_ptr<std::recursive_mutex> Mutex;
+    KernelMMIO *Owner;
+  };
+  std::shared_ptr<CallbackState> State;
   std::map<uint64_t, Device> Devices;
   std::map<uint64_t, Mapping> Mappings;
   uint64_t NextMapping = 0;
   void restorePowerContext(uint64_t PDO);
+  GuestMMIOCallbacks callbacks(uint64_t Address);
+  llvm::Expected<GuestMMIOPreparedAtomic>
+  prepare(uint64_t Address, uint64_t Offset, unsigned Size, bool Write);
   llvm::Error validate(uint64_t Address, uint64_t Offset, uint64_t Size,
                        bool Write) const;
   llvm::Expected<uint64_t> read(uint64_t Address, uint64_t Offset,
