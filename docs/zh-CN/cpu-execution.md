@@ -218,3 +218,5 @@ checked ARM64 支持 8/16/32/64 位 `LDXR/STXR`、32/64 位寄存器对 `LDXP/ST
 
 
 同一 ISA 层支持 FEAT_LSE `CAS/CASP`、`SWP`、`LDADD/LDCLR/LDEOR/LDSET` 及有符号/无符号 min/max，包括字节、半字、字、双字和 acquire/release 形式。checked 配置采用上述对齐策略，Unicorn `Software` 保留自然对齐。比较按操作数宽度执行，返回的旧值零扩展。CAS 比较失败仍要求写权限，并选择 Arm 允许的旧值回写行为，使物理保留状态失效。回调看到提交前的 CPU/RAM 状态；取消和同步故障不会发布部分原子操作结果。并行 CPU 与 MMIO 原子事务遵循并发提交契约。`MRS/MSR NZCV` 按架构规则传输四个条件标志，正确处理保留位和零寄存器。 先检查读权限，再检查写权限：不可读操作数报告读故障，只读操作数报告写故障，与原始 Windows ARM64 观测一致。
+
+CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-scheduling.md)。

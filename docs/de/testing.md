@@ -1587,3 +1587,5 @@ Native Schleifenrelationstests prüfen verzögerte bedingte Sammlung und nicht a
 `BinaryLowIRLoopInference.NativeSelectors*` prüft zwei Registerkontexte, allein durch den Frame trennbare Kontexte, Konjunktionen für drei Domänen, untrennbare Vorlagen, veränderte Ursprünge und native Schleifen sowie unabhängige exakte und um eins verkürzte Budgets. Iterationszahlen sind beliebig; Eingangskonstanten werden nicht ergänzt.
 
 `DarwinIndirectRecordCalls` prüft den aktuellen MakeScale-Vertrag und seine 22 Import-/ABI-Mutationen und verwendet anschließend ein vollständiges privates Ergebnis von 48 Bytes mit dem gemeinsamen Beweis für Wertkopien. Nicht ausgerichtete, verschobene, überlappende oder außerhalb des Rahmens liegende Ergebnisbereiche werden abgelehnt. Auch das Entfernen des sicheren Schreibeffekts führt trotz vollständiger Rückgabe-ABI zur Ablehnung.
+
+Explizite CPU0-Präemption, virtuelle Zeit und Grenzen beschreibt [Treiber-Scheduling](driver-scheduling.md).

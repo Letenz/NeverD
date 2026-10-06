@@ -761,7 +761,10 @@ def localized_paths(locale: str) -> tuple[Path, ...]:
 
 
 LOCALIZED_DOCS = tuple(path for locale in LOCALES for path in localized_paths(locale))
-MARKDOWN_DOCS = ENGLISH_DOCS + LOCALIZED_DOCS
+MARKDOWN_DOCS = ENGLISH_DOCS + LOCALIZED_DOCS + (
+    Path("docs/driver-scheduling.md"),
+    *(Path(f"docs/{locale}/driver-scheduling.md") for locale in LOCALES),
+)
 MOBILE_OVERVIEW_DOCS = (
     Path("docs/mobile.md"),
     *(Path(f"docs/{locale}/mobile.md") for locale in LOCALES),

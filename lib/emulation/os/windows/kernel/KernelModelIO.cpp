@@ -84,6 +84,13 @@ llvm::Expected<uint64_t> KernelModel::currentProcess() {
                  "thread");
 }
 
+bool KernelModel::hasProcessAttachment(uint64_t Execution) const {
+  return std::any_of(ProcessAttachments.begin(), ProcessAttachments.end(),
+                     [&](const auto &Attachment) {
+                       return Attachment.Execution == Execution;
+                     });
+}
+
 llvm::Error KernelModel::stackAttachProcess(uint64_t Process,
                                             uint64_t ApcState) {
   if (!Scheduler.active() ||
@@ -136,10 +143,7 @@ llvm::Error KernelModel::stackAttachProcess(uint64_t Process,
   const uint32_t PreviousProcessID =
       PreviousUserContext ? CurrentUserProcessID : 4;
   const uint32_t LogicalPreviousProcessID =
-      !ProcessAttachments.empty() &&
-              ProcessAttachments.back().Execution == CurrentExecution
-          ? CurrentUserProcessID
-          : 4;
+      hasProcessAttachment(CurrentExecution) ? CurrentUserProcessID : 4;
   auto PreviousProcess = processObject(LogicalPreviousProcessID);
   if (!PreviousProcess)
     return PreviousProcess.takeError();
@@ -157,16 +161,18 @@ llvm::Error KernelModel::stackAttachProcess(uint64_t Process,
 }
 
 llvm::Error KernelModel::unstackDetachProcess(uint64_t ApcState) {
-  if (ProcessAttachments.empty() ||
-      ProcessAttachments.back().Execution != CurrentExecution ||
-      ProcessAttachments.back().ApcState != ApcState)
+  auto It = std::find_if(ProcessAttachments.rbegin(), ProcessAttachments.rend(),
+                         [&](const auto &Attachment) {
+                           return Attachment.Execution == CurrentExecution;
+                         });
+  if (It == ProcessAttachments.rend() || It->ApcState != ApcState)
     return ioError("process detach requires the current thread's most recent "
                    "APC state");
-  const auto Attachment = ProcessAttachments.back();
+  const auto Attachment = *It;
   if (auto E = setUserRequestContext(Attachment.PreviousUserContext,
                                      Attachment.PreviousProcessID))
     return E;
-  ProcessAttachments.pop_back();
+  ProcessAttachments.erase(std::next(It).base());
   return llvm::Error::success();
 }
 

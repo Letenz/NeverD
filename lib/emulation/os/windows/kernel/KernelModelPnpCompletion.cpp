@@ -250,6 +250,8 @@ KernelModel::callProviderDriver(uint64_t Device, uint64_t IRP,
 }
 
 llvm::Error KernelModel::processProviderCompletions() {
+  if (!canServicePassiveEvents())
+    return llvm::Error::success();
   struct DueCompletion {
     uint64_t IRP;
     ProviderCompletion Provider;

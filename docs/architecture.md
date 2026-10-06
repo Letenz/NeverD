@@ -2125,7 +2125,7 @@ deadlines; `KernelDispatcher` owns opaque DPC, timer and event objects and
 their signals. `KernelModel` owns wait registrations, work-item/device
 lifetimes and IRP completion. `DriverSession` suspends and resumes separate
 callback stacks and complete CPU contexts, including Win64 stack arguments,
-with shared guest memory. Virtual time advances at timer/wait/cancellation boundaries only when no frame
+with shared guest memory. By default, virtual time advances at timer/wait/cancellation boundaries only when no frame
 is ready. DPCs run at `DISPATCH_LEVEL` and workers at `PASSIVE_LEVEL`, on
 CPU0 with deterministic cooperative scheduling. Framework cancellation
 callbacks follow the queue execution level at `PASSIVE_LEVEL` or
@@ -3427,3 +3427,5 @@ Bound discovery also examines represented prefix locations. A word may change wh
 Manual cutpoint plans may use per-side conjunctions of masked Register, entry-root-relative Frame or native SystemFlags equality selectors. The shared checker validates their shape, paired control agreement, feasible disjointness and each template’s starting selector; unmatched states continue normally and unknown results refuse. Guards consume existing budgets and bind proof semantic schema 17. The unaudited-native gate remains earlier. Unique self-plan pairing preserves guards and charges both sides; repeated-address pairing remains unsupported.
 
 The shared Darwin matrix effect owner also authenticates `CGAffineTransformMakeScale` as a complete 48-byte indirect-result producer. Its two double arguments retain separate floating-register carriers; current strong CoreGraphics imports, providers, required libraries and the complete SDK ABI must agree. The private-frame proof checks the entire result range, initialization and preservation independently. This call effect grants no native entry return projection or permission to use an arbitrary incoming `x8` buffer.
+
+Explicit CPU0 preemption, clock semantics and current limits are described in [driver scheduling](driver-scheduling.md).

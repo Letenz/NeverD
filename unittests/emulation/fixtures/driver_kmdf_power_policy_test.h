@@ -7,6 +7,11 @@
 #define NEVERD_DRIVER_KMDF_POWER_POLICY_TEST_H
 
 enum {
+#define NEVERD_POWER_PREEMPT_CASE(Name, Code) KmdfPower##Name = Code,
+#define NEVERD_POWER_PREEMPT_VALUE(Name, Value) KmdfPower##Name = Value,
+#include "DriverPowerPreemptiveCases.def"
+#undef NEVERD_POWER_PREEMPT_VALUE
+#undef NEVERD_POWER_PREEMPT_CASE
   KmdfPowerIdleWake = 'A',
   KmdfPowerIdleOnly = 'B',
   KmdfPowerSystemWake = 'C',

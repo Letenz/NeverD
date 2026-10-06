@@ -1567,3 +1567,5 @@ I test dei cicli nativi coprono raccolta condizionale differita e confini di rif
 `BinaryLowIRLoopInference.NativeSelectors*` copre due contesti di registro, contesti distinti solo dal frame, congiunzioni di tre domini, modelli inseparabili, mutazioni delle origini e del corpo nativo, e budget indipendenti esatti o inferiori di uno. Le iterazioni sono arbitrarie e non si aggiungono costanti d’ingresso.
 
 `DarwinIndirectRecordCalls` verifica il contratto MakeScale corrente e le sue 22 mutazioni di importazione/ABI, poi usa un risultato privato completo di 48 byte con la prova condivisa di copia per valore. Intervalli non allineati, spostati, sovrapposti o esterni al frame vengono rifiutati. Anche rimuovere l’effetto di scrittura completa causa il rifiuto, pur mantenendo l’ABI di ritorno completa.
+
+Prelazione esplicita su CPU0, tempo virtuale e limiti sono descritti nello [scheduling dei driver](driver-scheduling.md).

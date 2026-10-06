@@ -1586,3 +1586,5 @@ Les tests de relation de boucle native couvrent la collecte conditionnelle diff�
 `BinaryLowIRLoopInference.NativeSelectors*` couvre deux contextes de registre, des contextes distingués uniquement par le cadre, trois domaines conjoints, des modèles inséparables, des mutations des origines et du corps natif, ainsi que les budgets indépendants exacts et réduits d’une unité. Le nombre d’itérations est arbitraire, sans constante d’entrée ajoutée.
 
 `DarwinIndirectRecordCalls` vérifie le contrat MakeScale actuel et ses 22 mutations d’import/ABI, puis consomme un résultat privé complet de 48 octets avec la preuve partagée de copie par valeur. Les plages mal alignées, décalées, chevauchantes ou hors cadre sont refusées. Supprimer l’effet d’écriture certaine entraîne aussi un refus, même si l’ABI de retour complète est conservée.
+
+La préemption explicite CPU0, le temps virtuel et les limites sont décrits dans [l’ordonnancement des pilotes](driver-scheduling.md).

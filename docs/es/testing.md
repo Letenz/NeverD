@@ -1572,3 +1572,5 @@ Las pruebas de bucles nativos cubren la recopilación condicional diferida y las
 `BinaryLowIRLoopInference.NativeSelectors*` cubre dos contextos de registro, contextos diferenciados solo por el marco, conjunciones de tres dominios, plantillas inseparables, mutaciones de orígenes y del cuerpo nativo, y presupuestos independientes exactos y una unidad menores. Las iteraciones son arbitrarias y no se añaden constantes de entrada.
 
 `DarwinIndirectRecordCalls` comprueba el contrato actual de MakeScale y sus 22 mutaciones de importación/ABI, y consume un resultado privado completo de 48 bytes mediante la prueba compartida de copia por valor. Se rechazan rangos desalineados, desplazados, superpuestos o fuera del marco. Quitar el efecto de escritura completa también se rechaza, aunque se conserve toda la ABI de retorno.
+
+El desalojo explícito en CPU0, el reloj virtual y los límites se describen en [planificación de controladores](driver-scheduling.md).

@@ -1,0 +1,46 @@
+//===- DriverScheduling.def - Driver execution scheduling contract -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_DRIVER_SCHEDULING_VALUE
+#define NEVERD_DRIVER_SCHEDULING_VALUE(Name, Value)
+#endif
+#ifndef NEVERD_DRIVER_SCHEDULING_FIELD
+#define NEVERD_DRIVER_SCHEDULING_FIELD(Name, Text)
+#endif
+#ifndef NEVERD_DRIVER_SCHEDULING_DIAGNOSTIC
+#define NEVERD_DRIVER_SCHEDULING_DIAGNOSTIC(Name, Text)
+#endif
+
+NEVERD_DRIVER_SCHEDULING_VALUE(DefaultQuantumInstructions, 1024)
+NEVERD_DRIVER_SCHEDULING_VALUE(DefaultInstructionTime100ns, 1)
+NEVERD_DRIVER_SCHEDULING_FIELD(Scheduling, "scheduling")
+NEVERD_DRIVER_SCHEDULING_FIELD(QuantumInstructions, "quantum_instructions")
+NEVERD_DRIVER_SCHEDULING_FIELD(InstructionTime100ns, "instruction_time_100ns")
+NEVERD_DRIVER_SCHEDULING_DIAGNOSTIC(InvalidObject,
+                                    "scheduling must be an object")
+NEVERD_DRIVER_SCHEDULING_DIAGNOSTIC(InvalidFields,
+                                    "scheduling contains an unknown field")
+NEVERD_DRIVER_SCHEDULING_DIAGNOSTIC(InvalidValue,
+                                    "scheduling requires positive integers")
+NEVERD_DRIVER_SCHEDULING_DIAGNOSTIC(InvalidDuration,
+                                    "scheduling quantum duration overflows")
+NEVERD_DRIVER_SCHEDULING_DIAGNOSTIC(ClockOverflow,
+                                    "execution virtual time overflows")
+NEVERD_DRIVER_SCHEDULING_DIAGNOSTIC(ReadyOverflow,
+                                    "scheduler ready order exhausted")
+NEVERD_DRIVER_SCHEDULING_DIAGNOSTIC(
+    UnsafeBoundary, "preemption requires a consumed model continuation")
+NEVERD_DRIVER_SCHEDULING_DIAGNOSTIC(InvalidContext,
+                                    "preemption lost its execution context")
+NEVERD_DRIVER_SCHEDULING_DIAGNOSTIC(
+    MaskedPreemption, "thread preemption is masked at DISPATCH_LEVEL")
+
+NEVERD_DRIVER_SCHEDULING_DIAGNOSTIC(
+    StalledClock, "execution clock has an unconsumed deadline")
+
+#undef NEVERD_DRIVER_SCHEDULING_DIAGNOSTIC
+#undef NEVERD_DRIVER_SCHEDULING_FIELD
+#undef NEVERD_DRIVER_SCHEDULING_VALUE

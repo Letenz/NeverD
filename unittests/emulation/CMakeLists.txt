@@ -569,7 +569,7 @@ foreach(_driver_name success failure unknown fault loop devices readonly privile
 endforeach()
 # The loader fixture deliberately retains relocations and a compiler-inserted
 # stack protector. The WDM fixture covers the complete synchronous lifecycle.
-foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_async driver_dispatcher driver_context_limits)
+foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_async driver_dispatcher driver_context_limits driver_preemptive)
   set(_driver_object "${_driver_fixture_dir}/${_driver_name}.obj")
   set(_driver_image "${_driver_fixture_dir}/${_driver_name}.sys")
   if(_driver_name STREQUAL "loader")
@@ -596,6 +596,13 @@ foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl dr
       fixtures/driver_io.c fixtures/DriverDispatcherCases.def
       "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelDispatcherValues.def"
       "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelValues.def")
+  endif()
+  if(_driver_name STREQUAL "driver_preemptive")
+    list(APPEND _driver_additional_dependencies
+      fixtures/driver_io.c fixtures/DriverPreemptiveCases.def
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelValues.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/WindowsKernelLayout.def"
+      "${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/kernel/KernelDispatcherValues.def")
   endif()
   if(_driver_name STREQUAL "driver_context_limits")
     list(APPEND _driver_additional_dependencies
@@ -1179,6 +1186,7 @@ set(_driver_execution_fixture_definitions
   ${_driver_wdm_user_mapping_definitions})
 add_neverd_unittest(NeverDNativeDriverTests
   DriverNativeExecutionTests.cpp
+  DriverSchedulingTests.cpp
   DriverSIMDSEHTests.cpp
   KernelSEHTests.cpp
   TIMEOUT 30
