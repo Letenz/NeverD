@@ -1545,6 +1545,8 @@ I test dei cicli nativi coprono raccolta condizionale differita e confini di rif
 
 `LowIRLoopInference.MutablePrefixBounds*` copre limiti derivati di 8/24/32 bit con bit superiori variabili, tre memorie del contatore, entrambi gli ordini dei byte e uscite dirette/memorizzate. Verifica mancata terminazione, limiti mobili per uguaglianza, modifiche osservabili dei bit superiori/cache e budget esatti o ridotti di un’unità. Un limite mobile con ordine senza segno può terminare al riavvolgimento ed è verificato da una regressione con prova completa.
 
+`LowIRLoopInference.CompletedEntailments*` verifica l’isolamento delle sessioni tra cicli di frame terminanti e non terminanti in entrambi gli ordini dei byte, l’esaurimento dei limiti del solver/nodi e i budget di prova indipendenti. Le regressioni con limiti variabili verificano il budget logico esatto e ridotto di un’unità anche con riutilizzi; le prove native con contesti ripetuti verificano che il riutilizzo consideri il dominio.
+
 `LowIRLoopRefinement.GuardedCuts*` e `BinaryLowIRLoopRefinement.GuardedCuts*` coprono PC ripetuti, registri/frame/flag, entrambi gli ordini dei byte, percorsi non selezionati finiti o ciclici, sovrapposizioni, lati errati, generalizzazione, testimoni di valori indefiniti, metadati, digest e budget. Test nativi indipendenti provano due contesti R10 allo stesso PC e la precedenza dei confini non verificati. La certificazione ABI resta separata.
 
 `BinaryLowIRLoopInference.NativeSelectors*` copre due contesti di registro, contesti distinti solo dal frame, congiunzioni di tre domini, modelli inseparabili, mutazioni delle origini e del corpo nativo, e budget indipendenti esatti o inferiori di uno. Le iterazioni sono arbitrarie e non si aggiungono costanti d’ingresso.

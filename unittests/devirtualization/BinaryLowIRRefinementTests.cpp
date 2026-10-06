@@ -1705,6 +1705,7 @@ TEST(BinaryLowIRLoopInference, NativeSelectorsProveRepeatedContexts) {
   const auto R = inferAndCheckBinaryLowIRLoopRefinement(
       P.Image, Entry, P.Options, Recovery, P.Contract);
   ASSERT_TRUE(R.Inference.inferred()) << R.Inference.Diagnostic;
+  EXPECT_GT(R.Inference.EntailmentCacheHits, 0U);
   ASSERT_TRUE(R.proved()) << R.Refinement.Proof.Diagnostic;
   ASSERT_EQ(R.Inference.Plan->Cutpoints.size(), 2U);
   const auto &A = R.Inference.Plan->Cutpoints[0];

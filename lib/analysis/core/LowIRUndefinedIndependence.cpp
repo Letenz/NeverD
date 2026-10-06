@@ -546,13 +546,17 @@ class Checker {
       fail(Status::BudgetExceeded, "symbolic-node budget exhausted");
   }
 
+  void chargeQuery() {
+    if (Result.SolverQueries >= Limits.MaxSolverQueries)
+      fail(Status::BudgetExceeded, "solver-query budget exhausted");
+    ++Result.SolverQueries;
+  }
+
   solver::SatResult query(SymRef Predicate) {
     nodes();
     if (Predicate && Predicate == LastCompletedQuery)
       return LastCompletedAnswer;
-    if (Result.SolverQueries >= Limits.MaxSolverQueries)
-      fail(Status::BudgetExceeded, "solver-query budget exhausted");
-    ++Result.SolverQueries;
+    chargeQuery();
     const auto Answer =
         solver::checkSat(Ctx, Predicate, nullptr, Limits.Solver);
     if (Answer == solver::SatResult::Unknown)
@@ -2940,6 +2944,11 @@ class LoopPlanInference {
   std::vector<int> ReachableBlocks;
   bool MultipleCycles = false;
   bool GeneralContractFailure = false;
+  // Complete model-free answers in this session's immutable DAG and solver
+  // configuration. Keys include the full domain, not only the proposed fact.
+  // Every hit still consumes a query request, bounding both search work and
+  // retained entries by the existing query and symbolic-node limits.
+  std::map<SymRef, bool> CompleteEntailments;
   std::string Stage;
   SpecializationProvider *ReadProvider;
   detail::NativeUndefinedIndependenceResult ReadEvidence;
@@ -3016,9 +3025,19 @@ class LoopPlanInference {
 
   bool entails(SymRef Domain, SymRef Fact) {
     auto C = checker();
-    return C.query(
-               Session.Context.mkAnd(Domain, Session.Context.mkNot(Fact))) ==
-           solver::SatResult::Unsat;
+    const auto Query =
+        Session.Context.mkAnd(Domain, Session.Context.mkNot(Fact));
+    C.nodes();
+    if (auto It = CompleteEntailments.find(Query);
+        It != CompleteEntailments.end()) {
+      C.chargeQuery();
+      ++Result.EntailmentCacheHits;
+      return It->second;
+    }
+    // Unknown and invalid answers throw in the shared checker, before store.
+    const bool Holds = C.query(Query) == solver::SatResult::Unsat;
+    CompleteEntailments.emplace(Query, Holds);
+    return Holds;
   }
 
   void initializePrefixBounds(Word &W) {
