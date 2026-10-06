@@ -102,8 +102,7 @@ KernelModel::createSystemThread(llvm::ArrayRef<uint64_t> A) {
   }
   const bool CallerInUserProcess =
       (CurrentExecution == profile::StackBase && UserRequestContext) ||
-      (!ProcessAttachments.empty() &&
-       ProcessAttachments.back().Execution == CurrentExecution);
+      (hasProcessAttachment(CurrentExecution));
   if (CallerInUserProcess && !(Attributes & windows::ObjectKernelHandle))
     return schedulingError("system-thread creation outside the system process "
                            "requires OBJ_KERNEL_HANDLE");
@@ -332,33 +331,83 @@ KernelModel::dispatchScheduledPowerProvider(
   return std::optional<KernelScheduler::Invocation>{};
 }
 
+KernelModel::ExecutionContext KernelModel::captureExecutionContext() const {
+  return {CurrentExecution,
+          CurrentThreadKey,
+          CurrentGuestCall,
+          CurrentUserProcessID,
+          CurrentIRQL,
+          UserRequestContext,
+          FrameworkPowerManagedCallback};
+}
+
+llvm::Error
+KernelModel::restoreExecutionContext(const ExecutionContext &Context) {
+  const auto It = ExecutionThreadKeys.find(Context.Execution);
+  if (It == ExecutionThreadKeys.end() || It->second != Context.Thread)
+    return schedulingError(driver_scheduling::InvalidContext);
+  if (auto E = setUserRequestContext(Context.UserMemory, Context.Process))
+    return E;
+  CurrentExecution = Context.Execution;
+  CurrentThreadKey = Context.Thread;
+  CurrentGuestCall = Context.Call;
+  CurrentIRQL = Context.IRQL;
+  FrameworkPowerManagedCallback = Context.PowerManaged;
+  return llvm::Error::success();
+}
+
+llvm::Error KernelModel::preemptScheduled(uint64_t ID) {
+  if (CurrentIRQL >= scheduler::DispatchLevel)
+    return schedulingError(driver_scheduling::MaskedPreemption);
+  if (PendingWait || PendingThreadTermination ||
+      hasPendingIndependentGuestCall())
+    return schedulingError(driver_scheduling::UnsafeBoundary);
+  if (ID)
+    if (auto E = Scheduler.suspend(ID))
+      return E;
+  CurrentIRQL = scheduler::PassiveLevel;
+  return llvm::Error::success();
+}
+
+llvm::Error KernelModel::processScheduledBoundary(uint64_t Time,
+                                                  bool Executing) {
+  auto Additional = preflightScheduledBoundary(Time);
+  if (!Additional)
+    return Additional.takeError();
+  if (auto E = Executing
+                   ? Scheduler.canAdvanceExecutionTo100ns(Time, *Additional)
+                   : Scheduler.canAdvanceTo100ns(Time, *Additional))
+    return E;
+  if (auto E = Executing ? Scheduler.advanceExecutionTo100ns(Time)
+                         : Scheduler.advanceTo100ns(Time))
+    return E;
+  // Publish hardware effects before making their interrupts eligible.
+  if (auto E = processProviderCompletions())
+    return E;
+  if (auto E = processRequestCancellations())
+    return E;
+  if (auto E = DMA.processEvents(Scheduler.now100ns()))
+    return E;
+  if (auto E = processInterruptEvents())
+    return E;
+  // Pageable policy work is eligible on a passive service boundary. A due
+  // request remains pending while the running thread masks that service.
+  if (Executing && !canServicePassiveEvents())
+    return llvm::Error::success();
+  if (auto E = processPowerPolicyEvents())
+    return E;
+  return processPoFxCallbacks();
+}
+
+llvm::Error KernelModel::advanceExecutionTo100ns(uint64_t Time) {
+  return processScheduledBoundary(Time, true);
+}
+
 llvm::Expected<std::optional<KernelScheduler::Invocation>>
 KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
   if (Scheduler.active())
     return schedulingError("cannot dispatch with an unfinished callback");
-  auto ProcessBoundary = [&](uint64_t Time) -> llvm::Error {
-    auto Additional = preflightScheduledBoundary(Time);
-    if (!Additional)
-      return Additional.takeError();
-    if (auto E = Scheduler.canAdvanceTo100ns(Time, *Additional))
-      return E;
-    if (auto E = Scheduler.advanceTo100ns(Time))
-      return E;
-    // Hardware publication precedes interrupt eligibility. An actual bus
-    // transition may make a due pulse ineligible; preserve that ordered fact.
-    if (auto E = processProviderCompletions())
-      return E;
-    if (auto E = processRequestCancellations())
-      return E;
-    if (auto E = DMA.processEvents(Scheduler.now100ns()))
-      return E;
-    if (auto E = processInterruptEvents())
-      return E;
-    if (auto E = processPowerPolicyEvents())
-      return E;
-    return processPoFxCallbacks();
-  };
-  if (auto E = ProcessBoundary(Scheduler.now100ns()))
+  if (auto E = processScheduledBoundary(Scheduler.now100ns(), false))
     return E;
   // Admission and time advancement never dequeue. In particular, an ISR due
   // with a timer must be present before selecting that timer's lower-IRQL DPC.
@@ -393,7 +442,7 @@ KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
     if (Deadline && (!Boundary || *Deadline < *Boundary))
       Boundary = Deadline;
     if (Boundary && *Boundary > Scheduler.now100ns()) {
-      if (auto E = ProcessBoundary(*Boundary))
+      if (auto E = processScheduledBoundary(*Boundary, false))
         return E;
       Next = SelectReady();
       if (!Next)
@@ -432,6 +481,7 @@ KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
         CancelLock.Owner = 0;
         CancelLock.IRP = (**Next).Object;
         CancelLock.OldIRQL = scheduler::PassiveLevel;
+        CancelLock.CallbackIRQL = scheduler::PassiveLevel;
       }
       if ((**Next).Kind == KernelScheduler::CallbackKind::PoFx) {
         auto Token = ScheduledModelContinuations.find((**Next).ID);
@@ -479,7 +529,7 @@ llvm::Error KernelModel::finishScheduled(uint64_t ID) {
   if (Invocation.Kind == KernelScheduler::CallbackKind::WDMCancel) {
     if (!CancelLock.Callback || CancelLock.Held ||
         CancelLock.IRP != Invocation.Object ||
-        CurrentIRQL != CancelLock.OldIRQL)
+        CurrentIRQL != CancelLock.CallbackIRQL)
       return schedulingError(
           "WDM cancel callback did not release its cancel spin lock");
     CancelLock = {};
@@ -536,8 +586,7 @@ llvm::Error KernelModel::suspendScheduled(uint64_t ID) {
   for (const auto &[Address, Lock] : ExecutiveSpinLocks)
     if (Lock.Execution == CurrentExecution)
       return schedulingError("cannot suspend with an executive spin lock");
-  if (!ProcessAttachments.empty() && Scheduler.active() &&
-      ProcessAttachments.back().Execution == CurrentExecution &&
+  if (hasProcessAttachment(CurrentExecution) && Scheduler.active() &&
       Scheduler.active()->ID == ID)
     return schedulingError("cannot suspend a process-attached work item");
   if (auto E = Scheduler.suspend(ID))
@@ -563,11 +612,12 @@ llvm::Error KernelModel::restoreWaitIRQL(uint8_t IRQL) {
 std::optional<uint64_t> KernelModel::nextEventTime() const {
   auto Deadline = Scheduler.nextEventTime100ns();
   for (const auto &[IRP, Request] : Requests)
-    if (!Request.Completed && Request.CancelDeadline &&
+    if (canDeliverCancellation(Request) &&
         (!Deadline || *Request.CancelDeadline < *Deadline))
       Deadline = std::max(*Request.CancelDeadline, Scheduler.now100ns());
   for (const auto &[IRP, Completion] : ProviderCompletions)
-    if (!Deadline || Completion.Deadline < *Deadline)
+    if (canServicePassiveEvents() &&
+        (!Deadline || Completion.Deadline < *Deadline))
       Deadline = std::max(Completion.Deadline, Scheduler.now100ns());
   auto Interrupt = nextInterruptEventTime();
   if (Interrupt && (!Deadline || *Interrupt < *Deadline))
@@ -575,7 +625,8 @@ std::optional<uint64_t> KernelModel::nextEventTime() const {
   auto Policy = nextPowerPolicyEventTime();
   if (Policy && (!Deadline || *Policy < *Deadline))
     Deadline = std::max(*Policy, Scheduler.now100ns());
-  auto ComponentPower = PoFx.nextDeadline();
+  auto ComponentPower =
+      !canServicePassiveEvents() ? std::nullopt : PoFx.nextDeadline();
   if (ComponentPower && (!Deadline || *ComponentPower < *Deadline))
     Deadline = std::max(*ComponentPower, Scheduler.now100ns());
   auto Transfer = DMA.nextEventTime();

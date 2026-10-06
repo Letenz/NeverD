@@ -1166,7 +1166,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 4852 項 CPU 檢查及 17 項 SEH 回歸，共有 5093 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `4884 CPU + 224 WHP + 17 SEH = 5125`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 4884 項 CPU 檢查及 17 項 SEH 回歸及 53 項排程檢查，共有 5178 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `4884 CPU + 224 WHP + 17 SEH + 53 scheduling = 5178`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1429,3 +1429,5 @@ block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符�
 `DarwinIndirectRecordCalls.AffineInvertSnapshotsItsCompleteAliasedInput` 在 O0、O2 各執行 2560 個同址、重疊或分離的輸入輸出配置，檢查輸入位元模式、單次呼叫、全部 48 位元組結果與完整含守衛儲存。它驗證實體複製與快照，不是原始機器碼或原生 SDK 執行。目前矩陣/仿射契約測試對每個契約保留 22 種拒絕修改。
 
 `DarwinIndirectRecordCalls.AffineTranslatePreservesScalarBitsAndSnapshotsAliasedInput` 在 O0、O2 各執行 2560 組輸入，檢查兩個純量的位元模式、六個輸入欄位、單次呼叫、全部輸出位元組，以及同址、重疊和分離配置的受保護儲存空間。四種純量 ABI 修改和共用的 22 種匯入/ABI 修改均被拒絕。位元操作替身驗證實體參數和輸入快照，並非平移數學判據或原始機器碼執行。
+
+CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](driver-scheduling.md)。

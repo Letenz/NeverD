@@ -324,6 +324,8 @@ llvm::Error KernelModel::processPowerPolicyEvents() {
   return completeFrameworkTransitionIfReady();
 }
 std::optional<uint64_t> KernelModel::nextPowerPolicyEventTime() const {
+  if (!canServicePassiveEvents())
+    return std::nullopt;
   std::optional<uint64_t> Next =
       Framework ? Framework->nextPowerPolicyTime() : std::nullopt;
   for (const auto &Event : PowerPolicyEvents) {
