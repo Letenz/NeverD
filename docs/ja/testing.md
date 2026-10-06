@@ -1216,6 +1216,8 @@ WHP の能力照会、パーティション/仮想 CPU の初期化、レジス�
 
 `ci.yml` の手動プロファイル `native_cpu_only` は、`native_cpu_backend=whp` で Windows x64（既定）、`native_cpu_backend=kvm` で Ubuntu x64 を選択します。`NativeCPUTests.def` は CPU／プロセスの要件を共有し、バックエンド固有の対象とケースを別に宣言します。`run_native_cpu_ci.py --require-whp` または `--require-kvm` はホストを確認し、全対象を構築してから CTest を実行し、一覧、JUnit、ログ、結果別件数を保存します。CTest が成功しても必須ケースの欠落やスキップは失敗になります。CI は Unicorn を無効化し、`--with-drivers` は同じ元アドレス／再配置ドライバー群を選択したバックエンドで必須にします。コンパイルと初期化プローブはゲスト実行や ARM64 の合格を証明しません。 Ubuntu プロファイルは上流の署名済み Clang/LLD 21 パッケージを使います。Clang 18/19 の CR8 宣言は固定した WDK ヘッダーと競合します。 Linux のネイティブ検証には CMake 4.2.3 を使用します。`NeverDNativeDriverTests` は `NO_PRETTY_VALUES` を指定し、パラメーターの診断表示に依存せず、宣言したケース名を CTest に保持させます。
 
+ネイティブ CI はビルド前に `sccache --zero-stats` を実行します。プローブが失敗すると C/C++ コンパイラーのランチャーを解除し、同じコンパイラー設定と必須テスト一覧を維持します。構成やビルドの失敗は引き続きジョブの失敗になります。
+
 KVM の判定には、実際に自発終了しない vCPU のキャンセルと、`KvmStateTransferCases.def` の 48 件の状態転送結果が必要です。ioctl による取得とオプション能力の問い合わせ失敗を含みます。他の同期レジスタモードはホストが対応する場合に実行し、それ以外は明示的にスキップします。固定のパラメーター名は ioctl 番号やタプル表示形式に依存しません。プロトコルテストはネイティブ実行を補完し、代替しません。
 
 `native-host-probe.yml` は Linux と Windows の x64/ARM64 ホステッド runner で独立した `probe_native_host.py` を実行します。`NativeHostProbe.def` が能力照会、VM/vCPU 作成、解放の証拠の順序を定義します。レポートはソースとバイナリのハッシュ、ネイティブホスト ISA、各操作のステータスコードを保存します。`setup_ready` は初期化のみを証明し、ゲスト命令は実行しません。API/デバイス能力の欠如は `unavailable`、ビルド・初期化・解放・タイムアウト・不正な証拠はジョブ失敗です。ARM64 ホストの可用性は実行ごとに確認し、このプローブを ARM64 ワークロードの受け入れ証拠とはしません。 両 Linux ワークフローは `prepare_kvm_ci.py` で既存の KVM キャラクターデバイスへのアクセスを現在のホステッド runner アカウントだけに付与し、デバイスの識別情報と権限を記録します。ローカルおよびセルフホスト環境は拒否し、存在しないデバイスは作成しません。
@@ -1528,3 +1530,5 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 `BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource` はコピー元を破棄した後のリテラル表と共有監視リストの拡張、兄弟コピーの独立した変更、一回の監視訪問での伝播中断を検査し、再開後の完全モデルを元の節と独立した論理関係で確認します。
 
 `ObjCCallHints.SwiftPublishedAccessorsKeepOpaqueValueAndAllKeyPaths` は ARM64/x86-64 と両方の正規 Combine 提供元で二つのアクセサーを検証し、各組合せで九つの ABI 変異と八つのインポート識別変異を拒否します。独立 SDK 検証では ARM64 ホスト上で両ソース構成の生成 C を O0/O2 で実行し、128 回の呼出しで 24 バイト全部、入出力ガード、二つの owner 識別を比較します。八つのクロスコンパイル構成が macOS/Mac Catalyst の両アーキテクチャーを検査します。ランタイム検証は setter が消費する参照を保持し、製品コードに借用や所有権の省略を認めません。
+
+`BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` は、根で割り当て済みの変数と未決定変数の混在、非決定根変数、コピーの再コピー、元の破棄、変数追加、両方の既定極性、予算による中断と再開、競合と再始動を検査します。完全なモデルとすべての探索カウンターは新規符号化と一致する必要があります。

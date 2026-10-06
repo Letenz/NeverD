@@ -165,6 +165,9 @@ public:
   void increased(SatVar V);
   /// The most active variable, removed from the queue.
   SatVar removeMax();
+  /// Root assignments survive every backtrack and need no future decision.
+  void discardRootAssigned(llvm::ArrayRef<int8_t> Value,
+                           llvm::ArrayRef<uint32_t> Level);
   void clear();
 
 private:

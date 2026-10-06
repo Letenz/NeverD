@@ -70,7 +70,12 @@ SatEngine::SatEngine(const SatEngine &Other)
       FailedAssumptions(Other.FailedAssumptions),
       LearntScratch(Other.LearntScratch), ToClear(Other.ToClear),
       RedundancyStack(Other.RedundancyStack),
-      ClauseScratch(Other.ClauseScratch), LevelScratch(Other.LevelScratch) {}
+      ClauseScratch(Other.ClauseScratch), LevelScratch(Other.LevelScratch) {
+  // A pristine encoding can already have many root assignments. Remove them
+  // once from this independent copy instead of repeatedly popping them during
+  // search. Strict activity/index priority preserves every actual decision.
+  Order.discardRootAssigned(Value, Level);
+}
 
 //===----------------------------------------------------------------------===//
 // Building the formula

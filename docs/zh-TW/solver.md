@@ -77,3 +77,5 @@ build-release/bin/neverd-solver-bench \
 每行非註解資料格式為 `original ; candidate`；沒有分號時，以 MBA 簡化器結果作為候選。工具會回報判定、模型重播與時間；計時包含 session 建立、翻譯、求解，不含解析、MBA 簡化、匯出與結束處理。每次重複都建立新 solver。SAT model 必須能在表達式 evaluator 重現差異。互相矛盾的確定判定、無效查詢或模型會使執行失敗；`unknown` 會記錄，但不是等價證明。
 
 匯出的 SMT-LIB 包含原 DAG、永久 assertions 和最後一次查詢的 assumptions，可用 `z3 query-N.smt2` 重播。請記錄資源限制與 solver 版本；兩個後端的預算單位不同，故比較的是有限 workload，而非相同工作量。Bitvector 證明採用表達式語言的 total fixed-width 語意。機器例外、記憶體效果和 LLVM poison 仍屬於提升與翻譯邊界的責任，表達式證明不會替它們背書。
+
+尚未搜尋的編碼副本從自身決策佇列移除根層已賦值變數，並重建嚴格的活躍度／編號堆積順序。賦值與子句保持完整，根層事實在所有回溯中保留。來源物件所有權、實際決策、完整模型和全部搜尋預算均不變。

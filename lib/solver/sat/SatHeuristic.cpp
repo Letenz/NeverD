@@ -76,6 +76,22 @@ SatVar ActivityQueue::removeMax() {
   return Top;
 }
 
+void ActivityQueue::discardRootAssigned(llvm::ArrayRef<int8_t> Value,
+                                        llvm::ArrayRef<uint32_t> Level) {
+  size_t Write = 0;
+  for (SatVar V : Heap) {
+    if (Value[V] && Level[V] == 0) {
+      Position[V] = -1;
+      continue;
+    }
+    Heap[Write] = V;
+    Position[V] = static_cast<int32_t>(Write++);
+  }
+  Heap.resize(Write);
+  for (size_t I = Write / 2; I != 0;)
+    siftDown(--I);
+}
+
 void ActivityQueue::clear() {
   Heap.clear();
   std::fill(Position.begin(), Position.end(), -1);
