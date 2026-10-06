@@ -18,6 +18,79 @@ using namespace neverd::symbolic;
 
 namespace {
 
+TEST(FiniteValues, InvalidPredicateReferencesFailBeforeNodeAccess) {
+  for (bool UseEncoding : {false, true}) {
+    SymContext Ctx;
+    const auto X = Ctx.mkVar("x", 8);
+    FiniteDomainEncoding Encoding(Ctx, {});
+    for (SymRef Predicate :
+         {SymRef{}, X, SymRef(Ctx.numNodes()), SymRef(0xfffffffe)}) {
+      SCOPED_TRACE(UseEncoding);
+      SCOPED_TRACE(Predicate.index());
+      const auto Nodes = Ctx.numNodes();
+      uint64_t Queries = 7;
+      unsigned Observed = 0;
+      const auto Observe = [&](llvm::ArrayRef<uint64_t>) {
+        ++Observed;
+        return true;
+      };
+      const auto Result =
+          UseEncoding ? enumerateFiniteValues(Encoding, Predicate, {X}, 1, 20,
+                                              10000, Queries, Observe)
+                      : enumerateFiniteValues(Ctx, Predicate, {X}, 1, {}, 20,
+                                              10000, Queries, Observe);
+      EXPECT_EQ(Result.Status, FiniteValueStatus::Invalid);
+      EXPECT_TRUE(Result.Tuples.empty());
+      EXPECT_EQ(Queries, 7u);
+      EXPECT_EQ(Observed, 0u);
+      EXPECT_EQ(Ctx.numNodes(), Nodes);
+    }
+  }
+}
+
+TEST(FiniteValues, InvalidProjectionReferencesPrecedeEveryFastPath) {
+  for (bool UseEncoding : {false, true}) {
+    SymContext Ctx;
+    const auto X = Ctx.mkVar("x", 8), Seven = Ctx.mkConst(8, 7);
+    const auto Symbolic = Ctx.mkEq(X, Seven);
+    const auto False = Ctx.mkFalse(), True = Ctx.mkTrue();
+    const auto Wide = Ctx.mkVar("wide", 128);
+    FiniteDomainEncoding Encoding(Ctx, {});
+    for (SymRef Predicate : {False, True, Symbolic}) {
+      for (SymRef Value :
+           {SymRef{}, Wide, SymRef(Ctx.numNodes()), SymRef(0xfffffffe)}) {
+        SCOPED_TRACE(UseEncoding);
+        SCOPED_TRACE(Predicate.index());
+        SCOPED_TRACE(Value.index());
+        const auto Nodes = Ctx.numNodes();
+        uint64_t Queries = 7;
+        unsigned Observed = 0;
+        const auto Observe = [&](llvm::ArrayRef<uint64_t>) {
+          ++Observed;
+          return true;
+        };
+        const auto Result =
+            UseEncoding
+                ? enumerateFiniteValues(Encoding, Predicate, {Seven, Value}, 1,
+                                        20, 10000, Queries, Observe)
+                : enumerateFiniteValues(Ctx, Predicate, {Seven, Value}, 1, {},
+                                        20, 10000, Queries, Observe);
+        EXPECT_EQ(Result.Status, FiniteValueStatus::Invalid);
+        EXPECT_TRUE(Result.Tuples.empty());
+        EXPECT_EQ(Queries, 7u);
+        EXPECT_EQ(Observed, 0u);
+        EXPECT_EQ(Ctx.numNodes(), Nodes);
+      }
+    }
+    uint64_t Queries = 0;
+    const auto Good =
+        enumerateFiniteValues(Encoding, Symbolic, {X}, 1, 2, 10000, Queries);
+    EXPECT_EQ(Good.Status, FiniteValueStatus::Complete);
+    EXPECT_EQ(Good.Tuples, (std::vector<std::vector<uint64_t>>{{7}}));
+    EXPECT_EQ(Queries, 2u);
+  }
+}
+
 TEST(FiniteValues, ObserverCanAbandonButCannotFilterTheDomain) {
   for (unsigned RejectAt : {0u, 1u, 3u}) {
     SCOPED_TRACE(RejectAt);
