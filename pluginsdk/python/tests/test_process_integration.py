@@ -141,7 +141,8 @@ class ProcessIntegrationTests(unittest.TestCase):
                           "files_status_at_bionic", "files_access",
                           "files_access_faults", "files_access_bionic",
                           "files_directory_errors", "files_directory_bionic",
-                          "files_trailing_paths", "files_trailing_paths_bionic"):
+                          "files_trailing_paths", "files_trailing_paths_bionic",
+                          "files_filesystem_status", "files_filesystem_status_bionic"):
                 with self.subTest(optimization=optimization, entry=entry):
                     options = {
                         "backend": "unicorn", "instruction_quantum": 31,

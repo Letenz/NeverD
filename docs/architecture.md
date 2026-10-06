@@ -3350,6 +3350,12 @@ object; they do not maintain separate catalogues or cursors. `fstatat` reuses th
 path classifier and `fstat` serializer, while Bionic only adapts arguments and
 errno through its existing service registry.
 
+`LinuxFileSystemStatus.cpp` owns `statfs`/`fstatfs` lookup and descriptor errors.
+It shares the same pathname importer and descriptor lifetimes. Existing file
+bytes or stat metadata do not establish filesystem capacity, type or mount
+flags; queries of live objects stop before output access without those
+observations. Bionic aliases enter this owner through the service registry.
+
 Guest path parsing retains a trailing separator's directory requirement
 separately from the catalogue key. Open, access and status share this lookup
 constraint. Directory creation resolves the parent and final name separately,

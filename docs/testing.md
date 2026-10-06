@@ -2789,6 +2789,18 @@ first-NUL faults, flag and descriptor-limit priority, untouched status bytes
 and unchanged cursors. Relative, dot-component and internally repeated-slash
 forms stay unsupported; directory state and permissions are not inferred.
 
+`AndroidFileSystemStatusTests.cpp` verifies `statfs`/`fstatfs` pathname and
+descriptor errors through both Bionic aliases, variadic syscall and raw SVC.
+Complete byte comparisons cover invalid and overlapping outputs, trailing
+slashes, missing names and file ancestors. Live files with stat metadata,
+directories and standard streams remain pending without filesystem observations;
+absent catalogue input takes priority over invalid arguments. Dynamic providers
+retain identity and closed-provider refusal. Raw fixtures also cover low-word
+descriptors, close/reuse, cursor preservation and page-tail NUL/fault ordering on
+x64/AArch64 O0/O2 Linux. Available native ARM64 transports compare full reports
+with Unicorn, excluding only backend identity and its selection reason. C API,
+CLI and Python exercise the same bounded query-error cases.
+
 File-existence cases cover raw x64 `access`, x64/AArch64 `faccessat`, Bionic
 imports and variadic syscalls, shared catalogue queries from another guest
 thread, private errno, dynamic provider lifetime, implicit directories,

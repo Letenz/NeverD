@@ -484,6 +484,19 @@ as descriptor queries. Contracts were checked against Linux
 [v6.12](https://github.com/torvalds/linux/blob/v6.12/fs/stat.c), and the LP64
 [Bionic service aliases](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/SYSCALLS.TXT).
 
+`statfs` (x64 137, AArch64 43) and `fstatfs` (x64 138, AArch64 44)
+resolve names and descriptors in that same explicit catalogue. Path imports
+preserve `EFAULT` and `ENAMETOOLONG`; missing names return `ENOENT`, and a regular
+file used as a directory returns `ENOTDIR`. Closed or unknown descriptors return
+`EBADF`, using the low 32 bits of the descriptor argument. These errors precede
+output access and leave every output byte unchanged. Queries of existing files,
+implicit directories, root or live standard streams remain unsupported because
+file metadata does not provide filesystem observations. No successful filesystem
+status or mount information is inferred. Bionic `statfs`/`statfs64`,
+`fstatfs`/`fstatfs64` and variadic `syscall` share these error paths and the usual
+errno conversion. See Linux's [filesystem query order](https://github.com/torvalds/linux/blob/v4.9/fs/statfs.c)
+and the [API 28 LP64 wrappers](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/bionic/statvfs.cpp).
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Windows PE64 profile
