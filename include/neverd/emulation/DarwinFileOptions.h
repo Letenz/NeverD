@@ -133,6 +133,9 @@ struct DarwinFileOptions {
   /// grants. Namespace changes invalidate the parent's metadata and snapshot.
   /// New directory metadata stays unknown. Removed directories retain their
   /// object and original parent while held by directory FDs, CWD or children.
+  /// Regular-file rename may cross these created descendants of one initial
+  /// directory object. Distinct initial parents need explicit mount knowledge;
+  /// matching Device observations do not grant cross-parent rename.
   std::set<std::string> MutableDirectories;
   /// Removal authority for explicit initial Directories entries other than
   /// root. Declares an ordinary non-mount object with one namespace identity;

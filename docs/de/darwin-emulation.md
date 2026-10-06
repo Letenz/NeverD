@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 34d34e187ac46720dfc5b061a28605b13c368d0ab705c3d1a43465497ac1b4fe -->
+<!-- i18n-source: 1320c99e1a4c3d4138c36977fb78f02b6da0498343d6e2de55897d78d13c3aaa -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -75,7 +75,7 @@ Teilweise lesbare Eingaben stoppen vor Effekten. Vollständiges EFAULT erhält B
 
 DarwinMemory hält Mapping-Leases bis zum letzten unmap, auch bei PROT_NONE oder geschlossenen FDs; Änderungen bleiben bis dahin gesperrt. Fehler und alte Null-Längen-Mappings behalten keine Lease. Neue Mappings sehen aktuelle Bytes. O_WRONLY mit READ/WRITE ergibt EACCES; PROT_NONE darf später per mprotect lesen/schreiben.
 
-Originale normale/nocancel-Programme vergleichen den nativen Kernel; 4K/16K-Tests sowie C/CLI/Python prüfen fünf Kombinationen. Rechteprüfung, Verzeichnislöschung, Umbenennen zwischen Elternverzeichnissen, Hardlinks, native Dateisystem-Metadaten, Mapping-Kohärenz und EOF-SIGBUS fehlen weiterhin. Vollständige Umgebung, iOS-Gerät und Intel HVF sind nicht abgenommen; Intel-Actions bleiben ausgesetzt.
+Originale normale/nocancel-Programme vergleichen den nativen Kernel; 4K/16K-Tests sowie C/CLI/Python prüfen fünf Kombinationen. Rechteprüfung, Verzeichnislöschung, Umbenennen zwischen verschiedenen anfänglichen Verzeichnisdomänen, Hardlinks, native Dateisystem-Metadaten, Mapping-Kohärenz und EOF-SIGBUS fehlen weiterhin. Vollständige Umgebung, iOS-Gerät und Intel HVF sind nicht abgenommen; Intel-Actions bleiben ausgesetzt.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -112,7 +112,7 @@ Ohne Policy, bei Verzeichnissen oder nach vollständigem EFAULT mit unbekannter 
 
 `unlink(10)` / `unlinkat(472)` entfernen vorhandene reguläre Namen. Dateilöschung unterstützt nur die unteren32 Bits 0 oder `0x800`; unbekannte Bits liefern EINVAL vor Pfad/FD, AT_REMOVEDIR nutzt den unten beschriebenen Löschvertrag; DATALESS und SYSTEM_DISCARDED bleiben unmodelliert. Gemeinsame Auflösung: ENOENT, ENOTDIR nach Datei mit `/`, EPERM für normale Verzeichnisse, EISDIR für eine Wurzel nur aus Schrägstrichen, EBUSY bei abschließendem `.`/`..`. Endkomponenten `.`/`..` wurden nativ geprüft.
 
-Alte FD/dup/unabhängige Opens behalten Daten, Position und Flags; F_GETPATH liefert den erfassten alten Pfad. Neue Opens scheitern, implizite Eltern und CWD bleiben. Schreibfreigaben gehören zum Objekt; das aktuelle Bytebudget wird erst nach letztem Deskriptor und letzter Mapping-Range durch close/dup2/nächste Mutation zurückgewonnen. Ursprüngliche Pfadkosten bleiben; Rechteprüfung, Umbenennung zwischen Elternverzeichnissen und Hardlinks fehlen noch; anfängliche Verzeichnisse verwenden die unten beschriebene explizite Freigabe.
+Alte FD/dup/unabhängige Opens behalten Daten, Position und Flags; F_GETPATH liefert den erfassten alten Pfad. Neue Opens scheitern, implizite Eltern und CWD bleiben. Schreibfreigaben gehören zum Objekt; das aktuelle Bytebudget wird erst nach letztem Deskriptor und letzter Mapping-Range durch close/dup2/nächste Mutation zurückgewonnen. Ursprüngliche Pfadkosten bleiben; Rechteprüfung, Umbenennung zwischen verschiedenen anfänglichen Verzeichnisdomänen und Hardlinks fehlen noch; anfängliche Verzeichnisse verwenden die unten beschriebene explizite Freigabe.
 
 Eltern-stat/readdir/SEEK_END werden für alte/neue FD und Pfade unbekannt und stoppen vor Kopie/Cursoränderung. read/pread bleiben EISDIR; SET/CUR/F_GETPATH/fchdir/relative Auflösung funktionieren weiter. Eine bekannte Richtlinie setzt nur nlink=0 und feste ctime; spätere Schreibvorgänge stellen nlink=1 nicht wieder her. Ohne Richtlinie/nach EFAULT bleiben Metadaten unbekannt. Fehler erhalten den Zustand. `unlinked-file` vergleicht native Namen-/FD-Regeln; Zeit und Invalidierung sind explizite Modellregeln.
 
@@ -128,7 +128,7 @@ O_CREAT=0x200 erstellt eine leere Datei direkt unter einem explizit mutable Elte
 
 O_EXCL=0x800 mit O_CREAT liefert bei vorhandenen Dateien/Verzeichnissen EEXIST vor Kürzung; allein ist es wirkungslos. Ein vorhandenes Verzeichnis lässt sich mit Nur-Lese-O_CREAT öffnen. Reihenfolge: ungültiger Zugriffsmodus, FD-Platz, EINVAL für O_CREAT|O_DIRECTORY, Pfad. Nur die letzte ursprüngliche fehlende Komponente kann entstehen; fehlende Vorfahren und `/`, `//`, `/.`, `/..` am Ende liefern ENOENT. Neues O_CREAT|O_TRUNC setzt FWASWRITTEN nicht, Kürzung vorhandener Dateien dagegen schon.
 
-Nur Einfügen invalidiert Elternbeobachtungen. Gleichnamige alte/neue Objekte behalten getrennte Daten, FD, Metadaten und Mapping-Leases. 256 Einträge umfassen feste ursprüngliche Nicht-Datei-Einträge und lebende Dateien; dynamische kanonische Pfade/NUL und aktuelle Bytes zählen zu 16 MiB. Nach unlink gibt erst der letzte FD/Mapping die dynamischen Kosten frei, ursprüngliche Kosten bleiben. Budgetende oder kanonische Pfade ab 1024 Bytes stoppen ausdrücklich ohne erfundenes ENOSPC oder natives Pfad-errno, ohne Namen/FD zu veröffentlichen. created-file vergleicht natives macOS und fünf Profile; 4K/16K-Tests prüfen Grenzen. Rechteprüfung, Umbenennung zwischen Elternverzeichnissen, Links und Verzeichnismutation bleiben offen.
+Nur Einfügen invalidiert Elternbeobachtungen. Gleichnamige alte/neue Objekte behalten getrennte Daten, FD, Metadaten und Mapping-Leases. 256 Einträge umfassen feste ursprüngliche Nicht-Datei-Einträge und lebende Dateien; dynamische kanonische Pfade/NUL und aktuelle Bytes zählen zu 16 MiB. Nach unlink gibt erst der letzte FD/Mapping die dynamischen Kosten frei, ursprüngliche Kosten bleiben. Budgetende oder kanonische Pfade ab 1024 Bytes stoppen ausdrücklich ohne erfundenes ENOSPC oder natives Pfad-errno, ohne Namen/FD zu veröffentlichen. created-file vergleicht natives macOS und fünf Profile; 4K/16K-Tests prüfen Grenzen. Rechteprüfung, Umbenennung zwischen verschiedenen anfänglichen Verzeichnisdomänen, Links und Verzeichnismutation bleiben offen.
 
 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
@@ -148,13 +148,13 @@ Neue Knoten besitzen eigene Metadaten/Allokation und erben nichts vom alten glei
 
 [XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c). [XNU rename / renameat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
 
-## Reguläre Dateien innerhalb desselben Elternverzeichnisses umbenennen
+## Reguläre Dateien umbenennen
 
 `rename(128)`, `renameat(465)` und `renameatx_np(488)` benennen reguläre Dateien im selben ausdrücklich veränderbaren direkten Elternverzeichnis um oder ersetzen sie. Auch derselbe Name braucht diese Freigabe; danach bleiben alle Beobachtungen unverändert. Die unteren 32 Flag-Bits erlauben `RENAME_EXCL=0x4`, `RENAME_NOFOLLOW_ANY=0x10` und deren Kombination. Unbekannte Bits und EXCL+SWAP liefern EINVAL vor dem Pfadzugriff; SECLUDE und SWAP bleiben nicht unterstützt. Die hiesigen No-op- und EISDIR-Regeln gelten ohne EXCL; dessen eigener Vertrag folgt unten. Der gemeinsame Resolver behält Quellpriorität, FD- und ursprüngliche Komponentenprüfungen. Verzeichnisquellen werden sofort abgelehnt; erfolgreich aufgelöste abschließende Punkt- oder Zwei-Punkt-Komponenten liefern EINVAL vor Mount/Freigabe, auch bei verschachtelten oder anderen Eltern. Fehlende oder nicht als Verzeichnis nutzbare Vorfahren behalten Vorrang. Gewöhnliche Verzeichnisziele im zugelassenen Elternverzeichnis liefern EISDIR.
 
 Alte FD, unabhängige open und dup folgen dem neuen Quellnamen über `F_GETPATH`. Das ersetzte Objekt behält letzten Pfad, Bytes, Cursor, Flags und Mapping-Lebensdauer; Schreibrechte und Metadaten gehen nicht auf die Quelle über. Bekannte Richtlinien ändern nur den jeweiligen ctime und beim Ziel nlink=0; Identität, Eigentümer, Geburtszeit und Belegung bleiben erhalten. Ohne Richtlinie/nach vollständigem EFAULT bleiben Metadaten unbekannt. Nur echtes Verschieben invalidiert Eltern-stat/Aufzählung.
 
-Keine neue inode, Eintragskapazität oder freie FD nötig. Neuer Pfad/NUL ersetzt dynamische Quellkosten; ursprüngliche Kosten bleiben. Nur Ziele ohne alte FD/Mappings geben sofort Kapazität frei, genau einmal; teilweises unmap behält die vollen Objektkosten. Pfade ab 1024 Bytes oder mehr als 16 MiB stoppen vor Änderungen. Andere Eltern, widersprüchliche bekannte Geräte, Verzeichnisverschiebung, swap/exclusive/seclude und Rechteprüfung bleiben offen. Gleiche stat-Geräte beweisen keinen gemeinsamen Mount; EXDEV wird nicht erfunden. `renamed-file` vergleicht native/Gast-Identität, Pfade, Ersatz und Mappings; Zeiten/Budgets sind virtuelle Regeln.
+Keine neue inode, Eintragskapazität oder freie FD nötig. Neuer Pfad/NUL ersetzt dynamische Quellkosten; ursprüngliche Kosten bleiben. Nur Ziele ohne alte FD/Mappings geben sofort Kapazität frei, genau einmal; teilweises unmap behält die vollen Objektkosten. Pfade ab 1024 Bytes oder mehr als 16 MiB stoppen vor Änderungen. Verschiedene anfängliche Verzeichnisdomänen, widersprüchliche bekannte Geräte, Verzeichnisverschiebung, SWAP/SECLUDE und Rechteprüfung bleiben offen. Gleiche stat-Geräte beweisen keinen gemeinsamen Mount; EXDEV wird nicht erfunden. `renamed-file` vergleicht native/Gast-Identität, Pfade, Ersatz und Mappings; Zeiten/Budgets sind virtuelle Regeln.
 
 ## Verzeichnisse und relative Pfade
 
@@ -483,3 +483,12 @@ Nach Quell- und Zielauflösung liefert RENAME_EXCL für eine andere vorhandene D
 Prüfung, 2026-10-06 (Release): 1.097 Darwin-Tests, 665 bestanden, 432 wegen nicht verfügbarem Backend übersprungen, keine Fehler; alle 108 verpflichtenden ARM64-HVF-Fälle ausgeführt. Gezielt: 44 bestanden, 12 ausgelassen, darunter acht neue direkte Fälle. C/CLI/Berichte: 191/191; Python: fünf Kombinationen in 19,241 s; unabhängige Rohaufrufprobe: 26 Prüfungen bestanden. Der erste native Gesamtlauf überschritt bei return das Zeitlimit; die übrigen 25 einschließlich renamed-file bestanden. Drei return-Nachprüfungen derselben unveränderten Binärdatei dauerten 0,014–0,034 s, danach bestanden alle 26 Fälle mit der ursprünglichen 5-s-Grenze. Der erste Fehler bleibt dokumentiert und ungeklärt; auch der vorherige abschließende HVF-Erfolg belegt keine Latenzstabilität. Primäraudit abgeschlossen, unabhängige Prüfung nicht verfügbar. Zahlen überlappen; physisches iOS, vollständige GitHub-CI und ausgesetzte Intel-HVF-Actions sind nicht Teil der lokalen Abnahme.
 
 `build-hvf-arm64/exclusive-rename-validation-summary.json`, `exclusive-rename-darwin-evidence/`, `exclusive-rename-public.xml`, `exclusive-rename-native-evidence/`, `exclusive-rename-native-rechecked-summary.json`, `exclusive-rename-probe/`.
+
+
+## Umbenennen zwischen erstellten Verzeichnissen
+
+Ein anfängliches Verzeichnis und alle durch diesen Prozess mit mkdir/mkdirat erstellten Nachfahren teilen eine virtuelle Namensraumdomäne. `rename`, `renameat` und `renameatx_np` dürfen reguläre Dateien zwischen diesen Eltern verschieben; kein neues JSON-Feld ist nötig. Nach Erstellung von `/work/left` und `/work/right` im veränderbaren anfänglichen `/work` sind Bewegungen von `/work/data` in die Kinder und zwischen ihnen möglich. Ein getrennt angegebenes anfängliches `/work/left` bleibt eine eigene Domäne, auch bei gleicher Gerätenummer. Allgemeine Mount-Topologie bleibt unbekannt.
+
+Beide direkten Eltern brauchen Namensraumfreigaben; erstellte Verzeichnisse erben diese und bekannte Geräte-/Gruppenwerte. Dateiidentität, Eigentümer/Gruppe, Schreibfreigabe und Belegung bleiben erhalten. Bekannte Gerätekonflikte werden abgelehnt. Echtes Verschieben invalidiert vollständige stat-/Aufzählungsbeobachtungen beider Eltern. Gelöschte Anfangsverzeichnisse und wiederverwendete Pfade bleiben verschiedene Objekte; alte FD/CWD erhalten keine neue Domäne.
+
+Begrenzte Ersatztransaktion, Mapping-Leases, Pfad/NUL-Kosten und Fehlerpriorität gelten weiter. EXCL liefert bei einem anderen bestehenden Ziel EEXIST vor Domänen-/Freigabeprüfungen. `renamed-file` vergleicht Bewegungen ins erstellte Kind, Ersatz im Anfangselternteil und Rückkehr über C++/C/CLI/Python und natives macOS. Rechteprüfung, Verzeichnisquellen, harte/symbolische Links und native APFS-Metadaten bleiben offen.

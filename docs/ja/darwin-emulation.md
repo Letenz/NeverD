@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 34d34e187ac46720dfc5b061a28605b13c368d0ab705c3d1a43465497ac1b4fe -->
+<!-- i18n-source: 1320c99e1a4c3d4138c36977fb78f02b6da0498343d6e2de55897d78d13c3aaa -->
 
 [← ドキュメント一覧](README.md)
 
@@ -75,7 +75,7 @@ F_SETFL は O_APPEND のみを変更し、アクセスモード、close-on-exec�
 
 DarwinMemory の全マッピング区間を unmap するまで変更を拒否します。PROT_NONE と close 済み FD も含み、失敗・旧式ゼロ長マップはリースを残しません。新しいマップは現在の内容を使います。O_WRONLY の READ/WRITE mmap は EACCES、PROT_NONE は成功し後から mprotect で読み書きを許可できます。
 
-元の通常/nocancel プログラムをネイティブと比較し、4K/16K 単体テストと C/CLI/Python の5構成を検証します。権限強制・ディレクトリ削除・親をまたぐ改名・ハードリンク、実ファイルシステムのメタデータ更新、マップ整合性、EOF SIGBUS、完全な環境と iOS 実機は未完了です。Intel HVF は未検証、Actions は停止中です。
+元の通常/nocancel プログラムをネイティブと比較し、4K/16K 単体テストと C/CLI/Python の5構成を検証します。権限強制・ディレクトリ削除・異なる初期ディレクトリ領域間の改名・ハードリンク、実ファイルシステムのメタデータ更新、マップ整合性、EOF SIGBUS、完全な環境と iOS 実機は未完了です。Intel HVF は未検証、Actions は停止中です。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -112,7 +112,7 @@ allocation_unit、mutation_time、seconds/nanoseconds は必須で、整数は�
 
 `unlink(10)` / `unlinkat(472)` は既存の通常名を削除。通常ファイル削除の下位32ビットは0または `0x800` のみ対応し、未知ビットはパス/FDより先に EINVAL、AT_REMOVEDIR は後述の制限付き削除、DATALESS と SYSTEM_DISCARDED は未対応です。共通パス解決を使い、不在 ENOENT、ファイル末尾スラッシュ ENOTDIR、通常ディレクトリ EPERM、スラッシュのみのルート EISDIR、末尾が `.`/`..` のルート EBUSY。ネイティブで末尾 `.`/`..` も確認。
 
-古い FD/dup/独立 open はデータ・カーソル・フラグを維持し、F_GETPATH は捕捉した旧パスを返します。新規 open は失敗し、暗黙の親と CWD は残ります。書込み権限はオブジェクトに属し、最後の記述子とマップ範囲の解放後だけ close/dup2/次の変更で現在のバイト予算を回収。初期パス費用は残り、権限強制・親をまたぐ改名・ハードリンクは未完了です。初期ディレクトリの削除には後述の明示許可が必要です。
+古い FD/dup/独立 open はデータ・カーソル・フラグを維持し、F_GETPATH は捕捉した旧パスを返します。新規 open は失敗し、暗黙の親と CWD は残ります。書込み権限はオブジェクトに属し、最後の記述子とマップ範囲の解放後だけ close/dup2/次の変更で現在のバイト予算を回収。初期パス費用は残り、権限強制・異なる初期ディレクトリ領域間の改名・ハードリンクは未完了です。初期ディレクトリの削除には後述の明示許可が必要です。
 
 親の stat/readdir/SEEK_END は旧/新 FD とパス全体で未知となり、コピー/カーソル変更前に停止。read/pread は EISDIR、SET/CUR/F_GETPATH/fchdir/相対解決は継続。既知の変更ポリシーでは nlink=0、ctime=固定時刻のみ変更し、後の書込みでも nlink=1 に戻りません。ポリシーなし/EFAULT 後はメタデータ不明。失敗は状態を保持。元の `unlinked-file` はネイティブの名前/FD規則を比較し、時刻と親の失効は明示的モデル規則です。
 
@@ -128,7 +128,7 @@ O_CREAT=0x200 は明示的な mutable 親の直下に空ファイルを作成し
 
 O_CREAT と O_EXCL=0x800 の併用は既存ファイル・ディレクトリに切詰め前の EEXIST。O_EXCL 単独は無効です。既存ディレクトリの読取り専用 O_CREAT は成功します。無効アクセスモード→FD 空き→O_CREAT|O_DIRECTORY の EINVAL→パスの順です。作成できるのは元パスの最後の欠落要素だけで、欠落祖先や末尾 `/`・`//`・`/.`・`/..` は ENOENT。新規 O_CREAT|O_TRUNC は FWASWRITTEN を設定せず、既存切詰めは設定します。
 
-実際の挿入だけが親の観測を無効化。同名の新旧データ・FD・メタデータ・マップ寿命は独立です。256 項は初期非ファイル項と生存ファイルを数え、新しい正規パス/NUL とデータは 16 MiB に課金。削除後、最後の FD/マップ解放で動的費用を回収し、初期費用は保持します。予算超過や1024バイト以上の正規パスは明示的に停止し、ENOSPC やネイティブのパスエラーを捏造しません。失敗時は名前/FD を公開しません。created-file のネイティブ/5構成、4K/16K 境界試験が対象。権限強制・親をまたぐ改名・リンク・ディレクトリ変更は残っています。
+実際の挿入だけが親の観測を無効化。同名の新旧データ・FD・メタデータ・マップ寿命は独立です。256 項は初期非ファイル項と生存ファイルを数え、新しい正規パス/NUL とデータは 16 MiB に課金。削除後、最後の FD/マップ解放で動的費用を回収し、初期費用は保持します。予算超過や1024バイト以上の正規パスは明示的に停止し、ENOSPC やネイティブのパスエラーを捏造しません。失敗時は名前/FD を公開しません。created-file のネイティブ/5構成、4K/16K 境界試験が対象。権限強制・異なる初期ディレクトリ領域間の改名・リンク・ディレクトリ変更は残っています。
 
 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
@@ -148,13 +148,13 @@ O_CREAT と O_EXCL=0x800 の併用は既存ファイル・ディレクトリに�
 
 [XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c). [XNU rename / renameat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
 
-## 同一親ディレクトリ内の通常ファイル改名
+## 通常ファイルの改名
 
 `rename(128)`、`renameat(465)`、`renameatx_np(488)` は、同じ明示的に変更可能な直近の親内で通常ファイルを改名・置換します。同名の無操作にも許可が必要で、許可後は観測を保持します。下位32ビットの flags は `RENAME_EXCL=0x4` と `RENAME_NOFOLLOW_ANY=0x10`、および両者の組合せを受け付けます。未知ビットと EXCL+SWAP はパス読取り前に EINVAL、SECLUDE と SWAP は未対応です。ここの無操作と EISDIR の規則は EXCL なしの場合に適用され、EXCL は後述の契約に従います。共通解析器はソース優先、FD、元のスラッシュ・ドットの検査順序を保持します。ディレクトリソースは即座に未対応。通常ファイルのターゲット末尾ドット/二重ドットは解決成功後、マウント・許可検査より先に EINVAL となり、入れ子や別親も対象です。存在しない/非ディレクトリの祖先のエラーが優先します。許可された親内の通常ディレクトリターゲットは EISDIR です。
 
 独立 open・dup・既存 FD の `F_GETPATH` はソースの新しい名前に追従します。置換された物体は最後の名前、データ、カーソル、フラグ、マップ寿命を保持し、書込み権限やメタデータをソースへ渡しません。既知ポリシーは各 ctime と置換先の nlink=0 だけを変更し、識別子・所有権・作成時刻・割当を維持します。ポリシーなし/全体 EFAULT 後は完全なメタデータ不明のまま。実際の改名だけが親の stat/列挙を無効にします。
 
-新規 inode・項目・空き FD は不要。新パス/NUL がソースの動的費用を置き換え、初期費用は残ります。古い FD/マップのない置換先だけが容量回収に使え、回収は一度だけです。部分 unmap では全物体の費用が残ります。1024バイト以上のパスや16 MiB超過は変更前に停止。親をまたぐ移動、既知 device の矛盾、ディレクトリ移動、swap/exclusive/seclude、権限強制は未対応です。同じ stat device は同じマウントを証明せず、EXDEV を推測しません。`renamed-file` はネイティブ/ゲストの識別・パス・置換・マップを比較し、時刻と予算は仮想規則です。
+新規 inode・項目・空き FD は不要。新パス/NUL がソースの動的費用を置き換え、初期費用は残ります。古い FD/マップのない置換先だけが容量回収に使え、回収は一度だけです。部分 unmap では全物体の費用が残ります。1024バイト以上のパスや16 MiB超過は変更前に停止。異なる初期ディレクトリ領域間の移動、既知 device の矛盾、ディレクトリ移動、SWAP/SECLUDE、権限強制は未対応です。同じ stat device は同じマウントを証明せず、EXDEV を推測しません。`renamed-file` はネイティブ/ゲストの識別・パス・置換・マップを比較し、時刻と予算は仮想規則です。
 
 ## ディレクトリと相対パス
 
@@ -483,3 +483,12 @@ Release Darwin1,051登録、631成功、未提供420スキップ、失敗なし�
 検証、2026-10-06（Release）：Darwin 登録 1,097 件、成功 665 件、利用不可スキップ 432 件、失敗なし。必須 ARM64 HVF 108 件すべて実行。重点検証は成功 44 件、利用不可 12 件で、新規直接検証 8 件を含む。公開 C/CLI/レポート 191/191、Python 5 組合せ 19.241 秒、独立した生呼出しプローブ 26 件成功。最初のネイティブ全体実行は既存 return がタイムアウトし、renamed-file を含む他の 25 件は成功。同じ未変更バイナリの return 再確認 3 回は 0.014–0.034 秒、その後全 26 件が元の 5 秒制限で成功した。初回失敗は保存し原因は未解明で、以前の最終 HVF 成功を含め遅延安定性の証明ではない。主担当監査済み、独立レビュー利用不可。件数は重複する。実機 iOS、完全 GitHub CI、停止中の Intel HVF Actions はローカル受入範囲外。
 
 `build-hvf-arm64/exclusive-rename-validation-summary.json`, `exclusive-rename-darwin-evidence/`, `exclusive-rename-public.xml`, `exclusive-rename-native-evidence/`, `exclusive-rename-native-rechecked-summary.json`, `exclusive-rename-probe/`.
+
+
+## 作成したディレクトリ間の改名
+
+初期ディレクトリと、このプロセスが mkdir/mkdirat で作成した子孫は同じ仮想名前空間領域を共有します。`rename`、`renameat`、`renameatx_np` はこれらの親間で通常ファイルを移動できます。新しい JSON フィールドは不要です。変更可能な初期 `/work` 内に `/work/left` と `/work/right` を作成すれば、`/work/data` を各子へ、また子間へ移動できます。別途初期入力で宣言した `/work/left` は device が一致しても別領域です。一般的なマウント構造は不明のままです。
+
+両方の直接親に名前変更の許可が必要で、作成したディレクトリは許可と既知 device/GID を継承します。ファイル自身の識別子、所有者/グループ、書込み許可、割当は保持されます。既知 device の矛盾は拒否します。実移動は両親の完全な stat/列挙を無効にします。削除した初期ディレクトリと再利用パスは別物体で、古い FD/CWD は新しい領域を得ません。
+
+既存の有界置換、マップ寿命、パス/NUL 費用、エラー順序が適用されます。EXCL の異なる既存ターゲットは領域/許可検査前に EEXIST です。`renamed-file` は作成した子への移動、初期親への置換、子への再移動を C++/C/CLI/Python とネイティブ macOS で比較します。権限強制、ディレクトリソース、ハード/シンボリックリンク、ネイティブ APFS メタデータは未完了です。

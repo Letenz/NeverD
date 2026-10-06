@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 34d34e187ac46720dfc5b061a28605b13c368d0ab705c3d1a43465497ac1b4fe -->
+<!-- i18n-source: 1320c99e1a4c3d4138c36977fb78f02b6da0498343d6e2de55897d78d13c3aaa -->
 
 [← 文件索引](README.md)
 
@@ -75,7 +75,7 @@ F_SETFL 只改 O_APPEND 並保留存取模式、close-on-exec 與 FWASWRITTEN；
 
 映射租約由 DarwinMemory 持有，全部區間 unmap 前拒絕 write、truncate、O_TRUNC，包含 PROT_NONE 和已 close 的 FD；失敗或舊式零長度映射不留租約。新映射取得目前內容。只寫 FD 的 READ/WRITE mmap 為 EACCES；PROT_NONE 可成功並以 mprotect 取得讀寫權限。
 
-原生一般/nocancel 程式比對位元組、游標、旗標及錯誤順序；單元測試涵蓋 4K/16K，C/CLI/Python 涵蓋五種組合。權限強制檢查、刪除目錄、跨父目錄改名、硬連結、真實檔案系統的中繼資料更新、映射一致性與 EOF SIGBUS 尚缺；完整環境、iOS 實機與 Intel HVF 仍未驗收，Intel Actions 維持暫停。
+原生一般/nocancel 程式比對位元組、游標、旗標及錯誤順序；單元測試涵蓋 4K/16K，C/CLI/Python 涵蓋五種組合。權限強制檢查、刪除目錄、不同初始目錄域之間的改名、硬連結、真實檔案系統的中繼資料更新、映射一致性與 EOF SIGBUS 尚缺；完整環境、iOS 實機與 Intel HVF 仍未驗收，Intel Actions 維持暫停。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -112,7 +112,7 @@ allocation_unit、mutation_time 及 seconds/nanoseconds 全部必填，整數沿
 
 `unlink(10)` / `unlinkat(472)` 刪除既有一般名稱；一般檔案刪除僅接受低 32 位 flags=0 或 `AT_SYMLINK_NOFOLLOW_ANY=0x800`。未知位先回 EINVAL；AT_REMOVEDIR 使用下述受限目錄刪除；DATALESS、SYSTEM_DISCARDED 未支援。共用解析器保留路徑故障、dirfd、CWD 與絕對路徑順序；缺失 ENOENT、檔案後斜線 ENOTDIR、一般目錄 EPERM、純斜線根路徑 EISDIR，尾端帶 `.`/`..` 的根路徑 EBUSY。原生探針亦驗證末尾 `.`/`..`。
 
-舊 FD、dup、獨立開啟物件保留資料、游標與旗標，新開啟失敗；隱式父目錄與 CWD 保留，F_GETPATH 仍回傳捕獲的舊路徑。寫授權屬於檔案物件；全部描述元與最後一段映射釋放後，close/dup2 或下次修改才回收目前位元組預算，初始路徑/引用費用仍計入。權限強制檢查、跨父目錄改名與硬連結尚缺；刪除初始目錄使用下文的明確授權。
+舊 FD、dup、獨立開啟物件保留資料、游標與旗標，新開啟失敗；隱式父目錄與 CWD 保留，F_GETPATH 仍回傳捕獲的舊路徑。寫授權屬於檔案物件；全部描述元與最後一段映射釋放後，close/dup2 或下次修改才回收目前位元組預算，初始路徑/引用費用仍計入。權限強制檢查、不同初始目錄域之間的改名與硬連結尚缺；刪除初始目錄使用下文的明確授權。
 
 刪除後父目錄的 stat/列舉觀察對舊/新 FD、dup、路徑查詢皆失效；stat/readdir/SEEK_END 在複製或改游標前停止。read/pread 仍回 EISDIR，SET/CUR、F_GETPATH、fchdir 與相對查找可用。可信修改策略令 nlink=0、ctime=固定時間，保留其他時間、資料與分配；後續寫入不能恢復 nlink=1。無策略或整段 EFAULT 後中繼資料仍未知。失敗保留狀態；原生 `unlinked-file` 比較名稱/描述元，策略時間與目錄失效屬模型規則。
 
@@ -128,7 +128,7 @@ O_CREAT=0x200 在明確 mutable 的直接父目錄建立空檔案，涵蓋一般
 
 搭配 O_EXCL=0x800 時，既有檔案或目錄先回 EEXIST，不截斷；單獨 O_EXCL 無效。唯讀 O_CREAT 可開啟既有目錄。順序為無效存取模式→FD 容量→O_CREAT|O_DIRECTORY 的 EINVAL→路徑。只有原始路徑最後缺失分量可建立，缺失祖先或末尾 `/`、`//`、`/.`、`/..` 為 ENOENT。新建 O_CREAT|O_TRUNC 不設 FWASWRITTEN，截斷既有物件則設定。
 
-僅實際插入使父目錄觀測失效。同名新舊物件的資料、描述元、中繼資料與映射租約獨立。256 項涵蓋固定初始非檔案項、具名與存活孤立物件；新規範路徑/NUL 和目前資料計入 16 MiB，刪除且最後 FD/映射釋放後才回收，初始費用保留。預算耗盡或規範路徑達 1024 位元組明確停止，不捏造 ENOSPC 或原生路徑錯誤，失敗不建立名稱/FD。created-file 原生/五種來賓及 4K/16K 邊界測試驗證此合約；權限強制檢查、跨父目錄改名、連結及目錄修改仍待完善。
+僅實際插入使父目錄觀測失效。同名新舊物件的資料、描述元、中繼資料與映射租約獨立。256 項涵蓋固定初始非檔案項、具名與存活孤立物件；新規範路徑/NUL 和目前資料計入 16 MiB，刪除且最後 FD/映射釋放後才回收，初始費用保留。預算耗盡或規範路徑達 1024 位元組明確停止，不捏造 ENOSPC 或原生路徑錯誤，失敗不建立名稱/FD。created-file 原生/五種來賓及 4K/16K 邊界測試驗證此合約；權限強制檢查、不同初始目錄域之間的改名、連結及目錄修改仍待完善。
 
 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
@@ -148,13 +148,13 @@ O_CREAT=0x200 在明確 mutable 的直接父目錄建立空檔案，涵蓋一般
 
 [XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c). [XNU rename / renameat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
 
-## 同一父目錄內的一般檔案改名
+## 一般檔案改名
 
 `rename(128)`、`renameat(465)`、`renameatx_np(488)` 可在同一明確可修改的直接父目錄改名或覆蓋一般檔案。同名空操作也需授權，通過後保留觀察。低 32 位 flags 支援 `RENAME_EXCL=0x4`、`RENAME_NOFOLLOW_ANY=0x10` 及其組合。未知位及 EXCL+SWAP 在讀取路徑前回傳 EINVAL；SECLUDE 和 SWAP 仍不支援。這裡的空操作和 EISDIR 規則適用於未指定 EXCL 的呼叫，EXCL 的獨立契約見下文。共用解析器保留來源先於目標、目錄 FD、原始斜線與點元件的錯誤順序。目錄來源立即停止；一般檔案目標的末尾點/雙點解析成功後，在掛載及授權檢查前回傳 EINVAL，含巢狀與其他父目錄。缺少或非目錄祖先的錯誤仍優先；獲准父目錄內的一般目錄目標為 EISDIR。
 
 來源的獨立開啟、dup 與舊 FD 的 `F_GETPATH` 一起跟隨新名；被覆蓋物件保留最後關聯路徑、資料、游標、旗標和映射壽命。寫授權與中繼資料不由目標轉給來源。可信策略只改各自 ctime，被覆蓋者另設 nlink=0；身分、擁有權、建立時間與配置不變。無策略或整段 EFAULT 後完整中繼資料仍未知。實際改名使父目錄 stat/列舉失效，同名操作不變。
 
-不消耗新 inode、項目或可用 FD；新路徑/NUL 取代來源動態費用，初始費用保留。僅無舊 FD/映射的目標可提供回收容量，且只計一次；部分 unmap 保留整物件費用。路徑達 1024 位元組或總量超過 16 MiB 時，在狀態改變前停止。跨父目錄、已知裝置衝突、目錄移動、swap/exclusive/seclude 與權限檢查仍未支援；相同 stat 裝置號不證明同一掛載，不猜測 EXDEV。`renamed-file` 比對原生/來賓身分、路徑、覆蓋與映射；時間及預算是虛擬規則。
+不消耗新 inode、項目或可用 FD；新路徑/NUL 取代來源動態費用，初始費用保留。僅無舊 FD/映射的目標可提供回收容量，且只計一次；部分 unmap 保留整物件費用。路徑達 1024 位元組或總量超過 16 MiB 時，在狀態改變前停止。不同初始目錄域之間的移動、已知裝置衝突、目錄移動、SWAP/SECLUDE 與權限檢查仍未支援；相同 stat 裝置號不證明同一掛載，不猜測 EXDEV。`renamed-file` 比對原生/來賓身分、路徑、覆蓋與映射；時間及預算是虛擬規則。
 
 ## 目錄與相對路徑
 
@@ -483,3 +483,12 @@ Release Darwin 1,051項：631通過、420後端不可用略過、零失敗；105
 驗證，2026-10-06（Release）：1,097 項 Darwin 註冊測試，665 項通過、432 項因後端不可用略過、零失敗；108 項必要 ARM64 HVF 測試全部執行。聚焦測試 44 項通過、12 項不可用略過，含八項新增直接測試。公共 C/CLI/報告 191/191；Python 五種組合耗時 19.241 秒。獨立原始呼叫探針通過 26 項檢查。首次完整原生驗證中，既有 return 案例逾時，其餘 25 項（含 renamed-file）通過。同一未修改程式的 return 三次複查耗時 0.014–0.034 秒，隨後全部 26 項原生案例在原有 5 秒時限內通過。初次失敗保留且根因未明；這些結果與先前最終 HVF 通過均不保證延遲穩定性。已完成主代理核查，獨立審查不可用。計數重疊；實體 iOS、完整 GitHub CI 與暫停的 Intel HVF Actions 不屬於本機驗收。
 
 `build-hvf-arm64/exclusive-rename-validation-summary.json`, `exclusive-rename-darwin-evidence/`, `exclusive-rename-public.xml`, `exclusive-rename-native-evidence/`, `exclusive-rename-native-rechecked-summary.json`, `exclusive-rename-probe/`.
+
+
+## 已建立目錄之間的跨父目錄改名
+
+同一初始目錄及本程序透過 mkdir/mkdirat 建立的全部後代共享一個虛擬名稱空間域。`rename`、`renameat`、`renameatx_np` 可在這些父目錄之間移動一般檔案，不需新增 JSON 欄位。例如在可修改的初始 `/work` 內建立 `/work/left` 與 `/work/right` 後，`/work/data` 可移入任一子目錄，也可在子目錄之間移動。若 `/work/left` 是單獨提供的初始目錄，裝置號相同仍不能推定共享掛載。一般掛載拓撲依然未知。
+
+兩個直接父目錄均需名稱空間修改授權；新建目錄繼承授權及已知 device/GID。改名保留檔案自己的身分、擁有者/群組、寫授權與配置。已知裝置衝突仍明確拒絕。實際移動使兩個父目錄的完整 stat/列舉觀察失效。已刪除初始目錄與重用路徑始終是不同物件，舊目錄 FD/CWD 不會得到替代物件的域。
+
+既有有界替換交易、映射保留、路徑/NUL 費用及錯誤順序繼續適用。EXCL 遇到其他既存目標，仍在域與授權檢查之前回傳 EEXIST。原始 `renamed-file` 程式現在建立子目錄、移入子目錄、回到初始父目錄覆蓋檔案，再移入子目錄，透過 C++/C/CLI/Python 和原生 macOS 比對。權限強制檢查、目錄來源改名、硬/符號連結及原生 APFS 中繼資料仍未完成。

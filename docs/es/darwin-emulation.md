@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 34d34e187ac46720dfc5b061a28605b13c368d0ab705c3d1a43465497ac1b4fe -->
+<!-- i18n-source: 1320c99e1a4c3d4138c36977fb78f02b6da0498343d6e2de55897d78d13c3aaa -->
 
 [← Índice de documentación](README.md)
 
@@ -75,7 +75,7 @@ La entrada parcialmente legible se detiene antes de efectos. EFAULT completo con
 
 DarwinMemory mantiene reservas hasta el último unmap, incluso PROT_NONE y FD cerrados; las mutaciones paran mientras existan. Fallos y mmap antiguo de longitud cero no retienen reservas. Nuevos mapas ven bytes actuales. O_WRONLY con READ/WRITE da EACCES; PROT_NONE puede ganar lectura/escritura mediante mprotect.
 
-Programas originales normal/nocancel comparan el kernel nativo; pruebas 4K/16K y C/CLI/Python cubren cinco combinaciones. Aplicación de permisos, borrar directorios, renombrar entre padres, enlaces físicos, metadatos del sistema de archivos nativo, coherencia de mapas y SIGBUS EOF siguen pendientes. El entorno completo, dispositivos iOS e Intel HVF no están validados; Actions Intel permanece suspendido.
+Programas originales normal/nocancel comparan el kernel nativo; pruebas 4K/16K y C/CLI/Python cubren cinco combinaciones. Aplicación de permisos, borrar directorios, renombrar entre dominios de directorios iniciales distintos, enlaces físicos, metadatos del sistema de archivos nativo, coherencia de mapas y SIGBUS EOF siguen pendientes. El entorno completo, dispositivos iOS e Intel HVF no están validados; Actions Intel permanece suspendido.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -112,7 +112,7 @@ Sin política, para directorios o tras EFAULT completo con asignación desconoci
 
 `unlink(10)` / `unlinkat(472)` eliminan nombres regulares existentes. el borrado de archivos acepta los32 bits bajos 0 o `0x800`; bits desconocidos dan EINVAL antes de ruta/FD y AT_REMOVEDIR usa el contrato limitado de abajo; DATALESS y SYSTEM_DISCARDED siguen excluidos. Resolución común: ENOENT, ENOTDIR tras archivo con `/`, EPERM en directorio ordinario, EISDIR para raíz con solo barras, EBUSY para raíz terminada en `.`/`..`. Se verificaron nativamente finales `.`/`..`.
 
-FD/dup/aperturas independientes previos conservan datos, cursores y flags; F_GETPATH devuelve la ruta anterior capturada. Nuevas aperturas fallan, padres implícitos y CWD permanecen. La autorización de escritura pertenece al objeto; close/dup2/la siguiente mutación recuperan sus bytes actuales sólo tras el último descriptor y mapa. Los costes iniciales de rutas permanecen; aplicación de permisos, renombrado entre padres y enlaces físicos siguen pendientes; los directorios iniciales usan la autorización explícita descrita más abajo.
+FD/dup/aperturas independientes previos conservan datos, cursores y flags; F_GETPATH devuelve la ruta anterior capturada. Nuevas aperturas fallan, padres implícitos y CWD permanecen. La autorización de escritura pertenece al objeto; close/dup2/la siguiente mutación recuperan sus bytes actuales sólo tras el último descriptor y mapa. Los costes iniciales de rutas permanecen; aplicación de permisos, renombrado entre dominios de directorios iniciales distintos y enlaces físicos siguen pendientes; los directorios iniciales usan la autorización explícita descrita más abajo.
 
 stat/readdir/SEEK_END del padre quedan desconocidos para todo FD/ruta y paran antes de copiar o mover cursores. read/pread mantienen EISDIR; SET/CUR/F_GETPATH/fchdir/resolución relativa continúan. La política conocida establece nlink=0 y ctime fijo; posteriores escrituras no restauran nlink=1. Sin política/tras EFAULT, metadatos desconocidos. Los fallos preservan estado. `unlinked-file` compara reglas nativas de nombre/FD; tiempos e invalidación son reglas explícitas del modelo.
 
@@ -128,7 +128,7 @@ O_CREAT=0x200 crea un archivo vacío bajo un padre directo explícitamente mutab
 
 O_EXCL=0x800 con O_CREAT devuelve EEXIST para archivos/directorios existentes antes de truncar; solo no tiene efecto. O_CREAT de lectura abre directorios existentes. Orden: modo inválido, capacidad FD, EINVAL por O_CREAT|O_DIRECTORY, ruta. Solo se crea el último componente original ausente; ancestros ausentes y sufijos `/`, `//`, `/.`, `/..` dan ENOENT. O_CREAT|O_TRUNC nuevo no marca FWASWRITTEN; truncar uno existente sí.
 
-Solo insertar invalida las observaciones del padre. Objetos nuevos/antiguos homónimos mantienen datos, FD, metadatos y mapas independientes. Las 256 entradas incluyen elementos iniciales no archivo y objetos vivos; rutas canónicas/NUL dinámicas y bytes actuales cuentan en 16 MiB. Tras unlink, el último FD/mapa libera costes dinámicos; los iniciales permanecen. Agotar presupuesto o llegar a 1024 bytes de ruta canónica detiene explícitamente sin inventar ENOSPC o errno de ruta nativo ni publicar nombre/FD. created-file compara macOS nativo y cinco perfiles; pruebas 4K/16K verifican límites. Quedan aplicación de permisos, renombrado entre padres, enlaces y mutación de directorios.
+Solo insertar invalida las observaciones del padre. Objetos nuevos/antiguos homónimos mantienen datos, FD, metadatos y mapas independientes. Las 256 entradas incluyen elementos iniciales no archivo y objetos vivos; rutas canónicas/NUL dinámicas y bytes actuales cuentan en 16 MiB. Tras unlink, el último FD/mapa libera costes dinámicos; los iniciales permanecen. Agotar presupuesto o llegar a 1024 bytes de ruta canónica detiene explícitamente sin inventar ENOSPC o errno de ruta nativo ni publicar nombre/FD. created-file compara macOS nativo y cinco perfiles; pruebas 4K/16K verifican límites. Quedan aplicación de permisos, renombrado entre dominios de directorios iniciales distintos, enlaces y mutación de directorios.
 
 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
@@ -148,13 +148,13 @@ Cada nodo posee metadatos/asignación propios, sin heredar el antiguo homónimo.
 
 [XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c). [XNU rename / renameat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
 
-## Renombrar archivos normales dentro del mismo padre
+## Renombrar archivos normales
 
 `rename(128)`, `renameat(465)` y `renameatx_np(488)` renombran o reemplazan dentro del mismo padre inmediato explícitamente mutable. Incluso no cambiar el nombre requiere autorización; una vez admitido conserva las observaciones. Los 32 bits bajos aceptan `RENAME_EXCL=0x4`, `RENAME_NOFOLLOW_ANY=0x10` y su combinación. Bits desconocidos y EXCL+SWAP dan EINVAL antes de las rutas; SECLUDE y SWAP siguen sin soporte. Las reglas de operación nula y EISDIR aquí se aplican sin EXCL; su contrato separado aparece más abajo. El resolvedor conserva prioridad del origen, FD y comprobaciones de componentes originales. Un origen directorio se rechaza inmediatamente; un punto/doble punto final resuelto da EINVAL antes de montaje y autorización, incluso con padres anidados o distintos. Los errores de ancestros ausentes/no directorios conservan prioridad. Un directorio ordinario dentro del padre admitido da EISDIR.
 
 FD antiguos, open independientes y dup siguen el nuevo nombre mediante `F_GETPATH`. El objeto reemplazado conserva última ruta, bytes, posiciones, flags y mapas; no transfiere permiso de escritura ni metadatos al origen. Cada política conocida cambia su ctime y nlink=0 del destino, conservando identidad, propietario, nacimiento y asignación. Sin política/tras EFAULT completo, los metadatos siguen desconocidos. Solo un cambio real invalida stat/enumeración del padre.
 
-No consume inode, entrada nueva ni FD libre. La ruta/NUL sustituye el coste dinámico del origen; los iniciales quedan reservados. Solo un destino sin FD/mapas antiguos aporta capacidad inmediata, recuperada una sola vez; unmap parcial conserva el coste completo. Ruta de 1024 bytes o exceso de 16 MiB detiene antes de modificar. Otros padres, devices conocidos contradictorios, directorios, swap/exclusive/seclude y permisos siguen pendientes. Igual device stat no prueba igual montaje; no se inventa EXDEV. `renamed-file` compara identidad, rutas, reemplazo y mapas nativos/invitados; tiempos y presupuestos son reglas virtuales.
+No consume inode, entrada nueva ni FD libre. La ruta/NUL sustituye el coste dinámico del origen; los iniciales quedan reservados. Solo un destino sin FD/mapas antiguos aporta capacidad inmediata, recuperada una sola vez; unmap parcial conserva el coste completo. Ruta de 1024 bytes o exceso de 16 MiB detiene antes de modificar. Dominios iniciales distintos, devices conocidos contradictorios, directorios, SWAP/SECLUDE y permisos siguen pendientes. Igual device stat no prueba igual montaje; no se inventa EXDEV. `renamed-file` compara identidad, rutas, reemplazo y mapas nativos/invitados; tiempos y presupuestos son reglas virtuales.
 
 ## Directorios y rutas relativas
 
@@ -483,3 +483,12 @@ Tras resolver origen y destino, RENAME_EXCL devuelve EEXIST para otro archivo o 
 Verificación, 2026-10-06 (Release): 1.097 pruebas Darwin, 665 aprobadas, 432 omitidas por backend no disponible, sin fallos; ejecutados los 108 casos ARM64 HVF obligatorios. Enfocadas: 44 aprobadas, 12 omitidas, incluidos ocho casos directos nuevos. C/CLI/informes: 191/191; Python: cinco combinaciones en 19,241 s; sonda independiente: 26 comprobaciones aprobadas. El primer intento nativo agotó el tiempo de return; los otros 25, incluido renamed-file, pasaron. Tres revisiones return del mismo binario sin cambios tardaron 0,014–0,034 s y después pasaron los 26 casos con el límite original de 5 s. El fallo inicial se conserva sin causa determinada; estos resultados y el éxito HVF anterior no demuestran estabilidad de latencia. Auditoría principal terminada; revisión independiente no disponible. Recuentos solapados; iOS físico, CI GitHub completa y Actions Intel HVF suspendidas fuera de la aceptación local.
 
 `build-hvf-arm64/exclusive-rename-validation-summary.json`, `exclusive-rename-darwin-evidence/`, `exclusive-rename-public.xml`, `exclusive-rename-native-evidence/`, `exclusive-rename-native-rechecked-summary.json`, `exclusive-rename-probe/`.
+
+
+## Renombrado entre directorios creados
+
+Un directorio inicial y todos sus descendientes creados por este proceso con mkdir/mkdirat comparten un dominio de nombres virtual. `rename`, `renameat` y `renameatx_np` admiten mover archivos normales entre esos padres sin un nuevo campo JSON. Tras crear `/work/left` y `/work/right` bajo un `/work` inicial mutable, `/work/data` puede moverse a los hijos y entre ellos. Un `/work/left` declarado por separado como inicial conserva su propio dominio, incluso con el mismo device. La topología general de montajes sigue desconocida.
+
+Ambos padres inmediatos necesitan autorización; los directorios creados la heredan junto con device/GID conocidos. El archivo conserva identidad, propietario/grupo, permiso de escritura y asignación. Se rechazan devices contradictorios. Un movimiento invalida stat/enumeración completos de ambos padres. Los directorios iniciales eliminados y rutas reutilizadas son objetos distintos; FD/CWD antiguos no obtienen el dominio del reemplazo.
+
+Se mantienen transacción acotada, leases de mapas, costes de ruta/NUL y prioridad de errores. EXCL contra un destino existente distinto da EEXIST antes de dominio/autorización. `renamed-file` compara movimiento al hijo creado, reemplazo en el padre inicial y retorno mediante C++/C/CLI/Python y macOS nativo. Permisos, origen directorio, enlaces físicos/simbólicos y metadatos APFS nativos siguen pendientes.

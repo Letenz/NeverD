@@ -716,7 +716,8 @@ static int created_file_metadata(const char *path, int virtual_record) {
   return 37;
 }
 
-/* Original native/guest same-parent rename and replacement comparison. */
+/* Original native/guest same- and cross-parent rename/replacement comparison.
+ */
 static int renamed_file(const char *path) {
   unsigned error;
   int check = 80;
@@ -729,7 +730,7 @@ static int renamed_file(const char *path) {
   u64 old = call(5, (u64)path, 2, 0, 0, 0, 0, &error);
   RENAME_EXPECT(!error);
   char original[1024], parent[1024], temporary[1024], final[1024], after[1024],
-      trailing[1024], bytes[10];
+      trailing[1024], new_parent[1024], bytes[10];
   RENAME_EXPECT(call(92, old, 50, (u64)original, 0, 0, 0, &error) == 0 &&
                 !error);
   unsigned size = 0, slash = 0;
@@ -739,17 +740,24 @@ static int renamed_file(const char *path) {
       slash = size;
     ++size;
   }
-  RENAME_EXPECT(slash + 12 < sizeof(temporary));
+  RENAME_EXPECT(slash + 16 < sizeof(temporary));
   parent[slash ? slash : 1] = 0;
   for (unsigned i = 0; i <= slash; ++i)
-    temporary[i] = final[i] = trailing[i] = original[i];
-  const char names[][12] = {"rename.tmp", "rename.end", "rename.end/"};
-  for (unsigned i = 0; i != 12; ++i) {
+    temporary[i] = final[i] = trailing[i] = new_parent[i] = original[i];
+  const char names[][16] = {"rename.tmp", "rename.dir/end", "rename.dir/end/",
+                            "rename.dir"};
+  for (unsigned i = 0; i != 16; ++i) {
     temporary[slash + 1 + i] = names[0][i];
     final[slash + 1 + i] = names[1][i];
     trailing[slash + 1 + i] = names[2][i];
+    new_parent[slash + 1 + i] = names[3][i];
   }
   u64 directory = call(5, (u64)parent, 0, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error);
+  RENAME_EXPECT(
+      call(475, directory, (u64) "rename.dir", 0700, 0, 0, 0, &error) == 0 &&
+      !error);
+  u64 new_directory = call(5, (u64)new_parent, 0, 0, 0, 0, 0, &error);
   RENAME_EXPECT(!error);
   unsigned char old_status[144], source_status[144], status[144];
   RENAME_EXPECT(call(339, old, (u64)old_status, 0, 0, 0, 0, &error) == 0 &&
@@ -800,8 +808,8 @@ static int renamed_file(const char *path) {
   RENAME_EXPECT(call(488, (u64)-1, (u64)-1, (u64)-1, (u64)-1, 6, 0, &error) ==
                     22 &&
                 error);
-  RENAME_EXPECT(call(488, directory, (u64)(temporary + slash + 1), directory,
-                     (u64)(final + slash + 1), 0x14, 0, &error) == 0 &&
+  RENAME_EXPECT(call(488, directory, (u64)(temporary + slash + 1),
+                     new_directory, (u64) "end", 0x14, 0, &error) == 0 &&
                 !error);
   const u64 source_fds[] = {a, d, independent};
   for (unsigned i = 0; i != 3; ++i) {
@@ -865,8 +873,10 @@ static int renamed_file(const char *path) {
   RENAME_EXPECT(call(153, a, (u64)bytes, 10, 0, 0, 0, &error) == 3 && !error);
   RENAME_EXPECT(bytes[0] == 'n' && bytes[2] == 'w');
   RENAME_EXPECT(call(10, (u64) final, 0, 0, 0, 0, 0, &error) == 0 && !error);
-  const u64 fds[] = {old, a, d, independent, fresh, directory};
-  for (unsigned i = 0; i != 6; ++i)
+  RENAME_EXPECT(call(137, (u64)new_parent, 0, 0, 0, 0, 0, &error) == 0 &&
+                !error);
+  const u64 fds[] = {old, a, d, independent, fresh, directory, new_directory};
+  for (unsigned i = 0; i != 7; ++i)
     RENAME_EXPECT(call(6, fds[i], 0, 0, 0, 0, 0, &error) == 0 && !error);
   RENAME_EXPECT(call(4, 1, (u64) "r", 1, 0, 0, 0, &error) == 1 && !error);
 #undef RENAME_EXPECT

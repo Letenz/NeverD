@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 34d34e187ac46720dfc5b061a28605b13c368d0ab705c3d1a43465497ac1b4fe -->
+<!-- i18n-source: 1320c99e1a4c3d4138c36977fb78f02b6da0498343d6e2de55897d78d13c3aaa -->
 
 [← 文档索引](README.md)
 
@@ -83,7 +83,7 @@ F_SETFL 只改变 O_APPEND，保留访问模式、close-on-exec 和 FWASWRITTEN�
 
 DarwinMemory 持有映射租约；所有映射区间解除前，write、truncate 和 O_TRUNC 均停止，包括 PROT_NONE 和 FD 已关闭的映射。失败映射和旧式零长度映射不留租约；新映射读取当前内容。只写 FD 直接请求 READ/WRITE mmap 返回 EACCES，PROT_NONE 可成功并经 mprotect 获得读写权限。
 
-原生 writable-files 与 nocancel 程序比较字节、游标、标志和错误顺序；单元测试覆盖 4K/16K，C/CLI/Python 覆盖五种组合。权限强制检查、目录删除、跨父目录重命名、硬链接、真实文件系统的元数据更新、映射一致性和 EOF SIGBUS 仍待实现。完整 macOS/iOS 目标尚未完成，iOS 真机与 Intel HVF 仍无验收，Intel Actions 保持暂停。
+原生 writable-files 与 nocancel 程序比较字节、游标、标志和错误顺序；单元测试覆盖 4K/16K，C/CLI/Python 覆盖五种组合。权限强制检查、目录删除、不同初始目录域之间的重命名、硬链接、真实文件系统的元数据更新、映射一致性和 EOF SIGBUS 仍待实现。完整 macOS/iOS 目标尚未完成，iOS 真机与 Intel HVF 仍无验收，Intel Actions 保持暂停。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -120,7 +120,7 @@ DarwinMemory 持有映射租约；所有映射区间解除前，write、truncate
 
 `unlink(10)` / `unlinkat(472)` 删除现有普通名称；普通文件删除仅接受低 32 位 flags=0 或 `AT_SYMLINK_NOFOLLOW_ANY=0x800`。未知位先返回 EINVAL；AT_REMOVEDIR 使用下述受限目录删除；DATALESS、SYSTEM_DISCARDED 仍不支持。共用解析器保留路径故障、目录 FD、CWD 和绝对路径的优先级；缺失为 ENOENT，文件后斜杠为 ENOTDIR，普通目录为 EPERM，纯斜杠根路径为 EISDIR，末尾带 `.` / `..` 的根路径为 EBUSY。原生探针也检查末尾 `.` / `..`。
 
-名称删除后，旧 FD、dup、独立打开对象仍保留数据、游标和状态标志，新打开返回 ENOENT；隐式父目录与 CWD 继续存在。F_GETPATH 保留已捕获旧路径，与原生对照一致。写授权属于文件对象。只有所有描述符和最后一段映射均释放后，close/dup2 或下一次修改才回收当前文件字节预算；初始路径/引用费用仍保留。权限强制检查、跨父目录重命名与硬链接仍待实现；初始目录删除采用下文的显式授权。
+名称删除后，旧 FD、dup、独立打开对象仍保留数据、游标和状态标志，新打开返回 ENOENT；隐式父目录与 CWD 继续存在。F_GETPATH 保留已捕获旧路径，与原生对照一致。写授权属于文件对象。只有所有描述符和最后一段映射均释放后，close/dup2 或下一次修改才回收当前文件字节预算；初始路径/引用费用仍保留。权限强制检查、不同初始目录域之间的重命名与硬链接仍待实现；初始目录删除采用下文的显式授权。
 
 成功删除使直接父目录的 stat/列举观察失效，涵盖旧/新 FD、dup 和路径查询；stat/readdir/SEEK_END 在复制和移动游标前停止。read/pread 仍为 EISDIR，SET/CUR、F_GETPATH、fchdir、相对查找继续可用。有仍可信的文件修改策略时，仅将 nlink 改为 0、ctime 改为固定时间，保留 mtime/atime、数据和分配；后续写入不能恢复 nlink=1。缺少策略或曾发生整段 EFAULT 时，完整文件元数据仍未知。失败不改变状态。原生 `unlinked-file` 比较名称/描述符行为；策略时间与目录失效是明确的模型规则。
 
@@ -138,7 +138,7 @@ O_CREAT 配合 `O_EXCL=0x800` 对已有文件或目录先返回 EEXIST，不截�
 
 只有实际插入才使父目录 stat/枚举失效。同名重建与仍打开或映射的旧对象拥有独立字节、元数据、描述和映射租约。256 项上限计入固定初始非文件项、具名对象及仍存活的孤立对象；新对象的规范路径/NUL 和当前字节计入 16 MiB，删除且最后 FD/映射释放后才回收动态费用。关闭具名对象不释放名额，初始输入/引用费用仍保留。预算不足或规范路径达到 1024 字节会明确停止，不虚构 ENOSPC 或原生路径错误；失败不留下名称或 FD。
 
-原生 created-file 与五种来宾组合对照，4K/16K 测试覆盖精确容量、失败原子性和旧映射存活时重建。权限强制检查、跨父目录重命名、链接及目录修改仍待完善。
+原生 created-file 与五种来宾组合对照，4K/16K 测试覆盖精确容量、失败原子性和旧映射存活时重建。权限强制检查、不同初始目录域之间的重命名、链接及目录修改仍待完善。
 
 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
@@ -158,7 +158,7 @@ O_CREAT 配合 `O_EXCL=0x800` 对已有文件或目录先返回 EEXIST，不截�
 
 [XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c). [XNU rename / renameat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
 
-## 同一父目录中的普通文件重命名
+## 普通文件重命名
 
 `rename(128)`、`renameat(465)`、`renameatx_np(488)` 可在同一明确可修改的直接父目录中改名或覆盖普通文件。同名空操作也需要授权，通过后保留全部观察。低 32 位 flags 支持 `RENAME_EXCL=0x4`、`RENAME_NOFOLLOW_ANY=0x10` 及其组合。未知位及 EXCL+SWAP 在读取路径前返回 EINVAL；SECLUDE 和 SWAP 仍不支持。这里的空操作和 EISDIR 规则适用于未指定 EXCL 的调用，EXCL 的独立契约见下文。共用解析器保留源先于目标、目录 FD、原始斜杠与点组件的错误顺序。目录源立即报告不支持；普通文件目标的末尾点/双点在解析成功后、挂载与授权检查前返回 EINVAL，涵盖嵌套及其他父目录。缺失或非目录祖先仍优先报原错误；获准父目录内的普通目录目标为 EISDIR。
 
@@ -166,7 +166,7 @@ O_CREAT 配合 `O_EXCL=0x800` 对已有文件或目录先返回 EEXIST，不截�
 
 改名不消耗新 inode、目录项或空闲 FD。新规范路径/NUL 替换源的动态路径费用，初始输入费用始终保留。只有没有旧描述符和映射持有的目标才能提前计入可回收容量，并仅回收一次；部分 unmap 仍保留整对象费用。规范路径达到 1024 字节或总量超过 16 MiB 时，在修改名称、元数据和描述符前停止。
 
-跨父目录、已知设备冲突、目录移动、swap/exclusive/seclude 和权限强制检查仍待实现。相同 stat 设备号不能证明同一挂载，模型不会猜测 EXDEV。原生/来宾 `renamed-file` 对照身份、路径、覆盖和映射；策略时间与预算属于显式虚拟规则。
+不同初始目录域之间的移动、已知设备冲突、目录移动、SWAP/SECLUDE 和权限强制检查仍待实现。相同 stat 设备号不能证明同一挂载，模型不会猜测 EXDEV。原生/来宾 `renamed-file` 对照身份、路径、覆盖和映射；策略时间与预算属于显式虚拟规则。
 
 ## 目录与相对路径
 
@@ -587,3 +587,12 @@ Release Darwin 共1,051项：631通过、420因后端不可用跳过、零失败
 验证，2026-10-06（Release）：1,097 项 Darwin 注册测试，665 项通过、432 项因后端不可用跳过、零失败；108 项必需 ARM64 HVF 测试全部执行。聚焦测试 44 项通过、12 项不可用跳过，含八项新增直接测试。公共 C/CLI/报告 191/191；Python 五种组合耗时 19.241 秒。独立原始调用探针通过 26 项检查。首次完整原生验证中，既有 return 用例超时，其余 25 项（含 renamed-file）通过。同一未修改程序的 return 三次复查耗时 0.014–0.034 秒，随后全部 26 项原生用例在原有 5 秒限时内通过。初次失败保留且根因未明；这些结果和此前最终 HVF 通过均不构成延迟稳定性保证。已完成主代理核查，独立审查不可用。计数重叠；物理 iOS、完整 GitHub CI 和暂停的 Intel HVF Actions 不属于本地验收。
 
 `build-hvf-arm64/exclusive-rename-validation-summary.json`, `exclusive-rename-darwin-evidence/`, `exclusive-rename-public.xml`, `exclusive-rename-native-evidence/`, `exclusive-rename-native-rechecked-summary.json`, `exclusive-rename-probe/`.
+
+
+## 已创建目录之间的跨父目录重命名
+
+同一个初始目录及本进程通过 mkdir/mkdirat 创建的全部后代共享一个虚拟名称空间域。`rename`、`renameat`、`renameatx_np` 可在这些父目录之间移动普通文件，无需新增 JSON 字段。例如在可修改的初始 `/work` 内创建 `/work/left` 和 `/work/right` 后，`/work/data` 可移入任一子目录，也可在子目录之间移动。若 `/work/left` 是单独提供的初始目录，它仍是独立域，即使设备号相同也不推定共享挂载。一般挂载拓扑仍未知。
+
+两个直接父目录均需名称空间修改授权；新建目录继承授权及已知 device/GID。重命名保留文件自身的身份、所有者/组、写授权和分配。已知设备冲突仍明确拒绝。实际移动使两个父目录的完整 stat/列举观察失效。已删除初始目录与重用路径始终是不同对象，旧目录 FD/CWD 不会得到替代对象的域。
+
+既有有界替换事务、映射保留、路径/NUL 费用及错误顺序继续适用。EXCL 遇到其他既存目标，仍在域与授权检查之前返回 EEXIST。原始 `renamed-file` 程序现在创建子目录、移入子目录、回到初始父目录覆盖文件，再移入子目录，通过 C++/C/CLI/Python 和原生 macOS 对照。权限强制检查、目录源重命名、硬/符号链接及真实 APFS 元数据仍未完成。

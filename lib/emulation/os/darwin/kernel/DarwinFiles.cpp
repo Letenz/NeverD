@@ -868,28 +868,32 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
       return unsupported(Result, diagnostic::RenameCaseSensitivity);
     return returned(FileExists, true);
   }
-  const auto Parent = parentPath(Source.Path);
-  if (parentPath(Target.Path) != Parent)
+  const auto Parent = directoryNode(parentPath(Source.Path));
+  const auto TargetParent = directoryNode(parentPath(Target.Path));
+  // Separate initial directories do not establish a shared mount, even when
+  // stat devices match. Only mkdir descendants inherit their parent's domain.
+  if (Parent->initialAncestor() != TargetParent->initialAncestor())
     return unsupported(Result, diagnostic::RenameMount);
   // Even a same-name native rename performs authorization. The namespace
   // grant excludes known restricted flags, aliases and special parent modes.
-  if (!mutableDirectory(Parent))
+  if (!mutableDirectory(Parent->Path) || !mutableDirectory(TargetParent->Path))
     return unsupported(Result, diagnostic::DirectoryNotMutable);
-  const auto ParentIdentity = directoryIdentity(Parent);
-  std::optional<int32_t> Device =
-      ParentIdentity ? std::optional<int32_t>(ParentIdentity->Device)
-                     : std::nullopt;
-  auto SameDevice = [&](const DarwinFileMetadata *M) {
-    if (!M)
-      return true;
-    if (Device && *Device != M->Device)
+  std::optional<int32_t> Device;
+  auto SameDevice = [&](int32_t D) {
+    if (Device && *Device != D)
       return false;
-    Device = M->Device;
+    Device = D;
     return true;
   };
-  if (!SameDevice(Source.File->metadata()) ||
-      !SameDevice(Target.File ? Target.File->metadata() : Target.Metadata))
-    return unsupported(Result, diagnostic::RenameMount);
+  for (const auto &Directory : {Parent, TargetParent})
+    if (const auto Identity = directoryIdentity(Directory->Path);
+        Identity && !SameDevice(Identity->Device))
+      return unsupported(Result, diagnostic::RenameMount);
+  for (const auto *Metadata :
+       {Source.File->metadata(),
+        Target.File ? Target.File->metadata() : Target.Metadata})
+    if (Metadata && !SameDevice(Metadata->Device))
+      return unsupported(Result, diagnostic::RenameMount);
   if (Target.Type == Kind::Directory)
     return returned(IsDirectory, true);
   if (Source.Path == Target.Path)
@@ -922,7 +926,7 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   // Reclaim below deducts Credit exactly once, after the lookup releases it.
   *StorageUsed = *StorageUsed - Source.File->PathCharge + Charge;
   Source.File->PathCharge = Charge;
-  directoryNode(Parent)->Changed = true;
+  Parent->Changed = TargetParent->Changed = true;
   Target.File.reset();
   reclaimUnlinked();
   return returned(0);

@@ -56,6 +56,14 @@ private:
     bool Created = false;
     bool Linked = true;
     bool Changed = false;
+    /// mkdir cannot introduce a mount. Compare objects, including after a
+    /// removed initial directory's path is reused by a new directory.
+    const DirectoryNode *initialAncestor() const {
+      const auto *Node = this;
+      while (Node && Node->Created)
+        Node = Node->Parent.get();
+      return Node;
+    }
   };
   struct Contents {
     llvm::ArrayRef<uint8_t> Initial;

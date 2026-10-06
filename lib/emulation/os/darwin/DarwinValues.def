@@ -261,7 +261,8 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(RenameKind, "Darwin directory rename is unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(
     RenameMount,
-    "Darwin cross-parent or conflicting-device rename requires mount identity")
+    "Darwin rename requires shared initial directory ancestry and consistent "
+    "devices")
 NEVERD_DARWIN_DIAGNOSTIC(RenameLimit,
                          "Darwin rename exceeds the path or storage budget")
 NEVERD_DARWIN_DIAGNOSTIC(

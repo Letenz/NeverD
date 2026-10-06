@@ -149,7 +149,8 @@ TEST_P(DarwinVectorTest, CountAndCompleteHeaderPrecedeDescriptorLookup) {
   const auto FD = open();
   for (auto K : {ServiceKind::Readv, ServiceKind::Writev, ServiceKind::Preadv,
                  ServiceKind::Pwritev}) {
-    for (uint64_t Count : {0ULL, 1025ULL, 0xffffffffULL, UINT64_MAX})
+    for (uint64_t Count :
+         {uint64_t(0), uint64_t(1025), uint64_t(0xffffffff), UINT64_MAX})
       error(K, {999, 1, Count}, 22);
     error(K, {999, 1, 1}, 14);
     vectors({{1, UINT64_MAX}});
@@ -159,7 +160,7 @@ TEST_P(DarwinVectorTest, CountAndCompleteHeaderPrecedeDescriptorLookup) {
     EXPECT_EQ(ok(K, {FD, Header, 1024}), 0u);
     EXPECT_EQ(ok(K, {FD, Header, 0xdeadbeef00000002ULL}), 0u);
   }
-  for (uint64_t Negative : {UINT64_MAX, UINT64_MAX - 1, 1ULL << 63}) {
+  for (uint64_t Negative : {UINT64_MAX, UINT64_MAX - 1, uint64_t(1) << 63}) {
     error(ServiceKind::Pwritev, {999, 1, 2, Negative}, 22);
     error(ServiceKind::Preadv, {999, 1, 2, Negative}, 14);
   }
@@ -268,7 +269,7 @@ TEST_P(DarwinVectorTest, ReadSnapshotsMetadataBeforeOverlappingOutputs) {
 TEST_P(DarwinVectorTest, ReadFaultAndTransportKeepCompletedEarlierSpans) {
   const auto FD = open();
   const uint64_t Partial = Base + Page * 6 - 2;
-  for (uint64_t Bad : {1ULL, Partial}) {
+  for (uint64_t Bad : {uint64_t(1), Partial}) {
     EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 2, 0}), 2u);
     put(Partial, "zz");
     vectors({{Output, 3}, {Bad, 3}});
