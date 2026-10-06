@@ -416,6 +416,7 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"created-file-metadata", "71"},
           std::pair{"renamed-file", "72"},
           std::pair{"renamed-directory", "64"},
+          std::pair{"swapped-directory", "73"},
           std::pair{"vectored-io", "7621"},
           std::pair{"file-access", "61"},
           std::pair{"directory-mutations", "6d"},
@@ -487,6 +488,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       llvm::StringRef(Mode) == "virtual-created-metadata" ||
       llvm::StringRef(Mode) == "renamed-file" ||
       llvm::StringRef(Mode) == "renamed-directory" ||
+      llvm::StringRef(Mode) == "swapped-directory" ||
       llvm::StringRef(Mode) == "vectored-io") {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     auto *File = Input.getAsObject()
@@ -506,7 +508,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::StringRef(Mode) == "created-file-metadata" ||
         llvm::StringRef(Mode) == "virtual-created-metadata" ||
         llvm::StringRef(Mode) == "renamed-file" ||
-        llvm::StringRef(Mode) == "renamed-directory") {
+        llvm::StringRef(Mode) == "renamed-directory" ||
+        llvm::StringRef(Mode) == "swapped-directory") {
       (*File->getObject(field::FileMetadata))[field::FileLinkCount] = 1;
       (*File)[field::FileMutationPolicy] = llvm::cantFail(
           llvm::json::parse(emulation::darwin_test::MutationPolicyJSON));
@@ -519,13 +522,15 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::StringRef(Mode) == "created-file-metadata" ||
         llvm::StringRef(Mode) == "virtual-created-metadata" ||
         llvm::StringRef(Mode) == "renamed-file" ||
-        llvm::StringRef(Mode) == "renamed-directory")
+        llvm::StringRef(Mode) == "renamed-directory" ||
+        llvm::StringRef(Mode) == "swapped-directory")
       (*Input.getAsObject()
             ->getObject(field::DarwinFiles)
             ->getArray(field::Directories)
             ->front()
             .getAsObject())[field::DirectoryMutable] = true;
-    if (llvm::StringRef(Mode) == "renamed-file")
+    if (llvm::StringRef(Mode) == "renamed-file" ||
+        llvm::StringRef(Mode) == "swapped-directory")
       (*Input.getAsObject()
             ->getObject(field::DarwinFiles)
             ->getArray(field::Directories)
@@ -534,7 +539,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     if (llvm::StringRef(Mode) == "created-file-metadata" ||
         llvm::StringRef(Mode) == "virtual-created-metadata" ||
         llvm::StringRef(Mode) == "renamed-file" ||
-        llvm::StringRef(Mode) == "renamed-directory") {
+        llvm::StringRef(Mode) == "renamed-directory" ||
+        llvm::StringRef(Mode) == "swapped-directory") {
       auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
       (*Files)[field::FileUmask] = 0027;
       (*Files)[field::FileCreationPolicy] = llvm::cantFail(

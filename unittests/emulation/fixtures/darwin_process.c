@@ -736,6 +736,219 @@ static unsigned directory_path(u64 fd, const char *parent, const char *tail) {
   return 1;
 }
 
+/* Original SDK-free two-way directory and mixed-object exchange workload. */
+static int swapped_directory(const char *path) {
+  unsigned error;
+  int check = 80;
+#define DIRECTORY_SWAP_EXPECT(expression)                                      \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  char parent[1024], bytes[3];
+  u64 input = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(
+      call(92, input, 50, (u64)parent, 0, 0, 0, &error) == 0 && !error);
+  unsigned size = 0, slash = 0;
+  while (parent[size]) {
+    if (parent[size] == '/')
+      slash = size;
+    ++size;
+  }
+  parent[slash ? slash : 1] = 0;
+  u64 root = call(5, (u64)parent, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  for (unsigned i = 0; i != 2; ++i)
+    DIRECTORY_SWAP_EXPECT(call(475, root, (u64)(i ? "right" : "left"), 0700, 0,
+                               0, 0, &error) == 0 &&
+                          !error);
+  u64 left = call(463, root, (u64) "left", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 right = call(463, root, (u64) "right", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(
+      call(475, left, (u64) "source", 0700, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(475, right, (u64) "target", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 source = call(463, left, (u64) "source", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 target = call(463, right, (u64) "target", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 duplicate = call(41, source, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(call(92, source, 2, 1, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(475, source, (u64) "sub", 0700, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(475, target, (u64) "sub", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 child = call(463, source, (u64) "sub", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 other_child = call(463, target, (u64) "sub", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 file = call(463, child, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 other_file =
+      call(463, other_child, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(call(4, file, (u64) "abc", 3, 0, 0, 0, &error) == 3 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(4, other_file, (u64) "xyz", 3, 0, 0, 0, &error) == 3 && !error);
+  u64 file_duplicate = call(41, file, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 independent = call(463, child, (u64) "data", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(call(199, file, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  unsigned char before[144] = {0}, after[144] = {0};
+  DIRECTORY_SWAP_EXPECT(call(339, file, (u64)before, 0, 0, 0, 0, &error) == 0 &&
+                        !error);
+  u64 mapping = call(197, 0, PAGE, 1, 2, file, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 dead = call(463, source, (u64) "dead", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, source, (u64) "dead", 0, 0, 0, 0, &error) == 0 && !error);
+  u64 ordinary = call(463, root, (u64) "ordinary", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(call(4, ordinary, (u64) "F", 1, 0, 0, 0, &error) == 1 &&
+                        !error);
+  // Keep the freestanding image free of constant pointer-table rebases.
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source/.", right, (u64) "absent",
+                             2, 0, &error) == 2 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source/.", right,
+                             (u64) "absent/", 2, 0, &error) == 2 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source/sub/..", right,
+                             (u64) "absent", 2, 0, &error) == 2 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source/sub/..", right,
+                             (u64) "absent/", 2, 0, &error) == 2 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source", source, (u64) "sub", 2,
+                             0, &error) == 22 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, source, (u64) "sub", left, (u64) "source", 2,
+                             0, &error) == 22 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source", child, (u64) "data", 2,
+                             0, &error) == 22 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, child, (u64) "data", left, (u64) "source", 2,
+                             0, &error) == 22 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(
+      call(488, left, (u64) "source", 999, (u64)-1, 2, 0, &error) == 14 &&
+      error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source", 88888, (u64) "target",
+                             2, 0, &error) == 9 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source", root, (u64) "ordinary/",
+                             2, 0, &error) == 20 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(13, child, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source", right,
+                             (u64) "target///", 0x1234567800000012UL, 0,
+                             &error) == 0 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(directory_path(source, parent, "/right/target"));
+  DIRECTORY_SWAP_EXPECT(directory_path(duplicate, parent, "/right/target"));
+  DIRECTORY_SWAP_EXPECT(directory_path(target, parent, "/left/source"));
+  DIRECTORY_SWAP_EXPECT(directory_path(child, parent, "/right/target/sub"));
+  DIRECTORY_SWAP_EXPECT(
+      directory_path(other_child, parent, "/left/source/sub"));
+  DIRECTORY_SWAP_EXPECT(directory_path(file, parent, "/right/target/sub/data"));
+  DIRECTORY_SWAP_EXPECT(
+      directory_path(other_file, parent, "/left/source/sub/data"));
+  DIRECTORY_SWAP_EXPECT(directory_path(dead, parent, "/right/target/dead"));
+  u64 cwd = call(463, (u64)-2, (u64) ".", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(directory_path(cwd, parent, "/right/target/sub"));
+  u64 up = call(463, source, (u64) "..", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(directory_path(up, parent, "/right"));
+  DIRECTORY_SWAP_EXPECT(call(339, file, (u64)after, 0, 0, 0, 0, &error) == 0 &&
+                        !error);
+  unsigned unchanged = 1;
+  for (unsigned i = 0; i != 124; ++i)
+    if (i < 32 || i >= 48)
+      unchanged &= before[i] == after[i];
+  DIRECTORY_SWAP_EXPECT(unchanged);
+  DIRECTORY_SWAP_EXPECT(call(92, source, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  DIRECTORY_SWAP_EXPECT(call(92, duplicate, 1, 0, 0, 0, 0, &error) == 0 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(call(199, file_duplicate, 0, 1, 0, 0, 0, &error) == 1 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(call(199, independent, 0, 1, 0, 0, 0, &error) == 0 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(((volatile char *)mapping)[0] == 'a' &&
+                        ((volatile char *)mapping)[2] == 'c');
+  u64 reopened = call(463, left, (u64) "source/sub/data", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(call(153, reopened, (u64)bytes, 3, 0, 0, 0, &error) ==
+                            3 &&
+                        !error && bytes[0] == 'x' && bytes[2] == 'z');
+  DIRECTORY_SWAP_EXPECT(call(488, right, (u64) "target", root, (u64) "ordinary",
+                             2, 0, &error) == 0 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(directory_path(source, parent, "/ordinary"));
+  DIRECTORY_SWAP_EXPECT(directory_path(child, parent, "/ordinary/sub"));
+  DIRECTORY_SWAP_EXPECT(directory_path(cwd, parent, "/ordinary/sub"));
+  DIRECTORY_SWAP_EXPECT(directory_path(file, parent, "/ordinary/sub/data"));
+  DIRECTORY_SWAP_EXPECT(directory_path(dead, parent, "/ordinary/dead"));
+  DIRECTORY_SWAP_EXPECT(directory_path(ordinary, parent, "/right/target"));
+  u64 mixed_up = call(463, source, (u64) "..", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(directory_path(mixed_up, parent, ""));
+  DIRECTORY_SWAP_EXPECT(call(488, right, (u64) "target", root, (u64) "ordinary",
+                             2, 0, &error) == 0 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(directory_path(source, parent, "/right/target"));
+  DIRECTORY_SWAP_EXPECT(directory_path(ordinary, parent, "/ordinary"));
+  DIRECTORY_SWAP_EXPECT(call(488, right, (u64) "target", left, (u64) "source",
+                             2, 0, &error) == 0 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(directory_path(source, parent, "/left/source"));
+  DIRECTORY_SWAP_EXPECT(directory_path(target, parent, "/right/target"));
+  DIRECTORY_SWAP_EXPECT(directory_path(file, parent, "/left/source/sub/data"));
+  DIRECTORY_SWAP_EXPECT(directory_path(dead, parent, "/left/source/dead"));
+  DIRECTORY_SWAP_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(call(73, mapping, PAGE, 0, 0, 0, 0, &error) == 0 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, child, (u64) "data", 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, other_child, (u64) "data", 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, source, (u64) "sub", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, target, (u64) "sub", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, left, (u64) "source", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, right, (u64) "target", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, root, (u64) "left", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, root, (u64) "right", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, root, (u64) "ordinary", 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 fds[] = {input,       root,     left,       right,
+                     source,      target,   duplicate,  child,
+                     other_child, file,     other_file, file_duplicate,
+                     independent, dead,     ordinary,   cwd,
+                     up,          reopened, mixed_up};
+  for (unsigned i = 0; i != sizeof(fds) / sizeof(fds[0]); ++i)
+    DIRECTORY_SWAP_EXPECT(call(6, fds[i], 0, 0, 0, 0, 0, &error) == 0 &&
+                          !error);
+  DIRECTORY_SWAP_EXPECT(call(4, 1, (u64) "s", 1, 0, 0, 0, &error) == 1 &&
+                        !error);
+#undef DIRECTORY_SWAP_EXPECT
+  return 37;
+}
+
 /* Original SDK-free native/guest directory subtree and retained-object test. */
 static int renamed_directory(const char *path) {
   unsigned error;
@@ -2427,6 +2640,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
     return argc < 3 ? 79 : renamed_file(argv[2]);
   if (equal(argv[1], "renamed-directory"))
     return argc < 3 ? 79 : renamed_directory(argv[2]);
+  if (equal(argv[1], "swapped-directory"))
+    return argc < 3 ? 79 : swapped_directory(argv[2]);
   if (equal(argv[1], "created-file-metadata") ||
       equal(argv[1], "virtual-created-metadata"))
     return argc < 3 ? 79

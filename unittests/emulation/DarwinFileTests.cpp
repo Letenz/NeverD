@@ -193,6 +193,495 @@ protected:
   }
 };
 
+TEST_P(DarwinFileTest, DirectorySwapRetainsNonemptySubtreesAndObjectState) {
+  creationPolicy();
+  Options->Directories.insert("/");
+  Options->SwapRenameDirectories.insert("/");
+  const auto Left = makeDirectory("/p");
+  const auto Right = makeDirectory("/q");
+  const auto A = makeDirectory("/p/a");
+  const auto B = makeDirectory("/q/b");
+  const auto ChildA = makeDirectory("/p/a/sub");
+  const auto ChildB = makeDirectory("/q/b/sub");
+  const auto FileA = makeFile("/p/a/sub/file", "abc");
+  const auto FileB = makeFile("/q/b/sub/file", "xyz");
+  const auto BeforeA = status(FileA), BeforeB = status(FileB);
+  const auto Duplicate = ok(ServiceKind::Dup, {FileA});
+  path("/p/a/sub/file");
+  const auto Independent = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FileA, 1}), 1u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 7}), 7u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 2, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {ChildA}), 0u);
+  auto Lease = Files->mappingSource(FileA);
+  ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(Lease));
+  path("a");
+  path("b///", Base + 128);
+  ASSERT_EQ(ok(ServiceKind::RenameAtX, {Left, Base, Right, Base + 128, 2}), 0u);
+  identity(A, "/q/b");
+  identity(B, "/p/a");
+  identity(ChildA, "/q/b/sub");
+  identity(ChildB, "/p/a/sub");
+  for (auto FD : {FileA, Duplicate, Independent})
+    identity(FD, "/q/b/sub/file");
+  identity(FileB, "/p/a/sub/file");
+  EXPECT_EQ(status(FileA), BeforeA);
+  EXPECT_EQ(status(FileB), BeforeB);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Duplicate, 0, 1}), 1u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Independent, 0, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 7u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 1}), 1u);
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes,
+            llvm::ArrayRef<uint8_t>({'a', 'b', 'c'}));
+  path(".");
+  const auto CWD = ok(ServiceKind::Open, {Base});
+  identity(CWD, "/q/b/sub");
+  path("..");
+  const auto Parent = ok(ServiceKind::OpenAt, {A, Base});
+  identity(Parent, "/q");
+  path("sub/file");
+  const auto Reopened = ok(ServiceKind::OpenAt, {A, Base});
+  contents(Reopened, {'a', 'b', 'c'});
+  path("/p/a/sub/file");
+  contents(ok(ServiceKind::Open, {Base}), {'x', 'y', 'z'});
+  swapFiles("/q/b", "/p/a");
+  identity(A, "/p/a");
+  identity(B, "/q/b");
+  identity(CWD, "/p/a/sub");
+  identity(FileA, "/p/a/sub/file");
+  EXPECT_EQ(status(FileA), BeforeA);
+}
+
+TEST_P(DarwinFileTest, DirectorySwapSupportsBothMixedOrders) {
+  for (bool DirectoryFirst : {true, false}) {
+    SCOPED_TRACE(DirectoryFirst);
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    creationPolicy();
+    mutationPolicy();
+    Options->Directories.insert("/");
+    Options->SwapRenameDirectories.insert("/");
+    const auto Directory = makeDirectory("/folder");
+    const auto Child = makeDirectory("/folder/sub");
+    const auto Descendant = makeFile("/folder/sub/file", "c");
+    path("/data");
+    const auto File = ok(ServiceKind::Open, {Base, 2});
+    auto FileBefore = status(File);
+    const auto ChildBefore = status(Descendant);
+    EXPECT_EQ(ok(ServiceKind::Fchdir, {Child}), 0u);
+    auto Lease = Files->mappingSource(File);
+    ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(Lease));
+    path(DirectoryFirst ? "/folder" : "/data");
+    path(DirectoryFirst ? "/data" : "/folder", Base + 128);
+    ASSERT_EQ(ok(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}), 0u);
+    identity(Directory, "/data");
+    identity(Child, "/data/sub");
+    identity(Descendant, "/data/sub/file");
+    identity(File, "/folder");
+    EXPECT_EQ(status(Descendant), ChildBefore);
+    llvm::support::endian::write64le(FileBefore.data() + 64, uint64_t(-7));
+    llvm::support::endian::write64le(FileBefore.data() + 72, 123456789);
+    EXPECT_EQ(status(File), FileBefore);
+    contents(File, {'a', 'b', 0, 0xff, 'e', 'f'});
+    EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes,
+              llvm::ArrayRef<uint8_t>({'a', 'b', 0, 0xff, 'e', 'f'}));
+    path(".");
+    identity(ok(ServiceKind::Open, {Base}), "/data/sub");
+    path("..");
+    identity(ok(ServiceKind::OpenAt, {Directory, Base}), "/");
+    swapFiles("/folder", "/data");
+    identity(Directory, "/folder");
+    identity(Descendant, "/folder/sub/file");
+    identity(File, "/data");
+    EXPECT_EQ(status(Descendant), ChildBefore);
+  }
+}
+
+TEST_P(DarwinFileTest, DirectorySwapMissingTargetPrecedesSourceDotsAndGrant) {
+  creationPolicy();
+  Options->Directories.insert("/");
+  const auto Directory = makeDirectory("/left");
+  makeDirectory("/left/sub");
+  for (bool Declared : {false, true}) {
+    if (Declared)
+      Options->SwapRenameDirectories.insert("/");
+    for (const char *Source : {"/left/.", "/left/sub/.."})
+      for (const char *Target : {"/absent", "/absent/"}) {
+        SCOPED_TRACE(Source);
+        SCOPED_TRACE(Target);
+        path(Source);
+        path(Target, Base + 128);
+        error(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}, 2);
+        identity(Directory, "/left");
+      }
+  }
+}
+
+TEST_P(DarwinFileTest, DirectorySwapRejectsCyclesAndKeepsLookupPrecedence) {
+  creationPolicy();
+  Options->Directories.insert("/");
+  Options->SwapRenameDirectories.insert("/");
+  const auto A = makeDirectory("/a");
+  const auto B = makeDirectory("/b");
+  const auto Child = makeDirectory("/a/sub");
+  const auto File = makeFile("/a/sub/file", "a");
+  const auto Before = status(File);
+  for (auto [Source, Target] : {std::pair{"/a", "/a/sub"},
+                                {"/a/sub", "/a"},
+                                {"/a", "/a/sub/file"},
+                                {"/a/sub/file", "/a"},
+                                {"/a/.", "/b"},
+                                {"/a/sub/..", "/b"},
+                                {"/a", "/b/."}}) {
+    path(Source);
+    path(Target, Base + 128);
+    error(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}, 22);
+    identity(A, "/a");
+    identity(B, "/b");
+    identity(Child, "/a/sub");
+    identity(File, "/a/sub/file");
+    EXPECT_EQ(status(File), Before);
+  }
+  path("/a");
+  path("/a/sub/file/", Base + 128);
+  error(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}, 20);
+  error(ServiceKind::RenameAtX, {999, Base, 999, UINT64_MAX, 2}, 14);
+  path("b", Base + 128);
+  error(ServiceKind::RenameAtX, {999, Base, 88888, Base + 128, 2}, 9);
+  error(ServiceKind::RenameAtX, {999, Base, File, Base + 128, 2}, 20);
+  for (uint64_t Flags : {6u, 8u, 0x16u})
+    error(ServiceKind::RenameAtX, {999, UINT64_MAX, 999, UINT64_MAX, Flags},
+          22);
+  path("/a/.");
+  path("/a", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameDotCaseSensitivity);
+  path("/missing");
+  error(ServiceKind::RenameAtX, {999, Base, 999, UINT64_MAX, 2}, 2);
+}
+
+TEST_P(DarwinFileTest, DirectorySwapKeepsInitialDomainsAndGrantsExplicit) {
+  creationPolicy();
+  Options->Directories = {"/", "/initial"};
+  Options->MutableDirectories.insert("/initial");
+  Options->SwapRenameDirectories = {"/", "/initial"};
+  Options->Metadata["/initial"] = darwin_test::creationParentMetadata();
+  Options->Metadata["/initial"].Inode++;
+  const auto A = makeDirectory("/a");
+  const auto B = makeDirectory("/b");
+  makeDirectory("/initial/child");
+  path("/a");
+  path("/initial/child", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameMount);
+  for (const char *Target : {"/", "/initial"}) {
+    path(Target, Base + 128);
+    EXPECT_FALSE(
+        invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::RenameSwapKind);
+  }
+  path("/initial");
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {999, Base, 999, UINT64_MAX, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameKind);
+  path("/a");
+  path("/b", Base + 128);
+  Options->SwapRenameDirectories.clear();
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameSwapSupport);
+  Options->MutableDirectories.erase("/");
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryNotMutable);
+  identity(A, "/a");
+  identity(B, "/b");
+  Options->MutableDirectories.insert("/");
+  swapFiles("/a", "/./a");
+  identity(A, "/a");
+  EXPECT_TRUE(Options->SwapRenameDirectories.empty());
+  path("/a");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  path(".");
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {A, Base, B, UINT64_MAX, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameKind);
+}
+
+TEST_P(DarwinFileTest, DirectorySwapChargesInitialFileOnceWithoutCredits) {
+  Options->Directories.insert("/");
+  Options->MutableDirectories.insert("/");
+  Options->WritableFiles.insert("/data");
+  Options->SwapRenameDirectories.insert("/");
+  const auto File = ok(ServiceKind::Open, {Base, 2});
+  const auto Directory = makeDirectory("/d");
+  // Fixed inputs cost 18 bytes; initially only /d has a dynamic name charge.
+  const uint64_t Capacity = darwin_file_limits::Bytes - 18;
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {File, Capacity - 3}), 0u);
+  path("/d");
+  path("/data", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+  identity(File, "/data");
+  identity(Directory, "/d");
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {File, Capacity - 8}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {File, Capacity - 9}), 0u);
+  auto Lease = Files->mappingSource(File);
+  ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(Lease));
+  ASSERT_EQ(ok(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}), 0u);
+  identity(File, "/d");
+  identity(Directory, "/data");
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {File, Base + 256}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutatedMetadata);
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes.size(), Capacity - 9);
+  Lease = uint32_t(0);
+  for (unsigned I = 0; I != 8; ++I) {
+    swapFiles("/d", "/data");
+    swapFiles("/d", "/data");
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {File, Capacity - 9}), 0u);
+    EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {File, Capacity - 8}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  }
+  swapFiles("/d", "/data");
+  identity(File, "/data");
+  identity(Directory, "/d");
+  // Returning to its initial name does not erase the file's dynamic charge.
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {File, Capacity - 8}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+}
+
+TEST_P(DarwinFileTest, DirectorySwapDoesNotMoveOldOrphansAtAMixedRootName) {
+  Options->Directories.insert("/");
+  Options->MutableDirectories.insert("/");
+  Options->SwapRenameDirectories.insert("/");
+  const auto Directory = makeDirectory("/d");
+  const auto Child = makeDirectory("/d/child");
+  const auto Old = makeFile("/f", "o");
+  auto Lease = Files->mappingSource(Old);
+  path("/f");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  const auto Fresh = makeFile("/f", "n");
+  swapFiles("/d", "/f");
+  identity(Directory, "/f");
+  identity(Child, "/f/child");
+  identity(Fresh, "/d");
+  identity(Old, "/f");
+  renameFile("/f", "/moved");
+  identity(Directory, "/moved");
+  identity(Child, "/moved/child");
+  identity(Fresh, "/d");
+  identity(Old, "/f");
+  contents(Old, {'o'});
+  contents(Fresh, {'n'});
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes,
+            llvm::ArrayRef<uint8_t>({'o'}));
+}
+
+TEST_P(DarwinFileTest, DirectorySwapCannotCreditAnUnopenedRegularFile) {
+  Options->Directories.insert("/");
+  Options->MutableDirectories.insert("/");
+  Options->WritableFiles.insert("/data");
+  Options->SwapRenameDirectories.insert("/");
+  Options->Files["/target"] = std::vector<uint8_t>(32, 't');
+  const auto Data = ok(ServiceKind::Open, {Base, 2});
+  const auto Directory = makeDirectory("/s");
+  // Fixed names/references:26; the unopened target's bytes:32; /s:3.
+  const uint64_t Capacity = darwin_file_limits::Bytes - 26 - 32 - 3;
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity}), 0u);
+  path("/s");
+  path("/target", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 7}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+  identity(Directory, "/s");
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 8}), 0u);
+  ASSERT_EQ(ok(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}), 0u);
+  identity(Directory, "/target");
+  path("/s");
+  contents(ok(ServiceKind::Open, {Base}), std::vector<uint8_t>(32, 't'));
+}
+
+TEST_P(DarwinFileTest, DirectorySwapRetainsBothSameNameOrphansAndRefundsOnce) {
+  Options->Directories.insert("/");
+  Options->MutableDirectories.insert("/");
+  Options->WritableFiles.insert("/data");
+  Options->SwapRenameDirectories.insert("/");
+  const auto Data = ok(ServiceKind::Open, {Base, 2});
+  const auto A = makeDirectory("/a");
+  const auto B = makeDirectory("/b");
+  const auto OldDirA = makeDirectory("/a/dead");
+  const auto OldDirB = makeDirectory("/b/dead");
+  const auto OldA = makeFile("/a/same", "a");
+  const auto OldB = makeFile("/b/same", "b");
+  auto Lease = Files->mappingSource(OldB);
+  ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(Lease));
+  for (const char *Name : {"/a/same", "/b/same"}) {
+    path(Name);
+    EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  }
+  EXPECT_EQ(ok(ServiceKind::Close, {OldB}), 0u);
+  for (const char *Name : {"/a/dead", "/b/dead"}) {
+    path(Name);
+    EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  }
+  const auto NewDirA = makeDirectory("/a/dead");
+  const auto NewDirB = makeDirectory("/b/dead");
+  const auto NewA = makeFile("/a/same", "n");
+  const auto NewB = makeFile("/b/same", "m");
+  // Roots:6; four child directories:32; four file paths and bytes:36.
+  const uint64_t Capacity = darwin_file_limits::Bytes - 18 - 74;
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity}), 0u);
+  swapFiles("/a", "/b");
+  identity(A, "/b");
+  identity(B, "/a");
+  for (auto FD : {OldDirA, NewDirA})
+    identity(FD, "/b/dead");
+  for (auto FD : {OldDirB, NewDirB})
+    identity(FD, "/a/dead");
+  for (auto FD : {OldA, NewA})
+    identity(FD, "/b/same");
+  identity(NewB, "/a/same");
+  contents(OldA, {'a'});
+  contents(NewA, {'n'});
+  contents(NewB, {'m'});
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes,
+            llvm::ArrayRef<uint8_t>({'b'}));
+  path("same");
+  contents(ok(ServiceKind::OpenAt, {A, Base}), {'n'});
+  contents(ok(ServiceKind::OpenAt, {B, Base}), {'m'});
+  path("new");
+  error(ServiceKind::OpenAt, {OldDirA, Base}, 2);
+  error(ServiceKind::OpenAt, {OldDirB, Base}, 2);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity + 1}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  EXPECT_EQ(ok(ServiceKind::Close, {OldA}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity + 9}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity + 10}));
+  Lease = uint32_t(0);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity + 18}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity + 19}));
+  EXPECT_EQ(ok(ServiceKind::Close, {OldDirA}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity + 26}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity + 27}));
+  EXPECT_EQ(ok(ServiceKind::Close, {OldDirB}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity + 34}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity + 35}));
+}
+
+TEST_P(DarwinFileTest, DirectorySwapPreflightsBothRetainedSubtreesAtomically) {
+  Options->Directories.insert("/");
+  Options->MutableDirectories.insert("/");
+  Options->WritableFiles.insert("/data");
+  Options->SwapRenameDirectories.insert("/");
+  const auto Data = ok(ServiceKind::Open, {Base, 2});
+  const auto Source = makeDirectory("/s");
+  const auto Target = makeDirectory("/long");
+  const auto Removed = makeDirectory("/s/g");
+  const auto File = makeFile("/s/g/f", "xy");
+  auto Lease = Files->mappingSource(File);
+  path("/s/g/f");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path("/s/g");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  // Three source paths grow by 3; the opposing root shrinks by 3.
+  const uint64_t Capacity = darwin_file_limits::Bytes - 18;
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 28}), 0u);
+  for (bool Reverse : {false, true}) {
+    path(Reverse ? "/long" : "/s");
+    path(Reverse ? "/s" : "/long", Base + 128);
+    EXPECT_FALSE(
+        invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+    identity(Source, "/s");
+    identity(Target, "/long");
+    identity(Removed, "/s/g");
+    identity(File, "/s/g/f");
+    contents(File, {'x', 'y'});
+  }
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 29}), 0u);
+  ASSERT_EQ(ok(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 2}), 0u);
+  identity(Source, "/long");
+  identity(Target, "/s");
+  identity(Removed, "/long/g");
+  identity(File, "/long/g/f");
+  path("..");
+  identity(ok(ServiceKind::OpenAt, {Removed, Base}), "/long");
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes,
+            llvm::ArrayRef<uint8_t>({'x', 'y'}));
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity - 28}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+}
+
+TEST_P(DarwinFileTest, DirectorySwapPreflightsBothCanonicalPathLimits) {
+  Options->Directories.insert("/");
+  Options->MutableDirectories.insert("/");
+  Options->SwapRenameDirectories.insert("/");
+  const auto Source = makeDirectory("/s");
+  const auto Child = makeDirectory("/s/x");
+  const auto File = makeFile("/s/x/f", "s");
+  std::string Prefix;
+  for (char Letter : {'a', 'b', 'c'}) {
+    Prefix += '/' + std::string(255, Letter);
+    makeDirectory(Prefix);
+  }
+  const auto Boundary = Prefix + '/' + std::string(250, 'd');
+  ASSERT_EQ(Boundary.size(), 1019u);
+  const auto Long = Boundary + 'd';
+  const auto Target = makeDirectory(Long);
+  const auto TargetFile = makeFile(Long + "/v", "t");
+  for (bool Reverse : {false, true}) {
+    path(Reverse ? Long : "/s");
+    path(Reverse ? "/s" : Long, Base + Page);
+    EXPECT_FALSE(
+        invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + Page, 2}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+    identity(Source, "/s");
+    identity(Child, "/s/x");
+    identity(File, "/s/x/f");
+    identity(Target, Long);
+    identity(TargetFile, Long + "/v");
+  }
+  // Keep long source and target strings in separate guest buffers.
+  path(Long);
+  path(Boundary, Base + Page);
+  ASSERT_EQ(ok(ServiceKind::Rename, {Base, Base + Page}), 0u);
+  path("/s");
+  path(Boundary, Base + Page);
+  ASSERT_EQ(ok(ServiceKind::RenameAtX, {999, Base, 999, Base + Page, 2}), 0u);
+  identity(Source, Boundary);
+  identity(File, Boundary + "/x/f");
+  identity(Target, "/s");
+  identity(TargetFile, "/s/v");
+  contents(File, {'s'});
+  contents(TargetFile, {'t'});
+}
+
+TEST_P(DarwinFileTest, DirectorySwapConsumesNoEntryDescriptorOrCreationInode) {
+  Options->Files.clear();
+  for (unsigned I = 0; I != 252; ++I)
+    Options->Files["/f" + std::to_string(I)] = {};
+  creationPolicy(UINT64_MAX);
+  Options->Directories.insert("/");
+  Options->SwapRenameDirectories.insert("/");
+  Options->DescriptorLimit = 6;
+  const auto Source = makeDirectory("/s");
+  const auto Target = makeDirectory("/t");
+  const auto File = makeFile("/s/value", "x");
+  const auto Before = status(File);
+  swapFiles("/s", "/t");
+  identity(Source, "/t");
+  identity(Target, "/s");
+  identity(File, "/t/value");
+  EXPECT_EQ(status(File), Before);
+  EXPECT_EQ(llvm::support::endian::read64le(Before.data() + 8), UINT64_MAX);
+  path("/extra");
+  EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base, 0700}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryCreationLimit);
+  path("/f0");
+  error(ServiceKind::Open, {Base}, 24);
+  swapFiles("/t", "/s");
+  identity(File, "/s/value");
+}
+
 TEST_P(DarwinFileTest, DirectoryRenameRetainsSubtreePathsCWDAndFileState) {
   creationPolicy();
   const auto Source = makeDirectory("/from");
@@ -405,7 +894,7 @@ TEST_P(DarwinFileTest, DirectoryRenamePreservesNativeErrorsWithoutEffects) {
   for (uint64_t Flags : {2u, 0x12u}) {
     EXPECT_FALSE(
         invoke(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, Flags}));
-    EXPECT_EQ(Result.Diagnostic, diagnostic::RenameSwapKind);
+    EXPECT_EQ(Result.Diagnostic, diagnostic::RenameSwapSupport);
   }
   path("/right/new///", Base + 128);
   EXPECT_EQ(ok(ServiceKind::RenameAtX,

@@ -74,4 +74,5 @@ NEVERD_NATIVE_DARWIN_CASE(
     RenamePreservesReplacementIdentityPathsAndMappedLifetime)
 NEVERD_NATIVE_DARWIN_CASE(
     DirectoryRenamePreservesSubtreesAndRetainedObjectParents)
+NEVERD_NATIVE_DARWIN_CASE(DirectorySwapPreservesBothSubtreesAndMixedObjectState)
 #endif

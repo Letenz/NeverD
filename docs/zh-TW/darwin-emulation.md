@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 62ae8ec8491d69cc38e034a5f898c1b9002e7460509f37add4c60348b5c429b3 -->
+<!-- i18n-source: 3b19ce4b03ad45c168e0ca6db9fa8217c4da568d6d01ae23d3ef52545ed69fc9 -->
 
 [← 文件索引](README.md)
 
@@ -148,25 +148,17 @@ O_CREAT=0x200 在明確 mutable 的直接父目錄建立空檔案，涵蓋一般
 
 [XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c). [XNU rename / renameat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
 
-## 一般檔案改名
+## 一般檔案與建立目錄的原子交換
 
-`rename(128)`、`renameat(465)`、`renameatx_np(488)` 可在同一可修改的初始目錄及其行程建立後代之間移動或覆蓋一般檔案。兩邊直接父目錄都需要命名空間授權，同名空操作也需要。低 32 位 flags 支援 `RENAME_EXCL=0x4` 或 `RENAME_SWAP=0x2`，各自可加 `RENAME_NOFOLLOW_ANY=0x10`；0 或 0x10 執行一般重新命名。未知位及 EXCL+SWAP 在讀取路徑前回傳 EINVAL；SECLUDE 仍不支援。EXCL 和 SWAP 的獨立契約見下文。共用解析器保留來源先於目標、目錄 FD、原始斜線及點元件的錯誤順序。初始或已刪除目錄來源明確停止；仍連結的行程建立目錄使用下文子樹合約。目標末尾點/雙點在掛載及授權檢查前回傳 EINVAL，祖先錯誤仍優先。一般檔案重新命名的目錄目標回傳 EISDIR。
+RENAME_SWAP=0x2 透過 renameatx_np 交換兩個既有一般檔案、兩個仍連結的行程建立目錄，或檔案與建立目錄；可加 RENAME_NOFOLLOW_ANY。明確初始目錄須宣告 mutable:true 與 swap_rename:true，C++ 使用 DarwinFileOptions::SwapRenameDirectories。建立後代繼承原始目錄物件的能力，刪除和重用名稱不轉移舊宣告。false 或省略表示未知；相同裝置和修改授權不能證明能力，不同初始目錄域仍不支援。
 
-來源的獨立開啟、dup 與舊 FD 的 `F_GETPATH` 一起跟隨新名；被覆蓋物件保留最後關聯路徑、資料、游標、旗標和映射壽命。寫授權與中繼資料不由目標轉給來源。可信策略只改各自 ctime，被覆蓋者另設 nlink=0；身分、擁有權、建立時間與配置不變。無策略或整段 EFAULT 後完整中繼資料仍未知。實際改名使父目錄 stat/列舉失效，同名操作不變。
+`openat_nocancel`、`fstatat64` 與 `F_GETPATH=50` 使用同一檔案元件；交換後的路徑與觀察仍屬於各自物件，完整 stat 的可用性仍依中繼資料契約。
 
-不消耗新 inode、項目或可用 FD；新路徑/NUL 取代來源動態費用，初始費用保留。僅無舊 FD/映射的目標可提供回收容量，且只計一次；部分 unmap 保留整物件費用。路徑達 1024 位元組或總量超過 16 MiB 時，在狀態改變前停止。不同初始目錄域之間的移動、已知裝置衝突、初始目錄移動、目錄 SWAP、SECLUDE 與權限檢查仍未支援；相同 stat 裝置號不證明同一掛載，不猜測 EXDEV。`renamed-file` 比對原生/來賓身分、路徑、覆蓋與映射；時間及預算是虛擬規則。
+目標不存在（含尾斜線）時先回傳 ENOENT，先於來源點/雙點、域、授權與能力檢查。初始或已刪除目錄運算元仍不支援。在獲准域內，任一方向的父子目錄交換及目錄與子檔案交換回傳 EINVAL；一般檔案目標尾斜線為 ENOTDIR。一般元件的同物件交換經命名空間授權後為空操作，即使沒有能力宣告。來源點/雙點與目標同物件時，檔案系統大小寫屬性仍未知。RENAME_EXCL=0x4 + RENAME_SWAP=0x2 和未知 flags 在路徑讀取前回傳 EINVAL；SECLUDE 不支援。
 
-## 目錄與相對路徑
+兩棵非空子樹依父物件鏈移動，包含 FD 或映射保留的已刪除子目錄與檔案孤兒。混合交換只移動確切的一般檔案根；舊同名孤兒仍跟隨自己的父物件。FD、dup、CWD 與雙點跟隨物件及新父目錄。後代檔案的位元組、身分、中繼資料、寫入授權、游標、旗標與租約保留；移動根及兩邊直接父目錄套用既有命名空間中繼資料規則。設定策略更新根檔案自身 ctime；無策略或已失效時完整中繼資料仍未知。
 
-選用 `directories` 含規範絕對 `path` 和可選完整 `metadata`，可宣告空目錄；根與祖先隱式存在，中繼資料不建立缺失路徑。目錄 mode 為 `0x4000` 加權限，size 為 [0, INT64_MAX] 的明確觀察值。`working_directory` 必須是既有目錄，省略表示 CWD 未知，不繼承宿主。最多 256 個指定檔案/目錄路徑（含僅有中繼資料的祖先）；路徑/NUL/檔案/輸入/CWD 共 16 MiB。
-
-`openat` (463)、`openat_nocancel` (464)、`chdir` (12)、`fchdir` (13)、`fstatat64` (470) 共用解析器。相對路徑使用目錄 FD 或 `AT_FDCWD=-2`，絕對路徑忽略 FD。重複斜線、`.`、`..` 及尾端斜線保留祖先檢查：`/file/..` 為 ENOTDIR，`/missing/..` 為 ENOENT。失敗及原 FD 的關閉、重用或替換不改變 CWD。`F_GETPATH=50` 回傳規範路徑和 NUL，包含複製描述元，不寫入終止符後方。
-
-目錄 read/pread 即使零長度亦為 EISDIR，負 pread 偏移優先 EINVAL。SET/CUR 共用游標，END 需要明確 size；目錄 mmap 為 EINVAL。fstatat64 支援 0、`AT_SYMLINK_NOFOLLOW=0x20`、`AT_SYMLINK_NOFOLLOW_ANY=0x800`、`AT_FDONLY=0x400`（忽略路徑）；非法位為 EINVAL，`AT_REALDEV=0x200` 未支援。串流身份未知，權限不是存取控制模型；目錄建立與受限刪除使用下述明確授權。`directories` 程式對照原生與五種客體，stat 比對真實檔案及目錄。Intel HVF Actions 保持暫停。
-
-[XNU VFS](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h).
-
-目錄驗收（2026-10-05，Release）：467 項登記，227 通過、240 跳過、零失敗；ARM64 HVF 必需項 60/60 執行。10 個原生 macOS 程式、37 項公共 C/CLI/報告（無跳過）、Python 五種客體和 66 項驗收腳本通過，計數重疊。證據：`build-hvf-arm64/darwin-directory-verified-evidence/`。其他原生後端與 iOS 真機尚未驗收。
+能力參照的路徑+NUL 保留於固定初始 16 MiB 預算。兩邊所有連結及保留路徑在發布前檢查 1024 位元組界限和共用總額，再共同撤下舊名稱並發布新名稱。交換不刪除根、不使用覆蓋回收額度，未開啟目標的位元組也不能抵扣。初始檔案首次移動取得動態路徑費用，交換回不清零，往返不累加；無需新 FD、項目或建立 inode。失敗時兩邊名稱、父物件、游標、觀察及映射不變。原創無 SDK 的 swapped-directory 程式透過原生 macOS 與五種 C++/C/CLI/Python 設定比對目錄交換及兩種混合順序。
 
 ```json
 {"darwin_files":{"files":[{"path":"/work/data","bytes_hex":"3031"}],"directories":[{"path":"/work/empty"}],"working_directory":"/work"}}
@@ -478,7 +470,7 @@ Release Darwin 1,051項：631通過、420後端不可用略過、零失敗；105
 
 ## 一般檔案的獨占重新命名
 
-完成來源與目標查找後，RENAME_EXCL 對不同的既有檔案或目錄回傳 EEXIST，先於掛載及命名空間修改檢查。更早的路徑錯誤仍優先，包括末尾點/雙點的 EINVAL。目標不存在時重用相同的有界重新命名交易，保留已開啟描述、游標、旗標、映射租約和設定的中繼資料變化。同物件獨占重新命名仍明確不支援：原生結果依賴檔案系統是否區分大小寫，精確目錄鍵無法證明此屬性。大小寫折疊、初始目錄重新命名及目錄 SWAP和 SECLUDE 尚未納入。既有原創 `renamed-file` 工作負載現驗證拒絕時中繼資料不變，以及 EXCL|NOFOLLOW_ANY 成功移動，涵蓋原生 macOS 和 C++/C/CLI/Python。
+完成來源與目標查找後，RENAME_EXCL 對不同的既有檔案或目錄回傳 EEXIST，先於掛載及命名空間修改檢查。更早的路徑錯誤仍優先，包括末尾點/雙點的 EINVAL。目標不存在時重用相同的有界重新命名交易，保留已開啟描述、游標、旗標、映射租約和設定的中繼資料變化。同物件獨占重新命名仍明確不支援：原生結果依賴檔案系統是否區分大小寫，精確目錄鍵無法證明此屬性。大小寫折疊、初始目錄重新命名及 SECLUDE 尚未納入。既有原創 `renamed-file` 工作負載現驗證拒絕時中繼資料不變，以及 EXCL|NOFOLLOW_ANY 成功移動，涵蓋原生 macOS 和 C++/C/CLI/Python。
 
 驗證，2026-10-06（Release）：1,097 項 Darwin 註冊測試，665 項通過、432 項因後端不可用略過、零失敗；108 項必要 ARM64 HVF 測試全部執行。聚焦測試 44 項通過、12 項不可用略過，含八項新增直接測試。公共 C/CLI/報告 191/191；Python 五種組合耗時 19.241 秒。獨立原始呼叫探針通過 26 項檢查。首次完整原生驗證中，既有 return 案例逾時，其餘 25 項（含 renamed-file）通過。同一未修改程式的 return 三次複查耗時 0.014–0.034 秒，隨後全部 26 項原生案例在原有 5 秒時限內通過。初次失敗保留且根因未明；這些結果與先前最終 HVF 通過均不保證延遲穩定性。已完成主代理核查，獨立審查不可用。計數重疊；實體 iOS、完整 GitHub CI 與暫停的 Intel HVF Actions 不屬於本機驗收。
 
@@ -491,7 +483,7 @@ Release Darwin 1,051項：631通過、420後端不可用略過、零失敗；105
 
 兩個直接父目錄均需名稱空間修改授權；新建目錄繼承授權及已知 device/GID。改名保留檔案自己的身分、擁有者/群組、寫授權與配置。已知裝置衝突仍明確拒絕。實際移動使兩個父目錄的完整 stat/列舉觀察失效。已刪除初始目錄與重用路徑始終是不同物件，舊目錄 FD/CWD 不會得到替代物件的域。
 
-既有有界替換交易、映射保留、路徑/NUL 費用及錯誤順序繼續適用。EXCL 遇到其他既存目標，仍在域與授權檢查之前回傳 EEXIST。原始 `renamed-file` 程式現在建立子目錄、移入子目錄、回到初始父目錄覆蓋檔案，再移入子目錄，透過 C++/C/CLI/Python 和原生 macOS 比對。權限強制檢查、初始目錄改名及目錄 SWAP、硬/符號連結及原生 APFS 中繼資料仍未完成。
+既有有界替換交易、映射保留、路徑/NUL 費用及錯誤順序繼續適用。EXCL 遇到其他既存目標，仍在域與授權檢查之前回傳 EEXIST。原始 `renamed-file` 程式現在建立子目錄、移入子目錄、回到初始父目錄覆蓋檔案，再移入子目錄，透過 C++/C/CLI/Python 和原生 macOS 比對。權限強制檢查、初始目錄改名及硬/符號連結及原生 APFS 中繼資料仍未完成。
 
 ### 跨父目錄驗證，2026-10-06
 
@@ -507,11 +499,11 @@ Release Darwin 1,051項：631通過、420後端不可用略過、零失敗；105
 
 RENAME_SWAP=0x2 透過 renameatx_np 交換兩個既有一般檔案的名稱，可加 RENAME_NOFOLLOW_ANY。明確初始目錄必須同時宣告 mutable:true 和 swap_rename:true；C++ 使用 DarwinFileOptions::SwapRenameDirectories。建立後代繼承原始目錄物件的能力，刪除後重用路徑不會取得舊物件的宣告。false 或省略表示能力未知，不能僅憑裝置號相同或命名空間授權推斷支援；不同初始目錄域仍不支援。
 
-來源與目標重用元件解析器。目標缺少時，在目錄域、授權及能力檢查前回傳 ENOENT。任一目錄運算元都明確不支援：原生可交換檔案與目錄，模型不能套用一般重新命名的 EISDIR。同物件交換取得命名空間授權後為空操作，即使未宣告交換能力也不改變狀態。EXCL+SWAP、未知 flags 仍在讀取路徑前回傳 EINVAL；SECLUDE 仍不支援。
+來源與目標重用元件解析器。目標缺少時，在目錄域、授權及能力檢查前回傳 ENOENT。任一目錄運算元都明確不支援：原生可交換檔案與目錄，模型不能套用一般重新命名的 EISDIR。同物件交換取得命名空間授權後為空操作，即使未宣告交換能力也不改變狀態。RENAME_EXCL=0x4 + RENAME_SWAP=0x2、未知 flags 仍在讀取路徑前回傳 EINVAL；SECLUDE 仍不支援。
 
 兩份檔案都保持連結，各自的身分、擁有者/群組、位元組、寫入授權、開啟描述、游標、旗標及映射租約保留。已設定虛擬政策只更新各物件自身 ctime；政策缺少或已失效時完整中繼資料仍未知。實際交換使兩邊父目錄的完整中繼資料及列舉觀察失效，不消耗建立 inode、目錄項或 FD，也不改變呼叫者輸入。
 
-每個能力參照的路徑+NUL 占用固定初始 16 MiB 預算。交易先驗證兩邊完整動態名稱費用，再發布兩個名稱；仍連結的位元組和租約不能提供覆蓋回收額度。重複交換重用這些動態費用。原創 renamed-file 程式跨建立的子目錄交換並交換回，檢查兩份物件後繼續一般覆蓋，涵蓋原生 macOS 及所有 C++/C/CLI/Python 來賓設定。權限強制、掛載拓撲、大小寫折疊及初始目錄重新命名及目錄 SWAP仍待實作。
+每個能力參照的路徑+NUL 占用固定初始 16 MiB 預算。交易先驗證兩邊完整動態名稱費用，再發布兩個名稱；仍連結的位元組和租約不能提供覆蓋回收額度。重複交換重用這些動態費用。原創 renamed-file 程式跨建立的子目錄交換並交換回，檢查兩份物件後繼續一般覆蓋，涵蓋原生 macOS 及所有 C++/C/CLI/Python 來賓設定。權限強制、掛載拓撲、大小寫折疊及初始目錄重新命名仍待實作。
 
 [Apple 卷交換能力](https://developer.apple.com/documentation/foundation/urlresourcevalues/volumesupportsswaprenaming?changes=__1_2)、[XNU 重新命名旗標及查找順序](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c)。
 
@@ -530,7 +522,7 @@ Release Darwin 共 1,133 項：701 通過、432 項後端不可用略過、零�
 
 ## 行程建立目錄的重新命名
 
-一般 rename、renameat、renameatx_np 可在同一初始目錄物件域內移動仍連結的行程建立目錄及子樹；兩邊直接父目錄都要修改授權。不存在的目錄目標可帶尾斜線；一般檔案目標為 ENOTDIR、非空目錄為 ENOTEMPTY、移入後代為 EINVAL。獲准一般同名操作不變更狀態。EXCL 對另一既存目標先回傳 EEXIST，先於類型、循環、域與授權；目標查找錯誤先於來源點/雙點。來源點/雙點與目標為同物件時，大小寫屬性未知，明確 UnsupportedService。初始或已刪除目錄來源、初始目錄替換目標、目錄 SWAP、不同初始域、連結、權限執行和 SECLUDE 仍未支援。
+一般 rename、renameat、renameatx_np 可在同一初始目錄物件域內移動仍連結的行程建立目錄及子樹；兩邊直接父目錄都要修改授權。不存在的目錄目標可帶尾斜線；一般檔案目標為 ENOTDIR、非空目錄為 ENOTEMPTY、移入後代為 EINVAL。獲准一般同名操作不變更狀態。EXCL 對另一既存目標先回傳 EEXIST，先於類型、循環、域與授權；目標查找錯誤先於來源點/雙點。來源點/雙點與目標為同物件時，大小寫屬性未知，明確 UnsupportedService。初始或已刪除目錄來源、初始目錄替換目標、不同初始域、連結、權限執行和 SECLUDE 仍未支援。
 
 交易依父物件鏈選擇後代，更新具名子樹、FD 保留的已刪子目錄及 FD/映射保留的孤立檔案路徑。來源 FD、dup、CWD 與雙點仍指同物件及新父目錄。覆蓋的空建立目錄保留舊路徑與原父鏈；一般子名稱仍 ENOENT，點/雙點與 CWD 保留舊物件。再次移動新來源，不會移動路徑文字相同的舊目標孤立檔案。
 
@@ -546,3 +538,15 @@ Release Darwin 共 1,133 項：701 通過、432 項後端不可用略過、零�
 最終 Release Darwin 共1,175項：731通過、444後端不可用略過、零失敗；111項必要 ARM64 HVF 全執行。聚焦32/44（12略過，含22項新增4K/16K），最終邊界/舊測試4/4。公開 C/CLI165/165、報告32/32無略過；Python五種21.759秒，原生27/27、探針79項。獨立審查確認修正測試程式根分隔符與同物件來源點的檔案系統屬性邊界。初次來賓exit124、兩項過時預期失敗及來源/二進位均保留，最終完整驗收通過。計數重疊、時限不變；舊 HVF/原生逾時仍未定位，不證明延遲穩定。Intel HVF Actions 暫停，實體 iOS 及完整 GitHub CI 分別驗證。
 
 `build-hvf-arm64/directory-rename-validation-summary.json`, `directory-rename-darwin-final-evidence/`, `directory-rename-public.xml`, `directory-rename-reports.xml`, `directory-rename-python.log`, `directory-rename-native-evidence/`, `directory-rename-probe/`, `directory-rename-initial-fixture/`, `directory-rename-darwin-evidence/failed-source/`.
+
+### 目錄與混合類型交換驗證，2026-10-07
+
+Release Darwin 驗證核對了 1,219 項註冊：763 項通過、456 項因後端不可用跳過、零失敗；114 項必需 ARM64 HVF 案例全部執行。聚焦檢查為 32/44 通過、12 項不可用跳過，包含全部 24 項新增 4K/16K 直接案例；完整檔案元件為 317/317。原生程式為 28/28，獨立原始系統呼叫探針在本機不區分大小寫的 macOS 檔案系統上記錄了 32 項成功觀察。計數有重疊，客體程式時限未變。
+
+獨立計畫與實作審查核對了雙向交易、初始檔案路徑計費、兩側保留子樹、僅映射保留的孤兒及準確回收。最初紅測試漏設明確根目錄交換宣告，排除於驗收；修正後的舊實作在六項案例中均因拒絕目錄交換而失敗。兩項早期混合檔案斷言錯誤地捨棄設定中繼資料，現比較僅 ctime 改變的完整紀錄。區域常數指標表曾引入 ARM64 重定位，導致六項載入拒絕；改為四項純量斷言後，修正程式沒有傳統重定位，載入器仍明確拒絕不支援的 fixups。
+
+修正程式後的首次聚焦執行保留了三次五秒 HVF 逾時。單例與三設定控制檢查通過，隨後完整驗證通過；原因仍不明，不能據此證明延遲穩定。初始原始碼、二進位、失敗與控制紀錄均保留。初始目錄移動、獨立初始域、權限/掛載/大小寫宣告、動態相依與框架執行環境仍未完成；實體 iOS、已暫停的 Intel HVF 與完整 GitHub CI 是獨立驗收邊界。
+
+`build-hvf-arm64/directory-swap-research/`: `darwin-final-evidence/`, `darwin-evidence/`, `focused-v5.xml`, `file-owner-v5.xml`, `native-workload-fixed-evidence/`, `native-probe-v2-results.json`, `fixture-fixups-before/`, `hvf-controls.json`.
+
+最終連結後的二進位再次通過完整 Darwin 驗證。固定 dev 0a9a1d28d 的 20 組共享元件檢查共記錄 4,515 項：4,489 項通過、6 項可選 Z3 與 20 項缺少 Windows EH 樣本跳過、零失敗。其中公共 C/CLI 為 170/170，報告為 32/32。Python 在 30.780 秒內驗證全部五種設定。12 種原生行動端架構/重定位組合的 4,532 項結果與原程式一致；單工作階段及完整 Swift 中繼資料對照為 12/12。Swift witness 產生器修正註解縮排後，使用記錄的 SDK/編譯器重現了目錄。這是本機 Release LLVM 23/Apple Clang 17 的驗收，不代表後續 dev 修訂或 Linux Clang 18 已驗收。

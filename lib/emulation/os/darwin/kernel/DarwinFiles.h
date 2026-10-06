@@ -168,10 +168,10 @@ private:
   rename(uint64_t SourcePath, uint32_t SourceDirectory, uint64_t TargetPath,
          uint32_t TargetDirectory, RenameMode Mode, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
-  renameDirectory(Description &Source, Description &Target,
-                  const std::shared_ptr<DirectoryNode> &Parent,
-                  const std::shared_ptr<DirectoryNode> &TargetParent,
-                  ProcessResult &Result);
+  renameSubtrees(Description &Source, Description &Target,
+                 const std::shared_ptr<DirectoryNode> &Parent,
+                 const std::shared_ptr<DirectoryNode> &TargetParent, bool Swap,
+                 ProcessResult &Result);
   void updateNamespaceMetadata(Contents &Node, bool Removed);
   llvm::Expected<std::optional<ServiceResult>>
   create(Description &File, uint32_t Mode, ProcessResult &Result);

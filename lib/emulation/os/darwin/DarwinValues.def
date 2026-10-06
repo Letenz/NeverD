@@ -267,8 +267,9 @@ NEVERD_DARWIN_DIAGNOSTIC(RenameDotCaseSensitivity,
 NEVERD_DARWIN_DIAGNOSTIC(
     RenameKind,
     "Darwin rename of initial or removed directories is unsupported")
-NEVERD_DARWIN_DIAGNOSTIC(RenameSwapKind,
-                         "Darwin swap rename supports two regular files only")
+NEVERD_DARWIN_DIAGNOSTIC(
+    RenameSwapKind,
+    "Darwin swap rename of initial or removed directories is unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(
     RenameSwapSupport,
     "Darwin swap rename requires declared filesystem support")
