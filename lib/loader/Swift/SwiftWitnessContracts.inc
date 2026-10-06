@@ -7,4 +7,4 @@
 // No descriptor layout, purity, frame borrowing or value-witness ABI.
 {"$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc", "/System/Library/Frameworks/Combine.framework/Combine|/System/Library/Frameworks/Combine.framework/Versions/A/Combine", "/System/Library/Frameworks/Combine.framework/Combine|/System/Library/Frameworks/Combine.framework/Versions/A/Combine"},
 {"$sSnyxGSXsMc", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
-// clang-format on
+    // clang-format on

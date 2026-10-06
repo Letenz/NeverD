@@ -94,7 +94,7 @@ def render(profiles, exports, version, compiler):
             raise ValueError('descriptor must be exported in all four SDK profiles')
         lines.append('{' + ', '.join(json.dumps(x) for x in
                                    (name, *('|'.join(sorted(m)) for m in modules))) + '},')
-    return '\n'.join(lines + ['// clang-format on', ''])
+    return '\n'.join(lines + ['    // clang-format on', ''])
 
 
 def main():
