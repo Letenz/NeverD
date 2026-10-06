@@ -450,7 +450,7 @@ U64 files_filesystem_status(void) {
   unsigned char Output[256];
   for (unsigned I = 0; I < sizeof(Output); ++I)
     Output[I] = 0xa5;
-  const struct {
+  static const struct {
     const char *Name;
     U64 Error;
   } Cases[] = {{"/missing", 2},
@@ -475,7 +475,7 @@ U64 files_filesystem_status(void) {
   CHECK(raw(Close, 0, 0, 0, 0), 0);
   CHECK(raw(FstatFS, 0xabcdef1200000000UL, 1, 0, 0), (U64)-9);
   CHECK(raw(Protect, (U64)Pages + 4096, 4096, 0, 0), 0);
-  const char Missing[] = "/missing/";
+  static const char Missing[] = "/missing/";
   for (unsigned I = 0; I < sizeof(Missing); ++I)
     Pages[4096 - sizeof(Missing) + I] = Missing[I];
   U64 Name = (U64)Pages + 4096 - sizeof(Missing);
