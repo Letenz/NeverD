@@ -1416,3 +1416,5 @@ Swift witness 生成器在 ARM64/x86-64 macOS 和 Mac Catalyst 上同时验证 `
 `scripts.tests.test_generate_swift_data_declarations` 检查完整 `String.Index` 描述符查询，拒绝符号指针单元、配方字节或长度、元数据与缓存数据流、runtime ABI 的变更以及重复或缺失定义。`ObjCSourceBindings.SwiftRangeIndexDescriptorKeepsItsCompleteRecipe` 在两种架构上检查位于偏移 3 的非首位描述符；`SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe` 拒绝每种架构的 20 种变更，并复核既有地址提示与 helper 输出。
 
 `ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath` 覆盖 PHI 合并后的对象局部变量循环，以及同一循环中可达的私有栈帧值。对象循环保留精确指针溢写证明；携带栈帧的循环、部分覆盖和未知栈帧泄露会拒绝证明。
+
+`ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` 验证两种架构、导出提供方及全部参数和结果载体，并拒绝弱导入、附加偏移、外来提供方、过期符号和虚构的借用效果。

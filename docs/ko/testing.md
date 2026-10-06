@@ -1498,3 +1498,5 @@ Swift witness 생성기는 ARM64/x86-64 macOS와 Mac Catalyst에서 `CurrentValu
 `scripts.tests.test_generate_swift_data_declarations`는 완전한 `String.Index` 설명자 질의를 확인하고 기호 셀, 레시피 바이트나 길이, 메타데이터/캐시 흐름, runtime ABI 변경 및 중복되거나 누락된 정의를 거부합니다. `ObjCSourceBindings.SwiftRangeIndexDescriptorKeepsItsCompleteRecipe`는 두 아키텍처에서 선두가 아닌 오프셋 3의 설명자를 확인합니다. `SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe`는 각 아키텍처에서 20개 변형을 거부하고 기존 주소 힌트와 helper 출력을 재검증합니다.
 
 `ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath`는 PHI 병합 후 객체 로컬의 순환과 같은 순환에 비공개 프레임 값이 들어가는 경우를 검증합니다. 객체 순환은 정확한 포인터 저장을 보존하지만 프레임 값이 있는 순환, 부분 덮어쓰기와 알 수 없는 프레임 유출은 증명을 거부합니다.
+
+`ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords`는 두 아키텍처와 공급자, 모든 인자와 결과를 검증하고 약한 가져오기, 가산 오프셋, 다른 공급자, 오래된 심볼과 만들어낸 대여 효과를 거부합니다.

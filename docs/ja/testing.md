@@ -1508,3 +1508,5 @@ Swift witness の生成器は ARM64/x86-64 の macOS と Mac Catalyst で `Curre
 `scripts.tests.test_generate_swift_data_declarations` は完全な `String.Index` 記述子クエリを検査し、シンボルセル、レシピのバイトや長さ、メタデータ・キャッシュのフロー、runtime ABI の変更と重複・欠落定義を拒否します。`ObjCSourceBindings.SwiftRangeIndexDescriptorKeepsItsCompleteRecipe` は両アーキテクチャーで先頭以外のオフセット 3 の記述子を検証します。`SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe` は各アーキテクチャーで 20 変異を拒否し、公開済みのアドレスヒントと helper 出力を再検証します。
 
 `ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath` は PHI 統合後のオブジェクト変数の循環と、同じ循環にプライベートフレーム由来の値が入る場合を検証します。オブジェクトの循環は正確なポインタ保存を維持しますが、フレーム由来の循環、部分的な上書き、未知のフレーム漏出は証明を拒否します。
+
+`ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` は両アーキテクチャとプロバイダ、全引数と結果を検証し、弱いインポート、加算オフセット、別プロバイダ、古いシンボル、借用効果の捏造を拒否します。

@@ -1531,3 +1531,5 @@ build-release/bin/NeverDByteCellScalarizationTests
 يفحص `scripts.tests.test_generate_swift_data_declarations` استعلام واصف `String.Index` الكامل ويرفض تغييرات الخلايا الرمزية وبايتات الوصفة أو طولها وتدفق البيانات الوصفية/المخبأ وABI الخاص بـ runtime والتعريفات المكررة أو المفقودة. يفحص `ObjCSourceBindings.SwiftRangeIndexDescriptorKeepsItsCompleteRecipe` الواصف غير الأول عند الإزاحة 3 على المعماريتين؛ ويرفض `SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe` عشرين طفرة لكل معمارية ويعيد التحقق من تلميحات العناوين المنشورة وإخراج helper.
 
 يغطي `ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath` دورات متغيرات الكائنات بعد دمج PHI وقيمة إطار خاص داخل الدورة نفسها. تحافظ دورة الكائن على تخزين المؤشر الدقيق؛ وترفض دورة الإطار والكتابات الجزئية وتسربات الإطار غير المعروفة الإثبات.
+
+يتحقق `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` من المعماريتين والمورّدين وحوامل المعاملات والنتيجة، ويرفض الواردات الضعيفة والإزاحات والمورّدين الأجانب والرموز القديمة وتأثيرات الاستعارة المختلقة.
