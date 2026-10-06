@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: adbad5fe5176c4b6c69ffc7eb9b7a9f7f981923e7eaf69b29400f0493cc9d380 -->
+<!-- i18n-source: 8828ab2cc1f47bed24529d8d47a05ee929790480d47f96fcb54d6ebc101ae2ce -->
 
 [← 文档索引](README.md)
 
@@ -266,7 +266,7 @@ Intel HVF 的 10 项原生 transport 和全部 26 个 Darwin 工作负载均已�
 [HVF 验证记录](macos-hvf.md)，不能把内核参考程序成功当作后端通过。
 
 新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
-ARM64 三个平台共 93 项，x64 的 macOS 和 Simulator 共 62 项。
+ARM64 三个平台共 96 项，x64 的 macOS 和 Simulator 共 64 项。
 每种平台都必须执行 `LC_MAIN` 和独立编写的 `LC_UNIXTHREAD` 程序；源码清单回归确保
 以后新增的 Darwin 进程用例也进入必需集合。
 macOS 本机构建还会把同一份自编目标文件链接为宿主参考程序，对照返回、退出、内存保护/
@@ -496,3 +496,23 @@ MIB 数量取低32位，须为2–12；名称长度取完整64位且须小于102
 Release Darwin 共881项：509通过、372因后端不可用跳过、零失败；93项 ARM64 HVF 必需项全部执行。聚焦检查49项中37通过、12跳过。公开 C/CLI/配置报告163/163通过，含113项 Darwin 输入对照。未改变的 Python 方法在15.302秒内通过五种配置；原生程序21/21、验证脚本66/66通过。独立审查无阻塞，补充的错误优先级组合与独立 SDK 捕获对照均通过。新增 SDK 对照曾因缺少 StringExtras 头文件而编译失败，补上后通过，原始日志和源码已保留。原生非法长度指针探测也已保留，明确在支持边界之外。通过测试后仅整理了两个文件头注释，并成功重建。计数重叠、时限不变，无需运行失败复测。完整 GitHub CI 与 iOS 真机仍待分别验证；Intel HVF Actions 保持暂停。
 
 `build-hvf-arm64/sysctl-validation-summary.json`, `sysctl-darwin-final-evidence/`, `sysctl-focused-final.xml`, `sysctl-public.xml`, `sysctl-native-final/`, `sysctl-sdk-build-failure/`, `sysctl-initial-probe-evidence/`.
+
+## 向量文件与输出捕获 I/O
+
+`readv`/`writev`、`preadv`/`pwritev` 及 nocancel 入口复用标量文件与输出捕获实现，不增加配置或宿主访问。LP64 iovec 包含8字节地址和8字节长度；iovcnt 的有符号低32位须为1–1024。描述符查询前复制完整数组，输出别名不能改写请求；部分可读的数组仍明确不支持。
+
+先检查描述符访问权及流的定位能力，再校验长度。每项及总长度须在 INT64_MAX 内；普通文件和目录另限总长 INT_MAX。流不套用 vnode 限制：有限 stdin 按可用字节截短，输出捕获遵守预算。pwritev 的所有负偏移均在数组读取前拒绝；preadv 在描述符和长度后检查偏移。零长度项忽略地址，但仍检查描述符、目录和偏移。EOF 后不访问多余项。定位调用保留共享游标，pwritev 忽略追加标志；普通追加先按原游标一次性裁剪总请求，再选择 EOF。
+
+按向量顺序复制。后续完全无效的缓冲区返回 EFAULT，保留之前完成的字节、普通游标进度及实际写入非零字节时的 FWASWRITTEN。已获准的非零文件写入因数据缓冲区 EFAULT 返回时，使完整元数据失效，即使已有虚拟成功策略；参数错误、模型准入拒绝及后端失败保留元数据。单项读取目的区部分可写时，返回 UnsupportedService，不复制当前项，保留更早复制；单项文件写源部分可读时，在任何文件副作用前明确拒绝。授权、映射租约和总存储预算先检查；后端预检或读取失败不会发布文件或捕获字节。
+
+向量捕获在访问数据前检查 stdout/stderr 共用预算。跨越用户地址上限的项不贡献任何字节，保留之前各项；其他部分可读项保留已检查前缀并返回 EFAULT。标量地址范围错误仍优先于输出预算。复制或重定向描述符保留原始输出流。原创 `vectored-io` 在原生 macOS、五种客户机及公开 C/CLI/Python 验证全部8个入口；不增加取消、管道、线程或 iOS 真机验收。
+
+`readv`: 120/411; `writev`: 121/412; `preadv`: 540/542; `pwritev`: 541/543.
+
+[XNU vector calls](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU iovec lengths](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_subr.c), [XNU vnode I/O](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+### 向量 I/O 验证，2026-10-06
+
+Release Darwin 共937项：553通过、384因后端不可用跳过、零失败；96项必需 ARM64 HVF 全部执行。专项57项中45通过、12跳过。公开 C/CLI/报告168/168通过，含118项 Darwin 输入对照；Python 在20.397秒内覆盖五种配置。原生工作负载22/22、验证脚本66/66通过。独立审查补充稀疏定位写入故障测试，验证游标、实际 EOF、元数据拒绝及精确剩余存储容量。初次构建因旧测试仍调用已移除的内部查询而失败，现改为验证实际捕获输出；新增服务事件断言的 optional<bool> 误用曾使8项本已成功的客户机运行报失败，修正后相关检查全部通过。两次失败均保留源码与日志。计数重叠、时限不变；完整 GitHub CI 与 iOS 真机另行验证，Intel HVF Actions 保持暂停。
+
+`build-hvf-arm64/vector-validation-summary.json`, `vector-darwin-final-evidence/`, `vector-focused-final.xml`, `vector-public.xml`, `vector-native-initial/`, `vector-initial-build-failure/`, `vector-initial-assertion-evidence/`.

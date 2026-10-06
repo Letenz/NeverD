@@ -36,6 +36,7 @@
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
+#include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
 // The raw LP64 entry point exported by libsystem_kernel; the public legacy
@@ -514,6 +515,11 @@ TEST(DarwinNative, DirectoryRecordsMatchHostSDKAndCapturedFilesystemBytes) {
 #endif
 }
 TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
+#if defined(__APPLE__)
+  static_assert(sizeof(struct iovec) == 16);
+  static_assert(offsetof(struct iovec, iov_base) == 0);
+  static_assert(offsetof(struct iovec, iov_len) == 8);
+#endif
 #ifndef NEVERD_DARWIN_NATIVE_ORACLE
 #if defined(__APPLE__)
   if (std::getenv("NEVERD_REQUIRE_HVF"))

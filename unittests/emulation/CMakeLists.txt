@@ -190,6 +190,7 @@ add_neverd_unittest(NeverDDarwinProcessTests
   DarwinImageTests.cpp
   DarwinMemoryTests.cpp
   DarwinFileTests.cpp
+  DarwinVectorTests.cpp
   DarwinTimeTests.cpp
   DarwinSystemTests.cpp
   DarwinNativeTests.cpp

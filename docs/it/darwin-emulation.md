@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: adbad5fe5176c4b6c69ffc7eb9b7a9f7f981923e7eaf69b29400f0493cc9d380 -->
+<!-- i18n-source: 8828ab2cc1f47bed24529d8d47a05ee929790480d47f96fcb54d6ebc101ae2ce -->
 
 [← Indice della documentazione](README.md)
 
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-La verifica autonoma richiede tutti i 93 casi nativi ARM64 o 62 x64, compresi `LC_MAIN` e `LC_UNIXTHREAD` su ogni piattaforma. Casi obbligatori mancanti/saltati o assenza di `ld64.lld` causano errore.
+La verifica autonoma richiede tutti i 96 casi nativi ARM64 o 64 x64, compresi `LC_MAIN` e `LC_UNIXTHREAD` su ogni piattaforma. Casi obbligatori mancanti/saltati o assenza di `ld64.lld` causano errore.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -392,3 +392,23 @@ Il programma originale `system-info` verifica ABI nativa macOS e guest; `virtual
 Release Darwin: 881 registrazioni, 509 superate, 372 saltate per backend indisponibile, nessun errore; eseguite tutte le 93 identità ARM64 HVF obbligatorie. Mirate: 37/49 superate, 12 saltate. C/CLI/report: 163/163, inclusi 113 confronti Darwin. Metodo Python invariato: cinque profili in 15.302 s; programmi nativi 21/21 e script 66/66. Revisione indipendente senza blocchi; priorità aggiuntive e oracolo SDK superati. Una compilazione del nuovo oracolo è fallita per StringExtras mancante, poi è riuscita aggiungendolo; codice e log preservati. Le sonde native con lunghezza non valida restano conservate e fuori contratto. Dopo i test sono stati sistemati solo due commenti iniziali, con ricompilazione riuscita. Conteggi sovrapposti, limiti invariati, nessuna ripetizione per errori runtime necessaria. GitHub CI completa e iOS fisico separati; Intel HVF Actions sospeso.
 
 `build-hvf-arm64/sysctl-validation-summary.json`, `sysctl-darwin-final-evidence/`, `sysctl-focused-final.xml`, `sysctl-public.xml`, `sysctl-native-final/`, `sysctl-sdk-build-failure/`, `sysctl-initial-probe-evidence/`.
+
+## I/O vettoriale dei file e cattura
+
+`readv`/`writev`, `preadv`/`pwritev` e nocancel condividono la logica scalare di file e cattura, senza nuove opzioni o accessi host. Ogni iovec LP64 contiene indirizzo e lunghezza di otto byte. I32 bit bassi con segno di iovcnt devono essere1–1024. L’intero array viene copiato prima della ricerca del descrittore, quindi gli alias di output non cambiano la richiesta. Un array parzialmente leggibile resta non supportato.
+
+Permessi e posizionabilità dello stream precedono le lunghezze. Ogni valore e la somma devono rientrare in INT64_MAX; file e directory richiedono inoltre una somma <= INT_MAX. Lo stdin finito si limita ai byte disponibili e la cattura mantiene il proprio budget. pwritev rifiuta ogni offset negativo prima dell’array; preadv lo verifica dopo descrittore e lunghezze. Gli elementi vuoti ignorano l’indirizzo, mantenendo i controlli di descrittore, tipo e offset. Dopo EOF non si accede alla coda. Le chiamate posizionate conservano il cursore e pwritev ignora append. L’append ordinario riduce l’intera richiesta una sola volta secondo il cursore iniziale, poi sceglie EOF.
+
+Un elemento successivo totalmente invalido restituisce EFAULT mantenendo byte precedenti, avanzamento del cursore normale e FWASWRITTEN dopo aver scritto almeno un byte. Una scrittura non vuota ammessa che restituisce EFAULT per un buffer dati invalida i metadati completi; errori di argomento, rifiuti del modello e guasti backend li conservano. Una destinazione di lettura parzialmente scrivibile arresta con UnsupportedService senza copiare quell’elemento, conservando le copie precedenti. Una sorgente file parzialmente leggibile viene rifiutata prima di ogni effetto sul file. Autorizzazione, lease dei mapping e budget totale precedono la scrittura; errori di verifica o lettura del backend non pubblicano byte di file o cattura.
+
+La cattura verifica prima il budget comune stdout/stderr. Un elemento che oltrepassa il limite degli indirizzi utente non contribuisce byte; quelli precedenti restano. Altri prefissi leggibili vengono catturati con EFAULT. La priorità scalare dell’errore di intervallo sul budget resta invariata. Descrittori duplicati o reindirizzati mantengono la destinazione. L’originale `vectored-io` verifica otto ingressi su macOS nativo, cinque combinazioni guest e C/CLI/Python. Non aggiunge cancellazione, pipe, thread o accettazione iOS fisica.
+
+`readv`: 120/411; `writev`: 121/412; `preadv`: 540/542; `pwritev`: 541/543.
+
+[XNU vector calls](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU iovec lengths](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_subr.c), [XNU vnode I/O](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+### Verifica I/O vettoriale, 2026-10-06
+
+Release Darwin:937 registrazioni,553 superate,384 saltate per backend indisponibile, zero errori; tutte96 le identità ARM64 HVF richieste eseguite. Mirati45/57 superati,12 saltati. C/CLI/report168/168, inclusi118 confronti Darwin; Python copre cinque combinazioni in 20.397s. Nativi22/22, script66/66. La revisione indipendente ha aggiunto un errore di scrittura posizionata sparsa, verificando cursore, EOF reale, rifiuto dei metadati e capacità residua esatta. La prima compilazione usava ancora una query interna rimossa in un vecchio test, ora sostituita dal controllo dell’output reale. Un errore optional<bool> nella nuova asserzione degli eventi ha segnalato otto esecuzioni guest riuscite come fallite; dopo la correzione tutti i controlli interessati sono passati. Fonti e log di entrambi gli errori conservati. Conteggi sovrapposti, scadenze immutate. GitHub CI completa e iOS fisico separati; Intel HVF Actions sospeso.
+
+`build-hvf-arm64/vector-validation-summary.json`, `vector-darwin-final-evidence/`, `vector-focused-final.xml`, `vector-public.xml`, `vector-native-initial/`, `vector-initial-build-failure/`, `vector-initial-assertion-evidence/`.

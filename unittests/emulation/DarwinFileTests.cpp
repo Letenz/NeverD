@@ -2099,13 +2099,15 @@ TEST_P(DarwinFileTest, PerDescriptorFlagsDup2AndCaptureSinkIdentity) {
   EXPECT_EQ(ok(ServiceKind::Fcntl, {21, 1}), 0u);
   EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 0u);
   EXPECT_EQ(ok(ServiceKind::Dup2, {1, A}), A);
-  EXPECT_EQ(Files->outputSink(A), 1u);
+  EXPECT_EQ(ok(ServiceKind::Write, {A, Base, 1}), 1u);
   EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 1}), 0u);
   EXPECT_EQ(ok(ServiceKind::Close, {1}), 0u);
-  EXPECT_FALSE(Files->outputSink(1));
-  EXPECT_EQ(Files->outputSink(A), 1u);
+  error(ServiceKind::Write, {1, Base, 1}, 9);
+  EXPECT_EQ(ok(ServiceKind::Write, {A, Base, 1}), 1u);
   EXPECT_EQ(ok(ServiceKind::Dup2, {A, 2}), 2u);
-  EXPECT_EQ(Files->outputSink(2), 1u);
+  EXPECT_EQ(ok(ServiceKind::Write, {2, Base, 1}), 1u);
+  EXPECT_EQ(Result.StandardOutput, "///");
+  EXPECT_TRUE(Result.StandardError.empty());
   error(ServiceKind::Dup2, {A, UINT64_MAX}, 9);
   error(ServiceKind::Fcntl, {A, 0, UINT64_MAX}, 22);
 }

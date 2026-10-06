@@ -18,13 +18,11 @@ llvm::Error validateFileOptions(const DarwinFileOptions &Options);
 class DarwinFiles {
 public:
   DarwinFiles(GuestMemory &Memory,
-              const std::optional<DarwinFileOptions> &Options);
+              const std::optional<DarwinFileOptions> &Options,
+              uint64_t OutputLimit = process_defaults::Output);
   llvm::Expected<std::optional<ServiceResult>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ProcessResult &Result);
-  /// Original capture sink, even when reached through a duplicated FD.
-  std::optional<unsigned> outputSink(uint32_t FD) const;
-  void recordWrite(uint32_t FD);
   struct Mapping {
     llvm::ArrayRef<uint8_t> Bytes;
     /// The VM owner retains this lease until every mapped range is unmapped.
@@ -75,10 +73,16 @@ private:
     std::shared_ptr<Description> Open;
     bool CloseOnExec = false;
   };
+  struct Buffer {
+    uint64_t Address;
+    uint64_t Size;
+  };
+  using VectorInput = std::variant<std::vector<Buffer>, uint32_t, const char *>;
   using Pathname = std::variant<std::string, uint32_t>;
   using Lookup = std::variant<Description, uint32_t, const char *>;
   GuestMemory &Memory;
   const std::optional<DarwinFileOptions> &Options;
+  const uint64_t OutputLimit;
   std::map<uint32_t, Descriptor> Descriptors;
   std::map<std::string, std::shared_ptr<Contents>> Nodes;
   std::vector<std::shared_ptr<Contents>> Unlinked;
@@ -118,11 +122,15 @@ private:
   copyout(uint64_t Address, llvm::ArrayRef<uint8_t> Bytes,
           const char *PartialDiagnostic, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
-  read(Description &File, uint64_t Address, uint64_t Count, uint64_t Offset,
-       bool Positioned, ProcessResult &Result);
+  read(Description &File, llvm::ArrayRef<Buffer> Buffers, uint64_t Count,
+       uint64_t Offset, bool Positioned, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
-  write(Description &File, uint64_t Address, uint64_t Count, uint64_t Offset,
-        bool Positioned, ProcessResult &Result);
+  write(Description &File, llvm::ArrayRef<Buffer> Buffers, uint64_t Count,
+        uint64_t Offset, bool Positioned, ProcessResult &Result);
+  llvm::Expected<VectorInput> readVectors(uint64_t Address, uint32_t Count);
+  llvm::Expected<std::optional<ServiceResult>>
+  capture(Description &File, llvm::ArrayRef<Buffer> Buffers, uint64_t Count,
+          bool Vectored, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   resize(Description &File, uint64_t Size, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>

@@ -1501,6 +1501,144 @@ static int system_info(int emit_values) {
   return 37;
 }
 
+/* Independent LP64 records: no SDK types or model constants. */
+struct vector_span {
+  u64 address, length;
+};
+static int vectored_io(const char *path) {
+  unsigned error;
+  unsigned char bytes[32];
+  const char initial[] = "0123456789", replacement[] = "ABC";
+  struct vector_span spans[3];
+  int check = 50;
+#define VECTOR_EXPECT(expression)                                              \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  u64 fd = call(5, (u64)path, 2, 0, 0, 0, 0, &error);
+  VECTOR_EXPECT(!error && fd >= 3);
+  u64 duplicate = call(41, fd, 0, 0, 0, 0, 0, &error);
+  VECTOR_EXPECT(!error && duplicate != fd);
+  for (unsigned alias = 0; alias != 2; ++alias) {
+    const u64 read_number = alias ? 411 : 120;
+    const u64 write_number = alias ? 412 : 121;
+    const u64 pread_number = alias ? 542 : 540;
+    const u64 pwrite_number = alias ? 543 : 541;
+    VECTOR_EXPECT(call(154, fd, (u64)initial, 10, 0, 0, 0, &error) == 10 &&
+                  !error);
+    VECTOR_EXPECT(call(199, fd, 0, 0, 0, 0, 0, &error) == 0 && !error);
+    for (unsigned i = 0; i != sizeof(bytes); ++i)
+      bytes[i] = 0xa5;
+    spans[0] = (struct vector_span){(u64)(bytes + 1), 2};
+    spans[1] = (struct vector_span){(u64)(bytes + 5), 3};
+    VECTOR_EXPECT(call(read_number, duplicate, (u64)spans, 0x1234567800000002UL,
+                       0, 0, 0, &error) == 5 &&
+                  !error && !secondary);
+    VECTOR_EXPECT(bytes[0] == 0xa5 && bytes[1] == '0' && bytes[2] == '1' &&
+                  bytes[3] == 0xa5 && bytes[4] == 0xa5 && bytes[5] == '2' &&
+                  bytes[6] == '3' && bytes[7] == '4' && bytes[8] == 0xa5);
+    VECTOR_EXPECT(call(199, fd, 0, 1, 0, 0, 0, &error) == 5 && !error);
+    VECTOR_EXPECT(call(pread_number, fd, (u64)spans, 2, 1, 0, 0, &error) == 5 &&
+                  !error && bytes[1] == '1' && bytes[7] == '5');
+    VECTOR_EXPECT(call(199, duplicate, 0, 1, 0, 0, 0, &error) == 5 && !error);
+    VECTOR_EXPECT(call(read_number, (u64)-1, 1, 0, 0, 0, 0, &error) == 22 &&
+                  error);
+    VECTOR_EXPECT(call(write_number, (u64)-1, 1, 1025, 0, 0, 0, &error) == 22 &&
+                  error);
+    VECTOR_EXPECT(call(read_number, (u64)-1, 1, 2, 0, 0, 0, &error) == 14 &&
+                  error);
+    VECTOR_EXPECT(call(pwrite_number, (u64)-1, 1, 2, (u64)-2, 0, 0, &error) ==
+                      22 &&
+                  error);
+    VECTOR_EXPECT(call(pread_number, (u64)-1, 1, 2, (u64)-2, 0, 0, &error) ==
+                      14 &&
+                  error);
+    spans[0] = (struct vector_span){1, (u64)-1};
+    VECTOR_EXPECT(call(write_number, (u64)-1, (u64)spans, 1, 0, 0, 0, &error) ==
+                      9 &&
+                  error);
+    VECTOR_EXPECT(
+        call(write_number, fd, (u64)spans, 1, 0, 0, 0, &error) == 22 && error);
+    spans[0] = (struct vector_span){1, 0x80000000UL};
+    VECTOR_EXPECT(call(read_number, fd, (u64)spans, 1, 0, 0, 0, &error) == 22 &&
+                  error);
+    spans[0] = (struct vector_span){(u64)-1, 0};
+    spans[1] = (struct vector_span){1, 0};
+    VECTOR_EXPECT(call(read_number, fd, (u64)spans, 2, 0, 0, 0, &error) == 0 &&
+                  !error);
+    VECTOR_EXPECT(call(pread_number, fd, (u64)spans, 2, 0x7fffffffffffffffUL, 0,
+                       0, &error) == 0 &&
+                  !error);
+    VECTOR_EXPECT(call(pwrite_number, fd, (u64)spans, 2, 0x7fffffffffffffffUL,
+                       0, 0, &error) == 27 &&
+                  error);
+    spans[0] = (struct vector_span){(u64)replacement, 1};
+    spans[1] = (struct vector_span){(u64)(replacement + 1), 2};
+    VECTOR_EXPECT(call(pwrite_number, fd, (u64)spans, 2, 2, 0, 0, &error) ==
+                      3 &&
+                  !error && !secondary);
+    VECTOR_EXPECT(call(199, fd, 0, 1, 0, 0, 0, &error) == 5 && !error);
+    VECTOR_EXPECT(
+        call(write_number, duplicate, (u64)spans, 2, 0, 0, 0, &error) == 3 &&
+        !error);
+    VECTOR_EXPECT(call(199, fd, 0, 1, 0, 0, 0, &error) == 8 && !error);
+    VECTOR_EXPECT(call(153, fd, (u64)bytes, 10, 0, 0, 0, &error) == 10 &&
+                  !error);
+    bytes[10] = 0;
+    VECTOR_EXPECT(equal((char *)bytes, "01ABCABC89"));
+    VECTOR_EXPECT(call(199, fd, 2, 0, 0, 0, 0, &error) == 2 && !error);
+    spans[0] = (struct vector_span){(u64)bytes, 3};
+    spans[1] = (struct vector_span){1, 3};
+    VECTOR_EXPECT(call(read_number, fd, (u64)spans, 2, 0, 0, 0, &error) == 14 &&
+                  error && bytes[0] == 'A' && bytes[1] == 'B' &&
+                  bytes[2] == 'C');
+    VECTOR_EXPECT(call(199, duplicate, 0, 1, 0, 0, 0, &error) == 5 && !error);
+    spans[0] = (struct vector_span){(u64)replacement, 1};
+    VECTOR_EXPECT(
+        call(write_number, fd, (u64)spans, 2, 0, 0, 0, &error) == 14 && error);
+    VECTOR_EXPECT(call(199, duplicate, 0, 1, 0, 0, 0, &error) == 6 && !error);
+    VECTOR_EXPECT((call(92, fd, 3, 0, 0, 0, 0, &error) & 0x10000) && !error);
+    spans[0] = (struct vector_span){(u64)bytes, 12};
+    VECTOR_EXPECT(
+        call(pread_number, fd, (u64)spans, 2, 0, 0, 0, &error) == 10 && !error);
+    spans[0] = (struct vector_span){(u64)&spans[1], 8};
+    spans[1] = (struct vector_span){(u64)bytes, 2};
+    VECTOR_EXPECT(call(pread_number, fd, (u64)spans, 2, 0, 0, 0, &error) ==
+                      10 &&
+                  !error && bytes[0] == '8' && bytes[1] == '9');
+    spans[0] = (struct vector_span){(u64)bytes, 3};
+    spans[1] = (struct vector_span){(u64)bytes, 3};
+    VECTOR_EXPECT(call(pread_number, fd, (u64)spans, 2, 0, 0, 0, &error) == 6 &&
+                  !error && bytes[0] == 'B' && bytes[1] == 'C' &&
+                  bytes[2] == 'A');
+  }
+  VECTOR_EXPECT(call(92, fd, 4, 8, 0, 0, 0, &error) == 0 && !error);
+  VECTOR_EXPECT(call(199, fd, 0x7ffffffffffffffdUL, 0, 0, 0, 0, &error) ==
+                    0x7ffffffffffffffdUL &&
+                !error);
+  spans[0] = (struct vector_span){(u64)replacement, 1};
+  spans[1] = (struct vector_span){(u64)(replacement + 1), 2};
+  VECTOR_EXPECT(call(121, fd, (u64)spans, 2, 0, 0, 0, &error) == 2 && !error);
+  VECTOR_EXPECT(call(199, duplicate, 0, 1, 0, 0, 0, &error) == 12 && !error);
+  VECTOR_EXPECT(call(541, fd, (u64)spans, 2, 1, 0, 0, &error) == 3 && !error);
+  VECTOR_EXPECT(call(199, fd, 0, 1, 0, 0, 0, &error) == 12 && !error);
+  VECTOR_EXPECT(call(153, fd, (u64)bytes, 12, 0, 0, 0, &error) == 12 && !error);
+  bytes[12] = 0;
+  VECTOR_EXPECT(equal((char *)bytes, "0ABCCABC89AB"));
+  VECTOR_EXPECT(call(6, duplicate, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  VECTOR_EXPECT(call(6, fd, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  const char marker[] = "v!";
+  spans[0] = (struct vector_span){(u64)marker, 1};
+  spans[1] = (struct vector_span){(u64)-1, 0};
+  spans[2] = (struct vector_span){(u64)(marker + 1), 1};
+  VECTOR_EXPECT(call(412, 1, (u64)spans, 3, 0, 0, 0, &error) == 2 && !error &&
+                !secondary);
+#undef VECTOR_EXPECT
+  return 37;
+}
+
 static int output_descriptors(void) {
   unsigned error;
   const char text[] = "ok";
@@ -1528,6 +1666,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "vectored-io"))
+    return argc < 3 ? 79 : vectored_io(argv[2]);
   if (equal(argv[1], "system-info") || equal(argv[1], "virtual-system"))
     return system_info(equal(argv[1], "virtual-system"));
   if (equal(argv[1], "time-null"))

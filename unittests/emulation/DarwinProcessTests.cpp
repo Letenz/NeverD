@@ -328,6 +328,28 @@ TEST_P(DarwinProcess, DirectoryEnumerationPreservesRecordsCookiesAndCopyOrder) {
   EXPECT_TRUE(Result->StandardError.empty());
   EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
 }
+TEST_P(DarwinProcess,
+       VectorIOPreservesCopyOrderFaultPrefixesAndAggregateOffsets) {
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->WritableFiles.insert("/data");
+  Options.Arguments[2] = "/data";
+  auto Result = run("vectored-io");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "v!");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {120u, 121u, 411u, 412u, 540u, 541u, 542u, 543u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Result &&
+             Event.Error == false;
+    })) << Number;
+}
 TEST_P(DarwinProcess, SystemQueriesPreserveExplicitValuesWidthsAndCopyOrder) {
   auto Missing = run("system-info");
   ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());

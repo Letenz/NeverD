@@ -62,58 +62,6 @@ std::optional<ServiceBinding> resolveService(GuestArchitecture ISA,
       return Entry;
   return std::nullopt;
 }
-llvm::Expected<std::optional<ServiceResult>>
-writeOutput(ExecutionBackend &CPU, DarwinFiles &Files,
-            const ProcessServiceEvent &Event, const ProcessOptions &Options,
-            ProcessResult &Result) {
-  const uint32_t FD = Event.Arguments[0];
-  const uint64_t Address = Event.Arguments[1], Count = Event.Arguments[2];
-  // XNU write_internal validates nbyte before descriptor lookup or copying.
-  // An invalid request cannot consume the output allowance or publish bytes.
-  if (Count > MaxWriteBytes)
-    return std::optional<ServiceResult>({InvalidArgument, true});
-  auto Sink = Files.outputSink(FD);
-  if (!Sink)
-    return std::optional<ServiceResult>({BadDescriptor, true});
-  if (!Count)
-    return std::optional<ServiceResult>({0, false});
-  if (Address >= UserLimit || Count > UserLimit - Address)
-    return std::optional<ServiceResult>({BadAddress, true});
-  const uint64_t Used =
-      Result.StandardOutput.size() + Result.StandardError.size();
-  if (Used > Options.OutputLimit || Count > Options.OutputLimit - Used) {
-    Result.Stop = ProcessStopReason::OutputLimit;
-    Result.Diagnostic = diagnostic::OutputLimit;
-    return std::optional<ServiceResult>();
-  }
-  uint64_t Readable = 0;
-  // Access granules remain the CPU's 4 KiB mappings. Querying permissions must
-  // not publish a CPU fault while delivering a recoverable BSD errno.
-  while (Readable < Count) {
-    const uint64_t Start = Address + Readable;
-    const uint64_t Size = std::min(Count - Readable, 4096 - Start % 4096);
-    auto Access = CPU.canAccess(Start, Size, Read | UserAccessible);
-    if (!Access)
-      return Access.takeError();
-    if (!*Access)
-      break;
-    Readable += Size;
-  }
-  if (!Readable)
-    return std::optional<ServiceResult>({BadAddress, true});
-  std::string Bytes(Readable, '\0');
-  if (auto E = CPU.read(Address, llvm::MutableArrayRef<uint8_t>(
-                                     reinterpret_cast<uint8_t *>(Bytes.data()),
-                                     Bytes.size())))
-    return std::move(E);
-  (*Sink == 1 ? Result.StandardOutput : Result.StandardError).append(Bytes);
-  Files.recordWrite(FD);
-  // XNU's write path retains EFAULT after a partial copy; unlike interruption
-  // errors, it does not convert that error into a successful short write.
-  return std::optional<ServiceResult>(Readable == Count
-                                          ? ServiceResult{Readable, false}
-                                          : ServiceResult{BadAddress, true});
-}
 } // namespace
 
 llvm::Expected<ProcessServiceEvent> readService(ExecutionBackend &CPU,
@@ -183,9 +131,10 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
     Result.ExitStatus = Event.Arguments[0] & 0xff;
     return std::optional<ServiceResult>();
   case ServiceKind::Write:
-    if (Files.outputSink(uint32_t(Event.Arguments[0])))
-      return writeOutput(CPU, Files, Event, Options, Result);
-    return Files.handle(Kind, Event, Result);
+  case ServiceKind::Readv:
+  case ServiceKind::Writev:
+  case ServiceKind::Preadv:
+  case ServiceKind::Pwritev:
   case ServiceKind::Pwrite:
   case ServiceKind::Truncate:
   case ServiceKind::Ftruncate:

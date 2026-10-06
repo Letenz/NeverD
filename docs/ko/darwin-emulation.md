@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: adbad5fe5176c4b6c69ffc7eb9b7a9f7f981923e7eaf69b29400f0493cc9d380 -->
+<!-- i18n-source: 8828ab2cc1f47bed24529d8d47a05ee929790480d47f96fcb54d6ebc101ae2ce -->
 
 [← 문서 목록](README.md)
 
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-독립 워크로드 검증은 ARM64 93개 또는 x64 62개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
+독립 워크로드 검증은 ARM64 96개 또는 x64 64개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -392,3 +392,23 @@ MIB 개수는 하위32비트로2～12, 이름 길이는 전체64비트로1024 �
 Release Darwin 881개: 통과509, 백엔드 미지원 건너뜀372, 실패0. ARM64 HVF 필수93개를 모두 실행했습니다. 집중49개는37 통과·12 건너뜀. C/CLI/보고163/163(Darwin 비교113), 변경 없는 Python 다섯 구성15.302초, 원본 네이티브21/21, 검증 스크립트66/66 통과. 독립 검토에 차단 문제는 없으며 추가 오류 우선순위 조합과 SDK 캡처 비교도 통과했습니다. 새 SDK 검사의 StringExtras 헤더 누락으로 한 번 컴파일 실패 후 추가하여 성공했고 원본 로그·소스를 보존했습니다. 잘못된 길이 포인터의 네이티브 실험도 보존하며 명시적으로 지원 범위 밖입니다. 통과 후 파일 머리말 주석 두 개만 정리하고 재빌드했습니다. 집계는 중복, 시간 제한은 그대로이며 실행 실패 재검사는 없었습니다. 전체 GitHub CI·iOS 실기기는 별도, Intel HVF Actions는 중단 상태입니다.
 
 `build-hvf-arm64/sysctl-validation-summary.json`, `sysctl-darwin-final-evidence/`, `sysctl-focused-final.xml`, `sysctl-public.xml`, `sysctl-native-final/`, `sysctl-sdk-build-failure/`, `sysctl-initial-probe-evidence/`.
+
+## 벡터 파일 I/O와 출력 캡처
+
+`readv`/`writev`, `preadv`/`pwritev` 및 nocancel 진입점은 스칼라 파일·출력 캡처 구현을 공유합니다. 새 설정이나 호스트 접근은 없습니다. LP64 iovec는 8바이트 주소와 8바이트 길이이며, iovcnt의 부호 있는 하위32비트는1–1024입니다. 설명자 조회 전에 전체 배열을 복사하여 출력 별칭이 요청을 바꾸지 못합니다. 일부만 읽을 수 있는 배열은 미지원입니다.
+
+접근 권한과 스트림 위치 지정 여부를 먼저 검사한 뒤 각 길이와 합계를 INT64_MAX 이하로 제한합니다. 일반 파일·디렉터리는 합계가 INT_MAX 이하여야 합니다. 유한 stdin은 남은 입력으로 줄이고 캡처는 출력 예산을 적용합니다. pwritev의 모든 음수 위치는 배열 전에 거부하고, preadv는 설명자·길이 뒤에 위치를 검사합니다. 빈 항목은 주소를 무시하지만 설명자·종류·위치 규칙은 유지합니다. EOF 뒤 항목은 접근하지 않습니다. 위치 지정 호출은 커서를 보존하고 pwritev는 추가 쓰기를 무시합니다. 일반 추가 쓰기는 원래 커서로 전체 요청을 한 번 자른 뒤 EOF를 선택합니다.
+
+뒤의 완전히 잘못된 항목은 EFAULT를 반환하면서 앞서 완료한 바이트와 일반 커서 진행, 0보다 많은 바이트를 쓴 경우의 FWASWRITTEN을 보존합니다. 허용된 비어 있지 않은 파일 쓰기가 데이터 버퍼 EFAULT를 반환하면 전체 메타데이터를 무효화합니다. 인수 오류, 모델 허용 거부 및 백엔드 실패는 메타데이터를 유지합니다. 일부만 쓸 수 있는 읽기 목적지는 UnsupportedService로 중단하며 현재 항목은 복사하지 않고 이전 복사는 보존합니다. 일부만 읽을 수 있는 파일 쓰기 원본은 모든 파일 효과 전에 미지원으로 중단합니다. 권한·매핑 임대·전체 저장 예산을 먼저 검사하며, 백엔드 사전 검사나 읽기 실패는 파일·캡처 바이트를 게시하지 않습니다.
+
+캡처는 stdout/stderr 공유 예산을 먼저 검사합니다. 사용자 주소 한계를 넘는 항목은 복사하지 않고 이전 항목만 보존합니다. 다른 부분 입력은 확인된 접두부와 EFAULT를 남깁니다. 스칼라 범위 오류는 계속 예산보다 우선합니다. 복제·리디렉션된 설명자는 원래 출력 대상을 유지합니다. 독자 `vectored-io`는 원시 macOS와5개 게스트 구성, 공개 C/CLI/Python에서8개 진입점을 검증합니다. 취소·파이프·스레드·실제 iOS 검증은 추가하지 않습니다.
+
+`readv`: 120/411; `writev`: 121/412; `preadv`: 540/542; `pwritev`: 541/543.
+
+[XNU vector calls](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU iovec lengths](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_subr.c), [XNU vnode I/O](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+### 벡터 I/O 검증, 2026-10-06
+
+Release Darwin 937개 등록:553개 통과, 백엔드 미제공384개 건너뜀, 실패 없음. 필수 ARM64 HVF 96개를 모두 실행했습니다. 집중 검사는45/57개 통과,12개 건너뜀. 공개 C/CLI/report 168/168개 통과, Darwin 입력 비교118개 포함. Python은20.397초에5개 구성을 검증했고 네이티브22/22, 검증 스크립트66/66 통과. 독립 검토로 희소 위치 지정 쓰기 실패 테스트를 추가해 커서·실제 EOF·메타데이터 거부·정확한 남은 용량을 확인했습니다. 첫 빌드는 기존 테스트가 삭제된 내부 조회를 참조해 실패했으며 실제 캡처 출력 검사로 바꿨습니다. 새 이벤트 단언의 optional<bool> 오용은 성공한 게스트8개를 실패로 보고했지만 수정 후 관련 검사는 모두 통과했습니다. 두 실패의 소스와 로그를 보존합니다. 수치는 중복되고 기한은 그대로입니다. 전체 GitHub CI와 실제 iOS는 별도이며 Intel HVF Actions는 계속 중지합니다.
+
+`build-hvf-arm64/vector-validation-summary.json`, `vector-darwin-final-evidence/`, `vector-focused-final.xml`, `vector-public.xml`, `vector-native-initial/`, `vector-initial-build-failure/`, `vector-initial-assertion-evidence/`.

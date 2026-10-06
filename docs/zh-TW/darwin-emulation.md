@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: adbad5fe5176c4b6c69ffc7eb9b7a9f7f981923e7eaf69b29400f0493cc9d380 -->
+<!-- i18n-source: 8828ab2cc1f47bed24529d8d47a05ee929790480d47f96fcb54d6ebc101ae2ce -->
 
 [← 文件索引](README.md)
 
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-獨立工作負載驗收要求 ARM64 93 項或 x64 62 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
+獨立工作負載驗收要求 ARM64 96 項或 x64 64 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -392,3 +392,23 @@ MIB 數量取低32位且須為2–12；名稱長度取完整64位且須小於102
 Release Darwin 共881項：509通過、372因後端不可用跳過、零失敗；93項 ARM64 HVF 必需項全數執行。聚焦49項中37通過、12跳過。公開 C/CLI/報告163/163通過，含113項 Darwin 輸入比對。未更改的 Python 方法在15.302秒內通過五種設定；原生21/21、驗證腳本66/66通過。獨立審查無阻塞，補充錯誤優先序與 SDK 捕獲對照皆通過。新增對照曾因缺 StringExtras 標頭而編譯失敗，補上後通過，原始日誌與程式碼已保留。原生錯誤長度指標探測已保留且明確不在支援範圍。測試後只整理兩個檔頭註解，並成功重建。計數重疊、期限不變，不需執行失敗重測。完整 GitHub CI、iOS 實機另行驗證；Intel HVF Actions 維持暫停。
 
 `build-hvf-arm64/sysctl-validation-summary.json`, `sysctl-darwin-final-evidence/`, `sysctl-focused-final.xml`, `sysctl-public.xml`, `sysctl-native-final/`, `sysctl-sdk-build-failure/`, `sysctl-initial-probe-evidence/`.
+
+## 向量檔案與輸出擷取 I/O
+
+`readv`/`writev`、`preadv`/`pwritev` 及 nocancel 入口共用純量檔案與輸出擷取實作，不增加設定或主機存取。LP64 iovec 包含8位元組位址和8位元組長度；iovcnt 的有號低32位元須為1–1024。查詢描述符前複製完整陣列，輸出別名不能改寫要求；部分可讀陣列仍明確不支援。
+
+先檢查描述符權限與串流定位能力，再驗證長度。每項及總長須在 INT64_MAX 內；一般檔案和目錄另限總長 INT_MAX。串流不套用 vnode 限制：有限 stdin 依可用位元組截短，擷取遵守輸出預算。pwritev 的所有負偏移在陣列讀取前拒絕；preadv 在描述符與長度後檢查偏移。零長度項忽略位址，但保留描述符、目錄及偏移檢查；EOF 後不碰多餘項。定位呼叫保留游標，pwritev 忽略追加旗標；一般追加先按原游標一次裁剪總要求，再選 EOF。
+
+依向量順序複製。後續完全無效的項回傳 EFAULT，保留先前位元組、一般游標進度及實際寫入非零位元組時的 FWASWRITTEN。已獲准的非零檔案寫入因資料緩衝區 EFAULT 返回時，使完整中繼資料失效，即使有虛擬成功策略；參數錯誤、模型准入拒絕及後端失敗保留中繼資料。單項讀取目的地部分可寫時，回傳 UnsupportedService，不複製當前項，保留早先複製；單項檔案寫入來源部分可讀時，在任何檔案副作用前拒絕。授權、映射租約和總儲存預算先檢查；後端預檢或讀取失敗不發布檔案或擷取位元組。
+
+向量擷取先檢查 stdout/stderr 共用預算。跨越使用者位址上限的項不產生位元組，先前項仍保留；其他部分可讀項保留已檢查前綴並回傳 EFAULT。純量範圍錯誤仍優先於預算。複製或重新導向描述符保留原輸出流。原創 `vectored-io` 在原生 macOS、五種客體及公開 C/CLI/Python 驗證全部8個入口；不增加取消、管線、執行緒或 iOS 實機驗收。
+
+`readv`: 120/411; `writev`: 121/412; `preadv`: 540/542; `pwritev`: 541/543.
+
+[XNU vector calls](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU iovec lengths](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_subr.c), [XNU vnode I/O](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+### 向量 I/O 驗證，2026-10-06
+
+Release Darwin 共937項：553通過、384因後端不可用跳過、零失敗；96項必需 ARM64 HVF 全部執行。專項57項中45通過、12跳過。公開 C/CLI/報告168/168通過，含118項 Darwin 輸入對照；Python 在20.397秒內涵蓋五種設定。原生工作負載22/22、驗證腳本66/66通過。獨立審查補充稀疏定位寫入故障測試，驗證游標、實際 EOF、中繼資料拒絕與精確剩餘儲存容量。初次建置因舊測試仍呼叫已移除的內部查詢而失敗，現改驗證實際擷取輸出；新增事件斷言誤用 optional<bool> 曾使8項已成功的客體執行報失敗，修正後相關檢查全數通過。兩次失敗均保留原始碼與日誌。計數重疊、時限不變；完整 GitHub CI 與 iOS 實機另驗，Intel HVF Actions 保持暫停。
+
+`build-hvf-arm64/vector-validation-summary.json`, `vector-darwin-final-evidence/`, `vector-focused-final.xml`, `vector-public.xml`, `vector-native-initial/`, `vector-initial-build-failure/`, `vector-initial-assertion-evidence/`.

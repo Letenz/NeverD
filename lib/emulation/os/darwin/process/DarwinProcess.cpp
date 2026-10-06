@@ -119,7 +119,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     return Session.takeError();
   auto &CPU = (*Session)->cpu();
   DarwinMemory Memory(**Space, Image->Memory, Options);
-  DarwinFiles Files(CPU, Options.DarwinFiles);
+  DarwinFiles Files(CPU, Options.DarwinFiles, Options.OutputLimit);
   ProcessResult Result{Profile.Profile, Image->Architecture, Backend->Kind,
                        Backend->Reason};
   Result.Entry = Result.PC = Image->Plan.Entry;

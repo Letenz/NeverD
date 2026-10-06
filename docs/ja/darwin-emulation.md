@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: adbad5fe5176c4b6c69ffc7eb9b7a9f7f981923e7eaf69b29400f0493cc9d380 -->
+<!-- i18n-source: 8828ab2cc1f47bed24529d8d47a05ee929790480d47f96fcb54d6ebc101ae2ce -->
 
 [← ドキュメント一覧](README.md)
 
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-独立したワークロード検証は ARM64 93 件または x64 62 件をすべて要求し、各プラットフォームの `LC_MAIN` と `LC_UNIXTHREAD` を含みます。必須項目の欠落、スキップ、`ld64.lld` の不足はいずれも失敗です。
+独立したワークロード検証は ARM64 96 件または x64 64 件をすべて要求し、各プラットフォームの `LC_MAIN` と `LC_UNIXTHREAD` を含みます。必須項目の欠落、スキップ、`ld64.lld` の不足はいずれも失敗です。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -392,3 +392,23 @@ MIB 数は下位32ビットで2～12、名前長は64ビット全体で1024未�
 Release Darwin は881登録、509成功、利用不可372スキップ、失敗なし。必須 ARM64 HVF 93件をすべて実行。重点49件は37成功・12スキップ。C/CLI/レポート163/163（Darwin 比較113）、未変更 Python の5構成15.302秒、独自ネイティブ21/21、検証スクリプト66/66が成功しました。独立レビューに阻害事項はなく、追加のエラー優先順位と SDK 捕捉比較も成功。新しい SDK 検査は StringExtras ヘッダー不足で一度コンパイルに失敗し、追加後に成功しました。元のログ・ソースと、未対応境界に置いた不正長さポインタのネイティブ記録を保持します。検証後は二つのファイル先頭コメントだけを整理して再ビルド成功。件数は重複、期限は不変、実行失敗の再検査は不要でした。完全 GitHub CI と iOS 実機は別途、Intel HVF Actions は停止中です。
 
 `build-hvf-arm64/sysctl-validation-summary.json`, `sysctl-darwin-final-evidence/`, `sysctl-focused-final.xml`, `sysctl-public.xml`, `sysctl-native-final/`, `sysctl-sdk-build-failure/`, `sysctl-initial-probe-evidence/`.
+
+## ベクトルファイル入出力と出力捕捉
+
+`readv`/`writev`、`preadv`/`pwritev` と nocancel 入口は、スカラーのファイル・出力捕捉実装を共有します。新しい設定やホストアクセスはありません。LP64 iovec は8バイトのアドレスと8バイトの長さです。iovcnt の符号付き下位32ビットは1–1024で、記述子検索より前に配列全体をコピーします。出力との別名でも要求は変化しません。部分的に読める配列は未対応です。
+
+アクセス権とストリームの位置指定可否を先に検査し、その後、各長さと合計を INT64_MAX 以下に制限します。通常ファイル・ディレクトリの合計はさらに INT_MAX 以下です。有限 stdin は残りの入力に短縮し、捕捉は出力予算に従います。pwritev の負の位置は配列を読む前に拒否し、preadv の位置検査は記述子と長さの後です。空の項目はアドレスを無視しますが、記述子・種類・位置の検査は残ります。EOF 後の項目には触れません。位置指定ではカーソルを変えず、pwritev は追記を無視します。通常の追記は元のカーソルで要求全体を一度だけ短縮してから EOF を選びます。
+
+後続の完全に無効な項目は EFAULT を返し、完了済みのバイト、通常カーソルの進行、非ゼロバイトを書いた場合の FWASWRITTEN を保持します。承認済みの非ゼロ書き込みがデータバッファの EFAULT を返す場合、完全なメタデータを無効化します。引数エラー、モデルの受付拒否、バックエンド障害では保持します。部分的に書ける読み取り先は UnsupportedService で停止し、現在の項目はコピーせず、前のコピーは残ります。部分的に読めるファイル書き込み元は全ファイル効果の前に未対応で停止します。権限・マッピングリース・合計保存予算を先に検査し、バックエンドの事前検査・読み取り失敗ではファイルや捕捉を公開しません。
+
+捕捉は stdout/stderr 共通予算を先に検査します。ユーザーアドレス上限をまたぐ項目はコピーせず、先行項目だけ保持します。その他の部分入力は確認済み接頭部を保持して EFAULT です。スカラー範囲エラーは従来どおり予算より優先します。複製・転送記述子は元の出力先を保持します。独自 `vectored-io` がネイティブ macOS、5つのゲスト構成、公開 C/CLI/Python で8入口を検証します。キャンセル、パイプ、スレッド、実機 iOS の受け入れは含みません。
+
+`readv`: 120/411; `writev`: 121/412; `preadv`: 540/542; `pwritev`: 541/543.
+
+[XNU vector calls](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU iovec lengths](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_subr.c), [XNU vnode I/O](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+### ベクトル I/O 検証、2026-10-06
+
+Release Darwin は937登録、553成功、未提供バックエンド384スキップ、失敗なし。必須 ARM64 HVF 96件をすべて実行しました。対象検査は45/57成功、12スキップ。公開 C/CLI/report は168/168成功、うち Darwin 入力比較118件。Python は5構成を20.397秒で検証、ネイティブ22/22、検証スクリプト66/66成功。独立レビューで疎な位置指定書き込みの障害テストを追加し、カーソル、実際の EOF、メタデータ拒否、残存容量を検証しました。初回ビルドは旧テストの削除済み内部問い合わせ参照で失敗し、実出力の検証に変更しました。新イベント断言の optional<bool> 誤用で正常な8ゲスト実行が失敗扱いになりましたが、修正後すべて成功。両失敗のソースとログを保存しています。件数は重複し、制限時間は不変。完全な GitHub CI と実機 iOS は別検証、Intel HVF Actions は停止継続です。
+
+`build-hvf-arm64/vector-validation-summary.json`, `vector-darwin-final-evidence/`, `vector-focused-final.xml`, `vector-public.xml`, `vector-native-initial/`, `vector-initial-build-failure/`, `vector-initial-assertion-evidence/`.

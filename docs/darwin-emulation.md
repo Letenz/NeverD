@@ -536,7 +536,7 @@ HVF runtime remains unvalidated and its Actions testing stays suspended. See the
 [HVF validation record](macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03).
 
 The focused workload gate additionally requires **every** Darwin process case
-on each platform supported by the host ISA: 93 cases on ARM64, or 62 on x64.
+on each platform supported by the host ISA: 96 cases on ARM64, or 64 on x64.
 Both `LC_MAIN` and independent raw `LC_UNIXTHREAD` programs are required on
 every supported platform. A source-inventory regression ensures each new
 Darwin process test joins this required set.
@@ -874,3 +874,23 @@ The original `system-info` program checks native macOS and guest ABI behavior; `
 Release Darwin reconciled 881 registrations: 509 passed, 372 unavailable-backend skips and zero failures; all 93 required ARM64 HVF identities executed. Focused checks passed 37 of 49 with 12 unavailable skips. Public C/CLI/report passed 163/163, including 113 Darwin input comparisons. The unchanged Python method passed all five profiles in 15.302s; original native programs passed 21/21 and evidence runners 66/66. Independent review found no blocker; its extra error-priority combinations and the separate SDK capture oracle passed. One new oracle compilation failed for a missing StringExtras include and passed after adding it; that log and source are preserved. Faulting native length-pointer probes remain preserved and outside the admitted contract. Only two file-header comments were normalized after the passing runs, followed by a successful rebuild. Counts overlap, deadlines are unchanged, and no runtime recheck was needed. Full GitHub CI and physical iOS remain separate; Intel HVF Actions stay suspended.
 
 `build-hvf-arm64/sysctl-validation-summary.json`, `sysctl-darwin-final-evidence/`, `sysctl-focused-final.xml`, `sysctl-public.xml`, `sysctl-native-final/`, `sysctl-sdk-build-failure/`, `sysctl-initial-probe-evidence/`.
+
+## Vectored file and capture I/O
+
+`readv`/`writev` and `preadv`/`pwritev`, including nocancel entries, share the scalar file and capture owners. No new input options or host access are introduced. LP64 iovec records contain an eight-byte address and eight-byte length. The signed low 32 bits of iovcnt must be 1–1024. The complete array is copied before descriptor lookup, so later output aliases cannot rewrite the request. An individually partial array remains unsupported.
+
+Descriptor access and positioned-stream checks precede length validation. Each length and their sum must fit INT64_MAX; regular files/directories additionally require total <= INT_MAX. Streams have no vnode limit: finite stdin clips to available bytes, and capture retains its output budget. Every negative pwritev offset is rejected before the array; preadv checks offsets after descriptor/length admission. Zero spans ignore their addresses, while descriptor, directory and offset rules still apply. EOF skips all unused tails. Positioned calls preserve the open cursor and pwritev ignores append. Ordinary append clips the entire request against the original cursor once before selecting EOF.
+
+Copies follow vector order. A later wholly invalid span returns EFAULT while retaining earlier completed bytes, ordinary cursor progress and FWASWRITTEN after nonzero written bytes. An admitted nonzero file write that returns data-buffer EFAULT invalidates complete metadata even with a virtual success policy; argument errors, model admission refusals and backend failures preserve it. A partially writable read span stops with UnsupportedService before copying that span; earlier copies remain. An individually partial file-write source remains unsupported before any file effects. File authorization, mapping leases and aggregate storage admission precede writes; backend preflight/read failures publish no file or capture bytes.
+
+Capture uses the combined stdout/stderr allowance before vector data access. A span crossing the user address limit contributes no bytes; earlier vectors remain. Other partial readable capture spans retain their checked prefix with EFAULT. Scalar range-error priority over the output budget is unchanged. Duplicated and redirected descriptors retain their original sink. The original `vectored-io` workload exercises all eight entries on native macOS and all five guest combinations, including public C/CLI/Python. This does not add cancellation, pipes, threads or physical iOS acceptance.
+
+`readv`: 120/411; `writev`: 121/412; `preadv`: 540/542; `pwritev`: 541/543.
+
+[XNU vector calls](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [XNU iovec lengths](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_subr.c), [XNU vnode I/O](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+### Vector I/O verification, 2026-10-06
+
+Release Darwin reconciled 937 registrations: 553 passed, 384 unavailable-backend skips, zero failures; all 96 required ARM64 HVF identities executed. Focused checks passed 45/57 with 12 unavailable skips. Public C/CLI/report passed 168/168, including 118 Darwin input comparisons; Python covered all five combinations in 20.397s. Original native workloads passed 22/22, and runner tests 66/66. Independent review added a sparse positioned-write fault test that verifies cursor, actual EOF, metadata refusal and exact remaining storage capacity. Initial compilation still referenced a removed internal query in an old test; that test now checks actual captured output. An optional<bool> mistake in the new service-event assertion initially failed eight otherwise successful guest runs; it was corrected and all affected checks passed. Both failures retain source and logs. Counts overlap; deadlines are unchanged. Full GitHub CI and physical iOS remain separate, and Intel HVF Actions stay suspended.
+
+`build-hvf-arm64/vector-validation-summary.json`, `vector-darwin-final-evidence/`, `vector-focused-final.xml`, `vector-public.xml`, `vector-native-initial/`, `vector-initial-build-failure/`, `vector-initial-assertion-evidence/`.

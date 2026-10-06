@@ -282,8 +282,9 @@ llvm::Error validateFileOptions(const DarwinFileOptions &Options) {
 }
 
 DarwinFiles::DarwinFiles(GuestMemory &Memory,
-                         const std::optional<DarwinFileOptions> &Options)
-    : Memory(Memory), Options(Options),
+                         const std::optional<DarwinFileOptions> &Options,
+                         uint64_t OutputLimit)
+    : Memory(Memory), Options(Options), OutputLimit(OutputLimit),
       CurrentDirectory(Options ? Options->WorkingDirectory : std::nullopt) {
   const llvm::ArrayRef<uint8_t> Input =
       Options && Options->StandardInput
@@ -305,20 +306,6 @@ uint32_t DarwinFiles::freeDescriptor(uint32_t Minimum) const {
     ++Minimum;
   return Minimum;
 }
-std::optional<unsigned> DarwinFiles::outputSink(uint32_t FD) const {
-  auto I = Descriptors.find(FD);
-  if (I != Descriptors.end()) {
-    if (I->second.Open->Type == Kind::Output)
-      return 1;
-    if (I->second.Open->Type == Kind::Error)
-      return 2;
-  }
-  return std::nullopt;
-}
-void DarwinFiles::recordWrite(uint32_t FD) {
-  Descriptors.at(FD).Open->Flags |= FileWasWritten;
-}
-
 void DarwinFiles::initializeNamespace() {
   if (NamespaceReady)
     return;
@@ -743,37 +730,6 @@ DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
 }
 
 llvm::Expected<std::optional<ServiceResult>>
-DarwinFiles::read(Description &File, uint64_t Address, uint64_t Count,
-                  uint64_t Offset, bool Positioned, ProcessResult &Result) {
-  if ((File.Flags & OpenAccessMask) == OpenWriteOnly)
-    return returned(BadDescriptor, true);
-  if (Positioned && File.Type == Kind::Input)
-    return returned(IllegalSeek, true);
-  if (Offset > INT64_MAX)
-    return returned(InvalidArgument, true);
-  if (File.Type == Kind::Directory)
-    return returned(IsDirectory, true);
-  if (Count && File.Type == Kind::Input &&
-      (!Options || !Options->StandardInput))
-    return unsupported(Result, diagnostic::FileInput);
-  const auto Bytes = File.bytes();
-  const uint64_t Available =
-      Bytes.size() - std::min<uint64_t>(Offset, Bytes.size());
-  Count = std::min(Count, Available);
-  if (!Count)
-    return returned(0);
-  auto Stored = copyout(Address, Bytes.slice(Offset, Count),
-                        diagnostic::FilePartialRead, Result);
-  if (!Stored)
-    return Stored.takeError();
-  if (!*Stored || (**Stored).Error)
-    return Stored;
-  if (!Positioned)
-    File.Offset += Count;
-  return returned(Count);
-}
-
-llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::admitMutation(const Description &File, uint64_t Size,
                            ProcessResult &Result) {
   if (!File.File->Writable)
@@ -830,65 +786,6 @@ DarwinFiles::resize(Description &File, uint64_t Size, ProcessResult &Result) {
               Bytes.begin());
   publish(File, std::move(Bytes));
   return returned(0);
-}
-
-llvm::Expected<std::optional<ServiceResult>>
-DarwinFiles::write(Description &File, uint64_t Address, uint64_t Count,
-                   uint64_t Offset, bool Positioned, ProcessResult &Result) {
-  if (!(File.Flags & OpenAccessMask))
-    return returned(BadDescriptor, true);
-  if (File.Type != Kind::File)
-    return returned(IllegalSeek, true);
-  if (Offset > INT64_MAX)
-    return returned(InvalidArgument, true);
-  // vn_write checks and clips the supplied cursor before the filesystem
-  // chooses EOF for append, including the count-zero EFBIG boundary.
-  if (Offset == INT64_MAX)
-    return returned(FileTooLarge, true);
-  Count = std::min(Count, uint64_t(INT64_MAX) - Offset);
-  if (!Count)
-    return returned(0);
-  const bool Append = !Positioned && (File.Flags & OpenAppend);
-  if (Append)
-    Offset = File.bytes().size();
-  const uint64_t Size = std::max<uint64_t>(File.bytes().size(), Offset + Count);
-  auto Admitted = admitMutation(File, Size, Result);
-  if (!Admitted || !*Admitted)
-    return Admitted;
-  uint64_t Checked = 0;
-  while (Checked < Count) {
-    const uint64_t Start = Address + Checked;
-    const uint64_t Chunk = std::min(Count - Checked, 4096 - Start % 4096);
-    auto Access = Start < UserLimit
-                      ? Memory.canAccess(Start, Chunk, Read | UserAccessible)
-                      : llvm::Expected<bool>(false);
-    if (!Access)
-      return Access.takeError();
-    if (!*Access) {
-      if (Checked)
-        return unsupported(Result, diagnostic::FilePartialWrite);
-      // A wholly invalid input leaves contents unchanged. Darwin still
-      // publishes the chosen EOF cursor for a nonempty append request.
-      if (Append)
-        File.Offset = Offset;
-      // Filesystems can update mtime/ctime even after rolling back a failed
-      // extension. Do not retain a complete pre-write stat observation.
-      File.File->MetadataInvalidated = true;
-      return returned(BadAddress, true);
-    }
-    Checked += Chunk;
-  }
-  std::vector<uint8_t> Bytes(Size, 0);
-  const auto Previous = File.bytes();
-  std::copy(Previous.begin(), Previous.end(), Bytes.begin());
-  if (auto E = Memory.read(
-          Address, llvm::MutableArrayRef<uint8_t>(Bytes).slice(Offset, Count)))
-    return std::move(E);
-  publish(File, std::move(Bytes), std::pair{Offset, Count});
-  if (!Positioned)
-    File.Offset = Offset + Count;
-  File.Flags |= FileWasWritten;
-  return returned(Count);
 }
 
 ServiceResult DarwinFiles::seek(Description &File, uint64_t Offset,
@@ -1059,6 +956,28 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     CurrentDirectory = Directory.Path;
     return returned(0);
   }
+  const bool Vectored =
+      Service == ServiceKind::Readv || Service == ServiceKind::Preadv ||
+      Service == ServiceKind::Writev || Service == ServiceKind::Pwritev;
+  const bool Writing =
+      Service == ServiceKind::Write || Service == ServiceKind::Pwrite ||
+      Service == ServiceKind::Writev || Service == ServiceKind::Pwritev;
+  const bool Positioned =
+      Service == ServiceKind::Pread || Service == ServiceKind::Pwrite ||
+      Service == ServiceKind::Preadv || Service == ServiceKind::Pwritev;
+  if (Service == ServiceKind::Pwritev && A[3] > INT64_MAX)
+    return returned(InvalidArgument, true);
+  std::vector<Buffer> Vectors;
+  if (Vectored) {
+    auto Input = readVectors(A[1], uint32_t(A[2]));
+    if (!Input)
+      return Input.takeError();
+    if (auto *Error = std::get_if<uint32_t>(&*Input))
+      return returned(*Error, true);
+    if (auto *Reason = std::get_if<const char *>(&*Input))
+      return unsupported(Result, *Reason);
+    Vectors = std::move(std::get<std::vector<Buffer>>(*Input));
+  }
   if (Service == ServiceKind::Pwrite && A[3] == UINT64_MAX)
     return returned(InvalidArgument, true);
   if ((Service == ServiceKind::Read || Service == ServiceKind::Pread ||
@@ -1070,12 +989,35 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return returned(BadDescriptor, true);
   auto &FD = I->second;
   auto &File = *FD.Open;
+  if (Vectored || Writing || Service == ServiceKind::Read ||
+      Service == ServiceKind::Pread) {
+    const auto Access = File.Flags & OpenAccessMask;
+    if ((Writing && !Access) || (!Writing && Access == OpenWriteOnly))
+      return returned(BadDescriptor, true);
+    const bool Vnode = File.Type == Kind::File || File.Type == Kind::Directory;
+    if (Positioned && !Vnode)
+      return returned(IllegalSeek, true);
+    const Buffer Scalar{A[1], A[2]};
+    const llvm::ArrayRef<Buffer> Buffers =
+        Vectored ? llvm::ArrayRef<Buffer>(Vectors) : llvm::ArrayRef(Scalar);
+    uint64_t Count = 0;
+    // Metadata is copied before FD lookup, but uio lengths are admitted only
+    // after access and positioned-stream checks. Vnodes have a smaller limit.
+    for (const auto &B : Buffers) {
+      if (B.Size > uint64_t(INT64_MAX) - Count)
+        return returned(InvalidArgument, true);
+      Count += B.Size;
+    }
+    if (Vnode && Count > MaxWriteBytes)
+      return returned(InvalidArgument, true);
+    const uint64_t Offset = Positioned ? A[3] : File.Offset;
+    if (!Writing)
+      return read(File, Buffers, Count, Offset, Positioned, Result);
+    if (File.Type == Kind::Output || File.Type == Kind::Error)
+      return capture(File, Buffers, Count, Vectored, Result);
+    return write(File, Buffers, Count, Offset, Positioned, Result);
+  }
   switch (Service) {
-  case ServiceKind::Write:
-  case ServiceKind::Pwrite:
-    return write(File, A[1], A[2],
-                 Service == ServiceKind::Pwrite ? A[3] : File.Offset,
-                 Service == ServiceKind::Pwrite, Result);
   case ServiceKind::Ftruncate: {
     if (File.Type != Kind::File || !(File.Flags & OpenAccessMask))
       return returned(InvalidArgument, true);
@@ -1097,11 +1039,6 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
       return unsupported(Result, diagnostic::FileDirectoryKind);
     CurrentDirectory = File.Path;
     return returned(0);
-  case ServiceKind::Read:
-  case ServiceKind::Pread:
-    return read(File, A[1], A[2],
-                Service == ServiceKind::Pread ? A[3] : File.Offset,
-                Service == ServiceKind::Pread, Result);
   case ServiceKind::Close:
     Descriptors.erase(I);
     reclaimUnlinked();

@@ -415,6 +415,7 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"created-file", "63"},
           std::pair{"created-file-metadata", "71"},
           std::pair{"renamed-file", "72"},
+          std::pair{"vectored-io", "7621"},
           std::pair{"virtual-created-metadata",
                     emulation::darwin_test::CreationMetadataHex},
           std::pair{"stdin", "00ff78"},
@@ -476,7 +477,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       llvm::StringRef(Mode) == "created-file" ||
       llvm::StringRef(Mode) == "created-file-metadata" ||
       llvm::StringRef(Mode) == "virtual-created-metadata" ||
-      llvm::StringRef(Mode) == "renamed-file") {
+      llvm::StringRef(Mode) == "renamed-file" ||
+      llvm::StringRef(Mode) == "vectored-io") {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     auto *File = Input.getAsObject()
                      ->getObject(field::DarwinFiles)

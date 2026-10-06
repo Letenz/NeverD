@@ -505,6 +505,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("created-file", b"c"),
                                            ("created-file-metadata", b"q"),
                                            ("renamed-file", b"r"),
+                                           ("vectored-io", b"v!"),
                                            ("system-info", b"i"),
                                            ("virtual-system", bytes.fromhex(
                                                "44617277696e0032342e746573740000000080"
@@ -573,7 +574,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                           "type": 8, "next_offset": 99, "seek_offset": 0}]}}],
                                              "working_directory": "/empty",
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
-                        if mode.startswith("writable-files") or mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "created-file-metadata", "virtual-created-metadata", "renamed-file"):
+                        if mode.startswith("writable-files") or mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "created-file-metadata", "virtual-created-metadata", "renamed-file", "vectored-io"):
                             writable_options = json.loads(file_options)
                             writable_file = writable_options["darwin_files"]["files"][0]
                             writable_file["writable"] = True
