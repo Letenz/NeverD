@@ -14,6 +14,12 @@ Au-delà de huit bits, les comparaisons examinent d’abord les moitiés hautes 
 
 `BitBlaster.WidePredicatesAgreeWithTheEvaluator` confronte les prédicats signés et non signés à l’évaluateur pour des largeurs sélectionnées de 8 à 256 bits, avec des largeurs impaires, des valeurs voisines des frontières et des bits significatifs au-delà de 64 bits. Il exclut aussi les sorties incorrectes. Les tests de compteurs partiels vérifient les requêtes complètes, les modèles de contre-exemple et l’épuisement du budget de portes. Les régressions natives avec comparaison mémorisée prouvent les deux ordres de comparaison et de mise à jour en observant tous les registres et indicateurs, et rejettent un corps de boucle original modifié.
 
+<!-- i18n-section: pristine-encoding -->
+
+## Copies de l’encodage avant recherche
+
+`BitVectorSolver::cloneEncoding()` copie un encodage complet avant toute tentative de recherche SAT. La méthode renvoie null après une recherche ou un échec d’encodage. Chaque copie possède ses clauses modifiables, sa propagation à la racine, ses portes et ses correspondances de bits ; elle conserve l’ordre des variables, le décompte des portes et les paramètres du solveur. Le contexte doit survivre aux deux solveurs ; le solveur source peut être modifié ou détruit indépendamment.
+
 <!-- i18n-section: z3-build -->
 
 ## Build Z3 facultatif

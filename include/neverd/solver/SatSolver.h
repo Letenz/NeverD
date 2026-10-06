@@ -152,7 +152,6 @@ public:
   explicit SatSolver(const SatOptions &Opts = SatOptions());
   ~SatSolver();
 
-  SatSolver(const SatSolver &) = delete;
   SatSolver &operator=(const SatSolver &) = delete;
   SatSolver(SatSolver &&) noexcept;
   SatSolver &operator=(SatSolver &&) noexcept;
@@ -235,6 +234,9 @@ public:
   void setOptions(const SatOptions &Opts);
 
 private:
+  friend class BitVectorSolver;
+  SatSolver(const SatSolver &Other);
+  bool canCloneEncoding() const;
   std::unique_ptr<detail::SatEngine> Engine;
 };
 

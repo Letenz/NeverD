@@ -92,6 +92,13 @@ BitBlaster::BitBlaster(const symbolic::SymContext &Ctx, CnfEncoder &Enc,
                        const BlastLimits &Limits)
     : Ctx(Ctx), Enc(Enc), Limits(Limits), GateBase(Enc.numGates()) {}
 
+BitBlaster::BitBlaster(CnfEncoder &Enc, const BitBlaster &Other)
+    : Ctx(Other.Ctx), Enc(Enc), Limits(Other.Limits), Error(Other.Error),
+      GateBase(Other.GateBase), BitPool(Other.BitPool), Encoded(Other.Encoded),
+      VarSlices(Other.VarSlices), EncodedVars(Other.EncodedVars) {
+  // Reachability containers are per-call scratch, not encoded facts.
+}
+
 bool BitBlaster::withinGateBudget() const {
   return Limits.MaxGates == 0 || Enc.numGates() - GateBase <= Limits.MaxGates;
 }
