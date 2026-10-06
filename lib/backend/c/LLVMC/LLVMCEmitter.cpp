@@ -182,6 +182,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
 void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   std::set<std::string> Headers;
   Headers.insert("stdint.h");
+  NeedsUnalignedTypes = false;
   std::map<std::string, std::pair<unsigned, bool>> FunnelShifts;
   std::map<std::string, ScalarIntegerMinMax> IntegerMinMax;
   std::map<std::string, ScalarUnary> ScalarUnaries;
@@ -207,7 +208,15 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
         if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
           if (isLLVMX86SegmentedAddressSpace(LI->getPointerAddressSpace()))
             HasCIntrinsics = true;
+          NeedsUnalignedTypes |=
+              LI->isSimple() && LI->getPointerAddressSpace() == 0 &&
+              !c_memory::alias(typeToCLLVM(LI->getType())).empty();
         }
+        if (const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst))
+          NeedsUnalignedTypes |=
+              SI->isSimple() && SI->getPointerAddressSpace() == 0 &&
+              !c_memory::alias(typeToCLLVM(SI->getValueOperand()->getType()))
+                   .empty();
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
           if (llvm::dyn_cast<llvm::InlineAsm>(CI->getCalledOperand()))
             continue;
@@ -267,7 +276,10 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
       OS << "#include <" << H << ">\n";
     OS << "\n";
   }
-  if (Opts.UseUnalignedPointers)
+  // The aliases are declared only when an access can use one; without the
+  // declarations every access keeps its portable byte copy.
+  UnalignedTypesWritten = Opts.UseUnalignedPointers && NeedsUnalignedTypes;
+  if (UnalignedTypesWritten)
     c_memory::writeTypes(OS);
   for (const auto &[Name, Shape] : ScalarUnaries) {
     const unsigned CarrierBits = Shape.carrierBits();

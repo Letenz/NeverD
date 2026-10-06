@@ -378,6 +378,9 @@ class Checker {
   // One completed model-free query in this immutable DAG and fixed solver
   // configuration. No model, incomplete answer or cross-context fact escapes.
   SymRef LastCompletedQuery;
+  // Keep one completed SAT fact across intervening queries in this immutable
+  // DAG. A retained hit still consumes the same charged query request.
+  SymRef LastFeasibleQuery;
   solver::SatResult LastCompletedAnswer = solver::SatResult::Invalid;
   RefinementSession *Refinement = nullptr;
   bool CandidateExecution = false;
@@ -560,6 +563,11 @@ class Checker {
     if (Predicate && Predicate == LastCompletedQuery)
       return LastCompletedAnswer;
     chargeQuery();
+    if (Predicate && Predicate == LastFeasibleQuery) {
+      LastCompletedQuery = Predicate;
+      LastCompletedAnswer = solver::SatResult::Sat;
+      return LastCompletedAnswer;
+    }
     const bool Reused = EncodingCache && *EncodingCache;
     const auto Fresh = [&] {
       auto Options = Limits.Solver;
@@ -586,6 +594,8 @@ class Checker {
       fail(Status::Invalid, "invalid relational solver query");
     LastCompletedQuery = Predicate;
     LastCompletedAnswer = Answer;
+    if (Answer == solver::SatResult::Sat)
+      LastFeasibleQuery = Predicate;
     return Answer;
   }
 
@@ -1571,9 +1581,14 @@ class Checker {
             // covers the incoming domain. Keep that domain without making
             // later queries reprove this branch fact. Unknown still refuses,
             // and two feasible edges retain their distinct predicates.
-            if (query(Taken) == solver::SatResult::Unsat) {
+            // These two complementary queries share one incoming domain.
+            // End encoding reuse with the branch so unrelated native history
+            // cannot make a later small query search a much larger formula.
+            std::unique_ptr<solver::BitVectorSolver> BranchEncoding;
+            if (query(Taken, &BranchEncoding) == solver::SatResult::Unsat) {
               scheduleNative(std::move(P), Fallthrough, Incoming);
-            } else if (query(Other) == solver::SatResult::Unsat) {
+            } else if (query(Other, &BranchEncoding) ==
+                       solver::SatResult::Unsat) {
               nativeTargets(std::move(P), Left.branchTarget(), Incoming);
             } else {
               nativeTargets(P, Left.branchTarget(), Taken);

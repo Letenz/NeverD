@@ -6605,6 +6605,121 @@ TEST(HighControlFlowSemantics, TemporariesReadOnceStayOutOfTheTailLimit) {
   }
 }
 
+TEST(HighControlFlowSemantics, PhiCopiesOfOneRegisterShareItsName) {
+  // v1 = x; v2 = v1; L: v3 = v2 + 1; v2 = v3; if (v3 < x + 5) goto L;
+  // return v3;  -- the PHI copies of one register never overlap the values
+  // they copy, so all three versions become one local and the copies go.
+  // A version read after the other is redefined, a copy between two
+  // registers, one of an unknown value, of a register nothing assigns, or of
+  // a frame address stays.
+  auto Reg = [](int Tag, unsigned Offset = 0x10) {
+    MedVar V;
+    V.Kind = MedVar::Reg;
+    V.RegOff = Offset;
+    V.Size = 8;
+    V.TheArch = Arch::X64;
+    V.RenameTag = static_cast<int16_t>(Tag);
+    V.Id = 5000 + Tag;
+    return HighExpr::makeVar(V, NdType::makeInt(8));
+  };
+  auto Input = [] {
+    MedVar V;
+    V.Kind = MedVar::Param;
+    V.Size = 8;
+    V.TheArch = Arch::X64;
+    return HighExpr::makeVar(V, NdType::makeInt(8));
+  };
+  auto Set = [](va_t Address, ExprPtr Dst, ExprPtr Val, bool Phi = false) {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Addr = Address;
+    S.Dst = std::move(Dst);
+    S.Val = std::move(Val);
+    S.IsPhiCopy = Phi;
+    return S;
+  };
+  auto Plus = [](ExprPtr A, uint64_t N) {
+    return HighExpr::makeBinop(NdOp::INT_ADD, std::move(A),
+                               HighExpr::makeConst(N, 8));
+  };
+  auto Names = [](const HighFunc &F) {
+    std::set<int> Tags;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &X) {
+          if (!X)
+            return;
+          if (X->Kind == ExprKind::Var && X->Var.Kind == MedVar::Reg &&
+              X->Var.RenameTag >= 0)
+            Tags.insert(X->Var.RenameTag);
+          for (const auto &Operand : X->Operands)
+            Visit(Operand);
+        };
+        Visit(E);
+      });
+    });
+    return Tags;
+  };
+  {
+    HighStmt Test;
+    Test.Kind = StmtKind::If;
+    Test.Addr = 0x1010;
+    Test.Cond = HighExpr::makeBinop(NdOp::INT_LESS, Reg(3), Plus(Input(), 5));
+    Test.Body = {jump(0x1014, 0x1008)};
+    HighFunc F;
+    F.Body = {Set(0x1000, Reg(1), Input()),
+              Set(0x1004, Reg(2), Reg(1), true),
+              Set(0x1008, Reg(3), Plus(Reg(2), 1)),
+              Set(0x100c, Reg(2), Reg(3), true),
+              Test,
+              result(0x1018, Reg(3))};
+    EXPECT_TRUE(coalesceHighPhiCopies(F));
+    EXPECT_EQ(Names(F).size(), 1u);
+    EXPECT_EQ(countKind(F, StmtKind::Nop), 2u);
+    for (uint64_t X = 0; X < 4; ++X)
+      EXPECT_EQ(execute(F, X), std::optional<uint64_t>(X + 5)) << X;
+  }
+  enum class Kept { ReadAfter, OtherRegister, Unknown, Unassigned, Frame };
+  for (Kept Kind : {Kept::ReadAfter, Kept::OtherRegister, Kept::Unknown,
+                    Kept::Unassigned, Kept::Frame}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    // v1 = x; v2 = v1; v2 = v2 + 1; return v1 + v2;
+    ExprPtr First = Input();
+    if (Kind == Kept::Unknown) {
+      First = HighExpr::makeConst(0, 8);
+      First->Kind = ExprKind::Undef;
+    }
+    if (Kind == Kept::Unassigned)
+      First = Reg(9);
+    HighFunc F;
+    if (Kind == Kept::Frame) {
+      MedVar Frame;
+      Frame.Kind = MedVar::Reg;
+      Frame.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
+      Frame.Size = 8;
+      Frame.TheArch = Arch::X64;
+      F.FrameSize = 64;
+      First = HighExpr::makeBinop(NdOp::INT_SUB,
+                                  HighExpr::makeVar(Frame, NdType::makeInt(8)),
+                                  HighExpr::makeConst(16, 8));
+    }
+    const unsigned Second = Kind == Kept::OtherRegister ? 0x18 : 0x10;
+    ExprPtr Returned =
+        Kind == Kept::ReadAfter
+            ? HighExpr::makeBinop(NdOp::INT_ADD, Reg(1), Reg(2, Second))
+            : Reg(2, Second);
+    F.Body = {Set(0x1000, Reg(1), First),
+              Set(0x1004, Reg(2, Second), Reg(1), true),
+              Set(0x1008, Reg(2, Second), Plus(Reg(2, Second), 1)),
+              result(0x100c, Returned)};
+    EXPECT_FALSE(coalesceHighPhiCopies(F));
+    EXPECT_EQ(Names(F).size(), Kind == Kept::Unassigned ? 3u : 2u);
+    if (Kind == Kept::ReadAfter)
+      for (uint64_t X = 0; X < 4; ++X)
+        EXPECT_EQ(execute(F, X), std::optional<uint64_t>(2 * X + 1)) << X;
+  }
+}
+
 TEST(HighControlFlowSemantics, JumpToANoReturnCallBecomesItsCopy) {
   // if (c) goto fail; v = 5; return v; fail: abort(); -- the failing path
   // ends in the call, as a return tail ends in its return.

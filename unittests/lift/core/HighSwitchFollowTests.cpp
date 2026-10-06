@@ -351,4 +351,52 @@ TEST(HighSwitchFollow, SwitchKeepsItsFollowWhenTheMoveIsUnsafe) {
   }
 }
 
+TEST(HighSwitchFollow, IfElseFoldKeepsLabelsOtherJumpsReach) {
+  // v = 0; if (x & 1) goto L1; if (x & 2) {} else { v = 5; goto L2; }
+  // L1: v = v + 100; L2: return v;  -- with L1 a removed copy.  The writer
+  // prints an empty arm with a jump past copies as an if/else holding them,
+  // which leaves out the removed statements between; the label of one that
+  // another jump reaches has to stay.
+  constexpr va_t L1 = 0x1040, L2 = 0x1050;
+  auto Removed = [](va_t Address) {
+    HighStmt S;
+    S.Kind = StmtKind::Nop;
+    S.Addr = Address;
+    return S;
+  };
+  HighStmt Copy = add(0x1044, 100);
+  Copy.IsPhiCopy = true;
+  HighStmt Choice;
+  Choice.Kind = StmtKind::IfElse;
+  Choice.Addr = 0x1010;
+  Choice.Cond = bitSet(2);
+  Choice.Body = {Removed(0x1014)};
+  Choice.ElseBody = {set(0x1018, constant(5)), jump(0x101c, L2)};
+  HighFunc F;
+  F.Name = "fold_labels";
+  F.Entry = 0x1000;
+  F.ReturnType = word();
+  F.Params = {{"arg0", word()}};
+  F.Body = {set(0x1000, constant(0)),
+            when(0x1004, 1, {jump(0x1008, L1)}),
+            Choice,
+            Removed(L1),
+            Copy,
+            Removed(L2),
+            result(0x1054, value())};
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options));
+  compileAndRun(Source + R"(
+int main(void) {
+  for (uint64_t x = 0; x < 8; ++x)
+    if (fold_labels(x) != ((x & 3) ? 100 : 5))
+      return 1;
+  return 0;
+}
+)");
+}
+
 } // namespace
