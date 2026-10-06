@@ -29,9 +29,16 @@ inline bool canonicalRange(uint64_t Address, uint64_t Size) {
 }
 } // namespace x64
 class MemoryProjection;
-llvm::Expected<uint64_t> buildX64PageTables(MemoryProjection &Memory,
-                                            bool UserMode = false,
-                                            bool ExceptionMonitor = false);
+/// Build the guest page tables and return the transport-physical root. When
+/// \p NoExecutePages is non-empty, those guest pages are additionally marked
+/// non-executable regardless of their permissions, so a direct run's first
+/// fetch into one faults; \p WatchEpoch distinguishes successive overlays so a
+/// cached projection is not reused across a change to the set.
+llvm::Expected<uint64_t>
+buildX64PageTables(MemoryProjection &Memory, bool UserMode = false,
+                   bool ExceptionMonitor = false,
+                   llvm::ArrayRef<ExecutionWatch> NoExecutePages = {},
+                   uint64_t WatchEpoch = 0);
 struct X64MachineState {
   bool UserMode = false;
   std::array<uint64_t, unsigned(X64Register::SS) + 1> Registers{};

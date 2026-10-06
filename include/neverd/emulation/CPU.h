@@ -18,9 +18,18 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace neverd::emulation {
 class AddressSpace;
+/// A half-open guest range [Address, Address + Size). The first instruction
+/// attempted inside it suspends the session before admission, budget charge or
+/// any instruction effect. A checked contract enforces this at every
+/// instruction boundary; a direct contract enforces it by making the range's
+/// pages non-executable and reporting the fetch fault at the same boundary.
+struct ExecutionWatch {
+  uint64_t Address, Size;
+};
 struct BackendHooks {
   std::function<void(uint64_t, uint32_t)> Instruction;
   std::function<void(uint64_t, uint32_t)> Read;
@@ -107,6 +116,11 @@ public:
   virtual llvm::Error saveContext(BackendContext &Context) = 0;
   virtual llvm::Error restoreContext(const BackendContext &Context) = 0;
   virtual llvm::Error installHooks(BackendHooks Hooks) = 0;
+  /// The execution watches currently in force, replacing any previous set. A
+  /// checked contract consults them at each instruction; a direct contract
+  /// makes their pages non-executable so the next free run faults into them.
+  /// Backends that do not run a direct contract need not retain the set.
+  virtual void setExecutionWatches(const std::vector<ExecutionWatch> &) {}
   /// Execute until stopped, timed out, or faulted. A successful Error result
   /// alone does not imply successful guest completion: inspect fault() and
   /// timedOut() as well, including after an interrupt callback stops execution.

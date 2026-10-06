@@ -149,6 +149,38 @@ TEST_P(UnpackFixture, RecoversEntrySectionsAndImports) {
   EXPECT_EQ(Result->Sections.size(), Rebuilt.Sections.size());
 }
 
+// The direct contract runs the stub natively between page faults instead of
+// single-stepping it. The unpacker's transfer observer still catches the entry
+// because the not-yet-executed image pages are non-executable, so recovery must
+// reach the identical rebuilt image. Only a hardware transport runs it.
+TEST_P(UnpackFixture, DirectContractRecoversTheSameImage) {
+  const auto &[Transport, F] = GetParam();
+  if (Transport.Kind != ExecutionBackendKind::KVM &&
+      Transport.Kind != ExecutionBackendKind::WHP)
+    GTEST_SKIP() << "the direct contract runs only on a hardware transport";
+  auto Checked = unpackOn(Transport.Kind, F.Packed);
+  if (!Checked) {
+    if (!HasFailure())
+      GTEST_SKIP() << BackendUnavailable;
+    return;
+  }
+  ASSERT_EQ(Checked->Outcome, UnpackOutcome::Unpacked) << Checked->Diagnostic;
+  UnpackOptions Options;
+  Options.Process.Contract = emulation::ExecutionContract::DirectUserX64;
+  auto Direct = unpackOn(Transport.Kind, F.Packed, Options);
+  if (!Direct) {
+    if (!HasFailure())
+      GTEST_SKIP() << BackendUnavailable;
+    return;
+  }
+  ASSERT_EQ(Direct->Outcome, UnpackOutcome::Unpacked) << Direct->Diagnostic;
+  EXPECT_EQ(Direct->EntryRVA, Checked->EntryRVA);
+  EXPECT_EQ(Direct->Packer.Kind, Checked->Packer.Kind);
+  // Byte-identical rebuilt file: the two contracts observed the same program.
+  EXPECT_EQ(Direct->Image, Checked->Image);
+  EXPECT_EQ(runtimeImports(*Direct), runtimeImports(*Checked));
+}
+
 INSTANTIATE_TEST_SUITE_P(Backends, UnpackFixture,
                          testing::ValuesIn(backendFixtures),
                          [](const auto &Info) {

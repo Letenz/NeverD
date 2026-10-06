@@ -9,9 +9,20 @@
 #include "ExecutionDiagnostics.h"
 #include "ExecutionExitBuilder.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 
+#include <iterator>
+
 namespace neverd::emulation {
+bool CheckedBackend::executionWatched(uint64_t Address) const {
+  const auto I = llvm::upper_bound(
+      ExecutionWatches, Address, [](uint64_t Address, const ExecutionWatch &W) {
+        return Address < W.Address;
+      });
+  return I != ExecutionWatches.begin() &&
+         Address - std::prev(I)->Address < std::prev(I)->Size;
+}
 llvm::Error CheckedBackend::mapMMIO(uint64_t A, uint64_t N,
                                     GuestMMIOCallbacks Callbacks) {
   if (auto E = mutableMemory())
