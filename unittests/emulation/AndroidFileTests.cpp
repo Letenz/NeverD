@@ -77,6 +77,21 @@ TEST_P(AndroidFiles, ExistenceQueriesPreserveDescriptorCapacityAndCursors) {
 TEST_P(AndroidFiles, ExistenceQueriesImportOnlyTheTerminatedUserPath) {
   returned(run("files_access_faults"));
 }
+TEST_P(AndroidFiles, TrailingSeparatorsRetainDirectoryAndCreationSemantics) {
+  Options.LinuxFiles->DescriptorLimit = 4;
+  returned(run("files_trailing_paths"));
+  returned(run("files_trailing_paths_bionic"));
+}
+TEST_P(AndroidFiles, TrailingSeparatorsDoNotInventDirectoryStateOrPermissions) {
+  for (uint64_t Mode = 0; Mode < 10; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto R = run("files_trailing_unsupported", {Mode});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    EXPECT_FALSE(R.ReturnValue);
+    ASSERT_FALSE(R.Services.empty());
+    EXPECT_FALSE(R.Services.back().Result);
+  }
+}
 TEST_P(AndroidFiles, EmptyCatalogueContainsOnlyTheRootDirectory) {
   Options.LinuxFiles->Files.clear();
   Options.LinuxFiles->DescriptorLimit = 3;

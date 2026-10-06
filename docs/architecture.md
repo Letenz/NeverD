@@ -3350,6 +3350,12 @@ object; they do not maintain separate catalogues or cursors. `fstatat` reuses th
 path classifier and `fstat` serializer, while Bionic only adapts arguments and
 errno through its existing service registry.
 
+Guest path parsing retains a trailing separator's directory requirement
+separately from the catalogue key. Open, access and status share this lookup
+constraint. Directory creation resolves the parent and final name separately,
+so an existing final name still returns `EEXIST`. Catalogue configuration
+continues to require canonical file keys.
+
 `LinuxFiles` shares pathname import and catalogue classification between open
 and existence queries. The catalogue's files, ancestor directories and root
 define the bounded `F_OK` namespace. Existence checks consume no descriptor;

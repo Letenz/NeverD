@@ -2782,6 +2782,13 @@ AArch64 Linux executables; C API, Python and CLI execute its success and missing
 path cases. Available native ARM64 transports compare complete reports with
 Unicorn, normalizing only backend identity and its selection reason.
 
+Trailing-separator cases distinguish regular files, implicit directories,
+root-only slash paths, absent names and file ancestors across open, access,
+status and mkdir. They check creation's final-name `EEXIST`, query `ENOTDIR`,
+first-NUL faults, flag and descriptor-limit priority, untouched status bytes
+and unchanged cursors. Relative, dot-component and internally repeated-slash
+forms stay unsupported; directory state and permissions are not inferred.
+
 File-existence cases cover raw x64 `access`, x64/AArch64 `faccessat`, Bionic
 imports and variadic syscalls, shared catalogue queries from another guest
 thread, private errno, dynamic provider lifetime, implicit directories,

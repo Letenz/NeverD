@@ -47,11 +47,25 @@ llvm::Expected<LinuxFiles::Pathname> LinuxFiles::readPath(uint64_t Address,
   return Path;
 }
 
-LinuxFiles::PathKind LinuxFiles::lookupPath(const std::string &Path) const {
+std::optional<LinuxFiles::ParsedPath>
+LinuxFiles::parsePath(llvm::StringRef Path) {
+  if (!Path.starts_with('/'))
+    return std::nullopt;
+  const bool RequiresDirectory = Path.ends_with('/');
+  Path = Path.rtrim('/');
+  if (Path.empty())
+    return ParsedPath{"/", true};
+  if (!isCanonicalFilePath(Path))
+    return std::nullopt;
+  return ParsedPath{Path.str(), RequiresDirectory};
+}
+
+LinuxFiles::PathKind LinuxFiles::lookupPath(const std::string &Path,
+                                            bool RequiresDirectory) const {
   if (Path == "/")
     return PathKind::Directory;
   if (Options->Files.contains(Path))
-    return PathKind::File;
+    return RequiresDirectory ? PathKind::NotDirectory : PathKind::File;
   // Catalogue prefixes denote directories; a known file used as a path
   // component is ENOTDIR.
   const std::string Prefix = Path + '/';
@@ -77,10 +91,10 @@ LinuxFiles::access(uint64_t Address, uint32_t Mode, ProcessResult &Result) {
     return Imported.takeError();
   if (const auto *Error = std::get_if<uint32_t>(&*Imported))
     return std::optional<uint64_t>(uint64_t(0) - *Error);
-  const auto &Path = std::get<std::string>(*Imported);
-  if (Path != "/" && !isCanonicalFilePath(Path))
+  auto Path = parsePath(std::get<std::string>(*Imported));
+  if (!Path)
     return unsupported(Result, FilePathForm);
-  switch (lookupPath(Path)) {
+  switch (lookupPath(Path->Name, Path->RequiresDirectory)) {
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:
@@ -101,9 +115,10 @@ LinuxFiles::makeDirectory(uint64_t Address, ProcessResult &Result) {
     return Imported.takeError();
   if (const auto *Error = std::get_if<uint32_t>(&*Imported))
     return std::optional<uint64_t>(uint64_t(0) - *Error);
-  const auto &Path = std::get<std::string>(*Imported);
-  if (Path != "/" && !isCanonicalFilePath(Path))
+  auto Parsed = parsePath(std::get<std::string>(*Imported));
+  if (!Parsed)
     return unsupported(Result, FilePathForm);
+  const auto &Path = Parsed->Name;
 
   // Linux resolves the parent and final component before applying mode,
   // umask or creation policy. Only these catalogue-derived failures are known.
@@ -118,6 +133,8 @@ LinuxFiles::makeDirectory(uint64_t Address, ProcessResult &Result) {
   case PathKind::Directory:
     break;
   }
+  // Creation checks the final name itself: even a regular file followed by
+  // slashes already exists. The directory requirement applies to its parent.
   if (lookupPath(Path) != PathKind::Missing)
     return std::optional<uint64_t>(uint64_t(0) - AlreadyExists);
   return unsupported(Result, FileDirectoryCreation);
@@ -135,8 +152,8 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
     return Imported.takeError();
   if (const auto *Error = std::get_if<uint32_t>(&*Imported))
     return std::optional<uint64_t>(uint64_t(0) - *Error);
-  const auto &Path = std::get<std::string>(*Imported);
-  if (!isCanonicalFilePath(Path))
+  auto Path = parsePath(std::get<std::string>(*Imported));
+  if (!Path)
     return unsupported(Result, FilePathForm);
 
   uint32_t FD = 0;
@@ -144,7 +161,7 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
     ++FD;
   if (FD == Options->DescriptorLimit)
     return std::optional<uint64_t>(uint64_t(0) - TooManyFiles);
-  switch (lookupPath(Path)) {
+  switch (lookupPath(Path->Name, Path->RequiresDirectory)) {
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:
@@ -154,8 +171,8 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
   case PathKind::File:
     break;
   }
-  auto File = Options->Files.find(Path);
-  auto Metadata = Options->Metadata.find(Path);
+  auto File = Options->Files.find(Path->Name);
+  auto Metadata = Options->Metadata.find(Path->Name);
   Descriptors.emplace(FD,
                       OpenFile{File->second, Metadata == Options->Metadata.end()
                                                  ? nullptr

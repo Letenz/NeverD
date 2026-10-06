@@ -356,10 +356,20 @@ process-owned descriptor table. Android `open`, `open64`, `openat`, `openat64`,
 across guest threads. Bionic alone maps kernel errors to `-1` and thread-local
 `errno`; success preserves errno. Absolute paths ignore `dirfd`; mode is unused
 without creation. Opens admit only `O_RDONLY`, optional `O_CLOEXEC` and the
-architecture's `O_LARGEFILE`. Other flags, relative/noncanonical paths,
+architecture's `O_LARGEFILE`. Other flags, relative paths, internal repeated
+separators, `.`/`..` components,
 directory opens, writes/creation, symlinks, duplication and descriptor-control
 operations remain unsupported. Exec is unmodeled, so close-on-exec flags have
 no observable transition in this subset.
+
+Guest queries accept canonical absolute names followed by one or more `/`
+characters. Trailing separators require the final object to be a directory:
+queries of a regular file with a trailing slash return `ENOTDIR`, and missing
+names still return `ENOENT`. Paths consisting only of slashes name the root.
+Directory opens and directory metadata remain unsupported. This parsing does
+not relax the canonical keys required by the catalogue configuration. The
+directory requirement follows Linux
+[pathname lookup](https://www.kernel.org/doc/html/latest/filesystems/path-lookup.html).
 
 Existence queries use the same pathname import and closed catalogue. Raw x64
 `access` (21), x64/ARM64 `faccessat` (269/48), and Android `access`/`faccessat`
@@ -387,6 +397,8 @@ Directory creation supports only failures already determined by pathname
 lookup. Raw x64 `mkdir` (83), x64/ARM64 `mkdirat` (258/34), and Android
 `mkdir`/`mkdirat` share the catalogue: a missing parent returns `ENOENT`, a file
 ancestor returns `ENOTDIR`, and an existing file or directory returns `EEXIST`.
+The final name's `EEXIST` result also applies to a regular file followed by
+trailing slashes; directory creation checks the parent separately.
 They preserve the catalogue, descriptors and cursors. An absent final name
 under an existing directory remains unsupported; mode, umask, write permission
 and successful creation have no invented defaults. The boundary follows
@@ -453,7 +465,7 @@ the same fixed-copy policy used by Linux clock services. See the Linux
 and [x64 layout](https://github.com/torvalds/linux/blob/v6.6/arch/x86/include/uapi/asm/stat.h).
 
 `newfstatat` (x64 262, AArch64 79), Bionic `fstatat`/`fstatat64` and variadic
-`syscall` query those same observations. Absolute canonical paths ignore dirfd;
+`syscall` query those same observations. Absolute paths in the supported form ignore dirfd;
 missing entries return `ENOENT`, and traversal through a regular file returns
 `ENOTDIR`. `AT_SYMLINK_NOFOLLOW` and `AT_NO_AUTOMOUNT` are accepted for this
 catalogue, which has neither symlinks nor automounts. A non-NULL empty pathname

@@ -41,17 +41,18 @@ LinuxFiles::statusAt(uint32_t Directory, uint64_t PathAddress, uint64_t Address,
     return Imported.takeError();
   if (const auto *Error = std::get_if<uint32_t>(&*Imported))
     return std::optional<uint64_t>(uint64_t(0) - *Error);
-  const auto &Path = std::get<std::string>(*Imported);
-  if (Path.empty()) {
+  const auto &Name = std::get<std::string>(*Imported);
+  if (Name.empty()) {
     if (Directory == AtCurrentDirectory)
       return unsupported(Result, FileCurrentDirectory);
     return statusDescriptor(Directory, Address, Result);
   }
-  if (Path != "/" && !isCanonicalFilePath(Path))
+  auto Path = parsePath(Name);
+  if (!Path)
     return unsupported(Result, FilePathForm);
   // Absolute names ignore dirfd. The closed catalogue contains no symlinks
   // or automount points; directory prefixes carry no metadata observation.
-  switch (lookupPath(Path)) {
+  switch (lookupPath(Path->Name, Path->RequiresDirectory)) {
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:
@@ -61,7 +62,7 @@ LinuxFiles::statusAt(uint32_t Directory, uint64_t PathAddress, uint64_t Address,
   case PathKind::File:
     break;
   }
-  auto Metadata = Options->Metadata.find(Path);
+  auto Metadata = Options->Metadata.find(Path->Name);
   if (Metadata == Options->Metadata.end())
     return unsupported(Result, FileStatusMissing);
   return status(Metadata->second, Address, Result);

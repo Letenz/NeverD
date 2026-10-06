@@ -245,11 +245,11 @@ TEST_P(LinuxProcess, MemoryFilesPreserveBinaryBytesCursorsAndFaultPrefixes) {
   for (const char *Optimization : {"O0", "O2"}) {
     auto FilePath = Path.parent_path() /
                     (Path.stem().string() + "-files-" + Optimization + ".elf");
-    for (char Mode : {'s', 'f', 'c', 't', 'n', 'a', 'p', 'd'}) {
+    for (char Mode : {'s', 'f', 'c', 't', 'n', 'a', 'p', 'd', 'q'}) {
       SCOPED_TRACE(testing::Message() << Optimization << ':' << Mode);
       Options.Arguments = {"files", std::string(1, Mode)};
       Options.LinuxFiles->DescriptorLimit =
-          Mode == 'c' || Mode == 'a' || Mode == 'd' ? 4 : 256;
+          Mode == 'c' || Mode == 'a' || Mode == 'd' || Mode == 'q' ? 4 : 256;
       auto R = emulateProcess(FilePath, ProcessProfile::LinuxELF64, Options);
       ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
       ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
