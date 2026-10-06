@@ -1466,3 +1466,5 @@ Swift witness 產生器在 ARM64/x86-64 macOS 和 Mac Catalyst 上同時驗證 `
 `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults` 在兩種架構上拒絕載體、佈局、上下文角色與間接結果變更。`SourceABI.SwiftPointForwardingPreservesBothIEEECarriers` 在 -O0/-O2 下編譯執行轉發原始碼，驗證兩個欄位的正負零、次正規數、無窮與 NaN 酬載。宣告測試接受編譯器及具名參數形式，拒絕簽名變更與歧義映像身分。
 
 `BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource` 在複製並銷毀來源後擴展文字表及共享 watch 串列，獨立修改同源副本，在一次 watch 存取處中斷傳播，並依據原始子句和獨立布林關係檢查恢復後的完整模型。
+
+`BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` 檢查根層已賦值與未決變數混合、非決策根變數、副本再次複製、來源物件銷毀、後續變數增長、兩種預設極性、預算中斷與恢復、衝突及重新啟動。完整模型與全部搜尋計數必須與全新編碼一致。

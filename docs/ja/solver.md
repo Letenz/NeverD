@@ -77,3 +77,5 @@ build-release/bin/neverd-solver-bench \
 コメント以外の各行は `original ; candidate` です。セミコロンがなければ MBA simplifier の結果を候補として使います。ツールは判定、model replay、時間を報告します（session 構築・翻訳・solver 実行を含み、parse、MBA 簡約、export、teardown は除外）。各反復で新しい solver を使います。SAT model は式 evaluator 上で差分を再現する必要があります。相反する確定判定、不正 query/model は実行失敗です。`unknown` は記録されますが、等価性の証明ではありません。
 
 SMT-LIB export には元の DAG、恒久 assertion、最後の query assumptions が含まれ、`z3 query-N.smt2` で再実行できます。resource limit と solver version を記録してください。backend の budget 単位は異なるため、同一作業量ではなく上限付き workload の比較です。bitvector proof は式言語の total fixed-width semantics を使います。machine exception、memory effect、LLVM poison は lifting/translation boundary の責任であり、式の証明だけでは保証しません。
+
+未探索の符号化のコピーは、自身の決定キューから根レベルで割り当て済みの変数を除き、活性度と番号による厳密なヒープ順序を再構築します。割り当てと節は保持され、根の事実はすべてのバックトラックで有効です。元の所有権、実際の決定、完全なモデル、すべての探索予算は変わりません。
