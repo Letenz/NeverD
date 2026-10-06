@@ -1035,6 +1035,8 @@ The prefix-predicate preservation requirement below applies when `GeneralizeEntr
 
 Loop inference reuses completed, model-free SAT/UNSAT answers only within one symbolic context and fixed solver configuration. Each key contains the entire domain-and-negated-fact query. Unknown or invalid answers are never stored. Every hit still checks the node limit and consumes the shared logical query budget; `SolverQueries` includes these requests, while `EntailmentCacheHits` reports reuse separately. The existing limits bound retained entries. The independent final checker receives no cached answers, and proof/object schemas remain 17/16.
 
+Bit-relation pruning checks all surviving candidates under one incoming domain before moving to the next. Every retained relation must still pass every complete arrival predicate in the original arrival order. Refuted candidates stay removed; unknown answers and exhausted budgets still abort inference. This ordering reuses the existing domain-scoped solver encoding without changing state templates or sharing proofs between domains.
+
 Native loop inference also admits repeated original addresses when each residual origin is uniquely mapped. After state and rank inference, it proves opposite literal bits over the complete reconstructed candidate templates and proposes masked Register, Frame or SystemFlags selectors. Context identities and concrete prefix values are never assumptions. Inseparable domains refuse; metadata, bit scans and dependency walks consume existing budgets. The independent original/candidate checker still proves every admitted path, state observation and rank transition. Proof/object schemas remain 17/16; automatic source and ordinary ABI composition remain separate. Unique native origins retain their previous search priority; additional contexts share the same cumulative search budget.
 
 Unit-counter discovery also recognizes byte-aligned subword updates that preserve every outside bit, after trying the existing full-word and zero-extended forms. For multiple cuts, lane endpoint exclusions are proposed only after proof on saved concrete arrivals and all current incoming states. Widening removes failed guards without reseeding them and can discover another lane after its word is already known. Masks use the existing whole-word parameter; full-word ranks and state observations remain intact. All proposals retain shared node/query limits and require independent complete refinement.
@@ -2040,7 +2042,7 @@ KVM x64/ARM64 uses `KvmRunControl` to prepare state, enter `KVM_RUN` and capture
 
 ## Parallel CPUs and atomic devices
 
-Request `ExecutionFeature::ParallelCPUs` (`parallel_cpus`) for checked x64/ARM64 on KVM, WHP or Unicorn. Separately owned CPUs may run on different host threads over shared physical RAM. Proven read-only native instructions can overlap; a pending writer blocks new admissions and drains readers before publishing. This gives sequentially consistent instruction effects, with cancellation-aware waits and rollback. Mappings and host writes remain blocked until all runs stop. Only `stop()` is safe across threads on one CPU object. Default execution remains cooperative; OS scheduling and weak-memory exploration are separate contracts.
+Request `ExecutionFeature::ParallelCPUs` (`parallel_cpus`) for checked x64/ARM64 on KVM, WHP or Unicorn. Separately owned CPUs may run on different host threads over shared physical RAM. Proven read-only native instructions can overlap; a pending writer blocks new admissions and drains readers before publishing. This gives sequentially consistent instruction effects, with cancellation-aware waits and rollback. Mappings and host writes remain blocked until all runs stop. Only `stop()` is safe across threads on one CPU object. Default execution remains cooperative; [OS scheduling](driver-scheduling.md) and weak-memory exploration are separate contracts.
 
 Parallel WHP CPUs use independent VPs in one shared partition, with up to 31 simultaneous parallel bindings plus the cooperative VP. Private GPA windows and transport RAM keep their projections separate; ARM64 uses distinct ASIDs and non-global translations. Before each native step, the projection copies code and declared operands; only declared output bytes enter the shared RAM transaction. Observers read authoritative RAM. KVM and checked Unicorn use shared backing directly. HVF and Unicorn’s `Software` contract do not advertise this capability.
 
@@ -2193,15 +2195,16 @@ cannot bypass their ownership. `KernelGuestCall` preserves owner/token and
 caller CPU/IRQL state. `DriverResult.Interrupts` reports actual per-handler and
 per-sample observations, with source transitions separate from ISR returns.
 Unavailable or stale captured sources fail without rebinding. These explicit
-synthetic sources do not provide arbitrary controller state or
-instruction-level preemption; explicit message resources and passive ISR
-delivery use the same ownership model described below.
+synthetic sources do not provide arbitrary controller state; explicit message
+resources and passive ISR delivery use the same ownership model described below.
 
 `KernelModelInterruptEvents` preflights same-time producer capacity before
 clock advancement or observation changes, including exact framework
 cancellation callback counts. Provider hardware publication precedes interrupt
-eligibility; admitted ISRs precede DPCs and passive callbacks. Virtual time
-advances only while idle, and zero delay does not imply instruction preemption.
+eligibility; admitted ISRs precede DPCs and passive callbacks. Without
+`scheduling`, virtual time advances only while idle. Enabling the
+[driver scheduling policy](driver-scheduling.md) also processes deadlines during
+guest execution; a zero event delay alone does not enable preemption.
 Armed events outlive their source IRP. BOOLEAN uses only AL; manual locks retain
 the original execution and saved IRQL, and callbacks cannot return with leaked
 locks. Interrupt reports never fabricate an IRP or an NTSTATUS completion.

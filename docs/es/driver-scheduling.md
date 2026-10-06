@@ -1,6 +1,6 @@
-# Planificación preventiva de controladores Windows
+# Planificación con desalojo de controladores Windows
 
-El objeto opcional `scheduling` activa la planificación preventiva determinista en CPU0 para controladores Windows x64 con Unicorn, KVM o WHP. Si se omite, se conserva la planificación cooperativa y el tiempo virtual avanza solo en reposo. Ambos campos son enteros positivos cuyo producto cabe en `uint64_t`. Un objeto vacío selecciona los valores siguientes.
+El objeto opcional `scheduling` activa la planificación determinista con desalojo en CPU0 para controladores Windows x64 con Unicorn, KVM o WHP. Si se omite, se conserva la planificación cooperativa y el tiempo virtual avanza solo en reposo. Ambos campos son enteros positivos cuyo producto cabe en `uint64_t`. Un objeto vacío selecciona los valores siguientes.
 
 ```json
 {

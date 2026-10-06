@@ -218,6 +218,8 @@ LLVM 模型負責驗證 `initializes` 參數契約，重用狀態指標投影，
 
 迴圈推斷僅在同一符號上下文及固定求解器設定內重用完整、無需模型的 SAT/UNSAT 答案。鍵包含整個「域與事實取反」查詢，未知或無效答案不納入快取。每次命中仍檢查節點上限並消耗共用的邏輯查詢預算；`SolverQueries` 包含這些請求，`EntailmentCacheHits` 另行回報重用次數。既有預算限制快取項目數。獨立最終檢查器不接收快取答案，證明／物件 schema 維持 17／16。
 
+位元關係剪枝在一個入邊域下檢查所有尚存候選，再處理下一個域。每個保留關係仍須按原入邊順序通過全部完整到達述詞。被反例否定的候選保持刪除；未知結果或預算耗盡仍中止推斷。此順序重用既有的按域求解編碼，不改變狀態範本，也不跨域共用證明。
+
 原生迴圈推導也接受重複的原始位址，但每個殘餘來源必須有唯一映射。在狀態與排名推導後，它在完整重建的候選範本域上證明相反的常數位元，並提出暫存器、框架或 SystemFlags 的遮罩選擇條件。上下文識別及具體前綴值均不作為假設；無法區分的域會被拒絕。中繼資料、位元掃描及相依遍歷計入現有預算。獨立的原程式／候選程式檢查器仍須證明所有允許路徑、狀態觀察與排名轉換。證明／物件綱要維持 17／16；自動原始碼與一般 ABI 組合仍是獨立工作。 唯一原生來源保留原有搜尋優先順序；新增上下文共用同一累計搜尋預算。
 
 單位步長計數器發現亦支援按位元組對齊的局部更新，要求更新區間之外的所有位元保持不變，並優先嘗試既有整字及零擴展形式。多切點的窄位端點排除條件，僅在保存的實際到達狀態和全部目前入邊狀態上獲得證明後提出。拓寬會移除失敗條件且不重新播種；某個字已被辨識為計數器後，仍可發現另一個窄位區間。遮罩重用既有整字參數，保留整字排名及完整狀態觀測。所有候選仍受共用節點／查詢預算限制，並須通過獨立的完整精化檢查。
@@ -464,7 +466,7 @@ Windows 模型亦管理獨立的非分頁池 MDL；釋放描述符不會釋放�
 
 `KernelDMAChannels` 在同一邏輯域配置器上加入 channel reservation 與具型別的 SG／channel FIFO，分開保存回呼狀態、保留的 map registers 及每次操作的整體映射。每個操作只保留一次邏輯視窗，並原地延伸單一實體固定範圍，因此交錯的 MapTransfer 不會複製 RAM、重複扣除 registers 或重疊其他映射。純傳輸、返回、flush 與釋放計畫會在發布前驗證身分及整批佇列晉升。`KernelModelDMAChannels` 解碼間接 ABI 與實際註冊時的 CurrentIrp 快照，並與 SG 共用 MDL 檢視輔助函式。獨立的排程種類 `DMAAdapterControl` 共用 DMA 順序、容量與直接呼叫時的父框架保留；只有 DMA 模型解讀回呼返回動作的低 32 位元。排隊中擷取的 IRP 在最終堆疊展開前受保護；進入回呼後即釋放該輸入參考，容許在回呼內完成它。整體 flush 退役映射位元組；確切 FreeMapRegisters 退役獨立 reservation。`KeFlushIoBuffers` 的一致性快取契約不免除其中任何義務。
 
-`KernelInterrupts` 將每個明確脈衝綁定至來源要求成功提交時的連線權杖及資源世代。`KernelModelInterruptEvents` 在推進時鐘或變更觀測前預檢同一時刻所有事件產生者的容量，包含框架取消回呼的精確數量；計時器、提供者完成及取消不能默默佔用為 ISR 保留的容量。提供者實際硬體狀態發布先於脈衝資格檢查，已接納中斷先於 DPC 及被動層級回呼。排程仍是合作式：虛擬時間只在閒置時推進，零延遲不代表指令搶占。`KernelModelInterrupts` 解碼傳統十一引數 ABI 及選定 Ex 欄位；`KernelGuestCall` 為中斷回呼提供獨立擁有者／權杖。ISR 與同步回呼在配置的 DIRQL 持有同一把不可遞迴鎖；巢狀 CPU 框架保留呼叫者 IRQL／CR8，BOOLEAN 只使用 AL。手動鎖要求相同執行身分與儲存的 IRQL；回呼不可帶著未釋放的鎖返回。已設定脈衝的壽命不受來源 IRP 完成影響；連線已斷開、世代不可用或 D3 下的遞送會記錄明確未遞送原因並停止，不會重新綁定或臆造 enable／ack 暫存器行為。`DriverResult.Interrupts` 保存獨立觀測，不會合成 IRP 或 NTSTATUS 完成。
+`KernelInterrupts` 將每個明確脈衝綁定至來源要求成功提交時的連線權杖及資源世代。`KernelModelInterruptEvents` 在推進時鐘或變更觀測前預檢同一時刻所有事件產生者的容量，包含框架取消回呼的精確數量；計時器、提供者完成及取消不能默默佔用為 ISR 保留的容量。提供者實際硬體狀態發布先於脈衝資格檢查，已接納中斷先於 DPC 及被動層級回呼。未設定 `scheduling` 時，虛擬時間只在閒置時推進。啟用[驅動程式排程策略](driver-scheduling.md)後，來賓執行期間也會處理到期事件；僅將事件延遲設為零不會啟用搶占。`KernelModelInterrupts` 解碼傳統十一引數 ABI 及選定 Ex 欄位；`KernelGuestCall` 為中斷回呼提供獨立擁有者／權杖。ISR 與同步回呼在配置的 DIRQL 持有同一把不可遞迴鎖；巢狀 CPU 框架保留呼叫者 IRQL／CR8，BOOLEAN 只使用 AL。手動鎖要求相同執行身分與儲存的 IRQL；回呼不可帶著未釋放的鎖返回。已設定脈衝的壽命不受來源 IRP 完成影響；連線已斷開、世代不可用或 D3 下的遞送會記錄明確未遞送原因並停止，不會重新綁定或臆造 enable／ack 暫存器行為。`DriverResult.Interrupts` 保存獨立觀測，不會合成 IRP 或 NTSTATUS 完成。
 
 `DriverPower.def` 定義電源類型／動作拼法及要求來源；`DriverPnp.h` 的同一個 `DriverPowerOperation` 用於情境封包及每個 PDO 的回應 FIFO。`KernelModelPowerRequests` 擁有明確封包事實、保留路徑和每個 DEVICE_OBJECT 的通知狀態；`PoSetPowerState` 傳回該裝置前值，不修改生命週期交易。`KernelModelPowerCompletion` 管理真正的 `PoRequestPowerIrp(Query/Set)` 子要求，每個都有獨立 IRP、報告列和回應索引；只消耗符合的 PDO 首項，不從 context 猜父要求，也不借用父報告。巢狀派送及最終五參數 void 回呼沿用帶擁有者的續接、保留路徑及獨立回呼堆疊；狀態快照跨等待有效至回呼傳回。同步子要求可先於 API 的 STATUS_PENDING 傳回完成，System S0 父要求也可先於 D0 子要求完成。最終上層完成控制生命週期觀測，與匯流排結果分開。此有限合成匯流排範圍要求 DO_POWER_PAGABLE 且無 DO_POWER_INRUSH、PASSIVE_LEVEL 派送，只支援 D0/D2/D3 和 Working/Sleeping3 的 Query/Set；明確32位元 SystemContext 保持不透明。不提供一般電源原則、關機／休眠、一般硬體或任意並行公開情境提交。
 
@@ -692,7 +694,7 @@ KVM x64/ARM64 透過 `KvmRunControl` 在同一專用 vCPU 工作執行緒準備�
 
 ## 平行 CPU 與裝置原子交易
 
-KVM、WHP 與 Unicorn 的 checked x64/ARM64 可要求 `ExecutionFeature::ParallelCPUs`（`parallel_cpus`）。獨立 CPU 可在不同主機執行緒共享實體 RAM；已證明不寫 RAM 的原生指令可重疊執行，待處理寫入阻止新指令進入，等待讀取結束後才發布。指令效果採順序一致性，支援等待取消和回復。所有執行結束前仍禁止映射修改與主機寫入。同一 CPU 物件只有 `stop()` 支援跨執行緒呼叫。預設執行及 OS 排程仍為協作式，弱記憶體模型探索屬於獨立契約。
+KVM、WHP 與 Unicorn 的 checked x64/ARM64 可要求 `ExecutionFeature::ParallelCPUs`（`parallel_cpus`）。獨立 CPU 可在不同主機執行緒共享實體 RAM；已證明不寫 RAM 的原生指令可重疊執行，待處理寫入阻止新指令進入，等待讀取結束後才發布。指令效果採順序一致性，支援等待取消和回復。所有執行結束前仍禁止映射修改與主機寫入。同一 CPU 物件只有 `stop()` 支援跨執行緒呼叫。預設 CPU 執行仍為協作式；[OS 排程](driver-scheduling.md)與弱記憶體模型探索屬於獨立契約。
 
 平行 WHP CPU 在一個共用分割區內使用獨立 VP，最多同時保留 31 個平行 CPU，另加協作式 VP。私有 GPA 區間與傳輸 RAM 隔離各自投影；ARM64 使用不同 ASID 與非全域位址轉換。每次原生執行前複製程式碼及已宣告的運算元，只有已宣告的輸出位元組進入共用 RAM 交易。觀察者讀取權威 RAM。KVM 與 checked Unicorn 直接使用共用後備記憶體。HVF 與 Unicorn 的 `Software` 契約不宣告此能力。
 

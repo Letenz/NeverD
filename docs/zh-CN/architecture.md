@@ -317,6 +317,8 @@ LLVM 模型负责验证 `initializes` 参数契约，复用状态指针投影，
 
 循环推断仅在同一符号上下文和固定求解器配置内复用完整、无需模型的 SAT/UNSAT 答案。键包含整个“域与事实取反”的查询，未知或无效答案不入缓存。每次命中仍检查节点上限并消耗共享的逻辑查询预算；`SolverQueries` 包含这些请求，`EntailmentCacheHits` 单独报告复用次数。已有预算限制缓存条目数。独立最终检查器不接收缓存答案，证明／对象 schema 保持 17／16。
 
+位关系剪枝在一个入边域下检查所有尚存候选，再处理下一个域。每个保留关系仍须按原入边顺序通过全部完整到达谓词。被反例否定的候选保持删除；未知结果或预算耗尽仍中止推断。这种顺序复用已有的按域求解编码，不改变状态模板，也不跨域共享证明。
+
 原生循环推断也接受重复的原始地址，但每个残余来源必须有唯一映射。在状态与排名推断之后，它在完整重建的候选模板域上证明相反的常量位，并提出寄存器、帧或 SystemFlags 的掩码选择条件。上下文标识和具体前缀值均不作为假设；无法区分的域会被拒绝。元数据、位扫描及依赖遍历计入现有预算。独立的原程序／候选程序检查器仍需证明所有允许路径、状态观察和排名转换。证明／对象模式保持 17／16；自动源码及普通 ABI 组合仍是独立工作。 唯一原生来源保留原有搜索优先级；新增上下文共用同一累计搜索预算。
 
 单位步长计数器发现还支持按字节对齐的局部更新，要求更新区间之外的所有位保持不变，并优先尝试原有的整字及零扩展形式。多个切点的窄位端点排除条件，只有在保存的真实到达状态和全部当前入边状态上得到证明后才会被提出。拓宽会删除失败条件且不重新播种；某个字已被识别为计数器后，仍可发现另一个窄位区间。掩码复用现有整字参数，整字排名与完整状态观测均保留。所有候选仍受共享节点／查询预算限制，并须通过独立的完整精化检查。
@@ -568,7 +570,7 @@ Windows 模型还管理独立的非分页池 MDL；描述符释放不会释放�
 
 `DriverResources.h`／`DriverResources.def` 与 `DriverInterrupts.h`／`DriverInterrupts.def` 定义固定的 `register_bank` 内存及中断分配。`DriverScenario` 负责 JSON／原生预检，`DriverResult` 记录初始配置，不复制观测到的寄存器银行状态。`KernelResources` 独占紧凑布局的原始／转换后分配、资源代次、物理存在及电源状态。`KernelMMIO` 管理持久寄存器值及独立映射别名，`KernelInterrupts` 管理不透明连接、锁及显式脉冲。`KernelModelResources` 构造只读 START 包并接入真实提供者完成：下层 START 成功后，在上层回调前发布资源代次，提供者设备 SET 实际完成时更新 D0／D3 可访问性。失败 START 或 STOP／REMOVE 的拆除检查在最终 IRP 完成前进行，上层回调可先取消映射及断开连接，不会隐式清理。突然移除立即拒绝硬件访问。`GuestMemory` 与 `UnicornBackend` 在 MMIO 产生效果前验证完整 CPU／API 事务，并保留首次故障。固定分配的重启保留寄存器银行值。任意 RAM、资源重平衡、端口、共享／电平／消息中断及其他 DMA 接口仍不支持。
 
-`KernelInterrupts` 将每个显式脉冲绑定到源请求成功提交时的连接令牌和资源代次。`KernelModelInterruptEvents` 在推进时钟或修改观测前，预检同一时刻所有生产者的容量，包括精确的框架取消回调数量；定时器、提供者完成和取消不能悄悄占用 ISR 所需空间。提供者先发布实际硬件状态，再判定脉冲是否可递送；已接纳的中断先于 DPC 和被动级回调执行。调度仍是协作式：虚拟时间仅在空闲时推进，零延迟不意味着指令抢占。`KernelModelInterrupts` 解码传统的十一参数 ABI 及选定的 Ex 字段，`KernelGuestCall` 为中断回调提供独立所有者／令牌。ISR 与同步回调在分配的 DIRQL 持有同一把非递归锁；嵌套 CPU 帧保存调用方 IRQL／CR8，BOOLEAN 只使用 AL。手动锁要求同一执行身份及保存的 IRQL，回调不能带着未释放锁返回。已登记的脉冲独立于源 IRP 生命周期；断连、不可用资源代次或 D3 状态下的递送会记录明确未递送原因并停止，不会重新绑定或虚构 enable／ack 寄存器行为。`DriverResult.Interrupts` 包含独立观测，不伪造 IRP 或 NTSTATUS 完成。
+`KernelInterrupts` 将每个显式脉冲绑定到源请求成功提交时的连接令牌和资源代次。`KernelModelInterruptEvents` 在推进时钟或修改观测前，预检同一时刻所有生产者的容量，包括精确的框架取消回调数量；定时器、提供者完成和取消不能悄悄占用 ISR 所需空间。提供者先发布实际硬件状态，再判定脉冲是否可递送；已接纳的中断先于 DPC 和被动级回调执行。未配置 `scheduling` 时，虚拟时间仅在空闲时推进。启用[驱动调度策略](driver-scheduling.md)后，来宾执行期间也会处理到期事件；仅将事件延迟设为零不会启用抢占。`KernelModelInterrupts` 解码传统的十一参数 ABI 及选定的 Ex 字段，`KernelGuestCall` 为中断回调提供独立所有者／令牌。ISR 与同步回调在分配的 DIRQL 持有同一把非递归锁；嵌套 CPU 帧保存调用方 IRQL／CR8，BOOLEAN 只使用 AL。手动锁要求同一执行身份及保存的 IRQL，回调不能带着未释放锁返回。已登记的脉冲独立于源 IRP 生命周期；断连、不可用资源代次或 D3 状态下的递送会记录明确未递送原因并停止，不会重新绑定或虚构 enable／ack 寄存器行为。`DriverResult.Interrupts` 包含独立观测，不伪造 IRP 或 NTSTATUS 完成。
 
 `DriverDMA.h`／`DriverDMA.def` 定义每 PDO 的显式能力及独立外部事务。`KernelPhysicalMemory` 注册确切有效 RAM 分配、分配共享页身份并固定字节范围；MDL 是该权威存储的视图，不是缓冲区副本。`GuestMemory`／`UnicornBackend` 提供整区间底层访问，在不修改 CPU 权限的情况下绕过该权限检查，拒绝 MMIO、运行中、重入或已有故障的访问，并锁存意外后端失败。`KernelDMA` 管理独立逻辑地址域、适配器绑定的方法身份、公共／SG 映射、映射寄存器接纳和回调引用；`KernelDMAEvents` 在实际递送时解析已捕捉的 PDO 资源代次。`KernelModelPhysicalMemory`、`KernelModelDMA` 和 `KernelModelDMATransfers` 将原分配／MDL 所有权接入真实间接来宾回调。SG 资源可用时允许内嵌递送；排队回调保留身份和容量直到 FIFO 晋升。映射与回调生命周期独立：Put 可在回调返回前释放数据／描述符固定引用，回调保留不会延长已完成 IRP 的生命。`DmaWritable` 独立于 CPU 映射权限记录锁定意图。同一时刻先发布提供者状态，再执行 DMA RAM 访问，最后判定中断递送资格。资源代次／存在／电源仍仅由 `KernelResources` 管理；DMA 不推断厂商寄存器、不触发 IRQ、不完成 IRP，也不复制生命周期。逻辑地址永不复用，事务验证失败保留观测且不修改 RAM。已建模接口包括有界模型 RAM 上的一致性公共缓冲区、V1 SG DMA 及经过地址转换的总线主设备通道 DMA；通用硬件、从属控制器和其他 DMA 接口仍不支持。
 
@@ -776,7 +778,7 @@ KVM x64/ARM64 通过 `KvmRunControl` 在同一专用 vCPU 工作线程上准备�
 
 ## 并行 CPU 与设备原子事务
 
-KVM、WHP 和 Unicorn 的 checked x64/ARM64 可请求 `ExecutionFeature::ParallelCPUs`（`parallel_cpus`）。独立 CPU 可在不同宿主线程上共享物理 RAM；已证明不写 RAM 的原生指令可重叠执行，待处理写入阻止新指令进入，等待读取结束后再发布。指令效果采用顺序一致性，支持等待取消和回滚。所有运行结束前，映射修改与宿主写入仍被禁止。同一 CPU 对象只有 `stop()` 支持跨线程调用。默认执行和 OS 调度仍为协作式，弱内存模型探索属于独立契约。
+KVM、WHP 和 Unicorn 的 checked x64/ARM64 可请求 `ExecutionFeature::ParallelCPUs`（`parallel_cpus`）。独立 CPU 可在不同宿主线程上共享物理 RAM；已证明不写 RAM 的原生指令可重叠执行，待处理写入阻止新指令进入，等待读取结束后再发布。指令效果采用顺序一致性，支持等待取消和回滚。所有运行结束前，映射修改与宿主写入仍被禁止。同一 CPU 对象只有 `stop()` 支持跨线程调用。默认 CPU 执行仍为协作式；[OS 调度](driver-scheduling.md)和弱内存模型探索属于独立契约。
 
 并行 WHP CPU 在一个共享分区内使用独立 VP，最多同时保留 31 个并行 CPU，另加协作式 VP。私有 GPA 区间和传输 RAM 隔离各自投影；ARM64 使用不同 ASID 和非全局地址转换。每次原生执行前复制代码及已声明的操作数，只有已声明的输出字节进入共享 RAM 事务。观察者读取权威 RAM。KVM 和 checked Unicorn 直接使用共享后备内存。HVF 和 Unicorn 的 `Software` 契约不声明此能力。
 
