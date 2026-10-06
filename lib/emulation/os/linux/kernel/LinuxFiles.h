@@ -30,6 +30,10 @@ private:
   enum class PathKind { File, Directory, Missing, NotDirectory };
   // A pathname import can fail with guest errno independently of backend I/O.
   using Pathname = std::variant<std::string, uint32_t>;
+  struct ParsedPath {
+    std::string Name;
+    bool RequiresDirectory;
+  };
   struct OpenFile {
     llvm::ArrayRef<uint8_t> Bytes;
     const LinuxFileMetadata *Metadata = nullptr;
@@ -46,7 +50,9 @@ private:
   static std::optional<uint64_t> unsupported(ProcessResult &Result,
                                              const char *Reason);
   llvm::Expected<Pathname> readPath(uint64_t Address, bool AllowEmpty = false);
-  PathKind lookupPath(const std::string &Path) const;
+  static std::optional<ParsedPath> parsePath(llvm::StringRef Path);
+  PathKind lookupPath(const std::string &Path,
+                      bool RequiresDirectory = false) const;
   llvm::Expected<std::optional<uint64_t>>
   access(uint64_t Address, uint32_t Mode, ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>> makeDirectory(uint64_t Address,

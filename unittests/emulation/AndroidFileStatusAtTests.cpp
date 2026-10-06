@@ -91,6 +91,10 @@ TEST_P(AndroidFileStatusAt,
                         {1, Output, 0, 14, "/fixture/data"},
                         {Name, 1, 0, 2, "/absent"},
                         {Name, 1, 0, 20, "/fixture/data/child"},
+                        {Name, Output, 0, 20, "/fixture/data/"},
+                        {Name, Output, 0, 20, "/fixture/data////"},
+                        {Name, Output, 0, 2, "/missing/"},
+                        {Name, Output, 0, 2, "/missing/child///"},
                         {Name, 1, 0, 2, ""},
                         {Name, 1, 0x1000, 9, ""},
                         {Name, 1, 0, 14, "/fixture/data"},
@@ -151,6 +155,8 @@ TEST_P(AndroidFileStatusAt,
       {"/fixture/data", uint64_t(-100), Name, Output, 0, true, false},
       {"/fixture", uint64_t(-100), Name, Output, 0, true, true},
       {"/", uint64_t(-100), Name, Output, 0, true, true},
+      {"////", uint64_t(-100), Name, Output, 0, true, true},
+      {"/fixture///", uint64_t(-100), Name, Output, 0, true, true},
       {"fixture/data", uint64_t(-100), Name, Output, 0, true, true},
       {"/fixture/../data", uint64_t(-100), Name, Output, 0, true, true},
       {"", uint64_t(-100), Name, Output, 0x1000, true, true},
@@ -215,7 +221,10 @@ TEST_P(AndroidFileStatusAt, NativeTransportMatchesCompleteReports) {
     ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
     if (Probe->Availability != BackendAvailability::Available)
       continue;
-    for (const char *Entry : {"files_status_at", "files_status_at_bionic"}) {
+    Options.LinuxFiles->DescriptorLimit = 4;
+    for (const char *Entry :
+         {"files_status_at", "files_status_at_bionic", "files_trailing_paths",
+          "files_trailing_paths_bionic"}) {
       Options.Backend = ExecutionBackendKind::Unicorn;
       auto Software = run(Entry);
       ASSERT_EQ(Software.Stop, ProcessStopReason::Returned)

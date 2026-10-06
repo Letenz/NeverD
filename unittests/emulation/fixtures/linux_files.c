@@ -225,7 +225,9 @@ U64 files_access_faults(void) {
 
 U64 files_access_empty(void) {
   CHECK(raw(FaccessAt, 0, (U64) "/", 0, 0), 0);
+  CHECK(raw(FaccessAt, 0, (U64) "///", 0, 0), 0);
   CHECK(raw(FaccessAt, 0, (U64) "/fixture", 0, 0), (U64)-2);
+  CHECK(raw(FaccessAt, 0, (U64) "/fixture/", 0, 0), (U64)-2);
   CHECK(raw(FaccessAt, 0, (U64)Path, 0, 0), (U64)-2);
   return 0;
 }
@@ -270,6 +272,77 @@ U64 files_directory_unsupported(U64 Mode) {
   static const char *const Paths[] = {"/missing/child", "/new", "/fixture/new",
                                       "relative", "/fixture/../new"};
   return raw(MkdirAt, (U64)-1, (U64)Paths[Mode], 0777, 0);
+}
+
+U64 files_trailing_paths(void) {
+  static const struct {
+    const char *Name;
+    I64 Query, Create;
+  } Cases[] = {{"/fixture/data/", -20, -17},
+               {"/fixture/data////", -20, -17},
+               {"/fixture/data/child/", -20, -20},
+               {"/missing/child/", -2, -2},
+               {"/missing/child/deep///", -2, -2}};
+  for (unsigned I = 0; I < sizeof(Cases) / sizeof(Cases[0]); ++I) {
+    U64 Name = (U64)Cases[I].Name;
+    CHECK(raw(OpenAt, (U64)-1, Name, 0, 0), Cases[I].Query);
+    CHECK(raw(FaccessAt, 0, Name, 0, 0), Cases[I].Query);
+    CHECK(raw(FstatAt, 0, Name, 1, 0), Cases[I].Query);
+    CHECK(raw(MkdirAt, 0, Name, 0777, 0), Cases[I].Create);
+  }
+  for (unsigned I = 0; I < 2; ++I) {
+    const char *Directory = I ? "////" : "/fixture///";
+    CHECK(raw(FaccessAt, 0, (U64)Directory, 0, 0), 0);
+    CHECK(raw(MkdirAt, 0, (U64)Directory, 0777, 0), (U64)-17);
+  }
+  // A trailing separator does not alter flag or descriptor-limit priority.
+  CHECK(raw(FstatAt, 0, (U64) "/fixture/data/", 1, 0x40000000), (U64)-22);
+  CHECK(raw(FaccessAt, 0, (U64) "/fixture/data/", 8, 0), (U64)-22);
+  U64 F = raw(OpenAt, 0, (U64)Path, 0, 0);
+  CHECK(F, 3);
+  CHECK(raw(Read, F, (U64)Pages, 1, 0), 1);
+  CHECK(raw(OpenAt, 0, (U64) "/fixture/data/", 0, 0), (U64)-24);
+  CHECK(raw(FaccessAt, 0, (U64) "/fixture/data/", 0, 0), (U64)-20);
+  CHECK(raw(FstatAt, 0, (U64) "/missing/", 1, 0), (U64)-2);
+  CHECK(raw(Seek, F, 0, 1, 0), 1);
+  CHECK(raw(Close, F, 0, 0, 0), 0);
+  CHECK(raw(OpenAt, 0, (U64)Path, 0, 0), F);
+  // Import stops at the first NUL even when the next byte is inaccessible.
+  static const char Edge[] = "/fixture/data///";
+  CHECK(raw(Protect, (U64)Pages + 4096, 4096, 0, 0), 0);
+  for (unsigned I = 0; I < sizeof(Edge); ++I)
+    Pages[4096 - sizeof(Edge) + I] = Edge[I];
+  U64 Name = (U64)Pages + 4096 - sizeof(Edge);
+  CHECK(raw(FstatAt, 0, Name, 1, 0), (U64)-20);
+  CHECK(raw(MkdirAt, 0, Name, 0777, 0), (U64)-17);
+  Pages[4095] = '/';
+  CHECK(raw(FstatAt, 0, Name, 1, 0), (U64)-14);
+  return 0;
+}
+
+U64 files_trailing_unsupported(U64 Mode) {
+  switch (Mode) {
+  case 0:
+    return raw(OpenAt, 0, (U64) "/fixture/", 0, 0);
+  case 1:
+    return raw(FstatAt, 0, (U64) "/fixture/", (U64)Pages, 0);
+  case 2:
+    return raw(MkdirAt, 0, (U64) "/fixture/new///", 0777, 0);
+  case 3:
+    return raw(FaccessAt, 0, (U64) "/fixture/", 4, 0);
+  case 4:
+    return raw(FaccessAt, 0, (U64) "/fixture//data/", 0, 0);
+  case 5:
+    return raw(FaccessAt, 0, (U64) "fixture/data/", 0, 0);
+  case 6:
+    return raw(OpenAt, 0, (U64) "///", 0, 0);
+  case 7:
+    return raw(FstatAt, 0, (U64) "///", (U64)Pages, 0);
+  case 8:
+    return raw(MkdirAt, 0, (U64) "/new///", 0777, 0);
+  default:
+    return raw(FaccessAt, 0, (U64) "/fixture/../data/", 0, 0);
+  }
 }
 
 struct FileTime {
@@ -727,6 +800,40 @@ U64 files_directory_bionic(void) {
   return 0;
 }
 
+U64 files_trailing_paths_bionic(void) {
+  const char *Name = "/fixture/data///";
+  *__errno() = 83;
+  CHECK(open(Name, 0), -1);
+  CHECK(*__errno(), 20);
+  CHECK(open64(Name, 0), -1);
+  CHECK(*__errno(), 20);
+  CHECK(openat(-1, Name, 0), -1);
+  CHECK(*__errno(), 20);
+  CHECK(openat64(-1, Name, 0), -1);
+  CHECK(*__errno(), 20);
+  CHECK(access(Name, 0), -1);
+  CHECK(*__errno(), 20);
+  CHECK(faccessat(-1, Name, 0, 0), -1);
+  CHECK(*__errno(), 20);
+  CHECK(fstatat(-1, Name, (struct FileStatus *)1, 0), -1);
+  CHECK(*__errno(), 20);
+  CHECK(fstatat64(-1, "/missing/", (struct FileStatus *)1, 0), -1);
+  CHECK(*__errno(), 2);
+  CHECK(mkdir(Name, 0777), -1);
+  CHECK(*__errno(), 17);
+  CHECK(mkdirat(-1, Name, 0777), -1);
+  CHECK(*__errno(), 17);
+  CHECK(syscall(FstatAt, -1UL, "/missing/", 1UL, 0UL), -1);
+  CHECK(*__errno(), 2);
+  CHECK(syscall(MkdirAt, -1UL, Name, 0777UL), -1);
+  CHECK(*__errno(), 17);
+  CHECK(access("/fixture/", 0), 0);
+  CHECK(*__errno(), 17);
+  CHECK(open(Path, 0), 3);
+  CHECK(*__errno(), 17);
+  return 0;
+}
+
 U64 files_directory_dynamic(U64 Closed, U64 At) {
   void *Library = dlopen("libfiles.so", 2);
   if (!Library)
@@ -756,6 +863,7 @@ void process_main(U64 *Stack) {
                : Mode == 'a' ? files_access()
                : Mode == 'p' ? files_access_faults()
                : Mode == 'd' ? files_directory_errors()
+               : Mode == 'q' ? files_trailing_paths()
                              : files_unsupported(Mode - '0');
   raw(Exit, Status, 0, 0, 0);
   __builtin_trap();
