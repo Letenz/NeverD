@@ -1909,6 +1909,18 @@ jobs:
             -DNEVERD_EMULATION_BACKEND_UNICORN=OFF \
             -DNEVERD_LLVM_PREBUILT=ON
 
+      - name: Check native compiler cache availability
+        shell: bash
+        run: |
+          # --zero-stats connects to or starts the server; --show-stats can
+          # succeed without one. Startup errors may contain signed cache URLs.
+          if ! sccache --zero-stats > "$RUNNER_TEMP/neverd-sccache-probe.log" 2>&1; then
+            echo "::warning::Compiler cache unavailable; continuing with the configured compiler."
+            cmake -S . -B build-ci-native \
+              -DCMAKE_C_COMPILER_LAUNCHER= \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=
+          fi
+
       - name: Build and verify native CPU owners
         shell: bash
         run: |

@@ -1122,6 +1122,8 @@ WHP 在能力查询、分区/虚拟 CPU 初始化、寄存器/XSAVE 传输及执
 
 `ci.yml` 的手动模式 `native_cpu_only` 通过 `native_cpu_backend=whp` 选择 Windows x64（默认），或通过 `native_cpu_backend=kvm` 选择 Ubuntu x64。`NativeCPUTests.def` 共享 CPU／进程验收要求，分别声明后端专属目标和用例。`run_native_cpu_ci.py --require-whp` 或 `--require-kvm` 校验宿主，先构建全部目标再执行 CTest，并保留清单、JUnit、日志和结果分类。即使 CTest 成功退出，缺少或跳过必测用例仍会失败。CI 禁用 Unicorn；`--with-drivers` 要求所选后端执行同一组原址／重定位驱动样例。编译和建立探测不能证明来宾执行或 ARM64 验收。 Ubuntu 配置使用上游签名的 Clang/LLD 21 软件包；Clang 18/19 的 CR8 声明与固定版本的 WDK 头文件冲突。 Linux 原生验收使用 CMake 4.2.3。`NeverDNativeDriverTests` 显式设置 `NO_PRETTY_VALUES`，使 CTest 保留已声明的用例名称，不依赖参数诊断输出。
 
+原生 CI 在构建前探测 `sccache --zero-stats`。探测失败时会清空 C 和 C++ 编译器启动器，保留原有编译器配置和全部必测清单。配置或编译失败仍会使任务失败。
+
 KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferCases.def` 中 48 项状态传输结果，包括 ioctl 捕获和可选能力查询失败。其他同步寄存器模式在宿主支持时执行，否则明确跳过。稳定的参数名称不依赖 ioctl 数值或元组格式。协议测试补充原生执行证据，不能替代它。
 
 `native-host-probe.yml` 在 Linux 和 Windows x64/ARM64 托管 runner 上运行独立的 `probe_native_host.py`。`NativeHostProbe.def` 声明能力查询、VM/vCPU 创建和清理证据的顺序。报告保留源码/二进制哈希、原生宿主 ISA 和每一步宿主状态码。`setup_ready` 只证明初始化成功，不执行来宾指令。缺失的 API/设备能力记为 `unavailable`；构建、初始化、清理、超时或证据格式错误会使任务失败。ARM64 托管环境的可用性须逐次观察，这个探测不构成 ARM64 工作负载验收。 两个 Linux 工作流均通过 `prepare_kvm_ci.py`，仅向当前托管 runner 账户授予已有 KVM 字符设备的访问权限，并记录设备身份及权限；脚本拒绝本机与自托管机器，不会创建缺失的设备。

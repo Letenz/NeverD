@@ -1,3 +1,5 @@
+import os
+import shutil
 import subprocess
 import tempfile
 import textwrap
@@ -530,3 +532,90 @@ class CiConfigurationTests(unittest.TestCase):
         self.assertIn("default: whp", transport)
         self.assertIn("- whp\n", transport)
         self.assertIn("- kvm\n", transport)
+
+    @unittest.skipUnless(shutil.which("bash"), "Bash is required to execute the CI step")
+    def test_native_cache_startup_falls_back_without_hiding_configure_failures(self):
+        source = WORKFLOW.read_text(encoding="utf-8")
+        step = self.workflow_step_containing(
+            source, "Check native compiler cache availability"
+        )
+        self.assertLess(source.index("Configure the native CPU profile"),
+                        source.index("Check native compiler cache availability"))
+        self.assertLess(source.index("Check native compiler cache availability"),
+                        source.index("Build and verify native CPU owners"))
+        self.assertNotIn("continue-on-error", step)
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        commands = r'''
+            sccache() {
+              printf '%s\n' "$@" > "$RUNNER_TEMP/cache.args"
+              printf '%s\n' 'startup failed: https://cache.invalid/?cache-token=secret'
+              return "$CACHE_STATUS"
+            }
+            cmake() {
+              printf '%s\n' "$@" > "$RUNNER_TEMP/cmake.args"
+              return "$CMAKE_STATUS"
+            }
+        '''
+        for cache_status, cmake_status in ((0, 0), (1, 0), (1, 69)):
+            with (
+                self.subTest(cache=cache_status, cmake=cmake_status),
+                tempfile.TemporaryDirectory(prefix="neverd-cache-probe-") as directory,
+            ):
+                root = Path(directory)
+                result = subprocess.run(
+                    [shutil.which("bash"), "-e", "-o", "pipefail", "-c",
+                     textwrap.dedent(commands) + script],
+                    env={**os.environ, "RUNNER_TEMP": root.as_posix(),
+                         "CACHE_STATUS": str(cache_status),
+                         "CMAKE_STATUS": str(cmake_status)},
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                self.assertEqual(result.returncode, cmake_status,
+                                 result.stdout + result.stderr)
+                self.assertEqual((root / "cache.args").read_text().splitlines(),
+                                 ["--zero-stats"])
+                self.assertNotIn("cache-token", result.stdout + result.stderr)
+                self.assertIn("cache-token", (root / "neverd-sccache-probe.log").read_text())
+                if cache_status:
+                    self.assertIn("::warning::", result.stdout)
+                    self.assertEqual((root / "cmake.args").read_text().splitlines(),
+                                     ["-S", ".", "-B", "build-ci-native",
+                                      "-DCMAKE_C_COMPILER_LAUNCHER=",
+                                      "-DCMAKE_CXX_COMPILER_LAUNCHER="])
+                else:
+                    self.assertFalse((root / "cmake.args").exists())
+
+    def test_native_host_setup_keeps_four_hosts_separate_from_fault_diagnostics(self):
+        host = WORKFLOW.with_name("native-host-probe.yml").read_text(encoding="utf-8")
+        self.assertEqual(host.count("          - backend:"), 4)
+        for backend, arch, runner in (
+            ("kvm", "X64", "ubuntu-24.04"),
+            ("kvm", "ARM64", "ubuntu-24.04-arm"),
+            ("whp", "X64", "windows-latest"),
+            ("whp", "ARM64", "windows-11-arm"),
+        ):
+            with self.subTest(backend=backend, arch=arch):
+                self.assertIn(
+                    f"          - backend: {backend}\n"
+                    f"            arch: {arch}\n"
+                    f"            runner: {runner}\n", host)
+        self.assertIn("fail-fast: false", host)
+        self.assertIn("  pull_request:\n", host)
+        self.assertIn("    branches: [dev]\n", host)
+        self.assertIn("--backend ${{ matrix.backend }} --arch ${{ matrix.arch }}", host)
+        self.assertIn("name: native-host-${{ matrix.backend }}-${{ matrix.arch }}", host)
+        self.assertIn("build-native-host-probe/summary.json", host)
+        self.assertLess(host.index("scripts/prepare_kvm_ci.py --output"),
+                        host.index("python scripts/probe_native_host.py"))
+        self.assertNotIn("--require-setup", host)
+        self.assertNotIn("Temporary", host)
+
+        diagnostic = WORKFLOW.with_name("native-fault-observations.yml").read_text(
+            encoding="utf-8")
+        self.assertIn("  workflow_dispatch:\n", diagnostic)
+        self.assertNotIn("  pull_request:\n", diagnostic)
+        self.assertNotIn("  push:\n", diagnostic)
+        self.assertIn("scripts/diagnostics/RepFaultProbe.cpp", diagnostic)
+        self.assertIn("WindowsAlignmentNative.RunsOriginalFaultAndRetryExecutable", diagnostic)
