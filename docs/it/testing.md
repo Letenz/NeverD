@@ -1606,3 +1606,5 @@ I generatori di witness Swift verificano `CurrentValueSubject: Publisher` e `Ran
 `ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath` verifica cicli di variabili oggetto dopo la fusione PHI e un valore del frame privato nello stesso ciclo. Il ciclo di oggetti conserva lo spill esatto del puntatore; valori del frame, scritture parziali e fughe sconosciute invalidano la prova.
 
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` verifica entrambe le architetture e i provider e tutti i parametri e risultati; rifiuta import deboli, addendi, provider estranei, simboli obsoleti ed effetti di prestito inventati.
+
+Il lettore String in `scripts.tests.test_generate_swift_witness_contracts` verifica il flusso completo, rifiuta 28 modifiche a memoria, ABI e flusso e sette dichiarazioni ambigue, e limita l’input. I test di binding coprono tre descrittori su entrambe le architetture con 33 mutazioni per coppia. L’identità non concede layout del frame o prestiti.

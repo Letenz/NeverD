@@ -1611,3 +1611,5 @@ Los generadores de witness Swift verifican `CurrentValueSubject: Publisher` y `R
 `ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath` cubre ciclos de variables objeto tras fusionar PHI y un valor del marco privado dentro del mismo ciclo. El ciclo de objetos conserva el almacenamiento exacto del puntero; los ciclos con marco, las escrituras parciales y las fugas desconocidas rechazan la prueba.
 
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` verifica ambas arquitecturas y proveedores y todos los argumentos y resultados; rechaza importaciones débiles, desplazamientos, proveedores ajenos, símbolos obsoletos y efectos de préstamo inventados.
+
+El lector de testigos String en `scripts.tests.test_generate_swift_witness_contracts` verifica el flujo completo, rechaza 28 cambios de almacenamiento, ABI y flujo y siete declaraciones ambiguas, y limita la entrada. Las pruebas de enlace cubren tres descriptores en ambas arquitecturas con 33 mutaciones por pareja. La identidad no concede disposición del marco ni préstamo.

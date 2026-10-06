@@ -1510,3 +1510,5 @@ Swift witness の生成器は ARM64/x86-64 の macOS と Mac Catalyst で `Curre
 `ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath` は PHI 統合後のオブジェクト変数の循環と、同じ循環にプライベートフレーム由来の値が入る場合を検証します。オブジェクトの循環は正確なポインタ保存を維持しますが、フレーム由来の循環、部分的な上書き、未知のフレーム漏出は証明を拒否します。
 
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` は両アーキテクチャとプロバイダ、全引数と結果を検証し、弱いインポート、加算オフセット、別プロバイダ、古いシンボル、借用効果の捏造を拒否します。
+
+`scripts.tests.test_generate_swift_witness_contracts` の String リーダーは完全な流れを検証し、28 のストレージ・ABI・フロー変更と七つの曖昧な宣言を拒否して入力予算を守ります。結合テストは両アーキテクチャの三記述子にそれぞれ 33 の変更を適用します。記述子の識別はフレーム配置や借用を許可しません。

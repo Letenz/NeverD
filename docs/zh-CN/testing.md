@@ -1418,3 +1418,5 @@ Swift witness 生成器在 ARM64/x86-64 macOS 和 Mac Catalyst 上同时验证 `
 `ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath` 覆盖 PHI 合并后的对象局部变量循环，以及同一循环中可达的私有栈帧值。对象循环保留精确指针溢写证明；携带栈帧的循环、部分覆盖和未知栈帧泄露会拒绝证明。
 
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` 验证两种架构、导出提供方及全部参数和结果载体，并拒绝弱导入、附加偏移、外来提供方、过期符号和虚构的借用效果。
+
+`scripts.tests.test_generate_swift_witness_contracts` 的 String 读取器检查完整缓存与查询流程，拒绝 28 项存储、ABI、流程突变和七种歧义声明，并限制输入预算。现有见证绑定测试覆盖三个描述符与两种架构，每个组合包含 33 项突变。描述符身份不提供栈帧布局或借用权限。

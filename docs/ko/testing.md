@@ -1500,3 +1500,5 @@ Swift witness 생성기는 ARM64/x86-64 macOS와 Mac Catalyst에서 `CurrentValu
 `ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath`는 PHI 병합 후 객체 로컬의 순환과 같은 순환에 비공개 프레임 값이 들어가는 경우를 검증합니다. 객체 순환은 정확한 포인터 저장을 보존하지만 프레임 값이 있는 순환, 부분 덮어쓰기와 알 수 없는 프레임 유출은 증명을 거부합니다.
 
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords`는 두 아키텍처와 공급자, 모든 인자와 결과를 검증하고 약한 가져오기, 가산 오프셋, 다른 공급자, 오래된 심볼과 만들어낸 대여 효과를 거부합니다.
+
+`scripts.tests.test_generate_swift_witness_contracts`의 String 리더는 완전한 흐름을 검증하고 저장소·ABI·흐름 변형 28개와 모호한 선언 7개를 거부하며 입력 예산을 적용합니다. 바인딩 테스트는 두 아키텍처의 세 서술자에 각각 33개 변형을 적용합니다. 서술자 식별은 프레임 레이아웃이나 대여를 허용하지 않습니다.

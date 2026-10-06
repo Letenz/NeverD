@@ -2946,3 +2946,5 @@ The Swift witness generators verify both `CurrentValueSubject: Publisher` and `R
 `ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath` covers cyclic object locals after PHI coalescing and a private-frame seed through the same cycle. The object cycle preserves an exact pointer spill; the frame-carrying cycle, partial clobbers and unknown frame escapes reject it.
 
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` checks both architectures and exported providers, all argument and result carriers, and rejects weak imports, addends, foreign providers, stale symbols and invented borrowing effects.
+
+The string witness reader in `scripts.tests.test_generate_swift_witness_contracts` checks complete cache/query flow, rejects 28 storage, ABI and flow mutations plus seven ambiguous declarations, and enforces its input budget. The existing Swift witness binding tests cover all three descriptors on both architectures, including 33 mutations per descriptor and architecture. The descriptor identity supplies no frame layout or borrowing permission.

@@ -2,7 +2,8 @@ from pathlib import Path
 import re
 import unittest
 
-from scripts.generate_swift_witness_contracts import render, unused_instantiation_argument
+from scripts.generate_swift_witness_contracts import (
+    render, unused_instantiation_argument, string_protocol_instantiation_argument)
 from scripts.generate_swift_data_declarations import generic_range_conformance_storage
 
 IR = (Path(__file__).parent / 'fixtures/swift_generic_witness.ll').read_text()
@@ -11,9 +12,67 @@ MODULE = '/System/Library/Frameworks/Combine.framework/Combine'
 RANGE_IR = (Path(__file__).parent / 'fixtures/swift_generic_range_witness.ll').read_text()
 RANGE = '$sSnyxGSXsMc'
 CORE = '/usr/lib/swift/libswiftCore.dylib'
+STRING_IR = (Path(__file__).parent / 'fixtures/swift_string_protocol_witness.ll').read_text()
+STRING = '$sSSSysMc'
 
 
 class SwiftWitnessContracts(unittest.TestCase):
+    def test_string_protocol_keeps_complete_cache_query(self):
+        self.assertEqual(string_protocol_instantiation_argument(STRING_IR), STRING)
+        renamed = re.sub(r'%([0-9]+)', r'%local_\1', STRING_IR)
+        renamed = renamed.replace('entry', 'first').replace('cacheIsNull', 'miss').replace('cont', 'join')
+        self.assertEqual(string_protocol_instantiation_argument(renamed), STRING)
+        profiles = [{NAME, RANGE, STRING}] * 4
+        exports = [{NAME: {MODULE}, RANGE: {CORE}, STRING: {CORE}}] * 4
+        self.assertIn('"' + STRING + '"', render(profiles, exports, '15.5', 'Swift 6.1.2'))
+
+    def test_string_protocol_rejects_stale_cache_abi_and_flow(self):
+        changes = [
+            ('define swiftcc void', 'define void'),
+            ('@neverd_string_protocol_witness_probe()', '@neverd_string_protocol_witness_probe(ptr %context)'),
+            ('linkonce_odr hidden ptr', 'linkonce_odr hidden swiftcc ptr'),
+            ('@"$sS2SSysWl"()', '@"$sS2SSysWl"(ptr %context)'),
+            ('global ptr null', 'global ptr undef'),
+            ('global ptr null', 'constant ptr null'),
+            ('external global %swift.type, align 8', 'external thread_local global %swift.type, align 8'),
+            ('external global %swift.protocol_conformance_descriptor', 'extern_weak global %swift.protocol_conformance_descriptor'),
+            ('external global %swift.protocol_conformance_descriptor', 'external global ptr'),
+            ('load ptr, ptr', 'load volatile ptr, ptr'),
+            ('load ptr, ptr @"$sS2SSysWL"', 'load ptr, ptr @"foreign_cache"'),
+            ('icmp eq ptr %0, null', 'icmp ne ptr %0, null'),
+            ('label %cacheIsNull, label %cont', 'label %cont, label %cacheIsNull'),
+            ('ptr undef)', 'ptr null)'),
+            ('ptr undef)', 'ptr poison)'),
+            ('ptr undef)', 'ptr %context)'),
+            ('ptr undef)', 'i64 undef)'),
+            ('ptr nonnull @"$sSSN", ptr undef', 'ptr nonnull @"OtherMetadata", ptr undef'),
+            ('ptr nonnull @"$sSSSysMc", ptr nonnull', 'ptr nonnull @"OtherDescriptor", ptr nonnull'),
+            ('store atomic ptr %2', 'store atomic ptr %0'),
+            ('release, align 8', 'monotonic, align 8'),
+            ('phi ptr [ %0, %entry ], [ %2, %cacheIsNull ]', 'phi ptr [ %2, %entry ], [ %0, %cacheIsNull ]'),
+            ('ret ptr %3', 'ret ptr %0'),
+            ('ptr %0)\n  ret void', 'ptr undef)\n  ret void'),
+            ('declare ptr @swift_getWitnessTable(ptr, ptr, ptr)', 'declare swiftcc ptr @swift_getWitnessTable(ptr, ptr, ptr)'),
+            ('declare swiftcc void @neverd_string_protocol_observer(ptr, ptr, ptr)', 'declare swiftcc void @neverd_string_protocol_observer(ptr, ptr)'),
+            ('  ret void', '  call void @extra_effect()\n  ret void'),
+            ('  ret ptr %3', '  call void @extra_effect()\n  ret ptr %3'),
+        ]
+        for old, new in changes:
+            with self.subTest(old=old, new=new):
+                self.assertIn(old, STRING_IR)
+                with self.assertRaises(ValueError):
+                    string_protocol_instantiation_argument(STRING_IR.replace(old, new))
+        for prefix in ('@"$sSSN" =', '@"$sSSSysMc" =', '@"$sS2SSysWL" =',
+                       'declare ptr @swift_getWitnessTable',
+                       'declare swiftcc void @neverd_string_protocol_observer',
+                       'define swiftcc void @neverd_string_protocol_witness_probe',
+                       'define linkonce_odr hidden ptr @"$sS2SSysWl"'):
+            line = next(line for line in STRING_IR.splitlines() if line.startswith(prefix))
+            with self.subTest(duplicate=prefix), self.assertRaises(ValueError):
+                string_protocol_instantiation_argument(STRING_IR + '\n' + line + '\n')
+        with self.assertRaises(ValueError):
+            string_protocol_instantiation_argument(' ' * (1024 * 1024 + 1))
+
     def test_generic_range_preserves_both_metadata_inputs(self):
         self.assertEqual(generic_range_conformance_storage(RANGE_IR), {RANGE})
         renamed = re.sub(r'%([A-Za-z_0-9.]+)', r'%renamed_\1', RANGE_IR)

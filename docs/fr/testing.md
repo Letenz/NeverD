@@ -1625,3 +1625,5 @@ Les générateurs de witness Swift vérifient `CurrentValueSubject: Publisher` e
 `ObjCSourceBindings.PrivateFramePointerTailRequiresExactStoreOnEveryPath` couvre les cycles de variables objet après fusion des PHI et une valeur de pile privée dans le même cycle. Le cycle d’objets préserve le stockage exact du pointeur ; une valeur de pile, un écrasement partiel ou une fuite inconnue rejette la preuve.
 
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` vérifie les deux architectures, fournisseurs et tous les arguments et résultats ; il rejette les imports faibles, décalages, fournisseurs étrangers, symboles périmés et effets d’emprunt inventés.
+
+Le lecteur String de `scripts.tests.test_generate_swift_witness_contracts` vérifie le flux complet, rejette 28 modifications du stockage, de l’ABI et du flux ainsi que sept déclarations ambiguës et borne l’entrée. Les tests de liaison couvrent trois descripteurs sur les deux architectures avec 33 mutations par paire. L’identité n’accorde aucun agencement de pile ni emprunt.
