@@ -814,6 +814,21 @@ Explore disassembly, control flow, recovered C, and intermediate representations
 
 로컬 분석 프로세스로 디스어셈블리, 제어 흐름, 복원된 C 코드, 중간 표현을 탐색하세요.</translation>
         </message>
+        <message>
+            <location filename="../qml/Main.qml" line="288" />
+            <source>Library features and byte signatures (*.json *.pat)</source>
+            <translation>라이브러리 특징 및 바이트 시그니처 (*.json *.pat)</translation>
+        </message>
+        <message>
+            <location filename="../qml/Main.qml" line="286" />
+            <source>Load Signature Pack</source>
+            <translation>시그니처 팩 불러오기</translation>
+        </message>
+        <message>
+            <location filename="../qml/Main.qml" line="131" />
+            <source>Load Signature Pack…</source>
+            <translation>시그니처 팩 불러오기…</translation>
+        </message>
     </context>
     <context>
         <name>McpConnectionManager</name>
@@ -1045,6 +1060,101 @@ Explore disassembly, control flow, recovered C, and intermediate representations
             <source>Load more lines</source>
             <translation>줄 더 불러오기</translation>
         </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="91" />
+            <source>Close</source>
+            <translation>닫기</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="54" />
+            <source>Details</source>
+            <translation>세부 정보</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="110" />
+            <source>Evidence SHA-256</source>
+            <translation>근거 SHA-256</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="87" />
+            <source>Expand</source>
+            <translation>펼치기</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="49" />
+            <source>Expand all</source>
+            <translation>모두 펼치기</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="87" />
+            <source>Fold</source>
+            <translation>접기</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="49" />
+            <source>Fold all</source>
+            <translation>모두 접기</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="51" />
+            <source>Fold mapped library operations. Copy and export retain the full source.</source>
+            <translation>매핑된 라이브러리 연산을 접습니다. 복사 및 내보내기에는 전체 소스가 유지됩니다.</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="105" />
+            <source>Identity evidence</source>
+            <translation>식별 근거</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="46" />
+            <source>Library operations</source>
+            <translation>라이브러리 연산</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="107" />
+            <source>Linkage</source>
+            <translation>링크 이름</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="103" />
+            <source>Mapped to original source</source>
+            <translation>원본 소스에 매핑됨</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="106" />
+            <source>Original instructions</source>
+            <translation>원본 명령어</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="103" />
+            <source>Original source stays expanded; mapping is incomplete or outside the loaded page</source>
+            <translation>매핑이 불완전하거나 불러온 페이지 밖에 있어 원본 소스를 펼친 상태로 유지합니다</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="108" />
+            <source>Pack</source>
+            <translation>팩</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="109" />
+            <source>Profile SHA-256</source>
+            <translation>프로필 SHA-256</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="84" />
+            <source>Recognized library operation</source>
+            <translation>인식된 라이브러리 연산</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="104" />
+            <source>Rule</source>
+            <translation>규칙</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="111" />
+            <source>Source</source>
+            <translation>출처</translation>
+        </message>
     </context>
     <context>
         <name>Workbench</name>
@@ -1192,6 +1302,16 @@ Explore disassembly, control flow, recovered C, and intermediate representations
             <source>Finish opening the binary before editing.</source>
             <translation>바이너리를 여는 작업이 끝난 후에 편집하세요.</translation>
         </message>
+        <message>
+            <location filename="../PaneController.cpp" line="414" />
+            <source>Library regions link to original instructions; other source may be unmapped</source>
+            <translation>라이브러리 영역은 원본 명령어에 연결됩니다. 다른 소스는 매핑되지 않을 수 있습니다</translation>
+        </message>
+        <message>
+            <location filename="../Workbench.cpp" line="730" />
+            <source>Signature pack loaded</source>
+            <translation>시그니처 팩을 불러왔습니다</translation>
+        </message>
     </context>
     <context>
         <name>WorkerTransport</name>
@@ -1219,6 +1339,19 @@ Explore disassembly, control flow, recovered C, and intermediate representations
             <location filename="../EngineClient.cpp" line="67" />
             <source>Invalid analysis protocol JSON.</source>
             <translation>잘못된 분석 프로토콜 JSON입니다.</translation>
+        </message>
+    </context>
+    <context>
+        <name>TextPane</name>
+        <message>
+            <location filename="../qml/TextPane.qml" line="158" />
+            <source>Copy</source>
+            <translation>복사</translation>
+        </message>
+        <message>
+            <location filename="../qml/TextPane.qml" line="159" />
+            <source>Select all</source>
+            <translation>모두 선택</translation>
         </message>
     </context>
 </TS>

@@ -88,6 +88,8 @@ if(TARGET neverd_shared)
   target_compile_definitions(NeverDObjCRuntimeSourceTests PRIVATE
     NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
     NEVERD_MOBILE_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/scripts/tests/fixtures/mobile")
+  set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/ObjCRuntimeTestProperties.cmake")
   add_neverd_unittest(NeverDSessionCAPITests
     SessionCAPITests.cpp
     LINK_LIBS neverd_shared
@@ -96,6 +98,10 @@ if(TARGET neverd_shared)
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/lib/sdk/capi"
     ${LLVM_INCLUDE_DIRS})
+  add_dependencies(NeverDSessionCAPITests neverd-library-feature-fixtures)
+  target_compile_definitions(NeverDSessionCAPITests PRIVATE
+    NEVERD_LIBRARY_FEATURE_DIR="${CMAKE_SOURCE_DIR}/signatures/features/rules"
+    NEVERD_LIBRARY_FIXTURE_DIR="${CMAKE_BINARY_DIR}/unittests/lift/library-features/libcxx")
   if(WIN32)
     # The shared engine supplies SDK queries and the private mobile seam. The
     # test also uses LLVM's JSON parser; no GUI/worker links LLVM here.

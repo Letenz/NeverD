@@ -1,4 +1,5 @@
 add_neverd_unittest(NeverDSignatureTests
+  LibraryFeatureTests.cpp
   MachOPatternGeneratorTests.cpp
   PatternGeneratorTests.cpp
   PatternParserTests.cpp
@@ -15,3 +16,6 @@ add_neverd_unittest(NeverDSignatureTests
 target_include_directories(NeverDSignatureTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
 )
+
+target_compile_definitions(NeverDSignatureTests PRIVATE
+  NEVERD_LIBRARY_FEATURE_DIR="${CMAKE_SOURCE_DIR}/signatures/features/rules")

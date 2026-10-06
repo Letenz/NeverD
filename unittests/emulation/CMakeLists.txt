@@ -56,6 +56,8 @@ add_neverd_unittest(NeverDAArch64MemoryTests
   AArch64VectorMemoryTests.cpp
   AArch64StructureMemoryTests.cpp
   AArch64AcquireReleaseTests.cpp
+  AArch64ExclusiveTests.cpp
+  AArch64AtomicTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 
@@ -119,11 +121,24 @@ target_include_directories(NeverDX64MemoryUpdateTests PRIVATE
 
 add_neverd_unittest(NeverDRAMTransactionTests
   RAMTransactionTests.cpp
+  RAMReservationTests.cpp
   X64AtomicTests.cpp
   X64WideAtomicTests.cpp
   TIMEOUT 15
   LINK_COMPONENTS EmulationCPU)
 target_include_directories(NeverDRAMTransactionTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
+add_neverd_unittest(NeverDParallelExecutionTests
+  ParallelExecutionTests.cpp
+  TIMEOUT 30
+  LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDParallelExecutionTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
+add_neverd_unittest(NeverDMMIOAtomicTests
+  MMIOAtomicTests.cpp TIMEOUT 60 LINK_COMPONENTS EmulationCPU)
+target_include_directories(NeverDMMIOAtomicTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
 
 add_neverd_unittest(NeverDThreadPointerTests
@@ -165,6 +180,7 @@ add_neverd_unittest(NeverDLinuxProcessTests
   LinuxProcessTests.cpp
   LinuxProcessLayoutTests.cpp
   LinuxMemoryTests.cpp
+  LinuxClockTests.cpp
   LinuxOutputNativeTests.cpp
   ProcessReportTests.cpp
   TIMEOUT 20
@@ -208,8 +224,13 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidThreadAttributeTests.cpp
   AndroidThreadTests.cpp
   AndroidTimeTests.cpp
+  AndroidSleepTests.cpp
   AndroidSignalTests.cpp
+  AndroidSnapshotTests.cpp
+  AndroidResidencyTests.cpp
   AndroidFileTests.cpp
+  AndroidFileStatusAtTests.cpp
+  AndroidFileSystemStatusTests.cpp
   AndroidSyscallTests.cpp
   AndroidFormattingTests.cpp
   AndroidScanningTests.cpp
@@ -233,6 +254,8 @@ add_neverd_unittest(NeverDWindowsProcessTests
   WindowsSystemTests.cpp
   WindowsExceptionTests.cpp
   WindowsAlignmentProcessTests.cpp
+  WindowsExclusiveProcessTests.cpp
+  WindowsAtomicProcessTests.cpp
   WindowsSIMDMappingTests.cpp
   WindowsSIMDExecutionTests.cpp
   WindowsContinuationTests.cpp

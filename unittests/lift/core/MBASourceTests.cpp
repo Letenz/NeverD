@@ -4,7 +4,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../MachOThumbFixture.h"
 #include "../NeverDLiftFixture.h"
+
+#include "llvm/Support/JSON.h"
 
 #include <string_view>
 #include <tuple>
@@ -531,14 +534,20 @@ TEST_P(MBAFrameSourceTest, RemovesSpilledMBAAndPreservesExecutableBehavior) {
     // the harness to the emitted alias only after authenticating its address.
     const auto Listed = exec(ndBin(), {"funcs", "--json", Object.string()});
     ASSERT_TRUE(Listed.ok()) << Listed.err;
-    const std::regex Definition(
-        R"json(\{"addr":"([^"]+)","name":"([^"]+)","size":)json");
+    auto Functions = llvm::json::parse(Listed.out);
+    ASSERT_TRUE(static_cast<bool>(Functions))
+        << llvm::toString(Functions.takeError());
+    ASSERT_TRUE(Functions->getAsArray());
     std::vector<std::pair<std::string, std::string>> Symbols;
-    for (std::sregex_iterator
-             It(Listed.out.begin(), Listed.out.end(), Definition),
-         End;
-         It != End; ++It)
-      Symbols.emplace_back((*It)[1].str(), (*It)[2].str());
+    for (const auto &Value : *Functions->getAsArray()) {
+      const auto *Function = Value.getAsObject();
+      ASSERT_TRUE(Function);
+      const auto Address = Function->getString("addr");
+      const auto Name = Function->getString("name");
+      ASSERT_TRUE(Address);
+      ASSERT_TRUE(Name);
+      Symbols.emplace_back(Address->str(), Name->str());
+    }
     auto ResolveAlias = [&](const std::string &Name) {
       const auto Requested =
           std::find_if(Symbols.begin(), Symbols.end(), [&](const auto &Symbol) {
@@ -1386,10 +1395,11 @@ TEST_P(MBAMachOThumbOnlySubtypeSourceTest,
       tmpFile(std::string("macho-thumb-only-") + Case.Name + ".o");
   const auto Compiled =
       exec(NEVERD_TEST_CLANG,
-           {"-target", Case.Triple, "-c",
-            (fs::path(TEST_SOURCE_DIR) / "core" / Case.Fixture).string(), "-o",
-            Object.string()});
+           {"-target", neverd::test::thumbFixtureAssemblerTriple(Case.Fixture),
+            "-c", (fs::path(TEST_SOURCE_DIR) / "core" / Case.Fixture).string(),
+            "-o", Object.string()});
   ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  ASSERT_TRUE(neverd::test::setThumbFixtureSubtype(Object, Case.Triple));
 
   const auto Output = tmpFile("macho-thumb-only.c");
   std::vector<std::string> Args{"decompile", "--no-debug"};

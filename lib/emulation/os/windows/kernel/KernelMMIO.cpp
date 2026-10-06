@@ -15,7 +15,9 @@
 #include "neverd/emulation/DriverProfile.h"
 
 #include <algorithm>
+#include <climits>
 #include <limits>
+#include <utility>
 
 namespace neverd::emulation {
 namespace {
@@ -26,9 +28,119 @@ llvm::Error mmioError(const llvm::Twine &Message) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                  "MMIO: " + Message);
 }
+template <typename State, typename F>
+auto withOwner(const std::shared_ptr<State> &S, F Call)
+    -> decltype(Call(*S->Owner)) {
+  std::lock_guard Lock(*S->Mutex);
+  if (!S->Owner)
+    return mmioError(ExpiredOwner);
+  return Call(*S->Owner);
+}
 } // namespace
 
+KernelMMIO::KernelMMIO(GuestMemory &Memory, const KernelResources &Resources)
+    : Memory(Memory), Resources(Resources),
+      State(std::make_shared<CallbackState>(
+          CallbackState{Resources.transactionMutex(), this})) {}
+KernelMMIO::~KernelMMIO() {
+  // A callback either finishes while the owner still exists, or observes its
+  // retirement. Locking an unrelated weak token cannot provide this barrier.
+  std::lock_guard Lock(*State->Mutex);
+  State->Owner = nullptr;
+}
+
+GuestMMIOCallbacks KernelMMIO::callbacks(uint64_t Address) {
+  GuestMMIOCallbacks Callbacks;
+  const auto S = State;
+  Callbacks.Validate = [S, Address](uint64_t Offset, uint64_t Size,
+                                    bool Write) {
+    return withOwner(S, [&](KernelMMIO &Owner) {
+      return Owner.validate(Address, Offset, Size, Write);
+    });
+  };
+  Callbacks.Read = [S, Address](uint64_t Offset, unsigned Size) {
+    return withOwner(S, [&](KernelMMIO &Owner) {
+      return Owner.read(Address, Offset, Size);
+    });
+  };
+  Callbacks.Write = [S, Address](uint64_t Offset, unsigned Size,
+                                 uint64_t Value) {
+    return withOwner(S, [&](KernelMMIO &Owner) {
+      return Owner.write(Address, Offset, Size, Value);
+    });
+  };
+  Callbacks.PrepareAtomic = [S, Address](uint64_t Offset, unsigned Size) {
+    return withOwner(S, [&](KernelMMIO &Owner) {
+      return Owner.prepare(Address, Offset, Size, true);
+    });
+  };
+  Callbacks.PrepareRead =
+      [S, Address](uint64_t Offset,
+                   unsigned Size) -> llvm::Expected<GuestMMIOPreparedRead> {
+    auto Preview = withOwner(S, [&](KernelMMIO &Owner) {
+      return Owner.prepare(Address, Offset, Size, false);
+    });
+    if (!Preview)
+      return Preview.takeError();
+    uint64_t Value = 0;
+    for (unsigned N = 0; N < Size; ++N)
+      Value |= uint64_t(Preview->Value[N]) << (N * CHAR_BIT);
+    return GuestMMIOPreparedRead{Value, [Preview = std::move(*Preview)] {
+                                   return Preview.Commit(Preview.Value);
+                                 }};
+  };
+  return Callbacks;
+}
+
+llvm::Expected<GuestMMIOPreparedAtomic> KernelMMIO::prepare(uint64_t Address,
+                                                            uint64_t Offset,
+                                                            unsigned Size,
+                                                            bool Write) {
+  if (auto E = validate(Address, Offset, Size, Write))
+    return E;
+  if (!Size || Size > sizeof(uint32_t))
+    return mmioError(AtomicWidth);
+  auto Value = peek(Address, Offset, Size);
+  if (!Value)
+    return Value.takeError();
+  const auto &Mapping = Mappings.at(Address);
+  const auto Revision = Devices.at(Mapping.PDO).Revision;
+  const auto ResourceRevision = Resources.find(Mapping.PDO)->Revision;
+  // Shared identity cannot wrap or be recreated by restoring the same value.
+  // A shared consumed bit also protects copied provider commit callbacks.
+  auto Consumed = std::make_shared<bool>(false);
+  std::vector<uint8_t> Bytes(Size);
+  for (unsigned N = 0; N < Size; ++N)
+    Bytes[N] = uint8_t(*Value >> (N * CHAR_BIT));
+  return GuestMMIOPreparedAtomic{
+      std::move(Bytes),
+      [S = State, Address, Offset, Size, Write, Revision, ResourceRevision,
+       Consumed](llvm::ArrayRef<uint8_t> Bytes) -> llvm::Error {
+        return withOwner(S, [&](KernelMMIO &Owner) -> llvm::Error {
+          if (std::exchange(*Consumed, true))
+            return mmioError(ChangedRead);
+          if (Bytes.size() != Size)
+            return mmioError(AtomicWidth);
+          if (auto E = Owner.validate(Address, Offset, Size, Write))
+            return E;
+          const auto PDO = Owner.Mappings.at(Address).PDO;
+          if (Owner.Devices.at(PDO).Revision != Revision ||
+              Owner.Resources.find(PDO)->Revision != ResourceRevision)
+            return mmioError(ChangedRead);
+          if (!Write) {
+            auto Result = Owner.read(Address, Offset, Size);
+            return Result ? llvm::Error::success() : Result.takeError();
+          }
+          uint64_t Value = 0;
+          for (unsigned N = 0; N < Size; ++N)
+            Value |= uint64_t(Bytes[N]) << (N * CHAR_BIT);
+          return Owner.write(Address, Offset, Size, Value);
+        });
+      }};
+}
+
 llvm::Error KernelMMIO::configure(uint64_t PDO) {
+  std::lock_guard Lock(*State->Mutex);
   const auto *Assignment = Resources.find(PDO);
   if (!Assignment || Assignment->Memory.empty())
     return llvm::Error::success();
@@ -39,6 +151,7 @@ llvm::Error KernelMMIO::configure(uint64_t PDO) {
 }
 
 llvm::Error KernelMMIO::canRemove(uint64_t PDO) const {
+  std::lock_guard Lock(*State->Mutex);
   for (const auto &[Address, Mapping] : Mappings) {
     (void)Address;
     if (Mapping.PDO == PDO)
@@ -49,6 +162,7 @@ llvm::Error KernelMMIO::canRemove(uint64_t PDO) const {
 
 llvm::Expected<uint64_t> KernelMMIO::map(uint64_t Physical, uint64_t Length,
                                          uint32_t Attributes, bool Extended) {
+  std::lock_guard Lock(*State->Mutex);
   const bool ReadOnly =
       Extended && Attributes == (mmio::PageReadOnly | mmio::PageNoCache);
   if (Extended
@@ -84,51 +198,7 @@ llvm::Expected<uint64_t> KernelMMIO::map(uint64_t Physical, uint64_t Length,
   if (Mappings.size() >= mmio::MaxMappings || Base >= End || Size > End - Base)
     return 0;
   const uint64_t Address = Base + Offset;
-  GuestMMIOCallbacks Callbacks;
-  const std::weak_ptr<unsigned char> OwnerLifetime = Lifetime;
-  Callbacks.Validate = [this, Address, OwnerLifetime](
-                           uint64_t Offset, uint64_t Size, bool Write) {
-    if (OwnerLifetime.expired())
-      return mmioError(ExpiredOwner);
-    return validate(Address, Offset, Size, Write);
-  };
-  Callbacks.Read = [this, Address,
-                    OwnerLifetime](uint64_t Offset,
-                                   unsigned Size) -> llvm::Expected<uint64_t> {
-    if (OwnerLifetime.expired())
-      return mmioError(ExpiredOwner);
-    return read(Address, Offset, Size);
-  };
-  Callbacks.Write = [this, Address, OwnerLifetime](
-                        uint64_t Offset, unsigned Size, uint64_t Value) {
-    if (OwnerLifetime.expired())
-      return mmioError(ExpiredOwner);
-    return write(Address, Offset, Size, Value);
-  };
-  Callbacks.PrepareRead =
-      [this, Address,
-       OwnerLifetime](uint64_t Offset,
-                      unsigned Size) -> llvm::Expected<GuestMMIOPreparedRead> {
-    if (OwnerLifetime.expired())
-      return mmioError(ExpiredOwner);
-    auto Value = peek(Address, Offset, Size);
-    if (!Value)
-      return Value.takeError();
-    return GuestMMIOPreparedRead{*Value,
-                                 [this, Address, Offset, Size, OwnerLifetime,
-                                  Expected = *Value]() -> llvm::Error {
-                                   if (OwnerLifetime.expired())
-                                     return mmioError(ExpiredOwner);
-                                   auto Current = peek(Address, Offset, Size);
-                                   if (!Current)
-                                     return Current.takeError();
-                                   if (*Current != Expected)
-                                     return mmioError(ChangedRead);
-                                   auto Committed = read(Address, Offset, Size);
-                                   return Committed ? llvm::Error::success()
-                                                    : Committed.takeError();
-                                 }};
-  };
+  auto Callbacks = callbacks(Address);
   if (auto E = Memory.mapMMIO(Base, Size, std::move(Callbacks))) {
     bool Exhausted = false;
     auto Remaining = llvm::handleErrors(
@@ -145,6 +215,7 @@ llvm::Expected<uint64_t> KernelMMIO::map(uint64_t Physical, uint64_t Length,
 }
 
 llvm::Error KernelMMIO::unmap(uint64_t Address, uint64_t Length) {
+  std::lock_guard Lock(*State->Mutex);
   const auto It = Mappings.find(Address);
   if (It == Mappings.end() || It->second.Length != Length)
     return mmioError("unmap requires the original virtual base and byte count");
@@ -190,8 +261,11 @@ void KernelMMIO::restorePowerContext(uint64_t PDO) {
   const auto &Assignment = *Resources.find(PDO);
   if (Device.PowerGeneration == Assignment.PowerGeneration)
     return;
-  Device.Resources = Assignment.Memory;
+  auto Next = Assignment.Memory;
+  auto Revision = std::make_shared<unsigned char>(0);
+  Device.Resources = std::move(Next);
   Device.PowerGeneration = Assignment.PowerGeneration;
+  Device.Revision = std::move(Revision);
 }
 
 llvm::Expected<uint64_t> KernelMMIO::peek(uint64_t Address, uint64_t Offset,
@@ -228,6 +302,7 @@ llvm::Error KernelMMIO::write(uint64_t Address, uint64_t Offset, unsigned Size,
   if (auto E = validate(Address, Offset, Size, true))
     return E;
   const auto &Mapping = Mappings.at(Address);
+  auto Revision = std::make_shared<unsigned char>(0);
   restorePowerContext(Mapping.PDO);
   auto &Resource = Devices.at(Mapping.PDO).Resources[Mapping.ResourceIndex];
   const uint64_t RegisterOffset = Mapping.Physical - Resource.TranslatedStart +
@@ -236,6 +311,7 @@ llvm::Error KernelMMIO::write(uint64_t Address, uint64_t Offset, unsigned Size,
     if (Register.Offset == RegisterOffset) {
       Register.Value =
           uint32_t(Value) & uint32_t((uint64_t(1) << (Size * 8)) - 1);
+      Devices.at(Mapping.PDO).Revision = std::move(Revision);
       return llvm::Error::success();
     }
   llvm_unreachable(MissingRegister);

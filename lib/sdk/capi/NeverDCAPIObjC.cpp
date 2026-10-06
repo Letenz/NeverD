@@ -265,6 +265,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                                                      Result);
     const SourceSwiftWitnessFrameProjectionValidator WitnessFrames(S->Img,
                                                                    Result);
+    ObjCBlockByValueCopySourceValidator BlockValueCopies(BlockSource, Result,
+                                                         BlockPlan);
     std::map<va_t, ObjCBlockSourceBindingResult> BlockProjections;
     std::map<va_t, ObjCSynchronizedSourceProof> SynchronizedProjections;
     std::set<va_t> ResumeOnlyProjections;
@@ -302,6 +304,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                                     Function, Functions) ||
              objCByValueCopySourceCallBound(Expression, S->Img, Result,
                                             Function, Functions) ||
+             BlockValueCopies.validate(Expression, Function, Functions) ||
              objCMetadataFactorySourceCallBound(
                  Expression, S->Img, MetadataFactoryPlan, ProfileStorage,
                  Function, Functions) ||
@@ -652,6 +655,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                      objCByValueCopySourceCallBound(Expression, S->Img, Result,
                                                     Binding.Function,
                                                     Functions) ||
+                     BlockValueCopies.validate(Expression, Binding.Function,
+                                               Functions) ||
                      objCMetadataFactorySourceCallBound(
                          Expression, S->Img, MetadataFactoryPlan,
                          ProfileStorage, Binding.Function, Functions) ||
@@ -771,6 +776,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                  objCByValueCopySourceCallBound(Expression, S->Img, Result,
                                                 Projection.Function,
                                                 Functions) ||
+                 BlockValueCopies.validate(Expression, Projection.Function,
+                                           Functions) ||
                  objCMetadataFactorySourceCallBound(
                      Expression, S->Img, MetadataFactoryPlan, ProfileStorage,
                      Projection.Function, Functions) ||

@@ -1288,6 +1288,17 @@ target_include_directories(NeverDAArch64DivisionSemanticTests PRIVATE
   ${LLVM_INCLUDE_DIRS}
 )
 
+add_neverd_unittest(NeverDCMemoryCopyTests
+  core/CMemoryCopyTests.cpp
+  LINK_COMPONENTS BackendC
+)
+target_include_directories(NeverDCMemoryCopyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDCMemoryCopyTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
+
 add_neverd_unittest(NeverDLLVMCValueTests
   core/LLVMCValueTests.cpp
   LINK_COMPONENTS BackendC
@@ -1503,7 +1514,9 @@ add_dependencies(NeverDNativePointerRelocationBoundaryTests neverd)
 
 add_neverd_unittest(NeverDMBASourceTests
   core/MBASourceTests.cpp
+  LINK_LIBS LLVMSupport
 )
+target_include_directories(NeverDMBASourceTests PRIVATE ${LLVM_INCLUDE_DIRS})
 add_neverd_unittest(NeverDMedStackAlignmentTests
   core/MedStackAlignmentTests.cpp
   LINK_COMPONENTS IRMed
@@ -2365,10 +2378,10 @@ add_custom_command(
   COMMENT "Compiling PIC i386 stack-materialized jump-table fixture")
 list(APPEND TEST_OBJECTS ${stack_cgoto_i386_pic_obj})
 
-# Keep the optimized i386 PIC layout used by the adjacent two-table semantic
-# roundtrip probe: two five-entry GOTOFF runs and two dispatches per run.
+# Keep exact adjacent table ownership probes independent of compiler loop
+# peeling: two five-entry GOTOFF runs and two dispatches per run.
 set(i386_adjacent_twotable_src
-    "${CMAKE_CURRENT_SOURCE_DIR}/x86_32/test_i386_adjacent_twotable.c")
+    "${CMAKE_CURRENT_SOURCE_DIR}/x86_32/test_i386_adjacent_gotoff.S")
 set(i386_adjacent_twotable_obj
     "${CMAKE_CURRENT_BINARY_DIR}/test_i386_adjacent_twotable.o")
 add_custom_command(
@@ -2378,7 +2391,7 @@ add_custom_command(
           -fno-asynchronous-unwind-tables -march=pentium4
           ${i386_adjacent_twotable_src} -o ${i386_adjacent_twotable_obj}
   DEPENDS ${i386_adjacent_twotable_src}
-  COMMENT "Compiling optimized adjacent i386 GOTOFF tables")
+  COMMENT "Assembling adjacent i386 GOTOFF tables")
 list(APPEND TEST_OBJECTS ${i386_adjacent_twotable_obj})
 
 # O0 uses an EBP-relative GOT spill across three independent switch loops.
@@ -2396,8 +2409,7 @@ add_custom_command(
   COMMENT "Compiling O0 i386 PIC switch loops with a shared GOT spill")
 list(APPEND TEST_OBJECTS ${i386_three_switch_loops_obj})
 
-# The same public program has three adjacent GOTOFF runs, each with an entry
-# and a loop-back consumer, after optimization.
+# A third adjacent run must join the same all-or-nothing ownership proof.
 set(i386_three_switch_loops_o2_obj
     "${CMAKE_CURRENT_BINARY_DIR}/test_i386_three_switch_loops_o2.o")
 add_custom_command(
@@ -2405,9 +2417,10 @@ add_custom_command(
   COMMAND ${CLANG_EXEC} -target i386-linux-gnu -nostdlib -nostdlibinc -c -O2
           -fno-stack-protector -fno-exceptions -fno-unwind-tables
           -fno-asynchronous-unwind-tables -march=pentium4
-          ${i386_three_switch_loops_src} -o ${i386_three_switch_loops_o2_obj}
-  DEPENDS ${i386_three_switch_loops_src}
-  COMMENT "Compiling optimized three-run i386 GOTOFF tables")
+          -DNEVERD_GOTOFF_THREE_RUNS=1
+          ${i386_adjacent_twotable_src} -o ${i386_three_switch_loops_o2_obj}
+  DEPENDS ${i386_adjacent_twotable_src}
+  COMMENT "Assembling three-run i386 GOTOFF tables")
 list(APPEND TEST_OBJECTS ${i386_three_switch_loops_o2_obj})
 
 set(i386_adjacent_function_pointer_src
@@ -3277,3 +3290,122 @@ target_include_directories(NeverDLLVMCIntrinsicSemanticTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}
 )
+
+# The feature repository retains compiler-produced objects and their manifests.
+# Use those objects, rather than a hand-written stand-in for a standard library.
+set(_library_feature_dir "${CMAKE_CURRENT_BINARY_DIR}/library-features/libcxx")
+set(_library_feature_archive
+  "${CMAKE_SOURCE_DIR}/signatures/features/evidence/libcxx-23git-arm64-macos-abi1-alternate-clang22.tar.gz")
+add_custom_command(
+  OUTPUT "${_library_feature_dir}/accessors-inline.o"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${_library_feature_dir}"
+  COMMAND ${CMAKE_COMMAND} -E chdir "${_library_feature_dir}"
+    ${CMAKE_COMMAND} -E tar xzf "${_library_feature_archive}"
+  DEPENDS "${_library_feature_archive}"
+  VERBATIM)
+add_custom_target(neverd-library-feature-fixtures
+  DEPENDS "${_library_feature_dir}/accessors-inline.o")
+add_neverd_unittest(NeverDLibraryRecognitionTests
+  core/LibraryRecognitionTests.cpp
+  LINK_COMPONENTS Pipeline Sigs)
+add_dependencies(NeverDLibraryRecognitionTests neverd-library-feature-fixtures)
+target_compile_definitions(NeverDLibraryRecognitionTests PRIVATE
+  NEVERD_LIBRARY_FEATURE_DIR="${CMAKE_SOURCE_DIR}/signatures/features/rules"
+  NEVERD_LIBRARY_FIXTURE_DIR="${_library_feature_dir}")
+
+if(TARGET neverd-worker AND Python3_Interpreter_FOUND)
+  add_test(NAME NeverDWorkerLibraryFeatures
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/neverd-worker/tests/library_features_test.py"
+      "$<TARGET_FILE:neverd-worker>"
+      "${_library_feature_dir}/accessors-inline.o"
+      "${CMAKE_SOURCE_DIR}/signatures/features/rules/libcxx-23git-arm64-macos-abi1-alternate-clang22.json")
+  set_tests_properties(NeverDWorkerLibraryFeatures PROPERTIES TIMEOUT 60 LABELS "unit;library-recognition;worker")
+endif()
+
+if(TARGET neverd AND Python3_Interpreter_FOUND AND CLANG_EXEC)
+  add_test(NAME NeverDLibraryFeatureCLI
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/library_cli_test.py"
+      "$<TARGET_FILE:neverd>"
+      "${_library_feature_dir}/accessors-inline.o"
+      "${CMAKE_SOURCE_DIR}/signatures/features/rules/libcxx-23git-arm64-macos-abi1-alternate-clang22.json"
+      "${CLANG_EXEC}")
+  set_tests_properties(NeverDLibraryFeatureCLI PROPERTIES
+    TIMEOUT 120 LABELS "unit;library-recognition;cli")
+endif()
+
+# Link the original MSVC /Z7 objects locally so their CodeView locations can be
+# authenticated to an actual PE/PDB pair on every host with lld-link. The ATL
+# fixtures are analysis-only: unresolved platform calls are never executed.
+if(LLD_LINK_EXEC AND CLANG_EXEC)
+  set(_library_msvc_dir "${CMAKE_CURRENT_BINARY_DIR}/library-features/msvc")
+  set(_library_msvc_archive "${CMAKE_SOURCE_DIR}/signatures/features/evidence/msvc-14.44.35207-x64-release.tar.gz")
+  add_custom_command(
+    OUTPUT "${_library_msvc_dir}/accessors-inline.obj"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_library_msvc_dir}"
+    COMMAND ${CMAKE_COMMAND} -E chdir "${_library_msvc_dir}"
+      ${CMAKE_COMMAND} -E tar xzf "${_library_msvc_archive}"
+    DEPENDS "${_library_msvc_archive}" VERBATIM)
+  add_custom_command(
+    OUTPUT "${_library_msvc_dir}/link-storage.obj"
+    COMMAND "${CLANG_EXEC}" -target x86_64-pc-windows-msvc -c
+      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/library_link_storage.c"
+      -o "${_library_msvc_dir}/link-storage.obj"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/library_link_storage.c"
+      "${_library_msvc_dir}/accessors-inline.obj" VERBATIM)
+  set(_library_msvc_outputs)
+  # A real import thunk lets the PE loader authenticate the exception
+  # personality without a Windows runtime implementation on the build host.
+  foreach(_runtime vcruntime vcruntime_base)
+    add_custom_command(
+      OUTPUT "${_library_msvc_dir}/${_runtime}.lib"
+      COMMAND "${LLD_LINK_EXEC}" /lib /machine:x64
+        "/def:${CMAKE_CURRENT_SOURCE_DIR}/fixtures/library_${_runtime}.def"
+        "/out:${_library_msvc_dir}/${_runtime}.lib"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/library_${_runtime}.def"
+        "${_library_msvc_dir}/accessors-inline.obj" VERBATIM)
+  endforeach()
+  foreach(_profile accessors-inline accessors-negative-configuration atl_string-inline atl_com-inline)
+    add_custom_command(
+      OUTPUT "${_library_msvc_dir}/${_profile}.dll" "${_library_msvc_dir}/${_profile}.pdb"
+      COMMAND "${LLD_LINK_EXEC}" /dll /noentry /nodefaultlib /force:unresolved
+        /opt:noref /opt:noicf /debug:full "/out:${_profile}.dll" "/pdb:${_profile}.pdb" "${_profile}.obj" link-storage.obj vcruntime.lib vcruntime_base.lib
+      WORKING_DIRECTORY "${_library_msvc_dir}"
+      DEPENDS "${_library_msvc_dir}/accessors-inline.obj" "${_library_msvc_dir}/link-storage.obj" "${_library_msvc_dir}/vcruntime.lib" "${_library_msvc_dir}/vcruntime_base.lib" VERBATIM)
+    list(APPEND _library_msvc_outputs "${_library_msvc_dir}/${_profile}.dll")
+  endforeach()
+  add_custom_target(neverd-library-msvc-fixtures DEPENDS ${_library_msvc_outputs})
+  target_sources(NeverDLibraryRecognitionTests PRIVATE core/MsvcLibraryRecognitionTests.cpp)
+  add_dependencies(NeverDLibraryRecognitionTests neverd-library-msvc-fixtures)
+  target_compile_definitions(NeverDLibraryRecognitionTests PRIVATE
+    NEVERD_LIBRARY_MSVC_FIXTURE_DIR="${_library_msvc_dir}")
+  if(TARGET neverd AND Python3_Interpreter_FOUND)
+    add_test(NAME NeverDLibraryFeatureMsvcCLI
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/library_cli_test.py"
+        "$<TARGET_FILE:neverd>"
+        "${_library_msvc_dir}/accessors-inline.dll"
+        "${CMAKE_SOURCE_DIR}/signatures/features/rules/msvc-14.44.35207-x64-release-stl.json"
+        "${CLANG_EXEC}" msvc-names)
+    set_tests_properties(NeverDLibraryFeatureMsvcCLI PROPERTIES
+      TIMEOUT 120 LABELS "unit;library-recognition;cli")
+  endif()
+else()
+  message(STATUS "MSVC library consumer fixtures skipped: lld-link unavailable")
+endif()
+
+set(_library_libc_dir "${CMAKE_CURRENT_BINARY_DIR}/library-features/musl")
+set(_library_libc_archive "${CMAKE_SOURCE_DIR}/signatures/features/evidence/musl-1.2.5-x64-clang22-memory.tar.gz")
+add_custom_command(
+  OUTPUT "${_library_libc_dir}/library-memory.elf" "${_library_libc_dir}/library-memory.truth.json"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${_library_libc_dir}"
+  COMMAND ${CMAKE_COMMAND} -E chdir "${_library_libc_dir}"
+    ${CMAKE_COMMAND} -E tar xzf "${_library_libc_archive}"
+  DEPENDS "${_library_libc_archive}" VERBATIM)
+add_custom_target(neverd-library-libc-fixtures
+  DEPENDS "${_library_libc_dir}/library-memory.elf" "${_library_libc_dir}/library-memory.truth.json")
+target_sources(NeverDLibraryRecognitionTests PRIVATE core/LibcLibraryRecognitionTests.cpp)
+add_dependencies(NeverDLibraryRecognitionTests neverd-library-libc-fixtures)
+target_compile_definitions(NeverDLibraryRecognitionTests PRIVATE
+  NEVERD_LIBRARY_LIBC_FIXTURE_DIR="${_library_libc_dir}")

@@ -1,0 +1,66 @@
+//===- WindowsExclusiveNative.def - Native ARM64 alignment observations ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Original clean-source observations:
+// https://github.com/NeverSight/NeverD/actions/runs/37345882634
+// Source: 656dc2d3464bc151d293e22c968f77e9bd7fbfc2
+// Program SHA-256:
+// 70df7dbc38eb76c826b22e4bc3e9fcb04925bdf7d0122b86791eb103ab6589ab Hash each
+// complete record after validating PC relationships and removing only code/data
+// placement. Register values, exception metadata, operand offsets, ordering and
+// every observed RAM byte remain in the digest.
+#ifdef NEVERD_EXCLUSIVE_NATIVE_CASE
+NEVERD_EXCLUSIVE_NATIVE_CASE(
+    Byte, 0, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+NEVERD_EXCLUSIVE_NATIVE_CASE(
+    Half, 20,
+    "4db1f08af6c1edc7f75296d68e992049415b148f9dbb1f3daca8e9f89f44adea")
+NEVERD_EXCLUSIVE_NATIVE_CASE(
+    Word, 60,
+    "1b987ec1b97b721dcebc28f7e8b6848368f08ee2232b25b246682c5747617e5d")
+NEVERD_EXCLUSIVE_NATIVE_CASE(
+    Double, 140,
+    "6347d16e48361043881f1c3cdf6b8b5966dab298db7cd076ac1d78291606fbe5")
+NEVERD_EXCLUSIVE_NATIVE_CASE(
+    AcquireByte, 0,
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+NEVERD_EXCLUSIVE_NATIVE_CASE(
+    AcquireHalf, 20,
+    "a45d481a1d2cf51aef3bc8a6c8a279d559b3b5ba17892300ead756eae0b829d7")
+NEVERD_EXCLUSIVE_NATIVE_CASE(
+    AcquireWord, 60,
+    "27913f1fb3fc73ee0cf8a5e83b0b1b3fa5f9e65271648c1e712a3e339ae92028")
+NEVERD_EXCLUSIVE_NATIVE_CASE(
+    AcquireDouble, 140,
+    "edf7b061da3e77d6352ca391a4ba8bdd62a714789d41509f4c828007bcd6fe25")
+NEVERD_EXCLUSIVE_NATIVE_CASE(
+    PairWord, 140,
+    "e58fa6b934a37776b06fd54e40b9ed295e97d12254147a2854dd92b32bc17a90")
+NEVERD_EXCLUSIVE_NATIVE_CASE(
+    PairDouble, 300,
+    "a944ec73f91feb90e83b873ddfa942168f447829a4c03e9ad0ec70d70f16f2eb")
+NEVERD_EXCLUSIVE_NATIVE_CASE(
+    AcquirePairWord, 140,
+    "8fc61bc31ba816f3e30bc62f3590189685a9f9f9b1c37c74a7da33fc280280ab")
+NEVERD_EXCLUSIVE_NATIVE_CASE(
+    AcquirePairDouble, 300,
+    "9d2becf75d6666b18d12e31726143cc5e3e0c509ccf6c6514dcd671d9ea99dc2")
+#endif
+#ifdef NEVERD_EXCLUSIVE_NATIVE_TEXT
+NEVERD_EXCLUSIVE_NATIVE_TEXT(MissingTools,
+                             "ARM64 exclusive fixture requires Clang and LLD")
+#endif
+#ifdef NEVERD_EXCLUSIVE_NATIVE_VALUE
+NEVERD_EXCLUSIVE_NATIVE_VALUE(InstructionLimit, 2000000)
+NEVERD_EXCLUSIVE_NATIVE_VALUE(EventLimit, 10000)
+NEVERD_EXCLUSIVE_NATIVE_VALUE(TimeoutMicroseconds, 60000000)
+NEVERD_EXCLUSIVE_NATIVE_VALUE(OutputLimit, 1048576)
+NEVERD_EXCLUSIVE_NATIVE_VALUE(AccessViolation, 0xc0000005)
+#endif
+#ifdef NEVERD_EXCLUSIVE_NATIVE_BACKEND
+NEVERD_EXCLUSIVE_NATIVE_BACKEND(KVM)
+NEVERD_EXCLUSIVE_NATIVE_BACKEND(WHP)
+NEVERD_EXCLUSIVE_NATIVE_BACKEND(Unicorn)
+#endif

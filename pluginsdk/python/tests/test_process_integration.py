@@ -137,16 +137,19 @@ class ProcessIntegrationTests(unittest.TestCase):
         session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
         for optimization in ("O0", "O2"):
             for entry in ("files_sequence", "files_faults", "files_bionic",
-                          "files_status", "files_status_bionic", "files_access",
+                          "files_status", "files_status_bionic", "files_status_at",
+                          "files_status_at_bionic", "files_access",
                           "files_access_faults", "files_access_bionic",
-                          "files_directory_errors", "files_directory_bionic"):
+                          "files_directory_errors", "files_directory_bionic",
+                          "files_trailing_paths", "files_trailing_paths_bionic",
+                          "files_filesystem_status", "files_filesystem_status_bionic"):
                 with self.subTest(optimization=optimization, entry=entry):
                     options = {
                         "backend": "unicorn", "instruction_quantum": 31,
                         "linux_files": {"files": [{"path": "/fixture/data", "bytes_hex": "00ff410a805a"}]},
                         "android": {"entry_symbol": entry, "initialize": False, "thread_limit": 2},
                     }
-                    if entry in ("files_access", "files_directory_errors"):
+                    if entry in ("files_access", "files_directory_errors", "files_trailing_paths"):
                         options["linux_files"]["descriptor_limit"] = 4
                     if entry.startswith("files_status"):
                         options["linux_files"]["files"][0]["metadata"] = {
@@ -415,6 +418,42 @@ class ProcessIntegrationTests(unittest.TestCase):
             with self.assertRaisesRegex(NeverDError, "file exceeds its region"):
                 session.emulate_process(image, "android-aarch64-api28-v1", json.dumps(options))
             self.assertEqual(path.read_bytes(), source)
+
+    def test_relative_sleep_retains_input_and_completes_original_event(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_ANDROID_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Android fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        options = {"backend": "unicorn", "linux_time": {
+            "advance_on_idle": True,
+            "clocks": [{"id": 0, "seconds": "4294967297", "nanoseconds": 999999998}]},
+            "android": {"entry_symbol": "sleep_call", "initialize": False, "thread_limit": 2,
+                "arguments": [2, 0x20000000, 0x20000000, 0x20000020],
+                "memory": [{"address": 0x20000000, "size": 4096,
+                            "bytes_hex": "00000000000000000500000000000000"}],
+                "read_memory": [{"address": 0x20000000, "size": 64}]}}
+        result = session.emulate_process(str(Path(fixtures) / "sleep-O2-relr.so"),
+                                         "android-aarch64-api28-v1", json.dumps(options))
+        self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+        self.assertEqual(result["return_value"], "0")
+        self.assertEqual(len(result["services"]), 1)
+        self.assertEqual(result["services"][0]["result"], "0")
+        expected = b"".join(v.to_bytes(8, "little") for v in
+                            [0, 5, 0, 0, 73, 4294967298, 3, 4294967298])
+        self.assertEqual(bytes.fromhex(result["android"]["memory"][0]["bytes_hex"]), expected)
 
     def test_explicit_clocks_share_values_and_dynamic_api_names(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")

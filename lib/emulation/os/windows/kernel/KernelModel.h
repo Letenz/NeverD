@@ -37,6 +37,7 @@
 namespace neverd::emulation {
 struct DriverImage;
 class KernelExportRegistry;
+enum class KernelAPIKind;
 class KernelModel {
 public:
   KernelModel(GuestMemory &Memory, DriverResult &Result,
@@ -236,6 +237,27 @@ public:
                                   bool IsWrite) const;
 
 private:
+  llvm::Expected<uint64_t> setCancelRoutine(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> mapMDL(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> unmapMDL(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> callPowerDriver(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> completeDriverRequest(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t>
+  currentDriverRequestStack(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> initializeUnicodeString(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> allocatePool(llvm::ArrayRef<uint64_t> A,
+                                        bool Modern);
+  llvm::Expected<uint64_t> freePool(llvm::ArrayRef<uint64_t> A, bool Tagged);
+  llvm::Expected<uint64_t>
+  deleteSymbolicLinkFromGuest(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t>
+  createSymbolicLinkFromGuest(llvm::ArrayRef<uint64_t> A);
+  llvm::Expected<uint64_t> debugMessage(
+      llvm::ArrayRef<uint64_t> A, unsigned FormatIndex,
+      llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument);
+  llvm::Expected<uint64_t> memoryCall(KernelAPIKind Kind,
+                                      llvm::ArrayRef<uint64_t> A);
+
   GuestMemory &Memory;
   DriverResult &Result;
   KernelExportRegistry *Exports;
@@ -258,8 +280,32 @@ private:
   };
   std::map<uint64_t, BlockingPoFxOperation> BlockingPoFx;
   llvm::Error waitForPoFxOperation(uint64_t Thread);
-  llvm::Expected<uint64_t> callPoFxAPI(llvm::StringRef Name,
-                                       llvm::ArrayRef<uint64_t> Arguments);
+  enum class PoFxHandleAccess { DriverOwned, AnyOwner };
+  enum class PoFxCondition { Active, Idle };
+  llvm::Error preparePoFxOperation(uint64_t Handle, PoFxHandleAccess Access);
+  llvm::Expected<uint64_t> finishPoFxOperation(llvm::Error Error);
+  llvm::Expected<uint64_t> registerPoFxDevice(uint64_t Object, uint64_t Record,
+                                              uint64_t Output);
+  llvm::Expected<uint64_t> unregisterPoFxDevice(uint64_t Handle);
+  llvm::Expected<uint64_t> startPoFxPowerManagement(uint64_t Handle);
+  llvm::Expected<uint64_t> changePoFxComponent(uint64_t Handle, uint32_t Index,
+                                               uint32_t Flags,
+                                               PoFxCondition Condition);
+  llvm::Expected<uint64_t> completePoFxIdleCondition(uint64_t Handle,
+                                                     uint32_t Index);
+  llvm::Expected<uint64_t> completePoFxIdleState(uint64_t Handle,
+                                                 uint32_t Index);
+  llvm::Expected<uint64_t> completePoFxPowerNotRequired(uint64_t Handle);
+  llvm::Expected<uint64_t> reportPoFxDevicePoweredOn(uint64_t Handle);
+  llvm::Expected<uint64_t>
+  setPoFxComponentLatency(uint64_t Handle, uint32_t Index, uint64_t Latency);
+  llvm::Expected<uint64_t> setPoFxComponentResidency(uint64_t Handle,
+                                                     uint32_t Index,
+                                                     uint64_t Residency);
+  llvm::Expected<uint64_t> setPoFxComponentWake(uint64_t Handle, uint32_t Index,
+                                                bool Wake);
+  llvm::Expected<uint64_t> setPoFxDeviceIdleTimeout(uint64_t Handle,
+                                                    uint64_t Timeout);
   llvm::Expected<KernelPoFx::Registration>
   readPoFxRegistration(uint64_t PDO, uint64_t Address);
   llvm::Error queuePoFxCallbacks();
@@ -487,7 +533,12 @@ private:
     uint16_t GuardedDepth = 0;
   };
   std::map<uint64_t, ApcState> ApcStates;
-  llvm::Expected<uint64_t> callApcStateAPI(llvm::StringRef Name);
+  enum class ApcRegionKind { Critical, Guarded };
+  llvm::Expected<ApcState *> apcStateForCall();
+  llvm::Expected<uint64_t> apcsDisabled();
+  llvm::Expected<uint64_t> allApcsDisabled();
+  llvm::Expected<uint64_t> enterApcRegion(ApcRegionKind Kind);
+  llvm::Expected<uint64_t> leaveApcRegion(ApcRegionKind Kind);
   bool UserRequestContext = false;
   uint32_t CurrentUserProcessID = 0;
   uint64_t NextUserAddress = profile::UserArenaBase;
@@ -526,16 +577,21 @@ private:
     bool RaisedIRQL;
   };
   std::map<uint64_t, ExecutiveSpinLock> ExecutiveSpinLocks;
-  llvm::Expected<uint64_t> callSpinLockAPI(llvm::StringRef Name,
-                                           llvm::ArrayRef<uint64_t> Arguments);
+  enum class SpinLockMode { Raise, AtDpc, TryAtDpc };
+  llvm::Error validateSpinLockAddress(uint64_t Address) const;
+  llvm::Error validateSpinLockStorage(uint64_t Address) const;
+  llvm::Expected<uint64_t> initializeSpinLock(uint64_t Address);
+  llvm::Expected<uint64_t> acquireSpinLock(uint64_t Address, SpinLockMode Mode);
+  llvm::Expected<uint64_t> releaseSpinLock(uint64_t Address,
+                                           std::optional<uint8_t> RestoreIRQL);
   struct RaisedIRQL {
     uint64_t Execution;
     uint8_t OldIRQL;
     uint8_t NewIRQL;
   };
   std::vector<RaisedIRQL> RaisedIRQLs;
-  llvm::Expected<uint64_t> callIRQLAPI(llvm::StringRef Name,
-                                       llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t> raiseIRQL(uint8_t RequestedIRQL);
+  llvm::Expected<uint64_t> lowerIRQL(uint8_t RequestedIRQL);
   llvm::Expected<uint64_t> processObject(uint32_t ProcessID);
   llvm::Expected<uint64_t> requestorProcess(uint64_t IRP);
   llvm::Expected<uint64_t> currentProcess();
@@ -555,8 +611,38 @@ private:
   std::map<std::pair<uint64_t, uint64_t>, uint64_t> FrameworkPassiveLockThreads;
   std::map<uint64_t, bool> FrameworkLockStorage;
   std::map<std::pair<uint64_t, uint64_t>, uint64_t> FrameworkWaitLockThreads;
-  llvm::Expected<uint64_t> callInterruptAPI(llvm::StringRef Name,
-                                            llvm::ArrayRef<uint64_t> Arguments);
+  struct InterruptParameters {
+    uint64_t Record = 0;
+    uint64_t Output = 0;
+    uint64_t Routine = 0;
+    uint64_t Context = 0;
+    uint64_t SpinLock = 0;
+    uint64_t PDO = 0;
+    uint64_t Vector = 0;
+    uint64_t IRQL = 0;
+    uint64_t Synchronize = 0;
+    uint64_t Mode = 0;
+    uint64_t Share = 0;
+    uint64_t Affinity = 0;
+    uint64_t Floating = 0;
+    uint64_t Group = 0;
+    uint32_t Version = 0;
+    bool LineBased = false;
+    bool MessageBased = false;
+    bool Passive = false;
+    uint64_t Fallback = 0;
+  };
+  llvm::Expected<uint64_t> connectInterrupt(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t> connectInterruptEx(uint64_t Record);
+  llvm::Expected<uint64_t> registerInterrupt(InterruptParameters Parameters);
+  llvm::Expected<uint64_t> disconnectInterrupt(uint64_t Object,
+                                               uint32_t Version = 0);
+  llvm::Expected<uint64_t> disconnectInterruptEx(uint64_t Record);
+  llvm::Expected<uint64_t> acquireInterruptSpinLock(uint64_t Object);
+  llvm::Expected<uint64_t> releaseInterruptSpinLock(uint64_t Object,
+                                                    uint8_t OldIRQL);
+  llvm::Expected<uint64_t>
+  synchronizeInterrupt(uint64_t Object, uint64_t Routine, uint64_t Context);
   llvm::Expected<std::optional<uint64_t>> finishInterruptCall(uint64_t Token,
                                                               uint64_t Value);
   llvm::Expected<uint64_t> preflightScheduledBoundary(uint64_t Time);

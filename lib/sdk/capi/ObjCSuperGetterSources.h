@@ -170,10 +170,13 @@ callsRestore(const LowFunc &Low, va_t FirstSite, va_t FirstTarget,
          restoresNativeSourceState(Low, Arch::AArch64, Calls);
 }
 
-inline bool canonicalBoolGetter(const SourceFunctionTypeHint &Signature) {
-  auto Expected = parseObjCMethodEncoding("value", "B16@0:8");
-  std::string Error;
-  if (!Expected || !assignDarwinObjCSourceABI(*Expected, Arch::AArch64, Error))
+// These declarations use only registers for their complete return value.
+// The current method, selector cell and globally agreed declaration must each
+// independently match one of these shapes; no indirect-result buffer follows.
+inline bool canonicalGetter(const SourceFunctionTypeHint &Signature) {
+  const auto Expected = objcSuperGetterSourceDeclaration(Signature.Architecture,
+                                                         Signature.ReturnType);
+  if (!Expected)
     return false;
   auto Normalized = Signature;
   Normalized.Origin = Expected->Origin;
@@ -305,7 +308,7 @@ prove(const BinaryImage &Image, const PipelineResult &Result, va_t Entry,
              false) != std::optional<va_t>(Entry) ||
       !CallerLow || !CallerHigh || !CallerHigh->SourceTypeHint ||
       CallerHigh->DoesNotReturn || CallerHigh->Params.size() != 2 ||
-      !canonicalBoolGetter(*CallerHigh->SourceTypeHint) ||
+      !canonicalGetter(*CallerHigh->SourceTypeHint) ||
       !equalSourceTypes(CallerHigh->ReturnType,
                         CallerHigh->SourceTypeHint->ReturnType))
     return std::nullopt;
@@ -324,7 +327,7 @@ prove(const BinaryImage &Image, const PipelineResult &Result, va_t Entry,
                   llvm::support::endian::read32le(CallerBytes + 4), Caller, 2);
   const auto Reference = Slot ? Image.ObjCSourceReferences.find(*Slot)
                               : Image.ObjCSourceReferences.end();
-  if (!Method || !MethodHint || !canonicalBoolGetter(*MethodHint) ||
+  if (!Method || !MethodHint || !canonicalGetter(*MethodHint) ||
       !equalSourceABIs(*MethodHint, *CallerHigh->SourceTypeHint) || !Slot ||
       Reference == Image.ObjCSourceReferences.end() ||
       Reference->second.Address != *Slot || Reference->second.Size != 8 ||
@@ -335,12 +338,14 @@ prove(const BinaryImage &Image, const PipelineResult &Result, va_t Entry,
   // declaration must supply this same ABI. No representative selector is
   // substituted into the dynamic dispatch in the generated helper.
   const auto Signature = objcSelectorSourceTypeHint(Image, Method->Selector);
-  if (!Signature || !canonicalBoolGetter(*Signature))
+  if (!Signature || !canonicalGetter(*Signature))
     return std::nullopt;
   // Each declaration was authenticated independently above. The declaration
   // providers may differ, while every actual source/ABI field must agree.
   auto Normalized = *Signature;
   Normalized.Origin = SourceFunctionTypeHint::OriginKind::ObjCRuntime;
+  if (!equalSourceABIs(Normalized, *MethodHint))
+    return std::nullopt;
   Contract.MessageSignature = Normalized;
   Contract.CallerSelectorSlots.emplace(Caller, *Slot);
   if (!callsRestore(*Low, Entry + 24, *Accessor, MetadataSignature, Entry + 40,
@@ -351,6 +356,12 @@ prove(const BinaryImage &Image, const PipelineResult &Result, va_t Entry,
 
 inline std::string helperName(va_t Entry) {
   return "neverd_objc_super_getter_" + llvm::utohexstr(Entry, true);
+}
+
+inline std::string helperName(const ObjCSuperGetterContract &Contract) {
+  const auto Name = helperName(Contract.Entry);
+  return Contract.MessageSignature.ReturnComponents.empty() ? Name
+                                                            : Name + "_cgrect";
 }
 
 inline std::string selectorName(va_t Slot) {
@@ -374,14 +385,12 @@ inline SourceCallTypeHint addressHint(SourceCallTypeHint::Kind Kind,
 
 inline SourceCallTypeHint getterHint(const ObjCSuperGetterContract &Contract) {
   auto Hint = addressHint(SourceCallTypeHint::Kind::RuntimeObjCSuperGetter,
-                          Contract.Entry, helperName(Contract.Entry));
-  const auto Pointer = Hint.Signature.ReturnType;
-  Hint.Signature.ReturnType = Contract.MessageSignature.ReturnType;
-  for (const auto Name : {"self", "command", "selector_slot", "metadata"})
-    Hint.Signature.Parameters.push_back({Name, Pointer});
-  std::string Error;
-  if (!assignDarwinScalarSourceABI(Hint.Signature, Arch::AArch64, Error))
+                          Contract.Entry, helperName(Contract));
+  const auto Signature = objcSuperGetterHelperSourceDeclaration(
+      Arch::AArch64, Contract.MessageSignature.ReturnType);
+  if (!Signature)
     throw std::runtime_error("invalid super getter source ABI");
+  Hint.Signature = *Signature;
   return Hint;
 }
 
@@ -478,7 +487,7 @@ projectObjCSuperGetter(const HighFunc &Function, const BinaryImage &Image,
   ObjCSuperGetterSourceProjection Projection{Function, {}, false};
   const auto Contract = validatedObjCSuperGetter(Image, Plan, Function.Entry);
   if (!Contract || !Function.SourceTypeHint || Function.Params.size() != 2 ||
-      !objc_super_getter_detail::canonicalBoolGetter(*Function.SourceTypeHint))
+      !objc_super_getter_detail::canonicalGetter(*Function.SourceTypeHint))
     return Projection;
   using namespace objc_super_getter_detail;
   const auto Hint = getterHint(*Contract);
@@ -527,9 +536,19 @@ inline bool objCSuperGetterSourceCallBound(
   const auto Contract = validatedObjCSuperGetter(Image, Plan, Function.Entry);
   if (!Contract || Function.Body.size() != 1 ||
       Function.Body.front().Kind != StmtKind::Return ||
-      !Function.Body.front().RetVal || Function.Params.size() != 2)
+      Function.Body.front().Addr != Function.Entry + 8 ||
+      !Function.Body.front().RetVal || Function.Params.size() != 2 ||
+      !Function.SourceTypeHint || Function.DoesNotReturn ||
+      Function.StructuredExceptionRegions ||
+      Function.UnstructuredExceptionRegions ||
+      !equalSourceTypes(Function.ReturnType,
+                        Contract->MessageSignature.ReturnType))
     return false;
   using namespace objc_super_getter_detail;
+  const auto *Current = uniqueEntry(Plan.Pipeline->HighFuncs, Function.Entry);
+  if (!Current || !Current->SourceTypeHint ||
+      !equalSourceABIs(*Function.SourceTypeHint, *Current->SourceTypeHint))
+    return false;
   const auto &Call = *Function.Body.front().RetVal;
   const auto Hint = getterHint(*Contract);
   if (!callMatches(Call, Hint, Contract->Entry) ||
@@ -589,14 +608,15 @@ renderObjCSelectorReferenceHelpers(const std::map<va_t, std::string> &Selectors,
 inline std::string renderObjCSuperGetterHelpers(
     const BinaryImage &Image, const ObjCSuperGetterSourcePlan &Plan,
     const std::set<va_t> &Callers, std::set<std::string> &SharedFunctions) {
-  std::map<va_t, ObjCSuperGetterContract> Contracts;
+  std::map<std::string, ObjCSuperGetterContract> Contracts;
   std::map<va_t, std::string> Selectors;
   for (const auto Caller : Callers) {
     const auto Contract = validatedObjCSuperGetter(Image, Plan, Caller);
     if (!Contract)
       throw std::runtime_error(
           "super getter source contract is no longer valid");
-    Contracts.emplace(Contract->Entry, *Contract);
+    Contracts.emplace(objc_super_getter_detail::helperName(*Contract),
+                      *Contract);
     const va_t Slot = Contract->CallerSelectorSlots.at(Caller);
     Selectors.emplace(Slot, Image.ObjCSourceReferences.at(Slot).Name);
   }
@@ -607,8 +627,7 @@ inline std::string renderObjCSuperGetterHelpers(
   OS << "\n#include <objc/runtime.h>\n"
         "extern void objc_msgSendSuper2(void);\n";
   OS << renderObjCSelectorReferenceHelpers(Selectors, SharedFunctions);
-  for (const auto &[Entry, Contract] : Contracts) {
-    const auto Name = objc_super_getter_detail::helperName(Entry);
+  for (const auto &[Name, Contract] : Contracts) {
     SharedFunctions.insert(Name);
     OS << "\n"
        << typeToC(Contract.MessageSignature.ReturnType) << " " << Name

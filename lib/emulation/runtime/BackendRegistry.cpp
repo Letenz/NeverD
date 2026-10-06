@@ -141,7 +141,7 @@ llvm::Expected<std::unique_ptr<ExecutionBackend>>
 createCheckedBackend(ExecutionBackendKind Kind,
                      std::shared_ptr<AddressSpace> Space,
                      GuestArchitecture Architecture, bool UserMode,
-                     const ExecutionCapabilities &Capabilities) {
+                     const ExecutionCapabilities &Capabilities, bool Parallel) {
   auto Memory = MemoryProjection::create(Space);
   if (!Memory)
     return Memory.takeError();
@@ -150,6 +150,9 @@ createCheckedBackend(ExecutionBackendKind Kind,
     return Lock.takeError();
   if (auto E = (*Memory)->mutableMemory())
     return E;
+  if (Parallel)
+    if (auto E = (*Memory)->enableParallel(Kind == ExecutionBackendKind::WHP))
+      return E;
   if (Architecture == GuestArchitecture::X64) {
     auto Machine =
         Kind == ExecutionBackendKind::KVM   ? createKvmMachine(**Memory)
@@ -197,9 +200,11 @@ createExecutionBackend(const ExecutionConfiguration &Configuration,
                                    BackendAvailability::BuildDisabled);
 #endif
   }
-  auto CPU = createCheckedBackend(Kind, std::move(Space), Config.Architecture,
-                                  Config.Privilege == ExecutionPrivilege::User,
-                                  Resolved->Capabilities);
+  auto CPU = createCheckedBackend(
+      Kind, std::move(Space), Config.Architecture,
+      Config.Privilege == ExecutionPrivilege::User, Resolved->Capabilities,
+      (Config.RequiredFeatures & ExecutionFeature::ParallelCPUs) !=
+          ExecutionFeature::None);
   if (!CPU)
     return CPU.takeError();
   return BackendSelection{std::move(*CPU), Kind,

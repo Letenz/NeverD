@@ -42,8 +42,8 @@ struct BackendFault {
   std::optional<uint64_t> ErrorCode;
   /// Optional cause established by the architecture's instruction checks.
   /// A raw processor vector is insufficient to infer this classification.
-  /// OperandAlignment currently identifies checked x64 aligned SSE operands;
-  /// it does not imply that a data access or page lookup has occurred.
+  /// OperandAlignment identifies checked aligned operands, including ARM64
+  /// exclusive accesses. It does not imply that a data transfer occurred.
   std::optional<BackendFaultCause> Cause;
 };
 } // namespace neverd::emulation

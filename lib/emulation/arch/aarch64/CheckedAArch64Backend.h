@@ -21,6 +21,7 @@ public:
   llvm::Expected<std::unique_ptr<BackendContext>> saveContext() override;
   llvm::Error saveContext(BackendContext &) override;
   llvm::Error restoreContext(const BackendContext &) override;
+  llvm::Error bindAddressSpace(std::shared_ptr<AddressSpace>) override;
 
 private:
   CheckedAArch64Backend(bool UserMode)
@@ -28,8 +29,10 @@ private:
                        UserMode) {}
   struct SavedState : BackendContext::Storage {
     AArch64MachineState CPU;
+    std::shared_ptr<RAMReservation> Exclusive;
   };
   bool canonicalRange(uint64_t, uint64_t) const override;
+  bool supportsDeviceMappings() const override { return !UserMode; }
   uint64_t programCounter() const override {
     return CPU.reg(AArch64Register::PC);
   }
@@ -37,9 +40,12 @@ private:
     CPU.reg(AArch64Register::PC) = PC;
   }
   llvm::Error execute(const cs_insn &) override;
+  llvm::Expected<bool> executeAtomic(const cs_insn &);
+  void onGuestException() override { Exclusive.reset(); }
   std::optional<ServiceRequest>
   decodeServiceRequest(const cs_insn &) const override;
   AArch64MachineState CPU;
+  std::shared_ptr<RAMReservation> Exclusive;
   std::unique_ptr<AArch64Machine> Machine;
 };
 } // namespace neverd::emulation

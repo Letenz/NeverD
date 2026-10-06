@@ -327,6 +327,47 @@ TEST(SymExpr, StructuralOperatorsCollapseWhereTheyCan) {
       16u);
 }
 
+TEST(SymExpr, ZeroPrefixedWordsShareTheZeroExtensionForm) {
+  for (uint32_t Bits : {1u, 7u, 8u, 13u, 24u, 32u, 63u, 64u, 127u, 255u})
+    for (uint32_t Padding : {1u, 7u, 8u, 19u, 64u}) {
+      SCOPED_TRACE(Bits);
+      SCOPED_TRACE(Padding);
+      SymContext Ctx;
+      const auto X = Ctx.mkVar("x", Bits);
+      const auto Value = Ctx.mkAdd(X, Ctx.mkConst(Bits, 3));
+      const auto Expected = Ctx.mkZExt(Value, Bits + Padding);
+      EXPECT_EQ(Ctx.mkConcat(Ctx.mkZero(Padding), Value), Expected);
+      EXPECT_EQ(Ctx.mkConcat({Ctx.mkZero(Padding), Ctx.mkZero(5), Value}),
+                Ctx.mkZExt(Value, Bits + Padding + 5));
+      llvm::APInt Inputs[] = {llvm::APInt::getAllOnes(Bits)};
+      EXPECT_EQ(Ctx.eval(Expected, Inputs),
+                (Inputs[0] + llvm::APInt(Bits, 3)).zext(Bits + Padding));
+    }
+}
+
+TEST(SymExpr, ExtendedConcatGroupingPreservesEveryNonzeroAndUnknownBit) {
+  SymContext Ctx;
+  const auto High = Ctx.mkVar("high", 8), Low = Ctx.mkVar("low", 8);
+  const auto Pair = Ctx.mkConcat(High, Low);
+  const auto Flat = Ctx.mkConcat({Ctx.mkZero(8), High, Low});
+  const auto Grouped = Ctx.mkConcat(Ctx.mkZExt(High, 16), Low);
+  EXPECT_EQ(Flat, Ctx.mkZExt(Pair, 24));
+  EXPECT_EQ(Grouped, Flat);
+  EXPECT_EQ(Ctx.mkConcat(Ctx.mkZero(8), Grouped), Ctx.mkZExt(Pair, 32));
+  const auto Interior = Ctx.mkConcat(High, Ctx.mkZExt(Low, 16));
+  const auto Nonzero = Ctx.mkConcat(Ctx.mkConst(8, 0x93), Low);
+  EXPECT_NE(Pair, Ctx.mkZExt(Low, 16));
+  EXPECT_NE(Nonzero, Ctx.mkZExt(Low, 16));
+  for (uint64_t A = 0; A != 256; ++A)
+    for (uint64_t B = 0; B != 256; ++B) {
+      const uint64_t Inputs[] = {A, B};
+      EXPECT_EQ(Ctx.evalU64(Flat, Inputs), (A << 8) | B);
+      EXPECT_EQ(Ctx.evalU64(Grouped, Inputs), (A << 8) | B);
+      EXPECT_EQ(Ctx.evalU64(Interior, Inputs), (A << 16) | B);
+      EXPECT_EQ(Ctx.evalU64(Nonzero, Inputs), 0x9300 | B);
+    }
+}
+
 TEST(SymExpr, NonLowBitwiseWindowsRetainProvedConstants) {
   for (unsigned Width : {16u, 32u, 64u, 128u, 256u}) {
     SCOPED_TRACE(Width);

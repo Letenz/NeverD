@@ -1956,6 +1956,9 @@ jobs:
       - name: Verify original nonempty x87 capture
         if: ${{ matrix.arch == 'X64' }}
         run: python scripts/check_windows_context.py --arch X64 --floating-point --output build-context-fp
+      - name: Verify original ARM64 exclusive loops
+        if: ${{ matrix.arch == 'AArch64' }}
+        run: python scripts/check_aarch64_exclusives.py --output build-exclusive-oracle
       - name: Observe original SIMD exception masks and sticky status
         if: ${{ matrix.arch == 'X64' }}
         run: |
@@ -1971,5 +1974,6 @@ jobs:
             build-context-oracle/
             build-context-fp/
             build-simd-oracle/
+            build-exclusive-oracle/
           if-no-files-found: error
           retention-days: 14

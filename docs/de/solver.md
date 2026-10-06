@@ -6,6 +6,14 @@
 
 Standardmäßig verwendet NeverD seinen eingebauten Bitvektorsolver. Exakte MBA-Ableitung bleibt von allgemeinen Solverbackends unabhängig. Ausdruckssynthese übernimmt einen Kandidaten erst nach einem Äquivalenzbeweis; Gegenbeispiele und offene Abfragen lassen den Originalausdruck unverändert.
 
+<!-- i18n-section: builtin-comparisons -->
+
+## Eingebaute Vergleichsschaltungen
+
+Vergleiche über mehr als acht Bits vergleichen zuerst die oberen Hälften und verwenden bei deren Gleichheit die unteren Hälften. Kleine Abschnitte nutzen Subtraktionsüberträge. Der gemeinsame Encoder kann Gatter des oberen Präfixes wiederverwenden, wenn eine Teilregisteränderung nur untere Bits verändert. Vorzeichenbehaftete Vergleiche invertieren weiterhin beide Vorzeichenbits. Ausdruckssemantik und Ressourcengrenzen bleiben unverändert; ein ausgeschöpftes Budget liefert weiterhin `Unknown`.
+
+`BitBlaster.WidePredicatesAgreeWithTheEvaluator` prüft vorzeichenbehaftete und vorzeichenlose Prädikate gegen den Ausdrucksauswerter bei ausgewählten Breiten von 8 bis 256 Bits, einschließlich ungerader Breiten, benachbarter Grenzwerte und signifikanter Bits oberhalb von 64 Bits. Falsche Ausgabewerte werden ebenfalls ausgeschlossen. Tests für Teilzähler prüfen vollständige Abfragen, Gegenbeispielmodelle und erschöpfte Gatterbudgets. Native Regressionen mit gespeichertem Vergleich beweisen beide Reihenfolgen von Vergleich und Aktualisierung unter Beobachtung aller Register und Flags und weisen einen geänderten ursprünglichen Schleifenrumpf zurück.
+
 <!-- i18n-section: z3-build -->
 
 ## Optionaler Z3-Build

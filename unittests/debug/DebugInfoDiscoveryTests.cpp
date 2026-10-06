@@ -644,7 +644,7 @@ loadDWARFReturnFixture(DWARFReturnFixtureKind Kind) {
 }
 
 //===----------------------------------------------------------------------===//
-// isSynthesizedFuncName — the predicate the whole precedence chain rests on
+// isSynthesizedFuncName recognizes spelling; Symbol::Origin owns precedence.
 //===----------------------------------------------------------------------===//
 
 TEST(NameOriginTest, PlaceholdersAreSynthesized) {
@@ -660,9 +660,8 @@ TEST(NameOriginTest, RealNamesAreNotSynthesized) {
   EXPECT_FALSE(isSynthesizedFuncName("?bar@foo@@QEAAXXZ"));
 }
 
-// A binary is free to export something spelled like a placeholder.  Requiring
-// the exact `<prefix><hex>` shape is what keeps such a name from being treated
-// as up for grabs by a signature match.
+// Similar spellings remain ordinary names. Exact placeholder spellings still
+// require the producer's origin before a signature may replace them.
 TEST(NameOriginTest, PlaceholderLookalikesKeepTheirName) {
   EXPECT_FALSE(isSynthesizedFuncName("sub_total"));
   EXPECT_FALSE(isSynthesizedFuncName("sub_"));
@@ -677,7 +676,7 @@ TEST(NameOriginTest, PlaceholderLookalikesKeepTheirName) {
 
 TEST(ApplyDebugSymbolsTest, ReplacesPlaceholderAndFillsSize) {
   BinaryImage Img;
-  Img.Symbols.push_back(makeNamedFunc(0x1000, "sub_1000"));
+  Img.Symbols.push_back(Symbol::makeFunc(0x1000));
 
   FakeDebugContext Dbg({makeDebugFunc(0x1000, "parse_header", 64)});
   EXPECT_EQ(applyDebugSymbols(Img, Dbg), 1u);
@@ -701,6 +700,15 @@ TEST(ApplyDebugSymbolsTest, ImageNameOutranksDebugName) {
   EXPECT_EQ(S->Size, 32u);
 }
 
+TEST(ApplyDebugSymbolsTest, StatedHexPlaceholderNameRemainsAuthoritative) {
+  BinaryImage Img;
+  Img.Symbols.push_back(makeNamedFunc(0x1000, "sub_1000", 32));
+  FakeDebugContext Dbg({makeDebugFunc(0x1000, "stale_name", 64)});
+  EXPECT_EQ(applyDebugSymbols(Img, Dbg), 0u);
+  EXPECT_EQ(Img.Symbols.front().Name, "sub_1000");
+  EXPECT_EQ(Img.Symbols.front().Origin, NameOrigin::Stated);
+}
+
 TEST(ApplyDebugSymbolsTest, AddsFunctionsTheImageDoesNotDescribe) {
   BinaryImage Img;
   Img.Symbols.push_back(makeNamedFunc(0x1000, "main", 16));
@@ -719,7 +727,7 @@ TEST(ApplyDebugSymbolsTest, AddsFunctionsTheImageDoesNotDescribe) {
 // an address can carry two entries.  The stated one is what decides.
 TEST(ApplyDebugSymbolsTest, StatedEntryDecidesWhenAnAddressCarriesBoth) {
   BinaryImage Img;
-  Img.Symbols.push_back(makeNamedFunc(0x1000, "sub_1000"));
+  Img.Symbols.push_back(Symbol::makeFunc(0x1000));
   Img.Symbols.push_back(makeNamedFunc(0x1000, "shipped_name", 32));
 
   FakeDebugContext Dbg({makeDebugFunc(0x1000, "stale_name", 64)});

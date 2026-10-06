@@ -6,6 +6,7 @@
 #include "neverd/emulation/MemoryView.h"
 
 #include "ExecutionDiagnostics.h"
+#include "MemoryLayout.h"
 #include "MemoryStorage.h"
 
 #include <algorithm>
@@ -130,6 +131,9 @@ llvm::Error MemoryView::write(uint64_t Offset,
     auto *Backing = static_cast<uint8_t *>(RAM.Backing.base()) +
                     Slice.Region->Offset + Slice.Offset + Offset;
     const size_t Count = std::min<uint64_t>(Bytes.size(), Slice.Size - Offset);
+    RAM.invalidateReservations(memory::ProjectionReserve +
+                                   Slice.Region->Offset + Slice.Offset + Offset,
+                               Count);
     std::memcpy(Backing, Bytes.data(), Count);
     Bytes = Bytes.drop_front(Count);
     Offset = 0;

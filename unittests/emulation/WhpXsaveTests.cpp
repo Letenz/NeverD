@@ -238,7 +238,7 @@ TEST_P(WhpXsaveProtocol, InitialWideComponentsDoNotHideFPState) {
   EXPECT_EQ(Next, Before);
 }
 TEST_P(WhpXsaveProtocol, NativeInstallRetainsFPStateBeforeAnyGuestExecution) {
-  WhpPartition Host;
+  WhpVirtualProcessor Host;
   if (auto E = Host.API.load()) {
     const auto Text = llvm::toString(std::move(E));
     if (!std::getenv(XsaveRequireNative))
@@ -377,7 +377,7 @@ TEST_P(WhpXsaveProtocol, NativeGuestRAMDistinguishesEntryFromCaptureLoss) {
                         BoundaryData + BoundaryInputOffset, Input)),
                     "");
           const auto Root = llvm::cantFail(buildX64PageTables(*Memory));
-          WhpPartition Host;
+          WhpVirtualProcessor Host;
           if (auto E = Host.API.load()) {
             const auto Text = llvm::toString(std::move(E));
             if (!std::getenv(XsaveRequireNative))

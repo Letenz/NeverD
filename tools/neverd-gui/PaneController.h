@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LibraryCodeView.h"
 #include "PageModel.h"
 #include "PaneRegistry.h"
 #include "QueryService.h"
@@ -38,6 +39,7 @@ class PaneController final : public QObject {
                  changed)
   Q_PROPERTY(QString representationText READ representationText NOTIFY changed)
   Q_PROPERTY(QVariantList textMappings READ textMappings NOTIFY changed)
+  Q_PROPERTY(QObject *libraryView READ libraryView NOTIFY changed)
   Q_PROPERTY(QString mappingStatus READ mappingStatus NOTIFY changed)
   Q_PROPERTY(
       QString representationStatus READ representationStatus NOTIFY changed)
@@ -76,6 +78,7 @@ public:
   QString representation() const { return representation_; }
   QString representationText() const { return text_; }
   QVariantList textMappings() const;
+  QObject *libraryView();
   QString mappingStatus() const;
   QString representationStatus() const;
   bool hasMoreText() const { return nextText_ > 0; }
@@ -176,6 +179,8 @@ private:
   QString hexText_, graphRevision_;
   int nextText_ = 0, textStartLine_ = 0;
   QVariantList textMappings_, nodes_, edges_;
+  LibraryCodeView libraryView_;
+  qint64 textByteOffset_ = 0;
   QJsonObject graphSummary_, graphViewport_;
   QStringList history_;
   int historyIndex_ = -1;

@@ -9,6 +9,7 @@ add_neverd_component_library(NeverDLLVMFloatConvertLowering
 )
 
 add_neverd_component_library(NeverDBackendLLVM
+  LLVMSourceMap.cpp
   AArch64/MedLLVMAArch64Sideeffect.cpp
   AArch64/MedLLVMAArch64ValueEmitter.cpp
   ARM/MedLLVMARMSideeffect.cpp

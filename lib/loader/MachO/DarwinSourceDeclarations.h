@@ -16,6 +16,11 @@ bool darwinDeclaredSourceDataObjectExport(Arch Architecture,
 /// Authenticate a strong import slot whose external storage is declared as an
 /// Objective-C object pointer by the SDK catalog.
 bool darwinDeclaredSourceDataObject(const BinaryImage &Image, va_t ImportSlot);
+/// The complete compiler-derived type and extent of a public external record
+/// behind a current immutable, strong import slot. This supplies no object
+/// contents, initialized-byte certificate, frame effect or entry/call ABI.
+TypeRef darwinDeclaredSourceRecordDataType(const BinaryImage &Image,
+                                           va_t ImportSlot);
 std::optional<SourceCallTypeHint>
 darwinDeclaredSourceCallHint(const BinaryImage &Image, va_t ImportSlot);
 std::optional<SourceCallTypeHint>

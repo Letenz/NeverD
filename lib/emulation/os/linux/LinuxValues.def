@@ -50,6 +50,11 @@ NEVERD_LINUX_VALUE(FilePermissionMask, 07777)
 NEVERD_LINUX_VALUE(FileAccessMask, 7)
 NEVERD_LINUX_VALUE(FileStatusSizeARM64, 128)
 NEVERD_LINUX_VALUE(FileStatusSizeX64, 144)
+NEVERD_LINUX_VALUE(AtCurrentDirectory, 0xffffff9c)
+NEVERD_LINUX_VALUE(AtSymlinkNoFollow, 0x100)
+NEVERD_LINUX_VALUE(AtNoAutomount, 0x800)
+NEVERD_LINUX_VALUE(AtEmptyPath, 0x1000)
+NEVERD_LINUX_VALUE(AtStatSyncMask, 0x6000)
 NEVERD_LINUX_VALUE(OpenCloseOnExec, 02000000)
 NEVERD_LINUX_VALUE(OpenLargeFileX64, 00100000)
 NEVERD_LINUX_VALUE(OpenLargeFileARM64, 0400000)
@@ -121,6 +126,7 @@ NEVERD_LINUX_AUX(NULL, 0, 0)
 #endif
 #ifdef NEVERD_LINUX_SERVICE
 NEVERD_LINUX_SERVICE(SignalAction, 13, 134, 4)
+NEVERD_LINUX_SERVICE(Mincore, 27, 232, 3)
 // Linux UAPI: x86-64 and asm-generic numbers, followed by fixed arity.
 NEVERD_LINUX_SERVICE(OpenAt, 257, 56, 4)
 NEVERD_LINUX_SERVICE(FaccessAt, 269, 48, 3)
@@ -129,10 +135,14 @@ NEVERD_LINUX_SERVICE(Read, 0, 63, 3)
 NEVERD_LINUX_SERVICE(Close, 3, 57, 1)
 NEVERD_LINUX_SERVICE(Lseek, 8, 62, 3)
 NEVERD_LINUX_SERVICE(Fstat, 5, 80, 2)
+NEVERD_LINUX_SERVICE(FstatAt, 262, 79, 4)
+NEVERD_LINUX_SERVICE(StatFS, 137, 43, 2)
+NEVERD_LINUX_SERVICE(FstatFS, 138, 44, 2)
 NEVERD_LINUX_SERVICE(Write, 1, 64, 3)
 NEVERD_LINUX_SERVICE(WriteV, 20, 66, 3)
 NEVERD_LINUX_SERVICE(GetTimeOfDay, 96, 169, 2)
 NEVERD_LINUX_SERVICE(ClockGetTime, 228, 113, 2)
+NEVERD_LINUX_SERVICE(Nanosleep, 35, 101, 2)
 NEVERD_LINUX_SERVICE(Exit, 60, 93, 1)
 NEVERD_LINUX_SERVICE(ExitGroup, 231, 94, 1)
 NEVERD_LINUX_SERVICE(GetPID, 39, 172, 0)
@@ -163,6 +173,8 @@ NEVERD_LINUX_DYNAMIC_DEPENDENCY(Audit, 0x6ffffefc)
 NEVERD_LINUX_DYNAMIC_DEPENDENCY(DependencyAudit, 0x6ffffefb)
 #endif
 #ifdef NEVERD_LINUX_DIAGNOSTIC
+NEVERD_LINUX_DIAGNOSTIC(MemoryResidency,
+                        "unmodeled Linux page residency observation")
 NEVERD_LINUX_DIAGNOSTIC(SignalOptions, "invalid Linux signal disposition input")
 NEVERD_LINUX_DIAGNOSTIC(SignalInputMissing,
                         "signal actions require explicit linux_signals input")
@@ -199,6 +211,17 @@ NEVERD_LINUX_DIAGNOSTIC(FileStatusMissing,
                         "Linux file status requires explicit file metadata")
 NEVERD_LINUX_DIAGNOSTIC(FileStatusPartialOutput,
                         "partial Linux file-status output fault is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(FileStatusFlags,
+                        "Linux file-status synchronization flags are unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(FileStatusNullPath,
+                        "NULL empty-path Linux file status is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(FileStatusDirectory,
+                        "Linux directory status has no explicit metadata")
+NEVERD_LINUX_DIAGNOSTIC(FileCurrentDirectory,
+                        "Linux current-directory file status is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(
+    FileSystemStatusMissing,
+    "Linux filesystem status requires explicit observations")
 NEVERD_LINUX_DIAGNOSTIC(
     FileSeekMode, "Linux memory-file SEEK_DATA and SEEK_HOLE are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(AndroidOptions,
@@ -258,4 +281,14 @@ NEVERD_LINUX_DIAGNOSTIC(TimeDynamicClock,
                         "dynamic and encoded Linux clocks are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(TimezoneMissing,
                         "Linux timezone has no explicit linux_time input")
+NEVERD_LINUX_DIAGNOSTIC(
+    TimeAdvanceClock,
+    "advance_on_idle supports realtime, monotonic and boottime clocks only")
+NEVERD_LINUX_DIAGNOSTIC(
+    TimeAdvanceOverflow,
+    "Linux virtual clock advancement exceeds its modeled range")
+NEVERD_LINUX_DIAGNOSTIC(SleepPolicy,
+                        "Linux nanosleep requires linux_time.advance_on_idle")
+NEVERD_LINUX_DIAGNOSTIC(
+    SleepRange, "Linux sleep deadline exceeds the modeled virtual time range")
 #endif

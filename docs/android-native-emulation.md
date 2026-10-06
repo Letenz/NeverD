@@ -48,10 +48,21 @@ supply extension of narrow values. Top-level Linux `arguments` and
 Memory regions are explicit page-aligned address/size pairs. Initial
 `bytes_hex` are followed by zeros. They are readable/writable; `executable`
 defaults to false. Overlaps and reserved runtime addresses are rejected.
-`read_memory` snapshots must fit the output budget and initially readable
-memory. A snapshot that becomes unreadable fails explicitly. Terminal CPU or
-model faults do not produce snapshots. No host addresses are exposed as guest
+`read_memory` snapshots must fit the output budget and, by default, initially
+readable memory. Each read can explicitly set `require_mapped_at_entry: false`
+to observe memory allocated during the workload. The setting only defers the
+mapping check; it does not create memory, retain freed mappings, or change guest
+allocation and execution. Size, overflow and output-budget checks still apply
+before execution, and the complete range must be readable at the final stop.
+A snapshot that is unmapped or unreadable then fails explicitly. Terminal CPU
+or model faults do not trigger snapshots. No host addresses are exposed as guest
 memory.
+If a final read fails after earlier reads completed, those earlier snapshots
+remain in the report alongside the failure.
+
+```json
+{"address":"0x24000000","size":64,"require_mapped_at_entry":false}
+```
 
 For input larger than the 64 KiB options JSON limit, supply `path` instead of
 `bytes_hex` in a `memory` region. C++ callers set `NativeMemoryRegion::File`.
@@ -142,6 +153,12 @@ The supported Bionic subset is:
   [wrapper](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/sigaction.cpp)
   and [reserved mask](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/private/sigrtmin.h).
   Registering an action does not enable signal delivery or execute its handler.
+- `mincore`, for the shared Linux validation, empty-range and unmapped-first-page
+  subset. Direct imports, variadic `syscall` and raw SVC share the same error
+  priority and leave the output vector untouched. Only Bionic converts negative
+  kernel errors to `-1` and errno; success preserves errno. Mapped-page residency
+  remains an explicit unsupported observation; guest backing memory does not
+  justify inventing residency bits. See the [Linux contract](process-emulation.md).
 - `malloc`, `calloc`, `realloc`, `free`, with live allocation tracking and
   bounded anonymous guest memory. Zero-size allocations may return a unique
   pointer; allocation failure returns NULL and sets ENOMEM.
@@ -216,7 +233,7 @@ The supported Bionic subset is:
   `madvise` supports the shared [KSM eligibility contract](process-emulation.md#linux-elf64-profile)
   for `MADV_MERGEABLE` and `MADV_UNMERGEABLE`; other advice stops explicitly.
 - `open`/`open64`, `openat`/`openat64`, `read`, `close`, `lseek`/`lseek64`
-  and `fstat`/`fstat64`
+  and `fstat`/`fstat64`, `fstatat`/`fstatat64`
   use the explicit [`linux_files` catalogue](process-emulation.md#explicit-memory-files).
   Raw traps, imported calls and guest threads share descriptors and cursors;
   only Bionic converts negative errors into `-1` and TLS errno. No host files or
@@ -233,6 +250,12 @@ The supported Bionic subset is:
   Unknown numbers and unsupported memory or networking services stop explicitly.
   Static and dynamic calls retain their native import event; only an actual
   `svc #0` produces a raw service event.
+- `nanosleep` shares the explicit
+  [idle clock advancement policy](process-emulation.md#explicit-guest-clocks)
+  with raw and variadic calls. It retains the thread's original continuation
+  while other guest threads run, and preserves remaining-time storage and errno
+  on success. The policy is disabled by default; signal interruption and
+  absolute sleeps remain unmodeled.
 
 TLS uses the API 28 Bionic layout: TPIDR_EL0 points to a guest TLS block,
 `__errno` addresses slot 2, and the stack guard occupies slot 5. The guard is a
@@ -504,7 +527,9 @@ then publishes the full pointer result and releases its storage. Detached
 threads release storage on completion. Invalid non-null or retired handles
 fail at the API 28 target boundary; NULL lookup returns ESRCH, self-join
 returns EDEADLK, and detached or already claimed targets return EINVAL.
-No runnable thread with outstanding join, once or mutex waits is an explicit unsupported stop.
+If no thread is runnable, an admitted sleep can advance virtual time to its
+deadline. With no such deadline, outstanding join, once or mutex waits produce
+an explicit unsupported stop.
 `pthread_exit` returns its pointer to a joiner; raw `SYS_exit` terminates only
 the current thread and leaves its pthread result zero. When the last thread
 exits without an entry return, its low eight status bits become the workload

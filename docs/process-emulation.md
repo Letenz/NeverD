@@ -79,7 +79,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 | `stack_size` | 1048576 | Page-aligned stack within the memory budget |
 | `output_limit` | 1048576 | Combined captured stdout/stderr bytes |
 | `instruction_quantum` | 1024 | Admission interval before yielding to the runtime |
-| `linux_time` | Absent | Explicit fixed clock observations for Linux ELF64 and Android native workloads |
+| `linux_time` | Absent | Explicit clock observations and optional idle advancement for Linux ELF64 and Android native workloads |
 | `linux_files` | Absent | Closed catalogue of immutable guest files for Linux ELF64 and Android native workloads |
 | `linux_signals` | Absent | Explicit initial signal dispositions; no signal delivery or host handlers |
 
@@ -170,6 +170,17 @@ There are no queued signals, asynchronous delivery, handler invocation, signal
 frames, `sigreturn`, alternate stacks or per-thread signal-mask operations in
 this contract. CPU faults retain their existing explicit stop behavior.
 
+`mincore` supports ordered validation, zero-length queries and a first queried
+page that is unmapped. Alignment errors return EINVAL before address-range
+checks; an invalid query range returns ENOMEM before vector-range validation.
+The vector consumes one byte per rounded-up page. Numerical vector-range
+errors return EFAULT, but an unmapped vector does not precede ENOMEM for an
+unmapped first query page. These paths do not write the vector. A mapped first
+page, including PROT_NONE, stops explicitly because mapping ownership alone
+does not establish Linux residency. The model does not skip a mapped prefix to
+report a later hole, fabricate resident bits or query the host. This bounded
+ordering follows the [Linux implementation](https://android.googlesource.com/kernel/common/+/16a2d602244f/mm/mincore.c).
+
 Static ELF TLS templates (`PT_TLS`) are validated as loader-owned facts, with
 one template, bounded file/memory extents, alignment congruence and readable
 initialized bytes. Guest startup allocates and initializes each TLS block and
@@ -248,7 +259,7 @@ guest pointer or mapping request to the host OS.
 
 ## Explicit guest clocks
 
-The optional `linux_time` input supplies fixed observations, shared by raw
+The optional `linux_time` input supplies observations, fixed by default, shared by raw
 Linux services and Android Bionic. It never reads the host clock, advances time
 with instruction execution, or supplies a default epoch. For example:
 
@@ -268,6 +279,28 @@ JSON numbers are accepted within `±9007199254740991`; decimal strings preserve
 the full signed range. Timezone fields are signed 32-bit integers. C++ callers
 use `ProcessOptions::LinuxTime`, with the same value validation. Other process
 profiles reject this option.
+
+`"advance_on_idle": true` explicitly enables relative `nanosleep` on x64 and
+ARM64, including Android's named and variadic wrappers. Only clock IDs 0, 1 and
+7 may be supplied with this policy. Reads share each initial value plus elapsed
+virtual time. A sleeping Android thread retains its original pending service;
+other runnable threads execute first. When all threads are blocked, time advances
+to the earliest sleep deadline. A single-threaded workload advances directly.
+Instruction execution itself does not advance time, so a busy runnable thread
+can leave a sleeper pending until the workload budget expires.
+
+The request is copied before checking nonnegative seconds and normalized
+nanoseconds. Bad input addresses return `EFAULT`; invalid values return `EINVAL`.
+Normal completion leaves the remaining-time pointer and Bionic errno untouched.
+Zero duration returns without advancing. Saturated or overflowing deadlines and
+clock overflow stop explicitly; no partial clock advancement is committed.
+This deterministic policy excludes signal interruption/restart, absolute sleeps,
+timer slack, CPU-time accounting and host scheduling. Disabled policy retains
+an explicit unsupported-service stop for sleep.
+The copy/validation/completion boundary follows Linux's
+[relative nanosleep implementation](https://github.com/torvalds/linux/blob/v6.12/kernel/time/hrtimer.c);
+Android's error conversion follows the API 28
+[AArch64 Bionic wrapper](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/arch-arm64/syscalls/nanosleep.S).
 
 `clock_gettime` consumes the low signed 32 bits of its clock ID, returns
 `EINVAL` for invalid positive IDs before accessing the destination, and stops
@@ -323,10 +356,20 @@ process-owned descriptor table. Android `open`, `open64`, `openat`, `openat64`,
 across guest threads. Bionic alone maps kernel errors to `-1` and thread-local
 `errno`; success preserves errno. Absolute paths ignore `dirfd`; mode is unused
 without creation. Opens admit only `O_RDONLY`, optional `O_CLOEXEC` and the
-architecture's `O_LARGEFILE`. Other flags, relative/noncanonical paths,
+architecture's `O_LARGEFILE`. Other flags, relative paths, internal repeated
+separators, `.`/`..` components,
 directory opens, writes/creation, symlinks, duplication and descriptor-control
 operations remain unsupported. Exec is unmodeled, so close-on-exec flags have
 no observable transition in this subset.
+
+Guest queries accept canonical absolute names followed by one or more `/`
+characters. Trailing separators require the final object to be a directory:
+queries of a regular file with a trailing slash return `ENOTDIR`, and missing
+names still return `ENOENT`. Paths consisting only of slashes name the root.
+Directory opens and directory metadata remain unsupported. This parsing does
+not relax the canonical keys required by the catalogue configuration. The
+directory requirement follows Linux
+[pathname lookup](https://www.kernel.org/doc/html/latest/filesystems/path-lookup.html).
 
 Existence queries use the same pathname import and closed catalogue. Raw x64
 `access` (21), x64/ARM64 `faccessat` (269/48), and Android `access`/`faccessat`
@@ -354,6 +397,8 @@ Directory creation supports only failures already determined by pathname
 lookup. Raw x64 `mkdir` (83), x64/ARM64 `mkdirat` (258/34), and Android
 `mkdir`/`mkdirat` share the catalogue: a missing parent returns `ENOENT`, a file
 ancestor returns `ENOTDIR`, and an existing file or directory returns `EEXIST`.
+The final name's `EEXIST` result also applies to a regular file followed by
+trailing slashes; directory creation checks the parent separately.
 They preserve the catalogue, descriptors and cursors. An absent final name
 under an existing directory remains unsupported; mode, umask, write permission
 and successful creation have no invented defaults. The boundary follows
@@ -418,6 +463,39 @@ the same fixed-copy policy used by Linux clock services. See the Linux
 [status conversion](https://github.com/torvalds/linux/blob/v6.6/fs/stat.c),
 [AArch64 layout](https://github.com/torvalds/linux/blob/v6.6/include/uapi/asm-generic/stat.h)
 and [x64 layout](https://github.com/torvalds/linux/blob/v6.6/arch/x86/include/uapi/asm/stat.h).
+
+`newfstatat` (x64 262, AArch64 79), Bionic `fstatat`/`fstatat64` and variadic
+`syscall` query those same observations. Absolute paths in the supported form ignore dirfd;
+missing entries return `ENOENT`, and traversal through a regular file returns
+`ENOTDIR`. `AT_SYMLINK_NOFOLLOW` and `AT_NO_AUTOMOUNT` are accepted for this
+catalogue, which has neither symlinks nor automounts. A non-NULL empty pathname
+with `AT_EMPTY_PATH` queries an existing descriptor without changing its cursor;
+without that flag it returns `ENOENT`. Closed descriptors return `EBADF`.
+The directory and flags arguments use their low 32 bits. Invalid flag bits
+return `EINVAL` before path errors; the complete pathname is imported before
+status output, so input and output may overlap.
+
+Relative paths, directory metadata, the current working directory, NULL with
+`AT_EMPTY_PATH`, and stat synchronization flags remain unsupported. The last two
+have changed across kernel releases; the model does not infer a kernel version.
+Path queries use the same fixed-copy policy and explicit metadata requirement
+as descriptor queries. Contracts were checked against Linux
+[v4.9](https://github.com/torvalds/linux/blob/v4.9/fs/stat.c) and
+[v6.12](https://github.com/torvalds/linux/blob/v6.12/fs/stat.c), and the LP64
+[Bionic service aliases](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/SYSCALLS.TXT).
+
+`statfs` (x64 137, AArch64 43) and `fstatfs` (x64 138, AArch64 44)
+resolve names and descriptors in that same explicit catalogue. Path imports
+preserve `EFAULT` and `ENAMETOOLONG`; missing names return `ENOENT`, and a regular
+file used as a directory returns `ENOTDIR`. Closed or unknown descriptors return
+`EBADF`, using the low 32 bits of the descriptor argument. These errors precede
+output access and leave every output byte unchanged. Queries of existing files,
+implicit directories, root or live standard streams remain unsupported because
+file metadata does not provide filesystem observations. No successful filesystem
+status or mount information is inferred. Bionic `statfs`/`statfs64`,
+`fstatfs`/`fstatfs64` and variadic `syscall` share these error paths and the usual
+errno conversion. See Linux's [filesystem query order](https://github.com/torvalds/linux/blob/v4.9/fs/statfs.c)
+and the [API 28 LP64 wrappers](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r61/libc/bionic/statvfs.cpp).
 
 <!-- i18n-section: windows-pe64 -->
 

@@ -790,9 +790,11 @@ TEST_F(ProcessPublic, AndroidMemoryFilesShareStateThroughCAPIAndCLI) {
   const auto Output = (Root / OutputFile).string();
   for (const char *Entry :
        {"files_sequence", "files_faults", "files_bionic", "files_status",
-        "files_status_bionic", "files_access", "files_access_faults",
-        "files_access_bionic", "files_directory_errors",
-        "files_directory_bionic"}) {
+        "files_status_bionic", "files_status_at", "files_status_at_bionic",
+        "files_access", "files_access_faults", "files_access_bionic",
+        "files_directory_errors", "files_directory_bionic",
+        "files_trailing_paths", "files_trailing_paths_bionic",
+        "files_filesystem_status", "files_filesystem_status_bionic"}) {
     SCOPED_TRACE(Entry);
     llvm::json::Object Request{
         {"backend", "unicorn"},
@@ -811,7 +813,8 @@ TEST_F(ProcessPublic, AndroidMemoryFilesShareStateThroughCAPIAndCLI) {
             .getAsObject())["metadata"] =
           llvm::cantFail(llvm::json::parse(emulation::FileTestMetadataJSON));
     if (llvm::StringRef(Entry) == "files_access" ||
-        llvm::StringRef(Entry) == "files_directory_errors")
+        llvm::StringRef(Entry) == "files_directory_errors" ||
+        llvm::StringRef(Entry) == "files_trailing_paths")
       (*Request.getObject("linux_files"))["descriptor_limit"] = 4;
     auto Options = jsonText(std::move(Request));
     auto Text = takeString(neverd_emulate_process_json(
@@ -1104,6 +1107,55 @@ TEST_F(ProcessPublic, AndroidTokenNamesAndMutationsMatchSDKAndCLI) {
   auto Report = llvm::MemoryBuffer::getFile(Output);
   ASSERT_TRUE(bool(Report));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Report)->getBuffer())), Parsed);
+#endif
+}
+
+TEST_F(ProcessPublic, RelativeSleepCompletesRawEventAndClockThroughSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  Path =
+      (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "sleep-O2-relr.so")
+          .string();
+  const std::string Request = R"({"backend":"unicorn","linux_time":{
+    "advance_on_idle":true,"clocks":[{"id":0,"seconds":"4294967297","nanoseconds":999999998}]},
+    "android":{"entry_symbol":"sleep_call","initialize":false,"thread_limit":2,
+      "arguments":[2,"0x20000000","0x20000000","0x20000020"],
+      "memory":[{"address":"0x20000000","size":4096,"bytes_hex":"00000000000000000500000000000000"}],
+      "read_memory":[{"address":"0x20000000","size":64}]}})";
+  auto Text = takeString(neverd_emulate_process_json(
+      Session, Path.c_str(), AndroidNativeAArch64, Request.c_str()));
+  ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+  auto Parsed = llvm::cantFail(llvm::json::parse(Text));
+  ASSERT_EQ(Parsed.getAsObject()->getString(field::Stop), "returned");
+  EXPECT_EQ(Parsed.getAsObject()->getString(field::ReturnValue), "0");
+  const auto *Services = Parsed.getAsObject()->getArray(field::Services);
+  ASSERT_NE(Services, nullptr);
+  ASSERT_EQ(Services->size(), 1u);
+  EXPECT_EQ(Services->front().getAsObject()->getString(field::Result), "0");
+  const auto *Android = Parsed.getAsObject()->getObject(field::Android);
+  ASSERT_NE(Android, nullptr);
+  EXPECT_EQ(Android->getArray(field::Memory)
+                ->front()
+                .getAsObject()
+                ->getString(field::Bytes),
+            "0000000000000000050000000000000000000000000000000000000000000000"
+            "4900000000000000020000000100000003000000000000000200000001000000");
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const auto Command = test::shellQuote(NEVERD_PROCESS_CLI) + " emulate " +
+                       test::shellQuote(Path) +
+                       " --profile=" + AndroidNativeAArch64 +
+                       " --options=" + test::shellQuote(Request) +
+                       test::redirectStdout(Output) + test::silenceStderr();
+  EXPECT_EQ(test::systemExitCode(test::runShellCommand(Command)),
+            process_cli::Success);
+  auto Bytes = llvm::MemoryBuffer::getFile(Output);
+  ASSERT_TRUE(bool(Bytes));
+  EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
 #endif
 }
 

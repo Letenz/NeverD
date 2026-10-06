@@ -26,6 +26,30 @@
 using namespace neverd;
 using namespace neverd::sdk;
 
+void Session::refreshFunctionNames() {
+  const auto Names = SigDB.buildNameMap();
+  for (auto &F : Functions) {
+    if (F.LinkageName.empty()) {
+      F.LinkageName = F.Name;
+      F.LinkageOrigin = F.Origin;
+    }
+    F.Name = F.LinkageName;
+    F.Origin = F.LinkageOrigin;
+    if (F.Origin < NameOrigin::Stated) {
+      if (auto I = Names.find(F.Entry);
+          I != Names.end() && !I->second.empty()) {
+        F.Name = I->second;
+        F.Origin = NameOrigin::Analysis;
+      }
+    }
+    OriginalNames[F.Entry] = F.Name;
+    if (auto Rename = Renames.find(F.Entry); Rename != Renames.end()) {
+      F.Name = Rename->second;
+      F.Origin = NameOrigin::User;
+    }
+  }
+}
+
 /// The addresses signatures are tried at: every function the session lists,
 /// and, until the pipeline has run and published the functions it found,
 /// every entry its detector finds too.  The session lists what the image's
@@ -74,20 +98,7 @@ static int matchLoadedSignatures(Session &S,
   S.SigDB.apply(S.Img, Entries.get());
   S.SigDB.identifyPersonalityRoutines(S.Img);
 
-  auto NameMap = S.SigDB.buildNameMap();
-  for (auto &F : S.Functions) {
-    auto It = NameMap.find(F.Entry);
-    if (It == NameMap.end() || It->second.empty())
-      continue;
-    // A signature hit is NameOrigin::Analysis: a claim that these bytes look
-    // like a library routine somebody once compiled.  A name the symbol table,
-    // debug file, or MAP stated outranks it and stays, and so does a rename the
-    // user typed.  Only a placeholder is free to take the match.
-    if (!isSynthesizedFuncName(F.Name))
-      continue;
-    if (S.Renames.find(F.Entry) == S.Renames.end())
-      F.Name = It->second;
-  }
+  S.refreshFunctionNames();
 
   return static_cast<int>(S.SigDB.matches().size());
 }
@@ -139,25 +150,11 @@ int neverd_auto_apply_signatures(neverd_session_t Sess,
     return -1;
   S->clearError();
 
-  const std::optional<std::filesystem::path> Directory =
-      sigs::SignatureDB::treeDirectory(S->Img);
-  if (!Directory)
+  if (!sigs::SignatureDB::treeDirectory(S->Img))
     return 0;
-  const std::filesystem::path SigPath =
-      std::filesystem::path(SigBaseDir) / *Directory;
-
-  if (!std::filesystem::exists(SigPath))
-    return 0;
-
-  auto Files = sigs::SignatureDB::listDirectory(SigPath);
-  if (!Files) {
-    S->setError(llvm::toString(Files.takeError()));
-    return -1;
-  }
   auto Entries = findSignatureEntries(*S);
   useSignatureCache(*S);
-  auto Err = S->SigDB.loadFiles(
-      sigs::SignatureDB::selectForImage(S->Img, std::move(*Files)));
+  auto Err = S->SigDB.loadForImage(S->Img, SigBaseDir);
   if (Err) {
     S->setError(llvm::toString(std::move(Err)));
     return -1;

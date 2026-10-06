@@ -12,6 +12,9 @@ Rectangle {
     property bool showLineNumbers: true
     property bool syntaxHighlight: false
     property var mappings: []
+    property var libraryView: null
+    readonly property string displayedText: libraryView ? libraryView.text : text
+    readonly property var displayedMappings: libraryView ? libraryView.mappings : mappings
     property string selectedAddress: ""
     function focusContent() { code.forceActiveFocus(Qt.ShortcutFocusReason) }
     signal sourceLineSelected(int line)
@@ -21,7 +24,7 @@ Rectangle {
     function rememberViewport() {
         // TextArea can reset its cursor and scroll before onTextChanged runs.
         // Only record scrolling while the displayed document is stable.
-        if (text === code.text && code.text === code.previousText)
+        if (displayedText === code.text && code.text === code.previousText)
             readingViewport = Qt.point(scroll.contentItem.contentX, scroll.contentItem.contentY)
     }
     Connections {
@@ -42,7 +45,7 @@ Rectangle {
         }
         // Read the latest snapshot here: a queued restore must never retain an
         // address, mapping row or document position from an earlier result.
-        if (!anchorPending || text.length === 0 || mappings.length === 0 || selectedAddress.length === 0)
+        if (!anchorPending || displayedText.length === 0 || displayedMappings.length === 0 || selectedAddress.length === 0)
             return
         const position = highlighter.firstMappedPosition()
         if (position < 0)
@@ -60,7 +63,7 @@ Rectangle {
         anchorPending = false
     }
     onSelectedAddressChanged: requestAnchor()
-    onMappingsChanged: if (anchorPending) Qt.callLater(applyReadingPosition)
+    onDisplayedMappingsChanged: if (anchorPending) Qt.callLater(applyReadingPosition)
     color: Theme.editor
     LayoutMirroring.enabled: false
     LayoutMirroring.childrenInherit: true
@@ -84,7 +87,7 @@ Rectangle {
         TextArea {
             id: code
             objectName: "codeText"
-            text: root.text
+            text: root.displayedText
             readOnly: true
             width: Math.max(scroll.availableWidth, implicitWidth)
             selectByMouse: true
@@ -124,15 +127,42 @@ Rectangle {
                 root.rememberViewport()
                 Qt.callLater(root.applyReadingPosition)
             }
-            NativeCodeHighlighter { id: highlighter; document: code.textDocument; enabled: root.syntaxHighlight; mappings: root.mappings; selectedAddress: root.selectedAddress }
+            Keys.onPressed: event => {
+                if (root.libraryView && event.matches(StandardKey.Copy)) {
+                    root.copySelection()
+                    event.accepted = true
+                } else if (root.libraryView && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+                    const region = root.libraryView.regionAt(cursorPosition)
+                    if (region.length > 0) {
+                        root.libraryView.toggleRegion(region)
+                        event.accepted = true
+                    }
+                }
+            }
+            NativeCodeHighlighter { id: highlighter; document: code.textDocument; enabled: root.syntaxHighlight; mappings: root.displayedMappings; selectedAddress: root.selectedAddress }
             TapHandler {
                 acceptedButtons: Qt.LeftButton
                 onSingleTapped: eventPoint => {
-                    if (root.mappings.length > 0) root.sourceLineSelected(highlighter.lineAtPosition(code.positionAt(eventPoint.position.x, eventPoint.position.y)))
+                    const position = code.positionAt(eventPoint.position.x, eventPoint.position.y)
+                    const region = root.libraryView ? root.libraryView.regionAt(position) : ""
+                    if (region.length > 0) root.libraryView.toggleRegion(region)
+                    else if (root.displayedMappings.length > 0) root.sourceLineSelected(root.libraryView ? root.libraryView.sourceLineAt(position) : highlighter.lineAtPosition(position))
                 }
+            }
+            TapHandler {
+                acceptedButtons: Qt.RightButton
+                onSingleTapped: eventPoint => sourceMenu.popup(eventPoint.position.x, eventPoint.position.y)
+            }
+            Menu {
+                id: sourceMenu
+                MenuItem { text: qsTr("Copy"); enabled: code.selectionStart !== code.selectionEnd; onTriggered: root.copySelection() }
+                MenuItem { text: qsTr("Select all"); onTriggered: code.selectAll() }
             }
         }
     }
     EmptyPane { anchors.fill: parent; visible: root.text.length === 0; title: root.emptyTitle; detail: root.emptyDetail }
-    function copySelection() { code.copy() }
+    function copySelection() {
+        if (libraryView) libraryView.copySelection(code.selectionStart, code.selectionEnd)
+        else code.copy()
+    }
 }

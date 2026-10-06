@@ -32,6 +32,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -261,6 +262,50 @@ TEST(BitBlaster, Predicates) {
               [](SymContext &C, SymRef X, SymRef Y) { return C.mkSle(X, Y); });
 }
 
+TEST(BitBlaster, WidePredicatesAgreeWithTheEvaluator) {
+  for (uint32_t Width : {8u, 9u, 15u, 16u, 17u, 31u, 32u, 33u, 63u, 64u, 65u,
+                         127u, 128u, 129u, 255u, 256u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto X = Ctx.mkVar("x", Width);
+    const auto Y = Ctx.mkVar("y", Width);
+    const auto Expr =
+        Ctx.mkConcat(Ctx.mkConcat(Ctx.mkUlt(X, Y), Ctx.mkUle(X, Y)),
+                     Ctx.mkConcat(Ctx.mkSlt(X, Y), Ctx.mkSle(X, Y)));
+    const auto Result = Ctx.mkVar("comparisons", 4);
+    BitVectorSolver Solver(Ctx);
+    ASSERT_TRUE(Solver.assertEqual(Result, Expr));
+
+    // Cross byte, half-word and sign boundaries, including odd widths and
+    // significant bits above 64. Neighbours force carries across each boundary.
+    std::vector<llvm::APInt> Values{llvm::APInt::getZero(Width),
+                                    llvm::APInt::getAllOnes(Width)};
+    for (unsigned Bit :
+         {0u, 7u, std::min(8u, Width - 1), Width / 2, Width - 1}) {
+      const auto Power = llvm::APInt::getOneBitSet(Width, Bit);
+      for (const auto &Value : {Power - 1, Power, Power + 1})
+        if (std::find(Values.begin(), Values.end(), Value) == Values.end())
+          Values.push_back(Value);
+    }
+    for (size_t A = 0; A != Values.size(); ++A)
+      for (size_t B = 0; B != Values.size(); ++B) {
+        SCOPED_TRACE(A);
+        SCOPED_TRACE(B);
+        llvm::SmallVector<SymRef, 3> Pins{Ctx.mkEq(X, Ctx.mkConst(Values[A])),
+                                          Ctx.mkEq(Y, Ctx.mkConst(Values[B]))};
+        ASSERT_EQ(Solver.check(Pins), SatResult::Sat);
+        const auto &Model = Solver.model();
+        ASSERT_EQ(Model.value(Ctx.varId(X)), Values[A]);
+        ASSERT_EQ(Model.value(Ctx.varId(Y)), Values[B]);
+        const auto Expected = Ctx.eval(Expr, Model.asVarValues(Ctx));
+        EXPECT_EQ(Model.value(Ctx.varId(Result)), Expected);
+        // A plausible model alone would miss an unconstrained output bit.
+        Pins.push_back(Ctx.mkNe(Result, Ctx.mkConst(Expected)));
+        EXPECT_EQ(Solver.check(Pins), SatResult::Unsat);
+      }
+  }
+}
+
 TEST(BitBlaster, StructuralOperators) {
   checkBinary("concat", W4, [](SymContext &C, SymRef X, SymRef Y) {
     return C.mkConcat(X, Y);
@@ -395,6 +440,50 @@ TEST(BitBlaster, AWidthBeyondTheLimitIsRefusedRatherThanEncoded) {
   // A formula that was never fully encoded constrains nothing, so no answer
   // may be given for it.
   EXPECT_EQ(Solver.check(), SatResult::Unknown);
+}
+
+TEST(BitBlaster, LateNodesKeepCachedBitsAndEncodingRefusals) {
+  SymContext Ctx;
+  for (unsigned I = 0; I != 65536; ++I)
+    Ctx.mkConst(64, (uint64_t(1) << 32) + I);
+  const auto X = Ctx.mkFreshVar(16, "x");
+  const auto TooWide = Ctx.mkFreshVar(17, "unused_wide");
+  SatSolver Sat;
+  CnfEncoder Enc(Sat);
+  BlastLimits Limits;
+  Limits.MaxWidth = 16;
+  Limits.MaxGates = 128;
+  BitBlaster Blaster(Ctx, Enc, Limits);
+  BitLits Before, After;
+  ASSERT_TRUE(Blaster.blast(X, Before));
+  ASSERT_EQ(Before.size(), 16U);
+  EXPECT_TRUE(Blaster.variableBits(Ctx.varId(TooWide)).empty());
+
+  for (unsigned I = 0; I != 65536; ++I)
+    Ctx.mkConst(64, (uint64_t(2) << 32) + I);
+  const auto Y = Ctx.mkFreshVar(16, "y");
+  ASSERT_TRUE(Blaster.blast(Ctx.mkXor(X, Y), After));
+  const auto Gates = Enc.numGates();
+  ASSERT_TRUE(Blaster.blast(X, After));
+  EXPECT_EQ(Before, After);
+  EXPECT_EQ(Enc.numGates(), Gates);
+  EXPECT_EQ(Blaster.encodedVars().size(), 2U);
+  EXPECT_FALSE(Blaster.blast(TooWide, After));
+  EXPECT_EQ(Blaster.error(), BlastError::WidthTooLarge);
+  EXPECT_FALSE(Blaster.blast(X, After));
+  EXPECT_TRUE(After.empty());
+
+  SatSolver LimitedSat;
+  CnfEncoder LimitedEnc(LimitedSat);
+  Limits.MaxGates = 1;
+  BitBlaster Limited(Ctx, LimitedEnc, Limits);
+  EXPECT_FALSE(Limited.blast(Ctx.mkMul(X, Y), After));
+  EXPECT_EQ(Limited.error(), BlastError::TooManyGates);
+  SatSolver InvalidSat;
+  CnfEncoder InvalidEnc(InvalidSat);
+  BitBlaster Invalid(Ctx, InvalidEnc);
+  EXPECT_FALSE(Invalid.blast(SymRef(UINT32_MAX), After));
+  EXPECT_EQ(Invalid.error(), BlastError::Malformed);
 }
 
 } // namespace

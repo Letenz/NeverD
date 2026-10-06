@@ -1,5 +1,4 @@
 {
-  "published_evidence": {"path": "2026-10-05-arm64-hvf-watchdog.json", "sha256": "8b05695e8e66d74919cc7b6952d634f58886031ebe185ba0c5d130d276e45fbb", "note": "Path-normalized publication; existing evidence hashes refer to the original bytes."},
   "decision": "Retain the existing disarm notification. This candidate did not establish a reliable benefit. The noisy shared-host measurements do not isolate a causal performance regression.",
   "candidate_source_commit": "19f73298ac2318f4489814644d0436c5157abc31",
   "baseline_runtime_source_commit": "0bc27331b364997cb2edc827b38e04769765744b",
@@ -38,7 +37,7 @@
     },
     "load": "{ 18.37 17.94 17.68 }\n"
   },
-  "raw_comparison_sha256": "5a7fa9c41f39c3da9a45829b49662d623bb84f66eb8d40edea4477d7050d4740",
+  "raw_comparison_sha256": "779a926675b5dcdaff84543d44f5c61cf0824efb71e4eb6b7241f8158e22a31f",
   "summary": {
     "initialization": {
       "median_paired_ratio": 0.901860428136988,
@@ -131,5 +130,11 @@
       }
     }
   },
-  "hardware_scope": "Native ARM64 on one shared Apple Silicon host. No Intel native validation, no Intel Actions, and no universal ranking."
+  "hardware_scope": "Native ARM64 on one shared Apple Silicon host. No Intel native validation, no Intel Actions, and no universal ranking.",
+  "publication_path_redaction": {
+    "description": "Private checkout prefixes are replaced consistently with ${BENCHMARK_WORKSPACE} in paths, commands and captured output. Measurements, binary hashes and test results are unchanged. The comparison hash above identifies the published file.",
+    "original_file_sha256": {
+      "2026-10-05-arm64-hvf-watchdog.json": "5a7fa9c41f39c3da9a45829b49662d623bb84f66eb8d40edea4477d7050d4740"
+    }
+  }
 }

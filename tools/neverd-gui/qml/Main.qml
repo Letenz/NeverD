@@ -23,7 +23,7 @@ ApplicationWindow {
     readonly property bool interfaceMirrored: LayoutMirroring.enabled
     readonly property var effectiveFocusItem: workbenchFocus.focusedItem
     readonly property bool textEntryActive: (effectiveFocusItem instanceof TextInput || effectiveFocusItem instanceof TextEdit) && !effectiveFocusItem.readOnly
-    readonly property bool modalActive: unsavedDialog.visible || renameDialog.visible || commentDialog.visible || settingsDialog.visible || shortcutsDialog.visible || aboutDialog.visible || fileDialog.visible || extensionFileDialog.visible
+    readonly property bool modalActive: unsavedDialog.visible || renameDialog.visible || commentDialog.visible || settingsDialog.visible || shortcutsDialog.visible || aboutDialog.visible || fileDialog.visible || extensionFileDialog.visible || signatureFileDialog.visible
     readonly property bool analysisShortcutsEnabled: workbench.loaded && !textEntryActive && !modalActive
     readonly property var activeAnalysisPane: workbench.panes.activePane
     readonly property var representationIds: ["c", "llvmc", "low", "med", "high", "llvm"]
@@ -126,7 +126,12 @@ ApplicationWindow {
             MenuSeparator {}
             Action { text: qsTr("Reset Layout"); onTriggered: dockWorkspace.resetLayout() }
         }
-        Menu { title: qsTr("Analysis"); MenuItem { action: cancelAction } MenuItem { action: restartAction } }
+        Menu {
+            title: qsTr("Analysis")
+            MenuItem { text: qsTr("Load Signature Pack…"); enabled: workbench.loaded && !workbench.busy; onTriggered: window.openMainDialog(signatureFileDialog) }
+            MenuItem { action: cancelAction }
+            MenuItem { action: restartAction }
+        }
         Menu {
             title: qsTr("Extensions")
             Action { text: qsTr("Import Manifest…"); onTriggered: window.openMainDialog(extensionFileDialog) }
@@ -275,6 +280,13 @@ ApplicationWindow {
         fileMode: FileDialog.OpenFile
         nameFilters: [qsTr("JSON files (*.json)"), qsTr("All files (*)")]
         onAccepted: { workbench.importContributions(selectedFile); dockWorkspace.showPanel("extensions") }
+    }
+    FileDialog {
+        id: signatureFileDialog
+        title: qsTr("Load Signature Pack")
+        fileMode: FileDialog.OpenFile
+        nameFilters: [qsTr("Library features and byte signatures (*.json *.pat)"), qsTr("All files (*)")]
+        onAccepted: workbench.loadSignatures(selectedFile)
     }
     function switchCenter(index) {
         dockWorkspace.selectMachineView(index)

@@ -753,7 +753,9 @@ TEST_F(JTE_X86_32,
   // This separate `mov ecx, imm32` is outside all four indexed LOADs. Make
   // its immediate refer to A and add an otherwise unrelated raw GOTOFF field.
   // The negative identity must count only fields consumed by the four jumps.
-  const neverd::va_t ExtraField = Function->Addr + 0x94u;
+  const auto *ExtraReference = Image.findSymbol("x86tt_extra_reference");
+  ASSERT_NE(ExtraReference, nullptr);
+  const neverd::va_t ExtraField = ExtraReference->Addr + 1u;
   ASSERT_GE(ExtraField, CodeSection->VA);
   ASSERT_LT(ExtraField + 4, CodeSection->VA + CodeSection->Size);
   const uint8_t *Opcode = Image.readVA(ExtraField - 1, 1);
@@ -869,7 +871,9 @@ TEST_F(JTE_X86_32, AdjacentGOTOFFTablesDoNotClaimUnrelatedTailJump) {
   // Keep every GOTOFF relocation, but change the fourth dispatch from
   // `jmp ecx` (the table-loaded target) to `jmp eax` (an unrelated value).
   // A lexical relocation-to-next-branch association would still claim it.
-  const neverd::va_t CallbackBranch = Function->Addr + 0x10du;
+  const auto *Dispatch = Image.findSymbol("x86tt_final_dispatch");
+  ASSERT_NE(Dispatch, nullptr);
+  const neverd::va_t CallbackBranch = Dispatch->Addr;
   const uint8_t *Original = Image.readVA(CallbackBranch, 2);
   ASSERT_NE(Original, nullptr);
   ASSERT_EQ(Original[0], 0xffu);

@@ -10,7 +10,7 @@
 ///
 /// Every operator in the expression language is a finite circuit over the bits
 /// of its operands: an addition is a chain of full adders, a comparison is a
-/// chain that walks from the most significant bit down, a shift by a value
+/// circuit that compares high halves before low halves, a shift by a value
 /// that is not known is a ladder of multiplexers, a multiplication is an array
 /// of shifted partial products.  Writing those circuits out and handing them
 /// to a satisfiability engine decides any question about the expression
@@ -28,8 +28,7 @@
 /// encodes each subterm once.
 ///
 /// Bits are ordered least significant first throughout, which is the order the
-/// carries run in and therefore the order that keeps every loop in the
-/// implementation forward.
+/// carries run in and the order used to split low and high halves.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -42,6 +41,8 @@
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <cstddef>
@@ -154,11 +155,11 @@ private:
   void store(symbolic::SymRef R, llvm::ArrayRef<SatLit> Bits);
 
   llvm::ArrayRef<SatLit> bitsOf(symbolic::SymRef R) const {
-    const Slice &S = Encoded[R.index()];
+    const Slice &S = Encoded.find(R.index())->second;
     return llvm::ArrayRef<SatLit>(BitPool.data() + S.First, S.Width);
   }
   bool isEncoded(symbolic::SymRef R) const {
-    return R.index() < Encoded.size() && Encoded[R.index()].Width != 0;
+    return Encoded.find(R.index()) != Encoded.end();
   }
 
   /// True while the encoder has built fewer gates than the budget allows.
@@ -177,18 +178,16 @@ private:
   size_t GateBase = 0;
 
   std::vector<SatLit> BitPool;
-  /// Indexed by expression node index; a zero width means "not yet encoded".
-  std::vector<Slice> Encoded;
-  /// Indexed by variable id, into \c BitPool.
-  std::vector<Slice> VarSlices;
+  /// Allocate only for reached nodes and variables. A small query can refer
+  /// to late nodes in a large, long-lived context. Widen the keys so every
+  /// 32-bit identifier fits alongside DenseMap's reserved sentinel values.
+  llvm::DenseMap<uint64_t, Slice> Encoded;
+  llvm::DenseMap<uint64_t, Slice> VarSlices;
   std::vector<uint32_t> EncodedVars;
 
-  /// Scratch reused by the traversal so that a large expression does not
-  /// allocate once per node.  Nodes reached by the current traversal carry
-  /// \c Visit in \c Stamp, which avoids clearing a per-node array on every
-  /// call — incremental use makes many small calls against one large context.
-  std::vector<uint32_t> Stamp;
-  uint32_t Visit = 0;
+  /// Scratch for the current reachable graph, independent of unrelated nodes
+  /// in the context. Encoded nodes remain cached across traversals.
+  llvm::DenseSet<uint64_t> Seen;
   std::vector<uint32_t> Order;
   std::vector<uint32_t> Work;
 };

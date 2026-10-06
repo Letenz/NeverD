@@ -1,11 +1,11 @@
-//===- WhpX64Partition.h - Captured x64 state owned by a WHP partition
+//===- WhpX64Processor.h - Captured x64 state owned by a WHP processor
 //-----===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#ifndef NEVERD_EMULATION_WHP_X64PARTITION_H
-#define NEVERD_EMULATION_WHP_X64PARTITION_H
+#ifndef NEVERD_EMULATION_WHP_X64PROCESSOR_H
+#define NEVERD_EMULATION_WHP_X64PROCESSOR_H
 
 #include "../../arch/x86_64/X64Exception.h"
 #include "WhpXsaveState.h"
@@ -15,14 +15,14 @@
 #include <utility>
 
 namespace neverd::emulation {
-/// Reuse belongs to this actual native partition, never to a logical CPU.
+/// Reuse belongs to this actual native VP, never to a logical CPU.
 /// Every successful step captures all defined register fields and FP/SSE.
 /// Only an acknowledged debug exit authorizes omission of unchanged inputs.
-class WhpX64Partition final : public WhpPartition {
+class WhpX64Processor final : public WhpVirtualProcessor {
 public:
   WhpXsaveState Xsave;
 
-  /// Control already includes preparation and acquisition of the partition.
+  /// Control already includes preparation and acquisition of the VP.
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control,
                    uint32_t MXCSRMask = x64::fp::BaselineMXCSRMask) {
@@ -45,8 +45,8 @@ public:
       // Read control and segment state too. The next comparison uses the
       // actual host values, not an assumption that prior inputs survived.
       if (const auto Status = API.WHvGetVirtualProcessorRegisters(
-              Partition, 0, CaptureNames.data(), CaptureNames.size(),
-              Actual.data());
+              Partition, ProcessorIndex, CaptureNames.data(),
+              CaptureNames.size(), Actual.data());
           FAILED(Status))
         return whpError(diagnostic::WhpState, Status,
                         whp::operation::WHvGetVirtualProcessorRegisters);
@@ -179,7 +179,8 @@ private:
     if (!Count)
       return llvm::Error::success();
     const auto Status = API.WHvSetVirtualProcessorRegisters(
-        Partition, 0, ChangedNames.data(), Count, ChangedValues.data());
+        Partition, ProcessorIndex, ChangedNames.data(), Count,
+        ChangedValues.data());
     return FAILED(Status)
                ? whpError(diagnostic::WhpState, Status,
                           whp::operation::WHvSetVirtualProcessorRegisters)

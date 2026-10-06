@@ -26,7 +26,8 @@
 
 namespace neverd {
 
-/// Optional load-time progress.  Image parse and PDB publics must not look idle.
+/// Optional load-time progress.  Image parse and PDB publics must not look
+/// idle.
 struct LoadProgress {
   using Fn = void (*)(void *User, const char *Phase, unsigned long long Done,
                       unsigned long long Total, const char *Detail);
@@ -177,6 +178,16 @@ struct TypeSym {
   TypeRef Type;
 };
 
+/// A pointer-to-record parameter located in a physical register at the exact
+/// function entry. This is identity evidence only, never a callable ABI or a
+/// license to access/replace the record. Providers must authenticate the image,
+/// complete qualified record identity, byte size and concrete entry location.
+struct AuthenticatedRecordParameter {
+  uint64_t Register = 0;
+  std::string QualifiedType;
+  uint32_t ObjectBytes = 0;
+};
+
 class DebugContext {
 public:
   virtual ~DebugContext() = default;
@@ -209,6 +220,18 @@ public:
   /// loaded image.  PDB, MAP, mismatched companions, and legacy providers are
   /// untrusted by default even when they remain useful for names and lines.
   virtual bool hasAuthenticatedObjectExtents() const { return false; }
+
+  virtual std::vector<AuthenticatedRecordParameter>
+  resolveAuthenticatedRecordParameters(va_t) const {
+    return {};
+  }
+
+  /// An authenticated pointer-to-record return declaration. Its register is
+  /// the ABI result carrier, not an inferred receiver or parameter location.
+  virtual std::optional<AuthenticatedRecordParameter>
+  resolveAuthenticatedRecordReturn(va_t) const {
+    return std::nullopt;
+  }
 
   /// Resolve the unique object containing \p Offset at one concrete machine
   /// instruction.  The returned variable retains its declared base in

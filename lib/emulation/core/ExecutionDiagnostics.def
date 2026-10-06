@@ -62,6 +62,11 @@ NEVERD_EXECUTION_DIAGNOSTIC(
 NEVERD_EXECUTION_DIAGNOSTIC(WhpCreate,
                             "cannot create or configure WHP partition")
 NEVERD_EXECUTION_DIAGNOSTIC(WhpMap, "cannot map WHP guest physical memory")
+NEVERD_EXECUTION_DIAGNOSTIC(WhpProcessors, "WHP processor slot budget exceeded")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    WhpAddressWidth, "WHP physical address width cannot hold the CPU window")
+NEVERD_EXECUTION_DIAGNOSTIC(WhpRetire,
+                            "cannot retire WHP processor memory safely")
 NEVERD_EXECUTION_DIAGNOSTIC(WhpState, "WHP CPU state transfer failed")
 NEVERD_EXECUTION_DIAGNOSTIC(WhpRun, "WHP single-step execution failed")
 NEVERD_EXECUTION_DIAGNOSTIC(WhpRunControl,
@@ -154,3 +159,16 @@ NEVERD_EXECUTION_DIAGNOSTIC(RAMTransactionBudget,
                             "RAM effects exceed the instruction staging budget")
 NEVERD_EXECUTION_DIAGNOSTIC(RAMTransactionPhase,
                             "RAM effect transaction is in the wrong phase")
+NEVERD_EXECUTION_DIAGNOSTIC(RAMReservationTracking,
+                            "RAM reservations require declared write tracking")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    RAMReservationRange, "RAM reservation must fit in one power-of-two granule")
+NEVERD_EXECUTION_DIAGNOSTIC(ParallelWait,
+                            "parallel CPU memory admission interrupted")
+NEVERD_EXECUTION_DIAGNOSTIC(DeviceAtomic,
+                            "invalid prepared atomic device transaction")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    DeviceAtomicInterrupted,
+    "atomic device transaction interrupted before commit")
+NEVERD_EXECUTION_DIAGNOSTIC(DeviceOperand,
+                            "invalid private device operand projection")

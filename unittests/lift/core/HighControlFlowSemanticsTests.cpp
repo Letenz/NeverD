@@ -6099,6 +6099,276 @@ TEST(HighControlFlowSemantics, TailThatCannotFaultEntersExceptProtection) {
   }
 }
 
+TEST(HighControlFlowSemantics, TailRunningOutOfAnExceptTryIsCopiedInside) {
+  // __try { if (x & 1) { v = 1; goto out; } v = 2; out: w = 5; }
+  // __except (1) { v = 9; }  return v;
+  // The tail at out runs off the protected body into `return v`, which
+  // cannot fault, so a copy of both runs the same inside the __try.  A
+  // load after the try could fault into the handler there, and a __finally
+  // would run around the copy, so neither gets one.
+  enum class Variant { ExceptOnly, Finally, Load };
+  auto Build = [](Variant Kind) {
+    HighStmt Leave;
+    Leave.Kind = StmtKind::If;
+    Leave.Addr = 0x1000;
+    Leave.Cond =
+        HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+    Leave.Body = {assign(0x1004, 1, 1), jump(0x1008, 0x1010)};
+    HighStmt Try;
+    Try.Kind = StmtKind::SEHTry;
+    Try.Addr = 0x1000;
+    Try.EHRange = {0x1000, 0x1014};
+    Try.Body = {Leave, assign(0x100c, 1, 2), assign(0x1010, 2, 5)};
+    HighEHClause Clause;
+    Clause.Kind = Kind == Variant::Finally ? HighEHClauseKind::SEHFinally
+                                           : HighEHClauseKind::SEHExcept;
+    Clause.HandlerVA = 0x1018;
+    Try.EHClauses = {Clause};
+    Try.EHClauseBodies = {{assign(0x1018, 1, 9)}};
+    HighStmt Tail = result(0x1020, local(1));
+    if (Kind == Variant::Load)
+      Tail.RetVal =
+          HighExpr::makeLoad(HighExpr::makeConst(0x100, 8), NdType::makeInt(8));
+    HighFunc F;
+    F.Body = {Try, Tail};
+    return F;
+  };
+  for (Variant Kind : {Variant::ExceptOnly, Variant::Finally, Variant::Load}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    HighFunc F = Build(Kind);
+    duplicateSmallReturnTails(F.Body);
+    size_t Jumps = 0;
+    walkStmts(F.Body.front().Body,
+              [&](const HighStmt &S) { Jumps += S.Kind == StmtKind::Goto; });
+    EXPECT_EQ(Jumps, Kind == Variant::ExceptOnly ? 0u : 1u);
+    if (Kind == Variant::ExceptOnly)
+      for (uint64_t X : {0, 1})
+        EXPECT_EQ(execute(F, X), X & 1 ? 1u : 2u) << X;
+  }
+}
+
+TEST(HighControlFlowSemantics, JumpIntoTheNextIfArmMergesTheTests) {
+  // if (x & 1) goto L; if (x & 2) { L: v = 1; } else { v = 2; } return v;
+  // is `if ((x & 1) || (x & 2))`; with L opening the else arm it is
+  // `if (!(x & 1) && (x & 2))`.  The second test still runs only when the
+  // first fails.  A jump to the second if would skip the first test, so a
+  // label there keeps the code as it is.
+  enum class Variant { Then, Else, Labeled };
+  auto Bit = [](uint64_t B) {
+    return HighExpr::makeBinop(NdOp::INT_AND, local(0),
+                               HighExpr::makeConst(B, 8));
+  };
+  auto Build = [&](Variant Kind) {
+    const va_t Target = Kind == Variant::Else ? 0x1018 : 0x1010;
+    HighStmt Test;
+    Test.Kind = StmtKind::If;
+    Test.Addr = 0x1000;
+    Test.Cond = Bit(1);
+    Test.Body = {jump(0x1004, Target)};
+    HighStmt Next;
+    Next.Kind = StmtKind::IfElse;
+    Next.Addr = 0x1008;
+    Next.Cond = Bit(2);
+    Next.Body = {assign(0x1010, 1, 1)};
+    Next.ElseBody = {assign(0x1018, 1, 2)};
+    HighStmt Skip;
+    Skip.Kind = StmtKind::If;
+    Skip.Addr = 0x1020;
+    Skip.Cond = Bit(4);
+    Skip.Body = {jump(0x1024, 0x1008)};
+    HighFunc F;
+    F.Body = {Test, Next, result(0x1030, local(1))};
+    if (Kind == Variant::Labeled)
+      F.Body.insert(F.Body.begin(), Skip);
+    return F;
+  };
+  for (Variant Kind : {Variant::Then, Variant::Else, Variant::Labeled}) {
+    SCOPED_TRACE(static_cast<int>(Kind));
+    HighFunc F = Build(Kind);
+    EXPECT_EQ(mergeJumpsIntoNextIfArms(F), Kind != Variant::Labeled);
+    size_t Jumps = 0;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      Jumps += S.Kind == StmtKind::Goto && S.GotoTarget != 0x1008;
+    });
+    EXPECT_EQ(Jumps, Kind == Variant::Labeled ? 1u : 0u);
+    if (Kind == Variant::Labeled)
+      continue;
+    // The jump takes the arm it opens; otherwise the second test decides.
+    for (uint64_t X = 0; X < 8; ++X) {
+      const bool ThenArm = (X & 1) ? Kind == Variant::Then : (X & 2) != 0;
+      EXPECT_EQ(execute(F, X), ThenArm ? 1u : 2u) << X;
+    }
+  }
+}
+
+TEST(HighControlFlowSemantics, JumpBackFromNestedArmsBecomesALoop) {
+  // v = x; X: v = v + 1; if (v & 1) { if (v & 2) goto X; w = 3; } return v;
+  // becomes `while (1) { v = v + 1; if (v & 1) { if (v & 2) continue; w = 3;
+  // } break; }`.  A loose break in the region would bind to the new loop,
+  // so it keeps the jump.
+  auto Build = [](bool LooseBreak) {
+    auto Bump = [](va_t Address) {
+      HighStmt S;
+      S.Kind = StmtKind::Assign;
+      S.Addr = Address;
+      S.Dst = local(1);
+      S.Val = HighExpr::makeBinop(NdOp::INT_ADD, local(1),
+                                  HighExpr::makeConst(1, 8));
+      return S;
+    };
+    auto Bit = [](uint64_t B) {
+      return HighExpr::makeBinop(NdOp::INT_AND, local(1),
+                                 HighExpr::makeConst(B, 8));
+    };
+    HighStmt Init;
+    Init.Kind = StmtKind::Assign;
+    Init.Addr = 0x0ff0;
+    Init.Dst = local(1);
+    Init.Val = local(0);
+    HighStmt Inner;
+    Inner.Kind = StmtKind::If;
+    Inner.Addr = 0x1008;
+    Inner.Cond = Bit(2);
+    Inner.Body = {jump(0x100c, 0x1000)};
+    HighStmt Outer;
+    Outer.Kind = StmtKind::If;
+    Outer.Addr = 0x1004;
+    Outer.Cond = Bit(1);
+    Outer.Body = {Inner, assign(0x1010, 2, 3)};
+    if (LooseBreak) {
+      HighStmt Leave;
+      Leave.Kind = StmtKind::Break;
+      Outer.Body.push_back(Leave);
+    }
+    HighFunc F;
+    F.Body = {Init, Bump(0x1000), Outer, result(0x1020, local(1))};
+    return F;
+  };
+  for (bool LooseBreak : {false, true}) {
+    SCOPED_TRACE(LooseBreak);
+    HighFunc F = Build(LooseBreak);
+    EXPECT_EQ(loopsForNestedJumpsBack(F.Body), !LooseBreak);
+    size_t Jumps = 0, Loops = 0;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      Jumps += S.Kind == StmtKind::Goto;
+      Loops += S.Kind == StmtKind::While;
+    });
+    EXPECT_EQ(Jumps, LooseBreak ? 1u : 0u);
+    EXPECT_EQ(Loops, LooseBreak ? 0u : 1u);
+    if (LooseBreak)
+      continue;
+    for (uint64_t X = 0; X < 8; ++X) {
+      uint64_t V = X + 1;
+      while ((V & 3) == 3)
+        ++V;
+      EXPECT_EQ(execute(F, X), V) << X;
+    }
+  }
+}
+
+TEST(HighControlFlowSemantics, LoopJumpsBecomeBreakAndContinue) {
+  // v = x; while (1) { X: v = v + 1; if (v & 1) goto X; if (v & 4) goto Out;
+  // v = v + 2; } Out: return v;
+  // The jump to the top of the always-true loop is `continue` and the jump
+  // to what follows it is `break`.  Inside a switch, `break` would only
+  // leave the switch, so a jump out of the loop from a case stays.
+  auto Build = [](bool InSwitch) {
+    auto Add = [](va_t Address, uint64_t N) {
+      HighStmt S;
+      S.Kind = StmtKind::Assign;
+      S.Addr = Address;
+      S.Dst = local(1);
+      S.Val = HighExpr::makeBinop(NdOp::INT_ADD, local(1),
+                                  HighExpr::makeConst(N, 8));
+      return S;
+    };
+    auto Test = [](va_t Address, uint64_t Bit, va_t Target) {
+      HighStmt S;
+      S.Kind = StmtKind::If;
+      S.Addr = Address;
+      S.Cond = HighExpr::makeBinop(NdOp::INT_AND, local(1),
+                                   HighExpr::makeConst(Bit, 8));
+      S.Body = {jump(Address + 4, Target)};
+      return S;
+    };
+    HighStmt Init;
+    Init.Kind = StmtKind::Assign;
+    Init.Addr = 0x0ff0;
+    Init.Dst = local(1);
+    Init.Val = local(0);
+    HighStmt Leave = Test(0x1010, 4, 0x1030);
+    if (InSwitch) {
+      HighStmt Dispatch;
+      Dispatch.Kind = StmtKind::Switch;
+      Dispatch.Addr = 0x1010;
+      Dispatch.SwitchExpr = HighExpr::makeBinop(NdOp::INT_AND, local(1),
+                                                HighExpr::makeConst(4, 8));
+      Dispatch.Cases = {{4, {jump(0x1014, 0x1030)}}};
+      Leave = Dispatch;
+    }
+    HighStmt Loop;
+    Loop.Kind = StmtKind::While;
+    Loop.Cond = HighExpr::makeConst(1, 1);
+    Loop.Body = {Add(0x1000, 1), Test(0x1008, 1, 0x1000), Leave,
+                 Add(0x1020, 2)};
+    HighFunc F;
+    F.Body = {Init, Loop, result(0x1030, local(1))};
+    return F;
+  };
+  for (bool InSwitch : {false, true}) {
+    SCOPED_TRACE(InSwitch);
+    HighFunc F = Build(InSwitch);
+    EXPECT_TRUE(loopJumpsAsBreakAndContinue(F.Body));
+    size_t Jumps = 0;
+    walkStmts(F.Body,
+              [&](const HighStmt &S) { Jumps += S.Kind == StmtKind::Goto; });
+    EXPECT_EQ(Jumps, InSwitch ? 1u : 0u);
+    for (uint64_t X = 0; X < 8; ++X) {
+      uint64_t V = X;
+      while (true) {
+        ++V;
+        if (V & 1)
+          continue;
+        if (V & 4)
+          break;
+        V += 2;
+      }
+      EXPECT_EQ(execute(F, X), V) << X;
+    }
+  }
+}
+
+TEST(HighControlFlowSemantics, TrimmedJoinJumpKeepsTheLabelOthersEnter) {
+  // v = 0; if (x & 4) goto J; if (x & 1) { v = 1; J: goto Out; } else {
+  // v = 2; } Out: return v;
+  // The arm's trailing jump to Out is redundant once Out follows the if,
+  // but `goto J` still lands on that jump, so its label must stay.
+  HighStmt Enter;
+  Enter.Kind = StmtKind::If;
+  Enter.Addr = 0x1000;
+  Enter.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(4, 8));
+  Enter.Body = {jump(0x1002, 0x1018)};
+  HighStmt Split;
+  Split.Kind = StmtKind::IfElse;
+  Split.Addr = 0x1004;
+  Split.Cond =
+      HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(1, 8));
+  Split.Body = {assign(0x1008, 1, 1), jump(0x1018, 0x1030)};
+  Split.ElseBody = {assign(0x1020, 1, 2)};
+  HighFunc F;
+  F.Body = {assign(0x0ff0, 1, 0), Enter, Split, result(0x1030, local(1))};
+  structureIfElse(F, 10);
+  std::set<va_t> Starts, Targets;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    Starts.insert(S.Addr);
+    if (S.Kind == StmtKind::Goto)
+      Targets.insert(S.GotoTarget);
+  });
+  for (va_t Target : Targets)
+    EXPECT_TRUE(Starts.count(Target)) << "no statement at " << Target;
+}
+
 TEST(HighControlFlowSemantics, JumpToWhatFollowsATryBecomesAnElseArm) {
   // __try { if (x & 1) { v = 1; goto out; } v = 2; } __except (1) { v = 9; }
   // out: return v;

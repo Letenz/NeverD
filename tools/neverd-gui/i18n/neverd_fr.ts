@@ -814,6 +814,21 @@ Atelier d'analyse binaire
 
 Explorez le désassemblage, le flot de contrôle, le C reconstruit et les représentations intermédiaires avec un processus d'analyse local.</translation>
         </message>
+        <message>
+            <location filename="../qml/Main.qml" line="288" />
+            <source>Library features and byte signatures (*.json *.pat)</source>
+            <translation>Caractéristiques de bibliothèques et signatures binaires (*.json *.pat)</translation>
+        </message>
+        <message>
+            <location filename="../qml/Main.qml" line="286" />
+            <source>Load Signature Pack</source>
+            <translation>Charger un pack de signatures</translation>
+        </message>
+        <message>
+            <location filename="../qml/Main.qml" line="131" />
+            <source>Load Signature Pack…</source>
+            <translation>Charger un pack de signatures…</translation>
+        </message>
     </context>
     <context>
         <name>McpConnectionManager</name>
@@ -1045,6 +1060,101 @@ Explorez le désassemblage, le flot de contrôle, le C reconstruit et les repré
             <source>Load more lines</source>
             <translation>Charger plus de lignes</translation>
         </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="91" />
+            <source>Close</source>
+            <translation>Fermer</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="54" />
+            <source>Details</source>
+            <translation>Détails</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="110" />
+            <source>Evidence SHA-256</source>
+            <translation>SHA-256 des preuves</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="87" />
+            <source>Expand</source>
+            <translation>Déplier</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="49" />
+            <source>Expand all</source>
+            <translation>Tout déplier</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="87" />
+            <source>Fold</source>
+            <translation>Replier</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="49" />
+            <source>Fold all</source>
+            <translation>Tout replier</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="51" />
+            <source>Fold mapped library operations. Copy and export retain the full source.</source>
+            <translation>Replier les opérations de bibliothèque associées au code. La copie et l’export conservent le code source complet.</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="105" />
+            <source>Identity evidence</source>
+            <translation>Preuves d’identité</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="46" />
+            <source>Library operations</source>
+            <translation>Opérations de bibliothèque</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="107" />
+            <source>Linkage</source>
+            <translation>Nom de liaison</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="103" />
+            <source>Mapped to original source</source>
+            <translation>Associé au code source original</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="106" />
+            <source>Original instructions</source>
+            <translation>Instructions originales</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="103" />
+            <source>Original source stays expanded; mapping is incomplete or outside the loaded page</source>
+            <translation>Le code source reste déplié : la correspondance est incomplète ou hors de la page chargée</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="108" />
+            <source>Pack</source>
+            <translation>Pack</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="109" />
+            <source>Profile SHA-256</source>
+            <translation>SHA-256 du profil</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="84" />
+            <source>Recognized library operation</source>
+            <translation>Opération de bibliothèque reconnue</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="104" />
+            <source>Rule</source>
+            <translation>Règle</translation>
+        </message>
+        <message>
+            <location filename="../qml/RepresentationPane.qml" line="111" />
+            <source>Source</source>
+            <translation>Origine</translation>
+        </message>
     </context>
     <context>
         <name>Workbench</name>
@@ -1192,6 +1302,16 @@ Explorez le désassemblage, le flot de contrôle, le C reconstruit et les repré
             <source>Finish opening the binary before editing.</source>
             <translation>Attendez la fin de l'ouverture du binaire avant d'apporter des modifications.</translation>
         </message>
+        <message>
+            <location filename="../PaneController.cpp" line="414" />
+            <source>Library regions link to original instructions; other source may be unmapped</source>
+            <translation>Les régions de bibliothèque renvoient aux instructions originales ; le reste du code peut ne pas être associé</translation>
+        </message>
+        <message>
+            <location filename="../Workbench.cpp" line="730" />
+            <source>Signature pack loaded</source>
+            <translation>Pack de signatures chargé</translation>
+        </message>
     </context>
     <context>
         <name>WorkerTransport</name>
@@ -1219,6 +1339,19 @@ Explorez le désassemblage, le flot de contrôle, le C reconstruit et les repré
             <location filename="../EngineClient.cpp" line="67" />
             <source>Invalid analysis protocol JSON.</source>
             <translation>JSON du protocole d'analyse invalide.</translation>
+        </message>
+    </context>
+    <context>
+        <name>TextPane</name>
+        <message>
+            <location filename="../qml/TextPane.qml" line="158" />
+            <source>Copy</source>
+            <translation>Copier</translation>
+        </message>
+        <message>
+            <location filename="../qml/TextPane.qml" line="159" />
+            <source>Select all</source>
+            <translation>Tout sélectionner</translation>
         </message>
     </context>
 </TS>

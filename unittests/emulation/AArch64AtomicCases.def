@@ -1,0 +1,350 @@
+//===- AArch64AtomicCases.def - Independently assembled LSE cases --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Original instructions assembled with LLVM; production admission uses its
+// own encoding families. Source/result operands use X0/X2 (pairs X0:1/X2:3),
+// with X4 as the address.
+#ifdef NEVERD_ATOMIC_CASE
+NEVERD_ATOMIC_CASE(Add8Relaxed, Add, 1, 1, 0x38200082, 0x00000000000000ffULL)
+NEVERD_ATOMIC_CASE(Add8Acquire, Add, 1, 1, 0x38a00082, 0x00000000000000ffULL)
+NEVERD_ATOMIC_CASE(Add8Release, Add, 1, 1, 0x38600082, 0x00000000000000ffULL)
+NEVERD_ATOMIC_CASE(Add8AcquireRelease, Add, 1, 1, 0x38e00082,
+                   0x00000000000000ffULL)
+NEVERD_ATOMIC_CASE(Add16Relaxed, Add, 2, 1, 0x78200082, 0x000000000000ffffULL)
+NEVERD_ATOMIC_CASE(Add16Acquire, Add, 2, 1, 0x78a00082, 0x000000000000ffffULL)
+NEVERD_ATOMIC_CASE(Add16Release, Add, 2, 1, 0x78600082, 0x000000000000ffffULL)
+NEVERD_ATOMIC_CASE(Add16AcquireRelease, Add, 2, 1, 0x78e00082,
+                   0x000000000000ffffULL)
+NEVERD_ATOMIC_CASE(Add32Relaxed, Add, 4, 1, 0xb8200082, 0x00000000ffffffffULL)
+NEVERD_ATOMIC_CASE(Add32Acquire, Add, 4, 1, 0xb8a00082, 0x00000000ffffffffULL)
+NEVERD_ATOMIC_CASE(Add32Release, Add, 4, 1, 0xb8600082, 0x00000000ffffffffULL)
+NEVERD_ATOMIC_CASE(Add32AcquireRelease, Add, 4, 1, 0xb8e00082,
+                   0x00000000ffffffffULL)
+NEVERD_ATOMIC_CASE(Add64Relaxed, Add, 8, 1, 0xf8200082, 0xffffffffffffffffULL)
+NEVERD_ATOMIC_CASE(Add64Acquire, Add, 8, 1, 0xf8a00082, 0xffffffffffffffffULL)
+NEVERD_ATOMIC_CASE(Add64Release, Add, 8, 1, 0xf8600082, 0xffffffffffffffffULL)
+NEVERD_ATOMIC_CASE(Add64AcquireRelease, Add, 8, 1, 0xf8e00082,
+                   0xffffffffffffffffULL)
+NEVERD_ATOMIC_CASE(Clear8Relaxed, Clear, 1, 1, 0x38201082,
+                   0x0000000000000010ULL)
+NEVERD_ATOMIC_CASE(Clear8Acquire, Clear, 1, 1, 0x38a01082,
+                   0x0000000000000010ULL)
+NEVERD_ATOMIC_CASE(Clear8Release, Clear, 1, 1, 0x38601082,
+                   0x0000000000000010ULL)
+NEVERD_ATOMIC_CASE(Clear8AcquireRelease, Clear, 1, 1, 0x38e01082,
+                   0x0000000000000010ULL)
+NEVERD_ATOMIC_CASE(Clear16Relaxed, Clear, 2, 1, 0x78201082,
+                   0x0000000000003210ULL)
+NEVERD_ATOMIC_CASE(Clear16Acquire, Clear, 2, 1, 0x78a01082,
+                   0x0000000000003210ULL)
+NEVERD_ATOMIC_CASE(Clear16Release, Clear, 2, 1, 0x78601082,
+                   0x0000000000003210ULL)
+NEVERD_ATOMIC_CASE(Clear16AcquireRelease, Clear, 2, 1, 0x78e01082,
+                   0x0000000000003210ULL)
+NEVERD_ATOMIC_CASE(Clear32Relaxed, Clear, 4, 1, 0xb8201082,
+                   0x0000000076543210ULL)
+NEVERD_ATOMIC_CASE(Clear32Acquire, Clear, 4, 1, 0xb8a01082,
+                   0x0000000076543210ULL)
+NEVERD_ATOMIC_CASE(Clear32Release, Clear, 4, 1, 0xb8601082,
+                   0x0000000076543210ULL)
+NEVERD_ATOMIC_CASE(Clear32AcquireRelease, Clear, 4, 1, 0xb8e01082,
+                   0x0000000076543210ULL)
+NEVERD_ATOMIC_CASE(Clear64Relaxed, Clear, 8, 1, 0xf8201082,
+                   0xfedcba9876543210ULL)
+NEVERD_ATOMIC_CASE(Clear64Acquire, Clear, 8, 1, 0xf8a01082,
+                   0xfedcba9876543210ULL)
+NEVERD_ATOMIC_CASE(Clear64Release, Clear, 8, 1, 0xf8601082,
+                   0xfedcba9876543210ULL)
+NEVERD_ATOMIC_CASE(Clear64AcquireRelease, Clear, 8, 1, 0xf8e01082,
+                   0xfedcba9876543210ULL)
+NEVERD_ATOMIC_CASE(Xor8Relaxed, Xor, 1, 1, 0x38202082, 0x00000000000000ffULL)
+NEVERD_ATOMIC_CASE(Xor8Acquire, Xor, 1, 1, 0x38a02082, 0x00000000000000ffULL)
+NEVERD_ATOMIC_CASE(Xor8Release, Xor, 1, 1, 0x38602082, 0x00000000000000ffULL)
+NEVERD_ATOMIC_CASE(Xor8AcquireRelease, Xor, 1, 1, 0x38e02082,
+                   0x00000000000000ffULL)
+NEVERD_ATOMIC_CASE(Xor16Relaxed, Xor, 2, 1, 0x78202082, 0x000000000000ffffULL)
+NEVERD_ATOMIC_CASE(Xor16Acquire, Xor, 2, 1, 0x78a02082, 0x000000000000ffffULL)
+NEVERD_ATOMIC_CASE(Xor16Release, Xor, 2, 1, 0x78602082, 0x000000000000ffffULL)
+NEVERD_ATOMIC_CASE(Xor16AcquireRelease, Xor, 2, 1, 0x78e02082,
+                   0x000000000000ffffULL)
+NEVERD_ATOMIC_CASE(Xor32Relaxed, Xor, 4, 1, 0xb8202082, 0x00000000ffffffffULL)
+NEVERD_ATOMIC_CASE(Xor32Acquire, Xor, 4, 1, 0xb8a02082, 0x00000000ffffffffULL)
+NEVERD_ATOMIC_CASE(Xor32Release, Xor, 4, 1, 0xb8602082, 0x00000000ffffffffULL)
+NEVERD_ATOMIC_CASE(Xor32AcquireRelease, Xor, 4, 1, 0xb8e02082,
+                   0x00000000ffffffffULL)
+NEVERD_ATOMIC_CASE(Xor64Relaxed, Xor, 8, 1, 0xf8202082, 0xffffffffffffffffULL)
+NEVERD_ATOMIC_CASE(Xor64Acquire, Xor, 8, 1, 0xf8a02082, 0xffffffffffffffffULL)
+NEVERD_ATOMIC_CASE(Xor64Release, Xor, 8, 1, 0xf8602082, 0xffffffffffffffffULL)
+NEVERD_ATOMIC_CASE(Xor64AcquireRelease, Xor, 8, 1, 0xf8e02082,
+                   0xffffffffffffffffULL)
+NEVERD_ATOMIC_CASE(Set8Relaxed, Set, 1, 1, 0x38203082, 0x00000000000000ffULL)
+NEVERD_ATOMIC_CASE(Set8Acquire, Set, 1, 1, 0x38a03082, 0x00000000000000ffULL)
+NEVERD_ATOMIC_CASE(Set8Release, Set, 1, 1, 0x38603082, 0x00000000000000ffULL)
+NEVERD_ATOMIC_CASE(Set8AcquireRelease, Set, 1, 1, 0x38e03082,
+                   0x00000000000000ffULL)
+NEVERD_ATOMIC_CASE(Set16Relaxed, Set, 2, 1, 0x78203082, 0x000000000000ffffULL)
+NEVERD_ATOMIC_CASE(Set16Acquire, Set, 2, 1, 0x78a03082, 0x000000000000ffffULL)
+NEVERD_ATOMIC_CASE(Set16Release, Set, 2, 1, 0x78603082, 0x000000000000ffffULL)
+NEVERD_ATOMIC_CASE(Set16AcquireRelease, Set, 2, 1, 0x78e03082,
+                   0x000000000000ffffULL)
+NEVERD_ATOMIC_CASE(Set32Relaxed, Set, 4, 1, 0xb8203082, 0x00000000ffffffffULL)
+NEVERD_ATOMIC_CASE(Set32Acquire, Set, 4, 1, 0xb8a03082, 0x00000000ffffffffULL)
+NEVERD_ATOMIC_CASE(Set32Release, Set, 4, 1, 0xb8603082, 0x00000000ffffffffULL)
+NEVERD_ATOMIC_CASE(Set32AcquireRelease, Set, 4, 1, 0xb8e03082,
+                   0x00000000ffffffffULL)
+NEVERD_ATOMIC_CASE(Set64Relaxed, Set, 8, 1, 0xf8203082, 0xffffffffffffffffULL)
+NEVERD_ATOMIC_CASE(Set64Acquire, Set, 8, 1, 0xf8a03082, 0xffffffffffffffffULL)
+NEVERD_ATOMIC_CASE(Set64Release, Set, 8, 1, 0xf8603082, 0xffffffffffffffffULL)
+NEVERD_ATOMIC_CASE(Set64AcquireRelease, Set, 8, 1, 0xf8e03082,
+                   0xffffffffffffffffULL)
+NEVERD_ATOMIC_CASE(SignedMax8Relaxed, SignedMax, 1, 1, 0x38204082,
+                   0x0000000000000010ULL)
+NEVERD_ATOMIC_CASE(SignedMax8Acquire, SignedMax, 1, 1, 0x38a04082,
+                   0x0000000000000010ULL)
+NEVERD_ATOMIC_CASE(SignedMax8Release, SignedMax, 1, 1, 0x38604082,
+                   0x0000000000000010ULL)
+NEVERD_ATOMIC_CASE(SignedMax8AcquireRelease, SignedMax, 1, 1, 0x38e04082,
+                   0x0000000000000010ULL)
+NEVERD_ATOMIC_CASE(SignedMax16Relaxed, SignedMax, 2, 1, 0x78204082,
+                   0x0000000000003210ULL)
+NEVERD_ATOMIC_CASE(SignedMax16Acquire, SignedMax, 2, 1, 0x78a04082,
+                   0x0000000000003210ULL)
+NEVERD_ATOMIC_CASE(SignedMax16Release, SignedMax, 2, 1, 0x78604082,
+                   0x0000000000003210ULL)
+NEVERD_ATOMIC_CASE(SignedMax16AcquireRelease, SignedMax, 2, 1, 0x78e04082,
+                   0x0000000000003210ULL)
+NEVERD_ATOMIC_CASE(SignedMax32Relaxed, SignedMax, 4, 1, 0xb8204082,
+                   0x0000000076543210ULL)
+NEVERD_ATOMIC_CASE(SignedMax32Acquire, SignedMax, 4, 1, 0xb8a04082,
+                   0x0000000076543210ULL)
+NEVERD_ATOMIC_CASE(SignedMax32Release, SignedMax, 4, 1, 0xb8604082,
+                   0x0000000076543210ULL)
+NEVERD_ATOMIC_CASE(SignedMax32AcquireRelease, SignedMax, 4, 1, 0xb8e04082,
+                   0x0000000076543210ULL)
+NEVERD_ATOMIC_CASE(SignedMax64Relaxed, SignedMax, 8, 1, 0xf8204082,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(SignedMax64Acquire, SignedMax, 8, 1, 0xf8a04082,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(SignedMax64Release, SignedMax, 8, 1, 0xf8604082,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(SignedMax64AcquireRelease, SignedMax, 8, 1, 0xf8e04082,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(SignedMin8Relaxed, SignedMin, 1, 1, 0x38205082,
+                   0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(SignedMin8Acquire, SignedMin, 1, 1, 0x38a05082,
+                   0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(SignedMin8Release, SignedMin, 1, 1, 0x38605082,
+                   0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(SignedMin8AcquireRelease, SignedMin, 1, 1, 0x38e05082,
+                   0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(SignedMin16Relaxed, SignedMin, 2, 1, 0x78205082,
+                   0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(SignedMin16Acquire, SignedMin, 2, 1, 0x78a05082,
+                   0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(SignedMin16Release, SignedMin, 2, 1, 0x78605082,
+                   0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(SignedMin16AcquireRelease, SignedMin, 2, 1, 0x78e05082,
+                   0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(SignedMin32Relaxed, SignedMin, 4, 1, 0xb8205082,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(SignedMin32Acquire, SignedMin, 4, 1, 0xb8a05082,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(SignedMin32Release, SignedMin, 4, 1, 0xb8605082,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(SignedMin32AcquireRelease, SignedMin, 4, 1, 0xb8e05082,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(SignedMin64Relaxed, SignedMin, 8, 1, 0xf8205082,
+                   0xfedcba9876543210ULL)
+NEVERD_ATOMIC_CASE(SignedMin64Acquire, SignedMin, 8, 1, 0xf8a05082,
+                   0xfedcba9876543210ULL)
+NEVERD_ATOMIC_CASE(SignedMin64Release, SignedMin, 8, 1, 0xf8605082,
+                   0xfedcba9876543210ULL)
+NEVERD_ATOMIC_CASE(SignedMin64AcquireRelease, SignedMin, 8, 1, 0xf8e05082,
+                   0xfedcba9876543210ULL)
+NEVERD_ATOMIC_CASE(UnsignedMax8Relaxed, UnsignedMax, 1, 1, 0x38206082,
+                   0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(UnsignedMax8Acquire, UnsignedMax, 1, 1, 0x38a06082,
+                   0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(UnsignedMax8Release, UnsignedMax, 1, 1, 0x38606082,
+                   0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(UnsignedMax8AcquireRelease, UnsignedMax, 1, 1, 0x38e06082,
+                   0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(UnsignedMax16Relaxed, UnsignedMax, 2, 1, 0x78206082,
+                   0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(UnsignedMax16Acquire, UnsignedMax, 2, 1, 0x78a06082,
+                   0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(UnsignedMax16Release, UnsignedMax, 2, 1, 0x78606082,
+                   0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(UnsignedMax16AcquireRelease, UnsignedMax, 2, 1, 0x78e06082,
+                   0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(UnsignedMax32Relaxed, UnsignedMax, 4, 1, 0xb8206082,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(UnsignedMax32Acquire, UnsignedMax, 4, 1, 0xb8a06082,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(UnsignedMax32Release, UnsignedMax, 4, 1, 0xb8606082,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(UnsignedMax32AcquireRelease, UnsignedMax, 4, 1, 0xb8e06082,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(UnsignedMax64Relaxed, UnsignedMax, 8, 1, 0xf8206082,
+                   0xfedcba9876543210ULL)
+NEVERD_ATOMIC_CASE(UnsignedMax64Acquire, UnsignedMax, 8, 1, 0xf8a06082,
+                   0xfedcba9876543210ULL)
+NEVERD_ATOMIC_CASE(UnsignedMax64Release, UnsignedMax, 8, 1, 0xf8606082,
+                   0xfedcba9876543210ULL)
+NEVERD_ATOMIC_CASE(UnsignedMax64AcquireRelease, UnsignedMax, 8, 1, 0xf8e06082,
+                   0xfedcba9876543210ULL)
+NEVERD_ATOMIC_CASE(UnsignedMin8Relaxed, UnsignedMin, 1, 1, 0x38207082,
+                   0x0000000000000010ULL)
+NEVERD_ATOMIC_CASE(UnsignedMin8Acquire, UnsignedMin, 1, 1, 0x38a07082,
+                   0x0000000000000010ULL)
+NEVERD_ATOMIC_CASE(UnsignedMin8Release, UnsignedMin, 1, 1, 0x38607082,
+                   0x0000000000000010ULL)
+NEVERD_ATOMIC_CASE(UnsignedMin8AcquireRelease, UnsignedMin, 1, 1, 0x38e07082,
+                   0x0000000000000010ULL)
+NEVERD_ATOMIC_CASE(UnsignedMin16Relaxed, UnsignedMin, 2, 1, 0x78207082,
+                   0x0000000000003210ULL)
+NEVERD_ATOMIC_CASE(UnsignedMin16Acquire, UnsignedMin, 2, 1, 0x78a07082,
+                   0x0000000000003210ULL)
+NEVERD_ATOMIC_CASE(UnsignedMin16Release, UnsignedMin, 2, 1, 0x78607082,
+                   0x0000000000003210ULL)
+NEVERD_ATOMIC_CASE(UnsignedMin16AcquireRelease, UnsignedMin, 2, 1, 0x78e07082,
+                   0x0000000000003210ULL)
+NEVERD_ATOMIC_CASE(UnsignedMin32Relaxed, UnsignedMin, 4, 1, 0xb8207082,
+                   0x0000000076543210ULL)
+NEVERD_ATOMIC_CASE(UnsignedMin32Acquire, UnsignedMin, 4, 1, 0xb8a07082,
+                   0x0000000076543210ULL)
+NEVERD_ATOMIC_CASE(UnsignedMin32Release, UnsignedMin, 4, 1, 0xb8607082,
+                   0x0000000076543210ULL)
+NEVERD_ATOMIC_CASE(UnsignedMin32AcquireRelease, UnsignedMin, 4, 1, 0xb8e07082,
+                   0x0000000076543210ULL)
+NEVERD_ATOMIC_CASE(UnsignedMin64Relaxed, UnsignedMin, 8, 1, 0xf8207082,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(UnsignedMin64Acquire, UnsignedMin, 8, 1, 0xf8a07082,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(UnsignedMin64Release, UnsignedMin, 8, 1, 0xf8607082,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(UnsignedMin64AcquireRelease, UnsignedMin, 8, 1, 0xf8e07082,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(Swap8Relaxed, Swap, 1, 1, 0x38208082, 0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(Swap8Acquire, Swap, 1, 1, 0x38a08082, 0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(Swap8Release, Swap, 1, 1, 0x38608082, 0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(Swap8AcquireRelease, Swap, 1, 1, 0x38e08082,
+                   0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(Swap16Relaxed, Swap, 2, 1, 0x78208082, 0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(Swap16Acquire, Swap, 2, 1, 0x78a08082, 0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(Swap16Release, Swap, 2, 1, 0x78608082, 0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(Swap16AcquireRelease, Swap, 2, 1, 0x78e08082,
+                   0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(Swap32Relaxed, Swap, 4, 1, 0xb8208082, 0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(Swap32Acquire, Swap, 4, 1, 0xb8a08082, 0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(Swap32Release, Swap, 4, 1, 0xb8608082, 0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(Swap32AcquireRelease, Swap, 4, 1, 0xb8e08082,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(Swap64Relaxed, Swap, 8, 1, 0xf8208082, 0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(Swap64Acquire, Swap, 8, 1, 0xf8a08082, 0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(Swap64Release, Swap, 8, 1, 0xf8608082, 0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(Swap64AcquireRelease, Swap, 8, 1, 0xf8e08082,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(Compare8Relaxed, Compare, 1, 1, 0x08a07c82,
+                   0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(Compare8Acquire, Compare, 1, 1, 0x08e07c82,
+                   0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(Compare8Release, Compare, 1, 1, 0x08a0fc82,
+                   0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(Compare8AcquireRelease, Compare, 1, 1, 0x08e0fc82,
+                   0x00000000000000efULL)
+NEVERD_ATOMIC_CASE(Compare16Relaxed, Compare, 2, 1, 0x48a07c82,
+                   0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(Compare16Acquire, Compare, 2, 1, 0x48e07c82,
+                   0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(Compare16Release, Compare, 2, 1, 0x48a0fc82,
+                   0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(Compare16AcquireRelease, Compare, 2, 1, 0x48e0fc82,
+                   0x000000000000cdefULL)
+NEVERD_ATOMIC_CASE(Compare32Relaxed, Compare, 4, 1, 0x88a07c82,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(Compare32Acquire, Compare, 4, 1, 0x88e07c82,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(Compare32Release, Compare, 4, 1, 0x88a0fc82,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(Compare32AcquireRelease, Compare, 4, 1, 0x88e0fc82,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(Compare64Relaxed, Compare, 8, 1, 0xc8a07c82,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(Compare64Acquire, Compare, 8, 1, 0xc8e07c82,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(Compare64Release, Compare, 8, 1, 0xc8a0fc82,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(Compare64AcquireRelease, Compare, 8, 1, 0xc8e0fc82,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(ComparePair32Relaxed, ComparePair, 4, 2, 0x08207c82,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(ComparePair32Acquire, ComparePair, 4, 2, 0x08607c82,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(ComparePair32Release, ComparePair, 4, 2, 0x0820fc82,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(ComparePair32AcquireRelease, ComparePair, 4, 2, 0x0860fc82,
+                   0x0000000089abcdefULL)
+NEVERD_ATOMIC_CASE(ComparePair64Relaxed, ComparePair, 8, 2, 0x48207c82,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(ComparePair64Acquire, ComparePair, 8, 2, 0x48607c82,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(ComparePair64Release, ComparePair, 8, 2, 0x4820fc82,
+                   0x0123456789abcdefULL)
+NEVERD_ATOMIC_CASE(ComparePair64AcquireRelease, ComparePair, 8, 2, 0x4860fc82,
+                   0x0123456789abcdefULL)
+#endif
+#ifdef NEVERD_ATOMIC_FAMILY
+NEVERD_ATOMIC_FAMILY(Add)
+NEVERD_ATOMIC_FAMILY(Clear)
+NEVERD_ATOMIC_FAMILY(Xor)
+NEVERD_ATOMIC_FAMILY(Set)
+NEVERD_ATOMIC_FAMILY(SignedMax)
+NEVERD_ATOMIC_FAMILY(SignedMin)
+NEVERD_ATOMIC_FAMILY(UnsignedMax)
+NEVERD_ATOMIC_FAMILY(UnsignedMin)
+NEVERD_ATOMIC_FAMILY(Swap)
+NEVERD_ATOMIC_FAMILY(Compare)
+NEVERD_ATOMIC_FAMILY(ComparePair)
+#endif
+#ifdef NEVERD_ATOMIC_VALUE
+NEVERD_ATOMIC_VALUE(Code, 0x400000)
+NEVERD_ATOMIC_VALUE(Data, 0x800000)
+NEVERD_ATOMIC_VALUE(Alias, 0x900000)
+NEVERD_ATOMIC_VALUE(Limit, 1048576)
+NEVERD_ATOMIC_VALUE(PageBytes, 4096)
+NEVERD_ATOMIC_VALUE(Timeout, 1000000)
+NEVERD_ATOMIC_VALUE(InstructionBytes, 4)
+NEVERD_ATOMIC_VALUE(WordBytes, 8)
+NEVERD_ATOMIC_VALUE(Granule, 16)
+NEVERD_ATOMIC_VALUE(Nop, 0xd503201f)
+NEVERD_ATOMIC_VALUE(Initial, 0xfedcba9876543210ULL)
+NEVERD_ATOMIC_VALUE(Operand, 0x0123456789abcdefULL)
+NEVERD_ATOMIC_VALUE(InitialStatus, 0xfedcba98abcdef42ULL)
+NEVERD_ATOMIC_VALUE(InitialFlags, 0xb0000000)
+NEVERD_ATOMIC_VALUE(RegisterMask, 31)
+NEVERD_ATOMIC_VALUE(BaseShift, 5)
+NEVERD_ATOMIC_VALUE(SourceShift, 16)
+NEVERD_ATOMIC_VALUE(TargetRegister, 2)
+NEVERD_ATOMIC_VALUE(BaseRegister, 4)
+NEVERD_ATOMIC_VALUE(ExclusiveLoad, 0xc85f7c20)
+NEVERD_ATOMIC_VALUE(ExclusiveStore, 0xc8027c20)
+NEVERD_ATOMIC_VALUE(ReadNZCV, 0xd53b4202)
+NEVERD_ATOMIC_VALUE(WriteNZCV, 0xd51b4200)
+NEVERD_ATOMIC_VALUE(FlagsMask, 0xf0000000)
+#endif
+#ifdef NEVERD_ATOMIC_PROFILE
+NEVERD_ATOMIC_PROFILE(UserKVM, KVM, CheckedUserAArch64)
+NEVERD_ATOMIC_PROFILE(SupervisorKVM, KVM, CheckedAArch64)
+NEVERD_ATOMIC_PROFILE(UserWHP, WHP, CheckedUserAArch64)
+NEVERD_ATOMIC_PROFILE(SupervisorWHP, WHP, CheckedAArch64)
+NEVERD_ATOMIC_PROFILE(UserUnicorn, Unicorn, CheckedUserAArch64)
+NEVERD_ATOMIC_PROFILE(SupervisorUnicorn, Unicorn, CheckedAArch64)
+NEVERD_ATOMIC_PROFILE(SoftwareUnicorn, Unicorn, Software)
+#endif
+#ifdef NEVERD_ATOMIC_TEXT
+NEVERD_ATOMIC_TEXT(NameSeparator, "_")
+NEVERD_ATOMIC_TEXT(ObserverFailure, "atomic observer failure")
+#endif

@@ -29,6 +29,8 @@ public:
   llvm::Error replaceAliases(llvm::ArrayRef<GuestAliasRange>,
                              llvm::ArrayRef<GuestAliasMapping>) override;
   llvm::Error protect(uint64_t, uint64_t, unsigned) override;
+  llvm::Error mapMMIO(uint64_t, uint64_t, GuestMMIOCallbacks) override;
+  llvm::Error unmapMMIO(uint64_t, uint64_t) override;
   llvm::Error read(uint64_t, llvm::MutableArrayRef<uint8_t>) override;
   llvm::Error write(uint64_t, llvm::ArrayRef<uint8_t>) override;
   llvm::Error fetch(uint64_t, llvm::MutableArrayRef<uint8_t>) override;
@@ -45,7 +47,7 @@ public:
   bool hasMemoryFault() const override {
     return FirstFault && FirstFault->Access.has_value();
   }
-  bool hasDeviceError() const override { return false; }
+  bool hasDeviceError() const override { return DeviceFailed; }
   bool executable(uint64_t Address) const override {
     auto Result = Memory->addressSpace()->canAccess(
         Address, 1, executionPermissions(Execute));
@@ -73,6 +75,7 @@ protected:
   virtual uint64_t programCounter() const = 0;
   virtual void setProgramCounter(uint64_t PC) = 0;
   virtual llvm::Error execute(const cs_insn &) = 0;
+  virtual void onGuestException() {}
   virtual std::optional<ServiceRequest>
   decodeServiceRequest(const cs_insn &) const = 0;
   /// Context capture may occur in an instruction observer, but no mutation or
@@ -93,6 +96,7 @@ protected:
   std::optional<BackendFault> FirstFault, RecoverableFault;
   std::optional<ServiceRequest> PendingService;
   bool Running = false, TimedOut = false;
+  bool DeviceFailed = false;
   std::atomic<bool> StopRequested{false};
   std::chrono::steady_clock::time_point Deadline;
 
@@ -104,6 +108,7 @@ private:
   std::vector<uint8_t> InstructionBytes;
   cs_insn *Decoded = nullptr;
   unsigned InstructionAlignment;
+  std::atomic_flag Entered = ATOMIC_FLAG_INIT;
 };
 } // namespace neverd::emulation
 #endif

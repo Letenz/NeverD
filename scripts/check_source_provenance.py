@@ -353,7 +353,7 @@ class HistoryAllowance:
     reason: str
     # Exact UTF-8 line hashes let a reviewed cleanup avoid republishing private
     # text in this table. Path and full commit restrictions still apply.
-    line_digests: frozenset[str] = frozenset()
+    line_sha256: frozenset[str] = frozenset()
 
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
@@ -363,6 +363,7 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
         commits=frozenset({
             "a50bff6e89aae6514cfb82464531a2738651e1c6",
             "72e28d1c99e49fe067eb7a485d2605c2f200a100",
+            "ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120",
         }),
         line="",
         reason=(
@@ -371,7 +372,7 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
             "and binary hashes. Exact line digests avoid republishing the "
             "private prefixes; no current or future occurrence is permitted."
         ),
-        line_digests=frozenset({
+        line_sha256=frozenset({
             "117b049ad55781d3b77eb19f2f5b2bdae9fbb3fb71dd45ae6332152912bfb86c",
             "5125e718871cef21f168a6449649f8a6bda61f76db780ed10c59de1c2ff2c1ae",
             "71abb0673f1506ba1eff9aca60596139f32f841297c695ec00fd24c91828ec9f",
@@ -388,6 +389,7 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
         commits=frozenset({
             "a50bff6e89aae6514cfb82464531a2738651e1c6",
             "72e28d1c99e49fe067eb7a485d2605c2f200a100",
+            "ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120",
         }),
         line="",
         reason=(
@@ -396,7 +398,7 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
             "and binary hashes. Exact line digests avoid republishing the "
             "private prefixes; no current or future occurrence is permitted."
         ),
-        line_digests=frozenset({
+        line_sha256=frozenset({
             "6749c867ff97a650cf2d55e195158269ca59f96946c8280979e3e1b1e1b12d6a",
             "71abb0673f1506ba1eff9aca60596139f32f841297c695ec00fd24c91828ec9f",
             "ae135f6f4741c3dbcae82bd3038a408dcbfb15f3858ec55eb476ad5f5f30c45e",
@@ -413,6 +415,7 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
         commits=frozenset({
             "a50bff6e89aae6514cfb82464531a2738651e1c6",
             "72e28d1c99e49fe067eb7a485d2605c2f200a100",
+            "ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120",
         }),
         line="",
         reason=(
@@ -421,7 +424,7 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
             "and binary hashes. Exact line digests avoid republishing the "
             "private prefixes; no current or future occurrence is permitted."
         ),
-        line_digests=frozenset({
+        line_sha256=frozenset({
             "30cce435771a4e82d1bd7ba6270a12cdcc12f0695681bdae63235a2259f293e1",
             "32068396a6531eed8ebe7d5cf6d8931d1919100d3c9f7aca7f50a8aef138a1b3",
             "4c6cf7808a4c5b68083e1107750570ccc539f52873bd98b3b2d1795fd760eb1f",
@@ -441,6 +444,7 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
         commits=frozenset({
             "1655143e6cbac4e080aadb65f6a6fbff05c63cd8",
             "72e28d1c99e49fe067eb7a485d2605c2f200a100",
+            "ac78f59c2bf2bf75d734f5ef8ca35a8e8093c120",
         }),
         line="",
         reason=(
@@ -449,7 +453,7 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
             "and binary hashes. Exact line digests avoid republishing the "
             "private prefixes; no current or future occurrence is permitted."
         ),
-        line_digests=frozenset({
+        line_sha256=frozenset({
             "1af51e627f88bc5e24c1fb921cb43d2520c2604e1760e5cdf925a128c77869c6",
             "1b6b6a19768095b78684d9e67dd16f7abaae0acb99267bfaf0c0680660f963a6",
             "2184761a48ce1860e7bbe302d4222c19aec4e59ecc767fc6211cbbad1e21a524",
@@ -505,7 +509,7 @@ def is_allowed_history_line(
         and path == a.path
         and (
             line == a.line
-            or hashlib.sha256(line.encode("utf-8")).hexdigest() in a.line_digests
+            or hashlib.sha256(line.encode("utf-8")).hexdigest() in a.line_sha256
         )
         for a in HISTORY_ALLOWED
     )

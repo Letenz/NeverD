@@ -277,11 +277,10 @@ TEST_P(AArch64AcquireRelease, MisalignmentIsRejectedBeforeObserversOrEffects) {
   }
 }
 
-TEST_P(AArch64AcquireRelease, ExclusiveAndLimitedOrderingRemainUnsupported) {
-  // LDAXR/STLXR, LDLAR/STLLR, LDAPR w0,[x1], and STLR w0,[x1,#-4]!.
+TEST_P(AArch64AcquireRelease, LimitedOrderingRemainsUnsupported) {
+  // LDLAR/STLLR, LDAPR w0,[x1], and STLR w0,[x1,#-4]!.
   // The last encoding shares the STLR ID but needs FEAT_LRCPC3.
-  const uint32_t Words[] = {word() ^ (1u << 23), word() ^ (1u << 15),
-                            0xb8bfc020, 0x99800820};
+  const uint32_t Words[] = {word() ^ (1u << 15), 0xb8bfc020, 0x99800820};
   for (unsigned I = 0; I < std::size(Words); ++I) {
     if (I != 0) {
       ASSERT_NO_FATAL_FAILURE(initialize());

@@ -63,7 +63,7 @@ struct BinaryUndefinedIndependenceResult {
 };
 
 /// By default collect both arms of original direct branches before pruning.
-/// The explicit finite-only DeferNativeConditionalEdges contract instead
+/// The explicit DeferNativeConditionalEdges contract instead
 /// collects conditional successors after paired-control equality and their
 /// feasibility checks. An infeasible arm has no instruction-inventory claim;
 /// every feasible arrival retains all byte, semantic and resource checks.
@@ -76,7 +76,7 @@ struct BinaryUndefinedIndependenceResult {
 /// AllowOverlappingNativeInstructions permits independently checked entries
 /// only when all instruction and immutable-read byte evidence agrees, within
 /// the cumulative byte budget. Incomplete architecture evidence also refuses
-/// by default. The explicit finite-only
+/// by default. The explicit
 /// RetainUnauditedNativeBoundaries contract instead retains strictly lifted
 /// Missing instructions as bound refusal frontiers: each must be unreachable,
 /// and their uncollected successors are outside the claimed byte inventory.
@@ -152,7 +152,11 @@ BinaryLowIRRefinementResult checkBinaryLowIRRefinement(
 /// are LowIR block entries. The exact plan and every checked segment are bound
 /// into an InductiveNativeToLowIRLoops certificate. Proof hints must establish
 /// initiation and closure from the full admitted entry domain, never supply
-/// additional entry assumptions. This does not certify a source backend.
+/// additional entry assumptions. Deferred conditional edges and retained
+/// unaudited refusal boundaries use the same native collector in every
+/// segment; feasibility and evidence are checked over the complete induction
+/// domain. Overlapping instruction entries remain unsupported in this API.
+/// This does not certify a source backend.
 BinaryLowIRRefinementResult checkBinaryLowIRLoopRefinement(
     const BinaryImage &Image, va_t Entry, const SpecializationOptions &Options,
     const LowFunc &Candidate, const LowIRIndependenceContract &Contract,
@@ -167,9 +171,11 @@ struct BinaryAutomaticLowIRRefinementResult {
   bool proved() const { return Refinement.proved(); }
 };
 
-/// Infer loop proof hints from a complete recovery, select unique native
-/// origins for its candidate cutpoints, then independently check the complete
-/// native/candidate relation. Recovery metadata and inferred hints are
+/// Infer loop proof hints from a complete recovery with uniquely mapped
+/// residual origins. Repeated native addresses need literal-bit selectors
+/// proved over the complete candidate templates. Unique native origins retain
+/// their previous search priority. Independently check the
+/// complete native/candidate relation. Recovery metadata and inferred hints are
 /// untrusted; only Refinement's certificate establishes the relation. Search
 /// and proof budgets are separate and explicit. Neither stage certifies C.
 BinaryAutomaticLowIRRefinementResult inferAndCheckBinaryLowIRLoopRefinement(

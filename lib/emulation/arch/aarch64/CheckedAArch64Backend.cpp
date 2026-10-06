@@ -29,7 +29,7 @@ CheckedAArch64Backend::create(std::unique_ptr<MemoryProjection> Memory,
   B->Memory = std::move(Memory);
   B->Machine = std::move(Machine);
   B->CPU.UserMode = UserMode;
-  if (auto E = B->Memory->validateMappings(aarch64::canonicalRange))
+  if (auto E = B->Memory->validateMappings(aarch64::canonicalRange, !UserMode))
     return E;
   if (auto E = B->initializeDecoder(CS_ARCH_AARCH64, CS_MODE_ARM))
     return E;
@@ -71,6 +71,7 @@ CheckedAArch64Backend::saveContext() {
   S->Owner = Identity;
   S->Space = addressSpace();
   S->CPU = CPU;
+  S->Exclusive = Exclusive;
   return makeContext(std::move(S));
 }
 llvm::Error CheckedAArch64Backend::saveContext(BackendContext &C) {
@@ -82,6 +83,7 @@ llvm::Error CheckedAArch64Backend::saveContext(BackendContext &C) {
     return E;
   contextStorage(C)->Space = addressSpace();
   static_cast<SavedState &>(*contextStorage(C)).CPU = CPU;
+  static_cast<SavedState &>(*contextStorage(C)).Exclusive = Exclusive;
   return llvm::Error::success();
 }
 llvm::Error CheckedAArch64Backend::restoreContext(const BackendContext &C) {
@@ -94,7 +96,15 @@ llvm::Error CheckedAArch64Backend::restoreContext(const BackendContext &C) {
   if (contextStorage(C)->Space.lock() != addressSpace())
     return error(diagnostic::ContextSpace);
   CPU = static_cast<const SavedState &>(*contextStorage(C)).CPU;
+  Exclusive = static_cast<const SavedState &>(*contextStorage(C)).Exclusive;
   TimedOut = false;
+  return llvm::Error::success();
+}
+llvm::Error
+CheckedAArch64Backend::bindAddressSpace(std::shared_ptr<AddressSpace> Space) {
+  if (auto E = CheckedBackend::bindAddressSpace(std::move(Space)))
+    return E;
+  Exclusive.reset();
   return llvm::Error::success();
 }
 std::optional<ServiceRequest>
@@ -113,12 +123,26 @@ CheckedAArch64Backend::decodeServiceRequest(const cs_insn &I) const {
 }
 
 llvm::Error CheckedAArch64Backend::execute(const cs_insn &I) {
+  auto Atomic = executeAtomic(I);
+  if (!Atomic)
+    return Atomic.takeError();
+  if (*Atomic)
+    return llvm::Error::success();
   auto Effects = getAArch64InstructionEffects(I, CPU);
   if (!Effects)
     return Effects.takeError();
   const auto &Accesses = *Effects;
   // Validate the entire instruction before any native access or pair write.
   for (const auto &M : Accesses) {
+    // Ordinary device loads/stores and cache maintenance need their own
+    // transaction admission. Only explicit LSE atomics are projected here.
+    const auto First =
+        Memory->mappings().lower_bound(M.Address & ~(memory::PageSize - 1));
+    for (auto P = First;
+         P != Memory->mappings().end() && P->first <= M.Address + M.Size - 1;
+         ++P)
+      if (P->second.IO)
+        return llvm::make_error<UnsupportedExecutionError>();
     if (M.CacheMaintenance) {
       // Only readable ordinary RAM is admitted. Translation/fault behavior
       // for other cache targets differs between implementations, so reject
@@ -154,16 +178,24 @@ llvm::Error CheckedAArch64Backend::execute(const cs_insn &I) {
   if (auto E = buildAArch64PageTables(*this->Memory, UserMode))
     return E;
   std::vector<RAMWriteRange> Writes;
+  std::vector<RAMWriteRange> Inputs{{I.address, I.size}};
   for (const auto &M : Accesses)
     if (M.Permission == Write)
       Writes.push_back({M.Address, M.Size});
+  for (const auto &M : Accesses)
+    Inputs.push_back({M.Address, M.Size});
   auto Transaction = RAMTransaction::create(
       *this->Memory, Writes, execution_limits::InstructionRAMWriteBytes,
       executionPermissions(Write));
   if (!Transaction)
     return Transaction.takeError();
   auto Next = CPU;
-  if (auto E = Machine->step(Next, {Deadline, &StopRequested}))
+  if (auto E = (*Transaction)
+                   ->execute(
+                       [&] {
+                         return Machine->step(Next, {Deadline, &StopRequested});
+                       },
+                       Inputs))
     return E;
   if (auto E = (*Transaction)->stage())
     return E;

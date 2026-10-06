@@ -1,7 +1,7 @@
 #ifndef NEVERD_SDK_CAPI_OBJCBLOCKSOURCES_H
 #define NEVERD_SDK_CAPI_OBJCBLOCKSOURCES_H
 
-#include "ObjCSourceBindings.h"
+#include "ObjCByValueCopySources.h"
 
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/loader/ObjC/ObjCBlocks.h"
@@ -76,6 +76,8 @@ using Identity = objc_projection_detail::LocalIdentity;
 using CallKind = SourceCallTypeHint::Kind;
 constexpr uint64_t StrongObjectFieldFlag = 3;
 constexpr uint64_t StrongBlockFieldFlag = 7;
+constexpr uint32_t BlockNoEscape = 1u << 23;
+constexpr uint32_t BlockGlobal = 1u << 28;
 struct Invalid : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
@@ -145,7 +147,8 @@ inline bool validDescriptor(const ObjCBlockDescriptor &D) {
     return R.StorageKind == ObjCBlockCaptureRange::Kind::NonObjectBytes ||
            R.StorageKind == ObjCBlockCaptureRange::Kind::Unretained ||
            (R.StorageKind == ObjCBlockCaptureRange::Kind::Strong &&
-            D.CopyHelper);
+            (D.CopyHelper || (D.Flags & (BlockGlobal | BlockNoEscape)) ==
+                                 (BlockGlobal | BlockNoEscape)));
   });
 }
 inline bool sameDescriptor(const ObjCBlockDescriptor &A,
@@ -168,14 +171,17 @@ class Values {
   const ImportStorageSlotCollection &Imports;
   size_t EvaluationBudget = 1000000;
   std::set<int64_t> FrameIdentityBytes;
+  std::set<int64_t> InitializedFrameBytes;
 
 public:
   struct Facts {
     std::map<Identity, Value> Locals;
     std::map<std::pair<int64_t, unsigned>, Value> FrameValues;
     std::set<int64_t> FrameIdentityBytes;
+    std::set<int64_t> InitializedFrameBytes;
     size_t size() const {
-      return Locals.size() + FrameValues.size() + FrameIdentityBytes.size();
+      return Locals.size() + FrameValues.size() + FrameIdentityBytes.size() +
+             InitializedFrameBytes.size();
     }
   };
   std::map<Identity, Value> Locals;
@@ -197,11 +203,14 @@ public:
   }
   Values(ObjCBlockSourceContext &&, const HighFunc &,
          std::optional<size_t> = std::nullopt) = delete;
-  Facts facts() const { return {Locals, FrameValues, FrameIdentityBytes}; }
+  Facts facts() const {
+    return {Locals, FrameValues, FrameIdentityBytes, InitializedFrameBytes};
+  }
   void swap(Facts &F) {
     Locals.swap(F.Locals);
     FrameValues.swap(F.FrameValues);
     FrameIdentityBytes.swap(F.FrameIdentityBytes);
+    InitializedFrameBytes.swap(F.InitializedFrameBytes);
   }
   bool frameContainsPointerIdentity() const {
     return !FrameIdentityBytes.empty();
@@ -215,6 +224,7 @@ public:
     Locals = F.Locals;
     FrameValues = F.FrameValues;
     FrameIdentityBytes = F.FrameIdentityBytes;
+    InitializedFrameBytes = F.InitializedFrameBytes;
   }
   /// Consumer proofs need address identity, not the producer expression used
   /// to materialize a block header. Scalar disagreements become unknown;
@@ -258,6 +268,13 @@ public:
     };
     MergeValues(Into.Locals, From.Locals);
     MergeValues(Into.FrameValues, From.FrameValues);
+    for (auto It = Into.InitializedFrameBytes.begin();
+         It != Into.InitializedFrameBytes.end();)
+      if (!From.InitializedFrameBytes.count(*It)) {
+        It = Into.InitializedFrameBytes.erase(It);
+        Changed = true;
+      } else
+        ++It;
     const auto Before = Into.FrameIdentityBytes.size();
     Into.FrameIdentityBytes.insert(From.FrameIdentityBytes.begin(),
                                    From.FrameIdentityBytes.end());
@@ -510,12 +527,23 @@ public:
       const auto Address = Inputs[0];
       if (Address.K == Value::Frame) {
         auto Found = FrameValues.find({Address.Offset, Bytes});
-        if (Found != FrameValues.end())
+        if (Found != FrameValues.end() &&
+            (Bytes != 16 || Found->second.K != Value::Scalar))
           return established(Found->second);
         auto Identity = FrameIdentityBytes.lower_bound(Address.Offset);
         if (Identity != FrameIdentityBytes.end() &&
             *Identity < Address.Offset + Bytes)
           throw Invalid("partial frame read loses block address provenance");
+        // Different scalar store widths can describe the same complete
+        // vector copy. Preserve its byte coverage, never a pointer identity
+        // or a field type, only when every reaching byte is initialized.
+        if (Bytes == 16 && frameRange(Function, Address.Offset, Bytes)) {
+          bool Complete = true;
+          for (unsigned I = 0; I != Bytes; ++I)
+            Complete &= InitializedFrameBytes.count(Address.Offset + I) != 0;
+          if (Complete)
+            return {Value::OpaqueBytes, 0, 0, {}, E.get()};
+        }
         return {};
       }
       if (Address.K == Value::Context)
@@ -595,6 +623,7 @@ public:
     const bool Identity = pointerIdentity(V);
     for (unsigned I = 0; I < Bytes; ++I) {
       const int64_t Byte = Address.Offset + I;
+      InitializedFrameBytes.insert(Byte);
       if (Identity)
         FrameIdentityBytes.insert(Byte);
       else
@@ -613,6 +642,9 @@ public:
         ++It;
     FrameIdentityBytes.erase(FrameIdentityBytes.lower_bound(Offset),
                              FrameIdentityBytes.lower_bound(Offset + Bytes));
+    InitializedFrameBytes.erase(
+        InitializedFrameBytes.lower_bound(Offset),
+        InitializedFrameBytes.lower_bound(Offset + Bytes));
   }
 };
 
@@ -1069,7 +1101,8 @@ inline std::vector<ObjCStackBlockSource>
 stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
             const std::map<va_t, const HighFunc *> &Functions,
             const std::map<uint64_t, ObjCReceiverTypeHint> *ParentReceivers,
-            uint64_t ParentLiteralSize, std::string &Reason) {
+            uint64_t ParentLiteralSize, std::string &Reason,
+            const PipelineResult &Result) {
   const auto &Image = Source.Image;
   // A stack literal needs a store for its ISA/header. Avoid constructing a
   // source-flow graph for the many native functions that cannot build one.
@@ -1179,6 +1212,9 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
                                  &Function, nullptr,
                                  ParentReceivers ? &CaptureProof : nullptr);
     };
+    // The immutable function/result pair owns these observations. Do not
+    // rebuild the same complete machine proof on each worklist visit.
+    std::map<const HighExpr *, bool> CopyCallProofs;
     auto UntouchedEntryPointer = [&](const ExprPtr &Expr,
                                      auto &&Visit) -> bool {
       if (!Expr || !Expr->Type || Expr->Type->Size != 8)
@@ -1239,14 +1275,21 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
     auto Constructed = [&](int64_t Base) -> ObjCStackBlockSource {
       const auto Isa = Word(Base), Invoke = Word(Base + 16),
                  Descriptor = Word(Base + 24);
-      if (Isa.K != Value::Isa || Isa.Name != "_NSConcreteStackBlock" ||
-          Invoke.K != Value::Number || !Image.isCodeAddress(Invoke.Bits) ||
-          Descriptor.K != Value::Number || !Isa.Producer || !Invoke.Producer ||
-          !Descriptor.Producer || Integer(Base + 12, 4) != 0)
+      if (Isa.K != Value::Isa || Invoke.K != Value::Number ||
+          !Image.isCodeAddress(Invoke.Bits) || Descriptor.K != Value::Number ||
+          !Isa.Producer || !Invoke.Producer || !Descriptor.Producer ||
+          Integer(Base + 12, 4) != 0)
         throw Invalid("block literal header has no complete "
                       "stack/invoke/descriptor identity");
       const auto Flags = static_cast<uint32_t>(Integer(Base + 8, 4));
-      if ((Flags & (1u << 28)) && !(Flags & (1u << 23)))
+      // A captured noescape literal occupies the caller's frame but uses
+      // the global runtime class: copying it returns the original address.
+      // Both compatibility flags must agree with that class/storage pair.
+      if ((Isa.Name == "_NSConcreteGlobalBlock" &&
+           (Flags & (BlockGlobal | BlockNoEscape)) !=
+               (BlockGlobal | BlockNoEscape)) ||
+          ((Flags & BlockGlobal) && !(Flags & BlockNoEscape)) ||
+          ((Flags & BlockNoEscape) && !(Flags & BlockGlobal)))
         throw Invalid(
             "stack block concrete class disagrees with its storage flags");
       std::string Error;
@@ -1356,14 +1399,55 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
     State.Call = [&](const HighExpr &E,
                      const std::vector<Value> &Arguments) -> Value {
       std::map<int64_t, unsigned> InvalidatedBlocks;
+      std::optional<std::pair<int64_t, unsigned>> ConsumedCopy;
+      auto BorrowsDisjointValueCopy = [&](size_t Parameter,
+                                          int64_t Offset) -> bool {
+        const auto &Binding = E.SourceCallHint;
+        if (!Binding || !Binding->ByValueCopy)
+          return false;
+        const auto &Copy = *Binding->ByValueCopy;
+        if (Copy.Parameter != Parameter || Copy.FrameOffset != Offset ||
+            !Copy.Bytes || Copy.Bytes > 4096 ||
+            !frameRange(Function, Offset, Copy.Bytes) ||
+            State.frameRangeContainsPointerIdentity(Offset, Copy.Bytes))
+          return false;
+        std::map<int64_t, uint64_t> LiveRanges;
+        for (const auto &[Base, Block] : Blocks)
+          LiveRanges.emplace(Base, Block.Descriptor.LiteralSize);
+        // A complete literal can be live before its first consumer. Observe
+        // its current construction without publishing a consumer or ABI.
+        for (const auto &[Byte, Stored] : Memory)
+          if (!Stored.Index && Stored.Width == 8 && Stored.V.K == Value::Isa)
+            LiveRanges[Byte] = Constructed(Byte).Descriptor.LiteralSize;
+        for (const auto &[Base, Bytes] : LiveRanges)
+          if (Offset < Base + static_cast<int64_t>(Bytes) &&
+              Base < Offset + Copy.Bytes)
+            return false;
+        for (const auto &[Byte, Stored] : Memory)
+          if (pointerIdentity(Stored.V) &&
+              std::none_of(LiveRanges.begin(), LiveRanges.end(),
+                           [&](const auto &Entry) {
+                             const auto &[Base, Bytes] = Entry;
+                             return Byte >= Base &&
+                                    Byte - Base < static_cast<int64_t>(Bytes);
+                           }))
+            return false;
+        auto [Proof, Fresh] = CopyCallProofs.try_emplace(&E, false);
+        if (Fresh)
+          Proof->second = objCByValueCopyFrameCallBound(E, Image, Result,
+                                                        Function, Functions);
+        if (!Proof->second)
+          return false;
+        ConsumedCopy = {Offset, Copy.Bytes};
+        return true;
+      };
       auto BorrowsDisjointSuperRecord = [&](size_t Parameter,
                                             int64_t Offset) -> bool {
         const auto &Binding = E.SourceCallHint;
         if (Parameter != 0 || !Binding ||
             Binding->CallKind != CallKind::ObjCSuper2 ||
             Binding->TargetName != "objc_msgSendSuper2" ||
-            E.CallTarget != "objc_msgSendSuper2" ||
-            !CallBound(E) ||
+            E.CallTarget != "objc_msgSendSuper2" || !CallBound(E) ||
             !frameRange(Function, Offset, 16))
           return false;
         const auto InBlock = [&](int64_t Byte) {
@@ -1405,11 +1489,11 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         const auto Header = Memory.find(Arguments[I].Offset);
         const bool ExactBlockBase =
             Header != Memory.end() && Header->second.Index == 0 &&
-            Header->second.Width == 8 && Header->second.V.K == Value::Isa &&
-            Header->second.V.Name == "_NSConcreteStackBlock";
+            Header->second.Width == 8 && Header->second.V.K == Value::Isa;
         if (!ExactBlockBase) {
           if ((EnumerationBorrow && (I == 2 || I == 3)) ||
-              BorrowsDisjointSuperRecord(I, Arguments[I].Offset))
+              BorrowsDisjointSuperRecord(I, Arguments[I].Offset) ||
+              BorrowsDisjointValueCopy(I, Arguments[I].Offset))
             continue;
           if (Blocks.count(Arguments[I].Offset) ||
               State.frameContainsPointerIdentity())
@@ -1434,22 +1518,32 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
               Binding->TargetName == "_Block_copy")) &&
             CallBound(E);
         std::optional<SourceFunctionTypeHint> Consumer;
+        bool ConsumerCopies = false;
         if (Binding && Binding->CallKind == CallKind::DarwinRuntimeCall) {
           const auto Contract =
               darwinBlockParameterContract(Image, Binding->TargetAddress, I);
-          if (Contract)
+          if (Contract) {
             Consumer = Contract->Signature;
+            ConsumerCopies = Contract->Storage ==
+                             DarwinBlockParameterContract::Lifetime::Copied;
+          }
         } else if (Binding && Binding->CallKind == CallKind::ObjCMessage) {
           const auto Contract = objcBlockParameterContract(Image, *Binding, I);
-          if (Contract)
+          if (Contract) {
             Consumer = Contract->Signature;
+            ConsumerCopies = Contract->Storage ==
+                             ObjCBlockParameterContract::Lifetime::Copied;
+          }
         }
         const bool CallbackMatches =
             Consumer && Block.Descriptor.InvokeTypeHint &&
             objc_projection_detail::sameHint(*Block.Descriptor.InvokeTypeHint,
                                              *Consumer);
-        const bool DeclaredConsumer =
-            CallbackMatches && CallBound(E);
+        const bool DeclaredConsumer = CallbackMatches && CallBound(E);
+        if ((Block.Descriptor.Flags & BlockNoEscape) &&
+            (Runtime || (DeclaredConsumer && ConsumerCopies)))
+          throw Invalid("nonescaping stack block cannot acquire owned storage "
+                        "through a copying consumer");
         if (!Direct && !Runtime && !DeclaredConsumer &&
             (!Binding || Binding->CallKind != CallKind::Native ||
              E.IsIndirectCall ||
@@ -1512,9 +1606,15 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
       // A lifetime attribute says nothing about writes. Later consumers need
       // fresh construction evidence after an imported nonescaping call.
       for (const auto &[Offset, Size] : InvalidatedBlocks) {
-        State.storeFrame(Value{Value::Frame, Offset}, Size, {});
+        State.forgetFrameRange(Offset, Size);
         Memory.erase(Memory.lower_bound(Offset),
                      Memory.lower_bound(Offset + Size));
+      }
+      if (ConsumedCopy) {
+        const auto [Offset, Bytes] = *ConsumedCopy;
+        State.forgetFrameRange(Offset, Bytes);
+        Memory.erase(Memory.lower_bound(Offset),
+                     Memory.lower_bound(Offset + Bytes));
       }
       if (EnumerationBorrow)
         for (const auto &[Offset, Bytes] : *EnumerationBorrow) {
@@ -1557,8 +1657,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         break;
       case StmtKind::Store: {
         auto Address = State.eval(S.StoreAddr), V = State.eval(S.StoreVal);
-        Current.SawIsa |=
-            V.K == Value::Isa && V.Name == "_NSConcreteStackBlock";
+        Current.SawIsa |= V.K == Value::Isa;
         SawIsa |= Current.SawIsa;
         if (Address.K != Value::Frame) {
           if (V.K == Value::Frame)
@@ -1770,7 +1869,7 @@ discoverObjCBlockSourcesPass(const ObjCBlockSourceContext &Source,
         Error = Found->second;
     } else {
       Blocks = stackBlocks(Source, Function, Functions, ParentReceivers,
-                           ParentLiteralSize, Error);
+                           ParentLiteralSize, Error, Result);
     }
     if (!Error.empty())
       Plan.Rejections[Function.Entry] = std::move(Error);
@@ -2271,6 +2370,59 @@ objcBlockSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
   return objcBlockSourceCallBound(Expression, ObjCBlockSourceContext(Image),
                                   Plan, Functions);
 }
+
+/// The two owners publish in order: a current machine/frame replay, then a
+/// separately completed block construction/capture projection, then ordinary
+/// source references. The block plan is local to this immutable export result;
+/// it grants no copy layout or memory effects by itself.
+class ObjCBlockByValueCopySourceValidator {
+  const ObjCBlockSourceContext &Source;
+  const PipelineResult &Result;
+  const ObjCBlockSourcePlan &Candidates;
+  std::optional<ObjCBlockSourcePlan> Blocks;
+
+public:
+  ObjCBlockByValueCopySourceValidator(const ObjCBlockSourceContext &S,
+                                      const PipelineResult &R,
+                                      const ObjCBlockSourcePlan &P)
+      : Source(S), Result(R), Candidates(P) {}
+  bool validate(const HighExpr &Expression, const HighFunc &Function,
+                const std::map<va_t, const HighFunc *> &Functions) {
+    using native_swift_receiver_detail::BodyProof;
+    const auto &Image = Source.Image;
+    if (!Expression.SourceCallHint || !Expression.SourceCallHint->ByValueCopy ||
+        Expression.SourceCallHint->NativeSwiftReceiver ||
+        Candidates.SourceImage != &Image ||
+        Candidates.SourceResult != &Result ||
+        !Candidates.StackBlocks.count(Function.Entry))
+      return false;
+    const auto Rebuilt =
+        objc_value_copy_detail::replayCurrentFunction(Image, Result, Function);
+    const auto Current =
+        native_source_detail::currentFunction(Result, Function.Entry);
+    if (!Rebuilt || !Current)
+      return false;
+    if (!Blocks)
+      Blocks = discoverObjCBlockSources(Source, Result);
+    const auto BlockBinding = bindObjCBlockSourceReferences(
+        *Current->High, Source, *Blocks, Functions);
+    if (!BlockBinding.Limitation.empty())
+      return false;
+    const auto Bound = bindObjCSourceReferences(BlockBinding.Function, Image,
+                                                nullptr, &Functions);
+    if (!Bound.Limitation.empty() ||
+        !objc_value_copy_detail::sameBody(Bound.Function, Function, true))
+      return false;
+    BodyProof Expected{Image, Bound.Function}, Actual{Image, Function};
+    const auto ExpectedCalls = Expected.calls(true), Calls = Actual.calls(true);
+    if (!ExpectedCalls || !Calls || Calls->size() != ExpectedCalls->size())
+      return false;
+    const auto Call = Calls->find(Expression.SourceCallHint->ByValueCopy->Site);
+    return Call != Calls->end() && Call->second == &Expression &&
+           objcSourceCallBound(Expression, Image, Functions, nullptr, nullptr,
+                               &Function, nullptr, nullptr, false, true);
+  }
+};
 
 /// All data definitions are function-local, while the three generated function
 /// identities are explicitly shared by the Objective-C source assembler.

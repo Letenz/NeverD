@@ -1,4 +1,5 @@
 add_neverd_component_library(NeverDBackendC
+  CSourceRecorder.cpp
   HighC/HighCEmitter.cpp
   HighC/HighCExprBinOp.cpp
   HighC/HighCExprWriter.cpp

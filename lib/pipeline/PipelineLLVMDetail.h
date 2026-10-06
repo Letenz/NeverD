@@ -15,6 +15,7 @@ namespace neverd {
 
 struct Pipeline::LLVMEmissionResult {
   std::unique_ptr<llvm::Module> Module;
+  std::shared_ptr<LLVMSourceMap> Sources;
   uint64_t UnhandledValueIntrinsics = 0;
   bool LLVMVerifierFailed = false;
   std::string Error;

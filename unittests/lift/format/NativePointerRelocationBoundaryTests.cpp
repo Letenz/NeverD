@@ -1104,9 +1104,15 @@ TEST_F(NativePointerRelocationBoundary,
           "  mov x0, x30\n"
           "  ret\n";
   }
-  RunResult Compile = exec(
-      NEVERD_TEST_CLANG, {"-target", "arm64-apple-macos14", LLVMPath.string(),
-                          IntrinsicShim.string(), "-o", RebuiltPath.string()});
+  const auto SDK =
+      exec("/usr/bin/xcrun", {"--sdk", "macosx", "--show-sdk-path"});
+  ASSERT_EQ(SDK.exitCode, 0) << SDK.err;
+  const auto Sysroot = llvm::StringRef(SDK.out).trim().str();
+  ASSERT_FALSE(Sysroot.empty());
+  RunResult Compile = exec(NEVERD_TEST_CLANG,
+                           {"-target", "arm64-apple-macos14", "-isysroot",
+                            Sysroot, LLVMPath.string(), IntrinsicShim.string(),
+                            "-o", RebuiltPath.string()});
   ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
 #if defined(__aarch64__)
   for (unsigned Attempt = 0; Attempt < 5; ++Attempt) {

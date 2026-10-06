@@ -26,6 +26,66 @@ TEST(ProjectionCache, X64RootSurvivesAChangeOfCaller) {
   const auto Second = llvm::cantFail(buildX64PageTables(*Memory, false, true));
   EXPECT_EQ(Second, First);
 }
+TEST(ProjectionCache, RelocatedWindowsKeepRAMIdentityAndInvalidateCachedRoots) {
+  auto Memory = llvm::cantFail(MemoryProjection::create(Limit));
+  llvm::cantFail(Memory->map(Code, PageSize, Read | Write | Execute));
+  llvm::cantFail(Memory->aliases({}, {{Alias, Code, PageSize, Read | Write}}));
+  const auto Physical = Memory->mappings().at(Code).Physical;
+  auto *Backing = Memory->physicalPointer(Physical);
+  auto Previous = llvm::cantFail(buildX64PageTables(*Memory));
+  auto Leaf = [&](uint64_t VA, uint64_t Root, uint64_t Mask) {
+    uint64_t Entry = Root;
+    for (unsigned Level = x64::TableLevels; Level; --Level) {
+      const auto Offset = Memory->transportOffset(Entry & Mask);
+      EXPECT_LT(Offset, memory::ProjectionReserve);
+      if (Offset >= memory::ProjectionReserve)
+        return uint64_t(0);
+      const auto Index =
+          (VA >> (x64::PageBits + (Level - 1) * x64::TableBits)) &
+          (x64::TableEntries - 1);
+      Entry = llvm::support::endian::read64le(Memory->data() + Offset +
+                                              Index * x64::WordBytes);
+    }
+    return Entry;
+  };
+  for (uint64_t Base : {TransportBase, NextTransportBase}) {
+    llvm::cantFail(Memory->relocateTransport(Base));
+    EXPECT_EQ(Memory->registrations()[0].Physical, Base);
+    EXPECT_EQ(Memory->registrations()[1].Physical,
+              Base + memory::ProjectionReserve);
+    EXPECT_EQ(Memory->mappings().at(Code).Physical, Physical);
+    EXPECT_EQ(Memory->physicalPointer(Physical), Backing);
+    auto Root = llvm::cantFail(buildX64PageTables(*Memory, false, true));
+    EXPECT_NE(Root, Previous);
+    EXPECT_EQ(llvm::cantFail(buildX64PageTables(*Memory, false, true)), Root);
+    for (uint64_t VA : {Code, Alias})
+      EXPECT_EQ(Leaf(VA, Root, x64::AddressMask) & x64::AddressMask,
+                Base + Physical);
+    llvm::cantFail(buildAArch64PageTables(*Memory));
+    for (uint64_t VA : {Code, Alias, aarch64::EntryGPA, aarch64::VectorGPA}) {
+      const auto Entry =
+          Leaf(VA, Base + aarch64::LowRoot, aarch64::AddressMask);
+      EXPECT_EQ(Entry & aarch64::AddressMask,
+                Base + (VA == Code || VA == Alias ? Physical : VA));
+      EXPECT_NE(Entry & aarch64::NonGlobal, 0u);
+    }
+    Previous = Root;
+    Root = llvm::cantFail(buildX64PageTables(*Memory));
+    EXPECT_NE(Root, Previous);
+    EXPECT_EQ(Memory->transportOffset(Root),
+              Memory->projectionRoot(GuestArchitecture::X64));
+    llvm::cantFail(Memory->beginRun());
+    EXPECT_EQ(llvm::toString(Memory->relocateTransport(0)),
+              diagnostic::Running);
+    Memory->endRun();
+    EXPECT_EQ(Memory->transportPhysical(0), Base);
+  }
+  EXPECT_EQ(llvm::toString(Memory->relocateTransport(TransportBase + 1)),
+            diagnostic::InvalidMapping);
+  EXPECT_EQ(llvm::toString(
+                Memory->relocateTransport(memory::MaxTransportAddress + 1)),
+            diagnostic::InvalidMapping);
+}
 TEST(ProjectionCache, ArmLeavesRemainUnguardedAcrossPermissionsAndAliases) {
   auto Memory = llvm::cantFail(MemoryProjection::create(Limit));
   llvm::cantFail(Memory->map(Code, PageSize, Read | Write | Execute));

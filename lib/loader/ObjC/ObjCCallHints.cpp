@@ -463,7 +463,7 @@ std::optional<Value> adjustedFrame(Value Base, uint64_t Amount, bool Subtract) {
 struct CallFacts {
   std::map<Key, Value> Values;
   std::map<std::pair<int64_t, unsigned>, Value> FrameSlots;
-  // Receiver and declared source-parameter identities need less frame
+  // Receiver, selector and declared source-parameter identities need less frame
   // knowledge than block construction does.  A pointer to a higher-addressed
   // frame object cannot reach storage wholly below that object's base through
   // the source ABI without a backwards/out-of-object access.  Keep those
@@ -1397,6 +1397,12 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
       State.FreshNilFrameSlots.clear();
       const bool KnownABI = Signature && Signature->HasExplicitABI;
       if (!KnownABI) {
+        for (auto It = State.TypedFrameSlots.begin();
+             It != State.TypedFrameSlots.end();)
+          if (It->second.TheKind == Value::Kind::Selector)
+            It = State.TypedFrameSlots.erase(It);
+          else
+            ++It;
         State.FastEnumItems.clear();
         for (const auto &[K, V] : Values) {
           const auto &[Space, Offset, Size] = K;
@@ -1474,6 +1480,7 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
         const auto Stack = Read(NdVar::reg(TRI.StackPointer, 8));
         if (!Stack || Stack->TheKind != Value::Kind::Frame) {
           State.FrameSlots.clear();
+          State.TypedFrameSlots.clear();
         } else {
           // Exclude outgoing argument storage and its alignment padding. The
           // callee may also overwrite everything below the current call SP.
@@ -1483,6 +1490,12 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
                It != State.FrameSlots.end();)
             if (It->first.first < Begin)
               It = State.FrameSlots.erase(It);
+            else
+              ++It;
+          for (auto It = State.TypedFrameSlots.begin();
+               It != State.TypedFrameSlots.end();)
+            if (It->first.first < Begin)
+              It = State.TypedFrameSlots.erase(It);
             else
               ++It;
         }
@@ -1963,7 +1976,21 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
               }
             }
           }
-          if (!Qualified && Target->Name == "objc_msgSend") {
+          // Forwarding inference below observes only complete integer
+          // carriers. A declaration using floating registers or aggregate
+          // components already identifies the actual arguments; unrelated
+          // values left in integer registers cannot contradict that ABI.
+          const bool IntegerForwardingABI =
+              !Signature ||
+              std::all_of(Signature->Parameters.begin(),
+                          Signature->Parameters.end(), [](const auto &P) {
+                            return P.Location.Kind ==
+                                       SourceABICarrierKind::IntegerRegister &&
+                                   P.Location.ValueBytes == 8 &&
+                                   P.Components.empty();
+                          });
+          if (!Qualified && IntegerForwardingABI &&
+              Target->Name == "objc_msgSend") {
             const auto Caller = objcMethodSourceTypeHint(Image, Function.Entry);
             const auto SourceParameter =
                 [&](const Value &V) -> std::optional<unsigned> {
@@ -2466,6 +2493,7 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
                 std::move(*NilCompatibleDeclaration);
           if (Stored && Size == 8 &&
               (Stored->TheKind == Value::Kind::Receiver ||
+               Stored->TheKind == Value::Kind::Selector ||
                Stored->TheKind == Value::Kind::SourceParameter) &&
               Offset >= static_cast<int64_t>(Stack->Number) &&
               Offset <= -static_cast<int64_t>(Size) &&
@@ -2931,6 +2959,304 @@ bool isObjCByValueCopyHint(const SourceCallTypeHint &Hint, va_t FunctionEntry,
          !Hint.Signature.Parameters[1].IndirectByValue;
 }
 
+namespace {
+std::optional<NativeSourceCalls> objcFrameCallContracts(
+    const BinaryImage &Image, const LowFunc &Function,
+    const std::map<va_t, SourceCallTypeHint> &Candidates,
+    const std::map<va_t, SourceFunctionTypeHint> *NativeCallees) {
+  size_t Budget = 262144;
+  NativeSourceCalls Calls;
+  size_t Count = 0;
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!Budget--)
+        return std::nullopt;
+      if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+        continue;
+      const auto Site = nativeSourceCallKey(Op);
+      if (!Site || Op.Opcode != NdOp::CALL || !Site->StaticTarget)
+        return std::nullopt;
+      NativeSourceCallContract Contract;
+      const auto Found = Candidates.find(Op.Addr);
+      if (Found != Candidates.end()) {
+        const auto &Binding = Found->second;
+        Contract.Signature = &Binding.Signature;
+        Contract.PreservesSwiftErrorResult = swiftRuntimePreservesErrorResult(
+            Image, *Site->StaticTarget, Binding);
+        if (Binding.DoesNotReturn || Binding.WeakImport)
+          return std::nullopt;
+        if (hasIndirectSourceParameters(Binding.Signature)) {
+          const bool ImageTransform = isCoreImageTransformValueCall(Binding);
+          if ((!Binding.NativeSwiftReceiver && !ImageTransform) ||
+              Binding.Signature.Parameters.size() != 3 ||
+              !Binding.Signature.Parameters[2].IndirectByValue ||
+              !Binding.Signature.ReturnType ||
+              (!ImageTransform &&
+               Binding.Signature.ReturnType->Kind != NdTypeKind::Void) ||
+              ++Count > 8)
+            return std::nullopt;
+          Contract.ByValueFrameParameters.insert(2);
+        } else if (Binding.CallKind == SourceCallTypeHint::Kind::ObjCSuper2) {
+          const auto Effects = objcSuperSourceFrameEffects(Image, Binding);
+          if (!Effects)
+            return std::nullopt;
+          static_cast<SourceFrameEffects &>(Contract) = *Effects;
+        } else if (const auto Effects =
+                       darwinMatrixSourceFrameEffects(Image, Binding)) {
+          static_cast<SourceFrameEffects &>(Contract) = *Effects;
+        } else if (Binding.Signature.ReturnLocation.Kind ==
+                   SourceABICarrierKind::IndirectResultPointer) {
+          return std::nullopt;
+        }
+      } else {
+        if (!NativeCallees || *Site->StaticTarget == Function.Entry ||
+            !Image.hasAuthenticatedFunctionEntryAt(*Site->StaticTarget))
+          return std::nullopt;
+        const auto ABI = NativeCallees->find(*Site->StaticTarget);
+        if (ABI == NativeCallees->end() ||
+            ABI->second.Origin !=
+                SourceFunctionTypeHint::OriginKind::NativeAnalysis)
+          return std::nullopt;
+        Contract.Signature = &ABI->second;
+      }
+      if (!Calls.emplace(*Site, std::move(Contract)).second)
+        return std::nullopt;
+    }
+  return Calls;
+}
+
+// These recipes interpret only complete words whose reaching byte identity
+// was proved by SourceFrameAnalysis. The caller independently replays the
+// entire original machine/LowIR before interpreting any recipe.
+struct FrameHeaderWord {
+  uint64_t Bits;
+  enum class Kind { Scalar, Address, Load } TheKind;
+};
+std::optional<FrameHeaderWord>
+frameHeaderWord(const BinaryImage &Image, const LowFunc &Function,
+                const SourceFrameArgumentStorage &Storage, size_t Offset) {
+  if (Offset > Storage.Bytes.size() || Storage.Bytes.size() - Offset < 8)
+    return std::nullopt;
+  uint64_t Constant = 0;
+  bool AllConstants = true;
+  for (unsigned I = 0; I < 8; ++I) {
+    const auto &Byte = Storage.Bytes[Offset + I];
+    if (!Byte.Initialized)
+      return std::nullopt;
+    AllConstants &= Byte.Constant.has_value();
+    if (Byte.Constant)
+      Constant |= uint64_t(*Byte.Constant) << (8 * I);
+  }
+  if (AllConstants)
+    return FrameHeaderWord{Constant, FrameHeaderWord::Kind::Scalar};
+  const auto &First = Storage.Bytes[Offset];
+  if (!First.Definition || First.DefinitionByte)
+    return std::nullopt;
+  for (unsigned I = 0; I < 8; ++I)
+    if (Storage.Bytes[Offset + I].Definition != First.Definition ||
+        Storage.Bytes[Offset + I].DefinitionByte != I)
+      return std::nullopt;
+  const auto &Definition = *First.Definition;
+  const auto Block =
+      std::find_if(Function.Blocks.begin(), Function.Blocks.end(),
+                   [&](const auto &B) { return B.Id == Definition.BlockId; });
+  if (Block == Function.Blocks.end() ||
+      Definition.OperationIndex >= Block->Ops.size())
+    return std::nullopt;
+  const auto &Op = Block->Ops[Definition.OperationIndex];
+  if (Op.Addr != Definition.Instruction || Op.Seq != Definition.Sequence ||
+      Op.Output != Definition.Output || Definition.Instruction < 4)
+    return std::nullopt;
+  const auto Bytes =
+      readImmutableCodeBytes(Image, Definition.Instruction - 4, 8);
+  if (!Bytes)
+    return std::nullopt;
+  const auto Previous = llvm::support::endian::read32le(Bytes->data());
+  const auto Word = llvm::support::endian::read32le(Bytes->data() + 4);
+  const unsigned BaseRegister = (Word >> 5) & 31;
+  const auto Page = adrp(Previous, Definition.Instruction - 4, BaseRegister);
+  if (!Page || BaseRegister == 31)
+    return std::nullopt;
+  if ((Word & 0xff800000) == 0x91000000 && Op.Opcode == NdOp::INT_ADD &&
+      Op.Output == NdVar::reg((Word & 31) * 8, 8)) {
+    const uint64_t Delta = uint64_t((Word >> 10) & 4095)
+                           << ((Word & (1u << 22)) ? 12 : 0);
+    const auto Value = addSigned(*Page, int64_t(Delta));
+    return Value ? std::optional<FrameHeaderWord>(
+                       {*Value, FrameHeaderWord::Kind::Address})
+                 : std::nullopt;
+  }
+  const auto LoadKind = Word & 0xffc00000;
+  if ((LoadKind == 0xf9400000 || LoadKind == 0xfd400000) &&
+      Op.Opcode == NdOp::LOAD && Op.Output.Size == 8) {
+    const auto Slot = addSigned(*Page, ((Word >> 10) & 4095) * 8);
+    return Slot ? std::optional<FrameHeaderWord>(
+                      {*Slot, FrameHeaderWord::Kind::Load})
+                : std::nullopt;
+  }
+  return std::nullopt;
+}
+
+std::optional<SourceFrameEffects>
+nonEscapingBlockFrameEffects(const BinaryImage &Image, const LowFunc &Function,
+                             const NativeSourceCalls &Calls,
+                             const SourceCallOccurrenceKey &Site,
+                             const SourceCallTypeHint &Binding) {
+  if (Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
+      Binding.WeakImport || Binding.DoesNotReturn || !Binding.Receiver)
+    return std::nullopt;
+  SourceFrameEffects Effects;
+  for (size_t Parameter = 0; Parameter < Binding.Signature.Parameters.size();
+       ++Parameter) {
+    const auto Consumer =
+        objcNonEscapingBlockSignature(Image, Binding, unsigned(Parameter));
+    if (!Consumer)
+      continue;
+    const auto Header = sourceFrameCallArgumentStorage(
+        Function, Image.Arch, Calls, Site, Parameter, 32);
+    if (!Header)
+      continue;
+    const auto Isa = frameHeaderWord(Image, Function, *Header, 0);
+    const auto Flags = frameHeaderWord(Image, Function, *Header, 8);
+    const auto Invoke = frameHeaderWord(Image, Function, *Header, 16);
+    const auto Descriptor = frameHeaderWord(Image, Function, *Header, 24);
+    if (!Isa || Isa->TheKind != FrameHeaderWord::Kind::Load || !Flags ||
+        Flags->TheKind == FrameHeaderWord::Kind::Address || !Invoke ||
+        Invoke->TheKind != FrameHeaderWord::Kind::Address || !Descriptor ||
+        Descriptor->TheKind != FrameHeaderWord::Kind::Address ||
+        !Image.hasAuthenticatedFunctionEntryAt(Invoke->Bits))
+      continue;
+    const auto RuntimeIsa = darwinRuntimeGlobalAddressHint(Image, Isa->Bits);
+    if (!RuntimeIsa || RuntimeIsa->TargetName != "_NSConcreteStackBlock" ||
+        !isImmutableImageImportSlot(Image, Isa->Bits))
+      continue;
+    uint64_t FlagBits = Flags->Bits;
+    if (Flags->TheKind == FrameHeaderWord::Kind::Load) {
+      const auto Bytes = readImmutableImageBytes(Image, Flags->Bits, 8);
+      if (!Bytes)
+        continue;
+      FlagBits = llvm::support::endian::read64le(Bytes->data());
+    }
+    if (FlagBits > UINT32_MAX ||
+        ((FlagBits & (1u << 28)) && !(FlagBits & (1u << 23))))
+      continue;
+    std::string Error;
+    const auto D = readObjCBlockDescriptor(Image, Descriptor->Bits,
+                                           uint32_t(FlagBits), Error);
+    if (!D || D->LiteralSize < 32 || D->LiteralSize > 4096 ||
+        !D->Limitations.empty() || !D->InvokeTypeHint ||
+        !equalSourceABIs(*D->InvokeTypeHint, *Consumer))
+      continue;
+    const auto Storage = sourceFrameCallArgumentStorage(
+        Function, Image.Arch, Calls, Site, Parameter, D->LiteralSize);
+    if (!Storage || Storage->FrameOffset != Header->FrameOffset ||
+        !std::equal(Header->Bytes.begin(), Header->Bytes.end(),
+                    Storage->Bytes.begin()))
+      continue;
+    bool OwnershipInitialized = true;
+    for (const auto &Capture : D->Captures) {
+      if (Capture.StorageKind == ObjCBlockCaptureRange::Kind::NonObjectBytes)
+        continue;
+      if (Capture.StorageKind == ObjCBlockCaptureRange::Kind::Unknown ||
+          Capture.Offset > D->LiteralSize ||
+          Capture.Size > D->LiteralSize - Capture.Offset) {
+        OwnershipInitialized = false;
+        break;
+      }
+      for (uint64_t I = 0; I < Capture.Size; ++I)
+        OwnershipInitialized &= Storage->Bytes[Capture.Offset + I].Initialized;
+    }
+    if (OwnershipInitialized)
+      Effects.WritableFrameParameters.emplace(Parameter, D->LiteralSize);
+  }
+  return !Effects.empty() &&
+                 sourceFrameEffectsMatchABI(Effects, Binding.Signature)
+             ? std::optional(Effects)
+             : std::nullopt;
+}
+
+bool hasNonEscapingBlockParameter(const BinaryImage &Image,
+                                  const SourceCallTypeHint &Binding) {
+  if (Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
+      !Binding.Receiver || Binding.WeakImport || Binding.DoesNotReturn)
+    return false;
+  for (size_t I = 0; I < Binding.Signature.Parameters.size(); ++I)
+    if (objcNonEscapingBlockSignature(Image, Binding, unsigned(I)))
+      return true;
+  return false;
+}
+
+std::map<SourceCallOccurrenceKey, SourceFrameEffects>
+addNonEscapingBlockFrameEffects(
+    const BinaryImage &Image, const LowFunc &Function,
+    const std::map<va_t, SourceCallTypeHint> &Candidates,
+    NativeSourceCalls &Calls) {
+  auto Working = Calls;
+  std::map<SourceCallOccurrenceKey, SourceFrameEffects> Proven;
+  // Dependencies may use only completed proof rounds. A cycle cannot create
+  // its own lifetime permission, and candidate ordering cannot supply proof.
+  for (unsigned Round = 0; Round < 8; ++Round) {
+    std::map<SourceCallOccurrenceKey, SourceFrameEffects> Next;
+    for (const auto &[Site, Contract] : Working) {
+      if (Proven.count(Site))
+        continue;
+      const auto Binding = Candidates.find(Site.Instruction);
+      if (Binding == Candidates.end() ||
+          !hasNonEscapingBlockParameter(Image, Binding->second))
+        continue;
+      if (const auto Effect = nonEscapingBlockFrameEffects(
+              Image, Function, Working, Site, Binding->second))
+        Next.emplace(Site, *Effect);
+      if (Proven.size() + Next.size() > 8)
+        return {};
+    }
+    if (Next.empty())
+      break;
+    for (const auto &[Site, Effect] : Next) {
+      static_cast<SourceFrameEffects &>(Working.at(Site)) = Effect;
+      Proven.emplace(Site, Effect);
+    }
+  }
+  Calls = std::move(Working);
+  return Proven;
+}
+} // namespace
+
+std::optional<SourceFrameEffects> objcNonEscapingBlockSourceFrameEffects(
+    const BinaryImage &Image, const LowFunc &Function,
+    const SourceCallOccurrenceKey &Site, const SourceCallTypeHint &Binding,
+    const std::map<va_t, SourceFunctionTypeHint> *NativeCallees) {
+  if (Image.Arch != Arch::AArch64 ||
+      !hasNonEscapingBlockParameter(Image, Binding))
+    return std::nullopt;
+  const auto Candidates =
+      sourceCallCandidates(Image, Function, nullptr, nullptr);
+  const auto Current = Candidates.find(Site.Instruction);
+  if (Current == Candidates.end() || !Site.StaticTarget ||
+      Binding.TargetAddress != *Site.StaticTarget ||
+      Current->second.TargetAddress != Binding.TargetAddress ||
+      Current->second.TargetName != Binding.TargetName ||
+      Current->second.CallKind != Binding.CallKind ||
+      Current->second.OwnerClass != Binding.OwnerClass ||
+      Current->second.Selector != Binding.Selector ||
+      Current->second.SelectorReferenceAddress !=
+          Binding.SelectorReferenceAddress ||
+      Current->second.Receiver != Binding.Receiver ||
+      !equalSourceABIs(Current->second.Signature, Binding.Signature))
+    return std::nullopt;
+  size_t Budget = 262144;
+  if (!immutableNativeFrameMachineMatches(Image, Function, Budget))
+    return std::nullopt;
+  auto Calls =
+      objcFrameCallContracts(Image, Function, Candidates, NativeCallees);
+  if (!Calls || !Calls->count(Site))
+    return std::nullopt;
+  const auto Effects =
+      addNonEscapingBlockFrameEffects(Image, Function, Candidates, *Calls);
+  const auto Found = Effects.find(Site);
+  return Found == Effects.end() ? std::nullopt : std::optional(Found->second);
+}
+
 std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
     const BinaryImage &Image, const LowFunc &Function,
     const std::map<unsigned, ObjCReceiverTypeHint> *BlockParameters,
@@ -2953,66 +3279,14 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
   size_t Budget = 262144;
   if (!Entry || !immutableNativeFrameMachineMatches(Image, Function, Budget))
     return Result;
-  // The first phase owns declarations and register provenance. This phase
-  // never recursively discovers call hints, and its contracts point only to
-  // stable map nodes or separately supplied complete native declarations.
-  NativeSourceCalls Calls;
-  size_t Count = 0;
-  for (const auto &Block : Function.Blocks)
-    for (const auto &Op : Block.Ops) {
-      if (!Budget--)
-        return Result;
-      if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
-        continue;
-      const auto Site = nativeSourceCallKey(Op);
-      if (!Site || Op.Opcode != NdOp::CALL || !Site->StaticTarget)
-        return Result;
-      NativeSourceCallContract Contract;
-      const auto Found = Candidates.find(Op.Addr);
-      if (Found != Candidates.end()) {
-        const auto &Binding = Found->second;
-        Contract.Signature = &Binding.Signature;
-        Contract.PreservesSwiftErrorResult = swiftRuntimePreservesErrorResult(
-            Image, *Site->StaticTarget, Binding);
-        if (Binding.DoesNotReturn || Binding.WeakImport)
-          return Result;
-        if (hasIndirectSourceParameters(Binding.Signature)) {
-          const bool ImageTransform = isCoreImageTransformValueCall(Binding);
-          if ((!Binding.NativeSwiftReceiver && !ImageTransform) ||
-              Binding.Signature.Parameters.size() != 3 ||
-              !Binding.Signature.Parameters[2].IndirectByValue ||
-              !Binding.Signature.ReturnType ||
-              (!ImageTransform &&
-               Binding.Signature.ReturnType->Kind != NdTypeKind::Void) ||
-              ++Count > 8)
-            return Result;
-          Contract.ByValueFrameParameters.insert(2);
-        } else if (Binding.CallKind == SourceCallTypeHint::Kind::ObjCSuper2) {
-          const auto Effects = objcSuperSourceFrameEffects(Image, Binding);
-          if (!Effects)
-            return Result;
-          static_cast<SourceFrameEffects &>(Contract) = *Effects;
-        } else if (const auto Effects =
-                       darwinMatrixSourceFrameEffects(Image, Binding)) {
-          static_cast<SourceFrameEffects &>(Contract) = *Effects;
-        } else if (Binding.Signature.ReturnLocation.Kind ==
-                   SourceABICarrierKind::IndirectResultPointer) {
-          return Result;
-        }
-      } else {
-        if (!NativeCallees || *Site->StaticTarget == Function.Entry ||
-            !Image.hasAuthenticatedFunctionEntryAt(*Site->StaticTarget))
-          return Result;
-        const auto ABI = NativeCallees->find(*Site->StaticTarget);
-        if (ABI == NativeCallees->end() ||
-            ABI->second.Origin !=
-                SourceFunctionTypeHint::OriginKind::NativeAnalysis)
-          return Result;
-        Contract.Signature = &ABI->second;
-      }
-      if (!Calls.emplace(*Site, std::move(Contract)).second)
-        return Result;
-    }
+  // Stable declarations own the ABI; the shared byte query separately
+  // certifies each current block borrow before by-value copies can use it.
+  auto Contracts =
+      objcFrameCallContracts(Image, Function, Candidates, NativeCallees);
+  if (!Contracts)
+    return Result;
+  auto &Calls = *Contracts;
+  addNonEscapingBlockFrameEffects(Image, Function, Candidates, Calls);
   for (auto &[Address, Hint] : Candidates) {
     if (!hasIndirectSourceParameters(Hint.Signature))
       continue;

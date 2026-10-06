@@ -1,0 +1,32 @@
+//===- AArch64AtomicInstructions.def - FEAT_LSE atomic encoding families --===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Masks admit baseline LSE only. Width and acquire/release bits select the
+// exact Capstone ID; register-pair constraints are checked before access.
+#ifdef NEVERD_AARCH64_ATOMIC_RMW
+NEVERD_AARCH64_ATOMIC_RMW(LDADD, Add, 0x3f20fc00, 0x38200000)
+NEVERD_AARCH64_ATOMIC_RMW(LDCLR, Clear, 0x3f20fc00, 0x38201000)
+NEVERD_AARCH64_ATOMIC_RMW(LDEOR, Xor, 0x3f20fc00, 0x38202000)
+NEVERD_AARCH64_ATOMIC_RMW(LDSET, Set, 0x3f20fc00, 0x38203000)
+NEVERD_AARCH64_ATOMIC_RMW(LDSMAX, SignedMax, 0x3f20fc00, 0x38204000)
+NEVERD_AARCH64_ATOMIC_RMW(LDSMIN, SignedMin, 0x3f20fc00, 0x38205000)
+NEVERD_AARCH64_ATOMIC_RMW(LDUMAX, UnsignedMax, 0x3f20fc00, 0x38206000)
+NEVERD_AARCH64_ATOMIC_RMW(LDUMIN, UnsignedMin, 0x3f20fc00, 0x38207000)
+NEVERD_AARCH64_ATOMIC_RMW(SWP, Swap, 0x3f20fc00, 0x38208000)
+#endif
+#ifdef NEVERD_AARCH64_ATOMIC_COMPARE
+NEVERD_AARCH64_ATOMIC_COMPARE(CAS, Compare, 0x3fa07c00, 0x08a07c00)
+#endif
+#ifdef NEVERD_AARCH64_ATOMIC_PAIR
+NEVERD_AARCH64_ATOMIC_PAIR(CASP, ComparePair, 0xbfa07c00, 0x08207c00)
+#endif
+#ifdef NEVERD_AARCH64_ATOMIC_FIELD
+NEVERD_AARCH64_ATOMIC_FIELD(RMWAcquireShift, 23)
+NEVERD_AARCH64_ATOMIC_FIELD(RMWReleaseShift, 22)
+NEVERD_AARCH64_ATOMIC_FIELD(CompareAcquireShift, 22)
+NEVERD_AARCH64_ATOMIC_FIELD(CompareReleaseShift, 15)
+NEVERD_AARCH64_ATOMIC_FIELD(PairFirstWidth, 4)
+NEVERD_AARCH64_ATOMIC_FIELD(PairRegisterAlignment, 2)
+#endif

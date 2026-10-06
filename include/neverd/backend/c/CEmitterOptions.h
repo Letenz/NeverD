@@ -17,6 +17,7 @@
 namespace neverd {
 
 struct BinaryImage;
+struct CSourceMap;
 
 struct CEmitterOptions {
   bool EmitIncludes = true;
@@ -42,6 +43,8 @@ struct CEmitterOptions {
   /// rdata C/wchar literals, and name image-backed data objects
   /// instead of emitting raw virtual addresses.
   const BinaryImage *Image = nullptr;
+  /// Optional source-map sink. Recording never changes the emitted C text.
+  CSourceMap *SourceMap = nullptr;
 };
 
 } // namespace neverd

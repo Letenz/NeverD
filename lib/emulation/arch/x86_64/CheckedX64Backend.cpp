@@ -717,6 +717,11 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   const Access *DeviceAccess = nullptr;
   for (const auto &A : Accesses)
     if (deviceAt(A.Address)) {
+      if ((Atomic || BitWrites || updateArity(I.id)) && Accesses.size() == 2 &&
+          Accesses[0].Permission == Read && Accesses[1].Permission == Write &&
+          Accesses[0].Address == Accesses[1].Address &&
+          Accesses[0].Size == Accesses[1].Size)
+        return deviceAtomic(I, A.Address, A.Size);
       if (Accesses.size() != 1 || Locked ||
           (I.id != X86_INS_MOV && I.id != X86_INS_MOVABS &&
            I.id != X86_INS_MOVZX && I.id != X86_INS_MOVSX) ||
@@ -817,16 +822,25 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
   if (!Root)
     return Root.takeError();
   std::vector<RAMWriteRange> Writes;
+  std::vector<RAMWriteRange> Inputs{{I.address, I.size}};
   for (const auto &A : Accesses)
     if (A.Permission == Write)
       Writes.push_back({A.Address, A.Size});
+  for (const auto &A : Accesses)
+    Inputs.push_back({A.Address, A.Size});
   auto Transaction = RAMTransaction::create(
       *Memory, Writes, execution_limits::InstructionRAMWriteBytes,
       executionPermissions(Write));
   if (!Transaction)
     return Transaction.takeError();
   auto Next = CPU;
-  if (auto E = Machine->step(Next, *Root, {Deadline, &StopRequested})) {
+  if (auto E = (*Transaction)
+                   ->execute(
+                       [&] {
+                         return Machine->step(Next, *Root,
+                                              {Deadline, &StopRequested});
+                       },
+                       Inputs)) {
     // Discard speculative RAM before the OS receives a processor exception.
     // Its architectural fault state (including FP status) remains
     // authoritative.

@@ -4,8 +4,8 @@
 //
 //===----------------------------------------------------------------------===//
 #if defined(_WIN32) && defined(NEVERD_EMULATION_WHP)
-#include "backends/whp/WhpPartition.h"
 #include "backends/whp/WhpResourceCache.h"
+#include "backends/whp/WhpVirtualProcessor.h"
 #include "core/MemoryLayout.h"
 #include "gtest/gtest.h"
 
@@ -37,7 +37,7 @@ TEST(WhpMemoryProtocol, FailureRetainsStatusAndExactRegistration) {
   const auto Registrations = Memory->registrations();
   for (unsigned FailAt = 0; FailAt < Registrations.size(); ++FailAt) {
     FailedRegistration Target{FailAt};
-    WhpPartition Partition;
+    WhpVirtualProcessor Partition;
     Partition.Partition = &Target;
     Partition.API.WHvMapGpaRange = FailedRegistration::map;
     Partition.API.WHvDeletePartition = FailedRegistration::destroy;
@@ -49,11 +49,57 @@ TEST(WhpMemoryProtocol, FailureRetainsStatusAndExactRegistration) {
     EXPECT_EQ(Target.Calls, FailAt + 1);
   }
 }
+TEST(WhpMemoryProtocol,
+     SharedHostRetiresBeforeReplacementAndRetriesFailedSetup) {
+  struct Lifetime {
+    unsigned Live = 0, Created = 0, Destroyed = 0;
+    static HRESULT WINAPI destroy(WHV_PARTITION_HANDLE Handle) {
+      auto &Self = *static_cast<Lifetime *>(Handle);
+      --Self.Live;
+      ++Self.Destroyed;
+      return S_OK;
+    }
+  } Stats;
+  bool Fail = false;
+  auto Configure = [&](WhpAPI &API,
+                       WHV_PARTITION_HANDLE &Handle) -> llvm::Error {
+    EXPECT_EQ(Stats.Live, 0u);
+    ++Stats.Live;
+    ++Stats.Created;
+    API.WHvDeletePartition = Lifetime::destroy;
+    Handle = &Stats;
+    return Fail ? diagnostic::error(diagnostic::WhpCreate)
+                : llvm::Error::success();
+  };
+  std::lock_guard Lock(WhpPartitionHost::mutex());
+  auto First = llvm::cantFail(WhpPartitionHost::acquire(Configure));
+  First->Processors.set(0);
+  auto Second = llvm::cantFail(WhpPartitionHost::acquire(Configure));
+  Second->Processors.set(1);
+  EXPECT_EQ(First, Second);
+  EXPECT_EQ(Stats.Created, 1u);
+  First->Processors.reset(0);
+  WhpPartitionHost::retireIdle(First);
+  EXPECT_EQ(Stats.Live, 1u);
+  Second->Processors.reset(1);
+  WhpPartitionHost::retireIdle(Second);
+  EXPECT_EQ(Stats.Live, 0u);
+  Fail = true;
+  auto Rejected = WhpPartitionHost::acquire(Configure);
+  ASSERT_FALSE(bool(Rejected));
+  EXPECT_EQ(llvm::toString(Rejected.takeError()), diagnostic::WhpCreate);
+  EXPECT_EQ(Stats.Live, 0u);
+  Fail = false;
+  auto Replacement = llvm::cantFail(WhpPartitionHost::acquire(Configure));
+  WhpPartitionHost::retireIdle(Replacement);
+  EXPECT_EQ(Stats.Created, 3u);
+  EXPECT_EQ(Stats.Created, Stats.Destroyed);
+}
 
 #if defined(_M_X64) || defined(__x86_64__)
 /// Isolate the host mapping API from startup XSAVE, page tables and instruction
 /// execution. A mapping failure must remain visible even if CPU startup fails.
-class MappingPartition final : public WhpPartition {
+class MappingPartition final : public WhpVirtualProcessor {
 public:
   llvm::Error initialize() {
     if (auto E = API.load())
@@ -132,10 +178,10 @@ TEST_P(WHPMapping, TwoLogicalOwnersRegisterSwitchAndRetireBacking) {
     std::memset(FirstRAM.base(), Fill, Case.Size);
     std::memset(Other, Fill, Case.Size);
   }
-  using Binding = WhpResourceBinding<WhpPartition>;
+  using Binding = WhpResourceBinding<WhpVirtualProcessor>;
   auto Bind = [&](void *Backing, unsigned &Creations) {
     return std::make_unique<Binding>(
-        [&, Backing]() -> llvm::Expected<std::unique_ptr<WhpPartition>> {
+        [&, Backing]() -> llvm::Expected<std::unique_ptr<WhpVirtualProcessor>> {
           auto P = std::make_unique<MappingPartition>();
           if (auto E = P->initialize())
             return E;
@@ -145,7 +191,7 @@ TEST_P(WHPMapping, TwoLogicalOwnersRegisterSwitchAndRetireBacking) {
             if (auto E = P->createCPU())
               return E;
           ++Creations;
-          return std::unique_ptr<WhpPartition>(std::move(P));
+          return std::unique_ptr<WhpVirtualProcessor>(std::move(P));
         });
   };
   // Bindings retire native mappings before their borrowed host bytes. Both

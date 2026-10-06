@@ -30,6 +30,7 @@ bool failed(uint32_t Status) { return Status & profile::NTStatusFailureMask; }
 
 llvm::Error KernelResources::configure(uint64_t PDO,
                                        const DriverPnpDevice &Configuration) {
+  std::lock_guard Lock(*Mutex);
   if (auto E = validateDriverD3Cold(Configuration))
     return E;
   if (Configuration.Resources.empty() && Configuration.Interrupts.empty() &&
@@ -53,6 +54,7 @@ llvm::Error KernelResources::configure(uint64_t PDO,
 }
 
 bool KernelResources::hasResources(uint64_t PDO) const {
+  std::lock_guard Lock(*Mutex);
   const auto *Device = find(PDO);
   return Device && (!Device->Memory.empty() || !Device->Interrupts.empty() ||
                     Device->Dma);
@@ -60,6 +62,7 @@ bool KernelResources::hasResources(uint64_t PDO) const {
 
 llvm::Expected<std::vector<uint8_t>>
 KernelResources::resourceList(uint64_t PDO, bool Translated) const {
+  std::lock_guard Lock(*Mutex);
   const auto It = Devices.find(PDO);
   if (It == Devices.end() || !hasResources(PDO))
     return resourceError("resource list requires a configured register bank");
@@ -119,6 +122,7 @@ KernelResources::resourceList(uint64_t PDO, bool Translated) const {
 }
 
 llvm::Error KernelResources::canStart(uint64_t PDO) const {
+  std::lock_guard Lock(*Mutex);
   const auto It = Devices.find(PDO);
   if (It == Devices.end())
     return llvm::Error::success();
@@ -130,10 +134,12 @@ llvm::Error KernelResources::canStart(uint64_t PDO) const {
 }
 
 llvm::Error KernelResources::beginStart(uint64_t PDO) {
+  std::lock_guard Lock(*Mutex);
   if (auto E = canStart(PDO))
     return E;
   const auto It = Devices.find(PDO);
   if (It != Devices.end()) {
+    It->second.Revision = std::make_shared<unsigned char>(0);
     ++It->second.Epoch;
     It->second.Starting = true;
   }
@@ -141,12 +147,14 @@ llvm::Error KernelResources::beginStart(uint64_t PDO) {
 }
 
 llvm::Error KernelResources::completeLowerStart(uint64_t PDO, uint32_t Status) {
+  std::lock_guard Lock(*Mutex);
   const auto It = Devices.find(PDO);
   if (It == Devices.end())
     return llvm::Error::success();
   auto &Device = It->second;
   if (!Device.Starting || !Device.Present || Device.Assigned)
     return resourceError("lower START lost its pending resource epoch");
+  Device.Revision = std::make_shared<unsigned char>(0);
   Device.Assigned = !failed(Status);
   return llvm::Error::success();
 }
@@ -154,6 +162,7 @@ llvm::Error KernelResources::completeLowerStart(uint64_t PDO, uint32_t Status) {
 llvm::Error KernelResources::validateCompletion(uint64_t PDO,
                                                 DevicePnpRequest Minor,
                                                 uint32_t Status) const {
+  std::lock_guard Lock(*Mutex);
   const auto It = Devices.find(PDO);
   if (It == Devices.end())
     return llvm::Error::success();
@@ -173,12 +182,14 @@ llvm::Error KernelResources::validateCompletion(uint64_t PDO,
 
 llvm::Error KernelResources::finishPnp(uint64_t PDO, DevicePnpRequest Minor,
                                        uint32_t Status) {
+  std::lock_guard Lock(*Mutex);
   if (auto E = validateCompletion(PDO, Minor, Status))
     return E;
   const auto It = Devices.find(PDO);
   if (It == Devices.end())
     return llvm::Error::success();
   auto &Device = It->second;
+  Device.Revision = std::make_shared<unsigned char>(0);
   if (Minor == DevicePnpRequest::Start) {
     Device.Starting = false;
     if (failed(Status))
@@ -193,14 +204,19 @@ llvm::Error KernelResources::finishPnp(uint64_t PDO, DevicePnpRequest Minor,
 }
 
 void KernelResources::surpriseRemoval(uint64_t PDO) {
+  std::lock_guard Lock(*Mutex);
   const auto It = Devices.find(PDO);
-  if (It != Devices.end())
+  if (It != Devices.end()) {
+    It->second.Revision = std::make_shared<unsigned char>(0);
     It->second.Present = false;
+  }
 }
 
 void KernelResources::setPhysicalPower(uint64_t PDO, DevicePowerState Power) {
+  std::lock_guard Lock(*Mutex);
   const auto It = Devices.find(PDO);
   if (It != Devices.end()) {
+    It->second.Revision = std::make_shared<unsigned char>(0);
     It->second.Power = Power;
     if (Power == DevicePowerState::D0)
       It->second.Cold = false;
@@ -208,16 +224,19 @@ void KernelResources::setPhysicalPower(uint64_t PDO, DevicePowerState Power) {
 }
 
 bool KernelResources::supportsD3Cold(uint64_t PDO) const {
+  std::lock_guard Lock(*Mutex);
   const auto *Device = find(PDO);
   return Device && Device->D3Cold && Device->D3Cold->Supported;
 }
 
 bool KernelResources::d3ColdEnabledByDefault(uint64_t PDO) const {
+  std::lock_guard Lock(*Mutex);
   const auto *Device = find(PDO);
   return supportsD3Cold(PDO) && Device->D3Cold->EnabledByDefault;
 }
 
 bool KernelResources::isD3Cold(uint64_t PDO) const {
+  std::lock_guard Lock(*Mutex);
   const auto *Device = find(PDO);
   return Device && Device->Cold;
 }
@@ -225,6 +244,7 @@ bool KernelResources::isD3Cold(uint64_t PDO) const {
 llvm::Error KernelResources::canEnterD3Cold(uint64_t PDO,
                                             SystemPowerState System,
                                             bool RequireWake) const {
+  std::lock_guard Lock(*Mutex);
   const auto *Device = find(PDO);
   if (!supportsD3Cold(PDO))
     return resourceError("D3cold requires explicit bus and platform support");
@@ -247,15 +267,18 @@ llvm::Error KernelResources::canEnterD3Cold(uint64_t PDO,
 
 llvm::Error KernelResources::enterD3Cold(uint64_t PDO, SystemPowerState System,
                                          bool RequireWake) {
+  std::lock_guard Lock(*Mutex);
   if (auto E = canEnterD3Cold(PDO, System, RequireWake))
     return E;
   auto &Device = Devices.at(PDO);
+  Device.Revision = std::make_shared<unsigned char>(0);
   Device.Cold = true;
   ++Device.PowerGeneration;
   return llvm::Error::success();
 }
 
 const KernelResources::Device *KernelResources::find(uint64_t PDO) const {
+  std::lock_guard Lock(*Mutex);
   const auto It = Devices.find(PDO);
   return It == Devices.end() ? nullptr : &It->second;
 }

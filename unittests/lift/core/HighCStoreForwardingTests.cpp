@@ -75,7 +75,8 @@ size_t countOccurrences(llvm::StringRef Text, llvm::StringRef Needle) {
 }
 
 size_t countPointerDerefStores(llvm::StringRef Text) {
-  size_t Count = countOccurrences(Text, "neverd_mem_store_");
+  size_t Count = countOccurrences(Text, "neverd_mem_store_") +
+                 countOccurrences(Text, "__builtin_memcpy((void *)");
   size_t From = 0;
   while ((From = Text.find("*(", From)) != llvm::StringRef::npos) {
     const size_t Eq = Text.find('=', From);
@@ -98,7 +99,8 @@ size_t countPointerDerefStores(llvm::StringRef Text) {
 }
 
 size_t countPointerDerefLoads(llvm::StringRef Text) {
-  size_t Count = countOccurrences(Text, "neverd_mem_load_");
+  size_t Count = countOccurrences(Text, "neverd_mem_load_") +
+                 countOccurrences(Text, "__builtin_memcpy(&");
   size_t From = 0;
   while ((From = Text.find("*(", From)) != llvm::StringRef::npos) {
     const size_t Eq = Text.find('=', From);
@@ -583,10 +585,11 @@ TEST(HighCStoreForwarding,
   EXPECT_NE(Body.find("frame_base = (uintptr_t)(stack_storage +"),
             std::string::npos)
       << Body;
-  EXPECT_NE(Body.find("neverd_mem_store_0((uintptr_t)((uintptr_t)(frame_base) "
-                      "- 8), arg0);"),
+  EXPECT_NE(Body.find("= (uintptr_t)((uintptr_t)(frame_base) - 8);"),
             std::string::npos)
       << Body;
+  EXPECT_NE(Body.find("= arg0;"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("__builtin_memcpy((void *)"), std::string::npos) << Body;
   EXPECT_NE(Body.find("return (int32_t *)"), std::string::npos) << Body;
   EXPECT_NE(Body.find("(uint64_t)(frame_base) - (uint64_t)(8)"),
             std::string::npos)

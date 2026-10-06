@@ -19,6 +19,7 @@
 #include "neverd/loader/ExceptionInfo.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -255,6 +256,17 @@ void HighCWriter::writeCxxThrowExpr(const HighStmt &Stmt,
 }
 
 void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
+  auto Event = SourceRecorder && CurrentFunc
+                   ? SourceRecorder->statement(CurrentFunc->Entry, Stmt)
+                   : std::nullopt;
+  if (Event)
+    OS << SourceRecorder->begin(*Event);
+  writeStmtImpl(Stmt, Indent);
+  if (Event)
+    OS << SourceRecorder->end(*Event);
+}
+
+void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
   if (Analysis.DeadStmts.count(&Stmt) &&
       !(Stmt.Kind == StmtKind::Assign && Stmt.Dst &&
         (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi) &&
@@ -504,7 +516,6 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
           }
         }
       }
-      emitIndent(Indent);
       std::string Value = exprStr(*Stmt.Val);
       if (Stmt.Dst->Type && Stmt.Val->Type &&
           Stmt.Dst->Type->Kind == NdTypeKind::Int &&
@@ -514,13 +525,12 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       if (Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default)
         if (auto VA = constAddress(*Stmt.Dst->Operands[0]))
           ExactImageBytes = imageBackingAddress(*VA).has_value();
-      OS << memoryStoreExpr(Stmt.Dst->Type,
-                            addrStr(*Stmt.Dst->Operands[0], 0,
-                                    Stmt.Dst->MemoryAddressSpace ==
-                                        NdMemoryAddressSpace::Default),
-                            Value, Stmt.Dst->MemoryOrdering,
-                            Stmt.Dst->MemoryAddressSpace, ExactImageBytes)
-         << ";\n";
+      writeMemoryStore(Stmt.Dst->Type,
+                       addrStr(*Stmt.Dst->Operands[0], 0,
+                               Stmt.Dst->MemoryAddressSpace ==
+                                   NdMemoryAddressSpace::Default),
+                       Value, Stmt.Dst->MemoryOrdering,
+                       Stmt.Dst->MemoryAddressSpace, ExactImageBytes, Indent);
       break;
     }
     if (Stmt.Dst->Kind == ExprKind::Var &&
@@ -564,10 +574,6 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
           break;
         }
       }
-      if (auto Field = scalarRecordFieldDest(DestName, *Stmt.Val))
-        OS << *Field << " = ";
-      else
-        OS << DestName << " = ";
       auto DeclaredType = declaredParamType(Stmt.Dst->Var);
       if (!DeclaredType)
         DeclaredType = Stmt.Dst->Type;
@@ -598,8 +604,27 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
           PointerTypeFromCall ? addrStr(*Stmt.Val) : std::string();
       const bool DirectAddress =
           !AddressText.empty() && AddressText.front() == '&';
+      MemoryLoadDestination LoadDestination;
+      const auto DestinationType = DeclaredCTypes.find(DestName);
+      if (Stmt.Val->Kind == ExprKind::Load &&
+          (Stmt.Dst->Var.Kind == MedVar::Temp ||
+           Stmt.Dst->Var.Kind == MedVar::Reg) &&
+          DestName == varName(Stmt.Dst->Var) &&
+          DestinationType != DeclaredCTypes.end() &&
+          !AddressTakenNames.count(DestName) && !isAddressTakenSlot(DestName) &&
+          !scalarRecordFieldDest(DestName, *Stmt.Val) && Stmt.Val->Type &&
+          typeToC(DestinationType->second) == memoryTypeName(Stmt.Val->Type))
+        LoadDestination.Name = DestName;
       const std::string ValueText =
-          DirectAddress ? AddressText : exprStr(*Stmt.Val);
+          DirectAddress ? AddressText : exprStr(*Stmt.Val, 0, &LoadDestination);
+      if (LoadDestination.Written) {
+        OS << ValueText << ";\n";
+        break;
+      }
+      if (auto Field = scalarRecordFieldDest(DestName, *Stmt.Val))
+        OS << *Field << " = ";
+      else
+        OS << DestName << " = ";
       if (DeclaredType && DeclaredType->Kind == NdTypeKind::Ptr) {
         if (DirectAddress)
           OS << "(" << typeToC(DeclaredType) << ")(" << ValueText << ")";
@@ -774,20 +799,17 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
         }
       }
     }
-    emitIndent(Indent);
     bool ExactImageBytes = false;
     if (Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
       if (auto VA = constAddress(*Stmt.StoreAddr))
         ExactImageBytes = imageBackingAddress(*VA).has_value();
-    OS << memoryStoreExpr(
-              Stmt.StoreVal->Type,
-              addrStr(*Stmt.StoreAddr, 0,
-                      Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default),
-              isUnknownCallOperand(Stmt.StoreVal.get())
-                  ? "0"
-                  : exprStr(*Stmt.StoreVal),
-              Stmt.MemoryOrdering, Stmt.MemoryAddressSpace, ExactImageBytes)
-       << ";\n";
+    writeMemoryStore(
+        Stmt.StoreVal->Type,
+        addrStr(*Stmt.StoreAddr, 0,
+                Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default),
+        isUnknownCallOperand(Stmt.StoreVal.get()) ? "0"
+                                                  : exprStr(*Stmt.StoreVal),
+        Stmt.MemoryOrdering, Stmt.MemoryAddressSpace, ExactImageBytes, Indent);
     break;
   }
 
@@ -996,6 +1018,10 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
          << llvm::utohexstr(Stmt.Addr) << " */\n";
       break;
     }
+    if (llvm::is_contained(LeaveTargets, Stmt.GotoTarget)) {
+      OS << "__leave;\n";
+      break;
+    }
     OS << "goto L_" + llvm::utohexstr(Stmt.GotoTarget) + ";\n";
     break;
 
@@ -1036,6 +1062,15 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
     break;
 
   case StmtKind::SEHTry: {
+    // `__leave` ends the innermost __try block, so only this try's protected
+    // body may use it, and only while nothing else runs on that exit: every
+    // clause is an __except or a __finally printing an empty body.
+    const std::vector<va_t> Leave = std::move(NextTryLeaveTargets);
+    NextTryLeaveTargets.clear();
+    const std::vector<va_t> OuterLeave = std::move(LeaveTargets);
+    LeaveTargets.clear();
+    auto RestoreLeave =
+        llvm::make_scope_exit([&] { LeaveTargets = OuterLeave; });
     // C forbids a goto into a __try body, but machine code may branch into
     // the middle of a protected range.  x64 SEH protection is by address,
     // so splitting an __except try at that entry into two consecutive tries
@@ -1091,7 +1126,12 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
     const HighEHClause &Clause = Stmt.EHClauses.front();
     emitIndent(Indent);
     OS << "__try {\n";
+    if (Clause.Kind == HighEHClauseKind::SEHExcept ||
+        (Clause.Kind == HighEHClauseKind::SEHFinally &&
+         Stmt.EHClauseBodies.front().empty()))
+      LeaveTargets = Leave;
     writeTryBody(Stmt.Body, Indent + 1);
+    LeaveTargets.clear();
     emitIndent(Indent);
     if (Clause.Kind == HighEHClauseKind::SEHFinally) {
       OS << "} __finally {\n";
@@ -1159,6 +1199,12 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
   }
 
   case StmtKind::CxxTry: {
+    // `__leave` names the innermost __try; none of its jumps may use it here.
+    const std::vector<va_t> OuterLeave = std::move(LeaveTargets);
+    LeaveTargets.clear();
+    NextTryLeaveTargets.clear();
+    auto RestoreLeave =
+        llvm::make_scope_exit([&] { LeaveTargets = OuterLeave; });
     emitIndent(Indent);
     const bool CleanupOnly =
         !Stmt.EHClauses.empty() &&
@@ -1220,6 +1266,12 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
   }
 
   case StmtKind::ItaniumTry: {
+    // `__leave` names the innermost __try; none of its jumps may use it here.
+    const std::vector<va_t> OuterLeave = std::move(LeaveTargets);
+    LeaveTargets.clear();
+    NextTryLeaveTargets.clear();
+    auto RestoreLeave =
+        llvm::make_scope_exit([&] { LeaveTargets = OuterLeave; });
     emitIndent(Indent);
     OS << "/* Itanium try [0x" << llvm::utohexstr(Stmt.EHRange.Begin) << ", 0x"
        << llvm::utohexstr(Stmt.EHRange.End)
@@ -2048,6 +2100,9 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
         continue;
       }
     }
+    NextTryLeaveTargets.clear();
+    if (S.Kind == StmtKind::SEHTry)
+      NextTryLeaveTargets = tryLeaveTargets(Stmts, I);
     writeStmt(S, Indent);
     AfterNoReturn =
         isNoReturnCallStmt(S) ||
@@ -2117,6 +2172,34 @@ HighCWriter::fallthroughAddresses(const std::vector<HighStmt> &Stmts,
   }
   Addresses.insert(Addresses.end(), Continuation.begin(), Continuation.end());
   return Addresses;
+}
+
+std::vector<va_t>
+HighCWriter::tryLeaveTargets(const std::vector<HighStmt> &Stmts,
+                             size_t Index) const {
+  // A label prints at the first statement printed with its address, so one
+  // printed already, or inside the try or its clauses, is not after it.
+  std::set<va_t> Earlier;
+  std::function<void(const HighStmt &)> Visit = [&](const HighStmt &S) {
+    Earlier.insert(S.Addr);
+    if (S.Kind == StmtKind::While)
+      Earlier.insert(S.LoopHeaderAddr);
+    for (const auto *List : {&S.Body, &S.ElseBody, &S.DefaultBody})
+      for (const HighStmt &Child : *List)
+        Visit(Child);
+    for (const auto &Case : S.Cases)
+      for (const HighStmt &Child : Case.Body)
+        Visit(Child);
+    for (const auto &ClauseBody : S.EHClauseBodies)
+      for (const HighStmt &Child : ClauseBody)
+        Visit(Child);
+  };
+  Visit(Stmts[Index]);
+  std::vector<va_t> Targets = fallthroughAddresses(Stmts, Index, {});
+  llvm::erase_if(Targets, [&](va_t Addr) {
+    return Earlier.count(Addr) || EmittedLabels.count(Addr);
+  });
+  return Targets;
 }
 
 void HighCWriter::decideTryExits(const std::vector<HighStmt> &Stmts,

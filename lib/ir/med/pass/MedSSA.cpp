@@ -731,6 +731,19 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     return V.Kind == MedVar::Reg && V.Size != 0 &&
            !TRI.isStackPointer(V.RegOff) && fullyPreserved(V.RegOff, V.Size);
   };
+  // x86 EH3/EH4 restores the registration frame's EBP before entering a
+  // handler; it does not restore arbitrary callee-saved GPRs from the fault.
+  const bool HasX86SEHFrame =
+      TargetArch == Arch::X86 && Low.ExceptionMetadata &&
+      Low.ExceptionMetadata->ParseStatus == ExceptionParseStatus::Complete &&
+      (Low.ExceptionMetadata->Encoding == ExceptionEncoding::X86ScopeTableEH3 ||
+       Low.ExceptionMetadata->Encoding == ExceptionEncoding::X86ScopeTableEH4);
+  auto IsSEHRestored = [&](const MedVar &V) {
+    if (TargetArch == Arch::X86)
+      return HasX86SEHFrame && V.Kind == MedVar::Reg &&
+             V.RegOff == TRI.FramePointer && V.Size == TRI.PointerSize;
+    return IsNonvolatile(V);
+  };
   auto IsFullStackPointer = [&](const MedVar &V) {
     return V.Kind == MedVar::Reg && V.RegOff == TRI.StackPointer &&
            V.Size == TRI.PointerSize;
@@ -868,30 +881,44 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     for (int Root : Roots) {
       if (Root != 0)
         NonEntryRootLiveIns.insert(LiveIn[Root].begin(), LiveIn[Root].end());
-      if (Root != 0 && TargetArch == Arch::X64 && Low.ExceptionMetadata &&
-          Low.ExceptionMetadata->SEH) {
+      if (Root != 0 && (TargetArch == Arch::X64 || HasX86SEHFrame) &&
+          Low.ExceptionMetadata &&
+          (Low.ExceptionMetadata->SEH || HasX86SEHFrame)) {
         const ExceptionFunction &EH = *Low.ExceptionMetadata;
         std::vector<int> Protected;
         bool Complete = true;
-        for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
-          if (Scope.HandlerVA != Func.Blocks[Root].StartAddr)
-            continue;
-          auto Range = getSemanticSEHGuardedRange(Scope, Arch::X64, EH);
-          if (Scope.ParseStatus != ExceptionParseStatus::Complete || !Range) {
-            Complete = false;
-            break;
-          }
-          for (int B = 0; B < N; ++B)
-            if (Func.Blocks[B].StartAddr < Range->End &&
-                Func.Blocks[B].EndAddr > Range->Begin)
-              Protected.push_back(B);
+        // CFGBuilder owns registration try-level interpretation. Reuse its
+        // exceptional predecessor set rather than inventing x86 scope ranges.
+        if (HasX86SEHFrame) {
+          for (const ExceptionalEdge &Edge : Func.Blocks[Root].ExceptionalPreds)
+            if (Edge.Kind == ExceptionalEdgeKind::SEHHandler) {
+              if (Edge.BlockId < 0 || Edge.BlockId >= N) {
+                Complete = false;
+                break;
+              }
+              Protected.push_back(Edge.BlockId);
+            }
         }
+        if (!HasX86SEHFrame && EH.SEH)
+          for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
+            if (Scope.HandlerVA != Func.Blocks[Root].StartAddr)
+              continue;
+            auto Range = getSemanticSEHGuardedRange(Scope, TargetArch, EH);
+            if (Scope.ParseStatus != ExceptionParseStatus::Complete || !Range) {
+              Complete = false;
+              break;
+            }
+            for (int B = 0; B < N; ++B)
+              if (Func.Blocks[B].StartAddr < Range->End &&
+                  Func.Blocks[B].EndAddr > Range->Begin)
+                Protected.push_back(B);
+          }
         if (Complete && !Protected.empty()) {
           SEHProtected[Root] = std::move(Protected);
           for (int Id : LiveIn[Root])
             if (auto V = VarOfId.find(Id);
                 V != VarOfId.end() &&
-                (IsNonvolatile(V->second) || (SEHProtectedSPRoots.count(Root) &&
+                (IsSEHRestored(V->second) || (SEHProtectedSPRoots.count(Root) &&
                                               IsFullStackPointer(V->second))))
               SEHTrackedIds.insert(Id);
         }
@@ -1221,7 +1248,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       MedVar &In = Seed.Inputs[0];
       const bool ProtectedSP =
           SEHProtectedSPRoots.count(Root) && IsFullStackPointer(In);
-      if ((!IsNonvolatile(In) && !ProtectedSP) || In.Id != Seed.Output.Id ||
+      if ((!IsSEHRestored(In) && !ProtectedSP) || In.Id != Seed.Output.Id ||
           In.SSAVer != 0)
         continue;
       // Written in the range, the value at the fault is not known.
@@ -1248,15 +1275,14 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   // Without a proven protected range, a callee-saved register's value at
   // the fault is not known either.
   for (int Root : SEHHandlerRoots) {
-    if (SEHProtected.count(Root))
-      continue;
     for (MedOp &Seed : Func.Blocks[Root].Ops) {
       if (Seed.Addr != Func.Blocks[Root].StartAddr)
         break;
       if (Seed.Opcode != NdOp::COPY || Seed.NumInputs != 1)
         continue;
       MedVar &In = Seed.Inputs[0];
-      if (IsNonvolatile(In) && In.Id == Seed.Output.Id && In.SSAVer == 0)
+      if (IsNonvolatile(In) && In.Id == Seed.Output.Id && In.SSAVer == 0 &&
+          (!SEHProtected.count(Root) || !IsSEHRestored(In)))
         In = MedVar::makeUnspecified(In.Size, TargetArch);
     }
   }

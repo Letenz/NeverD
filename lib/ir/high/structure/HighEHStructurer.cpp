@@ -26,12 +26,15 @@
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <iterator>
 #include <map>
@@ -1040,6 +1043,27 @@ bool hasCrossingRegions(const std::vector<RegionCandidate> &Candidates,
   return false;
 }
 
+/// Whether \p Stmts, outside the slice taken for a try over \p Range, still
+/// hold a statement of that range that may raise an exception.
+bool guardedStatementLeftOut(const std::vector<HighStmt> &Stmts,
+                             const ExceptionAddressRange &Range) {
+  for (const HighStmt &S : Stmts) {
+    if (S.Addr && S.Addr != InvalidVA && Range.contains(S.Addr) &&
+        highStmtMayFault(S))
+      return true;
+    for (const auto *List : {&S.Body, &S.ElseBody, &S.DefaultBody})
+      if (guardedStatementLeftOut(*List, Range))
+        return true;
+    for (const SwitchCase &Case : S.Cases)
+      if (guardedStatementLeftOut(Case.Body, Range))
+        return true;
+    for (const std::vector<HighStmt> &ClauseBody : S.EHClauseBodies)
+      if (guardedStatementLeftOut(ClauseBody, Range))
+        return true;
+  }
+  return false;
+}
+
 /// The list and index of the try statement of \p Kind over \p Range.  A
 /// slice extraction moves statements, so callers look it up again after one.
 std::optional<std::pair<std::vector<HighStmt> *, size_t>>
@@ -1225,7 +1249,125 @@ uniqueHandlerBlockRange(const MedFunc &Med, const ExceptionFunction &EH,
   return Range;
 }
 
+/// Whether \p S is a plain statement with no address.  Nothing jumps to it,
+/// so it runs only after the statement before it.  Loop exits are not plain:
+/// the list they would move into need not sit in the same loop.
+bool isAddresslessPlainStmt(const HighStmt &S) {
+  if (S.Addr != 0 && S.Addr != InvalidVA)
+    return false;
+  switch (S.Kind) {
+  case StmtKind::Assign:
+  case StmtKind::ExprStmt:
+  case StmtKind::Store:
+  case StmtKind::Call:
+  case StmtKind::Nop:
+  case StmtKind::Return:
+  case StmtKind::Goto:
+    return true;
+  default:
+    return false;
+  }
+}
+
+/// The statement that runs once the statements of \p List end, \p List
+/// being nested in \p Stmts and \p After running once \p Stmts end: the
+/// statement after the if/else, block or __except-only try owning \p List, or
+/// what runs after that statement's own list.  nullptr when nothing here is
+/// known to run then, such as after a loop body, a case, a __finally or the
+/// function.  std::nullopt when \p List is not nested in \p Stmts.
+std::optional<const HighStmt *>
+continuationOf(const std::vector<HighStmt> &Stmts,
+               const std::vector<HighStmt> *List, const HighStmt *After) {
+  if (&Stmts == List)
+    return After;
+  for (size_t I = 0; I < Stmts.size(); ++I) {
+    const HighStmt &S = Stmts[I];
+    const HighStmt *Next = I + 1 < Stmts.size() ? &Stmts[I + 1] : After;
+    const bool Arms = S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse ||
+                      S.Kind == StmtKind::Block;
+    const bool ExceptOnly =
+        S.Kind == StmtKind::SEHTry && !S.EHClauses.empty() &&
+        llvm::all_of(S.EHClauses, [](const HighEHClause &Clause) {
+          return Clause.Kind == HighEHClauseKind::SEHExcept;
+        });
+    if (auto Found =
+            continuationOf(S.Body, List, Arms || ExceptOnly ? Next : nullptr))
+      return Found;
+    if (auto Found = continuationOf(S.ElseBody, List, Arms ? Next : nullptr))
+      return Found;
+    for (const SwitchCase &Case : S.Cases)
+      if (auto Found = continuationOf(Case.Body, List, nullptr))
+        return Found;
+    if (auto Found = continuationOf(S.DefaultBody, List, nullptr))
+      return Found;
+    for (size_t K = 0; K < S.EHClauseBodies.size(); ++K) {
+      const bool Except = S.Kind == StmtKind::SEHTry &&
+                          K < S.EHClauses.size() &&
+                          S.EHClauses[K].Kind == HighEHClauseKind::SEHExcept;
+      if (auto Found = continuationOf(S.EHClauseBodies[K], List,
+                                      Except ? Next : nullptr))
+        return Found;
+    }
+  }
+  return std::nullopt;
+}
+
+/// How many statements of \p Stmts a jump to \p Addr could land on: those
+/// beginning an address group, which C labels.  A first child sharing its
+/// parent's address prints under the parent's label, so it is no start of
+/// its own.  \p TargetStarts is set when \p Target is one of them.
+unsigned statementsStarting(const std::vector<HighStmt> &Stmts, va_t Addr,
+                            va_t Parent, const HighStmt *Target,
+                            bool &TargetStarts) {
+  unsigned Count = 0;
+  for (size_t I = 0; I < Stmts.size(); ++I) {
+    const HighStmt &S = Stmts[I];
+    if (S.Addr == Addr && Addr != (I == 0 ? Parent : Stmts[I - 1].Addr)) {
+      ++Count;
+      TargetStarts |= &S == Target;
+    }
+    Count += statementsStarting(S.Body, Addr, S.Addr, Target, TargetStarts);
+    Count += statementsStarting(S.ElseBody, Addr, 0, Target, TargetStarts);
+    for (const SwitchCase &Case : S.Cases)
+      Count += statementsStarting(Case.Body, Addr, 0, Target, TargetStarts);
+    Count += statementsStarting(S.DefaultBody, Addr, 0, Target, TargetStarts);
+    for (const std::vector<HighStmt> &ClauseBody : S.EHClauseBodies)
+      Count += statementsStarting(ClauseBody, Addr, 0, Target, TargetStarts);
+  }
+  return Count;
+}
+
 } // anonymous namespace
+
+void reportUnprotectedGuardedCode(const HighFunc &Func, const char *Stage) {
+  if (!std::getenv("NEVERD_HIGH_FLOW_ORACLE"))
+    return;
+  std::vector<const HighStmt *> Trys;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::SEHTry && S.EHIsReducible && S.EHRange.isValid())
+      Trys.push_back(&S);
+  });
+  for (const HighStmt *Try : Trys) {
+    std::set<const HighStmt *> Inside;
+    walkStmts(Try->Body, [&](const HighStmt &S) { Inside.insert(&S); });
+    unsigned Outside = 0;
+    va_t First = 0;
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (S.Addr && S.Addr != InvalidVA && Try->EHRange.contains(S.Addr) &&
+          !Inside.count(&S) && highStmtMayFault(S)) {
+        if (!Outside++)
+          First = S.Addr;
+      }
+    });
+    if (Outside)
+      llvm::errs() << "FLOWPROTECT stage=" << Stage << " entry="
+                   << llvm::utohexstr(Func.Entry, /*LowerCase=*/true)
+                   << " try=[" << llvm::utohexstr(Try->EHRange.Begin, true)
+                   << "," << llvm::utohexstr(Try->EHRange.End, true)
+                   << ") outside=" << Outside
+                   << " first=" << llvm::utohexstr(First, true) << "\n";
+  }
+}
 
 void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
                                                    const MedFunc &Med) {
@@ -1407,8 +1549,12 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
       continue;
     }
     // A jump from outside into the protected statements has no C spelling;
-    // keep that range unstructured instead of emitting one.
-    if (jumpEntersSlice(Func.Body, ProtectedBody, Candidate.Range.Begin)) {
+    // keep that range unstructured instead of emitting one.  So is a guarded
+    // statement left outside the slice that may raise: in C it would run
+    // unprotected.
+    if (jumpEntersSlice(Func.Body, ProtectedBody, Candidate.Range.Begin) ||
+        (Candidate.Kind == StmtKind::SEHTry &&
+         guardedStatementLeftOut(Func.Body, Candidate.Range))) {
       Host->insert(Host->begin() + static_cast<ptrdiff_t>(InsertAt),
                    std::make_move_iterator(ProtectedBody.begin()),
                    std::make_move_iterator(ProtectedBody.end()));
@@ -1456,6 +1602,63 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
       Host = TrySite->first;
     }
 
+    auto FindInsertedTry = [&]() -> HighStmt * {
+      for (HighStmt &Stmt : *Host)
+        if (Stmt.Kind == Candidate.Kind &&
+            Stmt.EHRange.Begin == Candidate.Range.Begin &&
+            Stmt.EHRange.End == Candidate.Range.End)
+          return &Stmt;
+      return nullptr;
+    };
+    // A clause that runs off its end continues after the try statement,
+    // which need not be where its handler block ran on to.  What runs next
+    // is the following statement, past empty anchors, or the target of the
+    // jump that statement is.
+    auto AfterInsertedTry = [&]() {
+      std::set<va_t> AfterTry;
+      const HighStmt *InsertedTry = FindInsertedTry();
+      for (size_t K = 0; InsertedTry && K < Host->size(); ++K) {
+        if (&(*Host)[K] != InsertedTry)
+          continue;
+        for (size_t M = K + 1; M < Host->size(); ++M) {
+          const HighStmt &Next = (*Host)[M];
+          AfterTry.insert(Next.Addr);
+          if (Next.Kind == StmtKind::Goto)
+            AfterTry.insert(Next.GotoTarget);
+          const bool EmptyAnchor =
+              Next.Kind == StmtKind::Nop ||
+              (Next.Kind == StmtKind::Block && Next.Body.empty());
+          if (!EmptyAnchor)
+            break;
+        }
+        break;
+      }
+      AfterTry.erase(0);
+      AfterTry.erase(InvalidVA);
+      return AfterTry;
+    };
+
+    // The statements a clause running off its end reaches before anything
+    // runs: the empty anchors after the try statement and the statement
+    // after them.
+    auto FollowInsertedTry = [&]() {
+      std::vector<const HighStmt *> Follow;
+      const HighStmt *InsertedTry = FindInsertedTry();
+      for (size_t K = 0; InsertedTry && K < Host->size(); ++K) {
+        if (&(*Host)[K] != InsertedTry)
+          continue;
+        for (size_t M = K + 1; M < Host->size(); ++M) {
+          const HighStmt &Next = (*Host)[M];
+          Follow.push_back(&Next);
+          if (Next.Kind != StmtKind::Nop &&
+              (Next.Kind != StmtKind::Block || !Next.Body.empty()))
+            break;
+        }
+        break;
+      }
+      return Follow;
+    };
+
     std::vector<std::vector<HighStmt>> ClauseBodies(ClauseTargets.size());
     // Where a handler block that runs off its end continued: the statement
     // after it.  As a clause body it continues after the try statement.
@@ -1479,57 +1682,77 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
               /*IncludeFunctionEdgeUnknown=*/false, &HandlerHost))
         continue;
       if (!HandlerBody.empty() && !highStmtEndsItsBlock(HandlerBody.back())) {
-        const va_t Next = HandlerHost && HandlerAt < HandlerHost->size()
-                              ? (*HandlerHost)[HandlerAt].Addr
-                              : 0;
-        if (Next == 0 || Next == InvalidVA) {
+        if (!HandlerHost)
+          llvm::report_fatal_error("handler slice extracted without its list");
+        // The handler block ran on.  Statements without an address that
+        // follow it run only after it, so they come along until one leaves;
+        // past them is the statement it ran into or, at the end of its list,
+        // what runs after that list.
+        size_t RunEnd = HandlerAt;
+        bool Leaves = false;
+        while (!Leaves && RunEnd < HandlerHost->size() &&
+               isAddresslessPlainStmt((*HandlerHost)[RunEnd]))
+          Leaves = highStmtEndsItsBlock((*HandlerHost)[RunEnd++]);
+        const bool InList = !Leaves && RunEnd < HandlerHost->size();
+        const HighStmt *Cont = nullptr;
+        if (!Leaves && !InList)
+          Cont =
+              continuationOf(Func.Body, HandlerHost, nullptr).value_or(nullptr);
+        if (!Leaves && !InList && !Cont) {
           // Without the statement it ran into, the clause could not keep
           // that path: leave the handler where it is, entered by a jump.
-          if (HandlerHost)
+          HandlerHost->insert(HandlerHost->begin() +
+                                  static_cast<ptrdiff_t>(HandlerAt),
+                              std::make_move_iterator(HandlerBody.begin()),
+                              std::make_move_iterator(HandlerBody.end()));
+          continue;
+        }
+        HandlerBody.insert(
+            HandlerBody.end(),
+            std::make_move_iterator(HandlerHost->begin() +
+                                    static_cast<ptrdiff_t>(HandlerAt)),
+            std::make_move_iterator(HandlerHost->begin() +
+                                    static_cast<ptrdiff_t>(RunEnd)));
+        HandlerHost->erase(
+            HandlerHost->begin() + static_cast<ptrdiff_t>(HandlerAt),
+            HandlerHost->begin() + static_cast<ptrdiff_t>(RunEnd));
+        if (InList)
+          Cont = &(*HandlerHost)[HandlerAt];
+        if (!Leaves) {
+          // A clause running on to the statement after the try reaches it
+          // with no jump.  Any other continuation needs one, which must land
+          // on that statement alone once the handler code is in the clause.
+          const std::vector<const HighStmt *> Follow = FollowInsertedTry();
+          const bool FallsThrough =
+              ClauseTargets.size() == 1 && llvm::is_contained(Follow, Cont);
+          const va_t Next = Cont->Addr;
+          bool ContStarts = false;
+          unsigned Starts = 0;
+          if (Next != 0 && Next != InvalidVA) {
+            Starts =
+                statementsStarting(Func.Body, Next, 0, Cont, ContStarts) +
+                statementsStarting(HandlerBody, Next, 0, nullptr, ContStarts);
+            for (const std::vector<HighStmt> &Filled : ClauseBodies)
+              Starts +=
+                  statementsStarting(Filled, Next, 0, nullptr, ContStarts);
+          }
+          if (!FallsThrough && (Starts != 1 || !ContStarts)) {
             HandlerHost->insert(HandlerHost->begin() +
                                     static_cast<ptrdiff_t>(HandlerAt),
                                 std::make_move_iterator(HandlerBody.begin()),
                                 std::make_move_iterator(HandlerBody.end()));
-          continue;
+            continue;
+          }
+          if (!FallsThrough)
+            ClauseFallTo[ClauseIndex] = Next;
         }
-        ClauseFallTo[ClauseIndex] = Next;
       }
       ClauseBodies[ClauseIndex] = std::move(HandlerBody);
     }
 
-    auto FindInsertedTry = [&]() -> HighStmt * {
-      for (HighStmt &Stmt : *Host)
-        if (Stmt.Kind == Candidate.Kind &&
-            Stmt.EHRange.Begin == Candidate.Range.Begin &&
-            Stmt.EHRange.End == Candidate.Range.End)
-          return &Stmt;
-      return nullptr;
-    };
     if (HighStmt *InsertedTry = FindInsertedTry()) {
+      const std::set<va_t> AfterTry = AfterInsertedTry();
       InsertedTry->EHClauseBodies = std::move(ClauseBodies);
-      // A clause that runs off its end continues after the try statement,
-      // which need not be where its handler block ran on to.  What runs next
-      // is the following statement, past empty anchors, or the target of the
-      // jump that statement is.
-      std::set<va_t> AfterTry;
-      for (size_t K = 0; K < Host->size(); ++K) {
-        if (&(*Host)[K] != InsertedTry)
-          continue;
-        for (size_t M = K + 1; M < Host->size(); ++M) {
-          const HighStmt &Next = (*Host)[M];
-          AfterTry.insert(Next.Addr);
-          if (Next.Kind == StmtKind::Goto)
-            AfterTry.insert(Next.GotoTarget);
-          const bool EmptyAnchor =
-              Next.Kind == StmtKind::Nop ||
-              (Next.Kind == StmtKind::Block && Next.Body.empty());
-          if (!EmptyAnchor)
-            break;
-        }
-        break;
-      }
-      AfterTry.erase(0);
-      AfterTry.erase(InvalidVA);
       for (size_t C = 0; C < ClauseFallTo.size(); ++C) {
         if (!ClauseFallTo[C] || AfterTry.count(*ClauseFallTo[C]))
           continue;
@@ -1638,6 +1861,7 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     if (Func.UnstructuredExceptionRegions == 0)
       Func.UnstructuredExceptionRegions = 1;
   }
+  reportUnprotectedGuardedCode(Func, "after-exceptions");
   // Invert-skip of `if (c) goto L; work; L:` inside a try body is blocked
   // before wrapping: Med blocks in the try have ExceptionalPreds. After the
   // handler is a clause, the try list is a closed HighIR run.

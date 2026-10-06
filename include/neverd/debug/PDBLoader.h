@@ -151,6 +151,12 @@ public:
   bool hasAuthenticatedFunctionSignatures() const override;
   bool hasAuthenticatedObjectExtents() const override;
 
+  std::vector<AuthenticatedRecordParameter>
+  resolveAuthenticatedRecordParameters(va_t Addr) const override;
+
+  std::optional<AuthenticatedRecordParameter>
+  resolveAuthenticatedRecordReturn(va_t Addr) const override;
+
   bool hasAuthenticatedImageIdentity() const;
   /// RSDS Phase A never authorizes exact object metadata.  Names-only
   /// S_LOCAL / S_REGREL32 recovery does not change that.  A PDB 2.00 JG

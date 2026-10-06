@@ -1,3 +1,4 @@
+#include "../../../lib/loader/MachO/DarwinSourceDeclarations.h"
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "gtest/gtest.h"
 
@@ -299,6 +300,57 @@ TEST(ObjCCallHints, ExactMethodForwardingSuppliesMissingSelectorDeclaration) {
       parseObjCMethodEncoding("ddSetLogLevel:", "v24@0:8@16");
   ASSERT_TRUE(Image.ObjCMethods.back().TypeHint);
   EXPECT_FALSE(buildObjCSourceCallHints(Image, Function).count(0x1200));
+}
+
+TEST(ObjCCallHints,
+     IntegerForwardingPreservesDeclaredFloatingAndRecordArguments) {
+  for (const auto &[Selector, Encoding, WrapperEncoding] :
+       {std::tuple{"setOpacity:", "v20@0:8f16", "v28@0:8f16@20"},
+        std::tuple{"setPosition:", "v32@0:8{CGPoint=dd}16",
+                   "v40@0:8{CGPoint=dd}16@32"},
+        std::tuple{"setMeasurement:", "v24@0:8d16", "v32@0:8d16@24"}}) {
+    SCOPED_TRACE(Selector);
+    auto Image = image();
+    Image.ObjCMethods.clear();
+    Image.ObjCSourceReferences.at(0x2100).Name = Selector;
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/QuartzCore.framework/QuartzCore"};
+    if (llvm::StringRef(Selector) == "setMeasurement:") {
+      ObjCMethod Declaration;
+      Declaration.ClassName = "MeasuredObject";
+      Declaration.Selector = Selector;
+      Declaration.TypeHint = parseObjCMethodEncoding(Selector, Encoding);
+      ASSERT_TRUE(Declaration.TypeHint);
+      Image.ObjCMethods.push_back(std::move(Declaration));
+    }
+    ObjCMethod Wrapper;
+    Wrapper.ClassName = "Forwarder";
+    Wrapper.Selector = "forward:to:";
+    Wrapper.Implementation = 0x1200;
+    Wrapper.TypeHint =
+        parseObjCMethodEncoding(Wrapper.Selector, WrapperEncoding);
+    ASSERT_TRUE(Wrapper.TypeHint);
+    Image.ObjCMethods.push_back(std::move(Wrapper));
+    const auto Declared = objcSelectorSourceTypeHint(Image, Selector);
+    ASSERT_TRUE(Declared);
+
+    // The receiver is moved from x2 to x0; x2 still contains that object.
+    // The forwarded value lives in v0 (and v1 for CGPoint), so treating x2
+    // as the selector argument would invent a conflicting pointer signature.
+    const auto &TRI = getTargetRegInfo(Image.Arch);
+    auto Function = caller();
+    Function.Blocks[0].Ops = {
+        operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                  {NdVar::reg(TRI.IntParamRegs[2], 8)}, 0x11fc),
+        operation(NdOp::CALL, NdVar::reg(TRI.IntReturnReg, 8),
+                  {NdVar::cst(0x1100, 8)}, 0x1200),
+        operation(NdOp::RETURN, {}, {NdVar::reg(TRI.IntReturnReg, 8)}, 0x1204)};
+    const auto Hints = buildObjCSourceCallHints(Image, Function);
+    ASSERT_TRUE(Hints.count(0x1200));
+    const auto &Hint = Hints.at(0x1200);
+    EXPECT_TRUE(equalSourceABIs(Hint.Signature, *Declared));
+    EXPECT_FALSE(Hint.SelectorForwardingUse);
+  }
 }
 
 TEST(ObjCCallHints, FrameworkProvidersRequireExactActivationAndAgreement) {
@@ -9459,6 +9511,119 @@ TEST(ObjCCallHints, SwiftMetadataAccessorsAndUnknownNominalsAreNotData) {
     }
 }
 
+namespace {
+BinaryImage recordDataImage(llvm::StringRef Name,
+                            Arch Architecture = Arch::AArch64) {
+  auto Image = runtimeImage(Name, Architecture);
+  // Record queries require genuine non-executable import storage. The generic
+  // runtime-call fixture intentionally keeps its data in the code segment.
+  Segment Data;
+  Data.VA = 0x2000;
+  Data.FileOff = 0x1000;
+  Data.Size = Data.FileSz = 0x1000;
+  Data.Flags = SegmentFlags::Readable;
+  Data.Data.assign(Image.Segments[0].Data.begin() + 0x1000,
+                   Image.Segments[0].Data.end());
+  Image.Segments[0].Size = Image.Segments[0].FileSz = 0x1000;
+  Image.Segments[0].Data.resize(0x1000);
+  Image.Segments.push_back(std::move(Data));
+  return Image;
+}
+} // namespace
+
+TEST(ObjCCallHints, SDKRecordDataRetainsCompilerTypeAndExtentWithoutContents) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (bool Versioned : {false, true})
+      for (const auto &[Name, Bytes] :
+           {std::pair{"CGSizeZero", 16U},
+            std::pair{"CGAffineTransformIdentity", 48U}}) {
+        auto Image = recordDataImage("_" + std::string(Name), Architecture);
+        const std::string Provider =
+            std::string("/System/Library/Frameworks/CoreGraphics.framework/") +
+            (Versioned ? "Versions/A/" : "") + "CoreGraphics";
+        Image.DyldBindSlots[0x2180] = {"_" + std::string(Name), 0, Provider,
+                                       false};
+        Image.DynInfo.NeededLibs.push_back(Provider);
+        const auto Type = darwinDeclaredSourceRecordDataType(Image, 0x2180);
+        ASSERT_TRUE(Type) << Name;
+        EXPECT_EQ(Type->Kind, NdTypeKind::Struct);
+        EXPECT_EQ(Type->Size, Bytes);
+        EXPECT_EQ(Type->Alignment, 8U);
+        const auto Members = sourceAggregateMembers(Type);
+        ASSERT_EQ(Members.size(), Bytes / 8);
+        for (size_t I = 0; I < Members.size(); ++I) {
+          EXPECT_EQ(Members[I].ByteOffset, I * 8);
+          EXPECT_EQ(Members[I].Type->Kind, NdTypeKind::Float);
+          EXPECT_EQ(Members[I].Type->Size, 8U);
+        }
+        // Type facts do not replace the address-producing binding or loads.
+        const auto Address = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+        ASSERT_TRUE(Address);
+        EXPECT_EQ(Address->Signature.ReturnType->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(Address->Signature.ReturnType->Pointee->Kind,
+                  NdTypeKind::Void);
+        EXPECT_EQ(Address->TargetName, Name);
+      }
+}
+
+TEST(ObjCCallHints, SDKRecordDataRechecksCurrentImportProviderAndStorage) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 16; ++Mutation) {
+      auto Image = recordDataImage("_CGSizeZero", Architecture);
+      const std::string Provider =
+          "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+      Image.DyldBindSlots[0x2180] = {"_CGSizeZero", 0, Provider, false};
+      Image.DynInfo.NeededLibs.push_back(Provider);
+      ASSERT_TRUE(darwinDeclaredSourceRecordDataType(Image, 0x2180));
+      if (Mutation == 0)
+        Image.DyldBindSlots.clear();
+      else if (Mutation == 1)
+        Image.DyldBindSlots[0x2180].Module = "/usr/lib/libSystem.B.dylib";
+      else if (Mutation == 2)
+        Image.DyldBindSlots[0x2180].WeakImport = true;
+      else if (Mutation == 3)
+        Image.DyldBindSlots[0x2180].Addend = 4;
+      else if (Mutation == 4)
+        Image.ConflictingImportStorageSlots.insert(0x2180);
+      else if (Mutation == 5)
+        Image.DynInfo.NeededLibs.clear();
+      else if (Mutation == 6)
+        Image.IsRelocatable = true;
+      else if (Mutation == 7)
+        Image.Format = BinaryFormat::ELF;
+      else if (Mutation == 8)
+        Image.Bits = Bitness::Bits32;
+      else if (Mutation == 9)
+        Image.ImportPtrSlots[0x2180] = "_different";
+      else if (Mutation == 10)
+        Image.Sections[1].Flags =
+            Image.Sections[1].Flags | SegmentFlags::Writable;
+      else if (Mutation == 11)
+        Image.Segments[1].Flags =
+            Image.Segments[1].Flags | SegmentFlags::Writable;
+      else if (Mutation == 12)
+        Image.Sections[1].FileSz = 0x180;
+      else if (Mutation == 13)
+        Image.MachOChainedFixupsAmbiguous = true;
+      else if (Mutation == 14)
+        Image.DataPtrRelocSlots.insert(0x2180);
+      else
+        Image.Segments[1].Flags =
+            Image.Segments[1].Flags | SegmentFlags::Executable;
+      EXPECT_FALSE(darwinDeclaredSourceRecordDataType(Image, 0x2180))
+          << Mutation;
+    }
+  for (const char *Name :
+       {"CGSizeZero_suffix", "CGPointZero", "CGAffineTransformMakeScale"}) {
+    auto Image = recordDataImage("_" + std::string(Name));
+    const std::string Provider =
+        "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+    Image.DyldBindSlots[0x2180] = {"_" + std::string(Name), 0, Provider, false};
+    Image.DynInfo.NeededLibs.push_back(Provider);
+    EXPECT_FALSE(darwinDeclaredSourceRecordDataType(Image, 0x2180));
+  }
+}
+
 TEST(ObjCCallHints, SDKDataBindingsRequireExactExportsAndDataDeclarations) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
@@ -15073,6 +15238,28 @@ TEST(ObjCCallHints, PrivateFrameSelectorSurvivesADeclaredCall) {
   }
 }
 
+TEST(ObjCCallHints,
+     PrivateFrameSelectorRequiresDisjointDeclaredFrameArguments) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const unsigned EscapedOffset : {0U, 16U, 23U, 24U, 32U}) {
+      SCOPED_TRACE(EscapedOffset);
+      auto Image = image(Architecture);
+      Image.ImportPtrSlots[0x2200] = "_objc_storeStrong";
+      auto Function = frameSelectorCaller(Architecture);
+      auto &Ops = Function.Blocks.front().Ops;
+      const auto &TRI = getTargetRegInfo(Architecture);
+      Ops.insert(Ops.begin() + 5,
+                 operation(NdOp::INT_ADD, NdVar::reg(TRI.IntParamRegs[0], 8),
+                           {NdVar::reg(TRI.FramePointer, 8),
+                            NdVar::cst(EscapedOffset, 8)},
+                           0x1230));
+      const auto Hints = buildObjCSourceCallHints(Image, Function);
+      // The selector occupies [frame + 16, frame + 24). An authenticated
+      // pointer argument above it cannot reach this private spill.
+      EXPECT_EQ(Hints.count(0x1250), EscapedOffset >= 24 ? 1U : 0U);
+    }
+}
+
 TEST(ObjCCallHints, IndirectMessageResultsRequireNilStorageModeling) {
   auto Image = image(Arch::AArch64);
   Image.ObjCMethods.clear();
@@ -16062,6 +16249,65 @@ TEST(ObjCCallHints, SDImageCacheFastEnumerationQualifiesCompletion) {
       buildObjCSourceCallHints(Image, OverwrittenState);
   EXPECT_FALSE(OverwrittenHints.count(0x1230) &&
                OverwrittenHints.at(0x1230).Receiver);
+}
+
+TEST(ObjCCallHints, CurrentSelectorEncodingChecksMethodsAndProtocols) {
+  for (bool Protocol : {false, true}) {
+    SCOPED_TRACE(Protocol);
+    BinaryImage Image;
+    Image.Format = BinaryFormat::MachO;
+    Image.Arch = Arch::AArch64;
+    Image.Bits = Bitness::Bits64;
+    ObjCMethod Method;
+    Method.Selector = "setNeedsLayout";
+    Method.TypeEncoding = "v16@0:8";
+    Method.TypeHint =
+        parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+    ObjCProtocolMethod P;
+    P.Selector = Method.Selector;
+    P.TypeEncoding = Method.TypeEncoding;
+    P.TypeHint = Method.TypeHint;
+    if (Protocol) {
+      ObjCProtocol Owner;
+      Owner.Methods.push_back(P);
+      Image.ObjCProtocols.push_back(std::move(Owner));
+    } else {
+      Image.ObjCMethods.push_back(Method);
+    }
+    ASSERT_TRUE(objcSelectorSourceTypeHint(Image, Method.Selector));
+    for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto Changed = Image;
+      auto Change = [&](auto &Current) {
+        if (Mutation == 0)
+          Current.TypeEncoding = "Q16@0:8";
+        if (Mutation == 1)
+          Current.Selector = "setNeedsLayout:";
+        if (Mutation == 2)
+          Current.TypeEncoding = "invalid";
+        if (Mutation == 3)
+          Current.TypeHint->Parameters[1].Type = NdType::makeInt(8);
+      };
+      if (Protocol)
+        Change(Changed.ObjCProtocols.front().Methods.front());
+      else
+        Change(Changed.ObjCMethods.front());
+      EXPECT_FALSE(objcSelectorSourceTypeHint(Changed, Method.Selector));
+      if (Mutation == 1)
+        EXPECT_FALSE(objcSelectorSourceTypeHint(Changed, "setNeedsLayout:"));
+    }
+    auto DeclarationOnly = [&](auto &Current) {
+      Current.TypeEncoding.clear();
+      Current.TypeHint->Parameters[0].Name = "explicit_receiver";
+    };
+    if (Protocol)
+      DeclarationOnly(Image.ObjCProtocols.front().Methods.front());
+    else
+      DeclarationOnly(Image.ObjCMethods.front());
+    const auto Hint = objcSelectorSourceTypeHint(Image, Method.Selector);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->Parameters[0].Name, "explicit_receiver");
+  }
 }
 
 TEST(ObjCCallHints, CurrentMethodEncodingMustAgreeWithCachedDeclaration) {

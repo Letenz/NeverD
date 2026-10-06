@@ -54,10 +54,21 @@ copy; instruction selection and references use actual addresses.
 
 Native LowIR and MedIR rows carry retained instruction anchors for linked
 selection when the engine provides the additive mapped-page API. Headers and
-synthetic operations have no invented address. C, HighIR, LLVM IR and VM source
-mapping remain explicitly unsupported; their text is still available. An anchor
+synthetic operations have no invented address. HighIR, LLVM IR and VM source
+mapping remain explicitly unsupported; their text is still available. C and
+LLVMC expose precise library-region mappings where recognition and source
+observations provide complete evidence; other source rows stay unmapped. An anchor
 identifies an originating instruction, not every contributor to a transformed
 expression.
+
+Use **Analysis → Load Signature Pack…** to load library feature `.json` or byte
+signature `.pat` files. After analysis, the function list shows the session's
+qualified display name and retains raw linkage in its tooltip. Recognized C
+operations have **Fold all / Expand all** and **Details** controls. Click a folded
+summary or press Enter to restore the original source. Copy/export keep the
+complete text. Partial, overlapping and unknown regions stay expanded, and a
+new analysis revision clears stale folds. Details link evidence to original
+instruction addresses and rule/profile hashes. See [supported library profiles](library-recognition.md).
 
 The CFG uses a worker layout and indexed viewport queries. A view receives at
 most 256 nodes and 512 edges, with visible counts and an explicit zoom/truncation

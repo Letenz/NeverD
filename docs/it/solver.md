@@ -6,6 +6,14 @@
 
 Per impostazione predefinita NeverD usa il solver bitvector integrato. La derivazione MBA esatta resta indipendente da un solver generale. La sintesi di espressioni accetta un candidato solo dopo una prova di equivalenza; controesempi o query inconclusive mantengono l’espressione originale.
 
+<!-- i18n-section: builtin-comparisons -->
+
+## Circuiti di confronto integrati
+
+I confronti più larghi di otto bit confrontano prima le metà alte e usano quelle basse quando le prime sono uguali. I piccoli blocchi usano i riporti della sottrazione. Il codificatore condiviso può riutilizzare le porte del prefisso alto quando un aggiornamento parziale di registro cambia solo i bit bassi. I confronti con segno continuano a invertire entrambi i bit di segno. La semantica delle espressioni e i limiti delle risorse restano invariati; l’esaurimento restituisce ancora `Unknown`.
+
+`BitBlaster.WidePredicatesAgreeWithTheEvaluator` confronta i predicati con e senza segno con il valutatore delle espressioni a larghezze selezionate da 8 a 256 bit, comprese larghezze dispari, valori adiacenti ai confini e bit significativi oltre i 64 bit. Esclude anche risultati errati. I test dei contatori parziali verificano query complete, modelli di controesempio ed esaurimento del budget di porte. Le regressioni native con confronto memorizzato provano entrambi gli ordini di confronto e aggiornamento osservando tutti i registri e flag, e rifiutano un corpo originale del ciclo modificato.
+
 <!-- i18n-section: z3-build -->
 
 ## Build Z3 facoltativa

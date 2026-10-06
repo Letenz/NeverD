@@ -269,6 +269,8 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
       Call->CallTarget.clear();
     }
   }
+  if (ExpressionObserver && CurOp.Addr != InvalidVA && CurOp.OriginSeq >= 0)
+    ExpressionObserver(CurOp, Call);
   if (CurOp.Output.Id >= 0 && CurOp.Output.Size > 0) {
     Call->Type = sourceCallResultType(CurOp);
     S.Kind = StmtKind::Assign;

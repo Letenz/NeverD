@@ -7,6 +7,25 @@ remains independent of a general solver. Expression synthesis accepts a
 candidate only after an equivalence proof; a counterexample or inconclusive
 query retains the original expression.
 
+<!-- i18n-section: builtin-comparisons -->
+
+## Built-in comparison circuits
+
+Comparisons wider than eight bits compare high halves first and use the low
+halves when the high halves are equal. Small chunks use subtraction carries.
+The shared encoder can reuse high-prefix gates when a partial-register update
+changes only low bits. Signed comparisons still invert both sign bits. The
+expression semantics and existing resource limits are unchanged; exhaustion
+still returns `Unknown`.
+
+`BitBlaster.WidePredicatesAgreeWithTheEvaluator` checks signed and unsigned
+predicates against the expression evaluator at selected widths from 8 to 256,
+including odd widths, boundary neighbours and significant bits above 64. It
+also excludes incorrect output values. Partial-counter tests check full queries,
+counterexample models and gate exhaustion. Native cached-comparison regressions
+prove both comparison/update orders with all register and flag observations,
+and reject a changed original loop body.
+
 <!-- i18n-section: z3-build -->
 
 ## Optional Z3 build

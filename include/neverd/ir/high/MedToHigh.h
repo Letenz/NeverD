@@ -19,6 +19,7 @@
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include <functional>
 #include <map>
 #include <set>
 #include <tuple>
@@ -125,6 +126,30 @@ bool elseArmsForFallthroughJumps(HighFunc &Func);
 /// becomes `while (1) { S...; if (c) { T...; continue; } break; }`, where X
 /// starts exactly one statement and S and T hold no loose break or continue.
 bool loopsForArmsJumpingBack(std::vector<HighStmt> &Body);
+
+/// The same for jumps nested deeper: `X: S...; T` where T holds `goto X`
+/// inside if/else arms, blocks or switch cases becomes `while (1) { S...; T;
+/// break; }` with those jumps turned into `continue`.  X starts exactly one
+/// statement and the region holds no loose break or continue.
+bool loopsForNestedJumpsBack(std::vector<HighStmt> &Body);
+
+/// Jumps inside a loop that leave it for the statement after it become
+/// `break`, and jumps to a while loop's test, or to the top of an always-true
+/// loop's body, become `continue`; each target starts exactly one statement.
+bool loopJumpsAsBreakAndContinue(std::vector<HighStmt> &Body);
+
+/// When NEVERD_HIGH_FLOW_ORACLE is set, print one FLOWPROTECT line for each
+/// structured SEH try of \p Func whose guarded range holds code outside its
+/// __try that may raise an exception: in C that code runs unprotected.  Run
+/// right after structuring the regions: later tail copies take the address
+/// of the jump they replace, which may lie in a range they do not belong to.
+void reportUnprotectedGuardedCode(const HighFunc &Func, const char *Stage);
+
+/// Once the other rewrites have settled: `if (c) goto L;` followed by an if
+/// whose then arm opens with L becomes `if (c || b)`, and one whose else arm
+/// opens with L becomes `if (!c && b)`.  L must start exactly one statement,
+/// and nothing but the first test may jump to the second if.
+bool mergeJumpsIntoNextIfArms(HighFunc &Func);
 /// `if (a) {..} else { ..; jump; X: S.. }` followed by `if (c) goto X;`
 /// becomes `while (c) { S.. }` in place of the test.
 bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);
@@ -154,6 +179,22 @@ public:
   HighFunc convert(const MedFunc &Med, Arch TheArch = Arch::Unknown);
 
   void setBinaryImage(const BinaryImage *Img) { Image = Img; }
+
+  /// Observe expression creation without adding metadata to either IR. The
+  /// observer must keep weak references: later transformations can replace an
+  /// expression, and an expired reference must not map a recycled address.
+  void setExpressionObserver(
+      std::function<void(const MedOp &, const ExprPtr &)> Observer) {
+    ExpressionObserver = std::move(Observer);
+  }
+  void setExpressionCloneObserver(
+      std::function<void(const ExprPtr &, const ExprPtr &)> Observer) {
+    ExpressionCloneObserver = std::move(Observer);
+  }
+  void setStatementObserver(
+      std::function<void(const MedOp &, const HighStmt &)> Observer) {
+    StatementObserver = std::move(Observer);
+  }
 
   void setFuncNames(const std::map<va_t, std::string> *Names) {
     FuncNames = Names;
@@ -189,6 +230,7 @@ private:
   void ensureTrailingReturn(HighFunc &Func, const MedFunc &Med);
 
   ExprPtr medOpToExpr(const MedOp &Op);
+  ExprPtr medOpToExprImpl(const MedOp &Op);
   ExprPtr medvarToExpr(const MedVar &V);
   /// Recover a target-width memory address from the wider LowIR VA carrier
   /// only when an explicit zero extension proves that no high bits are lost.
@@ -312,6 +354,9 @@ private:
   std::map<std::tuple<int, int, int>, const MedOp *> EntryOffsetDefs;
   const MedFunc *EntryOffsetDefsFor = nullptr;
   const BinaryImage *Image = nullptr;
+  std::function<void(const MedOp &, const ExprPtr &)> ExpressionObserver;
+  std::function<void(const ExprPtr &, const ExprPtr &)> ExpressionCloneObserver;
+  std::function<void(const MedOp &, const HighStmt &)> StatementObserver;
   Arch TargetArch = Arch::Unknown;
   const std::map<va_t, std::string> *FuncNames = nullptr;
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;

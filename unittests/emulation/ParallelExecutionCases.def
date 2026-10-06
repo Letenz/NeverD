@@ -1,0 +1,42 @@
+//===- ParallelExecutionCases.def - Independent concurrency fixtures -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_PARALLEL_VALUE
+NEVERD_PARALLEL_VALUE(Limit, 0x100000)
+NEVERD_PARALLEL_VALUE(Code, 0x10000)
+NEVERD_PARALLEL_VALUE(Data, 0x20000)
+NEVERD_PARALLEL_VALUE(Alias, 0x30000)
+NEVERD_PARALLEL_VALUE(Initial, 0x123456789abcdef0)
+NEVERD_PARALLEL_VALUE(Updated, 0xfedcba9876543210)
+NEVERD_PARALLEL_VALUE(WaitMicroseconds, 10000000)
+NEVERD_PARALLEL_VALUE(Participants, 2)
+NEVERD_PARALLEL_VALUE(Iterations, 128)
+NEVERD_PARALLEL_VALUE(X64InstructionBytes, 4)
+NEVERD_PARALLEL_VALUE(ArmInstructionBytes, 4)
+#endif
+#ifdef NEVERD_PARALLEL_BYTES
+// add rax, 1; nop. Encoded independently of checked admission.
+NEVERD_PARALLEL_BYTES(X64Add, 0x48, 0x83, 0xc0, 0x01, 0x90)
+// add x0, x0, #1; nop.
+NEVERD_PARALLEL_BYTES(ArmAdd, 0x00, 0x04, 0x00, 0x91, 0x1f, 0x20, 0x03, 0xd5)
+// lock add qword ptr [rbx], 1; loop back until RCX becomes zero; nop.
+NEVERD_PARALLEL_BYTES(X64Contend, 0xf0, 0x48, 0x83, 0x03, 0x01, 0xe2, 0xf9,
+                      0x90)
+// ldadd x1, x2, [x3]; subs x4, x4, #1; b.ne back; nop.
+NEVERD_PARALLEL_BYTES(ArmContend, 0x62, 0x00, 0x21, 0xf8, 0x84, 0x04, 0x00,
+                      0xf1, 0xc1, 0xff, 0xff, 0x54, 0x1f, 0x20, 0x03, 0xd5)
+#endif
+#ifdef NEVERD_PARALLEL_TEXT
+NEVERD_PARALLEL_TEXT(NativeFailure, "injected native capture failure")
+NEVERD_PARALLEL_TEXT(MeetingFailure, "parallel native entries did not meet")
+#endif
+#ifdef NEVERD_PARALLEL_PROFILE
+NEVERD_PARALLEL_PROFILE(KVM, X64)
+NEVERD_PARALLEL_PROFILE(WHP, X64)
+NEVERD_PARALLEL_PROFILE(Unicorn, X64)
+NEVERD_PARALLEL_PROFILE(KVM, AArch64)
+NEVERD_PARALLEL_PROFILE(WHP, AArch64)
+NEVERD_PARALLEL_PROFILE(Unicorn, AArch64)
+#endif

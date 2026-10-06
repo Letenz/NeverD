@@ -730,6 +730,36 @@ static bool exprMayFault(const HighExpr *E) {
   return false;
 }
 
+bool highStmtMayFault(const HighStmt &S) {
+  switch (S.Kind) {
+  case StmtKind::Nop:
+  case StmtKind::Block:
+  case StmtKind::Goto:
+  case StmtKind::Break:
+  case StmtKind::Continue:
+  case StmtKind::SEHTry:
+  case StmtKind::CxxTry:
+  case StmtKind::ItaniumTry:
+    return false;
+  case StmtKind::Assign:
+    return !S.Dst ||
+           (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi) ||
+           exprMayFault(S.Val.get());
+  case StmtKind::Return:
+    return exprMayFault(S.RetVal.get());
+  case StmtKind::If:
+  case StmtKind::IfElse:
+  case StmtKind::While:
+  case StmtKind::DoWhile:
+  case StmtKind::For:
+    return exprMayFault(S.Cond.get());
+  case StmtKind::Switch:
+    return exprMayFault(S.SwitchExpr.get());
+  default:
+    return true;
+  }
+}
+
 /// Whether running \p Tail may raise an exception.
 static bool tailMayFault(const std::vector<HighStmt> &Tail) {
   for (const HighStmt &S : Tail) {
@@ -1028,23 +1058,35 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body) {
               Tails.emplace(Label, std::move(*Tail));
               TailContexts.emplace(Label, Ctx);
             }
-          // Falling off an if/else arm or block continues after it.
+          // Falling off an if/else arm or block continues after it, and so
+          // does falling off the protected body or a handler of a try with
+          // only __except clauses.  Copied back into the protected body, what
+          // runs after the try would run under its handlers, so the body
+          // continues into it only when it cannot fault.
           std::optional<std::vector<HighStmt>> After;
           const StmtKind K = Stmts[I].Kind;
+          const bool ExceptOnly =
+              K == StmtKind::SEHTry && !Stmts[I].EHClauses.empty() &&
+              llvm::all_of(Stmts[I].EHClauses, [](const HighEHClause &Clause) {
+                return Clause.Kind == HighEHClauseKind::SEHExcept;
+              });
           if (K == StmtKind::If || K == StmtKind::IfElse ||
-              K == StmtKind::Block)
+              K == StmtKind::Block || ExceptOnly)
             After = I + 1 < Stmts.size()
                         ? TailAt(Stmts, I + 1, Cont, Ctx)
                         : (Cont ? std::optional(*Cont) : std::nullopt);
           const std::vector<HighStmt> *ChildCont = After ? &*After : nullptr;
-          Collect(Stmts[I].Body, ChildCont, Stmts[I].Addr,
+          const std::vector<HighStmt> *BodyCont =
+              ExceptOnly && ChildCont && tailMayFault(*ChildCont) ? nullptr
+                                                                  : ChildCont;
+          Collect(Stmts[I].Body, BodyCont, Stmts[I].Addr,
                   bodyTryContext(Ctx, Stmts[I]));
           Collect(Stmts[I].ElseBody, ChildCont, 0, Ctx);
           for (auto &C : Stmts[I].Cases)
             Collect(C.Body, nullptr, 0, Ctx);
           Collect(Stmts[I].DefaultBody, nullptr, 0, Ctx);
           for (auto &ClauseBody : Stmts[I].EHClauseBodies)
-            Collect(ClauseBody, nullptr, 0, Ctx);
+            Collect(ClauseBody, ExceptOnly ? ChildCont : nullptr, 0, Ctx);
         }
       };
   // A composed tail needs its epilogue's tail first; the epilogue usually
@@ -1241,6 +1283,297 @@ bool loopsForArmsJumpingBack(std::vector<HighStmt> &Body) {
           L.insert(L.begin() + K, std::move(Loop));
           I = K;
           Changed = true;
+        }
+      };
+  Visit(Body);
+  return Changed;
+}
+
+bool loopsForNestedJumpsBack(std::vector<HighStmt> &Body) {
+  std::map<va_t, unsigned> Uses, Starts;
+  std::function<void(const std::vector<HighStmt> &)> Count =
+      [&](const std::vector<HighStmt> &L) {
+        for (size_t I = 0; I < L.size(); ++I) {
+          const HighStmt &S = L[I];
+          if (S.Kind == StmtKind::Goto)
+            ++Uses[S.GotoTarget];
+          for (const HighEHClause &Clause : S.EHClauses)
+            ++Uses[Clause.HandlerVA];
+          if (S.Addr != 0 && S.Addr != InvalidVA &&
+              (I == 0 || L[I - 1].Addr != S.Addr))
+            ++Starts[S.Addr];
+          Count(S.Body);
+          Count(S.ElseBody);
+          for (const auto &C : S.Cases)
+            Count(C.Body);
+          Count(S.DefaultBody);
+          for (const auto &ClauseBody : S.EHClauseBodies)
+            Count(ClauseBody);
+        }
+      };
+  Count(Body);
+  // Turn the jumps to \p X in \p L into `continue` of a loop around \p L:
+  // those reached through if/else arms, blocks and switch cases, since a
+  // switch owns no continue.  A jump carrying an entered label leaves an
+  // empty block for it.  Returns how many were turned.
+  std::function<unsigned(std::vector<HighStmt> &, va_t)> Jumps =
+      [&](std::vector<HighStmt> &L, va_t X) {
+        unsigned N = 0;
+        for (size_t I = 0; I < L.size(); ++I) {
+          HighStmt &S = L[I];
+          if (S.Kind == StmtKind::Goto && S.GotoTarget == X) {
+            ++N;
+            HighStmt Next;
+            Next.Kind = StmtKind::Continue;
+            if (S.Addr != 0 && S.Addr != InvalidVA && Uses.count(S.Addr) &&
+                (I == 0 || L[I - 1].Addr != S.Addr)) {
+              HighStmt Anchor;
+              Anchor.Kind = StmtKind::Block;
+              Anchor.Addr = S.Addr;
+              S = std::move(Anchor);
+              L.insert(L.begin() + static_cast<ptrdiff_t>(++I),
+                       std::move(Next));
+            } else {
+              S = std::move(Next);
+            }
+            continue;
+          }
+          switch (S.Kind) {
+          case StmtKind::If:
+          case StmtKind::IfElse:
+          case StmtKind::Block:
+            N += Jumps(S.Body, X);
+            N += Jumps(S.ElseBody, X);
+            break;
+          case StmtKind::Switch:
+            for (auto &C : S.Cases)
+              N += Jumps(C.Body, X);
+            N += Jumps(S.DefaultBody, X);
+            break;
+          default:
+            break;
+          }
+        }
+        return N;
+      };
+  // The targets of the jumps Jumps turns in \p S.
+  std::function<void(const HighStmt &, std::set<va_t> &)> Targets =
+      [&](const HighStmt &S, std::set<va_t> &Out) {
+        switch (S.Kind) {
+        case StmtKind::Goto:
+          Out.insert(S.GotoTarget);
+          break;
+        case StmtKind::If:
+        case StmtKind::IfElse:
+        case StmtKind::Block:
+          for (const auto *List : {&S.Body, &S.ElseBody})
+            for (const HighStmt &Child : *List)
+              Targets(Child, Out);
+          break;
+        case StmtKind::Switch:
+          for (const auto &C : S.Cases)
+            for (const HighStmt &Child : C.Body)
+              Targets(Child, Out);
+          for (const HighStmt &Child : S.DefaultBody)
+            Targets(Child, Out);
+          break;
+        default:
+          break;
+        }
+      };
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (HighStmt &S : L) {
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
+        }
+        std::vector<std::set<va_t>> Reach(L.size());
+        for (size_t I = 0; I < L.size(); ++I)
+          Targets(L[I], Reach[I]);
+        for (size_t K = 0; K < L.size(); ++K) {
+          const va_t X = L[K].Addr;
+          if (X == 0 || X == InvalidVA || (K != 0 && L[K - 1].Addr == X) ||
+              Starts[X] != 1 || !Uses.count(X))
+            continue;
+          // The last statement after the label holding such a jump.
+          size_t Last = K;
+          for (size_t I = K + 1; I < L.size(); ++I)
+            if (Reach[I].count(X))
+              Last = I;
+          if (Last == K)
+            continue;
+          std::vector<HighStmt> LoopBody(L.begin() + K, L.begin() + Last + 1);
+          if (hasLooseBreakOrContinue(LoopBody))
+            continue;
+          // Jumps from the label's own statement onward restart the loop.
+          const unsigned Replaced = Jumps(LoopBody, X);
+          HighStmt Leave;
+          Leave.Kind = StmtKind::Break;
+          LoopBody.push_back(std::move(Leave));
+          HighStmt Loop;
+          Loop.Kind = StmtKind::While;
+          Loop.Cond = HighExpr::makeConst(1, 1);
+          Loop.LoopHeaderAddr = X;
+          Loop.Body = std::move(LoopBody);
+          Uses[X] -= Replaced;
+          if (!Uses[X])
+            Uses.erase(X);
+          L.erase(L.begin() + static_cast<ptrdiff_t>(K),
+                  L.begin() + static_cast<ptrdiff_t>(Last) + 1);
+          L.insert(L.begin() + static_cast<ptrdiff_t>(K), std::move(Loop));
+          Reach.erase(Reach.begin() + static_cast<ptrdiff_t>(K),
+                      Reach.begin() + static_cast<ptrdiff_t>(Last) + 1);
+          Reach.insert(Reach.begin() + static_cast<ptrdiff_t>(K),
+                       std::set<va_t>());
+          Targets(L[K], Reach[K]);
+          Changed = true;
+        }
+      };
+  Visit(Body);
+  return Changed;
+}
+
+bool loopJumpsAsBreakAndContinue(std::vector<HighStmt> &Body) {
+  std::map<va_t, unsigned> Uses, Starts;
+  std::function<void(const std::vector<HighStmt> &, va_t)> Count =
+      [&](const std::vector<HighStmt> &L, va_t Parent) {
+        for (size_t I = 0; I < L.size(); ++I) {
+          const HighStmt &S = L[I];
+          if (S.Kind == StmtKind::Goto)
+            ++Uses[S.GotoTarget];
+          for (const HighEHClause &Clause : S.EHClauses)
+            ++Uses[Clause.HandlerVA];
+          // A first child sharing its parent's address prints under the
+          // parent's label.
+          if (S.Addr != 0 && S.Addr != InvalidVA &&
+              S.Addr != (I == 0 ? Parent : L[I - 1].Addr))
+            ++Starts[S.Addr];
+          if (S.Kind == StmtKind::While && S.LoopHeaderAddr != 0 &&
+              S.LoopHeaderAddr != InvalidVA && S.LoopHeaderAddr != S.Addr)
+            ++Starts[S.LoopHeaderAddr];
+          Count(S.Body, S.Addr);
+          Count(S.ElseBody, 0);
+          for (const auto &C : S.Cases)
+            Count(C.Body, 0);
+          Count(S.DefaultBody, 0);
+          for (const auto &ClauseBody : S.EHClauseBodies)
+            Count(ClauseBody, 0);
+        }
+      };
+  Count(Body, 0);
+  auto Unique = [&](va_t Addr) {
+    return Addr != 0 && Addr != InvalidVA && Starts[Addr] == 1;
+  };
+  // Turn the jumps to \p Targets in \p L into \p Kind.  A loop owns both
+  // break and continue, and a switch owns break, so neither is entered for
+  // the kind it owns; a try is not entered.  A jump carrying an entered
+  // label leaves an empty block for it.
+  std::function<unsigned(std::vector<HighStmt> &, const std::set<va_t> &,
+                         StmtKind)>
+      Turn = [&](std::vector<HighStmt> &L, const std::set<va_t> &Targets,
+                 StmtKind Kind) {
+        unsigned N = 0;
+        for (size_t I = 0; I < L.size(); ++I) {
+          HighStmt &S = L[I];
+          if (S.Kind == StmtKind::Goto && Targets.count(S.GotoTarget)) {
+            if (--Uses[S.GotoTarget] == 0)
+              Uses.erase(S.GotoTarget);
+            ++N;
+            HighStmt Jump;
+            Jump.Kind = Kind;
+            if (S.Addr != 0 && S.Addr != InvalidVA && Uses.count(S.Addr) &&
+                (I == 0 || L[I - 1].Addr != S.Addr)) {
+              HighStmt Anchor;
+              Anchor.Kind = StmtKind::Block;
+              Anchor.Addr = S.Addr;
+              S = std::move(Anchor);
+              L.insert(L.begin() + static_cast<ptrdiff_t>(++I),
+                       std::move(Jump));
+            } else {
+              S = std::move(Jump);
+            }
+            continue;
+          }
+          switch (S.Kind) {
+          case StmtKind::If:
+          case StmtKind::IfElse:
+          case StmtKind::Block:
+            N += Turn(S.Body, Targets, Kind);
+            N += Turn(S.ElseBody, Targets, Kind);
+            break;
+          case StmtKind::Switch:
+            if (Kind == StmtKind::Continue) {
+              for (auto &C : S.Cases)
+                N += Turn(C.Body, Targets, Kind);
+              N += Turn(S.DefaultBody, Targets, Kind);
+            }
+            break;
+          default:
+            break;
+          }
+        }
+        return N;
+      };
+  auto IsAnchor = [](const HighStmt &S) {
+    return S.Kind == StmtKind::Nop ||
+           (S.Kind == StmtKind::Block && S.Body.empty());
+  };
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (size_t I = 0; I < L.size(); ++I) {
+          HighStmt &S = L[I];
+          const bool Loop = S.Kind == StmtKind::While ||
+                            S.Kind == StmtKind::DoWhile ||
+                            S.Kind == StmtKind::For;
+          if (Loop) {
+            // What runs after the loop: the anchors after it and the
+            // statement they lead to.
+            std::set<va_t> After;
+            for (size_t J = I + 1; J < L.size(); ++J) {
+              if (Unique(L[J].Addr) && L[J].Addr != L[J - 1].Addr)
+                After.insert(L[J].Addr);
+              if (!IsAnchor(L[J]))
+                break;
+            }
+            if (!After.empty())
+              Changed |= Turn(S.Body, After, StmtKind::Break) != 0;
+            // A while loop's test, and for an always-true one the top of
+            // its body.
+            std::set<va_t> Top;
+            if (S.Kind == StmtKind::While) {
+              // The header's label prints before the loop only as the loop
+              // statement's own address.
+              if (S.LoopHeaderAddr == S.Addr && Unique(S.Addr) &&
+                  (I == 0 || L[I - 1].Addr != S.Addr))
+                Top.insert(S.Addr);
+              const bool Always = S.Cond && S.Cond->Kind == ExprKind::Const &&
+                                  S.Cond->ConstVal != 0;
+              for (size_t J = 0; Always && J < S.Body.size(); ++J) {
+                const va_t Addr = S.Body[J].Addr;
+                if (Addr != (J == 0 ? S.Addr : S.Body[J - 1].Addr) &&
+                    Unique(Addr))
+                  Top.insert(Addr);
+                if (!IsAnchor(S.Body[J]))
+                  break;
+              }
+            }
+            if (!Top.empty())
+              Changed |= Turn(S.Body, Top, StmtKind::Continue) != 0;
+          }
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
         }
       };
   Visit(Body);
