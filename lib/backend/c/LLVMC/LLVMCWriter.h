@@ -667,6 +667,11 @@ public:
   std::map<const llvm::BasicBlock *, size_t> DeferredBlockLabels;
   std::set<const llvm::BasicBlock *> ReferencedBlocks;
   bool HasCIntrinsics = false;
+  /// A simple load or store has a type with an aligned(1), may_alias alias,
+  /// so the aliases are declared when UseUnalignedPointers is set.
+  bool NeedsUnalignedTypes = false;
+  /// The aliases were declared; an access spelled through one needs that.
+  bool UnalignedTypesWritten = false;
   std::set<std::string> IntrinsicMappedNames;
   LLVMCAnalysisState Analysis;
   llvm::DominatorTree Dominators;

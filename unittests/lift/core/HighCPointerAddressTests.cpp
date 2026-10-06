@@ -101,14 +101,18 @@ ExprPtr byteOffset(ExprPtr Base = parameter(0)) {
                                                  HighExpr::makeConst(4, 8)));
 }
 
+// \p Portable prints memory accesses as byte copies instead of the default
+// aligned(1), may_alias pointers, for tests that inspect that spelling.
 std::string emitFunctions(const std::vector<HighFunc> &Functions,
                           Arch TheArch = Arch::X64,
-                          const BinaryImage *Image = nullptr) {
+                          const BinaryImage *Image = nullptr,
+                          bool Portable = false) {
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.TheArch = TheArch;
   Options.Image = Image;
+  Options.UseUnalignedPointers = !Portable;
   EXPECT_TRUE(HighCEmitter().emit(Functions, OS, Options));
   OS.flush();
   return Source;
@@ -299,6 +303,59 @@ std::vector<PortableStoreCall> portableStoreCalls(std::string_view Source) {
         {std::string_view(Type.data(), Type.size()),
          Source.substr(Address, Source.find(';', Address) - Address),
          Source.substr(Value, Source.find(';', Value) - Value)});
+  }
+  // `((*(neverd_unaligned_u32 *)(uintptr_t)(ADDRESS)) = VALUE);`, the
+  // aligned(1), may_alias spelling of a scalar store.
+  static constexpr std::pair<std::string_view, std::string_view> Aliases[] = {
+      {"neverd_unaligned_u8", "uint8_t"},
+      {"neverd_unaligned_i8", "int8_t"},
+      {"neverd_unaligned_u16", "uint16_t"},
+      {"neverd_unaligned_i16", "int16_t"},
+      {"neverd_unaligned_u32", "uint32_t"},
+      {"neverd_unaligned_i32", "int32_t"},
+      {"neverd_unaligned_u64", "uint64_t"},
+      {"neverd_unaligned_i64", "int64_t"},
+      {"neverd_unaligned_u128", "unsigned __int128"},
+      {"neverd_unaligned_i128", "__int128"},
+      {"neverd_unaligned_f32", "float"},
+      {"neverd_unaligned_f64", "double"}};
+  // The offset just past the parenthesis closing one opened before \p At.
+  auto Close = [&](size_t At) {
+    for (unsigned Depth = 1; At < Source.size(); ++At) {
+      if (Source[At] == '(')
+        ++Depth;
+      else if (Source[At] == ')' && --Depth == 0)
+        return At + 1;
+    }
+    return std::string_view::npos;
+  };
+  constexpr std::string_view AliasPrefix = "((*(neverd_unaligned_";
+  constexpr std::string_view Cast = " *)(uintptr_t)(";
+  for (size_t At = Source.find(AliasPrefix); At != std::string_view::npos;
+       At = Source.find(AliasPrefix, At + AliasPrefix.size())) {
+    const size_t NameStart = At + 4;
+    const size_t NameEnd = Source.find(Cast, NameStart);
+    if (NameEnd == std::string_view::npos)
+      continue;
+    const auto Alias = Source.substr(NameStart, NameEnd - NameStart);
+    const auto *Known = llvm::find_if(
+        Aliases, [&](const auto &Entry) { return Entry.first == Alias; });
+    if (Known == std::end(Aliases))
+      continue;
+    const size_t AddressStart = NameEnd + Cast.size();
+    const size_t AddressEnd = Close(AddressStart);
+    constexpr std::string_view Assign = ") = ";
+    if (AddressEnd == std::string_view::npos ||
+        Source.substr(AddressEnd, Assign.size()) != Assign)
+      continue;
+    const size_t ValueStart = AddressEnd + Assign.size();
+    const size_t ValueEnd = Close(ValueStart);
+    if (ValueEnd == std::string_view::npos)
+      continue;
+    Stores.push_back(
+        {Known->second,
+         Source.substr(AddressStart, AddressEnd - 1 - AddressStart),
+         Source.substr(ValueStart, ValueEnd - 1 - ValueStart)});
   }
   return Stores;
 }
@@ -8858,7 +8915,8 @@ TEST(HighCPointerAddresses, X86StdcallPushesBecomeCallArgs) {
   MedToHighConverter Converter;
   Converter.setFuncNames(&Names);
   HighFunc High = Converter.convert(Med, TheArch);
-  const std::string Source = emitFunctions({High}, TheArch);
+  const std::string Source =
+      emitFunctions({High}, TheArch, nullptr, /*Portable=*/true);
   EXPECT_NE(Source.find("RaiseException(0xE0421001, 0, 0, 0)"),
             std::string::npos)
       << Source;
@@ -12381,6 +12439,8 @@ TEST(LLVMCPointerAddresses, RecordVisibleRegisterSpillOfZeroIsKept) {
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
+  // The checks read the portable byte-copy spelling.
+  Options.UseUnalignedPointers = false;
   Options.TheArch = Arch::X64;
   Options.Format = BinaryFormat::COFF;
   Options.EmitIncludes = false;
@@ -12970,6 +13030,8 @@ TEST(LLVMCPointerAddresses, KeepsNullFieldDiamondWhenReadNeedsStatement) {
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
+  // The checks read the portable byte-copy spelling.
+  Options.UseUnalignedPointers = false;
   Options.EmitIncludes = false;
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
   OS.flush();
@@ -27849,7 +27911,8 @@ TEST(HighCPointerAddresses, WholeSlotXmmCopyForwardsWithoutTemp) {
   Use.CallExpr =
       HighExpr::makeCall("LookupTextW", 0x140002000, {parameter(0), SlotB});
   Func.Body = {Init, Load, Store, Use};
-  const std::string Source = emitFunctions({Func});
+  const std::string Source =
+      emitFunctions({Func}, Arch::X64, nullptr, /*Portable=*/true);
   EXPECT_NE(Source.find("LookupTextW("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t116"), std::string::npos) << Source;
   EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
@@ -27907,7 +27970,8 @@ TEST(HighCPointerAddresses, WholeSlotCopyPropagatesRecordType) {
       HighExpr::makeCall("use_pack", 0x140002100,
                          {HighExpr::makeLoad(SlotB, NdType::makeInt(16))});
   Func.Body = {Init, Load, Store, UseA, UseB};
-  const std::string Source = emitFunctions({Func});
+  const std::string Source =
+      emitFunctions({Func}, Arch::X64, nullptr, /*Portable=*/true);
   EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
   expectPortableStore(Source, "__int128", "- 112", "__builtin_memcpy(&");
@@ -28107,7 +28171,8 @@ TEST(HighCPointerAddresses,
   Use.CallExpr = HighExpr::makeCall("use_args", 0x140002000, {First, Second});
   Func.Body = {Color, Copy, Tag, Use};
 
-  const std::string Source = emitFunctions({Func});
+  const std::string Source =
+      emitFunctions({Func}, Arch::X64, nullptr, /*Portable=*/true);
   const auto Stores = portableStoreCalls(Source);
   ASSERT_EQ(Stores.size(), 3u) << Source;
   EXPECT_EQ(Stores[0].Type, "uint32_t") << Source;
@@ -33073,7 +33138,7 @@ TEST(HighCPointerAddresses, RaiseSecurityFailureOmitsSuccessReturn) {
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("raise_securityfailure("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("return t3"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("t3"), std::string::npos) << Source;
+  EXPECT_FALSE(std::regex_search(Source, std::regex(R"(\bt3\b)"))) << Source;
 }
 
 TEST(HighCPointerAddresses, GsTebLoadPrintsReadGsQword) {
@@ -33794,6 +33859,8 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsThrow) {
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
+  // The checks read the portable byte-copy spelling.
+  Options.UseUnalignedPointers = false;
   Options.EmitIncludes = false;
   Options.TheArch = Img->Arch;
   Options.Format = Img->Format;
@@ -33994,6 +34061,8 @@ std::string llvmcOnlyFunction(BinaryImage Img, va_t Entry, bool NoOpt = true) {
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
+  // The checks read the portable byte-copy spelling.
+  Options.UseUnalignedPointers = false;
   Options.EmitIncludes = false;
   Options.TheArch = Img.Arch;
   Options.Format = Img.Format;
@@ -34005,7 +34074,8 @@ std::string llvmcOnlyFunction(BinaryImage Img, va_t Entry, bool NoOpt = true) {
   return Source;
 }
 
-std::string highcOnlyFunction(BinaryImage Img, va_t Entry) {
+std::string highcOnlyFunction(BinaryImage Img, va_t Entry,
+                              bool Portable = false) {
   llvm::LLVMContext Ctx;
   PipelineOptions Opts;
   Opts.EmitDumpOutput = false;
@@ -34024,10 +34094,13 @@ std::string highcOnlyFunction(BinaryImage Img, va_t Entry) {
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
+  // The checks read the portable byte-copy spelling.
+  Options.UseUnalignedPointers = false;
   Options.EmitIncludes = false;
   Options.TheArch = Img.Arch;
   Options.Format = Img.Format;
   Options.Image = &Img;
+  Options.UseUnalignedPointers = !Portable;
   if (!HighCEmitter().emit({*Attached}, OS, Options))
     return {};
   OS.flush();
@@ -34047,7 +34120,8 @@ TEST(HighCPointerAddresses, CorpusBufferedCatchUsesParentFrameForIndex) {
   Options.OnlyFunctionEntries.insert(Entry);
   auto Img = loadBinary(Path, Options);
   ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
-  const std::string Source = highcOnlyFunction(std::move(*Img), Entry);
+  const std::string Source =
+      highcOnlyFunction(std::move(*Img), Entry, /*Portable=*/true);
   ASSERT_FALSE(Source.empty()) << Source;
 
   const auto Stores = portableStoreCalls(Source);
@@ -34104,7 +34178,8 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   Options.OnlyFunctionEntries.insert(Entry);
   auto Img = loadBinary(Path, Options);
   ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
-  const std::string Source = highcOnlyFunction(std::move(*Img), Entry);
+  const std::string Source =
+      highcOnlyFunction(std::move(*Img), Entry, /*Portable=*/true);
   ASSERT_FALSE(Source.empty()) << Source;
 
   const auto Stores = portableStoreCalls(Source);
@@ -34619,6 +34694,8 @@ TEST(LLVMCPointerAddresses, NamedImageLoadKeepsAssignWhenStored) {
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
+  // The checks read the portable byte-copy spelling.
+  Options.UseUnalignedPointers = false;
   Options.TheArch = Arch::X64;
   Options.Format = BinaryFormat::COFF;
   Options.EmitIncludes = false;
@@ -35030,6 +35107,8 @@ TEST(LLVMCPointerAddresses, IntegerFieldStorePreservesCallViewAndStoreWidth) {
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
+  // The checks read the portable byte-copy spelling.
+  Options.UseUnalignedPointers = false;
   Options.EmitIncludes = false;
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
@@ -36649,6 +36728,8 @@ TEST(LLVMCPointerAddresses, WideArgListCopyTypesWeakerDest) {
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
+  // The checks read the portable byte-copy spelling.
+  Options.UseUnalignedPointers = false;
   Options.EmitIncludes = false;
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
@@ -39467,7 +39548,8 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   llvm::raw_string_ostream HighOS(HighDump);
   Pipeline::dumpHighIR(Result.HighFuncs, HighOS);
   HighOS.flush();
-  const std::string Source = highcOnlyFunction(std::move(*Img), Entry);
+  const std::string Source =
+      highcOnlyFunction(std::move(*Img), Entry, /*Portable=*/true);
   ASSERT_FALSE(Source.empty()) << Source << "\n" << Blocks << HighDump;
   EXPECT_NE(Source.find("__except"), std::string::npos) << Source << "\n"
                                                         << Blocks << HighDump;
@@ -39540,6 +39622,8 @@ TEST(HighCPointerAddresses, RsdsPdbNamesFrameSlotsOnSafetyFixture) {
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions COpts;
+  // The checks read the portable byte-copy spelling.
+  COpts.UseUnalignedPointers = false;
   COpts.EmitIncludes = false;
   COpts.TheArch = Img->Arch;
   COpts.Format = Img->Format;
@@ -41991,7 +42075,8 @@ TEST(HighCPointerAddresses, GuardDispatchTargetChosenOnTwoPathsStaysAssigned) {
   Symbol DSym = Symbol::makeFunc(Dispatch);
   DSym.Name = "_guard_dispatch_icall";
   Img.Symbols.push_back(DSym);
-  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  const std::string HighC =
+      highcOnlyFunction(std::move(Img), Entry, /*Portable=*/true);
   EXPECT_EQ(HighC.find("guard_dispatch_icall"), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("= arg2;"), std::string::npos) << HighC;
@@ -42284,7 +42369,7 @@ TEST(HighCPointerAddresses, SwapgsLeavesRaxAsItWas) {
                                      0x48, 0x89, 0x42, 0x08, // mov [rdx+8], rax
                                      0xc3};
   const std::string HighC =
-      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry, /*Portable=*/true);
   EXPECT_EQ(HighC.find("= __swapgs("), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("= __halt("), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("__swapgs();"), std::string::npos) << HighC;

@@ -35,8 +35,9 @@ struct CEmitterOptions {
   /// Spell ordinary scalar byte accesses with Clang/GCC aligned(1), may_alias
   /// pointer types. This preserves unaligned and overlapping storage without
   /// asserting an effective type. Ordered and unusual-width accesses retain
-  /// their existing exact semantics. The default uses portable byte copies.
-  bool UseUnalignedPointers = false;
+  /// their existing exact semantics. This is the default; clear it for
+  /// portable byte copies, which any C compiler accepts.
+  bool UseUnalignedPointers = true;
   Arch TheArch = Arch::X64;
   BinaryFormat Format = BinaryFormat::Unknown;
   /// When set, HighC can fold rdata integer loads, print printable

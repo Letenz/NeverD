@@ -171,11 +171,15 @@ TEST(HighCStoreForwarding, BoundsRepeatedTransitiveExpansion) {
       << Body->take_front(4096).str();
 }
 
-std::string emitBody(const HighFunc &Func, Arch Architecture = Arch::X64) {
+// \p Portable prints memory accesses as byte copies instead of the default
+// aligned(1), may_alias pointers, for tests that inspect that spelling.
+std::string emitBody(const HighFunc &Func, Arch Architecture = Arch::X64,
+                     bool Portable = false) {
   std::string Output;
   llvm::raw_string_ostream OS(Output);
   CEmitterOptions Options;
   Options.TheArch = Architecture;
+  Options.UseUnalignedPointers = !Portable;
   EXPECT_TRUE(HighCEmitter().emit({Func}, OS, Options));
   OS.flush();
   auto Body = functionBody(Output, Func.Name);
@@ -578,7 +582,7 @@ TEST(HighCStoreForwarding,
   Address->Operands.push_back(HighExpr::makeLoad(frameSlot(8), I32));
   Func.Body.push_back(ret(std::move(Address)));
 
-  const auto Body = emitBody(Func);
+  const auto Body = emitBody(Func, Arch::X64, /*Portable=*/true);
   // Escaped frame addresses use the common backing buffer so the store and
   // returned pointer retain the same memory identity.
   EXPECT_NE(Body.find("uint8_t stack_storage["), std::string::npos) << Body;

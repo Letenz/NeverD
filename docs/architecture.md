@@ -1092,7 +1092,9 @@ BFMMLA intrinsic retains native float/bfloat lanes and emits the ACLE operation;
 its matrix arithmetic is not approximated with scalar multiply/add.
 Inline and materialized LLVM GEP expressions share data-layout-derived byte
 offsets, including nested aggregates and signed dynamic indices. Ordinary raw
-scalar accesses with insufficient alignment use exact-width byte copies.
+scalar accesses with insufficient alignment use Clang/GCC `aligned(1)`,
+`may_alias` scalar types by default (`CEmitterOptions::UseUnalignedPointers`),
+and exact-width byte copies for other widths or when that option is cleared.
 Integer comparisons share one LLVMC rendering rule across inline expressions,
 assigned results, and inverted branches. Operands retain their LLVM bit width
 before C integer promotion, and signed predicates interpret that width's sign
