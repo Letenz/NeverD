@@ -452,6 +452,26 @@ the same fixed-copy policy used by Linux clock services. See the Linux
 [AArch64 layout](https://github.com/torvalds/linux/blob/v6.6/include/uapi/asm-generic/stat.h)
 and [x64 layout](https://github.com/torvalds/linux/blob/v6.6/arch/x86/include/uapi/asm/stat.h).
 
+`newfstatat` (x64 262, AArch64 79), Bionic `fstatat`/`fstatat64` and variadic
+`syscall` query those same observations. Absolute canonical paths ignore dirfd;
+missing entries return `ENOENT`, and traversal through a regular file returns
+`ENOTDIR`. `AT_SYMLINK_NOFOLLOW` and `AT_NO_AUTOMOUNT` are accepted for this
+catalogue, which has neither symlinks nor automounts. A non-NULL empty pathname
+with `AT_EMPTY_PATH` queries an existing descriptor without changing its cursor;
+without that flag it returns `ENOENT`. Closed descriptors return `EBADF`.
+The directory and flags arguments use their low 32 bits. Invalid flag bits
+return `EINVAL` before path errors; the complete pathname is imported before
+status output, so input and output may overlap.
+
+Relative paths, directory metadata, the current working directory, NULL with
+`AT_EMPTY_PATH`, and stat synchronization flags remain unsupported. The last two
+have changed across kernel releases; the model does not infer a kernel version.
+Path queries use the same fixed-copy policy and explicit metadata requirement
+as descriptor queries. Contracts were checked against Linux
+[v4.9](https://github.com/torvalds/linux/blob/v4.9/fs/stat.c) and
+[v6.12](https://github.com/torvalds/linux/blob/v6.12/fs/stat.c), and the LP64
+[Bionic service aliases](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/SYSCALLS.TXT).
+
 <!-- i18n-section: windows-pe64 -->
 
 ## Windows PE64 profile

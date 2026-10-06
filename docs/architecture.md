@@ -3330,6 +3330,14 @@ If/else structuring visits existing child lists before rewriting their parent. A
 
 `LinuxServices` owns one workload's Linux memory service state and file descriptor table. Linux process traps and Android Bionic wrappers share this instance; thread identity is supplied at each service boundary. `LinuxMemory` retains mapping ownership, while `LinuxFiles` owns immutable catalogue descriptions, open cursors and descriptor lifetime. Bionic alone owns errno conversion. Explicit `LinuxFileOptions` and strict JSON validation share one Linux contract; neither catalogue lookup nor guest file I/O reaches the host filesystem. Unsupported inputs do not acquire default file contents.
 
+`LinuxFiles.cpp` dispatches typed file operations. Catalogue validation lives in
+`LinuxFileOptions.cpp`, path import and lookup in `LinuxFilePaths.cpp`, descriptor
+ownership and transfers in `LinuxFileIO.cpp`, and metadata serialization in
+`LinuxFileStatus.cpp`. These files implement the same process-owned `LinuxFiles`
+object; they do not maintain separate catalogues or cursors. `fstatat` reuses the
+path classifier and `fstat` serializer, while Bionic only adapts arguments and
+errno through its existing service registry.
+
 `LinuxFiles` shares pathname import and catalogue classification between open
 and existence queries. The catalogue's files, ancestor directories and root
 define the bounded `F_OK` namespace. Existence checks consume no descriptor;

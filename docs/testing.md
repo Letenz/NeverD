@@ -2764,6 +2764,17 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `AndroidFileTests.cpp` and the original `linux_files.c` fixture exercise O0/O2 code, ordinary/APS2/RELR Android relocation formats and x64/AArch64 Linux processes. Cases cover binary bytes, independent opens, cross-thread/raw/Bionic cursor sharing, errno, lowest descriptor reuse (including standard streams), capacity/error precedence, signed seek boundaries, page-fault prefixes, EOF and page-tail path termination. Dynamic bindings preserve provider identity and closed-provider refusal. `ProcessReportTests.cpp` checks strict catalogue fields, limits, conflicting paths and profile restrictions. C API/Python/CLI checks use the same explicit inputs. Unavailable transports remain skips; these memory-file cases do not establish host filesystem or procfs equivalence.
 
+`AndroidFileStatusAtTests.cpp` checks `fstatat` and `fstatat64`, variadic syscall
+and raw SVC against the same explicit observations. Independent full-structure
+and byte expectations cover padding, wide timestamps, unaligned and overlapping
+path/output buffers, terminated page tails, untouched output on errors, low-word
+arguments, descriptor lifetime and unchanged cursors. Unmodeled directory/CWD
+metadata, version-specific NULL and synchronization flags, and mixed output
+permissions remain pending calls. The shared fixture also runs as O0/O2 x64 and
+AArch64 Linux executables; C API, Python and CLI execute its success and missing
+path cases. Available native ARM64 transports compare complete reports with
+Unicorn, normalizing only backend identity and its selection reason.
+
 File-existence cases cover raw x64 `access`, x64/AArch64 `faccessat`, Bionic
 imports and variadic syscalls, shared catalogue queries from another guest
 thread, private errno, dynamic provider lifetime, implicit directories,

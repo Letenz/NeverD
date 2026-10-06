@@ -16,6 +16,7 @@ enum {
   Close = 57,
   Seek = 62,
   Fstat = 80,
+  FstatAt = 79,
   Write = 64,
   Protect = 226,
   Exit = 93,
@@ -31,6 +32,7 @@ enum {
   Close = 3,
   Seek = 8,
   Fstat = 5,
+  FstatAt = 262,
   Write = 1,
   Protect = 10,
   Exit = 60,
@@ -367,6 +369,62 @@ U64 files_status(void) {
   return 0;
 }
 
+U64 files_status_at(void) {
+  struct {
+    U64 Before;
+    struct FileStatus Status;
+    U64 After;
+  } Out;
+  for (unsigned I = 0; I < sizeof(Out); ++I)
+    ((volatile unsigned char *)&Out)[I] = 0xa5;
+  // Absolute paths ignore dirfd and use only the int-width flag bits.
+  CHECK(raw(FstatAt, 0x12345678ffffffffUL, (U64)Path, (U64)&Out.Status,
+            0xabcdef0000000900UL),
+        0);
+  CHECK(verify_status(&Out.Status), 0);
+  CHECK(Out.Before, 0xa5a5a5a5a5a5a5a5UL);
+  CHECK(Out.After, 0xa5a5a5a5a5a5a5a5UL);
+  U64 F = raw(OpenAt, (U64)-100, (U64)Path, 0, 0);
+  CHECK(F, 3);
+  CHECK(raw(Read, F, (U64)Pages, 1, 0), 1);
+  CHECK(raw(FstatAt, F | 0x9876543200000000UL, (U64) "", (U64)&Out.Status,
+            0x1000),
+        0);
+  CHECK(verify_status(&Out.Status), 0);
+  CHECK(raw(Seek, F, 0, 1, 0), 1);
+  CHECK(raw(Read, F, (U64)Pages, 1, 0), 1);
+  CHECK(Pages[0], 0xff);
+  // Import the complete path before writing overlapping status bytes.
+  for (unsigned I = 0; I < sizeof(Path); ++I)
+    Pages[I + 1] = Path[I];
+  CHECK(raw(FstatAt, F, (U64)Pages + 1, (U64)Pages + 1, 0), 0);
+  for (unsigned I = 0; I < sizeof(Out.Status); ++I)
+    CHECK(Pages[I + 1], ((unsigned char *)&Out.Status)[I]);
+  CHECK(raw(FstatAt, F, 1, (U64)&Out.Status, 0x40000000), (U64)-22);
+  CHECK(raw(FstatAt, F, 1, (U64)&Out.Status, 0), (U64)-14);
+  CHECK(raw(FstatAt, F, (U64) "/missing", 1, 0), (U64)-2);
+  CHECK(raw(FstatAt, F, (U64) "/fixture/data/child", 1, 0), (U64)-20);
+  CHECK(raw(FstatAt, F, (U64) "", 1, 0), (U64)-2);
+  CHECK(raw(FstatAt, F, (U64)Path, 1, 0), (U64)-14);
+  CHECK(raw(Close, F, 0, 0, 0), 0);
+  CHECK(raw(FstatAt, F, (U64) "", 1, 0x1000), (U64)-9);
+  CHECK(verify_status(&Out.Status), 0);
+  // The first NUL is the last readable byte, followed by an inaccessible page.
+  for (unsigned I = 0; I < sizeof(Path); ++I)
+    Pages[4096 - sizeof(Path) + I] = Path[I];
+  CHECK(raw(Protect, (U64)Pages + 4096, 4096, 0, 0), 0);
+  CHECK(raw(FstatAt, (U64)-100, (U64)Pages + 4096 - sizeof(Path),
+            (U64)&Out.Status, 0),
+        0);
+  CHECK(verify_status(&Out.Status), 0);
+  CHECK(raw(FstatAt, F, (U64)Path, (U64)Pages + 4096, 0), (U64)-14);
+  Pages[4095] = 'x';
+  CHECK(raw(FstatAt, F, (U64)Pages + 4095, 1, 0), (U64)-14);
+  CHECK(Out.Before, 0xa5a5a5a5a5a5a5a5UL);
+  CHECK(Out.After, 0xa5a5a5a5a5a5a5a5UL);
+  return 0;
+}
+
 U64 files_status_unsupported(U64 Mode, U64 Buffer) {
   if (Mode == 1)
     return raw(Fstat, 1, Buffer, 0, 0);
@@ -405,6 +463,8 @@ extern I64 lseek(int, I64, int);
 extern I64 lseek64(int, I64, int);
 extern int fstat(int, struct FileStatus *);
 extern int fstat64(int, struct FileStatus *);
+extern int fstatat(int, const char *, struct FileStatus *, int);
+extern int fstatat64(int, const char *, struct FileStatus *, int);
 extern int access(const char *, int);
 extern int faccessat(int, const char *, int, int);
 extern int mkdir(const char *, U32);
@@ -505,6 +565,61 @@ U64 files_status_bionic(void) {
   CHECK(fstat64(F, &Status), 0);
   CHECK(verify_status(&Status), 0);
   return 0;
+}
+
+U64 files_status_at_call(U64 Route, U64 Directory, U64 Name, U64 Output,
+                         U64 Flags, U64 ObservedErrno) {
+  *__errno() = 83;
+  I64 Result;
+  switch (Route) {
+  case 0:
+    Result = fstatat(Directory, (const char *)Name, (struct FileStatus *)Output,
+                     Flags);
+    break;
+  case 1:
+    Result = fstatat64(Directory, (const char *)Name,
+                       (struct FileStatus *)Output, Flags);
+    break;
+  case 2:
+    Result = syscall(FstatAt, Directory, Name, Output, Flags);
+    break;
+  default:
+    Result = raw(FstatAt, Directory, Name, Output, Flags);
+    break;
+  }
+  *(U64 *)ObservedErrno = *__errno();
+  return Result;
+}
+
+U64 files_status_at_bionic(void) {
+  struct FileStatus Status;
+  U64 ObservedErrno;
+  for (U64 Route = 0; Route < 4; ++Route) {
+    CHECK(files_status_at_call(Route, (U64)-100, (U64)Path, (U64)&Status, 0,
+                               (U64)&ObservedErrno),
+          0);
+    CHECK(ObservedErrno, 83);
+    CHECK(verify_status(&Status), 0);
+    CHECK(files_status_at_call(Route, (U64)-100, (U64) "/missing", (U64)&Status,
+                               0, (U64)&ObservedErrno),
+          Route == 3 ? (U64)-2 : (U64)-1);
+    CHECK(ObservedErrno, Route == 3 ? 83 : 2);
+    CHECK(verify_status(&Status), 0);
+  }
+  return 0;
+}
+
+U64 files_status_at_dynamic(U64 Closed, U64 Alias) {
+  void *Library = dlopen("libfiles.so", 2);
+  CHECK(Library != 0, 1);
+  int (*Call)(int, const char *, struct FileStatus *, int) =
+      dlsym(Library, Alias ? "fstatat64" : "fstatat");
+  CHECK(Call != 0, 1);
+  if (Closed)
+    CHECK(dlclose(Library), 0);
+  struct FileStatus Status;
+  CHECK(Call(-1, Path, &Status, 0), 0);
+  return verify_status(&Status);
 }
 
 U64 files_status_dynamic(U64 Closed) {
@@ -637,6 +752,7 @@ void process_main(U64 *Stack) {
                : Mode == 'f' ? files_faults()
                : Mode == 'c' ? files_capacity()
                : Mode == 't' ? files_status()
+               : Mode == 'n' ? files_status_at()
                : Mode == 'a' ? files_access()
                : Mode == 'p' ? files_access_faults()
                : Mode == 'd' ? files_directory_errors()
