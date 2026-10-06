@@ -142,6 +142,9 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
                                     const DriverOptions &Options) {
   if (DriverObject)
     return modelError("kernel model cannot be initialized twice");
+  InstructionClock = Options.Scheduling.has_value();
+  Scheduler = KernelScheduler(KernelScheduler::Limits{},
+                              Options.Scheduling.has_value());
   ConfiguredPnpDevices = Options.PnpDevices;
   if (auto E = Registry.initialize(Options.Registry))
     return E;
@@ -731,8 +734,7 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
 
 std::optional<KernelModel::ExecutionProcessContext>
 KernelModel::executionProcessContext() const {
-  const bool Attached = !ProcessAttachments.empty() &&
-                        ProcessAttachments.back().Execution == CurrentExecution;
+  const bool Attached = hasProcessAttachment(CurrentExecution);
   if (auto It = InheritedExecutionContexts.find(CurrentExecution);
       It != InheritedExecutionContexts.end() &&
       It->second.ThreadKey == CurrentThreadKey) {
@@ -789,8 +791,7 @@ bool KernelModel::canCatchUserAccess(uint64_t Address, uint64_t Size) const {
   return Size && Address < profile::UserProbeLimit &&
          Size <= profile::UserProbeLimit - Address && UserRequestContext &&
          (CurrentExecution == profile::StackBase || InheritedPermission ||
-          (!ProcessAttachments.empty() &&
-           ProcessAttachments.back().Execution == CurrentExecution)) &&
+          (hasProcessAttachment(CurrentExecution))) &&
          CurrentIRQL <= APCLevel;
 }
 

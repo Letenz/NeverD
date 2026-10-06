@@ -76,6 +76,7 @@ public:
        llvm::ArrayRef<uint64_t> Arguments,
        llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument);
   std::optional<KernelGuestCall> takeGuestCall();
+  std::optional<KernelGuestCall> takeIndependentGuestCall();
   std::optional<KernelGuestCall> takePoFxThreadCall(uint64_t Thread);
   llvm::Error beginGuestCall(GuestCallToken Token);
   llvm::Expected<bool> enterFrameworkCallback(uint64_t ScheduledID,
@@ -139,6 +140,27 @@ public:
   continueScheduled(uint64_t ID, uint64_t ReturnValue);
   llvm::Error suspendScheduled(uint64_t ID);
   llvm::Error resumeScheduled(uint64_t ID);
+  /// Selector state only. Resource ownership remains in the model's canonical
+  /// per-execution and per-thread tables while this continuation is parked.
+  struct ExecutionContext {
+    uint64_t Execution, Thread;
+    GuestCallToken Call;
+    uint32_t Process;
+    uint8_t IRQL;
+    bool UserMemory, PowerManaged;
+  };
+  ExecutionContext captureExecutionContext() const;
+  llvm::Error restoreExecutionContext(const ExecutionContext &Context);
+  llvm::Error preemptScheduled(uint64_t ID);
+  llvm::Expected<uint64_t> issueReadyOrder() {
+    return Scheduler.issueReadyOrder();
+  }
+  std::optional<uint64_t> nextPassiveReadyOrder() const {
+    return Scheduler.nextPassiveReadyOrder();
+  }
+  uint64_t now100ns() const { return Scheduler.now100ns(); }
+  /// Process exactly one chronological boundary, including during execution.
+  llvm::Error advanceExecutionTo100ns(uint64_t Time);
   llvm::Error restoreWaitIRQL(uint8_t IRQL);
   struct Wait {
     enum class Kind {
@@ -475,12 +497,15 @@ private:
   KernelDMA DMA;
   std::optional<KernelGuestCall> PendingDMACall;
   std::set<uint64_t> InlineDMACalls;
+  bool hasPendingIndependentGuestCall() const {
+    return PendingWdmCall || PendingInterruptCall || PendingDMACall ||
+           (Framework && Framework->hasPendingGuestCall());
+  }
   bool hasPendingModelGuestCall() const {
     auto Operation = BlockingPoFx.find(CurrentThreadKey);
     const bool HasPoFxCall =
         Operation != BlockingPoFx.end() && !Operation->second.Calls.empty();
-    return HasPoFxCall || PendingWdmCall || PendingInterruptCall ||
-           PendingDMACall || (Framework && Framework->hasPendingGuestCall());
+    return HasPoFxCall || hasPendingIndependentGuestCall();
   }
   static std::optional<unsigned> dmaArgumentCount(llvm::StringRef Name);
   llvm::Expected<uint64_t>
@@ -571,6 +596,7 @@ private:
     bool PreviousUserContext;
   };
   std::vector<ProcessAttachment> ProcessAttachments;
+  bool hasProcessAttachment(uint64_t Execution) const;
   struct ExecutiveSpinLock {
     uint64_t Execution;
     uint8_t OldIRQL;
@@ -646,6 +672,11 @@ private:
   llvm::Expected<std::optional<uint64_t>> finishInterruptCall(uint64_t Token,
                                                               uint64_t Value);
   llvm::Expected<uint64_t> preflightScheduledBoundary(uint64_t Time);
+  llvm::Error processScheduledBoundary(uint64_t Time, bool Executing);
+  bool canServicePassiveEvents() const {
+    return !InstructionClock ||
+           (CurrentIRQL == scheduler::PassiveLevel && !CancelLock.Held);
+  }
   llvm::Error processInterruptEvents();
   std::optional<uint64_t> nextInterruptEventTime() const {
     return Interrupts.nextEventTime();
@@ -703,6 +734,7 @@ private:
   llvm::Error validateDispatcherStorage(uint64_t Address, uint32_t Size,
                                         bool IsWrite) const;
   uint8_t CurrentIRQL = 0;
+  bool InstructionClock = false;
   struct CancelSpinLockState {
     bool Held = false;
     bool Callback = false;
@@ -710,6 +742,7 @@ private:
     uint64_t CallbackExecution = 0;
     uint64_t IRP = 0;
     uint8_t OldIRQL = 0;
+    uint8_t CallbackIRQL = 0;
   } CancelLock;
   std::map<uint64_t, uint64_t> WorkItems;
   std::map<uint64_t, uint64_t> WorkReferences;
@@ -918,6 +951,7 @@ private:
     mutable std::array<bool, 16> IOStatusWritten{};
   };
   std::map<uint64_t, ActiveRequest> Requests;
+  bool canDeliverCancellation(const ActiveRequest &Request) const;
   llvm::Expected<std::optional<KernelScheduler::Callback>>
   planWDMCancellation(uint64_t IRP, const ActiveRequest &Request) const;
   llvm::Error

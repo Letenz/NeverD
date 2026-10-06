@@ -1,0 +1,80 @@
+//===- DriverPreemptiveCases.def - Original scheduler regression cases ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_PREEMPT_CASE
+NEVERD_PREEMPT_CASE(BusyThread, 0x223000)
+NEVERD_PREEMPT_CASE(ContendingThreads, 0x223004)
+NEVERD_PREEMPT_CASE(APCContext, 0x223008)
+NEVERD_PREEMPT_CASE(GuardedContext, 0x22300c)
+NEVERD_PREEMPT_CASE(TimerProgress, 0x223010)
+NEVERD_PREEMPT_CASE(MaskedTimer, 0x223014)
+NEVERD_PREEMPT_CASE(PeriodicTimer, 0x223018)
+NEVERD_PREEMPT_CASE(CancelBeforeDispatchReturn, 0x22301c)
+NEVERD_PREEMPT_CASE(CancelUnderSpinLock, 0x223020)
+NEVERD_PREEMPT_CASE(CancelPeerContext, 0x223024)
+NEVERD_PREEMPT_CASE(AttachedContexts, 0x223028)
+NEVERD_PREEMPT_CASE(TimedWait, 0x22302c)
+NEVERD_PREEMPT_CASE(FloatingContext, 0x223030)
+NEVERD_PREEMPT_CASE(TimerWakeThenReset, 0x223034)
+NEVERD_PREEMPT_CASE(TimeoutBeforeSignal, 0x223038)
+NEVERD_PREEMPT_CASE(TimeoutBeforeTimer, 0x22303c)
+#endif
+#ifdef NEVERD_PREEMPT_VALUE
+NEVERD_PREEMPT_VALUE(Quantum, 16)
+NEVERD_PREEMPT_VALUE(WaiterQuantum, 4096)
+NEVERD_PREEMPT_VALUE(CoarseInstructionTime, 1024)
+NEVERD_PREEMPT_VALUE(CoarseWaitDeadline, 10000000)
+NEVERD_PREEMPT_VALUE(ResetTimerDelay, 1000000)
+NEVERD_PREEMPT_VALUE(PassiveLevel, 0)
+NEVERD_PREEMPT_VALUE(DelayedWorkQueue, 1)
+NEVERD_PREEMPT_VALUE(PendingStatus, 0x103)
+NEVERD_PREEMPT_VALUE(InstructionTime, 1)
+NEVERD_PREEMPT_VALUE(SpinIterations, 1024)
+NEVERD_PREEMPT_VALUE(ContextSpinIterations, 64)
+NEVERD_PREEMPT_VALUE(TimerDelay, 100)
+NEVERD_PREEMPT_VALUE(TimerPeriod, 1)
+NEVERD_PREEMPT_VALUE(TimerCount, 3)
+NEVERD_PREEMPT_VALUE(CancelDelay, 1000)
+NEVERD_PREEMPT_VALUE(SuccessMarker, 0x5a)
+NEVERD_PREEMPT_VALUE(FailureMarker, 0xff)
+NEVERD_PREEMPT_VALUE(InstructionBudget, 200000)
+NEVERD_PREEMPT_VALUE(CooperativeBudget, 5000)
+NEVERD_PREEMPT_VALUE(ProbeMemory, 65536)
+NEVERD_PREEMPT_VALUE(CallbackPC, 0x180001000)
+NEVERD_PREEMPT_VALUE(DispatchIndex, 14)
+NEVERD_PREEMPT_VALUE(PoFxControlCode, 0x222000)
+NEVERD_PREEMPT_VALUE(OutputLength, 4)
+#endif
+#ifdef NEVERD_PREEMPT_TEXT
+NEVERD_PREEMPT_TEXT(PoFxDevice, "preempt-pofx")
+NEVERD_PREEMPT_TEXT(PoFxFailure, "PoFx failure:")
+NEVERD_PREEMPT_TEXT(Image, "/driver_preemptive.sys")
+NEVERD_PREEMPT_TEXT(LegacySuffix, "_driver_")
+NEVERD_PREEMPT_TEXT(CheckedSuffix, "_checked_")
+#endif
+#ifdef NEVERD_PREEMPT_JSON
+NEVERD_PREEMPT_JSON(Null, R"({"scheduling":null})")
+NEVERD_PREEMPT_JSON(Array, R"({"scheduling":[]})")
+NEVERD_PREEMPT_JSON(Unknown, R"({"scheduling":{"unknown":1}})")
+NEVERD_PREEMPT_JSON(Zero, R"({"scheduling":{"quantum_instructions":0}})")
+NEVERD_PREEMPT_JSON(Negative, R"({"scheduling":{"instruction_time_100ns":-1}})")
+NEVERD_PREEMPT_JSON(Fraction, R"({"scheduling":{"quantum_instructions":1.5}})")
+NEVERD_PREEMPT_JSON(Boolean, R"({"scheduling":{"quantum_instructions":true}})")
+NEVERD_PREEMPT_JSON(
+    Overflow,
+    R"({"scheduling":{"quantum_instructions":18446744073709551615,"instruction_time_100ns":2}})")
+#endif
+
+#ifdef NEVERD_PREEMPT_POFX
+NEVERD_PREEMPT_POFX(Blocking, 'B')
+NEVERD_PREEMPT_POFX(DeferredIdle, 'D')
+NEVERD_PREEMPT_POFX(ExplicitState, 'F')
+NEVERD_PREEMPT_POFX(DeferredState, 'G')
+NEVERD_PREEMPT_POFX(Power, 'P')
+#endif
+#ifdef NEVERD_PREEMPT_FLOAT
+NEVERD_PREEMPT_FLOAT(FirstSeed, 1.5)
+NEVERD_PREEMPT_FLOAT(SecondSeed, 7.25)
+#endif

@@ -2125,7 +2125,7 @@ deadlines; `KernelDispatcher` owns opaque DPC, timer and event objects and
 their signals. `KernelModel` owns wait registrations, work-item/device
 lifetimes and IRP completion. `DriverSession` suspends and resumes separate
 callback stacks and complete CPU contexts, including Win64 stack arguments,
-with shared guest memory. Virtual time advances at timer/wait/cancellation boundaries only when no frame
+with shared guest memory. By default, virtual time advances at timer/wait/cancellation boundaries only when no frame
 is ready. DPCs run at `DISPATCH_LEVEL` and workers at `PASSIVE_LEVEL`, on
 CPU0 with deterministic cooperative scheduling. Framework cancellation
 callbacks follow the queue execution level at `PASSIVE_LEVEL` or
@@ -3437,3 +3437,5 @@ A caller's complete four-double HFA return can propose a 32-byte native result w
 The authoritative Darwin affine bridge also handles `CGAffineTransformInvert`: a complete 48-byte physical input in x0 and result storage in x8. Current strong CoreGraphics imports, providers, required libraries and SDK declarations must agree. The shared frame-effect owner requires initialized input bytes and validates the complete result range; HighC snapshots the input before the call and retains all six result writes.
 
 The same authenticated affine frame contract covers `CGAffineTransformTranslate`. Its complete 48-byte input copy in x0 must be initialized; permitted writes invalidate that copy, and the result uses x8. The two double scalars retain independent d0/d1 carriers. The existing bridge snapshots all six input fields before the call and stores all six output fields. This SDK call contract does not certify an arbitrary native output buffer or publish a dependent body.
+
+Explicit CPU0 preemption, clock semantics and current limits are described in [driver scheduling](driver-scheduling.md).

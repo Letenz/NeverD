@@ -16,6 +16,7 @@
 #include "neverd/emulation/DriverPnp.h"
 #include "neverd/emulation/DriverProfile.h"
 #include "neverd/emulation/DriverRegistry.h"
+#include "neverd/emulation/DriverScheduling.h"
 #include "neverd/emulation/DriverUserMemory.h"
 #include "neverd/emulation/ExecutionBackend.h"
 
@@ -96,7 +97,8 @@ struct DriverRequest {
 };
 
 /// This profile models a single-processor x64 WDM lifecycle with cooperative
-/// worker scheduling, dispatcher waits and DPC execution at modeled IRQLs.
+/// or explicit instruction-driven preemptive scheduling, dispatcher waits,
+/// and DPC execution at modeled IRQLs.
 /// All pointers describe guest addresses, never native pointers. No host OS
 /// services are forwarded. Unsupported APIs and CPU environment effects stop.
 struct DriverOptions {
@@ -119,6 +121,10 @@ struct DriverOptions {
   /// availability unspecified; an empty inventory models an empty namespace.
   std::optional<std::vector<DriverRegistryKey>> Registry;
   std::vector<DriverPnpDevice> PnpDevices;
+  /// Omission retains cooperative scheduling and idle-only clock advancement.
+  /// An explicit policy permits instruction-boundary thread preemption below
+  /// DISPATCH_LEVEL and advances virtual time while guest instructions run.
+  std::optional<DriverScheduling> Scheduling;
 };
 
 enum class DriverStopReason {

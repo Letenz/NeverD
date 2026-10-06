@@ -1,0 +1,18 @@
+//===- DriverPowerPreemptiveCases.def - Power service under preemption ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_POWER_PREEMPT_CASE
+NEVERD_POWER_PREEMPT_CASE(PassiveBusy, 6)
+NEVERD_POWER_PREEMPT_CASE(APCBusy, 7)
+NEVERD_POWER_PREEMPT_CASE(DispatchBusy, 8)
+#endif
+#ifdef NEVERD_POWER_PREEMPT_VALUE
+NEVERD_POWER_PREEMPT_VALUE(BusyIterations, 4096)
+NEVERD_POWER_PREEMPT_VALUE(WakeDelay100ns, 100000)
+#endif
+#ifdef NEVERD_POWER_PREEMPT_TEXT
+NEVERD_POWER_PREEMPT_TEXT(Service, "NeverDKmdfPowerA-")
+NEVERD_POWER_PREEMPT_TEXT(Device, "preempt-power")
+#endif

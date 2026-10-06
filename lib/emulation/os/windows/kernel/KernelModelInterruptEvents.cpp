@@ -26,7 +26,7 @@ KernelModel::preflightScheduledBoundary(uint64_t Time) {
   uint64_t FrameworkCompletions = 0;
   std::vector<KernelScheduler::Callback> ProviderCallbacks;
   for (const auto &[IRP, Provider] : ProviderCompletions) {
-    if (Provider.Deadline > Time)
+    if (!canServicePassiveEvents() || Provider.Deadline > Time)
       continue;
     const auto *Request = requestForIRP(IRP);
     if (!Request || Request->Completed || Request->PnpDevice != Provider.Device)
@@ -80,7 +80,7 @@ KernelModel::preflightScheduledBoundary(uint64_t Time) {
     ++ProviderCount;
   }
   if (ProviderCount) {
-    if (hasPendingModelGuestCall())
+    if (hasPendingIndependentGuestCall())
       return interruptEventError(
           "PnP provider: deadline cannot replace a pending guest callback");
     if (WDMProviderCount > UINT64_MAX - NextIRPCall)
@@ -92,8 +92,7 @@ KernelModel::preflightScheduledBoundary(uint64_t Time) {
   uint64_t Cancellations = 0;
   std::vector<KernelScheduler::Callback> WDMCancellations;
   for (const auto &[IRP, Request] : Requests) {
-    if (Request.Completed || !Request.CancelDeadline ||
-        *Request.CancelDeadline > Time)
+    if (!canDeliverCancellation(Request) || *Request.CancelDeadline > Time)
       continue;
     if (Framework && FrameworkDevices.count(Request.Device)) {
       auto GeneratesCallback =
@@ -119,7 +118,8 @@ KernelModel::preflightScheduledBoundary(uint64_t Time) {
   for (const auto &Event : PowerPolicyEvents) {
     const auto &Observation = Result.PowerPolicyEvents[Event.ResultIndex];
     const auto *Usb = std::get_if<UsbIdlePermissionEvent>(&Event.Owner);
-    if (!Usb || Observation.OccurredAt100ns || Observation.DueAt100ns > Time)
+    if (!canServicePassiveEvents() || !Usb || Observation.OccurredAt100ns ||
+        Observation.DueAt100ns > Time)
       continue;
     UsbKeys.insert(UsbKeys.end(), Usb->Members.begin(), Usb->Members.end());
   }

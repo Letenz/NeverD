@@ -1,0 +1,6 @@
+# PE/COFF linker module-definition files use linker grammar, not C++ X-macros.
+unittests/emulation/fixtures/ntoskrnl.def
+unittests/lift/aarch64/test_call_arg_phi_a64_pe.def
+unittests/lift/fixtures/library_vcruntime.def
+unittests/lift/fixtures/library_vcruntime_base.def
+unittests/safety/fixtures/safety_runtime.def

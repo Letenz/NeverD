@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #ifdef NEVERD_SEH_SIMD_VALUE
+NEVERD_SEH_SIMD_VALUE(SehSIMDPreemptiveQuantum, 1)
 NEVERD_SEH_SIMD_VALUE(SehSIMDMarker, '-')
 NEVERD_SEH_SIMD_VALUE(SehSIMDModeCharacters, 2)
 NEVERD_SEH_SIMD_VALUE(SehSIMDDefault, 0x1f80)

@@ -542,7 +542,7 @@ Unicorn 通过 `cmake/NeverDUnicorn.cmake` 统一配置一次，与语义测试�
 
 Windows 模型还管理独立的非分页池 MDL；描述符释放不会释放底层缓冲区。MDL 链及 IRP 关联仍未建模。独立注册表模型管理显式场景树、句柄权限和键值生命周期，与静态导出目录分开。场景预检与执行使用同一注册表验证规则，报告保留最终键值；卸载检查遗留句柄。
 
-`KernelScheduler` 管理就绪队列顺序、回调身份和定时器期限；`KernelDispatcher` 管理不透明 DPC、定时器、事件及其信号。`KernelModel` 管理等待登记、工作项／设备生命周期和 IRP 完成。`DriverSession` 保存并恢复各回调的独立栈及完整 CPU 上下文，包括 Win64 栈参数，来宾内存保持共享。仅在没有就绪执行帧时，虚拟时间才推进到定时器／等待／取消边界；CPU0 以确定性的协作调度执行 `DISPATCH_LEVEL` 的 DPC 和 `PASSIVE_LEVEL` 的工作项。这不提供通用线程／APC／自旋锁调度、超出已描述契约的 WDM／PnP 取消、任意并发公开场景提交、完整 PnP／电源或通用硬件。 API 的 IRQL 上限来自 `KernelAPIIRQL.def`，参数相关限制由所属模型检查。
+`KernelScheduler` 管理就绪队列顺序、回调身份和定时器期限；`KernelDispatcher` 管理不透明 DPC、定时器、事件及其信号。`KernelModel` 管理等待登记、工作项／设备生命周期和 IRP 完成。`DriverSession` 保存并恢复各回调的独立栈及完整 CPU 上下文，包括 Win64 栈参数，来宾内存保持共享。默认配置下，仅在没有就绪执行帧时，虚拟时间才推进到定时器／等待／取消边界；CPU0 以确定性的协作调度执行 `DISPATCH_LEVEL` 的 DPC 和 `PASSIVE_LEVEL` 的工作项。这不提供通用线程／APC／自旋锁调度、超出已描述契约的 WDM／PnP 取消、任意并发公开场景提交、完整 PnP／电源或通用硬件。 API 的 IRQL 上限来自 `KernelAPIIRQL.def`，参数相关限制由所属模型检查。
 
 `KernelModelDeviceStack` 用单一记录管理每个设备的驱动所有者、分配、上下层邻居、待删除状态和内部引用。来宾 `NextDevice` 枚举链与宿主拥有的附着图含义不同。名称解析保留具名下层设备作为 `FILE_OBJECT` 和报告身份，选择当前栈顶进行初始派发及 READ/WRITE 缓冲配置，并保存保活整条路径的引用。拆链或删除不能使请求／回调仍持有的设备失效；公开 `ReferenceCount` 仍只计算打开句柄。
 
@@ -1354,3 +1354,5 @@ CoreImage 的强 SDK 声明保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 Darwin 仿射桥接的权威实现也支持 `CGAffineTransformInvert`：x0 承载完整 48 字节物理输入，x8 承载结果存储地址。当前强 CoreGraphics 导入、提供者、所需库和 SDK 声明必须一致。共享帧效果层要求输入全部初始化，并验证完整结果范围；HighC 在调用前快照输入，保留六个结果写入。
 
 同一份已认证的仿射帧契约也覆盖 `CGAffineTransformTranslate`。x0 中完整的 48 字节输入副本必须已初始化；允许的写入会使该副本失效，结果使用 x8。两个 double 标量保留独立的 d0/d1 载体。现有桥接在调用前快照全部六个输入字段，并写入六个输出字段。此 SDK 调用契约不认证任意原生输出缓冲区，也不授予依赖正文发布权限。
+
+CPU0 显式抢占、虚拟时钟语义及当前边界见[驱动调度](driver-scheduling.md)。
