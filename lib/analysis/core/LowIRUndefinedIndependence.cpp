@@ -4396,6 +4396,34 @@ class LoopPlanInference {
     return Changed;
   }
 
+  void chargeCounterTransferWork(uint64_t Count = 1) {
+    // These symbolic candidate traversals share predicate-analysis limits.
+    // Optional graph/context selector work remains a separate allowance.
+    if (Count > Limits.Execution.MaxSymbolicNodes - Result.PredicateNodes)
+      stop(Status::BudgetExceeded,
+           "loop inference counter transfer budget exhausted");
+    Result.PredicateNodes += Count;
+  }
+
+  // A transfer is only a proposal backed by an exact symbolic unit update.
+  // Its source must still satisfy every inferred guard and bound separately.
+  std::optional<uint64_t>
+  transferredCounterMask(Edge &E, const LowIRLoopLocation &Source,
+                         const LowIRLoopLocation &Target, bool Increment) {
+    chargeCounterTransferWork();
+    if (E.Source == static_cast<size_t>(E.After.Cutpoint) ||
+        Source.Bytes != Target.Bytes || sameLocation(Source, Target))
+      return {};
+    const auto Before = read(E.Before, Source);
+    const auto After = read(E.After, Target);
+    const auto Mask = unitStepLane(Before, After, Source.Bytes, Increment);
+    if (!Mask)
+      return {};
+    const auto Input = counterProjection(Before, *Mask);
+    checker().nodes();
+    return Session.Context.isConst(Input) ? std::nullopt : Mask;
+  }
+
   bool findNewCounters(std::vector<Edge> &Edges) {
     bool Changed = false;
     for (const auto &L : locations()) {
@@ -4423,6 +4451,36 @@ class LoopPlanInference {
         Changed = true;
       }
     }
+    // A known counter may occupy another word at an adjacent cut. Discovery
+    // adds only counter/guard proposals; saved arrivals and incoming edges
+    // must establish every resulting invariant in the usual shared layer.
+    const auto Targets = RelationCounters;
+    const auto Sources = locations();
+    for (const auto &Target : Targets)
+      for (auto &E : Edges)
+        for (const auto &Source : Sources)
+          for (bool Increment : {false, true}) {
+            const auto Mask =
+                transferredCounterMask(E, Source, Target, Increment);
+            if (!Mask)
+              continue;
+            if (std::none_of(
+                    RelationCounters.begin(), RelationCounters.end(),
+                    [&](const auto &C) { return sameLocation(C, Source); })) {
+              RelationCounters.push_back(Source);
+              Changed = true;
+            }
+            const Word::LaneGuard Guard{*Mask, Increment};
+            if (*Mask && std::none_of(LaneCounters.begin(), LaneCounters.end(),
+                                      [&](const auto &C) {
+                                        return sameLocation(C.Location,
+                                                            Source) &&
+                                               C.Guard == Guard;
+                                      })) {
+              LaneCounters.push_back({Source, Guard});
+              Changed = true;
+            }
+          }
     return Changed;
   }
 
@@ -4689,6 +4747,9 @@ class LoopPlanInference {
     LowIRLoopLocation Location;
     bool Complement;
     uint64_t Mask = 0;
+    // Empty preserves common-location ranks. Relocation proposals can read
+    // a different location at one source cut without merging its full state.
+    std::vector<LowIRLoopLocation> CutLocations;
   };
   struct Phases {
     std::vector<std::vector<uint64_t>> Between;
@@ -4725,9 +4786,14 @@ class LoopPlanInference {
            std::tie(B.Space, B.Offset, B.Bytes);
   }
 
-  SymRef counterValue(TerminalState &State, const Counter &Rank) {
+  const LowIRLoopLocation &rankLocation(const Counter &Rank, size_t Cut) {
+    return Rank.CutLocations.empty() ? Rank.Location : Rank.CutLocations[Cut];
+  }
+
+  SymRef counterValue(TerminalState &State, const Counter &Rank, size_t Cut) {
     auto &Ctx = Session.Context;
-    auto Value = counterProjection(read(State, Rank.Location), Rank.Mask);
+    auto Value =
+        counterProjection(read(State, rankLocation(Rank, Cut)), Rank.Mask);
     const auto Mask =
         Ctx.mkConst(Rank.Location.Bytes * 8,
                     Rank.Mask ? Rank.Mask : ones(Rank.Location.Bytes));
@@ -4746,7 +4812,8 @@ class LoopPlanInference {
       Append(Ctx.mkConst(64, Phase.Leading[E.Source]),
              Ctx.mkConst(64, Phase.Leading[E.After.Cutpoint]));
     for (size_t I = First; I != Ranks.size(); ++I) {
-      Append(counterValue(E.Before, Ranks[I]), counterValue(E.After, Ranks[I]));
+      Append(counterValue(E.Before, Ranks[I], E.Source),
+             counterValue(E.After, Ranks[I], E.After.Cutpoint));
       if (I + 1 != Ranks.size())
         Append(Ctx.mkConst(64, Phase.Between[I][E.Source]),
                Ctx.mkConst(64, Phase.Between[I][E.After.Cutpoint]));
@@ -4766,8 +4833,10 @@ class LoopPlanInference {
       for (auto &E : Edges) {
         auto Domain = E.After.Predicate;
         for (size_t I = 0; I <= Level; ++I)
-          Domain = Ctx.mkAnd(Domain, Ctx.mkEq(counterValue(E.Before, Ranks[I]),
-                                              counterValue(E.After, Ranks[I])));
+          Domain = Ctx.mkAnd(
+              Domain,
+              Ctx.mkEq(counterValue(E.Before, Ranks[I], E.Source),
+                       counterValue(E.After, Ranks[I], E.After.Cutpoint)));
         if (entails(Domain, Ctx.mkFalse()))
           continue;
         Constraints.push_back(
@@ -4810,38 +4879,39 @@ class LoopPlanInference {
         Cut.Rank.push_back(NdVar::scalar(Phase.Leading[I], 8));
       for (size_t J = 0; J != Ranks.size(); ++J) {
         const auto &R = Ranks[J];
+        const auto &Location = rankLocation(R, I);
         auto Input = std::find_if(
             Cut.Inputs.begin(), Cut.Inputs.end(), [&](const auto &Input) {
               return Input.Side == LowIRLoopSide::Original &&
-                     sameLocation(Input.Location, R.Location);
+                     sameLocation(Input.Location, Location);
             });
         NdVar Value;
         if (Input != Cut.Inputs.end()) {
           Value = Input->Temporary;
         } else {
-          Value = NdVar::tmp(Next, R.Location.Bytes);
+          Value = NdVar::tmp(Next, Location.Bytes);
           Next += 8;
           Cut.Inputs.push_back(
-              {LowIRLoopSide::OriginalPrefix, R.Location, Value});
+              {LowIRLoopSide::OriginalPrefix, Location, Value});
         }
         if (R.Mask) {
           LowOp Op;
           Op.Opcode = NdOp::INT_AND;
-          Op.Output = NdVar::tmp(Next, R.Location.Bytes);
+          Op.Output = NdVar::tmp(Next, Location.Bytes);
           Next += 8;
           Op.addInput(Value);
-          Op.addInput(NdVar::scalar(R.Mask, R.Location.Bytes));
+          Op.addInput(NdVar::scalar(R.Mask, Location.Bytes));
           Cut.Expressions.push_back(Op);
           Value = Op.Output;
         }
         if (R.Complement) {
           LowOp Op;
           Op.Opcode = NdOp::INT_XOR;
-          Op.Output = NdVar::tmp(Next, R.Location.Bytes);
+          Op.Output = NdVar::tmp(Next, Location.Bytes);
           Next += 8;
           Op.addInput(Value);
-          Op.addInput(NdVar::scalar(R.Mask ? R.Mask : ones(R.Location.Bytes),
-                                    R.Location.Bytes));
+          Op.addInput(NdVar::scalar(R.Mask ? R.Mask : ones(Location.Bytes),
+                                    Location.Bytes));
           Cut.Expressions.push_back(Op);
           Value = Op.Output;
         }
@@ -4858,7 +4928,7 @@ class LoopPlanInference {
     std::vector<Counter> Candidates, Ranks;
     std::vector<size_t> Next{0};
     size_t Size = 1, MaxSize = 0;
-    bool Resume = false, PendingLeading = false;
+    bool Resume = false, PendingLeading = false, RequireRelocated = false;
   };
   enum class TupleRankStatus { Inferred, Exhausted, Paused };
 
@@ -4892,9 +4962,62 @@ class LoopPlanInference {
     return Search;
   }
 
+  // Preserve ordinary search priority. After it exhausts, allow one source
+  // cut to read the location that supplies a known counter's unit update.
+  // Full phase/rank entailments check every edge with these local bindings.
+  std::optional<TupleRankSearch>
+  relocatedTupleSearch(std::vector<Edge> &Edges, const TupleRankSearch &Base) {
+    TupleRankSearch Search;
+    Search.Candidates = Base.Candidates;
+    Search.MaxSize = Base.MaxSize;
+    Search.RequireRelocated = true;
+    const auto Locations = locations();
+    for (const auto &C : Base.Candidates)
+      for (auto &E : Edges) {
+        chargeCounterTransferWork();
+        if (E.Source == static_cast<size_t>(E.After.Cutpoint))
+          continue;
+        for (const auto &Source : Locations) {
+          chargeCounterTransferWork();
+          if (Source.Bytes != C.Location.Bytes ||
+              sameLocation(Source, C.Location))
+            continue;
+          const auto Mask =
+              transferredCounterMask(E, Source, C.Location, C.Complement);
+          if (!Mask || *Mask != C.Mask)
+            continue;
+          auto Moved = C;
+          Moved.CutLocations.assign(Plan.Cutpoints.size(), C.Location);
+          Moved.CutLocations[E.Source] = Source;
+          chargeCounterTransferWork(Search.Candidates.size());
+          if (std::none_of(
+                  Search.Candidates.begin(), Search.Candidates.end(),
+                  [&](const auto &Old) {
+                    return Old.Complement == Moved.Complement &&
+                           Old.Mask == Moved.Mask &&
+                           sameLocation(Old.Location, Moved.Location) &&
+                           Old.CutLocations.size() ==
+                               Moved.CutLocations.size() &&
+                           std::equal(Old.CutLocations.begin(),
+                                      Old.CutLocations.end(),
+                                      Moved.CutLocations.begin(), sameLocation);
+                  })) {
+            if (Search.Candidates.size() - Base.Candidates.size() >=
+                Limits.MaxRankCandidates - Result.RankCandidates)
+              stop(Status::BudgetExceeded,
+                   "loop inference rank proposal budget exhausted");
+            Search.Candidates.push_back(std::move(Moved));
+          }
+        }
+      }
+    if (Search.Candidates.size() == Base.Candidates.size())
+      return {};
+    return Search;
+  }
+
   static bool nextTuple(TupleRankSearch &Search) {
-    auto &[Candidates, Ranks, Next, Size, MaxSize, Resume, PendingLeading] =
-        Search;
+    auto &[Candidates, Ranks, Next, Size, MaxSize, Resume, PendingLeading,
+           RequireRelocated] = Search;
     if (Resume) {
       Ranks.pop_back();
       Next.pop_back();
@@ -4902,6 +5025,14 @@ class LoopPlanInference {
     }
     while (Size <= MaxSize) {
       if (Ranks.size() == Size) {
+        if (RequireRelocated &&
+            std::none_of(Ranks.begin(), Ranks.end(), [](const auto &R) {
+              return !R.CutLocations.empty();
+            })) {
+          Ranks.pop_back();
+          Next.pop_back();
+          continue;
+        }
         Resume = true;
         return true;
       }
@@ -5141,7 +5272,11 @@ class LoopPlanInference {
           return false;
       }
     auto Search = makeTupleSearch(Edges);
-    return inferTupleRanks(Edges, Search) == TupleRankStatus::Inferred;
+    if (inferTupleRanks(Edges, Search) == TupleRankStatus::Inferred)
+      return true;
+    if (auto Relocated = relocatedTupleSearch(Edges, Search))
+      return inferTupleRanks(Edges, *Relocated) == TupleRankStatus::Inferred;
+    return false;
   }
 
 public:
