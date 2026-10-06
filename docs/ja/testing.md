@@ -1526,3 +1526,5 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 `BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource` はコピー元を破棄した後のリテラル表と共有監視リストの拡張、兄弟コピーの独立した変更、一回の監視訪問での伝播中断を検査し、再開後の完全モデルを元の節と独立した論理関係で確認します。
 
 `ObjCCallHints.SwiftPublishedAccessorsKeepOpaqueValueAndAllKeyPaths` は ARM64/x86-64 と両方の正規 Combine 提供元で二つのアクセサーを検証し、各組合せで九つの ABI 変異と八つのインポート識別変異を拒否します。独立 SDK 検証では ARM64 ホスト上で両ソース構成の生成 C を O0/O2 で実行し、128 回の呼出しで 24 バイト全部、入出力ガード、二つの owner 識別を比較します。八つのクロスコンパイル構成が macOS/Mac Catalyst の両アーキテクチャーを検査します。ランタイム検証は setter が消費する参照を保持し、製品コードに借用や所有権の省略を認めません。
+
+`BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` は、根で割り当て済みの変数と未決定変数の混在、非決定根変数、コピーの再コピー、元の破棄、変数追加、両方の既定極性、予算による中断と再開、競合と再始動を検査します。完全なモデルとすべての探索カウンターは新規符号化と一致する必要があります。

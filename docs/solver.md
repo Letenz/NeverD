@@ -134,3 +134,5 @@ Bitvector proofs use the expression language's total fixed-width semantics.
 Machine exceptions, memory effects, and LLVM poison remain the responsibility
 of the lifting and translation boundaries; an expression proof does not certify
 those boundaries.
+
+An unsearched encoding copy removes root-assigned variables from its own decision queue and rebuilds the strict activity/index heap order. Assignments and clauses stay intact; root facts survive every backtrack. Source ownership, actual decisions, complete models and all search budgets remain unchanged.

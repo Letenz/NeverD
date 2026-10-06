@@ -77,3 +77,5 @@ build-release/bin/neverd-solver-bench \
 주석이 아닌 각 행은 `original ; candidate`입니다. 세미콜론이 없으면 MBA simplifier 결과를 후보로 씁니다. 도구는 verdict, model replay, 시간을 보고합니다(세션 생성·변환·해결 포함, 파싱·MBA 단순화·내보내기·정리 제외). 반복마다 새 solver를 사용합니다. SAT model은 표현식 evaluator에서 차이를 재현해야 합니다. 서로 반대인 확정 verdict나 잘못된 질의/model은 실행 실패이고, `unknown`은 기록되지만 동등성 증명이 아닙니다.
 
 내보낸 SMT-LIB에는 원래 DAG, 영구 assertion, 마지막 query 가정이 들어 있으며 `z3 query-N.smt2`로 재생할 수 있습니다. 자원 제한과 solver 버전을 기록하세요. 두 backend의 예산 단위가 다르므로 동일 작업 비교가 아닌 제한된 workload 비교입니다. 비트벡터 증명은 표현식 언어의 total fixed-width 의미론을 사용합니다. 기계 예외, 메모리 효과, LLVM poison은 lifting/translation 경계의 책임이며 표현식 증명으로 인증되지 않습니다.
+
+검색 전 인코딩 복사본은 자체 결정 큐에서 루트 수준의 할당된 변수를 제거하고 활동도와 번호에 따른 엄격한 힙 순서를 재구성합니다. 할당과 절은 유지되며 루트 사실은 모든 역추적에서 보존됩니다. 원본 소유권, 실제 결정, 전체 모델과 모든 검색 예산은 그대로입니다.
