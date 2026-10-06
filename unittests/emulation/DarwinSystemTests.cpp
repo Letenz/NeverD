@@ -459,6 +459,180 @@ TEST(DarwinSystemOptions, TypedFieldsUseTheSameBoundedContract) {
   EXPECT_FALSE(bool(validateSystemOptions(O)));
 }
 
+TEST_P(DarwinSystemTest, ResourceLimitsKeepBothWordsFlagsAndUnalignedGuards) {
+  Options = darwin_test::resourceLimitOptions();
+  const auto Expected = llvm::fromHex(darwin_test::ResourceLimitsHex);
+  ASSERT_EQ(Expected.size(), 144u);
+  for (uint32_t Resource = 0; Resource != 9; ++Resource) {
+    for (uint32_t Flag : {0u, 0x1000u}) {
+      SCOPED_TRACE(Resource | Flag);
+      fill();
+      result(invoke(ServiceKind::GetRlimit, {Resource | Flag, Output + 1}));
+      EXPECT_EQ(bytes(Output + 1, 16), Expected.substr(Resource * 16, 16));
+      EXPECT_EQ(bytes(Output, 1), std::string(1, '\xa5'));
+      EXPECT_EQ(bytes(Output + 17, 16), std::string(16, '\xa5'));
+    }
+  }
+  EXPECT_EQ(Options->ResourceLimits.size(), 9u);
+  EXPECT_EQ(Options->ResourceLimits.at(0).Current, 0u);
+  EXPECT_EQ(Options->ResourceLimits.at(0).Maximum, 0u);
+  EXPECT_EQ(Options->ResourceLimits.at(1).Current, uint64_t(INT64_MAX));
+}
+
+TEST_P(DarwinSystemTest, ResourceSelectorsAndMissingValuesPrecedeAllMemory) {
+  for (unsigned Configuration = 0; Configuration != 3; ++Configuration) {
+    if (Configuration == 0)
+      Options.reset();
+    else if (Configuration == 1)
+      Options = DarwinSystemOptions{};
+    else
+      Options = darwin_test::resourceLimitOptions();
+    for (uint64_t Selector : {uint64_t(9), uint64_t(0x1009), uint64_t(0x2000),
+                              uint64_t(UINT32_MAX)}) {
+      FailingSystemMemory Memory(*Space);
+      Memory.FailAccess = Memory.FailWrite = 1;
+      auto Out = systemService(Memory, Page, ServiceKind::GetRlimit,
+                               {0, 194, {Selector, Output}, std::nullopt},
+                               Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      result(*Out, value::InvalidArgument);
+      EXPECT_EQ(Memory.Accesses, 0u);
+      EXPECT_EQ(Memory.Reads, 0u);
+      EXPECT_EQ(Memory.Writes, 0u);
+    }
+    if (Configuration == 2)
+      Options->ResourceLimits.erase(8);
+    for (uint64_t Selector : {uint64_t(8), uint64_t(0x1008)}) {
+      FailingSystemMemory Memory(*Space);
+      Memory.FailAccess = Memory.FailWrite = 1;
+      auto Out = systemService(Memory, Page, ServiceKind::GetRlimit,
+                               {0, 194, {Selector, Output}, std::nullopt},
+                               Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      EXPECT_FALSE(*Out);
+      EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(Result.Diagnostic, diagnostic::ResourceLimitObservation);
+      EXPECT_EQ(Memory.Accesses, 0u);
+      EXPECT_EQ(Memory.Reads, 0u);
+      EXPECT_EQ(Memory.Writes, 0u);
+    }
+  }
+  EXPECT_EQ(bytes(Base, Page * 2), std::string(Page * 2, '\xa5'));
+}
+
+TEST_P(DarwinSystemTest, ResourceSelectorUsesLow32BitsAndOnlyThePosixFlag) {
+  Options = darwin_test::resourceLimitOptions();
+  const uint64_t Selectors[] = {8, 0x1008, 0x100000008ULL,
+                                0xffffffff00001008ULL};
+  const auto Expected =
+      llvm::fromHex(darwin_test::ResourceLimitsHex).substr(128);
+  for (auto Selector : Selectors) {
+    fill();
+    result(invoke(ServiceKind::GetRlimit, {Selector, Output}));
+    EXPECT_EQ(bytes(Output, 16), Expected);
+    EXPECT_EQ(bytes(Output - 8, 8), std::string(8, '\xa5'));
+    EXPECT_EQ(bytes(Output + 16, 8), std::string(8, '\xa5'));
+  }
+  fill();
+  result(invoke(ServiceKind::GetRlimit, {0x2008, Output}),
+         value::InvalidArgument);
+  EXPECT_EQ(bytes(Output, 16), std::string(16, '\xa5'));
+}
+
+TEST_P(DarwinSystemTest,
+       ResourcePairsCrossMappedPagesAndRejectUnwritableOutput) {
+  Options = darwin_test::resourceLimitOptions();
+  const auto Expected =
+      llvm::fromHex(darwin_test::ResourceLimitsHex).substr(128);
+  result(invoke(ServiceKind::GetRlimit, {8, Base + Page - 7}));
+  EXPECT_EQ(bytes(Base + Page - 7, 16), Expected);
+  EXPECT_EQ(bytes(Base + Page - 15, 8), std::string(8, '\xa5'));
+  EXPECT_EQ(bytes(Base + Page + 9, 8), std::string(8, '\xa5'));
+  fill();
+  const uint64_t Faults[] = {0, 1, value::UserLimit, UINT64_MAX,
+                             Base + Page * 2};
+  for (auto Fault : Faults) {
+    result(invoke(ServiceKind::GetRlimit, {8, Fault}), value::BadAddress);
+    EXPECT_EQ(bytes(Base, Page * 2), std::string(Page * 2, '\xa5'));
+  }
+  ASSERT_FALSE(bool(Space->protect(Base + Page, Page, Read | UserAccessible)));
+  result(invoke(ServiceKind::GetRlimit, {8, Base + Page}), value::BadAddress);
+  EXPECT_EQ(bytes(Base, Page * 2), std::string(Page * 2, '\xa5'));
+}
+
+TEST_P(DarwinSystemTest, PartialResourcePairNeverPublishesEitherWord) {
+  Options = darwin_test::resourceLimitOptions();
+  for (bool ReadOnly : {false, true}) {
+    fill();
+    if (ReadOnly)
+      ASSERT_FALSE(
+          bool(Space->protect(Base + Page, Page, Read | UserAccessible)));
+    const auto Output = ReadOnly ? Base + Page - 8 : Base + Page * 2 - 8;
+    auto Out = invoke(ServiceKind::GetRlimit, {8, Output});
+    EXPECT_FALSE(Out);
+    EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Result.Diagnostic, diagnostic::ResourceLimitPartialOutput);
+    EXPECT_EQ(bytes(Base, Page * 2), std::string(Page * 2, '\xa5'));
+  }
+}
+
+TEST_P(DarwinSystemTest, ResourcePairTransportFailureDoesNotInventGuestErrno) {
+  Options = darwin_test::resourceLimitOptions();
+  for (unsigned Failure = 0; Failure != 3; ++Failure) {
+    fill();
+    FailingSystemMemory Memory(*Space);
+    if (Failure < 2)
+      Memory.FailAccess = Failure + 1;
+    else
+      Memory.FailWrite = 1;
+    auto Out = systemService(Memory, Page, ServiceKind::GetRlimit,
+                             {0, 194, {8, Base + Page - 8}, std::nullopt},
+                             Options, Result);
+    ASSERT_FALSE(bool(Out));
+    EXPECT_EQ(llvm::toString(Out.takeError()),
+              Failure < 2 ? "transport access" : "transport write");
+    EXPECT_EQ(Memory.Accesses, Failure < 2 ? Failure + 1 : 2u);
+    EXPECT_EQ(Memory.Reads, 0u);
+    EXPECT_EQ(Memory.Writes, Failure < 2 ? 0u : 1u);
+    EXPECT_EQ(bytes(Base, Page * 2), std::string(Page * 2, '\xa5'));
+  }
+  FailingSystemMemory Memory(*Space);
+  auto Out = systemService(Memory, Page, ServiceKind::GetRlimit,
+                           {0, 194, {8, Base + Page - 8}, std::nullopt},
+                           Options, Result);
+  ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+  result(*Out);
+  EXPECT_EQ(Memory.Accesses, 2u);
+  EXPECT_EQ(Memory.Reads, 0u);
+  EXPECT_EQ(Memory.Writes, 1u);
+  std::string Expected(Page * 2, '\xa5');
+  Expected.replace(Page - 8, 16,
+                   llvm::fromHex(darwin_test::ResourceLimitsHex).substr(128));
+  EXPECT_EQ(bytes(Base, Page * 2), Expected);
+}
+
+TEST(DarwinSystemOptions, ResourcePairsRequireCanonicalKeysAndBoundedValues) {
+  for (auto Resource : {9u, 4096u, UINT32_MAX}) {
+    auto O = darwin_test::resourceLimitOptions();
+    O.ResourceLimits[Resource] = {0, 0};
+    EXPECT_EQ(llvm::toString(validateSystemOptions(O)),
+              diagnostic::ResourceLimitOption);
+  }
+  for (const DarwinResourceLimit Bad :
+       {DarwinResourceLimit{1, 0},
+        DarwinResourceLimit{0, uint64_t(INT64_MAX) + 1},
+        DarwinResourceLimit{UINT64_MAX, UINT64_MAX}}) {
+    auto O = darwin_test::resourceLimitOptions();
+    O.ResourceLimits[8] = Bad;
+    EXPECT_EQ(llvm::toString(validateSystemOptions(O)),
+              diagnostic::ResourceLimitOption);
+  }
+  auto O = darwin_test::resourceLimitOptions();
+  EXPECT_FALSE(bool(validateSystemOptions(O)));
+  O.ResourceLimits.clear();
+  EXPECT_FALSE(bool(validateSystemOptions(O)));
+}
+
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinSystemTest,
                          testing::Values(4096, 16384));
 } // namespace

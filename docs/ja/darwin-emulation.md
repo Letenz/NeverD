@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 783dce3a095c35e7e39fa67d1d6d4214ed5504a0ae65fae3d00af6fd9f2277c3 -->
+<!-- i18n-source: 9fd13210357d20e09ca4c4b552e89a3b4b9608b2813d0d68730c75959a226579 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -590,3 +590,17 @@ SDK 非依存の original initial-directory-swap は既存 empty と data を交
 macOS ARM64 Release の今回の検証は Darwin 登録 1,303 件、成功 823 件、利用不能バックエンドによるスキップ 480 件、失敗 0 件。必須 ARM64 HVF 120 件はすべて実行した。ファイル検査 361/361（新規 4K/16K 動作 16 件と受け入れ検査 3 件）、C/CLI 180/180、レポート解析 34/34、原カーネルプログラム 30/30、独立プローブの観測 35 件が成功。Python は 5 構成を 33.894 秒で実行し、純 API 71 件、一覧/参照ユニット 49 件、SDK 差分、書式、能力、来歴、文書検査も成功した。件数は重複する。
 
 容量境界では同名操作と 16 回の往復交換が元のオブジェクトと課金を保持する。必要量 6 バイトに対して残量 5 バイトの場合、両方向の拒否で両ツリー、カーソル、後続作成予算が変わらない。独立した計画・最終コードレビューは承認済み。試行、ソース、バイナリ、結果を `build-hvf-arm64/initial-directory-swap/` に保存しコミットに結び付ける。重複実行したレポート検査は除外して逐次再実行し、翻訳マーカーを同期した。期限や負の対照は緩和していない。権限、未宣言マウント/大文字小文字、共有マップ/EOF、進行時計、Mach/スレッド/dyld/フレームワークは未完了。実機 iOS、停止中の Intel HVF、リモートマージ CI は別の検証である。
+
+## 明示的な読み取り専用リソース制限値
+
+五つの Darwin guest 構成で `getrlimit(194)` は `DarwinSystemOptions::ResourceLimits`（`darwin_system.resource_limits`）を読みます。キー 0..8 の `DarwinResourceLimit` は、オフセット 0/8 にある二つのリトルエンディアン uint64、計 16 バイトです。`0 <= current <= maximum <= 9223372036854775807` が必要で、ゼロも明示値、INT64_MAX は無限です。ホスト照会や FD/VM/ストレージ/実行予算の変更はありません。`setrlimit`、制限の適用、シグナル、スケジューリングは未完成です。
+
+厳格 JSON は最大九つの一意なキーと、ちょうど `resource`、`current`、`maximum` を認め、正確な整数または符号なし十進文字列を使います。型/フィールド違反、重複、非正規キー、逆転した値はロード前に失敗します。空/省略配列は不明のままです。構成キーに syscall の切り詰めやフラグ除去を適用しません。
+
+syscall だけが選択子の下位 32 ビットを取り `_RLIMIT_POSIX_FLAG=0x1000` を除きます。不正資源はメモリ照会前に EINVAL、未指定値は出力に触れる前に unsupported です。全体が書込不可なら EFAULT、一部だけ書込可能なペアは全バイトを保ち unsupported です。非整列/ページ境界を越す完全コピーは 16 バイトのみを変更し、backend エラーは転送エラーのままです。ARM64 ネイティブ probe は値/選択子 23 件と別個の fault 4 件を通過しました。このホストの部分プレフィックス不変は一般保証ではありません。
+
+```json
+{"darwin_system":{"resource_limits":[{"resource":8,"current":256,"maximum":"9223372036854775807"}]}}
+```
+
+macOS ARM64 Release の登録/成功/未実行 skip/失敗は 1337 / 845 / 492 / 0、必須 HVF 123 件を全実行。新規 4K/16K 行動検査十二件と SDK capture oracle、C/CLI 190/190、parser 37/37、native workload 31/31 が成功。Python 五構成は 71.978 秒、API 71 件と runner 49 件が成功し、SDK drift・整形・機能・出典・文書検査も通過。件数は重複します。証拠は `build-hvf-arm64/resource-limit-observations/` に凍結しコミットに結び付けます。最初のテスト enum の build エラーや接続/フィルター試行を保存し、修正後の直列検証は期限や負控を緩めていません。制限適用、権限、変更後ディレクトリ情報/列挙、共有 map/EOF、進む時計、Mach/thread/dyld と framework は未完成です。実機 iOS、停止中 Intel HVF、remote merge CI は別途検証が必要です。

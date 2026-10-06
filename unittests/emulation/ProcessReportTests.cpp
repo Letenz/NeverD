@@ -621,6 +621,105 @@ TEST(ProcessReport, PreservesExplicitWindowsCatalogueAndRejectsOtherProfiles) {
       EXPECT_EQ(llvm::toString(R.takeError()), field::WindowsProfile);
   }
 }
+TEST(ProcessReport,
+     DarwinResourceLimitsAreLosslessCanonicalAndDistinctFromMissing) {
+  auto Good = processOptionsFromJSON(std::string("{\"darwin_system\":") +
+                                     darwin_test::ResourceLimitsJSON + "}");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  ASSERT_TRUE(Good->DarwinSystem);
+  const auto &Limits = Good->DarwinSystem->ResourceLimits;
+  ASSERT_EQ(Limits.size(), 9u);
+  EXPECT_EQ(Limits.at(0).Current, 0u);
+  EXPECT_EQ(Limits.at(0).Maximum, 0u);
+  EXPECT_EQ(Limits.at(1).Current, uint64_t(INT64_MAX));
+  EXPECT_EQ(Limits.at(1).Maximum, uint64_t(INT64_MAX));
+  EXPECT_EQ(Limits.at(2).Current, 0x0123456789abcdefULL);
+  EXPECT_EQ(Limits.at(5).Current, uint64_t(INT64_MAX) - 1);
+  EXPECT_EQ(Limits.at(8).Current, 256u);
+  EXPECT_EQ(Limits.at(8).Maximum, 1024u);
+  for (const char *Empty : {R"({"darwin_system":{}})",
+                            R"({"darwin_system":{"resource_limits":[]}})"}) {
+    auto Parsed = processOptionsFromJSON(Empty);
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    ASSERT_TRUE(Parsed->DarwinSystem);
+    EXPECT_TRUE(Parsed->DarwinSystem->ResourceLimits.empty());
+  }
+  auto Text = processOptionsFromJSON(R"({"darwin_system":{"resource_limits":[
+      {"resource":"8","current":"0","maximum":"9223372036854775807"}]}})");
+  ASSERT_TRUE(bool(Text)) << llvm::toString(Text.takeError());
+  EXPECT_EQ(Text->DarwinSystem->ResourceLimits.at(8).Current, 0u);
+  EXPECT_EQ(Text->DarwinSystem->ResourceLimits.at(8).Maximum,
+            uint64_t(INT64_MAX));
+}
+
+TEST(ProcessReport, MalformedDarwinResourceLimitsFailBeforeImageLoading) {
+  for (
+      const char *Bad :
+      {"null",
+       "{}",
+       "true",
+       "0",
+       "[null]",
+       "[{}]",
+       R"([{"resource":0,"current":0}])",
+       R"([{"resource":0,"current":0,"maximum":0,"unknown":0}])",
+       R"([{"resource":0,"current":0,"unknown":0}])",
+       R"([{"resource":0,"current":0,"maximum":0},{"resource":"0","current":0,"maximum":0}])",
+       R"([{"resource":9,"current":0,"maximum":0}])",
+       R"([{"resource":4096,"current":0,"maximum":0}])",
+       R"([{"resource":"4294967296","current":0,"maximum":0}])",
+       R"([{"resource":-1,"current":0,"maximum":0}])",
+       R"([{"resource":0.5,"current":0,"maximum":0}])",
+       R"([{"resource":true,"current":0,"maximum":0}])",
+       R"([{"resource":0,"current":1,"maximum":0}])",
+       R"([{"resource":0,"current":-1,"maximum":0}])",
+       R"([{"resource":0,"current":0.5,"maximum":1}])",
+       R"([{"resource":0,"current":true,"maximum":1}])",
+       R"([{"resource":0,"current":0,"maximum":null}])",
+       R"([{"resource":0,"current":0,"maximum":"9223372036854775808"}])",
+       R"([{"resource":0,"current":0,"maximum":"18446744073709551615"}])",
+       R"([{"resource":0,"current":0,"maximum":9223372036854775807}])",
+       R"([{"resource":0,"current":0,"maximum":"1.0"}])"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string("{\"darwin_system\":{\"resource_limits\":") + Bad + "}}");
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+  auto TooMany = std::string("{\"darwin_system\":{\"resource_limits\":[");
+  for (unsigned I = 0; I != 10; ++I) {
+    if (I)
+      TooMany += ',';
+    TooMany +=
+        "{\"resource\":" + std::to_string(I) + ",\"current\":0,\"maximum\":0}";
+  }
+  auto Parsed = processOptionsFromJSON(TooMany + "]}}");
+  EXPECT_FALSE(bool(Parsed));
+  llvm::consumeError(Parsed.takeError());
+}
+
+TEST(ProcessReport,
+     ResourceLimitsRequireDarwinAndRejectTypedKeysBeforeLoading) {
+  auto O = processOptionsFromJSON(std::string("{\"darwin_system\":") +
+                                  darwin_test::ResourceLimitsJSON + "}");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  O->DarwinSystem->ResourceLimits[4096] = {0, 0};
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(
+        llvm::toString(R.takeError()),
+        "Darwin resource limits require canonical keys 0..8 and current <= "
+        "maximum <= INT64_MAX");
+  }
+}
+
 TEST(ProcessReport, DarwinSystemInputsAreLosslessAndRequireDarwinProfiles) {
   auto O = processOptionsFromJSON(std::string("{\"darwin_system\":") +
                                   darwin_test::SystemJSON + "}");

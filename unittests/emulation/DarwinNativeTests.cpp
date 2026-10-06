@@ -46,6 +46,56 @@ extern "C" ssize_t __getdirentries64(int, void *, size_t, off_t *);
 
 namespace neverd::emulation {
 namespace {
+TEST(DarwinNative, ResourcePairsMatchSDKCaptureLayoutAndBothFlagSpellings) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "Native resource observation capture requires macOS";
+#else
+  ASSERT_EQ(sizeof(rlim_t), 8u);
+  ASSERT_EQ(sizeof(struct rlimit), 16u);
+  ASSERT_EQ(offsetof(struct rlimit, rlim_cur), 0u);
+  ASSERT_EQ(offsetof(struct rlimit, rlim_max), 8u);
+  ASSERT_EQ(RLIM_INFINITY, uint64_t(INT64_MAX));
+  std::array<struct rlimit, 9> Captured;
+  DarwinSystemOptions O;
+  for (uint32_t Resource = 0; Resource != Captured.size(); ++Resource) {
+    ASSERT_EQ(::getrlimit(Resource, &Captured[Resource]), 0);
+    O.ResourceLimits[Resource] = {Captured[Resource].rlim_cur,
+                                  Captured[Resource].rlim_max};
+  }
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(O)));
+  for (uint64_t Page : {uint64_t(4096), uint64_t(16384)}) {
+    auto Physical = PhysicalMemory::create(Page * 2);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Space = AddressSpace::create(*Physical, Page * 2);
+    ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
+    constexpr uint64_t Base = 0x100000;
+    ASSERT_FALSE(
+        bool((*Space)->map(Base, Page * 2, Read | Write | UserAccessible)));
+    ProcessResult Result{
+        ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+        ExecutionBackendKind::Unicorn, "native getrlimit capture"};
+    for (uint32_t Resource = 0; Resource != Captured.size(); ++Resource) {
+      for (uint32_t Flag : {0u, 0x1000u}) {
+        SCOPED_TRACE(Resource | Flag);
+        std::vector<uint8_t> Expected(Page * 2, 0xa5), Actual(Page * 2);
+        ASSERT_FALSE(bool((*Space)->write(Base, Expected)));
+        std::memcpy(Expected.data() + Page - 8, &Captured[Resource], 16);
+        auto Out = darwin_model::systemService(
+            **Space, Page, darwin_model::ServiceKind::GetRlimit,
+            {0, 194, {Resource | Flag, Base + Page - 8}, std::nullopt}, O,
+            Result);
+        ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+        ASSERT_TRUE(*Out) << Result.Diagnostic;
+        EXPECT_EQ((**Out).Value, 0u);
+        EXPECT_FALSE((**Out).Error);
+        ASSERT_FALSE(bool((*Space)->read(Base, Actual)));
+        EXPECT_EQ(Actual, Expected);
+      }
+    }
+  }
+#endif
+}
+
 TEST(DarwinNative, SystemValuesMatchSDKCapturesAndStableMIBWidths) {
 #if !defined(__APPLE__)
   GTEST_SKIP() << "Native system observation capture requires macOS";

@@ -433,6 +433,9 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"directories", "64"},
           std::pair{"directory-entries", "65"},
           std::pair{"time-values", emulation::darwin_test::TimeHex},
+          std::pair{"resource-limits", "6c"},
+          std::pair{"virtual-resource-limits",
+                    emulation::darwin_test::ResourceLimitsHex},
           std::pair{"system-info", "69"},
           std::pair{"virtual-system", emulation::darwin_test::SystemHex},
           std::pair{"mach-time", "68"},
@@ -471,7 +474,9 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       std::string(
           R"({"backend":"unicorn","timeout_microseconds":10000000,"darwin_time":)") +
       emulation::darwin_test::TimeJSON + R"(,"darwin_system":)" +
-      emulation::darwin_test::SystemJSON +
+      ((Mode == "resource-limits" || Mode == "virtual-resource-limits")
+           ? emulation::darwin_test::ResourceLimitsJSON
+           : emulation::darwin_test::SystemJSON) +
       R"(,"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":)" +
       emulation::darwin_test::MetadataJSON +
       R"(}],"directories":[{"path":"/","contents":)" +

@@ -79,4 +79,6 @@ NEVERD_NATIVE_DARWIN_CASE(
     InitialDirectoryMovePreservesObjectsGrantsAndNameReuse)
 NEVERD_NATIVE_DARWIN_CASE(
     InitialDirectorySwapPreservesRootsSubtreesAndMixedObjects)
+NEVERD_NATIVE_DARWIN_CASE(
+    ResourceLimitsPreserveExplicitPairsSelectorsAndCopyOrder)
 #endif

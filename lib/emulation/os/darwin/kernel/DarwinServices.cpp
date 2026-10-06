@@ -118,6 +118,7 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   switch (Kind) {
   case ServiceKind::Sysctl:
   case ServiceKind::SysctlByName:
+  case ServiceKind::GetRlimit:
     return systemService(CPU, Memory.pageSize(), Kind, Event,
                          Options.DarwinSystem, Result);
   case ServiceKind::TimebaseInfo:

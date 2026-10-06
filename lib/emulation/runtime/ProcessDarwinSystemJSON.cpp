@@ -40,6 +40,30 @@ darwinSystemOptionsFromJSON(const llvm::json::Value &Value) {
   DarwinSystemOptions Out;
   for (const auto &[Key, V] : *Object) {
     const llvm::StringRef Name = Key;
+    if (Name == field::SystemResourceLimits) {
+      const auto *Limits = V.getAsArray();
+      if (!Limits || Limits->size() > darwin_model::value::ResourceLimitCount)
+        return invalid(Name);
+      for (const auto &Entry : *Limits) {
+        const auto *Limit = Entry.getAsObject();
+        if (!Limit || Limit->size() != 3)
+          return invalid(Name);
+        const auto *R = Limit->get(field::ResourceLimitResource);
+        const auto *C = Limit->get(field::ResourceLimitCurrent);
+        const auto *M = Limit->get(field::ResourceLimitMaximum);
+        if (!R || !C || !M)
+          return invalid(Name);
+        auto Resource = process_json::integer<uint32_t>(*R);
+        auto Current = process_json::integer<uint64_t>(*C);
+        auto Maximum = process_json::integer<uint64_t>(*M);
+        if (!Resource || !Current || !Maximum ||
+            !Out.ResourceLimits
+                 .emplace(*Resource, DarwinResourceLimit{*Current, *Maximum})
+                 .second)
+          return invalid(Name);
+      }
+      continue;
+    }
 #define NEVERD_DARWIN_SYSTEM_FIELD(Member, Field, NativeName, Root, Leaf)      \
   if (Name == field::Field) {                                                  \
     if (!parse(V, Out.Member))                                                 \

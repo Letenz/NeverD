@@ -55,6 +55,73 @@ static u64 little_integer(const unsigned char *p, unsigned width) {
     value |= (u64)p[i] << (i * 8);
   return value;
 }
+static int resource_limits(int emit_values) {
+  unsigned char bytes[18], flagged[16];
+  unsigned error;
+  int check = 51;
+#define RESOURCE_EXPECT(expression)                                            \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  for (unsigned resource = 0; resource != 9; ++resource) {
+    for (unsigned i = 0; i != sizeof(bytes); ++i)
+      bytes[i] = 0xa5;
+    RESOURCE_EXPECT(
+        !call(194, resource, (u64)(bytes + 1), 0, 0, 0, 0, &error) && !error &&
+        !secondary);
+    RESOURCE_EXPECT(bytes[0] == 0xa5 && bytes[17] == 0xa5 &&
+                    little_integer(bytes + 1, 8) <=
+                        little_integer(bytes + 9, 8) &&
+                    little_integer(bytes + 9, 8) <= 0x7fffffffffffffffUL);
+    RESOURCE_EXPECT(
+        !call(194, resource | 0x1000, (u64)flagged, 0, 0, 0, 0, &error) &&
+        !error && !secondary);
+    for (unsigned i = 0; i != 16; ++i)
+      if (flagged[i] != bytes[i + 1])
+        return 70;
+    if (emit_values)
+      RESOURCE_EXPECT(call(4, 1, (u64)(bytes + 1), 16, 0, 0, 0, &error) == 16 &&
+                      !error && !secondary);
+  }
+  RESOURCE_EXPECT(!call(194, 0x100000008UL, (u64)flagged, 0, 0, 0, 0, &error) &&
+                  !error && !secondary);
+  for (unsigned i = 0; i != 16; ++i)
+    if (flagged[i] != bytes[i + 1])
+      return 71;
+  const u64 invalid[] = {9, 0x1009, 0x2000, 0xffffffffUL};
+  for (unsigned i = 0; i != 4; ++i) {
+    for (unsigned j = 0; j != sizeof(bytes); ++j)
+      bytes[j] = 0xa5;
+    RESOURCE_EXPECT(
+        call(194, invalid[i], (u64)(bytes + 1), 0, 0, 0, 0, &error) == 22 &&
+        error && !secondary);
+    for (unsigned j = 0; j != sizeof(bytes); ++j)
+      if (bytes[j] != 0xa5)
+        return 72;
+  }
+  RESOURCE_EXPECT(call(194, 9, 0, 0, 0, 0, 0, &error) == 22 && error &&
+                  !secondary);
+  RESOURCE_EXPECT(call(194, 8, 0, 0, 0, 0, 0, &error) == 14 && error &&
+                  !secondary);
+  u64 mapping = call(197, 0, PAGE, 3, 0x1002, (u64)-1, 0, &error);
+  RESOURCE_EXPECT(!error && mapping && !secondary);
+  RESOURCE_EXPECT(!call(74, mapping, PAGE, 1, 0, 0, 0, &error) && !error &&
+                  !secondary);
+  RESOURCE_EXPECT(call(194, 8, mapping, 0, 0, 0, 0, &error) == 14 && error &&
+                  !secondary);
+  RESOURCE_EXPECT(!call(73, mapping, PAGE, 0, 0, 0, 0, &error) && !error &&
+                  !secondary);
+  if (!emit_values) {
+    char output = 'l';
+    RESOURCE_EXPECT(call(4, 1, (u64)&output, 1, 0, 0, 0, &error) == 1 &&
+                    !error && !secondary);
+  }
+#undef RESOURCE_EXPECT
+  return 37;
+}
+
 /* Raw Mach calls have a distinct return ABI. Record flags and live argument
  * carriers directly, without a libSystem wrapper or a BSD carry adapter. */
 struct mach_observation {
@@ -2859,6 +2926,9 @@ int main(int argc, char **argv, char **envp, char **apple) {
     return argc < 3 ? 79 : file_access(argv[2]);
   if (equal(argv[1], "vectored-io"))
     return argc < 3 ? 79 : vectored_io(argv[2]);
+  if (equal(argv[1], "resource-limits") ||
+      equal(argv[1], "virtual-resource-limits"))
+    return resource_limits(equal(argv[1], "virtual-resource-limits"));
   if (equal(argv[1], "system-info") || equal(argv[1], "virtual-system"))
     return system_info(equal(argv[1], "virtual-system"));
   if (equal(argv[1], "time-null"))

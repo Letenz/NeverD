@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 783dce3a095c35e7e39fa67d1d6d4214ed5504a0ae65fae3d00af6fd9f2277c3 -->
+<!-- i18n-source: 9fd13210357d20e09ca4c4b552e89a3b4b9608b2813d0d68730c75959a226579 -->
 
 [← Indice della documentazione](README.md)
 
@@ -588,3 +588,17 @@ Il carico originale senza SDK initial-directory-swap scambia empty e data preesi
 La verifica Release su macOS ARM64 registra 1,303 casi Darwin: 823 superati, 480 saltati per backend indisponibili, zero errori; tutti i 120 casi ARM64 HVF obbligatori sono eseguiti. File 361/361 (16 nuovi casi 4K/16K e 3 ammissioni), C/CLI 180/180, parser dei rapporti 34/34, programmi kernel originali 30/30 e sonda indipendente 35 osservazioni passano. Python copre cinque configurazioni in 33.894 secondi; passano 71 test API puri, 49 unità inventario/riferimento e verifiche SDK, formato, capacità, provenienza e documentazione. I conteggi si sovrappongono.
 
 Alla capacità esatta, lo stesso nome e 16 scambi di andata e ritorno conservano oggetti e costi. Se servono sei byte ma ne restano cinque, entrambi i rifiuti conservano alberi, cursori e budget di creazione. Le revisioni indipendenti del piano e del codice finale sono approvate. Tentativi, sorgenti, binari e risultati sono congelati in `build-hvf-arm64/initial-directory-swap/` e legati al commit. Un rapporto eseguito con sovrapposizione è escluso e ripetuto in serie; i marcatori di traduzione sono sincronizzati. Nessun limite temporale o controllo negativo è allentato. Permessi, mount/maiuscole non dichiarati, mappe condivise/EOF, orologi progressivi, Mach/thread/dyld/framework restano incompleti; iOS fisico, Intel HVF sospeso e CI remota di merge sono verifiche separate.
+
+## Osservazioni esplicite dei limiti, in sola lettura
+
+`getrlimit(194)` legge `DarwinSystemOptions::ResourceLimits` (`darwin_system.resource_limits`) nei cinque profili Darwin. Ogni `DarwinResourceLimit`, chiave 0..8, contiene due uint64 little-endian agli offset 0/8: 16 byte. Vale `0 <= current <= maximum <= 9223372036854775807`; zero è esplicito e INT64_MAX indica infinito. Nessuna query al host o modifica dei budget FD, VM, storage o esecuzione. `setrlimit`, applicazione dei limiti, segnali e scheduling restano incompleti.
+
+JSON rigoroso ammette al massimo nove chiavi uniche con esattamente `resource`, `current`, `maximum`, interi esatti o stringhe decimali senza segno. Tipi/campi errati, duplicati, chiavi non canoniche e limiti invertiti falliscono prima del caricamento. Array vuoti/omessi sono ignoti; le chiavi configurate non vengono normalizzate.
+
+Solo la syscall usa i 32 bit bassi del selettore e rimuove `_RLIMIT_POSIX_FLAG=0x1000`. Risorse invalide restituiscono EINVAL prima dell’accesso; osservazioni mancanti fermano come unsupported prima dell’output. Output totalmente non scrivibile restituisce EFAULT; coppie parzialmente scrivibili sono rifiutate senza scrivere. Copie complete non allineate o tra pagine cambiano solo 16 byte; errori backend restano di trasporto. La sonda ARM64 nativa ha passato 23 verifiche di valori/selettori e quattro errori separati; il prefisso parziale invariato su questo host non è una garanzia portabile.
+
+```json
+{"darwin_system":{"resource_limits":[{"resource":8,"current":256,"maximum":"9223372036854775807"}]}}
+```
+
+macOS ARM64 Release: registrati/passati/omessi non eseguiti/falliti 1337 / 845 / 492 / 0; tutti i 123 HVF richiesti eseguiti. Dodici nuovi casi 4K/16K e oracolo SDK; C/CLI 190/190, parser 37/37, carichi nativi 31/31; Python su cinque profili in 71.978 secondi, 71 verifiche API e 49 runner passate. Passano drift SDK, formato, capacità, provenienza e documentazione; i conteggi si sovrappongono. Evidenze congelate in `build-hvf-arm64/resource-limit-observations/` e legate al commit. Primo errore di build da enum di test, tentativi di collegamento/filtro conservati; validazione corretta seriale senza allentare scadenze o controlli. Applicazione dei limiti, permessi, directory dopo mutazione, mappe condivise/EOF, orologi, Mach/thread/dyld e framework restano da fare. iOS fisico, Intel HVF sospeso e CI remota richiedono accettazione separata.

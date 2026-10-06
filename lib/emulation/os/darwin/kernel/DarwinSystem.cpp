@@ -100,6 +100,10 @@ llvm::Error validateSystemOptions(const DarwinSystemOptions &Options) {
   if (Options.CPUCount &&
       (!*Options.CPUCount || *Options.CPUCount > uint32_t(INT32_MAX)))
     return failure(diagnostic::SystemCPUCount);
+  for (const auto &[Resource, Limit] : Options.ResourceLimits)
+    if (Resource >= ResourceLimitCount || Limit.Current > Limit.Maximum ||
+        Limit.Maximum > ResourceLimitInfinity)
+      return failure(diagnostic::ResourceLimitOption);
   return llvm::Error::success();
 }
 
@@ -109,6 +113,20 @@ systemService(GuestMemory &Memory, uint64_t PageSize, ServiceKind Kind,
               const std::optional<DarwinSystemOptions> &Options,
               ProcessResult &Result) {
   const auto &A = Event.Arguments;
+  if (Kind == ServiceKind::GetRlimit) {
+    const uint32_t Resource =
+        uint32_t(A[0]) & ~uint32_t(ResourceLimitPosixFlag);
+    if (Resource >= ResourceLimitCount)
+      return returned(InvalidArgument, true);
+    if (!Options || !Options->ResourceLimits.contains(Resource))
+      return unsupported(Result, diagnostic::ResourceLimitObservation);
+    const auto &Limit = Options->ResourceLimits.at(Resource);
+    std::array<uint8_t, 16> Bytes;
+    llvm::support::endian::write64le(Bytes.data(), Limit.Current);
+    llvm::support::endian::write64le(Bytes.data() + 8, Limit.Maximum);
+    return copyUserMemory(Memory, A[1], Bytes,
+                          diagnostic::ResourceLimitPartialOutput, Result);
+  }
   const bool Named = Kind == ServiceKind::SysctlByName;
   const uint64_t Count = Named ? A[1] : uint32_t(A[1]);
   if (Named ? Count >= SystemStringLimit : Count < 2 || Count > SystemMIBLimit)

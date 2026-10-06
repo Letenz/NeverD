@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 783dce3a095c35e7e39fa67d1d6d4214ed5504a0ae65fae3d00af6fd9f2277c3 -->
+<!-- i18n-source: 9fd13210357d20e09ca4c4b552e89a3b4b9608b2813d0d68730c75959a226579 -->
 
 [← Índice de documentación](README.md)
 
@@ -588,3 +588,17 @@ La carga original sin SDK initial-directory-swap intercambia empty y data preexi
 La validación Release en macOS ARM64 registra 1,303 casos Darwin: 823 aprobados, 480 omitidos por motores no disponibles y cero fallos; se ejecutaron los 120 casos ARM64 HVF obligatorios. Archivos 361/361 (16 nuevos casos 4K/16K y 3 admisiones), C/CLI 180/180, análisis de informes 34/34, programas originales del núcleo 30/30 y sonda independiente 35 observaciones pasan. Python cubre cinco configuraciones en 33.894 segundos; pasan 71 pruebas API puras, 49 unidades de inventario/referencia y las comprobaciones SDK, formato, capacidades, procedencia y documentación. Los recuentos se solapan.
 
 Con capacidad exacta, el mismo nombre y 16 intercambios de ida y vuelta conservan objetos y cargos. Si hacen falta seis bytes y quedan cinco, ambos rechazos conservan árboles, cursores y presupuesto de creación. Las revisiones independientes del plan y del código final están aceptadas. Intentos, fuentes, binarios y resultados se congelan en `build-hvf-arm64/initial-directory-swap/` y se vinculan al commit. Un informe ejecutado con solapamiento se excluyó y repitió en serie; se sincronizaron los marcadores de traducción. No se ampliaron plazos ni relajaron controles negativos. Permisos, montajes/mayúsculas no declarados, mapas compartidos/EOF, relojes progresivos, Mach/hilos/dyld/frameworks siguen pendientes; iOS físico, Intel HVF suspendido y CI remota de fusión son validaciones distintas.
+
+## Observaciones explícitas de límites de recursos, solo lectura
+
+`getrlimit(194)` lee `DarwinSystemOptions::ResourceLimits` (`darwin_system.resource_limits`) en los cinco perfiles Darwin. Cada `DarwinResourceLimit`, con clave 0..8, contiene dos uint64 little-endian en offsets 0/8, 16 bytes en total. Se exige `0 <= current <= maximum <= 9223372036854775807`; cero es explícito e INT64_MAX significa infinito. No consulta al host ni altera presupuestos FD, VM, almacenamiento o ejecución. `setrlimit`, aplicación de límites, señales y planificación siguen pendientes.
+
+JSON estricto permite hasta nueve claves únicas con exactamente `resource`, `current`, `maximum`, como enteros exactos o cadenas decimales sin signo. Tipos/campos inválidos, duplicados, claves no canónicas y límites invertidos fallan antes de cargar. Un array vacío u omitido sigue siendo desconocido; no se normalizan las claves de configuración.
+
+Solo el syscall usa los 32 bits bajos del selector y elimina `_RLIMIT_POSIX_FLAG=0x1000`. Un recurso inválido devuelve EINVAL antes de acceder a memoria; una observación ausente se detiene como no soportada antes del acceso. Salida totalmente no escribible devuelve EFAULT; un par parcialmente escribible se rechaza sin publicar bytes. La copia completa desalineada o entre páginas escribe solo 16 bytes; los errores del backend siguen siendo de transporte. La sonda ARM64 nativa pasó 23 comprobaciones de valores/selectores y cuatro fallos separados; el prefijo intacto de este host no constituye una garantía portable.
+
+```json
+{"darwin_system":{"resource_limits":[{"resource":8,"current":256,"maximum":"9223372036854775807"}]}}
+```
+
+macOS ARM64 Release: registrados/aprobados/omitidos sin ejecución/fallos 1337 / 845 / 492 / 0, todos los 123 HVF requeridos ejecutados. Doce casos nuevos 4K/16K y oráculo SDK; C/CLI 190/190, parser 37/37, cargas nativas 31/31; Python con cinco perfiles en 71.978 segundos, 71 pruebas API y 49 del runner aprobadas. Pasan deriva SDK, formato, capacidades, procedencia y documentación; los conteos se solapan. Evidencias congeladas en `build-hvf-arm64/resource-limit-observations/` y vinculadas al commit. Se preservan el primer fallo de compilación por un enum de prueba y los intentos de conexión/filtro; la validación corregida es serial y conserva plazos/controles negativos. Siguen pendientes aplicación de límites, permisos, directorios tras mutaciones, mapas compartidos/EOF, relojes, Mach/hilos/dyld y frameworks. iOS físico, Intel HVF suspendido y CI de merge remoto requieren aceptación aparte.

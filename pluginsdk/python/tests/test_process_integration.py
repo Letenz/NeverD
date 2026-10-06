@@ -553,6 +553,13 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("initial-directory-removal", b"j"),
                                            ("initial-directory-move", b"p"),
                                            ("initial-directory-swap", b"q"),
+                                           ("resource-limits", b"l"),
+                                           ("virtual-resource-limits", bytes.fromhex(
+                                               "00000000000000000000000000000000ffffffffffffff7fffffffffffffff7f"
+                                               "efcdab8967452301ffffffffffffff7f00000040000000000000008000000000"
+                                               "0000000000000000ffffffffffffff7ffeffffffffffff7fffffffffffffff7f"
+                                               "0020000000000000004000000000000020000000000000008000000000000000"
+                                               "00010000000000000004000000000000")),
                                            ("system-info", b"i"),
                                            ("virtual-system", bytes.fromhex(
                                                "44617277696e0032342e746573740000000080"
@@ -621,6 +628,20 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                           "type": 8, "next_offset": 99, "seek_offset": 0}]}}],
                                              "working_directory": "/empty",
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
+                        if mode in ("resource-limits", "virtual-resource-limits"):
+                            resource_options = json.loads(file_options)
+                            resource_options["darwin_system"] = {"resource_limits": [
+                                {"resource": 0, "current": 0, "maximum": 0},
+                                {"resource": 1, "current": "9223372036854775807", "maximum": "9223372036854775807"},
+                                {"resource": 2, "current": "81985529216486895", "maximum": "9223372036854775807"},
+                                {"resource": 3, "current": 1073741824, "maximum": 2147483648},
+                                {"resource": 4, "current": 0, "maximum": "9223372036854775807"},
+                                {"resource": 5, "current": "9223372036854775806", "maximum": "9223372036854775807"},
+                                {"resource": 6, "current": 8192, "maximum": 16384},
+                                {"resource": 7, "current": 32, "maximum": 128},
+                                {"resource": 8, "current": 256, "maximum": 1024}
+                            ]}
+                            file_options = json.dumps(resource_options)
                         if mode.startswith("writable-files") or mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "initial-directory-move", "initial-directory-swap", "created-file-metadata", "virtual-created-metadata", "renamed-file", "renamed-directory", "swapped-directory", "vectored-io"):
                             writable_options = json.loads(file_options)
                             writable_file = writable_options["darwin_files"]["files"][0]

@@ -1203,3 +1203,58 @@ This completes the declared initial-root exchange contract. Permissions,
 undeclared mounts/case behavior, coherent shared maps/EOF faults, advancing
 clocks, Mach/thread/dyld dependencies and framework runtime remain unfinished.
 Physical iOS, suspended Intel HVF and remote merge CI are separate acceptance.
+
+## Explicit read-only resource-limit observations
+
+`getrlimit(194)` reads caller-supplied `DarwinSystemOptions::ResourceLimits`
+(`darwin_system.resource_limits`) on all five Darwin guest configurations. Each
+canonical resource 0..8 has a `DarwinResourceLimit` pair: `Current` at byte 0 and
+`Maximum` at byte 8, both little-endian uint64, in one complete 16-byte output.
+The resources are CPU, FSIZE, DATA, STACK, CORE, AS/RSS, MEMLOCK, NPROC and NOFILE.
+Values require `0 <= current <= maximum <= 9223372036854775807`; zero is explicit
+and INT64_MAX is Darwin's infinity. These fixed observations never query host
+limits and do not change existing FD, VM, storage or execution budgets.
+`setrlimit`, limit enforcement, related signals and scheduling remain unfinished.
+
+Strict JSON accepts at most nine uniquely keyed objects with exactly `resource`,
+`current` and `maximum`. Exact integers or unsigned decimal strings preserve the
+full values; malformed, duplicate, noncanonical or reversed inputs fail before
+image loading. Empty or omitted arrays declare no limits. Configuration keys
+remain 0..8: syscall-only flag/truncation rules never normalize input keys.
+
+```json
+{"darwin_system":{"resource_limits":[{"resource":8,"current":256,"maximum":"9223372036854775807"}]}}
+```
+
+The syscall uses the low 32 selector bits and clears only `_RLIMIT_POSIX_FLAG`
+(`0x1000`). An invalid selector returns EINVAL before lookup or memory access;
+a valid absent observation stops unsupported before touching output. A wholly
+unwritable buffer returns EFAULT; an individually partially writable pair stops
+unsupported before publishing either word. A full unaligned or cross-page copy
+preserves surrounding bytes. Memory-backend errors remain transport errors.
+The original ARM64 native probe passed 23 selector/value/guard checks and four
+separate fault checks; this host's untouched partial prefix is not generalized
+into a portable partial-copy guarantee. [Apple getrlimit](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getrlimit.2.html),
+[XNU resource selector and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c),
+[XNU resource constants](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/resource.h).
+
+Native macOS ARM64 Release validation reconciles 1337 registrations:
+845 passed, 492 unavailable-backend
+skips and zero failures; all 123 required ARM64 HVF cases executed. The new
+query has twelve 4K/16K behavior instances, typed and strict-JSON admission
+controls, an SDK capture oracle and required SDK-free native/guest workloads.
+Public C/CLI passes 190/190, report/parser 37/37 and original native workloads
+31/31. Actual Python integration covers five configurations in 71.978 seconds;
+71 pure API and 49 runner/reference checks, SDK drift, pinned formatting,
+capability, provenance and documentation checks pass. Counts overlap. Evidence
+is frozen under `build-hvf-arm64/resource-limit-observations/` and bound to the
+committed source. A test-only profile enum typo was corrected after the preserved
+first build failure. The initial owner filter missed typed admission checks;
+they were run separately and included in the complete gate. Source-wiring
+attempts remain recorded; deadlines and negative controls are unchanged.
+
+This closes the explicit read-only query gap. Resource enforcement, permissions,
+directory metadata/enumeration after mutation, coherent shared maps/EOF faults,
+advancing clocks, Mach/thread/dyld dependencies and framework runtime remain
+unfinished. Physical iOS, suspended Intel HVF and remote merge CI remain separate
+acceptance requirements.

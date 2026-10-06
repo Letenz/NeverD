@@ -511,6 +511,40 @@ TEST_P(DarwinProcess,
              Event.Error == false;
     })) << Number;
 }
+TEST_P(DarwinProcess,
+       ResourceLimitsPreserveExplicitPairsSelectorsAndCopyOrder) {
+  for (bool EmptySystem : {false, true}) {
+    if (EmptySystem)
+      Options.DarwinSystem = DarwinSystemOptions{};
+    auto Missing = run("resource-limits");
+    ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+    EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Missing->Diagnostic,
+              "Darwin resource limit observation is not configured");
+    EXPECT_TRUE(Missing->StandardOutput.empty());
+  }
+  Options.DarwinSystem = darwin_test::resourceLimitOptions();
+  for (auto Mode : {"resource-limits", "virtual-resource-limits"}) {
+    SCOPED_TRACE(Mode);
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(Result->StandardOutput,
+              Mode == llvm::StringRef("resource-limits")
+                  ? "l"
+                  : llvm::fromHex(darwin_test::ResourceLimitsHex));
+    EXPECT_TRUE(Result->StandardError.empty());
+    EXPECT_TRUE(llvm::any_of(Result->Services, [](const auto &Event) {
+      return (uint32_t(Event.Number) & 0x00ffffff) == 194 &&
+             Event.Arguments[0] == 0x100000008ULL && Event.Result == 0 &&
+             Event.Error == false;
+    }));
+  }
+  EXPECT_EQ(Options.DarwinSystem->ResourceLimits.at(0).Current, 0u);
+  EXPECT_EQ(Options.DarwinSystem->ResourceLimits.at(0).Maximum, 0u);
+}
+
 TEST_P(DarwinProcess, SystemQueriesPreserveExplicitValuesWidthsAndCopyOrder) {
   auto Missing = run("system-info");
   ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());

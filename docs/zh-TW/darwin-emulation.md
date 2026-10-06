@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 783dce3a095c35e7e39fa67d1d6d4214ed5504a0ae65fae3d00af6fd9f2277c3 -->
+<!-- i18n-source: 9fd13210357d20e09ca4c4b552e89a3b4b9608b2813d0d68730c75959a226579 -->
 
 [← 文件索引](README.md)
 
@@ -590,3 +590,17 @@ Release Darwin 驗證核對了 1,219 項註冊：763 項通過、456 項因後�
 本輪在 macOS ARM64 Release 核對 1,303 項 Darwin 註冊：823 通過、480 因後端不可用跳過、零失敗；120 項必要 ARM64 HVF 檢查均已執行。檔案檢查 361/361（含 16 個新增 4K/16K 行為實例及 3 項准入检查）、C/CLI 180/180、報告解析 34/34、原始核心程式 30/30，獨立探針 35 項觀測通過。Python 五種配置用時 33.894 秒，71 項純 API、49 項清單/對照單元檢查及 SDK 漂移、格式、能力、來源、文件檢查通過。計數互相重疊。
 
 精確容量下，同名操作及 16 次往返交換保留物件與費用；需要 6 位元組而僅餘 5 位元組時，雙向拒絕均保留兩棵樹、游標及後續建立預算。獨立計畫及最終原始碼審查通過。嘗試、原始碼、二進位及結果保存在 `build-hvf-arm64/initial-directory-swap/` 並綁定提交；誤重疊的報告檢查排除後循序重跑，翻譯標記已同步，未放寬時限或負控。權限、未宣告掛載/大小寫、共享映射/EOF、推進時鐘、Mach/執行緒/dyld/框架仍未完成；實體 iOS、暫停的 Intel HVF 及遠端合併 CI 分開驗收。
+
+## 明確的唯讀資源限制觀察值
+
+五種 Darwin guest 配置的 `getrlimit(194)` 讀取 `DarwinSystemOptions::ResourceLimits`（`darwin_system.resource_limits`）。0..8 的 `DarwinResourceLimit` 含偏移 0/8 的兩個小端 uint64，共 16 位元組；`0 <= current <= maximum <= 9223372036854775807`，零是明確值，INT64_MAX 表示無窮。不查詢宿主，不改變 FD、VM、儲存或執行預算；`setrlimit`、限制執行、訊號與排程尚未完成。
+
+嚴格 JSON 最多九個唯一鍵，每項恰含 `resource`、`current`、`maximum`，接受精確整數或無符號十進位字串。重複、缺項、錯誤型別、非規範鍵及倒置值在載入前失敗；省略或空陣列仍是未知。配置鍵不套用系統呼叫的旗標或截斷規則。
+
+選擇器只取低 32 位並清除 `_RLIMIT_POSIX_FLAG=0x1000`。非法資源先回 EINVAL，缺值先停止為不支援，均不存取輸出。完全不可寫回 EFAULT；部分可寫保持全部位元組並停止為不支援。完整未對齊或跨頁複製僅寫 16 位元組；後端錯誤保留為傳輸錯誤。原生 ARM64 探針通過 23 項值/選擇器與四項獨立故障檢查，局部前綴不變不能推廣為通用保證。
+
+```json
+{"darwin_system":{"resource_limits":[{"resource":8,"current":256,"maximum":"9223372036854775807"}]}}
+```
+
+macOS ARM64 Release：註冊/通過/未執行略過/失敗為 1337 / 845 / 492 / 0，123 項必要 HVF 全部執行。新增十二項 4K/16K 行為檢查及 SDK 捕獲對照；C/CLI 190/190、解析 37/37、原生負載 31/31，Python 五配置 71.978 秒、純 API 71 項、執行器 49 項通過。SDK 漂移、格式、能力、來源與文件檢查通過；數量重疊。證據封存在 `build-hvf-arm64/resource-limit-observations/` 並綁定提交，首次編譯的測試列舉筆誤及接線/篩選嘗試均保留，修正後串行驗收，期限與負控不變。資源執行、權限、變更後目錄資料/枚舉、共享映射/EOF、推進時鐘、Mach/執行緒/dyld 與框架仍未完成；實體 iOS、暫停的 Intel HVF 及遠端合併 CI 另行驗收。
