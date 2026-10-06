@@ -128,13 +128,16 @@ struct DarwinFileOptions {
   /// configured metadata; later successful mutations do not restore it.
   std::map<std::string, DarwinFileMutationPolicy> MutationPolicies;
   /// Explicit authority to change immediate names in these directories.
-  /// Newly created objects have writable contents; existing objects retain
-  /// their separate WritableFiles authority. Namespace changes invalidate
-  /// the parent's observed metadata and directory snapshot. New objects have
-  /// unknown metadata unless CreationPolicy is supplied.
+  /// Newly created files have writable contents; new directories inherit
+  /// namespace mutation authority. Existing objects retain their separate
+  /// grants. Namespace changes invalidate the parent's metadata and snapshot.
+  /// New directory metadata stays unknown. Initial directories, or directories
+  /// held by a directory FD or CWD, cannot be removed in the current model.
   std::set<std::string> MutableDirectories;
-  /// Optional virtual creation metadata; requires InitialUmask. Never applies
-  /// to existing objects or reads any host environment. Input stays unchanged.
+  /// Optional virtual regular-file creation metadata; requires InitialUmask.
+  /// New directories inherit only the parent's known device/group and do not
+  /// consume regular-file inode values. Never applies to existing objects or
+  /// reads any host environment. Input stays unchanged.
   std::optional<DarwinFileCreationPolicy> CreationPolicy;
   /// Initial process mask, including all 07777 bits returned by Darwin umask.
   /// Independent of creation authority. Absence is unknown, not a host default.

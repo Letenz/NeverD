@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: db2f5a72fda6a5195b548852dda4cebabfdea38e499c54e1b88f809dd2fc1055 -->
+<!-- i18n-source: fb48643220c4133abaf1152bc583f4341f626a9d62e4c61f583d43af2c3ad145 -->
 
 [← 문서 목록](README.md)
 
@@ -111,9 +111,9 @@ allocation_unit, mutation_time 및 seconds/nanoseconds는 필수이며 기존 �
 
 디렉터리 `mutable:true`(C++ `MutableDirectories`)는 바로 아래 이름 변경 권한이며 내용의 `writable`과 별개입니다. 권한이 없으면 미지원으로 중지합니다. 알려진 비영 flags, 부모 특수 권한, 자식 link_count≠1, 부모/자식의 알려진 별칭을 거부합니다. stat/스냅샷 inode를 함께 확인하고 명시적으로 다른 장치는 구별하며 경로 비용을 예산에 포함합니다.
 
-`unlink(10)` / `unlinkat(472)`는 기존 일반 이름을 제거합니다. unlinkat 하위32비트는 0 또는 `0x800`만 지원합니다. 알 수 없는 비트는 경로/FD보다 먼저 EINVAL; 디렉터리 제거 등 알려진 다른 모드는 미지원입니다. 공통 경로 해석으로 ENOENT, 파일 뒤 슬래시 ENOTDIR, 일반 디렉터리 EPERM, 루트 EBUSY를 보존하며 네이티브로 마지막 `.`/`..`도 검사했습니다.
+`unlink(10)` / `unlinkat(472)`는 기존 일반 이름을 제거합니다. 일반 파일 제거의 하위32비트는 0 또는 `0x800`만 지원합니다. 알 수 없는 비트는 경로/FD보다 먼저 EINVAL; AT_REMOVEDIR는 아래 제한된 제거를 사용하고 DATALESS와 SYSTEM_DISCARDED는 미지원입니다. 공통 경로 해석으로 ENOENT, 파일 뒤 슬래시 ENOTDIR, 일반 디렉터리 EPERM, 슬래시만 있는 루트 EISDIR, `.`/`..`로 끝나는 루트 EBUSY를 보존하며 네이티브로 마지막 `.`/`..`도 검사했습니다.
 
-기존 FD/dup/독립 open은 데이터·커서·플래그를 유지하고 F_GETPATH는 이전 경로를 반환합니다. 새 open은 실패하되 암시적 부모와 CWD는 남습니다. 쓰기 권한은 객체에 속하며 마지막 설명자와 매핑 범위가 해제된 뒤 close/dup2/다음 변경에서 현재 바이트 예산을 회수합니다. 초기 경로 비용은 유지하며 권한 강제 검사·부모 간 이름 변경·하드링크·디렉터리 제거는 남아 있습니다.
+기존 FD/dup/독립 open은 데이터·커서·플래그를 유지하고 F_GETPATH는 이전 경로를 반환합니다. 새 open은 실패하되 암시적 부모와 CWD는 남습니다. 쓰기 권한은 객체에 속하며 마지막 설명자와 매핑 범위가 해제된 뒤 close/dup2/다음 변경에서 현재 바이트 예산을 회수합니다. 초기 경로 비용은 유지하며 권한 강제 검사·부모 간 이름 변경·하드링크·초기 디렉터리 또는 디렉터리 FD/CWD가 유지하는 디렉터리 제거는 남아 있습니다.
 
 부모 stat/readdir/SEEK_END는 구·신 FD 및 경로 모두에서 무효화되어 복사/커서 변경 전에 중지합니다. read/pread의 EISDIR와 SET/CUR/F_GETPATH/fchdir/상대 조회는 유지됩니다. 알려진 변경 정책은 nlink=0 및 고정 ctime만 적용하며 후속 쓰기도 nlink=1을 복구하지 않습니다. 정책 없음/EFAULT 뒤 메타데이터는 미상입니다. 실패는 상태를 보존하고 원본 `unlinked-file`은 네이티브 이름/FD 동작을 비교합니다. 정책 시간과 부모 무효화는 명시적 모델 규칙입니다.
 
@@ -164,7 +164,7 @@ O_CREAT과 O_EXCL=0x800의 조합은 기존 파일/디렉터리에 자르기 전
 
 `openat` (463), `openat_nocancel` (464), `chdir` (12), `fchdir` (13), `fstatat64` (470)는 해석기를 공유합니다. 상대 경로는 디렉터리 FD 또는 `AT_FDCWD=-2`를 사용하고 절대 경로는 FD를 무시합니다. 반복 슬래시, `.`, `..`, 끝 슬래시도 조상을 검사하여 `/file/..`는 ENOTDIR, `/missing/..`는 ENOENT입니다. 실패나 원래 FD의 닫기·재사용·교체는 CWD를 바꾸지 않습니다. `F_GETPATH=50`은 복제 FD에도 정규 경로와 NUL을 복사하며 이후 바이트는 보존합니다.
 
-디렉터리 read/pread는 길이 0에도 EISDIR이며 음수 pread 오프셋은 EINVAL이 우선합니다. SET/CUR은 커서를 공유하고 END는 명시 size가 필요하며 mmap은 EINVAL입니다. fstatat64는 0, `AT_SYMLINK_NOFOLLOW=0x20`, `AT_SYMLINK_NOFOLLOW_ANY=0x800`, `AT_FDONLY=0x400`(경로 무시)을 지원합니다. 잘못된 비트는 EINVAL, `AT_REALDEV=0x200`은 미지원입니다. 스트림 정체성은 미지정이며 권한은 접근 제어 모델이 아닙니다. 쓰기는 남은 작업입니다. 같은 `directories`를 네이티브와 다섯 게스트로 비교하고 stat은 실제 파일과 디렉터리를 비교합니다. Intel HVF Actions는 중지 상태입니다.
+디렉터리 read/pread는 길이 0에도 EISDIR이며 음수 pread 오프셋은 EINVAL이 우선합니다. SET/CUR은 커서를 공유하고 END는 명시 size가 필요하며 mmap은 EINVAL입니다. fstatat64는 0, `AT_SYMLINK_NOFOLLOW=0x20`, `AT_SYMLINK_NOFOLLOW_ANY=0x800`, `AT_FDONLY=0x400`(경로 무시)을 지원합니다. 잘못된 비트는 EINVAL, `AT_REALDEV=0x200`은 미지원입니다. 스트림 정체성은 미지정이며 권한은 접근 제어 모델이 아닙니다. 디렉터리 생성과 제한된 삭제는 아래 명시 허가를 사용합니다. 같은 `directories`를 네이티브와 다섯 게스트로 비교하고 stat은 실제 파일과 디렉터리를 비교합니다. Intel HVF Actions는 중지 상태입니다.
 
 [XNU VFS](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h).
 
@@ -184,7 +184,7 @@ O_CREAT과 O_EXCL=0x800의 조합은 기존 파일/디렉터리에 자르기 전
 
 독립 open은 별도 커서, dup는 공유 커서를 사용합니다. 0 또는 제공한 값에서만 재개하며 알 수 없는 위치는 중단합니다. 들어가는 완전한 기록의 최대 접두부를 반환합니다. 길이 >=1024이면 원래 요청 끝 4바이트에 EOF(끝이면 1, 아니면 0)를 예약하며 기록 페이로드만 128 MiB로 제한합니다. 플래그 주소는 원래 부호 없는 연산과 래핑을 유지합니다. 데이터 복사, 커서 갱신, 읽기 전 위치 복사, 플래그 순서입니다. 뒤의 EFAULT는 앞선 효과를 유지하고 EOF는 빈 데이터 복사를 생략합니다. 개별 복사가 일부만 쓰기 가능하면 그 복사 전에 미지원으로 중단하며 이전 효과는 유지합니다.
 
-동일한 `directory-entries`는 원본 macOS와 기록, dup/되감기, 작은 읽기, EOF 및 복사 순서를 비교합니다. 별도 테스트는 SDK 배치와 긴 이름을 포함한 원본 기록의 전체 바이트를 비교합니다. 고정 스냅샷 값은 되감기에도 유지되어 APFS의 동적 세대를 재현하지 않습니다. 이전 `getdirentries` (196), 쓰기, 다른 네이티브 백엔드와 iOS 실기기는 이 검증 밖입니다.
+동일한 `directory-entries`는 원본 macOS와 기록, dup/되감기, 작은 읽기, EOF 및 복사 순서를 비교합니다. 별도 테스트는 SDK 배치와 긴 이름을 포함한 원본 기록의 전체 바이트를 비교합니다. 고정 스냅샷 값은 되감기에도 유지되어 APFS의 동적 세대를 재현하지 않습니다. 이전 `getdirentries` (196), 변경 후 열거, 다른 네이티브 백엔드와 iOS 실기기는 이 검증 밖입니다.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"directories":[{"path":"/empty"},{"path":"/","contents":{
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-독립 워크로드 검증은 ARM64 99개 또는 x64 66개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
+독립 워크로드 검증은 ARM64 102개 또는 x64 68개 네이티브 사례를 모두 요구하며 각 플랫폼의 `LC_MAIN`과 `LC_UNIXTHREAD`를 포함합니다. 필수 항목 누락, 건너뛰기 또는 `ld64.lld` 부재는 실패입니다.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -430,3 +430,21 @@ Faccessat는 AT_EACCESS(0x10), AT_SYMLINK_NOFOLLOW(0x20), AT_SYMLINK_NOFOLLOW_AN
 Release Darwin 971개 등록:575개 통과, 백엔드 미제공396개 건너뜀, 실패 없음. 필수 ARM64 HVF 99개를 모두 실행했습니다. 집중35개 중23개 통과·12개 건너뜀이며 직접14개를 포함합니다. 공개 C/CLI/report 173/173개 통과, Darwin 입력 비교123개 포함. Python은16.235초에5개 구성을 검증했고 네이티브23/23, 검증 스크립트66/66 통과. 독립 설계·구현 검토에 차단 문제는 없습니다. 호스트 /tmp 링크로 인한 초기 NOFOLLOW_ANY 결과와 정규 경로 비교를 보존하며 공통 작업은 상대 디렉터리 FD를 사용합니다. 수치는 중복되고 기한은 동일하며 실행 실패 재검사는 불필요했습니다. 전체 GitHub CI와 실제 iOS는 별도이며 Intel HVF Actions는 계속 중지합니다.
 
 `build-hvf-arm64/access-validation-summary.json`, `access-darwin-final-evidence/`, `access-focused-final.xml`, `access-public.xml`, `access-native-initial/`, `access-evidence/`.
+
+## 디렉터리 생성과 삭제
+
+`mkdir(136)`과 `mkdirat(475)`는 명시적으로 변경 가능한 바로 위 부모에 디렉터리를 만듭니다. 새 디렉터리는 네임스페이스 변경 권한을 상속하고 초기 디렉터리는 별도 허가를 유지합니다. 알려진 부모 장치/GID만 상속하며 전체 stat·크기·할당·시간·열거 커서는 추측하지 않습니다. 재사용한 파일 이름의 이전 관측을 가립니다. `creation_policy`는 일반 파일 전용으로, 하위 파일은 상속된 부모 식별과 기존 전역 inode 순서를 사용하고 mkdir는 파일 inode를 소비하지 않습니다. 권한 강제와 원시 디렉터리 메타데이터는 범위 밖입니다.
+
+공통 구성요소 탐색에서 mkdir는 끝 슬래시만 뒤따르는 누락 이름을 생성합니다. 누락 조상 뒤 점/두 점은 ENOENT, 파일 조상은 ENOTDIR, 기존 이름은 EEXIST입니다. 상대 FD/CWD, 절대 경로의 FD 무시, 문자열 실패 우선순위를 유지합니다. 사용 가능한 FD가 필요 없고 탐색·허가·예산·전송 거부는 이름이나 부모 관측을 변경하지 않습니다.
+
+`rmdir(137)`와 AT_REMOVEDIR(0x80)를 준 `unlinkat(472)`는 이 프로세스가 생성한 빈 디렉터리를 제거하며 AT_SYMLINK_NOFOLLOW_ANY(0x800)를 함께 쓸 수 있습니다. 미지 하위32비트는 입력 전에 EINVAL, DATALESS와 SYSTEM_DISCARDED는 미지원입니다. 알려진 경로/종류/루트 오류는 유지하고 초기 디렉터리 삭제는 UnsupportedService입니다. 생성된 대상의 끝 점은 EINVAL, 두 점/비어 있지 않음은 ENOTEMPTY입니다. 디렉터리 FD(dup 포함)나 CWD가 유지하는 대상 삭제는 지속 객체 수명을 구현할 때까지 명시적으로 거부합니다. unlink된 일반 파일 FD/매핑은 이름에 포함하지 않으며 부모 삭제와 재사용 후 내용·inode·마지막 F_GETPATH가 유지됨을 네이티브로 비교합니다.
+
+새 정규 경로+NUL과1개 항목을 공통16 MiB/256개 예산에 합산하고 삭제 때 해당 비용만 반환합니다. 고아 파일·매핑은 유지합니다. 성공할 때만 부모의 전체 stat/열거를 무효화하며 새 디렉터리 관측은 계속 미지입니다. 독자 `directory-mutations`는 네이티브 macOS,5개 게스트,C++/C/CLI/Python에서 중첩 생성·이름 변경·unlink·삭제·고아 객체 재사용을 비교합니다.
+
+[XNU mkdir/rmdir](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU directory creation lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c).
+
+### 디렉터리 변경 검증, 2026-10-06
+
+Release Darwin:1,017개 등록,609개 통과,백엔드 미제공408개 건너뜀,실패 없음. 필수 ARM64 HVF102개 실행. 집중58개 통과·12개 건너뜀,새4K/16K 직접26개 포함. 공개 C/CLI/report178/178(Darwin 입력128),Python5개 구성17.255초,네이티브24/24,스크립트66/66 통과. 독립 검토는 예산·이름 재사용·부모 식별·파일 임대·롤백을 확인했습니다. 초기 성공 후 추가 네이티브 검사가 슬래시 전용 루트 삭제 EISDIR와 끝 점/두 점 루트 EBUSY 차이를 발견해 공통 판단과 테스트를 수정했습니다. 초기 결과·소스·바이너리는 보존합니다. 수치는 중복,기한 불변,Intel HVF Actions 중지 유지. 전체 GitHub CI와 실제 iOS는 별도입니다.
+
+`build-hvf-arm64/directory-mutation-validation-summary.json`, `directory-mutation-darwin-final-evidence/`, `directory-mutation-focused-final.xml`, `directory-mutation-public-final.xml`, `directory-mutation-native-final/`, `directory-mutation-before-root-fix/`.

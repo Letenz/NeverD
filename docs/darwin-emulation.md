@@ -289,9 +289,9 @@ separately checks exact policy geometry; C/CLI/Python cover all five profiles.
 
 Per-directory `mutable:true` (C++ `DarwinFileOptions::MutableDirectories`) explicitly authorizes immediate namespace changes, independently of `writable` file contents. The example below permits unlink of a read-only `/work/data`. Missing grants stop as unsupported; permission bits do not invent credentials or EACCES. Admission rejects nonzero known flags on mutable parents or immediate regular children, special parent permission bits, child link_count other than one, and known identity aliases of either the parent or child. Identity checks include stat and directory-snapshot inode observations; distinct explicitly known devices stay distinct. Grants count toward the existing path/entry budgets.
 
-`unlink(10)` and `unlinkat(472)` remove existing regular names; unlinkat accepts flags zero or `AT_SYMLINK_NOFOLLOW_ANY=0x800`. Unknown flag bits return EINVAL before path/FD checks; valid directory-removal/system-discard modes remain unsupported. Low 32 flag bits apply. The shared resolver preserves pathname-fault/dirfd order, relative CWD/dirfd use and absolute-path independence. Missing names return ENOENT, file/trailing-slash paths ENOTDIR, ordinary directory targets EPERM and guest root EBUSY. Original native probes also check terminal `.`/`..` directory paths.
+`unlink(10)` and `unlinkat(472)` remove existing regular names; regular-file unlinkat accepts flags zero or `AT_SYMLINK_NOFOLLOW_ANY=0x800`. Unknown flag bits return EINVAL before path/FD checks; AT_REMOVEDIR uses the bounded directory-removal contract below; DATALESS and SYSTEM_DISCARDED remain unsupported. Low 32 flag bits apply. The shared resolver preserves pathname-fault/dirfd order, relative CWD/dirfd use and absolute-path independence. Missing names return ENOENT, file/trailing-slash paths ENOTDIR, ordinary directory targets EPERM and a slash-only guest root EISDIR; root paths ending in `.` or `..` return EBUSY. Original native probes also check terminal `.`/`..` directory paths.
 
-A live namespace owns file objects separately from open descriptions. Unlink preserves existing FD/dup/independent-open bytes, offsets and status flags. Later opens fail; implicit parent directories and CWD remain present. F_GETPATH retains the last linked path, matching the native reference even after name removal. The file's writable grant belongs to its object. Unlinked objects retain their current-byte budget while any description or mapping lease remains; close/dup2 and the next mutation reclaim only unreachable objects, after the final mapped range is unmapped. Initial path/reference costs remain charged. Cross-parent rename, hard links and directory removal remain unfinished; creation is described below.
+A live namespace owns file objects separately from open descriptions. Unlink preserves existing FD/dup/independent-open bytes, offsets and status flags. Later opens fail; implicit parent directories and CWD remain present. F_GETPATH retains the last linked path, matching the native reference even after name removal. The file's writable grant belongs to its object. Unlinked objects retain their current-byte budget while any description or mapping lease remains; close/dup2 and the next mutation reclaim only unreachable objects, after the final mapped range is unmapped. Initial path/reference costs remain charged. Cross-parent rename, hard links and removal of initial or held directories remain unfinished; creation is described below.
 
 A successful unlink invalidates only its parent's stat and enumeration observations across old/new FDs, dup and path queries. stat/readdir/SEEK_END stop before output or cursor changes; ordinary read/pread still return EISDIR, while SET/CUR, F_GETPATH, fchdir and relative lookup continue. With a still-known file mutation policy, unlink sets nlink=0 and ctime to its fixed time, preserving mtime/atime/bytes/allocation. Later writes or truncation cannot restore nlink=1. Without a policy, or after whole-EFAULT, complete file metadata remains unknown. Rejected unlinks preserve all state. The original `unlinked-file` program compares native kernel name/descriptor behavior; policy timestamps and directory invalidation are explicit model rules.
 
@@ -309,7 +309,7 @@ A successful unlink invalidates only its parent's stat and enumeration observati
 
 Only successful insertion invalidates the immediate parent's stat/enumeration observations. New and old unlinked objects at the same name retain independent bytes, descriptors, metadata and mapping leases. The 256-entry cap includes fixed initial non-file entries plus live and retained orphan file objects. Each new object charges its canonical path and NUL alongside current bytes within 16 MiB. Unlink reclaims these dynamic charges only after the last description and mapping lease; closing a still-named object releases neither its entry nor bytes. Initial input/reference charges remain reserved. Exhausted model budgets, including a resolved canonical path of 1024 bytes or more, stop explicitly without inventing ENOSPC or a native pathname error. Rejected creation publishes no name or descriptor.
 
-The original `created-file` workload compares native macOS and all five guest profiles; 4K/16K tests independently cover exact capacity, rollback and mapped name reuse. Permission enforcement, cross-parent rename, links and directory mutation remain separate work.
+The original `created-file` workload compares native macOS and all five guest profiles; 4K/16K tests independently cover exact capacity, rollback and mapped name reuse. Permission enforcement, cross-parent rename, links and further directory operations remain separate work.
 
 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
@@ -317,7 +317,7 @@ The original `created-file` workload compares native macOS and all five guest pr
 
 Optional `darwin_files.umask` (C++ `InitialUmask`) declares the initial process mask, from 0 through octal 07777. It works independently of file creation authority. `umask(60)` returns the previous mask and stores the low 07777 bits, without guest-memory access or a free descriptor. Omission remains unknown; no host/default mask is inferred. The mask initializes once, changes only future creations, and never mutates caller input. The example below supplies decimal 18, or octal 0022.
 
-Optional `darwin_files.creation_policy` (C++ `CreationPolicy`) enables complete metadata for new objects. Its strict object has exactly `first_inode`, `block_size`, `generation`, `creation_time` and `mutation_policy`; time and mutation objects use the existing strict formats. It requires an explicit umask, at least one mutable parent, and complete metadata for every mutable parent. `block_size` is positive and at most INT32_MAX; generation is uint32. The allocation unit is a power of two from 512 through 16 MiB, independent of block size and VM pages; nanoseconds must be in [0, 1000000000). `first_inode` is a nonzero uint64 greater than every supplied stat/snapshot inode, including other devices. Decimal strings preserve values beyond JSON's exact integer range.
+Optional `darwin_files.creation_policy` (C++ `CreationPolicy`) enables complete metadata for new regular files. Its strict object has exactly `first_inode`, `block_size`, `generation`, `creation_time` and `mutation_policy`; time and mutation objects use the existing strict formats. It requires an explicit umask, at least one mutable parent, and complete metadata for every mutable parent. `block_size` is positive and at most INT32_MAX; generation is uint32. The allocation unit is a power of two from 512 through 16 MiB, independent of block size and VM pages; nanoseconds must be in [0, 1000000000). `first_inode` is a nonzero uint64 greater than every supplied stat/snapshot inode, including other devices. Decimal strings preserve values beyond JSON's exact integer range.
 
 Only a successful new insertion consumes the next global inode. A successful UINT64_MAX exhausts the sequence permanently; close, unlink, name reuse, umask and later namespace lookups cannot reset it. Exclusive, FD, path, entry and byte-budget refusals publish no name, descriptor or inode increment. Existing O_CREAT opens consume none.
 
@@ -368,7 +368,7 @@ explicit metadata. Directory mmap returns EINVAL. `fstatat64` accepts zero,
 `AT_FDONLY=0x400` (ignore the pathname entirely). Invalid flag bits return EINVAL;
 `AT_REALDEV=0x200` stops because real-device metadata is unmodeled. Stream path
 and directory identities remain unknown. Permission bits are observations,
-not an access-control model; directory mutations remain unsupported.
+not an access-control model; directory creation and bounded removal use the explicit grants described below.
 
 The original `directories` workload compares these services with the native
 macOS kernel and all five guest combinations; native stat records cover both
@@ -422,7 +422,7 @@ The original `directory-entries` workload compares record fields, dup/rewind,
 small reads, EOF and copy ordering with the native macOS kernel. A separate test
 compares captured native record bytes, including long names, against the SDK
 layout. Snapshot cookies remain fixed on rewind; this does not reproduce APFS's
-dynamic cookie generations. Legacy `getdirentries` (196), writable directories,
+dynamic cookie generations. Legacy `getdirentries` (196), enumeration after namespace mutation,
 other native transports and physical iOS remain outside this acceptance.
 
 ```json
@@ -536,7 +536,7 @@ HVF runtime remains unvalidated and its Actions testing stays suspended. See the
 [HVF validation record](macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03).
 
 The focused workload gate additionally requires **every** Darwin process case
-on each platform supported by the host ISA: 99 cases on ARM64, or 66 on x64.
+on each platform supported by the host ISA: 102 cases on ARM64, or 68 on x64.
 Both `LC_MAIN` and independent raw `LC_UNIXTHREAD` programs are required on
 every supported platform. A source-inventory regression ensures each new
 Darwin process test joins this required set.
@@ -602,7 +602,7 @@ or physical iOS acceptance. Intel HVF Actions remain suspended.
 
 ### Remaining environment work
 
-1. Extend the bounded writable-file model with permission enforcement, cross-parent rename and directory mutation,
+1. Extend the bounded writable-file model with permission enforcement, cross-parent rename and remaining directory operations,
    shared mappings and EOF fault delivery. Keep native acceptance for cursor,
    mapping lifetime and error-order interactions as the supported set grows.
 2. Extend fixed time inputs with advancing clocks and additional system observations,
@@ -912,3 +912,21 @@ The independent `file-access` workload compares both raw calls, ignored mode bit
 Release Darwin reconciled 971 registrations: 575 passed, 396 unavailable-backend skips, zero failures; all 99 required ARM64 HVF identities executed. Focused checks passed 23/35 with 12 unavailable skips, including all 14 direct cases. Public C/CLI/report passed 173/173, including 123 Darwin input comparisons. Python passed all five combinations in 16.235s; original native workloads passed 23/23 and evidence runners 66/66. Independent design and implementation review found no blocker. Native probes preserve the initial NOFOLLOW_ANY result caused by a host /tmp symlink and the subsequent canonical-path comparison; the shared workload uses a relative directory FD. Counts overlap, deadlines are unchanged, and no runtime failure recheck was needed. Full GitHub CI and physical iOS remain separate; Intel HVF Actions stay suspended.
 
 `build-hvf-arm64/access-validation-summary.json`, `access-darwin-final-evidence/`, `access-focused-final.xml`, `access-public.xml`, `access-native-initial/`, `access-evidence/`.
+
+## Creating and removing directories
+
+`mkdir(136)` and `mkdirat(475)` create directories in an explicitly mutable immediate parent. New directories inherit namespace mutation authority; initial directories retain their own grants. They inherit only the parent's known device/group identity, never complete stat records, directory size, allocation, timestamps or enumeration cookies. A new directory shadows all old observations at a reused file name. `creation_policy` still applies only to regular files: nested regular files use the inherited parent identity and the existing global inode sequence; mkdir consumes no regular-file inode. Permission enforcement and native directory metadata remain outside this contract.
+
+All calls share the component walker. Mkdir admits a missing final name followed only by slashes; missing ancestors followed by dot/dotdot still return ENOENT, and a regular-file ancestor gives ENOTDIR. Known existing names give EEXIST. Relative paths retain FD/CWD requirements, absolute paths ignore dirfd, and string faults precede relative descriptor errors. Creation needs no available descriptor. Rejected lookup, grant, byte/entry budget or memory transport publishes no name or parent invalidation.
+
+`rmdir(137)` and `unlinkat(472)` with AT_REMOVEDIR(0x80), optionally AT_SYMLINK_NOFOLLOW_ANY(0x800), remove empty directories created by this process. Unknown low32 flags return EINVAL before input; DATALESS and SYSTEM_DISCARDED remain unsupported. Known path/type/root errors remain; initial-directory removal is UnsupportedService. Within created directories, final dot gives EINVAL and dotdot/nonempty gives ENOTEMPTY. Any retained directory FD, including duplicates, or CWD makes removal explicitly unsupported until persistent directory-object lifetime is modeled. Open unlinked regular files and their mappings do not count as names: native comparisons confirm their bytes, inode and last linked F_GETPATH survive parent removal and name reuse.
+
+Every created directory charges its canonical path plus NUL and one entry to the shared 16 MiB/256-entry catalogue limits. Successful deletion refunds only that directory's path and entry, preserving orphan-file bytes and leases. Successful namespace changes invalidate the direct parent's complete stat/enumeration observations; rejected changes preserve them. New directory metadata and snapshots remain unknown even with a regular-file creation policy. The original `directory-mutations` workload exercises nested creation, rename, unlink, deletion and orphan reuse across native macOS and all five guest combinations through C++/C/CLI/Python.
+
+[XNU mkdir/rmdir](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU directory creation lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c).
+
+### Directory mutation verification, 2026-10-06
+
+Release Darwin: 1,017 registered, 609 passed, 408 unavailable-backend skips, zero failures; all 102 required ARM64 HVF cases executed. Focused checks: 58 passed, 12 unavailable skips, including 26 new direct 4K/16K cases. Public C/CLI/report: 178/178, including 128 Darwin input comparisons. Python passed five combinations in 17.255s; original native workloads 24/24 and runner tests 66/66 passed. Independent review checked admission, name reuse, parent identity, retained file leases and rollback. An extra native probe exposed a gap after the initial passing gate: slash-only root removal returns EISDIR, while root paths ending in dot/dotdot return EBUSY. The shared removal decision and common native/guest fixture now cover both; the earlier gate and source/binary snapshot remain preserved. Counts overlap; deadlines are unchanged. Intel HVF Actions remain suspended, with full GitHub CI and physical iOS outside this local acceptance.
+
+`build-hvf-arm64/directory-mutation-validation-summary.json`, `directory-mutation-darwin-final-evidence/`, `directory-mutation-focused-final.xml`, `directory-mutation-public-final.xml`, `directory-mutation-native-final/`, `directory-mutation-before-root-fix/`.

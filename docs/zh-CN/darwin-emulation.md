@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: db2f5a72fda6a5195b548852dda4cebabfdea38e499c54e1b88f809dd2fc1055 -->
+<!-- i18n-source: fb48643220c4133abaf1152bc583f4341f626a9d62e4c61f583d43af2c3ad145 -->
 
 [← 文档索引](README.md)
 
@@ -119,9 +119,9 @@ DarwinMemory 持有映射租约；所有映射区间解除前，write、truncate
 
 目录的 `mutable:true`（C++ `MutableDirectories`）显式授权修改直接子项名称，与文件内容的 `writable` 独立；下例允许删除只读文件。缺少授权会明确停止，不根据权限位虚构凭据或 EACCES。准入拒绝父目录/直接普通子文件的非零已知 flags、父目录特殊权限位、子文件 link_count 不为 1，以及父目录或子文件的已知身份别名。身份检查合并 stat 和目录快照的 inode；明确不同的设备保持独立。授权路径计入现有预算。
 
-`unlink(10)` / `unlinkat(472)` 删除现有普通名称；unlinkat 仅接受低 32 位 flags=0 或 `AT_SYMLINK_NOFOLLOW_ANY=0x800`。未知位先返回 EINVAL；已知的删除目录/系统丢弃模式仍不支持。共用解析器保留路径故障、目录 FD、CWD 和绝对路径的优先级；缺失为 ENOENT，文件后斜杠为 ENOTDIR，普通目录为 EPERM，来宾根目录为 EBUSY。原生探针也检查末尾 `.` / `..`。
+`unlink(10)` / `unlinkat(472)` 删除现有普通名称；普通文件删除仅接受低 32 位 flags=0 或 `AT_SYMLINK_NOFOLLOW_ANY=0x800`。未知位先返回 EINVAL；AT_REMOVEDIR 使用下述受限目录删除；DATALESS、SYSTEM_DISCARDED 仍不支持。共用解析器保留路径故障、目录 FD、CWD 和绝对路径的优先级；缺失为 ENOENT，文件后斜杠为 ENOTDIR，普通目录为 EPERM，纯斜杠根路径为 EISDIR，末尾带 `.` / `..` 的根路径为 EBUSY。原生探针也检查末尾 `.` / `..`。
 
-名称删除后，旧 FD、dup、独立打开对象仍保留数据、游标和状态标志，新打开返回 ENOENT；隐式父目录与 CWD 继续存在。F_GETPATH 保留已捕获旧路径，与原生对照一致。写授权属于文件对象。只有所有描述符和最后一段映射均释放后，close/dup2 或下一次修改才回收当前文件字节预算；初始路径/引用费用仍保留。权限强制检查、跨父目录重命名、硬链接、目录删除仍待实现。
+名称删除后，旧 FD、dup、独立打开对象仍保留数据、游标和状态标志，新打开返回 ENOENT；隐式父目录与 CWD 继续存在。F_GETPATH 保留已捕获旧路径，与原生对照一致。写授权属于文件对象。只有所有描述符和最后一段映射均释放后，close/dup2 或下一次修改才回收当前文件字节预算；初始路径/引用费用仍保留。权限强制检查、跨父目录重命名、硬链接、初始目录及被目录 FD/CWD 持有的目录删除仍待实现。
 
 成功删除使直接父目录的 stat/列举观察失效，涵盖旧/新 FD、dup 和路径查询；stat/readdir/SEEK_END 在复制和移动游标前停止。read/pread 仍为 EISDIR，SET/CUR、F_GETPATH、fchdir、相对查找继续可用。有仍可信的文件修改策略时，仅将 nlink 改为 0、ctime 改为固定时间，保留 mtime/atime、数据和分配；后续写入不能恢复 nlink=1。缺少策略或曾发生整段 EFAULT 时，完整文件元数据仍未知。失败不改变状态。原生 `unlinked-file` 比较名称/描述符行为；策略时间与目录失效是明确的模型规则。
 
@@ -176,7 +176,7 @@ O_CREAT 配合 `O_EXCL=0x800` 对已有文件或目录先返回 EEXIST，不截�
 
 `openat` (463)、`openat_nocancel` (464)、`chdir` (12)、`fchdir` (13)、`fstatat64` (470) 与 open/stat64 共用解析器。相对路径使用目录 FD 或 `AT_FDCWD=-2`，绝对路径忽略 FD。重复分隔符、`.`、`..` 和末尾斜杠逐级检查：`/file/..` 为 ENOTDIR，`/missing/..` 为 ENOENT。失败保留 CWD，关闭、复用或覆盖原目录 FD 不改变 CWD。`F_GETPATH=50` 在复制描述符上仍返回规范路径和 NUL，终止符之后不写入。
 
-目录 read/pread 即使零长度也返回 EISDIR，负 pread 偏移先返回 EINVAL。SET/CUR 共用游标，END 需要显式 size；目录 mmap 返回 EINVAL。fstatat64 支持 0、`AT_SYMLINK_NOFOLLOW=0x20`、`AT_SYMLINK_NOFOLLOW_ANY=0x800`、`AT_FDONLY=0x400`（完全忽略路径）。非法位返回 EINVAL；`AT_REALDEV=0x200` 明确不支持。流的路径和目录身份未知，权限不是访问控制模型；目录写入仍待实现。同一 `directories` 程序对照原生内核及五种 guest，原生 stat 逐字节比对文件和目录。Intel HVF Actions 保持暂停。
+目录 read/pread 即使零长度也返回 EISDIR，负 pread 偏移先返回 EINVAL。SET/CUR 共用游标，END 需要显式 size；目录 mmap 返回 EINVAL。fstatat64 支持 0、`AT_SYMLINK_NOFOLLOW=0x20`、`AT_SYMLINK_NOFOLLOW_ANY=0x800`、`AT_FDONLY=0x400`（完全忽略路径）。非法位返回 EINVAL；`AT_REALDEV=0x200` 明确不支持。流的路径和目录身份未知，权限不是访问控制模型；目录创建及受限删除使用下述明确授权。同一 `directories` 程序对照原生内核及五种 guest，原生 stat 逐字节比对文件和目录。Intel HVF Actions 保持暂停。
 
 [XNU VFS](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h).
 
@@ -196,7 +196,7 @@ O_CREAT 配合 `O_EXCL=0x800` 对已有文件或目录先返回 EEXIST，不截�
 
 独立 open 使用独立游标，dup 共享游标；仅零和声明的标记可恢复遍历，未知位置明确停止。每次返回能容纳的最大完整记录前缀。长度 >=1024 时，原请求末尾四字节为 EOF 标志（到末尾为 1，否则 0），仅记录载荷截断到 128 MiB；标志地址保留原无符号长度及回绕运算。顺序为写数据、移动游标、写读取前位置、写标志。后续 EFAULT 保留此前效果；EOF 不访问空数据缓冲区。单次复制仅部分可写时，在该次复制前明确停止，保留此前复制和游标效果。
 
-同一 `directory-entries` 程序对照原生 macOS 的记录字段、dup/回绕、小块读取、EOF 与复制顺序；独立测试按 SDK 布局逐字节核对捕获的原生记录和长文件名。快照标记在回绕后保持固定，不模拟 APFS 每次回绕时变化的游标值。旧 `getdirentries` (196)、目录写入、其他原生后端和 iOS 真机尚未纳入验收。
+同一 `directory-entries` 程序对照原生 macOS 的记录字段、dup/回绕、小块读取、EOF 与复制顺序；独立测试按 SDK 布局逐字节核对捕获的原生记录和长文件名。快照标记在回绕后保持固定，不模拟 APFS 每次回绕时变化的游标值。旧 `getdirentries` (196)、修改后的目录枚举、其他原生后端和 iOS 真机尚未纳入验收。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"directories":[{"path":"/empty"},{"path":"/","contents":{
@@ -266,7 +266,7 @@ Intel HVF 的 10 项原生 transport 和全部 26 个 Darwin 工作负载均已�
 [HVF 验证记录](macos-hvf.md)，不能把内核参考程序成功当作后端通过。
 
 新增的完整原生工作负载门禁要求本机架构的每个 Darwin 进程用例都实际通过：
-ARM64 三个平台共 99 项，x64 的 macOS 和 Simulator 共 66 项。
+ARM64 三个平台共 102 项，x64 的 macOS 和 Simulator 共 68 项。
 每种平台都必须执行 `LC_MAIN` 和独立编写的 `LC_UNIXTHREAD` 程序；源码清单回归确保
 以后新增的 Darwin 进程用例也进入必需集合。
 macOS 本机构建还会把同一份自编目标文件链接为宿主参考程序，对照返回、退出、内存保护/
@@ -534,3 +534,21 @@ Faccessat 接受低位标志 AT_EACCESS(0x10)、AT_SYMLINK_NOFOLLOW(0x20)、AT_S
 Release Darwin 共971项：575通过、396因后端不可用跳过、零失败；99项必需 ARM64 HVF 全部执行。专项35项中23通过、12跳过，含全部14项直接测试。公开 C/CLI/报告173/173通过，含123项 Darwin 输入对照。Python 在16.235秒内通过五种配置；原生工作负载23/23、验证脚本66/66通过。独立设计与实现审查未发现阻塞。原生探针保留宿主 /tmp 符号链接导致的初始 NOFOLLOW_ANY 结果及后续规范路径对照；共用工作负载使用相对目录 FD。计数重叠、时限不变，无需运行失败重测；完整 GitHub CI 与 iOS 真机另行验证，Intel HVF Actions 保持暂停。
 
 `build-hvf-arm64/access-validation-summary.json`, `access-darwin-final-evidence/`, `access-focused-final.xml`, `access-public.xml`, `access-native-initial/`, `access-evidence/`.
+
+## 创建与删除目录
+
+`mkdir(136)`、`mkdirat(475)` 在明确允许修改的直接父目录中创建目录。新目录继承命名空间修改授权；初始目录保留各自授权。新目录仅继承父目录已知的设备号与组 ID，不生成完整 stat、大小、分配、时间或枚举游标；复用旧文件名时遮蔽全部旧观察值。`creation_policy` 仍仅适用于普通文件：嵌套文件使用继承的父身份和现有全局 inode 序列，mkdir 不消耗普通文件 inode。权限执行和原生目录元数据仍不在此合同内。
+
+所有调用共用逐组件解析器。mkdir 可创建末尾仅跟斜杠的缺失名字；缺失祖先后跟点/双点仍为 ENOENT，普通文件祖先为 ENOTDIR，已存在名字为 EEXIST。相对路径沿用 FD/CWD，绝对路径忽略 dirfd，字符串故障先于相对 FD 错误。创建不需要可用 FD；路径、授权、字节/条目预算或内存传输拒绝不发布名字、不使父观察失效。
+
+`rmdir(137)` 及带 AT_REMOVEDIR(0x80) 的 `unlinkat(472)` 可删除本进程创建的空目录，可同时带 AT_SYMLINK_NOFOLLOW_ANY(0x800)。未知低32位标志先返回 EINVAL；DATALESS、SYSTEM_DISCARDED 仍不支持。保留已知路径/类型/根目录错误；初始目录删除为 UnsupportedService。新目录末尾点为 EINVAL，双点或非空为 ENOTEMPTY。目录 FD（含 dup）或 CWD 仍持有目标时明确不支持删除，等待完整目录对象生命周期。已 unlink 的普通文件 FD/映射不算目录项；原生对照确认其字节、inode 与最后链接 F_GETPATH 在父目录删除及名字复用后保持。
+
+每个新目录以规范路径加 NUL 和一个条目计入共享16 MiB/256条目预算。成功删除仅退回自身费用，保留孤立文件字节与映射租约。成功修改使直接父目录完整 stat/枚举观察失效，失败则保留。即使配置普通文件创建策略，新目录元数据和快照仍未知。原创 `directory-mutations` 经原生 macOS、五种客户机及 C++/C/CLI/Python 验证嵌套创建、重命名、unlink、删除与孤立对象复用。
+
+[XNU mkdir/rmdir](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU directory creation lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c).
+
+### 目录修改验证，2026-10-06
+
+Release Darwin 共1,017项：609通过、408因后端不可用跳过、零失败；102项必需 ARM64 HVF 全部执行。定向测试58通过、12跳过，含26项新增4K/16K直接测试。公开 C/CLI/报告178/178通过，含128项 Darwin 输入对照；Python 在17.255秒内通过五种组合，原生工作负载24/24、验证脚本66/66通过。独立审查核对预算、名字复用、父身份、文件租约与失败回滚。初始完整测试通过后，额外原生探针发现纯斜杠根删除应为 EISDIR，而末尾点/双点根为 EBUSY；已统一判断并补充原生/客户机共用断言，保留初始测试及源文件/二进制快照。计数重叠，时限未放宽；Intel HVF Actions 继续暂停，完整 GitHub CI 与 iOS 真机另行验证。
+
+`build-hvf-arm64/directory-mutation-validation-summary.json`, `directory-mutation-darwin-final-evidence/`, `directory-mutation-focused-final.xml`, `directory-mutation-public-final.xml`, `directory-mutation-native-final/`, `directory-mutation-before-root-fix/`.

@@ -35,6 +35,7 @@ NEVERD_DARWIN_VALUE(IllegalSeek, 29)
 NEVERD_DARWIN_VALUE(SeekHole, 3)
 NEVERD_DARWIN_VALUE(SeekData, 4)
 NEVERD_DARWIN_VALUE(NameTooLong, 63)
+NEVERD_DARWIN_VALUE(DirectoryNotEmpty, 66)
 NEVERD_DARWIN_VALUE(Overflow, 84)
 NEVERD_DARWIN_VALUE(OpenCloseOnExec, 0x01000000)
 NEVERD_DARWIN_VALUE(OpenDirectory, 0x00100000)
@@ -105,6 +106,9 @@ NEVERD_DARWIN_SERVICE(Pwritev, 541, Wide)
 NEVERD_DARWIN_SERVICE(Open, 5, Int)
 NEVERD_DARWIN_SERVICE(Close, 6, Int)
 NEVERD_DARWIN_SERVICE(Unlink, 10, Int)
+NEVERD_DARWIN_SERVICE(Mkdir, 136, Int)
+NEVERD_DARWIN_SERVICE(MkdirAt, 475, Int)
+NEVERD_DARWIN_SERVICE(Rmdir, 137, Int)
 NEVERD_DARWIN_SERVICE(Rename, 128, Int)
 NEVERD_DARWIN_SERVICE(RenameAt, 465, Int)
 NEVERD_DARWIN_SERVICE(RenameAtX, 488, Int)
@@ -205,6 +209,14 @@ NEVERD_DARWIN_DIAGNOSTIC(FileOptionPath,
 NEVERD_DARWIN_DIAGNOSTIC(FileAccessPermissions,
                          "Darwin access permission checks are not configured")
 NEVERD_DARWIN_DIAGNOSTIC(FileInputs, "Darwin file catalogue is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(DirectoryCreationLimit,
+                         "Darwin directory creation exceeds catalogue limits")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryRemovalInitial,
+    "Darwin removal of initial directories is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryRemovalHeld,
+    "Darwin removal of open or current directories is unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(FileInput, "Darwin standard input is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(FileMetadataOption,
                          "invalid Darwin file or directory metadata or size")

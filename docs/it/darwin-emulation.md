@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: db2f5a72fda6a5195b548852dda4cebabfdea38e499c54e1b88f809dd2fc1055 -->
+<!-- i18n-source: fb48643220c4133abaf1152bc583f4341f626a9d62e4c61f583d43af2c3ad145 -->
 
 [← Indice della documentazione](README.md)
 
@@ -111,9 +111,9 @@ Senza politica, per directory o dopo EFAULT completo con allocazione ignota il s
 
 `mutable:true` per directory (C++ `MutableDirectories`) autorizza i cambiamenti dei nomi immediati, indipendentemente da `writable`. Senza autorizzazione il modello si ferma. Rifiuta flags noti non nulli, permessi speciali del padre, link_count≠1 del figlio e alias noti padre/figlio; unisce stat e inode degli snapshot, distinguendo dispositivi esplicitamente diversi. I percorsi consumano il budget esistente.
 
-`unlink(10)` / `unlinkat(472)` rimuovono nomi regolari esistenti. unlinkat accetta solo i32 bit bassi 0 o `0x800`; bit sconosciuti danno EINVAL prima di percorso/FD, altri modi noti di rimozione restano non supportati. Risoluzione comune: ENOENT, ENOTDIR per file seguito da `/`, EPERM per directory ordinaria, EBUSY per radice. I suffissi `.`/`..` sono verificati nativamente.
+`unlink(10)` / `unlinkat(472)` rimuovono nomi regolari esistenti. la rimozione dei file accetta solo i32 bit bassi 0 o `0x800`; bit sconosciuti danno EINVAL prima di percorso/FD, AT_REMOVEDIR usa il contratto limitato sotto; DATALESS e SYSTEM_DISCARDED restano esclusi. Risoluzione comune: ENOENT, ENOTDIR per file seguito da `/`, EPERM per directory ordinaria, EISDIR per radice composta solo da barre, EBUSY con `.`/`..` finali. I suffissi `.`/`..` sono verificati nativamente.
 
-FD/dup/aperture indipendenti esistenti mantengono dati, cursori e flags; F_GETPATH conserva il vecchio percorso acquisito. Le nuove aperture falliscono, genitori impliciti e CWD restano. Il permesso di scrittura appartiene all’oggetto; close/dup2/modifica successiva recuperano i byte correnti solo dopo l’ultimo descrittore e mapping. I costi iniziali dei percorsi restano; controllo dei permessi, rinomina tra genitori, hard link e rimozione directory sono ancora incompleti.
+FD/dup/aperture indipendenti esistenti mantengono dati, cursori e flags; F_GETPATH conserva il vecchio percorso acquisito. Le nuove aperture falliscono, genitori impliciti e CWD restano. Il permesso di scrittura appartiene all’oggetto; close/dup2/modifica successiva recuperano i byte correnti solo dopo l’ultimo descrittore e mapping. I costi iniziali dei percorsi restano; controllo dei permessi, rinomina tra genitori, hard link e rimozione delle directory iniziali o trattenute da FD di directory/CWD sono ancora incompleti.
 
 stat/readdir/SEEK_END del padre diventano sconosciuti per ogni FD/percorso e si fermano prima di copia/cursore. read/pread restano EISDIR; SET/CUR/F_GETPATH/fchdir/risoluzione relativa continuano. La politica nota imposta nlink=0 e ctime fisso; scritture successive non ripristinano nlink=1. Senza politica/dopo EFAULT i metadati restano ignoti. Errori preservano lo stato. `unlinked-file` confronta regole native nome/FD; tempi e invalidazione sono regole esplicite del modello.
 
@@ -164,7 +164,7 @@ Nessun nuovo inode, voce o FD libero necessario. Percorso/NUL sostituisce il cos
 
 `openat` (463), `openat_nocancel` (464), `chdir` (12), `fchdir` (13) e `fstatat64` (470) condividono il risolutore. I percorsi relativi usano FD di directory o `AT_FDCWD=-2`; quelli assoluti ignorano FD. Separatori ripetuti, `.`, `..` e barra finale controllano ogni antenato: `/file/..` dà ENOTDIR, `/missing/..` ENOENT. Errori e chiusura, riutilizzo o sostituzione del FD originale conservano CWD. `F_GETPATH=50` copia percorso canonico e NUL anche dopo dup, senza modificare i byte successivi.
 
-read/pread di directory dà EISDIR anche con lunghezza zero; offset pread negativo dà prima EINVAL. SET/CUR condividono il cursore, END richiede size esplicita; mmap dà EINVAL. fstatat64 ammette 0, `AT_SYMLINK_NOFOLLOW=0x20`, `AT_SYMLINK_NOFOLLOW_ANY=0x800` e `AT_FDONLY=0x400` (ignora il percorso). Bit invalidi danno EINVAL; `AT_REALDEV=0x200` resta escluso. Identità dei flussi sconosciute, permessi senza controllo accessi; le modifiche restano da implementare. Lo stesso `directories` confronta kernel nativo e cinque guest; stat controlla file e directory reali. Intel HVF Actions resta sospeso.
+read/pread di directory dà EISDIR anche con lunghezza zero; offset pread negativo dà prima EINVAL. SET/CUR condividono il cursore, END richiede size esplicita; mmap dà EINVAL. fstatat64 ammette 0, `AT_SYMLINK_NOFOLLOW=0x20`, `AT_SYMLINK_NOFOLLOW_ANY=0x800` e `AT_FDONLY=0x400` (ignora il percorso). Bit invalidi danno EINVAL; `AT_REALDEV=0x200` resta escluso. Identità dei flussi sconosciute, permessi senza controllo accessi; creazione e rimozione limitata usano le autorizzazioni descritte sotto. Lo stesso `directories` confronta kernel nativo e cinque guest; stat controlla file e directory reali. Intel HVF Actions resta sospeso.
 
 [XNU VFS](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h).
 
@@ -184,7 +184,7 @@ Ogni voce richiede `name`, `inode` non nullo, `type` (0 sconosciuto, 4 directory
 
 Open indipendenti hanno cursori separati, dup li condivide. La ripresa accetta solo zero o cookie forniti; posizioni sconosciute arrestano esplicitamente. Ogni chiamata restituisce il massimo prefisso di record interi. Lunghezza >=1024 riserva gli ultimi quattro byte richiesti a EOF (1 alla fine, altrimenti 0); solo il payload è limitato a 128 MiB. L’indirizzo conserva l’aritmetica originale senza segno, overflow compreso. Ordine: dati, avanzamento, posizione precedente, flag. EFAULT successivi mantengono gli effetti precedenti; EOF omette la copia vuota. Una singola copia parzialmente scrivibile si arresta prima di quella copia, conservando gli effetti anteriori.
 
-`directory-entries` confronta campi, dup/riavvolgimento, letture piccole, EOF e ordine delle copie con macOS. Un test separato confronta tutti i byte nativi catturati, nomi lunghi compresi, con il layout SDK. I cookie fissi non riproducono le generazioni dinamiche APFS. Il vecchio `getdirentries` (196), le modifiche, altri backend nativi e iOS fisico restano fuori da questa verifica.
+`directory-entries` confronta campi, dup/riavvolgimento, letture piccole, EOF e ordine delle copie con macOS. Un test separato confronta tutti i byte nativi catturati, nomi lunghi compresi, con il layout SDK. I cookie fissi non riproducono le generazioni dinamiche APFS. Il vecchio `getdirentries` (196), enumerazione dopo modifiche, altri backend nativi e iOS fisico restano fuori da questa verifica.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"directories":[{"path":"/empty"},{"path":"/","contents":{
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-La verifica autonoma richiede tutti i 99 casi nativi ARM64 o 66 x64, compresi `LC_MAIN` e `LC_UNIXTHREAD` su ogni piattaforma. Casi obbligatori mancanti/saltati o assenza di `ld64.lld` causano errore.
+La verifica autonoma richiede tutti i 102 casi nativi ARM64 o 68 x64, compresi `LC_MAIN` e `LC_UNIXTHREAD` su ogni piattaforma. Casi obbligatori mancanti/saltati o assenza di `ld64.lld` causano errore.
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -430,3 +430,21 @@ L’originale `file-access` confronta entrambe le chiamate, bit ignorati, flag e
 Release Darwin:971 registrazioni,575 superate,396 saltate per backend indisponibile, zero errori; tutte99 le identità ARM64 HVF richieste eseguite. Mirati23/35 superati,12 saltati, inclusi14 diretti. C/CLI/report173/173, inclusi123 confronti Darwin. Python ha verificato cinque combinazioni in 16.235s; nativi23/23 e script66/66. Revisione indipendente di progetto e codice senza blocchi. Conservati il risultato NOFOLLOW_ANY iniziale dovuto al link host /tmp e il confronto con percorso canonico; il programma comune usa un FD di directory relativo. Conteggi sovrapposti, scadenze immutate, nessun errore di esecuzione da riprovare. GitHub CI completa e iOS fisico separati; Intel HVF Actions sospeso.
 
 `build-hvf-arm64/access-validation-summary.json`, `access-darwin-final-evidence/`, `access-focused-final.xml`, `access-public.xml`, `access-native-initial/`, `access-evidence/`.
+
+## Creare e rimuovere directory
+
+`mkdir(136)` e `mkdirat(475)` creano in un genitore diretto esplicitamente modificabile. Le nuove directory ereditano l’autorità sui nomi; quelle iniziali mantengono autorizzazioni proprie. Ereditano soltanto device/GID noti, mai stat completo, dimensione, allocazione, tempi o cookie. Una nuova directory nasconde tutte le osservazioni del precedente file omonimo. `creation_policy` resta per file regolari: i discendenti usano l’identità ereditata e la sequenza globale inode; mkdir non consuma inode di file. Controllo dei permessi e metadati nativi delle directory restano esclusi.
+
+Il percorso comune consente a mkdir un ultimo nome assente seguito solo da barre. Antenato mancante prima di punto/doppio punto dà ENOENT, file antenato ENOTDIR, nome esistente EEXIST. Restano FD/CWD relativi, indipendenza dal FD per percorsi assoluti e priorità degli errori di stringa. Non serve un FD libero; rifiuti di ricerca, autorità, budget o trasporto non pubblicano cambiamenti.
+
+`rmdir(137)` e `unlinkat(472)` con AT_REMOVEDIR(0x80), anche AT_SYMLINK_NOFOLLOW_ANY(0x800), rimuovono directory vuote create dal processo. Bit bassi32 sconosciuti danno EINVAL prima degli input; DATALESS e SYSTEM_DISCARDED restano esclusi. Restano errori noti di percorso/tipo/radice; rimuovere directory iniziali è UnsupportedService. Sulle nuove, punto finale dà EINVAL, doppio punto/non vuota ENOTEMPTY. FD di directory mantenuti, dup compresi, o CWD rendono la rimozione non supportata fino alla modellazione dell’identità persistente. File regolari già unlink e mapping non contano come nomi: confronti nativi mantengono byte, inode e ultimo F_GETPATH dopo rimozione/riuso del genitore.
+
+Ogni percorso canonico+NUL e una voce usano il budget comune16 MiB/256 voci. La rimozione rimborsa solo questo costo, mantenendo file orfani/mapping. Solo il successo invalida stat/enumerazione del genitore; osservazioni complete delle nuove directory restano sconosciute. L’originale `directory-mutations` confronta creazione annidata, rinomina, unlink, rimozione e riuso su macOS nativo e cinque guest tramite C++/C/CLI/Python.
+
+[XNU mkdir/rmdir](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU directory creation lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c).
+
+### Verifica delle modifiche alle directory, 2026-10-06
+
+Release Darwin:1.017 registrazioni,609 superate,408 saltate per backend indisponibile,zero errori;102 ARM64 HVF obbligatori eseguiti. Mirati58 superati,12 saltati,inclusi26 nuovi diretti4K/16K. C/CLI/report178/178,inclusi128 Darwin;Python cinque combinazioni in 17.255s,nativi24/24,script66/66. Revisione indipendente di budget,riuso nomi,identità genitore,lease e rollback. Una sonda nativa dopo il primo successo ha rilevato EISDIR per radice solo di barre ed EBUSY con punto/doppio punto finale;decisione comune e test nativo/guest corretti. Risultati iniziali e copie sorgente/binarie conservati. Conteggi sovrapposti,scadenze immutate,Intel HVF Actions sospeso;GitHub CI completa e iOS fisico separati.
+
+`build-hvf-arm64/directory-mutation-validation-summary.json`, `directory-mutation-darwin-final-evidence/`, `directory-mutation-focused-final.xml`, `directory-mutation-public-final.xml`, `directory-mutation-native-final/`, `directory-mutation-before-root-fix/`.

@@ -36,6 +36,12 @@ public:
 
 private:
   enum class Kind { Input, Output, Error, File, Directory, Missing };
+  enum class MissingPath { Reject, Regular, Directory };
+  enum class Terminal { Ordinary, Dot, DotDot };
+  struct DirectoryIdentity {
+    int32_t Device;
+    uint32_t GID;
+  };
   struct Contents {
     llvm::ArrayRef<uint8_t> Initial;
     std::optional<std::vector<uint8_t>> Modified;
@@ -64,7 +70,7 @@ private:
     std::string Path;
     std::shared_ptr<Contents> File;
     uint32_t Flags = 0;
-    bool FinalSpecialComponent = false;
+    Terminal FinalComponent = Terminal::Ordinary;
     llvm::ArrayRef<uint8_t> bytes() const {
       return File ? File->bytes() : Input;
     }
@@ -86,6 +92,7 @@ private:
   std::map<uint32_t, Descriptor> Descriptors;
   std::map<std::string, std::shared_ptr<Contents>> Nodes;
   std::vector<std::shared_ptr<Contents>> Unlinked;
+  std::map<std::string, std::optional<DirectoryIdentity>> CreatedDirectories;
   std::set<std::string> ChangedDirectories;
   bool NamespaceReady = false;
   uint64_t NextCreatedInode = 0;
@@ -99,9 +106,13 @@ private:
   void initializeNamespace();
   llvm::Error prepareMutation();
   void reclaimUnlinked();
+  bool isDirectory(const std::string &Path) const;
+  bool mutableDirectory(const std::string &Path) const;
+  std::optional<DirectoryIdentity>
+  directoryIdentity(const std::string &Path) const;
   llvm::Expected<Pathname> readPath(uint64_t Address);
   llvm::Expected<Lookup> resolvePath(uint64_t Address, uint32_t DirectoryFD,
-                                     bool AllowMissing = false);
+                                     MissingPath Missing = MissingPath::Reject);
   llvm::Expected<std::optional<ServiceResult>>
   open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD, uint32_t Mode,
        ProcessResult &Result);
@@ -114,8 +125,13 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   statusPath(uint64_t Path, uint64_t Address, uint32_t DirectoryFD,
              ProcessResult &Result);
+  static std::optional<uint32_t> rootRemovalError(const Description &File);
   llvm::Expected<std::optional<ServiceResult>>
   unlink(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  makeDirectory(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  removeDirectory(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   rename(uint64_t SourcePath, uint32_t SourceDirectory, uint64_t TargetPath,
          uint32_t TargetDirectory, ProcessResult &Result);

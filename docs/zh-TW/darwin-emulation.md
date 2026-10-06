@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: db2f5a72fda6a5195b548852dda4cebabfdea38e499c54e1b88f809dd2fc1055 -->
+<!-- i18n-source: fb48643220c4133abaf1152bc583f4341f626a9d62e4c61f583d43af2c3ad145 -->
 
 [← 文件索引](README.md)
 
@@ -111,9 +111,9 @@ allocation_unit、mutation_time 及 seconds/nanoseconds 全部必填，整數沿
 
 目錄的 `mutable:true`（C++ `MutableDirectories`）明確授權修改直接子項名稱，獨立於檔案內容的 `writable`；下例允許刪除唯讀檔案。缺少授權會停止，不依權限位虛構憑證或 EACCES。拒絕父目錄/直接一般子檔案的非零已知 flags、父目錄特殊權限、子檔案 link_count 不為 1，以及父目錄或子檔案的已知身份別名。身份檢查包含 stat 與目錄快照 inode；明確不同的裝置保持獨立，授權路徑計入預算。
 
-`unlink(10)` / `unlinkat(472)` 刪除既有一般名稱；unlinkat 僅接受低 32 位 flags=0 或 `AT_SYMLINK_NOFOLLOW_ANY=0x800`。未知位先回 EINVAL；刪目錄/系統丟棄模式尚未支援。共用解析器保留路徑故障、dirfd、CWD 與絕對路徑順序；缺失 ENOENT、檔案後斜線 ENOTDIR、一般目錄 EPERM、根目錄 EBUSY。原生探針亦驗證末尾 `.`/`..`。
+`unlink(10)` / `unlinkat(472)` 刪除既有一般名稱；一般檔案刪除僅接受低 32 位 flags=0 或 `AT_SYMLINK_NOFOLLOW_ANY=0x800`。未知位先回 EINVAL；AT_REMOVEDIR 使用下述受限目錄刪除；DATALESS、SYSTEM_DISCARDED 未支援。共用解析器保留路徑故障、dirfd、CWD 與絕對路徑順序；缺失 ENOENT、檔案後斜線 ENOTDIR、一般目錄 EPERM、純斜線根路徑 EISDIR，尾端帶 `.`/`..` 的根路徑 EBUSY。原生探針亦驗證末尾 `.`/`..`。
 
-舊 FD、dup、獨立開啟物件保留資料、游標與旗標，新開啟失敗；隱式父目錄與 CWD 保留，F_GETPATH 仍回傳捕獲的舊路徑。寫授權屬於檔案物件；全部描述元與最後一段映射釋放後，close/dup2 或下次修改才回收目前位元組預算，初始路徑/引用費用仍計入。權限強制檢查、跨父目錄改名、硬連結與刪目錄尚缺。
+舊 FD、dup、獨立開啟物件保留資料、游標與旗標，新開啟失敗；隱式父目錄與 CWD 保留，F_GETPATH 仍回傳捕獲的舊路徑。寫授權屬於檔案物件；全部描述元與最後一段映射釋放後，close/dup2 或下次修改才回收目前位元組預算，初始路徑/引用費用仍計入。權限強制檢查、跨父目錄改名、硬連結與刪除初始目錄或由目錄 FD/CWD 持有的目錄尚缺。
 
 刪除後父目錄的 stat/列舉觀察對舊/新 FD、dup、路徑查詢皆失效；stat/readdir/SEEK_END 在複製或改游標前停止。read/pread 仍回 EISDIR，SET/CUR、F_GETPATH、fchdir 與相對查找可用。可信修改策略令 nlink=0、ctime=固定時間，保留其他時間、資料與分配；後續寫入不能恢復 nlink=1。無策略或整段 EFAULT 後中繼資料仍未知。失敗保留狀態；原生 `unlinked-file` 比較名稱/描述元，策略時間與目錄失效屬模型規則。
 
@@ -164,7 +164,7 @@ O_CREAT=0x200 在明確 mutable 的直接父目錄建立空檔案，涵蓋一般
 
 `openat` (463)、`openat_nocancel` (464)、`chdir` (12)、`fchdir` (13)、`fstatat64` (470) 共用解析器。相對路徑使用目錄 FD 或 `AT_FDCWD=-2`，絕對路徑忽略 FD。重複斜線、`.`、`..` 及尾端斜線保留祖先檢查：`/file/..` 為 ENOTDIR，`/missing/..` 為 ENOENT。失敗及原 FD 的關閉、重用或替換不改變 CWD。`F_GETPATH=50` 回傳規範路徑和 NUL，包含複製描述元，不寫入終止符後方。
 
-目錄 read/pread 即使零長度亦為 EISDIR，負 pread 偏移優先 EINVAL。SET/CUR 共用游標，END 需要明確 size；目錄 mmap 為 EINVAL。fstatat64 支援 0、`AT_SYMLINK_NOFOLLOW=0x20`、`AT_SYMLINK_NOFOLLOW_ANY=0x800`、`AT_FDONLY=0x400`（忽略路徑）；非法位為 EINVAL，`AT_REALDEV=0x200` 未支援。串流身份未知，權限不是存取控制模型；寫入仍待完成。`directories` 程式對照原生與五種客體，stat 比對真實檔案及目錄。Intel HVF Actions 保持暫停。
+目錄 read/pread 即使零長度亦為 EISDIR，負 pread 偏移優先 EINVAL。SET/CUR 共用游標，END 需要明確 size；目錄 mmap 為 EINVAL。fstatat64 支援 0、`AT_SYMLINK_NOFOLLOW=0x20`、`AT_SYMLINK_NOFOLLOW_ANY=0x800`、`AT_FDONLY=0x400`（忽略路徑）；非法位為 EINVAL，`AT_REALDEV=0x200` 未支援。串流身份未知，權限不是存取控制模型；目錄建立與受限刪除使用下述明確授權。`directories` 程式對照原生與五種客體，stat 比對真實檔案及目錄。Intel HVF Actions 保持暫停。
 
 [XNU VFS](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h).
 
@@ -184,7 +184,7 @@ O_CREAT=0x200 在明確 mutable 的直接父目錄建立空檔案，涵蓋一般
 
 獨立 open 有獨立游標，dup 共用；只接受零或宣告的標記，未知位置明確停止。每次回傳能容納的最大完整記錄前綴。長度 >=1024 時，原請求末四位元組為 EOF 旗標（末尾 1，否則 0），僅記錄載荷限制為 128 MiB；旗標位址保留原無符號長度及回繞。順序是複製資料、移動游標、複製讀取前位置、寫旗標。後續 EFAULT 保留已完成效果；EOF 不複製空資料。單次複製僅部分可寫時，在該次複製前明確停止，保留先前效果。
 
-同一 `directory-entries` 對照原生 macOS 的記錄、dup/回繞、小塊讀取、EOF 和複製順序；獨立測試依 SDK 逐位元組核對捕獲記錄及長檔名。快照標記回繞後不變，不模擬 APFS 動態世代。舊 `getdirentries` (196)、目錄寫入、其他原生後端及 iOS 實機尚未納入驗收。
+同一 `directory-entries` 對照原生 macOS 的記錄、dup/回繞、小塊讀取、EOF 和複製順序；獨立測試依 SDK 逐位元組核對捕獲記錄及長檔名。快照標記回繞後不變，不模擬 APFS 動態世代。舊 `getdirentries` (196)、修改後的目錄列舉、其他原生後端及 iOS 實機尚未納入驗收。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"directories":[{"path":"/empty"},{"path":"/","contents":{
@@ -249,7 +249,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-獨立工作負載驗收要求 ARM64 99 項或 x64 66 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
+獨立工作負載驗收要求 ARM64 102 項或 x64 68 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -430,3 +430,21 @@ Faccessat 接受 AT_EACCESS(0x10)、AT_SYMLINK_NOFOLLOW(0x20)、AT_SYMLINK_NOFOL
 Release Darwin 共971項：575通過、396因後端不可用跳過、零失敗；99項必需 ARM64 HVF 全部執行。專項35項中23通過、12跳過，含全部14項直接測試。公開 C/CLI/報告173/173通過，含123項 Darwin 輸入對照。Python 在16.235秒內通過五種設定；原生工作負載23/23、驗證腳本66/66通過。獨立設計與實作審查未發現阻塞。原生探針保留主機 /tmp 符號連結造成的初始 NOFOLLOW_ANY 結果與後續正規路徑對照；共用工作負載使用相對目錄 FD。計數重疊、時限不變，無須執行失敗重測；完整 GitHub CI 與 iOS 實機另驗，Intel HVF Actions 保持暫停。
 
 `build-hvf-arm64/access-validation-summary.json`, `access-darwin-final-evidence/`, `access-focused-final.xml`, `access-public.xml`, `access-native-initial/`, `access-evidence/`.
+
+## 建立與刪除目錄
+
+`mkdir(136)`、`mkdirat(475)` 在明確可修改的直接父目錄建立目錄。新目錄繼承命名空間修改授權；初始目錄保留各自授權。僅繼承父目錄已知裝置與群組身分，不產生完整 stat、大小、配置、時間或列舉游標；重用舊檔名時遮蔽所有舊觀測。`creation_policy` 僅套用一般檔案：巢狀檔案使用繼承的父身分與既有全域 inode 序列，mkdir 不消耗檔案 inode。權限執行與原生目錄中繼資料不在本契約內。
+
+共用逐元件解析器。mkdir 可建立尾端只接斜線的缺失名稱；缺失祖先後接點/雙點仍為 ENOENT，一般檔案祖先為 ENOTDIR，既有名稱為 EEXIST。相對路徑沿用 FD/CWD，絕對路徑忽略 dirfd；字串錯誤先於相對 FD。建立不需可用 FD；查找、授權、位元組/項目預算或傳輸失敗不發布名稱、不使父觀測失效。
+
+`rmdir(137)` 與帶 AT_REMOVEDIR(0x80) 的 `unlinkat(472)` 刪除本程序建立的空目錄，可加 AT_SYMLINK_NOFOLLOW_ANY(0x800)。未知低32位旗標先回 EINVAL；DATALESS、SYSTEM_DISCARDED 未支援。保留已知路徑/類型/根目錄錯誤；刪除初始目錄為 UnsupportedService。新目錄尾點為 EINVAL，雙點或非空為 ENOTEMPTY。目錄 FD（含 dup）或 CWD 仍持有目標時明確拒絕，等待完整物件生命週期。已 unlink 的一般檔案 FD/映射不算名稱；原生對照確認位元組、inode 與最後連結 F_GETPATH 在父目錄刪除及名稱重用後保留。
+
+每個新目錄以規範路徑加 NUL 和一項計入共享16 MiB/256項預算。成功刪除僅退回自身費用，保留孤立檔案及映射租約。成功修改使直接父目錄完整 stat/列舉失效，失敗則保留；新目錄中繼資料及快照即使有一般檔案建立策略仍未知。原創 `directory-mutations` 在原生 macOS、五種客體與 C++/C/CLI/Python 比較巢狀建立、改名、unlink、刪除及孤立物件重用。
+
+[XNU mkdir/rmdir](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU directory creation lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c).
+
+### 目錄修改驗證，2026-10-06
+
+Release Darwin 共1,017項：609通過、408因後端不可用略過、零失敗；102項必需 ARM64 HVF 全部執行。定向測試58通過、12略過，含26項新增4K/16K直接測試。公開 C/CLI/報告178/178，含128項 Darwin 輸入對照；Python 在17.255秒內通過五種組合，原生24/24、驗證腳本66/66通過。獨立審查核對預算、名稱重用、父身分、檔案租約與回滾。初始測試通過後，額外原生探針發現純斜線根刪除為 EISDIR、尾點/雙點根為 EBUSY；已統一判斷並加入共用斷言，初始測試與原始碼/二進位快照保留。計數重疊、時限不變；Intel HVF Actions 暫停，完整 GitHub CI 與 iOS 實機另驗。
+
+`build-hvf-arm64/directory-mutation-validation-summary.json`, `directory-mutation-darwin-final-evidence/`, `directory-mutation-focused-final.xml`, `directory-mutation-public-final.xml`, `directory-mutation-native-final/`, `directory-mutation-before-root-fix/`.

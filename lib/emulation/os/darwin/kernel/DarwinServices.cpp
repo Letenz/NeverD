@@ -144,6 +144,9 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::OpenAt:
   case ServiceKind::Access:
   case ServiceKind::FaccessAt:
+  case ServiceKind::Mkdir:
+  case ServiceKind::MkdirAt:
+  case ServiceKind::Rmdir:
   case ServiceKind::Unlink:
   case ServiceKind::UnlinkAt:
   case ServiceKind::Rename:

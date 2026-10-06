@@ -341,6 +341,30 @@ void DarwinFiles::reclaimUnlinked() {
   }
 }
 
+bool DarwinFiles::isDirectory(const std::string &Path) const {
+  return CreatedDirectories.contains(Path) ||
+         pathKind(*Options, Path) == PathKind::Directory;
+}
+
+bool DarwinFiles::mutableDirectory(const std::string &Path) const {
+  return CreatedDirectories.contains(Path) ||
+         Options->MutableDirectories.contains(Path);
+}
+
+std::optional<DarwinFiles::DirectoryIdentity>
+DarwinFiles::directoryIdentity(const std::string &Path) const {
+  // A new directory may reuse an unlinked initial file's name. Its inherited
+  // identity must shadow that old path's observations, even when unknown.
+  const auto Created = CreatedDirectories.find(Path);
+  if (Created != CreatedDirectories.end())
+    return Created->second;
+  const auto Metadata = Options->Metadata.find(Path);
+  if (pathKind(*Options, Path) == PathKind::Directory &&
+      Metadata != Options->Metadata.end())
+    return DirectoryIdentity{Metadata->second.Device, Metadata->second.GID};
+  return std::nullopt;
+}
+
 llvm::Error DarwinFiles::prepareMutation() {
   if (!StorageUsed) {
     auto Footprint = fileOptionsFootprint(*Options);
@@ -390,7 +414,9 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
     return returned(TooManyFiles, true);
   if ((Flags & OpenCreate) && (Flags & OpenDirectory))
     return returned(InvalidArgument, true);
-  auto Resolved = resolvePath(Address, DirectoryFD, Flags & OpenCreate);
+  auto Resolved = resolvePath(Address, DirectoryFD,
+                              Flags & OpenCreate ? MissingPath::Regular
+                                                 : MissingPath::Reject);
   if (!Resolved)
     return Resolved.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*Resolved))
@@ -427,7 +453,7 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
 
 llvm::Expected<DarwinFiles::Lookup>
 DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
-                         bool AllowMissing) {
+                         MissingPath Missing) {
   if (!Options)
     return diagnostic::FileInputs;
   initializeNamespace();
@@ -480,11 +506,18 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
     // Initial ancestor directories remain real after their last child name
     // is removed. Regular-file names come only from the live namespace.
     Type = Nodes.contains(Prefix) ? PathKind::File
-           : pathKind(*Options, Prefix) == PathKind::Directory
-               ? PathKind::Directory
-               : PathKind::Missing;
+           : isDirectory(Prefix)  ? PathKind::Directory
+                                  : PathKind::Missing;
     if (Type == PathKind::Missing) {
-      if (AllowMissing && Index + 1 == Parts.size())
+      // Only mkdir's WILLBEDIR lookup may create before trailing slashes.
+      // A missing ancestor before a later dot/dotdot must still fail.
+      const bool Final = Index + 1 == Parts.size();
+      const bool DirectoryTail =
+          Missing == MissingPath::Directory &&
+          llvm::all_of(
+              llvm::ArrayRef<llvm::StringRef>(Parts).drop_front(Index + 1),
+              [](llvm::StringRef Part) { return Part.empty(); });
+      if (Missing != MissingPath::Reject && (Final || DirectoryTail))
         return Description{Kind::Missing, {}, 0, nullptr, std::move(Prefix)};
       return uint32_t(NoEntry);
     }
@@ -493,8 +526,10 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
   Description File{Type == PathKind::File ? Kind::File : Kind::Directory,
                    {},
                    0,
-                   Metadata == Options->Metadata.end() ? nullptr
-                                                       : &Metadata->second,
+                   CreatedDirectories.contains(Prefix) ||
+                           Metadata == Options->Metadata.end()
+                       ? nullptr
+                       : &Metadata->second,
                    std::move(Prefix)};
   if (Type == PathKind::File) {
     File.File = Nodes.at(File.Path);
@@ -504,7 +539,9 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
   const auto Slash = Trimmed.rfind('/');
   const auto Leaf =
       Slash == llvm::StringRef::npos ? Trimmed : Trimmed.substr(Slash + 1);
-  File.FinalSpecialComponent = Leaf == "." || Leaf == "..";
+  File.FinalComponent = Leaf == "."    ? Terminal::Dot
+                        : Leaf == ".." ? Terminal::DotDot
+                                       : Terminal::Ordinary;
   return File;
 }
 
@@ -573,6 +610,93 @@ DarwinFiles::statusPath(uint64_t Path, uint64_t Address, uint32_t DirectoryFD,
 }
 
 llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::makeDirectory(uint64_t Path, uint32_t DirectoryFD,
+                           ProcessResult &Result) {
+  auto Resolved = resolvePath(Path, DirectoryFD, MissingPath::Directory);
+  if (!Resolved)
+    return Resolved.takeError();
+  if (auto *Error = std::get_if<uint32_t>(&*Resolved))
+    return returned(*Error, true);
+  if (auto *Reason = std::get_if<const char *>(&*Resolved))
+    return unsupported(Result, *Reason);
+  const auto &File = std::get<Description>(*Resolved);
+  if (File.Type != Kind::Missing)
+    return returned(FileExists, true);
+  const auto Parent = parentPath(File.Path);
+  if (!mutableDirectory(Parent))
+    return unsupported(Result, diagnostic::DirectoryNotMutable);
+  if (auto E = prepareMutation())
+    return std::move(E);
+  const uint64_t Charge = File.Path.size() + 1;
+  if (File.Path.size() >= limits::Path ||
+      FixedEntries + Nodes.size() + Unlinked.size() +
+              CreatedDirectories.size() >=
+          limits::Files ||
+      Charge > limits::Bytes - *StorageUsed)
+    return unsupported(Result, diagnostic::DirectoryCreationLimit);
+  const auto Identity = directoryIdentity(Parent);
+  CreatedDirectories.emplace(File.Path, Identity);
+  *StorageUsed += Charge;
+  ChangedDirectories.insert(Parent);
+  return returned(0);
+}
+
+std::optional<uint32_t> DarwinFiles::rootRemovalError(const Description &File) {
+  if (File.Path != "/")
+    return std::nullopt;
+  // DELETE lookup rejects a slash-only root before the vnode removal checks.
+  // A terminal dot or dotdot resolves the root vnode and reaches VROOT/EBUSY.
+  return File.FinalComponent == Terminal::Ordinary ? IsDirectory : ResourceBusy;
+}
+
+llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::removeDirectory(uint64_t Path, uint32_t DirectoryFD,
+                             ProcessResult &Result) {
+  auto Resolved = resolvePath(Path, DirectoryFD);
+  if (!Resolved)
+    return Resolved.takeError();
+  if (auto *Error = std::get_if<uint32_t>(&*Resolved))
+    return returned(*Error, true);
+  if (auto *Reason = std::get_if<const char *>(&*Resolved))
+    return unsupported(Result, *Reason);
+  const auto &File = std::get<Description>(*Resolved);
+  if (File.Type != Kind::Directory)
+    return returned(NotDirectory, true);
+  if (auto Error = rootRemovalError(File))
+    return returned(*Error, true);
+  if (!CreatedDirectories.contains(File.Path))
+    return unsupported(Result, diagnostic::DirectoryRemovalInitial);
+  if (File.FinalComponent == Terminal::Dot)
+    return returned(InvalidArgument, true);
+  if (File.FinalComponent == Terminal::DotDot)
+    return returned(DirectoryNotEmpty, true);
+  const auto Prefix = File.Path + '/';
+  const auto ChildFile = Nodes.lower_bound(Prefix);
+  const auto ChildDirectory = CreatedDirectories.lower_bound(Prefix);
+  if ((ChildFile != Nodes.end() &&
+       llvm::StringRef(ChildFile->first).starts_with(Prefix)) ||
+      (ChildDirectory != CreatedDirectories.end() &&
+       llvm::StringRef(ChildDirectory->first).starts_with(Prefix)))
+    return returned(DirectoryNotEmpty, true);
+  // Native permits deleting open/current directories. Until directory
+  // objects outlive their names, refuse rather than make old FDs or CWD
+  // silently follow a subsequently reused name.
+  if (CurrentDirectory == File.Path ||
+      llvm::any_of(Descriptors, [&](const auto &Entry) {
+        return Entry.second.Open->Type == Kind::Directory &&
+               Entry.second.Open->Path == File.Path;
+      }))
+    return unsupported(Result, diagnostic::DirectoryRemovalHeld);
+  if (auto E = prepareMutation())
+    return std::move(E);
+  CreatedDirectories.erase(File.Path);
+  ChangedDirectories.erase(File.Path);
+  *StorageUsed -= File.Path.size() + 1;
+  ChangedDirectories.insert(parentPath(File.Path));
+  return returned(0);
+}
+
+llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::unlink(uint64_t Path, uint32_t DirectoryFD,
                     ProcessResult &Result) {
   auto Resolved = resolvePath(Path, DirectoryFD);
@@ -583,12 +707,12 @@ DarwinFiles::unlink(uint64_t Path, uint32_t DirectoryFD,
   if (auto *Reason = std::get_if<const char *>(&*Resolved))
     return unsupported(Result, *Reason);
   auto &File = std::get<Description>(*Resolved);
-  if (File.Path == "/")
-    return returned(ResourceBusy, true);
+  if (auto Error = rootRemovalError(File))
+    return returned(*Error, true);
   if (File.Type == Kind::Directory)
     return returned(OperationNotPermitted, true);
   const auto Parent = parentPath(File.Path);
-  if (!Options->MutableDirectories.contains(Parent))
+  if (!mutableDirectory(Parent))
     return unsupported(Result, diagnostic::DirectoryNotMutable);
   if (auto E = prepareMutation())
     return std::move(E);
@@ -627,7 +751,7 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   // trailing-slash rules. Do not apply a regular-file target lookup to them.
   if (Source.Type != Kind::File)
     return unsupported(Result, diagnostic::RenameKind);
-  auto To = resolvePath(TargetPath, TargetDirectory, true);
+  auto To = resolvePath(TargetPath, TargetDirectory, MissingPath::Regular);
   if (!To)
     return To.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*To))
@@ -637,16 +761,19 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   auto &Target = std::get<Description>(*To);
   // RENAME lookup rejects a final dot/dotdot before mount or authorization
   // checks. Canonical reduction can otherwise make it look like another parent.
-  if (Target.FinalSpecialComponent)
+  if (Target.FinalComponent != Terminal::Ordinary)
     return returned(InvalidArgument, true);
   const auto Parent = parentPath(Source.Path);
   if (parentPath(Target.Path) != Parent)
     return unsupported(Result, diagnostic::RenameMount);
   // Even a same-name native rename performs authorization. The namespace
   // grant excludes known restricted flags, aliases and special parent modes.
-  if (!Options->MutableDirectories.contains(Parent))
+  if (!mutableDirectory(Parent))
     return unsupported(Result, diagnostic::DirectoryNotMutable);
-  std::optional<int32_t> Device;
+  const auto ParentIdentity = directoryIdentity(Parent);
+  std::optional<int32_t> Device =
+      ParentIdentity ? std::optional<int32_t>(ParentIdentity->Device)
+                     : std::nullopt;
   auto SameDevice = [&](const DarwinFileMetadata *M) {
     if (!M)
       return true;
@@ -655,11 +782,7 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
     Device = M->Device;
     return true;
   };
-  const auto ParentMetadata = Options->Metadata.find(Parent);
-  if (!SameDevice(ParentMetadata == Options->Metadata.end()
-                      ? nullptr
-                      : &ParentMetadata->second) ||
-      !SameDevice(Source.File->metadata()) ||
+  if (!SameDevice(Source.File->metadata()) ||
       !SameDevice(Target.File ? Target.File->metadata() : Target.Metadata))
     return unsupported(Result, diagnostic::RenameMount);
   if (Target.Type == Kind::Directory)
@@ -703,13 +826,15 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
   const auto Parent = parentPath(File.Path);
-  if (!Options->MutableDirectories.contains(Parent))
+  if (!mutableDirectory(Parent))
     return unsupported(Result, diagnostic::DirectoryNotMutable);
   if (auto E = prepareMutation())
     return std::move(E);
   const uint64_t Charge = File.Path.size() + 1;
   if (File.Path.size() >= limits::Path ||
-      FixedEntries + Nodes.size() + Unlinked.size() >= limits::Files ||
+      FixedEntries + Nodes.size() + Unlinked.size() +
+              CreatedDirectories.size() >=
+          limits::Files ||
       Charge > limits::Bytes - *StorageUsed)
     return unsupported(Result, diagnostic::FileCreationLimit);
   if (Options->CreationPolicy && !NextCreatedInode)
@@ -722,10 +847,12 @@ DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
     const auto &Policy = *Options->CreationPolicy;
     // Namespace changes invalidate the parent's complete stat observation,
     // but cannot change these supplied device/group fields.
-    const auto &ParentMetadata = Options->Metadata.at(Parent);
+    const auto ParentIdentity = directoryIdentity(Parent);
+    if (!ParentIdentity)
+      return unsupported(Result, diagnostic::FileCreationParent);
     auto &M = Node->CurrentMetadata.emplace();
-    M.Device = ParentMetadata.Device;
-    M.GID = ParentMetadata.GID;
+    M.Device = ParentIdentity->Device;
+    M.GID = ParentIdentity->GID;
     M.UID = UserID;
     M.Inode = NextCreatedInode;
     M.Mode = FileRegularMode | (Mode & 0777 & ~CurrentUmask);
@@ -906,6 +1033,12 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return open(A[0], A[1], AtCurrentDirectory, A[2], Result);
   if (Service == ServiceKind::OpenAt)
     return open(A[1], A[2], A[0], A[3], Result);
+  if (Service == ServiceKind::Mkdir)
+    return makeDirectory(A[0], AtCurrentDirectory, Result);
+  if (Service == ServiceKind::MkdirAt)
+    return makeDirectory(A[1], A[0], Result);
+  if (Service == ServiceKind::Rmdir)
+    return removeDirectory(A[0], AtCurrentDirectory, Result);
   if (Service == ServiceKind::Access)
     return access(A[0], AtCurrentDirectory, A[1], Result);
   if (Service == ServiceKind::FaccessAt) {
@@ -936,8 +1069,10 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     if (Flags & ~uint32_t(AtRemoveDirectory | AtRemoveDatalessDirectory |
                           AtNoFollowAny | AtSystemDiscarded))
       return returned(InvalidArgument, true);
-    if (Flags & ~uint32_t(AtNoFollowAny))
+    if (Flags & (AtRemoveDatalessDirectory | AtSystemDiscarded))
       return unsupported(Result, diagnostic::UnlinkFlags);
+    if (Flags & AtRemoveDirectory)
+      return removeDirectory(A[1], A[0], Result);
     return unlink(A[1], A[0], Result);
   }
   if (Service == ServiceKind::Truncate || Service == ServiceKind::Ftruncate) {

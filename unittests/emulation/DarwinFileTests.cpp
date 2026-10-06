@@ -131,6 +131,398 @@ protected:
   }
 };
 
+TEST_P(DarwinFileTest, DirectoryCreationDistinguishesTrailingSlashesFromDots) {
+  Options->MutableDirectories.insert("/");
+  for (const char *Name : {"/data/", "/data/.", "/data/.."}) {
+    path(Name);
+    error(ServiceKind::Mkdir, {Base, 0700}, 20);
+  }
+  for (const char *Name : {"/absent/.", "/absent/..", "/absent/child"}) {
+    path(Name);
+    error(ServiceKind::Mkdir, {Base, 0700}, 2);
+  }
+  for (const char *Name : {"/", "/data", "/."}) {
+    path(Name);
+    error(ServiceKind::Mkdir, {Base, UINT64_MAX}, 17);
+  }
+  path("/new///");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base, 0x12345678ffff01c0ULL}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+  for (const char *Name : {"/new", "/new/.", "/new/.."}) {
+    path(Name);
+    error(ServiceKind::Mkdir, {Base}, 17);
+  }
+  path("/new/child//");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  error(ServiceKind::Open, {Base, 2}, 21);
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  error(ServiceKind::Access, {Base}, 2);
+  path("/new/.");
+  error(ServiceKind::Rmdir, {Base}, 22);
+  path("/new///");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_TRUE(Options->Directories.empty());
+}
+
+TEST_P(DarwinFileTest, DirectoryAtCallsKeepFlagsCarrierAndLookupOrder) {
+  Options->MutableDirectories.insert("/");
+  const auto Regular = ok(ServiceKind::Open, {Base});
+  path("/");
+  const auto Root = ok(ServiceKind::Open, {Base});
+  path("new");
+  EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileWorkingDirectory);
+  error(ServiceKind::MkdirAt, {UINT64_MAX, 1, 0700}, 14);
+  error(ServiceKind::MkdirAt, {UINT64_MAX, Base, 0700}, 9);
+  error(ServiceKind::MkdirAt, {Regular, Base, 0700}, 20);
+  EXPECT_FALSE(invoke(ServiceKind::MkdirAt, {1, Base, 0700}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileDirectoryKind);
+  EXPECT_EQ(ok(ServiceKind::MkdirAt,
+               {0x1234567800000000ULL | Root, Base, UINT64_MAX}),
+            0u);
+  error(ServiceKind::UnlinkAt, {UINT64_MAX, 1, 0x40}, 22);
+  error(ServiceKind::UnlinkAt, {UINT64_MAX, 1, 0x880}, 14);
+  for (uint32_t Flags : {0x100u, 0x180u, 0x1000u, 0x1880u}) {
+    EXPECT_FALSE(invoke(ServiceKind::UnlinkAt, {UINT64_MAX, 1, Flags}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::UnlinkFlags);
+  }
+  error(ServiceKind::UnlinkAt, {Regular, Base, 0x80}, 20);
+  path("");
+  error(ServiceKind::MkdirAt, {UINT64_MAX, Base}, 9);
+  error(ServiceKind::MkdirAt, {Regular, Base}, 20);
+  error(ServiceKind::MkdirAt, {Root, Base}, 2);
+  path("/new");
+  EXPECT_EQ(
+      ok(ServiceKind::UnlinkAt, {UINT64_MAX, Base, 0xfedcba9800000880ULL}), 0u);
+  EXPECT_EQ(ok(ServiceKind::MkdirAt, {UINT64_MAX, Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  Options.reset();
+  error(ServiceKind::UnlinkAt, {UINT64_MAX, 1, 0x40}, 22);
+  EXPECT_FALSE(invoke(ServiceKind::MkdirAt, {UINT64_MAX, 1}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileInputs);
+}
+
+TEST_P(DarwinFileTest, DirectoryCreationRequiresGrantsButNoFreeDescriptor) {
+  Options->Directories.insert("/fixed");
+  Options->DescriptorLimit = 3;
+  path("/fixed/new");
+  EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryNotMutable);
+  path("/fixed");
+  error(ServiceKind::Mkdir, {Base}, 17);
+  EXPECT_FALSE(invoke(ServiceKind::Rmdir, {Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryRemovalInitial);
+  Options->MutableDirectories.insert("/");
+  path("/new");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  error(ServiceKind::Open, {Base}, 24);
+  path("/new/child");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  path("/new");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  path("/data");
+  error(ServiceKind::Rmdir, {Base}, 20);
+  path("/");
+  error(ServiceKind::Rmdir, {Base}, 21);
+}
+
+TEST_P(DarwinFileTest, RootRemovalDistinguishesSlashOnlyFromDotComponents) {
+  for (const char *Name : {"/", "//", "///", "/.", "/..", "//.//"}) {
+    SCOPED_TRACE(Name);
+    path(Name);
+    const uint64_t Code = llvm::StringRef(Name).contains('.') ? 16 : 21;
+    error(ServiceKind::Rmdir, {Base}, Code);
+    error(ServiceKind::Unlink, {Base}, Code);
+    error(ServiceKind::UnlinkAt, {UINT64_MAX, Base, 0}, Code);
+    error(ServiceKind::UnlinkAt, {UINT64_MAX, Base, 0x80}, Code);
+    EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+  }
+}
+
+TEST_P(DarwinFileTest, DirectoryRemovalPreservesHeldAndNonemptyObjects) {
+  Options->MutableDirectories.insert("/");
+  path("/new");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  const auto Directory = ok(ServiceKind::Open, {Base});
+  const auto Dup = ok(ServiceKind::Dup, {Directory});
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {Directory}), 0u);
+  path("child");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  path("/new");
+  error(ServiceKind::Rmdir, {Base}, 66);
+  path("/new/child/..");
+  error(ServiceKind::Rmdir, {Base}, 66);
+  path("/new/child");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  path("/new");
+  EXPECT_FALSE(invoke(ServiceKind::Rmdir, {Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryRemovalHeld);
+  EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Directory}), 0u);
+  path("/");
+  EXPECT_EQ(ok(ServiceKind::Chdir, {Base}), 0u);
+  path("/new");
+  EXPECT_FALSE(invoke(ServiceKind::Rmdir, {Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryRemovalHeld);
+  identity(Dup, "/new");
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {Dup}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Dup}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Rmdir, {Base}));
+  path("/", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Chdir, {Base + 128}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  error(ServiceKind::Access, {Base}, 2);
+  const auto File = ok(ServiceKind::Open, {Base, 0x202});
+  error(ServiceKind::Open, {Base, 0x100000}, 20);
+  identity(File, "/new");
+}
+
+TEST_P(DarwinFileTest, DirectoryPublicationInvalidatesOnlyChangedParents) {
+  Options->WritableFiles.insert("/data");
+  Options->Directories.insert("/empty");
+  Options->DirectoryContents["/"] = darwin_test::directoryContents();
+  auto RootMetadata = darwin_test::mutationMetadata(64);
+  RootMetadata.Mode = 0040755;
+  RootMetadata.Inode = 41;
+  Options->Metadata["/"] = RootMetadata;
+  Options->MutableDirectories.insert("/");
+  path("/");
+  const auto Root = ok(ServiceKind::Open, {Base});
+  const auto Before = status(Root);
+  path("/data");
+  error(ServiceKind::Mkdir, {Base}, 17);
+  path("/empty/new");
+  EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base}));
+  EXPECT_EQ(status(Root), Before);
+  EXPECT_EQ(
+      ok(ServiceKind::GetDirEntries64, {Root, Base + Page, 64, Base + 512}),
+      64u);
+  const auto Cursor = ok(ServiceKind::Lseek, {Root, 0, 1});
+  path("/data", Base + 128);
+  const auto Data = ok(ServiceKind::Open, {Base + 128, 2});
+  // Initial paths/references cost 23 bytes; four observed records cost 128.
+  // Four spare bytes cannot pay for "/new" including its terminator.
+  EXPECT_EQ(
+      ok(ServiceKind::Ftruncate, {Data, darwin_file_limits::Bytes - 151 - 4}),
+      0u);
+  path("/new");
+  EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryCreationLimit);
+  error(ServiceKind::Access, {Base}, 2);
+  EXPECT_EQ(status(Root), Before);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 1}), Cursor);
+  EXPECT_EQ(
+      ok(ServiceKind::GetDirEntries64, {Root, Base + Page, 64, Base + 512}),
+      64u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + 512, 8)), Cursor);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, Cursor, 0}), Cursor);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, 6}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Data}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Root, UINT64_MAX}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  EXPECT_FALSE(
+      invoke(ServiceKind::GetDirEntries64, {Root, UINT64_MAX, 64, UINT64_MAX}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 1}), Cursor);
+  const auto New = ok(ServiceKind::Open, {Base});
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {New, UINT64_MAX}));
+  EXPECT_FALSE(
+      invoke(ServiceKind::GetDirEntries64, {New, UINT64_MAX, 64, UINT64_MAX}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryContents);
+  EXPECT_EQ(ok(ServiceKind::Close, {New}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Root, UINT64_MAX}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  EXPECT_EQ(Options->Metadata.at("/").Size, 64u);
+}
+
+TEST_P(DarwinFileTest, DirectoryAndFileNamesShareEntryBudgetAndReclaim) {
+  Options->Files.clear();
+  for (unsigned I = 0; I != 254; ++I)
+    Options->Files["/f" + std::to_string(I)] = {};
+  Options->MutableDirectories.insert("/");
+  path("/new");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  path("/extra", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryCreationLimit);
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base + 128, 0x200}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationLimit);
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  path("/f0");
+  const auto Old = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path("/new");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base + 128}));
+  EXPECT_EQ(ok(ServiceKind::Close, {Old}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base + 128}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base + 128}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  for (unsigned I = 0; I != 300; ++I) {
+    SCOPED_TRACE(I);
+    path("/d" + std::to_string(I));
+    EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+    EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  }
+}
+
+TEST_P(DarwinFileTest, DirectoryRefundDoesNotReleaseOrphanFileStorage) {
+  Options->WritableFiles.insert("/data");
+  Options->MutableDirectories.insert("/");
+  const auto Data = ok(ServiceKind::Open, {Base, 2});
+  const uint64_t Capacity = darwin_file_limits::Bytes - 14;
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 5}), 0u);
+  path("/new");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  path("/x", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base + 128}));
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryCreationLimit);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 14}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  path("/new/f");
+  const auto Child = ok(ServiceKind::Open, {Base, 0x202});
+  path("xy", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Write, {Child, Base + 128, 2}), 2u);
+  auto Lease = Files->mappingSource(Child);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Child}), 0u);
+  path("/new");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 9}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity - 8}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes,
+            llvm::ArrayRef<uint8_t>({'x', 'y'}));
+  Lease = uint32_t(0);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity}), 0u);
+}
+
+TEST_P(DarwinFileTest, DirectoryReuseShadowsOldFileMetadataAndKeepsItsLease) {
+  mutationPolicy();
+  creationPolicy();
+  Options->Metadata["/data"].Device = 456;
+  Options->Metadata["/data"].GID = 123;
+  const auto Old = ok(ServiceKind::Open, {Base});
+  auto Lease = Files->mappingSource(Old);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  const auto Unlinked = status(Old);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base, 0}), 0u);
+  const auto Directory = ok(ServiceKind::Open, {Base});
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Directory, UINT64_MAX}));
+  path("/data/child");
+  const auto Child = ok(ServiceKind::Open, {Base, 0x202, 0777});
+  const auto Record = status(Child);
+  EXPECT_EQ(llvm::support::endian::read32le(Record.data()), uint32_t(-123));
+  EXPECT_EQ(llvm::support::endian::read32le(Record.data() + 20), 0xfedcba98u);
+  EXPECT_EQ(llvm::support::endian::read64le(Record.data() + 8),
+            darwin_test::CreationPolicy.FirstInode);
+  renameFile("/data/child", "/data/child");
+  EXPECT_EQ(status(Child), Record);
+  path("/data/moved");
+  const auto Target = ok(ServiceKind::Open, {Base, 0x202, 0600});
+  path("t", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Write, {Target, Base + 128, 1}), 1u);
+  renameFile("/data/child", "/data/moved");
+  identity(Child, "/data/moved");
+  contents(Target, {'t'});
+  EXPECT_EQ(llvm::support::endian::read16le(status(Target).data() + 6), 0u);
+  EXPECT_EQ(status(Old), Unlinked);
+  contents(Old, Options->Files.at("/data"));
+  EXPECT_EQ(ok(ServiceKind::Close, {Child}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Target}), 0u);
+  path("/data/moved");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Directory}), 0u);
+  path("/data");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  const auto New = ok(ServiceKind::Open, {Base, 0x202, 0600});
+  EXPECT_EQ(llvm::support::endian::read64le(status(New).data() + 8),
+            darwin_test::CreationPolicy.FirstInode + 2);
+  EXPECT_EQ(status(Old), Unlinked);
+  identity(Old, "/data");
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes,
+            llvm::ArrayRef<uint8_t>(Options->Files.at("/data")));
+  EXPECT_EQ(Options->Metadata.at("/data").GID, 123u);
+}
+
+TEST_P(DarwinFileTest, DirectoryIdentityInheritanceDoesNotInventDirectoryStat) {
+  creationPolicy();
+  path("/new");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base, 0}), 0u);
+  path("/new/deep");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base, UINT64_MAX}), 0u);
+  const auto Directory = ok(ServiceKind::Open, {Base});
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Directory, UINT64_MAX}));
+  path("child");
+  const auto File = ok(ServiceKind::OpenAt, {Directory, Base, 0x202, 0777});
+  const auto Record = status(File);
+  EXPECT_EQ(llvm::support::endian::read32le(Record.data()), uint32_t(-123));
+  EXPECT_EQ(llvm::support::endian::read32le(Record.data() + 20), 0xfedcba98u);
+  EXPECT_EQ(llvm::support::endian::read16le(Record.data() + 4), 0100750u);
+  EXPECT_EQ(llvm::support::endian::read64le(Record.data() + 8),
+            darwin_test::CreationPolicy.FirstInode);
+  path("/new/deep");
+  error(ServiceKind::Rmdir, {Base}, 66);
+  EXPECT_EQ(Options->CreationPolicy->FirstInode,
+            darwin_test::CreationPolicy.FirstInode);
+  EXPECT_EQ(*Options->InitialUmask, 0027u);
+}
+
+TEST_P(DarwinFileTest, DirectoryRemovalAndReuseRetainUnlinkedChildObjects) {
+  Options->MutableDirectories.insert("/");
+  path("/new");
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  path("/new/f");
+  const auto Old = ok(ServiceKind::Open, {Base, 0x202});
+  path("old!", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Write, {Old, Base + 128, 4}), 4u);
+  auto Lease = Files->mappingSource(Old);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path("/new");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  path("/new/f");
+  const auto New = ok(ServiceKind::Open, {Base, 0x202});
+  path("new!", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::Write, {New, Base + 128, 4}), 4u);
+  contents(Old, {'o', 'l', 'd', '!'});
+  contents(New, {'n', 'e', 'w', '!'});
+  identity(Old, "/new/f");
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes,
+            llvm::ArrayRef<uint8_t>({'o', 'l', 'd', '!'}));
+}
+
+TEST_P(DarwinFileTest, DirectoryCreationBoundsCanonicalNamesAndInputCopy) {
+  std::string Parent;
+  for (char C : {'a', 'b', 'c', 'd'})
+    Parent += '/' + std::string(240, C);
+  Options->Directories.insert(Parent);
+  Options->MutableDirectories.insert(Parent);
+  Options->WorkingDirectory = Parent;
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path(std::string(59, 'x'));
+  EXPECT_FALSE(invoke(ServiceKind::Mkdir, {Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryCreationLimit);
+  path(std::string(58, 'y'));
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+  const auto Directory = ok(ServiceKind::Open, {Base});
+  identity(Directory, Parent + '/' + std::string(58, 'y'));
+  path("z", Base + Page * 2 - 2);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base + Page * 2 - 2}), 0u);
+  llvm::cantFail(Space->writeInteger(Base + Page * 2 - 1, 'q', 1));
+  error(ServiceKind::Mkdir, {Base + Page * 2 - 1}, 14);
+  path("q");
+  error(ServiceKind::Access, {Base}, 2);
+  llvm::cantFail(Space->protect(Base, Page * 2, Read | UserAccessible));
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {Base}), 0u);
+}
+
 TEST_P(DarwinFileTest,
        AccessZeroActionBitsAndRequestedPermissionsStayDistinct) {
   const uint64_t Ignored[] = {
@@ -1247,7 +1639,7 @@ TEST_P(DarwinFileTest,
   path("", Base + 256);
   error(ServiceKind::UnlinkAt, {999, Base + 256, 0}, 9);
   error(ServiceKind::UnlinkAt, {A, Base + 128, 0}, 20);
-  EXPECT_FALSE(invoke(ServiceKind::UnlinkAt, {999, UINT64_MAX, 0x80}));
+  EXPECT_FALSE(invoke(ServiceKind::UnlinkAt, {999, UINT64_MAX, 0x100}));
   EXPECT_EQ(Result.Diagnostic, diagnostic::UnlinkFlags);
   path("/tree/child/", Base + 256);
   error(ServiceKind::Unlink, {Base + 256}, 20);
@@ -1264,7 +1656,7 @@ TEST_P(DarwinFileTest,
   error(ServiceKind::Read, {Parent, 0, 0}, 21);
   error(ServiceKind::Unlink, {Base}, 1);
   path("/");
-  error(ServiceKind::Unlink, {Base}, 16);
+  error(ServiceKind::Unlink, {Base}, 21);
   path("/data");
   EXPECT_FALSE(invoke(ServiceKind::Unlink, {Base}));
   EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryNotMutable);
@@ -2099,6 +2491,32 @@ public:
     return Memory.canAccess(A, S, P);
   }
 };
+
+TEST_P(DarwinFileTest, DirectoryPathTransportFailuresKeepNamespaceUnchanged) {
+  Options->MutableDirectories.insert("/");
+  FailingFileInput Input(*Space);
+  Files = std::make_unique<DarwinFiles>(Input, Options);
+  path("/new");
+  for (auto Kind : {ServiceKind::Mkdir, ServiceKind::Rmdir}) {
+    for (bool Preflight : {true, false}) {
+      Input.FailureAddress = Base + 2;
+      Input.FailAccess = Preflight;
+      Input.FailRead = !Preflight;
+      auto Failed = Files->handle(Kind, {0, 0, {Base}, std::nullopt}, Result);
+      ASSERT_FALSE(bool(Failed));
+      llvm::consumeError(Failed.takeError());
+      Input.FailAccess = Input.FailRead = false;
+      if (Kind == ServiceKind::Mkdir)
+        error(ServiceKind::Access, {Base}, 2);
+      else
+        EXPECT_EQ(ok(ServiceKind::Access, {Base}), 0u);
+    }
+    EXPECT_EQ(ok(Kind, {Base}), 0u);
+  }
+  const auto FD = ok(ServiceKind::Open, {Base, 0x202});
+  EXPECT_EQ(FD, 3u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 0u);
+}
 
 TEST_P(DarwinFileTest, AccessTransportFailuresPreserveFilesAndDescriptors) {
   mutationPolicy();

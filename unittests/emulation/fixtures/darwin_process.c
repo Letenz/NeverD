@@ -1501,6 +1501,118 @@ static int system_info(int emit_values) {
   return 37;
 }
 
+static int directory_mutations(const char *path) {
+  unsigned error;
+  char parent[1024], old_path[1024], current_path[1024];
+  u64 length = 0, slash = 0;
+  while (path[length] && length + 1 < sizeof(parent)) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      slash = length;
+    ++length;
+  }
+  if (path[0] != '/' || path[length])
+    return 51;
+  parent[slash ? slash : 1] = 0;
+  int check = 51;
+#define DIRECTORY_EXPECT(expression)                                           \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  const char roots[][7] = {"/", "//", "///", "/.", "/..", "//.//"};
+  for (unsigned i = 0; i != sizeof(roots) / sizeof(*roots); ++i) {
+    const u64 code = i < 3 ? 21 : 16;
+    DIRECTORY_EXPECT(call(137, (u64)roots[i], 0, 0, 0, 0, 0, &error) == code &&
+                     error);
+    DIRECTORY_EXPECT(call(10, (u64)roots[i], 0, 0, 0, 0, 0, &error) == code &&
+                     error);
+    DIRECTORY_EXPECT(
+        call(472, (u64)-1, (u64)roots[i], 0, 0, 0, 0, &error) == code && error);
+    DIRECTORY_EXPECT(call(472, (u64)-1, (u64)roots[i], 0x80, 0, 0, 0, &error) ==
+                         code &&
+                     error);
+  }
+  const char name[] = "dir-work", trailing[] = "dir-work///";
+  const char child[] = "dir-work/child//", missing[] = "no-dir-work/.";
+  const char dot[] = "dir-work/.", leaf[] = "file", moved[] = "moved";
+  const char more[] = "more", child_name[] = "child";
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  DIRECTORY_EXPECT(!error && root >= 3);
+  DIRECTORY_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_EXPECT(call(136, (u64)path, 0700, 0, 0, 0, 0, &error) == 17 &&
+                   error);
+  DIRECTORY_EXPECT(call(475, (u64)-1, 1, 0700, 0, 0, 0, &error) == 14 && error);
+  DIRECTORY_EXPECT(call(136, (u64)missing, 0700, 0, 0, 0, 0, &error) == 2 &&
+                   error);
+  DIRECTORY_EXPECT(
+      call(136, (u64)trailing, 0x12345678000001c0UL, 0, 0, 0, 0, &error) == 0 &&
+      !error && !secondary);
+  DIRECTORY_EXPECT(call(475, 0x1234567800000000UL | root, (u64)child, 0700, 0,
+                        0, 0, &error) == 0 &&
+                   !error && !secondary);
+  DIRECTORY_EXPECT(call(136, (u64)dot, 0700, 0, 0, 0, 0, &error) == 17 &&
+                   error);
+  DIRECTORY_EXPECT(call(137, (u64)dot, 0, 0, 0, 0, 0, &error) == 22 && error);
+  DIRECTORY_EXPECT(call(137, (u64)name, 0, 0, 0, 0, 0, &error) == 66 && error);
+  u64 directory = call(463, root, (u64)name, 0x100000, 0, 0, 0, &error);
+  DIRECTORY_EXPECT(!error && directory != root);
+  u64 nested = call(463, directory, (u64)child_name, 0x100000, 0, 0, 0, &error);
+  DIRECTORY_EXPECT(!error && nested != directory);
+  DIRECTORY_EXPECT(
+      call(475, directory, (u64)more, 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 old = call(463, nested, (u64)leaf, 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_EXPECT(!error && old >= 3);
+  const char original[] = "old!", replacement[] = "new!";
+  DIRECTORY_EXPECT(call(4, old, (u64)original, 4, 0, 0, 0, &error) == 4 &&
+                   !error);
+  DIRECTORY_EXPECT(
+      call(465, nested, (u64)leaf, nested, (u64)moved, 0, 0, &error) == 0 &&
+      !error);
+  DIRECTORY_EXPECT(call(92, old, 50, (u64)old_path, 0, 0, 0, &error) == 0 &&
+                   !error);
+  DIRECTORY_EXPECT(call(472, nested, (u64)moved, 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  DIRECTORY_EXPECT(call(6, nested, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_EXPECT(call(472, directory, (u64)more, 0xfedcba9800000880UL, 0, 0,
+                        0, &error) == 0 &&
+                   !error);
+  DIRECTORY_EXPECT(call(6, directory, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_EXPECT(call(137, (u64)child, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_EXPECT(call(137, (u64)trailing, 0, 0, 0, 0, 0, &error) == 0 &&
+                   !error && !secondary);
+  DIRECTORY_EXPECT(call(33, (u64)name, 0, 0, 0, 0, 0, &error) == 2 && error);
+  DIRECTORY_EXPECT(call(475, root, (u64)name, 0700, 0, 0, 0, &error) == 0 &&
+                   !error);
+  DIRECTORY_EXPECT(call(475, root, (u64)child, 0700, 0, 0, 0, &error) == 0 &&
+                   !error);
+  u64 newer = call(5, (u64)old_path, 0xa02, 0600, 0, 0, 0, &error);
+  DIRECTORY_EXPECT(!error && newer >= 3 && newer != old);
+  DIRECTORY_EXPECT(call(4, newer, (u64)replacement, 4, 0, 0, 0, &error) == 4 &&
+                   !error);
+  char bytes[4];
+  DIRECTORY_EXPECT(call(153, old, (u64)bytes, 4, 0, 0, 0, &error) == 4 &&
+                   !error);
+  for (unsigned i = 0; i != 4; ++i)
+    DIRECTORY_EXPECT(bytes[i] == original[i]);
+  DIRECTORY_EXPECT(call(92, old, 50, (u64)current_path, 0, 0, 0, &error) == 0 &&
+                   !error);
+  DIRECTORY_EXPECT(equal(old_path, current_path));
+  DIRECTORY_EXPECT(call(6, old, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_EXPECT(call(6, newer, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_EXPECT(call(10, (u64)old_path, 0, 0, 0, 0, 0, &error) == 0 &&
+                   !error);
+  DIRECTORY_EXPECT(call(137, (u64)child, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_EXPECT(call(472, root, (u64)name, 0x80, 0, 0, 0, &error) == 0 &&
+                   !error);
+  DIRECTORY_EXPECT(call(6, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  const char marker = 'm';
+  DIRECTORY_EXPECT(call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error);
+#undef DIRECTORY_EXPECT
+  return 37;
+}
+
 static int file_access(const char *path) {
   unsigned error;
   char parent[1024];
@@ -1749,6 +1861,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "directory-mutations"))
+    return argc < 3 ? 79 : directory_mutations(argv[2]);
   if (equal(argv[1], "file-access"))
     return argc < 3 ? 79 : file_access(argv[2]);
   if (equal(argv[1], "vectored-io"))
