@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 9fd13210357d20e09ca4c4b552e89a3b4b9608b2813d0d68730c75959a226579 -->
+<!-- i18n-source: f2e1b376c3a2debfc3ffe6751fe7c57302755a5b03e02931fe21f4e83482165a -->
 
 [← 문서 목록](README.md)
 
@@ -604,3 +604,23 @@ syscall만 선택자의 하위 32비트를 취하고 `_RLIMIT_POSIX_FLAG=0x1000`
 ```
 
 macOS ARM64 Release 등록/통과/미실행 skip/실패: 1337 / 845 / 492 / 0, 필수 HVF 123개 모두 실행. 새 4K/16K 동작 검사 열두 개 및 SDK capture oracle, C/CLI 190/190, parser 37/37, native workload 31/31 통과. Python 다섯 구성 71.978초, 순수 API 71개와 runner 49개 통과; SDK drift, 형식, 기능, 출처, 문서 검사 통과. 수치는 겹칩니다. 증거는 `build-hvf-arm64/resource-limit-observations/`에 동결하고 커밋에 연결합니다. 초기 테스트 enum 컴파일 오류 및 연결/필터 시도를 보존하며 수정 후 직렬 검증에서 기한과 음성 대조를 완화하지 않았습니다. 제한 집행, 권한, 변경 후 디렉터리 정보/열거, 공유 map/EOF, 진행 시계, Mach/thread/dyld, framework는 미완성입니다. 물리 iOS, 중단된 Intel HVF와 원격 merge CI는 별도 검증이 필요합니다.
+
+## 명시적 읽기 전용 리소스 사용량
+
+다섯 Darwin guest 구성에서 getrusage(117)는 독립적인 선택 항목 DarwinSystemOptions::ResourceUsageSelf / ResourceUsageChildren을 읽습니다. 엄격 JSON: darwin_system.resource_usage.self / .children. 각 DarwinResourceUsage는 int64 user_seconds/system_seconds, 1000000 미만 uint32 user_microseconds/system_microseconds, 정확히 14개 int64 counters를 요구합니다. 정확한 정수나 부호 있는 십진 문자열은 전체 범위를 보존하며 잘못된 형식/필드/마이크로초/길이는 로드 전에 거부합니다. 누락된 상대는 미상이고 제공된 항목 조회를 막지 않습니다. 모두 0인 명시는 유효합니다.
+
+한 번에 144바이트 little-endian 출력: timeval 0/16에는 8바이트 초, 4 마이크로초, 4 zero padding; counter는32부터 각8바이트. Darwin 원값/단위를 보존하며 ru_maxrss에 Linux KiB 변환은 없습니다. 고정값은 호스트 성능 측정, 회계, fork/wait, 스케줄링, 제한 집행을 구현하지 않습니다.
+
+선택자 하위32비트만 사용해 0=SELF, -1=CHILDREN. 0x1000은 잘못된 값이며 POSIX flag 제거 없음. 잘못된 값은 메모리 전 EINVAL, 누락값은 출력 전 unsupported. 완전한 비정렬/페이지 경계 복사는 guard 보존; 모두 쓰기 불가 EFAULT, 일부 쓰기 가능은 복사 전 unsupported, backend 오류는 전송 오류입니다. SDK는 선택자별 한 번 캡처만 비교해 변화하는 후속 SELF를 피합니다. native probe 13개와 독립 fault4개는 기존5초로 통과. 이 호스트 partial SELF는 EFAULT 전64바이트 쓰기를 관측했으며 범용 prefix 보장으로 확대하지 않습니다.
+
+0..13: `ru_maxrss`, `ru_ixrss`, `ru_idrss`, `ru_isrss`, `ru_minflt`, `ru_majflt`, `ru_nswap`, `ru_inblock`, `ru_oublock`, `ru_msgsnd`, `ru_msgrcv`, `ru_nsignals`, `ru_nvcsw`, `ru_nivcsw`.
+
+```json
+{"darwin_system":{"resource_usage":{"self":{"user_seconds":"-9223372036854775808","user_microseconds":999999,"system_seconds":0,"system_microseconds":0,"counters":["9223372036854775807",0,0,0,0,0,0,0,0,0,0,0,0,0]}}}}
+```
+
+[Apple getrusage](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getrusage.2.html), [XNU](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [SDK layout](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/resource.h).
+
+macOS ARM64 Release 등록/통과/미실행 skip/실패 1371/867/504/0, 필수 HVF 126 전부 실행. File361/361, C/CLI 200/200, JSON 40/40, System/SDK 53/53, native 32/32 통과. 새4K/16K12개 및 입장/SDK 검사, Python5구성 42.865초; API71, runner/reference49, SDK drift/형식/기능/출처/문서 검사 통과. 수치는 겹치며 독립 검토 통과. 증거 `build-hvf-arm64/resource-usage-observations/`를 동결해 commit에 연결합니다. 초기 x64 EINVAL fixture는 RDX보존, ARM64 X1초기화로 수정했고 실패/빈 filter 기록 보존. runtime/기한/음성대조 불변. 집행, 권한, 변경 후 디렉터리, shared map/EOF, 시계, Mach/thread/dyld, framework 미완성. 물리iOS, 중단Intel HVF, remote merge CI 별도 검증입니다.
+
+첫 전체 검증866통과, 기존iOS ARM64 HVF rename5초timeout1개,504skip. 같은 binary의 해당 case386ms통과 후 전체 직렬 검증통과. 두 기록 보존, 원인미확정이며 latency보장 아님.

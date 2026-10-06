@@ -621,6 +621,137 @@ TEST(ProcessReport, PreservesExplicitWindowsCatalogueAndRejectsOtherProfiles) {
       EXPECT_EQ(llvm::toString(R.takeError()), field::WindowsProfile);
   }
 }
+TEST(ProcessReport, DarwinUsageIsLosslessAndEachSnapshotIsIndependent) {
+  auto Good = processOptionsFromJSON(std::string("{\"darwin_system\":") +
+                                     darwin_test::ResourceUsageJSON + "}");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  ASSERT_TRUE(Good->DarwinSystem);
+  ASSERT_TRUE(Good->DarwinSystem->ResourceUsageSelf);
+  ASSERT_TRUE(Good->DarwinSystem->ResourceUsageChildren);
+  const auto &Self = *Good->DarwinSystem->ResourceUsageSelf;
+  const auto &Children = *Good->DarwinSystem->ResourceUsageChildren;
+  EXPECT_EQ(Self.UserSeconds, INT64_MIN);
+  EXPECT_EQ(Self.UserMicroseconds, 999999u);
+  EXPECT_EQ(Self.SystemSeconds, 0x0123456789abcdefLL);
+  EXPECT_EQ(Self.SystemMicroseconds, 123456u);
+  EXPECT_EQ(Self.Counters[0], INT64_MAX);
+  EXPECT_EQ(Self.Counters[1], INT64_MIN);
+  EXPECT_EQ(Self.Counters[13], -14);
+  EXPECT_EQ(Children.UserSeconds, INT64_MAX);
+  EXPECT_EQ(Children.SystemSeconds, -3);
+  EXPECT_EQ(Children.Counters[13], INT64_MAX);
+  for (const char *Empty : {R"({"darwin_system":{}})",
+                            R"({"darwin_system":{"resource_usage":{}}})"}) {
+    auto Parsed = processOptionsFromJSON(Empty);
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    EXPECT_FALSE(Parsed->DarwinSystem->ResourceUsageSelf);
+    EXPECT_FALSE(Parsed->DarwinSystem->ResourceUsageChildren);
+  }
+  const std::string Zero = R"({"user_seconds":"0","user_microseconds":"0",
+    "system_seconds":"0","system_microseconds":"0",
+    "counters":[0,0,0,0,0,0,0,0,0,0,0,0,0,0]})";
+  for (bool SelfOnly : {true, false}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string("{\"darwin_system\":{\"resource_usage\":{\"") +
+        (SelfOnly ? "self" : "children") + "\":" + Zero + "}}}");
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    EXPECT_EQ(Parsed->DarwinSystem->ResourceUsageSelf.has_value(), SelfOnly);
+    EXPECT_EQ(Parsed->DarwinSystem->ResourceUsageChildren.has_value(),
+              !SelfOnly);
+    const auto &Usage = SelfOnly ? *Parsed->DarwinSystem->ResourceUsageSelf
+                                 : *Parsed->DarwinSystem->ResourceUsageChildren;
+    EXPECT_EQ(Usage.UserSeconds, 0);
+    EXPECT_EQ(Usage.SystemSeconds, 0);
+    EXPECT_EQ(Usage.Counters, (std::array<int64_t, 14>{}));
+  }
+}
+
+TEST(ProcessReport, MalformedDarwinUsageFailsBeforeImageLoading) {
+  const std::string Zero = R"({"user_seconds":0,"user_microseconds":0,
+    "system_seconds":0,"system_microseconds":0,
+    "counters":[0,0,0,0,0,0,0,0,0,0,0,0,0,0]})";
+  for (const char *Outer : {"null", "[]", "true", "0", R"({"self":null})",
+                            R"({"self":{}})", R"({"children":false})"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string("{\"darwin_system\":{\"resource_usage\":") + Outer + "}}");
+    EXPECT_FALSE(bool(Parsed)) << Outer;
+    llvm::consumeError(Parsed.takeError());
+  }
+  auto Reject = [&](llvm::json::Value Snapshot, llvm::StringRef Key = "self") {
+    llvm::json::Object System;
+    System["resource_usage"] = llvm::json::Object{{Key, std::move(Snapshot)}};
+    auto Parsed = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_system", std::move(System)}}))
+            .str());
+    EXPECT_FALSE(bool(Parsed));
+    llvm::consumeError(Parsed.takeError());
+  };
+  auto Seed = [&] { return llvm::cantFail(llvm::json::parse(Zero)); };
+  Reject(Seed(), "unknown");
+  for (const char *Key : {"user_seconds", "user_microseconds", "system_seconds",
+                          "system_microseconds", "counters"}) {
+    auto Snapshot = Seed();
+    Snapshot.getAsObject()->erase(Key);
+    Reject(std::move(Snapshot));
+  }
+  auto Unknown = Seed();
+  (*Unknown.getAsObject())["unknown"] = 0;
+  Reject(std::move(Unknown));
+  for (const char *Key : {"user_seconds", "system_seconds"}) {
+    for (const char *Bad : {"null", "true", "0.5", "9223372036854775807",
+                            R"("9223372036854775808")",
+                            R"("-9223372036854775809")", R"("1.0")"}) {
+      auto Snapshot = Seed();
+      (*Snapshot.getAsObject())[Key] = llvm::cantFail(llvm::json::parse(Bad));
+      Reject(std::move(Snapshot));
+    }
+  }
+  for (const char *Key : {"user_microseconds", "system_microseconds"}) {
+    for (const char *Bad :
+         {"null", "true", "0.5", "-1", "1000000", R"("4294967296")"}) {
+      auto Snapshot = Seed();
+      (*Snapshot.getAsObject())[Key] = llvm::cantFail(llvm::json::parse(Bad));
+      Reject(std::move(Snapshot));
+    }
+  }
+  for (const char *Bad :
+       {"null", "{}", "[]", "[0]", "[0,0,0,0,0,0,0,0,0,0,0,0,0]",
+        "[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]", "[true,0,0,0,0,0,0,0,0,0,0,0,0,0]",
+        "[0.5,0,0,0,0,0,0,0,0,0,0,0,0,0]",
+        R"(["-9223372036854775809",0,0,0,0,0,0,0,0,0,0,0,0,0])"}) {
+    auto Snapshot = Seed();
+    (*Snapshot.getAsObject())["counters"] =
+        llvm::cantFail(llvm::json::parse(Bad));
+    Reject(std::move(Snapshot));
+  }
+}
+
+TEST(ProcessReport, DarwinUsageRequiresDarwinAndTypedTimesFailBeforeLoading) {
+  auto O = processOptionsFromJSON(std::string("{\"darwin_system\":") +
+                                  darwin_test::ResourceUsageJSON + "}");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (bool Self : {true, false}) {
+    auto Bad = *O;
+    auto &Usage = Self ? *Bad.DarwinSystem->ResourceUsageSelf
+                       : *Bad.DarwinSystem->ResourceUsageChildren;
+    Usage.SystemMicroseconds = 1000000;
+    for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                   ProcessProfile::IOSSimulatorMachO64}) {
+      auto R = emulateProcess("missing.macho", P, Bad);
+      ASSERT_FALSE(bool(R));
+      EXPECT_EQ(llvm::toString(R.takeError()),
+                "Darwin resource usage microseconds must be below 1000000");
+    }
+  }
+}
+
 TEST(ProcessReport,
      DarwinResourceLimitsAreLosslessCanonicalAndDistinctFromMissing) {
   auto Good = processOptionsFromJSON(std::string("{\"darwin_system\":") +

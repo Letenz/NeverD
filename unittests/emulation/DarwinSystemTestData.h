@@ -55,5 +55,37 @@ inline constexpr char ResourceLimitsHex[] =
     "0000000000000000ffffffffffffff7ffeffffffffffff7fffffffffffffff7f"
     "0020000000000000004000000000000020000000000000008000000000000000"
     "00010000000000000004000000000000";
+inline DarwinSystemOptions resourceUsageOptions() {
+  DarwinSystemOptions O;
+  O.ResourceUsageSelf = DarwinResourceUsage{
+      INT64_MIN,
+      999999,
+      81985529216486895LL,
+      123456,
+      {INT64_MAX, INT64_MIN, -1LL, 0LL, 1LL, 81985529216486895LL,
+       -81985529216486895LL, 72623859790382856LL, 9LL, -10LL, 11LL, -12LL, 13LL,
+       -14LL}};
+  O.ResourceUsageChildren =
+      DarwinResourceUsage{INT64_MAX,
+                          0,
+                          -3LL,
+                          1,
+                          {0LL, -1LL, 2LL, -3LL, 4LL, -5LL, 6LL, -7LL, 8LL,
+                           -9LL, 10LL, -11LL, 12LL, INT64_MAX}};
+  return O;
+}
+inline constexpr char ResourceUsageJSON[] =
+    R"({"resource_usage":{"self":{"user_seconds":"-9223372036854775808","user_microseconds":999999,"system_seconds":"81985529216486895","system_microseconds":123456,"counters":["9223372036854775807","-9223372036854775808",-1,0,1,"81985529216486895","-81985529216486895","72623859790382856",9,-10,11,-12,13,-14]},"children":{"user_seconds":"9223372036854775807","user_microseconds":0,"system_seconds":-3,"system_microseconds":1,"counters":[0,-1,2,-3,4,-5,6,-7,8,-9,10,-11,12,"9223372036854775807"]}}})";
+// Independently packed signed timevals, zero padding and all fourteen longs.
+inline constexpr char ResourceUsageHex[] =
+    "00000000000000803f420f0000000000efcdab896745230140e2010000000000"
+    "ffffffffffffff7f0000000000000080ffffffffffffffff0000000000000000"
+    "0100000000000000efcdab89674523011132547698badcfe0807060504030201"
+    "0900000000000000f6ffffffffffffff0b00000000000000f4ffffffffffffff"
+    "0d00000000000000f2ffffffffffffffffffffffffffff7f0000000000000000"
+    "fdffffffffffffff01000000000000000000000000000000ffffffffffffffff"
+    "0200000000000000fdffffffffffffff0400000000000000fbffffffffffffff"
+    "0600000000000000f9ffffffffffffff0800000000000000f7ffffffffffffff"
+    "0a00000000000000f5ffffffffffffff0c00000000000000ffffffffffffff7f";
 } // namespace neverd::emulation::darwin_test
 #endif

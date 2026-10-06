@@ -46,6 +46,67 @@ extern "C" ssize_t __getdirentries64(int, void *, size_t, off_t *);
 
 namespace neverd::emulation {
 namespace {
+TEST(DarwinNative, UsageMatchesOneSDKCaptureWithEverySignedFieldAndPadding) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "native Darwin SDK capture requires macOS";
+#else
+  ASSERT_EQ(sizeof(struct rusage), 144u);
+  ASSERT_EQ(sizeof(long), 8u);
+  ASSERT_EQ(offsetof(struct rusage, ru_utime), 0u);
+  ASSERT_EQ(offsetof(struct rusage, ru_stime), 16u);
+  ASSERT_EQ(offsetof(struct rusage, ru_maxrss), 32u);
+  ASSERT_EQ(offsetof(struct rusage, ru_nivcsw), 136u);
+  struct rusage Self, Children;
+  std::memset(&Self, 0xa5, sizeof Self);
+  std::memset(&Children, 0xa5, sizeof Children);
+  ASSERT_EQ(getrusage(RUSAGE_SELF, &Self), 0);
+  ASSERT_EQ(getrusage(RUSAGE_CHILDREN, &Children), 0);
+  const auto Observation = [](const struct rusage &R) {
+    return DarwinResourceUsage{
+        R.ru_utime.tv_sec,
+        uint32_t(R.ru_utime.tv_usec),
+        R.ru_stime.tv_sec,
+        uint32_t(R.ru_stime.tv_usec),
+        {R.ru_maxrss, R.ru_ixrss, R.ru_idrss, R.ru_isrss, R.ru_minflt,
+         R.ru_majflt, R.ru_nswap, R.ru_inblock, R.ru_oublock, R.ru_msgsnd,
+         R.ru_msgrcv, R.ru_nsignals, R.ru_nvcsw, R.ru_nivcsw}};
+  };
+  std::optional<DarwinSystemOptions> Options = DarwinSystemOptions{};
+  Options->ResourceUsageSelf = Observation(Self);
+  Options->ResourceUsageChildren = Observation(Children);
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(*Options)));
+  for (auto Page : {uint64_t(4096), uint64_t(16384)}) {
+    auto Physical = PhysicalMemory::create(Page * 4);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Created = AddressSpace::create(*Physical, Page * 4);
+    ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+    auto Space = *Created;
+    constexpr uint64_t Base = 0x100000;
+    ASSERT_FALSE(
+        bool(Space->map(Base, Page * 2, Read | Write | UserAccessible)));
+    for (auto Who : {uint64_t(0), uint64_t(UINT32_MAX)}) {
+      ASSERT_FALSE(
+          bool(Space->write(Base, std::vector<uint8_t>(Page * 2, 0xa5))));
+      ProcessResult Result{ProcessProfile::MacOSMachO64,
+                           GuestArchitecture::AArch64,
+                           ExecutionBackendKind::Unicorn, "SDK capture"};
+      auto Out = darwin_model::systemService(
+          *Space, Page, darwin_model::ServiceKind::GetRusage,
+          {0, 117, {Who, Base + Page - 71}, std::nullopt}, Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out) << Result.Diagnostic;
+      EXPECT_FALSE((**Out).Error);
+      EXPECT_EQ((**Out).Value, 0u);
+      std::vector<uint8_t> Expected(Page * 2, 0xa5), Actual(Page * 2);
+      const auto &Captured = Who == 0 ? Self : Children;
+      std::memcpy(Expected.data() + Page - 71, &Captured, 144);
+      ASSERT_FALSE(bool(Space->read(Base, Actual)));
+      EXPECT_EQ(Actual, Expected);
+    }
+  }
+#endif
+}
+
 TEST(DarwinNative, ResourcePairsMatchSDKCaptureLayoutAndBothFlagSpellings) {
 #if !defined(__APPLE__)
   GTEST_SKIP() << "Native resource observation capture requires macOS";

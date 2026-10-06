@@ -142,6 +142,7 @@ NEVERD_DARWIN_SERVICE(Fstat64, 339, Int)
 NEVERD_DARWIN_SERVICE(Lstat64, 340, Int)
 NEVERD_DARWIN_SERVICE(GetDirEntries64, 344, Wide)
 NEVERD_DARWIN_SERVICE(GetTimeOfDay, 116, Int)
+NEVERD_DARWIN_SERVICE(GetRusage, 117, Int)
 NEVERD_DARWIN_SERVICE(OpenAt, 463, Int)
 NEVERD_DARWIN_SERVICE(FstatAt64, 470, Int)
 NEVERD_DARWIN_SERVICE(UnlinkAt, 472, Int)
@@ -199,6 +200,13 @@ NEVERD_DARWIN_DIAGNOSTIC(ResourceLimitObservation,
                          "Darwin resource limit observation is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(ResourceLimitPartialOutput,
                          "Darwin resource limit output is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ResourceUsageOption,
+    "Darwin resource usage microseconds must be below 1000000")
+NEVERD_DARWIN_DIAGNOSTIC(ResourceUsageObservation,
+                         "Darwin resource usage observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(ResourceUsagePartialOutput,
+                         "Darwin resource usage output is partially writable")
 NEVERD_DARWIN_DIAGNOSTIC(
     TimebaseRatio, "Darwin timebase numerator and denominator must be nonzero")
 NEVERD_DARWIN_DIAGNOSTIC(TimebaseMissing, "Darwin timebase is not configured")

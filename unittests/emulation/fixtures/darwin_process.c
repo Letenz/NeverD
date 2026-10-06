@@ -55,6 +55,95 @@ static u64 little_integer(const unsigned char *p, unsigned width) {
     value |= (u64)p[i] << (i * 8);
   return value;
 }
+static int resource_usage(int emit_values) {
+  unsigned char bytes[146], saved_children[144];
+  unsigned error = 0;
+  int code = 51;
+  for (unsigned child = 0; child != 2; ++child) {
+    for (unsigned i = 0; i != 146; ++i)
+      bytes[i] = 0xa5;
+    u64 who = child ? 0xffffffffUL : 0;
+    u64 returned =
+        call(117, who, (u64)(bytes + 1), 0x1122334455667788UL, 0, 0, 0, &error);
+    if (error || returned || secondary || bytes[0] != 0xa5 ||
+        bytes[145] != 0xa5)
+      return code;
+    if (little_integer(bytes + 9, 4) >= 1000000 ||
+        little_integer(bytes + 25, 4) >= 1000000 ||
+        little_integer(bytes + 13, 4) || little_integer(bytes + 29, 4))
+      return code + 1;
+    if (child)
+      for (unsigned i = 0; i != 144; ++i)
+        saved_children[i] = bytes[i + 1];
+    if (emit_values &&
+        (call(4, 1, (u64)(bytes + 1), 144, 0, 0, 0, &error) != 144 || error ||
+         secondary))
+      return code + 2;
+    code += 3;
+  }
+  for (unsigned i = 0; i != 146; ++i)
+    bytes[i] = 0xa5;
+  u64 returned = call(117, 0x12345678ffffffffUL, (u64)(bytes + 1),
+                      0x1122334455667788UL, 0, 0, 0, &error);
+  if (error || returned || secondary || bytes[0] != 0xa5 || bytes[145] != 0xa5)
+    return code;
+  for (unsigned i = 0; i != 144; ++i)
+    if (bytes[i + 1] != saved_children[i])
+      return code + 1;
+  code += 2;
+  for (unsigned i = 0; i != 146; ++i)
+    bytes[i] = 0xa5;
+  returned = call(117, 0x100000000UL, (u64)(bytes + 1), 0, 0, 0, 0, &error);
+  if (error || returned || secondary || bytes[0] != 0xa5 ||
+      bytes[145] != 0xa5 || little_integer(bytes + 9, 4) >= 1000000 ||
+      little_integer(bytes + 25, 4) >= 1000000 ||
+      little_integer(bytes + 13, 4) || little_integer(bytes + 29, 4))
+    return code;
+  ++code;
+  const u64 invalid[] = {1, 0x1000, 0xfffffffeUL, 0xffffffff00000001UL};
+  for (unsigned n = 0; n != 4; ++n) {
+    for (unsigned i = 0; i != 146; ++i)
+      bytes[i] = 0xa5;
+    returned = call(117, invalid[n], (u64)(bytes + 1), 0x1122334455667788UL, 0,
+                    0, 0, &error);
+#if defined(__aarch64__)
+    const u64 error_secondary = 0;
+#else
+    const u64 error_secondary = 0x1122334455667788UL;
+#endif
+    if (!error || returned != 22 || secondary != error_secondary)
+      return code;
+    for (unsigned i = 0; i != 146; ++i)
+      if (bytes[i] != 0xa5)
+        return code + 1;
+    code += 2;
+  }
+  returned = call(117, 1, 0, 0, 0, 0, 0, &error);
+  if (!error || returned != 22 || secondary)
+    return code + 2;
+  returned = call(117, 0, 0, 0, 0, 0, 0, &error);
+  if (!error || returned != 14 || secondary)
+    return code + 2;
+  u64 mapped = call(197, 0, PAGE, 3, 0x1002, -1UL, 0, &error);
+  if (error || !mapped || secondary)
+    return code + 3;
+  returned = call(74, mapped, PAGE, 1, 0, 0, 0, &error);
+  if (error || returned || secondary)
+    return code + 4;
+  returned = call(117, 0, mapped, 0, 0, 0, 0, &error);
+  if (!error || returned != 14 || secondary)
+    return code + 2;
+  returned = call(73, mapped, PAGE, 0, 0, 0, 0, &error);
+  if (error || returned || secondary)
+    return code + 4;
+  if (!emit_values) {
+    unsigned char marker = 'g';
+    if (call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) != 1 || error || secondary)
+      return code;
+  }
+  return 37;
+}
+
 static int resource_limits(int emit_values) {
   unsigned char bytes[18], flagged[16];
   unsigned error;
@@ -2926,6 +3015,9 @@ int main(int argc, char **argv, char **envp, char **apple) {
     return argc < 3 ? 79 : file_access(argv[2]);
   if (equal(argv[1], "vectored-io"))
     return argc < 3 ? 79 : vectored_io(argv[2]);
+  if (equal(argv[1], "resource-usage") ||
+      equal(argv[1], "virtual-resource-usage"))
+    return resource_usage(equal(argv[1], "virtual-resource-usage"));
   if (equal(argv[1], "resource-limits") ||
       equal(argv[1], "virtual-resource-limits"))
     return resource_limits(equal(argv[1], "virtual-resource-limits"));

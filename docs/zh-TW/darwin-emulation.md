@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 9fd13210357d20e09ca4c4b552e89a3b4b9608b2813d0d68730c75959a226579 -->
+<!-- i18n-source: f2e1b376c3a2debfc3ffe6751fe7c57302755a5b03e02931fe21f4e83482165a -->
 
 [← 文件索引](README.md)
 
@@ -604,3 +604,23 @@ Release Darwin 驗證核對了 1,219 項註冊：763 項通過、456 項因後�
 ```
 
 macOS ARM64 Release：註冊/通過/未執行略過/失敗為 1337 / 845 / 492 / 0，123 項必要 HVF 全部執行。新增十二項 4K/16K 行為檢查及 SDK 捕獲對照；C/CLI 190/190、解析 37/37、原生負載 31/31，Python 五配置 71.978 秒、純 API 71 項、執行器 49 項通過。SDK 漂移、格式、能力、來源與文件檢查通過；數量重疊。證據封存在 `build-hvf-arm64/resource-limit-observations/` 並綁定提交，首次編譯的測試列舉筆誤及接線/篩選嘗試均保留，修正後串行驗收，期限與負控不變。資源執行、權限、變更後目錄資料/枚舉、共享映射/EOF、推進時鐘、Mach/執行緒/dyld 與框架仍未完成；實體 iOS、暫停的 Intel HVF 及遠端合併 CI 另行驗收。
+
+## 明確唯讀資源用量觀察
+
+五種 Darwin guest 設定的 `getrusage(117)` 讀取獨立可選的 `DarwinSystemOptions::ResourceUsageSelf` / `ResourceUsageChildren`；嚴格 JSON 為 `darwin_system.resource_usage.self` / `.children`。每個 `DarwinResourceUsage` 需要 int64 的 user_seconds/system_seconds、小於 1000000 的 uint32 user_microseconds/system_microseconds，以及十四個 int64 counters。精確整數或有號十進位字串保留全範圍；錯誤型別/欄位/微秒/長度於載入前拒絕。缺少的另一快照仍未知，不妨礙已提供的快照；全零有效。
+
+一次完整 144 位元組小端複製：timeval 在 0/16，各為 8 位元組秒、4 微秒、4 零填補；counter 從 32 起各 8 位元組。保留 Darwin 原值與單位，不對 ru_maxrss 套用 Linux KiB 換算。固定觀察不取樣宿主效能，也不實作記帳、fork/wait、排程或限制執行。
+
+選擇子只取低 32 位元，0=SELF、-1=CHILDREN；0x1000 無效，不移除 POSIX 旗標。無效值於記憶體存取前 EINVAL，缺值於輸出存取前 unsupported。完整跨頁/非對齊複製保留護欄；全不可寫 EFAULT，部分可寫在任何複製前 unsupported；後端錯誤仍是傳輸錯誤。SDK 每個選擇子只捕獲一次，SELF 後續可能變化。原生探針通過 13 個值/佈局檢查與 4 個獨立故障程序，五秒時限不變。本機 partial SELF 在 EFAULT 前寫 64 位元組，不推廣前綴保證。
+
+0..13: `ru_maxrss`, `ru_ixrss`, `ru_idrss`, `ru_isrss`, `ru_minflt`, `ru_majflt`, `ru_nswap`, `ru_inblock`, `ru_oublock`, `ru_msgsnd`, `ru_msgrcv`, `ru_nsignals`, `ru_nvcsw`, `ru_nivcsw`.
+
+```json
+{"darwin_system":{"resource_usage":{"self":{"user_seconds":"-9223372036854775808","user_microseconds":999999,"system_seconds":0,"system_microseconds":0,"counters":["9223372036854775807",0,0,0,0,0,0,0,0,0,0,0,0,0]}}}}
+```
+
+[Apple getrusage](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getrusage.2.html), [XNU](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [SDK layout](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/resource.h).
+
+macOS ARM64 Release 登記/通過/不可用略過/失敗 1371/867/504/0，必需 HVF 126 全執行；檔案 361/361，C/CLI 200/200, JSON 40/40, System/SDK 53/53, native 32/32 通過。新增十二個 4K/16K 行為及准入/SDK 對照，Python 五設定 42.865 秒；API 71、runner/reference 49 和 SDK 漂移/格式/能力/來源/文件檢查通過。計數重疊，獨立複審通過。證據凍結於 `build-hvf-arm64/resource-usage-observations/` 並綁定提交。初版 x64 EINVAL 次要返回斷言修正為保留 RDX，ARM64 清零 X1；失敗與空過濾記錄保留，執行模型、期限與負控不變。限制執行、權限、修改後目錄、共享 map/EOF、時鐘、Mach/thread/dyld 與框架仍未完成；實體 iOS、暂停 Intel HVF 與遠端合併 CI 分別驗收。
+
+首輪完整驗證為 866 通過、1 個既有 iOS ARM64 HVF rename 五秒超時、504 略過；同一二進位複查 386 毫秒通過，後續完整串行驗證通過。原記錄保留，超時原因未知，不推論時延保證。

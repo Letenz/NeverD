@@ -119,6 +119,7 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::Sysctl:
   case ServiceKind::SysctlByName:
   case ServiceKind::GetRlimit:
+  case ServiceKind::GetRusage:
     return systemService(CPU, Memory.pageSize(), Kind, Event,
                          Options.DarwinSystem, Result);
   case ServiceKind::TimebaseInfo:

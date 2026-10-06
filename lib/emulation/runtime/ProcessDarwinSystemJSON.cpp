@@ -31,6 +31,36 @@ bool parse(const llvm::json::Value &Value, std::optional<T> &Out) {
   }
   return Out.has_value();
 }
+std::optional<DarwinResourceUsage> parseUsage(const llvm::json::Value &Value) {
+  const auto *Object = Value.getAsObject();
+  if (!Object || Object->size() != 5)
+    return std::nullopt;
+  const auto *US = Object->get(field::ResourceUsageUserSeconds);
+  const auto *UM = Object->get(field::ResourceUsageUserMicroseconds);
+  const auto *SS = Object->get(field::ResourceUsageSystemSeconds);
+  const auto *SM = Object->get(field::ResourceUsageSystemMicroseconds);
+  const auto *C = Object->get(field::ResourceUsageCounters);
+  if (!US || !UM || !SS || !SM || !C)
+    return std::nullopt;
+  auto UserSeconds = process_json::integer<int64_t>(*US);
+  auto UserMicroseconds = process_json::integer<uint32_t>(*UM);
+  auto SystemSeconds = process_json::integer<int64_t>(*SS);
+  auto SystemMicroseconds = process_json::integer<uint32_t>(*SM);
+  const auto *Counters = C->getAsArray();
+  if (!UserSeconds || !UserMicroseconds || !SystemSeconds ||
+      !SystemMicroseconds || !Counters ||
+      Counters->size() != DarwinResourceUsage::CounterCount)
+    return std::nullopt;
+  DarwinResourceUsage Out{
+      *UserSeconds, *UserMicroseconds, *SystemSeconds, *SystemMicroseconds, {}};
+  for (size_t I = 0; I != Out.Counters.size(); ++I) {
+    auto Counter = process_json::integer<int64_t>((*Counters)[I]);
+    if (!Counter)
+      return std::nullopt;
+    Out.Counters[I] = *Counter;
+  }
+  return Out;
+}
 } // namespace
 llvm::Expected<DarwinSystemOptions>
 darwinSystemOptionsFromJSON(const llvm::json::Value &Value) {
@@ -40,6 +70,23 @@ darwinSystemOptionsFromJSON(const llvm::json::Value &Value) {
   DarwinSystemOptions Out;
   for (const auto &[Key, V] : *Object) {
     const llvm::StringRef Name = Key;
+    if (Name == field::SystemResourceUsage) {
+      const auto *Usages = V.getAsObject();
+      if (!Usages || Usages->size() > 2)
+        return invalid(Name);
+      for (const auto &[K, Snapshot] : *Usages) {
+        auto Usage = parseUsage(Snapshot);
+        if (!Usage)
+          return invalid(Name);
+        if (K == field::ResourceUsageSelf)
+          Out.ResourceUsageSelf = *Usage;
+        else if (K == field::ResourceUsageChildren)
+          Out.ResourceUsageChildren = *Usage;
+        else
+          return invalid(Name);
+      }
+      continue;
+    }
     if (Name == field::SystemResourceLimits) {
       const auto *Limits = V.getAsArray();
       if (!Limits || Limits->size() > darwin_model::value::ResourceLimitCount)

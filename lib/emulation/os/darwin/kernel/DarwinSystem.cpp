@@ -1,4 +1,4 @@
-//===- DarwinSystem.cpp - Fixed Darwin sysctl values and copy phases ------===//
+//===- DarwinSystem.cpp - Fixed Darwin system values and copy phases ------===//
 //
 // NeverD Decompiler
 //
@@ -104,6 +104,11 @@ llvm::Error validateSystemOptions(const DarwinSystemOptions &Options) {
     if (Resource >= ResourceLimitCount || Limit.Current > Limit.Maximum ||
         Limit.Maximum > ResourceLimitInfinity)
       return failure(diagnostic::ResourceLimitOption);
+  for (const auto *Usage :
+       {&Options.ResourceUsageSelf, &Options.ResourceUsageChildren})
+    if (*Usage && ((**Usage).UserMicroseconds >= 1000000 ||
+                   (**Usage).SystemMicroseconds >= 1000000))
+      return failure(diagnostic::ResourceUsageOption);
   return llvm::Error::success();
 }
 
@@ -113,6 +118,30 @@ systemService(GuestMemory &Memory, uint64_t PageSize, ServiceKind Kind,
               const std::optional<DarwinSystemOptions> &Options,
               ProcessResult &Result) {
   const auto &A = Event.Arguments;
+  if (Kind == ServiceKind::GetRusage) {
+    const uint32_t Who = uint32_t(A[0]);
+    if (Who != 0 && Who != UINT32_MAX)
+      return returned(InvalidArgument, true);
+    if (!Options)
+      return unsupported(Result, diagnostic::ResourceUsageObservation);
+    const auto &Selected =
+        Who == 0 ? Options->ResourceUsageSelf : Options->ResourceUsageChildren;
+    if (!Selected)
+      return unsupported(Result, diagnostic::ResourceUsageObservation);
+    const auto &Usage = *Selected;
+    std::array<uint8_t, 32 + 8 * DarwinResourceUsage::CounterCount> Bytes{};
+    llvm::support::endian::write64le(Bytes.data(), uint64_t(Usage.UserSeconds));
+    llvm::support::endian::write32le(Bytes.data() + 8, Usage.UserMicroseconds);
+    llvm::support::endian::write64le(Bytes.data() + 16,
+                                     uint64_t(Usage.SystemSeconds));
+    llvm::support::endian::write32le(Bytes.data() + 24,
+                                     Usage.SystemMicroseconds);
+    for (size_t I = 0; I != Usage.Counters.size(); ++I)
+      llvm::support::endian::write64le(Bytes.data() + 32 + 8 * I,
+                                       uint64_t(Usage.Counters[I]));
+    return copyUserMemory(Memory, A[1], Bytes,
+                          diagnostic::ResourceUsagePartialOutput, Result);
+  }
   if (Kind == ServiceKind::GetRlimit) {
     const uint32_t Resource =
         uint32_t(A[0]) & ~uint32_t(ResourceLimitPosixFlag);

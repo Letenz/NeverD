@@ -553,6 +553,17 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("initial-directory-removal", b"j"),
                                            ("initial-directory-move", b"p"),
                                            ("initial-directory-swap", b"q"),
+                                           ("resource-usage", b"g"),
+                                           ("virtual-resource-usage", bytes.fromhex(
+                                               "00000000000000803f420f0000000000efcdab896745230140e2010000000000"
+                                               "ffffffffffffff7f0000000000000080ffffffffffffffff0000000000000000"
+                                               "0100000000000000efcdab89674523011132547698badcfe0807060504030201"
+                                               "0900000000000000f6ffffffffffffff0b00000000000000f4ffffffffffffff"
+                                               "0d00000000000000f2ffffffffffffffffffffffffffff7f0000000000000000"
+                                               "fdffffffffffffff01000000000000000000000000000000ffffffffffffffff"
+                                               "0200000000000000fdffffffffffffff0400000000000000fbffffffffffffff"
+                                               "0600000000000000f9ffffffffffffff0800000000000000f7ffffffffffffff"
+                                               "0a00000000000000f5ffffffffffffff0c00000000000000ffffffffffffff7f")),
                                            ("resource-limits", b"l"),
                                            ("virtual-resource-limits", bytes.fromhex(
                                                "00000000000000000000000000000000ffffffffffffff7fffffffffffffff7f"
@@ -628,6 +639,57 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                           "type": 8, "next_offset": 99, "seek_offset": 0}]}}],
                                              "working_directory": "/empty",
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
+                        if mode in ("resource-usage", "virtual-resource-usage"):
+                            usage_options = json.loads(file_options)
+                            usage_options["darwin_system"] = {
+                                "resource_usage": {
+                                    "self": {
+                                        "user_seconds": "-9223372036854775808",
+                                        "user_microseconds": 999999,
+                                        "system_seconds": "81985529216486895",
+                                        "system_microseconds": 123456,
+                                        "counters": [
+                                            "9223372036854775807",
+                                            "-9223372036854775808",
+                                            -1,
+                                            0,
+                                            1,
+                                            "81985529216486895",
+                                            "-81985529216486895",
+                                            "72623859790382856",
+                                            9,
+                                            -10,
+                                            11,
+                                            -12,
+                                            13,
+                                            -14
+                                        ]
+                                    },
+                                    "children": {
+                                        "user_seconds": "9223372036854775807",
+                                        "user_microseconds": 0,
+                                        "system_seconds": -3,
+                                        "system_microseconds": 1,
+                                        "counters": [
+                                            0,
+                                            -1,
+                                            2,
+                                            -3,
+                                            4,
+                                            -5,
+                                            6,
+                                            -7,
+                                            8,
+                                            -9,
+                                            10,
+                                            -11,
+                                            12,
+                                            "9223372036854775807"
+                                        ]
+                                    }
+                                }
+                            }
+                            file_options = json.dumps(usage_options)
                         if mode in ("resource-limits", "virtual-resource-limits"):
                             resource_options = json.loads(file_options)
                             resource_options["darwin_system"] = {"resource_limits": [

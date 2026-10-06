@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 9fd13210357d20e09ca4c4b552e89a3b4b9608b2813d0d68730c75959a226579 -->
+<!-- i18n-source: f2e1b376c3a2debfc3ffe6751fe7c57302755a5b03e02931fe21f4e83482165a -->
 
 [← فهرس الوثائق](README.md)
 
@@ -602,3 +602,23 @@ Release النهائي:1,175 حالة Darwin،731 نجاحاً،444 تخطياً
 ```
 
 تحقق macOS ARM64 Release: المسجل/الناجح/المتجاوز دون تنفيذ/الفاشل 1337 / 845 / 492 / 0، ونُفذت حالات HVF المطلوبة وعددها 123 جميعاً. اثنا عشر فحص 4K/16K جديداً ومقارنة SDK؛ C/CLI ‏190/190، parser ‏37/37، والأحمال الأصلية 31/31. Python عبر خمسة إعدادات في 71.978 ثانية، 71 فحص API و49 فحص runner ناجحة، وكذلك SDK drift والتنسيق والقدرات والمصدر والوثائق؛ الأعداد متداخلة. الأدلة مجمدة في `build-hvf-arm64/resource-limit-observations/` ومرتبطة بالتزام المصدر. حُفظ فشل البناء الأول بسبب اسم enum في الاختبار ومحاولات الربط والتصفية؛ التحقق المصحح متسلسل دون تخفيف المهل أو الفحوص السلبية. إنفاذ الموارد والصلاحيات والدليل بعد التعديل والخرائط المشتركة/EOF والساعات وMach/threads/dyld والأطر ما زالت ناقصة؛ iOS الفعلي وIntel HVF الموقوف وCI الدمج البعيد تحتاج تحققاً منفصلاً.
+
+## ملاحظات صريحة لاستخدام الموارد للقراءة فقط
+
+يقرأ getrusage(117) اللقطتين الاختياريتين المستقلتين DarwinSystemOptions::ResourceUsageSelf / ResourceUsageChildren في إعدادات Darwin الخمسة. JSON الصارم: darwin_system.resource_usage.self / .children. كل DarwinResourceUsage يتطلب int64 user_seconds/system_seconds وuint32 user_microseconds/system_microseconds أقل من1000000 وأربعة عشر counters int64. تحفظ الأعداد الدقيقة أو السلاسل العشرية الموقعة المجال كاملاً؛ ترفض الأنواع/الحقول/الميكروثواني/الأطوال الخاطئة قبل التحميل. تبقى اللقطة الأخرى المفقودة مجهولة ولا تمنع الاستعلام عن الموجودة؛ الصفر الصريح صالح.
+
+نسخ كامل واحد144 بايت little-endian: timeval عند0/16 (ثوان8، ميكروثوان4، حشو صفري4)، counters من32 وكل منها8. تحفظ قيم Darwin ووحداتها الأصلية، دون تحويل ru_maxrss إلى Linux KiB. القيم ثابتة ولا تقيس أداء المضيف ولا تنفذ المحاسبة أو fork/wait أو الجدولة أو إنفاذ الحدود.
+
+فقط أقل32 بت من المحدد: 0=SELF، -1=CHILDREN؛ 0x1000 غير صالح ولا إزالة علم POSIX. غير الصالح EINVAL قبل الذاكرة، المفقود unsupported قبل الخرج. النسخ الكامل غير المحاذي/العابر للصفحات يحفظ الحراس؛ غير القابل للكتابة كلياً EFAULT، الجزئي unsupported قبل أي بايت؛ أخطاء backend تبقى نقل. SDK يلتقط مرة واحدة لكل محدد دون مقارنة SELF لاحق متغير. المسبار الأصلي13 فحصاً و4 عمليات أعطال مستقلة بحد5ثوان دون تغيير. هنا كتب partial SELF64 بايت قبل EFAULT؛ لا ضمان عام للبادئة.
+
+0..13: `ru_maxrss`, `ru_ixrss`, `ru_idrss`, `ru_isrss`, `ru_minflt`, `ru_majflt`, `ru_nswap`, `ru_inblock`, `ru_oublock`, `ru_msgsnd`, `ru_msgrcv`, `ru_nsignals`, `ru_nvcsw`, `ru_nivcsw`.
+
+```json
+{"darwin_system":{"resource_usage":{"self":{"user_seconds":"-9223372036854775808","user_microseconds":999999,"system_seconds":0,"system_microseconds":0,"counters":["9223372036854775807",0,0,0,0,0,0,0,0,0,0,0,0,0]}}}}
+```
+
+[Apple getrusage](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getrusage.2.html), [XNU](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [SDK layout](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/resource.h).
+
+macOS ARM64 Release المسجل/الناجح/المتجاوز دون تنفيذ/الفاشل 1371/867/504/0؛ جميع HVF المطلوبة 126 نفذت. File361/361، C/CLI 200/200, JSON 40/40, System/SDK 53/53, native 32/32 ناجحة. اثنا عشر4K/16K جديداً وفحوص القبول/SDK؛ Python خمسة إعدادات 42.865ثانية، API71 وrunner/reference49 وSDK drift/التنسيق/القدرات/المصدر/الوثائق ناجحة. الأعداد متداخلة والمراجعة المستقلة ناجحة. الأدلة مجمدة في `build-hvf-arm64/resource-usage-observations/` ومرتبطة بالالتزام. صُحح فحص x64 EINVAL الأول ليحفظ RDX بينما ARM64 يمسح X1؛ حُفظ الفشل والمرشح الفارغ. runtime والمهل والضوابط السلبية دون تغيير. الحدود والصلاحيات والدليل بعد التعديل وshared maps/EOF والساعات وMach/thread/dyld والأطر غير مكتملة؛ iOS الفعلي وIntel HVF الموقوف وCI الدمج منفصلة.
+
+الجولة الأولى:866 ناجحة وtimeout5s واحد لحالة rename iOS ARM64 HVF الموجودة و504skip. نفس binary نجح للحالة في386ms ثم نجح gate الكامل المتسلسل. كلاهما محفوظ؛ السبب غير محدد ولا ضمان للكمون.

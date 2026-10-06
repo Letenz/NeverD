@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 9fd13210357d20e09ca4c4b552e89a3b4b9608b2813d0d68730c75959a226579 -->
+<!-- i18n-source: f2e1b376c3a2debfc3ffe6751fe7c57302755a5b03e02931fe21f4e83482165a -->
 
 [← Index de la documentation](README.md)
 
@@ -602,3 +602,23 @@ Seul le syscall retient les 32 bits bas du sélecteur et efface `_RLIMIT_POSIX_F
 ```
 
 macOS ARM64 Release : inscrits/réussis/ignorés non exécutés/échecs 1337 / 845 / 492 / 0; les 123 cas HVF requis ont été exécutés. Douze nouveaux cas 4K/16K et oracle SDK; C/CLI 190/190, parser 37/37, charges natives 31/31; Python sur cinq profils en 71.978 secondes, 71 contrôles API et 49 du runner réussis. Dérive SDK, format, capacités, provenance et documentation passent; totaux chevauchants. Sources, binaires et tentatives gelés dans `build-hvf-arm64/resource-limit-observations/` et liés au commit. Le premier build comportait une faute d’enum dans un test; les tentatives de raccordement/filtrage sont conservées, validation corrigée en série sans relâcher délais ou contrôles. Limites effectives, permissions, répertoires après mutation, maps partagées/EOF, horloges, Mach/threads/dyld et frameworks restent incomplets. iOS physique, Intel HVF suspendu et CI de merge distante exigent une validation séparée.
+
+## Observations explicites de consommation en lecture seule
+
+Dans les cinq configurations Darwin, getrusage(117) lit indépendamment DarwinSystemOptions::ResourceUsageSelf / ResourceUsageChildren, optionnels. JSON strict : darwin_system.resource_usage.self / .children. Chaque DarwinResourceUsage exige user_seconds/system_seconds int64, user_microseconds/system_microseconds uint32 inférieurs à 1000000, et exactement quatorze counters int64. Les entiers exacts ou chaînes décimales signées préservent toute la plage ; types/champs/microsecondes/longueurs invalides échouent avant chargement. Le pair absent reste inconnu sans bloquer le pair fourni ; un instantané nul explicite est valide.
+
+Une seule copie complète little-endian de144 octets : timeval à0/16 (secondes8, microsecondes4, padding nul4), counters dès32 par8. Les valeurs/unités Darwin sont conservées, sans conversion Linux KiB de ru_maxrss. Les valeurs fixes ne mesurent pas le host et ne réalisent ni comptabilité, fork/wait, ordonnancement ou application des limites.
+
+Seuls les32 bits bas sélectionnent 0=SELF, -1=CHILDREN ; 0x1000 invalide, aucun retrait de drapeau POSIX. Sélecteur invalide : EINVAL avant mémoire ; observation absente : unsupported avant sortie. Copie entière non alignée/interpage avec gardes intactes ; sortie totalement non inscriptible EFAULT, partielle unsupported avant tout octet ; erreurs backend restent de transport. L’oracle SDK capture chaque sélecteur une fois, sans comparer des SELF successifs variables. Probe natif13 contrôles et4 processus fautifs indépendants, limite inchangée5s. Sur ce host, partial SELF écrit64 octets avant EFAULT ; observation conservée sans garantie générale de préfixe.
+
+0..13: `ru_maxrss`, `ru_ixrss`, `ru_idrss`, `ru_isrss`, `ru_minflt`, `ru_majflt`, `ru_nswap`, `ru_inblock`, `ru_oublock`, `ru_msgsnd`, `ru_msgrcv`, `ru_nsignals`, `ru_nvcsw`, `ru_nivcsw`.
+
+```json
+{"darwin_system":{"resource_usage":{"self":{"user_seconds":"-9223372036854775808","user_microseconds":999999,"system_seconds":0,"system_microseconds":0,"counters":["9223372036854775807",0,0,0,0,0,0,0,0,0,0,0,0,0]}}}}
+```
+
+[Apple getrusage](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getrusage.2.html), [XNU](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [SDK layout](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/resource.h).
+
+macOS ARM64 Release inscrit/réussi/skip sans exécution/échec : 1371/867/504/0 ; 126 HVF requis exécutés. File361/361 et C/CLI 200/200, JSON 40/40, System/SDK 53/53, native 32/32 réussis. Douze nouveaux cas4K/16K, admission/SDK ; Python cinq configurations 42.865s, API71 et runner/reference49 ; audits SDK drift, format, capacités, provenance et documentation réussis. Nombres chevauchants ; revue indépendante réussie. Preuves gelées dans `build-hvf-arm64/resource-usage-observations/`, liées au commit. L’assertion initiale x64 EINVAL a été corrigée pour préserver RDX, ARM64 efface X1 ; échec et filtre vide conservés. Runtime/délais/contrôles négatifs inchangés. Application des limites, permissions, répertoires après mutation, shared maps/EOF, horloges, Mach/thread/dyld, frameworks restent incomplets ; iOS physique, Intel HVF suspendu et CI de fusion séparés.
+
+Premier gate :866 réussis, un timeout5s du rename iOS ARM64 HVF existant,504 skips. Le même binaire passe ce cas en386ms, puis le gate complet séquentiel passe. Les deux runs sont conservés ; cause inconnue, aucune garantie de latence.

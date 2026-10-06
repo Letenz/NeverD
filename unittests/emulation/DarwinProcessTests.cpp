@@ -512,6 +512,56 @@ TEST_P(DarwinProcess,
     })) << Number;
 }
 TEST_P(DarwinProcess,
+       ResourceUsagePreservesIndependentSnapshotsSignedLayoutAndCopyOrder) {
+  for (bool EmptySystem : {false, true}) {
+    if (EmptySystem)
+      Options.DarwinSystem = DarwinSystemOptions{};
+    auto Missing = run("resource-usage");
+    ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+    EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Missing->Diagnostic,
+              "Darwin resource usage observation is not configured");
+    EXPECT_TRUE(Missing->StandardOutput.empty());
+  }
+  for (bool SelfOnly : {true, false}) {
+    Options.DarwinSystem = darwin_test::resourceUsageOptions();
+    if (SelfOnly)
+      Options.DarwinSystem->ResourceUsageChildren.reset();
+    else
+      Options.DarwinSystem->ResourceUsageSelf.reset();
+    auto MissingPeer = run("virtual-resource-usage");
+    ASSERT_TRUE(bool(MissingPeer)) << llvm::toString(MissingPeer.takeError());
+    EXPECT_EQ(MissingPeer->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(MissingPeer->Diagnostic,
+              "Darwin resource usage observation is not configured");
+    EXPECT_EQ(MissingPeer->StandardOutput,
+              SelfOnly
+                  ? llvm::fromHex(darwin_test::ResourceUsageHex).substr(0, 144)
+                  : "");
+  }
+  Options.DarwinSystem = darwin_test::resourceUsageOptions();
+  for (auto Mode : {"resource-usage", "virtual-resource-usage"}) {
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(Result->StandardOutput,
+              Mode == llvm::StringRef("resource-usage")
+                  ? "g"
+                  : llvm::fromHex(darwin_test::ResourceUsageHex));
+    EXPECT_TRUE(Result->StandardError.empty());
+    EXPECT_TRUE(llvm::any_of(Result->Services, [](const auto &Event) {
+      return (uint32_t(Event.Number) & 0x00ffffff) == 117 &&
+             Event.Arguments[0] == 0x12345678ffffffffULL && Event.Result == 0 &&
+             Event.Error == false;
+    }));
+  }
+  EXPECT_EQ(Options.DarwinSystem->ResourceUsageSelf->UserSeconds, INT64_MIN);
+  EXPECT_EQ(Options.DarwinSystem->ResourceUsageChildren->Counters[13],
+            INT64_MAX);
+}
+
+TEST_P(DarwinProcess,
        ResourceLimitsPreserveExplicitPairsSelectorsAndCopyOrder) {
   for (bool EmptySystem : {false, true}) {
     if (EmptySystem)

@@ -1258,3 +1258,68 @@ directory metadata/enumeration after mutation, coherent shared maps/EOF faults,
 advancing clocks, Mach/thread/dyld dependencies and framework runtime remain
 unfinished. Physical iOS, suspended Intel HVF and remote merge CI remain separate
 acceptance requirements.
+
+## Explicit read-only resource-usage observations
+
+`getrusage(117)` reads independently optional
+`DarwinSystemOptions::ResourceUsageSelf` and `ResourceUsageChildren` on all five
+Darwin guest configurations. The strict JSON members are
+`darwin_system.resource_usage.self` and `.children`. Each `DarwinResourceUsage`
+requires signed int64 `user_seconds` / `system_seconds`, uint32
+`user_microseconds` / `system_microseconds` below 1000000, and exactly fourteen
+signed int64 `counters`. Exact integers or signed decimal strings preserve the
+full range; malformed, missing or unknown fields, invalid microseconds and
+counter lengths fail before image loading. Omitted peers stay unknown and do
+not prevent querying the supplied peer; explicit zero snapshots are valid.
+
+The complete little-endian output is 144 bytes. Timevals start at 0 and 16:
+seconds occupy eight bytes, microseconds four, then four zero padding bytes.
+Counters start at byte 32, eight bytes each; public indices 0..13 are
+`ru_maxrss`, `ru_ixrss`, `ru_idrss`, `ru_isrss`, `ru_minflt`, `ru_majflt`, `ru_nswap`, `ru_inblock`, `ru_oublock`, `ru_msgsnd`, `ru_msgrcv`, `ru_nsignals`, `ru_nvcsw`, `ru_nivcsw`. Preserve Darwin's raw values and units, including
+`ru_maxrss`; do not apply Linux KiB conversion. These observations remain fixed
+across calls. They neither sample host performance nor implement runtime
+accounting, fork/wait, scheduling or resource enforcement.
+
+```json
+{"darwin_system":{"resource_usage":{"self":{"user_seconds":"-9223372036854775808","user_microseconds":999999,"system_seconds":0,"system_microseconds":0,"counters":["9223372036854775807",0,0,0,0,0,0,0,0,0,0,0,0,0]}}}}
+```
+
+Only the low 32 selector bits matter: 0 is SELF, -1 is CHILDREN. Unlike
+`getrlimit`, `0x1000` is invalid and no POSIX flag is removed. Invalid selectors
+return EINVAL before lookup or memory access; missing selected observations stop
+unsupported before output access. One complete unaligned or cross-page copy
+changes exactly 144 bytes and preserves guards. Wholly unwritable output gives
+EFAULT; individually partially writable output stops unsupported before any
+byte. Backend errors remain transport errors. The SDK oracle uses one capture
+per selector, including every field and padding, because sequential SELF samples
+can change. The original native probe passed thirteen layout/selector/value
+checks and four independent fault checks at the unchanged five-second bound.
+On this host a partial SELF output published 64 bytes before EFAULT; this is
+preserved as an observation, without generalizing a portable prefix rule.
+[Apple getrusage](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getrusage.2.html), [XNU](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [SDK layout](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/resource.h).
+
+Native macOS ARM64 Release validation reconciles 1371 Darwin
+registrations: 867 passed, 504
+unavailable-backend skips, zero failures; all 126 required ARM64 HVF
+cases executed. File-owner coverage remains 361/361. C/CLI 200/200, JSON 40/40, System/SDK 53/53, native 32/32 pass.
+The new behavior has twelve 4K/16K instances plus typed/JSON admission and exact
+single-capture SDK comparison. Actual Python integration passes all five guest
+configurations in 42.865 seconds; 71 pure API and 49 inventory/reference
+checks, SDK drift, pinned format, capability, provenance and documentation
+checks pass. Counts overlap. Independent source review found no blocker.
+
+Evidence is frozen under `build-hvf-arm64/resource-usage-observations/` and bound
+to the committed source. The first guest fixture incorrectly required zero
+secondary return on x64 EINVAL despite a nonzero RDX input; the corrected
+assertion checks preserved RDX on x64 and cleared X1 on ARM64. The original
+failure, source/binaries and zero-match filter attempt remain separate evidence.
+The runtime return owner, deadlines and negative controls were unchanged.
+The first complete gate recorded 866 passed, one existing iOS ARM64 HVF rename
+five-second timeout and 504 unavailable skips. The same unchanged binary passed
+that exact case in 386 ms, then the complete serial gate passed. Both runs remain
+preserved; the timeout cause is unestablished and no latency guarantee is inferred.
+
+This completes the declared query. Resource enforcement, permissions,
+directory metadata/enumeration after mutation, coherent shared maps/EOF faults,
+advancing clocks, Mach/thread/dyld and framework runtime remain unfinished.
+Physical iOS, suspended Intel HVF and remote merge CI need separate acceptance.

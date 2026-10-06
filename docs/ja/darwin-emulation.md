@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 9fd13210357d20e09ca4c4b552e89a3b4b9608b2813d0d68730c75959a226579 -->
+<!-- i18n-source: f2e1b376c3a2debfc3ffe6751fe7c57302755a5b03e02931fe21f4e83482165a -->
 
 [← ドキュメント一覧](README.md)
 
@@ -604,3 +604,23 @@ syscall だけが選択子の下位 32 ビットを取り `_RLIMIT_POSIX_FLAG=0x
 ```
 
 macOS ARM64 Release の登録/成功/未実行 skip/失敗は 1337 / 845 / 492 / 0、必須 HVF 123 件を全実行。新規 4K/16K 行動検査十二件と SDK capture oracle、C/CLI 190/190、parser 37/37、native workload 31/31 が成功。Python 五構成は 71.978 秒、API 71 件と runner 49 件が成功し、SDK drift・整形・機能・出典・文書検査も通過。件数は重複します。証拠は `build-hvf-arm64/resource-limit-observations/` に凍結しコミットに結び付けます。最初のテスト enum の build エラーや接続/フィルター試行を保存し、修正後の直列検証は期限や負控を緩めていません。制限適用、権限、変更後ディレクトリ情報/列挙、共有 map/EOF、進む時計、Mach/thread/dyld と framework は未完成です。実機 iOS、停止中 Intel HVF、remote merge CI は別途検証が必要です。
+
+## 明示的な読み取り専用リソース使用量
+
+五つの Darwin guest 構成で getrusage(117) は独立した任意の DarwinSystemOptions::ResourceUsageSelf / ResourceUsageChildren を読みます。厳格 JSON は darwin_system.resource_usage.self / .children。各 DarwinResourceUsage は int64 user_seconds/system_seconds、1000000 未満の uint32 user_microseconds/system_microseconds、十四個の int64 counters を要求します。正確な整数か符号付き十進文字列で全範囲を保持し、不正な型/フィールド/微秒/長さはロード前に拒否。未指定の相手は不明のまま、指定済みの照会を妨げず、全ゼロは有効です。
+
+一度の完全な 144 バイト little-endian コピー：timeval は 0/16（秒8、微秒4、ゼロ padding4）、counter は32から各8バイト。Darwin の生値/単位を保持し ru_maxrss に Linux KiB 換算をしません。固定値はホスト性能、会計、fork/wait、スケジューリング、制限適用を実装しません。
+
+選択子の下位32ビットのみで 0=SELF、-1=CHILDREN。0x1000 は無効で POSIX flag 除去なし。不正値はメモリ前 EINVAL、欠落値は出力前 unsupported。完全な非整列/ページ境界コピーは guard を保持。全書込不可 EFAULT、部分書込可能は一切コピーせず unsupported、backend エラーは転送エラーです。SDK は各選択子を一度だけ捕獲し、変化する後続 SELF と比較しません。native probe は13検査と独立 fault4件を五秒上限で通過。このホストの partial SELF は EFAULT 前64バイト書込を観測し、一般的 prefix 保証にはしません。
+
+0..13: `ru_maxrss`, `ru_ixrss`, `ru_idrss`, `ru_isrss`, `ru_minflt`, `ru_majflt`, `ru_nswap`, `ru_inblock`, `ru_oublock`, `ru_msgsnd`, `ru_msgrcv`, `ru_nsignals`, `ru_nvcsw`, `ru_nivcsw`.
+
+```json
+{"darwin_system":{"resource_usage":{"self":{"user_seconds":"-9223372036854775808","user_microseconds":999999,"system_seconds":0,"system_microseconds":0,"counters":["9223372036854775807",0,0,0,0,0,0,0,0,0,0,0,0,0]}}}}
+```
+
+[Apple getrusage](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getrusage.2.html), [XNU](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [SDK layout](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/resource.h).
+
+macOS ARM64 Release 登録/成功/未実行 skip/失敗 1371/867/504/0、必須 HVF 126 全実行。File 361/361、C/CLI 200/200, JSON 40/40, System/SDK 53/53, native 32/32 成功。新規4K/16K十二件、准入/SDK検査、Python五構成 42.865秒、API71・runner/reference49、SDK drift/整形/機能/出典/文書検査が通過。件数は重複し独立レビューも通過。証拠は `build-hvf-arm64/resource-usage-observations/` に凍結し commit に結び付けます。初版x64 EINVAL断言を RDX 保持に修正、ARM64は X1 をゼロにし、失敗/空フィルター記録を保存。runtime/期限/負控は不変。制限適用、権限、変更後のディレクトリ、shared map/EOF、時計、Mach/thread/dyld、framework は未完成。実機iOS、停止中Intel HVF、remote merge CIは別途検証です。
+
+初回全体検証は866成功、既存iOS ARM64 HVF renameの五秒timeout1件、504skip。同一binaryで該当caseは386msで成功し、後の全体直列検証も成功。両方保存し、timeout原因は未確定、latency保証なし。

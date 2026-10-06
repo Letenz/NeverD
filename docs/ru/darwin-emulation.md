@@ -1,6 +1,6 @@
 **Языки**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 9fd13210357d20e09ca4c4b552e89a3b4b9608b2813d0d68730c75959a226579 -->
+<!-- i18n-source: f2e1b376c3a2debfc3ffe6751fe7c57302755a5b03e02931fe21f4e83482165a -->
 
 [← Оглавление документации](README.md)
 
@@ -602,3 +602,23 @@ Release-проверка Darwin сверила 1 219 регистраций: 763
 ```
 
 macOS ARM64 Release: зарегистрировано/пройдено/пропущено без выполнения/ошибок 1337 / 845 / 492 / 0; все 123 обязательных HVF выполнены. Двенадцать новых случаев 4K/16K и SDK capture oracle; C/CLI 190/190, parser 37/37, native workloads 31/31; Python пять профилей за 71.978 с, 71 API и 49 runner-проверок пройдены. Проверки SDK drift, формата, возможностей, происхождения и документации пройдены; числа пересекаются. Источники, бинарники и попытки заморожены в `build-hvf-arm64/resource-limit-observations/` и привязаны к commit. Сохранены первый сбой build из-за enum теста и попытки соединения/фильтра; исправленная проверка последовательная, сроки и отрицательные контроли не ослаблены. Применение лимитов, права, каталоги после мутации, shared maps/EOF, часы, Mach/threads/dyld и frameworks остаются незавершёнными. Физический iOS, приостановленный Intel HVF и remote merge CI требуют отдельной проверки.
+
+## Явные наблюдения использования ресурсов только для чтения
+
+getrusage(117) читает независимые необязательные DarwinSystemOptions::ResourceUsageSelf / ResourceUsageChildren во всех пяти Darwin-профилях. Строгий JSON: darwin_system.resource_usage.self / .children. Каждый DarwinResourceUsage требует int64 user_seconds/system_seconds, uint32 user_microseconds/system_microseconds меньше1000000 и ровно14 int64 counters. Точные целые или знаковые десятичные строки сохраняют весь диапазон; неверные типы/поля/микросекунды/длины отклоняются до загрузки. Отсутствующий сосед остаётся неизвестным, не блокируя заданный; явный ноль допустим.
+
+Одна полная little-endian копия144 байт: timeval в0/16 (секунды8, микросекунды4, нулевой padding4), counters с32 по8. Сохраняются исходные Darwin-значения/единицы, без Linux-KiB-преобразования ru_maxrss. Фиксированные значения не измеряют host и не реализуют учёт, fork/wait, планирование или применение лимитов.
+
+Только младшие32 бита селектора: 0=SELF, -1=CHILDREN; 0x1000 неверен, POSIX flag не удаляется. Неверный EINVAL до памяти, отсутствующий unsupported до вывода. Полная невыровненная/межстраничная копия сохраняет guards; полностью недоступный для записи EFAULT, частичный unsupported до любого байта; backend-ошибки транспортные. SDK захватывает каждый селектор один раз, без сравнения изменяющихся последующих SELF. Native probe13 проверок и4 независимых fault-процесса при прежних5с. Здесь partial SELF записал64 байта перед EFAULT; переносимая гарантия префикса не выводится.
+
+0..13: `ru_maxrss`, `ru_ixrss`, `ru_idrss`, `ru_isrss`, `ru_minflt`, `ru_majflt`, `ru_nswap`, `ru_inblock`, `ru_oublock`, `ru_msgsnd`, `ru_msgrcv`, `ru_nsignals`, `ru_nvcsw`, `ru_nivcsw`.
+
+```json
+{"darwin_system":{"resource_usage":{"self":{"user_seconds":"-9223372036854775808","user_microseconds":999999,"system_seconds":0,"system_microseconds":0,"counters":["9223372036854775807",0,0,0,0,0,0,0,0,0,0,0,0,0]}}}}
+```
+
+[Apple getrusage](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getrusage.2.html), [XNU](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [SDK layout](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/resource.h).
+
+macOS ARM64 Release зарегистрировано/пройдено/skip без выполнения/ошибок 1371/867/504/0; все 126 обязательных HVF выполнены. File361/361, C/CLI 200/200, JSON 40/40, System/SDK 53/53, native 32/32 пройдены. Двенадцать новых4K/16K, проверки допуска/SDK; Python пять профилей 42.865с, API71, runner/reference49, SDK drift/формат/возможности/происхождение/документация пройдены. Числа пересекаются, независимая проверка пройдена. Доказательства заморожены в `build-hvf-arm64/resource-usage-observations/` и связаны с commit. Первое x64 EINVAL-утверждение исправлено на сохранение RDX, ARM64 обнуляет X1; ошибка/пустой фильтр сохранены. Runtime/сроки/отрицательные контроли неизменны. Лимиты, права, каталоги после мутации, shared maps/EOF, часы, Mach/thread/dyld и frameworks не завершены; физический iOS, остановленный Intel HVF и merge CI отдельно.
+
+Первый gate:866 пройдено, один5с timeout существующего iOS ARM64 HVF rename,504 skip. Тот же binary проходит случай за386мс, затем полный последовательный gate. Оба сохранены; причина не установлена, гарантии задержки нет.
