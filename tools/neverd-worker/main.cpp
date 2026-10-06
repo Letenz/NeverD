@@ -125,6 +125,8 @@ struct State {
   bool stopping = false;
   bool finished = false;
   std::string revision = "0", projectId;
+  // Engine background work state, published with heartbeats.
+  Json background = nullptr;
 };
 
 Json response(const Json &request, const std::string &revision,
@@ -189,7 +191,16 @@ Json hello() {
             "contributions",
             "contribution_register",
             "contribution_unregister",
-            "contribution_execute"}},
+            "contribution_execute",
+            "listing",
+            "overview",
+            "names",
+            "regions",
+            "imports",
+            "exports",
+            "search",
+            "function_level_analysis",
+            "background_index"}},
           {"cancellation",
            "queued_requests_stop; "
            "synchronous_engine_requires_completion_or_process_restart"},
@@ -203,6 +214,18 @@ void executeLoop(State &state, Transport &transport) {
       std::shared_ptr<Request> request;
       {
         std::unique_lock lock(state.mutex);
+        // Background engine work runs only while no request is waiting; each
+        // step is bounded so interactive requests keep their latency.
+        while (!state.stopping && state.queue.empty() && engine.hasIdleWork()) {
+          lock.unlock();
+          try {
+            engine.idleStep();
+          } catch (const std::exception &) {
+            // A failed step leaves its error in the published state.
+          }
+          lock.lock();
+          state.background = engine.backgroundState();
+        }
         state.changed.wait(
             lock, [&] { return state.stopping || !state.queue.empty(); });
         if (state.stopping && state.queue.empty())
@@ -258,6 +281,7 @@ void executeLoop(State &state, Transport &transport) {
         }
         state.revision = engine.revision();
         state.projectId = engine.projectId();
+        state.background = engine.backgroundState();
         state.pending.erase(value["request_id"].get<std::string>());
         state.active.reset();
       }
@@ -318,8 +342,8 @@ int main(int argc, char **argv) {
             {"project_id", state.projectId},
             {"active_request_id",
              state.active ? state.active->value["request_id"] : Json(nullptr)},
-            {"cancellation_requested",
-             state.active && state.active->cancelled}};
+            {"cancellation_requested", state.active && state.active->cancelled},
+            {"background", state.background}};
         lock.unlock();
         transport.send(message);
         lock.lock();

@@ -1,0 +1,27 @@
+//===- AddressClasses.def - Navigation address classes ---------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Stable protocol codes classifying an address for the navigation overview
+/// and the listing prefix color.  Codes are part of worker protocol 1.x:
+/// append new classes, never renumber.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_ADDRESS_CLASS(Name, Code)
+#ifndef NEVERD_ADDRESS_CLASS
+#error "Define NEVERD_ADDRESS_CLASS before including AddressClasses.def"
+#endif
+
+NEVERD_ADDRESS_CLASS(Unmapped, 0)
+NEVERD_ADDRESS_CLASS(RegularFunction, 1)
+NEVERD_ADDRESS_CLASS(LibraryFunction, 2)
+NEVERD_ADDRESS_CLASS(Instruction, 3)
+NEVERD_ADDRESS_CLASS(Data, 4)
+NEVERD_ADDRESS_CLASS(Unexplored, 5)
+NEVERD_ADDRESS_CLASS(External, 6)
+
+#undef NEVERD_ADDRESS_CLASS

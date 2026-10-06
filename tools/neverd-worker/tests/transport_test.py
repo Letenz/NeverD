@@ -214,7 +214,12 @@ def run(executable):
         cfg = client.call("cfg", {"address": BASE})["payload"]
         assert isinstance(cfg["nodes"][0]["id"], str) and cfg["complete"]
         assert client.call("cfg", {"address": "0xffff800012340001"})["status"] == "budget_exceeded"
-        assert client.call("xrefs", {"address": BASE})["payload"]["items"][0]["address"] == "0xffff800012340008"
+        # Direct references come from the instruction index without analysis.
+        direct = client.call("xrefs", {"address": BASE})["payload"]
+        assert direct["items"][0]["address"] == "0xffff800012340008" and direct["items"][0]["type"] == "j", direct
+        assert client.call("xrefs", {"address": BASE, "direction": "from"})["status"] == "ok"
+        # IR constant references require whole-program analysis.
+        assert client.call("xrefs", {"address": BASE, "source": "ir"})["payload"]["items"][0]["address"] == "0xffff800012340008"
         client.close()
         assert b"native stdout" in client.logs and b"python-style print" in client.logs
         assert client.process.returncode == 0

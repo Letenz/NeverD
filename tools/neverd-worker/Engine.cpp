@@ -1,7 +1,9 @@
 #include "Engine.h"
 
 #include "Contributions.h"
+#include "EngineSymbols.h"
 #include "GraphSnapshot.h"
+#include "Listing.h"
 #include "ProjectHistory.h"
 
 #include "neverd/sdk/NeverDCAPIDisasm.h"
@@ -14,11 +16,14 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <string_view>
 #include <system_error>
+#include <unordered_map>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -35,24 +40,75 @@ using IRViewFunction = const char *(*)(neverd_session_t, neverd_va_t,
                                        const char *, std::size_t, std::size_t);
 IRViewFunction irViewFunction() {
   // Additive C ABI capability: an older matching engine can still run the GUI.
-  // Resolve only from the already linked engine, never an arbitrary user path.
-  static const auto function = []() -> IRViewFunction {
-#ifdef _WIN32
-    HMODULE module = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                            reinterpret_cast<LPCWSTR>(&neverd_session_create),
-                            &module))
-      return nullptr;
-    return reinterpret_cast<IRViewFunction>(
-        GetProcAddress(module, "neverd_ir_view_json"));
-#else
-    return reinterpret_cast<IRViewFunction>(
-        dlsym(RTLD_DEFAULT, "neverd_ir_view_json"));
-#endif
-  }();
+  static const auto function =
+      engineSymbol<IRViewFunction>("neverd_ir_view_json");
   return function;
 }
+/// Engine code text under workbench function names: every identifier token
+/// that is an engine name with a display alias, outside string and character
+/// literals.  \p shift receives (old byte offset, delta) for each edit.
+std::string
+renameIdentifiers(const std::string &text,
+                  const std::unordered_map<std::string, std::string> &aliases,
+                  std::vector<std::pair<std::size_t, std::ptrdiff_t>> &shift) {
+  const auto identifierStart = [](unsigned char c) {
+    return std::isalpha(c) || c == '_';
+  };
+  const auto identifierPart = [](unsigned char c) {
+    return std::isalnum(c) || c == '_';
+  };
+  std::string out;
+  out.reserve(text.size());
+  std::size_t i = 0;
+  while (i < text.size()) {
+    const unsigned char c = static_cast<unsigned char>(text[i]);
+    if (c == '"' || c == '\'') {
+      std::size_t j = i + 1;
+      while (j < text.size() && text[j] != static_cast<char>(c) &&
+             text[j] != '\n')
+        j += text[j] == '\\' ? 2 : 1;
+      j = std::min(text.size(), j + 1);
+      out.append(text, i, j - i);
+      i = j;
+      continue;
+    }
+    if (identifierStart(c) &&
+        (i == 0 || !identifierPart(static_cast<unsigned char>(text[i - 1])))) {
+      std::size_t j = i + 1;
+      while (j < text.size() &&
+             identifierPart(static_cast<unsigned char>(text[j])))
+        ++j;
+      const std::string_view word(text.data() + i, j - i);
+      if (const auto it = aliases.find(std::string(word));
+          it != aliases.end()) {
+        out += it->second;
+        shift.emplace_back(i, static_cast<std::ptrdiff_t>(it->second.size()) -
+                                  static_cast<std::ptrdiff_t>(word.size()));
+      } else {
+        out.append(word);
+      }
+      i = j;
+      continue;
+    }
+    out += static_cast<char>(c);
+    ++i;
+  }
+  return out;
+}
+
+/// A byte offset of the original text in the renamed text.
+std::size_t shiftedOffset(
+    std::size_t offset,
+    const std::vector<std::pair<std::size_t, std::ptrdiff_t>> &shift) {
+  std::ptrdiff_t delta = 0;
+  for (const auto &[at, change] : shift) {
+    if (at >= offset)
+      break;
+    delta += change;
+  }
+  return static_cast<std::size_t>(static_cast<std::ptrdiff_t>(offset) + delta);
+}
+
 fs::path utf8Path(const std::string &text) {
   return fs::path(std::u8string(reinterpret_cast<const char8_t *>(text.data()),
                                 text.size()));
@@ -97,6 +153,10 @@ std::string folded(std::string text) {
   });
   return text;
 }
+constexpr std::size_t MaxFunctionRows = 1000000;
+/// Lines of one engine code page; longer functions keep engine names.
+constexpr std::size_t MaxNamedViewLines = 2048;
+
 Json page(const Json &items, const Json &payload,
           const char *searchField = nullptr) {
   const auto offset =
@@ -122,6 +182,47 @@ Json page(const Json &items, const Json &payload,
           {"offset", offset},
           {"next_offset", complete ? Json(nullptr) : Json(offset + limit)},
           {"complete", complete}};
+}
+
+/// Sort table rows by {"sort": field, "descending": bool}.  Hex address
+/// strings compare numerically; other strings case-insensitively.
+void sortItems(Json &items, const Json &payload) {
+  const auto field = stringField(payload, "sort", {}, 64);
+  if (field.empty() || !items.is_array())
+    return;
+  const bool descending = payload.value("descending", false);
+  const auto key =
+      [&](const Json &item) -> std::pair<std::uint64_t, std::string> {
+    const auto it = item.find(field);
+    if (it == item.end())
+      return {0, {}};
+    if (it->is_number_unsigned())
+      return {it->get<std::uint64_t>(), {}};
+    if (it->is_number_integer())
+      return {static_cast<std::uint64_t>(it->get<std::int64_t>()), {}};
+    if (it->is_string()) {
+      const auto &text = it->get_ref<const std::string &>();
+      if (text.size() > 2 && text[0] == '0' &&
+          (text[1] == 'x' || text[1] == 'X'))
+        try {
+          return {parseAddress(text), {}};
+        } catch (const Error &) {
+        }
+      return {0, folded(text)};
+    }
+    return {0, {}};
+  };
+  std::vector<std::pair<std::pair<std::uint64_t, std::string>, Json>> keyed;
+  keyed.reserve(items.size());
+  for (auto &item : items)
+    keyed.emplace_back(key(item), std::move(item));
+  std::stable_sort(keyed.begin(), keyed.end(),
+                   [&](const auto &a, const auto &b) {
+                     return descending ? b.first < a.first : a.first < b.first;
+                   });
+  items = Json::array();
+  for (auto &entry : keyed)
+    items.push_back(std::move(entry.second));
 }
 
 // Replace one sidecar atomically. Each sidecar is a separate durable file;
@@ -223,21 +324,138 @@ void Engine::requireWriter() const {
 }
 void Engine::invalidate() {
   graph_.reset();
+  if (listing_)
+    listing_->invalidate();
   stringsCache_ = nullptr;
   textKey_.clear();
   textCache_.clear();
   textLines_.clear();
-  haveFilter_ = false;
-  filteredFunctions_.clear();
+  functionOrderKey_.clear();
+  functionOrder_.clear();
 }
+std::optional<Json> Engine::namedViewPage(std::uint64_t address,
+                                          const std::string &representation,
+                                          std::size_t offset,
+                                          std::size_t limit) {
+  const auto view = irViewFunction();
+  if (!view)
+    return std::nullopt;
+  const auto &aliases = listing().functionAliases();
+  if (aliases.empty())
+    return std::nullopt;
+  const auto key = hexAddress(address) + ":" + representation + ":" +
+                   std::to_string(revision_) + ":" +
+                   std::to_string(listing().generation());
+  if (namedViewKey_ != key) {
+    namedViewKey_.clear();
+    auto full = backendJson(
+        view(session_, address, representation.c_str(), 0, MaxNamedViewLines),
+        true);
+    // A function longer than one engine page keeps the engine's own pages.
+    if (!full.is_object() || !full.contains("text") ||
+        !full["text"].is_string() || !full.value("complete", false) ||
+        full.value("offset", std::size_t{0}) != 0)
+      return std::nullopt;
+    std::vector<std::pair<std::size_t, std::ptrdiff_t>> shift;
+    full["text"] =
+        renameIdentifiers(full["text"].get<std::string>(), aliases, shift);
+    const std::size_t base = full.value("byte_offset", std::size_t{0});
+    if (auto regions = full.find("library_regions");
+        regions != full.end() && regions->is_array())
+      for (auto &region : *regions)
+        if (auto spans = region.find("spans");
+            spans != region.end() && spans->is_array())
+          for (auto &span : *spans)
+            for (const char *field : {"begin_byte", "end_byte"})
+              if (span.contains(field) && span[field].is_number_unsigned() &&
+                  span[field].get<std::size_t>() >= base)
+                span[field] =
+                    base +
+                    shiftedOffset(span[field].get<std::size_t>() - base, shift);
+    namedViewLines_.clear();
+    const auto &text = full["text"].get_ref<const std::string &>();
+    namedViewLines_.push_back(0);
+    for (std::size_t i = 0; i < text.size(); ++i)
+      if (text[i] == '\n' && i + 1 < text.size())
+        namedViewLines_.push_back(i + 1);
+    namedView_ = std::move(full);
+    namedViewKey_ = key;
+  }
+  const auto &text = namedView_["text"].get_ref<const std::string &>();
+  const std::size_t total = text.empty() ? 0 : namedViewLines_.size();
+  const auto start = std::min(offset, total);
+  const auto end = start + std::min(limit, total - start);
+  const auto startByte = start < namedViewLines_.size() && !text.empty()
+                             ? namedViewLines_[start]
+                             : text.size();
+  const auto endByte =
+      end < namedViewLines_.size() ? namedViewLines_[end] : text.size();
+  Json page = namedView_;
+  page["text"] = text.substr(startByte, endByte - startByte);
+  Json rows = Json::array();
+  for (const auto &row : namedView_.value("rows", Json::array())) {
+    const auto line = row.value("line", std::size_t{0});
+    if (line >= start && line < end)
+      rows.push_back(row);
+  }
+  page["rows"] = std::move(rows);
+  page["offset"] = start;
+  page["byte_offset"] =
+      namedView_.value("byte_offset", std::size_t{0}) + startByte;
+  page["total_lines"] = total;
+  page["complete"] = end == total;
+  page["next_offset"] = end == total ? Json(nullptr) : Json(end);
+  page["project_id"] = projectId_;
+  page["revision"] = revision();
+  return page;
+}
+
 void Engine::analyze() {
   if (analyzed_)
     return;
+  // A restricted single-function pipeline must not stand in for the image.
+  neverd_session_restrict_function(session_, 0);
+  preparedFunction_.reset();
   if (!neverd_session_analyze(session_))
     throw Error("analysis_failed", error());
   analyzed_ = true;
   invalidate();
   ++revision_;
+}
+void Engine::prepareFunction(std::uint64_t address) {
+  if (analyzed_ || preparedFunction_ == address)
+    return;
+  // VM images analyze the whole program as one unit.
+  const auto arch = folded(ownedString(neverd_session_arch_name(session_)));
+  if (arch == "evm" || arch == "sbf") {
+    analyze();
+    return;
+  }
+  // neverd_decompile() restricts the session pipeline to this entry and
+  // replaces a previous restriction; IR, CFG and LLVM views then read it.
+  (void)ownedString(neverd_decompile(session_, address));
+  preparedFunction_ = address;
+  graph_.reset();
+  textKey_.clear();
+}
+Listing &Engine::listing() {
+  requireLoaded();
+  if (!listing_)
+    listing_ = std::make_unique<Listing>(session_);
+  return *listing_;
+}
+bool Engine::hasIdleWork() const {
+  return listing_ && neverd_session_is_loaded(session_) &&
+         listing_->hasIdleWork();
+}
+void Engine::idleStep() {
+  if (hasIdleWork())
+    listing_->idleStep();
+}
+Json Engine::backgroundState() const {
+  if (!listing_)
+    return nullptr;
+  return listing_->indexState();
 }
 Json Engine::backendJson(const char *owned, bool checkError) const {
   const auto text = ownedString(owned);
@@ -393,6 +611,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     loadedSize_ = fileSize;
     loadedTime_ = fileTime;
     history_.reset();
+    preparedFunction_.reset();
+    listing_ = std::make_unique<Listing>(session_);
     invalidate();
     ++revision_;
     projectId_ = "project-" + std::to_string(revision_);
@@ -526,42 +746,61 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     if (!limit)
       throw Error("invalid_request", "limit must be at least 1");
     const auto filter = folded(stringField(p, "filter"));
-    const int count = neverd_func_count(session_);
-    if (!filter.empty() && (!haveFilter_ || filterKey_ != filter)) {
-      if (count > 1000000)
-        throw Error("budget_exceeded",
-                    "Filtered function index exceeds one million entries");
-      filteredFunctions_.clear();
-      for (int i = 0; i < count; ++i) {
-        const auto identity = backendJson(
-            neverd_resolve_addr(session_, neverd_func_entry(session_, i)),
-            false);
-        if (folded(ownedString(neverd_func_name(session_, i))).find(filter) !=
+    const auto sort = stringField(p, "sort", {}, 64);
+    const bool descending = p.value("descending", false);
+    auto &listingView = listing();
+    const auto &rows = listingView.functionRows();
+    if (rows.size() > MaxFunctionRows)
+      throw Error("budget_exceeded",
+                  "The function index exceeds one million entries");
+    std::string key = filter;
+    key += '\0';
+    key += sort;
+    key += descending ? "\0d\0" : "\0a\0";
+    key += std::to_string(listingView.generation());
+    if (key != functionOrderKey_) {
+      functionOrder_.clear();
+      for (std::size_t i = 0; i < rows.size(); ++i) {
+        const auto &row = rows[i];
+        if (filter.empty() ||
+            folded(row.value("name", std::string())).find(filter) !=
                 std::string::npos ||
-            folded(identity.value("display_name", std::string{}))
-                    .find(filter) != std::string::npos ||
-            hexAddress(neverd_func_entry(session_, i)).find(filter) !=
+            folded(row.value("engine_name", std::string())).find(filter) !=
+                std::string::npos ||
+            row.value("address", std::string()).find(filter) !=
                 std::string::npos)
-          filteredFunctions_.push_back(i);
+          functionOrder_.push_back(i);
       }
-      filterKey_ = filter;
-      haveFilter_ = true;
+      if (!sort.empty()) {
+        Json keyed = Json::array();
+        for (const auto i : functionOrder_) {
+          Json item = rows[i];
+          item["\x01index"] = i;
+          keyed.push_back(std::move(item));
+        }
+        sortItems(keyed, p);
+        functionOrder_.clear();
+        for (const auto &item : keyed)
+          functionOrder_.push_back(item["\x01index"].get<std::size_t>());
+      }
+      functionOrderKey_ = std::move(key);
     }
-    const auto total = filter.empty()
-                           ? static_cast<std::size_t>(std::max(count, 0))
-                           : filteredFunctions_.size();
+    const auto total = functionOrder_.size();
     Json items = Json::array();
     for (auto i = std::min(offset, total); i < total && items.size() < limit;
          ++i) {
-      const int index =
-          filter.empty() ? static_cast<int>(i) : filteredFunctions_[i];
-      auto item = backendJson(
-          neverd_resolve_addr(session_, neverd_func_entry(session_, index)),
-          false);
-      item["name"] = ownedString(neverd_func_name(session_, index));
-      item["display_name"] = item.value("display_name", item["name"]);
-      item["address"] = hexAddress(neverd_func_entry(session_, index));
-      item["size"] = neverd_func_size(session_, index);
+      const auto &row = rows[functionOrder_[i]];
+      const auto address = parseAddress(row["address"].get<std::string>());
+      // The engine's identity (linkage and demangled names) under the
+      // workbench's display name.
+      auto item = backendJson(neverd_resolve_addr(session_, address), false);
+      if (!item.is_object())
+        item = Json::object();
+      const bool renamed = row.contains("engine_name");
+      for (const auto &[field, value] : row.items())
+        item[field] = value;
+      if (renamed || !item.contains("display_name"))
+        item["display_name"] = row["name"];
       items.push_back(std::move(item));
     }
     const bool complete = offset >= total || items.size() >= total - offset;
@@ -595,9 +834,14 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       }
     } else {
       index = neverd_func_find_by_name(session_, query.c_str());
-      if (index < 0)
-        throw Error("not_found", "No function matches that symbol");
-      address = neverd_func_entry(session_, index);
+      if (index >= 0) {
+        address = neverd_func_entry(session_, index);
+      } else if (auto named = listing().resolveName(query)) {
+        address = *named;
+        index = neverd_func_find_by_addr(session_, address);
+      } else {
+        throw Error("not_found", "No function or name matches that symbol");
+      }
     }
     auto result =
         index < 0
@@ -609,8 +853,14 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     result["function_address"] =
         index < 0 ? Json(nullptr)
                   : Json(hexAddress(neverd_func_entry(session_, index)));
-    result["name"] = index < 0 ? std::string()
-                               : ownedString(neverd_func_name(session_, index));
+    std::string name = index < 0
+                           ? std::string()
+                           : ownedString(neverd_func_name(session_, index));
+    // The workbench name of a function the engine leaves generic.
+    if (const auto &aliases = listing().functionAliases();
+        aliases.contains(name))
+      name = aliases.at(name);
+    result["name"] = std::move(name);
     result["comment"] = ownedString(neverd_annotation_get(session_, address));
     return result;
   }
@@ -632,6 +882,87 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       item.erase("va");
     }
     return page(items, p, "name");
+  }
+  if (operation == "listing")
+    return listing().page(p);
+  if (operation == "overview")
+    return listing().overview(p);
+  if (operation == "names") {
+    auto items = listing().names();
+    sortItems(items, p);
+    return page(items, p, "name");
+  }
+  if (operation == "regions") {
+    auto items = listing().regions();
+    sortItems(items, p);
+    return page(items, p, "name");
+  }
+  if (operation == "imports") {
+    Json items = Json::array();
+    for (const auto &row : backendJson(neverd_imports_json(session_)))
+      if (row.contains("iat_addr") &&
+          parseAddress(row["iat_addr"].get<std::string>()))
+        items.push_back({{"address", row["iat_addr"]},
+                         {"name", row.value("name", std::string())},
+                         {"module", row.value("module", std::string())},
+                         {"ordinal", row.value("ordinal", 0)}});
+    sortItems(items, p);
+    return page(items, p, "name");
+  }
+  if (operation == "exports") {
+    Json items = Json::array();
+    for (const auto &row : backendJson(neverd_exports_json(session_)))
+      items.push_back({{"address", row.value("addr", std::string("0x0"))},
+                       {"name", row.value("name", std::string())},
+                       {"ordinal", row.value("ordinal", 0)},
+                       {"kind", "export"}});
+    for (const auto &row : backendJson(neverd_entrypoints_json(session_)))
+      items.push_back({{"address", row.value("addr", std::string("0x0"))},
+                       {"name", row.value("name", std::string())},
+                       {"ordinal", nullptr},
+                       {"kind", row.value("type", std::string("entry"))}});
+    sortItems(items, p);
+    return page(items, p, "name");
+  }
+  if (operation == "search") {
+    const auto kind = stringField(p, "kind", "text", 16);
+    const auto pattern = stringField(p, "pattern", {}, 4096);
+    const auto limit = sizeField(p, "limit", 256, 4096);
+    if (pattern.empty() || !limit)
+      throw Error("invalid_request", "A search pattern and limit are required");
+    Json hits;
+    if (kind == "bytes") {
+      std::vector<unsigned char> bytes;
+      std::string digits;
+      for (char c : pattern)
+        if (std::isxdigit(static_cast<unsigned char>(c)))
+          digits += c;
+        else if (c != ' ' && c != '\t')
+          throw Error("invalid_request",
+                      "Byte patterns contain hexadecimal pairs");
+      if (digits.empty() || digits.size() % 2)
+        throw Error("invalid_request",
+                    "Byte patterns contain hexadecimal pairs");
+      for (std::size_t i = 0; i < digits.size(); i += 2)
+        bytes.push_back(static_cast<unsigned char>(
+            std::stoul(digits.substr(i, 2), nullptr, 16)));
+      hits = backendJson(neverd_search_bytes(session_, bytes.data(),
+                                             static_cast<int>(bytes.size()),
+                                             static_cast<int>(limit)));
+    } else if (kind == "text") {
+      hits = backendJson(neverd_search_string(
+          session_, pattern.c_str(), p.value("case_sensitive", false) ? 1 : 0,
+          static_cast<int>(limit)));
+    } else {
+      throw Error("invalid_request", "Search kind must be bytes or text");
+    }
+    Json items = Json::array();
+    for (auto &hit : hits) {
+      hit["address"] = hit.value("addr", std::string("0x0"));
+      hit.erase("addr");
+      items.push_back(std::move(hit));
+    }
+    return {{"items", std::move(items)}, {"complete", true}};
   }
   if (operation == "annotations") {
     auto items = backendJson(neverd_annotations_json(session_));
@@ -811,10 +1142,12 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     const auto limit = sizeField(p, "limit", 512, 2048);
     if (!limit)
       throw Error("invalid_request", "limit must be at least 1");
-    analyze();
+    prepareFunction(address);
     std::string mappingStatus = "unsupported_representation";
     if (representation == "low" || representation == "med" ||
         representation == "c" || representation == "llvmc") {
+      if (auto named = namedViewPage(address, representation, offset, limit))
+        return *named;
       if (const auto view = irViewFunction()) {
         auto result = backendJson(
             view(session_, address, representation.c_str(), offset, limit),
@@ -851,6 +1184,10 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         throw Error("unavailable", error().empty()
                                        ? "This representation is unavailable"
                                        : error());
+      if (const auto &aliases = listing().functionAliases(); !aliases.empty()) {
+        std::vector<std::pair<std::size_t, std::ptrdiff_t>> shift;
+        textCache_ = renameIdentifiers(textCache_, aliases, shift);
+      }
       textLines_.clear();
       textLines_.push_back(0);
       for (std::size_t i = 0; i < textCache_.size(); ++i)
@@ -882,13 +1219,41 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         {"revision", revision()}};
   }
   if (operation == "cfg_summary") {
-    analyze();
+    prepareFunction(address);
     const auto key = hexAddress(address);
-    if (!graph_ || graph_->address() != key) {
+    // Client text metrics size each node to its formatted listing rows.
+    GraphMetrics metrics;
+    if (const auto it = p.find("metrics"); it != p.end() && it->is_object()) {
+      const auto number = [&](const char *field) {
+        const auto value = it->find(field);
+        if (value == it->end())
+          return 0.0;
+        if (!value->is_number() || !std::isfinite(value->get<double>()) ||
+            value->get<double>() < 0 || value->get<double>() > 1000)
+          throw Error("invalid_request",
+                      std::string("metrics.") + field + " is out of range");
+        return value->get<double>();
+      };
+      metrics.charWidth = number("char_width");
+      metrics.lineHeight = number("line_height");
+      metrics.padding = number("padding");
+      metrics.titleHeight = number("title_height");
+    }
+    const auto metricsKey = std::to_string(metrics.charWidth) + "/" +
+                            std::to_string(metrics.lineHeight) + "/" +
+                            std::to_string(metrics.padding) + "/" +
+                            std::to_string(metrics.titleHeight);
+    if (!graph_ || graph_->address() != key || graphMetrics_ != metricsKey) {
       auto snapshot = std::make_unique<GraphSnapshot>(
           backendJson(neverd_cfg_json(session_, address), true), key,
-          projectId_ + ":" + revision() + ":" + key);
+          projectId_ + ":" + revision() + ":" + key + ":" + metricsKey, metrics,
+          metrics.valid()
+              ? GraphRows([this](std::uint64_t start, std::uint64_t end) {
+                  return listing().blockLines(start, end);
+                })
+              : GraphRows());
       graph_ = std::move(snapshot);
+      graphMetrics_ = metricsKey;
     }
     return graph_->summary();
   }
@@ -899,7 +1264,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     return graph_->viewport(p);
   }
   if (operation == "cfg") {
-    analyze();
+    prepareFunction(address);
     auto result = backendJson(neverd_cfg_json(session_, address), true);
     if (result.value("nodes", Json::array()).size() > 500 ||
         result.value("edges", Json::array()).size() > 2000)
@@ -926,6 +1291,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     const auto direction = stringField(p, "direction", "to", 8);
     if (direction != "to" && direction != "from")
       throw Error("invalid_request", "direction must be to or from");
+    if (stringField(p, "source", "direct", 16) != "ir")
+      return listing().references(address, p);
     analyze();
     const auto arch = folded(ownedString(neverd_session_arch_name(session_)));
     if (arch == "evm" || arch == "sbf")
