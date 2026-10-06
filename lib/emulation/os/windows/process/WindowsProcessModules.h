@@ -31,6 +31,9 @@ struct Module {
   ModuleState State = ModuleState::Retired;
   bool Attached = false, Pinned = false;
   bool System = false;
+  /// A module outside the catalogue, present only as an identity: every
+  /// export query yields an opaque entry.
+  bool Opaque = false;
   std::vector<ModuleRef> Dependencies;
   /// Index original entries, retaining holes, aliases and unresolved
   /// forwarders.
@@ -53,11 +56,22 @@ struct Program {
   std::vector<Import> Gates;
   /// Preparation and subsequent export queries never replenish these credits.
   ImageReadBudget Reads{0, 0};
+  /// WindowsProcessOptions::DeferUnmodeled for this process.
+  bool DeferUnmodeled = false;
+  uint64_t OpaqueEntries = 0;
 };
 inline constexpr uint64_t ModuleCapacity =
     windows_process_limits::Modules + value::SystemModuleCount + 1;
 llvm::Error prepareSystemModules(Program &P, VirtualMemory &Memory,
                                  const ExecutionBudget &Budget);
+/// The entry for an export identity the model does not implement. One identity
+/// has one address for the life of the process; executing it stops the run.
+llvm::Expected<uint64_t> opaqueEntry(Program &P, llvm::StringRef Module,
+                                     llvm::StringRef Name,
+                                     std::optional<uint16_t> Ordinal);
+/// Reserve and describe a module that exists only as a loader identity.
+llvm::Expected<Image> makeOpaqueImage(Program &P, VirtualMemory &Memory,
+                                      llvm::StringRef Name);
 /// Guest load failures are distinct from unsupported metadata or transport
 /// failures. The running process may handle these errors and continue.
 class ModuleLoadError final : public llvm::ErrorInfo<ModuleLoadError> {

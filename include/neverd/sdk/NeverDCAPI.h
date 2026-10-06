@@ -30,6 +30,7 @@
 ///   - NeverDCAPIEmulation.h -- bounded Windows driver initialization
 ///   - NeverDCAPICPU.h     -- CPU configuration and capability queries
 ///   - NeverDCAPIProcess.h -- explicit guest process workloads
+///   - NeverDCAPIUnpack.h -- packed executable recovery
 ///   - NeverDCAPIBytecode.h -- external-profile bytecode source recovery
 ///
 //===----------------------------------------------------------------------===//
@@ -56,5 +57,6 @@
 #include "neverd/sdk/NeverDCAPISynth.h"
 #include "neverd/sdk/NeverDCAPITranslate.h"
 #include "neverd/sdk/NeverDCAPITypes.h"
+#include "neverd/sdk/NeverDCAPIUnpack.h"
 
 #endif // NEVERD_SDK_CAPI_H

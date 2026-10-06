@@ -1,0 +1,70 @@
+//===- ProcessTransfer.h - Transfers into generated code --------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifndef NEVERD_UNPACK_DYNAMIC_PROCESSTRANSFER_H
+#define NEVERD_UNPACK_DYNAMIC_PROCESSTRANSFER_H
+
+#include "../core/Capture.h"
+#include "Platform.h"
+
+namespace neverd::unpack {
+/// Follows the generations of code inside one image. Generation zero is the
+/// image as the guest loader mapped it. Every transfer into code that is newer
+/// than the code that was running starts the next generation, measured against
+/// the image at that transfer. Control may also fall back to older code, as a
+/// callback does when it returns to the stub that called it.
+///
+/// A transfer is the program's entry when the stack pointer has returned to
+/// its value at process entry: the stub has given back the stack it received.
+/// A transfer on a deeper stack is a call the stub makes into the code it
+/// produced, such as an initialization callback. When an identified stub
+/// declares where it finally jumps, such a call already shows that the image
+/// is complete: the image is taken there, before any code of the program has
+/// run, and the declared address is the entry. The decision reads only bytes
+/// and registers the process has produced and operands of the stub; no entry
+/// is predicted.
+///
+/// The observer knows no container and no guest system. The image supplies
+/// its extent, and the instruction set's traits supply the stack pointer and
+/// the size of the window a transfer target is compared over.
+class TransferObserver final : public emulation::ProcessObserver {
+public:
+  /// \p Wanted selects a transfer by its one-based position; zero accepts the
+  /// first one that has the entry stack. \p Declared is the entry an
+  /// identified stub names, if any.
+  TransferObserver(const InputImage &Image, const ArchitectureTraits &Traits,
+                   uint64_t Wanted, std::optional<uint64_t> Declared)
+      : Extent(Image.extent()), Traits(Traits), Wanted(Wanted),
+        Declared(Declared) {}
+  llvm::Expected<std::vector<emulation::ExecutionWatch>>
+  started(emulation::ProcessView &Process) override;
+  llvm::Expected<std::optional<std::vector<emulation::ExecutionWatch>>>
+  watched(emulation::ProcessView &Process, uint64_t PC) override;
+  const std::vector<UnpackTransfer> &transfers() const { return Seen; }
+  std::optional<Capture> take() { return std::move(Captured); }
+
+private:
+  llvm::Error snapshot(emulation::ProcessView &Process,
+                       std::vector<uint8_t> &Bytes,
+                       std::vector<uint8_t> *Access = nullptr);
+  std::vector<emulation::ExecutionWatch> watches() const;
+  /// The generation of \p Bytes, which were read at image offset \p Offset.
+  uint64_t generation(llvm::ArrayRef<uint8_t> Bytes, uint64_t Offset) const;
+  const uint64_t Extent;
+  const ArchitectureTraits Traits;
+  const uint64_t Wanted;
+  const std::optional<uint64_t> Declared;
+  uint64_t Base = 0, InitialSP = 0;
+  /// Images[0] is the loaded image; Images[N] is the image at transfer N.
+  std::vector<std::vector<uint8_t>> Images;
+  /// The generation of the code that is running, and the pages known to hold
+  /// executed code of exactly that generation.
+  uint64_t Running = 0;
+  std::vector<bool> Executed;
+  std::vector<UnpackTransfer> Seen;
+  std::optional<Capture> Captured;
+};
+} // namespace neverd::unpack
+#endif

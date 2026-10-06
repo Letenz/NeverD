@@ -1099,6 +1099,8 @@ Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`�
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
+`lib/unpack` 分四層還原加殼映像。`core` 負責編排和模組登錄表；它不指名任何容器、指令集、來賓系統或保護器。`format/pe` 驗證一種容器，並把觀察到的記憶體重新寫成該容器的檔案。`packers/upx` 保存它所列出的容器和指令集的靜態外殼知識。`dynamic` 透過 `observeProcess` 觀察來賓行程：`Observation.def` 把每種容器與指令集對應到一個行程設定檔，並給出每種指令集的堆疊指標和指令視窗。新增一個目標只需一列表項和一個模組目錄，表中沒有對應列的輸入會被依名稱拒絕。`ExecutionSession` 負責執行監視；`ProcessObserver` 讀取已停止的行程並選擇下一個停止點，但不能改變來賓狀態。模擬層只知道 `defer_unmodeled`，它把未建模的匯入繫結到一旦執行就停止的不透明入口。參見[脫殼](unpack.md)。
+
 原生相依性探索僅在目前完整 LowIR 與不可變指令共同證明精確、已解析的鏈式程式碼指標槽時，才跟隨 ARM64 間接呼叫。獨立的程式碼指標讀取器檢查唯一唯讀儲存、衝突修正及目前函式入口；一般資料指標讀取器維持原有邊界。有界追蹤限定在一個基本區塊內，跨呼叫保留暫存器前必須取得目前執行階段或原生 ABI，包括使用特定暫存器傳參的 ARC 匯入。堆疊框架重載、未知呼叫與不完整證據仍未解析。相依性清單保留原始間接呼叫位置，本身不綁定其 ABI，也不授權發布原始碼。
 
 同一個不可變原生呼叫證明現在可在 SSA 之前繫結目前完整的純量 `NativeAnalysis` ABI，同時保留 LowIR/MedIR 中原始間接呼叫操作碼及呼叫位置。原生狀態推導會根據目前 LowIR 重做證明，一般呼叫破壞規則和框架檢查繼續適用。HighIR 只將已證明的不可變目標求值投影為選定的原始碼定義。發布時還要求目前呼叫端與被呼叫端的 LowIR、MedIR、HighIR 和已接受稽核一致，重新驗證指標槽、指令及 ABI，並確認每個原始已繫結呼叫恰好求值一次。儲存的提示和相依清單不能授權發布；缺漏、過時、重複或衝突的證據仍不受支援，每個被呼叫端仍須通過獨立的完整原始碼主體和相依閉合檢查。
@@ -1288,3 +1290,5 @@ CoreImage 的強 SDK 宣告保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 呼叫端完整的四 double HFA 回傳，可以在直接呼叫後 d0–d3 未被改變並到達回傳時，提出 32 位元組原生結果候選。共用回傳路徑證明隨後要求被呼叫函式在每條回傳路徑計算全部四個低位通道。僅有入口值或未知 Q 暫存器高位不能作為結果證據；仍須重新提升、驗證目前 ABI、發布主體並閉合相依性。
 
 Darwin 仿射橋接的權威實作也支援 `CGAffineTransformInvert`：x0 承載完整 48 位元組實體輸入，x8 承載結果儲存位址。目前強 CoreGraphics 匯入、提供者、必要函式庫與 SDK 宣告必須一致。共用框架效果層要求輸入全部初始化，並驗證完整結果範圍；HighC 在呼叫前建立輸入快照，保留六個結果寫入。
+
+同一份已認證的仿射框架契約也涵蓋 `CGAffineTransformTranslate`。x0 中完整的 48 位元組輸入副本必須已初始化；允許的寫入會使該副本失效，結果使用 x8。兩個 double 純量保留獨立的 d0/d1 載體。現有橋接在呼叫前快照全部六個輸入欄位，並寫入六個輸出欄位。此 SDK 呼叫契約不認證任意原生輸出緩衝區，也不授予相依函式主體發佈權限。

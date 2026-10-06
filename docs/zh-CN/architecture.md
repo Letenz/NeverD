@@ -1159,6 +1159,8 @@ Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
+`lib/unpack` 分四层恢复加壳镜像。`core` 负责编排和模块注册表；它不指名任何容器、指令集、来宾系统或保护器。`format/pe` 校验一种容器，并把观察到的内存重新写成该容器的文件。`packers/upx` 保存它所列出的容器和指令集的静态外壳知识。`dynamic` 通过 `observeProcess` 观察来宾进程：`Observation.def` 把每种容器与指令集映射到一个进程配置，并给出每种指令集的栈指针和指令窗口。新增一个目标只需一行表项和一个模块目录，表中没有对应行的输入会被按名称拒绝。`ExecutionSession` 负责执行监视；`ProcessObserver` 读取已停止的进程并选择下一个停止点，但不能改变来宾状态。模拟层只知道 `defer_unmodeled`，它把未建模的导入绑定到一旦执行就停止的不透明入口。参见[脱壳](unpack.md)。
+
 原生依赖发现仅在当前完整 LowIR 和不可变指令共同证明精确、已解析的链式代码指针槽时，才跟随 ARM64 间接调用。独立的代码指针读取器检查唯一只读存储、冲突修正及当前函数入口；普通数据指针读取器保持原有边界。有界追踪限定在一个基本块内，跨调用保留寄存器前必须取得当前运行时或原生 ABI，包括使用特定寄存器传参的 ARC 导入。帧重载、未知调用和不完整证据仍未解析。依赖清单保留原始间接调用位置，本身不绑定其 ABI，也不授权发布源码。
 
 同一个不可变原生调用证明现在可在 SSA 之前绑定当前完整的标量 `NativeAnalysis` ABI，同时保留 LowIR/MedIR 中原始间接调用操作码及调用位置。原生状态推导会根据当前 LowIR 重做证明，普通调用破坏规则和帧检查继续适用。HighIR 只将已证明的不可变目标求值投影为所选源码定义。发布时还要求当前调用方与被调用方的 LowIR、MedIR、HighIR 和已接受审计一致，重新验证指针槽、指令及 ABI，并确认每个原始已绑定调用恰好求值一次。保存的提示和依赖清单不能授权发布；缺失、陈旧、重复或冲突的证据仍不受支持，每个被调用方仍须通过独立的完整源码体和依赖闭合检查。
@@ -1350,3 +1352,5 @@ CoreImage 的强 SDK 声明保留 `imageWithCGImage:` 和 `imageByApplyingTransf
 调用者完整的四 double HFA 返回，可以在直接调用后 d0–d3 未被改变并到达返回时，提出 32 字节原生结果候选。共享返回路径证明随后要求被调函数在每条返回路径上计算全部四个低位通道。仅有入口值或未知 Q 寄存器高位不能作为结果证据；仍须重新提升、验证当前 ABI、发布正文并闭合依赖。
 
 Darwin 仿射桥接的权威实现也支持 `CGAffineTransformInvert`：x0 承载完整 48 字节物理输入，x8 承载结果存储地址。当前强 CoreGraphics 导入、提供者、所需库和 SDK 声明必须一致。共享帧效果层要求输入全部初始化，并验证完整结果范围；HighC 在调用前快照输入，保留六个结果写入。
+
+同一份已认证的仿射帧契约也覆盖 `CGAffineTransformTranslate`。x0 中完整的 48 字节输入副本必须已初始化；允许的写入会使该副本失效，结果使用 x8。两个 double 标量保留独立的 d0/d1 载体。现有桥接在调用前快照全部六个输入字段，并写入六个输出字段。此 SDK 调用契约不认证任意原生输出缓冲区，也不授予依赖正文发布权限。

@@ -1166,7 +1166,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 4852 項 CPU 檢查及 17 項 SEH 回歸，共有 5093 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `4852 CPU + 224 WHP + 17 SEH = 5093`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 4852 項 CPU 檢查及 17 項 SEH 回歸，共有 5093 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `4884 CPU + 224 WHP + 17 SEH = 5125`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1272,6 +1272,8 @@ Windows ring3 依獨立原生觀測，將 checked x64 的 `operand_alignment` �
 `WindowsExportTests.cpp` 使用原始 x64/ARM64 DLL 與 EXE，驗證轉送的程式碼／資料／序號呼叫、別名、初始化查詢、重定位、大小寫敏感的缺失項、LastError、循環與非駐留目標、無效指標，以及成功查詢後的中繼資料修改。同一 EXE 有獨立原生 Windows 對照；原生 CI 強制執行 WHP 案例。C ABI／CLI 測試比對完整報告。原生 ARM64 硬體證據仍待補齊。 具有及不具有匯出表的 EXE 變體涵蓋兩種相依圖、PEB 串列順序、結束通知順序，以及名稱／序號／空指標的錯誤碼。
 
 `WindowsLifetimeTests.cpp` 將固定通知序列與獨立原生 Windows 程序及 KVM/WHP/Unicorn 執行比對，涵蓋正常結束、進入點返回、兩個 DLL 初始化失敗、四處提早結束及無進入點 DLL。另驗證回呼故障、共用預算、重定位 TLS 欄位及 TLS 總容量。原生進入點返回探針保留初始執行緒控制代碼，重複64 次核對執行緒結束碼及精確執行緒／程序通知序列。觀察後終止其餘子程序執行緒，不將程序結束碼視為進入點返回值。
+
+`NeverDUnpackTests`、`NeverDUnpackExecutionTests` 和 `NeverDUnpackPublicTests` 涵蓋加殼映像的還原；參見[脫殼](unpack.md)。`UnpackGeneratedTests.cpp` 用測試自己加殼的程式，在 x86-64 和 ARM64 上檢查入口規則。`X64ReturnPrefixTests.cpp` 在每種傳輸上檢查雙位元組近返回，並確認其它帶前綴的返回仍被拒絕。`WindowsDeferredTests.cpp` 檢查不透明入口與已停止行程的觀察；`ExecutionSessionTests.cpp` 檢查執行監視。
 
 Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及目前行程的 `FlushInstructionCache`。OS 層管理保留區域，`AddressSpace` 統一管理已認可頁面、權限和實體儲存。測試涵蓋動態程式碼改寫、存取錯誤和記憶體額度回收。
 
@@ -1412,6 +1414,8 @@ block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符�
 
 `LowIRLoopInference.ProjectedCounterCopies*` 涵蓋在遞增前經由帶獨立標籤的字複製計數器位段的巢狀迴圈。144 組完整狀態案例涵蓋暫存器、框架、函式暫存量、兩種位元組順序、1/3/4 位元組位段、直接或快取退出條件，以及整字複製對照。投影相等關係必須在儲存的到達狀態和每條傳入轉移上成立；高位保持獨立。轉移域蘊含證明可辨識由不同參數表示的加法遞推。捨棄高位標籤、無效更新、缺少保護，以及推斷或最終證明預算少一單位時仍會拒絕。
 
+`LowIRLoopInference.TransferredCounters*` 涵蓋計數器在不同切點間搬移儲存位置、且其他迴圈可繞過各切點的情況。精確的符號單位步長轉移僅用於提出來源計數器保護條件，以及允許一個切點使用不同位置的備用排名；所有條件和排名仍須通過完整轉移證明。96 組完整狀態案例涵蓋暫存器、框架、函式暫存量、兩種位元組順序、1/3/4/8 位元組計數器、獨立標籤及位置不變的對照。結果或標籤變更、錯誤排名映射、不終止更新、缺少保護及推斷或最終證明預算不足均會被拒絕。計數器遍歷使用既有符號節點限額，可選圖選擇器的工作預算可維持為零。
+
 `LowIRLoopRefinement.GuardedCuts*` 與 `BinaryLowIRLoopRefinement.GuardedCuts*` 涵蓋同址切點、暫存器、框架及原生系統旗標、兩種位元組序、未匹配的有限與循環路徑、重疊及錯配拒絕、前綴泛化、未定義值見證、錯誤中繼資料、摘要與共用預算。獨立原生測試證明兩個 R10 上下文共用循環位址，並確認未稽核邊界檢查先於選擇條件。一般 ABI 認證仍是獨立工作。
 
 `BinaryLowIRLoopInference.NativeSelectors*` 涵蓋兩個暫存器上下文、僅靠框架區分的上下文、三域合取、無法區分的範本、來源及原生迴圈本體變異，以及推導與證明各自的精確和少一預算。迴圈次數任意，不引入入口常數。
@@ -1423,3 +1427,5 @@ block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符�
 `NativeSourceHints.FourDoubleCallerDemandNeedsEveryUnchangedCarrier` 檢查四個低位通道、獨立高位寫入及九種宣告或控制修改。`FourDoubleReturnRequiresEveryComputedLowLane` 拒絕十二種結果不完整或契約失效的情況。`DarwinNativeRecordReturns.FourComputedDoublesExecuteAtO0AndO2` 在每個最佳化等級執行 2048 組輸入，與獨立算術判據比較全部 32 位元組結果。
 
 `DarwinIndirectRecordCalls.AffineInvertSnapshotsItsCompleteAliasedInput` 在 O0、O2 各執行 2560 個同址、重疊或分離的輸入輸出配置，檢查輸入位元模式、單次呼叫、全部 48 位元組結果與完整含守衛儲存。它驗證實體複製與快照，不是原始機器碼或原生 SDK 執行。目前矩陣/仿射契約測試對每個契約保留 22 種拒絕修改。
+
+`DarwinIndirectRecordCalls.AffineTranslatePreservesScalarBitsAndSnapshotsAliasedInput` 在 O0、O2 各執行 2560 組輸入，檢查兩個純量的位元模式、六個輸入欄位、單次呼叫、全部輸出位元組，以及同址、重疊和分離配置的受保護儲存空間。四種純量 ABI 修改和共用的 22 種匯入/ABI 修改均被拒絕。位元操作替身驗證實體參數和輸入快照，並非平移數學判據或原始機器碼執行。

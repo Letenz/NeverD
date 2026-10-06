@@ -1054,17 +1054,17 @@ TEST(DarwinIndirectRecordCalls,
   executeSource(Source);
 }
 
-TEST(DarwinIndirectRecordCalls, AffineInvertSnapshotsItsCompleteAliasedInput) {
+void checkAffineInputSnapshot(const char *Name, bool Translation) {
   constexpr auto CoreGraphics =
       "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
-  auto Image = image("_CGAffineTransformInvert");
+  auto Image = image(("_" + std::string(Name)).c_str());
   Image.DynInfo.NeededLibs = {CoreGraphics};
   Image.DyldBindSlots.at(0x2180).Module = CoreGraphics;
   const auto Hint = darwinRuntimeSourceCallHint(Image, 0x2180);
   ASSERT_TRUE(Hint);
   const auto Effects = darwinMatrixSourceFrameEffects(Image, *Hint);
   ASSERT_TRUE(Effects);
-  ASSERT_EQ(Hint->Signature.Parameters.size(), 1U);
+  ASSERT_EQ(Hint->Signature.Parameters.size(), Translation ? 3U : 1U);
   EXPECT_EQ(Hint->Signature.Parameters[0].Location.RegisterOffset, a64reg::X0);
   EXPECT_EQ(Hint->Signature.ReturnLocation.RegisterOffset, a64reg::X8);
   EXPECT_EQ(Hint->ByteCount, 48U);
@@ -1072,16 +1072,44 @@ TEST(DarwinIndirectRecordCalls, AffineInvertSnapshotsItsCompleteAliasedInput) {
             (std::map<size_t, size_t>{{0, 48}}));
   EXPECT_EQ(Effects->InitializedFrameParameters, (std::set<size_t>{0}));
   EXPECT_TRUE(Effects->InitializesIndirectResult);
+  const auto Double = NdType::makeFloat(8);
+  if (Translation) {
+    for (unsigned J = 0; J != 2; ++J) {
+      const auto &Parameter = Hint->Signature.Parameters[J + 1];
+      EXPECT_TRUE(equalSourceTypes(Parameter.Type, Double));
+      EXPECT_EQ(Parameter.Location.Kind,
+                SourceABICarrierKind::FloatingRegister);
+      EXPECT_EQ(Parameter.Location.RegisterOffset,
+                getTargetRegInfo(Arch::AArch64).FPParamRegs[J]);
+    }
+    for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+      auto Changed = *Hint;
+      if (Mutation == 0)
+        Changed.Signature.Parameters[1].Location.RegisterOffset = a64reg::X1;
+      else if (Mutation == 1)
+        Changed.Signature.Parameters[1].Location.ValueBytes = 4;
+      else if (Mutation == 2)
+        Changed.Signature.Parameters[2].Location =
+            Changed.Signature.Parameters[1].Location;
+      else
+        Changed.Signature.Parameters[2].Type = NdType::makeFloat(4);
+      EXPECT_FALSE(darwinMatrixSourceFrameEffects(Image, Changed)) << Mutation;
+    }
+  }
   SourceFunctionTypeHint Entry;
   Entry.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
   Entry.ReturnType = NdType::makeVoid();
   const auto Pointer = NdType::makePtr(NdType::makeVoid());
   Entry.Parameters = {{"input", Pointer}, {"output", Pointer}};
+  if (Translation) {
+    Entry.Parameters.push_back({"first", Double});
+    Entry.Parameters.push_back({"second", Double});
+  }
   std::string Error;
   ASSERT_TRUE(assignDarwinScalarSourceABI(Entry, Arch::AArch64, Error));
   LowFunc Low;
   Low.Entry = 0x1200;
-  Low.Name = "invert_affine";
+  Low.Name = "snapshot_affine";
   LowBlock Block;
   Block.Id = 0;
   Block.StartAddr = Low.Entry;
@@ -1120,40 +1148,66 @@ TEST(DarwinIndirectRecordCalls, AffineInvertSnapshotsItsCompleteAliasedInput) {
   Options.TheArch = Arch::AArch64;
   ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
   const auto Record = typeToC(Hint->Signature.ReturnType);
-  Source +=
-      "\n#include <string.h>\n"
-      "static uint64_t input_bits[6]; static unsigned calls, mismatch;\n" +
-      Record + " inverse_probe(" + Record +
-      ") __asm__(\"_CGAffineTransformInvert\");\n" + Record +
-      " inverse_probe(" + Record +
-      " input) {\n"
-      "  ++calls; mismatch |= memcmp(&input, input_bits, 48) != 0;\n"
-      "  uint64_t bits[6]; memcpy(bits, &input, 48);\n"
-      "  for (unsigned j = 0; j != 6; ++j) bits[j] ^= "
-      "0x123456789abcdef0ULL + j;\n  " +
-      Record +
-      " result; memcpy(&result, bits, 48); return result;\n}\n"
-      "int main(void) {\n"
-      "  static const uint64_t cases[] = {0, 0x8000000000000000ULL, "
-      "0x3ff0000000000000ULL, 0x7ff0000000000000ULL, "
-      "0xfff0000000000000ULL, 0x7ff8000000001234ULL, 1, "
-      "0x8000000000000001ULL};\n"
-      "  static const unsigned outputs[] = {1, 3, 4, 5, 9};\n"
-      "  for (unsigned i = 0; i != 512; ++i) {\n"
-      "    for (unsigned j = 0; j != 6; ++j) input_bits[j] = "
-      "cases[(i + j) % 8] ^ ((uint64_t)(i / 8) << 8) ^ j;\n"
-      "    for (unsigned k = 0; k != 5; ++k) {\n"
-      "      uint64_t storage[16], expected[16];\n"
-      "      memset(storage, 0xa5, sizeof(storage));\n"
-      "      memcpy(storage + 3, input_bits, 48);\n"
-      "      memcpy(expected, storage, sizeof(storage));\n"
-      "      for (unsigned j = 0; j != 6; ++j) "
-      "expected[outputs[k] + j] = input_bits[j] ^ "
-      "(0x123456789abcdef0ULL + j);\n"
-      "      invert_affine(storage + 3, storage + outputs[k]);\n"
-      "      if (memcmp(storage, expected, sizeof(storage))) return 1;\n"
-      "    }\n  }\n  return mismatch || calls != 2560;\n}\n";
+  const std::string ScalarDeclaration = Translation ? ", double, double" : "";
+  const std::string ScalarDefinition =
+      Translation ? ", double first, double second" : "";
+  const std::string ScalarCheck =
+      Translation ? "  uint64_t a, b; memcpy(&a, &first, 8); "
+                    "memcpy(&b, &second, 8);\n"
+                    "  mismatch |= a != scalar_bits[0] || "
+                    "b != scalar_bits[1];\n"
+                  : "";
+  const std::string ResultBits =
+      "(0x123456789abcdef0ULL + j)" +
+      std::string(Translation ? " ^ scalar_bits[j % 2]" : "");
+  const std::string CallScalars = Translation ? ", scalars[0], scalars[1]" : "";
+  Source += "\n#include <string.h>\n"
+            "static uint64_t input_bits[6], scalar_bits[2]; "
+            "static unsigned calls, mismatch;\n" +
+            Record + " snapshot_probe(" + Record + ScalarDeclaration +
+            ") __asm__(\"_" + Name + "\");\n" + Record + " snapshot_probe(" +
+            Record + " input" + ScalarDefinition + ") {\n" + ScalarCheck +
+            "  ++calls; mismatch |= memcmp(&input, input_bits, 48) != 0;\n"
+            "  uint64_t bits[6]; memcpy(bits, &input, 48);\n"
+            "  for (unsigned j = 0; j != 6; ++j) bits[j] ^= " +
+            ResultBits + ";\n  " + Record +
+            " result; memcpy(&result, bits, 48); return result;\n}\n"
+            "int main(void) {\n"
+            "  static const uint64_t cases[] = {0, 0x8000000000000000ULL, "
+            "0x3ff0000000000000ULL, 0x7ff0000000000000ULL, "
+            "0xfff0000000000000ULL, 0x7ff8000000001234ULL, 1, "
+            "0x8000000000000001ULL};\n"
+            "  static const unsigned outputs[] = {1, 3, 4, 5, 9};\n"
+            "  for (unsigned i = 0; i != 512; ++i) {\n"
+            "    scalar_bits[0] = cases[i % 8]; "
+            "scalar_bits[1] = cases[(i / 8) % 8];\n"
+            "    double scalars[2]; memcpy(scalars, scalar_bits, 16);\n"
+            "    for (unsigned j = 0; j != 6; ++j) input_bits[j] = "
+            "cases[(i + j) % 8] ^ ((uint64_t)(i / 8) << 8) ^ j;\n"
+            "    for (unsigned k = 0; k != 5; ++k) {\n"
+            "      uint64_t storage[16], expected[16];\n"
+            "      memset(storage, 0xa5, sizeof(storage));\n"
+            "      memcpy(storage + 3, input_bits, 48);\n"
+            "      memcpy(expected, storage, sizeof(storage));\n"
+            "      for (unsigned j = 0; j != 6; ++j) "
+            "expected[outputs[k] + j] = input_bits[j] ^ " +
+            ResultBits +
+            ";\n"
+            "      snapshot_affine(storage + 3, storage + outputs[k]" +
+            CallScalars +
+            ");\n"
+            "      if (memcmp(storage, expected, sizeof(storage))) return 1;\n"
+            "    }\n  }\n  return mismatch || calls != 2560;\n}\n";
   executeSource(Source);
+}
+
+TEST(DarwinIndirectRecordCalls, AffineInvertSnapshotsItsCompleteAliasedInput) {
+  checkAffineInputSnapshot("CGAffineTransformInvert", false);
+}
+
+TEST(DarwinIndirectRecordCalls,
+     AffineTranslatePreservesScalarBitsAndSnapshotsAliasedInput) {
+  checkAffineInputSnapshot("CGAffineTransformTranslate", true);
 }
 
 TEST(DarwinIndirectRecordCalls,
@@ -1683,7 +1737,7 @@ TEST(DarwinIndirectRecordCalls, MatrixFrameEffectsRequireExactCurrentContract) {
        {"CATransform3DMakeTranslation", "CATransform3DScale",
         "CGAffineTransformMakeRotation", "CGAffineTransformMakeScale",
         "CGAffineTransformConcat", "CGAffineTransformInvert",
-        "CGRectApplyAffineTransform"}) {
+        "CGAffineTransformTranslate", "CGRectApplyAffineTransform"}) {
     SCOPED_TRACE(Name);
     const bool Rect = llvm::StringRef(Name) == "CGRectApplyAffineTransform";
     const bool Affine = llvm::StringRef(Name).starts_with("CGAffine") || Rect;
@@ -1699,7 +1753,8 @@ TEST(DarwinIndirectRecordCalls, MatrixFrameEffectsRequireExactCurrentContract) {
     const unsigned Inputs =
         std::string(Name) == "CGAffineTransformConcat" ? 2U
         : std::string(Name) == "CATransform3DScale" || Rect ||
-                std::string(Name) == "CGAffineTransformInvert"
+                std::string(Name) == "CGAffineTransformInvert" ||
+                std::string(Name) == "CGAffineTransformTranslate"
             ? 1U
             : 0U;
     EXPECT_EQ(Binding->Signature.ReturnType->Size, Rect     ? 32U

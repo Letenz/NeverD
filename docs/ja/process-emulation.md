@@ -209,6 +209,8 @@ x64 GS と ARM64 x18 は TEB を指し、スタック範囲、自身、PID/TID�
 
 空でない入力バッファが読み取り不可の場合、`WriteFile` は `ERROR_INVALID_USER_BUFFER`（1784）を返し、書き込みバイト数をゼロにして、バイトを出力しません。
 
+`windows.defer_unmodeled` は、モデルが実装していないローダー上の事実を含むイメージを読み込み、実行がそのいずれかに依存した場合にのみ停止します。API インベントリにないエクスポートとカタログにないモジュールは不透明なエントリに束縛されます。各識別子は 1 つのアドレスに解決され、それを実行すると `module!export` を名指しして `unsupported_service` で停止します。モデルが解釈しないディレクトリは解釈されないままとなり、ファイルに裏付けのないメタデータは読み込み時に読まれず、そのようなイメージを通るフレームベースの例外ディスパッチは停止します。`observeProcess` は `ProcessObserver` を追加します。これはプロセスの開始時と各実行ウォッチで停止したプロセスを読み取りますが、ゲストの状態を変えることはできず、これが実行を終了させた場合は `observer` が報告されます。[アンパック](unpack.md)はこの 2 つの上に構築されています。
+
 [PE/COFF](https://learn.microsoft.com/windows/win32/debug/pe-format), [ARM64 ABI](https://learn.microsoft.com/cpp/build/arm64-windows-abi-conventions), [WriteFile](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-writefile), [TLS](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue), [Wine 10.0 loader](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/loader.c). [GetProcAddress](https://learn.microsoft.com/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress).
 
 <!-- i18n-section: verification -->

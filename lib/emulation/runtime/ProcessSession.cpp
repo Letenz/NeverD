@@ -17,6 +17,7 @@
 #include "../os/windows/process/WindowsProcess.h"
 #include "RuntimeValues.h"
 
+#include "neverd/emulation/ProcessObserver.h"
 #include "neverd/emulation/ProcessReportFields.h"
 
 #include "llvm/Support/ErrorHandling.h"
@@ -50,9 +51,14 @@ const char *processStopReasonName(ProcessStopReason Reason) {
   }
   llvm_unreachable(runtime::ProcessOutcome);
 }
-llvm::Expected<ProcessResult> emulateProcess(const std::filesystem::path &Path,
-                                             ProcessProfile Profile,
-                                             const ProcessOptions &Options) {
+ProcessView::~ProcessView() = default;
+ProcessObserver::~ProcessObserver() = default;
+
+namespace {
+llvm::Expected<ProcessResult> runProfile(const std::filesystem::path &Path,
+                                         ProcessProfile Profile,
+                                         const ProcessOptions &Options,
+                                         ProcessObserver *Observer) {
   if (Options.Windows && Profile != ProcessProfile::WindowsPE64)
     return diagnostic::error(process_report::WindowsProfile);
   if (Options.DarwinSystem) {
@@ -86,6 +92,9 @@ llvm::Expected<ProcessResult> emulateProcess(const std::filesystem::path &Path,
     if (auto E = linux_model::validateSignalOptions(*Options.LinuxSignals))
       return std::move(E);
   }
+  // An ignored observer would report an unobserved run as an observed one.
+  if (Observer && Profile != ProcessProfile::WindowsPE64)
+    return diagnostic::error(process_report::ObserverProfile);
   if (Options.LinuxFiles) {
     if (Profile != ProcessProfile::LinuxELF64 &&
         Profile != ProcessProfile::AndroidNativeAArch64)
@@ -106,7 +115,7 @@ llvm::Expected<ProcessResult> emulateProcess(const std::filesystem::path &Path,
   case ProcessProfile::AndroidNativeAArch64:
     return android_model::runNative(Path, Options);
   case ProcessProfile::WindowsPE64:
-    return windows_process::runProcess(Path, Options);
+    return windows_process::runProcess(Path, Options, Observer);
   case ProcessProfile::MacOSMachO64:
     return darwin_model::runProcess(Path, darwin_model::macOSProfile(),
                                     Options);
@@ -118,5 +127,19 @@ llvm::Expected<ProcessResult> emulateProcess(const std::filesystem::path &Path,
                                     Options);
   }
   return diagnostic::error(runtime::ProcessProfile);
+}
+} // namespace
+
+llvm::Expected<ProcessResult> emulateProcess(const std::filesystem::path &Path,
+                                             ProcessProfile Profile,
+                                             const ProcessOptions &Options) {
+  return runProfile(Path, Profile, Options, nullptr);
+}
+
+llvm::Expected<ProcessResult> observeProcess(const std::filesystem::path &Path,
+                                             ProcessProfile Profile,
+                                             const ProcessOptions &Options,
+                                             ProcessObserver &Observer) {
+  return runProfile(Path, Profile, Options, &Observer);
 }
 } // namespace neverd::emulation

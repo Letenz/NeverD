@@ -20,6 +20,7 @@ NEVERD_PROCESS_OPTION_STRINGS(Environment, "environment", Environment)
 #endif
 #ifdef NEVERD_PROCESS_REPORT_FIELD
 NEVERD_PROCESS_REPORT_FIELD(Modules, "modules")
+NEVERD_PROCESS_REPORT_FIELD(DeferUnmodeled, "defer_unmodeled")
 NEVERD_PROCESS_REPORT_FIELD(Path, "path")
 NEVERD_PROCESS_REPORT_FIELD(Android, "android")
 NEVERD_PROCESS_REPORT_FIELD(LinuxTime, "linux_time")
@@ -239,6 +240,8 @@ NEVERD_PROCESS_REPORT_TEXT(AndroidOptions, "invalid Android native option: ")
 NEVERD_PROCESS_REPORT_TEXT(WindowsOptions, "invalid Windows process option: ")
 NEVERD_PROCESS_REPORT_TEXT(WindowsProfile,
                            "Windows options require windows-pe64-v1")
+NEVERD_PROCESS_REPORT_TEXT(ObserverProfile,
+                           "process observation requires windows-pe64-v1")
 NEVERD_PROCESS_REPORT_TEXT(LinuxTimeOptions, "invalid linux_time option: ")
 NEVERD_PROCESS_REPORT_TEXT(
     LinuxTimeProfile,

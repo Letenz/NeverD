@@ -1,0 +1,58 @@
+//===- PE.def - PE32+ limits, layout values and diagnostics ---------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_UNPACK_PE_VALUE
+NEVERD_UNPACK_PE_VALUE(PointerSize, 8)
+NEVERD_UNPACK_PE_VALUE(MaxSections, 96)
+// The optional header reserves one directory beyond the named ones.
+NEVERD_UNPACK_PE_VALUE(MaxDirectories, 16)
+NEVERD_UNPACK_PE_VALUE(MinFileAlignment, 512)
+NEVERD_UNPACK_PE_VALUE(MaxFileAlignment, 65536)
+NEVERD_UNPACK_PE_VALUE(SectionNameBytes, 8)
+NEVERD_UNPACK_PE_VALUE(OrdinalFlag, 1ull << 63)
+NEVERD_UNPACK_PE_VALUE(HintBytes, 2)
+NEVERD_UNPACK_PE_VALUE(MaxDebugRecords, 4096)
+#endif
+
+#ifdef NEVERD_UNPACK_PE_BYTES
+NEVERD_UNPACK_PE_BYTES(DOSMagic, 'M', 'Z')
+#endif
+
+// COFF machine, guest instruction set. An image for any other machine is
+// rejected by name.
+#ifdef NEVERD_UNPACK_PE_MACHINE
+NEVERD_UNPACK_PE_MACHINE(IMAGE_FILE_MACHINE_AMD64, X64)
+NEVERD_UNPACK_PE_MACHINE(IMAGE_FILE_MACHINE_ARM64, AArch64)
+#endif
+
+// Directories that describe the file layout or the load address of the input.
+// Bound imports and certificates name replaced file contents, and the input's
+// relocations cannot be shown to cover generated content. The rebuilt file
+// names a new import directory over the same cells, so it has no separate
+// address table.
+#ifdef NEVERD_UNPACK_PE_STALE_DIRECTORY
+NEVERD_UNPACK_PE_STALE_DIRECTORY(BOUND_IMPORT)
+NEVERD_UNPACK_PE_STALE_DIRECTORY(CERTIFICATE_TABLE)
+NEVERD_UNPACK_PE_STALE_DIRECTORY(BASE_RELOCATION_TABLE)
+NEVERD_UNPACK_PE_STALE_DIRECTORY(IAT)
+#endif
+
+#ifdef NEVERD_UNPACK_PE_TEXT
+NEVERD_UNPACK_PE_TEXT(NotPE, "input has no PE signature")
+NEVERD_UNPACK_PE_TEXT(Truncated, "PE headers are truncated or overlap")
+NEVERD_UNPACK_PE_TEXT(
+    Machine, "only 64-bit PE32+ images for x86-64 or ARM64 can be unpacked")
+NEVERD_UNPACK_PE_TEXT(
+    Alignment, "PE section or file alignment is outside the supported layout")
+NEVERD_UNPACK_PE_TEXT(
+    Sections, "PE section table is unordered, overlapping or outside the image")
+NEVERD_UNPACK_PE_TEXT(SectionData, "PE section data lies outside the file")
+NEVERD_UNPACK_PE_TEXT(
+    HeaderRoom, "PE headers have no room for the rebuilt metadata section")
+NEVERD_UNPACK_PE_TEXT(ImageSize,
+                      "rebuilt image exceeds the PE32+ address range")
+NEVERD_UNPACK_PE_TEXT(
+    Override, "a metadata override names no directory record inside the image")
+#endif
