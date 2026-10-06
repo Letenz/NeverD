@@ -20,6 +20,8 @@ Au-delà de huit bits, les comparaisons examinent d’abord les moitiés hautes 
 
 `BitVectorSolver::cloneEncoding()` copie un encodage complet avant toute tentative de recherche SAT. La méthode renvoie null après une recherche ou un échec d’encodage. Chaque copie possède ses clauses modifiables, sa propagation à la racine, ses portes et ses correspondances de bits ; elle conserve l’ordre des variables, le décompte des portes et les paramètres du solveur. Le contexte doit survivre aux deux solveurs ; le solveur source peut être modifié ou détruit indépendamment.
 
+Le moteur SAT conserve quatre entrées de surveillance dans chaque liste de littéral ; les listes plus longues grandissent dynamiquement. Cela évite des allocations séparées pour les listes courtes lors de la construction, de la copie avant recherche et de la destruction. L’ordre de propagation, les clauses, la propriété indépendante et tous les plafonds de travail restent inchangés.
+
 <!-- i18n-section: z3-build -->
 
 ## Build Z3 facultatif

@@ -1464,3 +1464,5 @@ Swift witness 產生器在 ARM64/x86-64 macOS 和 Mac Catalyst 上同時驗證 `
 `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults` 在兩種架構上拒絕載體、佈局、上下文角色與間接結果變更。`SourceABI.SwiftPointForwardingPreservesBothIEEECarriers` 在 -O0/-O2 下編譯執行轉發原始碼，驗證兩個欄位的正負零、次正規數、無窮與 NaN 酬載。宣告測試接受編譯器及具名參數形式，拒絕簽名變更與歧義映像身分。
 
 MainActor 測試資料檢查完整的固定中繼資料與靜態表流程，拒絕儲存、ABI、中繼資料擷取、表識別的變化、額外副作用、缺少或重複宣告及輸入預算耗盡。兩個目錄都要求每種目標提供全部三個配對 SDK 匯出。見證繫結測試在 arm64/x64 上涵蓋全部四種描述符，每種描述符與架構檢查 33 項輸入、匯入及 ABI 變異；主機執行階段檢查以五種具現化參數位元模式核對公開表。
+
+`BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource` 在複製並銷毀來源後擴展文字表及共享 watch 串列，獨立修改同源副本，在一次 watch 存取處中斷傳播，並依據原始子句和獨立布林關係檢查恢復後的完整模型。

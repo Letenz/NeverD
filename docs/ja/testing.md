@@ -1518,3 +1518,5 @@ Swift witness の生成器は ARM64/x86-64 の macOS と Mac Catalyst で `Curre
 `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults` は両アーキテクチャでレジスタ、配置、コンテキストの役割、間接結果の変更を拒否する。`SourceABI.SwiftPointForwardingPreservesBothIEEECarriers` は -O0/-O2 で転送ソースを実行し、両フィールドの符号付きゼロ、非正規数、無限大、NaN ペイロードを確認する。宣言テストはコンパイラ形式と名前付き引数を認め、変更された署名や曖昧なイメージ識別を拒否する。
 
 MainActor のフィクスチャは固定メタデータと静的テーブルの完全な流れを検証し、ストレージ、ABI、メタデータ抽出、テーブル識別、追加の副作用、宣言の欠落・重複、入力予算超過を拒否します。両カタログで各ターゲットの 3 つの SDK 公開シンボルが必須です。arm64/x64 の witness バインド試験は 4 記述子すべてに対して各アーキテクチャで 33 の入力・インポート・ABI 変異を検証します。ホストのランタイム試験は 5 種の具現化引数ビットパターンで公開テーブルを比較します。
+
+`BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource` はコピー元を破棄した後のリテラル表と共有監視リストの拡張、兄弟コピーの独立した変更、一回の監視訪問での伝播中断を検査し、再開後の完全モデルを元の節と独立した論理関係で確認します。

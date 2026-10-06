@@ -20,6 +20,8 @@ I confronti più larghi di otto bit confrontano prima le metà alte e usano quel
 
 `BitVectorSolver::cloneEncoding()` copia una codifica completa prima di qualsiasi tentativo di ricerca SAT. Restituisce null dopo una ricerca o un errore di codifica. Ogni copia possiede clausole mutabili, propagazione alla radice, porte e corrispondenze dei bit indipendenti; conserva ordine delle variabili, conteggio delle porte e impostazioni del risolutore. Il contesto deve sopravvivere a entrambi i risolutori; quello originale può essere modificato o distrutto indipendentemente.
 
+Il motore SAT conserva quattro elementi di sorveglianza in ogni lista di letterale; le liste più lunghe crescono dinamicamente. Questo evita allocazioni separate delle liste corte durante costruzione, copia prima della ricerca e distruzione. Ordine di propagazione, clausole, proprietà indipendente e tutti i limiti di lavoro restano invariati.
+
 <!-- i18n-section: z3-build -->
 
 ## Build Z3 facoltativa

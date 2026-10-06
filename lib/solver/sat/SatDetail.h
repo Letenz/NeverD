@@ -37,6 +37,7 @@
 #include "neverd/solver/SatTypes.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -309,7 +310,10 @@ public:
 
   /// One list per literal, holding the clauses that must be visited when that
   /// literal becomes true.
-  std::vector<std::vector<Watcher>> Watches;
+  // Most gate clauses have short watch lists. Keep four entries beside each
+  // list header to avoid separate allocations during encoding, cloning and
+  // teardown; longer lists still grow without changing propagation order.
+  std::vector<llvm::SmallVector<Watcher, 4>> Watches;
 
   std::vector<int8_t> Value;
   std::vector<uint32_t> Level;

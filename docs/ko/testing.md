@@ -1508,3 +1508,5 @@ Swift witness 생성기는 ARM64/x86-64 macOS와 Mac Catalyst에서 `CurrentValu
 `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults`는 두 아키텍처에서 레지스터, 배치, 컨텍스트 역할 및 간접 결과 변경을 거부한다. `SourceABI.SwiftPointForwardingPreservesBothIEEECarriers`는 -O0/-O2에서 전달 소스를 실행하여 두 필드의 부호 있는 0, 비정규 수, 무한대와 NaN 페이로드를 검사한다. 선언 테스트는 컴파일러 및 이름 있는 인자 형태를 허용하고 변경된 서명과 모호한 이미지 식별을 거부한다.
 
 MainActor 픽스처는 고정 메타데이터와 정적 테이블의 전체 흐름을 확인하고 저장소, ABI, 메타데이터 추출, 테이블 식별, 추가 효과, 누락되거나 중복된 선언 및 입력 예산 초과를 거부합니다. 두 카탈로그는 모든 대상에서 세 SDK 내보내기를 요구합니다. arm64/x64 witness 바인딩 시험은 네 설명자 각각에 대해 아키텍처별 33개의 입력, 가져오기 및 ABI 변이를 확인합니다. 호스트 런타임 시험은 다섯 인스턴스화 인수 비트 패턴으로 공개 테이블을 비교합니다.
+
+`BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource`는 복사 후 원본 소멸, 리터럴 테이블과 공유 감시 목록 확장, 형제 복사본의 독립 변경, 감시 방문 한 번에서의 전파 중단을 검사합니다. 재개된 전체 모델을 원래 절과 독립적인 불리언 관계로 검증합니다.
