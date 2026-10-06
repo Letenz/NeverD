@@ -3144,6 +3144,16 @@ class LoopPlanInference {
     return Mask;
   }
 
+  bool preservesOutsideLane(SymRef Before, SymRef After, unsigned Offset,
+                            unsigned Width, unsigned Total) {
+    auto &Ctx = Session.Context;
+    return (!Offset || Ctx.mkExtract(Before, 0, Offset) ==
+                           Ctx.mkExtract(After, 0, Offset)) &&
+           (Offset + Width == Total ||
+            Ctx.mkExtract(Before, Offset + Width, Total - Offset - Width) ==
+                Ctx.mkExtract(After, Offset + Width, Total - Offset - Width));
+  }
+
   // A zero mask denotes a full-width recurrence. Narrow zero-extended updates
   // and exact projected updates supply their mask for guards and ranks.
   // Other bits can be rebuilt or change: only the projection is proposed, and
@@ -3166,7 +3176,13 @@ class LoopPlanInference {
         const auto Input = Ctx.mkExtract(Before, Offset, Width);
         const auto Step = Ctx.mkConst(Width, Increment ? 1 : UINT64_MAX);
         const auto Updated = Ctx.mkAdd(Input, Step);
-        const bool Matches = Ctx.mkExtract(After, Offset, Width) == Updated;
+        // Constant lane coincidences with unrelated surrounding changes are
+        // poor recurrence proposals. Preserve isolated constant-lane updates;
+        // rebuilt lanes can be discovered after their input is generalized.
+        const bool Matches =
+            Ctx.mkExtract(After, Offset, Width) == Updated &&
+            (!Ctx.isConst(Input) ||
+             preservesOutsideLane(Before, After, Offset, Width, Total));
         checker().nodes();
         if (Matches)
           return (UINT64_MAX >> (64 - Width)) << Offset;
