@@ -1094,6 +1094,13 @@ Use the
 codes. Production builds may enable this feature with `BUILD_TESTING=OFF`;
 test-only Unicorn configuration must not be required by `libneverd`.
 
+For changes to shared kernel API dispatch or its call adapters, include
+`NeverDNativeDriverTests` and `NeverDDriverGuardMetadataTests` with the two
+driver emulation suites above. These checks cover common validation, strict
+execution policy, request ownership and backend-visible outcomes as well as
+individual API behavior. Unavailable native backends and external WDK images
+remain explicit skips.
+
 Explicit nested user-memory tests cover strict JSON/native graph validation,
 shared and cyclic references, unaligned pointer slots, page rights, request and
 process revocation, and WDF caller-context ownership. Genuine WDK WDM/KMDF tests

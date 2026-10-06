@@ -2099,6 +2099,14 @@ The runtime reads guest varargs through the session's checked Win64 argument
 reader. Backend faults retain their first structured cause; observation and
 reporting do not resume a faulted CPU or imply Windows exception handling.
 
+`KernelCalls.cpp` resolves the kernel API inventory into a typed operation and
+performs the common argument, initialization, IRQL and execution-context checks
+before dispatch. IRP, MDL, pool, object, runtime and memory call adapters live in
+separate files; `KernelModel` retains the shared state and lifecycle authority.
+The adapters preserve each API's validation and mutation order, including the
+different ownership rules for WDM and framework requests. Buffer range checks
+are shared by memory operations and the model's object accessors.
+
 `X64ExecutionPolicy` admits read-only, absolute 8-byte accesses to `GS:[0x188]`, including compiler forms such as MOV and CMP. A private read-only processor field supplies `KernelModel::currentThreadObject`; the backend executes the original instruction with its original register and flag semantics. This exposes one field, not a complete KPCR/KTHREAD layout. The identity follows the existing logical thread key through nested continuations; system threads reuse their existing borrowed object. The memory guard rejects opaque-object dereferences. Other GS offsets, all FS accesses, indexed/partial reads and stores remain rejected by the common CPU environment policy.
 
 `KernelScheduler` owns ready-queue order, callback identity and timer
