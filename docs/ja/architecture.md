@@ -1406,3 +1406,5 @@ Swift SDK カタログは Foundation の汎用 NSRange 初期化子について�
 Swift CGPoint のインスタンス変換は、double 入力二つ、double 結果二つと swiftself を使用する。Swift 6.1.2 の四つの SDK 構成で通常クラスとジェネリッククラスの宣言を確認した。共有 ABI 層は ARM64 と x86-64 でこの完全な形を扱い、正確なインポート CGPoint 宣言をネイティブ推論とレシーバーのバインドに使用する。thunk、async、throws、inout、Optional、別の名義型は対象外。
 
 固定の `MainActor: Actor` SDK 契約は、外部データと witness のカタログで完全なコンパイラ読取器を共有します。4 種のターゲットすべてでメタデータ応答と同じ公開静的テーブルを確認し、メタデータアクセサ、対応する conformance 記述子とテーブルを `libswift_Concurrency` がすべて公開している必要があります。Swift 6.1.2 の静的・非依存ランタイム経路は呼出側の具現化引数 2 を使用しません。既存の 3 ポインタ ABI、メタデータ入力とキャッシュ公開の副作用は保持されます。他の Actor conformance、値配置やフレーム効果の証明は与えません。
+
+Swift SDK Published の enclosing-instance アクセサーは四つのポインターを保持します。先頭は getter の不透明な間接結果、または setter の消費される値のアドレスで、その後に owner、wrapped key path、storage key path が続きます。四つの Swift 6.1.2 macOS/Mac Catalyst コンパイラー・エクスポート構成で正確なシンボルと Combine 提供元を検証します。ジェネリックメタデータや swiftself は追加せず、参照の所有権、不透明な値の配置、フレームの義務は既存の担当層が保持します。

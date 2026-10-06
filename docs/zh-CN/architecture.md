@@ -1396,3 +1396,5 @@ Swift SDK 目录认证 Foundation 泛型 NSRange 初始化器的六个普通指�
 Swift CGPoint 实例变换具有两个双精度输入、两个双精度结果和 swiftself；Swift 6.1.2 的四个 SDK 配置对普通类及泛型类接收者给出一致声明。共享 ABI 层在 ARM64、x86-64 上支持这一完整形状，精确的导入 CGPoint 声明用于原生推断和接收者绑定。thunk、异步、抛错、inout、可选值及其他名义类型不属于此声明契约。
 
 固定的 `MainActor: Actor` SDK 契约在外部数据和见证目录间共用完整的编译器读器。四种目标必须保留元数据响应并使用同一公开静态表；元数据访问器、配对的 conformance 描述符与见证表均须由 `libswift_Concurrency` 导出。Swift 6.1.2 的静态及非泛型依赖运行时路径不使用调用方的实例化参数 2。原有三指针查询 ABI、元数据输入和缓存发布副作用保持完整；此契约不提供其他 Actor conformance、值布局或栈帧效果的证明。
+
+Swift SDK Published 的 enclosing-instance 访问器保留四个指针载体：读取器的首参是 opaque 间接结果，写入器的首参是被消费值的地址，随后依次是对象、wrapped key path 和 storage key path。四种 Swift 6.1.2 macOS/Mac Catalyst 编译器及导出配置认证精确的读写器符号和 Combine 提供方。两种 ABI 均不添加泛型元数据或 swiftself；原有引用所有权、不透明值布局及栈帧义务仍由现有层负责。

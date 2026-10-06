@@ -1334,3 +1334,5 @@ Swift SDK 目錄認證 Foundation 泛型 NSRange 初始化器的六個普通指�
 Swift CGPoint 實例變換具有兩個雙精度輸入、兩個雙精度結果與 swiftself；Swift 6.1.2 的四種 SDK 設定對一般類別及泛型類別接收者給出一致宣告。共用 ABI 層在 ARM64、x86-64 上支援此完整形狀，精確的匯入 CGPoint 宣告用於原生推斷與接收者繫結。thunk、非同步、拋錯、inout、可選值及其他名義型別不屬於此宣告契約。
 
 固定的 `MainActor: Actor` SDK 契約在外部資料與見證目錄間共用完整的編譯器讀取器。四種目標必須保留中繼資料回應並使用同一公開靜態表；中繼資料存取器、配對的 conformance 描述符與見證表均須由 `libswift_Concurrency` 匯出。Swift 6.1.2 的靜態及非泛型相依執行階段路徑不使用呼叫端的具現化參數 2。原有三指標查詢 ABI、中繼資料輸入與快取發布副作用保持完整；此契約不提供其他 Actor conformance、值配置或堆疊框架效果的證明。
+
+Swift SDK Published 的 enclosing-instance 存取器保留四個指標載體：讀取器的首參是 opaque 間接結果，寫入器的首參是被消耗值的位址，隨後依序是物件、wrapped key path 和 storage key path。四種 Swift 6.1.2 macOS/Mac Catalyst 編譯器及匯出設定認證精確的讀寫器符號和 Combine 提供方。兩種 ABI 均不新增泛型中繼資料或 swiftself；原有參照所有權、不透明值配置及堆疊框架義務仍由現有層負責。

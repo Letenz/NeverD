@@ -247,6 +247,21 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Combine.framework/Combine|"
      "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
      "vIpp"},
+    // Four Swift 6.1.2 macOS/Mac Catalyst profiles pass owner and the two
+    // key paths as ordinary pointers. The getter has an opaque indirect
+    // result; the setter consumes an opaque value address instead. Neither
+    // entry carries generic metadata or swiftself. No value layout or frame
+    // borrowing effects follow from these declarations.
+    {"$s7Combine9PublishedV18_enclosingInstance7wrapped7storagexqd___s24"
+     "ReferenceWritableKeyPathCyqd__xGAHyqd__ACyxGGtcRld__CluigZ",
+     "/System/Library/Frameworks/Combine.framework/Combine|"
+     "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+     "vIppp"},
+    {"$s7Combine9PublishedV18_enclosingInstance7wrapped7storagexqd___s24"
+     "ReferenceWritableKeyPathCyqd__xGAHyqd__ACyxGGtcRld__CluisZ",
+     "/System/Library/Frameworks/Combine.framework/Combine|"
+     "/System/Library/Frameworks/Combine.framework/Versions/A/Combine",
+     "vpppp"},
     // The Never-failing Publisher sink overload receives closure code and
     // context, Publisher metadata and its witness table, then the opaque
     // borrowed Publisher address in swiftself. The result is AnyCancellable.

@@ -1428,3 +1428,5 @@ Swift witness 生成器在 ARM64/x86-64 macOS 和 Mac Catalyst 上同时验证 `
 MainActor 测试数据检查完整的固定元数据与静态表流程，拒绝存储、ABI、元数据提取、表身份的变化、额外副作用、缺失或重复声明以及输入预算耗尽。两个目录均要求每种目标提供全部三个配对 SDK 导出。见证绑定测试在 arm64/x64 上覆盖全部四种描述符，每种描述符和架构检查 33 项输入、导入及 ABI 变异；宿主运行时检查以五种实例化参数位模式核对公开表。
 
 `BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource` 在复制并销毁源后扩展文字表及共享 watch 列表，独立修改同源副本，在一次 watch 访问处中断传播，并依据原始子句和独立布尔关系检查恢复后的完整模型。
+
+`ObjCCallHints.SwiftPublishedAccessorsKeepOpaqueValueAndAllKeyPaths` 在 ARM64/x86-64 和两种规范 Combine 提供方上检查两个访问器，每个组合拒绝九项 ABI 变异和八项导入身份变异。独立 SDK 验证在 ARM64 主机上以 O0/O2 执行两种源码架构配置生成的 C，在 128 次访问器调用中比较全部 24 个载荷字节、输入输出保护区和两个对象身份。八种交叉编译配置覆盖两种架构的 macOS 与 Mac Catalyst。运行时检查保留写入器消费的引用，不授予生产代码借用或所有权捷径。

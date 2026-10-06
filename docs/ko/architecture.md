@@ -1383,3 +1383,5 @@ Swift SDK 카탈로그는 Foundation의 제네릭 NSRange 초기화에 범위, �
 Swift CGPoint 인스턴스 변환은 double 입력 두 개, 결과 두 개와 swiftself를 사용한다. Swift 6.1.2의 네 SDK 구성에서 일반 클래스와 제네릭 클래스 선언이 일치한다. 공유 ABI 계층은 ARM64와 x86-64에서 이 완전한 형태를 지원하며 정확한 가져온 CGPoint 선언을 네이티브 추론과 수신자 바인딩에 사용한다. thunk, async, throws, inout, Optional 및 다른 명목 타입은 이 계약에 포함되지 않는다.
 
 고정된 `MainActor: Actor` SDK 계약은 외부 데이터 및 witness 카탈로그에서 완전한 컴파일러 판독기를 공유합니다. 네 대상 모두 메타데이터 응답과 동일한 공개 정적 테이블을 유지해야 하며, 메타데이터 접근자와 대응 conformance 설명자 및 테이블을 `libswift_Concurrency`가 모두 내보내야 합니다. Swift 6.1.2의 정적 및 비의존 런타임 경로는 호출자의 인스턴스화 인수 2를 사용하지 않습니다. 기존 세 포인터 ABI, 메타데이터 입력과 캐시 게시 효과는 유지됩니다. 다른 Actor conformance, 값 배치 또는 프레임 효과에 대한 증명은 제공하지 않습니다.
+
+Swift SDK Published의 enclosing-instance 접근자는 포인터 네 개를 유지합니다. 첫 인수는 getter의 불투명한 간접 결과 또는 setter가 소비하는 값의 주소이며, 이후 owner, wrapped key path, storage key path가 이어집니다. Swift 6.1.2 macOS/Mac Catalyst의 네 컴파일러 및 내보내기 구성에서 정확한 심볼과 Combine 제공자를 확인합니다. 제네릭 메타데이터나 swiftself를 추가하지 않으며 참조 소유권, 불투명 값 배치 및 프레임 의무는 기존 담당 계층에 남습니다.

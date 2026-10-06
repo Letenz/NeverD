@@ -1520,3 +1520,5 @@ Swift witness の生成器は ARM64/x86-64 の macOS と Mac Catalyst で `Curre
 MainActor のフィクスチャは固定メタデータと静的テーブルの完全な流れを検証し、ストレージ、ABI、メタデータ抽出、テーブル識別、追加の副作用、宣言の欠落・重複、入力予算超過を拒否します。両カタログで各ターゲットの 3 つの SDK 公開シンボルが必須です。arm64/x64 の witness バインド試験は 4 記述子すべてに対して各アーキテクチャで 33 の入力・インポート・ABI 変異を検証します。ホストのランタイム試験は 5 種の具現化引数ビットパターンで公開テーブルを比較します。
 
 `BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource` はコピー元を破棄した後のリテラル表と共有監視リストの拡張、兄弟コピーの独立した変更、一回の監視訪問での伝播中断を検査し、再開後の完全モデルを元の節と独立した論理関係で確認します。
+
+`ObjCCallHints.SwiftPublishedAccessorsKeepOpaqueValueAndAllKeyPaths` は ARM64/x86-64 と両方の正規 Combine 提供元で二つのアクセサーを検証し、各組合せで九つの ABI 変異と八つのインポート識別変異を拒否します。独立 SDK 検証では ARM64 ホスト上で両ソース構成の生成 C を O0/O2 で実行し、128 回の呼出しで 24 バイト全部、入出力ガード、二つの owner 識別を比較します。八つのクロスコンパイル構成が macOS/Mac Catalyst の両アーキテクチャーを検査します。ランタイム検証は setter が消費する参照を保持し、製品コードに借用や所有権の省略を認めません。

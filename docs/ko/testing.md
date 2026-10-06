@@ -1510,3 +1510,5 @@ Swift witness 생성기는 ARM64/x86-64 macOS와 Mac Catalyst에서 `CurrentValu
 MainActor 픽스처는 고정 메타데이터와 정적 테이블의 전체 흐름을 확인하고 저장소, ABI, 메타데이터 추출, 테이블 식별, 추가 효과, 누락되거나 중복된 선언 및 입력 예산 초과를 거부합니다. 두 카탈로그는 모든 대상에서 세 SDK 내보내기를 요구합니다. arm64/x64 witness 바인딩 시험은 네 설명자 각각에 대해 아키텍처별 33개의 입력, 가져오기 및 ABI 변이를 확인합니다. 호스트 런타임 시험은 다섯 인스턴스화 인수 비트 패턴으로 공개 테이블을 비교합니다.
 
 `BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource`는 복사 후 원본 소멸, 리터럴 테이블과 공유 감시 목록 확장, 형제 복사본의 독립 변경, 감시 방문 한 번에서의 전파 중단을 검사합니다. 재개된 전체 모델을 원래 절과 독립적인 불리언 관계로 검증합니다.
+
+`ObjCCallHints.SwiftPublishedAccessorsKeepOpaqueValueAndAllKeyPaths`는 ARM64/x86-64와 두 정식 Combine 제공자에서 두 접근자를 검증하며, 조합마다 ABI 변형 아홉 개와 가져오기 식별 변형 여덟 개를 거부합니다. 독립 SDK 검증은 ARM64 호스트에서 두 소스 아키텍처 구성의 생성 C를 O0/O2로 실행하고, 128회 호출에서 페이로드 24바이트 전체, 입출력 보호 영역 및 두 owner 식별을 비교합니다. 교차 컴파일 구성 여덟 개가 macOS/Mac Catalyst의 두 아키텍처를 확인합니다. 런타임 검증은 setter가 소비하는 참조를 보존하며 제품 코드의 빌림이나 소유권 생략을 허용하지 않습니다.
