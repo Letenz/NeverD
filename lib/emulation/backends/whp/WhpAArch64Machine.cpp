@@ -162,6 +162,8 @@ private:
 };
 llvm::Error configureWhpArmPartition(WhpAPI &API,
                                      WHV_PARTITION_HANDLE &Partition) {
+  if (auto E = API.load())
+    return E;
   WHV_CAPABILITY C{};
   if (const auto Status = API.WHvGetCapability(
           WHvCapabilityCodeHypervisorPresent, &C, sizeof(C), nullptr);

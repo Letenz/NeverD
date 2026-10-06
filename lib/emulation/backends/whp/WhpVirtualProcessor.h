@@ -118,8 +118,6 @@ struct WhpPartitionHost {
     auto &Host = cached();
     if (!Host) {
       auto Next = std::make_shared<WhpPartitionHost>();
-      if (auto E = Next->API.load())
-        return E;
       if (auto E = Setup(Next->API, Next->Partition))
         return E;
       Host = std::move(Next);

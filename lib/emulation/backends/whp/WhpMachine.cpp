@@ -51,8 +51,10 @@ public:
 private:
   WhpResourceBinding<WhpVirtualProcessor> Binding;
 };
-llvm::Error configureWhpX64Processor(WhpAPI &API,
+llvm::Error configureWhpX64Partition(WhpAPI &API,
                                      WHV_PARTITION_HANDLE &Partition) {
+  if (auto E = API.load())
+    return E;
   WHV_CAPABILITY C{};
   if (const auto Status = API.WHvGetCapability(
           WHvCapabilityCodeHypervisorPresent, &C, sizeof(C), nullptr);
@@ -123,7 +125,7 @@ llvm::Error configureWhpX64Processor(WhpAPI &API,
 llvm::Expected<std::unique_ptr<WhpVirtualProcessor>>
 createWhpX64Processor(MemoryProjection &Memory) {
   auto M = std::make_unique<WhpX64Processor>();
-  if (auto E = M->attach(Memory, configureWhpX64Processor))
+  if (auto E = M->attach(Memory, configureWhpX64Partition))
     return E;
   if (auto E = M->Xsave.initialize(M->API, M->Partition, M->ProcessorIndex))
     return E;
