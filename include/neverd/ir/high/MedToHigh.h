@@ -94,6 +94,14 @@ bool dropJumpsToTheNextStatement(std::vector<HighStmt> &Body);
 /// or switch, exactly as falling out of it would, becomes `break`. Code that
 /// runs only after a loop's one break or a switch's one falling case moves
 /// there first. Returns true when anything changed.
+/// `switch (..) { ..goto J.. } C...; J:` where more of the switch's jumps go
+/// to J than reach C: C moves into the switch at one of its ways out, the
+/// others jump to C, and J becomes what follows the switch, so
+/// breakToTheLoopFollow turns the jumps to J into breaks.  C runs past the
+/// end of its list where nothing else falls into what follows: a block's
+/// body, or an if/else arm whose other arm never falls out.  Nothing outside
+/// the switch and C may enter C.  Returns true when a switch changed.
+bool busiestExitFollowsTheSwitch(std::vector<HighStmt> &Body);
 bool breakToTheLoopFollow(std::vector<HighStmt> &Body);
 /// `X: S...` where jumps from inside S return to X becomes
 /// `while (1) { S...; break; }` with those jumps as `continue`. A jump to X

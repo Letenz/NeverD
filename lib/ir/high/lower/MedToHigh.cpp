@@ -904,9 +904,12 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
       bool Rewritten;
       if (Phase == 3)
         Rewritten = loopifyBackwardGotos(Func.Body);
-      else if (Phase == 5)
-        Rewritten = breakToTheLoopFollow(Func.Body);
-      else
+      else if (Phase == 5) {
+        // A switch first takes the exit most of its jumps go to as what
+        // follows it, so those jumps become its breaks.
+        Rewritten = busiestExitFollowsTheSwitch(Func.Body);
+        Rewritten |= breakToTheLoopFollow(Func.Body);
+      } else
         Rewritten = duplicateSmallReturnTails(Func.Body) |
                     duplicateSmallJumpTails(Func.Body);
       // The last phase always runs its rounds: the dead-code cleanup above

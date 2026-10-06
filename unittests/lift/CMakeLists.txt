@@ -225,6 +225,7 @@ add_neverd_unittest(NeverDLiftTests
   eh/MachOExceptionPatchTests.cpp
   core/HighSymSimplifyTests.cpp
   core/HighFrameStoreForwardingTests.cpp
+  core/HighSwitchFollowTests.cpp
   core/MedNoReturnTests.cpp
   core/InternalNoReturnTests.cpp
   eh/RegistrationTryLevelTests.cpp
@@ -1103,6 +1104,7 @@ target_compile_definitions(NeverDLowInstructionBoundaryTests PRIVATE
 add_neverd_unittest(NeverDHighControlFlowTests
   core/HighControlFlowSemanticsTests.cpp
   core/HighFrameStoreForwardingTests.cpp
+  core/HighSwitchFollowTests.cpp
   core/HighSSADefinitionTests.cpp
   core/HighSourceRangeTests.cpp
   core/HighFrameTemporaryTests.cpp

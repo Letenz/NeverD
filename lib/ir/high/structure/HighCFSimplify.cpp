@@ -2513,6 +2513,356 @@ bool moveLoopTailsToTheirBreak(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
+bool busiestExitFollowsTheSwitch(std::vector<HighStmt> &Body) {
+  constexpr unsigned kMaxRounds = 64;
+  auto IsTry = [](const HighStmt &S) {
+    return S.Kind == StmtKind::SEHTry || S.Kind == StmtKind::CxxTry ||
+           S.Kind == StmtKind::ItaniumTry;
+  };
+  auto Transparent = [](const HighStmt &S) {
+    return S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse ||
+           S.Kind == StmtKind::Block;
+  };
+  auto OwnsBreaks = [](const HighStmt &S) {
+    return S.Kind == StmtKind::While || S.Kind == StmtKind::DoWhile ||
+           S.Kind == StmtKind::For || S.Kind == StmtKind::Switch;
+  };
+  // The jumps breakToTheLoopFollow turns into breaks once their target
+  // follows the switch: those reached through ifs and blocks only.
+  std::function<void(const std::vector<HighStmt> &, std::map<va_t, unsigned> &)>
+      Convertible =
+          [&](const std::vector<HighStmt> &L, std::map<va_t, unsigned> &Count) {
+            for (const HighStmt &S : L) {
+              if (S.Kind == StmtKind::Goto) {
+                ++Count[S.GotoTarget];
+              } else if (Transparent(S)) {
+                Convertible(S.Body, Count);
+                Convertible(S.ElseBody, Count);
+              }
+            }
+          };
+  // Every jump and handler entry in \p L, at any depth.
+  auto CountEntries = [](const std::vector<HighStmt> &L,
+                         std::map<va_t, unsigned> &Jumps,
+                         std::map<va_t, unsigned> &Handlers) {
+    walkStmts(L, [&](const HighStmt &S) {
+      if (S.Kind == StmtKind::Goto)
+        ++Jumps[S.GotoTarget];
+      for (const HighEHClause &Clause : S.EHClauses)
+        ++Handlers[Clause.HandlerVA];
+    });
+  };
+  std::set<va_t> Refused;
+  bool Changed = false;
+  for (unsigned Round = 0; Round < kMaxRounds; ++Round) {
+    const LabelStarts Labels(Body);
+    std::map<va_t, unsigned> AllJumps, AllHandlers;
+    CountEntries(Body, AllJumps, AllHandlers);
+    // The addresses a jump can name to reach L[N]: those of the empty
+    // anchors before the first statement, of that statement, and of a
+    // block's first statements.  False when L ends first.
+    std::function<bool(const std::vector<HighStmt> &, size_t, std::set<va_t> &)>
+        Collect =
+            [&](const std::vector<HighStmt> &L, size_t N, std::set<va_t> &Out) {
+              auto Name = [&](va_t A) {
+                if (A != 0 && A != InvalidVA && Labels.unique(A))
+                  Out.insert(A);
+              };
+              for (; N < L.size(); ++N) {
+                const HighStmt &T = L[N];
+                Name(T.Addr);
+                if (isEmptyAnchor(T)) {
+                  walkStmts(T.Body, [&](const HighStmt &C) { Name(C.Addr); });
+                  continue;
+                }
+                if (T.Kind == StmtKind::Block)
+                  Collect(T.Body, 0, Out);
+                return true;
+              }
+              return false;
+            };
+    struct Frame {
+      std::vector<HighStmt> *List;
+      size_t Index;
+      // Falling off the child list runs List[Index + 1], and nothing else
+      // falls into it: the child is a block's body, or an if/else arm whose
+      // other arm never falls out.
+      bool Open;
+    };
+    std::vector<Frame> Frames;
+    enum class Outcome { Kept, Moved, Reverted };
+    auto TryMove = [&](std::vector<HighStmt> &L, size_t K) {
+      HighStmt &Switch = L[K];
+      if (!Switch.SwitchExpr || Switch.Cases.empty() ||
+          Refused.count(Switch.Addr))
+        return Outcome::Kept;
+      // C: what runs once the switch falls out, up a list end only where
+      // nothing else falls into what follows.
+      struct Segment {
+        std::vector<HighStmt> *List;
+        size_t Begin;
+      };
+      std::vector<Segment> Chain{{&L, K + 1}};
+      for (size_t F = Frames.size(); F > 0 && Frames[F - 1].Open; --F)
+        Chain.push_back({Frames[F - 1].List, Frames[F - 1].Index + 1});
+      auto Reach = [&](size_t I, size_t N, std::set<va_t> &Out) {
+        while (I < Chain.size()) {
+          if (Collect(*Chain[I].List, N, Out))
+            return true;
+          if (++I < Chain.size())
+            N = Chain[I].Begin;
+        }
+        return false;
+      };
+      // The ways the switch falls out: a break leaving it from any depth
+      // short of a nested loop or switch (under a try or in a clause it
+      // stays a jump), a body running off its end, and no case matching.
+      struct Way {
+        std::vector<HighStmt> *List;
+        size_t Index;
+        bool Guarded;
+      };
+      std::vector<Way> Breaks;
+      std::function<void(std::vector<HighStmt> &, bool)> FindBreaks =
+          [&](std::vector<HighStmt> &B, bool Guarded) {
+            for (size_t I = 0; I < B.size(); ++I) {
+              HighStmt &T = B[I];
+              if (T.Kind == StmtKind::Break) {
+                Breaks.push_back({&B, I, Guarded});
+                continue;
+              }
+              if (OwnsBreaks(T))
+                continue;
+              FindBreaks(T.Body, Guarded || IsTry(T));
+              FindBreaks(T.ElseBody, Guarded || IsTry(T));
+              for (auto &ClauseBody : T.EHClauseBodies)
+                FindBreaks(ClauseBody, true);
+            }
+          };
+      std::vector<std::vector<HighStmt> *> Arms, FallOffs;
+      for (SwitchCase &C : Switch.Cases)
+        if (!C.FallsThrough)
+          Arms.push_back(&C.Body);
+      if (!Switch.DefaultBody.empty())
+        Arms.push_back(&Switch.DefaultBody);
+      for (std::vector<HighStmt> *Arm : Arms) {
+        FindBreaks(*Arm, false);
+        if (!armNeverFallsOut(*Arm))
+          FallOffs.push_back(Arm);
+      }
+      const bool NoDefault = Switch.DefaultBody.empty();
+      const unsigned Ways = Breaks.size() + FallOffs.size() + NoDefault;
+      const Way *InlineBreak = nullptr;
+      for (const Way &W : Breaks)
+        if (!W.Guarded) {
+          InlineBreak = &W;
+          break;
+        }
+      // One way out runs C in place; each other one jumps to it.
+      const bool InlineAtWay =
+          !FallOffs.empty() || NoDefault || InlineBreak != nullptr;
+      const unsigned AddedJumps = InlineAtWay ? Ways - 1 : Ways;
+      std::map<va_t, unsigned> Conv;
+      for (SwitchCase &C : Switch.Cases)
+        Convertible(C.Body, Conv);
+      Convertible(Switch.DefaultBody, Conv);
+      auto Sum = [&](const std::set<va_t> &Addrs) {
+        unsigned N = 0;
+        for (va_t A : Addrs)
+          if (auto It = Conv.find(A); It != Conv.end())
+            N += It->second;
+        return N;
+      };
+      size_t StartSeg = 0;
+      while (StartSeg < Chain.size() &&
+             Chain[StartSeg].Begin >= Chain[StartSeg].List->size())
+        ++StartSeg;
+      if (StartSeg == Chain.size())
+        return Outcome::Kept;
+      std::set<va_t> StartAddrs;
+      Reach(StartSeg, Chain[StartSeg].Begin, StartAddrs);
+      const unsigned StartJumps = Sum(StartAddrs);
+      const va_t Start = (*Chain[StartSeg].List)[Chain[StartSeg].Begin].Addr;
+      const bool StartNamed =
+          Start != 0 && Start != InvalidVA && Labels.unique(Start);
+      if (AddedJumps && !StartNamed)
+        return Outcome::Kept;
+      // Candidates for J, best first: a statement C runs into that the
+      // switch jumps to.
+      struct Candidate {
+        size_t Seg, Index;
+        std::set<va_t> Addrs;
+        int Gain;
+      };
+      std::vector<Candidate> Candidates;
+      for (size_t I = StartSeg; I < Chain.size(); ++I) {
+        std::vector<HighStmt> &List = *Chain[I].List;
+        for (size_t N = Chain[I].Begin; N < List.size(); ++N) {
+          if (I == StartSeg && N == Chain[I].Begin)
+            continue;
+          if (N > Chain[I].Begin && isEmptyAnchor(List[N - 1]))
+            continue;
+          std::set<va_t> Addrs;
+          if (!Reach(I, N, Addrs) || Addrs.empty())
+            continue;
+          const int Gain = static_cast<int>(Sum(Addrs)) -
+                           static_cast<int>(StartJumps) -
+                           static_cast<int>(AddedJumps);
+          if (Gain > 0)
+            Candidates.push_back({I, N, std::move(Addrs), Gain});
+        }
+      }
+      std::stable_sort(Candidates.begin(), Candidates.end(),
+                       [](const Candidate &A, const Candidate &B) {
+                         return A.Gain > B.Gain;
+                       });
+      auto ForEachMoved = [&](const Candidate &J, auto &&Fn) {
+        for (size_t I = StartSeg; I <= J.Seg; ++I) {
+          std::vector<HighStmt> &List = *Chain[I].List;
+          const size_t End = I == J.Seg ? J.Index : List.size();
+          for (size_t N = Chain[I].Begin; N < End; ++N)
+            Fn(List[N]);
+        }
+      };
+      const Candidate *Chosen = nullptr;
+      for (const Candidate &J : Candidates) {
+        std::vector<HighStmt> C;
+        ForEachMoved(J, [&](const HighStmt &S) { C.push_back(S); });
+        // A loose break or continue would bind to the switch once inside.
+        if (hasLooseBreakOrContinue(C))
+          continue;
+        // Only the switch and C itself may enter C.
+        std::map<va_t, unsigned> InJumps, InHandlers;
+        for (SwitchCase &Case : Switch.Cases)
+          CountEntries(Case.Body, InJumps, InHandlers);
+        CountEntries(Switch.DefaultBody, InJumps, InHandlers);
+        CountEntries(C, InJumps, InHandlers);
+        bool Outside = false;
+        walkStmts(C, [&](const HighStmt &S) {
+          if (S.Addr == 0 || S.Addr == InvalidVA ||
+              !Labels.entered().count(S.Addr))
+            return;
+          Outside |= AllJumps[S.Addr] != InJumps[S.Addr] ||
+                     AllHandlers[S.Addr] != InHandlers[S.Addr];
+        });
+        if (!Outside) {
+          Chosen = &J;
+          break;
+        }
+      }
+      if (!Chosen)
+        return Outcome::Kept;
+      std::vector<HighStmt> Saved = Body;
+      const va_t SwitchAddr = Switch.Addr;
+      std::vector<HighStmt> C;
+      for (size_t I = StartSeg; I <= Chosen->Seg; ++I) {
+        std::vector<HighStmt> &List = *Chain[I].List;
+        const size_t End = I == Chosen->Seg ? Chosen->Index : List.size();
+        const auto First =
+            List.begin() + static_cast<ptrdiff_t>(Chain[I].Begin);
+        const auto Last = List.begin() + static_cast<ptrdiff_t>(End);
+        C.insert(C.end(), std::make_move_iterator(First),
+                 std::make_move_iterator(Last));
+        List.erase(First, Last);
+      }
+      auto JumpToC = [&](va_t Addr) {
+        HighStmt Jump;
+        Jump.Kind = StmtKind::Goto;
+        Jump.Addr = Addr;
+        Jump.GotoTarget = Start;
+        return Jump;
+      };
+      // A break keeps its address: a jump to it still reaches C.
+      for (const Way &W : Breaks) {
+        HighStmt &Break = (*W.List)[W.Index];
+        if (&W == InlineBreak && FallOffs.empty() && !NoDefault) {
+          HighStmt Moved;
+          Moved.Kind = StmtKind::Block;
+          Moved.Addr = Break.Addr;
+          Moved.Body = std::move(C);
+          HighStmt Leave;
+          Leave.Kind = StmtKind::Break;
+          Moved.Body.push_back(std::move(Leave));
+          Break = std::move(Moved);
+        } else {
+          Break = JumpToC(Break.Addr);
+        }
+      }
+      for (std::vector<HighStmt> *Arm : FallOffs)
+        if (Arm != FallOffs.back())
+          Arm->push_back(JumpToC(0));
+      if (!FallOffs.empty()) {
+        FallOffs.back()->insert(FallOffs.back()->end(),
+                                std::make_move_iterator(C.begin()),
+                                std::make_move_iterator(C.end()));
+        if (NoDefault)
+          Switch.DefaultBody.push_back(JumpToC(0));
+      } else if (NoDefault) {
+        Switch.DefaultBody = std::move(C);
+      } else if (!InlineBreak) {
+        // Every way out sits under a try, or there is none: C follows the
+        // last body, which never falls out, and only jumps reach it.
+        Arms.back()->insert(Arms.back()->end(),
+                            std::make_move_iterator(C.begin()),
+                            std::make_move_iterator(C.end()));
+      }
+      // Moving statements next to others can change which statement a
+      // label lands on; keep the move only if no entered label changed.
+      const LabelStarts After(Body);
+      bool Same = !AddedJumps || After.unique(Start);
+      for (va_t A : Labels.entered())
+        Same &= A == 0 || A == InvalidVA ||
+                (After.unique(A) == Labels.unique(A) &&
+                 After.starts(A) == Labels.starts(A));
+      if (!Same) {
+        Body = std::move(Saved);
+        Refused.insert(SwitchAddr);
+        return Outcome::Reverted;
+      }
+      return Outcome::Moved;
+    };
+    Outcome Result = Outcome::Kept;
+    std::function<void(std::vector<HighStmt> &)> Visit =
+        [&](std::vector<HighStmt> &L) {
+          for (size_t K = 0; K < L.size() && Result == Outcome::Kept; ++K) {
+            if (L[K].Kind == StmtKind::Switch) {
+              Result = TryMove(L, K);
+              if (Result != Outcome::Kept)
+                return;
+            }
+            // A change may free every statement; nothing below may touch
+            // one once a child reports it.
+            HighStmt &S = L[K];
+            auto Into = [&](std::vector<HighStmt> &Child, bool Open) {
+              Frames.push_back({&L, K, Open});
+              Visit(Child);
+              Frames.pop_back();
+              return Result == Outcome::Kept;
+            };
+            const bool Both = S.Kind == StmtKind::IfElse;
+            const bool BodyOpen = S.Kind == StmtKind::Block ||
+                                  (Both && armNeverFallsOut(S.ElseBody));
+            const bool ElseOpen = Both && armNeverFallsOut(S.Body);
+            if (!Into(S.Body, BodyOpen) || !Into(S.ElseBody, ElseOpen))
+              return;
+            for (auto &Case : S.Cases)
+              if (!Into(Case.Body, false))
+                return;
+            if (!Into(S.DefaultBody, false))
+              return;
+            for (auto &ClauseBody : S.EHClauseBodies)
+              if (!Into(ClauseBody, false))
+                return;
+          }
+        };
+    Visit(Body);
+    if (Result == Outcome::Kept)
+      break;
+    Changed |= Result == Outcome::Moved;
+  }
+  return Changed;
+}
+
 bool breakToTheLoopFollow(std::vector<HighStmt> &Body) {
   const LabelStarts Labels(Body);
   const std::set<va_t> None;
