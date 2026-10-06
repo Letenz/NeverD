@@ -6,6 +6,8 @@
 
 #include "FiniteQueryCache.h"
 
+#include "llvm/ADT/DenseMap.h"
+
 #include <algorithm>
 #include <cassert>
 #include <iterator>
@@ -109,7 +111,9 @@ std::optional<Key> makeKey(const SymContext &Ctx, SymRef Predicate,
   Key Result{Limit, Values.size()};
   std::vector<SymRef> Pending(Values.rbegin(), Values.rend());
   Pending.push_back(Predicate);
-  std::map<uint32_t, uint64_t> Seen;
+  // Serialization follows Pending, never the lookup table order. Use a
+  // wide key so every uint32_t node index is distinct from DenseMap sentinels.
+  llvm::DenseMap<uint64_t, uint64_t> Seen;
   uint64_t Variables = 0;
   while (!Pending.empty()) {
     const SymRef Value = Pending.back();
@@ -126,7 +130,7 @@ std::optional<Key> makeKey(const SymContext &Ctx, SymRef Predicate,
         !supportedShape(Ctx, Value))
       return std::nullopt;
     const uint64_t Id = Seen.size();
-    Seen.emplace(Value.index(), Id);
+    Seen.try_emplace(Value.index(), Id);
     Result.insert(Result.end(), {1, Id, static_cast<uint64_t>(Node.Op),
                                  Node.Width, Node.NumOperands, PayloadWords});
     if (Node.Op == SymOp::Const) {

@@ -2523,6 +2523,8 @@ omitted as an unconstrained factor only after the shared bit-origin proof
 establishes independence from the predicate and all other columns. Marginal
 domains alone never authorize a Cartesian-product assumption.
 
+The temporary visited-node index uses a dense map. Serialization still follows the ordered traversal, so table growth and hash order do not change the key, variable renaming, or budget charges.
+
 MBA simplification keeps exact derivations inside `lib/symbolic/mba`.
 Split-word arithmetic recovery also lives there as a solver-independent
 candidate generator: it partitions low-word dependencies from high-word inputs,
