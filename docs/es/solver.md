@@ -20,6 +20,8 @@ Las comparaciones de más de ocho bits comparan primero las mitades altas y usan
 
 `BitVectorSolver::cloneEncoding()` copia una codificación completa antes de cualquier intento de búsqueda SAT. Devuelve null después de buscar o de un fallo de codificación. Cada copia posee sus cláusulas mutables, propagación raíz, puertas y correspondencias de bits; conserva el orden de variables, el cómputo de puertas y la configuración del solucionador. El contexto debe sobrevivir a ambos solucionadores; el original puede modificarse o destruirse de forma independiente.
 
+El motor SAT mantiene cuatro entradas de vigilancia dentro de cada lista de literal; las listas mayores crecen dinámicamente. Esto evita asignaciones separadas para listas cortas al construir, copiar antes de buscar y destruir. El orden de propagación, las cláusulas, la propiedad independiente y todos los límites de trabajo permanecen iguales.
+
 <!-- i18n-section: z3-build -->
 
 ## Compilación opcional con Z3

@@ -1516,3 +1516,5 @@ Swift witness の生成器は ARM64/x86-64 の macOS と Mac Catalyst で `Curre
 `PreparedFiniteKeys.*` はコンテキスト破棄と変数改名、射影順序と上限、移動後の明示的な無効化、不正・不完全な結果、空集合と非一意な値域、正確な容量境界を検査します。既存のキャッシュとフレームの回帰テストも準備済みキーの経路を検査します。
 
 `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults` は両アーキテクチャでレジスタ、配置、コンテキストの役割、間接結果の変更を拒否する。`SourceABI.SwiftPointForwardingPreservesBothIEEECarriers` は -O0/-O2 で転送ソースを実行し、両フィールドの符号付きゼロ、非正規数、無限大、NaN ペイロードを確認する。宣言テストはコンパイラ形式と名前付き引数を認め、変更された署名や曖昧なイメージ識別を拒否する。
+
+`BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource` はコピー元を破棄した後のリテラル表と共有監視リストの拡張、兄弟コピーの独立した変更、一回の監視訪問での伝播中断を検査し、再開後の完全モデルを元の節と独立した論理関係で確認します。

@@ -1048,4 +1048,79 @@ TEST(BitVectorEncodingClone,
   EXPECT_EQ(Copy->check(), SatResult::Unsat);
   EXPECT_EQ(Base.check(), SatResult::Unsat);
 }
+TEST(BitVectorEncodingClone, WatchMigrationAndGrowthOutliveTheSource) {
+  for (unsigned Count : {1U, 3U, 4U, 5U, 17U, 65U}) {
+    SymContext C;
+    std::vector<std::vector<SatLit>> Clauses;
+    std::vector<std::pair<SatLit, SatLit>> Inputs;
+    const auto Fill = [&](BitVectorSolver &S, bool Record) {
+      const auto Guard = SatLit::positive(S.sat().newVar());
+      for (unsigned I = 0; I < Count; ++I) {
+        const auto A = SatLit::positive(S.sat().newVar());
+        const auto B = SatLit::positive(S.sat().newVar());
+        const std::vector<SatLit> Positive{~Guard, A, B};
+        const std::vector<SatLit> Negative{~Guard, ~A, ~B};
+        S.sat().addClause(Positive);
+        S.sat().addClause(Negative);
+        if (Record) {
+          Inputs.emplace_back(A, B);
+          Clauses.push_back(Positive);
+          Clauses.push_back(Negative);
+        }
+      }
+      return Guard;
+    };
+    auto Source = std::make_unique<BitVectorSolver>(C);
+    const auto Guard = Fill(*Source, true);
+    auto Copy = Source->cloneEncoding(), Sibling = Source->cloneEncoding();
+    ASSERT_TRUE(Copy);
+    ASSERT_TRUE(Sibling);
+    Source.reset();
+    BitVectorSolver Fresh(C);
+    ASSERT_EQ(Fill(Fresh, false), Guard);
+
+    // Grow both the table of literal lists and one existing high-fanout list
+    // after copying. The sibling retains the original independent formula.
+    for (unsigned I = 0; I < 257; ++I) {
+      const auto Extra = SatLit::positive(Copy->sat().newVar());
+      ASSERT_EQ(SatLit::positive(Fresh.sat().newVar()), Extra);
+      Copy->sat().addClause(~Guard, Extra);
+      Fresh.sat().addClause(~Guard, Extra);
+      Clauses.push_back({~Guard, Extra});
+    }
+    Sibling->sat().addClause(~Guard);
+    EXPECT_EQ(Sibling->sat().solve({Guard}), SatResult::Unsat);
+    EXPECT_EQ(Sibling->sat().solve({~Guard}), SatResult::Sat);
+
+    for (unsigned Pattern = 0; Pattern < 4; ++Pattern) {
+      std::vector<SatLit> Assumptions{Guard};
+      for (unsigned I = 0; I < Count; ++I)
+        Assumptions.push_back(
+            Inputs[I].first.withPolarity((I + Pattern) % 3 == 0));
+      SatOptions Limited;
+      Limited.MaxWatchVisits = 1;
+      Copy->sat().setOptions(Limited);
+      Fresh.sat().setOptions(Limited);
+      EXPECT_EQ(Copy->sat().solve(Assumptions), SatResult::Unknown);
+      EXPECT_EQ(Fresh.sat().solve(Assumptions), SatResult::Unknown);
+      sameState(*Copy, Fresh);
+      Copy->sat().setOptions(SatOptions{});
+      Fresh.sat().setOptions(SatOptions{});
+      ASSERT_EQ(Copy->sat().solve(Assumptions), SatResult::Sat);
+      ASSERT_EQ(Fresh.sat().solve(Assumptions), SatResult::Sat);
+      sameState(*Copy, Fresh);
+      // Check the original clauses and the independently derived B = !A
+      // relation, including after interrupted watch migration and replay.
+      for (const auto &Clause : Clauses) {
+        bool Satisfied = false;
+        for (SatLit L : Clause)
+          Satisfied |= Copy->sat().modelValue(L) == SatValue::True;
+        EXPECT_TRUE(Satisfied);
+      }
+      for (unsigned I = 0; I < Count; ++I)
+        EXPECT_EQ(Copy->sat().modelValue(Inputs[I].second),
+                  (I + Pattern) % 3 == 0 ? SatValue::False : SatValue::True);
+    }
+  }
+}
 } // namespace
