@@ -353,6 +353,8 @@ fixture는 게스트 초기화, 성공/실패 반환, 미지원 동작, 메모�
 
 백엔드 테스트는 전체 CPU 컨텍스트(레지스터, 플래그, SIMD, FPU, CR8), 공유 메모리와 외부/장애 컨텍스트 거부를 검증합니다. 컴파일된 `driver_dispatcher.c`는 실제 DPC·작업 항목 콜백, 타이머 경계, 알림/동기화 이벤트와 타이머, 사유 `Executive`의 비경고 `KernelMode` 대기, 시간 초과/지연, 여러 차단 스택, 설정 직후 재설정해도 유지되는 깨우기, 콜백 인수와 잘못된 IRQL/수명을 검증합니다. 작업 항목의 보류/완료, 큐, 정체와 공유 예산 검증도 유지합니다. 이는 문서화된 부분집합의 증거이며 완전한 Windows 비동기 지원은 아닙니다.
 
+`DriverThreadPriorityTests.cpp`는 원본 컴파일 드라이버 `driver_thread_priority.c`를 명시적 Unicorn/KVM/WHP의 driver 및 checked 계약으로 실행하여 대기/준비 스레드의 우선순위 변경, 할당량 내 이벤트/타이머 깨움, 동순위 순환, DISPATCH_LEVEL 차단과 낮은 우선순위 기아 중의 타이머 진행을 확인합니다. 두 카운터 루프 실행을 비교하여 남은 할당량이 정확히 유지됨을 검증합니다. 모델 테스트는 부호 있는 ABI, 실패 시 상태 유지, 종료된 객체 참조, 중첩 식별자 및 독립 콜백의 스택 재사용을 다룹니다. 네이티브 사례는 `NativeDriverTests.def`에서 필수이며 로컬에서 사용할 수 없는 백엔드는 명시적으로 건너뜁니다.
+
 `driver_context_limits.c`: API IRQL 상한은 `KernelAPIIRQL.def`에 정의되며 인수별 제한은 담당 모델이 검사합니다. DPC는 레지스트리 API나 페이징 풀 할당·해제·접근을 사용할 수 없습니다. Unicode `DbgPrint` 변환은 `PASSIVE_LEVEL`이 필요하며 지원되는 ANSI 출력과 비페이징 작업은 `DISPATCH_LEVEL`에서 사용할 수 있습니다. 콜백 스택에는 경계가 있어 이탈한 스택 포인터가 다른 차단 작업자의 스택을 침범할 수 없습니다. 장치 확장의 활성 타이머는 조기 장치 회수를 막습니다. 일반 IRQL 전환을 제공하는 기능은 아닙니다.
 
 `KernelDeviceStackTests.cpp`는 소유/연결 관계의 독립성, 최상단 선택, 실패 원자성, 스택 용량, 불투명 필드, 핸들 수, 분리·삭제를 넘는 작업 항목/요청 유지, 파일과 디스패치 대상의 차이를 검사합니다. 원본 `driver_wdm_stack.c`는 실제 WDK 헤더와 인라인 Copy/Skip/SetCompletion을 사용하며 일반/활성 CFG 이미지는 선택적 `NEVERD_WDM_STACK_FIXTURE`/`NEVERD_WDM_STACK_CFG_FIXTURE`로 지정합니다. `DriverWDMStackTests.cpp`는 재배치, 실제 하위 상태, 완료 순서/조건, 지연 pending 전달, 작업자/DPC, 대기, `STATUS_MORE_PROCESSING_REQUIRED`, 직접 MDL 유지, 중첩 완료, 잘못된 커서/제어를 검증합니다. `DriverScenarioPublicTests.cpp`는 구성된 CFG 이미지를 포함해 C API/CLI 전달과 C API 유지/중첩 완료를 검사합니다. 산출물이 없으면 명시적으로 건너뛰며 Linux 근거는 동일 드라이버 스택 범위만 입증합니다. PDO/PnP/전원 지원을 뜻하지 않습니다. `KernelIRPStackTests.cpp`는 개수 기반 커서, 전체 인라인 Copy 범위, 소비된 위치 지우기, 상태/pending 전달, MPR 및 중첩 완료, continuation 소유자, 보존 경로를 검사합니다. 실제 READ/WRITE와 파일 수명 주기도 인라인 Copy로 검증합니다.
@@ -1200,7 +1202,7 @@ WHP의 기능 조회, 파티션/가상 CPU 초기화, 레지스터/XSAVE 전송 
 
 네이티브 CPU 전용 CI는 고정 버전의 Capstone 소스를 초기화하고 검증된 LLVM 패키지를 사용합니다. `NEVERD_ENABLE_SEMANTIC_TESTS=OFF`와 Unicorn 어댑터 비활성화를 함께 설정하면 CPU 테스트의 구성, 빌드 및 링크에 Unicorn 소스가 필요하지 않습니다. 서명 데이터와 외부 코퍼스도 필요하지 않습니다. 기본 CI에서는 전체 의미론 테스트 그룹을 계속 활성화합니다.
 
-`ci.yml`의 수동 프로필 `native_cpu_only`는 `native_cpu_backend=whp`로 Windows x64(기본값)를, `native_cpu_backend=kvm`으로 Ubuntu x64를 선택합니다. `NativeCPUTests.def`는 CPU·프로세스 요구 사항을 공유하고 백엔드 전용 대상과 사례를 별도로 선언합니다. `run_native_cpu_ci.py --require-whp` 또는 `--require-kvm`은 호스트를 확인하고 모든 대상을 빌드한 뒤 CTest를 실행하며 목록, JUnit, 로그와 결과별 수를 보존합니다. CTest가 성공해도 필수 사례가 없거나 건너뛰면 실패합니다. CI는 Unicorn을 비활성화하고 `--with-drivers`는 선택한 백엔드에서 동일한 원래 주소·재배치 드라이버 집합을 요구합니다. 컴파일과 초기화 탐색은 게스트 실행이나 ARM64 검증을 입증하지 않습니다. Ubuntu 프로필은 업스트림 서명된 Clang/LLD 21 패키지를 사용합니다. Clang 18/19의 CR8 선언은 고정된 WDK 헤더와 충돌합니다. Linux 네이티브 검증은 CMake 4.2.3을 사용하여 GoogleTest 매개변수 주석이 CTest 테스트 이름에 포함되지 않도록 합니다.
+`ci.yml`의 수동 프로필 `native_cpu_only`는 `native_cpu_backend=whp`로 Windows x64(기본값)를, `native_cpu_backend=kvm`으로 Ubuntu x64를 선택합니다. `NativeCPUTests.def`는 CPU·프로세스 요구 사항을 공유하고 백엔드 전용 대상과 사례를 별도로 선언합니다. `run_native_cpu_ci.py --require-whp` 또는 `--require-kvm`은 호스트를 확인하고 모든 대상을 빌드한 뒤 CTest를 실행하며 목록, JUnit, 로그와 결과별 수를 보존합니다. CTest가 성공해도 필수 사례가 없거나 건너뛰면 실패합니다. CI는 Unicorn을 비활성화하고 `--with-drivers`는 선택한 백엔드에서 동일한 원래 주소·재배치 드라이버 집합을 요구합니다. 컴파일과 초기화 탐색은 게스트 실행이나 ARM64 검증을 입증하지 않습니다. Ubuntu 프로필은 업스트림 서명된 Clang/LLD 21 패키지를 사용합니다. Clang 18/19의 CR8 선언은 고정된 WDK 헤더와 충돌합니다. Linux 네이티브 검증은 CMake 4.2.3을 사용합니다. `NeverDNativeDriverTests`는 `NO_PRETTY_VALUES`를 지정하여 매개변수 진단 출력과 관계없이 CTest가 선언된 사례 이름을 유지하도록 합니다.
 
 KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTransferCases.def`의 상태 전송 결과 48개를 요구합니다. ioctl 캡처와 선택적 기능 질의 실패가 포함됩니다. 추가 동기화 레지스터 모드는 호스트가 지원할 때 실행하며, 지원하지 않으면 명시적으로 건너뜁니다. 안정적인 매개변수 이름은 ioctl 숫자나 튜플 형식에 의존하지 않습니다. 프로토콜 테스트는 네이티브 실행을 보완하며 대체하지 않습니다.
 
@@ -1210,7 +1212,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 46개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 112개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 224개를 요구합니다. 내장 이미지 26개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 4884개와 SEH 회귀 검사 17개와 스케줄링 검사 53개를 포함하면 필수 결과는 5178개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `4884 CPU + 224 WHP + 17 SEH + 53 scheduling = 5178`.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 113개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 226개를 요구합니다. 내장 이미지 27개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 4884개와 SEH 회귀 검사 17개와 스케줄링 검사 77개를 포함하면 필수 결과는 5204개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `4884 CPU + 226 WHP + 17 SEH + 77 scheduling = 5204`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 
@@ -1495,7 +1497,7 @@ CPU0 명시적 선점, 가상 시계 의미와 현재 한계는 [드라이버 �
 
 `SwiftFunctionSymbols.RepeatedDeclarationsKeepEveryRecordField`는 동일한 중복 레코드를 검사하고 변경된 이름, 크기, 경계 출처 또는 이름 출처를 거부합니다. `NativeSourceHints.SwiftErrorCallResults*`는 ARM64/x64 호출자 자동 추론을 검사하며 현재 피호출자 누락, 변경된 기계 연산, 오래된 감사, 불완전한 ABI와 누락되거나 좁아지거나 관련 없는 결과 추출을 거부합니다. 진입 소스 실행은 충돌하는 선택적 디버그 선언이 있어도 연결된 규약과 오류·컨텍스트 역할을 유지하는지 확인합니다.
 
-Swift witness 생성기는 ARM64/x86-64 macOS와 Mac Catalyst에서 `CurrentValueSubject: Publisher`와 `Range<Bound: Comparable>: RangeExpression`을 검증합니다. `scripts.tests.test_generate_swift_witness_contracts`는 변경된 제네릭 입력, 메타데이터 응답 타입이나 멤버, 프로토타입, 내보내기 제공자와 불완전한 흐름을 거부합니다. `ObjCSourceBindings.SwiftWitnessUndefRequiresGenericDescriptorContract` 및 `SwiftWitnessUndefRejectsUnprovedInputAndABI`는 두 설명자를 두 아키텍처에서 확인하며, 설명자와 아키텍처마다 runtime/가져오기 식별, 약한 또는 충돌하는 저장소, ABI와 부수 효과에 관한 33개 변형을 검사합니다. 이 카탈로그는 프레임 배치나 빌림 계약을 부여하지 않습니다.
+Swift witness 생성기는 ARM64/x86-64 macOS와 Mac Catalyst에서 `CurrentValueSubject: Publisher`와 `Range<Bound: Comparable>: RangeExpression`을 검증합니다. `scripts.tests.test_generate_swift_witness_contracts`는 변경된 제네릭 입력, 메타데이터 응답 타입이나 멤버, 프로토타입, 내보내기 제공자와 불완전한 흐름을 거부합니다. `ObjCSourceBindings.SwiftWitnessUndefRequiresExactDescriptorContract` 및 `SwiftWitnessUndefRejectsUnprovedInputAndABI`는 두 설명자를 두 아키텍처에서 확인하며, 설명자와 아키텍처마다 runtime/가져오기 식별, 약한 또는 충돌하는 저장소, ABI와 부수 효과에 관한 33개 변형을 검사합니다. 이 카탈로그는 프레임 배치나 빌림 계약을 부여하지 않습니다.
 
 `scripts.tests.test_generate_swift_data_declarations`는 완전한 `String.Index` 설명자 질의를 확인하고 기호 셀, 레시피 바이트나 길이, 메타데이터/캐시 흐름, runtime ABI 변경 및 중복되거나 누락된 정의를 거부합니다. `ObjCSourceBindings.SwiftRangeIndexDescriptorKeepsItsCompleteRecipe`는 두 아키텍처에서 선두가 아닌 오프셋 3의 설명자를 확인합니다. `SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe`는 각 아키텍처에서 20개 변형을 거부하고 기존 주소 힌트와 helper 출력을 재검증합니다.
 
@@ -1503,12 +1505,16 @@ Swift witness 생성기는 ARM64/x86-64 macOS와 Mac Catalyst에서 `CurrentValu
 
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords`는 두 아키텍처와 공급자, 모든 인자와 결과를 검증하고 약한 가져오기, 가산 오프셋, 다른 공급자, 오래된 심볼과 만들어낸 대여 효과를 거부합니다.
 
-`scripts.tests.test_generate_swift_witness_contracts`의 String 리더는 완전한 흐름을 검증하고 저장소·ABI·흐름 변형 28개와 모호한 선언 7개를 거부하며 입력 예산을 적용합니다. 바인딩 테스트는 두 아키텍처의 세 서술자에 각각 33개 변형을 적용합니다. 서술자 식별은 프레임 레이아웃이나 대여를 허용하지 않습니다.
+`scripts.tests.test_generate_swift_witness_contracts`의 String 리더는 완전한 흐름을 검증하고 저장소·ABI·흐름 변형 28개와 모호한 선언 7개를 거부하며 입력 예산을 적용합니다. 바인딩 테스트는 두 아키텍처의 네 서술자에 각각 33개 변형을 적용합니다. 서술자 식별은 프레임 레이아웃이나 대여를 허용하지 않습니다.
 
 `PreparedFiniteKeys.*`는 문맥 소멸과 이름 변경, 투영 순서와 한도, 이동 후 명시적 무효화, 잘못되거나 불완전한 결과, 빈 도메인과 비단일 도메인, 정확한 용량 경계를 검사합니다. 기존 캐시와 프레임 회귀도 준비된 키 경로를 검사합니다.
 
 `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults`는 두 아키텍처에서 레지스터, 배치, 컨텍스트 역할 및 간접 결과 변경을 거부한다. `SourceABI.SwiftPointForwardingPreservesBothIEEECarriers`는 -O0/-O2에서 전달 소스를 실행하여 두 필드의 부호 있는 0, 비정규 수, 무한대와 NaN 페이로드를 검사한다. 선언 테스트는 컴파일러 및 이름 있는 인자 형태를 허용하고 변경된 서명과 모호한 이미지 식별을 거부한다.
 
+MainActor 픽스처는 고정 메타데이터와 정적 테이블의 전체 흐름을 확인하고 저장소, ABI, 메타데이터 추출, 테이블 식별, 추가 효과, 누락되거나 중복된 선언 및 입력 예산 초과를 거부합니다. 두 카탈로그는 모든 대상에서 세 SDK 내보내기를 요구합니다. arm64/x64 witness 바인딩 시험은 네 설명자 각각에 대해 아키텍처별 33개의 입력, 가져오기 및 ABI 변이를 확인합니다. 호스트 런타임 시험은 다섯 인스턴스화 인수 비트 패턴으로 공개 테이블을 비교합니다.
+
 `BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource`는 복사 후 원본 소멸, 리터럴 테이블과 공유 감시 목록 확장, 형제 복사본의 독립 변경, 감시 방문 한 번에서의 전파 중단을 검사합니다. 재개된 전체 모델을 원래 절과 독립적인 불리언 관계로 검증합니다.
+
+`ObjCCallHints.SwiftPublishedAccessorsKeepOpaqueValueAndAllKeyPaths`는 ARM64/x86-64와 두 정식 Combine 제공자에서 두 접근자를 검증하며, 조합마다 ABI 변형 아홉 개와 가져오기 식별 변형 여덟 개를 거부합니다. 독립 SDK 검증은 ARM64 호스트에서 두 소스 아키텍처 구성의 생성 C를 O0/O2로 실행하고, 128회 호출에서 페이로드 24바이트 전체, 입출력 보호 영역 및 두 owner 식별을 비교합니다. 교차 컴파일 구성 여덟 개가 macOS/Mac Catalyst의 두 아키텍처를 확인합니다. 런타임 검증은 setter가 소비하는 참조를 보존하며 제품 코드의 빌림이나 소유권 생략을 허용하지 않습니다.
 
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` 는 루트 할당 변수와 미결정 변수의 혼합, 비결정 루트 변수, 복사본의 재복사, 원본 소멸, 후속 변수 증가, 두 기본 극성, 예산 중단과 재개, 충돌과 재시작을 검사합니다. 전체 모델과 모든 검색 카운터는 새 인코딩과 같아야 합니다.

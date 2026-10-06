@@ -56,6 +56,10 @@ EXPORTS
   RtlEqualUnicodeString
   KfRaiseIrql
   KeLowerIrql
+  KeQueryPriorityThread
+  KeSetPriorityThread
+  ObReferenceObjectByHandle
+  ObfDereferenceObject
   PsCreateSystemThread
   PsTerminateSystemThread
   KeAreApcsDisabled

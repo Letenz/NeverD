@@ -354,6 +354,8 @@ fixture は、ゲストの初期化、成功／失敗の戻り値、未対応動
 
 バックエンドテストは完全な CPU コンテキスト（レジスタ、フラグ、SIMD、FPU、CR8）、共有メモリ、別バックエンドや障害後コンテキストの拒否を検証します。コンパイル済み `driver_dispatcher.c` は実際の DPC／ワーク項目、タイマー境界、通知／同期イベントとタイマー、理由 `Executive` の非アラート `KernelMode` 待機、タイムアウト／遅延、複数の待機スタック、セット直後のリセットでも保持する起床、コールバック引数、不正 IRQL／寿命を検証します。ワーク項目の保留／完了、キュー、停滞、共通予算の検証も維持します。文書化した部分集合の証拠であり、完全な Windows 非同期対応ではありません。
 
+`DriverThreadPriorityTests.cpp` は独自のコンパイル済み `driver_thread_priority.c` を明示的な Unicorn/KVM/WHP の driver・checked 契約で実行し、待機中・キュー内の優先度変更、量子内のイベント／タイマー起床、同優先度の交代、DISPATCH_LEVEL による抑止と低優先度の飢餓中の時計進行を検証します。対になるカウンターループで残りの量子が正確に保持されることを確認します。モデルテストは符号付き ABI、失敗時の状態保持、終了済み参照、入れ子の識別子、独立コールバックのスタック再利用を扱います。ネイティブケースは `NativeDriverTests.def` で必須です。利用できないバックエンドはローカルでは明示的にスキップします。
+
 `driver_context_limits.c`: API の IRQL 上限は `KernelAPIIRQL.def` にあり、引数依存の制約は担当モデルが検査します。DPC からレジストリ API やページプールの割り当て・解放・アクセスはできません。Unicode `DbgPrint` 変換は `PASSIVE_LEVEL` を要求し、対応する ANSI 出力と非ページ操作は `DISPATCH_LEVEL` で使用できます。コールバックスタックには範囲があり、逸脱したスタックポインターは別の待機ワーカーのスタックへ侵入できません。デバイス拡張内の有効なタイマーは早期解放を防ぎます。一般の IRQL 変更を公開する機能ではありません。
 
 `KernelDeviceStackTests.cpp` は所有関係と接続の独立性、最上位選択、失敗時の原子性、スタック容量、不透明フィールド、ハンドル数、切断・削除をまたぐワーク項目／要求の保持、ファイルとディスパッチ対象の違いを検証します。独自の `driver_wdm_stack.c` は実 WDK ヘッダーとインライン Copy/Skip/SetCompletion を使用し、通常／有効 CFG イメージを任意の `NEVERD_WDM_STACK_FIXTURE`／`NEVERD_WDM_STACK_CFG_FIXTURE` で指定します。`DriverWDMStackTests.cpp` は再配置、下位の実状態、完了順序／条件、遅延 pending 伝播、ワーカー／DPC、待機、`STATUS_MORE_PROCESSING_REQUIRED`、直接 MDL 保持、入れ子の完了、不正カーソル／制御を検証します。`DriverScenarioPublicTests.cpp` は C API／CLI 転送と C API の保持／入れ子完了を、設定された CFG イメージも含めて検証します。欠落時は明示的にスキップし、Linux の証拠は同一ドライバーのスタック範囲だけを示します。PDO／PnP／電源対応は示しません。 `KernelIRPStackTests.cpp` は個数に基づくカーソル、完全なインライン Copy 範囲、消費済み位置のクリア、状態／pending 伝播、MPR と入れ子完了、継続所有者、保持経路を検証します。実 READ/WRITE とファイルのライフサイクルもインライン Copy で検証します。
@@ -1210,7 +1212,7 @@ WHP の能力照会、パーティション/仮想 CPU の初期化、レジス�
 
 ネイティブ CPU 専用 CI は固定リビジョンの Capstone ソースを初期化し、検証済みの LLVM パッケージを使います。`NEVERD_ENABLE_SEMANTIC_TESTS=OFF` と Unicorn アダプターの無効化により、CPU テストの構成・ビルド・リンクに Unicorn ソースは不要です。署名データや外部コーパスにも依存しません。既定の CI は完全な意味論テスト群を引き続き有効にします。
 
-`ci.yml` の手動プロファイル `native_cpu_only` は、`native_cpu_backend=whp` で Windows x64（既定）、`native_cpu_backend=kvm` で Ubuntu x64 を選択します。`NativeCPUTests.def` は CPU／プロセスの要件を共有し、バックエンド固有の対象とケースを別に宣言します。`run_native_cpu_ci.py --require-whp` または `--require-kvm` はホストを確認し、全対象を構築してから CTest を実行し、一覧、JUnit、ログ、結果別件数を保存します。CTest が成功しても必須ケースの欠落やスキップは失敗になります。CI は Unicorn を無効化し、`--with-drivers` は同じ元アドレス／再配置ドライバー群を選択したバックエンドで必須にします。コンパイルと初期化プローブはゲスト実行や ARM64 の合格を証明しません。 Ubuntu プロファイルは上流の署名済み Clang/LLD 21 パッケージを使います。Clang 18/19 の CR8 宣言は固定した WDK ヘッダーと競合します。 Linux のネイティブ検証は CMake 4.2.3 を使用し、GoogleTest のパラメーター注釈が CTest のテスト名へ混入することを防ぎます。
+`ci.yml` の手動プロファイル `native_cpu_only` は、`native_cpu_backend=whp` で Windows x64（既定）、`native_cpu_backend=kvm` で Ubuntu x64 を選択します。`NativeCPUTests.def` は CPU／プロセスの要件を共有し、バックエンド固有の対象とケースを別に宣言します。`run_native_cpu_ci.py --require-whp` または `--require-kvm` はホストを確認し、全対象を構築してから CTest を実行し、一覧、JUnit、ログ、結果別件数を保存します。CTest が成功しても必須ケースの欠落やスキップは失敗になります。CI は Unicorn を無効化し、`--with-drivers` は同じ元アドレス／再配置ドライバー群を選択したバックエンドで必須にします。コンパイルと初期化プローブはゲスト実行や ARM64 の合格を証明しません。 Ubuntu プロファイルは上流の署名済み Clang/LLD 21 パッケージを使います。Clang 18/19 の CR8 宣言は固定した WDK ヘッダーと競合します。 Linux のネイティブ検証には CMake 4.2.3 を使用します。`NeverDNativeDriverTests` は `NO_PRETTY_VALUES` を指定し、パラメーターの診断表示に依存せず、宣言したケース名を CTest に保持させます。
 
 KVM の判定には、実際に自発終了しない vCPU のキャンセルと、`KvmStateTransferCases.def` の 48 件の状態転送結果が必要です。ioctl による取得とオプション能力の問い合わせ失敗を含みます。他の同期レジスタモードはホストが対応する場合に実行し、それ以外は明示的にスキップします。固定のパラメーター名は ioctl 番号やタプル表示形式に依存しません。プロトコルテストはネイティブ実行を補完し、代替しません。
 
@@ -1220,7 +1222,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 112 ワークロードについて、元のアドレスと再配置先で計 224 の WHP 結果を必須とします。内訳は組み込みイメージ 26 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 4884 検査とSEH 回帰検査 17 件とスケジューリング検査 53 件を合わせ、必須の結果は 5178 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `4884 CPU + 224 WHP + 17 SEH + 53 scheduling = 5178`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 113 ワークロードについて、元のアドレスと再配置先で計 226 の WHP 結果を必須とします。内訳は組み込みイメージ 27 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 4884 検査とSEH 回帰検査 17 件とスケジューリング検査 77 件を合わせ、必須の結果は 5204 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `4884 CPU + 226 WHP + 17 SEH + 77 scheduling = 5204`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1505,7 +1507,7 @@ CPU0 の明示的プリエンプション、仮想時計と制約は[ドライ�
 
 `SwiftFunctionSymbols.RepeatedDeclarationsKeepEveryRecordField` は同一の重複レコードを検証し、名前、サイズ、境界の由来、名前の由来の変更を拒否します。`NativeSourceHints.SwiftErrorCallResults*` は ARM64/x64 呼び出し側の自動推論を実行し、現在の呼び出し先の欠落、機械操作の変更、古い監査、不完全な ABI、および欠落・縮小・無関係な結果抽出を拒否します。入口ソースの実行では、競合する任意のデバッグ宣言があっても、結び付けられた規約とエラー・コンテキストの役割を維持することを確認します。
 
-Swift witness の生成器は ARM64/x86-64 の macOS と Mac Catalyst で `CurrentValueSubject: Publisher` と `Range<Bound: Comparable>: RangeExpression` を検証します。`scripts.tests.test_generate_swift_witness_contracts` はジェネリック入力、メタデータ応答の型やメンバー、プロトタイプ、エクスポート提供元、不完全なフローを検査します。`ObjCSourceBindings.SwiftWitnessUndefRequiresGenericDescriptorContract` と `SwiftWitnessUndefRejectsUnprovedInputAndABI` は両記述子を両アーキテクチャーで検証し、それぞれ runtime・インポート識別、弱いまたは競合するストレージ、ABI、副作用の 33 変異を拒否します。これらのカタログはフレーム配置や借用契約を認めません。
+Swift witness の生成器は ARM64/x86-64 の macOS と Mac Catalyst で `CurrentValueSubject: Publisher` と `Range<Bound: Comparable>: RangeExpression` を検証します。`scripts.tests.test_generate_swift_witness_contracts` はジェネリック入力、メタデータ応答の型やメンバー、プロトタイプ、エクスポート提供元、不完全なフローを検査します。`ObjCSourceBindings.SwiftWitnessUndefRequiresExactDescriptorContract` と `SwiftWitnessUndefRejectsUnprovedInputAndABI` は両記述子を両アーキテクチャーで検証し、それぞれ runtime・インポート識別、弱いまたは競合するストレージ、ABI、副作用の 33 変異を拒否します。これらのカタログはフレーム配置や借用契約を認めません。
 
 `scripts.tests.test_generate_swift_data_declarations` は完全な `String.Index` 記述子クエリを検査し、シンボルセル、レシピのバイトや長さ、メタデータ・キャッシュのフロー、runtime ABI の変更と重複・欠落定義を拒否します。`ObjCSourceBindings.SwiftRangeIndexDescriptorKeepsItsCompleteRecipe` は両アーキテクチャーで先頭以外のオフセット 3 の記述子を検証します。`SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe` は各アーキテクチャーで 20 変異を拒否し、公開済みのアドレスヒントと helper 出力を再検証します。
 
@@ -1513,12 +1515,16 @@ Swift witness の生成器は ARM64/x86-64 の macOS と Mac Catalyst で `Curre
 
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` は両アーキテクチャとプロバイダ、全引数と結果を検証し、弱いインポート、加算オフセット、別プロバイダ、古いシンボル、借用効果の捏造を拒否します。
 
-`scripts.tests.test_generate_swift_witness_contracts` の String リーダーは完全な流れを検証し、28 のストレージ・ABI・フロー変更と七つの曖昧な宣言を拒否して入力予算を守ります。結合テストは両アーキテクチャの三記述子にそれぞれ 33 の変更を適用します。記述子の識別はフレーム配置や借用を許可しません。
+`scripts.tests.test_generate_swift_witness_contracts` の String リーダーは完全な流れを検証し、28 のストレージ・ABI・フロー変更と七つの曖昧な宣言を拒否して入力予算を守ります。結合テストは両アーキテクチャの四記述子にそれぞれ 33 の変更を適用します。記述子の識別はフレーム配置や借用を許可しません。
 
 `PreparedFiniteKeys.*` はコンテキスト破棄と変数改名、射影順序と上限、移動後の明示的な無効化、不正・不完全な結果、空集合と非一意な値域、正確な容量境界を検査します。既存のキャッシュとフレームの回帰テストも準備済みキーの経路を検査します。
 
 `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults` は両アーキテクチャでレジスタ、配置、コンテキストの役割、間接結果の変更を拒否する。`SourceABI.SwiftPointForwardingPreservesBothIEEECarriers` は -O0/-O2 で転送ソースを実行し、両フィールドの符号付きゼロ、非正規数、無限大、NaN ペイロードを確認する。宣言テストはコンパイラ形式と名前付き引数を認め、変更された署名や曖昧なイメージ識別を拒否する。
 
+MainActor のフィクスチャは固定メタデータと静的テーブルの完全な流れを検証し、ストレージ、ABI、メタデータ抽出、テーブル識別、追加の副作用、宣言の欠落・重複、入力予算超過を拒否します。両カタログで各ターゲットの 3 つの SDK 公開シンボルが必須です。arm64/x64 の witness バインド試験は 4 記述子すべてに対して各アーキテクチャで 33 の入力・インポート・ABI 変異を検証します。ホストのランタイム試験は 5 種の具現化引数ビットパターンで公開テーブルを比較します。
+
 `BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource` はコピー元を破棄した後のリテラル表と共有監視リストの拡張、兄弟コピーの独立した変更、一回の監視訪問での伝播中断を検査し、再開後の完全モデルを元の節と独立した論理関係で確認します。
+
+`ObjCCallHints.SwiftPublishedAccessorsKeepOpaqueValueAndAllKeyPaths` は ARM64/x86-64 と両方の正規 Combine 提供元で二つのアクセサーを検証し、各組合せで九つの ABI 変異と八つのインポート識別変異を拒否します。独立 SDK 検証では ARM64 ホスト上で両ソース構成の生成 C を O0/O2 で実行し、128 回の呼出しで 24 バイト全部、入出力ガード、二つの owner 識別を比較します。八つのクロスコンパイル構成が macOS/Mac Catalyst の両アーキテクチャーを検査します。ランタイム検証は setter が消費する参照を保持し、製品コードに借用や所有権の省略を認めません。
 
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` は、根で割り当て済みの変数と未決定変数の混在、非決定根変数、コピーの再コピー、元の破棄、変数追加、両方の既定極性、予算による中断と再開、競合と再始動を検査します。完全なモデルとすべての探索カウンターは新規符号化と一致する必要があります。

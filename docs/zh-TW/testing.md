@@ -351,6 +351,8 @@ fixture 涵蓋客體初始化、成功與失敗傳回、不支援的行為、記
 
 後端測試驗證完整 CPU 內容（暫存器、旗標、SIMD、FPU、CR8）、共用記憶體及跨後端／故障內容拒絕。編譯後的 `driver_dispatcher.c` 範例實際執行 DPC 與工作項目回呼，涵蓋計時器邊界、通知／同步事件與計時器、原因 `Executive` 的非警示 `KernelMode` 等待、逾時／延遲、多個阻塞堆疊、設定後重設仍保留喚醒、回呼參數及非法 IRQL／生命週期。工作項目測試繼續涵蓋待處理／完成、佇列、停滯與共用預算。這些案例證明所述子集，不代表完整 Windows 非同步支援。
 
+`DriverThreadPriorityTests.cpp` 使用原創編譯驅動程式 `driver_thread_priority.c`，在明確指定的 Unicorn／KVM／WHP driver 與 checked 契約下驗證排隊及阻塞執行緒的優先順序修改、時間片內事件／計時器喚醒、同級輪轉、DISPATCH_LEVEL 屏蔽與低優先順序飢餓時的計時器推進。成對計數迴圈證明搶佔後保留準確的剩餘時間片。模型測試涵蓋帶符號 ABI、失敗不改變狀態、已結束物件參照、巢狀身分及獨立回呼堆疊重用。原生案例納入 `NativeDriverTests.def` 強制清單；本機不可用的後端明確略過。
+
 `driver_context_limits.c`: API 的 IRQL 上限來自 `KernelAPIIRQL.def`，參數相關限制由所屬模型檢查。DPC 不能呼叫登錄 API，也不能配置、釋放或存取分頁集區；Unicode `DbgPrint` 轉換要求 `PASSIVE_LEVEL`，支援的 ANSI 輸出與非分頁操作仍可在 `DISPATCH_LEVEL` 使用。回呼堆疊有明確邊界，越界堆疊指標不能進入另一阻塞工作項目的堆疊。裝置擴充中的已啟動計時器會阻止裝置提早回收。這些檢查並未開放一般 IRQL 切換。
 
 `KernelDeviceStackTests.cpp` 檢查獨立的擁有者／附加關係、頂端選擇、失敗原子性、堆疊容量、不透明欄位、開啟控制代碼計數、解除附加／刪除時的工作項目及請求保留，以及檔案身分與派送頂端的區別。原創 `driver_wdm_stack.c` 使用真正 WDK 標頭與內嵌 Copy/Skip/SetCompletion；一般／啟用 CFG 映像由選用的 `NEVERD_WDM_STACK_FIXTURE`／`NEVERD_WDM_STACK_CFG_FIXTURE` 設定。`DriverWDMStackTests.cpp` 涵蓋重新定位、實際下層狀態、完成順序和旗標、延遲 pending 傳播、工作項目／DPC、等待、`STATUS_MORE_PROCESSING_REQUIRED`、直接 MDL 保留、巢狀完成及格式錯誤的游標／控制值。`DriverScenarioPublicTests.cpp` 涵蓋 C API／CLI 轉送與 C API 保留／巢狀完成，包括已設定的 CFG 映像。缺少產物會明確略過；Linux 證據僅證明同驅動程式堆疊子集，不代表 PDO／PnP／電源支援。 `KernelIRPStackTests.cpp` 檢查計數游標、完整內嵌 Copy 前綴、已消耗位置清零、狀態／pending 傳播、MPR 與巢狀完成、續接擁有者檢查及保留路徑。真正 READ/WRITE 與檔案生命週期也使用內嵌 Copy 驗證。
@@ -1156,7 +1158,7 @@ WHP 在能力查詢、分割區/虛擬 CPU 初始化、暫存器/XSAVE 傳輸及
 
 僅原生 CPU 的 CI 檢出初始化固定版本的 Capstone 原始碼，並使用經驗證的預建 LLVM 套件。設定 `NEVERD_ENABLE_SEMANTIC_TESTS=OFF` 且停用 Unicorn 後端後，CPU 測試目標的設定、建置和連結均不需要 Unicorn 原始碼，也不依賴簽章庫及外部語料。預設 CI 仍啟用完整語意測試組。
 
-`ci.yml` 的手動模式 `native_cpu_only` 透過 `native_cpu_backend=whp` 選擇 Windows x64（預設），或透過 `native_cpu_backend=kvm` 選擇 Ubuntu x64。`NativeCPUTests.def` 共用 CPU／行程驗收要求，分別宣告後端專屬目標和案例。`run_native_cpu_ci.py --require-whp` 或 `--require-kvm` 驗證宿主，先建置全部目標再執行 CTest，並保留清單、JUnit、日誌和結果分類。即使 CTest 成功結束，缺少或略過必測案例仍會失敗。CI 停用 Unicorn；`--with-drivers` 要求所選後端執行相同的原址／重定位驅動程式範例。編譯和建立探測不能證明來賓執行或 ARM64 驗收。 Ubuntu 設定使用上游簽署的 Clang/LLD 21 套件；Clang 18/19 的 CR8 宣告與固定版本的 WDK 標頭衝突。 Linux 原生驗收使用 CMake 4.2.3，避免 GoogleTest 參數註解進入 CTest 測試識別。
+`ci.yml` 的手動模式 `native_cpu_only` 透過 `native_cpu_backend=whp` 選擇 Windows x64（預設），或透過 `native_cpu_backend=kvm` 選擇 Ubuntu x64。`NativeCPUTests.def` 共用 CPU／行程驗收要求，分別宣告後端專屬目標和案例。`run_native_cpu_ci.py --require-whp` 或 `--require-kvm` 驗證宿主，先建置全部目標再執行 CTest，並保留清單、JUnit、日誌和結果分類。即使 CTest 成功結束，缺少或略過必測案例仍會失敗。CI 停用 Unicorn；`--with-drivers` 要求所選後端執行相同的原址／重定位驅動程式範例。編譯和建立探測不能證明來賓執行或 ARM64 驗收。 Ubuntu 設定使用上游簽署的 Clang/LLD 21 套件；Clang 18/19 的 CR8 宣告與固定版本的 WDK 標頭衝突。 Linux 原生驗收使用 CMake 4.2.3。`NeverDNativeDriverTests` 明確設定 `NO_PRETTY_VALUES`，讓 CTest 保留已宣告的案例名稱，不依賴參數診斷輸出。
 
 KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransferCases.def` 中 48 項狀態傳輸結果，包括 ioctl 擷取和選用能力查詢失敗。其他同步暫存器模式在宿主支援時執行，否則明確略過。穩定的參數名稱不依賴 ioctl 數值或元組格式。協定測試補充原生執行證據，不能取代它。
 
@@ -1166,7 +1168,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 112 個工作負載產生 224 個 WHP 結果：26 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 4884 項 CPU 檢查及 17 項 SEH 回歸及 53 項排程檢查，共有 5178 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `4884 CPU + 224 WHP + 17 SEH + 53 scheduling = 5178`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 113 個工作負載產生 226 個 WHP 結果：27 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 4884 項 CPU 檢查及 17 項 SEH 回歸及 77 項排程檢查，共有 5204 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `4884 CPU + 226 WHP + 17 SEH + 77 scheduling = 5204`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1451,7 +1453,7 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 
 `SwiftFunctionSymbols.RepeatedDeclarationsKeepEveryRecordField` 檢查完全相同的重複記錄，並拒絕名稱、大小、邊界來源或名稱來源變化。`NativeSourceHints.SwiftErrorCallResults*` 涵蓋 ARM64/x64 呼叫者的自動推斷，拒絕缺失的目前被呼叫函式、被修改的機器操作、過期稽核、不完整 ABI，以及缺失、變窄或來自其他值的結果提取。入口原始碼執行也涵蓋互相衝突的可選除錯宣告，確保繫結的呼叫慣例及錯誤、上下文角色保持有效。
 
-Swift witness 產生器在 ARM64/x86-64 macOS 和 Mac Catalyst 上同時驗證 `CurrentValueSubject: Publisher` 與 `Range<Bound: Comparable>: RangeExpression`。`scripts.tests.test_generate_swift_witness_contracts` 拒絕泛型輸入、中繼資料回應型別或成員、原型、匯出提供方和完整資料流的變更。`ObjCSourceBindings.SwiftWitnessUndefRequiresGenericDescriptorContract` 與 `SwiftWitnessUndefRejectsUnprovedInputAndABI` 在兩種架構上驗證兩個描述符，每個描述符與架構包含 33 種 runtime/匯入身分、弱或衝突儲存、ABI 和副作用變更。這些目錄不授予框架配置或借用契約。
+Swift witness 產生器在 ARM64/x86-64 macOS 和 Mac Catalyst 上同時驗證 `CurrentValueSubject: Publisher` 與 `Range<Bound: Comparable>: RangeExpression`。`scripts.tests.test_generate_swift_witness_contracts` 拒絕泛型輸入、中繼資料回應型別或成員、原型、匯出提供方和完整資料流的變更。`ObjCSourceBindings.SwiftWitnessUndefRequiresExactDescriptorContract` 與 `SwiftWitnessUndefRejectsUnprovedInputAndABI` 在兩種架構上驗證兩個描述符，每個描述符與架構包含 33 種 runtime/匯入身分、弱或衝突儲存、ABI 和副作用變更。這些目錄不授予框架配置或借用契約。
 
 `scripts.tests.test_generate_swift_data_declarations` 檢查完整 `String.Index` 描述符查詢，拒絕符號指標單元、配方位元組或長度、中繼資料與快取資料流、runtime ABI 的變更以及重複或缺失定義。`ObjCSourceBindings.SwiftRangeIndexDescriptorKeepsItsCompleteRecipe` 在兩種架構上檢查位於位移 3 的非首位描述符；`SwiftRangeIndexDescriptorRejectsStaleIdentityAndRecipe` 拒絕每種架構的 20 種變更，並複核既有位址提示與 helper 輸出。
 
@@ -1459,12 +1461,16 @@ Swift witness 產生器在 ARM64/x86-64 macOS 和 Mac Catalyst 上同時驗證 `
 
 `ObjCCallHints.FoundationGenericNSRangeKeepsSixPointersAndTwoWords` 驗證兩種架構、匯出提供者及全部參數與結果載體，並拒絕弱匯入、附加位移、外來提供者、過期符號與虛構的借用效果。
 
-`scripts.tests.test_generate_swift_witness_contracts` 的 String 讀取器檢查完整快取與查詢流程，拒絕 28 項儲存、ABI、流程突變與七種歧義宣告，並限制輸入預算。現有見證繫結測試涵蓋三個描述符與兩種架構，每個組合包含 33 項突變。描述符身分不提供堆疊框架配置或借用權限。
+`scripts.tests.test_generate_swift_witness_contracts` 的 String 讀取器檢查完整快取與查詢流程，拒絕 28 項儲存、ABI、流程突變與七種歧義宣告，並限制輸入預算。現有見證繫結測試涵蓋四個描述符與兩種架構，每個組合包含 33 項突變。描述符身分不提供堆疊框架配置或借用權限。
 
 `PreparedFiniteKeys.*` 檢查上下文銷毀和重新命名、投影順序與上限、移動後明確失效、格式錯誤及不完整結果、空值域和非唯一值域，以及精確容量邊界。既有快取和堆疊偏移回歸也涵蓋預備鍵路徑。
 
 `SourceABI.SwiftPointTransformKeepsTwoFloatingInputsAndResults` 在兩種架構上拒絕載體、佈局、上下文角色與間接結果變更。`SourceABI.SwiftPointForwardingPreservesBothIEEECarriers` 在 -O0/-O2 下編譯執行轉發原始碼，驗證兩個欄位的正負零、次正規數、無窮與 NaN 酬載。宣告測試接受編譯器及具名參數形式，拒絕簽名變更與歧義映像身分。
 
+MainActor 測試資料檢查完整的固定中繼資料與靜態表流程，拒絕儲存、ABI、中繼資料擷取、表識別的變化、額外副作用、缺少或重複宣告及輸入預算耗盡。兩個目錄都要求每種目標提供全部三個配對 SDK 匯出。見證繫結測試在 arm64/x64 上涵蓋全部四種描述符，每種描述符與架構檢查 33 項輸入、匯入及 ABI 變異；主機執行階段檢查以五種具現化參數位元模式核對公開表。
+
 `BitVectorEncodingClone.WatchMigrationAndGrowthOutliveTheSource` 在複製並銷毀來源後擴展文字表及共享 watch 串列，獨立修改同源副本，在一次 watch 存取處中斷傳播，並依據原始子句和獨立布林關係檢查恢復後的完整模型。
+
+`ObjCCallHints.SwiftPublishedAccessorsKeepOpaqueValueAndAllKeyPaths` 在 ARM64/x86-64 與兩種規範 Combine 提供方上檢查兩個存取器，每個組合拒絕九項 ABI 變異與八項匯入身分變異。獨立 SDK 驗證在 ARM64 主機以 O0/O2 執行兩種原始碼架構設定產生的 C，在 128 次存取器呼叫中比較全部 24 個資料位元組、輸入輸出保護區與兩個物件身分。八種交叉編譯設定涵蓋兩種架構的 macOS 與 Mac Catalyst。執行階段檢查保留寫入器消耗的參照，不授予正式程式碼借用或所有權捷徑。
 
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` 檢查根層已賦值與未決變數混合、非決策根變數、副本再次複製、來源物件銷毀、後續變數增長、兩種預設極性、預算中斷與恢復、衝突及重新啟動。完整模型與全部搜尋計數必須與全新編碼一致。

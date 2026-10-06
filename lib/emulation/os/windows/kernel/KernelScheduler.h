@@ -12,6 +12,8 @@
 #ifndef NEVERD_EMULATION_WINDOWS_KERNELSCHEDULER_H
 #define NEVERD_EMULATION_WINDOWS_KERNELSCHEDULER_H
 
+#include "KernelThreadPriorities.h"
+
 #include "neverd/emulation/DriverInterrupts.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -39,8 +41,9 @@ namespace scheduler {
 /// boundaries. Interrupts use descending assigned priority and FIFO ties;
 /// high-importance DPCs insert at the head. No callback executes here: next()
 /// returns guest metadata.
-/// Virtual time advances only when no callback is ready or running. Guest API
-/// wrappers own object initialization, thread identities, and memory semantics.
+/// The session may advance the execution clock and preempt between
+/// instructions. Guest API wrappers own object initialization, thread
+/// identities and memory.
 class KernelScheduler {
 public:
   enum class CallbackKind {
@@ -117,6 +120,23 @@ public:
   /// Allocate only when an owner becomes ready or exhausts its time slice.
   llvm::Expected<uint64_t> issueReadyOrder();
   std::optional<uint64_t> nextPassiveReadyOrder() const;
+  /// Transient selection metadata; priority is always read from canonical
+  /// state, never retained in a queued invocation or CPU context.
+  struct ReadyThread {
+    int32_t Priority;
+    uint64_t ReadyOrder;
+    bool precedes(const ReadyThread &Other) const {
+      return Priority > Other.Priority ||
+             (Priority == Other.Priority && ReadyOrder < Other.ReadyOrder);
+    }
+  };
+  ReadyThread readyThread(uint64_t Key, uint64_t Order) const {
+    return {threadPriority(Key), Order};
+  }
+  std::optional<ReadyThread> nextPassiveThread() const;
+  int32_t threadPriority(uint64_t Key) const;
+  llvm::Expected<int32_t> setThreadPriority(uint64_t Key, int32_t Priority);
+  void forgetThreadPriority(uint64_t Key) { ThreadPriorities.erase(Key); }
 
   /// Already-queued work items are a driver error. Once next() dequeues an
   /// item, that object may be freed or queued again by its callback.
@@ -356,7 +376,9 @@ private:
   std::optional<Invocation> Active;
   std::map<uint64_t, Invocation> Suspended;
   std::map<uint64_t, TimerState> Timers;
+  std::map<uint64_t, int32_t> ThreadPriorities;
 
+  const Invocation *nextPassiveInvocation() const;
   llvm::Error validateTime() const;
   llvm::Error validateCallback(const Callback &Work) const;
   llvm::Error validateDPC(const DpcCallback &DPC) const;
