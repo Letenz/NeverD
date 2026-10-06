@@ -1316,7 +1316,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration` 拒绝与当前非空方法编码或选择器不一致的缓存 ABI；仅提供显式类型声明的客户端保留原有约定。
 
-`DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract` 覆盖四个矩阵/仿射生产函数及 22 种必须拒绝的契约篡改。`ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy` 证明 SDK 结果进入 CoreImage 副本并通过独立发布重建；`RejectsWrongProducerFrameAndSavedIR` 对每个生产函数检查 12 种篡改，包括输入写入缺失、结果越界、错误提供者/ABI 载体和复用已消耗的 Concat 输入。`GeneratedCMatchesOriginalMachineAndSDKResults` 在 Apple ARM64 上以 O0/O2 执行未修改的生成 C 与原始 ARM64 机器字，并调用原生 CoreGraphics：每个函数 1000 组数据对比全部 48 个结果字节、两个输入记录、选择子/接收者身份、单次调用、返回对象、私有副本改写及边界保护值。其他主机跳过此原生 SDK 执行测试。
+`DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract` 覆盖当前矩阵/仿射契约及 22 种必须拒绝的契约篡改。`ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy` 证明 SDK 结果进入 CoreImage 副本并通过独立发布重建；`RejectsWrongProducerFrameAndSavedIR` 对每个生产函数检查 12 种篡改，包括输入写入缺失、结果越界、错误提供者/ABI 载体和复用已消耗的 Concat 输入。`GeneratedCMatchesOriginalMachineAndSDKResults` 在 Apple ARM64 上以 O0/O2 执行未修改的生成 C 与原始 ARM64 机器字，并调用原生 CoreGraphics：每个函数 1000 组数据对比全部 48 个结果字节、两个输入记录、选择子/接收者身份、单次调用、返回对象、私有副本改写及边界保护值。其他主机跳过此原生 SDK 执行测试。
 
 `MatrixFrameEffectsRequireExactCurrentContract` 还覆盖 CGRect 消费者及 22 种必须拒绝的篡改。`ObjCAffineImageValueCopy.CGRectInputUsesTheSameCurrentFrameOwner` 验证“旋转 → CGRect 借用 → 旋转重新初始化 → CoreImage 发布”；`CGRectBorrowRejectsExpiredInputsAndChangedABI` 拒绝初始化、输入范围、导入和载体的八种修改。`GeneratedCMatchesOriginalMachineAndSDKResults` 还以 O0/O2、1000 组数据，将该完整顺序的生成 C 与原始机器字、原生 SDK 对照，检查保存的角度、全部 48 个最终字节、对象及保护值。
 
@@ -1360,3 +1360,9 @@ block/副本发布测试还覆盖两个独立的 48 字节范围、描述符重�
 `LowIRLoopRefinement.GuardedCuts*` 和 `BinaryLowIRLoopRefinement.GuardedCuts*` 覆盖同址切点、寄存器、帧及原生系统标志、两种字节序、未匹配的有限及循环路径、重叠和错配拒绝、前缀泛化、未定义值见证、错误元数据、摘要及共享预算。独立原生测试证明两个 R10 上下文共用循环地址，并确认未审计边界检查先于选择条件。原生选择条件自动发现和普通 ABI 认证仍是独立工作。
 
 `DarwinIndirectRecordCalls` 检查当前 MakeScale 契约及 22 项导入/ABI 变更拒绝案例，再通过共享按值副本证明消费完整的 48 字节私有结果。未对齐、偏移、重叠或越出栈帧的结果范围均被拒绝。即使保留完整返回 ABI，移除确定写入效果也会被拒绝。
+
+`SourceFrameAnalysis.IncomingResultAddressNeedsCompleteEntryIdentity` 拒绝十种入口、载体或写入修改以及缺失的入口 ABI。`NativeSourceHints.IndirectResultTailCallRetainsExplicitOutputAddress` 重新提升直接尾调用，检查显式输出参数、六次写入和发布门槛。
+
+`NativeSourceHints.FourDoubleCallerDemandNeedsEveryUnchangedCarrier` 检查四个低位通道、独立的高位写入及九种声明或控制修改。`FourDoubleReturnRequiresEveryComputedLowLane` 拒绝十二种结果不完整或契约失效的情况。`DarwinNativeRecordReturns.FourComputedDoublesExecuteAtO0AndO2` 在每个优化级别运行 2048 组输入，与独立算术判据比较全部 32 字节结果。
+
+`DarwinIndirectRecordCalls.AffineInvertSnapshotsItsCompleteAliasedInput` 在 O0、O2 各运行 2560 个同址、重叠或分离的输入输出布局，检查输入位模式、单次调用、全部 48 字节结果及完整带守卫存储。它验证物理复制与快照，不是原始机器码或原生 SDK 执行。当前矩阵/仿射契约测试对每个契约保留 22 种拒绝修改。

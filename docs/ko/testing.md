@@ -1398,7 +1398,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration`는 현재의 비어 있지 않은 메서드 인코딩 또는 선택자와 다른 캐시 ABI를 거부한다. 선언만 제공하는 클라이언트의 기존 계약은 유지한다.
 
-`DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract`는 네 행렬·아핀 생성 함수와 거부해야 하는 계약 변경 22개를 검사합니다. `ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy`는 SDK 결과가 CoreImage 복사와 게시용 독립 재구축에 도달함을 증명합니다. `RejectsWrongProducerFrameAndSavedIR`는 생성 함수마다 12개 변경을 검사하며 입력 쓰기 누락, 프레임 밖 결과, 잘못된 공급자·ABI 전달 위치 및 소비된 Concat 입력 재사용을 거부합니다. `GeneratedCMatchesOriginalMachineAndSDKResults`는 Apple ARM64의 O0/O2에서 변경하지 않은 생성 C와 원본 ARM64 명령어를 네이티브 CoreGraphics로 실행합니다. 함수마다 1000개 사례로 결과의 모든 48바이트, 두 입력, 선택자·수신자 식별, 한 번의 호출, 반환 객체, 비공개 복사 쓰기 및 경계 보호값을 비교합니다. 다른 호스트는 이 네이티브 SDK 실행 테스트를 건너뜁니다.
+`DarwinIndirectRecordCalls.MatrixFrameEffectsRequireExactCurrentContract`는 현재 행렬·아핀 계약와 거부해야 하는 계약 변경 22개를 검사합니다. `ObjCAffineImageValueCopy.CurrentProducerInitializesThePublishedCopy`는 SDK 결과가 CoreImage 복사와 게시용 독립 재구축에 도달함을 증명합니다. `RejectsWrongProducerFrameAndSavedIR`는 생성 함수마다 12개 변경을 검사하며 입력 쓰기 누락, 프레임 밖 결과, 잘못된 공급자·ABI 전달 위치 및 소비된 Concat 입력 재사용을 거부합니다. `GeneratedCMatchesOriginalMachineAndSDKResults`는 Apple ARM64의 O0/O2에서 변경하지 않은 생성 C와 원본 ARM64 명령어를 네이티브 CoreGraphics로 실행합니다. 함수마다 1000개 사례로 결과의 모든 48바이트, 두 입력, 선택자·수신자 식별, 한 번의 호출, 반환 객체, 비공개 복사 쓰기 및 경계 보호값을 비교합니다. 다른 호스트는 이 네이티브 SDK 실행 테스트를 건너뜁니다.
 
 `MatrixFrameEffectsRequireExactCurrentContract`는 CGRect 소비 함수와 거부해야 하는 변경 22개도 검사합니다. `ObjCAffineImageValueCopy.CGRectInputUsesTheSameCurrentFrameOwner`는 회전 → CGRect 대여 → 회전 재초기화 → CoreImage 게시를 검증합니다. `CGRectBorrowRejectsExpiredInputsAndChangedABI`는 초기화, 범위, 가져오기, 전달 위치에 대한 여덟 변경을 거부합니다. `GeneratedCMatchesOriginalMachineAndSDKResults`는 전체 순서를 O0/O2에서 1000개 사례로 원본 명령어 및 네이티브 SDK와 실행하여 저장된 각도, 결과의 모든 48바이트, 객체 및 경계 보호값을 비교합니다.
 
@@ -1442,3 +1442,9 @@ block과 복사본 게시 테스트는 독립된 두 48바이트 범위, 기술�
 `LowIRLoopRefinement.GuardedCuts*`와 `BinaryLowIRLoopRefinement.GuardedCuts*`는 같은 PC, 레지스터·프레임·시스템 플래그, 두 바이트 순서, 미일치 유한·순환 경로, 중첩과 잘못된 쌍, 접두 일반화, 미정의 값 증인, 메타데이터, 다이제스트와 공통 예산을 검사한다. 독립 네이티브 테스트는 같은 루프 주소의 두 R10 문맥을 증명하고 미감사 경계가 먼저 검사됨을 확인한다. 조건 자동 발견과 일반 ABI 인증은 별도다.
 
 `DarwinIndirectRecordCalls`는 현재 MakeScale 계약과 22가지 가져오기/ABI 변경을 검사하고, 공유 값 복사 증명으로 완전한 48바이트 비공개 결과를 소비합니다. 정렬되지 않거나 이동, 겹침 또는 프레임 범위를 벗어난 결과는 거부됩니다. 완전한 반환 ABI를 유지하더라도 확정 쓰기 효과를 제거하면 거부됩니다.
+
+`SourceFrameAnalysis.IncomingResultAddressNeedsCompleteEntryIdentity`는 진입·캐리어·쓰기 변경 열 가지와 진입 ABI 누락을 거부한다. `NativeSourceHints.IndirectResultTailCallRetainsExplicitOutputAddress`는 직접 꼬리 호출을 재리프팅하고 명시적 출력 매개변수, 쓰기 여섯 번과 게시 게이트를 확인한다.
+
+`NativeSourceHints.FourDoubleCallerDemandNeedsEveryUnchangedCarrier`는 네 하위 레인, 독립적인 상위 쓰기와 선언·제어 변경 아홉 가지를 확인한다. `FourDoubleReturnRequiresEveryComputedLowLane`는 불완전한 결과나 무효 계약 열두 가지를 거부한다. `DarwinNativeRecordReturns.FourComputedDoublesExecuteAtO0AndO2`는 각 최적화 수준에서 2048개 사례의 32바이트 전체 결과를 독립 산술 오라클과 비교한다.
+
+`DarwinIndirectRecordCalls.AffineInvertSnapshotsItsCompleteAliasedInput`는 O0/O2 각각 2560개 사례에서 동일·중첩·분리된 입력과 출력, 입력 비트 패턴, 한 번의 호출, 48바이트 전체 결과와 보호된 저장 공간 전체를 확인한다. 이는 물리 복사와 스냅샷 오라클이며 원본 기계 코드나 네이티브 SDK 실행은 아니다. 현재 행렬·아핀 계약 테스트는 계약마다 변경 22개의 거부를 유지한다.

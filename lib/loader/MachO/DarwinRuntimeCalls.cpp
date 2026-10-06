@@ -63,7 +63,7 @@ darwinIndirectAffineTransformSignature(Arch Architecture,
   if (Architecture != Arch::AArch64 ||
       (Name != "CGContextConcatCTM" && Name != "CGAffineTransformTranslate" &&
        Name != "CGAffineTransformScale" && Name != "CGAffineTransformRotate" &&
-       Name != "CGAffineTransformConcat" &&
+       Name != "CGAffineTransformConcat" && Name != "CGAffineTransformInvert" &&
        Name != "CGRectApplyAffineTransform" && !Matrix))
     return std::nullopt;
   SourceFunctionTypeHint Signature;
@@ -91,7 +91,7 @@ darwinIndirectAffineTransformSignature(Arch Architecture,
     Signature.Parameters = {{"transform", Pointer}};
     if (Name == "CGAffineTransformConcat") {
       Signature.Parameters.push_back({"second_transform", Pointer});
-    } else {
+    } else if (Name != "CGAffineTransformInvert") {
       Signature.Parameters.push_back({"first", Double});
       if (Name != "CGAffineTransformRotate")
         Signature.Parameters.push_back({"second", Double});
@@ -125,7 +125,8 @@ darwinMatrixSourceFrameEffects(const BinaryImage &Image,
   const bool Rect = Binding.TargetName == "CGRectApplyAffineTransform";
   const bool Affine = Binding.TargetName == "CGAffineTransformMakeRotation" ||
                       Binding.TargetName == "CGAffineTransformMakeScale" ||
-                      Binding.TargetName == "CGAffineTransformConcat" || Rect;
+                      Binding.TargetName == "CGAffineTransformConcat" ||
+                      Binding.TargetName == "CGAffineTransformInvert" || Rect;
   const bool Matrix = Binding.TargetName == "CATransform3DMakeTranslation" ||
                       Binding.TargetName == "CATransform3DScale";
   if (Image.Arch != Arch::AArch64 ||
@@ -162,7 +163,8 @@ darwinMatrixSourceFrameEffects(const BinaryImage &Image,
   SourceFrameEffects Effects;
   Effects.InitializesIndirectResult = !Rect;
   if (Binding.TargetName == "CATransform3DScale" ||
-      Binding.TargetName == "CGAffineTransformConcat" || Rect) {
+      Binding.TargetName == "CGAffineTransformConcat" ||
+      Binding.TargetName == "CGAffineTransformInvert" || Rect) {
     const auto Bytes =
         darwinIndirectAffineTransformInputBytes(Image.Arch, Binding.TargetName);
     if (Bytes != (Matrix ? 128 : 48))
@@ -287,6 +289,7 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   if (Name == "CGContextConcatCTM" || Name == "CGAffineTransformTranslate" ||
       Name == "CGAffineTransformScale" || Name == "CGAffineTransformRotate" ||
       Name == "CGAffineTransformConcat" || Name == "CATransform3DScale" ||
+      Name == "CGAffineTransformInvert" ||
       Name == "CGRectApplyAffineTransform") {
     const auto Bind = Image.DyldBindSlots.find(ImportSlot);
     const auto Signature =

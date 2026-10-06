@@ -111,6 +111,14 @@ std::set<va_t> observedNativeFloatingPairReturns(const LowFunc &Function,
 std::set<va_t> observedNativeFourWordReturns(const LowFunc &Function,
                                              Arch Architecture);
 
+/// Direct ARM64 calls whose four low-double result carriers reach a caller's
+/// complete declared HFA return without an intervening write or call in that
+/// block. This records caller demand only; every callee carrier still needs
+/// the independent return-path proof and a fresh source projection.
+std::set<va_t>
+observedNativeFourDoubleReturns(const LowFunc &Function,
+                                const SourceFunctionTypeHint &CallerSignature);
+
 /// Describe observed scalar machine inputs and a defined result for a native
 /// helper. The caller must select an exact local function target and supply IR
 /// and audit from the same pipeline/image. This is a candidate for a second
@@ -178,6 +186,15 @@ refineNativeIntegerPairReturnHint(const MedFunc &Med, const HighFunc &High,
 std::optional<SourceFunctionTypeHint>
 refineNativeFloatingPairReturnHint(const MedFunc &Med, const HighFunc &High,
                                    const PipelineFunctionAudit &Audit);
+
+/// Extend an inferred ARM64 scalar double to four computed low-double results
+/// using the same complete return-path proof as pair refinement. Requires a
+/// caller's independently observed four-result demand; unchanged entry values
+/// and unknown upper Q lanes supply no result. Re-lifting and complete source
+/// publication remain required.
+std::optional<SourceFunctionTypeHint>
+refineNativeFourDoubleReturnHint(const MedFunc &Med, const HighFunc &High,
+                                 const PipelineFunctionAudit &Audit);
 
 /// An internal arm64 leaf projection can return its defined x0 together with
 /// unchanged x1..x3 inputs. Retains already-bound scalar input locations and
