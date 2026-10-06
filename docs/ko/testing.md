@@ -1204,6 +1204,8 @@ WHP의 기능 조회, 파티션/가상 CPU 초기화, 레지스터/XSAVE 전송 
 
 `ci.yml`의 수동 프로필 `native_cpu_only`는 `native_cpu_backend=whp`로 Windows x64(기본값)를, `native_cpu_backend=kvm`으로 Ubuntu x64를 선택합니다. `NativeCPUTests.def`는 CPU·프로세스 요구 사항을 공유하고 백엔드 전용 대상과 사례를 별도로 선언합니다. `run_native_cpu_ci.py --require-whp` 또는 `--require-kvm`은 호스트를 확인하고 모든 대상을 빌드한 뒤 CTest를 실행하며 목록, JUnit, 로그와 결과별 수를 보존합니다. CTest가 성공해도 필수 사례가 없거나 건너뛰면 실패합니다. CI는 Unicorn을 비활성화하고 `--with-drivers`는 선택한 백엔드에서 동일한 원래 주소·재배치 드라이버 집합을 요구합니다. 컴파일과 초기화 탐색은 게스트 실행이나 ARM64 검증을 입증하지 않습니다. Ubuntu 프로필은 업스트림 서명된 Clang/LLD 21 패키지를 사용합니다. Clang 18/19의 CR8 선언은 고정된 WDK 헤더와 충돌합니다. Linux 네이티브 검증은 CMake 4.2.3을 사용합니다. `NeverDNativeDriverTests`는 `NO_PRETTY_VALUES`를 지정하여 매개변수 진단 출력과 관계없이 CTest가 선언된 사례 이름을 유지하도록 합니다.
 
+네이티브 CI는 빌드 전에 `sccache --zero-stats`를 실행합니다. 탐색에 실패하면 C/C++ 컴파일러 실행기를 해제하고 기존 컴파일러 설정과 필수 테스트 목록을 유지합니다. 구성 또는 빌드 실패는 여전히 작업 실패로 처리합니다.
+
 KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTransferCases.def`의 상태 전송 결과 48개를 요구합니다. ioctl 캡처와 선택적 기능 질의 실패가 포함됩니다. 추가 동기화 레지스터 모드는 호스트가 지원할 때 실행하며, 지원하지 않으면 명시적으로 건너뜁니다. 안정적인 매개변수 이름은 ioctl 숫자나 튜플 형식에 의존하지 않습니다. 프로토콜 테스트는 네이티브 실행을 보완하며 대체하지 않습니다.
 
 `native-host-probe.yml`은 Linux와 Windows x64/ARM64 호스팅 runner에서 독립적인 `probe_native_host.py`를 실행합니다. `NativeHostProbe.def`는 기능 조회, VM/vCPU 생성 및 정리 증거의 순서를 선언합니다. 보고서는 소스/바이너리 해시, 네이티브 호스트 ISA와 각 호스트 상태 코드를 보존합니다. `setup_ready`는 초기화만 증명하며 게스트 명령어는 실행하지 않습니다. API/장치 기능 부재는 `unavailable`로 기록하고 빌드, 초기화, 정리, 시간 초과 및 잘못된 증거는 작업 실패로 처리합니다. ARM64 호스트 가용성은 실행마다 확인해야 하며, 이 프로브는 ARM64 워크로드 검증을 대신하지 않습니다. 두 Linux 워크플로는 `prepare_kvm_ci.py`로 기존 KVM 문자 장치의 접근 권한을 현재 호스팅 runner 계정에만 부여하고 장치 식별 정보와 권한을 기록합니다. 로컬 및 자체 호스팅 환경은 거부하며 없는 장치를 만들지 않습니다.
