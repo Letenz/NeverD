@@ -3,6 +3,10 @@
 #include "neverd/sdk/NeverDCAPISession.h"
 
 #ifdef _WIN32
+// std::min, std::max and numeric_limits<>::max() must not meet the macros.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
