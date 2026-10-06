@@ -86,6 +86,8 @@ La enumeración finita puede observar tuplas factibles sin cambiar la consulta d
 
 Los desplazamientos del marco reutilizan el `FiniteQueryCache` acotado de cada verificador de relaciones. Las claves y pruebas retenidas se limitan a `MaxSymbolicNodes` palabras, igual que en la recuperación. Las claves preservan el predicado completo y las relaciones entre expresiones relativas; solo se reutilizan dominios completos o no unicidad probada. Cada acceso sigue comprobando independencia de dirección y límites del marco.
 
+El índice temporal de nodos visitados utiliza un mapa denso. La serialización sigue el recorrido ordenado, por lo que el crecimiento de la tabla y el orden del hash no cambian la clave, el renombrado de variables ni el cómputo del presupuesto.
+
 El verificador de relaciones conserva una única respuesta SAT completa sin modelo para la misma referencia de predicado, en el mismo contexto simbólico inmutable y con configuración fija del solver. Comprueba el límite de nodos antes de reutilizarla; el presupuesto cuenta las llamadas reales al solver. Nunca conserva Unknown/Invalid ni modelos; la reutilización termina con el verificador. Los demás predicados siguen exigiendo prueba.
 
 `FrameOffsets` reduce sumas constantes, máscaras y fragmentos de registros coincidentes a restos modulares exactos antes de enumerar. Para la alineación extrae solo los bits bajos eliminados, evitando expandir toda la raíz. La inspección tiene un máximo de dieciséis niveles binarios y los nuevos nodos DAG consumen presupuesto. Se mantienen el predicado original, la prueba de dominio único, los límites de mapeo/marco y el rechazo de resultados incompletos. No se presupone residuo ni alcanzabilidad y las direcciones residuales no cambian.

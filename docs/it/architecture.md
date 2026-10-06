@@ -86,6 +86,8 @@ L’enumerazione finita può osservare tuple ammissibili senza cambiare la query
 
 Gli spostamenti del frame riusano il `FiniteQueryCache` limitato esistente in ogni verificatore di relazione. Chiavi e prove conservate sono limitate a `MaxSymbolicNodes` parole, come nel recupero. Le chiavi preservano il predicato completo e i rapporti delle espressioni relative; si riusano solo domini completi o non unicità provata. Ogni accesso verifica ancora indipendenza dell’indirizzo e limiti del frame.
 
+L’indice temporaneo dei nodi visitati usa una mappa densa. La serializzazione segue ancora la visita ordinata: la crescita della tabella e l’ordine degli hash non cambiano la chiave, la rinomina delle variabili o il conteggio del budget.
+
 Il verificatore di relazione conserva una sola risposta SAT completa senza modello per lo stesso riferimento di predicato, nello stesso contesto simbolico immutabile e con configurazione fissa del solver. Controlla i limiti dei nodi prima del riuso; il budget conta le chiamate effettive al solver. Non conserva Unknown/Invalid né modelli; il riuso termina con il verificatore. Predicati diversi richiedono ancora una prova.
 
 `FrameOffsets` riduce somme costanti, maschere e porzioni di registri corrispondenti a resti modulari esatti prima dell’enumerazione finita. Per l’allineamento estrae solo i bit bassi eliminati invece di espandere l’intera radice. L’ispezione è limitata a sedici livelli binari e i nuovi nodi DAG restano conteggiati. Predicato originale, prova di dominio singolo, limiti di mappatura/frame e rifiuto dei risultati incompleti restano obbligatori. Non assume residui o raggiungibilità e non cambia gli indirizzi residui.
