@@ -3001,6 +3001,11 @@ class LoopPlanInference {
     };
     std::vector<BoundAttempt> CounterBoundAttempts;
     std::vector<LowIRLoopLocation> Equalities;
+    struct ProjectedEquality {
+      LowIRLoopLocation Location;
+      uint64_t Mask;
+    };
+    std::vector<ProjectedEquality> ProjectedEqualities;
     struct BitRelation {
       unsigned Bit;
       LowIRLoopLocation Counter, Bound;
@@ -3018,6 +3023,11 @@ class LoopPlanInference {
   };
   std::vector<std::vector<EqualitySeed>> EqualitySeeds;
   std::vector<std::vector<EqualitySeed>> EqualityAttempts;
+  struct ProjectedEqualityAttempt {
+    LowIRLoopLocation Source, Target;
+    uint64_t Mask;
+  };
+  std::vector<std::vector<ProjectedEqualityAttempt>> ProjectedEqualityAttempts;
   std::vector<LowIRLoopLocation> RelationCounters;
   struct LaneCounter {
     LowIRLoopLocation Location;
@@ -3225,6 +3235,36 @@ class LoopPlanInference {
     return false;
   }
 
+  // Distinct template parameters can represent the same counter lane. Prove
+  // that alias in the complete transition domain before proposing additive
+  // widening; this does not add a relation or certify any rank.
+  bool additiveRecurrenceUnder(SymRef Before, SymRef After, uint16_t Bytes,
+                               SymRef Domain) {
+    auto &Ctx = Session.Context;
+    const auto InputSlice = [&](SymRef V) {
+      return Ctx.isVar(V) || (Ctx.op(V) == SymOp::Extract &&
+                              Ctx.isVar(Ctx.operands(V).front()));
+    };
+    const unsigned Total = Bytes * 8;
+    for (unsigned Width = Total; Width; Width -= 8)
+      for (unsigned Offset = 0; Offset + Width <= Total; Offset += 8) {
+        const auto Value = Ctx.mkExtract(After, Offset, Width);
+        checker().nodes();
+        if (Ctx.op(Value) != SymOp::Add)
+          continue;
+        const auto Input = Ctx.mkExtract(Before, Offset, Width);
+        checker().nodes();
+        if (!InputSlice(Input))
+          continue;
+        const auto Operands = Ctx.operands(Value);
+        const std::vector<SymRef> Terms(Operands.begin(), Operands.end());
+        for (const auto Term : Terms)
+          if (InputSlice(Term) && entails(Domain, Ctx.mkEq(Input, Term)))
+            return true;
+      }
+    return false;
+  }
+
   std::vector<LowIRLoopLocation> locations() {
     std::vector<LowIRLoopLocation> Locations;
     std::set<uint64_t> Registers;
@@ -3316,6 +3356,14 @@ class LoopPlanInference {
         Holds &= entails(State.Predicate, Ctx.mkEq(Ctx.mkAnd(Initial, Mask),
                                                    Ctx.mkAnd(After, Mask)));
       }
+      if (!Holds && !Additive)
+        for (auto &State : Session.CandidateReturns)
+          if (State.Cutpoint == static_cast<int>(ActiveCutpoint) &&
+              additiveRecurrenceUnder(Before, read(State, W.Location),
+                                      W.Location.Bytes, State.Predicate)) {
+            Additive = true;
+            break;
+          }
       // One additive arm can invalidate spurious prefix bits even when a
       // sibling stutters or resets. Structural bits still intersect every
       // returning arm, and an already valid mask is never weakened here.
@@ -3492,6 +3540,13 @@ class LoopPlanInference {
       }
       for (const auto &L : W.Equalities) {
         const auto Same = Expr(NdOp::INT_EQUAL, Parameter, ValueAt(L), 1);
+        Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Same, 1);
+      }
+      for (const auto &E : W.ProjectedEqualities) {
+        const auto Mask = NdVar::scalar(E.Mask, Bytes);
+        const auto A = Expr(NdOp::INT_AND, Parameter, Mask, Bytes);
+        const auto B = Expr(NdOp::INT_AND, ValueAt(E.Location), Mask, Bytes);
+        const auto Same = Expr(NdOp::INT_EQUAL, A, B, 1);
         Cut.Predicate = Expr(NdOp::BOOL_AND, Cut.Predicate, Same, 1);
       }
       for (const auto &B : W.CounterBounds) {
@@ -4259,6 +4314,88 @@ class LoopPlanInference {
     return Changed;
   }
 
+  // Masks come from byte-aligned contiguous lanes discovered by unitStepLane.
+  SymRef copyProjection(SymRef Value, uint64_t Mask) {
+    return Session.Context.mkExtract(Value, std::countr_zero(Mask),
+                                     std::popcount(Mask));
+  }
+
+  bool seedProjectedWordCopies(std::vector<Edge> &Edges) {
+    if (RelationArrivals[ActiveCutpoint].empty())
+      return false;
+    auto &Ctx = Session.Context;
+    auto &Prefix = Session.LoopPrefixes[ActiveCutpoint]->Candidate;
+    auto &Attempts = ProjectedEqualityAttempts[ActiveCutpoint];
+    bool Changed = false;
+    for (auto &W : words())
+      for (const auto &C : LaneCounters) {
+        const auto &Target = C.Location;
+        const auto Mask = C.Guard.Mask;
+        if (W.Location.Bytes != Target.Bytes ||
+            sameLocation(W.Location, Target) ||
+            read(Prefix, W.Location) == read(Prefix, Target))
+          continue;
+        if (std::any_of(Attempts.begin(), Attempts.end(), [&](const auto &A) {
+              return sameLocation(A.Source, W.Location) &&
+                     sameLocation(A.Target, Target) && A.Mask == Mask;
+            }))
+          continue;
+        const auto SourcePrefix =
+            copyProjection(read(Prefix, W.Location), Mask);
+        const auto TargetPrefix = copyProjection(read(Prefix, Target), Mask);
+        checker().nodes();
+        if (SourcePrefix != TargetPrefix)
+          continue;
+        // A symbolic copy on an incoming edge must support the proposal.
+        // Equal initial constants alone would create unrelated cross-products.
+        bool WitnessedCopy = false;
+        for (auto &E : Edges) {
+          if (E.After.Cutpoint != static_cast<int>(ActiveCutpoint))
+            continue;
+          const auto SourceValue =
+              copyProjection(read(E.After, W.Location), Mask);
+          const auto TargetValue = copyProjection(read(E.After, Target), Mask);
+          checker().nodes();
+          WitnessedCopy |=
+              !Ctx.isConst(SourceValue) && SourceValue == TargetValue;
+        }
+        if (!WitnessedCopy)
+          continue;
+        // Rejected or later-pruned copies are not retried on narrower domains.
+        Attempts.push_back({W.Location, Target, Mask});
+        const auto Equal = [&](TerminalState &State) {
+          return Ctx.mkEq(copyProjection(read(State, W.Location), Mask),
+                          copyProjection(read(State, Target), Mask));
+        };
+        bool Holds = true;
+        for (auto &State : RelationArrivals[ActiveCutpoint])
+          if (!entails(State.Predicate, Equal(State))) {
+            Holds = false;
+            break;
+          }
+        if (!Holds)
+          continue;
+        for (auto &E : Edges) {
+          if (E.After.Cutpoint != static_cast<int>(ActiveCutpoint))
+            continue;
+          auto Domain = E.After.Predicate;
+          // A new invariant may use itself on a self edge. Other incoming
+          // cuts must establish it without borrowing that destination fact.
+          if (E.Source == ActiveCutpoint)
+            Domain = Ctx.mkAnd(Domain, Equal(E.Before));
+          if (!entails(Domain, Equal(E.After))) {
+            Holds = false;
+            break;
+          }
+        }
+        if (Holds) {
+          W.ProjectedEqualities.push_back({Target, Mask});
+          Changed = true;
+        }
+      }
+    return Changed;
+  }
+
   bool findNewCounters(std::vector<Edge> &Edges) {
     bool Changed = false;
     for (const auto &L : locations()) {
@@ -4449,6 +4586,15 @@ class LoopPlanInference {
                 entails(E.After.Predicate, Ctx.mkEq(Ctx.mkAnd(Initial, Mask),
                                                     Ctx.mkAnd(After, Mask)));
         }
+        if (!Holds && !Additive)
+          for (auto &E : Edges)
+            if (E.After.Cutpoint == static_cast<int>(I) &&
+                additiveRecurrenceUnder(read(E.Before, W.Location),
+                                        read(E.After, W.Location),
+                                        W.Location.Bytes, E.After.Predicate)) {
+              Additive = true;
+              break;
+            }
         if (!Holds && !Additive) {
           Stable = W.FixedMask;
           for (auto &State : Incoming)
@@ -4493,6 +4639,17 @@ class LoopPlanInference {
                          return true;
                      return false;
                    }) != 0;
+        Changed |=
+            std::erase_if(W.ProjectedEqualities, [&](const auto &E) {
+              for (auto &State : Incoming)
+                if (!entails(
+                        State.Predicate,
+                        Ctx.mkEq(
+                            copyProjection(read(State, W.Location), E.Mask),
+                            copyProjection(read(State, E.Location), E.Mask))))
+                  return true;
+              return false;
+            }) != 0;
         Changed |= std::erase_if(W.CounterBounds, [&](const auto &B) {
                      const auto Limit =
                          counterProjection(read(Prefix, B.Location), B.Mask);
@@ -4517,6 +4674,13 @@ class LoopPlanInference {
         Changed |= seedCounterBounds(W);
         Changed |= seedBitRelations(W, Incoming);
       }
+    }
+    // Install newly proved inductive copies after pruning the old templates.
+    // The next round executes every cut with these predicates, and the final
+    // checker must independently establish them on all original arrivals.
+    for (size_t I = 0; I != Plan.Cutpoints.size(); ++I) {
+      ActiveCutpoint = I;
+      Changed |= seedProjectedWordCopies(Edges);
     }
     return Changed;
   }
@@ -4903,6 +5067,7 @@ class LoopPlanInference {
     Models.assign(Cuts.size(), {});
     EqualitySeeds.assign(Cuts.size(), {});
     EqualityAttempts.assign(Cuts.size(), {});
+    ProjectedEqualityAttempts.assign(Cuts.size(), {});
     RelationCounters.clear();
     LaneCounters.clear();
     RelationBounds.assign(Cuts.size(), {});

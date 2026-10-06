@@ -2563,13 +2563,15 @@ TEST(LowIRLoopInference, AlternativeLoopsReachBothPrefixesWithinSharedBudgets) {
 }
 
 enum class CounterTag { Zero, Prefix, Changing };
+enum class CounterCopy { None, Word, Lane };
 
 Program projectedCounterLoops(
     uint16_t Bytes, bool Ascending, unsigned Step = 1, bool Guarded = true,
     LowIRLoopSpace Space = LowIRLoopSpace::Register, bool EqualityExit = false,
     unsigned BoundStep = 0, bool PadBounds = false, bool ZeroInitialize = false,
     bool CachedExit = false, bool OrderedExit = false,
-    bool MutableBounds = false, CounterTag Tag = CounterTag::Zero) {
+    bool MutableBounds = false, CounterTag Tag = CounterTag::Zero,
+    CounterCopy Copy = CounterCopy::None) {
   Program P;
   const uint64_t Mask = (uint64_t{1} << (Bytes * 8)) - 1;
   if (Space == LowIRLoopSpace::Frame)
@@ -2655,9 +2657,12 @@ Program projectedCounterLoops(
          op(NdOp::COND_BR, {}, {n(Done), NdVar::tmp(32, 1)})});
   };
   const auto Update = [&](unsigned Level) {
+    auto ReadUpdate = Read(Level);
+    if (Copy != CounterCopy::None && Level == 0)
+      ReadUpdate = op(NdOp::COPY, NdVar::tmp(8, 8), {r(200)});
     if (Tag == CounterTag::Zero) {
       P.instruction(
-          {Address(Level), Read(Level),
+          {Address(Level), ReadUpdate,
            op(NdOp::SUBBYTES, NdVar::tmp(16, Bytes), {NdVar::tmp(8, 8), n(0)}),
            op(Ascending ? NdOp::INT_ADD : NdOp::INT_SUB, NdVar::tmp(24, Bytes),
               {NdVar::tmp(16, Bytes), n(Step, Bytes)}),
@@ -2665,7 +2670,7 @@ Program projectedCounterLoops(
            Write(Level, NdVar::tmp(32, 8))});
     } else {
       P.instruction(
-          {Address(Level), Read(Level),
+          {Address(Level), ReadUpdate,
            op(NdOp::SUBBYTES, NdVar::tmp(16, Bytes), {NdVar::tmp(8, 8), n(0)}),
            op(Ascending ? NdOp::INT_ADD : NdOp::INT_SUB, NdVar::tmp(24, Bytes),
               {NdVar::tmp(16, Bytes), n(Step, Bytes)}),
@@ -2690,6 +2695,15 @@ Program projectedCounterLoops(
   };
   Header(1, 0x200, 0x700, 6, 0);
   P.block(2, 0x300, {3});
+  if (Copy != CounterCopy::None)
+    P.instruction(
+        {Address(0), Read(0),
+         op(NdOp::INT_AND, NdVar::tmp(16, 8), {NdVar::tmp(8, 8), n(Mask)}),
+         op(NdOp::INT_AND, NdVar::tmp(24, 8), {r(104), n(~Mask)}),
+         Copy == CounterCopy::Word
+             ? op(NdOp::COPY, r(200), {NdVar::tmp(8, 8)})
+             : op(NdOp::INT_OR, r(200),
+                  {NdVar::tmp(16, 8), NdVar::tmp(24, 8)})});
   Initialize(1);
   P.instruction({op(NdOp::BRANCH, {}, {n(0x400)})});
   Header(3, 0x400, 0x600, 5, 1);
@@ -3897,5 +3911,109 @@ TEST(LowIRLoopRefinement, OverlappingEntryViewsRemainSharedAtLaterCuts) {
   ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
   Plan.Cutpoints[0].CandidateState.back().Location.Offset = 42;
   loopRefused(loopCheck(A, B, Plan), Status::Different);
+}
+
+TEST(LowIRLoopInference, ProjectedCounterCopiesPreserveCompleteState) {
+  unsigned Cases = 0;
+  for (uint16_t Bytes : {1, 3, 4})
+    for (auto Space : {LowIRLoopSpace::Register, LowIRLoopSpace::Frame,
+                       LowIRLoopSpace::FunctionTemporary})
+      for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+        for (bool Cached : {false, true})
+          for (auto Tag : {CounterTag::Prefix, CounterTag::Changing})
+            for (auto Copy : {CounterCopy::Lane, CounterCopy::Word}) {
+              SCOPED_TRACE(Bytes);
+              SCOPED_TRACE(static_cast<unsigned>(Space));
+              SCOPED_TRACE(static_cast<unsigned>(Order));
+              SCOPED_TRACE(Cached);
+              SCOPED_TRACE(static_cast<unsigned>(Tag));
+              SCOPED_TRACE(static_cast<unsigned>(Copy));
+              auto P = projectedCounterLoops(Bytes, true, 1, true, Space, true,
+                                             0, true, false, Cached, false,
+                                             false, Tag, Copy);
+              P.Contract.ByteOrder = Order;
+              for (uint64_t Offset : {8, 16, 64, 72, 96, 104, 200})
+                P.Contract.ReturnRegisters.push_back({Offset, 8});
+              const std::vector<va_t> Cuts =
+                  Cached ? std::vector<va_t>{0x200, 0x400}
+                         : std::vector<va_t>{0x300, 0x500};
+              const auto R = inferLowIRLoopRefinementPlan(P.Function,
+                                                          P.Contract, {}, Cuts);
+              ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+              const auto Proof = loopCheck(P, P, *R.Plan);
+              ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+              // The copied lane may agree while its observed high tag differs.
+              // A complete-state proof must retain those independent bits.
+              if (Copy == CounterCopy::Lane) {
+                auto Wrong = P;
+                bool Changed = false;
+                for (auto &B : Wrong.Function.Blocks)
+                  for (auto &O : B.Ops)
+                    if (O.Opcode == NdOp::INT_OR && O.Output == r(200)) {
+                      O.Inputs[1] = n(0);
+                      Changed = true;
+                    }
+                ASSERT_TRUE(Changed);
+                loopRefused(loopCheck(P, Wrong, *R.Plan), Status::Different);
+              }
+              ++Cases;
+            }
+  EXPECT_EQ(Cases, 144u);
+}
+
+TEST(LowIRLoopInference, ProjectedCounterCopiesKeepProofBoundaries) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (bool Cached : {false, true}) {
+      const auto Make = [&](unsigned Step, bool Guarded) {
+        auto P = projectedCounterLoops(
+            1, true, Step, Guarded, LowIRLoopSpace::Frame, true, 0, true, false,
+            Cached, false, false, CounterTag::Changing, CounterCopy::Lane);
+        P.Contract.ByteOrder = Order;
+        for (uint64_t Offset : {8, 16, 64, 72, 96, 104, 200})
+          P.Contract.ReturnRegisters.push_back({Offset, 8});
+        return P;
+      };
+      const auto P = Make(1, true);
+      const std::vector<va_t> Cuts = Cached ? std::vector<va_t>{0x200, 0x400}
+                                            : std::vector<va_t>{0x300, 0x500};
+      const auto Good =
+          inferLowIRLoopRefinementPlan(P.Function, P.Contract, {}, Cuts);
+      ASSERT_TRUE(Good.inferred()) << Good.Diagnostic;
+      for (const auto &Bad : {Make(0, true), Make(2, true), Make(1, false)}) {
+        const auto R =
+            inferLowIRLoopRefinementPlan(Bad.Function, Bad.Contract, {}, Cuts);
+        EXPECT_FALSE(R.inferred());
+        EXPECT_FALSE(R.Plan);
+        loopRefused(loopCheck(Bad, Bad, *Good.Plan), Status::Different);
+      }
+      LowIRLoopInferenceLimits Exact;
+      Exact.Execution.MaxOperations = Good.Operations;
+      Exact.Execution.MaxSolverQueries = Good.SolverQueries;
+      Exact.MaxRankCandidates = Good.RankCandidates;
+      Exact.MaxWideningRounds = Good.WideningRounds;
+      ASSERT_TRUE(
+          inferLowIRLoopRefinementPlan(P.Function, P.Contract, Exact, Cuts)
+              .inferred());
+      for (unsigned Case = 0; Case != 4; ++Case) {
+        auto Short = Exact;
+        if (Case == 0)
+          --Short.Execution.MaxOperations;
+        else if (Case == 1)
+          --Short.Execution.MaxSolverQueries;
+        else if (Case == 2)
+          --Short.MaxRankCandidates;
+        else
+          --Short.MaxWideningRounds;
+        const auto R =
+            inferLowIRLoopRefinementPlan(P.Function, P.Contract, Short, Cuts);
+        EXPECT_EQ(R.Status, LowIRLoopInferenceStatus::BudgetExceeded);
+        EXPECT_FALSE(R.Plan);
+      }
+      const auto Proof = loopCheck(P, P, *Good.Plan);
+      ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+      LowIRRefinementLimits Short;
+      Short.Execution.MaxSolverQueries = Proof.SolverQueries - 1;
+      loopRefused(loopCheck(P, P, *Good.Plan, Short), Status::BudgetExceeded);
+    }
 }
 } // namespace
