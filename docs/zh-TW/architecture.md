@@ -456,6 +456,8 @@ Windows 模型亦管理獨立的非分頁池 MDL；釋放描述符不會釋放�
 
 `KernelScheduler` 管理就緒佇列順序、回呼識別與計時器期限；`KernelDispatcher` 管理不透明 DPC、計時器、事件及其訊號。`KernelModel` 管理等待登記、工作項目／裝置生命週期與 IRP 完成。`DriverSession` 儲存並還原各回呼的獨立堆疊及完整 CPU 內容，包括 Win64 堆疊參數，客體記憶體保持共用。預設設定下，僅在沒有就緒執行框架時，虛擬時間才推進至計時器／等待／取消邊界；CPU0 以確定性的合作排程執行 `DISPATCH_LEVEL` 的 DPC 和 `PASSIVE_LEVEL` 的工作項目。這不提供一般執行緒／APC／自旋鎖排程、超出已描述契約的 WDM／PnP 取消、任意並行公開情境提交、完整 PnP／電源或硬體。 API 的 IRQL 上限來自 `KernelAPIIRQL.def`，參數相關限制由所屬模型檢查。
 
+`KernelScheduler` 統一持有即時執行緒優先順序及優先順序／就緒順序比較規則。`KernelModelThreadPriorities` 為 `KeSetPriorityThread` 與 `KeQueryPriorityThread` 驗證執行緒物件；暫停的 CPU 上下文不複製優先順序狀態。`DriverSession` 在回呼同步入口及 API／事件邊界檢查較高優先順序的就緒執行緒。範圍與限制見[驅動程式排程](driver-scheduling.md)。
+
 `KernelModelDeviceStack` 以單一記錄管理各裝置的驅動程式擁有者、配置、上下層鄰居、待刪除狀態與內部參考。客體 `NextDevice` 列舉串列與宿主擁有的附加圖意義不同。名稱解析保留具名下層裝置作為 `FILE_OBJECT` 和報告身分，選擇目前堆疊頂端進行初始派送及 READ/WRITE 緩衝設定，並保留整條請求路徑。解除附加或刪除不會讓請求／回呼仍持有的裝置失效；公開 `ReferenceCount` 仍只計算開啟的控制代碼。
 
 `KernelModelIRPStack` 管理原始客體封包的有界堆疊游標、確切目標派送及完成展開；內嵌 Copy/Skip/SetCompletion 寫入仍為權威資料。派送狀態、完成回呼控制值與最終 `IoStatus` 分離，pending 可在派送傳回後傳播。`STATUS_MORE_PROCESSING_REQUIRED` 保留封包、MDL 與緩衝區，直到繼續執行並到達最終展開邊界，包括巢狀完成。`KernelGuestCall` 攜帶子系統擁有者及區域 token，防止 WDM／WDF 續接身分碰撞；`DriverSession` 保留 CPU 框架與繼承的 IRQL。一個客體驅動程式可附加於獨立擁有的情境 PDO；驅動程式自行配置的 IRP 仍不支援。WDF 附加／轉送、活動堆疊附加、中間層移除、變更主要功能及路徑外目標仍不支援。 呼叫上層完成回呼之前，已消耗的下層堆疊位置會清零。
@@ -1332,3 +1334,7 @@ Swift SDK 目錄認證 Foundation 泛型 NSRange 初始化器的六個普通指�
 堆疊偏移查詢為查找和後續存入只準備一次完整、獨立於上下文的有限證明鍵。可移動權杖保留精確 DAG 身分與投影位寬，不保留符號參照或不完整結果。權杖存活期間，保留快取之外增加一份有界暫存鍵。結果驗證、淘汰、完整列舉和全部求解器預算維持不變。
 
 Swift CGPoint 實例變換具有兩個雙精度輸入、兩個雙精度結果與 swiftself；Swift 6.1.2 的四種 SDK 設定對一般類別及泛型類別接收者給出一致宣告。共用 ABI 層在 ARM64、x86-64 上支援此完整形狀，精確的匯入 CGPoint 宣告用於原生推斷與接收者繫結。thunk、非同步、拋錯、inout、可選值及其他名義型別不屬於此宣告契約。
+
+固定的 `MainActor: Actor` SDK 契約在外部資料與見證目錄間共用完整的編譯器讀取器。四種目標必須保留中繼資料回應並使用同一公開靜態表；中繼資料存取器、配對的 conformance 描述符與見證表均須由 `libswift_Concurrency` 匯出。Swift 6.1.2 的靜態及非泛型相依執行階段路徑不使用呼叫端的具現化參數 2。原有三指標查詢 ABI、中繼資料輸入與快取發布副作用保持完整；此契約不提供其他 Actor conformance、值配置或堆疊框架效果的證明。
+
+Swift SDK Published 的 enclosing-instance 存取器保留四個指標載體：讀取器的首參是 opaque 間接結果，寫入器的首參是被消耗值的位址，隨後依序是物件、wrapped key path 和 storage key path。四種 Swift 6.1.2 macOS/Mac Catalyst 編譯器及匯出設定認證精確的讀寫器符號和 Combine 提供方。兩種 ABI 均不新增泛型中繼資料或 swiftself；原有參照所有權、不透明值配置及堆疊框架義務仍由現有層負責。

@@ -18,6 +18,14 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverSchedulingPolicy.RunningClockCapacityFailurePreservesTimeAndExpiry")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverSchedulingPolicy.HighestPriorityPrecedesOlderPassiveWork")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverSchedulingPolicy.PriorityChangesReevaluateQueuedAndSuspendedThreads")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverSchedulingPolicy.InvalidPriorityPreservesCanonicalState")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverSchedulingPolicy.CooperativeDefaultRetainsWorkerFIFO")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverKernelSEH.ScopeEndLabelMayOverlapTheHandlerLandingPad")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverKernelSEH.OverlappingScopeStillHasAnExclusiveEnd")
@@ -33,6 +41,18 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverKernelSEH.KernelSSEFilterEditsPreserveUnwindAndRejectX87")
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_CASES
+NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
+    "Preemptive/"
+    "DriverSchedulingPriority.RuntimePriorityControlsDispatchAndPreemption/"
+    "{backend}_driver_",
+    "unittests/emulation/fixtures/DriverThreadPriorityCases.def",
+    "NEVERD_DRIVER_PRIORITY_CASE")
+NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
+    "Preemptive/"
+    "DriverSchedulingPriority.RuntimePriorityControlsDispatchAndPreemption/"
+    "{backend}_checked_",
+    "unittests/emulation/fixtures/DriverThreadPriorityCases.def",
+    "NEVERD_DRIVER_PRIORITY_CASE")
 NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
     "Preemptive/"
     "DriverSchedulingPower.BusyDispatchAllowsIndependentPassivePowerCallbacks/"

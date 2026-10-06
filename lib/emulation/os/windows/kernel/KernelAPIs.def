@@ -102,6 +102,10 @@ NEVERD_KERNEL_API(KeGetCurrentIrql, 0, Export)
   NEVERD_KERNEL_API(Name, Arity, Export)
 #include "KernelExecutionAPIs.def"
 #undef NEVERD_KERNEL_EXECUTION_API
+#define NEVERD_KERNEL_THREAD_API(Name, Arity, IRQL, Operation)                 \
+  NEVERD_KERNEL_API(Name, Arity, Export)
+#include "KernelThreadAPIs.def"
+#undef NEVERD_KERNEL_THREAD_API
 NEVERD_KERNEL_API(IoAllocateWorkItem, 1, Export)
 NEVERD_KERNEL_API(IoQueueWorkItem, 4, Export)
 NEVERD_KERNEL_API(IoFreeWorkItem, 1, Export)

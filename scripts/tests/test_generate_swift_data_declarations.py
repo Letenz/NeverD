@@ -9,6 +9,7 @@ from scripts.generate_swift_data_declarations import (conformance_storage,
                                                         hashable_value,
                                                         METADATA_TYPES,
                                                         metadata_storage,
+                                                        main_actor_static_conformance_storage,
                                                         range_index_descriptor_storage,
                                                         render,
                                                         witness_storage)
@@ -16,6 +17,10 @@ from scripts.generate_swift_data_declarations import (conformance_storage,
 
 MODULE = '/usr/lib/swift/libswiftCore.dylib'
 NAME = '$sSSN'
+ACTOR_IR = (Path(__file__).parent / 'fixtures/swift_main_actor_witness.ll').read_text()
+ACTOR_DESCRIPTOR = '$sScMScAsMc'
+ACTOR_TABLE = '$sScMScAsWP'
+ACTOR_MODULE = '/usr/lib/swift/libswift_Concurrency.dylib'
 IR = ('@"$sSSN" = external global %swift.type, align 8\n'
       'define nonnull ptr @metadata_String() #0 {\nentry:\n'
       '  ret ptr @"$sSSN"\n}\n')
@@ -434,6 +439,69 @@ class SwiftDataDeclarationTests(unittest.TestCase):
             render(profiles[:3], exports, 'test', 'compiler')
         with self.assertRaises(ValueError):
             render(profiles, exports[:3], 'test', 'compiler')
+
+
+class MainActorStaticConformance(unittest.TestCase):
+    def test_complete_static_table_query_and_paired_exports(self):
+        names = {ACTOR_DESCRIPTOR, ACTOR_TABLE}
+        self.assertEqual(main_actor_static_conformance_storage(ACTOR_IR), names)
+        renamed = re.sub(r'%([0-9]+)', r'%value_\1', ACTOR_IR).replace('entry:', 'start:')
+        self.assertEqual(main_actor_static_conformance_storage(renamed), names)
+        exports = [{name: {ACTOR_MODULE} for name in names | {'$sScMMa'}} for _ in range(4)]
+        rendered = render([names] * 4, exports, 'test', 'compiler')
+        for name in names:
+            self.assertIn('{"' + name + '",', rendered)
+        for index in range(4):
+            for name in names | {'$sScMMa'}:
+                changed = copy.deepcopy(exports)
+                changed[index][name] = {'/usr/lib/swift/libswiftCore.dylib'}
+                with self.subTest(index=index, name=name), self.assertRaises(ValueError):
+                    render([names] * 4, changed, 'test', 'compiler')
+            changed = [set(names) for _ in range(4)]
+            changed[index].remove(ACTOR_TABLE)
+            with self.assertRaises(ValueError):
+                render(changed, exports, 'test', 'compiler')
+
+    def test_changed_abi_storage_and_complete_flow_reject(self):
+        changes = [
+            ('define swiftcc void', 'define void'),
+            ('@neverd_main_actor_witness_probe()', '@neverd_main_actor_witness_probe(ptr %context)'),
+            ('external global ptr', 'extern_weak global ptr'),
+            ('external global ptr', 'external thread_local global ptr'),
+            ('external global ptr', 'external constant ptr'),
+            ('global ptr, align 8', 'global ptr, align 4'),
+            ('type { ptr, i64 }', 'type { i64, ptr }'),
+            ('type { ptr, i64 }', 'type { ptr, i32 }'),
+            ('type { ptr, i64 }', 'type { ptr, i64, ptr }'),
+            ('@"$sScMMa"(i64)', '@"$sScMMa"(ptr)'),
+            ('declare swiftcc %swift.metadata_response', 'declare %swift.metadata_response'),
+            ('@"$sScMMa"(i64 0)', '@"$sScMMa"(i64 255)'),
+            ('extractvalue %swift.metadata_response %0, 0', 'extractvalue %swift.metadata_response %0, 1'),
+            ('extractvalue %swift.metadata_response %0, 0', 'extractvalue %swift.metadata_response %other, 0'),
+            ('@neverd_actor_observer(ptr %1, ptr %1,', '@neverd_actor_observer(ptr %1, ptr %other,'),
+            ('ptr nonnull @"$sScMScAsWP"', 'ptr undef'),
+            ('ptr nonnull @"$sScMScAsWP"', 'ptr null'),
+            ('ptr nonnull @"$sScMScAsWP"', 'ptr nonnull @"OtherActorWP"'),
+            ('@neverd_actor_observer(ptr, ptr, ptr)', '@neverd_actor_observer(ptr, ptr)'),
+            ('declare swiftcc void', 'declare void'),
+            ('  ret void', '  call void @extra_effect()\n  ret void'),
+            ('  ret void', '  unreachable'),
+        ]
+        for before, after in changes:
+            with self.subTest(after=after):
+                self.assertIn(before, ACTOR_IR)
+                with self.assertRaises(ValueError):
+                    main_actor_static_conformance_storage(ACTOR_IR.replace(before, after))
+        for prefix in ('@"$sScMScAsWP" =', '%swift.metadata_response =',
+                       'declare swiftcc %swift.metadata_response',
+                       'declare swiftcc void @neverd_actor_observer',
+                       'define swiftcc void @neverd_main_actor_witness_probe'):
+            line = next(line for line in ACTOR_IR.splitlines() if line.startswith(prefix))
+            for changed in (ACTOR_IR.replace(line, ''), line + '\n' + ACTOR_IR):
+                with self.subTest(prefix=prefix), self.assertRaises(ValueError):
+                    main_actor_static_conformance_storage(changed)
+        with self.assertRaises(ValueError):
+            main_actor_static_conformance_storage(' ' * (1024 * 1024 + 1))
 
 
 if __name__ == '__main__':
