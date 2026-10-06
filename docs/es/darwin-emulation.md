@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1320c99e1a4c3d4138c36977fb78f02b6da0498343d6e2de55897d78d13c3aaa -->
+<!-- i18n-source: e6367595a25cf61d5e804de3921795d6bb1cbdcda7fc056073387150bad7ddbc -->
 
 [← Índice de documentación](README.md)
 
@@ -492,3 +492,13 @@ Un directorio inicial y todos sus descendientes creados por este proceso con mkd
 Ambos padres inmediatos necesitan autorización; los directorios creados la heredan junto con device/GID conocidos. El archivo conserva identidad, propietario/grupo, permiso de escritura y asignación. Se rechazan devices contradictorios. Un movimiento invalida stat/enumeración completos de ambos padres. Los directorios iniciales eliminados y rutas reutilizadas son objetos distintos; FD/CWD antiguos no obtienen el dominio del reemplazo.
 
 Se mantienen transacción acotada, leases de mapas, costes de ruta/NUL y prioridad de errores. EXCL contra un destino existente distinto da EEXIST antes de dominio/autorización. `renamed-file` compara movimiento al hijo creado, reemplazo en el padre inicial y retorno mediante C++/C/CLI/Python y macOS nativo. Permisos, origen directorio, enlaces físicos/simbólicos y metadatos APFS nativos siguen pendientes.
+
+### Verificación entre padres, 2026-10-06
+
+La validación Release final concilió 1,115 registros Darwin: 683 aprobados, 432 omitidos por backend no disponible y ningún fallo; se ejecutaron los 108 casos ARM64 HVF obligatorios. Las comprobaciones directas aprobaron 56/56, incluidos 18 casos nuevos 4K/16K. C/CLI/report público aprobó 191/191; el método Python cubrió cinco perfiles en 22.254s. Programas nativos originales: 26/26; sonda independiente de llamadas crudas: 34 comprobaciones; scripts de documentación/capacidades/ejecución de evidencias: 296/296. Los recuentos se solapan. Los hashes de los diez binarios de validación no cambiaron tras el ajuste CMake exclusivo de MSVC.
+
+Las dos validaciones completas anteriores conservan tres y dos tiempos agotados en el método HVF de archivos existente. Las comparaciones del método completo, directorio de trabajo y sesión aprobaron sin establecer la causa; la aprobación final no demuestra estabilidad de latencia. La sonda comparaba inicialmente /tmp con /private/tmp canónico; consultar la ruta del FD raíz corrigió cuatro expectativas. El programa nativo ampliado usaba mkdir(136) para limpiar; rmdir(137) corrigió exit150. Se conservan fuentes y fallos iniciales, y el límite invitado sigue en 5s.
+
+Cuatro conflictos LP64 de listas de inicialización encontrados por la CI Linux completa usan ahora valores uint64_t explícitos; NeverDJumpTableTests recibe /bigobj bajo MSVC. La compilación real Linux/Windows espera la CI. La CI completa anterior también notificó fallos separados del corpus Windows EH y la cancelación de una PR cerrada. Se completó la revisión propia de fuentes/evidencias; no se afirma revisión independiente ni validación de iOS físico o Intel HVF suspendida.
+
+`build-hvf-arm64/cross-parent-rename-validation-summary.json`, `cross-parent-rename-darwin-synced-evidence/`, `cross-parent-rename-darwin-evidence/`, `cross-parent-rename-darwin-rechecked-evidence/`, `cross-parent-rename-public-synced.xml`, `cross-parent-rename-python-synced.log`, `cross-parent-rename-native-fixed-evidence/`, `cross-parent-rename-probe/`.

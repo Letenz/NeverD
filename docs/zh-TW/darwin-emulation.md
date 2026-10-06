@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1320c99e1a4c3d4138c36977fb78f02b6da0498343d6e2de55897d78d13c3aaa -->
+<!-- i18n-source: e6367595a25cf61d5e804de3921795d6bb1cbdcda7fc056073387150bad7ddbc -->
 
 [← 文件索引](README.md)
 
@@ -492,3 +492,13 @@ Release Darwin 1,051項：631通過、420後端不可用略過、零失敗；105
 兩個直接父目錄均需名稱空間修改授權；新建目錄繼承授權及已知 device/GID。改名保留檔案自己的身分、擁有者/群組、寫授權與配置。已知裝置衝突仍明確拒絕。實際移動使兩個父目錄的完整 stat/列舉觀察失效。已刪除初始目錄與重用路徑始終是不同物件，舊目錄 FD/CWD 不會得到替代物件的域。
 
 既有有界替換交易、映射保留、路徑/NUL 費用及錯誤順序繼續適用。EXCL 遇到其他既存目標，仍在域與授權檢查之前回傳 EEXIST。原始 `renamed-file` 程式現在建立子目錄、移入子目錄、回到初始父目錄覆蓋檔案，再移入子目錄，透過 C++/C/CLI/Python 和原生 macOS 比對。權限強制檢查、目錄來源改名、硬/符號連結及原生 APFS 中繼資料仍未完成。
+
+### 跨父目錄驗證，2026-10-06
+
+最終 Release 驗收核對了 1,115 個 Darwin 註冊項：683 通過、432 因後端不可用略過、零失敗；108 個必要 ARM64 HVF 項全部執行。直接檢查 56/56 通過，包括新增 18 個 4K/16K 案例。公開 C/CLI/report 191/191 通過；Python 方法在 22.254 秒內涵蓋五種環境。原始原生程式 26/26、獨立原始系統呼叫探針 34 項、文件/能力/證據執行器腳本測試 296/296 均通過。計數有重疊。僅針對 MSVC 的 CMake 調整後，十個驗收二進位的雜湊均未改變。
+
+先前兩次完整驗收分別保留了既有 HVF 檔案方法的三次和兩次逾時。完整方法、工作目錄與工作階段控制檢查通過，但未確立原因；最終通過不能證明延遲穩定。探針起初將 /tmp 文字路徑與 /private/tmp 標準路徑比較，改從 root FD 查詢路徑後修正四個預期。擴充原生程式最初清理誤用 mkdir(136)，改為 rmdir(137) 後修復 exit150。初始原始碼與失敗證據均保留，來賓時限仍為原來的 5 秒。
+
+完整 Linux CI 發現的四處 LP64 測試初始化列表衝突已改為明確 uint64_t；MSVC 下的 NeverDJumpTableTests 已加入 /bigobj。實際 Linux/Windows 編譯仍等待 CI。先前完整 CI 也報告了獨立的 Windows EH 語料與關閉 PR 取消工作失敗。已完成主代理原始碼/證據自審；未宣稱獨立審查、實體 iOS 或暫停的 Intel HVF 驗收通過。
+
+`build-hvf-arm64/cross-parent-rename-validation-summary.json`, `cross-parent-rename-darwin-synced-evidence/`, `cross-parent-rename-darwin-evidence/`, `cross-parent-rename-darwin-rechecked-evidence/`, `cross-parent-rename-public-synced.xml`, `cross-parent-rename-python-synced.log`, `cross-parent-rename-native-fixed-evidence/`, `cross-parent-rename-probe/`.

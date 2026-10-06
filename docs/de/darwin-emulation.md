@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1320c99e1a4c3d4138c36977fb78f02b6da0498343d6e2de55897d78d13c3aaa -->
+<!-- i18n-source: e6367595a25cf61d5e804de3921795d6bb1cbdcda7fc056073387150bad7ddbc -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -492,3 +492,13 @@ Ein anfängliches Verzeichnis und alle durch diesen Prozess mit mkdir/mkdirat er
 Beide direkten Eltern brauchen Namensraumfreigaben; erstellte Verzeichnisse erben diese und bekannte Geräte-/Gruppenwerte. Dateiidentität, Eigentümer/Gruppe, Schreibfreigabe und Belegung bleiben erhalten. Bekannte Gerätekonflikte werden abgelehnt. Echtes Verschieben invalidiert vollständige stat-/Aufzählungsbeobachtungen beider Eltern. Gelöschte Anfangsverzeichnisse und wiederverwendete Pfade bleiben verschiedene Objekte; alte FD/CWD erhalten keine neue Domäne.
 
 Begrenzte Ersatztransaktion, Mapping-Leases, Pfad/NUL-Kosten und Fehlerpriorität gelten weiter. EXCL liefert bei einem anderen bestehenden Ziel EEXIST vor Domänen-/Freigabeprüfungen. `renamed-file` vergleicht Bewegungen ins erstellte Kind, Ersatz im Anfangselternteil und Rückkehr über C++/C/CLI/Python und natives macOS. Rechteprüfung, Verzeichnisquellen, harte/symbolische Links und native APFS-Metadaten bleiben offen.
+
+### Prüfung über verschiedene Eltern, 2026-10-06
+
+Die abschließende Release-Prüfung glich 1,115 Darwin-Registrierungen ab: 683 bestanden, 432 wegen nicht verfügbarem Backend übersprungen, keine Fehler; alle 108 erforderlichen ARM64-HVF-Fälle wurden ausgeführt. Direkte Prüfungen bestanden 56/56, darunter 18 neue 4K/16K-Fälle. Öffentliche C/CLI/report-Prüfungen bestanden 191/191; die Python-Methode deckte fünf Profile in 22.254s ab. Ursprüngliche native Programme: 26/26; separate Rohaufrufsonde: 34 Prüfungen; Dokumentations-/Funktions-/Nachweisrunner-Skripte: 296/296. Die Zählungen überschneiden sich. Nach der auf MSVC begrenzten CMake-Anpassung blieben die Hashes aller zehn Prüfbinärdateien unverändert.
+
+Die beiden früheren Gesamtläufe bewahren drei und zwei Zeitüberschreitungen in der vorhandenen HVF-Dateimethode. Vergleiche der vollständigen Methode, Arbeitsverzeichnisse und Sitzungen bestanden, klärten aber die Ursache nicht; der abschließende Erfolg belegt keine stabile Latenz. Die Sonde verglich zunächst /tmp mit dem kanonischen /private/tmp; der Pfad des Root-FD korrigierte vier Erwartungen. Das erweiterte native Programm verwendete mkdir(136) zur Bereinigung; rmdir(137) behob exit150. Ursprüngliche Quellen und Fehler bleiben erhalten; die Gastgrenze bleibt 5s.
+
+Vier von der vollständigen Linux-CI gemeldete LP64-Initialisierungslistenkonflikte verwenden jetzt explizite uint64_t-Werte; NeverDJumpTableTests erhält unter MSVC /bigobj. Tatsächliche Linux-/Windows-Kompilierung steht in der CI noch aus. Die frühere Gesamt-CI meldete außerdem getrennte Fehler im Windows-EH-Korpus und beim Abbrechen einer geschlossenen PR. Die Quellen und Nachweise wurden selbst geprüft; eine unabhängige Prüfung, physisches iOS oder die ausgesetzte Intel-HVF-Abnahme werden nicht behauptet.
+
+`build-hvf-arm64/cross-parent-rename-validation-summary.json`, `cross-parent-rename-darwin-synced-evidence/`, `cross-parent-rename-darwin-evidence/`, `cross-parent-rename-darwin-rechecked-evidence/`, `cross-parent-rename-public-synced.xml`, `cross-parent-rename-python-synced.log`, `cross-parent-rename-native-fixed-evidence/`, `cross-parent-rename-probe/`.

@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 1320c99e1a4c3d4138c36977fb78f02b6da0498343d6e2de55897d78d13c3aaa -->
+<!-- i18n-source: e6367595a25cf61d5e804de3921795d6bb1cbdcda7fc056073387150bad7ddbc -->
 
 [← فهرس الوثائق](README.md)
 
@@ -492,3 +492,13 @@ Release Darwin1,051 حالة،631 ناجحة،420 متخطاة لغياب الخ
 يلزم إذن تعديل كلا الأبوين المباشرين. ترث الأدلة المنشأة الإذن والجهاز/المجموعة المعروفين؛ يحتفظ الملف بهويته وملكيته ومجموعته وحق الكتابة والتخصيص. تُرفض الأجهزة المتناقضة، وتصبح بيانات stat/التعداد لكلا الأبوين مجهولة بعد النقل. تبقى الأدلة المحذوفة والمسارات المعاد استخدامها كائنات منفصلة؛ لا تنتقل FD/CWD القديمة إلى المجال البديل.
 
 تبقى معاملة الاستبدال المحدودة وعهود الخرائط وتكاليف المسار/NUL وترتيب الأخطاء كما هي. يعيد EXCL مع هدف قائم مختلف EEXIST قبل فحص المجال والإذن. يختبر `renamed-file` النقل إلى دليل منشأ والاستبدال في الأب الأولي ثم العودة عبر C++/C/CLI/Python وmacOS الأصلي. فرض الأذونات ونقل مصادر الأدلة والروابط الصلبة/الرمزية وبيانات APFS الأصلية لم تكتمل.
+
+### التحقق من النقل بين المجلدات الأب، 2026-10-06
+
+طابق التحقق النهائي في Release عدد 1,115 تسجيل Darwin: نجح 683 وتُخطي 432 لعدم توفر backend، بلا فشل؛ نُفذت حالات ARM64 HVF الإلزامية وعددها 108 كلها. نجحت الفحوص المباشرة 56/56، بما فيها 18 حالة 4K/16K جديدة. نجحت فحوص C/CLI/report العامة 191/191؛ غطت طريقة Python خمسة ملفات بيئة خلال 22.254s. البرامج الأصلية المحلية: 26/26؛ مسبار الاستدعاءات الخام المنفصل: 34 فحصًا؛ اختبارات سكربتات التوثيق/القدرات/تشغيل الأدلة: 296/296. الأعداد متداخلة. لم تتغير بصمات الملفات الثنائية العشرة بعد تعديل CMake الخاص بـ MSVC فقط.
+
+حُفظت ثلاث مهلات واثنتان من التحققين الكاملين السابقين في طريقة الملفات HVF القائمة. نجحت مقارنة الطريقة الكاملة ودليل العمل والجلسة دون إثبات السبب؛ النجاح النهائي لا يثبت استقرار التأخير. قارن المسبار أولًا /tmp بالمسار القياسي /private/tmp؛ صحح جلب مسار root FD أربعة توقعات. استخدم البرنامج المحلي الموسع mkdir(136) خطأ للتنظيف؛ أصلح rmdir(137) نتيجة exit150. حُفظت المصادر والإخفاقات الأولى، وبقي حد الضيف الأصلي 5s.
+
+أصبحت تعارضات قوائم التهيئة LP64 الأربعة التي كشفها Linux CI الكامل تستخدم قيم uint64_t صريحة؛ يتلقى NeverDJumpTableTests الخيار /bigobj تحت MSVC. التجميع الفعلي في Linux/Windows ينتظر CI. أبلغ CI الكامل السابق أيضًا عن إخفاقات منفصلة في مجموعة Windows EH وإلغاء PR مغلق. اكتملت المراجعة الذاتية للمصادر/الأدلة؛ لا يُدّعى تحقق مستقل أو iOS فعلي أو تحقق Intel HVF المعلق.
+
+`build-hvf-arm64/cross-parent-rename-validation-summary.json`, `cross-parent-rename-darwin-synced-evidence/`, `cross-parent-rename-darwin-evidence/`, `cross-parent-rename-darwin-rechecked-evidence/`, `cross-parent-rename-public-synced.xml`, `cross-parent-rename-python-synced.log`, `cross-parent-rename-native-fixed-evidence/`, `cross-parent-rename-probe/`.

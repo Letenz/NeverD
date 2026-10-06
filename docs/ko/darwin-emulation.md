@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1320c99e1a4c3d4138c36977fb78f02b6da0498343d6e2de55897d78d13c3aaa -->
+<!-- i18n-source: e6367595a25cf61d5e804de3921795d6bb1cbdcda7fc056073387150bad7ddbc -->
 
 [← 문서 목록](README.md)
 
@@ -492,3 +492,13 @@ removable 참조마다 경로와 NUL을 초기 16 MiB 비용에 더합니다. �
 두 직접 부모 모두 이름 변경 권한이 필요하고 생성한 디렉터리는 권한과 알려진 device/GID를 상속합니다. 파일 자체 식별자, 소유자/그룹, 쓰기 권한과 할당은 유지합니다. 알려진 장치 충돌은 거부하고 실제 이동은 두 부모의 전체 stat/열거를 무효화합니다. 삭제한 초기 디렉터리와 재사용한 경로는 다른 객체이며 옛 FD/CWD는 대체 영역을 얻지 않습니다.
 
 기존의 제한된 덮어쓰기, 매핑 수명, 경로/NUL 비용과 오류 순서를 유지합니다. EXCL의 다른 기존 대상은 영역/권한 검사 전에 EEXIST를 반환합니다. `renamed-file`은 생성한 자식으로 이동, 초기 부모에서 덮어쓰기, 자식으로 재이동을 C++/C/CLI/Python과 네이티브 macOS로 비교합니다. 권한 강제 검사, 디렉터리 원본, 하드/심볼릭 링크, 네이티브 APFS 메타데이터는 미완성입니다.
+
+### 서로 다른 부모 간 검증, 2026-10-06
+
+최종 Release 검증은 Darwin 등록 1,115개를 대조했다. 683개 통과, 백엔드 사용 불가로 432개 건너뜀, 실패 없음이며 필수 ARM64 HVF 108개를 모두 실행했다. 직접 검사 56/56에는 새 4K/16K 사례 18개가 포함된다. 공개 C/CLI/report 191/191이 통과했고 Python 메서드는 22.254초 동안 환경 다섯 개를 검증했다. 원본 네이티브 프로그램 26/26, 별도 원시 시스템 호출 프로브 34개, 문서/기능/증거 실행기 스크립트 296/296도 통과했다. 집계는 중복된다. MSVC 전용 CMake 변경 후에도 검증 바이너리 열 개의 해시는 그대로였다.
+
+이전 전체 검증 두 번의 기존 HVF 파일 메서드 시간 초과 세 건과 두 건은 보존했다. 전체 메서드, 작업 디렉터리 및 세션 비교는 통과했으나 원인을 확인하지 못했으므로 최종 통과가 지연 안정성을 입증하지 않는다. 프로브는 처음 /tmp와 정규 경로 /private/tmp를 비교했으며 root FD의 경로를 조회하여 기대값 네 개를 수정했다. 확장 네이티브 프로그램의 정리에 mkdir(136)을 잘못 사용한 exit150은 rmdir(137)로 수정했다. 초기 소스와 실패 증거를 보존하고 게스트 제한은 원래 5초로 유지했다.
+
+전체 Linux CI에서 발견한 LP64 초기화 목록 충돌 네 곳은 명시적 uint64_t로 수정했고 MSVC NeverDJumpTableTests에 /bigobj를 추가했다. 실제 Linux/Windows 컴파일은 CI를 기다린다. 이전 전체 CI의 Windows EH 코퍼스 및 닫힌 PR 취소 실패는 별도 문제로 남아 있다. 주 에이전트가 소스/증거 자체 검토를 완료했으며 독립 검토, 실제 iOS 또는 중단된 Intel HVF 검증 통과를 주장하지 않는다.
+
+`build-hvf-arm64/cross-parent-rename-validation-summary.json`, `cross-parent-rename-darwin-synced-evidence/`, `cross-parent-rename-darwin-evidence/`, `cross-parent-rename-darwin-rechecked-evidence/`, `cross-parent-rename-public-synced.xml`, `cross-parent-rename-python-synced.log`, `cross-parent-rename-native-fixed-evidence/`, `cross-parent-rename-probe/`.

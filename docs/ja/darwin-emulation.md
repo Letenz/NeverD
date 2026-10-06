@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1320c99e1a4c3d4138c36977fb78f02b6da0498343d6e2de55897d78d13c3aaa -->
+<!-- i18n-source: e6367595a25cf61d5e804de3921795d6bb1cbdcda7fc056073387150bad7ddbc -->
 
 [← ドキュメント一覧](README.md)
 
@@ -492,3 +492,13 @@ Release Darwin1,051登録、631成功、未提供420スキップ、失敗なし�
 両方の直接親に名前変更の許可が必要で、作成したディレクトリは許可と既知 device/GID を継承します。ファイル自身の識別子、所有者/グループ、書込み許可、割当は保持されます。既知 device の矛盾は拒否します。実移動は両親の完全な stat/列挙を無効にします。削除した初期ディレクトリと再利用パスは別物体で、古い FD/CWD は新しい領域を得ません。
 
 既存の有界置換、マップ寿命、パス/NUL 費用、エラー順序が適用されます。EXCL の異なる既存ターゲットは領域/許可検査前に EEXIST です。`renamed-file` は作成した子への移動、初期親への置換、子への再移動を C++/C/CLI/Python とネイティブ macOS で比較します。権限強制、ディレクトリソース、ハード/シンボリックリンク、ネイティブ APFS メタデータは未完了です。
+
+### 異なる親ディレクトリ間の検証、2026-10-06
+
+最終 Release 検証では Darwin の登録 1,115 件を照合し、683 件成功、バックエンド利用不可で 432 件スキップ、失敗なし。必須 ARM64 HVF 108 件をすべて実行した。直接検査は新規 4K/16K 18 件を含め 56/56 成功。公開 C/CLI/report は 191/191、Python メソッドは 22.254 秒で五つの環境を検証した。元のネイティブプログラム 26/26、独立した生システムコールプローブ 34 件、文書/機能/証跡ランナースクリプト 296/296 が成功。件数は重複する。MSVC のみに適用する CMake 変更後も、検証用バイナリ十個のハッシュは変わらなかった。
+
+以前の全体検証二回では既存 HVF ファイルメソッドのタイムアウト三件と二件を保持している。メソッド全体、作業ディレクトリ、セッションの比較は成功したが原因は確定しておらず、最終成功は遅延の安定性を証明しない。プローブは当初 /tmp と正規化された /private/tmp を比較していたため、root FD からパスを取得して四つの期待値を修正した。拡張ネイティブプログラムの後処理は mkdir(136) を誤用しており、rmdir(137) で exit150 を修正した。元のソースと失敗を保存し、ゲストの 5 秒制限は変更していない。
+
+Linux 全体 CI が検出した LP64 初期化リスト四箇所は明示的 uint64_t に修正し、MSVC の NeverDJumpTableTests に /bigobj を追加した。実際の Linux/Windows コンパイルは CI 待ち。以前の全体 CI の Windows EH コーパスと閉じた PR のキャンセル失敗は別の問題として残る。主エージェントによるソース/証跡自己レビューのみ実施し、独立レビュー、実機 iOS、停止中の Intel HVF 検証の成功は主張しない。
+
+`build-hvf-arm64/cross-parent-rename-validation-summary.json`, `cross-parent-rename-darwin-synced-evidence/`, `cross-parent-rename-darwin-evidence/`, `cross-parent-rename-darwin-rechecked-evidence/`, `cross-parent-rename-public-synced.xml`, `cross-parent-rename-python-synced.log`, `cross-parent-rename-native-fixed-evidence/`, `cross-parent-rename-probe/`.

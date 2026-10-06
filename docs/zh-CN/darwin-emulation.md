@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1320c99e1a4c3d4138c36977fb78f02b6da0498343d6e2de55897d78d13c3aaa -->
+<!-- i18n-source: e6367595a25cf61d5e804de3921795d6bb1cbdcda7fc056073387150bad7ddbc -->
 
 [← 文档索引](README.md)
 
@@ -596,3 +596,13 @@ Release Darwin 共1,051项：631通过、420因后端不可用跳过、零失败
 两个直接父目录均需名称空间修改授权；新建目录继承授权及已知 device/GID。重命名保留文件自身的身份、所有者/组、写授权和分配。已知设备冲突仍明确拒绝。实际移动使两个父目录的完整 stat/列举观察失效。已删除初始目录与重用路径始终是不同对象，旧目录 FD/CWD 不会得到替代对象的域。
 
 既有有界替换事务、映射保留、路径/NUL 费用及错误顺序继续适用。EXCL 遇到其他既存目标，仍在域与授权检查之前返回 EEXIST。原始 `renamed-file` 程序现在创建子目录、移入子目录、回到初始父目录覆盖文件，再移入子目录，通过 C++/C/CLI/Python 和原生 macOS 对照。权限强制检查、目录源重命名、硬/符号链接及真实 APFS 元数据仍未完成。
+
+### 跨父目录验证，2026-10-06
+
+最终 Release 验收核对了 1,115 个 Darwin 注册项：683 通过、432 因后端不可用跳过、零失败；108 个必需 ARM64 HVF 项全部执行。直接检查 56/56 通过，包括新增 18 个 4K/16K 用例。公开 C/CLI/report 191/191 通过；Python 方法在 22.254 秒内覆盖五种环境。原始原生程序 26/26、单独的原始系统调用探针 34 项、文档/能力/证据运行器脚本测试 296/296 均通过。计数有重叠。仅针对 MSVC 的 CMake 调整后，十个验收二进制的哈希均未改变。
+
+此前两次完整验收分别保留了已有 HVF 文件方法的三次和两次超时。完整方法、工作目录和会话控制检查通过，但未确立原因；最终通过不能证明延迟稳定。探针起初把 /tmp 文本路径与 /private/tmp 规范路径比较，改为从 root FD 查询路径后修正了四个预期。扩展原生程序最初清理误用 mkdir(136)，改成 rmdir(137) 后修复 exit150。初始源和失败证据均保留，来宾时限仍为原来的 5 秒。
+
+完整 Linux CI 发现的四处 LP64 测试初始化列表冲突已改为显式 uint64_t；MSVC 下的 NeverDJumpTableTests 已添加 /bigobj。实际 Linux/Windows 编译仍等待 CI。此前完整 CI 还报告了独立的 Windows EH 语料和关闭 PR 取消任务失败。已完成主代理源/证据自审；没有宣称独立审查、实体 iOS 或暂停的 Intel HVF 验收通过。
+
+`build-hvf-arm64/cross-parent-rename-validation-summary.json`, `cross-parent-rename-darwin-synced-evidence/`, `cross-parent-rename-darwin-evidence/`, `cross-parent-rename-darwin-rechecked-evidence/`, `cross-parent-rename-public-synced.xml`, `cross-parent-rename-python-synced.log`, `cross-parent-rename-native-fixed-evidence/`, `cross-parent-rename-probe/`.
