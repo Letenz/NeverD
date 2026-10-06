@@ -125,6 +125,8 @@ private:
   llvm::Error prepareMutation();
   void reclaimUnlinked();
   std::shared_ptr<DirectoryNode> directoryNode(const std::string &Path);
+  std::shared_ptr<DirectoryNode> initialDirectoryNode(const std::string &Path);
+  bool hasInitialDirectoryChild(const std::string &Path);
   bool mutableDirectory(const std::string &Path) const;
   std::optional<DirectoryIdentity> directoryIdentity(const std::string &Path);
   llvm::Expected<Pathname> readPath(uint64_t Address);
@@ -151,7 +153,7 @@ private:
   removeDirectory(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   rename(uint64_t SourcePath, uint32_t SourceDirectory, uint64_t TargetPath,
-         uint32_t TargetDirectory, ProcessResult &Result);
+         uint32_t TargetDirectory, bool Exclusive, ProcessResult &Result);
   void updateNamespaceMetadata(Contents &Node, bool Removed);
   llvm::Expected<std::optional<ServiceResult>>
   create(Description &File, uint32_t Mode, ProcessResult &Result);

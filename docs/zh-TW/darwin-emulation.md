@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 2fb61c4299cd9e0d2292a80e45a5655cf97a5598165087d2d61c18176bd13248 -->
+<!-- i18n-source: 34d34e187ac46720dfc5b061a28605b13c368d0ab705c3d1a43465497ac1b4fe -->
 
 [← 文件索引](README.md)
 
@@ -98,7 +98,6 @@ allocation_unit、mutation_time 及 seconds/nanoseconds 全部必填，整數沿
 ```
 
 
-
 ## 稀疏檔案定位
 
 普通檔案具有 mutation_policy 且分配仍已知時，lseek 支援 SEEK_HOLE=3、SEEK_DATA=4，共用 stat 的分配帳本。首次修改前為明確密集分配，零值不表示洞。位於所求類型內便回傳原偏移，否則回傳下一單位起點；末尾洞從 EOF 開始。負偏移為 EINVAL，位於/超過 EOF（含空檔）或沒有後續資料為 ENXIO=6。失敗保留游標，成功只改目前描述與 dup；獨立 open 不受影響，重開看目前分配。中繼資料、旗標、內容不變，whence 高位忽略。
@@ -113,7 +112,7 @@ allocation_unit、mutation_time 及 seconds/nanoseconds 全部必填，整數沿
 
 `unlink(10)` / `unlinkat(472)` 刪除既有一般名稱；一般檔案刪除僅接受低 32 位 flags=0 或 `AT_SYMLINK_NOFOLLOW_ANY=0x800`。未知位先回 EINVAL；AT_REMOVEDIR 使用下述受限目錄刪除；DATALESS、SYSTEM_DISCARDED 未支援。共用解析器保留路徑故障、dirfd、CWD 與絕對路徑順序；缺失 ENOENT、檔案後斜線 ENOTDIR、一般目錄 EPERM、純斜線根路徑 EISDIR，尾端帶 `.`/`..` 的根路徑 EBUSY。原生探針亦驗證末尾 `.`/`..`。
 
-舊 FD、dup、獨立開啟物件保留資料、游標與旗標，新開啟失敗；隱式父目錄與 CWD 保留，F_GETPATH 仍回傳捕獲的舊路徑。寫授權屬於檔案物件；全部描述元與最後一段映射釋放後，close/dup2 或下次修改才回收目前位元組預算，初始路徑/引用費用仍計入。權限強制檢查、跨父目錄改名、硬連結與刪除初始目錄尚缺。
+舊 FD、dup、獨立開啟物件保留資料、游標與旗標，新開啟失敗；隱式父目錄與 CWD 保留，F_GETPATH 仍回傳捕獲的舊路徑。寫授權屬於檔案物件；全部描述元與最後一段映射釋放後，close/dup2 或下次修改才回收目前位元組預算，初始路徑/引用費用仍計入。權限強制檢查、跨父目錄改名與硬連結尚缺；刪除初始目錄使用下文的明確授權。
 
 刪除後父目錄的 stat/列舉觀察對舊/新 FD、dup、路徑查詢皆失效；stat/readdir/SEEK_END 在複製或改游標前停止。read/pread 仍回 EISDIR，SET/CUR、F_GETPATH、fchdir 與相對查找可用。可信修改策略令 nlink=0、ctime=固定時間，保留其他時間、資料與分配；後續寫入不能恢復 nlink=1。無策略或整段 EFAULT 後中繼資料仍未知。失敗保留狀態；原生 `unlinked-file` 比較名稱/描述元，策略時間與目錄失效屬模型規則。
 
@@ -151,12 +150,11 @@ O_CREAT=0x200 在明確 mutable 的直接父目錄建立空檔案，涵蓋一般
 
 ## 同一父目錄內的一般檔案改名
 
-`rename(128)`、`renameat(465)`、`renameatx_np(488)` 可在同一明確可修改的直接父目錄改名或覆蓋一般檔案。同名空操作也需授權，通過後保留觀察。低 32 位 flags 支援 0 或 `RENAME_NOFOLLOW_ANY=0x10`；未知位及 EXCL+SWAP 在讀取路徑前回傳 EINVAL，其餘已知旗標明確不支援。共用解析器保留來源先於目標、目錄 FD、原始斜線與點元件的錯誤順序。目錄來源立即停止；一般檔案目標的末尾點/雙點解析成功後，在掛載及授權檢查前回傳 EINVAL，含巢狀與其他父目錄。缺少或非目錄祖先的錯誤仍優先；獲准父目錄內的一般目錄目標為 EISDIR。
+`rename(128)`、`renameat(465)`、`renameatx_np(488)` 可在同一明確可修改的直接父目錄改名或覆蓋一般檔案。同名空操作也需授權，通過後保留觀察。低 32 位 flags 支援 `RENAME_EXCL=0x4`、`RENAME_NOFOLLOW_ANY=0x10` 及其組合。未知位及 EXCL+SWAP 在讀取路徑前回傳 EINVAL；SECLUDE 和 SWAP 仍不支援。這裡的空操作和 EISDIR 規則適用於未指定 EXCL 的呼叫，EXCL 的獨立契約見下文。共用解析器保留來源先於目標、目錄 FD、原始斜線與點元件的錯誤順序。目錄來源立即停止；一般檔案目標的末尾點/雙點解析成功後，在掛載及授權檢查前回傳 EINVAL，含巢狀與其他父目錄。缺少或非目錄祖先的錯誤仍優先；獲准父目錄內的一般目錄目標為 EISDIR。
 
 來源的獨立開啟、dup 與舊 FD 的 `F_GETPATH` 一起跟隨新名；被覆蓋物件保留最後關聯路徑、資料、游標、旗標和映射壽命。寫授權與中繼資料不由目標轉給來源。可信策略只改各自 ctime，被覆蓋者另設 nlink=0；身分、擁有權、建立時間與配置不變。無策略或整段 EFAULT 後完整中繼資料仍未知。實際改名使父目錄 stat/列舉失效，同名操作不變。
 
 不消耗新 inode、項目或可用 FD；新路徑/NUL 取代來源動態費用，初始費用保留。僅無舊 FD/映射的目標可提供回收容量，且只計一次；部分 unmap 保留整物件費用。路徑達 1024 位元組或總量超過 16 MiB 時，在狀態改變前停止。跨父目錄、已知裝置衝突、目錄移動、swap/exclusive/seclude 與權限檢查仍未支援；相同 stat 裝置號不證明同一掛載，不猜測 EXDEV。`renamed-file` 比對原生/來賓身分、路徑、覆蓋與映射；時間及預算是虛擬規則。
-
 
 ## 目錄與相對路徑
 
@@ -198,7 +196,6 @@ O_CREAT=0x200 在明確 mutable 的直接父目錄建立空檔案，涵蓋一般
 [XNU getdirentries64](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [dirent ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent.h), [extended flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/dirent_private.h).
 
 目錄列舉驗收（2026-10-05，Release）：Darwin 共 498 項，246 通過、252 項因後端不可用跳過、零失敗；ARM64 HVF 必需項 63/63 執行。11 個原生 macOS 程式、40 項公共 C/CLI/報告（無跳過）、Python 五種客體组合各八種檔案情境及 66 項驗收腳本通過，計數重疊。證據：`build-hvf-arm64/darwin-dirents-merged-evidence/`。Intel HVF Actions 保持暫停；其他原生後端和 iOS 實機未驗收。
-
 
 ## 私有檔案映射
 
@@ -249,7 +246,7 @@ python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
   --evidence build-hvf-native/native-evidence --require-hvf
 ```
 
-獨立工作負載驗收要求 ARM64 105 項或 x64 70 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
+獨立工作負載驗收要求 ARM64 108 項或 x64 72 項全部執行，包含每個平台的 `LC_MAIN` 與 `LC_UNIXTHREAD`。必需項缺失、跳過或缺少 `ld64.lld` 都會失敗。
 
 ```sh
 python3 scripts/run_native_cpu_ci.py --build build-hvf-native \
@@ -437,7 +434,7 @@ Release Darwin 共971項：575通過、396因後端不可用跳過、零失敗�
 
 共用逐元件解析器。mkdir 可建立尾端只接斜線的缺失名稱；缺失祖先後接點/雙點仍為 ENOENT，一般檔案祖先為 ENOTDIR，既有名稱為 EEXIST。相對路徑沿用 FD/CWD，絕對路徑忽略 dirfd；字串錯誤先於相對 FD。建立不需可用 FD；查找、授權、位元組/項目預算或傳輸失敗不發布名稱、不使父觀測失效。
 
-`rmdir(137)` 與帶 AT_REMOVEDIR(0x80) 的 `unlinkat(472)` 刪除本程序建立的空目錄，可加 AT_SYMLINK_NOFOLLOW_ANY(0x800)。未知低32位旗標先回 EINVAL；DATALESS、SYSTEM_DISCARDED 未支援。保留已知路徑/類型/根目錄錯誤；刪除初始目錄為 UnsupportedService。新目錄尾點為 EINVAL，從仍有名稱的目錄出發的雙點或非空目標為 ENOTEMPTY。目錄 FD（含 dup）或 CWD 保留原目錄物件，不再阻止刪除。已 unlink 的一般檔案 FD/映射不算名稱；原生對照確認位元組、inode 與最後連結 F_GETPATH 在父目錄刪除及名稱重用後保留。
+`rmdir(137)` 與帶 AT_REMOVEDIR(0x80) 的 `unlinkat(472)` 刪除本程序建立的空目錄，可加 AT_SYMLINK_NOFOLLOW_ANY(0x800)。未知低32位旗標先回 EINVAL；DATALESS、SYSTEM_DISCARDED 未支援。保留已知路徑/類型/根目錄錯誤；沒有 removable 授權的初始目錄刪除仍為 UnsupportedService。已准入目錄尾點為 EINVAL，從仍有名稱的目錄出發的雙點或非空目標為 ENOTEMPTY。目錄 FD（含 dup）或 CWD 保留原目錄物件，不再阻止刪除。已 unlink 的一般檔案 FD/映射不算名稱；原生對照確認位元組、inode 與最後連結 F_GETPATH 在父目錄刪除及名稱重用後保留。
 
 每個新目錄以規範路徑加 NUL 和一項計入共享16 MiB/256項預算。已刪目錄不可達後僅退回自身費用，保留孤立檔案及映射租約。成功修改使直接父目錄完整 stat/列舉失效，失敗則保留；新目錄中繼資料及快照即使有一般檔案建立策略仍未知。原創 `directory-mutations` 在原生 macOS、五種客體與 C++/C/CLI/Python 比較巢狀建立、改名、unlink、刪除及孤立物件重用。
 
@@ -458,3 +455,31 @@ Release Darwin 共1,017項：609通過、408因後端不可用略過、零失敗
 Release Darwin 1,051項：631通過、420後端不可用略過、零失敗；105項必需 ARM64 HVF 全執行。定向98通過、12略過；初始直接64/64，含14項新增及持有刪除更新。公開 C/CLI/報告183/183，含133項 Darwin；Python 五種設定18.691秒，原生25/25、腳本66/66。額外原生改名探針修正初始通過後發現的尾點錯誤順序，原始碼/結果/快照保留。主代理已核對源碼與證據，最終獨立審查不可用。計數重疊、時限不變；完整 CI/iOS實機另驗，Intel HVF Actions 暫停。
 
 `build-hvf-arm64/directory-lifetime-validation-summary.json`, `directory-lifetime-darwin-final-evidence/`, `directory-lifetime-focused-final.xml`, `directory-lifetime-public.xml`, `directory-lifetime-native/`, `directory-lifetime-before-rename-fix/`.
+
+## 明確准入的初始目錄刪除
+
+目錄項可使用嚴格布林值 `"removable": true`，C++ 對應 `DarwinFileOptions::RemovableDirectories`。這聲明目標是只有一個命名空間身分的普通非掛載目錄。目標必須是明確配置的初始 `directories` 項且不是根，其直接父目錄必須明確允許修改。已知特殊模式/旗標、inode 別名（含目錄快照）或父子已知裝置號衝突均拒絕准入。相同裝置號本身不能證明沒有掛載。省略或 false 保持不支援，其他 JSON 型別無效；此選項不提供通用權限或掛載模型。
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/empty","removable":true}],"working_directory":"/empty"}}
+```
+
+刪除要求目前命名空間為空；初始隱式子目錄不會因最後一個原始檔案被 unlink 而消失。成功刪除使物件及直接父目錄的完整 stat/列舉失效，舊 FD/dup/CWD 保留原物件與父鏈。已刪初始名稱不會從不可變輸入重新出現；同名新檔案或目錄有獨立身分，不繼承舊中繼資料或快照，呼叫端輸入不變。
+
+每個 removable 參照的路徑與 NUL 計入初始 16 MiB 預算。初始目錄項、路徑、參照及快照在刪除與最後關閉後仍保留費用，也不退還 256 項限制中的初始項；新物件另計動態費用。原創 `initial-directory-removal` 持有原生測試既有空目錄時刪除它，先重建為檔案再建為目錄，檢查僅 CWD 保留並恢復空目錄；同一程式透過 C++/C/CLI/Python 覆蓋五種客體組合。
+
+### 初始目錄刪除驗證，2026-10-06
+
+最終 Release 原始碼核對了 1,089 項 Darwin 註冊測試：657 項通過、432 項因後端不可用略過、零失敗；108 項必要的 ARM64 HVF 測試全部執行。聚焦驗證為 27/39 通過、12 項不可用略過，新增的僅快照別名檢查也通過。公共 C/CLI/報告測試為 191/191；Python 在 76.276 秒內涵蓋五種組合；原生獨立工作負載 26/26、證據執行器測試 66/66。初次測試中不一致的 inode/快照輸入已修正，失敗記錄仍保留。
+
+先前兩輪完整驗證分別在既有檔案/重新命名案例出現 1 次和 3 次逾時；帶診斷的驗證重現一次檔案逾時，實際耗時 5.008 秒、程序 CPU 用時 0.171 秒。相同方法及舊程式對照均通過，但延遲根因仍未確定，最終通過不代表逾時穩定性已解決。臨時診斷已移除，程式檔案雜湊已還原，客體原有 5 秒時限未變。已完成主代理原始碼/證據核查；獨立審查不可用。計數彼此重疊；完整 GitHub CI、實體 iOS 與已暫停的 Intel HVF Actions 不屬於本機驗收。
+
+`build-hvf-arm64/initial-directory-validation-summary.json`, `initial-directory-darwin-restored-evidence/`, `initial-directory-public.xml`, `initial-directory-native-evidence/`, `initial-directory-timeout-probe/`.
+
+## 一般檔案的獨占重新命名
+
+完成來源與目標查找後，RENAME_EXCL 對不同的既有檔案或目錄回傳 EEXIST，先於掛載及命名空間修改檢查。更早的路徑錯誤仍優先，包括末尾點/雙點的 EINVAL。目標不存在時重用相同的有界重新命名交易，保留已開啟描述、游標、旗標、映射租約和設定的中繼資料變化。同物件獨占重新命名仍明確不支援：原生結果依賴檔案系統是否區分大小寫，精確目錄鍵無法證明此屬性。大小寫折疊、目錄來源重新命名、SECLUDE 和 SWAP 尚未納入。既有原創 `renamed-file` 工作負載現驗證拒絕時中繼資料不變，以及 EXCL|NOFOLLOW_ANY 成功移動，涵蓋原生 macOS 和 C++/C/CLI/Python。
+
+驗證，2026-10-06（Release）：1,097 項 Darwin 註冊測試，665 項通過、432 項因後端不可用略過、零失敗；108 項必要 ARM64 HVF 測試全部執行。聚焦測試 44 項通過、12 項不可用略過，含八項新增直接測試。公共 C/CLI/報告 191/191；Python 五種組合耗時 19.241 秒。獨立原始呼叫探針通過 26 項檢查。首次完整原生驗證中，既有 return 案例逾時，其餘 25 項（含 renamed-file）通過。同一未修改程式的 return 三次複查耗時 0.014–0.034 秒，隨後全部 26 項原生案例在原有 5 秒時限內通過。初次失敗保留且根因未明；這些結果與先前最終 HVF 通過均不保證延遲穩定性。已完成主代理核查，獨立審查不可用。計數重疊；實體 iOS、完整 GitHub CI 與暫停的 Intel HVF Actions 不屬於本機驗收。
+
+`build-hvf-arm64/exclusive-rename-validation-summary.json`, `exclusive-rename-darwin-evidence/`, `exclusive-rename-public.xml`, `exclusive-rename-native-evidence/`, `exclusive-rename-native-rechecked-summary.json`, `exclusive-rename-probe/`.

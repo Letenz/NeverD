@@ -419,6 +419,7 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"file-access", "61"},
           std::pair{"directory-mutations", "6d"},
           std::pair{"deleted-directories", "68"},
+          std::pair{"initial-directory-removal", "6a"},
           std::pair{"virtual-created-metadata",
                     emulation::darwin_test::CreationMetadataHex},
           std::pair{"stdin", "00ff78"},
@@ -480,6 +481,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       llvm::StringRef(Mode) == "created-file" ||
       llvm::StringRef(Mode) == "directory-mutations" ||
       llvm::StringRef(Mode) == "deleted-directories" ||
+      llvm::StringRef(Mode) == "initial-directory-removal" ||
       llvm::StringRef(Mode) == "created-file-metadata" ||
       llvm::StringRef(Mode) == "virtual-created-metadata" ||
       llvm::StringRef(Mode) == "renamed-file" ||
@@ -498,6 +500,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::StringRef(Mode) == "created-file" ||
         llvm::StringRef(Mode) == "directory-mutations" ||
         llvm::StringRef(Mode) == "deleted-directories" ||
+        llvm::StringRef(Mode) == "initial-directory-removal" ||
         llvm::StringRef(Mode) == "created-file-metadata" ||
         llvm::StringRef(Mode) == "virtual-created-metadata" ||
         llvm::StringRef(Mode) == "renamed-file") {
@@ -509,6 +512,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::StringRef(Mode) == "created-file" ||
         llvm::StringRef(Mode) == "directory-mutations" ||
         llvm::StringRef(Mode) == "deleted-directories" ||
+        llvm::StringRef(Mode) == "initial-directory-removal" ||
         llvm::StringRef(Mode) == "created-file-metadata" ||
         llvm::StringRef(Mode) == "virtual-created-metadata" ||
         llvm::StringRef(Mode) == "renamed-file")
@@ -537,6 +541,12 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
             ->front()
             .getAsObject())[field::FileMetadata] = std::move(Parent);
     }
+    if (llvm::StringRef(Mode) == "initial-directory-removal")
+      (*Input.getAsObject()
+            ->getObject(field::DarwinFiles)
+            ->getArray(field::Directories)
+            ->back()
+            .getAsObject())[field::DirectoryRemovable] = true;
     Options = llvm::formatv("{0}", Input).str();
   }
   auto Text = takeString(neverd_emulate_process_json(Session, Path.c_str(),
