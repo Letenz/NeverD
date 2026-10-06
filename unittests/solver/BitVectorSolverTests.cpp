@@ -1048,6 +1048,96 @@ TEST(BitVectorEncodingClone,
   EXPECT_EQ(Copy->check(), SatResult::Unsat);
   EXPECT_EQ(Base.check(), SatResult::Unsat);
 }
+TEST(BitVectorEncodingClone,
+     RootQueuePreservesDecisionsAcrossGrowthAndBudgets) {
+  for (unsigned Count : {0U, 1U, 31U, 257U})
+    for (bool Positive : {false, true}) {
+      SCOPED_TRACE(Count);
+      SCOPED_TRACE(Positive);
+      SymContext C;
+      SolverOptions O;
+      O.Sat.DefaultPhase = Positive;
+      O.Sat.RestartInterval = 2;
+      O.Sat.LearnedFraction = 0.01;
+      std::vector<SatLit> Roots;
+      std::vector<SatVar> Free;
+      const auto Fill = [&](BitVectorSolver &S, bool Record) {
+        std::vector<SatLit> Units;
+        for (unsigned I = 0; I < Count; ++I) {
+          const auto Root = SatLit::mk(S.sat().newVar(), I % 2 == 0);
+          const auto Unassigned = S.sat().newVar();
+          const auto Derived = SatLit::positive(S.sat().newVar(false));
+          ASSERT_TRUE(S.sat().addClause(~Root, Derived));
+          Units.push_back(Root);
+          if (Record) {
+            Roots.push_back(Root);
+            Roots.push_back(Derived);
+            Free.push_back(Unassigned);
+          }
+        }
+        // Populate the heap before unit propagation leaves holes among its
+        // undecided variables. Include roots outside the decision queue.
+        for (SatLit Unit : Units)
+          ASSERT_TRUE(S.sat().addClause(Unit));
+        pigeonhole(S, 4, 4);
+      };
+      auto Source = std::make_unique<BitVectorSolver>(C, O);
+      Fill(*Source, true);
+      auto Template = Source->cloneEncoding();
+      ASSERT_TRUE(Template);
+      auto Copy = Template->cloneEncoding();
+      ASSERT_TRUE(Copy);
+      Source.reset();
+      Template.reset();
+      BitVectorSolver Fresh(C, O);
+      Fill(Fresh, false);
+      sameState(*Copy, Fresh);
+
+      // Insertion after compaction must maintain both positions and priority.
+      for (unsigned I = 0; I < 65; ++I) {
+        SatVar V = Copy->sat().newVar();
+        ASSERT_EQ(V, Fresh.sat().newVar());
+        Free.push_back(V);
+      }
+      SatOptions Limited = O.Sat;
+      Limited.MaxPropagations = 1;
+      Copy->sat().setOptions(Limited);
+      Fresh.sat().setOptions(Limited);
+      EXPECT_EQ(Copy->check(), SatResult::Unknown);
+      EXPECT_EQ(Fresh.check(), SatResult::Unknown);
+      sameState(*Copy, Fresh);
+      Copy->sat().setOptions(O.Sat);
+      Fresh.sat().setOptions(O.Sat);
+      ASSERT_EQ(Copy->check(), SatResult::Sat);
+      ASSERT_EQ(Fresh.check(), SatResult::Sat);
+      sameState(*Copy, Fresh);
+      for (SatLit Root : Roots)
+        EXPECT_EQ(Copy->sat().modelValue(Root), SatValue::True);
+      for (SatVar V : Free)
+        EXPECT_EQ(Copy->sat().modelValue(V),
+                  Positive ? SatValue::True : SatValue::False);
+
+      // The surviving positions must still support conflict activity changes,
+      // backtracking, restarts and incremental clauses after a complete solve.
+      pigeonhole(*Copy, 5, 4);
+      pigeonhole(Fresh, 5, 4);
+      Limited = O.Sat;
+      Limited.MaxConflicts = 1;
+      Copy->sat().setOptions(Limited);
+      Fresh.sat().setOptions(Limited);
+      EXPECT_EQ(Copy->check(), SatResult::Unknown);
+      EXPECT_EQ(Fresh.check(), SatResult::Unknown);
+      sameState(*Copy, Fresh);
+      Copy->sat().setOptions(O.Sat);
+      Fresh.sat().setOptions(O.Sat);
+      EXPECT_EQ(Copy->check(), SatResult::Unsat);
+      EXPECT_EQ(Fresh.check(), SatResult::Unsat);
+      sameState(*Copy, Fresh);
+      EXPECT_GT(Copy->stats().Restarts, 0U);
+      EXPECT_FALSE(Copy->cloneEncoding());
+    }
+}
+
 TEST(BitVectorEncodingClone, WatchMigrationAndGrowthOutliveTheSource) {
   for (unsigned Count : {1U, 3U, 4U, 5U, 17U, 65U}) {
     SymContext C;
