@@ -2801,6 +2801,38 @@ TEST(LowIRLoopInference, RebuiltCounterLanesKeepProofBoundaries) {
     }
 }
 
+TEST(LowIRLoopInference, RebuiltCounterLanesFitBoundedSearch) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (bool Cached : {false, true})
+      for (auto Tag : {CounterTag::Prefix, CounterTag::Changing}) {
+        SCOPED_TRACE(static_cast<unsigned>(Order));
+        SCOPED_TRACE(Cached);
+        SCOPED_TRACE(static_cast<unsigned>(Tag));
+        auto P = projectedCounterLoops(4, true, 1, true,
+                                       LowIRLoopSpace::Register, true, 0, true,
+                                       false, Cached, false, false, Tag);
+        P.Contract.ByteOrder = Order;
+        for (uint64_t Offset : {8, 16, 64, 72, 96, 104})
+          P.Contract.ReturnRegisters.push_back({Offset, 8});
+        const std::vector<va_t> Cuts = Cached ? std::vector<va_t>{0x200, 0x400}
+                                              : std::vector<va_t>{0x300, 0x500};
+        // Concrete prefix lanes can coincidentally differ by one while other
+        // bits change. Keep enough budget for the symbolic counter without
+        // expanding those incidental matches into additional relations.
+        LowIRLoopInferenceLimits Limits;
+        const bool Changing = Tag == CounterTag::Changing;
+        Limits.Execution.MaxSolverQueries =
+            Cached ? (Changing ? 928 : 640) : (Changing ? 1856 : 1248);
+        Limits.Execution.MaxOperations =
+            Cached ? (Changing ? 672 : 624) : (Changing ? 848 : 768);
+        const auto R =
+            inferLowIRLoopRefinementPlan(P.Function, P.Contract, Limits, Cuts);
+        ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+        const auto Proof = loopCheck(P, P, *R.Plan);
+        ASSERT_TRUE(Proof.proved()) << Proof.Diagnostic;
+      }
+}
+
 TEST(LowIRLoopInference, ZeroExtendedUpdatesUseTheirObservedCounterLanes) {
   for (uint16_t Bytes : {1, 3, 4})
     for (bool Ascending : {false, true}) {
