@@ -5,12 +5,14 @@
 //===----------------------------------------------------------------------===//
 #include "LinuxServices.h"
 
-#include "LinuxTime.h"
 #include "LinuxKernelAvailability.h"
+#include "LinuxTime.h"
 
 #include "neverd/emulation/CPU.h"
 
 #include "llvm/Support/FormatVariadic.h"
+
+#include <cassert>
 namespace neverd::emulation::linux_model {
 namespace {
 std::optional<ServiceKind> serviceKind(GuestArchitecture ISA, uint64_t Number) {
@@ -58,10 +60,13 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   if (unavailableKernelService(Kind, Options.LinuxKernel))
     return std::optional<uint64_t>(uint64_t(0) - ServiceNotImplemented);
   switch (Kind) {
-#define NEVERD_LINUX_UNAVAILABLE_SYSCALL(Name, Label, X64, ARM, Count) \
-  case ServiceKind::Name:
-#include "neverd/emulation/LinuxUnavailableSyscalls.def"
-#undef NEVERD_LINUX_UNAVAILABLE_SYSCALL
+  case ServiceKind::PidFDOpen:
+    if (Options.LinuxKernel && Options.LinuxKernel->GKI) {
+      auto Flags = gkiPidFDFlags(*Options.LinuxKernel->GKI);
+      assert(Flags && "kernel options validated before execution");
+      return Files.openProcessDescriptor(Event.Arguments[0], Event.Arguments[1],
+                                         *Flags, Result);
+    }
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic = llvm::formatv(Service, Event.Number).str();
     return std::optional<uint64_t>();
@@ -121,8 +126,12 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     return archPrctl(CPU, Event, Layout, Result);
   case ServiceKind::Write:
   case ServiceKind::WriteV:
-    if (Options.LinuxFiles && !Files.isOutput(Event.Arguments[0]))
-      return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
+    if (Options.LinuxFiles)
+      if (auto E = Files.outputError(Event.Arguments[0])) {
+        if (*E == uint64_t(0) - InvalidArgument)
+          return writeOutput(CPU, Kind, Event, Layout, Options, Result, E);
+        return E;
+      }
     return writeOutput(CPU, Kind, Event, Layout, Options, Result);
   }
   llvm_unreachable("unhandled Linux service kind");

@@ -3532,3 +3532,13 @@ declares a call absent. The catalogue does not supply an implementation or
 derive availability from an Android API level. JSON validation and profile
 admission happen before loading; unlisted and available-but-unmodeled calls
 retain their unsupported boundary.
+
+`LinuxGKIKernels.def` owns released Android GKI branch identifiers and the
+versioned `pidfd_open` flag mask. JSON and C++ options select that contract
+explicitly; Android's Bionic API level does not infer it. `LinuxServices`
+dispatches the shared kernel call, and `LinuxFiles` owns process descriptors
+alongside regular files and standard streams. `LinuxOutput` supplies the same
+vector import/error ordering before a pidfd's missing write operation. There
+is no host process lookup or parallel descriptor namespace. See
+[released GKI contracts](android-gki-kernels.md) for pinned source evidence and
+the limits of this implemented subset.

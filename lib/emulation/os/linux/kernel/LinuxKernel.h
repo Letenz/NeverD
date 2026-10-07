@@ -48,7 +48,8 @@ const ServiceABI &serviceABI(GuestArchitecture Architecture);
 llvm::Expected<std::optional<uint64_t>>
 writeOutput(ExecutionBackend &CPU, ServiceKind Kind,
             const ProcessServiceEvent &Event, const MemoryLayout &Layout,
-            const ProcessOptions &Options, ProcessResult &Result);
+            const ProcessOptions &Options, ProcessResult &Result,
+            std::optional<uint64_t> AfterVectorImportError = std::nullopt);
 llvm::Expected<ProcessServiceEvent> readService(ExecutionBackend &CPU,
                                                 const ServiceRequest &Request);
 llvm::Error returnService(ExecutionBackend &CPU, const ServiceRequest &Request,

@@ -23,7 +23,10 @@ public:
   llvm::Expected<std::optional<uint64_t>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ProcessResult &Result);
-  bool isOutput(uint32_t FD) const;
+  std::optional<uint64_t> outputError(uint32_t FD) const;
+  std::optional<uint64_t> openProcessDescriptor(uint32_t PID, uint32_t Flags,
+                                                uint32_t AllowedFlags,
+                                                ProcessResult &Result);
 
 private:
   enum class Stream { Input, Output, Error };
@@ -39,7 +42,10 @@ private:
     const LinuxFileMetadata *Metadata = nullptr;
     uint64_t Offset = 0;
   };
-  using Descriptor = std::variant<Stream, OpenFile>;
+  struct ProcessDescriptor {
+    uint32_t PID, Flags;
+  };
+  using Descriptor = std::variant<Stream, OpenFile, ProcessDescriptor>;
 
   ExecutionBackend &CPU;
   const MemoryLayout &Layout;
@@ -49,6 +55,7 @@ private:
 
   static std::optional<uint64_t> unsupported(ProcessResult &Result,
                                              const char *Reason);
+  uint32_t nextDescriptor() const;
   llvm::Expected<Pathname> readPath(uint64_t Address, bool AllowEmpty = false);
   static std::optional<ParsedPath> parsePath(llvm::StringRef Path);
   PathKind lookupPath(const std::string &Path,

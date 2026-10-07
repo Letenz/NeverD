@@ -5,7 +5,21 @@
 //===----------------------------------------------------------------------===//
 #include "LinuxKernelAvailability.h"
 namespace neverd::emulation::linux_model {
+std::optional<uint32_t> gkiPidFDFlags(AndroidGKIKernel Kernel) {
+  switch (Kernel) {
+#define NEVERD_LINUX_GKI_KERNEL(Name, Label, Flags)                            \
+  case AndroidGKIKernel::Name:                                                 \
+    return Flags;
+#include "neverd/emulation/LinuxGKIKernels.def"
+#undef NEVERD_LINUX_GKI_KERNEL
+  }
+  return std::nullopt;
+}
 llvm::Error validateKernelOptions(const LinuxKernelOptions &Options) {
+  if (Options.GKI &&
+      (!gkiPidFDFlags(*Options.GKI) || Options.UnavailableSyscalls.contains(
+                                           LinuxUnavailableSyscall::PidFDOpen)))
+    return failure(KernelOptions);
   for (auto Call : Options.UnavailableSyscalls) {
     switch (Call) {
 #define NEVERD_LINUX_UNAVAILABLE_SYSCALL(Name, Label, X64, ARM, Count)         \
