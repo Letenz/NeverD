@@ -30,6 +30,8 @@ add_neverd_component_library(NeverDEmulationArch
   arch/aarch64/AArch64Exclusive.cpp
   arch/aarch64/AArch64ExclusiveExecution.cpp
   arch/x86_64/CheckedX64Backend.cpp
+  arch/x86_64/X64Watch.cpp
+  arch/x86_64/X64WatchTables.cpp
   arch/x86_64/CheckedX64Memory.cpp
   arch/x86_64/CheckedX64MMIOAtomic.cpp
   arch/x86_64/CheckedX64Stack.cpp

@@ -262,7 +262,10 @@ void MemoryProjection::commitProjection(GuestArchitecture Architecture,
   ProjectedRoots[Architecture] = Root;
   ProjectedUserMode = UserMode;
   ProjectedVariant = Variant;
-  ProjectedPages = mappings();
+  // A watch overlay changes translation permissions, not RAM ownership. Keep
+  // the existing pins instead of copying every mapping on each private stop.
+  if (ProjectedSpace.lock() != Space || Generation != mappingGeneration())
+    ProjectedPages = mappings();
   Generation = mappingGeneration();
   ProjectedSpace = Space;
 }

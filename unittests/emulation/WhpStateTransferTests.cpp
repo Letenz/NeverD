@@ -9,6 +9,7 @@
 #include "backends/whp/WhpX64Processor.h"
 #include "gtest/gtest.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Endian.h"
 
 #include <cstring>
@@ -178,6 +179,7 @@ struct HostState {
                                          : WHvRunVpExitReasonException;
     Exit.VpException.ExceptionType = Self.Exception;
     if (Self.Exception == x64::DebugVector) {
+      Self.Registers[WHvX64RegisterDr6].Reg64 |= x64::DebugSingleStep;
       ++Self.Registers[WHvX64RegisterRax].Reg64;
       ++Self.Registers[WHvX64RegisterRip].Reg64;
       auto *Vector = Self.Xsave.data() + VectorOffset;
@@ -277,6 +279,9 @@ TEST_P(WhpStateTransfer, ContinuedStepsReuseCapturedRegistersAndFP) {
   EXPECT_EQ(Target.MetadataCaptures, Steps);
   EXPECT_EQ(Target.CaptureCalls, Steps);
   ASSERT_EQ(Target.LastCaptured.size(), FullCaptureCount);
+  for (auto R : {WHvX64RegisterDr0, WHvX64RegisterDr1, WHvX64RegisterDr2,
+                 WHvX64RegisterDr3, WHvX64RegisterDr6, WHvX64RegisterDr7})
+    EXPECT_EQ(llvm::count(Target.LastCaptured, R), 1);
   EXPECT_EQ(Target.LastCaptured[FullRegisterCount],
             WHvX64RegisterFpControlStatus);
   EXPECT_EQ(Target.LastCaptured.back(), WHvX64RegisterXmmControlStatus);

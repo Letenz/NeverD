@@ -92,6 +92,10 @@ public:
   std::optional<uint64_t> nativeCallCount() const override {
     return Result.NativeCalls.size();
   }
+  bool watchedMemoryUnchanged() const override { return MemoryUnchanged; }
+  void setWatchedMemoryUnchanged(bool Unchanged) {
+    MemoryUnchanged = Unchanged;
+  }
   llvm::Expected<std::optional<std::vector<uint8_t>>>
   threadLocalMemory() override {
     std::vector<uint8_t> Bytes(Modules.Modules.front().Loaded.TLSSize);
@@ -114,6 +118,7 @@ private:
   const std::vector<uint64_t> &Initializers;
   const ProcessResult &Result;
   ProcessStackView Stack;
+  bool MemoryUnchanged = false;
 };
 } // namespace
 
@@ -379,6 +384,10 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         break;
       }
     }
+    // OS services, exceptions and invocation preparation can change stopped
+    // memory. Only a pure execution-watch handoff proves the preceding write
+    // watches stayed untouched; committed writes stop the session first.
+    Stopped.setWatchedMemoryUnchanged(false);
     auto Exit = (*Session)->run(Result.PC, Options.InstructionQuantum);
     if (!Exit) {
       Failed(Exit.takeError());
@@ -395,6 +404,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         Exit->Kind == SessionExitKind::MemoryWriteWatch)
       continue;
     if (Exit->Kind == SessionExitKind::ExecutionWatch) {
+      Stopped.setWatchedMemoryUnchanged(true);
       // Only an observer installs watches. The watched instruction has not
       // been admitted, so the process is exactly at its boundary.
       auto Next = Observer->watched(Stopped, Result.PC);
