@@ -2,6 +2,7 @@
 #include "Protocol.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <deque>
@@ -207,6 +208,9 @@ Json hello() {
           {"storage", "existing_json_sidecars"}};
 }
 
+/// How long requests must pause before background work starts.
+constexpr auto IdleGracePeriod = std::chrono::milliseconds(150);
+
 void executeLoop(State &state, Transport &transport) {
   try {
     Engine engine;
@@ -214,8 +218,14 @@ void executeLoop(State &state, Transport &transport) {
       std::shared_ptr<Request> request;
       {
         std::unique_lock lock(state.mutex);
-        // Background engine work runs only while no request is waiting; each
-        // step is bounded so interactive requests keep their latency.
+        // Background engine work runs only while no request is waiting, and
+        // only once requests have paused, so a client's burst of reads after
+        // opening a file does not queue behind it.  Each step is bounded so
+        // interactive requests keep their latency.
+        if (!state.stopping && state.queue.empty() && engine.hasIdleWork())
+          state.changed.wait_for(lock, IdleGracePeriod, [&] {
+            return state.stopping || !state.queue.empty();
+          });
         while (!state.stopping && state.queue.empty() && engine.hasIdleWork()) {
           lock.unlock();
           try {
