@@ -248,6 +248,22 @@ TEST(StringScan, ReadsAStringFromTheCharacterAtOrAfterAByte) {
   EXPECT_EQ(GBK->Chars, 1u);
 }
 
+TEST(StringScan, FoldsCaseInEveryScript) {
+  EXPECT_EQ(foldCase("Hello WORLD"), "hello world");
+  // Cyrillic, Greek with its final sigma, Latin beyond ASCII, fullwidth.
+  EXPECT_EQ(foldCase("\xd0\x9f\xd0\xa0\xd0\x98\xd0\x92\xd0\x95\xd0\xa2"),
+            "\xd0\xbf\xd1\x80\xd0\xb8\xd0\xb2\xd0\xb5\xd1\x82");
+  EXPECT_EQ(foldCase("\xce\xa3\xce\xbf\xcf\x82"), "\xcf\x83\xce\xbf\xcf\x83");
+  EXPECT_EQ(foldCase("\xc3\x84\xc3\x96\xc3\x9c"), "\xc3\xa4\xc3\xb6\xc3\xbc");
+  EXPECT_EQ(foldCase("\xef\xbc\xa1"), "\xef\xbd\x81");
+  // Text without case, and bytes that are not UTF-8, stay.
+  EXPECT_EQ(foldCase("\xe4\xb8\xad\xe6\x96\x87"), "\xe4\xb8\xad\xe6\x96\x87");
+  EXPECT_EQ(foldCase("A\xff"
+                     "B"),
+            "a\xff"
+            "b");
+}
+
 TEST(StringScan, OverlappingStringsKeepTheFirst) {
   ScanOptions Options;
   Options.Encodings = Everything;

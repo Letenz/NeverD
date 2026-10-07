@@ -96,6 +96,10 @@ NEVERD_API const char *neverd_string_refs_json(neverd_session_t Sess,
                                                const char *OptionsJson,
                                                neverd_va_t FirstEntry,
                                                int MaxFunctions);
+/// \p Text (UTF-8) with every character case-folded by Unicode simple case
+/// folding, so that a filter matches text regardless of case in any script.
+/// Bytes that are not UTF-8 stay as they are.  NULL for NULL.
+NEVERD_API const char *neverd_fold_case(const char *Text);
 /// \p Size bytes decoded in \p Encoding (a name or alias of
 /// neverd_string_encodings_json()) for display, one cell per byte:
 /// {"cells":[...]}, where a character's first byte holds its text (UTF-8), a

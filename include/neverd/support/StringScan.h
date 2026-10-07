@@ -93,6 +93,11 @@ void decode(llvm::ArrayRef<uint8_t> Data, Encoding E,
 /// or direction mark, a byte order mark or a private-use character.
 bool isShownCharacter(uint32_t Code);
 
+/// \p Text with every character case-folded by Unicode simple case folding,
+/// so that text compares regardless of case in any script: "ПРИВЕТ" and
+/// "привет" fold alike.  Bytes that are not UTF-8 stay as they are.
+std::string foldCase(llvm::StringRef Text);
+
 /// The columns a fixed-width display draws \p Code in: two for East Asian
 /// wide and fullwidth characters (WideCharacters.def), else one.
 unsigned displayColumns(uint32_t Code);

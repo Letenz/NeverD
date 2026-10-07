@@ -5,6 +5,7 @@
 #include "GraphSnapshot.h"
 #include "Listing.h"
 #include "ProjectHistory.h"
+#include "TextFold.h"
 
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
@@ -176,12 +177,8 @@ std::string ownedString(const char *value) {
                 "Engine result exceeds the 32 MiB adapter budget");
   return std::string(value, size);
 }
-std::string folded(std::string text) {
-  std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  return text;
-}
+/// \p text folded for comparisons that ignore case, in any script.
+std::string folded(const std::string &text) { return foldText(text); }
 constexpr std::size_t MaxFunctionRows = 1000000;
 // Strings need this many characters unless string_options says otherwise;
 // a minimum is at most MaxStringMinLength (neverd::strings::MaxMinChars).

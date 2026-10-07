@@ -1153,6 +1153,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_fold_case",
+    "const char *",
+    ["const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_decode_text_json",
     "const char *",
     ["const unsigned char *", "int", "const char *"],

@@ -415,6 +415,10 @@ const char *neverd_string_encodings_json(void) {
   return dupStr(Buf);
 }
 
+const char *neverd_fold_case(const char *Text) {
+  return Text ? dupStr(strings::foldCase(Text)) : nullptr;
+}
+
 const char *neverd_decode_text_json(const unsigned char *Bytes, int Size,
                                     const char *Encoding) {
   const auto Kind = Encoding ? strings::encodingNamed(Encoding) : std::nullopt;

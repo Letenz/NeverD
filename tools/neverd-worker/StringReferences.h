@@ -41,7 +41,7 @@ public:
 };
 
 /// The `string_references` table.  A query filters the rows by text,
-/// function or address, ignoring the case of ASCII letters, and sorts them
+/// function or address, ignoring case in any script, and sorts them
 /// by address, text, function or type; its rows are kept for its pages.
 class StringReferenceTable {
 public:
@@ -52,6 +52,8 @@ public:
 
 private:
   std::vector<StringReference> rows_;
+  /// Each row's text case-folded, made when a query first needs it.
+  std::vector<std::string> foldedText_;
   std::vector<std::uint32_t> order_;
   std::string orderKey_;
   bool ordered_ = false;

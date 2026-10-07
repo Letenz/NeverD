@@ -1,5 +1,7 @@
 #include "StringReferences.h"
 
+#include "TextFold.h"
+
 #include <algorithm>
 #include <limits>
 
@@ -8,33 +10,11 @@ namespace {
 
 constexpr std::size_t MaxStringReferencePage = 512;
 
-/// The ASCII lower case of \p c; other bytes are themselves.
-char lowerASCII(char c) {
-  return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
-}
-
-/// Whether \p text contains \p needle, which is lower case, ignoring the
-/// case of ASCII letters.
-bool containsFolded(std::string_view text, std::string_view needle) {
-  return needle.empty() || std::search(text.begin(), text.end(), needle.begin(),
-                                       needle.end(), [](char a, char b) {
-                                         return lowerASCII(a) == b;
-                                       }) != text.end();
-}
-
-/// Orders text ignoring the case of ASCII letters.
-bool lessFolded(std::string_view a, std::string_view b) {
-  return std::lexicographical_compare(
-      a.begin(), a.end(), b.begin(), b.end(), [](char x, char y) {
-        return static_cast<unsigned char>(lowerASCII(x)) <
-               static_cast<unsigned char>(lowerASCII(y));
-      });
-}
-
 } // namespace
 
 void StringReferenceTable::reset(std::vector<StringReference> rows) {
   rows_ = std::move(rows);
+  foldedText_.clear();
   order_.clear();
   orderKey_.clear();
   ordered_ = false;
@@ -52,36 +32,42 @@ Json StringReferenceTable::page(const Json &payload,
     throw Error("invalid_request",
                 "sort must be address, text, function or type");
   const bool descending = payload.value("descending", false);
-  auto filter = stringField(payload, "filter", {}, 4096);
-  std::transform(filter.begin(), filter.end(), filter.begin(), lowerASCII);
+  // The filter and the text compare case-folded in every script.
+  const std::string filter = foldText(stringField(payload, "filter", {}, 4096));
   std::string key = filter;
   key += '\0';
   key += sort;
   key += descending ? 'd' : 'a';
   if (!ordered_ || key != orderKey_) {
+    if ((!filter.empty() || sort == "text") &&
+        foldedText_.size() != rows_.size()) {
+      foldedText_.clear();
+      foldedText_.reserve(rows_.size());
+      for (const auto &ref : rows_)
+        foldedText_.push_back(foldText(source.text(ref)));
+    }
     order_.clear();
     const bool hexFilter =
         filter.find_first_not_of("0123456789abcdefx") == std::string::npos;
     for (std::size_t i = 0; i < rows_.size(); ++i) {
       const auto &ref = rows_[i];
-      if (filter.empty() || containsFolded(source.text(ref), filter) ||
-          containsFolded(source.functionName(ref), filter) ||
-          (hexFilter && containsFolded(hexAddress(ref.from), filter)))
+      if (filter.empty() || foldedText_[i].find(filter) != std::string::npos ||
+          foldText(source.functionName(ref)).find(filter) !=
+              std::string::npos ||
+          (hexFilter && hexAddress(ref.from).find(filter) != std::string::npos))
         order_.push_back(static_cast<std::uint32_t>(i));
     }
-    const auto order = [&](auto field) {
-      std::stable_sort(order_.begin(), order_.end(),
-                       [&](std::uint32_t a, std::uint32_t b) {
-                         return lessFolded(field(rows_[a]), field(rows_[b]));
-                       });
-    };
-    if (sort == "text")
-      order([&](const StringReference &ref) { return source.text(ref); });
-    else if (sort == "function")
-      order(
-          [&](const StringReference &ref) { return source.functionName(ref); });
-    else if (sort == "type")
-      order([&](const StringReference &ref) { return source.encoding(ref); });
+    if (sort != "address") {
+      // Each row's key once, then the rows in key order.
+      std::vector<std::string> keys(rows_.size());
+      for (const auto i : order_)
+        keys[i] = sort == "text"       ? foldedText_[i]
+                  : sort == "function" ? foldText(source.functionName(rows_[i]))
+                                       : std::string(source.encoding(rows_[i]));
+      std::stable_sort(
+          order_.begin(), order_.end(),
+          [&](std::uint32_t a, std::uint32_t b) { return keys[a] < keys[b]; });
+    }
     if (descending)
       std::reverse(order_.begin(), order_.end());
     orderKey_ = std::move(key);
