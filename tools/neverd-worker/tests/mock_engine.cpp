@@ -203,13 +203,16 @@ int neverd_read_bytes(neverd_session_t, neverd_va_t address,
 // Each 16-byte fixture function is one-byte instructions: nops, a jump back
 // to its entry at offset 8 and a return at offset 15.
 constexpr std::uint64_t JumpOffset = 8, ReturnOffset = 15;
-/// function_5 keeps a frame without a frame pointer: offset -> mnemonic,
-/// operands and stack pointer move.  Its loop back to the entry restores the
-/// stack pointer, and the code after the loop is unreachable.
+/// Functions with stack frames: offset -> mnemonic, operands, stack pointer
+/// move and, for a conditional jump, its target offset.
 struct FrameRow {
   const char *mnemonic, *operands;
   int move;
+  int branch = -1;
 };
+/// function_5 keeps a frame without a frame pointer.  Its loop back to the
+/// entry restores the stack pointer, and the code after the loop is
+/// unreachable.
 const std::map<std::uint64_t, FrameRow> FrameFunction = {
     {0, {"push", "rbx", -8}},
     {1, {"sub", "rsp, 0x20", -0x20}},
@@ -222,6 +225,17 @@ const std::map<std::uint64_t, FrameRow> FrameFunction = {
     {9, {"mov", "rax, qword ptr [rsp + 8]", 0}},
 };
 constexpr std::uint64_t FrameFunctionEntry = Base + 0x50;
+/// function_6 reaches offset 4 both past a push and around it, so the stack
+/// pointer's distance there is unknown.
+const std::map<std::uint64_t, FrameRow> JoinFunction = {
+    {0, {"push", "rbx", -8}},
+    {1, {"mov", "rax, qword ptr [rsp]", 0}},
+    {2, {"je", "4", 0, 4}},
+    {3, {"push", "rcx", -8}},
+    {4, {"mov", "rax, qword ptr [rsp + 8]", 0}},
+    {7, {"ret", "", 0}},
+};
+constexpr std::uint64_t JoinFunctionEntry = Base + 0x60;
 
 Json fixtureInstructions(neverd_va_t address, int count, bool flow,
                          bool stack) {
@@ -238,12 +252,22 @@ Json fixtureInstructions(neverd_va_t address, int count, bool flow,
                 {"bytes", "90"}};
     if (stack)
       row["sp"] = 0;
-    if (const auto frame = FrameFunction.find(offset);
-        entry == FrameFunctionEntry && frame != FrameFunction.end()) {
+    const auto *rows = entry == FrameFunctionEntry  ? &FrameFunction
+                       : entry == JoinFunctionEntry ? &JoinFunction
+                                                    : nullptr;
+    if (const auto frame = rows ? rows->find(offset) : FrameFunction.end();
+        rows && frame != rows->end()) {
       row["mnemonic"] = frame->second.mnemonic;
       row["op_str"] = frame->second.operands;
       if (stack)
         row["sp"] = frame->second.move;
+      if (flow && frame->second.branch >= 0) {
+        row["op_str"] = hexAddress(entry + frame->second.branch);
+        row["flow"] = "cjump";
+        row["target"] = hexAddress(entry + frame->second.branch);
+      } else if (flow && std::string_view(frame->second.mnemonic) == "ret") {
+        row["flow"] = "ret";
+      }
     }
     if (offset == JumpOffset) {
       row["mnemonic"] = "jmp";

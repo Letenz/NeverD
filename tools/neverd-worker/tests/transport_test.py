@@ -243,6 +243,13 @@ def run(executable):
                          "mov rax, [rsp+8]"):
             assert any(text.endswith(expected) for text in frame), (expected, frame)
         assert not any("bp-based frame" in text for text in frame), frame
+        # function_6 names the slot its single path reaches, and leaves raw the
+        # operand two paths reach at different stack depths.
+        join = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012340060", "before": 0, "after": 30})["payload"]["lines"]
+            if line["kind"] == "insn"]
+        assert "mov rax, [rsp+8+var_8]" in join, join
+        assert "mov rax, [rsp+8]" in join, join
         # IR constant references require whole-program analysis.
         assert client.call("xrefs", {"address": BASE, "source": "ir"})["payload"]["items"][0]["address"] == "0xffff800012340008"
         client.close()
