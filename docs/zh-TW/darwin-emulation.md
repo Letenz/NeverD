@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 8ec53d25a48700a518aada5ae97b8d964eb979136488f13ba86d98558fc2da5c -->
+<!-- i18n-source: 5ede1d380a591548b87919442b32c86a0b1d52944086d0f9f0bcdd7592c368e3 -->
 
 [← 文件索引](README.md)
 
@@ -672,3 +672,17 @@ sysctl 沿用既有複製階段。EUID0 的真實寫入在名稱/MIB 與 oldlenp
 嘗試記錄：首次 runner 檢查在 ARM64 與 x86-64 清單子項失敗，因為新純量方法缺少必需登記。補齊登記並保留全部方法相等規則。初始 129 必需項門檻及失敗記錄保留，重新執行的最終 ARM64 門檻要求 132 項。
 
 計數互有重疊。新證據於 `build-hvf-arm64/descriptor-table-observations/` 保留實際執行基線及精確原始碼、二進位、日誌雜湊，舊證據不變。原生探針為五個一次性 ARM64 macOS 子進程、40 項檢查，每進程五秒期限；預設 Current=1048575/cap=245760 回傳 245760，子進程 Current=0/1/32/245777 回傳 0/1/32/245760，父進程與系統限制未改變。iOS 實機、暫停 Intel HVF、遠端 merge CI 分別驗收。權限、變更後目錄觀察、共享映射/EOF、推進時鐘、Mach/thread/dyld 與框架執行期仍未完整。
+
+## 明確的程序觀察值
+
+`DarwinSystemOptions::ProcessGroupID`、`SessionID`、`ProcessTainted` 是彼此獨立的選用輸入，對應 JSON `process_group_id`、`session_id`、`process_tainted`。兩個 ID 必須為正且不超過 INT32_MAX；污染狀態只接受 JSON 布林值 `true`/`false`。省略仍表示未知，明確的 `false` 是已知零值。不從主機、PID1000、憑證或其他觀察值推斷。
+
+原始 `getpgrp(81)` 讀取程序群組；`getpgid(151)`、`getsid(310)` 使用帶正負號的低32位 `pid_t`，零或固定目前 PID1000 查詢自身，例如 `0xffffffff000003e8` 仍指自身。負的低32位 PID 在讀取觀察值之前回傳 ESRCH3，經唯讀原生探針及 XNU 程序配置、查找規則確認。未知的正數其他程序（包括 `0x1000`）以 UnsupportedService 停止，不猜測 ESRCH，也不套用其他介面的旗標遮罩。缺少所選自身觀察值同樣停止。`getpgrp`、`issetugid(327)` 忽略全部參數；四個純量查詢均不存取客體記憶體，沿用 BSD carry 與第二回傳暫存器規則。
+
+`process_tainted` 提供固定的 `P_SUGID` 觀察值，與真實、有效 ID 是否相等無關；不改變 EUID、檔案所有權、sysctl 寫入權限、授權、領導關係或終端狀態。`setpgid`、`setsid` 與憑證修改仍不支援。原始唯讀 `process-observations` 工作負載擷取自身 PID，檢查高位參數、負數錯誤與回傳狀態；`virtual-process-observations` 輸出設定的群組、工作階段及污染狀態位元組。其他程序、缺失值及設定器的模型案例不進入原生執行清單。macOS 原生參照不構成實體 iOS 驗收。
+
+```json
+{"darwin_system":{"process_group_id":7,"session_id":16909060,"process_tainted":false}}
+```
+
+[XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).

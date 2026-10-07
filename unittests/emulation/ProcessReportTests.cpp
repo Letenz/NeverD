@@ -927,6 +927,90 @@ TEST(ProcessReport, MalformedDarwinCredentialsFailBeforeImageLoading) {
   }
 }
 
+TEST(ProcessReport,
+     DarwinProcessObservationsKeepIDsAndStrictBooleanIndependent) {
+  auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");
+  ASSERT_TRUE(bool(Empty));
+  EXPECT_FALSE(Empty->DarwinSystem->ProcessGroupID);
+  EXPECT_FALSE(Empty->DarwinSystem->SessionID);
+  EXPECT_FALSE(Empty->DarwinSystem->ProcessTainted);
+  for (const char *Name : {"process_group_id", "session_id"}) {
+    for (const auto &[Value, Expected] :
+         {std::pair{"1", 1u},
+          std::pair{R"("2147483647")", uint32_t(INT32_MAX)}}) {
+      auto O = processOptionsFromJSON(std::string(R"({"darwin_system":{")") +
+                                      Name + "\":" + Value + "}}");
+      ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+      EXPECT_EQ(llvm::StringRef(Name) == "session_id"
+                    ? O->DarwinSystem->SessionID
+                    : O->DarwinSystem->ProcessGroupID,
+                Expected);
+      EXPECT_FALSE(llvm::StringRef(Name) == "session_id"
+                       ? O->DarwinSystem->ProcessGroupID
+                       : O->DarwinSystem->SessionID);
+      EXPECT_FALSE(O->DarwinSystem->ProcessTainted);
+      EXPECT_FALSE(O->DarwinSystem->Credentials);
+    }
+    for (const char *Bad :
+         {"null", "true", "false", "0", "-1", "0.5", "[]", "{}", "2147483648",
+          "4294967296", R"("4294967296")", R"("18446744073709551615")"}) {
+      auto O = processOptionsFromJSON(std::string(R"({"darwin_system":{")") +
+                                      Name + "\":" + Bad + "}}");
+      EXPECT_FALSE(bool(O)) << Name << ' ' << Bad;
+      llvm::consumeError(O.takeError());
+    }
+  }
+  for (bool Tainted : {false, true}) {
+    auto O = processOptionsFromJSON(
+        std::string(R"({"darwin_system":{"process_tainted":)") +
+        (Tainted ? "true" : "false") + "}}");
+    ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+    ASSERT_TRUE(O->DarwinSystem->ProcessTainted.has_value());
+    EXPECT_EQ(*O->DarwinSystem->ProcessTainted, Tainted);
+    EXPECT_FALSE(O->DarwinSystem->ProcessGroupID);
+    EXPECT_FALSE(O->DarwinSystem->SessionID);
+    EXPECT_FALSE(O->DarwinSystem->Credentials);
+  }
+  for (const char *Bad :
+       {"null", "0", "1", "-1", "0.0", R"("false")", R"("true")", "[]", "{}"}) {
+    auto O = processOptionsFromJSON(
+        std::string(R"({"darwin_system":{"process_tainted":)") + Bad + "}}");
+    EXPECT_FALSE(bool(O));
+    llvm::consumeError(O.takeError());
+  }
+  for (const char *Alias : {"pgid", "sid", "tainted", "processGroupID"}) {
+    auto O = processOptionsFromJSON(std::string(R"({"darwin_system":{")") +
+                                    Alias + "\":1}}");
+    EXPECT_FALSE(bool(O));
+    llvm::consumeError(O.takeError());
+  }
+}
+
+TEST(ProcessReport, DarwinProcessObservationAdmissionPrecedesImageLoading) {
+  auto O =
+      processOptionsFromJSON(R"({"darwin_system":{"process_tainted":false}})");
+  ASSERT_TRUE(bool(O));
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64})
+    for (auto Member : {&DarwinSystemOptions::ProcessGroupID,
+                        &DarwinSystemOptions::SessionID})
+      for (uint32_t Bad : {0u, uint32_t(INT32_MAX) + 1, UINT32_MAX}) {
+        O->DarwinSystem.emplace().*Member = Bad;
+        auto R = emulateProcess("missing.macho", P, *O);
+        ASSERT_FALSE(bool(R));
+        EXPECT_EQ(
+            llvm::toString(R.takeError()),
+            "Darwin system process_group_id and session_id must be between "
+            "1 and INT32_MAX");
+      }
+}
+
 TEST(ProcessReport, DarwinHostNameKeepsMissingEmptyAndStrictByteBounds) {
   auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");
   ASSERT_TRUE(bool(Empty));

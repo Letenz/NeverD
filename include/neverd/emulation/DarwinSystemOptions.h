@@ -85,6 +85,13 @@ struct DarwinSystemOptions {
   /// mobile entitlements. Missing is unknown; empty is an explicit value.
   /// Does not authorize hostname writes, even with explicit root credentials.
   std::optional<std::string> HostName;
+  /// Independent self-process observations. IDs are positive pid_t values
+  /// (1..INT32_MAX); neither is inferred from PID, credentials or the host.
+  std::optional<uint32_t> ProcessGroupID;
+  std::optional<uint32_t> SessionID;
+  /// Fixed issetugid/P_SUGID observation. Explicit false is known zero;
+  /// absence is unknown. Does not change credentials or authorize privileges.
+  std::optional<bool> ProcessTainted;
 };
 } // namespace neverd::emulation
 #endif

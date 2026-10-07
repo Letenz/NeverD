@@ -578,6 +578,9 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("system-info", b"i"),
                                            ("hostname", b"n"),
                                            ("virtual-hostname", b"abcd\0"),
+                                           ("process-observations", b"P"),
+                                           ("virtual-process-observations", bytes.fromhex(
+                                               "070000000403020101000000")),
                                            ("virtual-system", bytes.fromhex(
                                                "44617277696e0032342e746573740000000080"
                                                "4e6576657244207669727475616c206b65726e656c0056343200"
@@ -609,6 +612,8 @@ class ProcessIntegrationTests(unittest.TestCase):
                             "backend": "unicorn", "arguments": ["guest", mode, "/data"],
                             "darwin_system": {
                                 "hostname": "abcd",
+                                "process_group_id": 7, "session_id": 16909060,
+                                "process_tainted": True,
                                 "os_type": "Darwin", "os_release": "24.test",
                                 "os_revision": -2147483648, "os_version": "V42",
                                 "kernel_version": "NeverD virtual kernel",

@@ -672,6 +672,193 @@ TEST(DarwinSystemOptions, HostNameHasItsOwnByteLimitWithoutOtherDefaults) {
   }
 }
 
+TEST_P(DarwinSystemTest, ProcessScalarsRequireOnlyTheirOwnObservation) {
+  for (unsigned Configuration = 0; Configuration != 6; ++Configuration) {
+    Options.reset();
+    if (Configuration) {
+      Options.emplace();
+      if (Configuration == 2)
+        Options->ProcessGroupID = 7;
+      if (Configuration == 3)
+        Options->SessionID = 9;
+      if (Configuration >= 4)
+        Options->ProcessTainted = Configuration == 5;
+    }
+    struct Sample {
+      ServiceKind Kind;
+      unsigned Number;
+      uint64_t PID;
+      std::optional<uint64_t> Expected;
+      const char *Missing;
+    };
+    const Sample Samples[] = {
+        {ServiceKind::GetPgrp, 81, UINT64_MAX,
+         Configuration == 2 ? std::optional<uint64_t>(7) : std::nullopt,
+         "Darwin process group observation is not configured"},
+        {ServiceKind::GetPGID, 151, 0xffffffff000003e8ULL,
+         Configuration == 2 ? std::optional<uint64_t>(7) : std::nullopt,
+         "Darwin process group observation is not configured"},
+        {ServiceKind::GetSID, 310, 0x100000000ULL,
+         Configuration == 3 ? std::optional<uint64_t>(9) : std::nullopt,
+         "Darwin process session observation is not configured"},
+        {ServiceKind::IsSetUGID, 327, UINT64_MAX,
+         Configuration >= 4 ? std::optional<uint64_t>(Configuration == 5)
+                            : std::nullopt,
+         "Darwin process taint observation is not configured"}};
+    for (const auto &S : Samples) {
+      SCOPED_TRACE(Configuration);
+      SCOPED_TRACE(S.Number);
+      Result = {ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+                ExecutionBackendKind::Unicorn, "independent process scalar"};
+      FailingSystemMemory Memory(*Space);
+      Memory.FailAccess = Memory.FailRead = Memory.FailWrite = 1;
+      auto Out = systemService(
+          Memory, Page, S.Kind,
+          {0, S.Number, {S.PID, 1, UINT64_MAX, Output, Length, UINT64_MAX}, {}},
+          Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      if (S.Expected) {
+        ASSERT_TRUE(*Out) << Result.Diagnostic;
+        EXPECT_EQ((**Out).Value, *S.Expected);
+        EXPECT_FALSE((**Out).Error);
+      } else {
+        EXPECT_FALSE(*Out);
+        EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+        EXPECT_EQ(Result.Diagnostic, S.Missing);
+      }
+      EXPECT_EQ(Memory.Accesses, 0u);
+      EXPECT_EQ(Memory.Reads, 0u);
+      EXPECT_EQ(Memory.Writes, 0u);
+      EXPECT_EQ(bytes(Base, Page * 2), std::string(Page * 2, '\xa5'));
+    }
+  }
+}
+
+TEST_P(DarwinSystemTest, ProcessPIDQueriesUseSignedLow32BeforeObservation) {
+  const uint64_t Self[] = {0,
+                           1000,
+                           0x100000000ULL,
+                           0xffffffff00000000ULL,
+                           0x12345678000003e8ULL,
+                           0xffffffff000003e8ULL};
+  const uint64_t Negative[] = {0xffffffffULL, UINT64_MAX, 0x80000000ULL,
+                               0xffffffff80000000ULL};
+  const uint64_t Peer[] = {1, 4096, INT32_MAX, 0x100000001ULL,
+                           0xffffffff00001000ULL};
+  for (bool Known : {false, true}) {
+    Options.reset();
+    if (Known) {
+      Options.emplace().ProcessGroupID = 1;
+      Options->SessionID = INT32_MAX;
+    }
+    for (bool Session : {false, true})
+      for (unsigned Domain = 0; Domain != 3; ++Domain) {
+        llvm::ArrayRef<uint64_t> Targets =
+            Domain == 0   ? llvm::ArrayRef<uint64_t>(Self)
+            : Domain == 1 ? llvm::ArrayRef<uint64_t>(Negative)
+                          : llvm::ArrayRef<uint64_t>(Peer);
+        for (auto PID : Targets) {
+          SCOPED_TRACE(PID);
+          FailingSystemMemory Memory(*Space);
+          Memory.FailAccess = Memory.FailRead = Memory.FailWrite = 1;
+          Result = {ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+                    ExecutionBackendKind::Unicorn, "signed pid_t oracle"};
+          auto Out = systemService(Memory, Page,
+                                   Session ? ServiceKind::GetSID
+                                           : ServiceKind::GetPGID,
+                                   {0,
+                                    Session ? 310u : 151u,
+                                    {PID, UINT64_MAX, 1, Output, Length},
+                                    {}},
+                                   Options, Result);
+          ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+          if (Domain == 1 || (Domain == 0 && Known)) {
+            ASSERT_TRUE(*Out) << Result.Diagnostic;
+            EXPECT_EQ((**Out).Value, Domain == 1 ? 3u
+                                     : Session   ? uint32_t(INT32_MAX)
+                                                 : 1u);
+            EXPECT_EQ((**Out).Error, Domain == 1);
+          } else {
+            EXPECT_FALSE(*Out);
+            EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+            EXPECT_EQ(
+                Result.Diagnostic,
+                Domain == 2 ? "Darwin other-process queries are not modeled"
+                : Session
+                    ? "Darwin process session observation is not configured"
+                    : "Darwin process group observation is not configured");
+          }
+          EXPECT_EQ(Memory.Accesses, 0u);
+          EXPECT_EQ(Memory.Reads, 0u);
+          EXPECT_EQ(Memory.Writes, 0u);
+        }
+      }
+  }
+  EXPECT_EQ(bytes(Base, Page * 2), std::string(Page * 2, '\xa5'));
+}
+
+TEST_P(DarwinSystemTest, ProcessTaintIsIndependentOfCredentialsAndAuthority) {
+  for (bool Tainted : {false, true})
+    for (unsigned Credentials = 0; Credentials != 3; ++Credentials) {
+      Options.emplace().ProcessTainted = Tainted;
+      if (Credentials)
+        Options->Credentials = Credentials == 1
+                                   ? DarwinCredentials{0, 0, 0, 0, {}}
+                                   : DarwinCredentials{0, 7, 9, 11, {}};
+      auto Out = invoke(ServiceKind::IsSetUGID, {UINT64_MAX, 1, UINT64_MAX});
+      ASSERT_TRUE(Out);
+      EXPECT_EQ(Out->Value, Tainted ? 1u : 0u);
+      EXPECT_FALSE(Out->Error);
+      EXPECT_EQ(credentialID(ServiceKind::GetEUID, Options),
+                Credentials == 0   ? 1000u
+                : Credentials == 1 ? 0u
+                                   : 7u);
+      Options->HostName = "x";
+      capacity(1);
+      Out = named("kern.hostname", Output, Length, Base, 1);
+      if (Credentials == 1) {
+        EXPECT_FALSE(Out);
+        EXPECT_EQ(Result.Diagnostic,
+                  "Darwin privileged system write is not modeled");
+      } else {
+        ASSERT_TRUE(Out);
+        EXPECT_EQ(Out->Value, 1u);
+        EXPECT_TRUE(Out->Error);
+      }
+      EXPECT_FALSE(Options->ProcessGroupID);
+      EXPECT_FALSE(Options->SessionID);
+    }
+}
+
+TEST(DarwinSystemOptions, ProcessIDsUseFullBoundsAndTaintHasNoDefaults) {
+  DarwinSystemOptions O;
+  EXPECT_FALSE(O.ProcessGroupID);
+  EXPECT_FALSE(O.SessionID);
+  EXPECT_FALSE(O.ProcessTainted);
+  for (auto Member : {&DarwinSystemOptions::ProcessGroupID,
+                      &DarwinSystemOptions::SessionID}) {
+    for (uint32_t ID : {1u, uint32_t(INT32_MAX)}) {
+      O = {};
+      O.*Member = ID;
+      EXPECT_FALSE(bool(validateSystemOptions(O)));
+    }
+    for (uint32_t ID : {0u, uint32_t(INT32_MAX) + 1, UINT32_MAX}) {
+      O = {};
+      O.*Member = ID;
+      EXPECT_EQ(llvm::toString(validateSystemOptions(O)),
+                "Darwin system process_group_id and session_id must be between "
+                "1 and INT32_MAX");
+    }
+  }
+  for (bool Tainted : {false, true}) {
+    O = {};
+    O.ProcessTainted = Tainted;
+    EXPECT_FALSE(bool(validateSystemOptions(O)));
+    EXPECT_TRUE(O.ProcessTainted.has_value());
+    EXPECT_FALSE(O.Credentials);
+  }
+}
+
 TEST_P(DarwinSystemTest, DescriptorTableNeedsBothObservationsWithoutMemory) {
   for (unsigned Configuration = 0; Configuration != 7; ++Configuration) {
     SCOPED_TRACE(Configuration);

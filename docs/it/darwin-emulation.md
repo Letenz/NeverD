@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 8ec53d25a48700a518aada5ae97b8d964eb979136488f13ba86d98558fc2da5c -->
+<!-- i18n-source: 5ede1d380a591548b87919442b32c86a0b1d52944086d0f9f0bcdd7592c368e3 -->
 
 [← Indice della documentazione](README.md)
 
@@ -670,3 +670,17 @@ Verifica: Darwin (registrati/superati/non disponibili/falliti) 1441/913/528/0; A
 Cronologia: il primo controllo runner è fallito negli inventari ARM64 e x86-64 perché mancava la registrazione obbligatoria del nuovo metodo scalare. È stata aggiunta mantenendo la regola di uguaglianza di tutti i metodi. Il primo controllo con 129 casi obbligatori e gli errori restano conservati; il controllo finale ARM64 ne richiede 132.
 
 I conteggi si sovrappongono. `build-hvf-arm64/descriptor-table-observations/` conserva baseline reale e hash esatti di sorgenti/binari/log; prove precedenti immutate. Cinque figli usa e getta ARM64 macOS,40 controlli, cinque secondi ciascuno: Current=1048575/cap=245760 restituisce245760; figli Current=0/1/32/245777 restituiscono0/1/32/245760. Limiti del genitore e del sistema immutati. iOS fisico, Intel HVF sospeso e remote merge CI restano separati. Permessi, osservazioni directory dopo mutazione, shared maps/EOF, orologi avanzati, Mach/thread/dyld e framework restano incompleti.
+
+## Osservazioni esplicite del processo
+
+`DarwinSystemOptions::ProcessGroupID`, `SessionID` e `ProcessTainted` sono input opzionali indipendenti: JSON `process_group_id`, `session_id`, `process_tainted`. Gli ID devono essere positivi e non superare INT32_MAX; lo stato contaminato accetta solo Boolean JSON `true`/`false`. Un’omissione resta sconosciuta, mentre `false` esplicito è zero noto. Nessun valore deriva da host, PID1000, credenziali o altre osservazioni.
+
+La chiamata grezza `getpgrp(81)` legge il gruppo; `getpgid(151)` e `getsid(310)` usano i32 bit bassi con segno di `pid_t`, con zero o il PID1000 corrente fisso per il processo stesso. Anche `0xffffffff000003e8` indica sé stesso. Un PID basso negativo restituisce ESRCH3 prima della ricerca dell’osservazione, confermato da sonde native di sola lettura e dall’allocazione/ricerca XNU. Un altro processo positivo sconosciuto, incluso `0x1000`, arresta con UnsupportedService senza inventare ESRCH o applicare maschere di flag. Anche un valore proprio selezionato mancante arresta come non supportato. `getpgrp` e `issetugid(327)` ignorano tutti gli argomenti; le quattro query scalari non accedono alla memoria guest. Restano le regole BSD carry e del secondo registro di ritorno.
+
+`process_tainted` fornisce l’osservazione fissa `P_SUGID`, indipendente dall’uguaglianza degli ID reali/effettivi. Non cambia EUID, proprietà dei file, autorità di scrittura sysctl, entitlement, leadership o stato del terminale. `setpgid`, `setsid` e la mutazione delle credenziali restano non supportati. Il programma originale di sola lettura `process-observations` cattura il proprio PID e verifica bit alti, errori negativi e ritorni; `virtual-process-observations` emette i byte configurati di gruppo/sessione/contaminazione. I casi del modello per altri processi, valori assenti e setter sono esclusi dall’inventario nativo. I riferimenti macOS non certificano dispositivi iOS fisici.
+
+```json
+{"darwin_system":{"process_group_id":7,"session_id":16909060,"process_tainted":false}}
+```
+
+[XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).

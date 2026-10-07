@@ -24,6 +24,7 @@ NEVERD_DARWIN_VALUE(UserID, 1000)
 NEVERD_DARWIN_VALUE(GroupID, 1000)
 NEVERD_DARWIN_VALUE(BadDescriptor, 9)
 NEVERD_DARWIN_VALUE(NoEntry, 2)
+NEVERD_DARWIN_VALUE(NoProcess, 3)
 NEVERD_DARWIN_VALUE(OperationNotPermitted, 1)
 NEVERD_DARWIN_VALUE(ResourceBusy, 16)
 NEVERD_DARWIN_VALUE(FileExists, 17)
@@ -132,6 +133,10 @@ NEVERD_DARWIN_SERVICE(Dup, 41, Int)
 NEVERD_DARWIN_SERVICE(GetEGID, 43, UInt)
 NEVERD_DARWIN_SERVICE(GetGID, 47, UInt)
 NEVERD_DARWIN_SERVICE(GetGroups, 79, Int)
+NEVERD_DARWIN_SERVICE(GetPgrp, 81, Int)
+NEVERD_DARWIN_SERVICE(GetPGID, 151, Int)
+NEVERD_DARWIN_SERVICE(GetSID, 310, Int)
+NEVERD_DARWIN_SERVICE(IsSetUGID, 327, Int)
 NEVERD_DARWIN_SERVICE(GetDTableSize, 89, Int)
 NEVERD_DARWIN_SERVICE(Dup2, 90, Int)
 NEVERD_DARWIN_SERVICE(Fcntl, 92, Int)
@@ -197,6 +202,18 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(
     DescriptorTableObservation,
     "Darwin descriptor table observations are not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ProcessIdentityOption,
+    "Darwin system process_group_id and session_id must be between 1 and "
+    "INT32_MAX")
+NEVERD_DARWIN_DIAGNOSTIC(ProcessGroupObservation,
+                         "Darwin process group observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(ProcessSessionObservation,
+                         "Darwin process session observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(ProcessTaintObservation,
+                         "Darwin process taint observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(ProcessPeerObservation,
+                         "Darwin other-process queries are not modeled")
 NEVERD_DARWIN_DIAGNOSTIC(SystemPartialInput,
                          "Darwin sysctl input is partially readable")
 NEVERD_DARWIN_DIAGNOSTIC(

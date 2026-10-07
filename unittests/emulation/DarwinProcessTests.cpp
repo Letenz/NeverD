@@ -776,6 +776,131 @@ TEST_P(DarwinProcess, SystemQueriesPreserveExplicitValuesWidthsAndCopyOrder) {
     EXPECT_EQ(Result->Services[2].Error, false);
   }
 }
+TEST_P(DarwinProcess, ProcessQueriesKeepIndependentSelfObservations) {
+  struct Query {
+    const char *Mode;
+    const char *Diagnostic;
+    unsigned Number;
+  };
+  const Query Queries[] = {
+      {"process-group-query",
+       "Darwin process group observation is not configured", 151},
+      {"process-session-query",
+       "Darwin process session observation is not configured", 310},
+      {"process-taint-query",
+       "Darwin process taint observation is not configured", 327}};
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x02000000 : 0;
+  auto Negative = run("process-negative");
+  ASSERT_TRUE(bool(Negative)) << llvm::toString(Negative.takeError());
+  ASSERT_EQ(Negative->Stop, ProcessStopReason::Exited) << Negative->Diagnostic;
+  EXPECT_EQ(Negative->ExitStatus, 37);
+  EXPECT_EQ(Negative->StandardOutput, "E");
+  unsigned NegativeResults = 0;
+  for (const auto &E : Negative->Services)
+    if (E.Number == Class + 151 || E.Number == Class + 310) {
+      EXPECT_EQ(E.Result, 3u);
+      EXPECT_EQ(E.Error, true);
+      ++NegativeResults;
+    }
+  EXPECT_EQ(NegativeResults, 8u);
+  for (const auto &Q : Queries) {
+    Options.DarwinSystem.reset();
+    auto Missing = run(Q.Mode);
+    ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+    EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Missing->Diagnostic, Q.Diagnostic);
+    EXPECT_TRUE(Missing->StandardOutput.empty());
+    ASSERT_EQ(Missing->Services.size(), 1u);
+    EXPECT_EQ(Missing->Services.front().Number, Class + Q.Number);
+    EXPECT_FALSE(Missing->Services.front().Result);
+    Options.DarwinSystem.emplace();
+    Options.DarwinSystem->Credentials = DarwinCredentials{0, 7, 9, 11, {}};
+    if (Q.Number == 151)
+      Options.DarwinSystem->ProcessGroupID = 7;
+    if (Q.Number == 310)
+      Options.DarwinSystem->SessionID = 9;
+    if (Q.Number == 327)
+      Options.DarwinSystem->ProcessTainted = false;
+    auto R = run(Q.Mode);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 37);
+    EXPECT_EQ(R->StandardOutput, llvm::fromHex(Q.Number == 151   ? "07000000"
+                                               : Q.Number == 310 ? "09000000"
+                                                                 : "00000000"));
+    EXPECT_EQ(R->Services.front().Error, false);
+  }
+  for (bool Tainted : {false, true}) {
+    Options.DarwinSystem = darwin_test::processObservationOptions();
+    Options.DarwinSystem->ProcessTainted = Tainted;
+    Options.DarwinFiles.emplace().DescriptorLimit = 3;
+    for (const char *Mode :
+         {"process-observations", "virtual-process-observations"}) {
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+      EXPECT_EQ(R->ExitStatus, 37);
+      EXPECT_EQ(R->StandardOutput,
+                llvm::StringRef(Mode) == "process-observations" ? "P"
+                : Tainted ? llvm::fromHex(darwin_test::ProcessObservationsHex)
+                          : llvm::fromHex("070000000403020100000000"));
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      unsigned Negative = 0, SelfGroup = 0, SelfSession = 0;
+      bool HighSelf = false;
+      for (const auto &E : R->Services) {
+        if (E.Number == Class + 151 || E.Number == Class + 310) {
+          if (uint32_t(E.Arguments[0]) & 0x80000000u) {
+            EXPECT_EQ(E.Result, 3u);
+            EXPECT_EQ(E.Error, true);
+            ++Negative;
+          } else {
+            EXPECT_EQ(E.Result, E.Number == Class + 151 ? 7u : 0x01020304u);
+            EXPECT_EQ(E.Error, false);
+            (E.Number == Class + 151 ? SelfGroup : SelfSession)++;
+            HighSelf |= E.Arguments[0] == 0xffffffff000003e8ULL;
+          }
+          EXPECT_EQ(E.Arguments[2], 0x1122334455667788ULL);
+        }
+      }
+      EXPECT_EQ(Negative, 8u);
+      EXPECT_EQ(SelfGroup, 6u);
+      EXPECT_EQ(SelfSession, 7u);
+      EXPECT_TRUE(HighSelf);
+      EXPECT_EQ(Options.DarwinFiles->DescriptorLimit, 3u);
+    }
+  }
+  Options.DarwinSystem.reset();
+  auto Missing = run("process-missing-after");
+  ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+  EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Missing->StandardOutput, "!");
+  EXPECT_EQ(Missing->Diagnostic,
+            "Darwin process group observation is not configured");
+  for (bool Known : {false, true}) {
+    if (Known)
+      Options.DarwinSystem = darwin_test::processObservationOptions();
+    auto Peer = run("process-peer-query");
+    ASSERT_TRUE(bool(Peer)) << llvm::toString(Peer.takeError());
+    EXPECT_EQ(Peer->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Peer->Diagnostic, "Darwin other-process queries are not modeled");
+    EXPECT_EQ(Peer->StandardOutput, "!");
+    EXPECT_EQ(Peer->Services.back().Arguments[0], 0xffffffff00001000ULL);
+    EXPECT_FALSE(Peer->Services.back().Result);
+  }
+  Options.DarwinSystem->Credentials.emplace();
+  for (const auto &[Mode, Number] :
+       {std::pair{"process-setpgid", 82u}, std::pair{"process-setsid", 147u}}) {
+    auto R = run(Mode);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(R->StandardOutput, "!");
+    EXPECT_EQ(R->Services.back().Number, Class + Number);
+    EXPECT_FALSE(R->Services.back().Result);
+  }
+}
+
 TEST_P(DarwinProcess, HostNameKeepsTruncationObservationAndWriteAuthority) {
   auto Missing = run("hostname-missing-after");
   ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());

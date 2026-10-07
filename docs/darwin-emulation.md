@@ -1425,3 +1425,17 @@ Checks: Darwin (registered/passed/unavailable/failed) 1441/913/528/0; ARM64 HVF 
 Attempt history: the first runner check failed in the ARM64 and x86-64 inventory subtests because the new scalar method lacked mandatory registration. Registration was added without relaxing the method-equality rule. The initial 129-required gate and failed runner records are retained; the fresh final ARM64 gate requires 132 cases.
 
 Counts overlap. Evidence preserves the actual execution baseline plus exact source/binary/log hashes under `build-hvf-arm64/descriptor-table-observations/`; prior observation evidence stays immutable. Native probe: five disposable ARM64 macOS processes, 40 checks, five-second deadline each. Captured default Current=1048575/cap=245760 returned 245760; child Current=0/1/32/245777 returned 0/1/32/245760. Parent and system limits were unchanged. Physical iOS, suspended Intel HVF and remote merge CI remain separate. Permissions, mutable directory observations, coherent shared maps/EOF, advancing clocks, Mach/thread/dyld and framework runtime remain unfinished.
+
+## Explicit process observations
+
+`DarwinSystemOptions::ProcessGroupID`, `SessionID` and `ProcessTainted` are independent optional inputs: JSON `process_group_id`, `session_id` and `process_tainted`. IDs must be positive, at most INT32_MAX; taint accepts only JSON Boolean `true`/`false`. Missing stays unknown, while explicit `false` is a known zero. No value comes from the host, PID1000, credentials or another observation.
+
+Raw `getpgrp(81)` reads the process group; `getpgid(151)` and `getsid(310)` use signed low32 `pid_t`, accepting zero or the fixed current PID1000. For example, `0xffffffff000003e8` still names self. A negative low32 PID returns ESRCH3 before observation lookup, as confirmed by read-only native probes and XNU process allocation/lookup. An unknown positive peer, including `0x1000`, stops with UnsupportedService without a guessed ESRCH or flag masking. A missing selected self value also stops unsupported. `getpgrp` and `issetugid(327)` ignore all arguments, and all four scalar queries access no guest memory. Existing BSD carry and secondary-register rules apply.
+
+`process_tainted` supplies the fixed `P_SUGID` observation independently of equal or unequal real/effective IDs. It does not change EUID, file ownership, sysctl write authority, entitlements, leadership or terminal state. `setpgid`, `setsid` and credential mutation remain unsupported. The original read-only `process-observations` workload captures its own PID and checks high carriers, negative errors and return state; `virtual-process-observations` emits configured group/session/taint bytes. Model-only peer, missing-value and setter cases are excluded from native execution. Native macOS references do not establish physical iOS acceptance.
+
+```json
+{"darwin_system":{"process_group_id":7,"session_id":16909060,"process_tainted":false}}
+```
+
+[XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).

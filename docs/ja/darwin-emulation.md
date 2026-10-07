@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 8ec53d25a48700a518aada5ae97b8d964eb979136488f13ba86d98558fc2da5c -->
+<!-- i18n-source: 5ede1d380a591548b87919442b32c86a0b1d52944086d0f9f0bcdd7592c368e3 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -672,3 +672,17 @@ sysctl のコピー段階は維持します。EUID0 の実際の書き込みは�
 試行記録：最初の runner 検査では、新スカラーメソッドの必須登録がなく ARM64 と x86-64 の一覧検査が失敗しました。全メソッド一致規則を維持して登録を追加しました。初回の必須129件のゲートと失敗記録は保持し、新しい最終 ARM64 ゲートは132件を要求します。
 
 件数は重複します。`build-hvf-arm64/descriptor-table-observations/` は実行時ベースラインとソース/バイナリー/ログの正確なハッシュを保持し、過去証拠は変更しません。原生 ARM64 macOS の使い捨て子プロセス五個、40 検査、各五秒期限：既定 Current=1048575/cap=245760 は245760、子 Current=0/1/32/245777 は0/1/32/245760。親とシステムの上限は変更しません。実機 iOS、停止 Intel HVF、remote merge CI は別検証です。権限、変更後のディレクトリー観測、共有 map/EOF、進行時計、Mach/thread/dyld、framework runtime は未完成です。
+
+## 明示的なプロセス観測値
+
+`DarwinSystemOptions::ProcessGroupID`、`SessionID`、`ProcessTainted` は独立した任意入力で、JSON 名は `process_group_id`、`session_id`、`process_tainted` です。ID は正数かつ INT32_MAX 以下、汚染状態は JSON の Boolean `true`/`false` のみです。省略は不明、明示的な `false` は既知のゼロです。ホスト、PID1000、資格情報や別の観測値から推定しません。
+
+生の `getpgrp(81)` はプロセスグループを読みます。`getpgid(151)` と `getsid(310)` は符号付き下位32ビットの `pid_t` を使い、ゼロまたは固定の現在 PID1000 を自身として扱います。`0xffffffff000003e8` も自身です。負の下位32ビット PID は観測値の検索前に ESRCH3 を返し、読み取り専用ネイティブプローブと XNU のプロセス割り当て・検索で確認しています。`0x1000` を含む不明な正の他プロセスは UnsupportedService で停止し、ESRCH やフラグマスクを推測しません。選択した自身の値がない場合も未対応で停止します。`getpgrp` と `issetugid(327)` は全引数を無視し、四つのスカラー問い合わせはゲストメモリにアクセスしません。BSD carry と第2戻りレジスタの既存規則を維持します。
+
+`process_tainted` は固定の `P_SUGID` 観測値で、実 ID と実効 ID の一致・不一致とは独立です。EUID、ファイル所有権、sysctl 書き込み権限、エンタイトルメント、リーダー状態や端末状態を変更しません。`setpgid`、`setsid`、資格情報の変更は未対応です。元の読み取り専用 `process-observations` は自身の PID を取得し、高位キャリア、負数エラー、戻り状態を検証します。`virtual-process-observations` は設定したグループ・セッション・汚染状態のバイト列を出力します。他プロセス、欠落値、設定用呼び出しのモデル専用ケースはネイティブ実行一覧に含めません。macOS の参照実行は実機 iOS の検証ではありません。
+
+```json
+{"darwin_system":{"process_group_id":7,"session_id":16909060,"process_tainted":false}}
+```
+
+[XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).

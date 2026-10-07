@@ -122,6 +122,10 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::GetDTableSize:
   case ServiceKind::GetRusage:
   case ServiceKind::GetGroups:
+  case ServiceKind::GetPgrp:
+  case ServiceKind::GetPGID:
+  case ServiceKind::GetSID:
+  case ServiceKind::IsSetUGID:
   case ServiceKind::GetUID:
   case ServiceKind::GetEUID:
   case ServiceKind::GetGID:

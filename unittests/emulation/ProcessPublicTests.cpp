@@ -446,6 +446,9 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"virtual-system", emulation::darwin_test::SystemHex},
           std::pair{"hostname", "6e"},
           std::pair{"virtual-hostname", emulation::darwin_test::HostNameHex},
+          std::pair{"process-observations", "50"},
+          std::pair{"virtual-process-observations",
+                    emulation::darwin_test::ProcessObservationsHex},
           std::pair{"mach-time", "68"},
           std::pair{"mach-timebase-values",
                     emulation::darwin_test::TimebaseHex},
@@ -493,6 +496,9 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
            ? emulation::darwin_test::ResourceUsageJSON
        : (ModeName == "hostname" || ModeName == "virtual-hostname")
            ? emulation::darwin_test::HostNameJSON
+       : (ModeName == "process-observations" ||
+          ModeName == "virtual-process-observations")
+           ? emulation::darwin_test::ProcessObservationsJSON
            : emulation::darwin_test::SystemJSON) +
       R"(,"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":)" +
       emulation::darwin_test::MetadataJSON +
@@ -1509,6 +1515,47 @@ TEST_F(ProcessPublic, AndroidSyscallNamesMatchSDKAndCLI) {
   ASSERT_TRUE(bool(Bytes));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
 #endif
+}
+
+TEST_F(ProcessPublic,
+       DarwinProcessObservationsRejectMalformedOptionsBeforeLoading) {
+  for (const char *Field :
+       {"process_group_id", "session_id", "process_tainted"}) {
+    const bool Boolean = llvm::StringRef(Field) == "process_tainted";
+    for (const char *Bad : {"null", "0", "-1", "0.5", "[]", "{}", "2147483648",
+                            R"("4294967296")", R"("true")"}) {
+      const auto Request =
+          std::string(R"({"darwin_system":{")") + Field + "\":" + Bad + "}}";
+      for (const char *Profile :
+           {MacOSMachO64, IOSMachO64, IOSSimulatorMachO64}) {
+        EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho", Profile,
+                                              Request.c_str()),
+                  nullptr);
+        EXPECT_NE(takeString(neverd_last_error(Session)).find(Field),
+                  std::string::npos);
+        EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+      }
+    }
+    if (Boolean)
+      for (const char *Bad : {"1", R"("false")"}) {
+        const auto Request =
+            std::string(R"({"darwin_system":{"process_tainted":)") + Bad + "}}";
+        EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho",
+                                              MacOSMachO64, Request.c_str()),
+                  nullptr);
+        EXPECT_NE(takeString(neverd_last_error(Session)).find(Field),
+                  std::string::npos);
+      }
+  }
+  for (const char *Profile : {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
+    EXPECT_EQ(neverd_emulate_process_json(
+                  Session, "missing.macho", Profile,
+                  R"({"darwin_system":{"process_tainted":false}})"),
+              nullptr);
+    EXPECT_EQ(takeString(neverd_last_error(Session)),
+              field::DarwinSystemProfile);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
 }
 
 TEST_F(ProcessPublic, DarwinHostNameRejectsMalformedOptionsBeforeLoading) {

@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 8ec53d25a48700a518aada5ae97b8d964eb979136488f13ba86d98558fc2da5c -->
+<!-- i18n-source: 5ede1d380a591548b87919442b32c86a0b1d52944086d0f9f0bcdd7592c368e3 -->
 
 [← 文档索引](README.md)
 
@@ -774,3 +774,17 @@ sysctl 沿用原复制阶段。显式 EUID0 的真实写请求在名称/MIB 与 
 尝试记录：首次 runner 检查在 ARM64 与 x86-64 清单子项失败，因为新标量方法缺少必需登记。补齐登记并保留全部方法相等规则。初始 129 必需项门禁及失败记录保留，重新执行的最终 ARM64 门禁要求 132 项。
 
 计数相互重叠。新证据保留实际执行基线及精确源码、二进制、日志哈希，目录为 `build-hvf-arm64/descriptor-table-observations/`，旧证据保持不变。原生探针为五个一次性 ARM64 macOS 子进程、40 项检查，每进程五秒期限；默认 Current=1048575/cap=245760 返回 245760，子进程 Current=0/1/32/245777 返回 0/1/32/245760，未改变父进程或系统限制。iOS 真机、暂停的 Intel HVF 与远端 merge CI 分别验收。权限、变更后目录观测、共享映射/EOF、推进时钟、Mach/thread/dyld 与框架运行时仍有缺口。
+
+## 显式进程观察值
+
+`DarwinSystemOptions::ProcessGroupID`、`SessionID` 和 `ProcessTainted` 是相互独立的可选输入，对应 JSON `process_group_id`、`session_id`、`process_tainted`。两个 ID 必须为正数且不超过 INT32_MAX；污染状态只接受 JSON 布尔值 `true`/`false`。缺省仍表示未知，明确的 `false` 则是已知零值。不会从宿主机、PID1000、凭据或其他观察值推断这些字段。
+
+原始 `getpgrp(81)` 读取进程组；`getpgid(151)`、`getsid(310)` 将参数解释为有符号低32位 `pid_t`，零或当前固定 PID1000 查询自身，例如 `0xffffffff000003e8` 仍表示自身。负的低32位 PID 在读取观察值之前返回 ESRCH3；这一结果由只读原生探针和 XNU 的进程分配、查找规则确认。未知的正数其他进程，包括 `0x1000`，以 UnsupportedService 停止，不猜测 ESRCH，也不把位解释为其他接口的标志。缺少所选自身观察值同样停止为不支持。`getpgrp`、`issetugid(327)` 忽略全部参数；四个标量查询均不访问来宾内存，并保留原有 BSD carry 和第二返回寄存器规则。
+
+`process_tainted` 提供固定的 `P_SUGID` 观察值，与真实和有效 ID 相同或不同无关；它不改变 EUID、文件所有权、sysctl 写权限、授权、领导关系或终端状态。`setpgid`、`setsid` 和凭据修改仍不支持。原始只读 `process-observations` 工作负载捕获自身 PID，核对高位参数、负数错误和返回状态；`virtual-process-observations` 输出配置的进程组、会话和污染状态字节。其他进程、缺失值及设置器的模型测试不进入原生执行目录。macOS 原生参照不能证明物理 iOS 设备兼容性。
+
+```json
+{"darwin_system":{"process_group_id":7,"session_id":16909060,"process_tainted":false}}
+```
+
+[XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).

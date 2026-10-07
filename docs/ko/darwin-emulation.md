@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 8ec53d25a48700a518aada5ae97b8d964eb979136488f13ba86d98558fc2da5c -->
+<!-- i18n-source: 5ede1d380a591548b87919442b32c86a0b1d52944086d0f9f0bcdd7592c368e3 -->
 
 [← 문서 목록](README.md)
 
@@ -672,3 +672,17 @@ sysctl 복사 단계는 유지됩니다. EUID0의 실제 쓰기는 이름/MIB와
 시도 기록: 새 스칼라 메서드의 필수 등록이 없어 첫 runner 검사에서 ARM64와 x86-64 목록 검사가 실패했습니다. 전체 메서드 일치 규칙을 유지하며 등록을 추가했습니다. 초기 필수 129개 게이트와 실패 기록을 보존하며, 새 최종 ARM64 게이트는 132개를 요구합니다.
 
 개수는 서로 겹칩니다. `build-hvf-arm64/descriptor-table-observations/`는 실제 실행 기준과 정확한 소스/바이너리/로그 해시를 보존하고 이전 증거는 변경하지 않습니다. 일회용 ARM64 macOS 자식 프로세스 5개, 검사 40개, 각 5초 제한: 기본 Current=1048575/cap=245760은245760, 자식 Current=0/1/32/245777은0/1/32/245760입니다. 부모와 시스템 제한은 변경하지 않았습니다. 실제 iOS, 중지된 Intel HVF, 원격 merge CI는 별도 검증입니다. 권한, 변경 후 디렉터리 관측, 공유 map/EOF, 진행 시계, Mach/thread/dyld 및 framework runtime은 미완성입니다.
+
+## 명시적 프로세스 관측값
+
+`DarwinSystemOptions::ProcessGroupID`, `SessionID`, `ProcessTainted`는 서로 독립적인 선택 입력이며 JSON 이름은 `process_group_id`, `session_id`, `process_tainted`입니다. ID는 양수이며 INT32_MAX 이하여야 하고, 오염 상태는 JSON Boolean `true`/`false`만 받습니다. 생략은 알 수 없는 값이고 명시적 `false`는 알려진 0입니다. 호스트, PID1000, 자격 증명 또는 다른 관측값에서 추론하지 않습니다.
+
+원시 `getpgrp(81)`는 프로세스 그룹을 읽습니다. `getpgid(151)`와 `getsid(310)`은 부호 있는 하위32비트 `pid_t`를 사용하며 0 또는 고정된 현재 PID1000을 자기 자신으로 처리합니다. `0xffffffff000003e8`도 자기 자신입니다. 음수 하위32비트 PID는 관측값 조회 전에 ESRCH3을 반환하며, 읽기 전용 네이티브 프로브와 XNU의 프로세스 할당·조회 규칙으로 확인했습니다. `0x1000`을 포함한 알려지지 않은 양수의 다른 프로세스는 UnsupportedService로 중단하고 ESRCH나 플래그 마스크를 추측하지 않습니다. 선택한 자기 관측값이 없을 때도 지원하지 않음으로 중단합니다. `getpgrp`와 `issetugid(327)`는 모든 인수를 무시하며 네 개의 스칼라 조회는 게스트 메모리에 접근하지 않습니다. 기존 BSD carry와 두 번째 반환 레지스터 규칙을 유지합니다.
+
+`process_tainted`는 고정된 `P_SUGID` 관측값이며 실제 ID와 유효 ID의 일치 여부와 독립적입니다. EUID, 파일 소유권, sysctl 쓰기 권한, entitlement, 리더 또는 터미널 상태를 바꾸지 않습니다. `setpgid`, `setsid`와 자격 증명 변경은 계속 지원하지 않습니다. 원본 읽기 전용 `process-observations`는 자기 PID를 캡처하고 상위 비트 전달값, 음수 오류, 반환 상태를 확인합니다. `virtual-process-observations`는 설정한 그룹·세션·오염 상태 바이트를 출력합니다. 다른 프로세스, 누락값, 설정 호출의 모델 전용 사례는 네이티브 실행 목록에서 제외합니다. macOS 참조 실행은 실제 iOS 기기 검증이 아닙니다.
+
+```json
+{"darwin_system":{"process_group_id":7,"session_id":16909060,"process_tainted":false}}
+```
+
+[XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).

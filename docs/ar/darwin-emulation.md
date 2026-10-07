@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 8ec53d25a48700a518aada5ae97b8d964eb979136488f13ba86d98558fc2da5c -->
+<!-- i18n-source: 5ede1d380a591548b87919442b32c86a0b1d52944086d0f9f0bcdd7592c368e3 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -670,3 +670,17 @@ getuid24/geteuid25/getgid47/getegid43/getgroups79 تشترك بمالكsystem و
 سجل المحاولات: فشل فحص runner الأول في قائمتَي ARM64 وx86-64 لغياب التسجيل الإلزامي للطريقة القياسية الجديدة. أُضيف التسجيل دون تخفيف قاعدة تطابق جميع الطرق. حُفظ الفحص الأول ذو 129 حالة إلزامية وسجلات الفشل؛ ويتطلب الفحص النهائي الجديد ARM64 عدد 132 حالة.
 
 الأعداد متداخلة. يحفظ `build-hvf-arm64/descriptor-table-observations/` خط أساس التنفيذ الفعلي وبصمات المصدر/الثنائيات/السجلات الدقيقة؛ الأدلة السابقة ثابتة. خمسة أبناء ARM64 macOS مؤقتين،40 فحصاً، مهلة خمس ثوان لكل منهم: Current=1048575/cap=245760 يعيد245760؛ أبناء Current=0/1/32/245777 يعيدون0/1/32/245760. حدود الأصل والنظام لم تتغير. iOS الحقيقي وIntel HVF المعلق وremote merge CI تحقق منفصل. الصلاحيات وملاحظات الدليل بعد التعديل وshared maps/EOF والساعات المتقدمة وMach/thread/dyld والأطر ما زالت غير مكتملة.
+
+## ملاحظات العملية الصريحة
+
+الحقول `DarwinSystemOptions::ProcessGroupID` و`SessionID` و`ProcessTainted` مدخلات اختيارية مستقلة، بأسماء JSON `process_group_id` و`session_id` و`process_tainted`. يجب أن تكون المعرّفات موجبة وألا تتجاوز INT32_MAX؛ لا تقبل حالة التلوث إلا JSON Boolean `true`/`false`. الحقل الغائب مجهول، أما `false` الصريحة فصفر معلوم. لا تُستنتج القيم من المضيف أو PID1000 أو بيانات الاعتماد أو ملاحظة أخرى.
+
+يقرأ الاستدعاء الخام `getpgrp(81)` المجموعة؛ ويستخدم `getpgid(151)` و`getsid(310)` البتات الدنيا32 الموقعة من `pid_t`، حيث يشير الصفر أو PID1000 الحالي الثابت إلى العملية نفسها. كذلك يشير `0xffffffff000003e8` إلى الذات. يعيد PID المنخفض السالب ESRCH3 قبل البحث عن الملاحظة، كما تؤكد مجسات أصلية للقراءة فقط وقواعد تخصيص العمليات والبحث عنها في XNU. تتوقف العملية الأخرى الموجبة المجهولة، ومنها `0x1000`، بـ UnsupportedService دون تخمين ESRCH أو إخفاء بتات الأعلام. وتتوقف الملاحظة الذاتية المختارة الغائبة باعتبارها غير مدعومة. يتجاهل `getpgrp` و`issetugid(327)` جميع الوسائط؛ ولا تدخل الاستعلامات العددية الأربعة إلى ذاكرة الضيف. تبقى قواعد BSD carry وسجل الإرجاع الثاني كما هي.
+
+يقدم `process_tainted` ملاحظة `P_SUGID` ثابتة ومستقلة عن تساوي المعرّفات الحقيقية والفعالة. لا يغيّر EUID أو ملكية الملفات أو سلطة كتابة sysctl أو الاستحقاقات أو القيادة أو حالة الطرفية. تبقى `setpgid` و`setsid` وتعديلات بيانات الاعتماد غير مدعومة. تلتقط حمولة القراءة الأصلية `process-observations` PID الخاص بها وتتحقق من البتات العليا والأخطاء السالبة وحالة الإرجاع؛ وتصدر `virtual-process-observations` بايتات المجموعة والجلسة والتلوث المصرح بها. لا تدخل حالات النموذج للعمليات الأخرى والقيم الغائبة وأوامر الضبط إلى قائمة التنفيذ الأصلي. لا تثبت مراجع macOS قبول أجهزة iOS الفعلية.
+
+```json
+{"darwin_system":{"process_group_id":7,"session_id":16909060,"process_tainted":false}}
+```
+
+[XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).

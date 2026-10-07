@@ -92,6 +92,11 @@ bool valid(const std::optional<T> &Value, uint64_t Limit) {
            (Value->size() < Limit && Value->find('\0') == std::string::npos);
   return true;
 }
+template <typename T> bool validProcess(const std::optional<T> &Value) {
+  if constexpr (std::is_same_v<T, uint32_t>)
+    return !Value || (*Value && *Value <= uint32_t(INT32_MAX));
+  return true;
+}
 } // namespace
 
 uint32_t credentialID(ServiceKind Kind,
@@ -136,6 +141,11 @@ llvm::Error validateSystemOptions(const DarwinSystemOptions &Options) {
                        : diagnostic::SystemString);
 #include "DarwinSystemFields.def"
 #undef NEVERD_DARWIN_SYSTEM_FIELD
+#define NEVERD_DARWIN_PROCESS_FIELD(Member, Field)                             \
+  if (!validProcess(Options.Member))                                           \
+    return failure(diagnostic::ProcessIdentityOption);
+#include "DarwinSystemFields.def"
+#undef NEVERD_DARWIN_PROCESS_FIELD
   if (Options.CPUCount &&
       (!*Options.CPUCount || *Options.CPUCount > uint32_t(INT32_MAX)))
     return failure(diagnostic::SystemCPUCount);
@@ -166,6 +176,33 @@ systemService(GuestMemory &Memory, uint64_t PageSize, ServiceKind Kind,
   case ServiceKind::GetGID:
   case ServiceKind::GetEGID:
     return returned(credentialID(Kind, Options));
+  default:
+    break;
+  }
+  if (Kind == ServiceKind::GetPGID || Kind == ServiceKind::GetSID) {
+    const uint32_t PID = uint32_t(A[0]);
+    // XNU narrows the carrier to signed pid_t, then looks up that PID.
+    // Negative values cannot name allocated processes: the read-only native
+    // oracle confirms ESRCH before any self observation is selected.
+    if (PID & 0x80000000u)
+      return returned(NoProcess, true);
+    if (PID && PID != ProcessID)
+      return unsupported(Result, diagnostic::ProcessPeerObservation);
+  }
+  switch (Kind) {
+  case ServiceKind::GetPgrp:
+  case ServiceKind::GetPGID:
+    return Options && Options->ProcessGroupID
+               ? returned(*Options->ProcessGroupID)
+               : unsupported(Result, diagnostic::ProcessGroupObservation);
+  case ServiceKind::GetSID:
+    return Options && Options->SessionID
+               ? returned(*Options->SessionID)
+               : unsupported(Result, diagnostic::ProcessSessionObservation);
+  case ServiceKind::IsSetUGID:
+    return Options && Options->ProcessTainted
+               ? returned(*Options->ProcessTainted)
+               : unsupported(Result, diagnostic::ProcessTaintObservation);
   default:
     break;
   }

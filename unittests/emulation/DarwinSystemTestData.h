@@ -40,6 +40,17 @@ inline DarwinSystemOptions hostNameOptions() {
 }
 inline constexpr char HostNameJSON[] = R"({"hostname":"abcd"})";
 inline constexpr char HostNameHex[] = "6162636400";
+inline DarwinSystemOptions processObservationOptions() {
+  DarwinSystemOptions O;
+  O.ProcessGroupID = 7;
+  O.SessionID = 0x01020304;
+  O.ProcessTainted = true;
+  return O;
+}
+inline constexpr char ProcessObservationsJSON[] =
+    R"({"process_group_id":7,"session_id":16909060,"process_tainted":true})";
+// Independently packed little-endian group, session and int taint result.
+inline constexpr char ProcessObservationsHex[] = "070000000403020101000000";
 inline DarwinSystemOptions resourceLimitOptions() {
   DarwinSystemOptions O;
   O.MaxFilesPerProcess = 64;

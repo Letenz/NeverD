@@ -36,6 +36,7 @@
 #include <sys/param.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/sysctl.h>
 #include <sys/syslimits.h>
 #include <sys/time.h>
@@ -50,6 +51,65 @@ extern "C" ssize_t __getdirentries64(int, void *, size_t, off_t *);
 
 namespace neverd::emulation {
 namespace {
+TEST(DarwinNative, ProcessObservationsMatchIndependentLibcCaptures) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "native process observation capture requires macOS";
+#else
+  ASSERT_EQ(sizeof(pid_t), 4u);
+  ASSERT_EQ(SYS_getpgrp, 81);
+  ASSERT_EQ(SYS_getpgid, 151);
+  ASSERT_EQ(SYS_getsid, 310);
+  ASSERT_EQ(SYS_issetugid, 327);
+  const pid_t PID = ::getpid(), Group = ::getpgrp(), Session = ::getsid(0);
+  const int Tainted = ::issetugid();
+  ASSERT_GT(PID, 0);
+  ASSERT_GT(Group, 0);
+  ASSERT_GT(Session, 0);
+  ASSERT_TRUE(Tainted == 0 || Tainted == 1);
+  ASSERT_EQ(::getpgid(0), Group);
+  ASSERT_EQ(::getpgid(PID), Group);
+  ASSERT_EQ(::getsid(PID), Session);
+  std::optional<DarwinSystemOptions> Options = DarwinSystemOptions{};
+  Options->ProcessGroupID = Group;
+  Options->SessionID = Session;
+  Options->ProcessTainted = Tainted != 0;
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(*Options)));
+  for (uint64_t Page : {uint64_t(4096), uint64_t(16384)}) {
+    auto Physical = PhysicalMemory::create(Page);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Created = AddressSpace::create(*Physical, Page);
+    ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+    struct Sample {
+      darwin_model::ServiceKind Kind;
+      unsigned Number;
+      uint64_t Argument;
+      uint32_t Expected;
+    };
+    const Sample Samples[] = {
+        {darwin_model::ServiceKind::GetPgrp, 81, UINT64_MAX, uint32_t(Group)},
+        {darwin_model::ServiceKind::GetPGID, 151, 0xffffffff000003e8ULL,
+         uint32_t(Group)},
+        {darwin_model::ServiceKind::GetSID, 310, 0x100000000ULL,
+         uint32_t(Session)},
+        {darwin_model::ServiceKind::IsSetUGID, 327, UINT64_MAX,
+         uint32_t(Tainted)}};
+    for (const auto &S : Samples) {
+      ProcessResult Result{
+          ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+          ExecutionBackendKind::Unicorn, "independent libc process capture"};
+      auto Out = darwin_model::systemService(
+          **Created, Page, S.Kind,
+          {0, S.Number, {S.Argument, UINT64_MAX, UINT64_MAX}, {}}, Options,
+          Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out) << Result.Diagnostic;
+      EXPECT_EQ((**Out).Value, S.Expected);
+      EXPECT_FALSE((**Out).Error);
+    }
+  }
+#endif
+}
+
 TEST(DarwinNative, HostNameMatchesSDKBytesTruncationAndLibcFullBuffers) {
 #if !defined(__APPLE__)
   GTEST_SKIP() << "native hostname capture requires macOS";

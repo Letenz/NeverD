@@ -25,3 +25,10 @@ NEVERD_DARWIN_SYSTEM_FIELD(MaxFilesPerProcess, SystemMaxFilesPerProcess,
 // Caller-visible observation only; root/mobile write authority is not inferred.
 NEVERD_DARWIN_SYSTEM_FIELD(HostName, SystemHostName, "kern.hostname", 1, 10)
 #endif
+
+// Scalar process observations have no sysctl names or numeric MIBs.
+#ifdef NEVERD_DARWIN_PROCESS_FIELD
+NEVERD_DARWIN_PROCESS_FIELD(ProcessGroupID, SystemProcessGroupID)
+NEVERD_DARWIN_PROCESS_FIELD(SessionID, SystemSessionID)
+NEVERD_DARWIN_PROCESS_FIELD(ProcessTainted, SystemProcessTainted)
+#endif

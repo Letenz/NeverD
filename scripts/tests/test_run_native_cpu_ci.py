@@ -461,7 +461,7 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                 with self.subTest(backend=backend, host=host):
                     owners, required = native.darwin_inventory(native.ROOT, backend, host)
                     self.assertEqual(owners, ["NeverDDarwinProcessTests"])
-                    self.assertEqual(len(required), 45 * len(platforms))
+                    self.assertEqual(len(required), 46 * len(platforms))
                     self.assertEqual({name.rsplit("/", 1)[1] for name in required},
                                      {f"{platform}_{backend}" for platform in platforms})
                     for platform in platforms:
@@ -483,6 +483,11 @@ class NativeCPUEvidenceTests(unittest.TestCase):
                         self.assertIn(
                             "Transports/DarwinProcess."
                             "HostNameKeepsTruncationObservationAndWriteAuthority/"
+                            f"{platform}_{backend}", required,
+                        )
+                        self.assertIn(
+                            "Transports/DarwinProcess."
+                            "ProcessQueriesKeepIndependentSelfObservations/"
                             f"{platform}_{backend}", required,
                         )
                         self.assertIn(

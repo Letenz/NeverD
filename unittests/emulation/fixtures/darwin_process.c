@@ -147,6 +147,102 @@ static int hostname_query(int prior_output) {
     return 52;
   return call(4, 1, (u64)&byte, 1, 0, 0, 0, &error) == 1 && !error ? 37 : 53;
 }
+/* Original read-only process workload; self PID is captured in this process.
+ * Native runs never assume the model's fixed PID or specific group/session. */
+static int process_observations(int emit_values) {
+  unsigned error;
+  const u64 sentinel = 0x1122334455667788UL;
+#if defined(__aarch64__)
+  const u64 error_secondary = 0;
+#else
+  const u64 error_secondary = sentinel;
+#endif
+  u64 pid = call(20, -1UL, -1UL, sentinel, -1UL, -1UL, -1UL, &error);
+  if (error || secondary || !pid || pid > 0x7fffffffUL)
+    return 101;
+  u64 group = call(81, -1UL, -1UL, sentinel, -1UL, -1UL, -1UL, &error);
+  if (error || secondary || !group || group > 0x7fffffffUL)
+    return 102;
+  u64 session = call(310, 0, -1UL, sentinel, -1UL, -1UL, -1UL, &error);
+  if (error || secondary || !session || session > 0x7fffffffUL)
+    return 103;
+  u64 tainted = call(327, -1UL, -1UL, sentinel, -1UL, -1UL, -1UL, &error);
+  if (error || secondary || tainted > 1)
+    return 104;
+  const unsigned numbers[] = {151, 310};
+  const u64 targets[] = {0,
+                         pid,
+                         0x100000000UL,
+                         0xffffffff00000000UL,
+                         0x1234567800000000UL | pid,
+                         0xffffffff00000000UL | pid};
+  const u64 negative[] = {0xffffffffUL, -1UL, 0x80000000UL,
+                          0xffffffff80000000UL};
+  for (unsigned n = 0; n != 2; ++n) {
+    for (unsigned i = 0; i != 6; ++i)
+      if (call(numbers[n], targets[i], -1UL, sentinel, -1UL, -1UL, -1UL,
+               &error) != (n ? session : group) ||
+          error || secondary)
+        return 105;
+    for (unsigned i = 0; i != 4; ++i)
+      if (call(numbers[n], negative[i], -1UL, sentinel, -1UL, -1UL, -1UL,
+               &error) != 3 ||
+          !error || secondary != error_secondary)
+        return 106;
+  }
+  const u64 values[] = {group, session, tainted};
+  unsigned char bytes[12];
+  for (unsigned n = 0; n != 3; ++n)
+    for (unsigned i = 0; i != 4; ++i)
+      bytes[n * 4 + i] = values[n] >> (i * 8);
+  const char marker = 'P';
+  u64 size = emit_values ? sizeof(bytes) : 1;
+  return call(4, 1, emit_values ? (u64)bytes : (u64)&marker, size, 0, 0, 0,
+              &error) == size &&
+                 !error
+             ? 37
+             : 107;
+}
+/* Model-only missing/peer/setter boundaries, excluded from native inventory. */
+static int process_negative_queries(void) {
+  unsigned error;
+  const u64 sentinel = 0x1122334455667788UL;
+#if defined(__aarch64__)
+  const u64 error_secondary = 0;
+#else
+  const u64 error_secondary = sentinel;
+#endif
+  const unsigned numbers[] = {151, 310};
+  const u64 targets[] = {0xffffffffUL, -1UL, 0x80000000UL,
+                         0xffffffff80000000UL};
+  for (unsigned n = 0; n != 2; ++n)
+    for (unsigned i = 0; i != 4; ++i)
+      if (call(numbers[n], targets[i], -1UL, sentinel, -1UL, -1UL, -1UL,
+               &error) != 3 ||
+          !error || secondary != error_secondary)
+        return 111;
+  const char marker = 'E';
+  return call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error ? 37 : 112;
+}
+static int process_query(unsigned number, u64 target, int prior_output) {
+  unsigned error;
+  const char before = '!';
+  if (prior_output &&
+      (call(4, 1, (u64)&before, 1, 0, 0, 0, &error) != 1 || error))
+    return 108;
+  u64 value = call(number, target, -1UL, 0x1122334455667788UL, -1UL, -1UL, -1UL,
+                   &error);
+  if (error || secondary || value > 0x7fffffffUL)
+    return 109;
+  unsigned char bytes[4];
+  for (unsigned i = 0; i != 4; ++i)
+    bytes[i] = value >> (i * 8);
+  return call(4, 1, (u64)bytes, sizeof(bytes), 0, 0, 0, &error) ==
+                     sizeof(bytes) &&
+                 !error
+             ? 37
+             : 110;
+}
 static int credentials(int emit_values) {
   unsigned error;
   const u64 sentinel = 0x1122334455667788UL;
@@ -3271,6 +3367,25 @@ int main(int argc, char **argv, char **envp, char **apple) {
     return argc < 3 ? 79 : file_access(argv[2]);
   if (equal(argv[1], "vectored-io"))
     return argc < 3 ? 79 : vectored_io(argv[2]);
+  if (equal(argv[1], "process-observations") ||
+      equal(argv[1], "virtual-process-observations"))
+    return process_observations(equal(argv[1], "virtual-process-observations"));
+  if (equal(argv[1], "process-group-query"))
+    return process_query(151, 0xffffffff000003e8UL, 0);
+  if (equal(argv[1], "process-session-query"))
+    return process_query(310, 0x100000000UL, 0);
+  if (equal(argv[1], "process-taint-query"))
+    return process_query(327, -1UL, 0);
+  if (equal(argv[1], "process-missing-after"))
+    return process_query(81, -1UL, 1);
+  if (equal(argv[1], "process-negative"))
+    return process_negative_queries();
+  if (equal(argv[1], "process-peer-query"))
+    return process_query(151, 0xffffffff00001000UL, 1);
+  if (equal(argv[1], "process-setpgid"))
+    return process_query(82, -1UL, 1);
+  if (equal(argv[1], "process-setsid"))
+    return process_query(147, -1UL, 1);
   if (equal(argv[1], "credentials") || equal(argv[1], "virtual-credentials"))
     return credentials(equal(argv[1], "virtual-credentials"));
   if (equal(argv[1], "resource-usage") ||

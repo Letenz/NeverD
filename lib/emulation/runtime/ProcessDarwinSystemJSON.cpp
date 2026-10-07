@@ -28,6 +28,8 @@ bool parse(const llvm::json::Value &Value, std::optional<T> &Out) {
     if (!Text)
       return false;
     Out = Text->str();
+  } else if constexpr (std::is_same_v<T, bool>) {
+    Out = Value.getAsBoolean();
   } else {
     Out = process_json::integer<T>(Value);
   }
@@ -156,8 +158,15 @@ darwinSystemOptionsFromJSON(const llvm::json::Value &Value) {
       return invalid(Name);                                                    \
     continue;                                                                  \
   }
+#define NEVERD_DARWIN_PROCESS_FIELD(Member, Field)                             \
+  if (Name == field::Field) {                                                  \
+    if (!parse(V, Out.Member))                                                 \
+      return invalid(Name);                                                    \
+    continue;                                                                  \
+  }
 #include "../os/darwin/kernel/DarwinSystemFields.def"
 #undef NEVERD_DARWIN_SYSTEM_FIELD
+#undef NEVERD_DARWIN_PROCESS_FIELD
     return invalid(Name);
   }
   if (auto E = darwin_model::validateSystemOptions(Out))
