@@ -2181,6 +2181,8 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
       continue;
     auto Event = SourceRecorder ? SourceRecorder->function(Funcs[I].Entry)
                                 : std::nullopt;
+    if (SourceRecorder)
+      OS << SourceRecorder->definition(Funcs[I].Entry);
     if (Event)
       OS << SourceRecorder->begin(*Event);
     writeFunction(Funcs[I]);
