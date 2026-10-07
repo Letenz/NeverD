@@ -78,24 +78,26 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
 
 ファイル／共有／固定マッピング、下方拡張、巨大ページ、メモリ固定、保護キー、実行専用／書き込み専用方針、その他のフラグは明示的に未対応です。効果の公開や戻り値の生成前に停止します。対応範囲内の通常の範囲・長さ・整列エラーはゲストエラーを返して実行を続けます。ゲストポインタやマッピング要求をホスト OS に転送することはありません。
 
-任意の `linux_kernel` は、観測により存在しないと確認したカーネルインターフェイスを記録します。例えば `pidfd_open` の実装がないフィクスチャは次を指定します。
+任意の `linux_kernel` 入力は、明確に観測したカーネルインターフェースの欠如を記録します。例えば `pidfd_open` 実装がない fixture は次を使用します。
 
 ```json
 {"linux_kernel":{"unavailable_syscalls":["pidfd_open"]}}
 ```
 
-指定した生の呼び出しは、存在しないカーネルエントリーと同様、引数検証前に -ENOSYS を返し、記述子やゲストメモリへの効果を生成しません。Bionic の `syscall` ラッパーは通常の -1／errno 変換を保持します。入力がない場合や空リストの場合、このインターフェイスは従来どおり未対応です。他の未知の呼び出しを ENOSYS に変換しません。現在許可するのは `pidfd_open` のみで、未知の名前、重複、型の誤りは拒否します。カーネルバージョン、ホストの可用性、動作する pidfd 実装は推測しません。[カーネルの未実装呼び出し](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c)を参照してください。
+選択した生の呼出しは、カーネル入口がない場合と同様に引数検査前に -ENOSYS を返し、記述子を作らずゲストメモリも変更しません。Bionic の `syscall` wrapper は通常の -1/errno 変換を保ちます。入力の省略と空リストでは、このインターフェースは従来の未対応境界に留まり、他の未知の呼出しを ENOSYS に変換しません。現在は `pidfd_open` のみを受理し、未知の名前、重複、誤った型を拒否します。入力からカーネル版、ホストの可用性、動作する pidfd 実装を推定しません。[カーネルの欠落呼出し実装](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c)を参照してください。
 
-任意の `linux_priority` 入力は、呼び出し元と同じ UID を持つフィクスチャのタスクの nice 状態を宣言します。Linux ELF64 と Android ネイティブの生の `setpriority`／`getpriority` はこの状態を共有し、ホストの優先度を変更しません。
+明示した `linux_kernel.gki` は、5.10～6.18 の公開済み Android common カーネル系列を選びます。実装範囲は、生存するモデルプロセスと明示したゲストタスクに対する `pidfd_open`、および版別のベクトル取り込みです。`linux_files` と記述子表を共有し、Bionic と生のトラップは所有権とエラー順序を共有します。GKI と `pidfd_open` 不在観測は同時に指定できません。任意の `linux_kernel.tasks` 配列は、他の生存タスクの固定された閉じた一覧を宣言します。項目例は `{ "id": 2000, "group_leader": true }` です。配列省略時は他の対象の検索が未対応、空配列では現在のグループリーダーだけが既知です。宣言した一覧外の PID は ESRCH になります。一覧と優先度観測は整合が必要で、協調型 Android ゲストスレッドとは併用できません。Android API レベルはカーネルを選びません。8 個のソース版、記述子動作、テストと残る範囲は[公開済み GKI 契約](../android-gki-kernels.md)を参照してください。
+
+任意の `linux_priority` 入力は、呼び出し元と同じ UID を持つテスト用タスクの nice 状態を宣言します。Linux ELF64 と Android の生の `setpriority` / `getpriority` はこの状態を共有し、ホストの優先度は変更しません。
 
 ```json
 {"linux_priority":{"tasks":[{"id":1000,"nice":0}],
                    "cap_sys_nice":false,"rlimit_nice":0}}
 ```
 
-タスク ID は重複しない正の符号付き 32 ビット値、初期 nice 値は -20～19、`rlimit_nice` は 0～40 です。`cap_sys_nice` と `rlimit_nice` の既定値は false とゼロで、タスク状態は常に明示します。入力の欠落、未登録タスク、PRIO_PGRP／PRIO_USER の選択は未対応サービスとして停止します。nice 状態が未宣言の新規スレッドも同様です。継承や他のタスクの所有関係は推測しません。PRIO_PROCESS の who がゼロなら現在のゲストタスク、それ以外なら指定タスクを選びます。
+タスク ID は重複しない正の符号付き 32 ビット値で、初期 nice は -20..19、`rlimit_nice` は 0..40 です。`cap_sys_nice` と `rlimit_nice` の既定値は false と 0 ですが、タスク状態は常に明示します。入力やタスクが未宣言の場合、新規スレッドの状態が未宣言の場合、および PRIO_PGRP / PRIO_USER は未対応として停止し、継承や所有者を推測しません。PRIO_PROCESS の who=0 は現在のゲストタスク、それ以外は指定タスクを選びます。不正な選択値は生の -EINVAL を返します。設定要求は符号付き 32 ビットの nice を -20..19 に制限します。nice 値を小さくするには CAP_SYS_NICE または十分な RLIMIT_NICE が必要で、拒否時は状態を変えず生の -EACCES を返します。生の取得値は `20 - nice`、つまりカーネルの 40..1 符号化であり、libc が変換した結果ではありません。
 
-無効なセレクターは生の -EINVAL を返します。設定時は符号付き 32 ビットの nice 引数を -20..19 に制限します。nice 値の引き下げには CAP_SYS_NICE または十分な RLIMIT_NICE が必要で、拒否時は状態を変えず生の -EACCES を返します。生の取得結果は `20 - nice` で、カーネルの 40..1 エンコーディングを保持し、libc が変換した `getpriority` の結果とは異なります。[Linux 優先度インターフェイス](https://man7.org/linux/man-pages/man2/setpriority.2.html)を参照してください。
+[Linux setpriority/getpriority](https://man7.org/linux/man-pages/man2/setpriority.2.html).
 
 `linux_signals` はプロセス全体の初期シグナル動作を指定します。未指定の項目は不明であり、`SIG_DFL` を意味しません。明示的な空リストでは、以前の動作を照会せずに新しい動作を登録できます。5 フィールドはすべて必須です。JSON の正確な整数範囲を超える符号なし 64 ビット値は十進文字列で指定します。
 

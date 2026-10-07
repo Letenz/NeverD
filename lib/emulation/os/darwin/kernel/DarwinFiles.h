@@ -19,7 +19,8 @@ class DarwinFiles {
 public:
   DarwinFiles(GuestMemory &Memory,
               const std::optional<DarwinFileOptions> &Options,
-              uint64_t OutputLimit = process_defaults::Output);
+              uint64_t OutputLimit = process_defaults::Output,
+              uint32_t EffectiveUID = value::UserID);
   llvm::Expected<std::optional<ServiceResult>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ProcessResult &Result);
@@ -42,9 +43,11 @@ private:
     CreateDirectory,
     DeleteFile,
     DeleteDirectory,
-    RenameTarget
+    RenameTarget,
+    RenameDirectoryTarget
   };
   enum class Terminal { Ordinary, Dot, DotDot };
+  enum class RenameMode { Replace, Exclusive, Swap };
   struct DirectoryIdentity {
     int32_t Device;
     uint32_t GID;
@@ -53,9 +56,28 @@ private:
     std::string Path;
     std::shared_ptr<DirectoryNode> Parent;
     std::optional<DirectoryIdentity> Identity;
+    const DarwinFileMetadata *Metadata = nullptr;
+    const DarwinDirectoryContents *Snapshot = nullptr;
+    uint64_t PathCharge = 0;
     bool Created = false;
     bool Linked = true;
     bool Changed = false;
+    bool Mutable = false;
+    bool Removable = false;
+    bool Movable = false;
+    bool Exchangeable = false;
+    bool NonMount = false;
+    /// Initial objects keep their direct declaration. mkdir inherits its
+    /// parent's capability; moving the object does not replace this grant.
+    bool SwapSupport = false;
+    /// Only mkdir or an explicit initial-subtree declaration establishes a
+    /// non-mount parent relation. Neither device equality nor SWAP does so.
+    const DirectoryNode *mountAncestor() const {
+      const auto *Node = this;
+      while (Node && (Node->Created || Node->NonMount))
+        Node = Node->Parent.get();
+      return Node;
+    }
   };
   struct Contents {
     llvm::ArrayRef<uint8_t> Initial;
@@ -67,6 +89,9 @@ private:
     bool Writable = false;
     /// Last linked name. All descriptions follow rename; unlink retains it.
     std::string Path;
+    /// Retain the parent object, including after unlink/name reuse. Moving an
+    /// ancestor also changes paths of its held orphan files and mappings.
+    std::shared_ptr<DirectoryNode> Parent;
     uint64_t PathCharge = 0;
     bool MetadataInvalidated = false;
     std::shared_ptr<const unsigned> Lease = std::make_shared<const unsigned>(0);
@@ -106,11 +131,11 @@ private:
   GuestMemory &Memory;
   const std::optional<DarwinFileOptions> &Options;
   const uint64_t OutputLimit;
+  const uint32_t EffectiveUID;
   std::map<uint32_t, Descriptor> Descriptors;
   std::map<std::string, std::shared_ptr<Contents>> Nodes;
   std::vector<std::shared_ptr<Contents>> Unlinked;
-  std::map<std::string, std::shared_ptr<DirectoryNode>> CreatedDirectories;
-  std::map<std::string, std::shared_ptr<DirectoryNode>> InitialDirectories;
+  std::map<std::string, std::shared_ptr<DirectoryNode>> Directories;
   std::vector<std::shared_ptr<DirectoryNode>> UnlinkedDirectories;
   bool NamespaceReady = false;
   uint64_t NextCreatedInode = 0;
@@ -126,7 +151,7 @@ private:
   void reclaimUnlinked();
   std::shared_ptr<DirectoryNode> directoryNode(const std::string &Path);
   std::shared_ptr<DirectoryNode> initialDirectoryNode(const std::string &Path);
-  bool hasInitialDirectoryChild(const std::string &Path);
+  uint32_t dynamicDirectoryEntries() const;
   bool mutableDirectory(const std::string &Path) const;
   std::optional<DirectoryIdentity> directoryIdentity(const std::string &Path);
   llvm::Expected<Pathname> readPath(uint64_t Address);
@@ -153,7 +178,12 @@ private:
   removeDirectory(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   rename(uint64_t SourcePath, uint32_t SourceDirectory, uint64_t TargetPath,
-         uint32_t TargetDirectory, bool Exclusive, ProcessResult &Result);
+         uint32_t TargetDirectory, RenameMode Mode, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  renameSubtrees(Description &Source, Description &Target,
+                 const std::shared_ptr<DirectoryNode> &Parent,
+                 const std::shared_ptr<DirectoryNode> &TargetParent, bool Swap,
+                 ProcessResult &Result);
   void updateNamespaceMetadata(Contents &Node, bool Removed);
   llvm::Expected<std::optional<ServiceResult>>
   create(Description &File, uint32_t Mode, ProcessResult &Result);

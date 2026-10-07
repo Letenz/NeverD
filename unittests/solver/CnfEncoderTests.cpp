@@ -38,10 +38,10 @@ bool gateValue(SatSolver &S, SatLit A, bool ValueA, SatLit B, bool ValueB,
   return S.modelValue(Gate) == SatValue::True;
 }
 
-void checkTwoInputGate(const char *Name,
-                       const std::function<SatLit(CnfEncoder &, SatLit,
-                                                  SatLit)> &Build,
-                       const std::function<bool(bool, bool)> &Expected) {
+void checkTwoInputGate(
+    const char *Name,
+    const std::function<SatLit(CnfEncoder &, SatLit, SatLit)> &Build,
+    const std::function<bool(bool, bool)> &Expected) {
   SatSolver S;
   CnfEncoder E(S);
   SatLit A = E.freshLit();
@@ -71,8 +71,7 @@ TEST(CnfEncoder, TwoInputGatesMatchTheirTruthTables) {
       [](CnfEncoder &E, SatLit A, SatLit B) { return E.mkEquiv(A, B); },
       [](bool A, bool B) { return A == B; });
   checkTwoInputGate(
-      "nand",
-      [](CnfEncoder &E, SatLit A, SatLit B) { return ~E.mkAnd(A, B); },
+      "nand", [](CnfEncoder &E, SatLit A, SatLit B) { return ~E.mkAnd(A, B); },
       [](bool A, bool B) { return !(A && B); });
 }
 
@@ -94,9 +93,8 @@ TEST(CnfEncoder, SelectionAndMajorityMatchTheirTruthTables) {
     bool ValueB = (Combination & 2) != 0;
     bool ValueC = (Combination & 4) != 0;
 
-    const SatLit Assumptions[] = {A.withPolarity(ValueA),
-                                  B.withPolarity(ValueB),
-                                  C.withPolarity(ValueC)};
+    const SatLit Assumptions[] = {
+        A.withPolarity(ValueA), B.withPolarity(ValueB), C.withPolarity(ValueC)};
     ASSERT_EQ(S.solve(Assumptions), SatResult::Sat);
 
     unsigned Total = unsigned(ValueA) + unsigned(ValueB) + unsigned(ValueC);

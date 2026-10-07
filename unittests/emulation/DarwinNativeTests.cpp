@@ -19,6 +19,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -32,11 +33,15 @@
 #include <mach/mach_time.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/param.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/sysctl.h>
+#include <sys/syslimits.h>
 #include <sys/time.h>
 #include <sys/uio.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
 // The raw LP64 entry point exported by libsystem_kernel; the public legacy
@@ -46,6 +51,554 @@ extern "C" ssize_t __getdirentries64(int, void *, size_t, off_t *);
 
 namespace neverd::emulation {
 namespace {
+TEST(DarwinNative, ProcessNiceMatchesSDKAndOneSignedRawCapture) {
+#if !defined(__APPLE__) || (!defined(__aarch64__) && !defined(__x86_64__))
+  GTEST_SKIP() << "native Darwin priority capture requires macOS";
+#else
+  ASSERT_EQ(SYS_getpriority, 100);
+  ASSERT_EQ(PRIO_PROCESS, 0);
+  ASSERT_EQ(PRIO_DARWIN_THREAD, 3);
+  ASSERT_EQ(PRIO_MIN, -20);
+  ASSERT_EQ(PRIO_MAX, 20);
+  ASSERT_EQ(sizeof(id_t), 4u);
+  ASSERT_GT(id_t(-1), 0u);
+  errno = 0;
+  const int Nice = getpriority(PRIO_PROCESS, 0);
+  ASSERT_GE(Nice, -20);
+  ASSERT_LE(Nice, 20);
+  if (Nice == -1)
+    ASSERT_EQ(errno, 0);
+  const auto Captured = [] {
+#if defined(__aarch64__)
+    register uint64_t X0 __asm__("x0") = 0;
+    register uint64_t X1 __asm__("x1") = 0;
+    register uint64_t X16 __asm__("x16") = 100;
+    unsigned Carry;
+    __asm__ volatile("svc #0x80\n\tcset %w2, cs"
+                     : "+r"(X0), "+r"(X1), "=r"(Carry)
+                     : "r"(X16)
+                     : "cc", "memory");
+    return std::array<uint64_t, 3>{X0, X1, Carry};
+#else
+    uint64_t RAX = 0x2000064, RDX = 0x1122334455667788ULL;
+    unsigned char Carry;
+    __asm__ volatile("syscall\n\tsetc %2"
+                     : "+a"(RAX), "+d"(RDX), "=qm"(Carry)
+                     : "D"(uint64_t(0)), "S"(uint64_t(0))
+                     : "rcx", "r11", "cc", "memory");
+    return std::array<uint64_t, 3>{RAX, RDX, Carry};
+#endif
+  }();
+  EXPECT_EQ(Captured[0], uint64_t(int64_t(Nice)));
+  ASSERT_EQ(Captured[1], 0u);
+  ASSERT_EQ(Captured[2], 0u);
+  std::optional<DarwinSystemOptions> Options = DarwinSystemOptions{};
+  Options->ProcessNice = Nice;
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(*Options)));
+  for (uint64_t Page : {4096u, 16384u}) {
+    auto Physical = PhysicalMemory::create(Page);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Space = AddressSpace::create(*Physical, Page);
+    ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
+    ProcessResult Result{
+        ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+        ExecutionBackendKind::Unicorn, "native priority sample"};
+    for (uint64_t Who :
+         {0ULL, 1000ULL, 0xffffffff00000000ULL, 0x12345678000003e8ULL}) {
+      auto Out = darwin_model::systemService(
+          **Space, Page, darwin_model::ServiceKind::GetPriority,
+          {0, 100, {0x1234567800000000ULL, Who, UINT64_MAX}, {}}, Options,
+          Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out) << Result.Diagnostic;
+      EXPECT_EQ((**Out).Value, Captured[0]);
+      EXPECT_FALSE((**Out).Error);
+    }
+  }
+  // A nonnegative host sample does not establish negative hardware returns;
+  // independent model constants and the pinned signed INT entry cover them.
+#endif
+}
+
+TEST(DarwinNative, LoginBufferMatchesSDKAndOneCompleteRawCapture) {
+#if !defined(__APPLE__) || (!defined(__aarch64__) && !defined(__x86_64__))
+  GTEST_SKIP() << "native Darwin login buffer capture requires macOS";
+#else
+  ASSERT_EQ(SYS_getlogin, 49);
+  ASSERT_EQ(MAXLOGNAME, 255);
+  ASSERT_EQ(sizeof(u_int), 4u);
+  const auto Native = [](uint64_t Address, uint64_t Size) {
+#if defined(__aarch64__)
+    register uint64_t X0 __asm__("x0") = Address;
+    register uint64_t X1 __asm__("x1") = Size;
+    register uint64_t X16 __asm__("x16") = 49;
+    unsigned Carry;
+    __asm__ volatile("svc #0x80\n\tcset %w2, cs"
+                     : "+r"(X0), "+r"(X1), "=r"(Carry)
+                     : "r"(X16)
+                     : "cc", "memory");
+    return std::array<uint64_t, 3>{X0, X1, Carry};
+#else
+    uint64_t RAX = 0x2000031, RDX = 0x1122334455667788ULL;
+    unsigned char Carry;
+    __asm__ volatile("syscall\n\tsetc %2"
+                     : "+a"(RAX), "+d"(RDX), "=qm"(Carry)
+                     : "D"(Address), "S"(Size)
+                     : "rcx", "r11", "cc", "memory");
+    return std::array<uint64_t, 3>{RAX, RDX, Carry};
+#endif
+  };
+  std::array<uint8_t, 257> Captured;
+  Captured.fill(0xa5);
+  ASSERT_EQ(Native(uint64_t(Captured.data() + 1), 255),
+            (std::array<uint64_t, 3>{0, 0, 0}));
+  EXPECT_EQ(Captured.front(), 0xa5);
+  EXPECT_EQ(Captured.back(), 0xa5);
+  std::optional<DarwinSystemOptions> Options = DarwinSystemOptions{};
+  Options->LoginNameBytes.emplace(Captured.begin() + 1, Captured.end() - 1);
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(*Options)));
+  for (uint64_t Page : std::array<uint64_t, 2>{4096, 16384}) {
+    auto Physical = PhysicalMemory::create(Page * 2);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Space = AddressSpace::create(*Physical, Page * 2);
+    ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
+    const uint64_t Base = 0x100000, Destination = Base + Page - 127;
+    ASSERT_FALSE(
+        bool((*Space)->map(Base, Page * 2, Read | Write | UserAccessible)));
+    const uint64_t Sizes[] = {0,
+                              1,
+                              2,
+                              254,
+                              255,
+                              256,
+                              UINT32_MAX,
+                              0x80000000,
+                              0x100000000ULL,
+                              0xffffffff00000001ULL,
+                              0x12345678000000ffULL,
+                              UINT64_MAX};
+    for (uint64_t Size : Sizes) {
+      std::array<uint8_t, 257> Host, Guest;
+      Host.fill(0xa5);
+      Guest.fill(0xa5);
+      ASSERT_EQ(Native(uint64_t(Host.data() + 1), Size),
+                (std::array<uint64_t, 3>{0, 0, 0}));
+      ASSERT_FALSE(bool((*Space)->write(Destination - 1, Guest)));
+      ProcessResult Result{
+          ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+          ExecutionBackendKind::Unicorn, "one native raw login buffer capture"};
+      auto Out = darwin_model::systemService(
+          **Space, Page, darwin_model::ServiceKind::GetLogin,
+          {0, 49, {Destination, Size, UINT64_MAX}, {}}, Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out) << Result.Diagnostic;
+      EXPECT_EQ((**Out).Value, 0u);
+      EXPECT_FALSE((**Out).Error);
+      ASSERT_FALSE(bool((*Space)->read(Destination - 1, Guest)));
+      EXPECT_EQ(Guest, Host);
+    }
+  }
+#endif
+}
+
+TEST(DarwinNative, ProcessObservationsMatchIndependentLibcCaptures) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "native process observation capture requires macOS";
+#else
+  ASSERT_EQ(sizeof(pid_t), 4u);
+  ASSERT_EQ(SYS_getpgrp, 81);
+  ASSERT_EQ(SYS_getpgid, 151);
+  ASSERT_EQ(SYS_getsid, 310);
+  ASSERT_EQ(SYS_issetugid, 327);
+  const pid_t PID = ::getpid(), Group = ::getpgrp(), Session = ::getsid(0);
+  const int Tainted = ::issetugid();
+  ASSERT_GT(PID, 0);
+  ASSERT_GT(Group, 0);
+  ASSERT_GT(Session, 0);
+  ASSERT_TRUE(Tainted == 0 || Tainted == 1);
+  ASSERT_EQ(::getpgid(0), Group);
+  ASSERT_EQ(::getpgid(PID), Group);
+  ASSERT_EQ(::getsid(PID), Session);
+  std::optional<DarwinSystemOptions> Options = DarwinSystemOptions{};
+  Options->ProcessGroupID = Group;
+  Options->SessionID = Session;
+  Options->ProcessTainted = Tainted != 0;
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(*Options)));
+  for (uint64_t Page : {uint64_t(4096), uint64_t(16384)}) {
+    auto Physical = PhysicalMemory::create(Page);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Created = AddressSpace::create(*Physical, Page);
+    ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+    struct Sample {
+      darwin_model::ServiceKind Kind;
+      unsigned Number;
+      uint64_t Argument;
+      uint32_t Expected;
+    };
+    const Sample Samples[] = {
+        {darwin_model::ServiceKind::GetPgrp, 81, UINT64_MAX, uint32_t(Group)},
+        {darwin_model::ServiceKind::GetPGID, 151, 0xffffffff000003e8ULL,
+         uint32_t(Group)},
+        {darwin_model::ServiceKind::GetSID, 310, 0x100000000ULL,
+         uint32_t(Session)},
+        {darwin_model::ServiceKind::IsSetUGID, 327, UINT64_MAX,
+         uint32_t(Tainted)}};
+    for (const auto &S : Samples) {
+      ProcessResult Result{
+          ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+          ExecutionBackendKind::Unicorn, "independent libc process capture"};
+      auto Out = darwin_model::systemService(
+          **Created, Page, S.Kind,
+          {0, S.Number, {S.Argument, UINT64_MAX, UINT64_MAX}, {}}, Options,
+          Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out) << Result.Diagnostic;
+      EXPECT_EQ((**Out).Value, S.Expected);
+      EXPECT_FALSE((**Out).Error);
+    }
+  }
+#endif
+}
+
+TEST(DarwinNative, HostNameMatchesSDKBytesTruncationAndLibcFullBuffers) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "native hostname capture requires macOS";
+#else
+  ASSERT_EQ(MAXHOSTNAMELEN, 256);
+  ASSERT_EQ(CTL_KERN, 1);
+  ASSERT_EQ(KERN_HOSTNAME, 10);
+  int MIB[] = {CTL_KERN, KERN_HOSTNAME};
+  std::array<char, MAXHOSTNAMELEN> Captured, Libc;
+  size_t Size = Captured.size();
+  ASSERT_EQ(::sysctl(MIB, 2, Captured.data(), &Size, nullptr, 0), 0);
+  ASSERT_GE(Size, 1u);
+  ASSERT_LE(Size, Captured.size());
+  ASSERT_EQ(Captured[Size - 1], 0);
+  ASSERT_EQ(std::strlen(Captured.data()) + 1, Size);
+  struct utsname U;
+  ASSERT_EQ(::uname(&U), 0);
+  ASSERT_EQ(::gethostname(Libc.data(), Libc.size()), 0);
+  EXPECT_STREQ(U.nodename, Captured.data());
+  EXPECT_STREQ(Libc.data(), Captured.data());
+  std::optional<DarwinSystemOptions> Options = DarwinSystemOptions{};
+  Options->HostName = Captured.data();
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(*Options)));
+  for (uint64_t Page : {uint64_t(4096), uint64_t(16384)}) {
+    auto Physical = PhysicalMemory::create(Page * 4);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Created = AddressSpace::create(*Physical, Page * 4);
+    ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+    auto Space = *Created;
+    constexpr uint64_t Base = 0x100000;
+    ASSERT_FALSE(
+        bool(Space->map(Base, Page * 2, Read | Write | UserAccessible)));
+    for (bool Named : {false, true}) {
+      for (size_t Capacity :
+           {size_t(0), size_t(1), size_t(2), Size - 1, Size, size_t(256)}) {
+        std::array<uint8_t, 258> Native;
+        Native.fill(0xa5);
+        size_t Length = Capacity;
+        errno = 0;
+        const int Ret =
+            Named ? ::sysctlbyname("kern.hostname", Native.data() + 1, &Length,
+                                   nullptr, 0)
+                  : ::sysctl(MIB, 2, Native.data() + 1, &Length, nullptr, 0);
+        const int Error = errno;
+        ASSERT_EQ(Ret, Capacity ? 0 : -1);
+        ASSERT_EQ(Error, Capacity ? 0 : ENOMEM);
+        ASSERT_LE(Length, Size);
+        ASSERT_EQ(Native[0], 0xa5);
+        ASSERT_EQ(Native[Length + 1], 0xa5);
+        std::vector<uint8_t> Expected(Page * 2, 0xa5), Actual(Page * 2);
+        constexpr char Name[] = "kern.hostname";
+        std::memcpy(Expected.data(),
+                    Named ? static_cast<const void *>(Name)
+                          : static_cast<const void *>(MIB),
+                    Named ? sizeof(Name) - 1 : sizeof(MIB));
+        llvm::support::endian::write64le(Expected.data() + 128, Capacity);
+        ASSERT_FALSE(bool(Space->write(Base, Expected)));
+        std::memcpy(Expected.data() + Page - 1, Native.data() + 1, Length);
+        llvm::support::endian::write64le(Expected.data() + 128, Length);
+        ProcessResult Result{
+            ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+            ExecutionBackendKind::Unicorn, "independent SDK hostname capture"};
+        auto Out = darwin_model::systemService(
+            *Space, Page,
+            Named ? darwin_model::ServiceKind::SysctlByName
+                  : darwin_model::ServiceKind::Sysctl,
+            {0,
+             Named ? 274u : 202u,
+             {Base, Named ? sizeof(Name) - 1 : 2, Base + Page - 1, Base + 128},
+             std::nullopt},
+            Options, Result);
+        ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+        ASSERT_TRUE(*Out) << Result.Diagnostic;
+        EXPECT_EQ((**Out).Error, Ret != 0);
+        EXPECT_EQ((**Out).Value, uint64_t(Error));
+        ASSERT_FALSE(bool(Space->read(Base, Actual)));
+        EXPECT_EQ(Actual, Expected);
+      }
+    }
+  }
+#endif
+}
+TEST(DarwinNative, CredentialsMatchOneSDKCaptureAndExactGroupOrder) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "native Darwin credential capture requires macOS";
+#else
+  ASSERT_EQ(sizeof(uid_t), 4u);
+  ASSERT_EQ(sizeof(gid_t), 4u);
+  ASSERT_EQ(NGROUPS_MAX, 16);
+  std::array<gid_t, NGROUPS_MAX> Groups;
+  const uid_t RealUID = ::getuid(), EffectiveUID = ::geteuid();
+  const gid_t RealGID = ::getgid(), EffectiveGID = ::getegid();
+  const int Count = ::getgroups(Groups.size(), Groups.data());
+  ASSERT_GE(Count, 1);
+  ASSERT_LE(Count, NGROUPS_MAX);
+  EXPECT_EQ(Groups[0], EffectiveGID);
+  std::optional<DarwinSystemOptions> Options = DarwinSystemOptions{};
+  Options->Credentials = DarwinCredentials{
+      RealUID, EffectiveUID, RealGID, EffectiveGID,
+      std::vector<uint32_t>(Groups.begin(), Groups.begin() + Count)};
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(*Options)));
+  for (auto Page : {uint64_t(4096), uint64_t(16384)}) {
+    auto Physical = PhysicalMemory::create(Page * 4);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Created = AddressSpace::create(*Physical, Page * 4);
+    ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+    constexpr uint64_t Base = 0x100000;
+    auto Space = *Created;
+    ASSERT_FALSE(
+        bool(Space->map(Base, Page * 2, Read | Write | UserAccessible)));
+    ProcessResult Result{
+        ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+        ExecutionBackendKind::Unicorn, "one SDK credential capture"};
+    for (const auto &[Kind, ID] :
+         {std::pair{darwin_model::ServiceKind::GetUID, RealUID},
+          std::pair{darwin_model::ServiceKind::GetEUID, EffectiveUID},
+          std::pair{darwin_model::ServiceKind::GetGID, RealGID},
+          std::pair{darwin_model::ServiceKind::GetEGID, EffectiveGID}}) {
+      auto Out = darwin_model::systemService(*Space, Page, Kind,
+                                             {0, 0, {UINT64_MAX}, std::nullopt},
+                                             Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out) << Result.Diagnostic;
+      EXPECT_FALSE((**Out).Error);
+      EXPECT_EQ((**Out).Value, ID);
+    }
+    for (auto Capacity :
+         {uint64_t(Count), uint64_t(0x1000), uint64_t(0x1234567800001000ULL)}) {
+      const auto Offset = Page - 3;
+      std::vector<uint8_t> Expected(Page * 2, 0xa5), Actual(Page * 2);
+      ASSERT_FALSE(bool(Space->write(Base, Expected)));
+      std::memcpy(Expected.data() + Offset, Groups.data(),
+                  Count * sizeof(gid_t));
+      auto Out = darwin_model::systemService(
+          *Space, Page, darwin_model::ServiceKind::GetGroups,
+          {0, 79, {Capacity, Base + Offset}, std::nullopt}, Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out) << Result.Diagnostic;
+      EXPECT_FALSE((**Out).Error);
+      EXPECT_EQ((**Out).Value, uint64_t(Count));
+      ASSERT_FALSE(bool(Space->read(Base, Actual)));
+      EXPECT_EQ(Actual, Expected);
+    }
+  }
+#endif
+}
+
+TEST(DarwinNative, UsageMatchesOneSDKCaptureWithEverySignedFieldAndPadding) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "native Darwin SDK capture requires macOS";
+#else
+  ASSERT_EQ(sizeof(struct rusage), 144u);
+  ASSERT_EQ(sizeof(long), 8u);
+  ASSERT_EQ(offsetof(struct rusage, ru_utime), 0u);
+  ASSERT_EQ(offsetof(struct rusage, ru_stime), 16u);
+  ASSERT_EQ(offsetof(struct rusage, ru_maxrss), 32u);
+  ASSERT_EQ(offsetof(struct rusage, ru_nivcsw), 136u);
+  struct rusage Self, Children;
+  std::memset(&Self, 0xa5, sizeof Self);
+  std::memset(&Children, 0xa5, sizeof Children);
+  ASSERT_EQ(getrusage(RUSAGE_SELF, &Self), 0);
+  ASSERT_EQ(getrusage(RUSAGE_CHILDREN, &Children), 0);
+  const auto Observation = [](const struct rusage &R) {
+    return DarwinResourceUsage{
+        R.ru_utime.tv_sec,
+        uint32_t(R.ru_utime.tv_usec),
+        R.ru_stime.tv_sec,
+        uint32_t(R.ru_stime.tv_usec),
+        {R.ru_maxrss, R.ru_ixrss, R.ru_idrss, R.ru_isrss, R.ru_minflt,
+         R.ru_majflt, R.ru_nswap, R.ru_inblock, R.ru_oublock, R.ru_msgsnd,
+         R.ru_msgrcv, R.ru_nsignals, R.ru_nvcsw, R.ru_nivcsw}};
+  };
+  std::optional<DarwinSystemOptions> Options = DarwinSystemOptions{};
+  Options->ResourceUsageSelf = Observation(Self);
+  Options->ResourceUsageChildren = Observation(Children);
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(*Options)));
+  for (auto Page : {uint64_t(4096), uint64_t(16384)}) {
+    auto Physical = PhysicalMemory::create(Page * 4);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Created = AddressSpace::create(*Physical, Page * 4);
+    ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+    auto Space = *Created;
+    constexpr uint64_t Base = 0x100000;
+    ASSERT_FALSE(
+        bool(Space->map(Base, Page * 2, Read | Write | UserAccessible)));
+    for (auto Who : {uint64_t(0), uint64_t(UINT32_MAX)}) {
+      ASSERT_FALSE(
+          bool(Space->write(Base, std::vector<uint8_t>(Page * 2, 0xa5))));
+      ProcessResult Result{ProcessProfile::MacOSMachO64,
+                           GuestArchitecture::AArch64,
+                           ExecutionBackendKind::Unicorn, "SDK capture"};
+      auto Out = darwin_model::systemService(
+          *Space, Page, darwin_model::ServiceKind::GetRusage,
+          {0, 117, {Who, Base + Page - 71}, std::nullopt}, Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out) << Result.Diagnostic;
+      EXPECT_FALSE((**Out).Error);
+      EXPECT_EQ((**Out).Value, 0u);
+      std::vector<uint8_t> Expected(Page * 2, 0xa5), Actual(Page * 2);
+      const auto &Captured = Who == 0 ? Self : Children;
+      std::memcpy(Expected.data() + Page - 71, &Captured, 144);
+      ASSERT_FALSE(bool(Space->read(Base, Actual)));
+      EXPECT_EQ(Actual, Expected);
+    }
+  }
+#endif
+}
+
+TEST(DarwinNative, DescriptorTableAndCapMatchIndependentSDKCaptures) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "Native descriptor observation capture requires macOS";
+#else
+  ASSERT_EQ(sizeof(int), 4u);
+  ASSERT_EQ(RLIMIT_NOFILE, 8);
+  ASSERT_EQ(CTL_KERN, 1);
+  ASSERT_EQ(KERN_MAXFILESPERPROC, 29);
+  int Cap = -1, Numeric = -1;
+  size_t Size = sizeof Cap;
+  ASSERT_EQ(::sysctlbyname("kern.maxfilesperproc", &Cap, &Size, nullptr, 0), 0);
+  ASSERT_EQ(Size, 4u);
+  ASSERT_GE(Cap, 0);
+  int MIB[] = {CTL_KERN, KERN_MAXFILESPERPROC};
+  Size = sizeof Numeric;
+  ASSERT_EQ(::sysctl(MIB, 2, &Numeric, &Size, nullptr, 0), 0);
+  ASSERT_EQ(Size, 4u);
+  ASSERT_EQ(Numeric, Cap);
+  struct rlimit Limit;
+  ASSERT_EQ(::getrlimit(RLIMIT_NOFILE, &Limit), 0);
+  const auto SDK = ::getdtablesize();
+  ASSERT_GE(SDK, 0);
+  ASSERT_EQ(uint64_t(SDK),
+            Limit.rlim_cur < uint64_t(Cap) ? Limit.rlim_cur : uint64_t(Cap));
+  DarwinSystemOptions Options;
+  Options.MaxFilesPerProcess = Cap;
+  Options.ResourceLimits[8] = {Limit.rlim_cur, Limit.rlim_max};
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(Options)));
+  for (uint64_t Page : {uint64_t(4096), uint64_t(16384)}) {
+    auto Physical = PhysicalMemory::create(Page * 2);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Space = AddressSpace::create(*Physical, Page * 2);
+    ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
+    constexpr uint64_t Base = 0x100000;
+    ASSERT_FALSE(
+        bool((*Space)->map(Base, Page * 2, Read | Write | UserAccessible)));
+    ProcessResult Result{
+        ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+        ExecutionBackendKind::Unicorn, "SDK descriptor capture"};
+    std::vector<uint8_t> Guard(Page * 2, 0xa5), Actual(Page * 2);
+    ASSERT_FALSE(bool((*Space)->write(Base, Guard)));
+    auto Out = darwin_model::systemService(
+        **Space, Page, darwin_model::ServiceKind::GetDTableSize,
+        {0, 89, {UINT64_MAX, UINT64_MAX, UINT64_MAX, 1, 1, 1}, std::nullopt},
+        Options, Result);
+    ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+    ASSERT_TRUE(*Out) << Result.Diagnostic;
+    EXPECT_EQ((**Out).Value, uint64_t(SDK));
+    EXPECT_FALSE((**Out).Error);
+    ASSERT_FALSE(bool((*Space)->read(Base, Actual)));
+    EXPECT_EQ(Actual, Guard);
+    for (bool Named : {false, true}) {
+      auto Expected = Guard;
+      constexpr char Name[] = "kern.maxfilesperproc";
+      std::memcpy(Expected.data(),
+                  Named ? static_cast<const void *>(Name)
+                        : static_cast<const void *>(MIB),
+                  Named ? sizeof(Name) - 1 : sizeof(MIB));
+      llvm::support::endian::write64le(Expected.data() + 128, 4);
+      ASSERT_FALSE(bool((*Space)->write(Base, Expected)));
+      std::memcpy(Expected.data() + Page - 1, &Cap, 4);
+      auto Kind = Named ? darwin_model::ServiceKind::SysctlByName
+                        : darwin_model::ServiceKind::Sysctl;
+      Out = darwin_model::systemService(
+          **Space, Page, Kind,
+          {0,
+           Named ? 274u : 202u,
+           {Base, Named ? sizeof(Name) - 1 : 2, Base + Page - 1, Base + 128},
+           std::nullopt},
+          Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out) << Result.Diagnostic;
+      EXPECT_EQ((**Out).Value, 0u);
+      EXPECT_FALSE((**Out).Error);
+      ASSERT_FALSE(bool((*Space)->read(Base, Actual)));
+      EXPECT_EQ(Actual, Expected);
+    }
+  }
+#endif
+}
+
+TEST(DarwinNative, ResourcePairsMatchSDKCaptureLayoutAndBothFlagSpellings) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "Native resource observation capture requires macOS";
+#else
+  ASSERT_EQ(sizeof(rlim_t), 8u);
+  ASSERT_EQ(sizeof(struct rlimit), 16u);
+  ASSERT_EQ(offsetof(struct rlimit, rlim_cur), 0u);
+  ASSERT_EQ(offsetof(struct rlimit, rlim_max), 8u);
+  ASSERT_EQ(RLIM_INFINITY, uint64_t(INT64_MAX));
+  std::array<struct rlimit, 9> Captured;
+  DarwinSystemOptions O;
+  for (uint32_t Resource = 0; Resource != Captured.size(); ++Resource) {
+    ASSERT_EQ(::getrlimit(Resource, &Captured[Resource]), 0);
+    O.ResourceLimits[Resource] = {Captured[Resource].rlim_cur,
+                                  Captured[Resource].rlim_max};
+  }
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(O)));
+  for (uint64_t Page : {uint64_t(4096), uint64_t(16384)}) {
+    auto Physical = PhysicalMemory::create(Page * 2);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Space = AddressSpace::create(*Physical, Page * 2);
+    ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
+    constexpr uint64_t Base = 0x100000;
+    ASSERT_FALSE(
+        bool((*Space)->map(Base, Page * 2, Read | Write | UserAccessible)));
+    ProcessResult Result{
+        ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+        ExecutionBackendKind::Unicorn, "native getrlimit capture"};
+    for (uint32_t Resource = 0; Resource != Captured.size(); ++Resource) {
+      for (uint32_t Flag : {0u, 0x1000u}) {
+        SCOPED_TRACE(Resource | Flag);
+        std::vector<uint8_t> Expected(Page * 2, 0xa5), Actual(Page * 2);
+        ASSERT_FALSE(bool((*Space)->write(Base, Expected)));
+        std::memcpy(Expected.data() + Page - 8, &Captured[Resource], 16);
+        auto Out = darwin_model::systemService(
+            **Space, Page, darwin_model::ServiceKind::GetRlimit,
+            {0, 194, {Resource | Flag, Base + Page - 8}, std::nullopt}, O,
+            Result);
+        ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+        ASSERT_TRUE(*Out) << Result.Diagnostic;
+        EXPECT_EQ((**Out).Value, 0u);
+        EXPECT_FALSE((**Out).Error);
+        ASSERT_FALSE(bool((*Space)->read(Base, Actual)));
+        EXPECT_EQ(Actual, Expected);
+      }
+    }
+  }
+#endif
+}
+
 TEST(DarwinNative, SystemValuesMatchSDKCapturesAndStableMIBWidths) {
 #if !defined(__APPLE__)
   GTEST_SKIP() << "Native system observation capture requires macOS";

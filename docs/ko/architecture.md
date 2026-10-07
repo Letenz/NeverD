@@ -1414,7 +1414,7 @@ Swift SDK Published의 enclosing-instance 접근자는 포인터 네 개를 유�
 
 ## 출시된 Android GKI 커널 계약
 
-`LinuxGKIKernels.def`가 분기·`pidfd_open` 플래그·비리더 오류·iovec 규칙을 소유합니다. `LinuxKernelOptions`는 명시적 선택과 선택적 고정 태스크 목록을 소유합니다. `LinuxServices`는 호출을 분배하고 `LinuxFiles`는 파일과 pidfd를 소유하며 `LinuxOutput`은 가져오기를 공유하고 `LinuxPIDFD`는 할당 전에 대상 종류를 검사합니다. 목록 생략 시 외부 대상은 미지원이며 공유 검증은 모순된 우선순위와 협력 Android 스레드를 거부합니다. 호스트 검색은 없습니다. [GKI 계약](android-gki-kernels.md)을 참고하십시오.
+`LinuxGKIKernels.def`는 출시된 GKI 계열 식별자, 버전별 `pidfd_open` 플래그 마스크, 비리더 오류와 iovec 가져오기 정책을 소유합니다. JSON과 C++이 명시적으로 선택하며 Bionic API 수준에서 추론하지 않습니다. `LinuxServices`가 공유 커널 호출을 전달하고 `LinuxFiles`가 파일, 표준 스트림과 pidfd 설명자를 통합 관리합니다. `LinuxOutput`은 캡처 출력과 pidfd의 쓰기 미지원 판정 전에 선택한 버전의 가져오기와 오류 순서를 적용합니다. `LinuxKernelOptions`는 추가 생존 게스트 작업의 선택적 고정 목록도 소유합니다. 닫힌 목록을 선언하면 부재를 판단하지만 생략 시 다른 대상은 미지원입니다. 공유 검증은 모순된 우선순위 관측과 협력형 Android 스레드 모드를 로드 전에 거부합니다. `LinuxPIDFD`는 설명자를 예약하기 전에 대상 종류를 검사하며 버전별 비리더 오류를 유지합니다. 호스트 조회나 별도의 설명자 이름 공간은 없습니다.[출시된 GKI 계약](../android-gki-kernels.md)을 참조하세요.
 
 `LinuxCPUClock`은 프로세스 CPU 식별자와 GKI 작업 관측을 검증하고 출력 전에 현재 그룹 별칭과 외부 리더를 확인합니다. `LinuxClock`은 표본을 정규화하고 중복 별칭을 거부합니다. 선언된 벽시계만 유휴 시 진행하며 CPU 표본은 고정됩니다. 호스트 시계나 실행 계측으로 관측을 보충하지 않습니다.
 

@@ -6,14 +6,52 @@
 #ifndef NEVERD_EMULATION_DARWINSYSTEMOPTIONS_H
 #define NEVERD_EMULATION_DARWINSYSTEMOPTIONS_H
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace neverd::emulation {
-/// Fixed sysctl observations, independent of host hardware and OS identity.
+/// One fixed raw getrlimit observation, not a resource enforcement policy.
+/// Both values are at most Darwin RLIM_INFINITY (INT64_MAX); Current <=
+/// Maximum.
+struct DarwinResourceLimit {
+  uint64_t Current = 0;
+  uint64_t Maximum = 0;
+};
+/// One fixed LP64 getrusage observation, never host/guest runtime accounting.
+/// Microseconds must be below 1000000; seconds and counters preserve signed
+/// 64-bit values. Counters use Darwin's raw units, without Linux conversions.
+struct DarwinResourceUsage {
+  static constexpr std::size_t CounterCount = 14;
+  int64_t UserSeconds = 0;
+  uint32_t UserMicroseconds = 0;
+  int64_t SystemSeconds = 0;
+  uint32_t SystemMicroseconds = 0;
+  /// Indices 0..13: ru_maxrss, ru_ixrss, ru_idrss, ru_isrss, ru_minflt,
+  /// ru_majflt, ru_nswap, ru_inblock, ru_oublock, ru_msgsnd, ru_msgrcv,
+  /// ru_nsignals, ru_nvcsw, ru_nivcsw. Meanings are implementation-defined.
+  std::array<int64_t, CounterCount> Counters{};
+};
+/// Fixed credential observations, not permission or privilege authorization.
+/// Supported IDs are 0..INT32_MAX. A supplied GroupAccessList has 1..16
+/// entries, preserves order/duplicates and starts with EffectiveGID.
+/// Omitted groups are unknown; constructing this record explicitly declares
+/// its zero/root IDs. Omitting Credentials retains the profile's legacy IDs.
+struct DarwinCredentials {
+  uint32_t RealUID = 0;
+  uint32_t EffectiveUID = 0;
+  uint32_t RealGID = 0;
+  uint32_t EffectiveGID = 0;
+  std::optional<std::vector<uint32_t>> GroupAccessList;
+};
+/// Fixed system observations, independent of host hardware and OS identity.
 /// Missing is unknown; an empty string is an explicit value. Strings contain
-/// no NUL and at most 1023 bytes. Page size comes from the guest memory policy.
+/// no NUL and at most 1023 bytes, except HostName (255 bytes). Page size comes
+/// from the guest memory policy.
 struct DarwinSystemOptions {
   std::optional<std::string> OSType;
   std::optional<std::string> OSRelease;
@@ -26,6 +64,44 @@ struct DarwinSystemOptions {
   std::optional<uint32_t> CPUCount;
   /// Reported memory, independent of the emulation allocation budget.
   std::optional<uint64_t> MemorySize;
+  /// Canonical resource keys 0..8. Missing is unknown, and zero is explicit.
+  /// Supplies read-only getrlimit observations without querying the host,
+  /// changing execution budgets or enabling setrlimit/signal delivery.
+  std::map<uint32_t, DarwinResourceLimit> ResourceLimits;
+  /// Independent fixed observations: one query never requires the other.
+  /// Missing children remain unknown even when fork/wait are unsupported.
+  /// No clock advancement, budget changes or guest performance is inferred.
+  std::optional<DarwinResourceUsage> ResourceUsageSelf;
+  std::optional<DarwinResourceUsage> ResourceUsageChildren;
+  /// Scalar queries and new-file UID share this immutable observation.
+  /// Absence retains UID/GID 1000; it never supplies a group list or grants
+  /// filesystem permissions, credential mutation or privileged sysctl writes.
+  std::optional<DarwinCredentials> Credentials;
+  /// Nonnegative int observation (0..INT32_MAX) for kern.maxfilesperproc.
+  /// With ResourceLimits[8].Current this supplies getdtablesize; neither
+  /// observation enforces the descriptor budget or queries the host.
+  std::optional<uint32_t> MaxFilesPerProcess;
+  /// Caller-visible kern.hostname bytes, independent of host identity or
+  /// mobile entitlements. Missing is unknown; empty is an explicit value.
+  /// Does not authorize hostname writes, even with explicit root credentials.
+  std::optional<std::string> HostName;
+  /// Independent self-process observations. IDs are positive pid_t values
+  /// (1..INT32_MAX); neither is inferred from PID, credentials or the host.
+  std::optional<uint32_t> ProcessGroupID;
+  std::optional<uint32_t> SessionID;
+  /// Fixed issetugid/P_SUGID observation. Explicit false is known zero;
+  /// absence is unknown. Does not change credentials or authorize privileges.
+  std::optional<bool> ProcessTainted;
+  /// Complete immutable session login buffer: exactly 255 raw bytes, including
+  /// NULs and bytes after a terminator. Missing is unknown; all-zero is
+  /// explicit. Not inferred from credentials, group/session IDs or the host.
+  /// Supplies read-only getlogin, without login authorization or setlogin
+  /// support.
+  std::optional<std::vector<uint8_t>> LoginNameBytes;
+  /// Fixed current-process nice observation (-20..20). Missing is unknown;
+  /// explicit zero and -1 are known. No host lookup, scheduling, priority
+  /// mutation or aggregate/peer observation is inferred.
+  std::optional<int32_t> ProcessNice;
 };
 } // namespace neverd::emulation
 #endif

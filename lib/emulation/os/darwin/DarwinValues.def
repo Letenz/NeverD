@@ -24,6 +24,7 @@ NEVERD_DARWIN_VALUE(UserID, 1000)
 NEVERD_DARWIN_VALUE(GroupID, 1000)
 NEVERD_DARWIN_VALUE(BadDescriptor, 9)
 NEVERD_DARWIN_VALUE(NoEntry, 2)
+NEVERD_DARWIN_VALUE(NoProcess, 3)
 NEVERD_DARWIN_VALUE(OperationNotPermitted, 1)
 NEVERD_DARWIN_VALUE(ResourceBusy, 16)
 NEVERD_DARWIN_VALUE(FileExists, 17)
@@ -82,7 +83,24 @@ NEVERD_DARWIN_VALUE(NoMemory, 12)
 NEVERD_DARWIN_VALUE(PermissionDenied, 13)
 NEVERD_DARWIN_VALUE(ResultTooLarge, 34)
 NEVERD_DARWIN_VALUE(SystemStringLimit, 1024)
+NEVERD_DARWIN_VALUE(HostNameLimit, 256)
+NEVERD_DARWIN_VALUE(LoginNameSize, 255)
+NEVERD_DARWIN_VALUE(PriorityNiceBound, 20)
+NEVERD_DARWIN_VALUE(PriorityProcess, 0)
+NEVERD_DARWIN_VALUE(PriorityGroup, 1)
+NEVERD_DARWIN_VALUE(PriorityUser, 2)
+NEVERD_DARWIN_VALUE(PriorityThread, 3)
+NEVERD_DARWIN_VALUE(PriorityBackground, 4)
+NEVERD_DARWIN_VALUE(PriorityRole, 6)
+NEVERD_DARWIN_VALUE(PriorityGame, 7)
+NEVERD_DARWIN_VALUE(PriorityCarPlay, 8)
 NEVERD_DARWIN_VALUE(SystemMIBLimit, 12)
+NEVERD_DARWIN_VALUE(CredentialIDMax, 0x7fffffff)
+NEVERD_DARWIN_VALUE(GroupAccessLimit, 16)
+NEVERD_DARWIN_VALUE(ResourceLimitCount, 9)
+NEVERD_DARWIN_VALUE(ResourceLimitNoFile, 8)
+NEVERD_DARWIN_VALUE(ResourceLimitPosixFlag, 0x1000)
+NEVERD_DARWIN_VALUE(ResourceLimitInfinity, 0x7fffffffffffffffULL)
 NEVERD_DARWIN_VALUE(MapPrivate, 0x2)
 NEVERD_DARWIN_VALUE(MapAnonymous, 0x1000)
 NEVERD_DARWIN_VALUE(MapUnix03, 0x40000)
@@ -124,11 +142,20 @@ NEVERD_DARWIN_SERVICE(FaccessAt, 466, Int)
 NEVERD_DARWIN_SERVICE(Dup, 41, Int)
 NEVERD_DARWIN_SERVICE(GetEGID, 43, UInt)
 NEVERD_DARWIN_SERVICE(GetGID, 47, UInt)
+NEVERD_DARWIN_SERVICE(GetLogin, 49, Int)
+NEVERD_DARWIN_SERVICE(GetGroups, 79, Int)
+NEVERD_DARWIN_SERVICE(GetPgrp, 81, Int)
+NEVERD_DARWIN_SERVICE(GetPGID, 151, Int)
+NEVERD_DARWIN_SERVICE(GetSID, 310, Int)
+NEVERD_DARWIN_SERVICE(IsSetUGID, 327, Int)
+NEVERD_DARWIN_SERVICE(GetDTableSize, 89, Int)
+NEVERD_DARWIN_SERVICE(GetPriority, 100, Int)
 NEVERD_DARWIN_SERVICE(Dup2, 90, Int)
 NEVERD_DARWIN_SERVICE(Fcntl, 92, Int)
 NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
 NEVERD_DARWIN_SERVICE(Pwrite, 154, Wide)
 NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
+NEVERD_DARWIN_SERVICE(GetRlimit, 194, Int)
 NEVERD_DARWIN_SERVICE(Truncate, 200, Int)
 NEVERD_DARWIN_SERVICE(Ftruncate, 201, Int)
 NEVERD_DARWIN_SERVICE(Sysctl, 202, Int)
@@ -138,6 +165,7 @@ NEVERD_DARWIN_SERVICE(Fstat64, 339, Int)
 NEVERD_DARWIN_SERVICE(Lstat64, 340, Int)
 NEVERD_DARWIN_SERVICE(GetDirEntries64, 344, Wide)
 NEVERD_DARWIN_SERVICE(GetTimeOfDay, 116, Int)
+NEVERD_DARWIN_SERVICE(GetRusage, 117, Int)
 NEVERD_DARWIN_SERVICE(OpenAt, 463, Int)
 NEVERD_DARWIN_SERVICE(FstatAt64, 470, Int)
 NEVERD_DARWIN_SERVICE(UnlinkAt, 472, Int)
@@ -176,7 +204,41 @@ NEVERD_DARWIN_DIAGNOSTIC(
     SystemString,
     "Darwin system strings must be at most 1023 bytes without NUL")
 NEVERD_DARWIN_DIAGNOSTIC(
+    SystemHostName,
+    "Darwin system hostname must be at most 255 bytes without NUL")
+NEVERD_DARWIN_DIAGNOSTIC(
     SystemCPUCount, "Darwin system cpu_count must be between 1 and INT32_MAX")
+NEVERD_DARWIN_DIAGNOSTIC(
+    SystemMaxFilesPerProcess,
+    "Darwin system max_files_per_process must be between 0 and INT32_MAX")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DescriptorTableObservation,
+    "Darwin descriptor table observations are not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ProcessIdentityOption,
+    "Darwin system process_group_id and session_id must be between 1 and "
+    "INT32_MAX")
+NEVERD_DARWIN_DIAGNOSTIC(ProcessGroupObservation,
+                         "Darwin process group observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(ProcessSessionObservation,
+                         "Darwin process session observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(ProcessTaintObservation,
+                         "Darwin process taint observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    LoginNameOption,
+    "Darwin system login_name_hex must encode exactly 255 bytes")
+NEVERD_DARWIN_DIAGNOSTIC(LoginNameObservation,
+                         "Darwin login buffer observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(LoginNamePartialOutput,
+                         "Darwin login buffer output is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(ProcessNiceOption,
+                         "Darwin system nice must be between -20 and 20")
+NEVERD_DARWIN_DIAGNOSTIC(ProcessNiceObservation,
+                         "Darwin process nice observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(PrioritySelectionObservation,
+                         "Darwin selected priority observation is not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(ProcessPeerObservation,
+                         "Darwin other-process queries are not modeled")
 NEVERD_DARWIN_DIAGNOSTIC(SystemPartialInput,
                          "Darwin sysctl input is partially readable")
 NEVERD_DARWIN_DIAGNOSTIC(
@@ -187,6 +249,30 @@ NEVERD_DARWIN_DIAGNOSTIC(SystemObservation,
                          "Darwin sysctl observation is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(SystemPartialOutput,
                          "Darwin sysctl output is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ResourceLimitOption,
+    "Darwin resource limits require canonical keys 0..8 and current <= maximum "
+    "<= INT64_MAX")
+NEVERD_DARWIN_DIAGNOSTIC(ResourceLimitObservation,
+                         "Darwin resource limit observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(ResourceLimitPartialOutput,
+                         "Darwin resource limit output is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ResourceUsageOption,
+    "Darwin resource usage microseconds must be below 1000000")
+NEVERD_DARWIN_DIAGNOSTIC(
+    CredentialOption,
+    "Darwin credentials require bounded IDs and coherent 1..16 groups")
+NEVERD_DARWIN_DIAGNOSTIC(GroupObservation,
+                         "Darwin group access list is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(GroupPartialOutput,
+                         "Darwin group output is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(SystemPrivilegedWrite,
+                         "Darwin privileged system write is not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(ResourceUsageObservation,
+                         "Darwin resource usage observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(ResourceUsagePartialOutput,
+                         "Darwin resource usage output is partially writable")
 NEVERD_DARWIN_DIAGNOSTIC(
     TimebaseRatio, "Darwin timebase numerator and denominator must be nonzero")
 NEVERD_DARWIN_DIAGNOSTIC(TimebaseMissing, "Darwin timebase is not configured")
@@ -222,6 +308,9 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(
     DirectoryRemovalDevice,
     "Darwin removable directory conflicts with its parent's device identity")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectorySwapOption,
+    "Darwin swap rename support requires an explicit mutable initial directory")
 NEVERD_DARWIN_DIAGNOSTIC(FileInput, "Darwin standard input is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(FileMetadataOption,
                          "invalid Darwin file or directory metadata or size")
@@ -258,10 +347,35 @@ NEVERD_DARWIN_DIAGNOSTIC(RenameFlags, "unsupported Darwin rename flags")
 NEVERD_DARWIN_DIAGNOSTIC(
     RenameCaseSensitivity,
     "Darwin same-object exclusive rename requires filesystem case sensitivity")
-NEVERD_DARWIN_DIAGNOSTIC(RenameKind, "Darwin directory rename is unsupported")
+NEVERD_DARWIN_DIAGNOSTIC(RenameDotCaseSensitivity,
+                         "Darwin same-object directory dot rename requires "
+                         "filesystem case sensitivity")
+NEVERD_DARWIN_DIAGNOSTIC(
+    RenameKind,
+    "Darwin rename requires a live created or appropriately declared initial "
+    "directory root")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryMovableOption,
+    "Darwin movable directories require an explicit non-root directory and "
+    "mutable parent")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryExchangeableOption,
+    "Darwin exchangeable directories require an explicit non-root directory "
+    "and mutable parent")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DirectoryMoveDevice,
+    "Darwin declared directory component has conflicting device observations")
+NEVERD_DARWIN_DIAGNOSTIC(
+    RenameSwapKind,
+    "Darwin swap rename requires live created or declared exchangeable "
+    "directory roots")
+NEVERD_DARWIN_DIAGNOSTIC(
+    RenameSwapSupport,
+    "Darwin swap rename requires declared filesystem support")
 NEVERD_DARWIN_DIAGNOSTIC(
     RenameMount,
-    "Darwin cross-parent or conflicting-device rename requires mount identity")
+    "Darwin rename requires shared initial directory ancestry and consistent "
+    "devices")
 NEVERD_DARWIN_DIAGNOSTIC(RenameLimit,
                          "Darwin rename exceeds the path or storage budget")
 NEVERD_DARWIN_DIAGNOSTIC(
