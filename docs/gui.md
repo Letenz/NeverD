@@ -94,12 +94,22 @@ shows the whole function and the visible area.
 
 **Pseudocode** (F5, Tab) and **IR** windows show C, C through LLVM, LowIR,
 MedIR, HighIR or LLVM IR of the current function and follow the disassembly
-unless their lock is set. Rows mapped to instructions move the disassembly
-cursor. C opens at the function: the includes, support types and declarations
-before its definition fold into one line. Recognized library operations in C
-can fold into one-line summaries too. Click a summary or press Keypad + on it
-to expand it; Keypad - folds the declarations again. Copy and export always
-use the complete code.
+unless their lock is set. The LLVM views translate the current function alone,
+with the others declared, so a function the engine refuses to translate shows
+its reason without affecting other functions. Rows mapped to instructions move
+the disassembly cursor. C opens at the function: the includes, support types and
+declarations before its definition fold into one line. Recognized library
+operations in C can fold into one-line summaries too. Click a summary or press
+Keypad + on it to expand it; Keypad - folds the declarations again, and the
+context menu expands or collapses either kind. Hovering a type or macro the code
+declares, such as an unaligned access type, shows its declaration, and
+double-clicking it goes there. Memory reads and writes print as a classic
+decompiler shows them, `*(_QWORD *)p`: `_BYTE`, `_WORD`, `_DWORD`, `_QWORD` and
+`_OWORD` access unsigned integers of their sizes, `_SBYTE` to `_SOWORD` signed
+ones, and `_FLOAT` and `_DOUBLE` floating-point values. Unlike those of such a
+decompiler, the types are declared one byte aligned and allowed to alias any
+object, so the code compiles to the same accesses. Copy and export always use
+the complete code.
 
 C++ names read as a classic disassembler shows them: the listing keeps the
 linkage name an instruction uses and adds its demangled form as a comment
@@ -107,6 +117,16 @@ linkage name an instruction uses and adds its demangled form as a comment
 name has the demangled one above its header, and the Functions window lists
 every function demangled, PLT entries included, with the filter matching
 either spelling. Itanium, Microsoft, Rust and D names are demangled.
+
+C has no `::`, so in C pseudocode a C++ function reads by its scopes joined
+with underscores: `QDomNode_nodeType`, constructors and destructors as
+`QDomNode_ctor` and `QDomNode_dtor`, operators by name (`QString_assign`).
+Its complete demangled signature is a comment above its definition, overloads
+sharing a name are numbered (`QDomNodeList_ctor_2`), and an imported C++
+function keeps its mangled symbol in an `__asm__` label so that the code still
+links. Other names keep every byte of their symbol (`__libc_start_main`), apart
+from the underscore Mach-O and 32-bit Windows add to C names and the start-up
+functions the C runtime defines itself (`_start` reads `start`).
 
 Strings are found by default in ASCII, UTF-8, UTF-16LE and UTF-32LE (the
 `wchar_t` of Linux and macOS), and C strings that are not UTF-8 in the common

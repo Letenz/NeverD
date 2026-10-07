@@ -166,8 +166,8 @@ std::string memoryHelperName(llvm::StringRef Operation, llvm::StringRef Type,
     Name += std::string(memoryAddressSpaceName(AddressSpace)) + "_";
   if (Ordering != NdMemoryOrdering::None)
     Name += std::string(memoryOrderingName(Ordering)) + "_";
-  if (auto Alias = c_memory::alias(Type); !Alias.empty())
-    return Name + llvm::StringRef(Alias).drop_front(17).str();
+  if (auto Suffix = c_memory::suffix(Type); !Suffix.empty())
+    return Name + Suffix;
   if (Type.consume_front("unsigned _BitInt(") && Type.consume_back(")"))
     return Name + "u" + Type.str();
   if (Type.consume_front("_BitInt(") && Type.consume_back(")"))
@@ -220,6 +220,7 @@ void HighCWriter::prepareFunctionIdentifiers(
     const std::vector<HighFunc> &Funcs) {
   GlobalIdentifierAllocator = CProjectionIdentifierAllocator{};
   FunctionIdentifiers.clear();
+  FunctionSymbolNames.clear();
   FunctionIdentifiersBySourceName.clear();
   ExternalFunctionIdentifiers.clear();
   ExternalCallSources.clear();
@@ -314,8 +315,11 @@ void HighCWriter::prepareFunctionIdentifiers(
       if (!Added)
         It->second = nullptr;
     }
-    llvm::StringRef RenderedName(SourceName);
-    RenderedName.consume_front("_");
+    const llvm::StringRef SymbolName =
+        cNameOfSymbol(SourceName, Opts.Format, Opts.TheArch);
+    FunctionSymbolNames.emplace(&Func, SymbolName.str());
+    const llvm::StringRef RenderedName =
+        cDefinitionName(SymbolName, Opts.Format);
     std::string Identifier =
         GlobalIdentifierAllocator.allocate(RenderedName, "nd_function");
     FunctionIdentifiers.emplace(&Func, Identifier);
@@ -323,15 +327,63 @@ void HighCWriter::prepareFunctionIdentifiers(
     FunctionIdentifiersBySourceName.try_emplace(SourceName, Identifier);
     FunctionIdentifiersBySourceName.try_emplace(RenderedName.str(), Identifier);
   }
+
+  // Distinct external callees stay distinct.  Itanium C++ overloads and
+  // constructor variants share a stem (`_ZN12QDomNodeListC1Ev` and
+  // `...C2EP19...` are both `QDomNodeList_ctor`), so each symbol of a stem
+  // that an Itanium symbol shares takes its own identifier, in encounter
+  // order.  Other externs keep their stems, MSVC stems merging as before.
+  std::map<std::string, std::vector<std::string>> SymbolsByStem;
+  std::map<std::string, std::set<std::string>> SourcesBySymbol;
+  std::set<const HighExpr *> Calls;
+  std::function<void(const ExprPtr &)> VisitCall = [&](const ExprPtr &Expr) {
+    if (!Expr || !Calls.insert(Expr.get()).second)
+      return;
+    for (const auto &Child : Expr->Operands)
+      VisitCall(Child);
+    if (Expr->Kind != ExprKind::Call || Expr->SourceCallHint ||
+        Expr->IntrinsicId != Intrinsic::None || Expr->IsIndirectCall)
+      return;
+    const std::string SourceName = resolvedCallTarget(*Expr);
+    if (SourceName.empty() ||
+        FunctionIdentifiersBySourceName.count(SourceName) ||
+        ExternalFunctionIdentifiers.count(SourceName))
+      return;
+    const std::string Symbol =
+        cNameOfSymbol(SourceName, Opts.Format, Opts.TheArch).str();
+    auto &Symbols =
+        SymbolsByStem[canonicalizeCProjectionIdentifier(Symbol, "nd_function")];
+    if (!llvm::is_contained(Symbols, Symbol))
+      Symbols.push_back(Symbol);
+    SourcesBySymbol[Symbol].insert(SourceName);
+  };
+  for (const auto &Func : Funcs)
+    walkStmts(Func.Body,
+              [&](const HighStmt &Stmt) { forEachExpr(Stmt, VisitCall); });
+  for (const auto &[Stem, Symbols] : SymbolsByStem) {
+    if (Symbols.size() < 2 ||
+        llvm::none_of(Symbols, [](const std::string &Symbol) {
+          return !itaniumStem(Symbol).empty();
+        }))
+      continue;
+    for (const std::string &Symbol : Symbols) {
+      const std::string Identifier =
+          GlobalIdentifierAllocator.allocate(Stem, "nd_external");
+      ExternalFunctionIdentifiers.emplace(Identifier, Identifier);
+      for (const std::string &SourceName : SourcesBySymbol[Symbol])
+        ExternalSourceIdentifiers[SourceName] = Identifier;
+    }
+  }
 }
 
 std::string HighCWriter::functionIdentifier(const HighFunc &Func) const {
   if (auto It = FunctionIdentifiers.find(&Func);
       It != FunctionIdentifiers.end())
     return It->second;
-  llvm::StringRef Name(Func.Name);
-  Name.consume_front("_");
-  return canonicalizeCProjectionIdentifier(Name, "nd_function");
+  return canonicalizeCProjectionIdentifier(
+      cDefinitionName(cNameOfSymbol(Func.Name, Opts.Format, Opts.TheArch),
+                      Opts.Format),
+      "nd_function");
 }
 
 std::string HighCWriter::functionIdentifier(llvm::StringRef SourceName) const {
@@ -344,8 +396,9 @@ std::string HighCWriter::functionIdentifier(llvm::StringRef SourceName) const {
   if (auto It = ExternalFunctionIdentifiers.find(SourceName.str());
       It != ExternalFunctionIdentifiers.end())
     return It->second;
-  SourceName.consume_front("_");
-  return canonicalizeCProjectionIdentifier(SourceName, "nd_function");
+  // A reference keeps its symbol's exact C name, which it links by.
+  return canonicalizeCProjectionIdentifier(
+      cNameOfSymbol(SourceName, Opts.Format, Opts.TheArch), "nd_function");
 }
 
 std::string HighCWriter::memoryTypeName(const TypeRef &Ty) const {
@@ -686,7 +739,7 @@ std::string HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
   if (UnalignedTypesWritten && Ordering == NdMemoryOrdering::None &&
       AddressSpace == NdMemoryAddressSpace::Default)
     if (auto Alias = c_memory::alias(Type); !Alias.empty())
-      return c_memory::access(Alias, Addr, true);
+      return "(" + c_memory::access(Alias, Addr) + ")";
   if (Ordering == NdMemoryOrdering::None &&
       AddressSpace == NdMemoryAddressSpace::Default &&
       !PartialIntegerBytes.count(Type)) {
@@ -729,7 +782,7 @@ std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
   if (UnalignedTypesWritten && Ordering == NdMemoryOrdering::None &&
       AddressSpace == NdMemoryAddressSpace::Default)
     if (auto Alias = c_memory::alias(Type); !Alias.empty())
-      return "(" + c_memory::access(Alias, Addr, false) + " = " + Value + ")";
+      return "(" + c_memory::access(Alias, Addr) + " = " + Value + ")";
   if (Ordering == NdMemoryOrdering::None &&
       AddressSpace == NdMemoryAddressSpace::Default &&
       !PartialIntegerBytes.count(Type)) {
@@ -747,6 +800,14 @@ std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
     validateAtomicStoreOrdering(Ordering);
   return memoryHelperName("store", Type, Ordering, AddressSpace) +
          "((uintptr_t)(" + Addr.str() + "), " + Value + ")";
+}
+
+std::string HighCWriter::statementText(std::string Text) {
+  // An assignment through an access needs no parentheses as a statement:
+  // `*(_QWORD *)p = 0;`.
+  return llvm::StringRef(Text).starts_with("(*(")
+             ? c_memory::unparenthesized(Text)
+             : Text;
 }
 
 std::string HighCWriter::memoryTemporary(llvm::StringRef Type,
@@ -767,8 +828,8 @@ void HighCWriter::writeMemoryStore(const TypeRef &Ty, llvm::StringRef Addr,
       PartialIntegerBytes.count(Type) ||
       (UnalignedTypesWritten && !c_memory::alias(Type).empty())) {
     emitIndent(Indent);
-    OS << memoryStoreExpr(Ty, Addr, Val, Ordering, AddressSpace,
-                          ExactImageBytes)
+    OS << statementText(memoryStoreExpr(Ty, Addr, Val, Ordering, AddressSpace,
+                                        ExactImageBytes))
        << ";\n";
     return;
   }
@@ -1232,7 +1293,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           if (!UnresolvedIndirect) {
             ExternalCallSources[Name].insert(SourceName);
             Targets.insert(Name);
-            if (Ex.DoesNotReturn)
+            // The statement writer's own rule, read from the call itself: a
+            // C name need not be the symbol the rule knows.
+            if (isNoreturnCallExpr(Ex))
               NoReturnCallTargets.insert(Name);
             if (auto FS = debugCallee(Ex)) {
               noteDebugExtern(Name, *FS);
@@ -1611,7 +1674,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // valid C, unless the name is already an ordinary identifier.
   std::set<std::string> DeclaredSyntheticRecords;
   auto DeclareSyntheticThis = [&](llvm::StringRef Identifier) {
-    const MsvcCallee *Msvc = msvcCallee(Identifier);
+    const MsvcCallee *Msvc = msvcCallee(Identifier, Opts.Format);
     if (!Msvc)
       return;
     const TypeRef This = msvcSyntheticThis(Identifier, *Msvc);
@@ -1642,10 +1705,26 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     const bool NoReturn = libc::isNoReturnFunction(Name) ||
                           libc::isNoReturnFunction(Identifier) ||
                           NoReturnCallTargets.count(Name);
+    // A C++ import reads by its stem but links by its mangled symbol, which
+    // a comment spells demangled.
+    std::string LinkLabel, LinkComment;
     if (auto Sources = ExternalCallSources.find(Name);
-        Sources != ExternalCallSources.end())
+        Sources != ExternalCallSources.end()) {
       for (const std::string &SourceName : Sources->second)
         ExternalSourceIdentifiers[SourceName] = Identifier;
+      if (Sources->second.size() == 1) {
+        const llvm::StringRef CName =
+            cNameOfSymbol(*Sources->second.begin(), Opts.Format, Opts.TheArch);
+        if (CName != Identifier && !itaniumStem(CName).empty()) {
+          llvm::raw_string_ostream Label(LinkLabel);
+          Label << " __asm__(\"";
+          Label.write_escaped(symbolOfCName(CName, Opts.Format, Opts.TheArch));
+          Label << "\")";
+          if (Opts.EmitComments)
+            LinkComment = " /* " + demangledComment(CName) + " */";
+        }
+      }
+    }
     auto SourceSignature = SourceNativeSignatures.find(Name);
     if (SourceSignature != SourceNativeSignatures.end() &&
         !ConflictingSourceNativeSignatures.count(Name)) {
@@ -1784,17 +1863,24 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
                !ConflictingDebugExternSigs.count(Name) &&
                DebugExternSigs.count(Name)) {
       DeclareSyntheticThis(Identifier);
-      OS << debugExternPrototype(DebugExternSigs[Name], Identifier, Name);
+      OS << debugExternPrototype(DebugExternSigs[Name], Identifier, Name)
+         << LinkLabel;
       if (NoReturn)
         OS << " __attribute__((noreturn))";
-      OS << ";\n";
+      OS << ";" << LinkComment << "\n";
     } else if (!ConflictingSourceNativeSignatures.count(Name) &&
-               msvcCallee(Identifier)) {
+               msvcCallee(Identifier, Opts.Format)) {
       DeclareSyntheticThis(Identifier);
       OS << debugExternPrototype(FunctionSym{}, Identifier) << ";\n";
     } else if (!ConflictingSourceNativeSignatures.count(Name)) {
       OS << "extern int " << Identifier << "(";
-      if (auto Arity = libc::libcArity(Name);
+      // The calls print as many arguments (debugCallArgLimit).
+      const auto Sources = ExternalCallSources.find(Name);
+      const llvm::StringRef Symbol =
+          Sources != ExternalCallSources.end() && Sources->second.size() == 1
+              ? llvm::StringRef(*Sources->second.begin())
+              : llvm::StringRef(Name);
+      if (auto Arity = knownArity(Symbol, Name);
           Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0) {
         if (Arity->IntArgs == 0)
           OS << "void";
@@ -1806,10 +1892,10 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
           }
         }
       }
-      OS << ")";
+      OS << ")" << LinkLabel;
       if (NoReturn)
         OS << " __attribute__((noreturn))";
-      OS << ";\n";
+      OS << ";" << LinkComment << "\n";
     }
   }
 

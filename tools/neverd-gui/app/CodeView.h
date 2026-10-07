@@ -5,6 +5,7 @@
 #include "StyledText.h"
 
 #include <QAbstractScrollArea>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QVector>
@@ -55,6 +56,19 @@ public:
   bool anyFolded() const { return library_.anyFolded(); }
   /// Some recognized library operation shows as its summary.
   bool libraryFolded() const { return library_.libraryFolded(); }
+  /// C code with the includes and declarations before its definition.
+  bool hasPrelude() const;
+  bool preludeFolded() const;
+  void setPreludeFolded(bool folded);
+  /// The source line that declares type or macro \p name in this code: a
+  /// typedef, struct, union, enum or #define.  Functions are named in the
+  /// binary and navigate there instead.
+  std::optional<int> declarationLine(const QString &name) const;
+  /// Show the declaration of \p name, expanding the prelude that holds it.
+  bool goToDeclaration(const QString &name);
+  /// The symbol a function declaration links \p name to with an assembler
+  /// label: a C++ function reads by its stem and links by its mangled name.
+  std::optional<QString> linkedSymbol(const QString &name) const;
   void setFolded(bool folded);
   const QString &status() const { return status_; }
   /// Pages of the current function are still arriving.
@@ -117,6 +131,15 @@ private:
   bool foldPreludeAfterLoad_ = true;
   /// The first page's prelude: lines and end_byte.
   QJsonObject prelude_;
+  /// What the code declares, indexed on first use.
+  struct Declarations {
+    /// Types and macros, by their source lines.
+    QHash<QString, int> types;
+    /// Functions declared with an assembler label: source line and symbol.
+    QHash<QString, std::pair<int, QString>> linked;
+  };
+  const Declarations &declarations() const;
+  mutable std::optional<Declarations> declarations_;
   int cursorLine_ = 0, cursorColumn_ = 0;
   std::optional<std::pair<int, int>> anchor_;
   QVector<int> marked_;

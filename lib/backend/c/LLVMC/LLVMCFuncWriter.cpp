@@ -588,7 +588,7 @@ bool LLVMCWriter::sameSlotDestructorBetween(
     const auto *Other = llvm::dyn_cast<llvm::CallBase>(&I);
     if (!Other || Other == &Call)
       return false;
-    const MsvcCallee *Msvc = msvcCallee(printedCalleeName(*Other));
+    const MsvcCallee *Msvc = msvcCallee(printedCalleeName(*Other), Opts.Format);
     if (!Msvc || Msvc->Kind != MsvcCalleeKind::Dtor)
       return false;
     llvm::SmallVector<SlotMention, 2> DtorSlots;
@@ -671,7 +671,7 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
       const std::string Name = printedCalleeName(*Call);
       if (isMsvcCxxThrowCallName(Name))
         continue;
-      if (const MsvcCallee *Msvc = msvcCallee(Name))
+      if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format))
         if (Msvc->Kind == MsvcCalleeKind::Ctor)
           continue;
 
@@ -2652,7 +2652,7 @@ bool LLVMCWriter::isResultParamValue(const llvm::Value *V) const {
 unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
                                           llvm::StringRef CalleeName) const {
   const unsigned Have = Call.arg_size();
-  const MsvcCallee *Msvc = msvcCallee(CalleeName);
+  const MsvcCallee *Msvc = msvcCallee(CalleeName, Opts.Format);
   auto Clamp = [&](size_t Limit) {
     return static_cast<unsigned>(std::min(Limit, static_cast<size_t>(Have)));
   };
@@ -2779,8 +2779,13 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
   if (Msvc)
     return static_cast<unsigned>(
         msvcPrintedArgLimit(*Msvc, Have, UnknownAt, KeepExtra));
-  if (auto Arity = libc::libcArity(CalleeName.str());
-      Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0)
+  // The arity tables know symbols; a C++ callee's C name is its stem.
+  const auto *Callee = Call.getCalledFunction();
+  auto Arity =
+      libc::libcArityForSymbol(Callee ? Callee->getName() : CalleeName);
+  if (!Arity)
+    Arity = libc::libcArity(CalleeName.str());
+  if (Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0)
     return Clamp(static_cast<size_t>(Arity->IntArgs));
   if (!Call.getCalledFunction()) {
     unsigned Lim = Have;
@@ -2843,7 +2848,7 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
     }
     if (Name.empty())
       return {};
-    if (const MsvcCallee *Msvc = msvcCallee(Name)) {
+    if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format)) {
       if (Index == 0 || msvcTypesCallArgAsPointer(*Msvc, Index) ||
           (Msvc->Kind == MsvcCalleeKind::Ctor && Index == 1)) {
         TypeRef Ty = cDisplayType(msvcSyntheticThis(Name, *Msvc));
@@ -7701,7 +7706,7 @@ LLVMCWriter::sharedReturnEpilogue(const llvm::BasicBlock *Tail) {
   if (Calls != 1 || !Call)
     return nullptr;
   const std::string Name = printedCalleeName(*Call);
-  const MsvcCallee *Msvc = msvcCallee(Name);
+  const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format);
   if (!Msvc || Msvc->Kind != MsvcCalleeKind::Dtor)
     return nullptr;
   unsigned Preds = 0;
@@ -8483,6 +8488,14 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
   OS.retarget(&BufOS);
 
   std::string FName = functionIdentifier(Fn);
+  // A C++ definition names its demangled signature: the C identifier keeps
+  // only its scopes and name.
+  if (Opts.EmitComments)
+    if (auto Symbol = FunctionSymbolNames.find(&Fn);
+        Symbol != FunctionSymbolNames.end())
+      if (const std::string Demangled = demangledComment(Symbol->second);
+          !Demangled.empty())
+        OS << "/* " << Demangled << " */\n";
   writeExceptionAnnotation(Fn);
 
   const bool IndirectReturn = !Opts.PreserveLLVMFunctionTypes && DebugFn &&

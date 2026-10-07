@@ -35,6 +35,11 @@ public:
   /// Some region of any kind can fold.
   bool canFold() const;
   bool isFolded(const QString &id) const { return folded_.contains(id); }
+  /// A region \p id can fold.
+  bool hasRegion(const QString &id) const;
+  /// The display line showing the start of source line \p sourceLine, -1
+  /// past the end.
+  int displayLine(int sourceLine) const;
   Q_INVOKABLE void toggleRegion(const QString &id);
   /// Fold or unfold every library operation.
   Q_INVOKABLE void setFolded(bool folded);

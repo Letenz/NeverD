@@ -17,6 +17,7 @@
 #include "llvm/Object/ELFTypes.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -42,6 +43,10 @@
 #include <fcntl.h>
 #include <sys/resource.h>
 #include <unistd.h>
+#endif
+
+#ifndef NEVERD_RUNTIME_FIXTURE_COMPILER
+#define NEVERD_RUNTIME_FIXTURE_COMPILER ""
 #endif
 
 namespace {
@@ -488,6 +493,21 @@ protected:
     Output.close();
     EXPECT_TRUE(Output) << "cannot write fixture " << Path;
     return Path;
+  }
+
+  /// Build the C program \p Text as a position-independent executable named
+  /// \p Name with the host compiler; empty if it does not build.
+  std::string buildProgram(const std::string &Name, std::string_view Text) {
+    const auto Source = write(Name + ".c", Text);
+    const std::string Binary = (Directory / Name).string();
+    std::string Message;
+    const int Built =
+        llvm::sys::ExecuteAndWait(NEVERD_RUNTIME_FIXTURE_COMPILER,
+                                  {NEVERD_RUNTIME_FIXTURE_COMPILER, "-O1",
+                                   "-fPIE", "-pie", Source, "-o", Binary},
+                                  std::nullopt, {}, 60, 0, &Message);
+    EXPECT_EQ(Built, 0) << Message;
+    return Built == 0 ? Binary : std::string();
   }
 
   void expectSignatureJSONName(const std::string &Name,
@@ -3261,6 +3281,63 @@ TEST_F(SessionCAPITest, SourcePagesLocateTheFunctionAfterItsPrelude) {
     if (std::strcmp(Stage, "c") == 0)
       EXPECT_EQ(Text.compare(*End, 18, "/* neverd.entry: 0"), 0) << Text;
   }
+}
+
+TEST_F(SessionCAPITest, StartAloneCallsTheBoundStartupImportWithMain) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "builds a glibc program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  const std::string Binary =
+      buildProgram("startup", "int main(void) { return 0; }\n");
+  ASSERT_FALSE(Binary.empty());
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Start = neverd_func_find_by_name(Session, "_start");
+  if (Start < 0)
+    GTEST_SKIP() << "the start file defines no _start symbol";
+  const auto Entry = neverd_func_entry(Session, Start);
+  // Only _start is lifted.  It passes main's address to __libc_start_main,
+  // which it calls through the GOT slot the loader binds.
+  const std::string LLVMC = takeString(neverd_decompile_llvm(Session, Entry));
+  ASSERT_FALSE(LLVMC.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_NE(LLVMC.find("__libc_start_main("), std::string::npos) << LLVMC;
+  EXPECT_NE(LLVMC.find("main(void);"), std::string::npos) << LLVMC;
+  const std::string HighC = takeString(neverd_decompile(Session, Entry));
+  EXPECT_NE(HighC.find("__libc_start_main("), std::string::npos) << HighC;
+#endif
+}
+
+TEST_F(SessionCAPITest, AnalyzedLLVMPagesEmitTheirFunctionAlone) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "builds a glibc program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // The puts import brings the lazy-binding stub, whose jump through the
+  // loader's resolver slot the emitter refuses.
+  const std::string Binary = buildProgram(
+      "puts", "#include <stdio.h>\nint main(void) { puts(\"neverd\"); }\n");
+  ASSERT_FALSE(Binary.empty());
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  // Analysis covers the whole program, as the workbench's does.
+  ASSERT_EQ(neverd_session_analyze(Session), 1)
+      << takeString(neverd_last_error(Session));
+  const int Start = neverd_func_find_by_name(Session, "_start");
+  if (Start < 0)
+    GTEST_SKIP() << "the start file defines no _start symbol";
+  const auto Entry = neverd_func_entry(Session, Start);
+  // A page emits its own function; a refused sibling cannot hide it.
+  const std::string LLVMC = takeString(neverd_decompile_llvm(Session, Entry));
+  ASSERT_FALSE(LLVMC.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_NE(LLVMC.find("__libc_start_main("), std::string::npos) << LLVMC;
+  EXPECT_NE(LLVMC.find("main(void);"), std::string::npos) << LLVMC;
+  const std::string IR = takeString(neverd_ir_llvm(Session, Entry));
+  ASSERT_FALSE(IR.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_NE(IR.find("define "), std::string::npos) << IR;
+#endif
 }
 
 TEST_F(SessionCAPITest, SignatureJSONPreservesASCIINameAndMatchFields) {

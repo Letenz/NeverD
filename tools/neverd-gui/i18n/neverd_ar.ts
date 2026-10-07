@@ -1303,6 +1303,12 @@ Recognized library operation; click to show its code.</source>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>التضمينات وأنواع الدعم والتصريحات التي يُترجَم بها هذا الكود؛ انقر لعرضها، واضغط - في لوحة الأرقام لطيّها مجددًا.</translation>
     </message>
+    <message>
+        <source>%1
+Double-click to go to the declaration.</source>
+        <translation>%1
+انقر نقرًا مزدوجًا للانتقال إلى التصريح.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1547,6 +1553,14 @@ Recognized library operation; click to show its code.</source>
     <message>
         <source>Text encoding</source>
         <translation>ترميز النص</translation>
+    </message>
+    <message>
+        <source>Copy takes at most %1 bytes; select fewer.</source>
+        <translation>يأخذ النسخ %1 بايت على الأكثر؛ حدّد عددًا أقل.</translation>
+    </message>
+    <message>
+        <source>The selection holds bytes no segment maps; nothing was copied.</source>
+        <translation>يضم التحديد بايتات لا يعيّنها أي مقطع؛ لم يُنسخ شيء.</translation>
     </message>
 </context>
 <context>
@@ -1926,6 +1940,26 @@ Signed: %4</source>
     <message>
         <source>Display columns: a wide East Asian character counts two</source>
         <translation>أعمدة العرض: يُحسب الحرف شرق الآسيوي العريض عمودين</translation>
+    </message>
+    <message>
+        <source>Expand declarations</source>
+        <translation>توسيع التصريحات</translation>
+    </message>
+    <message>
+        <source>Collapse declarations</source>
+        <translation>طي التصريحات</translation>
+    </message>
+    <message>
+        <source>Show or hide the includes and declarations before the function (Keypad + / Keypad -)</source>
+        <translation>إظهار التضمينات والتصريحات التي تسبق الدالة أو إخفاؤها (‎+ / ‎- في لوحة الأرقام)</translation>
+    </message>
+    <message>
+        <source>Expand library operations</source>
+        <translation>توسيع عمليات المكتبات</translation>
+    </message>
+    <message>
+        <source>Collapse library operations</source>
+        <translation>طي عمليات المكتبات</translation>
     </message>
 </context>
 <context>

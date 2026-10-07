@@ -115,6 +115,33 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(hex->byteAt(Base).has_value(), OpenTimeoutMs);
     QVERIFY(hex->isVisible());
+
+    // Shift and the arrows select bytes, which copy as hex text.
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    hex->setCurrent(Base);
+    hex->setFocus();
+    QTRY_VERIFY(hex->hasFocus());
+    for (int i = 0; i < 3; ++i)
+      QTest::keyClick(hex, Qt::Key_Right, Qt::ShiftModifier);
+    QCOMPARE(hex->selection(),
+             (std::optional<std::pair<Address, Address>>({Base, Base + 3})));
+    QStringList bytes;
+    for (Address at = Base; at <= Base + 3; ++at) {
+      QTRY_VERIFY(hex->byteAt(at).has_value());
+      bytes.append(QStringLiteral("%1")
+                       .arg(*hex->byteAt(at), 2, 16, QLatin1Char('0'))
+                       .toUpper());
+    }
+    QApplication::clipboard()->clear();
+    QTest::keyClick(hex, Qt::Key_C, Qt::ControlModifier);
+    QTRY_COMPARE(QApplication::clipboard()->text(), bytes.join(' '));
+    QApplication::clipboard()->clear();
+    bench.action(ActionId::EditCopy)->trigger();
+    QTRY_COMPARE(QApplication::clipboard()->text(), bytes.join(' '));
+    // A move without Shift ends the selection.
+    QTest::keyClick(hex, Qt::Key_Left);
+    QVERIFY(!hex->selection());
   }
 
   void stringReferencesAndHexTextEncodings() {
@@ -311,11 +338,35 @@ private slots:
     code->setCursorLine(0);
     QApplication::clipboard()->clear();
     QTest::keyClick(code, Qt::Key_C, Qt::ControlModifier);
+    const QString declaration =
+        QStringLiteral("typedef uint64_t _QWORD "
+                       "__attribute__((aligned(1), may_alias));");
+    const QString linked = QStringLiteral(
+        "extern int Bar_ctor() __asm__(\"_ZN3BarC1Ev\"); /* Bar::Bar() */");
     QCOMPARE(QApplication::clipboard()->text(),
-             QStringLiteral("#include <stdint.h>\n#include <string.h>\n"));
+             QStringLiteral("#include <stdint.h>\n") + declaration +
+                 QLatin1Char('\n') + linked + QLatin1Char('\n'));
     QTest::keyClick(code, Qt::Key_Plus, Qt::KeypadModifier);
-    QCOMPARE(code->lineCount(), 704);
+    QCOMPARE(code->lineCount(), 705);
     QTest::keyClick(code, Qt::Key_Minus, Qt::KeypadModifier);
+    QCOMPARE(code->lineCount(), 702);
+    QVERIFY(code->preludeFolded());
+
+    // A type the prelude declares opens at its declaration, expanding the
+    // prelude; C's own types are not declarations.
+    QCOMPARE(code->declarationLine(QStringLiteral("_QWORD")),
+             std::optional<int>(1));
+    QVERIFY(!code->declarationLine(QStringLiteral("uint64_t")));
+    QVERIFY(code->goToDeclaration(QStringLiteral("_QWORD")));
+    QVERIFY(!code->preludeFolded());
+    QCOMPARE(code->lineCount(), 705);
+    // A C++ function links by the mangled symbol its label names, which is
+    // what navigation looks up.
+    QCOMPARE(code->linkedSymbol(QStringLiteral("Bar_ctor")),
+             std::optional<QString>(QStringLiteral("_ZN3BarC1Ev")));
+    QVERIFY(!code->linkedSymbol(QStringLiteral("_QWORD")));
+    QCOMPARE(code->currentToken(), QStringLiteral("_QWORD"));
+    code->setPreludeFolded(true);
     QCOMPARE(code->lineCount(), 702);
 
     // A list copies its selected rows, by key or from the Edit menu.

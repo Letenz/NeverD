@@ -32,6 +32,18 @@
 
 namespace neverd {
 
+namespace {
+/// A load through an access pointer, `(*(_QWORD *)p)`, without its
+/// parentheses where no unary or postfix operator applies to it: the
+/// dereference is itself a unary expression.
+std::string bareLoad(std::string Text, int ParentPrec) {
+  constexpr int UnaryOperand = 99;
+  return ParentPrec < UnaryOperand && llvm::StringRef(Text).starts_with("(*(")
+             ? c_memory::unparenthesized(Text)
+             : Text;
+}
+} // namespace
+
 std::string frameStorageAddress(int64_t Displacement) {
   if (Displacement == 0)
     return "frame_base";
@@ -278,12 +290,8 @@ bool HighCWriter::integerText(const HighExpr &E, llvm::StringRef Text) const {
     });
   }
   // The integer aliases of a memory access.
-  if (E.Kind == ExprKind::Load) {
-    Text.consume_front("(*(");
-    Text.consume_front("const ");
-    return Text.starts_with("neverd_unaligned_i") ||
-           Text.starts_with("neverd_unaligned_u");
-  }
+  if (E.Kind == ExprKind::Load)
+    return c_memory::integerAccess(Text);
   return false;
 }
 
@@ -850,11 +858,14 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                               : E.Operands.size();
   std::string S = Name + "(";
   const auto Callee = debugCallee(E);
-  const MsvcCallee *Msvc = msvcCallee(Name);
+  const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format);
   // A callee printed in this file fixes the count by its signature; otherwise
   // debug info and MSVC member knowledge may trim ABI-only extra operands.
-  const size_t PrintedArgs =
+  size_t PrintedArgs =
       Defined && !Defined->SourceTypeHint ? ArgCount : debugCallArgLimit(E);
+  // So does a known external function's declaration.
+  if (const auto Declared = plainDeclarationArity(E))
+    PrintedArgs = std::max(PrintedArgs, *Declared);
   for (size_t I = 0; I < PrintedArgs; ++I) {
     if (I > 0)
       S += ", ";
@@ -1089,7 +1100,7 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None)
     return {};
   const std::string Name = callIdentifier(E);
-  if (const MsvcCallee *Msvc = msvcCallee(Name))
+  if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format))
     return msvcSyntheticReturn(Msvc->ReturnKind);
   if (const auto Callee = debugCallee(E))
     return Callee->ReturnType;
@@ -1102,7 +1113,7 @@ bool HighCWriter::knownVoidCall(const HighExpr &E) const {
   // Other special-member rows are declared `void` too, but an MSVC
   // constructor or assignment returns `this`, and so does an ARM32 Itanium
   // destructor: a read of their result is real.
-  if (const MsvcCallee *Msvc = msvcCallee(callIdentifier(E)))
+  if (const MsvcCallee *Msvc = msvcCallee(callIdentifier(E), Opts.Format))
     return Msvc->Kind == MsvcCalleeKind::Dtor &&
            isMsvcDestructorName(resolvedCallTarget(E));
   const auto Callee = debugCallee(E);
@@ -1411,7 +1422,7 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
     return Have;
   auto Clamp = [&](size_t Limit) { return std::min(Limit, Have); };
   const std::string Name = callIdentifier(E);
-  const MsvcCallee *Msvc = msvcCallee(Name);
+  const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format);
   auto UnknownAt = [&](size_t I) {
     return I < Have && isUnknownCallOperand(E.Operands[I].get());
   };
@@ -1450,10 +1461,35 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
   }
   if (Msvc)
     return msvcPrintedArgLimit(*Msvc, Have, UnknownAt, KeepExtra);
-  if (auto Arity = libc::libcArity(Name);
+  if (auto Arity = knownArity(resolvedCallTarget(E), Name);
       Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0)
     return Clamp(static_cast<size_t>(Arity->IntArgs));
   return Have;
+}
+
+std::optional<libc::LibCArity>
+HighCWriter::knownArity(llvm::StringRef Symbol, llvm::StringRef Identifier) {
+  if (auto Arity = libc::libcArityForSymbol(Symbol))
+    return Arity;
+  return libc::libcArity(Identifier);
+}
+
+std::optional<size_t>
+HighCWriter::plainDeclarationArity(const HighExpr &E) const {
+  if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None ||
+      E.IsIndirectCall || E.CallTarget.empty() ||
+      DefinedFuncs.count(E.CallTarget) || debugCallee(E))
+    return std::nullopt;
+  // Source, debug and MSVC knowledge declare the function their own way.
+  const std::string Name = callIdentifier(E);
+  if (SourceNativeSignatures.count(Name) ||
+      ConflictingSourceNativeSignatures.count(Name) ||
+      msvcCallee(Name, Opts.Format))
+    return std::nullopt;
+  const auto Arity = knownArity(resolvedCallTarget(E), Name);
+  if (!Arity || Arity->FpArgs != 0 || Arity->IntArgs < 0)
+    return std::nullopt;
+  return static_cast<size_t>(Arity->IntArgs);
 }
 
 namespace {
@@ -1482,7 +1518,7 @@ TypeRef HighCWriter::displayCallArgType(const HighExpr &Call,
   if (auto It = DebugExternSigs.find(Name); It != DebugExternSigs.end())
     if (TypeRef Ty = FromFS(It->second))
       return Ty;
-  if (const MsvcCallee *Msvc = msvcCallee(Name)) {
+  if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format)) {
     if (Index == 0 || msvcTypesCallArgAsPointer(*Msvc, Index) ||
         (Msvc->Kind == MsvcCalleeKind::Ctor && Index == 1)) {
       TypeRef Ty = cDisplayType(msvcSyntheticThis(Name, *Msvc));
@@ -1700,7 +1736,7 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
   }
   std::string Declarator = Identifier + "(";
   size_t Emitted = 0;
-  const MsvcCallee *Msvc = msvcCallee(Identifier);
+  const MsvcCallee *Msvc = msvcCallee(Identifier, Opts.Format);
   auto Emit = [&](TypeRef Ty, std::string Name) {
     if (Msvc && Msvc->ArityKind == MsvcArityKind::Fixed &&
         Emitted >= Msvc->MaxArgs)
@@ -3009,8 +3045,9 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       for (const auto &[Disp, Slot] : FrameStorageSlots)
         if (Slot.Name == Name && E.Var.Kind != MedVar::Param &&
             !isEmittedParamName(Name) && !isCxxCatchObjectName(Name))
-          return memoryLoadExpr(Slot.Type ? Slot.Type : E.Type,
-                                frameStorageAddress(Disp));
+          return bareLoad(memoryLoadExpr(Slot.Type ? Slot.Type : E.Type,
+                                         frameStorageAddress(Disp)),
+                          ParentPrec);
     }
     const HighExpr *Forwarded = nullptr;
     if (auto Printed = printedForwardedVar(Name, ParentPrec, &Forwarded);
@@ -3102,9 +3139,10 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     if (E.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
       if (auto VA = constAddress(*E.Operands[0])) {
         if (imageBackingAddress(*VA))
-          return memoryLoadExpr(E.Type, addrStr(*E.Operands[0]),
-                                E.MemoryOrdering, E.MemoryAddressSpace, true,
-                                Destination);
+          return bareLoad(memoryLoadExpr(E.Type, addrStr(*E.Operands[0]),
+                                         E.MemoryOrdering, E.MemoryAddressSpace,
+                                         true, Destination),
+                          ParentPrec);
       }
     }
     if (E.MemoryOrdering == NdMemoryOrdering::None &&
@@ -3140,10 +3178,12 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
            E.Type->Size == 2 || E.Type->Size == 4 || E.Type->Size == 8 ||
            E.Type->Size == 16 || E.Type->Size == 32 || E.Type->Size == 64) &&
           equalSourceTypes(AddressType->Pointee, E.Type))
-        return "(*(" + memoryTypeName(E.Type) + " *)(" + Addr + "))";
+        return bareLoad("(*(" + memoryTypeName(E.Type) + " *)(" + Addr + "))",
+                        ParentPrec);
     }
-    return memoryLoadExpr(E.Type, Addr, E.MemoryOrdering, E.MemoryAddressSpace,
-                          false, Destination);
+    return bareLoad(memoryLoadExpr(E.Type, Addr, E.MemoryOrdering,
+                                   E.MemoryAddressSpace, false, Destination),
+                    ParentPrec);
   }
   case ExprKind::Store: {
     if (E.Operands.size() < 2)

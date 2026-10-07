@@ -144,6 +144,25 @@ bool LibraryCodeView::canFold() const {
                      [](const auto &region) { return region.available; });
 }
 
+bool LibraryCodeView::hasRegion(const QString &id) const {
+  return std::any_of(regions_.begin(), regions_.end(), [&](const auto &region) {
+    return region.available && region.id == id;
+  });
+}
+
+int LibraryCodeView::displayLine(int sourceLine) const {
+  qsizetype start = 0;
+  for (int line = 0; line < sourceLine; ++line) {
+    start = original_.indexOf(QLatin1Char('\n'), start);
+    if (start < 0)
+      return -1;
+    ++start;
+  }
+  return int(QStringView(text_)
+                 .left(displayPosition(int(start)))
+                 .count(QLatin1Char('\n')));
+}
+
 void LibraryCodeView::toggleRegion(const QString &id) {
   setRegionFolded(id, !folded_.contains(id));
 }
