@@ -15,6 +15,7 @@
 #include "CallArgCollectionDetail.h"
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include <algorithm>
 
@@ -24,23 +25,30 @@ namespace call_args_detail {
 void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
                         std::vector<ExprPtr> &Args) {
   collectSpilledStackArgs(Scan, Found);
+  const BinaryFormat Format =
+      Scan.Image ? Scan.Image->Format : BinaryFormat::Unknown;
+  const size_t RegisterPositions =
+      Scan.TRI->integerArgumentLayout(Format).Registers.size();
   // A summarized callee reads no stack slot past the last one its body, or
   // a tail call it makes, reads: an outgoing-area store beyond that belongs
   // to another call or is a local.
-  if (isWin64(Scan) && Scan.CalleeRegisterArgs >= 0 &&
-      Scan.CalleeStackArgs >= 0) {
-    const int FirstStackArg = static_cast<int>(
-        Scan.TRI->integerArgumentLayout(true).Registers.size());
+  if (Scan.Convention && Scan.Convention->StackArgumentSummary &&
+      Scan.CalleeRegisterArgs >= 0 && Scan.CalleeStackArgs >= 0) {
+    const int FirstStackArg = static_cast<int>(RegisterPositions);
     for (size_t K = std::max(FirstStackArg, Scan.CalleeStackArgs);
          K < Found.size(); ++K)
       Found[K] = nullptr;
   }
-  // A stack argument means all four register arguments are passed, even the
-  // ones this block did not write (a pass-through of the caller's own).
-  if (isWin64(Scan) && Scan.ReachingRegArg &&
-      std::any_of(Found.begin() + std::min<size_t>(4, Found.size()),
+  // With positional slots a stack argument means every register argument is
+  // passed, even the ones this block did not write (a pass-through of the
+  // caller's own).
+  if (Scan.Convention && Scan.Convention->PositionalArgumentSlots &&
+      Scan.ReachingRegArg &&
+      std::any_of(Found.begin() + std::min(RegisterPositions, Found.size()),
                   Found.end(), [](const ExprPtr &E) { return E != nullptr; }))
-    for (int K = 0; K < 4 && K < static_cast<int>(Found.size()); ++K)
+    for (int K = 0; K < static_cast<int>(RegisterPositions) &&
+                    K < static_cast<int>(Found.size());
+         ++K)
       if (!Found[K]) {
         // A slot the callee does not read still occupies its position.
         Found[K] = Scan.ReachingRegArg(K);
@@ -91,6 +99,15 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
     Found[K] = Pushed[K];
   Args = std::move(Pushed);
 }
+
+/// i386 cdecl and stdcall push their arguments, and a block boundary between
+/// the pushes and a call alone in its block leaves them in its predecessor.
+/// ECX and EDX there are not arguments.
+extern const CallArgPolicy I386CallArgPolicy;
+const CallArgPolicy I386CallArgPolicy = {
+    .TheArch = Arch::X86,
+    .ReadsPredecessorWindow = true,
+};
 
 } // namespace call_args_detail
 } // namespace neverd

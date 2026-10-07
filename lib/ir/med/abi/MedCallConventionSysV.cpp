@@ -34,6 +34,8 @@ const CallArgumentConvention SysVX64CallArguments = {
     /*VariadicFromSummary=*/false,
     /*StackArgumentSummary=*/false,
     /*IndirectCallsTakePrecedingSetup=*/true,
+    /*PositionalArgumentSlots=*/false,
+    /*ReservedOutgoingArea=*/false,
 };
 
 } // namespace neverd

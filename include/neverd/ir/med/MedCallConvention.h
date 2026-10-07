@@ -49,6 +49,16 @@ struct CallArgumentConvention {
   /// An indirect call whose own block sets no argument register takes the
   /// consecutive setup writes of the block before it, as IDA does.
   bool IndirectCallsTakePrecedingSetup = false;
+  /// Every argument takes the next position whatever its class: register
+  /// position K is the Kth integer or the Kth vector argument register, and
+  /// the stack positions follow all the register ones.
+  bool PositionalArgumentSlots = false;
+  /// The caller reserves its outgoing argument area once, with a home slot
+  /// for each register position.  A stack argument is a store at a fixed
+  /// offset from the stack pointer anywhere before the call, also at a fixed
+  /// offset from the entry stack pointer, and the callee may read every slot
+  /// below the last one passed.
+  bool ReservedOutgoingArea = false;
 };
 
 /// The convention of code for \p A in a \p F image, or nullptr when NeverD
