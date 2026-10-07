@@ -14,6 +14,10 @@ add_neverd_component_library(NeverDIRMed
   abi/MedCallingConv.cpp
   abi/MedCallingConvX86.cpp
   abi/MedVariadic.cpp
+  abi/MedVariadicAArch64.cpp
+  abi/MedVariadicARM.cpp
+  abi/MedVariadicDarwin.cpp
+  abi/MedVariadicX86.cpp
   flags/MedFlags.cpp
   flags/MedFlagsARM.cpp
   flags/MedFlagsX86.cpp
