@@ -171,6 +171,10 @@ C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` �
 
 `windows-pe64-v1`은 PEB/TEB, 정적·동적 TLS, `DllMain`, 이름 기반 Win32 API 및 명시적 비순환 DLL 그래프를 갖춘 제한된 Windows x64/ARM64 콘솔 프로세스를 지원합니다. 게스트 모듈은 이름/서수 코드·데이터 가져오기, DIR64 재배치, 전달 내보내기 및 실제 로더 목록 식별자를 지원합니다. `LoadLibraryA` / `LoadLibraryW`, `FreeLibrary`, `GetProcAddress`는 설정된 모듈 카탈로그를 사용합니다. CRT/GUI, ARM64 스택 프레임 기반 사용자 SEH, 스레드 및 일반 Windows 앱 호환성은 미완성이며 네이티브 ARM64 KVM/WHP 증거도 아직 없습니다.
 
+`WindowsProcessTime.cpp`는 호스트 시계 기반 `GetSystemTimeAsFileTime`, `GetTickCount`, `QueryPerformanceCounter`, `QueryPerformanceFrequency`, `ZwDelayExecution`을 담당합니다. FILETIME은 1601년 기준 100 ns 단위이며, 성능 카운터는 단조 시계와 보고된 10 MHz 주파수를 사용하고 밀리초 tick은 32비트로 순환합니다. 500 ms 이하의 비경고 상대 지연과 0 간격을 지원합니다. 경고 가능 대기, 양수 절대 시각, 더 긴 지연은 대기를 줄이거나 성공을 반환하지 않고 명시적으로 중단합니다. LastError를 보존하며 CPU 백엔드마다 같은 모델을 사용합니다. `ZwDelayExecution`은 `BOOLEAN`의 하위 8비트만 읽으며 인수 레지스터의 사용하지 않는 상위 비트는 대기 정책에 영향을 주지 않습니다.
+
+[Windows x64 ABI](https://learn.microsoft.com/cpp/build/x64-calling-convention), [QueryPerformanceFrequency](https://learn.microsoft.com/windows/win32/api/profileapi/nf-profileapi-queryperformancefrequency), [FILETIME](https://learn.microsoft.com/windows/win32/api/minwinbase/ns-minwinbase-filetime).
+
 Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`와 현재 프로세스의 `FlushInstructionCache`를 지원합니다. OS 계층은 예약 영역을 소유하고 `AddressSpace`는 커밋된 페이지, 권한, 실제 저장 공간을 관리합니다. 테스트는 동적 코드 수정, 접근 오류, 메모리 한도 재사용을 검증합니다.
 
 전용 할당은 `MEM_RESERVE`, `MEM_COMMIT`, `MEM_DECOMMIT`, `MEM_RELEASE`, `MEM_TOP_DOWN`을 지원하며 예약 정렬은 64 KiB, 페이지는 4 KiB입니다. 예약만으로는 게스트 RAM을 사용하지 않습니다. 재커밋은 데이터를 보존하며 권한을 갱신하고 커밋 해제는 각 페이지의 저장 공간을 반환합니다. 전체 범위 검증과 사전 할당으로 일반적인 실패 시 일부만 변경되는 일을 방지합니다. 조회는 48바이트 x64/ARM64 메모리 정보 구조를 반환하고 동일한 할당 안에서만 이후 영역을 합칩니다. 초기 이미지, 환경, 힙 영역, API 진입점, 스택 경계도 배치에 반영하며 스택 할당 식별은 TEB와 일치합니다. 성공한 `VirtualProtect`가 이전 권한의 출력 위치를 읽기 전용으로 바꾸면 새 권한은 유지되고 출력 내용은 바뀌지 않으며 호출은 성공을 반환합니다. 커밋되지 않은 페이지를 포함한 범위의 권한 변경은 `ERROR_INVALID_ADDRESS`를 반환하고 이전 권한 출력에 `PAGE_NOACCESS`를 기록하며 페이지 권한은 변경하지 않습니다.

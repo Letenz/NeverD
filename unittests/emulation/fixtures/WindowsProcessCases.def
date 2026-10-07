@@ -28,6 +28,9 @@ NEVERD_WINDOWS_FIXTURE_VALUE(Quantum, 3)
 NEVERD_WINDOWS_FIXTURE_VALUE(InstructionLimit, 50000)
 NEVERD_WINDOWS_FIXTURE_VALUE(LoopLimit, 500)
 NEVERD_WINDOWS_FIXTURE_VALUE(LoopQuantum, 7)
+NEVERD_WINDOWS_FIXTURE_VALUE(ClockDelayTicks, 10000)
+NEVERD_WINDOWS_FIXTURE_VALUE(ClockMillisecondsPerSecond, 1000)
+NEVERD_WINDOWS_FIXTURE_VALUE(ClockTickWindow, 0x80000000)
 #endif
 #ifdef NEVERD_WINDOWS_FIXTURE_TEXT
 NEVERD_WINDOWS_FIXTURE_TEXT(Executable, "fixture.exe")
@@ -35,6 +38,10 @@ NEVERD_WINDOWS_FIXTURE_TEXT(Message, "Windows user process\n")
 NEVERD_WINDOWS_FIXTURE_TEXT(Detached, "TLS detached\n")
 NEVERD_WINDOWS_FIXTURE_TEXT(Binary, "A\0\xffZ")
 NEVERD_WINDOWS_FIXTURE_TEXT(Normal, "n")
+NEVERD_WINDOWS_FIXTURE_TEXT(ClockServices, "c")
+NEVERD_WINDOWS_FIXTURE_TEXT(ClockAlertable, "h")
+NEVERD_WINDOWS_FIXTURE_TEXT(ClockAbsolute, "o")
+NEVERD_WINDOWS_FIXTURE_TEXT(ClockTooLong, "w")
 NEVERD_WINDOWS_FIXTURE_TEXT(Returned, "r")
 NEVERD_WINDOWS_FIXTURE_TEXT(Loop, "l")
 NEVERD_WINDOWS_FIXTURE_TEXT(InitLoop, "i")
@@ -88,4 +95,21 @@ NEVERD_WINDOWS_FIXTURE_TEXT(NativeExit, "q")
 #endif
 #ifdef NEVERD_WINDOWS_FIXTURE_VALUE
 NEVERD_WINDOWS_FIXTURE_VALUE(ForgedReturnGate, 0x71000010)
+#endif
+
+#ifdef NEVERD_WINDOWS_FIXTURE_U64
+NEVERD_WINDOWS_FIXTURE_U64(ClockFileTimeEpoch, 116444736000000000ULL)
+NEVERD_WINDOWS_FIXTURE_U64(ClockMinimumInterval, 0x8000000000000000ULL)
+NEVERD_WINDOWS_FIXTURE_U64(ClockFutureInterval, 0x7fffffffffffffffLL)
+#endif
+#ifdef NEVERD_WINDOWS_CLOCK_ASM
+#if defined(_M_X64) || defined(__x86_64__)
+NEVERD_WINDOWS_CLOCK_ASM(
+    "movabsq $0xffff000000000000, %rax\norq %rax, %rcx\njmpq "
+    "*__imp_ZwDelayExecution(%rip)")
+#else
+NEVERD_WINDOWS_CLOCK_ASM(
+    "orr x0, x0, #0xffff000000000000\nadrp x16, __imp_ZwDelayExecution\nldr "
+    "x16, [x16, :lo12:__imp_ZwDelayExecution]\nbr x16")
+#endif
 #endif
