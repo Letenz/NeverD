@@ -169,6 +169,10 @@ C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` �
 
 `windows-pe64-v1` 支援有界 Windows x64/ARM64 主控台程序，包括 PEB/TEB、靜態與動態 TLS、`DllMain`、具名 Win32 API 和明確的無環 DLL 圖。客體模組支援依名稱／序號匯入程式碼與資料、DIR64 重定位、轉送匯出及真實載入器串列身分。`LoadLibraryA`／`LoadLibraryW`、`FreeLibrary` 和 `GetProcAddress` 使用設定的模組目錄。CRT／GUI、ARM64 以堆疊框架為基礎的使用者態 SEH、執行緒及通用 Windows 應用程式相容性仍待完成；原生 ARM64 KVM/WHP 證據仍缺失。
 
+`WindowsProcessTime.cpp` 管理以主機時鐘為基礎的 `GetSystemTimeAsFileTime`、`GetTickCount`、`QueryPerformanceCounter`、`QueryPerformanceFrequency` 與 `ZwDelayExecution`。FILETIME 以 1601 年為起點，單位為 100 ns；效能計數器使用單調時鐘並回報 10 MHz 頻率，毫秒 tick 計數以 32 位元回繞。支援不超過 500 ms 的非警覺相對延遲和零間隔；警覺等待、正數絕對時間和更長延遲明確停止，不縮短等待或回報成功。這些服務保留 LastError，各 CPU 後端使用相同模型。 `ZwDelayExecution` 僅讀取 `BOOLEAN` 的低 8 位元，參數暫存器未使用的高位元不會改變等待策略。
+
+[Windows x64 ABI](https://learn.microsoft.com/cpp/build/x64-calling-convention), [QueryPerformanceFrequency](https://learn.microsoft.com/windows/win32/api/profileapi/nf-profileapi-queryperformancefrequency), [FILETIME](https://learn.microsoft.com/windows/win32/api/minwinbase/ns-minwinbase-filetime).
+
 Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及目前行程的 `FlushInstructionCache`。OS 層管理保留區域，`AddressSpace` 統一管理已認可頁面、權限和實體儲存。測試涵蓋動態程式碼改寫、存取錯誤和記憶體額度回收。
 
 私有配置支援 `MEM_RESERVE`、`MEM_COMMIT`、`MEM_DECOMMIT`、`MEM_RELEASE` 和 `MEM_TOP_DOWN`，保留區域以 64 KiB 對齊，頁面大小為 4 KiB。僅保留不消耗客體 RAM。重複認可保留資料並更新權限，取消認可歸還個別頁面的儲存。完整範圍檢查和分階段配置避免一般配置或權限失敗留下部分修改。查詢傳回 48 位元組的 x64/ARM64 記憶體資訊結構，僅在同一次配置內向後合併。初始映像、環境、堆積區域、API 入口和堆疊邊界都參與位址配置；堆疊的配置識別與 TEB 一致。如果成功的 `VirtualProtect` 將舊權限的輸出位址改成唯讀，新權限仍生效、輸出內容保持不變，呼叫仍傳回成功。 對未完整認可範圍的權限修改失敗時，傳回 `ERROR_INVALID_ADDRESS`，將舊權限輸出設為 `PAGE_NOACCESS`，各頁權限保持不變。

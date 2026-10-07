@@ -234,6 +234,7 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
   case API::GetSystemTimeAsFileTime:
   case API::GetTickCount:
   case API::QueryPerformanceCounter:
+  case API::QueryPerformanceFrequency:
     return Wrap(clock(S, Event));
   case API::EncodePointer:
   case API::DecodePointer:

@@ -12,9 +12,7 @@
 #include "llvm/Support/Endian.h"
 
 #include <array>
-#include <cerrno>
 #include <cstdint>
-#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -651,71 +649,6 @@ Services::setThread(const Service &S, const NativeCallEvent &Event) {
       return failure(text::Access);
   }
   return std::optional<uint64_t>(0);
-}
-
-llvm::Expected<std::optional<uint64_t>>
-Services::delay(const Service &S, const NativeCallEvent &Event) {
-  const auto &A = Event.Arguments;
-  auto Refuse =
-      [&](const llvm::Twine &Why) -> llvm::Expected<std::optional<uint64_t>> {
-    Result.Stop = ProcessStopReason::UnsupportedService;
-    Result.Diagnostic =
-        std::string(text::ServiceArguments) + S.Name + ": " + Why.str();
-    return std::nullopt;
-  };
-  if (A[0] > 1 || !A[1])
-    return Refuse("flags");
-  auto Readable = access(A[1], PointerSize, Read);
-  if (!Readable)
-    return Readable.takeError();
-  if (!*Readable)
-    return failure(text::Access);
-  auto Ticks = CPU.readInteger(A[1], PointerSize);
-  if (!Ticks)
-    return Ticks.takeError();
-  const auto Interval = static_cast<int64_t>(*Ticks);
-  if (Interval < 0) {
-    const uint64_t Magnitude = Interval == INT64_MIN
-                                   ? static_cast<uint64_t>(INT64_MAX) + 1
-                                   : static_cast<uint64_t>(-Interval);
-    uint64_t Nanoseconds =
-        Magnitude > UINT64_MAX / 100 ? DelayCapNanoseconds : Magnitude * 100;
-    if (Nanoseconds > DelayCapNanoseconds)
-      Nanoseconds = DelayCapNanoseconds;
-    timespec Request{};
-    Request.tv_sec = static_cast<time_t>(Nanoseconds / 1000000000ull);
-    Request.tv_nsec = static_cast<long>(Nanoseconds % 1000000000ull);
-    while (nanosleep(&Request, &Request) != 0 && errno == EINTR)
-      ;
-  }
-  return std::optional<uint64_t>(0);
-}
-
-llvm::Expected<std::optional<uint64_t>>
-Services::clock(const Service &S, const NativeCallEvent &Event) {
-  const auto &A = Event.Arguments;
-  const bool File = S.Kind == API::GetSystemTimeAsFileTime;
-  timespec Ts{};
-  if (clock_gettime(File ? CLOCK_REALTIME : CLOCK_MONOTONIC, &Ts) != 0)
-    return failure("host clock");
-  if (S.Kind == API::GetTickCount)
-    return std::optional<uint64_t>(
-        (uint64_t(Ts.tv_sec) * 1000u + uint64_t(Ts.tv_nsec) / 1000000u) &
-        0xffffffffu);
-  const uint64_t Value =
-      File ? uint64_t(Ts.tv_sec) * PerformanceFrequency + FileTimeEpoch +
-                 Ts.tv_nsec / 100
-           : uint64_t(Ts.tv_sec) * PerformanceFrequency + Ts.tv_nsec / 100;
-  if (!A[0])
-    return failure(text::Access);
-  auto Writable = access(A[0], PointerSize, Write);
-  if (!Writable)
-    return Writable.takeError();
-  if (!*Writable)
-    return failure(text::Access);
-  if (auto E = CPU.writeInteger(A[0], Value, PointerSize))
-    return std::move(E);
-  return std::optional<uint64_t>(File ? 0 : 1);
 }
 
 llvm::Expected<std::optional<uint64_t>>

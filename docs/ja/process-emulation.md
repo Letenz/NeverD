@@ -171,6 +171,10 @@ C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` �
 
 `windows-pe64-v1` は PEB/TEB、静的・動的 TLS、`DllMain`、名前付き Win32 API、明示的な非循環 DLL グラフを持つ有界 Windows x64/ARM64 コンソールプロセスに対応します。ゲストモジュールは名前／序数によるコード・データのインポート、DIR64 再配置、転送エクスポートと実際のローダーリスト識別子を扱います。`LoadLibraryA` / `LoadLibraryW`、`FreeLibrary`、`GetProcAddress` は設定済みモジュールカタログを使用します。CRT/GUI、ARM64 のフレームベースのユーザー SEH、スレッド、一般的な Windows アプリ互換性は未完成で、ネイティブ ARM64 KVM/WHP の証拠も未取得です。
 
+`WindowsProcessTime.cpp` はホスト時計に基づく `GetSystemTimeAsFileTime`、`GetTickCount`、`QueryPerformanceCounter`、`QueryPerformanceFrequency`、`ZwDelayExecution` を管理します。FILETIME は 1601 年を起点とする 100 ns 単位、性能カウンターは単調時計と報告される 10 MHz の周波数を使い、ミリ秒の tick 数は 32 ビットで循環します。500 ms 以下の非 alertable 相対待機とゼロ間隔を受け入れます。alertable 待機、正の絶対時刻、より長い待機は明示的に停止し、待機を短縮したり成功を返したりしません。LastError を保持し、CPU バックエンド間で同じモデルを使います。 `ZwDelayExecution` は `BOOLEAN` の下位 8 ビットだけを読み、引数レジスターの未使用上位ビットは待機ポリシーに影響しません。
+
+[Windows x64 ABI](https://learn.microsoft.com/cpp/build/x64-calling-convention), [QueryPerformanceFrequency](https://learn.microsoft.com/windows/win32/api/profileapi/nf-profileapi-queryperformancefrequency), [FILETIME](https://learn.microsoft.com/windows/win32/api/minwinbase/ns-minwinbase-filetime).
+
 Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
 
 プライベート割り当ては `MEM_RESERVE`、`MEM_COMMIT`、`MEM_DECOMMIT`、`MEM_RELEASE`、`MEM_TOP_DOWN` に対応し、予約は 64 KiB 境界、ページは 4 KiB です。予約だけではゲスト RAM を消費しません。再コミットは内容を保持して権限を更新し、デコミットは各ページの記憶域を返します。範囲全体の検証と割り当ての準備により、通常の失敗で部分変更を残しません。クエリは 48 バイトの x64/ARM64 メモリ情報を返し、同一割り当て内で前方に結合します。初期イメージ、環境、ヒープ領域、API 入口、スタック境界も配置に含め、スタックの識別を TEB と一致させます。成功した `VirtualProtect` が旧権限の出力先を読み取り専用にした場合、新しい権限は適用されたまま、出力内容は変わらず、呼び出しは成功を返します。 未コミットページを含む範囲の保護変更は `ERROR_INVALID_ADDRESS` を返し、旧権限の出力に `PAGE_NOACCESS` を書き込みますが、ページ権限は変更しません。

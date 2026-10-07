@@ -46,11 +46,14 @@ NEVERD_WINDOWS_PROCESS_API(ZwQueryInformationProcess, Native, 5, true)
 NEVERD_WINDOWS_PROCESS_API(ZwQueryInformationThread, Native, 5, true)
 // ThreadHideFromDebugger for the current thread. The call is acknowledged.
 NEVERD_WINDOWS_PROCESS_API(ZwSetInformationThread, Native, 4, true)
-// A relative interval is waited, and capped, on the host clock.
+// Nonalertable relative intervals within DelayCapNanoseconds use the host
+// clock. Absolute, alertable and longer delays stop without claiming
+// completion.
 NEVERD_WINDOWS_PROCESS_API(ZwDelayExecution, Native, 2, true)
 NEVERD_WINDOWS_PROCESS_API(GetSystemTimeAsFileTime, Kernel, 1, true)
 NEVERD_WINDOWS_PROCESS_API(GetTickCount, Kernel, 0, true)
 NEVERD_WINDOWS_PROCESS_API(QueryPerformanceCounter, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(QueryPerformanceFrequency, Kernel, 1, true)
 NEVERD_WINDOWS_PROCESS_API(HeapCreate, Kernel, 3, true)
 NEVERD_WINDOWS_PROCESS_API(HeapSetInformation, Kernel, 4, true)
 NEVERD_WINDOWS_PROCESS_API(EncodePointer, Kernel, 1, true)

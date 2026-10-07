@@ -173,6 +173,10 @@ x64 的 `arch_prctl` 支持 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS` 和 `A
 
 `windows-pe64-v1` 支持有界 Windows x64/ARM64 控制台进程，包括 PEB/TEB、静态和动态 TLS、`DllMain`、具名 Win32 API 和显式无环 DLL 图。客户模块支持按名称／序号导入代码及数据、DIR64 重定位、转发导出和真实加载器链表身份。`LoadLibraryA`／`LoadLibraryW`、`FreeLibrary` 和 `GetProcAddress` 使用配置的模块目录。CRT／GUI、ARM64 基于栈帧的用户态 SEH、线程和通用 Windows 应用兼容性仍待完成；原生 ARM64 KVM/WHP 证据仍缺失。
 
+`WindowsProcessTime.cpp` 管理基于主机时钟的 `GetSystemTimeAsFileTime`、`GetTickCount`、`QueryPerformanceCounter`、`QueryPerformanceFrequency` 与 `ZwDelayExecution`。FILETIME 以 1601 年为起点，单位为 100 ns；性能计数器使用单调时钟并报告 10 MHz 频率，毫秒 tick 计数按 32 位回绕。支持不超过 500 ms 的非警觉相对延迟和零间隔；警觉等待、正数绝对时间和更长延迟明确停止，不缩短等待或报告成功。这些服务保持 LastError，各 CPU 后端使用同一模型。 `ZwDelayExecution` 仅读取 `BOOLEAN` 的低 8 位，参数寄存器的未使用高位不会改变等待策略。
+
+[Windows x64 ABI](https://learn.microsoft.com/cpp/build/x64-calling-convention), [QueryPerformanceFrequency](https://learn.microsoft.com/windows/win32/api/profileapi/nf-profileapi-queryperformancefrequency), [FILETIME](https://learn.microsoft.com/windows/win32/api/minwinbase/ns-minwinbase-filetime).
+
 Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及当前进程的 `FlushInstructionCache`。OS 层管理预留区域，`AddressSpace` 统一管理已提交页面、权限和物理存储。测试覆盖动态代码改写、访问故障和内存额度回收。
 
 私有分配支持 `MEM_RESERVE`、`MEM_COMMIT`、`MEM_DECOMMIT`、`MEM_RELEASE` 和 `MEM_TOP_DOWN`，预留按 64 KiB 对齐，页面大小为 4 KiB。仅预留不消耗来宾 RAM。重复提交保留数据并更新权限，解除提交归还独立页面的存储。完整范围校验和分阶段分配避免普通分配或权限失败留下部分修改。查询返回 48 字节的 x64/ARM64 内存信息结构，并仅在同一次分配内向后合并。初始映像、环境、堆区域、API 入口和栈边界均参与地址分配；栈的分配标识与 TEB 一致。如果成功的 `VirtualProtect` 将旧权限的输出地址改成只读，新权限仍生效，输出内容保持不变，调用仍返回成功。 对未完整提交范围的权限修改失败时，返回 `ERROR_INVALID_ADDRESS`，旧权限输出写为 `PAGE_NOACCESS`，各页权限保持不变。
