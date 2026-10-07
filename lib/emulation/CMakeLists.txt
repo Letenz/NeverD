@@ -103,6 +103,7 @@ add_neverd_component_library(NeverDEmulationProcess
   runtime/ProcessLinuxTimeJSON.cpp
   runtime/ProcessLinuxSignalsJSON.cpp
   runtime/ProcessLinuxPriorityJSON.cpp
+  runtime/ProcessLinuxKernelJSON.cpp
   runtime/ProcessLinuxFilesJSON.cpp
   runtime/ProcessAndroidJSON.cpp
   runtime/ProcessWindowsJSON.cpp

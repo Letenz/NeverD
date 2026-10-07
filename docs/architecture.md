@@ -3523,3 +3523,12 @@ CAP_SYS_NICE/RLIMIT_NICE authority; unknown task state and group/user selection
 remain unsupported boundaries. The raw getter keeps kernel return encoding,
 and permission failures leave the task state unchanged. JSON vocabulary and
 diagnostics live in the existing process and Linux `.def` files.
+
+`LinuxUnavailableSyscalls.def` owns the public absence observation identifiers,
+input names, architecture numbers and fixed arities for selected optional
+kernel calls. `LinuxKernelOptions` is an explicit fixture observation; the
+shared Linux kernel service layer returns ENOSYS only when that observation
+declares a call absent. The catalogue does not supply an implementation or
+derive availability from an Android API level. JSON validation and profile
+admission happen before loading; unlisted and available-but-unmodeled calls
+retain their unsupported boundary.

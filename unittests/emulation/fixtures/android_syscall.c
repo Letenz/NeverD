@@ -113,3 +113,15 @@ u64 syscall_dynamic(u64 after_close) {
     return 3;
   return result == gettid() && *__errno() == 77 ? 0 : 4;
 }
+
+/* Raw and Bionic paths retain their different error encodings. */
+u64 syscall_unavailable_kernel(u64 *out) {
+  *__errno() = 77;
+  out[0] = (u64)raw(434, 1000, 0, 0, 0, 0, 0);
+  out[1] = (u64)*__errno();
+  out[2] = (u64)syscall(434, 1000UL, 0UL);
+  out[3] = (u64)*__errno();
+  out[4] = (u64)syscall(434, ~0UL, ~0UL);
+  out[5] = (u64)*__errno();
+  return 0;
+}

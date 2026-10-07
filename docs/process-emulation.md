@@ -83,6 +83,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 | `linux_files` | Absent | Closed catalogue of immutable guest files for Linux ELF64 and Android native workloads |
 | `linux_signals` | Absent | Explicit initial signal dispositions; no signal delivery or host handlers |
 | `linux_priority` | Absent | Explicit per-task nice values and caller authority for raw Linux priority services |
+| `linux_kernel` | Absent | Explicit guest kernel interfaces known to be unavailable |
 
 `schema_version` is 1. Results include profile, architecture, selected backend
 and its selection reason, `stop_reason`, nullable `exit_status`, diagnostic,
@@ -142,6 +143,22 @@ stop as `unsupported_service`; they never execute host syscalls.
 Real/effective identity queries agree with the corresponding auxv entries.
 They use the deterministic model identity above; credential-changing services
 such as `setuid` remain unsupported.
+
+The optional `linux_kernel` input records explicitly observed absent kernel
+interfaces. For example, a fixture with no `pidfd_open` implementation uses:
+
+```json
+{"linux_kernel":{"unavailable_syscalls":["pidfd_open"]}}
+```
+
+The selected raw call returns -ENOSYS before argument validation, as a missing
+kernel entry does, and creates no descriptor or guest-memory effect. Bionic's
+`syscall` wrapper retains its normal -1/errno translation. Missing input and an
+empty list retain the existing unsupported boundary for this interface;
+other unknown calls are not converted to ENOSYS. Currently only `pidfd_open`
+is admitted; unknown names, duplicates and wrong types are rejected. This
+input does not infer a kernel version, host availability or a working pidfd
+implementation. See the [kernel missing-call implementation](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c).
 
 The optional `linux_priority` input declares nice state for fixture-owned tasks
 with the caller's UID. Raw `setpriority` and `getpriority` share this state across
