@@ -347,4 +347,47 @@ int main(void) {
 )");
 }
 
+TEST(HighValueForward, StatusTestTakesTheCallItReads) {
+  // t1 = probe(x) is read once, by the test right after it: the test calls
+  // probe.  In tested_against_local the test also reads t2, so the call
+  // keeps its statement.
+  auto Probe = [] {
+    auto Call = HighExpr::makeCall("probe", 0x2000, {input()});
+    Call->Type = NdType::makeInt(8, true);
+    return Call;
+  };
+  HighFunc Tested =
+      function("tested", {assign(local(1), Probe()),
+                          when(op(NdOp::INT_SLESS, local(1), constant(0), true),
+                               {result(constant(1))}),
+                          result(constant(2))});
+  HighFunc Local =
+      function("tested_against_local",
+               {assign(local(2), op(NdOp::INT_ADD, input(), constant(1))),
+                assign(local(1), Probe()),
+                when(op(NdOp::INT_SLESS, local(1), local(2), true),
+                     {result(constant(1))}),
+                result(local(2))});
+  const std::string Source = emit({Tested, Local});
+  const size_t LocalAt = Source.find("tested_against_local(");
+  ASSERT_NE(LocalAt, std::string::npos) << Source;
+  EXPECT_NE(Source.substr(0, LocalAt).find("if (probe(arg0) < 0)"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("t1 = probe(arg0);", LocalAt), std::string::npos)
+      << Source;
+  compileAndRun(Source + R"(
+static unsigned calls;
+int probe(uint64_t x) { ++calls; return (int)x - 10; }
+int main(void) {
+  for (uint64_t x = 0; x < 20; ++x) {
+    calls = 0;
+    if (tested(x) != (x < 10 ? 1 : 2) || calls != 1) return 1;
+    if (tested_against_local(x) != 1 || calls != 2) return 2;
+  }
+  return 0;
+}
+)");
+}
+
 } // namespace

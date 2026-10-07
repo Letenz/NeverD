@@ -3073,6 +3073,71 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     return false;
   };
 
+  // A test of the result right after the call moves nothing either:
+  // `v = f(x); if (v < 0)` is `if (f(x) < 0)`.  The condition holds no
+  // other variable, whose own folding could put a read beside the call, and
+  // reaches the result only through operators that print each operand once
+  // and always evaluate it, so the call runs once, where it ran.
+  auto callResultTestedNext = [&](const HighStmt &Def, const Site &Info) {
+    const HighExpr &Call = *Def.Val;
+    if (Call.Kind != ExprKind::Call || Info.Cleanup || Info.Handler ||
+        Def.Dst->Var.Kind == MedVar::Stack ||
+        Call.IntrinsicId != Intrinsic::None || !Call.IntrinsicOutputs.empty() ||
+        Call.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        (Call.CallTarget.empty() && Call.CallAddr == 0) ||
+        isNoreturnCallExpr(Call) || isMsvcCxxThrowCallName(Call.CallTarget) ||
+        knownVoidCall(Call) || isVoidSelfCall(Call))
+      return false;
+    const auto SeqIt = Linear.find(Info.Region);
+    if (SeqIt == Linear.end())
+      return false;
+    const std::vector<const HighStmt *> &Seq = SeqIt->second;
+    const std::string Name = varName(Def.Dst->Var);
+    for (size_t I = Info.Index + 1; I < Seq.size(); ++I) {
+      const HighStmt &Next = *Seq[I];
+      if (isLabelAddress(Next.Addr))
+        return false;
+      if (Analysis.DeadStmts.count(&Next) || stmtHiddenFromC(Next) ||
+          Next.Kind == StmtKind::Block)
+        continue;
+      if ((Next.Kind != StmtKind::If && Next.Kind != StmtKind::IfElse) ||
+          !Next.Cond)
+        return false;
+      unsigned Reads = 0;
+      std::function<bool(const HighExpr &)> Plain = [&](const HighExpr &E) {
+        if (E.Kind == ExprKind::Const)
+          return true;
+        if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
+          ++Reads;
+          return varName(E.Var) == Name;
+        }
+        const bool Once =
+            (E.Kind == ExprKind::Cast || E.Kind == ExprKind::BitCast) ||
+            (E.Kind == ExprKind::UnaryOp &&
+             (E.Op == NdOp::INT_ZEXT || E.Op == NdOp::INT_SEXT ||
+              E.Op == NdOp::BOOL_NOT)) ||
+            (E.Kind == ExprKind::BinOp &&
+             (E.Op == NdOp::INT_EQUAL || E.Op == NdOp::INT_NOTEQUAL ||
+              E.Op == NdOp::INT_LESS || E.Op == NdOp::INT_LESSEQUAL ||
+              E.Op == NdOp::INT_SLESS || E.Op == NdOp::INT_SLESSEQUAL ||
+              E.Op == NdOp::INT_AND || E.Op == NdOp::SUBBYTES));
+        if (!Once || E.IntrinsicId != Intrinsic::None ||
+            !E.IntrinsicOutputs.empty() || E.IndirectTarget)
+          return false;
+        if (E.Kind == ExprKind::BinOp && E.Op == NdOp::SUBBYTES &&
+            (E.Operands.size() != 2 || !E.Operands[1] ||
+             E.Operands[1]->Kind != ExprKind::Const ||
+             E.Operands[1]->ConstVal != 0))
+          return false;
+        return llvm::all_of(E.Operands, [&](const ExprPtr &Operand) {
+          return Operand && Plain(*Operand);
+        });
+      };
+      return Plain(*Next.Cond) && Reads == 1;
+    }
+    return false;
+  };
+
   struct Candidate {
     const HighStmt *Stmt = nullptr;
     std::string Name;
@@ -3122,7 +3187,8 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     if (Info.Handler)
       InEHClauseBody = true;
     const bool Fwdable = isForwardableValueExpr(*Stmt->Val) ||
-                         callResultReturnedNext(*Stmt, Info);
+                         callResultReturnedNext(*Stmt, Info) ||
+                         callResultTestedNext(*Stmt, Info);
     const HighExpr *Src = peelIntegerViewOps(Stmt->Val.get());
     const bool NamedSlotLoad = Src && Src->Kind == ExprKind::Load &&
                                !Src->Operands.empty() && Src->Operands[0] &&

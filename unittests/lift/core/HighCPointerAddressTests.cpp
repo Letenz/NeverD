@@ -9823,7 +9823,8 @@ TEST(HighCPointerAddresses, FallthroughKeepsRecalledPredCall) {
   Func.Body = {First, Skip, Find, Second, Inner, Ret};
   invertSkipGotos(Func);
   const std::string Source = emitFunctions({Func});
-  const auto FirstAt = Source.find("t8_1 = IsMediaPayload(arg0);");
+  // The first result is only tested, so the test may make the call.
+  const auto FirstAt = Source.find("IsMediaPayload(arg0)");
   const auto FindAt = Source.find("Find(arg0);");
   const auto SecondAt = Source.find("t8_2 = IsMediaPayload(arg0);");
   ASSERT_NE(FirstAt, std::string::npos) << Source;
