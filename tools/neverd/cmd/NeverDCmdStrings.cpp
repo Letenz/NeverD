@@ -95,22 +95,6 @@ std::string printable(StringRef Text) {
   return Out;
 }
 
-/// The instruction at \p Address as the engine disassembles it.
-std::string instructionAt(neverd_session_t Sess, neverd_va_t Address) {
-  auto Parsed = json::parse(take(neverd_disasm_json(Sess, Address, 1)));
-  const json::Array *Rows = Parsed ? Parsed->getAsArray() : nullptr;
-  if (!Parsed)
-    consumeError(Parsed.takeError());
-  if (!Rows || Rows->empty() || !(*Rows)[0].getAsObject())
-    return {};
-  const auto &Row = *(*Rows)[0].getAsObject();
-  std::string Text = Row.getString("mnemonic").value_or("").str();
-  if (const auto Operands = Row.getString("op_str");
-      Operands && !Operands->empty())
-    Text += " " + Operands->str();
-  return Text;
-}
-
 std::optional<json::Value> parseOrReport(const std::string &Text) {
   auto Parsed = json::parse(Text);
   if (!Parsed) {
@@ -161,10 +145,10 @@ int runStringReferences(neverd_session_t Sess, const std::string &Options) {
     }
     const json::Array *Refs = Object.getArray("refs");
     for (const auto &Ref : Refs ? *Refs : json::Array()) {
-      // [from, to, string, text_offset, kind, via|null]
+      // [from, to, string, text_offset, kind, via|null, instruction]
       const json::Array *Row = Ref.getAsArray();
       uint64_t From = 0, String = 0;
-      if (!Row || Row->size() != 6 ||
+      if (!Row || Row->size() != 7 ||
           (*Row)[0].getAsString().value_or("").getAsInteger(0, From) ||
           (*Row)[2].getAsString().value_or("").getAsInteger(0, String) ||
           !ByAddress.count(String)) {
@@ -189,7 +173,8 @@ int runStringReferences(neverd_session_t Sess, const std::string &Options) {
       const std::string Encoding =
           Found.getString("encoding").value_or("").str();
       const auto Type = Types.find(Encoding);
-      const std::string Instruction = instructionAt(Sess, From);
+      const std::string Instruction =
+          (*Row)[6].getAsString().value_or("").str();
       const auto Via = (*Row)[5].getAsString();
       ++Count;
       if (JsonOutput) {

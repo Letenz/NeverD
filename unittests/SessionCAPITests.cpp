@@ -2083,11 +2083,15 @@ TEST_F(SessionCAPITest, RelocatedImmediatesAreOffsetsAndNumbersAreNot) {
   ASSERT_GE(neverd_session_discover_functions(Session), 1);
   const auto Refs =
       takeString(neverd_string_refs_json(Session, nullptr, 0, 16));
-  EXPECT_NE(Refs.find(R"(["0x401000","0x402000","0x402000",0,"offset",null])"),
-            std::string::npos)
+  EXPECT_NE(
+      Refs.find(
+          R"(["0x401000","0x402000","0x402000",0,"offset",null,"push 0x402000"])"),
+      std::string::npos)
       << Refs;
-  EXPECT_NE(Refs.find(R"(["0x40100C","0x402006","0x402006",0,"offset",null])"),
-            std::string::npos)
+  EXPECT_NE(
+      Refs.find(
+          R"(["0x40100C","0x402006","0x402006",0,"offset",null,"mov eax, 0x402006"])"),
+      std::string::npos)
       << Refs;
   // Without relocations the same immediates are numbers.
   EXPECT_TRUE(offsets(false).empty());

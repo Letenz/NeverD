@@ -228,8 +228,10 @@ void HexView::request(Address key) const {
         if (serial != self->serial_)
           return;
         self->pending_.remove(base);
-        // An encoding this engine does not know reads as ASCII again.
-        if (code == QLatin1String("unsupported_encoding"))
+        // An encoding this engine does not know, or an engine that decodes
+        // no text, reads as ASCII again.
+        if (code == QLatin1String("unsupported_encoding") ||
+            code == QLatin1String("unsupported"))
           self->setTextEncoding({});
       });
 }

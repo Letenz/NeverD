@@ -2420,16 +2420,16 @@ struct Listing::Impl {
         throw Error("engine_error", takeString(neverd_last_error(session)));
       const auto page = takeJson(raw);
       cursor.reset();
-      // [from, to, string, text_offset, kind, via|null]
+      // [from, to, string, text_offset, kind, via|null, instruction]
       for (const auto &row : page.value("refs", Json::array())) {
-        const auto string = row.is_array() && row.size() == 6
+        const auto string = row.is_array() && row.size() == 7
                                 ? stringIndex(jsonAddress(row[2]))
                                 : std::nullopt;
         const auto kind = string && row[4].is_string()
                               ? parseRefKind(row[4].get<std::string>())
                               : std::nullopt;
         const auto offset =
-            jsonCount(row.is_array() && row.size() == 6 ? row[3] : Json());
+            jsonCount(row.is_array() && row.size() == 7 ? row[3] : Json());
         // The engine names strings of the same options; another one, or
         // text past its end, is an engine error, not a row to drop.
         if (!kind || offset > strings[*string].value.size())

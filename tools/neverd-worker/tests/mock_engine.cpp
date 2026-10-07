@@ -372,16 +372,17 @@ const char *neverd_string_refs_json(neverd_session_t s, const char *options,
   if (firstEntry <= Entry && maxFunctions >= 1) {
     if (wanted("utf-8"))
       refs.push_back({hexAddress(Entry + 2), hexAddress(RodataBase),
-                      hexAddress(RodataBase), 0, "offset", nullptr});
+                      hexAddress(RodataBase), 0, "offset", nullptr, "nop"});
     if (wanted("utf-16le"))
       refs.push_back({hexAddress(Entry + 3), hexAddress(RodataBase + 8),
-                      hexAddress(RodataBase + 8), 0, "read", hexAddress(slot)});
+                      hexAddress(RodataBase + 8), 0, "read", hexAddress(slot),
+                      "nop"});
     if (wanted("utf-8") && minimum <= 1)
       refs.push_back({hexAddress(Entry + 4), hexAddress(RodataBase + 3),
-                      hexAddress(RodataBase), 3, "offset", nullptr});
+                      hexAddress(RodataBase), 3, "offset", nullptr, "nop"});
     if (wanted("utf-16le") && minimum <= 2)
       refs.push_back({hexAddress(Entry + 5), hexAddress(RodataBase + 11),
-                      hexAddress(RodataBase + 8), 2, "offset", nullptr});
+                      hexAddress(RodataBase + 8), 2, "offset", nullptr, "nop"});
   }
   return copy(
       Json{{"refs", refs}, {"next_entry", nullptr}, {"function_count", 600}}

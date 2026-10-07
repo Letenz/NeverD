@@ -83,6 +83,7 @@ const char *neverd_string_refs_json(neverd_session_t Sess,
     ReferredText Text;
     llvm::StringRef Kind;
     std::optional<va_t> Via;
+    std::string Instruction;
   };
   // Each function's rows, merged in entry order.
   std::vector<std::vector<Row>> Slots(Page.Functions.size());
@@ -90,9 +91,17 @@ const char *neverd_string_refs_json(neverd_session_t Sess,
   const bool Decoded = decodeFunctions(
       *S, Page, [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
         const InstructionFlow Flow = summarizeInstructionFlow(Img, Dec, DI);
+        // The instruction as neverd_disasm_json() spells it.
+        const auto instruction = [&] {
+          std::string Text = DI.Raw ? DI.Raw->mnemonic : "";
+          if (DI.Raw && *DI.Raw->op_str)
+            Text += std::string(" ") + DI.Raw->op_str;
+          return Text;
+        };
         for (const auto &[To, Kind] : Flow.Refs) {
           if (const auto Text = referredText(Img, Strings, MinChars, To)) {
-            Slots[Index].push_back({DI.Addr, To, *Text, Kind, std::nullopt});
+            Slots[Index].push_back(
+                {DI.Addr, To, *Text, Kind, std::nullopt, instruction()});
             continue;
           }
           // A slot the loader relocated holds a pointer for certain.
@@ -101,7 +110,8 @@ const char *neverd_string_refs_json(neverd_session_t Sess,
             continue;
           if (const auto Target = relocatedPointer(Img, To))
             if (const auto Text = referredText(Img, Strings, MinChars, *Target))
-              Slots[Index].push_back({DI.Addr, *Target, *Text, Kind, To});
+              Slots[Index].push_back(
+                  {DI.Addr, *Target, *Text, Kind, To, instruction()});
         }
       });
   if (!Decoded) {
@@ -114,7 +124,7 @@ const char *neverd_string_refs_json(neverd_session_t Sess,
       Refs.push_back(llvm::json::Array{
           vaHex(R.From), vaHex(R.To), vaHex(R.Text.String->Address),
           static_cast<int64_t>(R.Text.TextOffset), R.Kind.str(),
-          R.Via ? llvm::json::Value(vaHex(*R.Via)) : nullptr});
+          R.Via ? llvm::json::Value(vaHex(*R.Via)) : nullptr, R.Instruction});
   llvm::json::Object Result;
   Result["refs"] = std::move(Refs);
   Result["next_entry"] =

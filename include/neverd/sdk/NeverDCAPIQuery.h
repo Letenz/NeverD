@@ -83,10 +83,12 @@ NEVERD_API const char *neverd_string_encodings_json(void);
 /// remains there.  An instruction that reads or writes a slot the loader
 /// relocated, whose pointer reaches such text, refers to it through the slot.
 /// Returns {"refs":[["from","to","string",text_offset,"kind",
-/// "via"|null],...],"next_entry":"0x..."|null,"function_count":int}: "to"
-/// is the referenced byte, "string" the start of the string holding it,
-/// text_offset where its text begins in that string's UTF-8 "value", "kind"
-/// read, write or offset, and "via" the slot.  Functions decode as for
+/// "via"|null,"instruction"],...],"next_entry":"0x..."|null,
+/// "function_count":int}: "to" is the referenced byte, "string" the start of
+/// the string holding it, text_offset where its text begins in that string's
+/// UTF-8 "value", "kind" read, write or offset, "via" the slot, and
+/// "instruction" the referring instruction as neverd_disasm_json() spells
+/// it.  Functions decode as for
 /// neverd_code_refs_json(), and MaxFunctions is clamped to 1..4096.  NULL
 /// with neverd_last_error() for malformed options or an EVM or SBF image.
 /// This query never starts analysis.
