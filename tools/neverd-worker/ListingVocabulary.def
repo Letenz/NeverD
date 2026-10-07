@@ -519,24 +519,3 @@ NEVERD_SECTION_FUNCTION_NAME(".init", "_init_proc")
 NEVERD_SECTION_FUNCTION_NAME(".fini", "_term_proc")
 #undef NEVERD_SECTION_FUNCTION_NAME
 
-// NEVERD_WIDE_CHARACTERS(First, Last): code points a fixed-width listing
-// draws two columns wide (East Asian Wide and Fullwidth characters), so the
-// columns after a string line up.
-#ifndef NEVERD_WIDE_CHARACTERS
-#define NEVERD_WIDE_CHARACTERS(First, Last)
-#endif
-NEVERD_WIDE_CHARACTERS(0x1100, 0x115F)   // Hangul Jamo initials
-NEVERD_WIDE_CHARACTERS(0x2E80, 0x303E)   // CJK radicals, symbols, punctuation
-NEVERD_WIDE_CHARACTERS(0x3041, 0x33FF)   // Kana, Bopomofo, compatibility
-NEVERD_WIDE_CHARACTERS(0x3400, 0x4DBF)   // CJK Unified Ideographs Extension A
-NEVERD_WIDE_CHARACTERS(0x4E00, 0x9FFF)   // CJK Unified Ideographs
-NEVERD_WIDE_CHARACTERS(0xA000, 0xA4CF)   // Yi
-NEVERD_WIDE_CHARACTERS(0xAC00, 0xD7A3)   // Hangul Syllables
-NEVERD_WIDE_CHARACTERS(0xF900, 0xFAFF)   // CJK Compatibility Ideographs
-NEVERD_WIDE_CHARACTERS(0xFE30, 0xFE4F)   // CJK Compatibility Forms
-NEVERD_WIDE_CHARACTERS(0xFF00, 0xFF60)   // Fullwidth Forms
-NEVERD_WIDE_CHARACTERS(0xFFE0, 0xFFE6)   // Fullwidth signs
-NEVERD_WIDE_CHARACTERS(0x1F300, 0x1F64F) // Pictographs and emoticons
-NEVERD_WIDE_CHARACTERS(0x1F900, 0x1F9FF) // Supplemental pictographs
-NEVERD_WIDE_CHARACTERS(0x20000, 0x3FFFD) // CJK Extensions B and later
-#undef NEVERD_WIDE_CHARACTERS

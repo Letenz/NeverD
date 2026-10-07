@@ -9,14 +9,14 @@ namespace neverd::worker {
 /// A kind of direct reference (ReferenceKinds.def).
 enum class RefKind : std::uint8_t {
 #define NEVERD_REFERENCE_KIND(Id, Name, Letter, Code) Id,
-#include "ReferenceKinds.def"
+#include "neverd/sdk/ReferenceKinds.def"
 };
 
 inline std::optional<RefKind> parseRefKind(std::string_view name) {
 #define NEVERD_REFERENCE_KIND(Id, Name, Letter, Code)                          \
   if (name == Name)                                                            \
     return RefKind::Id;
-#include "ReferenceKinds.def"
+#include "neverd/sdk/ReferenceKinds.def"
   return std::nullopt;
 }
 
@@ -25,7 +25,7 @@ inline std::string_view refKindName(RefKind kind) {
 #define NEVERD_REFERENCE_KIND(Id, Name, Letter, Code)                          \
   case RefKind::Id:                                                            \
     return Name;
-#include "ReferenceKinds.def"
+#include "neverd/sdk/ReferenceKinds.def"
   }
   return {};
 }
@@ -37,7 +37,7 @@ inline char refKindLetter(RefKind kind) {
 #define NEVERD_REFERENCE_KIND(Id, Name, Letter, Code)                          \
   case RefKind::Id:                                                            \
     return Letter;
-#include "ReferenceKinds.def"
+#include "neverd/sdk/ReferenceKinds.def"
   }
   return 'o';
 }
@@ -48,7 +48,7 @@ inline bool isCodeRef(RefKind kind) {
 #define NEVERD_REFERENCE_KIND(Id, Name, Letter, Code)                          \
   case RefKind::Id:                                                            \
     return Code;
-#include "ReferenceKinds.def"
+#include "neverd/sdk/ReferenceKinds.def"
   }
   return false;
 }

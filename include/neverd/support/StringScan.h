@@ -93,6 +93,10 @@ void decode(llvm::ArrayRef<uint8_t> Data, Encoding E,
 /// or direction mark, a byte order mark or a private-use character.
 bool isShownCharacter(uint32_t Code);
 
+/// The columns a fixed-width display draws \p Code in: two for East Asian
+/// wide and fullwidth characters (WideCharacters.def), else one.
+unsigned displayColumns(uint32_t Code);
+
 /// Where reading a string from one of its bytes begins: at the first
 /// character that starts at or after that byte.
 struct TextStart {

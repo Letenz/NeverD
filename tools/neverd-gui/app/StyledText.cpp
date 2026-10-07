@@ -11,7 +11,7 @@ bool isWideCharacter(char32_t code) {
 #define NEVERD_WIDE_CHARACTERS(First, Last)                                    \
   if (code >= (First) && code <= (Last))                                       \
     return true;
-#include "ListingVocabulary.def"
+#include "neverd/support/WideCharacters.def"
   return false;
 }
 } // namespace

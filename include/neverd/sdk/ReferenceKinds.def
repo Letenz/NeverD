@@ -5,10 +5,11 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// The kinds of the engine's direct references (neverd_code_refs_json): the
-/// engine's name, the classic one-letter cross reference type and whether
-/// the reference transfers control.  IndirectCall and IndirectJump transfer
-/// through a relocated pointer slot to the pointer it holds as loaded.
+/// The kinds of the C API's direct references (neverd_code_refs_json,
+/// neverd_string_refs_json): the name, the classic one-letter cross
+/// reference type and whether the reference transfers control.  IndirectCall
+/// and IndirectJump transfer through a relocated pointer slot to the pointer
+/// it holds as loaded.
 ///
 //===----------------------------------------------------------------------===//
 

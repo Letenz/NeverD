@@ -223,6 +223,14 @@ bool readsAsText(llvm::ArrayRef<uint32_t> Codes, Source From) {
 
 } // namespace detail
 
+unsigned displayColumns(uint32_t C) {
+#define NEVERD_WIDE_CHARACTERS(First, Last)                                    \
+  if (C >= (First) && C <= (Last))                                             \
+    return 2;
+#include "neverd/support/WideCharacters.def"
+  return 1;
+}
+
 bool isShownCharacter(uint32_t C) {
   return C >= 0x20 && C != 0x7f && !(C >= 0x80 && C < 0xa0) &&
          !(C >= 0x200b && C <= 0x200f) && !(C >= 0x202a && C <= 0x202e) &&
