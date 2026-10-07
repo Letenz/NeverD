@@ -227,7 +227,7 @@ void MainWindow::buildMenusAndToolbars() {
           [this](Address address) { navigate(address); });
   connect(navigationBand_, &NavigationBand::spaceChanged, this, [this] {
     if (disassembly_)
-      disassembly_->listing()->viewport()->update();
+      disassembly_->addressSpaceChanged();
     if (hex_)
       hex_->addressSpaceChanged();
   });

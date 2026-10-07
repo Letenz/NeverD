@@ -215,6 +215,11 @@ QString DisassemblyView::selectedText() const {
   return graphMode() ? graph_->currentRowText() : listing_->selectedText();
 }
 
+void DisassemblyView::addressSpaceChanged() {
+  listing_->viewport()->update();
+  updateStatus();
+}
+
 void DisassemblyView::updateStatus() {
   const auto address = currentAddress();
   if (!address) {

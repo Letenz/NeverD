@@ -46,6 +46,8 @@ public:
     syncName_ = name;
     updateStatus();
   }
+  /// Show segment names and file offsets of the regions that just arrived.
+  void addressSpaceChanged();
   void focusContent();
 
 signals:
