@@ -1,6 +1,6 @@
 **言語**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 0e490a01b7c701ed5c4ec7324feba7b113de2d5ccbc4713f2cef24397f7800d2 -->
+<!-- i18n-source: 28c7904abafc52d2209af4a57647570679e48107febcccb43e2bd9f607d0da2b -->
 
 <div align="center">
 
@@ -319,6 +319,7 @@ neverd decompile --arm-function-mode=0xADDRESS:thumb -o output.c binary
 | `hex` | アドレスの hex dump |
 | `cfg` / `callgraph` | CFG / コールグラフ（JSON；DOT/SVG 任意） |
 | `xrefs` | クロスリファレンス |
+| `switches` | プログラム全体の解析が復元した switch のジャンプテーブル |
 | `strings` / `search` | 文字列 / バイトまたはテキスト検索 |
 | `imports` / `exports` / `symbols` / `relocs` | テーブル |
 | `segments` / `sections` / `entrypoints` | レイアウト |

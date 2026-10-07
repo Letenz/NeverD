@@ -68,6 +68,12 @@ add_neverd_unittest(NeverDStringScanTests
   LINK_COMPONENTS Support
 )
 
+add_neverd_unittest(NeverDCaseListTests
+  CaseListTests.cpp
+)
+target_include_directories(NeverDCaseListTests PRIVATE
+  "${CMAKE_SOURCE_DIR}/include")
+
 add_neverd_unittest(NeverDPipelineOutcomeTests
   PipelineOutcomeTests.cpp
   LINK_COMPONENTS Pipeline BackendC

@@ -1,6 +1,6 @@
 **Sprachen**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 0e490a01b7c701ed5c4ec7324feba7b113de2d5ccbc4713f2cef24397f7800d2 -->
+<!-- i18n-source: 28c7904abafc52d2209af4a57647570679e48107febcccb43e2bd9f607d0da2b -->
 
 <div align="center">
 
@@ -321,6 +321,7 @@ Wiederholen Sie die Option für weitere mehrdeutige Einstiege, gegebenenfalls mi
 | `hex` | Hex-Dump an einer Adresse |
 | `cfg` / `callgraph` | CFG / Callgraph (JSON; DOT/SVG optional) |
 | `xrefs` | Querverweise |
+| `switches` | Sprungtabellen von switch-Anweisungen aus der Gesamtprogrammanalyse |
 | `strings` / `search` | Strings / Byte- oder Textsuche |
 | `imports` / `exports` / `symbols` / `relocs` | Tabellen |
 | `segments` / `sections` / `entrypoints` | Layout |

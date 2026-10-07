@@ -1021,6 +1021,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_switches_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "int"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_pointer_at",
     "int",
     ["neverd_session_t", "neverd_va_t", "neverd_va_t *", "neverd_va_t *"],

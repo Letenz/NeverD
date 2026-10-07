@@ -115,6 +115,27 @@ NEVERD_API const char *neverd_code_refs_json(neverd_session_t Sess,
                                              neverd_va_t FirstEntry,
                                              int MaxFunctions);
 
+/// The jump tables whole-program analysis recovered in up to
+/// \p MaxFunctions analyzed functions from \p FirstEntry in entry order.
+/// Returns {"switches":[{"function","jump","load","table","entry_size",
+/// "stride","storage":[["0x...",entry_size,stride,slots],...],"form",
+/// "targets":[["target",index,slot],...]},...],"next_entry":"0x..."|null}:
+/// "jump" is the dispatch, "load" the instruction that reads the table,
+/// "table" the address of its slot 0 and "storage" the runs of slots it owns.
+/// Each target carries the index that selects it, the value the dispatch
+/// indexes the table with (JumpTable::caseLabel; a switch value the
+/// decompiler shows may add a constant to it), and its physical slot, at
+/// "table" plus the slot times "stride" (null when the table maps none).
+/// "form" says how every such slot stores its target: "absolute",
+/// "table_relative" (the table's address plus the entry) or "image_relative"
+/// (the image base plus the entry); it is null for a table laid out
+/// otherwise.  Unknown addresses are null.  MaxFunctions is clamped to
+/// 1..4096.  NULL with an error until neverd_session_analyze has analyzed the
+/// whole image.
+NEVERD_API const char *neverd_switches_json(neverd_session_t Sess,
+                                            neverd_va_t FirstEntry,
+                                            int MaxFunctions);
+
 /// The pointers the loader stored in up to \p MaxSlots relocated data slots at
 /// or above \p FirstSlot, in ascending slot order: each slot refers to its
 /// pointer's target with kind "offset".  Returns
