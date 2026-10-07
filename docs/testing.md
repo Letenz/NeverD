@@ -3001,3 +3001,15 @@ for unspecified or unrelated calls. The Android syscall fixture compares raw
 SVC with Bionic `syscall`, preserving distinct raw return/errno effects.
 Run these focused tests, the full Linux process and public process suites,
 and Android syscall, native-entry and signal suites for availability changes.
+
+`LinuxPIDFD.*` checks released GKI branch parsing and rejects invalid enum values
+or an absent-pidfd observation combined with GKI before image loading.
+`Backends/LinuxPIDFDProcess.*` runs independent O0/O2 x64/AArch64 callers for all
+eight branches, including flag differences, shared file/pidfd allocation,
+limits, close/reuse and scalar/vector error ordering. Android's
+`ReleasedGKIProcessDescriptorsShareRawAndBionicOwnership` cases repeat the
+shared descriptor and errno behavior across all six compiled relocation
+profiles. Run these first, then the complete Linux process, Android native and
+public process suites when changing shared kernel or descriptor semantics.
+These tests execute the model; they do not boot the eight pinned GKI kernels.
+See [released GKI contracts](android-gki-kernels.md).

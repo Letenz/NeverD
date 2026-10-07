@@ -83,7 +83,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 | `linux_files` | Absent | Closed catalogue of immutable guest files for Linux ELF64 and Android native workloads |
 | `linux_signals` | Absent | Explicit initial signal dispositions; no signal delivery or host handlers |
 | `linux_priority` | Absent | Explicit per-task nice values and caller authority for raw Linux priority services |
-| `linux_kernel` | Absent | Explicit guest kernel interfaces known to be unavailable |
+| `linux_kernel` | Absent | Explicit released GKI branch or observed absent guest kernel interfaces |
 
 `schema_version` is 1. Results include profile, architecture, selected backend
 and its selection reason, `stop_reason`, nullable `exit_status`, diagnostic,
@@ -159,6 +159,15 @@ other unknown calls are not converted to ENOSYS. Currently only `pidfd_open`
 is admitted; unknown names, duplicates and wrong types are rejected. This
 input does not infer a kernel version, host availability or a working pidfd
 implementation. See the [kernel missing-call implementation](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c).
+
+An explicit `linux_kernel.gki` selects a released Android common kernel branch
+from 5.10 through 6.18. Its current implemented subset is `pidfd_open` for the
+live model process, with versioned flags and the same descriptor table used by
+`linux_files`; Bionic and raw traps share ownership and error ordering.
+Selecting GKI together with an absent `pidfd_open` observation is rejected.
+Android API levels do not select a kernel. See the
+[released GKI contracts](android-gki-kernels.md) for all eight source pins,
+descriptor behavior, tests and the remaining kernel coverage.
 
 The optional `linux_priority` input declares nice state for fixture-owned tasks
 with the caller's UID. Raw `setpriority` and `getpriority` share this state across

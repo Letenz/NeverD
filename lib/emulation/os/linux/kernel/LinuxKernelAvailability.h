@@ -7,6 +7,7 @@
 #define NEVERD_EMULATION_LINUXKERNELAVAILABILITY_H
 #include "LinuxKernel.h"
 namespace neverd::emulation::linux_model {
+std::optional<uint32_t> gkiPidFDFlags(AndroidGKIKernel Kernel);
 llvm::Error validateKernelOptions(const LinuxKernelOptions &Options);
 bool unavailableKernelService(ServiceKind Kind,
                               const std::optional<LinuxKernelOptions> &Options);

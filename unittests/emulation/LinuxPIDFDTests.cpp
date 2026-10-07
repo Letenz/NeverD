@@ -1,0 +1,158 @@
+//===- LinuxPIDFDTests.cpp - Released GKI process descriptors ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#include "HvfTestPolicy.h"
+#include "gtest/gtest.h"
+#include "os/linux/kernel/LinuxKernelAvailability.h"
+
+#include "neverd/emulation/ExecutionConfiguration.h"
+#include "neverd/emulation/ProcessReport.h"
+#include "neverd/emulation/ProcessReportFields.h"
+
+namespace neverd::emulation {
+namespace {
+using namespace linux_model;
+struct KernelCase {
+  AndroidGKIKernel Kernel;
+  const char *Label;
+  bool ThreadFlag;
+};
+constexpr KernelCase Kernels[] = {
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag)                       \
+  {AndroidGKIKernel::Name, Label, ThreadFlag},
+#include "GKIReleaseCases.def"
+#undef NEVERD_GKI_RELEASE_CASE
+};
+TEST(LinuxPIDFD, VersionInputsRejectContradictionsBeforeLoading) {
+  for (const auto &K : Kernels) {
+    auto O = processOptionsFromJSON(
+        std::string("{\"linux_kernel\":{\"gki\":\"") + K.Label + "\"}}");
+    ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+    ASSERT_TRUE(O->LinuxKernel);
+    EXPECT_EQ(O->LinuxKernel->GKI, K.Kernel);
+    EXPECT_EQ(gkiPidFDFlags(K.Kernel), K.ThreadFlag ? 0x880u : 0x800u);
+    O->LinuxKernel->UnavailableSyscalls.insert(
+        LinuxUnavailableSyscall::PidFDOpen);
+    auto R =
+        emulateProcess("missing.elf", ProcessProfile::AndroidNativeAArch64, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), KernelOptions);
+  }
+  for (const char *Value :
+       {R"({"gki":null})", R"({"gki":510})", R"({"gki":"android-mainline"})",
+        R"({"gki":"android17-6.18-rc1"})",
+        R"({"gki":"android12-5.10","unavailable_syscalls":["pidfd_open"]})"}) {
+    auto O =
+        processOptionsFromJSON(std::string("{\"linux_kernel\":") + Value + "}");
+    ASSERT_FALSE(bool(O)) << Value;
+    llvm::consumeError(O.takeError());
+  }
+  ProcessOptions O;
+  O.LinuxKernel.emplace().GKI = static_cast<AndroidGKIKernel>(99);
+  auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, O);
+  ASSERT_FALSE(bool(R));
+  EXPECT_EQ(llvm::toString(R.takeError()), KernelOptions);
+}
+struct Profile {
+  const char *Name;
+  ExecutionBackendKind Backend;
+  GuestArchitecture ISA;
+};
+constexpr Profile Profiles[] = {
+#define NEVERD_USER_PROFILE(Name, Backend, ISA, Contract)                      \
+  {#Name, ExecutionBackendKind::Backend, GuestArchitecture::ISA},
+#include "UserExecutionCases.def"
+#undef NEVERD_USER_PROFILE
+};
+void PrintTo(const Profile &P, std::ostream *OS) { *OS << P.Name; }
+class LinuxPIDFDProcess : public testing::TestWithParam<Profile> {
+protected:
+  ProcessOptions Options;
+  void SetUp() override {
+#ifndef NEVERD_PROCESS_FIXTURE_DIR
+    GTEST_SKIP() << "Clang and ld.lld process fixtures unavailable";
+#else
+    Options.Backend = GetParam().Backend;
+    ExecutionConfiguration C;
+    C.Backend = Options.Backend;
+    C.Architecture = GetParam().ISA;
+    C.Contract = GetParam().ISA == GuestArchitecture::X64
+                     ? ExecutionContract::CheckedUserX64
+                     : ExecutionContract::CheckedUserAArch64;
+    auto Probe = probeExecutionBackend(C);
+    ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+    if (Probe->Availability != BackendAvailability::Available) {
+      if (requireHvf(GetParam().Backend, GetParam().ISA))
+        FAIL() << Probe->Reason;
+      GTEST_SKIP() << Probe->Reason;
+    }
+    auto &Files = Options.LinuxFiles.emplace();
+    Files.DescriptorLimit = 5;
+    Files.Files["/catalog/input"] = {0xa5, 0x5a};
+#endif
+  }
+  ProcessResult run(char Mode, const char *Opt, bool Thread = false) {
+    Options.Arguments = {"pidfd", std::string(1, Mode), Thread ? "1" : "0"};
+#ifdef NEVERD_PROCESS_FIXTURE_DIR
+    auto Path =
+        std::filesystem::path(NEVERD_PROCESS_FIXTURE_DIR) /
+        (std::string(GetParam().ISA == GuestArchitecture::X64 ? "X64"
+                                                              : "AArch64") +
+         "-pidfd-" + Opt + ".elf");
+#else
+    std::filesystem::path Path;
+#endif
+    return llvm::cantFail(
+        emulateProcess(Path, ProcessProfile::LinuxELF64, Options));
+  }
+};
+TEST_P(LinuxPIDFDProcess,
+       EveryReleasedKernelSharesDescriptorOwnershipAndErrors) {
+  for (const auto &K : Kernels) {
+    SCOPED_TRACE(K.Label);
+    Options.LinuxKernel.emplace().GKI = K.Kernel;
+    for (const char *Opt : {"O0", "O2"}) {
+      auto R = run('l', Opt);
+      ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+      ASSERT_EQ(R.ExitStatus, 0u);
+    }
+  }
+}
+TEST_P(LinuxPIDFDProcess, ThreadFlagAndDescriptorLimitsFollowSelectedKernel) {
+  for (const auto &K : Kernels) {
+    SCOPED_TRACE(K.Label);
+    Options.LinuxKernel.emplace().GKI = K.Kernel;
+    for (const char *Opt : {"O0", "O2"}) {
+      Options.LinuxFiles->DescriptorLimit = 5;
+      auto T = run('t', Opt, K.ThreadFlag);
+      ASSERT_EQ(T.Stop, ProcessStopReason::Exited) << T.Diagnostic;
+      EXPECT_EQ(T.ExitStatus, 0u);
+      Options.LinuxFiles->DescriptorLimit = 3;
+      auto D = run('d', Opt);
+      ASSERT_EQ(D.Stop, ProcessStopReason::Exited) << D.Diagnostic;
+      EXPECT_EQ(D.ExitStatus, 0u);
+    }
+  }
+}
+TEST_P(LinuxPIDFDProcess, UnknownTargetsAndMissingObservationsStayUnsupported) {
+  Options.LinuxKernel.emplace().GKI = AndroidGKIKernel::Android17_6_18;
+  auto U = run('u', "O2");
+  EXPECT_EQ(U.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(U.Diagnostic, PidFDTargetMissing);
+  Options.LinuxFiles.reset();
+  auto F = run('m', "O2");
+  EXPECT_EQ(F.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(F.Diagnostic, FileInputsMissing);
+  Options.LinuxFiles.emplace();
+  Options.LinuxKernel.reset();
+  auto K = run('m', "O2");
+  EXPECT_EQ(K.Stop, ProcessStopReason::UnsupportedService);
+  ASSERT_FALSE(K.Services.empty());
+  EXPECT_FALSE(K.Services.back().Result);
+}
+INSTANTIATE_TEST_SUITE_P(Backends, LinuxPIDFDProcess,
+                         testing::ValuesIn(Profiles));
+} // namespace
+} // namespace neverd::emulation
