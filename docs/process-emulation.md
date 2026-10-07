@@ -163,9 +163,9 @@ implementation. See the [kernel missing-call implementation](https://github.com/
 An explicit `linux_kernel.gki` selects a released Android common kernel branch
 from 5.10 through 6.18. Its current implemented subset includes `pidfd_open`
 for the live model process and explicitly catalogued guest tasks, versioned
-vector import, observed process CPU clocks and zero-timeout pidfd `ppoll`, with
-the same descriptor
-table used by `linux_files`; Bionic and raw traps share ownership and error ordering.
+vector import, observed process CPU clocks, zero-timeout pidfd `ppoll` and
+extended-attribute name/target errors, with the same descriptor table used by
+`linux_files`; Bionic and raw traps share ownership and error ordering.
 Selecting GKI together with an absent `pidfd_open` observation is rejected.
 An optional `linux_kernel.tasks` array supplies a closed, fixed catalogue of
 additional live tasks as `{ "id": 2000, "group_leader": true }` entries.

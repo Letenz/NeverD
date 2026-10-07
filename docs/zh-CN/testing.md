@@ -1223,7 +1223,11 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 
 `WindowsProcess.ClockServicesUseConsistentUnitsAndPreserveLastError` 执行原始 x64/ARM64 PE 中的 `QueryPerformanceFrequency`、单调计数器、FILETIME、回绕 tick 计数和相对延迟调用。`WindowsProcess.UnmodeledDelaysStopWithoutClaimingCompletion` 验证警觉、正数绝对时间及 INT64_MIN 间隔在完成前被拒绝。`NativeWindowsOracleRunsTheSameExecutable` 也在 Windows 上直接运行成功的时钟情境；两项客户回归均纳入禁用 Unicorn 的 KVM/WHP 必测清单。 原始样例显式污染 `BOOLEAN` 参数寄存器的未使用高位，并以明确的 64 位类型定义常量，防止 Windows ABI 截断纪元值与 INT64_MIN。
 
+`ARM64 native backend build` 使用固定版本的 LLVM 源码，在 `ubuntu-24.04-arm`（KVM）和 `windows-11-arm`（WHP）上关闭 Unicorn 并编译 `NeverDEmulationNative`。`audit_native_backend_build.py` 核对每个声明的原生源文件、启用的后端定义、编译命令、ARM64 ELF/COFF 对象及哈希。`probe_native_host.py` 记录宿主初始化能力和资源清理；能力不可用会明确记录，初始化错误会使任务失败。这些任务验证编译和宿主初始化，尚不构成客户机执行证据。 `NeverDCapstoneCompilerOptions.inc` 将限定符诊断选项限定于 Clang 的 C 编译；GCC 和 MSVC 保留各自的告警规则。 `native_arm64_only=true` 可单独运行这些 ARM64 组件构建与初始化探测，不启动完整 x64 CPU 验收。 构建审计会先规范化源码和构建目录，再比对路径，包括 Windows 8.3 别名。 ARM64 组件任务会在构建审计前显式启用选定的 KVM 或 WHP 后端。
+
 `WindowsTestExecution.def` 将 Unicorn ARM64 的 `WindowsExclusive` 对照设为 `RUN_SERIAL`。CTest 策略避免它与其他客户负载争用资源，保留原有 60 s 客户机截止时间及全部结果、寄存器、权限和原生摘要检查。
+
+`run_native_cpu_methods.py` 依据 `NativeMethodExecution.def` 校验布尔属性 `RUN_SERIAL`，并在方法分组及跨运行执行契约中保留该约束。各方法依次执行；子进程未退出时不会启动下一项。未知属性和被修改的分片契约仍会使验证失败。
 
 `WindowsProcessLifetime` 在同一个 CPU 和执行预算下，按依赖顺序执行 DLL TLS 回调及 `DllMain`，随后执行 EXE TLS 和入口。每个模块都有独立 TLS 索引及对齐的数据块，从完成重定位和导入绑定的映像复制，共享 64 KiB 空间。TLS 保留参数为零，启动／进程退出的 `DllMain` 接收不透明非空值。显式进程退出按加载器链表的逆序分离已完成初始化的 DLL，再执行 EXE TLS 退出回调，即使 EXE 初始化尚未运行。启动 `DllMain(FALSE)` 以 `0xc0000142` 退出，不发送分离通知。故障和预算耗尽不伪造清理。带客户 DLL 的 PE 入口返回涉及尚未支持的线程终止，明确停止。非零 `SizeOfZeroFill` 仍不支持；实际 TLS 模板中的零初始化字节受支持。 无入口 DLL 接收 TLS 挂接通知，但不接收进程分离通知。
 
@@ -1260,6 +1264,8 @@ Windows ring3 按独立原生观测，将 checked x64 的 `operand_alignment` �
 `WindowsLifetimeTests.cpp` 将冻结的通知序列与独立原生 Windows 进程及 KVM/WHP/Unicorn 执行对比，覆盖正常退出、入口返回、两个 DLL 初始化失败、四处提前退出及无入口 DLL。另行验证回调故障、共享预算、重定位 TLS 字段和 TLS 总容量。原生入口返回探针保留初始线程句柄，重复64 次核对线程退出码及精确线程／进程通知序列。观察完成后终止剩余子进程线程，不将其进程退出码当作入口返回值。
 
 `NeverDUnpackTests`、`NeverDUnpackExecutionTests` 和 `NeverDUnpackPublicTests` 覆盖加壳镜像的恢复；参见[脱壳](unpack.md)。`UnpackGeneratedTests.cpp` 用测试自己加壳的程序，在 x86-64 和 ARM64 上检查入口规则。`X64ReturnPrefixTests.cpp` 在每种传输上检查双字节近返回，并确认其它带前缀的返回仍被拒绝。`WindowsDeferredTests.cpp` 检查不透明入口与已停止进程的观察；`ExecutionSessionTests.cpp` 检查执行监视。 `DirectX64Tests.cpp` 还验证直接执行的部分页监视、跨页取指、恢复后只执行一次、服务边界、非法指令和超时状态。
+
+`WindowsDeferred.EarlierTLSCallbackMayGenerateALaterCallback` 要求独立的 `.gentls` 段具有 `IMAGE_SCN_CNT_UNINITIALIZED_DATA` 标志，大小与声明的缓冲区范围完全一致，原始数据长度和指针均为零。`WindowsDeferredCases.def` 统一定义存储与汇编，普通 `.data` 保持独立。生成回调和生成入口两种情境均保留 x64/ARM64 上的严格拒绝及延迟执行检查。
 
 `ExtendedRegistersLoadOrdinaryImportsAgain` 通过受检和直接 x64 执行验证紧凑及带填充的 R8-R15 导入加载。低寄存器用例覆盖前置 REX 形状字节和仅含 CALL 的地址辅助例程；带填充的调用辅助例程跳过 CALL 后的任意字节。`ImportCallHelpersCannotDiscardPersistentEffects` 要求辅助例程的持久副作用仍可观察。`PERebuildTests.cpp` 拒绝缺失起点、结果证据及重叠起点，并保持六至八字节调用窗口的精确 API 返回地址。
 

@@ -22,7 +22,8 @@ struct KernelCase {
   uint32_t NonLeader;
 };
 constexpr KernelCase Kernels[] = {
-#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error,  \
+                                NameFirst)                                     \
   {AndroidGKIKernel::Name, Label, ThreadFlag, SingleBuffer, Error},
 #include "GKIReleaseCases.def"
 #undef NEVERD_GKI_RELEASE_CASE

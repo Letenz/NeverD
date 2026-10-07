@@ -1315,7 +1315,11 @@ checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト�
 
 `WindowsProcess.ClockServicesUseConsistentUnitsAndPreserveLastError` は元の x64/ARM64 PE で `QueryPerformanceFrequency`、単調カウンター、FILETIME、循環 tick 数、相対待機を実行します。`WindowsProcess.UnmodeledDelaysStopWithoutClaimingCompletion` は alertable 待機、正の絶対時刻、INT64_MIN 間隔が完了前に拒否されることを確認します。`NativeWindowsOracleRunsTheSameExecutable` は成功する時刻シナリオを Windows 上で直接実行します。両ゲスト回帰は Unicorn 無効の KVM/WHP 受け入れで必須です。 元のサンプルは `BOOLEAN` 引数の未使用上位ビットを明示的に汚染し、型付き 64 ビット定数で Windows ABI による紀元値と INT64_MIN の切り詰めを防ぎます。
 
+`ARM64 native backend build` は固定した LLVM ソースを使い、`ubuntu-24.04-arm`（KVM）と `windows-11-arm`（WHP）で Unicorn を無効にして `NeverDEmulationNative` をコンパイルします。`audit_native_backend_build.py` は宣言された各ネイティブソース、有効なバックエンド定義、コンパイルコマンド、ARM64 ELF/COFF オブジェクトとハッシュを検査します。`probe_native_host.py` はホスト初期化の可否とリソース解放を記録し、機能が利用できない場合は明示し、初期化エラーではジョブを失敗させます。これらはコンパイルとホスト初期化の検証であり、ゲスト実行は未検証です。 `NeverDCapstoneCompilerOptions.inc` は修飾子の診断オプションを Clang による C コンパイルに限定し、GCC と MSVC はそれぞれの警告規則を維持します。 `native_arm64_only=true` は完全な x64 CPU 受け入れ検証を起動せず、これらの ARM64 コンポーネントのビルドと初期化プローブを選択します。 ビルド監査では Windows 8.3 エイリアスを含め、ソースとビルドのルートを正規化してからパスを比較します。 ARM64 コンポーネントジョブは、ビルド監査の前に選択した KVM または WHP バックエンドを明示的に有効にします。
+
 `WindowsTestExecution.def` は Unicorn ARM64 の `WindowsExclusive` 比較に `RUN_SERIAL` を指定します。他のゲスト負荷との競合を避けつつ、元の 60 s のゲスト期限と、結果・レジスター・権限・ネイティブダイジェストの全検査を保持します。
+
+`run_native_cpu_methods.py` は `NativeMethodExecution.def` の真偽値プロパティ `RUN_SERIAL` を検証し、メソッドのグループ化と実行間の契約比較に保持します。メソッドは順番に実行し、子プロセスが終了しなければ次を開始しません。未知のプロパティや変更されたシャード契約は引き続き検証に失敗します。
 
 `WindowsProcessLifetime` は同じ CPU と実行予算で依存順に DLL TLS コールバック、`DllMain`、続いて EXE TLS と入口を実行します。各モジュールに独立した TLS インデックスと整列済み領域を割り当て、再配置・リンク済みイメージから共有 64 KiB 領域へコピーします。TLS の予約引数はゼロ、起動／プロセス終了時の `DllMain` は不透明な非 NULL 値です。明示的なプロセス終了は初期化完了 DLL をローダーリストの逆順に切り離し、その後 EXE TLS を呼びます。EXE 初期化前でも同様です。起動時の `DllMain(FALSE)` は detach 通知なしで `0xc0000142` 終了します。障害や予算切れは後処理を捏造しません。ゲスト DLL がある PE 入口の return は未対応のスレッド終了を必要とするため明示停止します。非ゼロの `SizeOfZeroFill` は未対応ですが、実際の TLS テンプレート内のゼロ初期化バイトは対応します。 入口なし DLL は TLS attach を受けますが、プロセス detach 通知は受けません。
 
@@ -1352,6 +1356,8 @@ Windows ring3 は独立したネイティブ観測に従い、checked x64 の `o
 `WindowsLifetimeTests.cpp` は固定トレースを独立したネイティブ Windows プロセスと KVM/WHP/Unicorn で照合します。通常終了、入口 return、両 DLL の初期化失敗、4 箇所の早期終了、入口なし DLL を含みます。回呼障害、共通予算、再配置 TLS フィールド、TLS 総容量も検証します。ネイティブ入口 return のプローブは初期スレッドのハンドルを保持し、終了コードと正確なスレッド／プロセス通知列を 64 回検証します。残る子スレッドは観測後に終了させ、プロセス終了値を入口の戻り値として扱いません。
 
 `NeverDUnpackTests`、`NeverDUnpackExecutionTests`、`NeverDUnpackPublicTests` はパックされたイメージの復元を対象とします。[アンパック](unpack.md)を参照してください。`UnpackGeneratedTests.cpp` は、テスト自身がパックしたプログラムを使って、x86-64 と ARM64 でエントリの規則を検査します。`X64ReturnPrefixTests.cpp` は 2 バイトの近リターンをすべてのトランスポートで検査し、それ以外のプレフィックス付きリターンが拒否されたままであることを確認します。`WindowsDeferredTests.cpp` は不透明なエントリと停止したプロセスの観測を、`ExecutionSessionTests.cpp` は実行ウォッチを検査します。 `DirectX64Tests.cpp` は部分ページの監視、ページ境界の命令取得、一度だけの再開、サービス境界、無効命令とタイムアウト時の状態も検証します。
+
+`WindowsDeferred.EarlierTLSCallbackMayGenerateALaterCallback` は、`IMAGE_SCN_CNT_UNINITIALIZED_DATA` を持つ独立した `.gentls` セクションを要求し、宣言されたバッファ範囲との完全一致と、生データのサイズおよびポインターがゼロであることを確認します。`WindowsDeferredCases.def` が記憶域とアセンブリを定義し、通常の `.data` は独立します。生成コールバックと生成エントリーの両ケースで、x64/ARM64 の厳密な拒否および遅延実行チェックを維持します。
 
 `ExtendedRegistersLoadOrdinaryImportsAgain` はコンパクト形式と余白付き R8-R15 読み込みを検査付き・直接 x64 実行で確認します。下位レジスタの例は直前の REX 風バイトと CALL のみのアドレス補助ルーチンを扱い、余白付き呼び出しは CALL 後の任意バイトを飛ばします。`ImportCallHelpersCannotDiscardPersistentEffects` は永続的な副作用の保存を確認します。`PERebuildTests.cpp` は開始・結果証拠の欠落と重複開始を拒否し、6～8 バイト領域の正確な API 戻りアドレスを維持します。
 

@@ -2662,7 +2662,11 @@ Input-file bytes and aggregate image extents each share `memory_limit`; runtime 
 
 `WindowsProcess.ClockServicesUseConsistentUnitsAndPreserveLastError` runs original x64/ARM64 PE calls for `QueryPerformanceFrequency`, the monotonic counter, FILETIME, wrapping tick count and a relative delay. `WindowsProcess.UnmodeledDelaysStopWithoutClaimingCompletion` checks alertable, positive absolute and INT64_MIN intervals before completion. `NativeWindowsOracleRunsTheSameExecutable` also executes the successful clock scenario directly on Windows; both guest regressions are mandatory in Unicorn-free KVM/WHP acceptance. The original fixture explicitly poisons unused `BOOLEAN` register bits and uses typed 64-bit constants, preserving the epoch and INT64_MIN under the Windows ABI.
 
+`ARM64 native backend build` compiles `NeverDEmulationNative` with Unicorn disabled on `ubuntu-24.04-arm` (KVM) and `windows-11-arm` (WHP), using the pinned LLVM sources. `audit_native_backend_build.py` checks every declared native source, its active backend definition, compile recipe, ARM64 ELF/COFF object and hashes. `probe_native_host.py` records setup availability and resource cleanup; unavailable facilities are explicit and setup failures fail the job. This verifies compilation and host setup; guest execution remains unverified. `NeverDCapstoneCompilerOptions.inc` scopes the qualifier diagnostic option to Clang C compilations; GCC and MSVC retain their own warning policies. `native_arm64_only=true` selects these ARM64 component builds and setup probes without the full x64 CPU acceptance profile. Build audits canonicalize source and build roots before matching paths, including Windows 8.3 aliases. The ARM64 component job explicitly enables its selected KVM or WHP backend before the build audit.
+
 `WindowsTestExecution.def` selects the Unicorn ARM64 `WindowsExclusive` comparison for `RUN_SERIAL`. The CTest policy avoids contention with other guest workloads while retaining the original 60 s guest deadline and all result, register, permission and native-digest checks.
+
+`run_native_cpu_methods.py` validates the boolean `RUN_SERIAL` property from `NativeMethodExecution.def` and retains it in method grouping and cross-run execution contracts. Methods run one at a time; an unretired child prevents the next method. Unknown properties and changed shard contracts still fail.
 
 `WindowsProcessLifetime` runs dependency DLL TLS callbacks then `DllMain`, followed by EXE TLS and entry, on one CPU under the same execution budget. Each module gets an independent TLS index and aligned block copied from the relocated, linked image within a shared 64 KiB arena. TLS reserved arguments are zero; startup/process-detach `DllMain` receives an opaque non-null value. Explicit process exit detaches successfully initialized DLLs in reverse loader-list order, then EXE TLS, even if EXE initialization had not run. Startup `DllMain(FALSE)` exits with `0xc0000142` without detach notifications. Faults and exhausted budgets do not invent cleanup. Returning from the PE entry with guest DLLs requires unsupported thread termination and stops explicitly. Nonzero `SizeOfZeroFill` remains unsupported; zero-initialized bytes in the actual TLS template are supported. DLLs without entry points receive TLS attach but no process-detach notifications.
 
@@ -2699,6 +2703,8 @@ A missing library anywhere in a `GetProcAddress` forwarder chain returns error 1
 `WindowsLifetimeTests.cpp` compares frozen traces with independent native Windows processes and KVM/WHP/Unicorn execution: normal exit, entry return, both DLL initialization failures, four early exits and DLLs without entry points. It separately checks callback faults, shared budgets, relocated TLS fields and aggregate TLS capacity. The native entry-return probe retains the initial thread handle and checks its exit code and exact thread/process notification sequence in 64 repetitions. Remaining child threads are terminated after observation; their process exit is not treated as the entry return value.
 
 `NeverDUnpackTests`, `NeverDUnpackExecutionTests` and `NeverDUnpackPublicTests` cover packed-image recovery; see [unpacking](unpack.md). `UnpackGeneratedTests.cpp` checks the entry rules on x86-64 and ARM64 with a program the test packs itself. `X64ReturnPrefixTests.cpp` checks the two-byte near return on every transport and that every other prefixed return stays rejected. `WindowsDeferredTests.cpp` checks opaque entries and stopped-process observation; `ExecutionSessionTests.cpp` checks execution watches. `DirectX64Tests.cpp` checks partial-page watches, cross-page instructions, one-instruction resumption, service traps, invalid instructions and deadline state on Unicorn/KVM/WHP; native CI requires the matching KVM/WHP cases.
+
+`WindowsDeferred.EarlierTLSCallbackMayGenerateALaterCallback` requires an isolated `.gentls` section with `IMAGE_SCN_CNT_UNINITIALIZED_DATA`, exactly the declared buffer extent, and zero raw-data size and pointer. `WindowsDeferredCases.def` owns the storage and assembly; ordinary `.data` remains separate. Both generated callback and entry cases retain strict rejection and deferred execution checks on x64/ARM64.
 
 `ExtendedRegistersLoadOrdinaryImportsAgain` executes compact and padded R8-R15 import loads through checked and direct x64 execution. Low-register cases cover a preceding REX-shaped byte and CALL-only address helpers. Padded call helpers skip arbitrary bytes after CALL. `ImportCallHelpersCannotDiscardPersistentEffects` requires persistent helper effects to remain observable. `PERebuildTests.cpp` rejects missing start/result evidence and overlapping starts, and preserves the exact API return address for six- to eight-byte call windows.
 
@@ -3076,6 +3082,12 @@ lookup failures, pathname-before-capacity ordering and unchanged cursors.
 `ReleasedGKIOpenFlagsSharePathErrorsAndErrno` repeats raw and the four Bionic
 open imports across packing profiles. The corresponding boundary cases keep
 existing directories and unobserved direct I/O unsupported.
+`ReleasedGKIXAttrsPreserveNameAndTargetErrorOrder` checks O0/O2 callers on all
+eight releases for versioned name/target precedence, empty and overlong names,
+page-edge imports, descriptor narrowing, unchanged cursors and value canaries.
+Android’s `ReleasedGKIXAttrsShareRawAndBionicErrorOrder` repeats raw/named calls
+and independent errno checks across packing profiles. Corresponding boundary
+cases retain missing GKI and existing-object attribute uncertainty.
 Run these first,
 then the complete Linux process, Android native and
 public process suites when changing shared kernel or descriptor semantics.

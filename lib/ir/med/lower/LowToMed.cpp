@@ -206,8 +206,8 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
     return;
   // Publish the register arguments the callee reads as uses, so SSA sees a
   // pass-through argument and the call site knows its arity.  The calling
-  // convention says how (MedCallConvention.h); one that Mach-O source-call
-  // binding owns has no entry.
+  // convention says whether and how (MedCallConvention.h); Mach-O
+  // source-call binding owns the single-input calls of the others.
   const CallArgumentConvention *Convention =
       callArgumentConvention(TargetArch, TargetFormat);
   const TargetRegInfo &TRI = getTargetRegInfo(TargetArch);
@@ -231,7 +231,8 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
     for (int8_t I = 0; I < Count; ++I)
       MOp.addInput(ndVarToMedVar(NdVar::reg(ArgRegs[I], TRI.PointerSize)));
     MOp.CalleeRegisterArgs = Count;
-  } else if (Convention && CallEntryReadGPRs && MOp.NumInputs == 1)
+  } else if (Convention && Convention->RegisterArgumentsFromCalleeSummary &&
+             CallEntryReadGPRs && MOp.NumInputs == 1)
     if (auto R = CallEntryReadGPRs->find(LOp.Inputs[0].Offset);
         R != CallEntryReadGPRs->end() &&
         !(Convention->SummaryListsNoParameters &&

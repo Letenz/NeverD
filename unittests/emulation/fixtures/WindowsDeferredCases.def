@@ -27,9 +27,15 @@ NEVERD_DEFERRED_BUILD(X64Target, "x86_64-pc-windows-msvc")
 NEVERD_DEFERRED_BUILD(X64Machine, "x64")
 NEVERD_DEFERRED_BUILD(AArch64Target, "aarch64-pc-windows-msvc")
 NEVERD_DEFERRED_BUILD(AArch64Machine, "arm64")
+NEVERD_DEFERRED_BUILD(GeneratedObjectFile, "generated-tls.obj")
+NEVERD_DEFERRED_BUILD(GeneratedEntrySymbol, "GeneratedEntry")
+NEVERD_DEFERRED_BUILD(GeneratedSectionPermissions, "RWE")
 #endif
 #ifdef NEVERD_DEFERRED_TEXT
 NEVERD_DEFERRED_TEXT(ProgramFile, "deferred.exe")
+NEVERD_DEFERRED_TEXT(GeneratedTLSFile, "generated-tls.exe")
+NEVERD_DEFERRED_TEXT(GeneratedTLSEntryFile, "generated-tls-entry.exe")
+NEVERD_DEFERRED_TEXT(GeneratedSection, ".gentls")
 NEVERD_DEFERRED_TEXT(X64Dir, "X64")
 NEVERD_DEFERRED_TEXT(AArch64Dir, "AArch64")
 NEVERD_DEFERRED_TEXT(MissingTools,
@@ -76,4 +82,21 @@ NEVERD_DEFERRED_KERNEL_API(NeverDUnmodeledFixtureExport)
 #endif
 #ifdef NEVERD_DEFERRED_ABSENT_API
 NEVERD_DEFERRED_ABSENT_API(AbsentRoutine)
+#endif
+
+// Keep generated code in an explicitly uninitialized COFF section. Ordinary
+// zero-valued globals may use initialized storage on another toolchain.
+#ifdef NEVERD_DEFERRED_GENERATED_ASM
+NEVERD_DEFERRED_GENERATED_ASM(".section .gentls,\"bw\"\n")
+#define NEVERD_DEFERRED_GENERATED_BUFFER(Name, Size)                           \
+  NEVERD_DEFERRED_GENERATED_ASM(".p2align 3\n.globl " #Name "\n" #Name         \
+                                ":\n.zero " #Size "\n")
+#endif
+#ifdef NEVERD_DEFERRED_GENERATED_BUFFER
+NEVERD_DEFERRED_GENERATED_BUFFER(Generated, 32)
+NEVERD_DEFERRED_GENERATED_BUFFER(GeneratedEntry, 16)
+#endif
+#ifdef NEVERD_DEFERRED_GENERATED_ASM
+#undef NEVERD_DEFERRED_GENERATED_BUFFER
+NEVERD_DEFERRED_GENERATED_ASM(".text\n")
 #endif

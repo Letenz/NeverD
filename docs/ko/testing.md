@@ -1305,7 +1305,11 @@ checked Unicorn은 `MachineRunControl`을 사용하며 ARM64 유지보수, 게�
 
 `WindowsProcess.ClockServicesUseConsistentUnitsAndPreserveLastError`는 원본 x64/ARM64 PE에서 `QueryPerformanceFrequency`, 단조 카운터, FILETIME, 순환 tick, 상대 지연 호출을 실행합니다. `WindowsProcess.UnmodeledDelaysStopWithoutClaimingCompletion`는 경고 가능 대기, 양수 절대 시각, INT64_MIN 간격이 완료 전에 거부되는지 확인합니다. `NativeWindowsOracleRunsTheSameExecutable`는 성공하는 시계 시나리오를 Windows에서 직접 실행합니다. 두 게스트 회귀는 Unicorn을 끈 KVM/WHP 인수 검사에서 필수입니다. 원본 샘플은 `BOOLEAN` 인수 레지스터의 사용하지 않는 상위 비트를 명시적으로 오염시키고 형식이 지정된 64비트 상수로 Windows ABI에서 기준 시각과 INT64_MIN이 잘리지 않도록 합니다.
 
+`ARM64 native backend build`는 고정된 LLVM 소스를 사용하여 `ubuntu-24.04-arm`(KVM)과 `windows-11-arm`(WHP)에서 Unicorn을 비활성화하고 `NeverDEmulationNative`를 컴파일합니다. `audit_native_backend_build.py`는 선언된 각 네이티브 소스, 활성 백엔드 정의, 컴파일 명령, ARM64 ELF/COFF 오브젝트와 해시를 검사합니다. `probe_native_host.py`는 호스트 초기화 가능 여부와 리소스 해제를 기록하며, 사용할 수 없는 기능을 명시하고 초기화 오류가 발생하면 작업을 실패시킵니다. 이는 컴파일과 호스트 초기화를 검증하며 게스트 실행은 아직 검증되지 않았습니다. `NeverDCapstoneCompilerOptions.inc`는 한정자 진단 옵션을 Clang의 C 컴파일에만 적용하며 GCC와 MSVC는 각자의 경고 규칙을 유지합니다. `native_arm64_only=true`는 전체 x64 CPU 승인 검증 없이 이러한 ARM64 구성 요소 빌드와 초기화 프로브를 선택합니다. 빌드 감사는 Windows 8.3 별칭을 포함하여 소스 및 빌드 루트 경로를 정규화한 뒤 경로를 비교합니다. ARM64 구성 요소 작업은 빌드 감사 전에 선택한 KVM 또는 WHP 백엔드를 명시적으로 활성화합니다.
+
 `WindowsTestExecution.def`는 Unicorn ARM64의 `WindowsExclusive` 비교를 `RUN_SERIAL`로 지정합니다. CTest 정책은 다른 게스트 작업과의 자원 경합을 피하면서 기존 60 s 게스트 기한과 모든 결과, 레지스터, 권한, 네이티브 해시 검사를 유지합니다.
+
+`run_native_cpu_methods.py`는 `NativeMethodExecution.def`의 불리언 속성 `RUN_SERIAL`을 검증하고 메서드 그룹과 실행 간 계약 비교에 유지합니다. 메서드는 하나씩 실행하며 자식 프로세스가 종료되지 않으면 다음 메서드를 시작하지 않습니다. 알 수 없는 속성과 변경된 샤드 계약은 계속 검증에 실패합니다.
 
 `WindowsProcessLifetime`은 같은 CPU와 실행 예산에서 의존 순서대로 DLL TLS 콜백과 `DllMain`, 이어서 EXE TLS와 진입점을 실행합니다. 모듈마다 독립 TLS 인덱스와 정렬된 블록을 할당하고 재배치·연결된 이미지에서 공용 64 KiB 영역으로 복사합니다. TLS 예약 인수는 0이며 시작/프로세스 종료 `DllMain`은 불투명한 비 NULL 값을 받습니다. 명시적 프로세스 종료는 초기화를 완료한 DLL을 로더 목록의 역순으로 분리한 뒤 EXE TLS를 호출하며 EXE 초기화 전에도 같습니다. 시작 `DllMain(FALSE)`는 분리 통지 없이 `0xc0000142`로 종료합니다. 오류와 예산 소진은 가짜 정리를 수행하지 않습니다. 게스트 DLL이 있는 PE 진입점 반환은 미지원 스레드 종료가 필요하므로 명시적으로 중단합니다. 0이 아닌 `SizeOfZeroFill`은 미지원이며 실제 TLS 템플릿의 0으로 초기화된 바이트는 지원합니다. 진입점 없는 DLL은 TLS attach를 받지만 프로세스 detach 통지는 받지 않습니다.
 
@@ -1342,6 +1346,8 @@ Windows ring3는 독립적인 네이티브 관측에 따라 checked x64의 `oper
 `WindowsLifetimeTests.cpp`는 고정된 추적을 독립 네이티브 Windows 프로세스 및 KVM/WHP/Unicorn 실행과 비교합니다. 정상 종료, 진입점 반환, 두 DLL의 초기화 실패, 네 곳의 조기 종료와 진입점 없는 DLL을 포함합니다. 콜백 오류, 공용 예산, 재배치 TLS 필드와 TLS 총용량도 확인합니다. 네이티브 진입점 반환 프로브는 초기 스레드 핸들을 보존하고 종료 코드와 정확한 스레드/프로세스 통지 순서를 64회 검증합니다. 남은 자식 스레드는 관찰 후 종료하며 프로세스 종료 코드를 진입점 반환값으로 취급하지 않습니다.
 
 `NeverDUnpackTests`, `NeverDUnpackExecutionTests`, `NeverDUnpackPublicTests`는 패킹된 이미지의 복구를 다룹니다. [언패킹](unpack.md)을 참고하십시오. `UnpackGeneratedTests.cpp`는 테스트가 직접 패킹한 프로그램으로 x86-64와 ARM64에서 진입점 규칙을 검사합니다. `X64ReturnPrefixTests.cpp`는 2바이트 근거리 복귀를 모든 전송 계층에서 검사하고, 그 밖의 접두사 붙은 복귀가 계속 거부되는지 확인합니다. `WindowsDeferredTests.cpp`는 불투명 진입점과 멈춘 프로세스의 관찰을, `ExecutionSessionTests.cpp`는 실행 감시를 검사합니다. `DirectX64Tests.cpp`는 부분 페이지 감시, 페이지 경계를 넘는 명령 가져오기, 한 번만 재개, 서비스 경계, 잘못된 명령과 시간 제한 시 상태를 검증합니다.
+
+`WindowsDeferred.EarlierTLSCallbackMayGenerateALaterCallback`는 `IMAGE_SCN_CNT_UNINITIALIZED_DATA`를 가진 독립 `.gentls` 섹션, 선언된 버퍼 범위와 정확히 일치하는 크기, 원시 데이터 크기와 포인터가 모두 0임을 요구합니다. `WindowsDeferredCases.def`가 저장소와 어셈블리를 정의하며 일반 `.data`는 분리됩니다. 생성 콜백과 생성 진입점 모두 x64/ARM64의 엄격한 거부 및 지연 실행 검사를 유지합니다.
 
 `ExtendedRegistersLoadOrdinaryImportsAgain`는 짧은 형식과 패딩이 있는 R8-R15 로드를 검사 및 직접 x64 실행으로 검증합니다. 하위 레지스터 사례는 앞선 REX 모양 바이트와 CALL만 있는 주소 도우미를 다루며 패딩 호출은 CALL 뒤 임의 바이트를 건너뜁니다. `ImportCallHelpersCannotDiscardPersistentEffects`는 영구 부작용 보존을 요구합니다. `PERebuildTests.cpp`는 시작·결과 증거 누락과 겹친 시작을 거부하고 6~8바이트 구간의 정확한 API 반환 주소를 보존합니다.
 

@@ -98,7 +98,7 @@ def audit_shards(paths, commit, architecture, count, root=ROOT):
         require({item.name for item in (path / "methods").iterdir()} == method_paths,
                 "missing or extra method evidence")
         for number, (key, expected) in enumerate(methods.items()):
-            binary, family, directory, variables, timeout = key
+            binary, family, directory, variables, timeout, _run_serial = key
             part = path / "methods" / f"{number:04d}"
             status = read_json(part / "status.json")
             command = status["command"]

@@ -112,6 +112,7 @@ add_subdirectory(third_party/capstone)
 # libraries.  Use RelWithDebInfo when both symbols and decode performance
 # matter.
 if(TARGET capstone)
+    include(${CMAKE_SOURCE_DIR}/cmake/NeverDCapstoneCompilerOptions.inc)
     if(MSVC)
         target_compile_options(capstone PRIVATE
             "$<$<NOT:$<CONFIG:Debug>>:/O2>")
@@ -119,7 +120,7 @@ if(TARGET capstone)
         target_compile_options(capstone PRIVATE
             "$<$<NOT:$<CONFIG:Debug>>:-O3;-fomit-frame-pointer>"
             # glibc/clang 21 treat strchr(const char*) as returning const char*.
-            "-Wno-error=incompatible-pointer-types-discards-qualifiers")
+            "$<$<COMPILE_LANG_AND_ID:C,Clang,AppleClang>:${NEVERD_CAPSTONE_CLANG_QUALIFIERS}>")
     endif()
     target_compile_definitions(capstone PRIVATE
         "$<$<NOT:$<CONFIG:Debug>>:NDEBUG>")
