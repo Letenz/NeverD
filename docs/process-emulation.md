@@ -427,8 +427,14 @@ process-owned descriptor table. Android `open`, `open64`, `openat`, `openat64`,
 `read`, `close`, `lseek`, `lseek64`, `fstat`, `fstat64` and `syscall` use that same state, including
 across guest threads. Bionic alone maps kernel errors to `-1` and thread-local
 `errno`; success preserves errno. Absolute paths ignore `dirfd`; mode is unused
-without creation. Opens admit only `O_RDONLY`, optional `O_CLOEXEC` and the
-architecture's `O_LARGEFILE`. Other flags, relative paths, internal repeated
+without creation. Ordinary file opens admit `O_RDONLY`, optional `O_CLOEXEC`
+and the architecture's `O_LARGEFILE`. `O_DIRECTORY` also admits known pathname
+failures and requires the final object to be a directory. `O_DIRECT` admits
+pathname and descriptor-exhaustion failures before reaching an opened file;
+the catalogue does not infer its backing filesystem's direct-I/O support.
+ARM64's directory/direct bits are `0x4000`/`0x10000`, while x64 uses
+`0x10000`/`0x4000`. These stable source-pinned rules do not require GKI selection.
+Other flags, relative paths, internal repeated
 separators, `.`/`..` components,
 directory opens, writes/creation, symlinks, duplication and descriptor-control
 operations remain unsupported. Exec is unmodeled, so close-on-exec flags have
