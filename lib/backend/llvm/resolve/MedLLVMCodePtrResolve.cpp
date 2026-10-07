@@ -152,22 +152,42 @@ MedLLVMEmitter::materializeImageFunctionDeclaration(va_t Entry,
   return Function;
 }
 
-llvm::Constant *MedLLVMEmitter::resolveImageFunctionAddress(va_t Address) {
-  if (llvm::Constant *Lifted = resolveLiftedCodeAddress(Address))
-    return Lifted;
-  if (!Img || !Mod || !Ctx)
-    return nullptr;
+namespace {
+/// The image function symbol starting at \p Address, and the one ending
+/// there (its exclusive end).
+std::pair<const Symbol *, const Symbol *>
+imageFunctionSymbolsAt(const BinaryImage &Img, va_t Address) {
   const Symbol *Exact = nullptr;
   const Symbol *Ending = nullptr;
-  for (const Symbol &Sym : Img->Symbols) {
+  for (const Symbol &Sym : Img.Symbols) {
     if (!Sym.IsFunc)
       continue;
-    const va_t Entry = normalizeCodeAddress(Sym.Addr, Img->Arch, Img->Mode);
+    const va_t Entry = normalizeCodeAddress(Sym.Addr, Img.Arch, Img.Mode);
     if (Entry == Address)
       Exact = &Sym;
     if (Sym.Size != 0 && Entry <= Address && Address - Entry == Sym.Size)
       Ending = &Sym;
   }
+  return {Exact, Ending};
+}
+} // namespace
+
+llvm::Function *MedLLVMEmitter::resolveImageFunctionEntry(va_t Address) {
+  if (llvm::Function *Lifted = resolveLiftedFunctionEntry(Address))
+    return Lifted;
+  if (!Img || !Mod || !Ctx)
+    return nullptr;
+  const Symbol *Exact = imageFunctionSymbolsAt(*Img, Address).first;
+  return Exact ? materializeImageFunctionDeclaration(Address, Exact->Name)
+               : nullptr;
+}
+
+llvm::Constant *MedLLVMEmitter::resolveImageFunctionAddress(va_t Address) {
+  if (llvm::Constant *Lifted = resolveLiftedCodeAddress(Address))
+    return Lifted;
+  if (!Img || !Mod || !Ctx)
+    return nullptr;
+  const auto [Exact, Ending] = imageFunctionSymbolsAt(*Img, Address);
   const Symbol *Use = Exact ? Exact : Ending;
   if (!Use)
     return nullptr;
@@ -2372,17 +2392,20 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
                           !Proof.SawConflict;
   if (UniqueCode) {
     llvm::Constant *Identity = nullptr;
+    // A function this module does not lift, such as `main` when only
+    // `_start` is decompiled, is still identified by the image's function
+    // symbol at that address and becomes a declaration.
     if (RequireCodeRole) {
       // A CALL target must name a function entry.  An interior BlockAddress is
       // a relocatable code value, but calling it would bypass the lifted
       // function's ABI/prologue and is never a valid fallback.
-      Identity = resolveLiftedFunctionEntry(*Proof.CommonTarget);
+      Identity = resolveImageFunctionEntry(*Proof.CommonTarget);
     } else {
       // Ordinary observable values (return/store/argument/identity relation)
       // may legitimately carry an interior label, for example x86
       // `lea 0(%rip), %rax`.  Preserve that identity as blockaddress while
       // keeping the stricter function-only policy above for indirect calls.
-      Identity = resolveLiftedCodeAddress(*Proof.CommonTarget);
+      Identity = resolveImageFunctionAddress(*Proof.CommonTarget);
     }
     if (Identity)
       return Builder.CreatePtrToInt(

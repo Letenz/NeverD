@@ -644,16 +644,34 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn) {
     OS << "\n";
 }
 
+namespace {
+/// Whether \p Value is used inside \p Function, directly or through constant
+/// expressions, such as the `ptrtoint` that passes a function's address.
+bool usedInFunction(const llvm::Value &Value, const llvm::Function &Function) {
+  llvm::SmallVector<const llvm::User *, 8> Work(Value.users());
+  llvm::SmallPtrSet<const llvm::User *, 16> Seen;
+  while (!Work.empty()) {
+    const llvm::User *User = Work.pop_back_val();
+    if (!Seen.insert(User).second)
+      continue;
+    if (const auto *Instruction = llvm::dyn_cast<llvm::Instruction>(User)) {
+      if (Instruction->getFunction() == &Function)
+        return true;
+    } else if (llvm::isa<llvm::Constant>(User) &&
+               !llvm::isa<llvm::GlobalValue>(User)) {
+      Work.append(User->user_begin(), User->user_end());
+    }
+  }
+  return false;
+}
+} // namespace
+
 void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
   for (auto &Fn : Mod) {
     if (OnlyFunction) {
       // Selected fragments need declarations for their referenced providers,
       // including scalar calls and definitions whose bodies are not emitted.
-      if (&Fn == OnlyFunction ||
-          !llvm::any_of(Fn.users(), [&](const llvm::User *User) {
-            const auto *Instruction = llvm::dyn_cast<llvm::Instruction>(User);
-            return Instruction && Instruction->getFunction() == OnlyFunction;
-          }))
+      if (&Fn == OnlyFunction || !usedInFunction(Fn, *OnlyFunction))
         continue;
     } else if (!Fn.isDeclaration() && !Opts.PreserveLLVMFunctionTypes)
       continue;

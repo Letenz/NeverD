@@ -5752,6 +5752,18 @@ LLVMCWriter::resolveImportCalleeName(const llvm::Value *Callee) const {
       return {};
     if (const Import *Imp = Img->findImportAt(Slot); Imp && !Imp->Name.empty())
       return canonicalizeCProjectionIdentifier(Imp->Name, "nd_import");
+    // A slot the loader binds to one import, such as an ELF GOT entry, names
+    // it while the call still loads the slot.  A C++ stem could merge two
+    // overloads, so a mangled import stays unnamed here.
+    if (const auto Bound = Img->ImportStorageSlots.find(Slot);
+        Bound != Img->ImportStorageSlots.end() &&
+        !Img->ConflictingImportStorageSlots.count(Slot) &&
+        Bound->second.Addend == 0 && !Bound->second.Name.empty()) {
+      const llvm::StringRef Name =
+          cNameOfSymbol(Bound->second.Name, Opts.Format, Opts.TheArch);
+      if (itaniumStem(Name).empty() && msvcDecorationStem(Name).empty())
+        return canonicalizeCProjectionIdentifier(Name, "nd_import");
+    }
     return {};
   };
 
