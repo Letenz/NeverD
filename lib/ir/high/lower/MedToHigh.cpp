@@ -1035,6 +1035,8 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
           (Phase != 0 && rotateLoopsToTheirEntry(Func.Body)) |
           (Phase != 0 && hoistLoopExitTests(Func.Body)) |
           (Phase != 0 && moveLoopTailsToTheirBreak(Func.Body)) |
+          (Phase != 0 && moveSwitchTailsToTheirExit(Func.Body)) |
+          (Phase != 0 && absorbSwitchRangeGuards(Func.Body)) |
           (Phase != 0 && unwrapLoopsThatNeverRepeat(Func.Body)) |
           (Phase != 0 && LateJoinSink && sinkJoinDefaultsLate(Func)) |
           (Phase != 0 && hoistLoopEntryLabels(Func.Body)) |

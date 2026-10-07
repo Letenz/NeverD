@@ -653,7 +653,7 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
   // Removing a vector carrier can expose a second, narrower scalar copy
   // view. Re-prove that view with the same bounds before assigning names.
   narrowSourceConcatLocals(Func);
-  narrowUnreadRegisterBytes(Func);
+  narrowUnreadRegisterBytes(Func, TargetArch);
 
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 14: var rename (" << Func.Name
                           << ", " << Func.Body.size() << " stmts)\n");

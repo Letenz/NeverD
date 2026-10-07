@@ -843,6 +843,13 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     return nullptr;
   };
   Scan.ReachingRegArg = ReachingRegArg;
+  auto IsOwnParameter = [&](int Index) {
+    return CurMed && Index >= 0 && Index < static_cast<int>(ParamRegs.size()) &&
+           llvm::any_of(
+               CurMed->Params,
+               [&](const MedVar &P) { return P.RegOff == ParamRegs[Index]; });
+  };
+  Scan.IsOwnParameter = IsOwnParameter;
   std::function<std::optional<int64_t>(const MedVar &, int)> EntryOffset =
       [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
     if (!CurMed || Depth > 8)

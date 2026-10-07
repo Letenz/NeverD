@@ -143,6 +143,10 @@ VarArgFixedParamKind varArgFixedParamKind(std::string_view Name,
 /// have leading underscores already stripped.
 bool isVaListConsumer(std::string_view Name);
 
+/// True if parameter \p Index of the standard C or POSIX function \p Name is
+/// a narrow, NUL-terminated `char` string.  Leading underscores are ignored.
+bool isCStringParameter(std::string_view Name, unsigned Index);
+
 /// True if Name is a libc/POSIX function that never returns to its caller
 /// (abort / exit / _exit / _Exit / quick_exit, longjmp / siglongjmp,
 /// pthread_exit / thrd_exit, the err / errx family, and the internal assert /

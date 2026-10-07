@@ -199,6 +199,23 @@ bool isVaListConsumer(std::string_view Name) {
       .Default(false);
 }
 
+bool isCStringParameter(std::string_view Name, unsigned Index) {
+  struct StringParam {
+    std::string_view Name;
+    unsigned Index;
+  };
+  static constexpr StringParam StringParams[] = {
+#define LIBC_STRING_PARAM(Name, Index) {Name, Index},
+#include "neverd/libc/LibCStringParams.inc"
+#undef LIBC_STRING_PARAM
+  };
+  const std::string_view Bare = stripLeadingUnderscores(Name);
+  for (const StringParam &Param : StringParams)
+    if (Param.Index == Index && Param.Name == Bare)
+      return true;
+  return false;
+}
+
 bool isNoReturnFunction(std::string_view Name) {
   // Every entry is unconditionally __attribute__((noreturn)) in its standard
   // header.  Names whose canonical form keeps a leading underscore appear here

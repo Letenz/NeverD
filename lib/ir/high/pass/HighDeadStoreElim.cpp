@@ -20,6 +20,7 @@
 #include "HighDCEDetail.h"
 #include "HighFrameAddress.h"
 
+#include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
@@ -549,9 +550,17 @@ void narrowSourceConcatLocals(HighFunc &Func) {
 // undefined, and they would print as an unknown read. Each definition becomes
 // its low prefix, zero-extended to the carrier, when the bytes it drops are
 // pure. No definition moves and no read changes.
-void narrowUnreadRegisterBytes(HighFunc &Func) {
-  size_t Budget = 200000;
+//
+// Reads are first counted through explicit low views alone. Counting them
+// also through arithmetic whose low bytes come from its operands' low bytes
+// (`(uint8_t)(v - 2)`) finds more dead bytes, but rewriting a definition
+// whose upper bytes are well defined only adds casts; that wider count
+// narrows only definitions that can leave bytes undefined.
+void narrowUnreadRegisterBytes(HighFunc &Func, Arch Architecture) {
+  constexpr size_t kBudget = 200000;
+  size_t Budget = kBudget;
   bool Abort = false;
+  bool ThroughArithmetic = false;
   struct Value {
     uint16_t Carrier = 0;
     uint16_t Read = 0;
@@ -568,6 +577,18 @@ void narrowUnreadRegisterBytes(HighFunc &Func) {
            D->Type->Kind == NdTypeKind::Int && D->Type->Size >= 2 &&
            D->Type->Size <= 8 && D->Var.Size == D->Type->Size &&
            D->IntrinsicId == Intrinsic::None && D->IntrinsicOutputs.empty();
+  };
+  // A value no context reads: only the definitions it holds count.
+  std::function<void(const ExprPtr &)> Unread = [&](const ExprPtr &E) {
+    if (!E)
+      return;
+    if (!Budget--) {
+      Abort = true;
+      return;
+    }
+    for (const MedVar &Output : E->IntrinsicOutputs)
+      Values[varKey(Output)].Valid = false;
+    E->forEachChildExpr([&](const ExprPtr &C) { Unread(C); });
   };
   // Record how many low bytes of \p E its context reads (0: all of them).
   std::function<void(const ExprPtr &, uint16_t)> Visit =
@@ -604,49 +625,228 @@ void narrowUnreadRegisterBytes(HighFunc &Func) {
           Visit(Only, Narrowed(E->CastTo->Size));
           return;
         }
+        if (!ThroughArithmetic) {
+          E->forEachChildExpr([&](const ExprPtr &C) { Visit(C, 0); });
+          return;
+        }
+        // Bytes [K, K + N) of a value lie in its low K + N bytes.
+        if (E->Kind == ExprKind::BinOp && E->Op == NdOp::SUBBYTES &&
+            E->Operands.size() == 2 && E->Operands[0] && E->Operands[0]->Type &&
+            E->Operands[0]->Type->Kind == NdTypeKind::Int && E->Operands[1] &&
+            E->Operands[1]->Kind == ExprKind::Const && E->Type &&
+            E->Type->Size) {
+          const uint64_t End =
+              E->Operands[1]->ConstVal + uint64_t{Narrowed(E->Type->Size)};
+          Visit(E->Operands[0],
+                End < E->Operands[0]->Type->Size ? uint16_t(End) : 0);
+          return;
+        }
+        // The low bytes of a concatenation that its low part supplies never
+        // read the high part.
+        if (Selected && E->Kind == ExprKind::BinOp && E->Op == NdOp::CONCAT &&
+            E->Operands.size() == 2 && E->Operands[1] && E->Operands[1]->Type &&
+            E->Operands[1]->Type->Kind == NdTypeKind::Int &&
+            Selected <= E->Operands[1]->Type->Size) {
+          Unread(E->Operands[0]);
+          Visit(E->Operands[1],
+                Selected < E->Operands[1]->Type->Size ? Selected : 0);
+          return;
+        }
+        // The low bytes of an extension are its operand's; those of a sum,
+        // difference, product, complement, bitwise combination or left
+        // shift come from the operands' low bytes alone (the shift amount
+        // is read whole).
+        const bool Integer = E->Type && E->Type->Kind == NdTypeKind::Int &&
+                             Selected && Selected < E->Type->Size;
+        const bool Extension =
+            (E->Kind == ExprKind::UnaryOp &&
+             (E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT)) ||
+            (E->Kind == ExprKind::Cast && E->CastTo &&
+             E->CastTo->Kind == NdTypeKind::Int);
+        if (Integer && Extension && Only && Only->Type &&
+            Only->Type->Kind == NdTypeKind::Int) {
+          Visit(Only, Selected < Only->Type->Size ? Selected : 0);
+          return;
+        }
+        if (Integer && Only && E->Kind == ExprKind::UnaryOp &&
+            (E->Op == NdOp::INT_NEGATE || E->Op == NdOp::INT_NOT)) {
+          Visit(Only, Selected);
+          return;
+        }
+        if (Integer && E->Kind == ExprKind::BinOp && E->Operands.size() == 2 &&
+            (E->Op == NdOp::INT_ADD || E->Op == NdOp::INT_SUB ||
+             E->Op == NdOp::INT_MULT || E->Op == NdOp::INT_AND ||
+             E->Op == NdOp::INT_OR || E->Op == NdOp::INT_XOR ||
+             E->Op == NdOp::INT_LEFT)) {
+          Visit(E->Operands[0], Selected);
+          Visit(E->Operands[1], E->Op == NdOp::INT_LEFT ? 0 : Selected);
+          return;
+        }
         E->forEachChildExpr([&](const ExprPtr &C) { Visit(C, 0); });
       };
-  walkStmts(Func.Body, [&](HighStmt &S) {
+  auto Collect = [&](bool Arithmetic) {
+    Values.clear();
+    Budget = kBudget;
+    Abort = false;
+    ThroughArithmetic = Arithmetic;
+    walkStmts(Func.Body, [&](HighStmt &S) {
+      if (Abort)
+        return;
+      const bool Defines = S.Kind == StmtKind::Assign && Candidate(S.Dst);
+      if (Defines) {
+        Value &V = Values[varKey(S.Dst->Var)];
+        V.Valid &= !V.Carrier || V.Carrier == S.Dst->Type->Size;
+        V.Carrier = S.Dst->Type->Size;
+        V.Definitions.push_back(&S);
+        if (S.Val && S.Val->Kind == ExprKind::Var && S.Val->Operands.empty()) {
+          Values[varKey(S.Val->Var)].CopiesTo.push_back(varKey(S.Dst->Var));
+          return;
+        }
+      } else if (S.Kind == StmtKind::Assign && S.Dst &&
+                 S.Dst->Kind == ExprKind::Var) {
+        Values[varKey(S.Dst->Var)].Valid = false;
+      }
+      forEachExpr(S, [&](const ExprPtr &E) {
+        if (&E == &S.Dst && S.Kind == StmtKind::Assign && E &&
+            E->Kind == ExprKind::Var)
+          return;
+        Visit(E, 0);
+      });
+    });
     if (Abort)
       return;
-    const bool Defines = S.Kind == StmtKind::Assign && Candidate(S.Dst);
-    if (Defines) {
-      Value &V = Values[varKey(S.Dst->Var)];
-      V.Valid &= !V.Carrier || V.Carrier == S.Dst->Type->Size;
-      V.Carrier = S.Dst->Type->Size;
-      V.Definitions.push_back(&S);
-      if (S.Val && S.Val->Kind == ExprKind::Var && S.Val->Operands.empty()) {
-        Values[varKey(S.Val->Var)].CopiesTo.push_back(varKey(S.Dst->Var));
-        return;
-      }
-    } else if (S.Kind == StmtKind::Assign && S.Dst &&
-               S.Dst->Kind == ExprKind::Var) {
-      Values[varKey(S.Dst->Var)].Valid = false;
+    // A copy reads what its destination's reads select.
+    for (bool Changed = true; Changed;) {
+      Changed = false;
+      for (auto &[Key, V] : Values)
+        for (const VarKey &To : V.CopiesTo) {
+          auto Dest = Values.find(To);
+          if (Dest == Values.end())
+            continue;
+          const uint16_t Read =
+              Dest->second.Valid ? Dest->second.Read : Dest->second.Carrier;
+          if (Read > V.Read) {
+            V.Read = Read;
+            Changed = true;
+          }
+        }
     }
-    forEachExpr(S, [&](const ExprPtr &E) {
-      if (&E == &S.Dst && S.Kind == StmtKind::Assign && E &&
-          E->Kind == ExprKind::Var)
-        return;
-      Visit(E, 0);
-    });
-  });
+  };
+  Collect(/*Arithmetic=*/false);
   if (Abort)
     return;
-  // A copy reads what its destination's reads select.
-  for (bool Changed = true; Changed;) {
-    Changed = false;
-    for (auto &[Key, V] : Values)
-      for (const VarKey &To : V.CopiesTo) {
-        auto Dest = Values.find(To);
-        if (Dest == Values.end())
-          continue;
-        const uint16_t Read =
-            Dest->second.Valid ? Dest->second.Read : Dest->second.Carrier;
-        if (Read > V.Read) {
-          V.Read = Read;
-          Changed = true;
-        }
-      }
+  const VarKeyMap<Value> Direct = std::move(Values);
+  // Without the wider count, the view-only one still applies.
+  Collect(/*Arithmetic=*/true);
+  const VarKeyMap<Value> Through =
+      Abort ? VarKeyMap<Value>() : std::move(Values);
+  Budget = kBudget;
+  // Whether bytes [Low, size) of \p E may be undefined: an undefined value a
+  // byte merge kept there, directly or, at depth 0, through the definitions
+  // of a local. A call or load result is defined whatever its operands are.
+  std::function<bool(const ExprPtr &, uint16_t, unsigned)> UpperUndefined =
+      [&](const ExprPtr &E, uint16_t Low, unsigned Depth) -> bool {
+    if (!E || !Budget)
+      return false;
+    --Budget;
+    const uint16_t Size = E->Type ? E->Type->Size : 0;
+    if (Size && Low >= Size)
+      return false;
+    switch (E->Kind) {
+    case ExprKind::Undef:
+      return true;
+    case ExprKind::Const:
+    case ExprKind::Call:
+    case ExprKind::Load:
+    case ExprKind::Addr:
+      return false;
+    case ExprKind::Var: {
+      const auto It = Through.find(varKey(E->Var));
+      const bool Defined =
+          It != Through.end() && !It->second.Definitions.empty();
+      // A register the function never sets prints as an unknown read; the
+      // entry stack pointer is the frame base instead.
+      if (!Defined && E->Var.SSAVer == 0 && E->Var.RenameTag < 0 &&
+          E->Var.Id < limits::kVarRenameIdBase &&
+          (E->Var.Kind == MedVar::Reg || E->Var.Kind == MedVar::Flag) &&
+          !isSyntheticEntryStackPointer(E->Var, Func, Architecture))
+        return true;
+      if (Depth == 0 && Defined)
+        for (const HighStmt *D : It->second.Definitions)
+          if (UpperUndefined(D->Val, Low, Depth + 1))
+            return true;
+      return false;
+    }
+    default:
+      break;
+    }
+    const ExprPtr Only = E->Operands.size() == 1 ? E->Operands[0] : nullptr;
+    const uint16_t OnlySize = Only && Only->Type ? Only->Type->Size : 0;
+    if (E->Kind == ExprKind::BinOp && E->Op == NdOp::CONCAT &&
+        E->Operands.size() == 2 && E->Operands[1] && E->Operands[1]->Type) {
+      const uint16_t LowSize = E->Operands[1]->Type->Size;
+      return UpperUndefined(E->Operands[0], Low > LowSize ? Low - LowSize : 0,
+                            Depth) ||
+             (Low < LowSize && UpperUndefined(E->Operands[1], Low, Depth));
+    }
+    if (E->Kind == ExprKind::BinOp && E->Op == NdOp::SUBBYTES &&
+        E->Operands.size() == 2 && E->Operands[1] &&
+        E->Operands[1]->Kind == ExprKind::Const && E->Operands[1]->ConstVal < 8)
+      return UpperUndefined(E->Operands[0],
+                            uint16_t(E->Operands[1]->ConstVal + Low), Depth);
+    // A zero extension supplies its upper bytes; a sign extension copies the
+    // operand's top byte into them.
+    const bool Signed =
+        (E->Kind == ExprKind::UnaryOp && E->Op == NdOp::INT_SEXT) ||
+        ((E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast) && Only &&
+         Only->Type && Only->Type->IsSigned);
+    if (Only && OnlySize &&
+        ((E->Kind == ExprKind::UnaryOp &&
+          (E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT)) ||
+         E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast))
+      return UpperUndefined(Only,
+                            Signed && OnlySize < Size
+                                ? std::min<uint16_t>(Low, OnlySize - 1)
+                                : Low,
+                            Depth);
+    if (E->Kind == ExprKind::BinOp && E->Operands.size() == 2 &&
+        (E->Op == NdOp::INT_AND || E->Op == NdOp::INT_OR ||
+         E->Op == NdOp::INT_XOR)) {
+      // An AND with a constant clear above Low keeps no operand byte there.
+      if (E->Op == NdOp::INT_AND)
+        for (const ExprPtr &C : E->Operands)
+          if (C && C->Kind == ExprKind::Const &&
+              (C->ConstVal >> (Low * 8)) == 0)
+            return false;
+      return UpperUndefined(E->Operands[0], Low, Depth) ||
+             UpperUndefined(E->Operands[1], Low, Depth);
+    }
+    // Anything else may carry any operand byte upward.
+    bool Found = false;
+    E->forEachChildExpr([&](const ExprPtr &C) {
+      Found = Found || UpperUndefined(C, 0, Depth);
+    });
+    return Found;
+  };
+  auto Narrowable = [](const Value &V) {
+    return V.Valid && V.Carrier && V.Read && V.Read < V.Carrier &&
+           !V.Definitions.empty();
+  };
+  // Decide every width before rewriting: the rewrites drop undefined reads.
+  std::vector<std::pair<const Value *, uint16_t>> Widths;
+  for (const auto &[Key, V] : Direct) {
+    uint16_t Width = Narrowable(V) ? V.Read : 0;
+    const auto It = Through.find(Key);
+    if (It != Through.end() && Narrowable(It->second) &&
+        It->second.Read < (Width ? Width : It->second.Carrier) &&
+        std::any_of(
+            It->second.Definitions.begin(), It->second.Definitions.end(),
+            [&](const HighStmt *D) {
+              return UpperUndefined(D->Val, It->second.Read, 0);
+            }))
+      Width = It->second.Read;
+    if (Width)
+      Widths.emplace_back(&V, Width);
   }
   // The low \p Bytes of \p Val, dropping only pure high operands.
   auto LowPrefix = [&](ExprPtr Val, uint16_t Bytes) -> ExprPtr {
@@ -685,21 +885,18 @@ void narrowUnreadRegisterBytes(HighFunc &Func) {
     Prefix->Type = NdType::makeInt(Bytes, false);
     return Prefix;
   };
-  for (auto &[Key, V] : Values) {
-    if (!V.Valid || !V.Carrier || !V.Read || V.Read >= V.Carrier ||
-        V.Definitions.empty())
-      continue;
+  for (const auto &[V, Width] : Widths) {
     std::vector<ExprPtr> Prefixes;
-    for (HighStmt *S : V.Definitions) {
-      ExprPtr Prefix = LowPrefix(S->Val, V.Read);
+    for (HighStmt *S : V->Definitions) {
+      ExprPtr Prefix = LowPrefix(S->Val, Width);
       if (!Prefix)
         break;
       Prefixes.push_back(std::move(Prefix));
     }
-    if (Prefixes.size() != V.Definitions.size())
+    if (Prefixes.size() != V->Definitions.size())
       continue;
     for (size_t I = 0; I < Prefixes.size(); ++I) {
-      HighStmt &S = *V.Definitions[I];
+      HighStmt &S = *V->Definitions[I];
       auto Extended = HighExpr::makeUnary(NdOp::INT_ZEXT, Prefixes[I]);
       Extended->Type = S.Dst->Type;
       S.Val = std::move(Extended);

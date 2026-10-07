@@ -5934,6 +5934,46 @@ LowFunc stackLoad(va_t Entry, uint64_t Displacement) {
 }
 } // namespace
 
+TEST(CallRegisterEffects, MaskedByteMergeIsALowWrite) {
+  // `setbe r8b` lifts as `t = r8 & ~0xFF; u = t | flag; r8 = u` in one
+  // instruction.  The old R8 reaches only bytes no later `test r8b, r8b`
+  // reads, so R8 is not an argument -- unless a later read needs them.
+  const BinaryImage Img = win64Image();
+  const NdVar R8 = NdVar::reg(x86reg::R8, 8);
+  auto Summary = [&](uint16_t ReadWidth, bool SameRegister) {
+    LowFunc Low = makeOneBlockLow(0x1000, "set_byte", [&](auto Push) {
+      Push(NdOp::INT_AND, NdVar::tmp(1, 8),
+           {R8, NdVar::cst(0xFFFFFFFFFFFFFF00ULL, 8)});
+      Push(NdOp::INT_OR, NdVar::tmp(2, 8),
+           {NdVar::tmp(1, 8), NdVar::cst(1, 8)});
+      Push(NdOp::COPY, SameRegister ? R8 : NdVar::reg(x86reg::R9, 8),
+           {NdVar::tmp(2, 8)});
+      Push(NdOp::INT_AND, NdVar::tmp(3, ReadWidth),
+           {NdVar::reg(x86reg::R8, ReadWidth),
+            NdVar::reg(x86reg::R8, ReadWidth)});
+    });
+    LowBlock &Block = Low.Blocks.front();
+    for (uint64_t First : {0, 3}) {
+      LowInstructionBoundary Boundary;
+      Boundary.Address = 0x1000 + First;
+      Boundary.Size = 3;
+      Boundary.FirstOp = First;
+      Boundary.OpCount = First == 0 ? 3 : Block.Ops.size() - 3;
+      Block.InstructionBoundaries.push_back(Boundary);
+    }
+    const GPRFamilyMask Args =
+        (1u << (x86reg::RCX / 8)) | (1u << (x86reg::RDX / 8)) |
+        (1u << (x86reg::R8 / 8)) | (1u << (x86reg::R9 / 8));
+    const auto Summaries = solveCallRegisterEffects(
+        {{0x1000, localRegisterEffect(Img, Low)}}, Args, Args);
+    return Summaries.EntryReads.at(0x1000)[x86reg::R8 / 8];
+  };
+  EXPECT_EQ(Summary(1, true), 0u);
+  EXPECT_EQ(Summary(8, true), 8u);
+  // A merge into another register reads all of R8.
+  EXPECT_EQ(Summary(1, false), 8u);
+}
+
 TEST(CallRegisterEffects, BoundsTheIncomingStackSlotsABodyReads) {
   const BinaryImage Img = win64Image();
   // [rsp+40h] after `sub rsp, 18h` is the first stack argument.

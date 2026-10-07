@@ -91,6 +91,9 @@ struct CallArgScan {
   /// The value register argument \p Index holds at the call, for filling a
   /// register slot the call did not visibly write (nullptr when unknown).
   llvm::function_ref<ExprPtr(int)> ReachingRegArg;
+  /// Whether argument register \p Index is one of this function's own
+  /// parameters, which a forwarder passes through untouched.
+  llvm::function_ref<bool(int)> IsOwnParameter;
   /// Offset of an address from the stack pointer at function entry, when it
   /// resolves through copies and constant adjustments (an `r11 = rsp`
   /// frame); nullopt otherwise.
