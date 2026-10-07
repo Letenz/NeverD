@@ -1419,6 +1419,8 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `NeverDOwnInteriorCallTests`는 x64 함수가 자신의 unwind 범위 안 레이블을 직접 call하는 경우를 다룹니다. 푸시한 반환 주소만을 위한 call은 푸시와 점프로 리프트하며, 직선과 루프 두 경우에서 생성한 C를 `-O0`과 `-O2`에서 AddressSanitizer와 정의되지 않은 동작 트랩을 켜고 실행합니다. 반환이 그 call 자신의 반환 주소를 꺼내는 대상은 일반 호출로 남습니다. 함수가 스스로 푸시한 주소를 꺼낼 수 있는 반환(불균형한 복원이나 스택 전환 이후)이 있으면 함수를 거부하고 그 반환 명령을 알립니다.
 
+`NeverDSysVCallContractTests`는 QtXml의 `QDomNode::save`와 `QDomNode::isDocument` 형태로 x86-64 System V 호출 규약을 검사합니다. 요약이 인수 레지스터를 읽는 직접 피호출자는 수정 없이 넘어온 입력 `this`를 포함해 호출자의 값을 받습니다. 가상 호출은 지배 블록이 `RDI`에 적재한 객체를 받습니다. 한 경로에서는 `RAX`를 쓰지 않고 반환하고 다른 경로에서는 피호출자의 결과만 넘기는 메서드는 void입니다. 비교 연쇄 앞에서 `AL`에 쓴 바이트는 모든 경로에서 반환값입니다. 생성된 프로그램은 `-O0`과 `-O2`에서 AddressSanitizer와 정의되지 않은 동작 트랩을 켜고 실행합니다.
+
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier`는 CoreImage 제공자, CIImage 팩터리, 완전한 48바이트 논리 레코드와 x2 포인터를 검사하고 누락되거나 잘못된 제공자, x86_64와 충돌하는 선언을 거부한다. `ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication`은 동일한 기계 주소를 가진 결과 대입과 원래 호출을 구분한다. `RejectsChangedCopyCallBodyAndCurrentImage`는 증명, 인수, 저장, 프레임, 메타데이터, 임포트, 중복 호출과 저장 IR에 대한 24가지 변경을 거부하며 MedIR과 HighIR을 일관되게 함께 수정한 경우도 포함한다. `GeneratedCExecutesAgainstIndependentPhysicalCopyABI`는 ARM64에서 수정하지 않은 생성 C를 O0/O2로 실행하고 컴파일러에서 독립적으로 관측한 x2 포인터를 받는 함수와 비교한다. 부동소수점 비트 패턴 6개, 선택자와 수신자 식별, 한 번의 평가, 반환 객체, 합법적인 복사본 쓰기, 입력 불변성과 경계 가드를 확인한다. 다른 호스트에서는 이 물리 ABI 실행 테스트를 건너뛴다.
 
 `ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration`는 현재의 비어 있지 않은 메서드 인코딩 또는 선택자와 다른 캐시 ABI를 거부한다. 선언만 제공하는 클라이언트의 기존 계약은 유지한다.

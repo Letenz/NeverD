@@ -206,6 +206,16 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
     }
   }
 
+  // Copy propagation can leave the integer return register's value as the
+  // temporary it was copied from (`CONCAT t = rax.hi, 0` for `xor al, al`)
+  // when no definition above names the register.  On x86 the RETURN operand
+  // is that register, so the temporary is the value returned and the
+  // register's incoming value is not.  Elsewhere the operand can be the
+  // return address instead.
+  if (!RetVal && (TargetArch == Arch::X64 || TargetArch == Arch::X86) &&
+      CurOp.NumInputs >= 1 && CurOp.Inputs[0].Id >= 0 &&
+      CurOp.Inputs[0].Kind == MedVar::Temp && !ExplicitABI && !UsesFPReturnReg)
+    RetVal = medvarToExpr(CurOp.Inputs[0]);
   if (!RetVal)
     RetVal = unchangedDeclaredReturnParameter(Med, TRI, ReturnReg);
 
