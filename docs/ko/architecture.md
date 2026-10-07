@@ -1402,6 +1402,8 @@ Swift SDK Published의 enclosing-instance 접근자는 포인터 네 개를 유�
 
 `LinuxGKIKernels.def`가 분기·`pidfd_open` 플래그·비리더 오류·iovec 규칙을 소유합니다. `LinuxKernelOptions`는 명시적 선택과 선택적 고정 태스크 목록을 소유합니다. `LinuxServices`는 호출을 분배하고 `LinuxFiles`는 파일과 pidfd를 소유하며 `LinuxOutput`은 가져오기를 공유하고 `LinuxPIDFD`는 할당 전에 대상 종류를 검사합니다. 목록 생략 시 외부 대상은 미지원이며 공유 검증은 모순된 우선순위와 협력 Android 스레드를 거부합니다. 호스트 검색은 없습니다. [GKI 계약](android-gki-kernels.md)을 참고하십시오.
 
+`LinuxCPUClock`은 프로세스 CPU 식별자와 GKI 작업 관측을 검증하고 출력 전에 현재 그룹 별칭과 외부 리더를 확인합니다. `LinuxClock`은 표본을 정규화하고 중복 별칭을 거부합니다. 선언된 벽시계만 유휴 시 진행하며 CPU 표본은 고정됩니다. 호스트 시계나 실행 계측으로 관측을 보충하지 않습니다.
+
 ## 모바일 소스 조립
 
 Objective-C 소스 내보내기는 전체 네이티브 단위와 개별 메서드 단위에서 `CEmitterOptions::EmitRecordGuards`와 `CEmitterOptions::UseUnalignedPointers`를 끕니다. 정확한 너비의 바이트 복사로 비정렬 메모리 접근 의미를 보존하고 생성된 매크로가 모바일 파서에 들어가지 않게 합니다. 조건부 지시문과 매크로를 변경하는 지시문은 계속 거부합니다.

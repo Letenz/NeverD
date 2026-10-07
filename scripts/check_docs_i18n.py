@@ -64,7 +64,7 @@ GUIDE_STEMS = ("evm", "sbf", "android", "ios")
 MACOS_GUIDE_STEMS = ("macos-hvf", "darwin-emulation")
 EMULATION_DOC_INVENTORY = Path("scripts/EmulationDocumentation.def")
 EMULATION_GUIDE_STEMS = tuple(re.findall(
-    r'NEVERD_EMULATION_DOC_GUIDE\("([^\"]+)"\)',
+    r'NEVERD_EMULATION_DOC_GUIDE\(\s*"([^\"]+)"\s*\)',
     (REPO_ROOT / EMULATION_DOC_INVENTORY).read_text(encoding="utf-8"),
 ))
 SBF_GUIDE_DOCS = (
@@ -3024,11 +3024,11 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
     inventory = view.read_text(EMULATION_DOC_INVENTORY)
     doc_tokens: dict[str, list[str]] = defaultdict(list)
     for group, token in re.findall(
-        r'NEVERD_EMULATION_DOC_TOKEN\((\w+), "([^\"]+)"\)', inventory
+        r'NEVERD_EMULATION_DOC_TOKEN\(\s*(\w+),\s*"([^\"]+)"\s*\)', inventory
     ):
         doc_tokens[group].append(token)
     for group, pattern in re.findall(
-        r'NEVERD_EMULATION_DOC_PATH\((\w+), "([^\"]+)"\)', inventory
+        r'NEVERD_EMULATION_DOC_PATH\(\s*(\w+),\s*"([^\"]+)"\s*\)', inventory
     ):
         paths = [pattern.format(locale=locale) for locale in LOCALES]
         for path in dict.fromkeys(paths):

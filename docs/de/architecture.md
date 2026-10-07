@@ -1539,6 +1539,8 @@ Der exakt authentifizierte SDK-Getter `MainActor.shared` gibt einen Objektzeiger
 
 `LinuxGKIKernels.def` verwaltet Zweige, `pidfd_open`-Flags, Nichtführerfehler und iovec-Regeln. `LinuxKernelOptions` besitzt die ausdrückliche Auswahl und den optionalen festen Aufgabenkatalog. `LinuxServices` verteilt Aufrufe, `LinuxFiles` besitzt Dateien und pidfds, `LinuxOutput` teilt den Importer; `LinuxPIDFD` prüft Zielklassen vor Zuteilung. Fehlende Kataloge lassen fremde Ziele ununterstützt; gemeinsame Validierung lehnt widersprüchliche Prioritäten und kooperative Android-Threads ab. Keine Host-Prozesssuche. Siehe [GKI-Verträge](android-gki-kernels.md).
 
+`LinuxCPUClock` decodiert CPU-Identitäten, validiert GKI-Aufgabenbeobachtungen und löst aktuelle Gruppenaliase und fremde Gruppenführer vor der Ausgabe auf. `LinuxClock` normalisiert Werte und lehnt doppelte Aliase ab. Nur deklarierte Wanduhren laufen im Leerlauf weiter; CPU-Werte bleiben fest, ohne Hostuhr oder implizite Abrechnung.
+
 ## Zusammenführung mobiler Quellen
 
 Der Objective-C-Quellexport deaktiviert `CEmitterOptions::EmitRecordGuards` und `CEmitterOptions::UseUnalignedPointers` für die vollständige native Einheit und jede Methodeneinheit. Bytekopien mit exakter Breite erhalten die Semantik nicht ausgerichteter Speicherzugriffe und halten erzeugte Makros vom mobilen Parser fern; bedingte und makroverändernde Direktiven werden weiterhin abgelehnt.

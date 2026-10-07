@@ -124,9 +124,13 @@ La opción `linux_time` proporciona valores fijos a las llamadas de Linux y a An
   "timezone":{"minutes_west":-60,"dst_time":0}}}
 ```
 
-Se aceptan los identificadores estáticos 0–9 y 11. Cada reloj es independiente; los valores omitidos siguen siendo desconocidos. Se rechazan los identificadores repetidos o desconocidos. Los segundos son enteros con signo de 64 bits y los nanosegundos están en `[0, 1000000000)`. Los enteros JSON deben estar dentro de `±9007199254740991`; las cadenas decimales conservan todo el intervalo de 64 bits. Los campos de zona horaria son enteros con signo de 32 bits. C++ usa `ProcessOptions::LinuxTime`; otros perfiles de SO rechazan esta opción.
+Se admiten ID estáticos 0–9 y 11 y los ID CPU negativos del GKI elegido. Identidades duplicadas, ID desconocidos y más de 16384 muestras se rechazan. Los segundos son enteros con signo de 64 bits, no negativos para CPU; los nanosegundos están en `[0, 1000000000)`. Los enteros JSON están en `±9007199254740991`, las cadenas decimales conservan todo el rango; la zona horaria usa 32 bits con signo. C++ usa `ProcessOptions::LinuxTime`; otros perfiles OS rechazan la opción.
 
-`clock_gettime`, `gettimeofday` y `time` de x64 comparten estas entradas. La falta de valores, los relojes dinámicos o las escrituras parciales no modeladas provocan una parada explícita; las escrituras terminadas se conservan. No se modelan ajustes, suspensión ni relojes de dispositivos reales. El [contrato completo de los relojes](../process-emulation.md#explicit-guest-clocks) detalla el orden de escritura, los errores y los punteros.
+`-16006` es SCHED del PID 2000. PROF y VIRT son independientes. Los ID actuales SCHED 2, -6 (PID cero) y -8006 (PID 1000) comparten muestra; los alias PROF son -8/-8008 y VIRT -7/-8007. Se rechazan alias duplicados incluso con valores iguales. Los segundos CPU son no negativos y los nanosegundos normalizados. El avance inactivo solo cambia los relojes de pared 0, 1 y 7; las muestras CPU quedan fijas. La ejecución no deduce consumo CPU.
+
+`advance_on_idle: true` activa `nanosleep` relativo x64/ARM64 y los wrappers Android nominales/variadic. Los relojes de pared 0, 1 y 7 pueden coexistir con muestras CPU fijas; otros tipos se excluyen de esta política. Los hilos ejecutables avanzan primero; cuando todos se bloquean, el tiempo llega al primer plazo. Un único hilo avanza directamente. Los relojes dinámicos/FD/de hilo codificados siguen sin soporte.
+
+El TID propio de la tarea actual también identifica su grupo, incluidos los hilos cooperativos Android sin catálogo externo. Un PID externo ausente del catálogo cerrado o vivo sin ser líder devuelve `EINVAL` antes de acceder al destino. Omitir el catálogo o la muestra de un grupo conocido deja la operación sin soporte antes de copiar. Un tipo inválido devuelve `EINVAL`; una muestra válida puede producir `EFAULT` en la copia de usuario. Los traps conservan errores negativos; solo Bionic actualiza errno y devuelve -1. [GKI](android-gki-kernels.md).
 
 <a id="explicit-memory-files"></a>
 

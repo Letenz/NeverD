@@ -1535,6 +1535,8 @@ Il getter SDK esatto `MainActor.shared` restituisce un puntatore a oggetto e ric
 
 `LinuxGKIKernels.def` gestisce rami, flag `pidfd_open`, errori dei non-leader e regole iovec. `LinuxKernelOptions` possiede scelta esplicita e catalogo fisso opzionale. `LinuxServices` distribuisce chiamate, `LinuxFiles` possiede file/pidfd, `LinuxOutput` condivide l’importatore e `LinuxPIDFD` controlla classi prima dell’allocazione. Senza catalogo, target esterni non supportati; la validazione comune rifiuta priorità contraddittorie e thread Android cooperativi. Nessuna ricerca host. Vedere i [contratti GKI](android-gki-kernels.md).
 
+`LinuxCPUClock` decodifica l’identità CPU, valida le attività GKI e risolve alias del gruppo corrente e leader esterni prima dell’output. `LinuxClock` normalizza i campioni e rifiuta alias duplicati. Avanzano solo gli orologi di parete dichiarati; i campioni CPU restano fissi, senza orologio host né contabilità implicita.
+
 ## Assemblaggio dei sorgenti mobili
 
 L’esportatore dei sorgenti Objective-C disabilita `CEmitterOptions::EmitRecordGuards` e `CEmitterOptions::UseUnalignedPointers` per l’unità nativa completa e ogni unità di metodo. Le copie di byte di larghezza esatta preservano gli accessi alla memoria non allineati ed evitano di introdurre macro generate nel parser mobile; le direttive condizionali e quelle che modificano macro restano rifiutate.

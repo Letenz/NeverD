@@ -6,11 +6,11 @@ NeverD privilégie les branches Android GKI publiées de 5.10 à 6.18 avant les 
 {"linux_kernel":{"gki":"android17-6.18"},"linux_files":{"files":[],"descriptor_limit":16}}
 ```
 
-Le contrat API 28 décrit les imports Bionic, sans choisir de noyau. GKI ne contrôle actuellement que `pidfd_open` et les sorties vectorielles implémentées. Il ne certifie pas un noyau complet, ne charge aucune image et ne déduit ni périphériques, ni espaces de noms, ni droits, ni inventaire des processus. Les services non pris en charge échouent explicitement. Voir la [politique GKI officielle](https://source.android.com/docs/core/architecture/kernel/gki-releases).
+Le contrat API 28 du profil Android natif décrit les imports Bionic sans sélectionner le noyau. Le choix GKI contrôle les contrats implémentés de `pidfd_open`, de sortie vectorielle et d’horloges CPU de processus encodées. Il ne certifie ni ne démarre un noyau complet et ne déduit aucun périphérique, espace de noms, droit ou inventaire de processus. Les services non pris en charge s’arrêtent explicitement. Voir la [politique GKI officielle](https://source.android.com/docs/core/architecture/kernel/gki-releases).
 
 ## Révisions sources figées
 
-`LinuxGKIKernels.def` suit ces étiquettes officielles `r1`, vérifiées le 2026-10-07. Les commits immuables fournissent `kernel/pid.c`, `include/uapi/linux/pidfd.h`, `arch/arm64/configs/gki_defconfig`, `kernel/fork.c`, `lib/iov_iter.c` et `fs/read_write.c`. Les drapeaux proviennent de l’UAPI et de la validation des appels, pas du niveau API Android ou du noyau hôte.
+`LinuxGKIKernels.def` suit ces étiquettes officielles `r1`, vérifiées le 2026-10-07. Les commits immuables fournissent `kernel/pid.c`, `include/uapi/linux/pidfd.h`, `arch/arm64/configs/gki_defconfig`, `kernel/fork.c`, `lib/iov_iter.c` et `fs/read_write.c`. Les drapeaux proviennent de l’UAPI et de la validation des appels, pas du niveau API Android ou du noyau hôte. Les sources CPU figées figurent dans le tableau ci-dessous.
 
 | Branche demandée | Étiquette publiée | Commit source figé | Drapeaux admis | Import iovec |
 | --- | --- | --- | --- | --- |
@@ -45,6 +45,35 @@ Sur un pidfd valide, `read`/`write` renvoient `EINVAL` avant accès aux données
 
 Bionic convertit les erreurs négatives brutes en `-1` et `errno` local au thread ; le succès préserve `errno`. Les métadonnées de `fstat` manquent. Polling, notifications de sortie, signaux via pidfd, `pidfd_getfd`, `fcntl`, ioctl pidfs et tâches non observées restent non pris en charge. Ni ordonnanceur ni durée de vie ne sont déduits d’un pidfd.
 
+## Sous-ensemble des horloges CPU de processus
+
+Avec un GKI explicite, `clock_gettime` accepte les identifiants négatifs encodés PROF, VIRT et SCHED, en interprétant les 32 bits bas signés. Le PID et le type désignent un échantillon explicite de `linux_time`. Le processus courant est implicite ; les autres doivent être déclarés comme chefs de groupe vivants dans le catalogue fermé avant de fournir leur échantillon.
+
+```json
+{"linux_kernel":{"gki":"android17-6.18","tasks":[{"id":2000,"group_leader":true}]},"linux_time":{"advance_on_idle":true,"clocks":[{"id":1,"seconds":10,"nanoseconds":0},{"id":2,"seconds":3,"nanoseconds":4},{"id":-16006,"seconds":7,"nanoseconds":9}]}}
+```
+
+`-16006` désigne SCHED pour le PID 2000. PROF et VIRT sont indépendants. Pour le processus courant, SCHED 2, -6 (PID zéro) et -8006 (PID 1000) partagent un échantillon ; les alias PROF sont -8/-8008 et VIRT -7/-8007. Les doublons sont refusés même à valeur égale. Les secondes CPU sont positives ou nulles, les nanosecondes normalisées. L’avancement au repos ne modifie que les horloges murales 0, 1 et 7 ; les échantillons CPU restent fixes. L’exécution ne déduit aucune consommation CPU.
+
+Le TID propre à la tâche courante désigne aussi son groupe, y compris avec les threads Android coopératifs sans catalogue étranger. Un PID étranger absent du catalogue fermé ou vivant sans être chef renvoie `EINVAL` avant tout accès de sortie. Catalogue omis ou échantillon absent d’un groupe connu : arrêt non pris en charge avant la copie. Un type invalide renvoie `EINVAL` ; un échantillon valide peut rencontrer `EFAULT` dans la copie utilisateur. Les traps bruts conservent les erreurs négatives ; Bionic seul actualise errno et renvoie -1.
+
+Les règles suivent `pid_for_clock`, `posix_cpu_clock_get`, le répartiteur et les définitions d’identifiants de chaque révision figée :
+
+| Branche demandée | Source des horloges CPU de processus |
+| --- | --- |
+| `android12-5.10` | [b14525331e0d](https://android.googlesource.com/kernel/common/+/b14525331e0d5d335b037d6ed17d40424ed47b0a/kernel/time/posix-cpu-timers.c) |
+| `android13-5.10` | [b9c8cb19d426](https://android.googlesource.com/kernel/common/+/b9c8cb19d426ec591e0a34dcc2d8638147e4ebc1/kernel/time/posix-cpu-timers.c) |
+| `android13-5.15` | [0b6028f1f30d](https://android.googlesource.com/kernel/common/+/0b6028f1f30da3c2143bb40eee912c4974108e5c/kernel/time/posix-cpu-timers.c) |
+| `android14-5.15` | [9938d39e2fe9](https://android.googlesource.com/kernel/common/+/9938d39e2fe99593abe347df3b82ea2f85c83d1d/kernel/time/posix-cpu-timers.c) |
+| `android14-6.1` | [79480508eb1e](https://android.googlesource.com/kernel/common/+/79480508eb1eed09620f1cd5484dbfa4a677d0a9/kernel/time/posix-cpu-timers.c) |
+| `android15-6.6` | [5556e039c32f](https://android.googlesource.com/kernel/common/+/5556e039c32fa02b239611dc8e5ebb958a7f12e1/kernel/time/posix-cpu-timers.c) |
+| `android16-6.12` | [894a317b5382](https://android.googlesource.com/kernel/common/+/894a317b5382555614ef2be7a79cca79083c6cf2/kernel/time/posix-cpu-timers.c) |
+| `android17-6.18` | [bab5f6aca819](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/kernel/time/posix-cpu-timers.c) |
+
+La distinction FD et le routage CPU suivent aussi le [répartiteur 6.18](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/kernel/time/posix-timers.c) et les [définitions des identifiants](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/include/linux/posix-timers_types.h) figés. Les horloges FD et les horloges CPU encodées par thread restent non prises en charge. Le catalogue est une observation invitée fixe ; droits, espaces de noms, durée de vie et comptabilité CPU nécessitent leurs propres contrats.
+
 ## Validation et couverture future
 
 `LinuxPIDFDTests.cpp` exécute des ELF x64/AArch64 indépendants O0/O2 pour les huit branches et transports disponibles : drapeaux, table partagée, limites/réutilisation, ordre des erreurs, métadonnées inaccessibles, plafonnement/étendues originales, catalogues omis/fermés, non-chefs et recherche avant saturation. `AndroidSyscallTests.cpp` répète propriété raw/Bionic, recherche et errno sur six profils O0/O2 avec relocations ordinaires, Android packed et RELR. Sources et exécutions prouvent ce sous-ensemble ; aucun démarrage natif de chaque image GKI n’est établi. Étendre Linux service par service en conservant versions, configurations et observations.
+
+Les cas CPU vérifient identité, ordre de sortie, types indépendants, observations explicites et séparation du repos mural. `AndroidTimeTests.cpp` vérifie sorties nommées/brutes et sentinelles ; le syscall coopératif vérifie l’alias du TID courant non chef.

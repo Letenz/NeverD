@@ -1509,3 +1509,5 @@ MainActor 測試資料檢查完整的固定中繼資料與靜態表流程，拒�
 `AndroidTestExecution.def` 為 `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` 設定 120 秒的整項 CTest 預算與 `RUN_SERIAL`。兩次工作負載各自保留 30 秒的有限執行預算，循序限制避免容量壓力案例爭用資源。六種 O0/O2 與重新定位設定皆採用此規則。
 
 `LinuxPIDFD.*` 檢查分支、列舉、缺失觀察值及任務清單的載入前校驗。`Backends/LinuxPIDFDProcess.*` 用八個分支的獨立 x64／AArch64 O0／O2 呼叫程式檢查標誌、檔案表、限額／複用、錯誤順序、清單查詢、非首領和單向量限長。`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` 與其他 `AndroidSyscallTests.cpp` 用例覆蓋六種重定位配置的 raw／Bionic 錯誤和 errno。共享語義變更後執行重點用例、完整 Linux 程序、Android 原生及程序公共介面套件。這些模型測試不等於啟動八種 GKI 核心；參見[原始碼固定版本與證據](android-gki-kernels.md)。
+
+`ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: `ProcessCPUClocksRetainIdentityAndIdleSeparation`、`ProcessCPUClocksKeepMissingObservationBoundaries` 與 `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle` 檢查八種固定版本的 raw／Bionic 身份、PROF／VIRT／SCHED、低 32 位引數、目標校驗先於指標故障、觀察值缺失、別名、CPU 非負值及牆鍾／CPU 空閒分離。`AndroidTimeTests.cpp` 檢查輸出和哨兵；協作式 syscall 樣例檢查當前非首領 TID 的程序組樣本。

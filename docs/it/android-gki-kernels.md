@@ -6,11 +6,11 @@ NeverD dà priorità ai rami Android GKI pubblicati 5.10–6.18, prima delle alt
 {"linux_kernel":{"gki":"android17-6.18"},"linux_files":{"files":[],"descriptor_limit":16}}
 ```
 
-API 28 descrive gli import Bionic, senza scegliere il kernel. GKI controlla solo `pidfd_open` e gli output vettoriali implementati; non certifica un kernel completo, non carica immagini e non deduce dispositivi, namespace, credenziali o processi. I servizi non supportati falliscono esplicitamente. Vedere la [politica GKI ufficiale](https://source.android.com/docs/core/architecture/kernel/gki-releases).
+Il contratto API 28 del profilo Android nativo descrive gli import Bionic senza scegliere il kernel. GKI controlla i contratti implementati di `pidfd_open`, output vettoriale e orologi CPU di processo codificati. Non certifica né avvia un kernel completo e non deduce dispositivi, namespace, autorizzazioni o processi. I servizi non supportati si arrestano esplicitamente. Vedere la [politica GKI ufficiale](https://source.android.com/docs/core/architecture/kernel/gki-releases).
 
 ## Revisioni sorgente fissate
 
-`LinuxGKIKernels.def` segue questi tag ufficiali `r1`, verificati il 2026-10-07. I commit immutabili forniscono `kernel/pid.c`, `include/uapi/linux/pidfd.h`, `arch/arm64/configs/gki_defconfig`, `kernel/fork.c`, `lib/iov_iter.c` e `fs/read_write.c`. I flag derivano da UAPI e controlli delle chiamate, non dal livello API Android o dal kernel host.
+`LinuxGKIKernels.def` segue questi tag ufficiali `r1`, verificati il 2026-10-07. I commit immutabili forniscono `kernel/pid.c`, `include/uapi/linux/pidfd.h`, `arch/arm64/configs/gki_defconfig`, `kernel/fork.c`, `lib/iov_iter.c` e `fs/read_write.c`. I flag derivano da UAPI e controlli delle chiamate, non dal livello API Android o dal kernel host. Le fonti fissate degli orologi CPU sono riportate nella tabella seguente.
 
 | Ramo richiesto | Tag pubblicato | Commit sorgente fissato | Flag ammessi | Import iovec |
 | --- | --- | --- | --- | --- |
@@ -45,6 +45,35 @@ Su pidfd validi, `read`/`write` danno `EINVAL` prima dei dati; `lseek` verifica 
 
 Bionic converte errori raw negativi in `-1` ed `errno` locale al thread; il successo conserva `errno`. Mancano metadati per `fstat`. Polling, notifiche di uscita, segnali tramite pidfd, `pidfd_getfd`, `fcntl`, ioctl pidfs e attività non osservate restano non supportati. Un pidfd non implica scheduling o ciclo di vita.
 
+## Sottoinsieme degli orologi CPU di processo
+
+Con GKI esplicito, `clock_gettime` accetta ID negativi codificati di processo PROF, VIRT e SCHED, interpretando i 32 bit bassi con segno. PID e tipo identificano un campione esplicito in `linux_time`. Il processo corrente è implicito; gli altri devono essere dichiarati leader di gruppo vivi nel catalogo chiuso prima di fornire un campione.
+
+```json
+{"linux_kernel":{"gki":"android17-6.18","tasks":[{"id":2000,"group_leader":true}]},"linux_time":{"advance_on_idle":true,"clocks":[{"id":1,"seconds":10,"nanoseconds":0},{"id":2,"seconds":3,"nanoseconds":4},{"id":-16006,"seconds":7,"nanoseconds":9}]}}
+```
+
+`-16006` è SCHED del PID 2000. PROF e VIRT sono indipendenti. Gli ID SCHED correnti 2, -6 (PID zero) e -8006 (PID 1000) condividono un campione; gli alias PROF sono -8/-8008 e VIRT -7/-8007. Alias duplicati vengono rifiutati anche a valori uguali. I secondi CPU sono non negativi e i nanosecondi normalizzati. L’avanzamento inattivo modifica solo gli orologi di parete 0, 1 e 7; i campioni CPU restano fissi. L’esecuzione non deduce consumo CPU.
+
+Il TID della stessa attività corrente identifica anche il suo gruppo, inclusi i thread Android cooperativi senza catalogo esterno. Un PID esterno assente dal catalogo chiuso o vivo ma non leader restituisce `EINVAL` prima dell’accesso alla destinazione. Catalogo omesso o campione mancante per un gruppo noto: arresto non supportato prima della copia. Tipi invalidi restituiscono `EINVAL`; campioni validi possono produrre `EFAULT` nella copia utente. I trap mantengono errori negativi; solo Bionic aggiorna errno e restituisce -1.
+
+Le regole seguono `pid_for_clock`, `posix_cpu_clock_get`, il dispatcher e le definizioni degli ID di ogni revisione fissata:
+
+| Ramo richiesto | Fonte degli orologi CPU di processo |
+| --- | --- |
+| `android12-5.10` | [b14525331e0d](https://android.googlesource.com/kernel/common/+/b14525331e0d5d335b037d6ed17d40424ed47b0a/kernel/time/posix-cpu-timers.c) |
+| `android13-5.10` | [b9c8cb19d426](https://android.googlesource.com/kernel/common/+/b9c8cb19d426ec591e0a34dcc2d8638147e4ebc1/kernel/time/posix-cpu-timers.c) |
+| `android13-5.15` | [0b6028f1f30d](https://android.googlesource.com/kernel/common/+/0b6028f1f30da3c2143bb40eee912c4974108e5c/kernel/time/posix-cpu-timers.c) |
+| `android14-5.15` | [9938d39e2fe9](https://android.googlesource.com/kernel/common/+/9938d39e2fe99593abe347df3b82ea2f85c83d1d/kernel/time/posix-cpu-timers.c) |
+| `android14-6.1` | [79480508eb1e](https://android.googlesource.com/kernel/common/+/79480508eb1eed09620f1cd5484dbfa4a677d0a9/kernel/time/posix-cpu-timers.c) |
+| `android15-6.6` | [5556e039c32f](https://android.googlesource.com/kernel/common/+/5556e039c32fa02b239611dc8e5ebb958a7f12e1/kernel/time/posix-cpu-timers.c) |
+| `android16-6.12` | [894a317b5382](https://android.googlesource.com/kernel/common/+/894a317b5382555614ef2be7a79cca79083c6cf2/kernel/time/posix-cpu-timers.c) |
+| `android17-6.18` | [bab5f6aca819](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/kernel/time/posix-cpu-timers.c) |
+
+La distinzione FD e il routing CPU seguono anche il [dispatcher 6.18](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/kernel/time/posix-timers.c) e le [definizizioni degli ID](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/include/linux/posix-timers_types.h) fissati. Gli orologi FD e CPU codificati per thread restano non supportati. Il catalogo è un’osservazione guest fissa; autorizzazioni, namespace, vita del processo e contabilità CPU richiedono contratti propri.
+
 ## Verifica e copertura futura
 
 `LinuxPIDFDTests.cpp` esegue ELF indipendenti x64/AArch64 O0/O2 per otto rami e trasporti disponibili: flag, tabella condivisa, limiti/riuso, ordine degli errori, metadati inaccessibili, limite/intervalli originali, cataloghi omessi/chiusi, non-leader e ricerca prima dell’esaurimento. `AndroidSyscallTests.cpp` ripete proprietà raw/Bionic, ricerca ed errno nei sei profili O0/O2 con rilocazioni ordinarie, Android packed e RELR. Sorgenti ed esecuzioni provano il sottoinsieme; non esiste evidenza di avvio nativo di ogni immagine GKI fissata. Estendere Linux servizio per servizio conservando versioni, configurazioni e osservazioni.
+
+I casi CPU verificano identità, ordine dell’output, tipi indipendenti, campioni espliciti e separazione dall’avanzamento di parete. `AndroidTimeTests.cpp` verifica output nominati/raw e sentinelle; il syscall cooperativo verifica l’alias del TID corrente non leader.

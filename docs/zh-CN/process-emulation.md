@@ -128,9 +128,11 @@ x64 的 `arch_prctl` 支持 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS` 和 `A
   "timezone":{"minutes_west":-60,"dst_time":0}}}
 ```
 
-支持静态时钟 ID 0–9 和 11；每个时钟独立，未提供的值仍然未知。重复或未知 ID 会被拒绝。秒数是有符号 64 位整数，纳秒范围为 `[0, 1000000000)`。JSON 整数须在 `±9007199254740991` 内，十进制字符串可表示完整 64 位范围；时区字段为有符号 32 位整数。C++ 使用 `ProcessOptions::LinuxTime`，其他 OS 配置不接受此选项。
+时钟输入包括静态 ID 0–9、11，以及显式 GKI 支持的负数编码进程 CPU 时钟。PROF、VIRT、SCHED 独立，当前进程别名共用样本；重复身份、未知 ID 或超过 16384 个观察值均拒绝。外部进程须在固定清单中声明为存活组首领。秒数为有符号 64 位，CPU 时钟须非负，纳秒范围为 `[0, 1000000000)`；JSON 整数限于 `±9007199254740991`，十进制字符串保留完整范围，时区为有符号 32 位。C++ 使用 `ProcessOptions::LinuxTime`；其他 OS 配置拒绝此选项。
 
-`clock_gettime`、`gettimeofday` 和 x64 的 `time` 共用这些输入。缺失输入、动态时钟和未建模的部分写入会明确停止；已完成的写入不会回滚。不模拟调时、休眠或真实设备时钟。字段顺序、错误码和指针语义详见[完整时钟契约](../process-emulation.md#explicit-guest-clocks)。
+`advance_on_idle: true` 显式启用 x64／ARM64 的相对 `nanosleep`，包括 Android 命名及 variadic 包装。墙钟 ID 0、1、7 随虚拟空闲时间推进，进程 CPU 样本可同时存在且保持固定；其他时钟不接受此策略。已阻塞线程保留原服务，其他可运行线程先执行；全部阻塞时推进至最早期限，单线程直接推进。指令执行不增加时间或 CPU 用量。
+
+`clock_gettime` 取 ID 的低 32 位有符号值，在目标复制前检查类别、任务及观察值；非法类别／外部目标可返回 `EINVAL`，有效样本的目标复制可返回 `EFAULT`。缺少观察值和未支持的动态／FD／编码线程时钟明确停止。原始陷阱保留负错误，Bionic 单独转换 errno。已有 `gettimeofday` 与 `time` 的有序写入及部分故障规则仍适用；参见[已发布 GKI 时钟契约](android-gki-kernels.md)与[完整时钟规则](../process-emulation.md#explicit-guest-clocks)。
 
 <a id="explicit-memory-files"></a>
 

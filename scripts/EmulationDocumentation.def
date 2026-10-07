@@ -1455,3 +1455,37 @@ NEVERD_EMULATION_DOC_TOKEN(AndroidCapacityTests, "AndroidTestExecution.def")
 NEVERD_EMULATION_DOC_TOKEN(AndroidCapacityTests,
                            "FiniteRegistryRejectsBeforeSuccessAndCanBeReused")
 NEVERD_EMULATION_DOC_TOKEN(AndroidCapacityTests, "RUN_SERIAL")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIClockGuide, "docs/android-gki-kernels.md")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIClockGuide,
+                          "docs/{locale}/android-gki-kernels.md")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockGuide, "PROF")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockGuide, "VIRT")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockGuide, "SCHED")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockGuide, "-16006")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockGuide, "-8006")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockGuide, "-8008")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockGuide, "-8007")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockGuide, "pid_for_clock")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockGuide, "posix_cpu_clock_get")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockGuide, "AndroidTimeTests.cpp")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIClockOwnership, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIClockOwnership,
+                          "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockOwnership, "LinuxCPUClock")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockOwnership, "LinuxClock")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIClockProcess, "docs/process-emulation.md")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIClockProcess,
+                          "docs/{locale}/process-emulation.md")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockProcess, "16384")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockProcess, "advance_on_idle")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockProcess, "SCHED")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockProcess, "android-gki-kernels.md")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIClockTests, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIClockTests, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockTests,
+                           "ProcessCPUClocksRetainIdentityAndIdleSeparation")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockTests,
+                           "ProcessCPUClocksKeepMissingObservationBoundaries")
+NEVERD_EMULATION_DOC_TOKEN(
+    AndroidGKIClockTests,
+    "LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle")

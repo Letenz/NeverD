@@ -1563,3 +1563,5 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 `AndroidTestExecution.def` は `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` に CTest 全体で 120 秒と `RUN_SERIAL` を設定します。二つのワークロードは各 30 秒の実行制限を保持し、直列化は容量試験間の競合を防ぎます。O0/O2 と再配置の全六構成に適用します。
 
 `LinuxPIDFD.*` はブランチとタスク一覧をロード前に検証します。`Backends/LinuxPIDFDProcess.*` は八ブランチの独立 x64/AArch64 O0/O2 呼び出し側でフラグ、共有表、上限、順序、対象種別、バッファ制限を確認します。`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` とほかの `AndroidSyscallTests.cpp` は六種の再配置構成で raw/Bionic と errno を確認します。共有部変更後は Linux プロセス、Android ネイティブ、公開プロセス API の全スイートを実行してください。モデル検証は GKI 起動とは別です。[ソースと証拠](android-gki-kernels.md)を参照してください。
+
+`ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: 八つの固定版で raw／Bionic の識別、PROF／VIRT／SCHED、下位 32 ビット、ポインター故障より先の対象検証、標本欠落、別名、非負 CPU 時間、壁時計と CPU のアイドル分離を確認します。`AndroidTimeTests.cpp` は出力とカナリアを、協調 syscall は現在の非リーダー TID を確認します。

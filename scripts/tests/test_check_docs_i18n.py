@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path, PureWindowsPath
+import re
 import unittest
 from unittest.mock import patch
 
@@ -45,6 +46,45 @@ class _OverlayView:
 
     def exists(self, path: Path) -> bool:
         return self._base.exists(path)
+
+
+class EmulationDocumentationInventoryTests(unittest.TestCase):
+    def test_wrapped_inventory_cannot_hide_missing_tokens(self) -> None:
+        inventory = i18n.EMULATION_DOC_INVENTORY.read_text(encoding="utf-8")
+        entries = list(re.finditer(
+            r'NEVERD_EMULATION_DOC_TOKEN\(\s*(\w+),\s*"([^\"]+)"\s*\)',
+            inventory,
+        ))
+        wrapped = [entry for entry in entries if "\n" in entry.group(0)]
+        self.assertTrue(wrapped)
+        group, token = wrapped[-1].groups()
+        paths = re.findall(
+            r'NEVERD_EMULATION_DOC_PATH\(\s*(\w+),\s*"([^\"]+)"\s*\)',
+            inventory,
+        )
+        pattern = next(pattern for owner, pattern in paths
+                       if owner == group and "{locale}" in pattern)
+        path = Path(pattern.format(locale=i18n.LOCALES[0]))
+        original = path.read_text(encoding="utf-8")
+        self.assertIn(token, original)
+        changed = original.replace(token, "")
+
+        for wrap_token, wrap_path in ((True, False), (False, True), (True, True)):
+            with self.subTest(wrap_token=wrap_token, wrap_path=wrap_path):
+                token_entry = f'NEVERD_EMULATION_DOC_TOKEN({group}, "{token}")'
+                path_entry = f'NEVERD_EMULATION_DOC_PATH({group}, "{pattern}")'
+                if wrap_token:
+                    token_entry = token_entry.replace("(", "(\n    ", 1)
+                if wrap_path:
+                    path_entry = path_entry.replace("(", "(\n    ", 1)
+                view = _OverlayView({
+                    i18n.EMULATION_DOC_INVENTORY: token_entry + "\n" + path_entry,
+                    path: changed,
+                })
+                errors: list[str] = []
+                i18n.validate_matrix(errors, view)
+                self.assertTrue(any(path.as_posix() in error and token in error
+                                    for error in errors), errors)
 
 
 class EmulationOverviewTests(unittest.TestCase):

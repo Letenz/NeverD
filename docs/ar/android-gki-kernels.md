@@ -6,11 +6,11 @@
 {"linux_kernel":{"gki":"android17-6.18"},"linux_files":{"files":[],"descriptor_limit":16}}
 ```
 
-يصف عقد API 28 استيرادات Bionic ولا يختار إصدار النواة. يتحكم GKI حالياً في `pidfd_open` والإخراج المتجهي المنفذين فقط؛ ولا يثبت توافق نواة كاملة أو يقلع صورتها أو يستنتج الأجهزة أو مساحات الأسماء أو الصلاحيات أو قائمة العمليات. تتوقف الخدمات غير المدعومة بوضوح. راجع [سياسة GKI الرسمية](https://source.android.com/docs/core/architecture/kernel/gki-releases).
+يصف عقد API 28 لملف Android الأصلي استيرادات Bionic ولا يختار إصدار النواة. يتحكم اختيار GKI في عقود `pidfd_open` والإخراج المتجهي وساعات CPU المرمّزة للعمليات المنفّذة. لا يصادق على نواة كاملة ولا يشغّلها ولا يستنتج الأجهزة أو نطاقات الأسماء أو الصلاحيات أو قوائم العمليات. تتوقف الخدمات غير المدعومة صراحةً. راجع [سياسة GKI الرسمية](https://source.android.com/docs/core/architecture/kernel/gki-releases).
 
 ## مراجعات المصدر المثبتة
 
-تستخدم `LinuxGKIKernels.def` وسوم `r1` الرسمية التالية، وقد تحققت بتاريخ 2026-10-07. توفر الالتزامات الثابتة `kernel/pid.c` و`include/uapi/linux/pidfd.h` و`arch/arm64/configs/gki_defconfig` و`kernel/fork.c` و`lib/iov_iter.c` و`fs/read_write.c`. تأتي الأعلام من UAPI والتحقق من الاستدعاءات، لا من مستوى Android API أو نواة المضيف.
+تستخدم `LinuxGKIKernels.def` وسوم `r1` الرسمية التالية، وقد تحققت بتاريخ 2026-10-07. توفر الالتزامات الثابتة `kernel/pid.c` و`include/uapi/linux/pidfd.h` و`arch/arm64/configs/gki_defconfig` و`kernel/fork.c` و`lib/iov_iter.c` و`fs/read_write.c`. تأتي الأعلام من UAPI والتحقق من الاستدعاءات، لا من مستوى Android API أو نواة المضيف. ترد مصادر ساعات CPU المثبّتة في الجدول أدناه.
 
 | الفرع المطلوب | وسم الإصدار | التزام المصدر المثبت | الأعلام المسموحة | استيراد iovec |
 | --- | --- | --- | --- | --- |
@@ -45,6 +45,35 @@
 
 تحول Bionic الأخطاء الخام السالبة إلى `-1` و`errno` محلي للخيط؛ ويحفظ النجاح `errno`. لا تتوفر بيانات `fstat` الوصفية. يظل الاستطلاع وإشعارات الخروج والإشارات عبر pidfd و`pidfd_getfd` و`fcntl` وioctl الخاص بـpidfs والمهام غير المرصودة غير مدعومة. لا تُستنتج الجدولة أو دورة حياة العملية من pidfd.
 
+## نطاق ساعات CPU للعمليات المنفّذ
+
+مع اختيار GKI صراحةً، يقبل `clock_gettime` معرّفات العمليات السالبة المرمّزة PROF وVIRT وSCHED، ويفسّر البتات الدنيا الـ32 بإشارة. يحدد PID والنوع عينة صريحة في `linux_time`. توجد العملية الحالية ضمنيًا؛ ويجب إعلان العمليات الأخرى كقادة مجموعات أحياء في قائمة المهام المغلقة قبل تقديم عيناتها.
+
+```json
+{"linux_kernel":{"gki":"android17-6.18","tasks":[{"id":2000,"group_leader":true}]},"linux_time":{"advance_on_idle":true,"clocks":[{"id":1,"seconds":10,"nanoseconds":0},{"id":2,"seconds":3,"nanoseconds":4},{"id":-16006,"seconds":7,"nanoseconds":9}]}}
+```
+
+يشير `-16006` إلى SCHED للعملية PID 2000. ملاحظتا PROF وVIRT مستقلتان. تتشارك معرّفات SCHED الحالية 2 و-6 ‏(PID صفر) و-8006 ‏(PID 1000) عينة واحدة؛ والأسماء البديلة لـPROF هي -8/-8008 ولـVIRT هي -7/-8007. تُرفض البدائل المكررة ولو تساوت القيم. ثواني CPU غير سالبة والنانوثواني مطبّعة. يغيّر تقدم الخمول ساعات الوقت الجداري 0 و1 و7 فقط؛ وتظل عينات CPU ثابتة. لا يُستنتج استهلاك CPU من تنفيذ التعليمات.
+
+يحدد TID الخاص بالمهمة الحالية مجموعة عمليتها أيضًا، بما في ذلك خيوط Android التعاونية دون قائمة خارجية. يعيد PID الخارجي الغائب من القائمة المغلقة أو الحي غير القائد `EINVAL` قبل الوصول إلى وجهة الإخراج. غياب القائمة أو عينة مجموعة معروفة يوقف العملية كغير مدعومة قبل النسخ. النوع غير الصالح يعيد `EINVAL`؛ وقد ينتج عن نسخ عينة صالحة إلى المستخدم `EFAULT`. تحتفظ المصائد الخام بالأخطاء السالبة؛ وحده Bionic يحدّث errno ويعيد -1.
+
+تتبع قواعد الهدف والنوع `pid_for_clock` و`posix_cpu_clock_get` وموزّع الساعات وتعريفات المعرّفات في كل إصدار مثبّت:
+
+| الفرع المطلوب | مصدر ساعات CPU للعمليات |
+| --- | --- |
+| `android12-5.10` | [b14525331e0d](https://android.googlesource.com/kernel/common/+/b14525331e0d5d335b037d6ed17d40424ed47b0a/kernel/time/posix-cpu-timers.c) |
+| `android13-5.10` | [b9c8cb19d426](https://android.googlesource.com/kernel/common/+/b9c8cb19d426ec591e0a34dcc2d8638147e4ebc1/kernel/time/posix-cpu-timers.c) |
+| `android13-5.15` | [0b6028f1f30d](https://android.googlesource.com/kernel/common/+/0b6028f1f30da3c2143bb40eee912c4974108e5c/kernel/time/posix-cpu-timers.c) |
+| `android14-5.15` | [9938d39e2fe9](https://android.googlesource.com/kernel/common/+/9938d39e2fe99593abe347df3b82ea2f85c83d1d/kernel/time/posix-cpu-timers.c) |
+| `android14-6.1` | [79480508eb1e](https://android.googlesource.com/kernel/common/+/79480508eb1eed09620f1cd5484dbfa4a677d0a9/kernel/time/posix-cpu-timers.c) |
+| `android15-6.6` | [5556e039c32f](https://android.googlesource.com/kernel/common/+/5556e039c32fa02b239611dc8e5ebb958a7f12e1/kernel/time/posix-cpu-timers.c) |
+| `android16-6.12` | [894a317b5382](https://android.googlesource.com/kernel/common/+/894a317b5382555614ef2be7a79cca79083c6cf2/kernel/time/posix-cpu-timers.c) |
+| `android17-6.18` | [bab5f6aca819](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/kernel/time/posix-cpu-timers.c) |
+
+يتبع تمييز ساعات FD وتوجيه CPU أيضًا [موزّع 6.18](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/kernel/time/posix-timers.c) و[تعريفات المعرّفات](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/include/linux/posix-timers_types.h) المثبّتة. تظل ساعات FD وساعات CPU المرمّزة لكل خيط غير مدعومة. القائمة ملاحظة ضيف ثابتة؛ وتتطلب الصلاحيات ونطاقات الأسماء وعمر العملية وقياس CPU عقودًا خاصة بها.
+
 ## التحقق والتغطية المتبقية
 
 ينفذ `LinuxPIDFDTests.cpp` ملفات ELF مستقلة x64/AArch64 عند O0/O2 للفروع الثمانية والخلفيات المتاحة، لفحص الأعلام والجدول المشترك والحدود وإعادة الاستخدام وترتيب الأخطاء وفشل البيانات الوصفية والحد مقابل النطاق الأصلي والقوائم المغفلة والمغلقة والمهام غير القائدة والبحث قبل نفاد FD. يكرر `AndroidSyscallTests.cpp` ملكية raw/Bionic والبحث وerrno في ستة إعدادات O0/O2 بإعادات تموضع عادية وAndroid packed وRELR. تثبت المصادر والتنفيذ هذا الجزء فقط؛ لم يتحقق إقلاع أصلي لكل صور GKI المثبتة. يتطلب توسيع Linux أدلة إصدارات وإعدادات وملاحظات لكل خدمة.
+
+تختبر حالات CPU الهوية وترتيب الإخراج والأنواع المستقلة والعينات الصريحة وفصلها عن تقدم الوقت الجداري. يتحقق `AndroidTimeTests.cpp` من الإخراج المسمى/الخام وقيم الحراسة؛ ويتحقق syscall التعاوني من البديل الخاص بـTID الحالي غير القائد.
