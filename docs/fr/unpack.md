@@ -10,10 +10,10 @@
 
 Le conteneur détermine comment un fichier est validé et reconstruit, le jeu d'instructions détermine comment un transfert est jugé, et les deux déterminent le profil de processus invité. Une entrée hors de ce tableau est rejetée nommément avant toute exécution.
 
-| Conteneur (`format`) | Jeu d'instructions | Profil invité | Connaissance du stub |
+| Conteneur (`format`) | Jeu d'instructions | Profil invité | Preuve du point d’entrée |
 | --- | --- | --- | --- |
-| PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | UPX |
-| PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | aucune ; observation seule |
+| PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | observation à l’exécution |
+| PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | observation à l’exécution |
 
 ## Utilisation
 
@@ -27,28 +27,42 @@ La commande affiche un rapport JSON. Le code de sortie 0 signifie que l'image a 
 
 ## Comment l'entrée est établie
 
-La génération zéro est l'image telle que le chargeur invité l'a mappée. Une instruction dont les octets diffèrent de cette image a été générée par le processus. Un transfert est la première exécution d'un code plus récent que celui qui s'exécutait ; `transfers` énumère chacun avec sa RVA, sa `generation` et indique si le pointeur de pile est égal à sa valeur à l'entrée du processus (`stack_balanced`).
+La génération zéro est l’image mappée par le chargeur invité. Un transfert commence l’exécution d’un code plus récent que le précédent. `transfers` donne le RVA, `generation`, l’égalité de pile (`stack_balanced`) et l’appartenance à l’invocation d’entrée du programme principal (`program_invocation`). Avant cette invocation, la comparaison utilise la pile du premier initialiseur.
 
-1. Un transfert sur la pile d'entrée est l'entrée du programme : le stub a rendu la pile qu'il avait reçue. `entry_source` vaut `transfer`.
-2. Un transfert sur une pile plus profonde est un appel que le stub fait vers le programme, par exemple un rappel TLS. Il est signalé, mais pas accepté. Lorsque le stub identifié nomme la cible de son saut final, l'image est reconstruite à cet appel, avant qu'aucun code du programme ne se soit exécuté, et l'adresse nommée est l'entrée. `entry_source` vaut `stub`.
-3. `transfer` sélectionne explicitement un transfert de la liste par sa position, pour les protecteurs qui dépaquettent par étapes ou qui appellent leur programme.
+1. L’entrée par défaut exige `stack_balanced` et `program_invocation` : le stub a rendu la pile de l’invocation principale. `entry_source` vaut `transfer`.
+2. Les callbacks TLS et DLL invoqués par l’OS sont consignés mais ne deviennent jamais l’entrée par défaut, même avec une pile équilibrée. Les appels invités plus profonds continuent aussi. Aucun callback n’est sauté et aucune signature ne prédit l’entrée.
+3. `transfer` sélectionne explicitement une position, y compris un callback d’initialisation ou un transfert intermédiaire.
 
 Aucune entrée n'est déduite de la forme du code de démarrage d'un compilateur. Une exécution qui s'arrête avant signale `no_entry` avec le `stop_reason` du processus.
 
 ## L'image reconstruite
 
-Les sections conservent leurs RVA et contiennent la mémoire observée ; chaque section a l'accès que ses pages avaient au moment du transfert. Une dernière section `.neverd` contient un nouveau répertoire d'importation posé sur les cellules par lesquelles le programme appelle déjà, de sorte qu'aucun code ni aucune donnée ne bouge. `imports` énumère chaque cellule avec son `origin` : les cellules `static` ont été liées par le chargeur à partir du répertoire de l'entrée, les cellules `runtime` ont été écrites par le stub. L'image est fixée à sa base observée : aucune relocalisation du contenu généré n'a été observée, le répertoire de relocalisation est donc supprimé et `IMAGE_FILE_RELOCS_STRIPPED` est positionné. Pour UPX, le répertoire TLS propre au programme est désigné à nouveau, car celui du fichier compressé n'atteint que le gestionnaire du stub.
+Les sections conservent leurs RVA, la mémoire observée (y compris les effets des initialisations déjà exécutées) et leurs droits de page. La nouvelle section `.neverd` contient le répertoire d’importation et les nouvelles cellules IAT nécessaires aux appels exportés et chargements d’adresses, sans réutiliser les zones nulles d’origine. `origin` dans `imports` distingue les cellules `static` liées depuis l’entrée et les cellules `runtime` écrites par l’invité ou ajoutées pour une réparation. Les relocalisations du code généré n’ayant pas été observées, l’image reste à sa base observée, le répertoire de relocalisation est supprimé et `IMAGE_FILE_RELOCS_STRIPPED` est positionné.
+
+Les candidats IAT d’exécution existants doivent former un tableau contigu de pointeurs d’exports d’un même fournisseur, avec une terminaison nulle intacte dans la section d’origine. La terminaison du fournisseur voisin ne suffit pas.
+
+La récupération TLS utilise l’identité d’allocation du chargeur, une liste complète de rappels terminée par zéro et les appels observés au code généré. Plusieurs candidats provoquent une erreur explicite. Aucun nom ni octet propre à un protecteur n’intervient. La preuve d’exécution d’un callback généré prime sur l’achèvement d’un initialiseur du chargeur lors du choix du répertoire.
+
+`materialized_tls_callbacks` compte les callbacks TLS de l’image principale dont les appels d’attachement au processus, effectués par l’OS, sont revenus avant la capture de l’invocation principale. Leurs effets mémoire figurent déjà dans l’instantané. Les adaptateurs de la nouvelle section `.neverd` évitent uniquement cet appel répété et transmettent les autres notifications au callback original par appel terminal. Répertoire, table et adaptateurs utilisent un nouvel espace sans modifier les octets d’origine. La section devient exécutable avec les adaptateurs, et inscriptible seulement si de nouvelles cellules IAT l’exigent. Les callbacks internes sans preuve d’achèvement gardent leur comportement. Lors de l’attachement au processus, le premier adaptateur restaure aussi le TLS capturé du thread principal s’il diffère du modèle. Une preuve TLS absente ou de taille incohérente provoque un échec explicite. Le modèle original reste disponible pour les futurs threads ; les autres notifications ne restaurent jamais le bloc capturé.
+
+Le chargement différé autorise des cibles exécutables de callback ou d’entrée dans une mémoire initialement nulle dont un initialiseur antérieur produit le code. Les tableaux de callbacks et les métadonnées d’allocation TLS exigent toujours des données de fichier validées ; le chargement strict conserve ses vérifications. Le modèle OS fournit la provenance des invocations et avertit l’observateur lorsqu’il prépare un appel ou restaure un appelant suspendu. Les surveillances sont réarmées à ces frontières, même si callback et entrée générée partagent une page.
+
+`import_repair` couvre deux exécutions bornées supplémentaires après la capture de l’entrée : découverte des appels exportés, puis observation de l’état des routines. Chaque exécution a ses propres limites. Les compteurs d’instructions et d’événements sont leur somme saturée ; `stop_reason` et le diagnostic décrivent la dernière, et les appels observés comptent seulement la découverte. Sans adresse de continuation, l’observation est omise. Les identités d’export contradictoires interdisent la réécriture. Seuls les chemins atteints sont couverts ; `unpacked` ne certifie ni tous les imports ni le succès du programme.
+
+La découverte observe la distribution des exports, y compris celui non modélisé qui arrête l’exécution, au lieu de dépendre des seuls journaux d’appels modélisés. Un retour ABI illisible ne peut établir une preuve de routine. Réparer un appel pur à un export opaque conserve l’arrêt explicite pour service non pris en charge.
+
+L’observation admet au plus 256 débuts candidats dans les 256 octets précédant les continuations d’appels exportés réels. `CALL rel32`, éventuellement précédé d’un PUSH/POP GPR, identifie seulement une frontière ; les octets suivants ne sont pas une signature. Une fenêtre de six à huit octets devient `call [rip+IAT]` seulement si l’entrée API a exactement une adresse de retour empilée, tous les autres registres (drapeaux et SIMD compris), mappings et RAM persistante inchangés, sans appel OS intermédiaire. Des NOP initiaux préservent l’adresse de retour exacte. Une fenêtre de sept ou huit octets devient `mov r64, [rip+IAT]` si elle renvoie un export connu dans un seul GPR, avec pile équilibrée et les mêmes garanties. Le registre résultat est déduit de l’état : tout GPR sauf RSP, dont R8-R15 ; huit octets laissent un NOP final. Seul l’espace temporaire sous le SP appelant est exclu ; sa pile est comparée. Une invocation ultérieure impure, non résolue ou inachevée invalide la preuve. Le début exécuté est requis ; aucun préfixe REX n’est déduit de l’octet précédent, et les débuts chevauchants partageant un retour sont refusés. `observed_loads` et `repaired_loads` comptent les chargements séparément.
 
 La table des sections d'origine, la disposition du répertoire d'importation et la table de relocalisation ne sont pas reconstruites ; un compresseur ne les restaure pas en mémoire.
 
 ## Identification
 
-`packer.kind` ne nomme un protecteur qu'à partir de preuves présentes dans le fichier. UPX en exige deux parmi `upx_section_names`, `upx_pack_header` (nombre magique, format, méthode et somme de contrôle) et `upx_entry_stub`. Une entrée non identifiée est tout de même dépaquetée par observation.
+Les champs de compatibilité `packer.kind` et `packer.evidence` renvoient `unidentified` et un tableau vide. Le registre de protecteurs, l’analyse des en-têtes de compression et les signatures de stub sont supprimés. L’ancienne API valide seulement le conteneur.
 
 ## Limites
 
-Seuls les exécutables sont pris en charge ; les DLL ne sont pas exécutées. L'exécution vérifiée admet une instruction à la fois, de l'ordre de 10^5 par seconde, si bien qu'un stub qui exige des milliards d'instructions dépasse tout budget réaliste. L'exécution est suivie par page de 4 KiB : du code écrit dans une page qui exécute déjà du code de la même génération n'est pas signalé comme un transfert. Le code du programme qui s'exécute avant l'entrée, par exemple un rappel TLS qui appelle une API non modélisée, arrête l'exécution sauf si le stub déclare son entrée. Les chargeurs VMProtect ne sont pas encore pris en charge.
+Les EXE sont exécutés, pas les DLL. L’exécution vérifiée procède instruction par instruction. x64 Unicorn/KVM/WHP fournit aussi `direct-user-x64-v1`, borné par le temps et les événements sans compter les instructions. Le suivi porte sur des pages de 4 KiB : une réécriture dans une page déjà exécutée de la même génération ne produit pas de transfert. L’initialisation avant l’entrée peut créer un état externe non portable, et rejouer les rappels TLS peut avoir des effets supplémentaires. Les API non modélisées arrêtent explicitement l’exécution. La réparation couvre les fenêtres d’appel x64 validées de six à huit octets et les chargements d’adresses de sept ou huit octets ; les autres formes et chemins non parcourus restent non résolus. Le code virtualisé le reste.
 
 ## Vérification
 
-`NeverDUnpackTests` vérifie l'identification. `NeverDUnpackExecutionTests` dépaquette des échantillons UPX versionnés (NRV2B, NRV2D, NRV2E, LZMA et un programme utilisant la bibliothèque d'exécution C) sur Unicorn, KVM et WHP, compare chaque section à l'original, exécute l'image récupérée et exige des octets identiques de tous les backends. `UnpackGeneratedTests.cpp` compresse un programme au sein du test pour x86-64 et ARM64 et vérifie, par rapport au fichier lié, un chargeur qui part directement, un chargeur qui appelle d'abord le programme et un chargeur à deux étages. `NeverDUnpackPublicTests` couvre l'ABI C et la CLI. `unittests/unpack/fixtures/Makefile` régénère les échantillons UPX.
+`NeverDUnpackTests` vérifie les conteneurs, l’allocation sûre des IAT, les conflits et les refus TLS. `NeverDUnpackExecutionTests` utilise le même chemin générique sur Unicorn/KVM/WHP pour UPX NRV2B/NRV2D/NRV2E/LZMA et CRT, compare les sections au programme lié indépendant après ses propres initialisations et exige des sorties identiques des backends disponibles. `UnpackGeneratedTests.cpp` génère des programmes x86-64/ARM64 indépendants et vérifie les transferts, le chargement par étapes, les imports et l’exécution directe x64 Unicorn/KVM/WHP. Les cas natifs obligatoires ne peuvent pas être ignorés en CI. `NeverDUnpackPublicTests` couvre l’ABI C et la CLI. `unittests/unpack/fixtures/Makefile` régénère les échantillons UPX.

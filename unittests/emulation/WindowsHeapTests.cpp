@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "HvfTestPolicy.h"
+#include "WindowsProcessTestSupport.h"
 #include "gtest/gtest.h"
 #include "os/windows/process/WindowsProcessExceptions.h"
 #include "os/windows/process/WindowsProcessModules.h"
@@ -318,10 +319,13 @@ TEST_P(WindowsHeap, InvalidOwnershipFlagsAndPermissionsDoNotPublishChanges) {
 }
 TEST_P(WindowsHeap,
        RepeatedResizeReclaimsBudgetAndRejectsEnvironmentOwnership) {
-  Options.MemoryLimit = LimitedMemory;
   Options.StackSize = LimitedStack;
   Options.OutputLimit = PageSize;
   Options.Arguments = {ProgramFile, ReclaimArgument};
+  auto Startup = test::startupMappedBytes(Path, Options);
+  ASSERT_TRUE(bool(Startup)) << llvm::toString(Startup.takeError());
+  ASSERT_LT(TransientPages, RepeatCount);
+  Options.MemoryLimit = *Startup + TransientPages * PageSize;
   auto R = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
   ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
   EXPECT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;

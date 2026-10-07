@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "UnpackTestSupport.h"
 
-#include "neverd/emulation/ProcessSession.h"
+#include "neverd/emulation/ProcessObserver.h"
 #include "neverd/unpack/Unpack.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -110,6 +110,31 @@ std::set<Image::Import> runtimeImports(const UnpackResult &Result) {
   return Out;
 }
 
+/// The independent linked image executes its own initializers before its
+/// entry too. Compare the complete state at that same boundary, including
+/// initialized BSS, instead of assuming callbacks had no memory effects.
+class LinkedEntrySnapshot final : public emulation::ProcessObserver {
+public:
+  explicit LinkedEntrySnapshot(Image &Program) : Program(Program) {}
+  llvm::Expected<std::vector<emulation::ExecutionWatch>>
+  started(emulation::ProcessView &Process) override {
+    return std::vector<emulation::ExecutionWatch>{
+        {Program.Base + Program.Entry, 1}};
+  }
+  llvm::Expected<std::optional<std::vector<emulation::ExecutionWatch>>>
+  watched(emulation::ProcessView &Process, uint64_t PC) override {
+    for (const auto &S : Program.Sections)
+      if (auto E = Process.read(Program.Base + S.RVA,
+                                llvm::MutableArrayRef(Program.Mapped)
+                                    .slice(S.RVA, S.VirtualSize)))
+        return std::move(E);
+    return std::nullopt;
+  }
+
+private:
+  Image &Program;
+};
+
 TEST_P(UnpackFixture, RecoversEntrySectionsAndImports) {
   const auto &[Transport, F] = GetParam();
   (void)Transport;
@@ -120,11 +145,20 @@ TEST_P(UnpackFixture, RecoversEntrySectionsAndImports) {
     return;
   }
   ASSERT_EQ(Result->Outcome, UnpackOutcome::Unpacked) << Result->Diagnostic;
-  EXPECT_EQ(Result->Packer.Kind, PackerKind::UPX);
+  EXPECT_EQ(Result->Packer.Kind, PackerKind::Unidentified);
   EXPECT_EQ(Result->ProcessStop, StopObserver);
-  const Image Original = readImage(fixture(F.Original));
+  Image Original = readImage(fixture(F.Original));
   const Image Rebuilt = readImage(Result->Image);
   ASSERT_FALSE(HasFailure());
+  LinkedEntrySnapshot Snapshot(Original);
+  UnpackOptions OracleOptions;
+  OracleOptions.Process.Backend = Transport.Kind;
+  auto Oracle = emulation::observeProcess(
+      fixture(F.Original), emulation::ProcessProfile::WindowsPE64,
+      OracleOptions.Process, Snapshot);
+  ASSERT_TRUE(bool(Oracle)) << llvm::toString(Oracle.takeError());
+  ASSERT_EQ(Oracle->Stop, emulation::ProcessStopReason::Observer)
+      << Oracle->Diagnostic;
   EXPECT_EQ(Result->EntryRVA, Original.Entry);
   EXPECT_EQ(Rebuilt.Entry, Original.Entry);
   EXPECT_EQ(Result->ImageBase, Original.Base);
@@ -152,12 +186,13 @@ TEST_P(UnpackFixture, RecoversEntrySectionsAndImports) {
 // The direct contract runs the stub natively between page faults instead of
 // single-stepping it. The unpacker's transfer observer still catches the entry
 // because the not-yet-executed image pages are non-executable, so recovery must
-// reach the identical rebuilt image. Only a hardware transport runs it.
+// reach the identical rebuilt image on both software and hardware transports.
 TEST_P(UnpackFixture, DirectContractRecoversTheSameImage) {
   const auto &[Transport, F] = GetParam();
-  if (Transport.Kind != ExecutionBackendKind::KVM &&
+  if (Transport.Kind != ExecutionBackendKind::Unicorn &&
+      Transport.Kind != ExecutionBackendKind::KVM &&
       Transport.Kind != ExecutionBackendKind::WHP)
-    GTEST_SKIP() << "the direct contract runs only on a hardware transport";
+    GTEST_SKIP() << "this transport has no direct x64 execution";
   auto Checked = unpackOn(Transport.Kind, F.Packed);
   if (!Checked) {
     if (!HasFailure())
@@ -218,6 +253,78 @@ TEST_P(Unpack, RecoveredImageRunsExactlyLikeTheOriginal) {
   EXPECT_EQ(Actual->Instructions, Expected->Instructions);
 }
 
+TEST_P(Unpack, OSTLSCallbackOnTheEntryStackIsNotTheProgramEntry) {
+#ifndef NEVERD_WINDOWS_DEFERRED_FIXTURE_DIR
+  GTEST_SKIP() << "generated TLS fixture requires Clang and lld-link";
+#else
+  const auto Path = std::filesystem::path(NEVERD_WINDOWS_DEFERRED_FIXTURE_DIR) /
+                    "X64" / "generated-tls.exe";
+  UnpackOptions Options;
+  Options.Process.Backend = GetParam().Kind;
+  auto Result = unpackFile(Path, Options);
+  if (!Result) {
+    auto E = Result.takeError();
+    const bool Unavailable = E.isA<emulation::BackendUnavailableError>();
+    auto Reason = llvm::toString(std::move(E));
+    if (Unavailable)
+      GTEST_SKIP() << Reason;
+    FAIL() << Reason;
+  }
+  EXPECT_EQ(Result->Outcome, UnpackOutcome::NoEntry);
+  EXPECT_TRUE(Result->Image.empty());
+  ASSERT_FALSE(Result->Transfers.empty());
+  EXPECT_TRUE(Result->Transfers.front().StackBalanced);
+  EXPECT_FALSE(Result->Transfers.front().ProgramInvocation);
+#endif
+}
+
+TEST_P(Unpack, GeneratedProgramEntryAfterOSTLSCallbacksIsObserved) {
+#ifndef NEVERD_WINDOWS_DEFERRED_FIXTURE_DIR
+  GTEST_SKIP() << "generated TLS fixture requires Clang and lld-link";
+#else
+  const auto Path = std::filesystem::path(NEVERD_WINDOWS_DEFERRED_FIXTURE_DIR) /
+                    "X64" / "generated-tls-entry.exe";
+  const Image Original = readImage(Path);
+  ASSERT_FALSE(HasFailure());
+  for (auto Contract : {emulation::ExecutionContract::CheckedUserX64,
+                        emulation::ExecutionContract::DirectUserX64}) {
+    SCOPED_TRACE(emulation::executionContractName(Contract));
+    UnpackOptions Options;
+    Options.Process.Backend = GetParam().Kind;
+    Options.Process.Contract = Contract;
+    auto Result = unpackFile(Path, Options);
+    if (!Result) {
+      auto E = Result.takeError();
+      const bool Unavailable = E.isA<emulation::BackendUnavailableError>();
+      auto Reason = llvm::toString(std::move(E));
+      if (Unavailable)
+        GTEST_SKIP() << Reason;
+      FAIL() << Reason;
+    }
+    ASSERT_EQ(Result->Outcome, UnpackOutcome::Unpacked) << Result->Diagnostic;
+    EXPECT_EQ(Result->EntryRVA, Original.Entry);
+    EXPECT_EQ(Result->MaterializedTLSCallbacks, 2u);
+    ASSERT_GE(Result->Transfers.size(), 2u);
+    EXPECT_TRUE(Result->Transfers.front().StackBalanced);
+    EXPECT_FALSE(Result->Transfers.front().ProgramInvocation);
+    EXPECT_TRUE(Result->Transfers.back().StackBalanced);
+    EXPECT_TRUE(Result->Transfers.back().ProgramInvocation);
+    llvm::SmallString<128> Directory;
+    ASSERT_FALSE(
+        llvm::sys::fs::createUniqueDirectory(ScratchPrefix, Directory));
+    const auto Output = std::filesystem::path(Directory.str().str()) / Plain;
+    writeFile(Output, Result->Image);
+    auto Run = emulation::emulateProcess(
+        Output, emulation::ProcessProfile::WindowsPE64, Options.Process);
+    std::filesystem::remove_all(std::filesystem::path(Directory.str().str()));
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    EXPECT_EQ(Run->Stop, emulation::ProcessStopReason::Exited)
+        << Run->Diagnostic;
+    EXPECT_EQ(Run->ExitStatus, 37u);
+  }
+#endif
+}
+
 TEST_P(Unpack, DirectJumpToTheProgramIsObservedAsItsEntry) {
   auto Result = unpack(PlainPacked);
   NEVERD_REQUIRE(Result);
@@ -237,10 +344,12 @@ TEST_P(Unpack, StubCallIntoTheProgramIsNotItsEntry) {
   const Image Original = readImage(fixture(RuntimeOriginal));
   // The stub calls the program's TLS callbacks before it leaves. That call
   // enters generated code on a deeper stack and is reported, not accepted.
-  ASSERT_EQ(Result->Transfers.size(), 1u);
-  EXPECT_FALSE(Result->Transfers[0].StackBalanced);
-  EXPECT_NE(Result->Transfers[0].RVA, Original.Entry);
-  EXPECT_EQ(Result->Source, EntrySource::Stub);
+  ASSERT_GE(Result->Transfers.size(), 2u);
+  EXPECT_FALSE(Result->Transfers.front().StackBalanced);
+  EXPECT_NE(Result->Transfers.front().RVA, Original.Entry);
+  EXPECT_TRUE(Result->Transfers.back().StackBalanced);
+  EXPECT_EQ(Result->Transfers.back().RVA, Original.Entry);
+  EXPECT_EQ(Result->Source, EntrySource::Transfer);
   EXPECT_EQ(Result->EntryRVA, Original.Entry);
   // An image that starts at the program must name the program's own TLS
   // directory again, or its callbacks would never run.
@@ -293,16 +402,16 @@ TEST_P(Unpack, ProgramThatGeneratesNoCodeHasNoEntryToRecover) {
 }
 
 TEST_P(Unpack, ProgramCodeBeyondTheModelStopsInsteadOfBeingSkipped) {
-  // Following the stub's call into the runtime's TLS callback reaches an
-  // import outside the process model. The run names it and stops.
+  // The initializers now execute normally. Continuing past the entry still
+  // reaches unmodeled program services; they must stop with a diagnostic.
   UnpackOptions Options;
-  Options.Transfer = 2;
+  Options.Transfer = defaults::MaxTransfers;
   auto Result = unpack(RuntimePacked, Options);
   NEVERD_REQUIRE(Result);
   EXPECT_EQ(Result->Outcome, UnpackOutcome::NoEntry);
   EXPECT_EQ(Result->ProcessStop, StopUnsupportedService);
-  EXPECT_NE(Result->ProcessDiagnostic.find(KernelModule), std::string::npos);
-  ASSERT_EQ(Result->Transfers.size(), 1u);
+  EXPECT_FALSE(Result->ProcessDiagnostic.empty());
+  ASSERT_GE(Result->Transfers.size(), 3u);
   EXPECT_TRUE(Result->Image.empty());
 }
 
@@ -393,7 +502,8 @@ TEST(UnpackReport, DescribesTheRunWithoutTheImageBytes) {
             llvm::utohexstr(*Result->EntryRVA, true));
   const auto *Packer = Root->getObject(key::Packer);
   ASSERT_NE(Packer, nullptr);
-  EXPECT_EQ(Packer->getString(key::Kind), packerKindName(PackerKind::UPX));
+  EXPECT_EQ(Packer->getString(key::Kind),
+            packerKindName(PackerKind::Unidentified));
   EXPECT_EQ(Packer->getArray(key::Evidence)->size(),
             Result->Packer.Evidence.size());
   EXPECT_EQ(Root->getArray(key::Transfers)->size(), Result->Transfers.size());

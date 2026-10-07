@@ -38,16 +38,16 @@ and execute at supervisor privilege. `checked-user-x64-v1` and
 at CPL3 and EL0, respectively, with architectural MMU isolation and explicit
 service-request exits. They support Unicorn and matching-host KVM/WHP/HVF; `auto`
 follows the existing host selection.
-`direct-user-x64-v1` runs the x64 user inventory on the hardware transport
+`direct-user-x64-v1` runs the x64 user inventory on Unicorn or the matching-host KVM/WHP transport
 between architectural events instead of single-stepping it, for workloads whose
 startup needs billions of instructions. It admits nothing and observes neither
 instructions nor memory accesses; guest page tables alone provide the CPL3
 isolation. Its service boundary matches `checked-user-x64-v1`: the system-call
 extension stays disabled, so a service instruction is the undefined-opcode event
 at the address the guest requests it, reported as the same pending service. The
-run takes a time budget, never an instruction budget or quantum. KVM and
-matching-host WHP implement it; Unicorn and HVF report it unsupported rather than
-run it under different semantics. Execution watches are still honored: their
+run takes a time budget, never an instruction budget or quantum. Unicorn and matching-host KVM/WHP implement it; HVF remains unsupported.
+Unicorn adapts its hook-only service helpers to the same original-PC boundary
+and captures the stopped CPU state on interruption. Execution watches are still honored: their
 pages are made non-executable, so the first fetch into a watched range faults at
 the same boundary a checked instruction watch stops on. Observation-driven
 unpacking recovers an entry under this contract without single-stepping.

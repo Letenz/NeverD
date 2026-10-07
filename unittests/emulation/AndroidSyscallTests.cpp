@@ -206,6 +206,29 @@ TEST_P(AndroidSyscall, ReleasedGKICurrentTaskClockNamesItsProcessObservation) {
   EXPECT_TRUE(R.NativeThreads[1].Finished);
   EXPECT_TRUE(R.NativeThreads[1].Retired);
 }
+TEST_P(AndroidSyscall, ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults) {
+  constexpr AndroidGKIKernel Kernels[] = {
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
+  AndroidGKIKernel::Name,
+#include "GKIReleaseCases.def"
+#undef NEVERD_GKI_RELEASE_CASE
+  };
+  for (auto Kernel : Kernels) {
+    SCOPED_TRACE(unsigned(Kernel));
+    Options.LinuxKernel.emplace().GKI = Kernel;
+    Options.LinuxFiles.emplace().DescriptorLimit = 5;
+    auto R = run("syscall_gki_ppoll", {Buffer});
+    returned(R);
+    words(R, {(uint64_t(17) << 32) | 3, (uint64_t(0xf0) << 32) | UINT32_MAX,
+              (uint64_t(32) << 48) | 99,
+              (uint64_t(32) << 48) | (uint64_t(0xffff) << 32) | 100, 2, 77, 2,
+              77});
+    R = run("syscall_gki_ppoll_errors", {Buffer});
+    returned(R);
+    words(R, {uint64_t(0) - 14, 77, UINT64_MAX, 22, UINT64_MAX, 22,
+              uint64_t(0) - 14, 22});
+  }
+}
 
 TEST_P(AndroidSyscall, ErrorsConvertToMinusOneAndSuccessPreservesErrno) {
   auto R = run("syscall_errors", {Buffer});

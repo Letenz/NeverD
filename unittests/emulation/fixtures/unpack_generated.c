@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 typedef unsigned char U8;
 typedef unsigned int U32;
+typedef unsigned long long U64;
 #define NEVERD_GENERATED_VALUE(Name, Value) enum { Name = Value };
 #define NEVERD_GENERATED_MODE(Name, Value) enum { Name##Mode = Value };
 #include "UnpackGeneratedCases.def"
@@ -16,6 +17,42 @@ typedef unsigned int U32;
 __declspec(dllimport) void ExitProcess(U32);
 __declspec(dllimport) void *GetStdHandle(U32);
 __declspec(dllimport) int WriteFile(void *, const void *, U32, U32 *, void *);
+__declspec(dllimport) void *SetUnhandledExceptionFilter(void *);
+
+// A protector can replace one six-byte import call with a register push and a
+// call to one of these stubs. The stub drops that push and tail-calls the
+// import, so the export returns to the instruction after the site. Nothing
+// reaches them unless a test plants that call. The names stay in the export
+// table so the test can aim the planted call.
+#if defined(__x86_64__)
+#define TAIL(Name)                                                             \
+  __declspec(dllexport) __attribute__((naked, used)) void tail_##Name(void) {  \
+    __asm__("push %rax\n\t"                                                    \
+            "mov 8(%rsp), %rax\n\t"                                            \
+            "mov %rax, 16(%rsp)\n\t"                                           \
+            "pop %rax\n\t"                                                     \
+            "lea 8(%rsp), %rsp\n\t"                                            \
+            "jmp *__imp_" #Name "(%rip)");                                     \
+  }
+TAIL(ExitProcess)
+TAIL(GetStdHandle)
+TAIL(WriteFile)
+#undef TAIL
+#define PADDED_CALL(Name)                                                      \
+  __declspec(dllexport) __attribute__((naked, used)) void call_##Name(void) {  \
+    __asm__("push %rax\n\t"                                                    \
+            "mov 8(%rsp), %rax\n\t"                                            \
+            "lea 1(%rax), %rax\n\t"                                            \
+            "mov %rax, 8(%rsp)\n\t"                                            \
+            "pop %rax\n\t"                                                     \
+            "jmp *__imp_" #Name "(%rip)");                                     \
+  }
+PADDED_CALL(ExitProcess)
+PADDED_CALL(GetStdHandle)
+PADDED_CALL(WriteFile)
+PADDED_CALL(SetUnhandledExceptionFilter)
+#undef PADDED_CALL
+#endif
 
 // The record a packer fills in; it is the only content of its section. As
 // linked it is empty and the loader below is never reached.
@@ -32,6 +69,173 @@ __declspec(allocate(".pay")) struct PackRecord Pack = {0};
 #define PROGRAM_CODE __attribute__((section(".prog$m"), noinline))
 #define RELAY_ENTRY __attribute__((section(".relay$a"), noinline))
 typedef U32 (*Entry)(void);
+
+#if defined(__x86_64__)
+// The terminator deliberately cannot validate this live program cache as IAT.
+volatile U64 CachedExport[] = {0, 0x5555555555555555ULL};
+volatile U32 AddressEffects;
+__declspec(dllexport) __attribute__((naked, used)) void address_helper(void) {
+  __asm__("push %rax\n\t"
+          "mov 8(%rsp), %rax\n\t"
+          "lea 1(%rax), %rax\n\t"
+          "mov %rbx, 8(%rsp)\n\t"
+          "mov CachedExport(%rip), %rbx\n\t"
+          "xchg %rax, (%rsp)\n\t"
+          "ret");
+}
+#define NEVERD_GENERATED_ADDRESS_REGISTER(Number)                              \
+  __declspec(dllexport) __attribute__((naked, used)) void                      \
+  address_helper_r##Number(void) {                                             \
+    __asm__("push %rax\n\t"                                                    \
+            "mov 8(%rsp), %rax\n\t"                                            \
+            "lea 1(%rax), %rax\n\t"                                            \
+            "mov %r" #Number ", 8(%rsp)\n\t"                                   \
+            "mov CachedExport(%rip), %r" #Number "\n\t"                        \
+            "xchg %rax, (%rsp)\n\t"                                            \
+            "ret");                                                            \
+  }
+#include "UnpackGeneratedCases.def"
+#undef NEVERD_GENERATED_ADDRESS_REGISTER
+#define NEVERD_GENERATED_ADDRESS_REGISTER(Number)                              \
+  __declspec(dllexport) __attribute__((naked, used)) void                      \
+  compact_helper_r##Number(void) {                                             \
+    __asm__("push %rax\n\t"                                                    \
+            "mov 8(%rsp), %rax\n\t"                                            \
+            "mov %r" #Number ", 8(%rsp)\n\t"                                   \
+            "mov CachedExport(%rip), %r" #Number "\n\t"                        \
+            "xchg %rax, (%rsp)\n\t"                                            \
+            "ret");                                                            \
+  }
+#include "UnpackGeneratedCases.def"
+#undef NEVERD_GENERATED_ADDRESS_REGISTER
+__declspec(dllexport)
+__attribute__((naked, used)) void call_address_helper(void) {
+  __asm__("push %rax\n\t"
+          "mov 8(%rsp), %rax\n\t"
+          "lea 2(%rax), %rax\n\t"
+          "mov %rax, 8(%rsp)\n\t"
+          "mov CachedExport(%rip), %rbx\n\t"
+          "pop %rax\n\t"
+          "ret");
+}
+__declspec(dllexport) __attribute__((naked, used)) void
+impure_tail_GetStdHandle(void) {
+  __asm__("pushfq\n\t"
+          "incl AddressEffects(%rip)\n\t"
+          "popfq\n\t"
+          "jmp tail_GetStdHandle");
+}
+__declspec(dllexport) __attribute__((naked, used)) void
+impure_address_helper(void) {
+  __asm__("pushfq\n\t"
+          "incl AddressEffects(%rip)\n\t"
+          "popfq\n\t"
+          "jmp address_helper");
+}
+__declspec(dllexport) __attribute__((naked, used)) void
+changing_address_helper(void) {
+  __asm__("pushfq\n\t"
+          "cmpl $0, AddressEffects(%rip)\n\t"
+          "jne 1f\n\t"
+          "popfq\n\t"
+          "jmp address_helper\n"
+          "1: popfq\n\t"
+          "jmp impure_address_helper");
+}
+__declspec(dllexport) __attribute__((naked, used)) void
+unresolved_address_helper(void) {
+  __asm__("pushfq\n\t"
+          "cmpl $0, AddressEffects(%rip)\n\t"
+          "jne 1f\n\t"
+          "popfq\n\t"
+          "jmp address_helper\n"
+          "1: popfq\n\t"
+          "push %rax\n\t"
+          "mov 8(%rsp), %rax\n\t"
+          "lea 1(%rax), %rax\n\t"
+          "mov %rbx, 8(%rsp)\n\t"
+          "mov $0, %ebx\n\t"
+          "xchg %rax, (%rsp)\n\t"
+          "ret");
+}
+__declspec(dllexport) __attribute__((naked, used)) void
+service_address_helper(void) {
+  __asm__("pushfq\n\t"
+          "push %rax\n\t"
+          "push %rcx\n\t"
+          "sub $40, %rsp\n\t"
+          "mov $0xfffffff5, %ecx\n\t"
+          "call *__imp_GetStdHandle(%rip)\n\t"
+          "add $40, %rsp\n\t"
+          "pop %rcx\n\t"
+          "pop %rax\n\t"
+          "popfq\n\t"
+          "jmp address_helper");
+}
+PROGRAM_CODE __declspec(dllexport) __attribute__((naked, used)) U32
+address_program(void) {
+  // Register calls keep these separate address-load scenarios from adding
+  // unreachable six-byte sites to the ordinary tail-call fixture.
+  __asm__("push %rbx\n\t"
+          "sub $32, %rsp\n\t"
+          "mov __imp_GetStdHandle(%rip), %rbx\n\t"
+          "mov $0xfffffff5, %ecx\n\t"
+          "call *%rbx\n\t"
+          "mov $43, %ecx\n\t"
+          "mov __imp_ExitProcess(%rip), %rax\n\t"
+          "call *%rax");
+}
+PROGRAM_CODE __declspec(dllexport) __attribute__((naked, used)) U32
+address_twice(void) {
+  __asm__("push %rbx\n\t"
+          "sub $32, %rsp\n\t"
+          "mov $2, %edi\n"
+          "1: mov __imp_GetStdHandle(%rip), %rbx\n\t"
+          "mov $0xfffffff5, %ecx\n\t"
+          "call *%rbx\n\t"
+          "movl $1, AddressEffects(%rip)\n\t"
+          "dec %edi\n\t"
+          "jne 1b\n\t"
+          "mov $43, %ecx\n\t"
+          "mov __imp_ExitProcess(%rip), %rax\n\t"
+          "call *%rax");
+}
+PROGRAM_CODE __declspec(dllexport) __attribute__((naked, used)) U32
+address_extended_program(void) {
+  __asm__("sub $40, %rsp\n\t"
+#define NEVERD_GENERATED_ADDRESS_REGISTER(Number)                              \
+  "mov __imp_GetStdHandle(%rip), %r" #Number "\n\t"                            \
+  "nop\n\t"                                                                    \
+  "mov $0xfffffff5, %ecx\n\t"                                                  \
+  "call *%r" #Number "\n\t"
+#include "UnpackGeneratedCases.def"
+#undef NEVERD_GENERATED_ADDRESS_REGISTER
+          "mov $43, %ecx\n\t"
+          "mov __imp_ExitProcess(%rip), %rax\n\t"
+          "call *%rax");
+}
+PROGRAM_CODE __declspec(dllexport) __attribute__((naked, used)) U32
+opaque_program(void) {
+  __asm__("sub $40, %rsp\n\t"
+          "xor %ecx, %ecx\n\t"
+          "call *__imp_SetUnhandledExceptionFilter(%rip)\n\t"
+          "mov $43, %ecx\n\t"
+          "mov __imp_ExitProcess(%rip), %rax\n\t"
+          "call *%rax");
+}
+PROGRAM_CODE __declspec(dllexport) __attribute__((naked, used)) U32
+address_previous_prefix(void) {
+  __asm__("push %rbx\n\t"
+          "sub $32, %rsp\n\t"
+          "mov $0x41000000, %eax\n\t"
+          "mov __imp_GetStdHandle(%rip), %rbx\n\t"
+          "mov $0xfffffff5, %ecx\n\t"
+          "call *%rbx\n\t"
+          "mov $43, %ecx\n\t"
+          "mov __imp_ExitProcess(%rip), %rax\n\t"
+          "call *%rax");
+}
+#endif
 
 // A call into the program that a loader makes before it leaves, as a system
 // loader calls initializers. The volatile cell keeps the call observable to
@@ -50,9 +254,32 @@ PROGRAM_CODE static U32 status(U32 Written) {
 }
 
 PROGRAM_ENTRY U32 program(void) {
+#if defined(__x86_64__)
+  if (Pack.Mode == OpaqueCallMode) {
+    __attribute__((musttail)) return opaque_program();
+  }
+  if (Pack.Mode == PreviousPrefixAddressMode) {
+    __attribute__((musttail)) return address_previous_prefix();
+  }
+  if (Pack.Mode == ExtendedAddressMode || Pack.Mode == CompactAddressMode) {
+    __attribute__((musttail)) return address_extended_program();
+  }
+  if (Pack.Mode == ChangingAddressMode || Pack.Mode == UnresolvedAddressMode) {
+    __attribute__((musttail)) return address_twice();
+  }
+  if (Pack.Mode == AddressMode || Pack.Mode == ImpureAddressMode ||
+      Pack.Mode == ServiceAddressMode || Pack.Mode == CallOnlyAddressMode) {
+    __attribute__((musttail)) return address_program();
+  }
+#endif
   U32 Written = 0;
   WriteFile(GetStdHandle(StdoutSelector), Message, sizeof(Message) - 1,
             &Written, 0);
+#if defined(__x86_64__)
+  // Keep one ordinary exit call in the byte-for-byte oracle. Dropping the
+  // impure helper's persistent increment must still change the exit status.
+  Written &= 0u - ((Pack.Mode != ImpureCallMode) | (AddressEffects == 1));
+#endif
   ExitProcess(status(Written));
   return FailureStatus;
 }
@@ -72,6 +299,11 @@ RELAY_ENTRY U32 relay(void) {
 // Every path leaves by a jump on the stack the process started with, as a
 // loader does when it hands control to the program it carried.
 __declspec(dllexport) U32 loader(void) {
+#if defined(__x86_64__)
+  if ((Pack.Mode >= AddressMode && Pack.Mode <= CompactAddressMode) ||
+      Pack.Mode == CallOnlyAddressMode)
+    CachedExport[0] = (U64)GetStdHandle;
+#endif
   if (Pack.Mode == StagedMode) {
     decode(relay, Pack.Relay, Pack.RelayBytes);
     __attribute__((musttail)) return relay();

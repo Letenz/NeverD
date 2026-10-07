@@ -29,28 +29,53 @@ struct Capture {
   /// Guest permissions of each page of the extent at the transfer; zero if
   /// the page was not mapped.
   std::vector<uint8_t> PageAccess;
+  /// Transfers into generated code, including initialization calls before
+  /// the accepted entry. Container metadata recovery can validate callback
+  /// addresses against these execution witnesses.
+  std::vector<UnpackTransfer> Transfers;
+  /// Main-image OS initializers that returned before the program invocation.
+  /// Their memory effects are already present in this entry snapshot.
+  std::vector<uint64_t> Initializers;
+  /// Live main-thread TLS outside the image, when the profile can capture it.
+  std::optional<std::vector<uint8_t>> ThreadLocal;
   /// Entry addresses of every export the guest loader can bind.
   std::map<uint64_t, ExportBinding> Exports;
 };
 
-/// A record of the recovered program that replaces one the input's headers
-/// name. A protector carries its own copy of metadata the system loader must
-/// see before anything is unpacked; the program's record is found in the
-/// observed memory. \p Kind is the container's own index for the record.
-struct MetadataOverride {
-  uint32_t Kind;
-  uint64_t RVA, Size;
+/// One runtime export use with a continuation inside the image. Call evidence
+/// comes from an entered export; address-load evidence comes from a helper's
+/// validated state transition.
+struct TailImport {
+  uint64_t ReturnAddress = 0;
+  /// Entry address of the resolved export.
+  uint64_t Gate = 0;
+  /// A helper returned this export address in a register without changing
+  /// other registers, flags or persistent guest memory.
+  bool AddressLoad = false;
+  /// Actual executed start, so overlapping instruction windows cannot be
+  /// inferred from a continuation address alone.
+  uint64_t InstructionAddress = 0;
+  /// Destination established by the complete register transition, not by
+  /// guessing which register a helper's bytes might produce.
+  std::optional<unsigned> ResultRegister;
 };
 
-/// What a protector module adds to a rebuild beyond the observed memory.
+/// Execution evidence used when rebuilding the observed memory.
 struct RebuildPlan {
-  std::vector<MetadataOverride> Metadata;
+  /// Export calls and address loads observed by running the recovered entry.
+  /// The instruction-set module validates each form before the container
+  /// allocates cells or rewrites it.
+  std::vector<TailImport> TailImports;
 };
 
 struct RebuiltImage {
   std::vector<uint8_t> File;
   std::vector<UnpackedSection> Sections;
   std::vector<UnpackedImport> Imports;
+  uint64_t RepairedTailCalls = 0;
+  uint64_t RepairedImportLoads = 0;
+  uint64_t ConflictingTailCalls = 0;
+  uint64_t MaterializedTLSCallbacks = 0;
 };
 } // namespace neverd::unpack
 #endif

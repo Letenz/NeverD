@@ -12,6 +12,8 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Object/COFF.h"
+#include "llvm/Support/MemoryBuffer.h"
 
 #include <array>
 #include <filesystem>
@@ -86,6 +88,45 @@ protected:
   }
 };
 
+TEST_P(WindowsDeferred, EarlierTLSCallbackMayGenerateALaterCallback) {
+  for (const char *Name : {"generated-tls.exe", "generated-tls-entry.exe"}) {
+    SCOPED_TRACE(Name);
+    Path = Path.parent_path() / Name;
+    Options.Contract.reset();
+    auto Bytes = llvm::MemoryBuffer::getFile(Path.string());
+    ASSERT_TRUE(bool(Bytes));
+    auto Image =
+        llvm::object::COFFObjectFile::create((*Bytes)->getMemBufferRef());
+    ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+    bool Unbacked = false;
+    for (const auto &Section : (*Image)->sections()) {
+      const auto *Header = (*Image)->getCOFFSection(Section);
+      if (llvm::cantFail(Section.getName()) == ".gentls") {
+        EXPECT_EQ(Header->SizeOfRawData, 0u);
+        Unbacked = Header->VirtualSize && !Header->SizeOfRawData;
+      }
+    }
+    ASSERT_TRUE(Unbacked);
+    Options.Windows->DeferUnmodeled = false;
+    auto Strict = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
+    EXPECT_FALSE(bool(Strict));
+    llvm::consumeError(Strict.takeError());
+    Options.Windows->DeferUnmodeled = true;
+    auto Run = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    EXPECT_EQ(Run->Stop, ProcessStopReason::Exited) << Run->Diagnostic;
+    EXPECT_EQ(Run->ExitStatus, ExitStatus);
+    if (GetParam().ISA != GuestArchitecture::X64 ||
+        GetParam().Backend == ExecutionBackendKind::HVF)
+      continue;
+    Options.Contract = ExecutionContract::DirectUserX64;
+    Run = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    EXPECT_EQ(Run->Stop, ProcessStopReason::Exited) << Run->Diagnostic;
+    EXPECT_EQ(Run->ExitStatus, ExitStatus);
+  }
+}
+
 /// Delegates each callback so a test states only the behavior it checks.
 struct Observer final : ProcessObserver {
   std::function<llvm::Expected<std::vector<ExecutionWatch>>(ProcessView &)>
@@ -93,6 +134,11 @@ struct Observer final : ProcessObserver {
   std::function<llvm::Expected<std::optional<std::vector<ExecutionWatch>>>(
       ProcessView &, uint64_t)>
       Watched = [](ProcessView &, uint64_t) { return std::nullopt; };
+  std::function<llvm::Error(ProcessView &, const ProcessExportView &,
+                            std::optional<uint64_t>)>
+      Exporting =
+          [](ProcessView &, const ProcessExportView &,
+             std::optional<uint64_t>) { return llvm::Error::success(); };
   unsigned Starts = 0, Watches = 0;
   llvm::Expected<std::vector<ExecutionWatch>>
   started(ProcessView &Process) override {
@@ -103,6 +149,10 @@ struct Observer final : ProcessObserver {
   watched(ProcessView &Process, uint64_t PC) override {
     ++Watches;
     return Watched(Process, PC);
+  }
+  llvm::Error exporting(ProcessView &Process, const ProcessExportView &Export,
+                        std::optional<uint64_t> ReturnAddress) override {
+    return Exporting(Process, Export, ReturnAddress);
   }
 };
 
@@ -136,6 +186,72 @@ TEST_P(WindowsDeferred, ExecutingAnOpaqueEntryStopsAndNamesIt) {
     EXPECT_TRUE(Result->StandardError.empty())
         << llvm::toHex(Result->StandardError);
   }
+}
+
+TEST_P(WindowsDeferred, ExportObservationIncludesTheOpaqueBoundary) {
+  for (const auto &C : Calls) {
+    SCOPED_TRACE(C.Name);
+    Options.Arguments = {ProgramFile, C.Argument};
+    auto Plain = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
+    ASSERT_TRUE(bool(Plain)) << llvm::toString(Plain.takeError());
+    Observer O;
+    std::vector<std::string> Exports;
+    O.Exporting = [&](ProcessView &P, const ProcessExportView &Export,
+                      std::optional<uint64_t> ReturnAddress) {
+      EXPECT_TRUE(ReturnAddress);
+      if (ReturnAddress) {
+        EXPECT_GE(*ReturnAddress, ProgramBaseAddress);
+        EXPECT_LT(*ReturnAddress,
+                  ProgramBaseAddress + P.modules().front().Size);
+      }
+      Exports.push_back(Export.Module + "!" +
+                        (Export.Name.empty()
+                             ? "#" + std::to_string(*Export.Ordinal)
+                             : Export.Name));
+      return llvm::Error::success();
+    };
+    auto Result = observeProcess(Path, ProcessProfile::WindowsPE64, Options, O);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    EXPECT_EQ(O.Starts, 1u);
+    EXPECT_EQ(O.Watches, 0u);
+    ASSERT_FALSE(Exports.empty());
+    EXPECT_EQ(Exports.back(), C.Stopped);
+    EXPECT_EQ(Exports.size(), Plain->NativeCalls.size() + 1);
+    EXPECT_EQ(Result->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Result->Stop, Plain->Stop);
+    EXPECT_EQ(Result->Diagnostic, Plain->Diagnostic);
+    EXPECT_EQ(Result->Instructions, Plain->Instructions);
+    EXPECT_EQ(Result->Events, Plain->Events);
+    EXPECT_EQ(Result->NativeCalls.size(), Plain->NativeCalls.size());
+    EXPECT_FALSE(Result->ExitStatus);
+  }
+}
+
+TEST_P(WindowsDeferred, OpaqueExportObservationPreservesAnUnreadableReturn) {
+  if (GetParam().ISA != GuestArchitecture::X64)
+    GTEST_SKIP() << "the invalid-stack fixture is x86-64";
+  Options.Arguments = {ProgramFile, "!B"};
+  auto Plain = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
+  ASSERT_TRUE(bool(Plain)) << llvm::toString(Plain.takeError());
+  Observer O;
+  bool Reached = false;
+  O.Exporting = [&](ProcessView &, const ProcessExportView &Export,
+                    std::optional<uint64_t> ReturnAddress) {
+    if (Export.Name == UnmodeledExport) {
+      Reached = true;
+      EXPECT_FALSE(ReturnAddress);
+    }
+    return llvm::Error::success();
+  };
+  auto Result = observeProcess(Path, ProcessProfile::WindowsPE64, Options, O);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  EXPECT_TRUE(Reached);
+  EXPECT_EQ(Result->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Result->Stop, Plain->Stop);
+  EXPECT_EQ(Result->Diagnostic, Plain->Diagnostic);
+  EXPECT_EQ(Result->Instructions, Plain->Instructions);
+  EXPECT_EQ(Result->Events, Plain->Events);
+  EXPECT_EQ(Result->NativeCalls.size(), Plain->NativeCalls.size());
 }
 
 TEST_P(WindowsDeferred, ObserverSeesTheProcessBeforeItsFirstInstruction) {
@@ -258,6 +374,19 @@ TEST_P(WindowsDeferred, ObserverFailuresAreNotGuestOutcomes) {
   ASSERT_TRUE(bool(Failed)) << llvm::toString(Failed.takeError());
   EXPECT_EQ(Failed->Stop, ProcessStopReason::RuntimeFailure);
   EXPECT_EQ(Failed->Diagnostic, ObserverFailure);
+
+  Observer Export;
+  Export.Exporting = [](ProcessView &, const ProcessExportView &,
+                        std::optional<uint64_t>) {
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   ObserverFailure);
+  };
+  auto BeforeAPI =
+      observeProcess(Path, ProcessProfile::WindowsPE64, Options, Export);
+  ASSERT_TRUE(bool(BeforeAPI)) << llvm::toString(BeforeAPI.takeError());
+  EXPECT_EQ(BeforeAPI->Stop, ProcessStopReason::RuntimeFailure);
+  EXPECT_EQ(BeforeAPI->Diagnostic, ObserverFailure);
+  EXPECT_TRUE(BeforeAPI->NativeCalls.empty());
 }
 
 TEST_P(WindowsDeferred, ProfilesWithoutObservationRefuseAnObserver) {

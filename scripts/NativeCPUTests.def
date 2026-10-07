@@ -23,6 +23,7 @@ NEVERD_NATIVE_CPU_OWNER(NeverDServiceRequestTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDProjectionCacheTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDThreadPointerTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDUserExecutionTests)
+NEVERD_NATIVE_CPU_OWNER(NeverDDirectX64Tests)
 NEVERD_NATIVE_CPU_OWNER(NeverDUnpackExecutionTests)
 #endif
 #ifdef NEVERD_NATIVE_CPU_HOST
@@ -31,6 +32,101 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.OpaqueExportCallsAreRepairedBeforeTheExplicitStop/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.OpaqueExportCallsAreRepairedBeforeTheExplicitStop/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsDeferred.ExportObservationIncludesTheOpaqueBoundary/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsDeferred.OpaqueExportObservationPreservesAnUnreadableReturn/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.ImportCallHelpersCannotDiscardPersistentEffects/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.ImportCallHelpersCannotDiscardPersistentEffects/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.ExtendedRegistersLoadOrdinaryImportsAgain/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.ExtendedRegistersLoadOrdinaryImportsAgain/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.ExportAddressLoadsAreOrdinaryImportsAgain/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.ExportAddressLoadsAreOrdinaryImportsAgain/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/"
+    "UnpackGenerated.ImportAddressHelpersCannotDiscardPersistentEffects/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/"
+    "UnpackGenerated.ImportAddressHelpersCannotDiscardPersistentEffects/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/"
+    "UnpackGenerated.ACompletedImportLoadCannotHideALaterUnprovenInvocation/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/"
+    "UnpackGenerated.ACompletedImportLoadCannotHideALaterUnprovenInvocation/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.ImportAddressHelpersCannotHideOSServiceEffects/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.ImportAddressHelpersCannotHideOSServiceEffects/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "MaterializesCompletedTLSStartupAndForwardsOtherNotifications"
+    "/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "MaterializesCompletedTLSStartupAndForwardsOtherNotifications"
+    "/{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/Unpack.OSTLSCallbackOnTheEntryStackIsNotTheProgramEntry/"
+    "{backend_title}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/Unpack.GeneratedProgramEntryAfterOSTLSCallbacksIsObserved/"
+    "{backend_title}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsDeferred.EarlierTLSCallbackMayGenerateALaterCallback/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.WatchEndingAtTheLastAddressCanResumeWithoutWrapping/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.PartialPageWatchStopsOnlyAtTheSelectedInstruction/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/"
+    "DirectX64.ResumedWatchCanRetireOneInstructionAcrossTwoWatchedPages/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.SplitInstructionRetiresBeforeTheWatchedPageBoundary/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/"
+    "DirectX64.ReadingAWatchedExecutablePageDoesNotTriggerAFetchWatch/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.ServiceRequestPreservesTheOriginalPCAndRegisters/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.InvalidOpcodeIsAFaultAtItsOriginalPC/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/"
+    "DirectX64.DeadlinePublishesCommittedRegistersAtAnInstructionBoundary/"
+    "{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/ParallelCPU.ProcessorCallsOverlapAndPublishIndependentRegisters/{backend}x86_64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
@@ -2159,6 +2255,18 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 
 #ifdef NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST
 NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST(
+    "StateAPIs/WhpStateTransfer."
+    "CancelledDirectRunPublishesACompleteBoundary/false")
+NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST(
+    "StateAPIs/WhpStateTransfer."
+    "CancelledDirectRunPublishesACompleteBoundary/true")
+NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST(
+    "StateAPIs/WhpStateTransfer."
+    "FailedDirectCapturePreservesStateAndForcesFullRetry/false")
+NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST(
+    "StateAPIs/WhpStateTransfer."
+    "FailedDirectCapturePreservesStateAndForcesFullRetry/true")
+NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST(
     "WhpMemoryProtocol.SharedHostRetiresBeforeReplacementAndRetriesFailedSetup")
 NEVERD_NATIVE_CPU_WHP_REQUIRED_TEST(
     "WhpEntryControl.CancellationTargetsTheRetainedNonzeroProcessor")
@@ -3937,10 +4045,34 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated."
     "SecondLoaderIsTheEntryUntilALaterTransferIsNamed/"
     "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/UnpackGenerated."
+                                "MutatedImportTailCallsAreOrdinaryImportsAgain/"
+                                "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/UnpackGenerated."
+                                "PackedProgramRunsLikeTheLinkedOne/"
+                                "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "LoaderThatLeavesForTheProgramYieldsTheLinkedImage/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/UnpackGenerated."
+                                "LoaderCallIntoTheProgramPrecedesItsEntry/"
+                                "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "SecondLoaderIsTheEntryUntilALaterTransferIsNamed/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/UnpackGenerated."
+                                "MutatedImportTailCallsAreOrdinaryImportsAgain/"
+                                "{backend_title}DirectX64")
 #endif
 // One case per packed fixture: every stub runs whole under its own limit.
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_CASES
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
     "Backends/UnpackFixture.RecoversEntrySectionsAndImports/{backend_title}_",
+    "unittests/unpack/UnpackCases.def", "NEVERD_UNPACK_TEST_FIXTURE")
+NEVERD_NATIVE_CPU_REQUIRED_CASES(
+    "Backends/UnpackFixture.DirectContractRecoversTheSameImage/"
+    "{backend_title}_",
     "unittests/unpack/UnpackCases.def", "NEVERD_UNPACK_TEST_FIXTURE")
 #endif

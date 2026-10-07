@@ -1303,6 +1303,8 @@ checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト�
 
 `WhpStateTransferTests.cpp` は両世代の XSAVE API で転送を注入し、変更グループ、完全取得、パディング無視、部分失敗、キャンセル、例外優先順位、区画再作成を検証します。`ContinuedStepsReuseCapturedRegistersAndFP` は省略された設定を数え、`PartialTransferFailuresPreserveStateAndForceFullRetry` は完全復元を要求します。これはプロトコル検証であり、既存のネイティブ FP・状態遷移・ドライバー・ring3 テストも引き続き必要です。
 
+`CancelledDirectRunPublishesACompleteBoundary` は direct 実行のキャンセル確認時に完全な状態を公開することを検証します。`FailedDirectCapturePreservesStateAndForcesFullRetry` はキャンセル中のレジスター、XSAVE、メタデータ取得の失敗で呼び出し元の状態を保持し、完全な再試行を要求します。両世代の API とも部分的なレジスター状態を公開してはいけません。
+
 `WhpStateTransferCases.def` は、統合した 32 レジスタ取得の各途中位置での失敗と、七つすべてのメタデータフィールドの不一致も検証します。両世代の XSAVE API は呼び出し元の状態を保持し、再試行時に全状態を復元する必要があります。同じテストで各ステップのレジスタ読み出しが一回であることと、XSAVE が省略したメタデータの補完を確認します。
 
 `windows-pe64-v1` は PEB/TEB、静的・動的 TLS、`DllMain`、名前付き Win32 API、明示的な非循環 DLL グラフを持つ有界 Windows x64/ARM64 コンソールプロセスに対応します。ゲストモジュールは名前／序数によるコード・データのインポート、DIR64 再配置、転送エクスポートと実際のローダーリスト識別子を扱います。`LoadLibraryA` / `LoadLibraryW`、`FreeLibrary`、`GetProcAddress` は設定済みモジュールカタログを使用します。CRT/GUI、ARM64 のフレームベースのユーザー SEH、スレッド、一般的な Windows アプリ互換性は未完成で、ネイティブ ARM64 KVM/WHP の証拠も未取得です。
@@ -1343,7 +1345,11 @@ Windows ring3 は独立したネイティブ観測に従い、checked x64 の `o
 
 `WindowsLifetimeTests.cpp` は固定トレースを独立したネイティブ Windows プロセスと KVM/WHP/Unicorn で照合します。通常終了、入口 return、両 DLL の初期化失敗、4 箇所の早期終了、入口なし DLL を含みます。回呼障害、共通予算、再配置 TLS フィールド、TLS 総容量も検証します。ネイティブ入口 return のプローブは初期スレッドのハンドルを保持し、終了コードと正確なスレッド／プロセス通知列を 64 回検証します。残る子スレッドは観測後に終了させ、プロセス終了値を入口の戻り値として扱いません。
 
-`NeverDUnpackTests`、`NeverDUnpackExecutionTests`、`NeverDUnpackPublicTests` はパックされたイメージの復元を対象とします。[アンパック](unpack.md)を参照してください。`UnpackGeneratedTests.cpp` は、テスト自身がパックしたプログラムを使って、x86-64 と ARM64 でエントリの規則を検査します。`X64ReturnPrefixTests.cpp` は 2 バイトの近リターンをすべてのトランスポートで検査し、それ以外のプレフィックス付きリターンが拒否されたままであることを確認します。`WindowsDeferredTests.cpp` は不透明なエントリと停止したプロセスの観測を、`ExecutionSessionTests.cpp` は実行ウォッチを検査します。
+`NeverDUnpackTests`、`NeverDUnpackExecutionTests`、`NeverDUnpackPublicTests` はパックされたイメージの復元を対象とします。[アンパック](unpack.md)を参照してください。`UnpackGeneratedTests.cpp` は、テスト自身がパックしたプログラムを使って、x86-64 と ARM64 でエントリの規則を検査します。`X64ReturnPrefixTests.cpp` は 2 バイトの近リターンをすべてのトランスポートで検査し、それ以外のプレフィックス付きリターンが拒否されたままであることを確認します。`WindowsDeferredTests.cpp` は不透明なエントリと停止したプロセスの観測を、`ExecutionSessionTests.cpp` は実行ウォッチを検査します。 `DirectX64Tests.cpp` は部分ページの監視、ページ境界の命令取得、一度だけの再開、サービス境界、無効命令とタイムアウト時の状態も検証します。
+
+`ExtendedRegistersLoadOrdinaryImportsAgain` はコンパクト形式と余白付き R8-R15 読み込みを検査付き・直接 x64 実行で確認します。下位レジスタの例は直前の REX 風バイトと CALL のみのアドレス補助ルーチンを扱い、余白付き呼び出しは CALL 後の任意バイトを飛ばします。`ImportCallHelpersCannotDiscardPersistentEffects` は永続的な副作用の保存を確認します。`PERebuildTests.cpp` は開始・結果証拠の欠落と重複開始を拒否し、6～8 バイト領域の正確な API 戻りアドレスを維持します。
+
+`OpaqueExportCallsAreRepairedBeforeTheExplicitStop` は未知 API を迂回せず純粋な呼び出しを復元します。`ExportObservationIncludesTheOpaqueBoundary` は静的・動的・序数エクスポートを確認し、実行とサービスログを維持します。`OpaqueExportObservationPreservesAnUnreadableReturn` は欠落した戻り情報を作らないことを確認します。
 
 Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
 

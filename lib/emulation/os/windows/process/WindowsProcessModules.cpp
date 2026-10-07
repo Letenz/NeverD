@@ -310,6 +310,7 @@ llvm::Expected<Program> loadProgram(const std::filesystem::path &Path,
   for (auto &M : Out.Modules)
     M.Pinned = true;
   Out.Modules.front().References = 1;
+  Out.ImagePath = Path;
   return Out;
 }
 } // namespace neverd::emulation::windows_process
