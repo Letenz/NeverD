@@ -1437,7 +1437,7 @@ Swift SDK Published の enclosing-instance アクセサーは四つのポイン�
 
 ## 公開済み Android GKI カーネルの契約
 
-`LinuxGKIKernels.def` はブランチ、`pidfd_open` フラグ、非リーダーエラー、iovec 方針を一元管理します。`LinuxKernelOptions` は明示選択と任意の固定タスク一覧を所有します。`LinuxServices` は呼び出し、`LinuxFiles` はファイルと pidfd、`LinuxOutput` は共有インポーターを担当し、`LinuxPIDFD` は割り当て前に対象種別を検証します。一覧省略時の外部検索は未対応です。共通検証は矛盾する優先度と Android 協調スレッドとの併用を拒否し、ホスト検索は行いません。[GKI 契約](android-gki-kernels.md)を参照してください。
+`LinuxGKIKernels.def` は公開済み GKI 系列識別子、版別の `pidfd_open` フラグマスク、非リーダーのエラーと iovec 取り込み方針を所有します。JSON と C++ が明示的に選択し、Bionic API レベルから推定しません。`LinuxServices` が共通カーネル呼び出しを分配し、`LinuxFiles` はファイル、標準ストリームと pidfd の記述子を一元管理します。`LinuxOutput` は捕捉出力および pidfd の書き込み未対応判定前に、選択版の取り込みとエラー順序を適用します。`LinuxKernelOptions` は追加の生存ゲストタスクの任意の固定一覧も所有します。閉じた一覧の宣言で不在を判断でき、省略時は他の対象が未対応です。共通検証は矛盾する優先度観測と協調型 Android スレッドをロード前に拒否します。`LinuxPIDFD` は記述子予約前に対象分類を調べ、版別の非リーダーエラーを保持します。ホスト検索も別の記述子名前空間もありません。[公開済み GKI 契約](../android-gki-kernels.md)を参照してください。
 
 `LinuxCPUClock` はプロセス CPU 識別子と GKI のタスク観測を検証し、出力前に現在のグループ別名と外部リーダーを解決します。`LinuxClock` は標本を正規化し、重複別名を拒否します。宣言済み壁時計だけがアイドルで進み、CPU 標本は固定です。ホスト時刻や実行計量から観測を補いません。
 

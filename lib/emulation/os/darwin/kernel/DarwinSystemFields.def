@@ -12,11 +12,26 @@ NEVERD_DARWIN_SYSTEM_FIELD(OSRevision, SystemOSRevision, "kern.osrevision", 1,
                            3)
 NEVERD_DARWIN_SYSTEM_FIELD(KernelVersion, SystemKernelVersion, "kern.version",
                            1, 4)
-// Native kern.osversion allows privileged writes. Our fixed non-root guest
-// identity cannot write it; the observation itself remains caller supplied.
+// Native kern.osversion permits privileged writes. Explicit root credentials
+// stop unsupported for writes; non-root returns EPERM. Observation stays fixed.
 NEVERD_DARWIN_SYSTEM_FIELD(OSVersion, SystemOSVersion, "kern.osversion", 1, 65)
 NEVERD_DARWIN_SYSTEM_FIELD(Machine, SystemMachine, "hw.machine", 6, 1)
 NEVERD_DARWIN_SYSTEM_FIELD(Model, SystemModel, "hw.model", 6, 2)
 NEVERD_DARWIN_SYSTEM_FIELD(CPUCount, SystemCPUCount, "hw.ncpu", 6, 3)
 NEVERD_DARWIN_SYSTEM_FIELD(MemorySize, SystemMemorySize, "hw.memsize", 6, 24)
+// Writable natively for root; only its immutable read observation is modeled.
+NEVERD_DARWIN_SYSTEM_FIELD(MaxFilesPerProcess, SystemMaxFilesPerProcess,
+                           "kern.maxfilesperproc", 1, 29)
+// Caller-visible observation only; root/mobile write authority is not inferred.
+NEVERD_DARWIN_SYSTEM_FIELD(HostName, SystemHostName, "kern.hostname", 1, 10)
+#endif
+
+// Process observations have no sysctl names or numeric MIBs. The member type
+// owns scalar or fixed-buffer encoding and admission.
+#ifdef NEVERD_DARWIN_PROCESS_FIELD
+NEVERD_DARWIN_PROCESS_FIELD(ProcessGroupID, SystemProcessGroupID)
+NEVERD_DARWIN_PROCESS_FIELD(SessionID, SystemSessionID)
+NEVERD_DARWIN_PROCESS_FIELD(ProcessTainted, SystemProcessTainted)
+NEVERD_DARWIN_PROCESS_FIELD(LoginNameBytes, SystemLoginNameHex)
+NEVERD_DARWIN_PROCESS_FIELD(ProcessNice, SystemProcessNice)
 #endif

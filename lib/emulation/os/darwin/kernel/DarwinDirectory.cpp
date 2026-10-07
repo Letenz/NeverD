@@ -31,12 +31,9 @@ DarwinFiles::directory(Description &File, uint64_t Address, uint64_t Count,
     return Unsupported(diagnostic::FileDirectoryKind);
   if (File.Directory->Changed)
     return Unsupported(diagnostic::DirectoryMutated);
-  if (File.Directory->Created)
+  if (!File.Directory->Snapshot)
     return Unsupported(diagnostic::DirectoryContents);
-  const auto Snapshot = Options->DirectoryContents.find(File.Directory->Path);
-  if (Snapshot == Options->DirectoryContents.end())
-    return Unsupported(diagnostic::DirectoryContents);
-  const auto &Contents = Snapshot->second;
+  const auto &Contents = *File.Directory->Snapshot;
   const bool Extended = Count >= DirectoryExtendedMinimum;
   const uint64_t Payload = std::min(
       Extended ? Count - DirectoryFlagsSize : Count, DirectoryPayloadLimit);

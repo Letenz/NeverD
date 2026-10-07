@@ -78,24 +78,26 @@ x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARC
 
 檔案、共享、固定映射，向下成長、大頁、記憶體鎖定、保護鍵、僅執行／僅寫入策略及其他旗標均明確不支援：在發布效果或建立回傳值前停止。支援子集內的一般範圍、長度及對齊錯誤會回傳客體錯誤，允許繼續執行。任何記憶體服務均不會將客體指標或映射請求轉交主機 OS。
 
-可選的 `linux_kernel` 記錄經觀察確認缺少的核心介面。例如，測試環境缺少 `pidfd_open` 實作時使用：
+選用的 `linux_kernel` 輸入記錄明確觀測到的核心介面缺失。例如，沒有 `pidfd_open` 實作的測試夾具使用：
 
 ```json
 {"linux_kernel":{"unavailable_syscalls":["pidfd_open"]}}
 ```
 
-指定的原始呼叫在驗證參數前回傳 -ENOSYS，不建立描述符，也不修改客體記憶體；這與缺少的核心入口一致。Bionic 的 `syscall` 包裝器仍執行一般的 -1／errno 轉換。缺少輸入或提供空清單時，該介面仍明確不支援；其他未知呼叫不會自動轉換為 ENOSYS。目前僅接納 `pidfd_open`，未知名稱、重複項目及型別錯誤均被拒絕。此輸入不推斷核心版本、主機可用性或可運作的 pidfd 實作。參見[核心缺少呼叫的實作](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c)。
+選定的原始呼叫在引數檢查前回傳 -ENOSYS，與核心入口缺失一致，不建立描述符，也不修改客體記憶體。Bionic 的 `syscall` 包裝器保留通常的 -1/errno 轉換。省略輸入或使用空清單時，此介面仍停在原有的未支援邊界；其他未知呼叫不會變成 ENOSYS。目前僅接受 `pidfd_open`，未知名稱、重複項目和錯誤型別皆被拒絕。輸入不推導核心版本、主機可用性或可運作的 pidfd 實作。參見[核心缺失呼叫實作](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c)。
 
-可選的 `linux_priority` 為與呼叫者 UID 相同的測試任務宣告 nice 狀態。Linux ELF64 與 Android 原生工作負載的原始 `setpriority` 和 `getpriority` 共用此狀態，不修改主機優先權。
+明確的 `linux_kernel.gki` 選擇 5.10 至 6.18 的已發布 Android common 核心分支。實作子集包含存活模型行程及明確目錄內客體任務的 `pidfd_open`，以及依版本選取的向量匯入；它與 `linux_files` 共用描述元表，Bionic 與原始陷阱共用所有權及錯誤順序。GKI 不得與 `pidfd_open` 缺失觀測同時選擇。選用的 `linux_kernel.tasks` 陣列宣告其他存活任務的封閉固定目錄，例如 `{ "id": 2000, "group_leader": true }`。省略陣列時，其他目標查詢仍不支援；空陣列只確認目前執行的群組首領。PID 不在已宣告目錄時回傳 ESRCH。目錄與優先權觀測必須一致，且不能搭配協作式 Android 客體執行緒。Android API 等級不選擇核心。請參閱[已發布 GKI 契約](../android-gki-kernels.md)，包含八個固定原始碼版本、描述元行為、測試及剩餘範圍。
+
+選用的 `linux_priority` 宣告與呼叫者 UID 相同的測試工作之 nice 狀態。Linux ELF64 與 Android 的原始 `setpriority` / `getpriority` 共用此狀態，不改變宿主優先權。
 
 ```json
 {"linux_priority":{"tasks":[{"id":1000,"nice":0}],
                    "cap_sys_nice":false,"rlimit_nice":0}}
 ```
 
-任務 ID 必須是互不重複的正有號 32 位元整數，初始 nice 值範圍為 -20 至 19，`rlimit_nice` 範圍為 0 至 40。`cap_sys_nice` 和 `rlimit_nice` 預設為 false 和零；任務狀態必須明確宣告。缺少輸入、未列出的任務或 PRIO_PGRP／PRIO_USER 選擇會以不支援的服務停止；這也包括未宣告 nice 狀態的新建執行緒。模型不猜測繼承規則或其他任務的歸屬。PRIO_PROCESS 的 who 為零時選擇目前客體任務，否則選擇指定任務。
+工作 ID 是互不重複的正有號 32 位元值；初始 nice 為 -20..19，`rlimit_nice` 為 0..40。`cap_sys_nice` 與 `rlimit_nice` 預設 false 與 0，但工作狀態必須明確宣告。缺少輸入、未列出的工作（包括未宣告狀態的新執行緒）及 PRIO_PGRP / PRIO_USER 都以不支援的服務停止，不猜測繼承或所有權。PRIO_PROCESS 的 who=0 選擇目前客體工作，否則選擇指定工作。無效選擇器回傳原始 -EINVAL；設定要求將有號 32 位元 nice 限制於 -20..19。降低 nice 值需要 CAP_SYS_NICE 或足夠的 RLIMIT_NICE；拒絕時回傳原始 -EACCES 且不修改狀態。原始查詢回傳 `20 - nice`，保留核心 40..1 編碼，並非 libc 轉換後的結果。
 
-無效選擇器回傳原始 -EINVAL。設定請求將有號 32 位元 nice 參數限制到 -20..19。降低 nice 值需要 CAP_SYS_NICE 或足夠的 RLIMIT_NICE；拒絕時回傳原始 -EACCES，狀態保持不變。原始查詢回傳 `20 - nice`，保留核心的 40..1 編碼，並非 libc 轉換後的 `getpriority` 結果。參見 [Linux 優先權介面](https://man7.org/linux/man-pages/man2/setpriority.2.html)。
+[Linux setpriority/getpriority](https://man7.org/linux/man-pages/man2/setpriority.2.html).
 
 `linux_signals` 明確提供程序層級的初始訊號處置。缺少項目表示未知，不代表 `SIG_DFL`；明確的空清單允許在不查詢舊值的情況下安裝新處置。五個欄位均必填，四個動作欄位為無號 64 位元值，超出 JSON 精確整數範圍時使用十進位字串。
 

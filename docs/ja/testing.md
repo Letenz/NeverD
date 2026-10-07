@@ -1583,7 +1583,7 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 
 `AndroidTestExecution.def` は `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` に CTest 全体で 120 秒と `RUN_SERIAL` を設定します。二つのワークロードは各 30 秒の実行制限を保持し、直列化は容量試験間の競合を防ぎます。O0/O2 と再配置の全六構成に適用します。
 
-`LinuxPIDFD.*` はブランチとタスク一覧をロード前に検証します。`Backends/LinuxPIDFDProcess.*` は八ブランチの独立 x64/AArch64 O0/O2 呼び出し側でフラグ、共有表、上限、順序、対象種別、バッファ制限を確認します。`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` とほかの `AndroidSyscallTests.cpp` は六種の再配置構成で raw/Bionic と errno を確認します。共有部変更後は Linux プロセス、Android ネイティブ、公開プロセス API の全スイートを実行してください。モデル検証は GKI 起動とは別です。[ソースと証拠](android-gki-kernels.md)を参照してください。
+`LinuxPIDFD.*` は系列解析、不正列挙、GKI と不在観測の衝突、壊れた・過大な・矛盾するタスク一覧をロード前に検証します。`Backends/LinuxPIDFDProcess.*` は独立した O0/O2 x64/AArch64 呼び出しで8系列のフラグ、共有割り当て、制限、close/再利用、閉じた一覧、非リーダーエラーとスカラー/ベクトル順序を検証します。不在対象と非リーダーは FD 枯渇前に判定し、スレッドフラグと暗黙の self のみの空一覧も対象です。ベクトル例は先行する負の長さと後続の読めないメタデータ、元の範囲がユーザー上限を越えても制限後は収まるバッファを比較し、pidfd と両捕捉ストリームを検証します。Android の `ReleasedGKIProcessDescriptorsShareRawAndBionicOwnership`、`ReleasedGKIVectorImportRetainsRawAndBionicErrors`、`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` は6種類の再配置構成で生のエラー、Bionic errno、一覧と枯渇を保持します。対象テスト後に完全な Linux プロセス、Android native、公開プロセスの各スイートを実行します。これはモデルの実行であり8個の GKI カーネルを起動しません。[公開済み GKI 契約](../android-gki-kernels.md)を参照してください。
 
 `ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: 八つの固定版で raw／Bionic の識別、PROF／VIRT／SCHED、下位 32 ビット、ポインター故障より先の対象検証、標本欠落、別名、非負 CPU 時間、壁時計と CPU のアイドル分離を確認します。`AndroidTimeTests.cpp` は出力とカナリアを、協調 syscall は現在の非リーダー TID を確認します。
 

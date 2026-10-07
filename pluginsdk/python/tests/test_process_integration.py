@@ -544,12 +544,49 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("created-file", b"c"),
                                            ("created-file-metadata", b"q"),
                                            ("renamed-file", b"r"),
+                                           ("renamed-directory", b"d"),
+                                           ("swapped-directory", b"s"),
                                            ("vectored-io", b"v!"),
                                            ("file-access", b"a"),
                                            ("directory-mutations", b"m"),
                                            ("deleted-directories", b"h"),
                                            ("initial-directory-removal", b"j"),
+                                           ("initial-directory-move", b"p"),
+                                           ("initial-directory-swap", b"q"),
+                                           ("credentials", b"k"),
+                                           ("virtual-credentials", bytes.fromhex(
+                                               "65000000ca0000002f0100009401000005000000"
+                                               "9401000000000000ffffff7f0700000007000000")),
+                                           ("resource-usage", b"g"),
+                                           ("virtual-resource-usage", bytes.fromhex(
+                                               "00000000000000803f420f0000000000efcdab896745230140e2010000000000"
+                                               "ffffffffffffff7f0000000000000080ffffffffffffffff0000000000000000"
+                                               "0100000000000000efcdab89674523011132547698badcfe0807060504030201"
+                                               "0900000000000000f6ffffffffffffff0b00000000000000f4ffffffffffffff"
+                                               "0d00000000000000f2ffffffffffffffffffffffffffff7f0000000000000000"
+                                               "fdffffffffffffff01000000000000000000000000000000ffffffffffffffff"
+                                               "0200000000000000fdffffffffffffff0400000000000000fbffffffffffffff"
+                                               "0600000000000000f9ffffffffffffff0800000000000000f7ffffffffffffff"
+                                               "0a00000000000000f5ffffffffffffff0c00000000000000ffffffffffffff7f")),
+                                           ("resource-limits", b"l"),
+                                           ("virtual-resource-limits", bytes.fromhex(
+                                               "00000000000000000000000000000000ffffffffffffff7fffffffffffffff7f"
+                                               "efcdab8967452301ffffffffffffff7f00000040000000000000008000000000"
+                                               "0000000000000000ffffffffffffff7ffeffffffffffff7fffffffffffffff7f"
+                                               "0020000000000000004000000000000020000000000000008000000000000000"
+                                               "00010000000000000004000000000000")),
                                            ("system-info", b"i"),
+                                           ("hostname", b"n"),
+                                           ("virtual-hostname", b"abcd\0"),
+                                           ("process-observations", b"P"),
+                                           ("virtual-process-observations", bytes.fromhex(
+                                               "070000000403020101000000")),
+                                           ("process-priority", b"Q"),
+                                           ("virtual-process-priority", bytes.fromhex(
+                                               "f9ffffffffffffff")),
+                                           ("login-buffer", b"L"),
+                                           ("virtual-login-buffer", b"L\0\xff" +
+                                            b"\xa5" * 251 + b"~"),
                                            ("virtual-system", bytes.fromhex(
                                                "44617277696e0032342e746573740000000080"
                                                "4e6576657244207669727475616c206b65726e656c0056343200"
@@ -580,6 +617,10 @@ class ProcessIntegrationTests(unittest.TestCase):
                         file_options = json.dumps({
                             "backend": "unicorn", "arguments": ["guest", mode, "/data"],
                             "darwin_system": {
+                                "hostname": "abcd",
+                                "process_group_id": 7, "session_id": 16909060,
+                                "process_tainted": True, "nice": -7,
+                                "login_name_hex": "4c00ff" + "a5" * 251 + "7e",
                                 "os_type": "Darwin", "os_release": "24.test",
                                 "os_revision": -2147483648, "os_version": "V42",
                                 "kernel_version": "NeverD virtual kernel",
@@ -617,23 +658,112 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                           "type": 8, "next_offset": 99, "seek_offset": 0}]}}],
                                              "working_directory": "/empty",
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
-                        if mode.startswith("writable-files") or mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "created-file-metadata", "virtual-created-metadata", "renamed-file", "vectored-io"):
+                        if mode in ("credentials", "virtual-credentials", "created-file-metadata"):
+                            credential_options = json.loads(file_options)
+                            credential_options["darwin_system"] = {"credentials": {
+                                "real_uid": 101, "effective_uid": 202,
+                                "real_gid": 303, "effective_gid": 404,
+                                "groups": [404, 0, "2147483647", 7, 7]}}
+                            file_options = json.dumps(credential_options)
+                        if mode in ("resource-usage", "virtual-resource-usage"):
+                            usage_options = json.loads(file_options)
+                            usage_options["darwin_system"] = {
+                                "resource_usage": {
+                                    "self": {
+                                        "user_seconds": "-9223372036854775808",
+                                        "user_microseconds": 999999,
+                                        "system_seconds": "81985529216486895",
+                                        "system_microseconds": 123456,
+                                        "counters": [
+                                            "9223372036854775807",
+                                            "-9223372036854775808",
+                                            -1,
+                                            0,
+                                            1,
+                                            "81985529216486895",
+                                            "-81985529216486895",
+                                            "72623859790382856",
+                                            9,
+                                            -10,
+                                            11,
+                                            -12,
+                                            13,
+                                            -14
+                                        ]
+                                    },
+                                    "children": {
+                                        "user_seconds": "9223372036854775807",
+                                        "user_microseconds": 0,
+                                        "system_seconds": -3,
+                                        "system_microseconds": 1,
+                                        "counters": [
+                                            0,
+                                            -1,
+                                            2,
+                                            -3,
+                                            4,
+                                            -5,
+                                            6,
+                                            -7,
+                                            8,
+                                            -9,
+                                            10,
+                                            -11,
+                                            12,
+                                            "9223372036854775807"
+                                        ]
+                                    }
+                                }
+                            }
+                            file_options = json.dumps(usage_options)
+                        if mode in ("resource-limits", "virtual-resource-limits"):
+                            resource_options = json.loads(file_options)
+                            resource_options["darwin_system"] = {"max_files_per_process": 64, "resource_limits": [
+                                {"resource": 0, "current": 0, "maximum": 0},
+                                {"resource": 1, "current": "9223372036854775807", "maximum": "9223372036854775807"},
+                                {"resource": 2, "current": "81985529216486895", "maximum": "9223372036854775807"},
+                                {"resource": 3, "current": 1073741824, "maximum": 2147483648},
+                                {"resource": 4, "current": 0, "maximum": "9223372036854775807"},
+                                {"resource": 5, "current": "9223372036854775806", "maximum": "9223372036854775807"},
+                                {"resource": 6, "current": 8192, "maximum": 16384},
+                                {"resource": 7, "current": 32, "maximum": 128},
+                                {"resource": 8, "current": 256, "maximum": 1024}
+                            ]}
+                            file_options = json.dumps(resource_options)
+                        if mode.startswith("writable-files") or mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "initial-directory-move", "initial-directory-swap", "created-file-metadata", "virtual-created-metadata", "renamed-file", "renamed-directory", "swapped-directory", "vectored-io"):
                             writable_options = json.loads(file_options)
                             writable_file = writable_options["darwin_files"]["files"][0]
                             writable_file["writable"] = True
                             writable_file["metadata"]["flags"] = 0
-                            if mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "created-file-metadata", "virtual-created-metadata", "renamed-file"):
+                            if mode in ("virtual-file-metadata", "sparse-file-seek", "unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "initial-directory-move", "initial-directory-swap", "created-file-metadata", "virtual-created-metadata", "renamed-file", "renamed-directory", "swapped-directory"):
                                 writable_file["metadata"]["link_count"] = 1
                                 writable_file["mutation_policy"] = {
                                     "allocation_unit": 4096,
                                     "mutation_time": {"seconds": -7, "nanoseconds": 123456789}}
-                            if mode in ("unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "created-file-metadata", "virtual-created-metadata", "renamed-file"):
+                            if mode in ("unlinked-file", "created-file", "directory-mutations", "deleted-directories", "initial-directory-removal", "initial-directory-move", "initial-directory-swap", "created-file-metadata", "virtual-created-metadata", "renamed-file", "renamed-directory", "swapped-directory"):
                                 next(d for d in writable_options["darwin_files"]["directories"]
                                      if d["path"] == "/")["mutable"] = True
+                            if mode == "initial-directory-swap":
+                                root = next(d for d in writable_options["darwin_files"]["directories"]
+                                            if d["path"] == "/")
+                                root["swap_rename"] = True
+                                initial = next(d for d in writable_options["darwin_files"]["directories"]
+                                               if d["path"] == "/empty")
+                                initial["mutable"] = True
+                                initial["exchangeable"] = True
+                                initial["swap_rename"] = True
+                            if mode == "initial-directory-move":
+                                initial = next(d for d in writable_options["darwin_files"]["directories"]
+                                               if d["path"] == "/empty")
+                                initial["mutable"] = True
+                                initial["movable"] = True
                             if mode == "initial-directory-removal":
                                 next(d for d in writable_options["darwin_files"]["directories"]
                                      if d["path"] == "/empty")["removable"] = True
-                            if mode in ("created-file-metadata", "virtual-created-metadata", "renamed-file"):
+                            if mode in ("renamed-file", "swapped-directory"):
+                                next(d for d in writable_options["darwin_files"]["directories"]
+                                     if d["path"] == "/")["swap_rename"] = True
+                            if mode in ("created-file-metadata", "virtual-created-metadata", "renamed-file", "renamed-directory", "swapped-directory"):
                                 files = writable_options["darwin_files"]
                                 files["umask"] = 0o27
                                 files["creation_policy"] = {

@@ -314,6 +314,36 @@ TEST(ProcessReport, DarwinNamespaceAuthorityRequiresAnExplicitBoolean) {
   llvm::consumeError(Extra.takeError());
 }
 
+TEST(ProcessReport, DarwinSwapRenameRequiresExplicitMutableDirectoryBoolean) {
+  auto Good = processOptionsFromJSON(R"({"darwin_files":{"files":[],
+    "directories":[{"path":"/","mutable":true,"swap_rename":true},
+    {"path":"/no","swap_rename":false},{"path":"/default"}]}})");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->DarwinFiles->SwapRenameDirectories,
+            (std::set<std::string>{"/"}));
+  EXPECT_EQ(Good->DarwinFiles->MutableDirectories,
+            (std::set<std::string>{"/"}));
+  EXPECT_TRUE(Good->DarwinFiles->RemovableDirectories.empty());
+  for (auto Bad : {"null", "0", "1", "\"true\"", "[]", "{}"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"darwin_files":{"files":[],"directories":[
+          {"path":"/","mutable":true,"swap_rename":)") +
+        Bad + "}]}}");
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+  for (
+      auto Bad :
+      {R"({"darwin_files":{"files":[],"directories":[{"path":"/","swap_rename":true}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":false,"swap_rename":true}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"swap_rename":true,"unknown":0}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"swap_rename":true},{"path":"/","mutable":true,"swap_rename":true}]}})"}) {
+    auto Parsed = processOptionsFromJSON(Bad);
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+}
+
 TEST(ProcessReport, DarwinInitialDirectoryRemovalRequiresExplicitBoolean) {
   auto Good = processOptionsFromJSON(R"({"darwin_files":{"files":[],
     "directories":[{"path":"/","mutable":true},
@@ -337,6 +367,65 @@ TEST(ProcessReport, DarwinInitialDirectoryRemovalRequiresExplicitBoolean) {
       {R"({"darwin_files":{"files":[],"directories":[{"path":"/yes","removable":true}]}})",
        R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"removable":true}]}})",
        R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/yes","removable":true,"unknown":0}]}})"}) {
+    auto Parsed = processOptionsFromJSON(Bad);
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+}
+
+TEST(ProcessReport, DarwinInitialDirectoryMoveRequiresExplicitBoolean) {
+  auto Good = processOptionsFromJSON(R"({"darwin_files":{"files":[],
+    "directories":[{"path":"/","mutable":true},
+    {"path":"/yes","movable":true},{"path":"/no","movable":false},
+    {"path":"/default"}]}})");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->DarwinFiles->MovableDirectories,
+            (std::set<std::string>{"/yes"}));
+  EXPECT_TRUE(Good->DarwinFiles->RemovableDirectories.empty());
+  EXPECT_TRUE(Good->DarwinFiles->SwapRenameDirectories.empty());
+  for (auto Bad : {"null", "0", "1", "\"true\"", "[]", "{}"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"darwin_files":{"files":[],"directories":[
+          {"path":"/","mutable":true},{"path":"/yes","movable":)") +
+        Bad + "}]}}");
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+  for (
+      auto Bad :
+      {R"({"darwin_files":{"files":[],"directories":[{"path":"/yes","movable":true}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"movable":true}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/yes","movable":true,"unknown":0}]}})"}) {
+    auto Parsed = processOptionsFromJSON(Bad);
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+}
+
+TEST(ProcessReport, DarwinInitialDirectoryExchangeRequiresExplicitBoolean) {
+  auto Good = processOptionsFromJSON(R"({"darwin_files":{"files":[],
+    "directories":[{"path":"/","mutable":true},
+    {"path":"/yes","exchangeable":true},{"path":"/no","exchangeable":false},
+    {"path":"/default"}]}})");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->DarwinFiles->ExchangeableDirectories,
+            (std::set<std::string>{"/yes"}));
+  EXPECT_TRUE(Good->DarwinFiles->RemovableDirectories.empty());
+  EXPECT_TRUE(Good->DarwinFiles->MovableDirectories.empty());
+  EXPECT_TRUE(Good->DarwinFiles->SwapRenameDirectories.empty());
+  for (auto Bad : {"null", "0", "1", "\"true\"", "[]", "{}"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"darwin_files":{"files":[],"directories":[
+          {"path":"/","mutable":true},{"path":"/yes","exchangeable":)") +
+        Bad + "}]}}");
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+  for (
+      auto Bad :
+      {R"({"darwin_files":{"files":[],"directories":[{"path":"/yes","exchangeable":true}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"exchangeable":true}]}})",
+       R"({"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/yes","exchangeable":true,"unknown":0}]}})"}) {
     auto Parsed = processOptionsFromJSON(Bad);
     EXPECT_FALSE(bool(Parsed)) << Bad;
     llvm::consumeError(Parsed.takeError());
@@ -532,6 +621,679 @@ TEST(ProcessReport, PreservesExplicitWindowsCatalogueAndRejectsOtherProfiles) {
       EXPECT_EQ(llvm::toString(R.takeError()), field::WindowsProfile);
   }
 }
+TEST(ProcessReport, DarwinUsageIsLosslessAndEachSnapshotIsIndependent) {
+  auto Good = processOptionsFromJSON(std::string("{\"darwin_system\":") +
+                                     darwin_test::ResourceUsageJSON + "}");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  ASSERT_TRUE(Good->DarwinSystem);
+  ASSERT_TRUE(Good->DarwinSystem->ResourceUsageSelf);
+  ASSERT_TRUE(Good->DarwinSystem->ResourceUsageChildren);
+  const auto &Self = *Good->DarwinSystem->ResourceUsageSelf;
+  const auto &Children = *Good->DarwinSystem->ResourceUsageChildren;
+  EXPECT_EQ(Self.UserSeconds, INT64_MIN);
+  EXPECT_EQ(Self.UserMicroseconds, 999999u);
+  EXPECT_EQ(Self.SystemSeconds, 0x0123456789abcdefLL);
+  EXPECT_EQ(Self.SystemMicroseconds, 123456u);
+  EXPECT_EQ(Self.Counters[0], INT64_MAX);
+  EXPECT_EQ(Self.Counters[1], INT64_MIN);
+  EXPECT_EQ(Self.Counters[13], -14);
+  EXPECT_EQ(Children.UserSeconds, INT64_MAX);
+  EXPECT_EQ(Children.SystemSeconds, -3);
+  EXPECT_EQ(Children.Counters[13], INT64_MAX);
+  for (const char *Empty : {R"({"darwin_system":{}})",
+                            R"({"darwin_system":{"resource_usage":{}}})"}) {
+    auto Parsed = processOptionsFromJSON(Empty);
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    EXPECT_FALSE(Parsed->DarwinSystem->ResourceUsageSelf);
+    EXPECT_FALSE(Parsed->DarwinSystem->ResourceUsageChildren);
+  }
+  const std::string Zero = R"({"user_seconds":"0","user_microseconds":"0",
+    "system_seconds":"0","system_microseconds":"0",
+    "counters":[0,0,0,0,0,0,0,0,0,0,0,0,0,0]})";
+  for (bool SelfOnly : {true, false}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string("{\"darwin_system\":{\"resource_usage\":{\"") +
+        (SelfOnly ? "self" : "children") + "\":" + Zero + "}}}");
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    EXPECT_EQ(Parsed->DarwinSystem->ResourceUsageSelf.has_value(), SelfOnly);
+    EXPECT_EQ(Parsed->DarwinSystem->ResourceUsageChildren.has_value(),
+              !SelfOnly);
+    const auto &Usage = SelfOnly ? *Parsed->DarwinSystem->ResourceUsageSelf
+                                 : *Parsed->DarwinSystem->ResourceUsageChildren;
+    EXPECT_EQ(Usage.UserSeconds, 0);
+    EXPECT_EQ(Usage.SystemSeconds, 0);
+    EXPECT_EQ(Usage.Counters, (std::array<int64_t, 14>{}));
+  }
+}
+
+TEST(ProcessReport, MalformedDarwinUsageFailsBeforeImageLoading) {
+  const std::string Zero = R"({"user_seconds":0,"user_microseconds":0,
+    "system_seconds":0,"system_microseconds":0,
+    "counters":[0,0,0,0,0,0,0,0,0,0,0,0,0,0]})";
+  for (const char *Outer : {"null", "[]", "true", "0", R"({"self":null})",
+                            R"({"self":{}})", R"({"children":false})"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string("{\"darwin_system\":{\"resource_usage\":") + Outer + "}}");
+    EXPECT_FALSE(bool(Parsed)) << Outer;
+    llvm::consumeError(Parsed.takeError());
+  }
+  auto Reject = [&](llvm::json::Value Snapshot, llvm::StringRef Key = "self") {
+    llvm::json::Object System;
+    System["resource_usage"] = llvm::json::Object{{Key, std::move(Snapshot)}};
+    auto Parsed = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_system", std::move(System)}}))
+            .str());
+    EXPECT_FALSE(bool(Parsed));
+    llvm::consumeError(Parsed.takeError());
+  };
+  auto Seed = [&] { return llvm::cantFail(llvm::json::parse(Zero)); };
+  Reject(Seed(), "unknown");
+  for (const char *Key : {"user_seconds", "user_microseconds", "system_seconds",
+                          "system_microseconds", "counters"}) {
+    auto Snapshot = Seed();
+    Snapshot.getAsObject()->erase(Key);
+    Reject(std::move(Snapshot));
+  }
+  auto Unknown = Seed();
+  (*Unknown.getAsObject())["unknown"] = 0;
+  Reject(std::move(Unknown));
+  for (const char *Key : {"user_seconds", "system_seconds"}) {
+    for (const char *Bad : {"null", "true", "0.5", "9223372036854775807",
+                            R"("9223372036854775808")",
+                            R"("-9223372036854775809")", R"("1.0")"}) {
+      auto Snapshot = Seed();
+      (*Snapshot.getAsObject())[Key] = llvm::cantFail(llvm::json::parse(Bad));
+      Reject(std::move(Snapshot));
+    }
+  }
+  for (const char *Key : {"user_microseconds", "system_microseconds"}) {
+    for (const char *Bad :
+         {"null", "true", "0.5", "-1", "1000000", R"("4294967296")"}) {
+      auto Snapshot = Seed();
+      (*Snapshot.getAsObject())[Key] = llvm::cantFail(llvm::json::parse(Bad));
+      Reject(std::move(Snapshot));
+    }
+  }
+  for (const char *Bad :
+       {"null", "{}", "[]", "[0]", "[0,0,0,0,0,0,0,0,0,0,0,0,0]",
+        "[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]", "[true,0,0,0,0,0,0,0,0,0,0,0,0,0]",
+        "[0.5,0,0,0,0,0,0,0,0,0,0,0,0,0]",
+        R"(["-9223372036854775809",0,0,0,0,0,0,0,0,0,0,0,0,0])"}) {
+    auto Snapshot = Seed();
+    (*Snapshot.getAsObject())["counters"] =
+        llvm::cantFail(llvm::json::parse(Bad));
+    Reject(std::move(Snapshot));
+  }
+}
+
+TEST(ProcessReport, DarwinUsageRequiresDarwinAndTypedTimesFailBeforeLoading) {
+  auto O = processOptionsFromJSON(std::string("{\"darwin_system\":") +
+                                  darwin_test::ResourceUsageJSON + "}");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (bool Self : {true, false}) {
+    auto Bad = *O;
+    auto &Usage = Self ? *Bad.DarwinSystem->ResourceUsageSelf
+                       : *Bad.DarwinSystem->ResourceUsageChildren;
+    Usage.SystemMicroseconds = 1000000;
+    for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                   ProcessProfile::IOSSimulatorMachO64}) {
+      auto R = emulateProcess("missing.macho", P, Bad);
+      ASSERT_FALSE(bool(R));
+      EXPECT_EQ(llvm::toString(R.takeError()),
+                "Darwin resource usage microseconds must be below 1000000");
+    }
+  }
+}
+
+TEST(ProcessReport,
+     DarwinResourceLimitsAreLosslessCanonicalAndDistinctFromMissing) {
+  auto Good = processOptionsFromJSON(std::string("{\"darwin_system\":") +
+                                     darwin_test::ResourceLimitsJSON + "}");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  ASSERT_TRUE(Good->DarwinSystem);
+  const auto &Limits = Good->DarwinSystem->ResourceLimits;
+  ASSERT_EQ(Limits.size(), 9u);
+  EXPECT_EQ(Limits.at(0).Current, 0u);
+  EXPECT_EQ(Limits.at(0).Maximum, 0u);
+  EXPECT_EQ(Limits.at(1).Current, uint64_t(INT64_MAX));
+  EXPECT_EQ(Limits.at(1).Maximum, uint64_t(INT64_MAX));
+  EXPECT_EQ(Limits.at(2).Current, 0x0123456789abcdefULL);
+  EXPECT_EQ(Limits.at(5).Current, uint64_t(INT64_MAX) - 1);
+  EXPECT_EQ(Limits.at(8).Current, 256u);
+  EXPECT_EQ(Limits.at(8).Maximum, 1024u);
+  for (const char *Empty : {R"({"darwin_system":{}})",
+                            R"({"darwin_system":{"resource_limits":[]}})"}) {
+    auto Parsed = processOptionsFromJSON(Empty);
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    ASSERT_TRUE(Parsed->DarwinSystem);
+    EXPECT_TRUE(Parsed->DarwinSystem->ResourceLimits.empty());
+  }
+  auto Text = processOptionsFromJSON(R"({"darwin_system":{"resource_limits":[
+      {"resource":"8","current":"0","maximum":"9223372036854775807"}]}})");
+  ASSERT_TRUE(bool(Text)) << llvm::toString(Text.takeError());
+  EXPECT_EQ(Text->DarwinSystem->ResourceLimits.at(8).Current, 0u);
+  EXPECT_EQ(Text->DarwinSystem->ResourceLimits.at(8).Maximum,
+            uint64_t(INT64_MAX));
+}
+
+TEST(ProcessReport, MalformedDarwinResourceLimitsFailBeforeImageLoading) {
+  for (
+      const char *Bad :
+      {"null",
+       "{}",
+       "true",
+       "0",
+       "[null]",
+       "[{}]",
+       R"([{"resource":0,"current":0}])",
+       R"([{"resource":0,"current":0,"maximum":0,"unknown":0}])",
+       R"([{"resource":0,"current":0,"unknown":0}])",
+       R"([{"resource":0,"current":0,"maximum":0},{"resource":"0","current":0,"maximum":0}])",
+       R"([{"resource":9,"current":0,"maximum":0}])",
+       R"([{"resource":4096,"current":0,"maximum":0}])",
+       R"([{"resource":"4294967296","current":0,"maximum":0}])",
+       R"([{"resource":-1,"current":0,"maximum":0}])",
+       R"([{"resource":0.5,"current":0,"maximum":0}])",
+       R"([{"resource":true,"current":0,"maximum":0}])",
+       R"([{"resource":0,"current":1,"maximum":0}])",
+       R"([{"resource":0,"current":-1,"maximum":0}])",
+       R"([{"resource":0,"current":0.5,"maximum":1}])",
+       R"([{"resource":0,"current":true,"maximum":1}])",
+       R"([{"resource":0,"current":0,"maximum":null}])",
+       R"([{"resource":0,"current":0,"maximum":"9223372036854775808"}])",
+       R"([{"resource":0,"current":0,"maximum":"18446744073709551615"}])",
+       R"([{"resource":0,"current":0,"maximum":9223372036854775807}])",
+       R"([{"resource":0,"current":0,"maximum":"1.0"}])"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string("{\"darwin_system\":{\"resource_limits\":") + Bad + "}}");
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+  auto TooMany = std::string("{\"darwin_system\":{\"resource_limits\":[");
+  for (unsigned I = 0; I != 10; ++I) {
+    if (I)
+      TooMany += ',';
+    TooMany +=
+        "{\"resource\":" + std::to_string(I) + ",\"current\":0,\"maximum\":0}";
+  }
+  auto Parsed = processOptionsFromJSON(TooMany + "]}}");
+  EXPECT_FALSE(bool(Parsed));
+  llvm::consumeError(Parsed.takeError());
+}
+
+TEST(ProcessReport,
+     ResourceLimitsRequireDarwinAndRejectTypedKeysBeforeLoading) {
+  auto O = processOptionsFromJSON(std::string("{\"darwin_system\":") +
+                                  darwin_test::ResourceLimitsJSON + "}");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  O->DarwinSystem->ResourceLimits[4096] = {0, 0};
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(
+        llvm::toString(R.takeError()),
+        "Darwin resource limits require canonical keys 0..8 and current <= "
+        "maximum <= INT64_MAX");
+  }
+}
+
+TEST(ProcessReport, DarwinCredentialsRetainDistinctIDsAndOptionalGroupOrder) {
+  auto Good = processOptionsFromJSON(std::string("{\"darwin_system\":") +
+                                     darwin_test::CredentialsJSON + "}");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  ASSERT_TRUE(Good->DarwinSystem->Credentials);
+  const auto &C = *Good->DarwinSystem->Credentials;
+  EXPECT_EQ(C.RealUID, 101u);
+  EXPECT_EQ(C.EffectiveUID, 202u);
+  EXPECT_EQ(C.RealGID, 303u);
+  EXPECT_EQ(C.EffectiveGID, 404u);
+  EXPECT_EQ(*C.GroupAccessList,
+            (std::vector<uint32_t>{404, 0, INT32_MAX, 7, 7}));
+  auto Missing = processOptionsFromJSON(R"({"darwin_system":{}})");
+  ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+  EXPECT_FALSE(Missing->DarwinSystem->Credentials);
+  auto NoGroups = processOptionsFromJSON(R"({"darwin_system":{"credentials":{
+      "real_uid":0,"effective_uid":0,"real_gid":0,"effective_gid":0}}})");
+  ASSERT_TRUE(bool(NoGroups)) << llvm::toString(NoGroups.takeError());
+  EXPECT_EQ(NoGroups->DarwinSystem->Credentials->EffectiveUID, 0u);
+  EXPECT_FALSE(NoGroups->DarwinSystem->Credentials->GroupAccessList);
+  auto Root = processOptionsFromJSON(R"({"darwin_system":{"credentials":{
+      "real_uid":"0","effective_uid":"0","real_gid":"0",
+      "effective_gid":"0","groups":["0",0]}}})");
+  ASSERT_TRUE(bool(Root)) << llvm::toString(Root.takeError());
+  EXPECT_EQ(*Root->DarwinSystem->Credentials->GroupAccessList,
+            (std::vector<uint32_t>{0, 0}));
+}
+
+TEST(ProcessReport, MalformedDarwinCredentialsFailBeforeImageLoading) {
+  auto Seed = [] {
+    return llvm::cantFail(llvm::json::parse(darwin_test::CredentialsJSON));
+  };
+  auto Reject = [](llvm::json::Value System) {
+    auto Parsed = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_system", std::move(System)}}))
+            .str());
+    EXPECT_FALSE(bool(Parsed));
+    llvm::consumeError(Parsed.takeError());
+  };
+  for (const char *Bad : {"null", "[]", "true", "0", "{}"}) {
+    auto S = Seed();
+    (*S.getAsObject())["credentials"] = llvm::cantFail(llvm::json::parse(Bad));
+    Reject(std::move(S));
+  }
+  for (const char *Key :
+       {"real_uid", "effective_uid", "real_gid", "effective_gid"}) {
+    auto S = Seed();
+    S.getAsObject()->getObject("credentials")->erase(Key);
+    Reject(std::move(S));
+    for (const char *Bad : {"null", "true", "0.5", "-1", "2147483648",
+                            R"("4294967296")", R"("1.0")"}) {
+      S = Seed();
+      (*S.getAsObject()->getObject("credentials"))[Key] =
+          llvm::cantFail(llvm::json::parse(Bad));
+      Reject(std::move(S));
+    }
+  }
+  auto Unknown = Seed();
+  (*Unknown.getAsObject()->getObject("credentials"))["unknown"] = 0;
+  Reject(std::move(Unknown));
+  Unknown = Seed();
+  Unknown.getAsObject()->getObject("credentials")->erase("groups");
+  (*Unknown.getAsObject()->getObject("credentials"))["unknown"] = 0;
+  Reject(std::move(Unknown));
+  for (const char *Bad :
+       {"null", "{}", "true", "0", "[]", "[0]", "[404,true]", "[404,0.5]",
+        "[404,-1]", "[404,2147483648]", R"([404,"4294967296"])",
+        "[404,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]"}) {
+    auto S = Seed();
+    (*S.getAsObject()->getObject("credentials"))["groups"] =
+        llvm::cantFail(llvm::json::parse(Bad));
+    Reject(std::move(S));
+  }
+}
+
+TEST(ProcessReport, DarwinNiceKeepsEverySignedValueLosslessAndIndependent) {
+  auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");
+  ASSERT_TRUE(bool(Empty));
+  EXPECT_FALSE(Empty->DarwinSystem->ProcessNice);
+  for (int Nice = -20; Nice <= 20; ++Nice) {
+    for (bool String : {false, true}) {
+      const auto Value =
+          String ? "\"" + std::to_string(Nice) + "\"" : std::to_string(Nice);
+      auto Parsed = processOptionsFromJSON(
+          std::string(R"({"darwin_system":{"nice":)") + Value + "}}");
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      EXPECT_EQ(Parsed->DarwinSystem->ProcessNice, Nice);
+      EXPECT_FALSE(Parsed->DarwinSystem->Credentials);
+      EXPECT_FALSE(Parsed->DarwinSystem->ProcessGroupID);
+      EXPECT_FALSE(Parsed->DarwinSystem->SessionID);
+      EXPECT_FALSE(Parsed->DarwinSystem->ProcessTainted);
+      EXPECT_FALSE(Parsed->DarwinSystem->LoginNameBytes);
+      EXPECT_FALSE(Parsed->DarwinSystem->CPUCount);
+      EXPECT_TRUE(Parsed->DarwinSystem->ResourceLimits.empty());
+    }
+  }
+  // Exact integer numeric JSON remains lossless through the existing helper.
+  auto Exponent = processOptionsFromJSON(R"({"darwin_system":{"nice":1e1}})");
+  ASSERT_TRUE(bool(Exponent));
+  EXPECT_EQ(Exponent->DarwinSystem->ProcessNice, 10);
+  for (const char *Bad : {"null",
+                          "true",
+                          "false",
+                          "0.5",
+                          "[]",
+                          "{}",
+                          "21",
+                          "-21",
+                          "2147483647",
+                          "-2147483648",
+                          "2147483648",
+                          "-2147483649",
+                          "18446744073709551615",
+                          R"("")",
+                          R"("+1")",
+                          R"(" 0")",
+                          R"("0 ")",
+                          R"("1e1")",
+                          R"("0.5")",
+                          R"("0x0")",
+                          R"("-21")",
+                          R"("21")",
+                          R"("-2147483649")",
+                          R"("0\u0000")"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"darwin_system":{"nice":)") + Bad + "}}");
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+  auto Extra =
+      processOptionsFromJSON(R"({"darwin_system":{"nice":0,"ncie":0}})");
+  EXPECT_FALSE(bool(Extra));
+  llvm::consumeError(Extra.takeError());
+}
+
+TEST(ProcessReport, DarwinNiceAdmissionPrecedesImageLoading) {
+  ProcessOptions O;
+  O.DarwinSystem = darwin_test::priorityOptions();
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64}) {
+    for (int32_t Bad : {-21, 21, INT32_MIN, INT32_MAX}) {
+      O.DarwinSystem->ProcessNice = Bad;
+      auto R = emulateProcess("missing.macho", P, O);
+      ASSERT_FALSE(bool(R));
+      EXPECT_EQ(llvm::toString(R.takeError()),
+                "Darwin system nice must be between -20 and 20");
+    }
+  }
+}
+
+TEST(ProcessReport,
+     DarwinLoginBufferRequiresCompleteStrictHexAndKeepsZeroKnown) {
+  auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");
+  ASSERT_TRUE(bool(Empty));
+  EXPECT_FALSE(Empty->DarwinSystem->LoginNameBytes);
+  auto Typed = darwin_test::loginBufferOptions();
+  const std::string Payload = darwin_test::LoginNameHex;
+  for (const std::string &Hex :
+       {Payload, llvm::StringRef(Payload).upper(), std::string(510, '0')}) {
+    auto Parsed = processOptionsFromJSON(
+        llvm::formatv("{0}",
+                      llvm::json::Value(llvm::json::Object{
+                          {"darwin_system",
+                           llvm::json::Object{{"login_name_hex", Hex}}}}))
+            .str());
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    ASSERT_TRUE(Parsed->DarwinSystem->LoginNameBytes);
+    EXPECT_EQ(*Parsed->DarwinSystem->LoginNameBytes,
+              Hex == std::string(510, '0') ? std::vector<uint8_t>(255, 0)
+                                           : *Typed.LoginNameBytes);
+    EXPECT_FALSE(Parsed->DarwinSystem->Credentials);
+    EXPECT_FALSE(Parsed->DarwinSystem->ProcessGroupID);
+    EXPECT_FALSE(Parsed->DarwinSystem->SessionID);
+    EXPECT_FALSE(Parsed->DarwinSystem->ProcessTainted);
+    EXPECT_FALSE(Parsed->DarwinSystem->HostName);
+  }
+  for (const char *Value :
+       {"null", "false", "true", "0", "255", "[]", "{}", "[0]"}) {
+    auto Bad = processOptionsFromJSON(
+        std::string(R"({"darwin_system":{"login_name_hex":)") + Value + "}}");
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+  for (const auto &Hex :
+       {std::string(), std::string(508, '0'), std::string(509, '0'),
+        std::string(511, '0'), std::string(512, '0'),
+        "0x" + std::string(508, '0'), std::string(509, '0') + "g",
+        std::string(509, '0') + " ", std::string(509, '0') + '\0',
+        std::string(508, '0') + "\xc3\xa9"}) {
+    auto Bad = processOptionsFromJSON(
+        llvm::formatv("{0}",
+                      llvm::json::Value(llvm::json::Object{
+                          {"darwin_system",
+                           llvm::json::Object{{"login_name_hex", Hex}}}}))
+            .str());
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+}
+
+TEST(ProcessReport, DarwinLoginBufferAdmissionPrecedesImageLoading) {
+  ProcessOptions O;
+  O.DarwinSystem = darwin_test::loginBufferOptions();
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64}) {
+    for (size_t Size : {0u, 1u, 254u, 256u}) {
+      O.DarwinSystem->LoginNameBytes->assign(Size, 0);
+      auto R = emulateProcess("missing.macho", P, O);
+      ASSERT_FALSE(bool(R));
+      EXPECT_EQ(llvm::toString(R.takeError()),
+                "Darwin system login_name_hex must encode exactly 255 bytes");
+    }
+  }
+}
+
+TEST(ProcessReport,
+     DarwinProcessObservationsKeepIDsAndStrictBooleanIndependent) {
+  auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");
+  ASSERT_TRUE(bool(Empty));
+  EXPECT_FALSE(Empty->DarwinSystem->ProcessGroupID);
+  EXPECT_FALSE(Empty->DarwinSystem->SessionID);
+  EXPECT_FALSE(Empty->DarwinSystem->ProcessTainted);
+  for (const char *Name : {"process_group_id", "session_id"}) {
+    for (const auto &[Value, Expected] :
+         {std::pair{"1", 1u},
+          std::pair{R"("2147483647")", uint32_t(INT32_MAX)}}) {
+      auto O = processOptionsFromJSON(std::string(R"({"darwin_system":{")") +
+                                      Name + "\":" + Value + "}}");
+      ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+      EXPECT_EQ(llvm::StringRef(Name) == "session_id"
+                    ? O->DarwinSystem->SessionID
+                    : O->DarwinSystem->ProcessGroupID,
+                Expected);
+      EXPECT_FALSE(llvm::StringRef(Name) == "session_id"
+                       ? O->DarwinSystem->ProcessGroupID
+                       : O->DarwinSystem->SessionID);
+      EXPECT_FALSE(O->DarwinSystem->ProcessTainted);
+      EXPECT_FALSE(O->DarwinSystem->Credentials);
+    }
+    for (const char *Bad :
+         {"null", "true", "false", "0", "-1", "0.5", "[]", "{}", "2147483648",
+          "4294967296", R"("4294967296")", R"("18446744073709551615")"}) {
+      auto O = processOptionsFromJSON(std::string(R"({"darwin_system":{")") +
+                                      Name + "\":" + Bad + "}}");
+      EXPECT_FALSE(bool(O)) << Name << ' ' << Bad;
+      llvm::consumeError(O.takeError());
+    }
+  }
+  for (bool Tainted : {false, true}) {
+    auto O = processOptionsFromJSON(
+        std::string(R"({"darwin_system":{"process_tainted":)") +
+        (Tainted ? "true" : "false") + "}}");
+    ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+    ASSERT_TRUE(O->DarwinSystem->ProcessTainted.has_value());
+    EXPECT_EQ(*O->DarwinSystem->ProcessTainted, Tainted);
+    EXPECT_FALSE(O->DarwinSystem->ProcessGroupID);
+    EXPECT_FALSE(O->DarwinSystem->SessionID);
+    EXPECT_FALSE(O->DarwinSystem->Credentials);
+  }
+  for (const char *Bad :
+       {"null", "0", "1", "-1", "0.0", R"("false")", R"("true")", "[]", "{}"}) {
+    auto O = processOptionsFromJSON(
+        std::string(R"({"darwin_system":{"process_tainted":)") + Bad + "}}");
+    EXPECT_FALSE(bool(O));
+    llvm::consumeError(O.takeError());
+  }
+  for (const char *Alias : {"pgid", "sid", "tainted", "processGroupID"}) {
+    auto O = processOptionsFromJSON(std::string(R"({"darwin_system":{")") +
+                                    Alias + "\":1}}");
+    EXPECT_FALSE(bool(O));
+    llvm::consumeError(O.takeError());
+  }
+}
+
+TEST(ProcessReport, DarwinProcessObservationAdmissionPrecedesImageLoading) {
+  auto O =
+      processOptionsFromJSON(R"({"darwin_system":{"process_tainted":false}})");
+  ASSERT_TRUE(bool(O));
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64})
+    for (auto Member : {&DarwinSystemOptions::ProcessGroupID,
+                        &DarwinSystemOptions::SessionID})
+      for (uint32_t Bad : {0u, uint32_t(INT32_MAX) + 1, UINT32_MAX}) {
+        O->DarwinSystem.emplace().*Member = Bad;
+        auto R = emulateProcess("missing.macho", P, *O);
+        ASSERT_FALSE(bool(R));
+        EXPECT_EQ(
+            llvm::toString(R.takeError()),
+            "Darwin system process_group_id and session_id must be between "
+            "1 and INT32_MAX");
+      }
+}
+
+TEST(ProcessReport, DarwinHostNameKeepsMissingEmptyAndStrictByteBounds) {
+  auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");
+  ASSERT_TRUE(bool(Empty));
+  EXPECT_FALSE(Empty->DarwinSystem->HostName);
+  std::string UTF8;
+  for (unsigned I = 0; I != 127; ++I)
+    UTF8 += "\xc3\xa9";
+  for (const auto &Name : {std::string(), std::string(255, 'x'), UTF8 + "a"}) {
+    auto Parsed = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_system",
+                                  llvm::json::Object{{"hostname", Name}}}}))
+            .str());
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    EXPECT_EQ(Parsed->DarwinSystem->HostName, Name);
+    EXPECT_FALSE(Parsed->DarwinSystem->Machine);
+    EXPECT_FALSE(Parsed->DarwinSystem->Credentials);
+  }
+  for (const auto &Bad :
+       {std::string(256, 'x'), UTF8 + "\xc3\xa9", std::string("x\0y", 3)}) {
+    auto Parsed = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_system",
+                                  llvm::json::Object{{"hostname", Bad}}}}))
+            .str());
+    ASSERT_FALSE(bool(Parsed));
+    EXPECT_EQ(llvm::toString(Parsed.takeError()),
+              "Darwin system hostname must be at most 255 bytes without NUL");
+  }
+  for (const char *Bad : {"null", "true", "1", "[]", "{}"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"darwin_system":{"hostname":)") + Bad + "}}");
+    EXPECT_FALSE(bool(Parsed));
+    llvm::consumeError(Parsed.takeError());
+  }
+  auto Alias = processOptionsFromJSON(R"({"darwin_system":{"host_name":"x"}})");
+  EXPECT_FALSE(bool(Alias));
+  llvm::consumeError(Alias.takeError());
+}
+TEST(ProcessReport, DarwinHostNameAdmissionPrecedesLoadingOnAllProfiles) {
+  auto O = processOptionsFromJSON(R"({"darwin_system":{"hostname":""}})");
+  ASSERT_TRUE(bool(O));
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64}) {
+    O->DarwinSystem->HostName = std::string(256, 'x');
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()),
+              "Darwin system hostname must be at most 255 bytes without NUL");
+  }
+}
+TEST(ProcessReport, DarwinDescriptorCapKeepsMissingZeroAndIntegerBounds) {
+  auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");
+  ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
+  EXPECT_FALSE(Empty->DarwinSystem->MaxFilesPerProcess);
+  for (const auto &[Literal, Expected] :
+       {std::pair{"0", 0u}, std::pair{"1", 1u},
+        std::pair{R"("2147483647")", uint32_t(INT32_MAX)}}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string("{\"darwin_system\":{\"max_files_per_process\":") +
+        Literal + "}}");
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    EXPECT_EQ(Parsed->DarwinSystem->MaxFilesPerProcess, Expected);
+    EXPECT_TRUE(Parsed->DarwinSystem->ResourceLimits.empty());
+  }
+  for (const char *Bad : {"null", "true", "[]", "{}", "-1", "0.5", "2147483648",
+                          "4294967295", R"("4294967296")", R"("1.0")"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string("{\"darwin_system\":{\"max_files_per_process\":") + Bad +
+        "}}");
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+}
+
+TEST(ProcessReport, DarwinDescriptorCapAdmissionPrecedesImageLoading) {
+  auto O = processOptionsFromJSON(
+      R"({"darwin_system":{"max_files_per_process":0}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (auto Bad : {0x80000000u, UINT32_MAX}) {
+    O->DarwinSystem->MaxFilesPerProcess = Bad;
+    for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                   ProcessProfile::IOSSimulatorMachO64}) {
+      auto R = emulateProcess("missing.macho", P, *O);
+      ASSERT_FALSE(bool(R));
+      EXPECT_EQ(llvm::toString(R.takeError()),
+                "Darwin system max_files_per_process must be between 0 and "
+                "INT32_MAX");
+    }
+  }
+}
+
+TEST(ProcessReport, CredentialsRequireDarwinAndTypedAdmissionBeforeLoading) {
+  auto O = processOptionsFromJSON(std::string("{\"darwin_system\":") +
+                                  darwin_test::CredentialsJSON + "}");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (bool Groups : {false, true}) {
+    auto Bad = *O;
+    if (Groups)
+      Bad.DarwinSystem->Credentials->GroupAccessList->front() = 0;
+    else
+      Bad.DarwinSystem->Credentials->RealUID = 0x80000000u;
+    for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                   ProcessProfile::IOSSimulatorMachO64}) {
+      auto R = emulateProcess("missing.macho", P, Bad);
+      ASSERT_FALSE(bool(R));
+      EXPECT_EQ(
+          llvm::toString(R.takeError()),
+          "Darwin credentials require bounded IDs and coherent 1..16 groups");
+    }
+  }
+}
+
 TEST(ProcessReport, DarwinSystemInputsAreLosslessAndRequireDarwinProfiles) {
   auto O = processOptionsFromJSON(std::string("{\"darwin_system\":") +
                                   darwin_test::SystemJSON + "}");
