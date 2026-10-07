@@ -1784,6 +1784,69 @@ TEST_F(SessionCAPITest, DisassemblyStatesHowEachInstructionMovesTheStack) {
   }
 }
 
+TEST_F(SessionCAPITest, DisassemblyStatesTheMemoryEachInstructionReaches) {
+  // Each row: its bytes and the reference it states, as an offset from the
+  // next instruction or an absolute address, with its kind.
+  struct Row {
+    std::string_view Bytes;
+    std::optional<int64_t> Relative;
+    std::optional<uint64_t> Absolute;
+    std::string_view Kind;
+  };
+  using namespace std::string_view_literals;
+  const Row Rows[] = {
+      // mov rdi, qword ptr [rip + 0x100]
+      {"\x48\x8b\x3d\x00\x01\x00\x00"sv, 0x100, {}, "read"},
+      // mov dword ptr [rip + 0x200], eax
+      {"\x89\x05\x00\x02\x00\x00"sv, 0x200, {}, "write"},
+      // mov rax, qword ptr fs:[0x28]: an offset in a segment, not an address
+      {"\x64\x48\x8b\x04\x25\x28\x00\x00\x00"sv, {}, {}, {}},
+      // mov eax, dword ptr [0x404000]
+      {"\x8b\x04\x25\x00\x40\x40\x00"sv, {}, 0x404000, "read"},
+      // lea rax, [rip + 0x10]
+      {"\x48\x8d\x05\x10\x00\x00\x00"sv, 0x10, {}, "offset"},
+      // mov rax, qword ptr [rbx + 8]
+      {"\x48\x8b\x43\x08"sv, {}, {}, {}},
+      {"\xc3"sv, {}, {}, {}},
+  };
+  std::string Code;
+  for (const auto &R : Rows)
+    Code += R.Bytes;
+  const auto Input =
+      write("memory-refs.elf", makeNativeELF(false, 0x400000, {}, Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const uint64_t Entry = neverd_session_entry_addr(Session);
+  const auto Text = takeString(neverd_disasm_json_ex(
+      Session, Entry, std::size(Rows), NEVERD_DISASM_FLOW));
+  auto Parsed = llvm::json::parse(Text);
+  ASSERT_TRUE(static_cast<bool>(Parsed)) << Text;
+  const auto *Array = Parsed->getAsArray();
+  ASSERT_TRUE(Array && Array->size() == std::size(Rows)) << Text;
+  uint64_t Next = Entry;
+  for (size_t I = 0; I < std::size(Rows); ++I) {
+    Next += Rows[I].Bytes.size();
+    const auto *Object = (*Array)[I].getAsObject();
+    ASSERT_TRUE(Object) << I << ": " << Text;
+    const auto *Refs = Object->getArray("refs");
+    if (Rows[I].Kind.empty()) {
+      EXPECT_TRUE(!Refs || Refs->empty()) << I << ": " << Text;
+      continue;
+    }
+    ASSERT_TRUE(Refs && Refs->size() == 1) << I << ": " << Text;
+    const auto *Ref = (*Refs)[0].getAsObject();
+    ASSERT_TRUE(Ref) << I << ": " << Text;
+    const uint64_t Expected =
+        Rows[I].Absolute ? *Rows[I].Absolute : Next + *Rows[I].Relative;
+    EXPECT_EQ(
+        std::stoull(Ref->getString("to").value_or("0").str(), nullptr, 16),
+        Expected)
+        << I << ": " << Text;
+    EXPECT_EQ(Ref->getString("kind").value_or("").str(), Rows[I].Kind)
+        << I << ": " << Text;
+  }
+}
+
 // An x86-64 executable whose code segment returns and whose separate
 // read-only segment holds \p Data.
 std::string makeDataELF(std::string_view Data) {

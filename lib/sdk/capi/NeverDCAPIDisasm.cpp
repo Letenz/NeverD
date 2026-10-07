@@ -20,6 +20,8 @@
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MathExtras.h"
@@ -250,6 +252,62 @@ summarizeInstructionFlow(Decoder &Dec, const DecodedInsn &DI,
       return std::nullopt;
     return static_cast<va_t>(Op.Inputs[0].Offset);
   };
+  // Values the instruction's own ops compute from constants, such as a
+  // RIP-relative address: the next instruction's address plus a
+  // displacement.  A sum is an address when one of its terms is; a
+  // segment offset alone, which the lifter marks scalar, is not.
+  enum class Role : uint8_t { Unknown, Scalar, Address };
+  struct Known {
+    va_t Value;
+    Role Kind;
+  };
+  struct Slot {
+    VnodeSpace Space;
+    uint64_t Offset;
+    uint16_t Size;
+    Known Value;
+  };
+  llvm::SmallVector<Slot, 8> Computed;
+  const auto ValueOf = [&](const NdVar &V) -> std::optional<Known> {
+    if (V.isConst())
+      return Known{static_cast<va_t>(V.Offset),
+                   isExactAddressProvenance(V.Provenance) ? Role::Address
+                   : V.Provenance == ConstantAddressProvenance::Scalar
+                       ? Role::Scalar
+                       : Role::Unknown};
+    for (const Slot &S : Computed)
+      if (S.Space == V.Space && S.Offset == V.Offset && S.Size == V.Size)
+        return S.Value;
+    return std::nullopt;
+  };
+  const auto Record = [&](const LowOp &Op) {
+    const NdVar &Out = Op.Output;
+    if (!Out.Size || Out.isConst())
+      return;
+    std::optional<Known> Result;
+    if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1) {
+      Result = ValueOf(Op.Inputs[0]);
+    } else if (Op.Opcode == NdOp::INT_ADD && Op.NumInputs == 2) {
+      const auto Left = ValueOf(Op.Inputs[0]), Right = ValueOf(Op.Inputs[1]);
+      if (Left && Right)
+        Result =
+            Known{Left->Value + Right->Value,
+                  Left->Kind == Role::Address || Right->Kind == Role::Address
+                      ? Role::Address
+                  : Left->Kind == Role::Scalar || Right->Kind == Role::Scalar
+                      ? Role::Scalar
+                      : Role::Unknown};
+    }
+    llvm::erase_if(Computed, [&](const Slot &S) {
+      return S.Space == Out.Space && S.Offset < Out.Offset + Out.Size &&
+             Out.Offset < S.Offset + S.Size;
+    });
+    if (!Result)
+      return;
+    if (Out.Size < 8)
+      Result->Value &= (uint64_t{1} << (Out.Size * 8)) - 1;
+    Computed.push_back({Out.Space, Out.Offset, Out.Size, *Result});
+  };
   for (const LowOp &Op : Ops) {
     switch (Op.Opcode) {
     case NdOp::CALL:
@@ -282,14 +340,18 @@ summarizeInstructionFlow(Decoder &Dec, const DecodedInsn &DI,
     case NdOp::LOAD:
     case NdOp::STORE: {
       const LowMemoryOperandView Memory = lowMemoryOperands(Op);
-      if (Memory.Complete && Memory.Address && Memory.Address->isConst())
-        Flow.Refs.push_back({static_cast<va_t>(Memory.Address->Offset),
-                             Op.Opcode == NdOp::LOAD ? "read" : "write"});
+      if (!Memory.Complete || !Memory.Address)
+        break;
+      if (const auto Address = ValueOf(*Memory.Address);
+          Address && Address->Kind != Role::Scalar)
+        Flow.Refs.push_back(
+            {Address->Value, Op.Opcode == NdOp::LOAD ? "read" : "write"});
       break;
     }
     default:
       break;
     }
+    Record(Op);
   }
   if (va_t Address = Dec.pcRelCodeRefTarget(DI); Address != InvalidVA)
     Flow.Refs.push_back({Address, "offset"});
