@@ -165,14 +165,6 @@ bool SatEngine::addClause(llvm::ArrayRef<SatLit> Lits) {
 // Searching
 //===----------------------------------------------------------------------===//
 
-bool SatEngine::outOfPropagationBudget() const {
-  return PropagationBudgetAt != 0 && Stats.Propagations >= PropagationBudgetAt;
-}
-
-bool SatEngine::outOfWatchVisitBudget() const {
-  return WatchVisitBudgetAt != 0 && Stats.WatchVisits >= WatchVisitBudgetAt;
-}
-
 bool SatEngine::outOfBudget() const {
   return (ConflictBudgetAt != 0 && Stats.Conflicts >= ConflictBudgetAt) ||
          outOfPropagationBudget() || outOfWatchVisitBudget();
