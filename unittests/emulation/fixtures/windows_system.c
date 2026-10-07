@@ -157,6 +157,34 @@ static void forward(void) {
           25);
   require(FreeLibrary(Module), 26);
 }
+static void clocks(void **Modules) {
+  void (*FileTime)(U64 *) = lookup(Modules[0], "GetSystemTimeAsFileTime");
+  U32 (*Ticks)(void) = lookup(Modules[0], "GetTickCount");
+  int (*Counter)(U64 *) = lookup(Modules[0], "QueryPerformanceCounter");
+  int (*Frequency)(U64 *) = lookup(Modules[0], "QueryPerformanceFrequency");
+  U32 (*Delay)(U8, const long long *) = lookup(Modules[2], "ZwDelayExecution");
+  U64 First, Last, Before, After, Rate;
+  FileTime(&First);
+  require(Frequency(&Rate) && Rate && Counter(&Before), 36);
+  U32 Tick = Ticks();
+  const long long Interval = -200000;
+  require(Delay(0, &Interval) == 0, 37);
+  require(Counter(&After) && After >= Before, 38);
+  FileTime(&Last);
+  // Independently bound the 1601 epoch to years 2020..2100. A Unix timestamp
+  // or a value expressed in nanoseconds cannot satisfy this window.
+  require(First >= 132223104000000000ull && First < 157469184000000000ull &&
+              Last >= 132223104000000000ull && Last < 157469184000000000ull,
+          39);
+  require(After - Before >= Rate / 50, 40);
+  // Allow wall-clock granularity and an adjustment; do not require UTC to be
+  // monotonic. The reported counter frequency must still describe its units.
+  if (Last >= First)
+    require((After - Before) / Rate <= (Last - First) / 10000000 + 1, 41);
+  require((U32)(Ticks() - Tick) < 0x80000000u &&
+              GetLastError() == LastErrorSeed,
+          42);
+}
 U32 entry(void) {
   U32 Mode = LoadMode;
   for (const U16 *P = GetCommandLineW(); *P; ++P)
@@ -174,6 +202,14 @@ U32 entry(void) {
     GetProcAddress(Modules[0], UnmodeledName);
   if (Mode == OrdinalMode)
     GetProcAddress(Modules[0], (const char *)(U64)QueryOrdinal);
+  if (Mode == ClocksMode)
+    clocks(Modules);
+  if (Mode == AbsoluteDelayMode) {
+    U32 (*Delay)(U8, const long long *) =
+        lookup(Modules[2], "ZwDelayExecution");
+    const long long Interval = 0x7fffffffffffffffLL;
+    Delay(0, &Interval);
+  }
   if (Mode == ChangedMode || Mode == ChangedForwardMode ||
       Mode == ChangedImportMode) {
     void *Module =

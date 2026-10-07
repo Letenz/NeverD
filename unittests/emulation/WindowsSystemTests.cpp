@@ -108,10 +108,11 @@ TEST_P(WindowsSystem, ExecutesOriginalSystemModuleScenarios) {
 TEST_P(WindowsSystem, RejectsUnmodeledExportsOrdinalsAndChangedImages) {
   struct Negative {
     const char *Argument, *Diagnostic;
+    ProcessStopReason Stop;
   };
   const Negative Cases[] = {
-#define NEVERD_SYSTEM_NEGATIVE(Argument, Diagnostic)                           \
-  {Argument, win::text::Diagnostic},
+#define NEVERD_SYSTEM_NEGATIVE(Argument, Diagnostic, Stop)                     \
+  {Argument, win::text::Diagnostic, ProcessStopReason::Stop},
 #include "fixtures/WindowsSystemCases.def"
 #undef NEVERD_SYSTEM_NEGATIVE
   };
@@ -120,7 +121,7 @@ TEST_P(WindowsSystem, RejectsUnmodeledExportsOrdinalsAndChangedImages) {
     Options.Arguments = {ProgramFile, C.Argument};
     auto R = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
     ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
-    EXPECT_EQ(R->Stop, ProcessStopReason::RuntimeFailure) << R->Diagnostic;
+    EXPECT_EQ(R->Stop, C.Stop) << R->Diagnostic;
     EXPECT_NE(R->Diagnostic.find(C.Diagnostic), std::string::npos);
     EXPECT_FALSE(R->ExitStatus);
     EXPECT_TRUE(R->StandardOutput.empty());
