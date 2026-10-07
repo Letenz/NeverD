@@ -28,6 +28,27 @@ NEVERD_MULTI_WAIT_VALUE(ModeCharacters, 2)
 NEVERD_MULTI_WAIT_VALUE(SuccessMarker, 0x57)
 #endif
 
+#ifdef NEVERD_MULTI_WAIT_OUTCOME
+NEVERD_MULTI_WAIT_OUTCOME(ImmediateAny, 3, Any, 0)
+NEVERD_MULTI_WAIT_OUTCOME(ImmediateAny, 3, Any, 1)
+NEVERD_MULTI_WAIT_OUTCOME(ImmediateAny, 3, Any, 2)
+NEVERD_MULTI_WAIT_OUTCOME(ImmediateAny, 3, Any, 2)
+NEVERD_MULTI_WAIT_OUTCOME(AtomicAll, 4, All, windows::StatusSuccess)
+NEVERD_MULTI_WAIT_OUTCOME(AtomicAll, 1, All, windows::StatusSuccess)
+NEVERD_MULTI_WAIT_OUTCOME(WorkerOrStop, 2, Any, 0)
+NEVERD_MULTI_WAIT_OUTCOME(WorkerOrStop, 2, Any, 1)
+NEVERD_MULTI_WAIT_OUTCOME(WorkerOrStop, 1, All, windows::StatusSuccess)
+NEVERD_MULTI_WAIT_OUTCOME(TimerOrThread, 2, Any, 1)
+NEVERD_MULTI_WAIT_OUTCOME(TimerOrThread, 1, All, windows::StatusSuccess)
+NEVERD_MULTI_WAIT_OUTCOME(TimeoutAll, 2, All, windows::StatusTimeout)
+NEVERD_MULTI_WAIT_OUTCOME(TimeoutAll, 1, All, windows::StatusSuccess)
+NEVERD_MULTI_WAIT_OUTCOME(TimeoutAll, 2, All, windows::StatusSuccess)
+NEVERD_MULTI_WAIT_OUTCOME(FullWaitSet, 64, Any, 63)
+NEVERD_MULTI_WAIT_OUTCOME(FullWaitSet, 64, All, windows::StatusSuccess)
+NEVERD_MULTI_WAIT_OUTCOME(DispatchPoll, 2, All, windows::StatusTimeout)
+NEVERD_MULTI_WAIT_OUTCOME(DispatchPoll, 2, Any, 0)
+#endif
+
 #ifdef NEVERD_MULTI_WAIT_CASE
 NEVERD_MULTI_WAIT_CASE(ImmediateAny, 'A')
 NEVERD_MULTI_WAIT_CASE(AtomicAll, 'B')

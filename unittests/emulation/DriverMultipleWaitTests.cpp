@@ -5,11 +5,15 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
+#include "os/windows/kernel/KernelAPINames.h"
+#include "os/windows/kernel/KernelWaits.h"
+#include "os/windows/kernel/WindowsKernelLayout.h"
 
 #include "neverd/emulation/CPU.h"
 #include "neverd/emulation/DriverSession.h"
 
 #include <algorithm>
+#include <array>
 #include <ostream>
 
 namespace neverd::emulation {
@@ -20,11 +24,25 @@ namespace {
 #undef NEVERD_MULTI_WAIT_TEXT
 #undef NEVERD_MULTI_WAIT_VALUE
 
+using WaitObservation = std::array<uint64_t, 3>;
+
+std::vector<WaitObservation> expectedWaits(llvm::StringRef Mode) {
+  std::vector<WaitObservation> Result;
+#define NEVERD_MULTI_WAIT_OUTCOME(Name, Count, Type, Status)                   \
+  if (Mode == #Name)                                                           \
+    Result.push_back({Count, kernel_wait::Type, Status});
+#include "fixtures/DriverMultipleWaitCases.def"
+#undef NEVERD_MULTI_WAIT_OUTCOME
+  std::sort(Result.begin(), Result.end());
+  return Result;
+}
+
 struct WaitParameter {
   ExecutionBackendKind Backend;
   ExecutionContract Contract;
   char Mode;
   std::string Name;
+  std::vector<WaitObservation> Waits;
 };
 void PrintTo(const WaitParameter &Parameter, std::ostream *Stream) {
   *Stream << Parameter.Name;
@@ -40,7 +58,8 @@ std::vector<WaitParameter> parameters() {
           (Contract == ExecutionContract::Legacy ? LegacySuffix
                                                  : CheckedSuffix);
 #define NEVERD_MULTI_WAIT_CASE(Name, Value)                                    \
-  Result.push_back({Backend, Contract, Value, Prefix + #Name});
+  Result.push_back(                                                            \
+      {Backend, Contract, Value, Prefix + #Name, expectedWaits(#Name)});
 #include "fixtures/DriverMultipleWaitCases.def"
 #undef NEVERD_MULTI_WAIT_CASE
     }
@@ -52,6 +71,7 @@ class DriverMultipleWait : public testing::TestWithParam<WaitParameter> {};
 TEST_P(DriverMultipleWait, OriginalWaitSetsPreserveSignalsAndThreadLifetimes) {
 #ifdef NEVERD_WDM_MULTIPLE_WAIT_FIXTURE
   const auto &Parameter = GetParam();
+  ASSERT_FALSE(Parameter.Waits.empty());
   auto Probe = createExecutionBackend(Parameter.Backend, Parameter.Contract,
                                       MemoryLimit);
   if (!Probe) {
@@ -98,6 +118,19 @@ TEST_P(DriverMultipleWait, OriginalWaitSetsPreserveSignalsAndThreadLifetimes) {
         EXPECT_EQ(std::count(Result->Messages.begin(), Result->Messages.end(),
                              Complete),
                   1);
+        // Distinct API observations verify mode selection and the final status
+        // of every immediate or deferred wait.
+        std::vector<WaitObservation> Observed;
+        for (const auto &Call : Result->Calls) {
+          if (Call.Name != kernel_api::KeWaitForMultipleObjects)
+            continue;
+          ASSERT_EQ(Call.Arguments.size(), 8u);
+          ASSERT_TRUE(Call.Result);
+          Observed.push_back(
+              {Call.Arguments[0], Call.Arguments[2], *Call.Result});
+        }
+        std::sort(Observed.begin(), Observed.end());
+        EXPECT_EQ(Observed, Parameter.Waits);
       }
 #else
   GTEST_SKIP() << MissingFixture;

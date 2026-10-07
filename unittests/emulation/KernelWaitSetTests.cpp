@@ -229,6 +229,12 @@ TEST_F(KernelMultipleWait,
   reject(Model->call(kernel_api::KeWaitForMultipleObjects.str(),
                      {1, Scratch, 0, 1, 0, 0, 0, 0}),
          kernel_wait::WaitReason);
+  reject(Model->call(
+             kernel_api::KeWaitForMultipleObjects.str(),
+             {1, profile::UserProbeLimit - sizeof(uint64_t), 0, 0, 0, 0, 0, 0}),
+         kernel_wait::ArrayStorage);
+  reject(wait({First}, true, 0, profile::UserProbeLimit - WaitBlockBytes),
+         kernel_wait::BlocksStorage);
   reject(wait({First}, true, 0, First));
   reject(wait({First}, true, 0, Scratch), kernel_wait::BufferOverlap);
   reject(wait({First}, true, 0, Scratch + 1), kernel_wait::BlocksStorage);
