@@ -28,16 +28,15 @@ std::string parseStringOptions(const char *Json,
   for (const auto &[Key, Value] : *Object) {
     if (Key == "min_length") {
       const auto Length = Value.getAsInteger();
-      if (!Length || *Length < 1 || *Length > strings::MaxMinChars)
+      if (!Length || *Length < 1 || *Length > strings::MaxMinLength)
         return "min_length must be an integer from 1 to " +
-               std::to_string(strings::MaxMinChars);
-      Options.MinChars = static_cast<unsigned>(*Length);
+               std::to_string(strings::MaxMinLength);
+      Options.MinLength = static_cast<unsigned>(*Length);
     } else if (Key == "encodings") {
       const auto *Names = Value.getAsArray();
       if (!Names)
         return "encodings must be an array of encoding names";
       Options.Encodings = 0;
-      unsigned Legacy = 0;
       for (const auto &Name : *Names) {
         const auto Text = Name.getAsString();
         const auto Encoding =
@@ -45,13 +44,18 @@ std::string parseStringOptions(const char *Json,
         if (!Encoding)
           return "unknown string encoding: " +
                  (Text ? Text->str() : std::string("non-string"));
-        // Code pages read the same bytes differently; one is searched.
-        if (strings::isLegacyEncoding(*Encoding) &&
-            !(Options.Encodings & strings::encodingBit(*Encoding)) &&
-            ++Legacy > 1)
-          return "only one legacy code page can be searched at a time";
         Options.Encodings |= strings::encodingBit(*Encoding);
       }
+    } else if (Key == "preferred") {
+      if (Value.kind() == llvm::json::Value::Null) {
+        Options.Preferred.reset();
+        continue;
+      }
+      const auto Text = Value.getAsString();
+      const auto Encoding = Text ? strings::encodingNamed(*Text) : std::nullopt;
+      if (!Encoding || !strings::isLegacyEncoding(*Encoding))
+        return "preferred must name a legacy code page";
+      Options.Preferred = *Encoding;
     } else {
       return "unknown string option: " + Key.str();
     }
@@ -63,7 +67,8 @@ const std::vector<ImageString> &
 imageStrings(Session &S, const strings::ScanOptions &Options) {
   if (S.ImageStrings &&
       S.ImageStrings->Options.Encodings == Options.Encodings &&
-      S.ImageStrings->Options.MinChars == Options.MinChars)
+      S.ImageStrings->Options.Preferred == Options.Preferred &&
+      S.ImageStrings->Options.MinLength == Options.MinLength)
     return S.ImageStrings->Strings;
   ImageStringScan Scan;
   Scan.Options = Options;

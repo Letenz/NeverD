@@ -18,6 +18,7 @@ namespace {
 constexpr int CacheMiB = 256;
 constexpr char RecentFilesKey[] = "files/recent";
 constexpr char StringEncodingsKey[] = "strings/encodings";
+constexpr char StringPreferredKey[] = "strings/preferred";
 constexpr char StringMinLengthKey[] = "strings/minLength";
 constexpr int MaxRecentFiles = 10;
 
@@ -134,8 +135,22 @@ void Session::receive(const QJsonObject &incoming) {
                  0);
     emit stateChanged();
     // Before any file opens, so its listing starts with them.
-    applyStringOptions(false);
-    openPending();
+    if (stringOptionsNeedMigration()) {
+      const auto proceed = [this] {
+        applyStringOptions(false);
+        openPending();
+      };
+      read(
+          QStringLiteral("string_encodings"), {}, this,
+          [this, proceed](const QJsonObject &payload) {
+            migrateStringOptions(payload.value("items").toArray());
+            proceed();
+          },
+          [proceed](const QString &, const QString &) { proceed(); });
+    } else {
+      applyStringOptions(false);
+      openPending();
+    }
   } else if (type == QLatin1String("heartbeat")) {
     const auto background = incoming.value("background").toObject();
     if (background != background_) {
@@ -647,11 +662,39 @@ void Session::loadSignatures(const QString &path, bool tree) {
           });
 }
 
-void Session::setStringOptions(const QStringList &encodings, int minLength) {
+void Session::setStringOptions(const QStringList &encodings,
+                               const QString &preferred, int minLength) {
   QSettings settings;
   settings.setValue(StringEncodingsKey, encodings);
+  settings.setValue(StringPreferredKey, preferred);
   settings.setValue(StringMinLengthKey, minLength);
   applyStringOptions(true);
+}
+
+bool Session::stringOptionsNeedMigration() const {
+  const QSettings settings;
+  return settings.contains(StringEncodingsKey) &&
+         !settings.contains(StringPreferredKey);
+}
+
+void Session::migrateStringOptions(const QJsonArray &encodings) {
+  QSettings settings;
+  const auto saved = settings.value(StringEncodingsKey).toStringList();
+  QStringList names;
+  QString preferred;
+  for (const auto &value : encodings) {
+    const auto encoding = value.toObject();
+    const auto name = encoding.value("name").toString();
+    const bool legacy = encoding.value("legacy").toBool();
+    if (legacy && saved.contains(name))
+      preferred = name;
+    if ((!legacy && saved.contains(name)) || encoding.value("default").toBool())
+      names.append(name);
+  }
+  if (names.isEmpty())
+    return;
+  settings.setValue(StringEncodingsKey, names);
+  settings.setValue(StringPreferredKey, preferred);
 }
 
 void Session::applyStringOptions(bool announce) {
@@ -659,8 +702,11 @@ void Session::applyStringOptions(bool announce) {
   if (!settings.contains(StringEncodingsKey))
     return;
   const auto encodings = settings.value(StringEncodingsKey).toStringList();
+  const auto preferred = settings.value(StringPreferredKey).toString();
   const int minLength = settings.value(StringMinLengthKey).toInt();
   QJsonObject payload{{"encodings", QJsonArray::fromStringList(encodings)}};
+  if (!preferred.isEmpty())
+    payload.insert("preferred", preferred);
   if (minLength > 0)
     payload.insert("min_length", minLength);
   command(QStringLiteral("string_options"), payload,
@@ -670,9 +716,15 @@ void Session::applyStringOptions(bool announce) {
             QStringList names;
             for (const auto &name : options.value("encodings").toArray())
               names.append(name.toString());
-            emit message(tr("Strings: %1, at least %2 characters")
-                             .arg(names.join(QStringLiteral(", ")))
-                             .arg(options.value("min_length").toInt()),
+            const auto first = options.value("preferred").toString();
+            const int columns = options.value("min_length").toInt();
+            emit message(first.isEmpty()
+                             ? tr("Strings: %1, at least %2 columns")
+                                   .arg(names.join(QStringLiteral(", ")))
+                                   .arg(columns)
+                             : tr("Strings: %1, %2 first, at least %3 columns")
+                                   .arg(names.join(QStringLiteral(", ")), first)
+                                   .arg(columns),
                          0);
             emit stringOptionsChanged();
           });

@@ -1883,12 +1883,28 @@ Signed: %4</source>
         <translation>Нет</translation>
     </message>
     <message>
-        <source>Also read C strings that are not UTF-8 in this code page</source>
-        <translation>Также читать в этой кодовой странице C-строки, не являющиеся UTF-8</translation>
+        <source>Detect common code pages</source>
+        <translation>Распознавать распространённые кодовые страницы</translation>
     </message>
     <message>
-        <source>Code page:</source>
-        <translation>Кодовая страница:</translation>
+        <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
+        <translation>Читать C-строки не в UTF-8 также в %1, если одна из них читает их как текст, а кодовая страница для другой письменности — нет</translation>
+    </message>
+    <message>
+        <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
+        <translation>Читать C-строки не в UTF-8 сначала в этой кодовой странице, чтобы она побеждала там, где их читают и другие кодовые страницы</translation>
+    </message>
+    <message>
+        <source>Code pages:</source>
+        <translation>Кодовые страницы:</translation>
+    </message>
+    <message>
+        <source>Preferred code page:</source>
+        <translation>Предпочитаемая кодовая страница:</translation>
+    </message>
+    <message>
+        <source>Display columns: a wide East Asian character counts two</source>
+        <translation>Колонки на экране: широкий восточноазиатский символ считается за две</translation>
     </message>
 </context>
 <context>
@@ -2029,8 +2045,12 @@ Signed: %4</source>
         <translation>Не удалось обновить базу данных: %1</translation>
     </message>
     <message>
-        <source>Strings: %1, at least %2 characters</source>
-        <translation>Строки: %1, не менее %2 символов</translation>
+        <source>Strings: %1, at least %2 columns</source>
+        <translation>Строки: %1, не менее %2 колонок</translation>
+    </message>
+    <message>
+        <source>Strings: %1, %2 first, at least %3 columns</source>
+        <translation>Строки: %1, сначала %2, не менее %3 колонок</translation>
     </message>
 </context>
 </TS>

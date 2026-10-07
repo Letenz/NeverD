@@ -38,6 +38,7 @@
           "neverd_evm_set_hardfork",
           "neverd_evm_set_strict",
           "neverd_exports_json",
+          "neverd_fold_case",
           "neverd_free_string",
           "neverd_func_count",
           "neverd_func_entry",

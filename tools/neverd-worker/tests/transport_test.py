@@ -255,7 +255,7 @@ def run(executable):
         assert [e["name"] for e in encodings] == ["ascii", "utf-8", "utf-16le", "gbk", "big5"], encodings
         assert [e.get("legacy", False) for e in encodings] == [False, False, False, True, True], encodings
         options = client.call("string_options")["payload"]
-        assert options == {"encodings": ["ascii", "utf-8", "utf-16le"], "min_length": 4}, options
+        assert options == {"encodings": ["ascii", "utf-8", "utf-16le"], "preferred": None, "min_length": 4}, options
         rodata = [" ".join(line["text"].split()) for line in client.call(
             "listing", {"address": "0xffff800012343100", "before": 0, "after": 12})["payload"]["lines"]]
         assert any(line.startswith("asc_FFFF800012343100 db '\u4e2d\u6587',0") for line in rodata), rodata
@@ -295,8 +295,12 @@ def run(executable):
         assert tails["total"] == 4, tails
         assert ("0xffff800012340074", "0xffff800012343103", "\u6587") in rows, tails
         assert ("0xffff800012340075", "0xffff80001234310b", "de") in rows, tails
-        # Code pages read the same bytes differently; one is searched.
-        assert client.call("string_options", {"encodings": ["gbk", "big5"]})["error"]["code"] == "invalid_request"
+        # Several code pages are searched together; the preferred one reads
+        # first, and only a code page can be preferred.
+        both = client.call("string_options", {"encodings": ["gbk", "big5"], "preferred": "big5"})["payload"]
+        assert both["encodings"] == ["gbk", "big5"] and both["preferred"] == "big5", both
+        assert client.call("string_options", {"preferred": "utf-8"})["error"]["code"] == "invalid_request"
+        assert client.call("string_options", {"preferred": "klingon"})["error"]["code"] == "unsupported_encoding"
         client.call("string_options", {"encodings": ["ascii", "utf-8", "utf-16le"], "min_length": 4})
         # The strings filter also matches addresses and types.
         assert client.call("strings", {"filter": "343108"})["payload"]["total"] == 1

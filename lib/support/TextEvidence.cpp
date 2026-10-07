@@ -8,6 +8,8 @@
 
 #include "neverd/support/StringScan.h"
 
+#include "llvm/ADT/bit.h"
+
 #include <algorithm>
 #include <vector>
 
@@ -36,6 +38,10 @@ constexpr unsigned ShortIdeographicText = 10;
 /// From this many characters on, text beyond ASCII may not repeat one
 /// character in two in five positions.
 constexpr size_t TablePatternLength = 6;
+/// Characters beyond ASCII that ascend by less than TableAscentStep each are
+/// a table from this many on, or this many ideographs.
+constexpr size_t TableAscentLength = 6, MinTableAscentIdeographs = 3;
+constexpr uint32_t TableAscentStep = 256;
 
 /// The writing system of a letter beyond ASCII (StringEncodings.def).
 enum class Family : uint8_t {
@@ -197,6 +203,19 @@ bool readsAsText(llvm::ArrayRef<uint32_t> Codes, Source From) {
     }
     return Longest;
   };
+  // Characters beyond ASCII that never descend, each a small step on, are a
+  // table of code points: ideographs from three on (a large block, where
+  // text does not climb), other characters from six on.
+  if (Beyond.size() >= TableAscentLength ||
+      (Beyond.size() >= MinTableAscentIdeographs &&
+       std::all_of(Beyond.begin(), Beyond.end(), isIdeograph))) {
+    bool Ascends = true;
+    for (size_t I = 1; I < Beyond.size() && Ascends; ++I)
+      Ascends = Beyond[I] >= Beyond[I - 1] &&
+                Beyond[I] - Beyond[I - 1] < TableAscentStep;
+    if (Ascends)
+      return false;
+  }
   if (Beyond.size() >= 2) {
     const size_t Longest = longestRun(Beyond);
     if (Longest * 2 > Beyond.size() && (Beyond.size() >= 3 || Longest == 2))
@@ -219,6 +238,81 @@ bool readsAsText(llvm::ArrayRef<uint32_t> Codes, Source From) {
   return AllLetters >= Needed && Inside * 5 >= Letters * 4 &&
          (Script != Family::Latin || Letters * 5 <= AllLetters * 3) &&
          (From != Source::SingleByte || Letters);
+}
+
+namespace {
+
+/// The writing systems a code page is made for, a bit per Family.
+uint32_t scriptsOf(Encoding Page) {
+  uint32_t Scripts = 0;
+#define NEVERD_CODE_PAGE_SCRIPT(Id, Script)                                    \
+  if (Page == Encoding::Id)                                                    \
+    Scripts |= uint32_t(1) << static_cast<unsigned>(Family::Script);
+#include "neverd/support/StringEncodings.def"
+  return Scripts;
+}
+
+} // namespace
+
+bool longEnoughText(llvm::ArrayRef<uint32_t> Codes) {
+  const size_t Beyond = static_cast<size_t>(std::count_if(
+      Codes.begin(), Codes.end(), [](uint32_t C) { return C >= 0x80; }));
+  return Beyond * 2 <= Codes.size() || Beyond >= MinTextBeyondASCII;
+}
+
+bool readsAsUnchosenText(llvm::ArrayRef<uint32_t> Codes) {
+  constexpr unsigned MinWordLetters = 3, MinLettersBeyond = 2,
+                     MinDistinctASCIILetters = 3;
+  unsigned Beyond = 0, ASCIILetters = 0;
+  uint64_t ASCIISeen = 0;
+  for (uint32_t C : Codes)
+    if (isASCIILetter(C)) {
+      ++ASCIILetters;
+      ASCIISeen |= uint64_t(1) << (C - 'A');
+    }
+  // Western text in a code page is mostly ASCII letters, and of more than
+  // one or two of them; a table pairs bytes with one letter.
+  if (static_cast<unsigned>(llvm::popcount(ASCIISeen)) <
+      MinDistinctASCIILetters)
+    return false;
+  for (size_t I = 0; I < Codes.size();) {
+    // One word: its letters, and whether one beyond ASCII is in it.
+    const auto isLetter = [&](size_t At) {
+      return isASCIILetter(Codes[At]) || familyOf(Codes[At]) != Family::None;
+    };
+    if (!isLetter(I)) {
+      ++I;
+      continue;
+    }
+    size_t End = I;
+    bool HasBeyond = false;
+    for (; End < Codes.size() && isLetter(End); ++End) {
+      if (Codes[End] < 0x80)
+        continue;
+      HasBeyond = true;
+      ++Beyond;
+      if (End != I && letterCase(Codes[End]) == 1)
+        return false;
+    }
+    if (HasBeyond && End - I < MinWordLetters)
+      return false;
+    I = End;
+  }
+  return Beyond >= MinLettersBeyond && ASCIILetters >= Beyond;
+}
+
+bool inCodePageScripts(llvm::ArrayRef<uint32_t> Codes, Encoding Page) {
+  const uint32_t Scripts = scriptsOf(Page);
+  for (uint32_t C : Codes) {
+    const Family Kind = C >= 0x80 ? familyOf(C) : Family::None;
+    if (Kind != Family::None && !(Scripts >> static_cast<unsigned>(Kind) & 1))
+      return false;
+  }
+  return true;
+}
+
+bool shareScripts(Encoding A, Encoding B) {
+  return (scriptsOf(A) & scriptsOf(B)) != 0;
 }
 
 } // namespace detail

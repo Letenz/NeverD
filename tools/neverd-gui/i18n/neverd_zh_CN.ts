@@ -1879,12 +1879,28 @@ Signed: %4</source>
         <translation>无</translation>
     </message>
     <message>
-        <source>Also read C strings that are not UTF-8 in this code page</source>
-        <translation>同时按此代码页读取非 UTF-8 的 C 字符串</translation>
+        <source>Detect common code pages</source>
+        <translation>检测常用代码页</translation>
     </message>
     <message>
-        <source>Code page:</source>
+        <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
+        <translation>同时用 %1 读取非 UTF-8 的 C 字符串：其中一个代码页能将其读作文本，且没有其他文字的代码页也能读取时</translation>
+    </message>
+    <message>
+        <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
+        <translation>优先用此代码页读取非 UTF-8 的 C 字符串，其他代码页也能读取时以它为准</translation>
+    </message>
+    <message>
+        <source>Code pages:</source>
         <translation>代码页：</translation>
+    </message>
+    <message>
+        <source>Preferred code page:</source>
+        <translation>首选代码页：</translation>
+    </message>
+    <message>
+        <source>Display columns: a wide East Asian character counts two</source>
+        <translation>显示列数：东亚宽字符计为两列</translation>
     </message>
 </context>
 <context>
@@ -2025,8 +2041,12 @@ Signed: %4</source>
         <translation>无法更新数据库：%1</translation>
     </message>
     <message>
-        <source>Strings: %1, at least %2 characters</source>
-        <translation>字符串：%1，至少 %2 个字符</translation>
+        <source>Strings: %1, at least %2 columns</source>
+        <translation>字符串：%1，至少 %2 列</translation>
+    </message>
+    <message>
+        <source>Strings: %1, %2 first, at least %3 columns</source>
+        <translation>字符串：%1，优先 %2，至少 %3 列</translation>
     </message>
 </context>
 </TS>

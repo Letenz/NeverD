@@ -24,7 +24,7 @@ namespace {
 
 /// The text a reference to \p Address reads: the string holding it and
 /// where the text from its first whole character on begins in the string's
-/// UTF-8 text, while at least \p MinChars characters remain there.
+/// UTF-8 text, while at least \p MinLength display columns remain there.
 struct ReferredText {
   const ImageString *String = nullptr;
   uint64_t TextOffset = 0;
@@ -32,7 +32,7 @@ struct ReferredText {
 
 std::optional<ReferredText>
 referredText(const BinaryImage &Img, const std::vector<ImageString> &Strings,
-             unsigned MinChars, va_t Address) {
+             unsigned MinLength, va_t Address) {
   const ImageString *String = stringHolding(Strings, Address);
   if (!String)
     return std::nullopt;
@@ -45,7 +45,7 @@ referredText(const BinaryImage &Img, const std::vector<ImageString> &Strings,
   const auto Start =
       strings::textFrom(llvm::ArrayRef<uint8_t>(Bytes, String->Bytes),
                         String->Kind, Address - String->Address);
-  if (!Start || Start->Chars < MinChars)
+  if (!Start || Start->Columns < MinLength)
     return std::nullopt;
   return ReferredText{String, Start->UTF8};
 }
@@ -76,7 +76,7 @@ const char *neverd_string_refs_json(neverd_session_t Sess,
   if (!S->synchronizeFunctions())
     return nullptr;
   const std::vector<ImageString> &Strings = imageStrings(*S, Options);
-  const unsigned MinChars = std::max(1u, Options.MinChars);
+  const unsigned MinLength = std::max(1u, Options.MinLength);
   const FunctionPage Page = functionPage(*S, FirstEntry, MaxFunctions);
   struct Row {
     va_t From, To;
@@ -99,7 +99,7 @@ const char *neverd_string_refs_json(neverd_session_t Sess,
           return Text;
         };
         for (const auto &[To, Kind] : Flow.Refs) {
-          if (const auto Text = referredText(Img, Strings, MinChars, To)) {
+          if (const auto Text = referredText(Img, Strings, MinLength, To)) {
             Slots[Index].push_back(
                 {DI.Addr, To, *Text, Kind, std::nullopt, instruction()});
             continue;
@@ -109,7 +109,8 @@ const char *neverd_string_refs_json(neverd_session_t Sess,
               !Img.CodePtrRelocSlots.count(To))
             continue;
           if (const auto Target = relocatedPointer(Img, To))
-            if (const auto Text = referredText(Img, Strings, MinChars, *Target))
+            if (const auto Text =
+                    referredText(Img, Strings, MinLength, *Target))
               Slots[Index].push_back(
                   {DI.Addr, *Target, *Text, Kind, To, instruction()});
         }
