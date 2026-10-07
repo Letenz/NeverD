@@ -158,3 +158,38 @@ u64 syscall_gki_pidfd_limit(u64 *out) {
   out[7] = (u64)*__errno();
   return 0;
 }
+
+/* Version observations are captured as values, independently of the model. */
+u64 syscall_gki_vectors(u64 *out) {
+  struct vector {
+    const void *base;
+    u64 length;
+  };
+  long fd = raw(434, (u64)getpid(), 0, 0, 0, 0, 0);
+  if (fd != 3)
+    return 1;
+  unsigned char *pages = (void *)raw(222, 0, 8192, 3, 0x22, ~0UL, 0);
+  if ((long)pages < 0)
+    return 2;
+  struct vector *tail = (void *)(pages + 4096 - sizeof(struct vector));
+  tail->base = (void *)1;
+  tail->length = ~0UL;
+  if (raw(226, (u64)(pages + 4096), 4096, 0, 0, 0, 0))
+    return 3;
+  *__errno() = 77;
+  out[0] = (u64)raw(66, (u64)fd, (u64)tail, 2, 0, 0, 0);
+  out[1] = (u64)*__errno();
+  out[2] = (u64)syscall(66, 1UL, tail, 2UL);
+  out[3] = (u64)*__errno();
+  const struct vector capped = {(void *)(0x0001000000000000UL - 0x7ffff000UL),
+                                0x80000000UL};
+  out[4] = (u64)raw(66, (u64)fd, (u64)&capped, 1, 0, 0, 0);
+  out[5] = (u64)syscall(66, (u64)fd, &capped, 1UL);
+  out[6] = (u64)*__errno();
+  if (syscall(66, 2UL, tail, 2UL) != -1)
+    return 4;
+  out[7] = (u64)*__errno();
+  if (raw(57, (u64)fd, 0, 0, 0, 0, 0) || raw(215, (u64)pages, 8192, 0, 0, 0, 0))
+    return 5;
+  return 0;
+}

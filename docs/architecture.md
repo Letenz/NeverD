@@ -3534,11 +3534,13 @@ admission happen before loading; unlisted and available-but-unmodeled calls
 retain their unsupported boundary.
 
 `LinuxGKIKernels.def` owns released Android GKI branch identifiers and the
-versioned `pidfd_open` flag mask. JSON and C++ options select that contract
+versioned `pidfd_open` flag mask and iovec import policy. JSON and C++ options
+select that contract
 explicitly; Android's Bionic API level does not infer it. `LinuxServices`
 dispatches the shared kernel call, and `LinuxFiles` owns process descriptors
 alongside regular files and standard streams. `LinuxOutput` supplies the same
-vector import/error ordering before a pidfd's missing write operation. There
+version-selected vector import/error ordering for captured output and before a
+pidfd's missing write operation. There
 is no host process lookup or parallel descriptor namespace. See
 [released GKI contracts](android-gki-kernels.md) for pinned source evidence and
 the limits of this implemented subset.
