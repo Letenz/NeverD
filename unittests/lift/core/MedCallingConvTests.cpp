@@ -5934,6 +5934,45 @@ LowFunc stackLoad(va_t Entry, uint64_t Displacement) {
 }
 } // namespace
 
+TEST(CallRegisterEffects, StackProbeIsNoCall) {
+  // `mov eax, 2000h; call __chkstk; sub rsp, rax`: the probe returns with
+  // every register as it found them, so it is no callee of the summary and
+  // lowers to nothing.  The same call is an ordinary one in an ELF image,
+  // where no helper of that name is a stack probe, and under a name only an
+  // analysis guessed.
+  for (const auto &[Format, Origin] :
+       {std::pair{BinaryFormat::COFF, NameOrigin::Stated},
+        std::pair{BinaryFormat::ELF, NameOrigin::Stated},
+        std::pair{BinaryFormat::COFF, NameOrigin::Analysis}}) {
+    SCOPED_TRACE(static_cast<int>(Format));
+    BinaryImage Img = win64Image();
+    Img.Format = Format;
+    Symbol Probe;
+    Probe.Name = "__chkstk";
+    Probe.Addr = 0x2000;
+    Probe.Origin = Origin;
+    Img.Symbols.push_back(Probe);
+    const NdVar Rax = NdVar::reg(x86reg::RAX, 8);
+    LowFunc Low = makeOneBlockLow(0x1000, "large_frame", [&](auto Push) {
+      Push(NdOp::COPY, Rax, {NdVar::cst(0x2000, 8)});
+      Push(NdOp::CALL, NdVar{}, {NdVar::cst(0x2000, 8)});
+      Push(NdOp::INT_SUB, Rsp, {Rsp, Rax});
+    });
+    const bool Elided =
+        Format == BinaryFormat::COFF && Origin == NameOrigin::Stated;
+    EXPECT_EQ(localRegisterEffect(Img, Low).Callees.count(0x2000),
+              Elided ? 0u : 1u);
+    LowToMedConverter Converter;
+    Converter.setBinaryImage(&Img);
+    const MedFunc Med = Converter.convert(Low, Arch::X64);
+    bool Calls = false;
+    for (const MedBlock &Block : Med.Blocks)
+      for (const MedOp &Op : Block.Ops)
+        Calls |= Op.Opcode == NdOp::CALL;
+    EXPECT_EQ(Calls, !Elided);
+  }
+}
+
 TEST(CallRegisterEffects, MaskedByteMergeIsALowWrite) {
   // `setbe r8b` lifts as `t = r8 & ~0xFF; u = t | flag; r8 = u` in one
   // instruction.  The old R8 reaches only bytes no later `test r8b, r8b`

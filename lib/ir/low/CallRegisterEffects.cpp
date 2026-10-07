@@ -349,6 +349,10 @@ void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
               : Op.Opcode != NdOp::INDIR_BR || Block.Succs.empty();
       if (!LeavesFunction)
         continue;
+      if (Op.Opcode == NdOp::CALL && DirectTarget && !TailCall &&
+          libc::stackProbeEffect(Img, Op.Inputs[0].Offset) ==
+              libc::StackProbeEffect::Probe)
+        continue;
       Unknown |= ArgumentsEscape();
       if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
           !TailCall) {
@@ -516,6 +520,11 @@ localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
           (hasLowInstructionControlFlag(Flags,
                                         LowInstructionControlFlag::NoReturn) ||
            (TailCall && EntersNoReturnFunction));
+      // A stack probe changes no register its caller can observe.
+      if (Op.Opcode == NdOp::CALL && DirectTarget && !TailCall &&
+          libc::stackProbeEffect(Img, Op.Inputs[0].Offset) ==
+              libc::StackProbeEffect::Probe)
+        continue;
       RegisterStep Step;
       for (uint8_t In = 0; In < Op.NumInputs; ++In)
         if (Op.Inputs[In].isReg() && !(In == 0 && MergeReads.count(I)))
