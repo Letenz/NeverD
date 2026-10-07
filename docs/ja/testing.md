@@ -1427,7 +1427,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `NeverDLowInstructionBoundaryTests` は集約リフトの全フィクスチャを構築せずに LowIR の命令由来テストを実行します。`BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame` は整列した ADD と後置インデックス LDP によるスタック解放、および呼び出し元でリンクレジスタを復元する形を確認し、元の RET X30 と共有入口を独立して保持します。`BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership` は別の戻り先レジスタ、BR X30、欠落または非整列の解放、狭い復元、内部入口、修正情報、書き込み可能または曖昧なマッピング、再配置可能入力、別形式を拒否します。共有末尾のデコードはネイティブ ABI の証明ではなく、呼び出し元の保存や領域確保が欠ければ既存のフレーム証明は失敗します。
 
-`NeverDOwnInteriorCallTests` は、x64 関数が自身の unwind 範囲内のラベルを直接 call する場合を扱います。積んだ戻りアドレスのためだけの call はプッシュとジャンプとして持ち上げ、直線とループの両ケースで生成した C を `-O0` と `-O2` で AddressSanitizer と未定義動作トラップ付きで実行します。戻りがその call 自身の戻りアドレスを取り出すターゲットは通常の呼び出しのままです。関数が自分で積んだアドレスを取り出しうる戻り（不均衡な復元やスタック切り替えの後）があれば、関数を拒否し、その戻り命令を示します。
+`NeverDOwnInteriorCallTests` は、x86 と x86-64 の関数が自身の unwind 範囲内のラベルを直接 call する場合を、Microsoft x64 の `.pdata` エントリ、System V x86-64 の DWARF FDE、i386 の DWARF FDE のそれぞれで扱います。積んだ戻りアドレスのためだけの call はプッシュとジャンプとして持ち上げられ、x86-64 の直線とループの場合に生成された C は `-O0` と `-O2` で AddressSanitizer と未定義動作トラップの下で実行されます。戻りがその call 自身の戻りアドレスを取り出す対象は通常の呼び出しのままです。スタック切り替え後の戻りや入口スタックポインタより下での戻りは拒否されます。i386 の登録チェーンから復元した範囲は本体を区切らないため、その call は call のままです。
 
 `NeverDSysVCallContractTests` は、QtXml の `QDomNode::save` と `QDomNode::isDocument` の形を使って x86-64 System V の呼び出し規約を検査します。サマリが引数レジスタを読む直接呼び出し先は、呼び出し元がそのまま渡す入力の `this` も含め、呼び出し元の値を受け取ります。仮想呼び出しは、支配するブロックが `RDI` に読み込んだオブジェクトを引数に取ります。ある経路では `RAX` を書かずに戻り、他の経路では呼び出し先の結果を渡すだけのメソッドは void になります。比較の連鎖の前に `AL` に書いたバイトは、どの経路でも戻り値です。出力したプログラムは `-O0` と `-O2` で AddressSanitizer と未定義動作トラップ付きで実行します。
 

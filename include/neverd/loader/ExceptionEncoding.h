@@ -148,6 +148,41 @@ inline ExceptionModel getExceptionEncodingModel(ExceptionEncoding Encoding) {
   return ExceptionModel::None;
 }
 
+/// Whether a record of this encoding covers the code of exactly one function,
+/// as the image's own table declares it.  Function tables, DWARF FDEs and the
+/// Go function table do.  A registration-chain range is recovered from code,
+/// and a compact-unwind or ARM EHABI entry runs to the next entry, which the
+/// linker may have merged across adjacent functions with the same unwind
+/// description.
+inline bool exceptionEncodingBoundsOneFunction(ExceptionEncoding Encoding) {
+  switch (Encoding) {
+  case ExceptionEncoding::X64UnwindV1:
+  case ExceptionEncoding::X64UnwindV2:
+  case ExceptionEncoding::X64UnwindV3:
+  case ExceptionEncoding::ARM32Packed:
+  case ExceptionEncoding::ARM32PackedFragment:
+  case ExceptionEncoding::ARM32Unpacked:
+  case ExceptionEncoding::ARM64Packed:
+  case ExceptionEncoding::ARM64PackedFragment:
+  case ExceptionEncoding::ARM64Unpacked:
+  case ExceptionEncoding::DwarfFDE:
+  case ExceptionEncoding::GoFuncTable:
+    return true;
+  case ExceptionEncoding::CompactUnwind:
+  case ExceptionEncoding::X86ScopeTableEH3:
+  case ExceptionEncoding::X86ScopeTableEH4:
+  case ExceptionEncoding::X86CxxFuncInfo:
+  case ExceptionEncoding::DelphiX86Chain:
+  case ExceptionEncoding::ARMEHABICantUnwind:
+  case ExceptionEncoding::ARMEHABIInline:
+  case ExceptionEncoding::ARMEHABICompact:
+  case ExceptionEncoding::ARMEHABIGeneric:
+  case ExceptionEncoding::Unknown:
+    return false;
+  }
+  return false;
+}
+
 enum class RuntimeFunctionKind : uint8_t {
   Primary,
   Chained,

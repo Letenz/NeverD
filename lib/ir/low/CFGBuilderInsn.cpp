@@ -438,14 +438,14 @@ void CFGBuilder::rewriteOwnInteriorCall(const BinaryImage &Img, InsnRecord &Rec,
   // calls a label inside itself, and the return address that pushes is a
   // value like any other.  Whether a return later pops it is for
   // classifyOwnInteriorCalls to prove.  The function's body is the extent
-  // its function-table record declares (x64 `.pdata`); a registration-chain
-  // range is recovered from code and bounds nothing.
+  // its own unwind record declares (a function-table entry or a DWARF FDE);
+  // a range recovered from code or shared by several functions bounds
+  // nothing.
   const va_t Target = *Rec.Immediate;
   const ExceptionFunction *Own =
       Img.ExceptionMetadata.findFunction(CurrentFuncEntry);
   if (!Own || Own->Kind != RuntimeFunctionKind::Primary ||
-      getExceptionEncodingModel(Own->Encoding) !=
-          ExceptionModel::WindowsTable ||
+      !exceptionEncodingBoundsOneFunction(Own->Encoding) ||
       Own->CodeRange.Begin != CurrentFuncEntry ||
       !Own->CodeRange.contains(Rec.Addr) || !Own->CodeRange.contains(Target) ||
       Target == Own->CodeRange.Begin ||

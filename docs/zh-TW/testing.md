@@ -1373,7 +1373,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `NeverDLowInstructionBoundaryTests` 可獨立執行 LowIR 指令來源測試，無須建置聚合提升測試的全部夾具。`BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame` 驗證對齊 ADD 與後索引 LDP 堆疊釋放，包括由呼叫端恢復連結暫存器的情形；原始 RET X30 與共用入口仍獨立保留。`BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership` 拒絕其他返回暫存器、BR X30、缺失或未對齊的釋放、窄恢復、內部入口、修正、可寫或歧義映射、可重定位輸入及其他格式。解碼共用尾部不能證明原生 ABI：缺失呼叫端儲存或配置仍會使既有框架證明失敗。
 
-`NeverDOwnInteriorCallTests` 涵蓋 x64 函式直接 call 自身 unwind 範圍內標籤的情況。只為壓入返回位址而做的 call 會提升為壓堆疊加跳轉，直線與迴圈兩種情形產生的 C 在 `-O0` 與 `-O2` 下搭配 AddressSanitizer 與未定義行為陷阱執行。返回時彈出該 call 自身返回位址的目標仍視為一般呼叫。若某條返回可能彈出函式自己壓入的位址（恢復不平衡或切換了堆疊），函式會被拒絕，並指出那條返回指令。
+`NeverDOwnInteriorCallTests` 涵蓋 x86 與 x86-64 函式直接 call 自身 unwind 範圍內標籤的情況，分別在 Microsoft x64 `.pdata` 條目、System V x86-64 DWARF FDE 與 i386 DWARF FDE 下測試。只為壓入返回位址而做的 call 會提升為壓堆疊加跳轉，x86-64 直線與迴圈兩種情形產生的 C 在 `-O0` 與 `-O2` 下以 AddressSanitizer 與未定義行為陷阱執行。返回時恰好彈出該 call 自身返回位址的目標仍是一般呼叫；切換堆疊之後的返回或低於入口堆疊指標的返回會被拒絕。從 i386 註冊鏈還原的範圍不能界定函式本體，因此其中的 call 仍是 call。
 
 `NeverDSysVCallContractTests` 以 QtXml 中 `QDomNode::save` 與 `QDomNode::isDocument` 的形態檢查 x86-64 System V 呼叫約定。摘要顯示會讀取某個引數暫存器的直接被呼叫者會收到呼叫者的值，包括原樣傳遞的傳入 `this`；虛擬呼叫會取得支配區塊載入 `RDI` 的物件；在某條路徑上不寫 `RAX` 就返回、在其他路徑上只傳遞被呼叫者結果的方法為 void；在比較鏈之前寫入 `AL` 的位元組在每條路徑上都是返回值。產生的程式在 `-O0` 與 `-O2` 下搭配 AddressSanitizer 與未定義行為陷阱執行。
 

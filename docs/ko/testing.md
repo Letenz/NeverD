@@ -1417,7 +1417,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `NeverDLowInstructionBoundaryTests`는 전체 리프트 픽스처를 빌드하지 않고 LowIR 명령 출처 테스트를 실행합니다. `BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame`은 정렬된 ADD 및 후위 인덱스 LDP 스택 해제와 호출자에서 링크 레지스터를 복원하는 형태를 확인하며 원래 RET X30과 공유 진입점을 독립적으로 유지합니다. `BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership`는 다른 반환 레지스터, BR X30, 누락되거나 정렬되지 않은 해제, 좁은 복원, 내부 진입점, 픽스업, 쓰기 가능하거나 모호한 매핑, 재배치 가능한 입력과 다른 형식을 거부합니다. 공유 꼬리 디코딩은 네이티브 ABI를 증명하지 않으며 호출자 저장이나 할당이 없으면 기존 프레임 증명이 실패합니다.
 
-`NeverDOwnInteriorCallTests`는 x64 함수가 자신의 unwind 범위 안 레이블을 직접 call하는 경우를 다룹니다. 푸시한 반환 주소만을 위한 call은 푸시와 점프로 리프트하며, 직선과 루프 두 경우에서 생성한 C를 `-O0`과 `-O2`에서 AddressSanitizer와 정의되지 않은 동작 트랩을 켜고 실행합니다. 반환이 그 call 자신의 반환 주소를 꺼내는 대상은 일반 호출로 남습니다. 함수가 스스로 푸시한 주소를 꺼낼 수 있는 반환(불균형한 복원이나 스택 전환 이후)이 있으면 함수를 거부하고 그 반환 명령을 알립니다.
+`NeverDOwnInteriorCallTests`는 x86과 x86-64 함수가 자신의 unwind 범위 안 레이블을 직접 call하는 경우를 Microsoft x64 `.pdata` 항목, System V x86-64 DWARF FDE, i386 DWARF FDE에서 각각 다룹니다. 푸시한 반환 주소만을 위한 call은 푸시와 점프로 리프트되며, x86-64 직선 및 루프 경우에 생성된 C는 `-O0`과 `-O2`에서 AddressSanitizer와 정의되지 않은 동작 트랩 아래 실행됩니다. 반환이 그 call 자신의 반환 주소를 꺼내는 대상은 일반 호출로 남습니다. 스택 전환 후의 반환이나 진입 스택 포인터보다 아래에서의 반환은 거부됩니다. i386 등록 체인에서 복원한 범위는 본문을 한정하지 않으므로 그 call은 call로 남습니다.
 
 `NeverDSysVCallContractTests`는 QtXml의 `QDomNode::save`와 `QDomNode::isDocument` 형태로 x86-64 System V 호출 규약을 검사합니다. 요약이 인수 레지스터를 읽는 직접 피호출자는 수정 없이 넘어온 입력 `this`를 포함해 호출자의 값을 받습니다. 가상 호출은 지배 블록이 `RDI`에 적재한 객체를 받습니다. 한 경로에서는 `RAX`를 쓰지 않고 반환하고 다른 경로에서는 피호출자의 결과만 넘기는 메서드는 void입니다. 비교 연쇄 앞에서 `AL`에 쓴 바이트는 모든 경로에서 반환값입니다. 생성된 프로그램은 `-O0`과 `-O2`에서 AddressSanitizer와 정의되지 않은 동작 트랩을 켜고 실행합니다.
 

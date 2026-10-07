@@ -1335,7 +1335,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `NeverDLowInstructionBoundaryTests` 可独立运行 LowIR 指令来源测试，无需构建聚合提升测试的全部夹具。`BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame` 验证对齐 ADD 和后索引 LDP 栈释放，包括由调用方恢复链接寄存器的情形；原始 RET X30 与共享入口仍独立保留。`BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership` 拒绝其他返回寄存器、BR X30、缺失或未对齐的释放、窄恢复、内部入口、修正、可写或歧义映射、可重定位输入及其他格式。解码共享尾部不能证明原生 ABI：缺失调用方保存或分配仍会使现有帧证明失败。
 
-`NeverDOwnInteriorCallTests` 覆盖 x64 函数直接 call 自身 unwind 范围内标签的情况。只为压入返回地址而做的 call 被提升为压栈加跳转，直线和循环两种情形生成的 C 在 `-O0` 和 `-O2` 下带 AddressSanitizer 和未定义行为陷阱运行。返回时弹出该 call 自身返回地址的目标仍按普通调用处理。若某条返回可能弹出函数自己压入的地址（恢复不平衡或切换了栈），函数会被拒绝，并指出那条返回指令。
+`NeverDOwnInteriorCallTests` 覆盖 x86 和 x86-64 函数直接 call 自身 unwind 范围内标签的情况，分别在 Microsoft x64 `.pdata` 条目、System V x86-64 DWARF FDE 和 i386 DWARF FDE 下测试。只为压入返回地址而做的 call 被提升为压栈加跳转，x86-64 直线和循环两种情形生成的 C 在 `-O0` 和 `-O2` 下以 AddressSanitizer 和未定义行为陷阱运行。返回时恰好弹出该 call 自身返回地址的目标仍是普通调用；切换栈之后的返回或低于入口栈指针的返回会被拒绝。从 i386 注册链恢复的范围不能界定函数体，因此其中的 call 仍是 call。
 
 `NeverDSysVCallContractTests` 以 QtXml 中 `QDomNode::save` 和 `QDomNode::isDocument` 的形态检查 x86-64 System V 调用约定。摘要显示会读取某个参数寄存器的直接被调用者会收到调用者的值，包括原样传递的传入 `this`；虚调用会取得支配块载入 `RDI` 的对象；在某条路径上不写 `RAX` 就返回、在其他路径上只传递被调用者结果的方法为 void；在比较链之前写入 `AL` 的字节在每条路径上都是返回值。生成的程序在 `-O0` 和 `-O2` 下带 AddressSanitizer 与未定义行为陷阱运行。
 
