@@ -927,6 +927,53 @@ TEST(ProcessReport, MalformedDarwinCredentialsFailBeforeImageLoading) {
   }
 }
 
+TEST(ProcessReport, DarwinDescriptorCapKeepsMissingZeroAndIntegerBounds) {
+  auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");
+  ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
+  EXPECT_FALSE(Empty->DarwinSystem->MaxFilesPerProcess);
+  for (const auto &[Literal, Expected] :
+       {std::pair{"0", 0u}, std::pair{"1", 1u},
+        std::pair{R"("2147483647")", uint32_t(INT32_MAX)}}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string("{\"darwin_system\":{\"max_files_per_process\":") +
+        Literal + "}}");
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    EXPECT_EQ(Parsed->DarwinSystem->MaxFilesPerProcess, Expected);
+    EXPECT_TRUE(Parsed->DarwinSystem->ResourceLimits.empty());
+  }
+  for (const char *Bad : {"null", "true", "[]", "{}", "-1", "0.5", "2147483648",
+                          "4294967295", R"("4294967296")", R"("1.0")"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string("{\"darwin_system\":{\"max_files_per_process\":") + Bad +
+        "}}");
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+}
+
+TEST(ProcessReport, DarwinDescriptorCapAdmissionPrecedesImageLoading) {
+  auto O = processOptionsFromJSON(
+      R"({"darwin_system":{"max_files_per_process":0}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (auto Bad : {0x80000000u, UINT32_MAX}) {
+    O->DarwinSystem->MaxFilesPerProcess = Bad;
+    for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                   ProcessProfile::IOSSimulatorMachO64}) {
+      auto R = emulateProcess("missing.macho", P, *O);
+      ASSERT_FALSE(bool(R));
+      EXPECT_EQ(llvm::toString(R.takeError()),
+                "Darwin system max_files_per_process must be between 0 and "
+                "INT32_MAX");
+    }
+  }
+}
+
 TEST(ProcessReport, CredentialsRequireDarwinAndTypedAdmissionBeforeLoading) {
   auto O = processOptionsFromJSON(std::string("{\"darwin_system\":") +
                                   darwin_test::CredentialsJSON + "}");

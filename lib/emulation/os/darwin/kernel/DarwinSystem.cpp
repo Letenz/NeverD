@@ -10,6 +10,7 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <algorithm>
 #include <type_traits>
 
 namespace neverd::emulation::darwin_model {
@@ -133,6 +134,9 @@ llvm::Error validateSystemOptions(const DarwinSystemOptions &Options) {
   if (Options.CPUCount &&
       (!*Options.CPUCount || *Options.CPUCount > uint32_t(INT32_MAX)))
     return failure(diagnostic::SystemCPUCount);
+  if (Options.MaxFilesPerProcess &&
+      *Options.MaxFilesPerProcess > uint32_t(INT32_MAX))
+    return failure(diagnostic::SystemMaxFilesPerProcess);
   for (const auto &[Resource, Limit] : Options.ResourceLimits)
     if (Resource >= ResourceLimitCount || Limit.Current > Limit.Maximum ||
         Limit.Maximum > ResourceLimitInfinity)
@@ -159,6 +163,16 @@ systemService(GuestMemory &Memory, uint64_t PageSize, ServiceKind Kind,
     return returned(credentialID(Kind, Options));
   default:
     break;
+  }
+  if (Kind == ServiceKind::GetDTableSize) {
+    if (!Options || !Options->MaxFilesPerProcess ||
+        !Options->ResourceLimits.contains(ResourceLimitNoFile))
+      return unsupported(Result, diagnostic::DescriptorTableObservation);
+    // XNU proc_limitgetcur_nofile clips the full rlim_t before returning int.
+    // Neither the hard limit nor a guest execution/descriptor budget applies.
+    return returned(
+        std::min(Options->ResourceLimits.at(ResourceLimitNoFile).Current,
+                 uint64_t(*Options->MaxFilesPerProcess)));
   }
   if (Kind == ServiceKind::GetGroups) {
     const uint32_t Capacity = uint32_t(A[0]);
@@ -279,9 +293,11 @@ systemService(GuestMemory &Memory, uint64_t PageSize, ServiceKind Kind,
     return unsupported(Result, diagnostic::SystemKey);
   // A pointer alone is not a write request. Keep name/MIB and oldlenp
   // preflight before this decision. Root cannot infer a modeled privileged
-  // write to kern.osversion; native read-only nodes still reject writes.
+  // write to kern.osversion or kern.maxfilesperproc; native read-only nodes
+  // still reject writes.
   if (A[4] && A[5]) {
-    if (Selected->Kind == Observation::OSVersion &&
+    if ((Selected->Kind == Observation::OSVersion ||
+         Selected->Kind == Observation::MaxFilesPerProcess) &&
         credentialID(ServiceKind::GetEUID, Options) == 0)
       return unsupported(Result, diagnostic::SystemPrivilegedWrite);
     return returned(OperationNotPermitted, true);

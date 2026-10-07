@@ -119,6 +119,7 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::Sysctl:
   case ServiceKind::SysctlByName:
   case ServiceKind::GetRlimit:
+  case ServiceKind::GetDTableSize:
   case ServiceKind::GetRusage:
   case ServiceKind::GetGroups:
   case ServiceKind::GetUID:

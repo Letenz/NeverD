@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: dcf1c6fd8dade7571d6c20c70f66ce44bd254c717076498f8a48e46deec70a62 -->
+<!-- i18n-source: 854783aa85d00cdf9407d25b961d4a98e2a61885a55d71c416365143d066a1b7 -->
 
 [← 文件索引](README.md)
 
@@ -348,7 +348,7 @@ Release Darwin 共 835 項：474 通過、360 項後端不可用跳過，既有 
 
 `ProcessOptions::DarwinSystem` / `darwin_system` 為所有 Darwin 設定的 `sysctl(202)` 與原始 `sysctlbyname(274)` 提供固定觀察值。各欄位皆可省略；缺少的值或未列出的鍵明確停止為不支援。不查詢主機、不推測版本或機型。嚴格 JSON 與 C++ 驗證在載入映像前拒絕非法值與非 Darwin 設定。
 
-`os_revision` 為帶符號32位；`cpu_count` 為1至 INT32_MAX；`memory_size` 保留完整無符號64位。其餘欄位是最多1023位元組、無內嵌 NUL 的字串，允許明確空字串。輸出含結尾 NUL。CPU 與記憶體報告不會改變排程或配置預算。
+`os_revision` 為有符號 32 位；`cpu_count` 為 1..INT32_MAX；`memory_size` 保留無符號 64 位；`max_files_per_process` 為 0..INT32_MAX，採四位元組 int 編碼。其餘純量欄位是最多 1023 位元組且無內嵌 NUL 的字串，允許明確空字串，結果包含結尾 NUL。觀察值不改變排程、配置或描述符預算。
 
 | JSON 欄位 | sysctl 名稱 | MIB |
 | --- | --- | --- |
@@ -361,12 +361,13 @@ Release Darwin 共 835 項：474 通過、360 項後端不可用跳過，既有 
 | `model` | `hw.model` | `6,2` |
 | `cpu_count` | `hw.ncpu` | `6,3` |
 | `memory_size` | `hw.memsize` | `6,24` |
+| `max_files_per_process` | `kern.maxfilesperproc` | `1,29` |
 
 `hw.pagesize` 取自既有客體記憶體策略，通常為8位元組；非空輸出且容量恰為4時為4位元組。舊 MIB `[6,7]` 與 `hw.pagesize_compat` 固定回傳4位元組。`hw.pagesize` 的動態數字 OID 仍不支援。`hw.memsize` 在容量恰為4時，僅當64位模式是帶符號32位值的符號擴展才縮窄，否則 ERANGE34 保持輸出與長度不變。
 
 MIB 數量取低32位且須為2–12；名稱長度取完整64位且須小於1024。先檢查全部指定的位元組，再依首個 NUL 解讀並移除一個末尾點；空名稱回傳 ENOENT，部分可讀輸入不支援。非空 `oldlenp` 在副作用前須完整具備8位元組讀寫權限；原生錯誤長度指標探測未在期限內返回，因此明確不支援。空 `oldlenp` 表示容量0；空 `oldp` 僅查長度。短緩衝區回傳 ENOMEM12、不寫資料並將長度設0；資料 EFAULT 保持原長度。先擷取輸入與容量，再寫資料、最後寫長度，保留別名順序與後續傳輸失敗前完成的複製。
 
-newp/newlen 均非零才是寫入請求。先保留名稱/MIB 與 oldlenp 完整讀寫預檢，再由預設或明確非 root EUID 在觀察值和資料輸出前回傳 EPERM1。EUID0 的 kern.osversion 特權寫入明確停止 unsupported；RUID 不決定此分支。其他原生唯讀節點即使 root 仍 EPERM1。新長度0忽略指標；未知鍵、樹和動態 OID 不猜 ENOENT。
+newp/newlen 均非零才是寫入請求。先保留名稱/MIB 與 oldlenp 完整讀寫預檢，再由預設或明確非 root EUID 在觀察值和資料輸出前回傳 EPERM1。EUID0 的 kern.osversion / kern.maxfilesperproc 特權寫入明確停止 unsupported；RUID 不決定此分支。其他原生唯讀節點即使 root 仍 EPERM1。新長度0忽略指標；未知鍵、樹和動態 OID 不猜 ENOENT。
 
 原創 `system-info` 檢查原生 macOS 與客體 ABI；`virtual-system` 透過 C++、C/CLI、Python 比對明確設定的位元組。獨立 SDK 對照將主機九項觀察值作為明確測試輸入，比較名稱與數字輸出；不代表 iOS 實機或 Intel HVF 驗收。
 
@@ -648,3 +649,23 @@ getgroups容量低32位有號int：負數先EINVAL，未知先unsupported，已�
 21 value +5 native fault,5s; host16groups, positive short capacity: OK. Native partial32byte thenEFAULT: observation only. Counts overlap. `build-hvf-arm64/credential-observations/`.
 
 首輪8失敗（5指令預算、3個5秒期限）、12略過；兩頁掃描太重。改為同一跨頁完整132位元組保護（64前、最多64資料、至少4後），直接測試仍驗整兩頁。預算/參數/故障負控不變，源碼/二進位/兩次結果保留；直接傳輸跨頁幾何執行前修正，公共選項使用內容比較。權限/ACL、連結、修改後目錄完整觀察、shared maps/EOF、時鐘、Mach/thread/dyld/framework未完；實體iOS、暂停Intel HVF、merge CI分開驗收。
+
+## 由明確進程與核心限制決定的描述符表查詢
+
+可選 `DarwinSystemOptions::MaxFilesPerProcess` / `darwin_system.max_files_per_process` 宣告非負 int 觀察值，缺省未知，明確零有效。名稱 `kern.maxfilesperproc` 與數字 MIB `[1,29]` 獨立讀取同一個四位元組值，不要求資源限制。無損整數解析與中央驗證在載入前拒絕錯誤型別、負數及越界值；非 Darwin 設定明確拒絕。
+
+BSD `getdtablesize(89)` 必須同時具有該上限與 `ResourceLimits[8].Current`，回傳兩者較小值。先截斷完整 64 位 Current，再按 int 回傳：Current=`0x100000001`、cap=64 得到 64，無窮限制也安全截斷。Maximum、宿主值、目前 FD 數與 `DescriptorLimit` 不替代觀察值；任何一項缺失時，即使另一項為零仍 unsupported。忽略全部六個引數，不存取使用者記憶體，沿用 BSD carry/次級暫存器約定；Mach timebase 的 89 號陷入保持獨立。
+
+sysctl 沿用既有複製階段。EUID0 的真實寫入在名稱/MIB 與 oldlenp 預檢後、觀察值和輸出前停止 unsupported；非 root 回傳 EPERM，新指標長度為零仍讀取。不據此執行限制或授予寫入權限。既有必需資源 workload 核對兩種 cap 查詢及低位/高位 syscall number，輸出仍為 `l` / 144 位元組，後續 unsupported 保留已輸出資料。獨立純量 fixture 驗證缺值、零、寬 Current 與 DescriptorLimit=3 的預算獨立性。
+
+```json
+{"darwin_system":{"max_files_per_process":64,"resource_limits":[{"resource":8,"current":"4294967297","maximum":"9223372036854775807"}]}}
+```
+
+[XNU getdtablesize](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c), [XNU proc_limitgetcur_nofile](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [XNU MIB constants](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/sysctl.h).
+
+驗證: Darwin (登記/通過/不可用/失敗) 1441/913/528/0; ARM64 HVF 132/132; System/SDK 80/80; File 365/365; C/CLI 211/211; ProcessReport 45/45; native 33/33; Python 5 (42.254s); API 71; runner 44 + reference 5. clang-format 22.1.2; capabilities/provenance; docs 286 / locales 10 / negative controls 3.
+
+嘗試記錄：首次 runner 檢查在 ARM64 與 x86-64 清單子項失敗，因為新純量方法缺少必需登記。補齊登記並保留全部方法相等規則。初始 129 必需項門檻及失敗記錄保留，重新執行的最終 ARM64 門檻要求 132 項。
+
+計數互有重疊。新證據於 `build-hvf-arm64/descriptor-table-observations/` 保留實際執行基線及精確原始碼、二進位、日誌雜湊，舊證據不變。原生探針為五個一次性 ARM64 macOS 子進程、40 項檢查，每進程五秒期限；預設 Current=1048575/cap=245760 回傳 245760，子進程 Current=0/1/32/245777 回傳 0/1/32/245760，父進程與系統限制未改變。iOS 實機、暫停 Intel HVF、遠端 merge CI 分別驗收。權限、變更後目錄觀察、共享映射/EOF、推進時鐘、Mach/thread/dyld 與框架執行期仍未完整。

@@ -19,4 +19,7 @@ NEVERD_DARWIN_SYSTEM_FIELD(Machine, SystemMachine, "hw.machine", 6, 1)
 NEVERD_DARWIN_SYSTEM_FIELD(Model, SystemModel, "hw.model", 6, 2)
 NEVERD_DARWIN_SYSTEM_FIELD(CPUCount, SystemCPUCount, "hw.ncpu", 6, 3)
 NEVERD_DARWIN_SYSTEM_FIELD(MemorySize, SystemMemorySize, "hw.memsize", 6, 24)
+// Writable natively for root; only its immutable read observation is modeled.
+NEVERD_DARWIN_SYSTEM_FIELD(MaxFilesPerProcess, SystemMaxFilesPerProcess,
+                           "kern.maxfilesperproc", 1, 29)
 #endif

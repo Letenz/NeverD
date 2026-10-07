@@ -76,6 +76,10 @@ struct DarwinSystemOptions {
   /// Absence retains UID/GID 1000; it never supplies a group list or grants
   /// filesystem permissions, credential mutation or privileged sysctl writes.
   std::optional<DarwinCredentials> Credentials;
+  /// Nonnegative int observation (0..INT32_MAX) for kern.maxfilesperproc.
+  /// With ResourceLimits[8].Current this supplies getdtablesize; neither
+  /// observation enforces the descriptor budget or queries the host.
+  std::optional<uint32_t> MaxFilesPerProcess;
 };
 } // namespace neverd::emulation
 #endif

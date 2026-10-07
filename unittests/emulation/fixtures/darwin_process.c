@@ -258,6 +258,20 @@ static int resource_usage(int emit_values) {
   return 37;
 }
 
+static int descriptor_table_query(void) {
+  unsigned error;
+  u64 value = call(0x1234567800000059UL, -1UL, -1UL, 0x1122334455667788UL, -1UL,
+                   -1UL, -1UL, &error);
+  if (error || secondary || value > 0x7fffffffUL)
+    return 51;
+  unsigned char bytes[4];
+  for (unsigned i = 0; i != 4; ++i)
+    bytes[i] = value >> (i * 8);
+  if (call(4, 1, (u64)bytes, 4, 0, 0, 0, &error) != 4 || error || secondary)
+    return 52;
+  return 37;
+}
+
 static int resource_limits(int emit_values) {
   unsigned char bytes[18], flagged[16];
   unsigned error;
@@ -293,6 +307,42 @@ static int resource_limits(int emit_values) {
   for (unsigned i = 0; i != 16; ++i)
     if (flagged[i] != bytes[i + 1])
       return 71;
+  const u64 nofile_current = little_integer(bytes + 1, 8);
+  const char cap_name[] = "kern.maxfilesperproc";
+  unsigned cap_mib[] = {1, 29};
+  unsigned char cap_bytes[6], saved_cap[4];
+  u64 cap = 0, cap_length = 4;
+  for (unsigned named = 0; named != 2; ++named) {
+    for (unsigned i = 0; i != sizeof(cap_bytes); ++i)
+      cap_bytes[i] = 0xa5;
+    cap_length = 4;
+    RESOURCE_EXPECT(
+        !call(named ? 274 : 202, named ? (u64)cap_name : (u64)cap_mib,
+              named ? sizeof(cap_name) - 1 : 0x1234567800000002UL,
+              (u64)(cap_bytes + 1), (u64)&cap_length, -1UL, 0, &error) &&
+        !error && !secondary && cap_length == 4 && cap_bytes[0] == 0xa5 &&
+        cap_bytes[5] == 0xa5);
+    if (!named) {
+      cap = little_integer(cap_bytes + 1, 4);
+      RESOURCE_EXPECT(cap <= 0x7fffffffUL);
+      for (unsigned i = 0; i != 4; ++i)
+        saved_cap[i] = cap_bytes[i + 1];
+    } else
+      RESOURCE_EXPECT(little_integer(cap_bytes + 1, 4) == cap);
+  }
+  const u64 expected_table = nofile_current < cap ? nofile_current : cap;
+  for (unsigned high = 0; high != 2; ++high) {
+    RESOURCE_EXPECT(call(high ? 0x1234567800000059UL : 89, -1UL,
+                         (u64)(cap_bytes + 1), 0x1122334455667788UL, -1UL,
+                         (u64)&cap_length, -1UL, &error) == expected_table &&
+                    !error && !secondary && cap_length == 4 &&
+                    cap_bytes[0] == 0xa5 && cap_bytes[5] == 0xa5 &&
+                    bytes[0] == 0xa5 && bytes[17] == 0xa5);
+    for (unsigned i = 0; i != 4; ++i)
+      RESOURCE_EXPECT(cap_bytes[i + 1] == saved_cap[i]);
+    for (unsigned i = 0; i != 16; ++i)
+      RESOURCE_EXPECT(flagged[i] == bytes[i + 1]);
+  }
   const u64 invalid[] = {9, 0x1009, 0x2000, 0xffffffffUL};
   for (unsigned i = 0; i != 4; ++i) {
     for (unsigned j = 0; j != sizeof(bytes); ++j)
@@ -3137,6 +3187,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (equal(argv[1], "resource-limits") ||
       equal(argv[1], "virtual-resource-limits"))
     return resource_limits(equal(argv[1], "virtual-resource-limits"));
+  if (equal(argv[1], "descriptor-table-query"))
+    return descriptor_table_query();
   if (equal(argv[1], "system-info") || equal(argv[1], "virtual-system"))
     return system_info(equal(argv[1], "virtual-system"));
   if (equal(argv[1], "time-null"))

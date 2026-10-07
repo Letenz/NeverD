@@ -840,7 +840,7 @@ Release Darwin reconciled 835 registrations: 474 passed, 360 unavailable-backend
 
 `ProcessOptions::DarwinSystem` / `darwin_system` supplies fixed observations for `sysctl(202)` and raw `sysctlbyname(274)` on every Darwin profile. Each field is optional; an omitted value or unlisted key stops as unsupported. There are no host queries or inferred version/model defaults. Strict JSON and typed validation reject malformed values and non-Darwin profiles before image loading.
 
-`os_revision` is signed 32-bit; `cpu_count` is 1 through INT32_MAX; `memory_size` retains all unsigned 64 bits. Other fields are strings of at most 1023 bytes without embedded NUL; explicit empty strings are valid. Results include the terminating NUL. CPU and memory reports do not change scheduling or the allocation budget.
+`os_revision` is signed 32-bit; `cpu_count` is 1 through INT32_MAX; `memory_size` retains all unsigned 64 bits; `max_files_per_process` is 0 through INT32_MAX and has a four-byte int encoding. The remaining scalar fields are strings of at most 1023 bytes without embedded NUL; explicit empty strings are valid and results include the terminating NUL. These observations do not change scheduling or allocation/descriptor budgets.
 
 | JSON field | sysctl name | MIB |
 | --- | --- | --- |
@@ -853,12 +853,13 @@ Release Darwin reconciled 835 registrations: 474 passed, 360 unavailable-backend
 | `model` | `hw.model` | `6,2` |
 | `cpu_count` | `hw.ncpu` | `6,3` |
 | `memory_size` | `hw.memsize` | `6,24` |
+| `max_files_per_process` | `kern.maxfilesperproc` | `1,29` |
 
 `hw.pagesize` comes from the existing guest memory policy: normally eight bytes, or four when a nonnull output has capacity exactly four. The legacy MIB `[6,7]` and name `hw.pagesize_compat` always return four bytes. The dynamic numeric OID for `hw.pagesize` remains unsupported. `hw.memsize` also narrows at exact capacity four only when its 64-bit pattern is a sign extension of a signed 32-bit value; otherwise ERANGE34 preserves output and length.
 
 MIB counts use the low 32 bits and must be 2–12; named lengths use all 64 bits and must be below 1024. Every supplied name byte is checked before interpreting the first NUL and removing one final dot. An empty name returns ENOENT. Partial input remains unsupported. A nonnull `oldlenp` must be fully readable and writable for eight bytes before effects; faulting native length probes did not return within their deadlines, so those pointers remain an explicit unsupported boundary. Null `oldlenp` means capacity zero; null `oldp` requests only the size. A short buffer returns ENOMEM12, leaves data untouched and writes length zero. Data EFAULT preserves the old length. Input and capacity are captured before data, with the final length copy last, including aliases and retained earlier copies after transport failure.
 
-Only nonzero `newp` together with nonzero `newlen` is a write request. After the original name/MIB and complete oldlenp read/write preflight, default or explicit non-root EUID returns EPERM1 before observation lookup or data-output access. With explicit EUID0, privileged-writable `kern.osversion` stops unsupported because privileged writes are not modeled; real UID does not decide this branch. Native read-only selected nodes retain EPERM1 even for root. A pointer with zero new length is ignored. Unknown keys, other trees and dynamic OIDs do not acquire guessed ENOENT results.
+Only nonzero `newp` together with nonzero `newlen` is a write request. After the original name/MIB and complete oldlenp read/write preflight, default or explicit non-root EUID returns EPERM1 before observation lookup or data-output access. With explicit EUID0, privileged-writable `kern.osversion / kern.maxfilesperproc` stops unsupported because privileged writes are not modeled; real UID does not decide this branch. Native read-only selected nodes retain EPERM1 even for root. A pointer with zero new length is ignored. Unknown keys, other trees and dynamic OIDs do not acquire guessed ENOENT results.
 
 The original `system-info` program checks native macOS and guest ABI behavior; `virtual-system` compares exact configured bytes through C++, C/CLI and Python. A separate SDK oracle captures all nine host observations as explicit test inputs and compares both named and numeric output. This does not provide iOS device or Intel HVF acceptance.
 
@@ -1357,7 +1358,7 @@ Unaligned/cross-page copies preserve full guards. Wholly unwritable output gives
 EFAULT; individually partial output stops unsupported before any byte. Backend
 errors remain transport errors. BSD error return preserves x64 RDX and clears
 ARM64 X1; successful secondary results clear on both. Reports preserve full raw
-arguments. Explicit EUID0 changes only the declared kern.osversion write boundary
+arguments. Explicit EUID0 changes only the declared kern.osversion / kern.maxfilesperproc write boundary
 described above, after the existing input/length preflight.
 
 
@@ -1401,3 +1402,23 @@ Permissions/ACLs, links, complete directory observations after mutation,
 coherent shared maps/EOF, advancing clocks, Mach/thread/dyld and frameworks
 remain unfinished. Physical iOS, suspended Intel HVF and remote merge CI remain
 separate acceptance boundaries.
+
+## Descriptor-table size from declared process and kernel limits
+
+`DarwinSystemOptions::MaxFilesPerProcess` / `darwin_system.max_files_per_process` declares an optional nonnegative int observation. Missing is unknown; explicit zero is valid. Named `kern.maxfilesperproc` and numeric MIB `[1,29]` read the same four-byte value, independently of resource limits. Strict lossless integer parsing and central validation reject malformed, negative or oversized values before image loading; non-Darwin profiles reject this configuration.
+
+BSD `getdtablesize(89)` requires this cap and `ResourceLimits[8].Current`, then returns their minimum. It clips the complete 64-bit Current before its int return: Current `0x100000001` with cap 64 returns 64, and infinite Current safely clips. Maximum, host values, live FD counts and `DescriptorLimit` are not substitutes. Missing either observation stops unsupported even when the known peer is zero. All six live arguments are ignored; the service performs no user-memory operation and uses the existing BSD carry/secondary-register convention. Mach timebase trap 89 remains separate.
+
+The existing sysctl copy phases apply. Declared effective UID 0 cannot infer privileged writes to `kern.maxfilesperproc`: a true write stops unsupported after name/MIB and oldlenp preflight, before observations or output. Non-root returns EPERM; a new pointer with zero length stays a read. No limits or write authorization are inferred. The required resource workload compares both cap queries and low/high-number getdtablesize while keeping its original `l` / 144-byte output; a later unsupported query preserves bytes already emitted. A separate scalar fixture proves missing peers, zero, wide Current and independence from DescriptorLimit=3.
+
+```json
+{"darwin_system":{"max_files_per_process":64,"resource_limits":[{"resource":8,"current":"4294967297","maximum":"9223372036854775807"}]}}
+```
+
+[XNU getdtablesize](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c), [XNU proc_limitgetcur_nofile](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [XNU MIB constants](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/sysctl.h).
+
+Checks: Darwin (registered/passed/unavailable/failed) 1441/913/528/0; ARM64 HVF 132/132; System/SDK 80/80; File 365/365; C/CLI 211/211; ProcessReport 45/45; native 33/33; Python 5 (42.254s); API 71; runner 44 + reference 5. clang-format 22.1.2; capabilities/provenance; docs 286 / locales 10 / negative controls 3.
+
+Attempt history: the first runner check failed in the ARM64 and x86-64 inventory subtests because the new scalar method lacked mandatory registration. Registration was added without relaxing the method-equality rule. The initial 129-required gate and failed runner records are retained; the fresh final ARM64 gate requires 132 cases.
+
+Counts overlap. Evidence preserves the actual execution baseline plus exact source/binary/log hashes under `build-hvf-arm64/descriptor-table-observations/`; prior observation evidence stays immutable. Native probe: five disposable ARM64 macOS processes, 40 checks, five-second deadline each. Captured default Current=1048575/cap=245760 returned 245760; child Current=0/1/32/245777 returned 0/1/32/245760. Parent and system limits were unchanged. Physical iOS, suspended Intel HVF and remote merge CI remain separate. Permissions, mutable directory observations, coherent shared maps/EOF, advancing clocks, Mach/thread/dyld and framework runtime remain unfinished.

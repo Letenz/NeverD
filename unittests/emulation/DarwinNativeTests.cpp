@@ -173,6 +173,87 @@ TEST(DarwinNative, UsageMatchesOneSDKCaptureWithEverySignedFieldAndPadding) {
 #endif
 }
 
+TEST(DarwinNative, DescriptorTableAndCapMatchIndependentSDKCaptures) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "Native descriptor observation capture requires macOS";
+#else
+  ASSERT_EQ(sizeof(int), 4u);
+  ASSERT_EQ(RLIMIT_NOFILE, 8);
+  ASSERT_EQ(CTL_KERN, 1);
+  ASSERT_EQ(KERN_MAXFILESPERPROC, 29);
+  int Cap = -1, Numeric = -1;
+  size_t Size = sizeof Cap;
+  ASSERT_EQ(::sysctlbyname("kern.maxfilesperproc", &Cap, &Size, nullptr, 0), 0);
+  ASSERT_EQ(Size, 4u);
+  ASSERT_GE(Cap, 0);
+  int MIB[] = {CTL_KERN, KERN_MAXFILESPERPROC};
+  Size = sizeof Numeric;
+  ASSERT_EQ(::sysctl(MIB, 2, &Numeric, &Size, nullptr, 0), 0);
+  ASSERT_EQ(Size, 4u);
+  ASSERT_EQ(Numeric, Cap);
+  struct rlimit Limit;
+  ASSERT_EQ(::getrlimit(RLIMIT_NOFILE, &Limit), 0);
+  const auto SDK = ::getdtablesize();
+  ASSERT_GE(SDK, 0);
+  ASSERT_EQ(uint64_t(SDK),
+            Limit.rlim_cur < uint64_t(Cap) ? Limit.rlim_cur : uint64_t(Cap));
+  DarwinSystemOptions Options;
+  Options.MaxFilesPerProcess = Cap;
+  Options.ResourceLimits[8] = {Limit.rlim_cur, Limit.rlim_max};
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(Options)));
+  for (uint64_t Page : {uint64_t(4096), uint64_t(16384)}) {
+    auto Physical = PhysicalMemory::create(Page * 2);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Space = AddressSpace::create(*Physical, Page * 2);
+    ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
+    constexpr uint64_t Base = 0x100000;
+    ASSERT_FALSE(
+        bool((*Space)->map(Base, Page * 2, Read | Write | UserAccessible)));
+    ProcessResult Result{
+        ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+        ExecutionBackendKind::Unicorn, "SDK descriptor capture"};
+    std::vector<uint8_t> Guard(Page * 2, 0xa5), Actual(Page * 2);
+    ASSERT_FALSE(bool((*Space)->write(Base, Guard)));
+    auto Out = darwin_model::systemService(
+        **Space, Page, darwin_model::ServiceKind::GetDTableSize,
+        {0, 89, {UINT64_MAX, UINT64_MAX, UINT64_MAX, 1, 1, 1}, std::nullopt},
+        Options, Result);
+    ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+    ASSERT_TRUE(*Out) << Result.Diagnostic;
+    EXPECT_EQ((**Out).Value, uint64_t(SDK));
+    EXPECT_FALSE((**Out).Error);
+    ASSERT_FALSE(bool((*Space)->read(Base, Actual)));
+    EXPECT_EQ(Actual, Guard);
+    for (bool Named : {false, true}) {
+      auto Expected = Guard;
+      constexpr char Name[] = "kern.maxfilesperproc";
+      std::memcpy(Expected.data(),
+                  Named ? static_cast<const void *>(Name)
+                        : static_cast<const void *>(MIB),
+                  Named ? sizeof(Name) - 1 : sizeof(MIB));
+      llvm::support::endian::write64le(Expected.data() + 128, 4);
+      ASSERT_FALSE(bool((*Space)->write(Base, Expected)));
+      std::memcpy(Expected.data() + Page - 1, &Cap, 4);
+      auto Kind = Named ? darwin_model::ServiceKind::SysctlByName
+                        : darwin_model::ServiceKind::Sysctl;
+      Out = darwin_model::systemService(
+          **Space, Page, Kind,
+          {0,
+           Named ? 274u : 202u,
+           {Base, Named ? sizeof(Name) - 1 : 2, Base + Page - 1, Base + 128},
+           std::nullopt},
+          Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out) << Result.Diagnostic;
+      EXPECT_EQ((**Out).Value, 0u);
+      EXPECT_FALSE((**Out).Error);
+      ASSERT_FALSE(bool((*Space)->read(Base, Actual)));
+      EXPECT_EQ(Actual, Expected);
+    }
+  }
+#endif
+}
+
 TEST(DarwinNative, ResourcePairsMatchSDKCaptureLayoutAndBothFlagSpellings) {
 #if !defined(__APPLE__)
   GTEST_SKIP() << "Native resource observation capture requires macOS";

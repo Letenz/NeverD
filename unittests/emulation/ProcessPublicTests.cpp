@@ -1507,6 +1507,31 @@ TEST_F(ProcessPublic, AndroidSyscallNamesMatchSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, DarwinDescriptorCapRejectsMalformedOptionsBeforeLoading) {
+  for (const char *Bad :
+       {"null", "true", "-1", "0.5", "2147483648", R"("4294967296")"}) {
+    auto Request =
+        std::string("{\"darwin_system\":{\"max_files_per_process\":") + Bad +
+        "}}";
+    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho",
+                                          MacOSMachO64, Request.c_str()),
+              nullptr);
+    EXPECT_NE(
+        takeString(neverd_last_error(Session)).find("max_files_per_process"),
+        std::string::npos);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+  for (const char *Profile : {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
+    EXPECT_EQ(neverd_emulate_process_json(
+                  Session, "missing.macho", Profile,
+                  R"({"darwin_system":{"max_files_per_process":0}})"),
+              nullptr);
+    EXPECT_EQ(takeString(neverd_last_error(Session)),
+              field::DarwinSystemProfile);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+}
+
 TEST_F(ProcessPublic, InvalidSetupDoesNotPoisonTheReusableSession) {
   EXPECT_EQ(
       neverd_emulate_process_json(nullptr, Path.c_str(), LinuxELF64, nullptr),

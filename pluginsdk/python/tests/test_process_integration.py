@@ -703,7 +703,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                             file_options = json.dumps(usage_options)
                         if mode in ("resource-limits", "virtual-resource-limits"):
                             resource_options = json.loads(file_options)
-                            resource_options["darwin_system"] = {"resource_limits": [
+                            resource_options["darwin_system"] = {"max_files_per_process": 64, "resource_limits": [
                                 {"resource": 0, "current": 0, "maximum": 0},
                                 {"resource": 1, "current": "9223372036854775807", "maximum": "9223372036854775807"},
                                 {"resource": 2, "current": "81985529216486895", "maximum": "9223372036854775807"},

@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: dcf1c6fd8dade7571d6c20c70f66ce44bd254c717076498f8a48e46deec70a62 -->
+<!-- i18n-source: 854783aa85d00cdf9407d25b961d4a98e2a61885a55d71c416365143d066a1b7 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -348,7 +348,7 @@ Release Darwin:835 حالة، نجحت474 وتُخطيت360، وتجاوز اخ�
 
 يوفر `ProcessOptions::DarwinSystem` / `darwin_system` ملاحظات ثابتة لاستدعاء `sysctl(202)` و`sysctlbyname(274)` المباشر في جميع ملفات Darwin. كل حقل اختياري؛ القيمة الغائبة أو المفتاح غير المدرج يؤدي إلى توقف صريح لعدم الدعم. لا توجد استعلامات للمضيف أو افتراضات عن الإصدار والطراز. يرفض تحقق JSON الصارم وC++ القيم غير الصحيحة والملفات غير Darwin قبل تحميل الصورة.
 
-`os_revision` عدد بإشارة من 32 بت؛ `cpu_count` من 1 إلى INT32_MAX؛ ويحفظ `memory_size` جميع 64 بت دون إشارة. بقية الحقول سلاسل حتى 1023 بايت بلا NUL داخلي، مع السماح بالسلسلة الفارغة الصريحة. يشمل الخرج NUL النهائي. معلومات CPU والذاكرة لا تغير الجدولة أو ميزانية التخصيص.
+`os_revision` عدد بإشارة من 32 بت؛ `cpu_count` ضمن 1..INT32_MAX؛ `memory_size` يحتفظ بـ64 بت دون إشارة؛ `max_files_per_process` ضمن 0..INT32_MAX بترميز int من أربعة بايتات. الحقول القياسية الأخرى سلاسل حتى 1023 بايت دون NUL داخلي؛ السلسلة الفارغة المعلنة صالحة وتشمل النتيجة NUL النهائي. لا تغير الملاحظات الجدولة أو ميزانية الذاكرة أو الواصفات.
 
 | حقل JSON | اسم sysctl | MIB |
 | --- | --- | --- |
@@ -361,12 +361,13 @@ Release Darwin:835 حالة، نجحت474 وتُخطيت360، وتجاوز اخ�
 | `model` | `hw.model` | `6,2` |
 | `cpu_count` | `hw.ncpu` | `6,3` |
 | `memory_size` | `hw.memsize` | `6,24` |
+| `max_files_per_process` | `kern.maxfilesperproc` | `1,29` |
 
 يأتي `hw.pagesize` من سياسة ذاكرة الضيف الحالية: ثمانية بايت عادة، أو أربعة إذا كان مؤشر الخرج غير صفري والسعة أربعة بالضبط. يعيد MIB القديم `[6,7]` والاسم `hw.pagesize_compat` أربعة بايت دائماً. يبقى OID الرقمي الديناميكي لـ`hw.pagesize` غير مدعوم. يضيق `hw.memsize` عند سعة أربعة فقط إذا كان نمط 64 بت امتداد إشارة لقيمة 32 بت؛ وإلا يعيد ERANGE34 مع حفظ الخرج والطول.
 
 يستخدم عدد MIB أدنى 32 بت ويجب أن يكون 2–12؛ طول الاسم يستخدم 64 بت كاملة ويجب أن يقل عن 1024. تُفحص جميع البايتات المحددة قبل تفسير أول NUL وإزالة نقطة نهائية واحدة. الاسم الفارغ يعيد ENOENT والمدخل المقروء جزئياً غير مدعوم. يجب أن يتيح `oldlenp` غير الصفري قراءة وكتابة ثمانية بايت كاملة قبل أي أثر. لم ترجع تجارب مؤشرات الطول المعطوبة الأصلية ضمن المهلة، لذا تبقى هذه المؤشرات خارج حدود الدعم صراحة. `oldlenp` الصفري يعني سعة صفر و`oldp` الصفري يطلب الحجم فقط. المخزن القصير يعيد ENOMEM12 دون تغيير البيانات ويكتب طولاً صفرياً. يحفظ EFAULT للبيانات الطول القديم. تُلتقط المدخلات والسعة قبل البيانات ويُنسخ الطول أخيراً، مع حفظ ترتيب التداخل والنسخ المكتملة إذا فشل النقل لاحقاً.
 
-الكتابة تتطلب newp/newlen غير صفريين. تبقى قراءة الاسم/MIB وفحوص oldlenp الكاملة للقراءة/الكتابة أولاً. EUID الافتراضي أو غيرroot المعلن يعيد EPERM1 قبل الملاحظة وخرج البيانات. EUID0 يوقف kern.osversion unsupported لأن الكتابة ذات الصلاحيات الخاصة غير ممثلة؛ RUID لا يقرر. العقد الأصلية الأخرى للقراءة فقط تبقى EPERM1 حتىroot. طول جديد0 يتجاهل المؤشر ولا يُخمن ENOENT للمفاتيح/الأشجار/OID الديناميكية المجهولة.
+الكتابة تتطلب newp/newlen غير صفريين. تبقى قراءة الاسم/MIB وفحوص oldlenp الكاملة للقراءة/الكتابة أولاً. EUID الافتراضي أو غيرroot المعلن يعيد EPERM1 قبل الملاحظة وخرج البيانات. EUID0 يوقف kern.osversion / kern.maxfilesperproc unsupported لأن الكتابة ذات الصلاحيات الخاصة غير ممثلة؛ RUID لا يقرر. العقد الأصلية الأخرى للقراءة فقط تبقى EPERM1 حتىroot. طول جديد0 يتجاهل المؤشر ولا يُخمن ENOENT للمفاتيح/الأشجار/OID الديناميكية المجهولة.
 
 يفحص البرنامج الأصلي `system-info` واجهة ABI على macOS الأصلي والضيف؛ ويقارن `virtual-system` البايتات المضبوطة عبر C++ وC/CLI وPython. يلتقط مرجع SDK مستقل ملاحظات المضيف التسع كمدخلات اختبار صريحة ويقارن المخرجات الاسمية والرقمية. هذا لا يثبت قبول iOS الفعلي أو Intel HVF.
 
@@ -646,3 +647,23 @@ getuid24/geteuid25/getgid47/getegid43/getgroups79 تشترك بمالكsystem و
 21 value +5 native fault,5s; host16groups, positive short capacity: OK. Native partial32byte thenEFAULT: observation only. Counts overlap. `build-hvf-arm64/credential-observations/`.
 
 الجولة الأولى8فشل (5ميزانية تعليمات،3مهل5ثوان) و12skip. حُدد مسح صفحتين فيfixture إلى كامل132بايت على نفس الحد (64قبل،حتى64بيانات،4بعدعلى الأقل)؛ owner المباشر يفحص صفحتين كاملتين. الميزانيات/المعاملات/الضوابط السلبية ثابتة وحُفظت المصادر/binary والجولتان. هندسةtransport صُححت قبل التنفيذ وفق المراجعة واختيارpublic يقارن المحتوى. الصلاحيات/ACL والروابط وملاحظاتdirectory بعد التعديل وshared maps/EOF والساعات وMach/thread/dyld/framework غيرمكتملة؛ iOS الفعلي وIntelHVF الموقف وmergeCI منفصلة.
+
+## جدول الواصفات من حدود العملية والنواة المعلنة
+
+يعلن `DarwinSystemOptions::MaxFilesPerProcess` / `darwin_system.max_files_per_process` ملاحظة int اختيارية غير سالبة. الغياب مجهول والصفر الصريح صالح. يقرأ `kern.maxfilesperproc` وMIB `[1,29]` الأربعة بايتات نفسها باستقلال عن حدود الموارد. تحليل الأعداد الصحيحة دون فقد والتحقق المركزي يرفضان النوع الخاطئ والسالب والمتجاوز قبل التحميل؛ ملفات غير Darwin ترفض الإعداد أيضاً.
+
+يتطلب BSD `getdtablesize(89)` هذا الحد و`ResourceLimits[8].Current` ثم يعيد الأصغر. يُحد Current الكامل من64 بت قبل إرجاع int: `0x100000001` مع cap=64 يعيد64، والقيمة اللانهائية تُحد أيضاً. لا يحل Maximum أو host أو عدد FD الفعلي أو `DescriptorLimit` محل الملاحظات. غياب أي طرف يبقى unsupported حتى إن كان الآخر صفراً. تُهمل المعاملات الستة ولا تُلمس ذاكرة المستخدم، مع اتفاق BSD carry والسجل الثانوي القائم. يبقى Mach timebase trap89 مستقلاً.
+
+مراحل نسخ sysctl محفوظة. تتوقف الكتابة الفعلية EUID0 بوصف unsupported بعد الاسم/MIB وفحص oldlenp وقبل الملاحظة/الخرج؛ غيرroot يعيد EPERM. مؤشر جديد بطول صفر يبقى قراءة. لا يُستنتج تطبيق حدود أو صلاحية كتابة. يقارن workload الإلزامي كلا cap وأرقام syscall المنخفضة/العالية مع خرج `l` /144 بايت نفسه؛ رفض لاحق يحفظ البايتات الصادرة. يتحقق fixture قياسي مستقل من الغياب والصفر وCurrent الواسع والاستقلال عن DescriptorLimit=3.
+
+```json
+{"darwin_system":{"max_files_per_process":64,"resource_limits":[{"resource":8,"current":"4294967297","maximum":"9223372036854775807"}]}}
+```
+
+[XNU getdtablesize](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c), [XNU proc_limitgetcur_nofile](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [XNU MIB constants](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/sysctl.h).
+
+التحقق: Darwin (مسجلة/ناجحة/غير متاحة/فاشلة) 1441/913/528/0; ARM64 HVF 132/132; System/SDK 80/80; File 365/365; C/CLI 211/211; ProcessReport 45/45; native 33/33; Python 5 (42.254s); API 71; runner 44 + reference 5. clang-format 22.1.2; capabilities/provenance; docs 286 / locales 10 / negative controls 3.
+
+سجل المحاولات: فشل فحص runner الأول في قائمتَي ARM64 وx86-64 لغياب التسجيل الإلزامي للطريقة القياسية الجديدة. أُضيف التسجيل دون تخفيف قاعدة تطابق جميع الطرق. حُفظ الفحص الأول ذو 129 حالة إلزامية وسجلات الفشل؛ ويتطلب الفحص النهائي الجديد ARM64 عدد 132 حالة.
+
+الأعداد متداخلة. يحفظ `build-hvf-arm64/descriptor-table-observations/` خط أساس التنفيذ الفعلي وبصمات المصدر/الثنائيات/السجلات الدقيقة؛ الأدلة السابقة ثابتة. خمسة أبناء ARM64 macOS مؤقتين،40 فحصاً، مهلة خمس ثوان لكل منهم: Current=1048575/cap=245760 يعيد245760؛ أبناء Current=0/1/32/245777 يعيدون0/1/32/245760. حدود الأصل والنظام لم تتغير. iOS الحقيقي وIntel HVF المعلق وremote merge CI تحقق منفصل. الصلاحيات وملاحظات الدليل بعد التعديل وshared maps/EOF والساعات المتقدمة وMach/thread/dyld والأطر ما زالت غير مكتملة.

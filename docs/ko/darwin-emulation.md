@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: dcf1c6fd8dade7571d6c20c70f66ce44bd254c717076498f8a48e46deec70a62 -->
+<!-- i18n-source: 854783aa85d00cdf9407d25b961d4a98e2a61885a55d71c416365143d066a1b7 -->
 
 [← 문서 목록](README.md)
 
@@ -348,7 +348,7 @@ Release Darwin 835개: 통과474, 백엔드 미지원 건너뜀360, 기존 macOS
 
 `ProcessOptions::DarwinSystem` / `darwin_system`은 모든 Darwin 프로필의 `sysctl(202)`과 raw `sysctlbyname(274)`에 고정 관측값을 제공합니다. 필드는 모두 선택 사항이며, 누락된 값이나 목록 밖의 키는 지원되지 않음으로 중단합니다. 호스트 조회나 버전·모델 추정은 없습니다. 엄격한 JSON 및 C++ 검증은 이미지 로드 전에 잘못된 값과 비 Darwin 프로필을 거부합니다.
 
-`os_revision`은 부호 있는32비트, `cpu_count`는1～INT32_MAX, `memory_size`는 부호 없는64비트를 모두 보존합니다. 나머지는 내부 NUL 없는 최대1023바이트 문자열이며 명시적 빈 문자열도 허용합니다. 출력은 끝 NUL을 포함합니다. CPU·메모리 보고값은 스케줄링이나 할당 예산을 바꾸지 않습니다.
+`os_revision`은 부호 있는 32비트, `cpu_count`는 1..INT32_MAX, `memory_size`는 부호 없는 64비트입니다. `max_files_per_process`는 0..INT32_MAX의 4바이트 int입니다. 나머지 스칼라 필드는 최대 1023바이트이며 내부 NUL이 없는 문자열입니다. 명시적 빈 문자열도 유효하고 결과는 끝 NUL을 포함합니다. 관측값은 스케줄링, 할당 또는 기술자 예산을 변경하지 않습니다.
 
 | JSON 필드 | sysctl 이름 | MIB |
 | --- | --- | --- |
@@ -361,12 +361,13 @@ Release Darwin 835개: 통과474, 백엔드 미지원 건너뜀360, 기존 macOS
 | `model` | `hw.model` | `6,2` |
 | `cpu_count` | `hw.ncpu` | `6,3` |
 | `memory_size` | `hw.memsize` | `6,24` |
+| `max_files_per_process` | `kern.maxfilesperproc` | `1,29` |
 
 `hw.pagesize`는 기존 게스트 메모리 정책을 따르며 보통8바이트, null이 아닌 출력의 용량이 정확히4이면4바이트입니다. 기존 MIB `[6,7]`과 `hw.pagesize_compat`는 항상4바이트입니다. `hw.pagesize`의 동적 숫자 OID는 지원하지 않습니다. `hw.memsize`도 용량4에서64비트 패턴이 부호 있는32비트 값의 부호 확장과 일치할 때만 축소합니다. 그렇지 않으면 ERANGE34이며 출력과 길이를 유지합니다.
 
 MIB 개수는 하위32비트로2～12, 이름 길이는 전체64비트로1024 미만이어야 합니다. 지정된 모든 바이트를 검사한 뒤 첫 NUL을 해석하고 끝의 점 하나를 제거합니다. 빈 이름은 ENOENT, 부분적으로 읽을 수 있는 입력은 미지원입니다. null이 아닌 `oldlenp`는 효과 발생 전에8바이트 전체를 읽고 쓸 수 있어야 합니다. 잘못된 길이 포인터의 네이티브 실험이 제한 시간 안에 반환하지 않아 명시적으로 지원 범위 밖에 둡니다. null `oldlenp`는 용량0, null `oldp`는 크기 조회입니다. 짧은 버퍼는 ENOMEM12, 데이터 불변, 길이0입니다. 데이터 EFAULT는 이전 길이를 보존합니다. 입력과 용량을 먼저 캡처하고 데이터 다음 길이를 쓰므로 별칭 순서와 후속 전송 실패 전의 복사를 보존합니다.
 
-newp/newlen 모두0이 아니면 쓰기입니다. 이름/MIB와 oldlenp 전체 읽기/쓰기 사전 검사를 먼저 유지합니다. 기본 또는 명시적 비root EUID는 관측/데이터 출력 검사 전 EPERM1이며 EUID0의 kern.osversion 특권 쓰기는 미구현이므로 unsupported입니다. RUID는 결정하지 않습니다. 다른 네이티브 읽기 전용 노드는root도 EPERM1입니다. 새 길이0은 포인터를 무시하고 알 수 없는 키/트리/동적OID의 ENOENT는 추정하지 않습니다.
+newp/newlen 모두0이 아니면 쓰기입니다. 이름/MIB와 oldlenp 전체 읽기/쓰기 사전 검사를 먼저 유지합니다. 기본 또는 명시적 비root EUID는 관측/데이터 출력 검사 전 EPERM1이며 EUID0의 kern.osversion / kern.maxfilesperproc 특권 쓰기는 미구현이므로 unsupported입니다. RUID는 결정하지 않습니다. 다른 네이티브 읽기 전용 노드는root도 EPERM1입니다. 새 길이0은 포인터를 무시하고 알 수 없는 키/트리/동적OID의 ENOENT는 추정하지 않습니다.
 
 자체 작성 `system-info`는 네이티브 macOS와 게스트 ABI를 검사하고 `virtual-system`은 C++·C/CLI·Python에서 설정 바이트를 비교합니다. 별도 SDK 검사는 호스트의 아홉 관측값을 명시적 테스트 입력으로 삼아 이름·숫자 출력을 비교합니다. iOS 실기기나 Intel HVF 검증을 뜻하지 않습니다.
 
@@ -648,3 +649,23 @@ getgroups용량은 하위32bit 부호int입니다. 음수먼저EINVAL, 미설정
 21 value +5 native fault,5s; host16groups, positive short capacity: OK. Native partial32byte thenEFAULT: observation only. Counts overlap. `build-hvf-arm64/credential-observations/`.
 
 첫8실패（명령예산5, 5초deadline3）、12skip. 새fixture2페이지scan을 같은경계132byte guard（앞64, 최대data64, 뒤최소4）로제한. 직접owner는전체2페이지검증. 예산/인자/오류음성대조불변, source/binary/두run보존. 사전검토로transport경계수정, public설정내용비교. 권한/ACL、link、변경후directory전체관측、shared maps/EOF、clock、Mach/thread/dyld/framework미완；실물iOS、정지Intel HVF、merge CI별도.
+
+## 명시적 프로세스와 커널 한도로 결정되는 기술자 표 조회
+
+선택 `DarwinSystemOptions::MaxFilesPerProcess` / `darwin_system.max_files_per_process`는 음수가 아닌 int 관측값입니다. 누락은 미지정, 명시적 0은 유효합니다. 이름 `kern.maxfilesperproc`와 숫자 MIB `[1,29]`는 자원 제한과 독립적으로 같은 4바이트 값을 읽습니다. 무손실 정수 파싱과 중앙 검증은 잘못된 형식, 음수, 범위 초과를 로드 전에 거부하며 비 Darwin 설정도 거부합니다.
+
+BSD `getdtablesize(89)`는 이 상한과 `ResourceLimits[8].Current`를 모두 요구하고 작은 값을 반환합니다. 완전한 64비트 Current를 먼저 제한하므로 Current=`0x100000001`, cap=64이면 64이며 무한 값도 안전하게 제한됩니다. Maximum, 호스트 값, 실제 FD 수, `DescriptorLimit`로 추정하지 않습니다. 한쪽이 누락되면 다른 쪽이 0이어도 unsupported입니다. 여섯 인수를 모두 무시하며 사용자 메모리를 접근하지 않고 기존 BSD carry/보조 레지스터 규약을 사용합니다. Mach timebase trap 89는 독립적입니다.
+
+sysctl 복사 단계는 유지됩니다. EUID0의 실제 쓰기는 이름/MIB와 oldlenp 검사 뒤, 관측/출력 전에 unsupported이고 비 root는 EPERM입니다. 새 포인터 길이가 0이면 읽기입니다. 제한 실행이나 쓰기 권한은 추정하지 않습니다. 필수 자원 workload는 두 cap 조회와 낮은/높은 syscall number를 검증하고 `l` / 144바이트 출력을 유지합니다. 뒤의 unsupported도 이미 출력한 바이트를 보존합니다. 독립 스칼라 fixture는 누락, 0, 넓은 Current와 DescriptorLimit=3의 독립성을 검증합니다.
+
+```json
+{"darwin_system":{"max_files_per_process":64,"resource_limits":[{"resource":8,"current":"4294967297","maximum":"9223372036854775807"}]}}
+```
+
+[XNU getdtablesize](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c), [XNU proc_limitgetcur_nofile](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [XNU MIB constants](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/sysctl.h).
+
+검증: Darwin (등록/통과/사용 불가/실패) 1441/913/528/0; ARM64 HVF 132/132; System/SDK 80/80; File 365/365; C/CLI 211/211; ProcessReport 45/45; native 33/33; Python 5 (42.254s); API 71; runner 44 + reference 5. clang-format 22.1.2; capabilities/provenance; docs 286 / locales 10 / negative controls 3.
+
+시도 기록: 새 스칼라 메서드의 필수 등록이 없어 첫 runner 검사에서 ARM64와 x86-64 목록 검사가 실패했습니다. 전체 메서드 일치 규칙을 유지하며 등록을 추가했습니다. 초기 필수 129개 게이트와 실패 기록을 보존하며, 새 최종 ARM64 게이트는 132개를 요구합니다.
+
+개수는 서로 겹칩니다. `build-hvf-arm64/descriptor-table-observations/`는 실제 실행 기준과 정확한 소스/바이너리/로그 해시를 보존하고 이전 증거는 변경하지 않습니다. 일회용 ARM64 macOS 자식 프로세스 5개, 검사 40개, 각 5초 제한: 기본 Current=1048575/cap=245760은245760, 자식 Current=0/1/32/245777은0/1/32/245760입니다. 부모와 시스템 제한은 변경하지 않았습니다. 실제 iOS, 중지된 Intel HVF, 원격 merge CI는 별도 검증입니다. 권한, 변경 후 디렉터리 관측, 공유 map/EOF, 진행 시계, Mach/thread/dyld 및 framework runtime은 미완성입니다.

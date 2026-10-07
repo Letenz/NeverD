@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: dcf1c6fd8dade7571d6c20c70f66ce44bd254c717076498f8a48e46deec70a62 -->
+<!-- i18n-source: 854783aa85d00cdf9407d25b961d4a98e2a61885a55d71c416365143d066a1b7 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -348,7 +348,7 @@ Release Darwin は835件：成功474、利用不可スキップ360、既存 macO
 
 `ProcessOptions::DarwinSystem` / `darwin_system` は、すべての Darwin profile の `sysctl(202)` と raw `sysctlbyname(274)` に固定観測値を渡します。各フィールドは省略可能で、未指定の値や一覧外のキーは未対応として停止します。ホストへの問い合わせや版・機種の推測はありません。厳密な JSON と C++ 検証は、読み込み前に不正値と Darwin 以外の profile を拒否します。
 
-`os_revision` は符号付き32ビット、`cpu_count` は1～INT32_MAX、`memory_size` は符号なし64ビットをすべて保持します。他は最大1023バイトで内部 NUL のない文字列です。明示的な空文字列も有効で、出力には終端 NUL を含みます。CPU 数やメモリ量の報告はスケジューリングや割当予算を変えません。
+`os_revision` は符号付き 32 ビット、`cpu_count` は 1..INT32_MAX、`memory_size` は符号なし 64 ビットです。`max_files_per_process` は 0..INT32_MAX の四バイト int。その他のスカラー項目は最大 1023 バイトの NUL を含まない文字列で、明示的な空文字列も有効、結果は終端 NUL を含みます。観測値はスケジューリング、割り当て、記述子予算を変更しません。
 
 | JSON フィールド | sysctl 名 | MIB |
 | --- | --- | --- |
@@ -361,12 +361,13 @@ Release Darwin は835件：成功474、利用不可スキップ360、既存 macO
 | `model` | `hw.model` | `6,2` |
 | `cpu_count` | `hw.ncpu` | `6,3` |
 | `memory_size` | `hw.memsize` | `6,24` |
+| `max_files_per_process` | `kern.maxfilesperproc` | `1,29` |
 
 `hw.pagesize` は既存のゲストメモリ方針を使用し、通常8バイト、非 null 出力の容量がちょうど4なら4バイトです。旧 MIB `[6,7]` と `hw.pagesize_compat` は常に4バイトです。`hw.pagesize` の動的数値 OID は未対応です。`hw.memsize` も容量4では、64ビット値が符号付き32ビット値の符号拡張と一致する場合だけ縮小します。それ以外は ERANGE34 で出力と長さを保持します。
 
 MIB 数は下位32ビットで2～12、名前長は64ビット全体で1024未満です。指定された全バイトを検査してから最初の NUL を解釈し、末尾の点を一つ除きます。空の名前は ENOENT、部分的に読める入力は未対応です。非 null `oldlenp` は副作用前に8バイト全体の読み書きが必要です。不正な長さポインタのネイティブ試験は期限内に戻らなかったため、明示的な未対応範囲とします。null `oldlenp` は容量0、null `oldp` はサイズのみの問い合わせです。短い領域では ENOMEM12、データは不変で長さ0です。データ EFAULT は元の長さを保持します。入力と容量の取得、データ、最後の長さという順序で、別名と後続の転送失敗時の既存コピーを保持します。
 
-newp/newlen が両方非ゼロなら書き込みです。名前/MIB と oldlenp の完全な読み書き事前検査を先に保ち、既定または明示的非root EUID は観測値・データ出力検査前に EPERM1。明示的EUID0 の kern.osversion 特権書き込みは未モデル化のため unsupported；RUID は判断に使いません。他のネイティブ読み取り専用ノードはrootでも EPERM1。新長0はポインタを無視し、未知キー/ツリー/動的OIDの ENOENT は推測しません。
+newp/newlen が両方非ゼロなら書き込みです。名前/MIB と oldlenp の完全な読み書き事前検査を先に保ち、既定または明示的非root EUID は観測値・データ出力検査前に EPERM1。明示的EUID0 の kern.osversion / kern.maxfilesperproc 特権書き込みは未モデル化のため unsupported；RUID は判断に使いません。他のネイティブ読み取り専用ノードはrootでも EPERM1。新長0はポインタを無視し、未知キー/ツリー/動的OIDの ENOENT は推測しません。
 
 独自の `system-info` はネイティブ macOS とゲスト ABI を検査し、`virtual-system` は C++、C/CLI、Python で設定済みバイト列を比較します。別の SDK 検査はホストの九つの観測値を明示的なテスト入力として名前・数値出力を照合します。iOS 実機や Intel HVF の検証ではありません。
 
@@ -648,3 +649,23 @@ getgroups容量は下位32bit符号付きint。負数は最初EINVAL、未知uns
 21 value +5 native fault,5s; host16groups, positive short capacity: OK. Native partial32byte thenEFAULT: observation only. Counts overlap. `build-hvf-arm64/credential-observations/`.
 
 初回8失敗（指令予算5、5秒deadline3）、skip12。新fixtureの全2頁scanを同じ跨頁132byte guard（前64、最大data64、後最低4）へ限定。直接ownerは全2頁を検証。予算/引数/障害負対照不変、source/binary/両run保存。事前レビューでtransport test跨頁修正、public設定は文字列内容比較。権限/ACL、links、変更後directory完全観測、shared maps/EOF、clock、Mach/thread/dyld/framework未完；実機iOS、停止Intel HVF、merge CI別途。
+
+## 宣言したプロセスとカーネルの上限による記述子表照会
+
+任意の `DarwinSystemOptions::MaxFilesPerProcess` / `darwin_system.max_files_per_process` は非負 int の観測値です。省略は未知、明示的ゼロは有効。名前 `kern.maxfilesperproc` と数値 MIB `[1,29]` は資源制限と独立に同じ四バイト値を読みます。無損失整数解析と中央検証は不正型、負値、範囲超過をロード前に拒否し、非 Darwin 設定も拒否します。
+
+BSD `getdtablesize(89)` はこの上限と `ResourceLimits[8].Current` の両方を必要とし、小さい方を返します。完全な 64 ビット Current を先に制限するため、Current=`0x100000001`、cap=64 は 64、無限値も安全に制限されます。Maximum、ホスト値、実 FD 数、`DescriptorLimit` からは推測しません。片方が未知なら、既知側がゼロでも unsupported。六引数は無視し、ユーザーメモリに触れず、既存 BSD carry/副レジスター規約を使います。Mach timebase の trap 89 は独立です。
+
+sysctl のコピー段階は維持します。EUID0 の実際の書き込みは名前/MIB と oldlenp 検査後、観測/出力前に unsupported、非 root は EPERM。新ポインターの長さゼロは読み取りです。制限の実施や書き込み権限は付与しません。必須資源 workload は両 cap 照会と低/高 syscall number を検査し、`l` / 144 バイト出力を維持します。後の unsupported でも既出力は残ります。独立スカラー fixture は未知、ゼロ、広い Current と DescriptorLimit=3 の独立性を検証します。
+
+```json
+{"darwin_system":{"max_files_per_process":64,"resource_limits":[{"resource":8,"current":"4294967297","maximum":"9223372036854775807"}]}}
+```
+
+[XNU getdtablesize](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c), [XNU proc_limitgetcur_nofile](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [XNU MIB constants](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/sysctl.h).
+
+検証: Darwin (登録/成功/利用不可/失敗) 1441/913/528/0; ARM64 HVF 132/132; System/SDK 80/80; File 365/365; C/CLI 211/211; ProcessReport 45/45; native 33/33; Python 5 (42.254s); API 71; runner 44 + reference 5. clang-format 22.1.2; capabilities/provenance; docs 286 / locales 10 / negative controls 3.
+
+試行記録：最初の runner 検査では、新スカラーメソッドの必須登録がなく ARM64 と x86-64 の一覧検査が失敗しました。全メソッド一致規則を維持して登録を追加しました。初回の必須129件のゲートと失敗記録は保持し、新しい最終 ARM64 ゲートは132件を要求します。
+
+件数は重複します。`build-hvf-arm64/descriptor-table-observations/` は実行時ベースラインとソース/バイナリー/ログの正確なハッシュを保持し、過去証拠は変更しません。原生 ARM64 macOS の使い捨て子プロセス五個、40 検査、各五秒期限：既定 Current=1048575/cap=245760 は245760、子 Current=0/1/32/245777 は0/1/32/245760。親とシステムの上限は変更しません。実機 iOS、停止 Intel HVF、remote merge CI は別検証です。権限、変更後のディレクトリー観測、共有 map/EOF、進行時計、Mach/thread/dyld、framework runtime は未完成です。

@@ -639,6 +639,19 @@ TEST_P(DarwinProcess,
     EXPECT_TRUE(Missing->StandardOutput.empty());
   }
   Options.DarwinSystem = darwin_test::resourceLimitOptions();
+  Options.DarwinSystem->MaxFilesPerProcess.reset();
+  for (auto Mode : {"resource-limits", "virtual-resource-limits"}) {
+    auto MissingCap = run(Mode);
+    ASSERT_TRUE(bool(MissingCap)) << llvm::toString(MissingCap.takeError());
+    EXPECT_EQ(MissingCap->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(MissingCap->Diagnostic,
+              "Darwin sysctl observation is not configured");
+    EXPECT_EQ(MissingCap->StandardOutput,
+              Mode == llvm::StringRef("resource-limits")
+                  ? ""
+                  : llvm::fromHex(darwin_test::ResourceLimitsHex));
+  }
+  Options.DarwinSystem = darwin_test::resourceLimitOptions();
   for (auto Mode : {"resource-limits", "virtual-resource-limits"}) {
     SCOPED_TRACE(Mode);
     auto Result = run(Mode);
@@ -655,9 +668,83 @@ TEST_P(DarwinProcess,
              Event.Arguments[0] == 0x100000008ULL && Event.Result == 0 &&
              Event.Error == false;
     }));
+    unsigned Queries = 0;
+    bool HighNumber = false;
+    for (const auto &Event : Result->Services)
+      if ((uint32_t(Event.Number) & 0x00ffffff) == 89) {
+        ++Queries;
+        EXPECT_EQ(Event.Result, 64);
+        EXPECT_EQ(Event.Error, false);
+        HighNumber |= (Event.Number >> 32) == 0x12345678;
+        EXPECT_EQ(Event.Arguments[0], UINT64_MAX);
+        EXPECT_EQ(Event.Arguments[2], 0x1122334455667788ULL);
+      }
+    EXPECT_EQ(Queries, 2u);
+    EXPECT_TRUE(HighNumber);
   }
   EXPECT_EQ(Options.DarwinSystem->ResourceLimits.at(0).Current, 0u);
   EXPECT_EQ(Options.DarwinSystem->ResourceLimits.at(0).Maximum, 0u);
+  EXPECT_EQ(Options.DarwinSystem->ResourceLimits.at(8).Current, 256u);
+  EXPECT_EQ(Options.DarwinSystem->MaxFilesPerProcess, 64u);
+}
+
+TEST_P(DarwinProcess, DescriptorTableRequiresExplicitPeersAndKeepsBudgets) {
+  Options.DarwinFiles.emplace().DescriptorLimit = 3;
+  for (unsigned Configuration = 0; Configuration != 6; ++Configuration) {
+    Options.DarwinSystem.reset();
+    if (Configuration) {
+      Options.DarwinSystem.emplace();
+      if (Configuration == 2)
+        Options.DarwinSystem->ResourceLimits[8] = {0, uint64_t(INT64_MAX)};
+      if (Configuration == 3 || Configuration == 4)
+        Options.DarwinSystem->MaxFilesPerProcess =
+            Configuration == 3 ? 0u : 64u;
+      if (Configuration == 4)
+        Options.DarwinSystem->ResourceLimits[7] = {0, 0};
+      if (Configuration == 5)
+        Options.DarwinSystem->ResourceLimits[8] = {256, 1024};
+    }
+    auto Missing = run("descriptor-table-query");
+    ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+    EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Missing->Diagnostic,
+              "Darwin descriptor table observations are not configured");
+    EXPECT_TRUE(Missing->StandardOutput.empty());
+    ASSERT_EQ(Missing->Services.size(), 1u);
+    EXPECT_FALSE(Missing->Services.front().Result);
+    EXPECT_EQ(Missing->Services.front().Arguments[0], UINT64_MAX);
+  }
+  struct Sample {
+    uint64_t Current;
+    uint32_t Cap;
+    const char *Hex;
+  };
+  for (const Sample &S :
+       {Sample{0, 64, "00000000"}, Sample{1, 64, "01000000"},
+        Sample{256, 64, "40000000"}, Sample{0x100000001ULL, 64, "40000000"},
+        Sample{uint64_t(INT64_MAX), INT32_MAX, "ffffff7f"},
+        Sample{256, 0, "00000000"}}) {
+    SCOPED_TRACE(S.Current);
+    Options.DarwinSystem.emplace();
+    Options.DarwinSystem->ResourceLimits[8] = {S.Current, uint64_t(INT64_MAX)};
+    Options.DarwinSystem->MaxFilesPerProcess = S.Cap;
+    auto Result = run("descriptor-table-query");
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(Result->StandardOutput, llvm::fromHex(S.Hex));
+    EXPECT_TRUE(Result->StandardError.empty());
+    ASSERT_FALSE(Result->Services.empty());
+    const auto &Event = Result->Services.front();
+    EXPECT_EQ(Event.Number,
+              0x1234567800000059ULL |
+                  (GetParam().ISA == GuestArchitecture::X64 ? 0x02000000 : 0));
+    EXPECT_EQ(Event.Error, false);
+    EXPECT_EQ(Event.Arguments[2], 0x1122334455667788ULL);
+    EXPECT_EQ(Options.DarwinFiles->DescriptorLimit, 3u);
+    EXPECT_EQ(Options.DarwinSystem->ResourceLimits.at(8).Current, S.Current);
+    EXPECT_EQ(Options.DarwinSystem->MaxFilesPerProcess, S.Cap);
+  }
 }
 
 TEST_P(DarwinProcess, SystemQueriesPreserveExplicitValuesWidthsAndCopyOrder) {

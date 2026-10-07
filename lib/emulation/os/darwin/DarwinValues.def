@@ -86,6 +86,7 @@ NEVERD_DARWIN_VALUE(SystemMIBLimit, 12)
 NEVERD_DARWIN_VALUE(CredentialIDMax, 0x7fffffff)
 NEVERD_DARWIN_VALUE(GroupAccessLimit, 16)
 NEVERD_DARWIN_VALUE(ResourceLimitCount, 9)
+NEVERD_DARWIN_VALUE(ResourceLimitNoFile, 8)
 NEVERD_DARWIN_VALUE(ResourceLimitPosixFlag, 0x1000)
 NEVERD_DARWIN_VALUE(ResourceLimitInfinity, 0x7fffffffffffffffULL)
 NEVERD_DARWIN_VALUE(MapPrivate, 0x2)
@@ -130,6 +131,7 @@ NEVERD_DARWIN_SERVICE(Dup, 41, Int)
 NEVERD_DARWIN_SERVICE(GetEGID, 43, UInt)
 NEVERD_DARWIN_SERVICE(GetGID, 47, UInt)
 NEVERD_DARWIN_SERVICE(GetGroups, 79, Int)
+NEVERD_DARWIN_SERVICE(GetDTableSize, 89, Int)
 NEVERD_DARWIN_SERVICE(Dup2, 90, Int)
 NEVERD_DARWIN_SERVICE(Fcntl, 92, Int)
 NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
@@ -185,6 +187,12 @@ NEVERD_DARWIN_DIAGNOSTIC(
     "Darwin system strings must be at most 1023 bytes without NUL")
 NEVERD_DARWIN_DIAGNOSTIC(
     SystemCPUCount, "Darwin system cpu_count must be between 1 and INT32_MAX")
+NEVERD_DARWIN_DIAGNOSTIC(
+    SystemMaxFilesPerProcess,
+    "Darwin system max_files_per_process must be between 0 and INT32_MAX")
+NEVERD_DARWIN_DIAGNOSTIC(
+    DescriptorTableObservation,
+    "Darwin descriptor table observations are not configured")
 NEVERD_DARWIN_DIAGNOSTIC(SystemPartialInput,
                          "Darwin sysctl input is partially readable")
 NEVERD_DARWIN_DIAGNOSTIC(

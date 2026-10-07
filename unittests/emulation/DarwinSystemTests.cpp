@@ -459,6 +459,130 @@ TEST(DarwinSystemOptions, TypedFieldsUseTheSameBoundedContract) {
   EXPECT_FALSE(bool(validateSystemOptions(O)));
 }
 
+TEST_P(DarwinSystemTest, DescriptorTableNeedsBothObservationsWithoutMemory) {
+  for (unsigned Configuration = 0; Configuration != 7; ++Configuration) {
+    SCOPED_TRACE(Configuration);
+    Options.reset();
+    if (Configuration) {
+      Options.emplace();
+      if (Configuration == 2 || Configuration == 6)
+        Options->ResourceLimits[8] = {Configuration == 6 ? 0u : 256u,
+                                      uint64_t(INT64_MAX)};
+      if (Configuration >= 3 && Configuration <= 5)
+        Options->MaxFilesPerProcess = Configuration == 4 ? 0u : 64u;
+      if (Configuration == 5)
+        Options->ResourceLimits[7] = {0, uint64_t(INT64_MAX)};
+    }
+    FailingSystemMemory Memory(*Space);
+    Memory.FailAccess = Memory.FailRead = Memory.FailWrite = 1;
+    auto Out =
+        systemService(Memory, Page, ServiceKind::GetDTableSize,
+                      {0,
+                       89,
+                       {UINT64_MAX, 1, value::UserLimit, 0, Output, Length},
+                       std::nullopt},
+                      Options, Result);
+    ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+    EXPECT_FALSE(*Out);
+    EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Result.Diagnostic, diagnostic::DescriptorTableObservation);
+    EXPECT_EQ(Memory.Accesses, 0u);
+    EXPECT_EQ(Memory.Reads, 0u);
+    EXPECT_EQ(Memory.Writes, 0u);
+    EXPECT_EQ(bytes(Base, Page * 2), std::string(Page * 2, '\xa5'));
+  }
+}
+
+TEST_P(DarwinSystemTest, DescriptorTableClipsFullCurrentAndIgnoresArguments) {
+  struct Sample {
+    uint64_t Current, Maximum;
+    uint32_t Cap, Expected;
+  };
+  const Sample Samples[] = {
+      {0, 0, 64, 0},
+      {1, 1024, 64, 1},
+      {256, 1024, 64, 64},
+      {0x100000001ULL, uint64_t(INT64_MAX), 64, 64},
+      {uint64_t(INT64_MAX), uint64_t(INT64_MAX), INT32_MAX, INT32_MAX},
+      {256, 1024, 0, 0},
+      {0, uint64_t(INT64_MAX), 0, 0}};
+  for (const auto &S : Samples) {
+    SCOPED_TRACE(S.Current);
+    Options = DarwinSystemOptions{};
+    Options->ResourceLimits[8] = {S.Current, S.Maximum};
+    Options->ResourceLimits[7] = {0, 0};
+    Options->MaxFilesPerProcess = S.Cap;
+    ASSERT_FALSE(bool(validateSystemOptions(*Options)));
+    FailingSystemMemory Memory(*Space);
+    Memory.FailAccess = Memory.FailRead = Memory.FailWrite = 1;
+    auto Out = systemService(
+        Memory, Page, ServiceKind::GetDTableSize,
+        {0,
+         0x1234567800000059ULL,
+         {UINT64_MAX, Output, value::UserLimit, 1, Length, UINT64_MAX},
+         std::nullopt},
+        Options, Result);
+    ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+    ASSERT_TRUE(*Out) << Result.Diagnostic;
+    EXPECT_EQ((**Out).Value, S.Expected);
+    EXPECT_FALSE((**Out).Error);
+    EXPECT_EQ(Memory.Accesses, 0u);
+    EXPECT_EQ(Memory.Reads, 0u);
+    EXPECT_EQ(Memory.Writes, 0u);
+    EXPECT_EQ(Options->ResourceLimits.at(8).Current, S.Current);
+    EXPECT_EQ(Options->ResourceLimits.at(8).Maximum, S.Maximum);
+    EXPECT_EQ(Options->MaxFilesPerProcess, S.Cap);
+    EXPECT_EQ(bytes(Base, Page * 2), std::string(Page * 2, '\xa5'));
+  }
+}
+
+TEST_P(DarwinSystemTest, DescriptorCapHasIndependentFourByteSysctlReads) {
+  Options = DarwinSystemOptions{};
+  struct Sample {
+    uint32_t Cap;
+    const char *Hex;
+  };
+  for (const Sample &S :
+       {Sample{0, "00000000"}, Sample{1, "01000000"},
+        Sample{0x01020304, "04030201"}, Sample{INT32_MAX, "ffffff7f"}}) {
+    Options->MaxFilesPerProcess = S.Cap;
+    for (bool Named : {false, true}) {
+      fill();
+      capacity(8);
+      result(Named ? named("kern.maxfilesperproc", Output + 1)
+                   : mib(1, 29, Output + 1));
+      EXPECT_EQ(bytes(Output + 1, 4), llvm::fromHex(S.Hex));
+      EXPECT_EQ(bytes(Output - 8, 9), std::string(9, '\xa5'));
+      EXPECT_EQ(bytes(Output + 5, 16), std::string(16, '\xa5'));
+      EXPECT_EQ(length(), 4u);
+    }
+  }
+  EXPECT_TRUE(Options->ResourceLimits.empty());
+  fill();
+  capacity(3);
+  result(named("kern.maxfilesperproc"), value::NoMemory);
+  EXPECT_EQ(length(), 0u);
+  EXPECT_EQ(bytes(Output, 32), std::string(32, '\xa5'));
+  capacity(4);
+  result(named("kern.maxfilesperproc", 0));
+  EXPECT_EQ(length(), 4u);
+  EXPECT_EQ(bytes(Output, 32), std::string(32, '\xa5'));
+}
+
+TEST(DarwinSystemOptions, DescriptorCapAdmitsOnlyNonnegativeIntObservations) {
+  DarwinSystemOptions O;
+  ASSERT_FALSE(bool(validateSystemOptions(O)));
+  for (auto Cap : {0u, 1u, uint32_t(INT32_MAX)}) {
+    O.MaxFilesPerProcess = Cap;
+    EXPECT_FALSE(bool(validateSystemOptions(O)));
+  }
+  for (auto Cap : {0x80000000u, UINT32_MAX}) {
+    O.MaxFilesPerProcess = Cap;
+    EXPECT_EQ(llvm::toString(validateSystemOptions(O)),
+              diagnostic::SystemMaxFilesPerProcess);
+  }
+}
+
 TEST_P(DarwinSystemTest, ResourceLimitsKeepBothWordsFlagsAndUnalignedGuards) {
   Options = darwin_test::resourceLimitOptions();
   const auto Expected = llvm::fromHex(darwin_test::ResourceLimitsHex);
@@ -477,6 +601,10 @@ TEST_P(DarwinSystemTest, ResourceLimitsKeepBothWordsFlagsAndUnalignedGuards) {
   EXPECT_EQ(Options->ResourceLimits.at(0).Current, 0u);
   EXPECT_EQ(Options->ResourceLimits.at(0).Maximum, 0u);
   EXPECT_EQ(Options->ResourceLimits.at(1).Current, uint64_t(INT64_MAX));
+  Options->MaxFilesPerProcess.reset();
+  fill();
+  result(invoke(ServiceKind::GetRlimit, {8, Output}));
+  EXPECT_EQ(bytes(Output, 16), Expected.substr(128, 16));
 }
 
 TEST_P(DarwinSystemTest, ResourceSelectorsAndMissingValuesPrecedeAllMemory) {
@@ -1018,41 +1146,55 @@ TEST_P(DarwinSystemTest, GroupTransportErrorsAndSingleSuccessfulCopy) {
 }
 TEST_P(DarwinSystemTest,
        SysctlWriteDecisionUsesEffectiveIdentityAfterPreflight) {
-  for (unsigned Identity = 0; Identity != 3; ++Identity)
-    for (bool Missing : {false, true})
-      for (bool Named : {false, true}) {
-        Options = darwin_test::systemOptions();
-        if (Identity)
-          Options->Credentials = DarwinCredentials{
-              Identity == 1 ? 0u : 7u, Identity == 1 ? 7u : 0u, 0, 0, {}};
-        if (Missing)
-          Options->OSVersion.reset();
-        fill();
-        capacity(0);
-        std::optional<ServiceResult> Out;
-        if (Named)
-          Out = named("kern.osversion", UINT64_MAX, Length, UINT64_MAX, 1);
-        else {
-          ASSERT_FALSE(bool(Space->writeInteger(Base, 1, 4)));
-          ASSERT_FALSE(bool(Space->writeInteger(Base + 4, 65, 4)));
-          Out = invoke(ServiceKind::Sysctl,
-                       {Base, 2, UINT64_MAX, Length, UINT64_MAX, 1});
+  for (bool DescriptorCap : {false, true})
+    for (unsigned Identity = 0; Identity != 3; ++Identity)
+      for (bool Missing : {false, true})
+        for (bool Named : {false, true}) {
+          Options = darwin_test::systemOptions();
+          Options->MaxFilesPerProcess = 64;
+          if (Identity)
+            Options->Credentials = DarwinCredentials{
+                Identity == 1 ? 0u : 7u, Identity == 1 ? 7u : 0u, 0, 0, {}};
+          if (Missing) {
+            if (DescriptorCap)
+              Options->MaxFilesPerProcess.reset();
+            else
+              Options->OSVersion.reset();
+          }
+          fill();
+          capacity(0);
+          std::optional<ServiceResult> Out;
+          if (Named)
+            Out =
+                named(DescriptorCap ? "kern.maxfilesperproc" : "kern.osversion",
+                      UINT64_MAX, Length, UINT64_MAX, 1);
+          else {
+            ASSERT_FALSE(bool(Space->writeInteger(Base, 1, 4)));
+            ASSERT_FALSE(bool(
+                Space->writeInteger(Base + 4, DescriptorCap ? 29 : 65, 4)));
+            Out = invoke(ServiceKind::Sysctl,
+                         {Base, 2, UINT64_MAX, Length, UINT64_MAX, 1});
+          }
+          if (Identity == 2) {
+            EXPECT_FALSE(Out);
+            EXPECT_EQ(Result.Diagnostic, diagnostic::SystemPrivilegedWrite);
+          } else
+            result(Out, 1);
+          EXPECT_EQ(length(), 0u);
+          EXPECT_EQ(bytes(Output, 32), std::string(32, '\xa5'));
+          capacity(32);
+          result(named("kern.ostype", UINT64_MAX, Length, UINT64_MAX, 1), 1);
         }
-        if (Identity == 2) {
-          EXPECT_FALSE(Out);
-          EXPECT_EQ(Result.Diagnostic, diagnostic::SystemPrivilegedWrite);
-        } else
-          result(Out, 1);
-        EXPECT_EQ(length(), 0u);
-        EXPECT_EQ(bytes(Output, 32), std::string(32, '\xa5'));
-        capacity(32);
-        result(named("kern.ostype", UINT64_MAX, Length, UINT64_MAX, 1), 1);
-      }
   Options = darwin_test::systemOptions();
   Options->Credentials = DarwinCredentials{};
   capacity(8);
   result(named("kern.osversion", Output, Length, UINT64_MAX, 0));
   EXPECT_EQ(bytes(Output, 4), std::string("V42\0", 4));
+  Options->MaxFilesPerProcess = 64;
+  capacity(8);
+  result(named("kern.maxfilesperproc", Output, Length, UINT64_MAX, 0));
+  EXPECT_EQ(bytes(Output, 4), llvm::fromHex("40000000"));
+  EXPECT_EQ(length(), 4u);
 }
 TEST_P(DarwinSystemTest, RootSysctlCannotSkipNameOrLengthPreflight) {
   Options = darwin_test::systemOptions();
@@ -1063,13 +1205,16 @@ TEST_P(DarwinSystemTest, RootSysctlCannotSkipNameOrLengthPreflight) {
   result(invoke(ServiceKind::Sysctl,
                 {UINT64_MAX, 2, UINT64_MAX, Length, UINT64_MAX, 1}),
          14);
-  EXPECT_FALSE(named("kern.osversion", UINT64_MAX, 1, UINT64_MAX, 1));
-  EXPECT_EQ(Result.Diagnostic, diagnostic::SystemLengthMemory);
-  ASSERT_FALSE(bool(Space->writeInteger(Base, 1, 4)));
-  ASSERT_FALSE(bool(Space->writeInteger(Base + 4, 65, 4)));
-  EXPECT_FALSE(
-      invoke(ServiceKind::Sysctl, {Base, 2, UINT64_MAX, 1, UINT64_MAX, 1}));
-  EXPECT_EQ(Result.Diagnostic, diagnostic::SystemLengthMemory);
+  for (const auto &[Name, Leaf] : {std::pair{"kern.osversion", 65u},
+                                   std::pair{"kern.maxfilesperproc", 29u}}) {
+    EXPECT_FALSE(named(Name, UINT64_MAX, 1, UINT64_MAX, 1));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::SystemLengthMemory);
+    ASSERT_FALSE(bool(Space->writeInteger(Base, 1, 4)));
+    ASSERT_FALSE(bool(Space->writeInteger(Base + 4, Leaf, 4)));
+    EXPECT_FALSE(
+        invoke(ServiceKind::Sysctl, {Base, 2, UINT64_MAX, 1, UINT64_MAX, 1}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::SystemLengthMemory);
+  }
   EXPECT_EQ(bytes(Output, 32), std::string(32, '\xa5'));
 }
 TEST(DarwinSystemOptions, CredentialsRequireBoundedCoherentGroups) {

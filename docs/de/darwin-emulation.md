@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: dcf1c6fd8dade7571d6c20c70f66ce44bd254c717076498f8a48e46deec70a62 -->
+<!-- i18n-source: 854783aa85d00cdf9407d25b961d4a98e2a61885a55d71c416365143d066a1b7 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -348,7 +348,7 @@ Release Darwin: 835 Registrierungen,474 bestanden,360 nicht verfügbare Backends
 
 `ProcessOptions::DarwinSystem` / `darwin_system` liefert feste Beobachtungen für `sysctl(202)` und das rohe `sysctlbyname(274)` in jedem Darwin-Profil. Alle Felder sind optional; fehlende Werte oder nicht aufgeführte Schlüssel bleiben ausdrücklich nicht unterstützt. Es gibt keine Hostabfragen oder abgeleiteten Versions-/Modellvorgaben. Striktes JSON und C++ prüfen Werte und lehnen andere Profile vor dem Laden ab.
 
-`os_revision` ist vorzeichenbehaftet mit 32 Bit; `cpu_count` liegt zwischen 1 und INT32_MAX; `memory_size` erhält alle 64 vorzeichenlosen Bits. Andere Felder sind Zeichenketten bis 1023 Bytes ohne eingebettetes NUL; ausdrücklich leere Zeichenketten sind gültig. Die Ausgabe enthält das abschließende NUL. CPU- und Speicherangaben verändern weder Scheduling noch Zuteilungsbudget.
+`os_revision` ist ein vorzeichenbehafteter 32-Bit-Wert, `cpu_count` liegt bei 1..INT32_MAX, `memory_size` bewahrt 64 vorzeichenlose Bits. `max_files_per_process` liegt bei 0..INT32_MAX und wird als vier Byte großer int kodiert. Die übrigen Skalarfelder sind höchstens 1023 Byte lange Zeichenketten ohne eingebettetes NUL; explizit leere Werte sind gültig und die Ausgabe enthält das abschließende NUL. Beobachtungen ändern weder Scheduling noch Speicher- oder Deskriptorbudgets.
 
 | JSON-Feld | sysctl-Name | MIB |
 | --- | --- | --- |
@@ -361,12 +361,13 @@ Release Darwin: 835 Registrierungen,474 bestanden,360 nicht verfügbare Backends
 | `model` | `hw.model` | `6,2` |
 | `cpu_count` | `hw.ncpu` | `6,3` |
 | `memory_size` | `hw.memsize` | `6,24` |
+| `max_files_per_process` | `kern.maxfilesperproc` | `1,29` |
 
 `hw.pagesize` stammt aus der vorhandenen Gastspeicherrichtlinie: normalerweise acht Bytes, vier bei nicht null Ausgabe und genau vier Bytes Kapazität. Das alte MIB `[6,7]` und `hw.pagesize_compat` liefern immer vier Bytes. Die dynamische numerische OID von `hw.pagesize` bleibt nicht unterstützt. `hw.memsize` wird bei Kapazität vier nur verkürzt, wenn das 64-Bit-Muster einer Vorzeichenerweiterung eines 32-Bit-Werts entspricht; sonst bewahrt ERANGE34 Ausgabe und Länge.
 
 Die MIB-Anzahl verwendet die unteren 32 Bits und muss 2–12 sein; die Namenslänge verwendet 64 Bits und muss kleiner als 1024 sein. Alle angegebenen Bytes werden vor dem ersten NUL und dem Entfernen eines abschließenden Punkts geprüft. Leere Namen ergeben ENOENT; teilweise lesbare Eingaben bleiben nicht unterstützt. Ein nicht null `oldlenp` muss vor Effekten für acht Bytes vollständig les- und schreibbar sein. Native Versuche mit fehlerhaften Längenzeigern kehrten nicht fristgerecht zurück; diese Zeiger bleiben außerhalb des unterstützten Bereichs. Null `oldlenp` bedeutet Kapazität null; null `oldp` fragt nur die Größe ab. Ein kurzer Puffer ergibt ENOMEM12 ohne Datenänderung und schreibt Länge null. Daten-EFAULT bewahrt die alte Länge. Eingabe und Kapazität werden vor den Daten erfasst; die Länge wird zuletzt kopiert. Aliase und frühere Kopien bleiben bei späteren Transportfehlern erhalten.
 
-newp/newlen beide ungleich0 bedeuten Schreiben. Namen/MIB und vollständige oldlenp-Lese/Schreibvorprüfung bleiben zuerst. Standard oder explizit nicht-root EUID liefert EPERM1 vor Beobachtung/Datenausgabe. EUID0 stoppt kern.osversion unsupported, da privilegiertes Schreiben unmodelliert bleibt; RUID entscheidet nicht. Andere nativ schreibgeschützte Knoten liefern auch root EPERM1. Neue Länge0 ignoriert Zeiger; kein erfundenes ENOENT für unbekannte Schlüssel/Bäume/dynamische OIDs.
+newp/newlen beide ungleich0 bedeuten Schreiben. Namen/MIB und vollständige oldlenp-Lese/Schreibvorprüfung bleiben zuerst. Standard oder explizit nicht-root EUID liefert EPERM1 vor Beobachtung/Datenausgabe. EUID0 stoppt kern.osversion / kern.maxfilesperproc unsupported, da privilegiertes Schreiben unmodelliert bleibt; RUID entscheidet nicht. Andere nativ schreibgeschützte Knoten liefern auch root EPERM1. Neue Länge0 ignoriert Zeiger; kein erfundenes ENOENT für unbekannte Schlüssel/Bäume/dynamische OIDs.
 
 Das eigene Programm `system-info` prüft native macOS- und Gast-ABI; `virtual-system` vergleicht konfigurierte Bytes über C++, C/CLI und Python. Ein separates SDK-Orakel erfasst neun Hostbeobachtungen als explizite Testeingaben und vergleicht benannte und numerische Ausgaben. Das bestätigt weder physisches iOS noch Intel HVF.
 
@@ -646,3 +647,23 @@ registriert/bestanden/unverfügbare skips/fehlgeschlagen: 1413/897/516/0; ARM64 
 21 value +5 native fault,5s; host16groups, positive short capacity: OK. Native partial32byte thenEFAULT: observation only. Counts overlap. `build-hvf-arm64/credential-observations/`.
 
 Erster Lauf8 Fehler (5 Instruktionsbudgets,3 Fünfsekundenfristen),12skips. Zweitseiten-Scan im Fixture auf komplette132Byte am gleichen Seitenübergang begrenzt (64 davor,bis64 Daten,mindestens4 danach); direkter Owner prüft beide ganzen Seiten. Budgets/Argumente/Negativkontrollen unverändert, Quellen/Binaries/beide Läufe erhalten. Transportgeometrie vor Ausführung nach Review korrigiert; Public-Auswahl vergleicht Inhalte. Rechte/ACL, Links, Directorybeobachtungen nach Mutation, shared maps/EOF, Uhren, Mach/thread/dyld/framework offen; physisches iOS, pausiertes IntelHVF, mergeCI separat.
+
+## Deskriptortabelle aus deklarierten Prozess- und Kernelgrenzen
+
+`DarwinSystemOptions::MaxFilesPerProcess` / `darwin_system.max_files_per_process` deklariert optional einen nichtnegativen int. Fehlend bleibt unbekannt, explizite Null ist gültig. `kern.maxfilesperproc` und MIB `[1,29]` lesen unabhängig von Ressourcenlimits dieselben vier Byte. Verlustfreie Ganzzahlprüfung und zentraler Validator verweigern falsche Typen, negative und zu große Werte vor dem Laden; Nicht-Darwin-Profile ebenso.
+
+BSD `getdtablesize(89)` benötigt diese Grenze und `ResourceLimits[8].Current` und liefert das Minimum. Der volle 64-Bit-Current wird vor int-Konvertierung begrenzt: `0x100000001` mit cap=64 liefert64, auch Infinity wird sicher begrenzt. Maximum, Hostwerte, aktive FD-Anzahl und `DescriptorLimit` ersetzen keine Beobachtung. Ein fehlender Partner bleibt auch bei bekanntem Nullwert unsupported. Alle sechs Argumente bleiben unbeachtet, ohne Zugriff auf Userspeicher; vorhandene BSD carry/sekundäre Register gelten. Mach timebase trap89 bleibt getrennt.
+
+Die sysctl-Kopierphasen bleiben erhalten. EUID0-Schreiben stoppt nach Namen/MIB und oldlenp-Vorprüfung, vor Beobachtung/Ausgabe unsupported; nicht-root erhält EPERM. Neuer Zeiger mit Länge Null bleibt Lesen. Limits oder Schreibrechte werden nicht daraus abgeleitet. Das Pflicht-Workload prüft beide cap-Abfragen und niedrige/hohe syscall numbers mit unverändertem `l` /144-Byte-Ausgang; spätere Ablehnung bewahrt bereits ausgegebene Bytes. Der skalare Fixture prüft fehlende Werte, Null, breiten Current und Unabhängigkeit von DescriptorLimit=3.
+
+```json
+{"darwin_system":{"max_files_per_process":64,"resource_limits":[{"resource":8,"current":"4294967297","maximum":"9223372036854775807"}]}}
+```
+
+[XNU getdtablesize](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c), [XNU proc_limitgetcur_nofile](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [XNU MIB constants](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/sysctl.h).
+
+Prüfung: Darwin (registriert/bestanden/nicht verfügbar/fehlgeschlagen) 1441/913/528/0; ARM64 HVF 132/132; System/SDK 80/80; File 365/365; C/CLI 211/211; ProcessReport 45/45; native 33/33; Python 5 (42.254s); API 71; runner 44 + reference 5. clang-format 22.1.2; capabilities/provenance; docs 286 / locales 10 / negative controls 3.
+
+Versuchsverlauf: Die erste Runner-Prüfung scheiterte für ARM64 und x86-64, weil die neue skalare Methode nicht im Pflichtinventar stand. Die Registrierung wurde ergänzt, ohne die Gleichheitsregel aller Methoden abzuschwächen. Das erste Gate mit 129 Pflichtfällen und die Fehler bleiben erhalten; das neue abschließende ARM64-Gate verlangt 132 Fälle.
+
+Zählungen überschneiden sich. `build-hvf-arm64/descriptor-table-observations/` bewahrt die tatsächliche Ausführungsbasis und exakte Quell-/Binär-/Loghashes; frühere Belege bleiben unverändert. Fünf wegwerfbare ARM64-macOS-Kindprozesse,40 Prüfungen, je fünf Sekunden Frist: Current=1048575/cap=245760 ergibt245760; Kinder mit Current=0/1/32/245777 ergeben0/1/32/245760. Eltern- und Systemlimits bleiben unverändert. Physisches iOS, pausiertes Intel HVF und remote merge CI sind separate Abnahmen. Rechte, Verzeichnisbeobachtungen nach Änderung, shared maps/EOF, fortlaufende Uhren, Mach/thread/dyld und Frameworks bleiben offen.
