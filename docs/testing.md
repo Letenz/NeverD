@@ -3044,6 +3044,14 @@ unknown observations, target validation, aliases and idle behavior. The
 `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle` unit case
 checks the shared observation owner, and input cases reject aliases,
 unobserved/nonleader targets and negative CPU time before loading.
+`ZeroTimeoutPollRetainsReadinessAndOrderedCopies` executes O0/O2 raw callers
+for every released GKI branch. It checks live/negative/closed entries, duplicate
+ready counts, argument narrowing, timeout/mask ordering, read-only zero
+timespecs, metadata-before-readiness admission and earlier revents before a
+later write fault. `ZeroTimeoutPollKeepsUnobservedBoundaries` retains unknown
+kernel, limit, masks, waits and descriptor readiness. Android's
+`ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` checks the same table and
+errno ownership across all six packing profiles.
 Run these first,
 then the complete Linux process, Android native and
 public process suites when changing shared kernel or descriptor semantics.

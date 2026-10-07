@@ -260,3 +260,38 @@ u64 syscall_current_task_cpu_clock(u64 *out) {
     return 2;
   return result ? 3 : 0;
 }
+
+u64 syscall_gki_ppoll(u64 *out) {
+  struct poll_descriptor {
+    int fd;
+    unsigned short events, revents;
+  } *entries = (void *)out;
+  struct cpu_timespec zero = {0, 0};
+  if (raw(434, (u64)getpid(), 0, 0, 0, 0, 0) != 3)
+    return 1;
+  entries[0] = (struct poll_descriptor){3, 17, 0xa5a5};
+  entries[1] = (struct poll_descriptor){-1, 0xf0, 0x5a5a};
+  entries[2] = (struct poll_descriptor){99, 0, 0xa5a5};
+  entries[3] = (struct poll_descriptor){100, 0xffff, 0x5a5a};
+  *__errno() = 77;
+  out[4] = (u64)raw(73, (u64)entries, 4, (u64)&zero, 0, ~0UL, ~0UL);
+  out[5] = (u64)*__errno();
+  out[6] = (u64)syscall(73, entries, 0x100000004UL, &zero, 0UL, ~0UL);
+  out[7] = (u64)*__errno();
+  return raw(57, 3, 0, 0, 0, 0, 0) ? 2 : 0;
+}
+u64 syscall_gki_ppoll_errors(u64 *out) {
+  struct cpu_timespec timeout = {0, 0};
+  *__errno() = 77;
+  out[0] = (u64)raw(73, 1, 6, 1, 1, 7, 0);
+  out[1] = (u64)*__errno();
+  timeout.seconds = -1;
+  out[2] = (u64)syscall(73, 1UL, 0UL, &timeout, 1UL, 7UL);
+  out[3] = (u64)*__errno();
+  timeout.seconds = 0;
+  out[4] = (u64)syscall(73, 1UL, 6UL, &timeout, 0UL, 0UL);
+  out[5] = (u64)*__errno();
+  out[6] = (u64)raw(73, ~0UL, 0, (u64)&timeout, 0, 0, 0);
+  out[7] = (u64)*__errno();
+  return 0;
+}
