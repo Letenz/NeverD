@@ -496,7 +496,7 @@ Windows 모델은 독립적인 비페이지 풀 MDL도 관리하며, 설명자�
 
 `KernelDispatcher`는 논리 스레드별로 mutex 재귀 소유권을 관리합니다. `KernelModel`은 지연된 `KeWaitForSingleObject` 획득을 위해 대기 스레드를 저장하고 APC 조회와 `KeReleaseMutex`에 같은 ID를 사용합니다. 중첩 스택을 폐기해도 소유권은 유지되며, 가장 바깥쪽 반환에서 수명을 검사합니다.
 
-`KernelModelWaits`는 단일／다중 대기 등록, 스레드 참조, 기한 및 호출자의 불투명한 `KWAIT_BLOCK` 수명을 소유합니다. `KernelDispatcher`는 전체 집합을 검증한 뒤 신호·카운트·mutex 변경을 확정하고, `KernelScheduler`는 선택된 동기화 타이머 신호를 일괄 사전 검증하여 소비합니다.
+`KernelModelWaits`는 단일／다중 대기 등록, 스레드 참조, 기한 및 호출자의 불투명한 `KWAIT_BLOCK` 수명을 소유합니다. `KernelDispatcher`는 전체 집합을 검증한 뒤 신호·카운트·mutex 변경을 확정하고, `KernelScheduler`는 선택된 동기화 타이머 신호를 일괄 사전 검증하여 소비합니다. `WaitRegistrations`가 이 기준 기록을 보관합니다. 보류된 각 대기는 재사용하지 않는 식별자와 변경할 수 없는 저장 상태를 갖습니다. 완료되거나 변경된 대기를 폴링하면 신호 획득이나 참조 해제 전에 오류가 발생합니다.
 
 `KernelModelDeviceStack`은 장치의 드라이버 소유자, 할당, 상하 연결, 삭제 대기 상태, 내부 참조를 하나의 레코드로 관리합니다. 게스트 `NextDevice` 목록과 호스트 소유 연결 그래프는 별개입니다. 이름 확인은 이름 있는 하위 장치를 `FILE_OBJECT`와 보고서에 유지하고 초기 디스패치와 READ/WRITE 방식은 현재 최상단을 선택하며 요청 경로 전체를 보존합니다. 분리·삭제 후에도 요청/콜백이 참조하는 장치는 만료되지 않으며 공개 `ReferenceCount`는 열린 핸들만 셉니다.
 

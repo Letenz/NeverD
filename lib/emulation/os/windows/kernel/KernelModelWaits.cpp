@@ -145,6 +145,10 @@ llvm::Expected<uint64_t> KernelModel::beginObjectWait(Wait Pending,
   if (Pending.Deadline && *Pending.Deadline <= Scheduler.now100ns())
     return Pending.Type == Wait::Kind::Delay ? windows::StatusSuccess
                                              : windows::StatusTimeout;
+  if (!NextWaitRegistration)
+    return waitError(kernel_wait::RegistrationExhausted);
+  Pending.Registration = NextWaitRegistration++;
+  WaitRegistrations.emplace(Pending.Registration, Pending);
   for (uint64_t Object : Pending.Objects)
     ++WaitReferences[Object];
   if (Pending.WaitBlockArray)
@@ -203,11 +207,23 @@ llvm::Error KernelModel::releaseWaitReferences(const Wait &Pending) {
       WaitReferences.erase(Object);
   for (uint64_t Object : Objects)
     retireThreadIfUnreferenced(Object);
+  WaitRegistrations.erase(Pending.Registration);
   return llvm::Error::success();
 }
 
 llvm::Expected<std::optional<uint32_t>>
 KernelModel::pollWait(const Wait &Pending) {
+  if (Pending.Registration) {
+    const auto Registration = WaitRegistrations.find(Pending.Registration);
+    if (Registration == WaitRegistrations.end() ||
+        Registration->second != Pending)
+      return waitError(kernel_wait::RegistrationLost);
+  } else if (Pending.Type == Wait::Kind::Dispatcher ||
+             Pending.Type == Wait::Kind::Thread ||
+             Pending.Type == Wait::Kind::Multiple ||
+             Pending.Type == Wait::Kind::Delay) {
+    return waitError(kernel_wait::RegistrationLost);
+  }
   if (Pending.Type == Wait::Kind::PoFxActive ||
       Pending.Type == Wait::Kind::PoFxIdle) {
     auto Operation = BlockingPoFx.find(Pending.Thread);
@@ -305,12 +321,14 @@ KernelModel::pollWait(const Wait &Pending) {
       Pending.Deadline && *Pending.Deadline <= Scheduler.now100ns();
   if (!*Acquired && !Expired)
     return std::optional<uint32_t>{};
+  const auto Status =
+      *Acquired ? *Acquired
+                : std::optional<uint32_t>{Pending.Type == Wait::Kind::Delay
+                                              ? windows::StatusSuccess
+                                              : windows::StatusTimeout};
   if (auto E = releaseWaitReferences(Pending))
     return E;
-  return *Acquired ? *Acquired
-                   : std::optional<uint32_t>{Pending.Type == Wait::Kind::Delay
-                                                 ? windows::StatusSuccess
-                                                 : windows::StatusTimeout};
+  return Status;
 }
 
 } // namespace neverd::emulation

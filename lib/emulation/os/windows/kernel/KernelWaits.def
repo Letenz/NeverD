@@ -13,6 +13,7 @@ NEVERD_KERNEL_WAIT_VALUE(BlockSize, 48)
 NEVERD_KERNEL_WAIT_VALUE(PointerSize, 8)
 NEVERD_KERNEL_WAIT_VALUE(All, 0)
 NEVERD_KERNEL_WAIT_VALUE(Any, 1)
+NEVERD_KERNEL_WAIT_VALUE(FirstRegistration, 1)
 #endif
 
 #ifdef NEVERD_KERNEL_WAIT_TEXT
@@ -38,6 +39,10 @@ NEVERD_KERNEL_WAIT_TEXT(
 NEVERD_KERNEL_WAIT_TEXT(OpaqueBlocks,
                         "guest access to an active opaque wait-block array")
 NEVERD_KERNEL_WAIT_TEXT(WaitLost, "wait lost its dispatcher object reference")
+NEVERD_KERNEL_WAIT_TEXT(RegistrationLost,
+                        "wait registration is missing, completed or changed")
+NEVERD_KERNEL_WAIT_TEXT(RegistrationExhausted,
+                        "wait registration identity space is exhausted")
 NEVERD_KERNEL_WAIT_TEXT(BlockLost, "wait lost its wait-block storage reference")
 NEVERD_KERNEL_WAIT_TEXT(ThreadReference,
                         "thread wait requires a referenced object pointer")

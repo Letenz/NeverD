@@ -556,7 +556,7 @@ Windows 模型还管理独立的非分页池 MDL；描述符释放不会释放�
 
 `KernelDispatcher` 按逻辑线程维护 mutex 的递归所有权。`KernelModel` 为延迟的 `KeWaitForSingleObject` 获取保存等待线程，并让 APC 查询和 `KeReleaseMutex` 使用相同身份；嵌套栈退役保留所有权，最外层返回仍执行生命周期检查。
 
-`KernelModelWaits` 统一负责单对象／多对象等待登记、线程引用、截止时间及调用方不透明 `KWAIT_BLOCK` 的生命周期。`KernelDispatcher` 验证完整集合后才提交信号、计数和 mutex 更改；`KernelScheduler` 对选中的同步定时器信号整批预检和消耗。
+`KernelModelWaits` 统一负责单对象／多对象等待登记、线程引用、截止时间及调用方不透明 `KWAIT_BLOCK` 的生命周期。`KernelDispatcher` 验证完整集合后才提交信号、计数和 mutex 更改；`KernelScheduler` 对选中的同步定时器信号整批预检和消耗。 `WaitRegistrations` 保存这一权威记录。 每次延后等待都有不复用的标识和不可变的捕获状态；轮询已完成或被篡改的等待时，会在获取信号或释放引用之前报错。
 
 `KernelModelDeviceStack` 用单一记录管理每个设备的驱动所有者、分配、上下层邻居、待删除状态和内部引用。来宾 `NextDevice` 枚举链与宿主拥有的附着图含义不同。名称解析保留具名下层设备作为 `FILE_OBJECT` 和报告身份，选择当前栈顶进行初始派发及 READ/WRITE 缓冲配置，并保存保活整条路径的引用。拆链或删除不能使请求／回调仍持有的设备失效；公开 `ReferenceCount` 仍只计算打开句柄。
 

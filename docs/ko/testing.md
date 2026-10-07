@@ -357,7 +357,7 @@ fixture는 게스트 초기화, 성공/실패 반환, 미지원 동작, 메모�
 
 `DriverMutexThreadTests.cpp`는 `driver_seh_mutex.def`의 원본 WDK 모드 네 가지를 실행합니다. SEH 필터의 재귀 획득, 필터 또는 예외 finally가 획득한 소유권 유지, 다른 시스템 스레드의 mutex 해제 후 차단된 필터 재개를 검증합니다. Unicorn/KVM/WHP의 driver 및 checked 계약에서 일반/활성 CFG 이미지, 기본/재배치 주소, 협력식 및 1/17 명령 시간 할당량을 다룹니다. 모델 테스트는 중첩 스택 폐기 후 APC 비활성화, 다른 스레드의 해제 거부, 가장 바깥쪽 반환 검사도 확인합니다. KVM/WHP 사례는 `NativeDriverTests.def`의 필수 항목입니다.
 
-`KernelWaitSetTests.cpp`는 Unicorn 없이 12개 모델 사례로 부분 `WaitAll`, 첫 준비 객체 `WaitAny`, 저장된 인덱스, 시간 초과 정리, 잘못된 후속 객체／저장소, 64개 경계, IRQL, 종료 스레드 보존과 동기화 타이머 두 개를 검증합니다. `DriverMultipleWaitTests.cpp`는 `driver_wdm_multiple_wait.c`와 `DriverMultipleWaitCases.def`의 독자적인 WDK 모드 7개를 Unicorn/KVM/WHP, 두 드라이버 계약, 일반／CFG 이미지, 재배치와 협력식／1／17 명령 퀀텀에서 실행합니다. 모델／네이티브 결과 26개는 `NativeDriverTests.def`의 필수 항목입니다.
+`KernelWaitSetTests.cpp`는 Unicorn 없이 15개 모델 사례로 부분 `WaitAll`, 첫 준비 객체 `WaitAny`, 저장된 인덱스, 시간 초과 정리, 잘못된 후속 객체／저장소, 64개 경계, IRQL, 종료 스레드 보존과 동기화 타이머 두 개를 검증합니다. `DriverMultipleWaitTests.cpp`는 `driver_wdm_multiple_wait.c`와 `DriverMultipleWaitCases.def`의 독자적인 WDK 모드 7개를 Unicorn/KVM/WHP, 두 드라이버 계약, 일반／CFG 이미지, 재배치와 협력식／1／17 명령 퀀텀에서 실행합니다. 모델／네이티브 결과 29개는 `NativeDriverTests.def`의 필수 항목입니다. 회귀 테스트는 성공 또는 시간 초과 뒤의 중복 완료, 저장 상태 변경, 지연 대기의 중복 완료도 검증합니다.
 
 `driver_context_limits.c`: API IRQL 상한은 `KernelAPIIRQL.def`에 정의되며 인수별 제한은 담당 모델이 검사합니다. DPC는 레지스트리 API나 페이징 풀 할당·해제·접근을 사용할 수 없습니다. Unicode `DbgPrint` 변환은 `PASSIVE_LEVEL`이 필요하며 지원되는 ANSI 출력과 비페이징 작업은 `DISPATCH_LEVEL`에서 사용할 수 있습니다. 콜백 스택에는 경계가 있어 이탈한 스택 포인터가 다른 차단 작업자의 스택을 침범할 수 없습니다. 장치 확장의 활성 타이머는 조기 장치 회수를 막습니다. 일반 IRQL 전환을 제공하는 기능은 아닙니다.
 
@@ -1224,7 +1224,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 48개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `4887 CPU + 230 WHP + 25 SEH + 77 scheduling + 26 wait sets = 5245`입니다. 대기 집합 검사 26개는 이식 가능한 모델 사례 12개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `4887 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5248`입니다. 대기 집합 검사 29개는 이식 가능한 모델 사례 15개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 

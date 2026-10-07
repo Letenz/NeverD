@@ -460,7 +460,7 @@ Windows 模型亦管理獨立的非分頁池 MDL；釋放描述符不會釋放�
 
 `KernelDispatcher` 依邏輯執行緒維護 mutex 的遞迴所有權。`KernelModel` 為延遲的 `KeWaitForSingleObject` 取得保存等待執行緒，並讓 APC 查詢和 `KeReleaseMutex` 使用相同身分；巢狀堆疊退役保留所有權，最外層返回仍執行生命週期檢查。
 
-`KernelModelWaits` 統一負責單物件／多物件等待登記、執行緒參考、期限及呼叫端不透明 `KWAIT_BLOCK` 的生命週期。`KernelDispatcher` 驗證完整集合後才提交訊號、計數及 mutex 變更；`KernelScheduler` 對選中的同步計時器訊號整批預檢和消耗。
+`KernelModelWaits` 統一負責單物件／多物件等待登記、執行緒參考、期限及呼叫端不透明 `KWAIT_BLOCK` 的生命週期。`KernelDispatcher` 驗證完整集合後才提交訊號、計數及 mutex 變更；`KernelScheduler` 對選中的同步計時器訊號整批預檢和消耗。 `WaitRegistrations` 保存這份權威記錄。 每次延後等待都有不重複使用的識別碼與不可變的擷取狀態；輪詢已完成或被竄改的等待時，會在取得訊號或釋放參照之前報錯。
 
 `KernelModelDeviceStack` 以單一記錄管理各裝置的驅動程式擁有者、配置、上下層鄰居、待刪除狀態與內部參考。客體 `NextDevice` 列舉串列與宿主擁有的附加圖意義不同。名稱解析保留具名下層裝置作為 `FILE_OBJECT` 和報告身分，選擇目前堆疊頂端進行初始派送及 READ/WRITE 緩衝設定，並保留整條請求路徑。解除附加或刪除不會讓請求／回呼仍持有的裝置失效；公開 `ReferenceCount` 仍只計算開啟的控制代碼。
 

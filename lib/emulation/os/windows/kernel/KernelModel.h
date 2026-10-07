@@ -23,6 +23,7 @@
 #include "KernelRemoveLocks.h"
 #include "KernelScheduler.h"
 #include "KernelUsbIdle.h"
+#include "KernelWaits.h"
 
 #include "neverd/emulation/DriverSession.h"
 #include "neverd/emulation/GuestMemory.h"
@@ -200,6 +201,8 @@ public:
     bool All = false;
     uint64_t WaitBlockArray = 0;
     uint32_t WaitBlockSize = 0;
+    uint64_t Registration = 0;
+    bool operator==(const Wait &) const = default;
   };
   std::optional<Wait> takeWait();
   llvm::Expected<std::optional<uint32_t>> pollWait(const Wait &Pending);
@@ -697,6 +700,8 @@ private:
   }
   llvm::Error canReleaseResources(uint64_t PDO) const;
   std::optional<Wait> PendingWait;
+  uint64_t NextWaitRegistration = kernel_wait::FirstRegistration;
+  std::map<uint64_t, Wait> WaitRegistrations;
   std::map<uint64_t, size_t> WaitReferences;
   std::map<std::pair<uint64_t, uint32_t>, size_t> WaitBlockReferences;
   struct SystemThread {

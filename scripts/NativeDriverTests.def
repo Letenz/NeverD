@@ -46,6 +46,12 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelMultipleWait.DeferredWaitCapturesObjectsAndOriginalIndices")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.CompletedWaitCannotConsumeAnotherRegistrationsSignal")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.CapturedWaitStateRejectsAlterationBeforeAcquisition")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.CompletedDelayCannotReuseItsRegistration")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelMultipleWait.TimeoutReleasesEveryObjectAndCallerBufferReference")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelMultipleWait.InvalidLaterObjectCannotConsumeEarlierSignal")

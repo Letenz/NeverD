@@ -355,7 +355,7 @@ fixture 涵蓋客體初始化、成功與失敗傳回、不支援的行為、記
 
 `DriverMutexThreadTests.cpp` 執行 `driver_seh_mutex.def` 中四種原創 WDK 模式：在 SEH 篩選器中遞迴取得、篩選器或異常 finally 取得後保留所有權，以及篩選器阻塞並在另一系統執行緒釋放 mutex 後恢復。Unicorn／KVM／WHP 的 driver 與 checked 契約涵蓋一般／有效 CFG 映像、偏好／重定位位址及協作式／1／17 指令時間片。模型測試亦驗證巢狀堆疊退役後的 APC 停用、錯誤執行緒釋放及最外層返回檢查；KVM／WHP 案例納入 `NativeDriverTests.def` 強制清單。
 
-`KernelWaitSetTests.cpp` 在不依賴 Unicorn 時執行十二項模型測試：部分 `WaitAll`、首個就緒 `WaitAny`、索引快照、逾時清理、後續非法物件／儲存、64 物件邊界、IRQL、保留已退出執行緒及兩個同步計時器。`DriverMultipleWaitTests.cpp` 執行 `driver_wdm_multiple_wait.c` 與 `DriverMultipleWaitCases.def` 的七種原創 WDK 模式，涵蓋 Unicorn/KVM/WHP、兩種驅動契約、一般／CFG 映像、重定位及協作式／1／17 指令時間片。26 項模型／原生結果納入 `NativeDriverTests.def` 強制驗收。
+`KernelWaitSetTests.cpp` 在不依賴 Unicorn 時執行十五項模型測試：部分 `WaitAll`、首個就緒 `WaitAny`、索引快照、逾時清理、後續非法物件／儲存、64 物件邊界、IRQL、保留已退出執行緒及兩個同步計時器。`DriverMultipleWaitTests.cpp` 執行 `driver_wdm_multiple_wait.c` 與 `DriverMultipleWaitCases.def` 的七種原創 WDK 模式，涵蓋 Unicorn/KVM/WHP、兩種驅動契約、一般／CFG 映像、重定位及協作式／1／17 指令時間片。29 項模型／原生結果納入 `NativeDriverTests.def` 強制驗收。 回歸也涵蓋成功或逾時後的重複完成、擷取狀態被更動，以及延遲等待的重複完成。
 
 `driver_context_limits.c`: API 的 IRQL 上限來自 `KernelAPIIRQL.def`，參數相關限制由所屬模型檢查。DPC 不能呼叫登錄 API，也不能配置、釋放或存取分頁集區；Unicode `DbgPrint` 轉換要求 `PASSIVE_LEVEL`，支援的 ANSI 輸出與非分頁操作仍可在 `DISPATCH_LEVEL` 使用。回呼堆疊有明確邊界，越界堆疊指標不能進入另一阻塞工作項目的堆疊。裝置擴充中的已啟動計時器會阻止裝置提早回收。這些檢查並未開放一般 IRQL 切換。
 
@@ -1180,7 +1180,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 48 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `4887 CPU + 230 WHP + 25 SEH + 77 scheduling + 26 wait sets = 5245`。26 項等待集合檢查包含十二項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `4887 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5248`。29 項等待集合檢查包含十五項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 

@@ -17,7 +17,7 @@
 
 核心 mutex 的所有權屬於邏輯執行緒，並跨巢狀回呼和 SEH 保持。`KeWaitForSingleObject` 為延遲取得保存等待執行緒身分；該執行緒可在任一呼叫堆疊上執行 `KeReleaseMutex`。一般 APC 的停用持續到最後一次遞迴釋放，最外層返回會拒絕遺留的 mutex。
 
-`KeWaitForMultipleObjects` 支援對 1..64 個不同的已初始化事件、計時器、號誌、mutex 或已參考系統執行緒執行 `WaitAll`／`WaitAny`，限非警示式 `KernelMode` 與 `Executive` 原因。`WaitAll` 一次提交全部取得；`WaitAny` 回傳最小就緒陣列索引，只消耗該物件。超過三個物件須提供可寫的非分頁 `KWAIT_BLOCK` 儲存。延遲等待保存物件陣列、保留全部物件並保護呼叫端等待區塊，直到成功或逾時。零逾時輪詢允許 DISPATCH_LEVEL，阻塞等待保存不高於 APC_LEVEL 的 IRQL。重複物件、警示式／使用者模式等待及 mutex 遺棄仍不支援。
+`KeWaitForMultipleObjects` 支援對 1..64 個不同的已初始化事件、計時器、號誌、mutex 或已參考系統執行緒執行 `WaitAll`／`WaitAny`，限非警示式 `KernelMode` 與 `Executive` 原因。`WaitAll` 一次提交全部取得；`WaitAny` 回傳最小就緒陣列索引，只消耗該物件。超過三個物件須提供可寫的非分頁 `KWAIT_BLOCK` 儲存。延遲等待保存物件陣列、保留全部物件並保護呼叫端等待區塊，直到成功或逾時。零逾時輪詢允許 DISPATCH_LEVEL，阻塞等待保存不高於 APC_LEVEL 的 IRQL。重複物件、警示式／使用者模式等待及 mutex 遺棄仍不支援。 每次延後等待都有不重複使用的識別碼與不可變的擷取狀態；輪詢已完成或被竄改的等待時，會在取得訊號或釋放參照之前報錯。
 
 可執行續接、新工作項目與系統執行緒共用就緒順序。巢狀呼叫與 SEH 共用所屬執行緒的時間片。切換保留完整 CPU 上下文、邏輯執行緒身分、APC 狀態、有效 IRQL 和處理程序映射。PASSIVE/APC 層級可搶占；DISPATCH 以上遮蔽執行緒切換。臨界區與 guarded region 停用 APC，並不禁止執行緒搶占。
 

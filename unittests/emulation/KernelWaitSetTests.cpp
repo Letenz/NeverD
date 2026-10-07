@@ -155,10 +155,108 @@ TEST_F(KernelMultipleWait, DeferredWaitCapturesObjectsAndOriginalIndices) {
   EXPECT_EQ(take(Model->pollWait(*Pending)), 1u);
   EXPECT_EQ(call(kernel_api::KeReadStateEvent, {Replacement}), 1u);
   signal(First);
-  reject(Model->pollWait(*Pending), kernel_wait::WaitLost);
+  reject(Model->pollWait(*Pending), kernel_wait::RegistrationLost);
   EXPECT_EQ(call(kernel_api::KeReadStateEvent, {First}), 1u);
   call(kernel_api::KeInitializeEvent, {First, 1, false});
   call(kernel_api::KeInitializeEvent, {Second, 1, false});
+}
+
+TEST_F(KernelMultipleWait,
+       CompletedWaitCannotConsumeAnotherRegistrationsSignal) {
+  for (bool Timeout : {false, true}) {
+    SCOPED_TRACE(Timeout);
+    Model->enterExecution(profile::StackBase);
+    const auto Event = event();
+    const auto Interval = Scratch + Stride * 3;
+    put(Interval, std::bit_cast<uint64_t>(-int64_t(TimeoutTicks)));
+    EXPECT_EQ(take(wait({Event}, true, Timeout ? Interval : 0)), 0u);
+    auto First = Model->takeWait();
+    ASSERT_TRUE(First);
+    Model->enterExecution(Scratch + Stride * 4);
+    EXPECT_EQ(call(kernel_api::KeWaitForSingleObject,
+                   {Event, windows::ExecutiveWaitReason, windows::KernelMode,
+                    false, 0}),
+              0u);
+    auto Second = Model->takeWait();
+    ASSERT_TRUE(Second);
+    if (Timeout)
+      ok(Model->advanceExecutionTo100ns(Model->now100ns() + TimeoutTicks));
+    else
+      signal(Event);
+    EXPECT_EQ(take(Model->pollWait(*First)),
+              Timeout ? windows::StatusTimeout : windows::StatusSuccess);
+    signal(Event);
+    reject(Model->pollWait(*First), kernel_wait::RegistrationLost);
+    EXPECT_EQ(call(kernel_api::KeReadStateEvent, {Event}), 1u);
+    EXPECT_EQ(take(Model->pollWait(*Second)), windows::StatusSuccess);
+    call(kernel_api::ExFreePool, {Event});
+  }
+}
+
+TEST_F(KernelMultipleWait,
+       CapturedWaitStateRejectsAlterationBeforeAcquisition) {
+  const auto First = event();
+  const auto Second = event();
+  const auto Replacement = event(true);
+  const auto Blocks = pool(2 * WaitBlockBytes);
+  const auto Interval = Scratch + Stride * 3;
+  put(Interval, std::bit_cast<uint64_t>(-int64_t(TimeoutTicks)));
+  EXPECT_EQ(take(wait({First, Second}, false, Interval, Blocks)), 0u);
+  auto Pending = Model->takeWait();
+  ASSERT_TRUE(Pending);
+  signal(Second);
+  auto Changed = *Pending;
+  Changed.Objects = {Replacement};
+  reject(Model->pollWait(Changed), kernel_wait::RegistrationLost);
+  Changed = *Pending;
+  Changed.Thread ^= Stride;
+  reject(Model->pollWait(Changed), kernel_wait::RegistrationLost);
+  Changed = *Pending;
+  Changed.Execution ^= Stride;
+  reject(Model->pollWait(Changed), kernel_wait::RegistrationLost);
+  Changed = *Pending;
+  Changed.IRQL = scheduler::DispatchLevel;
+  reject(Model->pollWait(Changed), kernel_wait::RegistrationLost);
+  Changed = *Pending;
+  Changed.Deadline.reset();
+  reject(Model->pollWait(Changed), kernel_wait::RegistrationLost);
+  Changed = *Pending;
+  Changed.All = true;
+  reject(Model->pollWait(Changed), kernel_wait::RegistrationLost);
+  Changed = *Pending;
+  Changed.WaitBlockArray = 0;
+  reject(Model->pollWait(Changed), kernel_wait::RegistrationLost);
+  Changed = *Pending;
+  Changed.Registration = 0;
+  reject(Model->pollWait(Changed), kernel_wait::RegistrationLost);
+  Changed = *Pending;
+  Changed.Type = KernelModel::Wait::Kind::FrameworkIdle;
+  reject(Model->pollWait(Changed), kernel_wait::RegistrationLost);
+  EXPECT_EQ(call(kernel_api::KeReadStateEvent, {Replacement}), 1u);
+  EXPECT_EQ(call(kernel_api::KeReadStateEvent, {Second}), 1u);
+  EXPECT_EQ(take(Model->pollWait(*Pending)), 1u);
+  call(kernel_api::ExFreePool, {Blocks});
+}
+
+TEST_F(KernelMultipleWait, CompletedDelayCannotReuseItsRegistration) {
+  const auto Interval = Scratch + Stride * 3;
+  put(Interval, std::bit_cast<uint64_t>(-int64_t(TimeoutTicks)));
+  EXPECT_EQ(call(kernel_api::KeDelayExecutionThread,
+                 {windows::KernelMode, false, Interval}),
+            0u);
+  auto First = Model->takeWait();
+  ASSERT_TRUE(First);
+  ok(Model->advanceExecutionTo100ns(TimeoutTicks));
+  EXPECT_EQ(take(Model->pollWait(*First)), windows::StatusSuccess);
+  EXPECT_EQ(call(kernel_api::KeDelayExecutionThread,
+                 {windows::KernelMode, false, Interval}),
+            0u);
+  auto Second = Model->takeWait();
+  ASSERT_TRUE(Second);
+  reject(Model->pollWait(*First), kernel_wait::RegistrationLost);
+  EXPECT_FALSE(take(Model->pollWait(*Second)));
+  ok(Model->advanceExecutionTo100ns(2 * TimeoutTicks));
+  EXPECT_EQ(take(Model->pollWait(*Second)), windows::StatusSuccess);
 }
 
 TEST_F(KernelMultipleWait, TimeoutReleasesEveryObjectAndCallerBufferReference) {

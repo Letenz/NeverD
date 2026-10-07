@@ -508,7 +508,7 @@ Windows モデルは独立した非ページプール MDL も管理し、記述�
 
 `KernelDispatcher` は論理スレッドごとに mutex の再帰所有権を管理します。`KernelModel` は遅延した `KeWaitForSingleObject` 取得の待機スレッドを保存し、APC 照会と `KeReleaseMutex` に同じ識別子を使用します。ネストしたスタックの破棄は所有権を保持し、最外層の復帰では寿命検査を行います。
 
-`KernelModelWaits` が単一／複数待機の登録、スレッド参照、期限、呼び出し側の不透明な `KWAIT_BLOCK` の寿命を管理します。`KernelDispatcher` は集合全体を検証してから信号・カウント・mutex の変更を確定し、`KernelScheduler` は選択された同期タイマー信号を一括事前検証して消費します。
+`KernelModelWaits` が単一／複数待機の登録、スレッド参照、期限、呼び出し側の不透明な `KWAIT_BLOCK` の寿命を管理します。`KernelDispatcher` は集合全体を検証してから信号・カウント・mutex の変更を確定し、`KernelScheduler` は選択された同期タイマー信号を一括事前検証して消費します。 `WaitRegistrations` がこの正式な記録を保持します。 遅延された各待機は再利用されない識別子と不変の保存状態を持ちます。完了済みまたは変更された待機のポーリングは、シグナルの取得や参照の解放前にエラーになります。
 
 `KernelModelDeviceStack` はデバイスのドライバー所有者、割り当て、上下の接続、削除待ち状態、内部参照を一つの記録で管理します。ゲストの `NextDevice` 一覧とホストが所有する接続グラフは別の意味を持ちます。名前解決は名前付き下位デバイスを `FILE_OBJECT` とレポートに保持し、初期ディスパッチと READ/WRITE の方式には現在の最上位を選び、要求経路全体を保持します。切断・削除しても要求やコールバックが保持中のデバイスは失効せず、公開 `ReferenceCount` は開いたハンドル数だけを表します。
 
