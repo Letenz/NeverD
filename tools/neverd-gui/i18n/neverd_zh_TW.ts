@@ -1,1357 +1,1989 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
 <TS version="2.1" language="zh_TW" sourcelanguage="en">
-    <context>
-        <name>ConnectionsPane</name>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="20" />
-            <source>Pending</source>
-            <translation>等待中</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="21" />
-            <source>Completed</source>
-            <translation>已完成</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="22" />
-            <source>Failed</source>
-            <translation>失敗</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="23" />
-            <source>Cancelled</source>
-            <translation>已取消</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="24" />
-            <source>Timed out</source>
-            <translation>已逾時</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="25" />
-            <source>Disconnected</source>
-            <translation>已中斷連線</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="36" />
-            <source>MCP connections</source>
-            <translation>MCP 連線</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="37" />
-            <source>No server connected</source>
-            <translation>未連線伺服器</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="38" />
-            <source>Current session is available to external agents.</source>
-            <translation>目前工作階段可供外部代理程式存取。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="38" />
-            <source>Connect tools and resources, or share this session with an external agent.</source>
-            <translation>連線工具與資源，或與外部代理程式共用此工作階段。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="41" />
-            <source>Manage Connections…</source>
-            <translation>管理連線…</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="46" />
-            <source>MCP Connections</source>
-            <translation>MCP 連線</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="59" />
-            <source>Current GUI session</source>
-            <translation>目前 GUI 工作階段</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="60" />
-            <source>Disable Sharing</source>
-            <translation>停用共用</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="60" />
-            <source>Enable Sharing</source>
-            <translation>啟用共用</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="61" />
-            <source>Copy Credential Path</source>
-            <translation>複製憑證路徑</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="63" />
-            <source>Sharing is off. Enabling it grants local agents access to this session using its private credential file.</source>
-            <translation>共用已關閉。啟用後，本機代理程式可透過私有憑證檔案存取此工作階段。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="67" />
-            <source>Transport</source>
-            <translation>傳輸方式</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="68" />
-            <source>Absolute path to server executable</source>
-            <translation>伺服器執行檔的絕對路徑</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="68" />
-            <source>Server endpoint</source>
-            <translation>伺服器端點</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="70" />
-            <source>Disconnect</source>
-            <translation>中斷連線</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="70" />
-            <source>Connect</source>
-            <translation>連線</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="80" />
-            <source>Arguments must be a JSON array of strings.</source>
-            <translation>引數必須是 JSON 字串陣列。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="87" />
-            <source>Arguments as JSON, for example ["--help"]</source>
-            <translation>JSON 格式的引數，例如 ["--help"]</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="87" />
-            <source>Server arguments</source>
-            <translation>伺服器引數</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="91" />
-            <source>Bearer token (optional)</source>
-            <translation>Bearer 權杖（選填）</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="91" />
-            <source>Bearer token</source>
-            <translation>Bearer 權杖</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="92" />
-            <source>CA certificate path (optional)</source>
-            <translation>CA 憑證路徑（選填）</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="92" />
-            <source>CA certificate path</source>
-            <translation>CA 憑證路徑</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="106" />
-            <source>Tools</source>
-            <translation>工具</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="106" />
-            <source>Resources</source>
-            <translation>資源</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="106" />
-            <source>History</source>
-            <translation>歷程記錄</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="146" />
-            <source>No items published by this server.</source>
-            <translation>此伺服器未發佈任何項目。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="146" />
-            <source>Connect a server to browse its tools and resources.</source>
-            <translation>連線伺服器以瀏覽其工具與資源。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="146" />
-            <source>No calls yet.</source>
-            <translation>目前沒有呼叫記錄。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="156" />
-            <source>Result</source>
-            <translation>結果</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="157" />
-            <source>Schema</source>
-            <translation>結構定義</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="158" />
-            <source>Call Tool</source>
-            <translation>呼叫工具</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="159" />
-            <source>Cancel Call</source>
-            <translation>取消呼叫</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="167" />
-            <source>Tool arguments as JSON</source>
-            <translation>JSON 格式的工具引數</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="169" />
-            <source>Select a resource or call a tool to inspect its response.</source>
-            <translation>選取資源或呼叫工具以檢視回應。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="177" />
-            <source>Tool Input Schema</source>
-            <translation>工具輸入結構</translation>
-        </message>
-    </context>
-    <context>
-        <name>DisassemblyPane</name>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="22" />
-            <source>Address</source>
-            <translation>位址</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="23" />
-            <source>Instruction</source>
-            <translation>指令</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="87" />
-            <source>Load more instructions</source>
-            <translation>載入更多指令</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="93" />
-            <source>Disassembly</source>
-            <translation>反組譯</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="94" />
-            <source>Select a function to inspect its instructions.</source>
-            <translation>選取函式以檢視其指令。</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="94" />
-            <source>Addresses, instructions, and control flow in one place.</source>
-            <translation>在同一處檢視位址、指令與控制流程。</translation>
-        </message>
-    </context>
-    <context>
-        <name>DockTitleBar</name>
-        <message>
-            <location filename="../qml/DockTitleBar.qml" line="17" />
-            <source>Float or Dock Panel</source>
-            <translation>浮動或停駐面板</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockTitleBar.qml" line="18" />
-            <source>Close Panel</source>
-            <translation>關閉面板</translation>
-        </message>
-    </context>
-    <context>
-        <name>ExtensionsPane</name>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="25" />
-            <source>Import Manifest…</source>
-            <translation>匯入資訊清單…</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="26" />
-            <source>Run</source>
-            <translation>執行</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="27" />
-            <source>Unload</source>
-            <translation>卸載</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="55" />
-            <source>Import a declarative manifest to add analysis commands and views.</source>
-            <translation>匯入宣告式資訊清單，以新增分析命令與檢視。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="59" />
-            <source>Select an extension command to inspect its result.</source>
-            <translation>選取擴充功能命令以檢視其結果。</translation>
-        </message>
-    </context>
-    <context>
-        <name>FunctionsPane</name>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="84" />
-            <location filename="../qml/FunctionsPane.qml" line="22" />
-            <location filename="../qml/Main.qml" line="106" />
-            <source>FUNCTIONS</source>
-            <translation>函式</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="42" />
-            <source>Filter functions…</source>
-            <translation>篩選函式…</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="43" />
-            <source>Filter functions</source>
-            <translation>篩選函式</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="58" />
-            <source>Name</source>
-            <translation>名稱</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="59" />
-            <source>Address</source>
-            <translation>位址</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="128" />
-            <source>No functions</source>
-            <translation>沒有函式</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="129" />
-            <source>Try another filter or wait for analysis.</source>
-            <translation>嘗試其他篩選條件或等待分析。</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="129" />
-            <source>Open a binary to browse its functions.</source>
-            <translation>開啟二進位檔案以瀏覽其函式。</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="157" />
-            <source>Rename</source>
-            <translation>重新命名</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="158" />
-            <source>Comment</source>
-            <translation>註解</translation>
-        </message>
-    </context>
-    <context>
-        <name>GraphPane</name>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="54" />
-            <source>Zoom out</source>
-            <translation>縮小</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="55" />
-            <source>Reset zoom</source>
-            <translation>重設縮放</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="56" />
-            <source>Zoom in</source>
-            <translation>放大</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="57" />
-            <source>Fit</source>
-            <translation>適應</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="57" />
-            <source>Fit graph in viewport</source>
-            <translation>使圖形適應檢視區</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="59" />
-            <source>%1 blocks · %2 edges</source>
-            <translation>%1 個基本區塊 · %2 條邊</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="96" />
-            <location filename="../qml/GraphPane.qml" line="119" />
-            <source>Control flow</source>
-            <translation>控制流程</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="120" />
-            <source>Select a function to inspect its basic blocks.</source>
-            <translation>選取函式以檢視其基本區塊。</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="120" />
-            <source>Explore the paths through a function.</source>
-            <translation>探索函式內的執行路徑。</translation>
-        </message>
-    </context>
-    <context>
-        <name>GuiSessionBroker</name>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="22" />
-            <location filename="../mcp/GuiSessionBroker.cpp" line="98" />
-            <source>Session sharing disabled</source>
-            <translation>工作階段共用已停用</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="57" />
-            <source>Cannot create private session directory</source>
-            <translation>無法建立私有工作階段目錄</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="72" />
-            <source>Cannot open local session broker: %1</source>
-            <translation>無法啟動本機工作階段代理：%1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="78" />
-            <location filename="../mcp/GuiSessionBroker.cpp" line="83" />
-            <source>Cannot write private session credentials</source>
-            <translation>無法寫入私有工作階段憑證</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="87" />
-            <source>Session sharing enabled</source>
-            <translation>工作階段共用已啟用</translation>
-        </message>
-    </context>
-    <context>
-        <name>Main</name>
-        <message>
-            <location filename="../qml/Main.qml" line="16" />
-            <source>NeverD — Binary Analysis</source>
-            <translation>NeverD — 二進位分析</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="61" />
-            <source>Unsaved annotations</source>
-            <translation>未儲存的註解</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="70" />
-            <source>Save annotation changes before continuing?</source>
-            <translation>是否在繼續前儲存註解變更？</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="76" />
-            <source>Open Binary…</source>
-            <translation>開啟二進位檔案…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="77" />
-            <source>Go to Address or Symbol…</source>
-            <translation>跳至位址或符號…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="78" />
-            <source>Back</source>
-            <translation>上一個</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="79" />
-            <source>Forward</source>
-            <translation>下一個</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="80" />
-            <source>Settings…</source>
-            <translation>設定…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="81" />
-            <source>Rename Function…</source>
-            <translation>重新命名函式…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="82" />
-            <source>Edit Comment…</source>
-            <translation>編輯註解…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="83" />
-            <source>Undo</source>
-            <translation>復原</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="84" />
-            <source>Redo</source>
-            <translation>重做</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="85" />
-            <source>Cancel Analysis</source>
-            <translation>取消分析</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="86" />
-            <location filename="../qml/Main.qml" line="196" />
-            <source>Restart Worker</source>
-            <translation>重新啟動分析程序</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="87" />
-            <source>Toggle Bottom Panel</source>
-            <translation>切換底部面板</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="88" />
-            <source>Quit NeverD</source>
-            <translation>結束 NeverD</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="97" />
-            <source>File</source>
-            <translation>檔案</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="98" />
-            <source>Navigate</source>
-            <translation>導覽</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="99" />
-            <source>Edit</source>
-            <translation>編輯</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="99" />
-            <source>Save Annotations</source>
-            <translation>儲存註解</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="99" />
-            <source>Reload Annotations</source>
-            <translation>重新載入註解</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="101" />
-            <source>View</source>
-            <translation>檢視</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="112" />
-            <source>Focus Panel</source>
-            <translation>聚焦面板</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="98" />
-            <location filename="../qml/MachinePane.qml" line="22" />
-            <location filename="../qml/Main.qml" line="103" />
-            <location filename="../qml/Main.qml" line="113" />
-            <source>Disassembly</source>
-            <translation>反組譯</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="104" />
-            <source>Control Flow</source>
-            <translation>控制流程</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="22" />
-            <location filename="../qml/Main.qml" line="105" />
-            <source>Hex</source>
-            <translation>十六進位</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="117" />
-            <source>Reset Layout</source>
-            <translation>重設配置</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="119" />
-            <source>Analysis</source>
-            <translation>分析</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="122" />
-            <source>Import Manifest…</source>
-            <translation>匯入資訊清單…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="125" />
-            <source>Help</source>
-            <translation>說明</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="125" />
-            <location filename="../qml/Main.qml" line="356" />
-            <source>Keyboard Shortcuts</source>
-            <translation>鍵盤快速鍵</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="125" />
-            <location filename="../qml/Main.qml" line="366" />
-            <source>About NeverD</source>
-            <translation>關於 NeverD</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="141" />
-            <location filename="../qml/Main.qml" line="253" />
-            <source>Open Binary</source>
-            <translation>開啟二進位檔案</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="152" />
-            <source>Go to address or symbol…</source>
-            <translation>跳至位址或符號…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="153" />
-            <source>Address or symbol</source>
-            <translation>位址或符號</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="162" />
-            <source>Cancel</source>
-            <translation>取消</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="163" />
-            <location filename="../qml/Main.qml" line="320" />
-            <source>Settings</source>
-            <translation>設定</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="163" />
-            <source>Language and editor preferences</source>
-            <translation>語言與編輯器偏好設定</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="172" />
-            <source>WORKSPACE</source>
-            <translation>工作區</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="174" />
-            <source>No binary open</source>
-            <translation>未開啟二進位檔案</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="176" />
-            <source>%1 functions</source>
-            <translation>%1 個函式</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="176" />
-            <source>Local analysis</source>
-            <translation>本機分析</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="22" />
-            <source>CFG</source>
-            <translation>控制流程圖</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="32" />
-            <source>Hex view</source>
-            <translation>十六進位檢視</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="32" />
-            <source>Select an address to inspect its bytes.</source>
-            <translation>選取位址以檢視其位元組。</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="105" />
-            <location filename="../qml/Main.qml" line="107" />
-            <location filename="../qml/Main.qml" line="114" />
-            <location filename="../qml/RepresentationPane.qml" line="30" />
-            <source>Pseudocode &amp; intermediate representations</source>
-            <translation>虛擬碼與中介表示</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="46" />
-            <source>No representation available</source>
-            <translation>目前沒有可用表示</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="46" />
-            <source>Read beyond assembly</source>
-            <translation>探索組合語言之外的表示</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="49" />
-            <source>Compare recovered C, LLVM C, LowIR, MedIR, HighIR, and LLVM IR. Select a function to begin.</source>
-            <translation>比較還原的 C、LLVM C、LowIR、MedIR、HighIR 和 LLVM IR。選取函式以開始。</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="112" />
-            <location filename="../qml/Main.qml" line="108" />
-            <source>References</source>
-            <translation>參照</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="119" />
-            <location filename="../qml/Main.qml" line="109" />
-            <source>Output</source>
-            <translation>輸出</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="126" />
-            <location filename="../qml/Main.qml" line="110" />
-            <source>Connections</source>
-            <translation>連線</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="133" />
-            <location filename="../qml/Main.qml" line="121" />
-            <location filename="../qml/Main.qml" line="123" />
-            <source>Extensions</source>
-            <translation>擴充功能</translation>
-        </message>
-        <message>
-            <location filename="../qml/ReferencesPane.qml" line="42" />
-            <source>No references for this selection.</source>
-            <translation>目前選取項目沒有參照。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ReferencesPane.qml" line="42" />
-            <source>References to the selected address appear here.</source>
-            <translation>所選位址的參照會顯示於此。</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="120" />
-            <source>Worker events and analysis messages appear here.</source>
-            <translation>分析程序事件與分析訊息會顯示於此。</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="221" />
-            <source>Worker connected</source>
-            <translation>分析程序已連線</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="221" />
-            <source>Worker offline</source>
-            <translation>分析程序未連線</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="255" />
-            <location filename="../qml/Main.qml" line="262" />
-            <source>All files (*)</source>
-            <translation>所有檔案 (*)</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="260" />
-            <source>Import Manifest</source>
-            <translation>匯入資訊清單</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="262" />
-            <source>JSON files (*.json)</source>
-            <translation>JSON 檔案 (*.json)</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="273" />
-            <source>Rename Function</source>
-            <translation>重新命名函式</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="283" />
-            <location filename="../qml/Main.qml" line="283" />
-            <source>Function name</source>
-            <translation>函式名稱</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="289" />
-            <source>Edit Comment</source>
-            <translation>編輯註解</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="306" />
-            <source>Add a comment for this address…</source>
-            <translation>為此位址新增註解…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="311" />
-            <source>Comment</source>
-            <translation>註解</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="329" />
-            <source>Appearance</source>
-            <translation>外觀</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="332" />
-            <source>Theme</source>
-            <translation>佈景主題</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="337" />
-            <source>Code font size</source>
-            <translation>程式碼字型大小</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="341" />
-            <source>Language</source>
-            <translation>語言</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="349" />
-            <source>Interface language</source>
-            <translation>介面語言</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="351" />
-            <source>Changes apply immediately. Code, symbols, and comments keep their original language.</source>
-            <translation>變更立即套用。程式碼、符號與註解保留原始語言。</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="372" />
-            <source>NeverD
-Binary analysis workbench
-
-Explore disassembly, control flow, recovered C, and intermediate representations with a local analysis worker.</source>
-            <translation>NeverD
-二進位分析工作台
-
-使用本機分析程序探索反組譯、控制流程、還原的 C 程式碼與中介表示。</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="288" />
-            <source>Library features and byte signatures (*.json *.pat)</source>
-            <translation>函式庫特徵與位元組簽章 (*.json *.pat)</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="286" />
-            <source>Load Signature Pack</source>
-            <translation>載入簽章套件</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="131" />
-            <source>Load Signature Pack…</source>
-            <translation>載入簽章套件…</translation>
-        </message>
-    </context>
-    <context>
-        <name>McpConnectionManager</name>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="18" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="145" />
-            <source>Disconnected</source>
-            <translation>已中斷連線</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="22" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="300" />
-            <source>MCP message exceeds 8 MiB</source>
-            <translation>MCP 訊息超過 8 MiB</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="31" />
-            <source>Invalid MCP JSON-RPC message</source>
-            <translation>無效的 MCP JSON-RPC 訊息</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="41" />
-            <source>MCP process error: %1</source>
-            <translation>MCP 程序錯誤：%1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="45" />
-            <source>MCP process exited (%1): %2</source>
-            <translation>MCP 程序已結束（%1）：%2</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="58" />
-            <source>MCP request timed out: %1</source>
-            <translation>MCP 要求逾時：%1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="76" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="95" />
-            <source>Disconnect the running MCP process before reconnecting</source>
-            <translation>請先中斷執行中的 MCP 程序，再重新連線</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="81" />
-            <source>Choose an absolute MCP executable path</source>
-            <translation>請選擇 MCP 執行檔的絕對路徑</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="84" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="118" />
-            <source>Connecting</source>
-            <translation>正在連線</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="102" />
-            <source>MCP HTTP requires HTTPS, or HTTP on localhost</source>
-            <translation>MCP HTTP 需要 HTTPS，或使用 localhost 上的 HTTP</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="105" />
-            <source>Invalid authentication token</source>
-            <translation>無效的驗證權杖</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="110" />
-            <source>Cannot load CA certificate</source>
-            <translation>無法載入 CA 憑證</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="182" />
-            <source>MCP request queue is full</source>
-            <translation>MCP 要求佇列已滿</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="194" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="220" />
-            <source>MCP outgoing message budget exceeded</source>
-            <translation>MCP 傳送訊息超過大小限制</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="199" />
-            <source>MCP server is disconnected</source>
-            <translation>MCP 伺服器已中斷連線</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="245" />
-            <source>MCP session expired; reconnecting</source>
-            <translation>MCP 工作階段已到期，正在重新連線</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="250" />
-            <source>MCP HTTP error %1: %2</source>
-            <translation>MCP HTTP 錯誤 %1：%2</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="259" />
-            <source>MCP event stream ended before its response</source>
-            <translation>MCP 事件串流在回應前已結束</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="276" />
-            <source>Invalid MCP HTTP response</source>
-            <translation>無效的 MCP HTTP 回應</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="292" />
-            <source>Invalid MCP session identifier</source>
-            <translation>無效的 MCP 工作階段識別碼</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="294" />
-            <source>MCP session identifier is too large</source>
-            <translation>MCP 工作階段識別碼過長</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="318" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="333" />
-            <source>Invalid MCP event data</source>
-            <translation>無效的 MCP 事件資料</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="347" />
-            <source>Invalid MCP protocol version</source>
-            <translation>無效的 MCP 通訊協定版本</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="364" />
-            <source>MCP request failed: %1</source>
-            <translation>MCP 要求失敗：%1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="367" />
-            <source>MCP response has no result object</source>
-            <translation>MCP 回應缺少結果物件</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="371" />
-            <source>Unsupported MCP protocol version</source>
-            <translation>不支援的 MCP 通訊協定版本</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="377" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="387" />
-            <source>Connected</source>
-            <translation>已連線</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="380" />
-            <source>Connected; tool list is partial</source>
-            <translation>已連線；工具清單尚未完整載入</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="383" />
-            <source>Connected; resource list is partial</source>
-            <translation>已連線；資源清單尚未完整載入</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="387" />
-            <source>MCP tool reported an error</source>
-            <translation>MCP 工具回報錯誤</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="397" />
-            <source>Connect an MCP server first</source>
-            <translation>請先連線 MCP 伺服器</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="398" />
-            <source>Tool arguments exceed the size limit</source>
-            <translation>工具引數超過大小限制</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="402" />
-            <source>Tool arguments must be a JSON object</source>
-            <translation>工具引數必須是 JSON 物件</translation>
-        </message>
-    </context>
-    <context>
-        <name>PaneRegistry</name>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="417" />
-            <source>Default</source>
-            <translation>預設</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="424" />
-            <source>Cannot create pane: invalid kind or pane limit reached.</source>
-            <translation>無法建立面板：類型無效或已達面板數量上限。</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="429" />
-            <source>The source pane is unavailable.</source>
-            <translation>來源面板無法使用。</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="553" />
-            <source>Cannot create group: invalid name or group limit reached.</source>
-            <translation>無法建立群組：名稱無效或已達群組數量上限。</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="1004" />
-            <source>The saved pane catalog is invalid.</source>
-            <translation>已儲存的面板目錄無效。</translation>
-        </message>
-    </context>
-    <context>
-        <name>RepresentationPane</name>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="31" />
-            <source>Refresh</source>
-            <translation>重新整理</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="32" />
-            <source>Unpin</source>
-            <translation>取消固定</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="32" />
-            <source>Pin</source>
-            <translation>固定</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="32" />
-            <source>Keep this function while navigating</source>
-            <translation>導覽時保留此函式</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="54" />
-            <source>Load more lines</source>
-            <translation>載入更多行</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="91" />
-            <source>Close</source>
-            <translation>關閉</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="54" />
-            <source>Details</source>
-            <translation>詳細資料</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="110" />
-            <source>Evidence SHA-256</source>
-            <translation>證據 SHA-256</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="87" />
-            <source>Expand</source>
-            <translation>展開</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="49" />
-            <source>Expand all</source>
-            <translation>全部展開</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="87" />
-            <source>Fold</source>
-            <translation>摺疊</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="49" />
-            <source>Fold all</source>
-            <translation>全部摺疊</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="51" />
-            <source>Fold mapped library operations. Copy and export retain the full source.</source>
-            <translation>摺疊已定位的函式庫操作。複製及匯出仍保留完整原始碼。</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="105" />
-            <source>Identity evidence</source>
-            <translation>身分依據</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="46" />
-            <source>Library operations</source>
-            <translation>函式庫操作</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="107" />
-            <source>Linkage</source>
-            <translation>連結名稱</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="103" />
-            <source>Mapped to original source</source>
-            <translation>已定位至原始碼</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="106" />
-            <source>Original instructions</source>
-            <translation>原始指令</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="103" />
-            <source>Original source stays expanded; mapping is incomplete or outside the loaded page</source>
-            <translation>原始碼保持展開；對應不完整或位於已載入頁面之外</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="108" />
-            <source>Pack</source>
-            <translation>特徵套件</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="109" />
-            <source>Profile SHA-256</source>
-            <translation>設定 SHA-256</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="84" />
-            <source>Recognized library operation</source>
-            <translation>已識別的函式庫操作</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="104" />
-            <source>Rule</source>
-            <translation>規則</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="111" />
-            <source>Source</source>
-            <translation>來源</translation>
-        </message>
-    </context>
-    <context>
-        <name>Workbench</name>
-        <message>
-            <location filename="../Workbench.cpp" line="71" />
-            <source>Loading debug symbols…</source>
-            <translation>正在載入偵錯符號…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="17" />
-            <source>Open a binary to begin</source>
-            <translation>開啟二進位檔案以開始</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="87" />
-            <source>Action failed</source>
-            <translation>操作失敗</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="147" />
-            <source>Incompatible analysis worker protocol.</source>
-            <translation>分析程序通訊協定不相容。</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="150" />
-            <source>Connected to %1</source>
-            <translation>已連線至 %1</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="214" />
-            <source>Select an existing binary file.</source>
-            <translation>請選取現有的二進位檔案。</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="217" />
-            <source>Starting analysis worker…</source>
-            <translation>正在啟動分析程序…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="223" />
-            <source>Opening binary…</source>
-            <translation>正在開啟二進位檔案…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="228" />
-            <source>Binary loaded</source>
-            <translation>二進位檔案已載入</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="311" />
-            <location filename="../Workbench.cpp" line="352" />
-            <location filename="../Workbench.cpp" line="445" />
-            <source>Ready</source>
-            <translation>就緒</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="328" />
-            <source>No function at this address</source>
-            <translation>此位址沒有函式</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="330" />
-            <location filename="../Workbench.cpp" line="443" />
-            <source>Analyzing…</source>
-            <translation>正在分析…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="351" />
-            <source>Complete</source>
-            <translation>已完成</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="351" />
-            <source>More lines available</source>
-            <translation>還有更多行</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="361" />
-            <source>Mapping belongs to an earlier revision; reload the representation</source>
-            <translation>映射屬於較早的修訂版本；請重新載入表示</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="363" />
-            <source>Linked instruction addresses; synthetic rows may be unmapped</source>
-            <translation>已關聯指令位址；合成行可能沒有映射</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="364" />
-            <source>Instruction mapping unavailable for this representation</source>
-            <translation>此表示不支援指令映射</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="416" />
-            <source>Loading graph viewport…</source>
-            <translation>正在載入圖形檢視區…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="418" />
-            <source>Viewport limit reached; zoom in for details</source>
-            <translation>已達到檢視區上限；請放大以查看細節</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="419" />
-            <source>%1 visible blocks · %2 edges</source>
-            <translation>%1 個可見基本區塊 · %2 條邊</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="452" />
-            <source>Cancellation requested; restart stops the worker immediately.</source>
-            <translation>已要求取消；重新啟動將立即停止分析程序。</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="453" />
-            <source>Cancellation requested</source>
-            <translation>已要求取消</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="488" />
-            <source>Restarting analysis worker…</source>
-            <translation>正在重新啟動分析程序…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="495" />
-            <source>Rename saved</source>
-            <translation>重新命名已儲存</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="502" />
-            <source>Comment changed; save annotations to keep it.</source>
-            <translation>註解已修改；請儲存註解以保留變更。</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="506" />
-            <source>Annotations saved</source>
-            <translation>註解已儲存</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="479" />
-            <location filename="../Workbench.cpp" line="510" />
-            <source>Annotations reloaded</source>
-            <translation>註解已重新載入</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="193" />
-            <source>Finish opening the binary before editing.</source>
-            <translation>請等候二進位檔案開啟完成後再編輯。</translation>
-        </message>
-        <message>
-            <location filename="../PaneController.cpp" line="414" />
-            <source>Library regions link to original instructions; other source may be unmapped</source>
-            <translation>函式庫區域連結至原始指令；其他原始碼可能尚無對應</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="730" />
-            <source>Signature pack loaded</source>
-            <translation>簽章套件已載入</translation>
-        </message>
-    </context>
-    <context>
-        <name>WorkerTransport</name>
-        <message>
-            <location filename="../EngineClient.cpp" line="28" />
-            <source>Analysis worker exited (%1). Restart to continue.</source>
-            <translation>分析程序已結束（%1）。請重新啟動以繼續。</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="36" />
-            <source>Analysis worker is not running.</source>
-            <translation>分析程序未執行。</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="41" />
-            <source>Analysis request queue is full.</source>
-            <translation>分析要求佇列已滿。</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="57" />
-            <source>Invalid analysis protocol frame.</source>
-            <translation>無效的分析通訊協定框架。</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="67" />
-            <source>Invalid analysis protocol JSON.</source>
-            <translation>無效的分析通訊協定 JSON。</translation>
-        </message>
-    </context>
-    <context>
-        <name>TextPane</name>
-        <message>
-            <location filename="../qml/TextPane.qml" line="158" />
-            <source>Copy</source>
-            <translation>複製</translation>
-        </message>
-        <message>
-            <location filename="../qml/TextPane.qml" line="159" />
-            <source>Select all</source>
-            <translation>全選</translation>
-        </message>
-    </context>
+<context>
+    <name>Actions</name>
+    <message>
+        <source>&amp;Open...</source>
+        <translation>開啟(&amp;O)...</translation>
+    </message>
+    <message>
+        <source>Open a binary for analysis</source>
+        <translation>開啟二進位檔案以進行分析</translation>
+    </message>
+    <message>
+        <source>&amp;Reload the input file</source>
+        <translation>重新載入輸入檔案(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Reload the binary and its saved annotations</source>
+        <translation>重新載入二進位檔案及其已儲存的註解</translation>
+    </message>
+    <message>
+        <source>&amp;FLIRT signature file...</source>
+        <translation>FLIRT 簽章檔案(&amp;F)...</translation>
+    </message>
+    <message>
+        <source>Apply a byte signature (.pat) or library feature (.json) pack</source>
+        <translation>套用位元組簽章套件 (.pat) 或程式庫特徵套件 (.json)</translation>
+    </message>
+    <message>
+        <source>Signature &amp;directory...</source>
+        <translation>簽章目錄(&amp;D)...</translation>
+    </message>
+    <message>
+        <source>Apply every matching pack from a signature tree</source>
+        <translation>套用簽章目錄樹中所有相符的簽章套件</translation>
+    </message>
+    <message>
+        <source>Create &amp;LST file...</source>
+        <translation>建立 LST 檔案(&amp;L)...</translation>
+    </message>
+    <message>
+        <source>Write the current function&apos;s listing to a text file</source>
+        <translation>將目前函式的反組譯清單寫入文字檔</translation>
+    </message>
+    <message>
+        <source>Create &amp;C file...</source>
+        <translation>建立 C 檔案(&amp;C)...</translation>
+    </message>
+    <message>
+        <source>Write the current function&apos;s pseudocode to a C file</source>
+        <translation>將目前函式的偽代碼寫入 C 檔案</translation>
+    </message>
+    <message>
+        <source>&amp;Save</source>
+        <translation>儲存(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Save comments and history beside the binary</source>
+        <translation>將註解和歷程記錄儲存至二進位檔案所在目錄</translation>
+    </message>
+    <message>
+        <source>&amp;Close</source>
+        <translation>關閉(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Close the current binary</source>
+        <translation>關閉目前的二進位檔案</translation>
+    </message>
+    <message>
+        <source>&amp;Quick start</source>
+        <translation>快速開始(&amp;Q)</translation>
+    </message>
+    <message>
+        <source>Show the quick start window</source>
+        <translation>顯示快速開始視窗</translation>
+    </message>
+    <message>
+        <source>E&amp;xit</source>
+        <translation>結束(&amp;X)</translation>
+    </message>
+    <message>
+        <source>Quit NeverD</source>
+        <translation>結束 NeverD</translation>
+    </message>
+    <message>
+        <source>&amp;Undo</source>
+        <translation>復原(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Undo the last comment or rename</source>
+        <translation>復原上一次的註解或重新命名</translation>
+    </message>
+    <message>
+        <source>&amp;Redo</source>
+        <translation>重做(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Redo the last undone change</source>
+        <translation>重做上一次復原的變更</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>複製(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Copy the selection or current line</source>
+        <translation>複製選取內容或目前所在行</translation>
+    </message>
+    <message>
+        <source>Copy &amp;address</source>
+        <translation>複製位址(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Copy the current address</source>
+        <translation>複製目前位址</translation>
+    </message>
+    <message>
+        <source>Re&amp;name...</source>
+        <translation>重新命名(&amp;N)...</translation>
+    </message>
+    <message>
+        <source>Rename the current function</source>
+        <translation>重新命名目前函式</translation>
+    </message>
+    <message>
+        <source>Enter &amp;comment...</source>
+        <translation>輸入註解(&amp;C)...</translation>
+    </message>
+    <message>
+        <source>Comment the current address</source>
+        <translation>為目前位址新增註解</translation>
+    </message>
+    <message>
+        <source>Enter re&amp;peatable comment...</source>
+        <translation>輸入可重複註解(&amp;P)...</translation>
+    </message>
+    <message>
+        <source>&amp;Mark position...</source>
+        <translation>標記位置(&amp;M)...</translation>
+    </message>
+    <message>
+        <source>Bookmark the current address</source>
+        <translation>為目前位址新增書籤</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;operand</source>
+        <translation>跳至運算元(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Follow the name or address under the cursor</source>
+        <translation>跟隨游標處的名稱或位址</translation>
+    </message>
+    <message>
+        <source>Jump in a new &amp;window</source>
+        <translation>在新視窗中跳轉(&amp;W)</translation>
+    </message>
+    <message>
+        <source>Open the target in a new disassembly view</source>
+        <translation>在新的反組譯檢視中開啟目標</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;previous position</source>
+        <translation>跳至上一個位置(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Go back in the navigation history</source>
+        <translation>在導覽歷程中後退</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;next position</source>
+        <translation>跳至下一個位置(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Go forward in the navigation history</source>
+        <translation>在導覽歷程中前進</translation>
+    </message>
+    <message>
+        <source>Next f&amp;unction</source>
+        <translation>下一個函式(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Move to the start of the next function</source>
+        <translation>移至下一個函式的起始處</translation>
+    </message>
+    <message>
+        <source>Pre&amp;vious function</source>
+        <translation>上一個函式(&amp;V)</translation>
+    </message>
+    <message>
+        <source>Move to the start of the previous function</source>
+        <translation>移至上一個函式的起始處</translation>
+    </message>
+    <message>
+        <source>Jump to ps&amp;eudocode</source>
+        <translation>跳至偽代碼(&amp;E)</translation>
+    </message>
+    <message>
+        <source>Switch between disassembly and pseudocode</source>
+        <translation>在反組譯與偽代碼之間切換</translation>
+    </message>
+    <message>
+        <source>Jump &amp;anywhere...</source>
+        <translation>跳至任意位置(&amp;A)...</translation>
+    </message>
+    <message>
+        <source>Jump to an address, name or expression</source>
+        <translation>跳至位址、名稱或運算式</translation>
+    </message>
+    <message>
+        <source>Jump by na&amp;me...</source>
+        <translation>依名稱跳轉(&amp;M)...</translation>
+    </message>
+    <message>
+        <source>Choose a name to jump to</source>
+        <translation>選擇要跳至的名稱</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;function...</source>
+        <translation>跳至函式(&amp;F)...</translation>
+    </message>
+    <message>
+        <source>Choose a function to jump to</source>
+        <translation>選擇要跳至的函式</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;segment...</source>
+        <translation>跳至區段(&amp;S)...</translation>
+    </message>
+    <message>
+        <source>Choose a segment to jump to</source>
+        <translation>選擇要跳至的區段</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;entry point...</source>
+        <translation>跳至進入點(&amp;E)...</translation>
+    </message>
+    <message>
+        <source>Choose an entry point to jump to</source>
+        <translation>選擇要跳至的進入點</translation>
+    </message>
+    <message>
+        <source>List cross references &amp;to...</source>
+        <translation>列出指向此處的交叉引用(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>List references to the current item</source>
+        <translation>列出對目前項目的引用</translation>
+    </message>
+    <message>
+        <source>List cross references f&amp;rom...</source>
+        <translation>列出來自此處的交叉引用(&amp;R)...</translation>
+    </message>
+    <message>
+        <source>List references made by the current instruction</source>
+        <translation>列出目前指令發出的引用</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;xref to operand...</source>
+        <translation>跳至運算元的交叉引用(&amp;X)...</translation>
+    </message>
+    <message>
+        <source>List references to the name under the cursor</source>
+        <translation>列出對游標處名稱的引用</translation>
+    </message>
+    <message>
+        <source>Jump to mar&amp;ked position...</source>
+        <translation>跳至標記位置(&amp;K)...</translation>
+    </message>
+    <message>
+        <source>Choose a bookmark to jump to</source>
+        <translation>選擇要跳至的書籤</translation>
+    </message>
+    <message>
+        <source>&amp;Text...</source>
+        <translation>文字(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Search the binary for text</source>
+        <translation>在二進位檔案中搜尋文字</translation>
+    </message>
+    <message>
+        <source>Next te&amp;xt</source>
+        <translation>下一個文字(&amp;X)</translation>
+    </message>
+    <message>
+        <source>Repeat the last text search</source>
+        <translation>重複上一次文字搜尋</translation>
+    </message>
+    <message>
+        <source>Sequence of &amp;bytes...</source>
+        <translation>位元組序列(&amp;B)...</translation>
+    </message>
+    <message>
+        <source>Search the binary for a byte sequence</source>
+        <translation>在二進位檔案中搜尋位元組序列</translation>
+    </message>
+    <message>
+        <source>Next seq&amp;uence of bytes</source>
+        <translation>下一個位元組序列(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Repeat the last byte search</source>
+        <translation>重複上一次位元組搜尋</translation>
+    </message>
+    <message>
+        <source>Search highlight &amp;up</source>
+        <translation>向上搜尋醒目提示項目(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Move to the previous occurrence of the highlighted identifier</source>
+        <translation>移至醒目提示識別碼的上一個出現位置</translation>
+    </message>
+    <message>
+        <source>Search highlight &amp;down</source>
+        <translation>向下搜尋醒目提示項目(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Move to the next occurrence of the highlighted identifier</source>
+        <translation>移至醒目提示識別碼的下一個出現位置</translation>
+    </message>
+    <message>
+        <source>&amp;Find in view...</source>
+        <translation>在檢視中尋找(&amp;F)...</translation>
+    </message>
+    <message>
+        <source>Find text among the loaded lines of the current view</source>
+        <translation>在目前檢視已載入的行中尋找文字</translation>
+    </message>
+    <message>
+        <source>&amp;Quick view...</source>
+        <translation>快速檢視(&amp;Q)...</translation>
+    </message>
+    <message>
+        <source>Choose a view to open</source>
+        <translation>選擇要開啟的檢視</translation>
+    </message>
+    <message>
+        <source>&amp;Disassembly</source>
+        <translation>反組譯(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Open a new disassembly view</source>
+        <translation>開啟新的反組譯檢視</translation>
+    </message>
+    <message>
+        <source>Toggle &amp;graph view</source>
+        <translation>切換圖形檢視(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Switch between text and graph views</source>
+        <translation>在文字檢視與圖形檢視之間切換</translation>
+    </message>
+    <message>
+        <source>Generate &amp;pseudocode</source>
+        <translation>產生偽代碼(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Decompile the current function</source>
+        <translation>反編譯目前函式</translation>
+    </message>
+    <message>
+        <source>Generate &amp;LowIR</source>
+        <translation>產生 LowIR(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s LowIR</source>
+        <translation>顯示目前函式的 LowIR</translation>
+    </message>
+    <message>
+        <source>Generate &amp;MedIR</source>
+        <translation>產生 MedIR(&amp;M)</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s MedIR</source>
+        <translation>顯示目前函式的 MedIR</translation>
+    </message>
+    <message>
+        <source>Generate &amp;HighIR</source>
+        <translation>產生 HighIR(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s HighIR</source>
+        <translation>顯示目前函式的 HighIR</translation>
+    </message>
+    <message>
+        <source>Generate LLVM &amp;IR</source>
+        <translation>產生 LLVM IR(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s LLVM IR</source>
+        <translation>顯示目前函式的 LLVM IR</translation>
+    </message>
+    <message>
+        <source>Generate LLVM &amp;C</source>
+        <translation>產生 LLVM C(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Decompile the current function through LLVM</source>
+        <translation>透過 LLVM 反編譯目前函式</translation>
+    </message>
+    <message>
+        <source>&amp;Hex dump</source>
+        <translation>十六進位傾印(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the hex view</source>
+        <translation>顯示十六進位檢視</translation>
+    </message>
+    <message>
+        <source>E&amp;xports</source>
+        <translation>匯出(&amp;X)</translation>
+    </message>
+    <message>
+        <source>Show exported names and entry points</source>
+        <translation>顯示匯出名稱與進入點</translation>
+    </message>
+    <message>
+        <source>&amp;Imports</source>
+        <translation>匯入(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show imported names</source>
+        <translation>顯示匯入名稱</translation>
+    </message>
+    <message>
+        <source>&amp;Names</source>
+        <translation>名稱(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Show every named location</source>
+        <translation>顯示所有已命名的位置</translation>
+    </message>
+    <message>
+        <source>&amp;Functions</source>
+        <translation>函式(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Show the functions window</source>
+        <translation>顯示函式視窗</translation>
+    </message>
+    <message>
+        <source>&amp;Strings</source>
+        <translation>字串(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Show the strings window</source>
+        <translation>顯示字串視窗</translation>
+    </message>
+    <message>
+        <source>S&amp;egments</source>
+        <translation>區段(&amp;E)</translation>
+    </message>
+    <message>
+        <source>Show the segments window</source>
+        <translation>顯示區段視窗</translation>
+    </message>
+    <message>
+        <source>&amp;Cross references</source>
+        <translation>交叉引用(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Show references to the current item</source>
+        <translation>顯示對目前項目的引用</translation>
+    </message>
+    <message>
+        <source>&amp;Bookmarks</source>
+        <translation>書籤(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Show bookmarks</source>
+        <translation>顯示書籤</translation>
+    </message>
+    <message>
+        <source>&amp;Output</source>
+        <translation>輸出(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the output window</source>
+        <translation>顯示輸出視窗</translation>
+    </message>
+    <message>
+        <source>Graph &amp;overview</source>
+        <translation>圖形概覽(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the graph overview</source>
+        <translation>顯示圖形概覽</translation>
+    </message>
+    <message>
+        <source>MCP &amp;connections</source>
+        <translation>MCP 連線(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Manage MCP connections and session sharing</source>
+        <translation>管理 MCP 連線與工作階段共用</translation>
+    </message>
+    <message>
+        <source>E&amp;xtensions</source>
+        <translation>擴充功能(&amp;X)</translation>
+    </message>
+    <message>
+        <source>Manage declarative extensions</source>
+        <translation>管理宣告式擴充功能</translation>
+    </message>
+    <message>
+        <source>&amp;Undo history</source>
+        <translation>復原歷程記錄(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Show the comment and rename history</source>
+        <translation>顯示註解與重新命名歷程記錄</translation>
+    </message>
+    <message>
+        <source>&amp;Calculator...</source>
+        <translation>計算機(&amp;C)...</translation>
+    </message>
+    <message>
+        <source>Evaluate an expression</source>
+        <translation>計算運算式的值</translation>
+    </message>
+    <message>
+        <source>F&amp;ull screen</source>
+        <translation>全螢幕(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Toggle full screen</source>
+        <translation>切換全螢幕</translation>
+    </message>
+    <message>
+        <source>&amp;Increase font size</source>
+        <translation>放大字型(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Increase the code font size</source>
+        <translation>放大程式碼字型</translation>
+    </message>
+    <message>
+        <source>&amp;Decrease font size</source>
+        <translation>縮小字型(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Decrease the code font size</source>
+        <translation>縮小程式碼字型</translation>
+    </message>
+    <message>
+        <source>&amp;Reset font size</source>
+        <translation>重設字型大小(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Restore the default code font size</source>
+        <translation>還原預設的程式碼字型大小</translation>
+    </message>
+    <message>
+        <source>&amp;General...</source>
+        <translation>一般(&amp;G)...</translation>
+    </message>
+    <message>
+        <source>Listing, analysis and language options</source>
+        <translation>反組譯清單、分析與語言選項</translation>
+    </message>
+    <message>
+        <source>&amp;Colors...</source>
+        <translation>色彩(&amp;C)...</translation>
+    </message>
+    <message>
+        <source>Choose the color theme</source>
+        <translation>選擇色彩佈景主題</translation>
+    </message>
+    <message>
+        <source>&amp;Font...</source>
+        <translation>字型(&amp;F)...</translation>
+    </message>
+    <message>
+        <source>Choose the code font</source>
+        <translation>選擇程式碼字型</translation>
+    </message>
+    <message>
+        <source>&amp;Shortcuts...</source>
+        <translation>快速鍵(&amp;S)...</translation>
+    </message>
+    <message>
+        <source>List keyboard shortcuts</source>
+        <translation>列出鍵盤快速鍵</translation>
+    </message>
+    <message>
+        <source>Show command &amp;palette...</source>
+        <translation>顯示命令選擇區(&amp;P)...</translation>
+    </message>
+    <message>
+        <source>Search and run any command</source>
+        <translation>搜尋並執行任何命令</translation>
+    </message>
+    <message>
+        <source>&amp;Repeat last palette command</source>
+        <translation>重複上次的命令選擇區命令(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Run the last command chosen in the palette again</source>
+        <translation>再次執行上次在命令選擇區中選擇的命令</translation>
+    </message>
+    <message>
+        <source>&amp;Whole-program analysis</source>
+        <translation>全程式分析(&amp;W)</translation>
+    </message>
+    <message>
+        <source>Analyze every function together in the background</source>
+        <translation>在背景中對所有函式進行整體分析</translation>
+    </message>
+    <message>
+        <source>Ca&amp;ncel pending requests</source>
+        <translation>取消擱置中的要求(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Cancel queued analysis requests</source>
+        <translation>取消佇列中的分析要求</translation>
+    </message>
+    <message>
+        <source>&amp;Restart analysis worker</source>
+        <translation>重新啟動分析程序(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Restart the analysis process and reopen the binary</source>
+        <translation>重新啟動分析程序並重新開啟二進位檔案</translation>
+    </message>
+    <message>
+        <source>&amp;Save desktop</source>
+        <translation>儲存桌面配置(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Save the window layout</source>
+        <translation>儲存視窗配置</translation>
+    </message>
+    <message>
+        <source>&amp;Load desktop</source>
+        <translation>載入桌面配置(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Restore the saved window layout</source>
+        <translation>還原已儲存的視窗配置</translation>
+    </message>
+    <message>
+        <source>&amp;Reset desktop</source>
+        <translation>重設桌面配置(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Restore the default window layout</source>
+        <translation>還原預設視窗配置</translation>
+    </message>
+    <message>
+        <source>&amp;Next window</source>
+        <translation>下一個視窗(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Activate the next window</source>
+        <translation>切換至下一個視窗</translation>
+    </message>
+    <message>
+        <source>&amp;Previous window</source>
+        <translation>上一個視窗(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Activate the previous window</source>
+        <translation>切換至上一個視窗</translation>
+    </message>
+    <message>
+        <source>&amp;Close window</source>
+        <translation>關閉視窗(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Close the current window</source>
+        <translation>關閉目前視窗</translation>
+    </message>
+    <message>
+        <source>&amp;Focus command line</source>
+        <translation>聚焦命令列(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Move the keyboard focus to the command line</source>
+        <translation>將鍵盤焦點移至命令列</translation>
+    </message>
+    <message>
+        <source>&amp;Help</source>
+        <translation>說明(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Open the NeverD documentation</source>
+        <translation>開啟 NeverD 說明文件</translation>
+    </message>
+    <message>
+        <source>&amp;About NeverD</source>
+        <translation>關於 NeverD(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Version and license information</source>
+        <translation>版本與授權資訊</translation>
+    </message>
+    <message>
+        <source>S&amp;tring literals...</source>
+        <translation>字串常值(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Choose the encodings and minimum length of the strings the listing shows</source>
+        <translation>選擇清單中顯示之字串的編碼與最小長度</translation>
+    </message>
+</context>
+<context>
+    <name>Choosers</name>
+    <message>
+        <source>Functions</source>
+        <translation>函式</translation>
+    </message>
+    <message>
+        <source>Function name</source>
+        <translation>函式名稱</translation>
+    </message>
+    <message>
+        <source>Segment</source>
+        <translation>區段</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>起始位址</translation>
+    </message>
+    <message>
+        <source>Length</source>
+        <translation>長度</translation>
+    </message>
+    <message>
+        <source>Names</source>
+        <translation>名稱</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名稱</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>位址</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>類型</translation>
+    </message>
+    <message>
+        <source>Strings</source>
+        <translation>字串</translation>
+    </message>
+    <message>
+        <source>String</source>
+        <translation>字串</translation>
+    </message>
+    <message>
+        <source>Segments</source>
+        <translation>區段</translation>
+    </message>
+    <message>
+        <source>End</source>
+        <translation>結束位址</translation>
+    </message>
+    <message>
+        <source>R</source>
+        <translation>R</translation>
+    </message>
+    <message>
+        <source>W</source>
+        <translation>W</translation>
+    </message>
+    <message>
+        <source>X</source>
+        <translation>X</translation>
+    </message>
+    <message>
+        <source>Align</source>
+        <translation>對齊</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>類別</translation>
+    </message>
+    <message>
+        <source>Imports</source>
+        <translation>匯入</translation>
+    </message>
+    <message>
+        <source>Ordinal</source>
+        <translation>序數</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>程式庫</translation>
+    </message>
+    <message>
+        <source>Exports</source>
+        <translation>匯出</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>種類</translation>
+    </message>
+    <message>
+        <source>Cross references</source>
+        <translation>交叉引用</translation>
+    </message>
+    <message>
+        <source>Direction</source>
+        <translation>方向</translation>
+    </message>
+    <message>
+        <source>Location</source>
+        <translation>位置</translation>
+    </message>
+    <message>
+        <source>Search results</source>
+        <translation>搜尋結果</translation>
+    </message>
+    <message>
+        <source>Context</source>
+        <translation>上下文</translation>
+    </message>
+    <message>
+        <source>Bookmarks</source>
+        <translation>書籤</translation>
+    </message>
+    <message>
+        <source>Description</source>
+        <translation>描述</translation>
+    </message>
+</context>
+<context>
+    <name>GuiSessionBroker</name>
+    <message>
+        <source>Session sharing disabled</source>
+        <translation>工作階段共用已停用</translation>
+    </message>
+    <message>
+        <source>Cannot create private session directory</source>
+        <translation>無法建立私有工作階段目錄</translation>
+    </message>
+    <message>
+        <source>Cannot open local session broker: %1</source>
+        <translation>無法啟動本機工作階段代理：%1</translation>
+    </message>
+    <message>
+        <source>Cannot write private session credentials</source>
+        <translation>無法寫入私有工作階段憑證</translation>
+    </message>
+    <message>
+        <source>Session sharing enabled</source>
+        <translation>工作階段共用已啟用</translation>
+    </message>
+</context>
+<context>
+    <name>McpConnectionManager</name>
+    <message>
+        <source>Disconnected</source>
+        <translation>已中斷連線</translation>
+    </message>
+    <message>
+        <source>MCP message exceeds 8 MiB</source>
+        <translation>MCP 訊息超過 8 MiB</translation>
+    </message>
+    <message>
+        <source>Invalid MCP JSON-RPC message</source>
+        <translation>無效的 MCP JSON-RPC 訊息</translation>
+    </message>
+    <message>
+        <source>MCP process error: %1</source>
+        <translation>MCP 程序錯誤：%1</translation>
+    </message>
+    <message>
+        <source>MCP process exited (%1): %2</source>
+        <translation>MCP 程序已結束（%1）：%2</translation>
+    </message>
+    <message>
+        <source>MCP request timed out: %1</source>
+        <translation>MCP 要求逾時：%1</translation>
+    </message>
+    <message>
+        <source>Disconnect the running MCP process before reconnecting</source>
+        <translation>請先中斷執行中的 MCP 程序，再重新連線</translation>
+    </message>
+    <message>
+        <source>Choose an absolute MCP executable path</source>
+        <translation>請選擇 MCP 執行檔的絕對路徑</translation>
+    </message>
+    <message>
+        <source>Connecting</source>
+        <translation>正在連線</translation>
+    </message>
+    <message>
+        <source>MCP HTTP requires HTTPS, or HTTP on localhost</source>
+        <translation>MCP HTTP 需要 HTTPS，或使用 localhost 上的 HTTP</translation>
+    </message>
+    <message>
+        <source>Invalid authentication token</source>
+        <translation>無效的驗證權杖</translation>
+    </message>
+    <message>
+        <source>Cannot load CA certificate</source>
+        <translation>無法載入 CA 憑證</translation>
+    </message>
+    <message>
+        <source>MCP request queue is full</source>
+        <translation>MCP 要求佇列已滿</translation>
+    </message>
+    <message>
+        <source>MCP outgoing message budget exceeded</source>
+        <translation>MCP 傳送訊息超過大小限制</translation>
+    </message>
+    <message>
+        <source>MCP server is disconnected</source>
+        <translation>MCP 伺服器已中斷連線</translation>
+    </message>
+    <message>
+        <source>MCP session expired; reconnecting</source>
+        <translation>MCP 工作階段已到期，正在重新連線</translation>
+    </message>
+    <message>
+        <source>MCP HTTP error %1: %2</source>
+        <translation>MCP HTTP 錯誤 %1：%2</translation>
+    </message>
+    <message>
+        <source>MCP event stream ended before its response</source>
+        <translation>MCP 事件串流在回應前已結束</translation>
+    </message>
+    <message>
+        <source>Invalid MCP HTTP response</source>
+        <translation>無效的 MCP HTTP 回應</translation>
+    </message>
+    <message>
+        <source>Invalid MCP session identifier</source>
+        <translation>無效的 MCP 工作階段識別碼</translation>
+    </message>
+    <message>
+        <source>MCP session identifier is too large</source>
+        <translation>MCP 工作階段識別碼過長</translation>
+    </message>
+    <message>
+        <source>Invalid MCP event data</source>
+        <translation>無效的 MCP 事件資料</translation>
+    </message>
+    <message>
+        <source>Invalid MCP protocol version</source>
+        <translation>無效的 MCP 通訊協定版本</translation>
+    </message>
+    <message>
+        <source>MCP request failed: %1</source>
+        <translation>MCP 要求失敗：%1</translation>
+    </message>
+    <message>
+        <source>MCP response has no result object</source>
+        <translation>MCP 回應缺少結果物件</translation>
+    </message>
+    <message>
+        <source>Unsupported MCP protocol version</source>
+        <translation>不支援的 MCP 通訊協定版本</translation>
+    </message>
+    <message>
+        <source>Connected</source>
+        <translation>已連線</translation>
+    </message>
+    <message>
+        <source>Connected; tool list is partial</source>
+        <translation>已連線；工具清單尚未完整載入</translation>
+    </message>
+    <message>
+        <source>Connected; resource list is partial</source>
+        <translation>已連線；資源清單尚未完整載入</translation>
+    </message>
+    <message>
+        <source>MCP tool reported an error</source>
+        <translation>MCP 工具回報錯誤</translation>
+    </message>
+    <message>
+        <source>Connect an MCP server first</source>
+        <translation>請先連線 MCP 伺服器</translation>
+    </message>
+    <message>
+        <source>Tool arguments exceed the size limit</source>
+        <translation>工具引數超過大小限制</translation>
+    </message>
+    <message>
+        <source>Tool arguments must be a JSON object</source>
+        <translation>工具引數必須是 JSON 物件</translation>
+    </message>
+</context>
+<context>
+    <name>Menus</name>
+    <message>
+        <source>&amp;File</source>
+        <translation>檔案(&amp;F)</translation>
+    </message>
+    <message>
+        <source>&amp;Load file</source>
+        <translation>載入檔案(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Produce file</source>
+        <translation>產生檔案(&amp;P)</translation>
+    </message>
+    <message>
+        <source>&amp;Edit</source>
+        <translation>編輯(&amp;E)</translation>
+    </message>
+    <message>
+        <source>Co&amp;mments</source>
+        <translation>註解(&amp;M)</translation>
+    </message>
+    <message>
+        <source>&amp;Jump</source>
+        <translation>跳轉(&amp;J)</translation>
+    </message>
+    <message>
+        <source>&amp;Search</source>
+        <translation>搜尋(&amp;S)</translation>
+    </message>
+    <message>
+        <source>&amp;View</source>
+        <translation>檢視(&amp;V)</translation>
+    </message>
+    <message>
+        <source>Open &amp;subviews</source>
+        <translation>開啟子檢視(&amp;S)</translation>
+    </message>
+    <message>
+        <source>&amp;Intermediate representations</source>
+        <translation>中介表示(&amp;I)</translation>
+    </message>
+    <message>
+        <source>&amp;Graphs</source>
+        <translation>圖形(&amp;G)</translation>
+    </message>
+    <message>
+        <source>&amp;Toolbars</source>
+        <translation>工具列(&amp;T)</translation>
+    </message>
+    <message>
+        <source>&amp;Options</source>
+        <translation>選項(&amp;O)</translation>
+    </message>
+    <message>
+        <source>&amp;Language</source>
+        <translation>語言(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Analysis</source>
+        <translation>分析(&amp;A)</translation>
+    </message>
+    <message>
+        <source>&amp;Windows</source>
+        <translation>視窗(&amp;W)</translation>
+    </message>
+    <message>
+        <source>&amp;Help</source>
+        <translation>說明(&amp;H)</translation>
+    </message>
+</context>
+<context>
+    <name>NavigationBand</name>
+    <message>
+        <source>Library function</source>
+        <translation>程式庫函式</translation>
+    </message>
+    <message>
+        <source>Regular function</source>
+        <translation>一般函式</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>指令</translation>
+    </message>
+    <message>
+        <source>Data</source>
+        <translation>資料</translation>
+    </message>
+    <message>
+        <source>Unexplored</source>
+        <translation>未探索</translation>
+    </message>
+    <message>
+        <source>External symbol</source>
+        <translation>外部符號</translation>
+    </message>
+</context>
+<context>
+    <name>ProjectDatabase</name>
+    <message>
+        <source>Cannot read %1: %2</source>
+        <translation>無法讀取 %1：%2</translation>
+    </message>
+    <message>
+        <source>Cannot read %1</source>
+        <translation>無法讀取 %1</translation>
+    </message>
+    <message>
+        <source>%1 uses database format %2, which this NeverD cannot update.</source>
+        <translation>%1 使用資料庫格式 %2，此版本的 NeverD 無法更新它。</translation>
+    </message>
+    <message>
+        <source>Cannot create %1</source>
+        <translation>無法建立 %1</translation>
+    </message>
+    <message>
+        <source>%1 is not a NeverD database.</source>
+        <translation>%1 不是 NeverD 資料庫。</translation>
+    </message>
+    <message>
+        <source>%1 does not exist.</source>
+        <translation>%1 不存在。</translation>
+    </message>
+    <message>
+        <source>%1 uses database format %2, which this NeverD cannot read.</source>
+        <translation>%1 使用資料庫格式 %2，此版本的 NeverD 無法讀取它。</translation>
+    </message>
+    <message>
+        <source>%1 names an invalid input file.</source>
+        <translation>%1 指定了無效的輸入檔案。</translation>
+    </message>
+    <message>
+        <source>Cannot write %1: %2</source>
+        <translation>無法寫入 %1：%2</translation>
+    </message>
+    <message>
+        <source>The input stored in %1 is damaged.</source>
+        <translation>%1 中儲存的輸入已損毀。</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>無法寫入 %1</translation>
+    </message>
+</context>
+<context>
+    <name>Representations</name>
+    <message>
+        <source>Pseudocode</source>
+        <translation>偽代碼</translation>
+    </message>
+    <message>
+        <source>LLVM C</source>
+        <translation>LLVM C</translation>
+    </message>
+    <message>
+        <source>LowIR</source>
+        <translation>LowIR</translation>
+    </message>
+    <message>
+        <source>MedIR</source>
+        <translation>MedIR</translation>
+    </message>
+    <message>
+        <source>HighIR</source>
+        <translation>HighIR</translation>
+    </message>
+    <message>
+        <source>LLVM IR</source>
+        <translation>LLVM IR</translation>
+    </message>
+</context>
+<context>
+    <name>Toolbars</name>
+    <message>
+        <source>File</source>
+        <translation>檔案</translation>
+    </message>
+    <message>
+        <source>Navigation</source>
+        <translation>導覽</translation>
+    </message>
+    <message>
+        <source>Jump</source>
+        <translation>跳轉</translation>
+    </message>
+    <message>
+        <source>Search</source>
+        <translation>搜尋</translation>
+    </message>
+    <message>
+        <source>Views</source>
+        <translation>檢視</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>分析</translation>
+    </message>
+</context>
+<context>
+    <name>WorkerTransport</name>
+    <message>
+        <source>Analysis worker exited (%1). Restart to continue.</source>
+        <translation>分析程序已結束（%1）。請重新啟動以繼續。</translation>
+    </message>
+    <message>
+        <source>Analysis worker is not running.</source>
+        <translation>分析程序未執行。</translation>
+    </message>
+    <message>
+        <source>Analysis request queue is full.</source>
+        <translation>分析要求佇列已滿。</translation>
+    </message>
+    <message>
+        <source>Invalid analysis protocol frame.</source>
+        <translation>無效的分析通訊協定框架。</translation>
+    </message>
+    <message>
+        <source>Invalid analysis protocol JSON.</source>
+        <translation>無效的分析通訊協定 JSON。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ChooserModel</name>
+    <message>
+        <source>References are still being indexed…</source>
+        <translation>仍在為引用建立索引…</translation>
+    </message>
+    <message>
+        <source>Up</source>
+        <translation>向上</translation>
+    </message>
+    <message>
+        <source>Down</source>
+        <translation>向下</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ChooserView</name>
+    <message>
+        <source>Quick filter</source>
+        <translation>快速篩選</translation>
+    </message>
+    <message>
+        <source>Line %1 of %2</source>
+        <translation>第 %1 行，共 %2 行</translation>
+    </message>
+    <message>
+        <source>1 item</source>
+        <translation>1 個項目</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n items</source>
+        <translation>
+            <numerusform>%n 個項目</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::CodeText</name>
+    <message>
+        <source>Decompiling…</source>
+        <translation>正在反編譯…</translation>
+    </message>
+    <message>
+        <source>Function-level analysis</source>
+        <translation>函式層級分析</translation>
+    </message>
+    <message>
+        <source>rows linked to instructions</source>
+        <translation>程式碼行已關聯指令</translation>
+    </message>
+    <message>
+        <source>%1
+Recognized library operation; click to show its code.</source>
+        <translation>%1
+已識別的程式庫操作；按一下以顯示其程式碼。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::CodeView</name>
+    <message>
+        <source>Fold library code</source>
+        <translation>摺疊程式庫程式碼</translation>
+    </message>
+    <message>
+        <source>Show each recognized library operation as a one-line summary; copy and export keep the full code.</source>
+        <translation>將每個已識別的程式庫操作顯示為一行摘要；複製與匯出仍保留完整程式碼。</translation>
+    </message>
+    <message>
+        <source>Keep this function while the disassembly moves on</source>
+        <translation>反組譯檢視移動時保持顯示此函式</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ConnectionsDialog</name>
+    <message>
+        <source>Pending</source>
+        <translation>等待中</translation>
+    </message>
+    <message>
+        <source>Completed</source>
+        <translation>已完成</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>失敗</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>已取消</translation>
+    </message>
+    <message>
+        <source>Timed out</source>
+        <translation>已逾時</translation>
+    </message>
+    <message>
+        <source>Disconnected</source>
+        <translation>已中斷連線</translation>
+    </message>
+    <message>
+        <source>MCP Connections</source>
+        <translation>MCP 連線</translation>
+    </message>
+    <message>
+        <source>Current GUI session</source>
+        <translation>目前 GUI 工作階段</translation>
+    </message>
+    <message>
+        <source>Copy Credential Path</source>
+        <translation>複製憑證路徑</translation>
+    </message>
+    <message>
+        <source>Transport</source>
+        <translation>傳輸方式</translation>
+    </message>
+    <message>
+        <source>Arguments as JSON, for example [&quot;--help&quot;]</source>
+        <translation>JSON 格式的引數，例如 [&quot;--help&quot;]</translation>
+    </message>
+    <message>
+        <source>Bearer token (optional)</source>
+        <translation>Bearer 權杖（選填）</translation>
+    </message>
+    <message>
+        <source>Bearer token</source>
+        <translation>Bearer 權杖</translation>
+    </message>
+    <message>
+        <source>CA certificate path (optional)</source>
+        <translation>CA 憑證路徑（選填）</translation>
+    </message>
+    <message>
+        <source>CA certificate path</source>
+        <translation>CA 憑證路徑</translation>
+    </message>
+    <message>
+        <source>Tools</source>
+        <translation>工具</translation>
+    </message>
+    <message>
+        <source>Resources</source>
+        <translation>資源</translation>
+    </message>
+    <message>
+        <source>History</source>
+        <translation>歷程記錄</translation>
+    </message>
+    <message>
+        <source>Result</source>
+        <translation>結果</translation>
+    </message>
+    <message>
+        <source>Schema</source>
+        <translation>結構定義</translation>
+    </message>
+    <message>
+        <source>Call Tool</source>
+        <translation>呼叫工具</translation>
+    </message>
+    <message>
+        <source>Cancel Call</source>
+        <translation>取消呼叫</translation>
+    </message>
+    <message>
+        <source>Select a resource or call a tool to inspect its response.</source>
+        <translation>選取資源或呼叫工具以檢視回應。</translation>
+    </message>
+    <message>
+        <source>Disable Sharing</source>
+        <translation>停用共用</translation>
+    </message>
+    <message>
+        <source>Enable Sharing</source>
+        <translation>啟用共用</translation>
+    </message>
+    <message>
+        <source>Sharing is off. Enabling it grants local agents access to this session using its private credential file.</source>
+        <translation>共用已關閉。啟用後，本機代理程式可透過私有憑證檔案存取此工作階段。</translation>
+    </message>
+    <message>
+        <source>Absolute path to server executable</source>
+        <translation>伺服器執行檔的絕對路徑</translation>
+    </message>
+    <message>
+        <source>Disconnect</source>
+        <translation>中斷連線</translation>
+    </message>
+    <message>
+        <source>Connect</source>
+        <translation>連線</translation>
+    </message>
+    <message>
+        <source>No server connected</source>
+        <translation>未連線伺服器</translation>
+    </message>
+    <message>
+        <source>No calls yet.</source>
+        <translation>目前沒有呼叫記錄。</translation>
+    </message>
+    <message>
+        <source>No items published by this server.</source>
+        <translation>此伺服器未發佈任何項目。</translation>
+    </message>
+    <message>
+        <source>Connect to a server to list its catalog.</source>
+        <translation>連線至伺服器以列出其目錄。</translation>
+    </message>
+    <message>
+        <source>Arguments must be a JSON array of strings.</source>
+        <translation>引數必須是 JSON 字串陣列。</translation>
+    </message>
+    <message>
+        <source>Tool Input Schema</source>
+        <translation>工具輸入結構</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DisassemblyView</name>
+    <message>
+        <source>Graph view requires a location inside a function.</source>
+        <translation>圖形檢視需要位於函式內的位置。</translation>
+    </message>
+    <message>
+        <source> (Synchronized with %1)</source>
+        <translation> (與 %1 同步)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::Expression</name>
+    <message>
+        <source>Unexpected character &apos;%1&apos;</source>
+        <translation>非預期的字元「%1」</translation>
+    </message>
+    <message>
+        <source>Empty expression</source>
+        <translation>運算式為空</translation>
+    </message>
+    <message>
+        <source>Unexpected text after the expression</source>
+        <translation>運算式後有多餘的文字</translation>
+    </message>
+    <message>
+        <source>Unknown name &apos;%1&apos;</source>
+        <translation>未知的名稱「%1」</translation>
+    </message>
+    <message>
+        <source>Missing &apos;)&apos;</source>
+        <translation>缺少「)」</translation>
+    </message>
+    <message>
+        <source>Expected a value</source>
+        <translation>此處應為一個值</translation>
+    </message>
+    <message>
+        <source>Division by zero</source>
+        <translation>除數為零</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExtensionsView</name>
+    <message>
+        <source>Import Manifest…</source>
+        <translation>匯入資訊清單…</translation>
+    </message>
+    <message>
+        <source>Run</source>
+        <translation>執行</translation>
+    </message>
+    <message>
+        <source>Unload</source>
+        <translation>卸載</translation>
+    </message>
+    <message>
+        <source>Import a declarative manifest to add analysis commands and views.</source>
+        <translation>匯入宣告式資訊清單，以新增分析命令與檢視。</translation>
+    </message>
+    <message>
+        <source>Select an extension command to inspect its result.</source>
+        <translation>選取擴充功能命令以檢視其結果。</translation>
+    </message>
+    <message>
+        <source>Import extension manifest</source>
+        <translation>匯入擴充功能資訊清單</translation>
+    </message>
+    <message>
+        <source>Manifests (*.json)</source>
+        <translation>資訊清單 (*.json)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::GraphView</name>
+    <message>
+        <source>Laying out graph…</source>
+        <translation>正在配置圖形版面…</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::JumpDialog</name>
+    <message>
+        <source>Jump anywhere</source>
+        <translation>跳至任意位置</translation>
+    </message>
+    <message>
+        <source>Address, name or expression (0x401000, main, sub_401000+10)</source>
+        <translation>位址、名稱或運算式 (0x401000, main, sub_401000+10)</translation>
+    </message>
+    <message>
+        <source>Enter jumps to the expression; arrows choose a match.</source>
+        <translation>按 Enter 跳至運算式；按方向鍵選擇相符項目。</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>%n 個相符項目</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Navigation band</source>
+        <translation>導覽列</translation>
+    </message>
+    <message>
+        <source>Extensions</source>
+        <translation>擴充功能</translation>
+    </message>
+    <message>
+        <source>Hex View-1</source>
+        <translation>十六進位檢視-1</translation>
+    </message>
+    <message>
+        <source>NeverD View-A</source>
+        <translation>NeverD 檢視-A</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>函式</translation>
+    </message>
+    <message>
+        <source>Output</source>
+        <translation>輸出</translation>
+    </message>
+    <message>
+        <source>Graph overview</source>
+        <translation>圖形概覽</translation>
+    </message>
+    <message>
+        <source>Background analysis: references and labels are indexed while you browse</source>
+        <translation>背景分析：在您瀏覽時為引用與標籤建立索引</translation>
+    </message>
+    <message>
+        <source>Unsaved changes</source>
+        <translation>未儲存的變更</translation>
+    </message>
+    <message>
+        <source>Comments were changed. Save them before continuing?</source>
+        <translation>註解已變更。是否在繼續之前儲存？</translation>
+    </message>
+    <message>
+        <source>Cannot jump to %1: %2</source>
+        <translation>無法跳至 %1：%2</translation>
+    </message>
+    <message>
+        <source>Load signature pack</source>
+        <translation>載入簽章套件</translation>
+    </message>
+    <message>
+        <source>Signature packs (*.pat *.json);;All files (*)</source>
+        <translation>簽章套件 (*.pat *.json);;所有檔案 (*)</translation>
+    </message>
+    <message>
+        <source>Signature directory</source>
+        <translation>簽章目錄</translation>
+    </message>
+    <message>
+        <source>Mark position</source>
+        <translation>標記位置</translation>
+    </message>
+    <message>
+        <source>Description:</source>
+        <translation>描述：</translation>
+    </message>
+    <message>
+        <source>Find in view</source>
+        <translation>在檢視中尋找</translation>
+    </message>
+    <message>
+        <source>Text:</source>
+        <translation>文字：</translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; was not found among the loaded lines</source>
+        <translation>在已載入的行中找不到「%1」</translation>
+    </message>
+    <message>
+        <source>History: %1 entries, cursor %2</source>
+        <translation>歷程記錄：%1 筆，目前位置 %2</translation>
+    </message>
+    <message>
+        <source>AU: idle</source>
+        <translation>AU: 閒置</translation>
+    </message>
+    <message>
+        <source>AU: busy %1%</source>
+        <translation>AU: 忙碌 %1%</translation>
+    </message>
+    <message>
+        <source>AU: busy</source>
+        <translation>AU: 忙碌</translation>
+    </message>
+    <message>
+        <source>Down</source>
+        <translation>向下</translation>
+    </message>
+    <message>
+        <source>Up</source>
+        <translation>向上</translation>
+    </message>
+    <message>
+        <source>Disk: %1GB</source>
+        <translation>磁碟：%1GB</translation>
+    </message>
+    <message>
+        <source> · read-only</source>
+        <translation> · 唯讀</translation>
+    </message>
+    <message>
+        <source>%1 is not a function entry; only functions can be renamed.</source>
+        <translation>%1 不是函式進入點；只能重新命名函式。</translation>
+    </message>
+    <message>
+        <source>Rename function</source>
+        <translation>重新命名函式</translation>
+    </message>
+    <message>
+        <source>Name of %1:</source>
+        <translation>%1 的名稱：</translation>
+    </message>
+    <message>
+        <source>Please enter text</source>
+        <translation>請輸入文字</translation>
+    </message>
+    <message>
+        <source>Comment at %1:</source>
+        <translation>%1 處的註解：</translation>
+    </message>
+    <message>
+        <source>xrefs to %1</source>
+        <translation>指向 %1 的交叉引用</translation>
+    </message>
+    <message>
+        <source>xrefs from %1</source>
+        <translation>來自 %1 的交叉引用</translation>
+    </message>
+    <message>
+        <source>Place the cursor inside a function to decompile it.</source>
+        <translation>請將游標置於函式內以進行反編譯。</translation>
+    </message>
+    <message>
+        <source>Text search</source>
+        <translation>文字搜尋</translation>
+    </message>
+    <message>
+        <source>Binary search</source>
+        <translation>二進位搜尋</translation>
+    </message>
+    <message>
+        <source>String:</source>
+        <translation>字串：</translation>
+    </message>
+    <message>
+        <source>Hex bytes (e.g. 48 8B 05):</source>
+        <translation>十六進位位元組（例如 48 8B 05）：</translation>
+    </message>
+    <message>
+        <source>Search failed: %1 not found</source>
+        <translation>搜尋失敗：找不到 %1</translation>
+    </message>
+    <message>
+        <source>Evaluate expression</source>
+        <translation>計算運算式</translation>
+    </message>
+    <message>
+        <source>Expression:</source>
+        <translation>運算式：</translation>
+    </message>
+    <message>
+        <source>Hex: %1h
+Decimal: %2
+Octal: %3
+Signed: %4</source>
+        <translation>十六進位：%1h
+十進位：%2
+八進位：%3
+有號：%4</translation>
+    </message>
+    <message>
+        <source>About NeverD</source>
+        <translation>關於 NeverD</translation>
+    </message>
+    <message>
+        <source>&lt;h3&gt;NeverD %1&lt;/h3&gt;&lt;p&gt;Interactive disassembler and decompiler workbench.&lt;/p&gt;&lt;p&gt;Licensed under the GNU Affero General Public License v3. Icons are original NeverD artwork.&lt;/p&gt;&lt;p&gt;&lt;a href=&quot;https://github.com/NeverSight/NeverD&quot;&gt;github.com/NeverSight/NeverD&lt;/a&gt;&lt;/p&gt;</source>
+        <translation>&lt;h3&gt;NeverD %1&lt;/h3&gt;&lt;p&gt;互動式反組譯與反編譯工作台。&lt;/p&gt;&lt;p&gt;採用 GNU Affero General Public License v3 授權。圖示為 NeverD 原創作品。&lt;/p&gt;&lt;p&gt;&lt;a href=&quot;https://github.com/NeverSight/NeverD&quot;&gt;github.com/NeverSight/NeverD&lt;/a&gt;&lt;/p&gt;</translation>
+    </message>
+    <message>
+        <source>Code font</source>
+        <translation>程式碼字型</translation>
+    </message>
+    <message>
+        <source>Dark (Visual Studio Code Dark+)</source>
+        <translation>深色 (Visual Studio Code Dark+)</translation>
+    </message>
+    <message>
+        <source>Light (Visual Studio Code Light+)</source>
+        <translation>淺色 (Visual Studio Code Light+)</translation>
+    </message>
+    <message>
+        <source>Colors</source>
+        <translation>色彩</translation>
+    </message>
+    <message>
+        <source>Theme:</source>
+        <translation>佈景主題：</translation>
+    </message>
+    <message>
+        <source>General options</source>
+        <translation>一般選項</translation>
+    </message>
+    <message>
+        <source>Number of opcode bytes:</source>
+        <translation>操作碼位元組數：</translation>
+    </message>
+    <message>
+        <source>Show segment:address line prefixes</source>
+        <translation>顯示「區段:位址」行前綴</translation>
+    </message>
+    <message>
+        <source>Shortcuts</source>
+        <translation>快速鍵</translation>
+    </message>
+    <message>
+        <source>Action</source>
+        <translation>動作</translation>
+    </message>
+    <message>
+        <source>Shortcut</source>
+        <translation>快速鍵</translation>
+    </message>
+    <message>
+        <source>Command palette</source>
+        <translation>命令選擇區</translation>
+    </message>
+    <message>
+        <source>Type a command</source>
+        <translation>輸入命令</translation>
+    </message>
+    <message>
+        <source>Create C file</source>
+        <translation>建立 C 檔案</translation>
+    </message>
+    <message>
+        <source>Create LST file</source>
+        <translation>建立 LST 檔案</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>無法寫入 %1</translation>
+    </message>
+    <message>
+        <source>Wrote %1</source>
+        <translation>已寫入 %1</translation>
+    </message>
+    <message>
+        <source>Desktop saved</source>
+        <translation>桌面配置已儲存</translation>
+    </message>
+    <message>
+        <source>No saved desktop</source>
+        <translation>沒有已儲存的桌面配置</translation>
+    </message>
+    <message>
+        <source>NeverD: Quick start</source>
+        <translation>NeverD：快速開始</translation>
+    </message>
+    <message>
+        <source>New</source>
+        <translation>新增</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>反組譯新的檔案</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation>直接開始</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>自行開始工作</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>最近</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>載入所選的最近檔案</translation>
+    </message>
+    <message>
+        <source>Recent files:</source>
+        <translation>最近的檔案：</translation>
+    </message>
+    <message>
+        <source>Open binary or database</source>
+        <translation>開啟二進位檔或資料庫</translation>
+    </message>
+    <message>
+        <source>All files (*);;NeverD databases (*.nddb)</source>
+        <translation>所有檔案 (*);;NeverD 資料庫 (*.nddb)</translation>
+    </message>
+    <message>
+        <source>The saved desktop of this database could not be restored.</source>
+        <translation>無法還原此資料庫儲存的桌面配置。</translation>
+    </message>
+    <message>
+        <source>String options are unavailable: %1</source>
+        <translation>字串選項無法使用：%1</translation>
+    </message>
+    <message>
+        <source>String literals</source>
+        <translation>字串常值</translation>
+    </message>
+    <message>
+        <source>Encodings:</source>
+        <translation>編碼：</translation>
+    </message>
+    <message>
+        <source>Minimum length:</source>
+        <translation>最小長度：</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::OutputWindow</name>
+    <message>
+        <source>Command line language: NeverD expressions and commands. Type help for a list.</source>
+        <translation>命令列語言：NeverD 運算式與命令。輸入 help 以檢視命令清單。</translation>
+    </message>
+    <message>
+        <source>Expression or command (help)</source>
+        <translation>運算式或命令 (help)</translation>
+    </message>
+    <message>
+        <source>Commands:</source>
+        <translation>命令：</translation>
+    </message>
+    <message>
+        <source>  g &lt;expr&gt;          jump to an address or name</source>
+        <translation>  g &lt;expr&gt;          跳至位址或名稱</translation>
+    </message>
+    <message>
+        <source>  x [expr]          list references to the current item or expr</source>
+        <translation>  x [expr]          列出對目前項目或 expr 的引用</translation>
+    </message>
+    <message>
+        <source>  n &lt;name&gt;          rename the current function</source>
+        <translation>  n &lt;name&gt;          重新命名目前函式</translation>
+    </message>
+    <message>
+        <source>  c &lt;text&gt;          comment the current address</source>
+        <translation>  c &lt;text&gt;          為目前位址新增註解</translation>
+    </message>
+    <message>
+        <source>  d [expr]          decompile the current or given function</source>
+        <translation>  d [expr]          反編譯目前函式或指定的函式</translation>
+    </message>
+    <message>
+        <source>  f &lt;hex|&quot;text&quot;&gt;    search the binary</source>
+        <translation>  f &lt;hex|&quot;text&quot;&gt;    搜尋二進位檔案</translation>
+    </message>
+    <message>
+        <source>  graph, hex        show the graph or hex view</source>
+        <translation>  graph, hex        顯示圖形檢視或十六進位檢視</translation>
+    </message>
+    <message>
+        <source>  analyze, save     whole-program analysis, save comments</source>
+        <translation>  analyze, save     全程式分析、儲存註解</translation>
+    </message>
+    <message>
+        <source>  &lt;expr&gt;            evaluate: 0x10, 10h, #16, names, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</source>
+        <translation>  &lt;expr&gt;            求值：0x10, 10h, #16, 名稱, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::Session</name>
+    <message>
+        <source>Starting analysis worker…</source>
+        <translation>正在啟動分析程序…</translation>
+    </message>
+    <message>
+        <source>Incompatible analysis worker protocol.</source>
+        <translation>分析程序通訊協定不相容。</translation>
+    </message>
+    <message>
+        <source>Analysis engine %1 ready</source>
+        <translation>分析引擎 %1 已就緒</translation>
+    </message>
+    <message>
+        <source>Select an existing binary file.</source>
+        <translation>請選取現有的二進位檔案。</translation>
+    </message>
+    <message>
+        <source>Loading %1…</source>
+        <translation>正在載入 %1…</translation>
+    </message>
+    <message>
+        <source>%1: %2 %3, %4 functions</source>
+        <translation>%1：%2 %3，%4 個函式</translation>
+    </message>
+    <message>
+        <source>Annotations reloaded</source>
+        <translation>註解已重新載入</translation>
+    </message>
+    <message>
+        <source>Comments and history saved</source>
+        <translation>註解與歷程記錄已儲存</translation>
+    </message>
+    <message>
+        <source>The edit was prepared for a session that is no longer open and was not applied.</source>
+        <translation>此編輯所針對的工作階段已不再開啟，因此未套用。</translation>
+    </message>
+    <message>
+        <source>Edits are paused while the pending save, open or close completes.</source>
+        <translation>正在等候儲存、開啟或關閉作業完成，編輯已暫停。</translation>
+    </message>
+    <message>
+        <source>Renamed %1 to %2</source>
+        <translation>已將 %1 重新命名為 %2</translation>
+    </message>
+    <message>
+        <source>Signature pack applied: %1 byte matches</source>
+        <translation>已套用簽章套件：%1 個位元組簽章相符項目</translation>
+    </message>
+    <message>
+        <source>Whole-program analysis started; views stay available.</source>
+        <translation>全程式分析已開始；檢視仍可正常使用。</translation>
+    </message>
+    <message>
+        <source>Whole-program analysis finished</source>
+        <translation>全程式分析已完成</translation>
+    </message>
+    <message>
+        <source>Queued requests cancelled; a running engine call finishes unless the worker is restarted.</source>
+        <translation>已取消佇列中的要求；執行中的引擎呼叫會繼續執行至完成，除非重新啟動分析程序。</translation>
+    </message>
+    <message>
+        <source>%1 describes a different version of this file and was not used; saving replaces it.</source>
+        <translation>%1 對應此檔案的另一個版本，因此未被使用；儲存時將取代它。</translation>
+    </message>
+    <message>
+        <source>Could not restore %1 from the database.</source>
+        <translation>無法從資料庫還原 %1。</translation>
+    </message>
+    <message>
+        <source>Database saved: %1</source>
+        <translation>資料庫已儲存：%1</translation>
+    </message>
+    <message>
+        <source>Could not save the database: %1</source>
+        <translation>無法儲存資料庫：%1</translation>
+    </message>
+    <message>
+        <source>Could not update the database: %1</source>
+        <translation>無法更新資料庫：%1</translation>
+    </message>
+    <message>
+        <source>Strings: %1, at least %2 characters</source>
+        <translation>字串：%1，至少 %2 個字元</translation>
+    </message>
+</context>
 </TS>

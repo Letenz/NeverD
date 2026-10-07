@@ -869,6 +869,119 @@ static VOID Unload(PDRIVER_OBJECT DriverObject) {
   DbgPrint("WDM SEH: unload mode=%c stage=%lu\n", Mode, Stage);
 }
 
+static KMUTEX ThreadMutex;
+static KEVENT MutexOwnerReady;
+static PKTHREAD MutexCaller;
+static volatile BOOLEAN MutexInvalid;
+static volatile NTSTATUS MutexWorkerStatus;
+
+static VOID CheckMutex(BOOLEAN Condition) {
+  if (!Condition)
+    MutexInvalid = TRUE;
+}
+
+static VOID MutexOwnerThread(PVOID Context) {
+  LARGE_INTEGER Delay;
+  UNREFERENCED_PARAMETER(Context);
+  KeLeaveCriticalRegion();
+  CheckMutex(KeWaitForSingleObject(&ThreadMutex, Executive, KernelMode, FALSE,
+                                   NULL) == STATUS_SUCCESS);
+  CheckMutex(KeAreApcsDisabled() && !KeAreAllApcsDisabled());
+  KeSetEvent(&MutexOwnerReady, IO_NO_INCREMENT, FALSE);
+  Delay.QuadPart = -(LONGLONG)SehMutexDelay;
+  CheckMutex(KeDelayExecutionThread(KernelMode, FALSE, &Delay) ==
+             STATUS_SUCCESS);
+  CheckMutex(KeReleaseMutex(&ThreadMutex, FALSE) == 0);
+  CheckMutex(!KeAreApcsDisabled());
+  MutexWorkerStatus = STATUS_SUCCESS;
+  PsTerminateSystemThread(STATUS_SUCCESS);
+}
+
+static LONG MutexFilter(VOID) {
+  LARGE_INTEGER Zero;
+  Zero.QuadPart = 0;
+  CheckMutex(KeGetCurrentThread() == MutexCaller);
+  CheckMutex(
+      KeWaitForSingleObject(&ThreadMutex, Executive, KernelMode, FALSE,
+                            Mode == SehMutexBlockedFilter ? NULL : &Zero) ==
+      STATUS_SUCCESS);
+  CheckMutex(KeAreApcsDisabled() && !KeAreAllApcsDisabled());
+  if (Mode == SehMutexParentRecursion) {
+    CheckMutex(KeReadStateMutex(&ThreadMutex) == -1);
+    CheckMutex(KeReleaseMutex(&ThreadMutex, FALSE) == -1);
+  }
+  Stage = SehMutexFilterStage;
+  return EXCEPTION_EXECUTE_HANDLER;
+}
+
+// A separate frame makes target unwind leave the protected finally scope.
+// An adjacent compiler scope-end label can include the parent's landing pad.
+__declspec(noinline) static VOID MutexRaiseWithFinally(VOID) {
+  LARGE_INTEGER Zero;
+  Zero.QuadPart = 0;
+  __try {
+    ExRaiseAccessViolation();
+  } __finally {
+    CheckMutex(AbnormalTermination());
+    CheckMutex(KeGetCurrentThread() == MutexCaller);
+    CheckMutex(KeWaitForSingleObject(&ThreadMutex, Executive, KernelMode, FALSE,
+                                     &Zero) == STATUS_SUCCESS);
+    CheckMutex(KeAreApcsDisabled() && !KeAreAllApcsDisabled());
+    Stage = SehMutexFinallyStage;
+  }
+}
+
+static NTSTATUS ThreadMutexPaths(VOID) {
+  HANDLE Handle = NULL;
+  PVOID Thread = NULL;
+  LARGE_INTEGER Zero;
+  Zero.QuadPart = 0;
+  MutexInvalid = FALSE;
+  MutexWorkerStatus = STATUS_PENDING;
+  MutexCaller = KeGetCurrentThread();
+  KeInitializeMutex(&ThreadMutex, 0);
+  REQUIRE(!KeAreApcsDisabled());
+  if (Mode == SehMutexBlockedFilter) {
+    KeInitializeEvent(&MutexOwnerReady, NotificationEvent, FALSE);
+    REQUIRE(PsCreateSystemThread(&Handle, THREAD_ALL_ACCESS, NULL, NULL, NULL,
+                                 MutexOwnerThread, NULL) == STATUS_SUCCESS);
+    REQUIRE(ObReferenceObjectByHandle(Handle, SYNCHRONIZE, NULL, KernelMode,
+                                      &Thread, NULL) == STATUS_SUCCESS);
+    REQUIRE(ZwClose(Handle) == STATUS_SUCCESS);
+    REQUIRE(KeWaitForSingleObject(&MutexOwnerReady, Executive, KernelMode,
+                                  FALSE, NULL) == STATUS_SUCCESS);
+  } else if (Mode == SehMutexParentRecursion) {
+    REQUIRE(KeWaitForSingleObject(&ThreadMutex, Executive, KernelMode, FALSE,
+                                  &Zero) == STATUS_SUCCESS);
+  }
+  __try {
+    if (Mode == SehMutexFinallyOwnership)
+      MutexRaiseWithFinally();
+    else
+      ExRaiseAccessViolation();
+  } __except (Mode == SehMutexFinallyOwnership ? EXCEPTION_EXECUTE_HANDLER
+                                               : MutexFilter()) {
+    REQUIRE((NTSTATUS)GetExceptionCode() == STATUS_ACCESS_VIOLATION);
+    REQUIRE(Stage == (Mode == SehMutexFinallyOwnership ? SehMutexFinallyStage
+                                                       : SehMutexFilterStage));
+    REQUIRE(!MutexInvalid && KeGetCurrentThread() == MutexCaller);
+    REQUIRE(KeAreApcsDisabled() && !KeAreAllApcsDisabled());
+    REQUIRE(KeReadStateMutex(&ThreadMutex) == 0);
+    REQUIRE(KeReleaseMutex(&ThreadMutex, FALSE) == 0);
+    REQUIRE(!KeAreApcsDisabled() && KeReadStateMutex(&ThreadMutex) == 1);
+    Stage = SehMutexHandledStage;
+  }
+  if (Thread) {
+    REQUIRE(KeWaitForSingleObject(Thread, Executive, KernelMode, FALSE, NULL) ==
+            STATUS_SUCCESS);
+    ObDereferenceObject(Thread);
+    REQUIRE(MutexWorkerStatus == STATUS_SUCCESS && !MutexInvalid);
+  }
+  REQUIRE(Stage == SehMutexHandledStage);
+  DbgPrint(SehMutexCompleteMessage);
+  return STATUS_SUCCESS;
+}
+
 DRIVER_INITIALIZE DriverEntry;
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
                      PUNICODE_STRING RegistryPath) {
@@ -880,6 +993,17 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
         RegistryPath->Length >= SehDivideModeCharacters * sizeof(WCHAR) &&
         RegistryPath->Buffer[RegistryPath->Length / sizeof(WCHAR) -
                              SehDivideModeCharacters] == SehDivideModeMarker;
+    if (RegistryPath->Length >= SehMutexModeCharacters * sizeof(WCHAR) &&
+        RegistryPath->Buffer[RegistryPath->Length / sizeof(WCHAR) -
+                             SehMutexModeCharacters] == SehMutexMarker) {
+      switch (Last) {
+#define NEVERD_SEH_MUTEX_CASE(Name, Value) case SehMutex##Name:
+#include "driver_seh_mutex.def"
+#undef NEVERD_SEH_MUTEX_CASE
+        Mode = (CHAR)Last;
+        break;
+      }
+    }
     if (RegistryPath->Length >= SehSIMDModeCharacters * sizeof(WCHAR) &&
         RegistryPath->Buffer[RegistryPath->Length / sizeof(WCHAR) -
                              SehSIMDModeCharacters] == SehSIMDMarker) {
@@ -903,6 +1027,11 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
       Mode = (CHAR)Last;
   }
   switch (Mode) {
+#define NEVERD_SEH_MUTEX_CASE(Name, Value) case SehMutex##Name:
+#include "driver_seh_mutex.def"
+#undef NEVERD_SEH_MUTEX_CASE
+    Test = ThreadMutexPaths;
+    break;
 #define NEVERD_SEH_SIMD_MODE(Name, Value) case SehSIMD##Name:
 #include "driver_seh_simd.def"
 #undef NEVERD_SEH_SIMD_MODE

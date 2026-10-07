@@ -22,6 +22,12 @@ Vergleiche über mehr als acht Bits vergleichen zuerst die oberen Hälften und v
 
 Die SAT-Engine speichert vier Watch-Einträge direkt in jeder Literalliste; längere Listen wachsen dynamisch. Das vermeidet separate Allokationen kurzer Listen beim Aufbau, Kopieren vor der Suche und Freigeben. Propagationsreihenfolge, Klauseln, unabhängiger Besitz und alle Arbeitsgrenzen bleiben unverändert.
 
+<!-- i18n-section: context-finite-proofs -->
+
+## Abgeschlossene Beweise in einem Kontext
+
+Der native Unabhängigkeitsprüfer bindet seinen Cache endlicher Wertebereiche an den tatsächlichen symbolischen Kontext, dem nur Knoten hinzugefügt werden. Kompakte Schlüssel enthalten das genaue Prädikat, geordnete Projektionen und die Werteobergrenze. Nur vollständige numerische Bereiche oder bewiesene Mehrdeutigkeit sind wiederverwendbar; ein Fehltreffer erfordert weiterhin die vollständige Aufzählung und den abschließenden Ausschlussbeweis. Kontext und Bedeutung vorhandener Knoten müssen während der Cache-Lebensdauer stabil bleiben. Vorbereitete Token dürfen weder Besitzer wechseln noch von einem Ersatz am selben Speicherort verwendet werden. Die bestehende Speicherobergrenze in Wörtern bleibt erhalten. Andere Nutzer behalten strukturelle Schlüssel und die Wiederverwendung durch Variablenumbenennung.
+
 <!-- i18n-section: z3-build -->
 
 ## Optionaler Z3-Build

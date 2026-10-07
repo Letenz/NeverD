@@ -67,6 +67,69 @@ NEVERD_API int neverd_read_bytes(neverd_session_t Sess, neverd_va_t Addr,
 NEVERD_API const char *neverd_disasm_json(neverd_session_t Sess,
                                           neverd_va_t Addr, int MaxInsns);
 
+/// Options for neverd_disasm_json_ex().
+enum {
+  /// Add each native instruction's control transfer and constant memory
+  /// references, read from the instruction's own LowIR lift.  "flow" is one of
+  /// "call", "icall", "jump", "cjump", "ijump" or "ret" and is absent for a
+  /// fall-through instruction; it is "unlifted", with no target or references,
+  /// for an instruction the lifter cannot model.  "target" is the direct
+  /// transfer target when the lift names one.  "refs" lists {"to","kind"} for
+  /// constant addresses the instruction reads ("read"), writes ("write") or
+  /// takes the address of ("offset").  EVM and SBF rows never carry these
+  /// fields.
+  NEVERD_DISASM_FLOW = 1u,
+  /// Add how each native instruction moves the stack pointer, from the same
+  /// lift.  "sp" is the constant the instruction adds to the stack pointer, 0
+  /// when it leaves it alone; with "sp_base" it is the constant added to that
+  /// register's value before the instruction instead (`leave` is "rbp" plus
+  /// 8).  "sp" is null when the lift does not reduce the new stack pointer to
+  /// either form, as for an unlifted instruction.  A call leaves the stack
+  /// pointer where it was, as the lift models it: the callee pops the return
+  /// address, and arguments a callee also pops are not included.  A return
+  /// states only what happens before control leaves the function.
+  NEVERD_DISASM_STACK = 2u
+};
+
+/// neverd_disasm_json() with additive row fields selected by \p Options.
+/// Rows and their order are identical to neverd_disasm_json().
+NEVERD_API const char *neverd_disasm_json_ex(neverd_session_t Sess,
+                                             neverd_va_t Addr, int MaxInsns,
+                                             unsigned Options);
+
+/// Direct references of up to \p MaxFunctions native functions whose entries
+/// are at or above \p FirstEntry, in ascending entry order, from the same
+/// LowIR lift as NEVERD_DISASM_FLOW.  The address cursor stays valid when lazy
+/// analysis adds a function to the list between calls.  A function with a
+/// known size is decoded across its whole extent; one without a size stops at
+/// its first function terminator.  Returns
+/// {"refs":[["from","to","kind"],...],"next_entry":"0x..."|null,
+/// "function_count":int}, where kind is "call", "jump", "cjump", "read",
+/// "write" or "offset", or "icall"/"ijump" for a call or jump through a pointer
+/// slot the loader relocated to code: such a reference names the slot's
+/// pointer as loaded, which the program may still overwrite unless the slot
+/// is read-only after relocation.  MaxFunctions is clamped to 1..4096.  EVM and
+/// SBF images return NULL with an error, because their analyzers own a
+/// different instruction model.  This query never starts analysis.
+NEVERD_API const char *neverd_code_refs_json(neverd_session_t Sess,
+                                             neverd_va_t FirstEntry,
+                                             int MaxFunctions);
+
+/// The pointers the loader stored in up to \p MaxSlots relocated data slots at
+/// or above \p FirstSlot, in ascending slot order: each slot refers to its
+/// pointer's target with kind "offset".  Returns
+/// {"refs":[["from","to","offset"],...],"next_slot":"0x..."|null}.
+/// MaxSlots is clamped to 1..65536.
+NEVERD_API const char *neverd_pointer_refs_json(neverd_session_t Sess,
+                                                neverd_va_t FirstSlot,
+                                                int MaxSlots);
+
+/// Whether \p Address lies in a data slot the loader relocated to hold a
+/// pointer.  Returns 1 and stores the slot's first address in \p Slot and the
+/// pointer in \p Target (either may be NULL), or returns 0.
+NEVERD_API int neverd_pointer_at(neverd_session_t Sess, neverd_va_t Address,
+                                 neverd_va_t *Slot, neverd_va_t *Target);
+
 // ===--------------------------------------------------------------------===//
 // Decompilation
 // ===--------------------------------------------------------------------===//

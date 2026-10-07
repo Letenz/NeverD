@@ -47,6 +47,8 @@ Optionen sind ein JSON-Objekt bis 64 KiB. Unbekannte/null-Felder, falsche Typen,
 | `stack_size` | 1048576 | Seitenausgerichteter Stack innerhalb des Budgets |
 | `output_limit` | 1048576 | Zusammengefasste stdout/stderr-Bytes |
 | `instruction_quantum` | 1024 | Zulassungsintervall bis zur Rückgabe an die Runtime |
+| `linux_kernel` | Nicht angegeben | Explizit als nicht verfügbar beobachtete Schnittstellen des Gastkernels |
+| `linux_priority` | Nicht angegeben | Explizite Nice-Werte je Task und Aufruferrechte für rohe Linux-Prioritätsdienste |
 
 `schema_version` ist 1. Der Bericht enthält Profil, Architektur, ausgewähltes Backend samt Grund, `stop_reason`, nullable `exit_status`, Diagnose, Ein-/aktuellen PC, Zähler, Service-Aufzeichnungen und letzten typisierten CPU-Ausgang. Adressen, syscall-Nummern, Registerargumente und rohe Rückgabebits sind Hex-Strings **ohne** `0x`; `stdout_hex`/`stderr_hex` erhalten NUL und ungültiges UTF-8. Ein null syscall-Ergebnis bedeutet keine modellierte Rückgabe (etwa Exit oder nicht unterstützte Anfrage), nicht erfolgreiche Null.
 
@@ -75,6 +77,25 @@ Anonyme Speicherdienste nutzen denselben Prozessadressraum und dasselbe physisch
 Längen werden auf Seiten aufgerundet. `munmap` toleriert Lücken und wiederholtes Entfernen; `mprotect` ändert das gemappte Präfix und liefert an einer Lücke `ENOMEM`. `PROT_NONE` erhält Allokation und Bytes, verweigert aber Gastzugriffe. Der rohe `brk`-Aufruf liefert bei Erfolg die angeforderte Bytegrenze, sonst die alte Grenze, nicht die Null/Minus-eins-Konvention des libc-Wrappers. Die anfängliche Grenze ist das seitenausgerichtete Image-Ende. Wachstum berücksichtigt andere Mappings und das Budget; Schrumpfen erhält Bytes der verbleibenden Teilseite. Regeln und Fehlerpriorität folgen den Linux-Diensten für [Mapping](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) und [Schutz](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c).
 
 Datei-, gemeinsame und feste Mappings, abwärts wachsender Speicher, große Seiten, Speichersperren, Schutzschlüssel, reine Ausführungs-/Schreibrechte und weitere Flags sind ausdrücklich nicht unterstützt. Sie stoppen vor veröffentlichten Effekten oder erfundenen Rückgabewerten. Normale Bereichs-, Längen- und Ausrichtungsfehler innerhalb der unterstützten Teilmenge liefern Gastfehler und erlauben die Fortsetzung. Kein Gastzeiger oder Mapping-Auftrag wird an das Host-OS weitergereicht.
+
+Die optionale Eingabe `linux_kernel` erfasst ausdrücklich beobachtete fehlende Kernelschnittstellen. Eine Fixture ohne `pidfd_open`-Implementierung verwendet beispielsweise:
+
+```json
+{"linux_kernel":{"unavailable_syscalls":["pidfd_open"]}}
+```
+
+Der ausgewählte rohe Aufruf liefert wie ein fehlender Kerneleintrag bereits vor der Argumentprüfung -ENOSYS, ohne Deskriptoren oder Gastspeichereffekte zu erzeugen. Bionics `syscall`-Wrapper behält seine übliche -1/errno-Übersetzung. Fehlende Eingaben und leere Listen behalten die bisherige Nichtunterstützung dieser Schnittstelle bei; andere unbekannte Aufrufe werden nicht in ENOSYS umgewandelt. Derzeit ist nur `pidfd_open` zugelassen; unbekannte Namen, Duplikate und falsche Typen werden abgelehnt. Die Eingabe unterstellt weder Kernelversion noch Hostverfügbarkeit oder eine funktionierende pidfd-Implementierung. Siehe die [Kernelimplementierung fehlender Aufrufe](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c).
+
+Die optionale Eingabe `linux_priority` deklariert den Nice-Zustand von Fixture-Tasks mit der UID des Aufrufers. Rohe `setpriority`- und `getpriority`-Aufrufe teilen diesen Zustand in Linux-ELF64- und nativen Android-Workloads; Hostprioritäten bleiben unverändert.
+
+```json
+{"linux_priority":{"tasks":[{"id":1000,"nice":0}],
+                   "cap_sys_nice":false,"rlimit_nice":0}}
+```
+
+Task-IDs sind eindeutige positive vorzeichenbehaftete 32-Bit-Werte, anfängliche Nice-Werte liegen zwischen -20 und 19, `rlimit_nice` zwischen 0 und 40. `cap_sys_nice` und `rlimit_nice` sind standardmäßig false und null; Task-Zustand wird stets explizit angegeben. Fehlende Eingaben, nicht aufgeführte Tasks sowie PRIO_PGRP/PRIO_USER stoppen als nicht unterstützter Dienst. Das gilt auch für neu erzeugte Threads ohne deklarierten Nice-Zustand; Vererbung oder Eigentümerschaft anderer Tasks wird nicht geraten. PRIO_PROCESS mit who null wählt den aktuellen Gast-Task, sonst den benannten Task.
+
+Ungültige Selektoren liefern roh -EINVAL. Setzanfragen begrenzen das vorzeichenbehaftete 32-Bit-Nice-Argument auf -20..19. Eine Absenkung benötigt CAP_SYS_NICE oder ein ausreichendes RLIMIT_NICE; andernfalls bleibt der Zustand unverändert und der Aufruf liefert roh -EACCES. Rohe Abfragen liefern `20 - nice` mit der Kernelkodierung 40..1, nicht das von libc übersetzte `getpriority`-Ergebnis. Siehe die [Linux-Prioritätsschnittstelle](https://man7.org/linux/man-pages/man2/setpriority.2.html).
 
 `linux_signals` legt die anfänglichen Signalaktionen für den gesamten Prozess fest. Fehlende Einträge sind unbekannt und bedeuten nicht `SIG_DFL`; eine ausdrücklich leere Liste erlaubt das Setzen ohne Abfrage des Vorgängers. Alle fünf Felder sind erforderlich. Für vorzeichenlose 64-Bit-Werte außerhalb des exakten JSON-Zahlenbereichs dienen Dezimalzeichenfolgen.
 

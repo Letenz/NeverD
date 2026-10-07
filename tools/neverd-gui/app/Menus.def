@@ -1,0 +1,174 @@
+//===- Menus.def - Workbench menu structure ---------------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The menu bar, in the order of a classic interactive disassembler: File,
+/// Edit, Jump, Search, View, Options, Windows and Help.  Commands come from
+/// Actions.def; dynamic entries (recent files, languages, open windows) are
+/// filled at placeholders.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_MENU(Id, Parent, Text): a top-level menu (Parent is None) or submenu.
+// NEVERD_MENU_ITEM(Menu, Action)
+// NEVERD_MENU_SEPARATOR(Menu)
+// NEVERD_MENU_PLACEHOLDER(Menu, Name): items supplied at run time.
+#ifndef NEVERD_MENU
+#define NEVERD_MENU(Id, Parent, Text)
+#endif
+#ifndef NEVERD_MENU_ITEM
+#define NEVERD_MENU_ITEM(Menu, Action)
+#endif
+#ifndef NEVERD_MENU_SEPARATOR
+#define NEVERD_MENU_SEPARATOR(Menu)
+#endif
+#ifndef NEVERD_MENU_PLACEHOLDER
+#define NEVERD_MENU_PLACEHOLDER(Menu, Name)
+#endif
+
+NEVERD_MENU(File, None, QT_TRANSLATE_NOOP("Menus", "&File"))
+NEVERD_MENU_ITEM(File, FileOpen)
+NEVERD_MENU(LoadFile, File, QT_TRANSLATE_NOOP("Menus", "&Load file"))
+NEVERD_MENU_ITEM(LoadFile, FileReload)
+NEVERD_MENU_SEPARATOR(LoadFile)
+NEVERD_MENU_ITEM(LoadFile, FileLoadSignatures)
+NEVERD_MENU_ITEM(LoadFile, FileLoadSignatureTree)
+NEVERD_MENU(ProduceFile, File, QT_TRANSLATE_NOOP("Menus", "&Produce file"))
+NEVERD_MENU_ITEM(ProduceFile, FileExportListing)
+NEVERD_MENU_ITEM(ProduceFile, FileExportPseudocode)
+NEVERD_MENU_SEPARATOR(File)
+NEVERD_MENU_ITEM(File, FileSave)
+NEVERD_MENU_ITEM(File, FileClose)
+NEVERD_MENU_SEPARATOR(File)
+NEVERD_MENU_ITEM(File, FileQuickStart)
+NEVERD_MENU_SEPARATOR(File)
+NEVERD_MENU_PLACEHOLDER(File, RecentFiles)
+NEVERD_MENU_SEPARATOR(File)
+NEVERD_MENU_ITEM(File, FileExit)
+
+NEVERD_MENU(Edit, None, QT_TRANSLATE_NOOP("Menus", "&Edit"))
+NEVERD_MENU_ITEM(Edit, EditCopy)
+NEVERD_MENU_ITEM(Edit, EditCopyAddress)
+NEVERD_MENU_ITEM(Edit, EditUndo)
+NEVERD_MENU_ITEM(Edit, EditRedo)
+NEVERD_MENU_SEPARATOR(Edit)
+NEVERD_MENU_ITEM(Edit, EditRename)
+NEVERD_MENU(Comments, Edit, QT_TRANSLATE_NOOP("Menus", "Co&mments"))
+NEVERD_MENU_ITEM(Comments, EditComment)
+NEVERD_MENU_ITEM(Comments, EditRepeatableComment)
+NEVERD_MENU_SEPARATOR(Edit)
+NEVERD_MENU_ITEM(Edit, EditBookmark)
+
+NEVERD_MENU(Jump, None, QT_TRANSLATE_NOOP("Menus", "&Jump"))
+NEVERD_MENU_ITEM(Jump, JumpOperand)
+NEVERD_MENU_ITEM(Jump, JumpNewWindow)
+NEVERD_MENU_ITEM(Jump, JumpBack)
+NEVERD_MENU_ITEM(Jump, JumpForward)
+NEVERD_MENU_ITEM(Jump, JumpNextFunction)
+NEVERD_MENU_ITEM(Jump, JumpPreviousFunction)
+NEVERD_MENU_SEPARATOR(Jump)
+NEVERD_MENU_ITEM(Jump, JumpPseudocode)
+NEVERD_MENU_ITEM(Jump, JumpAnywhere)
+NEVERD_MENU_ITEM(Jump, JumpByName)
+NEVERD_MENU_ITEM(Jump, JumpFunction)
+NEVERD_MENU_ITEM(Jump, JumpSegment)
+NEVERD_MENU_ITEM(Jump, JumpXrefsTo)
+NEVERD_MENU_ITEM(Jump, JumpXrefsFrom)
+NEVERD_MENU_ITEM(Jump, JumpXrefOperand)
+NEVERD_MENU_ITEM(Jump, JumpEntry)
+NEVERD_MENU_SEPARATOR(Jump)
+NEVERD_MENU_ITEM(Jump, JumpMark)
+
+NEVERD_MENU(Search, None, QT_TRANSLATE_NOOP("Menus", "&Search"))
+NEVERD_MENU_ITEM(Search, SearchText)
+NEVERD_MENU_ITEM(Search, SearchNextText)
+NEVERD_MENU_ITEM(Search, SearchBytes)
+NEVERD_MENU_ITEM(Search, SearchNextBytes)
+NEVERD_MENU_SEPARATOR(Search)
+NEVERD_MENU_ITEM(Search, SearchHighlightUp)
+NEVERD_MENU_ITEM(Search, SearchHighlightDown)
+NEVERD_MENU_ITEM(Search, SearchInView)
+
+NEVERD_MENU(View, None, QT_TRANSLATE_NOOP("Menus", "&View"))
+NEVERD_MENU(OpenSubviews, View, QT_TRANSLATE_NOOP("Menus", "Open &subviews"))
+NEVERD_MENU_ITEM(OpenSubviews, ViewQuickView)
+NEVERD_MENU_SEPARATOR(OpenSubviews)
+NEVERD_MENU_ITEM(OpenSubviews, ViewDisassembly)
+NEVERD_MENU_ITEM(OpenSubviews, ViewPseudocode)
+NEVERD_MENU_ITEM(OpenSubviews, ViewLLVMC)
+NEVERD_MENU_ITEM(OpenSubviews, ViewHex)
+NEVERD_MENU_SEPARATOR(OpenSubviews)
+NEVERD_MENU_ITEM(OpenSubviews, ViewExports)
+NEVERD_MENU_ITEM(OpenSubviews, ViewImports)
+NEVERD_MENU_ITEM(OpenSubviews, ViewNames)
+NEVERD_MENU_ITEM(OpenSubviews, ViewFunctions)
+NEVERD_MENU_ITEM(OpenSubviews, ViewStrings)
+NEVERD_MENU_SEPARATOR(OpenSubviews)
+NEVERD_MENU_ITEM(OpenSubviews, ViewSegments)
+NEVERD_MENU_SEPARATOR(OpenSubviews)
+NEVERD_MENU_ITEM(OpenSubviews, ViewCrossReferences)
+NEVERD_MENU_ITEM(OpenSubviews, ViewBookmarks)
+NEVERD_MENU_ITEM(OpenSubviews, ViewUndoHistory)
+NEVERD_MENU_SEPARATOR(OpenSubviews)
+NEVERD_MENU_ITEM(OpenSubviews, ViewConnections)
+NEVERD_MENU_ITEM(OpenSubviews, ViewExtensions)
+NEVERD_MENU(IntermediateRepresentations, View,
+            QT_TRANSLATE_NOOP("Menus", "&Intermediate representations"))
+NEVERD_MENU_ITEM(IntermediateRepresentations, ViewLowIR)
+NEVERD_MENU_ITEM(IntermediateRepresentations, ViewMedIR)
+NEVERD_MENU_ITEM(IntermediateRepresentations, ViewHighIR)
+NEVERD_MENU_ITEM(IntermediateRepresentations, ViewLLVMIR)
+NEVERD_MENU(Graphs, View, QT_TRANSLATE_NOOP("Menus", "&Graphs"))
+NEVERD_MENU_ITEM(Graphs, ViewToggleGraph)
+NEVERD_MENU_ITEM(Graphs, ViewGraphOverview)
+NEVERD_MENU(Toolbars, View, QT_TRANSLATE_NOOP("Menus", "&Toolbars"))
+NEVERD_MENU_PLACEHOLDER(Toolbars, ToolbarToggles)
+NEVERD_MENU_SEPARATOR(View)
+NEVERD_MENU_ITEM(View, ViewCalculator)
+NEVERD_MENU_ITEM(View, ViewFullScreen)
+NEVERD_MENU_ITEM(View, ViewOutput)
+NEVERD_MENU_SEPARATOR(View)
+NEVERD_MENU_ITEM(View, ViewZoomIn)
+NEVERD_MENU_ITEM(View, ViewZoomOut)
+NEVERD_MENU_ITEM(View, ViewZoomReset)
+
+NEVERD_MENU(Options, None, QT_TRANSLATE_NOOP("Menus", "&Options"))
+NEVERD_MENU_ITEM(Options, OptionsGeneral)
+NEVERD_MENU_ITEM(Options, OptionsStrings)
+NEVERD_MENU_ITEM(Options, OptionsColors)
+NEVERD_MENU_ITEM(Options, OptionsFont)
+NEVERD_MENU_ITEM(Options, OptionsShortcuts)
+NEVERD_MENU_ITEM(Options, OptionsPalette)
+NEVERD_MENU_ITEM(Options, OptionsRepeatPalette)
+NEVERD_MENU(Language, Options, QT_TRANSLATE_NOOP("Menus", "&Language"))
+NEVERD_MENU_PLACEHOLDER(Language, Languages)
+NEVERD_MENU_SEPARATOR(Options)
+NEVERD_MENU(Analysis, Options, QT_TRANSLATE_NOOP("Menus", "&Analysis"))
+NEVERD_MENU_ITEM(Analysis, OptionsAnalyze)
+NEVERD_MENU_ITEM(Analysis, OptionsCancel)
+NEVERD_MENU_ITEM(Analysis, OptionsRestartWorker)
+
+NEVERD_MENU(Windows, None, QT_TRANSLATE_NOOP("Menus", "&Windows"))
+NEVERD_MENU_ITEM(Windows, WindowsSaveDesktop)
+NEVERD_MENU_ITEM(Windows, WindowsLoadDesktop)
+NEVERD_MENU_ITEM(Windows, WindowsResetDesktop)
+NEVERD_MENU_SEPARATOR(Windows)
+NEVERD_MENU_ITEM(Windows, WindowsNext)
+NEVERD_MENU_ITEM(Windows, WindowsPrevious)
+NEVERD_MENU_ITEM(Windows, WindowsClose)
+NEVERD_MENU_ITEM(Windows, WindowsFocusCommand)
+NEVERD_MENU_SEPARATOR(Windows)
+NEVERD_MENU_PLACEHOLDER(Windows, OpenWindows)
+
+NEVERD_MENU(Help, None, QT_TRANSLATE_NOOP("Menus", "&Help"))
+NEVERD_MENU_ITEM(Help, HelpContents)
+NEVERD_MENU_SEPARATOR(Help)
+NEVERD_MENU_ITEM(Help, HelpAbout)
+
+#undef NEVERD_MENU
+#undef NEVERD_MENU_ITEM
+#undef NEVERD_MENU_SEPARATOR
+#undef NEVERD_MENU_PLACEHOLDER

@@ -186,6 +186,8 @@ target_include_directories(NeverDX64ExceptionTests PRIVATE
 add_neverd_unittest(NeverDLinuxProcessTests
   LinuxProcessTests.cpp
   LinuxPriorityTests.cpp
+  LinuxKernelAvailabilityTests.cpp
+  LinuxPIDFDTests.cpp
   LinuxProcessLayoutTests.cpp
   LinuxMemoryTests.cpp
   LinuxClockTests.cpp
@@ -1250,6 +1252,7 @@ add_neverd_unittest(NeverDNativeDriverTests
   DriverNativeExecutionTests.cpp
   DriverSchedulingTests.cpp
   DriverThreadPriorityTests.cpp
+  DriverMutexThreadTests.cpp
   DriverSIMDSEHTests.cpp
   KernelSEHTests.cpp
   TIMEOUT 30

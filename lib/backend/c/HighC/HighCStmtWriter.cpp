@@ -517,7 +517,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           }
         }
       }
-      std::string Value = exprStr(*Stmt.Val);
+      std::string Value =
+          storedValueText(*Stmt.Val, Stmt.Dst->Type, Stmt.Dst->MemoryOrdering);
       if (Stmt.Dst->Type && Stmt.Val->Type &&
           Stmt.Dst->Type->Kind == NdTypeKind::Int &&
           Stmt.Val->Type->Kind == NdTypeKind::Ptr)
@@ -645,6 +646,12 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         OS << "0";
       else if (auto Enum = enumConstDisplay(varName(Stmt.Dst->Var), *Stmt.Val))
         OS << *Enum;
+      else if (std::optional<std::string> Converted =
+                   DestinationType != DeclaredCTypes.end() && !DirectAddress
+                       ? implicitIntegerConversion(*Stmt.Val,
+                                                   DestinationType->second)
+                       : std::nullopt)
+        OS << *Converted;
       else
         OS << ValueText;
     } else {
@@ -818,8 +825,10 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         Stmt.StoreVal->Type,
         addrStr(*Stmt.StoreAddr, 0,
                 Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default),
-        isUnknownCallOperand(Stmt.StoreVal.get()) ? "0"
-                                                  : exprStr(*Stmt.StoreVal),
+        isUnknownCallOperand(Stmt.StoreVal.get())
+            ? "0"
+            : storedValueText(*Stmt.StoreVal, Stmt.StoreVal->Type,
+                              Stmt.MemoryOrdering),
         Stmt.MemoryOrdering, Stmt.MemoryAddressSpace, ExactImageBytes, Indent);
     break;
   }

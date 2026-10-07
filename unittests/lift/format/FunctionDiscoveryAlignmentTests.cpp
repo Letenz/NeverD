@@ -61,6 +61,96 @@ TEST(FunctionDiscoveryAlignment, UsesVirtualAddressForEveryArchitecture) {
   }
 }
 
+TEST(FunctionDiscoveryAlignment, StartsIBTImportThunksAtTheirEndbr) {
+  constexpr va_t StubVA = 0xCA90;
+  constexpr va_t FreeSlot = 0x31C70, MallocSlot = 0x31C78, ExitSlot = 0x31C80;
+  // jmp [rip+disp32] whose opcode is at Offset, to Slot.
+  const auto Jump = [&](std::vector<uint8_t> &Bytes, size_t Offset, va_t Slot) {
+    const auto Disp = static_cast<int32_t>(Slot - (StubVA + Offset + 6));
+    Bytes[Offset] = 0xff;
+    Bytes[Offset + 1] = 0x25;
+    writeLE<int32_t>(Bytes.data() + Offset + 2, Disp);
+  };
+  std::vector<uint8_t> Bytes(48, 0x90);
+  // endbr64; bnd jmp [rip+free]
+  const uint8_t Endbr64[] = {0xf3, 0x0f, 0x1e, 0xfa};
+  std::copy(std::begin(Endbr64), std::end(Endbr64), Bytes.begin());
+  Bytes[4] = 0xf2;
+  Jump(Bytes, 5, FreeSlot);
+  // endbr64; jmp [rip+malloc]
+  std::copy(std::begin(Endbr64), std::end(Endbr64), Bytes.begin() + 16);
+  Jump(Bytes, 20, MallocSlot);
+  // mov al, 0xf2; jmp [rip+exit]: the F2 ends the previous instruction.
+  Bytes[32] = 0xb0;
+  Bytes[33] = 0xf2;
+  Jump(Bytes, 34, ExitSlot);
+
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  Img.Segments.push_back(executableSegment(StubVA, Bytes));
+  Img.Imports.push_back({"extern", "free", 0, FreeSlot});
+  Img.Imports.push_back({"extern", "malloc", 0, MallocSlot});
+  Img.Imports.push_back({"extern", "exit", 0, ExitSlot});
+  scanImportThunks(Img);
+
+  const struct {
+    va_t Entry;
+    uint64_t Size;
+    const char *Import;
+  } Thunks[] = {{StubVA, 11, "free"},
+                {StubVA + 16, 10, "malloc"},
+                {StubVA + 34, 6, "exit"}};
+  for (const auto &Thunk : Thunks) {
+    SCOPED_TRACE(Thunk.Import);
+    const Import *Resolved = Img.findImportAt(Thunk.Entry);
+    ASSERT_NE(Resolved, nullptr);
+    EXPECT_EQ(Resolved->Name, Thunk.Import);
+    const Symbol *Stub = Img.findSymbolAt(Thunk.Entry);
+    ASSERT_NE(Stub, nullptr);
+    EXPECT_TRUE(Stub->IsFunc);
+    EXPECT_EQ(Stub->Size, Thunk.Size);
+  }
+  // Nothing is registered inside an instruction.
+  for (va_t Inside : {StubVA + 4, StubVA + 5, StubVA + 20, StubVA + 33}) {
+    EXPECT_FALSE(Img.ImportStubIndices.count(Inside)) << std::hex << Inside;
+    EXPECT_EQ(Img.findSymbolAt(Inside), nullptr) << std::hex << Inside;
+  }
+}
+
+TEST(FunctionDiscoveryAlignment, RegistersLoaderRunFunctions) {
+  // sub rsp, 8; add rsp, 8; ret; ret; ret: initializers nothing in the image
+  // calls, and the entry point.
+  const uint8_t Code[] = {0x48, 0x83, 0xec, 0x08, 0x48, 0x83,
+                          0xc4, 0x08, 0xc3, 0xc3, 0xc3};
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  Img.Segments.push_back(executableSegment(0x1000, Code));
+  Img.Symbols.push_back(Symbol::makeFunc(0x1008, 1));
+  Img.Entry = 0x100A;
+  for (va_t Addr : {0x1000, 0x1008, 0x1009, 0x100A})
+    ASSERT_TRUE(Img.recordRuntimeFunction(Addr));
+  Img.DynInfo.InitAddr = 0x1000;
+  Img.DynInfo.FiniArray = {0x1008, 0x1009};
+  registerLoaderRunFunctions(Img);
+
+  for (va_t Addr : {0x1000, 0x1009}) {
+    const Symbol *Function = Img.findSymbolAt(Addr);
+    ASSERT_NE(Function, nullptr) << std::hex << Addr;
+    EXPECT_TRUE(Function->IsFunc);
+    EXPECT_EQ(Function->Size, 0u);
+  }
+  // A function symbol already there is kept as the only one.
+  EXPECT_EQ(std::count_if(Img.Symbols.begin(), Img.Symbols.end(),
+                          [](const Symbol &Sym) { return Sym.Addr == 0x1008; }),
+            1);
+  // The entry point is the function detector's, which recovers its extent.
+  EXPECT_EQ(Img.findSymbolAt(0x100A), nullptr);
+}
+
 TEST(FunctionDiscoveryAlignment, RejectsWrappedAndOutOfBufferAddresses) {
   const std::array<uint8_t, 8> Bytes = {0xff, 0x83, 0x00, 0xd1,
                                         0xff, 0x83, 0x00, 0xd1};

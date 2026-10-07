@@ -151,6 +151,80 @@ TEST_P(AndroidTime, InvalidClockPrecedesPointerAccessAndEncodedClocksStop) {
   incomplete(call(4, 0xfffffffdu, 1), ProcessStopReason::UnsupportedService);
   incomplete(call(5, 0, Buffer), ProcessStopReason::UnsupportedService);
 }
+TEST_P(AndroidTime, ReleasedGKIProcessCPUClocksShareRawAndBionicObservations) {
+  struct KernelCase {
+    AndroidGKIKernel Kernel;
+    const char *Label;
+  };
+  constexpr KernelCase Kernels[] = {
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
+  {AndroidGKIKernel::Name, Label},
+#include "GKIReleaseCases.def"
+#undef NEVERD_GKI_RELEASE_CASE
+  };
+  for (const auto &K : Kernels) {
+    SCOPED_TRACE(K.Label);
+    auto &Kernel = Options.LinuxKernel.emplace();
+    Kernel.GKI = K.Kernel;
+    Kernel.Tasks.emplace().emplace(2000, LinuxKernelTask{true});
+    Kernel.Tasks->emplace(3000, LinuxKernelTask{false});
+    Options.LinuxTime->Clocks[2] = {3, 4};
+    Options.LinuxTime->Clocks[-16006] = {7, 9};
+    Options.LinuxTime->Clocks[-8] = {13, 15};
+    Options.LinuxTime->Clocks[-8007] = {16, 17};
+    for (int32_t ID : {2, -6, -8006, -16006, -8, -8008, -7, -8007}) {
+      SCOPED_TRACE(ID);
+      const bool Foreign = ID == -16006;
+      const bool Prof = ID == -8 || ID == -8008;
+      const bool Virt = ID == -7 || ID == -8007;
+      for (unsigned Op : {2, 4}) {
+        // clockid_t consumes only the low 32 bits in both interfaces.
+        auto R = call(Op, 0x1234567800000000ULL | uint32_t(ID), Buffer + 1);
+        returned(R, 0);
+        auto Expected = std::vector<uint8_t>(8192, 0xa5);
+        llvm::support::endian::write64le(Expected.data() + 1, Foreign ? 7
+                                                              : Prof  ? 13
+                                                              : Virt  ? 16
+                                                                      : 3);
+        llvm::support::endian::write64le(Expected.data() + 9, Foreign ? 9
+                                                              : Prof  ? 15
+                                                              : Virt  ? 17
+                                                                      : 4);
+        llvm::support::endian::write32le(Expected.data() + 256, 73);
+        EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+      }
+    }
+    for (int32_t ID : {-16014, -24006, -1}) {
+      for (unsigned Op : {2, 4}) {
+        auto R = call(Op, uint32_t(ID), 1);
+        returned(R, Op == 2 ? UINT64_MAX : uint64_t(0) - 22, Op == 2 ? 22 : 73);
+        auto Expected = std::vector<uint8_t>(8192, 0xa5);
+        llvm::support::endian::write32le(Expected.data() + 256,
+                                         Op == 2 ? 22 : 73);
+        EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+      }
+    }
+    returned(call(2, uint32_t(-16006), 1), UINT64_MAX, 14);
+    returned(call(4, uint32_t(-16006), 1), uint64_t(0) - 14);
+  }
+}
+TEST_P(AndroidTime, ReleasedGKIProcessCPUClocksKeepUnobservedBoundaries) {
+  auto &Kernel = Options.LinuxKernel.emplace();
+  Kernel.GKI = AndroidGKIKernel::Android17_6_18;
+  Kernel.Tasks.emplace().emplace(2000, LinuxKernelTask{true});
+  for (unsigned Op : {2, 4}) {
+    incomplete(call(Op, uint32_t(-16006), 1),
+               ProcessStopReason::UnsupportedService);
+    incomplete(call(Op, uint32_t(-29), 1),
+               ProcessStopReason::UnsupportedService);
+    incomplete(call(Op, uint32_t(-2), 1),
+               ProcessStopReason::UnsupportedService);
+  }
+  Kernel.Tasks.reset();
+  for (unsigned Op : {2, 4})
+    incomplete(call(Op, uint32_t(-16006), 1),
+               ProcessStopReason::UnsupportedService);
+}
 TEST_P(AndroidTime, UserSpaceTimeStoreAndKernelFaultHaveDistinctOutcomes) {
   for (uint64_t Address : {uint64_t(1), UINT64_MAX, Buffer + 4096}) {
     const uint64_t RO = Address == Buffer + 4096 ? Address : 0;

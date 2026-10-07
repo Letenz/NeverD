@@ -21,13 +21,15 @@ struct LinuxTimezone {
 };
 /// Explicit observations for Linux ELF64 and Android native workloads. Keys
 /// are Linux clock IDs. An absent clock/timezone has no modeled value; zero
-/// must be supplied explicitly. Reads never consult or advance host time.
+/// must be supplied explicitly. Encoded process CPU clocks require explicit
+/// released GKI and live guest task observations. Reads never consult host
+/// time.
 struct LinuxTimeOptions {
   std::map<int32_t, LinuxTimespec> Clocks;
   std::optional<LinuxTimezone> Timezone;
   /// Opt in to relative nanosleep without signals. Time advances to the next
-  /// sleep deadline only when no guest thread can run. Only realtime,
-  /// monotonic and boottime observations may accompany this policy.
+  /// sleep deadline only when no guest thread can run. Realtime, monotonic and
+  /// boottime observations advance; process CPU observations remain fixed.
   bool AdvanceOnIdle = false;
 };
 } // namespace neverd::emulation

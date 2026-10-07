@@ -59,6 +59,10 @@ NEVERD_X86_ENCODING(uint8_t, kNop, 0x90)
 NEVERD_X86_ENCODING(uint8_t, kJmpIndirectOp, 0xFF)
 NEVERD_X86_ENCODING(uint8_t, kJmpIndirectModRM, 0x25)
 NEVERD_X86_ENCODING(uint8_t, kFSSegmentPrefix, 0x64)
+NEVERD_X86_ENCODING(uint8_t, kBndPrefix, 0xF2)
+// endbr64 and endbr32 (F3 0F 1E FA/FB) read as little-endian words.
+NEVERD_X86_ENCODING(uint32_t, kEndbr64Word, 0xFA1E0FF3)
+NEVERD_X86_ENCODING(uint32_t, kEndbr32Word, 0xFB1E0FF3)
 
 // --- EVEX prefix: 62 P0 P1 P2 ---
 NEVERD_X86_ENCODING(uint8_t, kEvexEscape, 0x62)
@@ -78,6 +82,7 @@ NEVERD_X86_ENCODING(size_t, kJccNearLen, 6)
 NEVERD_X86_ENCODING(size_t, kJccNearDispOffset, 2)
 NEVERD_X86_ENCODING(size_t, kJmpIndirectLen, 6)
 NEVERD_X86_ENCODING(size_t, kJmpIndirectDispOffset, 2)
+NEVERD_X86_ENCODING(size_t, kEndbrLen, 4)
 NEVERD_X86_ENCODING(size_t, kIntImm8Len, 2)
 
 // ===--------------------------------------------------------------------===//

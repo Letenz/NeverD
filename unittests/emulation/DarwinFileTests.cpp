@@ -1073,7 +1073,7 @@ TEST_P(DarwinFileTest,
       1,      2,      4,       0x200,   0x400,   0x800,   0x1000,   0x2000,
       0x4000, 0x8000, 0x10000, 0x20000, 0x40000, 0x80000, 0x100000, 0x200000};
   for (auto Right : Rights) {
-    for (uint64_t Mode : {uint64_t(Right), 0xffc001f8ULL | Right}) {
+    for (uint64_t Mode : {uint64_t(Right), uint64_t(0xffc001f8) | Right}) {
       EXPECT_FALSE(invoke(ServiceKind::Access, {Base, Mode}));
       EXPECT_EQ(Result.Diagnostic, diagnostic::FileAccessPermissions);
       EXPECT_FALSE(invoke(ServiceKind::FaccessAt, {UINT64_MAX, Base, Mode}));

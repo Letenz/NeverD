@@ -35,8 +35,8 @@ a displayed GUI frame. First analysis and later query latency remain separate.
 
 ## Production GUI startup
 
-Measure the full workbench with its normal QML, docking, transport and real
-`libneverd` worker. The default fixture is the benign 536-byte, named-function
+Measure the full workbench with its normal Qt Widgets windows, docking,
+transport and real `libneverd` worker. The default fixture is the benign 536-byte, named-function
 ELF from `tests/analysis_probe_test.py`; it is analyzed, never executed.
 
 ```sh
@@ -65,17 +65,15 @@ Other system activity is not controlled. Native runs require a real desktop
 session. Explicit offscreen/software runs remain separate diagnostics and must
 not establish native display performance.
 
-Schema 2 GUI milestones begin at `main()` entry, after dynamic loading. They
-separate application and docking setup, MCP and broker construction, font
-lookup, QML load, worker hello, metadata, instructions, representation,
-first frame, and first useful frame. A useful frame is eligible only after
-`afterSynchronizing` observes both analysis datasets; its timestamp is captured
-at the corresponding `frameSwapped` emission on the rendering thread. The
-queued GUI delivery time is recorded separately. This follows Qt's documented
-[scene graph synchronization and frame signals](https://doc.qt.io/qt-6/qquickwindow.html#afterSynchronizing)
-and prevents an older queued swap from being attributed to new analysis data.
-Neither timestamp independently measures hardware presentation. The runner's
-separate process wall time includes dynamic loading, report writing and shutdown.
+Schema 3 GUI milestones begin at `main()` entry, after dynamic loading. They
+separate application and docking setup, service construction, window
+creation, the first window paint, worker hello, metadata of the opened file,
+the first paint of its disassembly listing (`useful_frame_ms`) and the end of
+that event-loop pass, when the backing store has been flushed
+(`useful_frame_flushed_ms`). Without an input file the report ends after the
+first paint. Neither timestamp independently measures hardware presentation.
+The runner's separate process wall time includes dynamic loading, report
+writing and shutdown.
 
 The opt-in `--startup-benchmark <report.json>` GUI flag is available in production
 builds. `--startup-benchmark-timeout <milliseconds>` defaults to 30000; input and
@@ -84,9 +82,8 @@ accepts `--timeout <seconds>` and stops on the first failed launch. Empty or
 unsupported representations cannot be reported as successful useful frames.
 The in-process deadline is observed when the GUI event loop runs; the runner's
 additional hard process deadline covers blocked GUI initialization.
-Early schema 1 measurements used queued frame delivery and inherited user
-preferences; retain them as provisional evidence rather than using them for a
-quantitative startup speedup comparison with schema 2.
+Schema 1 and 2 reports measured the earlier Qt Quick workbench; keep them as
+historical evidence rather than comparing them quantitatively with schema 3.
 
 ### Historical Window2 GUI validation: macOS arm64, 2026-09-10
 
@@ -293,9 +290,10 @@ uncached viewport latency.
 
 ## ADR evidence still required
 
-The current choice remains Qt Quick + a C ABI worker. This harness supports
-testing bounded visible work, but does not justify a framework comparison or
-final performance sign-off. Before P0 acceptance:
+The workbench now uses Qt Widgets with custom-painted analysis views and the
+same C ABI worker; the earlier Qt Quick measurements above are historical. The
+viewport harness measures the Qt Quick prototype only. Neither justifies a
+framework comparison or final performance sign-off. Before P0 acceptance:
 
 - Freeze hardware, OS/driver, Qt version, viewport, DPI, font and rendering loop
   on Windows x64, Linux x64 and macOS arm64; repeat runs and retain raw results.

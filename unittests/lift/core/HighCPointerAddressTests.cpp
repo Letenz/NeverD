@@ -847,8 +847,12 @@ TEST(HighCPointerAddresses, InlinedSignedIncrementKeepsModularExpression) {
   Func.Body = {Store};
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("+= 1"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__builtin_bit_cast(int32_t"), std::string::npos)
+  // The increment wraps in an unsigned carrier; the int32_t store converts
+  // it back.
+  EXPECT_NE(Source.find("= (uint32_t)(*(const neverd_unaligned_i32 *)"),
+            std::string::npos)
       << Source;
+  EXPECT_NE(Source.find(" + 1);"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, IncrementLoadKeptWhenValueIsUsed) {
@@ -887,9 +891,10 @@ TEST(HighCPointerAddresses, IncrementLoadKeptWhenValueIsUsed) {
   returnValue(Func, HighExpr::makeVar(T, I32));
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("+= 1"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__builtin_bit_cast(int32_t"), std::string::npos)
+  // The increment wraps in an unsigned carrier; the int32_t store converts
+  // it back.
+  EXPECT_NE(Source.find("= (uint32_t)t94_8 + 1);"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("t94_8"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, AddressTakenFrameSlotUsesSharedBacking) {
@@ -8750,7 +8755,8 @@ TEST(HighCPointerAddresses, InvertSkipInsideSehTryFoldsRaise) {
   const std::string Source = emitFunctions({Func}, Arch::X86);
   EXPECT_EQ(Source.find("goto L_"), std::string::npos) << Source;
   EXPECT_NE(Source.find("RaiseException"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("0xFFFFFF9C"), std::string::npos) << Source;
+  // The int32_t slot takes the value of the 0xFFFFFF9C bit pattern.
+  EXPECT_NE(Source.find("= -100;"), std::string::npos) << Source;
   EXPECT_NE(Source.find("= 41"), std::string::npos) << Source;
 }
 
@@ -24251,7 +24257,7 @@ TEST(HighCPointerAddresses, X86DivPreconditionKeepsArithmeticWraps) {
       Source.substr(DividendAt, DividendEnd - DividendAt);
   // eRecord is declared uint32_t. Its add wraps at 32 bits before the
   // dividend is widened; the old per-operand casts are unnecessary.
-  EXPECT_NE(Dividend.find("(uint32_t)(eRecord + 1)"), std::string::npos)
+  EXPECT_NE(Dividend.find("(uint64_t)(eRecord + 1)"), std::string::npos)
       << Source;
   EXPECT_EQ(Dividend.find("(uint64_t)(eRecord) + 1"), std::string::npos)
       << Source;
@@ -25302,7 +25308,7 @@ TEST(HighCPointerAddresses, Win64SameBlockRdxRecoversPredSetupR8) {
   EXPECT_EQ(Args->size(), 3u) << Source << "\nHighIR:\n" << HighDump;
   if (Args->size() == 3) {
     EXPECT_NE((*Args)[1].find("3313"), std::string_view::npos) << Source;
-    EXPECT_NE((*Args)[2].find("+ 64)"), std::string_view::npos) << Source;
+    EXPECT_NE((*Args)[2].find(" + 64"), std::string_view::npos) << Source;
   }
   EXPECT_EQ(Source.find(", 42"), std::string::npos) << Source;
 }
@@ -25441,7 +25447,7 @@ TEST(HighCPointerAddresses, Win64CallJoinRecoversDominatingR8) {
   ASSERT_TRUE(Args) << Source;
   EXPECT_EQ(Args->size(), 3u) << Source << "\nHighIR:\n" << HighDump;
   if (Args->size() == 3)
-    EXPECT_NE((*Args)[2].find("+ 64)"), std::string_view::npos) << Source;
+    EXPECT_NE((*Args)[2].find(" + 64"), std::string_view::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, Win64IpMapSplitCallKeepsPredLeaArgs) {
@@ -25667,11 +25673,22 @@ TEST(HighCPointerAddresses, Win64CallOnlyBlockRecoversPredR9AndHome) {
   const auto CallAt = Source.rfind("Concatenate(");
   ASSERT_NE(CallAt, std::string::npos) << Source;
   const auto Open = Source.find('(', CallAt);
-  const auto Close = Source.find(')', Open);
   ASSERT_NE(Open, std::string::npos) << Source;
+  // Count the commas between arguments, not those inside an argument such
+  // as the unknown r8 the helper call clobbered.
+  int Depth = 0;
+  size_t Commas = 0;
+  size_t Close = std::string::npos;
+  for (size_t I = Open; I < Source.size() && Close == std::string::npos; ++I) {
+    if (Source[I] == '(')
+      ++Depth;
+    else if (Source[I] == ')' && --Depth == 0)
+      Close = I;
+    else if (Source[I] == ',' && Depth == 1)
+      ++Commas;
+  }
   ASSERT_NE(Close, std::string::npos) << Source;
-  const std::string Args = Source.substr(Open + 1, Close - Open - 1);
-  EXPECT_EQ(std::count(Args.begin(), Args.end(), ','), 4) << Source;
+  EXPECT_EQ(Commas, 4u) << Source;
 }
 
 TEST(HighCPointerAddresses, NestedIfGotoSkipInvertsToIf) {
@@ -32739,8 +32756,10 @@ TEST(HighCPointerAddresses, ConstantReturnIsNotInferredVoid) {
   EXPECT_EQ(Source.find("void GSHandlerCheck"), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses,
-     UnknownCalleeReturnIsNotDiscardedByBareSiblingReturn) {
+TEST(HighCPointerAddresses, BareSiblingReturnMakesATailCallingFunctionVoid) {
+  // One path returns RAX as the caller left it, so no caller can rely on a
+  // result: the function is void, the bare path returns normally, and the
+  // other path still makes its call exactly once.
   HighFunc Func;
   Func.Name = "cookie";
   Func.Entry = 0x140001350;
@@ -32777,30 +32796,21 @@ TEST(HighCPointerAddresses,
   Func.Body.push_back(std::move(Ret));
 
   const std::string Source = emitFunctions({Func});
-  EXPECT_EQ(Source.find("void cookie"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("sub_14000173C("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return (int64_t)sub_14000173C(arg0)"),
-            std::string::npos)
+  EXPECT_NE(Source.find("void cookie"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("    sub_14000173C(arg0);"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("__builtin_trap(); /* unknown return value */"),
-            std::string::npos)
-      << Source;
-  EXPECT_EQ(Source.find("return;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("unknown return value"), std::string::npos) << Source;
   compileAndRunCallOrdering(Source + R"(
-static int calls, result;
+static int calls;
 int sub_14000173C(int64_t input) {
     ++calls;
-    if (input != 7) return 99;
-    return result;
+    return (int)input;
 }
 int main(void) {
-    const int values[] = {0, -41, INT32_MIN, INT32_MAX};
-    for (unsigned i = 0; i != sizeof(values) / sizeof(values[0]); ++i) {
-        calls = 0;
-        result = values[i];
-        if (cookie(7) != result || calls != 1) return 1;
-    }
-    return 0;
+    cookie(7);
+    if (calls != 1) return 1;
+    cookie(1);
+    return calls == 1 ? 0 : 2;
 }
 )");
 }
@@ -33520,7 +33530,8 @@ TEST(HighCPointerAddresses, ReturningCallFollowedByInt3PreservesDebugBreak) {
   EXPECT_NE(Source.find("abort_like("), std::string::npos) << Source;
   EXPECT_NE(Source.find("__debugbreak"), std::string::npos) << Source;
   EXPECT_NE(Source.find("= abort_like("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return (int32_t)v0"), std::string::npos) << Source;
+  // The int32_t return converts the 64-bit value itself.
+  EXPECT_NE(Source.find("return v0;"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, TestRcxDoesNotEmitPopcount) {
@@ -34199,6 +34210,8 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   auto ExceptStore = sourceLineContaining(Source, "+= 20;");
   if (ExceptStore.empty())
     ExceptStore = sourceLineContaining(Source, ") + 20)");
+  if (ExceptStore.empty())
+    ExceptStore = sourceLineContaining(Source, ") + 20;");
   ASSERT_NE(Store, Stores.end()) << Source;
   ASSERT_FALSE(Clear.empty()) << Source;
   ASSERT_FALSE(Home.empty()) << Source;
@@ -34241,10 +34254,11 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   EXPECT_NE(Source.find("__except"), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, CorpusFuncLoadGsCookieKeepsUnprovenFailReturn) {
-  // With no debug signature, a bare sibling return does not prove that the
-  // unnamed tail target is void or noreturn. Preserve its observed result and
-  // make the unproven bare return explicit instead of inventing a contract.
+TEST(HighCPointerAddresses, CorpusFuncLoadGsCookieReturnsOnTheValidPath) {
+  // __security_check_cookie returns without writing RAX when the cookie is
+  // valid and tail-calls __report_gsfailure otherwise.  That bare return
+  // leaves its caller nothing to rely on, so the function is void: the valid
+  // path returns instead of trapping, and the tail call still runs.
   if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
     GTEST_SKIP() << "windows-eh corpus root is not configured";
   const auto Path = gsSehProbePath();
@@ -34268,14 +34282,12 @@ TEST(HighCPointerAddresses, CorpusFuncLoadGsCookieKeepsUnprovenFailReturn) {
   ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
   const std::string Source = highcOnlyFunction(std::move(*Img), Entry);
   ASSERT_FALSE(Source.empty()) << Source;
-  const std::string Signature = "int64_t sub_" + llvm::utohexstr(Entry) + "(";
+  const std::string Signature = "void sub_" + llvm::utohexstr(Entry) + "(";
   const size_t BodyAt = Source.find(Signature);
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   const std::string Body = Source.substr(BodyAt);
-  EXPECT_NE(Body.find("__builtin_trap(); /* unknown return value */"),
-            std::string::npos)
-      << Source;
-  EXPECT_NE(Body.find("return (int64_t)sub_"), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("unknown return value"), std::string::npos) << Source;
+  EXPECT_NE(Body.find("    sub_"), std::string::npos) << Source;
   EXPECT_EQ(Body.find("= sub_"), std::string::npos) << Source;
   llvm::SmallVector<llvm::StringRef, 16> Lines;
   llvm::StringRef(Body).split(Lines, '\n');
@@ -38708,9 +38720,9 @@ TEST(HighCPointerAddresses, ReturnViewChainAroundAddKeepsOneCast) {
   Narrow->Operands = {Outer};
   returnValue(Func, Narrow);
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("return (int32_t)"), std::string::npos) << Source;
+  // The int32_t return converts the unsigned sum itself.
+  EXPECT_NE(Source.find("return arg0 + 1;"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("(int64_t)"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ "), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, ReturnZextFromNarrowerKeepsSourceWidth) {

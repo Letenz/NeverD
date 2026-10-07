@@ -1,0 +1,28 @@
+//===- Languages.def - Bundled interface languages -------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Interface translations shipped in i18n/: settings code and the language's
+/// own name, shown untranslated in the language menu.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_LANGUAGE(Code, SelfName)
+#ifndef NEVERD_LANGUAGE
+#define NEVERD_LANGUAGE(Code, SelfName)
+#endif
+NEVERD_LANGUAGE("en", "English")
+NEVERD_LANGUAGE("zh-CN", "简体中文")
+NEVERD_LANGUAGE("zh-TW", "繁體中文")
+NEVERD_LANGUAGE("ja", "日本語")
+NEVERD_LANGUAGE("ko", "한국어")
+NEVERD_LANGUAGE("fr", "Français")
+NEVERD_LANGUAGE("de", "Deutsch")
+NEVERD_LANGUAGE("es", "Español")
+NEVERD_LANGUAGE("it", "Italiano")
+NEVERD_LANGUAGE("ru", "Русский")
+NEVERD_LANGUAGE("ar", "العربية")
+#undef NEVERD_LANGUAGE

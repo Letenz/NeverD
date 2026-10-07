@@ -19,6 +19,12 @@ GUI = REPOSITORY / "tools" / "neverd-gui"
 PLACEHOLDER = re.compile(r"%L?(?:[1-9][0-9]*|n)")
 
 
+def gui_sources():
+    """Every file with translatable strings: C++ sources and the .def tables."""
+    return [str(path) for pattern in ("*.cpp", "app/*.cpp", "app/*.def", "mcp/*.cpp")
+            for path in sorted(GUI.glob(pattern))]
+
+
 def messages(path):
     tree = ET.parse(path)
     entries = {}
@@ -37,7 +43,7 @@ def messages(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check-sources", action="store_true", help="Use lupdate to check the actual C++/QML source keys")
+    parser.add_argument("--check-sources", action="store_true", help="Use lupdate to check the actual C++ source keys")
     parser.add_argument("--lupdate", help="Explicit lupdate executable; implies --check-sources")
     args = parser.parse_args()
     errors = []
@@ -93,8 +99,7 @@ def main():
         else:
             with tempfile.TemporaryDirectory(prefix="neverd-i18n-") as temporary:
                 catalog = Path(temporary) / "sources.ts"
-                sources = [str(GUI / "qml"), *(str(path) for path in sorted(GUI.glob("*.cpp"))),
-                           *(str(path) for path in sorted((GUI / "mcp").glob("*.cpp")))]
+                sources = gui_sources()
                 result = subprocess.run([executable, *sources, "-no-obsolete", "-source-language", "en", "-ts", str(catalog)],
                                         capture_output=True, text=True, timeout=60)
                 if result.returncode:

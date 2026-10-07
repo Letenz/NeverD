@@ -1,1357 +1,1989 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
 <TS version="2.1" language="ko" sourcelanguage="en">
-    <context>
-        <name>ConnectionsPane</name>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="20" />
-            <source>Pending</source>
-            <translation>대기 중</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="21" />
-            <source>Completed</source>
-            <translation>완료됨</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="22" />
-            <source>Failed</source>
-            <translation>실패</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="23" />
-            <source>Cancelled</source>
-            <translation>취소됨</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="24" />
-            <source>Timed out</source>
-            <translation>시간 초과</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="25" />
-            <source>Disconnected</source>
-            <translation>연결 해제됨</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="36" />
-            <source>MCP connections</source>
-            <translation>MCP 연결</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="37" />
-            <source>No server connected</source>
-            <translation>연결된 서버 없음</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="38" />
-            <source>Current session is available to external agents.</source>
-            <translation>외부 에이전트가 현재 세션에 접근할 수 있습니다.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="38" />
-            <source>Connect tools and resources, or share this session with an external agent.</source>
-            <translation>도구와 리소스에 연결하거나 외부 에이전트와 이 세션을 공유하세요.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="41" />
-            <source>Manage Connections…</source>
-            <translation>연결 관리…</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="46" />
-            <source>MCP Connections</source>
-            <translation>MCP 연결</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="59" />
-            <source>Current GUI session</source>
-            <translation>현재 GUI 세션</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="60" />
-            <source>Disable Sharing</source>
-            <translation>공유 끄기</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="60" />
-            <source>Enable Sharing</source>
-            <translation>공유 켜기</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="61" />
-            <source>Copy Credential Path</source>
-            <translation>자격 증명 경로 복사</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="63" />
-            <source>Sharing is off. Enabling it grants local agents access to this session using its private credential file.</source>
-            <translation>공유가 꺼져 있습니다. 켜면 로컬 에이전트가 비공개 자격 증명 파일을 통해 이 세션에 접근할 수 있습니다.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="67" />
-            <source>Transport</source>
-            <translation>전송 방식</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="68" />
-            <source>Absolute path to server executable</source>
-            <translation>서버 실행 파일의 절대 경로</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="68" />
-            <source>Server endpoint</source>
-            <translation>서버 엔드포인트</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="70" />
-            <source>Disconnect</source>
-            <translation>연결 해제</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="70" />
-            <source>Connect</source>
-            <translation>연결</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="80" />
-            <source>Arguments must be a JSON array of strings.</source>
-            <translation>인수는 문자열로 이루어진 JSON 배열이어야 합니다.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="87" />
-            <source>Arguments as JSON, for example ["--help"]</source>
-            <translation>JSON 형식의 인수. 예: ["--help"]</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="87" />
-            <source>Server arguments</source>
-            <translation>서버 인수</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="91" />
-            <source>Bearer token (optional)</source>
-            <translation>Bearer 토큰(선택 사항)</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="91" />
-            <source>Bearer token</source>
-            <translation>Bearer 토큰</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="92" />
-            <source>CA certificate path (optional)</source>
-            <translation>CA 인증서 경로(선택 사항)</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="92" />
-            <source>CA certificate path</source>
-            <translation>CA 인증서 경로</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="106" />
-            <source>Tools</source>
-            <translation>도구</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="106" />
-            <source>Resources</source>
-            <translation>리소스</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="106" />
-            <source>History</source>
-            <translation>기록</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="146" />
-            <source>No items published by this server.</source>
-            <translation>이 서버에서 제공하는 항목이 없습니다.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="146" />
-            <source>Connect a server to browse its tools and resources.</source>
-            <translation>서버에 연결하여 도구와 리소스를 탐색하세요.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="146" />
-            <source>No calls yet.</source>
-            <translation>아직 호출 기록이 없습니다.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="156" />
-            <source>Result</source>
-            <translation>결과</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="157" />
-            <source>Schema</source>
-            <translation>스키마</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="158" />
-            <source>Call Tool</source>
-            <translation>도구 호출</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="159" />
-            <source>Cancel Call</source>
-            <translation>호출 취소</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="167" />
-            <source>Tool arguments as JSON</source>
-            <translation>JSON 형식의 도구 인수</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="169" />
-            <source>Select a resource or call a tool to inspect its response.</source>
-            <translation>리소스를 선택하거나 도구를 호출하여 응답을 확인하세요.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="177" />
-            <source>Tool Input Schema</source>
-            <translation>도구 입력 스키마</translation>
-        </message>
-    </context>
-    <context>
-        <name>DisassemblyPane</name>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="22" />
-            <source>Address</source>
-            <translation>주소</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="23" />
-            <source>Instruction</source>
-            <translation>명령어</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="87" />
-            <source>Load more instructions</source>
-            <translation>명령어 더 불러오기</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="93" />
-            <source>Disassembly</source>
-            <translation>디스어셈블리</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="94" />
-            <source>Select a function to inspect its instructions.</source>
-            <translation>함수를 선택하여 명령어를 확인하세요.</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="94" />
-            <source>Addresses, instructions, and control flow in one place.</source>
-            <translation>주소, 명령어, 제어 흐름을 한곳에서 확인하세요.</translation>
-        </message>
-    </context>
-    <context>
-        <name>DockTitleBar</name>
-        <message>
-            <location filename="../qml/DockTitleBar.qml" line="17" />
-            <source>Float or Dock Panel</source>
-            <translation>패널 분리 또는 도킹</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockTitleBar.qml" line="18" />
-            <source>Close Panel</source>
-            <translation>패널 닫기</translation>
-        </message>
-    </context>
-    <context>
-        <name>ExtensionsPane</name>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="25" />
-            <source>Import Manifest…</source>
-            <translation>매니페스트 가져오기…</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="26" />
-            <source>Run</source>
-            <translation>실행</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="27" />
-            <source>Unload</source>
-            <translation>언로드</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="55" />
-            <source>Import a declarative manifest to add analysis commands and views.</source>
-            <translation>선언형 매니페스트를 가져와 분석 명령과 보기를 추가하세요.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="59" />
-            <source>Select an extension command to inspect its result.</source>
-            <translation>확장 기능 명령을 선택하여 결과를 확인하세요.</translation>
-        </message>
-    </context>
-    <context>
-        <name>FunctionsPane</name>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="84" />
-            <location filename="../qml/FunctionsPane.qml" line="22" />
-            <location filename="../qml/Main.qml" line="106" />
-            <source>FUNCTIONS</source>
-            <translation>함수</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="42" />
-            <source>Filter functions…</source>
-            <translation>함수 필터링…</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="43" />
-            <source>Filter functions</source>
-            <translation>함수 필터링</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="58" />
-            <source>Name</source>
-            <translation>이름</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="59" />
-            <source>Address</source>
-            <translation>주소</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="128" />
-            <source>No functions</source>
-            <translation>함수 없음</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="129" />
-            <source>Try another filter or wait for analysis.</source>
-            <translation>다른 필터를 사용하거나 분석을 기다리세요.</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="129" />
-            <source>Open a binary to browse its functions.</source>
-            <translation>바이너리를 열어 함수를 탐색하세요.</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="157" />
-            <source>Rename</source>
-            <translation>이름 바꾸기</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="158" />
-            <source>Comment</source>
-            <translation>주석</translation>
-        </message>
-    </context>
-    <context>
-        <name>GraphPane</name>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="54" />
-            <source>Zoom out</source>
-            <translation>축소</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="55" />
-            <source>Reset zoom</source>
-            <translation>확대/축소 초기화</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="56" />
-            <source>Zoom in</source>
-            <translation>확대</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="57" />
-            <source>Fit</source>
-            <translation>맞춤</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="57" />
-            <source>Fit graph in viewport</source>
-            <translation>그래프를 뷰포트에 맞추기</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="59" />
-            <source>%1 blocks · %2 edges</source>
-            <translation>블록 %1개 · 간선 %2개</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="96" />
-            <location filename="../qml/GraphPane.qml" line="119" />
-            <source>Control flow</source>
-            <translation>제어 흐름</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="120" />
-            <source>Select a function to inspect its basic blocks.</source>
-            <translation>함수를 선택하여 기본 블록을 확인하세요.</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="120" />
-            <source>Explore the paths through a function.</source>
-            <translation>함수 내 실행 경로를 탐색하세요.</translation>
-        </message>
-    </context>
-    <context>
-        <name>GuiSessionBroker</name>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="22" />
-            <location filename="../mcp/GuiSessionBroker.cpp" line="98" />
-            <source>Session sharing disabled</source>
-            <translation>세션 공유 꺼짐</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="57" />
-            <source>Cannot create private session directory</source>
-            <translation>비공개 세션 디렉터리를 만들 수 없습니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="72" />
-            <source>Cannot open local session broker: %1</source>
-            <translation>로컬 세션 브로커를 열 수 없습니다: %1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="78" />
-            <location filename="../mcp/GuiSessionBroker.cpp" line="83" />
-            <source>Cannot write private session credentials</source>
-            <translation>비공개 세션 자격 증명을 기록할 수 없습니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="87" />
-            <source>Session sharing enabled</source>
-            <translation>세션 공유 켜짐</translation>
-        </message>
-    </context>
-    <context>
-        <name>Main</name>
-        <message>
-            <location filename="../qml/Main.qml" line="16" />
-            <source>NeverD — Binary Analysis</source>
-            <translation>NeverD — 바이너리 분석</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="61" />
-            <source>Unsaved annotations</source>
-            <translation>저장되지 않은 주석</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="70" />
-            <source>Save annotation changes before continuing?</source>
-            <translation>계속하기 전에 주석 변경 사항을 저장하시겠습니까?</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="76" />
-            <source>Open Binary…</source>
-            <translation>바이너리 열기…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="77" />
-            <source>Go to Address or Symbol…</source>
-            <translation>주소 또는 심볼로 이동…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="78" />
-            <source>Back</source>
-            <translation>뒤로</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="79" />
-            <source>Forward</source>
-            <translation>앞으로</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="80" />
-            <source>Settings…</source>
-            <translation>설정…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="81" />
-            <source>Rename Function…</source>
-            <translation>함수 이름 바꾸기…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="82" />
-            <source>Edit Comment…</source>
-            <translation>주석 편집…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="83" />
-            <source>Undo</source>
-            <translation>실행 취소</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="84" />
-            <source>Redo</source>
-            <translation>다시 실행</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="85" />
-            <source>Cancel Analysis</source>
-            <translation>분석 취소</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="86" />
-            <location filename="../qml/Main.qml" line="196" />
-            <source>Restart Worker</source>
-            <translation>분석 프로세스 재시작</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="87" />
-            <source>Toggle Bottom Panel</source>
-            <translation>하단 패널 표시 전환</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="88" />
-            <source>Quit NeverD</source>
-            <translation>NeverD 종료</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="97" />
-            <source>File</source>
-            <translation>파일</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="98" />
-            <source>Navigate</source>
-            <translation>탐색</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="99" />
-            <source>Edit</source>
-            <translation>편집</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="99" />
-            <source>Save Annotations</source>
-            <translation>주석 저장</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="99" />
-            <source>Reload Annotations</source>
-            <translation>주석 다시 불러오기</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="101" />
-            <source>View</source>
-            <translation>보기</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="112" />
-            <source>Focus Panel</source>
-            <translation>패널 집중</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="98" />
-            <location filename="../qml/MachinePane.qml" line="22" />
-            <location filename="../qml/Main.qml" line="103" />
-            <location filename="../qml/Main.qml" line="113" />
-            <source>Disassembly</source>
-            <translation>디스어셈블리</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="104" />
-            <source>Control Flow</source>
-            <translation>제어 흐름</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="22" />
-            <location filename="../qml/Main.qml" line="105" />
-            <source>Hex</source>
-            <translation>16진수</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="117" />
-            <source>Reset Layout</source>
-            <translation>레이아웃 초기화</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="119" />
-            <source>Analysis</source>
-            <translation>분석</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="122" />
-            <source>Import Manifest…</source>
-            <translation>매니페스트 가져오기…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="125" />
-            <source>Help</source>
-            <translation>도움말</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="125" />
-            <location filename="../qml/Main.qml" line="356" />
-            <source>Keyboard Shortcuts</source>
-            <translation>키보드 단축키</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="125" />
-            <location filename="../qml/Main.qml" line="366" />
-            <source>About NeverD</source>
-            <translation>NeverD 정보</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="141" />
-            <location filename="../qml/Main.qml" line="253" />
-            <source>Open Binary</source>
-            <translation>바이너리 열기</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="152" />
-            <source>Go to address or symbol…</source>
-            <translation>주소 또는 심볼로 이동…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="153" />
-            <source>Address or symbol</source>
-            <translation>주소 또는 심볼</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="162" />
-            <source>Cancel</source>
-            <translation>취소</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="163" />
-            <location filename="../qml/Main.qml" line="320" />
-            <source>Settings</source>
-            <translation>설정</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="163" />
-            <source>Language and editor preferences</source>
-            <translation>언어 및 편집기 환경 설정</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="172" />
-            <source>WORKSPACE</source>
-            <translation>작업 공간</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="174" />
-            <source>No binary open</source>
-            <translation>열린 바이너리 없음</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="176" />
-            <source>%1 functions</source>
-            <translation>함수 %1개</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="176" />
-            <source>Local analysis</source>
-            <translation>로컬 분석</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="22" />
-            <source>CFG</source>
-            <translation>제어 흐름 그래프</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="32" />
-            <source>Hex view</source>
-            <translation>16진수 보기</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="32" />
-            <source>Select an address to inspect its bytes.</source>
-            <translation>주소를 선택하여 바이트를 확인하세요.</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="105" />
-            <location filename="../qml/Main.qml" line="107" />
-            <location filename="../qml/Main.qml" line="114" />
-            <location filename="../qml/RepresentationPane.qml" line="30" />
-            <source>Pseudocode &amp; intermediate representations</source>
-            <translation>의사 코드 및 중간 표현</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="46" />
-            <source>No representation available</source>
-            <translation>사용 가능한 표현 없음</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="46" />
-            <source>Read beyond assembly</source>
-            <translation>어셈블리 너머를 살펴보세요</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="49" />
-            <source>Compare recovered C, LLVM C, LowIR, MedIR, HighIR, and LLVM IR. Select a function to begin.</source>
-            <translation>복원된 C, LLVM C, LowIR, MedIR, HighIR, LLVM IR을 비교합니다. 시작하려면 함수를 선택하세요.</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="112" />
-            <location filename="../qml/Main.qml" line="108" />
-            <source>References</source>
-            <translation>참조</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="119" />
-            <location filename="../qml/Main.qml" line="109" />
-            <source>Output</source>
-            <translation>출력</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="126" />
-            <location filename="../qml/Main.qml" line="110" />
-            <source>Connections</source>
-            <translation>연결</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="133" />
-            <location filename="../qml/Main.qml" line="121" />
-            <location filename="../qml/Main.qml" line="123" />
-            <source>Extensions</source>
-            <translation>확장 기능</translation>
-        </message>
-        <message>
-            <location filename="../qml/ReferencesPane.qml" line="42" />
-            <source>No references for this selection.</source>
-            <translation>선택한 항목에 대한 참조가 없습니다.</translation>
-        </message>
-        <message>
-            <location filename="../qml/ReferencesPane.qml" line="42" />
-            <source>References to the selected address appear here.</source>
-            <translation>선택한 주소에 대한 참조가 여기에 표시됩니다.</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="120" />
-            <source>Worker events and analysis messages appear here.</source>
-            <translation>분석 프로세스 이벤트와 분석 메시지가 여기에 표시됩니다.</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="221" />
-            <source>Worker connected</source>
-            <translation>분석 프로세스 연결됨</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="221" />
-            <source>Worker offline</source>
-            <translation>분석 프로세스 연결 안 됨</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="255" />
-            <location filename="../qml/Main.qml" line="262" />
-            <source>All files (*)</source>
-            <translation>모든 파일 (*)</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="260" />
-            <source>Import Manifest</source>
-            <translation>매니페스트 가져오기</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="262" />
-            <source>JSON files (*.json)</source>
-            <translation>JSON 파일 (*.json)</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="273" />
-            <source>Rename Function</source>
-            <translation>함수 이름 바꾸기</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="283" />
-            <location filename="../qml/Main.qml" line="283" />
-            <source>Function name</source>
-            <translation>함수 이름</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="289" />
-            <source>Edit Comment</source>
-            <translation>주석 편집</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="306" />
-            <source>Add a comment for this address…</source>
-            <translation>이 주소에 주석 추가…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="311" />
-            <source>Comment</source>
-            <translation>주석</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="329" />
-            <source>Appearance</source>
-            <translation>모양</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="332" />
-            <source>Theme</source>
-            <translation>테마</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="337" />
-            <source>Code font size</source>
-            <translation>코드 글꼴 크기</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="341" />
-            <source>Language</source>
-            <translation>언어</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="349" />
-            <source>Interface language</source>
-            <translation>인터페이스 언어</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="351" />
-            <source>Changes apply immediately. Code, symbols, and comments keep their original language.</source>
-            <translation>변경 사항이 즉시 적용됩니다. 코드, 심볼, 주석은 원래 언어로 유지됩니다.</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="372" />
-            <source>NeverD
-Binary analysis workbench
-
-Explore disassembly, control flow, recovered C, and intermediate representations with a local analysis worker.</source>
-            <translation>NeverD
-바이너리 분석 작업 공간
-
-로컬 분석 프로세스로 디스어셈블리, 제어 흐름, 복원된 C 코드, 중간 표현을 탐색하세요.</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="288" />
-            <source>Library features and byte signatures (*.json *.pat)</source>
-            <translation>라이브러리 특징 및 바이트 시그니처 (*.json *.pat)</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="286" />
-            <source>Load Signature Pack</source>
-            <translation>시그니처 팩 불러오기</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="131" />
-            <source>Load Signature Pack…</source>
-            <translation>시그니처 팩 불러오기…</translation>
-        </message>
-    </context>
-    <context>
-        <name>McpConnectionManager</name>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="18" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="145" />
-            <source>Disconnected</source>
-            <translation>연결 해제됨</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="22" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="300" />
-            <source>MCP message exceeds 8 MiB</source>
-            <translation>MCP 메시지가 8 MiB를 초과합니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="31" />
-            <source>Invalid MCP JSON-RPC message</source>
-            <translation>잘못된 MCP JSON-RPC 메시지</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="41" />
-            <source>MCP process error: %1</source>
-            <translation>MCP 프로세스 오류: %1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="45" />
-            <source>MCP process exited (%1): %2</source>
-            <translation>MCP 프로세스가 종료되었습니다(%1): %2</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="58" />
-            <source>MCP request timed out: %1</source>
-            <translation>MCP 요청 시간 초과: %1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="76" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="95" />
-            <source>Disconnect the running MCP process before reconnecting</source>
-            <translation>다시 연결하기 전에 실행 중인 MCP 프로세스의 연결을 해제하세요</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="81" />
-            <source>Choose an absolute MCP executable path</source>
-            <translation>MCP 실행 파일의 절대 경로를 선택하세요</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="84" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="118" />
-            <source>Connecting</source>
-            <translation>연결 중</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="102" />
-            <source>MCP HTTP requires HTTPS, or HTTP on localhost</source>
-            <translation>MCP HTTP에는 HTTPS 또는 localhost의 HTTP가 필요합니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="105" />
-            <source>Invalid authentication token</source>
-            <translation>잘못된 인증 토큰</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="110" />
-            <source>Cannot load CA certificate</source>
-            <translation>CA 인증서를 불러올 수 없습니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="182" />
-            <source>MCP request queue is full</source>
-            <translation>MCP 요청 대기열이 가득 찼습니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="194" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="220" />
-            <source>MCP outgoing message budget exceeded</source>
-            <translation>MCP 발신 메시지가 크기 제한을 초과했습니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="199" />
-            <source>MCP server is disconnected</source>
-            <translation>MCP 서버 연결이 해제되었습니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="245" />
-            <source>MCP session expired; reconnecting</source>
-            <translation>MCP 세션이 만료되어 다시 연결 중입니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="250" />
-            <source>MCP HTTP error %1: %2</source>
-            <translation>MCP HTTP 오류 %1: %2</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="259" />
-            <source>MCP event stream ended before its response</source>
-            <translation>응답 전에 MCP 이벤트 스트림이 종료되었습니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="276" />
-            <source>Invalid MCP HTTP response</source>
-            <translation>잘못된 MCP HTTP 응답</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="292" />
-            <source>Invalid MCP session identifier</source>
-            <translation>잘못된 MCP 세션 식별자</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="294" />
-            <source>MCP session identifier is too large</source>
-            <translation>MCP 세션 식별자가 너무 깁니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="318" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="333" />
-            <source>Invalid MCP event data</source>
-            <translation>잘못된 MCP 이벤트 데이터</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="347" />
-            <source>Invalid MCP protocol version</source>
-            <translation>잘못된 MCP 프로토콜 버전</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="364" />
-            <source>MCP request failed: %1</source>
-            <translation>MCP 요청 실패: %1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="367" />
-            <source>MCP response has no result object</source>
-            <translation>MCP 응답에 결과 객체가 없습니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="371" />
-            <source>Unsupported MCP protocol version</source>
-            <translation>지원하지 않는 MCP 프로토콜 버전</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="377" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="387" />
-            <source>Connected</source>
-            <translation>연결됨</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="380" />
-            <source>Connected; tool list is partial</source>
-            <translation>연결됨. 도구 목록이 일부만 표시됩니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="383" />
-            <source>Connected; resource list is partial</source>
-            <translation>연결됨. 리소스 목록이 일부만 표시됩니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="387" />
-            <source>MCP tool reported an error</source>
-            <translation>MCP 도구가 오류를 보고했습니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="397" />
-            <source>Connect an MCP server first</source>
-            <translation>먼저 MCP 서버에 연결하세요</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="398" />
-            <source>Tool arguments exceed the size limit</source>
-            <translation>도구 인수가 크기 제한을 초과합니다</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="402" />
-            <source>Tool arguments must be a JSON object</source>
-            <translation>도구 인수는 JSON 객체여야 합니다</translation>
-        </message>
-    </context>
-    <context>
-        <name>PaneRegistry</name>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="417" />
-            <source>Default</source>
-            <translation>기본</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="424" />
-            <source>Cannot create pane: invalid kind or pane limit reached.</source>
-            <translation>패널을 만들 수 없습니다. 유형이 잘못되었거나 패널 수가 한도에 도달했습니다.</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="429" />
-            <source>The source pane is unavailable.</source>
-            <translation>원본 패널을 사용할 수 없습니다.</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="553" />
-            <source>Cannot create group: invalid name or group limit reached.</source>
-            <translation>그룹을 만들 수 없습니다. 이름이 잘못되었거나 그룹 수가 한도에 도달했습니다.</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="1004" />
-            <source>The saved pane catalog is invalid.</source>
-            <translation>저장된 패널 목록이 올바르지 않습니다.</translation>
-        </message>
-    </context>
-    <context>
-        <name>RepresentationPane</name>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="31" />
-            <source>Refresh</source>
-            <translation>새로 고침</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="32" />
-            <source>Unpin</source>
-            <translation>고정 해제</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="32" />
-            <source>Pin</source>
-            <translation>고정</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="32" />
-            <source>Keep this function while navigating</source>
-            <translation>탐색하는 동안 이 함수 유지</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="54" />
-            <source>Load more lines</source>
-            <translation>줄 더 불러오기</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="91" />
-            <source>Close</source>
-            <translation>닫기</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="54" />
-            <source>Details</source>
-            <translation>세부 정보</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="110" />
-            <source>Evidence SHA-256</source>
-            <translation>근거 SHA-256</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="87" />
-            <source>Expand</source>
-            <translation>펼치기</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="49" />
-            <source>Expand all</source>
-            <translation>모두 펼치기</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="87" />
-            <source>Fold</source>
-            <translation>접기</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="49" />
-            <source>Fold all</source>
-            <translation>모두 접기</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="51" />
-            <source>Fold mapped library operations. Copy and export retain the full source.</source>
-            <translation>매핑된 라이브러리 연산을 접습니다. 복사 및 내보내기에는 전체 소스가 유지됩니다.</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="105" />
-            <source>Identity evidence</source>
-            <translation>식별 근거</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="46" />
-            <source>Library operations</source>
-            <translation>라이브러리 연산</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="107" />
-            <source>Linkage</source>
-            <translation>링크 이름</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="103" />
-            <source>Mapped to original source</source>
-            <translation>원본 소스에 매핑됨</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="106" />
-            <source>Original instructions</source>
-            <translation>원본 명령어</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="103" />
-            <source>Original source stays expanded; mapping is incomplete or outside the loaded page</source>
-            <translation>매핑이 불완전하거나 불러온 페이지 밖에 있어 원본 소스를 펼친 상태로 유지합니다</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="108" />
-            <source>Pack</source>
-            <translation>팩</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="109" />
-            <source>Profile SHA-256</source>
-            <translation>프로필 SHA-256</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="84" />
-            <source>Recognized library operation</source>
-            <translation>인식된 라이브러리 연산</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="104" />
-            <source>Rule</source>
-            <translation>규칙</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="111" />
-            <source>Source</source>
-            <translation>출처</translation>
-        </message>
-    </context>
-    <context>
-        <name>Workbench</name>
-        <message>
-            <location filename="../Workbench.cpp" line="71" />
-            <source>Loading debug symbols…</source>
-            <translation>디버그 심볼 로드 중…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="17" />
-            <source>Open a binary to begin</source>
-            <translation>바이너리를 열어 시작하세요</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="87" />
-            <source>Action failed</source>
-            <translation>작업 실패</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="147" />
-            <source>Incompatible analysis worker protocol.</source>
-            <translation>분석 프로세스 프로토콜이 호환되지 않습니다.</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="150" />
-            <source>Connected to %1</source>
-            <translation>%1에 연결됨</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="214" />
-            <source>Select an existing binary file.</source>
-            <translation>기존 바이너리 파일을 선택하세요.</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="217" />
-            <source>Starting analysis worker…</source>
-            <translation>분석 프로세스 시작 중…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="223" />
-            <source>Opening binary…</source>
-            <translation>바이너리 여는 중…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="228" />
-            <source>Binary loaded</source>
-            <translation>바이너리 불러옴</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="311" />
-            <location filename="../Workbench.cpp" line="352" />
-            <location filename="../Workbench.cpp" line="445" />
-            <source>Ready</source>
-            <translation>준비됨</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="328" />
-            <source>No function at this address</source>
-            <translation>이 주소에 함수가 없습니다</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="330" />
-            <location filename="../Workbench.cpp" line="443" />
-            <source>Analyzing…</source>
-            <translation>분석 중…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="351" />
-            <source>Complete</source>
-            <translation>완료</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="351" />
-            <source>More lines available</source>
-            <translation>더 많은 줄이 있습니다</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="361" />
-            <source>Mapping belongs to an earlier revision; reload the representation</source>
-            <translation>이 매핑은 이전 리비전의 것입니다. 표현을 다시 불러오세요</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="363" />
-            <source>Linked instruction addresses; synthetic rows may be unmapped</source>
-            <translation>명령어 주소가 연결되었습니다. 합성된 행에는 매핑이 없을 수 있습니다</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="364" />
-            <source>Instruction mapping unavailable for this representation</source>
-            <translation>이 표현에서는 명령어 매핑을 사용할 수 없습니다</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="416" />
-            <source>Loading graph viewport…</source>
-            <translation>그래프 뷰포트 불러오는 중…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="418" />
-            <source>Viewport limit reached; zoom in for details</source>
-            <translation>뷰포트 한도에 도달했습니다. 자세히 보려면 확대하세요</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="419" />
-            <source>%1 visible blocks · %2 edges</source>
-            <translation>표시된 블록 %1개 · 간선 %2개</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="452" />
-            <source>Cancellation requested; restart stops the worker immediately.</source>
-            <translation>취소를 요청했습니다. 재시작하면 분석 프로세스가 즉시 중지됩니다.</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="453" />
-            <source>Cancellation requested</source>
-            <translation>취소 요청됨</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="488" />
-            <source>Restarting analysis worker…</source>
-            <translation>분석 프로세스 재시작 중…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="495" />
-            <source>Rename saved</source>
-            <translation>이름 변경 저장됨</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="502" />
-            <source>Comment changed; save annotations to keep it.</source>
-            <translation>주석을 변경했습니다. 유지하려면 주석을 저장하세요.</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="506" />
-            <source>Annotations saved</source>
-            <translation>주석 저장됨</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="479" />
-            <location filename="../Workbench.cpp" line="510" />
-            <source>Annotations reloaded</source>
-            <translation>주석 다시 불러옴</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="193" />
-            <source>Finish opening the binary before editing.</source>
-            <translation>바이너리를 여는 작업이 끝난 후에 편집하세요.</translation>
-        </message>
-        <message>
-            <location filename="../PaneController.cpp" line="414" />
-            <source>Library regions link to original instructions; other source may be unmapped</source>
-            <translation>라이브러리 영역은 원본 명령어에 연결됩니다. 다른 소스는 매핑되지 않을 수 있습니다</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="730" />
-            <source>Signature pack loaded</source>
-            <translation>시그니처 팩을 불러왔습니다</translation>
-        </message>
-    </context>
-    <context>
-        <name>WorkerTransport</name>
-        <message>
-            <location filename="../EngineClient.cpp" line="28" />
-            <source>Analysis worker exited (%1). Restart to continue.</source>
-            <translation>분석 프로세스가 종료되었습니다(%1). 계속하려면 재시작하세요.</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="36" />
-            <source>Analysis worker is not running.</source>
-            <translation>분석 프로세스가 실행되고 있지 않습니다.</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="41" />
-            <source>Analysis request queue is full.</source>
-            <translation>분석 요청 대기열이 가득 찼습니다.</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="57" />
-            <source>Invalid analysis protocol frame.</source>
-            <translation>잘못된 분석 프로토콜 프레임입니다.</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="67" />
-            <source>Invalid analysis protocol JSON.</source>
-            <translation>잘못된 분석 프로토콜 JSON입니다.</translation>
-        </message>
-    </context>
-    <context>
-        <name>TextPane</name>
-        <message>
-            <location filename="../qml/TextPane.qml" line="158" />
-            <source>Copy</source>
-            <translation>복사</translation>
-        </message>
-        <message>
-            <location filename="../qml/TextPane.qml" line="159" />
-            <source>Select all</source>
-            <translation>모두 선택</translation>
-        </message>
-    </context>
+<context>
+    <name>Actions</name>
+    <message>
+        <source>&amp;Open...</source>
+        <translation>열기(&amp;O)...</translation>
+    </message>
+    <message>
+        <source>Open a binary for analysis</source>
+        <translation>분석할 바이너리를 엽니다</translation>
+    </message>
+    <message>
+        <source>&amp;Reload the input file</source>
+        <translation>입력 파일 다시 불러오기(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Reload the binary and its saved annotations</source>
+        <translation>바이너리와 저장된 주석을 다시 불러옵니다</translation>
+    </message>
+    <message>
+        <source>&amp;FLIRT signature file...</source>
+        <translation>FLIRT 시그니처 파일(&amp;F)...</translation>
+    </message>
+    <message>
+        <source>Apply a byte signature (.pat) or library feature (.json) pack</source>
+        <translation>바이트 시그니처(.pat) 또는 라이브러리 특징(.json) 팩을 적용합니다</translation>
+    </message>
+    <message>
+        <source>Signature &amp;directory...</source>
+        <translation>시그니처 디렉터리(&amp;D)...</translation>
+    </message>
+    <message>
+        <source>Apply every matching pack from a signature tree</source>
+        <translation>시그니처 트리에서 일치하는 모든 팩을 적용합니다</translation>
+    </message>
+    <message>
+        <source>Create &amp;LST file...</source>
+        <translation>LST 파일 만들기(&amp;L)...</translation>
+    </message>
+    <message>
+        <source>Write the current function&apos;s listing to a text file</source>
+        <translation>현재 함수의 리스팅을 텍스트 파일로 저장합니다</translation>
+    </message>
+    <message>
+        <source>Create &amp;C file...</source>
+        <translation>C 파일 만들기(&amp;C)...</translation>
+    </message>
+    <message>
+        <source>Write the current function&apos;s pseudocode to a C file</source>
+        <translation>현재 함수의 의사 코드를 C 파일로 저장합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Save</source>
+        <translation>저장(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Save comments and history beside the binary</source>
+        <translation>주석과 기록을 바이너리와 같은 위치에 저장합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Close</source>
+        <translation>닫기(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Close the current binary</source>
+        <translation>현재 바이너리를 닫습니다</translation>
+    </message>
+    <message>
+        <source>&amp;Quick start</source>
+        <translation>빠른 시작(&amp;Q)</translation>
+    </message>
+    <message>
+        <source>Show the quick start window</source>
+        <translation>빠른 시작 창을 표시합니다</translation>
+    </message>
+    <message>
+        <source>E&amp;xit</source>
+        <translation>끝내기(&amp;X)</translation>
+    </message>
+    <message>
+        <source>Quit NeverD</source>
+        <translation>NeverD를 종료합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Undo</source>
+        <translation>실행 취소(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Undo the last comment or rename</source>
+        <translation>마지막 주석 또는 이름 바꾸기를 실행 취소합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Redo</source>
+        <translation>다시 실행(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Redo the last undone change</source>
+        <translation>마지막으로 실행 취소한 변경을 다시 실행합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>복사(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Copy the selection or current line</source>
+        <translation>선택 영역 또는 현재 줄을 복사합니다</translation>
+    </message>
+    <message>
+        <source>Copy &amp;address</source>
+        <translation>주소 복사(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Copy the current address</source>
+        <translation>현재 주소를 복사합니다</translation>
+    </message>
+    <message>
+        <source>Re&amp;name...</source>
+        <translation>이름 바꾸기(&amp;N)...</translation>
+    </message>
+    <message>
+        <source>Rename the current function</source>
+        <translation>현재 함수의 이름을 바꿉니다</translation>
+    </message>
+    <message>
+        <source>Enter &amp;comment...</source>
+        <translation>주석 입력(&amp;C)...</translation>
+    </message>
+    <message>
+        <source>Comment the current address</source>
+        <translation>현재 주소에 주석을 추가합니다</translation>
+    </message>
+    <message>
+        <source>Enter re&amp;peatable comment...</source>
+        <translation>반복 주석 입력(&amp;P)...</translation>
+    </message>
+    <message>
+        <source>&amp;Mark position...</source>
+        <translation>위치 표시(&amp;M)...</translation>
+    </message>
+    <message>
+        <source>Bookmark the current address</source>
+        <translation>현재 주소를 책갈피에 추가합니다</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;operand</source>
+        <translation>피연산자로 이동(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Follow the name or address under the cursor</source>
+        <translation>커서 아래의 이름 또는 주소로 이동합니다</translation>
+    </message>
+    <message>
+        <source>Jump in a new &amp;window</source>
+        <translation>새 창에서 이동(&amp;W)</translation>
+    </message>
+    <message>
+        <source>Open the target in a new disassembly view</source>
+        <translation>대상을 새 디스어셈블리 보기에서 엽니다</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;previous position</source>
+        <translation>이전 위치로 이동(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Go back in the navigation history</source>
+        <translation>탐색 기록에서 뒤로 이동합니다</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;next position</source>
+        <translation>다음 위치로 이동(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Go forward in the navigation history</source>
+        <translation>탐색 기록에서 앞으로 이동합니다</translation>
+    </message>
+    <message>
+        <source>Next f&amp;unction</source>
+        <translation>다음 함수(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Move to the start of the next function</source>
+        <translation>다음 함수의 시작 위치로 이동합니다</translation>
+    </message>
+    <message>
+        <source>Pre&amp;vious function</source>
+        <translation>이전 함수(&amp;V)</translation>
+    </message>
+    <message>
+        <source>Move to the start of the previous function</source>
+        <translation>이전 함수의 시작 위치로 이동합니다</translation>
+    </message>
+    <message>
+        <source>Jump to ps&amp;eudocode</source>
+        <translation>의사 코드로 이동(&amp;E)</translation>
+    </message>
+    <message>
+        <source>Switch between disassembly and pseudocode</source>
+        <translation>디스어셈블리와 의사 코드 간에 전환합니다</translation>
+    </message>
+    <message>
+        <source>Jump &amp;anywhere...</source>
+        <translation>임의 위치로 이동(&amp;A)...</translation>
+    </message>
+    <message>
+        <source>Jump to an address, name or expression</source>
+        <translation>주소, 이름 또는 식으로 지정한 위치로 이동합니다</translation>
+    </message>
+    <message>
+        <source>Jump by na&amp;me...</source>
+        <translation>이름으로 이동(&amp;M)...</translation>
+    </message>
+    <message>
+        <source>Choose a name to jump to</source>
+        <translation>이동할 이름을 선택합니다</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;function...</source>
+        <translation>함수로 이동(&amp;F)...</translation>
+    </message>
+    <message>
+        <source>Choose a function to jump to</source>
+        <translation>이동할 함수를 선택합니다</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;segment...</source>
+        <translation>세그먼트로 이동(&amp;S)...</translation>
+    </message>
+    <message>
+        <source>Choose a segment to jump to</source>
+        <translation>이동할 세그먼트를 선택합니다</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;entry point...</source>
+        <translation>진입점으로 이동(&amp;E)...</translation>
+    </message>
+    <message>
+        <source>Choose an entry point to jump to</source>
+        <translation>이동할 진입점을 선택합니다</translation>
+    </message>
+    <message>
+        <source>List cross references &amp;to...</source>
+        <translation>들어오는 상호 참조 목록(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>List references to the current item</source>
+        <translation>현재 항목에 대한 참조를 나열합니다</translation>
+    </message>
+    <message>
+        <source>List cross references f&amp;rom...</source>
+        <translation>나가는 상호 참조 목록(&amp;R)...</translation>
+    </message>
+    <message>
+        <source>List references made by the current instruction</source>
+        <translation>현재 명령어가 참조하는 대상을 나열합니다</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;xref to operand...</source>
+        <translation>피연산자의 상호 참조로 이동(&amp;X)...</translation>
+    </message>
+    <message>
+        <source>List references to the name under the cursor</source>
+        <translation>커서 아래 이름에 대한 참조를 나열합니다</translation>
+    </message>
+    <message>
+        <source>Jump to mar&amp;ked position...</source>
+        <translation>표시한 위치로 이동(&amp;K)...</translation>
+    </message>
+    <message>
+        <source>Choose a bookmark to jump to</source>
+        <translation>이동할 책갈피를 선택합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Text...</source>
+        <translation>텍스트(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Search the binary for text</source>
+        <translation>바이너리에서 텍스트를 검색합니다</translation>
+    </message>
+    <message>
+        <source>Next te&amp;xt</source>
+        <translation>다음 텍스트(&amp;X)</translation>
+    </message>
+    <message>
+        <source>Repeat the last text search</source>
+        <translation>마지막 텍스트 검색을 반복합니다</translation>
+    </message>
+    <message>
+        <source>Sequence of &amp;bytes...</source>
+        <translation>바이트 시퀀스(&amp;B)...</translation>
+    </message>
+    <message>
+        <source>Search the binary for a byte sequence</source>
+        <translation>바이너리에서 바이트 시퀀스를 검색합니다</translation>
+    </message>
+    <message>
+        <source>Next seq&amp;uence of bytes</source>
+        <translation>다음 바이트 시퀀스(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Repeat the last byte search</source>
+        <translation>마지막 바이트 검색을 반복합니다</translation>
+    </message>
+    <message>
+        <source>Search highlight &amp;up</source>
+        <translation>강조 표시 위로 검색(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Move to the previous occurrence of the highlighted identifier</source>
+        <translation>강조 표시된 식별자의 이전 위치로 이동합니다</translation>
+    </message>
+    <message>
+        <source>Search highlight &amp;down</source>
+        <translation>강조 표시 아래로 검색(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Move to the next occurrence of the highlighted identifier</source>
+        <translation>강조 표시된 식별자의 다음 위치로 이동합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Find in view...</source>
+        <translation>보기에서 찾기(&amp;F)...</translation>
+    </message>
+    <message>
+        <source>Find text among the loaded lines of the current view</source>
+        <translation>현재 보기에서 불러온 줄 중 텍스트를 찾습니다</translation>
+    </message>
+    <message>
+        <source>&amp;Quick view...</source>
+        <translation>빠른 보기(&amp;Q)...</translation>
+    </message>
+    <message>
+        <source>Choose a view to open</source>
+        <translation>열 보기를 선택합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Disassembly</source>
+        <translation>디스어셈블리(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Open a new disassembly view</source>
+        <translation>새 디스어셈블리 보기를 엽니다</translation>
+    </message>
+    <message>
+        <source>Toggle &amp;graph view</source>
+        <translation>그래프 보기 전환(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Switch between text and graph views</source>
+        <translation>텍스트 보기와 그래프 보기 간에 전환합니다</translation>
+    </message>
+    <message>
+        <source>Generate &amp;pseudocode</source>
+        <translation>의사 코드 생성(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Decompile the current function</source>
+        <translation>현재 함수를 디컴파일합니다</translation>
+    </message>
+    <message>
+        <source>Generate &amp;LowIR</source>
+        <translation>LowIR 생성(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s LowIR</source>
+        <translation>현재 함수의 LowIR을 표시합니다</translation>
+    </message>
+    <message>
+        <source>Generate &amp;MedIR</source>
+        <translation>MedIR 생성(&amp;M)</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s MedIR</source>
+        <translation>현재 함수의 MedIR을 표시합니다</translation>
+    </message>
+    <message>
+        <source>Generate &amp;HighIR</source>
+        <translation>HighIR 생성(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s HighIR</source>
+        <translation>현재 함수의 HighIR을 표시합니다</translation>
+    </message>
+    <message>
+        <source>Generate LLVM &amp;IR</source>
+        <translation>LLVM IR 생성(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s LLVM IR</source>
+        <translation>현재 함수의 LLVM IR을 표시합니다</translation>
+    </message>
+    <message>
+        <source>Generate LLVM &amp;C</source>
+        <translation>LLVM C 생성(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Decompile the current function through LLVM</source>
+        <translation>LLVM을 통해 현재 함수를 디컴파일합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Hex dump</source>
+        <translation>16진수 덤프(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the hex view</source>
+        <translation>16진수 보기를 표시합니다</translation>
+    </message>
+    <message>
+        <source>E&amp;xports</source>
+        <translation>익스포트(&amp;X)</translation>
+    </message>
+    <message>
+        <source>Show exported names and entry points</source>
+        <translation>익스포트된 이름과 진입점을 표시합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Imports</source>
+        <translation>임포트(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show imported names</source>
+        <translation>임포트된 이름을 표시합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Names</source>
+        <translation>이름(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Show every named location</source>
+        <translation>이름이 지정된 모든 위치를 표시합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Functions</source>
+        <translation>함수(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Show the functions window</source>
+        <translation>함수 창을 표시합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Strings</source>
+        <translation>문자열(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Show the strings window</source>
+        <translation>문자열 창을 표시합니다</translation>
+    </message>
+    <message>
+        <source>S&amp;egments</source>
+        <translation>세그먼트(&amp;E)</translation>
+    </message>
+    <message>
+        <source>Show the segments window</source>
+        <translation>세그먼트 창을 표시합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Cross references</source>
+        <translation>상호 참조(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Show references to the current item</source>
+        <translation>현재 항목에 대한 참조를 표시합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Bookmarks</source>
+        <translation>책갈피(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Show bookmarks</source>
+        <translation>책갈피를 표시합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Output</source>
+        <translation>출력(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the output window</source>
+        <translation>출력 창을 표시합니다</translation>
+    </message>
+    <message>
+        <source>Graph &amp;overview</source>
+        <translation>그래프 개요(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the graph overview</source>
+        <translation>그래프 개요를 표시합니다</translation>
+    </message>
+    <message>
+        <source>MCP &amp;connections</source>
+        <translation>MCP 연결(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Manage MCP connections and session sharing</source>
+        <translation>MCP 연결과 세션 공유를 관리합니다</translation>
+    </message>
+    <message>
+        <source>E&amp;xtensions</source>
+        <translation>확장 기능(&amp;X)</translation>
+    </message>
+    <message>
+        <source>Manage declarative extensions</source>
+        <translation>선언형 확장 기능을 관리합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Undo history</source>
+        <translation>실행 취소 기록(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Show the comment and rename history</source>
+        <translation>주석 및 이름 바꾸기 기록을 표시합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Calculator...</source>
+        <translation>계산기(&amp;C)...</translation>
+    </message>
+    <message>
+        <source>Evaluate an expression</source>
+        <translation>식을 평가합니다</translation>
+    </message>
+    <message>
+        <source>F&amp;ull screen</source>
+        <translation>전체 화면(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Toggle full screen</source>
+        <translation>전체 화면 모드를 켜거나 끕니다</translation>
+    </message>
+    <message>
+        <source>&amp;Increase font size</source>
+        <translation>글꼴 크기 늘리기(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Increase the code font size</source>
+        <translation>코드 글꼴 크기를 늘립니다</translation>
+    </message>
+    <message>
+        <source>&amp;Decrease font size</source>
+        <translation>글꼴 크기 줄이기(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Decrease the code font size</source>
+        <translation>코드 글꼴 크기를 줄입니다</translation>
+    </message>
+    <message>
+        <source>&amp;Reset font size</source>
+        <translation>글꼴 크기 초기화(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Restore the default code font size</source>
+        <translation>코드 글꼴 크기를 기본값으로 되돌립니다</translation>
+    </message>
+    <message>
+        <source>&amp;General...</source>
+        <translation>일반(&amp;G)...</translation>
+    </message>
+    <message>
+        <source>Listing, analysis and language options</source>
+        <translation>리스팅, 분석 및 언어 옵션</translation>
+    </message>
+    <message>
+        <source>&amp;Colors...</source>
+        <translation>색상(&amp;C)...</translation>
+    </message>
+    <message>
+        <source>Choose the color theme</source>
+        <translation>색상 테마를 선택합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Font...</source>
+        <translation>글꼴(&amp;F)...</translation>
+    </message>
+    <message>
+        <source>Choose the code font</source>
+        <translation>코드 글꼴을 선택합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Shortcuts...</source>
+        <translation>단축키(&amp;S)...</translation>
+    </message>
+    <message>
+        <source>List keyboard shortcuts</source>
+        <translation>키보드 단축키 목록을 표시합니다</translation>
+    </message>
+    <message>
+        <source>Show command &amp;palette...</source>
+        <translation>명령 팔레트 표시(&amp;P)...</translation>
+    </message>
+    <message>
+        <source>Search and run any command</source>
+        <translation>원하는 명령을 검색하여 실행합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Repeat last palette command</source>
+        <translation>마지막 팔레트 명령 반복(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Run the last command chosen in the palette again</source>
+        <translation>팔레트에서 마지막으로 선택한 명령을 다시 실행합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Whole-program analysis</source>
+        <translation>전체 프로그램 분석(&amp;W)</translation>
+    </message>
+    <message>
+        <source>Analyze every function together in the background</source>
+        <translation>모든 함수를 백그라운드에서 함께 분석합니다</translation>
+    </message>
+    <message>
+        <source>Ca&amp;ncel pending requests</source>
+        <translation>대기 중인 요청 취소(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Cancel queued analysis requests</source>
+        <translation>대기열의 분석 요청을 취소합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Restart analysis worker</source>
+        <translation>분석 프로세스 재시작(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Restart the analysis process and reopen the binary</source>
+        <translation>분석 프로세스를 재시작하고 바이너리를 다시 엽니다</translation>
+    </message>
+    <message>
+        <source>&amp;Save desktop</source>
+        <translation>데스크톱 저장(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Save the window layout</source>
+        <translation>창 레이아웃을 저장합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Load desktop</source>
+        <translation>데스크톱 불러오기(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Restore the saved window layout</source>
+        <translation>저장된 창 레이아웃을 복원합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Reset desktop</source>
+        <translation>데스크톱 초기화(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Restore the default window layout</source>
+        <translation>기본 창 레이아웃으로 되돌립니다</translation>
+    </message>
+    <message>
+        <source>&amp;Next window</source>
+        <translation>다음 창(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Activate the next window</source>
+        <translation>다음 창을 활성화합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Previous window</source>
+        <translation>이전 창(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Activate the previous window</source>
+        <translation>이전 창을 활성화합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Close window</source>
+        <translation>창 닫기(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Close the current window</source>
+        <translation>현재 창을 닫습니다</translation>
+    </message>
+    <message>
+        <source>&amp;Focus command line</source>
+        <translation>명령줄에 포커스(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Move the keyboard focus to the command line</source>
+        <translation>키보드 포커스를 명령줄로 옮깁니다</translation>
+    </message>
+    <message>
+        <source>&amp;Help</source>
+        <translation>도움말(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Open the NeverD documentation</source>
+        <translation>NeverD 문서를 엽니다</translation>
+    </message>
+    <message>
+        <source>&amp;About NeverD</source>
+        <translation>NeverD 정보(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Version and license information</source>
+        <translation>버전 및 라이선스 정보</translation>
+    </message>
+    <message>
+        <source>S&amp;tring literals...</source>
+        <translation>문자열 리터럴(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Choose the encodings and minimum length of the strings the listing shows</source>
+        <translation>목록에 표시할 문자열의 인코딩과 최소 길이를 선택합니다</translation>
+    </message>
+</context>
+<context>
+    <name>Choosers</name>
+    <message>
+        <source>Functions</source>
+        <translation>함수</translation>
+    </message>
+    <message>
+        <source>Function name</source>
+        <translation>함수 이름</translation>
+    </message>
+    <message>
+        <source>Segment</source>
+        <translation>세그먼트</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>시작</translation>
+    </message>
+    <message>
+        <source>Length</source>
+        <translation>길이</translation>
+    </message>
+    <message>
+        <source>Names</source>
+        <translation>이름</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>이름</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>주소</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>유형</translation>
+    </message>
+    <message>
+        <source>Strings</source>
+        <translation>문자열</translation>
+    </message>
+    <message>
+        <source>String</source>
+        <translation>문자열</translation>
+    </message>
+    <message>
+        <source>Segments</source>
+        <translation>세그먼트</translation>
+    </message>
+    <message>
+        <source>End</source>
+        <translation>끝</translation>
+    </message>
+    <message>
+        <source>R</source>
+        <translation>R</translation>
+    </message>
+    <message>
+        <source>W</source>
+        <translation>W</translation>
+    </message>
+    <message>
+        <source>X</source>
+        <translation>X</translation>
+    </message>
+    <message>
+        <source>Align</source>
+        <translation>정렬</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>클래스</translation>
+    </message>
+    <message>
+        <source>Imports</source>
+        <translation>임포트</translation>
+    </message>
+    <message>
+        <source>Ordinal</source>
+        <translation>서수</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>라이브러리</translation>
+    </message>
+    <message>
+        <source>Exports</source>
+        <translation>익스포트</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>종류</translation>
+    </message>
+    <message>
+        <source>Cross references</source>
+        <translation>상호 참조</translation>
+    </message>
+    <message>
+        <source>Direction</source>
+        <translation>방향</translation>
+    </message>
+    <message>
+        <source>Location</source>
+        <translation>위치</translation>
+    </message>
+    <message>
+        <source>Search results</source>
+        <translation>검색 결과</translation>
+    </message>
+    <message>
+        <source>Context</source>
+        <translation>컨텍스트</translation>
+    </message>
+    <message>
+        <source>Bookmarks</source>
+        <translation>책갈피</translation>
+    </message>
+    <message>
+        <source>Description</source>
+        <translation>설명</translation>
+    </message>
+</context>
+<context>
+    <name>GuiSessionBroker</name>
+    <message>
+        <source>Session sharing disabled</source>
+        <translation>세션 공유 꺼짐</translation>
+    </message>
+    <message>
+        <source>Cannot create private session directory</source>
+        <translation>비공개 세션 디렉터리를 만들 수 없습니다</translation>
+    </message>
+    <message>
+        <source>Cannot open local session broker: %1</source>
+        <translation>로컬 세션 브로커를 열 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>Cannot write private session credentials</source>
+        <translation>비공개 세션 자격 증명을 기록할 수 없습니다</translation>
+    </message>
+    <message>
+        <source>Session sharing enabled</source>
+        <translation>세션 공유 켜짐</translation>
+    </message>
+</context>
+<context>
+    <name>McpConnectionManager</name>
+    <message>
+        <source>Disconnected</source>
+        <translation>연결 해제됨</translation>
+    </message>
+    <message>
+        <source>MCP message exceeds 8 MiB</source>
+        <translation>MCP 메시지가 8 MiB를 초과합니다</translation>
+    </message>
+    <message>
+        <source>Invalid MCP JSON-RPC message</source>
+        <translation>잘못된 MCP JSON-RPC 메시지</translation>
+    </message>
+    <message>
+        <source>MCP process error: %1</source>
+        <translation>MCP 프로세스 오류: %1</translation>
+    </message>
+    <message>
+        <source>MCP process exited (%1): %2</source>
+        <translation>MCP 프로세스가 종료되었습니다(%1): %2</translation>
+    </message>
+    <message>
+        <source>MCP request timed out: %1</source>
+        <translation>MCP 요청 시간 초과: %1</translation>
+    </message>
+    <message>
+        <source>Disconnect the running MCP process before reconnecting</source>
+        <translation>다시 연결하기 전에 실행 중인 MCP 프로세스의 연결을 해제하세요</translation>
+    </message>
+    <message>
+        <source>Choose an absolute MCP executable path</source>
+        <translation>MCP 실행 파일의 절대 경로를 선택하세요</translation>
+    </message>
+    <message>
+        <source>Connecting</source>
+        <translation>연결 중</translation>
+    </message>
+    <message>
+        <source>MCP HTTP requires HTTPS, or HTTP on localhost</source>
+        <translation>MCP HTTP에는 HTTPS 또는 localhost의 HTTP가 필요합니다</translation>
+    </message>
+    <message>
+        <source>Invalid authentication token</source>
+        <translation>잘못된 인증 토큰</translation>
+    </message>
+    <message>
+        <source>Cannot load CA certificate</source>
+        <translation>CA 인증서를 불러올 수 없습니다</translation>
+    </message>
+    <message>
+        <source>MCP request queue is full</source>
+        <translation>MCP 요청 대기열이 가득 찼습니다</translation>
+    </message>
+    <message>
+        <source>MCP outgoing message budget exceeded</source>
+        <translation>MCP 발신 메시지가 크기 제한을 초과했습니다</translation>
+    </message>
+    <message>
+        <source>MCP server is disconnected</source>
+        <translation>MCP 서버 연결이 해제되었습니다</translation>
+    </message>
+    <message>
+        <source>MCP session expired; reconnecting</source>
+        <translation>MCP 세션이 만료되어 다시 연결 중입니다</translation>
+    </message>
+    <message>
+        <source>MCP HTTP error %1: %2</source>
+        <translation>MCP HTTP 오류 %1: %2</translation>
+    </message>
+    <message>
+        <source>MCP event stream ended before its response</source>
+        <translation>응답 전에 MCP 이벤트 스트림이 종료되었습니다</translation>
+    </message>
+    <message>
+        <source>Invalid MCP HTTP response</source>
+        <translation>잘못된 MCP HTTP 응답</translation>
+    </message>
+    <message>
+        <source>Invalid MCP session identifier</source>
+        <translation>잘못된 MCP 세션 식별자</translation>
+    </message>
+    <message>
+        <source>MCP session identifier is too large</source>
+        <translation>MCP 세션 식별자가 너무 깁니다</translation>
+    </message>
+    <message>
+        <source>Invalid MCP event data</source>
+        <translation>잘못된 MCP 이벤트 데이터</translation>
+    </message>
+    <message>
+        <source>Invalid MCP protocol version</source>
+        <translation>잘못된 MCP 프로토콜 버전</translation>
+    </message>
+    <message>
+        <source>MCP request failed: %1</source>
+        <translation>MCP 요청 실패: %1</translation>
+    </message>
+    <message>
+        <source>MCP response has no result object</source>
+        <translation>MCP 응답에 결과 객체가 없습니다</translation>
+    </message>
+    <message>
+        <source>Unsupported MCP protocol version</source>
+        <translation>지원하지 않는 MCP 프로토콜 버전</translation>
+    </message>
+    <message>
+        <source>Connected</source>
+        <translation>연결됨</translation>
+    </message>
+    <message>
+        <source>Connected; tool list is partial</source>
+        <translation>연결됨. 도구 목록이 일부만 표시됩니다</translation>
+    </message>
+    <message>
+        <source>Connected; resource list is partial</source>
+        <translation>연결됨. 리소스 목록이 일부만 표시됩니다</translation>
+    </message>
+    <message>
+        <source>MCP tool reported an error</source>
+        <translation>MCP 도구가 오류를 보고했습니다</translation>
+    </message>
+    <message>
+        <source>Connect an MCP server first</source>
+        <translation>먼저 MCP 서버에 연결하세요</translation>
+    </message>
+    <message>
+        <source>Tool arguments exceed the size limit</source>
+        <translation>도구 인수가 크기 제한을 초과합니다</translation>
+    </message>
+    <message>
+        <source>Tool arguments must be a JSON object</source>
+        <translation>도구 인수는 JSON 객체여야 합니다</translation>
+    </message>
+</context>
+<context>
+    <name>Menus</name>
+    <message>
+        <source>&amp;File</source>
+        <translation>파일(&amp;F)</translation>
+    </message>
+    <message>
+        <source>&amp;Load file</source>
+        <translation>파일 불러오기(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Produce file</source>
+        <translation>파일 생성(&amp;P)</translation>
+    </message>
+    <message>
+        <source>&amp;Edit</source>
+        <translation>편집(&amp;E)</translation>
+    </message>
+    <message>
+        <source>Co&amp;mments</source>
+        <translation>주석(&amp;M)</translation>
+    </message>
+    <message>
+        <source>&amp;Jump</source>
+        <translation>이동(&amp;J)</translation>
+    </message>
+    <message>
+        <source>&amp;Search</source>
+        <translation>검색(&amp;S)</translation>
+    </message>
+    <message>
+        <source>&amp;View</source>
+        <translation>보기(&amp;V)</translation>
+    </message>
+    <message>
+        <source>Open &amp;subviews</source>
+        <translation>하위 보기 열기(&amp;S)</translation>
+    </message>
+    <message>
+        <source>&amp;Intermediate representations</source>
+        <translation>중간 표현(&amp;I)</translation>
+    </message>
+    <message>
+        <source>&amp;Graphs</source>
+        <translation>그래프(&amp;G)</translation>
+    </message>
+    <message>
+        <source>&amp;Toolbars</source>
+        <translation>도구 모음(&amp;T)</translation>
+    </message>
+    <message>
+        <source>&amp;Options</source>
+        <translation>옵션(&amp;O)</translation>
+    </message>
+    <message>
+        <source>&amp;Language</source>
+        <translation>언어(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Analysis</source>
+        <translation>분석(&amp;A)</translation>
+    </message>
+    <message>
+        <source>&amp;Windows</source>
+        <translation>창(&amp;W)</translation>
+    </message>
+    <message>
+        <source>&amp;Help</source>
+        <translation>도움말(&amp;H)</translation>
+    </message>
+</context>
+<context>
+    <name>NavigationBand</name>
+    <message>
+        <source>Library function</source>
+        <translation>라이브러리 함수</translation>
+    </message>
+    <message>
+        <source>Regular function</source>
+        <translation>일반 함수</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>명령어</translation>
+    </message>
+    <message>
+        <source>Data</source>
+        <translation>데이터</translation>
+    </message>
+    <message>
+        <source>Unexplored</source>
+        <translation>미탐색</translation>
+    </message>
+    <message>
+        <source>External symbol</source>
+        <translation>외부 심볼</translation>
+    </message>
+</context>
+<context>
+    <name>ProjectDatabase</name>
+    <message>
+        <source>Cannot read %1: %2</source>
+        <translation>%1을(를) 읽을 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>Cannot read %1</source>
+        <translation>%1을(를) 읽을 수 없습니다</translation>
+    </message>
+    <message>
+        <source>%1 uses database format %2, which this NeverD cannot update.</source>
+        <translation>%1은(는) 데이터베이스 형식 %2을(를) 사용하며, 이 NeverD에서는 업데이트할 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Cannot create %1</source>
+        <translation>%1을(를) 만들 수 없습니다</translation>
+    </message>
+    <message>
+        <source>%1 is not a NeverD database.</source>
+        <translation>%1은(는) NeverD 데이터베이스가 아닙니다.</translation>
+    </message>
+    <message>
+        <source>%1 does not exist.</source>
+        <translation>%1이(가) 없습니다.</translation>
+    </message>
+    <message>
+        <source>%1 uses database format %2, which this NeverD cannot read.</source>
+        <translation>%1은(는) 데이터베이스 형식 %2을(를) 사용하며, 이 NeverD에서는 읽을 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>%1 names an invalid input file.</source>
+        <translation>%1에 잘못된 입력 파일이 지정되어 있습니다.</translation>
+    </message>
+    <message>
+        <source>Cannot write %1: %2</source>
+        <translation>%1에 쓸 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>The input stored in %1 is damaged.</source>
+        <translation>%1에 저장된 입력이 손상되었습니다.</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>%1에 쓸 수 없습니다</translation>
+    </message>
+</context>
+<context>
+    <name>Representations</name>
+    <message>
+        <source>Pseudocode</source>
+        <translation>의사 코드</translation>
+    </message>
+    <message>
+        <source>LLVM C</source>
+        <translation>LLVM C</translation>
+    </message>
+    <message>
+        <source>LowIR</source>
+        <translation>LowIR</translation>
+    </message>
+    <message>
+        <source>MedIR</source>
+        <translation>MedIR</translation>
+    </message>
+    <message>
+        <source>HighIR</source>
+        <translation>HighIR</translation>
+    </message>
+    <message>
+        <source>LLVM IR</source>
+        <translation>LLVM IR</translation>
+    </message>
+</context>
+<context>
+    <name>Toolbars</name>
+    <message>
+        <source>File</source>
+        <translation>파일</translation>
+    </message>
+    <message>
+        <source>Navigation</source>
+        <translation>탐색</translation>
+    </message>
+    <message>
+        <source>Jump</source>
+        <translation>이동</translation>
+    </message>
+    <message>
+        <source>Search</source>
+        <translation>검색</translation>
+    </message>
+    <message>
+        <source>Views</source>
+        <translation>보기</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>분석</translation>
+    </message>
+</context>
+<context>
+    <name>WorkerTransport</name>
+    <message>
+        <source>Analysis worker exited (%1). Restart to continue.</source>
+        <translation>분석 프로세스가 종료되었습니다(%1). 계속하려면 재시작하세요.</translation>
+    </message>
+    <message>
+        <source>Analysis worker is not running.</source>
+        <translation>분석 프로세스가 실행되고 있지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Analysis request queue is full.</source>
+        <translation>분석 요청 대기열이 가득 찼습니다.</translation>
+    </message>
+    <message>
+        <source>Invalid analysis protocol frame.</source>
+        <translation>잘못된 분석 프로토콜 프레임입니다.</translation>
+    </message>
+    <message>
+        <source>Invalid analysis protocol JSON.</source>
+        <translation>잘못된 분석 프로토콜 JSON입니다.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ChooserModel</name>
+    <message>
+        <source>References are still being indexed…</source>
+        <translation>참조 색인을 생성하는 중입니다…</translation>
+    </message>
+    <message>
+        <source>Up</source>
+        <translation>위</translation>
+    </message>
+    <message>
+        <source>Down</source>
+        <translation>아래</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ChooserView</name>
+    <message>
+        <source>Quick filter</source>
+        <translation>빠른 필터</translation>
+    </message>
+    <message>
+        <source>Line %1 of %2</source>
+        <translation>줄 %1/%2</translation>
+    </message>
+    <message>
+        <source>1 item</source>
+        <translation>항목 1개</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n items</source>
+        <translation>
+            <numerusform>항목 %n개</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::CodeText</name>
+    <message>
+        <source>Decompiling…</source>
+        <translation>디컴파일하는 중…</translation>
+    </message>
+    <message>
+        <source>Function-level analysis</source>
+        <translation>함수 단위 분석</translation>
+    </message>
+    <message>
+        <source>rows linked to instructions</source>
+        <translation>명령어에 연결된 행</translation>
+    </message>
+    <message>
+        <source>%1
+Recognized library operation; click to show its code.</source>
+        <translation>%1
+인식된 라이브러리 연산입니다. 클릭하면 코드를 표시합니다.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::CodeView</name>
+    <message>
+        <source>Fold library code</source>
+        <translation>라이브러리 코드 접기</translation>
+    </message>
+    <message>
+        <source>Show each recognized library operation as a one-line summary; copy and export keep the full code.</source>
+        <translation>인식된 각 라이브러리 연산을 한 줄 요약으로 표시합니다. 복사와 내보내기에는 전체 코드가 유지됩니다.</translation>
+    </message>
+    <message>
+        <source>Keep this function while the disassembly moves on</source>
+        <translation>디스어셈블리가 이동해도 이 함수를 계속 표시</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ConnectionsDialog</name>
+    <message>
+        <source>Pending</source>
+        <translation>대기 중</translation>
+    </message>
+    <message>
+        <source>Completed</source>
+        <translation>완료됨</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>실패</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>취소됨</translation>
+    </message>
+    <message>
+        <source>Timed out</source>
+        <translation>시간 초과</translation>
+    </message>
+    <message>
+        <source>Disconnected</source>
+        <translation>연결 해제됨</translation>
+    </message>
+    <message>
+        <source>MCP Connections</source>
+        <translation>MCP 연결</translation>
+    </message>
+    <message>
+        <source>Current GUI session</source>
+        <translation>현재 GUI 세션</translation>
+    </message>
+    <message>
+        <source>Copy Credential Path</source>
+        <translation>자격 증명 경로 복사</translation>
+    </message>
+    <message>
+        <source>Transport</source>
+        <translation>전송 방식</translation>
+    </message>
+    <message>
+        <source>Arguments as JSON, for example [&quot;--help&quot;]</source>
+        <translation>JSON 형식의 인수. 예: [&quot;--help&quot;]</translation>
+    </message>
+    <message>
+        <source>Bearer token (optional)</source>
+        <translation>Bearer 토큰(선택 사항)</translation>
+    </message>
+    <message>
+        <source>Bearer token</source>
+        <translation>Bearer 토큰</translation>
+    </message>
+    <message>
+        <source>CA certificate path (optional)</source>
+        <translation>CA 인증서 경로(선택 사항)</translation>
+    </message>
+    <message>
+        <source>CA certificate path</source>
+        <translation>CA 인증서 경로</translation>
+    </message>
+    <message>
+        <source>Tools</source>
+        <translation>도구</translation>
+    </message>
+    <message>
+        <source>Resources</source>
+        <translation>리소스</translation>
+    </message>
+    <message>
+        <source>History</source>
+        <translation>기록</translation>
+    </message>
+    <message>
+        <source>Result</source>
+        <translation>결과</translation>
+    </message>
+    <message>
+        <source>Schema</source>
+        <translation>스키마</translation>
+    </message>
+    <message>
+        <source>Call Tool</source>
+        <translation>도구 호출</translation>
+    </message>
+    <message>
+        <source>Cancel Call</source>
+        <translation>호출 취소</translation>
+    </message>
+    <message>
+        <source>Select a resource or call a tool to inspect its response.</source>
+        <translation>리소스를 선택하거나 도구를 호출하여 응답을 확인하세요.</translation>
+    </message>
+    <message>
+        <source>Disable Sharing</source>
+        <translation>공유 끄기</translation>
+    </message>
+    <message>
+        <source>Enable Sharing</source>
+        <translation>공유 켜기</translation>
+    </message>
+    <message>
+        <source>Sharing is off. Enabling it grants local agents access to this session using its private credential file.</source>
+        <translation>공유가 꺼져 있습니다. 켜면 로컬 에이전트가 비공개 자격 증명 파일을 통해 이 세션에 접근할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Absolute path to server executable</source>
+        <translation>서버 실행 파일의 절대 경로</translation>
+    </message>
+    <message>
+        <source>Disconnect</source>
+        <translation>연결 해제</translation>
+    </message>
+    <message>
+        <source>Connect</source>
+        <translation>연결</translation>
+    </message>
+    <message>
+        <source>No server connected</source>
+        <translation>연결된 서버 없음</translation>
+    </message>
+    <message>
+        <source>No calls yet.</source>
+        <translation>아직 호출 기록이 없습니다.</translation>
+    </message>
+    <message>
+        <source>No items published by this server.</source>
+        <translation>이 서버에서 제공하는 항목이 없습니다.</translation>
+    </message>
+    <message>
+        <source>Connect to a server to list its catalog.</source>
+        <translation>서버에 연결하여 카탈로그를 확인하세요.</translation>
+    </message>
+    <message>
+        <source>Arguments must be a JSON array of strings.</source>
+        <translation>인수는 문자열로 이루어진 JSON 배열이어야 합니다.</translation>
+    </message>
+    <message>
+        <source>Tool Input Schema</source>
+        <translation>도구 입력 스키마</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DisassemblyView</name>
+    <message>
+        <source>Graph view requires a location inside a function.</source>
+        <translation>그래프 보기에는 함수 내부 위치가 필요합니다.</translation>
+    </message>
+    <message>
+        <source> (Synchronized with %1)</source>
+        <translation> (%1에 동기화됨)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::Expression</name>
+    <message>
+        <source>Unexpected character &apos;%1&apos;</source>
+        <translation>예기치 않은 문자 &apos;%1&apos;</translation>
+    </message>
+    <message>
+        <source>Empty expression</source>
+        <translation>식이 비어 있습니다</translation>
+    </message>
+    <message>
+        <source>Unexpected text after the expression</source>
+        <translation>식 뒤에 예기치 않은 텍스트가 있습니다</translation>
+    </message>
+    <message>
+        <source>Unknown name &apos;%1&apos;</source>
+        <translation>알 수 없는 이름 &apos;%1&apos;</translation>
+    </message>
+    <message>
+        <source>Missing &apos;)&apos;</source>
+        <translation>&apos;)&apos;가 없습니다</translation>
+    </message>
+    <message>
+        <source>Expected a value</source>
+        <translation>값이 필요합니다</translation>
+    </message>
+    <message>
+        <source>Division by zero</source>
+        <translation>0으로 나눌 수 없습니다</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExtensionsView</name>
+    <message>
+        <source>Import Manifest…</source>
+        <translation>매니페스트 가져오기…</translation>
+    </message>
+    <message>
+        <source>Run</source>
+        <translation>실행</translation>
+    </message>
+    <message>
+        <source>Unload</source>
+        <translation>언로드</translation>
+    </message>
+    <message>
+        <source>Import a declarative manifest to add analysis commands and views.</source>
+        <translation>선언형 매니페스트를 가져와 분석 명령과 보기를 추가하세요.</translation>
+    </message>
+    <message>
+        <source>Select an extension command to inspect its result.</source>
+        <translation>확장 기능 명령을 선택하여 결과를 확인하세요.</translation>
+    </message>
+    <message>
+        <source>Import extension manifest</source>
+        <translation>확장 기능 매니페스트 가져오기</translation>
+    </message>
+    <message>
+        <source>Manifests (*.json)</source>
+        <translation>매니페스트 (*.json)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::GraphView</name>
+    <message>
+        <source>Laying out graph…</source>
+        <translation>그래프 배치 중…</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::JumpDialog</name>
+    <message>
+        <source>Jump anywhere</source>
+        <translation>임의 위치로 이동</translation>
+    </message>
+    <message>
+        <source>Address, name or expression (0x401000, main, sub_401000+10)</source>
+        <translation>주소, 이름 또는 식 (0x401000, main, sub_401000+10)</translation>
+    </message>
+    <message>
+        <source>Enter jumps to the expression; arrows choose a match.</source>
+        <translation>Enter 키로 식 위치로 이동하고, 화살표 키로 일치 항목을 선택합니다.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>일치 항목 %n개</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Navigation band</source>
+        <translation>내비게이션 밴드</translation>
+    </message>
+    <message>
+        <source>Extensions</source>
+        <translation>확장 기능</translation>
+    </message>
+    <message>
+        <source>Hex View-1</source>
+        <translation>16진수 보기-1</translation>
+    </message>
+    <message>
+        <source>NeverD View-A</source>
+        <translation>NeverD 보기-A</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>함수</translation>
+    </message>
+    <message>
+        <source>Output</source>
+        <translation>출력</translation>
+    </message>
+    <message>
+        <source>Graph overview</source>
+        <translation>그래프 개요</translation>
+    </message>
+    <message>
+        <source>Background analysis: references and labels are indexed while you browse</source>
+        <translation>백그라운드 분석: 탐색하는 동안 참조와 레이블의 색인을 생성합니다</translation>
+    </message>
+    <message>
+        <source>Unsaved changes</source>
+        <translation>저장되지 않은 변경 사항</translation>
+    </message>
+    <message>
+        <source>Comments were changed. Save them before continuing?</source>
+        <translation>주석이 변경되었습니다. 계속하기 전에 저장하시겠습니까?</translation>
+    </message>
+    <message>
+        <source>Cannot jump to %1: %2</source>
+        <translation>%1(으)로 이동할 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>Load signature pack</source>
+        <translation>시그니처 팩 불러오기</translation>
+    </message>
+    <message>
+        <source>Signature packs (*.pat *.json);;All files (*)</source>
+        <translation>시그니처 팩 (*.pat *.json);;모든 파일 (*)</translation>
+    </message>
+    <message>
+        <source>Signature directory</source>
+        <translation>시그니처 디렉터리</translation>
+    </message>
+    <message>
+        <source>Mark position</source>
+        <translation>위치 표시</translation>
+    </message>
+    <message>
+        <source>Description:</source>
+        <translation>설명:</translation>
+    </message>
+    <message>
+        <source>Find in view</source>
+        <translation>보기에서 찾기</translation>
+    </message>
+    <message>
+        <source>Text:</source>
+        <translation>텍스트:</translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; was not found among the loaded lines</source>
+        <translation>불러온 줄에서 &apos;%1&apos;을(를) 찾을 수 없습니다</translation>
+    </message>
+    <message>
+        <source>History: %1 entries, cursor %2</source>
+        <translation>기록: 항목 %1개, 커서 %2</translation>
+    </message>
+    <message>
+        <source>AU: idle</source>
+        <translation>AU: 유휴</translation>
+    </message>
+    <message>
+        <source>AU: busy %1%</source>
+        <translation>AU: 작업 중 %1%</translation>
+    </message>
+    <message>
+        <source>AU: busy</source>
+        <translation>AU: 작업 중</translation>
+    </message>
+    <message>
+        <source>Down</source>
+        <translation>아래쪽</translation>
+    </message>
+    <message>
+        <source>Up</source>
+        <translation>위쪽</translation>
+    </message>
+    <message>
+        <source>Disk: %1GB</source>
+        <translation>디스크: %1GB</translation>
+    </message>
+    <message>
+        <source> · read-only</source>
+        <translation> · 읽기 전용</translation>
+    </message>
+    <message>
+        <source>%1 is not a function entry; only functions can be renamed.</source>
+        <translation>%1은(는) 함수 시작 주소가 아닙니다. 함수만 이름을 바꿀 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Rename function</source>
+        <translation>함수 이름 바꾸기</translation>
+    </message>
+    <message>
+        <source>Name of %1:</source>
+        <translation>%1의 이름:</translation>
+    </message>
+    <message>
+        <source>Please enter text</source>
+        <translation>텍스트를 입력하세요</translation>
+    </message>
+    <message>
+        <source>Comment at %1:</source>
+        <translation>%1의 주석:</translation>
+    </message>
+    <message>
+        <source>xrefs to %1</source>
+        <translation>%1에 대한 상호 참조</translation>
+    </message>
+    <message>
+        <source>xrefs from %1</source>
+        <translation>%1에서 나가는 상호 참조</translation>
+    </message>
+    <message>
+        <source>Place the cursor inside a function to decompile it.</source>
+        <translation>디컴파일하려면 커서를 함수 안에 두세요.</translation>
+    </message>
+    <message>
+        <source>Text search</source>
+        <translation>텍스트 검색</translation>
+    </message>
+    <message>
+        <source>Binary search</source>
+        <translation>바이너리 검색</translation>
+    </message>
+    <message>
+        <source>String:</source>
+        <translation>문자열:</translation>
+    </message>
+    <message>
+        <source>Hex bytes (e.g. 48 8B 05):</source>
+        <translation>16진수 바이트 (예: 48 8B 05):</translation>
+    </message>
+    <message>
+        <source>Search failed: %1 not found</source>
+        <translation>검색 실패: %1을(를) 찾을 수 없습니다</translation>
+    </message>
+    <message>
+        <source>Evaluate expression</source>
+        <translation>식 평가</translation>
+    </message>
+    <message>
+        <source>Expression:</source>
+        <translation>식:</translation>
+    </message>
+    <message>
+        <source>Hex: %1h
+Decimal: %2
+Octal: %3
+Signed: %4</source>
+        <translation>16진수: %1h
+10진수: %2
+8진수: %3
+부호 있는 값: %4</translation>
+    </message>
+    <message>
+        <source>About NeverD</source>
+        <translation>NeverD 정보</translation>
+    </message>
+    <message>
+        <source>&lt;h3&gt;NeverD %1&lt;/h3&gt;&lt;p&gt;Interactive disassembler and decompiler workbench.&lt;/p&gt;&lt;p&gt;Licensed under the GNU Affero General Public License v3. Icons are original NeverD artwork.&lt;/p&gt;&lt;p&gt;&lt;a href=&quot;https://github.com/NeverSight/NeverD&quot;&gt;github.com/NeverSight/NeverD&lt;/a&gt;&lt;/p&gt;</source>
+        <translation>&lt;h3&gt;NeverD %1&lt;/h3&gt;&lt;p&gt;대화형 디스어셈블러 및 디컴파일러 작업 공간입니다.&lt;/p&gt;&lt;p&gt;GNU Affero General Public License v3에 따라 라이선스가 부여됩니다. 아이콘은 NeverD에서 직접 제작한 아트워크입니다.&lt;/p&gt;&lt;p&gt;&lt;a href=&quot;https://github.com/NeverSight/NeverD&quot;&gt;github.com/NeverSight/NeverD&lt;/a&gt;&lt;/p&gt;</translation>
+    </message>
+    <message>
+        <source>Code font</source>
+        <translation>코드 글꼴</translation>
+    </message>
+    <message>
+        <source>Dark (Visual Studio Code Dark+)</source>
+        <translation>어둡게 (Visual Studio Code Dark+)</translation>
+    </message>
+    <message>
+        <source>Light (Visual Studio Code Light+)</source>
+        <translation>밝게 (Visual Studio Code Light+)</translation>
+    </message>
+    <message>
+        <source>Colors</source>
+        <translation>색상</translation>
+    </message>
+    <message>
+        <source>Theme:</source>
+        <translation>테마:</translation>
+    </message>
+    <message>
+        <source>General options</source>
+        <translation>일반 옵션</translation>
+    </message>
+    <message>
+        <source>Number of opcode bytes:</source>
+        <translation>옵코드 바이트 수:</translation>
+    </message>
+    <message>
+        <source>Show segment:address line prefixes</source>
+        <translation>줄 앞에 세그먼트:주소 접두사 표시</translation>
+    </message>
+    <message>
+        <source>Shortcuts</source>
+        <translation>단축키</translation>
+    </message>
+    <message>
+        <source>Action</source>
+        <translation>동작</translation>
+    </message>
+    <message>
+        <source>Shortcut</source>
+        <translation>단축키</translation>
+    </message>
+    <message>
+        <source>Command palette</source>
+        <translation>명령 팔레트</translation>
+    </message>
+    <message>
+        <source>Type a command</source>
+        <translation>명령을 입력하세요</translation>
+    </message>
+    <message>
+        <source>Create C file</source>
+        <translation>C 파일 만들기</translation>
+    </message>
+    <message>
+        <source>Create LST file</source>
+        <translation>LST 파일 만들기</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>%1에 쓸 수 없습니다</translation>
+    </message>
+    <message>
+        <source>Wrote %1</source>
+        <translation>%1에 저장했습니다</translation>
+    </message>
+    <message>
+        <source>Desktop saved</source>
+        <translation>데스크톱을 저장했습니다</translation>
+    </message>
+    <message>
+        <source>No saved desktop</source>
+        <translation>저장된 데스크톱이 없습니다</translation>
+    </message>
+    <message>
+        <source>NeverD: Quick start</source>
+        <translation>NeverD: 빠른 시작</translation>
+    </message>
+    <message>
+        <source>New</source>
+        <translation>새 파일</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>새 파일을 디스어셈블합니다</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation>시작</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>파일을 열지 않고 작업을 시작합니다</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>이전</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>선택한 최근 파일을 불러옵니다</translation>
+    </message>
+    <message>
+        <source>Recent files:</source>
+        <translation>최근 파일:</translation>
+    </message>
+    <message>
+        <source>Open binary or database</source>
+        <translation>바이너리 또는 데이터베이스 열기</translation>
+    </message>
+    <message>
+        <source>All files (*);;NeverD databases (*.nddb)</source>
+        <translation>모든 파일 (*);;NeverD 데이터베이스 (*.nddb)</translation>
+    </message>
+    <message>
+        <source>The saved desktop of this database could not be restored.</source>
+        <translation>이 데이터베이스에 저장된 데스크톱을 복원할 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>String options are unavailable: %1</source>
+        <translation>문자열 옵션을 사용할 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>String literals</source>
+        <translation>문자열 리터럴</translation>
+    </message>
+    <message>
+        <source>Encodings:</source>
+        <translation>인코딩:</translation>
+    </message>
+    <message>
+        <source>Minimum length:</source>
+        <translation>최소 길이:</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::OutputWindow</name>
+    <message>
+        <source>Command line language: NeverD expressions and commands. Type help for a list.</source>
+        <translation>명령줄 언어: NeverD 식 및 명령. 목록을 보려면 help를 입력하세요.</translation>
+    </message>
+    <message>
+        <source>Expression or command (help)</source>
+        <translation>식 또는 명령 (help)</translation>
+    </message>
+    <message>
+        <source>Commands:</source>
+        <translation>명령:</translation>
+    </message>
+    <message>
+        <source>  g &lt;expr&gt;          jump to an address or name</source>
+        <translation>  g &lt;expr&gt;          주소 또는 이름으로 이동</translation>
+    </message>
+    <message>
+        <source>  x [expr]          list references to the current item or expr</source>
+        <translation>  x [expr]          현재 항목 또는 expr에 대한 참조 나열</translation>
+    </message>
+    <message>
+        <source>  n &lt;name&gt;          rename the current function</source>
+        <translation>  n &lt;name&gt;          현재 함수 이름 바꾸기</translation>
+    </message>
+    <message>
+        <source>  c &lt;text&gt;          comment the current address</source>
+        <translation>  c &lt;text&gt;          현재 주소에 주석 추가</translation>
+    </message>
+    <message>
+        <source>  d [expr]          decompile the current or given function</source>
+        <translation>  d [expr]          현재 함수 또는 지정한 함수 디컴파일</translation>
+    </message>
+    <message>
+        <source>  f &lt;hex|&quot;text&quot;&gt;    search the binary</source>
+        <translation>  f &lt;hex|&quot;text&quot;&gt;    바이너리 검색</translation>
+    </message>
+    <message>
+        <source>  graph, hex        show the graph or hex view</source>
+        <translation>  graph, hex        그래프 보기 또는 16진수 보기 표시</translation>
+    </message>
+    <message>
+        <source>  analyze, save     whole-program analysis, save comments</source>
+        <translation>  analyze, save     전체 프로그램 분석, 주석 저장</translation>
+    </message>
+    <message>
+        <source>  &lt;expr&gt;            evaluate: 0x10, 10h, #16, names, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</source>
+        <translation>  &lt;expr&gt;            평가: 0x10, 10h, #16, 이름, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::Session</name>
+    <message>
+        <source>Starting analysis worker…</source>
+        <translation>분석 프로세스 시작 중…</translation>
+    </message>
+    <message>
+        <source>Incompatible analysis worker protocol.</source>
+        <translation>분석 프로세스 프로토콜이 호환되지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Analysis engine %1 ready</source>
+        <translation>분석 엔진 %1 준비 완료</translation>
+    </message>
+    <message>
+        <source>Select an existing binary file.</source>
+        <translation>기존 바이너리 파일을 선택하세요.</translation>
+    </message>
+    <message>
+        <source>Loading %1…</source>
+        <translation>%1 불러오는 중…</translation>
+    </message>
+    <message>
+        <source>%1: %2 %3, %4 functions</source>
+        <translation>%1: %2 %3, 함수 %4개</translation>
+    </message>
+    <message>
+        <source>Annotations reloaded</source>
+        <translation>주석 다시 불러옴</translation>
+    </message>
+    <message>
+        <source>Comments and history saved</source>
+        <translation>주석과 기록을 저장했습니다</translation>
+    </message>
+    <message>
+        <source>The edit was prepared for a session that is no longer open and was not applied.</source>
+        <translation>이 편집은 더 이상 열려 있지 않은 세션용으로 준비되었으므로 적용되지 않았습니다.</translation>
+    </message>
+    <message>
+        <source>Edits are paused while the pending save, open or close completes.</source>
+        <translation>보류 중인 저장, 열기 또는 닫기 작업이 완료될 때까지 편집이 일시 중지됩니다.</translation>
+    </message>
+    <message>
+        <source>Renamed %1 to %2</source>
+        <translation>%1의 이름을 %2(으)로 바꿨습니다</translation>
+    </message>
+    <message>
+        <source>Signature pack applied: %1 byte matches</source>
+        <translation>시그니처 팩 적용됨: 바이트 일치 %1건</translation>
+    </message>
+    <message>
+        <source>Whole-program analysis started; views stay available.</source>
+        <translation>전체 프로그램 분석을 시작했습니다. 보기는 계속 사용할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Whole-program analysis finished</source>
+        <translation>전체 프로그램 분석이 완료되었습니다</translation>
+    </message>
+    <message>
+        <source>Queued requests cancelled; a running engine call finishes unless the worker is restarted.</source>
+        <translation>대기 중인 요청을 취소했습니다. 실행 중인 엔진 호출은 분석 프로세스를 재시작하지 않는 한 끝까지 실행됩니다.</translation>
+    </message>
+    <message>
+        <source>%1 describes a different version of this file and was not used; saving replaces it.</source>
+        <translation>%1은(는) 이 파일의 다른 버전을 설명하므로 사용되지 않았습니다. 저장하면 대체됩니다.</translation>
+    </message>
+    <message>
+        <source>Could not restore %1 from the database.</source>
+        <translation>데이터베이스에서 %1을(를) 복원할 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Database saved: %1</source>
+        <translation>데이터베이스를 저장했습니다: %1</translation>
+    </message>
+    <message>
+        <source>Could not save the database: %1</source>
+        <translation>데이터베이스를 저장할 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>Could not update the database: %1</source>
+        <translation>데이터베이스를 업데이트할 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>Strings: %1, at least %2 characters</source>
+        <translation>문자열: %1, 최소 %2자</translation>
+    </message>
+</context>
 </TS>

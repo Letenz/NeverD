@@ -154,6 +154,16 @@ class WDKDriverFixtureTests(unittest.TestCase):
                 "Native/DriverSIMDSEH.OriginalDriverCatchesAndRetriesSSEFaults/"
                 f"whp_{contract}_{mode}" for mode in modes
             )
+        mutex_modes = re.findall(
+            r"^NEVERD_SEH_MUTEX_CASE\(\s*(\w+),",
+            (source.parent / "fixtures/driver_seh_mutex.def").read_text(), re.M,
+        )
+        self.assertTrue(mutex_modes)
+        for contract in ("driver", "checked"):
+            seh_required.update(
+                "Native/DriverMutexThread.NestedAndBlockedCallsRetainThreadOwnership/"
+                f"whp_{contract}_{mode}" for mode in mutex_modes
+            )
         scheduling_required = {
             test for test in required
             if test.startswith(("DriverSchedulingPolicy.",

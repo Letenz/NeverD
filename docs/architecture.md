@@ -919,7 +919,7 @@ Finite-value enumeration may observe feasible tuples without changing the proof 
 
 Frame-offset checks reuse the existing bounded `FiniteQueryCache` within each relation checker. Key construction and retained proofs are limited to `MaxSymbolicNodes` words, as in recovery. Keys preserve the full predicate and relative-expression relationships; only completed domains or proved nonuniqueness are reusable. Every access still checks address independence and frame bounds.
 
-The relation checker retains the latest completed model-free query answer and one completed SAT fact for exact predicate-reference reuse in the same immutable symbolic context and fixed solver configuration. Immediate repeated queries keep their existing uncharged reuse; a SAT hit after intervening queries still consumes one query request before avoiding re-encoding and search. Node limits are checked before either lookup. Unknown/Invalid results and models are never retained, and reuse ends with that checker. Different predicates still require proof.
+The relation checker caches completed model-free SAT/UNSAT answers by exact predicate reference within its actual immutable, append-only symbolic context and fixed solver configuration. A packed table uses two bits per node under `MaxSymbolicNodes` and is allocated only after a second query completes. Every lookup first checks the node limit. Immediate repeats keep the existing uncharged fast path; every other hit consumes one logical query before skipping encoding and search. Growth can temporarily retain both old and new allocations. Unknown/Invalid answers, models and mutable search state are never retained. Reuse ends with the checker, and an independent final checker starts empty. Different predicates still need complete proof.
 
 A native conditional branch shares one model-free encoder between its taken and fallthrough feasibility queries. Each query checks its complete predicate under separate assumptions; encoding reuse ends with that branch. Earlier branches therefore cannot accumulate clauses in a later branch’s search. The existing charged fresh retry applies only to encoding-gate exhaustion; search exhaustion and malformed inputs still refuse. Query, node and observation budgets remain enforced.
 
@@ -1420,6 +1420,12 @@ transfer ownership of execution, thread or callback state out of the model.
 
 The Linux kernel component also owns validation and lookup of explicit
 clock observations in `LinuxTimeOptions`, plus time-service output ordering.
+`LinuxCPUClock` decodes process CPU identities and validates their released GKI
+task observations. It resolves current-task aliases to the process group and
+checks foreign group leaders before output access. `LinuxClock` canonicalizes
+observations and rejects duplicate aliases. Process CPU samples stay fixed
+while the idle policy advances declared wall clocks; no execution accounting
+or host clock supplies an observation.
 The process wire parser validates representations and delegates value policy
 to that owner. Android reuses clock lookup and raw kernel services; Bionic
 alone owns errno conversion and `time`'s user-space destination store.
@@ -2174,6 +2180,8 @@ cancellation, full PnP/power or general hardware. API IRQL ceilings come from `K
 argument-dependent checks in the owning model.
 
 `KernelScheduler` owns live runtime priority and the shared priority/ready-order comparison. `KernelModelThreadPriorities` validates thread objects for `KeSetPriorityThread` and `KeQueryPriorityThread`; paused CPU contexts never copy priority state. `DriverSession` checks higher-priority readiness before callback synchronization and at API/event boundaries. See [driver scheduling](driver-scheduling.md) for the bounded policy and remaining limits.
+
+`KernelDispatcher` owns mutex recursion by logical thread. `KernelModel` captures the waiting thread for deferred `KeWaitForSingleObject` acquisition and uses the same identity for APC queries and `KeReleaseMutex`; nested stack retirement preserves ownership, while outermost return checks retain the lifetime guard.
 
 `KernelModelDeviceStack` keeps each device's driver owner, allocation, attachment neighbors, delete-pending state and internal references in one record. The guest `NextDevice` inventory and the host-owned attachment graph have different meanings. Namespace resolution retains the named lower device for `FILE_OBJECT` and reports, selects the current top for initial dispatch and READ/WRITE buffer flags, and captures a retained route. Detach/delete cannot expire devices still owned by a request or callback; the public `ReferenceCount` remains an open-handle count.
 
@@ -3507,7 +3515,7 @@ The Swift SDK catalog authenticates the generic Foundation NSRange initializer w
 
 The same descriptor-specific witness contract covers the fixed `String: StringProtocol` conformance. Four complete compiler queries preserve the direct String metadata, descriptor and null-initialized cache; the lazy accessor checks the cache, calls the three-pointer runtime with an undef third operand, stores the new witness with release ordering and returns the matching PHI value. Changed storage, prototypes, branches, PHI inputs or additional effects invalidate the contract. Only that undef operand is projected; observed entry arguments and effectful expressions remain intact.
 
-Each relation checker owns one `FiniteDomainEncoding` bound to its context and fixed solver settings. Repeated cold frame queries with the same complete predicate clone its pre-search encoding; a changed predicate replaces it. Projection, blocking clauses, learned state and models remain local to each query. Full finite enumeration, the final UNSAT check, logical query charges and all existing limits remain mandatory.
+Each relation checker owns one `FiniteDomainEncoding` bound to its context and fixed solver settings. Frame-offset and native indirect-target projections with the same complete predicate share its pre-search encoding; a changed predicate replaces this single template. Each projection receives an independent clone, and blocking clauses, learned state and models remain local to that query. Full finite enumeration, the final UNSAT check, logical query charges and all existing limits remain mandatory.
 
 Frame-offset queries prepare one complete, context-independent finite-proof key for lookup and later insertion. The movable token keeps exact DAG identity and projection widths; it never retains symbolic references or incomplete results. A live token adds one bounded temporary key beside the retained cache storage. Result validation, eviction, complete enumeration and all solver budgets are unchanged.
 
@@ -3527,3 +3535,35 @@ CAP_SYS_NICE/RLIMIT_NICE authority; unknown task state and group/user selection
 remain unsupported boundaries. The raw getter keeps kernel return encoding,
 and permission failures leave the task state unchanged. JSON vocabulary and
 diagnostics live in the existing process and Linux `.def` files.
+
+`LinuxUnavailableSyscalls.def` owns the public absence observation identifiers,
+input names, architecture numbers and fixed arities for selected optional
+kernel calls. `LinuxKernelOptions` is an explicit fixture observation; the
+shared Linux kernel service layer returns ENOSYS only when that observation
+declares a call absent. The catalogue does not supply an implementation or
+derive availability from an Android API level. JSON validation and profile
+admission happen before loading; unlisted and available-but-unmodeled calls
+retain their unsupported boundary.
+
+`LinuxGKIKernels.def` owns released Android GKI branch identifiers and the
+versioned `pidfd_open` flag mask, nonleader error and iovec import policy. JSON and C++ options
+select that contract
+explicitly; Android's Bionic API level does not infer it. `LinuxServices`
+dispatches the shared kernel call, and `LinuxFiles` owns process descriptors
+alongside regular files and standard streams. `LinuxOutput` supplies the same
+version-selected vector import/error ordering for captured output and before a
+pidfd's missing write operation. There
+is no host process lookup or parallel descriptor namespace. `LinuxKernelOptions`
+also owns an optional fixed catalogue of additional live guest tasks. A declared
+closed catalogue supplies lookup absence; an omitted one leaves foreign targets
+unsupported. Shared kernel validation rejects contradictory priority observations
+and cooperative Android thread mode before loading. `LinuxPIDFD` checks target
+class before reserving a descriptor, with release-specific nonleader errors.
+`LinuxPoll` uses that same descriptor owner for zero-timeout pidfd queries.
+It imports timeout and descriptor metadata before readiness selection, checks
+the declared descriptor limit, and commits only ordered revents fields through
+the shared user-copy policy. Its fixed live observations do not infer exits,
+blocking waits, temporary masks or other descriptor readiness.
+See
+[released GKI contracts](android-gki-kernels.md) for pinned source evidence and
+the limits of this implemented subset.

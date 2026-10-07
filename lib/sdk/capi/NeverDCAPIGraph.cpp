@@ -68,6 +68,24 @@ private:
 
 } // namespace
 
+namespace {
+/// Whether successor \p Index of a two-way native block is its taken branch.
+/// The CFG builder lists a conditional block's fall-through first, so the
+/// block's COND_BR target decides; without one, the first edge stays taken.
+bool isTakenSuccessor(const LowFunc &F, const LowBlock &B, size_t Index) {
+  for (auto It = B.Ops.rbegin(); It != B.Ops.rend(); ++It) {
+    if (It->Opcode != NdOp::COND_BR)
+      continue;
+    const int Succ = B.Succs[Index];
+    if (!It->NumInputs || !It->Inputs[0].isConst() || Succ < 0 ||
+        static_cast<size_t>(Succ) >= F.Blocks.size())
+      break;
+    return F.Blocks[Succ].StartAddr == static_cast<va_t>(It->Inputs[0].Offset);
+  }
+  return Index == 0;
+}
+} // namespace
+
 // ===--------------------------------------------------------------------===//
 // XRefs
 // ===--------------------------------------------------------------------===//
@@ -338,7 +356,7 @@ const char *neverd_cfg_json(neverd_session_t Sess, neverd_va_t FuncEntry) {
       Edge["from"] = B.Id;
       Edge["to"] = B.Succs[I];
       if (B.Succs.size() == 2)
-        Edge["type"] = (I == 0) ? "true" : "false";
+        Edge["type"] = isTakenSuccessor(*F, B, I) ? "true" : "false";
       else
         Edge["type"] = "unconditional";
       Edges.push_back(std::move(Edge));
@@ -472,8 +490,9 @@ const char *neverd_cfg_dot(neverd_session_t Sess, const char *InputPath,
     for (size_t J = 0; J < B.Succs.size(); ++J) {
       std::string Color = Styled ? "\"#569cd6\"" : "blue";
       if (B.Succs.size() == 2)
-        Color = (J == 0) ? (Styled ? "\"#4ec9b0\"" : "green")
-                         : (Styled ? "\"#f44747\"" : "red");
+        Color = isTakenSuccessor(*Target, B, J)
+                    ? (Styled ? "\"#4ec9b0\"" : "green")
+                    : (Styled ? "\"#f44747\"" : "red");
       OS << "  bb" << B.Id << " -> bb" << B.Succs[J] << " [color=" << Color
          << "];\n";
     }

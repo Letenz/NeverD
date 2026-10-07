@@ -26,6 +26,33 @@ namespace {
 
 using namespace neverd;
 
+// The first alias of an address names its function, so aliases keep their
+// symbol table order however many other functions the image has.
+TEST(ImageFunctionSymbols, ListAliasesInSymbolTableOrder) {
+  constexpr va_t AliasVA = 0x800;
+  constexpr int Aliases = 24;
+  for (int Others : {0, 40, 400}) {
+    BinaryImage Img;
+    for (int Index = 0; Index < Others; ++Index)
+      Img.Symbols.push_back(Symbol::makeFunc(0x10000 - Index * 0x10));
+    for (int Index = 0; Index < Aliases; ++Index) {
+      Symbol Alias = Symbol::makeFunc(AliasVA);
+      Alias.Name = "alias_" + std::to_string(Index);
+      Img.Symbols.insert(Img.Symbols.begin() + Img.Symbols.size() / 2,
+                         std::move(Alias));
+    }
+    std::vector<std::string> Order;
+    for (const Symbol *Sym : Img.getFunctionSymbols())
+      if (Sym->Addr == AliasVA)
+        Order.push_back(Sym->Name);
+    std::vector<std::string> Expected;
+    for (const Symbol &Sym : Img.Symbols)
+      if (Sym.Addr == AliasVA)
+        Expected.push_back(Sym.Name);
+    EXPECT_EQ(Order, Expected) << Others << " other functions";
+  }
+}
+
 constexpr uint64_t ImageBase = 0x400000;
 constexpr uint32_t TextOff = 0x100;
 constexpr uint32_t DataOff = 0x180;

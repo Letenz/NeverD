@@ -1,12 +1,15 @@
 # NeverD desktop workbench
 
-The desktop workbench uses Qt Quick/QML and a separate `neverd-worker` process.
-The worker links the same `libneverd` shared library used by the CLI through its
-public C ABI. Analysis, function discovery and decompilation remain in that
-library; Qt owns presentation and asynchronous request coordination. Keeping the
-worker separate lets analysis run without blocking or crashing the UI. The GUI
-executable does not link LLVM or the CLI, and no model service is required to
-browse binaries.
+The desktop workbench is a Qt Widgets application with a separate
+`neverd-worker` process. It starts in the classic interactive disassembler
+layout and keeps that layout's window names, menus and default shortcuts, so
+existing muscle memory carries over; colors follow the Visual Studio Code Dark+
+(default) and Light+ themes, and every icon is original NeverD artwork. The
+worker links the same `libneverd` shared library as the CLI through its public C
+ABI: analysis, function discovery and decompilation stay in that library, and Qt
+owns presentation and request coordination. A crash or a long engine call in the
+worker never blocks or takes down the window. The GUI executable does not link
+LLVM or the CLI, and no model service is needed to browse binaries.
 
 ## Build
 
@@ -14,7 +17,7 @@ The normal engine/CLI configuration is unchanged. Qt is optional and is searched
 only when `NEVERD_BUILD_GUI=ON`. To add the workbench to an engine build, use:
 
 ```sh
-cmake -S . -B build -DNEVERD_BUILD_GUI=ON -DCMAKE_PREFIX_PATH=/path/to/Qt/6.11.1/platform
+cmake -S . -B build -DNEVERD_BUILD_GUI=ON -DCMAKE_PREFIX_PATH=/path/to/Qt/6.8.3/platform
 cmake --build build --target neverd-gui
 ```
 
@@ -23,174 +26,225 @@ For fast desktop development, build against a matching existing shared engine:
 ```sh
 cmake -S tools/neverd-gui -B build-gui -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH=/path/to/Qt/6.11.1/platform \
-  -DNEVERD_ENGINE_LIBRARY=/path/to/libneverd.dylib
+  -DCMAKE_PREFIX_PATH=/path/to/Qt/6.8.3/platform \
+  -DNEVERD_ENGINE_LIBRARY=/path/to/libneverd.so
 cmake --build build-gui
 ctest --test-dir build-gui --output-on-failure
 build-gui/bin/neverd-gui /absolute/path/to/binary
 ```
 
-Requires C++20, CMake 3.24+, Qt 6.8+ Core/Gui/Qml/Quick/QuickControls2/Network/Svg/
-LinguistTools, GuiPrivate/QuickPrivate for the pinned KDDockWidgets frontend (Qt Test for tests), and Python 3.10+ for tests and the MCP adapter.
-The first configure downloads nlohmann/json 3.11.3 and KDDockWidgets 2.4.1 using pinned SHA-256 digests. Ship the exact Qt build used to compile its private headers.
-On Windows set `NEVERD_ENGINE_LIBRARY` to the runtime DLL and
-`NEVERD_ENGINE_IMPLIB` to its matching import `.lib`; make runtime dependencies
-available alongside the worker. On Linux use the matching `.so` file.
+Requires C++20, CMake 3.24+, Qt 6.8+ Core, Gui, Widgets, Network, Svg, Sql
+(with its SQLite driver), Concurrent and LinguistTools, the GuiPrivate and
+WidgetsPrivate headers for the pinned KDDockWidgets frontend (Qt Test for
+tests), and Python 3.10+ for tests and the MCP adapter. The first configure
+downloads nlohmann/json 3.11.3 and KDDockWidgets 2.4.1 using pinned SHA-256
+digests. Ship the exact Qt build used to compile its private headers. On Windows
+set `NEVERD_ENGINE_LIBRARY` to the runtime DLL and `NEVERD_ENGINE_IMPLIB` to its
+matching import `.lib`; make runtime dependencies available alongside the
+worker.
 
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
-worker never links the test engine. Existing CLI commands remain available;
-sidecar write failures now propagate as errors instead of reporting success.
+worker never links the test engine.
 
-## Use
+## Layout
 
-Open a native binary or supported bytecode file. Select a function, or enter a
-symbol or hexadecimal **virtual address** in the navigation bar. Addresses stay
-64-bit in C++ and cross JSON/QML as strings. The left list supports filtered,
-paged reads; the central pane shows disassembly, bytes or CFG; the adjacent pane
-shows C, LowIR, MedIR, HighIR or LLVM IR. Code pages retain exact engine output.
-Use the load-more controls for additional rows. Code text supports selection and
-copy; instruction selection and references use actual addresses.
+The first start shows the quick-start dialog (New, Go, Previous and the recent
+files) over the default desktop:
 
-Native LowIR and MedIR rows carry retained instruction anchors for linked
-selection when the engine provides the additive mapped-page API. Headers and
-synthetic operations have no invented address. HighIR, LLVM IR and VM source
-mapping remain explicitly unsupported; their text is still available. C and
-LLVMC expose precise library-region mappings where recognition and source
-observations provide complete evidence; other source rows stay unmapped. An anchor
-identifies an originating instruction, not every contributor to a transformed
-expression.
+- the navigation band across the top: the whole address space colored by
+  library functions, regular functions, instructions, data, unexplored bytes
+  and external symbols, with the current position; click or drag to navigate;
+- **Functions** on the left, paged from the worker so a million functions cost
+  only their visible rows; import thunks and recognized library functions are
+  tinted;
+- **NeverD View-A** in the center with **Hex View-1**, **Imports** and
+  **Exports** as tabs, and the status line under the listing;
+- **Output** across the bottom, with a command line for expressions and
+  workbench commands;
+- the status bar with the background analysis indicator (`AU: idle` or busy
+  with progress), the search direction and free disk space.
 
-Use **Analysis → Load Signature Pack…** to load library feature `.json` or byte
-signature `.pat` files. After analysis, the function list shows the session's
-qualified display name and retains raw linkage in its tooltip. Recognized C
-operations have **Fold all / Expand all** and **Details** controls. Click a folded
-summary or press Enter to restore the original source. Copy/export keep the
-complete text. Partial, overlapping and unknown regions stay expanded, and a
-new analysis revision clears stale folds. Details link evidence to original
-instruction addresses and rule/profile hashes. See [supported library profiles](library-recognition.md).
+Every window is a dock: drag tabs to split, stack or float them. **Windows →
+Save desktop** remembers an arrangement and **Reset desktop** returns to the
+default. **Graph overview** appears under the function list in graph view, and
+the pseudocode and IR windows open beside the disassembly.
 
-The CFG uses a worker layout and indexed viewport queries. A view receives at
-most 256 nodes and 512 edges, with visible counts and an explicit zoom/truncation
-indication; it does not create an object for every offscreen block. Snapshots
-support up to 20,000 nodes and 100,000 edges within the backend result budget.
-Only the legacy `cfg` preview request retains the 500-node/2,000-edge cap.
+## Views
 
-The engine's current decompilation API may first analyze the whole image. The
-window stays responsive while this runs in the worker. Cancel can remove queued
-work; a synchronous active engine call continues until it returns or the worker
-is terminated. Restart terminates the worker, reopens the binary and reloads saved edits.
-Opening another file, restarting, reloading or quitting with staged edits offers Save, Discard and Cancel before the session changes. Errors, unavailable results and
-budget limits remain visible instead of being presented as empty successful
-analysis.
+**Disassembly** is the whole image as one address-ordered listing in the classic
+format: segment headers, function headers with their attributes and stack
+variables, unwind frame markers, `proc`/`endp`, `loc_` and `locret_` labels,
+data items, alignment and cross-reference comments, and the classic instruction
+spellings (`jz`, `retn`, `[rbp+var_30]`, sizes only where no operand implies
+them), with `segment:address` prefixes and optional opcode bytes (**Options →
+General**). Stack variables are named through the frame pointer and, in 64-bit
+code, through the stack pointer wherever every path agrees on its distance
+from the frame (`[rsp+48h+var_30]`); each is as wide as its widest access. Only a window of lines around the viewport is held; the scroll bar
+maps to the linear address space. The arrow gutter draws branches, and clicking
+an identifier highlights every occurrence. Names the engine leaves generic take
+their classic forms in the listing, function list and jumps: import thunks after
+their import, the entry point `start`, and `main` as passed to the C runtime's
+start routine.
 
-Annotations use the existing `.neverd-annotations.json` sidecar and explicit Save.
-Renames use the existing `.neverd-renames.json` sidecar and are saved atomically.
-One worker owns a writable input through an operating-system advisory lock;
-headless MCP opens read-only. Current CLI/C ABI sidecar writes use the same lock
-and fail while another writer owns the input. Older binaries and external editors
-can bypass the lock, so saves also check for foreign edits. Reload discards
-staged notes; a missing sidecar is an empty saved state. Failed sidecar writes
-preserve the previous file through atomic replacement.
+**Graph view** (Space) lays the current function out in layers with the
+conditional (green/red) and unconditional edges routed around blocks; panning
+and zooming are local, and text is dropped at low zoom. The graph overview
+shows the whole function and the visible area.
 
-The UI starts in English and bundles all 11 project languages. Settings switches
-language without reloading the analysis; Arabic mirrors UI chrome while code and
-addresses stay left-to-right. Floating and tabbed dock layouts, window size and language preference are saved per user. Pin keeps a representation on one function while the instruction pane navigates independently.
+**Pseudocode** (F5, Tab) and **IR** windows show C, C through LLVM, LowIR,
+MedIR, HighIR or LLVM IR of the current function and follow the disassembly
+unless their lock is set. Rows mapped to instructions move the disassembly
+cursor. Recognized library operations in C can fold into one-line summaries:
+click a summary to expand it; copy and export always use the complete code.
 
-## Keyboard and reading workflow
+Strings are found in ASCII, UTF-8 and UTF-16LE by default: UTF-8 text such as
+Chinese, Japanese or Korean prints as itself (`db '中文字符串',0`), a string in a
+wide encoding under its label as `text "UTF-16LE", 'Wide text',0`, and an
+instruction that refers to a string quotes it in a comment (`; "Usage: %s"`).
+**Options → String literals** chooses the encodings searched, including
+UTF-16BE and UTF-32, and the minimum length; the Strings window shows each
+string's encoding in its Type column.
 
-The workbench retains Dark+ and adds the common IDA navigation defaults. These
-shortcuts operate on analysis content; typing in a search field or annotation
-dialog keeps normal text editing behavior. A read-only C/IR view remains an
-analysis view, so navigation, rename and comment commands stay available there.
+**Hex View-1** follows the disassembly cursor; while it is the active view, a
+jump (G or `g` on the command line) moves it and keeps it in front.
+**Imports**, **Exports**, **Names**, **Strings**, **Segments** and
+**Bookmarks** are choosers with a quick filter and sortable columns. **Jump
+anywhere** (G) takes an address, a name or an expression such as `main+0x10`
+and suggests names as you type. Cross references (X, Ctrl+X, Ctrl+J) list call
+(`p`), jump (`j`), read (`r`), write (`w`) and offset (`o`) references from the
+worker's reference index.
+
+The output window's command line evaluates expressions in hexadecimal by
+default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
+`hex`, `analyze` and `save`; `help` lists them. **Options → Show command palette**
+(Ctrl+Shift+P) searches every command.
+
+## Keyboard
 
 | Key | Action |
 | --- | --- |
-| G | Focus the address/symbol field; Enter navigates, Esc returns to disassembly. |
-| Esc / Ctrl+Enter | Previous / next navigation position. Platform Back/Forward also work. |
-| Space | Toggle linear disassembly and CFG while reading the machine view. |
-| F5 | Show recovered C and focus its text. |
-| Tab | Move between machine and C/IR content; ordinary controls retain Tab traversal. |
-| X | Show and focus incoming references. |
-| Ctrl+P | Focus function search. |
-| N / ; | Rename the selected function / edit the selected address comment. |
-| F6 / Shift+F6 | Cycle open panes in either direction. |
-| Platform Save | Save annotations. |
+| G | Jump to an address, name or expression |
+| Esc / Ctrl+Enter | Previous / next position (mouse Back/Forward work too) |
+| Enter / Alt+Enter | Follow the operand / follow it in a new view |
+| Space | Toggle graph and text view |
+| F5 / Tab | Pseudocode / switch between disassembly and pseudocode |
+| X / Ctrl+X / Ctrl+J | References to the operand / to the item / from the item |
+| N | Rename the function |
+| : or ; | Comment the address |
+| Alt+M / Ctrl+M | Mark a position / jump to a marked position |
+| Ctrl+P / Ctrl+L / Ctrl+S / Ctrl+E | Choose a function / name / segment / entry point |
+| Alt+T, Ctrl+T / Alt+B, Ctrl+B | Search text / bytes, and repeat |
+| Alt+Up / Alt+Down | Previous / next occurrence of the highlighted identifier |
+| Ctrl+Shift+Up / Ctrl+Shift+Down | Previous / next function |
+| Shift+F3, Shift+F4, Shift+F7, Shift+F12 | Functions, Names, Segments, Strings |
+| F6 / Shift+F6 | Next / previous window |
+| Ctrl+W | Save the database |
+| Ctrl+Shift+P | Command palette |
 
-Function, instruction and reference lists support arrows, Home/End and
-PageUp/PageDown. Enter activates the current row; platform Copy copies an
-instruction or reference as plain text. Current keyboard rows remain visible,
-and linked instruction selections reveal their address without loading the full
-function catalog. Holding an arrow key updates selection immediately while
-coalescing comment/reference queries; each pane has at most one derived request
-in flight, with comment and reference reads dispatched serially.
+Single-key shortcuts apply only while an analysis view has the keyboard focus,
+so typing in a field or dialog keeps normal text editing. **Options →
+Shortcuts** lists every command with its key.
 
-Instruction columns follow the configured font metrics, with horizontal
-scrolling where needed. Narrow references use two lines so both 64-bit addresses
-remain readable. View → Focus Panel temporarily expands a pane; selecting the
-same command again, or opening another pane, restores the saved arrangement.
+## Databases
 
-The shortcuts follow the [official IDA usage guide](https://docs.hex-rays.com/8.5/getting-started/basic-usage)
-and [shortcut reference](https://docs.hex-rays.com/user-guide/configuration/shortcuts).
-NeverD's multi-representation and pane navigation add to those familiar actions.
+**File → Save** (Ctrl+W) packs the project into a NeverD database next to the
+input: `ls` saves to `ls.nddb`. A database is one SQLite file holding the input
+itself, its comments, renames and edit history, and the workbench state
+(location, graph mode, bookmarks and desktop). Each save is a single
+transaction, so a database is never left half written; the input is stored in
+independently compressed chunks that compress and expand in parallel, and an
+unchanged input is not rewritten.
 
-## History and extensions
+Open a `.nddb` file directly to continue a project anywhere, even without the
+original binary: the input is unpacked into a per-database working directory
+and checked against its SHA-256 digest, and a damaged database is reported
+instead of loaded. Opening a binary whose `.nddb` sits beside it restores the
+saved location, bookmarks and desktop; when its comment files are missing they
+are restored from the database, and a database that describes a different
+version of the file is reported and left unused until the next save replaces
+it. Closing the window updates the saved location of an existing database.
 
-Annotation and rename commands have bounded undo/redo history, persisted alongside
-the binary in `.neverd-history.json`. The history is bound to the input hash and
-sidecar contents. A write-ahead journal recovers an interrupted save; foreign
-edits disable replay instead of silently applying commands to another state.
-Save or reload staged annotations before undoing a durable rename.
+## Edits, history and analysis
 
-The Extensions panel imports versioned JSON manifests with namespaced read-only
-query contributions. Imported labels and results are plain text; manifests
-cannot run scripts or register arbitrary engine operations. The registry lasts
-for the worker session. See the manifest schema in the worker protocol.
+Comments are staged and saved explicitly; renames commit at once (staged
+comments are saved first). Opening another file, restarting the worker or
+quitting with unsaved comments offers Save, Discard and Cancel. Edits prepared
+for a session that has since closed are refused, never applied to the new one.
+Annotation and rename commands have bounded undo/redo history bound to the input
+hash and sidecar contents; a write-ahead journal recovers an interrupted save,
+and foreign edits disable replay instead of silently applying commands to
+another state. One worker owns a writable input through an operating-system
+advisory lock.
 
-## MCP
+Opening a file never starts whole-program analysis. The listing, function list,
+references and graph come from the loader and from per-function work: a
+decompile, graph or IR request analyzes only the function it names. While the
+window is idle the worker first lets the engine add the functions its detector
+finds from the image alone (call targets, prologues and format tables), so
+binaries without unwind tables list their functions too, and then builds the
+reference index in parallel across all cores; references and labels appear when
+it finishes, and an explicit cross-reference request completes it at once.
+**Options → Analysis → Whole-program analysis** runs the full pipeline when
+wanted. Cancel removes queued work; a running engine call finishes unless the
+worker is restarted.
 
-The Connections panel starts connections only on request. It supports local stdio
-programs with an explicit argument list and Streamable HTTP with TLS verification,
-optional bearer credentials and a custom CA file. Tool schemas, arguments and
-results are inspectable. The bounded call history retains parameters, results and cancellation states; large server results use immutable paged resources. MCP is an interoperability client, not a model provider.
+## Languages, extensions and MCP
 
-The standalone, Qt-free adapter uses MCP **2025-11-25** newline JSON-RPC:
+The UI starts in English and bundles all 11 project languages; **Options →
+Language** switches immediately without reloading the analysis, and Arabic
+mirrors the window chrome while code and addresses stay left to right.
+
+**View → Open subviews → Extensions** imports versioned JSON manifests with namespaced
+read-only query contributions and runs them on the current address. Manifests
+cannot run scripts or register arbitrary engine operations. See the manifest
+schema in the [worker protocol](../tools/neverd-worker/PROTOCOL.md).
+
+**View → Open subviews → MCP connections** starts connections only on
+request. It supports local
+stdio programs with an explicit argument list and Streamable HTTP with TLS
+verification, optional bearer credentials and a custom CA file. Tool schemas,
+arguments and results are inspectable, and the call history keeps parameters,
+results and cancellation states. MCP is an interoperability client, not a model
+provider. The standalone, Qt-free adapter uses MCP **2025-11-25** newline
+JSON-RPC:
 
 ```sh
 tools/neverd-mcp/neverd-mcp --worker /absolute/path/to/neverd-worker \
   --file /absolute/path/to/binary
 ```
 
-For the current GUI project, enable session sharing in Connections and copy its
-credential-file path. Configure the external client as:
+To share the open GUI project, enable session sharing in MCP connections and
+copy its credential-file path for:
 
 ```sh
 tools/neverd-mcp/neverd-mcp --attach /absolute/path/to/credentials.json
 ```
 
 Attachment queries the same worker and revision, never starts another project
-writer, and ends when sharing or the GUI closes, or the active project changes. The credential file is private
-to the user. The adapter exposes bounded analysis queries; it does not expose
-arbitrary core/plugin execution. See [MCP details](../tools/neverd-mcp/README.md)
-and [worker protocol](../tools/neverd-worker/PROTOCOL.md).
+writer, and ends when sharing or the GUI closes or the project changes. See
+[MCP details](../tools/neverd-mcp/README.md).
 
 ## Packaging and qualification
 
-`cmake --install build-gui --prefix dist` invokes Qt's QML deployment script.
-The matching engine and its dependencies must be included in a distributable
-package. macOS can create a new ad-hoc signed development bundle with:
+`cmake --install build-gui --prefix dist` invokes Qt's deployment script for
+the Widgets, Svg and Sql plugins. The matching engine and its dependencies must
+be included in a distributable package. macOS can create an ad-hoc signed
+development bundle with:
 
 ```sh
 python3 tools/neverd-gui/package_macos.py --build-dir build-gui \
   --engine /absolute/path/to/libneverd.dylib \
-  --qt-dir /path/to/Qt/6.11.1/macos --output dist/NeverD.app
+  --qt-dir /path/to/Qt/6.8.3/macos --output dist/NeverD.app
 ```
 
-This produces an ad-hoc signed development application, not a notarized release.
-Test native dialogs, IME, accessibility, mixed-DPI screens and platform packaging
-on each target platform before a public release. Automated offscreen tests do not
-prove those properties. Performance measurements and unresolved issue #108
-acceptance items are recorded in the implementation plan and benchmark report;
-proposed latency targets must not be described as measured results.
+This produces an ad-hoc signed development application, not a notarized
+release. Test native dialogs, IME, accessibility, mixed-DPI screens and platform
+packaging on each target platform before a public release; automated offscreen
+tests do not prove those properties. `--startup-benchmark` writes startup
+milestones from main entry to the first painted listing of the opened file; see
+the [benchmark harness](../tools/neverd-gui/benchmarks/README.md).
 
-See the [packaging guide](../tools/neverd-gui/PACKAGING.md) for dependency and license inputs, and [qualification record](gui-qualification.md) for measured evidence and remaining issue #108 criteria.
+See the [packaging guide](../tools/neverd-gui/PACKAGING.md) for dependency and
+license inputs, and the [qualification record](gui-qualification.md) for
+measured evidence and remaining release criteria.

@@ -255,7 +255,9 @@ call sites, backward calls, malformed encodings and jumps that need a veneer.
 
 `HighIntegerSignedness.*` in `NeverDHighControlFlowTests` checks the late pass that declares each register or temporary local signed or unsigned by what most of its uses read. Wrapping arithmetic, logical shifts and unsigned comparisons favor unsigned; signed comparisons, signed division, arithmetic shifts and sign extension favor signed; a local with any non-integer use keeps its types. The emitted C runs at `-O0` and `-O2` with undefined-behavior traps against independent reference arithmetic, including a signed comparison of a local that became unsigned.
 
-`HighValueForward.*` in `NeverDHighControlFlowTests` checks when the HighC writer may fold a single-use value into its use. A loop condition keeps a value whose variables the loop assigns, since one name can denote several SSA values; a reloaded frame slot keeps its value across a store to that slot and folds past a store to another slot. Each case runs at `-O0` and `-O2` with undefined-behavior traps.
+`HighValueForward.*` in `NeverDHighControlFlowTests` checks when the HighC writer may fold a single-use value into its use. A loop condition keeps a value whose variables the loop assigns, since one name can denote several SSA values; a reloaded frame slot keeps its value across a store to that slot and folds past a store to another slot. A copy keeps its value when its source is reassigned before the use. Each case runs at `-O0` and `-O2` with undefined-behavior traps.
+
+`HighCIntegerConversion.*` in `NeverDHighControlFlowTests` checks the integer conversions the HighC writer leaves to C. A conversion inside an operand that keeps the bytes an outer conversion keeps prints no cast of its own; an assignment to a declared integer local and a return convert implicitly, and a literal is spelled as the value it converts to, while a pointer keeps its explicit conversion. Stores convert like assignments, and a zero-extended argument to a typed wider parameter keeps its extension. Each case runs at `-O0` and `-O2` with undefined-behavior traps against reference arithmetic.
 
 Source projection also revalidates variadic object lists after this cleanup: empty instruction anchors are accepted, while hidden effects or control transfers are rejected. Synchronized cleanup accepts a single `int64_t` or `uint64_t` view of the same saved receiver; narrowing, floating conversions, address arithmetic and reassignment remain rejected. Foundation object sets and normal/exceptional unlock traces run at both `-O0` and `-O2`.
 
@@ -1162,6 +1164,8 @@ Windows asynchronous support.
 
 `DriverThreadPriorityTests.cpp` runs the original `driver_thread_priority.c` fixture on explicit Unicorn/KVM/WHP in driver and checked contracts. Cases verify queued and blocked reprioritization, mid-quantum event/timer wakes, equal-priority rotation, DISPATCH_LEVEL masking and timer progress while lower-priority work is starved. A paired counter-loop experiment proves that priority preemption preserves the exact remaining quantum. Model tests cover signed ABI arguments, rejected mutations, retained exited objects, nested identity and detached stack reuse. Native cases are mandatory in `NativeDriverTests.def`; unavailable transports remain explicit local skips.
 
+`DriverMutexThreadTests.cpp` executes four original WDK modes from `driver_seh_mutex.def`: recursion from an SEH filter, ownership acquired by a filter or exceptional finally, and a blocked filter resumed after another system thread releases the mutex. Unicorn/KVM/WHP driver and checked contracts cover normal/active-CFG images, preferred/rebased addresses and cooperative/1/17-instruction quanta. Model tests also check APC suppression after nested stack retirement, wrong-thread release and the outermost return guard; KVM/WHP outcomes are mandatory in `NativeDriverTests.def`.
+
 `DriverAsyncTests.cpp` submits two pending WDM IOCTLs on independent file
 objects with `defer_callback_drain`, then checks that both dispatches precede
 either worker and that each IRP completes with its own output. A second batch
@@ -1375,7 +1379,7 @@ The WDK fixture also initializes a `KSEMAPHORE` at count zero, releases two unit
 
 The WDK fixture's inline `KeRaiseIrqlToDpcLevel`, `KeRaiseIrqlToSynchLevel` and `KeRaiseIrql` use actual `KfRaiseIrql` / `KeLowerIrql` imports. It observes CR8 through `KeGetCurrentIrql` after nested DISPATCH, APC and synchronization-level transitions in normal/active-CFG preferred/rebased images, C API/CLI and Python. Model tests reject lower without a saved raise, wrong LIFO order, cross-execution restoration, a held spin lock and return with an unmatched raise. No instruction-level interrupt preemption is inferred.
 
-The same genuine WDK fixture uses a resident `KMUTEX` through `KeInitializeMutex`, `KeWaitForMutexObject` (the WDK `KeWaitForSingleObject` macro), `KeReadStateMutex` and `KeReleaseMutex`, checking initial signaled state, recursive acquisition, signed previous-state returns and final release. A second mode catches `STATUS_MUTANT_NOT_OWNED` from an unowned release. Native normal/active-CFG preferred/rebased, C API/CLI and Python paths run both modes. Model tests check owner isolation, incorrect IRQL, waiter-frame ownership, a held object's storage and callback-return lifetime, and unsupported `Wait=TRUE` handoff.
+The same genuine WDK fixture uses a resident `KMUTEX` through `KeInitializeMutex`, `KeWaitForMutexObject` (the WDK `KeWaitForSingleObject` macro), `KeReadStateMutex` and `KeReleaseMutex`, checking initial signaled state, recursive acquisition, signed previous-state returns and final release. A second mode catches `STATUS_MUTANT_NOT_OWNED` from an unowned release. Native normal/active-CFG preferred/rebased, C API/CLI and Python paths run both modes. Model tests check owner isolation, incorrect IRQL, waiting-thread ownership, a held object's storage and callback-return lifetime, and unsupported `Wait=TRUE` handoff.
 
 The genuine WDK neither fixture also creates a system thread with `PsCreateSystemThread`, references its opaque object with `ObReferenceObjectByHandle`, closes the handle with `ZwClose`, and waits for `PsTerminateSystemThread` to signal it. The thread observes system PID 4, kernel mode and `PASSIVE_LEVEL`; code after termination does not execute. Native normal/active-CFG preferred/rebased, C API/CLI and Python paths run this case. A model test checks that closing the handle does not retire a referenced object, a normal start-routine return is rejected, and waiting/dereferencing retire the object in order. APC delivery and non-system process handles are outside this profile.
 
@@ -2411,9 +2415,11 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 46 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 226 WHP outcomes from all 113 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 46 WDK images and 40 request scenarios, each at original and rebased addresses. Together with the 4884 CPU checks and 17 SEH regressions and 77 scheduling checks, 5204 outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build. `4884 CPU + 226 WHP + 17 SEH + 77 scheduling = 5204`.
+`NativeDriverTests.def` requires 226 WHP outcomes from all 113 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 46 WDK images and 40 request scenarios, each at original and rebased addresses. Together with the 4887 CPU checks and 25 SEH regressions and 77 scheduling checks, 5215 outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build. `4887 CPU + 226 WHP + 25 SEH + 77 scheduling = 5215`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
+
+`WhpResourcePolicy.def` gives WHP x64 and ARM64 resource creation a separate `30 s` allowance before ISA validation. Synchronous host setup is checked against that deadline before publishing the resource. Instruction probes and ordinary guest deadlines retain their own limits. `WhpResourceTests.cpp` checks typed initialization interruptions, cause diagnostics, disposal after cancellation, host-error priority and unchanged ordinary execution deadlines.
 
 `X64PopFlagsTests.cpp` checks both privileges and `driver-strict`: all 256 admitted flag images against two initial states, nine encodings, all 64 input bits, read-only/executable aliases, cross-page faults and repair, observer cancellation/failure, rejected device stacks and subsequent native instruction boundaries. `X64PopFlagsOracle` executes original instructions independently on x64 hosts, checking CPL3/IOPL0 and exact stack consumption. `driver_resource_flags.def` makes the original WDK resource driver set, clear and restore flags with both operand widths. These tests preserve complete integer/control/x87/SSE state; they do not admit guest TF/NT/AC/ID or establish native ARM64 execution.
 
@@ -2543,6 +2549,12 @@ provider lifetime, absent inputs, fault ordering and unsupported partial
 copies. Linux process fixtures execute the raw x64/ARM64 service ABIs at O0/O2
 through available backends. Process JSON tests cover malformed and lossless
 inputs; C API/CLI and Python tests preserve dynamic names and exact output.
+Released GKI CPU clock cases compare raw and Bionic calls across all eight
+source pins, including current-process aliases, distinct PROF/VIRT/SCHED
+observations, low-32-bit arguments, target errors before pointer faults and
+unchanged canaries. The cooperative syscall fixture checks that the current
+nonleader TID still names its group's CPU sample. Linux raw callers verify that
+idle advancement changes wall clocks while leaving CPU samples fixed.
 These are deterministic model checks, not an Android device or native Linux
 clock comparison. Unsupported native transports remain explicit skips.
 
@@ -2880,6 +2892,8 @@ Memory-file reads cover empty ranges at the user limit and original-count signed
 
 `NeverDOwnInteriorCallTests` covers direct x64 calls to a label inside the caller's own unwind range. A call made only for the return address it pushes is lifted as a push and a jump, and the emitted C for the straight and looped cases runs at `-O0` and `-O2` under AddressSanitizer and undefined-behavior traps. A target whose returns pop that call's own return address stays an ordinary call. A return that may pop an address the function pushed itself, after an unbalanced restore or a stack switch, refuses the function and names that return.
 
+`NeverDSysVCallContractTests` covers x86-64 System V call contracts on the shapes of QtXml's `QDomNode::save` and `QDomNode::isDocument`. A direct callee whose summary reads an argument register receives the caller's value of it, including an incoming `this` passed through untouched; a virtual call takes the object a dominating block loaded into `RDI`; a method that returns without writing `RAX` on one path while only passing callee results on the others is void; and a byte written to `AL` before a comparison chain is the value returned on every path. The emitted programs run at `-O0` and `-O2` under AddressSanitizer and undefined-behavior traps.
+
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` checks the CoreImage provider, CIImage factory, complete 48-byte logical record and x2 pointer, rejecting missing or wrong providers, x86_64 and conflicting declarations. `ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` retains the original call independently of result assignments at the same machine address. `RejectsChangedCopyCallBodyAndCurrentImage` rejects 24 edits to receipts, arguments, stores, frames, metadata, imports, duplicate calls and saved IR, including consistent edits to both MedIR and HighIR. `GeneratedCExecutesAgainstIndependentPhysicalCopyABI` executes unchanged generated C at O0/O2 on ARM64 against a callee accepting the independently compiler-observed x2 pointer, checking all six floating bit patterns, selector/receiver identity, one evaluation, returned object, legal copy writes, unchanged inputs and boundary guards. Other hosts skip this physical ABI execution test.
 
 `ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration` rejects a cached ABI that disagrees with the current nonempty method encoding or selector; declaration-only clients retain their existing contract.
@@ -2989,6 +3003,12 @@ The MainActor fixture checks the complete fixed metadata/static-table flow and r
 
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` checks mixed root and undecided variables, nondecision roots, copying a copy, destroyed sources, later variable growth, both default phases, bounded interruption and resume, conflicts and restarts. Complete models and all search counters must match a fresh encoding.
 
+`ContextFiniteProofs.*` checks context and owner isolation, owner replacement, token moves, exact predicates and ordered projections, append-only growth, completed and incomplete results, storage ceilings and LRU eviction. Frame tests require the final uniqueness query before caching and preserve symbolic-node limits on hits.
+
+`CompletedQueryCache.*` checks full byte-domain answers, every packed slot, growth, context and owner isolation, invalid and incomplete inputs, and exact storage limits. Native branch regressions retain fixed logical query costs and exact/one-short budgets even when complete answers avoid backend work.
+
+`BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` check repeated native target chains with branch changes and symbolic frame stores, fixed logical costs, exact/one-short query budgets, invalid target limits, gate exhaustion and wrong terminal observations. Interleaved frame and correlated target projections also preserve complete tuples, observer order and incomplete-result refusal across predicate replacement.
+
 `LinuxPriorityTests.cpp` checks explicit task state, thread isolation, missing
 observations, malformed JSON, profile admission and refusal effects.
 Independent x64/AArch64 raw callers at O0/O2 verify nice clamping, 32-bit syscall
@@ -2997,3 +3017,49 @@ getpriority encoding. Run the `LinuxPriority.*` and
 `Backends/LinuxPriorityProcess.*` cases in `NeverDLinuxProcessTests`, then the
 complete Linux process, Android native and process public suites for shared
 kernel/JSON changes. Absent optional native transports remain explicit skips.
+
+`LinuxKernelAvailability.*` validates explicit absence inputs and profile
+admission. `Backends/LinuxKernelProcess.*` uses independent x64/AArch64 O0/O2
+raw callers to verify ENOSYS before argument validation and continued refusal
+for unspecified or unrelated calls. The Android syscall fixture compares raw
+SVC with Bionic `syscall`, preserving distinct raw return/errno effects.
+Run these focused tests, the full Linux process and public process suites,
+and Android syscall, native-entry and signal suites for availability changes.
+
+`LinuxPIDFD.*` checks released GKI branch parsing and rejects invalid enum values
+or an absent-pidfd observation combined with GKI before image loading. It also
+rejects malformed, excessive and contradictory task catalogues before loading.
+`Backends/LinuxPIDFDProcess.*` runs independent O0/O2 x64/AArch64 callers for all
+eight branches, including flag differences, shared file/pidfd allocation,
+limits, close/reuse, closed task lookup, versioned nonleader errors and
+scalar/vector error ordering. Task cases test missing targets and nonleaders
+before FD exhaustion, thread flags and an empty catalogue with implicit self.
+The versioned vector cases
+contrast an early negative length with inaccessible later metadata, and a single
+buffer whose original extent crosses the user limit while its capped extent fits.
+They check pidfds and both captured streams, with O0/O2 callers. Android's
+`ReleasedGKIProcessDescriptorsShareRawAndBionicOwnership` cases repeat the
+shared descriptor and errno behavior across all six compiled relocation
+profiles; `ReleasedGKIVectorImportRetainsRawAndBionicErrors` repeats the vector
+ordering and cap differences through raw and Bionic transports.
+`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` repeats the catalogue
+and exhaustion cases while checking raw errors and Bionic's preserved errno.
+`ProcessCPUClocksRetainIdentityAndIdleSeparation` and
+`ProcessCPUClocksKeepMissingObservationBoundaries` check encoded CPU identities,
+unknown observations, target validation, aliases and idle behavior. The
+`LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle` unit case
+checks the shared observation owner, and input cases reject aliases,
+unobserved/nonleader targets and negative CPU time before loading.
+`ZeroTimeoutPollRetainsReadinessAndOrderedCopies` executes O0/O2 raw callers
+for every released GKI branch. It checks live/negative/closed entries, duplicate
+ready counts, argument narrowing, timeout/mask ordering, read-only zero
+timespecs, metadata-before-readiness admission and earlier revents before a
+later write fault. `ZeroTimeoutPollKeepsUnobservedBoundaries` retains unknown
+kernel, limit, masks, waits and descriptor readiness. Android's
+`ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` checks the same table and
+errno ownership across all six packing profiles.
+Run these first,
+then the complete Linux process, Android native and
+public process suites when changing shared kernel or descriptor semantics.
+These tests execute the model; they do not boot the eight pinned GKI kernels.
+See [released GKI contracts](android-gki-kernels.md).

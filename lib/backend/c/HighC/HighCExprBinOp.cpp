@@ -20,6 +20,9 @@ namespace neverd {
 
 namespace {
 
+/// The precedence of a cast expression, above every binary operator.
+constexpr int kCastPrecedence = 11;
+
 int getOpPrecedence(NdOp Op) {
   switch (Op) {
   case NdOp::BOOL_OR:
@@ -433,8 +436,10 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
         const std::string Value =
             exprStr(*E.Operands[0]) + Symbol + exprStr(*E.Operands[1]);
         if (E.Type->IsSigned)
-          return "__builtin_bit_cast(" + typeToC(E.Type) + ", " + Value + ")";
-        return ParentPrec >= getOpPrecedence(E.Op) ? "(" + Value + ")" : Value;
+          return signedCarrierResult(E, Value, getOpPrecedence(E.Op), Size);
+        return typedText(
+            E, ParentPrec >= getOpPrecedence(E.Op) ? "(" + Value + ")" : Value,
+            Size, false);
       }
     }
     const auto IntegerWidth = [](uint16_t Width) {
@@ -477,25 +482,27 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                      : std::nullopt;
         return static_cast<int64_t>(Bits | ~Mask);
       };
+      const int OperandPrec = getOpPrecedence(E.Op);
       auto Operand = [&](const ExprPtr &Value) {
-        const auto Bits = typeToC(NdType::makeInt(Value->Type->Size, false));
-        if (Value->Type->Size == CarrierSize &&
-            DeclaredUnsignedLocal(Value, CarrierSize))
-          return exprStr(*Value);
+        const uint16_t Width = Value->Type->Size;
         // A zero-extension printed as `(T)(uintN_t)x` only needs the carrier
         // in place of T.
         if (Value->Kind == ExprKind::UnaryOp && Value->Op == NdOp::INT_ZEXT &&
-            Value->Type->Size == CarrierSize && !typedCallResult(Value.get()) &&
+            Width == CarrierSize && !typedCallResult(Value.get()) &&
             !Value->Operands.empty() && Value->Operands[0] &&
             Value->Operands[0]->Kind != ExprKind::Const &&
             Value->Operands[0]->Type &&
             Value->Operands[0]->Type->Size < CarrierSize)
-          return "(" + Carrier + ")(" +
-                 typeToC(
-                     NdType::makeInt(Value->Operands[0]->Type->Size, false)) +
-                 ")" + c_memory::castOperand(exprStr(*Value->Operands[0]));
-        return "(" + Carrier + ")" + (Carrier == Bits ? "" : "(" + Bits + ")") +
-               c_memory::castOperand(exprStr(*Value));
+          return "(" + Carrier + ")" +
+                 integerView(
+                     *Value->Operands[0],
+                     NdType::makeInt(Value->Operands[0]->Type->Size, false),
+                     99);
+        if (Width == CarrierSize)
+          return integerView(*Value, NdType::makeInt(Width, false),
+                             OperandPrec);
+        return "(" + Carrier + ")" +
+               integerView(*Value, NdType::makeInt(Width, false), 99);
       };
       // The literal keeps the carrier's width: a 32-bit carrier must not
       // meet a wider literal type.
@@ -538,9 +545,13 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       if (!AtCarrier)
         Value = "(" + Unsigned + ")(" + Value + ")";
       if (E.Type->IsSigned)
-        return "__builtin_bit_cast(" + typeToC(E.Type) + ", " + Value + ")";
-      return AtCarrier && getOpPrecedence(Op) <= ParentPrec ? "(" + Value + ")"
-                                                            : Value;
+        return signedCarrierResult(
+            E, Value, AtCarrier ? getOpPrecedence(Op) : kCastPrecedence, Size);
+      return typedText(E,
+                       AtCarrier && getOpPrecedence(Op) <= ParentPrec
+                           ? "(" + Value + ")"
+                           : Value,
+                       Size, false);
     }
   }
 
@@ -652,6 +663,12 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     if (E.Operands[1]->Kind == ExprKind::Const)
       ByteOff = E.Operands[1]->ConstVal;
     std::string Ty = typeToC(E.Type);
+    if (ByteOff == 0 && E.Type && E.Type->Kind == NdTypeKind::Int &&
+        !E.Type->IsEnum && E.Operands[0]->Type &&
+        E.Operands[0]->Type->Kind == NdTypeKind::Int &&
+        E.Type->Size <= E.Operands[0]->Type->Size)
+      return typedText(E, integerView(*E.Operands[0], E.Type, ParentPrec),
+                       E.Type->Size, E.Type->IsSigned);
     if (ByteOff == 0)
       return "(" + Ty + ")" + Src;
     return "(" + Ty + ")(" + Src + " >> " + std::to_string(ByteOff * 8) + ")";
@@ -727,10 +744,15 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     // a compound literal receives the unused arithmetic result.
     const auto Size = E.Operands[0]->Type->Size;
     const auto SignedType = typeToC(NdType::makeInt(Size, true));
-    const auto UnsignedType = typeToC(NdType::makeInt(Size, false));
     const auto SignedBits = [&](const HighExpr &Operand) {
-      return "__builtin_bit_cast(" + SignedType + ", (" + UnsignedType + ")(" +
-             exprStr(Operand) + "))";
+      // An operand printed as the signed type already is that value.
+      const HighExpr &Source = lowBytesSource(Operand, Size);
+      std::string Text = exprStr(Source);
+      if (const auto Printed = printedIntegerType(Source);
+          Printed && Printed->first == Size && Printed->second)
+        return Text;
+      return "__builtin_bit_cast(" + SignedType + ", " +
+             integerView(Operand, NdType::makeInt(Size, false), 0) + ")";
     };
     return std::string(E.Op == NdOp::INT_SOVF ? "__builtin_add_overflow("
                                               : "__builtin_sub_overflow(") +

@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "LinuxKernel.h"
+#include "LinuxKernelAvailability.h"
 
 #include "llvm/ADT/SmallVector.h"
 
@@ -74,13 +75,16 @@ publishOutput(ExecutionBackend &CPU, uint64_t FD,
 llvm::Expected<std::optional<uint64_t>>
 writeOutput(ExecutionBackend &CPU, ServiceKind Kind,
             const ProcessServiceEvent &Event, const MemoryLayout &Layout,
-            const ProcessOptions &Options, ProcessResult &Result) {
+            const ProcessOptions &Options, ProcessResult &Result,
+            std::optional<uint64_t> AfterVectorImportError) {
   const auto [Descriptor, Address, Count, A3, A4, A5] = Event.Arguments;
   // Linux descriptor lookup consumes the low unsigned 32 bits for both calls.
   const uint32_t FD = Descriptor;
-  if (FD != StandardOutput && FD != StandardError)
+  if (!AfterVectorImportError && FD != StandardOutput && FD != StandardError)
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
   if (Kind == ServiceKind::Write) {
+    if (AfterVectorImportError)
+      return AfterVectorImportError;
     if (!userRange(Layout, Address, Count))
       return std::optional<uint64_t>(uint64_t(0) - BadAddress);
     if (!Count)
@@ -93,13 +97,30 @@ writeOutput(ExecutionBackend &CPU, ServiceKind Kind,
   if (Entries > MaxIOVectors)
     return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
   if (!Entries)
-    return std::optional<uint64_t>(0);
+    return AfterVectorImportError.value_or(0);
   if (!userRange(Layout, Address, Entries * IOVectorSize))
     return std::optional<uint64_t>(uint64_t(0) - BadAddress);
 
-  // Import every descriptor before touching payloads. Check entries in order:
-  // an earlier negative length precedes a later unreadable descriptor, while
-  // any descriptor error precedes all output effects and payload faults.
+  IOVectorImportKind Import = IOVectorImportKind::SingleBuffer;
+  if (Options.LinuxKernel && Options.LinuxKernel->GKI) {
+    auto Selected = gkiIOVectorImport(*Options.LinuxKernel->GKI);
+    if (!Selected)
+      return failure(KernelOptions);
+    Import = *Selected;
+  }
+  // The older copy_from_user path consumes the complete descriptor array
+  // before testing any length. Later inaccessible metadata therefore precedes
+  // an earlier negative length. No payload is inspected by this preflight.
+  if (Import == IOVectorImportKind::CopyAll) {
+    auto Access =
+        CPU.canAccess(Address, Entries * IOVectorSize, Read | UserAccessible);
+    if (!Access)
+      return Access.takeError();
+    if (!*Access)
+      return std::optional<uint64_t>(uint64_t(0) - BadAddress);
+  }
+  // The newer importer reads and validates each entry in sequence. Both
+  // policies finish metadata validation before any payload or output effect.
   llvm::SmallVector<OutputBuffer> Buffers;
   Buffers.reserve(Entries);
   for (uint32_t I = 0; I < Entries; ++I) {
@@ -123,16 +144,21 @@ writeOutput(ExecutionBackend &CPU, ServiceKind Kind,
   const uint64_t Maximum = MaxReadWriteSize & ~(Layout.PageSize - 1);
   uint64_t Total = 0;
   for (auto &Buffer : Buffers) {
-    // Linux's single-vector path applies the transfer cap before access_ok;
-    // its multi-vector path validates each original extent, even after the
-    // cumulative cap is exhausted. Neither path probes payload mappings yet.
-    if (Entries == 1)
+    // Only the newer single-buffer path caps before access_ok. Older imports
+    // and multi-vector imports check every original extent, even after the
+    // cumulative cap is exhausted. Payload mappings are not probed here.
+    if (Import == IOVectorImportKind::SingleBuffer && Entries == 1)
       Buffer.Size = std::min(Buffer.Size, Maximum);
     if (!userRange(Layout, Buffer.Address, Buffer.Size))
       return std::optional<uint64_t>(uint64_t(0) - BadAddress);
     Buffer.Size = std::min(Buffer.Size, Maximum - Total);
     Total += Buffer.Size;
   }
+  // A process descriptor has no write operation, but Linux imports the iovec
+  // before consulting that operation. Share this import and error ordering
+  // with captured output; never inspect payloads or publish bytes for pidfds.
+  if (AfterVectorImportError)
+    return AfterVectorImportError;
   return publishOutput(CPU, FD, Buffers, Layout, Options, Result);
 }
 } // namespace neverd::emulation::linux_model

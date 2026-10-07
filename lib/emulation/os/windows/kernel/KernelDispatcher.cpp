@@ -260,12 +260,12 @@ bool KernelDispatcher::waitLockOwnedByThread(uint64_t Thread) const {
   });
 }
 
-bool KernelDispatcher::ownsMutex(uint64_t Execution) const {
-  if (!Execution)
+bool KernelDispatcher::ownsMutex(uint64_t ThreadKey) const {
+  if (!ThreadKey)
     return false;
   for (const auto &[Address, State] : Objects)
     if (State.Type == Kind::Mutex && State.MutexDepth &&
-        State.MutexOwner == Execution)
+        State.MutexOwner == ThreadKey)
       return true;
   return false;
 }
@@ -283,7 +283,7 @@ llvm::Expected<bool> KernelDispatcher::signaled(uint64_t Address,
 }
 
 llvm::Expected<bool> KernelDispatcher::tryAcquire(uint64_t Address,
-                                                  uint64_t Execution,
+                                                  uint64_t ThreadKey,
                                                   uint8_t CurrentIRQL) {
   if (!isWaitable(Address))
     return dispatcherError("unsupported or uninitialized wait object");
@@ -293,15 +293,15 @@ llvm::Expected<bool> KernelDispatcher::tryAcquire(uint64_t Address,
   if (auto E = Scheduler.processDueTimers())
     return E;
   if (State.Type == Kind::Mutex) {
-    if (!Execution)
-      return dispatcherError("mutex wait requires an active execution");
-    if (State.MutexDepth && State.MutexOwner != Execution)
+    if (!ThreadKey)
+      return dispatcherError(dispatcher::MutexThreadRequired);
+    if (State.MutexDepth && State.MutexOwner != ThreadKey)
       return false;
     if (State.MutexDepth == uint32_t(std::numeric_limits<int32_t>::max()) + 1)
       return llvm::make_error<KernelGuestException>(
           dispatcher::StatusMutantLimitExceeded);
     if (!State.MutexDepth) {
-      State.MutexOwner = Execution;
+      State.MutexOwner = ThreadKey;
       State.MutexAcquiredAtDispatch = CurrentIRQL == dispatcher::DispatchLevel;
     } else if (State.MutexAcquiredAtDispatch !=
                (CurrentIRQL == dispatcher::DispatchLevel)) {
@@ -326,7 +326,7 @@ llvm::Expected<bool> KernelDispatcher::tryAcquire(uint64_t Address,
 llvm::Expected<uint64_t> KernelDispatcher::call(llvm::StringRef Name,
                                                 llvm::ArrayRef<uint64_t> Args,
                                                 uint8_t CurrentIRQL,
-                                                uint64_t Execution) {
+                                                uint64_t ThreadKey) {
   const auto *Descriptor = lookupAPI(Name);
   if (!Descriptor || Args.size() != Descriptor->ArgumentCount)
     return dispatcherError("unknown dispatcher API or invalid argument count");
@@ -535,8 +535,8 @@ llvm::Expected<uint64_t> KernelDispatcher::call(llvm::StringRef Name,
     if (static_cast<uint8_t>(Args[1]))
       return dispatcherError(
           "KeReleaseMutex Wait=TRUE requires unsupported IRQL handoff");
-    if (!Execution || !(*State)->MutexDepth ||
-        (*State)->MutexOwner != Execution)
+    if (!ThreadKey || !(*State)->MutexDepth ||
+        (*State)->MutexOwner != ThreadKey)
       return llvm::make_error<KernelGuestException>(
           dispatcher::StatusMutantNotOwned);
     if ((*State)->MutexAcquiredAtDispatch !=

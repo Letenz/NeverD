@@ -84,7 +84,7 @@ foreach(_process_arch X64 AArch64)
     VERBATIM)
   list(APPEND _process_outputs "${_process_base}-output.elf")
   foreach(_optimization O0 O2)
-    foreach(_file_kind time files signals residency priority)
+    foreach(_file_kind time files signals residency priority kernel pidfd)
       set(_service_base "${_process_base}-${_file_kind}-${_optimization}")
       add_custom_command(OUTPUT "${_service_base}.elf" "${_service_base}.o"
         COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}" "--target=${_process_target}"

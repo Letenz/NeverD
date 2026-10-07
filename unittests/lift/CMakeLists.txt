@@ -1092,6 +1092,8 @@ target_compile_definitions(NeverDObjCSourceCallTests PRIVATE
 if(MSVC)
   target_compile_options(NeverDLiftTests PRIVATE /bigobj)
   target_compile_options(NeverDObjCSourceCallTests PRIVATE /bigobj)
+  # JumpTableEnhancedTests.cpp outgrows the default section limit here too.
+  target_compile_options(NeverDJumpTableTests PRIVATE /bigobj)
 endif()
 
 # Run instruction provenance and shared entry/frame checks without the full
@@ -1116,6 +1118,15 @@ target_include_directories(NeverDOwnInteriorCallTests PRIVATE
 target_compile_definitions(NeverDOwnInteriorCallTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 
+add_neverd_unittest(NeverDSysVCallContractTests
+  core/SysVCallContractTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM Pipeline
+)
+target_include_directories(NeverDSysVCallContractTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(NeverDSysVCallContractTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+
 # Exercise shared source control-flow and SSA invariants independently of the
 # aggregate lift inventory when fixing mobile source reconstruction.
 add_neverd_unittest(NeverDHighControlFlowTests
@@ -1124,6 +1135,7 @@ add_neverd_unittest(NeverDHighControlFlowTests
   core/HighSwitchFollowTests.cpp
   core/HighIntegerSignednessTests.cpp
   core/HighValueForwardTests.cpp
+  core/HighCIntegerConversionTests.cpp
   core/HighSSADefinitionTests.cpp
   core/HighSourceRangeTests.cpp
   core/HighFrameTemporaryTests.cpp

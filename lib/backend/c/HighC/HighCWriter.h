@@ -337,6 +337,41 @@ public:
   /// \p E prints as a local declared as a \p Width-byte integer of the given
   /// signedness.
   bool declaredLocalInteger(const HighExpr &E, uint16_t Width, bool Signed);
+  /// The integer type, as {byte width, signed}, of the text exprStr last
+  /// printed for \p E, when that spelling fixes it: a declared local, an
+  /// integer cast or carrier arithmetic.
+  std::optional<std::pair<uint16_t, bool>>
+  printedIntegerType(const HighExpr &E) const;
+  /// Record that \p Text, printed for \p E, is a \p Width-byte integer.
+  std::string typedText(const HighExpr &E, std::string Text, uint16_t Width,
+                        bool Signed);
+  /// The signed view of the unsigned carrier \p Value computed for \p E,
+  /// whose top operator has precedence \p ValuePrec.  Consumers that convert
+  /// the result anyway may read \p Value instead (unsignedCarrierText).
+  std::string signedCarrierResult(const HighExpr &E, std::string Value,
+                                  int ValuePrec, uint16_t Size);
+  /// The unsigned carrier exprStr last printed inside \p E's signed view,
+  /// parenthesized for \p ParentPrec.
+  std::optional<std::string> unsignedCarrierText(const HighExpr &E,
+                                                 int ParentPrec) const;
+  /// The expression inside \p E whose conversion to a \p Width-byte integer
+  /// gives the same value: integer conversions that keep at least the low
+  /// \p Width bytes are looked through.
+  const HighExpr &lowBytesSource(const HighExpr &E, uint16_t Width) const;
+  /// \p Text, printed for \p E, certainly has an integer type.
+  bool integerText(const HighExpr &E, llvm::StringRef Text) const;
+  /// \p E converted to the integer type \p To, printed as an operand at
+  /// \p ParentPrec.  Conversions that keep the bytes \p To holds are left
+  /// out, and so is the cast when the text already has that type.
+  std::string integerView(const HighExpr &E, const TypeRef &To, int ParentPrec);
+  /// \p E as the value assigned or returned to the integer type \p To, without
+  /// the conversions that C's implicit conversion performs; nullopt when the
+  /// text could not be shown to be an integer.
+  std::optional<std::string> implicitIntegerConversion(const HighExpr &E,
+                                                       const TypeRef &To);
+  /// \p Value as stored to memory of type \p To with \p Ordering.
+  std::string storedValueText(const HighExpr &Value, const TypeRef &To,
+                              NdMemoryOrdering Ordering);
   std::string formatReturnExpr(const HighExpr &Expr);
   std::string collapseHiLo(const HighExpr &Expr);
   std::string unwrapCastVar(const HighExpr &E);
@@ -427,7 +462,9 @@ public:
   void aliasCtorReturnThis(const HighFunc &Func);
   void collectUnusedCallStoreAlias(const HighFunc &Func);
   void collectCallResultNames(const HighFunc &Func);
-  std::string printedForwardedVar(const std::string &Name, int ParentPrec);
+  /// \p PrintedFrom receives the expression whose exprStr text is returned.
+  std::string printedForwardedVar(const std::string &Name, int ParentPrec,
+                                  const HighExpr **PrintedFrom = nullptr);
 
   //--- Binary expression rendering (HighCExprBinOp.cpp) ---
   std::string renderBinOp(const HighExpr &E, int ParentPrec);
@@ -450,6 +487,12 @@ public:
   std::map<std::string, std::string> MemoryTemporaries;
   std::set<std::string> AddressTakenNames;
   std::map<std::string, TypeRef> DeclaredCTypes;
+  /// See printedIntegerType.
+  std::unordered_map<const HighExpr *, std::pair<uint16_t, bool>>
+      PrintedIntegerTypes;
+  /// See signedCarrierResult: the carrier text and its precedence.
+  std::unordered_map<const HighExpr *, std::pair<std::string, int>>
+      UnsignedCarrierTexts;
   CEmitterOptions Opts;
   DebugContext *Dbg;
   bool GuardAnalysisOnlyFunctions;

@@ -1,0 +1,542 @@
+//===- ListingVocabulary.def - Listing lexical tables ----------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Lexical tables the worker uses to classify disassembler operand text into
+/// listing roles.  Classification is presentation only: instruction semantics
+/// come from the engine's flow and reference facts, never from these tables.
+///
+//===----------------------------------------------------------------------===//
+
+// Register families.  A family name selects the operand dialect of an
+// engine architecture name (see Listing.cpp).
+//
+// NEVERD_REGISTER_NAME(Family, Name): one exact register spelling.
+// NEVERD_REGISTER_RANGE(Family, Prefix, First, Last, Suffix): Prefix followed
+//   by a decimal index in [First, Last] and then Suffix.
+#ifndef NEVERD_REGISTER_NAME
+#define NEVERD_REGISTER_NAME(Family, Name)
+#endif
+#ifndef NEVERD_REGISTER_RANGE
+#define NEVERD_REGISTER_RANGE(Family, Prefix, First, Last, Suffix)
+#endif
+
+// x86 and x86-64 general purpose registers.
+NEVERD_REGISTER_NAME(X86, "rax")
+NEVERD_REGISTER_NAME(X86, "rbx")
+NEVERD_REGISTER_NAME(X86, "rcx")
+NEVERD_REGISTER_NAME(X86, "rdx")
+NEVERD_REGISTER_NAME(X86, "rsi")
+NEVERD_REGISTER_NAME(X86, "rdi")
+NEVERD_REGISTER_NAME(X86, "rbp")
+NEVERD_REGISTER_NAME(X86, "rsp")
+NEVERD_REGISTER_NAME(X86, "rip")
+NEVERD_REGISTER_NAME(X86, "eax")
+NEVERD_REGISTER_NAME(X86, "ebx")
+NEVERD_REGISTER_NAME(X86, "ecx")
+NEVERD_REGISTER_NAME(X86, "edx")
+NEVERD_REGISTER_NAME(X86, "esi")
+NEVERD_REGISTER_NAME(X86, "edi")
+NEVERD_REGISTER_NAME(X86, "ebp")
+NEVERD_REGISTER_NAME(X86, "esp")
+NEVERD_REGISTER_NAME(X86, "eip")
+NEVERD_REGISTER_NAME(X86, "ax")
+NEVERD_REGISTER_NAME(X86, "bx")
+NEVERD_REGISTER_NAME(X86, "cx")
+NEVERD_REGISTER_NAME(X86, "dx")
+NEVERD_REGISTER_NAME(X86, "si")
+NEVERD_REGISTER_NAME(X86, "di")
+NEVERD_REGISTER_NAME(X86, "bp")
+NEVERD_REGISTER_NAME(X86, "sp")
+NEVERD_REGISTER_NAME(X86, "ip")
+NEVERD_REGISTER_NAME(X86, "al")
+NEVERD_REGISTER_NAME(X86, "bl")
+NEVERD_REGISTER_NAME(X86, "cl")
+NEVERD_REGISTER_NAME(X86, "dl")
+NEVERD_REGISTER_NAME(X86, "ah")
+NEVERD_REGISTER_NAME(X86, "bh")
+NEVERD_REGISTER_NAME(X86, "ch")
+NEVERD_REGISTER_NAME(X86, "dh")
+NEVERD_REGISTER_NAME(X86, "sil")
+NEVERD_REGISTER_NAME(X86, "dil")
+NEVERD_REGISTER_NAME(X86, "bpl")
+NEVERD_REGISTER_NAME(X86, "spl")
+NEVERD_REGISTER_RANGE(X86, "r", 8, 31, "")
+NEVERD_REGISTER_RANGE(X86, "r", 8, 31, "d")
+NEVERD_REGISTER_RANGE(X86, "r", 8, 31, "w")
+NEVERD_REGISTER_RANGE(X86, "r", 8, 31, "b")
+// Segment, control, debug and status registers.
+NEVERD_REGISTER_NAME(X86, "cs")
+NEVERD_REGISTER_NAME(X86, "ds")
+NEVERD_REGISTER_NAME(X86, "es")
+NEVERD_REGISTER_NAME(X86, "fs")
+NEVERD_REGISTER_NAME(X86, "gs")
+NEVERD_REGISTER_NAME(X86, "ss")
+NEVERD_REGISTER_NAME(X86, "rflags")
+NEVERD_REGISTER_NAME(X86, "eflags")
+NEVERD_REGISTER_NAME(X86, "flags")
+NEVERD_REGISTER_RANGE(X86, "cr", 0, 15, "")
+NEVERD_REGISTER_RANGE(X86, "dr", 0, 15, "")
+// x87, MMX and vector registers.
+NEVERD_REGISTER_NAME(X86, "st")
+NEVERD_REGISTER_RANGE(X86, "st", 0, 7, "")
+NEVERD_REGISTER_RANGE(X86, "mm", 0, 7, "")
+NEVERD_REGISTER_RANGE(X86, "xmm", 0, 31, "")
+NEVERD_REGISTER_RANGE(X86, "ymm", 0, 31, "")
+NEVERD_REGISTER_RANGE(X86, "zmm", 0, 31, "")
+NEVERD_REGISTER_RANGE(X86, "k", 0, 7, "")
+NEVERD_REGISTER_RANGE(X86, "tmm", 0, 7, "")
+NEVERD_REGISTER_RANGE(X86, "bnd", 0, 3, "")
+
+// AArch64.
+NEVERD_REGISTER_RANGE(AArch64, "x", 0, 30, "")
+NEVERD_REGISTER_RANGE(AArch64, "w", 0, 30, "")
+NEVERD_REGISTER_RANGE(AArch64, "b", 0, 31, "")
+NEVERD_REGISTER_RANGE(AArch64, "h", 0, 31, "")
+NEVERD_REGISTER_RANGE(AArch64, "s", 0, 31, "")
+NEVERD_REGISTER_RANGE(AArch64, "d", 0, 31, "")
+NEVERD_REGISTER_RANGE(AArch64, "q", 0, 31, "")
+NEVERD_REGISTER_RANGE(AArch64, "v", 0, 31, "")
+NEVERD_REGISTER_RANGE(AArch64, "z", 0, 31, "")
+NEVERD_REGISTER_RANGE(AArch64, "p", 0, 15, "")
+NEVERD_REGISTER_NAME(AArch64, "sp")
+NEVERD_REGISTER_NAME(AArch64, "wsp")
+NEVERD_REGISTER_NAME(AArch64, "xzr")
+NEVERD_REGISTER_NAME(AArch64, "wzr")
+NEVERD_REGISTER_NAME(AArch64, "lr")
+NEVERD_REGISTER_NAME(AArch64, "fp")
+NEVERD_REGISTER_NAME(AArch64, "nzcv")
+
+// 32-bit ARM.
+NEVERD_REGISTER_RANGE(ARM, "r", 0, 15, "")
+NEVERD_REGISTER_RANGE(ARM, "s", 0, 31, "")
+NEVERD_REGISTER_RANGE(ARM, "d", 0, 31, "")
+NEVERD_REGISTER_RANGE(ARM, "q", 0, 15, "")
+NEVERD_REGISTER_NAME(ARM, "sp")
+NEVERD_REGISTER_NAME(ARM, "lr")
+NEVERD_REGISTER_NAME(ARM, "pc")
+NEVERD_REGISTER_NAME(ARM, "ip")
+NEVERD_REGISTER_NAME(ARM, "fp")
+NEVERD_REGISTER_NAME(ARM, "sb")
+NEVERD_REGISTER_NAME(ARM, "sl")
+NEVERD_REGISTER_NAME(ARM, "apsr")
+NEVERD_REGISTER_NAME(ARM, "cpsr")
+NEVERD_REGISTER_NAME(ARM, "spsr")
+NEVERD_REGISTER_NAME(ARM, "fpscr")
+
+#undef NEVERD_REGISTER_NAME
+#undef NEVERD_REGISTER_RANGE
+
+// NEVERD_OPERAND_KEYWORD(Spelling): operand size and addressing keywords.
+#ifndef NEVERD_OPERAND_KEYWORD
+#define NEVERD_OPERAND_KEYWORD(Spelling)
+#endif
+NEVERD_OPERAND_KEYWORD("ptr")
+NEVERD_OPERAND_KEYWORD("byte")
+NEVERD_OPERAND_KEYWORD("word")
+NEVERD_OPERAND_KEYWORD("dword")
+NEVERD_OPERAND_KEYWORD("fword")
+NEVERD_OPERAND_KEYWORD("qword")
+NEVERD_OPERAND_KEYWORD("tbyte")
+NEVERD_OPERAND_KEYWORD("xword")
+NEVERD_OPERAND_KEYWORD("xmmword")
+NEVERD_OPERAND_KEYWORD("ymmword")
+NEVERD_OPERAND_KEYWORD("zmmword")
+NEVERD_OPERAND_KEYWORD("offset")
+NEVERD_OPERAND_KEYWORD("short")
+NEVERD_OPERAND_KEYWORD("near")
+NEVERD_OPERAND_KEYWORD("far")
+NEVERD_OPERAND_KEYWORD("lsl")
+NEVERD_OPERAND_KEYWORD("lsr")
+NEVERD_OPERAND_KEYWORD("asr")
+NEVERD_OPERAND_KEYWORD("ror")
+NEVERD_OPERAND_KEYWORD("uxtw")
+NEVERD_OPERAND_KEYWORD("sxtw")
+NEVERD_OPERAND_KEYWORD("uxtx")
+NEVERD_OPERAND_KEYWORD("sxtx")
+#undef NEVERD_OPERAND_KEYWORD
+
+// NEVERD_DATA_NAME_PREFIX(SizeKeyword, Prefix): automatic name of an unnamed
+// data location reached through a sized memory operand, as listings show it.
+#ifndef NEVERD_DATA_NAME_PREFIX
+#define NEVERD_DATA_NAME_PREFIX(SizeKeyword, Prefix)
+#endif
+NEVERD_DATA_NAME_PREFIX("byte", "byte_")
+NEVERD_DATA_NAME_PREFIX("word", "word_")
+NEVERD_DATA_NAME_PREFIX("dword", "dword_")
+NEVERD_DATA_NAME_PREFIX("fword", "fword_")
+NEVERD_DATA_NAME_PREFIX("qword", "qword_")
+NEVERD_DATA_NAME_PREFIX("tbyte", "tbyte_")
+NEVERD_DATA_NAME_PREFIX("xmmword", "xmmword_")
+NEVERD_DATA_NAME_PREFIX("ymmword", "ymmword_")
+NEVERD_DATA_NAME_PREFIX("zmmword", "zmmword_")
+#undef NEVERD_DATA_NAME_PREFIX
+
+// NEVERD_DUMMY_NAME_PREFIX(Prefix): automatic name prefixes that resolve back
+// to the hexadecimal address that follows them.
+#ifndef NEVERD_DUMMY_NAME_PREFIX
+#define NEVERD_DUMMY_NAME_PREFIX(Prefix)
+#endif
+NEVERD_DUMMY_NAME_PREFIX("sub_")
+NEVERD_DUMMY_NAME_PREFIX("loc_")
+NEVERD_DUMMY_NAME_PREFIX("locret_")
+NEVERD_DUMMY_NAME_PREFIX("off_")
+NEVERD_DUMMY_NAME_PREFIX("unk_")
+NEVERD_DUMMY_NAME_PREFIX("byte_")
+NEVERD_DUMMY_NAME_PREFIX("word_")
+NEVERD_DUMMY_NAME_PREFIX("dword_")
+NEVERD_DUMMY_NAME_PREFIX("fword_")
+NEVERD_DUMMY_NAME_PREFIX("qword_")
+NEVERD_DUMMY_NAME_PREFIX("tbyte_")
+NEVERD_DUMMY_NAME_PREFIX("xmmword_")
+NEVERD_DUMMY_NAME_PREFIX("ymmword_")
+NEVERD_DUMMY_NAME_PREFIX("zmmword_")
+NEVERD_DUMMY_NAME_PREFIX("asc_")
+NEVERD_DUMMY_NAME_PREFIX("stru_")
+NEVERD_DUMMY_NAME_PREFIX("j_")
+#undef NEVERD_DUMMY_NAME_PREFIX
+
+// NEVERD_PADDING_MNEMONIC(Spelling): instructions that only fill space
+// between functions.  A gap made solely of them renders as one align line.
+#ifndef NEVERD_PADDING_MNEMONIC
+#define NEVERD_PADDING_MNEMONIC(Spelling)
+#endif
+NEVERD_PADDING_MNEMONIC("nop")
+NEVERD_PADDING_MNEMONIC("int3")
+NEVERD_PADDING_MNEMONIC("hint")
+#undef NEVERD_PADDING_MNEMONIC
+
+// NEVERD_X86_MNEMONIC_SPELLING(Engine, Classic): x86 mnemonics that classic
+// listings spell differently.  Both spellings name the same instruction; the
+// classic ones state the flag a condition tests (zero, not below).
+#ifndef NEVERD_X86_MNEMONIC_SPELLING
+#define NEVERD_X86_MNEMONIC_SPELLING(Engine, Classic)
+#endif
+NEVERD_X86_MNEMONIC_SPELLING("je", "jz")
+NEVERD_X86_MNEMONIC_SPELLING("jne", "jnz")
+NEVERD_X86_MNEMONIC_SPELLING("jae", "jnb")
+NEVERD_X86_MNEMONIC_SPELLING("ret", "retn")
+NEVERD_X86_MNEMONIC_SPELLING("movabs", "mov")
+NEVERD_X86_MNEMONIC_SPELLING("sete", "setz")
+NEVERD_X86_MNEMONIC_SPELLING("setne", "setnz")
+NEVERD_X86_MNEMONIC_SPELLING("setae", "setnb")
+NEVERD_X86_MNEMONIC_SPELLING("seta", "setnbe")
+NEVERD_X86_MNEMONIC_SPELLING("setge", "setnl")
+NEVERD_X86_MNEMONIC_SPELLING("setg", "setnle")
+NEVERD_X86_MNEMONIC_SPELLING("cmove", "cmovz")
+NEVERD_X86_MNEMONIC_SPELLING("cmovne", "cmovnz")
+NEVERD_X86_MNEMONIC_SPELLING("cmovae", "cmovnb")
+#undef NEVERD_X86_MNEMONIC_SPELLING
+
+// NEVERD_X86_HIDDEN_PREFIX(Spelling): instruction prefixes classic listings
+// leave out of the mnemonic.
+#ifndef NEVERD_X86_HIDDEN_PREFIX
+#define NEVERD_X86_HIDDEN_PREFIX(Spelling)
+#endif
+NEVERD_X86_HIDDEN_PREFIX("notrack")
+#undef NEVERD_X86_HIDDEN_PREFIX
+
+// NEVERD_X86_STRING_MNEMONIC(Spelling): string instructions, which classic
+// listings show without their implicit rSI/rDI and accumulator operands.  The
+// SSE movsd and cmpsd share two spellings and keep their xmm operands.
+#ifndef NEVERD_X86_STRING_MNEMONIC
+#define NEVERD_X86_STRING_MNEMONIC(Spelling)
+#endif
+NEVERD_X86_STRING_MNEMONIC("movsb")
+NEVERD_X86_STRING_MNEMONIC("movsw")
+NEVERD_X86_STRING_MNEMONIC("movsd")
+NEVERD_X86_STRING_MNEMONIC("movsq")
+NEVERD_X86_STRING_MNEMONIC("stosb")
+NEVERD_X86_STRING_MNEMONIC("stosw")
+NEVERD_X86_STRING_MNEMONIC("stosd")
+NEVERD_X86_STRING_MNEMONIC("stosq")
+NEVERD_X86_STRING_MNEMONIC("lodsb")
+NEVERD_X86_STRING_MNEMONIC("lodsw")
+NEVERD_X86_STRING_MNEMONIC("lodsd")
+NEVERD_X86_STRING_MNEMONIC("lodsq")
+NEVERD_X86_STRING_MNEMONIC("scasb")
+NEVERD_X86_STRING_MNEMONIC("scasw")
+NEVERD_X86_STRING_MNEMONIC("scasd")
+NEVERD_X86_STRING_MNEMONIC("scasq")
+NEVERD_X86_STRING_MNEMONIC("cmpsb")
+NEVERD_X86_STRING_MNEMONIC("cmpsw")
+NEVERD_X86_STRING_MNEMONIC("cmpsd")
+NEVERD_X86_STRING_MNEMONIC("cmpsq")
+NEVERD_X86_STRING_MNEMONIC("insb")
+NEVERD_X86_STRING_MNEMONIC("insw")
+NEVERD_X86_STRING_MNEMONIC("insd")
+NEVERD_X86_STRING_MNEMONIC("outsb")
+NEVERD_X86_STRING_MNEMONIC("outsw")
+NEVERD_X86_STRING_MNEMONIC("outsd")
+#undef NEVERD_X86_STRING_MNEMONIC
+
+// NEVERD_X86_REGISTER_SIZE(Keyword, Name): the operand size keyword of a
+// general purpose register.  A memory operand of that size next to such a
+// register needs no size keyword of its own.
+#ifndef NEVERD_X86_REGISTER_SIZE
+#define NEVERD_X86_REGISTER_SIZE(Keyword, Name)
+#endif
+NEVERD_X86_REGISTER_SIZE("qword", "rax")
+NEVERD_X86_REGISTER_SIZE("qword", "rbx")
+NEVERD_X86_REGISTER_SIZE("qword", "rcx")
+NEVERD_X86_REGISTER_SIZE("qword", "rdx")
+NEVERD_X86_REGISTER_SIZE("qword", "rsi")
+NEVERD_X86_REGISTER_SIZE("qword", "rdi")
+NEVERD_X86_REGISTER_SIZE("qword", "rbp")
+NEVERD_X86_REGISTER_SIZE("qword", "rsp")
+NEVERD_X86_REGISTER_SIZE("dword", "eax")
+NEVERD_X86_REGISTER_SIZE("dword", "ebx")
+NEVERD_X86_REGISTER_SIZE("dword", "ecx")
+NEVERD_X86_REGISTER_SIZE("dword", "edx")
+NEVERD_X86_REGISTER_SIZE("dword", "esi")
+NEVERD_X86_REGISTER_SIZE("dword", "edi")
+NEVERD_X86_REGISTER_SIZE("dword", "ebp")
+NEVERD_X86_REGISTER_SIZE("dword", "esp")
+NEVERD_X86_REGISTER_SIZE("word", "ax")
+NEVERD_X86_REGISTER_SIZE("word", "bx")
+NEVERD_X86_REGISTER_SIZE("word", "cx")
+NEVERD_X86_REGISTER_SIZE("word", "dx")
+NEVERD_X86_REGISTER_SIZE("word", "si")
+NEVERD_X86_REGISTER_SIZE("word", "di")
+NEVERD_X86_REGISTER_SIZE("word", "bp")
+NEVERD_X86_REGISTER_SIZE("word", "sp")
+NEVERD_X86_REGISTER_SIZE("byte", "al")
+NEVERD_X86_REGISTER_SIZE("byte", "bl")
+NEVERD_X86_REGISTER_SIZE("byte", "cl")
+NEVERD_X86_REGISTER_SIZE("byte", "dl")
+NEVERD_X86_REGISTER_SIZE("byte", "ah")
+NEVERD_X86_REGISTER_SIZE("byte", "bh")
+NEVERD_X86_REGISTER_SIZE("byte", "ch")
+NEVERD_X86_REGISTER_SIZE("byte", "dh")
+NEVERD_X86_REGISTER_SIZE("byte", "sil")
+NEVERD_X86_REGISTER_SIZE("byte", "dil")
+NEVERD_X86_REGISTER_SIZE("byte", "bpl")
+NEVERD_X86_REGISTER_SIZE("byte", "spl")
+#undef NEVERD_X86_REGISTER_SIZE
+
+// NEVERD_X86_REGISTER_SIZE_RANGE(Keyword, Prefix, First, Last, Suffix): the
+// same for Prefix, a decimal index in [First, Last] and Suffix.
+#ifndef NEVERD_X86_REGISTER_SIZE_RANGE
+#define NEVERD_X86_REGISTER_SIZE_RANGE(Keyword, Prefix, First, Last, Suffix)
+#endif
+NEVERD_X86_REGISTER_SIZE_RANGE("qword", "r", 8, 31, "")
+NEVERD_X86_REGISTER_SIZE_RANGE("dword", "r", 8, 31, "d")
+NEVERD_X86_REGISTER_SIZE_RANGE("word", "r", 8, 31, "w")
+NEVERD_X86_REGISTER_SIZE_RANGE("byte", "r", 8, 31, "b")
+#undef NEVERD_X86_REGISTER_SIZE_RANGE
+
+// NEVERD_X86_DISPLACED_BASE(Name): base registers x86 can only encode with a
+// displacement.  Classic listings show that displacement even when it is zero.
+#ifndef NEVERD_X86_DISPLACED_BASE
+#define NEVERD_X86_DISPLACED_BASE(Name)
+#endif
+NEVERD_X86_DISPLACED_BASE("rbp")
+NEVERD_X86_DISPLACED_BASE("ebp")
+NEVERD_X86_DISPLACED_BASE("bp")
+NEVERD_X86_DISPLACED_BASE("r13")
+NEVERD_X86_DISPLACED_BASE("r13d")
+#undef NEVERD_X86_DISPLACED_BASE
+
+// NEVERD_X86_THREAD_SEGMENT(Name): segment registers that address thread
+// storage.  An absolute operand through them is an offset, not an image
+// location, and is never named.
+#ifndef NEVERD_X86_THREAD_SEGMENT
+#define NEVERD_X86_THREAD_SEGMENT(Name)
+#endif
+NEVERD_X86_THREAD_SEGMENT("fs")
+NEVERD_X86_THREAD_SEGMENT("gs")
+#undef NEVERD_X86_THREAD_SEGMENT
+
+// NEVERD_X86_ENCODING_SPELLING(Bytes, Mnemonic, Operands): encodings classic
+// listings spell as the equivalent instruction they also are.
+#ifndef NEVERD_X86_ENCODING_SPELLING
+#define NEVERD_X86_ENCODING_SPELLING(Bytes, Mnemonic, Operands)
+#endif
+NEVERD_X86_ENCODING_SPELLING("6690", "xchg", "ax, ax")
+#undef NEVERD_X86_ENCODING_SPELLING
+
+// NEVERD_X86_OPERAND_FORM(Mnemonic, Form): operand spellings classic listings
+// use for one instruction (X86OperandForm in OperandFormat.cpp):
+//   FoldRepeatedSource   `imul r, r, imm` reads as `imul r, imm`.
+//   SwapRegisters        a register pair is listed in the opposite order.
+//   SignedByte           an immediate that fits a signed byte keeps its sign.
+//   StackWidth           an immediate has the width of a stack slot.
+#ifndef NEVERD_X86_OPERAND_FORM
+#define NEVERD_X86_OPERAND_FORM(Mnemonic, Form)
+#endif
+NEVERD_X86_OPERAND_FORM("imul", FoldRepeatedSource)
+NEVERD_X86_OPERAND_FORM("imul", SignedByte)
+NEVERD_X86_OPERAND_FORM("xchg", SwapRegisters)
+NEVERD_X86_OPERAND_FORM("push", StackWidth)
+#undef NEVERD_X86_OPERAND_FORM
+
+// NEVERD_X86_SIZE_BITS(Keyword, Bits): the width of an operand size keyword.
+// It sets the width of an immediate shown as an unsigned number and the type
+// of a stack variable.
+#ifndef NEVERD_X86_SIZE_BITS
+#define NEVERD_X86_SIZE_BITS(Keyword, Bits)
+#endif
+NEVERD_X86_SIZE_BITS("byte", 8)
+NEVERD_X86_SIZE_BITS("word", 16)
+NEVERD_X86_SIZE_BITS("dword", 32)
+NEVERD_X86_SIZE_BITS("fword", 48)
+NEVERD_X86_SIZE_BITS("qword", 64)
+NEVERD_X86_SIZE_BITS("tbyte", 80)
+NEVERD_X86_SIZE_BITS("xmmword", 128)
+NEVERD_X86_SIZE_BITS("ymmword", 256)
+NEVERD_X86_SIZE_BITS("zmmword", 512)
+#undef NEVERD_X86_SIZE_BITS
+
+// NEVERD_X86_FRAME_REGISTER(Name, PrologueSource): frame pointers.  A function
+// whose prologue pushes Name and then copies PrologueSource into it addresses
+// its stack variables relative to Name.
+#ifndef NEVERD_X86_FRAME_REGISTER
+#define NEVERD_X86_FRAME_REGISTER(Name, PrologueSource)
+#endif
+NEVERD_X86_FRAME_REGISTER("rbp", "rsp")
+NEVERD_X86_FRAME_REGISTER("ebp", "esp")
+#undef NEVERD_X86_FRAME_REGISTER
+
+// NEVERD_X86_STACK_REGISTER(Name, PointerBytes): the stack pointer of code
+// with PointerBytes-byte pointers.  Operands based on it name stack variables
+// wherever the stack pointer's distance from the frame is known.
+#ifndef NEVERD_X86_STACK_REGISTER
+#define NEVERD_X86_STACK_REGISTER(Name, PointerBytes)
+#endif
+NEVERD_X86_STACK_REGISTER("rsp", 8)
+NEVERD_X86_STACK_REGISTER("esp", 4)
+#undef NEVERD_X86_STACK_REGISTER
+
+// NEVERD_FUNCTION_ATTRIBUTE(Id, Spelling): function attributes, in the order
+// a function header lists them.
+#ifndef NEVERD_FUNCTION_ATTRIBUTE
+#define NEVERD_FUNCTION_ATTRIBUTE(Id, Spelling)
+#endif
+NEVERD_FUNCTION_ATTRIBUTE(LibraryAttribute, "library function")
+NEVERD_FUNCTION_ATTRIBUTE(ThunkAttribute, "thunk")
+NEVERD_FUNCTION_ATTRIBUTE(FrameAttribute, "bp-based frame")
+#undef NEVERD_FUNCTION_ATTRIBUTE
+
+// NEVERD_MARKED_UNWIND_ENCODING(Spelling): unwind record formats whose every
+// frame a listing marks (`; __unwind {` ... `; } // starts at`).  A frame of
+// another format is marked when it names a handler.
+#ifndef NEVERD_MARKED_UNWIND_ENCODING
+#define NEVERD_MARKED_UNWIND_ENCODING(Spelling)
+#endif
+NEVERD_MARKED_UNWIND_ENCODING("dwarf-fde")
+#undef NEVERD_MARKED_UNWIND_ENCODING
+
+// NEVERD_ITEM_NAME_PREFIX(Id, Prefix): automatic names by what a data item
+// holds, when no size names it.
+#ifndef NEVERD_ITEM_NAME_PREFIX
+#define NEVERD_ITEM_NAME_PREFIX(Id, Prefix)
+#endif
+NEVERD_ITEM_NAME_PREFIX(PointerNamePrefix, "off_")
+#undef NEVERD_ITEM_NAME_PREFIX
+
+// NEVERD_FRAME_NAME_PREFIX(Id, Prefix): automatic names of stack variables
+// below the frame pointer and of stack arguments above the return address.
+#ifndef NEVERD_FRAME_NAME_PREFIX
+#define NEVERD_FRAME_NAME_PREFIX(Id, Prefix)
+#endif
+NEVERD_FRAME_NAME_PREFIX(LocalPrefix, "var_")
+NEVERD_FRAME_NAME_PREFIX(ArgumentPrefix, "arg_")
+#undef NEVERD_FRAME_NAME_PREFIX
+
+// NEVERD_X86_MULTIBYTE_NOP(Escape, Opcode): the opcode of the multi-byte
+// no-op (0F 1F /0).  No prefix byte equals the escape, and the ModRM byte
+// after the opcode sets the width classic listings give its zero displacement.
+#ifndef NEVERD_X86_MULTIBYTE_NOP
+#define NEVERD_X86_MULTIBYTE_NOP(Escape, Opcode)
+#endif
+NEVERD_X86_MULTIBYTE_NOP(0x0f, 0x1f)
+#undef NEVERD_X86_MULTIBYTE_NOP
+
+// NEVERD_START_ROUTINE(Name): C runtime entry routines whose first argument
+// is the program's main function.
+#ifndef NEVERD_START_ROUTINE
+#define NEVERD_START_ROUTINE(Name)
+#endif
+NEVERD_START_ROUTINE("__libc_start_main")
+NEVERD_START_ROUTINE("__uClibc_main")
+#undef NEVERD_START_ROUTINE
+
+// NEVERD_CLASSIC_NAME(Id, Spelling): names for functions the engine leaves
+// generic, as classic disassemblers show them.
+#ifndef NEVERD_CLASSIC_NAME
+#define NEVERD_CLASSIC_NAME(Id, Spelling)
+#endif
+NEVERD_CLASSIC_NAME(EntryFunctionName, "start")
+NEVERD_CLASSIC_NAME(MainFunctionName, "main")
+#undef NEVERD_CLASSIC_NAME
+
+// NEVERD_STUB_SECTION_PREFIX(Prefix): sections of linker-generated import
+// stubs, whose jumps through an import slot name them as thunks.
+#ifndef NEVERD_STUB_SECTION_PREFIX
+#define NEVERD_STUB_SECTION_PREFIX(Prefix)
+#endif
+NEVERD_STUB_SECTION_PREFIX(".plt")
+#undef NEVERD_STUB_SECTION_PREFIX
+
+// NEVERD_SEGMENT_ALIGNMENT(Bytes, Spelling): segment alignment classes, widest
+// first.  A segment takes the widest class its alignment reaches.
+#ifndef NEVERD_SEGMENT_ALIGNMENT
+#define NEVERD_SEGMENT_ALIGNMENT(Bytes, Spelling)
+#endif
+NEVERD_SEGMENT_ALIGNMENT(4096, "mempage")
+NEVERD_SEGMENT_ALIGNMENT(2048, "align_2048")
+NEVERD_SEGMENT_ALIGNMENT(1024, "align_1024")
+NEVERD_SEGMENT_ALIGNMENT(512, "align_512")
+NEVERD_SEGMENT_ALIGNMENT(256, "page")
+NEVERD_SEGMENT_ALIGNMENT(128, "align_128")
+NEVERD_SEGMENT_ALIGNMENT(64, "align_64")
+NEVERD_SEGMENT_ALIGNMENT(32, "align_32")
+NEVERD_SEGMENT_ALIGNMENT(16, "para")
+NEVERD_SEGMENT_ALIGNMENT(8, "qword")
+NEVERD_SEGMENT_ALIGNMENT(4, "dword")
+NEVERD_SEGMENT_ALIGNMENT(2, "word")
+NEVERD_SEGMENT_ALIGNMENT(1, "byte")
+#undef NEVERD_SEGMENT_ALIGNMENT
+
+// NEVERD_RUNTIME_ENTRY_TYPE(Type): neverd_entrypoints_json types of code the
+// loader runs on its own, which a listing declares public like the entry.
+#ifndef NEVERD_RUNTIME_ENTRY_TYPE
+#define NEVERD_RUNTIME_ENTRY_TYPE(Type)
+#endif
+NEVERD_RUNTIME_ENTRY_TYPE("init")
+NEVERD_RUNTIME_ENTRY_TYPE("fini")
+#undef NEVERD_RUNTIME_ENTRY_TYPE
+
+// NEVERD_SECTION_FUNCTION_NAME(Section, Name): the classic name of a
+// function at the start of a loader-run section.
+#ifndef NEVERD_SECTION_FUNCTION_NAME
+#define NEVERD_SECTION_FUNCTION_NAME(Section, Name)
+#endif
+NEVERD_SECTION_FUNCTION_NAME(".init", "_init_proc")
+NEVERD_SECTION_FUNCTION_NAME(".fini", "_term_proc")
+#undef NEVERD_SECTION_FUNCTION_NAME
+
+// NEVERD_WIDE_CHARACTERS(First, Last): code points a fixed-width listing
+// draws two columns wide (East Asian Wide and Fullwidth characters), so the
+// columns after a string line up.
+#ifndef NEVERD_WIDE_CHARACTERS
+#define NEVERD_WIDE_CHARACTERS(First, Last)
+#endif
+NEVERD_WIDE_CHARACTERS(0x1100, 0x115F)   // Hangul Jamo initials
+NEVERD_WIDE_CHARACTERS(0x2E80, 0x303E)   // CJK radicals, symbols, punctuation
+NEVERD_WIDE_CHARACTERS(0x3041, 0x33FF)   // Kana, Bopomofo, compatibility
+NEVERD_WIDE_CHARACTERS(0x3400, 0x4DBF)   // CJK Unified Ideographs Extension A
+NEVERD_WIDE_CHARACTERS(0x4E00, 0x9FFF)   // CJK Unified Ideographs
+NEVERD_WIDE_CHARACTERS(0xA000, 0xA4CF)   // Yi
+NEVERD_WIDE_CHARACTERS(0xAC00, 0xD7A3)   // Hangul Syllables
+NEVERD_WIDE_CHARACTERS(0xF900, 0xFAFF)   // CJK Compatibility Ideographs
+NEVERD_WIDE_CHARACTERS(0xFE30, 0xFE4F)   // CJK Compatibility Forms
+NEVERD_WIDE_CHARACTERS(0xFF00, 0xFF60)   // Fullwidth Forms
+NEVERD_WIDE_CHARACTERS(0xFFE0, 0xFFE6)   // Fullwidth signs
+NEVERD_WIDE_CHARACTERS(0x1F300, 0x1F64F) // Pictographs and emoticons
+NEVERD_WIDE_CHARACTERS(0x1F900, 0x1F9FF) // Supplemental pictographs
+NEVERD_WIDE_CHARACTERS(0x20000, 0x3FFFD) // CJK Extensions B and later
+#undef NEVERD_WIDE_CHARACTERS

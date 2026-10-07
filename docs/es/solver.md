@@ -22,6 +22,12 @@ Las comparaciones de más de ocho bits comparan primero las mitades altas y usan
 
 El motor SAT mantiene cuatro entradas de vigilancia dentro de cada lista de literal; las listas mayores crecen dinámicamente. Esto evita asignaciones separadas para listas cortas al construir, copiar antes de buscar y destruir. El orden de propagación, las cláusulas, la propiedad independiente y todos los límites de trabajo permanecen iguales.
 
+<!-- i18n-section: context-finite-proofs -->
+
+## Pruebas completas dentro de un contexto
+
+El verificador nativo de independencia vincula su caché de dominios finitos al contexto simbólico real, al que solo se añaden nodos. Las claves compactas conservan el predicado exacto, las proyecciones ordenadas y el límite de valores. Solo se reutilizan dominios numéricos completos o falta de unicidad demostrada; cada fallo de caché exige la enumeración completa y la prueba final de exclusión. El contexto y el significado de los nodos existentes deben mantenerse durante la vida de la caché. Los tokens preparados no pueden pasar a otro propietario ni a un sustituto en la misma dirección. Se conserva el límite de almacenamiento en palabras. Los demás usuarios mantienen las claves estructurales y la reutilización mediante renombrado de variables.
+
 <!-- i18n-section: z3-build -->
 
 ## Compilación opcional con Z3

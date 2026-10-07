@@ -60,4 +60,17 @@ enum {
 #include "driver_seh_simd.def"
 #undef NEVERD_SEH_SIMD_WIDE_VALUE
 #undef NEVERD_SEH_SIMD_TEXT
+enum {
+#define NEVERD_SEH_MUTEX_CASE(Name, Value) SehMutex##Name = Value,
+#define NEVERD_SEH_MUTEX_VALUE(Name, Value) Name = Value,
+#include "driver_seh_mutex.def"
+#undef NEVERD_SEH_MUTEX_VALUE
+#undef NEVERD_SEH_MUTEX_CASE
+};
+#define NEVERD_SEH_MUTEX_TEXT(Name, Text) static const char Name[] = Text;
+#define NEVERD_SEH_MUTEX_WIDE_VALUE(Name, Value)                               \
+  static const unsigned long long Name = Value;
+#include "driver_seh_mutex.def"
+#undef NEVERD_SEH_MUTEX_WIDE_VALUE
+#undef NEVERD_SEH_MUTEX_TEXT
 #endif

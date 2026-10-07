@@ -1,0 +1,17 @@
+//===- LinuxGKIKernels.def - Android GKI syscall contracts ----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Name, public branch label, admitted pidfd_open flags, iovec import policy, non-leader errno.
+// This catalogue selects syscall semantics, not a kernel image or device.
+#ifdef NEVERD_LINUX_GKI_KERNEL
+NEVERD_LINUX_GKI_KERNEL(Android12_5_10, "android12-5.10", 0x800, CopyAll, 22)
+NEVERD_LINUX_GKI_KERNEL(Android13_5_10, "android13-5.10", 0x800, CopyAll, 22)
+NEVERD_LINUX_GKI_KERNEL(Android13_5_15, "android13-5.15", 0x800, CopyAll, 22)
+NEVERD_LINUX_GKI_KERNEL(Android14_5_15, "android14-5.15", 0x800, CopyAll, 22)
+NEVERD_LINUX_GKI_KERNEL(Android14_6_1, "android14-6.1", 0x800, CopyAll, 22)
+NEVERD_LINUX_GKI_KERNEL(Android15_6_6, "android15-6.6", 0x800, SingleBuffer, 22)
+NEVERD_LINUX_GKI_KERNEL(Android16_6_12, "android16-6.12", 0x880, SingleBuffer, 22)
+NEVERD_LINUX_GKI_KERNEL(Android17_6_18, "android17-6.18", 0x880, SingleBuffer, 2)
+#endif

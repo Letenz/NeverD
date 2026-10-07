@@ -22,6 +22,12 @@ Au-delà de huit bits, les comparaisons examinent d’abord les moitiés hautes 
 
 Le moteur SAT conserve quatre entrées de surveillance dans chaque liste de littéral ; les listes plus longues grandissent dynamiquement. Cela évite des allocations séparées pour les listes courtes lors de la construction, de la copie avant recherche et de la destruction. L’ordre de propagation, les clauses, la propriété indépendante et tous les plafonds de travail restent inchangés.
 
+<!-- i18n-section: context-finite-proofs -->
+
+## Preuves terminées dans un même contexte
+
+Le vérificateur natif d’indépendance lie son cache de domaines finis à son contexte symbolique réel, où seuls des nœuds sont ajoutés. Les clés compactes conservent le prédicat exact, les projections ordonnées et la limite de valeurs. Seuls les domaines numériques complets ou la non-unicité prouvée sont réutilisables ; chaque échec du cache exige encore l’énumération complète et la preuve finale d’exclusion. Le contexte et le sens des nœuds existants doivent rester stables pendant la vie du cache. Un jeton préparé ne passe ni à un autre propriétaire ni à son remplaçant à la même adresse. Le plafond de stockage en mots reste inchangé. Les autres utilisateurs conservent les clés structurelles et le renommage des variables.
+
 <!-- i18n-section: z3-build -->
 
 ## Build Z3 facultatif

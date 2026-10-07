@@ -284,10 +284,11 @@ See [Testing NeverD](docs/testing.md) for focused targets, CTest labels, fixture
 
 ## Desktop workbench
 
-The optional [Qt Quick desktop workbench](docs/gui.md) provides dockable
-instruction, CFG, Hex, C and IR views, all 11 UI languages, saved annotations and
-MCP connections. Analysis runs in a separate Qt-free worker; CLI-only builds
-remain independent. See the [qualification record](docs/gui-qualification.md)
+The optional [desktop workbench](docs/gui.md) follows the classic interactive
+disassembler layout and shortcuts, with disassembly, graph, pseudocode, IR, hex
+and list views, a Visual Studio Code-style theme, all 11 UI languages and
+`.nddb` project databases. Analysis runs in a separate Qt-free worker; CLI-only
+builds remain independent. See the [qualification record](docs/gui-qualification.md)
 for supported workflows and platform validation still required before release.
 
 <!-- i18n-section: cli -->

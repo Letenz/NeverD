@@ -280,6 +280,9 @@ llvm::Expected<BinaryImage> ELFLoader::load(const std::filesystem::path &Path) {
   if (llvm::Error E = verifyARMFunctionModeHints(Img, ARMFunctionModes))
     return std::move(E);
 
+  // Frame extents are function boundaries the discovery heuristics must not
+  // guess inside, as PE .pdata ranges already are when they run.
+  dwarf_eh::recordFrameExtents(Img);
   runPostLoadDiscovery(Img, "elf: loaded " + Path.filename().string());
   // Classified before any table is read: a decoder that finds an Itanium LSDA
   // cannot tell from the table alone whether its cleanup pads are C++

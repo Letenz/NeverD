@@ -11,6 +11,7 @@
 #include "../os/darwin/kernel/DarwinTime.h"
 #include "../os/darwin/process/DarwinProcess.h"
 #include "../os/linux/android/AndroidInternal.h"
+#include "../os/linux/kernel/LinuxKernelAvailability.h"
 #include "../os/linux/kernel/LinuxPriority.h"
 #include "../os/linux/kernel/LinuxSignals.h"
 #include "../os/linux/kernel/LinuxTime.h"
@@ -94,6 +95,15 @@ llvm::Expected<ProcessResult> runProfile(const std::filesystem::path &Path,
     if (auto E = darwin_model::validateFileOptions(*Options.DarwinFiles))
       return std::move(E);
   }
+  if (Options.LinuxKernel) {
+    if (Profile != ProcessProfile::LinuxELF64 &&
+        Profile != ProcessProfile::AndroidNativeAArch64)
+      return diagnostic::error(process_report::LinuxKernelProfile);
+    if (auto E = linux_model::validateKernelOptions(*Options.LinuxKernel))
+      return std::move(E);
+    if (auto E = linux_model::validateKernelTaskInputs(Options))
+      return std::move(E);
+  }
   if (Options.LinuxPriority) {
     if (Profile != ProcessProfile::LinuxELF64 &&
         Profile != ProcessProfile::AndroidNativeAArch64)
@@ -123,6 +133,8 @@ llvm::Expected<ProcessResult> runProfile(const std::filesystem::path &Path,
         Profile != ProcessProfile::AndroidNativeAArch64)
       return diagnostic::error(process_report::LinuxTimeProfile);
     if (auto E = linux_model::validateTimeOptions(*Options.LinuxTime))
+      return std::move(E);
+    if (auto E = linux_model::validateCPUClockInputs(Options))
       return std::move(E);
   }
   switch (Profile) {

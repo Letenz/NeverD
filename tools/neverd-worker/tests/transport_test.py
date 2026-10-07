@@ -214,7 +214,60 @@ def run(executable):
         cfg = client.call("cfg", {"address": BASE})["payload"]
         assert isinstance(cfg["nodes"][0]["id"], str) and cfg["complete"]
         assert client.call("cfg", {"address": "0xffff800012340001"})["status"] == "budget_exceeded"
-        assert client.call("xrefs", {"address": BASE})["payload"]["items"][0]["address"] == "0xffff800012340008"
+        # Direct references come from the instruction index without analysis.
+        direct = client.call("xrefs", {"address": BASE})["payload"]
+        assert direct["items"][0]["address"] == "0xffff800012340008" and direct["items"][0]["type"] == "j", direct
+        assert client.call("xrefs", {"address": BASE, "direction": "from"})["status"] == "ok"
+        # Idle work reports the function count after discovery.
+        beat = client.next(lambda item: item.get("type") == "heartbeat" and "functions" in item.get("background", {}))
+        assert beat["background"]["functions"] == 600, beat
+        # A call through a relocated slot, and the slot's own pointer.
+        through_slot = client.call("xrefs", {"address": "0xffff800012340020"})["payload"]["items"]
+        kinds = {(item["from"], item["kind"], item["type"]) for item in through_slot}
+        assert ("0xffff800012340034", "icall", "p") in kinds, through_slot
+        assert ("0xffff800012343008", "offset", "o") in kinds, through_slot
+        data = client.call("listing", {"address": "0xffff800012343000", "after": 20})["payload"]["lines"]
+        slot = next(line for line in data if line["kind"] == "data")
+        assert "dq" in slot["text"] and "offset function_1" in slot["text"], data
+        code = [line["text"] for line in client.call("listing", {"address": BASE, "after": 120})["payload"]["lines"]]
+        assert any(text.strip() == "; __unwind {" for text in code), code
+        assert any(text.strip() == "; } // starts at FFFF800012340000" for text in code), code
+        assert any(text.strip() == "; __unwind { // __gxx_personality_v0" for text in code), code
+        # function_5 has no frame pointer: its stack variables are named from
+        # the tracked stack pointer, except where no path reaches.
+        frame = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012340050", "before": 0, "after": 40})["payload"]["lines"]]
+        for expected in ("var_20 = xmmword ptr -20h", "var_10 = qword ptr -10h", "arg_0 = qword ptr 8",
+                         "mov [rsp+28h+var_10], rax", "lea rdi, [rsp+28h+var_20]",
+                         "mov rax, [rsp+28h+arg_0]", "movups [rsp+28h+var_20], xmm0",
+                         "mov rax, [rsp+8]"):
+            assert any(text.endswith(expected) for text in frame), (expected, frame)
+        assert not any("bp-based frame" in text for text in frame), frame
+        # function_6 names the slot its single path reaches, and leaves raw the
+        # operand two paths reach at different stack depths.
+        join = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012340060", "before": 0, "after": 30})["payload"]["lines"]
+            if line["kind"] == "insn"]
+        assert "mov rax, [rsp+8+var_8]" in join, join
+        assert "mov rax, [rsp+8]" in join, join
+        # Strings in every encoding the engine finds, under the classic forms.
+        encodings = client.call("string_encodings")["payload"]["items"]
+        assert [e["name"] for e in encodings] == ["ascii", "utf-8", "utf-16le"], encodings
+        options = client.call("string_options")["payload"]
+        assert options == {"encodings": ["ascii", "utf-8", "utf-16le"], "min_length": 4}, options
+        rodata = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012343100", "before": 0, "after": 12})["payload"]["lines"]]
+        assert "asc_FFFF800012343100 db '\u4e2d\u6587',0" in rodata, rodata
+        assert "aWide:" in rodata and "text \"UTF-16LE\", 'Wide',0" in rodata, rodata
+        types = {row["text"]: row["type"] for row in client.call("strings", {"filter": ""})["payload"]["items"]}
+        assert types.get("Wide") == "UTF-16LE" and types.get("\u4e2d\u6587") == "UTF-8", types
+        assert client.call("string_options", {"encodings": ["ascii", "utf-8"]})["payload"]["encodings"] == ["ascii", "utf-8"]
+        rodata = [line["text"] for line in client.call(
+            "listing", {"address": "0xffff800012343100", "before": 0, "after": 12})["payload"]["lines"]]
+        assert not any("UTF-16LE" in text for text in rodata), rodata
+        assert client.call("string_options", {"encodings": ["ebcdic"]})["error"]["code"] == "unsupported_encoding"
+        # IR constant references require whole-program analysis.
+        assert client.call("xrefs", {"address": BASE, "source": "ir"})["payload"]["items"][0]["address"] == "0xffff800012340008"
         client.close()
         assert b"native stdout" in client.logs and b"python-style print" in client.logs
         assert client.process.returncode == 0

@@ -46,6 +46,12 @@ NEVERD_PROCESS_REPORT_FIELD(Timebase, "timebase")
 NEVERD_PROCESS_REPORT_FIELD(Numerator, "numerator")
 NEVERD_PROCESS_REPORT_FIELD(Denominator, "denominator")
 NEVERD_PROCESS_REPORT_FIELD(StandardInput, "stdin_hex")
+NEVERD_PROCESS_REPORT_FIELD(LinuxKernel, "linux_kernel")
+NEVERD_PROCESS_REPORT_FIELD(KernelTasks, "tasks")
+NEVERD_PROCESS_REPORT_FIELD(KernelTaskID, "id")
+NEVERD_PROCESS_REPORT_FIELD(KernelTaskGroupLeader, "group_leader")
+NEVERD_PROCESS_REPORT_FIELD(UnavailableSyscalls, "unavailable_syscalls")
+NEVERD_PROCESS_REPORT_FIELD(GKI, "gki")
 NEVERD_PROCESS_REPORT_FIELD(LinuxPriority, "linux_priority")
 NEVERD_PROCESS_REPORT_FIELD(PriorityTasks, "tasks")
 NEVERD_PROCESS_REPORT_FIELD(PriorityTaskID, "id")
@@ -182,6 +188,9 @@ NEVERD_PROCESS_REPORT_TEXT(DarwinTimeProfile,
 NEVERD_PROCESS_REPORT_TEXT(DarwinFilesOptions, "invalid darwin_files option: ")
 NEVERD_PROCESS_REPORT_TEXT(DarwinFilesProfile,
                            "darwin_files requires a macOS or iOS profile")
+NEVERD_PROCESS_REPORT_TEXT(LinuxKernelOptions, "invalid linux_kernel option: ")
+NEVERD_PROCESS_REPORT_TEXT(LinuxKernelProfile,
+    "linux_kernel requires a Linux ELF64 or Android native profile")
 NEVERD_PROCESS_REPORT_TEXT(LinuxPriorityOptions, "invalid linux_priority option: ")
 NEVERD_PROCESS_REPORT_TEXT(LinuxPriorityProfile,
     "linux_priority requires a Linux ELF64 or Android native profile")

@@ -1,141 +1,144 @@
-#include "NativeCodeHighlighter.h"
-#include "NativeGraphItem.h"
-#include "NativeLayoutSaver.h"
-#include "StartupMetrics.h"
-#include "Workbench.h"
-#include "WorkbenchFocus.h"
+#include "app/DisassemblyView.h"
+#include "app/Language.h"
+#include "app/ListingView.h"
+#include "app/MainWindow.h"
+#include "app/Session.h"
+#include "app/StartupMetrics.h"
+#include "app/Theme.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
+#include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
-#include <QEvent>
-#include <QFontDatabase>
-#include <QGuiApplication>
-#include <QQmlApplicationEngine>
-#include <QQmlContext>
-#include <QQuickItem>
-#include <QQuickStyle>
-#include <QQuickWindow>
+#include <QElapsedTimer>
+#include <QFileInfo>
+#include <QScreen>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <kddockwidgets/Config.h>
-#include <kddockwidgets/qtquick/Platform.h>
-#include <kddockwidgets/qtquick/ViewFactory.h>
+#include <kddockwidgets/KDDockWidgets.h>
 #include <memory>
+
 #ifdef NEVERD_GUI_TEST_PROBES
-#include "tests/AnalysisProbe.h"
-#include "tests/DockingProbe.h"
-#include "tests/ShortcutProbe.h"
+#include "tests/WidgetsProbe.h"
 #endif
 
-class NeverDDockViewFactory final : public KDDockWidgets::QtQuick::ViewFactory {
-public:
-  QUrl titleBarFilename() const override {
-    return QUrl("qrc:/qt/qml/NeverD/Workbench/qml/DockTitleBar.qml");
-  }
-  QUrl tabbarFilename() const override {
-    return QUrl("qrc:/qt/qml/NeverD/Workbench/qml/DockTabBar.qml");
-  }
-  QUrl groupFilename() const override {
-    return QUrl("qrc:/qt/qml/NeverD/Workbench/qml/DockGroup.qml");
-  }
-  QUrl floatingWindowFilename() const override {
-    return QUrl("qrc:/qt/qml/NeverD/Workbench/qml/DockFloatingWindow.qml");
-  }
-  QUrl separatorFilename() const override {
-    return QUrl("qrc:/qt/qml/NeverD/Workbench/qml/DockSeparator.qml");
-  }
-};
+using namespace neverd::gui;
 
-// Installed after the docking frontend: preserve the live layout and resolve
-// unsaved edits before KDDockWidgets begins closing child panels.
-class WorkbenchCloseGuard final : public QObject {
-public:
-  explicit WorkbenchCloseGuard(Workbench &workbench) : workbench_(workbench) {}
-  bool eventFilter(QObject *object, QEvent *event) override {
-    if (event->type() != QEvent::Close)
-      return false;
-    if (!object->property("closeApproved").toBool() &&
-        !workbench_.requestClose()) {
-      event->ignore();
-      return true;
-    }
-    if (auto *workspace = object->findChild<QObject *>("dockWorkspace"))
-      QMetaObject::invokeMethod(workspace, "saveLayout");
-    return false;
-  }
+namespace {
+constexpr char QuickStartKey[] = "ui/quickStart";
+constexpr char GeometryKey[] = "ui/geometry";
+constexpr int CaptureDelayMs = 6000;
+constexpr int SmokeDelayMs = 1500;
+constexpr int DefaultWidth = 1600;
+constexpr int DefaultHeight = 1000;
 
-private:
-  Workbench &workbench_;
-};
+void configureDocking() {
+  KDDockWidgets::initFrontend(KDDockWidgets::FrontendType::QtWidgets);
+  auto &config = KDDockWidgets::Config::self();
+  // Every docked window carries a closable tab, as in classic disassemblers.
+  config.setFlags(KDDockWidgets::Config::Flag_AlwaysShowTabs |
+                  KDDockWidgets::Config::Flag_HideTitleBarWhenTabsVisible |
+                  KDDockWidgets::Config::Flag_TabsHaveCloseButton |
+                  KDDockWidgets::Config::Flag_AllowReorderTabs |
+                  KDDockWidgets::Config::Flag_TitleBarIsFocusable |
+                  KDDockWidgets::Config::Flag_DoubleClickMaximizes);
+  config.setSeparatorThickness(4);
+}
+
+void restoreGeometry(MainWindow &window) {
+  const auto geometry = QSettings().value(GeometryKey).toByteArray();
+  if (!geometry.isEmpty() && window.restoreGeometry(geometry))
+    return;
+  const QRect available = window.screen()->availableGeometry();
+  window.resize(std::min(DefaultWidth, available.width()),
+                std::min(DefaultHeight, available.height()));
+}
+} // namespace
 
 int main(int argc, char **argv) {
   QElapsedTimer startupClock;
   startupClock.start();
-  QGuiApplication::setOrganizationName("NeverSight");
-  QGuiApplication::setOrganizationDomain("neversight.dev");
-  QGuiApplication::setApplicationName("NeverD");
-  QGuiApplication::setApplicationVersion("3389.0.1");
-  QQuickStyle::setStyle("Basic");
-  qmlRegisterType<NativeCodeHighlighter>("NeverD.Native", 1, 0,
-                                         "NativeCodeHighlighter");
-  qmlRegisterType<NativeGraphItem>("NeverD.Native", 1, 0, "NativeGraphItem");
-  qmlRegisterType<NativeLayoutSaver>("NeverD.Native", 1, 0,
-                                     "NativeLayoutSaver");
-  QGuiApplication app(argc, argv);
+  QApplication::setOrganizationName(QStringLiteral("NeverSight"));
+  QApplication::setOrganizationDomain(QStringLiteral("neversight.dev"));
+  QApplication::setApplicationName(QStringLiteral("NeverD"));
+  QApplication::setApplicationVersion(QStringLiteral("3389.0.1"));
+  QApplication app(argc, argv);
   const auto applicationCreatedMs = startupClock.nsecsElapsed() / 1.0e6;
-  KDDockWidgets::initFrontend(KDDockWidgets::FrontendType::QtQuick);
-  KDDockWidgets::Config::self().setViewFactory(new NeverDDockViewFactory);
+  configureDocking();
   const auto dockingFrontendMs = startupClock.nsecsElapsed() / 1.0e6;
+
   QCommandLineParser parser;
-  parser.setApplicationDescription("NeverD interactive analysis workbench");
+  parser.setApplicationDescription(
+      QStringLiteral("NeverD interactive disassembler and decompiler"));
   parser.addHelpOption();
   parser.addVersionOption();
-  parser.addPositionalArgument("binary", "Binary file to open", "[binary]");
-  parser.addOption({"worker", "Path to the matching analysis worker", "path"});
+  parser.addPositionalArgument(QStringLiteral("binary"),
+                               QStringLiteral("Binary file to open"),
+                               QStringLiteral("[binary]"));
+  parser.addOption({QStringLiteral("worker"),
+                    QStringLiteral("Path to the matching analysis worker"),
+                    QStringLiteral("path")});
+  parser.addOption({QStringLiteral("capture"),
+                    QStringLiteral("Save a workbench screenshot after loading"),
+                    QStringLiteral("path")});
+  parser.addOption({QStringLiteral("capture-delay"),
+                    QStringLiteral("Milliseconds before --capture"),
+                    QStringLiteral("milliseconds"),
+                    QString::number(CaptureDelayMs)});
   parser.addOption(
-      {"capture", "Save a workbench screenshot after loading", "path"});
+      {QStringLiteral("smoke-test"),
+       QStringLiteral("Exit after loading the UI (for build verification)")});
+  parser.addOption({QStringLiteral("fresh-layout"),
+                    QStringLiteral("Use a temporary workbench layout")});
   parser.addOption(
-      {"smoke-test", "Exit after loading the UI (for build verification)"});
-  parser.addOption({"fresh-layout", "Use a temporary workbench layout"});
+      {QStringLiteral("command"),
+       QStringLiteral("Run an output-window command line after the binary "
+                      "opens, such as \"g main\" or \"graph\"; repeatable"),
+       QStringLiteral("line")});
   parser.addOption(
-      {"startup-benchmark",
-       "Write startup milestones as JSON and exit after a useful frame",
-       "path"});
+      {QStringLiteral("startup-benchmark"),
+       QStringLiteral("Write startup milestones as JSON and exit after a "
+                      "useful frame"),
+       QStringLiteral("path")});
   parser.addOption(
-      {"startup-benchmark-timeout",
-       "Startup benchmark deadline from main entry in milliseconds",
-       "milliseconds", "30000"});
+      {QStringLiteral("startup-benchmark-timeout"),
+       QStringLiteral("Startup benchmark deadline from main entry in "
+                      "milliseconds"),
+       QStringLiteral("milliseconds"), QStringLiteral("30000")});
 #ifdef NEVERD_GUI_TEST_PROBES
-  parser.addOption({"docking-test", "Exercise the docking workbench and exit"});
   parser.addOption(
-      {"shortcuts-test", "Exercise workbench keyboard shortcuts and exit"});
-  parser.addOption(
-      {"analysis-test", "Exercise the live analysis views and exit"});
+      {QStringLiteral("widgets-test"),
+       QStringLiteral("Exercise the workbench on a fixture and exit")});
+  parser.addOption({QStringLiteral("analysis-test"),
+                    QStringLiteral("Exercise the workbench on a binary with a "
+                                   "function named main and exit"),
+                    QStringLiteral("binary")});
 #endif
   parser.process(app);
   const auto optionsParsedMs = startupClock.nsecsElapsed() / 1.0e6;
-  QString worker = parser.value("worker");
+
+  QString worker = parser.value(QStringLiteral("worker"));
   if (worker.isEmpty())
     worker = QDir(QCoreApplication::applicationDirPath())
                  .filePath(
 #ifdef Q_OS_WIN
-                     "neverd-worker.exe"
+                     QStringLiteral("neverd-worker.exe")
 #else
-                     "neverd-worker"
+                     QStringLiteral("neverd-worker")
 #endif
                  );
-  bool isolateSettings =
-      parser.isSet("startup-benchmark") || parser.isSet("smoke-test");
+  bool automated = parser.isSet(QStringLiteral("startup-benchmark")) ||
+                   parser.isSet(QStringLiteral("smoke-test"));
 #ifdef NEVERD_GUI_TEST_PROBES
-  isolateSettings = isolateSettings || parser.isSet("docking-test") ||
-                    parser.isSet("analysis-test") ||
-                    parser.isSet("shortcuts-test");
+  const bool probe = parser.isSet(QStringLiteral("widgets-test")) ||
+                     parser.isSet(QStringLiteral("analysis-test"));
+  automated = automated || probe;
 #endif
   std::unique_ptr<QTemporaryDir> temporarySettings;
-  if (isolateSettings) {
+  if (automated) {
     temporarySettings = std::make_unique<QTemporaryDir>();
     if (!temporarySettings->isValid()) {
       qCritical("Could not create temporary workbench test settings");
@@ -147,126 +150,88 @@ int main(int argc, char **argv) {
     QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope,
                        temporarySettings->path());
   }
-  Workbench workbench(QFileInfo(worker).absoluteFilePath());
+  applyLanguage(currentLanguage());
+  Theme::instance().apply();
+
+  Session session(QFileInfo(worker).absoluteFilePath());
   std::unique_ptr<StartupMetrics> startupMetrics;
-  if (parser.isSet("startup-benchmark")) {
+  const bool openingFile = !parser.positionalArguments().isEmpty();
+  if (parser.isSet(QStringLiteral("startup-benchmark"))) {
     bool validTimeout = false;
     const auto timeout =
-        parser.value("startup-benchmark-timeout").toInt(&validTimeout);
+        parser.value(QStringLiteral("startup-benchmark-timeout"))
+            .toInt(&validTimeout);
     if (!validTimeout || timeout < 100 || timeout > 300000) {
       qCritical("Startup benchmark timeout must be 100-300000 milliseconds");
       return 2;
     }
     startupMetrics = std::make_unique<StartupMetrics>(
-        workbench, startupClock, parser.value("startup-benchmark"),
-        !parser.positionalArguments().isEmpty(), timeout, &app);
+        session, startupClock,
+        parser.value(QStringLiteral("startup-benchmark")), openingFile, timeout,
+        &app);
     startupMetrics->record("application_created_ms", applicationCreatedMs);
     startupMetrics->record("docking_frontend_ms", dockingFrontendMs);
     startupMetrics->record("options_parsed_ms", optionsParsedMs);
     startupMetrics->record("controller_created_ms");
   }
-  QTemporaryDir testLayout;
-  if (parser.isSet("smoke-test") || parser.isSet("fresh-layout") ||
-      parser.isSet("startup-benchmark"))
-    workbench.setDockLayoutPath(testLayout.filePath("layout.json"));
-#ifdef NEVERD_GUI_TEST_PROBES
-  if (parser.isSet("docking-test") || parser.isSet("analysis-test") ||
-      parser.isSet("shortcuts-test"))
-    workbench.setDockLayoutPath(testLayout.filePath("layout.json"));
-#endif
-  QObject::connect(
-      &app, &QGuiApplication::screenRemoved, &workbench, [&workbench] {
-        QTimer::singleShot(0, &workbench, &Workbench::clampWindows);
-      });
-  if (startupMetrics)
-    startupMetrics->record("services_started_ms");
   McpConnectionManager mcp;
-  if (startupMetrics)
-    startupMetrics->record("mcp_created_ms");
   GuiSessionBroker broker;
   if (startupMetrics)
-    startupMetrics->record("broker_created_ms");
-  QObject::connect(&workbench, &Workbench::languageChanged, &mcp,
-                   &McpConnectionManager::retranslate);
-  QObject::connect(&workbench, &Workbench::languageChanged, &broker,
-                   &GuiSessionBroker::retranslate);
-  QObject::connect(&broker, &GuiSessionBroker::queryRequested, &workbench,
-                   &Workbench::externalQuery);
-  QObject::connect(&workbench, &Workbench::externalResponse, &broker,
-                   &GuiSessionBroker::reply);
-  QObject::connect(&workbench, &Workbench::selectionChanged, &broker,
-                   &GuiSessionBroker::setSelection);
-  QObject::connect(&broker, &GuiSessionBroker::navigationRequested, &workbench,
-                   [&workbench](const QString &address, bool highlight) {
-                     if (highlight)
-                       workbench.selectInstruction(address);
-                     else
-                       workbench.navigate(address);
-                   });
-  if (startupMetrics)
     startupMetrics->record("services_created_ms");
-  WorkbenchFocus workbenchFocus;
-  QQmlApplicationEngine engine;
+
+  MainWindow window(session, mcp, broker);
+  QTemporaryDir testLayout;
+  if (automated || parser.isSet(QStringLiteral("fresh-layout")))
+    window.setLayoutPath(testLayout.filePath(QStringLiteral("layout.json")));
+  restoreGeometry(window);
+  window.initializeLayout();
   if (startupMetrics)
-    startupMetrics->record("qml_engine_created_ms");
-  KDDockWidgets::QtQuick::Platform::instance()->setQmlEngine(&engine);
-  workbench.setQmlEngine(&engine);
-  engine.rootContext()->setContextProperty("workbench", &workbench);
-  engine.rootContext()->setContextProperty("workbenchFocus", &workbenchFocus);
-  engine.rootContext()->setContextProperty("mcp", &mcp);
-  engine.rootContext()->setContextProperty("sessionBroker", &broker);
-  if (startupMetrics)
-    startupMetrics->record("font_lookup_started_ms");
-  engine.rootContext()->setContextProperty(
-      "systemMonoFamily",
-      QFontDatabase::systemFont(QFontDatabase::FixedFont).family());
-  if (startupMetrics)
-    startupMetrics->record("font_lookup_finished_ms");
-  QObject::connect(
-      &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
-      [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
-  if (startupMetrics)
-    startupMetrics->record("qml_load_started_ms");
-  engine.loadFromModule("NeverD.Workbench", "Main");
-  if (engine.rootObjects().isEmpty()) {
-    if (startupMetrics)
-      startupMetrics->observeWindow(nullptr);
-    return 1;
-  }
-  if (startupMetrics)
-    startupMetrics->observeWindow(
-        qobject_cast<QQuickWindow *>(engine.rootObjects().first()));
-  WorkbenchCloseGuard closeGuard(workbench);
-  engine.rootObjects().first()->installEventFilter(&closeGuard);
+    startupMetrics->observeWindow(&window);
+  window.show();
+  QObject::connect(&app, &QApplication::aboutToQuit, &window, [&window] {
+    QSettings().setValue(GeometryKey, window.saveGeometry());
+  });
+
 #ifdef NEVERD_GUI_TEST_PROBES
-  if (parser.isSet("docking-test"))
-    startDockingProbe(engine, workbench);
-  if (parser.isSet("shortcuts-test"))
-    startShortcutProbe(engine, workbench);
-  if (parser.isSet("analysis-test"))
-    startAnalysisProbe(engine, workbench);
-#endif
-  if (!parser.positionalArguments().isEmpty())
-    workbench.openFile(QUrl::fromLocalFile(
-        QFileInfo(parser.positionalArguments().first()).absoluteFilePath()));
-  if (parser.isSet("capture")) {
-    auto capture = [&engine, path = parser.value("capture")] {
-      auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
-      if (!window || !window->grabWindow().save(path))
-        QCoreApplication::exit(2);
-    };
-    QTimer::singleShot(6000, &app, capture);
+  if (probe) {
+    const QString binary = parser.value(QStringLiteral("analysis-test"));
+    startWidgetsProbe(window, session,
+                      binary.isEmpty() ? QString()
+                                       : QFileInfo(binary).absoluteFilePath());
+    return app.exec();
   }
-  if (parser.isSet("smoke-test"))
-    QTimer::singleShot(parser.isSet("capture") ? 7000 : 1500, &app, [&engine] {
-      auto *list = engine.rootObjects().first()->findChild<QQuickItem *>(
-          "functionsList");
-      if (!list || !list->isVisible() || list->width() <= 0 ||
-          list->height() <= 0) {
-        qCritical("The default function pane is not visible.");
-        QCoreApplication::exit(3);
-      } else
-        QCoreApplication::quit();
-    });
+#endif
+  window.runAfterOpen(parser.values(QStringLiteral("command")));
+  if (openingFile)
+    window.openFile(
+        QFileInfo(parser.positionalArguments().first()).absoluteFilePath());
+  else if (!automated && !parser.isSet(QStringLiteral("capture")) &&
+           QSettings().value(QuickStartKey, true).toBool())
+    QTimer::singleShot(0, &window, [&window] { window.showQuickStart(); });
+
+  if (parser.isSet(QStringLiteral("capture"))) {
+    const int delay = parser.value(QStringLiteral("capture-delay")).toInt();
+    QTimer::singleShot(
+        delay, &app, [&window, path = parser.value(QStringLiteral("capture"))] {
+          if (!window.grab().save(path))
+            QCoreApplication::exit(2);
+        });
+  }
+  if (parser.isSet(QStringLiteral("smoke-test")))
+    QTimer::singleShot(
+        parser.isSet(QStringLiteral("capture"))
+            ? parser.value(QStringLiteral("capture-delay")).toInt() + 1000
+            : SmokeDelayMs,
+        &app, [&window] {
+          auto *functions =
+              window.findChild<QWidget *>(QStringLiteral("functionsList"));
+          if (!functions || !functions->isVisible() ||
+              functions->width() <= 0 || functions->height() <= 0) {
+            qCritical("The default function window is not visible.");
+            QCoreApplication::exit(3);
+          } else {
+            QCoreApplication::quit();
+          }
+        });
   return app.exec();
 }
