@@ -111,6 +111,8 @@ I numeri dei segnali vanno da 1 a 64. `rt_sigaction` e Bionic condividono lo sta
 
 `linux_kernel.gki` seleziona 5.10–6.18 per `pidfd_open` e import vettoriale; API Android non sceglie kernel. `linux_kernel.tasks` dichiara attività vive fisse come `{ "id": 2000, "group_leader": true }`. Omissione: target esterni non supportati; array vuoto: solo leader corrente; fuori catalogo: ESRCH. Priorità coerenti e assenza di thread Android cooperativi sono richieste. La tabella si condivide con `linux_files`; GKI e pidfd assente sono incompatibili. Vedere il [contratto completo](android-gki-kernels.md).
 
+Il sottoinsieme GKI comprende anche orologi CPU di processo osservati e pidfd `ppoll` con timeout zero. Quest’ultimo richiede timespec zero esplicita, maschera temporanea nulla e limite `linux_files`. Scrive solo `revents` ordinati senza riscrivere il timeout o avanzare l’orologio reale. Un descrittore chiuso produce POLLNVAL; un pidfd vivo non è pronto. Attese bloccanti e disponibilità di altri tipi restano non supportate.
+
 <!-- i18n-section: linux-clocks -->
 
 ## Orologi guest espliciti

@@ -111,6 +111,8 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
 
 `linux_kernel.gki`는 `pidfd_open`과 벡터 가져오기의 5.10–6.18 계약을 선택합니다. Android API 수준은 커널을 선택하지 않습니다. `linux_kernel.tasks`는 `{ "id": 2000, "group_leader": true }` 형태의 고정 생존 목록입니다. 생략하면 외부 대상 미지원, 빈 배열은 현재 리더만, 목록 밖은 ESRCH입니다. 우선순위는 일치해야 하며 협력 Android 스레드는 결합할 수 없습니다. 표는 `linux_files`와 공유하고 GKI와 pidfd 부재는 모순입니다. [전체 계약](android-gki-kernels.md)을 참고하십시오.
 
+이 GKI 부분집합에는 관측된 프로세스 CPU 시계와 시간 제한 0의 pidfd `ppoll`도 포함됩니다. 후자는 명시적인 0 timespec, null 임시 마스크, `linux_files` 한도를 요구하고 `revents`만 순서대로 씁니다. 시간 제한이나 벽시계는 바꾸지 않습니다. 닫힌 설명자는 POLLNVAL, 살아 있는 pidfd는 준비 상태 없음이며 블로킹 대기와 다른 유형의 준비 상태는 미지원입니다.
+
 <!-- i18n-section: linux-clocks -->
 
 ## 명시적인 게스트 시계

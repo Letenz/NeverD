@@ -111,6 +111,8 @@ Die Signalnummern reichen von 1 bis 64. `rt_sigaction` und Bionic teilen denselb
 
 `linux_kernel.gki` wählt 5.10–6.18 für `pidfd_open` und Vektorimport; Android-API-Stufen wählen keinen Kernel. `linux_kernel.tasks` enthält feste lebende Aufgaben als `{ "id": 2000, "group_leader": true }`. Weglassen lässt fremde Ziele ununterstützt, ein leeres Array kennt nur den laufenden Gruppenführer, außerhalb des Katalogs gilt ESRCH. Prioritäten müssen konsistent sein; kooperative Android-Threads sind ausgeschlossen. Die Tabelle gehört `linux_files`; GKI und ausdrücklich fehlendes pidfd widersprechen sich. Siehe [Vertrag und Grenzen](android-gki-kernels.md).
 
+Die GKI-Teilmenge umfasst auch beobachtete Prozess-CPU-Uhren und pidfd-`ppoll` mit Zeitlimit null. Letzteres verlangt eine explizite Null-timespec, eine Nullmaske und die Grenze aus `linux_files`. Es schreibt nur geordnete `revents`, ohne Zeitlimit oder Wanduhr zu verändern. Geschlossene Deskriptoren liefern POLLNVAL, lebende pidfds keine Bereitschaft. Blockieren und andere Bereitschaft bleiben ununterstützt.
+
 <!-- i18n-section: linux-clocks -->
 
 ## Explizite Gastuhren

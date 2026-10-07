@@ -6,7 +6,7 @@ NeverD prioriza las ramas publicadas Android GKI 5.10–6.18 antes de otras vari
 {"linux_kernel":{"gki":"android17-6.18"},"linux_files":{"files":[],"descriptor_limit":16}}
 ```
 
-El contrato API 28 del perfil Android nativo describe las importaciones Bionic, sin elegir el núcleo. GKI controla los contratos implementados de `pidfd_open`, salida vectorial y relojes CPU de proceso codificados. No certifica ni inicia un núcleo completo ni deduce dispositivos, espacios de nombres, permisos o procesos. Los servicios no admitidos se detienen explícitamente. Véase la [política GKI oficial](https://source.android.com/docs/core/architecture/kernel/gki-releases).
+El contrato API 28 del perfil Android nativo describe las importaciones Bionic, sin elegir el núcleo. GKI controla los contratos implementados de `pidfd_open`, salida vectorial, relojes CPU de proceso codificados y `ppoll` de descriptores de proceso con tiempo cero. No certifica ni inicia un núcleo completo ni deduce dispositivos, espacios de nombres, permisos o procesos. Los servicios no admitidos se detienen explícitamente. Véase la [política GKI oficial](https://source.android.com/docs/core/architecture/kernel/gki-releases).
 
 ## Fuentes fijadas
 
@@ -43,7 +43,19 @@ En un pidfd válido, `read`/`write` devuelven `EINVAL` antes de acceder a datos;
 
 5.10/5.15/6.1 copian todo el array iovec antes de validar longitudes: una negativa seguida de metadatos inaccesibles produce `EFAULT`. Comprueban rangos originales antes del límite, incluso con un vector. 6.6/6.12/6.18 validan secuencialmente y producen `EINVAL`; un búfer se limita antes de validar su rango, mientras varios conservan todos los rangos originales. Son reglas de `copy_iovec_from_user`, `__import_iovec` e `import_ubuf`. Sin GKI permanece la política existente de un búfer, sin inferir versión.
 
-Bionic convierte errores negativos raw en `-1` y `errno` local al thread; el éxito conserva `errno`. Faltan metadatos para `fstat`. Polling, notificaciones de salida, señales mediante pidfd, `pidfd_getfd`, `fcntl`, ioctl pidfs y tareas no observadas siguen sin admitirse. Un pidfd no implica planificación ni ciclo de vida.
+Bionic convierte errores negativos raw en `-1` y `errno` local al thread; el éxito conserva `errno`. Faltan metadatos para `fstat`. Polling bloqueante, notificaciones de salida, señales mediante pidfd, `pidfd_getfd`, `fcntl`, ioctl pidfs y tareas no observadas siguen sin admitirse. Un pidfd no implica planificación ni ciclo de vida.
+
+## Subconjunto de sondeo con tiempo cero
+
+Al seleccionar GKI, `ppoll` raw x64/AArch64 y `syscall` variádico Bionic admiten una timespec explícitamente cero y una máscara temporal de señales nula. `linux_files.descriptor_limit` aporta el límite invitado RLIMIT_NOFILE; los 32 bits inferiores sin signo de `nfds` no pueden superarlo. La tabla compartida no indica disponibilidad para pidfd vivos observados, ignora descriptores negativos y devuelve `POLLNVAL` (`0x20`) para los cerrados. Cada entrada no nula cuenta por separado, incluidos duplicados. La disponibilidad no observada de otros tipos causa una parada explícita.
+
+La copia y validación del tiempo preceden a máscara y descriptores. Una máscara no nula valida su tamaño de ancho completo y extensión legible antes del límite no admitido; una máscara nula ignora el tamaño. Todos los metadatos se importan antes de seleccionar disponibilidad o escribir resultados. Solo se escriben los campos `revents` de 16 bits en orden de entrada; un fallo posterior conserva las escrituras anteriores. El acceso mixto dentro de un campo mantiene el límite compartido de copia parcial no admitida. Incluso un array vacío recibe la comprobación final del rango de usuario. La timespec cero no se reescribe y puede ser legible pero de solo lectura. La llamada no lee ni avanza el reloj de pared.
+
+Las reglas se comprobaron en las ocho versiones inmutables de `fs/select.c`: `ppoll`, `do_sys_poll`, `do_pollfd`, `poll_select_set_timeout` y `poll_select_finish`. La disponibilidad de pidfd vivos sigue `pidfd_poll` en `kernel/fork.c` para las seis primeras versiones y pidfs para las dos últimas:
+
+[5.10 fs/select.c](https://android.googlesource.com/kernel/common/+/b14525331e0d5d335b037d6ed17d40424ed47b0a/fs/select.c) · [6.18 fs/select.c](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/fs/select.c) · [6.6 kernel/fork.c](https://android.googlesource.com/kernel/common/+/5556e039c32fa02b239611dc8e5ebb958a7f12e1/kernel/fork.c) · [6.12 fs/pidfs.c](https://android.googlesource.com/kernel/common/+/894a317b5382555614ef2be7a79cca79083c6cf2/fs/pidfs.c) · [6.18 fs/pidfs.c](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/fs/pidfs.c)
+
+Las notificaciones de salida y recolección varían por versión y quedan fuera del subconjunto de tareas vivas fijas. Las esperas bloqueantes, máscaras temporales, señales y wrappers Bionic `ppoll` con nombre requieren contratos propios.
 
 ## Subconjunto de relojes CPU de proceso
 
@@ -70,6 +82,8 @@ Las reglas siguen `pid_for_clock`, `posix_cpu_clock_get`, el despachador y las d
 | `android16-6.12` | [894a317b5382](https://android.googlesource.com/kernel/common/+/894a317b5382555614ef2be7a79cca79083c6cf2/kernel/time/posix-cpu-timers.c) |
 | `android17-6.18` | [bab5f6aca819](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/kernel/time/posix-cpu-timers.c) |
 
+`init/Kconfig` de las versiones fijadas activa los temporizadores POSIX por defecto; los defconfig GKI no los desactivan. Véase [6.18 init/Kconfig](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/init/Kconfig).
+
 La distinción FD y el enrutamiento CPU siguen también el [despachador 6.18](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/kernel/time/posix-timers.c) y las [definiciones de ID](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/include/linux/posix-timers_types.h) fijados. Los relojes FD y CPU codificados por hilo siguen sin soporte. El catálogo es una observación invitada fija; permisos, espacios de nombres, vida del proceso y contabilidad CPU requieren sus propios contratos.
 
 ## Validación y cobertura pendiente
@@ -77,3 +91,5 @@ La distinción FD y el enrutamiento CPU siguen también el [despachador 6.18](ht
 `LinuxPIDFDTests.cpp` ejecuta ELF independientes x64/AArch64 O0/O2 para ocho ramas y backends disponibles: flags, tabla compartida, límites/reutilización, orden de errores, metadatos inaccesibles, límite frente a rangos originales, catálogos omitidos/cerrados, no líderes y objetivos antes del agotamiento. `AndroidSyscallTests.cpp` repite propiedad raw/Bionic, búsqueda y errno en seis perfiles O0/O2 con relocaciones normales, Android packed y RELR. Fuentes y ejecuciones prueban este subconjunto; no hay arranque nativo de todas las imágenes GKI fijadas. Ampliar Linux servicio por servicio conservando versiones, configuración y observaciones.
 
 Los casos CPU verifican identidad, orden de salida, tipos independientes, muestras explícitas y separación del avance de pared. `AndroidTimeTests.cpp` comprueba salidas nominales/directas y centinelas; el syscall cooperativo comprueba el alias del TID actual no líder.
+
+`ZeroTimeoutPollRetainsReadinessAndOrderedCopies` verifica llamadas raw O0/O2 de ocho GKI: descriptores vivos, negativos y cerrados, duplicados, reducción de argumentos, orden tiempo/máscara, timespec cero de solo lectura, importación completa antes de disponibilidad y primeros `revents` conservados tras un fallo posterior. `ZeroTimeoutPollKeepsUnobservedBoundaries` mantiene límites desconocidos de núcleo, recursos, máscaras, esperas y disponibilidad. Android `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` verifica la tabla y propiedad de errno en seis perfiles de empaquetado.

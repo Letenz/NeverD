@@ -6,7 +6,7 @@ NeverD は他の Linux 系統に先立ち、公開済み Android GKI 5.10–6.18
 {"linux_kernel":{"gki":"android17-6.18"},"linux_files":{"files":[],"descriptor_limit":16}}
 ```
 
-Android ネイティブプロファイルの API 28 契約は Bionic のインポートを表し、カーネル版を選びません。GKI 選択は実装済みの `pidfd_open`、ベクトル出力、符号化されたプロセス CPU クロックだけを制御します。完全なカーネルの認証や起動、デバイス・名前空間・資格情報・プロセス一覧の推測は行いません。未対応サービスは明示的に停止します。[公式 GKI リリース方針](https://source.android.com/docs/core/architecture/kernel/gki-releases)を参照してください。
+Android ネイティブプロファイルの API 28 契約は Bionic のインポートを表し、カーネル版を選びません。GKI 選択は実装済みの `pidfd_open`、ベクトル出力、符号化されたプロセス CPU クロック、タイムアウトゼロのプロセス記述子 `ppoll` だけを制御します。完全なカーネルの認証や起動、デバイス・名前空間・資格情報・プロセス一覧の推測は行いません。未対応サービスは明示的に停止します。[公式 GKI リリース方針](https://source.android.com/docs/core/architecture/kernel/gki-releases)を参照してください。
 
 ## 固定したソース版
 
@@ -43,7 +43,19 @@ x64/AArch64 の生トラップと Bionic `syscall` は `LinuxServices` とワー
 
 5.10/5.15/6.1 は iovec 全体をコピーしてから長さを検証するため、先の負の長さと後続のアクセス不能メタデータは `EFAULT` です。単一ベクトルも上限適用前に元の範囲を検証します。6.6/6.12/6.18 は逐次検証し、同じ場合は `EINVAL` です。単一バッファは先に制限し、複数ではすべての元の範囲を検証します。根拠は `copy_iovec_from_user`、`__import_iovec`、`import_ubuf` です。GKI 未指定時は既存の単一バッファ方針を保持し、版を推測しません。
 
-Bionic は生の負エラーを `-1` とスレッド局所 `errno` に変換し、成功時は `errno` を維持します。`fstat` 用メタデータはありません。ポーリング、終了通知、pidfd 経由のシグナル、`pidfd_getfd`、`fcntl`、pidfs ioctl、未観測タスク検索は未対応です。pidfd からスケジューリングや寿命は推測しません。
+Bionic は生の負エラーを `-1` とスレッド局所 `errno` に変換し、成功時は `errno` を維持します。`fstat` 用メタデータはありません。ブロッキングポーリング、終了通知、pidfd 経由のシグナル、`pidfd_getfd`、`fcntl`、pidfs ioctl、未観測タスク検索は未対応です。pidfd からスケジューリングや寿命は推測しません。
+
+## 実装済みのタイムアウトゼロのポーリング
+
+GKI を選択すると、生の x64／AArch64 `ppoll` と Bionic の可変引数 `syscall` は明示的なゼロ timespec と null の一時シグナルマスクを受け付けます。`linux_files.descriptor_limit` がこの範囲のゲスト RLIMIT_NOFILE 上限となり、`nfds` の符号なし下位 32 ビットはこれを超えられません。共有表は観測済みの生存 pidfd を準備未完了とし、負の記述子を無視し、閉じた記述子には `POLLNVAL`（`0x20`）を返します。重複を含む非ゼロ結果の各要素を個別に数えます。他種の未観測の準備状態は明示的に停止します。
+
+タイムアウトのコピーと検証はマスクと記述子より先です。非 null マスクは全幅のサイズと可読範囲を検証してから未対応境界に達し、null マスクはサイズを無視します。全記述子のメタデータを準備状態の選択と出力より先に読み込みます。16 ビットの `revents` だけを要素順に書き、後続障害でも先行書き込みは残ります。一フィールド内の混在アクセスは共有コピー層の部分コピー未対応境界を維持します。空配列も最終ユーザー範囲を検証します。ゼロ timespec は書き戻さず、可読な読み取り専用領域でも成功でき、壁時計を読んだり進めたりしません。
+
+規則は八つの固定版の `fs/select.c` にある `ppoll`、`do_sys_poll`、`do_pollfd`、`poll_select_set_timeout`、`poll_select_finish` で確認しました。生存 pidfd の `pidfd_poll` は最初の六版の `kernel/fork.c` と最後の二版の pidfs にあります：
+
+[5.10 fs/select.c](https://android.googlesource.com/kernel/common/+/b14525331e0d5d335b037d6ed17d40424ed47b0a/fs/select.c) · [6.18 fs/select.c](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/fs/select.c) · [6.6 kernel/fork.c](https://android.googlesource.com/kernel/common/+/5556e039c32fa02b239611dc8e5ebb958a7f12e1/kernel/fork.c) · [6.12 fs/pidfs.c](https://android.googlesource.com/kernel/common/+/894a317b5382555614ef2be7a79cca79083c6cf2/fs/pidfs.c) · [6.18 fs/pidfs.c](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/fs/pidfs.c)
+
+版ごとに異なる終了・回収通知は固定生存タスクの範囲外です。ブロッキング待機、一時マスク、シグナル配信、名前付き Bionic `ppoll` ラッパーには別の契約が必要です。
 
 ## 実装済みプロセス CPU クロックの範囲
 
@@ -70,6 +82,8 @@ GKI を明示的に選ぶと、`clock_gettime` は PROF、VIRT、SCHED の負の
 | `android16-6.12` | [894a317b5382](https://android.googlesource.com/kernel/common/+/894a317b5382555614ef2be7a79cca79083c6cf2/kernel/time/posix-cpu-timers.c) |
 | `android17-6.18` | [bab5f6aca819](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/kernel/time/posix-cpu-timers.c) |
 
+固定版の `init/Kconfig` は POSIX タイマーを既定で有効にし、GKI defconfig は無効化しません。参照： [6.18 init/Kconfig](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/init/Kconfig).
+
 FD クロックの識別と CPU 分派は固定の [6.18 分派器](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/kernel/time/posix-timers.c)と[クロック ID 定義](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/include/linux/posix-timers_types.h)にも基づきます。FD クロックと符号化されたスレッド別 CPU クロックは未対応です。一覧は固定のゲスト観測であり、権限、名前空間、プロセス寿命、CPU 計量の拡張には個別の契約が必要です。
 
 ## 検証と今後の対象
@@ -77,3 +91,5 @@ FD クロックの識別と CPU 分派は固定の [6.18 分派器](https://andr
 `LinuxPIDFDTests.cpp` は独立した x64/AArch64 O0/O2 ELF 呼び出し側を全八ブランチと利用可能なバックエンドで実行し、フラグ、表の共有、上限・再利用、エラー順序、メタデータ障害、長さ制限と元範囲、一覧の省略・閉包、非リーダー、FD 枯渇前の対象検索を検証します。`AndroidSyscallTests.cpp` は通常・Android packed・RELR の六種の O0/O2 構成で raw/Bionic の所有権・検索・errno を再検証します。ソースとモデル実行はこの部分契約の証拠であり、すべての固定 GKI イメージを起動するネイティブ検証は未実施です。ほかの Linux への拡張もサービスごとに版・構成・観測証拠を保持します。
 
 CPU クロックのテストは識別、出力順序、独立した種類、明示的標本の検証、壁時計のアイドル進行との分離を確認します。`AndroidTimeTests.cpp` は名前付き／raw 出力とカナリアを、協調 syscall は現在の非リーダー TID の別名を確認します。
+
+`ZeroTimeoutPollRetainsReadinessAndOrderedCopies` は八版の O0／O2 生呼び出しで、生存・負・閉じた記述子、重複件数、引数の縮小、タイムアウトとマスクの順序、読み取り専用ゼロ timespec、全メタデータの先行取り込み、後続障害で残る `revents` を検証します。`ZeroTimeoutPollKeepsUnobservedBoundaries` は未観測のカーネル、上限、マスク、待機、準備状態を維持します。Android の `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` は六つの梱包形式で共有表と errno の所有者を確認します。

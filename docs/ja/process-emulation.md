@@ -111,6 +111,8 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
 
 `linux_kernel.gki` は `pidfd_open` とベクトル導入の 5.10–6.18 契約を選び、Android API レベルはカーネルを選びません。`linux_kernel.tasks` は `{ "id": 2000, "group_leader": true }` の固定生存タスク一覧です。省略時は外部対象未対応、空配列は現在のリーダーのみ、一覧外は ESRCH です。優先度との整合性が必要で、Android 協調スレッドと併用できません。表は `linux_files` と共有し、GKI と pidfd 不在は矛盾します。[詳細と制約](android-gki-kernels.md)を参照してください。
 
+この GKI 範囲は観測済みプロセス CPU クロックとタイムアウトゼロの pidfd `ppoll` も含みます。後者は明示的なゼロ timespec、null の一時マスク、`linux_files` 上限を要求し、`revents` のみを順に書きます。タイムアウトや壁時計は変更しません。閉じた記述子は POLLNVAL、生存 pidfd は準備未完了です。ブロッキング待機や他種の準備状態は未対応です。
+
 <!-- i18n-section: linux-clocks -->
 
 ## 明示的なゲストクロック

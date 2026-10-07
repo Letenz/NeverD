@@ -1551,6 +1551,8 @@ Le getter SDK exact `MainActor.shared` renvoie un pointeur objet et reçoit son 
 
 `LinuxCPUClock` décode l’identité CPU et valide les observations GKI, puis résout les alias du groupe courant et les chefs étrangers avant la sortie. `LinuxClock` normalise les échantillons et refuse les alias doubles. Seules les horloges murales déclarées avancent au repos ; les échantillons CPU restent fixes, sans horloge hôte ni comptabilité implicite.
 
+`LinuxPoll` réutilise le propriétaire des descripteurs de `LinuxFiles` pour interroger les pidfd sans attente. Il importe délai et métadonnées avant la sélection, vérifie la limite déclarée et valide seulement les `revents` ordonnés par la copie utilisateur commune. Les observations vivantes fixes ne déduisent ni sortie, attente bloquante, masque temporaire ni disponibilité des autres types.
+
 ## Assemblage des sources mobiles
 
 L’exporteur de sources Objective-C désactive `CEmitterOptions::EmitRecordGuards` et `CEmitterOptions::UseUnalignedPointers` pour l’unité native complète et chaque unité de méthode. Les copies d’octets de largeur exacte préservent les accès mémoire non alignés sans introduire de macros générées dans l’analyseur mobile ; les directives conditionnelles et celles qui modifient des macros restent refusées.

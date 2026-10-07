@@ -1408,6 +1408,8 @@ Swift SDK Published의 enclosing-instance 접근자는 포인터 네 개를 유�
 
 `LinuxCPUClock`은 프로세스 CPU 식별자와 GKI 작업 관측을 검증하고 출력 전에 현재 그룹 별칭과 외부 리더를 확인합니다. `LinuxClock`은 표본을 정규화하고 중복 별칭을 거부합니다. 선언된 벽시계만 유휴 시 진행하며 CPU 표본은 고정됩니다. 호스트 시계나 실행 계측으로 관측을 보충하지 않습니다.
 
+`LinuxPoll`은 `LinuxFiles` 설명자 소유자를 재사용하여 시간 제한 0으로 pidfd를 조회합니다. 시간 제한과 설명자 메타데이터 및 선언된 한도를 확인한 뒤 공유 사용자 복사로 `revents`를 순서대로 반영합니다. 고정 생존 관측에서 종료, 블로킹 대기, 임시 마스크 또는 다른 유형의 준비 상태를 추론하지 않습니다.
+
 ## 모바일 소스 조립
 
 Objective-C 소스 내보내기는 전체 네이티브 단위와 개별 메서드 단위에서 `CEmitterOptions::EmitRecordGuards`와 `CEmitterOptions::UseUnalignedPointers`를 끕니다. 정확한 너비의 바이트 복사로 비정렬 메모리 접근 의미를 보존하고 생성된 매크로가 모바일 파서에 들어가지 않게 합니다. 조건부 지시문과 매크로를 변경하는 지시문은 계속 거부합니다.

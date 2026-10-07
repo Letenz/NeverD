@@ -1421,6 +1421,8 @@ Swift SDK Published 的 enclosing-instance 访问器保留四个指针载体：�
 
 `LinuxCPUClock` 解码进程 CPU 身份并校验已发布 GKI 的任务观察值，在访问输出前解析当前任务的进程组别名及外部组首领。`LinuxClock` 规范化样本并拒绝重复别名。空闲策略只推进声明的墙钟，CPU 样本保持固定；宿主时钟和指令计量均不提供隐式观察值。
 
+`LinuxPoll` 复用 `LinuxFiles` 的描述符所有者进行零超时 pidfd 查询；先导入超时和描述符元数据，检查声明的限额，再通过共享用户复制策略按序提交 `revents`。固定存活观察值不推断退出、阻塞等待、临时掩码或其他描述符的就绪状态。
+
 ## 移动端源码组装
 
 Objective-C 源码导出器对完整原生单元和各方法单元同时关闭 `CEmitterOptions::EmitRecordGuards` 与 `CEmitterOptions::UseUnalignedPointers`。精确宽度的字节复制保留非对齐内存访问语义，并使生成的宏不进入移动端解析器；条件指令和修改宏的指令仍被拒绝。

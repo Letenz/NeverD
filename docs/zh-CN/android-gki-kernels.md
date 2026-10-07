@@ -6,7 +6,7 @@ NeverD 优先支持已发布的 Android GKI 5.10–6.18 分支，再扩展其他
 {"linux_kernel":{"gki":"android17-6.18"},"linux_files":{"files":[],"descriptor_limit":16}}
 ```
 
-Android 原生配置的 API 28 契约描述 Bionic 导入，不决定内核版本。GKI 选择目前控制已实现的 `pidfd_open`、向量输出和编码进程 CPU 时钟语义；它不认证完整内核、不加载内核映像，也不推断设备、命名空间、凭据或进程清单。未支持的服务仍明确停止。参见官方 [GKI 发布策略](https://source.android.com/docs/core/architecture/kernel/gki-releases)。
+Android 原生配置的 API 28 契约描述 Bionic 导入，不决定内核版本。GKI 选择目前控制已实现的 `pidfd_open`、向量输出和编码进程 CPU 时钟及零超时进程描述符 `ppoll` 语义；它不认证完整内核、不加载内核映像，也不推断设备、命名空间、凭据或进程清单。未支持的服务仍明确停止。参见官方 [GKI 发布策略](https://source.android.com/docs/core/architecture/kernel/gki-releases)。
 
 ## 固定源码版本
 
@@ -43,7 +43,19 @@ x64／AArch64 原始陷阱与 Bionic `syscall` 共用 `LinuxServices` 和工作�
 
 固定 5.10／5.15／6.1 先复制整个 iovec 数组，再检查负长度；较早的负长度遇到后续不可访问元数据返回 `EFAULT`，且单向量也在截断长度前校验原始范围。6.6／6.12／6.18 逐项读取和校验，此组合返回 `EINVAL`；单缓冲区先限长再验用户范围，多向量仍检查全部原始范围。这些规则来自固定源码的 `copy_iovec_from_user`、`__import_iovec`、`import_ubuf`。未选择 GKI 时保留现有单缓冲区策略，不推断内核版本。
 
-Bionic 将原始负错误转换为 `-1` 和线程局部 `errno`；成功保留 `errno`。本子集缺少 `fstat` 所需元数据。轮询、退出通知、pidfd 信号投递、`pidfd_getfd`、`fcntl`、pidfs ioctl 和未观察任务查找仍不支持；不会从 pidfd 推断调度或进程生命周期。
+Bionic 将原始负错误转换为 `-1` 和线程局部 `errno`；成功保留 `errno`。本子集缺少 `fstat` 所需元数据。阻塞轮询、退出通知、pidfd 信号投递、`pidfd_getfd`、`fcntl`、pidfs ioctl 和未观察任务查找仍不支持；不会从 pidfd 推断调度或进程生命周期。
+
+## 已实现的零超时轮询子集
+
+选择 GKI 后，原始 x64／AArch64 `ppoll` 与 Bionic variadic `syscall` 接受显式零 timespec 和空临时信号掩码。`linux_files.descriptor_limit` 提供此子集的来宾 RLIMIT_NOFILE 上限，`nfds` 的低 32 位无符号值不能超过它。共享描述符表对已观察的存活 pidfd 返回无就绪状态，忽略负描述符，对已关闭描述符返回 `POLLNVAL`（`0x20`）；每个非零条目分别计数，包含重复描述符。其他类型的就绪状态未观察时明确停止。
+
+先复制并校验超时，再处理掩码和描述符。非空掩码先校验完整宽度的大小及可读范围，再到达未支持的临时掩码边界；空掩码忽略大小参数。全部描述符元数据在就绪选择和输出之前导入。只按条目顺序写每个 16 位 `revents`，后续故障保留较早写入；单个字段内的混合访问仍遵守共享复制层不支持部分复制的边界。空数组也校验最终用户范围。零超时不回写，因此可读但只读的零 timespec 可以成功，调用不读取或推进墙钟。
+
+规则核对了八个固定发布版本的 `fs/select.c`：`ppoll`、`do_sys_poll`、`do_pollfd`、`poll_select_set_timeout` 和 `poll_select_finish`。存活 pidfd 的就绪状态来自 `pidfd_poll`，前六个版本位于 `kernel/fork.c`，后两个位于 pidfs：
+
+[5.10 fs/select.c](https://android.googlesource.com/kernel/common/+/b14525331e0d5d335b037d6ed17d40424ed47b0a/fs/select.c) · [6.18 fs/select.c](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/fs/select.c) · [6.6 kernel/fork.c](https://android.googlesource.com/kernel/common/+/5556e039c32fa02b239611dc8e5ebb958a7f12e1/kernel/fork.c) · [6.12 fs/pidfs.c](https://android.googlesource.com/kernel/common/+/894a317b5382555614ef2be7a79cca79083c6cf2/fs/pidfs.c) · [6.18 fs/pidfs.c](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/fs/pidfs.c)
+
+版本间退出与回收通知不同，均不属于固定存活任务子集。阻塞等待、临时掩码、信号投递及命名 Bionic `ppoll` 包装仍需要独立契约。
 
 ## 已实现的进程 CPU 时钟子集
 
@@ -70,6 +82,8 @@ Bionic 将原始负错误转换为 `-1` 和线程局部 `errno`；成功保留 `
 | `android16-6.12` | [894a317b5382](https://android.googlesource.com/kernel/common/+/894a317b5382555614ef2be7a79cca79083c6cf2/kernel/time/posix-cpu-timers.c) |
 | `android17-6.18` | [bab5f6aca819](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/kernel/time/posix-cpu-timers.c) |
 
+固定版本的 `init/Kconfig` 默认启用 POSIX 定时器，其 GKI defconfig 未禁用；参见 [6.18 init/Kconfig](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/init/Kconfig).
+
 FD 时钟判别与 CPU 路由还依据固定的 [6.18 分派器](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/kernel/time/posix-timers.c)和[时钟 ID 定义](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/include/linux/posix-timers_types.h)。基于 FD 的时钟与编码的逐线程 CPU 时钟仍不支持。任务清单是固定来宾观察值；权限、命名空间、进程生命周期及 CPU 用量计量的扩展需要各自明确的支持契约。
 
 ## 验证与后续覆盖
@@ -77,3 +91,5 @@ FD 时钟判别与 CPU 路由还依据固定的 [6.18 分派器](https://android
 `LinuxPIDFDTests.cpp` 使用独立的 x64／AArch64 O0／O2 ELF 样例，覆盖八个分支及可用后端，检查标志、共享文件表、限额／复用、标量／向量错误顺序、元数据故障、限长与原始范围、清单省略／封闭、非首领和描述符耗尽前的目标查找。`AndroidSyscallTests.cpp` 在普通、Android packed 和 RELR 的 O0／O2 六种配置中复验 raw／Bionic 所有权、查找和 errno。源码及模型执行只证明此系统调用子集，尚无逐个启动全部固定 GKI 映像的原生测试；扩展其他 Linux 发行版前须逐服务保留版本、配置和观察值证据。
 
 CPU 时钟用例还验证身份及输出顺序、独立类别、显式观察值校验，以及 CPU 样本与空闲墙钟推进的分离。`AndroidTimeTests.cpp` 检查命名／原始调用的进程 CPU 输出和边界哨兵；协作式 syscall 样例检查当前非首领 TID 的别名。
+
+`ZeroTimeoutPollRetainsReadinessAndOrderedCopies` 覆盖八个 GKI 分支的 O0／O2 原始调用，检查存活／负数／已关闭描述符、重复计数、参数收窄、超时／掩码顺序、只读零 timespec、全部元数据先于就绪，以及后续故障保留较早 `revents`。`ZeroTimeoutPollKeepsUnobservedBoundaries` 保留内核、限额、掩码、等待和就绪状态的未知边界。Android 的 `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` 在六种打包配置中复验共享表和 errno 所有权。

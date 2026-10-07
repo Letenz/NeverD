@@ -1234,7 +1234,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `4887 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5248`。待機集合の 29 件は移植可能なモデル 15 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `4931 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5292`。待機集合の 29 件は移植可能なモデル 15 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1571,3 +1571,7 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 `LinuxPIDFD.*` はブランチとタスク一覧をロード前に検証します。`Backends/LinuxPIDFDProcess.*` は八ブランチの独立 x64/AArch64 O0/O2 呼び出し側でフラグ、共有表、上限、順序、対象種別、バッファ制限を確認します。`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` とほかの `AndroidSyscallTests.cpp` は六種の再配置構成で raw/Bionic と errno を確認します。共有部変更後は Linux プロセス、Android ネイティブ、公開プロセス API の全スイートを実行してください。モデル検証は GKI 起動とは別です。[ソースと証拠](android-gki-kernels.md)を参照してください。
 
 `ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: 八つの固定版で raw／Bionic の識別、PROF／VIRT／SCHED、下位 32 ビット、ポインター故障より先の対象検証、標本欠落、別名、非負 CPU 時間、壁時計と CPU のアイドル分離を確認します。`AndroidTimeTests.cpp` は出力とカナリアを、協調 syscall は現在の非リーダー TID を確認します。
+
+`ZeroTimeoutPollRetainsReadinessAndOrderedCopies` は八版の O0／O2 生呼び出しで、生存・負・閉じた記述子、重複件数、引数の縮小、タイムアウトとマスクの順序、読み取り専用ゼロ timespec、全メタデータの先行取り込み、後続障害で残る `revents` を検証します。`ZeroTimeoutPollKeepsUnobservedBoundaries` は未観測のカーネル、上限、マスク、待機、準備状態を維持します。Android の `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` は六つの梱包形式で共有表と errno の所有者を確認します。
+
+`CancelledDirectRunPublishesACompleteBoundary` は直接実行のキャンセル確認時の完全な状態を検証します。`FailedDirectCapturePreservesStateAndForcesFullRetry` はキャンセル中にレジスター、XSAVE、メタデータの取得が失敗した場合に呼び出し元の状態を保ち、完全再試行を要求します。どちらの XSAVE API もレジスターの一部分を公開できません。

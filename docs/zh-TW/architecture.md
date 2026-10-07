@@ -1359,6 +1359,8 @@ Swift SDK Published 的 enclosing-instance 存取器保留四個指標載體：�
 
 `LinuxCPUClock` 解碼程序 CPU 身份並校驗已釋出 GKI 的任務觀察值，在訪問輸出前解析當前任務的程序組別名及外部組首領。`LinuxClock` 規範化樣本並拒絕重複別名。空閒策略只推進宣告的牆鍾，CPU 樣本保持固定；宿主時鐘和指令計量均不提供隱式觀察值。
 
+`LinuxPoll` 複用 `LinuxFiles` 的描述符所有者進行零超時 pidfd 查詢；先匯入超時和描述符元資料，檢查宣告的限額，再透過共享使用者複製策略按序提交 `revents`。固定存活觀察值不推斷退出、阻塞等待、臨時掩碼或其他描述符的就緒狀態。
+
 ## 行動端原始碼組裝
 
 Objective-C 原始碼匯出器對完整原生單元與各方法單元同時關閉 `CEmitterOptions::EmitRecordGuards` 與 `CEmitterOptions::UseUnalignedPointers`。精確寬度的位元組複製保留非對齊記憶體存取語意，並使產生的巨集不進入行動端剖析器；條件指令與修改巨集的指令仍被拒絕。

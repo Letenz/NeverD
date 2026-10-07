@@ -594,7 +594,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
 NEVERD_EMULATION_DOC_TOKEN(
     NativeDriverCI,
-    "4887 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5248")
+    "4931 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5292")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -1510,3 +1510,44 @@ NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockTests,
 NEVERD_EMULATION_DOC_TOKEN(
     AndroidGKIClockTests,
     "LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockGuide, "init/Kconfig")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIClockGuide, "POSIX")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIPollGuide, "docs/android-gki-kernels.md")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIPollGuide,
+                          "docs/{locale}/android-gki-kernels.md")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollGuide, "ppoll")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollGuide, "nfds")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollGuide, "descriptor_limit")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollGuide, "POLLNVAL")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollGuide, "0x20")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollGuide, "revents")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollGuide, "fs/select.c")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollGuide, "pidfd_poll")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollGuide, "poll_select_set_timeout")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollGuide, "poll_select_finish")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIPollOwnership, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIPollOwnership,
+                          "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollOwnership, "LinuxPoll")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollOwnership, "revents")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIPollProcess, "docs/process-emulation.md")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIPollProcess,
+                          "docs/{locale}/process-emulation.md")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollProcess, "ppoll")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollProcess, "POLLNVAL")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollProcess, "revents")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIPollTests, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(AndroidGKIPollTests, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollTests,
+                           "ZeroTimeoutPollRetainsReadinessAndOrderedCopies")
+NEVERD_EMULATION_DOC_TOKEN(AndroidGKIPollTests,
+                           "ZeroTimeoutPollKeepsUnobservedBoundaries")
+NEVERD_EMULATION_DOC_TOKEN(
+    AndroidGKIPollTests, "ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults")
+NEVERD_EMULATION_DOC_PATH(WHPDirectCaptureTests, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WHPDirectCaptureTests, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(WHPDirectCaptureTests,
+                           "CancelledDirectRunPublishesACompleteBoundary")
+NEVERD_EMULATION_DOC_TOKEN(
+    WHPDirectCaptureTests,
+    "FailedDirectCapturePreservesStateAndForcesFullRetry")

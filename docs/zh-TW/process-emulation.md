@@ -111,6 +111,8 @@ x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARC
 
 `linux_kernel.gki` 顯式選擇 5.10–6.18 已釋出分支，控制 `pidfd_open` 與版本化向量匯入；Android API 級別不選擇核心。`linux_kernel.tasks` 是可選的固定存活任務清單，條目如 `{ "id": 2000, "group_leader": true }`；省略時外部目標仍不支援，空陣列僅含當前組首領，清單外 PID 返回 ESRCH。任務與優先順序觀察值須一致，且不能組合協作式 Android 執行緒。描述符與 `linux_files` 共用表；GKI 與顯式缺失 pidfd 觀察值不能並存。參見[完整契約與限制](android-gki-kernels.md)。
 
+該 GKI 子集還支援已觀察的程序 CPU 時鐘，以及零超時 pidfd `ppoll`。後者要求顯式零 timespec、空臨時掩碼和 `linux_files` 描述符限額；僅按序寫 `revents`，不回寫超時或推進牆鍾。已關閉描述符返回 POLLNVAL，已觀察的存活 pidfd 無就緒狀態；阻塞等待和其他型別的就緒狀態仍不支援。
+
 <!-- i18n-section: linux-clocks -->
 
 ## 明確提供客體時鐘

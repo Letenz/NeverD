@@ -1545,6 +1545,8 @@ Der exakt authentifizierte SDK-Getter `MainActor.shared` gibt einen Objektzeiger
 
 `LinuxCPUClock` decodiert CPU-Identitäten, validiert GKI-Aufgabenbeobachtungen und löst aktuelle Gruppenaliase und fremde Gruppenführer vor der Ausgabe auf. `LinuxClock` normalisiert Werte und lehnt doppelte Aliase ab. Nur deklarierte Wanduhren laufen im Leerlauf weiter; CPU-Werte bleiben fest, ohne Hostuhr oder implizite Abrechnung.
 
+`LinuxPoll` verwendet den Deskriptorbesitzer von `LinuxFiles` für pidfd-Abfragen mit Zeitlimit null. Zeitlimit und Metadaten werden vor der Bereitschaftsauswahl importiert, die deklarierte Grenze geprüft und nur geordnete `revents` über die gemeinsame Benutzerkopie festgeschrieben. Feste Beobachtungen lebender Aufgaben erschließen weder Exits, blockierende Wartevorgänge, temporäre Masken noch Bereitschaft anderer Typen.
+
 ## Zusammenführung mobiler Quellen
 
 Der Objective-C-Quellexport deaktiviert `CEmitterOptions::EmitRecordGuards` und `CEmitterOptions::UseUnalignedPointers` für die vollständige native Einheit und jede Methodeneinheit. Bytekopien mit exakter Breite erhalten die Semantik nicht ausgerichteter Speicherzugriffe und halten erzeugte Makros vom mobilen Parser fern; bedingte und makroverändernde Direktiven werden weiterhin abgelehnt.

@@ -1142,7 +1142,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 48 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `4887 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5248`。29 项等待集合检查包含十五项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `4931 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5292`。29 项等待集合检查包含十五项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1479,3 +1479,7 @@ MainActor 测试数据检查完整的固定元数据与静态表流程，拒绝�
 `LinuxPIDFD.*` 检查分支、枚举、缺失观察值及任务清单的加载前校验。`Backends/LinuxPIDFDProcess.*` 用八个分支的独立 x64／AArch64 O0／O2 调用程序检查标志、文件表、限额／复用、错误顺序、清单查找、非首领和单向量限长。`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` 与其他 `AndroidSyscallTests.cpp` 用例覆盖六种重定位配置的 raw／Bionic 错误和 errno。共享语义变更后运行重点用例、完整 Linux 进程、Android 原生及进程公共接口套件。这些模型测试不等于启动八种 GKI 内核；参见[源码固定版本与证据](android-gki-kernels.md)。
 
 `ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: `ProcessCPUClocksRetainIdentityAndIdleSeparation`、`ProcessCPUClocksKeepMissingObservationBoundaries` 与 `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle` 检查八种固定版本的 raw／Bionic 身份、PROF／VIRT／SCHED、低 32 位参数、目标校验先于指针故障、观察值缺失、别名、CPU 非负值及墙钟／CPU 空闲分离。`AndroidTimeTests.cpp` 检查输出和哨兵；协作式 syscall 样例检查当前非首领 TID 的进程组样本。
+
+`ZeroTimeoutPollRetainsReadinessAndOrderedCopies` 覆盖八个 GKI 分支的 O0／O2 原始调用，检查存活／负数／已关闭描述符、重复计数、参数收窄、超时／掩码顺序、只读零 timespec、全部元数据先于就绪，以及后续故障保留较早 `revents`。`ZeroTimeoutPollKeepsUnobservedBoundaries` 保留内核、限额、掩码、等待和就绪状态的未知边界。Android 的 `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` 在六种打包配置中复验共享表和 errno 所有权。
+
+`CancelledDirectRunPublishesACompleteBoundary` 验证确认直接执行取消时发布完整状态。`FailedDirectCapturePreservesStateAndForcesFullRetry` 要求取消期间寄存器、XSAVE 或元数据捕获失败时保持调用者状态，随后完整重试；两个 XSAVE API 版本均不能发布部分寄存器前缀。
