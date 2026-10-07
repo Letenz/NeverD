@@ -23,7 +23,10 @@ namespace neverd::emulation {
 namespace {
 #define NEVERD_DEFERRED_VALUE(Name, Value) constexpr uint64_t Name = Value;
 #define NEVERD_DEFERRED_TEXT(Name, Text) constexpr char Name[] = Text;
+#define NEVERD_DEFERRED_GENERATED_BUFFER(Name, Bytes)                          \
+  constexpr uint64_t Name##Size = Bytes;
 #include "fixtures/WindowsDeferredCases.def"
+#undef NEVERD_DEFERRED_GENERATED_BUFFER
 #undef NEVERD_DEFERRED_TEXT
 #undef NEVERD_DEFERRED_VALUE
 struct Call {
@@ -89,7 +92,7 @@ protected:
 };
 
 TEST_P(WindowsDeferred, EarlierTLSCallbackMayGenerateALaterCallback) {
-  for (const char *Name : {"generated-tls.exe", "generated-tls-entry.exe"}) {
+  for (const char *Name : {GeneratedTLSFile, GeneratedTLSEntryFile}) {
     SCOPED_TRACE(Name);
     Path = Path.parent_path() / Name;
     Options.Contract.reset();
@@ -101,8 +104,12 @@ TEST_P(WindowsDeferred, EarlierTLSCallbackMayGenerateALaterCallback) {
     bool Unbacked = false;
     for (const auto &Section : (*Image)->sections()) {
       const auto *Header = (*Image)->getCOFFSection(Section);
-      if (llvm::cantFail(Section.getName()) == ".gentls") {
+      if (llvm::cantFail(Section.getName()) == GeneratedSection) {
         EXPECT_EQ(Header->SizeOfRawData, 0u);
+        EXPECT_EQ(Header->PointerToRawData, 0u);
+        EXPECT_EQ(Header->VirtualSize, GeneratedSize + GeneratedEntrySize);
+        EXPECT_TRUE(Header->Characteristics &
+                    llvm::COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA);
         Unbacked = Header->VirtualSize && !Header->SizeOfRawData;
       }
     }

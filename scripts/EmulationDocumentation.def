@@ -1619,3 +1619,18 @@ NEVERD_EMULATION_DOC_TOKEN(WindowsDispatcherArgumentWidthTests,
 NEVERD_EMULATION_DOC_TOKEN(WindowsDispatcherArgumentWidthTests,
                            "driver_wdm_multiple_wait.c")
 #endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(GeneratedTLSStorage, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(GeneratedTLSStorage, "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(
+    GeneratedTLSStorage,
+    "WindowsDeferred.EarlierTLSCallbackMayGenerateALaterCallback")
+NEVERD_EMULATION_DOC_TOKEN(GeneratedTLSStorage, "WindowsDeferredCases.def")
+NEVERD_EMULATION_DOC_TOKEN(GeneratedTLSStorage, ".gentls")
+NEVERD_EMULATION_DOC_TOKEN(GeneratedTLSStorage,
+                           "IMAGE_SCN_CNT_UNINITIALIZED_DATA")
+NEVERD_EMULATION_DOC_TOKEN(GeneratedTLSStorage, ".data")
+#endif

@@ -1299,6 +1299,8 @@ Windows ring3 依獨立原生觀測，將 checked x64 的 `operand_alignment` �
 
 `NeverDUnpackTests`、`NeverDUnpackExecutionTests` 和 `NeverDUnpackPublicTests` 涵蓋加殼映像的還原；參見[脫殼](unpack.md)。`UnpackGeneratedTests.cpp` 用測試自己加殼的程式，在 x86-64 和 ARM64 上檢查入口規則。`X64ReturnPrefixTests.cpp` 在每種傳輸上檢查雙位元組近返回，並確認其它帶前綴的返回仍被拒絕。`WindowsDeferredTests.cpp` 檢查不透明入口與已停止行程的觀察；`ExecutionSessionTests.cpp` 檢查執行監視。 `DirectX64Tests.cpp` 另驗證部分頁監視、跨頁取指、恢復後僅執行一次、服務邊界、非法指令和逾時狀態。
 
+`WindowsDeferred.EarlierTLSCallbackMayGenerateALaterCallback` 要求獨立的 `.gentls` 區段具有 `IMAGE_SCN_CNT_UNINITIALIZED_DATA` 旗標，大小與宣告的緩衝區範圍完全一致，原始資料長度與指標皆為零。`WindowsDeferredCases.def` 統一定義儲存與組合語言，普通 `.data` 保持獨立。產生回呼與產生入口兩種情境皆保留 x64/ARM64 的嚴格拒絕及延後執行檢查。
+
 `ExtendedRegistersLoadOrdinaryImportsAgain` 以受檢及直接 x64 執行驗證緊湊與帶填充的 R8-R15 導入載入。低暫存器案例涵蓋前置 REX 形狀位元組與僅含 CALL 的位址輔助常式；填充呼叫會跳過 CALL 後的任意位元組。`ImportCallHelpersCannotDiscardPersistentEffects` 要求持久副作用仍可觀察。`PERebuildTests.cpp` 拒絕缺少起點、結果證據及重疊起點，並保留六至八位元組視窗的精確 API 返回位址。
 
 `OpaqueExportCallsAreRepairedBeforeTheExplicitStop` 還原純呼叫而不繞過未知 API。`ExportObservationIncludesTheOpaqueBoundary` 涵蓋靜態、動態與序號導出，保持執行和服務日誌不變。`OpaqueExportObservationPreservesAnUnreadableReturn` 要求缺少的返回資訊保持缺少。
