@@ -2250,6 +2250,17 @@ TEST_F(SessionCAPITest, SwitchTablesComeFromWholeProgramAnalysis) {
   }
 }
 
+TEST(SessionNames, DemanglesAsIdentitiesDo) {
+  EXPECT_EQ(takeString(neverd_demangle("_ZN8QDomNodeC1Ev")),
+            "QDomNode::QDomNode()");
+  // An ELF PLT entry or a Mach-O symbol carries one underscore more.
+  EXPECT_EQ(takeString(neverd_demangle("__ZNK14QMessageLogger7warningEPKcz")),
+            "QMessageLogger::warning(char const*, ...) const");
+  EXPECT_EQ(takeString(neverd_demangle("?f@@YAXXZ")), "void __cdecl f(void)");
+  EXPECT_EQ(takeString(neverd_demangle("main")), "main");
+  EXPECT_EQ(neverd_demangle(nullptr), nullptr);
+}
+
 TEST(SessionTextDecoding, DecodesBytesForDisplayInAnyEncoding) {
   const unsigned char GBK[] = {'a', 0xd6, 0xd0, 0xff, 0x80};
   EXPECT_EQ(takeString(neverd_decode_text_json(GBK, sizeof(GBK), "gbk")),

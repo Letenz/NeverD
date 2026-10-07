@@ -882,11 +882,14 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       functionOrder_.clear();
       for (std::size_t i = 0; i < rows.size(); ++i) {
         const auto &row = rows[i];
-        if (filter.empty() ||
-            folded(row.value("name", std::string())).find(filter) !=
-                std::string::npos ||
-            folded(row.value("engine_name", std::string())).find(filter) !=
-                std::string::npos ||
+        // The filter matches the name, the engine's name, the name as it
+        // reads demangled or the address.
+        const auto matches = [&](const char *field) {
+          return folded(row.value(field, std::string())).find(filter) !=
+                 std::string::npos;
+        };
+        if (filter.empty() || matches("name") || matches("engine_name") ||
+            matches("demangled_name") ||
             row.value("address", std::string()).find(filter) !=
                 std::string::npos)
           functionOrder_.push_back(i);
@@ -918,9 +921,11 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         item = Json::object();
       const bool renamed = row.contains("engine_name");
       for (const auto &[field, value] : row.items())
-        item[field] = value;
+        if (field != "demangled_name")
+          item[field] = value;
+      // A name the workbench gave reads demangled, as the engine's do.
       if (renamed || !item.contains("display_name"))
-        item["display_name"] = row["name"];
+        item["display_name"] = row.value("demangled_name", row["name"]);
       items.push_back(std::move(item));
     }
     const bool complete = offset >= total || items.size() >= total - offset;

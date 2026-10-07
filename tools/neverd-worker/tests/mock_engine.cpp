@@ -494,6 +494,12 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                    {"complete", end == 700}}
                   .dump());
 }
+// The fixture's function_9 reads as a demangled C++ method.
+const char *neverd_demangle(const char *name) {
+  if (!name)
+    return nullptr;
+  return copy(std::string_view(name) == "function_9" ? "Widget::draw()" : name);
+}
 const char *neverd_switches_json(neverd_session_t, neverd_va_t first, int) {
   // function_8 loads a table of three offsets from the table, in the free
   // end of the read-only data, and dispatches through it.

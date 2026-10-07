@@ -22,7 +22,6 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/ELF.h"
-#include "llvm/Demangle/Demangle.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MD5.h"
@@ -122,7 +121,7 @@ llvm::json::Object Session::functionIdentity(va_t Entry) const {
     return {};
   const auto &F = *At;
   std::string Display =
-      F.Origin == NameOrigin::User ? F.Name : llvm::demangle(F.Name);
+      F.Origin == NameOrigin::User ? F.Name : demangledName(F.Name);
   llvm::json::Array Annotations;
   const sigs::LibraryRecognition *Whole = nullptr;
   bool Ambiguous = false;
@@ -417,6 +416,10 @@ const char *neverd_string_encodings_json(void) {
 
 const char *neverd_fold_case(const char *Text) {
   return Text ? dupStr(strings::foldCase(Text)) : nullptr;
+}
+
+const char *neverd_demangle(const char *Name) {
+  return Name ? dupStr(demangledName(Name)) : nullptr;
 }
 
 const char *neverd_decode_text_json(const unsigned char *Bytes, int Size,

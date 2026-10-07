@@ -34,6 +34,7 @@
 #include "neverd/sdk/NeverDCAPI.h"
 #include "neverd/sigs/SignatureDB.h"
 
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
@@ -538,6 +539,12 @@ inline Session *toSession(neverd_session_t Sess) {
 }
 
 inline char *dupStr(const std::string &S) { return strdup(S.c_str()); }
+
+/// How a name reads in identities and listings: demangled when it is a
+/// mangled name, else as it is.
+inline std::string demangledName(llvm::StringRef Name) {
+  return llvm::demangle(Name);
+}
 
 inline std::string vaHex(va_t Addr) { return "0x" + llvm::utohexstr(Addr); }
 
