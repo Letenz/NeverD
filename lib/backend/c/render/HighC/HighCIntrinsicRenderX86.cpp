@@ -1520,9 +1520,19 @@ const char *x86HighCIntrinsicFatalReason(Intrinsic Id) {
 
 std::string renderX86IntrinsicCall(Intrinsic Id,
                                    const std::vector<std::string> &Ops,
-                                   bool &HasCIntrinsics) {
+                                   bool &HasCIntrinsics, bool GnuToolchain) {
   if (const char *Reason = x86HighCIntrinsicFatalReason(Id))
     llvm::report_fatal_error(Reason);
+  if (GnuToolchain && Ops.empty())
+    switch (Id) {
+#define G(ID, MNEMONIC)                                                        \
+  case ID:                                                                     \
+    return "__asm__ volatile(\"" MNEMONIC "\" ::: \"memory\")";
+#include "neverd/ir/intrinsics/intrinsics_x86_gnu_asm.inc"
+#undef G
+    default:
+      break;
+    }
 
   using I = Intrinsic;
   switch (Id) {

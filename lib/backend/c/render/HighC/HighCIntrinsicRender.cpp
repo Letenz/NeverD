@@ -29,15 +29,15 @@ std::string MultiOutputRender::operator()(
 
 std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
                                 const std::vector<std::string> &Ops,
-                                uint16_t ResultBytes,
-                                bool &HasCIntrinsics) {
+                                uint16_t ResultBytes, bool &HasCIntrinsics,
+                                bool GnuToolchain) {
   std::string Result;
   if (TheArch == Arch::ARM || TheArch == Arch::AArch64) {
     Result = renderARMIntrinsicCall(Id, Ops, ResultBytes, HasCIntrinsics);
     if (!Result.empty())
       return Result;
   } else {
-    Result = renderX86IntrinsicCall(Id, Ops, HasCIntrinsics);
+    Result = renderX86IntrinsicCall(Id, Ops, HasCIntrinsics, GnuToolchain);
     if (!Result.empty())
       return Result;
   }

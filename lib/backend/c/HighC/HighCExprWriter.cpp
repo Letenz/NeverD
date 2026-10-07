@@ -820,9 +820,9 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
         }
       }
 
-    auto Rendered =
-        renderIntrinsicCall(E.IntrinsicId, Opts.TheArch, OpStrs,
-                            E.Type ? E.Type->Size : 0, HasCIntrinsics);
+    auto Rendered = renderIntrinsicCall(
+        E.IntrinsicId, Opts.TheArch, OpStrs, E.Type ? E.Type->Size : 0,
+        HasCIntrinsics, Opts.Format != BinaryFormat::COFF);
     if (!Rendered.empty())
       return Rendered;
   }

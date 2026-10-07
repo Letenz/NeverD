@@ -42418,6 +42418,28 @@ TEST(HighCPointerAddresses, MonitorAndMwaitLoadTheirRegisters) {
   EXPECT_NE(HighC.find("    mwait\n"), std::string::npos) << HighC;
 }
 
+TEST(HighCPointerAddresses, HaltIsInlineAsmForGnuToolchains) {
+  // `__halt` comes only from MSVC's <intrin.h>. An ELF function is compiled
+  // with GCC or Clang, which declare no such name: it writes the instruction.
+  constexpr va_t Entry = 0x401000;
+  const std::vector<uint8_t> Code = {0xf4, // hlt
+                                     0xc3};
+  for (const BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
+    SCOPED_TRACE(static_cast<int>(Format));
+    BinaryImage Image = makeCodeFixture(Entry, Code);
+    Image.Format = Format;
+    const std::string HighC = highcOnlyFunction(Image, Entry);
+    if (Format == BinaryFormat::COFF) {
+      EXPECT_NE(HighC.find("__halt();"), std::string::npos) << HighC;
+    } else {
+      EXPECT_EQ(HighC.find("__halt"), std::string::npos) << HighC;
+      EXPECT_NE(HighC.find("__asm__ volatile(\"hlt\" ::: \"memory\");"),
+                std::string::npos)
+          << HighC;
+    }
+  }
+}
+
 TEST(HighCPointerAddresses, SwapgsLeavesRaxAsItWas) {
   // KiSystemCall64 keeps the service number in RAX across `swapgs`, which
   // swaps the GS base and produces no value.  The store after it writes the
