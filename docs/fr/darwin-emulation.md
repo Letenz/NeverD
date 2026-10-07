@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 3e9324c29172180028d55fd3d4da679382fd95322227a5b26464f0360127662a -->
+<!-- i18n-source: 21441b8b14985fbac413a4bb78aa57c696ad5eb07b70d439200550bdc6ce27a4 -->
 
 [← Index de la documentation](README.md)
 
@@ -207,7 +207,7 @@ Release Darwin : 438 identités uniques, 210 succès, 228 omissions, aucun éche
 
 Une entrée peut ajouter `metadata` ; tous les champs ci-dessous sont alors obligatoires. Les chaînes décimales préservent toute la largeur ; les nombres JSON restent des entiers exacts dans ±(2^53−1). device est signé sur 32 bits, mode/link_count non signés sur 16, inode non signé sur 64, uid/gid/flags/generation non signés sur 32. size doit égaler le nombre d’octets ; blocks tient sur 64 bits signés, block_size sur 32 bits signés non négatifs. Les temps utilisent des secondes signées sur 64 bits et 0–999999999 nanosecondes.
 
-`stat64` (338), `fstat64` (339) et `lstat64` (340) produisent le même enregistrement LP64 de 144 octets sur ARM64/x64. Ils partagent la résolution de open, suivent dup/close, sans allouer de FD ni modifier le curseur. rdev, remplissage et réserves sont nuls. Les entrées donnent les métadonnées initiales, puis la politique facultative régit les modifications ; read ne change pas les temps et mode ne modifie pas l’accès au catalogue. Métadonnées absentes, flux, liens symboliques, ancien stat, et sécurité étendue restent exclus. Les erreurs de chemin/FD précèdent le pointeur de sortie ; une sortie partiellement accessible est refusée avant écriture. Le test natif compare tous les octets d’un fichier réel et les offsets du SDK ; le même programme original vérifie les trois appels.
+`stat64` (338), `fstat64` (339) et `lstat64` (340) produisent le même enregistrement LP64 de 144 octets sur ARM64/x64. Ils partagent la résolution de open, suivent dup/close, sans allouer de FD ni modifier le curseur. rdev, remplissage et réserves sont nuls. Les entrées donnent les métadonnées initiales, puis la politique facultative régit les modifications ; read ne change pas les temps et mode ne modifie pas l’accès au catalogue. Métadonnées absentes, flux, ancien stat, et sécurité étendue restent exclus. Les erreurs de chemin/FD précèdent le pointeur de sortie ; une sortie partiellement accessible est refusée avant écriture. Le test natif compare tous les octets d’un fichier réel et les offsets du SDK ; le même programme original vérifie les trois appels.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":{
@@ -412,7 +412,7 @@ Release Darwin :937 inscriptions,553 réussites,384 sauts de backend indisponibl
 
 Le mode utilise les 32 bits bas. R/W/X occupe les bits 0–2, les droits étendus 9–21. `(mode & 0x003ffe07) == 0` signifie existence ; les autres bits, signe compris, sont ignorés sans EINVAL. Une demande de permissions reste UnsupportedService après une recherche réussie, sans déduction des métadonnées ou autorisations de mutation. Les erreurs connues de chemin/descripteur passent avant.
 
-Faccessat accepte toute combinaison des drapeaux bas AT_EACCESS(0x10), AT_SYMLINK_NOFOLLOW(0x20), AT_SYMLINK_NOFOLLOW_ANY(0x800). Les autres donnent EINVAL avant chemin ou FD, même sans catalogue. Le catalogue admis n’a pas de liens symboliques et les identités réelle/effective sont fixes. Un chemin absolu ignore dirfd ; un chemin relatif garde les règles CWD/FD de répertoire. La copie jusqu’au premier NUL précède le FD relatif ; un octet manquant donne EFAULT. Un chemin relatif vide vérifie encore le FD : EBADF si inconnu, ENOTDIR pour fichier, sinon ENOENT. Catalogue absent ou nature de répertoire d’un flux inconnue restent non pris en charge.
+Faccessat accepte toute combinaison des drapeaux bas AT_EACCESS(0x10), AT_SYMLINK_NOFOLLOW(0x20), AT_SYMLINK_NOFOLLOW_ANY(0x800). Les autres donnent EINVAL avant chemin ou FD, même sans catalogue. Les identités réelle/effective sont fixes; les liens fixes suivent les règles ci-dessous. Un chemin absolu ignore dirfd ; un chemin relatif garde les règles CWD/FD de répertoire. nameiat hors AT_FDCWD lit un octet, vérifie le FD relatif puis importe la chaîne entière; `/` évite le FD. Premier octet inaccessible: EFAULT14; FD inconnu/fichier: EBADF9/ENOTDIR20 avant faute ultérieure. Un chemin relatif vide vérifie encore le FD : EBADF si inconnu, ENOTDIR pour fichier, sinon ENOENT. Catalogue absent ou nature de répertoire d’un flux inconnue restent non pris en charge.
 
 L’original `file-access` compare les deux appels, bits ignorés, drapeaux et ordre sur macOS natif et cinq invités via C++/C/CLI/Python. NOFOLLOW_ANY utilise un FD relatif pour éviter les liens hôtes `/tmp` ou `/var`. Les tests directs couvrent noms vivants, bits mixtes, épuisement des FD, indépendance des métadonnées et erreurs mémoire.
 
@@ -487,7 +487,7 @@ Un répertoire initial et tous ses descendants créés par ce processus avec mkd
 
 Les deux parents immédiats exigent une autorisation ; les répertoires créés l’héritent avec les device/GID connus. Identité, propriétaire/groupe, droit d’écriture et allocation du fichier sont préservés. Les devices contradictoires sont refusés. Un déplacement invalide stat/énumération complets des deux parents. Répertoires initiaux supprimés et chemins réutilisés restent des objets distincts ; anciens FD/CWD ne reçoivent pas le domaine du remplacement.
 
-Transaction bornée, leases de mappings, coûts chemin/NUL et priorité des erreurs restent valables. EXCL sur une cible existante distincte donne EEXIST avant domaine/autorisation. `renamed-file` compare déplacement vers l’enfant créé, remplacement dans le parent initial et retour via C++/C/CLI/Python et macOS natif. Permissions, déplacement des répertoires initiaux, liens physiques/symboliques et métadonnées APFS natives restent incomplets.
+Transaction bornée, leases de mappings, coûts chemin/NUL et priorité des erreurs restent valables. EXCL sur une cible existante distincte donne EEXIST avant domaine/autorisation. `renamed-file` compare déplacement vers l’enfant créé, remplacement dans le parent initial et retour via C++/C/CLI/Python et macOS natif. Permissions, déplacement des répertoires initiaux, liens physiques, liens symboliques dynamiques et métadonnées APFS natives restent incomplets.
 
 ### Vérification entre parents, 2026-10-06
 
@@ -720,10 +720,28 @@ Le vérificateur invité initialise les 265 octets de sortie avant chaque copie 
 
 ## Ouverture sans suivi de liens et contrôle du répertoire
 
-Les entrées ordinaires et nocancel `open` / `openat` acceptent O_NOFOLLOW=0x100 ou O_NOFOLLOW_ANY=0x20000000 dans les32 bits bas non signés. Le catalogue fermé ne contient aucun lien symbolique ; la résolution de liens reste à implémenter. Ces options de recherche sont absentes de F_GETFL et ne changent ni accès, ajout, troncature, création ni CLOEXEC propre au FD. Leur combinaison donne EINVAL22 après admission de la capacité FD, avant lecture du chemin complet ; une table pleine donne d’abord EMFILE24. Les options inconnues restent non prises en charge.
+Les entrées ordinaires et nocancel `open` / `openat` acceptent O_NOFOLLOW=0x100 ou O_NOFOLLOW_ANY=0x20000000 dans les32 bits bas non signés. Ces options de recherche sont absentes de F_GETFL et ne changent ni accès, ajout, troncature, création ni CLOEXEC propre au FD. Leur combinaison donne EINVAL22 après admission de la capacité FD, avant lecture du chemin complet ; une table pleine donne d’abord EMFILE24. Les options inconnues restent non prises en charge.
 
-Hors AT_FDCWD, `openat` lit exactement le premier octet avant le mode d’accès et la capacité FD. Un octet inaccessible donne EFAULT14. Un préfixe relatif, même NUL, vérifie d’abord l’objet répertoire détenu : FD inconnu EBADF9, fichier ordinaire ENOTDIR20, type vnode de flux inconnu non pris en charge. `/` ignore dirfd ; la séquence open existante lit ensuite le chemin complet. `open` ordinaire et AT_FDCWD omettent ce contrôle, tandis que les autres services conservent leur ordre de lecture complète. Un refus ne consomme ni FD ni nouvel inode ; les erreurs de transport se propagent sans mutation de l’espace de noms.
+Hors AT_FDCWD, `openat` lit exactement le premier octet avant le mode d’accès et la capacité FD. Un octet inaccessible donne EFAULT14. Un préfixe relatif, même NUL, vérifie d’abord l’objet répertoire détenu : FD inconnu EBADF9, fichier ordinaire ENOTDIR20, type vnode de flux inconnu non pris en charge. `/` ignore dirfd ; la séquence open existante lit ensuite le chemin complet. `open` ordinaire et AT_FDCWD omettent ce contrôle, les autres services nameiat vérifient, après les options et tailles, le premier octet et le dirfd relatif avant la chaîne complète. Un refus ne consomme ni FD ni nouvel inode ; les erreurs de transport se propagent sans mutation de l’espace de noms.
 
 Le programme original `file-access` utilise un FD de répertoire relatif pour NOFOLLOW_ANY afin d’éviter les alias natifs `/var` et `/tmp`. Les tests directs distinguent premier octet et suite, barre/NUL, limites utilisateur/page, table pleine et répertoires supprimés conservés. La sonde brute ARM64 macOS a réussi30 cas sous le délai inchangé de cinq secondes ; sa dernière ligne de chemin absolu avec table pleine utilise réellement un FD de répertoire valide malgré son ancien libellé. iOS physique et Intel natif restent à valider séparément.
 
 [XNU open1at / open1](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU vn_open_auth](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_vnops.c), [XNU open flags / FMASK](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/sys/fcntl.h).
+
+## Liens symboliques initiaux fixes
+
+`DarwinFileOptions::SymbolicLinks` / `darwin_files.symbolic_links` déclarent un `path` absolu canonique, un `target_hex` brut et les `metadata` facultatives du lien. La cible contient1..1023 octets nonNUL, conserve nonUTF-8, barres répétées et points, et peut manquer. `files` reste requis, même vide. Collisions et descendants déclarés sous un lien sont refusés. Chemin/NUL/cible partagent256 entrées/16 MiB. S_IFLNK, size=longueur, DT_LNK=10 et inode cohérent sont requis; CWD configuré doit être un vrai répertoire.
+
+Les liens sont développés avant les points: cible relative depuis le parent réel, cible absolue depuis la racine invitée. Chaque reprise réanalyse les barres finales sans réutiliser celles consommées.32 développements sont permis, le33e donneELOOP62; cible+suffixe+NUL dépassant1024 octets donneENAMETOOLONG63. FD/CWD/F_GETPATH/mmap gardent l’objet résolu.
+
+stat64/open/access/truncate/chdir suivent le lien final; lstat64/readlink le gardent. O_NOFOLLOW donneELOOP, avecO_DIRECTORY ENOTDIR20 passe avant. O_NOFOLLOW_ANY refuse tout développement nécessaire. O_CREAT|O_EXCL donneEEXIST17 pour un lien final existant, même cassé/cyclique. AT0x20/0x800 gardent le lien final;0x800 refuse aussi les développements intermédiaires/barres finales. Combinaison permise. AT_FDONLY ignore le chemin après validation des options.
+
+readlink(58) utilise count signé bas32, readlinkat(473) le size_t entier; retourint. Au-delà deINT32_MAX: EINVAL22 avant chemin/FD. Copie min(count,longueur), sansNUL; seul ce préfixe est vérifié. Taille0 vérifie chemin/type puis ignore la sortie. Non-lienEINVAL22, aucun octet accessibleEFAULT14; préfixe partiellement accessible: arrêt avant copie. Les erreurs de transport/budget mémoire se propagent.
+
+Les liens non vides excluent globalement MutableDirectories/RemovableDirectories/MovableDirectories/ExchangeableDirectories/SwapRenameDirectories/CreationPolicy. WritableFiles/MutationPolicies fixes peuvent modifier le fichier cible. Unlink/rename d’un lien retenu s’arrêtent avant effet. Liens dynamiques/durs, ACL et espace mutable restent exclus. La sonde ARM64 macOS a passé189 observations/115 tampons complets sous la limite initiale5s; pas une preuve d’iOS physique/Intel HVF/OS complet.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"symbolic_links":[{"path":"/link","target_hex":"64617461"}],"working_directory":"/"}}
+```
+
+[XNU namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_lookup.c), [XNU readlink / AT](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU open authorization](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_subr.c).

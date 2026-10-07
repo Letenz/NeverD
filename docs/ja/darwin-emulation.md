@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 3e9324c29172180028d55fd3d4da679382fd95322227a5b26464f0360127662a -->
+<!-- i18n-source: 21441b8b14985fbac413a4bb78aa57c696ad5eb07b70d439200550bdc6ce27a4 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -207,7 +207,7 @@ Release Darwin は438件の一意な登録を照合し、210件成功、228件�
 
 ファイル項目には `metadata` を追加できます。指定する場合、下の全フィールドが必須です。10進文字列は整数の全幅を保持し、JSON 数値は ±(2^53−1) 内の正確な整数に制限されます。device は符号付き32ビット、mode/link_count は符号なし16ビット、inode は符号なし64ビット、uid/gid/flags/generation は符号なし32ビットです。size はファイルのバイト数と一致し、blocks は符号付き64ビット上限以下、block_size は非負の符号付き32ビットです。時刻は符号付き64ビット秒と 0–999999999 ナノ秒を使います。
 
-`stat64` (338)、`fstat64` (339)、`lstat64` (340) は ARM64/x64 で同じ144バイト LP64 レコードを返します。open とパス解決を共有し、FD の複製と close を反映します。FD やカーソルは変更せず、rdev、パディング、予約領域はゼロです。入力は初期メタデータを与え、変更は任意のポリシーに従います。read は時刻を更新せず、mode はアクセス許可を変えません。未指定メタデータ、ストリーム、シンボリックリンク、旧 stat、拡張セキュリティは未対応です。パス/FD エラーを出力ポインターより先に処理し、部分的に書ける出力は変更前に停止します。ネイティブ試験は実ファイルの全バイトと SDK 配置を比較し、同じ独自プログラムで3呼び出しを検証します。
+`stat64` (338)、`fstat64` (339)、`lstat64` (340) は ARM64/x64 で同じ144バイト LP64 レコードを返します。open とパス解決を共有し、FD の複製と close を反映します。FD やカーソルは変更せず、rdev、パディング、予約領域はゼロです。入力は初期メタデータを与え、変更は任意のポリシーに従います。read は時刻を更新せず、mode はアクセス許可を変えません。未指定メタデータ、ストリーム、旧 stat、拡張セキュリティは未対応です。パス/FD エラーを出力ポインターより先に処理し、部分的に書ける出力は変更前に停止します。ネイティブ試験は実ファイルの全バイトと SDK 配置を比較し、同じ独自プログラムで3呼び出しを検証します。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":{
@@ -412,7 +412,7 @@ Release Darwin は937登録、553成功、未提供バックエンド384スキ�
 
 モードは下位32ビットです。R/W/X はビット0–2、拡張権限は9–21を使用します。`(mode & 0x003ffe07) == 0` が存在確認で、符号を含む他のビットは EINVAL にせず無視します。権限要求は探索成功後に UnsupportedService となり、許可を示すようなメタデータや変更許可から推測しません。既知のパス・記述子エラーが先です。
 
-Faccessat は下位フラグ AT_EACCESS(0x10)、AT_SYMLINK_NOFOLLOW(0x20)、AT_SYMLINK_NOFOLLOW_ANY(0x800) の任意の組合せを受け入れます。それ以外は、カタログ未設定でもパス・FD の前に EINVAL です。現在のカタログはシンボリックリンクを含まず、実/実効 ID は固定です。絶対パスは dirfd を無視し、相対パスは設定済み CWD/ディレクトリ FD に従います。最初の NUL までコピーしてから相対 FD を検査し、文字列の欠落バイトは EFAULT です。空の相対パスでも未知 FD は EBADF、通常ファイル FD は ENOTDIR、それ以外は ENOENT。未設定カタログや未知のストリーム種別は未対応です。
+Faccessat は下位フラグ AT_EACCESS(0x10)、AT_SYMLINK_NOFOLLOW(0x20)、AT_SYMLINK_NOFOLLOW_ANY(0x800) の任意の組合せを受け入れます。それ以外は、カタログ未設定でもパス・FD の前に EINVAL です。実/実効 ID は固定で、固定リンクは下記の規則で解決します。絶対パスは dirfd を無視し、相対パスは設定済み CWD/ディレクトリ FD に従います。非 AT_FDCWD の nameiat は1バイトを読んで相対ディレクトリ FD を検査した後、全文字列を読みます。`/` は FD 検査を省略。最初のバイト故障は EFAULT14、相対の不明/ファイル FD は後続故障より先に EBADF9/ENOTDIR20。空の相対パスでも未知 FD は EBADF、通常ファイル FD は ENOTDIR、それ以外は ENOENT。未設定カタログや未知のストリーム種別は未対応です。
 
 独自 `file-access` はネイティブ macOS と5ゲスト構成、C++/C/CLI/Python で両入口、無視ビット、フラグと順序を比較します。NOFOLLOW_ANY は相対ディレクトリ FD を使い、ホスト `/tmp`、`/var` のリンクに左右されません。直接テストは名前の変更、混合権限ビット、FD 枯渇、メタデータ非依存とメモリエラーを確認します。
 
@@ -487,7 +487,7 @@ Release Darwin1,051登録、631成功、未提供420スキップ、失敗なし�
 
 両方の直接親に名前変更の許可が必要で、作成したディレクトリは許可と既知 device/GID を継承します。ファイル自身の識別子、所有者/グループ、書込み許可、割当は保持されます。既知 device の矛盾は拒否します。実移動は両親の完全な stat/列挙を無効にします。削除した初期ディレクトリと再利用パスは別物体で、古い FD/CWD は新しい領域を得ません。
 
-既存の有界置換、マップ寿命、パス/NUL 費用、エラー順序が適用されます。EXCL の異なる既存ターゲットは領域/許可検査前に EEXIST です。`renamed-file` は作成した子への移動、初期親への置換、子への再移動を C++/C/CLI/Python とネイティブ macOS で比較します。権限強制、初期ディレクトリ移動、ハード/シンボリックリンク、ネイティブ APFS メタデータは未完了です。
+既存の有界置換、マップ寿命、パス/NUL 費用、エラー順序が適用されます。EXCL の異なる既存ターゲットは領域/許可検査前に EEXIST です。`renamed-file` は作成した子への移動、初期親への置換、子への再移動を C++/C/CLI/Python とネイティブ macOS で比較します。権限強制、初期ディレクトリ移動、ハードリンク、動的シンボリックリンク、ネイティブ APFS メタデータは未完了です。
 
 ### 異なる親ディレクトリ間の検証、2026-10-06
 
@@ -722,10 +722,28 @@ sysctl のコピー段階は維持します。EUID0 の実際の書き込みは�
 
 ## リンク追跡を禁止する open フラグとディレクトリ事前検査
 
-通常および nocancel の `open` / `openat` は、符号なし下位32ビットの O_NOFOLLOW=0x100 または O_NOFOLLOW_ANY=0x20000000 を受け付けます。閉じたカタログにシンボリックリンクはなく、リンク解決はまだ実装していません。検索フラグは F_GETFL に含まれず、アクセス、追記、切り詰め、作成、FD 固有の CLOEXEC を変えません。両方を指定すると FD 容量確認後、完全なパスの読込み前に EINVAL22 を返します。満杯なら先に EMFILE24 です。未知のフラグは未対応です。
+通常および nocancel の `open` / `openat` は、符号なし下位32ビットの O_NOFOLLOW=0x100 または O_NOFOLLOW_ANY=0x20000000 を受け付けます。検索フラグは F_GETFL に含まれず、アクセス、追記、切り詰め、作成、FD 固有の CLOEXEC を変えません。両方を指定すると FD 容量確認後、完全なパスの読込み前に EINVAL22 を返します。満杯なら先に EMFILE24 です。未知のフラグは未対応です。
 
-AT_FDCWD 以外の `openat` は、アクセスモードと FD 容量より先にパスの最初の1バイトだけを読みます。読めなければ EFAULT14。相対接頭辞（NUL を含む）は FD が保持するディレクトリを先に検査し、未知の FD は EBADF9、通常ファイルは ENOTDIR20、未知のストリーム vnode 型は未対応になります。`/` は dirfd 検査を省き、その後は既存の open 順序でパス全体を読みます。通常の `open` と AT_FDCWD はこの事前検査を行わず、他のパスサービスも既存の全体読込み順序を保ちます。拒否時は FD や新しい inode を消費せず、転送エラーをそのまま伝え、名前空間を変更しません。
+AT_FDCWD 以外の `openat` は、アクセスモードと FD 容量より先にパスの最初の1バイトだけを読みます。読めなければ EFAULT14。相対接頭辞（NUL を含む）は FD が保持するディレクトリを先に検査し、未知の FD は EBADF9、通常ファイルは ENOTDIR20、未知のストリーム vnode 型は未対応になります。`/` は dirfd 検査を省き、その後は既存の open 順序でパス全体を読みます。通常の `open` と AT_FDCWD はこの事前検査を行わず、他の nameiat も同じ1バイト/相対 FD 検査を共有し、AT_FDONLY はパスを無視します。拒否時は FD や新しい inode を消費せず、転送エラーをそのまま伝え、名前空間を変更しません。
 
 既存の `file-access` は NOFOLLOW_ANY を相対ディレクトリ FD で検査し、原生 `/var`、`/tmp` の別名リンクを避けます。直接テストは最初と後続のバイト障害、スラッシュ/NUL、ユーザー領域とページ境界、FD 満杯、削除済みディレクトリを区別します。ARM64 macOS の独立した生呼出しプローブは従来の5秒制限で30件成功しました。最後の満杯時絶対パス検査は、元のラベルにかかわらず有効なディレクトリ FD を使っています。実機 iOS と Intel の原生検証は別途必要です。
 
 [XNU open1at / open1](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU vn_open_auth](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_vnops.c), [XNU open flags / FMASK](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/sys/fcntl.h).
+
+## 固定初期シンボリックリンク
+
+`DarwinFileOptions::SymbolicLinks` / `darwin_files.symbolic_links` は正規絶対 `path` と生の16進 `target_hex`、任意のリンク自身の `metadata` を指定します。目標は1..1023非NULバイトで、非UTF-8、連続スラッシュ、ドット、存在しない目標も保持します。`files` は空配列でも必須です。名前の衝突/リンク配下の宣言は禁止。名前/NUL/目標は256項/16 MiBを共有。S_IFLNK、目標長と同じsize、DT_LNK=10、inodeの一致が必要で、設定CWDは実際のディレクトリです。
+
+リンクを展開してからドットを処理します。相対目標は実際の親、絶対目標はゲスト根から開始。各展開で末尾スラッシュを再解析し、消費した入力スラッシュは引き継ぎません。32展開まで許可し、33回目はELOOP62。目標+残り+NULが1024バイトを超えるとENAMETOOLONG63。FD/CWD/F_GETPATH/mmapは解決した対象を保持します。
+
+stat64/open/access/truncate/chdirは末尾リンクを追跡し、lstat64/readlinkは保持します。O_NOFOLLOWはELOOP、O_DIRECTORY併用は先にENOTDIR20。O_NOFOLLOW_ANYは必要な展開を拒否。O_CREAT|O_EXCLは存在する末尾リンクにEEXIST17（循環/未存在目標も）。AT0x20は末尾保持、AT0x800も末尾保持し中間/末尾スラッシュの展開を拒否、併用可。AT_FDONLYはフラグ検証後パスを無視します。
+
+readlink(58)は符号付き下位32ビットcount、readlinkat(473)は完全なsize_t。intを返し、INT32_MAX超過はパス/FDより先にEINVAL22。min(count,目標長)だけコピーしNULなし、実際の範囲だけ検査。ゼロ長もパス/型を検証後に出力を無視。非リンクEINVAL22、全域書込み不可EFAULT14、部分書込みはコピー前に停止。転送/メモリ予算エラーは伝播します。
+
+非空リンクと MutableDirectories/RemovableDirectories/MovableDirectories/ExchangeableDirectories/SwapRenameDirectories/CreationPolicy は全体で併用不可。固定名WritableFiles/MutationPoliciesは対象の通常ファイルを変更できます。リンクunlink/renameは作用前に停止。動的/ハードリンク、ACL、可変リンク名前空間は未対応。ARM64 macOS独立プローブは元の5秒以内に189観察/115全バッファを通過しました。物理iOS/Intel HVF/完全OSの証明ではありません。
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"symbolic_links":[{"path":"/link","target_hex":"64617461"}],"working_directory":"/"}}
+```
+
+[XNU namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_lookup.c), [XNU readlink / AT](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU open authorization](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_subr.c).

@@ -5878,7 +5878,8 @@ class FailingFileInput : public GuestMemory {
   GuestMemory &Memory;
 
 public:
-  bool FailAccess = false, FailRead = false;
+  bool FailAccess = false, FailRead = false, FailWrite = false,
+       FailBudget = false;
   uint64_t FailureAddress = 0;
   explicit FailingFileInput(GuestMemory &Memory) : Memory(Memory) {}
   llvm::Error map(uint64_t A, uint64_t S, unsigned P) override {
@@ -5889,6 +5890,8 @@ public:
   }
   llvm::Error read(uint64_t A, llvm::MutableArrayRef<uint8_t> B) override {
     if (FailRead && A >= FailureAddress) {
+      if (FailBudget)
+        return llvm::make_error<GuestMemoryLimitError>();
       // A transport may fill part of the scratch span before failing.
       B.front() = 'x';
       return failure("file input transport failed");
@@ -5896,12 +5899,20 @@ public:
     return Memory.read(A, B);
   }
   llvm::Error write(uint64_t A, llvm::ArrayRef<uint8_t> B) override {
+    if (FailWrite && A >= FailureAddress) {
+      if (FailBudget)
+        return llvm::make_error<GuestMemoryLimitError>();
+      return failure("file output transport failed");
+    }
     return Memory.write(A, B);
   }
   llvm::Expected<bool> canAccess(uint64_t A, uint64_t S,
                                  unsigned P) const override {
-    if (FailAccess && A >= FailureAddress)
+    if (FailAccess && A >= FailureAddress) {
+      if (FailBudget)
+        return llvm::make_error<GuestMemoryLimitError>();
       return failure("file input preflight failed");
+    }
     return Memory.canAccess(A, S, P);
   }
 };
@@ -7089,6 +7100,465 @@ TEST_P(DarwinFileTest, ExplicitRootDoesNotGrantFileOrDirectoryMutation) {
   EXPECT_TRUE(Options->WritableFiles.empty());
   EXPECT_EQ(Options->Files.at("/data"),
             (std::vector<uint8_t>{'a', 'b', 0, 0xff, 'e', 'f'}));
+}
+
+TEST(DarwinFileOptions,
+     SymbolicLinksRequireRawTargetsAndDistinctCanonicalNames) {
+  DarwinFileOptions Good;
+  Good.Files["/data"] = {'x'};
+  Good.SymbolicLinks["/link"] = {'d', 'a', 't', 'a'};
+  auto Refused = [](const DarwinFileOptions &O) {
+    auto E = validateFileOptions(O);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+  };
+  EXPECT_FALSE(bool(validateFileOptions(Good)));
+  for (const auto &Target :
+       {std::vector<uint8_t>{}, std::vector<uint8_t>{'a', 0, 'b'},
+        std::vector<uint8_t>(1024, 'x')}) {
+    auto Bad = Good;
+    Bad.SymbolicLinks["/link"] = Target;
+    Refused(Bad);
+  }
+  for (const char *Name : {"link", "/", "/link/", "/a/../link", "/a//link"}) {
+    auto Bad = Good;
+    Bad.SymbolicLinks[Name] = {'x'};
+    Refused(Bad);
+  }
+  for (unsigned Collision = 0; Collision != 5; ++Collision) {
+    auto Bad = Good;
+    if (Collision == 0)
+      Bad.Files["/link"] = {};
+    else if (Collision == 1)
+      Bad.Directories.insert("/link");
+    else if (Collision == 2)
+      Bad.Files["/link/child"] = {};
+    else if (Collision == 3)
+      Bad.Directories.insert("/link/child");
+    else
+      Bad.SymbolicLinks["/link/child"] = {'x'};
+    Refused(Bad);
+  }
+  Good.SymbolicLinks["/link"] = std::vector<uint8_t>(1023, 0xff);
+  EXPECT_FALSE(bool(validateFileOptions(Good)));
+  Good.WorkingDirectory = "/link";
+  Refused(Good);
+}
+
+TEST(DarwinFileOptions, SymbolicLinksExcludeNamespaceGrantsButPermitFileBytes) {
+  DarwinFileOptions Good;
+  Good.Files["/data"] = {'x'};
+  Good.WritableFiles.insert("/data");
+  Good.Metadata["/data"] = darwin_test::mutationMetadata(1);
+  Good.MutationPolicies["/data"] = darwin_test::MutationPolicy;
+  Good.SymbolicLinks["/link"] = {'d', 'a', 't', 'a'};
+  EXPECT_FALSE(bool(validateFileOptions(Good)));
+  for (unsigned Grant = 0; Grant != 6; ++Grant) {
+    auto Bad = Good;
+    if (Grant == 0)
+      Bad.MutableDirectories.insert("/");
+    else if (Grant == 1)
+      Bad.RemovableDirectories.insert("/elsewhere");
+    else if (Grant == 2)
+      Bad.MovableDirectories.insert("/elsewhere");
+    else if (Grant == 3)
+      Bad.ExchangeableDirectories.insert("/elsewhere");
+    else if (Grant == 4)
+      Bad.SwapRenameDirectories.insert("/");
+    else
+      Bad.CreationPolicy = darwin_test::CreationPolicy;
+    EXPECT_EQ(llvm::toString(validateFileOptions(Bad)),
+              diagnostic::SymbolicLinkNamespace);
+  }
+}
+
+TEST(DarwinFileOptions, SymbolicLinkMetadataAndSnapshotsObserveTheLinkObject) {
+  DarwinFileOptions Good;
+  Good.SymbolicLinks["/link"] = {'d', 'a', 't', 'a'};
+  auto &M = Good.Metadata["/link"];
+  M = darwin_test::metadata(4);
+  M.Mode = 0120777;
+  Good.DirectoryContents["/"] = {
+      {{".", 41, 4, 1}, {"..", 41, 4, 2}, {"link", M.Inode, 10, 3}}, 1};
+  EXPECT_FALSE(bool(validateFileOptions(Good)));
+  for (unsigned BadField = 0; BadField != 5; ++BadField) {
+    auto Bad = Good;
+    if (BadField == 0)
+      Bad.Metadata["/link"].Size = 5;
+    else if (BadField == 1)
+      Bad.Metadata["/link"].Mode = 0100777;
+    else if (BadField == 2)
+      Bad.DirectoryContents["/"].Entries.back().Type = 0;
+    else if (BadField == 3)
+      Bad.DirectoryContents["/"].Entries.back().Inode++;
+    else
+      Bad.DirectoryContents["/"].Entries.pop_back();
+    auto E = validateFileOptions(Bad);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+  }
+}
+
+TEST(DarwinFileOptions, SymbolicLinkNamesAndTargetsShareEntryAndByteLimits) {
+  DarwinFileOptions O;
+  O.SymbolicLinks["/l"] = {'x'}; // 3 name bytes including NUL, one target byte.
+  O.Files["/a"] = std::vector<uint8_t>(darwin_file_limits::Bytes - 7);
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Files["/a"].push_back(0);
+  auto E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  O = {};
+  for (unsigned I = 0; I != 255; ++I)
+    O.Files["/f" + std::to_string(I)] = {};
+  O.SymbolicLinks["/l"] = {'x'};
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.SymbolicLinks["/extra"] = {'x'};
+  E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+}
+
+TEST_P(DarwinFileTest, SymbolicLinkExpansionUsesActualParentsAndNewRootPolicy) {
+  Options->WorkingDirectory = "/";
+  Options->Files["/dir/item"] = {'i'};
+  Options->SymbolicLinks = {
+      {"/relative", {'d', 'a', 't', 'a'}},
+      {"/absolute", {'/', 'd', 'a', 't', 'a'}},
+      {"/dir/parent", {'.', '.', '/', 'd', 'a', 't', 'a'}},
+      {"/chain", {'r', 'e', 'l', 'a', 't', 'i', 'v', 'e'}},
+      {"/dirlink", {'d', 'i', 'r'}}};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  for (const char *Name :
+       {"/relative", "/absolute", "relative", "absolute", "/dir/parent",
+        "/chain", "/dirlink/../relative", "/dirlink/parent"}) {
+    SCOPED_TRACE(Name);
+    path(Name);
+    const auto FD = ok(ServiceKind::Open, {Base});
+    contents(FD, Options->Files.at("/data"));
+    identity(FD, "/data");
+    ok(ServiceKind::Close, {FD});
+  }
+  path("/dirlink");
+  const auto Dir = ok(ServiceKind::Open, {Base});
+  identity(Dir, "/dir");
+  EXPECT_EQ(ok(ServiceKind::Chdir, {Base}), 0u);
+  path("parent");
+  const auto FD = ok(ServiceKind::OpenAt, {Dir, Base});
+  contents(FD, Options->Files.at("/data"));
+  identity(FD, "/data");
+  ok(ServiceKind::Close, {FD});
+  path("item");
+  const auto Item = ok(ServiceKind::Open, {Base});
+  contents(Item, Options->Files.at("/dir/item"));
+}
+
+TEST_P(DarwinFileTest, SymbolicLinkTrailingStateIsReparsedAfterEveryExpansion) {
+  Options->WorkingDirectory = "/";
+  Options->SymbolicLinks = {
+      {"/relative", {'d', 'a', 't', 'a'}},
+      {"/chain", {'r', 'e', 'l', 'a', 't', 'i', 'v', 'e'}},
+      {"/own-slash", {'d', 'a', 't', 'a', '/'}},
+      {"/cycle-slash",
+       {'c', 'y', 'c', 'l', 'e', '-', 's', 'l', 'a', 's', 'h', '/'}}};
+  path("/relative////");
+  const auto FD = ok(ServiceKind::Open, {Base, 0x100});
+  contents(FD, Options->Files.at("/data"));
+  ok(ServiceKind::Close, {FD});
+  error(ServiceKind::ReadLink, {Base, Base + Page, 32}, 22);
+  path("/chain////");
+  error(ServiceKind::Open, {Base, 0x100}, 62);
+  EXPECT_EQ(ok(ServiceKind::ReadLink, {Base, Base + Page, 32}), 4u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 4)), 0x61746164u);
+  path("/own-slash");
+  error(ServiceKind::Open, {Base}, 20);
+  EXPECT_EQ(ok(ServiceKind::ReadLink, {Base, Base + Page, 32}), 5u);
+  path("/cycle-slash/");
+  error(ServiceKind::ReadLink, {Base, Base + Page, 32}, 62);
+}
+
+TEST_P(DarwinFileTest,
+       SymbolicLinksKeepTerminalRetentionSeparateFromNoExpansion) {
+  Options->WorkingDirectory = "/";
+  Options->SymbolicLinks = {{"/link", {'d', 'a', 't', 'a'}},
+                            {"/dangling", {'a', 'b', 's', 'e', 'n', 't'}},
+                            {"/cycle", {'c', 'y', 'c', 'l', 'e'}},
+                            {"/dirlink", {'/'}}};
+  for (const char *Name : {"/link", "/dangling", "/cycle", "/dirlink"}) {
+    path(Name);
+    for (uint32_t Flags : {0x100u, 0x20000000u})
+      error(ServiceKind::Open, {Base, Flags}, 62);
+    for (uint32_t Flags : {0u, 0x100u, 0x20000000u})
+      error(ServiceKind::Open, {Base, Flags | 0xa00}, 17);
+    error(ServiceKind::Open, {Base, 0x100100}, 20);
+    for (uint32_t Flags : {0x20u, 0x800u, 0x820u})
+      EXPECT_EQ(ok(ServiceKind::FaccessAt, {999, Base, 0, Flags}), 0u);
+  }
+  path("/dirlink/data");
+  error(ServiceKind::FaccessAt, {999, Base, 0, 0x800}, 62);
+  error(ServiceKind::UnlinkAt, {999, Base, 0x800}, 62);
+  path("/link");
+  EXPECT_FALSE(invoke(ServiceKind::Unlink, {Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkMutation);
+  path("/data", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkMutation);
+  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base + 128, Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkMutation);
+  error(ServiceKind::Mkdir, {Base, 0700}, 17);
+  error(ServiceKind::Rmdir, {Base}, 20);
+  path("/data");
+  EXPECT_EQ(ok(ServiceKind::Open, {Base}), 3u);
+}
+
+TEST_P(DarwinFileTest,
+       SymbolicLinkStatDistinguishesOwnMetadataAndFDOnlyTarget) {
+  Options->WorkingDirectory = "/";
+  Options->SymbolicLinks["/link"] = {'d', 'a', 't', 'a'};
+  Options->Metadata["/data"] = darwin_test::metadata(6);
+  auto &Link = Options->Metadata["/link"];
+  Link = darwin_test::metadata(4);
+  Link.Inode = 123;
+  Link.Mode = 0120777;
+  path("/link");
+  const auto FD = ok(ServiceKind::Open, {Base});
+  const auto Target = status(FD);
+  EXPECT_EQ(ok(ServiceKind::Stat64, {Base, Base + 256}), 0u);
+  std::array<uint8_t, 144> Bytes;
+  llvm::cantFail(Space->read(Base + 256, Bytes));
+  EXPECT_EQ(Bytes, Target);
+  for (uint32_t Flags : {0x20u, 0x800u, 0x820u}) {
+    EXPECT_EQ(ok(ServiceKind::FstatAt64, {999, Base, Base + 256, Flags}), 0u);
+    llvm::cantFail(Space->read(Base + 256, Bytes));
+    EXPECT_EQ(llvm::support::endian::read16le(Bytes.data() + 4), 0120777u);
+    EXPECT_EQ(llvm::support::endian::read64le(Bytes.data() + 8), 123u);
+    EXPECT_EQ(llvm::support::endian::read64le(Bytes.data() + 96), 4u);
+  }
+  EXPECT_EQ(ok(ServiceKind::Lstat64, {Base, Base + 256}), 0u);
+  error(ServiceKind::FstatAt64, {999, 0, Base + 256, 0xc20}, 9);
+  error(ServiceKind::FstatAt64, {FD, 0, Base + 256, 0xc21}, 22);
+  EXPECT_EQ(ok(ServiceKind::FstatAt64, {FD, 0, Base + 256, 0xc20}), 0u);
+  llvm::cantFail(Space->read(Base + 256, Bytes));
+  EXPECT_EQ(Bytes, Target);
+  Options->Metadata.erase("/link");
+  EXPECT_FALSE(invoke(ServiceKind::Lstat64, {Base, Base + 256}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMetadata);
+}
+
+TEST_P(DarwinFileTest, ReadLinkPreservesRawBytesCountsAndEveryAdjacentCanary) {
+  const std::vector<uint8_t> Raw = {'.', '/', '/', 0xff, '/'};
+  Options->SymbolicLinks["/raw"] = Raw;
+  path("/raw");
+  for (auto Count :
+       {uint64_t(0), uint64_t(2), uint64_t(5), uint64_t(INT32_MAX)}) {
+    std::array<uint8_t, 32> Expected;
+    Expected.fill(0xa5);
+    llvm::cantFail(Space->write(Base + Page, Expected));
+    const auto Copy = std::min<uint64_t>(Count, Raw.size());
+    EXPECT_EQ(ok(ServiceKind::ReadLink, {Base, Base + Page + 8, Count}), Copy);
+    std::copy_n(Raw.begin(), Copy, Expected.begin() + 8);
+    std::array<uint8_t, 32> Actual;
+    llvm::cantFail(Space->read(Base + Page, Actual));
+    EXPECT_EQ(Actual, Expected);
+  }
+  EXPECT_EQ(
+      ok(ServiceKind::ReadLink, {Base, Base + Page, 0x1234567800000002ULL}),
+      2u);
+  error(ServiceKind::ReadLinkAt, {999, Base, Base + Page, 0x100000002ULL}, 22);
+  error(ServiceKind::ReadLink, {0, 0, uint64_t(INT32_MAX) + 1}, 22);
+  EXPECT_EQ(ok(ServiceKind::ReadLink, {Base, UINT64_MAX, 0}), 0u);
+  path("/data");
+  error(ServiceKind::ReadLink, {Base, 0, 0}, 22);
+  path("/absent");
+  error(ServiceKind::ReadLink, {Base, 0, 0}, 2);
+  error(ServiceKind::ReadLink, {0, 0, 0}, 14);
+}
+
+TEST_P(DarwinFileTest,
+       ReadLinkChecksOnlyItsActualPrefixAndRefusesPartialCopies) {
+  Options->SymbolicLinks["/link"] = {'d', 'a', 't', 'a'};
+  path("/link");
+  const auto End = Base + Page * 2;
+  EXPECT_EQ(ok(ServiceKind::ReadLinkAt, {999, Base, End - 4, INT32_MAX}), 4u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(End - 4, 4)), 0x61746164u);
+  llvm::cantFail(Space->writeInteger(End - 2, 0xa5a5, 2));
+  EXPECT_FALSE(invoke(ServiceKind::ReadLink, {Base, End - 2, 4}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkPartialOutput);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(End - 2, 2)), 0xa5a5u);
+  EXPECT_EQ(ok(ServiceKind::ReadLink, {Base, End - 2, 2}), 2u);
+  error(ServiceKind::ReadLink, {Base, End, 1}, 14);
+  llvm::cantFail(Space->protect(Base + Page, Page, Read | UserAccessible));
+  error(ServiceKind::ReadLink, {Base, Base + Page, 1}, 14);
+}
+
+TEST_P(DarwinFileTest, ReadLinkAtUsesDirectoryObjectsAndAbsolutePathsIgnoreFD) {
+  Options->SymbolicLinks["/dir/link"] = {'d', 'a', 't', 'a'};
+  path("/dir");
+  const auto Dir = ok(ServiceKind::Open, {Base});
+  path("link");
+  EXPECT_EQ(ok(ServiceKind::ReadLinkAt, {Dir, Base, Base + Page, 4}), 4u);
+  error(ServiceKind::ReadLinkAt, {999, Base, Base + Page, 4}, 9);
+  path("/data");
+  const auto FD = ok(ServiceKind::Open, {Base});
+  path("link");
+  error(ServiceKind::ReadLinkAt, {FD, Base, Base + Page, 4}, 20);
+  path("/dir/link");
+  EXPECT_EQ(ok(ServiceKind::ReadLinkAt, {999, Base, Base + Page, 4}), 4u);
+}
+
+TEST_P(DarwinFileTest,
+       SymbolicLinksEnforceExpansionAndTerminatorInclusiveLimits) {
+  Options->WorkingDirectory = "/";
+  for (unsigned I = 0; I != 33; ++I) {
+    const auto Target = I == 32 ? "/data" : "/l" + std::to_string(I + 1);
+    Options->SymbolicLinks["/l" + std::to_string(I)] =
+        std::vector<uint8_t>(Target.begin(), Target.end());
+  }
+  path("/l1");
+  const auto FD = ok(ServiceKind::Open, {Base});
+  contents(FD, Options->Files.at("/data"));
+  ok(ServiceKind::Close, {FD});
+  path("/l0");
+  error(ServiceKind::Open, {Base}, 62);
+  std::string Prefix;
+  for (unsigned I = 0; I != 510; ++I)
+    Prefix += "./";
+  const auto Fits = Prefix + 'd', TooLong = Prefix + "dd";
+  Options->Files["/d/e"] = {'x'};
+  Options->Files["/dd/e"] = {'y'};
+  Options->SymbolicLinks["/fits"] =
+      std::vector<uint8_t>(Fits.begin(), Fits.end());
+  Options->SymbolicLinks["/too-long"] =
+      std::vector<uint8_t>(TooLong.begin(), TooLong.end());
+  // Added catalogue input requires a new namespace owner, not live mutation.
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  for (const char *Name : {"/fits/e", "/fits//e", "/fits////e"}) {
+    path(Name);
+    const auto FitsFD = ok(ServiceKind::Open, {Base});
+    contents(FitsFD, Options->Files.at("/d/e"));
+    ok(ServiceKind::Close, {FitsFD});
+  }
+  for (const char *Name : {"/too-long/e", "/too-long////e"}) {
+    path(Name);
+    error(ServiceKind::Open, {Base}, 63);
+  }
+}
+
+TEST_P(DarwinFileTest, AtPathPrefixPrecedesLaterFaultsAcrossTheSharedResolver) {
+  path("/");
+  const auto Dir = ok(ServiceKind::Open, {Base});
+  path("/data");
+  const auto FD = ok(ServiceKind::Open, {Base});
+  const auto End = Base + Page * 2;
+  llvm::cantFail(Space->write(End - 1, {'x'}));
+  for (auto Kind : {ServiceKind::ReadLinkAt, ServiceKind::FstatAt64,
+                    ServiceKind::FaccessAt}) {
+    const auto Output = Kind == ServiceKind::FaccessAt ? 0 : Base + Page;
+    error(Kind, {999, End - 1, Output, 0}, 9);
+    error(Kind, {FD, End - 1, Output, 0}, 20);
+    error(Kind, {Dir, End - 1, Output, 0}, 14);
+    error(Kind, {uint32_t(-2), End - 1, Output, 0}, 14);
+    error(Kind, {999, End, Output, 0}, 14);
+    llvm::cantFail(Space->write(End - 1, {'/'}));
+    error(Kind, {999, End - 1, Output, 0}, 14);
+    llvm::cantFail(Space->write(End - 1, {'x'}));
+  }
+  error(ServiceKind::ReadLinkAt, {999, End, 0, uint64_t(INT32_MAX) + 1}, 22);
+  error(ServiceKind::FstatAt64, {999, End, 0, 1}, 22);
+  error(ServiceKind::FaccessAt, {999, End, 0, 1}, 22);
+  path("/data");
+  EXPECT_EQ(ok(ServiceKind::Open, {Base}), 5u);
+}
+
+TEST_P(DarwinFileTest,
+       SymbolicLinkFileMutationKeepsTargetOwnershipAndLinkStatus) {
+  mutationPolicy();
+  Options->SymbolicLinks["/link"] = {'d', 'a', 't', 'a'};
+  auto &Link = Options->Metadata["/link"];
+  Link = darwin_test::metadata(4);
+  Link.Mode = 0120777;
+  Link.Inode = 123;
+  Options->WorkingDirectory = "/";
+  path("/link");
+  const auto Alias = ok(ServiceKind::Open, {Base, 2});
+  path("/data");
+  const auto Direct = ok(ServiceKind::Open, {Base});
+  path("X", Base + Page);
+  EXPECT_EQ(ok(ServiceKind::Pwrite, {Alias, Base + Page, 1, 0}), 1u);
+  const uint8_t Expected[] = {'X', 'b', 0, 0xff, 'e', 'f'};
+  contents(Direct, Expected);
+  identity(Alias, "/data");
+  path("/link");
+  EXPECT_EQ(ok(ServiceKind::Truncate, {Base, 2}), 0u);
+  contents(Direct, llvm::ArrayRef<uint8_t>(Expected).take_front(2));
+  EXPECT_EQ(ok(ServiceKind::Lstat64, {Base, Base + 256}), 0u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + 256 + 96, 8)), 4u);
+  EXPECT_EQ(Options->Files.at("/data"),
+            (std::vector<uint8_t>{'a', 'b', 0, 0xff, 'e', 'f'}));
+}
+
+TEST_P(DarwinFileTest,
+       ReadLinkTransportFailuresRemainErrorsWithoutFDOrByteEffects) {
+  Options->SymbolicLinks["/link"] = {'d', 'a', 't', 'a'};
+  FailingFileInput Input(*Space);
+  Files = std::make_unique<DarwinFiles>(Input, Options);
+  path("/link");
+  for (bool Preflight : {false, true}) {
+    Input.FailAccess = Preflight;
+    Input.FailRead = !Preflight;
+    Input.FailureAddress = Base + 2;
+    auto Failed =
+        Files->handle(ServiceKind::ReadLink,
+                      {0, 58, {Base, Base + Page, 4}, std::nullopt}, Result);
+    ASSERT_FALSE(bool(Failed));
+    EXPECT_EQ(llvm::toString(Failed.takeError()),
+              Preflight ? "file input preflight failed"
+                        : "file input transport failed");
+    Input.FailAccess = Input.FailRead = false;
+  }
+  Input.FailAccess = true;
+  Input.FailureAddress = Base + Page;
+  auto Failed =
+      Files->handle(ServiceKind::ReadLink,
+                    {0, 58, {Base, Base + Page, 4}, std::nullopt}, Result);
+  ASSERT_FALSE(bool(Failed));
+  EXPECT_EQ(llvm::toString(Failed.takeError()), "file input preflight failed");
+  Input.FailAccess = false;
+  Input.FailWrite = true;
+  Failed = Files->handle(ServiceKind::ReadLink,
+                         {0, 58, {Base, Base + Page, 4}, std::nullopt}, Result);
+  ASSERT_FALSE(bool(Failed));
+  EXPECT_EQ(llvm::toString(Failed.takeError()), "file output transport failed");
+  Input.FailWrite = false;
+  EXPECT_EQ(ok(ServiceKind::ReadLink, {Base, Base + Page, 4}), 4u);
+  path("/data");
+  EXPECT_EQ(ok(ServiceKind::Open, {Base}), 3u);
+}
+
+TEST_P(DarwinFileTest, ReadLinkMemoryBudgetErrorsKeepTheirTypeAndCanaryBytes) {
+  Options->SymbolicLinks["/link"] = {'d', 'a', 't', 'a'};
+  path("/link");
+  for (unsigned Phase = 0; Phase != 3; ++Phase) {
+    std::array<uint8_t, 32> Before, After;
+    Before.fill(0xa5);
+    llvm::cantFail(Space->write(Base + Page, Before));
+    FailingFileInput Input(*Space);
+    Input.FailBudget = true;
+    Input.FailRead = Phase == 0;
+    Input.FailAccess = Phase == 1;
+    Input.FailWrite = Phase == 2;
+    Input.FailureAddress = Phase == 0 ? Base + 2 : Base + Page;
+    DarwinFiles Owner(Input, Options);
+    auto Failed =
+        Owner.handle(ServiceKind::ReadLink,
+                     {0, 58, {Base, Base + Page + 8, 4}, std::nullopt}, Result);
+    ASSERT_FALSE(bool(Failed));
+    auto E = Failed.takeError();
+    EXPECT_TRUE(E.isA<GuestMemoryLimitError>());
+    llvm::consumeError(std::move(E));
+    llvm::cantFail(Space->read(Base + Page, After));
+    EXPECT_EQ(After, Before);
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinFileTest, testing::Values(4096, 16384));

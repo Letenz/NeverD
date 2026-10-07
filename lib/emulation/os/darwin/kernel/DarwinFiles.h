@@ -36,7 +36,15 @@ public:
   MappingSource mappingSource(uint32_t FD) const;
 
 private:
-  enum class Kind { Input, Output, Error, File, Directory, Missing };
+  enum class Kind {
+    Input,
+    Output,
+    Error,
+    File,
+    Directory,
+    SymbolicLink,
+    Missing
+  };
   enum class LookupMode {
     Existing,
     CreateFile,
@@ -45,6 +53,13 @@ private:
     DeleteDirectory,
     RenameTarget,
     RenameDirectoryTarget
+  };
+  // Retaining a terminal link and refusing required expansion are separate
+  // namei policies. AT_SYMLINK_NOFOLLOW_ANY uses both; ordinary open uses only
+  // NoExpansion, while exclusive creation retains the terminal entry.
+  struct LinkPolicy {
+    bool FollowFinal;
+    bool NoExpansion;
   };
   enum class Terminal { Ordinary, Dot, DotDot };
   enum class RenameMode { Replace, Exclusive, Swap };
@@ -158,30 +173,40 @@ private:
   std::optional<DirectoryIdentity> directoryIdentity(const std::string &Path);
   llvm::Expected<Pathname> readPath(uint64_t Address);
   DirectoryLookup directoryDescriptor(uint32_t FD) const;
+  llvm::Expected<std::optional<Lookup>> directoryPrefix(uint64_t Address,
+                                                        uint32_t DirectoryFD);
   llvm::Expected<Lookup> resolvePath(uint64_t Address, uint32_t DirectoryFD,
-                                     LookupMode Mode = LookupMode::Existing);
+                                     LookupMode Mode = LookupMode::Existing,
+                                     LinkPolicy Links = {true, false},
+                                     bool CheckDirectoryPrefix = true);
   llvm::Expected<std::optional<ServiceResult>>
   open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD, uint32_t Mode,
        ProcessResult &Result);
-  llvm::Expected<std::optional<ServiceResult>> access(uint64_t Path,
-                                                      uint32_t DirectoryFD,
-                                                      uint32_t Mode,
-                                                      ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  access(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
+         ProcessResult &Result, LinkPolicy Links = {true, false});
   llvm::Expected<std::optional<ServiceResult>>
   status(const Description &File, uint64_t Address, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   statusPath(uint64_t Path, uint64_t Address, uint32_t DirectoryFD,
-             ProcessResult &Result);
-  static std::optional<uint32_t> rootRemovalError(const Description &File);
+             ProcessResult &Result, LinkPolicy Links = {true, false});
   llvm::Expected<std::optional<ServiceResult>>
-  unlink(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result);
+  readLink(uint64_t Path, uint64_t Address, uint64_t Size, uint32_t DirectoryFD,
+           ProcessResult &Result);
+  static std::optional<uint32_t> rootRemovalError(const Description &File);
+  llvm::Expected<std::optional<ServiceResult>> unlink(uint64_t Path,
+                                                      uint32_t DirectoryFD,
+                                                      ProcessResult &Result,
+                                                      bool NoExpansion = false);
   llvm::Expected<std::optional<ServiceResult>>
   makeDirectory(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
-  removeDirectory(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result);
+  removeDirectory(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result,
+                  bool NoExpansion = false);
   llvm::Expected<std::optional<ServiceResult>>
   rename(uint64_t SourcePath, uint32_t SourceDirectory, uint64_t TargetPath,
-         uint32_t TargetDirectory, RenameMode Mode, ProcessResult &Result);
+         uint32_t TargetDirectory, RenameMode Mode, ProcessResult &Result,
+         bool NoExpansion = false);
   llvm::Expected<std::optional<ServiceResult>>
   renameSubtrees(Description &Source, Description &Target,
                  const std::shared_ptr<DirectoryNode> &Parent,
