@@ -1117,6 +1117,8 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 讀�
 
 Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及目前行程的 `FlushInstructionCache`。OS 層管理保留區域，`AddressSpace` 統一管理已認可頁面、權限和實體儲存。測試涵蓋動態程式碼改寫、存取錯誤和記憶體額度回收。
 
+`WriteProcessMemory` 對不超過 4 KiB 的目前處理程序寫入，遵循 x64/ARM64 原生實測的已認可頁面語意。它保留各區域的權限、已複製前綴、位元組數和 LastError，包括 `ERROR_NOACCESS`、`ERROR_PARTIAL_COPY` 以及 RX 前綴寫入後傳回成功的情況。`WindowsMemoryWriteTests.cpp` 檢查全部 25 種權限組合；`check_windows_memory_write.py` 在原生 Windows CI 上驗證同一份原創可執行檔。未認可的目標區域仍明確不受支援。
+
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 Windows 行程時間策略由 `os/windows/process/` 的 `WindowsProcessTime.cpp` 管理。`std::chrono` 區分主機實際時間與單調計數器，`WindowsProcess.def` 定義客體時間單位與有限等待上限；CPU 後端不承載 Windows 時間策略。

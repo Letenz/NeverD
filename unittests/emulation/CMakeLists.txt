@@ -271,6 +271,7 @@ set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
 add_neverd_unittest(NeverDWindowsProcessTests
   WindowsProcessTests.cpp
   WindowsProcessMemoryTests.cpp
+  WindowsMemoryWriteTests.cpp
   WindowsModuleTests.cpp
   WindowsLifetimeTests.cpp
   WindowsExportTests.cpp
@@ -301,6 +302,7 @@ include(WindowsExportFixtures.cmake)
 include(WindowsDynamicFixtures.cmake)
 include(WindowsEnvironmentFixtures.cmake)
 include(WindowsHeapFixtures.cmake)
+include(WindowsMemoryWriteFixtures.cmake)
 include(WindowsSystemFixtures.cmake)
 include(WindowsExceptionFixtures.cmake)
 include(WindowsSEHFixtures.cmake)

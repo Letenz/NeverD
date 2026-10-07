@@ -196,8 +196,9 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
   case API::VirtualProtect:
   case API::VirtualQuery:
   case API::FlushInstructionCache:
-  case API::WriteProcessMemory:
     return Wrap(memory(S, Event));
+  case API::WriteProcessMemory:
+    return Wrap(writeProcessMemory(S, Event));
   case API::HeapAlloc:
   case API::RtlAllocateHeap:
   case API::HeapReAlloc:

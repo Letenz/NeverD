@@ -17,6 +17,7 @@ add_neverd_component_library(NeverDEmulationWindowsProcess
   WindowsProcessTime.cpp
   WindowsProcessServices.cpp
   WindowsProcessMemory.cpp
+  WindowsProcessMemoryWrite.cpp
   LINK_COMPONENTS Loader EmulationRuntime EmulationABI EmulationWindowsException
   LLVM_COMPONENTS Object Support)
 if(WIN32)
