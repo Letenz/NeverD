@@ -313,9 +313,11 @@ std::optional<TextStart> textFrom(llvm::ArrayRef<uint8_t> Data, Encoding E,
     if (!Character.Codes)
       return;
     if (!Start && Character.Offset >= Offset)
-      Start = TextStart{Character.Offset, Text, 0};
+      Start = TextStart{Character.Offset, Text, 0, 0};
     if (Start) {
       Start->Chars += Character.Codes;
+      for (unsigned I = 0; I < Character.Codes; ++I)
+        Start->Columns += displayColumns(Character.Code[I]);
       return;
     }
     for (unsigned I = 0; I < Character.Codes; ++I)

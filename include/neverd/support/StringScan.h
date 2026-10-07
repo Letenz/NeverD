@@ -6,8 +6,8 @@
 ///
 /// \file
 /// Finds terminated text strings in raw bytes: ASCII and UTF-8 C strings,
-/// UTF-16 and UTF-32 strings in either byte order, and C strings in one
-/// legacy code page.  Every string ends in a zero code unit and holds only
+/// UTF-16 and UTF-32 strings in either byte order, and C strings in legacy
+/// code pages.  Every string ends in a zero code unit and holds only
 /// printable characters; StringEncodings.def states which characters each
 /// kind may hold.
 ///
@@ -50,17 +50,30 @@ constexpr EncodingSet encodingBit(Encoding E) {
   return EncodingSet(1) << static_cast<unsigned>(E);
 }
 
+/// The encodings a search uses unless its options name others
+/// (StringEncodings.def).
+constexpr EncodingSet defaultEncodings() {
+  EncodingSet Set = 0;
+#define NEVERD_DEFAULT_ENCODING(Id) Set |= encodingBit(Encoding::Id);
+#include "neverd/support/StringEncodings.def"
+  return Set;
+}
+
 /// The largest minimum length a scan accepts.
-constexpr unsigned MaxMinChars = 1024;
+constexpr unsigned MaxMinLength = 1024;
 
 struct ScanOptions {
-  /// ASCII and UTF-8 C strings, and UTF-16LE strings.  At most one legacy
-  /// encoding: C strings that are not UTF-8 are read in it.
-  EncodingSet Encodings = encodingBit(Encoding::ASCII) |
-                          encodingBit(Encoding::UTF8) |
-                          encodingBit(Encoding::UTF16LE);
-  /// Characters a string needs, its terminator not counted.
-  unsigned MinChars = 4;
+  /// The encodings searched.  C strings that are not UTF-8 are read in each
+  /// legacy code page among them.
+  EncodingSet Encodings = defaultEncodings();
+  /// The code page that reads a C string first, which wins where other code
+  /// pages read it as text too; it is searched whether or not Encodings
+  /// names it.  Otherwise the code pages read in StringEncodings.def order.
+  std::optional<Encoding> Preferred;
+  /// Display columns a string needs, its terminator not counted: a wide East
+  /// Asian character counts two (displayColumns), so that three ideographs
+  /// pass where three ASCII letters do not.
+  unsigned MinLength = 4;
 };
 
 struct FoundString {
@@ -108,8 +121,9 @@ struct TextStart {
   /// The character's offset in the string's bytes, and its text's offset in
   /// the string's UTF-8 text.
   uint64_t Byte = 0, UTF8 = 0;
-  /// Code points from that character to the end of the string.
-  unsigned Chars = 0;
+  /// Code points from that character to the end of the string, and the
+  /// display columns they take.
+  unsigned Chars = 0, Columns = 0;
 };
 
 /// Where the text of the string \p Data, in \p E and without its terminator,

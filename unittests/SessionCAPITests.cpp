@@ -1949,21 +1949,19 @@ TEST_F(SessionCAPITest, StringReferencesReadTextFromTheReferencedCharacter) {
     }
     return Rows;
   };
-  // "world" is long enough on its own; "ld" and "\u6587\u5b57\u7b26" after
-  // the byte inside "\u4e2d" are not, under the default four characters.
+  // "world" is long enough on its own, and the reference into "\u4e2d" reads
+  // from the next character, three UTF-8 bytes into the string's text:
+  // "\u6587\u5b57\u7b26" fills six columns.  "ld" fills two, under the
+  // default four.
   using Row = std::tuple<uint64_t, uint64_t, uint64_t, int64_t>;
-  EXPECT_EQ(
-      rows(nullptr),
-      (std::vector<Row>{{DataELFEntry, DataELFData, DataELFData, 0},
-                        {DataELFEntry + 7, DataELFData + 6, DataELFData, 6}}));
-  // With three, the reference into "\u4e2d" reads from the next character,
-  // three UTF-8 bytes into the string's text.
-  const auto Three = rows(R"({"min_length":3})");
-  ASSERT_EQ(Three.size(), 3u);
-  EXPECT_EQ(Three[2],
-            (Row{DataELFEntry + 21, DataELFData + 13, DataELFData + 12, 3}));
-  EXPECT_EQ(neverd_string_refs_json(Session, R"({"encodings":["gbk","big5"]})",
-                                    0, 16),
+  const std::vector<Row> Default{
+      {DataELFEntry, DataELFData, DataELFData, 0},
+      {DataELFEntry + 7, DataELFData + 6, DataELFData, 6},
+      {DataELFEntry + 21, DataELFData + 13, DataELFData + 12, 3}};
+  EXPECT_EQ(rows(nullptr), Default);
+  // Seven columns leave "world" (five) and the ideographs (six) out.
+  EXPECT_EQ(rows(R"({"min_length":7})"), (std::vector<Row>{Default[0]}));
+  EXPECT_EQ(neverd_string_refs_json(Session, R"({"preferred":"utf-8"})", 0, 16),
             nullptr);
 }
 
@@ -2172,8 +2170,8 @@ TEST_F(SessionCAPITest, StringScanFindsUTF8AndWideStringsByOption) {
   EXPECT_EQ(Scan(R"({"min_length":0})"),
             "error: min_length must be an integer from 1 to 1024");
   EXPECT_EQ(Scan(R"({"limit":3})"), "error: unknown string option: limit");
-  EXPECT_EQ(Scan(R"({"encodings":["gbk","big5"]})"),
-            "error: only one legacy code page can be searched at a time");
+  EXPECT_EQ(Scan(R"({"preferred":"utf-8"})"),
+            "error: preferred must name a legacy code page");
   EXPECT_EQ(Scan("[]"), "error: string options must be a JSON object");
 
   const auto Encodings = takeString(neverd_string_encodings_json());
@@ -2182,19 +2180,25 @@ TEST_F(SessionCAPITest, StringScanFindsUTF8AndWideStringsByOption) {
       << Encodings;
 }
 
-TEST_F(SessionCAPITest, StringScanReadsTheChosenCodePage) {
+TEST_F(SessionCAPITest, StringScanReadsTheCodePagesSearched) {
   // "中文字符串" in GBK after a NUL.
   constexpr char Data[] = "\0\xd6\xd0\xce\xc4\xd7\xd6\xb7\xfb\xb4\xae\0";
   const auto Input =
       write("gbk.elf", makeDataELF(std::string_view(Data, sizeof(Data) - 1)));
   ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
       << takeString(neverd_last_error(Session));
-  EXPECT_EQ(takeString(neverd_strings_ex_json(Session, nullptr)), "[]");
-  const auto Found = takeString(
-      neverd_strings_ex_json(Session, R"({"encodings":["ascii","cp936"]})"));
-  EXPECT_EQ(Found, "[{\"addr\":\"0x401001\",\"chars\":5,\"encoding\":\"gbk\","
-                   "\"length\":10,\"value\":\"\xe4\xb8\xad\xe6\x96\x87\xe5\xad"
-                   "\x97\xe7\xac\xa6\xe4\xb8\xb2\"}]");
+  constexpr char Found[] =
+      "[{\"addr\":\"0x401001\",\"chars\":5,\"encoding\":\"gbk\","
+      "\"length\":10,\"value\":\"\xe4\xb8\xad\xe6\x96\x87\xe5\xad"
+      "\x97\xe7\xac\xa6\xe4\xb8\xb2\"}]";
+  // The common code pages are searched by default, and an alias names one.
+  EXPECT_EQ(takeString(neverd_strings_ex_json(Session, nullptr)), Found);
+  EXPECT_EQ(takeString(neverd_strings_ex_json(
+                Session, R"({"encodings":["ascii","cp936"]})")),
+            Found);
+  EXPECT_EQ(
+      takeString(neverd_strings_ex_json(Session, R"({"encodings":["ascii"]})")),
+      "[]");
 }
 
 TEST(SessionTextDecoding, DecodesBytesForDisplayInAnyEncoding) {

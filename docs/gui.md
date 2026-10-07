@@ -98,17 +98,28 @@ unless their lock is set. Rows mapped to instructions move the disassembly
 cursor. Recognized library operations in C can fold into one-line summaries:
 click a summary to expand it; copy and export always use the complete code.
 
-Strings are found in ASCII, UTF-8 and UTF-16LE by default: UTF-8 text such as
-Chinese, Japanese or Korean prints as itself (`db '中文字符串',0`), each wide
-character two columns wide so the comments after it line up, a string in a
-wide encoding under its label as `text "UTF-16LE", 'Wide text',0`, and an
-instruction that refers to a string quotes it in a comment (`; "Usage: %s"`).
+Strings are found by default in ASCII, UTF-8, UTF-16LE and UTF-32LE (the
+`wchar_t` of Linux and macOS), and C strings that are not UTF-8 in the common
+code pages: windows-1252, GBK, Big5, Shift-JIS and EUC-KR, all in one pass.
+UTF-8 text such as Chinese, Japanese or Korean prints as itself
+(`db '中文字符串',0`), each wide character two columns wide so the comments
+after it line up, a string in another encoding under its label as
+`text "Shift-JIS", '日本語',0`, and an instruction that refers to a string
+quotes it in a comment (`; "Usage: %s"`). A code page's string is shown when
+one of them reads it as text in a script it is made for and no code page for
+another script reads it too: the Big5 bytes of 中文檔, which GBK reads as kana,
+stay Big5, and KOI8-R text that GBK would read as ideographs is left alone.
 **Options → String literals** chooses the encodings searched, including
-UTF-16BE and UTF-32, the minimum length, and one code page (GBK, Big5,
-Shift-JIS, EUC-KR, Windows-1250 to 1258, ISO-8859, KOI8 or IBM866) in which C
-strings that are not UTF-8 are read; the Strings window shows each string's
-encoding in its Type column. Code pages decode by the WHATWG Encoding Standard,
-and a string reads as text only when its characters keep to one script.
+UTF-16BE and UTF-32BE; whether the common code pages are detected; a preferred
+code page (GBK, Big5, Shift-JIS, EUC-KR, Windows-1250 to 1258, ISO-8859, KOI8
+or IBM866), which reads C strings first and wins where other code pages read
+them too; and the minimum length in display columns, a wide East Asian
+character counting two. Text mostly beyond ASCII also needs three characters,
+since two random code points read as text too often. The Strings window shows
+each string's encoding in its Type column. Code pages decode by the WHATWG
+Encoding Standard, and a string reads as text only when its characters keep to
+one script. Settings from versions that searched one code page keep it as the
+preferred one.
 
 **Search → String references** (Ctrl+Shift+F12, or `strref [text]` on the
 command line) lists every instruction that refers to a string: directly, into

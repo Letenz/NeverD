@@ -59,11 +59,15 @@ NEVERD_API const char *neverd_unwind_frame_json(neverd_session_t Sess,
 NEVERD_API const char *neverd_segments_json(neverd_session_t Sess);
 /// Text strings in the image's initialized data that is not code: C strings
 /// in ASCII or UTF-8, UTF-16 or UTF-32 strings in either byte order, and C
-/// strings in one legacy code page, each ending in a zero code unit.
+/// strings in legacy code pages, each ending in a zero code unit.
 /// \p OptionsJson is NULL for the defaults or an object with optional
-/// "encodings" (names from neverd_string_encodings_json(), at most one of
-/// them a legacy code page; default ascii, utf-8 and utf-16le) and
-/// "min_length" (characters, 1 to 1024, default 4).  Returns
+/// "encodings" (names from neverd_string_encodings_json(); default those it
+/// marks "default"), "preferred" (a legacy code page that reads a C string
+/// first and so wins where other code pages read it as text too; searched
+/// whether or not "encodings" names it; without it the code pages read in
+/// the order neverd_string_encodings_json() lists them) and "min_length"
+/// (display columns, a wide East Asian character counting two, 1 to 1024,
+/// default 4).  Returns
 /// [{"addr","length","chars","encoding","value"},...] in address order, where
 /// "length" counts bytes without the terminator and "value" is UTF-8, or NULL
 /// with neverd_last_error() for malformed options.

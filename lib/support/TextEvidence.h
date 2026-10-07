@@ -16,6 +16,8 @@
 #ifndef NEVERD_LIB_SUPPORT_TEXTEVIDENCE_H
 #define NEVERD_LIB_SUPPORT_TEXTEVIDENCE_H
 
+#include "neverd/support/StringScan.h"
+
 #include "llvm/ADT/ArrayRef.h"
 
 #include <cstdint>
@@ -78,6 +80,28 @@ enum class Source : uint8_t { UTF8, Wide, DoubleByte, SingleByte };
 ///    letters beyond ASCII inside words and, in a Latin script, at most three
 ///    in five letters accented.
 bool readsAsText(llvm::ArrayRef<uint32_t> Codes, Source From);
+
+/// Text mostly beyond ASCII needs this many characters: two random code
+/// points read as text too often.
+constexpr size_t MinTextBeyondASCII = 3;
+
+/// Whether \p Codes hold enough characters for their kind of text: at least
+/// MinTextBeyondASCII when most are beyond ASCII.
+bool longEnoughText(llvm::ArrayRef<uint32_t> Codes);
+
+/// More evidence that a single-byte code page nobody chose reads text: two
+/// letters beyond ASCII or more, each lowercase or starting its word, and in
+/// words of three letters or more.  A stray byte between ASCII strings reads
+/// as one such letter, and bytes of a table as capitals.
+bool readsAsUnchosenText(llvm::ArrayRef<uint32_t> Codes);
+
+/// Whether every letter of \p Codes beyond ASCII belongs to a writing system
+/// the code page \p Page is made for (NEVERD_CODE_PAGE_SCRIPT).
+bool inCodePageScripts(llvm::ArrayRef<uint32_t> Codes, Encoding Page);
+
+/// Whether code pages \p A and \p B are made for a writing system in common,
+/// as the East Asian pages are for ideographs.
+bool shareScripts(Encoding A, Encoding B);
 
 } // namespace neverd::strings::detail
 

@@ -139,11 +139,13 @@ TEST(StringScan, AsksIdeographicWideTextForMoreEvidence) {
   EXPECT_TRUE(scanAll(bytes("ABCDEFGH\0\0"), Options).empty());
 }
 
-TEST(StringScan, ReadsOneLegacyCodePageWhereUTF8Fails) {
+TEST(StringScan, ReadsTheChosenCodePageWhereUTF8Fails) {
+  // A code page chosen is preferred: it reads first and wins.
   const auto scanIn = [](Encoding Legacy, std::vector<uint8_t> Data) {
     ScanOptions Options;
-    Options.Encodings = encodingBit(Encoding::ASCII) |
-                        encodingBit(Encoding::UTF8) | encodingBit(Legacy);
+    Options.Encodings =
+        encodingBit(Encoding::ASCII) | encodingBit(Encoding::UTF8);
+    Options.Preferred = Legacy;
     return scanAll(Data, Options);
   };
   const struct {
@@ -191,6 +193,85 @@ TEST(StringScan, ReadsOneLegacyCodePageWhereUTF8Fails) {
                                                 "\xe5\xad\x97\xe7\xac\xa6\0"));
   ASSERT_EQ(UTF8.size(), 1u);
   EXPECT_EQ(UTF8[0].Kind, Encoding::UTF8);
+}
+
+TEST(StringScan, ReadsEveryCodePageSearchedInOnePass) {
+  // GBK, Shift-JIS and windows-1252 strings in one pool, as the defaults
+  // search them; the three ideographs of 日本語 are six columns.
+  const auto Found =
+      scanAll(bytes("\0\xd6\xd0\xce\xc4\xd7\xd6\xb7\xfb\xb4\xae\0"
+                    "\x93\xfa\x96\x7b\x8c\xea\0"
+                    "caf\xe9 cr\xe8me\0"));
+  ASSERT_EQ(Found.size(), 3u);
+  EXPECT_EQ(Found[0].Kind, Encoding::GBK);
+  EXPECT_EQ(Found[0].Text,
+            "\xe4\xb8\xad\xe6\x96\x87\xe5\xad\x97\xe7\xac\xa6\xe4\xb8\xb2");
+  EXPECT_EQ(Found[1].Kind, Encoding::ShiftJIS);
+  EXPECT_EQ(Found[1].Offset, 12u);
+  EXPECT_EQ(Found[1].Text, "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e");
+  EXPECT_EQ(Found[2].Kind, Encoding::Windows1252);
+  EXPECT_EQ(Found[2].Text, "caf\xc3\xa9 cr\xc3\xa8me");
+}
+
+TEST(StringScan, PrefersAReadingInTheCodePagesOwnScript) {
+  // GBK reads the Big5 bytes of 中文檔 as いゅ郎, kana that Chinese text in
+  // GBK seldom holds; Big5 reads them as the ideographs it is made for.
+  const auto Data = bytes("\0\xa4\xa4\xa4\xe5\xc0\xc9\0");
+  const auto Found = scanAll(Data);
+  ASSERT_EQ(Found.size(), 1u);
+  EXPECT_EQ(Found[0].Kind, Encoding::Big5);
+  EXPECT_EQ(Found[0].Text, "\xe4\xb8\xad\xe6\x96\x87\xe6\xaa\x94");
+  // The preferred code page reads first and wins outright.
+  ScanOptions Options;
+  Options.Preferred = Encoding::GBK;
+  const auto Preferred = scanAll(Data, Options);
+  ASSERT_EQ(Preferred.size(), 1u);
+  EXPECT_EQ(Preferred[0].Kind, Encoding::GBK);
+  EXPECT_EQ(Preferred[0].Text, "\xe3\x81\x84\xe3\x82\x85\xe9\x83\x8e");
+}
+
+TEST(StringScan, LeavesAStringAnotherScriptsCodePageReads) {
+  // windows-1253 reads the windows-1251 bytes of Привет as Οπθβες, so
+  // searched without a preference, neither is shown.
+  ScanOptions Options;
+  Options.Encodings = encodingBit(Encoding::Windows1251);
+  EXPECT_TRUE(scanAll(bytes("\0\xcf\xf0\xe8\xe2\xe5\xf2\0"), Options).empty());
+}
+
+TEST(StringScan, SearchesAnotherCodePageOnlyWhenChosen) {
+  // KOI8-R reads привет; no code page searched by default reads it.
+  const auto Data = bytes("\0\xd0\xd2\xc9\xd7\xc5\xd4\0");
+  EXPECT_TRUE(scanAll(Data).empty());
+  ScanOptions Options;
+  Options.Preferred = Encoding::KOI8R;
+  const auto Found = scanAll(Data, Options);
+  ASSERT_EQ(Found.size(), 1u);
+  EXPECT_EQ(Found[0].Kind, Encoding::KOI8R);
+  EXPECT_EQ(Found[0].Text, "\xd0\xbf\xd1\x80\xd0\xb8\xd0\xb2\xd0\xb5\xd1\x82");
+}
+
+TEST(StringScan, MeasuresTheMinimumLengthInColumns) {
+  // Three ideographs fill six columns; three ASCII letters three.
+  const auto Found =
+      scanAll(bytes("\0\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\0abc\0"));
+  ASSERT_EQ(Found.size(), 1u);
+  EXPECT_EQ(Found[0].Kind, Encoding::UTF8);
+  EXPECT_EQ(Found[0].Chars, 3u);
+  ScanOptions Seven;
+  Seven.MinLength = 7;
+  EXPECT_TRUE(scanAll(bytes("\0\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\0"), Seven)
+                  .empty());
+}
+
+TEST(StringScan, FindsUTF32ByDefault) {
+  // wchar_t is 32 bits outside Windows: L"..." literals are UTF-32LE.
+  std::vector<uint8_t> Data(4, 0);
+  const auto Text = wide(U"UTF32 \u4e2d\u6587", 4, false);
+  Data.insert(Data.end(), Text.begin(), Text.end());
+  const auto Found = scanAll(Data);
+  ASSERT_EQ(Found.size(), 1u);
+  EXPECT_EQ(Found[0].Kind, Encoding::UTF32LE);
+  EXPECT_EQ(Found[0].Text, "UTF32 \xe4\xb8\xad\xe6\x96\x87");
 }
 
 TEST(StringScan, DecodesCharactersForDisplay) {
