@@ -13,12 +13,16 @@ std::optional<uint64_t> LinuxFiles::unsupported(ProcessResult &Result,
   return std::nullopt;
 }
 
-bool LinuxFiles::isOutput(uint32_t FD) const {
+std::optional<uint64_t> LinuxFiles::outputError(uint32_t FD) const {
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
-    return false;
+    return uint64_t(0) - BadDescriptor;
+  if (std::holds_alternative<ProcessDescriptor>(I->second))
+    return uint64_t(0) - InvalidArgument;
   const auto *S = std::get_if<Stream>(&I->second);
-  return S && (*S == Stream::Output || *S == Stream::Error);
+  if (S && (*S == Stream::Output || *S == Stream::Error))
+    return std::nullopt;
+  return uint64_t(0) - BadDescriptor;
 }
 
 llvm::Expected<std::optional<uint64_t>>

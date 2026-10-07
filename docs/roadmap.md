@@ -185,6 +185,13 @@ Cross-cutting work that unblocks the items above and improves today’s native e
 | Semantic tests | Expand Unicorn / roundtrip coverage as new ISAs land |
 | Plugin ABI | Maintain the [native plugin ABI](plugins.md) as an in-process extension contract; Loader and UI values remain metadata until explicit host APIs exist |
 | Docs / matrix | Update README support tables only after tests land |
+| Linux kernel contracts | Prioritize formal Android GKI 5.10–6.18 releases, then general Linux variants; verify each service against pinned source and keep unsupported semantics explicit |
+
+The [released GKI contract matrix](android-gki-kernels.md) currently implements
+the live-process `pidfd_open` subset across eight branches, including the
+6.12/6.18 thread flag distinction and shared descriptor ownership. Full kernel
+image/device execution, pidfd lifetime notifications and the remaining syscall
+surface are ongoing coverage, not implied by selecting a branch.
 
 ---
 

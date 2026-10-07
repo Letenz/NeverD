@@ -2989,6 +2989,8 @@ The MainActor fixture checks the complete fixed metadata/static-table flow and r
 
 `CompletedQueryCache.*` checks full byte-domain answers, every packed slot, growth, context and owner isolation, invalid and incomplete inputs, and exact storage limits. Native branch regressions retain fixed logical query costs and exact/one-short budgets even when complete answers avoid backend work.
 
+`BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` check repeated native target chains with branch changes and symbolic frame stores, fixed logical costs, exact/one-short query budgets, invalid target limits, gate exhaustion and wrong terminal observations. Interleaved frame and correlated target projections also preserve complete tuples, observer order and incomplete-result refusal across predicate replacement.
+
 `LinuxPriorityTests.cpp` checks explicit task state, thread isolation, missing
 observations, malformed JSON, profile admission and refusal effects.
 Independent x64/AArch64 raw callers at O0/O2 verify nice clamping, 32-bit syscall
@@ -3005,3 +3007,15 @@ for unspecified or unrelated calls. The Android syscall fixture compares raw
 SVC with Bionic `syscall`, preserving distinct raw return/errno effects.
 Run these focused tests, the full Linux process and public process suites,
 and Android syscall, native-entry and signal suites for availability changes.
+
+`LinuxPIDFD.*` checks released GKI branch parsing and rejects invalid enum values
+or an absent-pidfd observation combined with GKI before image loading.
+`Backends/LinuxPIDFDProcess.*` runs independent O0/O2 x64/AArch64 callers for all
+eight branches, including flag differences, shared file/pidfd allocation,
+limits, close/reuse and scalar/vector error ordering. Android's
+`ReleasedGKIProcessDescriptorsShareRawAndBionicOwnership` cases repeat the
+shared descriptor and errno behavior across all six compiled relocation
+profiles. Run these first, then the complete Linux process, Android native and
+public process suites when changing shared kernel or descriptor semantics.
+These tests execute the model; they do not boot the eight pinned GKI kernels.
+See [released GKI contracts](android-gki-kernels.md).

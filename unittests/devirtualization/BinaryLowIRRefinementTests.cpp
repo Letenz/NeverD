@@ -354,6 +354,105 @@ TEST(BinaryLowIRRefinement, SingletonTargetsRetainTheirBranchDomains) {
           Status::Different);
 }
 
+Program indirectNativeChain(unsigned Count, bool Frame, bool Split) {
+  Program P({});
+  P.Options.EntryFrameAlignment = P.Contract.Frame->EntryAlignment = {128, 8};
+  P.Contract.ObserveWrittenFrameBytes = true;
+  auto &Code = P.Image.Segments.front();
+  const auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Code.Data.insert(Code.Data.end(), Bytes);
+  };
+  const auto Immediate = [&](uint32_t Value) {
+    for (unsigned I = 0; I != 4; ++I)
+      Code.Data.push_back(static_cast<uint8_t>(Value >> (8 * I)));
+  };
+  if (Split) {
+    Emit({0xf7, 0xc7, 1, 0, 0, 0, 0x0f, 0x85});
+    Immediate(0);
+  }
+  for (unsigned Arm = 0; Arm != (Split ? 2U : 1U); ++Arm) {
+    if (Arm) {
+      const uint32_t Offset = Code.Data.size() - 12;
+      for (unsigned I = 0; I != 4; ++I)
+        Code.Data[8 + I] = static_cast<uint8_t>(Offset >> (8 * I));
+    }
+    for (unsigned I = 0; I != Count; ++I) {
+      const uint8_t Bias = I + 1;
+      if (Frame) {
+        // LEA RDX,[RSP+bias]; AND RDX,-128; MOV [RDX],RAX.
+        // The full entry residue proves that every store addresses RSP-8.
+        Emit({0x48, 0x8d, 0x54, 0x24, Bias, 0x48, 0x83, 0xe2, 0x80, 0x48, 0x89,
+              0x02});
+      }
+      const uint32_t Target = Entry + Code.Data.size() + 16;
+      Emit({0x48, 0x8d, 0x44, 0x24, Bias, 0x83, 0xe0, 127, 0x48, 0x05});
+      Immediate(Target - ((8 + Bias) & 127));
+      Emit({0xff, 0xe0});
+    }
+    Emit({0xb9});
+    Immediate(Arm ? 11 : 7);
+    Emit({0xc3});
+  }
+  Code.Size = Code.FileSz = Code.Data.size();
+  return P;
+}
+
+TEST(BinaryLowIRRefinement, NativeTargetDomainsKeepIndependentProjections) {
+  for (unsigned Count : {8U, 12U})
+    for (bool Frame : {false, true})
+      for (bool Split : {false, true}) {
+        SCOPED_TRACE(Count);
+        SCOPED_TRACE(Frame);
+        SCOPED_TRACE(Split);
+        auto P = indirectNativeChain(Count, Frame, Split);
+        const auto Recovery = P.recover();
+        ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+        LowIRRefinementLimits Limits;
+        Limits.Execution.MaxIndirectTargets = 1;
+        const auto Good =
+            P.check(Recovery.Residual, Witness::LiftedBits, Limits);
+        ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+        const auto &Q = Good.Proof;
+        // Independent baseline costs include every final exclusion query.
+        const unsigned SingleQueries = Frame ? 6 * Count + 13 : 2 * Count + 5;
+        EXPECT_EQ(Q.SolverQueries,
+                  Split ? 2 * SingleQueries + 6 : SingleQueries);
+        EXPECT_EQ(Q.OriginalPaths, Split ? 2U : 1U);
+        EXPECT_EQ(Q.CandidatePaths, Split ? 2U : 1U);
+        Limits.Execution.MaxSolverQueries = Q.SolverQueries;
+        ASSERT_TRUE(
+            P.check(Recovery.Residual, Witness::LiftedBits, Limits).proved());
+        --Limits.Execution.MaxSolverQueries;
+        refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+                Status::BudgetExceeded);
+        Limits.Execution.MaxSolverQueries = Q.SolverQueries;
+        Limits.Execution.MaxIndirectTargets = 0;
+        refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+                Status::Invalid);
+        Limits.Execution.MaxIndirectTargets = 1;
+        Limits.Execution.Solver.Blast.MaxGates = 1;
+        refused(P.check(Recovery.Residual, Witness::LiftedBits, Limits),
+                Status::BudgetExceeded);
+        for (unsigned V : {7U, 11U}) {
+          if (V == 11 && !Split)
+            continue;
+          auto Bad = Recovery.Residual;
+          bool Changed = false;
+          for (auto &B : Bad.Blocks)
+            for (auto &O : B.Ops)
+              if ((O.Opcode == NdOp::COPY || O.Opcode == NdOp::INT_ZEXT) &&
+                  O.Output.isReg() && O.Output.Offset == x86reg::RCX &&
+                  O.NumInputs == 1 && O.Inputs[0].isConst() &&
+                  O.Inputs[0].Offset == V) {
+                O.Inputs[0].Offset += 2;
+                Changed = true;
+              }
+          ASSERT_TRUE(Changed);
+          refused(P.check(Bad), Status::Different);
+        }
+      }
+}
+
 TEST(BinaryLowIRRefinement, MemoryIndirectDispatchKeepsTargetSnapshot) {
   // AND ECX,3; LEA RAX,[RIP+table]; JMP [RAX+RCX*8]; four return arms.
   Program P({0x83, 0xe1, 3, 0x48, 0x8d, 0x05, 27,   0, 0, 0, 0xff, 0x24, 0xc8,

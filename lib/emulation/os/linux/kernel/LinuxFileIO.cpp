@@ -8,6 +8,12 @@
 #include <algorithm>
 
 namespace neverd::emulation::linux_model {
+uint32_t LinuxFiles::nextDescriptor() const {
+  uint32_t FD = 0;
+  while (FD < Options->DescriptorLimit && Descriptors.contains(FD))
+    ++FD;
+  return FD;
+}
 llvm::Expected<std::optional<uint64_t>> LinuxFiles::close(uint32_t FD) {
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
@@ -22,6 +28,8 @@ LinuxFiles::readDescriptor(uint32_t FD, uint64_t Address, uint64_t Size,
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
+  if (std::holds_alternative<ProcessDescriptor>(I->second))
+    return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
   auto *File = std::get_if<OpenFile>(&I->second);
   if (!File) {
     if (std::get<Stream>(I->second) == Stream::Input)
@@ -42,6 +50,8 @@ LinuxFiles::seekDescriptor(uint32_t FD, uint64_t Offset, uint32_t Whence,
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
   if (Whence > SeekHole)
     return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
+  if (std::holds_alternative<ProcessDescriptor>(I->second))
+    return std::optional<uint64_t>(uint64_t(0) - IllegalSeek);
   auto *File = std::get_if<OpenFile>(&I->second);
   if (!File) {
     if (std::get<Stream>(I->second) == Stream::Input)

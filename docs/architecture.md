@@ -3503,7 +3503,7 @@ The Swift SDK catalog authenticates the generic Foundation NSRange initializer w
 
 The same descriptor-specific witness contract covers the fixed `String: StringProtocol` conformance. Four complete compiler queries preserve the direct String metadata, descriptor and null-initialized cache; the lazy accessor checks the cache, calls the three-pointer runtime with an undef third operand, stores the new witness with release ordering and returns the matching PHI value. Changed storage, prototypes, branches, PHI inputs or additional effects invalidate the contract. Only that undef operand is projected; observed entry arguments and effectful expressions remain intact.
 
-Each relation checker owns one `FiniteDomainEncoding` bound to its context and fixed solver settings. Repeated cold frame queries with the same complete predicate clone its pre-search encoding; a changed predicate replaces it. Projection, blocking clauses, learned state and models remain local to each query. Full finite enumeration, the final UNSAT check, logical query charges and all existing limits remain mandatory.
+Each relation checker owns one `FiniteDomainEncoding` bound to its context and fixed solver settings. Frame-offset and native indirect-target projections with the same complete predicate share its pre-search encoding; a changed predicate replaces this single template. Each projection receives an independent clone, and blocking clauses, learned state and models remain local to that query. Full finite enumeration, the final UNSAT check, logical query charges and all existing limits remain mandatory.
 
 Frame-offset queries prepare one complete, context-independent finite-proof key for lookup and later insertion. The movable token keeps exact DAG identity and projection widths; it never retains symbolic references or incomplete results. A live token adds one bounded temporary key beside the retained cache storage. Result validation, eviction, complete enumeration and all solver budgets are unchanged.
 
@@ -3532,3 +3532,13 @@ declares a call absent. The catalogue does not supply an implementation or
 derive availability from an Android API level. JSON validation and profile
 admission happen before loading; unlisted and available-but-unmodeled calls
 retain their unsupported boundary.
+
+`LinuxGKIKernels.def` owns released Android GKI branch identifiers and the
+versioned `pidfd_open` flag mask. JSON and C++ options select that contract
+explicitly; Android's Bionic API level does not infer it. `LinuxServices`
+dispatches the shared kernel call, and `LinuxFiles` owns process descriptors
+alongside regular files and standard streams. `LinuxOutput` supplies the same
+vector import/error ordering before a pidfd's missing write operation. There
+is no host process lookup or parallel descriptor namespace. See
+[released GKI contracts](android-gki-kernels.md) for pinned source evidence and
+the limits of this implemented subset.

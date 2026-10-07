@@ -190,6 +190,8 @@ NEVERD_LINUX_DYNAMIC_DEPENDENCY(DependencyAudit, 0x6ffffefb)
 NEVERD_LINUX_DIAGNOSTIC(MemoryResidency,
                         "unmodeled Linux page residency observation")
 NEVERD_LINUX_DIAGNOSTIC(KernelOptions, "invalid Linux kernel availability input")
+NEVERD_LINUX_DIAGNOSTIC(PidFDTargetMissing,
+                        "pidfd_open target process is not modeled")
 NEVERD_LINUX_DIAGNOSTIC(PriorityOptions, "invalid Linux priority input")
 NEVERD_LINUX_DIAGNOSTIC(PriorityInputsMissing,
     "priority services require explicit linux_priority input")
