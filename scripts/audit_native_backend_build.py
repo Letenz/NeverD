@@ -71,6 +71,7 @@ def validate_object(data: bytes, backend: str) -> None:
 
 
 def audit_objects(build: Path, backend: str, root: Path = ROOT) -> list[dict]:
+    build, root = build.resolve(), root.resolve()
     profiles, sources, _, texts = definitions()
     _, definition, suffix = profiles[backend]
     cache = dict(re.findall(r'^([^#/:][^:]*):[^=]+=(.*)$',

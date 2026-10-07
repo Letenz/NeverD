@@ -23,6 +23,11 @@ on:
         required: true
         type: boolean
         default: false
+      native_arm64_only:
+        description: 'Run ARM64 backend component builds and host setup probes'
+        required: true
+        type: boolean
+        default: false
       native_cpu_backend:
         description: 'Native x64 transport for the native_cpu_only profile'
         required: true
@@ -47,7 +52,7 @@ concurrency:
 jobs:
   build-and-test:
     name: Build and test (${{ matrix.name }})
-    if: ${{ github.event.action != 'closed' && !inputs.native_cpu_only }}
+    if: ${{ github.event.action != 'closed' && !inputs.native_cpu_only && !inputs.native_arm64_only }}
     runs-on: ${{ matrix.runner }}
     env:
       NEVERD_LLVM_PREBUILT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.use_prebuilt_llvm && 'ON' || 'OFF' }}
@@ -1810,7 +1815,7 @@ jobs:
 
   native-cpu:
     name: Native CPU (${{ inputs.native_cpu_backend == 'kvm' && 'Linux x64 KVM' || 'Windows x64 WHP' }})
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.native_cpu_only }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.native_cpu_only && !inputs.native_arm64_only }}
     runs-on: ${{ inputs.native_cpu_backend == 'kvm' && 'ubuntu-24.04' || 'windows-latest' }}
     # Include a cold build and the full native instruction/driver inventory.
     timeout-minutes: 60
