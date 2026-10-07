@@ -968,6 +968,62 @@ ExprPtr concatenate(ExprPtr High, ExprPtr Low) {
   return Joined;
 }
 
+TEST(HighControlFlowSemantics, FlagTestsOfOneCompareMergeIntoOneOrder) {
+  // `cmp edi, 8; ja` reads !CF && !ZF: `!(x < 8) && !(x - 8 == 0)`, which is
+  // `8 < x`.  Its negation `x < 8 || x - 8 == 0` is `x <= 8`.  Two different
+  // values must stay two tests.
+  auto view = [](ExprPtr Base) { return byteSlice(std::move(Base), 0, 4); };
+  auto c32 = [](uint64_t V) { return HighExpr::makeConst(V, 4); };
+  auto cmp = [](NdOp Op, ExprPtr A, ExprPtr B) {
+    auto E = HighExpr::makeBinop(Op, std::move(A), std::move(B));
+    E->Type = NdType::makeInt(1, false);
+    return E;
+  };
+  auto logical = [](NdOp Op, ExprPtr A, ExprPtr B) {
+    auto E = HighExpr::makeBinop(Op, std::move(A), std::move(B));
+    E->Type = NdType::makeInt(1, false);
+    return E;
+  };
+  auto difference = [&](ExprPtr X) {
+    auto E = HighExpr::makeBinop(NdOp::INT_SUB, std::move(X), c32(8));
+    E->Type = NdType::makeInt(4, false);
+    return E;
+  };
+  auto negate = [](ExprPtr E) {
+    auto N = HighExpr::makeUnary(NdOp::BOOL_NOT, std::move(E));
+    N->Type = NdType::makeInt(1, false);
+    return N;
+  };
+  for (unsigned Case = 0; Case != 3; ++Case) {
+    SCOPED_TRACE(Case);
+    const bool Above = Case != 1;
+    ExprPtr Other = Case == 2 ? view(local(1)) : view(local(0));
+    ExprPtr Cond =
+        Above ? logical(NdOp::BOOL_AND,
+                        negate(cmp(NdOp::INT_LESS, view(local(0)), c32(8))),
+                        negate(cmp(NdOp::INT_EQUAL, difference(Other), c32(0))))
+              : logical(NdOp::BOOL_OR,
+                        cmp(NdOp::INT_LESS, view(local(0)), c32(8)),
+                        cmp(NdOp::INT_EQUAL, difference(Other), c32(0)));
+    HighFunc F;
+    F.Body = {result(0, Cond)};
+    const std::vector<uint64_t> Inputs{0, 7, 8, 9, 0xffffffff, 0x100000008};
+    std::vector<std::optional<uint64_t>> Expected;
+    if (Case != 2)
+      for (uint64_t Input : Inputs)
+        Expected.push_back(execute(F, Input));
+    simplifyAllExprs(F.Body);
+    const ExprPtr &Root = F.Body[0].RetVal;
+    if (Case == 2) {
+      EXPECT_EQ(Root->Op, NdOp::BOOL_AND);
+      continue;
+    }
+    EXPECT_EQ(Root->Op, Above ? NdOp::INT_LESS : NdOp::INT_LESSEQUAL);
+    for (size_t I = 0; I != Inputs.size(); ++I)
+      EXPECT_EQ(execute(F, Inputs[I]), Expected[I]) << Inputs[I];
+  }
+}
+
 TEST(HighControlFlowSemantics, AdjacentLocalSlicesPreserveEveryBit) {
   for (unsigned Offset : {0U, 1U, 2U})
     for (unsigned Bytes : {2U, 4U, 8U}) {
