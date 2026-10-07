@@ -1468,6 +1468,8 @@ Una biblioteca ausente en cualquier punto de la cadena de reenvío de `GetProcAd
 
 La memoria virtual de Windows incorpora `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` y `FlushInstructionCache` para el proceso actual. La capa OS administra las reservas; `AddressSpace` mantiene la autoridad sobre páginas confirmadas, permisos y almacenamiento. Las pruebas cubren cambios de código, fallos de acceso y reutilización del presupuesto de memoria.
 
+`WriteProcessMemory` sigue el comportamiento de páginas confirmadas observado en x64/ARM64 para escrituras de hasta 4 KiB en el proceso actual. Conserva la protección de cada región, los prefijos copiados, los recuentos de bytes y LastError, incluidos `ERROR_NOACCESS`, `ERROR_PARTIAL_COPY` y el éxito tras un prefijo RX. `WindowsMemoryWriteTests.cpp` comprueba las 25 parejas de protecciones; `check_windows_memory_write.py` verifica el mismo ejecutable original en CI de Windows nativo. Los destinos sin confirmar siguen explícitamente sin soporte.
+
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 Las regresiones cubren presupuestos exactos e insuficientes, palabras parciales, ambos órdenes de bytes, identidad de memoria intacta, límites afines completos, sobrescrituras de predecesores tardíos e invalidación predeterminada. C API/CLI comprueban compatibilidad v6 y dominios inválidos. HighC y LLVMC ejecutados en O0/O2 verifican retorno, memoria, pila y estado preservado, sin certificar equivalencia nativa.

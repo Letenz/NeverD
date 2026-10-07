@@ -13,7 +13,11 @@ NEVERD_MEMORY_WRITE_VALUE(InitialSecond, 0x52)
 NEVERD_MEMORY_WRITE_VALUE(UpdatedFirst, 0xa4)
 NEVERD_MEMORY_WRITE_VALUE(UpdatedSecond, 0xb7)
 NEVERD_MEMORY_WRITE_VALUE(LastErrorSeed, 0x12345678)
-NEVERD_MEMORY_WRITE_VALUE(WrittenSeed, 0xffffffff)
+NEVERD_MEMORY_WRITE_VALUE(PrefixSize, 1)
+NEVERD_MEMORY_WRITE_VALUE(ErrorNoAccess, 998)
+NEVERD_MEMORY_WRITE_VALUE(ErrorPartialCopy, 299)
+NEVERD_MEMORY_WRITE_VALUE(WireWordMax, 0xffffffff)
+NEVERD_MEMORY_WRITE_VALUE(WireByteMax, 0xff)
 NEVERD_MEMORY_WRITE_VALUE(StdoutSelector, 0xfffffff5)
 NEVERD_MEMORY_WRITE_VALUE(CompletionStatus, 0)
 NEVERD_MEMORY_WRITE_VALUE(FailureStatus, 99)
@@ -23,6 +27,9 @@ NEVERD_MEMORY_WRITE_VALUE(BuildTimeoutSeconds, 60)
 NEVERD_MEMORY_WRITE_VALUE(NativeTimeoutSeconds, 10)
 NEVERD_MEMORY_WRITE_VALUE(InstructionLimit, 500000)
 NEVERD_MEMORY_WRITE_VALUE(TimeoutMicroseconds, 20000000)
+#endif
+#ifdef NEVERD_MEMORY_WRITE_WIDE
+NEVERD_MEMORY_WRITE_WIDE(WrittenSeed, 0xffffffffffffffffULL)
 #endif
 #ifdef NEVERD_MEMORY_WRITE_PROTECTION
 NEVERD_MEMORY_WRITE_PROTECTION(NoAccess, 0x01)
@@ -84,9 +91,86 @@ NEVERD_MEMORY_WRITE_TEXT(UnexpectedStderr,
                          "native process-write observation emitted stderr")
 NEVERD_MEMORY_WRITE_TEXT(
     ChangedSource, "source changed during native process-write observation")
+NEVERD_MEMORY_WRITE_TEXT(
+    ContractMismatch, "process-write observation differs from native Windows")
+NEVERD_MEMORY_WRITE_TEXT(MissingTools,
+                         "process-write fixtures require Clang and lld-link")
 #endif
 #ifdef NEVERD_MEMORY_WRITE_ABI
 NEVERD_MEMORY_WRITE_ABI(MemoryInfo, InformationSize, "memory-information ABI")
 NEVERD_MEMORY_WRITE_ABI(Observation, RecordSize,
                         "process-write observation ABI")
+#endif
+
+// Windows x64 10.0.26100 and ARM64 10.0.26200 agree on every field. Preserve
+// partial writes even when the wrapper returns success after an RX prefix.
+#ifdef NEVERD_MEMORY_WRITE_EXPECTED
+NEVERD_MEMORY_WRITE_EXPECTED(NoAccess, NoAccess, 0, ErrorNoAccess, WrittenSeed,
+                             NoAccess, NoAccess, InitialFirst, InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(NoAccess, ReadOnly, 0, ErrorNoAccess, WrittenSeed,
+                             NoAccess, ReadOnly, InitialFirst, InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(NoAccess, ReadWrite, 0, ErrorNoAccess, WrittenSeed,
+                             NoAccess, ReadWrite, InitialFirst, InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(NoAccess, ExecuteRead, 0, ErrorNoAccess,
+                             WrittenSeed, NoAccess, ExecuteRead, InitialFirst,
+                             InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(NoAccess, ExecuteReadWrite, 0, ErrorNoAccess,
+                             WrittenSeed, NoAccess, ExecuteReadWrite,
+                             InitialFirst, InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ReadOnly, NoAccess, 0, ErrorNoAccess, WrittenSeed,
+                             ReadOnly, NoAccess, InitialFirst, InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ReadOnly, ReadOnly, 0, ErrorNoAccess, WrittenSeed,
+                             ReadOnly, ReadOnly, InitialFirst, InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ReadOnly, ReadWrite, 0, ErrorNoAccess, WrittenSeed,
+                             ReadOnly, ReadWrite, InitialFirst, InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ReadOnly, ExecuteRead, 0, ErrorNoAccess,
+                             WrittenSeed, ReadOnly, ExecuteRead, InitialFirst,
+                             InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ReadOnly, ExecuteReadWrite, 0, ErrorNoAccess,
+                             WrittenSeed, ReadOnly, ExecuteReadWrite,
+                             InitialFirst, InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ReadWrite, NoAccess, 0, ErrorPartialCopy,
+                             PrefixSize, ReadWrite, NoAccess, UpdatedFirst,
+                             InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ReadWrite, ReadOnly, 0, ErrorPartialCopy,
+                             PrefixSize, ReadWrite, ReadOnly, UpdatedFirst,
+                             InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ReadWrite, ReadWrite, 1, LastErrorSeed, WriteSize,
+                             ReadWrite, ReadWrite, UpdatedFirst, UpdatedSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ReadWrite, ExecuteRead, 0, ErrorPartialCopy,
+                             PrefixSize, ReadWrite, ExecuteRead, UpdatedFirst,
+                             InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ReadWrite, ExecuteReadWrite, 1, LastErrorSeed,
+                             WriteSize, ReadWrite, ExecuteReadWrite,
+                             UpdatedFirst, UpdatedSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ExecuteRead, NoAccess, 1, LastErrorSeed,
+                             PrefixSize, ExecuteRead, NoAccess, UpdatedFirst,
+                             InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ExecuteRead, ReadOnly, 1, LastErrorSeed,
+                             PrefixSize, ExecuteRead, ReadOnly, UpdatedFirst,
+                             InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ExecuteRead, ReadWrite, 1, LastErrorSeed,
+                             WriteSize, ExecuteRead, ReadWrite, UpdatedFirst,
+                             UpdatedSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ExecuteRead, ExecuteRead, 1, LastErrorSeed,
+                             WriteSize, ExecuteRead, ExecuteRead, UpdatedFirst,
+                             UpdatedSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ExecuteRead, ExecuteReadWrite, 1, LastErrorSeed,
+                             WriteSize, ExecuteRead, ExecuteReadWrite,
+                             UpdatedFirst, UpdatedSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ExecuteReadWrite, NoAccess, 0, ErrorPartialCopy,
+                             PrefixSize, ExecuteReadWrite, NoAccess,
+                             UpdatedFirst, InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ExecuteReadWrite, ReadOnly, 0, ErrorPartialCopy,
+                             PrefixSize, ExecuteReadWrite, ReadOnly,
+                             UpdatedFirst, InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ExecuteReadWrite, ReadWrite, 1, LastErrorSeed,
+                             WriteSize, ExecuteReadWrite, ReadWrite,
+                             UpdatedFirst, UpdatedSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ExecuteReadWrite, ExecuteRead, 0, ErrorPartialCopy,
+                             PrefixSize, ExecuteReadWrite, ExecuteRead,
+                             UpdatedFirst, InitialSecond)
+NEVERD_MEMORY_WRITE_EXPECTED(ExecuteReadWrite, ExecuteReadWrite, 1,
+                             LastErrorSeed, WriteSize, ExecuteReadWrite,
+                             ExecuteReadWrite, UpdatedFirst, UpdatedSecond)
 #endif

@@ -1390,6 +1390,8 @@ cmake -S . -B build-native -G Ninja \
 
 تضيف الذاكرة الافتراضية في Windows دعم `VirtualAlloc` و`VirtualFree` و`VirtualProtect` و`VirtualQuery` و`FlushInstructionCache` للعملية الحالية. تدير طبقة OS الحجوزات، وتبقى `AddressSpace` المرجع للصفحات الملتزم بها والصلاحيات والتخزين الفعلي. تشمل الاختبارات تعديل الشيفرة وأخطاء الوصول وإعادة استخدام ميزانية الذاكرة.
 
+يتبع `WriteProcessMemory` سلوك الصفحات الملتزم بها المقاس على x64/ARM64 عند كتابة ما لا يتجاوز 4 KiB في العملية الحالية. ويحافظ على حماية كل منطقة والبادئات المنسوخة وعدد البايتات وLastError، بما في ذلك `ERROR_NOACCESS` و`ERROR_PARTIAL_COPY` والنجاح بعد كتابة بادئة RX. يفحص `WindowsMemoryWriteTests.cpp` أزواج الحماية الخمسة والعشرين كلها، ويتحقق `check_windows_memory_write.py` من الملف التنفيذي الأصلي نفسه في CI على Windows الأصلي. تظل الوجهات غير الملتزم بها غير مدعومة صراحةً.
+
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 تغطي اختبارات الفصل الميزانيات الدقيقة والناقصة، والكلمات الجزئية، وترتيبي البايتات، وهوية الذاكرة غير الملموسة، وحدود الخانات الأفينية الكاملة، والكتابة من أسلاف متأخرين، والإبطال الافتراضي. تفحص C API/CLI توافق v6 والنطاقات غير الصالحة. تُنفذ مخرجات HighC وLLVMC عند O0/O2 مع فحص الإرجاع والذاكرة والمكدس والحالة المحفوظة؛ وليست هذه شهادة تكافؤ أصلي.

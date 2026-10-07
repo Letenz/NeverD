@@ -59,6 +59,19 @@ class WindowsMemoryWriteEvidenceTests(unittest.TestCase):
                             ByteFirst=self.values["UpdatedFirst"])
         self.assertEqual(oracle.parse_observations(self.data()), self.rows)
 
+    def test_complete_native_contract_is_verified(self):
+        self.rows = oracle.expected_observations()
+        self.assertEqual(oracle.validate_observations(self.data()), self.rows)
+
+    def test_contract_rejects_changed_result_error_count_permissions_and_bytes(self):
+        original = oracle.expected_observations()
+        for index, row in enumerate(original):
+            for key in self.fields:
+                self.rows = [dict(item) for item in original]
+                self.rows[index][key] ^= 1
+                with self.subTest(index=index, key=key), self.assertRaises(ValueError):
+                    oracle.validate_observations(self.data())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1463,6 +1463,8 @@ Una libreria assente nella catena di inoltro di `GetProcAddress` restituisce 127
 
 La memoria virtuale Windows aggiunge `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` e `FlushInstructionCache` per il processo corrente. Il livello OS gestisce le prenotazioni; `AddressSpace` resta responsabile delle pagine impegnate, dei permessi e della memoria sottostante. I test verificano modifiche al codice, errori di accesso e riutilizzo del budget di memoria.
 
+`WriteProcessMemory` segue il comportamento delle pagine impegnate osservato su x64/ARM64 per scritture fino a 4 KiB nel processo corrente. Conserva la protezione di ogni regione, i prefissi copiati, i conteggi dei byte e LastError, inclusi `ERROR_NOACCESS`, `ERROR_PARTIAL_COPY` e il successo dopo un prefisso RX. `WindowsMemoryWriteTests.cpp` controlla tutte le 25 coppie di protezioni; `check_windows_memory_write.py` verifica lo stesso eseguibile originale nella CI Windows nativa. Le destinazioni non impegnate restano esplicitamente non supportate.
+
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 Le regressioni coprono budget esatti e insufficienti, parole parziali, entrambi gli ordini dei byte, identità della memoria intatta, limiti degli slot affini, sovrascritture di predecessori tardivi e invalidazione predefinita. C API/CLI verificano compatibilità v6 e domini non validi. HighC e LLVMC eseguiti in O0/O2 controllano ritorno, memoria, stack e stato preservato, senza certificare equivalenza nativa.

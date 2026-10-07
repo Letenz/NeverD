@@ -1367,6 +1367,8 @@ Windows ring3 は独立したネイティブ観測に従い、checked x64 の `o
 
 Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
 
+`WriteProcessMemory` は、現在のプロセスへの最大 4 KiB の書き込みについて、x64/ARM64 の実測に基づくコミット済みページの動作に従います。各領域の保護属性、コピー済みの先頭部分、バイト数、LastError を保持し、`ERROR_NOACCESS`、`ERROR_PARTIAL_COPY`、RX 領域の先頭部分を書き込んだ後の成功も再現します。`WindowsMemoryWriteTests.cpp` は全 25 通りの保護属性の組み合わせを検査し、`check_windows_memory_write.py` は同じ独自の実行ファイルをネイティブ Windows CI で検証します。未コミットの書き込み先は明示的に未対応です。
+
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 分離契約の回帰テストは、厳密・不足予算、部分ワード、両エンディアン、未アクセスメモリの同一性、アフィン保存領域の境界、遅れて到着する先行辺の上書き、既定の無効化を検証します。C API／CLI は v6 の互換性と無効ドメインを検査します。HighC と LLVMC を O0／O2 で実行し、戻り値、メモリ、スタック、保存状態を確認しますが、ネイティブ等価証明ではありません。

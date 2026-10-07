@@ -1,6 +1,6 @@
 **언어**: [English](../emulation.md) | [简体中文](../zh-CN/emulation.md) | [繁體中文](../zh-TW/emulation.md) | [日本語](../ja/emulation.md) | [한국어](emulation.md) | [Français](../fr/emulation.md) | [Deutsch](../de/emulation.md) | [Español](../es/emulation.md) | [Italiano](../it/emulation.md) | [Русский](../ru/emulation.md) | [العربية](../ar/emulation.md)
 
-<!-- i18n-source: 43404b1ba61f34e6aed8a220c1bff2ec811fe2e43200dc183d01f9d774bf936e -->
+<!-- i18n-source: a3e64122b77a690dd856d02f5b2af53973d3bf1affd973bea5f9735aa9dd6722 -->
 
 [← 문서 색인](README.md)
 
@@ -33,6 +33,8 @@ CPU 실행은 ISA 허용, 게스트 메모리, 백엔드 전송과 게스트 OS 
 `WindowsProcessHeap`은 프로세스 힙의 할당, `HeapReAlloc`, 해제와 크기 조회를 통합 관리합니다. 크기 변경은 유지되는 데이터를 보존하며 `HEAP_ZERO_MEMORY`는 추가 바이트를 0으로 만들고 `HEAP_REALLOC_IN_PLACE_ONLY`는 이동을 금지합니다. 재할당 실패 시 기존 블록을 보존하고 NULL을 반환하며 `ERROR_NOT_ENOUGH_MEMORY`(8)를 설정하여 네이티브 관측과 일치합니다. 독립적인 페이지는 축소와 해제 시 용량을 반환하며 단계별 확장과 제한된 복사는 실행 기한을 확인합니다. 사용자 정의 힙, 예외 생성 플래그, 알 수 없는 소유권, 접근 불가능한 복사 또는 초기화 범위는 명시적으로 중단합니다. `WindowsHeapTests.cpp`는 두 ISA, 강제 이동, 예산 재사용, 실패 원자성을 검증하며 CI는 동일한 자체 EXE를 네이티브 Windows에서도 실행합니다.
 
 Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`와 현재 프로세스의 `FlushInstructionCache`를 지원합니다. OS 계층은 예약 영역을 소유하고 `AddressSpace`는 커밋된 페이지, 권한, 실제 저장 공간을 관리합니다. 테스트는 동적 코드 수정, 접근 오류, 메모리 한도 재사용을 검증합니다.
+
+`WriteProcessMemory`는 현재 프로세스에 최대 4 KiB를 쓸 때 x64/ARM64에서 실측한 커밋된 페이지의 동작을 따릅니다. 각 영역의 보호 속성, 복사된 앞부분, 바이트 수와 LastError를 보존하며 `ERROR_NOACCESS`, `ERROR_PARTIAL_COPY`, RX 앞부분을 쓴 뒤 성공을 반환하는 동작도 재현합니다. `WindowsMemoryWriteTests.cpp`는 보호 속성의 25가지 조합을 모두 검사하고, `check_windows_memory_write.py`는 같은 자체 제작 실행 파일을 네이티브 Windows CI에서 검증합니다. 커밋되지 않은 대상 영역은 명시적으로 지원하지 않습니다.
 
 <!-- i18n-section: vectored-exceptions -->
 

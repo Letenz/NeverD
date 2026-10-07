@@ -9,10 +9,13 @@ typedef unsigned int DWORD;
 typedef unsigned long long ULONG_PTR;
 typedef void *HANDLE;
 #define NEVERD_MEMORY_WRITE_VALUE(Name, Value) enum { Name = Value };
+#define NEVERD_MEMORY_WRITE_WIDE(Name, Value)                                  \
+  static const ULONG_PTR Name = Value;
 #define NEVERD_MEMORY_WRITE_PROTECTION(Name, Value) enum { Name = Value };
 #include "WindowsMemoryWriteCases.def"
 #undef NEVERD_MEMORY_WRITE_PROTECTION
 #undef NEVERD_MEMORY_WRITE_VALUE
+#undef NEVERD_MEMORY_WRITE_WIDE
 
 typedef struct {
   void *Base, *AllocationBase;

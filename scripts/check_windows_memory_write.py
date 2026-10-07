@@ -22,7 +22,7 @@ DEFINITION = FIXTURES / "WindowsMemoryWriteCases.def"
 def definitions() -> tuple[dict, dict, list, list]:
     text = DEFINITION.read_text(encoding="utf-8")
     values = {name: int(value, 0) for name, value in re.findall(
-        r"^NEVERD_MEMORY_WRITE_VALUE\((\w+), (\w+)\)$", text, re.M)}
+        r"^NEVERD_MEMORY_WRITE_(?:VALUE|WIDE)\((\w+), (\w+?)(?:ULL)?\)$", text, re.M)}
     settings = dict(re.findall(r'NEVERD_MEMORY_WRITE_TEXT\(\s*(\w+),\s*"([^"]*)"\s*\)', text))
     protections = [(name, int(value, 0)) for name, value in re.findall(
         r"^NEVERD_MEMORY_WRITE_PROTECTION\((\w+), (\w+)\)$", text, re.M)]
@@ -48,12 +48,36 @@ def parse_observations(data: bytes) -> list[dict]:
         row = dict(zip(fields, words))
         if (row["First"], row["Second"]) != divmod(index, count):
             raise ValueError(settings["InvalidIdentity"])
-        if (row["Result"] not in (0, 1) or row["Error"] > 0xffffffff
+        if (row["Result"] not in (0, 1) or row["Error"] > values["WireWordMax"]
                 or row["AfterFirst"] not in rights or row["AfterSecond"] not in rights
-                or max(row["ByteFirst"], row["ByteSecond"]) > 0xff):
+                or max(row["ByteFirst"], row["ByteSecond"]) > values["WireByteMax"]):
             raise ValueError(settings["InvalidResult"])
         records.append(row)
     return records
+
+
+def expected_observations() -> list[dict]:
+    values, settings, protections, fields = definitions()
+    constants = {**values, **dict(protections)}
+    indexes = {name: index for index, (name, _) in enumerate(protections)}
+    rows = []
+    for match in re.findall(r"NEVERD_MEMORY_WRITE_EXPECTED\(\s*([^)]*)\)",
+                            DEFINITION.read_text(encoding="utf-8")):
+        words = [word.strip() for word in match.split(",")]
+        if len(words) != len(fields) or any(not re.fullmatch(r"\w+", word) for word in words):
+            raise ValueError(settings["InvalidInventory"])
+        row = [indexes[word] if index < 2 else constants[word] if word in constants else int(word, 0)
+               for index, word in enumerate(words)]
+        rows.append(dict(zip(fields, row)))
+    return parse_observations(b"".join(struct.pack("<" + "Q" * len(fields),
+                                                  *(row[field] for field in fields)) for row in rows))
+
+
+def validate_observations(data: bytes) -> list[dict]:
+    rows = parse_observations(data)
+    if rows != expected_observations():
+        raise ValueError(definitions()[1]["ContractMismatch"])
+    return rows
 
 
 def main() -> None:
@@ -61,6 +85,7 @@ def main() -> None:
     parser.add_argument("--arch", choices=("X64", "AArch64"), required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--build-only", action="store_true")
+    parser.add_argument("--probe", action="store_true")
     args = parser.parse_args()
     values, settings, _, _ = definitions()
     output = args.output.resolve()
@@ -134,11 +159,12 @@ def main() -> None:
             result = run([str(program)], "observe", values["NativeTimeoutSeconds"])
             if result.stderr:
                 raise ValueError(settings["UnexpectedStderr"])
-            observations = parse_observations(result.stdout)
+            observations = (parse_observations if args.probe else validate_observations)(result.stdout)
             (output / "observations.json").write_text(json.dumps(observations, indent=2) + "\n", encoding="utf-8")
             report["observations"] = len(observations)
             report["native_windows_observed"] = True
-            report["status"] = "observed"
+            report["contract_verified"] = not args.probe
+            report["status"] = "observed" if args.probe else "verified"
         report["final_commit"] = git("rev-parse", "HEAD")
         report["final_source_dirty"] = bool(git("status", "--porcelain"))
         if not args.build_only and (report["final_commit"] != report["commit"] or report["final_source_dirty"]):

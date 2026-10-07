@@ -733,6 +733,25 @@ NEVERD_EMULATION_DOC_TOKEN(WindowsMemory, "AddressSpace")
 #endif
 
 #ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(WindowsMemoryWrite, "docs/emulation.md")
+NEVERD_EMULATION_DOC_PATH(WindowsMemoryWrite, "docs/{locale}/emulation.md")
+NEVERD_EMULATION_DOC_PATH(WindowsMemoryWrite, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(WindowsMemoryWrite, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(WindowsMemoryWrite, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WindowsMemoryWrite, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_PATH(WindowsMemoryWrite, "docs/process-emulation.md")
+NEVERD_EMULATION_DOC_PATH(WindowsMemoryWrite,
+                          "docs/{locale}/process-emulation.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(WindowsMemoryWrite, "WriteProcessMemory")
+NEVERD_EMULATION_DOC_TOKEN(WindowsMemoryWrite, "ERROR_NOACCESS")
+NEVERD_EMULATION_DOC_TOKEN(WindowsMemoryWrite, "ERROR_PARTIAL_COPY")
+NEVERD_EMULATION_DOC_TOKEN(WindowsMemoryWrite, "WindowsMemoryWriteTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(WindowsMemoryWrite, "check_windows_memory_write.py")
+#endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
 NEVERD_EMULATION_DOC_PATH(WindowsModules, "docs/process-emulation.md")
 NEVERD_EMULATION_DOC_PATH(WindowsModules, "docs/{locale}/process-emulation.md")
 #endif

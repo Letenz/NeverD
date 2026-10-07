@@ -1275,6 +1275,8 @@ Windows ring3 按独立原生观测，将 checked x64 的 `operand_alignment` �
 
 Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及当前进程的 `FlushInstructionCache`。OS 层管理预留区域，`AddressSpace` 统一管理已提交页面、权限和物理存储。测试覆盖动态代码改写、访问故障和内存额度回收。
 
+`WriteProcessMemory` 对不超过 4 KiB 的当前进程写入，遵循 x64/ARM64 原生实测的已提交页面语义。它保留各区域的权限、已复制前缀、字节数和 LastError，包括 `ERROR_NOACCESS`、`ERROR_PARTIAL_COPY` 以及 RX 前缀写入后返回成功的情况。`WindowsMemoryWriteTests.cpp` 检查全部 25 种权限组合；`check_windows_memory_write.py` 在原生 Windows CI 上验证同一份原创可执行文件。未提交的目标区域仍明确不受支持。
+
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 外部写入分离回归覆盖精确及不足预算、部分字、大／小端、未触及内存的身份、完整仿射槽边界、晚到前驱覆盖和默认失效。公开 C API／CLI 检查 v6 布局兼容性和无效域。HighC、LLVMC 输出均在 O0／O2 下检查返回值、内存、栈及保留状态；这些测试不等于原生等价证书。
