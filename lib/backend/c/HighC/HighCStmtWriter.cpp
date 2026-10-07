@@ -1077,7 +1077,10 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           namedFrameSlot(*Stmt.Val->Operands[0]))
         break;
       emitIndent(Indent);
-      OS << exprStr(*Stmt.Val) << ";\n";
+      OS << (Stmt.Val->Kind == ExprKind::Store
+                 ? statementText(exprStr(*Stmt.Val))
+                 : exprStr(*Stmt.Val))
+         << ";\n";
     }
     break;
 

@@ -166,8 +166,8 @@ std::string memoryHelperName(llvm::StringRef Operation, llvm::StringRef Type,
     Name += std::string(memoryAddressSpaceName(AddressSpace)) + "_";
   if (Ordering != NdMemoryOrdering::None)
     Name += std::string(memoryOrderingName(Ordering)) + "_";
-  if (auto Alias = c_memory::alias(Type); !Alias.empty())
-    return Name + llvm::StringRef(Alias).drop_front(17).str();
+  if (auto Suffix = c_memory::suffix(Type); !Suffix.empty())
+    return Name + Suffix;
   if (Type.consume_front("unsigned _BitInt(") && Type.consume_back(")"))
     return Name + "u" + Type.str();
   if (Type.consume_front("_BitInt(") && Type.consume_back(")"))
@@ -739,7 +739,7 @@ std::string HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
   if (UnalignedTypesWritten && Ordering == NdMemoryOrdering::None &&
       AddressSpace == NdMemoryAddressSpace::Default)
     if (auto Alias = c_memory::alias(Type); !Alias.empty())
-      return c_memory::access(Alias, Addr, true);
+      return "(" + c_memory::access(Alias, Addr) + ")";
   if (Ordering == NdMemoryOrdering::None &&
       AddressSpace == NdMemoryAddressSpace::Default &&
       !PartialIntegerBytes.count(Type)) {
@@ -782,7 +782,7 @@ std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
   if (UnalignedTypesWritten && Ordering == NdMemoryOrdering::None &&
       AddressSpace == NdMemoryAddressSpace::Default)
     if (auto Alias = c_memory::alias(Type); !Alias.empty())
-      return "(" + c_memory::access(Alias, Addr, false) + " = " + Value + ")";
+      return "(" + c_memory::access(Alias, Addr) + " = " + Value + ")";
   if (Ordering == NdMemoryOrdering::None &&
       AddressSpace == NdMemoryAddressSpace::Default &&
       !PartialIntegerBytes.count(Type)) {
@@ -800,6 +800,14 @@ std::string HighCWriter::memoryStoreExpr(const TypeRef &Ty,
     validateAtomicStoreOrdering(Ordering);
   return memoryHelperName("store", Type, Ordering, AddressSpace) +
          "((uintptr_t)(" + Addr.str() + "), " + Value + ")";
+}
+
+std::string HighCWriter::statementText(std::string Text) {
+  // An assignment through an access needs no parentheses as a statement:
+  // `*(_QWORD *)p = 0;`.
+  return llvm::StringRef(Text).starts_with("(*(")
+             ? c_memory::unparenthesized(Text)
+             : Text;
 }
 
 std::string HighCWriter::memoryTemporary(llvm::StringRef Type,
@@ -820,8 +828,8 @@ void HighCWriter::writeMemoryStore(const TypeRef &Ty, llvm::StringRef Addr,
       PartialIntegerBytes.count(Type) ||
       (UnalignedTypesWritten && !c_memory::alias(Type).empty())) {
     emitIndent(Indent);
-    OS << memoryStoreExpr(Ty, Addr, Val, Ordering, AddressSpace,
-                          ExactImageBytes)
+    OS << statementText(memoryStoreExpr(Ty, Addr, Val, Ordering, AddressSpace,
+                                        ExactImageBytes))
        << ";\n";
     return;
   }

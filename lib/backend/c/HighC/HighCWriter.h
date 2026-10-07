@@ -119,6 +119,8 @@ public:
     std::string Name;
     bool Written = false;
   };
+  /// \p Text, an expression printed as a statement of its own.
+  static std::string statementText(std::string Text);
   std::string memoryLoadExpr(
       const TypeRef &Ty, llvm::StringRef Addr,
       NdMemoryOrdering MemoryOrdering = NdMemoryOrdering::None,

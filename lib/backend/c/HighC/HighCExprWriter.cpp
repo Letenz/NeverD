@@ -32,6 +32,18 @@
 
 namespace neverd {
 
+namespace {
+/// A load through an access pointer, `(*(_QWORD *)p)`, without its
+/// parentheses where no unary or postfix operator applies to it: the
+/// dereference is itself a unary expression.
+std::string bareLoad(std::string Text, int ParentPrec) {
+  constexpr int UnaryOperand = 99;
+  return ParentPrec < UnaryOperand && llvm::StringRef(Text).starts_with("(*(")
+             ? c_memory::unparenthesized(Text)
+             : Text;
+}
+} // namespace
+
 std::string frameStorageAddress(int64_t Displacement) {
   if (Displacement == 0)
     return "frame_base";
@@ -278,12 +290,8 @@ bool HighCWriter::integerText(const HighExpr &E, llvm::StringRef Text) const {
     });
   }
   // The integer aliases of a memory access.
-  if (E.Kind == ExprKind::Load) {
-    Text.consume_front("(*(");
-    Text.consume_front("const ");
-    return Text.starts_with("neverd_unaligned_i") ||
-           Text.starts_with("neverd_unaligned_u");
-  }
+  if (E.Kind == ExprKind::Load)
+    return c_memory::integerAccess(Text);
   return false;
 }
 
@@ -3009,8 +3017,9 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       for (const auto &[Disp, Slot] : FrameStorageSlots)
         if (Slot.Name == Name && E.Var.Kind != MedVar::Param &&
             !isEmittedParamName(Name) && !isCxxCatchObjectName(Name))
-          return memoryLoadExpr(Slot.Type ? Slot.Type : E.Type,
-                                frameStorageAddress(Disp));
+          return bareLoad(memoryLoadExpr(Slot.Type ? Slot.Type : E.Type,
+                                         frameStorageAddress(Disp)),
+                          ParentPrec);
     }
     const HighExpr *Forwarded = nullptr;
     if (auto Printed = printedForwardedVar(Name, ParentPrec, &Forwarded);
@@ -3102,9 +3111,10 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     if (E.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
       if (auto VA = constAddress(*E.Operands[0])) {
         if (imageBackingAddress(*VA))
-          return memoryLoadExpr(E.Type, addrStr(*E.Operands[0]),
-                                E.MemoryOrdering, E.MemoryAddressSpace, true,
-                                Destination);
+          return bareLoad(memoryLoadExpr(E.Type, addrStr(*E.Operands[0]),
+                                         E.MemoryOrdering, E.MemoryAddressSpace,
+                                         true, Destination),
+                          ParentPrec);
       }
     }
     if (E.MemoryOrdering == NdMemoryOrdering::None &&
@@ -3140,10 +3150,12 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
            E.Type->Size == 2 || E.Type->Size == 4 || E.Type->Size == 8 ||
            E.Type->Size == 16 || E.Type->Size == 32 || E.Type->Size == 64) &&
           equalSourceTypes(AddressType->Pointee, E.Type))
-        return "(*(" + memoryTypeName(E.Type) + " *)(" + Addr + "))";
+        return bareLoad("(*(" + memoryTypeName(E.Type) + " *)(" + Addr + "))",
+                        ParentPrec);
     }
-    return memoryLoadExpr(E.Type, Addr, E.MemoryOrdering, E.MemoryAddressSpace,
-                          false, Destination);
+    return bareLoad(memoryLoadExpr(E.Type, Addr, E.MemoryOrdering,
+                                   E.MemoryAddressSpace, false, Destination),
+                    ParentPrec);
   }
   case ExprKind::Store: {
     if (E.Operands.size() < 2)
