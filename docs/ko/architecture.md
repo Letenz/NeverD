@@ -790,6 +790,8 @@ pipeline을 계속 진행하려고 `UnliftedInstruction`을 잡지 마세요. �
 코드 생성은 `lib/backend/llvm/<ISA>` 및 `lib/backend/codegen/CodeGen<ISA>.cpp`에
 있습니다.
 
+공유 패스에 추가하는 대상별 규칙은 아키텍처나 포맷을 인라인으로 검사하지 말고 대상별 테이블에 둡니다. ISA에 관한 사실은 해당 ISA의 `lib/ir/TargetRegInfo<ISA>.cpp`에서 설정하는 `TargetRegInfo` 특성입니다. 호출 규약 규칙은 별도의 `lib/ir/med/abi/MedCallConvention<Name>.cpp`에 정의하고 `MedCallConvention.cpp`에 등록하는 `CallArgumentConvention` 항목입니다. 반환하지 않는 함수는 런타임별로 `include/neverd/libc` 아래(`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`)에 나열합니다. 따라서 새 대상을 지원할 때는 공유 패스에 분기를 넣는 대신 파일이나 테이블 항목을 추가합니다.
+
 <a id="support-and-test-depth"></a>
 
 ### 지원 및 테스트 깊이

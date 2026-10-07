@@ -919,6 +919,18 @@ liegen in `include/neverd/lift`. Zielspezifische LLVM-Ausgabe und Codeerzeugung
 befinden sich unter `lib/backend/llvm/<ISA>` und
 `lib/backend/codegen/CodeGen<ISA>.cpp`.
 
+Neue zielspezifische Regeln in gemeinsamen Passes gehören in Tabellen pro Ziel,
+nicht in Inline-Prüfungen von Architektur oder Format. Eine Eigenschaft einer
+ISA ist ein `TargetRegInfo`-Merkmal, das in ihrer
+`lib/ir/TargetRegInfo<ISA>.cpp` gesetzt wird. Eine Aufrufkonventionsregel ist
+ein `CallArgumentConvention`-Eintrag in einer eigenen
+`lib/ir/med/abi/MedCallConvention<Name>.cpp`, der in `MedCallConvention.cpp`
+registriert ist. Funktionen, die nie zurückkehren, stehen pro Laufzeitumgebung
+unter `include/neverd/libc` (`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`,
+`WindowsNoReturn.inc`). Die Unterstützung eines weiteren Ziels fügt dann eine
+Datei oder einen Tabelleneintrag hinzu statt einer Verzweigung im gemeinsamen
+Pass.
+
 <a id="support-and-test-depth"></a>
 
 ### Support- und Testtiefe

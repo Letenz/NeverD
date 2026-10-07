@@ -153,6 +153,17 @@ struct TargetRegInfo {
   /// getTargetRegInfo().
   bool ReturnsFPInX87 = false;
 
+  /// A RETURN operation's operand is the integer return register's value
+  /// (x86 `ret` leaves the result in EAX/RAX), so whatever SSA left there is
+  /// the value returned.  Elsewhere the operand can be the return address.
+  /// Set by getTargetRegInfo().
+  bool ReturnOperandIsValue = false;
+
+  /// A call pushes its return address on the stack (x86), so a call made only
+  /// for that address is a push and a jump.  Elsewhere a call writes the
+  /// link register.  Set by getTargetRegInfo().
+  bool CallPushesReturnAddress = false;
+
   /// An auto-declared unknown external callee must use a variadic prototype so
   /// the backend never mislays arguments (true on ARM/AArch64 where variadic
   /// and non-variadic calling conventions differ).  Set by getTargetRegInfo().
@@ -351,12 +362,24 @@ struct TargetRegInfo {
   /// IsWin64 is meaningful only on x86-64; do not select it by argument count.
   IntegerArgumentLayout integerArgumentLayout(bool IsWin64) const;
 
+  /// Physical integer argument layout of code in a \p Format image, in the
+  /// register order integerParamRegs() gives for that format.
+  IntegerArgumentLayout integerArgumentLayout(BinaryFormat Format) const {
+    return integerArgumentLayout(Format == BinaryFormat::COFF);
+  }
+
   /// Map a register offset to a parameter index, or -1 if not a param reg.
   int regToArgIdx(uint64_t RegOff) const;
 
   /// Map a register offset to a parameter index for a specific calling
   /// convention. \p IsWin64 selects the Win64 register order on x86-64.
   int regToArgIdx(uint64_t RegOff, bool IsWin64) const;
+
+  /// Map a register offset to a parameter index of code in a \p Format
+  /// image, as integerParamRegs() orders that format's registers.
+  int regToArgIdx(uint64_t RegOff, BinaryFormat Format) const {
+    return regToArgIdx(RegOff, Format == BinaryFormat::COFF);
+  }
 
   /// Check whether \p RegOff is a parameter register in any convention.
   bool isParamReg(uint64_t RegOff) const { return regToArgIdx(RegOff) >= 0; }

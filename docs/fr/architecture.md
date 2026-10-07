@@ -925,6 +925,18 @@ trouvent dans `include/neverd/lift`. L’émission LLVM et la génération de co
 propres à la cible vivent sous `lib/backend/llvm/<ISA>` et
 `lib/backend/codegen/CodeGen<ISA>.cpp`.
 
+Les nouvelles règles propres à une cible dans les passes partagées vont dans des
+tables par cible, et non dans des tests en ligne de l'architecture ou du format.
+Un fait sur une ISA est un trait de `TargetRegInfo` défini dans son
+`lib/ir/TargetRegInfo<ISA>.cpp`. Une règle de convention d'appel est une entrée
+`CallArgumentConvention` dans son propre
+`lib/ir/med/abi/MedCallConvention<Name>.cpp`, recensée dans
+`MedCallConvention.cpp`. Les fonctions qui ne reviennent jamais sont listées par
+runtime sous `include/neverd/libc` (`LibCNoReturn.inc`,
+`CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`). Prendre en charge une autre
+cible ajoute alors un fichier ou une entrée de table plutôt qu'une branche dans
+la passe partagée.
+
 <a id="support-and-test-depth"></a>
 
 ### Support et profondeur des tests
