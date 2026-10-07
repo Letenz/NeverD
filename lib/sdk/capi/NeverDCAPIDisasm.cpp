@@ -184,7 +184,8 @@ const char *neverd_disasm_json_ex(neverd_session_t Sess, neverd_va_t Addr,
         Obj["bytes"] = BytesHex;
         if (Options & (NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK)) {
           const InstructionFlow Flow = summarizeInstructionFlow(
-              S->Dec, DI, Options & NEVERD_DISASM_STACK ? &Registers : nullptr);
+              S->Img, S->Dec, DI,
+              Options & NEVERD_DISASM_STACK ? &Registers : nullptr);
           if (Options & NEVERD_DISASM_FLOW) {
             if (!Flow.Kind.empty())
               Obj["flow"] = Flow.Kind.str();
@@ -252,7 +253,7 @@ const char *neverd_code_refs_json(neverd_session_t Sess, neverd_va_t FirstEntry,
   const bool Decoded = decodeFunctions(
       *S, Page, [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
         auto &Out = Slots[Index];
-        const InstructionFlow Flow = summarizeInstructionFlow(Dec, DI);
+        const InstructionFlow Flow = summarizeInstructionFlow(S->Img, Dec, DI);
         if (Flow.Target != InvalidVA && !Flow.Kind.empty() &&
             Flow.Kind != UnliftedFlow)
           Out.push_back({DI.Addr, Flow.Target, Flow.Kind});

@@ -109,7 +109,8 @@ inline constexpr llvm::StringLiteral UnliftedFlow = "unlifted";
 /// The flow of \p DI, with its stack pointer move when \p StackRegisters is
 /// given.
 InstructionFlow
-summarizeInstructionFlow(Decoder &Dec, const DecodedInsn &DI,
+summarizeInstructionFlow(const BinaryImage &Img, Decoder &Dec,
+                         const DecodedInsn &DI,
                          const TargetRegInfo *StackRegisters = nullptr);
 
 /// The pointer the loader stored in a relocated slot, as a code address when

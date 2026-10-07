@@ -89,7 +89,7 @@ const char *neverd_string_refs_json(neverd_session_t Sess,
   const BinaryImage &Img = S->Img;
   const bool Decoded = decodeFunctions(
       *S, Page, [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
-        const InstructionFlow Flow = summarizeInstructionFlow(Dec, DI);
+        const InstructionFlow Flow = summarizeInstructionFlow(Img, Dec, DI);
         for (const auto &[To, Kind] : Flow.Refs) {
           if (const auto Text = referredText(Img, Strings, MinChars, To)) {
             Slots[Index].push_back({DI.Addr, To, *Text, Kind, std::nullopt});

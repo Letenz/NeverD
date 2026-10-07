@@ -9,6 +9,7 @@
 #include "SessionImpl.h"
 
 #include "neverd/Limits.h"
+#include "neverd/decode/InstructionRelocations.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Parallel.h"
 
@@ -109,14 +110,18 @@ StackMove stackMove(const TargetRegInfo &Registers, llvm::ArrayRef<LowOp> Ops) {
 
 /// The flow of \p DI, with its stack pointer move when \p StackRegisters is
 /// given.
-InstructionFlow summarizeInstructionFlow(Decoder &Dec, const DecodedInsn &DI,
+InstructionFlow summarizeInstructionFlow(const BinaryImage &Img, Decoder &Dec,
+                                         const DecodedInsn &DI,
                                          const TargetRegInfo *StackRegisters) {
   InstructionFlow Flow;
   std::vector<LowOp> Ops;
   // Each row is lifted independently of its neighbours.
   Dec.resetX86FpuState();
   try {
-    Dec.liftToLow(DI, Ops);
+    // The relocations inside the instruction make its relocated immediates
+    // addresses, as they are to the pipeline.
+    const InstructionRelocations Relocations = instructionRelocations(Img, DI);
+    Dec.liftToLow(DI, Ops, Relocations.Addresses, Relocations.Scalars);
   } catch (const UnliftedInstruction &) {
     // Nothing is known about what the instruction does, so it states no
     // transfer, no reference and no stack pointer.
@@ -147,6 +152,11 @@ InstructionFlow summarizeInstructionFlow(Decoder &Dec, const DecodedInsn &DI,
     Known Value;
   };
   llvm::SmallVector<Slot, 8> Computed;
+  // Addresses the instruction materializes as values: exact address
+  // constants (a relocated immediate, a PC-relative address) that it stores
+  // or puts in a register.  A number that only looks like an address is not
+  // one; without a relocation an immediate stays a number.
+  llvm::SmallVector<va_t, 2> Offsets;
   const auto ValueOf = [&](const NdVar &V) -> std::optional<Known> {
     if (V.isConst())
       return Known{static_cast<va_t>(V.Offset),
@@ -225,15 +235,34 @@ InstructionFlow summarizeInstructionFlow(Decoder &Dec, const DecodedInsn &DI,
           Address && Address->Kind != Role::Scalar)
         Flow.Refs.push_back(
             {Address->Value, Op.Opcode == NdOp::LOAD ? "read" : "write"});
+      // A stored address, such as an argument pushed as `offset aText`.
+      if (Op.Opcode == NdOp::STORE && Memory.StoredValue)
+        if (const auto Stored = ValueOf(*Memory.StoredValue);
+            Stored && Stored->Kind == Role::Address)
+          Offsets.push_back(Stored->Value);
       break;
     }
     default:
       break;
     }
     Record(Op);
+    // An address the instruction puts in a register, as `mov eax, offset X`.
+    if (Op.Output.isReg())
+      if (const auto Value = ValueOf(Op.Output);
+          Value && Value->Kind == Role::Address)
+        Offsets.push_back(Value->Value);
   }
   if (va_t Address = Dec.pcRelCodeRefTarget(DI); Address != InvalidVA)
-    Flow.Refs.push_back({Address, "offset"});
+    Offsets.push_back(Address);
+  // The next instruction's address, which a call pushes and a system call
+  // saves, is where execution returns, not an address the code refers to.
+  const va_t Next = DI.Addr + DI.Size;
+  for (const va_t Address : Offsets)
+    if (Address != Next && Address != Flow.Target &&
+        llvm::none_of(Flow.Refs, [&](const auto &Ref) {
+          return Ref.first == Address && Ref.second == "offset";
+        }))
+      Flow.Refs.push_back({Address, "offset"});
   return Flow;
 }
 

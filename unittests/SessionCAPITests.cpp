@@ -1967,6 +1967,132 @@ TEST_F(SessionCAPITest, StringReferencesReadTextFromTheReferencedCharacter) {
             nullptr);
 }
 
+// A 32-bit PE image based at 0x400000 running \p Code at 0x401000, with
+// \p Data at 0x402000 and, when \p Relocated lists any, base relocations
+// (HIGHLOW) for the code bytes at those offsets.
+std::string makePE32(std::string_view Code, std::string_view Data,
+                     llvm::ArrayRef<uint16_t> Relocated) {
+  constexpr uint32_t ImageBase = 0x400000, Headers = 0x200, Raw = 0x200;
+  std::string Reloc;
+  const auto put16 = [](std::string &Out, size_t At, uint16_t Value) {
+    if (Out.size() < At + 2)
+      Out.resize(At + 2);
+    Out[At] = static_cast<char>(Value);
+    Out[At + 1] = static_cast<char>(Value >> 8);
+  };
+  const auto put32 = [&](std::string &Out, size_t At, uint32_t Value) {
+    put16(Out, At, static_cast<uint16_t>(Value));
+    put16(Out, At + 2, static_cast<uint16_t>(Value >> 16));
+  };
+  if (!Relocated.empty()) {
+    // One block for the code page, padded to four bytes with an absolute
+    // entry.
+    const size_t Entries = (Relocated.size() + 1) / 2 * 2;
+    put32(Reloc, 0, 0x1000);
+    put32(Reloc, 4, static_cast<uint32_t>(8 + 2 * Entries));
+    for (size_t I = 0; I < Entries; ++I)
+      put16(Reloc, 8 + 2 * I,
+            I < Relocated.size() ? static_cast<uint16_t>(0x3000 | Relocated[I])
+                                 : 0);
+  }
+  struct SectionSpec {
+    const char *Name;
+    uint32_t Rva;
+    std::string_view Bytes;
+    uint32_t Flags;
+  };
+  const SectionSpec Sections[] = {{".text", 0x1000, Code, 0x60000020},
+                                  {".rdata", 0x2000, Data, 0x40000040},
+                                  {".reloc", 0x3000, Reloc, 0x42000040}};
+  const unsigned Count = Relocated.empty() ? 2 : 3;
+  std::string Bytes(Headers + Count * Raw, '\0');
+  Bytes[0] = 'M';
+  Bytes[1] = 'Z';
+  put32(Bytes, 0x3c, 0x40);
+  Bytes.replace(0x40, 4, std::string("PE\0\0", 4));
+  put16(Bytes, 0x44, 0x14c); // Machine: i386
+  put16(Bytes, 0x46, static_cast<uint16_t>(Count));
+  put16(Bytes, 0x54, 0xe0);   // SizeOfOptionalHeader
+  put16(Bytes, 0x56, 0x0102); // Executable, 32-bit
+  constexpr size_t Optional = 0x58;
+  put16(Bytes, Optional, 0x10b);       // PE32
+  put32(Bytes, Optional + 16, 0x1000); // AddressOfEntryPoint
+  put32(Bytes, Optional + 28, ImageBase);
+  put32(Bytes, Optional + 32, 0x1000);               // SectionAlignment
+  put32(Bytes, Optional + 36, 0x200);                // FileAlignment
+  put16(Bytes, Optional + 40, 4);                    // OS version
+  put16(Bytes, Optional + 48, 4);                    // Subsystem version
+  put32(Bytes, Optional + 56, 0x1000 * (Count + 1)); // SizeOfImage
+  put32(Bytes, Optional + 60, Headers);
+  put16(Bytes, Optional + 68, 3);  // Console
+  put32(Bytes, Optional + 92, 16); // NumberOfRvaAndSizes
+  if (!Relocated.empty()) {
+    put32(Bytes, Optional + 96 + 5 * 8, 0x3000);
+    put32(Bytes, Optional + 96 + 5 * 8 + 4,
+          static_cast<uint32_t>(Reloc.size()));
+  }
+  for (unsigned I = 0; I < Count; ++I) {
+    const size_t Header = Optional + 0xe0 + 40 * I;
+    Bytes.replace(Header, std::strlen(Sections[I].Name), Sections[I].Name);
+    put32(Bytes, Header + 8, static_cast<uint32_t>(Sections[I].Bytes.size()));
+    put32(Bytes, Header + 12, Sections[I].Rva);
+    put32(Bytes, Header + 16, Raw);
+    put32(Bytes, Header + 20, Headers + I * Raw);
+    put32(Bytes, Header + 36, Sections[I].Flags);
+    Bytes.replace(Headers + I * Raw, Sections[I].Bytes.size(),
+                  Sections[I].Bytes);
+  }
+  return Bytes;
+}
+
+TEST_F(SessionCAPITest, RelocatedImmediatesAreOffsetsAndNumbersAreNot) {
+  // push 0x402000; mov dword ptr [esp], 0x402000; mov eax, 0x402006; ret
+  using namespace std::string_view_literals;
+  constexpr auto Code = "\x68\x00\x20\x40\x00"
+                        "\xc7\x04\x24\x00\x20\x40\x00"
+                        "\xb8\x06\x20\x40\x00"
+                        "\xc3"sv;
+  constexpr auto Data = "hello\0world\0"sv;
+  const auto offsets = [&](bool Relocated) {
+    const uint16_t Fields[] = {0x001, 0x008, 0x00d};
+    const auto Input =
+        write(Relocated ? "relocated.exe" : "fixed.exe",
+              makePE32(Code, Data,
+                       Relocated ? llvm::ArrayRef<uint16_t>(Fields)
+                                 : llvm::ArrayRef<uint16_t>()));
+    EXPECT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+        << takeString(neverd_last_error(Session));
+    std::vector<uint64_t> Targets;
+    const auto Text = takeString(
+        neverd_disasm_json_ex(Session, 0x401000, 4, NEVERD_DISASM_FLOW));
+    auto Parsed = llvm::json::parse(Text);
+    EXPECT_TRUE(static_cast<bool>(Parsed)) << Text;
+    if (!Parsed)
+      return Targets;
+    for (const auto &Row : *Parsed->getAsArray())
+      if (const auto *Refs = Row.getAsObject()->getArray("refs"))
+        for (const auto &Ref : *Refs)
+          if (Ref.getAsObject()->getString("kind") == "offset")
+            Targets.push_back(std::stoull(
+                Ref.getAsObject()->getString("to")->str(), nullptr, 16));
+    return Targets;
+  };
+  // The loader relocates each immediate, so each is an address.
+  EXPECT_EQ(offsets(true),
+            (std::vector<uint64_t>{0x402000, 0x402000, 0x402006}));
+  ASSERT_GE(neverd_session_discover_functions(Session), 1);
+  const auto Refs =
+      takeString(neverd_string_refs_json(Session, nullptr, 0, 16));
+  EXPECT_NE(Refs.find(R"(["0x401000","0x402000","0x402000",0,"offset",null])"),
+            std::string::npos)
+      << Refs;
+  EXPECT_NE(Refs.find(R"(["0x40100C","0x402006","0x402006",0,"offset",null])"),
+            std::string::npos)
+      << Refs;
+  // Without relocations the same immediates are numbers.
+  EXPECT_TRUE(offsets(false).empty());
+}
+
 TEST_F(SessionCAPITest, HexDumpsCrossGapsAndReadTextInAnyEncoding) {
   // GBK "\u4e2d\u6587" then "ab", in the data segment after a gap.
   constexpr char Data[] = "\xd6\xd0\xce\xc4"
