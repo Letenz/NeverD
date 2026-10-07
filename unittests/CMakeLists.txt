@@ -112,7 +112,8 @@ if(TARGET neverd_shared)
   add_dependencies(NeverDSessionCAPITests neverd-library-feature-fixtures)
   target_compile_definitions(NeverDSessionCAPITests PRIVATE
     NEVERD_LIBRARY_FEATURE_DIR="${CMAKE_SOURCE_DIR}/signatures/features/rules"
-    NEVERD_LIBRARY_FIXTURE_DIR="${CMAKE_BINARY_DIR}/unittests/lift/library-features/libcxx")
+    NEVERD_LIBRARY_FIXTURE_DIR="${CMAKE_BINARY_DIR}/unittests/lift/library-features/libcxx"
+    NEVERD_RUNTIME_FIXTURE_COMPILER="${NEVERD_HOST_RUNTIME_FIXTURE_COMPILER_EXECUTABLE}")
   if(WIN32)
     # The shared engine supplies SDK queries and the private mobile seam. The
     # test also uses LLVM's JSON parser; no GUI/worker links LLVM here.

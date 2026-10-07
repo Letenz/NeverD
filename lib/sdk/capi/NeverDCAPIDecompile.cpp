@@ -348,7 +348,7 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
     S->OnlyFunctionEntries = {FuncEntry};
   }
 
-  if (!S->ensureLlvmModule(NoOpt != 0))
+  if (!S->ensurePipeline())
     return dupStr(std::string());
 
   if (S->PipeResult.EVM) {
@@ -362,7 +362,10 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
     return dupStr(std::string());
   }
 
-  llvm::Function *LF = S->findNativeLlvmFunction(FuncEntry);
+  const auto *Native = S->ensureFunctionLlvmModule(FuncEntry, NoOpt != 0);
+  if (!Native)
+    return dupStr(std::string());
+  llvm::Function *LF = S->findNativeLlvmFunction(*Native->Module, FuncEntry);
   if (!LF)
     return dupStr(std::string());
 
@@ -373,11 +376,11 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
   Opts.Format = S->Img.Format;
   if (SourceMap) {
     SourceMap->Recognitions = &S->PipeResult.LibraryRecognitions;
-    SourceMap->LLVMSources = S->PipeResult.LLVMSources.get();
+    SourceMap->LLVMSources = Native->Sources.get();
     Opts.SourceMap = SourceMap;
   }
   LLVMCEmitter Emitter;
-  Emitter.emit(*S->PipeResult.LlvmModule, OS, Opts, S->Dbg.get(), &S->Img, LF);
+  Emitter.emit(*Native->Module, OS, Opts, S->Dbg.get(), &S->Img, LF);
   return dupStr(Out);
 }
 
@@ -707,18 +710,26 @@ const char *neverd_ir_llvm(neverd_session_t Sess, neverd_va_t FuncEntry) {
   auto *S = toSession(Sess);
   S->clearError();
 
-  if (!S->ensureLlvmModule()) {
+  if (!S->ensurePipeline())
+    return dupStr(std::string());
+  if (S->PipeResult.EVM || S->PipeResult.SBF) {
+    if (!S->ensureLlvmModule()) {
+      if (S->LastError.empty())
+        S->setError("failed to generate LLVM module");
+      return dupStr(std::string());
+    }
+    return dupStr(S->PipeResult.EVM
+                      ? evm::emitLLVMText(*S->PipeResult.LlvmModule)
+                      : sbf::emitLLVMText(*S->PipeResult.LlvmModule));
+  }
+
+  const auto *Native = S->ensureFunctionLlvmModule(FuncEntry, false);
+  if (!Native) {
     if (S->LastError.empty())
       S->setError("failed to generate LLVM module");
     return dupStr(std::string());
   }
-
-  if (S->PipeResult.EVM)
-    return dupStr(evm::emitLLVMText(*S->PipeResult.LlvmModule));
-  if (S->PipeResult.SBF)
-    return dupStr(sbf::emitLLVMText(*S->PipeResult.LlvmModule));
-
-  llvm::Function *LF = S->findNativeLlvmFunction(FuncEntry);
+  llvm::Function *LF = S->findNativeLlvmFunction(*Native->Module, FuncEntry);
   if (!LF)
     return dupStr(std::string());
 

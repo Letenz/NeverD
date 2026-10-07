@@ -14,6 +14,7 @@
 #define NEVERD_BACKEND_LLVM_LLVMNAME_H
 
 #include "neverd/Common.h"
+#include "neverd/loader/SymbolDecoration.h"
 
 #include "llvm/ADT/StringRef.h"
 
@@ -29,6 +30,14 @@ inline llvm::StringRef fromObjectSymbol(llvm::StringRef Name,
       Name.starts_with("_"))
     return Name.drop_front(1);
   return Name;
+}
+
+/// The C name LLVM IR function name \p Name spells: fromObjectSymbol removed
+/// Mach-O's decoration already, and other formats keep their object symbol.
+inline llvm::StringRef cNameOfLLVMName(llvm::StringRef Name,
+                                       BinaryFormat Format, Arch Target) {
+  return Format == BinaryFormat::MachO ? Name
+                                       : cNameOfSymbol(Name, Format, Target);
 }
 
 } // namespace neverd::llvm_name

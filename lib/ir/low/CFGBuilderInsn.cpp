@@ -345,12 +345,20 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
   if (!CurrentImg)
     return false;
   va_t Target = InvalidVA;
-  for (const auto &Op : Rec.Ops)
+  for (const auto &Op : Rec.Ops) {
     if (Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
         Op.Inputs[0].isConst()) {
       Target = Op.Inputs[0].Offset;
       break;
     }
+    // x86 lifts `call [slot]` as an INDIR_CALL of the slot address. Only the
+    // import the loader binds to the slot can prove the call never returns.
+    if (Op.Opcode == NdOp::INDIR_CALL && Op.NumInputs >= 1 &&
+        Op.Inputs[0].isConst()) {
+      return libc::isNoReturnTarget(*CurrentImg, Op.Inputs[0].Offset,
+                                    NoReturnTargets);
+    }
+  }
   if (Target == InvalidVA)
     return false;
   if (libc::isNoReturnTarget(*CurrentImg, Target, NoReturnTargets))

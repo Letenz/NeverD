@@ -14,6 +14,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QPainter>
+#include <QRegularExpression>
 #include <QScrollBar>
 #include <QSet>
 #include <QTextLine>
@@ -171,6 +172,7 @@ void CodeText::clear() {
   regions_ = {};
   regionsValid_ = false;
   prelude_ = {};
+  declarations_.reset();
   library_.reset({}, {}, {});
   lines_.clear();
   function_.reset();
@@ -275,6 +277,7 @@ void CodeText::appendPage(const QJsonObject &payload, int offset) {
     regionsValid_ =
         payload.value("library_regions").isArray() && pageOffset >= 0;
     prelude_ = payload.value("prelude").toObject();
+    declarations_.reset();
     byteOffset_ = std::max<qint64>(0, pageOffset);
   } else if (regionsValid_ &&
              pageOffset != byteOffset_ + source_.toUtf8().size()) {
@@ -412,6 +415,33 @@ bool CodeText::event(QEvent *event) {
         return true;
       }
     }
+    // A type or macro the code declares shows its declaration.
+    if (const int line = lineAt(local.y()); line >= 0 && line < lines_.size())
+      if (const QString token =
+              lines_[line].styled.tokenAt(columnAt(line, local.x()));
+          !token.isEmpty())
+        if (const auto declared = declarationLine(token)) {
+          const auto text = QStringView(source_)
+                                .split(QLatin1Char('\n'))
+                                .at(*declared)
+                                .trimmed();
+          QToolTip::showText(help->globalPos(),
+                             tr("%1\nDouble-click to go to the declaration.")
+                                 .arg(text.toString()),
+                             this);
+          return true;
+        } else if (const auto linked = declarations().linked.constFind(token);
+                   linked != declarations().linked.cend()) {
+          // Its declaration names the symbol and the demangled signature.
+          QToolTip::showText(help->globalPos(),
+                             QStringView(source_)
+                                 .split(QLatin1Char('\n'))
+                                 .at(linked->first)
+                                 .trimmed()
+                                 .toString(),
+                             this);
+          return true;
+        }
     QToolTip::hideText();
     event->ignore();
     return true;
@@ -753,13 +783,9 @@ void CodeText::keyPressEvent(QKeyEvent *event) {
       return;
     }
     if (event->key() == Qt::Key_Minus) {
-      if (!library_.isFolded(PreludeRegion) &&
-          cursorLine_ < prelude_.value("lines").toInteger(0)) {
-        library_.setRegionFolded(PreludeRegion, true);
-        rebuildLines();
-        moveCursor(0, 0, false);
-        emit foldingChanged();
-      }
+      if (hasPrelude() && !preludeFolded() &&
+          cursorLine_ < prelude_.value("lines").toInteger(0))
+        setPreludeFolded(true);
       return;
     }
   }
@@ -803,8 +829,99 @@ void CodeText::mouseDoubleClickEvent(QMouseEvent *event) {
   if (event->button() != Qt::LeftButton)
     return;
   const QString token = currentToken();
-  if (!token.isEmpty())
-    emit nameActivated(token);
+  // A type or macro this code declares opens at its declaration; C's own
+  // words name nothing in the binary.
+  if (token.isEmpty() || goToDeclaration(token) ||
+      controlWords().contains(token) || keywordWords().contains(token) ||
+      typeWords().contains(token))
+    return;
+  // A C++ function links by its mangled symbol, which the binary names.
+  emit nameActivated(linkedSymbol(token).value_or(token));
+}
+
+bool CodeText::hasPrelude() const {
+  return library_.hasRegion(QLatin1String(PreludeRegion));
+}
+
+bool CodeText::preludeFolded() const {
+  return library_.isFolded(QLatin1String(PreludeRegion));
+}
+
+void CodeText::setPreludeFolded(bool folded) {
+  if (!hasPrelude() || preludeFolded() == folded)
+    return;
+  library_.setRegionFolded(QLatin1String(PreludeRegion), folded);
+  rebuildLines();
+  if (folded)
+    moveCursor(0, 0, false);
+  emit foldingChanged();
+}
+
+const CodeText::Declarations &CodeText::declarations() const {
+  if (declarations_)
+    return *declarations_;
+  // The declared name ends a typedef, before its attributes; a record or
+  // macro names itself first; a labeled function names itself before its
+  // parameters.
+  static const QRegularExpression Typedef(QStringLiteral(
+      R"(^\s*typedef\b.*?\b([A-Za-z_]\w*)\s*(?:__attribute__\s*\(\(.*\)\)\s*)?;\s*$)"));
+  static const QRegularExpression Record(QStringLiteral(
+      R"(^\s*(?:typedef\s+)?(?:struct|union|enum)\s+([A-Za-z_]\w*)\s*\{)"));
+  static const QRegularExpression Define(
+      QStringLiteral(R"(^\s*#\s*define\s+([A-Za-z_]\w*))"));
+  static const QRegularExpression Labeled(QStringLiteral(
+      R"re(\b([A-Za-z_]\w*)\s*\([^;]*\)\s*__asm__\s*\(\s*"([^"\\]+)"\s*\))re"));
+  auto &found = declarations_.emplace();
+  int line = 0;
+  for (const QStringView text : QStringView(source_).split(QLatin1Char('\n'))) {
+    const QStringView head = text.trimmed();
+    if (head.startsWith(u"typedef") || head.startsWith(u"struct") ||
+        head.startsWith(u"union") || head.startsWith(u"enum") ||
+        head.startsWith(u'#')) {
+      for (const auto *pattern : {&Typedef, &Record, &Define})
+        if (const auto match = pattern->matchView(text); match.hasMatch()) {
+          if (!found.types.contains(match.captured(1)))
+            found.types.insert(match.captured(1), line);
+          break;
+        }
+    } else if (text.contains(u"__asm__")) {
+      if (const auto match = Labeled.matchView(text);
+          match.hasMatch() && !found.linked.contains(match.captured(1)))
+        found.linked.insert(match.captured(1), {line, match.captured(2)});
+    }
+    ++line;
+  }
+  return found;
+}
+
+std::optional<int> CodeText::declarationLine(const QString &name) const {
+  const auto &types = declarations().types;
+  if (const auto found = types.constFind(name); found != types.cend())
+    return *found;
+  return std::nullopt;
+}
+
+std::optional<QString> CodeText::linkedSymbol(const QString &name) const {
+  const auto &linked = declarations().linked;
+  if (const auto found = linked.constFind(name); found != linked.cend())
+    return found->second;
+  return std::nullopt;
+}
+
+bool CodeText::goToDeclaration(const QString &name) {
+  const auto source = declarationLine(name);
+  if (!source || loading_)
+    return false;
+  if (hasPrelude() && preludeFolded() &&
+      *source < prelude_.value("lines").toInteger(0))
+    setPreludeFolded(false);
+  const int line = library_.canFold() ? library_.displayLine(*source) : *source;
+  if (line < 0 || line >= lines_.size())
+    return false;
+  highlight_ = name;
+  moveCursor(line, std::max(0, int(lines_[line].styled.text.indexOf(name))),
+             false);
+  return true;
 }
 
 void CodeText::wheelEvent(QWheelEvent *event) {

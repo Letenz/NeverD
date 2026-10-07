@@ -1,0 +1,65 @@
+//===- CxxOperatorNames.def - C identifiers of C++ operators --*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The C identifier stem of each C++ operator function: `QString::operator=`
+/// becomes `QString_assign`, as MsvcCallees.def names MSVC's `??4`.  A
+/// conversion operator becomes `to_` and its type.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_CXX_OPERATOR(Spelling, Stem): the operator after the `operator`
+// keyword, as a demangler prints it.
+#ifndef NEVERD_CXX_OPERATOR
+#define NEVERD_CXX_OPERATOR(Spelling, Stem)
+#endif
+
+NEVERD_CXX_OPERATOR("=", "assign")
+NEVERD_CXX_OPERATOR("==", "equal")
+NEVERD_CXX_OPERATOR("!=", "not_equal")
+NEVERD_CXX_OPERATOR("<", "less")
+NEVERD_CXX_OPERATOR("<=", "less_equal")
+NEVERD_CXX_OPERATOR(">", "greater")
+NEVERD_CXX_OPERATOR(">=", "greater_equal")
+NEVERD_CXX_OPERATOR("<=>", "compare")
+NEVERD_CXX_OPERATOR("+", "add")
+NEVERD_CXX_OPERATOR("-", "subtract")
+NEVERD_CXX_OPERATOR("*", "multiply")
+NEVERD_CXX_OPERATOR("/", "divide")
+NEVERD_CXX_OPERATOR("%", "modulo")
+NEVERD_CXX_OPERATOR("+=", "add_assign")
+NEVERD_CXX_OPERATOR("-=", "subtract_assign")
+NEVERD_CXX_OPERATOR("*=", "multiply_assign")
+NEVERD_CXX_OPERATOR("/=", "divide_assign")
+NEVERD_CXX_OPERATOR("%=", "modulo_assign")
+NEVERD_CXX_OPERATOR("<<", "shift_left")
+NEVERD_CXX_OPERATOR(">>", "shift_right")
+NEVERD_CXX_OPERATOR("<<=", "shift_left_assign")
+NEVERD_CXX_OPERATOR(">>=", "shift_right_assign")
+NEVERD_CXX_OPERATOR("&", "bit_and")
+NEVERD_CXX_OPERATOR("|", "bit_or")
+NEVERD_CXX_OPERATOR("^", "bit_xor")
+NEVERD_CXX_OPERATOR("&=", "bit_and_assign")
+NEVERD_CXX_OPERATOR("|=", "bit_or_assign")
+NEVERD_CXX_OPERATOR("^=", "bit_xor_assign")
+NEVERD_CXX_OPERATOR("~", "bit_not")
+NEVERD_CXX_OPERATOR("!", "not")
+NEVERD_CXX_OPERATOR("&&", "and")
+NEVERD_CXX_OPERATOR("||", "or")
+NEVERD_CXX_OPERATOR("++", "increment")
+NEVERD_CXX_OPERATOR("--", "decrement")
+NEVERD_CXX_OPERATOR(",", "comma")
+NEVERD_CXX_OPERATOR("->", "arrow")
+NEVERD_CXX_OPERATOR("->*", "arrow_member")
+NEVERD_CXX_OPERATOR("()", "call")
+NEVERD_CXX_OPERATOR("[]", "subscript")
+NEVERD_CXX_OPERATOR("new", "new")
+NEVERD_CXX_OPERATOR("new[]", "new_array")
+NEVERD_CXX_OPERATOR("delete", "delete")
+NEVERD_CXX_OPERATOR("delete[]", "delete_array")
+NEVERD_CXX_OPERATOR("co_await", "co_await")
+
+#undef NEVERD_CXX_OPERATOR

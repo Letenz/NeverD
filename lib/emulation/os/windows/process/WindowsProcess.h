@@ -218,6 +218,8 @@ private:
   llvm::Error writeWide(uint64_t Address, const std::u16string &Text);
   llvm::Expected<std::optional<uint64_t>> memory(const Service &,
                                                  const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>>
+  writeProcessMemory(const Service &, const NativeCallEvent &);
   ExecutionBackend &CPU;
   AddressSpace &Memory;
   const Image &Loaded;

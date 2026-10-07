@@ -1492,7 +1492,8 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
 
 void MainWindow::copySelection() {
   // The view holding the focus copies its selection: any code view, a
-  // chooser's rows, or a text field; the disassembly otherwise.
+  // chooser's rows, the hex view's bytes or a text field; the disassembly
+  // otherwise.
   for (QWidget *widget = QApplication::focusWidget(); widget;
        widget = widget->parentWidget()) {
     if (auto *field = qobject_cast<QLineEdit *>(widget)) {
@@ -1509,6 +1510,10 @@ void MainWindow::copySelection() {
     }
     if (auto *chooser = qobject_cast<ChooserView *>(widget)) {
       QApplication::clipboard()->setText(chooser->selectedText());
+      return;
+    }
+    if (auto *hex = qobject_cast<HexView *>(widget)) {
+      hex->copySelection();
       return;
     }
   }
@@ -1710,6 +1715,30 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   menu.addSeparator();
   menu.addAction(actions_.action(ActionId::EditCopy));
   menu.addAction(actions_.action(ActionId::EditCopyAddress));
+  // A code window's folds: the declarations before the function and the
+  // recognized library operations.
+  if (auto *code = focusedCodeView()) {
+    CodeText *text = code->text();
+    menu.addSeparator();
+    if (text->hasPrelude()) {
+      const bool folded = text->preludeFolded();
+      auto *declarations = menu.addAction(folded ? tr("Expand declarations")
+                                                 : tr("Collapse declarations"));
+      declarations->setStatusTip(
+          tr("Show or hide the includes and declarations before the function "
+             "(Keypad + / Keypad -)"));
+      connect(declarations, &QAction::triggered, text,
+              [text, folded] { text->setPreludeFolded(!folded); });
+    }
+    if (text->foldableCount() > 0) {
+      const bool folded = text->libraryFolded();
+      auto *library =
+          menu.addAction(folded ? tr("Expand library operations")
+                                : tr("Collapse library operations"));
+      connect(library, &QAction::triggered, text,
+              [text, folded] { text->setFolded(!folded); });
+    }
+  }
   menu.addSeparator();
   menu.addAction(actions_.action(ActionId::OptionsFont));
   menu.exec(globalPosition);

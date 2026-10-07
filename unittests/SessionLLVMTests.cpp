@@ -227,5 +227,52 @@ TEST_F(SessionLLVMTest, RejectedEmissionDoesNotPublishAModule) {
   EXPECT_TRUE(State.PipeResult.Success);
 }
 
+TEST_F(SessionLLVMTest, OneFunctionsModuleDoesNotEmitItsSiblings) {
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = 0x1000;
+  Text.Size = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(Text.Size);
+  State.Img.Segments.push_back(std::move(Text));
+  State.PipeResult.MedFuncs.push_back(sourceFunction());
+  // The emitter refuses this sibling: it returns a code address that no
+  // lifted function owns.
+  MedFunc Refused = sourceFunction();
+  Refused.Entry = 0x1040;
+  Refused.Name = "refused_sibling";
+  Refused.ReturnType = NdType::makeInt(8);
+  Refused.Blocks.front().StartAddr = Refused.Entry;
+  Refused.Blocks.front().Ops.front().addInput(
+      MedVar::makeConst(0x1080, 8, ConstantAddressProvenance::CodeAddress));
+  State.PipeResult.MedFuncs.push_back(std::move(Refused));
+
+  // The whole program refuses as a unit; one function's module does not.
+  EXPECT_FALSE(State.ensureLlvmModule());
+  State.clearError();
+  const auto *Shown = State.ensureFunctionLlvmModule(0x1000, false);
+  ASSERT_NE(Shown, nullptr) << State.LastError;
+  EXPECT_FALSE(llvm::verifyModule(*Shown->Module));
+  const auto *Body = State.findNativeLlvmFunction(*Shown->Module, 0x1000);
+  ASSERT_NE(Body, nullptr) << State.LastError;
+  EXPECT_FALSE(Body->isDeclaration());
+  // The sibling is only declared, and showing the function again reuses
+  // its module.
+  EXPECT_EQ(State.findNativeLlvmFunction(*Shown->Module, 0x1040), nullptr);
+  EXPECT_EQ(State.ensureFunctionLlvmModule(0x1000, false), Shown);
+
+  // The refused function and an unknown one still fail clearly.
+  State.clearError();
+  EXPECT_EQ(State.ensureFunctionLlvmModule(0x1040, false), nullptr);
+  EXPECT_EQ(State.LastError, "native LLVM emission failed");
+  State.clearError();
+  EXPECT_EQ(State.ensureFunctionLlvmModule(0x2000, false), nullptr);
+  EXPECT_EQ(State.LastError, "LLVM function not found at 0x2000");
+
+  // A new pipeline drops the modules before their context.
+  State.clearPipeline();
+  EXPECT_TRUE(State.FunctionLlvmModules.empty());
+}
+
 } // namespace
 } // namespace neverd::sdk

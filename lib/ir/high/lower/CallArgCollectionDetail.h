@@ -66,6 +66,12 @@ struct CallArgScan {
   int MaxArgs = 0;
   int FirstStackSlot = 0;
   int StoreScanWindow = 0;
+  /// The call is a tail jump (CFG building rewrote `jmp callee` as a CALL and
+  /// a RETURN of the same instruction): the callee enters on this function's
+  /// stack, so its stack arguments sit at the callee-entry offsets from the
+  /// entry stack pointer, above the return address on x86, and no argument
+  /// was pushed.
+  bool TailJump = false;
   /// Register arguments a summarized callee reads (MedOp::CalleeRegisterArgs),
   /// or -1 when the callee has no summary.
   int CalleeRegisterArgs = -1;

@@ -5,7 +5,9 @@
 #include "Theme.h"
 
 #include <QActionGroup>
+#include <QClipboard>
 #include <QContextMenuEvent>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QKeyEvent>
@@ -20,6 +22,9 @@ namespace {
 constexpr int BytesPerRow = 16;
 constexpr int ChunkBytes = 4096;
 constexpr int MaxChunks = 256;
+/// The most bytes one copy takes: half the chunk cache, so that its bytes
+/// stay loaded until the copy completes.
+constexpr Address MaxCopyBytes = Address(MaxChunks / 2) * ChunkBytes;
 constexpr int Margin = 6;
 // Columns: address, two spaces, 16 hex bytes ("xx " each, extra space after
 // eight), two spaces, 16 characters.
@@ -50,6 +55,8 @@ HexView::HexView(Session &session, const AddressSpace &space, QWidget *parent)
   });
   connect(&session_, &Session::unloaded, this, [this] {
     current_.reset();
+    anchor_.reset();
+    pendingCopy_.reset();
     clearChunks();
   });
 }
@@ -236,6 +243,7 @@ void HexView::request(Address key) const {
           self->order_.pop_back();
         }
         self->viewport()->update();
+        self->completeCopy();
       },
       [self, base, serial](const QString &code, const QString &) {
         if (serial != self->serial_)
@@ -282,6 +290,10 @@ std::optional<QString> HexView::textAt(Address address) const {
 }
 
 void HexView::setCurrent(Address address, int size) {
+  // The disassembly echoes a move it follows; only a move elsewhere ends the
+  // selection.
+  if (current_ != address)
+    anchor_.reset();
   current_ = address;
   currentSize_ = std::max(1, size);
   const qint64 row = rowOf(address);
@@ -302,6 +314,7 @@ void HexView::paintEvent(QPaintEvent *) {
   const qreal hexLeft = Margin + (digits + 2) * charWidth_;
   const qreal asciiLeft = hexLeft + (BytesPerRow * 3 + 2) * charWidth_;
   const qint64 first = verticalScrollBar()->value();
+  const auto Selected = selection();
   for (int i = 0; i <= visibleRows(); ++i) {
     const auto rowAddress = addressOfRow(first + i);
     if (!rowAddress)
@@ -314,18 +327,23 @@ void HexView::paintEvent(QPaintEvent *) {
       return current_ && address >= *current_ &&
              address < *current_ + Address(currentSize_);
     };
+    const auto isSelected = [&](Address address) {
+      return Selected && address >= Selected->first &&
+             address <= Selected->second;
+    };
     // Highlights go first: a wide character's glyph spans the next cells.
     for (int b = 0; b < BytesPerRow; ++b) {
       const Address address = *rowAddress + b;
-      if (!isCurrent(address) || !space_.regionOf(address))
+      const bool current = isCurrent(address);
+      if ((!current && !isSelected(address)) || !space_.regionOf(address))
         continue;
+      const QColor fill = theme.color(current ? ColorRole::HexCurrent
+                                              : ColorRole::ListingSelection);
       const qreal x = hexLeft + (b * 3 + (b >= HexGroup ? 1 : 0)) * charWidth_;
       painter.fillRect(
-          QRectF(x - charWidth_ / 4, y, charWidth_ * 2.5, lineHeight_),
-          theme.color(ColorRole::HexCurrent));
+          QRectF(x - charWidth_ / 4, y, charWidth_ * 2.5, lineHeight_), fill);
       painter.fillRect(
-          QRectF(asciiLeft + b * charWidth_, y, charWidth_, lineHeight_),
-          theme.color(ColorRole::HexCurrent));
+          QRectF(asciiLeft + b * charWidth_, y, charWidth_, lineHeight_), fill);
     }
     for (int b = 0; b < BytesPerRow; ++b) {
       const Address address = *rowAddress + b;
@@ -373,6 +391,10 @@ void HexView::paintEvent(QPaintEvent *) {
 }
 
 void HexView::keyPressEvent(QKeyEvent *event) {
+  if (event->matches(QKeySequence::Copy)) {
+    copySelection();
+    return;
+  }
   if (!current_) {
     QAbstractScrollArea::keyPressEvent(event);
     return;
@@ -405,20 +427,19 @@ void HexView::keyPressEvent(QKeyEvent *event) {
   }
   if (!space_.regionOf(next))
     return;
-  setCurrent(next, 1);
+  moveCurrent(next, event->modifiers() & Qt::ShiftModifier);
   emit locationChanged(next);
 }
 
-void HexView::mousePressEvent(QMouseEvent *event) {
-  setFocus(Qt::MouseFocusReason);
+std::optional<Address> HexView::addressAt(const QPointF &position) const {
   const int digits = session_.bitness() == 64 ? 16 : 8;
   const qreal hexLeft = Margin + (digits + 2) * charWidth_;
   const qreal asciiLeft = hexLeft + (BytesPerRow * 3 + 2) * charWidth_;
-  const int rowIndex = int(event->position().y()) / std::max(1, lineHeight_);
+  const int rowIndex = int(position.y()) / std::max(1, lineHeight_);
   const auto rowAddress = addressOfRow(verticalScrollBar()->value() + rowIndex);
   if (!rowAddress)
-    return;
-  const qreal x = event->position().x();
+    return std::nullopt;
+  const qreal x = position.x();
   int byte = -1;
   if (x >= asciiLeft)
     byte = int((x - asciiLeft) / charWidth_);
@@ -429,12 +450,101 @@ void HexView::mousePressEvent(QMouseEvent *event) {
     byte = int(column / 3);
   }
   if (byte < 0 || byte >= BytesPerRow)
-    return;
+    return std::nullopt;
   const Address address = *rowAddress + Address(byte);
   if (!space_.regionOf(address))
-    return;
+    return std::nullopt;
+  return address;
+}
+
+void HexView::moveCurrent(Address address, bool extend) {
+  const std::optional<Address> anchor =
+      extend ? (anchor_ ? anchor_ : current_) : std::nullopt;
   setCurrent(address, 1);
-  emit locationChanged(address);
+  anchor_ = anchor;
+}
+
+std::optional<std::pair<Address, Address>> HexView::selection() const {
+  if (!anchor_ || !current_ || *anchor_ == *current_)
+    return std::nullopt;
+  return std::pair{std::min(*anchor_, *current_),
+                   std::max(*anchor_, *current_)};
+}
+
+void HexView::mousePressEvent(QMouseEvent *event) {
+  setFocus(Qt::MouseFocusReason);
+  const auto address = addressAt(event->position());
+  if (!address)
+    return;
+  // A press starts a selection a drag extends; Shift extends the current one.
+  const bool extend = event->modifiers() & Qt::ShiftModifier;
+  moveCurrent(*address, extend);
+  if (!extend)
+    anchor_ = *address;
+  emit locationChanged(*address);
+}
+
+void HexView::mouseMoveEvent(QMouseEvent *event) {
+  if (!(event->buttons() & Qt::LeftButton) || !anchor_)
+    return;
+  if (const auto address = addressAt(event->position());
+      address && address != current_) {
+    current_ = *address;
+    currentSize_ = 1;
+    viewport()->update();
+  }
+}
+
+void HexView::copySelection() {
+  std::pair<Address, Address> range;
+  if (const auto selected = selection())
+    range = *selected;
+  else if (current_)
+    range = {*current_, *current_ + Address(currentSize_) - 1};
+  else
+    return;
+  if (range.second - range.first >= MaxCopyBytes) {
+    emit session_.message(tr("Copy takes at most %1 bytes; select fewer.")
+                              .arg(qulonglong(MaxCopyBytes)),
+                          2);
+    return;
+  }
+  pendingCopy_ = range;
+  completeCopy();
+}
+
+void HexView::completeCopy() {
+  if (!pendingCopy_)
+    return;
+  const auto [first, last] = *pendingCopy_;
+  QString text;
+  text.reserve(int((last - first + 1) * 3));
+  for (Address address = first;; ++address) {
+    const auto value = byteAt(address);
+    if (!value) {
+      // The rest loads first; an unmapped byte cannot be copied at all.
+      if (!space_.regionOf(address)) {
+        pendingCopy_.reset();
+        emit session_.message(
+            tr("The selection holds bytes no segment maps; nothing was "
+               "copied."),
+            2);
+        return;
+      }
+      for (Address key = chunkKey(address); key <= last;
+           key = chunkKey(chunkBase(key) + ChunkBytes))
+        if (!chunks_.contains(key))
+          request(key);
+      return;
+    }
+    if (!text.isEmpty())
+      text += QLatin1Char(' ');
+    text += QStringLiteral("%1").arg(*value, 2, 16, QLatin1Char('0')).toUpper();
+    if (address == last)
+      break;
+  }
+  pendingCopy_.reset();
+  QGuiApplication::clipboard()->setText(text);
 }
 
 void HexView::wheelEvent(QWheelEvent *event) {

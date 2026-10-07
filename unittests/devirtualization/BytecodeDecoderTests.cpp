@@ -497,8 +497,7 @@ TEST_F(BytecodeSourceTest,
       }
       OS.flush();
       if (Pointers) {
-        EXPECT_NE(Source.find("neverd_unaligned_u64 *)(uintptr_t)"),
-                  std::string::npos);
+        EXPECT_NE(Source.find("*(_QWORD *)"), std::string::npos);
         EXPECT_EQ(Source.find("neverd_mem_load"), std::string::npos);
         EXPECT_EQ(Source.find("neverd_mem_store"), std::string::npos);
       }

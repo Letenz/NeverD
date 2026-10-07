@@ -93,6 +93,19 @@ NEVERD_C_TYPE("ptrdiff_t")
 NEVERD_C_TYPE("intptr_t")
 NEVERD_C_TYPE("uintptr_t")
 NEVERD_C_TYPE("wchar_t")
+// The engine's memory access types, as a classic decompiler names them.
+NEVERD_C_TYPE("_BYTE")
+NEVERD_C_TYPE("_SBYTE")
+NEVERD_C_TYPE("_WORD")
+NEVERD_C_TYPE("_SWORD")
+NEVERD_C_TYPE("_DWORD")
+NEVERD_C_TYPE("_SDWORD")
+NEVERD_C_TYPE("_QWORD")
+NEVERD_C_TYPE("_SQWORD")
+NEVERD_C_TYPE("_OWORD")
+NEVERD_C_TYPE("_SOWORD")
+NEVERD_C_TYPE("_FLOAT")
+NEVERD_C_TYPE("_DOUBLE")
 #undef NEVERD_C_TYPE
 
 // NEVERD_LLVM_KEYWORD(Word): LLVM IR keywords and instruction opcodes.

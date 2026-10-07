@@ -2204,13 +2204,13 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
         break;
       }
 
-      // An unconditional direct call to a no-return libc function (longjmp /
-      // abort / exit / ...) is a control-flow terminator.  At -O2 the compiler
-      // emits nothing after it, so continuing would absorb the next function
-      // into this CFG.  A predicated ARM call is different: its false path must
-      // continue at the following instruction even though its taken path never
-      // returns.
-      if (Saved.IsCall && !Saved.IsIndirect && isNoReturnCall(Saved)) {
+      // An unconditional call to a no-return libc function (longjmp / abort /
+      // exit / ...), direct or through the import slot the loader binds, is a
+      // control-flow terminator.  At -O2 the compiler emits nothing after it,
+      // so continuing would absorb the next function into this CFG.  A
+      // predicated ARM call is different: its false path must continue at the
+      // following instruction even though its taken path never returns.
+      if (Saved.IsCall && isNoReturnCall(Saved)) {
         Saved.IsNoReturnCall = true;
         if (!Saved.IsCond)
           break;

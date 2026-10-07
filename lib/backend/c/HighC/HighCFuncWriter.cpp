@@ -3695,7 +3695,7 @@ void HighCWriter::aliasCtorReturnThis(const HighFunc &Func) {
     if (S.Val->Kind != ExprKind::Call || S.Val->IntrinsicId != Intrinsic::None)
       return;
     const std::string Callee = callIdentifier(*S.Val);
-    const MsvcCallee *Msvc = msvcCallee(Callee);
+    const MsvcCallee *Msvc = msvcCallee(Callee, Opts.Format);
     if (!Msvc || Msvc->Kind != MsvcCalleeKind::Ctor)
       return;
     if (S.Val->Operands.empty() || !S.Val->Operands[0])
@@ -3899,7 +3899,8 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
                                         Record->Size ? Record->Size : 8));
         }
       }
-    } else if (const MsvcCallee *Msvc = msvcCallee(callIdentifier(*S.Val)))
+    } else if (const MsvcCallee *Msvc =
+                   msvcCallee(callIdentifier(*S.Val), Opts.Format))
       ReturnType = msvcSyntheticReturn(Msvc->ReturnKind);
     if (ReturnType)
       CallResultTypes[Name] = ReturnType;
@@ -5117,6 +5118,17 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
 
   if (EmitFunctionWrapper && Func.Entry)
     OS << "/* neverd.entry: 0x" << llvm::utohexstr(Func.Entry) << " */\n";
+  // A C++ definition names its demangled signature: the C identifier keeps
+  // only its scopes and name.
+  if (Opts.EmitComments)
+    if (auto Symbol = FunctionSymbolNames.find(&Func);
+        Symbol != FunctionSymbolNames.end())
+      if (const std::string Demangled = demangledComment(Symbol->second);
+          !Demangled.empty() && Demangled != Func.DebugName) {
+        if (!EmitFunctionWrapper)
+          emitIndent(1);
+        OS << "/* " << Demangled << " */\n";
+      }
 
   if (Opts.EmitComments && !Func.DebugName.empty() &&
       Func.DebugName != Func.Name) {

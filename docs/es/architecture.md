@@ -1311,6 +1311,8 @@ Para `EXCEPTION_NONCONTINUABLE`, un filtro x64 que devuelve `EXCEPTION_CONTINUE_
 
 La memoria virtual de Windows incorpora `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` y `FlushInstructionCache` para el proceso actual. La capa OS administra las reservas; `AddressSpace` mantiene la autoridad sobre páginas confirmadas, permisos y almacenamiento. Las pruebas cubren cambios de código, fallos de acceso y reutilización del presupuesto de memoria.
 
+`WriteProcessMemory` sigue el comportamiento de páginas confirmadas observado en x64/ARM64 para escrituras de hasta 4 KiB en el proceso actual. Conserva la protección de cada región, los prefijos copiados, los recuentos de bytes y LastError, incluidos `ERROR_NOACCESS`, `ERROR_PARTIAL_COPY` y el éxito tras un prefijo RX. `WindowsMemoryWriteTests.cpp` comprueba las 25 parejas de protecciones; `check_windows_memory_write.py` verifica el mismo ejecutable original en CI de Windows nativo. Los destinos sin confirmar siguen explícitamente sin soporte.
+
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 La política temporal de los procesos Windows pertenece a `WindowsProcessTime.cpp`, en `os/windows/process/`. `std::chrono` separa la hora real del contador monótono del host; `WindowsProcess.def` define las unidades del invitado y el límite finito de espera. Los transportes CPU no contienen política temporal de Windows.

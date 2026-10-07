@@ -1,6 +1,6 @@
 **言語**: [English](../emulation.md) | [简体中文](../zh-CN/emulation.md) | [繁體中文](../zh-TW/emulation.md) | [日本語](emulation.md) | [한국어](../ko/emulation.md) | [Français](../fr/emulation.md) | [Deutsch](../de/emulation.md) | [Español](../es/emulation.md) | [Italiano](../it/emulation.md) | [Русский](../ru/emulation.md) | [العربية](../ar/emulation.md)
 
-<!-- i18n-source: 43404b1ba61f34e6aed8a220c1bff2ec811fe2e43200dc183d01f9d774bf936e -->
+<!-- i18n-source: a3e64122b77a690dd856d02f5b2af53973d3bf1affd973bea5f9735aa9dd6722 -->
 
 [← ドキュメント索引](README.md)
 
@@ -33,6 +33,8 @@ CPU 実行は ISA 検証、ゲストメモリー、バックエンド転送、�
 `WindowsProcessHeap` はプロセスヒープの割り当て、`HeapReAlloc`、解放、サイズ照会を一元管理します。サイズ変更は保持範囲のデータを維持し、`HEAP_ZERO_MEMORY` は追加領域をゼロ化、`HEAP_REALLOC_IN_PLACE_ONLY` は移動を禁止します。再割り当て失敗時は旧ブロックを保持し、NULL と `ERROR_NOT_ENOUGH_MEMORY`（8）を返すネイティブの観測結果に一致します。独立したページの縮小・解放で容量を返却し、段階的な拡張と有界コピーで実行期限を確認します。独自ヒープ、例外生成フラグ、不明な所有権、アクセス不能なコピー・ゼロ化範囲は明示的に停止します。`WindowsHeapTests.cpp` は両 ISA、強制移動、予算再利用、失敗時の原子性を検証し、CI は同じ独自 EXE をネイティブ Windows でも実行します。
 
 Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
+
+`WriteProcessMemory` は、現在のプロセスへの最大 4 KiB の書き込みについて、x64/ARM64 の実測に基づくコミット済みページの動作に従います。各領域の保護属性、コピー済みの先頭部分、バイト数、LastError を保持し、`ERROR_NOACCESS`、`ERROR_PARTIAL_COPY`、RX 領域の先頭部分を書き込んだ後の成功も再現します。`WindowsMemoryWriteTests.cpp` は全 25 通りの保護属性の組み合わせを検査し、`check_windows_memory_write.py` は同じ独自の実行ファイルをネイティブ Windows CI で検証します。未コミットの書き込み先は明示的に未対応です。
 
 <!-- i18n-section: vectored-exceptions -->
 
