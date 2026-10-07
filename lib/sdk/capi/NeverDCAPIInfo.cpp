@@ -14,6 +14,8 @@
 #include "SessionImpl.h"
 
 #include "neverd/evm/bytecode/EVMBytecode.h"
+#include "neverd/loader/ExceptionEncoding.h"
+#include "neverd/loader/ExceptionFunction.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -24,6 +26,7 @@
 #include "llvm/Support/MD5.h"
 #include "llvm/Support/SHA256.h"
 
+#include <algorithm>
 #include <fstream>
 #include <map>
 #include <set>
@@ -248,6 +251,31 @@ const char *neverd_import_slots_json(neverd_session_t Sess) {
     Arr.push_back(llvm::json::Object{{"addr", vaHex(Addr)},
                                      {"name", jsonSafeText(Slot.first)},
                                      {"addend", Slot.second}});
+  }
+  return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
+}
+
+const char *neverd_unwind_frames_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S || !S->Loaded)
+    return dupStr(std::string("[]"));
+  std::vector<const ExceptionFunction *> Frames;
+  for (const ExceptionFunction &F : S->Img.ExceptionMetadata.Functions)
+    if (F.CodeRange.isValid())
+      Frames.push_back(&F);
+  std::stable_sort(Frames.begin(), Frames.end(),
+                   [](const ExceptionFunction *A, const ExceptionFunction *B) {
+                     return A->CodeRange.Begin < B->CodeRange.Begin;
+                   });
+  llvm::json::Array Arr;
+  for (const ExceptionFunction *F : Frames) {
+    llvm::json::Object Obj{{"begin", vaHex(F->CodeRange.Begin)},
+                           {"end", vaHex(F->CodeRange.End)},
+                           {"encoding", getExceptionEncodingName(F->Encoding)},
+                           {"language_data", F->hasLanguageTable()}};
+    if (!F->PersonalityName.empty())
+      Obj["personality"] = jsonSafeText(F->PersonalityName);
+    Arr.push_back(std::move(Obj));
   }
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }

@@ -1098,6 +1098,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_unwind_frames_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_exports_json",
     "const char *",
     ["neverd_session_t"],

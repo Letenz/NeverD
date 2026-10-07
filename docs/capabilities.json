@@ -164,6 +164,7 @@
           "neverd_synthesize_result_dispose",
           "neverd_translate_error_code_name",
           "neverd_translate_object_result_dispose",
+          "neverd_unwind_frames_json",
           "neverd_version",
           "neverd_version_number",
           "neverd_xrefs_from_json",
@@ -594,6 +595,7 @@
           "neverd_sig_matches_json",
           "neverd_strings_json",
           "neverd_symbols_json",
+          "neverd_unwind_frames_json",
           "neverd_xrefs_from_json",
           "neverd_xrefs_to_json"
         ]

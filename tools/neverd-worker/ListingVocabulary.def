@@ -410,6 +410,15 @@ NEVERD_FUNCTION_ATTRIBUTE(ThunkAttribute, "thunk")
 NEVERD_FUNCTION_ATTRIBUTE(FrameAttribute, "bp-based frame")
 #undef NEVERD_FUNCTION_ATTRIBUTE
 
+// NEVERD_MARKED_UNWIND_ENCODING(Spelling): unwind record formats whose every
+// frame a listing marks (`; __unwind {` ... `; } // starts at`).  A frame of
+// another format is marked when it names a handler.
+#ifndef NEVERD_MARKED_UNWIND_ENCODING
+#define NEVERD_MARKED_UNWIND_ENCODING(Spelling)
+#endif
+NEVERD_MARKED_UNWIND_ENCODING("dwarf-fde")
+#undef NEVERD_MARKED_UNWIND_ENCODING
+
 // NEVERD_FRAME_NAME_PREFIX(Id, Prefix): automatic names of stack variables
 // below the frame pointer and of stack arguments above the return address.
 #ifndef NEVERD_FRAME_NAME_PREFIX

@@ -25,6 +25,7 @@ using DisasmExFunction = const char *(*)(neverd_session_t, neverd_va_t, int,
                                          unsigned);
 using CodeRefsFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
 using ImportSlotsFunction = const char *(*)(neverd_session_t);
+using UnwindFramesFunction = const char *(*)(neverd_session_t);
 
 // Listing layout, in characters after the prefix: name, mnemonic and comment
 // columns of a conventional interactive disassembler listing.
@@ -56,6 +57,8 @@ constexpr char SubroutineRule[] =
     "; =============== S U B R O U T I N E ======="
     "================================";
 constexpr char AttributesLead[] = "; Attributes: ";
+constexpr char UnwindOpen[] = "; __unwind {";
+constexpr char UnwindClose[] = "; } // starts at ";
 constexpr char SegmentRule[] = "; ============================================="
                                "==============================";
 
@@ -344,6 +347,7 @@ struct Listing::Impl {
   DisasmExFunction disasmEx = nullptr;
   CodeRefsFunction codeRefs = nullptr;
   ImportSlotsFunction importSlots = nullptr;
+  UnwindFramesFunction unwindFrames = nullptr;
   OperandDialect dialect = OperandDialect::Generic;
   bool wide = true, elf = false, macho = false;
   unsigned addressDigits = 16, pointerSize = 8;
@@ -360,6 +364,9 @@ struct Listing::Impl {
   std::map<std::string, std::uint64_t, std::less<>> listingNames;
   /// Executable import veneers and the import each forwards to.
   std::map<std::uint64_t, std::string> stubImports;
+  /// Marked unwind frames: begin -> personality, and end -> begin.
+  std::map<std::uint64_t, std::string> unwindBegins;
+  std::map<std::uint64_t, std::uint64_t> unwindEnds;
   /// Engine function name -> display name, where they differ.
   std::unordered_map<std::string, std::string> aliases;
   Json functionRowsCache;
@@ -383,6 +390,8 @@ struct Listing::Impl {
     disasmEx = engineSymbol<DisasmExFunction>("neverd_disasm_json_ex");
     codeRefs = engineSymbol<CodeRefsFunction>("neverd_code_refs_json");
     importSlots = engineSymbol<ImportSlotsFunction>("neverd_import_slots_json");
+    unwindFrames =
+        engineSymbol<UnwindFramesFunction>("neverd_unwind_frames_json");
   }
 
   //===--------------------------------------------------------------------===//
@@ -794,6 +803,21 @@ struct Listing::Impl {
           ImportSlot slot{name, std::string(), elf ? name + "_ptr" : name};
           listingNames.emplace(slot.label, address);
           slots.emplace(address, std::move(slot));
+        }
+    unwindBegins.clear();
+    unwindEnds.clear();
+    if (unwindFrames)
+      if (const auto rows = takeJson(unwindFrames(session)); rows.is_array())
+        for (const auto &row : rows) {
+          const auto begin = jsonAddress(row.value("begin", Json()));
+          const auto end = jsonAddress(row.value("end", Json()));
+          auto personality = row.value("personality", std::string());
+          if (!begin || end <= begin ||
+              (!isMarkedUnwindEncoding(row.value("encoding", std::string())) &&
+               personality.empty()))
+            continue;
+          unwindEnds.emplace(end, begin);
+          unwindBegins.emplace(begin, std::move(personality));
         }
     if (const auto rows = takeJson(neverd_exports_json(session));
         rows.is_array())
@@ -1298,6 +1322,14 @@ struct Listing::Impl {
     return {prefix + upperHex(address), ListingRole::DummyDataName, address};
   }
 
+  static bool isMarkedUnwindEncoding(std::string_view encoding) {
+#define NEVERD_MARKED_UNWIND_ENCODING(Spelling)                                \
+  if (encoding == Spelling)                                                    \
+    return true;
+#include "ListingVocabulary.def"
+    return false;
+  }
+
   /// Whether the instruction at \p address in function \p f returns.
   bool returnsAt(int f, std::uint64_t address) {
     const auto &instructions = decode(f).instructions;
@@ -1633,6 +1665,15 @@ struct Listing::Impl {
       addNamedLine(out, item, base - NameColumnWidth, std::move(label),
                    item.start, "label");
     }
+    if (const auto frame = unwindBegins.find(item.start);
+        frame != unwindBegins.end()) {
+      StyledText open = lead(base - NameColumnWidth);
+      open.append(frame->second.empty()
+                      ? std::string(UnwindOpen)
+                      : std::string(UnwindOpen) + " // " + frame->second,
+                  ListingRole::AutoComment);
+      addLine(out, item, item.start, "comment", std::move(open));
+    }
     StyledText text = instructionText(
         instruction, base, opcodeColumn(instruction, base - NameColumnWidth),
         &body);
@@ -1645,6 +1686,13 @@ struct Listing::Impl {
     addLine(out, item, item.start, "insn", std::move(text), target);
     out.back().flow = std::string(flowName(instruction.flow));
     const std::uint64_t next = item.start + item.size;
+    if (const auto frame = unwindEnds.lower_bound(item.start + 1);
+        frame != unwindEnds.end() && frame->first <= next) {
+      StyledText close = lead(base - NameColumnWidth);
+      close.append(UnwindClose + upperHex(frame->second),
+                   ListingRole::AutoComment);
+      addLine(out, item, item.start, "comment", std::move(close));
+    }
     if (next >= body.end) {
       // The footer belongs to the last instruction.  Code that no function
       // owns, padding or data follows a rule; a function brings its own.
