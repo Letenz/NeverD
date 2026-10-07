@@ -99,7 +99,7 @@ TEST_P(AndroidSyscall,
     bool ThreadFlag;
   };
   constexpr KernelCase Kernels[] = {
-#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag)                       \
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer)         \
   {AndroidGKIKernel::Name, Label, ThreadFlag},
 #include "GKIReleaseCases.def"
 #undef NEVERD_GKI_RELEASE_CASE
@@ -115,6 +115,32 @@ TEST_P(AndroidSyscall,
     R = run("syscall_gki_pidfd_limit", {Buffer});
     returned(R);
     words(R, {uint64_t(0) - 24, 77, UINT64_MAX, 24, 0, 0, 0, 24});
+  }
+}
+
+TEST_P(AndroidSyscall, ReleasedGKIVectorImportRetainsRawAndBionicErrors) {
+  struct KernelCase {
+    AndroidGKIKernel Kernel;
+    const char *Label;
+    bool SingleBuffer;
+  };
+  constexpr KernelCase Kernels[] = {
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer)         \
+  {AndroidGKIKernel::Name, Label, SingleBuffer},
+#include "GKIReleaseCases.def"
+#undef NEVERD_GKI_RELEASE_CASE
+  };
+  for (const auto &K : Kernels) {
+    SCOPED_TRACE(K.Label);
+    Options.LinuxKernel.emplace().GKI = K.Kernel;
+    Options.LinuxFiles.emplace().DescriptorLimit = 5;
+    auto R = run("syscall_gki_vectors", {Buffer});
+    returned(R);
+    const uint64_t Error = K.SingleBuffer ? 22 : 14;
+    words(R, {uint64_t(0) - Error, 77, UINT64_MAX, Error, uint64_t(0) - Error,
+              UINT64_MAX, Error, Error});
+    EXPECT_TRUE(R.StandardOutput.empty());
+    EXPECT_TRUE(R.StandardError.empty());
   }
 }
 

@@ -57,6 +57,22 @@ NEVERD_API const char *neverd_import_slots_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_unwind_frame_json(neverd_session_t Sess,
                                                 neverd_va_t Address);
 NEVERD_API const char *neverd_segments_json(neverd_session_t Sess);
+/// Text strings in the image's initialized data that is not code: C strings
+/// in ASCII or UTF-8 and UTF-16 or UTF-32 strings in either byte order, each
+/// ending in a zero code unit.  \p OptionsJson is NULL for the defaults or an
+/// object with optional "encodings" (names from "ascii", "utf-8", "utf-16le",
+/// "utf-16be", "utf-32le" and "utf-32be"; default ascii, utf-8 and utf-16le)
+/// and "min_length" (characters, 1 to 1024, default 4).  Returns
+/// [{"addr","length","chars","encoding","value"},...] in address order, where
+/// "length" counts bytes without the terminator and "value" is UTF-8, or NULL
+/// with neverd_last_error() for malformed options.
+NEVERD_API const char *neverd_strings_ex_json(neverd_session_t Sess,
+                                              const char *OptionsJson);
+/// The encodings neverd_strings_ex_json() can search:
+/// [{"name","spelling","unit","default"},...], where "spelling" is how a
+/// listing names the encoding (empty for plain ASCII), "unit" the bytes of
+/// one code unit and "default" whether a search without options uses it.
+NEVERD_API const char *neverd_string_encodings_json(void);
 NEVERD_API const char *neverd_strings_json(neverd_session_t Sess,
                                            int MinLength);
 NEVERD_API const char *neverd_xrefs_to_json(neverd_session_t Sess,

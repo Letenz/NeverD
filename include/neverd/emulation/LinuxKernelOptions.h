@@ -9,7 +9,7 @@
 #include <set>
 namespace neverd::emulation {
 enum class AndroidGKIKernel {
-#define NEVERD_LINUX_GKI_KERNEL(Name, Label, Flags) Name,
+#define NEVERD_LINUX_GKI_KERNEL(Name, Label, Flags, Import) Name,
 #include "neverd/emulation/LinuxGKIKernels.def"
 #undef NEVERD_LINUX_GKI_KERNEL
 };

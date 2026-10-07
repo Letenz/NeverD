@@ -5,14 +5,14 @@
 //===----------------------------------------------------------------------===//
 // Fixture truth from the immutable r1 pins in docs/android-gki-kernels.md.
 // Do not derive expected behavior from the production flag catalogue.
-// Name, literal request branch, whether PIDFD_THREAD is accepted.
+// Name, literal branch, PIDFD_THREAD acceptance, single-buffer iovec import.
 #ifdef NEVERD_GKI_RELEASE_CASE
-NEVERD_GKI_RELEASE_CASE(Android12_5_10, "android12-5.10", false)
-NEVERD_GKI_RELEASE_CASE(Android13_5_10, "android13-5.10", false)
-NEVERD_GKI_RELEASE_CASE(Android13_5_15, "android13-5.15", false)
-NEVERD_GKI_RELEASE_CASE(Android14_5_15, "android14-5.15", false)
-NEVERD_GKI_RELEASE_CASE(Android14_6_1, "android14-6.1", false)
-NEVERD_GKI_RELEASE_CASE(Android15_6_6, "android15-6.6", false)
-NEVERD_GKI_RELEASE_CASE(Android16_6_12, "android16-6.12", true)
-NEVERD_GKI_RELEASE_CASE(Android17_6_18, "android17-6.18", true)
+NEVERD_GKI_RELEASE_CASE(Android12_5_10, "android12-5.10", false, false)
+NEVERD_GKI_RELEASE_CASE(Android13_5_10, "android13-5.10", false, false)
+NEVERD_GKI_RELEASE_CASE(Android13_5_15, "android13-5.15", false, false)
+NEVERD_GKI_RELEASE_CASE(Android14_5_15, "android14-5.15", false, false)
+NEVERD_GKI_RELEASE_CASE(Android14_6_1, "android14-6.1", false, false)
+NEVERD_GKI_RELEASE_CASE(Android15_6_6, "android15-6.6", false, true)
+NEVERD_GKI_RELEASE_CASE(Android16_6_12, "android16-6.12", true, true)
+NEVERD_GKI_RELEASE_CASE(Android17_6_18, "android17-6.18", true, true)
 #endif

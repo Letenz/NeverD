@@ -98,6 +98,14 @@ unless their lock is set. Rows mapped to instructions move the disassembly
 cursor. Recognized library operations in C can fold into one-line summaries:
 click a summary to expand it; copy and export always use the complete code.
 
+Strings are found in ASCII, UTF-8 and UTF-16LE by default: UTF-8 text such as
+Chinese, Japanese or Korean prints as itself (`db '中文字符串',0`), a string in a
+wide encoding under its label as `text "UTF-16LE", 'Wide text',0`, and an
+instruction that refers to a string quotes it in a comment (`; "Usage: %s"`).
+**Options → String literals** chooses the encodings searched, including
+UTF-16BE and UTF-32, and the minimum length; the Strings window shows each
+string's encoding in its Type column.
+
 **Hex View-1** follows the disassembly cursor; while it is the active view, a
 jump (G or `g` on the command line) moves it and keeps it in front.
 **Imports**, **Exports**, **Names**, **Strings**, **Segments** and

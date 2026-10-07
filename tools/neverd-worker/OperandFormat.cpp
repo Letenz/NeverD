@@ -653,22 +653,63 @@ void StyledText::append(std::string_view text, ListingRole role,
                         address});
   }
   text_ += text;
+  columns_ += displayColumns(text);
 }
 
 void StyledText::padTo(std::size_t column) {
-  if (text_.size() < column)
-    text_.append(column - text_.size(), ' ');
-  else if (!text_.empty())
+  if (columns_ < column) {
+    text_.append(column - columns_, ' ');
+    columns_ = column;
+  } else if (!text_.empty()) {
     text_ += ' ';
+    ++columns_;
+  }
 }
 
 void StyledText::append(const StyledText &other) {
   const auto offset = static_cast<std::uint32_t>(text_.size());
   text_ += other.text_;
+  columns_ += other.columns_;
   for (TextSpan span : other.spans_) {
     span.start += offset;
     spans_.push_back(span);
   }
+}
+
+std::size_t displayColumns(std::string_view text) {
+  std::size_t columns = 0;
+  for (std::size_t at = 0; at < text.size();) {
+    const auto lead = static_cast<unsigned char>(text[at]);
+    if (lead < 0x80) {
+      ++columns;
+      ++at;
+      continue;
+    }
+    const unsigned length = (lead & 0xe0) == 0xc0   ? 2
+                            : (lead & 0xf0) == 0xe0 ? 3
+                            : (lead & 0xf8) == 0xf0 ? 4
+                                                    : 1;
+    std::uint32_t code = lead & (0x7f >> length);
+    bool formed = length > 1 && at + length <= text.size();
+    for (unsigned i = 1; formed && i < length; ++i) {
+      const auto next = static_cast<unsigned char>(text[at + i]);
+      formed = (next & 0xc0) == 0x80;
+      code = code << 6 | (next & 0x3f);
+    }
+    if (!formed) {
+      ++columns;
+      ++at;
+      continue;
+    }
+    unsigned width = 1;
+#define NEVERD_WIDE_CHARACTERS(First, Last)                                    \
+  if (code >= First && code <= Last)                                           \
+    width = 2;
+#include "ListingVocabulary.def"
+    columns += width;
+    at += length;
+  }
+  return columns;
 }
 
 std::string x86Number(std::uint64_t value) {

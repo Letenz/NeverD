@@ -695,6 +695,14 @@
         <source>Version and license information</source>
         <translation>Informations de version et de licence</translation>
     </message>
+    <message>
+        <source>S&amp;tring literals...</source>
+        <translation>Littéraux de c&amp;haîne...</translation>
+    </message>
+    <message>
+        <source>Choose the encodings and minimum length of the strings the listing shows</source>
+        <translation>Choisir les encodages et la longueur minimale des chaînes affichées dans le listage</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1825,6 +1833,22 @@ Signé : %4</translation>
         <source>The saved desktop of this database could not be restored.</source>
         <translation>Le bureau enregistré de cette base de données n&apos;a pas pu être restauré.</translation>
     </message>
+    <message>
+        <source>String options are unavailable: %1</source>
+        <translation>Les options des chaînes ne sont pas disponibles : %1</translation>
+    </message>
+    <message>
+        <source>String literals</source>
+        <translation>Littéraux de chaîne</translation>
+    </message>
+    <message>
+        <source>Encodings:</source>
+        <translation>Encodages :</translation>
+    </message>
+    <message>
+        <source>Minimum length:</source>
+        <translation>Longueur minimale :</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -1958,6 +1982,10 @@ Signé : %4</translation>
     <message>
         <source>Could not update the database: %1</source>
         <translation>Impossible de mettre à jour la base de données : %1</translation>
+    </message>
+    <message>
+        <source>Strings: %1, at least %2 characters</source>
+        <translation>Chaînes : %1, au moins %2 caractères</translation>
     </message>
 </context>
 </TS>
