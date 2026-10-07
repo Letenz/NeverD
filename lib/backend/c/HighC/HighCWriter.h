@@ -274,6 +274,16 @@ public:
                                 const HighExpr &Val) const;
   bool isIntegerOverlayStore(const HighExpr &Val) const;
   bool pointerNeedsIntegerView(const TypeRef &Ty) const;
+  /// The name of the pointer variable \p E when \p Text is the integer view
+  /// it prints with, so an access can take the pointer itself.
+  std::optional<std::string> declaredPointerName(const HighExpr &E,
+                                                 llvm::StringRef Text) const;
+  /// Whether \p Text is the bare name of pointer variable \p E.
+  bool isBarePointerName(const HighExpr &E, llvm::StringRef Text) const;
+  /// The C type variable \p E named \p Name is declared with, if known.
+  TypeRef declaredTypeOf(const HighExpr &E, llvm::StringRef Name) const;
+  /// A pointer to void, or to nothing the type records.
+  static bool pointsToVoid(const TypeRef &Ty);
   /// Pointer object used as an `INDIR_CALL` base, without `(uintptr_t)`.
   std::string pointerObjectStr(const HighExpr &E);
   /// The failure an unknown value prints at its use, or empty when \p E

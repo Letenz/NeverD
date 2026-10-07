@@ -1202,6 +1202,17 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
                            BaseTy->Pointee &&
                            BaseTy->Pointee->Kind == NdTypeKind::Int &&
                            BaseTy->Pointee->Size == 1;
+      // addrStr gives a pointer variable as the pointer itself.  A void or
+      // byte pointer offsets by bytes (GNU C for void *), so the access needs
+      // no integer round trip: `*(_QWORD *)(p + 8)`; another pointer type
+      // takes its integer view for a byte offset.
+      if (ProjectImageBacking && isBarePointerName(*Base, B)) {
+        if (BytePtr || pointsToVoid(declaredTypeOf(*Base, B))) {
+          std::string S = B + (Minus ? " - " : " + ") + constStr(Off->ConstVal);
+          return ParentPrec >= AddPrec ? "(" + S + ")" : S;
+        }
+        B = "(uintptr_t)" + B;
+      }
       // Byte offsets from an unsigned pointer-width integer already wrap
       // like the machine address: the frame base, or a local or parameter
       // declared that way.
@@ -1251,9 +1262,53 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
   // unsigned carrier.
   const HighExpr &Printed = Inner != &E ? *Inner : E;
   std::string Text = exprStr(Printed, ParentPrec);
+  // A pointer variable is the address itself: every access converts it.
+  if (ProjectImageBacking)
+    if (auto Pointer = declaredPointerName(Printed, Text))
+      return *Pointer;
   if (auto Carrier = unsignedCarrierText(Printed, ParentPrec))
     return *Carrier;
   return Text;
+}
+
+bool HighCWriter::isBarePointerName(const HighExpr &E,
+                                    llvm::StringRef Text) const {
+  return (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
+         !Text.empty() &&
+         (llvm::isAlpha(Text.front()) || Text.front() == '_') &&
+         llvm::all_of(Text,
+                      [](char C) { return llvm::isAlnum(C) || C == '_'; }) &&
+         pointerNeedsIntegerView(declaredTypeOf(E, Text));
+}
+
+std::optional<std::string>
+HighCWriter::declaredPointerName(const HighExpr &E,
+                                 llvm::StringRef Text) const {
+  // Only the integer view a pointer variable prints with, around its name.
+  if (E.Kind != ExprKind::Var && E.Kind != ExprKind::Phi)
+    return std::nullopt;
+  if (!Text.consume_front("(uintptr_t)") || Text.empty() ||
+      !(llvm::isAlpha(Text.front()) || Text.front() == '_') ||
+      !llvm::all_of(Text, [](char C) { return llvm::isAlnum(C) || C == '_'; }))
+    return std::nullopt;
+  if (!pointerNeedsIntegerView(declaredTypeOf(E, Text)))
+    return std::nullopt;
+  return Text.str();
+}
+
+TypeRef HighCWriter::declaredTypeOf(const HighExpr &E,
+                                    llvm::StringRef Name) const {
+  if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi)
+    if (TypeRef Param = declaredParamType(E.Var))
+      return Param;
+  if (auto It = DeclaredCTypes.find(Name.str()); It != DeclaredCTypes.end())
+    return It->second;
+  return nullptr;
+}
+
+bool HighCWriter::pointsToVoid(const TypeRef &Ty) {
+  return Ty && Ty->Kind == NdTypeKind::Ptr &&
+         (!Ty->Pointee || Ty->Pointee->Kind == NdTypeKind::Void);
 }
 
 bool HighCWriter::isIntegerViewOfScalar(const HighExpr &E) const {

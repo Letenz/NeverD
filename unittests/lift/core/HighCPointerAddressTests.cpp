@@ -3227,6 +3227,39 @@ TEST(HighCPointerAddresses, RotateOrPrintsBuiltin) {
       << Source;
 }
 
+TEST(HighCPointerAddresses, PointerParameterIsTheAccessAddress) {
+  // return *(int64_t *)p + *(int64_t *)(p + 8) for `void *p`: the access
+  // takes the pointer itself, offset by bytes; an int pointer offset by
+  // bytes still goes through its integer view.
+  auto Emit = [](TypeRef ParamType) {
+    HighFunc Func;
+    Func.Name = "fields";
+    Func.ReturnType = NdType::makeInt(8);
+    Func.Params = {{"arg0", ParamType}};
+    auto Load = [&](ExprPtr Address) {
+      auto L = std::make_shared<HighExpr>();
+      L->Kind = ExprKind::Load;
+      L->Type = NdType::makeInt(8);
+      L->Operands = {std::move(Address)};
+      return L;
+    };
+    auto Offset = HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, ParamType),
+                                      HighExpr::makeConst(8, 8));
+    Offset->Type = NdType::makeInt(8, false);
+    auto Sum = HighExpr::makeBinop(NdOp::INT_ADD, Load(parameter(0, ParamType)),
+                                   Load(Offset));
+    Sum->Type = NdType::makeInt(8);
+    returnValue(Func, Sum);
+    return emitFunctions({Func});
+  };
+  const std::string Void = Emit(NdType::makePtr());
+  EXPECT_EQ(Void.find("(uintptr_t)arg0"), std::string::npos) << Void;
+  EXPECT_NE(Void.find(" *)arg0"), std::string::npos) << Void;
+  EXPECT_NE(Void.find(" *)(arg0 + 8)"), std::string::npos) << Void;
+  const std::string Int = Emit(NdType::makePtr(NdType::makeInt(4)));
+  EXPECT_NE(Int.find("(uintptr_t)arg0 + 8"), std::string::npos) << Int;
+}
+
 TEST(HighCPointerAddresses, MaskedShiftCountNeedsNoOvershiftGuard) {
   // `shl rax, cl` shifts by cl & 63, which is below 64 whatever cl holds, so
   // C needs no guard; an unmasked count keeps it.
@@ -42484,7 +42517,7 @@ TEST(HighCPointerAddresses, SplitScopeRangesFormOneTry) {
   EXPECT_EQ(HighC.find("__try {", Try + 1), std::string::npos) << HighC;
   const std::string Protected = HighC.substr(Try, Except - Try);
   EXPECT_NE(Protected.find("arg0"), std::string::npos) << HighC;
-  EXPECT_NE(Protected.find("2)"), std::string::npos) << HighC;
+  EXPECT_NE(Protected.find("arg2"), std::string::npos) << HighC;
   EXPECT_NE(
       HighC.substr(Except, HighC.find('}', Except + 1) - Except).find(" = 3;"),
       std::string::npos)
@@ -42638,8 +42671,8 @@ TEST(HighCPointerAddresses, SwapgsLeavesRaxAsItWas) {
   EXPECT_EQ(HighC.find("= __swapgs("), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("= __halt("), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("__swapgs();"), std::string::npos) << HighC;
-  expectPortableStore(HighC, "int64_t", "(uintptr_t)arg1)", "arg0");
-  expectPortableStore(HighC, "int64_t", "(uintptr_t)arg1 + 8", "arg0");
+  expectPortableStore(HighC, "int64_t", "(uintptr_t)(arg1)", "arg0");
+  expectPortableStore(HighC, "int64_t", "(arg1 + 8)", "arg0");
 }
 
 TEST(HighCPointerAddresses, MaskedGlobalAddressIsAnIntegerOperand) {
