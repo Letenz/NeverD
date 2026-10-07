@@ -1261,6 +1261,8 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完�
 
 `WindowsProcess.ClockServicesUseConsistentUnitsAndPreserveLastError` 執行原始 x64/ARM64 PE 中的 `QueryPerformanceFrequency`、單調計數器、FILETIME、回繞 tick 計數和相對延遲呼叫。`WindowsProcess.UnmodeledDelaysStopWithoutClaimingCompletion` 驗證警覺、正數絕對時間及 INT64_MIN 間隔在完成前遭拒絕。`NativeWindowsOracleRunsTheSameExecutable` 也在 Windows 上直接執行成功的時鐘情境；兩項客體回歸均納入停用 Unicorn 的 KVM/WHP 必測清單。 原始樣例明確污染 `BOOLEAN` 參數暫存器未使用的高位元，並以明確的 64 位元型別定義常數，防止 Windows ABI 截斷紀元值與 INT64_MIN。
 
+`ARM64 native backend build` 使用固定版本的 LLVM 原始碼，在 `ubuntu-24.04-arm`（KVM）和 `windows-11-arm`（WHP）上停用 Unicorn 並編譯 `NeverDEmulationNative`。`audit_native_backend_build.py` 核對每個宣告的原生原始檔、啟用的後端定義、編譯命令、ARM64 ELF/COFF 物件及雜湊。`probe_native_host.py` 記錄主機初始化能力與資源清理；能力不可用會明確記錄，初始化錯誤會使工作失敗。這些工作驗證編譯與主機初始化，尚不構成客體執行證據。
+
 `WindowsTestExecution.def` 將 Unicorn ARM64 的 `WindowsExclusive` 對照設為 `RUN_SERIAL`。CTest 策略避免它與其他客體負載爭用資源，保留原有 60 s 客體截止時間及全部結果、暫存器、權限和原生摘要檢查。
 
 `WindowsProcessLifetime` 在相同 CPU 與執行預算下，依相依順序執行 DLL TLS 回呼及 `DllMain`，再執行 EXE TLS 與進入點。各模組具有獨立 TLS 索引與對齊區塊，從完成重定位和匯入繫結的映像複製，共用 64 KiB 空間。TLS 保留參數為零，啟動／程序結束的 `DllMain` 接收不透明非空值。明確程序結束依載入器串列的反向順序分離已完成初始化的 DLL，再執行 EXE TLS 結束回呼，即使 EXE 初始化尚未執行。啟動 `DllMain(FALSE)` 以 `0xc0000142` 結束，不發送分離通知。故障和預算耗盡不捏造清理。含客體 DLL 的 PE 進入點返回需要尚未支援的執行緒終止，因此明確停止。非零 `SizeOfZeroFill` 仍不支援；實際 TLS 範本中的零初始化位元組受支援。 無進入點 DLL 接收 TLS 掛接通知，但不接收程序分離通知。
