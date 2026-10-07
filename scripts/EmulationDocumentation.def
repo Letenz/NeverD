@@ -1651,3 +1651,15 @@ NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build, "Clang")
 NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build, "GCC")
 NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build, "native_arm64_only=true")
 NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build, "8.3")
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(NativeMethodSerialPolicy, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(NativeMethodSerialPolicy, "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(NativeMethodSerialPolicy,
+                           "run_native_cpu_methods.py")
+NEVERD_EMULATION_DOC_TOKEN(NativeMethodSerialPolicy,
+                           "NativeMethodExecution.def")
+NEVERD_EMULATION_DOC_TOKEN(NativeMethodSerialPolicy, "RUN_SERIAL")
+#endif
