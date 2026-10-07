@@ -250,6 +250,22 @@ def run(executable):
             if line["kind"] == "insn"]
         assert "mov rax, [rsp+8+var_8]" in join, join
         assert "mov rax, [rsp+8]" in join, join
+        # Strings in every encoding the engine finds, under the classic forms.
+        encodings = client.call("string_encodings")["payload"]["items"]
+        assert [e["name"] for e in encodings] == ["ascii", "utf-8", "utf-16le"], encodings
+        options = client.call("string_options")["payload"]
+        assert options == {"encodings": ["ascii", "utf-8", "utf-16le"], "min_length": 4}, options
+        rodata = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012343100", "before": 0, "after": 12})["payload"]["lines"]]
+        assert "asc_FFFF800012343100 db '\u4e2d\u6587',0" in rodata, rodata
+        assert "aWide:" in rodata and "text \"UTF-16LE\", 'Wide',0" in rodata, rodata
+        types = {row["text"]: row["type"] for row in client.call("strings", {"filter": ""})["payload"]["items"]}
+        assert types.get("Wide") == "UTF-16LE" and types.get("\u4e2d\u6587") == "UTF-8", types
+        assert client.call("string_options", {"encodings": ["ascii", "utf-8"]})["payload"]["encodings"] == ["ascii", "utf-8"]
+        rodata = [line["text"] for line in client.call(
+            "listing", {"address": "0xffff800012343100", "before": 0, "after": 12})["payload"]["lines"]]
+        assert not any("UTF-16LE" in text for text in rodata), rodata
+        assert client.call("string_options", {"encodings": ["ebcdic"]})["error"]["code"] == "unsupported_encoding"
         # IR constant references require whole-program analysis.
         assert client.call("xrefs", {"address": BASE, "source": "ir"})["payload"]["items"][0]["address"] == "0xffff800012340008"
         client.close()

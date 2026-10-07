@@ -97,6 +97,9 @@ public:
   void redo();
   void loadSignatures(const QString &path, bool tree);
   void analyzeWholeProgram();
+  /// Search strings in \p encodings (engine names) of at least \p minLength
+  /// characters.  Remembered and applied to every worker that starts.
+  void setStringOptions(const QStringList &encodings, int minLength);
   void cancelReads();
 
   // Declarative extension manifests.
@@ -145,6 +148,8 @@ signals:
   void contributionsChanged();
   void databaseSaved(bool ok);
   void contributionResult(const QJsonObject &result);
+  /// The worker searches strings with new options; string views reload.
+  void stringOptionsChanged();
 
 private:
   using Callback = std::function<void(const QJsonObject &payload)>;
@@ -161,6 +166,8 @@ private:
   void finishTransition();
   void refreshHistory();
   void refreshContributions();
+  /// Send the remembered string options, if any; \p announce reports them.
+  void applyStringOptions(bool announce);
   void resetState();
   void setError(const QString &text);
   /// Whether an edit aimed at \p epoch may be applied now.

@@ -695,6 +695,14 @@
         <source>Version and license information</source>
         <translation>版本與授權資訊</translation>
     </message>
+    <message>
+        <source>S&amp;tring literals...</source>
+        <translation>字串常值(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Choose the encodings and minimum length of the strings the listing shows</source>
+        <translation>選擇清單中顯示之字串的編碼與最小長度</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1823,6 +1831,22 @@ Signed: %4</source>
         <source>The saved desktop of this database could not be restored.</source>
         <translation>無法還原此資料庫儲存的桌面配置。</translation>
     </message>
+    <message>
+        <source>String options are unavailable: %1</source>
+        <translation>字串選項無法使用：%1</translation>
+    </message>
+    <message>
+        <source>String literals</source>
+        <translation>字串常值</translation>
+    </message>
+    <message>
+        <source>Encodings:</source>
+        <translation>編碼：</translation>
+    </message>
+    <message>
+        <source>Minimum length:</source>
+        <translation>最小長度：</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -1956,6 +1980,10 @@ Signed: %4</source>
     <message>
         <source>Could not update the database: %1</source>
         <translation>無法更新資料庫：%1</translation>
+    </message>
+    <message>
+        <source>Strings: %1, at least %2 characters</source>
+        <translation>字串：%1，至少 %2 個字元</translation>
     </message>
 </context>
 </TS>

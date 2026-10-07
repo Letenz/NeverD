@@ -695,6 +695,14 @@
         <source>Version and license information</source>
         <translation>バージョンとライセンスの情報</translation>
     </message>
+    <message>
+        <source>S&amp;tring literals...</source>
+        <translation>文字列リテラル(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Choose the encodings and minimum length of the strings the listing shows</source>
+        <translation>リストに表示する文字列のエンコーディングと最小長を選択します</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1823,6 +1831,22 @@ Signed: %4</source>
         <source>The saved desktop of this database could not be restored.</source>
         <translation>このデータベースに保存されたデスクトップを復元できませんでした。</translation>
     </message>
+    <message>
+        <source>String options are unavailable: %1</source>
+        <translation>文字列オプションを利用できません：%1</translation>
+    </message>
+    <message>
+        <source>String literals</source>
+        <translation>文字列リテラル</translation>
+    </message>
+    <message>
+        <source>Encodings:</source>
+        <translation>エンコーディング：</translation>
+    </message>
+    <message>
+        <source>Minimum length:</source>
+        <translation>最小長：</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -1956,6 +1980,10 @@ Signed: %4</source>
     <message>
         <source>Could not update the database: %1</source>
         <translation>データベースを更新できませんでした: %1</translation>
+    </message>
+    <message>
+        <source>Strings: %1, at least %2 characters</source>
+        <translation>文字列：%1、%2 文字以上</translation>
     </message>
 </context>
 </TS>

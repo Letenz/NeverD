@@ -27,6 +27,8 @@ constexpr std::uint64_t Base = 0xffff800012340000ULL;
 // A read-only data section of relocated pointers: slot i points to function
 // i + 1.
 constexpr std::uint64_t DataBase = Base + 0x3000, DataSlots = 8;
+// Read-only data holding a UTF-8 and a UTF-16LE string.
+constexpr std::uint64_t RodataBase = Base + 0x3100, RodataSize = 0x20;
 struct MockSession {
   std::string path, error;
   std::map<std::uint64_t, std::string> annotations, names;
@@ -428,6 +430,47 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                    {"complete", end == 700}}
                   .dump());
 }
+const char *neverd_string_encodings_json(void) {
+  return copy(Json::array({{{"name", "ascii"},
+                            {"spelling", ""},
+                            {"unit", 1},
+                            {"default", true}},
+                           {{"name", "utf-8"},
+                            {"spelling", "UTF-8"},
+                            {"unit", 1},
+                            {"default", true}},
+                           {{"name", "utf-16le"},
+                            {"spelling", "UTF-16LE"},
+                            {"unit", 2},
+                            {"default", true}}})
+                  .dump());
+}
+const char *neverd_strings_ex_json(neverd_session_t, const char *options) {
+  const Json parsed =
+      options ? Json::parse(options, nullptr, false) : Json::object();
+  const auto wanted = [&](const char *encoding) {
+    if (!parsed.contains("encodings"))
+      return true;
+    for (const auto &name : parsed["encodings"])
+      if (name == encoding)
+        return true;
+    return false;
+  };
+  Json items = Json::array();
+  if (wanted("utf-8"))
+    items.push_back({{"addr", hexAddress(RodataBase)},
+                     {"length", 6},
+                     {"chars", 2},
+                     {"encoding", "utf-8"},
+                     {"value", "\xe4\xb8\xad\xe6\x96\x87"}});
+  if (wanted("utf-16le"))
+    items.push_back({{"addr", hexAddress(RodataBase + 8)},
+                     {"length", 8},
+                     {"chars", 4},
+                     {"encoding", "utf-16le"},
+                     {"value", "Wide"}});
+  return copy(items.dump());
+}
 const char *neverd_strings_json(neverd_session_t, int) {
   Json items = Json::array();
   for (int i = 0; i < 600; ++i)
@@ -444,6 +487,10 @@ const char *neverd_segments_json(neverd_session_t) {
                            {{"name", ".data.rel.ro"},
                             {"va", hexAddress(DataBase)},
                             {"size", "0x40"},
+                            {"flags", "R--"}},
+                           {{"name", ".rodata"},
+                            {"va", hexAddress(RodataBase)},
+                            {"size", "0x20"},
                             {"flags", "R--"}}})
                   .dump());
 }
@@ -464,6 +511,14 @@ const char *neverd_sections_json(neverd_session_t) {
                             {"file_off", 0x4000},
                             {"file_sz", DataSlots * 8},
                             {"alignment", 8},
+                            {"flags", "R--"}},
+                           {{"name", ".rodata"},
+                            {"segment", ".rodata"},
+                            {"va", hexAddress(RodataBase)},
+                            {"size", RodataSize},
+                            {"file_off", 0x4100},
+                            {"file_sz", RodataSize},
+                            {"alignment", 16},
                             {"flags", "R--"}}})
                   .dump());
 }

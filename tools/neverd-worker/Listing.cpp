@@ -31,6 +31,8 @@ using DiscoverFunctionsFunction = int (*)(neverd_session_t);
 using PointerAtFunction = int (*)(neverd_session_t, neverd_va_t, neverd_va_t *,
                                   neverd_va_t *);
 using DataSymbolsFunction = const char *(*)(neverd_session_t);
+using StringsExFunction = const char *(*)(neverd_session_t, const char *);
+using StringEncodingsFunction = const char *(*)();
 
 // Listing layout, in characters after the prefix: name, mnemonic and comment
 // columns of a conventional interactive disassembler listing.
@@ -52,6 +54,10 @@ constexpr std::uint64_t MaxAlignment = 0x1000;
 constexpr std::uint64_t ClassicAlignmentLimit = 0x20;
 // Automatic string names keep this many characters, the `a` included.
 constexpr std::size_t StringNameLength = 15;
+// A string a comment quotes shows this many escaped characters.
+constexpr std::size_t CommentStringLength = 39;
+// Strings in these encodings are shown as plain bytes (`db`).
+constexpr std::string_view PlainStringEncodings[] = {"ascii", "utf-8"};
 constexpr std::size_t MaxOverviewBuckets = 16384;
 constexpr int OverviewSamples = 4;
 constexpr int StringScanMinimum = 4;
@@ -316,8 +322,12 @@ struct DecodedFunction {
   std::map<std::int64_t, unsigned> frame;
 };
 struct StringItem {
+  /// The length counts bytes without the terminator, one code unit long.
   std::uint64_t address = 0, length = 0;
   std::string value, name;
+  /// The engine's encoding name (neverd_string_encodings_json).
+  std::string encoding;
+  unsigned unit = 1;
 };
 struct ImportSlot {
   std::string name, module, label;
@@ -367,25 +377,75 @@ Json spansJson(const StyledText &text) {
   return spans;
 }
 
+/// The code point of the UTF-8 sequence at \p at, advancing past it, or
+/// nothing for a malformed sequence (which advances one byte).
+std::optional<std::uint32_t> nextCodePoint(std::string_view text,
+                                           std::size_t &at) {
+  const auto byte = [&](std::size_t i) {
+    return static_cast<unsigned char>(text[i]);
+  };
+  const unsigned char lead = byte(at);
+  const unsigned length = lead < 0x80             ? 1
+                          : (lead & 0xe0) == 0xc0 ? 2
+                          : (lead & 0xf0) == 0xe0 ? 3
+                          : (lead & 0xf8) == 0xf0 ? 4
+                                                  : 0;
+  if (!length || at + length > text.size()) {
+    ++at;
+    return std::nullopt;
+  }
+  std::uint32_t code = length == 1 ? lead : lead & (0x7f >> length);
+  for (unsigned i = 1; i < length; ++i) {
+    if ((byte(at + i) & 0xc0) != 0x80) {
+      ++at;
+      return std::nullopt;
+    }
+    code = code << 6 | (byte(at + i) & 0x3f);
+  }
+  static constexpr std::uint32_t Smallest[] = {0, 0, 0x80, 0x800, 0x10000};
+  if (code < Smallest[length] || code > 0x10ffff ||
+      (code >= 0xd800 && code <= 0xdfff)) {
+    ++at;
+    return std::nullopt;
+  }
+  at += length;
+  return code;
+}
+
+/// A character a listing shows as itself: not a control, a formatting or
+/// direction mark, a byte order mark or a private-use character.
+bool isShownCharacter(std::uint32_t c) {
+  return c >= 0x20 && c != 0x7f && !(c >= 0x80 && c < 0xa0) &&
+         !(c >= 0x200b && c <= 0x200f) && !(c >= 0x202a && c <= 0x202e) &&
+         !(c >= 0x2060 && c <= 0x206f) && c != 0xfeff &&
+         !(c >= 0xe000 && c <= 0xf8ff) && c < 0xf0000;
+}
+
+/// A string as data operands: shown characters quoted, others as numbers
+/// (`'caf',0E9h,' cr',0`), up to \p limit characters, then the terminator.
 std::string escapeString(const std::string &value, std::size_t limit) {
   std::string result;
   bool quoted = false;
   std::size_t shown = 0;
-  for (unsigned char c : value) {
+  for (std::size_t at = 0; at < value.size();) {
     if (shown++ >= limit) {
       if (quoted)
         result += '\'';
       result += quoted ? ",..." : "...";
       return result;
     }
-    if (c >= 0x20 && c < 0x7f && c != '\'') {
+    const std::size_t start = at;
+    const auto code = nextCodePoint(value, at);
+    const std::uint32_t number =
+        code ? *code : static_cast<unsigned char>(value[start]);
+    if (code && isShownCharacter(*code) && *code != '\'') {
       if (!quoted) {
         if (!result.empty())
           result += ',';
         result += '\'';
         quoted = true;
       }
-      result += static_cast<char>(c);
+      result.append(value, start, at - start);
     } else {
       if (quoted) {
         result += '\'';
@@ -393,7 +453,7 @@ std::string escapeString(const std::string &value, std::size_t limit) {
       }
       if (!result.empty())
         result += ',';
-      result += x86Number(c);
+      result += x86Number(number);
     }
   }
   if (quoted)
@@ -402,6 +462,45 @@ std::string escapeString(const std::string &value, std::size_t limit) {
     result += ',';
   result += '0';
   return result;
+}
+
+/// A string as a comment quotes it: C escapes in double quotes, cut after
+/// CommentStringLength escaped characters (`"Calling appendChild() on a"...`).
+std::string quoteString(const std::string &value) {
+  std::string escaped;
+  std::size_t characters = 0;
+  bool cut = false;
+  for (std::size_t at = 0; at < value.size();) {
+    const std::size_t start = at;
+    const auto code = nextCodePoint(value, at);
+    std::string piece;
+    if (!code) {
+      piece = "\\x" + upperHex(static_cast<unsigned char>(value[start]), 2);
+    } else if (*code == '"' || *code == '\\') {
+      piece = std::string("\\") + static_cast<char>(*code);
+    } else if (*code == '\n') {
+      piece = "\\n";
+    } else if (*code == '\t') {
+      piece = "\\t";
+    } else if (*code == '\r') {
+      piece = "\\r";
+    } else if (!isShownCharacter(*code)) {
+      piece = *code < 0x100 ? "\\x" + upperHex(*code, 2)
+                            : "\\u{" + upperHex(*code) + "}";
+    } else {
+      piece.assign(value, start, at - start);
+    }
+    // Every escape counts as its spelled characters, a character as one.
+    const std::size_t width =
+        piece.size() > 1 && piece[0] == '\\' ? piece.size() : 1;
+    if (characters + width > CommentStringLength) {
+      cut = true;
+      break;
+    }
+    characters += width;
+    escaped += piece;
+  }
+  return "\"" + escaped + "\"" + (cut ? "..." : "");
 }
 } // namespace
 
@@ -415,6 +514,12 @@ struct Listing::Impl {
   DiscoverFunctionsFunction discoverFunctions = nullptr;
   PointerAtFunction pointerAtQuery = nullptr;
   DataSymbolsFunction dataSymbols = nullptr;
+  StringsExFunction stringsEx = nullptr;
+  /// Options for neverd_strings_ex_json, empty for the engine's defaults.
+  std::string stringOptions;
+  /// Encoding name -> listing spelling and code unit bytes.
+  std::unordered_map<std::string, std::pair<std::string, unsigned>>
+      stringEncodings;
   /// Whether the engine's function detector has run for this image.
   bool discovered = false;
   OperandDialect dialect = OperandDialect::Generic;
@@ -463,6 +568,15 @@ struct Listing::Impl {
     discoverFunctions = engineSymbol<DiscoverFunctionsFunction>(
         "neverd_session_discover_functions");
     pointerAtQuery = engineSymbol<PointerAtFunction>("neverd_pointer_at");
+    stringsEx = engineSymbol<StringsExFunction>("neverd_strings_ex_json");
+    if (const auto encodings = engineSymbol<StringEncodingsFunction>(
+            "neverd_string_encodings_json"))
+      if (const auto rows = takeJson(encodings()); rows.is_array())
+        for (const auto &row : rows)
+          stringEncodings[row.value("name", std::string())] = {
+              row.value("spelling", std::string()),
+              static_cast<unsigned>(std::max<std::uint64_t>(
+                  1, jsonCount(row.value("unit", Json()))))};
     dataSymbols = engineSymbol<DataSymbolsFunction>("neverd_data_symbols_json");
   }
 
@@ -912,8 +1026,11 @@ struct Listing::Impl {
         else if (auto name = row.value("name", std::string()); !name.empty())
           dataNames.emplace(address, std::move(name));
       }
-    if (const auto rows =
-            takeJson(neverd_strings_json(session, StringScanMinimum));
+    if (const auto rows = takeJson(
+            stringsEx ? stringsEx(session, stringOptions.empty()
+                                               ? nullptr
+                                               : stringOptions.c_str())
+                      : neverd_strings_json(session, StringScanMinimum));
         rows.is_array()) {
       strings.reserve(rows.size());
       for (const auto &row : rows) {
@@ -921,6 +1038,10 @@ struct Listing::Impl {
         item.address = jsonAddress(row.value("addr", Json()));
         item.length = jsonCount(row.value("length", Json()));
         item.value = row.value("value", std::string());
+        item.encoding = row.value("encoding", std::string());
+        if (auto it = stringEncodings.find(item.encoding);
+            it != stringEncodings.end())
+          item.unit = it->second.second;
         if (item.address && item.length)
           strings.push_back(std::move(item));
       }
@@ -1023,7 +1144,18 @@ struct Listing::Impl {
     if (it == strings.begin())
       return nullptr;
     --it;
-    return address <= it->address + it->length ? &*it : nullptr;
+    return address < it->address + it->length + it->unit ? &*it : nullptr;
+  }
+  /// The listing spelling of a string's encoding: empty for the 8-bit
+  /// encodings a listing shows as plain bytes.
+  std::string_view encodingSpelling(const StringItem &string) const {
+    if (string.unit == 1 && (string.encoding.empty() ||
+                             string.encoding == PlainStringEncodings[0] ||
+                             string.encoding == PlainStringEncodings[1]))
+      return {};
+    auto it = stringEncodings.find(string.encoding);
+    return it == stringEncodings.end() ? std::string_view(string.encoding)
+                                       : std::string_view(it->second.first);
   }
 
   std::vector<Instruction> disassemble(std::uint64_t address,
@@ -1475,10 +1607,10 @@ struct Listing::Impl {
     }
     if (const auto *string = stringAt(address);
         string && string->address >= region.start &&
-        string->address + string->length < region.end) {
+        string->address + string->length + string->unit <= region.end) {
       item.kind = ItemKind::String;
       item.start = string->address;
-      item.size = string->length + 1;
+      item.size = string->length + string->unit;
       item.index = static_cast<std::size_t>(string - strings.data());
     }
     return item;
@@ -1979,6 +2111,16 @@ struct Listing::Impl {
     const auto comment =
         takeString(neverd_annotation_get(session, instruction.address));
     appendComment(text, comment, ListingRole::Comment, base - NameColumnWidth);
+    // Without a comment of its own, an instruction quotes the string it
+    // refers to.
+    if (comment.empty())
+      for (const auto &[to, kind] : instruction.refs)
+        if (const auto *string = stringAt(to);
+            string && string->address == to) {
+          appendComment(text, quoteString(string->value),
+                        ListingRole::AutoComment, base - NameColumnWidth);
+          break;
+        }
     std::optional<std::uint64_t> target = instruction.target;
     if (!target && instruction.refs.size() == 1)
       target = instruction.refs.front().first;
@@ -2046,10 +2188,31 @@ struct Listing::Impl {
     }
     case ItemKind::String: {
       const auto &string = strings[item.index];
-      head.append(string.name, ListingRole::DummyDataName, item.start);
-      head.padTo(base);
-      head.append("db", ListingRole::Directive);
-      head.padTo(base + 3);
+      const auto spelling = encodingSpelling(string);
+      if (spelling.empty()) {
+        head.append(string.name, ListingRole::DummyDataName, item.start);
+        head.padTo(base);
+        head.append("db", ListingRole::Directive);
+        head.padTo(base + 3);
+      } else {
+        // A string in another encoding names it on its own line, under a
+        // label: `text "UTF-16LE", 'Wide',0`.
+        StyledText label = lead(nameBase);
+        label.append(string.name, ListingRole::DummyDataName, item.start);
+        label.append(":", ListingRole::Punctuation);
+        addNamedLine(out, item, nameBase, std::move(label), item.start,
+                     "label");
+        head.padTo(base);
+        head.append("text ", ListingRole::Directive);
+        head.append("\"" + std::string(spelling) + "\", ", ListingRole::String);
+        head.append(escapeString(string.value, MaxStringDisplay),
+                    ListingRole::String);
+        appendComment(head,
+                      takeString(neverd_annotation_get(session, item.start)),
+                      ListingRole::Comment, nameBase);
+        addLine(out, item, item.start, "data", std::move(head));
+        return;
+      }
       head.append(escapeString(string.value, MaxStringDisplay),
                   ListingRole::String);
       break;
@@ -2083,7 +2246,7 @@ struct Listing::Impl {
       target = to;
       // A pointer to a string quotes it.
       if (const auto *string = stringAt(to); string && string->address == to)
-        comment = escapeString(string->value, MaxStringDisplay);
+        comment = quoteString(string->value);
       break;
     }
     case ItemKind::Align:
@@ -2286,6 +2449,13 @@ Listing::~Listing() = default;
 void Listing::invalidate() {
   impl_->built = false;
   ++impl_->generation;
+}
+
+void Listing::setStringOptions(std::string options) {
+  if (impl_->stringOptions == options)
+    return;
+  impl_->stringOptions = std::move(options);
+  invalidate();
 }
 
 std::uint64_t Listing::generation() const { return impl_->generation; }

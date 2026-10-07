@@ -297,6 +297,12 @@ NEVERD_ACTION(OptionsGeneral, QT_TRANSLATE_NOOP("Actions", "&General..."), "",
               "options",
               QT_TRANSLATE_NOOP("Actions",
                                 "Listing, analysis and language options"))
+NEVERD_ACTION(OptionsStrings,
+              QT_TRANSLATE_NOOP("Actions", "S&tring literals..."), "",
+              "strings",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Choose the encodings and minimum length of "
+                                "the strings the listing shows"))
 NEVERD_ACTION(OptionsColors, QT_TRANSLATE_NOOP("Actions", "&Colors..."), "",
               "colors", QT_TRANSLATE_NOOP("Actions", "Choose the color theme"))
 NEVERD_ACTION(OptionsFont, QT_TRANSLATE_NOOP("Actions", "&Font..."), "", "font",

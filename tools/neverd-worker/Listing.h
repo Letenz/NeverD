@@ -37,6 +37,9 @@ public:
 
   /// Names, comments or function boundaries changed.
   void invalidate();
+  /// The neverd_strings_ex_json options strings are found with, as JSON
+  /// text; empty for the engine's defaults.
+  void setStringOptions(std::string options);
   /// `listing`: lines around an address.
   Json page(const Json &payload);
   /// `overview`: address classes in equal linear buckets.
