@@ -199,6 +199,11 @@ NEVERD_WINDOWS_PROCESS_TEXT(EnvironmentTimeout,
 NEVERD_WINDOWS_PROCESS_TEXT(Service, "unregistered Windows service entry")
 NEVERD_WINDOWS_PROCESS_TEXT(ServiceArguments,
                             "unsupported Windows API arguments: ")
+NEVERD_WINDOWS_PROCESS_TEXT(DelayArguments, "invalid delay arguments")
+NEVERD_WINDOWS_PROCESS_TEXT(DelayAlertable, "alertable delay is unsupported")
+NEVERD_WINDOWS_PROCESS_TEXT(DelayAbsolute, "absolute delay is unsupported")
+NEVERD_WINDOWS_PROCESS_TEXT(DelayLimit,
+                            "relative delay exceeds the host wait limit")
 NEVERD_WINDOWS_PROCESS_TEXT(ImageFile, "cannot read the loaded program file")
 NEVERD_WINDOWS_PROCESS_TEXT(
     Access, "Windows API argument is not accessible user memory")

@@ -594,7 +594,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
 NEVERD_EMULATION_DOC_TOKEN(
     NativeDriverCI,
-    "4933 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5294")
+    "4935 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5296")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -1551,3 +1551,35 @@ NEVERD_EMULATION_DOC_TOKEN(WHPDirectCaptureTests,
 NEVERD_EMULATION_DOC_TOKEN(
     WHPDirectCaptureTests,
     "FailedDirectCapturePreservesStateAndForcesFullRetry")
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(WindowsProcessClockPolicy, "docs/process-emulation.md")
+NEVERD_EMULATION_DOC_PATH(WindowsProcessClockPolicy,
+                          "docs/{locale}/process-emulation.md")
+NEVERD_EMULATION_DOC_PATH(WindowsProcessClockOwner, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(WindowsProcessClockOwner,
+                          "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(WindowsProcessClockTests, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WindowsProcessClockTests,
+                          "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockPolicy, "WindowsProcessTime.cpp")
+NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockPolicy, "QueryPerformanceFrequency")
+NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockPolicy, "100 ns")
+NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockPolicy, "10 MHz")
+NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockPolicy, "500 ms")
+NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockPolicy, "BOOLEAN")
+NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockOwner, "WindowsProcessTime.cpp")
+NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockOwner, "WindowsProcess.def")
+NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockOwner, "std::chrono")
+NEVERD_EMULATION_DOC_TOKEN(
+    WindowsProcessClockTests,
+    "WindowsProcess.ClockServicesUseConsistentUnitsAndPreserveLastError")
+NEVERD_EMULATION_DOC_TOKEN(
+    WindowsProcessClockTests,
+    "WindowsProcess.UnmodeledDelaysStopWithoutClaimingCompletion")
+NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockTests,
+                           "NativeWindowsOracleRunsTheSameExecutable")
+NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockTests, "BOOLEAN")
+#endif
