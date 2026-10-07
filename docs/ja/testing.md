@@ -1313,6 +1313,8 @@ checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト�
 
 `WindowsProcess.ClockServicesUseConsistentUnitsAndPreserveLastError` は元の x64/ARM64 PE で `QueryPerformanceFrequency`、単調カウンター、FILETIME、循環 tick 数、相対待機を実行します。`WindowsProcess.UnmodeledDelaysStopWithoutClaimingCompletion` は alertable 待機、正の絶対時刻、INT64_MIN 間隔が完了前に拒否されることを確認します。`NativeWindowsOracleRunsTheSameExecutable` は成功する時刻シナリオを Windows 上で直接実行します。両ゲスト回帰は Unicorn 無効の KVM/WHP 受け入れで必須です。 元のサンプルは `BOOLEAN` 引数の未使用上位ビットを明示的に汚染し、型付き 64 ビット定数で Windows ABI による紀元値と INT64_MIN の切り詰めを防ぎます。
 
+`WindowsTestExecution.def` は Unicorn ARM64 の `WindowsExclusive` 比較に `RUN_SERIAL` を指定します。他のゲスト負荷との競合を避けつつ、元の 60 s のゲスト期限と、結果・レジスター・権限・ネイティブダイジェストの全検査を保持します。
+
 `WindowsProcessLifetime` は同じ CPU と実行予算で依存順に DLL TLS コールバック、`DllMain`、続いて EXE TLS と入口を実行します。各モジュールに独立した TLS インデックスと整列済み領域を割り当て、再配置・リンク済みイメージから共有 64 KiB 領域へコピーします。TLS の予約引数はゼロ、起動／プロセス終了時の `DllMain` は不透明な非 NULL 値です。明示的なプロセス終了は初期化完了 DLL をローダーリストの逆順に切り離し、その後 EXE TLS を呼びます。EXE 初期化前でも同様です。起動時の `DllMain(FALSE)` は detach 通知なしで `0xc0000142` 終了します。障害や予算切れは後処理を捏造しません。ゲスト DLL がある PE 入口の return は未対応のスレッド終了を必要とするため明示停止します。非ゼロの `SizeOfZeroFill` は未対応ですが、実際の TLS テンプレート内のゼロ初期化バイトは対応します。 入口なし DLL は TLS attach を受けますが、プロセス detach 通知は受けません。
 
 `WindowsProcessExports` は静的インポートと `GetProcAddress` で名前／序数の解決を共有し、コード、データ、別名、連鎖転送を扱います。 実際に参照する起動時の転送だけがカタログのモジュールと初期化依存関係を追加し、未使用の転送はファイルを読みません。 名前は大小文字を区別し、名前がなければ NULL／エラー 127、直接照会で序数がなければ穴を含め NULL／エラー 182、照会引数が NULL ならエラー 87、成功時は LastError を保持します。 未知のモジュールハンドルは未対応です。 有界 API 登録から提供元／名前ごとの入口を一度だけ確保します。 各イメージの現在の PE ヘッダーとエクスポートメタデータを検査し、変更や読み取り不能を拒否します。 連鎖は最大 64 項で、準備段階の残りのメタデータ予算と実行期限を共有します。 穴への転送は対象イメージのベースを返し LastError を保持します。 序数ゼロへの転送はエラー 87 です。 ベースはデータアドレスであり、イメージヘッダーの実行権限は与えません。 実行時の転送は設定カタログのモジュールをロードし、初期化完了後に照会結果を返せます。実行中のエクスポート表変更は未対応です。

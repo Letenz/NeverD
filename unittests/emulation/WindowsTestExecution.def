@@ -1,0 +1,11 @@
+//===- WindowsTestExecution.def - Windows test execution policy -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Instantiation, suite, case, backend. Retain every guest runtime budget.
+NEVERD_WINDOWS_TEST_SERIAL(
+    "Backends", "WindowsExclusive",
+    "MatchesNativeAlignmentPermissionsAndRegisterContexts", "Unicorn")
+NEVERD_WINDOWS_TEST_EXECUTION_DIAGNOSTIC(
+    "Windows test execution inventory has no valid serial rule")
