@@ -3514,3 +3514,12 @@ The fixed `MainActor: Actor` SDK contract shares a complete compiler reader betw
 Swift SDK Published enclosing-instance accessors preserve four pointer carriers: an opaque indirect result for the getter or a consumed value address for the setter, then owner, wrapped key path and storage key path. Four Swift 6.1.2 macOS/Mac Catalyst compiler and export profiles authenticate the exact getter/setter symbols and Combine providers. Neither ABI adds generic metadata or swiftself; original reference ownership, opaque value layout and frame obligations remain with their existing owners.
 
 The exact `MainActor.shared` SDK getter returns one object pointer and receives its metatype in swiftself (`x20` on ARM64, `r13` on x86-64). Four Swift 6.1.2 macOS/Mac Catalyst compiler and export profiles authenticate this complete ABI and the strong `libswift_Concurrency` provider. Ownership, executor scheduling and private-frame analysis retain their existing contracts.
+
+`LinuxPriority` owns explicit per-task nice state in the same workload's
+`LinuxServices`. Raw x64 and AArch64 priority traps use `LinuxValues.def` number
+bindings and the current OS-owned thread identity. Validated
+`LinuxPriorityOptions` supplies fixture-owned task observations and caller
+CAP_SYS_NICE/RLIMIT_NICE authority; unknown task state and group/user selection
+remain unsupported boundaries. The raw getter keeps kernel return encoding,
+and permission failures leave the task state unchanged. JSON vocabulary and
+diagnostics live in the existing process and Linux `.def` files.
