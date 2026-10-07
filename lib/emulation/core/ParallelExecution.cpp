@@ -80,6 +80,7 @@ llvm::Error MemoryProjection::beginParallelRun(MachineRunControl Control) {
       RAM.ParallelRuns.count(Thread))
     return diagnostic::error(diagnostic::Running);
   RAM.ParallelRuns.emplace(Thread, this);
+  WatchedWrite = false;
   RAM.Running = ParallelRunning = true;
   RunThread = Thread;
   ParallelControl = Control;

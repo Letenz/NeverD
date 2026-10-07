@@ -218,6 +218,52 @@ llvm::Error CheckedBackend::installHooks(BackendHooks H) {
   return llvm::Error::success();
 }
 
+llvm::Error CheckedBackend::setMemoryWriteWatches(
+    const std::vector<MemoryWriteWatch> &Watches) {
+  if (auto E = mutableMemory())
+    return E;
+  for (const auto &W : Watches)
+    if (!W.Size || W.Size - 1 > UINT64_MAX - W.Address)
+      return error(diagnostic::WriteWatchRange);
+  if (Memory->setWriteWatches(Watches))
+    ++WatchEpoch;
+  return llvm::Error::success();
+}
+
+llvm::Expected<bool> CheckedBackend::decodeInstruction(uint64_t PC) {
+  if (PC % InstructionAlignment)
+    return false;
+  size_t Count = 0;
+  for (; Count < InstructionBytes.size() && Count <= UINT64_MAX - PC; ++Count) {
+    if (Memory->check(PC + Count, 1, executionPermissions(Execute)))
+      break;
+    if (auto E = Memory->read(
+            PC + Count,
+            llvm::MutableArrayRef<uint8_t>(&InstructionBytes[Count], 1),
+            Execute))
+      return std::move(E);
+  }
+  if (!Count)
+    return false;
+  const uint8_t *Input = InstructionBytes.data();
+  uint64_t DecodePC = PC;
+  return cs_disasm_iter(Decoder, &Input, &Count, &DecodePC, Decoded);
+}
+
+llvm::Expected<uint32_t> CheckedBackend::instructionSize(uint64_t Address) {
+  if (auto E = mutableMemory())
+    return std::move(E);
+  auto Lock = Memory->lock();
+  if (!Lock)
+    return Lock.takeError();
+  auto Decoding = decodeInstruction(Address);
+  if (!Decoding)
+    return Decoding.takeError();
+  if (!*Decoding)
+    return error(diagnostic::Decode);
+  return Decoded->size;
+}
+
 std::optional<BackendFault> CheckedBackend::takeRecoverableFault() {
   return std::exchange(RecoverableFault, std::nullopt);
 }
@@ -340,27 +386,13 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
           break;
         continue;
       }
-      if (PC % InstructionAlignment) {
-        FirstFault = BackendFault{BackendFaultKind::InvalidInstruction, PC};
-        if (Hooks.InvalidInstruction)
-          Hooks.InvalidInstruction();
-        return llvm::make_error<UnsupportedExecutionError>();
-      }
-      auto &Bytes = InstructionBytes;
-      size_t Count = 0;
-      for (; Count < Bytes.size() && Count <= UINT64_MAX - PC; ++Count) {
-        if (Memory->check(PC + Count, 1, executionPermissions(Execute)))
-          break;
-        if (auto E = Memory->read(
-                PC + Count, llvm::MutableArrayRef<uint8_t>(&Bytes[Count], 1),
-                Execute))
-          return E;
-      }
-      if (!Count)
-        return access(PC, 1, Execute, false, true);
-      const uint8_t *Input = Bytes.data();
-      uint64_t DecodePC = PC;
-      if (!cs_disasm_iter(Decoder, &Input, &Count, &DecodePC, Decoded)) {
+      auto Decoding = decodeInstruction(PC);
+      if (!Decoding)
+        return Decoding.takeError();
+      if (!*Decoding) {
+        if (!(PC % InstructionAlignment) &&
+            Memory->check(PC, 1, executionPermissions(Execute)))
+          return access(PC, 1, Execute, false, true);
         FirstFault = BackendFault{BackendFaultKind::InvalidInstruction, PC};
         if (Hooks.InvalidInstruction)
           Hooks.InvalidInstruction();
@@ -398,6 +430,8 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
       }
       if (FirstFault)
         return error(diagnostic::Faulted);
+      if (Memory->takeWatchedWrite() && Hooks.MemoryWritten)
+        Hooks.MemoryWritten();
     }
   } catch (...) {
     // A secondary observer failure must not replace the original guest fault.

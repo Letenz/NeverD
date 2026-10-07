@@ -15,15 +15,16 @@
 #include <iterator>
 
 namespace neverd::emulation {
-llvm::Expected<uint64_t> buildX64PageTables(
-    MemoryProjection &Memory, bool UserMode, bool ExceptionMonitor,
-    llvm::ArrayRef<ExecutionWatch> NoExecutePages, uint64_t WatchEpoch) {
-  // The watch epoch occupies the bits above the gateway variant, so a change
-  // to the non-executable overlay rebuilds the projection and never reuses it
-  // for a build without the overlay.
+llvm::Expected<uint64_t>
+buildX64PageTables(MemoryProjection &Memory, bool UserMode,
+                   bool ExceptionMonitor,
+                   llvm::ArrayRef<ExecutionWatch> NoExecutePages,
+                   uint64_t WatchEpoch, bool WatchWrites) {
+  // The watch epoch occupies the bits above the gateway and write variants.
+  // Neither a changed overlay nor a temporary step can reuse the other root.
   const uint64_t Variant =
       (ExceptionMonitor ? x64::gateway::ProjectionVariant : 0) |
-      (WatchEpoch << 1);
+      (WatchWrites ? 2 : 0) | (WatchEpoch << 2);
   // Watches are sorted and merged by the session. A watch can start inside a
   // page: cover any page intersecting the last range starting before its end.
   const auto watched = [&](uint64_t VA) {
@@ -87,7 +88,8 @@ llvm::Expected<uint64_t> buildX64PageTables(
       Entry |= x64::Present;
     if (UserMode && (P.Permissions & UserAccessible))
       Entry |= x64::UserPage;
-    if (P.Permissions & Write)
+    if ((P.Permissions & Write) &&
+        !(WatchWrites && Memory.writeWatched(P.Physical, x64::PageSize)))
       Entry |= x64::Writable;
     // A watched page is non-executable whatever its permissions, so a direct
     // run's first fetch into it faults at the watch boundary.

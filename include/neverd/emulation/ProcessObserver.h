@@ -85,6 +85,9 @@ public:
   threadLocalMemory() {
     return std::nullopt;
   }
+  /// The current instruction's decoded extent, using the CPU's fetch rules.
+  /// Missing decoding support is an error, never a guessed instruction size.
+  virtual llvm::Expected<uint32_t> instructionSize(uint64_t Address);
 };
 
 /// Receives a process at its start and at each execution watch.
@@ -112,6 +115,14 @@ public:
   virtual llvm::Error exporting(ProcessView &Process,
                                 const ProcessExportView &Export,
                                 std::optional<uint64_t> ReturnAddress);
+  /// The model is about to resume the CPU. This includes changes made by OS
+  /// services while stopped and committed guest writes that yielded the CPU.
+  /// A returned set replaces execution watches; std::nullopt keeps them.
+  virtual llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+  resuming(ProcessView &Process);
+  /// RAM ranges to invalidate after a guest write, through any physical alias.
+  /// The model replaces these watches before each CPU resume.
+  virtual std::vector<MemoryWriteWatch> writeWatches() const { return {}; }
 };
 
 /// As emulateProcess, under observation. Profiles without an observation
