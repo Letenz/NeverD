@@ -2696,6 +2696,8 @@ A missing library anywhere in a `GetProcAddress` forwarder chain returns error 1
 
 `OpaqueExportCallsAreRepairedBeforeTheExplicitStop` restores a pure call without bypassing an unknown API. `ExportObservationIncludesTheOpaqueBoundary` covers static, dynamic and ordinal exports without changing execution or service logs. `OpaqueExportObservationPreservesAnUnreadableReturn` requires missing return metadata to remain absent.
 
+`ExportIdentitySurvivesRebindingAndLateResolution` changes opaque-export binding order and resolves an export after entry. Checked/direct x64 cases require the correct API identity and preserve the explicit unsupported-service stop.
+
 Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` and current-process `FlushInstructionCache`. The OS layer owns reservations; `AddressSpace` remains the authority for committed pages, permissions and backing. Tests cover dynamic code rewriting, access faults and memory-budget reuse.
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).

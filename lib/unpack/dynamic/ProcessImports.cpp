@@ -155,11 +155,11 @@ ImportObserver::started(ProcessView &Process) {
   }
   llvm::sort(Gates);
   Gates.erase(std::unique(Gates.begin(), Gates.end()), Gates.end());
+  // A discovered entry may only become bound after program invocation. The
+  // address seeds a watch; only its live identity can authorize a repair.
   if (!Candidates.empty())
     for (uint64_t Gate : Gates)
-      if (llvm::any_of(Process.exports(),
-                       [&](const auto &E) { return E.Address == Gate; }))
-        Watches.push_back({Gate, 1});
+      Watches.push_back({Gate, 1});
 
   return Watches;
 }
@@ -213,9 +213,17 @@ llvm::Error ImportObserver::complete(ProcessView &Process, uint64_t PC) {
   if (Pure && ReturnPC >= Base + C.RVA &&
       ReturnPC - (Base + C.RVA) <= C.Capacity)
     Site = x64::importSite(Code, ReturnPC - Base, !Call, C.RVA, Destination);
-  Pure &= bool(Site) && llvm::any_of(Process.exports(), [&](const auto &E) {
-            return E.Address == Gate;
-          });
+  std::optional<ExportBinding> Target;
+  if (Pure && Site)
+    for (auto &Export : Process.exports()) {
+      if (Export.Address != Gate)
+        continue;
+      ExportBinding Binding{std::move(Export.Module), std::move(Export.Name),
+                            Export.Ordinal};
+      if (!Target || Binding < *Target)
+        Target = std::move(Binding);
+    }
+  Pure &= bool(Site) && bool(Target);
   if (Pure && C.Proven)
     Pure = C.Proven->Size == Site->Size && C.Proven->Register == Site->Register;
   if (Pure) {
@@ -227,12 +235,13 @@ llvm::Error ImportObserver::complete(ProcessView &Process, uint64_t PC) {
   if (Pure) {
     C.Proven = *Site;
     if (!llvm::any_of(Imports, [&](const auto &I) {
-          return I.ReturnAddress == ReturnPC && I.Gate == Gate &&
+          return I.ReturnAddress == ReturnPC && I.Target == *Target &&
                  I.InstructionAddress == Base + C.RVA;
         })) {
       if (Imports.size() == defaults::Imports)
         return failure(text::ImportLimit);
-      Imports.push_back({ReturnPC, Gate, !Call, Base + C.RVA, Destination});
+      Imports.push_back(
+          {ReturnPC, std::move(*Target), !Call, Base + C.RVA, Destination});
     }
   } else
     reject(Active->Candidate);

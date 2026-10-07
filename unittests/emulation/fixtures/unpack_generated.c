@@ -18,6 +18,9 @@ __declspec(dllimport) void ExitProcess(U32);
 __declspec(dllimport) void *GetStdHandle(U32);
 __declspec(dllimport) int WriteFile(void *, const void *, U32, U32 *, void *);
 __declspec(dllimport) void *SetUnhandledExceptionFilter(void *);
+__declspec(dllimport) void *GetModuleHandleA(const char *);
+__declspec(dllimport) void *GetProcAddress(void *, const char *);
+__declspec(dllimport) int GetSystemMetrics(int);
 
 // A protector can replace one six-byte import call with a register push and a
 // call to one of these stubs. The stub drops that push and tail-calls the
@@ -51,6 +54,7 @@ PADDED_CALL(ExitProcess)
 PADDED_CALL(GetStdHandle)
 PADDED_CALL(WriteFile)
 PADDED_CALL(SetUnhandledExceptionFilter)
+PADDED_CALL(GetSystemMetrics)
 #undef PADDED_CALL
 #endif
 
@@ -73,7 +77,26 @@ typedef U32 (*Entry)(void);
 #if defined(__x86_64__)
 // The terminator deliberately cannot validate this live program cache as IAT.
 volatile U64 CachedExport[] = {0, 0x5555555555555555ULL};
+// This independently terminated cell precedes the static import section.
+// Rebuilding it changes the order in which opaque exports receive addresses.
+#pragma section(".cache", read, write)
+__declspec(dllexport) __declspec(allocate(
+    ".cache")) volatile U64 LateImports[] = {0, 0, 0x5555555555555555ULL};
 volatile U32 AddressEffects;
+__attribute__((noinline)) static void resolveLateImport(void) {
+  if (!LateImports[0])
+    LateImports[0] =
+        (U64)GetProcAddress(GetModuleHandleA(OpaqueModule), LateExport);
+}
+__declspec(dllexport) __attribute__((naked, used)) void
+late_export_helper(void) {
+  __asm__("push %rax\n\t"
+          "mov 8(%rsp), %rax\n\t"
+          "lea 1(%rax), %rax\n\t"
+          "mov %rax, 8(%rsp)\n\t"
+          "pop %rax\n\t"
+          "jmp *LateImports(%rip)");
+}
 __declspec(dllexport) __attribute__((naked, used)) void address_helper(void) {
   __asm__("push %rax\n\t"
           "mov 8(%rsp), %rax\n\t"
@@ -224,6 +247,14 @@ opaque_program(void) {
           "call *%rax");
 }
 PROGRAM_CODE __declspec(dllexport) __attribute__((naked, used)) U32
+late_program(void) {
+  __asm__("sub $40, %rsp\n\t"
+          "call *LateImports(%rip)\n\t"
+          "mov $43, %ecx\n\t"
+          "mov __imp_ExitProcess(%rip), %rax\n\t"
+          "call *%rax");
+}
+PROGRAM_CODE __declspec(dllexport) __attribute__((naked, used)) U32
 address_previous_prefix(void) {
   __asm__("push %rbx\n\t"
           "sub $32, %rsp\n\t"
@@ -255,6 +286,10 @@ PROGRAM_CODE static U32 status(U32 Written) {
 
 PROGRAM_ENTRY U32 program(void) {
 #if defined(__x86_64__)
+  if (Pack.Mode == ReboundOpaqueCallMode || Pack.Mode == LateOpaqueCallMode) {
+    resolveLateImport();
+    __attribute__((musttail)) return late_program();
+  }
   if (Pack.Mode == OpaqueCallMode) {
     __attribute__((musttail)) return opaque_program();
   }
@@ -300,6 +335,8 @@ RELAY_ENTRY U32 relay(void) {
 // loader does when it hands control to the program it carried.
 __declspec(dllexport) U32 loader(void) {
 #if defined(__x86_64__)
+  if (Pack.Mode == ReboundOpaqueCallMode)
+    resolveLateImport();
   if ((Pack.Mode >= AddressMode && Pack.Mode <= CompactAddressMode) ||
       Pack.Mode == CallOnlyAddressMode)
     CachedExport[0] = (U64)GetStdHandle;

@@ -1349,6 +1349,8 @@ Windows ring3 は独立したネイティブ観測に従い、checked x64 の `o
 
 `OpaqueExportCallsAreRepairedBeforeTheExplicitStop` は未知 API を迂回せず純粋な呼び出しを復元します。`ExportObservationIncludesTheOpaqueBoundary` は静的・動的・序数エクスポートを確認し、実行とサービスログを維持します。`OpaqueExportObservationPreservesAnUnreadableReturn` は欠落した戻り情報を作らないことを確認します。
 
+`ExportIdentitySurvivesRebindingAndLateResolution` は未モデル化エクスポートのバインド順序を変え、エントリ後の解決も検証します。checked/direct x64 ケースは正しい API 識別情報と明示的な unsupported-service 停止を要求します。
+
 Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).

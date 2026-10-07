@@ -1445,6 +1445,8 @@ Una libreria assente nella catena di inoltro di `GetProcAddress` restituisce 127
 
 `OpaqueExportCallsAreRepairedBeforeTheExplicitStop` ripristina una chiamata pura senza eludere API sconosciute. `ExportObservationIncludesTheOpaqueBoundary` copre export statici, dinamici e ordinali senza modificare esecuzione o log dei servizi. `OpaqueExportObservationPreservesAnUnreadableReturn` richiede che il ritorno mancante resti assente.
 
+`ExportIdentitySurvivesRebindingAndLateResolution` cambia l’ordine di associazione di esportazioni opache e risolve un’esportazione dopo l’ingresso. I casi checked/direct x64 richiedono la corretta identità API e mantengono l’arresto esplicito unsupported-service.
+
 La memoria virtuale Windows aggiunge `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` e `FlushInstructionCache` per il processo corrente. Il livello OS gestisce le prenotazioni; `AddressSpace` resta responsabile delle pagine impegnate, dei permessi e della memoria sottostante. I test verificano modifiche al codice, errori di accesso e riutilizzo del budget di memoria.
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).

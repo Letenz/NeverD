@@ -1417,6 +1417,8 @@ cmake -S . -B build-native -G Ninja \
 
 `OpaqueExportCallsAreRepairedBeforeTheExplicitStop` восстанавливает чистый вызов без обхода неизвестного API. `ExportObservationIncludesTheOpaqueBoundary` покрывает статические, динамические и ординальные экспорты без изменения выполнения и журналов служб. `OpaqueExportObservationPreservesAnUnreadableReturn` требует сохранять отсутствие данных возврата.
 
+`ExportIdentitySurvivesRebindingAndLateResolution` меняет порядок связывания непрозрачных экспортов и разрешает экспорт после входа. Случаи checked/direct x64 требуют правильной идентичности API и сохраняют явную остановку unsupported-service.
+
 Виртуальная память Windows поддерживает `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` и `FlushInstructionCache` для текущего процесса. Уровень ОС управляет резервированием; `AddressSpace` остаётся единственным владельцем отображений подтверждённых страниц, прав доступа и физической памяти. Тесты проверяют изменение кода, ошибки доступа и повторное использование лимита памяти.
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).

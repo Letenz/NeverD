@@ -1295,6 +1295,8 @@ Windows ring3 依獨立原生觀測，將 checked x64 的 `operand_alignment` �
 
 `OpaqueExportCallsAreRepairedBeforeTheExplicitStop` 還原純呼叫而不繞過未知 API。`ExportObservationIncludesTheOpaqueBoundary` 涵蓋靜態、動態與序號導出，保持執行和服務日誌不變。`OpaqueExportObservationPreservesAnUnreadableReturn` 要求缺少的返回資訊保持缺少。
 
+`ExportIdentitySurvivesRebindingAndLateResolution` 改變不透明匯出的繫結順序，並在入口之後解析匯出。checked/direct x64 案例要求正確的 API 身分，並保留明確的 unsupported-service 停止。
+
 Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及目前行程的 `FlushInstructionCache`。OS 層管理保留區域，`AddressSpace` 統一管理已認可頁面、權限和實體儲存。測試涵蓋動態程式碼改寫、存取錯誤和記憶體額度回收。
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).

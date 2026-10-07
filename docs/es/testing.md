@@ -1450,6 +1450,8 @@ Una biblioteca ausente en cualquier punto de la cadena de reenvío de `GetProcAd
 
 `OpaqueExportCallsAreRepairedBeforeTheExplicitStop` restaura una llamada pura sin omitir una API desconocida. `ExportObservationIncludesTheOpaqueBoundary` cubre exports estáticos, dinámicos y por ordinal sin cambiar ejecución ni registros de servicios. `OpaqueExportObservationPreservesAnUnreadableReturn` exige mantener ausente el retorno desconocido.
 
+`ExportIdentitySurvivesRebindingAndLateResolution` cambia el orden de enlace de exportaciones opacas y resuelve una exportación después de la entrada. Los casos checked/direct x64 exigen la identidad API correcta y conservan la parada explícita unsupported-service.
+
 La memoria virtual de Windows incorpora `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` y `FlushInstructionCache` para el proceso actual. La capa OS administra las reservas; `AddressSpace` mantiene la autoridad sobre páginas confirmadas, permisos y almacenamiento. Las pruebas cubren cambios de código, fallos de acceso y reutilización del presupuesto de memoria.
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).

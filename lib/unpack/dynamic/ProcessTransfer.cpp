@@ -9,7 +9,6 @@
 #include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
-#include <tuple>
 
 namespace neverd::unpack {
 using namespace emulation;
@@ -169,15 +168,12 @@ TransferObserver::watched(ProcessView &Process, uint64_t PC) {
   }
   // Several identities may share one address. Keep a named one, in a stable
   // order, so the rebuilt directory does not depend on enumeration order.
-  const auto Key = [](const ExportBinding &B) {
-    return std::tuple(B.Name.empty(), B.Module, B.Name, B.Ordinal);
-  };
   for (auto &Export : Process.exports()) {
     ExportBinding Candidate{std::move(Export.Module), std::move(Export.Name),
                             Export.Ordinal};
     auto [Slot, Inserted] =
         Observed.Exports.try_emplace(Export.Address, Candidate);
-    if (!Inserted && Key(Candidate) < Key(Slot->second))
+    if (!Inserted && Candidate < Slot->second)
       Slot->second = std::move(Candidate);
   }
   Captured = std::move(Observed);

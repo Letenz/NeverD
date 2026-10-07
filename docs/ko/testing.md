@@ -1339,6 +1339,8 @@ Windows ring3는 독립적인 네이티브 관측에 따라 checked x64의 `oper
 
 `OpaqueExportCallsAreRepairedBeforeTheExplicitStop`는 알 수 없는 API를 우회하지 않고 순수 호출을 복원합니다. `ExportObservationIncludesTheOpaqueBoundary`는 정적·동적·서수 내보내기를 다루며 실행과 서비스 로그를 보존합니다. `OpaqueExportObservationPreservesAnUnreadableReturn`는 누락된 반환 정보를 만들지 않도록 요구합니다.
 
+`ExportIdentitySurvivesRebindingAndLateResolution`은 불투명 내보내기의 바인딩 순서를 바꾸고 진입점 이후의 확인도 검사합니다. checked/direct x64 사례는 올바른 API 식별 정보와 명시적인 unsupported-service 중단을 요구합니다.
+
 Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`와 현재 프로세스의 `FlushInstructionCache`를 지원합니다. OS 계층은 예약 영역을 소유하고 `AddressSpace`는 커밋된 페이지, 권한, 실제 저장 공간을 관리합니다. 테스트는 동적 코드 수정, 접근 오류, 메모리 한도 재사용을 검증합니다.
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).

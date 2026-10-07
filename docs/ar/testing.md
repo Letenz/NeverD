@@ -1372,6 +1372,8 @@ cmake -S . -B build-native -G Ninja \
 
 يعيد `OpaqueExportCallsAreRepairedBeforeTheExplicitStop` الاستدعاء النقي دون تجاوز API مجهولة. يغطي `ExportObservationIncludesTheOpaqueBoundary` الصادرات الثابتة والديناميكية والرقمية دون تغيير التنفيذ أو سجلات الخدمات. يطلب `OpaqueExportObservationPreservesAnUnreadableReturn` إبقاء بيانات العودة المفقودة غائبة.
 
+يغيّر `ExportIdentitySurvivesRebindingAndLateResolution` ترتيب ربط الصادرات المعتمة ويحل تصديراً بعد الدخول. تشترط حالات checked/direct x64 هوية API الصحيحة وتحافظ على التوقف الصريح unsupported-service.
+
 تضيف الذاكرة الافتراضية في Windows دعم `VirtualAlloc` و`VirtualFree` و`VirtualProtect` و`VirtualQuery` و`FlushInstructionCache` للعملية الحالية. تدير طبقة OS الحجوزات، وتبقى `AddressSpace` المرجع للصفحات الملتزم بها والصلاحيات والتخزين الفعلي. تشمل الاختبارات تعديل الشيفرة وأخطاء الوصول وإعادة استخدام ميزانية الذاكرة.
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
