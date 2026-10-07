@@ -9,6 +9,9 @@
 // A reversible projection of one loaded source page. UTF-8 byte offsets are
 // validated before conversion to Qt's UTF-16 coordinates. The worker's original
 // text remains the only source for copying/exporting or instruction navigation.
+// Regions are recognized library operations unless their "kind" names another
+// fold, such as the prelude before a definition; only library operations
+// count as foldable and follow setFolded.
 class LibraryCodeView final : public QObject {
   Q_OBJECT
   Q_PROPERTY(QString text READ text NOTIFY changed)
@@ -25,9 +28,17 @@ public:
   QVariantList mappings() const { return mappings_; }
   QVariantList regions() const;
   int foldableCount() const;
+  /// Some region, library operation or not, shows as its summary.
   bool anyFolded() const { return !folded_.isEmpty(); }
+  /// Some library operation shows as its summary.
+  bool libraryFolded() const;
+  /// Some region of any kind can fold.
+  bool canFold() const;
+  bool isFolded(const QString &id) const { return folded_.contains(id); }
   Q_INVOKABLE void toggleRegion(const QString &id);
+  /// Fold or unfold every library operation.
   Q_INVOKABLE void setFolded(bool folded);
+  void setRegionFolded(const QString &id, bool folded);
   Q_INVOKABLE QString regionAt(int position) const;
   Q_INVOKABLE int sourceLineAt(int position) const;
   Q_INVOKABLE QString originalSelection(int begin, int end) const;
@@ -46,6 +57,7 @@ private:
     QString id, summary;
     QVector<Span> spans;
     bool available = false;
+    bool library = true;
   };
   struct Segment {
     int begin, end, sourceBegin, sourceEnd;

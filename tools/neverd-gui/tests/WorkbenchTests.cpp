@@ -273,6 +273,27 @@ private slots:
     bench.action(ActionId::EditCopy)->trigger();
     QCOMPARE(QApplication::clipboard()->text(), lines);
 
+    // C opens at the definition: the includes and declarations before it fold
+    // into one line, which Keypad + expands and Keypad - folds again, and
+    // which copies as the lines it stands for.
+    pseudocode->setRepresentation(QStringLiteral("llvmc"));
+    auto *code = pseudocode->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() == 702,
+                             OpenTimeoutMs);
+    QVERIFY(code->allText().startsWith(QStringLiteral("#include <stdint.h>")));
+    QCOMPARE(code->foldableCount(), 0);
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    code->setCursorLine(0);
+    QApplication::clipboard()->clear();
+    QTest::keyClick(code, Qt::Key_C, Qt::ControlModifier);
+    QCOMPARE(QApplication::clipboard()->text(),
+             QStringLiteral("#include <stdint.h>\n#include <string.h>\n"));
+    QTest::keyClick(code, Qt::Key_Plus, Qt::KeypadModifier);
+    QCOMPARE(code->lineCount(), 704);
+    QTest::keyClick(code, Qt::Key_Minus, Qt::KeypadModifier);
+    QCOMPARE(code->lineCount(), 702);
+
     // A list copies its selected rows, by key or from the Edit menu.
     auto &model = functions->model();
     functions->table()->setFocus();

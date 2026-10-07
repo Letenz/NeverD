@@ -1285,6 +1285,18 @@ Recognized library operation; click to show its code.</source>
         <translation>%1
 Распознанная библиотечная операция; щёлкните, чтобы показать её код.</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of includes and declarations</source>
+        <translation>
+            <numerusform>%n строка включений и объявлений</numerusform>
+            <numerusform>%n строки включений и объявлений</numerusform>
+            <numerusform>%n строк включений и объявлений</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
+        <translation>Включения, вспомогательные типы и объявления, с которыми компилируется этот код; щёлкните, чтобы показать их, клавиша - на цифровой клавиатуре сворачивает их снова.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>

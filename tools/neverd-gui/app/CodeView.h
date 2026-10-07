@@ -6,6 +6,7 @@
 
 #include <QAbstractScrollArea>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QVector>
 #include <QWidget>
 #include <optional>
@@ -52,6 +53,8 @@ public:
   /// Recognized library operations that can fold into one-line summaries.
   int foldableCount() const { return library_.foldableCount(); }
   bool anyFolded() const { return library_.anyFolded(); }
+  /// Some recognized library operation shows as its summary.
+  bool libraryFolded() const { return library_.libraryFolded(); }
   void setFolded(bool folded);
   const QString &status() const { return status_; }
   /// Pages of the current function are still arriving.
@@ -80,6 +83,8 @@ protected:
 private:
   void request(int offset, quint64 serial);
   void appendPage(const QJsonObject &payload, int offset);
+  /// The library regions of the loaded function and its prelude.
+  QJsonArray foldRegions() const;
   /// Display lines from the source, folded where the user asked.
   void rebuildLines();
   /// Position in the displayed text of a line and column.
@@ -109,6 +114,9 @@ private:
   QString representation_, status_, highlight_;
   quint64 serial_ = 0;
   bool inComment_ = false, loading_ = false, foldAfterLoad_ = false;
+  bool foldPreludeAfterLoad_ = true;
+  /// The first page's prelude: lines and end_byte.
+  QJsonObject prelude_;
   int cursorLine_ = 0, cursorColumn_ = 0;
   std::optional<std::pair<int, int>> anchor_;
   QVector<int> marked_;

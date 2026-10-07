@@ -27,6 +27,8 @@ namespace {
 constexpr int PageLines = 2048;
 constexpr int Margin = 6;
 constexpr int WheelLines = 3;
+/// The fold over the lines before a C definition.
+constexpr char PreludeRegion[] = "prelude";
 
 enum class Dialect { C, IR, LLVM };
 struct Representation {
@@ -168,6 +170,7 @@ void CodeText::clear() {
   lineStarts_.clear();
   regions_ = {};
   regionsValid_ = false;
+  prelude_ = {};
   library_.reset({}, {}, {});
   lines_.clear();
   function_.reset();
@@ -193,8 +196,10 @@ void CodeText::load(Address function, const QString &representation) {
   }
   inComment_ = false;
   loading_ = true;
-  // Folding state survives a refresh of the same function as "fold all".
-  foldAfterLoad_ = same && library_.anyFolded();
+  // Folding state survives a refresh of the same function as "fold all";
+  // a new function opens at its definition, its prelude folded.
+  foldAfterLoad_ = same && library_.libraryFolded();
+  foldPreludeAfterLoad_ = !same || library_.isFolded(PreludeRegion);
   library_.reset({}, {}, {});
   emit foldingChanged();
   status_ = tr("Decompiling…");
@@ -225,9 +230,12 @@ void CodeText::request(int offset, quint64 serial) {
         loading_ = false;
         // Folding needs the whole function: regions span pages.
         library_.reset(source_, sourceRows_,
-                       regionsValid_ ? regions_ : QJsonArray(), byteOffset_);
+                       regionsValid_ ? foldRegions() : QJsonArray(),
+                       byteOffset_);
         if (foldAfterLoad_)
           library_.setFolded(true);
+        if (foldPreludeAfterLoad_)
+          library_.setRegionFolded(PreludeRegion, true);
         rebuildLines();
         emit foldingChanged();
         const auto mapping = payload.value("mapping_status").toString();
@@ -266,6 +274,7 @@ void CodeText::appendPage(const QJsonObject &payload, int offset) {
     regions_ = payload.value("library_regions").toArray();
     regionsValid_ =
         payload.value("library_regions").isArray() && pageOffset >= 0;
+    prelude_ = payload.value("prelude").toObject();
     byteOffset_ = std::max<qint64>(0, pageOffset);
   } else if (regionsValid_ &&
              pageOffset != byteOffset_ + source_.toUtf8().size()) {
@@ -279,8 +288,27 @@ void CodeText::appendPage(const QJsonObject &payload, int offset) {
     sourceRows_.append(row.toObject().toVariantMap());
 }
 
+QJsonArray CodeText::foldRegions() const {
+  QJsonArray regions = regions_;
+  // The prelude folds to its summary line, the newline before the
+  // definition kept.
+  const qint64 lines = prelude_.value("lines").toInteger(-1);
+  const qint64 end = prelude_.value("end_byte").toInteger(-1);
+  if (lines > 0 && end > byteOffset_ + 1)
+    regions.append(QJsonObject{
+        {"id", PreludeRegion},
+        {"kind", PreludeRegion},
+        {"display_name",
+         tr("%n lines of includes and declarations", nullptr, int(lines))},
+        {"foldable", true},
+        {"mapping_status", "mapped"},
+        {"spans", QJsonArray{QJsonObject{{"begin_byte", byteOffset_},
+                                         {"end_byte", end - 1}}}}});
+  return regions;
+}
+
 void CodeText::rebuildLines() {
-  const bool folding = !loading_ && library_.foldableCount() > 0;
+  const bool folding = !loading_ && library_.canFold();
   const QString display = folding ? library_.text() : source_;
   const QVariantList &rows = folding ? library_.mappings() : sourceRows_;
   const int previousLine = cursorLine_;
@@ -372,8 +400,14 @@ bool CodeText::event(QEvent *event) {
           continue;
         QToolTip::showText(
             help->globalPos(),
-            tr("%1\nRecognized library operation; click to show its code.")
-                .arg(region.value(QStringLiteral("display_name")).toString()),
+            id == QLatin1String(PreludeRegion)
+                ? tr("The includes, support types and declarations this code "
+                     "compiles with; click to show them, Keypad - to fold "
+                     "them again.")
+                : tr("%1\nRecognized library operation; click to show its "
+                     "code.")
+                      .arg(region.value(QStringLiteral("display_name"))
+                               .toString()),
             this);
         return true;
       }
@@ -705,6 +739,30 @@ void CodeText::keyPressEvent(QKeyEvent *event) {
     QApplication::clipboard()->setText(selectedText());
     return;
   }
+  // Keypad + shows the folded code at the cursor and Keypad - folds the
+  // prelude back, as the decompiler views of classic disassemblers do.
+  if (event->modifiers() & Qt::KeypadModifier) {
+    if (event->key() == Qt::Key_Plus) {
+      if (const QString id =
+              library_.regionAt(displayPosition(cursorLine_, cursorColumn_));
+          !id.isEmpty()) {
+        library_.setRegionFolded(id, false);
+        rebuildLines();
+        emit foldingChanged();
+      }
+      return;
+    }
+    if (event->key() == Qt::Key_Minus) {
+      if (!library_.isFolded(PreludeRegion) &&
+          cursorLine_ < prelude_.value("lines").toInteger(0)) {
+        library_.setRegionFolded(PreludeRegion, true);
+        rebuildLines();
+        moveCursor(0, 0, false);
+        emit foldingChanged();
+      }
+      return;
+    }
+  }
   QAbstractScrollArea::keyPressEvent(event);
 }
 
@@ -819,7 +877,7 @@ CodeView::CodeView(Session &session, const QString &representation,
   connect(text_, &CodeText::foldingChanged, this, [this] {
     fold_->setVisible(text_->foldableCount() > 0);
     const QSignalBlocker blocker(fold_);
-    fold_->setChecked(text_->anyFolded());
+    fold_->setChecked(text_->libraryFolded());
   });
 }
 

@@ -95,8 +95,11 @@ shows the whole function and the visible area.
 **Pseudocode** (F5, Tab) and **IR** windows show C, C through LLVM, LowIR,
 MedIR, HighIR or LLVM IR of the current function and follow the disassembly
 unless their lock is set. Rows mapped to instructions move the disassembly
-cursor. Recognized library operations in C can fold into one-line summaries:
-click a summary to expand it; copy and export always use the complete code.
+cursor. C opens at the function: the includes, support types and declarations
+before its definition fold into one line. Recognized library operations in C
+can fold into one-line summaries too. Click a summary or press Keypad + on it
+to expand it; Keypad - folds the declarations again. Copy and export always
+use the complete code.
 
 C++ names read as a classic disassembler shows them: the listing keeps the
 linkage name an instruction uses and adds its demangled form as a comment

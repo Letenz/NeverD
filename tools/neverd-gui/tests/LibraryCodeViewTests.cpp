@@ -46,6 +46,38 @@ private slots:
     QVERIFY(!view.anyFolded());
   }
 
+  void preludeFoldsApartFromLibraryOperations() {
+    LibraryCodeView view;
+    const QString source =
+        "#include <stdint.h>\n\nint f(void) {\n  return size();\n}\n";
+    const int call = source.indexOf("size()");
+    auto prelude = region("prelude", 0, source.indexOf("int f") - 1);
+    prelude["kind"] = "prelude";
+    prelude["display_name"] = "2 lines of includes and declarations";
+    view.reset(source, {},
+               {prelude, region("call", call, call + int(qstrlen("size()")))});
+    // Only library operations count for the fold-all switch.
+    QCOMPARE(view.foldableCount(), 1);
+    QVERIFY(view.canFold());
+    view.setRegionFolded("prelude", true);
+    QVERIFY(view.anyFolded());
+    QVERIFY(!view.libraryFolded());
+    QVERIFY(view.text().startsWith(
+        "/* 2 lines of includes and declarations … */\nint f(void) {"));
+    view.setFolded(true);
+    QVERIFY(view.libraryFolded());
+    view.setFolded(false);
+    QVERIFY(view.isFolded("prelude"));
+    QVERIFY(!view.libraryFolded());
+    // The summary line copies as the lines it stands for.
+    const int summaryEnd = view.text().indexOf('\n');
+    QCOMPARE(view.originalSelection(0, summaryEnd),
+             QString("#include <stdint.h>\n"));
+    QCOMPARE(view.sourceLineAt(summaryEnd + 1), 2);
+    view.toggleRegion("prelude");
+    QCOMPARE(view.text(), source);
+  }
+
   void disjointSpansPreserveInterleavedCodeAndNavigation() {
     LibraryCodeView view;
     const QString source = "first\nkeep\nlast\ntail\n";
