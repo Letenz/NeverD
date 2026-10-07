@@ -47,7 +47,7 @@ Optionen sind ein JSON-Objekt bis 64 KiB. Unbekannte/null-Felder, falsche Typen,
 | `stack_size` | 1048576 | Seitenausgerichteter Stack innerhalb des Budgets |
 | `output_limit` | 1048576 | Zusammengefasste stdout/stderr-Bytes |
 | `instruction_quantum` | 1024 | Zulassungsintervall bis zur Rückgabe an die Runtime |
-| `linux_kernel` | Nicht angegeben | Explizit als nicht verfügbar beobachtete Schnittstellen des Gastkernels |
+| `linux_kernel` | Nicht angegeben | Expliziter GKI-Zweig, fester Gastaufgabenkatalog oder beobachtete fehlende Kernelschnittstellen |
 | `linux_priority` | Nicht angegeben | Explizite Nice-Werte je Task und Aufruferrechte für rohe Linux-Prioritätsdienste |
 
 `schema_version` ist 1. Der Bericht enthält Profil, Architektur, ausgewähltes Backend samt Grund, `stop_reason`, nullable `exit_status`, Diagnose, Ein-/aktuellen PC, Zähler, Service-Aufzeichnungen und letzten typisierten CPU-Ausgang. Adressen, syscall-Nummern, Registerargumente und rohe Rückgabebits sind Hex-Strings **ohne** `0x`; `stdout_hex`/`stderr_hex` erhalten NUL und ungültiges UTF-8. Ein null syscall-Ergebnis bedeutet keine modellierte Rückgabe (etwa Exit oder nicht unterstützte Anfrage), nicht erfolgreiche Null.
@@ -109,6 +109,10 @@ Die Signalnummern reichen von 1 bis 64. `rt_sigaction` und Bionic teilen denselb
 
 <a id="windows-pe64-profile"></a>
 
+`linux_kernel.gki` wählt 5.10–6.18 für `pidfd_open` und Vektorimport; Android-API-Stufen wählen keinen Kernel. `linux_kernel.tasks` enthält feste lebende Aufgaben als `{ "id": 2000, "group_leader": true }`. Weglassen lässt fremde Ziele ununterstützt, ein leeres Array kennt nur den laufenden Gruppenführer, außerhalb des Katalogs gilt ESRCH. Prioritäten müssen konsistent sein; kooperative Android-Threads sind ausgeschlossen. Die Tabelle gehört `linux_files`; GKI und ausdrücklich fehlendes pidfd widersprechen sich. Siehe [Vertrag und Grenzen](android-gki-kernels.md).
+
+Die GKI-Teilmenge umfasst auch beobachtete Prozess-CPU-Uhren und pidfd-`ppoll` mit Zeitlimit null. Letzteres verlangt eine explizite Null-timespec, eine Nullmaske und die Grenze aus `linux_files`. Es schreibt nur geordnete `revents`, ohne Zeitlimit oder Wanduhr zu verändern. Geschlossene Deskriptoren liefern POLLNVAL, lebende pidfds keine Bereitschaft. Blockieren und andere Bereitschaft bleiben ununterstützt.
+
 <!-- i18n-section: linux-clocks -->
 
 ## Explizite Gastuhren
@@ -122,9 +126,13 @@ Die optionale Eingabe `linux_time` liefert feste Zeitwerte für Linux-Systemaufr
   "timezone":{"minutes_west":-60,"dst_time":0}}}
 ```
 
-Die statischen Uhr-IDs 0–9 und 11 sind zulässig. Jede Uhr ist unabhängig; fehlende Werte bleiben unbekannt. Doppelte oder unbekannte IDs werden abgelehnt. Sekunden sind vorzeichenbehaftete 64-Bit-Werte, Nanosekunden liegen in `[0, 1000000000)`. JSON-Ganzzahlen sind auf `±9007199254740991` begrenzt; Dezimalzeichenfolgen erhalten den gesamten 64-Bit-Bereich. Zeitzonenfelder sind vorzeichenbehaftete 32-Bit-Werte. C++ verwendet `ProcessOptions::LinuxTime`; andere OS-Profile lehnen diese Option ab.
+Eingaben erlauben statische IDs 0–9 und 11 sowie negative Prozess-CPU-IDs des gewählten GKI. Doppelte Identitäten, unbekannte IDs und mehr als 16384 Werte werden abgelehnt. Sekunden sind vorzeichenbehaftete 64-Bit-Werte, CPU-Sekunden nicht negativ; Nanosekunden liegen in `[0, 1000000000)`. JSON-Ganzzahlen liegen innerhalb `±9007199254740991`, Dezimalzeichenfolgen erhalten den gesamten Bereich; Zeitzonen sind vorzeichenbehaftete 32-Bit-Werte. C++ nutzt `ProcessOptions::LinuxTime`; andere OS-Profile lehnen die Option ab.
 
-`clock_gettime`, `gettimeofday` und x64-`time` teilen diese Eingaben. Fehlende Werte, dynamische Uhren oder nicht modellierte Teilschreibzugriffe führen zum expliziten Stopp; abgeschlossene Schreibzugriffe bleiben erhalten. Zeitanpassung, Schlafen und reale Geräteuhren bleiben unmodelliert. Schreibreihenfolge, Fehler und Zeiger beschreibt der [vollständige Uhrvertrag](../process-emulation.md#explicit-guest-clocks).
+`-16006` ist SCHED für PID 2000. PROF und VIRT sind unabhängig. Die aktuellen SCHED-IDs 2, -6 (PID null) und -8006 (PID 1000) teilen einen Wert; PROF-Aliase sind -8/-8008, VIRT -7/-8007. Doppelte Aliase werden auch bei gleichem Wert abgelehnt. CPU-Sekunden sind nicht negativ, Nanosekunden normalisiert. Leerlauffortschritt ändert nur Wanduhren 0, 1 und 7; CPU-Werte bleiben fest. Aus Befehlen wird kein CPU-Verbrauch geschätzt.
+
+`advance_on_idle: true` aktiviert relatives `nanosleep` auf x64/ARM64 einschließlich benannter/variadischer Android-Wrapper. Wanduhren 0, 1 und 7 dürfen mit festen CPU-Werten bestehen; andere Arten sind bei dieser Strategie ausgeschlossen. Ausführbare Threads laufen zuerst; sind alle blockiert, geht die Zeit bis zur ersten Frist weiter. Ein einzelner Thread schreitet direkt fort. Dynamische/FD/codierte Thread-Uhren bleiben nicht unterstützt.
+
+Die eigene TID der aktuellen Aufgabe bezeichnet ebenfalls ihre Prozessgruppe, auch bei kooperativen Android-Threads ohne Fremdkatalog. Fehlende fremde PIDs und lebende Nichtführer im geschlossenen Katalog liefern `EINVAL` vor dem Ausgabezugriff. Ein ausgelassener Katalog oder fehlender Wert einer bekannten Gruppe bleibt vor der Kopie nicht unterstützt. Ungültige Arten liefern `EINVAL`, gültige Werte können beim Benutzerkopieren `EFAULT` liefern. Rohe Traps behalten negative Fehler; nur Bionic setzt errno und liefert -1. [GKI](android-gki-kernels.md).
 
 <a id="explicit-memory-files"></a>
 

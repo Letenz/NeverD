@@ -55,6 +55,14 @@ const char *processStopReasonName(ProcessStopReason Reason) {
 }
 ProcessView::~ProcessView() = default;
 ProcessObserver::~ProcessObserver() = default;
+llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+ProcessObserver::invoking(ProcessView &) {
+  return std::nullopt;
+}
+llvm::Error ProcessObserver::exporting(ProcessView &, const ProcessExportView &,
+                                       std::optional<uint64_t>) {
+  return llvm::Error::success();
+}
 
 namespace {
 llvm::Expected<ProcessResult> runProfile(const std::filesystem::path &Path,

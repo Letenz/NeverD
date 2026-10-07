@@ -25,10 +25,6 @@ constexpr Fixture Fixtures[] = {
 #undef NEVERD_UNPACK_TEST_FIXTURE
 };
 
-const std::vector<PackerEvidence> AllEvidence = {
-    PackerEvidence::UPXSectionNames, PackerEvidence::UPXPackHeader,
-    PackerEvidence::UPXEntryStub};
-
 /// Replace every occurrence of \p From, which must be present.
 void replaceAll(std::vector<uint8_t> &Bytes, llvm::StringRef From,
                 llvm::StringRef To) {
@@ -50,49 +46,23 @@ TEST(UnpackIdentify, OriginalImagesCarryNoEvidence) {
   }
 }
 
-TEST(UnpackIdentify, EveryPackedFixtureShowsEachObservation) {
+TEST(UnpackIdentify, PackedImagesNeedNoProtectorIdentity) {
   for (const auto &F : Fixtures) {
     auto Packer = identifyPacker(readFile(fixture(F.Packed)));
     ASSERT_TRUE(bool(Packer)) << llvm::toString(Packer.takeError());
-    EXPECT_EQ(Packer->Kind, PackerKind::UPX) << F.Name;
-    EXPECT_EQ(Packer->Evidence, AllEvidence) << F.Name;
+    EXPECT_EQ(Packer->Kind, PackerKind::Unidentified) << F.Name;
+    EXPECT_TRUE(Packer->Evidence.empty()) << F.Name;
   }
 }
 
-TEST(UnpackIdentify, RenamedSectionsLeaveTwoObservations) {
-  auto Bytes = readFile(fixture(PlainPacked));
-  // The stub never reads its section names; the image still runs.
-  replaceAll(Bytes, PackedSection, RenamedSection);
-  auto Packer = identifyPacker(Bytes);
-  ASSERT_TRUE(bool(Packer)) << llvm::toString(Packer.takeError());
-  EXPECT_EQ(Packer->Kind, PackerKind::UPX);
-  EXPECT_EQ(Packer->Evidence, (std::vector{PackerEvidence::UPXPackHeader,
-                                           PackerEvidence::UPXEntryStub}));
-}
-
-TEST(UnpackIdentify, OneObservationDoesNotNameThePacker) {
+TEST(UnpackIdentify, ProtectorNamesAndPackHeadersDoNotAffectValidation) {
   auto Bytes = readFile(fixture(PlainPacked));
   replaceAll(Bytes, PackedSection, RenamedSection);
   replaceAll(Bytes, PackMagic, RenamedSection);
   auto Packer = identifyPacker(Bytes);
   ASSERT_TRUE(bool(Packer)) << llvm::toString(Packer.takeError());
   EXPECT_EQ(Packer->Kind, PackerKind::Unidentified);
-  EXPECT_EQ(Packer->Evidence, std::vector{PackerEvidence::UPXEntryStub});
-}
-
-TEST(UnpackIdentify, PackHeaderIsBoundByItsChecksum) {
-  auto Bytes = readFile(fixture(PlainPacked));
-  const llvm::StringRef Magic(PackMagic);
-  auto At = std::search(Bytes.begin(), Bytes.end(), Magic.begin(), Magic.end());
-  ASSERT_NE(At, Bytes.end());
-  // The byte after the magic is covered by the checksum but not by any
-  // other check, so only the checksum can reject this header.
-  At[Magic.size()] ^= 1;
-  auto Packer = identifyPacker(Bytes);
-  ASSERT_TRUE(bool(Packer)) << llvm::toString(Packer.takeError());
-  EXPECT_EQ(Packer->Kind, PackerKind::UPX);
-  EXPECT_EQ(Packer->Evidence, (std::vector{PackerEvidence::UPXSectionNames,
-                                           PackerEvidence::UPXEntryStub}));
+  EXPECT_TRUE(Packer->Evidence.empty());
 }
 
 TEST(UnpackIdentify, MalformedImagesAreErrors) {
@@ -119,9 +89,9 @@ TEST(UnpackIdentify, ContainerWithoutAFormatModuleIsANamedError) {
             std::string::npos);
 }
 
-TEST(UnpackIdentify, StubEvidenceIsBoundToItsInstructionSet) {
-  // The protector module knows this stub for one instruction set. The same
-  // bytes in an image for another one are not evidence of that stub.
+TEST(UnpackIdentify, ValidationUsesContainerMachineWithoutInspectingStubBytes) {
+  // Validation checks the container without inventing a meaning for its
+  // machine code. ISA admission belongs to the execution layer.
   auto Bytes = readFile(fixture(PlainPacked));
   const Image Layout = readImage(Bytes);
   ASSERT_FALSE(HasFailure());
@@ -130,7 +100,7 @@ TEST(UnpackIdentify, StubEvidenceIsBoundToItsInstructionSet) {
   auto Packer = identifyPacker(Bytes);
   ASSERT_TRUE(bool(Packer)) << llvm::toString(Packer.takeError());
   EXPECT_EQ(Packer->Kind, PackerKind::Unidentified);
-  EXPECT_EQ(Packer->Evidence, std::vector{PackerEvidence::UPXSectionNames});
+  EXPECT_TRUE(Packer->Evidence.empty());
 }
 
 TEST(UnpackIdentify, SectionOutsideTheImageIsAnError) {

@@ -1,0 +1,11 @@
+//===- AndroidTestExecution.def - Android test execution policy -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Instantiation, suite, case, aggregate timeout in seconds, run serially.
+NEVERD_ANDROID_TEST_EXECUTION(
+    "OptimizationAndPacking", "AndroidFinalizers",
+    "FiniteRegistryRejectsBeforeSuccessAndCanBeReused", 120, 1)
+NEVERD_ANDROID_TEST_EXECUTION_DIAGNOSTIC(
+    "Android test execution inventory has no valid capacity rule")

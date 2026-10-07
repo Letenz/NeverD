@@ -31,6 +31,9 @@ struct NativeCallEvent {
   std::string Symbol;
   /// Present for explicitly enabled Android guest-thread scheduling.
   std::optional<uint64_t> ThreadID;
+  /// Guest return address at the call, when the ABI keeps one. A tail call
+  /// leaves the caller's return address here.
+  std::optional<uint64_t> ReturnAddress;
 };
 } // namespace neverd::emulation
 #endif

@@ -23,6 +23,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <vector>
 
 namespace neverd::emulation {
 namespace {
@@ -289,11 +290,51 @@ private:
   uint64_t SynchronizedRegisters = 0;
   bool Runnable = false;
 };
+// KVM returns zeros from CPUID until userspace installs a table. Advertise
+// the host vendor and a leaf-1 identity without XSAVE or the hypervisor bit.
+// Those two change the XSAVE buffer and the path a packer takes on real
+// hardware; the checked floating-point decoder does not accept AVX state.
+void hostCpuid(uint32_t Leaf, uint32_t Subleaf, uint32_t &EAX, uint32_t &EBX,
+               uint32_t &ECX, uint32_t &EDX) {
+  __asm__ volatile("cpuid"
+                   : "=a"(EAX), "=b"(EBX), "=c"(ECX), "=d"(EDX)
+                   : "a"(Leaf), "c"(Subleaf));
+}
+llvm::Error installUserCpuIdentity(int, int CPU) {
+  // XSAVE, OSXSAVE, AVX and the hypervisor bit. Advertising them changes the
+  // XSAVE buffer the floating-point decoder accepts.
+  constexpr uint32_t Hide = (1u << 26) | (1u << 27) | (1u << 28) | (1u << 31);
+  kvm_cpuid_entry2 Leaf[7]{};
+  hostCpuid(0, 0, Leaf[0].eax, Leaf[0].ebx, Leaf[0].ecx, Leaf[0].edx);
+  Leaf[0].function = 0;
+  Leaf[0].eax = 1;
+  hostCpuid(1, 0, Leaf[1].eax, Leaf[1].ebx, Leaf[1].ecx, Leaf[1].edx);
+  Leaf[1].function = 1;
+  Leaf[1].ecx &= ~Hide;
+  for (uint32_t I = 0; I < 5; ++I) {
+    auto &Entry = Leaf[2 + I];
+    Entry.function = 0x80000000 + I;
+    hostCpuid(Entry.function, 0, Entry.eax, Entry.ebx, Entry.ecx, Entry.edx);
+  }
+  Leaf[2].eax = 0x80000004;
+  Leaf[3].ecx &= ~Hide;
+  constexpr uint32_t Count = 7;
+  std::vector<uint8_t> Bytes(sizeof(kvm_cpuid2) + Count * sizeof(Leaf[0]));
+  auto *Info = reinterpret_cast<kvm_cpuid2 *>(Bytes.data());
+  Info->nent = Count;
+  std::memcpy(Info->entries, Leaf, sizeof(Leaf));
+  if (ioctl(CPU, KVM_SET_CPUID2, Info) < 0)
+    return diagnostic::unavailable(diagnostic::KvmCapabilities,
+                                   BackendAvailability::MissingCapability);
+  return llvm::Error::success();
+}
 } // namespace
 llvm::Expected<std::unique_ptr<X64Machine>>
 createKvmMachine(MemoryProjection &Memory) {
   auto M = std::make_unique<KvmMachine>(Memory);
   if (auto E = M->initialize(Memory.registrations()))
+    return E;
+  if (auto E = installUserCpuIdentity(M->System, M->CPU))
     return E;
   if (ioctl(M->System, KVM_CHECK_EXTENSION, KVM_CAP_XSAVE) <= 0 ||
       ioctl(M->System, KVM_CHECK_EXTENSION, KVM_CAP_MP_STATE) <= 0)

@@ -101,3 +101,5 @@ NEVERD_WDK_FIXTURE("KMDF_CHILD_WAKE", "driver_kmdf_child_wake.c", "KMDF", "0",
 NEVERD_WDK_FIXTURE("WDM_POFX", "driver_wdm_pofx.c", "WDM", "0", "")
 NEVERD_WDK_FIXTURE("WDM_USER_MAPPING", "driver_wdm_user_mapping.c", "WDM", "0",
                    "async")
+NEVERD_WDK_FIXTURE("WDM_MULTIPLE_WAIT", "driver_wdm_multiple_wait.c", "WDM",
+                   "0", "")

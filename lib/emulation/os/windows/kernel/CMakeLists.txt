@@ -84,6 +84,7 @@ target_sources(NeverDEmulation PRIVATE
   KernelRemoveLocks.cpp
   KernelModelRuntime.cpp
   KernelModelScheduling.cpp
+  KernelModelWaits.cpp
   KernelModelThreadPriorities.cpp
   KernelModelFrameworkSynchronization.cpp
   KernelModelSpinLocks.cpp

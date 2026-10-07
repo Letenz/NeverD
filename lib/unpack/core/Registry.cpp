@@ -4,21 +4,13 @@
 //
 //===----------------------------------------------------------------------===//
 #include "Format.h"
-#include "Packer.h"
-
-#include "llvm/ADT/STLExtras.h"
 
 namespace neverd::unpack {
 #define NEVERD_UNPACK_FORMAT_MODULE(Kind, Namespace)                           \
   namespace Namespace {                                                        \
   const Format &format();                                                      \
   }
-#define NEVERD_UNPACK_PACKER_MODULE(Kind, Namespace)                           \
-  namespace Namespace {                                                        \
-  const Packer &packer();                                                      \
-  }
 #include "UnpackValues.def"
-#undef NEVERD_UNPACK_PACKER_MODULE
 #undef NEVERD_UNPACK_FORMAT_MODULE
 
 llvm::ArrayRef<const Format *> formats() {
@@ -28,21 +20,6 @@ llvm::ArrayRef<const Format *> formats() {
 #undef NEVERD_UNPACK_FORMAT_MODULE
   };
   return Modules;
-}
-
-llvm::ArrayRef<const Packer *> packers() {
-  static const Packer *const Modules[] = {
-#define NEVERD_UNPACK_PACKER_MODULE(Kind, Namespace) &Namespace::packer(),
-#include "UnpackValues.def"
-#undef NEVERD_UNPACK_PACKER_MODULE
-  };
-  return Modules;
-}
-
-const Packer *packerOf(PackerKind Kind) {
-  const auto Found = llvm::find_if(
-      packers(), [&](const Packer *P) { return P->kind() == Kind; });
-  return Found == packers().end() ? nullptr : *Found;
 }
 
 llvm::Expected<const Format *> formatOf(llvm::ArrayRef<uint8_t> File) {

@@ -14,6 +14,7 @@
 #include "../driver/DriverImage.h"
 #include "KernelException.h"
 #include "KernelModelRuntime.h"
+#include "KernelWaits.h"
 #include "WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverProfile.h"
@@ -606,6 +607,9 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
   for (const auto &[Start, Length] : FreedRanges)
     if (Address < Start + Length && Start < End)
       return modelError("guest access to a freed model object or allocation");
+  for (const auto &[Range, References] : WaitBlockReferences)
+    if (References && Address < Range.first + Range.second && Range.first < End)
+      return modelError(kernel_wait::OpaqueBlocks);
   if (IncludeDispatcher)
     if (auto E = Dispatcher.validateGuestAccess(Address, Size, IsWrite))
       return E;

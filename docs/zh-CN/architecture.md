@@ -556,6 +556,8 @@ Windows 模型还管理独立的非分页池 MDL；描述符释放不会释放�
 
 `KernelDispatcher` 按逻辑线程维护 mutex 的递归所有权。`KernelModel` 为延迟的 `KeWaitForSingleObject` 获取保存等待线程，并让 APC 查询和 `KeReleaseMutex` 使用相同身份；嵌套栈退役保留所有权，最外层返回仍执行生命周期检查。
 
+`KernelModelWaits` 统一负责单对象／多对象等待登记、线程引用、截止时间及调用方不透明 `KWAIT_BLOCK` 的生命周期。`KernelDispatcher` 验证完整集合后才提交信号、计数和 mutex 更改；`KernelScheduler` 对选中的同步定时器信号整批预检和消耗。 `WaitRegistrations` 保存这一权威记录。 每次延后等待都有不复用的标识和不可变的捕获状态；轮询已完成或被篡改的等待时，会在获取信号或释放引用之前报错。
+
 `KernelModelDeviceStack` 用单一记录管理每个设备的驱动所有者、分配、上下层邻居、待删除状态和内部引用。来宾 `NextDevice` 枚举链与宿主拥有的附着图含义不同。名称解析保留具名下层设备作为 `FILE_OBJECT` 和报告身份，选择当前栈顶进行初始派发及 READ/WRITE 缓冲配置，并保存保活整条路径的引用。拆链或删除不能使请求／回调仍持有的设备失效；公开 `ReferenceCount` 仍只计算打开句柄。
 
 `KernelModelIRPStack` 管理原始来宾数据包的有界栈游标、确切目标派发和完成展开；内联 Copy/Skip/SetCompletion 写入仍是权威数据。派发状态、完成回调控制值和最终 `IoStatus` 分离，pending 可以在派发返回后传播。`STATUS_MORE_PROCESSING_REQUIRED` 保留数据包、MDL 和缓冲区，直到继续执行并到达最终展开边界；这也适用于嵌套完成。`KernelGuestCall` 携带子系统所有者和局部 token，防止 WDM／WDF 续接身份碰撞；`DriverSession` 保存 CPU 帧和继承的 IRQL。一个来宾驱动可附着于单独拥有的场景 PDO；驱动自行分配的 IRP 仍不支持。WDF 附着／转发、活动栈附加、中间层拆除、改变主功能及路径外目标仍不支持。 在调用上层完成回调之前，已消耗的下层栈位置会被清零。
@@ -1175,7 +1177,13 @@ Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
-`lib/unpack` 分四层恢复加壳镜像。`core` 负责编排和模块注册表；它不指名任何容器、指令集、来宾系统或保护器。`format/pe` 校验一种容器，并把观察到的内存重新写成该容器的文件。`packers/upx` 保存它所列出的容器和指令集的静态外壳知识。`dynamic` 通过 `observeProcess` 观察来宾进程：`Observation.def` 把每种容器与指令集映射到一个进程配置，并给出每种指令集的栈指针和指令窗口。新增一个目标只需一行表项和一个模块目录，表中没有对应行的输入会被按名称拒绝。`ExecutionSession` 负责执行监视；`ProcessObserver` 读取已停止的进程并选择下一个停止点，但不能改变来宾状态。模拟层只知道 `defer_unmodeled`，它把未建模的导入绑定到一旦执行就停止的不透明入口。参见[脱壳](unpack.md)。
+`lib/unpack` 分四层恢复加壳镜像。`core` 负责编排和格式注册表。`format/pe` 校验容器并重建观察到的内存、导入和元数据；`PETLS.cpp` 依据加载器分配信息和实际观察到的回调校验替换的 TLS 记录。不使用保护器注册表或静态外壳签名选择入口。`dynamic` 通过 `observeProcess` 观察来宾进程：`Observation.def` 把每种容器与指令集映射到一个进程配置，并给出每种指令集的栈指针和指令窗口。新增一个目标只需一行表项和一个模块目录，表中没有对应行的输入会被按名称拒绝。`ExecutionSession` 负责执行监视；`ProcessObserver` 读取已停止的进程并选择下一个停止点，但不能改变来宾状态。模拟层只知道 `defer_unmodeled`，它把未建模的导入绑定到一旦执行就停止的不透明入口。参见[脱壳](unpack.md)。 延迟加载允许可执行回调或入口目标位于零填充内存，由先前的初始化器生成其代码。回调数组和 TLS 分配元数据仍要求经过校验的文件内容；普通严格加载保留文件覆盖检查。操作系统模型提供调用归属，并在准备调用或恢复挂起的调用者时通知观察器。转移监视在这些边界重新布置，覆盖回调与生成入口同处一页的情况。
+
+`arch/X64Imports.cpp` 统一负责 x64 导入指令的解码和生成。`dynamic/ProcessImports.cpp` 通过只读进程观察证明纯导出调用和地址加载结果；PE 写入器消费这些证据，不重复定义指令规则。
+
+导出地址只属于一次进程运行。辅助例程的证据携带证明该行为时解析出的模块和导出名称或序号；PE 写出层按身份值比较。发现阶段的地址可以在入口之后才绑定，但只有本轮运行的有效导出身份才能授权修复。
+
+`ProcessObserver::exporting` 在已建模 API 产生效果或不透明导出导致停止之前，提供已识别的导出及可选 ABI 返回地址。缺失的返回信息保持缺失，不编造未知签名或结果。观察器报错会在 API 效果产生前停止调度。
 
 原生依赖发现仅在当前完整 LowIR 和不可变指令共同证明精确、已解析的链式代码指针槽时，才跟随 ARM64 间接调用。独立的代码指针读取器检查唯一只读存储、冲突修正及当前函数入口；普通数据指针读取器保持原有边界。有界追踪限定在一个基本块内，跨调用保留寄存器前必须取得当前运行时或原生 ABI，包括使用特定寄存器传参的 ARC 导入。帧重载、未知调用和不完整证据仍未解析。依赖清单保留原始间接调用位置，本身不绑定其 ABI，也不授权发布源码。
 
@@ -1408,3 +1416,17 @@ Swift SDK Published 的 enclosing-instance 访问器保留四个指针载体：�
 `LinuxPriority` 在同一工作负载的 `LinuxServices` 中统一管理显式的逐任务 nice 状态。x64 与 AArch64 原始优先级陷阱使用 `LinuxValues.def` 的编号绑定和 OS 所有的当前线程身份。经校验的 `LinuxPriorityOptions` 提供测试任务观察值及调用者的 CAP_SYS_NICE／RLIMIT_NICE 权限；未知任务状态和组／用户选择仍不支持。原始查询保留内核返回编码，权限失败不改变任务状态。JSON 字段与诊断由现有进程和 Linux `.def` 文件声明。
 
 `LinuxUnavailableSyscalls.def` 统一声明公开的缺失观察标识、输入名称、架构编号及选定可选内核调用的固定参数数量。`LinuxKernelOptions` 是显式测试观察值；共享 Linux 内核服务仅在观察值声明调用缺失时返回 ENOSYS。目录不提供调用实现，也不根据 Android API 级别推断可用性。JSON 校验与配置准入在加载前完成；未列出及可用但未建模的调用仍明确不支持。
+
+帧偏移证明键从原始 64 位地址的顶层和式移出常量偏置，再减去同一个入口帧根。首次证明保留完整谓词和既有余项表达式。完成域入缓存前减去偏置，命中时加回当前请求的偏置，保持模回绕、空域和非唯一性。键依据原地址构造，因此有界余项改写在二元与多元和式之间改变形状不会改变证明身份。所有新节点均计入既有节点上限。
+
+## 已发布 Android GKI 内核契约
+
+`LinuxGKIKernels.def` 统一管理已发布分支、`pidfd_open` 标志、非首领错误及 iovec 导入策略。`LinuxKernelOptions` 显式选择版本并拥有可选的固定任务清单；省略清单时外部目标仍不支持。`LinuxServices` 分派调用，`LinuxFiles` 统一拥有文件和进程描述符，`LinuxOutput` 复用版本化向量校验，`LinuxPIDFD` 在分配描述符前检查目标类别。共享准入拒绝矛盾的优先级观察值及协作式 Android 线程组合；不查询宿主进程。详见[已发布 GKI 契约](android-gki-kernels.md)。
+
+`LinuxCPUClock` 解码进程 CPU 身份并校验已发布 GKI 的任务观察值，在访问输出前解析当前任务的进程组别名及外部组首领。`LinuxClock` 规范化样本并拒绝重复别名。空闲策略只推进声明的墙钟，CPU 样本保持固定；宿主时钟和指令计量均不提供隐式观察值。
+
+`LinuxPoll` 复用 `LinuxFiles` 的描述符所有者进行零超时 pidfd 查询；先导入超时和描述符元数据，检查声明的限额，再通过共享用户复制策略按序提交 `revents`。固定存活观察值不推断退出、阻塞等待、临时掩码或其他描述符的就绪状态。
+
+## 移动端源码组装
+
+Objective-C 源码导出器对完整原生单元和各方法单元同时关闭 `CEmitterOptions::EmitRecordGuards` 与 `CEmitterOptions::UseUnalignedPointers`。精确宽度的字节复制保留非对齐内存访问语义，并使生成的宏不进入移动端解析器；条件指令和修改宏的指令仍被拒绝。

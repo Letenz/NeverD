@@ -65,7 +65,7 @@ struct HostState {
   const MetadataCorruption *CorruptMetadata = nullptr;
   unsigned Entries = 0, Exception = x64::DebugVector;
   bool ChangeControls = false, PoisonPadding = false,
-       OmitPacketMetadata = false;
+       OmitPacketMetadata = false, CancelledExit = false;
 
   bool boundary(Stage Current) {
     if (Current == StopAt)
@@ -174,7 +174,8 @@ struct HostState {
     auto &Self = *static_cast<HostState *>(Handle);
     ++Self.Entries;
     auto &Exit = *static_cast<WHV_RUN_VP_EXIT_CONTEXT *>(Bytes);
-    Exit.ExitReason = WHvRunVpExitReasonException;
+    Exit.ExitReason = Self.CancelledExit ? WHvRunVpExitReasonCanceled
+                                         : WHvRunVpExitReasonException;
     Exit.VpException.ExceptionType = Self.Exception;
     if (Self.Exception == x64::DebugVector) {
       ++Self.Registers[WHvX64RegisterRax].Reg64;
@@ -242,6 +243,11 @@ protected:
         MachineRunControl{std::chrono::steady_clock::time_point::max(),
                           &Target.Stop}
             .forNativeStep());
+  }
+  llvm::Error run() {
+    return Host->run(
+        State, Root,
+        {std::chrono::steady_clock::time_point::max(), &Target.Stop});
   }
   static X64MachineState advanced(X64MachineState Before) {
     ++Before.reg(X64Register::AX);
@@ -392,6 +398,54 @@ TEST_P(WhpStateTransfer, CancelledCapturePreservesStateAndForcesFullRetry) {
     Target.StopAt = Stage::None;
     Target.Stop = false;
     ASSERT_NO_FATAL_FAILURE(expectFullRetry(Before));
+  }
+}
+TEST_P(WhpStateTransfer, CancelledDirectRunPublishesACompleteBoundary) {
+  const auto Before = State;
+  Target.CancelledExit = true;
+  Target.StopAt = Stage::Entry;
+  auto E = run();
+  EXPECT_TRUE(E.isA<MachineInterruptedError>());
+  llvm::consumeError(std::move(E));
+  EXPECT_EQ(State, advanced(Before));
+  Target.CancelledExit = false;
+  Target.StopAt = Stage::None;
+  Target.Stop = false;
+  const auto Captured = State;
+  ASSERT_NO_FATAL_FAILURE(expectFullRetry(Captured));
+}
+TEST_P(WhpStateTransfer, FailedDirectCapturePreservesStateAndForcesFullRetry) {
+  auto Try = [&] {
+    const auto Before = State;
+    Target.CancelledExit = true;
+    Target.StopAt = Stage::Entry;
+    auto E = run();
+    EXPECT_TRUE(bool(E));
+    EXPECT_FALSE(E.isA<MachineInterruptedError>());
+    llvm::consumeError(std::move(E));
+    EXPECT_EQ(State, Before);
+    Target.CancelledExit = false;
+    Target.StopAt = Target.Failure = Stage::None;
+    Target.Stop = false;
+    Target.CaptureFailureAt.reset();
+    Target.CorruptMetadata = nullptr;
+    ASSERT_NO_FATAL_FAILURE(expectFullRetry(Before));
+  };
+  for (const auto Failure :
+       {Stage::RegisterCapture, Stage::XsaveCapture, Stage::MetadataCapture}) {
+    SCOPED_TRACE(unsigned(Failure));
+    Target.Failure = Failure;
+    ASSERT_NO_FATAL_FAILURE(Try());
+  }
+  for (unsigned I = 0; I < FullCaptureCount; ++I) {
+    SCOPED_TRACE(I);
+    Target.CaptureFailureAt = I;
+    ASSERT_NO_FATAL_FAILURE(Try());
+  }
+  for (const auto &Corruption : Corruptions) {
+    SCOPED_TRACE(unsigned(Corruption.Register));
+    Target.CorruptMetadata = &Corruption;
+    ASSERT_NO_FATAL_FAILURE(Try());
   }
 }
 TEST_P(WhpStateTransfer, ExceptionsOutrankCancellationAndInvalidateReuse) {

@@ -180,6 +180,38 @@ private:
   llvm::Expected<bool> access(uint64_t Address, uint64_t Size, unsigned Rights);
   llvm::Expected<std::optional<uint64_t>> heap(const Service &,
                                                const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>> openImage(const Service &,
+                                                    const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>>
+  createSection(const Service &, const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>> mapSection(const Service &,
+                                                     const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>> unmapSection(const Service &,
+                                                       const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>> closeHandle(const Service &,
+                                                      const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>>
+  protectMemory(const Service &, const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>> querySystem(const Service &,
+                                                      const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>> queryProcess(const Service &,
+                                                       const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>> queryThread(const Service &,
+                                                      const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>> setThread(const Service &,
+                                                    const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>> delay(const Service &,
+                                                const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>> clock(const Service &,
+                                                const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>>
+  encodePointer(const Service &, const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>>
+  criticalSection(const Service &, const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>> crt(const Service &,
+                                              const NativeCallEvent &);
+  llvm::Expected<std::optional<uint64_t>> toolhelp(const Service &,
+                                                   const NativeCallEvent &);
   llvm::Expected<std::optional<uint64_t>> environment(const Service &,
                                                       const NativeCallEvent &);
   llvm::Expected<std::u16string> readWide(uint64_t Address, uint64_t Limit);
@@ -197,6 +229,8 @@ private:
   const ExecutionBudget &Budget;
   ExceptionDispatcher &Exceptions;
   std::bitset<value::DynamicTLSCount> TLSSlots;
+  std::bitset<value::DynamicTLSCount> FLSSlots;
+  std::map<uint32_t, uint64_t> FLSValues;
   struct Allocation {
     uint64_t Size, MappedSize;
     bool EnvironmentSnapshot = false;
@@ -206,6 +240,31 @@ private:
   llvm::Expected<uint64_t> reallocateHeap(uint64_t Address, uint64_t Size,
                                           uint32_t Flags);
   std::map<uint64_t, Allocation> Allocations;
+  uint64_t NextCreatedHeap = value::CreatedHeapBase;
+  uint64_t CommandLineA = 0;
+  std::map<uint64_t, bool> ThreadSnapshots;
+  uint64_t NextThreadSnapshot = value::ThreadSnapshotBase;
+  uint32_t ThreadErrorMode = 0;
+  bool knownHeap(uint64_t Handle) const {
+    if (Handle == value::HeapHandle)
+      return true;
+    return Handle >= value::CreatedHeapBase && Handle < NextCreatedHeap &&
+           (Handle - value::CreatedHeapBase) % value::CreatedHeapStride == 0;
+  }
+  struct OpenedFile {
+    std::filesystem::path Path;
+    uint64_t Size = 0;
+  };
+  struct SectionObject {
+    std::filesystem::path Path;
+    uint64_t Size = 0;
+  };
+  struct MappedView {
+    uint64_t Size = 0;
+  };
+  std::map<uint64_t, OpenedFile> Files;
+  std::map<uint64_t, SectionObject> Sections;
+  std::map<uint64_t, MappedView> Views;
 };
 } // namespace neverd::emulation::windows_process
 #endif

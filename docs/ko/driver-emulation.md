@@ -355,6 +355,7 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `KeSetPriorityThread`, `KeQueryPriorityThread` | `PASSIVE_LEVEL` 실행 우선순위이며 1..31을 설정하고 이전 값을 반환합니다. 결정적 초기값은 8이고 알려진 스레드 객체가 필요합니다. `scheduling`으로 우선순위 스케줄링을 사용하며 동적 부스트와 프로세스 우선순위 클래스는 지원하지 않습니다. [driver-scheduling.md](driver-scheduling.md) |
 | `KeEnterCriticalRegion`, `KeLeaveCriticalRegion`, `KeEnterGuardedRegion`, `KeLeaveGuardedRegion`, `KeAreApcsDisabled`, `KeAreAllApcsDisabled` | 스레드별 중첩 APC 비활성화 상태. 중요 영역과 보유한 KMUTEX는 일반 APC를, 보호 영역과 IRQL >= APC_LEVEL은 모든 APC를 비활성화한다. 시스템 스레드는 중요 영역 하나 안에서 시작한다. 짝이 없는 종료와 균형이 맞지 않는 복귀는 실패한다. APC 전달은 모델링하지 않는다. |
 | `KeWaitForSingleObject` | 초기화된 이벤트, 타이머, 세마포 또는 뮤텍스 하나, 비경고 `KernelMode`, 사유 `Executive`; 0 폴링, 유한 상대/절대 또는 무한 대기; 0이 아닌/무한 대기는 IRQL <= APC_LEVEL |
+| `KeWaitForMultipleObjects` | 비경고성 `KernelMode`／`Executive`에서 1..64개 객체의 `WaitAll`／`WaitAny`를 지원합니다. 세 개를 넘으면 비페이지 `KWAIT_BLOCK`이 필요합니다. 원자적 획득, 배열 인덱스, 스레드 참조와 시간 초과 해제는 [드라이버 스케줄링](driver-scheduling.md)을 참조하세요. |
 | `KeDelayExecutionThread` | IRQL <= APC_LEVEL에서 비경고 `KernelMode` 상대/절대 지연; 가상 시간 진행 후 저장된 게스트 프레임 재개 |
 | `IoMarkIrpPending` | 현재 유효한 IRP를 보류로 표시. WDM 매크로의 스택 제어 필드 쓰기도 지원. 디스패치는 `STATUS_PENDING`을 반환해야 함 |
 | `IofCompleteRequest`, `IoCompleteRequest` | `IO_NO_INCREMENT`로 완료 해제를 수행. 중단/재개를 지원하고 최종 경계에서만 IRP/MDL/버퍼를 폐기 |

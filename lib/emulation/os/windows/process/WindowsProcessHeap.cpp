@@ -183,24 +183,49 @@ Services::reallocateHeap(uint64_t Address, uint64_t Size, uint32_t Flags) {
 llvm::Expected<std::optional<uint64_t>>
 Services::heap(const Service &S, const NativeCallEvent &Event) {
   const auto &A = Event.Arguments;
-  if (A[0] != HeapHandle)
+  if (S.Kind == API::HeapCreate) {
+    if (A[0] & ~uint64_t(HeapNoSerialize) || (A[2] && A[2] < A[1]))
+      return unsupported(S);
+    if (NextCreatedHeap >=
+        CreatedHeapBase + MaxCreatedHeaps * CreatedHeapStride)
+      return std::optional<uint64_t>(0);
+    const uint64_t Handle = NextCreatedHeap;
+    NextCreatedHeap += CreatedHeapStride;
+    return std::optional<uint64_t>(Handle);
+  }
+  if (S.Kind == API::HeapSetInformation) {
+    if (!knownHeap(A[0]) || A[1] != HeapCompatibilityInformation ||
+        A[3] != DWordSize || !A[2])
+      return unsupported(S);
+    auto Readable = access(A[2], DWordSize, Read);
+    if (!Readable)
+      return Readable.takeError();
+    if (!*Readable)
+      return failure(text::Access);
+    return std::optional<uint64_t>(1);
+  }
+  if (!knownHeap(A[0]))
     return unsupported(S);
+  const bool Alloc = S.Kind == API::HeapAlloc || S.Kind == API::RtlAllocateHeap;
+  const bool Realloc =
+      S.Kind == API::HeapReAlloc || S.Kind == API::RtlReAllocateHeap;
+  const bool Free = S.Kind == API::HeapFree || S.Kind == API::RtlFreeHeap;
+  const bool Size = S.Kind == API::HeapSize || S.Kind == API::RtlSizeHeap;
   const uint32_t Flags = A[1];
   uint32_t Allowed = HeapNoSerialize;
-  if (S.Kind == API::HeapAlloc || S.Kind == API::HeapReAlloc)
+  if (Alloc || Realloc)
     Allowed |= HeapZeroMemory;
-  if (S.Kind == API::HeapReAlloc)
+  if (Realloc)
     Allowed |= HeapReallocInPlaceOnly;
   if (Flags & ~Allowed)
     return unsupported(S);
   auto Found = Allocations.find(A[2]);
-  if (S.Kind != API::HeapAlloc && Found != Allocations.end() &&
-      Found->second.EnvironmentSnapshot)
+  if (!Alloc && Found != Allocations.end() && Found->second.EnvironmentSnapshot)
     return unsupported(S);
-  if (S.Kind == API::HeapSize)
+  if (Size)
     return std::optional<uint64_t>(
         Found == Allocations.end() ? UINT64_MAX : Found->second.Size);
-  if (S.Kind == API::HeapFree) {
+  if (Free) {
     if (!A[2])
       return std::optional<uint64_t>(1);
     if (Found == Allocations.end())
@@ -210,13 +235,12 @@ Services::heap(const Service &S, const NativeCallEvent &Event) {
     Allocations.erase(Found);
     return std::optional<uint64_t>(1);
   }
-  if (S.Kind == API::HeapReAlloc && Found == Allocations.end())
+  if (Realloc && Found == Allocations.end())
     return unsupported(S);
-  auto Address = S.Kind == API::HeapAlloc ? allocateHeap(A[2])
-                                          : reallocateHeap(A[2], A[3], Flags);
+  auto Address = Alloc ? allocateHeap(A[2]) : reallocateHeap(A[2], A[3], Flags);
   if (!Address)
     return Address.takeError();
-  if (S.Kind == API::HeapReAlloc && !*Address) {
+  if (Realloc && !*Address) {
     // Native Windows reports allocation failure through the thread's Win32
     // error slot, including oversized and in-place-only requests.
     auto Value = error(ErrorNotEnoughMemory);

@@ -194,6 +194,7 @@ NEVERD_KERNEL_IRQL_API(IoFreeWorkItem, Dispatch)
 // wait additionally requires <= APC_LEVEL and a nonarbitrary thread context.
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-kewaitforsingleobject
 NEVERD_KERNEL_IRQL_API(KeWaitForSingleObject, Dispatch)
+NEVERD_KERNEL_IRQL_API(KeWaitForMultipleObjects, Dispatch)
 
 // Unicode conversions additionally require PASSIVE_LEVEL, even with resident
 // input. The format parser owns this argument-dependent restriction.

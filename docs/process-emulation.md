@@ -339,7 +339,8 @@ realtime alarm, boottime alarm and TAI. Each is independent; absent clocks are
 unknown, including coarse variants. Selected released GKI contracts also admit
 negative encoded process CPU clock IDs with explicit live group observations;
 see [released GKI clocks](android-gki-kernels.md#implemented-process-cpu-clock-subset).
-Aliases of the current process share one observation. Duplicate identities,
+PROF, VIRT and SCHED retain independent observations; aliases of the current
+process share one observation. Duplicate identities,
 unknown input IDs and more than 16384 clock observations are errors.
 Seconds are signed 64-bit and must be nonnegative for CPU clocks;
 nanoseconds must be in `[0, 1000000000)`. Integer

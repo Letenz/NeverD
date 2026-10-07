@@ -14,6 +14,7 @@ NEVERD_UNPACK_PE_VALUE(SectionNameBytes, 8)
 NEVERD_UNPACK_PE_VALUE(OrdinalFlag, 1ull << 63)
 NEVERD_UNPACK_PE_VALUE(HintBytes, 2)
 NEVERD_UNPACK_PE_VALUE(MaxDebugRecords, 4096)
+NEVERD_UNPACK_PE_VALUE(MaxTLSCallbacks, 256)
 #endif
 
 #ifdef NEVERD_UNPACK_PE_BYTES
@@ -53,6 +54,10 @@ NEVERD_UNPACK_PE_TEXT(
     HeaderRoom, "PE headers have no room for the rebuilt metadata section")
 NEVERD_UNPACK_PE_TEXT(ImageSize,
                       "rebuilt image exceeds the PE32+ address range")
+NEVERD_UNPACK_PE_TEXT(AmbiguousTLS,
+                      "multiple TLS directories match the observed callbacks")
 NEVERD_UNPACK_PE_TEXT(
-    Override, "a metadata override names no directory record inside the image")
+    TLSState, "completed TLS startup requires a matching live TLS snapshot")
+NEVERD_UNPACK_PE_TEXT(ImportRange,
+                      "a repaired import cell is outside relative-call range")
 #endif
