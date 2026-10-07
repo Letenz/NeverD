@@ -1353,6 +1353,8 @@ Windows ring3 は独立したネイティブ観測に従い、checked x64 の `o
 
 `NeverDUnpackTests`、`NeverDUnpackExecutionTests`、`NeverDUnpackPublicTests` はパックされたイメージの復元を対象とします。[アンパック](unpack.md)を参照してください。`UnpackGeneratedTests.cpp` は、テスト自身がパックしたプログラムを使って、x86-64 と ARM64 でエントリの規則を検査します。`X64ReturnPrefixTests.cpp` は 2 バイトの近リターンをすべてのトランスポートで検査し、それ以外のプレフィックス付きリターンが拒否されたままであることを確認します。`WindowsDeferredTests.cpp` は不透明なエントリと停止したプロセスの観測を、`ExecutionSessionTests.cpp` は実行ウォッチを検査します。 `DirectX64Tests.cpp` は部分ページの監視、ページ境界の命令取得、一度だけの再開、サービス境界、無効命令とタイムアウト時の状態も検証します。
 
+`WindowsDeferred.EarlierTLSCallbackMayGenerateALaterCallback` は、`IMAGE_SCN_CNT_UNINITIALIZED_DATA` を持つ独立した `.gentls` セクションを要求し、宣言されたバッファ範囲との完全一致と、生データのサイズおよびポインターがゼロであることを確認します。`WindowsDeferredCases.def` が記憶域とアセンブリを定義し、通常の `.data` は独立します。生成コールバックと生成エントリーの両ケースで、x64/ARM64 の厳密な拒否および遅延実行チェックを維持します。
+
 `ExtendedRegistersLoadOrdinaryImportsAgain` はコンパクト形式と余白付き R8-R15 読み込みを検査付き・直接 x64 実行で確認します。下位レジスタの例は直前の REX 風バイトと CALL のみのアドレス補助ルーチンを扱い、余白付き呼び出しは CALL 後の任意バイトを飛ばします。`ImportCallHelpersCannotDiscardPersistentEffects` は永続的な副作用の保存を確認します。`PERebuildTests.cpp` は開始・結果証拠の欠落と重複開始を拒否し、6～8 バイト領域の正確な API 戻りアドレスを維持します。
 
 `OpaqueExportCallsAreRepairedBeforeTheExplicitStop` は未知 API を迂回せず純粋な呼び出しを復元します。`ExportObservationIncludesTheOpaqueBoundary` は静的・動的・序数エクスポートを確認し、実行とサービスログを維持します。`OpaqueExportObservationPreservesAnUnreadableReturn` は欠落した戻り情報を作らないことを確認します。

@@ -1343,6 +1343,8 @@ Windows ring3는 독립적인 네이티브 관측에 따라 checked x64의 `oper
 
 `NeverDUnpackTests`, `NeverDUnpackExecutionTests`, `NeverDUnpackPublicTests`는 패킹된 이미지의 복구를 다룹니다. [언패킹](unpack.md)을 참고하십시오. `UnpackGeneratedTests.cpp`는 테스트가 직접 패킹한 프로그램으로 x86-64와 ARM64에서 진입점 규칙을 검사합니다. `X64ReturnPrefixTests.cpp`는 2바이트 근거리 복귀를 모든 전송 계층에서 검사하고, 그 밖의 접두사 붙은 복귀가 계속 거부되는지 확인합니다. `WindowsDeferredTests.cpp`는 불투명 진입점과 멈춘 프로세스의 관찰을, `ExecutionSessionTests.cpp`는 실행 감시를 검사합니다. `DirectX64Tests.cpp`는 부분 페이지 감시, 페이지 경계를 넘는 명령 가져오기, 한 번만 재개, 서비스 경계, 잘못된 명령과 시간 제한 시 상태를 검증합니다.
 
+`WindowsDeferred.EarlierTLSCallbackMayGenerateALaterCallback`는 `IMAGE_SCN_CNT_UNINITIALIZED_DATA`를 가진 독립 `.gentls` 섹션, 선언된 버퍼 범위와 정확히 일치하는 크기, 원시 데이터 크기와 포인터가 모두 0임을 요구합니다. `WindowsDeferredCases.def`가 저장소와 어셈블리를 정의하며 일반 `.data`는 분리됩니다. 생성 콜백과 생성 진입점 모두 x64/ARM64의 엄격한 거부 및 지연 실행 검사를 유지합니다.
+
 `ExtendedRegistersLoadOrdinaryImportsAgain`는 짧은 형식과 패딩이 있는 R8-R15 로드를 검사 및 직접 x64 실행으로 검증합니다. 하위 레지스터 사례는 앞선 REX 모양 바이트와 CALL만 있는 주소 도우미를 다루며 패딩 호출은 CALL 뒤 임의 바이트를 건너뜁니다. `ImportCallHelpersCannotDiscardPersistentEffects`는 영구 부작용 보존을 요구합니다. `PERebuildTests.cpp`는 시작·결과 증거 누락과 겹친 시작을 거부하고 6~8바이트 구간의 정확한 API 반환 주소를 보존합니다.
 
 `OpaqueExportCallsAreRepairedBeforeTheExplicitStop`는 알 수 없는 API를 우회하지 않고 순수 호출을 복원합니다. `ExportObservationIncludesTheOpaqueBoundary`는 정적·동적·서수 내보내기를 다루며 실행과 서비스 로그를 보존합니다. `OpaqueExportObservationPreservesAnUnreadableReturn`는 누락된 반환 정보를 만들지 않도록 요구합니다.
