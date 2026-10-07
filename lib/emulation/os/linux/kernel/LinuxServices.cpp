@@ -62,10 +62,8 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   switch (Kind) {
   case ServiceKind::PidFDOpen:
     if (Options.LinuxKernel && Options.LinuxKernel->GKI) {
-      auto Flags = gkiPidFDFlags(*Options.LinuxKernel->GKI);
-      assert(Flags && "kernel options validated before execution");
       return Files.openProcessDescriptor(Event.Arguments[0], Event.Arguments[1],
-                                         *Flags, Result);
+                                         *Options.LinuxKernel, Result);
     }
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic = llvm::formatv(Service, Event.Number).str();
@@ -89,7 +87,8 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Time:
   case ServiceKind::GetTimeOfDay:
   case ServiceKind::ClockGetTime:
-    return timeService(CPU, Kind, Event, Layout, Options, Clock, Result);
+    return timeService(CPU, Kind, Event, Layout, Options, Clock, Result,
+                       Thread ? Thread->ID : ThreadID);
   case ServiceKind::Nanosleep:
     return sleepService(CPU, Event, Layout, Clock, Thread, Result);
   case ServiceKind::Exit:

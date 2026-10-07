@@ -2547,6 +2547,12 @@ provider lifetime, absent inputs, fault ordering and unsupported partial
 copies. Linux process fixtures execute the raw x64/ARM64 service ABIs at O0/O2
 through available backends. Process JSON tests cover malformed and lossless
 inputs; C API/CLI and Python tests preserve dynamic names and exact output.
+Released GKI CPU clock cases compare raw and Bionic calls across all eight
+source pins, including current-process aliases, distinct PROF/VIRT/SCHED
+observations, low-32-bit arguments, target errors before pointer faults and
+unchanged canaries. The cooperative syscall fixture checks that the current
+nonleader TID still names its group's CPU sample. Linux raw callers verify that
+idle advancement changes wall clocks while leaving CPU samples fixed.
 These are deterministic model checks, not an Android device or native Linux
 clock comparison. Unsupported native transports remain explicit skips.
 
@@ -2880,6 +2886,8 @@ Memory-file reads cover empty ranges at the user limit and original-count signed
 
 `NeverDOwnInteriorCallTests` covers direct x64 calls to a label inside the caller's own unwind range. A call made only for the return address it pushes is lifted as a push and a jump, and the emitted C for the straight and looped cases runs at `-O0` and `-O2` under AddressSanitizer and undefined-behavior traps. A target whose returns pop that call's own return address stays an ordinary call. A return that may pop an address the function pushed itself, after an unbalanced restore or a stack switch, refuses the function and names that return.
 
+`NeverDSysVCallContractTests` covers x86-64 System V call contracts on the shapes of QtXml's `QDomNode::save` and `QDomNode::isDocument`. A direct callee whose summary reads an argument register receives the caller's value of it, including an incoming `this` passed through untouched; a virtual call takes the object a dominating block loaded into `RDI`; a method that returns without writing `RAX` on one path while only passing callee results on the others is void; and a byte written to `AL` before a comparison chain is the value returned on every path. The emitted programs run at `-O0` and `-O2` under AddressSanitizer and undefined-behavior traps.
+
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` checks the CoreImage provider, CIImage factory, complete 48-byte logical record and x2 pointer, rejecting missing or wrong providers, x86_64 and conflicting declarations. `ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` retains the original call independently of result assignments at the same machine address. `RejectsChangedCopyCallBodyAndCurrentImage` rejects 24 edits to receipts, arguments, stores, frames, metadata, imports, duplicate calls and saved IR, including consistent edits to both MedIR and HighIR. `GeneratedCExecutesAgainstIndependentPhysicalCopyABI` executes unchanged generated C at O0/O2 on ARM64 against a callee accepting the independently compiler-observed x2 pointer, checking all six floating bit patterns, selector/receiver identity, one evaluation, returned object, legal copy writes, unchanged inputs and boundary guards. Other hosts skip this physical ABI execution test.
 
 `ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration` rejects a cached ABI that disagrees with the current nonempty method encoding or selector; declaration-only clients retain their existing contract.
@@ -3013,17 +3021,30 @@ Run these focused tests, the full Linux process and public process suites,
 and Android syscall, native-entry and signal suites for availability changes.
 
 `LinuxPIDFD.*` checks released GKI branch parsing and rejects invalid enum values
-or an absent-pidfd observation combined with GKI before image loading.
+or an absent-pidfd observation combined with GKI before image loading. It also
+rejects malformed, excessive and contradictory task catalogues before loading.
 `Backends/LinuxPIDFDProcess.*` runs independent O0/O2 x64/AArch64 callers for all
 eight branches, including flag differences, shared file/pidfd allocation,
-limits, close/reuse and scalar/vector error ordering. The versioned vector cases
+limits, close/reuse, closed task lookup, versioned nonleader errors and
+scalar/vector error ordering. Task cases test missing targets and nonleaders
+before FD exhaustion, thread flags and an empty catalogue with implicit self.
+The versioned vector cases
 contrast an early negative length with inaccessible later metadata, and a single
 buffer whose original extent crosses the user limit while its capped extent fits.
 They check pidfds and both captured streams, with O0/O2 callers. Android's
 `ReleasedGKIProcessDescriptorsShareRawAndBionicOwnership` cases repeat the
 shared descriptor and errno behavior across all six compiled relocation
 profiles; `ReleasedGKIVectorImportRetainsRawAndBionicErrors` repeats the vector
-ordering and cap differences through raw and Bionic transports. Run these first,
+ordering and cap differences through raw and Bionic transports.
+`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` repeats the catalogue
+and exhaustion cases while checking raw errors and Bionic's preserved errno.
+`ProcessCPUClocksRetainIdentityAndIdleSeparation` and
+`ProcessCPUClocksKeepMissingObservationBoundaries` check encoded CPU identities,
+unknown observations, target validation, aliases and idle behavior. The
+`LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle` unit case
+checks the shared observation owner, and input cases reject aliases,
+unobserved/nonleader targets and negative CPU time before loading.
+Run these first,
 then the complete Linux process, Android native and
 public process suites when changing shared kernel or descriptor semantics.
 These tests execute the model; they do not boot the eight pinned GKI kernels.

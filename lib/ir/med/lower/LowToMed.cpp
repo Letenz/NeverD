@@ -203,9 +203,9 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   if (LOp.Opcode != NdOp::CALL || LOp.NumInputs == 0 ||
       !LOp.Inputs[0].isConst())
     return;
-  // Publish the Win64 register arguments the callee reads as uses, so SSA
-  // sees a pass-through argument and the call site knows its arity.  Mach-O
-  // source-call binding owns single-input calls, hence COFF only.
+  // Publish the register arguments the callee reads as uses, so SSA sees a
+  // pass-through argument and the call site knows its arity.  Mach-O
+  // source-call binding owns single-input calls, hence COFF and ELF only.
   // A Control Flow Guard dispatcher is an indirect call to RAX: its
   // arguments are the registers this function set before the call, the rule
   // IDA uses.  A register only passed through from this function's entry is
@@ -226,14 +226,26 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
       MOp.addInput(ndVarToMedVar(NdVar::reg(Win64Args[I], 8)));
     MOp.CalleeRegisterArgs = Count;
   } else if (CallEntryReadGPRs && TargetArch == Arch::X64 &&
-             TargetFormat == BinaryFormat::COFF && MOp.NumInputs == 1)
+             (TargetFormat == BinaryFormat::COFF ||
+              TargetFormat == BinaryFormat::ELF) &&
+             MOp.NumInputs == 1)
     if (auto R = CallEntryReadGPRs->find(LOp.Inputs[0].Offset);
-        R != CallEntryReadGPRs->end()) {
+        R != CallEntryReadGPRs->end() &&
+        // A System V variadic callee tests AL and spills every argument
+        // register to its save area; those spills are not its parameters.
+        !(TargetFormat == BinaryFormat::ELF && R->second[x86reg::RAX / 8])) {
       static constexpr uint64_t Win64Args[] = {x86reg::RCX, x86reg::RDX,
                                                x86reg::R8, x86reg::R9};
+      static constexpr uint64_t SysVArgs[] = {x86reg::RDI, x86reg::RSI,
+                                              x86reg::RDX, x86reg::RCX,
+                                              x86reg::R8,  x86reg::R9};
+      const bool SysV = TargetFormat == BinaryFormat::ELF;
+      const llvm::ArrayRef<uint64_t> Args =
+          SysV ? llvm::ArrayRef<uint64_t>(SysVArgs)
+               : llvm::ArrayRef<uint64_t>(Win64Args);
       int8_t Count = 0;
-      for (int8_t I = 0; I < 4; ++I)
-        if (R->second[Win64Args[I] / 8])
+      for (int8_t I = 0; I < static_cast<int8_t>(Args.size()); ++I)
+        if (R->second[Args[I] / 8])
           Count = I + 1;
       // Pass exactly the bytes the callee reads (DL for a KIRQL), so the
       // bytes it ignores do not become an unknown incoming value.  An unread
@@ -241,7 +253,7 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
       // callee cannot observe it, so it carries zero rather than whatever
       // the caller left in the register.
       for (int8_t I = 0; I < Count; ++I) {
-        const uint8_t Width = R->second[Win64Args[I] / 8];
+        const uint8_t Width = R->second[Args[I] / 8];
         if (Width == 0) {
           MOp.addInput(
               MedVar::makeConst(0, getTargetRegInfo(TargetArch).PointerSize));
@@ -251,12 +263,12 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
                               : Width <= 2 ? 2
                               : Width <= 4 ? 4
                                            : 8;
-        MOp.addInput(ndVarToMedVar(NdVar::reg(Win64Args[I], Size)));
+        MOp.addInput(ndVarToMedVar(NdVar::reg(Args[I], Size)));
       }
       // A variadic callee also reads the variadic arguments the caller
       // passes: the argument registers set on every path to the call.  An
       // unread fixed slot below them carries zero as above.
-      if (CallVariadicFrom)
+      if (CallVariadicFrom && !SysV)
         if (auto V = CallVariadicFrom->find(LOp.Inputs[0].Offset);
             V != CallVariadicFrom->end()) {
           int8_t Passed = Count;
@@ -271,7 +283,8 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
           Count = Passed;
         }
       MOp.CalleeRegisterArgs = Count;
-      if (CallEntryStackArgs)
+      // The stack-argument summary counts Win64 positions.
+      if (CallEntryStackArgs && !SysV)
         if (auto S = CallEntryStackArgs->find(LOp.Inputs[0].Offset);
             S != CallEntryStackArgs->end())
           MOp.CalleeStackArgs = static_cast<int8_t>(std::min(

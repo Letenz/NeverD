@@ -99,7 +99,7 @@ TEST_P(AndroidSyscall,
     bool ThreadFlag;
   };
   constexpr KernelCase Kernels[] = {
-#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer)         \
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
   {AndroidGKIKernel::Name, Label, ThreadFlag},
 #include "GKIReleaseCases.def"
 #undef NEVERD_GKI_RELEASE_CASE
@@ -125,7 +125,7 @@ TEST_P(AndroidSyscall, ReleasedGKIVectorImportRetainsRawAndBionicErrors) {
     bool SingleBuffer;
   };
   constexpr KernelCase Kernels[] = {
-#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer)         \
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
   {AndroidGKIKernel::Name, Label, SingleBuffer},
 #include "GKIReleaseCases.def"
 #undef NEVERD_GKI_RELEASE_CASE
@@ -141,6 +141,37 @@ TEST_P(AndroidSyscall, ReleasedGKIVectorImportRetainsRawAndBionicErrors) {
               UINT64_MAX, Error, Error});
     EXPECT_TRUE(R.StandardOutput.empty());
     EXPECT_TRUE(R.StandardError.empty());
+  }
+}
+TEST_P(AndroidSyscall, ReleasedGKICatalogueRetainsRawAndBionicLookupErrors) {
+  struct KernelCase {
+    AndroidGKIKernel Kernel;
+    const char *Label;
+    bool ThreadFlag;
+    uint32_t NonLeader;
+  };
+  constexpr KernelCase Kernels[] = {
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
+  {AndroidGKIKernel::Name, Label, ThreadFlag, Error},
+#include "GKIReleaseCases.def"
+#undef NEVERD_GKI_RELEASE_CASE
+  };
+  for (const auto &K : Kernels) {
+    SCOPED_TRACE(K.Label);
+    auto &Kernel = Options.LinuxKernel.emplace();
+    Kernel.GKI = K.Kernel;
+    Kernel.Tasks.emplace().emplace(2000, LinuxKernelTask{true});
+    Kernel.Tasks->emplace(3000, LinuxKernelTask{false});
+    Options.LinuxFiles.emplace().DescriptorLimit = 5;
+    auto R = run("syscall_gki_tasks", {Buffer, K.ThreadFlag, K.NonLeader});
+    returned(R);
+    words(R, {uint64_t(0) - 3, 77, UINT64_MAX, 3, uint64_t(0) - K.NonLeader,
+              UINT64_MAX, K.NonLeader, K.ThreadFlag ? 3u : UINT64_MAX});
+    Options.LinuxFiles->DescriptorLimit = 3;
+    R = run("syscall_gki_tasks_full", {Buffer});
+    returned(R);
+    words(R, {uint64_t(0) - 3, 77, UINT64_MAX, 3, uint64_t(0) - K.NonLeader,
+              UINT64_MAX, K.NonLeader, uint64_t(0) - 24});
   }
 }
 
@@ -162,6 +193,18 @@ TEST_P(AndroidSyscall, NamedRawAndVariadicIdentityQueriesAgree) {
     ++I;
   }
   EXPECT_EQ(I, Numbers.size());
+}
+
+TEST_P(AndroidSyscall, ReleasedGKICurrentTaskClockNamesItsProcessObservation) {
+  Options.LinuxKernel.emplace().GKI = AndroidGKIKernel::Android17_6_18;
+  Options.LinuxTime.emplace().Clocks[2] = {3, 4};
+  Options.Android->ThreadLimit = 2;
+  auto R = run("syscall_current_task_cpu_clock", {Buffer});
+  returned(R);
+  words(R, {1001, 0, 3, 4, 0, 3, 4, 87});
+  ASSERT_EQ(R.NativeThreads.size(), 2u);
+  EXPECT_TRUE(R.NativeThreads[1].Finished);
+  EXPECT_TRUE(R.NativeThreads[1].Retired);
 }
 
 TEST_P(AndroidSyscall, ErrorsConvertToMinusOneAndSuccessPreservesErrno) {
