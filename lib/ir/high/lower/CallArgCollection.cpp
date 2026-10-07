@@ -21,6 +21,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -642,14 +643,15 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
                             static_cast<int>(ParamRegs.size())) -
                    1;
     }
-    // A System V indirect call whose own block sets no argument register
-    // still takes the ones set in the block before it (`mov rdi, [rdi]; test
-    // rdi, rdi; je; mov rax, [rdi]; call [rax+58h]`): the consecutive
-    // registers such setup writes give a known value, never padded to this
-    // function's own parameters.  A direct callee has its own summary.
-    const bool SysV64 =
-        TargetArch == Arch::X64 && !Win64 && Format == BinaryFormat::ELF;
-    if (SysV64 && MaxRegArg < 0 && CallIdx < Ops.size() &&
+    // An indirect call whose own block sets no argument register takes the
+    // consecutive setup writes of the block before it (`mov rdi, [rdi]; test
+    // rdi, rdi; je; mov rax, [rdi]; call [rax+58h]`) when its calling
+    // convention says so, never padded to this function's own parameters.  A
+    // direct callee has its own summary.
+    const CallArgumentConvention *Convention =
+        callArgumentConvention(TargetArch, Format);
+    if (Convention && Convention->IndirectCallsTakePrecedingSetup &&
+        MaxRegArg < 0 && CallIdx < Ops.size() &&
         Ops[CallIdx].Opcode == NdOp::INDIR_CALL &&
         Ops[CallIdx].CalleeRegisterArgs < 0 && !Ops[CallIdx].SourceCallHint) {
       for (int K = 0; K < static_cast<int>(ParamRegs.size()) && K < MaxArgs;

@@ -431,34 +431,39 @@ void CFGBuilder::rewriteAsTailCall(InsnRecord &Rec) {
 
 void CFGBuilder::rewriteOwnInteriorCall(const BinaryImage &Img, InsnRecord &Rec,
                                         va_t Next) {
-  if (Img.Arch != Arch::X64 || Img.Format != BinaryFormat::COFF)
+  const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
+  if (!TRI.CallPushesReturnAddress)
     return;
   // Compiler output reaches its own code with jumps; only hand-written code
   // calls a label inside itself, and the return address that pushes is a
   // value like any other.  Whether a return later pops it is for
-  // classifyOwnInteriorCalls to prove.
+  // classifyOwnInteriorCalls to prove.  The function's body is the extent
+  // its function-table record declares (x64 `.pdata`); a registration-chain
+  // range is recovered from code and bounds nothing.
   const va_t Target = *Rec.Immediate;
   const ExceptionFunction *Own =
       Img.ExceptionMetadata.findFunction(CurrentFuncEntry);
   if (!Own || Own->Kind != RuntimeFunctionKind::Primary ||
+      getExceptionEncodingModel(Own->Encoding) !=
+          ExceptionModel::WindowsTable ||
       Own->CodeRange.Begin != CurrentFuncEntry ||
       !Own->CodeRange.contains(Rec.Addr) || !Own->CodeRange.contains(Target) ||
       Target == Own->CodeRange.Begin ||
       (KnownFuncEntries && KnownFuncEntries->count(Target)) ||
       KeptOwnInteriorCallTargets.count(Target))
     return;
-  const uint16_t PtrSize = 8;
-  const NdVar Rsp = NdVar::reg(x86reg::RSP, PtrSize);
+  const uint16_t PtrSize = TRI.PointerSize;
+  const NdVar Sp = NdVar::reg(TRI.StackPointer, PtrSize);
   LowOp Sub;
   Sub.Opcode = NdOp::INT_SUB;
-  Sub.Output = Rsp;
-  Sub.addInput(Rsp);
+  Sub.Output = Sp;
+  Sub.addInput(Sp);
   Sub.addInput(NdVar::scalar(PtrSize, PtrSize));
   Sub.Addr = Rec.Addr;
   Sub.Seq = 0;
   LowOp Store;
   Store.Opcode = NdOp::STORE;
-  Store.addInput(Rsp);
+  Store.addInput(Sp);
   Store.addInput(NdVar::cst(Next, PtrSize));
   Store.Addr = Rec.Addr;
   Store.Seq = 1;

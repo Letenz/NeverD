@@ -813,6 +813,8 @@ CMake.
 وتوليد الشفرة الخاصان بالهدف تحت `lib/backend/llvm/<ISA>` و
 `lib/backend/codegen/CodeGen<ISA>.cpp`.
 
+تُوضع القواعد الجديدة الخاصة بهدف معيّن في التمريرات المشتركة في جداول لكل هدف، لا في فحوص مضمّنة للمعمارية أو الصيغة. الحقيقة المتعلقة بمعمارية تعليمات (ISA) هي سمة في `TargetRegInfo` تُضبط في ملفها `lib/ir/TargetRegInfo<ISA>.cpp`. وقاعدة اصطلاح الاستدعاء هي مُدخل `CallArgumentConvention` في ملفه الخاص `lib/ir/med/abi/MedCallConvention<Name>.cpp`، ومُسجَّل في `MedCallConvention.cpp`. أما الدوال التي لا تعود أبدًا فتُدرج لكل بيئة تشغيل تحت `include/neverd/libc` (`LibCNoReturn.inc` و`CxxRuntimeNoReturn.inc` و`WindowsNoReturn.inc`). وبذلك يضيف دعم هدف جديد ملفًا أو مُدخل جدول بدلًا من فرع في التمرير المشترك.
+
 <a id="support-and-test-depth"></a>
 
 ### الدعم وعمق الاختبار

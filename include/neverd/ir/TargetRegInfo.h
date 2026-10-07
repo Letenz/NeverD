@@ -153,6 +153,17 @@ struct TargetRegInfo {
   /// getTargetRegInfo().
   bool ReturnsFPInX87 = false;
 
+  /// A RETURN operation's operand is the integer return register's value
+  /// (x86 `ret` leaves the result in EAX/RAX), so whatever SSA left there is
+  /// the value returned.  Elsewhere the operand can be the return address.
+  /// Set by getTargetRegInfo().
+  bool ReturnOperandIsValue = false;
+
+  /// A call pushes its return address on the stack (x86), so a call made only
+  /// for that address is a push and a jump.  Elsewhere a call writes the
+  /// link register.  Set by getTargetRegInfo().
+  bool CallPushesReturnAddress = false;
+
   /// An auto-declared unknown external callee must use a variadic prototype so
   /// the backend never mislays arguments (true on ARM/AArch64 where variadic
   /// and non-variadic calling conventions differ).  Set by getTargetRegInfo().

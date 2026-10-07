@@ -740,6 +740,8 @@ KVM、WHP 與 Unicorn 的 checked x64/ARM64 可要求 `ExecutionFeature::Paralle
 發射與程式碼產生位於 `lib/backend/llvm/<ISA>` 及
 `lib/backend/codegen/CodeGen<ISA>.cpp`。
 
+共用 pass 中新增的目標專屬規則應放在依目標劃分的表中，而不是內聯判斷架構或格式。ISA 的事實是一個 `TargetRegInfo` 特性，在該 ISA 的 `lib/ir/TargetRegInfo<ISA>.cpp` 中設定。呼叫慣例規則是一個 `CallArgumentConvention` 條目，定義在獨立的 `lib/ir/med/abi/MedCallConvention<Name>.cpp` 中，並在 `MedCallConvention.cpp` 中登記。永不返回的函式依執行環境分別列在 `include/neverd/libc` 下（`LibCNoReturn.inc`、`CxxRuntimeNoReturn.inc`、`WindowsNoReturn.inc`）。如此支援新目標只需新增檔案或表項，而無需在共用 pass 中加分支。
+
 <a id="support-and-test-depth"></a>
 
 ### 支援範圍與測試深度

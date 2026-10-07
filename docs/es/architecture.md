@@ -918,6 +918,17 @@ Los lifters de arquitectura están en `lib/lift/X86`, `lib/lift/AArch64` y
 objetivo residen bajo `lib/backend/llvm/<ISA>` y
 `lib/backend/codegen/CodeGen<ISA>.cpp`.
 
+Las nuevas reglas específicas de un objetivo en los pases compartidos van en
+tablas por objetivo, no en comprobaciones en línea de la arquitectura o el
+formato. Un hecho sobre una ISA es un rasgo de `TargetRegInfo` definido en su
+`lib/ir/TargetRegInfo<ISA>.cpp`. Una regla de convención de llamada es una
+entrada `CallArgumentConvention` en su propio
+`lib/ir/med/abi/MedCallConvention<Name>.cpp`, registrada en
+`MedCallConvention.cpp`. Las funciones que nunca retornan se enumeran por
+runtime en `include/neverd/libc` (`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`,
+`WindowsNoReturn.inc`). Así, admitir otro objetivo añade un archivo o una
+entrada de tabla en lugar de una rama en el pase compartido.
+
 <a id="support-and-test-depth"></a>
 
 ### Soporte y profundidad de pruebas

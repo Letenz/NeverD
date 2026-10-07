@@ -869,6 +869,16 @@ Lifter архитектур находятся в `lib/lift/X86`, `lib/lift/AArc
 в `include/neverd/lift`. Целевые вывод LLVM и генерация кода расположены в
 `lib/backend/llvm/<ISA>` и `lib/backend/codegen/CodeGen<ISA>.cpp`.
 
+Новые правила, специфичные для цели, в общих проходах размещаются в таблицах по
+целям, а не во встроенных проверках архитектуры или формата. Факт об ISA — это
+признак `TargetRegInfo`, задаваемый в её `lib/ir/TargetRegInfo<ISA>.cpp`.
+Правило соглашения о вызовах — это запись `CallArgumentConvention` в отдельном
+`lib/ir/med/abi/MedCallConvention<Name>.cpp`, зарегистрированная в
+`MedCallConvention.cpp`. Функции, которые никогда не возвращают управление,
+перечислены по средам выполнения в `include/neverd/libc` (`LibCNoReturn.inc`,
+`CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`). Поддержка новой цели тогда
+добавляет файл или запись таблицы, а не ветвление в общем проходе.
+
 <a id="support-and-test-depth"></a>
 
 ### Поддержка и глубина тестирования

@@ -50,10 +50,12 @@ BinaryImage makeImage(std::vector<uint8_t> Code) {
   Seg.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
   Seg.Data = std::move(Code);
   Img.Segments.push_back(std::move(Seg));
+  // The `.pdata` record the COFF loader produces for the function.
   ExceptionFunction Own;
   Own.CodeRange = {Entry, End};
   Own.FunctionEntry = Entry;
   Own.Kind = RuntimeFunctionKind::Primary;
+  Own.Encoding = ExceptionEncoding::X64UnwindV1;
   Img.ExceptionMetadata.Functions.push_back(Own);
   Img.ExceptionMetadata.rebuildIndex();
   Img.KnownCodeRanges.push_back({Entry, End});

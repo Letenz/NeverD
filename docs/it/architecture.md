@@ -915,6 +915,17 @@ I lifter di architettura risiedono in `lib/lift/X86`, `lib/lift/AArch64` e
 del target si trovano in `lib/backend/llvm/<ISA>` e
 `lib/backend/codegen/CodeGen<ISA>.cpp`.
 
+Le nuove regole specifiche di un target nei pass condivisi vanno in tabelle per
+target, non in controlli inline dell'architettura o del formato. Un fatto su una
+ISA è un tratto di `TargetRegInfo` impostato nel suo
+`lib/ir/TargetRegInfo<ISA>.cpp`. Una regola di convenzione di chiamata è una
+voce `CallArgumentConvention` nel proprio
+`lib/ir/med/abi/MedCallConvention<Name>.cpp`, registrata in
+`MedCallConvention.cpp`. Le funzioni che non ritornano mai sono elencate per
+runtime in `include/neverd/libc` (`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`,
+`WindowsNoReturn.inc`). Supportare un altro target aggiunge quindi un file o una
+voce di tabella invece di un ramo nel pass condiviso.
+
 <a id="support-and-test-depth"></a>
 
 ### Supporto e profondità dei test

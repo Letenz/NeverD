@@ -807,6 +807,8 @@ pipeline を続行するためだけに `UnliftedInstruction` を捕捉しない
 ターゲット固有の LLVM 出力とコード生成は `lib/backend/llvm/<ISA>` と
 `lib/backend/codegen/CodeGen<ISA>.cpp` にあります。
 
+共有パスに追加するターゲット固有の規則は、アーキテクチャやフォーマットのインライン判定ではなく、ターゲットごとの表に置きます。ISA に関する事実は、その ISA の `lib/ir/TargetRegInfo<ISA>.cpp` で設定する `TargetRegInfo` の特性です。呼び出し規約の規則は、専用の `lib/ir/med/abi/MedCallConvention<Name>.cpp` に定義し `MedCallConvention.cpp` に登録する `CallArgumentConvention` エントリです。戻らない関数はランタイムごとに `include/neverd/libc` 以下（`LibCNoReturn.inc`、`CxxRuntimeNoReturn.inc`、`WindowsNoReturn.inc`）に列挙します。これにより、新しいターゲットの対応は共有パスへの分岐ではなく、ファイルまたは表エントリの追加で済みます。
+
 <a id="support-and-test-depth"></a>
 
 ### サポートとテストの深さ

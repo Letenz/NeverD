@@ -2857,6 +2857,16 @@ Architecture lifters live in `lib/lift/X86`, `lib/lift/AArch64`, and
 `include/neverd/lift`. Target-specific LLVM emission and code generation live
 under `lib/backend/llvm/<ISA>` and `lib/backend/codegen/CodeGen<ISA>.cpp`.
 
+New target-specific rules in shared passes belong in per-target tables, not in
+inline architecture or format tests. A fact about an ISA is a `TargetRegInfo`
+trait set in its `lib/ir/TargetRegInfo<ISA>.cpp`. A calling-convention rule is a
+`CallArgumentConvention` entry in its own
+`lib/ir/med/abi/MedCallConvention<Name>.cpp`, listed in `MedCallConvention.cpp`.
+Functions that never return are listed per runtime under `include/neverd/libc`
+(`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`).
+Supporting another target then adds a file or a table entry instead of a branch
+in the shared pass.
+
 <a id="support-and-test-depth"></a>
 
 ### Support and test depth
