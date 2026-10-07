@@ -76,6 +76,8 @@ ChooserModel::ChooserModel(Session &session, const AddressSpace &space,
       columns_(columnsOf(kind)) {
   connect(&session_, &Session::revisionChanged, this, &ChooserModel::reload);
   connect(&session_, &Session::unloaded, this, &ChooserModel::reload);
+  if (kind_ == ChooserKind::Functions || kind_ == ChooserKind::Names)
+    connect(&session_, &Session::functionsChanged, this, &ChooserModel::reload);
 }
 
 QString ChooserModel::title() const {

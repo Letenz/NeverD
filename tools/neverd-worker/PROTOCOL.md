@@ -377,9 +377,13 @@ slots, including ELF `GLOB_DAT` entries from `neverd_import_slots_json`, are
 named `<import>_ptr` on ELF. Code text from the engine (C and IR) keeps the
 engine's spellings.
 
-Heartbeats carry `background:{state,done,total,references,generation}` for the reference
-index the worker builds while idle: `pending`, `building`, `ready` or
-`unavailable`. Its generation changes when finished references can add labels
-and cross-reference comments to listing text; clients refresh visible lines
-then. Function-level analysis runs only for the function a decompile, CFG or
-IR request names; `analyze` remains the explicit whole-program pipeline.
+Heartbeats carry `background:{state,done,total,references,generation,functions}`
+for the work the worker does while idle. It first lets the engine add the
+functions its detector finds without lifting
+(`neverd_session_discover_functions`); `functions` is the listed function count,
+which clients compare to refresh function lists. It then builds the reference
+index: `pending`, `building`, `ready` or `unavailable`. Its generation changes
+when finished references can add labels and cross-reference comments to listing
+text; clients refresh visible lines then. Function-level analysis runs only for
+the function a decompile, CFG or IR request names; `analyze` remains the
+explicit whole-program pipeline.

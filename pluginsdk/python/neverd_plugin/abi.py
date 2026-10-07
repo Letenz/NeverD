@@ -988,6 +988,7 @@ _declare(
 _declare("neverd_func_count", "int", ["neverd_session_t"])
 _declare("neverd_func_entry", "neverd_va_t", ["neverd_session_t", "int"])
 _declare("neverd_func_size", "int", ["neverd_session_t", "int"])
+_declare("neverd_session_discover_functions", "int", ["neverd_session_t"])
 _declare(
     "neverd_func_name",
     "const char *",

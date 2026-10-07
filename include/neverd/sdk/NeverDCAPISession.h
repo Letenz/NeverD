@@ -45,6 +45,13 @@ NEVERD_API void neverd_session_destroy(neverd_session_t Sess);
 NEVERD_API int neverd_session_load(neverd_session_t Sess, const char *Path);
 NEVERD_API int neverd_session_is_loaded(neverd_session_t Sess);
 
+/// Add the native function entries the function detector finds in the loaded
+/// image alone -- call targets, prologues and format tables, without lifting
+/// anything -- to the function list.  An added function has an automatic name
+/// and no size, and stays listed until the next load; the full pipeline may
+/// list more.  Idempotent; returns the function count, or -1 with an error.
+NEVERD_API int neverd_session_discover_functions(neverd_session_t Sess);
+
 /// Run the full analysis pipeline (lift → optimize → decompile).
 /// Call after neverd_session_load() to pre-compute analysis data.
 /// Returns 1 on success, 0 on failure.  Thread-safe if called once.

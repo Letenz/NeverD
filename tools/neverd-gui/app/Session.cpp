@@ -139,9 +139,17 @@ void Session::receive(const QJsonObject &incoming) {
       const auto generation = background.value("generation").toString();
       const bool newGeneration = generation != generation_;
       generation_ = generation;
+      // The first count only states what the opened file already listed.
+      const auto functions =
+          background.value("functions").toInteger(functionCount_);
+      const bool moreFunctions =
+          functionCount_ >= 0 && functions != functionCount_;
+      functionCount_ = functions;
       emit backgroundChanged();
       if (newGeneration)
         emit generationChanged();
+      if (moreFunctions)
+        emit functionsChanged();
       emit stateChanged();
     }
   } else if (type == QLatin1String("fatal")) {
@@ -225,6 +233,7 @@ void Session::resetState() {
   history_ = {};
   background_ = {};
   generation_.clear();
+  functionCount_ = -1;
 }
 
 void Session::open(const QString &path) {

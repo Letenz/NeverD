@@ -122,6 +122,7 @@
           "neverd_session_debug_info_kind",
           "neverd_session_debug_info_path",
           "neverd_session_destroy",
+          "neverd_session_discover_functions",
           "neverd_session_entry_addr",
           "neverd_session_export_count",
           "neverd_session_file_path",

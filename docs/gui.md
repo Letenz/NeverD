@@ -170,11 +170,14 @@ advisory lock.
 Opening a file never starts whole-program analysis. The listing, function list,
 references and graph come from the loader and from per-function work: a
 decompile, graph or IR request analyzes only the function it names. While the
-window is idle the worker builds the reference index in parallel across all
-cores; references and labels appear when it finishes, and an explicit
-cross-reference request completes it at once. **Options → Analysis →
-Whole-program analysis** runs the full pipeline when wanted. Cancel removes queued work; a
-running engine call finishes unless the worker is restarted.
+window is idle the worker first lets the engine add the functions its detector
+finds from the image alone (call targets, prologues and format tables), so
+binaries without unwind tables list their functions too, and then builds the
+reference index in parallel across all cores; references and labels appear when
+it finishes, and an explicit cross-reference request completes it at once.
+**Options → Analysis → Whole-program analysis** runs the full pipeline when
+wanted. Cancel removes queued work; a running engine call finishes unless the
+worker is restarted.
 
 ## Languages, extensions and MCP
 

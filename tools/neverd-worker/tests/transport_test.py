@@ -218,6 +218,9 @@ def run(executable):
         direct = client.call("xrefs", {"address": BASE})["payload"]
         assert direct["items"][0]["address"] == "0xffff800012340008" and direct["items"][0]["type"] == "j", direct
         assert client.call("xrefs", {"address": BASE, "direction": "from"})["status"] == "ok"
+        # Idle work reports the function count after discovery.
+        beat = client.next(lambda item: item.get("type") == "heartbeat" and "functions" in item.get("background", {}))
+        assert beat["background"]["functions"] == 600, beat
         # A call through a relocated slot, and the slot's own pointer.
         through_slot = client.call("xrefs", {"address": "0xffff800012340020"})["payload"]["items"]
         kinds = {(item["from"], item["kind"], item["type"]) for item in through_slot}

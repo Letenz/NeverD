@@ -49,6 +49,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -97,6 +98,9 @@ struct Session {
   std::optional<bool> LlvmModuleNoOpt;
   bool SBFFunctionsSynchronized = false;
   bool NativeFunctionsSynchronized = false;
+  /// Function entries the detector found on request
+  /// (neverd_session_discover_functions); kept until the next load.
+  std::optional<std::vector<std::pair<va_t, std::string>>> DiscoveredFunctions;
   std::set<va_t> OnlyFunctionEntries;
   std::map<va_t, InstructionMode> ARMFunctionModes;
   evm::Hardfork EVMFork = evm::Hardfork::Latest;
@@ -299,7 +303,37 @@ struct Session {
       Functions.push_back({Symbol->Addr, Symbol->Size, std::move(Name), Origin,
                            Symbol->Name, Symbol->Origin});
     }
+    appendDiscoveredFunctions();
     refreshFunctionNames();
+  }
+
+  /// Add the detector's entries the list does not hold yet, keeping it in
+  /// address order.  Returns whether any was added.
+  bool appendDiscoveredFunctions() {
+    if (!DiscoveredFunctions)
+      return false;
+    std::unordered_set<va_t> Known;
+    Known.reserve(Functions.size());
+    for (const FuncInfo &F : Functions)
+      Known.insert(F.Entry);
+    bool Added = false;
+    for (const auto &[Entry, Name] : *DiscoveredFunctions) {
+      if (!Known.insert(Entry).second)
+        continue;
+      OriginalNames.try_emplace(Entry, Name);
+      const auto Rename = Renames.find(Entry);
+      const bool Renamed = Rename != Renames.end();
+      Functions.push_back({Entry, 0, Renamed ? Rename->second : Name,
+                           Renamed ? NameOrigin::User : NameOrigin::Analysis,
+                           Name, NameOrigin::Analysis});
+      Added = true;
+    }
+    if (Added)
+      std::stable_sort(Functions.begin(), Functions.end(),
+                       [](const FuncInfo &Left, const FuncInfo &Right) {
+                         return Left.Entry < Right.Entry;
+                       });
+    return Added;
   }
 
   /// Recompute display identity from current evidence. No IR or image names

@@ -27,6 +27,7 @@ using CodeRefsFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
 using ImportSlotsFunction = const char *(*)(neverd_session_t);
 using UnwindFramesFunction = const char *(*)(neverd_session_t);
 using PointerRefsFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
+using DiscoverFunctionsFunction = int (*)(neverd_session_t);
 
 // Listing layout, in characters after the prefix: name, mnemonic and comment
 // columns of a conventional interactive disassembler listing.
@@ -377,6 +378,9 @@ struct Listing::Impl {
   ImportSlotsFunction importSlots = nullptr;
   UnwindFramesFunction unwindFrames = nullptr;
   PointerRefsFunction pointerRefs = nullptr;
+  DiscoverFunctionsFunction discoverFunctions = nullptr;
+  /// Whether the engine's function detector has run for this image.
+  bool discovered = false;
   OperandDialect dialect = OperandDialect::Generic;
   bool wide = true, elf = false, macho = false;
   unsigned addressDigits = 16, pointerSize = 8;
@@ -424,11 +428,24 @@ struct Listing::Impl {
     unwindFrames =
         engineSymbol<UnwindFramesFunction>("neverd_unwind_frames_json");
     pointerRefs = engineSymbol<PointerRefsFunction>("neverd_pointer_refs_json");
+    discoverFunctions = engineSymbol<DiscoverFunctionsFunction>(
+        "neverd_session_discover_functions");
   }
 
   //===--------------------------------------------------------------------===//
   // Indexes
   //===--------------------------------------------------------------------===//
+
+  /// Let the engine add the functions its detector finds without lifting.
+  /// The next build sees the longer function list.  A failure leaves the list
+  /// as the image states it; the engine reports why.
+  void discover() {
+    if (discovered)
+      return;
+    discovered = true;
+    if (discoverFunctions)
+      (void)discoverFunctions(session);
+  }
 
   void build() {
     const int count = neverd_func_count(session);
@@ -2057,11 +2074,19 @@ void Listing::invalidate() {
 std::uint64_t Listing::generation() const { return impl_->generation; }
 
 bool Listing::hasIdleWork() const {
-  return impl_->indexState == Impl::IndexState::Idle ||
+  return (impl_->discoverFunctions && !impl_->discovered) ||
+         impl_->indexState == Impl::IndexState::Idle ||
          impl_->indexState == Impl::IndexState::Building;
 }
 
 void Listing::idleStep() {
+  // Function discovery comes first, so the reference index covers its
+  // functions.
+  if (!impl_->discovered) {
+    impl_->discover();
+    impl_->build();
+    return;
+  }
   impl_->build();
   impl_->indexStep();
 }
@@ -2073,7 +2098,8 @@ Json Listing::indexState() const {
           {"references", impl_->indexState == Impl::IndexState::Ready
                              ? impl_->references.size()
                              : 0},
-          {"generation", std::to_string(impl_->generation)}};
+          {"generation", std::to_string(impl_->generation)},
+          {"functions", impl_->functions.size()}};
 }
 
 Json Listing::page(const Json &payload) {
@@ -2258,6 +2284,7 @@ Json Listing::overview(const Json &payload) {
 
 Json Listing::references(std::uint64_t address, const Json &payload) {
   auto &d = *impl_;
+  d.discover();
   d.build();
   const auto direction = stringField(payload, "direction", "to", 8);
   const auto offset =

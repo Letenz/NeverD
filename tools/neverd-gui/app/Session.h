@@ -128,6 +128,9 @@ signals:
   void unloaded();
   void revisionChanged();
   void generationChanged();
+  /// The worker lists a different number of functions, for example after its
+  /// function detector ran.
+  void functionsChanged();
   void backgroundChanged();
   void historyChanged();
   void loadProgress(const QString &phase, double fraction);
@@ -171,6 +174,7 @@ private:
   QHash<QString, QByteArray> databaseState_;
   std::function<QHash<QString, QByteArray>()> stateProvider_;
   QString generation_;
+  qint64 functionCount_ = -1;
   QJsonObject metadata_, background_, history_, selection_;
   QJsonArray contributions_;
   quint64 sessionEpoch_ = 0;

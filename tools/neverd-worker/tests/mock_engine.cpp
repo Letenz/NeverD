@@ -136,6 +136,8 @@ const char *neverd_dashboard_json(neverd_session_t s) {
       Json{{"hashes", {{"sha256", digest + digest + digest + digest}}}}.dump());
 }
 int neverd_func_count(neverd_session_t) { return 600; }
+// The fixture's detector finds nothing the image does not list.
+int neverd_session_discover_functions(neverd_session_t) { return 600; }
 neverd_va_t neverd_func_entry(neverd_session_t, int index) {
   return Base + 16 * index;
 }
