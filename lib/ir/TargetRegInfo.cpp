@@ -407,8 +407,7 @@ IntegerArgumentLayout TargetRegInfo::integerArgumentLayout(bool IsWin64) const {
   Layout.CallStackBase =
       Win64 ? int64_t(Layout.Registers.size()) * PointerSize : 0;
   Layout.EntryStackBase =
-      Layout.CallStackBase +
-      ((TheArch == Arch::X64 || TheArch == Arch::X86) ? PointerSize : 0);
+      Layout.CallStackBase + (CallPushesReturnAddress ? PointerSize : 0);
   return Layout;
 }
 

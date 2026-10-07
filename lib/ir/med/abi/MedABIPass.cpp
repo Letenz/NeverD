@@ -789,6 +789,18 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // store to each slot win.
       int StoreScanStart = 0;
 
+      // A tail jump, which CFG building rewrites as a CALL and a RETURN of
+      // the same instruction, enters the callee on this function's own stack:
+      // its stack arguments sit where the callee's entry finds them, above
+      // the return address this function was entered with on x86, rather
+      // than at the call SP of an ordinary call.
+      const bool IsTailJump = OI + 1 < Blk.Ops.size() &&
+                              Blk.Ops[OI + 1].Opcode == NdOp::RETURN &&
+                              Blk.Ops[OI + 1].Addr == Op.Addr;
+      IntegerArgumentLayout CallLayout = IntegerLayout;
+      if (IsTailJump)
+        CallLayout.CallStackBase = IntegerLayout.EntryStackBase;
+
       // The SP offset at the call site, so pushed arguments can be placed at
       // their true distance from it regardless of the moving stack pointer left
       // by successive `push`es (x86/x64 pass stack arguments by `push`,
@@ -844,7 +856,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                          CI,
                          TRI,
                          TheArch,
-                         IntegerLayout,
+                         CallLayout,
                          Found,
                          FoundMask,
                          FromStackScan,
@@ -868,10 +880,10 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
             Prev.MemoryAddressSpace == NdMemoryAddressSpace::Default)
           if (auto Rel = CallRelativeStackOffset(Prev.Inputs[0]);
               Rel && *Rel >= 0) {
-            if (*Rel < IntegerLayout.CallStackBase)
+            if (*Rel < CallLayout.CallStackBase)
               continue;
             HasStackArg = true;
-            const int64_t FirstStackOff = IntegerLayout.CallStackBase;
+            const int64_t FirstStackOff = CallLayout.CallStackBase;
             if (*Rel == FirstStackOff &&
                 !(Prev.Inputs[1].Kind == MedVar::Reg &&
                   TRI.isFrameOrLinkReg(Prev.Inputs[1].RegOff)))
@@ -1209,9 +1221,9 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         const int64_t StackOff = *RelativeOffset;
 
         int SlotSize = IntegerLayout.SlotBytes;
-        if (StackOff < IntegerLayout.CallStackBase)
+        if (StackOff < CallLayout.CallStackBase)
           continue;
-        int64_t SlotOff = StackOff - IntegerLayout.CallStackBase;
+        int64_t SlotOff = StackOff - CallLayout.CallStackBase;
         const int NumRegArgSlots = static_cast<int>(IntParamRegs.size());
         // The argument index of the first stack slot [call_sp + 0]:
         //  - stack arguments after the used registers (i386): arg
@@ -1579,21 +1591,37 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         ForwarderFPRetBlk = Blk.Id;
         ForwarderFPRetCallAddr = Op.Addr;
       }
-      if (IsTailReturn && !CI.IsIndirect && CalleeArgs > NumIntParamRegs) {
-        for (int K = NumIntParamRegs; K < CalleeArgs && K < MaxArgs; ++K) {
+      // The callee's stack arguments start after the registers this call
+      // uses where they follow the used registers (i386), and this
+      // function's own incoming stack arguments after its register
+      // parameters; elsewhere both start at the fixed register count.
+      const int CalleeStackBase =
+          StackAfterUsedRegisters ? FirstStackSlot : NumIntParamRegs;
+      int CallerStackBase = NumIntParamRegs;
+      if (StackAfterUsedRegisters) {
+        CallerStackBase = 0;
+        for (const MedVar &Param : Func.Params)
+          if (Param.RegOff != kNoParamReg)
+            ++CallerStackBase;
+      }
+      if (IsTailJump && !CI.IsIndirect && CalleeArgs > CalleeStackBase) {
+        for (int K = CalleeStackBase; K < CalleeArgs && K < MaxArgs; ++K) {
           if (FoundMask[K])
             continue;
           if (K > 0 && !FoundMask[K - 1])
             break; // keep arguments consecutive from arg0
+          const int Incoming = CallerStackBase + (K - CalleeStackBase);
           MedVar P;
           P.Kind = MedVar::Param;
-          P.Id = K;
+          P.Id = Incoming;
           P.RegOff = kNoParamReg;
           P.Size = static_cast<uint16_t>(TRI.PointerSize);
           P.TheArch = TheArch;
           Found[K] = P;
           FoundMask[K] = true;
-          PromoteStackParams.insert(K);
+          // A stack argument, assembled after any register arguments.
+          FromStackScan[K] = true;
+          PromoteStackParams.insert(Incoming);
         }
       }
 

@@ -42,9 +42,12 @@ struct MultiOutputRender {
 };
 
 //--- Dispatchers (HighCIntrinsicRender.cpp) ---
+/// \p GnuToolchain: the output is compiled by GCC or Clang rather than MSVC,
+/// so an MSVC-only intrinsic name has no declaration.
 std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
                                 const std::vector<std::string> &Ops,
-                                uint16_t ResultBytes, bool &HasCIntrinsics);
+                                uint16_t ResultBytes, bool &HasCIntrinsics,
+                                bool GnuToolchain = false);
 
 //--- Arch-specific (HighCIntrinsicRenderX86.cpp) ---
 std::string
@@ -56,7 +59,8 @@ renderX86MultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
 
 std::string renderX86IntrinsicCall(Intrinsic Id,
                                    const std::vector<std::string> &Ops,
-                                   bool &HasCIntrinsics);
+                                   bool &HasCIntrinsics,
+                                   bool GnuToolchain = false);
 
 /// Render x86 intrinsics whose C spelling depends on the complete HighIR
 /// result and operand types. Returns an empty string when \p Call is not one

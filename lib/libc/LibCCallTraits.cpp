@@ -257,6 +257,14 @@ bool isNoReturnTarget(const BinaryImage &Img, va_t Target) {
   if (const Import *Imp = Img.findImportAt(Target))
     if (isNoReturnFunction(Imp->Name))
       return true;
+  // A pointer slot the loader binds to an import (an ELF GLOB_DAT or
+  // JUMP_SLOT, a Mach-O bind): x86 calls through it as `call [slot]`.
+  const ImportStorageSlotCollection Storage =
+      Img.collectImportStorageSlot(Target);
+  if (auto It = Storage.Slots.find(Target);
+      It != Storage.Slots.end() && !Storage.Conflicts.count(Target) &&
+      It->second.Addend == 0 && isNoReturnFunction(It->second.Name))
+    return true;
   if (const Symbol *Sym = Img.findSymbolAt(Target))
     if (isNoReturnFunction(Sym->Name))
       return true;
@@ -278,6 +286,13 @@ NoReturnTargetIndex::NoReturnTargetIndex(const BinaryImage &Img,
     if (!ImportAddresses.count(Address) && Index < Img.Imports.size() &&
         isNoReturnFunction(Img.Imports[Index].Name))
       Targets.insert(Address);
+  // Pointer slots the loader binds to imports, which x86 calls through as
+  // `call [slot]`; an import directory entry for the same slot decides.
+  const ImportStorageSlotCollection Storage = Img.collectImportStorageSlots();
+  for (const auto &[SlotVA, Slot] : Storage.Slots)
+    if (!ImportAddresses.count(SlotVA) && !Storage.Conflicts.count(SlotVA) &&
+        Slot.Addend == 0 && isNoReturnFunction(Slot.Name))
+      Targets.insert(SlotVA);
 
   // A returning import still permits the first same-address symbol to prove
   // no-return. Later symbol aliases do not override that first symbol.
