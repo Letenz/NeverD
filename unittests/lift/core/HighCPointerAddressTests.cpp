@@ -8750,7 +8750,8 @@ TEST(HighCPointerAddresses, InvertSkipInsideSehTryFoldsRaise) {
   const std::string Source = emitFunctions({Func}, Arch::X86);
   EXPECT_EQ(Source.find("goto L_"), std::string::npos) << Source;
   EXPECT_NE(Source.find("RaiseException"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("0xFFFFFF9C"), std::string::npos) << Source;
+  // The int32_t slot takes the value of the 0xFFFFFF9C bit pattern.
+  EXPECT_NE(Source.find("= -100;"), std::string::npos) << Source;
   EXPECT_NE(Source.find("= 41"), std::string::npos) << Source;
 }
 
@@ -33520,7 +33521,8 @@ TEST(HighCPointerAddresses, ReturningCallFollowedByInt3PreservesDebugBreak) {
   EXPECT_NE(Source.find("abort_like("), std::string::npos) << Source;
   EXPECT_NE(Source.find("__debugbreak"), std::string::npos) << Source;
   EXPECT_NE(Source.find("= abort_like("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return (int32_t)v0"), std::string::npos) << Source;
+  // The int32_t return converts the 64-bit value itself.
+  EXPECT_NE(Source.find("return v0;"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, TestRcxDoesNotEmitPopcount) {

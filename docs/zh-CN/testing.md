@@ -1037,7 +1037,9 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 
 `NeverDHighControlFlowTests` 中的 `HighIntegerSignedness.*` 检查一个后期 pass：它按每个寄存器或临时局部变量大多数用途的需要，把它声明为有符号或无符号。回绕算术、逻辑移位和无符号比较倾向无符号；有符号比较、有符号除法、算术移位和符号扩展倾向有符号；任何一处非整数用途都会让该变量保持原类型。生成的 C 在 `-O0` 和 `-O2` 下带未定义行为陷阱运行，并与独立的参考算术比对，其中包括对已变为无符号的局部变量做有符号比较的情形。
 
-`NeverDHighControlFlowTests` 中的 `HighValueForward.*` 检查 HighC 写出器何时可以把只用一次的值折叠进它的使用处。循环条件会保留一个其变量在循环中被赋值的值，因为同一个名字可能代表多个 SSA 值；重新读取的栈槽在对该槽的写入之后仍保持原值，而在对其他槽的写入之后可以折叠。每种情形都在 `-O0` 和 `-O2` 下带未定义行为陷阱运行。
+`NeverDHighControlFlowTests` 中的 `HighValueForward.*` 检查 HighC 写出器何时可以把只用一次的值折叠进它的使用处。循环条件会保留一个其变量在循环中被赋值的值，因为同一个名字可能代表多个 SSA 值；重新读取的栈槽在对该槽的写入之后仍保持原值，而在对其他槽的写入之后可以折叠。源变量在使用前被重新赋值时，副本保持原值。每种情形都在 `-O0` 和 `-O2` 下带未定义行为陷阱运行。
+
+`NeverDHighControlFlowTests` 中的 `HighCIntegerConversion.*` 检查 HighC 写出器交给 C 完成的整数转换。操作数内部的转换若保留了外层转换所保留的字节，就不再单独输出强制转换；对已声明整数局部变量的赋值和 return 采用隐式转换，字面量写成转换后的值，而指针保留显式转换。每种情形都在 `-O0` 和 `-O2` 下带未定义行为陷阱运行，并与参考运算比较。
 
 源码投影还会在清理后重新验证变参对象列表：允许空的指令地址锚点，但拒绝隐藏效果或控制转移。同步清理允许同一已保存接收者的单层 `int64_t` 或 `uint64_t` 视图；窄化、浮点转换、地址运算和重新赋值仍被拒绝。Foundation 对象集合及正常、异常解锁轨迹均在 `-O0` 和 `-O2` 下执行验证。
 
@@ -1452,3 +1454,5 @@ MainActor 测试数据检查完整的固定元数据与静态表流程，拒绝�
 `LinuxPriorityTests.cpp` 检查显式任务状态、线程隔离、缺失观察值、无效 JSON、配置准入和拒绝效果。独立的 x64／AArch64 原始调用程序在 O0／O2 下验证 nice 限制、系统调用参数的 32 位截断、CAP_SYS_NICE／RLIMIT_NICE 权限边界和内核 getpriority 编码。在 `NeverDLinuxProcessTests` 中运行 `LinuxPriority.*` 与 `Backends/LinuxPriorityProcess.*`；涉及共享内核／JSON 时，再运行完整 Linux 进程、Android 原生和进程公共接口测试。缺失的可选原生传输仍明确跳过。
 
 `LinuxKernelAvailability.*` 校验显式缺失输入与配置准入。`Backends/LinuxKernelProcess.*` 使用独立的 x64／AArch64 O0／O2 原始调用程序，确认参数校验前返回 ENOSYS，且未指定及无关调用仍被拒绝。Android syscall 样例对照原始 SVC 与 Bionic `syscall`，分别保留原始返回值与 errno 效果。可用性变更须运行这些重点测试、完整 Linux 进程与进程公共接口测试，以及 Android syscall、原生入口和信号测试。
+
+`CompletedQueryCache.*` 覆盖完整字节域答案、所有紧凑槽位、增长、上下文及所有者隔离、无效与不完整输入和精确存储边界。原生分支回归保持固定逻辑查询成本、精确预算和少一预算拒绝，即使完整答案省去了后端工作。
