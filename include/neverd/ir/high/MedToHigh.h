@@ -278,7 +278,16 @@ private:
   /// Like \ref forceInlineExpr, but a unique Load / add / copy may inline
   /// even when the dest is a memory-read output.  Used for `INDIR_CALL`
   /// callees so HighC prints `(*(*p))(...)` instead of an undeclared temp.
+  /// A read inlines only when nothing between it and the call at
+  /// \ref CallTargetUse may write memory: the call would otherwise read the
+  /// slot again after a store to it.
   ExprPtr forceInlineCallTarget(const ExprPtr &E);
+  struct CallTargetUseSite {
+    const MedBlock *Block = nullptr;
+    size_t CallIdx = 0;
+  };
+  CallTargetUseSite CallTargetUse;
+  bool memoryReadReachesCallTarget(const MedVar &Value) const;
 
   int regToArgIdx(uint64_t RegOff) const;
   /// Map a MedIR parameter or its entry register to the ABI slot index in

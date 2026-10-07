@@ -691,6 +691,78 @@ ExprPtr MedToHighConverter::forceInlineExpr(const ExprPtr &E) {
   return Result;
 }
 
+bool MedToHighConverter::memoryReadReachesCallTarget(
+    const MedVar &Value) const {
+  const MedBlock *Block = CallTargetUse.Block;
+  if (!Block || CallTargetUse.CallIdx > Block->Ops.size())
+    return false;
+  size_t ReadIdx = CallTargetUse.CallIdx;
+  for (size_t I = CallTargetUse.CallIdx; I-- > 0;) {
+    const MedOp &Op = Block->Ops[I];
+    if (Op.Opcode == NdOp::LOAD && Op.Output.Kind == Value.Kind &&
+        Op.Output.Id == Value.Id && Op.Output.SSAVer == Value.SSAVer) {
+      ReadIdx = I;
+      break;
+    }
+  }
+  if (ReadIdx == CallTargetUse.CallIdx)
+    return false;
+  const MedOp &Read = Block->Ops[ReadIdx];
+  const uint64_t StackPointer = getTargetRegInfo(TargetArch).StackPointer;
+  // Whether \p Address, used by the op at \p Before, is this function's own
+  // stack: the stack pointer through copies, zero extensions and constant
+  // offsets.
+  auto frameAddress = [&](size_t Before, MedVar Address) {
+    for (size_t I = Before; I-- > 0;) {
+      if (Address.Kind == MedVar::Reg && Address.RegOff == StackPointer)
+        return true;
+      const MedOp &Def = Block->Ops[I];
+      if (Def.Output.Kind != Address.Kind || Def.Output.Id != Address.Id ||
+          Def.Output.SSAVer != Address.SSAVer || Def.NumInputs < 1)
+        continue;
+      const bool Offset =
+          (Def.Opcode == NdOp::INT_ADD || Def.Opcode == NdOp::INT_SUB) &&
+          Def.NumInputs == 2 && Def.Inputs[1].isConst();
+      if (Def.Opcode != NdOp::COPY && Def.Opcode != NdOp::INT_ZEXT && !Offset)
+        return false;
+      Address = Def.Inputs[0];
+    }
+    return Address.Kind == MedVar::Reg && Address.RegOff == StackPointer;
+  };
+  if (Read.NumInputs < 1)
+    return false;
+  // A store to this function's stack (outgoing arguments, spills) and a read
+  // of image or heap memory name different storage, and so do a heap store
+  // and a stack read.  A pointer the function loaded is assumed not to point
+  // into its own frame.
+  const bool ReadsFrame = frameAddress(ReadIdx, Read.Inputs[0]);
+  for (size_t I = ReadIdx + 1; I < CallTargetUse.CallIdx; ++I) {
+    const MedOp &Op = Block->Ops[I];
+    if (Op.MemoryOrdering != NdMemoryOrdering::None)
+      return false;
+    // A store, call or atomic can change the memory the read observed.
+    switch (Op.Opcode) {
+    case NdOp::STORE:
+      if (Op.NumInputs >= 1 &&
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          Read.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          frameAddress(I, Op.Inputs[0]) != ReadsFrame)
+        continue;
+      return false;
+    case NdOp::CALL:
+    case NdOp::INDIR_CALL:
+    case NdOp::INTRINSIC:
+    case NdOp::ATOMIC_XCHG:
+    case NdOp::ATOMIC_ADD:
+    case NdOp::ATOMIC_CMPXCHG:
+      return false;
+    default:
+      break;
+    }
+  }
+  return true;
+}
+
 ExprPtr MedToHighConverter::forceInlineCallTarget(const ExprPtr &E) {
   struct DepthGuard {
     int &D;
@@ -703,7 +775,8 @@ ExprPtr MedToHighConverter::forceInlineCallTarget(const ExprPtr &E) {
     return E;
   if (E->Kind == ExprKind::Var && E->Var.Id >= 0 && !E->Var.isConst()) {
     auto Key = varKey(E->Var);
-    if (!PhiOutputVars.count(Key)) {
+    if (!PhiOutputVars.count(Key) && (!MemoryReadOutputs.count(Key) ||
+                                      memoryReadReachesCallTarget(E->Var))) {
       auto It = DefExpr.find(Key);
       if (It != DefExpr.end() && It->second &&
           It->second->Kind != ExprKind::Call &&
@@ -1077,6 +1150,45 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
         *Med.SourceTypeHint, *SwiftErrorEntryInput};
   };
 
+  // MedIR keeps the loads and stores of an incoming stack argument the
+  // function writes in place as memory accesses to its home slot. Seed each
+  // home with its parameter at entry, as the LLVM emitter does, so the first
+  // read sees the argument rather than an uninitialized local.
+  auto SeedMutableStackParamHomes = [&] {
+    if (Med.MutableStackParamHomes.empty() || Med.SourceTypeHint)
+      return;
+    std::optional<MedVar> EntrySP;
+    for (const MedBlock &Block : Med.Blocks) {
+      for (const MedOp &Op : Block.Ops)
+        for (uint8_t I = 0; I < Op.NumInputs && !EntrySP; ++I)
+          if (Op.Inputs[I].Kind == MedVar::Reg &&
+              Op.Inputs[I].RegOff == TRI.StackPointer &&
+              Op.Inputs[I].SSAVer == 0 && Op.Inputs[I].RenameTag < 0)
+            EntrySP = Op.Inputs[I];
+      if (EntrySP)
+        break;
+    }
+    if (!EntrySP)
+      return;
+    std::vector<HighStmt> Seeds;
+    for (const auto &[ParamIdx, Offset] : Med.MutableStackParamHomes) {
+      if (ParamIdx < 0 || static_cast<size_t>(ParamIdx) >= Med.Params.size())
+        continue;
+      HighStmt Seed;
+      Seed.Kind = StmtKind::Store;
+      Seed.Addr = Med.Entry;
+      Seed.StoreAddr = HighExpr::makeBinop(
+          NdOp::INT_ADD, HighExpr::makeVar(*EntrySP),
+          HighExpr::makeConst(static_cast<uint64_t>(Offset), EntrySP->Size));
+      MedVar Param = Med.Params[ParamIdx];
+      Param.Kind = MedVar::Param;
+      Param.Id = ParamIdx;
+      Seed.StoreVal = medvarToExpr(Param);
+      Seeds.push_back(std::move(Seed));
+    }
+    Func.Body.insert(Func.Body.begin(), Seeds.begin(), Seeds.end());
+  };
+
   if (Med.SourceTypeHint) {
     for (const auto &P : Med.SourceTypeHint->Parameters)
       Func.Params.push_back({P.Name, P.Type});
@@ -1120,6 +1232,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
     buildExpressions(Med);
     structureControlFlow(Func, Med);
     CaptureSwiftError();
+    SeedMutableStackParamHomes();
     Trace.high(Func, "structured");
     inferTypes(Func);
     eraseKeepingBranchEntries(
@@ -1141,6 +1254,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   auto TStruct = std::chrono::steady_clock::now();
   structureControlFlow(Func, Med);
   CaptureSwiftError();
+  SeedMutableStackParamHomes();
   Trace.high(Func, "structured");
   auto TSimp = std::chrono::steady_clock::now();
   simplifyControlFlow(Func, Med);

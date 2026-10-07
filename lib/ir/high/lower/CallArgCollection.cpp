@@ -167,6 +167,18 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
       if (std::optional<int64_t> Entry = Scan.EntryOffsetOf(AddrVar))
         StackOff = *Entry + Scan.FrameSize;
 
+    // A tail jump leaves on the entry stack: a stored slot is the callee's
+    // argument at its entry offset, whatever stack pointer the store used.
+    if (Scan.TailJump) {
+      std::optional<int64_t> Entry =
+          Scan.EntryOffsetOf ? Scan.EntryOffsetOf(AddrVar) : std::nullopt;
+      const int64_t ReturnAddress =
+          Layout.EntryStackBase - Layout.CallStackBase;
+      if (!Entry || *Entry < ReturnAddress)
+        return;
+      StackOff = *Entry - ReturnAddress;
+    }
+
     if (StackOff < 0 || SlotBytes == 0)
       return;
     int ArgPos = -1;
@@ -177,7 +189,9 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
       if (SlotOff % SlotBytes != 0)
         return;
       // A slot the function reads back is a local stored before the call.
-      if (Scan.LoadedEntrySlots &&
+      // A tail jump's slots are this function's own incoming arguments,
+      // which it may well have read before passing them on.
+      if (!Scan.TailJump && Scan.LoadedEntrySlots &&
           Scan.LoadedEntrySlots->count(StackOff - Scan.FrameSize))
         return;
       ArgPos = static_cast<int>(Layout.Registers.size()) +
@@ -808,6 +822,9 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     Scan.CalleeStackArgs = Ops[CallIdx].CalleeStackArgs;
   }
   Scan.FirstStackSlot = FirstStackSlot;
+  Scan.TailJump = CallIdx + 1 < Ops.size() &&
+                  Ops[CallIdx + 1].Opcode == NdOp::RETURN &&
+                  Ops[CallIdx + 1].Addr == Ops[CallIdx].Addr;
   Scan.StoreScanWindow = limits::kCallArgStoreScanWindow;
   Scan.ExtraWindows = ExtraWindows;
   auto ToExpr = [this](const MedVar &V) { return medvarToExpr(V); };
@@ -850,7 +867,9 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     const MedOp *Def = DefIt == EntryOffsetDefs.end() ? nullptr : DefIt->second;
     if (!Def || Def->NumInputs < 1)
       return std::nullopt;
-    if (Def->Opcode == NdOp::COPY)
+    // i386 addresses reach memory zero-extended to the 8-byte VA model; a
+    // stack address does not wrap, so the offset is unchanged.
+    if (Def->Opcode == NdOp::COPY || Def->Opcode == NdOp::INT_ZEXT)
       return EntryOffset(Def->Inputs[0], Depth + 1);
     if ((Def->Opcode == NdOp::INT_ADD || Def->Opcode == NdOp::INT_SUB) &&
         Def->NumInputs == 2 && Def->Inputs[1].isConst()) {
