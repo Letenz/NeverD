@@ -3227,6 +3227,36 @@ TEST(HighCPointerAddresses, RotateOrPrintsBuiltin) {
       << Source;
 }
 
+TEST(HighCPointerAddresses, MaskedShiftCountNeedsNoOvershiftGuard) {
+  // `shl rax, cl` shifts by cl & 63, which is below 64 whatever cl holds, so
+  // C needs no guard; an unmasked count keeps it.
+  auto Emit = [](bool Masked) {
+    HighFunc Func;
+    Func.Name = "shift";
+    Func.ReturnType = NdType::makeInt(8, false);
+    Func.Params = {{"arg0", NdType::makeInt(8, false)},
+                   {"arg1", NdType::makeInt(8, false)}};
+    ExprPtr Count = parameter(1, NdType::makeInt(8, false));
+    if (Masked) {
+      Count =
+          HighExpr::makeBinop(NdOp::INT_AND, Count, HighExpr::makeConst(63, 8));
+      Count->Type = NdType::makeInt(8, false);
+    }
+    auto Left = HighExpr::makeBinop(
+        NdOp::INT_LEFT, parameter(0, NdType::makeInt(8, false)), Count);
+    Left->Type = NdType::makeInt(8, false);
+    auto Right = HighExpr::makeBinop(NdOp::INT_RIGHT, Left, Count);
+    Right->Type = NdType::makeInt(8, false);
+    returnValue(Func, Right);
+    return emitFunctions({Func});
+  };
+  const std::string Masked = Emit(true);
+  EXPECT_EQ(Masked.find("< 64 ?"), std::string::npos) << Masked;
+  EXPECT_NE(Masked.find("<< (arg1 & 63)"), std::string::npos) << Masked;
+  const std::string Unmasked = Emit(false);
+  EXPECT_NE(Unmasked.find("< 64 ?"), std::string::npos) << Unmasked;
+}
+
 TEST(HighCPointerAddresses, OmitsCopyForwardedTempDeclarations) {
   HighFunc Func;
   Func.Name = "fwd_temp";
