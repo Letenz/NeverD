@@ -94,6 +94,36 @@ void process_main(U64 *stack) {
     finish(0);
   }
   U64 self = linux_service(GetPID, 0, 0, 0);
+  if (mode == 'e') {
+    require(pidfd(2000, 0) == (U64)-3, 61);
+    require(pidfd(self, 0) == 3, 62);
+    require(linux_service(Close, 3, 0, 0) == 0, 63);
+    finish(0);
+  }
+  if (mode == 'c') {
+    unsigned truth = arguments[2][0] - '0';
+    U64 nonleader_error = (truth & 2) ? (U64)-2 : (U64)-22;
+    require(pidfd(2000UL | (1UL << 32), 0x800UL | (1UL << 32)) == 3, 64);
+    require(pidfd(2001, 0) == (U64)-3, 65);
+    require(pidfd(2001, 1) == (U64)-22, 66);
+    require(pidfd(3000, 0) == nonleader_error, 67);
+    U64 thread = pidfd(3000, 0x80);
+    if (truth & 1) {
+      require(thread == 4, 68);
+      require(linux_service(Close, thread, 0, 0) == 0, 69);
+    } else
+      require(thread == (U64)-22, 70);
+    require(pidfd(self, 0) == 4, 71);
+    require(pidfd(2001, 0) == (U64)-3, 72);
+    require(pidfd(3000, 0) == nonleader_error, 73);
+    require(pidfd(2000, 0) == (U64)-24, 74);
+    require(pidfd(2000, 1) == (U64)-22, 75);
+    require(linux_service(Close, 3, 0, 0) == 0, 76);
+    require(pidfd(2000, 0) == 3, 77);
+    require(linux_service(Close, 3, 0, 0) == 0, 78);
+    require(linux_service(Close, 4, 0, 0) == 0, 79);
+    finish(0);
+  }
   if (mode == 'v') {
     int single_buffer = arguments[2][0] == '1';
     U64 fd = pidfd(self, 0);

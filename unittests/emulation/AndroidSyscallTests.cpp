@@ -99,7 +99,7 @@ TEST_P(AndroidSyscall,
     bool ThreadFlag;
   };
   constexpr KernelCase Kernels[] = {
-#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer)         \
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
   {AndroidGKIKernel::Name, Label, ThreadFlag},
 #include "GKIReleaseCases.def"
 #undef NEVERD_GKI_RELEASE_CASE
@@ -125,7 +125,7 @@ TEST_P(AndroidSyscall, ReleasedGKIVectorImportRetainsRawAndBionicErrors) {
     bool SingleBuffer;
   };
   constexpr KernelCase Kernels[] = {
-#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer)         \
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
   {AndroidGKIKernel::Name, Label, SingleBuffer},
 #include "GKIReleaseCases.def"
 #undef NEVERD_GKI_RELEASE_CASE
@@ -141,6 +141,37 @@ TEST_P(AndroidSyscall, ReleasedGKIVectorImportRetainsRawAndBionicErrors) {
               UINT64_MAX, Error, Error});
     EXPECT_TRUE(R.StandardOutput.empty());
     EXPECT_TRUE(R.StandardError.empty());
+  }
+}
+TEST_P(AndroidSyscall, ReleasedGKICatalogueRetainsRawAndBionicLookupErrors) {
+  struct KernelCase {
+    AndroidGKIKernel Kernel;
+    const char *Label;
+    bool ThreadFlag;
+    uint32_t NonLeader;
+  };
+  constexpr KernelCase Kernels[] = {
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
+  {AndroidGKIKernel::Name, Label, ThreadFlag, Error},
+#include "GKIReleaseCases.def"
+#undef NEVERD_GKI_RELEASE_CASE
+  };
+  for (const auto &K : Kernels) {
+    SCOPED_TRACE(K.Label);
+    auto &Kernel = Options.LinuxKernel.emplace();
+    Kernel.GKI = K.Kernel;
+    Kernel.Tasks.emplace().emplace(2000, LinuxKernelTask{true});
+    Kernel.Tasks->emplace(3000, LinuxKernelTask{false});
+    Options.LinuxFiles.emplace().DescriptorLimit = 5;
+    auto R = run("syscall_gki_tasks", {Buffer, K.ThreadFlag, K.NonLeader});
+    returned(R);
+    words(R, {uint64_t(0) - 3, 77, UINT64_MAX, 3, uint64_t(0) - K.NonLeader,
+              UINT64_MAX, K.NonLeader, K.ThreadFlag ? 3u : UINT64_MAX});
+    Options.LinuxFiles->DescriptorLimit = 3;
+    R = run("syscall_gki_tasks_full", {Buffer});
+    returned(R);
+    words(R, {uint64_t(0) - 3, 77, UINT64_MAX, 3, uint64_t(0) - K.NonLeader,
+              UINT64_MAX, K.NonLeader, uint64_t(0) - 24});
   }
 }
 

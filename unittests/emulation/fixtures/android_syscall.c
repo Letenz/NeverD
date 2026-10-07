@@ -193,3 +193,37 @@ u64 syscall_gki_vectors(u64 *out) {
     return 5;
   return 0;
 }
+
+u64 syscall_gki_tasks(u64 *out, u64 thread_flag, u64 group_errno) {
+  *__errno() = 77;
+  out[0] = (u64)raw(434, 2001, 0, 0, 0, 0, 0);
+  out[1] = (u64)*__errno();
+  out[2] = (u64)syscall(434, 2001UL, 0UL);
+  out[3] = (u64)*__errno();
+  out[4] = (u64)raw(434, 3000, 0, 0, 0, 0, 0);
+  out[5] = (u64)syscall(434, 3000UL, 0UL);
+  out[6] = (u64)*__errno();
+  out[7] = (u64)syscall(434, 3000UL, 0x80UL);
+  if (thread_flag) {
+    if (out[7] != 3 || (u64)*__errno() != group_errno || syscall(57, out[7]))
+      return 1;
+  } else if (out[7] != ~0UL || *__errno() != 22)
+    return 2;
+  long leader = raw(434, 2000UL | (1UL << 32), 1UL << 32, 0, 0, 0, 0);
+  if (leader != 3 || raw(57, (u64)leader, 0, 0, 0, 0, 0))
+    return 3;
+  return 0;
+}
+
+u64 syscall_gki_tasks_full(u64 *out) {
+  *__errno() = 77;
+  out[0] = (u64)raw(434, 2001, 0, 0, 0, 0, 0);
+  out[1] = (u64)*__errno();
+  out[2] = (u64)syscall(434, 2001UL, 0UL);
+  out[3] = (u64)*__errno();
+  out[4] = (u64)raw(434, 3000, 0, 0, 0, 0, 0);
+  out[5] = (u64)syscall(434, 3000UL, 0UL);
+  out[6] = (u64)*__errno();
+  out[7] = (u64)raw(434, 2000, 0, 0, 0, 0, 0);
+  return 0;
+}

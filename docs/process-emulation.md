@@ -83,7 +83,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 | `linux_files` | Absent | Closed catalogue of immutable guest files for Linux ELF64 and Android native workloads |
 | `linux_signals` | Absent | Explicit initial signal dispositions; no signal delivery or host handlers |
 | `linux_priority` | Absent | Explicit per-task nice values and caller authority for raw Linux priority services |
-| `linux_kernel` | Absent | Explicit released GKI branch or observed absent guest kernel interfaces |
+| `linux_kernel` | Absent | Explicit released GKI branch, fixed guest task catalogue or observed absent guest kernel interfaces |
 
 `schema_version` is 1. Results include profile, architecture, selected backend
 and its selection reason, `stop_reason`, nullable `exit_status`, diagnostic,
@@ -162,9 +162,16 @@ implementation. See the [kernel missing-call implementation](https://github.com/
 
 An explicit `linux_kernel.gki` selects a released Android common kernel branch
 from 5.10 through 6.18. Its current implemented subset includes `pidfd_open`
-for the live model process and versioned vector import, with the same descriptor
+for the live model process and explicitly catalogued guest tasks, and versioned
+vector import, with the same descriptor
 table used by `linux_files`; Bionic and raw traps share ownership and error ordering.
 Selecting GKI together with an absent `pidfd_open` observation is rejected.
+An optional `linux_kernel.tasks` array supplies a closed, fixed catalogue of
+additional live tasks as `{ "id": 2000, "group_leader": true }` entries.
+An omitted array leaves foreign target lookup unsupported; an empty array knows
+only the running group leader. A PID outside a declared catalogue returns ESRCH.
+Entries and priority observations must be consistent, and the fixed catalogue
+cannot be combined with cooperative Android guest threads.
 Android API levels do not select a kernel. See the
 [released GKI contracts](android-gki-kernels.md) for all eight source pins,
 descriptor behavior, tests and the remaining kernel coverage.
