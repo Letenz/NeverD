@@ -13,8 +13,10 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QClipboard>
 #include <QFile>
 #include <QFileInfo>
+#include <QItemSelectionModel>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLineEdit>
@@ -250,6 +252,44 @@ private slots:
     ir->text()->setCursorLine(3);
     QTRY_COMPARE(disassembly->currentItem(),
                  std::optional<Address>(Base + 0x143));
+
+    // Copy takes the lines selected in the window holding the focus, also in
+    // an IR window switched to pseudocode, which is not the pseudocode
+    // window; it used to copy the disassembly.
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    ir->setRepresentation(QStringLiteral("c"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !ir->text()->loading() && ir->text()->lineCount() > 3, OpenTimeoutMs);
+    ir->text()->setFocus();
+    QTRY_VERIFY(ir->text()->hasFocus());
+    ir->text()->setCursorLine(1);
+    QTest::keyClick(ir->text(), Qt::Key_Down, Qt::ShiftModifier);
+    const QString lines = QStringLiteral("// code line 1\n// code line 2");
+    QApplication::clipboard()->clear();
+    QTest::keyClick(ir->text(), Qt::Key_C, Qt::ControlModifier);
+    QCOMPARE(QApplication::clipboard()->text(), lines);
+    QApplication::clipboard()->clear();
+    bench.action(ActionId::EditCopy)->trigger();
+    QCOMPARE(QApplication::clipboard()->text(), lines);
+
+    // A list copies its selected rows, by key or from the Edit menu.
+    auto &model = functions->model();
+    functions->table()->setFocus();
+    QTRY_VERIFY(functions->table()->hasFocus());
+    functions->table()->selectionModel()->select(
+        QItemSelection(model.index(0, 0),
+                       model.index(1, model.columnCount() - 1)),
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    QApplication::clipboard()->clear();
+    QTest::keyClick(functions->table(), Qt::Key_C, Qt::ControlModifier);
+    const QString rows = QApplication::clipboard()->text();
+    QCOMPARE(rows.count(QLatin1Char('\n')), 1);
+    QVERIFY2(rows.startsWith(QStringLiteral("function_0\t")), qPrintable(rows));
+    QVERIFY2(rows.contains(QStringLiteral("\nfunction_1\t")), qPrintable(rows));
+    QApplication::clipboard()->clear();
+    bench.action(ActionId::EditCopy)->trigger();
+    QCOMPARE(QApplication::clipboard()->text(), rows);
 
     // The graph of the current function.
     disassembly->navigate(Base + 0x140);

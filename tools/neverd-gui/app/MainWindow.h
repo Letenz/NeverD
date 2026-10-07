@@ -93,6 +93,8 @@ private:
   std::optional<Address> currentAddress() const;
   /// The list window holding the keyboard focus, if one does.
   ChooserView *focusedChooser() const;
+  /// The pseudocode or IR window holding the keyboard focus, if one does.
+  CodeView *focusedCodeView() const;
   std::optional<Address> currentFunction() const;
   void navigate(Address address);
   /// Jump in the active address view: the hex view when it was the last
@@ -126,6 +128,8 @@ private:
   void chooseFont();
   void chooseTheme();
   void showShortcuts();
+  /// Edit > Copy: the selection of the view holding the focus.
+  void copySelection();
   void showCommandPalette();
   void exportCurrent(bool pseudocode);
   void runCommand(const QString &command, const QString &argument);

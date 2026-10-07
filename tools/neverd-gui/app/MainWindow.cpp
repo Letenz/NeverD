@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "ChooserView.h"
 #include "CodeView.h"
 #include "ConnectionsDialog.h"
 #include "DisassemblyView.h"
@@ -48,6 +49,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
@@ -644,6 +646,14 @@ ChooserView *MainWindow::focusedChooser() const {
   return nullptr;
 }
 
+CodeView *MainWindow::focusedCodeView() const {
+  for (auto *widget = QApplication::focusWidget(); widget;
+       widget = widget->parentWidget())
+    if (auto *view = qobject_cast<CodeView *>(widget))
+      return view;
+  return nullptr;
+}
+
 std::optional<Address> MainWindow::currentFunction() const {
   return disassembly_ ? disassembly_->currentFunction() : std::nullopt;
 }
@@ -735,15 +745,7 @@ void MainWindow::connectActions() {
 
   on(ActionId::EditUndo, [this] { session_.undo(); });
   on(ActionId::EditRedo, [this] { session_.redo(); });
-  on(ActionId::EditCopy, [this] {
-    QWidget *focus = QApplication::focusWidget();
-    QString text;
-    if (pseudocode_ && pseudocode_->isAncestorOf(focus))
-      text = pseudocode_->text()->selectedText();
-    else
-      text = disassembly_->selectedText();
-    QApplication::clipboard()->setText(text);
-  });
+  on(ActionId::EditCopy, [this] { copySelection(); });
   on(ActionId::EditCopyAddress, [this] {
     if (const auto address = currentAddress())
       QApplication::clipboard()->setText(hexAddress(*address));
@@ -779,8 +781,8 @@ void MainWindow::connectActions() {
   on(ActionId::JumpNextFunction, [this] { stepFunction(true); });
   on(ActionId::JumpPreviousFunction, [this] { stepFunction(false); });
   on(ActionId::JumpPseudocode, [this] {
-    QWidget *focus = QApplication::focusWidget();
-    if (pseudocode_ && pseudocode_->isAncestorOf(focus)) {
+    // From any pseudocode or IR window back to the disassembly.
+    if (focusedCodeView()) {
       if (auto *dock = docks_.value(DisassemblyDock))
         dock->raise();
       disassembly_->focusContent();
@@ -858,10 +860,9 @@ void MainWindow::connectActions() {
                                             disassembly_->currentToken(), &ok);
     if (!ok || text.isEmpty())
       return;
-    QWidget *focus = QApplication::focusWidget();
     bool found = false;
-    if (pseudocode_ && pseudocode_->isAncestorOf(focus))
-      found = pseudocode_->text()->findText(text, searchDown_);
+    if (auto *code = focusedCodeView())
+      found = code->text()->findText(text, searchDown_);
     else
       found = disassembly_->listing()->findInLoaded(text, searchDown_);
     if (!found)
@@ -1466,6 +1467,31 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
   if (names.isEmpty())
     names.append(page);
   session_.setStringOptions(names, page, length->value());
+}
+
+void MainWindow::copySelection() {
+  // The view holding the focus copies its selection: any code view, a
+  // chooser's rows, or a text field; the disassembly otherwise.
+  for (QWidget *widget = QApplication::focusWidget(); widget;
+       widget = widget->parentWidget()) {
+    if (auto *field = qobject_cast<QLineEdit *>(widget)) {
+      field->copy();
+      return;
+    }
+    if (auto *log = qobject_cast<QPlainTextEdit *>(widget)) {
+      log->copy();
+      return;
+    }
+    if (auto *code = qobject_cast<CodeText *>(widget)) {
+      QApplication::clipboard()->setText(code->selectedText());
+      return;
+    }
+    if (auto *chooser = qobject_cast<ChooserView *>(widget)) {
+      QApplication::clipboard()->setText(chooser->selectedText());
+      return;
+    }
+  }
+  QApplication::clipboard()->setText(disassembly_->selectedText());
 }
 
 void MainWindow::showShortcuts() {

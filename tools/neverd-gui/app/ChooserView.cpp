@@ -471,6 +471,29 @@ std::optional<Address> ChooserView::referenceTarget() const {
                          : std::nullopt;
 }
 
+QString ChooserView::selectedText() const {
+  auto rows = table_->selectionModel()->selectedRows();
+  if (rows.isEmpty() && table_->currentIndex().isValid())
+    rows.append(table_->currentIndex());
+  std::sort(rows.begin(), rows.end(),
+            [](const QModelIndex &a, const QModelIndex &b) {
+              return a.row() < b.row();
+            });
+  // Columns in the order the header shows them.
+  const QHeaderView *header = table_->header();
+  QStringList lines;
+  for (const auto &row : rows) {
+    QStringList cells;
+    for (int visual = 0; visual < header->count(); ++visual)
+      if (const int column = header->logicalIndex(visual);
+          !header->isSectionHidden(column))
+        cells.append(
+            model_->index(row.row(), column).data(Qt::DisplayRole).toString());
+    lines.append(cells.join(QLatin1Char('\t')));
+  }
+  return lines.join(QLatin1Char('\n'));
+}
+
 void ChooserView::focusFilter() {
   filter_->setVisible(true);
   filter_->setFocus(Qt::ShortcutFocusReason);
@@ -528,14 +551,7 @@ bool ChooserView::eventFilter(QObject *object, QEvent *event) {
       return true;
     }
     if (key->matches(QKeySequence::Copy)) {
-      QStringList rows;
-      for (const auto &index : table_->selectionModel()->selectedRows()) {
-        QStringList cells;
-        for (int column = 0; column < model_->columnCount(); ++column)
-          cells.append(model_->index(index.row(), column).data().toString());
-        rows.append(cells.join(QLatin1Char('\t')));
-      }
-      QApplication::clipboard()->setText(rows.join(QLatin1Char('\n')));
+      QApplication::clipboard()->setText(selectedText());
       return true;
     }
     // Typing starts a quick filter, as in the classic list windows.

@@ -180,6 +180,17 @@ Single-key shortcuts apply only while an analysis view has the keyboard focus,
 so typing in a field or dialog keeps normal text editing. **Options →
 Shortcuts** lists every command with its key.
 
+**Edit → Copy** (Ctrl+C) copies from the window that has the keyboard focus:
+the selected lines of a disassembly, pseudocode or IR window (the current line
+when nothing is selected), the selected rows of a list with their columns
+separated by tabs, or the text selected in a field.
+
+GNOME attaches a modal dialog to its parent window, so dragging the dialog
+would drag the whole workbench. On GNOME the workbench keeps dialogs
+free-standing: under X11 a modal dialog takes the utility window type, and
+under Wayland the compositor is not told which dialogs are modal
+(`xdg-dialog-v1`). A modal dialog still blocks the workbench until it closes.
+
 ## Databases
 
 **File → Save** (Ctrl+W) packs the project into a NeverD database next to the
