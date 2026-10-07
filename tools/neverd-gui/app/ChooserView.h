@@ -56,6 +56,8 @@ public:
   /// Rows supplied locally instead of by the worker (bookmarks).
   void setLocalRows(const QJsonArray &rows);
   void reload();
+  /// Redraw the columns that name segments once the regions change.
+  void addressSpaceChanged();
   int total() const { return total_; }
   bool loading() const { return !inFlight_.isEmpty(); }
   QJsonObject rowObject(int row) const;

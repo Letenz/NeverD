@@ -124,6 +124,15 @@ void ChooserModel::setLocalRows(const QJsonArray &rows) {
   emit totalChanged(total_);
 }
 
+void ChooserModel::addressSpaceChanged() {
+  const int rows = rowCount();
+  for (int column = 0; column < columnCount(); ++column)
+    if (rows && (columns_.at(column).format == Format::SegmentOf ||
+                 columns_.at(column).format == Format::SegmentAddress))
+      emit dataChanged(index(0, column), index(rows - 1, column),
+                       {Qt::DisplayRole});
+}
+
 void ChooserModel::reload() {
   if (localRows_)
     return;

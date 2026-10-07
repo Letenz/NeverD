@@ -891,6 +891,10 @@ void CodeView::setRepresentation(const QString &representation) {
     selector_->setCurrentIndex(index);
 }
 
+QString CodeView::representation() const {
+  return selector_->currentData().toString();
+}
+
 void CodeView::updateStatus() { status_->setText(text_->status()); }
 
 bool CodeView::locked() const { return lock_->isChecked(); }

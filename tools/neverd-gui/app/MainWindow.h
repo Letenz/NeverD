@@ -88,6 +88,8 @@ private:
                  QWidget *content);
   Dock *chooserDock(ChooserKind kind);
   CodeView *codeView(const QString &representation);
+  /// Title the pseudocode and IR windows by what they show, lettered apart.
+  void retitleCodeDocks();
 
   // Location and synchronization.
   std::optional<Address> currentAddress() const;

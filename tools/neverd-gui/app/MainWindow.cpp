@@ -51,6 +51,7 @@
 #include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSet>
 #include <QSettings>
 #include <QSpinBox>
 #include <QStandardPaths>
@@ -235,6 +236,9 @@ void MainWindow::buildMenusAndToolbars() {
       disassembly_->addressSpaceChanged();
     if (hex_)
       hex_->addressSpaceChanged();
+    // Lists that arrived first name their rows' segments now.
+    for (auto *chooser : std::as_const(choosers_))
+      chooser->model().addressSpaceChanged();
   });
   Q_UNUSED(toolbars);
 }
@@ -467,11 +471,9 @@ CodeView *MainWindow::codeView(const QString &representation) {
   auto *dock =
       makeDock(id, nullptr,
                c ? QStringLiteral("pseudocode") : QStringLiteral("ir"), view);
-  dock->setTitle(CodeView::titleOf(representation) + QStringLiteral("-A"));
+  retitleCodeDocks();
   connect(view, &CodeView::representationChanged, this,
-          [dock](const QString &name) {
-            dock->setTitle(CodeView::titleOf(name) + QStringLiteral("-A"));
-          });
+          &MainWindow::retitleCodeDocks);
   connect(view->text(), &CodeText::locationChanged, this, [this](Address a) {
     if (synchronizing_)
       return;
@@ -486,6 +488,25 @@ CodeView *MainWindow::codeView(const QString &representation) {
   if (c)
     pseudocode_ = view;
   return view;
+}
+
+void MainWindow::retitleCodeDocks() {
+  // Windows showing the same representation take letters in order, the
+  // pseudocode window first: Pseudocode-A, Pseudocode-B.
+  QSet<QString> taken;
+  for (const char *id : {PseudocodeDock, RepresentationDock}) {
+    auto *dock = docks_.value(QLatin1String(id));
+    auto *code = dock ? qobject_cast<CodeView *>(dock->widget()) : nullptr;
+    if (!code)
+      continue;
+    const QString title = CodeView::titleOf(code->representation());
+    char letter = 'A';
+    while (taken.contains(title + QLatin1Char('-') + QLatin1Char(letter)))
+      ++letter;
+    const QString name = title + QLatin1Char('-') + QLatin1Char(letter);
+    taken.insert(name);
+    dock->setTitle(name);
+  }
 }
 
 void MainWindow::initializeLayout() {
@@ -1863,10 +1884,8 @@ void MainWindow::retranslateUi() {
       it.value()->setTitle(tr(title));
     else if (auto *chooser = qobject_cast<ChooserView *>(it.value()->widget()))
       it.value()->setTitle(chooser->model().title());
-    else if (auto *code = qobject_cast<CodeView *>(it.value()->widget()))
-      it.value()->setTitle(CodeView::titleOf(code->representation()) +
-                           QStringLiteral("-A"));
   }
+  retitleCodeDocks();
   disassembly_->setSyncName(tr("Hex View-1"));
   updateTitle();
   updateStatusBar();

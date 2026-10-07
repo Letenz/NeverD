@@ -64,6 +64,13 @@ struct Workbench {
     return table ? qobject_cast<ChooserView *>(table->parentWidget()) : nullptr;
   }
   QAction *action(ActionId id) const { return window->actions().action(id); }
+  QString dockTitle(const QString &uniqueName) const {
+    for (auto *dock :
+         window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+      if (dock->uniqueName() == uniqueName)
+        return dock->title();
+    return {};
+  }
   CodeView *codeView(const QString &representation) const {
     for (auto *view : window->findChildren<CodeView *>())
       if (view->representation() == representation)
@@ -216,6 +223,14 @@ private slots:
              std::optional<Address>(Base + 0x2570));
     functions->setFilterText({});
     QTRY_COMPARE(functions->model().total(), 600);
+    // Rows that arrive before the regions name their segments once the
+    // regions do: only the Segment column repaints.
+    QTRY_VERIFY(functions->model().rowCount() > 0);
+    QSignalSpy repaint(&functions->model(), &QAbstractItemModel::dataChanged);
+    functions->model().addressSpaceChanged();
+    QCOMPARE(repaint.size(), 1);
+    QCOMPARE(repaint.first().at(0).toModelIndex().column(), 1);
+    QCOMPARE(repaint.first().at(1).toModelIndex().column(), 1);
 
     // Navigation records history and synchronizes the hex view.
     disassembly->navigate(Base + 0x140);
@@ -261,6 +276,11 @@ private slots:
     ir->setRepresentation(QStringLiteral("c"));
     QTRY_VERIFY_WITH_TIMEOUT(
         !ir->text()->loading() && ir->text()->lineCount() > 3, OpenTimeoutMs);
+    // Two windows showing pseudocode are lettered apart.
+    QCOMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+             QStringLiteral("Pseudocode-A"));
+    QCOMPARE(bench.dockTitle(QStringLiteral("ir-a")),
+             QStringLiteral("Pseudocode-B"));
     ir->text()->setFocus();
     QTRY_VERIFY(ir->text()->hasFocus());
     ir->text()->setCursorLine(1);
@@ -277,6 +297,10 @@ private slots:
     // into one line, which Keypad + expands and Keypad - folds again, and
     // which copies as the lines it stands for.
     pseudocode->setRepresentation(QStringLiteral("llvmc"));
+    QCOMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+             QStringLiteral("LLVM C-A"));
+    QCOMPARE(bench.dockTitle(QStringLiteral("ir-a")),
+             QStringLiteral("Pseudocode-A"));
     auto *code = pseudocode->text();
     QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() == 702,
                              OpenTimeoutMs);

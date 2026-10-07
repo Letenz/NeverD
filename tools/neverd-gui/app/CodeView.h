@@ -134,7 +134,8 @@ public:
   CodeText *text() const { return text_; }
   void showFunction(Address function);
   void setRepresentation(const QString &representation);
-  QString representation() const { return text_->representation(); }
+  /// The representation the selector shows, loaded or still to load.
+  QString representation() const;
   /// The view stays on its function instead of following the disassembly.
   bool locked() const;
   /// Window title of a representation, such as "Pseudocode".
