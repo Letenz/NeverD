@@ -40,6 +40,9 @@ public:
   std::optional<size_t> function(const llvm::Function &Function);
   std::string begin(size_t Event) const;
   std::string end(size_t Event) const;
+  /// A delimiter where a top-level function definition begins.
+  std::string definition(std::optional<va_t> Entry);
+  std::string definition(const llvm::Function &Function);
   bool finish(llvm::StringRef Annotated, llvm::StringRef Ordinary);
 
 private:
@@ -51,6 +54,7 @@ private:
     std::vector<sigs::LibraryOccurrence> Coverage;
   };
   std::vector<Event> Events;
+  std::vector<std::optional<va_t>> DefinitionEntries;
   std::map<std::pair<va_t, const HighExpr *>, Event> HighRegions;
   std::map<std::pair<va_t, va_t>, Event> HighStores;
   std::map<const llvm::Function *, va_t> LLVMFunctions;

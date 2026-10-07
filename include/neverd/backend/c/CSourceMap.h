@@ -9,6 +9,8 @@
 
 #include "neverd/ir/high/HighSourceMap.h"
 
+#include <optional>
+
 namespace neverd {
 
 class LLVMSourceMap;
@@ -18,6 +20,17 @@ struct CSourceSpan {
   size_t Begin = 0;
   size_t End = 0;
   bool operator==(const CSourceSpan &) const = default;
+};
+
+/// Where a top-level function definition begins in the emitted C text, its
+/// leading comments included. A funclet body printed inside its parent's
+/// definition is not a definition of its own.
+struct CSourceDefinition {
+  /// The function's entry, when the emitter knows it.
+  std::optional<va_t> Entry;
+  /// UTF-8 byte offset in the exact, complete emitted C text.
+  size_t Begin = 0;
+  bool operator==(const CSourceDefinition &) const = default;
 };
 
 struct CSourceRegion {
@@ -35,6 +48,10 @@ struct CSourceMap {
   const HighSourceMap *HighSources = nullptr;
   const LLVMSourceMap *LLVMSources = nullptr;
   std::vector<CSourceRegion> Regions;
+  /// The top-level definitions in text order, replaced on every emit. Text
+  /// before the first is the translation unit's prelude: includes, support
+  /// types and declarations.
+  std::vector<CSourceDefinition> Definitions;
 };
 
 } // namespace neverd

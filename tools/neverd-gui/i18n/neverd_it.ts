@@ -1284,6 +1284,17 @@ Recognized library operation; click to show its code.</source>
         <translation>%1
 Operazione di libreria riconosciuta; fai clic per mostrarne il codice.</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of includes and declarations</source>
+        <translation>
+            <numerusform>%n riga di include e dichiarazioni</numerusform>
+            <numerusform>%n righe di include e dichiarazioni</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
+        <translation>Gli include, i tipi di supporto e le dichiarazioni con cui questo codice viene compilato; fai clic per mostrarli, - del tastierino numerico per richiuderli.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1886,7 +1897,7 @@ Con segno: %4</translation>
     </message>
     <message>
         <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
-        <translation>Leggi anche in %1 le stringhe C che non sono UTF-8, quando una di esse le legge come testo e nessuna tabella codici di un'altra scrittura lo fa</translation>
+        <translation>Leggi anche in %1 le stringhe C che non sono UTF-8, quando una di esse le legge come testo e nessuna tabella codici di un&apos;altra scrittura lo fa</translation>
     </message>
     <message>
         <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
@@ -1902,7 +1913,7 @@ Con segno: %4</translation>
     </message>
     <message>
         <source>Display columns: a wide East Asian character counts two</source>
-        <translation>Colonne di visualizzazione: un carattere largo dell'Asia orientale conta due</translation>
+        <translation>Colonne di visualizzazione: un carattere largo dell&apos;Asia orientale conta due</translation>
     </message>
 </context>
 <context>

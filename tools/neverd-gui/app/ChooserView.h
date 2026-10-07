@@ -56,6 +56,8 @@ public:
   /// Rows supplied locally instead of by the worker (bookmarks).
   void setLocalRows(const QJsonArray &rows);
   void reload();
+  /// Redraw the columns that name segments once the regions change.
+  void addressSpaceChanged();
   int total() const { return total_; }
   bool loading() const { return !inFlight_.isEmpty(); }
   QJsonObject rowObject(int row) const;
@@ -112,6 +114,9 @@ public:
   void setFilterText(const QString &text);
   /// Select the row whose address equals \p address among loaded rows.
   void revealAddress(Address address);
+  /// The selected rows, or else the current one, as text: a line a row in
+  /// table order, its shown columns in header order separated by tabs.
+  QString selectedText() const;
 
 signals:
   void activated(neverd::gui::Address address);

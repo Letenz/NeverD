@@ -1,4 +1,5 @@
 #include "app/DisassemblyView.h"
+#include "app/GnomeModalDialogs.h"
 #include "app/Language.h"
 #include "app/ListingView.h"
 #include "app/MainWindow.h"
@@ -17,9 +18,12 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QWindow>
+#include <functional>
 #include <kddockwidgets/Config.h>
 #include <kddockwidgets/KDDockWidgets.h>
 #include <memory>
+#include <utility>
 
 #ifdef NEVERD_GUI_TEST_PROBES
 #include "tests/WidgetsProbe.h"
@@ -48,6 +52,30 @@ void configureDocking() {
   config.setSeparatorThickness(4);
 }
 
+/// Runs an action once a window is first exposed, after the window manager
+/// has placed it: a dialog shown before then centers on where the window was
+/// before it was placed.
+class OnFirstExpose final : public QObject {
+public:
+  OnFirstExpose(QWindow &window, std::function<void()> action)
+      : QObject(&window), action_(std::move(action)) {
+    window.installEventFilter(this);
+  }
+
+protected:
+  bool eventFilter(QObject *object, QEvent *event) override {
+    if (event->type() == QEvent::Expose && action_ &&
+        static_cast<QWindow *>(object)->isExposed()) {
+      QTimer::singleShot(0, object, std::exchange(action_, nullptr));
+      deleteLater();
+    }
+    return QObject::eventFilter(object, event);
+  }
+
+private:
+  std::function<void()> action_;
+};
+
 void restoreGeometry(MainWindow &window) {
   const auto geometry = QSettings().value(GeometryKey).toByteArray();
   if (!geometry.isEmpty() && window.restoreGeometry(geometry))
@@ -65,8 +93,10 @@ int main(int argc, char **argv) {
   QApplication::setOrganizationDomain(QStringLiteral("neversight.dev"));
   QApplication::setApplicationName(QStringLiteral("NeverD"));
   QApplication::setApplicationVersion(QStringLiteral("3389.0.1"));
+  gnome::prepareModalDialogs();
   QApplication app(argc, argv);
   const auto applicationCreatedMs = startupClock.nsecsElapsed() / 1.0e6;
+  gnome::detachModalDialogs(app);
   configureDocking();
   const auto dockingFrontendMs = startupClock.nsecsElapsed() / 1.0e6;
 
@@ -207,7 +237,8 @@ int main(int argc, char **argv) {
         QFileInfo(parser.positionalArguments().first()).absoluteFilePath());
   else if (!automated && !parser.isSet(QStringLiteral("capture")) &&
            QSettings().value(QuickStartKey, true).toBool())
-    QTimer::singleShot(0, &window, [&window] { window.showQuickStart(); });
+    new OnFirstExpose(*window.windowHandle(),
+                      [&window] { window.showQuickStart(); });
 
   if (parser.isSet(QStringLiteral("capture"))) {
     const int delay = parser.value(QStringLiteral("capture-delay")).toInt();

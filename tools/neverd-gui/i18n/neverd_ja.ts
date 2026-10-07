@@ -1283,6 +1283,16 @@ Recognized library operation; click to show its code.</source>
         <translation>%1
 認識されたライブラリ操作です。クリックするとコードを表示します。</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of includes and declarations</source>
+        <translation>
+            <numerusform>インクルードと宣言 %n 行</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
+        <translation>このコードのコンパイルに使うインクルード、補助型、宣言です。クリックで表示し、テンキーの - で再び折りたたみます。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>

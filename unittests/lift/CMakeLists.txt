@@ -169,6 +169,7 @@ add_neverd_unittest(NeverDLiftTests
   ../loader/SwiftRuntimeSourceTests.cpp
   core/HighCPointerAddressTests.cpp
   core/HighCIntegerWidthTests.cpp
+  core/CSourceDefinitionTests.cpp
   sdk/ObjCSourceProjectionTests.cpp
   sdk/ObjCSourceBindingTests.cpp
   sdk/ObjCSwiftOnceSourceTests.cpp

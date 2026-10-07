@@ -1284,6 +1284,17 @@ Recognized library operation; click to show its code.</source>
         <translation>%1
 Opération de bibliothèque reconnue ; cliquez pour afficher son code.</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of includes and declarations</source>
+        <translation>
+            <numerusform>%n ligne d&apos;inclusions et de déclarations</numerusform>
+            <numerusform>%n lignes d&apos;inclusions et de déclarations</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
+        <translation>Les inclusions, types auxiliaires et déclarations avec lesquels ce code se compile ; cliquez pour les afficher, - du pavé numérique pour les replier.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1886,11 +1897,11 @@ Signé : %4</translation>
     </message>
     <message>
         <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
-        <translation>Lire aussi en %1 les chaînes C qui ne sont pas en UTF-8, lorsque l'une d'elles les lit comme du texte et qu'aucune page de codes d'une autre écriture ne le fait</translation>
+        <translation>Lire aussi en %1 les chaînes C qui ne sont pas en UTF-8, lorsque l&apos;une d&apos;elles les lit comme du texte et qu&apos;aucune page de codes d&apos;une autre écriture ne le fait</translation>
     </message>
     <message>
         <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
-        <translation>Lire d'abord dans cette page de codes les chaînes C qui ne sont pas en UTF-8, pour qu'elle l'emporte là où d'autres pages de codes les lisent aussi</translation>
+        <translation>Lire d&apos;abord dans cette page de codes les chaînes C qui ne sont pas en UTF-8, pour qu&apos;elle l&apos;emporte là où d&apos;autres pages de codes les lisent aussi</translation>
     </message>
     <message>
         <source>Code pages:</source>
@@ -1902,7 +1913,7 @@ Signé : %4</translation>
     </message>
     <message>
         <source>Display columns: a wide East Asian character counts two</source>
-        <translation>Colonnes d'affichage : un caractère large d'Asie de l'Est compte pour deux</translation>
+        <translation>Colonnes d&apos;affichage : un caractère large d&apos;Asie de l&apos;Est compte pour deux</translation>
     </message>
 </context>
 <context>
@@ -2048,7 +2059,7 @@ Signé : %4</translation>
     </message>
     <message>
         <source>Strings: %1, %2 first, at least %3 columns</source>
-        <translation>Chaînes : %1, %2 d'abord, au moins %3 colonnes</translation>
+        <translation>Chaînes : %1, %2 d&apos;abord, au moins %3 colonnes</translation>
     </message>
 </context>
 </TS>
