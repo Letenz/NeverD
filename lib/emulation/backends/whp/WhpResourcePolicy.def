@@ -1,0 +1,15 @@
+//===- WhpResourcePolicy.def - Bounded native resource initialization -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_WHP_RESOURCE_VALUE
+// Cold Hyper-V setup on a shared host may outlast an ISA self-test. Resource
+// creation has its own bound; guest entry and instruction probes keep theirs.
+NEVERD_WHP_RESOURCE_VALUE(InitializationTimeoutMicroseconds, 30'000'000)
+#endif
+#ifdef NEVERD_WHP_RESOURCE_TEXT
+NEVERD_WHP_RESOURCE_TEXT(InitializationInterrupted,
+                         "WHP resource initialization interrupted "
+                         "(stop_requested={0}, deadline_reached={1}): {2}")
+#endif
