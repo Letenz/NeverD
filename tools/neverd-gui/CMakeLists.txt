@@ -46,8 +46,10 @@ file(GLOB NEVERD_GUI_APP_SOURCES CONFIGURE_DEPENDS
 add_library(neverd_gui_app STATIC ${NEVERD_GUI_APP_SOURCES})
 target_include_directories(neverd_gui_app PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}/app"
-  # Listing roles and address classes are shared with the worker.
+  # Listing roles and address classes are shared with the worker, and
+  # header-only tables such as the wide characters with the engine.
   "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-worker"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../include"
   "${neverd_docking_SOURCE_DIR}/src")
 target_link_libraries(neverd_gui_app PUBLIC neverd_gui_core Qt6::Widgets Qt6::Svg
   Qt6::Sql Qt6::Concurrent KDAB::kddockwidgets)

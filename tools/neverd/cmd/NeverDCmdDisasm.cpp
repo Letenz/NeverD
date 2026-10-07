@@ -33,19 +33,6 @@ namespace neverd::cli {
 
 namespace {
 
-bool parseHexAddress(const std::string &Text, neverd_va_t &Addr) {
-  StringRef Ref(Text);
-  if (Ref.empty() || Ref.front() == '-')
-    return false;
-  if (Ref.consume_front("0x") || Ref.consume_front("0X")) {
-    if (Ref.empty())
-      return false;
-  }
-  if (Ref.getAsInteger(16, Addr))
-    return false;
-  return true;
-}
-
 int findFunction(neverd_session_t Sess, const std::string &FuncId) {
   int FuncIdx = neverd_func_find_by_name(Sess, FuncId.c_str());
   if (FuncIdx >= 0)
@@ -193,69 +180,56 @@ int runHex(neverd_session_t Sess) {
   } else {
     Addr = neverd_session_base_addr(Sess);
   }
-
-  unsigned Size = HexSize;
+  const char *Encoding =
+      HexTextEncoding.empty() ? nullptr : HexTextEncoding.getValue().c_str();
+  const unsigned Size = HexSize;
+  if (!JsonOutput) {
+    // The dump goes on past unmapped bytes, which print as "??".
+    const char *Dump =
+        neverd_hex_dump_ex(Sess, Addr, static_cast<int>(Size), Encoding);
+    if (!Dump) {
+      const std::string Error = takeLastError(Sess);
+      WithColor::error() << (Error.empty()
+                                 ? "no data at address 0x" + utohexstr(Addr)
+                                 : Error)
+                         << "\n";
+      return 1;
+    }
+    outs() << "\n" << Dump;
+    neverd_free_string(Dump);
+    return 0;
+  }
   std::vector<uint8_t> Buf(Size);
   int Got = neverd_read_bytes(Sess, Addr, Buf.data(), static_cast<int>(Size));
   if (Got <= 0) {
     WithColor::error() << "no data at address 0x" << utohexstr(Addr) << "\n";
     return 1;
   }
-
-  if (JsonOutput) {
-    outs() << "{\"addr\":\"0x" << utohexstr(Addr) << "\",\"size\":" << Got
-           << ",\"bytes\":\"";
-    for (int I = 0; I < Got; ++I)
-      outs() << format("%02x", Buf[I]);
-    outs() << "\"}\n";
-  } else {
-    const char *Dump = neverd_hex_dump(Sess, Addr, static_cast<int>(Size));
-    if (Dump) {
-      outs() << "\n" << Dump;
-      neverd_free_string(Dump);
+  outs() << "{\"addr\":\"0x" << utohexstr(Addr) << "\",\"size\":" << Got
+         << ",\"bytes\":\"";
+  for (int I = 0; I < Got; ++I)
+    outs() << format("%02x", Buf[I]);
+  outs() << "\"";
+  // With an encoding, the text of each byte as a hex view shows it.
+  if (Encoding) {
+    const char *Cells = neverd_decode_text_json(Buf.data(), Got, Encoding);
+    if (!Cells) {
+      outs() << "}\n";
+      WithColor::error() << "unknown text encoding: " << Encoding << "\n";
+      return 1;
     }
-  }
-  return 0;
-}
-
-int runXrefs(neverd_session_t Sess) {
-  neverd_va_t Target = 0;
-  if (!parseHexAddress(XrefAddr.getValue(), Target)) {
-    WithColor::error() << "invalid hexadecimal address\n";
-    return 1;
-  }
-  if (!JsonOutput) {
-    outs() << "XRefs for 0x" << utohexstr(Target) << ":\n";
-    outs() << "(requires pipeline - running lift...)\n";
-  }
-
-  const char *Json =
-      neverd_xrefs_scan(Sess, InputFile.getValue().c_str(), Target);
-  if (!Json) {
-    WithColor::error() << "xrefs scan failed\n";
-    return 1;
-  }
-
-  if (JsonOutput) {
-    outs() << Json << "\n";
-  } else {
-    auto Parsed = json::parse(Json);
-    size_t RefCount = 0;
-    if (Parsed) {
-      if (auto *Arr = Parsed->getAsArray()) {
-        for (const auto &V : *Arr) {
-          if (auto *Obj = V.getAsObject()) {
-            outs() << "  " << Obj->getString("from").value_or("") << " in "
-                   << Obj->getString("func").value_or("") << " (block "
-                   << Obj->getInteger("block").value_or(0) << ")\n";
-            ++RefCount;
-          }
-        }
-      }
+    auto Parsed = json::parse(Cells);
+    neverd_free_string(Cells);
+    if (!Parsed) {
+      consumeError(Parsed.takeError());
+      outs() << "}\n";
+      return 1;
     }
-    outs() << RefCount << " references found\n";
+    if (const auto *Object = Parsed->getAsObject())
+      if (const auto *List = Object->get("cells"))
+        outs() << ",\"cells\":" << *List;
   }
-  neverd_free_string(Json);
+  outs() << "}\n";
   return 0;
 }
 

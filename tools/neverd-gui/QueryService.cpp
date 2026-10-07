@@ -39,6 +39,9 @@ bool readable(const QString &operation) {
                                         "listing",
                                         "overview",
                                         "xrefs",
+                                        "string_references",
+                                        "string_encodings",
+                                        "string_options",
                                         "search"};
   return cacheable(operation) || operations.contains(operation);
 }
@@ -54,6 +57,7 @@ bool command(const QString &operation) {
                                         "undo",
                                         "redo",
                                         "history_reset",
+                                        "string_options",
                                         "contribution_register",
                                         "contribution_unregister"};
   return operations.contains(operation);

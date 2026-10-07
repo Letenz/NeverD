@@ -244,6 +244,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.Renames.clear();
   S.SigDB.clear();
   S.DiscoveredFunctions.reset();
+  S.ImageStrings.reset();
   S.resetFunctionsFromImage();
 
   neverd_annotations_load(Sess);
@@ -656,39 +657,6 @@ int neverd_session_export_count(neverd_session_t Sess) {
 int neverd_session_symbol_count(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   return S->Loaded ? static_cast<int>(S->Img.Symbols.size()) : 0;
-}
-
-const char *neverd_hex_dump(neverd_session_t Sess, neverd_va_t Addr, int Size) {
-  auto *S = toSession(Sess);
-  if (!S->Loaded || Size <= 0)
-    return nullptr;
-
-  std::vector<uint8_t> Buf(static_cast<size_t>(Size));
-  int Got = neverd_read_bytes(Sess, Addr, Buf.data(), Size);
-  if (Got <= 0)
-    return nullptr;
-
-  std::string Out;
-  llvm::raw_string_ostream OS(Out);
-  for (int I = 0; I < Got; I += 16) {
-    OS << "0x" << llvm::utohexstr(Addr + I) << "  ";
-    int LineLen = std::min(16, Got - I);
-    for (int J = 0; J < 16; ++J) {
-      if (J < LineLen)
-        OS << llvm::format("%02x ", Buf[I + J]);
-      else
-        OS << "   ";
-      if (J == 7)
-        OS << " ";
-    }
-    OS << " |";
-    for (int J = 0; J < LineLen; ++J) {
-      uint8_t B = Buf[I + J];
-      OS << static_cast<char>((B >= 0x20 && B < 0x7F) ? B : '.');
-    }
-    OS << "|\n";
-  }
-  return dupStr(Out);
 }
 
 // ===--------------------------------------------------------------------===//

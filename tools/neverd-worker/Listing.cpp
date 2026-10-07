@@ -1,6 +1,8 @@
 #include "Listing.h"
 
 #include "EngineSymbols.h"
+#include "References.h"
+#include "StringReferences.h"
 
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
@@ -32,6 +34,8 @@ using PointerAtFunction = int (*)(neverd_session_t, neverd_va_t, neverd_va_t *,
                                   neverd_va_t *);
 using DataSymbolsFunction = const char *(*)(neverd_session_t);
 using StringsExFunction = const char *(*)(neverd_session_t, const char *);
+using StringRefsFunction = const char *(*)(neverd_session_t, const char *,
+                                           neverd_va_t, int);
 using StringEncodingsFunction = const char *(*)();
 
 // Listing layout, in characters after the prefix: name, mnemonic and comment
@@ -61,6 +65,8 @@ constexpr std::string_view PlainStringEncodings[] = {"ascii", "utf-8"};
 constexpr std::size_t MaxOverviewBuckets = 16384;
 constexpr int OverviewSamples = 4;
 constexpr int StringScanMinimum = 4;
+/// Functions one neverd_string_refs_json call decodes.
+constexpr int StringReferencePageFunctions = 1024;
 constexpr std::size_t MaxReferencePage = 512;
 constexpr int PointerPage = 65536;
 constexpr char SeparatorRule[] = "; -------------------------------------------"
@@ -178,82 +184,6 @@ bool isBranch(Flow flow) {
   return flow == Flow::Jump || flow == Flow::CondJump;
 }
 
-/// IndirectCall and IndirectJump transfer through a relocated pointer slot to
-/// the pointer it holds as loaded.
-enum class RefKind : std::uint8_t {
-  Call,
-  Jump,
-  CondJump,
-  Read,
-  Write,
-  Offset,
-  IndirectCall,
-  IndirectJump
-};
-std::optional<RefKind> parseRefKind(const std::string &kind) {
-  if (kind == "call")
-    return RefKind::Call;
-  if (kind == "jump")
-    return RefKind::Jump;
-  if (kind == "cjump")
-    return RefKind::CondJump;
-  if (kind == "read")
-    return RefKind::Read;
-  if (kind == "write")
-    return RefKind::Write;
-  if (kind == "offset")
-    return RefKind::Offset;
-  if (kind == "icall")
-    return RefKind::IndirectCall;
-  if (kind == "ijump")
-    return RefKind::IndirectJump;
-  return std::nullopt;
-}
-std::string_view refKindName(RefKind kind) {
-  switch (kind) {
-  case RefKind::Call:
-    return "call";
-  case RefKind::Jump:
-    return "jump";
-  case RefKind::CondJump:
-    return "cjump";
-  case RefKind::Read:
-    return "read";
-  case RefKind::Write:
-    return "write";
-  case RefKind::Offset:
-    return "offset";
-  case RefKind::IndirectCall:
-    return "icall";
-  case RefKind::IndirectJump:
-    return "ijump";
-  }
-  return {};
-}
-char refKindLetter(RefKind kind) {
-  switch (kind) {
-  case RefKind::Call:
-  case RefKind::IndirectCall:
-    return 'p';
-  case RefKind::Jump:
-  case RefKind::CondJump:
-  case RefKind::IndirectJump:
-    return 'j';
-  case RefKind::Read:
-    return 'r';
-  case RefKind::Write:
-    return 'w';
-  case RefKind::Offset:
-    return 'o';
-  }
-  return 'o';
-}
-bool isCodeRef(RefKind kind) {
-  return kind == RefKind::Call || kind == RefKind::Jump ||
-         kind == RefKind::CondJump || kind == RefKind::IndirectCall ||
-         kind == RefKind::IndirectJump;
-}
-
 #define NEVERD_CLASSIC_NAME(Id, Spelling)                                      \
   constexpr std::string_view Id = Spelling;
 #define NEVERD_FUNCTION_ATTRIBUTE(Id, Spelling)                                \
@@ -320,6 +250,11 @@ struct DecodedFunction {
   std::int64_t frameBase = 0;
   /// Stack variables by offset from the frame's base, with their bytes.
   std::map<std::int64_t, unsigned> frame;
+};
+/// An engine encoding as the listing uses it.
+struct EncodingInfo {
+  std::string spelling;
+  unsigned unit = 1;
 };
 struct StringItem {
   /// The length counts bytes without the terminator, one code unit long.
@@ -515,11 +450,15 @@ struct Listing::Impl {
   PointerAtFunction pointerAtQuery = nullptr;
   DataSymbolsFunction dataSymbols = nullptr;
   StringsExFunction stringsEx = nullptr;
+  StringRefsFunction stringRefs = nullptr;
+  /// The instructions referring to strings, and the string options and
+  /// function count they were listed for.
+  StringReferenceTable stringReferenceTable;
+  std::optional<std::string> stringReferencesKey;
   /// Options for neverd_strings_ex_json, empty for the engine's defaults.
   std::string stringOptions;
-  /// Encoding name -> listing spelling and code unit bytes.
-  std::unordered_map<std::string, std::pair<std::string, unsigned>>
-      stringEncodings;
+  /// Encoding name -> how the listing spells and reads it.
+  std::unordered_map<std::string, EncodingInfo> stringEncodings;
   /// Whether the engine's function detector has run for this image.
   bool discovered = false;
   OperandDialect dialect = OperandDialect::Generic;
@@ -569,6 +508,7 @@ struct Listing::Impl {
         "neverd_session_discover_functions");
     pointerAtQuery = engineSymbol<PointerAtFunction>("neverd_pointer_at");
     stringsEx = engineSymbol<StringsExFunction>("neverd_strings_ex_json");
+    stringRefs = engineSymbol<StringRefsFunction>("neverd_string_refs_json");
     if (const auto encodings = engineSymbol<StringEncodingsFunction>(
             "neverd_string_encodings_json"))
       if (const auto rows = takeJson(encodings()); rows.is_array())
@@ -1041,7 +981,7 @@ struct Listing::Impl {
         item.encoding = row.value("encoding", std::string());
         if (auto it = stringEncodings.find(item.encoding);
             it != stringEncodings.end())
-          item.unit = it->second.second;
+          item.unit = it->second.unit;
         if (item.address && item.length)
           strings.push_back(std::move(item));
       }
@@ -1155,7 +1095,7 @@ struct Listing::Impl {
       return {};
     auto it = stringEncodings.find(string.encoding);
     return it == stringEncodings.end() ? std::string_view(string.encoding)
-                                       : std::string_view(it->second.first);
+                                       : std::string_view(it->second.spelling);
   }
 
   std::vector<Instruction> disassemble(std::uint64_t address,
@@ -2271,24 +2211,46 @@ struct Listing::Impl {
     case ItemKind::Instruction:
       return;
     }
+    // Comments in order: the user's, the references, and the quoted string
+    // a pointer shows unless the user commented it.
+    struct Comment {
+      StyledText text;
+      const char *kind;
+    };
+    std::vector<Comment> comments;
     const auto user = takeString(neverd_annotation_get(session, item.start));
-    auto xrefs = xrefComments(item.start);
-    if (!user.empty())
-      appendComment(head, user, ListingRole::Comment, nameBase);
-    else if (!xrefs.empty()) {
+    if (!user.empty()) {
+      StyledText text;
+      text.append("; ", ListingRole::Comment);
+      text.append(user, ListingRole::Comment);
+      comments.push_back({std::move(text), "comment"});
+    }
+    for (auto &xref : xrefComments(item.start)) {
+      StyledText text;
+      text.append("; ", ListingRole::Xref);
+      text.append(xref);
+      comments.push_back({std::move(text), "xref"});
+    }
+    if (user.empty() && !comment.empty()) {
+      StyledText text;
+      text.append("; ", ListingRole::AutoComment);
+      text.append(comment, ListingRole::AutoComment);
+      comments.push_back({std::move(text), "comment"});
+    }
+    // The first comment shares the item's line when the item ends before
+    // the comment column; past it, every comment takes a line of its own.
+    std::size_t next = 0;
+    if (!comments.empty() && head.columns() < nameBase + CommentColumn) {
       head.padTo(nameBase + CommentColumn);
-      head.append("; ", ListingRole::Xref);
-      head.append(xrefs.front());
-      xrefs.erase(xrefs.begin());
-    } else if (!comment.empty())
-      appendComment(head, comment, ListingRole::AutoComment, nameBase);
+      head.append(comments.front().text);
+      next = 1;
+    }
     addLine(out, item, item.start, "data", std::move(head), target);
-    for (auto &more : xrefs) {
+    for (; next < comments.size(); ++next) {
       StyledText line = lead(nameBase);
       line.padTo(nameBase + CommentColumn);
-      line.append("; ", ListingRole::Xref);
-      line.append(more);
-      addLine(out, item, item.start, "xref", std::move(line));
+      line.append(comments[next].text);
+      addLine(out, item, item.start, comments[next].kind, std::move(line));
     }
   }
 
@@ -2425,6 +2387,110 @@ struct Listing::Impl {
     decoded.clear();
     decodedOrder.clear();
     ++generation;
+  }
+
+  /// The index of the string starting at \p address in the string list.
+  std::optional<std::uint32_t> stringIndex(std::uint64_t address) const {
+    const auto it =
+        std::lower_bound(strings.begin(), strings.end(), address,
+                         [](const StringItem &item, std::uint64_t value) {
+                           return item.address < value;
+                         });
+    if (it == strings.end() || it->address != address)
+      return std::nullopt;
+    return static_cast<std::uint32_t>(it - strings.begin());
+  }
+
+  /// Lists the instructions that refer to strings, as the engine finds them
+  /// under the current string options, once per options and function list.
+  void loadStringReferences() {
+    std::string key = stringOptions;
+    key += '\0';
+    key += std::to_string(builtFunctionCount);
+    if (stringReferencesKey == key)
+      return;
+    if (!stringRefs)
+      throw Error("unsupported", "This engine does not list string references");
+    std::vector<StringReference> rows;
+    for (std::optional<std::uint64_t> cursor = 0; cursor;) {
+      const char *raw = stringRefs(
+          session, stringOptions.empty() ? nullptr : stringOptions.c_str(),
+          *cursor, StringReferencePageFunctions);
+      if (!raw)
+        throw Error("engine_error", takeString(neverd_last_error(session)));
+      const auto page = takeJson(raw);
+      cursor.reset();
+      // [from, to, string, text_offset, kind, via|null, instruction]
+      for (const auto &row : page.value("refs", Json::array())) {
+        const auto string = row.is_array() && row.size() == 7
+                                ? stringIndex(jsonAddress(row[2]))
+                                : std::nullopt;
+        const auto kind = string && row[4].is_string()
+                              ? parseRefKind(row[4].get<std::string>())
+                              : std::nullopt;
+        const auto offset =
+            jsonCount(row.is_array() && row.size() == 7 ? row[3] : Json());
+        // The engine names strings of the same options; another one, or
+        // text past its end, is an engine error, not a row to drop.
+        if (!kind || offset > strings[*string].value.size())
+          throw Error("engine_error",
+                      "String references name a string the listing lacks");
+        rows.push_back({jsonAddress(row[0]), jsonAddress(row[1]),
+                        row[5].is_null() ? 0 : jsonAddress(row[5]), *string,
+                        static_cast<std::uint32_t>(offset), *kind});
+      }
+      if (const auto next = page.value("next_entry", Json()); next.is_string())
+        cursor = jsonAddress(next);
+    }
+    stringReferenceTable.reset(std::move(rows));
+    stringReferencesKey = std::move(key);
+  }
+
+  /// Whether \p instruction's operands use a register that names stack
+  /// variables, so that showing it takes its function's frame.
+  static bool usesStackVariables(const Instruction &instruction) {
+    const std::string_view text = instruction.operands;
+    for (std::size_t i = 0; i < text.size();) {
+      if (!std::isalnum(static_cast<unsigned char>(text[i]))) {
+        ++i;
+        continue;
+      }
+      std::size_t end = i;
+      while (end < text.size() &&
+             std::isalnum(static_cast<unsigned char>(text[end])))
+        ++end;
+      const auto word = text.substr(i, end - i);
+#define NEVERD_X86_FRAME_REGISTER(Name, PrologueSource)                        \
+  if (word == Name)                                                            \
+    return true;
+#define NEVERD_X86_STACK_REGISTER(Name, PointerBytes)                          \
+  if (word == Name)                                                            \
+    return true;
+#include "ListingVocabulary.def"
+      i = end;
+    }
+    return false;
+  }
+
+  /// The instruction at \p address as text, without prefix or opcodes.  It
+  /// decodes alone unless its operands need the function's frame.
+  std::string instructionTextAt(std::uint64_t address) {
+    const auto single = disassemble(address, 1);
+    if (single.empty() || single.front().address != address)
+      return {};
+    std::string text;
+    if (usesStackVariables(single.front())) {
+      const auto item = itemAt(address);
+      if (!item || item->kind != ItemKind::Instruction)
+        return {};
+      const auto &body = decode(item->function);
+      text =
+          instructionText(body.instructions[item->index], 0, {}, &body).text();
+    } else {
+      text = instructionText(single.front(), 0, {}).text();
+    }
+    text.erase(0, text.find_first_not_of(' '));
+    return text;
   }
 
   const char *indexStateName() const {
@@ -2738,6 +2804,50 @@ Json Listing::references(std::uint64_t address, const Json &payload) {
           {"next_offset", complete ? Json(nullptr) : Json(offset + limit)},
           {"complete", complete},
           {"source", "direct_references"}};
+}
+
+Json Listing::stringReferences(const Json &payload) {
+  auto &d = *impl_;
+  d.discover();
+  d.build();
+  d.loadStringReferences();
+  // The listing's text, names and instructions for the rows.
+  class Source final : public StringReferenceSource {
+  public:
+    explicit Source(Impl &d) : d(d) {}
+    std::string_view text(const StringReference &ref) const override {
+      return std::string_view(d.strings[ref.string].value)
+          .substr(ref.textOffset);
+    }
+    std::string_view encoding(const StringReference &ref) const override {
+      return d.strings[ref.string].encoding;
+    }
+    std::string type(const StringReference &ref) const override {
+      // The classic type column: C for plain ASCII, else the encoding.
+      const auto &encoding = d.strings[ref.string].encoding;
+      const auto known = d.stringEncodings.find(encoding);
+      const std::string spelling =
+          known == d.stringEncodings.end() ? encoding : known->second.spelling;
+      return spelling.empty() ? std::string("C") : spelling;
+    }
+    std::optional<std::uint64_t>
+    functionEntry(const StringReference &ref) const override {
+      const int f = d.functionIndexCoarse(ref.from);
+      return f >= 0 ? std::optional(d.functions[f].entry) : std::nullopt;
+    }
+    std::string_view functionName(const StringReference &ref) const override {
+      const int f = d.functionIndexCoarse(ref.from);
+      return f >= 0 ? std::string_view(d.functions[f].name)
+                    : std::string_view();
+    }
+    std::string disassembly(std::uint64_t address) override {
+      return d.instructionTextAt(address);
+    }
+
+  private:
+    Impl &d;
+  } source(d);
+  return d.stringReferenceTable.page(payload, source);
 }
 
 std::optional<std::uint64_t> Listing::resolveName(const std::string &name) {

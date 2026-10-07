@@ -566,6 +566,27 @@ cl::opt<sbf::RuntimePurpose>
 
 cl::opt<unsigned> MinStrLen("min-len", cl::desc("Minimum string length"),
                             cl::init(4), cl::sub(StringsCmd));
+cl::list<std::string> StringEncodings(
+    "encodings",
+    cl::desc("Encodings to search, comma separated: ascii, utf-8, utf-16le, "
+             "utf-16be, utf-32le, utf-32be (default ascii, utf-8, utf-16le)"),
+    cl::CommaSeparated, cl::value_desc("names"), cl::sub(StringsCmd));
+cl::opt<std::string> StringCodePage(
+    "code-page",
+    cl::desc("Also read C strings that are not UTF-8 in this code page: "
+             "gbk, big5, shift_jis, euc-kr, windows-1250 to windows-1258, "
+             "iso-8859-2, iso-8859-5, iso-8859-7, koi8-r, koi8-u or ibm866"),
+    cl::init(""), cl::value_desc("name"), cl::sub(StringsCmd));
+cl::opt<bool> StringRefs(
+    "refs",
+    cl::desc("List the instructions that refer to the strings, reading a "
+             "reference into a string from the character it reaches"),
+    cl::sub(StringsCmd));
+cl::opt<std::string> StringFilter(
+    "filter",
+    cl::desc("Keep the strings or references whose text contains this, "
+             "ignoring the case of ASCII letters"),
+    cl::init(""), cl::value_desc("text"), cl::sub(StringsCmd));
 
 //===----------------------------------------------------------------------===//
 // Xrefs-specific options
@@ -573,6 +594,14 @@ cl::opt<unsigned> MinStrLen("min-len", cl::desc("Minimum string length"),
 
 cl::opt<std::string> XrefAddr("addr", cl::desc("Target address (hex)"),
                               cl::Required, cl::sub(XrefsCmd));
+cl::opt<XrefSourceKind> XrefSource(
+    "source", cl::desc("Where the references come from"),
+    cl::values(clEnumValN(XrefSourceKind::Direct, "direct",
+                          "What each instruction states, without analysis, "
+                          "as the GUI lists them (default)"),
+               clEnumValN(XrefSourceKind::IR, "ir",
+                          "The constants of the analyzed IR")),
+    cl::init(XrefSourceKind::Direct), cl::sub(XrefsCmd));
 
 //===----------------------------------------------------------------------===//
 // Funcs/Disasm/Cfg/Hex options
@@ -593,6 +622,11 @@ cl::opt<std::string> HexAddr("addr", cl::desc("Start address (hex)"),
 
 cl::opt<unsigned> HexSize("size", cl::desc("Number of bytes"), cl::init(256),
                           cl::sub(HexCmd));
+cl::opt<std::string> HexTextEncoding(
+    "text-encoding",
+    cl::desc("Read the text column in this encoding, such as utf-8, "
+             "utf-16le or gbk (default ASCII)"),
+    cl::init(""), cl::value_desc("name"), cl::sub(HexCmd));
 
 cl::opt<bool> CfgDot("dot", cl::desc("Output in DOT format"), cl::sub(CfgCmd));
 

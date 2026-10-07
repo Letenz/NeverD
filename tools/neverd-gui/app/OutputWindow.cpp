@@ -35,6 +35,7 @@ constexpr CommandWord Commands[] = {
     {"f", "find"},          {"find", "find"},
     {"analyze", "analyze"}, {"save", "save"},
     {"graph", "graph"},     {"hex", "hex"},
+    {"strref", "strref"},   {"strrefs", "strref"},
 };
 } // namespace
 
@@ -202,6 +203,8 @@ void OutputWindow::printHelp() {
   append(tr("  c <text>          comment the current address"), 0);
   append(tr("  d [expr]          decompile the current or given function"), 0);
   append(tr("  f <hex|\"text\">    search the binary"), 0);
+  append(tr("  strref [text]     list the instructions that refer to strings"),
+         0);
   append(tr("  graph, hex        show the graph or hex view"), 0);
   append(tr("  analyze, save     whole-program analysis, save comments"), 0);
   append(tr("  <expr>            evaluate: 0x10, 10h, #16, names, + - * / % & "

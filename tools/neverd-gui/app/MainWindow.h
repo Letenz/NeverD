@@ -91,6 +91,8 @@ private:
 
   // Location and synchronization.
   std::optional<Address> currentAddress() const;
+  /// The list window holding the keyboard focus, if one does.
+  ChooserView *focusedChooser() const;
   std::optional<Address> currentFunction() const;
   void navigate(Address address);
   /// Jump in the active address view: the hex view when it was the last

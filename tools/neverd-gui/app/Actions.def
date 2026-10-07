@@ -180,6 +180,11 @@ NEVERD_ACTION(SearchNextBytes,
               QT_TRANSLATE_NOOP("Actions", "Next seq&uence of bytes"), "Ctrl+B",
               "search_next",
               QT_TRANSLATE_NOOP("Actions", "Repeat the last byte search"))
+NEVERD_ACTION(SearchStringReferences,
+              QT_TRANSLATE_NOOP("Actions", "String &references"),
+              "Ctrl+Shift+F12", "string_references",
+              QT_TRANSLATE_NOOP("Actions",
+                                "List the instructions that refer to strings"))
 NEVERD_VIEW_ACTION(
     SearchHighlightUp, QT_TRANSLATE_NOOP("Actions", "Search highlight &up"),
     "Alt+Up", "back",

@@ -14,7 +14,10 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPIObjC.cpp
     capi/NeverDCAPISwift.cpp
     capi/NeverDCAPIDisasm.cpp
+    capi/InstructionFlow.cpp
+    capi/ImageStrings.cpp
     capi/NeverDCAPIGraph.cpp
+    capi/NeverDCAPIHexDump.cpp
     capi/NeverDCAPIInfo.cpp
     capi/NeverDCAPIOptimize.cpp
     capi/NeverDCAPIPatch.cpp
@@ -24,6 +27,7 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPISanitize.cpp
     capi/NeverDCAPISearch.cpp
     capi/NeverDCAPISigs.cpp
+    capi/NeverDCAPIStringRefs.cpp
     capi/NeverDCAPISimplify.cpp
     capi/NeverDCAPISynth.cpp
     capi/NeverDCAPISymbolic.cpp

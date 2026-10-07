@@ -58,21 +58,52 @@ NEVERD_API const char *neverd_unwind_frame_json(neverd_session_t Sess,
                                                 neverd_va_t Address);
 NEVERD_API const char *neverd_segments_json(neverd_session_t Sess);
 /// Text strings in the image's initialized data that is not code: C strings
-/// in ASCII or UTF-8 and UTF-16 or UTF-32 strings in either byte order, each
-/// ending in a zero code unit.  \p OptionsJson is NULL for the defaults or an
-/// object with optional "encodings" (names from "ascii", "utf-8", "utf-16le",
-/// "utf-16be", "utf-32le" and "utf-32be"; default ascii, utf-8 and utf-16le)
-/// and "min_length" (characters, 1 to 1024, default 4).  Returns
+/// in ASCII or UTF-8, UTF-16 or UTF-32 strings in either byte order, and C
+/// strings in one legacy code page, each ending in a zero code unit.
+/// \p OptionsJson is NULL for the defaults or an object with optional
+/// "encodings" (names from neverd_string_encodings_json(), at most one of
+/// them a legacy code page; default ascii, utf-8 and utf-16le) and
+/// "min_length" (characters, 1 to 1024, default 4).  Returns
 /// [{"addr","length","chars","encoding","value"},...] in address order, where
 /// "length" counts bytes without the terminator and "value" is UTF-8, or NULL
 /// with neverd_last_error() for malformed options.
 NEVERD_API const char *neverd_strings_ex_json(neverd_session_t Sess,
                                               const char *OptionsJson);
 /// The encodings neverd_strings_ex_json() can search:
-/// [{"name","spelling","unit","default"},...], where "spelling" is how a
-/// listing names the encoding (empty for plain ASCII), "unit" the bytes of
-/// one code unit and "default" whether a search without options uses it.
+/// [{"name","spelling","unit","default","legacy"},...], where "spelling" is
+/// how a listing names the encoding (empty for plain ASCII), "unit" the bytes
+/// of one code unit, "default" whether a search without options uses it and
+/// "legacy" whether it is an 8-bit code page.
 NEVERD_API const char *neverd_string_encodings_json(void);
+/// The instructions of up to \p MaxFunctions native functions, from
+/// \p FirstEntry in entry order, that refer to the text of a string the
+/// options (as neverd_strings_ex_json() takes them) find.  A reference into
+/// a string reads its text from the first character that starts at or after
+/// that byte, and counts only while at least the minimum length of characters
+/// remains there.  An instruction that reads or writes a slot the loader
+/// relocated, whose pointer reaches such text, refers to it through the slot.
+/// Returns {"refs":[["from","to","string",text_offset,"kind",
+/// "via"|null,"instruction"],...],"next_entry":"0x..."|null,
+/// "function_count":int}: "to" is the referenced byte, "string" the start of
+/// the string holding it, text_offset where its text begins in that string's
+/// UTF-8 "value", "kind" read, write or offset, "via" the slot, and
+/// "instruction" the referring instruction as neverd_disasm_json() spells
+/// it.  Functions decode as for
+/// neverd_code_refs_json(), and MaxFunctions is clamped to 1..4096.  NULL
+/// with neverd_last_error() for malformed options or an EVM or SBF image.
+/// This query never starts analysis.
+NEVERD_API const char *neverd_string_refs_json(neverd_session_t Sess,
+                                               const char *OptionsJson,
+                                               neverd_va_t FirstEntry,
+                                               int MaxFunctions);
+/// \p Size bytes decoded in \p Encoding (a name or alias of
+/// neverd_string_encodings_json()) for display, one cell per byte:
+/// {"cells":[...]}, where a character's first byte holds its text (UTF-8), a
+/// later byte of it "", and a byte that decodes to nothing shown (a control,
+/// an unmapped byte) null.  Wide encodings decode whole units from the first
+/// byte.  Returns NULL for an unknown encoding or a size outside 0-65536.
+NEVERD_API const char *neverd_decode_text_json(const unsigned char *Bytes,
+                                               int Size, const char *Encoding);
 NEVERD_API const char *neverd_strings_json(neverd_session_t Sess,
                                            int MinLength);
 NEVERD_API const char *neverd_xrefs_to_json(neverd_session_t Sess,
