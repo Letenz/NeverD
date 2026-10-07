@@ -355,6 +355,8 @@ fixture는 게스트 초기화, 성공/실패 반환, 미지원 동작, 메모�
 
 `DriverThreadPriorityTests.cpp`는 원본 컴파일 드라이버 `driver_thread_priority.c`를 명시적 Unicorn/KVM/WHP의 driver 및 checked 계약으로 실행하여 대기/준비 스레드의 우선순위 변경, 할당량 내 이벤트/타이머 깨움, 동순위 순환, DISPATCH_LEVEL 차단과 낮은 우선순위 기아 중의 타이머 진행을 확인합니다. 두 카운터 루프 실행을 비교하여 남은 할당량이 정확히 유지됨을 검증합니다. 모델 테스트는 부호 있는 ABI, 실패 시 상태 유지, 종료된 객체 참조, 중첩 식별자 및 독립 콜백의 스택 재사용을 다룹니다. 네이티브 사례는 `NativeDriverTests.def`에서 필수이며 로컬에서 사용할 수 없는 백엔드는 명시적으로 건너뜁니다.
 
+`DriverMutexThreadTests.cpp`는 `driver_seh_mutex.def`의 원본 WDK 모드 네 가지를 실행합니다. SEH 필터의 재귀 획득, 필터 또는 예외 finally가 획득한 소유권 유지, 다른 시스템 스레드의 mutex 해제 후 차단된 필터 재개를 검증합니다. Unicorn/KVM/WHP의 driver 및 checked 계약에서 일반/활성 CFG 이미지, 기본/재배치 주소, 협력식 및 1/17 명령 시간 할당량을 다룹니다. 모델 테스트는 중첩 스택 폐기 후 APC 비활성화, 다른 스레드의 해제 거부, 가장 바깥쪽 반환 검사도 확인합니다. KVM/WHP 사례는 `NativeDriverTests.def`의 필수 항목입니다.
+
 `driver_context_limits.c`: API IRQL 상한은 `KernelAPIIRQL.def`에 정의되며 인수별 제한은 담당 모델이 검사합니다. DPC는 레지스트리 API나 페이징 풀 할당·해제·접근을 사용할 수 없습니다. Unicode `DbgPrint` 변환은 `PASSIVE_LEVEL`이 필요하며 지원되는 ANSI 출력과 비페이징 작업은 `DISPATCH_LEVEL`에서 사용할 수 있습니다. 콜백 스택에는 경계가 있어 이탈한 스택 포인터가 다른 차단 작업자의 스택을 침범할 수 없습니다. 장치 확장의 활성 타이머는 조기 장치 회수를 막습니다. 일반 IRQL 전환을 제공하는 기능은 아닙니다.
 
 `KernelDeviceStackTests.cpp`는 소유/연결 관계의 독립성, 최상단 선택, 실패 원자성, 스택 용량, 불투명 필드, 핸들 수, 분리·삭제를 넘는 작업 항목/요청 유지, 파일과 디스패치 대상의 차이를 검사합니다. 원본 `driver_wdm_stack.c`는 실제 WDK 헤더와 인라인 Copy/Skip/SetCompletion을 사용하며 일반/활성 CFG 이미지는 선택적 `NEVERD_WDM_STACK_FIXTURE`/`NEVERD_WDM_STACK_CFG_FIXTURE`로 지정합니다. `DriverWDMStackTests.cpp`는 재배치, 실제 하위 상태, 완료 순서/조건, 지연 pending 전달, 작업자/DPC, 대기, `STATUS_MORE_PROCESSING_REQUIRED`, 직접 MDL 유지, 중첩 완료, 잘못된 커서/제어를 검증합니다. `DriverScenarioPublicTests.cpp`는 구성된 CFG 이미지를 포함해 C API/CLI 전달과 C API 유지/중첩 완료를 검사합니다. 산출물이 없으면 명시적으로 건너뛰며 Linux 근거는 동일 드라이버 스택 범위만 입증합니다. PDO/PnP/전원 지원을 뜻하지 않습니다. `KernelIRPStackTests.cpp`는 개수 기반 커서, 전체 인라인 Copy 범위, 소비된 위치 지우기, 상태/pending 전달, MPR 및 중첩 완료, continuation 소유자, 보존 경로를 검사합니다. 실제 READ/WRITE와 파일 수명 주기도 인라인 Copy로 검증합니다.
@@ -1119,7 +1121,7 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 
 `NeverDHighControlFlowTests`의 `HighValueForward.*`는 HighC 작성기가 한 번만 쓰이는 값을 그 사용 위치로 접을 수 있는 경우를 검사합니다. 한 이름이 여러 SSA 값을 나타낼 수 있으므로 루프 조건은 루프가 대입하는 변수를 읽는 값을 유지하고, 다시 읽은 프레임 슬롯은 그 슬롯에 대한 저장을 넘어 값을 유지하며 다른 슬롯에 대한 저장은 넘어 접습니다. 사용 전에 원본이 다시 대입된 복사본은 그 값을 유지합니다. 각 경우는 `-O0`과 `-O2`에서 정의되지 않은 동작 트랩을 켜고 실행합니다.
 
-`NeverDHighControlFlowTests`의 `HighCIntegerConversion.*`는 HighC 작성기가 C에 맡기는 정수 변환을 검사합니다. 바깥 변환이 유지하는 바이트를 유지하는 피연산자 안의 변환은 자체 캐스트를 출력하지 않고, 선언된 정수 지역 변수로의 대입과 return은 암시적으로 변환하며, 리터럴은 변환된 값으로 쓰입니다. 반면 포인터는 명시적 변환을 유지합니다. 각 경우는 `-O0`과 `-O2`에서 정의되지 않은 동작 트랩을 켜고 기준 산술과 비교하여 실행합니다.
+`NeverDHighControlFlowTests`의 `HighCIntegerConversion.*`는 HighC 작성기가 C에 맡기는 정수 변환을 검사합니다. 바깥 변환이 유지하는 바이트를 유지하는 피연산자 안의 변환은 자체 캐스트를 출력하지 않고, 선언된 정수 지역 변수로의 대입과 return은 암시적으로 변환하며, 리터럴은 변환된 값으로 쓰입니다. 반면 포인터는 명시적 변환을 유지합니다. 메모리 저장은 대입처럼 변환되고, 타입이 지정된 더 넓은 매개변수로 전달되는 0 확장 인수는 그 확장을 유지합니다. 각 경우는 `-O0`과 `-O2`에서 정의되지 않은 동작 트랩을 켜고 기준 산술과 비교하여 실행합니다.
 
 소스 투영은 이 정리 후에도 가변 인자 객체 목록을 다시 검증합니다. 빈 명령 주소 앵커는 허용하지만 숨겨진 효과나 제어 이동은 거부합니다. 동기화 정리는 동일하게 저장된 수신자의 단일 `int64_t` 또는 `uint64_t` 뷰를 허용하며, 축소·부동소수점 변환·주소 연산·재할당은 계속 거부합니다. Foundation 객체 집합과 정상 및 예외 잠금 해제 추적을 `-O0`와 `-O2`에서 모두 실행합니다.
 
@@ -1220,9 +1222,11 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 46개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 113개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 226개를 요구합니다. 내장 이미지 27개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 4884개와 SEH 회귀 검사 17개와 스케줄링 검사 77개를 포함하면 필수 결과는 5204개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `4884 CPU + 226 WHP + 17 SEH + 77 scheduling = 5204`.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 전체 113개 워크로드에 대해 원래 주소와 재배치 주소에서 WHP 결과 226개를 요구합니다. 내장 이미지 27개, WDK 이미지 46개, 요청 시나리오 40개이며 CPU 검사 4887개와 SEH 회귀 검사 25개와 스케줄링 검사 77개를 포함하면 필수 결과는 5215개입니다. 고정 이미지의 재배치는 기존의 예상된 거부 결과를 유지합니다. WDK 이미지나 시나리오가 없거나 건너뛰면 이 선택적 CI 작업은 실패합니다. 일반 로컬 빌드에서는 외부 픽스처가 계속 선택 사항입니다. `run_native_cpu_ci.py --with-drivers`는 구성된 테스트 타깃과 전체 목록/JUnit 증거를 기록합니다. 이미지 빌드만으로 Windows 또는 ARM64 네이티브 실행이 검증되지는 않습니다. 아래 명령으로 로컬에서 재현하거나 생성된 캐시를 기존 에뮬레이션 빌드에 적용할 수 있습니다. `4887 CPU + 226 WHP + 25 SEH + 77 scheduling = 5215`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
+
+`WhpResourcePolicy.def`는 ISA 검증 전 WHP x64 및 ARM64 리소스 생성에 별도의 `30 s` 기한을 부여합니다. 동기 호스트 설정이 끝나면 리소스를 공개하기 전에 기한을 확인합니다. 명령 프로브와 일반 게스트 기한은 각자의 제한을 유지합니다. `WhpResourceTests.cpp`는 초기화 중단의 타입과 원인 진단, 취소 후 폐기, 호스트 오류 우선순위 및 일반 실행 기한의 유지를 검사합니다.
 
 `X64PopFlagsTests.cpp`는 두 권한과 `driver-strict`에서 허용된 플래그 입력 256개와 초기 상태 2개, 인코딩 9개, 입력 64비트 전체, 읽기 전용·실행 가능 별칭, 페이지 경계 오류와 복구, 관찰자 중단·실패, 장치 스택 거부, 후속 네이티브 명령 경계를 검사합니다. `X64PopFlagsOracle`은 x64 호스트에서 원본 명령을 독립 실행해 CPL3/IOPL0과 정확한 스택 소비량을 확인합니다. `driver_resource_flags.def`는 원본 WDK 리소스 드라이버가 두 피연산자 폭으로 플래그를 설정·해제·복원하도록 합니다. 전체 정수·제어·x87·SSE 상태를 보존하지만 게스트 TF/NT/AC/ID 지원이나 ARM64 네이티브 실행을 입증하지는 않습니다.
 
@@ -1530,6 +1534,10 @@ MainActor 픽스처는 고정 메타데이터와 정적 테이블의 전체 흐�
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` 는 루트 할당 변수와 미결정 변수의 혼합, 비결정 루트 변수, 복사본의 재복사, 원본 소멸, 후속 변수 증가, 두 기본 극성, 예산 중단과 재개, 충돌과 재시작을 검사합니다. 전체 모델과 모든 검색 카운터는 새 인코딩과 같아야 합니다.
 
 `ContextFiniteProofs.*`는 컨텍스트와 소유자 격리, 소유자 교체, 토큰 이동, 정확한 술어와 투영 순서, 노드 추가, 완료 및 미완료 결과, 저장 한도와 LRU 제거를 검사합니다. 프레임 테스트는 저장 전 마지막 유일성 질의와 캐시 적중 시 심볼릭 노드 한도를 확인합니다.
+
+`LinuxPriorityTests.cpp`는 명시적인 작업 상태, 스레드 격리, 누락된 관찰값, 잘못된 JSON, 프로필 허용과 거부 효과를 검사합니다. 독립적인 x64/AArch64 원시 호출 프로그램을 O0/O2에서 실행하여 nice 제한, 시스템 호출 인수의 32비트 축소, CAP_SYS_NICE/RLIMIT_NICE 권한 경계와 커널 getpriority 인코딩을 검증합니다. `NeverDLinuxProcessTests`에서 `LinuxPriority.*`와 `Backends/LinuxPriorityProcess.*`를 실행하고, 공유 커널/JSON 변경 시 전체 Linux 프로세스, Android 네이티브 및 프로세스 공개 API 테스트를 실행합니다. 선택적인 네이티브 전송이 없으면 명시적으로 건너뜁니다.
+
+`LinuxKernelAvailability.*`는 명시적인 부재 입력과 프로필 허용을 검증합니다. `Backends/LinuxKernelProcess.*`는 독립적인 x64/AArch64 O0/O2 원시 호출 프로그램으로 인수 검사 전의 ENOSYS 및 미지정/무관한 호출의 거부를 확인합니다. Android syscall 픽스처는 원시 SVC와 Bionic `syscall`을 비교하며 원시 반환값과 errno 효과를 구분합니다. 가용성 변경 시 이 집중 테스트, 전체 Linux 프로세스 및 공개 API 테스트와 Android syscall, 네이티브 진입 및 시그널 테스트를 실행합니다.
 
 `CompletedQueryCache.*`는 전체 바이트 영역의 답, 모든 압축 위치, 확장, 컨텍스트와 소유자 격리, 잘못되거나 불완전한 입력, 정확한 저장 한도를 검사합니다. 네이티브 분기 회귀는 완료된 답으로 백엔드 작업을 생략해도 고정된 논리 질의 비용과 정확한 예산 및 하나 부족한 예산의 거부를 유지합니다.
 

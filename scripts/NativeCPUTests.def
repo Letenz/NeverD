@@ -60,6 +60,12 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "WhpResources.IndependentBindingsRetainSimultaneousResourceLeases")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WhpResources.InitializationRetainsPhaseCauseAndOrdinaryDeadlines")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WhpResources.CancelledInitializationDiscardsTheCreatedResource")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WhpResources.InitializationHostFailureOutranksConcurrentStop")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ProjectionCache.RelocatedWindowsKeepRAMIdentityAndInvalidateCachedRoots")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.RetainsPhysicalIdentityAcrossAliasesAndPermissionChanges")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.SameValueAndABAHostWritesInvalidateEveryOlderWitness")

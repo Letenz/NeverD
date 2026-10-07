@@ -15,6 +15,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#ifdef NEVERD_KERNEL_DISPATCHER_VALUE
 NEVERD_KERNEL_DISPATCHER_VALUE(DpcSize, 64)
 NEVERD_KERNEL_DISPATCHER_VALUE(TimerSize, 64)
 NEVERD_KERNEL_DISPATCHER_VALUE(EventSize, 24)
@@ -29,3 +30,11 @@ NEVERD_KERNEL_DISPATCHER_VALUE(MaxObjects, 1024)
 NEVERD_KERNEL_DISPATCHER_VALUE(StatusSemaphoreLimitExceeded, 0xc0000047U)
 NEVERD_KERNEL_DISPATCHER_VALUE(StatusMutantNotOwned, 0xc0000046U)
 NEVERD_KERNEL_DISPATCHER_VALUE(StatusMutantLimitExceeded, 0xc0000191U)
+#endif
+
+#ifdef NEVERD_KERNEL_DISPATCHER_TEXT
+NEVERD_KERNEL_DISPATCHER_TEXT(MutexThreadRequired,
+                              "mutex wait requires an active thread")
+NEVERD_KERNEL_DISPATCHER_TEXT(OwnedMutexReturn,
+                              "guest return retains an owned mutex")
+#endif

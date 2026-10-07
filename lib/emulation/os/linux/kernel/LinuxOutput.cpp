@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "LinuxKernel.h"
+#include "LinuxKernelAvailability.h"
 
 #include "llvm/ADT/SmallVector.h"
 
@@ -100,9 +101,26 @@ writeOutput(ExecutionBackend &CPU, ServiceKind Kind,
   if (!userRange(Layout, Address, Entries * IOVectorSize))
     return std::optional<uint64_t>(uint64_t(0) - BadAddress);
 
-  // Import every descriptor before touching payloads. Check entries in order:
-  // an earlier negative length precedes a later unreadable descriptor, while
-  // any descriptor error precedes all output effects and payload faults.
+  IOVectorImportKind Import = IOVectorImportKind::SingleBuffer;
+  if (Options.LinuxKernel && Options.LinuxKernel->GKI) {
+    auto Selected = gkiIOVectorImport(*Options.LinuxKernel->GKI);
+    if (!Selected)
+      return failure(KernelOptions);
+    Import = *Selected;
+  }
+  // The older copy_from_user path consumes the complete descriptor array
+  // before testing any length. Later inaccessible metadata therefore precedes
+  // an earlier negative length. No payload is inspected by this preflight.
+  if (Import == IOVectorImportKind::CopyAll) {
+    auto Access =
+        CPU.canAccess(Address, Entries * IOVectorSize, Read | UserAccessible);
+    if (!Access)
+      return Access.takeError();
+    if (!*Access)
+      return std::optional<uint64_t>(uint64_t(0) - BadAddress);
+  }
+  // The newer importer reads and validates each entry in sequence. Both
+  // policies finish metadata validation before any payload or output effect.
   llvm::SmallVector<OutputBuffer> Buffers;
   Buffers.reserve(Entries);
   for (uint32_t I = 0; I < Entries; ++I) {
@@ -126,10 +144,10 @@ writeOutput(ExecutionBackend &CPU, ServiceKind Kind,
   const uint64_t Maximum = MaxReadWriteSize & ~(Layout.PageSize - 1);
   uint64_t Total = 0;
   for (auto &Buffer : Buffers) {
-    // Linux's single-vector path applies the transfer cap before access_ok;
-    // its multi-vector path validates each original extent, even after the
-    // cumulative cap is exhausted. Neither path probes payload mappings yet.
-    if (Entries == 1)
+    // Only the newer single-buffer path caps before access_ok. Older imports
+    // and multi-vector imports check every original extent, even after the
+    // cumulative cap is exhausted. Payload mappings are not probed here.
+    if (Import == IOVectorImportKind::SingleBuffer && Entries == 1)
       Buffer.Size = std::min(Buffer.Size, Maximum);
     if (!userRange(Layout, Buffer.Address, Buffer.Size))
       return std::optional<uint64_t>(uint64_t(0) - BadAddress);

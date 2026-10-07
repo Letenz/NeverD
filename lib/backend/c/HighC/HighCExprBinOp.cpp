@@ -20,6 +20,9 @@ namespace neverd {
 
 namespace {
 
+/// The precedence of a cast expression, above every binary operator.
+constexpr int kCastPrecedence = 11;
+
 int getOpPrecedence(NdOp Op) {
   switch (Op) {
   case NdOp::BOOL_OR:
@@ -433,8 +436,10 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
         const std::string Value =
             exprStr(*E.Operands[0]) + Symbol + exprStr(*E.Operands[1]);
         if (E.Type->IsSigned)
-          return "__builtin_bit_cast(" + typeToC(E.Type) + ", " + Value + ")";
-        return ParentPrec >= getOpPrecedence(E.Op) ? "(" + Value + ")" : Value;
+          return signedCarrierResult(E, Value, getOpPrecedence(E.Op), Size);
+        return typedText(
+            E, ParentPrec >= getOpPrecedence(E.Op) ? "(" + Value + ")" : Value,
+            Size, false);
       }
     }
     const auto IntegerWidth = [](uint16_t Width) {
@@ -489,10 +494,10 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
             Value->Operands[0]->Type &&
             Value->Operands[0]->Type->Size < CarrierSize)
           return "(" + Carrier + ")" +
-                 integerView(*Value->Operands[0],
-                             NdType::makeInt(Value->Operands[0]->Type->Size,
-                                             false),
-                             99);
+                 integerView(
+                     *Value->Operands[0],
+                     NdType::makeInt(Value->Operands[0]->Type->Size, false),
+                     99);
         if (Width == CarrierSize)
           return integerView(*Value, NdType::makeInt(Width, false),
                              OperandPrec);
@@ -540,10 +545,8 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       if (!AtCarrier)
         Value = "(" + Unsigned + ")(" + Value + ")";
       if (E.Type->IsSigned)
-        return typedText(E,
-                         "__builtin_bit_cast(" + typeToC(E.Type) + ", " +
-                             Value + ")",
-                         Size, true);
+        return signedCarrierResult(
+            E, Value, AtCarrier ? getOpPrecedence(Op) : kCastPrecedence, Size);
       return typedText(E,
                        AtCarrier && getOpPrecedence(Op) <= ParentPrec
                            ? "(" + Value + ")"
@@ -664,8 +667,7 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
         !E.Type->IsEnum && E.Operands[0]->Type &&
         E.Operands[0]->Type->Kind == NdTypeKind::Int &&
         E.Type->Size <= E.Operands[0]->Type->Size)
-      return typedText(E,
-                       integerView(*E.Operands[0], E.Type, ParentPrec),
+      return typedText(E, integerView(*E.Operands[0], E.Type, ParentPrec),
                        E.Type->Size, E.Type->IsSigned);
     if (ByteOff == 0)
       return "(" + Ty + ")" + Src;

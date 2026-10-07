@@ -13,6 +13,7 @@
 #include "gtest/gtest.h"
 #include "os/windows/driver/DriverImage.h"
 #include "os/windows/kernel/KernelAPINames.h"
+#include "os/windows/kernel/KernelException.h"
 #include "os/windows/kernel/KernelModel.h"
 #include "os/windows/kernel/WindowsKernelLayout.h"
 
@@ -22,6 +23,11 @@
 
 namespace neverd::emulation {
 namespace {
+namespace mutex_test {
+#define NEVERD_SEH_MUTEX_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#include "fixtures/driver_seh_mutex.def"
+#undef NEVERD_SEH_MUTEX_VALUE
+} // namespace mutex_test
 
 class DriverKernelModel : public ::testing::Test {
 protected:
@@ -277,6 +283,116 @@ TEST_F(DriverKernelModel, CriticalAndGuardedAPCRegionsPairOnOneThread) {
   EXPECT_NE(failure("KeLeaveGuardedRegion", {}).find("no matching entry"),
             std::string::npos);
   success(Model->validateExecutionReturn(profile::StackBase, 0));
+}
+
+TEST_F(DriverKernelModel, RecursiveMutexFollowsThreadAcrossNestedStacks) {
+  using namespace mutex_test;
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Mutex =
+      invoke(kernel_api::ExAllocatePoolWithTag,
+             {SehMutexPoolType, dispatcher::MutexSize, SehMutexPoolTag});
+  ASSERT_NE(Mutex, 0u);
+  invoke(kernel_api::KeInitializeMutex, {Mutex, 0});
+  EXPECT_EQ(
+      invoke(kernel_api::KeWaitForSingleObject,
+             {Mutex, windows::ExecutiveWaitReason, windows::KernelMode, 0, 0}),
+      windows::StatusSuccess);
+  ASSERT_FALSE(Model->takeWait());
+  const auto Parent = Model->captureExecutionContext();
+  const uint64_t Child = Scratch + SehMutexChildOffset;
+  Model->enterExecution(Child, Parent.Thread);
+  EXPECT_EQ(invoke(kernel_api::KeAreApcsDisabled, {}), 1u);
+  EXPECT_EQ(invoke(kernel_api::KeAreAllApcsDisabled, {}), 0u);
+  EXPECT_EQ(
+      invoke(kernel_api::KeWaitForSingleObject,
+             {Mutex, windows::ExecutiveWaitReason, windows::KernelMode, 0, 0}),
+      windows::StatusSuccess);
+  EXPECT_FALSE(Model->takeWait());
+  EXPECT_EQ(invoke(kernel_api::KeReadStateMutex, {Mutex}), UINT32_MAX);
+  EXPECT_EQ(invoke(kernel_api::KeReleaseMutex, {Mutex, 0}), UINT32_MAX);
+  EXPECT_EQ(invoke(kernel_api::KeAreApcsDisabled, {}), 1u);
+  success(Model->validateExecutionReturn(Child, 0, true));
+  success(Model->retireStack(Child, profile::PageSize));
+  success(Model->restoreExecutionContext(Parent));
+  EXPECT_EQ(invoke(kernel_api::KeReleaseMutex, {Mutex, 0}), 0u);
+  EXPECT_EQ(invoke(kernel_api::KeAreApcsDisabled, {}), 0u);
+  success(Model->validateExecutionReturn(profile::StackBase, 0));
+  invoke(kernel_api::ExFreePoolWithTag, {Mutex, SehMutexPoolTag});
+}
+
+TEST_F(DriverKernelModel,
+       NestedMutexOwnershipSurvivesAcquiringStackRetirement) {
+  using namespace mutex_test;
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Mutex =
+      invoke(kernel_api::ExAllocatePoolWithTag,
+             {SehMutexPoolType, dispatcher::MutexSize, SehMutexPoolTag});
+  ASSERT_NE(Mutex, 0u);
+  invoke(kernel_api::KeInitializeMutex, {Mutex, 0});
+  const auto Parent = Model->captureExecutionContext();
+  const uint64_t Child = Scratch + SehMutexChildOffset;
+  Model->enterExecution(Child, Parent.Thread);
+  invoke(kernel_api::KeWaitForSingleObject,
+         {Mutex, windows::ExecutiveWaitReason, windows::KernelMode, 0, 0});
+  ASSERT_FALSE(Model->takeWait());
+  success(Model->validateExecutionReturn(Child, 0, true));
+  success(Model->retireStack(Child, profile::PageSize));
+  success(Model->restoreExecutionContext(Parent));
+  EXPECT_EQ(invoke(kernel_api::KeAreApcsDisabled, {}), 1u);
+  auto Held = Model->validateExecutionReturn(profile::StackBase, 0);
+  ASSERT_TRUE(bool(Held));
+  EXPECT_NE(llvm::toString(std::move(Held)).find(dispatcher::OwnedMutexReturn),
+            std::string::npos);
+  EXPECT_EQ(invoke(kernel_api::KeReleaseMutex, {Mutex, 0}), 0u);
+  EXPECT_EQ(invoke(kernel_api::KeAreApcsDisabled, {}), 0u);
+  success(Model->validateExecutionReturn(profile::StackBase, 0));
+  invoke(kernel_api::ExFreePoolWithTag, {Mutex, SehMutexPoolTag});
+}
+
+TEST_F(DriverKernelModel, BlockedMutexAcquiresForWaitingThreadDuringPeerRun) {
+  using namespace mutex_test;
+  Model->enterExecution(profile::StackBase);
+  const uint64_t Mutex =
+      invoke(kernel_api::ExAllocatePoolWithTag,
+             {SehMutexPoolType, dispatcher::MutexSize, SehMutexPoolTag});
+  ASSERT_NE(Mutex, 0u);
+  invoke(kernel_api::KeInitializeMutex, {Mutex, 0});
+  invoke(kernel_api::KeWaitForSingleObject,
+         {Mutex, windows::ExecutiveWaitReason, windows::KernelMode, 0, 0});
+  ASSERT_FALSE(Model->takeWait());
+  const uint64_t Peer = Scratch + SehMutexPeerOffset;
+  const uint64_t Child = Scratch + SehMutexChildOffset;
+  Model->enterExecution(Child, Peer);
+  invoke(kernel_api::KeWaitForSingleObject,
+         {Mutex, windows::ExecutiveWaitReason, windows::KernelMode, 0, 0});
+  auto Pending = Model->takeWait();
+  ASSERT_TRUE(Pending);
+  Model->enterExecution(profile::StackBase);
+  EXPECT_EQ(invoke(kernel_api::KeReleaseMutex, {Mutex, 0}), 0u);
+  Model->enterExecution(Scratch + SehMutexOtherOffset);
+  auto Acquired = Model->pollWait(*Pending);
+  ASSERT_TRUE(bool(Acquired)) << llvm::toString(Acquired.takeError());
+  ASSERT_EQ(*Acquired, std::optional<uint32_t>{windows::StatusSuccess});
+  auto WrongOwner = Model->call(kernel_api::KeReleaseMutex.str(), {Mutex, 0});
+  ASSERT_FALSE(bool(WrongOwner));
+  uint32_t Code = 0;
+  llvm::handleAllErrors(
+      WrongOwner.takeError(),
+      [&](const KernelGuestException &Error) { Code = Error.code(); },
+      [&](const llvm::ErrorInfoBase &Error) {
+        ADD_FAILURE() << Error.message();
+      });
+  EXPECT_EQ(Code, dispatcher::StatusMutantNotOwned);
+  EXPECT_EQ(invoke(kernel_api::KeReadStateMutex, {Mutex}), 0u);
+  // The wait was acquired for Peer, even though its nested stack is retired
+  // before the owning thread resumes on its original stack.
+  success(Model->retireStack(Child, profile::PageSize));
+  Model->enterExecution(Peer);
+  EXPECT_EQ(invoke(kernel_api::KeAreApcsDisabled, {}), 1u);
+  EXPECT_EQ(invoke(kernel_api::KeReleaseMutex, {Mutex, 0}), 0u);
+  EXPECT_EQ(invoke(kernel_api::KeAreApcsDisabled, {}), 0u);
+  success(Model->validateExecutionReturn(Peer, 0));
+  invoke(kernel_api::ExFreePoolWithTag, {Mutex, SehMutexPoolTag});
 }
 
 TEST_F(DriverKernelModel,
