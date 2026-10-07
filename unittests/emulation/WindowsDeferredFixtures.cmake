@@ -60,32 +60,35 @@ foreach(_arch X64 AArch64)
       "${_deferred_dir}/KERNEL.def" "${_deferred_dir}/ABSENT.def"
     VERBATIM)
   list(APPEND _deferred_outputs "${_dir}/${_deferred_ProgramFile}")
-  add_custom_command(OUTPUT "${_dir}/generated-tls.exe"
-      "${_dir}/generated-tls.obj"
+  add_custom_command(OUTPUT "${_dir}/${_deferred_GeneratedTLSFile}"
+      "${_dir}/${_deferred_GeneratedObjectFile}"
     COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
       "--target=${_deferred_${_arch}Target}"
       -std=c11 -ffreestanding -fno-builtin -fno-stack-protector -O1 -c
       "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/windows_generated_tls.c"
-      -o "${_dir}/generated-tls.obj"
-    COMMAND "${NEVERD_PROCESS_LLD_LINK}" /nodefaultlib /entry:entry
+      -o "${_dir}/${_deferred_GeneratedObjectFile}"
+    COMMAND "${NEVERD_PROCESS_LLD_LINK}" /nodefaultlib
+      "/entry:${_deferred_ProgramEntry}"
       /subsystem:console "/machine:${_deferred_${_arch}Machine}"
-      "/base:${_deferred_ProgramBase}" /timestamp:0 /merge:.data=.gentls
-      /section:.gentls,RWE
-      "${_dir}/generated-tls.obj" "${_dir}/kernel.lib"
-      "/out:${_dir}/generated-tls.exe"
-    DEPENDS fixtures/windows_generated_tls.c "${_dir}/kernel.lib"
+      "/base:${_deferred_ProgramBase}" /timestamp:0
+      "/section:${_deferred_GeneratedSection},${_deferred_GeneratedSectionPermissions}"
+      "${_dir}/${_deferred_GeneratedObjectFile}" "${_dir}/kernel.lib"
+      "/out:${_dir}/${_deferred_GeneratedTLSFile}"
+    DEPENDS fixtures/windows_generated_tls.c "${_deferred_cases}"
+      "${_dir}/kernel.lib"
     VERBATIM)
-  list(APPEND _deferred_outputs "${_dir}/generated-tls.exe")
-  add_custom_command(OUTPUT "${_dir}/generated-tls-entry.exe"
-    COMMAND "${NEVERD_PROCESS_LLD_LINK}" /nodefaultlib /entry:GeneratedEntry
+  list(APPEND _deferred_outputs "${_dir}/${_deferred_GeneratedTLSFile}")
+  add_custom_command(OUTPUT "${_dir}/${_deferred_GeneratedTLSEntryFile}"
+    COMMAND "${NEVERD_PROCESS_LLD_LINK}" /nodefaultlib
+      "/entry:${_deferred_GeneratedEntrySymbol}"
       /subsystem:console "/machine:${_deferred_${_arch}Machine}"
-      "/base:${_deferred_ProgramBase}" /timestamp:0 /merge:.data=.gentls
-      /section:.gentls,RWE
-      "${_dir}/generated-tls.obj" "${_dir}/kernel.lib"
-      "/out:${_dir}/generated-tls-entry.exe"
-    DEPENDS "${_dir}/generated-tls.obj" "${_dir}/kernel.lib"
+      "/base:${_deferred_ProgramBase}" /timestamp:0
+      "/section:${_deferred_GeneratedSection},${_deferred_GeneratedSectionPermissions}"
+      "${_dir}/${_deferred_GeneratedObjectFile}" "${_dir}/kernel.lib"
+      "/out:${_dir}/${_deferred_GeneratedTLSEntryFile}"
+    DEPENDS "${_dir}/${_deferred_GeneratedObjectFile}" "${_dir}/kernel.lib"
     VERBATIM)
-  list(APPEND _deferred_outputs "${_dir}/generated-tls-entry.exe")
+  list(APPEND _deferred_outputs "${_dir}/${_deferred_GeneratedTLSEntryFile}")
 endforeach()
 add_custom_target(NeverDWindowsDeferredFixtures DEPENDS ${_deferred_outputs})
 add_dependencies(NeverDWindowsProcessTests NeverDWindowsDeferredFixtures)

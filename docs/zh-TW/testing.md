@@ -355,7 +355,9 @@ fixture 涵蓋客體初始化、成功與失敗傳回、不支援的行為、記
 
 `DriverMutexThreadTests.cpp` 執行 `driver_seh_mutex.def` 中四種原創 WDK 模式：在 SEH 篩選器中遞迴取得、篩選器或異常 finally 取得後保留所有權，以及篩選器阻塞並在另一系統執行緒釋放 mutex 後恢復。Unicorn／KVM／WHP 的 driver 與 checked 契約涵蓋一般／有效 CFG 映像、偏好／重定位位址及協作式／1／17 指令時間片。模型測試亦驗證巢狀堆疊退役後的 APC 停用、錯誤執行緒釋放及最外層返回檢查；KVM／WHP 案例納入 `NativeDriverTests.def` 強制清單。
 
-`KernelWaitSetTests.cpp` 在不依賴 Unicorn 時執行十五項模型測試：部分 `WaitAll`、首個就緒 `WaitAny`、索引快照、逾時清理、後續非法物件／儲存、64 物件邊界、IRQL、保留已退出執行緒及兩個同步計時器。`DriverMultipleWaitTests.cpp` 執行 `driver_wdm_multiple_wait.c` 與 `DriverMultipleWaitCases.def` 的七種原創 WDK 模式，涵蓋 Unicorn/KVM/WHP、兩種驅動契約、一般／CFG 映像、重定位及協作式／1／17 指令時間片。29 項模型／原生結果納入 `NativeDriverTests.def` 強制驗收。 回歸也涵蓋成功或逾時後的重複完成、擷取狀態被更動，以及延遲等待的重複完成。
+`KernelWaitSetTests.cpp` 在不依賴 Unicorn 時執行十六項模型測試：部分 `WaitAll`、首個就緒 `WaitAny`、索引快照、逾時清理、後續非法物件／儲存、64 物件邊界、IRQL、保留已退出執行緒及兩個同步計時器。`DriverMultipleWaitTests.cpp` 執行 `driver_wdm_multiple_wait.c` 與 `DriverMultipleWaitCases.def` 的七種原創 WDK 模式，涵蓋 Unicorn/KVM/WHP、兩種驅動契約、一般／CFG 映像、重定位及協作式／1／17 指令時間片。30 項模型／原生結果納入 `NativeDriverTests.def` 強制驗收。 回歸也涵蓋成功或逾時後的重複完成、擷取狀態被更動，以及延遲等待的重複完成。
+
+`KernelMultipleWait.DispatcherScalarParametersIgnoreUpperRegisterBits` 檢查高位元污染、有號邊界、溢位及物件狀態不變性。`DriverMultipleWaitCases.def` 的裸尾呼叫包裝器讓 `driver_wdm_multiple_wait.c` 經由真正的 WDK 匯入執行相同的合法 ABI 呼叫，並涵蓋啟用 CFG、重定位與按指令搶佔。
 
 `driver_context_limits.c`: API 的 IRQL 上限來自 `KernelAPIIRQL.def`，參數相關限制由所屬模型檢查。DPC 不能呼叫登錄 API，也不能配置、釋放或存取分頁集區；Unicode `DbgPrint` 轉換要求 `PASSIVE_LEVEL`，支援的 ANSI 輸出與非分頁操作仍可在 `DISPATCH_LEVEL` 使用。回呼堆疊有明確邊界，越界堆疊指標不能進入另一阻塞工作項目的堆疊。裝置擴充中的已啟動計時器會阻止裝置提早回收。這些檢查並未開放一般 IRQL 切換。
 
@@ -1180,7 +1182,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 48 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `4935 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5296`。29 項等待集合檢查包含十五項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `4935 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5297`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1296,6 +1298,8 @@ Windows ring3 依獨立原生觀測，將 checked x64 的 `operand_alignment` �
 `WindowsLifetimeTests.cpp` 將固定通知序列與獨立原生 Windows 程序及 KVM/WHP/Unicorn 執行比對，涵蓋正常結束、進入點返回、兩個 DLL 初始化失敗、四處提早結束及無進入點 DLL。另驗證回呼故障、共用預算、重定位 TLS 欄位及 TLS 總容量。原生進入點返回探針保留初始執行緒控制代碼，重複64 次核對執行緒結束碼及精確執行緒／程序通知序列。觀察後終止其餘子程序執行緒，不將程序結束碼視為進入點返回值。
 
 `NeverDUnpackTests`、`NeverDUnpackExecutionTests` 和 `NeverDUnpackPublicTests` 涵蓋加殼映像的還原；參見[脫殼](unpack.md)。`UnpackGeneratedTests.cpp` 用測試自己加殼的程式，在 x86-64 和 ARM64 上檢查入口規則。`X64ReturnPrefixTests.cpp` 在每種傳輸上檢查雙位元組近返回，並確認其它帶前綴的返回仍被拒絕。`WindowsDeferredTests.cpp` 檢查不透明入口與已停止行程的觀察；`ExecutionSessionTests.cpp` 檢查執行監視。 `DirectX64Tests.cpp` 另驗證部分頁監視、跨頁取指、恢復後僅執行一次、服務邊界、非法指令和逾時狀態。
+
+`WindowsDeferred.EarlierTLSCallbackMayGenerateALaterCallback` 要求獨立的 `.gentls` 區段具有 `IMAGE_SCN_CNT_UNINITIALIZED_DATA` 旗標，大小與宣告的緩衝區範圍完全一致，原始資料長度與指標皆為零。`WindowsDeferredCases.def` 統一定義儲存與組合語言，普通 `.data` 保持獨立。產生回呼與產生入口兩種情境皆保留 x64/ARM64 的嚴格拒絕及延後執行檢查。
 
 `ExtendedRegistersLoadOrdinaryImportsAgain` 以受檢及直接 x64 執行驗證緊湊與帶填充的 R8-R15 導入載入。低暫存器案例涵蓋前置 REX 形狀位元組與僅含 CALL 的位址輔助常式；填充呼叫會跳過 CALL 後的任意位元組。`ImportCallHelpersCannotDiscardPersistentEffects` 要求持久副作用仍可觀察。`PERebuildTests.cpp` 拒絕缺少起點、結果證據及重疊起點，並保留六至八位元組視窗的精確 API 返回位址。
 

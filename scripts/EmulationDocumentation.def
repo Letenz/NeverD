@@ -594,7 +594,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
 NEVERD_EMULATION_DOC_TOKEN(
     NativeDriverCI,
-    "4935 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5296")
+    "4935 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5297")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -1553,19 +1553,20 @@ NEVERD_EMULATION_DOC_TOKEN(
     "FailedDirectCapturePreservesStateAndForcesFullRetry")
 
 #ifdef NEVERD_EMULATION_DOC_PATH
-NEVERD_EMULATION_DOC_PATH(WindowsProcessClockPolicy, "docs/process-emulation.md")
+NEVERD_EMULATION_DOC_PATH(WindowsProcessClockPolicy,
+                          "docs/process-emulation.md")
 NEVERD_EMULATION_DOC_PATH(WindowsProcessClockPolicy,
                           "docs/{locale}/process-emulation.md")
 NEVERD_EMULATION_DOC_PATH(WindowsProcessClockOwner, "docs/architecture.md")
 NEVERD_EMULATION_DOC_PATH(WindowsProcessClockOwner,
                           "docs/{locale}/architecture.md")
 NEVERD_EMULATION_DOC_PATH(WindowsProcessClockTests, "docs/testing.md")
-NEVERD_EMULATION_DOC_PATH(WindowsProcessClockTests,
-                          "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_PATH(WindowsProcessClockTests, "docs/{locale}/testing.md")
 #endif
 #ifdef NEVERD_EMULATION_DOC_TOKEN
 NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockPolicy, "WindowsProcessTime.cpp")
-NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockPolicy, "QueryPerformanceFrequency")
+NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockPolicy,
+                           "QueryPerformanceFrequency")
 NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockPolicy, "100 ns")
 NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockPolicy, "10 MHz")
 NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockPolicy, "500 ms")
@@ -1593,4 +1594,43 @@ NEVERD_EMULATION_DOC_TOKEN(WindowsProbeScheduling, "WindowsTestExecution.def")
 NEVERD_EMULATION_DOC_TOKEN(WindowsProbeScheduling, "WindowsExclusive")
 NEVERD_EMULATION_DOC_TOKEN(WindowsProbeScheduling, "RUN_SERIAL")
 NEVERD_EMULATION_DOC_TOKEN(WindowsProbeScheduling, "60 s")
+#endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(WindowsDispatcherArgumentWidths,
+                          "docs/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(WindowsDispatcherArgumentWidths,
+                          "docs/{locale}/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(WindowsDispatcherArgumentWidthTests,
+                          "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WindowsDispatcherArgumentWidthTests,
+                          "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(WindowsDispatcherArgumentWidths, "KernelDispatcher")
+NEVERD_EMULATION_DOC_TOKEN(WindowsDispatcherArgumentWidths, "LONG")
+NEVERD_EMULATION_DOC_TOKEN(WindowsDispatcherArgumentWidths, "ULONG")
+NEVERD_EMULATION_DOC_TOKEN(WindowsDispatcherArgumentWidths, "BOOLEAN")
+NEVERD_EMULATION_DOC_TOKEN(
+    WindowsDispatcherArgumentWidthTests,
+    "KernelMultipleWait.DispatcherScalarParametersIgnoreUpperRegisterBits")
+NEVERD_EMULATION_DOC_TOKEN(WindowsDispatcherArgumentWidthTests,
+                           "DriverMultipleWaitCases.def")
+NEVERD_EMULATION_DOC_TOKEN(WindowsDispatcherArgumentWidthTests,
+                           "driver_wdm_multiple_wait.c")
+#endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(GeneratedTLSStorage, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(GeneratedTLSStorage, "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(
+    GeneratedTLSStorage,
+    "WindowsDeferred.EarlierTLSCallbackMayGenerateALaterCallback")
+NEVERD_EMULATION_DOC_TOKEN(GeneratedTLSStorage, "WindowsDeferredCases.def")
+NEVERD_EMULATION_DOC_TOKEN(GeneratedTLSStorage, ".gentls")
+NEVERD_EMULATION_DOC_TOKEN(GeneratedTLSStorage,
+                           "IMAGE_SCN_CNT_UNINITIALIZED_DATA")
+NEVERD_EMULATION_DOC_TOKEN(GeneratedTLSStorage, ".data")
 #endif

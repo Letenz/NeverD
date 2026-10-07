@@ -361,6 +361,8 @@ PnP FDO에서 `WdfDeviceInitSetDeviceType`은 지정한 32비트 유형을 WDM `
 | `IofCompleteRequest`, `IoCompleteRequest` | `IO_NO_INCREMENT`로 완료 해제를 수행. 중단/재개를 지원하고 최종 경계에서만 IRP/MDL/버퍼를 폐기 |
 | `memcpy`, `memmove`, `memset`, `memcmp`, `RtlCopyMemory`, `RtlMoveMemory`, `RtlFillMemory`, `RtlZeroMemory`, `RtlCompareMemory` | 호출당 최대 1 MiB의 제한된 게스트 버퍼 작업. 비중첩 복사 API는 겹치는 범위를 거부함 |
 
+`KernelDispatcher`는 세마포어의 `Count`, `Limit`, `Adjustment`를 부호 있는 32비트 `LONG`, 뮤텍스의 `Level`을 32비트 `ULONG`, `Wait`를 8비트 `BOOLEAN`으로 해석하며 [Windows x64 ABI](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170)에 따라 정의되지 않은 레지스터 상위 비트를 무시합니다. 유효한 비트 범위의 잘못된 값과 세마포어 오버플로는 객체 상태 변경 전에 거부합니다.
+
 API IRQL 상한은 `KernelAPIIRQL.def`에 정의되며 인수별 제한은 담당 모델이 검사합니다. DPC는 레지스트리 API나 페이징 풀 할당·해제·접근을 사용할 수 없습니다. Unicode `DbgPrint` 변환은 `PASSIVE_LEVEL`이 필요하며 지원되는 ANSI 출력과 비페이징 작업은 `DISPATCH_LEVEL`에서 사용할 수 있습니다. 콜백 스택에는 경계가 있어 이탈한 스택 포인터가 다른 차단 작업자의 스택을 침범할 수 없습니다. 장치 확장의 활성 타이머는 조기 장치 회수를 막습니다.
 
 타이머 만료는 DPC가 타이머를 재설정하기 전에 등록된 대기를 충족합니다. 대기열의 DPC는 깨어난 `PASSIVE_LEVEL` 프레임이 재개되기 전에 실행합니다. 요청 저장소에 대기 중인 DPC가 있으면 IRP 완료 처리는 완료와 버퍼 무효화 전에 해제를 거부합니다.
