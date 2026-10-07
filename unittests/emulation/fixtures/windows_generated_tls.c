@@ -13,6 +13,8 @@ void entry(void);
 static volatile U32 Result;
 static volatile U32 StartupCount;
 static volatile U32 Notifications;
+// Initialized writable storage must not give generated code file backing.
+static volatile U32 ExitStatus = 37;
 static U32 Index;
 static const U32 TLSRaw[] = {11, 22};
 // Explicit COFF storage keeps the generated buffers unbacked independently of
@@ -103,6 +105,6 @@ void entry(void) {
   }
   ExitProcess(Result == 42 && StartupCount == 1 && Notifications == 3 &&
                       threadLocalData()[0] == 0x2468
-                  ? 37
+                  ? ExitStatus
                   : 91);
 }
