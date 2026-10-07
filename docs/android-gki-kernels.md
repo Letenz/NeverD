@@ -142,6 +142,27 @@ Exit and reaping notifications differ across those versions and are outside
 the fixed-live-task subset. Blocking waits, temporary masks, signal delivery
 and named Bionic `ppoll` wrappers require further contracts.
 
+## Architecture-specific open flags and known path errors
+
+The closed `linux_files` catalogue also admits `O_DIRECTORY` and `O_DIRECT`
+when their result is determined before opening an observed file. ARM64 uses
+`0x4000` for directories and `0x10000` for direct I/O; x64's generic ABI uses
+the opposite values. All eight pinned ARM64 and generic UAPI headers agree:
+see the [5.10 ARM64 header](https://android.googlesource.com/kernel/common/+/b14525331e0d5d335b037d6ed17d40424ed47b0a/arch/arm64/include/uapi/asm/fcntl.h),
+[6.18 ARM64 header](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/arch/arm64/include/uapi/asm/fcntl.h)
+and [6.18 generic header](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/include/uapi/asm-generic/fcntl.h).
+
+The shared descriptor owner imports the pathname, checks descriptor capacity,
+and then resolves the catalogue and any directory requirement. Known absent
+paths return ENOENT; a regular file used as a directory returns ENOTDIR.
+An opened file's direct-I/O support follows pathname resolution in the pinned
+[5.10 open implementation](https://android.googlesource.com/kernel/common/+/b14525331e0d5d335b037d6ed17d40424ed47b0a/fs/open.c)
+and [6.18 implementation](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/fs/open.c).
+The catalogue does not declare a backing filesystem's direct-I/O capability,
+so existing regular files with that flag retain an explicit unsupported
+boundary. Existing directory opens remain unsupported. These stable rules
+also apply without a GKI selection; they do not infer procfs content or mounts.
+
 ## Implemented process CPU clock subset
 
 With explicit GKI selection, `clock_gettime` admits negative encoded process
@@ -218,6 +239,10 @@ negative/closed descriptors, low-32-bit counts, timeout and mask error ordering,
 read-only timespecs, complete metadata import, ordered fault prefixes and
 unchanged wall clocks. Android repeats readiness and raw/Bionic errno behavior
 over all six relocation profiles.
+Open-flag fixtures check architecture-specific directory/direct bits, combined
+flags, narrow arguments, pathname faults, descriptor exhaustion and unchanged
+cursors on all eight branches. Android repeats raw and all four named open
+imports with independent errno checks, and retains existing-file boundaries.
 
 Source pins and these model executions are evidence for the specified syscall
 subset. Native tests booting every pinned GKI image are not yet available.

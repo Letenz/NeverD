@@ -809,6 +809,8 @@ pipeline を続行するためだけに `UnliftedInstruction` を捕捉しない
 ターゲット固有の LLVM 出力とコード生成は `lib/backend/llvm/<ISA>` と
 `lib/backend/codegen/CodeGen<ISA>.cpp` にあります。
 
+共有パスに追加するターゲット固有の規則は、アーキテクチャやフォーマットのインライン判定ではなく、ターゲットごとの表に置きます。ISA に関する事実は、その ISA の `lib/ir/TargetRegInfo<ISA>.cpp` で設定する `TargetRegInfo` の特性です。呼び出し規約の規則は、専用の `lib/ir/med/abi/MedCallConvention<Name>.cpp` に定義し `MedCallConvention.cpp` に登録する `CallArgumentConvention` エントリです。戻らない関数はランタイムごとに `include/neverd/libc` 以下（`LibCNoReturn.inc`、`CxxRuntimeNoReturn.inc`、`WindowsNoReturn.inc`）に列挙します。これにより、新しいターゲットの対応は共有パスへの分岐ではなく、ファイルまたは表エントリの追加で済みます。
+
 <a id="support-and-test-depth"></a>
 
 ### サポートとテストの深さ
@@ -1188,6 +1190,8 @@ UIButton の `contentEdgeInsets`、`imageEdgeInsets`、`titleEdgeInsets` の get
 Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
+
+Windows プロセスの時刻ポリシーは `os/windows/process/` の `WindowsProcessTime.cpp` が管理します。`std::chrono` でホストの実時間と単調カウンターを分離し、`WindowsProcess.def` でゲストの時間単位と有限の待機上限を定義します。CPU バックエンドに Windows の時刻ポリシーは置きません。
 
 `lib/unpack` は 4 層でパックされたイメージを復元します。`core` は実行の調整と形式の登録を担当します。`format/pe` はコンテナを検証し、観測したメモリ、インポート、メタデータを再構築します。`PETLS.cpp` はローダーの割り当てと観測済みコールバックに基づき置換 TLS レコードを検証します。プロテクター登録や静的なスタブ署名で入口を選択しません。`dynamic` は `observeProcess` を通じてゲストプロセスを観測します。`Observation.def` は各コンテナと命令セットをプロセスプロファイルに対応付け、各命令セットのスタックポインタと命令ウィンドウを与えます。新しい対象は表の 1 行とモジュールのディレクトリ 1 つであり、行のない入力は名前を挙げて拒否されます。`ExecutionSession` が実行ウォッチを所有します。`ProcessObserver` は停止したプロセスを読み取り、次の停止位置を選びますが、ゲストの状態を変えることはできません。エミュレーション層が知っているのは `defer_unmodeled` だけです。これは未モデルのインポートを、実行された時点で停止する不透明なエントリに束縛します。[アンパック](unpack.md)を参照してください。 遅延ロードでは、先行する初期化処理がコードを生成するゼロ埋めメモリを、実行可能なコールバックや入口の対象にできます。コールバック配列と TLS 割り当てメタデータには検証済みのファイル内容が必要で、通常の厳格ロードはファイル裏付け検査を維持します。OS モデルは呼び出しの帰属を示し、呼び出しの準備時や中断した呼び出し元の復元時に観察器へ通知します。これらの境界で転送監視を再設定し、コールバックと生成された入口が同じページにある場合も扱います。
 

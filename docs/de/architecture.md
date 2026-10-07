@@ -919,6 +919,18 @@ liegen in `include/neverd/lift`. Zielspezifische LLVM-Ausgabe und Codeerzeugung
 befinden sich unter `lib/backend/llvm/<ISA>` und
 `lib/backend/codegen/CodeGen<ISA>.cpp`.
 
+Neue zielspezifische Regeln in gemeinsamen Passes gehören in Tabellen pro Ziel,
+nicht in Inline-Prüfungen von Architektur oder Format. Eine Eigenschaft einer
+ISA ist ein `TargetRegInfo`-Merkmal, das in ihrer
+`lib/ir/TargetRegInfo<ISA>.cpp` gesetzt wird. Eine Aufrufkonventionsregel ist
+ein `CallArgumentConvention`-Eintrag in einer eigenen
+`lib/ir/med/abi/MedCallConvention<Name>.cpp`, der in `MedCallConvention.cpp`
+registriert ist. Funktionen, die nie zurückkehren, stehen pro Laufzeitumgebung
+unter `include/neverd/libc` (`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`,
+`WindowsNoReturn.inc`). Die Unterstützung eines weiteren Ziels fügt dann eine
+Datei oder einen Tabelleneintrag hinzu statt einer Verzweigung im gemeinsamen
+Pass.
+
 <a id="support-and-test-depth"></a>
 
 ### Support- und Testtiefe
@@ -1302,6 +1314,8 @@ Bei `EXCEPTION_NONCONTINUABLE` löst ein x64-Filter mit Rückgabe `EXCEPTION_CON
 Der virtuelle Windows-Speicher ergänzt `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` und `FlushInstructionCache` für den aktuellen Prozess. Die OS-Schicht verwaltet Reservierungen; `AddressSpace` bleibt maßgeblich für zugesicherte Seiten, Zugriffsrechte und deren Speicher. Tests prüfen Codeänderungen, Zugriffsfehler und die Wiederverwendung des Speicherbudgets.
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
+
+Die Zeitregeln für Windows-Prozesse liegen in `WindowsProcessTime.cpp` unter `os/windows/process/`. `std::chrono` trennt Host-Echtzeit und monotonen Zähler; `WindowsProcess.def` definiert Gast-Zeiteinheiten und die endliche Wartegrenze. CPU-Transporte enthalten keine Windows-Zeitregeln.
 
 `lib/unpack` stellt gepackte Abbilder in vier Schichten wieder her. `core` besitzt die Orchestrierung und das Formatregister. `format/pe` validiert den Container und rekonstruiert beobachteten Speicher, Imports und Metadaten; `PETLS.cpp` prüft ersetzte TLS-Datensätze anhand der Loader-Allokation und beobachteter Callbacks. Weder Schutzprogrammregister noch statische Stub-Signaturen wählen den Einstieg. `dynamic` beobachtet einen Gastprozess über `observeProcess`: `Observation.def` ordnet jedem Container und Befehlssatz ein Prozessprofil zu und gibt jedem Befehlssatz seinen Stapelzeiger und sein Befehlsfenster. Ein neues Ziel ist eine Tabellenzeile und ein Modulverzeichnis, und eine Eingabe ohne Zeile wird namentlich abgelehnt. `ExecutionSession` besitzt die Ausführungsüberwachungen; ein `ProcessObserver` liest einen angehaltenen Prozess und wählt den nächsten Halt, kann den Gastzustand aber nicht ändern. Die Emulationsschicht kennt nur `defer_unmodeled`, das nicht modellierte Importe an opake Einstiege bindet, die bei ihrer Ausführung stoppen. Siehe [Entpacken](unpack.md). Verzögertes Laden erlaubt ausführbare Callback- und Eintrittsziele in nullgefülltem Speicher, deren Code frühere Initialisierer erzeugen. Callbackfelder und TLS-Zuteilungsmetadaten benötigen weiterhin geprüfte Dateiinhalte; strenges Laden behält seine Dateiprüfung. Das OS-Modell liefert die Aufrufzugehörigkeit und benachrichtigt Beobachter beim Vorbereiten eines Aufrufs oder Wiederherstellen eines angehaltenen Aufrufers. An diesen Grenzen werden Übergangswachen neu gesetzt, auch wenn Callback und erzeugter Eintritt dieselbe Seite teilen.
 

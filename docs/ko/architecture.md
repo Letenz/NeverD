@@ -790,6 +790,8 @@ pipeline을 계속 진행하려고 `UnliftedInstruction`을 잡지 마세요. �
 코드 생성은 `lib/backend/llvm/<ISA>` 및 `lib/backend/codegen/CodeGen<ISA>.cpp`에
 있습니다.
 
+공유 패스에 추가하는 대상별 규칙은 아키텍처나 포맷을 인라인으로 검사하지 말고 대상별 테이블에 둡니다. ISA에 관한 사실은 해당 ISA의 `lib/ir/TargetRegInfo<ISA>.cpp`에서 설정하는 `TargetRegInfo` 특성입니다. 호출 규약 규칙은 별도의 `lib/ir/med/abi/MedCallConvention<Name>.cpp`에 정의하고 `MedCallConvention.cpp`에 등록하는 `CallArgumentConvention` 항목입니다. 반환하지 않는 함수는 런타임별로 `include/neverd/libc` 아래(`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`)에 나열합니다. 따라서 새 대상을 지원할 때는 공유 패스에 분기를 넣는 대신 파일이나 테이블 항목을 추가합니다.
+
 <a id="support-and-test-depth"></a>
 
 ### 지원 및 테스트 깊이
@@ -1165,6 +1167,8 @@ UIButton의 `contentEdgeInsets`, `imageEdgeInsets`, `titleEdgeInsets` getter/set
 Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`와 현재 프로세스의 `FlushInstructionCache`를 지원합니다. OS 계층은 예약 영역을 소유하고 `AddressSpace`는 커밋된 페이지, 권한, 실제 저장 공간을 관리합니다. 테스트는 동적 코드 수정, 접근 오류, 메모리 한도 재사용을 검증합니다.
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
+
+Windows 프로세스 시간 정책은 `os/windows/process/`의 `WindowsProcessTime.cpp`가 담당합니다. `std::chrono`는 호스트 벽시계와 단조 카운터를 구분하고 `WindowsProcess.def`는 게스트 시간 단위와 유한 대기 한도를 정의합니다. CPU 백엔드에는 Windows 시간 정책을 두지 않습니다.
 
 `lib/unpack`는 네 계층으로 압축 이미지를 복구합니다. `core`는 조정과 형식 레지스트리를 관리합니다. `format/pe`는 컨테이너를 검증하고 관찰한 메모리, 가져오기와 메타데이터를 재구성합니다. `PETLS.cpp`는 로더 할당과 관찰한 콜백을 기준으로 대체 TLS 레코드를 검증합니다. 보호기 레지스트리나 정적 스텁 서명으로 진입점을 선택하지 않습니다. `dynamic`은 `observeProcess`를 통해 게스트 프로세스를 관찰합니다. `Observation.def`는 각 컨테이너와 명령어 집합을 프로세스 프로필에 대응시키고, 각 명령어 집합의 스택 포인터와 명령 창을 제공합니다. 새 대상은 표의 한 행과 모듈 디렉터리 하나이며, 행이 없는 입력은 이름과 함께 거부됩니다. `ExecutionSession`이 실행 감시를 소유합니다. `ProcessObserver`는 멈춘 프로세스를 읽고 다음 정지 지점을 고르지만 게스트 상태를 바꿀 수는 없습니다. 에뮬레이션 계층이 아는 것은 `defer_unmodeled`뿐입니다. 이는 모델링되지 않은 임포트를, 실행되는 순간 멈추는 불투명 진입점에 바인딩합니다. [언패킹](unpack.md)을 참고하십시오. 지연 로딩은 앞선 초기화 함수가 코드를 생성할 0으로 채운 메모리를 실행 가능한 콜백이나 진입 대상으로 허용합니다. 콜백 배열과 TLS 할당 메타데이터는 검증된 파일 내용이 필요하며 일반 엄격 로딩은 파일 뒷받침 검사를 유지합니다. OS 모델은 호출 소속을 제공하고 호출 준비 또는 일시 중단된 호출자 복원 시 관찰자에게 알립니다. 이 경계에서 전이 감시를 다시 설정하여 콜백과 생성된 진입점이 같은 페이지인 경우도 처리합니다.
 

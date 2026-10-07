@@ -21,6 +21,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -70,28 +71,38 @@ namespace neverd {
 
 namespace call_args_detail {
 
-bool isWin64(const CallArgScan &Scan) {
-  return Scan.TheArch == Arch::X64 && Scan.Image &&
-         Scan.Image->Format == BinaryFormat::COFF;
+extern const CallArgPolicy Win64CallArgPolicy;
+extern const CallArgPolicy I386CallArgPolicy;
+
+const CallArgPolicy *callArgPolicy(Arch A, BinaryFormat F) {
+  static constexpr const CallArgPolicy *Policies[] = {&Win64CallArgPolicy,
+                                                      &I386CallArgPolicy};
+  // An entry for the image's own format wins over one for every format.
+  for (BinaryFormat Wanted : {F, BinaryFormat::Unknown})
+    for (const CallArgPolicy *P : Policies)
+      if (P->TheArch == A && P->Format == Wanted)
+        return P;
+  return nullptr;
 }
 
 void collectSpilledStackArgs(const CallArgScan &Scan,
                              std::vector<ExprPtr> &Found) {
   const TargetRegInfo &TRI = *Scan.TRI;
   const int64_t SlotBytes = static_cast<int64_t>(TRI.PointerSize);
-  const bool Win64 = Scan.TheArch == Arch::X64 && Scan.Image &&
-                     Scan.Image->Format == BinaryFormat::COFF;
-  const auto Layout = TRI.integerArgumentLayout(Win64);
-
   const BinaryFormat Format =
       Scan.Image ? Scan.Image->Format : BinaryFormat::Unknown;
+  const bool Reserved =
+      Scan.Convention && Scan.Convention->ReservedOutgoingArea;
+  const auto Layout = TRI.integerArgumentLayout(Format);
+
   auto preserved = [&](const MedVar &V) {
     return V.Kind == MedVar::Reg &&
            isCallPreservedReg(TRI, Format, V.RegOff, V.Size);
   };
 
-  // Written Win64 outgoing slots (call-time offset, address) so a slot left
-  // unwritten between two written ones can still be read afterwards.
+  // Written slots of a reserved outgoing area (call-time offset, address) so
+  // a slot left unwritten between two written ones can still be read
+  // afterwards.
   std::vector<std::pair<int64_t, MedVar>> StoredSlots;
   auto considerStore = [&](const std::vector<MedOp> &Ops, int J) {
     const MedOp &Prev = Ops[static_cast<size_t>(J)];
@@ -152,14 +163,14 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
     }
 
     // An `r11 = rsp` frame addresses the outgoing area from the entry stack.
-    if (StackOff < 0 && Win64 && Scan.EntryOffsetOf)
+    if (StackOff < 0 && Reserved && Scan.EntryOffsetOf)
       if (std::optional<int64_t> Entry = Scan.EntryOffsetOf(AddrVar))
         StackOff = *Entry + Scan.FrameSize;
 
     if (StackOff < 0 || SlotBytes == 0)
       return;
     int ArgPos = -1;
-    if (Win64) {
+    if (Reserved) {
       if (StackOff < Layout.CallStackBase)
         return;
       const int64_t SlotOff = StackOff - Layout.CallStackBase;
@@ -178,7 +189,7 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
     }
     if (ArgPos < 0 || ArgPos >= Scan.MaxArgs || Found[ArgPos])
       return;
-    if (Win64)
+    if (Reserved)
       StoredSlots.push_back({StackOff, AddrVar});
     if (Scan.ResolveWindow) {
       if (ExprPtr E = Scan.ResolveWindow(Prev.Inputs[1], Ops, J - 1))
@@ -232,11 +243,11 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
         break;
       // HighIR has no MedCallInfo on the ordinary decompile path. Match the
       // MedABI scan's call boundary, but do not attach stores from an older
-      // Win64 outgoing frame to this call. An SP-to-SP copy may only cross
+      // reserved outgoing area to this call. An SP-to-SP copy may only cross
       // the scan boundary when it copies the currently reaching SP value;
-      // restoring an older SP version changes the outgoing frame again.
-      if (Win64 && Prev.Output.Kind == MedVar::Reg && Prev.Output.Size != 0 &&
-          Prev.Output.RegOff == Scan.SpRegOff) {
+      // restoring an older SP version changes the outgoing area again.
+      if (Reserved && Prev.Output.Kind == MedVar::Reg &&
+          Prev.Output.Size != 0 && Prev.Output.RegOff == Scan.SpRegOff) {
         const bool SpCopy = Prev.Opcode == NdOp::COPY && Prev.NumInputs >= 1 &&
                             Prev.Inputs[0].Kind == MedVar::Reg &&
                             Prev.Inputs[0].RegOff == Scan.SpRegOff &&
@@ -264,7 +275,7 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
   };
 
   const int StoreScanStart =
-      Win64
+      Reserved
           ? 0
           : std::max(0, static_cast<int>(Scan.CallIdx) - Scan.StoreScanWindow);
   scanWindow(*Scan.Ops, static_cast<int>(Scan.CallIdx) - 1, StoreScanStart);
@@ -272,10 +283,10 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
     if (W.Ops)
       scanWindow(*W.Ops, W.Before, 0);
 
-  // A Win64 stack slot the caller did not write between two it did is still
-  // an argument: the callee reads whatever the slot holds.  Read it through
-  // the address of a written neighbour rather than dropping later arguments.
-  if (!Win64 || StoredSlots.empty())
+  // A reserved slot the caller did not write between two it did is still an
+  // argument: the callee reads whatever the slot holds.  Read it through the
+  // address of a written neighbour rather than dropping later arguments.
+  if (!Reserved || StoredSlots.empty())
     return;
   const int FirstStackArg = static_cast<int>(Layout.Registers.size());
   int Last = -1;
@@ -295,33 +306,6 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
     Found[K] = HighExpr::makeLoad(std::move(Address),
                                   NdType::makeInt(TRI.PointerSize));
   }
-}
-
-static bool preferScannedCallArg(const ExprPtr &Scanned, const ExprPtr &Hinted,
-                                 size_t Slot) {
-  if (!Scanned || Scanned->Kind == ExprKind::Undef)
-    return false;
-  if (!Hinted || Hinted->Kind == ExprKind::Undef)
-    return true;
-  if (Hinted->Kind == ExprKind::Record)
-    return false;
-  const bool ScannedParam =
-      Scanned->Kind == ExprKind::Var && Scanned->Var.Kind == MedVar::Param;
-  const bool HintedParam =
-      Hinted->Kind == ExprKind::Var && Hinted->Var.Kind == MedVar::Param;
-  const bool ScannedSlot =
-      ScannedParam && Scanned->Var.Id == static_cast<int>(Slot);
-  const bool HintedSlot =
-      HintedParam && Hinted->Var.Id == static_cast<int>(Slot);
-  if (ScannedSlot)
-    return true;
-  // `mov rcx, item` leaves a different param in slot 0.  The CALL input is
-  // still the incoming sret; the rewrite is the argument.
-  if (HintedSlot && ScannedParam && Scanned->Var.Id != static_cast<int>(Slot))
-    return true;
-  if (HintedSlot)
-    return false;
-  return true;
 }
 
 } // namespace call_args_detail
@@ -370,12 +354,15 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   const auto &TRI = getTargetRegInfo(TargetArch);
   const BinaryFormat Format = Image ? Image->Format : BinaryFormat::Unknown;
   const auto ParamRegs = TRI.integerParamRegs(Format);
-  const bool Win64 = TargetArch == Arch::X64 && Format == BinaryFormat::COFF;
-  const auto IntLayout = TRI.integerArgumentLayout(Win64);
+  const CallArgumentConvention *Convention =
+      callArgumentConvention(TargetArch, Format);
+  const call_args_detail::CallArgPolicy *Policy =
+      call_args_detail::callArgPolicy(TargetArch, Format);
+  const auto IntLayout = TRI.integerArgumentLayout(Format);
   auto integerSlot = [&](uint64_t RegOff) -> int {
-    // Win64 `regToArgIdx` maps XMM0 onto slot 0, same as RCX. A `movups`
-    // leftover is not integer `this` for cstr/GetLength.
-    if (Win64)
+    // With positional slots `regToArgIdx` maps XMM0 onto slot 0, same as
+    // RCX. A `movups` leftover is not integer `this` for cstr/GetLength.
+    if (Convention && Convention->PositionalArgumentSlots)
       return IntLayout.registerIndex(RegOff);
     return regToArgIdx(RegOff);
   };
@@ -476,40 +463,144 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     }
     return medvarToExpr(V);
   };
-  // IP-map / EH splits isolate the CALL. Trailing `mov r9, rdi` /
-  // `mov [rsp+20h], esi` then sit in the predecessor after the last
-  // helper CALL (GetLength/cstr) and must be collected here — leftover
-  // Find nKey in r9 is before those helpers, so it stays out.
+  auto predSetupExpr = [&](const MedVar &LiveIn) -> ExprPtr {
+    const MedBlock *Pred = nullptr;
+    const MedOp *Def = nullptr;
+    int DefIdx = -1;
+    int Hits = 0;
+    if (CurMed) {
+      for (const auto &Blk : CurMed->Blocks) {
+        for (int I = 0; I < static_cast<int>(Blk.Ops.size()); ++I) {
+          const MedOp &Op = Blk.Ops[static_cast<size_t>(I)];
+          if (Op.Output.Id != LiveIn.Id || Op.Output.SSAVer != LiveIn.SSAVer)
+            continue;
+          ++Hits;
+          Pred = &Blk;
+          Def = &Op;
+          DefIdx = I;
+        }
+      }
+    }
+    if (Hits != 1) {
+      Pred = nullptr;
+      Def = nullptr;
+      DefIdx = -1;
+      for (int PredId : CurBlock.Preds) {
+        Pred = blockById(PredId);
+        if (!Pred)
+          continue;
+        for (int I = 0; I < static_cast<int>(Pred->Ops.size()); ++I) {
+          const MedOp &Op = Pred->Ops[static_cast<size_t>(I)];
+          if (Op.Output.Id == LiveIn.Id && Op.Output.SSAVer == LiveIn.SSAVer) {
+            Def = &Op;
+            DefIdx = I;
+            break;
+          }
+        }
+        if (Def)
+          break;
+      }
+    }
+    if (!Def)
+      return medvarToExpr(LiveIn);
+    ExprPtr E = medOpToExpr(*Def);
+    if (E && E->Kind != ExprKind::Undef)
+      return E;
+    if (Def->Opcode == NdOp::COPY && Def->NumInputs >= 1 && Pred)
+      E = exprFromWindowValue(Def->Inputs[0], Pred->Ops, DefIdx - 1);
+    if (E && E->Kind != ExprKind::Undef)
+      return E;
+    if (Pred)
+      return exprFromWindowValue(LiveIn, Pred->Ops, DefIdx - 1);
+    return E;
+  };
+  auto tryPredSetupArg = [&](int K) -> bool {
+    MedVar LiveIn;
+    if (!reachingRegAtBlockEntry(CurBlock, ParamRegs[K], LiveIn))
+      return false;
+    if (!isCallArgSetupDef(CurBlock, LiveIn, ParamRegs[K]))
+      return false;
+    ExprPtr E = predSetupExpr(LiveIn);
+    if (!E || E->Kind == ExprKind::Undef)
+      return false;
+    Found[K] = std::move(E);
+    return true;
+  };
+  // Join `mov edx; jmp call` keeps a dominating `lea r8` in the shared
+  // fork. Leftover r9 from an earlier Find is not that fork write.
+  auto tryDominatingForkSetup = [&](int K) -> bool {
+    if (Found[K] || CurBlock.Preds.size() < 2)
+      return false;
+    std::optional<int> ForkId;
+    for (int PredId : CurBlock.Preds) {
+      const MedBlock *Pred = blockById(PredId);
+      if (!Pred || Pred->Preds.size() != 1)
+        return false;
+      if (!ForkId)
+        ForkId = Pred->Preds[0];
+      else if (*ForkId != Pred->Preds[0])
+        return false;
+    }
+    const MedBlock *Fork = ForkId ? blockById(*ForkId) : nullptr;
+    if (!Fork)
+      return false;
+    MedVar LiveIn;
+    if (!reachingRegAtBlockEntry(CurBlock, ParamRegs[K], LiveIn))
+      return false;
+    for (const auto &Op : Fork->Ops) {
+      if (Op.Output.Id != LiveIn.Id || Op.Output.SSAVer != LiveIn.SSAVer)
+        continue;
+      if (Op.Opcode == NdOp::COPY && Op.NumInputs >= 1 &&
+          Op.Inputs[0].Kind == MedVar::Reg &&
+          Op.Inputs[0].RegOff == ParamRegs[K] &&
+          Op.Inputs[0].Id == Op.Output.Id &&
+          Op.Inputs[0].SSAVer == Op.Output.SSAVer)
+        return false;
+      if (Op.Output.Kind != MedVar::Reg || Op.Output.RegOff != ParamRegs[K] ||
+          Op.Output.Size == 0)
+        return false;
+      Found[K] = medOpToExpr(Op);
+      return true;
+    }
+    return false;
+  };
+  auto takePrecedingSetup = [&](int K) {
+    return tryPredSetupArg(K) || tryDominatingForkSetup(K);
+  };
+  auto reachingAtEntry = [&](uint64_t RegOff, MedVar &LiveIn) {
+    return reachingRegAtBlockEntry(CurBlock, RegOff, LiveIn);
+  };
+  auto toExpr = [this](const MedVar &V) { return medvarToExpr(V); };
+  auto opToExpr = [this](const MedOp &Op) { return medOpToExpr(Op); };
+  auto argIdx = [this](uint64_t RegOff) { return regToArgIdx(RegOff); };
+  auto paramIdx = [this](const MedVar &V) { return abiParamIndex(V); };
+  call_args_detail::CallArgContext Ctx{Found,
+                                       MaxArgs,
+                                       ParamRegs,
+                                       CurBlock,
+                                       CurMed,
+                                       toExpr,
+                                       opToExpr,
+                                       integerSlot,
+                                       argIdx,
+                                       paramIdx,
+                                       reachingAtEntry,
+                                       exprFromWindowValue,
+                                       takePrecedingSetup};
+
+  // A block boundary (an EH state change, a split `cmp/jnz`) can isolate the
+  // CALL from setup at the end of its single predecessor; the convention
+  // says whether to read it there.
   if (ReachedBlockStart && CallIdx == 0 && CurBlock.Preds.size() == 1 &&
-      (Win64 || TargetArch == Arch::X86)) {
+      Policy && Policy->ReadsPredecessorWindow) {
     for (int PredId : CurBlock.Preds) {
       const MedBlock *Pred = blockById(PredId);
       if (!Pred || Pred->Ops.empty())
         continue;
       ExtraWindows.push_back(
           {&Pred->Ops, static_cast<int>(Pred->Ops.size()) - 1});
-      // i386 stdcall pushes live in ExtraWindows; ECX/EDX are not arguments.
-      if (!Win64)
-        continue;
-      for (int J = static_cast<int>(Pred->Ops.size()) - 1; J >= 0; --J) {
-        const MedOp &Prev = Pred->Ops[static_cast<size_t>(J)];
-        if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
-            Prev.Opcode == NdOp::INTRINSIC)
-          break;
-        if (call_args_detail::isNoopRegisterCopy(Prev))
-          continue;
-        if (Prev.Output.Kind != MedVar::Reg || Prev.Output.Size == 0)
-          continue;
-        const int ArgIdx = integerSlot(Prev.Output.RegOff);
-        if (ArgIdx < 0 || ArgIdx >= MaxArgs || Found[ArgIdx])
-          continue;
-        if (Prev.Opcode == NdOp::COPY && Prev.NumInputs >= 1)
-          Found[ArgIdx] = exprFromWindowValue(Prev.Inputs[0], Pred->Ops, J - 1);
-        else
-          Found[ArgIdx] = medOpToExpr(Prev);
-        if (!Found[ArgIdx] || Found[ArgIdx]->Kind == ExprKind::Undef)
-          Found[ArgIdx] = exprFromWindowValue(Prev.Output, Pred->Ops, J - 1);
-      }
+      if (Policy->TakePredecessorRegisters)
+        Policy->TakePredecessorRegisters(Ctx, *Pred);
     }
   }
 
@@ -520,136 +611,16 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
         MaxRegArg = K;
     // Fill holes below the highest written slot.  Do not extend arity with
     // live-in r9 when the call only wrote rcx/rdx/r8 (GSHandlerCheckCommon).
-    // A tail-call with no param-reg writes still recovers live-in args up to
-    // the current function's parameter count (`jmp __report_gsfailure`).
     int FillLast = MaxRegArg;
-    auto predSetupExpr = [&](const MedVar &LiveIn) -> ExprPtr {
-      const MedBlock *Pred = nullptr;
-      const MedOp *Def = nullptr;
-      int DefIdx = -1;
-      int Hits = 0;
-      if (CurMed) {
-        for (const auto &Blk : CurMed->Blocks) {
-          for (int I = 0; I < static_cast<int>(Blk.Ops.size()); ++I) {
-            const MedOp &Op = Blk.Ops[static_cast<size_t>(I)];
-            if (Op.Output.Id != LiveIn.Id || Op.Output.SSAVer != LiveIn.SSAVer)
-              continue;
-            ++Hits;
-            Pred = &Blk;
-            Def = &Op;
-            DefIdx = I;
-          }
-        }
-      }
-      if (Hits != 1) {
-        Pred = nullptr;
-        Def = nullptr;
-        DefIdx = -1;
-        for (int PredId : CurBlock.Preds) {
-          Pred = blockById(PredId);
-          if (!Pred)
-            continue;
-          for (int I = 0; I < static_cast<int>(Pred->Ops.size()); ++I) {
-            const MedOp &Op = Pred->Ops[static_cast<size_t>(I)];
-            if (Op.Output.Id == LiveIn.Id &&
-                Op.Output.SSAVer == LiveIn.SSAVer) {
-              Def = &Op;
-              DefIdx = I;
-              break;
-            }
-          }
-          if (Def)
-            break;
-        }
-      }
-      if (!Def)
-        return medvarToExpr(LiveIn);
-      ExprPtr E = medOpToExpr(*Def);
-      if (E && E->Kind != ExprKind::Undef)
-        return E;
-      if (Def->Opcode == NdOp::COPY && Def->NumInputs >= 1 && Pred)
-        E = exprFromWindowValue(Def->Inputs[0], Pred->Ops, DefIdx - 1);
-      if (E && E->Kind != ExprKind::Undef)
-        return E;
-      if (Pred)
-        return exprFromWindowValue(LiveIn, Pred->Ops, DefIdx - 1);
-      return E;
-    };
-    auto tryPredSetupArg = [&](int K) -> bool {
-      MedVar LiveIn;
-      if (!reachingRegAtBlockEntry(CurBlock, ParamRegs[K], LiveIn))
-        return false;
-      if (!isCallArgSetupDef(CurBlock, LiveIn, ParamRegs[K]))
-        return false;
-      ExprPtr E = predSetupExpr(LiveIn);
-      if (!E || E->Kind == ExprKind::Undef)
-        return false;
-      Found[K] = std::move(E);
-      return true;
-    };
-    // Join `mov edx; jmp call` keeps a dominating `lea r8` in the shared
-    // fork. Leftover r9 from an earlier Find is not that fork write.
-    auto tryDominatingForkSetup = [&](int K) -> bool {
-      if (Found[K] || CurBlock.Preds.size() < 2)
-        return false;
-      std::optional<int> ForkId;
-      for (int PredId : CurBlock.Preds) {
-        const MedBlock *Pred = blockById(PredId);
-        if (!Pred || Pred->Preds.size() != 1)
-          return false;
-        if (!ForkId)
-          ForkId = Pred->Preds[0];
-        else if (*ForkId != Pred->Preds[0])
-          return false;
-      }
-      const MedBlock *Fork = ForkId ? blockById(*ForkId) : nullptr;
-      if (!Fork)
-        return false;
-      MedVar LiveIn;
-      if (!reachingRegAtBlockEntry(CurBlock, ParamRegs[K], LiveIn))
-        return false;
-      for (const auto &Op : Fork->Ops) {
-        if (Op.Output.Id != LiveIn.Id || Op.Output.SSAVer != LiveIn.SSAVer)
-          continue;
-        if (Op.Opcode == NdOp::COPY && Op.NumInputs >= 1 &&
-            Op.Inputs[0].Kind == MedVar::Reg &&
-            Op.Inputs[0].RegOff == ParamRegs[K] &&
-            Op.Inputs[0].Id == Op.Output.Id &&
-            Op.Inputs[0].SSAVer == Op.Output.SSAVer)
-          return false;
-        if (Op.Output.Kind != MedVar::Reg || Op.Output.RegOff != ParamRegs[K] ||
-            Op.Output.Size == 0)
-          return false;
-        Found[K] = medOpToExpr(Op);
-        return true;
-      }
-      return false;
-    };
-    // Call-only block: recover consecutive live-ins that a predecessor wrote
-    // as call setup (`lea r8, name` before a callee). Do not use the
-    // caller's parameter count — that drops a 3rd callee arg when the
-    // caller is a 2-param sret method.
-    if (Win64 && MaxRegArg < 0) {
-      int SetupLast = -1;
-      for (int K = 0; K < static_cast<int>(ParamRegs.size()) && K < 4; ++K) {
-        if (tryPredSetupArg(K) || tryDominatingForkSetup(K))
-          SetupLast = K;
-      }
-      if (SetupLast >= 0)
-        FillLast = SetupLast;
-      else if (CurMed && !CurMed->Params.empty())
-        FillLast = std::min(static_cast<int>(CurMed->Params.size()),
-                            static_cast<int>(ParamRegs.size())) -
-                   1;
-    }
-    // A System V indirect call whose own block sets no argument register
-    // still takes the ones set in the block before it (`mov rdi, [rdi]; test
-    // rdi, rdi; je; mov rax, [rdi]; call [rax+58h]`): the consecutive
-    // registers such setup writes give a known value, never padded to this
-    // function's own parameters.  A direct callee has its own summary.
-    const bool SysV64 =
-        TargetArch == Arch::X64 && !Win64 && Format == BinaryFormat::ELF;
-    if (SysV64 && MaxRegArg < 0 && CallIdx < Ops.size() &&
+    if (Policy && Policy->RecoverCallOnlySetup && MaxRegArg < 0)
+      Policy->RecoverCallOnlySetup(Ctx, FillLast);
+    // An indirect call whose own block sets no argument register takes the
+    // consecutive setup writes of the block before it (`mov rdi, [rdi]; test
+    // rdi, rdi; je; mov rax, [rdi]; call [rax+58h]`) when its calling
+    // convention says so, never padded to this function's own parameters.  A
+    // direct callee has its own summary.
+    if (Convention && Convention->IndirectCallsTakePrecedingSetup &&
+        MaxRegArg < 0 && CallIdx < Ops.size() &&
         Ops[CallIdx].Opcode == NdOp::INDIR_CALL &&
         Ops[CallIdx].CalleeRegisterArgs < 0 && !Ops[CallIdx].SourceCallHint) {
       for (int K = 0; K < static_cast<int>(ParamRegs.size()) && K < MaxArgs;
@@ -662,40 +633,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
         FillLast = K;
       }
     }
-    // Same-block writes of rcx/rdx/r8 must not hide a join PHI in r9
-    // (`CStringTable::Find` nKey).  Unused function-entry r9 is not a PHI.
-    if (Win64 && MaxRegArg >= 0) {
-      int Next = MaxRegArg + 1;
-      while (Next < static_cast<int>(ParamRegs.size()) && Next < MaxArgs) {
-        MedVar LiveIn;
-        if (!reachingRegAtBlockEntry(CurBlock, ParamRegs[Next], LiveIn))
-          break;
-        bool IsJoinPhi = false;
-        for (const auto &Phi : CurBlock.Phis) {
-          if (Phi.Output.Id == LiveIn.Id &&
-              Phi.Output.SSAVer == LiveIn.SSAVer) {
-            IsJoinPhi = true;
-            break;
-          }
-        }
-        if (!IsJoinPhi)
-          break;
-        Found[Next] = medvarToExpr(LiveIn);
-        FillLast = Next;
-        ++Next;
-      }
-      // `lea r8, name` can sit in the predecessor when `cmp/jnz` splits
-      // it from `mov edx; call`. Recover that setup; leftover r9 whose
-      // pred did not write it stays out.
-      int SetupNext = FillLast + 1;
-      while (
-          SetupNext < static_cast<int>(ParamRegs.size()) &&
-          SetupNext < MaxArgs &&
-          (tryPredSetupArg(SetupNext) || tryDominatingForkSetup(SetupNext))) {
-        FillLast = SetupNext;
-        ++SetupNext;
-      }
-    }
+    if (Policy && Policy->ExtendWrittenArgs && MaxRegArg >= 0)
+      Policy->ExtendWrittenArgs(Ctx, MaxRegArg, FillLast);
     for (int K = 0; K <= FillLast && K < static_cast<int>(ParamRegs.size());
          ++K) {
       if (Found[K])
@@ -706,94 +645,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     }
   }
 
-  // Last-COPY-by-address across blocks is CFG-unsound: cookie `ror rcx`
-  // would steal rcx from the mismatch path's incoming argument. Reaching
-  // defs / same-block writes already recovered the live value.
-  if (Win64 && CurMed) {
-    auto UniqueDef = [&](const MedVar &V) -> const MedOp * {
-      const MedOp *Def = nullptr;
-      for (const auto &Blk : CurMed->Blocks)
-        for (const auto &Op : Blk.Ops)
-          if (Op.Output.Id == V.Id && Op.Output.SSAVer == V.SSAVer) {
-            if (Def)
-              return nullptr;
-            Def = &Op;
-          }
-      return Def;
-    };
-    std::function<bool(const MedVar &, int)> IsConstLike =
-        [&](const MedVar &V, int Depth) -> bool {
-      if (Depth > 8)
-        return false;
-      if (V.isConst())
-        return true;
-      const MedOp *Def = UniqueDef(V);
-      if (!Def || Def->NumInputs < 1)
-        return false;
-      if (Def->Opcode == NdOp::COPY)
-        return IsConstLike(Def->Inputs[0], Depth + 1);
-      return false;
-    };
-    std::function<bool(const MedVar &, int, int)> IsSlot =
-        [&](const MedVar &V, int Slot, int Depth) -> bool {
-      if (Depth > 8 || Slot < 0)
-        return false;
-      if (V.Kind == MedVar::Param)
-        return abiParamIndex(V) == Slot;
-      if (V.Kind == MedVar::Reg && V.SSAVer == 0)
-        return regToArgIdx(V.RegOff) == Slot;
-      for (const auto &Blk : CurMed->Blocks)
-        for (const auto &Phi : Blk.Phis)
-          if (Phi.Output.Id == V.Id && Phi.Output.SSAVer == V.SSAVer) {
-            if (Phi.Args.empty())
-              return false;
-            for (const auto &Arg : Phi.Args)
-              if (!IsSlot(Arg.second, Slot, Depth + 1))
-                return false;
-            return true;
-          }
-      const MedOp *Def = UniqueDef(V);
-      if (!Def)
-        return false;
-      if (Def->Opcode == NdOp::COPY && Def->NumInputs >= 1)
-        return IsSlot(Def->Inputs[0], Slot, Depth + 1);
-      if ((Def->Opcode == NdOp::INT_LEFT || Def->Opcode == NdOp::INT_RIGHT ||
-           Def->Opcode == NdOp::INT_OR || Def->Opcode == NdOp::INT_AND) &&
-          Def->NumInputs >= 1) {
-        bool Any = false;
-        for (uint8_t I = 0; I < Def->NumInputs; ++I) {
-          if (IsConstLike(Def->Inputs[I], 0))
-            continue;
-          if (!IsSlot(Def->Inputs[I], Slot, Depth + 1))
-            return false;
-          Any = true;
-        }
-        return Any;
-      }
-      return false;
-    };
-    for (int I = 0; I < 4 && I < static_cast<int>(CurMed->Params.size()); ++I) {
-      if (!Found[I] || Found[I]->Kind != ExprKind::Var)
-        continue;
-      int SrcSlot = -1;
-      const int Limit = std::min(4, static_cast<int>(CurMed->Params.size()));
-      for (int J = 0; J < Limit; ++J) {
-        if (!IsSlot(Found[I]->Var, J, 0))
-          continue;
-        SrcSlot = J;
-        break;
-      }
-      if (SrcSlot < 0)
-        continue;
-      if (Found[I]->Var.Kind == MedVar::Param &&
-          abiParamIndex(Found[I]->Var) == SrcSlot)
-        continue;
-      MedVar Param = CurMed->Params[static_cast<size_t>(SrcSlot)];
-      Param.Kind = MedVar::Param;
-      Param.Id = SrcSlot;
-      Found[I] = HighExpr::makeVar(Param, TypeRef{});
-    }
-  }
+  if (Policy && Policy->ResolvePassThroughParams && CurMed)
+    Policy->ResolvePassThroughParams(Ctx);
 
   // A summarized callee published exactly the register arguments it reads
   // as the CALL's inputs (LowToMed); SSA already renamed them to the values
@@ -948,6 +801,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   Scan.TRI = &TRI;
   Scan.Image = Image;
   Scan.TheArch = TargetArch;
+  Scan.Convention = Convention;
   Scan.MaxArgs = MaxArgs;
   if (CallIdx < Ops.size() && !Ops[CallIdx].SourceCallHint) {
     Scan.CalleeRegisterArgs = Ops[CallIdx].CalleeRegisterArgs;
@@ -1088,8 +942,10 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   // calls.  A missing register argument is this function's own parameter
   // when one was recovered for that position, else a value the call site
   // does not determine.
+  const bool PassesOwnSignature =
+      SelfCall && Policy && Policy->RecursiveCallsPassOwnSignature;
   auto MatchOwnSignature = [&](std::vector<ExprPtr> Collected) {
-    if (!SelfCall || !Win64)
+    if (!PassesOwnSignature)
       return Collected;
     if (Collected.size() > OwnParamCount)
       Collected.resize(OwnParamCount);
@@ -1107,38 +963,13 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     }
     return Collected;
   };
-  if (Win64 && CurMed && !SummarizedCallee) {
-    size_t FillTo = 0;
-    if (!Hinted.empty())
-      FillTo = std::min(Hinted.size(), static_cast<size_t>(4));
-    else if (SelfCall)
-      FillTo = std::min(OwnParamCount, static_cast<size_t>(4));
-    else {
-      for (int K = 3; K >= 0; --K)
-        if (Found[K] && Found[K]->Kind != ExprKind::Undef) {
-          FillTo = static_cast<size_t>(K + 1);
-          break;
-        }
-      // Tail-call with no param-reg writes (`jmp __report_gsfailure`): rcx is
-      // still the incoming cookie. Do not extend a 3-arg call with live-in r9.
-      if (FillTo == 0 && !CurMed->Params.empty())
-        FillTo = 1;
-    }
-    for (size_t I = 0; I < FillTo && I < CurMed->Params.size(); ++I) {
-      if ((Found[I] && Found[I]->Kind != ExprKind::Undef) ||
-          CurMed->Params[I].RegOff == kNoParamReg)
-        continue;
-      MedVar Param = CurMed->Params[I];
-      Param.Kind = MedVar::Param;
-      Param.Id = static_cast<int>(I);
-      Found[I] = HighExpr::makeVar(Param, TypeRef{});
-    }
-  }
+  if (Policy && Policy->FillUnwrittenParams && CurMed && !SummarizedCallee)
+    Policy->FillUnwrittenParams(Ctx, Hinted.size(), SelfCall, OwnParamCount);
 
   auto BoundKnownCalleeArity = [&](std::vector<ExprPtr> Collected) {
     if (CallIdx >= Ops.size())
       return Collected;
-    if (SelfCall && Win64)
+    if (PassesOwnSignature)
       return MatchOwnSignature(std::move(Collected));
     const MedOp &Call = Ops[CallIdx];
     std::string Name;
@@ -1149,11 +980,13 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     if (Name.empty())
       return Collected;
     size_t N = 0;
-    if (const libc::WindowsKernelPrototype *Proto =
-            Win64 ? libc::windowsKernelPrototype(Name) : nullptr) {
-      // A WDK prototype fixes the stack arguments too: outgoing-area stores
-      // for a later call are not arguments of this one.
-      N = Proto->ArgCount;
+    if (const std::optional<size_t> Count =
+            Policy && Policy->PrototypeArgCount
+                ? Policy->PrototypeArgCount(Name)
+                : std::nullopt) {
+      // A platform prototype fixes the stack arguments too: outgoing-area
+      // stores for a later call are not arguments of this one.
+      N = *Count;
     } else {
       const auto Arity = libc::libcArityForSymbol(Name);
       if (!Arity)
@@ -1190,24 +1023,12 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   }
 
   if (!Hinted.empty()) {
-    // Source ABI operands are authoritative. Win64 may still prefer a scanned
-    // parameter copy over a clobbered CALL input; AArch64 selector stubs must
-    // not replace `_cmd` with the const-0 overwrite placeholder.
-    if (Win64) {
-      for (size_t I = 0; I < Hinted.size(); ++I) {
-        const ExprPtr Scanned = I < Found.size() ? Found[I] : ExprPtr{};
-        if (call_args_detail::preferScannedCallArg(Scanned, Hinted[I], I))
-          Hinted[I] = Scanned;
-      }
-      // An IAT hint can be short (`Concatenate` with only dest+a+na). Keep
-      // recovered r9 / [rsp+20h] that sit past that prefix.
-      size_t End = Hinted.size();
-      while (End < static_cast<size_t>(MaxArgs) && Found[End] &&
-             Found[End]->Kind != ExprKind::Undef)
-        ++End;
-      for (size_t I = Hinted.size(); I < End; ++I)
-        Hinted.push_back(Found[I]);
-    }
+    // Source ABI operands are authoritative, though a convention may still
+    // prefer a scanned value for some of them (MergeScannedArgs); AArch64
+    // selector stubs must not replace `_cmd` with the const-0 overwrite
+    // placeholder.
+    if (Policy && Policy->MergeScannedArgs)
+      Policy->MergeScannedArgs(Ctx, Hinted);
     return MatchOwnSignature(std::move(Hinted));
   }
   Args.clear();
@@ -1365,9 +1186,8 @@ bool MedToHighConverter::isCallArgSetupDef(const MedBlock &CallBlk,
 }
 
 int MedToHighConverter::regToArgIdx(uint64_t RegOff) const {
-  const bool IsWin64 =
-      TargetArch == Arch::X64 && Image && Image->Format == BinaryFormat::COFF;
-  return getTargetRegInfo(TargetArch).regToArgIdx(RegOff, IsWin64);
+  return getTargetRegInfo(TargetArch)
+      .regToArgIdx(RegOff, Image ? Image->Format : BinaryFormat::Unknown);
 }
 
 std::string MedToHighConverter::calleeDisplayName(va_t Target) const {

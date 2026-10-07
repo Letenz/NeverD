@@ -290,6 +290,50 @@ TEST_F(KernelMultipleWait, InvalidLaterObjectCannotConsumeEarlierSignal) {
   call(kernel_api::KeInitializeEvent, {First, 1, true});
 }
 
+TEST_F(KernelMultipleWait, DispatcherScalarParametersIgnoreUpperRegisterBits) {
+  for (const uint64_t High : {ArgumentHighBits, ~uint64_t(UINT32_MAX)}) {
+    SCOPED_TRACE(High);
+    const auto Semaphore = pool(dispatcher::SemaphoreSize);
+    auto Initialized = Model->call(kernel_api::KeInitializeSemaphore.str(),
+                                   {Semaphore, High | 1, High | 2});
+    ASSERT_TRUE(bool(Initialized)) << llvm::toString(Initialized.takeError());
+    EXPECT_EQ(call(kernel_api::KeReadStateSemaphore, {Semaphore}), 1u);
+    EXPECT_EQ(take(wait({Semaphore}, true)), windows::StatusSuccess);
+    EXPECT_EQ(
+        call(kernel_api::KeReleaseSemaphore, {Semaphore, High, High | 2, High}),
+        0u);
+    EXPECT_EQ(call(kernel_api::KeReadStateSemaphore, {Semaphore}), 2u);
+    for (const uint64_t Adjustment : {High, High | UINT32_MAX}) {
+      reject(Model->call(kernel_api::KeReleaseSemaphore.str(),
+                         {Semaphore, High, Adjustment, High}));
+      EXPECT_EQ(call(kernel_api::KeReadStateSemaphore, {Semaphore}), 2u);
+    }
+    reject(Model->call(kernel_api::KeReleaseSemaphore.str(),
+                       {Semaphore, High, High | 1, High}));
+    EXPECT_EQ(call(kernel_api::KeReadStateSemaphore, {Semaphore}), 2u);
+    for (const uint64_t Count : {High | UINT32_MAX, High | 3}) {
+      reject(Model->call(kernel_api::KeInitializeSemaphore.str(),
+                         {Semaphore, Count, High | 2}));
+      EXPECT_EQ(call(kernel_api::KeReadStateSemaphore, {Semaphore}), 2u);
+    }
+    for (const uint64_t Limit : {High, High | UINT32_MAX}) {
+      reject(Model->call(kernel_api::KeInitializeSemaphore.str(),
+                         {Semaphore, High | 1, Limit}));
+      EXPECT_EQ(call(kernel_api::KeReadStateSemaphore, {Semaphore}), 2u);
+    }
+
+    const auto Mutex = pool(dispatcher::MutexSize);
+    Initialized =
+        Model->call(kernel_api::KeInitializeMutex.str(), {Mutex, High});
+    ASSERT_TRUE(bool(Initialized)) << llvm::toString(Initialized.takeError());
+    EXPECT_EQ(call(kernel_api::KeReadStateMutex, {Mutex}), 1u);
+    EXPECT_EQ(take(wait({Mutex}, true)), windows::StatusSuccess);
+    EXPECT_EQ(call(kernel_api::KeReleaseMutex, {Mutex, High}), 0u);
+    reject(Model->call(kernel_api::KeInitializeMutex.str(), {Mutex, High | 1}));
+    EXPECT_EQ(call(kernel_api::KeReadStateMutex, {Mutex}), 1u);
+  }
+}
+
 TEST_F(KernelMultipleWait,
        MaximumCountUsesCallerBlocksAndPreservesBoundaryBytes) {
   std::vector<uint64_t> Objects;

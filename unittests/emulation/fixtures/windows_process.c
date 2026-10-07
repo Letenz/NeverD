@@ -14,6 +14,8 @@ typedef unsigned long long ULONG_PTR;
 typedef unsigned short WCHAR;
 typedef void *HANDLE;
 #define NEVERD_WINDOWS_FIXTURE_VALUE(Name, Value) enum { Name = Value };
+#define NEVERD_WINDOWS_FIXTURE_U64(Name, Value)                                \
+  static const ULONG_PTR Name = Value;
 #define NEVERD_WINDOWS_FIXTURE_TEXT(Name, Text) static const char Name[] = Text;
 #define NEVERD_WINDOWS_FIXTURE_BYTES(Name, ...)                                \
   __declspec(allocate(".text")) static const unsigned char Name[] = {          \
@@ -22,6 +24,7 @@ typedef void *HANDLE;
 #undef NEVERD_WINDOWS_FIXTURE_BYTES
 #undef NEVERD_WINDOWS_FIXTURE_TEXT
 #undef NEVERD_WINDOWS_FIXTURE_VALUE
+#undef NEVERD_WINDOWS_FIXTURE_U64
 __declspec(dllimport) void ExitProcess(DWORD Status);
 __declspec(dllimport) HANDLE GetStdHandle(DWORD Selector);
 __declspec(dllimport) int WriteFile(HANDLE File, const void *Bytes, DWORD Size,
@@ -88,6 +91,7 @@ static void require(int OK) {
     ExitProcess(Failure);
 }
 #include "WindowsMemoryFixture.inc"
+#include "WindowsTimeFixture.inc"
 static char mode(void) {
   WCHAR *Line = GetCommandLineW();
   unsigned N = 0;
@@ -107,10 +111,11 @@ static char mode(void) {
   }
   require(Start && (Line[Start - 1] == ' ' || Line[Start - 1] == '\t'));
   static const char *const Modes[] = {
-      Normal,        Returned,    Loop,     InitLoop,    Fault,
-      Privileged,    Unknown,     Errors,   Unsupported, BadOutput,
-      AliasedOutput, TLSMutation, TailExit, ForgedGate,  ReentrantExit,
-      ReturnSlot,    NativeExit,
+      Normal,        Returned,    Loop,          InitLoop,       Fault,
+      Privileged,    Unknown,     Errors,        Unsupported,    BadOutput,
+      AliasedOutput, TLSMutation, TailExit,      ForgedGate,     ReentrantExit,
+      ReturnSlot,    NativeExit,  ClockServices, ClockAlertable, ClockAbsolute,
+      ClockTooLong,
 #define NEVERD_WINDOWS_FIXTURE_TEXT(Name, Text) Name,
 #include "WindowsMemoryCases.def"
 #undef NEVERD_WINDOWS_FIXTURE_TEXT
@@ -229,6 +234,7 @@ DWORD entry(void) {
   Bytes[HeapBytes - 1] = 1;
   require(HeapFree(Heap, 0, Bytes));
   memoryScenario(Mode);
+  clockScenario(Mode);
   if (Mode == 't')
     tailExit();
   if (Mode == 'g')

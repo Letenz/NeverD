@@ -1,5 +1,7 @@
-// libc/POSIX functions that never return to their caller.
-// Included by LibCCallTraits.cpp with LIBC_NO_RETURN_SYMBOL defined.
+// C and POSIX functions that never return to their caller.
+// Included by LibCCallTraits.cpp with LIBC_NO_RETURN_SYMBOL defined, next to
+// the C++ runtime (CxxRuntimeNoReturn.inc) and Windows (WindowsNoReturn.inc)
+// tables.
 
 LIBC_NO_RETURN_SYMBOL("abort")
 LIBC_NO_RETURN_SYMBOL("exit")
@@ -17,49 +19,3 @@ LIBC_NO_RETURN_SYMBOL("assert_fail")
 LIBC_NO_RETURN_SYMBOL("assert_rtn")
 LIBC_NO_RETURN_SYMBOL("assert_perror_fail")
 LIBC_NO_RETURN_SYMBOL("stack_chk_fail")
-LIBC_NO_RETURN_SYMBOL("cxa_throw")
-LIBC_NO_RETURN_SYMBOL("cxa_rethrow")
-LIBC_NO_RETURN_SYMBOL("cxa_call_terminate")
-LIBC_NO_RETURN_SYMBOL("clang_call_terminate")
-LIBC_NO_RETURN_SYMBOL("ZSt9terminatev")
-// Itanium C++ ABI runtime entries that only throw or terminate.
-LIBC_NO_RETURN_SYMBOL("cxa_bad_cast")
-LIBC_NO_RETURN_SYMBOL("cxa_bad_typeid")
-LIBC_NO_RETURN_SYMBOL("cxa_pure_virtual")
-LIBC_NO_RETURN_SYMBOL("cxa_deleted_virtual")
-LIBC_NO_RETURN_SYMBOL("cxa_throw_bad_array_new_length")
-// libstdc++'s [[noreturn]] exception helpers (bits/functexcept.h).
-LIBC_NO_RETURN_SYMBOL("ZSt22__throw_bad_exceptionv")
-LIBC_NO_RETURN_SYMBOL("ZSt17__throw_bad_allocv")
-LIBC_NO_RETURN_SYMBOL("ZSt28__throw_bad_array_new_lengthv")
-LIBC_NO_RETURN_SYMBOL("ZSt16__throw_bad_castv")
-LIBC_NO_RETURN_SYMBOL("ZSt18__throw_bad_typeidv")
-LIBC_NO_RETURN_SYMBOL("ZSt19__throw_logic_errorPKc")
-LIBC_NO_RETURN_SYMBOL("ZSt20__throw_domain_errorPKc")
-LIBC_NO_RETURN_SYMBOL("ZSt24__throw_invalid_argumentPKc")
-LIBC_NO_RETURN_SYMBOL("ZSt20__throw_length_errorPKc")
-LIBC_NO_RETURN_SYMBOL("ZSt20__throw_out_of_rangePKc")
-LIBC_NO_RETURN_SYMBOL("ZSt24__throw_out_of_range_fmtPKcz")
-LIBC_NO_RETURN_SYMBOL("ZSt21__throw_runtime_errorPKc")
-LIBC_NO_RETURN_SYMBOL("ZSt19__throw_range_errorPKc")
-LIBC_NO_RETURN_SYMBOL("ZSt22__throw_overflow_errorPKc")
-LIBC_NO_RETURN_SYMBOL("ZSt23__throw_underflow_errorPKc")
-LIBC_NO_RETURN_SYMBOL("ZSt19__throw_ios_failurePKc")
-LIBC_NO_RETURN_SYMBOL("ZSt19__throw_ios_failurePKci")
-LIBC_NO_RETURN_SYMBOL("ZSt20__throw_system_errori")
-LIBC_NO_RETURN_SYMBOL("ZSt20__throw_future_errori")
-LIBC_NO_RETURN_SYMBOL("ZSt25__throw_bad_function_callv")
-LIBC_NO_RETURN_SYMBOL("Unwind_Resume")
-LIBC_NO_RETURN_SYMBOL("CxxThrowException")
-LIBC_NO_RETURN_SYMBOL("report_gsfailure")
-LIBC_NO_RETURN_SYMBOL("raise_securityfailure")
-LIBC_NO_RETURN_SYMBOL("TerminateProcess")
-// Windows kernel routines the WDK declares DECLSPEC_NORETURN.  Routines that
-// can return (RtlRaiseException when the exception is continued,
-// PsTerminateSystemThread on failure) are deliberately absent.
-LIBC_NO_RETURN_SYMBOL("KeBugCheck")
-LIBC_NO_RETURN_SYMBOL("KeBugCheckEx")
-LIBC_NO_RETURN_SYMBOL("ExRaiseStatus")
-LIBC_NO_RETURN_SYMBOL("ExRaiseAccessViolation")
-LIBC_NO_RETURN_SYMBOL("ExRaiseDatatypeMisalignment")
-LIBC_NO_RETURN_SYMBOL("RtlRaiseStatus")

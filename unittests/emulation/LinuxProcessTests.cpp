@@ -257,6 +257,46 @@ TEST_P(LinuxProcess, MemoryFilesPreserveBinaryBytesCursorsAndFaultPrefixes) {
     }
   }
 }
+TEST_P(LinuxProcess, MemoryFileOpenFlagsRetainObservedPathErrors) {
+  Options.LinuxFiles.emplace();
+  Options.LinuxFiles->Files["/fixture/data"] = {0, 0xff, 0x41};
+  Options.LinuxFiles->DescriptorLimit = 4;
+  constexpr AndroidGKIKernel Kernels[] = {
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
+  AndroidGKIKernel::Name,
+#include "GKIReleaseCases.def"
+#undef NEVERD_GKI_RELEASE_CASE
+  };
+  for (auto Kernel : Kernels) {
+    SCOPED_TRACE(unsigned(Kernel));
+    Options.LinuxKernel.emplace().GKI = Kernel;
+    for (const char *Opt : {"O0", "O2"}) {
+      auto FilePath = Path.parent_path() /
+                      (Path.stem().string() + "-files-" + Opt + ".elf");
+      Options.Arguments = {"files", "o"};
+      auto R = llvm::cantFail(
+          emulateProcess(FilePath, ProcessProfile::LinuxELF64, Options));
+      ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+      EXPECT_EQ(R.ExitStatus, 0u);
+    }
+  }
+}
+TEST_P(LinuxProcess, MemoryFileOpenFlagsKeepUnobservedOpenedFiles) {
+  Options.LinuxFiles.emplace().Files["/fixture/data"] = {0};
+  for (const char *Opt : {"O0", "O2"}) {
+    auto FilePath =
+        Path.parent_path() / (Path.stem().string() + "-files-" + Opt + ".elf");
+    for (char Mode : {'R', 'D', 'B'}) {
+      Options.Arguments = {"files", std::string(1, Mode)};
+      auto R = llvm::cantFail(
+          emulateProcess(FilePath, ProcessProfile::LinuxELF64, Options));
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+      EXPECT_FALSE(R.Services.back().Result);
+      EXPECT_NE(R.Diagnostic.find(Mode == 'R' ? "direct I/O" : "directory"),
+                std::string::npos);
+    }
+  }
+}
 TEST_P(LinuxProcess, TimeFaultsPreserveKernelErrnosAndOrderedWrites) {
   Options.LinuxTime.emplace();
   Options.LinuxTime->Clocks[0] = {4294967297, 987654321};

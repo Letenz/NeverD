@@ -299,8 +299,11 @@ private:
   const std::map<va_t, int> *CallEntryStackArgs = nullptr;
   const std::set<va_t> *CallDispatchThunks = nullptr;
   const std::map<va_t, int> *CallVariadicFrom = nullptr;
-  /// Win64 argument registers (bit I = RCX, RDX, R8, R9) defined on every
-  /// path to the dispatcher or variadic call being converted.
+  /// Argument registers DispatchCallDefinedArgs tracks, one bit each.
+  static constexpr size_t kTrackedArgSlots = 8;
+  /// The calling convention's argument registers (bit I = its Ith integer
+  /// argument register) defined on every path to the dispatcher or variadic
+  /// call being converted.
   uint8_t DispatchCallDefinedArgs = 0;
 
   /// GOT/pointer-slot VAs holding a stack-probe import; see setStackProbeSlots.

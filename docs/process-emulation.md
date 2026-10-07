@@ -427,8 +427,14 @@ process-owned descriptor table. Android `open`, `open64`, `openat`, `openat64`,
 `read`, `close`, `lseek`, `lseek64`, `fstat`, `fstat64` and `syscall` use that same state, including
 across guest threads. Bionic alone maps kernel errors to `-1` and thread-local
 `errno`; success preserves errno. Absolute paths ignore `dirfd`; mode is unused
-without creation. Opens admit only `O_RDONLY`, optional `O_CLOEXEC` and the
-architecture's `O_LARGEFILE`. Other flags, relative paths, internal repeated
+without creation. Ordinary file opens admit `O_RDONLY`, optional `O_CLOEXEC`
+and the architecture's `O_LARGEFILE`. `O_DIRECTORY` also admits known pathname
+failures and requires the final object to be a directory. `O_DIRECT` admits
+pathname and descriptor-exhaustion failures before reaching an opened file;
+the catalogue does not infer its backing filesystem's direct-I/O support.
+ARM64's directory/direct bits are `0x4000`/`0x10000`, while x64 uses
+`0x10000`/`0x4000`. These stable source-pinned rules do not require GKI selection.
+Other flags, relative paths, internal repeated
 separators, `.`/`..` components,
 directory opens, writes/creation, symlinks, duplication and descriptor-control
 operations remain unsupported. Exec is unmodeled, so close-on-exec flags have
@@ -574,6 +580,10 @@ and the [API 28 LP64 wrappers](https://github.com/aosp-mirror/platform_bionic/bl
 ## Windows PE64 profile
 
 `windows-pe64-v1` supports bounded Windows x64/ARM64 console processes with PEB/TEB, static and dynamic TLS, `DllMain`, named Win32 APIs and explicit acyclic DLL graphs. Guest modules support named/ordinal code and data imports, DIR64 rebasing, forwarded exports and actual loader-list identities. `LoadLibraryA` / `LoadLibraryW`, `FreeLibrary` and `GetProcAddress` use the configured module catalogue. CRT/GUI, ARM64 frame-based user SEH, threads and general Windows application compatibility remain unfinished; native ARM64 KVM/WHP evidence is still pending.
+
+`WindowsProcessTime.cpp` owns host-backed `GetSystemTimeAsFileTime`, `GetTickCount`, `QueryPerformanceCounter`, `QueryPerformanceFrequency` and `ZwDelayExecution`. FILETIME uses 100 ns units from 1601; the performance counter uses a monotonic clock and its reported 10 MHz frequency, while tick count wraps at 32 bits in milliseconds. Nonalertable relative delays up to 500 ms and a zero interval complete; alertable, positive absolute and longer delays stop explicitly without shortened waits or a successful result. These services preserve LastError and use the same model across CPU backends. `ZwDelayExecution` reads only the low 8 bits of `BOOLEAN`; unused argument-register bits do not change the wait policy.
+
+[Windows x64 ABI](https://learn.microsoft.com/cpp/build/x64-calling-convention), [QueryPerformanceFrequency](https://learn.microsoft.com/windows/win32/api/profileapi/nf-profileapi-queryperformancefrequency), [FILETIME](https://learn.microsoft.com/windows/win32/api/minwinbase/ns-minwinbase-filetime).
 
 Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` and current-process `FlushInstructionCache`. The OS layer owns reservations; `AddressSpace` remains the authority for committed pages, permissions and backing. Tests cover dynamic code rewriting, access faults and memory-budget reuse.
 

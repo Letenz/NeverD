@@ -917,6 +917,17 @@ I lifter di architettura risiedono in `lib/lift/X86`, `lib/lift/AArch64` e
 del target si trovano in `lib/backend/llvm/<ISA>` e
 `lib/backend/codegen/CodeGen<ISA>.cpp`.
 
+Le nuove regole specifiche di un target nei pass condivisi vanno in tabelle per
+target, non in controlli inline dell'architettura o del formato. Un fatto su una
+ISA è un tratto di `TargetRegInfo` impostato nel suo
+`lib/ir/TargetRegInfo<ISA>.cpp`. Una regola di convenzione di chiamata è una
+voce `CallArgumentConvention` nel proprio
+`lib/ir/med/abi/MedCallConvention<Name>.cpp`, registrata in
+`MedCallConvention.cpp`. Le funzioni che non ritornano mai sono elencate per
+runtime in `include/neverd/libc` (`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`,
+`WindowsNoReturn.inc`). Supportare un altro target aggiunge quindi un file o una
+voce di tabella invece di un ramo nel pass condiviso.
+
 <a id="support-and-test-depth"></a>
 
 ### Supporto e profondità dei test
@@ -1298,6 +1309,8 @@ Per `EXCEPTION_NONCONTINUABLE`, un filtro x64 che restituisce `EXCEPTION_CONTINU
 La memoria virtuale Windows aggiunge `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` e `FlushInstructionCache` per il processo corrente. Il livello OS gestisce le prenotazioni; `AddressSpace` resta responsabile delle pagine impegnate, dei permessi e della memoria sottostante. I test verificano modifiche al codice, errori di accesso e riutilizzo del budget di memoria.
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
+
+La politica temporale dei processi Windows appartiene a `WindowsProcessTime.cpp` in `os/windows/process/`. `std::chrono` distingue l’ora reale dal contatore monotono dell’host; `WindowsProcess.def` definisce le unità guest e il limite finito di attesa. I trasporti CPU non contengono politiche temporali Windows.
 
 `lib/unpack` recupera immagini compresse in quattro livelli. `core` gestisce l’orchestrazione e il registro dei formati. `format/pe` convalida il contenitore e ricostruisce memoria osservata, import e metadati; `PETLS.cpp` convalida i record TLS sostituiti rispetto all’allocazione del loader e ai callback osservati. Nessun registro dei protettori o firma statica dello stub seleziona l’ingresso. `dynamic` osserva un processo ospite tramite `observeProcess`: `Observation.def` associa ogni contenitore e set di istruzioni a un profilo di processo e fornisce a ogni set di istruzioni il puntatore dello stack e la finestra di istruzione. Un nuovo obiettivo è una riga di tabella e una directory di modulo, e un input senza riga viene rifiutato per nome. `ExecutionSession` possiede le sorveglianze di esecuzione; un `ProcessObserver` legge un processo fermo e sceglie la prossima fermata, ma non può modificare lo stato dell'ospite. Il livello di emulazione conosce solo `defer_unmodeled`, che collega le importazioni non modellate a ingressi opachi che si fermano quando vengono eseguiti. Vedere [spacchettamento](unpack.md). Il caricamento differito ammette destinazioni eseguibili di callback o ingresso in memoria inizialmente azzerata, il cui codice viene prodotto da inizializzatori precedenti. Gli array di callback e i metadati di allocazione TLS richiedono ancora contenuti di file convalidati; il caricamento rigoroso mantiene i controlli. Il modello del sistema operativo indica l’appartenenza dell’invocazione e avvisa l’osservatore quando prepara una chiamata o ripristina un chiamante sospeso. Le sorveglianze vengono riattivate a questi confini, anche se callback e ingresso generato condividono una pagina.
 

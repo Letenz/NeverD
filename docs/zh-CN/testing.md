@@ -355,7 +355,9 @@ fixture 覆盖来宾初始化、成功与失败返回、不支持的行为、内
 
 `DriverMutexThreadTests.cpp` 执行 `driver_seh_mutex.def` 中四种原创 WDK 模式：在 SEH 过滤器中递归获取、过滤器或异常 finally 获取后保留所有权，以及过滤器阻塞并在另一系统线程释放 mutex 后恢复。Unicorn／KVM／WHP 的 driver 和 checked 契约覆盖普通／有效 CFG 映像、首选／重定位地址及协作式／1／17 指令时间片。模型测试还验证嵌套栈退役后的 APC 禁用、错误线程释放和最外层返回检查；KVM／WHP 用例纳入 `NativeDriverTests.def` 强制清单。
 
-`KernelWaitSetTests.cpp` 在不依赖 Unicorn 的情况下运行十五项模型测试：部分 `WaitAll`、首个就绪 `WaitAny`、索引快照、超时清理、后续非法对象／存储、64 对象边界、IRQL、已退出线程保留及两个同步定时器。`DriverMultipleWaitTests.cpp` 执行 `driver_wdm_multiple_wait.c` 和 `DriverMultipleWaitCases.def` 的七种原创 WDK 模式，覆盖 Unicorn/KVM/WHP、两种驱动契约、普通／CFG 映像、重定位及协作式／1／17 指令时间片。29 项模型／原生结果纳入 `NativeDriverTests.def` 强制验收。 回归还覆盖成功或超时后的重复完成、捕获状态被改动以及延时等待的重复完成。
+`KernelWaitSetTests.cpp` 在不依赖 Unicorn 的情况下运行十六项模型测试：部分 `WaitAll`、首个就绪 `WaitAny`、索引快照、超时清理、后续非法对象／存储、64 对象边界、IRQL、已退出线程保留及两个同步定时器。`DriverMultipleWaitTests.cpp` 执行 `driver_wdm_multiple_wait.c` 和 `DriverMultipleWaitCases.def` 的七种原创 WDK 模式，覆盖 Unicorn/KVM/WHP、两种驱动契约、普通／CFG 映像、重定位及协作式／1／17 指令时间片。30 项模型／原生结果纳入 `NativeDriverTests.def` 强制验收。 回归还覆盖成功或超时后的重复完成、捕获状态被改动以及延时等待的重复完成。
+
+`KernelMultipleWait.DispatcherScalarParametersIgnoreUpperRegisterBits` 检查高位污染、有符号边界、溢出及对象状态不变性。`DriverMultipleWaitCases.def` 中的裸尾调用包装器让 `driver_wdm_multiple_wait.c` 经真实 WDK 导入执行同样的合法 ABI 调用，并覆盖启用 CFG、重定位及按指令抢占。
 
 `driver_context_limits.c`: API 的 IRQL 上限来自 `KernelAPIIRQL.def`，参数相关限制由所属模型检查。DPC 不能调用注册表 API，也不能分配、释放或访问分页池；Unicode `DbgPrint` 转换要求 `PASSIVE_LEVEL`，支持的 ANSI 输出和非分页操作仍可在 `DISPATCH_LEVEL` 使用。回调栈有明确边界，越界栈指针不能进入另一阻塞工作项的栈。设备扩展中的已启动定时器会阻止设备提前回收。这些检查并未开放通用 IRQL 切换。
 
@@ -1142,7 +1144,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 48 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `4933 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5294`。29 项等待集合检查包含十五项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `4935 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5297`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1218,6 +1220,10 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 `windows-pe64-v1` 支持有界 Windows x64/ARM64 控制台进程，包括 PEB/TEB、静态和动态 TLS、`DllMain`、具名 Win32 API 和显式无环 DLL 图。客户模块支持按名称／序号导入代码及数据、DIR64 重定位、转发导出和真实加载器链表身份。`LoadLibraryA`／`LoadLibraryW`、`FreeLibrary` 和 `GetProcAddress` 使用配置的模块目录。CRT／GUI、ARM64 基于栈帧的用户态 SEH、线程和通用 Windows 应用兼容性仍待完成；原生 ARM64 KVM/WHP 证据仍缺失。
 
 输入文件总字节数和映像总范围各自受 `memory_limit` 限制，运行时映射也计入映像预算。准备阶段共享 65,536 条记录、64 MiB 元数据读取、名称长度和整个任务的截止时间限制；阻塞式主机 I/O 不保证硬实时。原创 EXE→DLL→DLL 样例检查重定位指针、序号调用、共享数据、API 指针身份、`MEM_IMAGE`、加载器链表及 EXE TLS 挂接／分离。`NeverDWindowsProcessTests` 包含这些检查和直接原生 Windows 对照；`NeverDPEProgramExportsTests` 验证畸形元数据及资源计费，`NeverDProcessPublicTests` 验证 C ABI/CLI 模块目录一致性。不可用后端明确跳过。
+
+`WindowsProcess.ClockServicesUseConsistentUnitsAndPreserveLastError` 执行原始 x64/ARM64 PE 中的 `QueryPerformanceFrequency`、单调计数器、FILETIME、回绕 tick 计数和相对延迟调用。`WindowsProcess.UnmodeledDelaysStopWithoutClaimingCompletion` 验证警觉、正数绝对时间及 INT64_MIN 间隔在完成前被拒绝。`NativeWindowsOracleRunsTheSameExecutable` 也在 Windows 上直接运行成功的时钟情境；两项客户回归均纳入禁用 Unicorn 的 KVM/WHP 必测清单。 原始样例显式污染 `BOOLEAN` 参数寄存器的未使用高位，并以明确的 64 位类型定义常量，防止 Windows ABI 截断纪元值与 INT64_MIN。
+
+`WindowsTestExecution.def` 将 Unicorn ARM64 的 `WindowsExclusive` 对照设为 `RUN_SERIAL`。CTest 策略避免它与其他客户负载争用资源，保留原有 60 s 客户机截止时间及全部结果、寄存器、权限和原生摘要检查。
 
 `WindowsProcessLifetime` 在同一个 CPU 和执行预算下，按依赖顺序执行 DLL TLS 回调及 `DllMain`，随后执行 EXE TLS 和入口。每个模块都有独立 TLS 索引及对齐的数据块，从完成重定位和导入绑定的映像复制，共享 64 KiB 空间。TLS 保留参数为零，启动／进程退出的 `DllMain` 接收不透明非空值。显式进程退出按加载器链表的逆序分离已完成初始化的 DLL，再执行 EXE TLS 退出回调，即使 EXE 初始化尚未运行。启动 `DllMain(FALSE)` 以 `0xc0000142` 退出，不发送分离通知。故障和预算耗尽不伪造清理。带客户 DLL 的 PE 入口返回涉及尚未支持的线程终止，明确停止。非零 `SizeOfZeroFill` 仍不支持；实际 TLS 模板中的零初始化字节受支持。 无入口 DLL 接收 TLS 挂接通知，但不接收进程分离通知。
 
@@ -1345,7 +1351,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `NeverDLowInstructionBoundaryTests` 可独立运行 LowIR 指令来源测试，无需构建聚合提升测试的全部夹具。`BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame` 验证对齐 ADD 和后索引 LDP 栈释放，包括由调用方恢复链接寄存器的情形；原始 RET X30 与共享入口仍独立保留。`BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership` 拒绝其他返回寄存器、BR X30、缺失或未对齐的释放、窄恢复、内部入口、修正、可写或歧义映射、可重定位输入及其他格式。解码共享尾部不能证明原生 ABI：缺失调用方保存或分配仍会使现有帧证明失败。
 
-`NeverDOwnInteriorCallTests` 覆盖 x64 函数直接 call 自身 unwind 范围内标签的情况。只为压入返回地址而做的 call 被提升为压栈加跳转，直线和循环两种情形生成的 C 在 `-O0` 和 `-O2` 下带 AddressSanitizer 和未定义行为陷阱运行。返回时弹出该 call 自身返回地址的目标仍按普通调用处理。若某条返回可能弹出函数自己压入的地址（恢复不平衡或切换了栈），函数会被拒绝，并指出那条返回指令。
+`NeverDOwnInteriorCallTests` 覆盖 x86 和 x86-64 函数直接 call 自身 unwind 范围内标签的情况，分别在 Microsoft x64 `.pdata` 条目、System V x86-64 DWARF FDE 和 i386 DWARF FDE 下测试。只为压入返回地址而做的 call 被提升为压栈加跳转，x86-64 直线和循环两种情形生成的 C 在 `-O0` 和 `-O2` 下以 AddressSanitizer 和未定义行为陷阱运行。返回时恰好弹出该 call 自身返回地址的目标仍是普通调用；切换栈之后的返回或低于入口栈指针的返回会被拒绝。从 i386 注册链恢复的范围不能界定函数体，因此其中的 call 仍是 call。
 
 `NeverDSysVCallContractTests` 以 QtXml 中 `QDomNode::save` 和 `QDomNode::isDocument` 的形态检查 x86-64 System V 调用约定。摘要显示会读取某个参数寄存器的直接被调用者会收到调用者的值，包括原样传递的传入 `this`；虚调用会取得支配块载入 `RDI` 的对象；在某条路径上不写 `RAX` 就返回、在其他路径上只传递被调用者结果的方法为 void；在比较链之前写入 `AL` 的字节在每条路径上都是返回值。生成的程序在 `-O0` 和 `-O2` 下带 AddressSanitizer 与未定义行为陷阱运行。
 

@@ -78,6 +78,10 @@ NEVERD_LINUX_VALUE(AtStatSyncMask, 0x6000)
 NEVERD_LINUX_VALUE(OpenCloseOnExec, 02000000)
 NEVERD_LINUX_VALUE(OpenLargeFileX64, 00100000)
 NEVERD_LINUX_VALUE(OpenLargeFileARM64, 0400000)
+NEVERD_LINUX_VALUE(OpenDirectoryX64, 00200000)
+NEVERD_LINUX_VALUE(OpenDirectoryARM64, 040000)
+NEVERD_LINUX_VALUE(OpenDirectX64, 00040000)
+NEVERD_LINUX_VALUE(OpenDirectARM64, 0200000)
 NEVERD_LINUX_VALUE(SeekSet, 0)
 NEVERD_LINUX_VALUE(SeekCurrent, 1)
 NEVERD_LINUX_VALUE(SeekEnd, 2)
@@ -230,6 +234,8 @@ NEVERD_LINUX_DIAGNOSTIC(
     FileInputsMissing, "Linux file services require explicit linux_files input")
 NEVERD_LINUX_DIAGNOSTIC(FileOpenFlags,
                         "unsupported Linux memory-file open flags")
+NEVERD_LINUX_DIAGNOSTIC(FileDirectIO,
+                        "direct I/O for this catalogue file is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(FilePathForm, "unsupported Linux memory-file path form")
 NEVERD_LINUX_DIAGNOSTIC(FileAccessMode,
                         "Linux memory-file permission checks are unmodeled")

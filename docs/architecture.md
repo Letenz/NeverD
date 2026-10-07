@@ -1468,6 +1468,8 @@ do not need vocabulary entries.
 | `NeverDEmulationProcess` | Process-profile dispatch, options and reports |
 | `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
 
+Windows process time policy belongs to `WindowsProcessTime.cpp` in `os/windows/process/`. `std::chrono` separates the host wall clock from its monotonic counter, and `WindowsProcess.def` owns guest units and the finite wait bound; CPU transports contain no Windows time policy.
+
 On macOS, [HVF](macos-hvf.md) is the native transport owned by `NeverDEmulationNative`: ARM64 on Apple Silicon and x86-64 on Intel. The host ISA selects this transport; it does not select a guest OS. [Darwin profiles](darwin-emulation.md) separately define macOS, iOS device and iOS Simulator startup and services. Remaining Linux ARM64 KVM and Windows ARM64 WHP validation gaps do not negate the recorded macOS ARM64 HVF results. Native availability and complete acceptance results remain explicit in the HVF guide.
 
 The five CPU components declare LLVM Support as their LLVM dependency.
@@ -2858,6 +2860,16 @@ Architecture lifters live in `lib/lift/X86`, `lib/lift/AArch64`, and
 `lib/lift/ARM`. The corresponding public lifter/register declarations live in
 `include/neverd/lift`. Target-specific LLVM emission and code generation live
 under `lib/backend/llvm/<ISA>` and `lib/backend/codegen/CodeGen<ISA>.cpp`.
+
+New target-specific rules in shared passes belong in per-target tables, not in
+inline architecture or format tests. A fact about an ISA is a `TargetRegInfo`
+trait set in its `lib/ir/TargetRegInfo<ISA>.cpp`. A calling-convention rule is a
+`CallArgumentConvention` entry in its own
+`lib/ir/med/abi/MedCallConvention<Name>.cpp`, listed in `MedCallConvention.cpp`.
+Functions that never return are listed per runtime under `include/neverd/libc`
+(`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`).
+Supporting another target then adds a file or a table entry instead of a branch
+in the shared pass.
 
 <a id="support-and-test-depth"></a>
 

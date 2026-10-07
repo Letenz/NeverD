@@ -357,7 +357,9 @@ fixture는 게스트 초기화, 성공/실패 반환, 미지원 동작, 메모�
 
 `DriverMutexThreadTests.cpp`는 `driver_seh_mutex.def`의 원본 WDK 모드 네 가지를 실행합니다. SEH 필터의 재귀 획득, 필터 또는 예외 finally가 획득한 소유권 유지, 다른 시스템 스레드의 mutex 해제 후 차단된 필터 재개를 검증합니다. Unicorn/KVM/WHP의 driver 및 checked 계약에서 일반/활성 CFG 이미지, 기본/재배치 주소, 협력식 및 1/17 명령 시간 할당량을 다룹니다. 모델 테스트는 중첩 스택 폐기 후 APC 비활성화, 다른 스레드의 해제 거부, 가장 바깥쪽 반환 검사도 확인합니다. KVM/WHP 사례는 `NativeDriverTests.def`의 필수 항목입니다.
 
-`KernelWaitSetTests.cpp`는 Unicorn 없이 15개 모델 사례로 부분 `WaitAll`, 첫 준비 객체 `WaitAny`, 저장된 인덱스, 시간 초과 정리, 잘못된 후속 객체／저장소, 64개 경계, IRQL, 종료 스레드 보존과 동기화 타이머 두 개를 검증합니다. `DriverMultipleWaitTests.cpp`는 `driver_wdm_multiple_wait.c`와 `DriverMultipleWaitCases.def`의 독자적인 WDK 모드 7개를 Unicorn/KVM/WHP, 두 드라이버 계약, 일반／CFG 이미지, 재배치와 협력식／1／17 명령 퀀텀에서 실행합니다. 모델／네이티브 결과 29개는 `NativeDriverTests.def`의 필수 항목입니다. 회귀 테스트는 성공 또는 시간 초과 뒤의 중복 완료, 저장 상태 변경, 지연 대기의 중복 완료도 검증합니다.
+`KernelWaitSetTests.cpp`는 Unicorn 없이 16개 모델 사례로 부분 `WaitAll`, 첫 준비 객체 `WaitAny`, 저장된 인덱스, 시간 초과 정리, 잘못된 후속 객체／저장소, 64개 경계, IRQL, 종료 스레드 보존과 동기화 타이머 두 개를 검증합니다. `DriverMultipleWaitTests.cpp`는 `driver_wdm_multiple_wait.c`와 `DriverMultipleWaitCases.def`의 독자적인 WDK 모드 7개를 Unicorn/KVM/WHP, 두 드라이버 계약, 일반／CFG 이미지, 재배치와 협력식／1／17 명령 퀀텀에서 실행합니다. 모델／네이티브 결과 30개는 `NativeDriverTests.def`의 필수 항목입니다. 회귀 테스트는 성공 또는 시간 초과 뒤의 중복 완료, 저장 상태 변경, 지연 대기의 중복 완료도 검증합니다.
+
+`KernelMultipleWait.DispatcherScalarParametersIgnoreUpperRegisterBits`는 상위 비트 오염, 부호 경계, 오버플로와 객체 상태 보존을 검사합니다. `DriverMultipleWaitCases.def`의 naked 꼬리 호출 래퍼는 `driver_wdm_multiple_wait.c`의 실제 WDK 가져오기를 통해 같은 유효 ABI 호출을 실행하며 활성 CFG, 재배치와 명령 단위 선점을 포함합니다.
 
 `driver_context_limits.c`: API IRQL 상한은 `KernelAPIIRQL.def`에 정의되며 인수별 제한은 담당 모델이 검사합니다. DPC는 레지스트리 API나 페이징 풀 할당·해제·접근을 사용할 수 없습니다. Unicode `DbgPrint` 변환은 `PASSIVE_LEVEL`이 필요하며 지원되는 ANSI 출력과 비페이징 작업은 `DISPATCH_LEVEL`에서 사용할 수 있습니다. 콜백 스택에는 경계가 있어 이탈한 스택 포인터가 다른 차단 작업자의 스택을 침범할 수 없습니다. 장치 확장의 활성 타이머는 조기 장치 회수를 막습니다. 일반 IRQL 전환을 제공하는 기능은 아닙니다.
 
@@ -1224,7 +1226,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 48개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `4933 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5294`입니다. 대기 집합 검사 29개는 이식 가능한 모델 사례 15개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `4935 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5297`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 
@@ -1300,6 +1302,10 @@ checked Unicorn은 `MachineRunControl`을 사용하며 ARM64 유지보수, 게�
 `windows-pe64-v1`은 PEB/TEB, 정적·동적 TLS, `DllMain`, 이름 기반 Win32 API 및 명시적 비순환 DLL 그래프를 갖춘 제한된 Windows x64/ARM64 콘솔 프로세스를 지원합니다. 게스트 모듈은 이름/서수 코드·데이터 가져오기, DIR64 재배치, 전달 내보내기 및 실제 로더 목록 식별자를 지원합니다. `LoadLibraryA` / `LoadLibraryW`, `FreeLibrary`, `GetProcAddress`는 설정된 모듈 카탈로그를 사용합니다. CRT/GUI, ARM64 스택 프레임 기반 사용자 SEH, 스레드 및 일반 Windows 앱 호환성은 미완성이며 네이티브 ARM64 KVM/WHP 증거도 아직 없습니다.
 
 입력 총 바이트와 이미지 전체 범위는 각각 `memory_limit`로 제한하고 런타임 매핑도 이미지 예산에 포함합니다. 준비 단계는 65,536개 레코드, 64 MiB 메타데이터 읽기, 이름 길이와 전체 작업 기한을 공유합니다. 호스트 I/O의 강제 시간 보장은 없습니다. 독자 EXE→DLL→DLL은 재배치, 서수, 공유 데이터, API 포인터, `MEM_IMAGE`, 목록, EXE TLS attach/detach를 확인합니다. `NeverDWindowsProcessTests`는 원본 네이티브 Windows 대조, `NeverDPEProgramExportsTests`는 잘못된 메타데이터와 예산, `NeverDProcessPublicTests`는 C ABI/CLI 일치를 검증합니다. 사용할 수 없는 백엔드는 명시적으로 건너뜁니다.
+
+`WindowsProcess.ClockServicesUseConsistentUnitsAndPreserveLastError`는 원본 x64/ARM64 PE에서 `QueryPerformanceFrequency`, 단조 카운터, FILETIME, 순환 tick, 상대 지연 호출을 실행합니다. `WindowsProcess.UnmodeledDelaysStopWithoutClaimingCompletion`는 경고 가능 대기, 양수 절대 시각, INT64_MIN 간격이 완료 전에 거부되는지 확인합니다. `NativeWindowsOracleRunsTheSameExecutable`는 성공하는 시계 시나리오를 Windows에서 직접 실행합니다. 두 게스트 회귀는 Unicorn을 끈 KVM/WHP 인수 검사에서 필수입니다. 원본 샘플은 `BOOLEAN` 인수 레지스터의 사용하지 않는 상위 비트를 명시적으로 오염시키고 형식이 지정된 64비트 상수로 Windows ABI에서 기준 시각과 INT64_MIN이 잘리지 않도록 합니다.
+
+`WindowsTestExecution.def`는 Unicorn ARM64의 `WindowsExclusive` 비교를 `RUN_SERIAL`로 지정합니다. CTest 정책은 다른 게스트 작업과의 자원 경합을 피하면서 기존 60 s 게스트 기한과 모든 결과, 레지스터, 권한, 네이티브 해시 검사를 유지합니다.
 
 `WindowsProcessLifetime`은 같은 CPU와 실행 예산에서 의존 순서대로 DLL TLS 콜백과 `DllMain`, 이어서 EXE TLS와 진입점을 실행합니다. 모듈마다 독립 TLS 인덱스와 정렬된 블록을 할당하고 재배치·연결된 이미지에서 공용 64 KiB 영역으로 복사합니다. TLS 예약 인수는 0이며 시작/프로세스 종료 `DllMain`은 불투명한 비 NULL 값을 받습니다. 명시적 프로세스 종료는 초기화를 완료한 DLL을 로더 목록의 역순으로 분리한 뒤 EXE TLS를 호출하며 EXE 초기화 전에도 같습니다. 시작 `DllMain(FALSE)`는 분리 통지 없이 `0xc0000142`로 종료합니다. 오류와 예산 소진은 가짜 정리를 수행하지 않습니다. 게스트 DLL이 있는 PE 진입점 반환은 미지원 스레드 종료가 필요하므로 명시적으로 중단합니다. 0이 아닌 `SizeOfZeroFill`은 미지원이며 실제 TLS 템플릿의 0으로 초기화된 바이트는 지원합니다. 진입점 없는 DLL은 TLS attach를 받지만 프로세스 detach 통지는 받지 않습니다.
 
@@ -1427,7 +1433,7 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `NeverDLowInstructionBoundaryTests`는 전체 리프트 픽스처를 빌드하지 않고 LowIR 명령 출처 테스트를 실행합니다. `BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame`은 정렬된 ADD 및 후위 인덱스 LDP 스택 해제와 호출자에서 링크 레지스터를 복원하는 형태를 확인하며 원래 RET X30과 공유 진입점을 독립적으로 유지합니다. `BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership`는 다른 반환 레지스터, BR X30, 누락되거나 정렬되지 않은 해제, 좁은 복원, 내부 진입점, 픽스업, 쓰기 가능하거나 모호한 매핑, 재배치 가능한 입력과 다른 형식을 거부합니다. 공유 꼬리 디코딩은 네이티브 ABI를 증명하지 않으며 호출자 저장이나 할당이 없으면 기존 프레임 증명이 실패합니다.
 
-`NeverDOwnInteriorCallTests`는 x64 함수가 자신의 unwind 범위 안 레이블을 직접 call하는 경우를 다룹니다. 푸시한 반환 주소만을 위한 call은 푸시와 점프로 리프트하며, 직선과 루프 두 경우에서 생성한 C를 `-O0`과 `-O2`에서 AddressSanitizer와 정의되지 않은 동작 트랩을 켜고 실행합니다. 반환이 그 call 자신의 반환 주소를 꺼내는 대상은 일반 호출로 남습니다. 함수가 스스로 푸시한 주소를 꺼낼 수 있는 반환(불균형한 복원이나 스택 전환 이후)이 있으면 함수를 거부하고 그 반환 명령을 알립니다.
+`NeverDOwnInteriorCallTests`는 x86과 x86-64 함수가 자신의 unwind 범위 안 레이블을 직접 call하는 경우를 Microsoft x64 `.pdata` 항목, System V x86-64 DWARF FDE, i386 DWARF FDE에서 각각 다룹니다. 푸시한 반환 주소만을 위한 call은 푸시와 점프로 리프트되며, x86-64 직선 및 루프 경우에 생성된 C는 `-O0`과 `-O2`에서 AddressSanitizer와 정의되지 않은 동작 트랩 아래 실행됩니다. 반환이 그 call 자신의 반환 주소를 꺼내는 대상은 일반 호출로 남습니다. 스택 전환 후의 반환이나 진입 스택 포인터보다 아래에서의 반환은 거부됩니다. i386 등록 체인에서 복원한 범위는 본문을 한정하지 않으므로 그 call은 call로 남습니다.
 
 `NeverDSysVCallContractTests`는 QtXml의 `QDomNode::save`와 `QDomNode::isDocument` 형태로 x86-64 System V 호출 규약을 검사합니다. 요약이 인수 레지스터를 읽는 직접 피호출자는 수정 없이 넘어온 입력 `this`를 포함해 호출자의 값을 받습니다. 가상 호출은 지배 블록이 `RDI`에 적재한 객체를 받습니다. 한 경로에서는 `RAX`를 쓰지 않고 반환하고 다른 경로에서는 피호출자의 결과만 넘기는 메서드는 void입니다. 비교 연쇄 앞에서 `AL`에 쓴 바이트는 모든 경로에서 반환값입니다. 생성된 프로그램은 `-O0`과 `-O2`에서 AddressSanitizer와 정의되지 않은 동작 트랩을 켜고 실행합니다.
 

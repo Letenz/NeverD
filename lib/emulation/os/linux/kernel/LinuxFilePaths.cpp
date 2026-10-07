@@ -142,10 +142,11 @@ LinuxFiles::makeDirectory(uint64_t Address, ProcessResult &Result) {
 
 llvm::Expected<std::optional<uint64_t>>
 LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
-  const uint32_t LargeFile = CPU.architecture() == GuestArchitecture::AArch64
-                                 ? OpenLargeFileARM64
-                                 : OpenLargeFileX64;
-  if (Flags & ~(OpenCloseOnExec | LargeFile))
+  const bool ARM64 = CPU.architecture() == GuestArchitecture::AArch64;
+  const uint32_t LargeFile = ARM64 ? OpenLargeFileARM64 : OpenLargeFileX64;
+  const uint32_t Directory = ARM64 ? OpenDirectoryARM64 : OpenDirectoryX64;
+  const uint32_t Direct = ARM64 ? OpenDirectARM64 : OpenDirectX64;
+  if (Flags & ~(OpenCloseOnExec | LargeFile | Directory | Direct))
     return unsupported(Result, FileOpenFlags);
   auto Imported = readPath(Address);
   if (!Imported)
@@ -159,7 +160,8 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
   uint32_t FD = nextDescriptor();
   if (FD == Options->DescriptorLimit)
     return std::optional<uint64_t>(uint64_t(0) - TooManyFiles);
-  switch (lookupPath(Path->Name, Path->RequiresDirectory)) {
+  switch (
+      lookupPath(Path->Name, Path->RequiresDirectory || (Flags & Directory))) {
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:
@@ -169,6 +171,11 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
   case PathKind::File:
     break;
   }
+  // The kernel resolves the pathname before checking an opened file's direct
+  // I/O support. A missing path or non-directory component is already known;
+  // this catalogue does not infer a backing filesystem's direct-I/O policy.
+  if (Flags & Direct)
+    return unsupported(Result, FileDirectIO);
   auto File = Options->Files.find(Path->Name);
   auto Metadata = Options->Metadata.find(Path->Name);
   Descriptors.emplace(FD,

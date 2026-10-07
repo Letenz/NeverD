@@ -292,6 +292,8 @@ add_neverd_unittest(NeverDWindowsProcessTests
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDWindowsProcessTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/WindowsTestExecution.cmake")
 include(WindowsProcessFixtures.cmake)
 include(WindowsModuleFixtures.cmake)
 include(WindowsLifetimeFixtures.cmake)

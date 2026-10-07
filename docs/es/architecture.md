@@ -920,6 +920,17 @@ Los lifters de arquitectura están en `lib/lift/X86`, `lib/lift/AArch64` y
 objetivo residen bajo `lib/backend/llvm/<ISA>` y
 `lib/backend/codegen/CodeGen<ISA>.cpp`.
 
+Las nuevas reglas específicas de un objetivo en los pases compartidos van en
+tablas por objetivo, no en comprobaciones en línea de la arquitectura o el
+formato. Un hecho sobre una ISA es un rasgo de `TargetRegInfo` definido en su
+`lib/ir/TargetRegInfo<ISA>.cpp`. Una regla de convención de llamada es una
+entrada `CallArgumentConvention` en su propio
+`lib/ir/med/abi/MedCallConvention<Name>.cpp`, registrada en
+`MedCallConvention.cpp`. Las funciones que nunca retornan se enumeran por
+runtime en `include/neverd/libc` (`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`,
+`WindowsNoReturn.inc`). Así, admitir otro objetivo añade un archivo o una
+entrada de tabla en lugar de una rama en el pase compartido.
+
 <a id="support-and-test-depth"></a>
 
 ### Soporte y profundidad de pruebas
@@ -1301,6 +1312,8 @@ Para `EXCEPTION_NONCONTINUABLE`, un filtro x64 que devuelve `EXCEPTION_CONTINUE_
 La memoria virtual de Windows incorpora `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` y `FlushInstructionCache` para el proceso actual. La capa OS administra las reservas; `AddressSpace` mantiene la autoridad sobre páginas confirmadas, permisos y almacenamiento. Las pruebas cubren cambios de código, fallos de acceso y reutilización del presupuesto de memoria.
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
+
+La política temporal de los procesos Windows pertenece a `WindowsProcessTime.cpp`, en `os/windows/process/`. `std::chrono` separa la hora real del contador monótono del host; `WindowsProcess.def` define las unidades del invitado y el límite finito de espera. Los transportes CPU no contienen política temporal de Windows.
 
 `lib/unpack` recupera imágenes empaquetadas en cuatro capas. `core` gestiona la orquestación y el registro de formatos. `format/pe` valida el contenedor y reconstruye la memoria observada, imports y metadatos; `PETLS.cpp` valida los registros TLS sustituidos con la asignación del cargador y los callbacks observados. Ningún registro de protectores ni firma estática selecciona la entrada. `dynamic` observa un proceso invitado mediante `observeProcess`: `Observation.def` asigna a cada contenedor y conjunto de instrucciones un perfil de proceso y da a cada conjunto de instrucciones su puntero de pila y su ventana de instrucción. Un nuevo objetivo es una fila de tabla y un directorio de módulo, y una entrada sin fila se rechaza por su nombre. `ExecutionSession` es dueño de las vigilancias de ejecución; un `ProcessObserver` lee un proceso detenido y elige la siguiente parada, pero no puede cambiar el estado del invitado. La capa de emulación solo conoce `defer_unmodeled`, que enlaza las importaciones no modeladas a entradas opacas que se detienen al ejecutarse. Véase [desempaquetado](unpack.md). La carga diferida permite destinos ejecutables de callback o entrada en memoria inicialmente nula cuyo código generan inicializadores anteriores. Las matrices de callbacks y los metadatos de asignación TLS siguen necesitando contenido de archivo validado; la carga estricta conserva sus comprobaciones. El modelo del SO indica la procedencia de la invocación y avisa al observador al preparar una llamada o restaurar un llamante suspendido. Las vigilancias se reactivan en esos límites, incluso si el callback y la entrada generada comparten página.
 
