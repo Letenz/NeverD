@@ -70,6 +70,8 @@ NEVERD_API const char *neverd_xrefs_from_json(neverd_session_t Sess,
 
 NEVERD_API const char *neverd_sections_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_symbols_json(neverd_session_t Sess);
+/// The symbols of neverd_symbols_json that are not functions.
+NEVERD_API const char *neverd_data_symbols_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_relocs_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_headers_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_entrypoints_json(neverd_session_t Sess);

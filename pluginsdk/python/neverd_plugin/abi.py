@@ -834,6 +834,7 @@ _C_TYPES: dict[str, object] = {
     "unsigned char *": ctypes.POINTER(ctypes.c_ubyte),
     "const unsigned char *": ctypes.POINTER(ctypes.c_ubyte),
     "unsigned long long *": ctypes.POINTER(ctypes.c_ulonglong),
+    "neverd_va_t *": ctypes.POINTER(ctypes.c_uint64),
     "const void *": ctypes.c_void_p,
     "void *": ctypes.c_void_p,
     "neverd_load_progress_fn": LoadProgressCallback,
@@ -1018,6 +1019,11 @@ _declare(
     "const char *",
     ["neverd_session_t", "neverd_va_t", "int"],
     ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_pointer_at",
+    "int",
+    ["neverd_session_t", "neverd_va_t", "neverd_va_t *", "neverd_va_t *"],
 )
 _declare(
     "neverd_decompile",
@@ -1376,6 +1382,12 @@ _declare(
 )
 _declare(
     "neverd_symbols_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_data_symbols_json",
     "const char *",
     ["neverd_session_t"],
     ownership=Ownership.OWNED_STRING,

@@ -114,6 +114,12 @@ NEVERD_API const char *neverd_pointer_refs_json(neverd_session_t Sess,
                                                 neverd_va_t FirstSlot,
                                                 int MaxSlots);
 
+/// Whether \p Address lies in a data slot the loader relocated to hold a
+/// pointer.  Returns 1 and stores the slot's first address in \p Slot and the
+/// pointer in \p Target (either may be NULL), or returns 0.
+NEVERD_API int neverd_pointer_at(neverd_session_t Sess, neverd_va_t Address,
+                                 neverd_va_t *Slot, neverd_va_t *Target);
+
 // ===--------------------------------------------------------------------===//
 // Decompilation
 // ===--------------------------------------------------------------------===//

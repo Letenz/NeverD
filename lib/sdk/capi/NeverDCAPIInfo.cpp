@@ -399,6 +399,26 @@ const char *neverd_symbols_json(neverd_session_t Sess) {
   return dupStr(Buf);
 }
 
+const char *neverd_data_symbols_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S->Loaded)
+    return dupStr("[]");
+  std::string Buf;
+  llvm::raw_string_ostream OS(Buf);
+  llvm::json::OStream J(OS);
+  J.array([&] {
+    for (const auto &Sym : S->Img.Symbols)
+      if (!Sym.IsFunc)
+        J.object([&] {
+          J.attribute("addr", vaHex(Sym.Addr));
+          J.attribute("name", jsonSafeText(Sym.Name));
+          J.attribute("size", static_cast<int64_t>(Sym.Size));
+        });
+  });
+  OS.flush();
+  return dupStr(Buf);
+}
+
 const char *neverd_relocs_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S->Loaded)

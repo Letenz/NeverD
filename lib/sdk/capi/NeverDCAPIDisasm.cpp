@@ -482,6 +482,33 @@ const char *neverd_pointer_refs_json(neverd_session_t Sess,
   return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
 }
 
+int neverd_pointer_at(neverd_session_t Sess, neverd_va_t Address,
+                      neverd_va_t *Slot, neverd_va_t *Target) {
+  auto *S = toSession(Sess);
+  if (!S || !S->Loaded)
+    return 0;
+  const va_t Size = S->Img.getPointerSize();
+  // The nearest slot that starts at or before Address in either set.
+  std::optional<va_t> Found;
+  for (const auto *Slots :
+       {&S->Img.CodePtrRelocSlots, &S->Img.DataPtrRelocSlots}) {
+    auto It = Slots->upper_bound(Address);
+    if (It != Slots->begin() && Address - *std::prev(It) < Size &&
+        (!Found || *std::prev(It) > *Found))
+      Found = *std::prev(It);
+  }
+  if (!Found)
+    return 0;
+  const auto Pointer = relocatedPointer(S->Img, *Found);
+  if (!Pointer)
+    return 0;
+  if (Slot)
+    *Slot = *Found;
+  if (Target)
+    *Target = *Pointer;
+  return 1;
+}
+
 // ===--------------------------------------------------------------------===//
 // Disassembly (annotated text)
 // ===--------------------------------------------------------------------===//

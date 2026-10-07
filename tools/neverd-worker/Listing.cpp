@@ -28,6 +28,9 @@ using ImportSlotsFunction = const char *(*)(neverd_session_t);
 using UnwindFrameFunction = const char *(*)(neverd_session_t, neverd_va_t);
 using PointerRefsFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
 using DiscoverFunctionsFunction = int (*)(neverd_session_t);
+using PointerAtFunction = int (*)(neverd_session_t, neverd_va_t, neverd_va_t *,
+                                  neverd_va_t *);
+using DataSymbolsFunction = const char *(*)(neverd_session_t);
 
 // Listing layout, in characters after the prefix: name, mnemonic and comment
 // columns of a conventional interactive disassembler listing.
@@ -385,6 +388,8 @@ struct Listing::Impl {
   UnwindFrameFunction unwindFrame = nullptr;
   PointerRefsFunction pointerRefs = nullptr;
   DiscoverFunctionsFunction discoverFunctions = nullptr;
+  PointerAtFunction pointerAtQuery = nullptr;
+  DataSymbolsFunction dataSymbols = nullptr;
   /// Whether the engine's function detector has run for this image.
   bool discovered = false;
   OperandDialect dialect = OperandDialect::Generic;
@@ -403,8 +408,6 @@ struct Listing::Impl {
   std::map<std::string, std::uint64_t, std::less<>> listingNames;
   /// Executable import veneers and the import each forwards to.
   std::map<std::uint64_t, std::string> stubImports;
-  /// Relocated data slots -> the pointer the loader stored there.
-  std::map<std::uint64_t, std::uint64_t> pointers;
   /// Engine function name -> display name, where they differ.
   std::unordered_map<std::string, std::string> aliases;
   Json functionRowsCache;
@@ -432,6 +435,8 @@ struct Listing::Impl {
     pointerRefs = engineSymbol<PointerRefsFunction>("neverd_pointer_refs_json");
     discoverFunctions = engineSymbol<DiscoverFunctionsFunction>(
         "neverd_session_discover_functions");
+    pointerAtQuery = engineSymbol<PointerAtFunction>("neverd_pointer_at");
+    dataSymbols = engineSymbol<DataSymbolsFunction>("neverd_data_symbols_json");
   }
 
   //===--------------------------------------------------------------------===//
@@ -818,7 +823,9 @@ struct Listing::Impl {
     strings.clear();
     listingNames.clear();
     namedData.clear();
-    if (const auto rows = takeJson(neverd_symbols_json(session));
+    // Only names of data matter here; functions are listed already.
+    if (const auto rows = takeJson(dataSymbols ? dataSymbols(session)
+                                               : neverd_symbols_json(session));
         rows.is_array())
       for (const auto &row : rows) {
         const auto address = jsonAddress(row.value("addr", Json()));
@@ -855,22 +862,6 @@ struct Listing::Impl {
           listingNames.emplace(slot.label, address);
           slots.emplace(address, std::move(slot));
         }
-    pointers.clear();
-    if (pointerRefs)
-      for (std::optional<std::uint64_t> cursor = 0; cursor;) {
-        const auto page = takeJson(pointerRefs(session, *cursor, PointerPage));
-        cursor.reset();
-        if (const auto rows = page.value("refs", Json()); rows.is_array())
-          for (const auto &row : rows)
-            if (row.is_array() && row.size() == 3) {
-              const auto slot = jsonAddress(row[0]);
-              // An import slot already lists its symbol.
-              if (!slots.contains(slot))
-                pointers.emplace(slot, jsonAddress(row[1]));
-            }
-        if (const auto next = page.value("next_slot", Json()); next.is_string())
-          cursor = jsonAddress(next);
-      }
     if (const auto rows = takeJson(neverd_exports_json(session));
         rows.is_array())
       for (const auto &row : rows) {
@@ -1308,15 +1299,13 @@ struct Listing::Impl {
             std::min<std::uint64_t>(pointerSize, region.end - item.start);
         return item;
       }
-    if (auto it = pointers.upper_bound(address); it != pointers.begin()) {
-      --it;
-      if (address < it->first + pointerSize && it->first >= region.start &&
-          it->first + pointerSize <= region.end) {
-        item.kind = ItemKind::Pointer;
-        item.start = it->first;
-        item.size = pointerSize;
-        return item;
-      }
+    if (const auto pointer = pointerAt(address);
+        pointer && pointer->slot >= region.start &&
+        pointer->slot + pointerSize <= region.end) {
+      item.kind = ItemKind::Pointer;
+      item.start = pointer->slot;
+      item.size = pointerSize;
+      return item;
     }
     if (const auto *string = stringAt(address);
         string && string->address >= region.start &&
@@ -1365,7 +1354,7 @@ struct Listing::Impl {
     if (const auto *string = stringAt(address);
         string && string->address == address)
       return {string->name, ListingRole::DummyDataName, address};
-    if (use != NameUse::Transfer && pointers.contains(address))
+    if (use != NameUse::Transfer && isPointerSlot(address))
       return {std::string(PointerNamePrefix) + upperHex(address),
               ListingRole::DummyDataName, address};
     const int region = regionIndex(address);
@@ -1395,6 +1384,21 @@ struct Listing::Impl {
     return true;
 #include "ListingVocabulary.def"
     return false;
+  }
+
+  /// A data slot the loader relocated to hold a pointer.
+  struct PointerSlot {
+    std::uint64_t slot = 0, target = 0;
+  };
+  std::optional<PointerSlot> pointerAt(std::uint64_t address) const {
+    neverd_va_t slot = 0, target = 0;
+    if (!pointerAtQuery || !pointerAtQuery(session, address, &slot, &target))
+      return std::nullopt;
+    return PointerSlot{slot, target};
+  }
+  bool isPointerSlot(std::uint64_t address) const {
+    const auto pointer = pointerAt(address);
+    return pointer && pointer->slot == address;
   }
 
   /// The marked unwind frame that covers \p address: every DWARF frame, and
@@ -1440,7 +1444,7 @@ struct Listing::Impl {
       return "?:" + upperHex(address, addressDigits);
     // A named or referenced item reads by its name, like `.got:off_AC5AC0`.
     if (dataNames.contains(address) || slots.contains(address) ||
-        (pointers.contains(address) &&
+        (isPointerSlot(address) &&
          referencesTo(address).first != referencesTo(address).second))
       return regions[region].name + ":" +
              nameOf(address, NameUse::Data, {}).text;
@@ -1872,7 +1876,7 @@ struct Listing::Impl {
       head.append(pointerSize == 8 ? "dq" : "dd", ListingRole::Directive);
       head.padTo(base + 3);
       head.append("offset ", ListingRole::Keyword);
-      const auto to = pointers.at(item.start);
+      const auto to = pointerAt(item.start)->target;
       if (const auto name = nameOf(to, NameUse::Address, {});
           !name.text.empty())
         head.append(name.text, name.role, name.address);
@@ -2034,8 +2038,19 @@ struct Listing::Impl {
           static_cast<std::size_t>(std::max<std::ptrdiff_t>(1, to - from));
       return;
     }
-    for (const auto &[slot, to] : pointers)
-      references.push_back({to, slot, RefKind::Offset});
+    // Each relocated data slot refers to its pointer.
+    if (pointerRefs)
+      for (std::optional<std::uint64_t> cursor = 0; cursor;) {
+        const auto page = takeJson(pointerRefs(session, *cursor, PointerPage));
+        cursor.reset();
+        if (const auto rows = page.value("refs", Json()); rows.is_array())
+          for (const auto &row : rows)
+            if (row.is_array() && row.size() == 3)
+              references.push_back(
+                  {jsonAddress(row[1]), jsonAddress(row[0]), RefKind::Offset});
+        if (const auto next = page.value("next_slot", Json()); next.is_string())
+          cursor = jsonAddress(next);
+      }
     std::sort(references.begin(), references.end(),
               [](const Reference &a, const Reference &b) {
                 return a.to != b.to ? a.to < b.to : a.from < b.from;

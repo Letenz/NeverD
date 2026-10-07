@@ -283,6 +283,17 @@ const char *neverd_pointer_refs_json(neverd_session_t s, neverd_va_t firstSlot,
                                      : Json(nullptr)}}
                   .dump());
 }
+int neverd_pointer_at(neverd_session_t, neverd_va_t address, neverd_va_t *slot,
+                      neverd_va_t *target) {
+  if (address < DataBase || address >= DataBase + DataSlots * 8)
+    return 0;
+  const auto first = DataBase + (address - DataBase) / 8 * 8;
+  if (slot)
+    *slot = first;
+  if (target)
+    *target = Base + 16 * ((first - DataBase) / 8 + 1);
+  return 1;
+}
 const char *neverd_unwind_frame_json(neverd_session_t, neverd_va_t address) {
   // function_0 has a plain frame; function_1 names a personality.
   if (address >= Base && address < Base + 16)
