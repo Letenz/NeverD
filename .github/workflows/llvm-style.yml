@@ -21,7 +21,9 @@ jobs:
     name: clang-format 22.1.2
     if: ${{ github.event.action != 'closed' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # Translation checks need time for the complete localized guide inventory.
+    # Keep enough room for checkout, formatter checks and runner cleanup too.
+    timeout-minutes: 10
     env:
       # The event's base SHA can lag behind the checked-out PR merge ref.
       # Use that merge's actual first parent for checking and evidence.
