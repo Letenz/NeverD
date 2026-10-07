@@ -7,6 +7,8 @@
 
 #include "llvm/Support/FormatVariadic.h"
 
+#include <set>
+
 namespace neverd::emulation::linux_model {
 namespace {
 constexpr uint64_t NanosecondsPerSecond = 1000000000;
@@ -50,12 +52,21 @@ bool isNormalizedTimespec(const LinuxTimespec &Value) {
 }
 
 llvm::Error validateTimeOptions(const LinuxTimeOptions &Options) {
+  if (Options.Clocks.size() > TimeClockLimit)
+    return failure(TimeClockOption);
+  std::set<int32_t> Identities;
   for (const auto &[ID, Value] : Options.Clocks) {
-    if (!isKnownClock(ID))
+    const auto CPU = processCPUClock(ID);
+    if ((!isKnownClock(ID) && !CPU) ||
+        !Identities.insert(canonicalClockID(ID)).second)
       return failure(TimeClockOption);
     if (!isNormalizedTimespec(Value))
       return failure(TimeNanoseconds);
-    if (Options.AdvanceOnIdle && !advancingClock(ID))
+    if ((CPU || ID == ClockProcessCPU || ID == ClockThreadCPU) &&
+        Value.Seconds < 0)
+      return failure(TimeCPUObservation);
+    if (Options.AdvanceOnIdle && !advancingClock(ID) && ID != ClockProcessCPU &&
+        !CPU)
       return failure(TimeAdvanceClock);
   }
   return llvm::Error::success();
@@ -64,9 +75,21 @@ llvm::Error validateTimeOptions(const LinuxTimeOptions &Options) {
 std::optional<LinuxTimespec> LinuxClock::read(int32_t ID,
                                               ProcessResult &Result) const {
   if (Options) {
+    ID = canonicalClockID(ID);
     auto I = Options->Clocks.find(ID);
+    if (I == Options->Clocks.end()) {
+      if (ID == ClockProcessCPU) {
+        I = Options->Clocks.find(processCPUClockID(0, CPUClockScheduled));
+        if (I == Options->Clocks.end())
+          I = Options->Clocks.find(
+              processCPUClockID(ProcessID, CPUClockScheduled));
+      } else if (auto CPU = processCPUClock(ID); CPU && CPU->PID == ProcessID) {
+        I = Options->Clocks.find(processCPUClockID(0, CPU->Kind));
+      }
+    }
     if (I != Options->Clocks.end()) {
-      auto Value = shifted(I->second, Elapsed);
+      auto Value = advancingClock(ID) ? shifted(I->second, Elapsed)
+                                      : std::optional<LinuxTimespec>(I->second);
       if (!Value)
         unsupported(Result, TimeAdvanceOverflow);
       return Value;
@@ -99,7 +122,7 @@ std::optional<uint64_t> LinuxClock::deadline(const LinuxTimespec &Duration,
 bool LinuxClock::advanceTo(uint64_t Deadline, ProcessResult &Result) {
   assert(advancesOnIdle() && Deadline >= Elapsed && Deadline <= INT64_MAX);
   for (const auto &[ID, Value] : Options->Clocks) {
-    if (!shifted(Value, Deadline)) {
+    if (advancingClock(ID) && !shifted(Value, Deadline)) {
       unsupported(Result, TimeAdvanceOverflow);
       return false;
     }

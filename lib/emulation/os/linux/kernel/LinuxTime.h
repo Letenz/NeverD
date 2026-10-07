@@ -14,6 +14,19 @@ namespace neverd::emulation::linux_model {
 bool isNormalizedTimespec(const LinuxTimespec &Value);
 llvm::Error validateTimeOptions(const LinuxTimeOptions &Options);
 bool isKnownClock(int32_t ID);
+struct ProcessCPUClock {
+  uint32_t PID, Kind;
+};
+std::optional<ProcessCPUClock> processCPUClock(int32_t ID);
+int32_t processCPUClockID(uint32_t PID, uint32_t Kind);
+int32_t canonicalClockID(int32_t ID);
+llvm::Error validateCPUClockInputs(const ProcessOptions &Options);
+/// Select an observed process clock. Zero admits the query, an errno rejects
+/// it, and an absent result preserves an unsupported observation boundary.
+std::optional<uint64_t> selectProcessCPUClock(int32_t ID, uint64_t CurrentTask,
+                                              const ProcessOptions &Options,
+                                              ProcessResult &Result,
+                                              int32_t &SelectedID);
 
 /// One workload's clock observations and elapsed virtual nanoseconds. Sleep
 /// admission and idle advancement share this owner across every service ABI.
@@ -38,7 +51,7 @@ llvm::Expected<std::optional<uint64_t>>
 timeService(ExecutionBackend &CPU, ServiceKind Kind,
             const ProcessServiceEvent &Event, const MemoryLayout &Layout,
             const ProcessOptions &Options, LinuxClock &Clock,
-            ProcessResult &Result);
+            ProcessResult &Result, uint64_t CurrentTask = ThreadID);
 llvm::Expected<std::optional<uint64_t>>
 sleepService(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
              const MemoryLayout &Layout, LinuxClock &Clock,

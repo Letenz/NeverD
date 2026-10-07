@@ -195,6 +195,18 @@ TEST_P(AndroidSyscall, NamedRawAndVariadicIdentityQueriesAgree) {
   EXPECT_EQ(I, Numbers.size());
 }
 
+TEST_P(AndroidSyscall, ReleasedGKICurrentTaskClockNamesItsProcessObservation) {
+  Options.LinuxKernel.emplace().GKI = AndroidGKIKernel::Android17_6_18;
+  Options.LinuxTime.emplace().Clocks[2] = {3, 4};
+  Options.Android->ThreadLimit = 2;
+  auto R = run("syscall_current_task_cpu_clock", {Buffer});
+  returned(R);
+  words(R, {1001, 0, 3, 4, 0, 3, 4, 87});
+  ASSERT_EQ(R.NativeThreads.size(), 2u);
+  EXPECT_TRUE(R.NativeThreads[1].Finished);
+  EXPECT_TRUE(R.NativeThreads[1].Retired);
+}
+
 TEST_P(AndroidSyscall, ErrorsConvertToMinusOneAndSuccessPreservesErrno) {
   auto R = run("syscall_errors", {Buffer});
   returned(R);

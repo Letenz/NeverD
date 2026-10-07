@@ -87,7 +87,8 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Time:
   case ServiceKind::GetTimeOfDay:
   case ServiceKind::ClockGetTime:
-    return timeService(CPU, Kind, Event, Layout, Options, Clock, Result);
+    return timeService(CPU, Kind, Event, Layout, Options, Clock, Result,
+                       Thread ? Thread->ID : ThreadID);
   case ServiceKind::Nanosleep:
     return sleepService(CPU, Event, Layout, Clock, Thread, Result);
   case ServiceKind::Exit:

@@ -126,6 +126,8 @@ llvm::Expected<ProcessResult> runProfile(const std::filesystem::path &Path,
       return diagnostic::error(process_report::LinuxTimeProfile);
     if (auto E = linux_model::validateTimeOptions(*Options.LinuxTime))
       return std::move(E);
+    if (auto E = linux_model::validateCPUClockInputs(Options))
+      return std::move(E);
   }
   switch (Profile) {
   case ProcessProfile::LinuxELF64:
