@@ -17,6 +17,8 @@ namespace neverd::gui {
 namespace {
 constexpr int CacheMiB = 256;
 constexpr char RecentFilesKey[] = "files/recent";
+constexpr char StringEncodingsKey[] = "strings/encodings";
+constexpr char StringMinLengthKey[] = "strings/minLength";
 constexpr int MaxRecentFiles = 10;
 
 bool isEdit(const QString &operation) {
@@ -131,6 +133,8 @@ void Session::receive(const QJsonObject &incoming) {
                      .arg(incoming.value("engine_version").toString()),
                  0);
     emit stateChanged();
+    // Before any file opens, so its listing starts with them.
+    applyStringOptions(false);
     openPending();
   } else if (type == QLatin1String("heartbeat")) {
     const auto background = incoming.value("background").toObject();
@@ -640,6 +644,37 @@ void Session::loadSignatures(const QString &path, bool tree) {
             emit message(tr("Signature pack applied: %1 byte matches")
                              .arg(payload.value("byte_matches").toInt()),
                          0);
+          });
+}
+
+void Session::setStringOptions(const QStringList &encodings, int minLength) {
+  QSettings settings;
+  settings.setValue(StringEncodingsKey, encodings);
+  settings.setValue(StringMinLengthKey, minLength);
+  applyStringOptions(true);
+}
+
+void Session::applyStringOptions(bool announce) {
+  const QSettings settings;
+  if (!settings.contains(StringEncodingsKey))
+    return;
+  const auto encodings = settings.value(StringEncodingsKey).toStringList();
+  const int minLength = settings.value(StringMinLengthKey).toInt();
+  QJsonObject payload{{"encodings", QJsonArray::fromStringList(encodings)}};
+  if (minLength > 0)
+    payload.insert("min_length", minLength);
+  command(QStringLiteral("string_options"), payload,
+          [this, announce](const QJsonObject &options) {
+            if (!announce)
+              return;
+            QStringList names;
+            for (const auto &name : options.value("encodings").toArray())
+              names.append(name.toString());
+            emit message(tr("Strings: %1, at least %2 characters")
+                             .arg(names.join(QStringLiteral(", ")))
+                             .arg(options.value("min_length").toInt()),
+                         0);
+            emit stringOptionsChanged();
           });
 }
 

@@ -695,6 +695,14 @@
         <source>Version and license information</source>
         <translation>Informazioni su versione e licenza</translation>
     </message>
+    <message>
+        <source>S&amp;tring literals...</source>
+        <translation>Letterali s&amp;tringa...</translation>
+    </message>
+    <message>
+        <source>Choose the encodings and minimum length of the strings the listing shows</source>
+        <translation>Scegliere le codifiche e la lunghezza minima delle stringhe mostrate nel listato</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1825,6 +1833,22 @@ Con segno: %4</translation>
         <source>The saved desktop of this database could not be restored.</source>
         <translation>Impossibile ripristinare il desktop salvato in questo database.</translation>
     </message>
+    <message>
+        <source>String options are unavailable: %1</source>
+        <translation>Le opzioni delle stringhe non sono disponibili: %1</translation>
+    </message>
+    <message>
+        <source>String literals</source>
+        <translation>Letterali stringa</translation>
+    </message>
+    <message>
+        <source>Encodings:</source>
+        <translation>Codifiche:</translation>
+    </message>
+    <message>
+        <source>Minimum length:</source>
+        <translation>Lunghezza minima:</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -1958,6 +1982,10 @@ Con segno: %4</translation>
     <message>
         <source>Could not update the database: %1</source>
         <translation>Impossibile aggiornare il database: %1</translation>
+    </message>
+    <message>
+        <source>Strings: %1, at least %2 characters</source>
+        <translation>Stringhe: %1, almeno %2 caratteri</translation>
     </message>
 </context>
 </TS>

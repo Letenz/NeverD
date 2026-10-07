@@ -116,6 +116,11 @@ private:
   void showCalculator();
   void showAbout();
   void showOptions();
+  /// Options -> String literals: the engine's encodings and the minimum
+  /// length, applied to the listing and the Strings window.
+  void showStringOptions();
+  void stringOptionsDialog(const QJsonArray &encodings,
+                           const QJsonObject &current);
   void chooseFont();
   void chooseTheme();
   void showShortcuts();

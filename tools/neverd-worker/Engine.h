@@ -57,6 +57,10 @@ private:
   std::uintmax_t loadedSize_ = 0;
   std::filesystem::file_time_type loadedTime_;
   Json stringsCache_;
+  /// neverd_strings_ex_json options as JSON text, empty for the defaults; a
+  /// workbench preference that outlives the open file.
+  std::string stringOptions_;
+  Listing &newListing();
   std::string textKey_, textCache_;
   std::vector<std::size_t> textLines_;
   /// One whole code view under workbench names, paged from memory.

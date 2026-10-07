@@ -695,6 +695,14 @@
         <source>Version and license information</source>
         <translation>معلومات الإصدار والترخيص</translation>
     </message>
+    <message>
+        <source>S&amp;tring literals...</source>
+        <translation>القيم النصية الحرفية(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Choose the encodings and minimum length of the strings the listing shows</source>
+        <translation>اختيار الترميزات والحد الأدنى لطول السلاسل النصية التي تعرضها القائمة</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1833,6 +1841,22 @@ Signed: %4</source>
         <source>The saved desktop of this database could not be restored.</source>
         <translation>تعذّرت استعادة سطح المكتب المحفوظ في قاعدة البيانات هذه.</translation>
     </message>
+    <message>
+        <source>String options are unavailable: %1</source>
+        <translation>خيارات السلاسل النصية غير متاحة: %1</translation>
+    </message>
+    <message>
+        <source>String literals</source>
+        <translation>القيم النصية الحرفية</translation>
+    </message>
+    <message>
+        <source>Encodings:</source>
+        <translation>الترميزات:</translation>
+    </message>
+    <message>
+        <source>Minimum length:</source>
+        <translation>الحد الأدنى للطول:</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -1966,6 +1990,10 @@ Signed: %4</source>
     <message>
         <source>Could not update the database: %1</source>
         <translation>تعذّر تحديث قاعدة البيانات: %1</translation>
+    </message>
+    <message>
+        <source>Strings: %1, at least %2 characters</source>
+        <translation>السلاسل النصية: %1، على الأقل %2 حرفًا</translation>
     </message>
 </context>
 </TS>
