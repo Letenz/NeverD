@@ -224,8 +224,13 @@ public:
 
   SatResult solve(llvm::ArrayRef<SatLit> Assumptions);
   SatResult search(uint64_t ConflictBudget, llvm::ArrayRef<SatLit> Assumptions);
-  bool outOfPropagationBudget() const;
-  bool outOfWatchVisitBudget() const;
+  bool outOfPropagationBudget() const {
+    return PropagationBudgetAt != 0 &&
+           Stats.Propagations >= PropagationBudgetAt;
+  }
+  bool outOfWatchVisitBudget() const {
+    return WatchVisitBudgetAt != 0 && Stats.WatchVisits >= WatchVisitBudgetAt;
+  }
   bool outOfBudget() const;
   void captureModel();
 

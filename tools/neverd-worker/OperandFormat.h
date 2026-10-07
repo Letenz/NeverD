@@ -39,10 +39,18 @@ public:
   const std::vector<TextSpan> &spans() const { return spans_; }
   bool empty() const { return text_.empty(); }
 
+  /// Columns the text takes in a fixed-width font.
+  std::size_t columns() const { return columns_; }
+
 private:
   std::string text_;
   std::vector<TextSpan> spans_;
+  std::size_t columns_ = 0;
 };
+
+/// Columns \p text takes in a fixed-width font: two for East Asian wide
+/// characters, one for every other character or malformed byte.
+std::size_t displayColumns(std::string_view text);
 
 /// How an operand reaches a location; it selects an automatic name when the
 /// location has none.

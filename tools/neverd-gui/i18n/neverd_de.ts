@@ -695,6 +695,14 @@
         <source>Version and license information</source>
         <translation>Versions- und Lizenzinformationen</translation>
     </message>
+    <message>
+        <source>S&amp;tring literals...</source>
+        <translation>Zeichen&amp;kettenliterale...</translation>
+    </message>
+    <message>
+        <source>Choose the encodings and minimum length of the strings the listing shows</source>
+        <translation>Kodierungen und Mindestlänge der Zeichenketten wählen, die die Auflistung zeigt</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1825,6 +1833,22 @@ Mit Vorzeichen: %4</translation>
         <source>The saved desktop of this database could not be restored.</source>
         <translation>Der gespeicherte Desktop dieser Datenbank konnte nicht wiederhergestellt werden.</translation>
     </message>
+    <message>
+        <source>String options are unavailable: %1</source>
+        <translation>Zeichenkettenoptionen sind nicht verfügbar: %1</translation>
+    </message>
+    <message>
+        <source>String literals</source>
+        <translation>Zeichenkettenliterale</translation>
+    </message>
+    <message>
+        <source>Encodings:</source>
+        <translation>Kodierungen:</translation>
+    </message>
+    <message>
+        <source>Minimum length:</source>
+        <translation>Mindestlänge:</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -1958,6 +1982,10 @@ Mit Vorzeichen: %4</translation>
     <message>
         <source>Could not update the database: %1</source>
         <translation>Die Datenbank konnte nicht aktualisiert werden: %1</translation>
+    </message>
+    <message>
+        <source>Strings: %1, at least %2 characters</source>
+        <translation>Zeichenketten: %1, mindestens %2 Zeichen</translation>
     </message>
 </context>
 </TS>
