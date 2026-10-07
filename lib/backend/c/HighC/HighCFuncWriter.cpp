@@ -4764,6 +4764,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   MemoryTemporaries.clear();
   AddressTakenNames.clear();
   DeclaredCTypes.clear();
+  PrintedIntegerTypes.clear();
   for (const auto &Param : Func.Params)
     MemoryIdentifiers.allocate(Param.Name);
   for (const auto &Local : Func.Locals)
