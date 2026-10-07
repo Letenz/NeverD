@@ -125,12 +125,22 @@ struct InstructionFlow {
   llvm::SmallVector<std::pair<va_t, llvm::StringRef>, 2> Refs;
 };
 
+/// The flow kind of an instruction the lifter cannot model.
+constexpr llvm::StringLiteral UnliftedFlow = "unlifted";
+
 InstructionFlow summarizeInstructionFlow(Decoder &Dec, const DecodedInsn &DI) {
   InstructionFlow Flow;
   std::vector<LowOp> Ops;
   // Each row is lifted independently of its neighbours.
   Dec.resetX86FpuState();
-  Dec.liftToLow(DI, Ops);
+  try {
+    Dec.liftToLow(DI, Ops);
+  } catch (const UnliftedInstruction &) {
+    // Nothing is known about what the instruction does, so it states no
+    // transfer and no reference.
+    Flow.Kind = UnliftedFlow;
+    return Flow;
+  }
   const auto ConstantInput = [](const LowOp &Op) -> std::optional<va_t> {
     if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
       return std::nullopt;
@@ -394,7 +404,8 @@ const char *neverd_code_refs_json(neverd_session_t Sess, neverd_va_t FirstEntry,
           S->Img, Local, F.Entry, F.Size, Limit,
           [&](const DecodedInsn &DI, const uint8_t *, int) {
             const InstructionFlow Flow = summarizeInstructionFlow(Local, DI);
-            if (Flow.Target != InvalidVA && !Flow.Kind.empty())
+            if (Flow.Target != InvalidVA && !Flow.Kind.empty() &&
+                Flow.Kind != UnliftedFlow)
               Out.push_back({DI.Addr, Flow.Target, Flow.Kind});
             for (const auto &[To, Kind] : Flow.Refs)
               Out.push_back({DI.Addr, To, Kind});

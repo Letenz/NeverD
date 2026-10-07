@@ -72,10 +72,12 @@ enum {
   /// Add each native instruction's control transfer and constant memory
   /// references, read from the instruction's own LowIR lift.  "flow" is one of
   /// "call", "icall", "jump", "cjump", "ijump" or "ret" and is absent for a
-  /// fall-through instruction; "target" is the direct transfer target when the
-  /// lift names one.  "refs" lists {"to","kind"} for constant addresses the
-  /// instruction reads ("read"), writes ("write") or takes the address of
-  /// ("offset").  EVM and SBF rows never carry these fields.
+  /// fall-through instruction; it is "unlifted", with no target or references,
+  /// for an instruction the lifter cannot model.  "target" is the direct
+  /// transfer target when the lift names one.  "refs" lists {"to","kind"} for
+  /// constant addresses the instruction reads ("read"), writes ("write") or
+  /// takes the address of ("offset").  EVM and SBF rows never carry these
+  /// fields.
   NEVERD_DISASM_FLOW = 1u
 };
 
