@@ -500,10 +500,13 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
         out.append("ds", ListingRole::Register);
         out.append(":", ListingRole::Punctuation);
       }
+      // A zero displacement only scales the index (`ds:0[rdx*8]`).
       const LocationName name =
-          namer(displacement,
-                facts.mnemonic == "lea" ? NameUse::Address : NameUse::Data,
-                sizeKeyword);
+          displacement ? namer(displacement,
+                               facts.mnemonic == "lea" ? NameUse::Address
+                                                       : NameUse::Data,
+                               sizeKeyword)
+                       : LocationName{};
       if (!name.text.empty())
         out.append(name.text, name.role, name.address);
       else

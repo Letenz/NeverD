@@ -57,9 +57,12 @@ std::string format(const Format &input, const FrameNamer *frame = nullptr,
     facts.stackRegister = "rsp";
     facts.stackDepth = stackDepth;
   }
+  // Every address but the rest of the first page has a name.
   return formatOperands(input.operands, facts,
-                        [](std::uint64_t, NameUse, std::string_view) {
-                          return LocationName{};
+                        [](std::uint64_t address, NameUse, std::string_view) {
+                          return address == 0 || address >= 0x1000
+                                     ? LocationName{"unk_" + hex(address)}
+                                     : LocationName{};
                         })
       .text();
 }
@@ -121,6 +124,8 @@ int main() {
   expectFormat({"mov", "rax, qword ptr fs:[0x28]", "", "rax, fs:28h"});
   expectFormat({"lea", "rsi, [rsi*2 + 1]", "", "rsi, ds:1[rsi*2]"});
   expectFormat({"lea", "rax, [rax*4]", "", "rax, ds:0[rax*4]"});
+  expectFormat({"mov", "rax, qword ptr [rdx*8 + 0x2000]", "",
+                "rax, ds:unk_2000[rdx*8]"});
   expectFormat({"mov", "rax, qword ptr [r13]", "", "rax, [r13+0]"});
   expectFormat({"mov", "rax, qword ptr [rbx + rcx]", "", "rax, [rbx+rcx]"});
   expectFormat(
