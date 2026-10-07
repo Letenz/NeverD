@@ -16,8 +16,8 @@ void WorkerTransport::start(const QString &program, quint64 epoch) {
   connect(process_, &QProcess::readyReadStandardOutput, this,
           &WorkerTransport::receive);
   connect(process_, &QProcess::readyReadStandardError, this, [this] {
-    const auto bytes = process_->readAllStandardError();
-    emit diagnostic(QString::fromUtf8(bytes.right(32768)), epoch_);
+    diagnostics_ += process_->readAllStandardError();
+    flushDiagnostics(false);
   });
   connect(process_, &QProcess::errorOccurred, this,
           [this](QProcess::ProcessError error) {
@@ -30,6 +30,8 @@ void WorkerTransport::start(const QString &program, quint64 epoch) {
       process_, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
       [this](int code, QProcess::ExitStatus status) {
         input_.clear();
+        diagnostics_ += process_->readAllStandardError();
+        flushDiagnostics(true);
         if (status == QProcess::CrashExit || code != 0)
           emit failure(
               tr("Analysis worker exited (%1). Restart to continue.").arg(code),
@@ -99,6 +101,20 @@ void WorkerTransport::receive() {
   }
 }
 
+void WorkerTransport::flushDiagnostics(bool all) {
+  // A line no newline ends is reported once it grows past a burst.
+  constexpr qsizetype MaxPartialLine = 65536;
+  all = all || diagnostics_.size() > MaxPartialLine;
+  const auto end =
+      all ? diagnostics_.size() : diagnostics_.lastIndexOf('\n') + 1;
+  if (end <= 0)
+    return;
+  // At most the latest 32 KiB of a burst reaches the UI.
+  emit diagnostic(QString::fromUtf8(diagnostics_.first(end).right(32768)),
+                  epoch_);
+  diagnostics_.remove(0, end);
+}
+
 void WorkerTransport::stop() {
   if (process_) {
     process_->disconnect(this);
@@ -110,6 +126,7 @@ void WorkerTransport::stop() {
     process_ = nullptr;
   }
   input_.clear();
+  diagnostics_.clear();
 }
 
 EngineClient::EngineClient(QObject *parent)

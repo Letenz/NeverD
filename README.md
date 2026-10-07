@@ -350,6 +350,7 @@ setting as `neverd_session_set_arm_function_mode()`.
 | `hex` | Hex dump at an address |
 | `cfg` / `callgraph` | CFG / call graph (JSON; DOT/SVG optional) |
 | `xrefs` | Cross-references |
+| `switches` | Switch jump tables from whole-program analysis |
 | `strings` / `search` | Strings / byte or text search |
 | `imports` / `exports` / `symbols` / `relocs` | Tables |
 | `segments` / `sections` / `entrypoints` | Layout |

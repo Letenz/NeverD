@@ -21,8 +21,13 @@ signals:
 
 private:
   void receive();
+  /// Report the complete lines of engine stderr; with \p all, the rest too.
+  void flushDiagnostics(bool all);
   QProcess *process_ = nullptr;
   QByteArray input_;
+  /// Engine stderr after its last complete line: one diagnostic often
+  /// arrives in several writes.
+  QByteArray diagnostics_;
   quint64 epoch_ = 0;
 };
 

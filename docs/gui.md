@@ -213,8 +213,14 @@ binaries without unwind tables list their functions too, and then builds the
 reference index in parallel across all cores; references and labels appear when
 it finishes, and an explicit cross-reference request completes it at once.
 **Options → Analysis → Whole-program analysis** runs the full pipeline when
-wanted. Cancel removes queued work; a running engine call finishes unless the
-worker is restarted.
+wanted, and the listing then shows the switch jump tables it recovered as a
+classic disassembler does: the table under its `jpt_` name with one slot per
+line (`dd offset loc_164C0 - 27444h`, or `dq offset`/`dd rva` for absolute and
+image-relative tables), `switch 54 cases` on the instruction that loads it,
+`switch jump` on the dispatch, and on each target a code reference from the
+dispatch and a data reference from the table. A table is laid out only when
+the engine has checked that every slot holds its target. Cancel removes
+queued work; a running engine call finishes unless the worker is restarted.
 
 ## Languages, extensions and MCP
 

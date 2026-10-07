@@ -195,6 +195,24 @@ def run(executable):
         assert responses[0]["status"] == "cancelled"
         analysis = client.response(analyze_id)
         assert analysis["status"] == "ok" and analysis["cancellation_requested"] and analysis["calculation_stopped"]
+        # Whole-program analysis brings the switch tables: a table under its
+        # jpt_ name with a slot per line, the load and the dispatch commented,
+        # and each target referred to from the dispatch and the table.
+        table = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012343114", "before": 0, "after": 6})["payload"]["lines"]]
+        assert table[0].startswith("jpt_FFFF800012340086 dd offset loc_FFFF800012340088 - "), table
+        assert any("jump table for switch statement" in line for line in table), table
+        assert any(line.startswith("dd offset loc_FFFF80001234008A - ") for line in table), table
+        code = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012340085", "before": 0, "after": 3})["payload"]["lines"]
+            if line["kind"] == "insn"]
+        assert code[0].endswith("; switch 3 cases") and code[1].endswith("; switch jump"), code
+        target = client.call("xrefs", {"address": "0xffff800012340088", "direction": "to"})["payload"]["items"]
+        assert {(item["address"], item["type"]) for item in target} >= {
+            ("0xffff800012340086", "j"), ("0xffff800012343114", "o")}, target
+        tables = client.call("names", {"filter": "jpt_"})["payload"]["items"]
+        assert [(item["name"], item["address"]) for item in tables] == [
+            ("jpt_FFFF800012340086", "0xffff800012343114")], tables
         first = client.call("decompile", {"address": BASE, "representation": "llvm", "limit": 400})["payload"]
         last = client.call("decompile", {"address": BASE, "representation": "llvm", "offset": first["next_offset"], "limit": 400})["payload"]
         assert first["total_lines"] == 700 and not first["complete"] and last["complete"]

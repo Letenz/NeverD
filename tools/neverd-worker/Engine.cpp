@@ -458,6 +458,8 @@ void Engine::analyze() {
     throw Error("analysis_failed", error());
   analyzed_ = true;
   invalidate();
+  if (listing_)
+    listing_->loadSwitches();
   ++revision_;
 }
 void Engine::prepareFunction(std::uint64_t address) {
@@ -479,6 +481,8 @@ void Engine::prepareFunction(std::uint64_t address) {
 Listing &Engine::newListing() {
   listing_ = std::make_unique<Listing>(session_);
   listing_->setStringOptions(stringOptions_);
+  if (analyzed_)
+    listing_->loadSwitches();
   return *listing_;
 }
 

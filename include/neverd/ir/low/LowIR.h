@@ -980,6 +980,13 @@ struct JumpTable {
   /// Empty when recovery is not possible (e.g., relocatable objects).
   std::vector<int64_t> CaseLabels;
 
+  /// The case value that selects Targets[K]: its recovered label, or K when
+  /// the labels are the table positions.
+  int64_t caseLabel(size_t K) const {
+    return CaseLabels.size() == Targets.size() ? CaseLabels[K]
+                                               : static_cast<int64_t>(K);
+  }
+
   std::optional<uint64_t>
   targetPositionForPhysicalSlot(uint64_t PhysicalSlot) const {
     if (!HasDispatchSlotMap)

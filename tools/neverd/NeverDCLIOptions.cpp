@@ -126,6 +126,8 @@ cl::SubCommand SymbolsCmd("symbols", "List all symbols");
 cl::SubCommand RelocsCmd("relocs", "List relocations");
 cl::SubCommand HeadersCmd("headers", "Show comprehensive binary headers");
 cl::SubCommand EntryPointsCmd("entrypoints", "List binary entry points");
+cl::SubCommand SwitchesCmd("switches",
+                           "List the switch jump tables analysis recovers");
 cl::SubCommand DashboardCmd("dashboard", "Show binary overview dashboard");
 cl::SubCommand SigsCmd("sigs", "Apply FLIRT signatures to binary");
 cl::SubCommand SymbolicCmd("sym-explore",
@@ -185,8 +187,9 @@ cl::opt<std::string>
               cl::sub(AnnotateCmd), cl::sub(CallGraphCmd), cl::sub(RenameCmd),
               cl::sub(SearchCmd), cl::sub(SectionsCmd), cl::sub(SymbolsCmd),
               cl::sub(RelocsCmd), cl::sub(HeadersCmd), cl::sub(EntryPointsCmd),
-              cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
-              cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(MobileCmd));
+              cl::sub(SwitchesCmd), cl::sub(DashboardCmd), cl::sub(SigsCmd),
+              cl::sub(SymbolicCmd), cl::sub(AuditCmd), cl::sub(HuntCmd),
+              cl::sub(MobileCmd));
 
 cl::opt<std::string> OutputFile("o", cl::desc("Output file"), cl::init(""),
                                 cl::sub(LiftCmd), cl::sub(DecompileCmd),
@@ -202,8 +205,8 @@ cl::opt<bool>
             cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
             cl::sub(RenameCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
             cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
-            cl::sub(EntryPointsCmd), cl::sub(DashboardCmd), cl::sub(SigsCmd),
-            cl::sub(SymbolicCmd));
+            cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
+            cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd));
 
 cl::opt<bool> InjectHello("hello",
                           cl::desc("Inject hello_world() test function"),
@@ -309,8 +312,9 @@ cl::opt<bool> NoDebug(
     cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
     cl::sub(RenameCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
     cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
-    cl::sub(EntryPointsCmd), cl::sub(DashboardCmd), cl::sub(SigsCmd),
-    cl::sub(SymbolicCmd), cl::sub(AuditCmd), cl::sub(HuntCmd));
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
 
 cl::list<std::string> ARMFunctionModeHints(
     arm_mode_cli::Option, cl::desc(arm_mode_cli::Description),
@@ -322,8 +326,9 @@ cl::list<std::string> ARMFunctionModeHints(
     cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
     cl::sub(RenameCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
     cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
-    cl::sub(EntryPointsCmd), cl::sub(DashboardCmd), cl::sub(SigsCmd),
-    cl::sub(SymbolicCmd), cl::sub(AuditCmd), cl::sub(HuntCmd));
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
 
 cl::opt<std::string> PdbFile(
     "pdb",
@@ -337,8 +342,9 @@ cl::opt<std::string> PdbFile(
     cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
     cl::sub(RenameCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
     cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
-    cl::sub(EntryPointsCmd), cl::sub(DashboardCmd), cl::sub(SigsCmd),
-    cl::sub(SymbolicCmd), cl::sub(AuditCmd), cl::sub(HuntCmd));
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
 
 cl::opt<std::string> MapFile(
     "map",
@@ -352,8 +358,9 @@ cl::opt<std::string> MapFile(
     cl::sub(BookmarksCmd), cl::sub(AnnotateCmd), cl::sub(CallGraphCmd),
     cl::sub(RenameCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
     cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
-    cl::sub(EntryPointsCmd), cl::sub(DashboardCmd), cl::sub(SigsCmd),
-    cl::sub(SymbolicCmd), cl::sub(AuditCmd), cl::sub(HuntCmd));
+    cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd), cl::sub(DashboardCmd),
+    cl::sub(SigsCmd), cl::sub(SymbolicCmd), cl::sub(AuditCmd),
+    cl::sub(HuntCmd));
 
 cl::opt<bool> NoOpt("no-opt", cl::desc("Skip LLVM optimization passes"),
                     cl::sub(LiftCmd), cl::sub(DecompileCmd), cl::sub(PatchCmd),
@@ -784,8 +791,9 @@ cl::opt<bool>
                cl::sub(CallGraphCmd), cl::sub(RenameCmd), cl::sub(SearchCmd),
                cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
                cl::sub(HeadersCmd), cl::sub(EntryPointsCmd),
-               cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(AuditCmd),
-               cl::sub(HuntCmd), cl::sub(MobileCmd), cl::sub(DecompileCmd));
+               cl::sub(SwitchesCmd), cl::sub(DashboardCmd), cl::sub(SigsCmd),
+               cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(MobileCmd),
+               cl::sub(DecompileCmd));
 
 //===----------------------------------------------------------------------===//
 // Plugins-specific options
