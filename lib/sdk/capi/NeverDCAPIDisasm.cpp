@@ -12,7 +12,9 @@
 #include "JSONText.h"
 #include "SessionImpl.h"
 
+#include "neverd/Limits.h"
 #include "neverd/evm/analysis/EVMAnalyzer.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/sbf/analysis/SBFFunctionBody.h"
 #include "neverd/support/Parallel.h"
@@ -20,10 +22,12 @@
 #include "llvm/ADT/BitVector.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <map>
 #include <optional>
 
 using namespace neverd;
@@ -119,16 +123,113 @@ bool decodeNativeRange(const BinaryImage &Img, Decoder &Dec, va_t Addr,
 /// instruction.  They come from the instruction's own LowIR lift, so a listing
 /// agrees with the operations the pipeline consumes.  Kind is empty for a
 /// fall-through instruction.
+/// Where an instruction leaves the stack pointer: its value before the
+/// instruction plus Delta, or Base's value before it plus Delta.  Unknown
+/// when the lift does not reduce the new value to either.
+struct StackMove {
+  int64_t Delta = 0;
+  std::optional<uint64_t> Base;
+  bool Unknown = false;
+};
+
 struct InstructionFlow {
   llvm::StringRef Kind;
   va_t Target = InvalidVA;
   llvm::SmallVector<std::pair<va_t, llvm::StringRef>, 2> Refs;
+  StackMove Stack;
 };
+
+/// Follows the lift's full-width values, each a register's value before the
+/// instruction plus a constant, through copies and constant additions to
+/// where the stack pointer ends.  A call keeps the stack pointer: the callee
+/// pops the return address it pushes.
+StackMove stackMove(const TargetRegInfo &Registers, llvm::ArrayRef<LowOp> Ops) {
+  struct Value {
+    uint64_t Register = 0;
+    int64_t Offset = 0;
+  };
+  const uint16_t Width = Registers.PointerSize;
+  std::map<std::pair<VnodeSpace, uint64_t>, Value> Values;
+  // Register bytes written so far: their earlier values are gone.
+  llvm::SmallVector<std::pair<uint64_t, uint64_t>, 8> Written;
+  const auto Overlaps = [](uint64_t Offset, uint64_t Size, uint64_t Start,
+                           uint64_t End) {
+    return Offset < End && Start < Offset + Size;
+  };
+  const auto ValueOf = [&](const NdVar &V) -> std::optional<Value> {
+    if (V.Size != Width)
+      return std::nullopt;
+    if (auto It = Values.find({V.Space, V.Offset}); It != Values.end())
+      return It->second;
+    if (!V.isReg() || llvm::any_of(Written, [&](const auto &Range) {
+          return Overlaps(V.Offset, V.Size, Range.first, Range.second);
+        }))
+      return std::nullopt;
+    return Value{V.Offset, 0};
+  };
+  bool Moved = false;
+  for (const LowOp &Op : Ops) {
+    const NdVar &Out = Op.Output;
+    if (!Out.Size)
+      continue;
+    std::optional<Value> Result;
+    if (Out.Size == Width && Op.Opcode == NdOp::COPY && Op.NumInputs == 1) {
+      Result = ValueOf(Op.Inputs[0]);
+    } else if (Out.Size == Width &&
+               (Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
+               Op.NumInputs == 2) {
+      for (unsigned I = 0; I < 2 && !Result; ++I) {
+        // `constant - value` is not an offset from the value.
+        if (Op.Opcode == NdOp::INT_SUB && I != 0)
+          break;
+        const NdVar &C = Op.Inputs[1 - I];
+        if (!C.isConst() || C.Size == 0 || C.Size > 8)
+          continue;
+        const int64_t Constant = llvm::SignExtend64(C.Offset, C.Size * 8);
+        const auto Base = ValueOf(Op.Inputs[I]);
+        if (Base && Constant > -limits::kMaxFrameSize &&
+            Constant < limits::kMaxFrameSize)
+          Result = Value{Base->Register, Op.Opcode == NdOp::INT_ADD
+                                             ? Base->Offset + Constant
+                                             : Base->Offset - Constant};
+      }
+    }
+    for (auto It = Values.begin(); It != Values.end();)
+      It = It->first.first == Out.Space &&
+                   Overlaps(Out.Offset, Out.Size, It->first.second,
+                            It->first.second + Width)
+               ? Values.erase(It)
+               : std::next(It);
+    if (Out.isReg()) {
+      Written.push_back({Out.Offset, Out.Offset + Out.Size});
+      Moved |= Overlaps(Out.Offset, Out.Size, Registers.StackPointer,
+                        Registers.StackPointer + Width);
+    }
+    if (Result)
+      Values[{Out.Space, Out.Offset}] = *Result;
+  }
+  StackMove Move;
+  if (!Moved)
+    return Move;
+  const auto Final = Values.find({VnodeSpace::REG, Registers.StackPointer});
+  if (Final == Values.end()) {
+    Move.Unknown = true;
+    return Move;
+  }
+  Move.Delta = Final->second.Offset;
+  if (Final->second.Register != Registers.StackPointer)
+    Move.Base = Final->second.Register;
+  return Move;
+}
 
 /// The flow kind of an instruction the lifter cannot model.
 constexpr llvm::StringLiteral UnliftedFlow = "unlifted";
 
-InstructionFlow summarizeInstructionFlow(Decoder &Dec, const DecodedInsn &DI) {
+/// The flow of \p DI, with its stack pointer move when \p StackRegisters is
+/// given.
+InstructionFlow
+summarizeInstructionFlow(Decoder &Dec, const DecodedInsn &DI,
+                         const TargetRegInfo *StackRegisters = nullptr) {
   InstructionFlow Flow;
   std::vector<LowOp> Ops;
   // Each row is lifted independently of its neighbours.
@@ -137,10 +238,13 @@ InstructionFlow summarizeInstructionFlow(Decoder &Dec, const DecodedInsn &DI) {
     Dec.liftToLow(DI, Ops);
   } catch (const UnliftedInstruction &) {
     // Nothing is known about what the instruction does, so it states no
-    // transfer and no reference.
+    // transfer, no reference and no stack pointer.
     Flow.Kind = UnliftedFlow;
+    Flow.Stack.Unknown = true;
     return Flow;
   }
+  if (StackRegisters)
+    Flow.Stack = stackMove(*StackRegisters, Ops);
   const auto ConstantInput = [](const LowOp &Op) -> std::optional<va_t> {
     if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
       return std::nullopt;
@@ -300,6 +404,7 @@ const char *neverd_disasm_json_ex(neverd_session_t Sess, neverd_va_t Addr,
   uint64_t Limit =
       MaxInsns > 0 ? static_cast<uint64_t>(MaxInsns) : (Span > 0 ? Span : 256);
 
+  const TargetRegInfo &Registers = getTargetRegInfo(S->Img.Arch);
   const bool ModeKnown = decodeNativeRange(
       S->Img, S->Dec, Addr, Span, Limit,
       [&](const DecodedInsn &DI, const uint8_t *Bytes, int Sz) {
@@ -316,18 +421,35 @@ const char *neverd_disasm_json_ex(neverd_session_t Sess, neverd_va_t Addr,
         Obj["mnemonic"] = std::string(DI.Raw ? DI.Raw->mnemonic : "");
         Obj["op_str"] = std::string(DI.Raw ? DI.Raw->op_str : "");
         Obj["bytes"] = BytesHex;
-        if (Options & NEVERD_DISASM_FLOW) {
-          const InstructionFlow Flow = summarizeInstructionFlow(S->Dec, DI);
-          if (!Flow.Kind.empty())
-            Obj["flow"] = Flow.Kind.str();
-          if (Flow.Target != InvalidVA)
-            Obj["target"] = vaHex(Flow.Target);
-          if (!Flow.Refs.empty()) {
-            llvm::json::Array Refs;
-            for (const auto &[To, Kind] : Flow.Refs)
-              Refs.push_back(
-                  llvm::json::Object{{"to", vaHex(To)}, {"kind", Kind.str()}});
-            Obj["refs"] = std::move(Refs);
+        if (Options & (NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK)) {
+          const InstructionFlow Flow = summarizeInstructionFlow(
+              S->Dec, DI, Options & NEVERD_DISASM_STACK ? &Registers : nullptr);
+          if (Options & NEVERD_DISASM_FLOW) {
+            if (!Flow.Kind.empty())
+              Obj["flow"] = Flow.Kind.str();
+            if (Flow.Target != InvalidVA)
+              Obj["target"] = vaHex(Flow.Target);
+            if (!Flow.Refs.empty()) {
+              llvm::json::Array Refs;
+              for (const auto &[To, Kind] : Flow.Refs)
+                Refs.push_back(llvm::json::Object{{"to", vaHex(To)},
+                                                  {"kind", Kind.str()}});
+              Obj["refs"] = std::move(Refs);
+            }
+          }
+          if (Options & NEVERD_DISASM_STACK) {
+            const char *Base = Flow.Stack.Base && Registers.GetRegName
+                                   ? Registers.GetRegName(*Flow.Stack.Base,
+                                                          Registers.PointerSize)
+                                   : nullptr;
+            if (Flow.Stack.Unknown || (Flow.Stack.Base && !Base)) {
+              Obj["sp"] = nullptr;
+            } else {
+              Obj["sp"] = Flow.Stack.Delta;
+              // Spelled like the operand text.
+              if (Base)
+                Obj["sp_base"] = llvm::StringRef(Base).lower();
+            }
           }
         }
         Arr.push_back(std::move(Obj));

@@ -78,7 +78,17 @@ enum {
   /// constant addresses the instruction reads ("read"), writes ("write") or
   /// takes the address of ("offset").  EVM and SBF rows never carry these
   /// fields.
-  NEVERD_DISASM_FLOW = 1u
+  NEVERD_DISASM_FLOW = 1u,
+  /// Add how each native instruction moves the stack pointer, from the same
+  /// lift.  "sp" is the constant the instruction adds to the stack pointer, 0
+  /// when it leaves it alone; with "sp_base" it is the constant added to that
+  /// register's value before the instruction instead (`leave` is "rbp" plus
+  /// 8).  "sp" is null when the lift does not reduce the new stack pointer to
+  /// either form, as for an unlifted instruction.  A call leaves the stack
+  /// pointer where it was, as the lift models it: the callee pops the return
+  /// address, and arguments a callee also pops are not included.  A return
+  /// states only what happens before control leaves the function.
+  NEVERD_DISASM_STACK = 2u
 };
 
 /// neverd_disasm_json() with additive row fields selected by \p Options.
