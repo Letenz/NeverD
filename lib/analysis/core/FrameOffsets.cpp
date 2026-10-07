@@ -126,7 +126,29 @@ proveFrameOffsetImpl(SymContext &Ctx, SymRef Predicate, SymRef Value,
   if (const auto Constant = Ctx.asConst(Difference))
     return {FrameOffsetStatus::Exact, Constant->getZExtValue()};
 
-  auto Prepared = Cache ? Cache->prepare(Ctx, Predicate, {Difference}, 1)
+  // Value == CacheAddress + CacheBias modulo 2^64. Derive the cache key
+  // from the original address, independently of the bounded remainder
+  // rewrite used to make the cold proof small. Equivalent translated
+  // addresses must not acquire unrelated keys when that rewrite chooses a
+  // different shape. The actual cold solver query is still Difference.
+  SymRef CacheAddress = Value;
+  uint64_t CacheBias = 0;
+  if (Cache && Ctx.op(Value) == SymOp::Add) {
+    llvm::SmallVector<SymRef, 8> Terms;
+    for (const auto Term : Ctx.operands(Value)) {
+      if (const auto Number = Ctx.asConst(Term))
+        CacheBias += Number->getZExtValue();
+      else
+        Terms.push_back(Term);
+    }
+    if (CacheBias && !Terms.empty())
+      CacheAddress = Ctx.mkAdd(Terms);
+  }
+  const auto CacheValue = Cache ? Ctx.mkSub(CacheAddress, Root) : Difference;
+  if (Ctx.numNodes() > MaxSymbolicNodes)
+    return {FrameOffsetStatus::BudgetExceeded};
+
+  auto Prepared = Cache ? Cache->prepare(Ctx, Predicate, {CacheValue}, 1)
                         : FiniteQueryCache::PreparedQuery{};
   auto Cached = Cache ? Cache->lookup(Prepared) : std::nullopt;
   const auto Domain =
@@ -138,15 +160,25 @@ proveFrameOffsetImpl(SymContext &Ctx, SymRef Predicate, SymRef Value,
                                   MaxQueries, MaxSymbolicNodes, Queries);
   if (Ctx.numNodes() > MaxSymbolicNodes)
     return {FrameOffsetStatus::BudgetExceeded};
-  if (Cache && !Cached)
-    Cache->store(std::move(Prepared), Domain);
+  if (Cache && !Cached) {
+    if (CacheBias && Domain.Status == FiniteValueStatus::Complete) {
+      auto Unbiased = Domain;
+      for (auto &Tuple : Unbiased.Tuples)
+        if (Tuple.size() == 1)
+          Tuple.front() -= CacheBias;
+      Cache->store(std::move(Prepared), Unbiased);
+    } else {
+      Cache->store(std::move(Prepared), Domain);
+    }
+  }
   switch (Domain.Status) {
   case FiniteValueStatus::Complete:
     if (Domain.Tuples.empty())
       return {FrameOffsetStatus::Infeasible};
     if (Domain.Tuples.size() != 1 || Domain.Tuples.front().size() != 1)
       return {FrameOffsetStatus::Invalid};
-    return {FrameOffsetStatus::Exact, Domain.Tuples.front().front()};
+    return {FrameOffsetStatus::Exact,
+            Domain.Tuples.front().front() + (Cached ? CacheBias : 0)};
   case FiniteValueStatus::TooManyValues:
     return {FrameOffsetStatus::NonUnique};
   case FiniteValueStatus::Invalid:

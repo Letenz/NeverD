@@ -1507,3 +1507,4 @@ MainActor 測試資料檢查完整的固定中繼資料與靜態表流程，拒�
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` 檢查帶分支變更和符號框架寫入的重複原生目標鏈、固定邏輯開銷、精確及少一次查詢預算、無效目標限額、閘預算耗盡和錯誤終點觀察。交錯的框架與相關目標投影還在謂詞替換前後保持完整元組、觀察順序及不完整結果拒絕。
+`FrameOffsets.Cached*` 涵蓋根高位保持任意的位址平移、無號回繞、和式形狀變化、兩種快取模式、述詞隔離、零容量、查詢／節點預算拒絕，以及空值域與非唯一值域的差異。首次要求保留完整求解證明；後續平移可在沒有剩餘查詢預算時使用已完成的證明。

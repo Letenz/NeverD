@@ -1412,3 +1412,5 @@ Swift SDK Published 的 enclosing-instance 访问器保留四个指针载体：�
 `LinuxPriority` 在同一工作负载的 `LinuxServices` 中统一管理显式的逐任务 nice 状态。x64 与 AArch64 原始优先级陷阱使用 `LinuxValues.def` 的编号绑定和 OS 所有的当前线程身份。经校验的 `LinuxPriorityOptions` 提供测试任务观察值及调用者的 CAP_SYS_NICE／RLIMIT_NICE 权限；未知任务状态和组／用户选择仍不支持。原始查询保留内核返回编码，权限失败不改变任务状态。JSON 字段与诊断由现有进程和 Linux `.def` 文件声明。
 
 `LinuxUnavailableSyscalls.def` 统一声明公开的缺失观察标识、输入名称、架构编号及选定可选内核调用的固定参数数量。`LinuxKernelOptions` 是显式测试观察值；共享 Linux 内核服务仅在观察值声明调用缺失时返回 ENOSYS。目录不提供调用实现，也不根据 Android API 级别推断可用性。JSON 校验与配置准入在加载前完成；未列出及可用但未建模的调用仍明确不支持。
+
+帧偏移证明键从原始 64 位地址的顶层和式移出常量偏置，再减去同一个入口帧根。首次证明保留完整谓词和既有余项表达式。完成域入缓存前减去偏置，命中时加回当前请求的偏置，保持模回绕、空域和非唯一性。键依据原地址构造，因此有界余项改写在二元与多元和式之间改变形状不会改变证明身份。所有新节点均计入既有节点上限。
