@@ -3222,6 +3222,163 @@ TEST(HighControlFlowSemantics, BranchStoresKeepTheirObservableContinuation) {
   }
 }
 
+TEST(HighControlFlowSemantics, TableCallKeepsTheSelectedEntry) {
+  // `fns[i % 3](x)` in a non-PIE build loads its target from
+  // `fns(,%rdi,8)`. The table's symbol names the first slot only: a call by
+  // that name would drop the index. One constant slot, `rip + disp` folded
+  // in two addends, still names the pointer it holds.
+  const Arch Architecture = Arch::X64;
+  const std::map<va_t, std::string> Names{{0x404040, "fns"}};
+  auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+  auto callIn = [](const HighFunc &F) -> ExprPtr {
+    for (const HighStmt &S : F.Body) {
+      if (S.Kind == StmtKind::Call && S.CallExpr)
+        return S.CallExpr;
+      if (S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::Call)
+        return S.Val;
+    }
+    return nullptr;
+  };
+  for (bool Indexed : {true, false}) {
+    SCOPED_TRACE(Indexed);
+    MedFunc M;
+    M.Entry = 0x1000;
+    M.Name = "table_call";
+    M.ReturnType = NdType::makeVoid();
+    auto Input = machineValue(0, Architecture);
+    Input.Kind = MedVar::Param;
+    Input.RegOff = getTargetRegInfo(Architecture).IntParamRegs[0];
+    M.Params = {Input};
+    const auto Offset = machineValue(1, Architecture);
+    const auto Slot = machineValue(2, Architecture);
+    const auto Target = machineValue(3, Architecture);
+    M.Blocks.resize(1);
+    M.Blocks[0].Id = 0;
+    M.Blocks[0].StartAddr = 0x1000;
+    M.Blocks[0].EndAddr = 0x1020;
+    M.Blocks[0].Ops = {
+        operation(NdOp::INT_MULT, 0x1000, Offset, {Input, C(8)}),
+        Indexed
+            ? operation(NdOp::INT_ADD, 0x1004, Slot, {Offset, C(0x404040)})
+            : operation(NdOp::INT_ADD, 0x1004, Slot, {C(0x404000), C(0x40)}),
+        operation(NdOp::LOAD, 0x1004, Target, {Slot}),
+        operation(NdOp::INDIR_CALL, 0x100c, {}, {Target}),
+        operation(NdOp::RETURN, 0x1010, {}, {})};
+    MedToHighConverter Converter;
+    Converter.setFuncNames(&Names);
+    const auto F = Converter.convert(M, Architecture);
+    const ExprPtr Call = callIn(F);
+    ASSERT_TRUE(Call);
+    EXPECT_EQ(Call->IsIndirectCall, Indexed);
+    if (Indexed)
+      EXPECT_TRUE(Call->IndirectTarget);
+    else
+      EXPECT_EQ(Call->CallTarget, "fns");
+  }
+}
+
+TEST(HighControlFlowSemantics, SlotCallGoesThroughThePointerItHolds) {
+  // x86 lifts `call [rip+disp]` as an INDIR_CALL of the slot address. A
+  // symbol on a data slot names the variable, `int (*handler)(int)`, not the
+  // callee: calling it by name would run the variable. A bound import slot
+  // names its import, and a constant folded into `call rax` that lands in
+  // code is the callee itself.
+  const Arch Architecture = Arch::X64;
+  BinaryImage Image;
+  Image.Format = BinaryFormat::ELF;
+  Image.Arch = Architecture;
+  Image.Bits = Bitness::Bits64;
+  Segment Code;
+  Code.VA = 0x401000;
+  Code.Size = Code.FileSz = 0x100;
+  Code.Data.resize(0x100);
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Image.Segments.push_back(Code);
+  Segment Data;
+  Data.VA = 0x404000;
+  Data.Size = Data.FileSz = 0x100;
+  Data.Data.resize(0x100);
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Image.Segments.push_back(Data);
+  Symbol Handler;
+  Handler.Name = "handler";
+  Handler.Addr = 0x404018;
+  Image.Symbols.push_back(Handler);
+  Symbol Target;
+  Target.Name = "target";
+  Target.Addr = 0x401060;
+  Image.Symbols.push_back(Target);
+  Import Bound;
+  Bound.Name = "puts";
+  Bound.IATAddr = 0x404020;
+  Image.Imports.push_back(Bound);
+  // An ELF GLOB_DAT slot, and one that holds `import + 8`.
+  ASSERT_TRUE(Image.recordImportStorageSlot(0x404028, "__libc_start_main", 0,
+                                            ImportStorageEvidence::LoaderBind));
+  ASSERT_TRUE(Image.recordImportStorageSlot(0x404030, "table", 8,
+                                            ImportStorageEvidence::LoaderBind));
+  // An unnamed API-set directory entry named by its slot symbol, and a slot
+  // only the linker's `__imp_` symbol identifies.
+  Import Unnamed;
+  Unnamed.Module = "ext-ms-win-fs-clfs-l1-1-0.dll";
+  Unnamed.IATAddr = 0x404038;
+  Image.Imports.push_back(Unnamed);
+  Symbol UnnamedSlot;
+  UnnamedSlot.Name = "ClfsLsnInvalid";
+  UnnamedSlot.Addr = 0x404038;
+  Image.Symbols.push_back(UnnamedSlot);
+  Symbol LinkerSlot;
+  LinkerSlot.Name = "__imp_ZwClose";
+  LinkerSlot.Addr = 0x404040;
+  Image.Symbols.push_back(LinkerSlot);
+  auto callIn = [](const HighFunc &F) -> ExprPtr {
+    for (const HighStmt &S : F.Body) {
+      if (S.Kind == StmtKind::Call && S.CallExpr)
+        return S.CallExpr;
+      if (S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::Call)
+        return S.Val;
+    }
+    return nullptr;
+  };
+  const std::map<va_t, std::string> Named{{0x404020, "puts"},
+                                          {0x404028, "__libc_start_main"},
+                                          {0x404038, "ClfsLsnInvalid"},
+                                          {0x404040, "__imp_ZwClose"},
+                                          {0x401060, "target"}};
+  for (va_t Constant : {0x404018U, 0x404020U, 0x404028U, 0x404030U, 0x404038U,
+                        0x404040U, 0x401060U}) {
+    SCOPED_TRACE(Constant);
+    MedFunc M;
+    M.Entry = 0x401000;
+    M.Name = "slot_call";
+    M.ReturnType = NdType::makeVoid();
+    M.Blocks.resize(1);
+    M.Blocks[0].Id = 0;
+    M.Blocks[0].StartAddr = 0x401000;
+    M.Blocks[0].EndAddr = 0x401010;
+    M.Blocks[0].Ops = {operation(NdOp::INDIR_CALL, 0x401000, {},
+                                 {MedVar::makeConst(Constant, 8)}),
+                       operation(NdOp::RETURN, 0x401006, {}, {})};
+    MedToHighConverter Converter;
+    Converter.setBinaryImage(&Image);
+    const auto F = Converter.convert(M, Architecture);
+    const ExprPtr Call = callIn(F);
+    ASSERT_TRUE(Call);
+    const auto Name = Named.find(Constant);
+    if (Name == Named.end()) {
+      EXPECT_TRUE(Call->IsIndirectCall);
+      ASSERT_TRUE(Call->IndirectTarget);
+      EXPECT_EQ(Call->IndirectTarget->Kind, ExprKind::Load);
+      ASSERT_EQ(Call->IndirectTarget->Operands.size(), 1U);
+      EXPECT_EQ(Call->IndirectTarget->Operands[0]->Kind, ExprKind::Const);
+      EXPECT_EQ(Call->IndirectTarget->Operands[0]->ConstVal, Constant);
+    } else {
+      EXPECT_FALSE(Call->IsIndirectCall);
+      EXPECT_EQ(Call->CallTarget, Name->second);
+    }
+  }
+}
+
 MedFunc loopFunction(Arch Architecture, bool Swap, bool ReversePhis) {
   MedFunc F;
   F.Entry = 0x1000;

@@ -241,6 +241,9 @@ public:
     va_t Addr = 0;
     bool IsIndirect = true;
     int IndirectParam = -1;
+    /// The constant INDIR_CALL input is the slot holding the target, so the
+    /// call goes through a load of it.
+    bool ThroughSlot = false;
   };
 
 private:
