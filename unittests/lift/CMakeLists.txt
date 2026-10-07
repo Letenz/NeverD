@@ -118,6 +118,7 @@ add_neverd_unittest(NeverDLiftTests
   core/ExecutableCodeOwnerIndexTests.cpp
   core/LowInstructionBoundaryTests.cpp
   core/LiftCommonTests.cpp
+  core/TargetRegInfoSubRegTests.cpp
   core/MedSSAMultiRootTests.cpp
   core/ObjCSourceTypeHintTests.cpp
   core/ObjCProtocolTests.cpp
