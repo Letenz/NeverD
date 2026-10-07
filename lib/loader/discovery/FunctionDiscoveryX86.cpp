@@ -7,8 +7,10 @@
 ///
 /// \file
 /// x86 and x86-64 import thunk recognition for heuristic function discovery.
-/// Recognizes the indirect-jump trampolines emitted for PE IAT entries
-/// (jmp [rip+disp32] on x86-64, jmp [abs32] on x86).
+/// Recognizes the indirect-jump trampolines emitted for PE IAT entries and
+/// ELF PLT slots (jmp [rip+disp32] on x86-64, jmp [abs32] on x86), including
+/// the indirect-branch-tracking form that starts with an endbr marker and may
+/// give the jump a bnd prefix (`.plt.sec`).
 ///
 //===----------------------------------------------------------------------===//
 
@@ -48,12 +50,30 @@ size_t scanImportThunksX86(BinaryImage &Img, const Segment &Seg,
     auto TargetIt = Targets.find(Target);
     if (TargetIt == Targets.end())
       continue;
-    if (!Img.isCodeRange(InsnVA, x86::kJmpIndirectLen))
+    // An endbr marker right before the jump starts the thunk, and a bnd
+    // prefix between them belongs to the jump.  A lone F2 byte may end the
+    // previous instruction, so it only counts after an endbr.
+    size_t Start = I;
+    const auto EndbrBefore = [&](size_t At) {
+      if (At < x86::kEndbrLen)
+        return false;
+      uint32_t Word;
+      std::memcpy(&Word, D + At - x86::kEndbrLen, sizeof(Word));
+      return Word == (Is64 ? x86::kEndbr64Word : x86::kEndbr32Word);
+    };
+    if (EndbrBefore(Start))
+      Start -= x86::kEndbrLen;
+    else if (Start > 0 && D[Start - 1] == x86::kBndPrefix &&
+             EndbrBefore(Start - 1))
+      Start -= 1 + x86::kEndbrLen;
+    const va_t ThunkVA = Seg.VA + Start;
+    const size_t ThunkLen = I + x86::kJmpIndirectLen - Start;
+    if (!Img.isCodeRange(ThunkVA, ThunkLen))
       continue;
-    Img.recordImportStub(InsnVA, TargetIt->second);
-    if (!Existing.insert(InsnVA).second)
+    Img.recordImportStub(ThunkVA, TargetIt->second);
+    if (!Existing.insert(ThunkVA).second)
       continue;
-    Img.Symbols.push_back(Symbol::makeFunc(InsnVA, x86::kJmpIndirectLen));
+    Img.Symbols.push_back(Symbol::makeFunc(ThunkVA, ThunkLen));
     ++Added;
   }
   return Added;
