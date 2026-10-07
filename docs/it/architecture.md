@@ -1534,3 +1534,7 @@ Il getter SDK esatto `MainActor.shared` restituisce un puntatore a oggetto e ric
 ## Contratti dei kernel Android GKI pubblicati
 
 `LinuxGKIKernels.def` gestisce rami, flag `pidfd_open`, errori dei non-leader e regole iovec. `LinuxKernelOptions` possiede scelta esplicita e catalogo fisso opzionale. `LinuxServices` distribuisce chiamate, `LinuxFiles` possiede file/pidfd, `LinuxOutput` condivide l’importatore e `LinuxPIDFD` controlla classi prima dell’allocazione. Senza catalogo, target esterni non supportati; la validazione comune rifiuta priorità contraddittorie e thread Android cooperativi. Nessuna ricerca host. Vedere i [contratti GKI](android-gki-kernels.md).
+
+## Assemblaggio dei sorgenti mobili
+
+L’esportatore dei sorgenti Objective-C disabilita `CEmitterOptions::EmitRecordGuards` e `CEmitterOptions::UseUnalignedPointers` per l’unità nativa completa e ogni unità di metodo. Le copie di byte di larghezza esatta preservano gli accessi alla memoria non allineati ed evitano di introdurre macro generate nel parser mobile; le direttive condizionali e quelle che modificano macro restano rifiutate.

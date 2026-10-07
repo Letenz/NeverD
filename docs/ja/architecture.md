@@ -1424,3 +1424,7 @@ Swift SDK Published の enclosing-instance アクセサーは四つのポイン�
 ## 公開済み Android GKI カーネルの契約
 
 `LinuxGKIKernels.def` はブランチ、`pidfd_open` フラグ、非リーダーエラー、iovec 方針を一元管理します。`LinuxKernelOptions` は明示選択と任意の固定タスク一覧を所有します。`LinuxServices` は呼び出し、`LinuxFiles` はファイルと pidfd、`LinuxOutput` は共有インポーターを担当し、`LinuxPIDFD` は割り当て前に対象種別を検証します。一覧省略時の外部検索は未対応です。共通検証は矛盾する優先度と Android 協調スレッドとの併用を拒否し、ホスト検索は行いません。[GKI 契約](android-gki-kernels.md)を参照してください。
+
+## モバイルソースの組み立て
+
+Objective-C ソースのエクスポーターは、ネイティブ全体と各メソッドの単位で `CEmitterOptions::EmitRecordGuards` と `CEmitterOptions::UseUnalignedPointers` を無効にします。正確な幅のバイトコピーで非整列メモリアクセスの意味を保ち、生成されたマクロがモバイルのパーサーに入ることを防ぎます。条件付き指令とマクロを変更する指令は引き続き拒否されます。

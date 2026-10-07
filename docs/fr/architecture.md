@@ -1544,3 +1544,7 @@ Le getter SDK exact `MainActor.shared` renvoie un pointeur objet et reçoit son 
 ## Contrats des noyaux Android GKI publiés
 
 `LinuxGKIKernels.def` possède les branches, drapeaux `pidfd_open`, erreurs des non-chefs et politiques iovec. `LinuxKernelOptions` possède la sélection explicite et le catalogue facultatif fixe. `LinuxServices` distribue les appels ; `LinuxFiles` possède fichiers et pidfds ; `LinuxOutput` partage l’importateur ; `LinuxPIDFD` valide la classe cible avant allocation. L’absence de catalogue laisse les cibles étrangères non prises en charge ; la validation commune rejette priorités contradictoires et threads Android coopératifs. Aucune recherche hôte. Voir les [contrats GKI](android-gki-kernels.md).
+
+## Assemblage des sources mobiles
+
+L’exporteur de sources Objective-C désactive `CEmitterOptions::EmitRecordGuards` et `CEmitterOptions::UseUnalignedPointers` pour l’unité native complète et chaque unité de méthode. Les copies d’octets de largeur exacte préservent les accès mémoire non alignés sans introduire de macros générées dans l’analyseur mobile ; les directives conditionnelles et celles qui modifient des macros restent refusées.

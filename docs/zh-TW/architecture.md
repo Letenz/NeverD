@@ -1352,3 +1352,7 @@ Swift SDK Published 的 enclosing-instance 存取器保留四個指標載體：�
 ## 已釋出 Android GKI 核心契約
 
 `LinuxGKIKernels.def` 統一管理已釋出分支、`pidfd_open` 標誌、非首領錯誤及 iovec 匯入策略。`LinuxKernelOptions` 顯式選擇版本並擁有可選的固定任務清單；省略清單時外部目標仍不支援。`LinuxServices` 分派呼叫，`LinuxFiles` 統一擁有檔案和程序描述符，`LinuxOutput` 複用版本化向量校驗，`LinuxPIDFD` 在分配描述符前檢查目標類別。共享准入拒絕矛盾的優先順序觀察值及協作式 Android 執行緒組合；不查詢宿主程序。詳見[已釋出 GKI 契約](android-gki-kernels.md)。
+
+## 行動端原始碼組裝
+
+Objective-C 原始碼匯出器對完整原生單元與各方法單元同時關閉 `CEmitterOptions::EmitRecordGuards` 與 `CEmitterOptions::UseUnalignedPointers`。精確寬度的位元組複製保留非對齊記憶體存取語意，並使產生的巨集不進入行動端剖析器；條件指令與修改巨集的指令仍被拒絕。

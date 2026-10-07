@@ -1414,3 +1414,7 @@ Swift SDK Published 的 enclosing-instance 访问器保留四个指针载体：�
 ## 已发布 Android GKI 内核契约
 
 `LinuxGKIKernels.def` 统一管理已发布分支、`pidfd_open` 标志、非首领错误及 iovec 导入策略。`LinuxKernelOptions` 显式选择版本并拥有可选的固定任务清单；省略清单时外部目标仍不支持。`LinuxServices` 分派调用，`LinuxFiles` 统一拥有文件和进程描述符，`LinuxOutput` 复用版本化向量校验，`LinuxPIDFD` 在分配描述符前检查目标类别。共享准入拒绝矛盾的优先级观察值及协作式 Android 线程组合；不查询宿主进程。详见[已发布 GKI 契约](android-gki-kernels.md)。
+
+## 移动端源码组装
+
+Objective-C 源码导出器对完整原生单元和各方法单元同时关闭 `CEmitterOptions::EmitRecordGuards` 与 `CEmitterOptions::UseUnalignedPointers`。精确宽度的字节复制保留非对齐内存访问语义，并使生成的宏不进入移动端解析器；条件指令和修改宏的指令仍被拒绝。
