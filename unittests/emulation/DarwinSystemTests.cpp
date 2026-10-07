@@ -11,6 +11,8 @@
 
 #include "llvm/ADT/StringExtras.h"
 
+#include <algorithm>
+
 namespace neverd::emulation::darwin_model {
 namespace {
 class DarwinSystemTest : public testing::TestWithParam<uint64_t> {
@@ -457,6 +459,217 @@ TEST(DarwinSystemOptions, TypedFieldsUseTheSameBoundedContract) {
   O.CPUCount = INT32_MAX;
   O.MemorySize = UINT64_MAX;
   EXPECT_FALSE(bool(validateSystemOptions(O)));
+}
+
+TEST_P(DarwinSystemTest, HostNameTruncatesPositiveCapacityWithNamedMIBParity) {
+  Options->HostName = "abcd";
+  struct Sample {
+    uint64_t Capacity;
+    const char *Hex;
+    uint64_t Error;
+  };
+  for (const Sample &S :
+       {Sample{0, "", 12}, Sample{1, "00", 0}, Sample{2, "6100", 0},
+        Sample{3, "616200", 0}, Sample{4, "61626300", 0},
+        Sample{5, "6162636400", 0}, Sample{6, "6162636400", 0},
+        Sample{UINT64_MAX, "6162636400", 0}}) {
+    for (bool Named : {false, true}) {
+      SCOPED_TRACE(S.Capacity);
+      fill();
+      capacity(S.Capacity);
+      result(Named ? named("kern.hostname", Output + 1)
+                   : mib(1, 10, Output + 1),
+             S.Error);
+      const auto Expected = llvm::fromHex(S.Hex);
+      EXPECT_EQ(length(), Expected.size());
+      EXPECT_EQ(bytes(Output, 1), std::string(1, '\xa5'));
+      EXPECT_EQ(bytes(Output + 1, Expected.size()), Expected);
+      EXPECT_EQ(bytes(Output + 1 + Expected.size(), 8), std::string(8, '\xa5'));
+      capacity(S.Capacity);
+      result(Named ? named("kern.hostname", 0) : mib(1, 10, 0));
+      EXPECT_EQ(length(), 5u);
+    }
+  }
+  // The other string nodes retain their existing short-buffer refusal.
+  capacity(1);
+  result(named("kern.ostype"), 12);
+  EXPECT_EQ(length(), 0u);
+}
+
+TEST_P(DarwinSystemTest, HostNameMissingEmptyAndMaximumRemainIndependent) {
+  for (bool Present : {false, true}) {
+    Options.reset();
+    if (Present)
+      Options.emplace();
+    fill();
+    capacity(8);
+    EXPECT_FALSE(named("kern.hostname"));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::SystemObservation);
+    EXPECT_EQ(length(), 8u);
+    EXPECT_EQ(bytes(Output, 8), std::string(8, '\xa5'));
+  }
+  Options->HostName = "";
+  capacity(1);
+  result(mib(1, 10));
+  EXPECT_EQ(length(), 1u);
+  EXPECT_EQ(bytes(Output, 2), std::string("\0\xa5", 2));
+  capacity(0);
+  result(named("kern.hostname"), 12);
+  EXPECT_EQ(length(), 0u);
+  Options->HostName = std::string(255, 'x');
+  fill();
+  capacity(UINT64_MAX);
+  result(named("kern.hostname", Base + Page - 3));
+  EXPECT_EQ(length(), 256u);
+  EXPECT_EQ(bytes(Base + Page - 3, 257),
+            std::string(255, 'x') + std::string("\0\xa5", 2));
+}
+
+TEST_P(DarwinSystemTest, HostNameFaultsCheckOnlyActualSpanAndPreserveLength) {
+  Options->HostName = "abcd";
+  for (auto Bad : {uint64_t(1), value::UserLimit, UINT64_MAX}) {
+    fill();
+    capacity(1);
+    result(named("kern.hostname", Bad), 14);
+    EXPECT_EQ(length(), 1u);
+    capacity(0);
+    result(named("kern.hostname", Bad), 12);
+    EXPECT_EQ(length(), 0u);
+    EXPECT_EQ(bytes(Output, 8), std::string(8, '\xa5'));
+  }
+  const auto End = Base + 2 * Page;
+  fill();
+  capacity(1);
+  result(named("kern.hostname", End - 1));
+  EXPECT_EQ(length(), 1u);
+  EXPECT_EQ(bytes(End - 2, 2), std::string("\xa5\0", 2));
+  fill();
+  capacity(UINT64_MAX);
+  result(named("kern.hostname", End - 5));
+  EXPECT_EQ(length(), 5u);
+  EXPECT_EQ(bytes(End - 6, 6), std::string("\xa5"
+                                           "abcd\0",
+                                           6));
+  fill();
+  capacity(2);
+  EXPECT_FALSE(named("kern.hostname", End - 1));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SystemPartialOutput);
+  EXPECT_EQ(bytes(End - 1, 1), std::string(1, '\xa5'));
+  EXPECT_EQ(length(), 2u);
+  for (auto Permissions :
+       {unsigned(Read | UserAccessible), unsigned(Read | Write)}) {
+    ASSERT_FALSE(bool(Space->protect(Base + Page, Page, Permissions)));
+    capacity(2);
+    result(named("kern.hostname", Base + Page), 14);
+    EXPECT_EQ(length(), 2u);
+    ASSERT_FALSE(
+        bool(Space->protect(Base + Page, Page, Read | Write | UserAccessible)));
+  }
+}
+
+TEST_P(DarwinSystemTest, HostNameReadNullsAliasesAndWritesKeepPreflightOrder) {
+  Options->HostName = "abcd";
+  for (auto Cap : {uint64_t(1), uint64_t(2), uint64_t(5), UINT64_MAX}) {
+    fill();
+    capacity(Cap);
+    result(named("kern.hostname", Length, Length));
+    EXPECT_EQ(length(), std::min(Cap, uint64_t(5)));
+    EXPECT_EQ(bytes(Length + 8, 8), std::string(8, '\xa5'));
+  }
+  fill();
+  result(named("kern.hostname", Output, 0), 12);
+  result(named("kern.hostname", 0, 0));
+  EXPECT_EQ(bytes(Output, 8), std::string(8, '\xa5'));
+  for (bool Root : {false, true}) {
+    for (bool Missing : {false, true}) {
+      Options.emplace();
+      if (!Missing)
+        Options->HostName = "abcd";
+      if (Root)
+        Options->Credentials.emplace();
+      fill();
+      capacity(2);
+      auto Out = named("kern.hostname", UINT64_MAX, Length, UINT64_MAX, 1);
+      if (Root) {
+        EXPECT_FALSE(Out);
+        EXPECT_EQ(Result.Diagnostic, diagnostic::SystemPrivilegedWrite);
+      } else
+        result(Out, 1);
+      EXPECT_EQ(length(), 2u);
+      EXPECT_EQ(bytes(Output, 8), std::string(8, '\xa5'));
+      EXPECT_FALSE(
+          named("kern.hostname", Output, Base + 2 * Page - 4, UINT64_MAX, 1));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::SystemLengthMemory);
+      auto Input = invoke(ServiceKind::SysctlByName,
+                          {UINT64_MAX, 13, Output, Length, UINT64_MAX, 1});
+      result(Input, 14);
+    }
+  }
+  Options.emplace().HostName = "abcd";
+  for (const auto &[New, NewLen] : {std::pair{uint64_t(0), uint64_t(0)},
+                                    std::pair{uint64_t(0), uint64_t(1)},
+                                    std::pair{UINT64_MAX, uint64_t(0)}}) {
+    capacity(2);
+    result(named("kern.hostname", Output, Length, New, NewLen));
+    EXPECT_EQ(bytes(Output, 3), std::string("a\0\xa5", 3));
+    EXPECT_EQ(length(), 2u);
+  }
+}
+
+TEST_P(DarwinSystemTest, HostNameTransportFailuresKeepCompletedDataCopy) {
+  Options->HostName = "abcd";
+  for (unsigned Phase = 0; Phase != 3; ++Phase) {
+    for (unsigned At = 1; At <= (Phase == 0 ? 4u : 2u); ++At) {
+      fill();
+      capacity(2);
+      put(Base, "kern.hostname");
+      FailingSystemMemory Memory(*Space);
+      (Phase == 0   ? Memory.FailAccess
+       : Phase == 1 ? Memory.FailRead
+                    : Memory.FailWrite) = At;
+      auto Out = systemService(
+          Memory, Page, ServiceKind::SysctlByName,
+          {0, 274, {Base, 13, Output, Length}, std::nullopt}, Options, Result);
+      ASSERT_FALSE(bool(Out));
+      EXPECT_EQ(llvm::toString(Out.takeError()), Phase == 0 ? "transport access"
+                                                 : Phase == 1
+                                                     ? "transport read"
+                                                     : "transport write");
+      const bool Copied = (Phase == 0 && At == 4) || (Phase == 2 && At == 2);
+      EXPECT_EQ(bytes(Output, 2),
+                Copied ? std::string("a\0", 2) : std::string(2, '\xa5'));
+      EXPECT_EQ(length(), 2u);
+      EXPECT_EQ(Memory.Writes, Copied && Phase == 0 ? 1u
+                               : Phase == 2         ? At
+                                                    : 0u);
+    }
+  }
+  fill();
+  capacity(2);
+  put(Base, "kern.hostname");
+  FailingSystemMemory Memory(*Space);
+  auto Out = systemService(Memory, Page, ServiceKind::SysctlByName,
+                           {0, 274, {Base, 13, Output, Length}, std::nullopt},
+                           Options, Result);
+  ASSERT_TRUE(bool(Out));
+  ASSERT_TRUE(*Out);
+  EXPECT_FALSE((**Out).Error);
+  EXPECT_EQ(Memory.Writes, 2u); // One complete data transaction, then length.
+}
+
+TEST(DarwinSystemOptions, HostNameHasItsOwnByteLimitWithoutOtherDefaults) {
+  DarwinSystemOptions O;
+  for (const auto &Good : {std::string(), std::string(255, 'x')}) {
+    O.HostName = Good;
+    EXPECT_FALSE(bool(validateSystemOptions(O)));
+    EXPECT_FALSE(O.Machine);
+    EXPECT_FALSE(O.Credentials);
+  }
+  for (const auto &Bad : {std::string(256, 'x'), std::string("x\0y", 3)}) {
+    O.HostName = Bad;
+    EXPECT_EQ(llvm::toString(validateSystemOptions(O)),
+              diagnostic::SystemHostName);
+  }
 }
 
 TEST_P(DarwinSystemTest, DescriptorTableNeedsBothObservationsWithoutMemory) {

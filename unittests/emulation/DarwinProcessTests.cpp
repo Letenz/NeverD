@@ -776,6 +776,60 @@ TEST_P(DarwinProcess, SystemQueriesPreserveExplicitValuesWidthsAndCopyOrder) {
     EXPECT_EQ(Result->Services[2].Error, false);
   }
 }
+TEST_P(DarwinProcess, HostNameKeepsTruncationObservationAndWriteAuthority) {
+  auto Missing = run("hostname-missing-after");
+  ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+  EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Missing->Diagnostic, "Darwin sysctl observation is not configured");
+  EXPECT_EQ(Missing->StandardOutput, "!");
+  Options.DarwinSystem = darwin_test::hostNameOptions();
+  for (const char *Mode : {"hostname", "virtual-hostname", "hostname-query"}) {
+    auto R = run(Mode);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 37);
+    EXPECT_EQ(R->StandardOutput, llvm::StringRef(Mode) == "hostname" ? "n"
+                                 : llvm::StringRef(Mode) == "hostname-query"
+                                     ? std::string(1, '\0')
+                                     : llvm::fromHex(darwin_test::HostNameHex));
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    const uint64_t Class =
+        GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+    ASSERT_GE(R->Services.size(),
+              llvm::StringRef(Mode) == "hostname-query" ? 2u : 3u);
+    EXPECT_EQ(R->Services.front().Number, Class + 274);
+    if (llvm::StringRef(Mode) != "hostname-query") {
+      EXPECT_EQ(R->Services[1].Number, Class + 202);
+      EXPECT_EQ(R->Services[1].Arguments[1], 0x1234567800000002ULL);
+    }
+    EXPECT_EQ(R->Services.front().Error, false);
+  }
+  Options.DarwinSystem->HostName = "";
+  auto Empty = run("hostname-query");
+  ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
+  ASSERT_EQ(Empty->Stop, ProcessStopReason::Exited) << Empty->Diagnostic;
+  EXPECT_EQ(Empty->StandardOutput, std::string(1, '\0'));
+  for (bool Root : {false, true}) {
+    for (bool Known : {false, true}) {
+      Options.DarwinSystem.emplace();
+      if (Known)
+        Options.DarwinSystem->HostName = "abcd";
+      if (Root)
+        Options.DarwinSystem->Credentials.emplace();
+      auto R = run("hostname-write");
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      EXPECT_EQ(R->Stop, Root ? ProcessStopReason::UnsupportedService
+                              : ProcessStopReason::Exited);
+      EXPECT_EQ(R->StandardOutput, Root ? "!" : "!w");
+      if (Root)
+        EXPECT_EQ(R->Diagnostic,
+                  "Darwin privileged system write is not modeled");
+      else
+        EXPECT_EQ(R->ExitStatus, 37);
+    }
+  }
+}
 TEST_P(DarwinProcess, ExplicitTimeObservationsPreserveBytesErrorsAndCopyOrder) {
   auto Null = run("time-null");
   ASSERT_TRUE(bool(Null)) << llvm::toString(Null.takeError());

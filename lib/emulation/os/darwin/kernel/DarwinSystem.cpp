@@ -85,10 +85,11 @@ observation(Observation Kind, uint64_t PageSize,
     return std::nullopt;
   }
 }
-template <typename T> bool valid(const std::optional<T> &Value) {
+template <typename T>
+bool valid(const std::optional<T> &Value, uint64_t Limit) {
   if constexpr (std::is_same_v<T, std::string>)
-    return !Value || (Value->size() < SystemStringLimit &&
-                      Value->find('\0') == std::string::npos);
+    return !Value ||
+           (Value->size() < Limit && Value->find('\0') == std::string::npos);
   return true;
 }
 } // namespace
@@ -127,8 +128,12 @@ llvm::Error validateSystemOptions(const DarwinSystemOptions &Options) {
     }
   }
 #define NEVERD_DARWIN_SYSTEM_FIELD(Member, Field, Name, Root, Leaf)            \
-  if (!valid(Options.Member))                                                  \
-    return failure(diagnostic::SystemString);
+  if (!valid(Options.Member, Observation::Member == Observation::HostName      \
+                                 ? HostNameLimit                               \
+                                 : SystemStringLimit))                         \
+    return failure(Observation::Member == Observation::HostName                \
+                       ? diagnostic::SystemHostName                            \
+                       : diagnostic::SystemString);
 #include "DarwinSystemFields.def"
 #undef NEVERD_DARWIN_SYSTEM_FIELD
   if (Options.CPUCount &&
@@ -293,11 +298,13 @@ systemService(GuestMemory &Memory, uint64_t PageSize, ServiceKind Kind,
     return unsupported(Result, diagnostic::SystemKey);
   // A pointer alone is not a write request. Keep name/MIB and oldlenp
   // preflight before this decision. Root cannot infer a modeled privileged
-  // write to kern.osversion or kern.maxfilesperproc; native read-only nodes
-  // still reject writes.
+  // write to kern.osversion, kern.maxfilesperproc or kern.hostname. A visible
+  // hostname also supplies no mobile entitlement. Read-only nodes reject
+  // writes.
   if (A[4] && A[5]) {
     if ((Selected->Kind == Observation::OSVersion ||
-         Selected->Kind == Observation::MaxFilesPerProcess) &&
+         Selected->Kind == Observation::MaxFilesPerProcess ||
+         Selected->Kind == Observation::HostName) &&
         credentialID(ServiceKind::GetEUID, Options) == 0)
       return unsupported(Result, diagnostic::SystemPrivilegedWrite);
     return returned(OperationNotPermitted, true);
@@ -305,6 +312,14 @@ systemService(GuestMemory &Memory, uint64_t PageSize, ServiceKind Kind,
   auto Value = observation(Selected->Kind, PageSize, Options);
   if (!Value)
     return unsupported(Result, diagnostic::SystemObservation);
+  // XNU sysctl_hostname uses sysctl_io_string with truncation enabled.
+  // A positive short capacity succeeds with its final byte replaced by NUL.
+  // Check/copy only this actual span, once; zero capacity keeps ENOMEM below.
+  if (Selected->Kind == Observation::HostName && A[2] && Capacity &&
+      Capacity < Value->Bytes.size()) {
+    Value->Bytes.resize(Capacity);
+    Value->Bytes.back() = 0;
+  }
   if (A[2] && Capacity == 4 && Value->Quad) {
     const auto Bits = llvm::support::endian::read64le(Value->Bytes.data());
     const uint64_t Low = uint32_t(Bits);

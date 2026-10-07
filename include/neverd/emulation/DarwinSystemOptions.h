@@ -50,7 +50,8 @@ struct DarwinCredentials {
 };
 /// Fixed system observations, independent of host hardware and OS identity.
 /// Missing is unknown; an empty string is an explicit value. Strings contain
-/// no NUL and at most 1023 bytes. Page size comes from the guest memory policy.
+/// no NUL and at most 1023 bytes, except HostName (255 bytes). Page size comes
+/// from the guest memory policy.
 struct DarwinSystemOptions {
   std::optional<std::string> OSType;
   std::optional<std::string> OSRelease;
@@ -80,6 +81,10 @@ struct DarwinSystemOptions {
   /// With ResourceLimits[8].Current this supplies getdtablesize; neither
   /// observation enforces the descriptor budget or queries the host.
   std::optional<uint32_t> MaxFilesPerProcess;
+  /// Caller-visible kern.hostname bytes, independent of host identity or
+  /// mobile entitlements. Missing is unknown; empty is an explicit value.
+  /// Does not authorize hostname writes, even with explicit root credentials.
+  std::optional<std::string> HostName;
 };
 } // namespace neverd::emulation
 #endif

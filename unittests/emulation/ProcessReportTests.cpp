@@ -927,6 +927,63 @@ TEST(ProcessReport, MalformedDarwinCredentialsFailBeforeImageLoading) {
   }
 }
 
+TEST(ProcessReport, DarwinHostNameKeepsMissingEmptyAndStrictByteBounds) {
+  auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");
+  ASSERT_TRUE(bool(Empty));
+  EXPECT_FALSE(Empty->DarwinSystem->HostName);
+  std::string UTF8;
+  for (unsigned I = 0; I != 127; ++I)
+    UTF8 += "\xc3\xa9";
+  for (const auto &Name : {std::string(), std::string(255, 'x'), UTF8 + "a"}) {
+    auto Parsed = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_system",
+                                  llvm::json::Object{{"hostname", Name}}}}))
+            .str());
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    EXPECT_EQ(Parsed->DarwinSystem->HostName, Name);
+    EXPECT_FALSE(Parsed->DarwinSystem->Machine);
+    EXPECT_FALSE(Parsed->DarwinSystem->Credentials);
+  }
+  for (const auto &Bad :
+       {std::string(256, 'x'), UTF8 + "\xc3\xa9", std::string("x\0y", 3)}) {
+    auto Parsed = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_system",
+                                  llvm::json::Object{{"hostname", Bad}}}}))
+            .str());
+    ASSERT_FALSE(bool(Parsed));
+    EXPECT_EQ(llvm::toString(Parsed.takeError()),
+              "Darwin system hostname must be at most 255 bytes without NUL");
+  }
+  for (const char *Bad : {"null", "true", "1", "[]", "{}"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"darwin_system":{"hostname":)") + Bad + "}}");
+    EXPECT_FALSE(bool(Parsed));
+    llvm::consumeError(Parsed.takeError());
+  }
+  auto Alias = processOptionsFromJSON(R"({"darwin_system":{"host_name":"x"}})");
+  EXPECT_FALSE(bool(Alias));
+  llvm::consumeError(Alias.takeError());
+}
+TEST(ProcessReport, DarwinHostNameAdmissionPrecedesLoadingOnAllProfiles) {
+  auto O = processOptionsFromJSON(R"({"darwin_system":{"hostname":""}})");
+  ASSERT_TRUE(bool(O));
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64}) {
+    O->DarwinSystem->HostName = std::string(256, 'x');
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()),
+              "Darwin system hostname must be at most 255 bytes without NUL");
+  }
+}
 TEST(ProcessReport, DarwinDescriptorCapKeepsMissingZeroAndIntegerBounds) {
   auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");
   ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());

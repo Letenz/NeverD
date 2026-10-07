@@ -33,6 +33,13 @@ inline constexpr char SystemHex[] =
     "4e6576657244207669727475616c206b65726e656c0056343200"
     "7669727475616c3634005669727475616c4d6f64656c0007000000"
     "1032547698badcfe";
+inline DarwinSystemOptions hostNameOptions() {
+  DarwinSystemOptions O;
+  O.HostName = "abcd";
+  return O;
+}
+inline constexpr char HostNameJSON[] = R"({"hostname":"abcd"})";
+inline constexpr char HostNameHex[] = "6162636400";
 inline DarwinSystemOptions resourceLimitOptions() {
   DarwinSystemOptions O;
   O.MaxFilesPerProcess = 64;

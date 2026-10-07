@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 854783aa85d00cdf9407d25b961d4a98e2a61885a55d71c416365143d066a1b7 -->
+<!-- i18n-source: 8ec53d25a48700a518aada5ae97b8d964eb979136488f13ba86d98558fc2da5c -->
 
 [← ドキュメント一覧](README.md)
 
@@ -348,7 +348,7 @@ Release Darwin は835件：成功474、利用不可スキップ360、既存 macO
 
 `ProcessOptions::DarwinSystem` / `darwin_system` は、すべての Darwin profile の `sysctl(202)` と raw `sysctlbyname(274)` に固定観測値を渡します。各フィールドは省略可能で、未指定の値や一覧外のキーは未対応として停止します。ホストへの問い合わせや版・機種の推測はありません。厳密な JSON と C++ 検証は、読み込み前に不正値と Darwin 以外の profile を拒否します。
 
-`os_revision` は符号付き 32 ビット、`cpu_count` は 1..INT32_MAX、`memory_size` は符号なし 64 ビットです。`max_files_per_process` は 0..INT32_MAX の四バイト int。その他のスカラー項目は最大 1023 バイトの NUL を含まない文字列で、明示的な空文字列も有効、結果は終端 NUL を含みます。観測値はスケジューリング、割り当て、記述子予算を変更しません。
+`os_revision` は符号付き 32 ビット、`cpu_count` は 1..INT32_MAX、`memory_size` は符号なし 64 ビットです。`max_files_per_process` は 0..INT32_MAX の四バイト int。その他のスカラー項目は最大 1023 バイト（`hostname` は 255 バイト）の NUL を含まない文字列で、明示的な空文字列も有効、結果は終端 NUL を含みます。観測値はスケジューリング、割り当て、記述子予算を変更しません。
 
 | JSON フィールド | sysctl 名 | MIB |
 | --- | --- | --- |
@@ -362,17 +362,20 @@ Release Darwin は835件：成功474、利用不可スキップ360、既存 macO
 | `cpu_count` | `hw.ncpu` | `6,3` |
 | `memory_size` | `hw.memsize` | `6,24` |
 | `max_files_per_process` | `kern.maxfilesperproc` | `1,29` |
+| `hostname` | `kern.hostname` | `1,10` |
 
 `hw.pagesize` は既存のゲストメモリ方針を使用し、通常8バイト、非 null 出力の容量がちょうど4なら4バイトです。旧 MIB `[6,7]` と `hw.pagesize_compat` は常に4バイトです。`hw.pagesize` の動的数値 OID は未対応です。`hw.memsize` も容量4では、64ビット値が符号付き32ビット値の符号拡張と一致する場合だけ縮小します。それ以外は ERANGE34 で出力と長さを保持します。
 
-MIB 数は下位32ビットで2～12、名前長は64ビット全体で1024未満です。指定された全バイトを検査してから最初の NUL を解釈し、末尾の点を一つ除きます。空の名前は ENOENT、部分的に読める入力は未対応です。非 null `oldlenp` は副作用前に8バイト全体の読み書きが必要です。不正な長さポインタのネイティブ試験は期限内に戻らなかったため、明示的な未対応範囲とします。null `oldlenp` は容量0、null `oldp` はサイズのみの問い合わせです。短い領域では ENOMEM12、データは不変で長さ0です。データ EFAULT は元の長さを保持します。入力と容量の取得、データ、最後の長さという順序で、別名と後続の転送失敗時の既存コピーを保持します。
+MIB 数は下位32ビットで2～12、名前長は64ビット全体で1024未満です。指定された全バイトを検査してから最初の NUL を解釈し、末尾の点を一つ除きます。空の名前は ENOENT、部分的に読める入力は未対応です。非 null `oldlenp` は副作用前に8バイト全体の読み書きが必要です。不正な長さポインタのネイティブ試験は期限内に戻らなかったため、明示的な未対応範囲とします。null `oldlenp` は容量0、null `oldp` はサイズのみの問い合わせです。`kern.hostname` 以外の短い領域では ENOMEM12、データは不変で長さ0です。データ EFAULT は元の長さを保持します。入力と容量の取得、データ、最後の長さという順序で、別名と後続の転送失敗時の既存コピーを保持します。
 
-newp/newlen が両方非ゼロなら書き込みです。名前/MIB と oldlenp の完全な読み書き事前検査を先に保ち、既定または明示的非root EUID は観測値・データ出力検査前に EPERM1。明示的EUID0 の kern.osversion / kern.maxfilesperproc 特権書き込みは未モデル化のため unsupported；RUID は判断に使いません。他のネイティブ読み取り専用ノードはrootでも EPERM1。新長0はポインタを無視し、未知キー/ツリー/動的OIDの ENOENT は推測しません。
+`hostname` はこの guest 呼び出し元に見えるバイト列を宣言します。ホスト照会、モバイル環境の `localhost` 既定値、entitlement 推定は行いません。省略は未知、明示的な空文字列は NUL 一つです。`kern.hostname` の非 null 出力が正の容量で不足する場合、容量ちょうどのバイトを末尾 NUL 付きで正常に返し、その容量を報告します。容量0は ENOMEM12、長さ0、データ不変です。null 出力は NUL を含む全長を報告します。検査は実際の出力範囲のみです。部分的に書ける範囲は未対応で、接頭部を公開しません。ネイティブの部分コピーはモデル外です。libc uname/gethostname が用いる raw 観測の追加であり、dylib インポートや完全なランタイムの実装ではありません。
+
+newp/newlen が両方非ゼロなら書き込みです。名前/MIB と oldlenp の完全な読み書き事前検査を先に保ち、既定または明示的非root EUID は観測値・データ出力検査前に EPERM1。明示的EUID0 の kern.osversion / kern.maxfilesperproc / kern.hostname 特権書き込みは未モデル化のため unsupported；RUID は判断に使いません。他のネイティブ読み取り専用ノードはrootでも EPERM1。新長0はポインタを無視し、未知キー/ツリー/動的OIDの ENOENT は推測しません。
 
 独自の `system-info` はネイティブ macOS とゲスト ABI を検査し、`virtual-system` は C++、C/CLI、Python で設定済みバイト列を比較します。別の SDK 検査はホストの九つの観測値を明示的なテスト入力として名前・数値出力を照合します。iOS 実機や Intel HVF の検証ではありません。
 
 ```json
-{"darwin_system":{"os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
+{"darwin_system":{"hostname":"guest-node","os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
 ```
 
 [XNU sysctl](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_newsysctl.c), [XNU hardware MIB](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mib.c), [Apple sysctl(3)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/sysctl.3.html).

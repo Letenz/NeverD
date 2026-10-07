@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 854783aa85d00cdf9407d25b961d4a98e2a61885a55d71c416365143d066a1b7 -->
+<!-- i18n-source: 8ec53d25a48700a518aada5ae97b8d964eb979136488f13ba86d98558fc2da5c -->
 
 [← 文档索引](README.md)
 
@@ -450,7 +450,7 @@ Release Darwin 共 835 项：474 通过、360 项后端不可用跳过，既有 
 
 `ProcessOptions::DarwinSystem` / `darwin_system` 为所有 Darwin 配置的 `sysctl(202)` 和原始 `sysctlbyname(274)` 提供固定观察值。各字段均可省略；未提供的值或未列出的键明确停止为不支持。不会查询宿主或推测版本、机型。严格 JSON 与 C++ 校验在加载映像前拒绝非法值和非 Darwin 配置。
 
-`os_revision` 为有符号 32 位；`cpu_count` 为 1..INT32_MAX；`memory_size` 保留无符号 64 位；`max_files_per_process` 为 0..INT32_MAX，按四字节 int 编码。其余标量字段是最多 1023 字节且无内嵌 NUL 的字符串，允许显式空串，返回内容包含结尾 NUL。观测不会改变调度、分配或描述符预算。
+`os_revision` 为有符号 32 位；`cpu_count` 为 1..INT32_MAX；`memory_size` 保留无符号 64 位；`max_files_per_process` 为 0..INT32_MAX，按四字节 int 编码。其余标量字段是最多 1023 字节（`hostname` 限 255 字节）且无内嵌 NUL 的字符串，允许显式空串，返回内容包含结尾 NUL。观测不会改变调度、分配或描述符预算。
 
 | JSON 字段 | sysctl 名称 | MIB |
 | --- | --- | --- |
@@ -464,17 +464,20 @@ Release Darwin 共 835 项：474 通过、360 项后端不可用跳过，既有 
 | `cpu_count` | `hw.ncpu` | `6,3` |
 | `memory_size` | `hw.memsize` | `6,24` |
 | `max_files_per_process` | `kern.maxfilesperproc` | `1,29` |
+| `hostname` | `kern.hostname` | `1,10` |
 
 `hw.pagesize` 来自现有客户机内存策略，通常返回8字节；非空输出且容量恰为4时返回4字节。旧 MIB `[6,7]` 与名称 `hw.pagesize_compat` 始终返回4字节。`hw.pagesize` 的动态数字 OID 仍不支持。`hw.memsize` 在容量恰为4时，仅当64位模式是有符号32位值的符号扩展才缩窄，否则返回 ERANGE34，保持输出和长度不变。
 
-MIB 数量取低32位，须为2–12；名称长度取完整64位且须小于1024。先检查全部指定字节，再按首个 NUL 解释名称并移除一个末尾点；空名称返回 ENOENT，部分可读输入仍不支持。非空 `oldlenp` 必须在任何副作用前完整具备8字节读写权限。原生非法长度指针探测未在时限内返回，因此这类指针明确留在不支持边界。空 `oldlenp` 表示容量0；空 `oldp` 仅查询长度。短缓冲区返回 ENOMEM12、不写数据并把长度置0；数据 EFAULT 保持旧长度。输入和容量先取快照，随后写数据，最后写长度，保留别名顺序及后续传输失败前已完成的复制。
+MIB 数量取低32位，须为2–12；名称长度取完整64位且须小于1024。先检查全部指定字节，再按首个 NUL 解释名称并移除一个末尾点；空名称返回 ENOENT，部分可读输入仍不支持。非空 `oldlenp` 必须在任何副作用前完整具备8字节读写权限。原生非法长度指针探测未在时限内返回，因此这类指针明确留在不支持边界。空 `oldlenp` 表示容量0；空 `oldp` 仅查询长度。除 `kern.hostname` 外，短缓冲区返回 ENOMEM12、不写数据并把长度置0；数据 EFAULT 保持旧长度。输入和容量先取快照，随后写数据，最后写长度，保留别名顺序及后续传输失败前已完成的复制。
 
-只有 newp/newlen 均非零才是写请求。先保留名称/MIB 与 oldlenp 完整读写预检，然后默认或显式非 root EUID 在观察值和数据输出检查前返回 EPERM1。显式 EUID0 对原生允许特权写的 kern.osversion / kern.maxfilesperproc 明确停止 unsupported，因为未建模特权写入；RUID 不决定此分支。其他原生只读节点即使 root 仍 EPERM1。新长度0忽略指针；未知键、树和动态 OID 不猜 ENOENT。
+`hostname` 声明该 guest 调用者可见的字节，不查询宿主、不为移动环境补出 `localhost`，也不推断 entitlement。缺省为未知，显式空串返回一个 NUL。`kern.hostname` 的非空输出若容量为正且不足，会成功返回恰好该容量的字节，末尾补 NUL，并报告该容量。零容量仍返回 ENOMEM12、长度0且不写数据；空输出指针报告包含 NUL 的完整长度。仅检查实际输出范围；部分可写范围仍明确不支持且不发布前缀，原生部分复制行为不在模型内。这只增加 libc uname/gethostname 使用的原始观测，不实现其 dylib 导入或完整运行时。
+
+只有 newp/newlen 均非零才是写请求。先保留名称/MIB 与 oldlenp 完整读写预检，然后默认或显式非 root EUID 在观察值和数据输出检查前返回 EPERM1。显式 EUID0 对原生允许特权写的 kern.osversion / kern.maxfilesperproc / kern.hostname 明确停止 unsupported，因为未建模特权写入；RUID 不决定此分支。其他原生只读节点即使 root 仍 EPERM1。新长度0忽略指针；未知键、树和动态 OID 不猜 ENOENT。
 
 原创 `system-info` 程序检查原生 macOS 与客户机 ABI；`virtual-system` 通过 C++、C/CLI、Python 比较配置的精确字节。独立 SDK 对照将宿主九项观察值显式作为测试输入，比较名称与数字查询输出。这不构成 iOS 真机或 Intel HVF 验收。
 
 ```json
-{"darwin_system":{"os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
+{"darwin_system":{"hostname":"guest-node","os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
 ```
 
 [XNU sysctl](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_newsysctl.c), [XNU hardware MIB](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mib.c), [Apple sysctl(3)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/sysctl.3.html).

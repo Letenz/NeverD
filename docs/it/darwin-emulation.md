@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 854783aa85d00cdf9407d25b961d4a98e2a61885a55d71c416365143d066a1b7 -->
+<!-- i18n-source: 8ec53d25a48700a518aada5ae97b8d964eb979136488f13ba86d98558fc2da5c -->
 
 [← Indice della documentazione](README.md)
 
@@ -348,7 +348,7 @@ Release Darwin: 835 registrazioni,474 superate,360 saltate e un timeout preesist
 
 `ProcessOptions::DarwinSystem` / `darwin_system` fornisce osservazioni fisse a `sysctl(202)` e al `sysctlbyname(274)` diretto in ogni profilo Darwin. Ogni campo è facoltativo; valori assenti o chiavi non elencate restano non supportati. Nessuna query all’host o versione/modello implicito. La validazione rigorosa JSON e C++ rifiuta valori errati e profili non Darwin prima del caricamento.
 
-`os_revision` è un valore con segno a 32 bit; `cpu_count` vale 1..INT32_MAX; `memory_size` conserva 64 bit senza segno; `max_files_per_process` vale 0..INT32_MAX e usa un int di quattro byte. Gli altri campi scalari sono stringhe di massimo 1023 byte senza NUL interno; una stringa vuota esplicita è valida e il risultato include il NUL finale. Le osservazioni non modificano scheduling o budget di memoria e descrittori.
+`os_revision` è un valore con segno a 32 bit; `cpu_count` vale 1..INT32_MAX; `memory_size` conserva 64 bit senza segno; `max_files_per_process` vale 0..INT32_MAX e usa un int di quattro byte. Gli altri campi scalari sono stringhe di massimo 1023 byte (255 per `hostname`) senza NUL interno; una stringa vuota esplicita è valida e il risultato include il NUL finale. Le osservazioni non modificano scheduling o budget di memoria e descrittori.
 
 | Campo JSON | Nome sysctl | MIB |
 | --- | --- | --- |
@@ -362,17 +362,20 @@ Release Darwin: 835 registrazioni,474 superate,360 saltate e un timeout preesist
 | `cpu_count` | `hw.ncpu` | `6,3` |
 | `memory_size` | `hw.memsize` | `6,24` |
 | `max_files_per_process` | `kern.maxfilesperproc` | `1,29` |
+| `hostname` | `kern.hostname` | `1,10` |
 
 `hw.pagesize` deriva dalla politica di memoria guest esistente: normalmente otto byte, quattro con output non nullo e capacità esattamente quattro. Il MIB storico `[6,7]` e `hw.pagesize_compat` restituiscono sempre quattro byte. L’OID numerico dinamico di `hw.pagesize` non è supportato. Anche `hw.memsize` si restringe con capacità quattro solo se il suo schema a 64 bit è l’estensione del segno di un intero a 32 bit; altrimenti ERANGE34 preserva output e lunghezza.
 
-Il conteggio MIB usa i 32 bit inferiori e deve essere 2–12; la lunghezza del nome usa 64 bit e deve essere inferiore a 1024. Tutti i byte sono verificati prima di interpretare il primo NUL e rimuovere un punto finale. Il nome vuoto restituisce ENOENT; l’input parzialmente leggibile resta non supportato. `oldlenp` non nullo richiede otto byte interamente leggibili e scrivibili prima degli effetti. Le prove native con puntatori di lunghezza errati non sono tornate entro il limite: restano esplicitamente fuori ambito. `oldlenp` nullo significa capacità zero; `oldp` nullo richiede solo la dimensione. Un buffer corto restituisce ENOMEM12, lascia i dati intatti e scrive lunghezza zero. EFAULT sui dati conserva la lunghezza precedente. Input e capacità sono acquisiti prima dei dati e la lunghezza è copiata per ultima, preservando alias e copie già completate in caso di successivo errore di trasporto.
+Il conteggio MIB usa i 32 bit inferiori e deve essere 2–12; la lunghezza del nome usa 64 bit e deve essere inferiore a 1024. Tutti i byte sono verificati prima di interpretare il primo NUL e rimuovere un punto finale. Il nome vuoto restituisce ENOENT; l’input parzialmente leggibile resta non supportato. `oldlenp` non nullo richiede otto byte interamente leggibili e scrivibili prima degli effetti. Le prove native con puntatori di lunghezza errati non sono tornate entro il limite: restano esplicitamente fuori ambito. `oldlenp` nullo significa capacità zero; `oldp` nullo richiede solo la dimensione. Per chiavi diverse da `kern.hostname`, un buffer corto restituisce ENOMEM12, lascia i dati intatti e scrive lunghezza zero. EFAULT sui dati conserva la lunghezza precedente. Input e capacità sono acquisiti prima dei dati e la lunghezza è copiata per ultima, preservando alias e copie già completate in caso di successivo errore di trasporto.
 
-newp/newlen non nulli significano scrittura. Prima restano lettura nome/MIB e verifica completa lettura/scrittura oldlenp. EUID default o esplicito non-root dà EPERM1 prima di osservazione/output dati. EUID0 ferma kern.osversion / kern.maxfilesperproc unsupported perché la scrittura privilegiata non è modellata; RUID non decide. Altri nodi nativi sola lettura mantengono EPERM1 anche root. Nuova lunghezza0 ignora puntatore; nessun ENOENT inventato per chiavi/alberi/OID dinamici sconosciuti.
+`hostname` dichiara i byte visibili a questo chiamante guest, senza interrogare l’host, assumere `localhost` sui dispositivi mobili o dedurre entitlement. L’assenza resta ignota; una stringa esplicitamente vuota restituisce un NUL. Per `kern.hostname`, un’uscita non nulla con capacità positiva insufficiente ha successo con esattamente tale numero di byte, terminati da NUL, e riporta tale capacità. La capacità zero conserva ENOMEM12, lunghezza zero e dati invariati; l’uscita nulla riporta la lunghezza completa con NUL. Si verifica solo l’intervallo effettivo. Un intervallo parzialmente scrivibile resta non supportato senza pubblicare prefissi; le copie native parziali sono fuori modello. Si aggiunge solo l’osservazione raw usata da libc uname/gethostname, non i loro import dylib o un runtime completo.
+
+newp/newlen non nulli significano scrittura. Prima restano lettura nome/MIB e verifica completa lettura/scrittura oldlenp. EUID default o esplicito non-root dà EPERM1 prima di osservazione/output dati. EUID0 ferma kern.osversion / kern.maxfilesperproc / kern.hostname unsupported perché la scrittura privilegiata non è modellata; RUID non decide. Altri nodi nativi sola lettura mantengono EPERM1 anche root. Nuova lunghezza0 ignora puntatore; nessun ENOENT inventato per chiavi/alberi/OID dinamici sconosciuti.
 
 Il programma originale `system-info` verifica ABI nativa macOS e guest; `virtual-system` confronta byte configurati tramite C++, C/CLI e Python. Un oracolo SDK acquisisce nove osservazioni host come input espliciti del test e confronta output per nome e numero. Non certifica iOS fisico o Intel HVF.
 
 ```json
-{"darwin_system":{"os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
+{"darwin_system":{"hostname":"guest-node","os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
 ```
 
 [XNU sysctl](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_newsysctl.c), [XNU hardware MIB](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mib.c), [Apple sysctl(3)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man 3/sysctl.3.html).

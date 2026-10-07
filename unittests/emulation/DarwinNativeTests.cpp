@@ -19,6 +19,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -32,12 +33,14 @@
 #include <mach/mach_time.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/param.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/syslimits.h>
 #include <sys/time.h>
 #include <sys/uio.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
 // The raw LP64 entry point exported by libsystem_kernel; the public legacy
@@ -47,6 +50,88 @@ extern "C" ssize_t __getdirentries64(int, void *, size_t, off_t *);
 
 namespace neverd::emulation {
 namespace {
+TEST(DarwinNative, HostNameMatchesSDKBytesTruncationAndLibcFullBuffers) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "native hostname capture requires macOS";
+#else
+  ASSERT_EQ(MAXHOSTNAMELEN, 256);
+  ASSERT_EQ(CTL_KERN, 1);
+  ASSERT_EQ(KERN_HOSTNAME, 10);
+  int MIB[] = {CTL_KERN, KERN_HOSTNAME};
+  std::array<char, MAXHOSTNAMELEN> Captured, Libc;
+  size_t Size = Captured.size();
+  ASSERT_EQ(::sysctl(MIB, 2, Captured.data(), &Size, nullptr, 0), 0);
+  ASSERT_GE(Size, 1u);
+  ASSERT_LE(Size, Captured.size());
+  ASSERT_EQ(Captured[Size - 1], 0);
+  ASSERT_EQ(std::strlen(Captured.data()) + 1, Size);
+  struct utsname U;
+  ASSERT_EQ(::uname(&U), 0);
+  ASSERT_EQ(::gethostname(Libc.data(), Libc.size()), 0);
+  EXPECT_STREQ(U.nodename, Captured.data());
+  EXPECT_STREQ(Libc.data(), Captured.data());
+  std::optional<DarwinSystemOptions> Options = DarwinSystemOptions{};
+  Options->HostName = Captured.data();
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(*Options)));
+  for (uint64_t Page : {uint64_t(4096), uint64_t(16384)}) {
+    auto Physical = PhysicalMemory::create(Page * 4);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Created = AddressSpace::create(*Physical, Page * 4);
+    ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+    auto Space = *Created;
+    constexpr uint64_t Base = 0x100000;
+    ASSERT_FALSE(
+        bool(Space->map(Base, Page * 2, Read | Write | UserAccessible)));
+    for (bool Named : {false, true}) {
+      for (size_t Capacity :
+           {size_t(0), size_t(1), size_t(2), Size - 1, Size, size_t(256)}) {
+        std::array<uint8_t, 258> Native;
+        Native.fill(0xa5);
+        size_t Length = Capacity;
+        errno = 0;
+        const int Ret =
+            Named ? ::sysctlbyname("kern.hostname", Native.data() + 1, &Length,
+                                   nullptr, 0)
+                  : ::sysctl(MIB, 2, Native.data() + 1, &Length, nullptr, 0);
+        const int Error = errno;
+        ASSERT_EQ(Ret, Capacity ? 0 : -1);
+        ASSERT_EQ(Error, Capacity ? 0 : ENOMEM);
+        ASSERT_LE(Length, Size);
+        ASSERT_EQ(Native[0], 0xa5);
+        ASSERT_EQ(Native[Length + 1], 0xa5);
+        std::vector<uint8_t> Expected(Page * 2, 0xa5), Actual(Page * 2);
+        constexpr char Name[] = "kern.hostname";
+        std::memcpy(Expected.data(),
+                    Named ? static_cast<const void *>(Name)
+                          : static_cast<const void *>(MIB),
+                    Named ? sizeof(Name) - 1 : sizeof(MIB));
+        llvm::support::endian::write64le(Expected.data() + 128, Capacity);
+        ASSERT_FALSE(bool(Space->write(Base, Expected)));
+        std::memcpy(Expected.data() + Page - 1, Native.data() + 1, Length);
+        llvm::support::endian::write64le(Expected.data() + 128, Length);
+        ProcessResult Result{
+            ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+            ExecutionBackendKind::Unicorn, "independent SDK hostname capture"};
+        auto Out = darwin_model::systemService(
+            *Space, Page,
+            Named ? darwin_model::ServiceKind::SysctlByName
+                  : darwin_model::ServiceKind::Sysctl,
+            {0,
+             Named ? 274u : 202u,
+             {Base, Named ? sizeof(Name) - 1 : 2, Base + Page - 1, Base + 128},
+             std::nullopt},
+            Options, Result);
+        ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+        ASSERT_TRUE(*Out) << Result.Diagnostic;
+        EXPECT_EQ((**Out).Error, Ret != 0);
+        EXPECT_EQ((**Out).Value, uint64_t(Error));
+        ASSERT_FALSE(bool(Space->read(Base, Actual)));
+        EXPECT_EQ(Actual, Expected);
+      }
+    }
+  }
+#endif
+}
 TEST(DarwinNative, CredentialsMatchOneSDKCaptureAndExactGroupOrder) {
 #if !defined(__APPLE__)
   GTEST_SKIP() << "native Darwin credential capture requires macOS";

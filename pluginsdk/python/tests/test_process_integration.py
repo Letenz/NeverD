@@ -576,6 +576,8 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                "0020000000000000004000000000000020000000000000008000000000000000"
                                                "00010000000000000004000000000000")),
                                            ("system-info", b"i"),
+                                           ("hostname", b"n"),
+                                           ("virtual-hostname", b"abcd\0"),
                                            ("virtual-system", bytes.fromhex(
                                                "44617277696e0032342e746573740000000080"
                                                "4e6576657244207669727475616c206b65726e656c0056343200"
@@ -606,6 +608,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                         file_options = json.dumps({
                             "backend": "unicorn", "arguments": ["guest", mode, "/data"],
                             "darwin_system": {
+                                "hostname": "abcd",
                                 "os_type": "Darwin", "os_release": "24.test",
                                 "os_revision": -2147483648, "os_version": "V42",
                                 "kernel_version": "NeverD virtual kernel",

@@ -444,6 +444,8 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
                     emulation::darwin_test::ResourceLimitsHex},
           std::pair{"system-info", "69"},
           std::pair{"virtual-system", emulation::darwin_test::SystemHex},
+          std::pair{"hostname", "6e"},
+          std::pair{"virtual-hostname", emulation::darwin_test::HostNameHex},
           std::pair{"mach-time", "68"},
           std::pair{"mach-timebase-values",
                     emulation::darwin_test::TimebaseHex},
@@ -489,6 +491,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
            ? emulation::darwin_test::ResourceLimitsJSON
        : (ModeName == "resource-usage" || ModeName == "virtual-resource-usage")
            ? emulation::darwin_test::ResourceUsageJSON
+       : (ModeName == "hostname" || ModeName == "virtual-hostname")
+           ? emulation::darwin_test::HostNameJSON
            : emulation::darwin_test::SystemJSON) +
       R"(,"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":)" +
       emulation::darwin_test::MetadataJSON +
@@ -1507,6 +1511,28 @@ TEST_F(ProcessPublic, AndroidSyscallNamesMatchSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, DarwinHostNameRejectsMalformedOptionsBeforeLoading) {
+  for (const auto &Bad :
+       {std::string("null"), std::string("true"), std::string("1"),
+        std::string("[]"), std::string("{}"), std::string("\"x\\u0000y\""),
+        "\"" + std::string(256, 'x') + "\""}) {
+    auto Request = std::string(R"({"darwin_system":{"hostname":)") + Bad + "}}";
+    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho",
+                                          MacOSMachO64, Request.c_str()),
+              nullptr);
+    EXPECT_NE(takeString(neverd_last_error(Session)).find("hostname"),
+              std::string::npos);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+  for (const char *Profile : {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
+    EXPECT_EQ(
+        neverd_emulate_process_json(Session, "missing.macho", Profile,
+                                    R"({"darwin_system":{"hostname":""}})"),
+        nullptr);
+    EXPECT_EQ(takeString(neverd_last_error(Session)),
+              field::DarwinSystemProfile);
+  }
+}
 TEST_F(ProcessPublic, DarwinDescriptorCapRejectsMalformedOptionsBeforeLoading) {
   for (const char *Bad :
        {"null", "true", "-1", "0.5", "2147483648", R"("4294967296")"}) {

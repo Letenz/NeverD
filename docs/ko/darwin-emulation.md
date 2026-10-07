@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 854783aa85d00cdf9407d25b961d4a98e2a61885a55d71c416365143d066a1b7 -->
+<!-- i18n-source: 8ec53d25a48700a518aada5ae97b8d964eb979136488f13ba86d98558fc2da5c -->
 
 [← 문서 목록](README.md)
 
@@ -348,7 +348,7 @@ Release Darwin 835개: 통과474, 백엔드 미지원 건너뜀360, 기존 macOS
 
 `ProcessOptions::DarwinSystem` / `darwin_system`은 모든 Darwin 프로필의 `sysctl(202)`과 raw `sysctlbyname(274)`에 고정 관측값을 제공합니다. 필드는 모두 선택 사항이며, 누락된 값이나 목록 밖의 키는 지원되지 않음으로 중단합니다. 호스트 조회나 버전·모델 추정은 없습니다. 엄격한 JSON 및 C++ 검증은 이미지 로드 전에 잘못된 값과 비 Darwin 프로필을 거부합니다.
 
-`os_revision`은 부호 있는 32비트, `cpu_count`는 1..INT32_MAX, `memory_size`는 부호 없는 64비트입니다. `max_files_per_process`는 0..INT32_MAX의 4바이트 int입니다. 나머지 스칼라 필드는 최대 1023바이트이며 내부 NUL이 없는 문자열입니다. 명시적 빈 문자열도 유효하고 결과는 끝 NUL을 포함합니다. 관측값은 스케줄링, 할당 또는 기술자 예산을 변경하지 않습니다.
+`os_revision`은 부호 있는 32비트, `cpu_count`는 1..INT32_MAX, `memory_size`는 부호 없는 64비트입니다. `max_files_per_process`는 0..INT32_MAX의 4바이트 int입니다. 나머지 스칼라 필드는 최대 1023바이트(`hostname`은 255바이트)이며 내부 NUL이 없는 문자열입니다. 명시적 빈 문자열도 유효하고 결과는 끝 NUL을 포함합니다. 관측값은 스케줄링, 할당 또는 기술자 예산을 변경하지 않습니다.
 
 | JSON 필드 | sysctl 이름 | MIB |
 | --- | --- | --- |
@@ -362,17 +362,20 @@ Release Darwin 835개: 통과474, 백엔드 미지원 건너뜀360, 기존 macOS
 | `cpu_count` | `hw.ncpu` | `6,3` |
 | `memory_size` | `hw.memsize` | `6,24` |
 | `max_files_per_process` | `kern.maxfilesperproc` | `1,29` |
+| `hostname` | `kern.hostname` | `1,10` |
 
 `hw.pagesize`는 기존 게스트 메모리 정책을 따르며 보통8바이트, null이 아닌 출력의 용량이 정확히4이면4바이트입니다. 기존 MIB `[6,7]`과 `hw.pagesize_compat`는 항상4바이트입니다. `hw.pagesize`의 동적 숫자 OID는 지원하지 않습니다. `hw.memsize`도 용량4에서64비트 패턴이 부호 있는32비트 값의 부호 확장과 일치할 때만 축소합니다. 그렇지 않으면 ERANGE34이며 출력과 길이를 유지합니다.
 
-MIB 개수는 하위32비트로2～12, 이름 길이는 전체64비트로1024 미만이어야 합니다. 지정된 모든 바이트를 검사한 뒤 첫 NUL을 해석하고 끝의 점 하나를 제거합니다. 빈 이름은 ENOENT, 부분적으로 읽을 수 있는 입력은 미지원입니다. null이 아닌 `oldlenp`는 효과 발생 전에8바이트 전체를 읽고 쓸 수 있어야 합니다. 잘못된 길이 포인터의 네이티브 실험이 제한 시간 안에 반환하지 않아 명시적으로 지원 범위 밖에 둡니다. null `oldlenp`는 용량0, null `oldp`는 크기 조회입니다. 짧은 버퍼는 ENOMEM12, 데이터 불변, 길이0입니다. 데이터 EFAULT는 이전 길이를 보존합니다. 입력과 용량을 먼저 캡처하고 데이터 다음 길이를 쓰므로 별칭 순서와 후속 전송 실패 전의 복사를 보존합니다.
+MIB 개수는 하위32비트로2～12, 이름 길이는 전체64비트로1024 미만이어야 합니다. 지정된 모든 바이트를 검사한 뒤 첫 NUL을 해석하고 끝의 점 하나를 제거합니다. 빈 이름은 ENOENT, 부분적으로 읽을 수 있는 입력은 미지원입니다. null이 아닌 `oldlenp`는 효과 발생 전에8바이트 전체를 읽고 쓸 수 있어야 합니다. 잘못된 길이 포인터의 네이티브 실험이 제한 시간 안에 반환하지 않아 명시적으로 지원 범위 밖에 둡니다. null `oldlenp`는 용량0, null `oldp`는 크기 조회입니다. `kern.hostname` 외의 짧은 버퍼는 ENOMEM12, 데이터 불변, 길이0입니다. 데이터 EFAULT는 이전 길이를 보존합니다. 입력과 용량을 먼저 캡처하고 데이터 다음 길이를 쓰므로 별칭 순서와 후속 전송 실패 전의 복사를 보존합니다.
 
-newp/newlen 모두0이 아니면 쓰기입니다. 이름/MIB와 oldlenp 전체 읽기/쓰기 사전 검사를 먼저 유지합니다. 기본 또는 명시적 비root EUID는 관측/데이터 출력 검사 전 EPERM1이며 EUID0의 kern.osversion / kern.maxfilesperproc 특권 쓰기는 미구현이므로 unsupported입니다. RUID는 결정하지 않습니다. 다른 네이티브 읽기 전용 노드는root도 EPERM1입니다. 새 길이0은 포인터를 무시하고 알 수 없는 키/트리/동적OID의 ENOENT는 추정하지 않습니다.
+`hostname`은 이 guest 호출자에게 보이는 바이트를 선언합니다. 호스트 조회, 모바일 환경의 `localhost` 기본값 또는 entitlement 추론은 없습니다. 생략은 미지이며 명시적 빈 문자열은 NUL 하나를 반환합니다. `kern.hostname`의 null이 아닌 출력이 양수 용량에서 짧으면 정확히 그 용량의 바이트를 끝 NUL과 함께 성공적으로 반환하고 해당 용량을 보고합니다. 용량0은 여전히 ENOMEM12, 길이0이며 데이터를 쓰지 않습니다. null 출력은 NUL을 포함한 전체 길이를 보고합니다. 실제 출력 범위만 검사합니다. 일부만 쓸 수 있는 범위는 미지원이고 접두부를 게시하지 않습니다. 네이티브 부분 복사는 모델 밖입니다. libc uname/gethostname이 쓰는 raw 관측만 추가하며 dylib 가져오기나 완전한 런타임을 구현하지 않습니다.
+
+newp/newlen 모두0이 아니면 쓰기입니다. 이름/MIB와 oldlenp 전체 읽기/쓰기 사전 검사를 먼저 유지합니다. 기본 또는 명시적 비root EUID는 관측/데이터 출력 검사 전 EPERM1이며 EUID0의 kern.osversion / kern.maxfilesperproc / kern.hostname 특권 쓰기는 미구현이므로 unsupported입니다. RUID는 결정하지 않습니다. 다른 네이티브 읽기 전용 노드는root도 EPERM1입니다. 새 길이0은 포인터를 무시하고 알 수 없는 키/트리/동적OID의 ENOENT는 추정하지 않습니다.
 
 자체 작성 `system-info`는 네이티브 macOS와 게스트 ABI를 검사하고 `virtual-system`은 C++·C/CLI·Python에서 설정 바이트를 비교합니다. 별도 SDK 검사는 호스트의 아홉 관측값을 명시적 테스트 입력으로 삼아 이름·숫자 출력을 비교합니다. iOS 실기기나 Intel HVF 검증을 뜻하지 않습니다.
 
 ```json
-{"darwin_system":{"os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
+{"darwin_system":{"hostname":"guest-node","os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
 ```
 
 [XNU sysctl](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_newsysctl.c), [XNU hardware MIB](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mib.c), [Apple sysctl(3)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/sysctl.3.html).

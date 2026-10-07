@@ -58,6 +58,7 @@ NEVERD_PROCESS_REPORT_FIELD(ResourceUsageSystemMicroseconds,
                             "system_microseconds")
 NEVERD_PROCESS_REPORT_FIELD(ResourceUsageCounters, "counters")
 NEVERD_PROCESS_REPORT_FIELD(SystemMaxFilesPerProcess, "max_files_per_process")
+NEVERD_PROCESS_REPORT_FIELD(SystemHostName, "hostname")
 NEVERD_PROCESS_REPORT_FIELD(TimeOfDay, "time_of_day")
 NEVERD_PROCESS_REPORT_FIELD(Microseconds, "microseconds")
 NEVERD_PROCESS_REPORT_FIELD(MachAbsoluteTime, "mach_absolute_time")

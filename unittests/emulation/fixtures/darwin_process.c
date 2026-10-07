@@ -55,6 +55,98 @@ static u64 little_integer(const unsigned char *p, unsigned width) {
     value |= (u64)p[i] << (i * 8);
   return value;
 }
+/* Read-only workload shared unchanged with the native kernel. Its marker
+ * depends on shape/ABI, never a host-name literal; virtual mode emits bytes. */
+static int hostname_calls(int emit_values) {
+  unsigned error;
+  const char name[] = "kern.hostname";
+  unsigned mib[] = {1, 10};
+  unsigned char full[256], bytes[258];
+  u64 size = 0, length;
+  if (call(274, (u64)name, 13, 0, (u64)&size, 0, 0, &error) || error ||
+      secondary || !size || size > sizeof(full))
+    return 40;
+  length = sizeof(full);
+  if (call(202, (u64)mib, 0x1234567800000002UL, (u64)full, (u64)&length, 0, 0,
+           &error) ||
+      error || secondary || length != size || full[size - 1])
+    return 41;
+  const u64 capacities[] = {0, 1, 2, size - 1, size, size + 1, 256};
+  for (unsigned named = 0; named != 2; ++named) {
+    const u64 input = named ? (u64)name : (u64)mib;
+    const u64 count = named ? 13 : 0x1234567800000002UL;
+    const u64 number = named ? 274 : 202;
+    for (unsigned c = 0; c != 7; ++c) {
+      u64 n = capacities[c] < size ? capacities[c] : size;
+      for (unsigned i = 0; i != n + 2; ++i)
+        bytes[i] = 0xa5;
+      length = capacities[c];
+      u64 ret = call(number, input, count, (u64)(bytes + 1), (u64)&length, 0, 0,
+                     &error);
+      if (ret != (n ? 0 : 12) || error != !n || length != n ||
+          (n && secondary) || bytes[0] != 0xa5 || bytes[n + 1] != 0xa5)
+        return 42;
+#if defined(__aarch64__)
+      if (!n && secondary)
+        return 43;
+#else
+      if (!n && secondary != (u64)(bytes + 1))
+        return 43;
+#endif
+      for (unsigned i = 0; i + 1 < n; ++i)
+        if (bytes[i + 1] != full[i])
+          return 44;
+      if (n && bytes[n])
+        return 45;
+    }
+    for (unsigned variant = 0; variant != 3; ++variant) {
+      length = 1;
+      if (call(number, input, count, 0, (u64)&length, variant == 1 ? -1UL : 0,
+               variant == 2 ? 1 : 0, &error) ||
+          error || secondary || length != size)
+        return 46;
+    }
+  }
+  const char marker = 'n';
+  length = emit_values ? size : 1;
+  return call(4, 1, emit_values ? (u64)full : (u64)&marker, length, 0, 0, 0,
+              &error) == length &&
+                 !error
+             ? 37
+             : 47;
+}
+/* Model-only authority boundary. Never registered as a native workload. */
+static int hostname_write(void) {
+  unsigned error;
+  const char name[] = "kern.hostname", before = '!', after = 'w';
+  u64 length = 2;
+  if (call(4, 1, (u64)&before, 1, 0, 0, 0, &error) != 1 || error)
+    return 48;
+  if (call(274, (u64)name, 13, -1UL, (u64)&length, -1UL, 1, &error) != 1 ||
+      !error || length != 2)
+    return 49;
+#if defined(__aarch64__)
+  if (secondary)
+    return 49;
+#else
+  if (secondary != -1UL)
+    return 49;
+#endif
+  return call(4, 1, (u64)&after, 1, 0, 0, 0, &error) == 1 && !error ? 37 : 50;
+}
+static int hostname_query(int prior_output) {
+  unsigned error;
+  const char name[] = "kern.hostname", before = '!';
+  unsigned char byte = 0xa5;
+  u64 length = 1;
+  if (prior_output &&
+      (call(4, 1, (u64)&before, 1, 0, 0, 0, &error) != 1 || error))
+    return 51;
+  if (call(274, (u64)name, 13, (u64)&byte, (u64)&length, 0, 0, &error) ||
+      error || secondary || length != 1 || byte)
+    return 52;
+  return call(4, 1, (u64)&byte, 1, 0, 0, 0, &error) == 1 && !error ? 37 : 53;
+}
 static int credentials(int emit_values) {
   unsigned error;
   const u64 sentinel = 0x1122334455667788UL;
@@ -3187,6 +3279,13 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (equal(argv[1], "resource-limits") ||
       equal(argv[1], "virtual-resource-limits"))
     return resource_limits(equal(argv[1], "virtual-resource-limits"));
+  if (equal(argv[1], "hostname") || equal(argv[1], "virtual-hostname"))
+    return hostname_calls(equal(argv[1], "virtual-hostname"));
+  if (equal(argv[1], "hostname-write"))
+    return hostname_write();
+  if (equal(argv[1], "hostname-query") ||
+      equal(argv[1], "hostname-missing-after"))
+    return hostname_query(equal(argv[1], "hostname-missing-after"));
   if (equal(argv[1], "descriptor-table-query"))
     return descriptor_table_query();
   if (equal(argv[1], "system-info") || equal(argv[1], "virtual-system"))

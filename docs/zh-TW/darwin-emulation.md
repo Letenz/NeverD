@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 854783aa85d00cdf9407d25b961d4a98e2a61885a55d71c416365143d066a1b7 -->
+<!-- i18n-source: 8ec53d25a48700a518aada5ae97b8d964eb979136488f13ba86d98558fc2da5c -->
 
 [← 文件索引](README.md)
 
@@ -348,7 +348,7 @@ Release Darwin 共 835 項：474 通過、360 項後端不可用跳過，既有 
 
 `ProcessOptions::DarwinSystem` / `darwin_system` 為所有 Darwin 設定的 `sysctl(202)` 與原始 `sysctlbyname(274)` 提供固定觀察值。各欄位皆可省略；缺少的值或未列出的鍵明確停止為不支援。不查詢主機、不推測版本或機型。嚴格 JSON 與 C++ 驗證在載入映像前拒絕非法值與非 Darwin 設定。
 
-`os_revision` 為有符號 32 位；`cpu_count` 為 1..INT32_MAX；`memory_size` 保留無符號 64 位；`max_files_per_process` 為 0..INT32_MAX，採四位元組 int 編碼。其餘純量欄位是最多 1023 位元組且無內嵌 NUL 的字串，允許明確空字串，結果包含結尾 NUL。觀察值不改變排程、配置或描述符預算。
+`os_revision` 為有符號 32 位；`cpu_count` 為 1..INT32_MAX；`memory_size` 保留無符號 64 位；`max_files_per_process` 為 0..INT32_MAX，採四位元組 int 編碼。其餘純量欄位是最多 1023 位元組（`hostname` 限 255 位元組）且無內嵌 NUL 的字串，允許明確空字串，結果包含結尾 NUL。觀察值不改變排程、配置或描述符預算。
 
 | JSON 欄位 | sysctl 名稱 | MIB |
 | --- | --- | --- |
@@ -362,17 +362,20 @@ Release Darwin 共 835 項：474 通過、360 項後端不可用跳過，既有 
 | `cpu_count` | `hw.ncpu` | `6,3` |
 | `memory_size` | `hw.memsize` | `6,24` |
 | `max_files_per_process` | `kern.maxfilesperproc` | `1,29` |
+| `hostname` | `kern.hostname` | `1,10` |
 
 `hw.pagesize` 取自既有客體記憶體策略，通常為8位元組；非空輸出且容量恰為4時為4位元組。舊 MIB `[6,7]` 與 `hw.pagesize_compat` 固定回傳4位元組。`hw.pagesize` 的動態數字 OID 仍不支援。`hw.memsize` 在容量恰為4時，僅當64位模式是帶符號32位值的符號擴展才縮窄，否則 ERANGE34 保持輸出與長度不變。
 
-MIB 數量取低32位且須為2–12；名稱長度取完整64位且須小於1024。先檢查全部指定的位元組，再依首個 NUL 解讀並移除一個末尾點；空名稱回傳 ENOENT，部分可讀輸入不支援。非空 `oldlenp` 在副作用前須完整具備8位元組讀寫權限；原生錯誤長度指標探測未在期限內返回，因此明確不支援。空 `oldlenp` 表示容量0；空 `oldp` 僅查長度。短緩衝區回傳 ENOMEM12、不寫資料並將長度設0；資料 EFAULT 保持原長度。先擷取輸入與容量，再寫資料、最後寫長度，保留別名順序與後續傳輸失敗前完成的複製。
+MIB 數量取低32位且須為2–12；名稱長度取完整64位且須小於1024。先檢查全部指定的位元組，再依首個 NUL 解讀並移除一個末尾點；空名稱回傳 ENOENT，部分可讀輸入不支援。非空 `oldlenp` 在副作用前須完整具備8位元組讀寫權限；原生錯誤長度指標探測未在期限內返回，因此明確不支援。空 `oldlenp` 表示容量0；空 `oldp` 僅查長度。除 `kern.hostname` 外，短緩衝區回傳 ENOMEM12、不寫資料並將長度設0；資料 EFAULT 保持原長度。先擷取輸入與容量，再寫資料、最後寫長度，保留別名順序與後續傳輸失敗前完成的複製。
 
-newp/newlen 均非零才是寫入請求。先保留名稱/MIB 與 oldlenp 完整讀寫預檢，再由預設或明確非 root EUID 在觀察值和資料輸出前回傳 EPERM1。EUID0 的 kern.osversion / kern.maxfilesperproc 特權寫入明確停止 unsupported；RUID 不決定此分支。其他原生唯讀節點即使 root 仍 EPERM1。新長度0忽略指標；未知鍵、樹和動態 OID 不猜 ENOENT。
+`hostname` 宣告此 guest 呼叫者可見的位元組，不查詢宿主、不替行動環境補上 `localhost`，也不推斷 entitlement。省略為未知，明確空字串回傳一個 NUL。`kern.hostname` 的非空輸出容量若為正且不足，會成功回傳恰好該容量的位元組，以 NUL 結尾並報告該容量。零容量仍回傳 ENOMEM12、長度0且不寫資料；空輸出指標報告包含 NUL 的完整長度。只檢查實際輸出範圍；部分可寫範圍仍不支援且不發布前綴，原生部分複製行為不在模型內。這只增加 libc uname/gethostname 使用的原始觀察值，不實作其 dylib 匯入或完整執行環境。
+
+newp/newlen 均非零才是寫入請求。先保留名稱/MIB 與 oldlenp 完整讀寫預檢，再由預設或明確非 root EUID 在觀察值和資料輸出前回傳 EPERM1。EUID0 的 kern.osversion / kern.maxfilesperproc / kern.hostname 特權寫入明確停止 unsupported；RUID 不決定此分支。其他原生唯讀節點即使 root 仍 EPERM1。新長度0忽略指標；未知鍵、樹和動態 OID 不猜 ENOENT。
 
 原創 `system-info` 檢查原生 macOS 與客體 ABI；`virtual-system` 透過 C++、C/CLI、Python 比對明確設定的位元組。獨立 SDK 對照將主機九項觀察值作為明確測試輸入，比較名稱與數字輸出；不代表 iOS 實機或 Intel HVF 驗收。
 
 ```json
-{"darwin_system":{"os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
+{"darwin_system":{"hostname":"guest-node","os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
 ```
 
 [XNU sysctl](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_newsysctl.c), [XNU hardware MIB](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mib.c), [Apple sysctl(3)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/sysctl.3.html).
