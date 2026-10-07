@@ -72,12 +72,14 @@ the pseudocode and IR windows open beside the disassembly.
 
 ## Views
 
-**Disassembly** is the whole image as one address-ordered listing: segment and
-function headers, `proc`/`endp`, `loc_` labels, data items, alignment and
-cross-reference comments in the classic format, with `segment:address`
-prefixes and optional opcode bytes (**Options → General**). Only a window of
-lines around the viewport is held; the scroll bar maps to the linear address
-space. The arrow gutter draws branches, and clicking an identifier highlights
+**Disassembly** is the whole image as one address-ordered listing in the
+classic format: segment headers, function headers with their attributes and
+stack variables, `proc`/`endp`, `loc_` and `locret_` labels, data items,
+alignment and cross-reference comments, and the classic instruction spellings
+(`jz`, `retn`, `[rbp+var_30]`, sizes only where no operand implies them), with
+`segment:address` prefixes and optional opcode bytes (**Options → General**).
+Only a window of lines around the viewport is held; the scroll bar maps to the
+linear address space. The arrow gutter draws branches, and clicking an identifier highlights
 every occurrence. Names the engine leaves generic take their classic forms in
 the listing, function list and jumps: import thunks after their import, the
 entry point `start`, and `main` as passed to the C runtime's start routine.

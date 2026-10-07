@@ -41,6 +41,11 @@ constexpr int IndexStepFunctions = 2048;
 constexpr std::size_t MaxStringDisplay = 400;
 constexpr std::size_t MaxUnsizedInstructions = 65536;
 constexpr std::uint64_t MaxAlignment = 0x1000;
+// Classic listings name padding by the alignment of its end, up to this or the
+// smallest power of two longer than the padding.
+constexpr std::uint64_t ClassicAlignmentLimit = 0x20;
+// Automatic string names keep this many characters, the `a` included.
+constexpr std::size_t StringNameLength = 15;
 constexpr std::size_t MaxOverviewBuckets = 16384;
 constexpr int OverviewSamples = 4;
 constexpr int StringScanMinimum = 4;
@@ -50,6 +55,7 @@ constexpr char SeparatorRule[] = "; -------------------------------------------"
 constexpr char SubroutineRule[] =
     "; =============== S U B R O U T I N E ======="
     "================================";
+constexpr char AttributesLead[] = "; Attributes: ";
 constexpr char SegmentRule[] = "; ============================================="
                                "==============================";
 
@@ -207,6 +213,10 @@ bool isCodeRef(RefKind kind) {
 
 #define NEVERD_CLASSIC_NAME(Id, Spelling)                                      \
   constexpr std::string_view Id = Spelling;
+#define NEVERD_FUNCTION_ATTRIBUTE(Id, Spelling)                                \
+  constexpr std::string_view Id = Spelling;
+#define NEVERD_FRAME_NAME_PREFIX(Id, Prefix)                                   \
+  constexpr std::string_view Id = Prefix;
 #include "ListingVocabulary.def"
 
 struct Region {
@@ -236,6 +246,10 @@ struct DecodedFunction {
   std::vector<Instruction> instructions;
   std::set<std::uint64_t> labels;
   std::uint64_t end = 0;
+  /// The frame register a prologue sets up, or empty.
+  std::string_view frameRegister;
+  /// Stack variables by offset from the frame register, with their bytes.
+  std::map<std::int64_t, unsigned> frame;
 };
 struct StringItem {
   std::uint64_t address = 0, length = 0;
@@ -333,6 +347,7 @@ struct Listing::Impl {
   OperandDialect dialect = OperandDialect::Generic;
   bool wide = true, elf = false, macho = false;
   unsigned addressDigits = 16, pointerSize = 8;
+  std::uint64_t imageEntry = 0;
 
   bool built = false;
   int builtFunctionCount = -1;
@@ -435,6 +450,7 @@ struct Listing::Impl {
         if (const auto name = sectionFunctionName(region.name); !name.empty())
           rename(*function, std::string(name));
     const auto entry = neverd_session_entry_addr(session);
+    imageEntry = entry;
     if (auto *function = functionAtEntry(entry))
       rename(*function, std::string(EntryFunctionName));
     if (!functionNamed(MainFunctionName))
@@ -812,7 +828,7 @@ struct Listing::Impl {
           item.name = it->second;
           continue;
         }
-        const auto base = stringName(item.value);
+        const auto base = stringName(item);
         auto &count = used[base];
         item.name = count ? base + "_" + std::to_string(count - 1) : base;
         ++count;
@@ -829,22 +845,24 @@ struct Listing::Impl {
   }
 
   /// Automatic string label: `a` followed by the capitalized words.
-  static std::string stringName(const std::string &value) {
-    constexpr std::size_t MaxNameLength = 32;
+  /// The classic automatic name of a string: `a` and its words, each
+  /// capitalized, up to StringNameLength characters; `asc_` and the address
+  /// when it has no letters or digits.
+  static std::string stringName(const StringItem &item) {
     std::string name = "a";
-    bool capitalize = true;
-    for (unsigned char c : value) {
-      if (name.size() >= MaxNameLength)
+    bool wordStart = true;
+    for (unsigned char c : item.value) {
+      if (name.size() >= StringNameLength)
         break;
-      if (std::isalnum(c)) {
-        name += capitalize ? static_cast<char>(std::toupper(c))
-                           : static_cast<char>(c);
-        capitalize = false;
+      if (c < 0x80 && std::isalnum(c)) {
+        name += wordStart ? static_cast<char>(std::toupper(c))
+                          : static_cast<char>(std::tolower(c));
+        wordStart = false;
       } else {
-        capitalize = true;
+        wordStart = true;
       }
     }
-    return name.size() == 1 ? std::string("asc") : name;
+    return name.size() == 1 ? "asc_" + upperHex(item.address) : name;
   }
 
   //===--------------------------------------------------------------------===//
@@ -937,6 +955,76 @@ struct Listing::Impl {
     return result;
   }
 
+  /// The stack variables of a function whose prologue sets up a frame
+  /// pointer (`push rbp; mov rbp, rsp`, after an optional endbr).  An offset
+  /// the function addresses starts a variable typed by its first sized access
+  /// in address order (a byte when only its address is taken), unless it
+  /// falls inside the variable below it.
+  void buildFrame(DecodedFunction &body) const {
+    const auto &instructions = body.instructions;
+    std::size_t first = 0;
+    while (first < instructions.size() &&
+           (instructions[first].mnemonic == "endbr64" ||
+            instructions[first].mnemonic == "endbr32"))
+      ++first;
+    if (first + 1 >= instructions.size() ||
+        instructions[first].mnemonic != "push" ||
+        instructions[first + 1].mnemonic != "mov")
+      return;
+#define NEVERD_X86_FRAME_REGISTER(Name, PrologueSource)                        \
+  if (instructions[first].operands == Name &&                                  \
+      instructions[first + 1].operands ==                                      \
+          std::string(Name) + ", " + PrologueSource)                           \
+    body.frameRegister = Name;
+#include "ListingVocabulary.def"
+    if (body.frameRegister.empty())
+      return;
+    // Offset -> bytes of its first sized access, or zero.
+    std::map<std::int64_t, unsigned> accesses;
+    for (const auto &instruction : instructions) {
+      const auto access =
+          x86FrameAccess(instruction.operands, body.frameRegister);
+      // The saved frame pointer and return address are not variables.
+      if (!access || (access->offset >= 0 && access->offset < argumentBase()))
+        continue;
+      auto &size = accesses[access->offset];
+      if (!size)
+        size = access->size;
+    }
+    std::int64_t covered = std::numeric_limits<std::int64_t>::min();
+    for (const auto &[offset, size] : accesses) {
+      if (offset < covered)
+        continue;
+      const unsigned bytes = std::max(1u, size);
+      body.frame.emplace(offset, bytes);
+      covered = offset + static_cast<std::int64_t>(bytes);
+    }
+  }
+
+  /// Frame offset of the first stack argument: above the saved frame pointer
+  /// and the return address.
+  std::int64_t argumentBase() const {
+    return 2 * static_cast<std::int64_t>(pointerSize);
+  }
+
+  std::string frameName(std::int64_t offset) const {
+    return offset < 0 ? std::string(LocalPrefix) + upperHex(-offset)
+                      : std::string(ArgumentPrefix) +
+                            upperHex(offset - argumentBase());
+  }
+
+  /// The frame variable that \p offset falls in.
+  std::optional<FrameSlot> frameSlot(const DecodedFunction &body,
+                                     std::int64_t offset) const {
+    auto next = body.frame.upper_bound(offset);
+    if (next == body.frame.begin())
+      return std::nullopt;
+    const auto &[start, size] = *std::prev(next);
+    if (offset >= start + static_cast<std::int64_t>(size))
+      return std::nullopt;
+    return FrameSlot{frameName(start), offset - start, size};
+  }
+
   const DecodedFunction &decode(int index) {
     auto &function = functions[index];
     if (auto it = decoded.find(function.entry); it != decoded.end())
@@ -995,6 +1083,8 @@ struct Listing::Impl {
         if (it->kind == RefKind::Jump || it->kind == RefKind::CondJump)
           body.labels.insert(it->to);
     }
+    if (dialect == OperandDialect::X86)
+      buildFrame(body);
     // Only real instruction boundaries can carry labels.
     for (auto it = body.labels.begin(); it != body.labels.end();) {
       const auto at =
@@ -1042,7 +1132,10 @@ struct Listing::Impl {
       return it->second;
     std::uint64_t alignment = 0;
     const std::uint64_t length = end - start;
-    for (std::uint64_t candidate = MaxAlignment; candidate >= 2; candidate /= 2)
+    std::uint64_t limit = ClassicAlignmentLimit;
+    while (limit <= length && limit < MaxAlignment)
+      limit *= 2;
+    for (std::uint64_t candidate = limit; candidate >= 2; candidate /= 2)
       if (end % candidate == 0 && length < candidate) {
         alignment = candidate;
         break;
@@ -1190,7 +1283,10 @@ struct Listing::Impl {
     if (regions[region].exec) {
       const int f = functionIndex(address);
       if (use == NameUse::Transfer || f >= 0)
-        return {(f >= 0 ? "loc_" : "unk_") + upperHex(address),
+        return {(f < 0                   ? "unk_"
+                 : returnsAt(f, address) ? "locret_"
+                                         : "loc_") +
+                    upperHex(address),
                 ListingRole::DummyCodeName, address};
     }
     std::string prefix = "unk_";
@@ -1200,6 +1296,18 @@ struct Listing::Impl {
       if (const auto sized = dataNamePrefix(sizeKeyword); !sized.empty())
         prefix = std::string(sized);
     return {prefix + upperHex(address), ListingRole::DummyDataName, address};
+  }
+
+  /// Whether the instruction at \p address in function \p f returns.
+  bool returnsAt(int f, std::uint64_t address) {
+    const auto &instructions = decode(f).instructions;
+    const auto it =
+        std::lower_bound(instructions.begin(), instructions.end(), address,
+                         [](const Instruction &i, std::uint64_t value) {
+                           return i.address < value;
+                         });
+    return it != instructions.end() && it->address == address &&
+           it->flow == Flow::Return;
   }
 
   std::string locationText(std::uint64_t address) {
@@ -1413,27 +1521,42 @@ struct Listing::Impl {
   }
 
   StyledText instructionText(const Instruction &instruction, std::size_t base,
-                             StyledText text = {}) {
+                             StyledText text = {},
+                             const DecodedFunction *body = nullptr) {
     text.padTo(base);
+    const auto classic = classicInstruction(
+        dialect, instruction.mnemonic, instruction.operands, instruction.bytes);
     // Control transfers get their own role, like a source editor's control
     // keywords.
-    text.append(instruction.mnemonic, instruction.flow == Flow::None
-                                          ? ListingRole::Mnemonic
-                                          : ListingRole::FlowMnemonic);
+    text.append(classic.mnemonic, instruction.flow == Flow::None
+                                      ? ListingRole::Mnemonic
+                                      : ListingRole::FlowMnemonic);
     OperandFacts facts;
     facts.dialect = dialect;
-    facts.mnemonic = instruction.mnemonic;
+    // Without its prefixes (`rep movsb`).
+    const auto space = classic.mnemonic.rfind(' ');
+    facts.mnemonic = std::string_view(classic.mnemonic)
+                         .substr(space == std::string::npos ? 0 : space + 1);
     facts.address = instruction.address;
     facts.size = instruction.size;
     facts.wide = wide;
     facts.flow = flowName(instruction.flow);
     facts.target = instruction.target;
+    facts.bytes = instruction.bytes;
+    FrameNamer frame;
+    if (body && !body->frame.empty()) {
+      frame = [this, body](std::int64_t offset) {
+        return frameSlot(*body, offset);
+      };
+      facts.frameRegister = body->frameRegister;
+      facts.frame = &frame;
+    }
     for (const auto &[to, kind] : instruction.refs)
       facts.references.push_back(to);
-    if (!instruction.operands.empty()) {
+    if (!classic.operands.empty()) {
       text.padTo(base + MnemonicWidth);
       text.append(formatOperands(
-          instruction.operands, facts,
+          classic.operands, facts,
           [this](std::uint64_t address, NameUse use, std::string_view size) {
             return nameOf(address, use, size);
           }));
@@ -1447,17 +1570,28 @@ struct Listing::Impl {
     const DecodedFunction &body = decode(item.function);
     const Instruction &instruction = body.instructions[item.index];
     if (item.start == function.entry) {
-      // Function header: rule, exports and the proc line with references.
-      // A preceding function already ends with a blank line.
-      const bool afterFunction = item.start > regions[item.region].start &&
-                                 functionIndex(item.start - 1) >= 0;
-      if (!afterFunction)
-        addLine(out, item, item.start, "blank", {});
+      // Function header: a rule, the attribute block (each ends with a blank
+      // line), exports and the proc line with references.
+      addLine(out, item, item.start, "blank", {});
       StyledText rule = lead(base - NameColumnWidth);
       rule.append(SubroutineRule, ListingRole::Separator);
       addLine(out, item, item.start, "separator", std::move(rule));
       addLine(out, item, item.start, "blank", {});
-      if (function.exported) {
+      std::string attributes;
+      for (const auto &[present, spelling] :
+           {std::pair{function.library, LibraryAttribute},
+            std::pair{function.thunk, ThunkAttribute},
+            std::pair{!body.frameRegister.empty(), FrameAttribute}})
+        if (present)
+          attributes += (attributes.empty() ? "" : " ") + std::string(spelling);
+      if (!attributes.empty()) {
+        StyledText line = lead(base - NameColumnWidth);
+        line.append(AttributesLead + attributes, ListingRole::AutoComment);
+        addLine(out, item, item.start, "comment", std::move(line));
+      }
+      addLine(out, item, item.start, "blank", {});
+      // The entry point is public like every export.
+      if (function.exported || function.entry == imageEntry) {
         StyledText publicLine = lead(base);
         publicLine.append("public ", ListingRole::Directive);
         publicLine.append(function.name, ListingRole::CodeName, function.entry);
@@ -1472,6 +1606,24 @@ struct Listing::Impl {
       head.append("proc near", ListingRole::Directive);
       addNamedLine(out, item, base - NameColumnWidth, std::move(head),
                    item.start, "header");
+      if (!body.frame.empty()) {
+        addLine(out, item, item.start, "blank", {});
+        for (const auto &[offset, size] : body.frame) {
+          StyledText line = lead(base - NameColumnWidth);
+          line.append(frameName(offset), ListingRole::Plain);
+          line.padTo(base);
+          line.append("= ", ListingRole::Punctuation);
+          line.append(std::string(x86SizeKeyword(size)) + " ptr",
+                      ListingRole::Keyword);
+          // Offsets align on their sign: `-30h`, ` 10h`.
+          line.append(offset < 0 ? " -" : "  ", ListingRole::Punctuation);
+          line.append(x86Number(static_cast<std::uint64_t>(
+                          offset < 0 ? -offset : offset)),
+                      ListingRole::Number);
+          addLine(out, item, item.start, "frame", std::move(line));
+        }
+        addLine(out, item, item.start, "blank", {});
+      }
     } else if (body.labels.contains(item.start)) {
       addLine(out, item, item.start, "blank", {});
       StyledText label = lead(base - NameColumnWidth);
@@ -1482,7 +1634,8 @@ struct Listing::Impl {
                    item.start, "label");
     }
     StyledText text = instructionText(
-        instruction, base, opcodeColumn(instruction, base - NameColumnWidth));
+        instruction, base, opcodeColumn(instruction, base - NameColumnWidth),
+        &body);
     const auto comment =
         takeString(neverd_annotation_get(session, instruction.address));
     appendComment(text, comment, ListingRole::Comment, base - NameColumnWidth);
@@ -1491,14 +1644,21 @@ struct Listing::Impl {
       target = instruction.refs.front().first;
     addLine(out, item, item.start, "insn", std::move(text), target);
     out.back().flow = std::string(flowName(instruction.flow));
-    const bool last = item.start + item.size >= body.end;
-    if (last) {
+    const std::uint64_t next = item.start + item.size;
+    if (next >= body.end) {
+      // The footer belongs to the last instruction.  Code that no function
+      // owns, padding or data follows a rule; a function brings its own.
       StyledText end = lead(base - NameColumnWidth);
       end.append(function.name, ListingRole::CodeName, function.entry);
       end.padTo(base);
       end.append("endp", ListingRole::Directive);
-      addLine(out, item, item.start + item.size, "footer", std::move(end));
-      addLine(out, item, item.start + item.size, "blank", {});
+      addLine(out, item, item.start, "footer", std::move(end));
+      addLine(out, item, item.start, "blank", {});
+      if (next < regions[item.region].end && !functionAtEntry(next)) {
+        StyledText rule = lead(base - NameColumnWidth);
+        rule.append(SeparatorRule, ListingRole::Separator);
+        addLine(out, item, item.start, "separator", std::move(rule));
+      }
     } else if (!fallsThrough(instruction.flow)) {
       StyledText rule = lead(base - NameColumnWidth);
       rule.append(SeparatorRule, ListingRole::Separator);
@@ -1592,12 +1752,6 @@ struct Listing::Impl {
       xrefs.erase(xrefs.begin());
     } else if (!comment.empty())
       appendComment(head, comment, ListingRole::AutoComment, nameBase);
-    if (item.kind == ItemKind::Align && item.start > regions[item.region].start)
-      addLine(out, item, item.start, "separator", [&] {
-        auto t = lead(nameBase);
-        t.append(SeparatorRule, ListingRole::Separator);
-        return t;
-      }());
     addLine(out, item, item.start, "data", std::move(head), target);
     for (auto &more : xrefs) {
       StyledText line = lead(nameBase);
@@ -2075,7 +2229,7 @@ Json Listing::blockLines(std::uint64_t start, std::uint64_t end) {
     emit(start, label, "label");
   }
   for (; it != body.instructions.end() && it->address < end; ++it) {
-    StyledText text = d.instructionText(*it, 0);
+    StyledText text = d.instructionText(*it, 0, {}, &body);
     const auto comment =
         takeString(neverd_annotation_get(d.session, it->address));
     if (!comment.empty())

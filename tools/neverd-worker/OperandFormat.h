@@ -59,6 +59,18 @@ struct LocationName {
 using LocationNamer = std::function<LocationName(
     std::uint64_t Address, NameUse Use, std::string_view SizeKeyword)>;
 
+/// A stack variable that a frame-relative operand falls in.
+struct FrameSlot {
+  std::string name;
+  /// Offset of the operand inside the variable.
+  std::int64_t delta = 0;
+  /// Bytes the variable spans.
+  unsigned size = 0;
+};
+
+/// Names the frame variable at an offset from the frame register.
+using FrameNamer = std::function<std::optional<FrameSlot>(std::int64_t)>;
+
 struct OperandFacts {
   OperandDialect dialect = OperandDialect::Generic;
   std::string_view mnemonic;
@@ -70,7 +82,39 @@ struct OperandFacts {
   std::optional<std::uint64_t> target;
   /// Constant locations the instruction reads, writes or takes the address of.
   std::vector<std::uint64_t> references;
+  /// Instruction bytes as lowercase hexadecimal, or empty.
+  std::string_view bytes;
+  /// The frame register and variables of a function with a frame pointer.
+  std::string_view frameRegister;
+  const FrameNamer *frame = nullptr;
 };
+
+/// A memory operand relative to a frame register.
+struct FrameAccess {
+  std::int64_t offset = 0;
+  /// Bytes accessed, or zero when only the address is taken.
+  unsigned size = 0;
+};
+
+/// The memory operand of x86 operand text based on \p frameRegister.
+std::optional<FrameAccess> x86FrameAccess(std::string_view operands,
+                                          std::string_view frameRegister);
+
+/// The x86 size keyword of \p bytes ("qword" for 8), or empty.
+std::string_view x86SizeKeyword(unsigned bytes);
+
+/// An instruction's mnemonic and operand text as classic listings spell it.
+struct ClassicInstruction {
+  std::string mnemonic, operands;
+};
+
+/// Respell engine disassembler text for \p dialect: classic mnemonics, hidden
+/// prefixes, implicit string operands and folded operand forms.  The
+/// instruction is the same; only its spelling changes.
+ClassicInstruction classicInstruction(OperandDialect dialect,
+                                      std::string_view mnemonic,
+                                      std::string_view operands,
+                                      std::string_view bytes);
 
 /// IDA-compatible x86 numeric spelling: decimal below ten, otherwise uppercase
 /// hexadecimal with an `h` suffix and a leading zero before a letter.

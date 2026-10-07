@@ -4,7 +4,9 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <iterator>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace neverd::worker {
@@ -127,6 +129,118 @@ bool isTransfer(std::string_view flow) {
   return flow == "call" || flow == "jump" || flow == "cjump";
 }
 
+/// Classic operand forms of one x86 instruction (NEVERD_X86_OPERAND_FORM).
+enum X86OperandForm : unsigned {
+  FoldRepeatedSource = 1u << 0,
+  SwapRegisters = 1u << 1,
+  SignedByte = 1u << 2,
+  StackWidth = 1u << 3,
+};
+
+unsigned x86OperandForms(std::string_view mnemonic) {
+  static const std::unordered_map<std::string_view, unsigned> forms = [] {
+    std::unordered_map<std::string_view, unsigned> result;
+#define NEVERD_X86_OPERAND_FORM(Mnemonic, Form) result[Mnemonic] |= Form;
+#include "ListingVocabulary.def"
+    return result;
+  }();
+  const auto it = forms.find(mnemonic);
+  return it == forms.end() ? 0 : it->second;
+}
+
+/// The size keyword a general purpose register implies, or empty.
+std::string_view x86RegisterSize(std::string_view name) {
+  static const std::unordered_map<std::string, std::string_view> sizes = [] {
+    std::unordered_map<std::string, std::string_view> result;
+#define NEVERD_X86_REGISTER_SIZE(Keyword, Name) result.emplace(Name, Keyword);
+#define NEVERD_X86_REGISTER_SIZE_RANGE(Keyword, Prefix, First, Last, Suffix)   \
+  for (int index = First; index <= Last; ++index)                              \
+    result.emplace(std::string(Prefix) + std::to_string(index) + Suffix,       \
+                   Keyword);
+#include "ListingVocabulary.def"
+    return result;
+  }();
+  const auto it = sizes.find(lower(name));
+  return it == sizes.end() ? std::string_view() : it->second;
+}
+
+unsigned sizeBits(std::string_view keyword) {
+#define NEVERD_X86_SIZE_BITS(Keyword, Bits)                                    \
+  if (keyword == Keyword)                                                      \
+    return Bits;
+#include "ListingVocabulary.def"
+  return 0;
+}
+
+bool isDisplacedBase(std::string_view name) {
+  static const std::unordered_set<std::string_view> bases = {
+#define NEVERD_X86_DISPLACED_BASE(Name) Name,
+#include "ListingVocabulary.def"
+  };
+  return bases.contains(lower(name));
+}
+
+bool isThreadSegment(std::string_view name) {
+  static const std::unordered_set<std::string_view> segments = {
+#define NEVERD_X86_THREAD_SEGMENT(Name) Name,
+#include "ListingVocabulary.def"
+  };
+  return segments.contains(name);
+}
+
+/// Width in bytes of the zero displacement a multi-byte no-op encodes in its
+/// ModRM byte, or zero.
+unsigned noOpDisplacementBytes(std::string_view bytes) {
+  // ModRM.mod: 01 adds a byte of displacement, 10 four bytes.
+  constexpr unsigned Displacement8 = 1, Displacement32 = 2;
+  std::vector<unsigned char> encoding;
+  for (std::size_t i = 0; i + 1 < bytes.size(); i += 2) {
+    unsigned value = 0;
+    const auto parsed =
+        std::from_chars(bytes.data() + i, bytes.data() + i + 2, value, 16);
+    if (parsed.ec != std::errc{} || parsed.ptr != bytes.data() + i + 2)
+      return 0;
+    encoding.push_back(static_cast<unsigned char>(value));
+  }
+  unsigned char escape = 0, opcode = 0;
+#define NEVERD_X86_MULTIBYTE_NOP(Escape, Opcode)                               \
+  escape = Escape;                                                             \
+  opcode = Opcode;
+#include "ListingVocabulary.def"
+  const auto at = std::find(encoding.begin(), encoding.end(), escape);
+  if (std::distance(at, encoding.end()) < 3 || at[1] != opcode)
+    return 0;
+  const unsigned mod = at[2] >> 6;
+  return mod == Displacement8 ? 1 : mod == Displacement32 ? 4 : 0;
+}
+
+/// Facts an x86 operand needs about the other operands of its instruction.
+struct X86Context {
+  /// Size keywords that register operands state.
+  std::vector<std::string_view> registerSizes;
+  /// Width of a negative immediate shown unsigned, or zero to keep its sign.
+  unsigned immediateBits = 0;
+  /// A negative immediate that fits a signed byte keeps its sign.
+  bool signedByte = false;
+};
+
+/// The size keyword in front of a memory operand, or empty.
+std::string memorySize(const std::vector<Token> &tokens) {
+  for (const Token &token : tokens) {
+    if (token.kind == TokenKind::Punct && token.text == "[")
+      break;
+    if (token.kind == TokenKind::Identifier)
+      if (auto word = lower(token.text); !dataNamePrefix(word).empty())
+        return word;
+  }
+  return {};
+}
+
+bool isLoneRegister(const std::vector<Token> &operand) {
+  return operand.size() == 1 && operand.front().kind == TokenKind::Identifier &&
+         isRegisterName(OperandDialect::X86, operand.front().text);
+}
+
 /// Tokens of one operand, without surrounding spaces.
 using OperandTokens = std::vector<Token>;
 
@@ -207,8 +321,56 @@ std::optional<std::uint64_t> fixedX86Location(const std::vector<Token> &inner,
   return std::nullopt;
 }
 
+/// Registers and displacement inside the brackets of an x86 memory operand.
+struct X86Address {
+  std::vector<Token> tokens;
+  /// Positions in tokens; an index register is followed by its scale.
+  std::optional<std::size_t> base, index;
+  bool displaced = false;
+  std::int64_t displacement = 0;
+};
+
+X86Address parseX86Address(const std::vector<Token> &inner) {
+  X86Address address;
+  for (const Token &token : inner)
+    if (token.kind != TokenKind::Space)
+      address.tokens.push_back(token);
+  const auto &tokens = address.tokens;
+  for (std::size_t i = 0; i < tokens.size(); ++i) {
+    const Token &token = tokens[i];
+    const bool scale = i > 0 && tokens[i - 1].text == "*";
+    if (token.kind == TokenKind::Number && !scale) {
+      address.displaced = true;
+      const auto value = static_cast<std::int64_t>(token.value);
+      address.displacement +=
+          i > 0 && tokens[i - 1].text == "-" ? -value : value;
+    }
+    if (token.kind != TokenKind::Identifier ||
+        !isRegisterName(OperandDialect::X86, token.text))
+      continue;
+    // An index is followed by its scale, or is the second register.
+    if ((i + 1 < tokens.size() && tokens[i + 1].text == "*") || address.base)
+      address.index = i;
+    else
+      address.base = i;
+  }
+  return address;
+}
+
+void appendX86Token(StyledText &out, const Token &token) {
+  if (token.kind == TokenKind::Space)
+    out.append(" ", ListingRole::Plain);
+  else if (token.kind == TokenKind::Identifier)
+    out.append(token.text, identifierRole(OperandDialect::X86, token.text));
+  else if (token.kind == TokenKind::Number)
+    appendX86Number(out, token);
+  else
+    out.append(token.text, ListingRole::Punctuation);
+}
+
 void formatX86Operand(StyledText &out, const OperandTokens &tokens,
-                      const OperandFacts &facts, const LocationNamer &namer) {
+                      const OperandFacts &facts, const LocationNamer &namer,
+                      const X86Context &context) {
   const auto open =
       std::find_if(tokens.begin(), tokens.end(), [](const Token &t) {
         return t.kind == TokenKind::Punct && t.text == "[";
@@ -220,18 +382,51 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
     const std::vector<Token> prefix(tokens.begin(), open);
     const std::vector<Token> inner(
         open + 1, close == tokens.end() ? tokens.end() : close);
-    std::string sizeKeyword, segment;
-    for (std::size_t i = 0; i < prefix.size(); ++i) {
-      if (prefix[i].kind != TokenKind::Identifier)
-        continue;
-      const auto word = lower(prefix[i].text);
-      if (!dataNamePrefix(word).empty())
-        sizeKeyword = word;
-      else if (i + 1 < prefix.size() && prefix[i + 1].text == ":")
-        segment = word;
+    const std::string sizeKeyword = memorySize(prefix);
+    std::string segment;
+    for (std::size_t i = 0; i + 1 < prefix.size(); ++i)
+      if (prefix[i].kind == TokenKind::Identifier && prefix[i + 1].text == ":")
+        segment = lower(prefix[i].text);
+    // A register operand of the same size already states the size.
+    const bool sizeStated =
+        !sizeKeyword.empty() &&
+        std::find(context.registerSizes.begin(), context.registerSizes.end(),
+                  sizeKeyword) != context.registerSizes.end();
+    const auto appendPrefix = [&](bool omitSize) {
+      for (std::size_t i = 0; i < prefix.size(); ++i) {
+        const Token &token = prefix[i];
+        if (omitSize && token.kind == TokenKind::Identifier) {
+          const auto word = lower(token.text);
+          if (word == sizeKeyword || word == "ptr") {
+            if (i + 1 < prefix.size() && prefix[i + 1].kind == TokenKind::Space)
+              ++i;
+            continue;
+          }
+        }
+        appendX86Token(out, token);
+      }
+    };
+    const auto appendSuffix = [&] {
+      if (close == tokens.end())
+        return;
+      out.append("]", ListingRole::Punctuation);
+      for (auto it = close + 1; it != tokens.end(); ++it)
+        if (it->kind != TokenKind::Space)
+          appendX86Token(out, *it);
+    };
+    const X86Address parsed = parseX86Address(inner);
+    const auto &compact = parsed.tokens;
+    // Thread storage is addressed by offset, never by an image location.
+    if (isThreadSegment(segment) && compact.size() == 1 &&
+        compact.front().kind == TokenKind::Number) {
+      appendPrefix(sizeStated);
+      appendX86Number(out, compact.front());
+      return;
     }
     bool pcRelative = false;
-    const auto location = fixedX86Location(inner, facts, pcRelative);
+    const auto location = isThreadSegment(segment)
+                              ? std::nullopt
+                              : fixedX86Location(inner, facts, pcRelative);
     if (location) {
       const bool address = facts.mnemonic == "lea";
       const NameUse use = address ? NameUse::Address
@@ -249,39 +444,89 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
         return;
       }
     }
-    // Keep the size keywords; tighten the address expression.
-    for (const Token &token : prefix) {
-      if (token.kind == TokenKind::Space)
-        out.append(" ", ListingRole::Plain);
-      else if (token.kind == TokenKind::Identifier)
-        out.append(token.text, identifierRole(OperandDialect::X86, token.text));
-      else if (token.kind == TokenKind::Number)
-        appendX86Number(out, token);
+    const auto appendIndex = [&] {
+      const std::size_t index = *parsed.index;
+      appendX86Token(out, compact[index]);
+      if (index + 2 < compact.size() && compact[index + 1].text == "*") {
+        appendX86Token(out, compact[index + 1]);
+        appendX86Token(out, compact[index + 2]);
+      }
+    };
+    // A variable of the function's frame: `[rbp+rax*4+var_290]`.  Its type
+    // states the size unless the access differs from it.
+    if (facts.frame && parsed.base &&
+        lower(compact[*parsed.base].text) == facts.frameRegister)
+      if (const auto slot = (*facts.frame)(parsed.displacement)) {
+        appendPrefix(slot->delta == 0 &&
+                     sizeBits(sizeKeyword) == slot->size * 8);
+        out.append("[", ListingRole::Punctuation);
+        appendX86Token(out, compact[*parsed.base]);
+        if (parsed.index) {
+          out.append("+", ListingRole::Punctuation);
+          appendIndex();
+        }
+        out.append("+", ListingRole::Punctuation);
+        out.append(slot->name, ListingRole::Plain);
+        if (slot->delta) {
+          out.append("+", ListingRole::Punctuation);
+          out.append(x86Number(static_cast<std::uint64_t>(slot->delta)),
+                     ListingRole::Number);
+        }
+        appendSuffix();
+        return;
+      }
+    appendPrefix(sizeStated);
+    if (parsed.index && !parsed.base) {
+      // Without a base register the displacement leads: `ds:1[rsi*2]`.
+      std::uint64_t displacement =
+          static_cast<std::uint64_t>(parsed.displacement);
+      if (!facts.wide)
+        displacement &= 0xffffffffu;
+      if (segment.empty()) {
+        out.append("ds", ListingRole::Register);
+        out.append(":", ListingRole::Punctuation);
+      }
+      const LocationName name =
+          namer(displacement,
+                facts.mnemonic == "lea" ? NameUse::Address : NameUse::Data,
+                sizeKeyword);
+      if (!name.text.empty())
+        out.append(name.text, name.role, name.address);
       else
-        out.append(token.text, ListingRole::Punctuation);
+        out.append(x86Number(displacement), ListingRole::Number);
+      out.append("[", ListingRole::Punctuation);
+      appendIndex();
+      appendSuffix();
+      return;
     }
     out.append("[", ListingRole::Punctuation);
-    for (const Token &token : inner) {
-      if (token.kind == TokenKind::Space)
-        continue;
-      if (token.kind == TokenKind::Identifier)
-        out.append(token.text, identifierRole(OperandDialect::X86, token.text));
-      else if (token.kind == TokenKind::Number)
-        appendX86Number(out, token);
-      else
-        out.append(token.text, ListingRole::Punctuation);
-    }
-    if (close != tokens.end()) {
-      out.append("]", ListingRole::Punctuation);
-      for (auto it = close + 1; it != tokens.end(); ++it) {
-        if (it->kind == TokenKind::Identifier)
-          out.append(it->text, identifierRole(OperandDialect::X86, it->text));
-        else if (it->kind == TokenKind::Number)
-          appendX86Number(out, *it);
-        else if (it->kind != TokenKind::Space)
-          out.append(it->text, ListingRole::Punctuation);
+    for (const Token &token : compact)
+      appendX86Token(out, token);
+    if (!parsed.displaced) {
+      // A displacement the encoding carries is shown even when zero: as wide
+      // as encoded in a no-op, as `+0` after a base that requires one.
+      if (const unsigned width = noOpDisplacementBytes(facts.bytes)) {
+        out.append("+", ListingRole::Punctuation);
+        out.append(std::string(width * 2, '0') + "h", ListingRole::Number);
+      } else if (parsed.base && isDisplacedBase(compact[*parsed.base].text)) {
+        out.append("+", ListingRole::Punctuation);
+        out.append("0", ListingRole::Number);
       }
     }
+    appendSuffix();
+    return;
+  }
+  // A negative immediate is the unsigned value of the operation's width,
+  // unless the instruction keeps a signed byte.
+  if (context.immediateBits && tokens.size() == 2 &&
+      tokens[0].kind == TokenKind::Punct && tokens[0].text == "-" &&
+      tokens[1].kind == TokenKind::Number && tokens[1].valid &&
+      !(context.signedByte && tokens[1].value <= 0x80)) {
+    const std::uint64_t mask =
+        context.immediateBits >= 64
+            ? ~std::uint64_t(0)
+            : (std::uint64_t(1) << context.immediateBits) - 1;
+    out.append(x86Number((~tokens[1].value + 1) & mask), ListingRole::Number);
     return;
   }
   for (const Token &token : tokens) {
@@ -426,6 +671,24 @@ StyledText formatOperands(std::string_view operands, const OperandFacts &facts,
                           const LocationNamer &namer) {
   StyledText out;
   const auto pieces = splitOperands(tokenize(operands));
+  X86Context context;
+  if (facts.dialect == OperandDialect::X86) {
+    const unsigned forms = x86OperandForms(facts.mnemonic);
+    context.signedByte = forms & SignedByte;
+    for (const auto &operand : pieces)
+      if (isLoneRegister(operand))
+        if (const auto size = x86RegisterSize(operand.front().text);
+            !size.empty())
+          context.registerSizes.push_back(size);
+    // The first operand sets the width of the operation.
+    if (!pieces.empty())
+      context.immediateBits =
+          isLoneRegister(pieces.front())
+              ? sizeBits(x86RegisterSize(pieces.front().front().text))
+              : sizeBits(memorySize(pieces.front()));
+    if (!context.immediateBits && (forms & StackWidth))
+      context.immediateBits = facts.wide ? 64 : 32;
+  }
   bool first = true;
   for (const auto &operand : pieces) {
     if (operand.empty())
@@ -434,11 +697,119 @@ StyledText formatOperands(std::string_view operands, const OperandFacts &facts,
       out.append(", ", ListingRole::Punctuation);
     first = false;
     if (facts.dialect == OperandDialect::X86)
-      formatX86Operand(out, operand, facts, namer);
+      formatX86Operand(out, operand, facts, namer, context);
     else
       formatGenericOperand(out, operand, facts, namer);
   }
   return out;
+}
+
+std::optional<FrameAccess> x86FrameAccess(std::string_view operands,
+                                          std::string_view frameRegister) {
+  for (const auto &operand : splitOperands(tokenize(operands))) {
+    const auto open =
+        std::find_if(operand.begin(), operand.end(), [](const Token &t) {
+          return t.kind == TokenKind::Punct && t.text == "[";
+        });
+    if (open == operand.end())
+      continue;
+    const auto close = std::find_if(open, operand.end(), [](const Token &t) {
+      return t.kind == TokenKind::Punct && t.text == "]";
+    });
+    const X86Address address =
+        parseX86Address(std::vector<Token>(open + 1, close));
+    if (!address.base ||
+        lower(address.tokens[*address.base].text) != frameRegister)
+      continue;
+    return FrameAccess{
+        address.displacement,
+        sizeBits(memorySize(std::vector<Token>(operand.begin(), open))) / 8};
+  }
+  return std::nullopt;
+}
+
+std::string_view x86SizeKeyword(unsigned bytes) {
+#define NEVERD_X86_SIZE_BITS(Keyword, Bits)                                    \
+  if (bytes * 8 == Bits)                                                       \
+    return Keyword;
+#include "ListingVocabulary.def"
+  return {};
+}
+
+ClassicInstruction classicInstruction(OperandDialect dialect,
+                                      std::string_view mnemonic,
+                                      std::string_view operands,
+                                      std::string_view bytes) {
+  ClassicInstruction result{std::string(mnemonic), std::string(operands)};
+  if (dialect != OperandDialect::X86)
+    return result;
+#define NEVERD_X86_ENCODING_SPELLING(Bytes, Mnemonic, Operands)                \
+  if (bytes == Bytes)                                                          \
+    return {Mnemonic, Operands};
+#include "ListingVocabulary.def"
+  static const std::unordered_map<std::string_view, std::string_view>
+      spellings = {
+#define NEVERD_X86_MNEMONIC_SPELLING(Engine, Classic) {Engine, Classic},
+#include "ListingVocabulary.def"
+      };
+  static const std::unordered_set<std::string_view> hiddenPrefixes = {
+#define NEVERD_X86_HIDDEN_PREFIX(Spelling) Spelling,
+#include "ListingVocabulary.def"
+  };
+  static const std::unordered_set<std::string_view> stringMnemonics = {
+#define NEVERD_X86_STRING_MNEMONIC(Spelling) Spelling,
+#include "ListingVocabulary.def"
+  };
+  // Prefixes share the mnemonic field: `rep movsb`, `notrack jmp`.
+  std::vector<std::string_view> words;
+  for (std::size_t i = 0; i < mnemonic.size();) {
+    while (i < mnemonic.size() &&
+           std::isspace(static_cast<unsigned char>(mnemonic[i])))
+      ++i;
+    const std::size_t start = i;
+    while (i < mnemonic.size() &&
+           !std::isspace(static_cast<unsigned char>(mnemonic[i])))
+      ++i;
+    if (i > start)
+      words.push_back(mnemonic.substr(start, i - start));
+  }
+  if (words.empty())
+    return result;
+  std::string_view base = words.back();
+  if (const auto it = spellings.find(base); it != spellings.end())
+    base = it->second;
+  result.mnemonic.clear();
+  for (std::size_t i = 0; i + 1 < words.size(); ++i)
+    if (!hiddenPrefixes.contains(words[i])) {
+      result.mnemonic += words[i];
+      result.mnemonic += ' ';
+    }
+  result.mnemonic += base;
+  const auto pieces = splitOperands(tokenize(operands));
+  // The SSE movsd and cmpsd name an xmm register; the string forms never do.
+  const bool vector = std::any_of(
+      pieces.begin(), pieces.end(), [](const OperandTokens &operand) {
+        return isLoneRegister(operand) &&
+               lower(operand.front().text).starts_with("xmm");
+      });
+  if (stringMnemonics.contains(base) && !vector) {
+    result.operands.clear();
+    return result;
+  }
+  const auto text = [](const OperandTokens &operand) {
+    std::string spelled;
+    for (const Token &token : operand)
+      spelled += token.text;
+    return spelled;
+  };
+  const unsigned forms = x86OperandForms(base);
+  if ((forms & FoldRepeatedSource) && pieces.size() == 3 &&
+      text(pieces[0]) == text(pieces[1]))
+    result.operands = text(pieces[0]) + ", " + text(pieces[2]);
+  else if ((forms & SwapRegisters) && pieces.size() == 2 &&
+           isLoneRegister(pieces[0]) && isLoneRegister(pieces[1]))
+    result.operands = text(pieces[1]) + ", " + text(pieces[0]);
+  return result;
 }
 
 bool isRegisterName(OperandDialect dialect, std::string_view name) {
