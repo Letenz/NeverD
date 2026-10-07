@@ -47,7 +47,7 @@ Las opciones son un objeto JSON de hasta 64 KiB. Se rechazan campos desconocidos
 | `stack_size` | 1048576 | Pila alineada a página dentro del presupuesto |
 | `output_limit` | 1048576 | Bytes combinados capturados de stdout/stderr |
 | `instruction_quantum` | 1024 | Intervalo de admisión antes de ceder a la runtime |
-| `linux_kernel` | Ausente | Interfaces del kernel invitado observadas explícitamente como no disponibles |
+| `linux_kernel` | Ausente | Rama GKI explícita, catálogo fijo de tareas invitadas o interfaces del kernel observadas como ausentes |
 | `linux_priority` | Ausente | Valores nice explícitos por tarea y autoridad del llamante para los servicios Linux de prioridad sin envoltorio |
 
 `schema_version` vale 1. El informe incluye perfil, arquitectura, backend seleccionado y motivo, `stop_reason`, `exit_status` anulable, diagnóstico, PC de entrada/actual, contadores, registros de servicios y última salida CPU tipada. Direcciones, números syscall, registros de argumentos y bits de retorno son cadenas hexadecimales **sin** `0x`; `stdout_hex`/`stderr_hex` preservan NUL y UTF-8 inválido. Un resultado syscall null significa que no hay retorno modelado (por ejemplo, exit o solicitud no admitida), no un cero exitoso.
@@ -108,6 +108,8 @@ Los selectores inválidos devuelven -EINVAL sin traducir. Las solicitudes de cam
 Los números de señal van del 1 al 64. `rt_sigaction` y Bionic comparten el estado, con disposición de campos y orden de errores propios de cada interfaz. No se implementan señales pendientes, entrega, ejecución de manejadores ni máscaras por hilo, y no se usan manejadores del anfitrión. Véase el [contrato completo](../process-emulation.md#linux-profile-semantics).
 
 <a id="windows-pe64-profile"></a>
+
+`linux_kernel.gki` selecciona 5.10–6.18 para `pidfd_open` e importación vectorial; el nivel API Android no elige kernel. `linux_kernel.tasks` declara tareas fijas vivas como `{ "id": 2000, "group_leader": true }`. Omitido: objetivos externos no admitidos; vacío: solo líder actual; fuera del catálogo: ESRCH. Prioridades coherentes y ausencia de threads Android cooperativos son requisitos. La tabla se comparte con `linux_files`; GKI y pidfd declarado ausente son incompatibles. Véase el [contrato completo](android-gki-kernels.md).
 
 <!-- i18n-section: linux-clocks -->
 

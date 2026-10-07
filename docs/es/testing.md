@@ -1656,3 +1656,9 @@ La fixture MainActor comprueba el flujo completo de metadatos fijos y tabla est�
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` comprueban cadenas repetidas de destinos nativos con cambios de rama y escrituras simbólicas de marco, costes lógicos fijos, presupuestos exactos o con una consulta menos, límites de destino inválidos, agotamiento de puertas y observaciones finales incorrectas. Las proyecciones intercaladas de marco y destinos correlacionados conservan también las tuplas completas, el orden de observación y el rechazo de resultados incompletos al reemplazar el predicado.
+
+## Contratos de los kernels Android GKI publicados
+
+`AndroidTestExecution.def` asigna a `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` un límite CTest total de 120 segundos y `RUN_SERIAL`. Cada carga conserva su presupuesto de 30 segundos; la ejecución serial evita contención entre pruebas de capacidad. La política cubre las seis variantes O0/O2 y de relocación.
+
+`LinuxPIDFD.*` valida ramas y catálogos antes de cargar. `Backends/LinuxPIDFDProcess.*` prueba ocho ramas con llamadores independientes x64/AArch64 O0/O2: flags, tabla común, límites, orden, clases y límite de búfer. `ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` y otros casos de `AndroidSyscallTests.cpp` verifican raw/Bionic y errno en seis perfiles de relocación. Después, ante cambios compartidos, ejecutar las suites completas de procesos Linux, Android nativo y API pública. Estos modelos no arrancan kernels GKI. Véanse las [fuentes y evidencias](android-gki-kernels.md).

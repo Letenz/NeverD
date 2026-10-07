@@ -1670,3 +1670,9 @@ La fixture MainActor vérifie le flux complet des métadonnées fixes et de la t
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` vérifient les chaînes répétées de cibles natives avec changements de branche et écritures de trame symboliques, les coûts logiques fixes, les budgets exacts ou insuffisants d’une requête, les limites de cibles invalides, l’épuisement des portes et les observations finales incorrectes. Les projections alternées de trame et de cibles corrélées préservent aussi les tuples complets, l’ordre des observations et le refus des résultats incomplets lors du remplacement du prédicat.
+
+## Contrats des noyaux Android GKI publiés
+
+`AndroidTestExecution.def` donne à `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` un délai CTest total de 120 secondes et `RUN_SERIAL`. Chacune des deux charges conserve sa limite propre de 30 secondes ; la sérialisation évite la contention entre tests de capacité. Les six variantes O0/O2 et de relocation suivent cette politique.
+
+`LinuxPIDFD.*` valide branches et catalogues avant chargement. `Backends/LinuxPIDFDProcess.*` teste huit branches avec des appelants indépendants x64/AArch64 O0/O2 : drapeaux, table commune, limites, ordre, classes cibles et plafonnement. `ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` et les autres cas `AndroidSyscallTests.cpp` vérifient raw/Bionic et errno sur six profils de relocation. Puis exécuter les suites Linux processus, Android natif et API publique pour toute modification commune. Ces tests ne démarrent pas les noyaux GKI. Voir les [sources et preuves](android-gki-kernels.md).

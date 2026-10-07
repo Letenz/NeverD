@@ -47,7 +47,7 @@ Optionen sind ein JSON-Objekt bis 64 KiB. Unbekannte/null-Felder, falsche Typen,
 | `stack_size` | 1048576 | Seitenausgerichteter Stack innerhalb des Budgets |
 | `output_limit` | 1048576 | Zusammengefasste stdout/stderr-Bytes |
 | `instruction_quantum` | 1024 | Zulassungsintervall bis zur Rückgabe an die Runtime |
-| `linux_kernel` | Nicht angegeben | Explizit als nicht verfügbar beobachtete Schnittstellen des Gastkernels |
+| `linux_kernel` | Nicht angegeben | Expliziter GKI-Zweig, fester Gastaufgabenkatalog oder beobachtete fehlende Kernelschnittstellen |
 | `linux_priority` | Nicht angegeben | Explizite Nice-Werte je Task und Aufruferrechte für rohe Linux-Prioritätsdienste |
 
 `schema_version` ist 1. Der Bericht enthält Profil, Architektur, ausgewähltes Backend samt Grund, `stop_reason`, nullable `exit_status`, Diagnose, Ein-/aktuellen PC, Zähler, Service-Aufzeichnungen und letzten typisierten CPU-Ausgang. Adressen, syscall-Nummern, Registerargumente und rohe Rückgabebits sind Hex-Strings **ohne** `0x`; `stdout_hex`/`stderr_hex` erhalten NUL und ungültiges UTF-8. Ein null syscall-Ergebnis bedeutet keine modellierte Rückgabe (etwa Exit oder nicht unterstützte Anfrage), nicht erfolgreiche Null.
@@ -108,6 +108,8 @@ Ungültige Selektoren liefern roh -EINVAL. Setzanfragen begrenzen das vorzeichen
 Die Signalnummern reichen von 1 bis 64. `rt_sigaction` und Bionic teilen denselben Zustand; Strukturaufbau und Fehlerreihenfolge folgen jeweils der Schnittstelle. Wartende Signale, Zustellung, Handleraufrufe und threadbezogene Masken sind nicht implementiert; Host-Handler werden nicht verwendet. Siehe den [vollständigen Vertrag](../process-emulation.md#linux-profile-semantics).
 
 <a id="windows-pe64-profile"></a>
+
+`linux_kernel.gki` wählt 5.10–6.18 für `pidfd_open` und Vektorimport; Android-API-Stufen wählen keinen Kernel. `linux_kernel.tasks` enthält feste lebende Aufgaben als `{ "id": 2000, "group_leader": true }`. Weglassen lässt fremde Ziele ununterstützt, ein leeres Array kennt nur den laufenden Gruppenführer, außerhalb des Katalogs gilt ESRCH. Prioritäten müssen konsistent sein; kooperative Android-Threads sind ausgeschlossen. Die Tabelle gehört `linux_files`; GKI und ausdrücklich fehlendes pidfd widersprechen sich. Siehe [Vertrag und Grenzen](android-gki-kernels.md).
 
 <!-- i18n-section: linux-clocks -->
 

@@ -257,6 +257,8 @@ add_neverd_unittest(NeverDAndroidNativeTests
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDAndroidNativeTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)
 include(AndroidFixtures.cmake)
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/AndroidTestExecution.cmake")
 
 # Batch PE scenarios use the common harness timeout; each guest workload
 # retains its own finite instruction, event and time budget.

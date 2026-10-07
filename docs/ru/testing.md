@@ -1623,3 +1623,9 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` проверяют повторные цепочки нативных целей со сменой ветвей и символьными записями кадра, фиксированную логическую стоимость, точный бюджет и нехватку одного запроса, неверные пределы целей, исчерпание вентилей и неверные конечные наблюдения. Чередующиеся проекции кадра и коррелированных целей также сохраняют полные кортежи, порядок наблюдения и отказ от неполных результатов при замене предиката.
+
+## Контракты выпущенных ядер Android GKI
+
+`AndroidTestExecution.def` задаёт `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` общий предел CTest 120 секунд и `RUN_SERIAL`. Каждая из двух нагрузок сохраняет собственный предел 30 секунд; последовательное выполнение устраняет конкуренцию тестов ёмкости. Правило действует для всех шести вариантов O0/O2 и релокаций.
+
+`LinuxPIDFD.*` проверяет ветки и каталоги до загрузки. `Backends/LinuxPIDFDProcess.*` проверяет восемь веток независимыми x64/AArch64 O0/O2-вызовами: флаги, общую таблицу, пределы, порядок, классы целей и ограничение буфера. `ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` и другие случаи `AndroidSyscallTests.cpp` проверяют raw/Bionic и errno в шести профилях релокации. После общих изменений запускайте полные наборы Linux-процессов, Android native и публичного API процессов. Эти модели не загружают GKI. См. [исходники и доказательства](android-gki-kernels.md).

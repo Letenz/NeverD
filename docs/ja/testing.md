@@ -1555,3 +1555,9 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` は、分岐変更とシンボリックなフレーム書き込みを含む反復ネイティブ分岐先列、固定論理コスト、問い合わせ予算の境界と一回不足、不正な分岐先数制限、ゲート予算の枯渇、誤った終端観測を検証します。交互のフレーム射影と相関する分岐先射影では、述語置換後も完全なタプル、観測順序、不完全結果の拒否を維持します。
+
+## 公開済み Android GKI カーネルの契約
+
+`AndroidTestExecution.def` は `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` に CTest 全体で 120 秒と `RUN_SERIAL` を設定します。二つのワークロードは各 30 秒の実行制限を保持し、直列化は容量試験間の競合を防ぎます。O0/O2 と再配置の全六構成に適用します。
+
+`LinuxPIDFD.*` はブランチとタスク一覧をロード前に検証します。`Backends/LinuxPIDFDProcess.*` は八ブランチの独立 x64/AArch64 O0/O2 呼び出し側でフラグ、共有表、上限、順序、対象種別、バッファ制限を確認します。`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` とほかの `AndroidSyscallTests.cpp` は六種の再配置構成で raw/Bionic と errno を確認します。共有部変更後は Linux プロセス、Android ネイティブ、公開プロセス API の全スイートを実行してください。モデル検証は GKI 起動とは別です。[ソースと証拠](android-gki-kernels.md)を参照してください。

@@ -47,7 +47,7 @@ Le opzioni sono un oggetto JSON massimo 64 KiB. Campi sconosciuti/null, tipi err
 | `stack_size` | 1048576 | Stack allineato alla pagina entro il budget |
 | `output_limit` | 1048576 | Byte complessivi catturati da stdout/stderr |
 | `instruction_quantum` | 1024 | Intervallo d’ammissione prima di cedere alla runtime |
-| `linux_kernel` | Assente | Interfacce del kernel guest osservate esplicitamente come non disponibili |
+| `linux_kernel` | Assente | Ramo GKI esplicito, catalogo fisso di attività guest o interfacce del kernel osservate assenti |
 | `linux_priority` | Assente | Valori nice espliciti per task e autorità del chiamante per i servizi Linux di priorità grezzi |
 
 `schema_version` è 1. Il report contiene profilo, architettura, backend e motivo della scelta, `stop_reason`, `exit_status` nullable, diagnostica, PC di ingresso/corrente, contatori, record dei servizi e ultimo esito CPU tipizzato. Indirizzi, numeri syscall, registri argomento e bit di ritorno sono stringhe esadecimali **senza** `0x`; `stdout_hex`/`stderr_hex` preservano NUL e UTF-8 non valido. Un risultato syscall null significa nessun ritorno modellato (per esempio exit o richiesta non supportata), non zero riuscito.
@@ -108,6 +108,8 @@ I selettori non validi restituiscono -EINVAL grezzo. Le richieste di modifica li
 I numeri dei segnali vanno da 1 a 64. `rt_sigaction` e Bionic condividono lo stato, con layout e ordine degli errori propri di ogni interfaccia. Non sono implementati segnali in attesa, consegna, chiamate ai gestori o maschere per thread; non si usano gestori dell’host. Vedere il [contratto completo](../process-emulation.md#linux-profile-semantics).
 
 <a id="windows-pe64-profile"></a>
+
+`linux_kernel.gki` seleziona 5.10–6.18 per `pidfd_open` e import vettoriale; API Android non sceglie kernel. `linux_kernel.tasks` dichiara attività vive fisse come `{ "id": 2000, "group_leader": true }`. Omissione: target esterni non supportati; array vuoto: solo leader corrente; fuori catalogo: ESRCH. Priorità coerenti e assenza di thread Android cooperativi sono richieste. La tabella si condivide con `linux_files`; GKI e pidfd assente sono incompatibili. Vedere il [contratto completo](android-gki-kernels.md).
 
 <!-- i18n-section: linux-clocks -->
 

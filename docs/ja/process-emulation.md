@@ -47,7 +47,7 @@ options は最大 64 KiB の JSON object です。未知/null field、不正な�
 | `stack_size` | 1048576 | 予算内の page-aligned stack |
 | `output_limit` | 1048576 | stdout/stderr 合計の捕捉 byte 数 |
 | `instruction_quantum` | 1024 | runtime に戻るまでの admission 間隔 |
-| `linux_kernel` | 未指定 | 利用不可と明示したゲストカーネルインターフェイス |
+| `linux_kernel` | 未指定 | 明示的な GKI ブランチ、固定ゲストタスク一覧、またはカーネルインターフェイス不在の観測 |
 | `linux_priority` | 未指定 | タスクごとの明示的な nice 値と、生の Linux 優先度サービスに必要な呼び出し元権限 |
 
 `schema_version` は 1 です。report には profile、architecture、選択 backend と理由、`stop_reason`、nullable `exit_status`、診断、入口/現在 PC、counter、service record、最後の型付き CPU exit が含まれます。address、syscall number、引数 register、raw return bit は `0x` なしの hex string です。`stdout_hex`/`stderr_hex` は NUL と不正 UTF-8 を保持します。syscall 結果 null は model が戻り値を定義しないこと（exit や未対応 request など）を示し、成功値 0 とは異なります。
@@ -108,6 +108,8 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
 シグナル番号は 1–64 です。`rt_sigaction` と Bionic は状態を共有し、構造体の配置とエラー順序はそれぞれの ABI に従います。保留中のシグナル、配送、ハンドラー実行、スレッド別マスクは未実装で、ホストのハンドラーも使いません。[完全な契約](../process-emulation.md#linux-profile-semantics)を参照してください。
 
 <a id="windows-pe64-profile"></a>
+
+`linux_kernel.gki` は `pidfd_open` とベクトル導入の 5.10–6.18 契約を選び、Android API レベルはカーネルを選びません。`linux_kernel.tasks` は `{ "id": 2000, "group_leader": true }` の固定生存タスク一覧です。省略時は外部対象未対応、空配列は現在のリーダーのみ、一覧外は ESRCH です。優先度との整合性が必要で、Android 協調スレッドと併用できません。表は `linux_files` と共有し、GKI と pidfd 不在は矛盾します。[詳細と制約](android-gki-kernels.md)を参照してください。
 
 <!-- i18n-section: linux-clocks -->
 

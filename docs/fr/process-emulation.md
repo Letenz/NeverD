@@ -47,7 +47,7 @@ Les options sont un objet JSON de 64 KiB maximum. Champs inconnus/null, types in
 | `stack_size` | 1048576 | Pile alignée sur page dans le budget |
 | `output_limit` | 1048576 | Total des octets stdout/stderr capturés |
 | `instruction_quantum` | 1024 | Intervalle d’admission avant cession à la runtime |
-| `linux_kernel` | Absent | Interfaces du noyau invité explicitement observées comme indisponibles |
+| `linux_kernel` | Absent | Branche GKI explicite, catalogue fixe de tâches invitées ou interfaces du noyau observées absentes |
 | `linux_priority` | Absent | Valeurs nice explicites par tâche et droits de l’appelant pour les services Linux bruts de priorité |
 
 `schema_version` vaut 1. Le rapport inclut profil, architecture, backend sélectionné et motif, `stop_reason`, `exit_status` nullable, diagnostic, PC d’entrée/courant, compteurs, enregistrements de services et dernière sortie CPU typée. Adresses, numéros syscall, registres d’arguments et bits de retour sont des chaînes hexadécimales **sans** `0x` ; `stdout_hex`/`stderr_hex` préservent NUL et UTF-8 invalide. Un résultat syscall null signifie aucun retour modélisé (exit ou requête non prise en charge, par exemple), et non un zéro réussi.
@@ -108,6 +108,8 @@ Un sélecteur invalide renvoie -EINVAL brut. Les demandes de modification bornen
 Les numéros de signal vont de 1 à 64. `rt_sigaction` et Bionic partagent l’état, avec une disposition des champs et un ordre des erreurs propres à chaque interface. Les signaux en attente, leur livraison, l’appel des gestionnaires et les masques par thread ne sont pas implémentés ; aucun gestionnaire de l’hôte n’est utilisé. Voir le [contrat complet](../process-emulation.md#linux-profile-semantics).
 
 <a id="windows-pe64-profile"></a>
+
+`linux_kernel.gki` choisit 5.10–6.18 pour `pidfd_open` et l’import vectoriel ; le niveau API Android ne choisit pas le noyau. `linux_kernel.tasks` déclare les tâches vivantes fixes sous la forme `{ "id": 2000, "group_leader": true }`. Sans tableau, cibles étrangères non prises en charge ; vide, seul le chef courant est connu ; hors catalogue : ESRCH. Priorités cohérentes et absence de threads Android coopératifs sont requises. La table est partagée avec `linux_files` ; GKI et pidfd déclaré absent sont incompatibles. Voir le [contrat complet](android-gki-kernels.md).
 
 <!-- i18n-section: linux-clocks -->
 

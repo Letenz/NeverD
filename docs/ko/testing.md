@@ -1545,3 +1545,9 @@ MainActor 픽스처는 고정 메타데이터와 정적 테이블의 전체 흐�
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` 는 분기 변경과 기호적 프레임 쓰기를 포함한 반복 네이티브 대상 체인, 고정 논리 비용, 정확하거나 한 번 부족한 질의 예산, 잘못된 대상 한도, 게이트 예산 소진 및 잘못된 종료 관측을 검사합니다. 교차하는 프레임 및 상관 대상 투영은 술어 교체 전후에도 완전한 튜플, 관측 순서와 불완전한 결과 거부를 유지합니다.
+
+## 출시된 Android GKI 커널 계약
+
+`AndroidTestExecution.def`는 `FiniteRegistryRejectsBeforeSuccessAndCanBeReused`에 전체 CTest 제한 120초와 `RUN_SERIAL`을 설정합니다. 두 워크로드는 각각 30초 실행 한도를 유지하며, 직렬화는 용량 테스트의 경합을 방지합니다. O0/O2 및 재배치의 여섯 구성을 모두 포함합니다.
+
+`LinuxPIDFD.*`는 로드 전에 분기와 태스크 목록을 검증합니다. `Backends/LinuxPIDFDProcess.*`는 여덟 분기의 독립 x64/AArch64 O0/O2 호출자로 플래그·공유 표·한도·순서·대상 종류·버퍼 제한을 검사합니다. `ReleasedGKICatalogueRetainsRawAndBionicLookupErrors`와 다른 `AndroidSyscallTests.cpp` 사례는 여섯 재배치 구성의 raw/Bionic 및 errno를 검사합니다. 공유 의미 변경 뒤 전체 Linux 프로세스·Android 네이티브·공개 프로세스 API 테스트를 실행하십시오. 이 모델 검증은 GKI 부팅과 별개입니다. [소스 및 증거](android-gki-kernels.md)를 참고하십시오.

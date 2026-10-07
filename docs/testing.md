@@ -3014,6 +3014,8 @@ SVC with Bionic `syscall`, preserving distinct raw return/errno effects.
 Run these focused tests, the full Linux process and public process suites,
 and Android syscall, native-entry and signal suites for availability changes.
 
+`AndroidTestExecution.def` gives `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` an aggregate CTest timeout of 120 seconds and `RUN_SERIAL`. Each of its two workloads retains its own finite 30-second runtime budget; serialization prevents capacity stress cases from timing out through contention. All six O0/O2 and relocation variants use this policy.
+
 `LinuxPIDFD.*` checks released GKI branch parsing and rejects invalid enum values
 or an absent-pidfd observation combined with GKI before image loading. It also
 rejects malformed, excessive and contradictory task catalogues before loading.

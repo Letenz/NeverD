@@ -1,4 +1,6 @@
+import ast
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -18,6 +20,7 @@ SEMANTIC_CMAKE = ROOT / "unittests" / "semantic" / "CMakeLists.txt"
 SEMANTIC_PLUGIN_CMAKE = ROOT / "plugins" / "semantic" / "CMakeLists.txt"
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 STYLE_WORKFLOW = ROOT / ".github" / "workflows" / "llvm-style.yml"
+STYLE_EXPECTATIONS = ROOT / "scripts" / "tests" / "CIStyleExpectations.def"
 
 
 class CiConfigurationTests(unittest.TestCase):
@@ -129,24 +132,17 @@ class CiConfigurationTests(unittest.TestCase):
     def test_llvm_style_workflow_pins_formatter_and_checks_event_diff(self):
         source = STYLE_WORKFLOW.read_text(encoding="utf-8")
 
-        for expected in (
-            "name: LLVM Style",
-            "    branches:\n      - dev",
-            "  pull_request:",
-            "  workflow_dispatch:",
-            "  contents: read",
-            "runs-on: ubuntu-24.04",
-            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-            "fetch-depth: 0",
-            "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
-            "python-version: '3.12'",
-            "timeout-minutes: 5",
-            "clang-format==22.1.2",
-            "python -m unittest scripts.tests.test_check_clang_format -v",
-            "FORMAT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}",
-            "FORMAT_HEAD: ${{ github.sha }}",
-            'python scripts/check_clang_format.py --base "$FORMAT_BASE" --head "$FORMAT_HEAD"',
-        ):
+        declarations = STYLE_EXPECTATIONS.read_text(encoding="utf-8")
+        pattern = r'NEVERD_CI_STYLE_EXPECTATION\(\s*((?:"(?:[^"\\]|\\.)*"\s*)+)\)'
+        expectations = tuple(
+            ast.literal_eval("(" + literal + ")")
+            for literal in re.findall(pattern, declarations, re.DOTALL)
+        )
+        self.assertTrue(expectations)
+        self.assertEqual(
+            len(expectations), declarations.count("NEVERD_CI_STYLE_EXPECTATION(")
+        )
+        for expected in expectations:
             with self.subTest(expected=expected):
                 self.assertIn(expected, source)
 

@@ -47,7 +47,7 @@ output = bytes.fromhex(report["stdout_hex"])
 | `stack_size` | 1048576 | 預算內按頁對齊的堆疊 |
 | `output_limit` | 1048576 | 擷取的 stdout/stderr 總位元組數 |
 | `instruction_quantum` | 1024 | 交還 runtime 前的准入間隔 |
-| `linux_kernel` | 未提供 | 明確宣告客體核心中不可用的介面 |
+| `linux_kernel` | 未提供 | 明確的 GKI 分支、固定客體工作清單或核心介面缺失觀察值 |
 | `linux_priority` | 未提供 | 明確的逐任務 nice 值與原始 Linux 優先權服務所需的呼叫者權限 |
 
 `schema_version` 為 1。結果包含 profile、架構、所選後端與原因、`stop_reason`、可為 null 的 `exit_status`、診斷、進入／目前 PC、計數器、服務記錄與最後的型別化 CPU exit。位址、syscall 編號、參數暫存器及原始回傳位元均為**不含** `0x` 的十六進位字串；`stdout_hex`／`stderr_hex` 保留 NUL 與無效 UTF-8。syscall 結果為 null 表示沒有建模回傳值（例如 exit 或不支援要求），不代表成功回傳 0。
@@ -108,6 +108,8 @@ x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARC
 訊號編號為 1–64。`rt_sigaction` 與 Bionic 共用狀態，結構配置和錯誤順序依各自介面處理。不實作待處理訊號、投遞、處理函式呼叫或執行緒訊號遮罩，也不使用宿主處理函式。參見[完整契約](../process-emulation.md#linux-profile-semantics)。
 
 <a id="windows-pe64-profile"></a>
+
+`linux_kernel.gki` 顯式選擇 5.10–6.18 已釋出分支，控制 `pidfd_open` 與版本化向量匯入；Android API 級別不選擇核心。`linux_kernel.tasks` 是可選的固定存活任務清單，條目如 `{ "id": 2000, "group_leader": true }`；省略時外部目標仍不支援，空陣列僅含當前組首領，清單外 PID 返回 ESRCH。任務與優先順序觀察值須一致，且不能組合協作式 Android 執行緒。描述符與 `linux_files` 共用表；GKI 與顯式缺失 pidfd 觀察值不能並存。參見[完整契約與限制](android-gki-kernels.md)。
 
 <!-- i18n-section: linux-clocks -->
 

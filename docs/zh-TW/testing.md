@@ -1501,3 +1501,9 @@ MainActor 測試資料檢查完整的固定中繼資料與靜態表流程，拒�
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` 檢查帶分支變更和符號框架寫入的重複原生目標鏈、固定邏輯開銷、精確及少一次查詢預算、無效目標限額、閘預算耗盡和錯誤終點觀察。交錯的框架與相關目標投影還在謂詞替換前後保持完整元組、觀察順序及不完整結果拒絕。
+
+## 已釋出 Android GKI 核心契約
+
+`AndroidTestExecution.def` 為 `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` 設定 120 秒的整項 CTest 預算與 `RUN_SERIAL`。兩次工作負載各自保留 30 秒的有限執行預算，循序限制避免容量壓力案例爭用資源。六種 O0/O2 與重新定位設定皆採用此規則。
+
+`LinuxPIDFD.*` 檢查分支、列舉、缺失觀察值及任務清單的載入前校驗。`Backends/LinuxPIDFDProcess.*` 用八個分支的獨立 x64／AArch64 O0／O2 呼叫程式檢查標誌、檔案表、限額／複用、錯誤順序、清單查詢、非首領和單向量限長。`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` 與其他 `AndroidSyscallTests.cpp` 用例覆蓋六種重定位配置的 raw／Bionic 錯誤和 errno。共享語義變更後執行重點用例、完整 Linux 程序、Android 原生及程序公共介面套件。這些模型測試不等於啟動八種 GKI 核心；參見[原始碼固定版本與證據](android-gki-kernels.md)。

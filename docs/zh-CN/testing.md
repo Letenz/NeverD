@@ -1463,3 +1463,9 @@ MainActor 测试数据检查完整的固定元数据与静态表流程，拒绝�
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` 检查带分支变化和符号帧写入的重复原生目标链、固定逻辑开销、精确及少一次查询预算、无效目标限额、门预算耗尽和错误终点观察。交错的帧与相关目标投影还在谓词替换前后保持完整元组、观察顺序及不完整结果拒绝。
+
+## 已发布 Android GKI 内核契约
+
+`AndroidTestExecution.def` 为 `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` 设置 120 秒的整项 CTest 预算与 `RUN_SERIAL`。其中两次工作负载各自保留 30 秒的有限运行预算，串行约束避免容量压力用例相互争抢资源。六种 O0/O2 与重定位配置均采用此规则。
+
+`LinuxPIDFD.*` 检查分支、枚举、缺失观察值及任务清单的加载前校验。`Backends/LinuxPIDFDProcess.*` 用八个分支的独立 x64／AArch64 O0／O2 调用程序检查标志、文件表、限额／复用、错误顺序、清单查找、非首领和单向量限长。`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` 与其他 `AndroidSyscallTests.cpp` 用例覆盖六种重定位配置的 raw／Bionic 错误和 errno。共享语义变更后运行重点用例、完整 Linux 进程、Android 原生及进程公共接口套件。这些模型测试不等于启动八种 GKI 内核；参见[源码固定版本与证据](android-gki-kernels.md)。

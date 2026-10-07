@@ -1671,3 +1671,9 @@ Die MainActor-Fixture prüft den vollständigen Ablauf für feste Metadaten und 
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` prüfen wiederholte native Zielketten mit Zweigwechseln und symbolischen Frame-Schreibzugriffen, feste logische Kosten, exakte und um eine Anfrage zu kleine Budgets, ungültige Zielgrenzen, erschöpfte Gate-Budgets und falsche Endbeobachtungen. Abwechselnde Frame- und korrelierte Zielprojektionen bewahren auch beim Prädikatwechsel vollständige Tupel, Beobachterreihenfolge und die Ablehnung unvollständiger Ergebnisse.
+
+## Verträge veröffentlichter Android-GKI-Kernel
+
+`AndroidTestExecution.def` gibt `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` einen gesamten CTest-Zeitrahmen von 120 Sekunden und `RUN_SERIAL`. Beide Workloads behalten jeweils ihre endliche Laufzeitgrenze von 30 Sekunden; die Serialisierung verhindert Konkurrenz zwischen Kapazitätstests. Alle sechs O0/O2- und Relokationsvarianten verwenden diese Regel.
+
+`LinuxPIDFD.*` prüft Zweige, ungültige Auswahl und Aufgabenkataloge vor dem Laden. `Backends/LinuxPIDFDProcess.*` prüft acht Zweige mit unabhängigen x64/AArch64-O0/O2-Aufrufern, Flags, gemeinsame Tabellen, Grenzen, Reihenfolge, Zielklassen und Pufferbegrenzung. `ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` und weitere `AndroidSyscallTests.cpp`-Fälle prüfen raw/Bionic und errno in sechs Relokationsprofilen. Danach bei gemeinsamen Änderungen vollständige Linux-Prozess-, Android-Native- und öffentliche Prozesssuiten ausführen. Diese Modelltests booten keine GKI-Kernel. Siehe [Quellstände und Nachweise](android-gki-kernels.md).

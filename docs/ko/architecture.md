@@ -1397,3 +1397,7 @@ Swift SDK Published의 enclosing-instance 접근자는 포인터 네 개를 유�
 `LinuxPriority`는 같은 워크로드의 `LinuxServices` 안에서 명시적인 작업별 nice 상태를 관리합니다. x64/AArch64 원시 우선순위 트랩은 `LinuxValues.def`의 번호와 OS가 소유한 현재 스레드 ID를 사용합니다. 검증된 `LinuxPriorityOptions`가 테스트 작업 관찰값과 호출자의 CAP_SYS_NICE/RLIMIT_NICE 권한을 제공합니다. 알 수 없는 작업 상태와 그룹/사용자 선택은 지원하지 않습니다. 원시 조회는 커널 반환 인코딩을 보존하며 권한 오류는 작업 상태를 바꾸지 않습니다. JSON 필드와 진단은 기존 프로세스 및 Linux `.def` 파일에 선언합니다.
 
 `LinuxUnavailableSyscalls.def`는 선택적인 커널 호출의 공개 부재 관찰 ID, 입력 이름, 아키텍처별 번호와 고정 인수 수를 관리합니다. `LinuxKernelOptions`는 명시적인 테스트 관찰값이며, 공유 Linux 커널 서비스는 그 관찰값이 호출 부재를 선언했을 때만 ENOSYS를 반환합니다. 목록은 구현을 제공하거나 Android API 수준에서 가용성을 추론하지 않습니다. JSON 검사와 프로필 허용은 로드 전에 수행하며, 목록에 없거나 사용 가능하지만 모델링되지 않은 호출은 계속 지원하지 않습니다.
+
+## 출시된 Android GKI 커널 계약
+
+`LinuxGKIKernels.def`가 분기·`pidfd_open` 플래그·비리더 오류·iovec 규칙을 소유합니다. `LinuxKernelOptions`는 명시적 선택과 선택적 고정 태스크 목록을 소유합니다. `LinuxServices`는 호출을 분배하고 `LinuxFiles`는 파일과 pidfd를 소유하며 `LinuxOutput`은 가져오기를 공유하고 `LinuxPIDFD`는 할당 전에 대상 종류를 검사합니다. 목록 생략 시 외부 대상은 미지원이며 공유 검증은 모순된 우선순위와 협력 Android 스레드를 거부합니다. 호스트 검색은 없습니다. [GKI 계약](android-gki-kernels.md)을 참고하십시오.

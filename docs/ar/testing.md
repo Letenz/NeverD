@@ -1578,3 +1578,9 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` يتحققان من سلاسل أهداف أصلية متكررة مع تغيّر الفروع وكتابات إطار رمزية، والتكاليف المنطقية الثابتة، وميزانية الاستعلام الدقيقة أو الناقصة باستعلام واحد، وحدود الأهداف غير الصالحة، ونفاد ميزانية البوابات، والملاحظات النهائية الخاطئة. كما تحافظ إسقاطات الإطار والأهداف المترابطة المتداخلة على الصفوف الكاملة وترتيب المراقبة ورفض النتائج غير المكتملة عند استبدال الشرط.
+
+## عقود نوى Android GKI المنشورة
+
+يفحص تمنح `AndroidTestExecution.def` اختبار `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` مهلة CTest كلية قدرها 120 ثانية مع `RUN_SERIAL`. تحتفظ كل حمولة من الاثنتين بحد التشغيل المستقل البالغ 30 ثانية؛ يمنع التسلسل تنافس اختبارات السعة. تشمل السياسة إعدادات O0/O2 وإعادة التموضع الستة.
+
+`LinuxPIDFD.*` الفروع والقوائم قبل التحميل. يختبر `Backends/LinuxPIDFDProcess.*` الفروع الثمانية عبر برامج x64/AArch64 O0/O2 مستقلة للأعلام والجدول المشترك والحدود والترتيب وأصناف الأهداف وحد المخازن. يفحص `ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` وبقية حالات `AndroidSyscallTests.cpp` نتائج raw/Bionic وerrno ضمن ستة إعدادات إعادة تموضع. بعد تغييرات مشتركة تُشغّل مجموعات عمليات Linux وAndroid الأصلي وواجهة العمليات العامة كاملة. هذه النماذج لا تقلع نوى GKI. راجع [المصادر والأدلة](android-gki-kernels.md).

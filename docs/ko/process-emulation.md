@@ -47,7 +47,7 @@ output = bytes.fromhex(report["stdout_hex"])
 | `stack_size` | 1048576 | 예산 내 페이지 정렬 스택 |
 | `output_limit` | 1048576 | stdout/stderr 합산 캡처 바이트 |
 | `instruction_quantum` | 1024 | runtime으로 양보하기 전 admission 간격 |
-| `linux_kernel` | 없음 | 사용할 수 없다고 명시한 게스트 커널 인터페이스 |
+| `linux_kernel` | 없음 | 명시적 GKI 분기, 고정 게스트 태스크 목록 또는 커널 인터페이스 부재 관측 |
 | `linux_priority` | 없음 | 명시적인 작업별 nice 값과 원시 Linux 우선순위 서비스의 호출자 권한 |
 
 `schema_version`은 1입니다. 보고서에는 프로필, 아키텍처, 선택 백엔드와 이유, `stop_reason`, nullable `exit_status`, 진단, 진입/현재 PC, 카운터, 서비스 기록, 마지막 typed CPU exit가 포함됩니다. 주소, syscall 번호, 인자 레지스터, raw 반환 비트는 `0x` 없는 16진수 문자열입니다. `stdout_hex`/`stderr_hex`는 NUL과 잘못된 UTF-8을 보존합니다. syscall 결과 null은 모델링된 반환이 없다는 뜻(exit 또는 미지원 요청 등)이지 성공한 0이 아닙니다.
@@ -108,6 +108,8 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
 시그널 번호는 1–64입니다. `rt_sigaction`과 Bionic은 상태를 공유하며 구조체 배치와 오류 순서는 각 인터페이스를 따릅니다. 대기 시그널, 전달, 핸들러 호출 및 스레드별 마스크는 구현하지 않으며 호스트 핸들러도 사용하지 않습니다. [전체 계약](../process-emulation.md#linux-profile-semantics)을 참조하세요.
 
 <a id="windows-pe64-profile"></a>
+
+`linux_kernel.gki`는 `pidfd_open`과 벡터 가져오기의 5.10–6.18 계약을 선택합니다. Android API 수준은 커널을 선택하지 않습니다. `linux_kernel.tasks`는 `{ "id": 2000, "group_leader": true }` 형태의 고정 생존 목록입니다. 생략하면 외부 대상 미지원, 빈 배열은 현재 리더만, 목록 밖은 ESRCH입니다. 우선순위는 일치해야 하며 협력 Android 스레드는 결합할 수 없습니다. 표는 `linux_files`와 공유하고 GKI와 pidfd 부재는 모순입니다. [전체 계약](android-gki-kernels.md)을 참고하십시오.
 
 <!-- i18n-section: linux-clocks -->
 
