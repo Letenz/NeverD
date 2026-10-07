@@ -358,7 +358,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - - - -
 
 BSD 3-Clause License (for the portions of the Encoding Standard's indexes
-that NeverD incorporates into source code, lib/support/TextEncodingTables.inc)
+that NeverD incorporates into source code, lib/support/TextEncodingIndexes.inc
+and lib/support/CommonCharacters.inc)
 
 Copyright © WHATWG (Apple, Google, Mozilla, Microsoft).
 

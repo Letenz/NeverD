@@ -27,7 +27,7 @@ NEVERD_STRING_ENCODING(UTF32BE, "utf-32be", "UTF-32BE", 4, true)
 
 // NEVERD_LEGACY_ENCODING(Id, Name, Spelling, Decoder, Table): 8-bit code
 // pages, decoded as the WHATWG Encoding Standard decodes them from the
-// indexes of TextEncodingTables.inc.  Decoder: GB18030 (which also decodes
+// indexes of TextEncodingIndexes.inc.  Decoder: GB18030 (which also decodes
 // GBK), Big5, ShiftJIS, EUCKR, or SingleByte with its Table of bytes
 // 0x80-0xFF.  Different code pages read the same bytes, so a search uses at
 // most one of them.

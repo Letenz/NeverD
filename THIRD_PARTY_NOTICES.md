@@ -113,17 +113,18 @@ decoder adds a check of the header's checksum. Adapted on 2026-09-28.
 
 ## WHATWG Encoding Standard indexes
 
-`lib/support/TextEncodingTables.inc` holds the pointer-to-code-point indexes
+`lib/support/TextEncodingIndexes.inc` holds the pointer-to-code-point indexes
 of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) (the
 `index-*.txt` files of 2024-09-18: GB18030 with its ranges, Big5, JIS X 0208,
-EUC-KR and fifteen single-byte encodings), and the common Han and Hangul
-characters derived from them, as `scripts/generate_text_encoding_tables.py`
-writes them; the script checks each index's published identifier.
-Copyright © WHATWG (Apple, Google, Mozilla, Microsoft). The standard is
-licensed under the Creative Commons Attribution 4.0 International License, and
-the portions incorporated into source code under the BSD 3-Clause License;
-both are preserved in [LICENSES/WHATWG-Encoding.txt](LICENSES/WHATWG-Encoding.txt).
-`lib/support/StringScan.cpp` implements the standard's decoders for these
+EUC-KR and fifteen single-byte encodings), and `lib/support/CommonCharacters.inc`
+the common Han and Hangul characters derived from them, as
+`scripts/generate_text_encoding_tables.py` writes them; the script checks each
+index's published identifier. Copyright © WHATWG (Apple, Google, Mozilla,
+Microsoft). The standard is licensed under the Creative Commons Attribution 4.0
+International License, and the portions incorporated into source code under
+the BSD 3-Clause License; both are preserved in
+[LICENSES/WHATWG-Encoding.txt](LICENSES/WHATWG-Encoding.txt).
+`lib/support/TextCodec.cpp` implements the standard's decoders for these
 encodings. Generated on 2026-10-06.
 
 ## FPREM anti-emulation regression

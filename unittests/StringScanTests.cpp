@@ -216,6 +216,38 @@ TEST(StringScan, DecodesCharactersForDisplay) {
   EXPECT_FALSE(isShownCharacter(0xe000));
 }
 
+TEST(StringScan, ReadsAStringFromTheCharacterAtOrAfterAByte) {
+  // A reference into a string reads it from the first whole character.
+  const auto UTF8 = bytes("\xe4\xb8\xad\xe6\x96\x87"
+                          "abc");
+  const auto Whole = textFrom(UTF8, Encoding::UTF8, 0);
+  ASSERT_TRUE(Whole);
+  EXPECT_EQ(Whole->Byte, 0u);
+  EXPECT_EQ(Whole->UTF8, 0u);
+  EXPECT_EQ(Whole->Chars, 5u);
+  const auto Inside = textFrom(UTF8, Encoding::UTF8, 1);
+  ASSERT_TRUE(Inside);
+  EXPECT_EQ(Inside->Byte, 3u);
+  EXPECT_EQ(Inside->UTF8, 3u);
+  EXPECT_EQ(Inside->Chars, 4u);
+  EXPECT_FALSE(textFrom(UTF8, Encoding::UTF8, UTF8.size()));
+  // An odd byte of a UTF-16 string reads from the next unit.
+  auto WideBytes = wide(U"Wide", 2, false);
+  WideBytes.resize(8); // Without the terminator.
+  const auto Wide = textFrom(WideBytes, Encoding::UTF16LE, 3);
+  ASSERT_TRUE(Wide);
+  EXPECT_EQ(Wide->Byte, 4u);
+  EXPECT_EQ(Wide->UTF8, 2u);
+  EXPECT_EQ(Wide->Chars, 2u);
+  // A trail byte of a GBK character reads from the character after it,
+  // whose text follows three UTF-8 bytes of the one before.
+  const auto GBK = textFrom(bytes("a\xd6\xd0\xce\xc4"), Encoding::GBK, 2);
+  ASSERT_TRUE(GBK);
+  EXPECT_EQ(GBK->Byte, 3u);
+  EXPECT_EQ(GBK->UTF8, 4u);
+  EXPECT_EQ(GBK->Chars, 1u);
+}
+
 TEST(StringScan, OverlappingStringsKeepTheFirst) {
   ScanOptions Options;
   Options.Encodings = Everything;

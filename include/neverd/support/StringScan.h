@@ -93,6 +93,22 @@ void decode(llvm::ArrayRef<uint8_t> Data, Encoding E,
 /// or direction mark, a byte order mark or a private-use character.
 bool isShownCharacter(uint32_t Code);
 
+/// Where reading a string from one of its bytes begins: at the first
+/// character that starts at or after that byte.
+struct TextStart {
+  /// The character's offset in the string's bytes, and its text's offset in
+  /// the string's UTF-8 text.
+  uint64_t Byte = 0, UTF8 = 0;
+  /// Code points from that character to the end of the string.
+  unsigned Chars = 0;
+};
+
+/// Where the text of the string \p Data, in \p E and without its terminator,
+/// begins when read from byte \p Offset; none when no character starts at
+/// or after it.
+std::optional<TextStart> textFrom(llvm::ArrayRef<uint8_t> Data, Encoding E,
+                                  uint64_t Offset);
+
 /// Reports the strings in \p Data in offset order, none overlapping another.
 /// A wide string starts at a multiple of its code unit size; where strings
 /// of different encodings overlap, the one starting first wins.
