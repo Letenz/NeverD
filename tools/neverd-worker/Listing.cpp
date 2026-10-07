@@ -67,6 +67,12 @@ constexpr char UnwindOpen[] = "; __unwind {";
 constexpr char UnwindClose[] = "; } // starts at ";
 constexpr char SegmentRule[] = "; ============================================="
                                "==============================";
+// A loader segment's remainder outside every section is mapped in pages.
+constexpr std::uint64_t LoadSegmentAlignment = 0x1000;
+// The section a classic listing assumes the data segment register holds.
+constexpr char DataSectionName[] = ".data";
+constexpr char SegmentRegistersLead[] = "es:nothing, ss:nothing, ds:";
+constexpr char SegmentRegistersTail[] = ", fs:nothing, gs:nothing";
 
 std::string takeString(const char *value) {
   if (!value)
@@ -415,6 +421,8 @@ struct Listing::Impl {
   bool wide = true, elf = false, macho = false;
   unsigned addressDigits = 16, pointerSize = 8;
   std::uint64_t imageEntry = 0;
+  /// Code the loader runs on its own besides the entry (DT_INIT, DT_FINI).
+  std::set<std::uint64_t> runtimeEntries;
 
   bool built = false;
   int builtFunctionCount = -1;
@@ -535,6 +543,16 @@ struct Listing::Impl {
           rename(*function, std::string(name));
     const auto entry = neverd_session_entry_addr(session);
     imageEntry = entry;
+    runtimeEntries.clear();
+    if (const auto rows = takeJson(neverd_entrypoints_json(session));
+        rows.is_array())
+      for (const auto &row : rows) {
+        const auto type = row.value("type", std::string());
+#define NEVERD_RUNTIME_ENTRY_TYPE(Type)                                        \
+  if (type == Type)                                                            \
+    runtimeEntries.insert(jsonAddress(row.value("addr", Json())));
+#include "ListingVocabulary.def"
+      }
     if (auto *function = functionAtEntry(entry))
       rename(*function, std::string(EntryFunctionName));
     if (!functionNamed(MainFunctionName))
@@ -748,13 +766,15 @@ struct Listing::Impl {
     for (const auto &segment : segments) {
       std::uint64_t cursor = segment.start;
       const std::string remainder = elf ? std::string("LOAD") : segment.name;
+      const std::uint64_t remainderAlignment = elf ? LoadSegmentAlignment : 1;
       for (const auto &section : sections) {
         if (section.end <= cursor || section.start >= segment.end)
           continue;
         const auto start = std::max(section.start, cursor);
         const auto end = std::min(section.end, segment.end);
         if (start > cursor)
-          pieces.push_back({cursor, start, start, 1, remainder, segment.flags});
+          pieces.push_back({cursor, start, start, remainderAlignment, remainder,
+                            segment.flags});
         Range piece = section;
         if (piece.fileOffset)
           *piece.fileOffset += start - section.start;
@@ -767,8 +787,8 @@ struct Listing::Impl {
         cursor = end;
       }
       if (cursor < segment.end)
-        pieces.push_back(
-            {cursor, segment.end, segment.end, 1, remainder, segment.flags});
+        pieces.push_back({cursor, segment.end, segment.end, remainderAlignment,
+                          remainder, segment.flags});
     }
     if (segments.empty())
       pieces = sections;
@@ -1757,13 +1777,12 @@ struct Listing::Impl {
     directive.append(segmentDirectiveName(region), ListingRole::SegmentName);
     directive.padTo(NameColumnWidth);
     directive.append("segment ", ListingRole::Directive);
-    const char *alignment = region.alignment >= 4096 ? "page"
-                            : region.alignment >= 16 ? "para"
-                            : region.alignment >= 8  ? "qword"
-                            : region.alignment >= 4  ? "dword"
-                            : region.alignment >= 2  ? "word"
-                                                     : "byte";
-    directive.append(alignment, ListingRole::Directive);
+    std::string_view alignment;
+#define NEVERD_SEGMENT_ALIGNMENT(Bytes, Spelling)                              \
+  if (alignment.empty() && region.alignment >= Bytes)                          \
+    alignment = Spelling;
+#include "ListingVocabulary.def"
+    directive.append(std::string(alignment), ListingRole::Directive);
     directive.append(" public '", ListingRole::Directive);
     directive.append(region.exec     ? "CODE"
                      : uninitialized ? "BSS"
@@ -1772,7 +1791,33 @@ struct Listing::Impl {
                      ListingRole::Directive);
     directive.append(wide ? "' use64" : "' use32", ListingRole::Directive);
     addLine(out, item, item.start, "directive", std::move(directive));
-    addLine(out, item, item.start, "blank", {});
+    if (dialect != OperandDialect::X86)
+      return;
+    // The segment registers the code assumes; data states only its origin.
+    const auto assume = [&](std::string text) {
+      StyledText line = lead(base);
+      line.append("assume ", ListingRole::Directive);
+      line.append(text, ListingRole::Directive);
+      addLine(out, item, item.start, "directive", std::move(line));
+    };
+    assume("cs:" + segmentDirectiveName(region));
+    if (region.start) {
+      StyledText origin = lead(base);
+      origin.append(";org ", ListingRole::AutoComment);
+      origin.append(x86Number(region.start), ListingRole::AutoComment);
+      addLine(out, item, item.start, "comment", std::move(origin));
+    }
+    if (region.exec)
+      assume(SegmentRegistersLead + dataSegmentName() + SegmentRegistersTail);
+  }
+
+  /// The data segment register's assumed segment: the data section's, or
+  /// nothing without one.
+  std::string dataSegmentName() const {
+    for (const auto &region : regions)
+      if (region.name == DataSectionName)
+        return segmentDirectiveName(region);
+    return "nothing";
   }
   bool slotsIn(const Region &region) const {
     for (const auto &entry : slots)
@@ -1876,7 +1921,8 @@ struct Listing::Impl {
       }
       addLine(out, item, item.start, "blank", {});
       // The entry point is public like every export.
-      if (function.exported || function.entry == imageEntry) {
+      if (function.exported || function.entry == imageEntry ||
+          runtimeEntries.contains(function.entry)) {
         StyledText publicLine = lead(base);
         publicLine.append("public ", ListingRole::Directive);
         publicLine.append(function.name, ListingRole::CodeName, function.entry);
@@ -2100,9 +2146,8 @@ struct Listing::Impl {
                   ListingRole::SegmentName);
       ends.padTo(base);
       ends.append("ends", ListingRole::Directive);
-      addLine(lines, item, item.start + item.size, "directive",
-              std::move(ends));
-      addLine(lines, item, item.start + item.size, "blank", {});
+      addLine(lines, item, item.start, "directive", std::move(ends));
+      addLine(lines, item, item.start, "blank", {});
     }
     for (std::size_t i = 0; i < lines.size(); ++i)
       lines[i].sub = static_cast<std::uint32_t>(i);

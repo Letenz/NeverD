@@ -481,6 +481,35 @@ NEVERD_CLASSIC_NAME(MainFunctionName, "main")
 NEVERD_STUB_SECTION_PREFIX(".plt")
 #undef NEVERD_STUB_SECTION_PREFIX
 
+// NEVERD_SEGMENT_ALIGNMENT(Bytes, Spelling): segment alignment classes, widest
+// first.  A segment takes the widest class its alignment reaches.
+#ifndef NEVERD_SEGMENT_ALIGNMENT
+#define NEVERD_SEGMENT_ALIGNMENT(Bytes, Spelling)
+#endif
+NEVERD_SEGMENT_ALIGNMENT(4096, "mempage")
+NEVERD_SEGMENT_ALIGNMENT(2048, "align_2048")
+NEVERD_SEGMENT_ALIGNMENT(1024, "align_1024")
+NEVERD_SEGMENT_ALIGNMENT(512, "align_512")
+NEVERD_SEGMENT_ALIGNMENT(256, "page")
+NEVERD_SEGMENT_ALIGNMENT(128, "align_128")
+NEVERD_SEGMENT_ALIGNMENT(64, "align_64")
+NEVERD_SEGMENT_ALIGNMENT(32, "align_32")
+NEVERD_SEGMENT_ALIGNMENT(16, "para")
+NEVERD_SEGMENT_ALIGNMENT(8, "qword")
+NEVERD_SEGMENT_ALIGNMENT(4, "dword")
+NEVERD_SEGMENT_ALIGNMENT(2, "word")
+NEVERD_SEGMENT_ALIGNMENT(1, "byte")
+#undef NEVERD_SEGMENT_ALIGNMENT
+
+// NEVERD_RUNTIME_ENTRY_TYPE(Type): neverd_entrypoints_json types of code the
+// loader runs on its own, which a listing declares public like the entry.
+#ifndef NEVERD_RUNTIME_ENTRY_TYPE
+#define NEVERD_RUNTIME_ENTRY_TYPE(Type)
+#endif
+NEVERD_RUNTIME_ENTRY_TYPE("init")
+NEVERD_RUNTIME_ENTRY_TYPE("fini")
+#undef NEVERD_RUNTIME_ENTRY_TYPE
+
 // NEVERD_SECTION_FUNCTION_NAME(Section, Name): the classic name of a
 // function at the start of a loader-run section.
 #ifndef NEVERD_SECTION_FUNCTION_NAME
