@@ -47,6 +47,8 @@ Les options sont un objet JSON de 64 KiB maximum. Champs inconnus/null, types in
 | `stack_size` | 1048576 | Pile alignée sur page dans le budget |
 | `output_limit` | 1048576 | Total des octets stdout/stderr capturés |
 | `instruction_quantum` | 1024 | Intervalle d’admission avant cession à la runtime |
+| `linux_kernel` | Absent | Interfaces du noyau invité explicitement observées comme indisponibles |
+| `linux_priority` | Absent | Valeurs nice explicites par tâche et droits de l’appelant pour les services Linux bruts de priorité |
 
 `schema_version` vaut 1. Le rapport inclut profil, architecture, backend sélectionné et motif, `stop_reason`, `exit_status` nullable, diagnostic, PC d’entrée/courant, compteurs, enregistrements de services et dernière sortie CPU typée. Adresses, numéros syscall, registres d’arguments et bits de retour sont des chaînes hexadécimales **sans** `0x` ; `stdout_hex`/`stderr_hex` préservent NUL et UTF-8 invalide. Un résultat syscall null signifie aucun retour modélisé (exit ou requête non prise en charge, par exemple), et non un zéro réussi.
 
@@ -75,6 +77,25 @@ Les services de mémoire anonyme partagent l'espace d'adressage et le budget phy
 Les longueurs sont arrondies aux pages. `munmap` tolère les trous et suppressions répétées ; `mprotect` modifie le préfixe mappé avant de retourner `ENOMEM` au premier trou. `PROT_NONE` conserve l'allocation et les octets sans autoriser l'accès invité. L'appel brut `brk` retourne la limite demandée en cas de succès et l'ancienne en cas d'échec, contrairement au zéro/moins un du wrapper libc. La limite initiale est la fin d'image alignée sur une page. L'extension respecte les autres mappings et le budget ; la réduction conserve les octets de la page partielle restante. Les règles et priorités d'erreur suivent les services Linux de [mapping](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) et de [protection](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c).
 
 Les mappings de fichiers, partagés ou fixes, la croissance descendante, les grandes pages, le verrouillage, les clés de protection, les politiques exécution seule/écriture seule et les autres drapeaux restent explicitement non pris en charge : arrêt avant tout effet publié ou retour inventé. Les erreurs ordinaires de plage, longueur et alignement du sous-ensemble admis retournent une erreur invitée et permettent de poursuivre. Aucun pointeur ni demande de mapping invité n'est transmis à l'OS hôte.
+
+L’entrée facultative `linux_kernel` consigne les interfaces du noyau dont l’absence a été explicitement observée. Par exemple, un test sans implémentation de `pidfd_open` utilise :
+
+```json
+{"linux_kernel":{"unavailable_syscalls":["pidfd_open"]}}
+```
+
+L’appel brut sélectionné renvoie -ENOSYS avant la validation des arguments, comme une entrée absente du noyau, sans créer de descripteur ni d’effet sur la mémoire invitée. Le wrapper `syscall` de Bionic conserve sa traduction habituelle -1/errno. Une entrée absente ou une liste vide conserve la limite existante de service non pris en charge ; les autres appels inconnus ne deviennent pas ENOSYS. Actuellement, seul `pidfd_open` est admis ; les noms inconnus, doublons et types incorrects sont rejetés. Cette entrée ne déduit ni version du noyau, ni disponibilité de l’hôte, ni implémentation pidfd fonctionnelle. Voir l’[implémentation des appels absents du noyau](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c).
+
+L’entrée facultative `linux_priority` déclare l’état nice des tâches de test ayant l’UID de l’appelant. Les appels bruts `setpriority` et `getpriority` partagent cet état entre les charges Linux ELF64 et Android natif ; ils ne modifient jamais les priorités de l’hôte.
+
+```json
+{"linux_priority":{"tasks":[{"id":1000,"nice":0}],
+                   "cap_sys_nice":false,"rlimit_nice":0}}
+```
+
+Les identifiants de tâche sont des entiers signés positifs distincts sur 32 bits, les valeurs nice initiales vont de -20 à 19 et `rlimit_nice` de 0 à 40. `cap_sys_nice` et `rlimit_nice` valent par défaut false et zéro ; l’état des tâches est toujours explicite. Une entrée absente, une tâche non déclarée ou la sélection PRIO_PGRP/PRIO_USER arrête l’exécution comme service non pris en charge. Cela inclut les nouveaux threads dont l’état nice n’est pas déclaré ; le modèle ne suppose ni héritage ni propriété d’une autre tâche. PRIO_PROCESS avec who zéro sélectionne la tâche invitée courante, sinon la tâche désignée.
+
+Un sélecteur invalide renvoie -EINVAL brut. Les demandes de modification bornent l’argument nice signé sur 32 bits à -20..19. Réduire nice exige CAP_SYS_NICE ou un RLIMIT_NICE suffisant ; un refus renvoie -EACCES brut sans modifier l’état. Les lectures brutes renvoient `20 - nice`, conservant le codage 40..1 du noyau, et non le résultat `getpriority` traduit par libc. Voir l’[interface Linux de priorité](https://man7.org/linux/man-pages/man2/setpriority.2.html).
 
 `linux_signals` fournit les actions initiales des signaux pour tout le processus. Une entrée absente est inconnue et ne signifie pas `SIG_DFL` ; une liste explicitement vide permet une installation sans lecture de l’action précédente. Les cinq champs sont obligatoires ; les valeurs non signées sur 64 bits hors de la plage exacte de JSON utilisent des chaînes décimales.
 

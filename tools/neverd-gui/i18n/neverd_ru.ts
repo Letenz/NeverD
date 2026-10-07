@@ -695,6 +695,14 @@
         <source>Version and license information</source>
         <translation>Сведения о версии и лицензии</translation>
     </message>
+    <message>
+        <source>S&amp;tring literals...</source>
+        <translation>Строковые &amp;литералы...</translation>
+    </message>
+    <message>
+        <source>Choose the encodings and minimum length of the strings the listing shows</source>
+        <translation>Выбрать кодировки и минимальную длину строк, показываемых в листинге</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1827,6 +1835,22 @@ Signed: %4</source>
         <source>The saved desktop of this database could not be restored.</source>
         <translation>Не удалось восстановить сохранённый рабочий стол этой базы данных.</translation>
     </message>
+    <message>
+        <source>String options are unavailable: %1</source>
+        <translation>Параметры строк недоступны: %1</translation>
+    </message>
+    <message>
+        <source>String literals</source>
+        <translation>Строковые литералы</translation>
+    </message>
+    <message>
+        <source>Encodings:</source>
+        <translation>Кодировки:</translation>
+    </message>
+    <message>
+        <source>Minimum length:</source>
+        <translation>Минимальная длина:</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -1960,6 +1984,10 @@ Signed: %4</source>
     <message>
         <source>Could not update the database: %1</source>
         <translation>Не удалось обновить базу данных: %1</translation>
+    </message>
+    <message>
+        <source>Strings: %1, at least %2 characters</source>
+        <translation>Строки: %1, не менее %2 символов</translation>
     </message>
 </context>
 </TS>

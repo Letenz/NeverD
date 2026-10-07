@@ -11,6 +11,12 @@ extern unsigned int getegid(void);
 extern void *dlopen(const char *, int);
 extern void *dlsym(void *, const char *);
 extern int dlclose(void *);
+extern int pthread_create(u64 *, const void *, void *(*)(void *), void *);
+extern int pthread_join(u64, void **);
+struct cpu_timespec {
+  long seconds, nanoseconds;
+};
+extern int clock_gettime(int, struct cpu_timespec *);
 
 static long raw(u64 number, u64 a, u64 b, u64 c, u64 d, u64 e, u64 f) {
   register u64 x0 __asm__("x0") = a;
@@ -157,4 +163,100 @@ u64 syscall_gki_pidfd_limit(u64 *out) {
   out[6] = (u64)syscall(57, out[5]);
   out[7] = (u64)*__errno();
   return 0;
+}
+
+/* Version observations are captured as values, independently of the model. */
+u64 syscall_gki_vectors(u64 *out) {
+  struct vector {
+    const void *base;
+    u64 length;
+  };
+  long fd = raw(434, (u64)getpid(), 0, 0, 0, 0, 0);
+  if (fd != 3)
+    return 1;
+  unsigned char *pages = (void *)raw(222, 0, 8192, 3, 0x22, ~0UL, 0);
+  if ((long)pages < 0)
+    return 2;
+  struct vector *tail = (void *)(pages + 4096 - sizeof(struct vector));
+  tail->base = (void *)1;
+  tail->length = ~0UL;
+  if (raw(226, (u64)(pages + 4096), 4096, 0, 0, 0, 0))
+    return 3;
+  *__errno() = 77;
+  out[0] = (u64)raw(66, (u64)fd, (u64)tail, 2, 0, 0, 0);
+  out[1] = (u64)*__errno();
+  out[2] = (u64)syscall(66, 1UL, tail, 2UL);
+  out[3] = (u64)*__errno();
+  const struct vector capped = {(void *)(0x0001000000000000UL - 0x7ffff000UL),
+                                0x80000000UL};
+  out[4] = (u64)raw(66, (u64)fd, (u64)&capped, 1, 0, 0, 0);
+  out[5] = (u64)syscall(66, (u64)fd, &capped, 1UL);
+  out[6] = (u64)*__errno();
+  if (syscall(66, 2UL, tail, 2UL) != -1)
+    return 4;
+  out[7] = (u64)*__errno();
+  if (raw(57, (u64)fd, 0, 0, 0, 0, 0) || raw(215, (u64)pages, 8192, 0, 0, 0, 0))
+    return 5;
+  return 0;
+}
+
+u64 syscall_gki_tasks(u64 *out, u64 thread_flag, u64 group_errno) {
+  *__errno() = 77;
+  out[0] = (u64)raw(434, 2001, 0, 0, 0, 0, 0);
+  out[1] = (u64)*__errno();
+  out[2] = (u64)syscall(434, 2001UL, 0UL);
+  out[3] = (u64)*__errno();
+  out[4] = (u64)raw(434, 3000, 0, 0, 0, 0, 0);
+  out[5] = (u64)syscall(434, 3000UL, 0UL);
+  out[6] = (u64)*__errno();
+  out[7] = (u64)syscall(434, 3000UL, 0x80UL);
+  if (thread_flag) {
+    if (out[7] != 3 || (u64)*__errno() != group_errno || syscall(57, out[7]))
+      return 1;
+  } else if (out[7] != ~0UL || *__errno() != 22)
+    return 2;
+  long leader = raw(434, 2000UL | (1UL << 32), 1UL << 32, 0, 0, 0, 0);
+  if (leader != 3 || raw(57, (u64)leader, 0, 0, 0, 0, 0))
+    return 3;
+  return 0;
+}
+
+u64 syscall_gki_tasks_full(u64 *out) {
+  *__errno() = 77;
+  out[0] = (u64)raw(434, 2001, 0, 0, 0, 0, 0);
+  out[1] = (u64)*__errno();
+  out[2] = (u64)syscall(434, 2001UL, 0UL);
+  out[3] = (u64)*__errno();
+  out[4] = (u64)raw(434, 3000, 0, 0, 0, 0, 0);
+  out[5] = (u64)syscall(434, 3000UL, 0UL);
+  out[6] = (u64)*__errno();
+  out[7] = (u64)raw(434, 2000, 0, 0, 0, 0, 0);
+  return 0;
+}
+
+/* The current nonleader TID is accepted for a process clock, and still names
+   the group's observation. No foreign task catalogue is inferred. */
+static void *current_task_cpu_clock(void *argument) {
+  u64 *out = argument;
+  out[0] = (u64)gettid();
+  unsigned int id = (~(unsigned int)out[0] << 3) | 2;
+  struct cpu_timespec value;
+  *__errno() = 87;
+  out[1] = (u64)raw(113, id, (u64)&value, 0, 0, 0, 0);
+  out[2] = (u64)value.seconds;
+  out[3] = (u64)value.nanoseconds;
+  out[4] = (u64)(long)clock_gettime((int)id, &value);
+  out[5] = (u64)value.seconds;
+  out[6] = (u64)value.nanoseconds;
+  out[7] = (u64)*__errno();
+  return 0;
+}
+u64 syscall_current_task_cpu_clock(u64 *out) {
+  u64 thread;
+  void *result = (void *)1;
+  if (pthread_create(&thread, 0, current_task_cpu_clock, out))
+    return 1;
+  if (pthread_join(thread, &result))
+    return 2;
+  return result ? 3 : 0;
 }

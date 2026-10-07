@@ -1420,6 +1420,12 @@ transfer ownership of execution, thread or callback state out of the model.
 
 The Linux kernel component also owns validation and lookup of explicit
 clock observations in `LinuxTimeOptions`, plus time-service output ordering.
+`LinuxCPUClock` decodes process CPU identities and validates their released GKI
+task observations. It resolves current-task aliases to the process group and
+checks foreign group leaders before output access. `LinuxClock` canonicalizes
+observations and rejects duplicate aliases. Process CPU samples stay fixed
+while the idle policy advances declared wall clocks; no execution accounting
+or host clock supplies an observation.
 The process wire parser validates representations and delegates value policy
 to that owner. Android reuses clock lookup and raw kernel services; Bionic
 alone owns errno conversion and `time`'s user-space destination store.
@@ -2174,6 +2180,8 @@ cancellation, full PnP/power or general hardware. API IRQL ceilings come from `K
 argument-dependent checks in the owning model.
 
 `KernelScheduler` owns live runtime priority and the shared priority/ready-order comparison. `KernelModelThreadPriorities` validates thread objects for `KeSetPriorityThread` and `KeQueryPriorityThread`; paused CPU contexts never copy priority state. `DriverSession` checks higher-priority readiness before callback synchronization and at API/event boundaries. See [driver scheduling](driver-scheduling.md) for the bounded policy and remaining limits.
+
+`KernelDispatcher` owns mutex recursion by logical thread. `KernelModel` captures the waiting thread for deferred `KeWaitForSingleObject` acquisition and uses the same identity for APC queries and `KeReleaseMutex`; nested stack retirement preserves ownership, while outermost return checks retain the lifetime guard.
 
 `KernelModelDeviceStack` keeps each device's driver owner, allocation, attachment neighbors, delete-pending state and internal references in one record. The guest `NextDevice` inventory and the host-owned attachment graph have different meanings. Namespace resolution retains the named lower device for `FILE_OBJECT` and reports, selects the current top for initial dispatch and READ/WRITE buffer flags, and captures a retained route. Detach/delete cannot expire devices still owned by a request or callback; the public `ReferenceCount` remains an open-handle count.
 
@@ -3534,11 +3542,19 @@ admission happen before loading; unlisted and available-but-unmodeled calls
 retain their unsupported boundary.
 
 `LinuxGKIKernels.def` owns released Android GKI branch identifiers and the
-versioned `pidfd_open` flag mask. JSON and C++ options select that contract
+versioned `pidfd_open` flag mask, nonleader error and iovec import policy. JSON and C++ options
+select that contract
 explicitly; Android's Bionic API level does not infer it. `LinuxServices`
 dispatches the shared kernel call, and `LinuxFiles` owns process descriptors
 alongside regular files and standard streams. `LinuxOutput` supplies the same
-vector import/error ordering before a pidfd's missing write operation. There
-is no host process lookup or parallel descriptor namespace. See
+version-selected vector import/error ordering for captured output and before a
+pidfd's missing write operation. There
+is no host process lookup or parallel descriptor namespace. `LinuxKernelOptions`
+also owns an optional fixed catalogue of additional live guest tasks. A declared
+closed catalogue supplies lookup absence; an omitted one leaves foreign targets
+unsupported. Shared kernel validation rejects contradictory priority observations
+and cooperative Android thread mode before loading. `LinuxPIDFD` checks target
+class before reserving a descriptor, with release-specific nonleader errors.
+See
 [released GKI contracts](android-gki-kernels.md) for pinned source evidence and
 the limits of this implemented subset.

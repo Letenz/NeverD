@@ -353,7 +353,7 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `KeInitializeTimer`, `KeInitializeTimerEx`, `KeSetTimer`, `KeSetTimerEx`, `KeCancelTimer`, `KeReadStateTimer` | 通知／同步定时器；相对／绝对 100 ns 期限、毫秒周期、重新设置／取消及虚拟时间中的信号查询 |
 | `KeInitializeEvent`, `KeSetEvent`, `KeResetEvent`, `KeClearEvent`, `KeReadStateEvent` | 通知／同步事件保留不同信号消耗行为；`KeSetEvent` 仅接受 Increment=0、Wait=FALSE |
 | `KeInitializeSemaphore`, `KeReleaseSemaphore`, `KeReadStateSemaphore` | 驻留的计数信号量，上限必须为正；每次成功等待消耗一个计数。释放仅接受 Increment=0、Wait=FALSE；超过上限时抛出 `STATUS_SEMAPHORE_LIMIT_EXCEEDED`。 |
-| `KeInitializeMutex`, `KeReleaseMutex`, `KeReadStateMutex` | 驻留的 KMUTEX 按执行帧持有并支持递归获取；KeReleaseMutex 返回先前的有符号信号状态，要求持有者和匹配的 DISPATCH_LEVEL 获取上下文，且仅接受 Wait=FALSE。持有期间禁止返回、重新初始化或释放存储。 非持有者释放触发 `STATUS_MUTANT_NOT_OWNED`。 |
+| `KeInitializeMutex`, `KeReleaseMutex`, `KeReadStateMutex` | 驻留的 KMUTEX 按逻辑线程持有，支持跨嵌套回调和 SEH 的递归获取；KeReleaseMutex 返回先前的有符号信号状态，要求持有者和匹配的 DISPATCH_LEVEL 获取上下文，且仅接受 Wait=FALSE。持有期间禁止最外层返回、重新初始化或释放存储。非持有者释放触发 `STATUS_MUTANT_NOT_OWNED`。 |
 | `PsCreateSystemThread`, `PsTerminateSystemThread`, `ObReferenceObjectByHandle`, `ObfDereferenceObject`, `ZwClose` | 系统进程中的有界线程在 PASSIVE_LEVEL 运行。句柄与不透明线程对象的引用各自持有生命周期；PsTerminateSystemThread 不返回客体代码，并使线程对象可等待且进入信号状态。APC 交付、进程优先级类别和带类型的对象引用尚未建模。 |
 | `KeSetPriorityThread`, `KeQueryPriorityThread` | 在 `PASSIVE_LEVEL` 访问运行时优先级；设置接受 1..31 并返回原值，确定性初始值为 8，要求已知线程对象。`scheduling` 启用优先级调度；动态提升与进程优先级类别尚未支持。 [driver-scheduling.md](driver-scheduling.md) |
 | `KeEnterCriticalRegion`, `KeLeaveCriticalRegion`, `KeEnterGuardedRegion`, `KeLeaveGuardedRegion`, `KeAreApcsDisabled`, `KeAreAllApcsDisabled` | 按线程跟踪可嵌套的 APC 禁用状态。临界区及持有的 KMUTEX 禁用普通内核 APC；保护区和 IRQL >= APC_LEVEL 禁用全部 APC。系统线程启动时处于一层临界区内。未匹配的离开和带未平衡状态返回都会失败；尚未实现 APC 投递。 |

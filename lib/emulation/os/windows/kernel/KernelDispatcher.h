@@ -28,7 +28,9 @@ class GuestMemory;
 namespace dispatcher {
 #define NEVERD_KERNEL_DISPATCHER_VALUE(Name, Value)                            \
   constexpr uint64_t Name = Value;
+#define NEVERD_KERNEL_DISPATCHER_TEXT(Name, Text) constexpr char Name[] = Text;
 #include "KernelDispatcherValues.def"
+#undef NEVERD_KERNEL_DISPATCHER_TEXT
 #undef NEVERD_KERNEL_DISPATCHER_VALUE
 } // namespace dispatcher
 
@@ -50,7 +52,7 @@ public:
   static std::optional<unsigned> argumentCount(llvm::StringRef Name);
   llvm::Expected<uint64_t> call(llvm::StringRef Name,
                                 llvm::ArrayRef<uint64_t> Arguments,
-                                uint8_t CurrentIRQL, uint64_t Execution = 0);
+                                uint8_t CurrentIRQL, uint64_t ThreadKey = 0);
 
   /// API operations use model state; direct guest structure access is denied.
   llvm::Error validateGuestAccess(uint64_t Address, uint32_t Size,
@@ -63,9 +65,10 @@ public:
   bool isWaitable(uint64_t Object) const;
   /// Process timers due now, without advancing time or dispatching callbacks.
   /// Successful synchronization-object acquisition consumes its signal.
-  llvm::Expected<bool> tryAcquire(uint64_t Object, uint64_t Execution = 0,
+  /// Mutex ownership uses the logical thread key, shared by all of its stacks.
+  llvm::Expected<bool> tryAcquire(uint64_t Object, uint64_t ThreadKey = 0,
                                   uint8_t CurrentIRQL = 0);
-  bool ownsMutex(uint64_t Execution) const;
+  bool ownsMutex(uint64_t ThreadKey) const;
 
   /// Framework wait locks share dispatcher ownership and opaque storage. An
   /// interrupt reservation exists before its guest thread begins execution.
@@ -93,7 +96,7 @@ private:
     bool Signaled = false;
     int32_t Count = 0;
     int32_t Limit = 0;
-    uint64_t MutexOwner = 0;
+    uint64_t MutexOwner = 0; // Logical thread key, never an execution stack.
     uint32_t MutexDepth = 0;
     bool MutexAcquiredAtDispatch = false;
     std::optional<WaitLockOwner> LockOwner;
