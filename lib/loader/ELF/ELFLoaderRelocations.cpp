@@ -172,6 +172,7 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
       if (!SecName.empty())
         RE.SectionName = SecName.str();
 
+      bool Undefined = false;
       if (SymSH && SymIdx > 0 && !StrTab.empty()) {
         auto SymsOr = ELF.symbols(SymSH);
         if (!SymsOr) {
@@ -182,15 +183,22 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
             RE.SymbolName = SymNameOr->str();
           else
             llvm::consumeError(SymNameOr.takeError());
+          Undefined = (*SymsOr)[SymIdx].st_shndx == SHN_UNDEF;
         }
       }
 
-      if (!IsRelocatable)
+      if (!IsRelocatable) {
         elf_loader::recordIRelativeResolver(
             RE.Type, RE.Address,
             RE.HasExplicitAddend ? std::optional<int64_t>(RE.Addend)
                                  : std::nullopt,
             Img);
+        // The dynamic linker writes the symbol's address; a REL slot's
+        // implicit addend is not added.
+        elf_loader::recordImportSlotBinding(
+            RE.Type, RE.Address, RE.SymbolName, Undefined,
+            RE.HasExplicitAddend ? RE.Addend : 0, Img);
+      }
       Img.Relocations.push_back(std::move(RE));
     };
 

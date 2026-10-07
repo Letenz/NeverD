@@ -14,6 +14,7 @@
 #include "SessionImpl.h"
 
 #include "neverd/evm/bytecode/EVMBytecode.h"
+#include "neverd/loader/ELF/ELFLoaderUtils.h"
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionFunction.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
@@ -211,25 +212,6 @@ const char *neverd_imports_json(neverd_session_t Sess) {
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }
 
-namespace {
-/// ELF dynamic relocations that store a symbol's address in a GOT slot.
-bool isELFSlotBinding(Arch Target, uint32_t Type) {
-  using namespace llvm::ELF;
-  switch (Target) {
-  case Arch::X64:
-    return Type == R_X86_64_GLOB_DAT || Type == R_X86_64_JUMP_SLOT;
-  case Arch::X86:
-    return Type == R_386_GLOB_DAT || Type == R_386_JUMP_SLOT;
-  case Arch::AArch64:
-    return Type == R_AARCH64_GLOB_DAT || Type == R_AARCH64_JUMP_SLOT;
-  case Arch::ARM:
-    return Type == R_ARM_GLOB_DAT || Type == R_ARM_JUMP_SLOT;
-  default:
-    return false;
-  }
-}
-} // namespace
-
 const char *neverd_import_slots_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S || !S->Loaded)
@@ -249,7 +231,7 @@ const char *neverd_import_slots_json(neverd_session_t Sess) {
     Note(Addr, Slot.Name, Slot.Addend);
   if (S->Img.Format == BinaryFormat::ELF && !S->Img.IsRelocatable)
     for (const auto &Rel : S->Img.Relocations)
-      if (isELFSlotBinding(S->Img.Arch, Rel.Type))
+      if (elf_loader::isELFSlotBinding(S->Img.Arch, Rel.Type))
         Note(Rel.Address, Rel.SymbolName, Rel.Addend);
   llvm::json::Array Arr;
   for (const auto &[Addr, Slot] : Slots) {
