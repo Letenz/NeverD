@@ -1365,7 +1365,7 @@ Swift SDK Published 的 enclosing-instance 存取器保留四個指標載體：�
 
 ## 已釋出 Android GKI 核心契約
 
-`LinuxGKIKernels.def` 統一管理已釋出分支、`pidfd_open` 標誌、非首領錯誤及 iovec 匯入策略。`LinuxKernelOptions` 顯式選擇版本並擁有可選的固定任務清單；省略清單時外部目標仍不支援。`LinuxServices` 分派呼叫，`LinuxFiles` 統一擁有檔案和程序描述符，`LinuxOutput` 複用版本化向量校驗，`LinuxPIDFD` 在分配描述符前檢查目標類別。共享准入拒絕矛盾的優先順序觀察值及協作式 Android 執行緒組合；不查詢宿主程序。詳見[已釋出 GKI 契約](android-gki-kernels.md)。
+`LinuxGKIKernels.def` 擁有已發布 Android GKI 分支識別碼、依版本變化的 `pidfd_open` 旗標遮罩、非群組首領錯誤及 iovec 匯入策略。JSON 與 C++ 明確選擇契約，Bionic API 等級不推導它。`LinuxServices` 分派共用核心呼叫，`LinuxFiles` 統一擁有檔案、標準串流及 pidfd 描述元；`LinuxOutput` 對擷取輸出及 pidfd 缺少寫入操作之前採用所選版本的向量匯入與錯誤順序。`LinuxKernelOptions` 也擁有其他存活客體任務的選用固定目錄。宣告封閉目錄後可確認查詢缺失；省略時，其他目標仍不支援。共用准入在載入前拒絕矛盾的優先權觀測與協作式 Android 執行緒模式。`LinuxPIDFD` 在保留描述元前檢查目標類別，並保留各版本的非群組首領錯誤。沒有宿主查詢或第二套描述元命名空間。請參閱[已發布 GKI 契約](../android-gki-kernels.md)。
 
 `LinuxCPUClock` 解碼程序 CPU 身份並校驗已釋出 GKI 的任務觀察值，在訪問輸出前解析當前任務的程序組別名及外部組首領。`LinuxClock` 規範化樣本並拒絕重複別名。空閒策略只推進宣告的牆鍾，CPU 樣本保持固定；宿主時鐘和指令計量均不提供隱式觀察值。
 

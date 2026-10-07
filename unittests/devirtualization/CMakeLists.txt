@@ -96,7 +96,7 @@ target_compile_definitions(NeverDLLVMScalarResultProjectionTests PRIVATE
 add_neverd_unittest(NeverDLLVMScalarStateProjectionTests
   LLVMScalarStateProjectionTests.cpp
   LINK_COMPONENTS LLVMScalarStateProjection
-  LINK_LIBS LLVMAsmParser LLVMIRReader
+  LINK_LIBS LLVMAsmParser LLVMIRReader LLVMTransformUtils
 )
 target_compile_definitions(NeverDLLVMScalarStateProjectionTests PRIVATE
   TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}/unittests/lift"

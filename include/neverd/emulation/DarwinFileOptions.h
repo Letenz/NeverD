@@ -133,6 +133,9 @@ struct DarwinFileOptions {
   /// grants. Namespace changes invalidate the parent's metadata and snapshot.
   /// New directory metadata stays unknown. Removed directories retain their
   /// object and original parent while held by directory FDs, CWD or children.
+  /// Regular-file rename may cross these created descendants of one initial
+  /// directory object. Distinct initial parents need explicit mount knowledge;
+  /// matching Device observations do not grant cross-parent rename.
   std::set<std::string> MutableDirectories;
   /// Removal authority for explicit initial Directories entries other than
   /// root. Declares an ordinary non-mount object with one namespace identity;
@@ -140,6 +143,11 @@ struct DarwinFileOptions {
   /// parent/target devices reject admission. Fixed initial costs stay reserved
   /// after removal; old observations never describe a reused name.
   std::set<std::string> RemovableDirectories;
+  /// Declared RENAME_SWAP support in these explicit mutable initial directory
+  /// domains. Created descendants inherit the original object's declaration.
+  /// Omission remains unknown; matching devices or mutable grants alone do not
+  /// supply filesystem support. Each reference has a fixed path+NUL charge.
+  std::set<std::string> SwapRenameDirectories;
   /// Optional virtual regular-file creation metadata; requires InitialUmask.
   /// New directories inherit only the parent's known device/group and do not
   /// consume regular-file inode values. Never applies to existing objects or
@@ -148,6 +156,19 @@ struct DarwinFileOptions {
   /// Initial process mask, including all 07777 bits returned by Darwin umask.
   /// Independent of creation authority. Absence is unknown, not a host default.
   std::optional<uint16_t> InitialUmask;
+  /// Ordinary rename authority for explicit non-root initial directory roots.
+  /// Their complete initial subtree is declared non-mount and uniquely named;
+  /// the immediate parent must be mutable. Descendants keep their own grants.
+  /// Fixed input costs stay reserved, while moved names acquire dynamic
+  /// charges. This does not authorize initial-directory SWAP or directory
+  /// removal.
+  std::set<std::string> MovableDirectories;
+  /// SWAP operand authority for explicit non-root initial directory objects.
+  /// Declares the same ordinary non-mount, unique initial subtree as Movable,
+  /// while keeping ordinary rename and removal grants separate. The immediate
+  /// parent must be mutable; both actual parents still need SWAP support for
+  /// distinct-object exchange. Fixed references charge path+NUL independently.
+  std::set<std::string> ExchangeableDirectories;
 };
 } // namespace neverd::emulation
 #endif

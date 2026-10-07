@@ -11,4 +11,4 @@
 {"$sSSSysMc", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
 {"$sScMScAsMc", "/usr/lib/swift/libswift_Concurrency.dylib", "/usr/lib/swift/libswift_Concurrency.dylib"},
 {"$sSnyxGSXsMc", "/usr/lib/swift/libswiftCore.dylib", "/usr/lib/swift/libswiftCore.dylib"},
-// clang-format on
+    // clang-format on

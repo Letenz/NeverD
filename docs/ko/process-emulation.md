@@ -78,24 +78,26 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
 
 파일/공유/고정 매핑, 아래 방향 확장, 대형 페이지, 메모리 잠금, 보호 키, 실행 전용/쓰기 전용 정책 및 다른 플래그는 명시적으로 지원하지 않습니다. 효과를 게시하거나 반환값을 만들기 전에 중단합니다. 지원 범위 안의 일반 범위/길이/정렬 오류는 게스트 오류를 반환하고 실행을 계속합니다. 게스트 포인터나 매핑 요청을 호스트 OS에 전달하지 않습니다.
 
-선택적인 `linux_kernel`은 관찰로 확인한 커널 인터페이스 부재를 기록합니다. 예를 들어 `pidfd_open` 구현이 없는 테스트 환경은 다음을 사용합니다.
+선택적인 `linux_kernel` 입력은 명확히 관측한 커널 인터페이스 부재를 기록합니다. 예를 들어 `pidfd_open` 구현이 없는 fixture는 다음을 사용합니다.
 
 ```json
 {"linux_kernel":{"unavailable_syscalls":["pidfd_open"]}}
 ```
 
-지정한 원시 호출은 누락된 커널 진입점처럼 인수 검사 전에 -ENOSYS를 반환하며, 설명자나 게스트 메모리 효과를 만들지 않습니다. Bionic `syscall` 래퍼는 일반적인 -1/errno 변환을 유지합니다. 입력 누락이나 빈 목록은 이 인터페이스의 기존 미지원 경계를 유지하며, 다른 알 수 없는 호출을 ENOSYS로 바꾸지 않습니다. 현재는 `pidfd_open`만 허용하며 알 수 없는 이름, 중복, 잘못된 형식은 거부합니다. 커널 버전, 호스트 가용성이나 동작하는 pidfd 구현은 추론하지 않습니다. [커널의 누락된 호출 구현](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c)을 참고하세요.
+선택한 raw 호출은 커널 진입점이 없는 경우처럼 인자 검증 전에 -ENOSYS를 반환하며, descriptor를 생성하거나 게스트 메모리를 변경하지 않습니다. Bionic `syscall` wrapper는 일반적인 -1/errno 변환을 유지합니다. 입력을 생략하거나 빈 목록을 주면 이 인터페이스의 기존 미지원 경계가 유지되며, 다른 알 수 없는 호출을 ENOSYS로 변환하지 않습니다. 현재 `pidfd_open`만 허용하며 알 수 없는 이름, 중복, 잘못된 타입은 거부합니다. 입력으로 커널 버전, 호스트 가용성 또는 작동하는 pidfd 구현을 추정하지 않습니다. [커널의 누락 호출 구현](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c)을 참조하십시오.
 
-선택적인 `linux_priority` 입력은 호출자와 UID가 같은 테스트 작업의 nice 상태를 선언합니다. Linux ELF64와 Android 네이티브의 원시 `setpriority` 및 `getpriority`가 이 상태를 공유하며 호스트 우선순위는 변경하지 않습니다.
+명시적인 `linux_kernel.gki`는 5.10~6.18의 출시된 Android common 커널 계열을 선택합니다. 구현 범위는 살아 있는 모델 프로세스와 명시한 게스트 작업의 `pidfd_open`, 버전별 벡터 가져오기입니다. `linux_files`와 설명자 표를 공유하며 Bionic과 원시 트랩의 소유권과 오류 순서가 같습니다. GKI와 `pidfd_open` 부재 관측은 함께 지정할 수 없습니다. 선택적인 `linux_kernel.tasks` 배열은 다른 살아 있는 작업의 고정된 닫힌 목록을 선언합니다. 항목 예는 `{ "id": 2000, "group_leader": true }`입니다. 배열을 생략하면 다른 대상 조회는 미지원이며, 빈 배열은 실행 중인 그룹 리더만 알고 있습니다. 선언한 목록 밖 PID는 ESRCH를 반환합니다. 목록과 우선순위 관측은 일치해야 하며 협력형 Android 게스트 스레드와 함께 사용할 수 없습니다. Android API 수준은 커널을 선택하지 않습니다. 여덟 소스 버전, 설명자 동작, 테스트와 남은 범위는[출시된 GKI 계약](../android-gki-kernels.md)을 참조하세요.
+
+선택 입력 `linux_priority`는 호출자와 같은 UID를 가진 테스트 태스크의 nice 상태를 선언합니다. Linux ELF64와 Android의 원시 `setpriority` 및 `getpriority`는 이 상태를 공유하며 호스트 우선순위는 변경하지 않습니다.
 
 ```json
 {"linux_priority":{"tasks":[{"id":1000,"nice":0}],
                    "cap_sys_nice":false,"rlimit_nice":0}}
 ```
 
-작업 ID는 중복되지 않는 양의 부호 있는 32비트 값이어야 하며, 초기 nice 값은 -20~19, `rlimit_nice`는 0~40입니다. `cap_sys_nice`와 `rlimit_nice`의 기본값은 false와 0이며, 작업 상태는 항상 명시해야 합니다. 입력 누락, 목록에 없는 작업, PRIO_PGRP/PRIO_USER 선택은 지원하지 않는 서비스로 중단합니다. nice 상태가 선언되지 않은 새 스레드도 포함됩니다. 모델은 상속이나 다른 작업의 소유권을 추측하지 않습니다. PRIO_PROCESS의 who가 0이면 현재 게스트 작업을, 그 외에는 지정한 작업을 선택합니다.
+태스크 ID는 서로 다른 양수의 부호 있는 32비트 값이며, 초기 nice는 -20..19, `rlimit_nice`는 0..40입니다. `cap_sys_nice`와 `rlimit_nice`의 기본값은 false와 0이지만 태스크 상태는 항상 명시해야 합니다. 입력이 없거나 태스크가 목록에 없으면(상태를 선언하지 않은 새 스레드 포함) 미지원으로 중단하며 상속이나 소유자를 추측하지 않습니다. PRIO_PGRP/PRIO_USER 선택도 미지원으로 중단합니다. PRIO_PROCESS에서 who=0은 현재 게스트 태스크를, 그 외 값은 지정 태스크를 선택합니다. 잘못된 선택자는 원시 -EINVAL을 반환합니다. 설정 요청은 부호 있는 32비트 nice를 -20..19로 제한합니다. nice 값을 낮추려면 CAP_SYS_NICE 또는 충분한 RLIMIT_NICE가 필요하며, 거부 시 상태를 바꾸지 않고 원시 -EACCES를 반환합니다. 원시 조회는 `20 - nice`, 즉 커널의 40..1 인코딩이며 libc가 변환한 결과가 아닙니다.
 
-잘못된 선택자는 원시 -EINVAL을 반환합니다. 설정 요청은 부호 있는 32비트 nice 인수를 -20..19로 제한합니다. nice 값을 낮추려면 CAP_SYS_NICE 또는 충분한 RLIMIT_NICE가 필요하며, 거부 시 상태를 바꾸지 않고 원시 -EACCES를 반환합니다. 원시 조회는 `20 - nice`를 반환하여 커널의 40..1 인코딩을 유지합니다. libc가 변환한 `getpriority` 결과와는 다릅니다. [Linux 우선순위 인터페이스](https://man7.org/linux/man-pages/man2/setpriority.2.html)를 참고하세요.
+[Linux setpriority/getpriority](https://man7.org/linux/man-pages/man2/setpriority.2.html).
 
 `linux_signals`는 프로세스 전체의 초기 시그널 동작을 지정합니다. 누락된 항목은 알 수 없는 값이며 `SIG_DFL`을 뜻하지 않습니다. 명시적인 빈 목록은 이전 동작을 조회하지 않고 새 동작을 설정할 수 있습니다. 다섯 필드가 모두 필수이며, JSON의 정확한 정수 범위를 벗어나는 부호 없는 64비트 값은 십진 문자열을 사용합니다.
 

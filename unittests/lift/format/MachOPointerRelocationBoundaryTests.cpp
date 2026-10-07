@@ -6515,6 +6515,36 @@ bool containsOpcode(const LowFunc &Func, NdOp Opcode) {
   return false;
 }
 
+void expectRejectedInteriorRelay(const InteriorPointerFixture &Fixture,
+                                 const LowFunc &Func) {
+  const va_t Relay =
+      Fixture.End - (Fixture.Image.Arch == Arch::AArch64 ? 4 : 2);
+  std::vector<NdOp> Control;
+  for (const LowBlock &Block : Func.Blocks)
+    for (const LowOp &Op : Block.Ops) {
+      if (Op.Addr != Relay)
+        continue;
+      switch (Op.Opcode) {
+      case NdOp::BRANCH:
+      case NdOp::COND_BR:
+      case NdOp::INDIR_BR:
+      case NdOp::CALL:
+      case NdOp::INDIR_CALL:
+      case NdOp::RETURN:
+        Control.push_back(Op.Opcode);
+        break;
+      default:
+        break;
+      }
+    }
+  // The AArch64 relay still owns its 48-byte frame and saved LR. Rejecting
+  // destinations cannot grant tail-call identity while that frame is live.
+  if (Fixture.Image.Arch == Arch::AArch64)
+    EXPECT_EQ(Control, (std::vector<NdOp>{NdOp::INDIR_BR}));
+  else
+    EXPECT_EQ(Control, (std::vector<NdOp>{NdOp::INDIR_CALL, NdOp::RETURN}));
+}
+
 MedFunc makeReturnFunction(llvm::StringRef Name, va_t Entry,
                            std::optional<va_t> Interior = std::nullopt) {
   MedFunc Func;
@@ -7560,13 +7590,13 @@ TEST(MachOInteriorCodePointerCFG, DoesNotFoldWritableOrUnprovenRelay) {
     Fixture.Image.Segments.back().Flags =
         Fixture.Image.Segments.back().Flags | SegmentFlags::Writable;
     LowFunc Func = buildInteriorPointerCFG(Fixture);
-    EXPECT_TRUE(containsOpcode(Func, NdOp::INDIR_CALL));
+    expectRejectedInteriorRelay(Fixture, Func);
   }
   {
     InteriorPointerFixture Fixture = makeInteriorPointerFixture(Arch::X64);
     Fixture.Image.CodePtrRelocSlots.clear();
     LowFunc Func = buildInteriorPointerCFG(Fixture);
-    EXPECT_TRUE(containsOpcode(Func, NdOp::INDIR_CALL));
+    expectRejectedInteriorRelay(Fixture, Func);
   }
 }
 
@@ -7851,7 +7881,10 @@ TEST(MachOInteriorCodePointerCFG,
       EXPECT_EQ(Indexed.DecodedInstructionCount, Live.DecodedInstructionCount);
       EXPECT_EQ(Indexed.LiftedInstructionCount, Live.LiftedInstructionCount);
       EXPECT_EQ(Builder.relocationCFGRootSourcesForTesting(), LiveSources);
-      EXPECT_TRUE(containsOpcode(Indexed, NdOp::INDIR_CALL));
+      EXPECT_EQ(Indexed.UnsafeIndirectBranchAddresses,
+                Live.UnsafeIndirectBranchAddresses);
+      expectRejectedInteriorRelay(Fixture, Live);
+      expectRejectedInteriorRelay(Fixture, Indexed);
       if (RejectedTarget != InvalidVA)
         EXPECT_EQ(blockStarts(Indexed).count(RejectedTarget), 0u);
     }
@@ -7866,7 +7899,7 @@ TEST(MachOInteriorCodePointerCFG,
         Fixture.Image.patchPtr(Fixture.SelectedSlot, InstructionInterior));
     LowFunc Func = buildInteriorPointerCFG(Fixture);
     EXPECT_EQ(blockStarts(Func).count(InstructionInterior), 0u);
-    EXPECT_TRUE(containsOpcode(Func, NdOp::INDIR_CALL));
+    expectRejectedInteriorRelay(Fixture, Func);
   }
   {
     InteriorPointerFixture Fixture = makeInteriorPointerFixture(Arch::AArch64);
@@ -7874,7 +7907,7 @@ TEST(MachOInteriorCodePointerCFG,
     std::set<va_t> Entries{Fixture.Entry, OtherFunction};
     LowFunc Func = buildInteriorPointerCFG(Fixture, Entries);
     EXPECT_EQ(blockStarts(Func).count(OtherFunction), 0u);
-    EXPECT_TRUE(containsOpcode(Func, NdOp::INDIR_CALL));
+    expectRejectedInteriorRelay(Fixture, Func);
   }
   {
     InteriorPointerFixture Fixture = makeInteriorPointerFixture(Arch::AArch64);
@@ -7886,7 +7919,7 @@ TEST(MachOInteriorCodePointerCFG,
     std::set<va_t> Entries{Fixture.Entry, Adjacent};
     LowFunc Func = buildInteriorPointerCFG(Fixture, Entries);
     EXPECT_EQ(blockStarts(Func).count(Adjacent), 0u);
-    EXPECT_TRUE(containsOpcode(Func, NdOp::INDIR_CALL));
+    expectRejectedInteriorRelay(Fixture, Func);
   }
 }
 
@@ -7911,7 +7944,7 @@ TEST(MachOInteriorCodePointerCFG, RejectsPotentiallyAliasingRelayStore) {
   Fixture.Image.ExceptionMetadata.rebuildIndex();
 
   LowFunc Func = buildInteriorPointerCFG(Fixture);
-  EXPECT_TRUE(containsOpcode(Func, NdOp::INDIR_CALL));
+  expectRejectedInteriorRelay(Fixture, Func);
 }
 
 TEST(MachOInteriorCodePointerCFG, RejectsAmbiguousMultiplePredecessorRelay) {
@@ -7928,7 +7961,7 @@ TEST(MachOInteriorCodePointerCFG, RejectsAmbiguousMultiplePredecessorRelay) {
 
   LowFunc Func = buildInteriorPointerCFG(Fixture);
   EXPECT_EQ(blockStarts(Func).count(Fixture.SelectedTarget), 1u);
-  EXPECT_TRUE(containsOpcode(Func, NdOp::INDIR_CALL));
+  expectRejectedInteriorRelay(Fixture, Func);
 }
 
 TEST(MachOLLVMInteriorCodePointerBoundary,

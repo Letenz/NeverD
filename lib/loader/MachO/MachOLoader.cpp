@@ -86,6 +86,9 @@ MachOLoader::load(const std::filesystem::path &Path) {
   Img.Format = BinaryFormat::MachO;
   Img.IsRelocatable = Obj.getHeader().filetype == MH_OBJECT;
   Img.MachOIsDylib = Obj.getHeader().filetype == MH_DYLIB;
+  // An executable linked without MH_PIE runs at its link address.
+  Img.LoadsAtLinkAddress = Obj.getHeader().filetype == MH_EXECUTE &&
+                           !(Obj.getHeader().flags & MH_PIE);
   llvm::StringRef ObjBytes = Obj.getData();
   Img.Raw.assign(reinterpret_cast<const uint8_t *>(ObjBytes.data()),
                  reinterpret_cast<const uint8_t *>(ObjBytes.data()) +

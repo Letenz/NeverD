@@ -678,8 +678,7 @@ TEST_F(AArch64_Atomic, CasAndCaspHighCUseStandardCompareExchangeAndCompile) {
   EXPECT_NE(Byte.find("return (uint8_t)("), std::string::npos) << Byte;
   auto Half = functionC(source, "test_cash");
   ASSERT_FALSE(Half.empty()) << source;
-  EXPECT_NE(Half.find("uint16_t neverd_expected"), std::string::npos)
-      << Half;
+  EXPECT_NE(Half.find("uint16_t neverd_expected"), std::string::npos) << Half;
   EXPECT_NE(Half.find("return (uint16_t)("), std::string::npos) << Half;
 
   EXPECT_NE(

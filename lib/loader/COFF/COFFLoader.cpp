@@ -123,6 +123,15 @@ COFFLoader::load(const std::filesystem::path &Path) {
                    : Bitness::Bits32;
   }
   Img.IsRelocatable = IsRelocatable;
+  // A linked image without base relocations runs at its preferred base: the
+  // loader has nothing to rebase it with.
+  if (!IsRelocatable) {
+    const llvm::object::data_directory *Relocations =
+        Obj.getDataDirectory(llvm::COFF::BASE_RELOCATION_TABLE);
+    Img.LoadsAtLinkAddress =
+        (Obj.getCharacteristics() & llvm::COFF::IMAGE_FILE_RELOCS_STRIPPED) ||
+        !Relocations || Relocations->Size == 0;
+  }
   if (!IsRelocatable) {
     Img.Entry = normalizeCodeAddress(Img.Entry, Img.Arch, Img.Mode);
     Img.COFFRichHeader =

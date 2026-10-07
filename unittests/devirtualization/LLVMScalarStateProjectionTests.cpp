@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "../LLVMHostFixture.h"
 #include "../lift/NeverDLiftFixture.h"
 #include "LLVMScalarEquivalenceTest.h"
 
@@ -343,12 +344,10 @@ TEST_F(LLVMScalarStateCompiled, OriginalAndAggregateBridgeMatchAtO0AndO2) {
   auto Original = tmpFile("original.ll"), Projected = tmpFile("scalar.ll"),
        Harness = tmpFile("check.c");
   S.function().setName("original");
-  std::ofstream(Original) << S.text();
-  std::string ScalarText;
-  llvm::raw_string_ostream OS(ScalarText);
-  R.Module->print(OS, nullptr);
+  std::ofstream(Original) << neverd::test::printHostCompilerFixture(*S.Module);
   // An LLVM bridge avoids assuming that a native C struct has LLVM's ABI.
-  std::ofstream(Projected) << ScalarText << R"(
+  std::ofstream(Projected) << neverd::test::printHostCompilerFixture(*R.Module)
+                           << R"(
 define void @bridge(i32 %x, i32 %y, ptr %out) {
  %s = call {i64, i32, i32} @f(i32 %x, i32 %y)
  %a = extractvalue {i64, i32, i32} %s, 0
