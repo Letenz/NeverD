@@ -3567,3 +3567,5 @@ blocking waits, temporary masks or other descriptor readiness.
 See
 [released GKI contracts](android-gki-kernels.md) for pinned source evidence and
 the limits of this implemented subset.
+
+Frame-offset proof keys normalize a top-level 64-bit address sum by removing its constant bias and subtracting the same entry root. Cold proofs retain the complete predicate and the existing remainder expression. Completed domains subtract the bias before insertion and restore the requested bias on lookup, preserving modular wrap, empty domains and nonuniqueness. Keys follow the original address so a change in the bounded remainder rewrite from a binary to an n-ary sum cannot change proof identity. All new nodes count against the existing node limit.

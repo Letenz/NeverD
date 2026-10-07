@@ -1551,3 +1551,4 @@ MainActor 픽스처는 고정 메타데이터와 정적 테이블의 전체 흐�
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` 는 분기 변경과 기호적 프레임 쓰기를 포함한 반복 네이티브 대상 체인, 고정 논리 비용, 정확하거나 한 번 부족한 질의 예산, 잘못된 대상 한도, 게이트 예산 소진 및 잘못된 종료 관측을 검사합니다. 교차하는 프레임 및 상관 대상 투영은 술어 교체 전후에도 완전한 튜플, 관측 순서와 불완전한 결과 거부를 유지합니다.
+`FrameOffsets.Cached*`는 기준값의 상위 비트를 자유롭게 유지한 주소 평행 이동, 부호 없는 순환, 합의 형태 변경, 두 캐시 모드, 술어 분리, 용량 0, 쿼리／노드 예산 거부, 빈 집합과 비유일 집합의 구분을 검사한다. 최초 요청은 완전한 솔버 증명을 유지하며, 후속 평행 이동은 남은 쿼리 예산이 없어도 이미 완료된 증명을 사용할 수 있다.

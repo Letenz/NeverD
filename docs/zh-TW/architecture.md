@@ -1350,3 +1350,5 @@ Swift SDK Published 的 enclosing-instance 存取器保留四個指標載體：�
 `LinuxPriority` 在同一工作負載的 `LinuxServices` 中統一管理明確的逐任務 nice 狀態。x64 與 AArch64 原始優先權陷阱使用 `LinuxValues.def` 的編號繫結及 OS 擁有的目前執行緒身分。經驗證的 `LinuxPriorityOptions` 提供測試任務觀察值與呼叫者的 CAP_SYS_NICE／RLIMIT_NICE 權限；未知任務狀態及群組／使用者選擇仍不支援。原始查詢保留核心回傳編碼，權限失敗不改變任務狀態。JSON 欄位與診斷由既有程序及 Linux `.def` 檔案宣告。
 
 `LinuxUnavailableSyscalls.def` 統一宣告公開的缺少觀察識別碼、輸入名稱、架構編號及選定可選核心呼叫的固定參數數量。`LinuxKernelOptions` 是明確測試觀察值；共用 Linux 核心服務僅在觀察值宣告呼叫缺少時回傳 ENOSYS。目錄不提供呼叫實作，也不根據 Android API 等級推斷可用性。JSON 驗證及設定准入在載入前完成；未列出及可用但未建模的呼叫仍明確不支援。
+
+框架偏移證明鍵從原始 64 位元位址的頂層和式移出常數偏移，再減去同一個入口框架根。首次證明保留完整述詞與既有餘項運算式。完成的值域在存入快取前減去偏移，命中時加回本次要求的偏移，保留模數回繞、空值域與非唯一性。鍵依原位址建立，因此有界餘項改寫在二元與多元和式間改變形狀不會改變證明身分。所有新節點均計入既有節點上限。
