@@ -534,21 +534,57 @@ llvm::Expected<DarwinFiles::Pathname> DarwinFiles::readPath(uint64_t Address) {
   return uint32_t(NameTooLong);
 }
 
+DarwinFiles::DirectoryLookup
+DarwinFiles::directoryDescriptor(uint32_t FD) const {
+  const auto I = Descriptors.find(FD);
+  if (I == Descriptors.end())
+    return uint32_t(BadDescriptor);
+  if (I->second.Open->Type == Kind::File)
+    return uint32_t(NotDirectory);
+  if (I->second.Open->Type != Kind::Directory)
+    return diagnostic::FileDirectoryKind;
+  return I->second.Open->Directory;
+}
+
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
                   uint32_t Mode, ProcessResult &Result) {
   if (!Options)
     return unsupported(Result, diagnostic::FileInputs);
+  // open1at imports one byte and checks a relative directory vnode before
+  // open1 validates flags or reserves a descriptor. Do not import the rest yet.
+  if (DirectoryFD != AtCurrentDirectory) {
+    if (Address >= UserLimit)
+      return returned(BadAddress, true);
+    auto Access = Memory.canAccess(Address, 1, Read | UserAccessible);
+    if (!Access)
+      return Access.takeError();
+    if (!*Access)
+      return returned(BadAddress, true);
+    auto Byte = Memory.readInteger(Address, 1);
+    if (!Byte)
+      return Byte.takeError();
+    if (*Byte != '/') {
+      auto Directory = directoryDescriptor(DirectoryFD);
+      if (auto *Error = std::get_if<uint32_t>(&Directory))
+        return returned(*Error, true);
+      if (auto *Reason = std::get_if<const char *>(&Directory))
+        return unsupported(Result, *Reason);
+    }
+  }
   if ((Flags & OpenAccessMask) == OpenAccessMask)
     return returned(InvalidArgument, true);
   if (Flags & ~uint32_t(OpenCloseOnExec | OpenDirectory | OpenAccessMask |
-                        OpenAppend | OpenTruncate | OpenCreate | OpenExclusive))
+                        OpenAppend | OpenTruncate | OpenCreate | OpenExclusive |
+                        OpenNoFollow | OpenNoFollowAny))
     return unsupported(Result, diagnostic::FileOpenFlags);
   // XNU reserves the descriptor before resolving the pathname. A failed
   // open does not retain that reservation.
   const uint32_t FD = freeDescriptor();
   if (FD == limit())
     return returned(TooManyFiles, true);
+  if ((Flags & OpenNoFollow) && (Flags & OpenNoFollowAny))
+    return returned(InvalidArgument, true);
   if ((Flags & OpenCreate) && (Flags & OpenDirectory))
     return returned(InvalidArgument, true);
   auto Resolved = resolvePath(Address, DirectoryFD,
@@ -604,14 +640,12 @@ DarwinFiles::resolvePath(uint64_t Address, uint32_t DirectoryFD,
   auto Directory = directoryNode("/");
   if (!Absolute) {
     if (DirectoryFD != AtCurrentDirectory) {
-      auto FD = Descriptors.find(DirectoryFD);
-      if (FD == Descriptors.end())
-        return uint32_t(BadDescriptor);
-      if (FD->second.Open->Type == Kind::File)
-        return uint32_t(NotDirectory);
-      if (FD->second.Open->Type != Kind::Directory)
-        return diagnostic::FileDirectoryKind;
-      Directory = FD->second.Open->Directory;
+      auto Found = directoryDescriptor(DirectoryFD);
+      if (auto *Error = std::get_if<uint32_t>(&Found))
+        return *Error;
+      if (auto *Reason = std::get_if<const char *>(&Found))
+        return *Reason;
+      Directory = std::get<std::shared_ptr<DirectoryNode>>(std::move(Found));
     } else if (!Path.empty()) {
       if (!CurrentDirectory)
         return diagnostic::FileWorkingDirectory;

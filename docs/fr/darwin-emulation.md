@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1fca157d25a2f609ab3d51be25fb8a113e6ef48a9fd3a7037c77cfbcf2d4425f -->
+<!-- i18n-source: 3e9324c29172180028d55fd3d4da679382fd95322227a5b26464f0360127662a -->
 
 [← Index de la documentation](README.md)
 
@@ -126,7 +126,7 @@ Les observations stat/readdir/SEEK_END du parent deviennent inconnues pour tous 
 
 O_CREAT=0x200 crée un fichier vide dans un parent direct explicitement mutable, via open/openat normal ou nocancel. Le nouvel objet est inscriptible ; les objets existants conservent leur autorisation WritableFiles. Un FD en lecture seule peut créer, mais pas écrire. Sans politique de création explicite, stat64 et recherche de trous restent inconnus. Les metadata/mutation_policy d’un ancien objet homonyme ne sont jamais hérités.
 
-Avec O_CREAT, O_EXCL=0x800 renvoie EEXIST sur fichier/répertoire existant avant troncature ; seul, il est sans effet. O_CREAT en lecture seule ouvre un répertoire existant. Ordre : mode d’accès invalide, disponibilité FD, EINVAL pour O_CREAT|O_DIRECTORY, puis chemin. Seul le dernier composant original absent peut être créé ; ancêtre absent et terminaisons `/`, `//`, `/.`, `/..` donnent ENOENT. Une création O_TRUNC ne marque pas FWASWRITTEN, contrairement à la troncature d’un objet existant.
+Avec O_CREAT, O_EXCL=0x800 renvoie EEXIST sur fichier/répertoire existant avant troncature ; seul, il est sans effet. O_CREAT en lecture seule ouvre un répertoire existant. Après le contrôle du premier octet et du répertoire dans openat décrit ci-dessous, l’ordre est : mode d’accès invalide, disponibilité FD, EINVAL pour O_CREAT|O_DIRECTORY, puis chemin. Seul le dernier composant original absent peut être créé ; ancêtre absent et terminaisons `/`, `//`, `/.`, `/..` donnent ENOENT. Une création O_TRUNC ne marque pas FWASWRITTEN, contrairement à la troncature d’un objet existant.
 
 Seule l’insertion invalide les observations du parent. Objets homonymes ancien/nouveau gardent données, FD, métadonnées et baux de mapping distincts. La limite de 256 compte les entrées initiales non-fichiers et objets vivants ; chemins canoniques/NUL dynamiques et octets courants comptent dans 16 MiB. Après unlink, le dernier FD/mapping libère les coûts dynamiques ; les coûts initiaux restent réservés. Budget épuisé ou chemin canonique de 1024 octets arrête explicitement sans inventer ENOSPC ou erreur native de chemin ; aucun nom/FD n’est publié. created-file compare le natif aux cinq profils, avec limites 4K/16K. Contrôle des droits, renommage entre domaines de répertoires initiaux distincts, liens et mutation des répertoires restent à compléter.
 
@@ -716,3 +716,14 @@ Le vérificateur invité initialise les 265 octets de sortie avant chaque copie 
 ```
 
 [XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).
+
+
+## Ouverture sans suivi de liens et contrôle du répertoire
+
+Les entrées ordinaires et nocancel `open` / `openat` acceptent O_NOFOLLOW=0x100 ou O_NOFOLLOW_ANY=0x20000000 dans les32 bits bas non signés. Le catalogue fermé ne contient aucun lien symbolique ; la résolution de liens reste à implémenter. Ces options de recherche sont absentes de F_GETFL et ne changent ni accès, ajout, troncature, création ni CLOEXEC propre au FD. Leur combinaison donne EINVAL22 après admission de la capacité FD, avant lecture du chemin complet ; une table pleine donne d’abord EMFILE24. Les options inconnues restent non prises en charge.
+
+Hors AT_FDCWD, `openat` lit exactement le premier octet avant le mode d’accès et la capacité FD. Un octet inaccessible donne EFAULT14. Un préfixe relatif, même NUL, vérifie d’abord l’objet répertoire détenu : FD inconnu EBADF9, fichier ordinaire ENOTDIR20, type vnode de flux inconnu non pris en charge. `/` ignore dirfd ; la séquence open existante lit ensuite le chemin complet. `open` ordinaire et AT_FDCWD omettent ce contrôle, tandis que les autres services conservent leur ordre de lecture complète. Un refus ne consomme ni FD ni nouvel inode ; les erreurs de transport se propagent sans mutation de l’espace de noms.
+
+Le programme original `file-access` utilise un FD de répertoire relatif pour NOFOLLOW_ANY afin d’éviter les alias natifs `/var` et `/tmp`. Les tests directs distinguent premier octet et suite, barre/NUL, limites utilisateur/page, table pleine et répertoires supprimés conservés. La sonde brute ARM64 macOS a réussi30 cas sous le délai inchangé de cinq secondes ; sa dernière ligne de chemin absolu avec table pleine utilise réellement un FD de répertoire valide malgré son ancien libellé. iOS physique et Intel natif restent à valider séparément.
+
+[XNU open1at / open1](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU vn_open_auth](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_vnops.c), [XNU open flags / FMASK](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/sys/fcntl.h).

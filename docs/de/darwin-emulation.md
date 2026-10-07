@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1fca157d25a2f609ab3d51be25fb8a113e6ef48a9fd3a7037c77cfbcf2d4425f -->
+<!-- i18n-source: 3e9324c29172180028d55fd3d4da679382fd95322227a5b26464f0360127662a -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -126,7 +126,7 @@ Eltern-stat/readdir/SEEK_END werden für alte/neue FD und Pfade unbekannt und st
 
 O_CREAT=0x200 erstellt eine leere Datei direkt unter einem explizit mutable Elternverzeichnis, über normales/nocancel open und openat. Neue Objekte sind beschreibbar; vorhandene behalten ihre WritableFiles-Freigabe. Ein Nur-Lese-FD kann erstellen, aber nicht schreiben. Ohne explizite Erstellungsrichtlinie bleiben stat64 und Sparse-Suche unbekannt. metadata/mutation_policy eines früheren gleichnamigen Objekts werden nie übernommen.
 
-O_EXCL=0x800 mit O_CREAT liefert bei vorhandenen Dateien/Verzeichnissen EEXIST vor Kürzung; allein ist es wirkungslos. Ein vorhandenes Verzeichnis lässt sich mit Nur-Lese-O_CREAT öffnen. Reihenfolge: ungültiger Zugriffsmodus, FD-Platz, EINVAL für O_CREAT|O_DIRECTORY, Pfad. Nur die letzte ursprüngliche fehlende Komponente kann entstehen; fehlende Vorfahren und `/`, `//`, `/.`, `/..` am Ende liefern ENOENT. Neues O_CREAT|O_TRUNC setzt FWASWRITTEN nicht, Kürzung vorhandener Dateien dagegen schon.
+O_EXCL=0x800 mit O_CREAT liefert bei vorhandenen Dateien/Verzeichnissen EEXIST vor Kürzung; allein ist es wirkungslos. Ein vorhandenes Verzeichnis lässt sich mit Nur-Lese-O_CREAT öffnen. Nach der unten beschriebenen openat-Prüfung des ersten Bytes und Verzeichnisses gilt die Reihenfolge: ungültiger Zugriffsmodus, FD-Platz, EINVAL für O_CREAT|O_DIRECTORY, Pfad. Nur die letzte ursprüngliche fehlende Komponente kann entstehen; fehlende Vorfahren und `/`, `//`, `/.`, `/..` am Ende liefern ENOENT. Neues O_CREAT|O_TRUNC setzt FWASWRITTEN nicht, Kürzung vorhandener Dateien dagegen schon.
 
 Nur Einfügen invalidiert Elternbeobachtungen. Gleichnamige alte/neue Objekte behalten getrennte Daten, FD, Metadaten und Mapping-Leases. 256 Einträge umfassen feste ursprüngliche Nicht-Datei-Einträge und lebende Dateien; dynamische kanonische Pfade/NUL und aktuelle Bytes zählen zu 16 MiB. Nach unlink gibt erst der letzte FD/Mapping die dynamischen Kosten frei, ursprüngliche Kosten bleiben. Budgetende oder kanonische Pfade ab 1024 Bytes stoppen ausdrücklich ohne erfundenes ENOSPC oder natives Pfad-errno, ohne Namen/FD zu veröffentlichen. created-file vergleicht natives macOS und fünf Profile; 4K/16K-Tests prüfen Grenzen. Rechteprüfung, Umbenennung zwischen verschiedenen anfänglichen Verzeichnisdomänen, Links und Verzeichnismutation bleiben offen.
 
@@ -716,3 +716,14 @@ Rohes `getpriority(100)` verwendet die unteren32 Bits des int-Selektors und des 
 ```
 
 [XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).
+
+
+## Open ohne Linkverfolgung und Verzeichnisvorprüfung
+
+Normale und nocancel-Einträge von `open` / `openat` akzeptieren O_NOFOLLOW=0x100 oder O_NOFOLLOW_ANY=0x20000000 in den vorzeichenlosen unteren32 Bits. Der geschlossene Katalog enthält keine symbolischen Links; deren Auflösung ist noch nicht implementiert. Diese Suchflags fehlen in F_GETFL und ändern weder Zugriff, Anhängen, Kürzen, Erzeugen noch FD-eigenes CLOEXEC. Beide zusammen ergeben EINVAL22 nach der FD-Kapazitätsprüfung und vor dem vollständigen Pfadimport; eine volle Tabelle liefert zuerst EMFILE24. Unbekannte Flags bleiben nicht unterstützt.
+
+Bei dirfd ungleich AT_FDCWD liest `openat` genau das erste Pfadbyte vor Zugriffsmodus und FD-Kapazität. Ein unlesbares Byte ergibt EFAULT14. Ein relativer Anfang, auch NUL, prüft zuerst das gehaltene Verzeichnisobjekt: unbekannter FD EBADF9, reguläre Datei ENOTDIR20, unbekannter Stream-vnode-Typ nicht unterstützt. `/` überspringt dirfd; erst danach liest die vorhandene open-Sequenz den vollständigen Pfad. Normales `open` und AT_FDCWD lassen diese Vorprüfung aus, andere Pfaddienste behalten ihre vollständige Importreihenfolge. Abgelehnte Aufrufe verbrauchen weder FD noch neuen inode; Transportfehler werden ohne Namensraummutationen weitergereicht.
+
+Das ursprüngliche `file-access` prüft NOFOLLOW_ANY über relative Verzeichnis-FDs und vermeidet native `/var`-/`/tmp`-Linkaliase. Direkte Tests unterscheiden erstes/späteres Byte, Schrägstrich/NUL, Benutzer-/Seitengrenzen, volle Tabellen und gehaltene entfernte Verzeichnisse. Die rohe ARM64-macOS-Sonde bestand30 Fälle im unveränderten Fünfsekundenlimit. Ihre letzte absolute Pfadzeile bei voller Tabelle verwendet trotz altem Namen einen gültigen Verzeichnis-FD. Physisches iOS und natives Intel bleiben getrennt zu prüfen.
+
+[XNU open1at / open1](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU vn_open_auth](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_vnops.c), [XNU open flags / FMASK](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/sys/fcntl.h).

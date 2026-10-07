@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 1fca157d25a2f609ab3d51be25fb8a113e6ef48a9fd3a7037c77cfbcf2d4425f -->
+<!-- i18n-source: 3e9324c29172180028d55fd3d4da679382fd95322227a5b26464f0360127662a -->
 
 [← فهرس الوثائق](README.md)
 
@@ -126,7 +126,7 @@ allocation_unit وmutation_time وseconds/nanoseconds مطلوبة وفق قوا
 
 ينشئ O_CREAT=0x200 ملفاً فارغاً تحت أب مباشر محدد بأنه mutable عبر open/openat العادي وnocancel. الكائن الجديد قابل للكتابة؛ تحتفظ الكائنات السابقة بإذن WritableFiles. يمكن لواصف القراءة الإنشاء دون الكتابة. دون سياسة إنشاء صريحة تبقى stat64 والبحث المتناثر مجهولين. لا تُورث metadata/mutation_policy من كائن سابق بالاسم نفسه أبداً.
 
-يعيد O_EXCL=0x800 مع O_CREAT الخطأ EEXIST للملفات والأدلة الموجودة قبل الاقتطاع؛ منفرداً لا يؤثر. يمكن فتح دليل موجود للقراءة مع O_CREAT. الترتيب: نمط وصول غير صالح، سعة FD، ثم EINVAL لـ O_CREAT|O_DIRECTORY، ثم المسار. يُنشأ آخر مكوّن أصلي مفقود فقط؛ الأب المفقود والنهايات `/` و`//` و`/.` و`/..` تعيد ENOENT. إنشاء O_CREAT|O_TRUNC جديد لا يضع FWASWRITTEN بينما اقتطاع الموجود يضعه.
+يعيد O_EXCL=0x800 مع O_CREAT الخطأ EEXIST للملفات والأدلة الموجودة قبل الاقتطاع؛ منفرداً لا يؤثر. يمكن فتح دليل موجود للقراءة مع O_CREAT. بعد فحص أول بايت والمجلد المسبق في openat الموضح أدناه، الترتيب: نمط وصول غير صالح، سعة FD، ثم EINVAL لـ O_CREAT|O_DIRECTORY، ثم المسار. يُنشأ آخر مكوّن أصلي مفقود فقط؛ الأب المفقود والنهايات `/` و`//` و`/.` و`/..` تعيد ENOENT. إنشاء O_CREAT|O_TRUNC جديد لا يضع FWASWRITTEN بينما اقتطاع الموجود يضعه.
 
 الإدراج الفعلي وحده يبطل ملاحظات الأب. للكائنين القديم والجديد بالاسم نفسه بيانات وFD وبيانات وصفية وعهد خرائط مستقلة. يشمل حد 256 العناصر الأولية غير الملفية والكائنات الحية؛ المسارات المعيارية/NUL الجديدة والبايتات الحالية تدخل حد 16 MiB. بعد unlink تُسترد التكاليف الديناميكية بعد آخر FD وخريطة فقط؛ تبقى الأولية. نفاد الميزانية أو بلوغ المسار المعياري 1024 بايت يوقف صراحة دون اختلاق ENOSPC أو خطأ مسار أصلي أو نشر اسم/FD. يقارن created-file macOS الأصلي بالملفات التعريفية الخمسة، وتفحص اختبارات 4K/16K الحدود. تبقى فرض الأذونات وإعادة التسمية بين مجالات أدلة أولية مختلفة والروابط وتغيير الأدلة عملاً لاحقاً.
 
@@ -716,3 +716,14 @@ getuid24/geteuid25/getgid47/getegid43/getgroups79 تشترك بمالكsystem و
 ```
 
 [XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).
+
+
+## فتح الملفات دون تتبع الروابط وفحص المجلد المسبق
+
+تقبل مداخل `open` / `openat` العادية وnocancel الخيار O_NOFOLLOW=0x100 أو O_NOFOLLOW_ANY=0x20000000 في البتات32 الدنيا غير الموقعة. لا يحتوي الدليل المغلق على روابط رمزية؛ حل الروابط لم يُنفذ بعد. لا تظهر خيارات البحث هذه في F_GETFL ولا تغير الوصول أو الإلحاق أو الاقتطاع أو الإنشاء أو CLOEXEC الخاص بكل FD. جمع الخيارين يعيد EINVAL22 بعد فحص سعة FD وقبل قراءة المسار الكامل؛ الجدول الممتلئ يعيد EMFILE24 أولاً. الخيارات المجهولة تبقى غير مدعومة.
+
+عندما لا يكون dirfd هو AT_FDCWD، يقرأ `openat` أول بايت فقط قبل نمط الوصول وسعة FD. البايت غير المقروء يعيد EFAULT14. البداية النسبية، بما فيها NUL، تفحص أولاً كائن المجلد المحتفظ به: FD مجهول يعيد EBADF9، ملف عادي يعيد ENOTDIR20، ونوع vnode مجهول للتدفق يبقى غير مدعوم. `/` يتجاوز فحص dirfd؛ ثم يقرأ تسلسل open الحالي المسار الكامل. يتجاوز `open` العادي وAT_FDCWD هذا الفحص وتحتفظ الخدمات الأخرى بترتيب قراءة المسار الكامل. الرفض لا يستهلك FD أو inode جديداً، وتنتقل أخطاء النقل دون تعديل فضاء الأسماء.
+
+يستخدم البرنامج الأصلي `file-access` وصف مجلد نسبياً لاختبار NOFOLLOW_ANY وتجنب روابط `/var` و`/tmp` الأصلية. تميز الاختبارات المباشرة أول بايت وما بعده، والشرطة/NUL، وحدود المستخدم والصفحة، ونفاد FD، والمجلدات المحذوفة المحتفظ بها. نجح مسبار ARM64 macOS الخام في30 حالة خلال المهلة الأصلية البالغة خمس ثوانٍ؛ آخر سطر مطلق مع جدول ممتلئ يستخدم فعلياً FD مجلد صالحاً رغم تسميته القديمة. يظل اعتماد iOS الفعلي وIntel الأصلي منفصلاً.
+
+[XNU open1at / open1](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU vn_open_auth](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_vnops.c), [XNU open flags / FMASK](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/sys/fcntl.h).

@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1fca157d25a2f609ab3d51be25fb8a113e6ef48a9fd3a7037c77cfbcf2d4425f -->
+<!-- i18n-source: 3e9324c29172180028d55fd3d4da679382fd95322227a5b26464f0360127662a -->
 
 [← 문서 목록](README.md)
 
@@ -126,7 +126,7 @@ allocation_unit, mutation_time 및 seconds/nanoseconds는 필수이며 기존 �
 
 O_CREAT=0x200은 명시적 mutable 부모 바로 아래 빈 파일을 만듭니다. 일반/nocancel open·openat이 공유합니다. 새 객체는 쓰기 가능하고 기존 객체는 WritableFiles를 유지합니다. 읽기 전용 FD도 생성할 수 있으나 쓸 수 없습니다. 생성 정책이 없으면 stat64와 희소 탐색은 미상입니다. 새 객체는 같은 이름의 옛 metadata/mutation_policy를 상속하지 않습니다.
 
-O_CREAT과 O_EXCL=0x800의 조합은 기존 파일/디렉터리에 자르기 전 EEXIST를 반환하며 O_EXCL만으로는 효과가 없습니다. 기존 디렉터리의 읽기 전용 O_CREAT은 성공합니다. 잘못된 접근 모드→FD 여유→O_CREAT|O_DIRECTORY의 EINVAL→경로 순서입니다. 원래 경로의 마지막 누락 요소만 생성하고 누락 조상 및 끝 `/`, `//`, `/.`, `/..`는 ENOENT입니다. 새 O_CREAT|O_TRUNC는 FWASWRITTEN을 설정하지 않지만 기존 파일 자르기는 설정합니다.
+O_CREAT과 O_EXCL=0x800의 조합은 기존 파일/디렉터리에 자르기 전 EEXIST를 반환하며 O_EXCL만으로는 효과가 없습니다. 기존 디렉터리의 읽기 전용 O_CREAT은 성공합니다. 아래의 openat 첫 바이트 및 디렉터리 사전 검사 뒤에는 잘못된 접근 모드→FD 여유→O_CREAT|O_DIRECTORY의 EINVAL→경로 순서입니다. 원래 경로의 마지막 누락 요소만 생성하고 누락 조상 및 끝 `/`, `//`, `/.`, `/..`는 ENOENT입니다. 새 O_CREAT|O_TRUNC는 FWASWRITTEN을 설정하지 않지만 기존 파일 자르기는 설정합니다.
 
 실제 삽입만 부모 관측을 무효화하며 같은 이름의 새/옛 데이터·FD·메타데이터·매핑 수명은 독립적입니다. 256개 제한에는 초기 비파일 항목과 살아 있는 파일 객체가 포함됩니다. 새 정규 경로/NUL과 현재 바이트는 16 MiB에 포함하고 삭제 후 마지막 FD/매핑 해제 때 동적 비용을 회수합니다. 초기 비용은 유지합니다. 예산 또는 1024바이트 정규 경로 한계는 명시적으로 중단하며 ENOSPC나 네이티브 경로 오류를 만들지 않습니다. 실패는 이름/FD를 남기지 않습니다. created-file 네이티브/다섯 프로필, 4K/16K 경계 테스트가 계약을 검사합니다. 권한 강제 검사·서로 다른 초기 디렉터리 영역 간 이름 변경·링크·디렉터리 변경은 남아 있습니다.
 
@@ -718,3 +718,14 @@ sysctl 복사 단계는 유지됩니다. EUID0의 실제 쓰기는 이름/MIB와
 ```
 
 [XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).
+
+
+## 링크 추적 금지 open 플래그와 디렉터리 사전 검사
+
+일반 및 nocancel `open` / `openat`은 부호 없는 하위32비트 O_NOFOLLOW=0x100 또는 O_NOFOLLOW_ANY=0x20000000을 허용합니다. 닫힌 카탈로그에는 심볼릭 링크가 없으며 링크 해석은 아직 구현하지 않았습니다. 검색 플래그는 F_GETFL에 포함되지 않으며 접근, 추가, 잘라내기, 생성, FD별 CLOEXEC 동작을 바꾸지 않습니다. 두 플래그를 함께 지정하면 FD 용량 검사 뒤 전체 경로를 읽기 전에 EINVAL22를 반환하고, 테이블이 가득 차면 EMFILE24가 먼저입니다. 알 수 없는 플래그는 지원하지 않습니다.
+
+AT_FDCWD가 아닌 `openat`은 접근 모드와 FD 용량 검사보다 먼저 경로 첫 바이트만 읽습니다. 읽을 수 없으면 EFAULT14입니다. 상대 접두사(NUL 포함)는 FD가 보유한 디렉터리 객체를 먼저 확인하여 알 수 없는 FD는 EBADF9, 일반 파일은 ENOTDIR20을 반환하고 알 수 없는 스트림 vnode 유형은 지원하지 않습니다. `/`는 dirfd 검사를 건너뛰고 이후 기존 open 순서로 전체 경로를 읽습니다. 일반 `open`과 AT_FDCWD는 이 사전 검사를 하지 않으며 다른 경로 서비스의 전체 읽기 순서도 유지합니다. 거부된 호출은 FD나 새 inode를 소비하지 않고 전송 오류를 그대로 전달하며 이름 공간을 변경하지 않습니다.
+
+기존 `file-access`는 상대 디렉터리 FD로 NOFOLLOW_ANY를 검사하여 네이티브 `/var`, `/tmp` 링크 별칭을 피합니다. 직접 테스트는 첫 바이트와 후속 오류, 슬래시/NUL, 사용자 주소와 페이지 경계, FD 고갈, 삭제된 디렉터리 객체를 구분합니다. ARM64 macOS 독립 원시 프로브는 기존 5초 제한으로30건을 통과했습니다. 마지막 고갈 상태 절대 경로 행은 원래 라벨과 달리 유효한 디렉터리 FD를 사용합니다. 실제 iOS와 Intel 네이티브 검증은 별도입니다.
+
+[XNU open1at / open1](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU vn_open_auth](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_vnops.c), [XNU open flags / FMASK](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/sys/fcntl.h).

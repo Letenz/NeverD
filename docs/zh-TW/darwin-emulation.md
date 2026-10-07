@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1fca157d25a2f609ab3d51be25fb8a113e6ef48a9fd3a7037c77cfbcf2d4425f -->
+<!-- i18n-source: 3e9324c29172180028d55fd3d4da679382fd95322227a5b26464f0360127662a -->
 
 [← 文件索引](README.md)
 
@@ -126,7 +126,7 @@ allocation_unit、mutation_time 及 seconds/nanoseconds 全部必填，整數沿
 
 O_CREAT=0x200 在明確 mutable 的直接父目錄建立空檔案，涵蓋一般/nocancel open、openat。新物件可寫，既有物件仍依 WritableFiles；唯讀 FD 可建立但不可寫入。未提供建立策略時，stat64 與稀疏定位仍未知；新物件始終不繼承同名舊物件的 metadata/mutation_policy。
 
-搭配 O_EXCL=0x800 時，既有檔案或目錄先回 EEXIST，不截斷；單獨 O_EXCL 無效。唯讀 O_CREAT 可開啟既有目錄。順序為無效存取模式→FD 容量→O_CREAT|O_DIRECTORY 的 EINVAL→路徑。只有原始路徑最後缺失分量可建立，缺失祖先或末尾 `/`、`//`、`/.`、`/..` 為 ENOENT。新建 O_CREAT|O_TRUNC 不設 FWASWRITTEN，截斷既有物件則設定。
+搭配 O_EXCL=0x800 時，既有檔案或目錄先回 EEXIST，不截斷；單獨 O_EXCL 無效。唯讀 O_CREAT 可開啟既有目錄。經過下述 openat 首位元組與目錄預檢後，順序為無效存取模式→FD 容量→O_CREAT|O_DIRECTORY 的 EINVAL→路徑。只有原始路徑最後缺失分量可建立，缺失祖先或末尾 `/`、`//`、`/.`、`/..` 為 ENOENT。新建 O_CREAT|O_TRUNC 不設 FWASWRITTEN，截斷既有物件則設定。
 
 僅實際插入使父目錄觀測失效。同名新舊物件的資料、描述元、中繼資料與映射租約獨立。256 項涵蓋固定初始非檔案項、具名與存活孤立物件；新規範路徑/NUL 和目前資料計入 16 MiB，刪除且最後 FD/映射釋放後才回收，初始費用保留。預算耗盡或規範路徑達 1024 位元組明確停止，不捏造 ENOSPC 或原生路徑錯誤，失敗不建立名稱/FD。created-file 原生/五種來賓及 4K/16K 邊界測試驗證此合約；權限強制檢查、不同初始目錄域之間的改名、連結及目錄修改仍待完善。
 
@@ -718,3 +718,14 @@ sysctl 沿用既有複製階段。EUID0 的真實寫入在名稱/MIB 與 oldlenp
 ```
 
 [XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).
+
+
+## 禁止跟隨旗標與目錄預檢
+
+一般及 nocancel `open` / `openat` 接受無符號低32位 O_NOFOLLOW=0x100 或 O_NOFOLLOW_ANY=0x20000000。封閉目錄不含符號連結，此處尚未實作連結解析。查找旗標不出現在 F_GETFL，也不改變存取、附加、截斷、建立或 FD 獨立的 CLOEXEC。兩者同時設定時，先檢查 FD 容量，再於完整路徑匯入前回傳 EINVAL22；滿表先回傳 EMFILE24。未知旗標仍不支援。
+
+非 AT_FDCWD 的 `openat` 在存取模式及容量檢查前只匯入首位元組。首位元組不可讀回傳 EFAULT14；相對前綴（含 NUL）先檢查 FD 持有的目錄物件：未知 FD 為 EBADF9，一般檔案為 ENOTDIR20，未知串流 vnode 類型仍不支援。`/` 跳過 dirfd 驗證，之後才按既有 open 順序匯入完整路徑。一般 `open`、AT_FDCWD 不做此前綴預檢，其他路徑服務保留完整匯入順序。拒絕操作不占用 FD 或新 inode，傳輸錯誤直接傳遞，不發布命名空間變更。
+
+原始 `file-access` 以相對目錄 FD 檢查 NOFOLLOW_ANY，避開原生 `/var`、`/tmp` 連結別名。直接測試涵蓋首位元組及後續故障、斜線/NUL、使用者位址與頁面邊界、滿表及已刪除目錄物件。獨立 ARM64 macOS 原始探針在既有五秒期限內通過30項；最後的滿表絕對路徑實際使用有效目錄 FD，保留原標籤但不擴大證據範圍。實體 iOS 與 Intel 原生驗收仍需分別完成。
+
+[XNU open1at / open1](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU vn_open_auth](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_vnops.c), [XNU open flags / FMASK](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/sys/fcntl.h).

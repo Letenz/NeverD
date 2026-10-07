@@ -136,7 +136,7 @@ configuration stops `open`; an explicit empty catalogue still contains root, whi
 The file services include `open`, `read`, `pread`, `write`, `pwrite`, `truncate`,
 `ftruncate`, `lseek`, `close`, `dup`, `dup2`, `fcntl`, `rename`, `renameat` and `renameatx_np`. The `read`, `write`,
 `open`, `close`, `fcntl`, `pread` and `pwrite` nocancel entries use the same owners.
-`open` supports O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_TRUNC, O_CREAT, O_EXCL, O_CLOEXEC and O_DIRECTORY.
+`open` supports O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_TRUNC, O_CREAT, O_EXCL, O_CLOEXEC, O_DIRECTORY, O_NOFOLLOW and O_NOFOLLOW_ANY.
 `fcntl` supports F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL, bounded F_SETFL and F_GETPATH.
 Separate opens have independent cursors; duplicated descriptors share a cursor
 but have independent close-on-exec flags. `pread` never changes the cursor.
@@ -305,7 +305,7 @@ A successful unlink invalidates only its parent's stat and enumeration observati
 
 `O_CREAT=0x200` creates an empty regular file only in an explicitly mutable immediate parent. Ordinary/nocancel open and openat share this behavior. The namespace grant makes new objects writable; existing objects retain their separate `WritableFiles` authority. A read-only descriptor can create but cannot write. Without an explicit creation policy, new stat64 and sparse-seek observations remain unknown, including when an old configured name is reused. New objects never inherit that old name's metadata or mutation policy.
 
-`O_EXCL=0x800` with O_CREAT returns EEXIST for an existing file or directory before truncation or writable/mapping checks; alone it has no effect. Existing read-only directory opens with O_CREAT succeed. Invalid access mode precedes descriptor availability, then O_CREAT|O_DIRECTORY returns EINVAL before pathname access. Only a missing final original component can be created: missing ancestors, trailing `/`, `//`, `/.` and `/..` remain ENOENT. Relative CWD/dirfd and absolute-path rules share the existing resolver. New O_CREAT|O_TRUNC does not set FWASWRITTEN; truncating an existing object does.
+`O_EXCL=0x800` with O_CREAT returns EEXIST for an existing file or directory before truncation or writable/mapping checks; alone it has no effect. Existing read-only directory opens with O_CREAT succeed. After the openat prefix check described below, invalid access mode precedes descriptor availability, then O_CREAT|O_DIRECTORY returns EINVAL before pathname access. Only a missing final original component can be created: missing ancestors, trailing `/`, `//`, `/.` and `/..` remain ENOENT. Relative CWD/dirfd and absolute-path rules share the existing resolver. New O_CREAT|O_TRUNC does not set FWASWRITTEN; truncating an existing object does.
 
 Only successful insertion invalidates the immediate parent's stat/enumeration observations. New and old unlinked objects at the same name retain independent bytes, descriptors, metadata and mapping leases. The 256-entry cap includes fixed initial non-file entries plus live and retained orphan file objects. Each new object charges its canonical path and NUL alongside current bytes within 16 MiB. Unlink reclaims these dynamic charges only after the last description and mapping lease; closing a still-named object releases neither its entry nor bytes. Initial input/reference charges remain reserved. Exhausted model budgets, including a resolved canonical path of 1024 bytes or more, stop explicitly without inventing ENOSPC or a native pathname error. Rejected creation publishes no name or descriptor.
 
@@ -1471,3 +1471,14 @@ Raw `getpriority(100)` uses low32 for the int selector and unsigned `id_t` targe
 ```
 
 [XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).
+
+
+## No-follow open flags and directory preflight
+
+Ordinary and nocancel `open` / `openat` accept unsigned low32 O_NOFOLLOW=0x100 or O_NOFOLLOW_ANY=0x20000000 in the closed file catalogue. No admitted object is a symbolic link; this does not implement link following. These lookup flags never appear in F_GETFL and do not change access, append, truncation, creation or descriptor-local CLOEXEC behavior. Combining both returns EINVAL22 after FD capacity admission, before importing the full pathname; a full descriptor table returns EMFILE24 first. Unknown flags remain unsupported.
+
+For non-AT_FDCWD `openat`, importing exactly the first pathname byte precedes access-mask and FD-capacity checks. An inaccessible first byte returns EFAULT14. A relative prefix, including NUL, first checks the held directory object: unknown FD gives EBADF9, regular file gives ENOTDIR20, and an unknown stream vnode kind remains unsupported. A slash skips dirfd validation. Only afterward does the existing open sequence import the full pathname. Ordinary `open` and AT_FDCWD skip this prefix phase. Other path services retain their existing full-import order. Rejected opens reserve no FD or new inode; transport errors propagate without namespace mutation.
+
+The original `file-access` workload uses relative directory FDs for NOFOLLOW_ANY to avoid native `/var` or `/tmp` aliases. Direct tests distinguish first/later byte faults, slash/NUL, user/page boundaries, exhausted descriptors and retained removed directories. The separate ARM64 macOS raw probe passed 30 cases with its unchanged five-second deadline; its final exhausted absolute-path row uses a valid directory FD despite its historical label. Physical iOS and Intel native acceptance remain separate.
+
+[XNU open1at / open1](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU vn_open_auth](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_vnops.c), [XNU open flags / FMASK](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/sys/fcntl.h).

@@ -140,6 +140,49 @@ static int priority_errors_only(void) {
 
 /* Original read-only raw buffer workload. No host login literal, text decoding
  * or session setters; virtual mode publishes the declared bytes unchanged. */
+static void login_fill_canary(unsigned char *Out, unsigned Size) {
+  const u64 Pattern = 0xa5a5a5a5a5a5a5a5UL;
+  while (Size >= 8) {
+    __builtin_memcpy(Out, &Pattern, 8);
+    Out += 8;
+    Size -= 8;
+  }
+  while (Size--)
+    *Out++ = 0xa5;
+}
+static int login_equal_bytes(const unsigned char *Actual,
+                             const unsigned char *Expected, unsigned Size) {
+  while (Size >= 8) {
+    u64 A, E;
+    __builtin_memcpy(&A, Actual, 8);
+    __builtin_memcpy(&E, Expected, 8);
+    if (A != E)
+      return 0;
+    Actual += 8;
+    Expected += 8;
+    Size -= 8;
+  }
+  while (Size--) {
+    if (*Actual++ != *Expected++)
+      return 0;
+  }
+  return 1;
+}
+static int login_canary_bytes(const unsigned char *Actual, unsigned Size) {
+  while (Size >= 8) {
+    u64 A;
+    __builtin_memcpy(&A, Actual, 8);
+    if (A != 0xa5a5a5a5a5a5a5a5UL)
+      return 0;
+    Actual += 8;
+    Size -= 8;
+  }
+  while (Size--) {
+    if (*Actual++ != 0xa5)
+      return 0;
+  }
+  return 1;
+}
 static int login_zero_calls(void) {
   unsigned error;
   const u64 pointers[] = {0,
@@ -179,23 +222,17 @@ static int login_buffer(int emit_values) {
                          0xffffffff000000ffUL,
                          -1UL};
   for (unsigned i = 0; i != 12; ++i) {
-    for (unsigned j = 0; j != sizeof(out); ++j)
-      out[j] = 0xa5;
+    login_fill_canary(out, sizeof(out));
     if (call(49, (u64)(out + 3), lengths[i], -1UL, -1UL, -1UL, -1UL, &error) ||
         error || secondary)
       return 203;
     unsigned n = (unsigned)lengths[i];
     if (n > 255)
       n = 255;
-    for (unsigned j = 0; j != 3; ++j)
-      if (out[j] != 0xa5)
-        return 204;
-    for (unsigned j = 0; j != n; ++j)
-      if (out[3 + j] != snapshot[j])
-        return 204;
-    for (unsigned j = 3 + n; j != sizeof(out); ++j)
-      if (out[j] != 0xa5)
-        return 204;
+    if (!login_canary_bytes(out, 3) ||
+        !login_equal_bytes(out + 3, snapshot, n) ||
+        !login_canary_bytes(out + 3 + n, sizeof(out) - 3 - n))
+      return 204;
   }
   const u64 pointers[] = {0,
                           1,
@@ -3319,6 +3356,57 @@ static int file_access(const char *path) {
   u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
   ACCESS_EXPECT(!error && fd != dir);
   ACCESS_EXPECT(call(199, fd, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  const u64 lookup_flags[] = {0x100, 0x20000000, 0x1234567800000100UL,
+                              0xfedcba9820000000UL};
+  for (unsigned alias = 0; alias != 2; ++alias) {
+    for (unsigned i = 0; i != sizeof(lookup_flags) / sizeof(*lookup_flags);
+         ++i) {
+      // Resolve relative to the held parent; native /var and /tmp may be links.
+      u64 opened =
+          call(alias ? 464 : 463, 0x1234567800000000UL | dir, (u64)leaf,
+               lookup_flags[i] | 0x1000000, 0, 0, 0, &error);
+      ACCESS_EXPECT(!error && !secondary && opened != fd && opened != dir);
+      ACCESS_EXPECT(call(92, opened, 3, 0, 0, 0, 0, &error) == 0 && !error &&
+                    !secondary);
+      ACCESS_EXPECT(call(92, opened, 1, 0, 0, 0, 0, &error) == 1 && !error);
+      u64 dup = call(41, opened, 0, 0, 0, 0, 0, &error);
+      ACCESS_EXPECT(!error && dup != opened);
+      ACCESS_EXPECT(call(92, dup, 1, 0, 0, 0, 0, &error) == 0 && !error);
+      ACCESS_EXPECT(call(92, dup, 3, 0, 0, 0, 0, &error) == 0 && !error);
+      ACCESS_EXPECT(call(6, dup, 0, 0, 0, 0, 0, &error) == 0 && !error);
+      ACCESS_EXPECT(call(6, opened, 0, 0, 0, 0, 0, &error) == 0 && !error);
+    }
+    u64 opened = call(alias ? 398 : 5, (u64)path, 0x1234567800000100UL, 0, 0, 0,
+                      0, &error);
+    ACCESS_EXPECT(!error && !secondary);
+    ACCESS_EXPECT(call(92, opened, 3, 0, 0, 0, 0, &error) == 0 && !error);
+    ACCESS_EXPECT(call(6, opened, 0, 0, 0, 0, 0, &error) == 0 && !error);
+    ACCESS_EXPECT(call(alias ? 398 : 5, 1, 0x20000100, 0, 0, 0, 0, &error) ==
+                      22 &&
+                  error && !secondary);
+    ACCESS_EXPECT(
+        call(alias ? 464 : 463, -1UL, 1, 0x20000103, 0, 0, 0, &error) == 14 &&
+        error);
+#if defined(__aarch64__)
+    ACCESS_EXPECT(!secondary);
+#else
+    ACCESS_EXPECT(secondary == 0x20000103);
+#endif
+    ACCESS_EXPECT(call(alias ? 464 : 463, -1UL, (u64)leaf, 0x20000100, 0, 0, 0,
+                       &error) == 9 &&
+                  error);
+    ACCESS_EXPECT(call(alias ? 464 : 463, fd, (u64)leaf, 0x20000100, 0, 0, 0,
+                       &error) == 20 &&
+                  error);
+    ACCESS_EXPECT(call(alias ? 464 : 463, dir, (u64)leaf, 0x20000100, 0, 0, 0,
+                       &error) == 22 &&
+                  error);
+#if defined(__aarch64__)
+    ACCESS_EXPECT(!secondary);
+#else
+    ACCESS_EXPECT(secondary == 0x20000100);
+#endif
+  }
   const u64 modes[] = {0,        8,          0x80,       0x100,
                        0x400000, 0x80000000, 0xffc001f8, 0x1234567800000000UL};
   for (unsigned i = 0; i != sizeof(modes) / sizeof(*modes); ++i) {

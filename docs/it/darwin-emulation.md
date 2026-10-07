@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1fca157d25a2f609ab3d51be25fb8a113e6ef48a9fd3a7037c77cfbcf2d4425f -->
+<!-- i18n-source: 3e9324c29172180028d55fd3d4da679382fd95322227a5b26464f0360127662a -->
 
 [← Indice della documentazione](README.md)
 
@@ -126,7 +126,7 @@ stat/readdir/SEEK_END del padre diventano sconosciuti per ogni FD/percorso e si 
 
 O_CREAT=0x200 crea un file vuoto nel genitore diretto esplicitamente mutable, tramite open/openat normale o nocancel. Il nuovo oggetto è scrivibile; quelli esistenti mantengono WritableFiles. Un FD di sola lettura può creare ma non scrivere. Senza politica di creazione esplicita, stat64 e ricerca sparsa restano sconosciuti. metadata/mutation_policy del vecchio omonimo non vengono mai ereditati.
 
-O_EXCL=0x800 con O_CREAT restituisce EEXIST per file/directory esistenti prima del troncamento; da solo non ha effetto. O_CREAT di sola lettura apre directory esistenti. Ordine: accesso invalido, disponibilità FD, EINVAL per O_CREAT|O_DIRECTORY, percorso. Si crea solo l’ultimo componente originale mancante; antenati assenti e suffissi `/`, `//`, `/.`, `/..` danno ENOENT. Nuovo O_CREAT|O_TRUNC non imposta FWASWRITTEN, mentre il troncamento esistente sì.
+O_EXCL=0x800 con O_CREAT restituisce EEXIST per file/directory esistenti prima del troncamento; da solo non ha effetto. O_CREAT di sola lettura apre directory esistenti. Dopo il controllo del primo byte e della directory in openat descritto sotto, l’ordine è: accesso invalido, disponibilità FD, EINVAL per O_CREAT|O_DIRECTORY, percorso. Si crea solo l’ultimo componente originale mancante; antenati assenti e suffissi `/`, `//`, `/.`, `/..` danno ENOENT. Nuovo O_CREAT|O_TRUNC non imposta FWASWRITTEN, mentre il troncamento esistente sì.
 
 Solo l’inserimento invalida le osservazioni del genitore. Vecchi/nuovi omonimi mantengono dati, FD, metadati e mapping indipendenti. Le 256 voci includono elementi iniziali non file e oggetti vivi; percorsi canonici/NUL dinamici e byte correnti contano nei 16 MiB. Dopo unlink, l’ultimo FD/mapping libera i costi dinamici; quelli iniziali restano. Budget esaurito o percorso canonico di almeno 1024 byte arrestano esplicitamente senza inventare ENOSPC o errno nativo né pubblicare nome/FD. created-file confronta macOS nativo e cinque profili; test 4K/16K verificano i limiti. Controllo dei permessi, rinomina tra domini di directory iniziali distinti, link e mutazione directory restano aperti.
 
@@ -716,3 +716,14 @@ Il verificatore guest inizializza tutti i 265 byte di uscita prima di ogni copia
 ```
 
 [XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).
+
+
+## Apertura senza seguire link e controllo della directory
+
+Le entrate ordinarie e nocancel `open` / `openat` accettano O_NOFOLLOW=0x100 oppure O_NOFOLLOW_ANY=0x20000000 nei32 bit bassi senza segno. Il catalogo chiuso non contiene link simbolici; la loro risoluzione resta da implementare. Questi flag di ricerca non compaiono in F_GETFL e non modificano accesso, append, troncamento, creazione o CLOEXEC del singolo FD. Insieme danno EINVAL22 dopo l’ammissione della capacità FD, prima di importare il percorso completo; una tabella piena dà prima EMFILE24. I flag sconosciuti restano non supportati.
+
+Per dirfd diverso da AT_FDCWD, `openat` importa solo il primo byte prima di modalità di accesso e capacità FD. Un byte inaccessibile dà EFAULT14. Un prefisso relativo, anche NUL, controlla prima l’oggetto directory trattenuto: FD sconosciuto EBADF9, file regolare ENOTDIR20, tipo vnode di stream ignoto non supportato. `/` salta dirfd; poi la sequenza open esistente importa l’intero percorso. `open` ordinario e AT_FDCWD omettono questa fase, e gli altri servizi mantengono l’ordine di importazione completa. I rifiuti non consumano FD o nuovi inode; gli errori di trasporto si propagano senza mutazioni del namespace.
+
+L’originale `file-access` usa FD relativi di directory per NOFOLLOW_ANY, evitando alias nativi `/var` e `/tmp`. I test diretti distinguono primo byte e successivi, slash/NUL, limiti utente/pagina, FD esauriti e directory rimosse trattenute. La sonda grezza ARM64 macOS ha superato30 casi con il limite invariato di cinque secondi; l’ultima riga assoluta con tabella piena usa davvero un FD di directory valido nonostante la vecchia etichetta. iOS fisico e Intel nativo restano da verificare separatamente.
+
+[XNU open1at / open1](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU vn_open_auth](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_vnops.c), [XNU open flags / FMASK](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/sys/fcntl.h).

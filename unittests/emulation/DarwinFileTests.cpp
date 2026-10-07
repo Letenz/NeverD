@@ -5955,6 +5955,35 @@ TEST_P(DarwinFileTest, AccessTransportFailuresPreserveFilesAndDescriptors) {
   }
 }
 
+TEST_P(DarwinFileTest, OpenAtPrefixTransportFailuresDoNotReserveDescriptors) {
+  mutationPolicy();
+  FailingFileInput Input(*Space);
+  Files = std::make_unique<DarwinFiles>(Input, Options);
+  const auto FD = ok(ServiceKind::Open, {Base});
+  const auto Before = status(FD);
+  path("/", Base + 128);
+  const auto Dir = ok(ServiceKind::Open, {Base + 128});
+  path("data", Base + 128);
+  for (bool Preflight : {true, false}) {
+    Input.FailureAddress = Base + 128;
+    Input.FailAccess = Preflight;
+    Input.FailRead = !Preflight;
+    auto Failed = Files->handle(
+        ServiceKind::OpenAt,
+        {0, 463, {Dir, Base + 128, 0x20000100}, std::nullopt}, Result);
+    ASSERT_FALSE(bool(Failed));
+    EXPECT_EQ(llvm::toString(Failed.takeError()),
+              Preflight ? "file input preflight failed"
+                        : "file input transport failed");
+    Input.FailAccess = Input.FailRead = false;
+    EXPECT_EQ(status(FD), Before);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 0u);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {FD, 3}), 0u);
+    EXPECT_EQ(ok(ServiceKind::OpenAt, {Dir, Base + 128, 0x100}), 5u);
+    ok(ServiceKind::Close, {5});
+  }
+}
+
 TEST_P(DarwinFileTest, RenameTargetInputFailuresPreserveBothObjects) {
   mutationPolicy();
   Options->MutableDirectories.insert("/");
@@ -6439,7 +6468,158 @@ TEST_P(DarwinFileTest, RelativeLookupWalksAncestorsAndPreservesErrorOrder) {
   error(ServiceKind::Open, {Base}, 2);
   error(ServiceKind::OpenAt, {999, 0}, 14);
   Options->DescriptorLimit = 6;
-  error(ServiceKind::OpenAt, {999, 0}, 24);
+  error(ServiceKind::OpenAt, {999, 0}, 14);
+  error(ServiceKind::Open, {0}, 24);
+  error(ServiceKind::OpenAt, {0xfffffffe, 0}, 24);
+}
+
+TEST_P(DarwinFileTest, NoFollowFlagsKeepLookupAndDescriptorState) {
+  path("/");
+  const auto Dir = ok(ServiceKind::Open, {Base, 0x100000});
+  for (uint64_t Flags : {0x100ULL, 0x20000000ULL, 0x1234567800000100ULL,
+                         0xfedcba9820000000ULL}) {
+    SCOPED_TRACE(Flags);
+    path("/data");
+    const auto FD = ok(ServiceKind::Open, {Base, Flags | 0x1000000});
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {FD, 3}), 0u);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {FD, 1}), 1u);
+    const auto Dup = ok(ServiceKind::Dup, {FD});
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {Dup, 1}), 0u);
+    EXPECT_EQ(ok(ServiceKind::Read, {Dup, Base + Page, 1}), 1u);
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 1)), 'a');
+    EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 1u);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {Dup, 3}), 0u);
+    ok(ServiceKind::Close, {Dup});
+    ok(ServiceKind::Close, {FD});
+    path("data");
+    const auto Relative =
+        ok(ServiceKind::OpenAt, {0x1234567800000000ULL | Dir, Base, Flags});
+    contents(Relative, {'a', 'b', 0, 0xff, 'e', 'f'});
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {Relative, 3}), 0u);
+    ok(ServiceKind::Close, {Relative});
+    path(".");
+    const auto Directory =
+        ok(ServiceKind::OpenAt, {Dir, Base, Flags | 0x100000});
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {Directory, 3}), 0u);
+    identity(Directory, "/");
+    ok(ServiceKind::Close, {Directory});
+  }
+  path("/data");
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x1000}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileOpenFlags);
+  EXPECT_EQ(ok(ServiceKind::Open, {Base, 0x100}), 4u);
+}
+
+TEST_P(DarwinFileTest, NoFollowFlagsPreserveWriteCreateAndTruncateControl) {
+  mutationPolicy();
+  creationPolicy();
+  unsigned Created = 0;
+  for (uint64_t Flags : {0x100u, 0x20000000u}) {
+    SCOPED_TRACE(Flags);
+    path("/data");
+    const auto FD = ok(ServiceKind::Open, {Base, Flags | 0xa});
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {FD, 3}), 0xau);
+    path("x", Base + 128);
+    EXPECT_EQ(ok(ServiceKind::Pwrite, {FD, Base + 128, 1, 0}), 1u);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {FD, 3}), 0x1000au);
+    ok(ServiceKind::Close, {FD});
+    const auto Truncated = ok(ServiceKind::Open, {Base, Flags | 0x402});
+    contents(Truncated, {});
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {Truncated, 3}), 0x10002u);
+    ok(ServiceKind::Close, {Truncated});
+    path("/new" + std::to_string(Created));
+    error(ServiceKind::Open, {Base, 0x20000702, 0666}, 22);
+    error(ServiceKind::Access, {Base}, 2);
+    const auto New = ok(ServiceKind::Open, {Base, Flags | 0x602, 0666});
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {New, 3}), 2u);
+    EXPECT_EQ(llvm::support::endian::read64le(status(New).data() + 8),
+              darwin_test::CreationPolicy.FirstInode + Created);
+    error(ServiceKind::Open, {Base, Flags | 0xa00, 0666}, 17);
+    contents(New, {});
+    EXPECT_EQ(ok(ServiceKind::Write, {New, Base + 128, 1}), 1u);
+    contents(New, {'x'});
+    ok(ServiceKind::Close, {New});
+    ++Created;
+  }
+}
+
+TEST_P(DarwinFileTest, OpenAtFirstBytePrecedesFlagsAndFullPathImport) {
+  path("/");
+  const auto Dir = ok(ServiceKind::Open, {Base});
+  path("/data");
+  const auto File = ok(ServiceKind::Open, {Base});
+  const auto Dup = ok(ServiceKind::Dup, {Dir});
+  constexpr uint64_t UserEnd = 0x0000800000000000ULL;
+  ASSERT_FALSE(
+      bool(Space->map(UserEnd - Page, Page, Read | Write | UserAccessible)));
+  for (auto End : {Base + Page * 2 - 1, UserEnd - 1}) {
+    SCOPED_TRACE(End);
+    for (unsigned Byte : {'r', '/', '\0'}) {
+      llvm::cantFail(Space->writeInteger(End, Byte, 1));
+      for (uint64_t Flags : {0u, 0x100u, 0x20000000u, 0x20000100u}) {
+        SCOPED_TRACE(Flags);
+        const bool Pair = Flags == 0x20000100;
+        error(ServiceKind::OpenAt, {999, End, Flags},
+              Byte == '/' ? (Pair ? 22 : 14) : 9);
+        error(ServiceKind::OpenAt, {File, End, Flags},
+              Byte == '/' ? (Pair ? 22 : 14) : 20);
+        error(ServiceKind::OpenAt, {Dup, End, Flags},
+              Pair   ? 22
+              : Byte ? 14
+                     : 2);
+        error(ServiceKind::OpenAt, {999, End, Flags | 3}, Byte == '/' ? 22 : 9);
+        error(ServiceKind::OpenAt, {Dup, End, Flags | 3}, 22);
+      }
+    }
+  }
+  for (auto Address : {0ULL, UserEnd, UINT64_MAX}) {
+    error(ServiceKind::OpenAt, {999, Address, 0x20000103}, 14);
+    error(ServiceKind::Open, {Address, 0x20000100}, 22);
+    error(ServiceKind::OpenAt, {0xfffffffe, Address, 0x20000100}, 22);
+  }
+  path("data");
+  EXPECT_FALSE(invoke(ServiceKind::OpenAt, {0, Base, 0x20000100}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileDirectoryKind);
+  Options->DescriptorLimit = 6;
+  error(ServiceKind::OpenAt, {999, 0, 0x20000103}, 14);
+  error(ServiceKind::Open, {0, 0x20000103}, 22);
+  error(ServiceKind::Open, {0, 0x20000100}, 24);
+  error(ServiceKind::OpenAt, {0xfffffffe, 0, 0x20000100}, 24);
+  error(ServiceKind::OpenAt, {999, Base, 0x20000100}, 9);
+  error(ServiceKind::OpenAt, {File, Base, 0x20000100}, 20);
+  error(ServiceKind::OpenAt, {Dup, Base, 0x20000100}, 24);
+  error(ServiceKind::OpenAt, {Dup, Base, 3}, 22);
+  const auto End = Base + Page * 2 - 1;
+  for (unsigned Byte : {'r', '/', '\0'}) {
+    llvm::cantFail(Space->writeInteger(End, Byte, 1));
+    error(ServiceKind::OpenAt, {Dup, End, 0x20000100}, 24);
+    error(ServiceKind::OpenAt, {999, End, 0x20000100}, Byte == '/' ? 24 : 9);
+  }
+  ok(ServiceKind::Close, {File});
+  path("data");
+  EXPECT_EQ(ok(ServiceKind::OpenAt, {Dup, Base, 0x20000000}), File);
+}
+
+TEST_P(DarwinFileTest, NoFollowOpenAtRetainsRemovedDirectoryObject) {
+  Options->MutableDirectories.insert("/");
+  const auto Old = makeDirectory("/old");
+  const auto Dup = ok(ServiceKind::Dup, {Old});
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  const auto New = makeDirectory("/old");
+  path("/old/data");
+  const auto Fresh = ok(ServiceKind::Open, {Base, 0x202});
+  ok(ServiceKind::Close, {Fresh});
+  path("data");
+  for (uint64_t Flags : {0x100u, 0x20000000u}) {
+    error(ServiceKind::OpenAt, {Dup, Base, Flags}, 2);
+    const auto Current = ok(ServiceKind::OpenAt, {New, Base, Flags});
+    ok(ServiceKind::Close, {Current});
+    path(".");
+    const auto Retained = ok(ServiceKind::OpenAt, {Dup, Base, Flags});
+    identity(Retained, "/old");
+    ok(ServiceKind::Close, {Retained});
+    path("data");
+  }
 }
 
 TEST_P(DarwinFileTest,

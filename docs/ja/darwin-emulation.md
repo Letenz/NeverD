@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1fca157d25a2f609ab3d51be25fb8a113e6ef48a9fd3a7037c77cfbcf2d4425f -->
+<!-- i18n-source: 3e9324c29172180028d55fd3d4da679382fd95322227a5b26464f0360127662a -->
 
 [← ドキュメント一覧](README.md)
 
@@ -126,7 +126,7 @@ allocation_unit、mutation_time、seconds/nanoseconds は必須で、整数は�
 
 O_CREAT=0x200 は明示的な mutable 親の直下に空ファイルを作成します。通常/nocancel open・openat は共通です。新規オブジェクトは書込み可能、既存は WritableFiles に従います。読取り専用 FD でも作成できますが書込みはできません。作成ポリシーがなければ stat64 と疎領域の検索は未知のままです。同名の旧 metadata/mutation_policy は常に継承しません。
 
-O_CREAT と O_EXCL=0x800 の併用は既存ファイル・ディレクトリに切詰め前の EEXIST。O_EXCL 単独は無効です。既存ディレクトリの読取り専用 O_CREAT は成功します。無効アクセスモード→FD 空き→O_CREAT|O_DIRECTORY の EINVAL→パスの順です。作成できるのは元パスの最後の欠落要素だけで、欠落祖先や末尾 `/`・`//`・`/.`・`/..` は ENOENT。新規 O_CREAT|O_TRUNC は FWASWRITTEN を設定せず、既存切詰めは設定します。
+O_CREAT と O_EXCL=0x800 の併用は既存ファイル・ディレクトリに切詰め前の EEXIST。O_EXCL 単独は無効です。既存ディレクトリの読取り専用 O_CREAT は成功します。以下の openat の先頭バイト・ディレクトリ事前検査後は、無効アクセスモード→FD 空き→O_CREAT|O_DIRECTORY の EINVAL→パスの順です。作成できるのは元パスの最後の欠落要素だけで、欠落祖先や末尾 `/`・`//`・`/.`・`/..` は ENOENT。新規 O_CREAT|O_TRUNC は FWASWRITTEN を設定せず、既存切詰めは設定します。
 
 実際の挿入だけが親の観測を無効化。同名の新旧データ・FD・メタデータ・マップ寿命は独立です。256 項は初期非ファイル項と生存ファイルを数え、新しい正規パス/NUL とデータは 16 MiB に課金。削除後、最後の FD/マップ解放で動的費用を回収し、初期費用は保持します。予算超過や1024バイト以上の正規パスは明示的に停止し、ENOSPC やネイティブのパスエラーを捏造しません。失敗時は名前/FD を公開しません。created-file のネイティブ/5構成、4K/16K 境界試験が対象。権限強制・異なる初期ディレクトリ領域間の改名・リンク・ディレクトリ変更は残っています。
 
@@ -718,3 +718,14 @@ sysctl のコピー段階は維持します。EUID0 の実際の書き込みは�
 ```
 
 [XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).
+
+
+## リンク追跡を禁止する open フラグとディレクトリ事前検査
+
+通常および nocancel の `open` / `openat` は、符号なし下位32ビットの O_NOFOLLOW=0x100 または O_NOFOLLOW_ANY=0x20000000 を受け付けます。閉じたカタログにシンボリックリンクはなく、リンク解決はまだ実装していません。検索フラグは F_GETFL に含まれず、アクセス、追記、切り詰め、作成、FD 固有の CLOEXEC を変えません。両方を指定すると FD 容量確認後、完全なパスの読込み前に EINVAL22 を返します。満杯なら先に EMFILE24 です。未知のフラグは未対応です。
+
+AT_FDCWD 以外の `openat` は、アクセスモードと FD 容量より先にパスの最初の1バイトだけを読みます。読めなければ EFAULT14。相対接頭辞（NUL を含む）は FD が保持するディレクトリを先に検査し、未知の FD は EBADF9、通常ファイルは ENOTDIR20、未知のストリーム vnode 型は未対応になります。`/` は dirfd 検査を省き、その後は既存の open 順序でパス全体を読みます。通常の `open` と AT_FDCWD はこの事前検査を行わず、他のパスサービスも既存の全体読込み順序を保ちます。拒否時は FD や新しい inode を消費せず、転送エラーをそのまま伝え、名前空間を変更しません。
+
+既存の `file-access` は NOFOLLOW_ANY を相対ディレクトリ FD で検査し、原生 `/var`、`/tmp` の別名リンクを避けます。直接テストは最初と後続のバイト障害、スラッシュ/NUL、ユーザー領域とページ境界、FD 満杯、削除済みディレクトリを区別します。ARM64 macOS の独立した生呼出しプローブは従来の5秒制限で30件成功しました。最後の満杯時絶対パス検査は、元のラベルにかかわらず有効なディレクトリ FD を使っています。実機 iOS と Intel の原生検証は別途必要です。
+
+[XNU open1at / open1](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU vn_open_auth](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_vnops.c), [XNU open flags / FMASK](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/sys/fcntl.h).

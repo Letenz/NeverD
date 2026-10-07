@@ -488,6 +488,21 @@ TEST_P(DarwinProcess, FileExistenceUsesNativeModeBitsAndPathErrorOrder) {
       return Event.Number == Class + Number && Event.Result == 0 &&
              Event.Error == false;
     })) << Number;
+  for (auto Number : {463u, 464u})
+    for (uint32_t Flags : {0x100u, 0x20000000u})
+      EXPECT_TRUE(llvm::any_of(Result->Services,
+                               [&](const auto &Event) {
+                                 return Event.Number == Class + Number &&
+                                        uint32_t(Event.Arguments[2]) ==
+                                            (Flags | 0x1000000) &&
+                                        Event.Result && *Event.Result >= 3 &&
+                                        Event.Error == false;
+                               }))
+          << Number << ":" << Flags;
+  EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+    return Event.Number == Class + 92 && Event.Arguments[1] == 3 &&
+           Event.Result == 0 && Event.Error == false;
+  }));
 }
 TEST_P(DarwinProcess,
        VectorIOPreservesCopyOrderFaultPrefixesAndAggregateOffsets) {

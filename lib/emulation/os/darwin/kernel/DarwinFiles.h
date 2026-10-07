@@ -128,6 +128,8 @@ private:
   using VectorInput = std::variant<std::vector<Buffer>, uint32_t, const char *>;
   using Pathname = std::variant<std::string, uint32_t>;
   using Lookup = std::variant<Description, uint32_t, const char *>;
+  using DirectoryLookup =
+      std::variant<std::shared_ptr<DirectoryNode>, uint32_t, const char *>;
   GuestMemory &Memory;
   const std::optional<DarwinFileOptions> &Options;
   const uint64_t OutputLimit;
@@ -155,6 +157,7 @@ private:
   bool mutableDirectory(const std::string &Path) const;
   std::optional<DirectoryIdentity> directoryIdentity(const std::string &Path);
   llvm::Expected<Pathname> readPath(uint64_t Address);
+  DirectoryLookup directoryDescriptor(uint32_t FD) const;
   llvm::Expected<Lookup> resolvePath(uint64_t Address, uint32_t DirectoryFD,
                                      LookupMode Mode = LookupMode::Existing);
   llvm::Expected<std::optional<ServiceResult>>
