@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""Generate lib/support/TextEncodingTables.inc from the WHATWG Encoding
+Standard indexes (https://encoding.spec.whatwg.org/).
+
+The indexes are read from a directory of index-*.txt files as published by
+the standard; each must carry the identifier recorded below, so the table
+changes only when this script does.  The generated file holds the
+pointer-to-code-point indexes the legacy decoders of
+lib/support/StringScan.cpp use, and the common Han and Hangul characters
+(GB2312, Big5, JIS X 0208 level 1 and the KS X 1001 syllables) that tell
+text from 16-bit numbers in wide strings.
+
+Usage: generate_text_encoding_tables.py INDEX_DIR OUTPUT
+"""
+
+import re
+import sys
+from pathlib import Path
+
+# Index name -> identifier line of the 2024-09-18 edition.
+IDENTIFIERS = {
+    "big5": "8dfc771062e7be0810919082c2c06baa2236147909e0ecc235b1cb9ad782ac82",
+    "euc-kr": "1d97134cbf187263585bc8f593ca4196654ed4c7a673f5672eaad4f5d9fdc4ba",
+    "gb18030": "ff1c9a923b5d24f9761b3a2de2c0f07b395f9f6f36519508944de4f0415be81c",
+    "gb18030-ranges": "f963aaa1653f630c523e7b04729fb4e4458f35806c45eb5c179445623138f0c0",
+    "ibm866": "db6fe14a559d1601a7667338d83704773d5708dbc641e1ad3c5e21405770f05e",
+    "iso-8859-2": "9569c67f22d0b57790e1c407c6eecf227e4562322dc296de43cdab7a0152ec73",
+    "iso-8859-5": "fa9b1f3f5242df43e2e7bca80e9b6997c67944f20a4af91ee06bacc4e132d9c9",
+    "iso-8859-7": "f53d8aeba36314ef950eef02ffcf11dff540638ce27dfe7a86b6ccc6875afb24",
+    "jis0208": "cbaa91f3deb7d0841faf5c33041fc15a285da0e87e64ab802c4bf04b7c4da861",
+    "koi8-r": "c5497cd9071cb352c0e56b219154e539badf63de40b71578f09e2e11fe7d50ae",
+    "koi8-u": "19a4da2c3f245118bbc8019326f45a07832949938ff903f03d62ac4da1f61f40",
+    "windows-1250": "0669455a7a1c70ba6003ea737991e8ee9adc455125c13cfe6705a361358de5fa",
+    "windows-1251": "7592ef921679ba168b00a9e9afa3b4eebd67bf13dc7e84c4b6e120de856826e0",
+    "windows-1252": "e56d49d9176e9a412283cf29ac9bd613f5620462f2a080a84eceaf974cfa18b7",
+    "windows-1253": "49fdc881a3488904dd1e8dfba9aef3258454249958b611bcded1d4c981ab5561",
+    "windows-1254": "e80a27adf377438be8ba5bd223875ea56d6a4d47f958cce1c957a2c446825caa",
+    "windows-1255": "cd7fb43c97eefa1651084d92d02af53ad668bd848528c18c3b1af5c06b499651",
+    "windows-1256": "161bdb381f16408e8bebcc8f5310c4190af0e359de8d9bbaa3628ce2f0875509",
+    "windows-1257": "cc7256bdd10a5b8dc7fb6f994659f307dfcae60def9aa6c29d811f85e2842c47",
+    "windows-1258": "198bacedfcf24390e219240a7b776b6cec34cff070330b08a601a69c67f7eb24",
+}
+SINGLE_BYTE = [
+    "ibm866", "iso-8859-2", "iso-8859-5", "iso-8859-7", "koi8-r", "koi8-u",
+    "windows-1250", "windows-1251", "windows-1252", "windows-1253",
+    "windows-1254", "windows-1255", "windows-1256", "windows-1257",
+    "windows-1258",
+]
+EDITION = "2024-09-18"
+
+
+def read_index(directory: Path, name: str):
+    """Pointer -> code point pairs of index-NAME.txt."""
+    text = (directory / f"index-{name}.txt").read_text(encoding="utf-8")
+    if f"# Date: {EDITION}" not in text:
+        raise SystemExit(f"index-{name}.txt is not the {EDITION} edition")
+    identifier = re.search(r"# Identifier: ([0-9a-f]{64})", text)
+    expected = IDENTIFIERS[name]
+    if not identifier or identifier.group(1) != expected:
+        raise SystemExit(f"index-{name}.txt identifier differs from {expected}")
+    pairs = []
+    # Fields are tab separated; the character column can itself be a line
+    # or field separator (U+0085), so neither splitlines() nor split() fits.
+    for line in text.split("\n"):
+        if not line.strip() or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        pairs.append((int(fields[0]), int(fields[1], 16)))
+    return pairs
+
+
+def dense(pairs, size=None):
+    size = size if size is not None else max(p for p, _ in pairs) + 1
+    table = [0] * size
+    for pointer, code in pairs:
+        table[pointer] = code
+    return table
+
+
+def emit_array(out, ctype, name, values, comment):
+    out.append(f"// {comment}")
+    out.append(f"constexpr {ctype} {name}[{len(values)}] = {{")
+    # As many values a line as fit in 80 columns.
+    width = max(len(f"0x{v:X}") for v in values) + 2
+    per_line = max(1, (80 - 4) // width)
+    for i in range(0, len(values), per_line):
+        out.append("    " + ", ".join(f"0x{v:X}" for v in values[i:i + per_line]) + ",")
+    out.append("};")
+    out.append("")
+
+
+def bitset(codes, first, last):
+    words = [0] * ((last - first) // 64 + 1)
+    for code in codes:
+        if first <= code <= last:
+            offset = code - first
+            words[offset // 64] |= 1 << (offset % 64)
+    return words
+
+
+def main():
+    if len(sys.argv) != 3:
+        raise SystemExit(__doc__)
+    directory, output = Path(sys.argv[1]), Path(sys.argv[2])
+    gb = dense(read_index(directory, "gb18030"))
+    ranges = read_index(directory, "gb18030-ranges")
+    big5 = dense(read_index(directory, "big5"))
+    jis = dense(read_index(directory, "jis0208"))
+    euckr = dense(read_index(directory, "euc-kr"))
+
+    # Common characters: the first level of each national standard.
+    han = set()
+    for lead in range(0xB0, 0xD8):            # GB2312 level 1 in GBK order
+        for trail in range(0xA1, 0xFF):
+            pointer = (lead - 0x81) * 190 + (trail - 0x41)
+            if pointer < len(gb) and gb[pointer]:
+                han.add(gb[pointer])
+    for lead in range(0xA4, 0xC7):            # Big5 level 1
+        for trail in list(range(0x40, 0x7F)) + list(range(0xA1, 0xFF)):
+            offset = 0x40 if trail < 0x7F else 0x62
+            pointer = (lead - 0x81) * 157 + (trail - offset)
+            if pointer < len(big5) and big5[pointer] and big5[pointer] <= 0xFFFF:
+                han.add(big5[pointer])
+    for ku in range(16, 48):                  # JIS X 0208 level 1
+        for ten in range(1, 95):
+            pointer = (ku - 1) * 94 + (ten - 1)
+            if pointer < len(jis) and jis[pointer]:
+                han.add(jis[pointer])
+    hangul = set()
+    for lead in range(0xB0, 0xC9):            # KS X 1001 syllables
+        for trail in range(0xA1, 0xFF):
+            pointer = (lead - 0x81) * 190 + (trail - 0x41)
+            if pointer < len(euckr) and euckr[pointer]:
+                hangul.add(euckr[pointer])
+
+    title = "//===- TextEncodingTables.inc - Legacy encoding indexes "
+    out = [
+        title + "-" * (80 - len(title) - len("*- C++ -*-===//")) + "*- C++ -*-===//",
+        "//",
+        "// Generated by scripts/generate_text_encoding_tables.py from the WHATWG",
+        f"// Encoding Standard indexes of {EDITION}; do not edit.  Copyright WHATWG",
+        "// (Apple, Google, Mozilla, Microsoft); see LICENSES/WHATWG-Encoding.txt.",
+        "//",
+        "//===----------------------------------------------------------------------===//",
+        "",
+        "// clang-format off",
+    ]
+    emit_array(out, "uint16_t", "GB18030Index", gb,
+               "index-gb18030: two-byte pointer -> BMP code point, 0 unmapped")
+    out.append("// index-gb18030-ranges: four-byte pointer -> code point, ascending")
+    out.append(f"constexpr uint32_t GB18030Ranges[{len(ranges)}][2] = {{")
+    for pointer, code in ranges:
+        out.append(f"    {{{pointer}, 0x{code:X}}},")
+    out.append("};")
+    out.append("")
+    emit_array(out, "uint32_t", "Big5Index", big5,
+               "index-big5: pointer -> code point, 0 unmapped")
+    emit_array(out, "uint16_t", "JIS0208Index", jis,
+               "index-jis0208: pointer -> code point, 0 unmapped")
+    emit_array(out, "uint16_t", "EUCKRIndex", euckr,
+               "index-euc-kr: pointer -> code point, 0 unmapped")
+    for name in SINGLE_BYTE:
+        table = dense(read_index(directory, name), 128)
+        identifier = "SingleByte_" + re.sub(r"[^0-9A-Za-z]", "_", name)
+        emit_array(out, "uint16_t", identifier, table,
+                   f"index-{name}: byte 0x80 + pointer -> code point, 0 unmapped")
+    emit_array(out, "uint64_t", "CommonHan", bitset(han, 0x3400, 0x9FFF),
+               f"Common Han characters U+3400-U+9FFF ({len(han)}), one bit each")
+    emit_array(out, "uint64_t", "CommonHangul", bitset(hangul, 0xAC00, 0xD7A3),
+               f"KS X 1001 Hangul syllables U+AC00-U+D7A3 ({len(hangul)}), one bit each")
+    out.append("// clang-format on")
+    output.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()

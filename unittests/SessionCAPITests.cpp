@@ -1875,12 +1875,40 @@ TEST_F(SessionCAPITest, StringScanFindsUTF8AndWideStringsByOption) {
   EXPECT_EQ(Scan(R"({"min_length":0})"),
             "error: min_length must be an integer from 1 to 1024");
   EXPECT_EQ(Scan(R"({"limit":3})"), "error: unknown string option: limit");
+  EXPECT_EQ(Scan(R"({"encodings":["gbk","big5"]})"),
+            "error: only one legacy code page can be searched at a time");
   EXPECT_EQ(Scan("[]"), "error: string options must be a JSON object");
 
   const auto Encodings = takeString(neverd_string_encodings_json());
   EXPECT_NE(Encodings.find(R"("name":"utf-16le","spelling":"UTF-16LE")"),
             std::string::npos)
       << Encodings;
+}
+
+TEST_F(SessionCAPITest, StringScanReadsTheChosenCodePage) {
+  // "中文字符串" in GBK after a NUL.
+  constexpr char Data[] = "\0\xd6\xd0\xce\xc4\xd7\xd6\xb7\xfb\xb4\xae\0";
+  const auto Input =
+      write("gbk.elf", makeDataELF(std::string_view(Data, sizeof(Data) - 1)));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_strings_ex_json(Session, nullptr)), "[]");
+  const auto Found = takeString(
+      neverd_strings_ex_json(Session, R"({"encodings":["ascii","cp936"]})"));
+  EXPECT_EQ(Found, "[{\"addr\":\"0x401001\",\"chars\":5,\"encoding\":\"gbk\","
+                   "\"length\":10,\"value\":\"\xe4\xb8\xad\xe6\x96\x87\xe5\xad"
+                   "\x97\xe7\xac\xa6\xe4\xb8\xb2\"}]");
+}
+
+TEST(SessionTextDecoding, DecodesBytesForDisplayInAnyEncoding) {
+  const unsigned char GBK[] = {'a', 0xd6, 0xd0, 0xff, 0x80};
+  EXPECT_EQ(takeString(neverd_decode_text_json(GBK, sizeof(GBK), "gbk")),
+            "{\"cells\":[\"a\",\"\xe4\xb8\xad\",\"\",null,\"\xe2\x82\xac\"]}");
+  const unsigned char Wide[] = {'O', 0, 'K', 0, 0x0a, 0};
+  EXPECT_EQ(takeString(neverd_decode_text_json(Wide, sizeof(Wide), "utf-16le")),
+            R"({"cells":["O","","K","",null,null]})");
+  EXPECT_EQ(neverd_decode_text_json(GBK, sizeof(GBK), "ebcdic"), nullptr);
+  EXPECT_EQ(neverd_decode_text_json(GBK, -1, "gbk"), nullptr);
 }
 
 TEST_F(SessionCAPITest, DecompileDiffPreservesEqualSuccessfulOutputs) {

@@ -1147,6 +1147,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_decode_text_json",
+    "const char *",
+    ["const unsigned char *", "int", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_xrefs_to_json",
     "const char *",
     ["neverd_session_t", "neverd_va_t"],
