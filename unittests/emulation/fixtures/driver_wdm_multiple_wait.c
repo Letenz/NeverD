@@ -27,6 +27,29 @@ static ULONG Invalid;
 static UCHAR Mode;
 static volatile ULONG WorkSeen, StopSeen, Completed;
 
+__attribute__((naked)) static VOID
+initializeSemaphoreLow32(PRKSEMAPHORE Object, LONG Count, LONG Limit) {
+#define NEVERD_MULTI_WAIT_INITIALIZE_SEMAPHORE_ASM(Text) __asm__(Text);
+#include "DriverMultipleWaitCases.def"
+#undef NEVERD_MULTI_WAIT_INITIALIZE_SEMAPHORE_ASM
+}
+
+__attribute__((naked)) static LONG releaseSemaphoreLow32(PRKSEMAPHORE Object,
+                                                         KPRIORITY Increment,
+                                                         LONG Adjustment,
+                                                         BOOLEAN Wait) {
+#define NEVERD_MULTI_WAIT_RELEASE_SEMAPHORE_ASM(Text) __asm__(Text);
+#include "DriverMultipleWaitCases.def"
+#undef NEVERD_MULTI_WAIT_RELEASE_SEMAPHORE_ASM
+}
+
+__attribute__((naked)) static VOID initializeMutexLow32(PRKMUTEX Object,
+                                                        ULONG Level) {
+#define NEVERD_MULTI_WAIT_INITIALIZE_MUTEX_ASM(Text) __asm__(Text);
+#include "DriverMultipleWaitCases.def"
+#undef NEVERD_MULTI_WAIT_INITIALIZE_MUTEX_ASM
+}
+
 static void Check(BOOLEAN Condition) {
   if (!Condition)
     ++Invalid;
@@ -118,8 +141,9 @@ static void Immediate(void) {
 static void All(void) {
   HANDLE Handle;
   KeSetEvent(&Events[0], IO_NO_INCREMENT, FALSE);
-  KeInitializeSemaphore(&Semaphore, 1, 1);
-  KeInitializeMutex(&Mutex, 0);
+  initializeSemaphoreLow32(&Semaphore, 0, 1);
+  Check(releaseSemaphoreLow32(&Semaphore, IO_NO_INCREMENT, 1, FALSE) == 0);
+  initializeMutexLow32(&Mutex, 0);
   PVOID Object = StartWorker(&Handle);
   PVOID Objects[] = {&Events[0], &Semaphore, &Mutex, &Events[1]};
   KWAIT_BLOCK Blocks[RTL_NUMBER_OF(Objects)];

@@ -448,9 +448,8 @@ llvm::Expected<uint64_t> KernelDispatcher::call(llvm::StringRef Name,
     const int32_t Limit = static_cast<int32_t>(Args[2]);
     if (CurrentIRQL != scheduler::PassiveLevel)
       return dispatcherError("semaphore initialization requires PASSIVE_LEVEL");
-    if (Count < 0 || Limit <= 0 || Count > Limit ||
-        Args[1] != static_cast<uint32_t>(Count) ||
-        Args[2] != static_cast<uint32_t>(Limit))
+    // LONG arguments define only the low 32 bits of their ABI registers.
+    if (Count < 0 || Limit <= 0 || Count > Limit)
       return dispatcherError("invalid initial semaphore count or limit");
     Object State{Kind::Semaphore, dispatcher::SemaphoreSize};
     State.Count = Count;
@@ -460,7 +459,7 @@ llvm::Expected<uint64_t> KernelDispatcher::call(llvm::StringRef Name,
     return 0;
   }
   case API::KeInitializeMutex: {
-    if (Args[1])
+    if (static_cast<uint32_t>(Args[1]))
       return dispatcherError("KeInitializeMutex Level must be zero");
     Object State{Kind::Mutex, dispatcher::MutexSize};
     if (auto E = initialize(Args[0], std::move(State)))
@@ -581,7 +580,7 @@ llvm::Expected<uint64_t> KernelDispatcher::call(llvm::StringRef Name,
       return dispatcherError(
           "KeReleaseSemaphore Wait=TRUE requires unsupported IRQL handoff");
     const int32_t Adjustment = static_cast<int32_t>(Args[2]);
-    if (Adjustment <= 0 || Args[2] != static_cast<uint32_t>(Adjustment))
+    if (Adjustment <= 0)
       return dispatcherError("semaphore adjustment must be positive LONG");
     if (Adjustment > (*State)->Limit - Count)
       return llvm::make_error<KernelGuestException>(

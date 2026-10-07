@@ -364,6 +364,8 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `IofCompleteRequest`、`IoCompleteRequest` | `IO_NO_INCREMENT` で完了を展開。停止／再開をサポートし、最終展開時にだけ IRP／MDL／バッファーを解放 |
 | `memcpy`、`memmove`、`memset`、`memcmp`、`RtlCopyMemory`、`RtlMoveMemory`、`RtlFillMemory`、`RtlZeroMemory`、`RtlCompareMemory` | ゲストバッファー操作は 1 呼び出しあたり最大 1 MiB。重複不可のコピー API は重複範囲を拒否する |
 
+`KernelDispatcher` はセマフォの `Count`、`Limit`、`Adjustment` を符号付き 32 ビット `LONG`、ミューテックスの `Level` を 32 ビット `ULONG`、`Wait` を 8 ビット `BOOLEAN` として解釈し、[Windows x64 ABI](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170) に従ってレジスターの未定義上位ビットを無視します。有効幅内の不正な値やセマフォのオーバーフローは、オブジェクト状態を変更する前に拒否します。
+
 API の IRQL 上限は `KernelAPIIRQL.def` にあり、引数依存の制約は担当モデルが検査します。DPC からレジストリ API やページプールの割り当て・解放・アクセスはできません。Unicode `DbgPrint` 変換は `PASSIVE_LEVEL` を要求し、対応する ANSI 出力と非ページ操作は `DISPATCH_LEVEL` で使用できます。コールバックスタックには範囲があり、逸脱したスタックポインターは別の待機ワーカーのスタックへ侵入できません。デバイス拡張内の有効なタイマーは早期解放を防ぎます。
 
 タイマー満了は DPC がタイマーをリセット・再設定する前に登録済み待機を満たします。キュー済み DPC は起床した `PASSIVE_LEVEL` フレームの再開より先に実行します。要求領域にキュー済み DPC が残る場合、IRP 完了処理は完了とバッファ無効化の前に解放を拒否します。

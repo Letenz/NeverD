@@ -575,6 +575,8 @@ The initial API model deliberately has a finite contract:
 | `IofCompleteRequest`, `IoCompleteRequest` | `IO_NO_INCREMENT`; executes completion unwinding, supports stopped/resumed completion and retires IRP/MDL/buffer storage only at its terminal boundary |
 | `memcpy`, `memmove`, `memset`, `memcmp`, `RtlCopyMemory`, `RtlMoveMemory`, `RtlFillMemory`, `RtlZeroMemory`, `RtlCompareMemory` | Bounded guest buffer operations, at most 1 MiB per call; non-overlapping copy APIs reject overlaps |
 
+`KernelDispatcher` decodes semaphore `Count`, `Limit` and `Adjustment` as signed 32-bit `LONG`, mutex `Level` as 32-bit `ULONG`, and `Wait` as 8-bit `BOOLEAN`, ignoring undefined register bits under the [Windows x64 ABI](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170). Invalid low-width values and semaphore overflow fail before object state changes.
+
 API IRQL ceilings come from `KernelAPIIRQL.def`, with argument-dependent
 checks in the owning model. DPCs cannot call registry APIs or allocate, free
 or access paged pool; Unicode `DbgPrint` conversions require `PASSIVE_LEVEL`,
