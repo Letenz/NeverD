@@ -1334,6 +1334,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_hex_dump_ex",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "int", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_annotation_set", "void", ["neverd_session_t", "neverd_va_t", "const char *"]
 )
 _declare("neverd_annotation_remove", "void", ["neverd_session_t", "neverd_va_t"])

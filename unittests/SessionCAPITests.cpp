@@ -1967,6 +1967,37 @@ TEST_F(SessionCAPITest, StringReferencesReadTextFromTheReferencedCharacter) {
             nullptr);
 }
 
+TEST_F(SessionCAPITest, HexDumpsCrossGapsAndReadTextInAnyEncoding) {
+  // GBK "\u4e2d\u6587" then "ab", in the data segment after a gap.
+  constexpr char Data[] = "\xd6\xd0\xce\xc4"
+                          "ab";
+  const auto Input =
+      write("hex-dump.elf", makeDataELF(std::string_view(Data, 6)));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  // The bytes before the data segment are unmapped; the dump goes on past
+  // them and leaves out the unmapped lines after the last mapped byte.
+  const auto Dump =
+      takeString(neverd_hex_dump_ex(Session, DataELFData - 16, 48, "gbk"));
+  const auto Lines = llvm::StringRef(Dump).split('\n');
+  EXPECT_TRUE(Lines.first.contains("?? ?? ?? ?? ?? ?? ?? ??")) << Dump;
+  EXPECT_TRUE(
+      Lines.second.contains("d6 d0 ce c4 61 62 ?? ??  ?? ?? ?? ?? ?? ?? ?? ??"))
+      << Dump;
+  // Each wide character draws two columns over its two bytes; the segment
+  // ends after "ab".
+  EXPECT_TRUE(Lines.second.contains("|\xe4\xb8\xad\xe6\x96\x87"
+                                    "ab          |"))
+      << Dump;
+  EXPECT_EQ(llvm::StringRef(Dump).count('\n'), 2u) << Dump;
+  // ASCII by default, and an unknown encoding fails.
+  EXPECT_TRUE(
+      llvm::StringRef(takeString(neverd_hex_dump(Session, DataELFData, 6)))
+          .contains("|....ab|"));
+  EXPECT_EQ(neverd_hex_dump_ex(Session, DataELFData, 6, "klingon"), nullptr);
+  EXPECT_EQ(neverd_hex_dump(Session, DataELFData + 0x100000, 16), nullptr);
+}
+
 TEST_F(SessionCAPITest, StringScanFindsUTF8AndWideStringsByOption) {
   // "hello", UTF-8 "中文字符" and UTF-16LE "Wide text", each terminated.
   constexpr char Data[] = "hello\0"

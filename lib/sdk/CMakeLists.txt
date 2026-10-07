@@ -17,6 +17,7 @@ set(NEVERD_SDK_SOURCES
     capi/InstructionFlow.cpp
     capi/ImageStrings.cpp
     capi/NeverDCAPIGraph.cpp
+    capi/NeverDCAPIHexDump.cpp
     capi/NeverDCAPIInfo.cpp
     capi/NeverDCAPIOptimize.cpp
     capi/NeverDCAPIPatch.cpp

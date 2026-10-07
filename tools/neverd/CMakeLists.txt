@@ -77,9 +77,12 @@ endif()
 add_neverd_tool(neverd
   neverd.cpp
   NeverDCLIOptions.cpp
+  NeverDCLIFunctions.cpp
   NeverDTranslateOutput.cpp
   cmd/NeverDCmdInfo.cpp
   cmd/NeverDCmdTables.cpp
+  cmd/NeverDCmdStrings.cpp
+  cmd/NeverDCmdXrefs.cpp
   cmd/NeverDCmdDisasm.cpp
   cmd/NeverDCmdMarkup.cpp
   cmd/NeverDCmdSearch.cpp

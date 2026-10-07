@@ -47,6 +47,7 @@
           "neverd_func_size",
           "neverd_headers_json",
           "neverd_hex_dump",
+          "neverd_hex_dump_ex",
           "neverd_import_slots_json",
           "neverd_imports_json",
           "neverd_inject_hello",
@@ -347,6 +348,7 @@
           "neverd hex --no-debug",
           "neverd hex --pdb",
           "neverd hex --size",
+          "neverd hex --text-encoding",
           "neverd hex --v",
           "neverd hunt",
           "neverd hunt --arm-function-mode",
@@ -532,11 +534,15 @@
           "neverd simplify --width",
           "neverd strings",
           "neverd strings --arm-function-mode",
+          "neverd strings --code-page",
+          "neverd strings --encodings",
+          "neverd strings --filter",
           "neverd strings --json",
           "neverd strings --map",
           "neverd strings --min-len",
           "neverd strings --no-debug",
           "neverd strings --pdb",
+          "neverd strings --refs",
           "neverd strings --v",
           "neverd sym-explore --arm-function-mode",
           "neverd sym-explore --expressions",
@@ -565,7 +571,8 @@
           "neverd xrefs --json",
           "neverd xrefs --map",
           "neverd xrefs --no-debug",
-          "neverd xrefs --pdb"
+          "neverd xrefs --pdb",
+          "neverd xrefs --source"
         ]
       },
       {
