@@ -137,8 +137,8 @@ llvm::Error KernelModel::validateExecutionReturn(uint64_t Identity,
   for (const RaisedIRQL &Raise : RaisedIRQLs)
     if (Raise.Execution == Identity)
       return apiError("guest return retains a raised IRQL");
-  if (Dispatcher.ownsMutex(Identity))
-    return apiError("guest return retains an owned mutex");
+  if (!Nested && Dispatcher.ownsMutex(CurrentThreadKey))
+    return apiError(dispatcher::OwnedMutexReturn);
   if (auto It = ApcStates.find(CurrentThreadKey);
       !Nested && It != ApcStates.end()) {
     const bool SystemThread =

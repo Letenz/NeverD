@@ -6,6 +6,14 @@
 #ifdef NEVERD_WHP_RESOURCE_TEXT
 NEVERD_WHP_RESOURCE_TEXT(CreateFailed,
                          "synthetic native resource construction failed")
+NEVERD_WHP_RESOURCE_TEXT(InitializationStopped,
+                         "WHP resource initialization interrupted "
+                         "(stop_requested=true, deadline_reached=false): "
+                         "WHP single-step execution failed")
+NEVERD_WHP_RESOURCE_TEXT(InitializationExpired,
+                         "WHP resource initialization interrupted "
+                         "(stop_requested=false, deadline_reached=true): "
+                         "WHP single-step execution failed")
 #endif
 #ifdef NEVERD_WHP_RESOURCE_VALUE
 NEVERD_WHP_RESOURCE_VALUE(DeadlineMilliseconds, 20)

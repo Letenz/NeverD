@@ -847,8 +847,12 @@ TEST(HighCPointerAddresses, InlinedSignedIncrementKeepsModularExpression) {
   Func.Body = {Store};
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("+= 1"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__builtin_bit_cast(int32_t"), std::string::npos)
+  // The increment wraps in an unsigned carrier; the int32_t store converts
+  // it back.
+  EXPECT_NE(Source.find("= (uint32_t)(*(const neverd_unaligned_i32 *)"),
+            std::string::npos)
       << Source;
+  EXPECT_NE(Source.find(" + 1);"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, IncrementLoadKeptWhenValueIsUsed) {
@@ -887,9 +891,10 @@ TEST(HighCPointerAddresses, IncrementLoadKeptWhenValueIsUsed) {
   returnValue(Func, HighExpr::makeVar(T, I32));
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("+= 1"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__builtin_bit_cast(int32_t"), std::string::npos)
+  // The increment wraps in an unsigned carrier; the int32_t store converts
+  // it back.
+  EXPECT_NE(Source.find("= (uint32_t)t94_8 + 1);"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("t94_8"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, AddressTakenFrameSlotUsesSharedBacking) {
@@ -24252,7 +24257,7 @@ TEST(HighCPointerAddresses, X86DivPreconditionKeepsArithmeticWraps) {
       Source.substr(DividendAt, DividendEnd - DividendAt);
   // eRecord is declared uint32_t. Its add wraps at 32 bits before the
   // dividend is widened; the old per-operand casts are unnecessary.
-  EXPECT_NE(Dividend.find("(uint32_t)(eRecord + 1)"), std::string::npos)
+  EXPECT_NE(Dividend.find("(uint64_t)(eRecord + 1)"), std::string::npos)
       << Source;
   EXPECT_EQ(Dividend.find("(uint64_t)(eRecord) + 1"), std::string::npos)
       << Source;
@@ -25303,7 +25308,7 @@ TEST(HighCPointerAddresses, Win64SameBlockRdxRecoversPredSetupR8) {
   EXPECT_EQ(Args->size(), 3u) << Source << "\nHighIR:\n" << HighDump;
   if (Args->size() == 3) {
     EXPECT_NE((*Args)[1].find("3313"), std::string_view::npos) << Source;
-    EXPECT_NE((*Args)[2].find("+ 64)"), std::string_view::npos) << Source;
+    EXPECT_NE((*Args)[2].find(" + 64"), std::string_view::npos) << Source;
   }
   EXPECT_EQ(Source.find(", 42"), std::string::npos) << Source;
 }
@@ -25442,7 +25447,7 @@ TEST(HighCPointerAddresses, Win64CallJoinRecoversDominatingR8) {
   ASSERT_TRUE(Args) << Source;
   EXPECT_EQ(Args->size(), 3u) << Source << "\nHighIR:\n" << HighDump;
   if (Args->size() == 3)
-    EXPECT_NE((*Args)[2].find("+ 64)"), std::string_view::npos) << Source;
+    EXPECT_NE((*Args)[2].find(" + 64"), std::string_view::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, Win64IpMapSplitCallKeepsPredLeaArgs) {
@@ -25668,11 +25673,22 @@ TEST(HighCPointerAddresses, Win64CallOnlyBlockRecoversPredR9AndHome) {
   const auto CallAt = Source.rfind("Concatenate(");
   ASSERT_NE(CallAt, std::string::npos) << Source;
   const auto Open = Source.find('(', CallAt);
-  const auto Close = Source.find(')', Open);
   ASSERT_NE(Open, std::string::npos) << Source;
+  // Count the commas between arguments, not those inside an argument such
+  // as the unknown r8 the helper call clobbered.
+  int Depth = 0;
+  size_t Commas = 0;
+  size_t Close = std::string::npos;
+  for (size_t I = Open; I < Source.size() && Close == std::string::npos; ++I) {
+    if (Source[I] == '(')
+      ++Depth;
+    else if (Source[I] == ')' && --Depth == 0)
+      Close = I;
+    else if (Source[I] == ',' && Depth == 1)
+      ++Commas;
+  }
   ASSERT_NE(Close, std::string::npos) << Source;
-  const std::string Args = Source.substr(Open + 1, Close - Open - 1);
-  EXPECT_EQ(std::count(Args.begin(), Args.end(), ','), 4) << Source;
+  EXPECT_EQ(Commas, 4u) << Source;
 }
 
 TEST(HighCPointerAddresses, NestedIfGotoSkipInvertsToIf) {
@@ -34201,6 +34217,8 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   auto ExceptStore = sourceLineContaining(Source, "+= 20;");
   if (ExceptStore.empty())
     ExceptStore = sourceLineContaining(Source, ") + 20)");
+  if (ExceptStore.empty())
+    ExceptStore = sourceLineContaining(Source, ") + 20;");
   ASSERT_NE(Store, Stores.end()) << Source;
   ASSERT_FALSE(Clear.empty()) << Source;
   ASSERT_FALSE(Home.empty()) << Source;
@@ -38710,9 +38728,9 @@ TEST(HighCPointerAddresses, ReturnViewChainAroundAddKeepsOneCast) {
   Narrow->Operands = {Outer};
   returnValue(Func, Narrow);
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("return (int32_t)"), std::string::npos) << Source;
+  // The int32_t return converts the unsigned sum itself.
+  EXPECT_NE(Source.find("return arg0 + 1;"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("(int64_t)"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ "), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, ReturnZextFromNarrowerKeepsSourceWidth) {

@@ -353,6 +353,8 @@ fixture 覆盖来宾初始化、成功与失败返回、不支持的行为、内
 
 `DriverThreadPriorityTests.cpp` 使用原创编译驱动 `driver_thread_priority.c`，在显式 Unicorn／KVM／WHP 的 driver 和 checked 契约下验证排队及阻塞线程的优先级修改、时间片内事件／计时器唤醒、同级轮转、DISPATCH_LEVEL 屏蔽，以及低优先级线程饥饿时计时器仍推进。成对计数循环对照证明抢占后保留准确的剩余时间片。模型测试覆盖有符号 ABI 参数、失败不改变状态、已退出对象引用、嵌套线程身份和独立回调栈复用。原生用例纳入 `NativeDriverTests.def` 强制清单；本地不可用后端明确跳过。
 
+`DriverMutexThreadTests.cpp` 执行 `driver_seh_mutex.def` 中四种原创 WDK 模式：在 SEH 过滤器中递归获取、过滤器或异常 finally 获取后保留所有权，以及过滤器阻塞并在另一系统线程释放 mutex 后恢复。Unicorn／KVM／WHP 的 driver 和 checked 契约覆盖普通／有效 CFG 映像、首选／重定位地址及协作式／1／17 指令时间片。模型测试还验证嵌套栈退役后的 APC 禁用、错误线程释放和最外层返回检查；KVM／WHP 用例纳入 `NativeDriverTests.def` 强制清单。
+
 `driver_context_limits.c`: API 的 IRQL 上限来自 `KernelAPIIRQL.def`，参数相关限制由所属模型检查。DPC 不能调用注册表 API，也不能分配、释放或访问分页池；Unicode `DbgPrint` 转换要求 `PASSIVE_LEVEL`，支持的 ANSI 输出和非分页操作仍可在 `DISPATCH_LEVEL` 使用。回调栈有明确边界，越界栈指针不能进入另一阻塞工作项的栈。设备扩展中的已启动定时器会阻止设备提前回收。这些检查并未开放通用 IRQL 切换。
 
 `KernelDeviceStackTests.cpp` 检查独立的所有者／附着关系、栈顶选择、失败原子性、栈容量、不透明字段、打开句柄计数、拆链／删除时的工作项及请求保活，以及文件身份与派发栈顶的区别。原创 `driver_wdm_stack.c` 使用真实 WDK 头文件和内联 Copy/Skip/SetCompletion；普通／启用 CFG 映像由可选 `NEVERD_WDM_STACK_FIXTURE`／`NEVERD_WDM_STACK_CFG_FIXTURE` 配置。`DriverWDMStackTests.cpp` 覆盖重定位、真实下层状态、完成顺序和标志、延迟 pending 传播、工作项／DPC、等待、`STATUS_MORE_PROCESSING_REQUIRED`、直接 MDL 保留、嵌套完成及畸形游标／控制值。`DriverScenarioPublicTests.cpp` 覆盖 C API／CLI 转发及 C API 保留／嵌套完成，包括已配置 CFG 映像。缺少产物会明确跳过；Linux 证据仅证明同驱动设备栈子集，不代表 PDO／PnP／电源支持。 `KernelIRPStackTests.cpp` 检查计数游标、完整内联 Copy 前缀、已消耗栈位置清零、状态／pending 传播、MPR 与嵌套完成、续接所有者检查及保留路径。真实 READ/WRITE 与文件生命周期也使用内联 Copy 验证。
@@ -1037,7 +1039,7 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 
 `NeverDHighControlFlowTests` 中的 `HighValueForward.*` 检查 HighC 写出器何时可以把只用一次的值折叠进它的使用处。循环条件会保留一个其变量在循环中被赋值的值，因为同一个名字可能代表多个 SSA 值；重新读取的栈槽在对该槽的写入之后仍保持原值，而在对其他槽的写入之后可以折叠。源变量在使用前被重新赋值时，副本保持原值。每种情形都在 `-O0` 和 `-O2` 下带未定义行为陷阱运行。
 
-`NeverDHighControlFlowTests` 中的 `HighCIntegerConversion.*` 检查 HighC 写出器交给 C 完成的整数转换。操作数内部的转换若保留了外层转换所保留的字节，就不再单独输出强制转换；对已声明整数局部变量的赋值和 return 采用隐式转换，字面量写成转换后的值，而指针保留显式转换。每种情形都在 `-O0` 和 `-O2` 下带未定义行为陷阱运行，并与参考运算比较。
+`NeverDHighControlFlowTests` 中的 `HighCIntegerConversion.*` 检查 HighC 写出器交给 C 完成的整数转换。操作数内部的转换若保留了外层转换所保留的字节，就不再单独输出强制转换；对已声明整数局部变量的赋值和 return 采用隐式转换，字面量写成转换后的值，而指针保留显式转换。内存写入与赋值一样转换，传给有类型的更宽参数的零扩展实参保留其扩展。每种情形都在 `-O0` 和 `-O2` 下带未定义行为陷阱运行，并与参考运算比较。
 
 源码投影还会在清理后重新验证变参对象列表：允许空的指令地址锚点，但拒绝隐藏效果或控制转移。同步清理允许同一已保存接收者的单层 `int64_t` 或 `uint64_t` 视图；窄化、浮点转换、地址运算和重新赋值仍被拒绝。Foundation 对象集合及正常、异常解锁轨迹均在 `-O0` 和 `-O2` 下执行验证。
 
@@ -1138,9 +1140,11 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 113 个工作负载产生 226 个 WHP 结果：27 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 4884 项 CPU 检查及 17 项 SEH 回归及 77 项调度检查，共有 5204 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `4884 CPU + 226 WHP + 17 SEH + 77 scheduling = 5204`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 113 个工作负载产生 226 个 WHP 结果：27 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 4887 项 CPU 检查及 25 项 SEH 回归及 77 项调度检查，共有 5215 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `4887 CPU + 226 WHP + 25 SEH + 77 scheduling = 5215`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
+
+`WhpResourcePolicy.def` 为 WHP x64 和 ARM64 的资源创建设置独立的 `30 s` 期限，再执行 ISA 自检。同步宿主设置完成后，发布资源前仍检查该期限。指令自检和普通 guest 执行保留各自的限制。`WhpResourceTests.cpp` 检查初始化中断的类型与原因诊断、取消后资源清理、宿主错误优先级及普通执行期限不变。
 
 `X64PopFlagsTests.cpp` 检查两种权限及 `driver-strict`：全部 256 种允许的标志输入与两种初态、九种编码、全部 64 个输入位、只读和可执行别名、跨页故障与修复、观察器中止及失败、设备栈拒绝和后续原生指令边界。`X64PopFlagsOracle` 在 x64 主机独立执行原始指令，核验 CPL3/IOPL0 和精确栈消耗。`driver_resource_flags.def` 使原 WDK 资源驱动通过两种操作数宽度设置、清除并恢复标志。测试保留完整整数、控制、x87、SSE 状态，不代表支持客体 TF/NT/AC/ID 或已有 ARM64 原生执行证据。
 
@@ -1448,6 +1452,10 @@ MainActor 测试数据检查完整的固定元数据与静态表流程，拒绝�
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` 检查根层已赋值与未决变量混合、非决策根变量、副本再次复制、源对象销毁、后续变量增长、两种默认极性、预算中断与恢复、冲突及重启。完整模型与全部搜索计数必须与全新编码一致。
 
 `ContextFiniteProofs.*` 检查上下文与所有者隔离、所有者替换、令牌移动、精确谓词与有序投影、节点追加、完整与不完整结果、存储上限及 LRU 淘汰。帧测试要求缓存前完成最终唯一性查询，并在命中时保留符号节点限额。
+
+`LinuxPriorityTests.cpp` 检查显式任务状态、线程隔离、缺失观察值、无效 JSON、配置准入和拒绝效果。独立的 x64／AArch64 原始调用程序在 O0／O2 下验证 nice 限制、系统调用参数的 32 位截断、CAP_SYS_NICE／RLIMIT_NICE 权限边界和内核 getpriority 编码。在 `NeverDLinuxProcessTests` 中运行 `LinuxPriority.*` 与 `Backends/LinuxPriorityProcess.*`；涉及共享内核／JSON 时，再运行完整 Linux 进程、Android 原生和进程公共接口测试。缺失的可选原生传输仍明确跳过。
+
+`LinuxKernelAvailability.*` 校验显式缺失输入与配置准入。`Backends/LinuxKernelProcess.*` 使用独立的 x64／AArch64 O0／O2 原始调用程序，确认参数校验前返回 ENOSYS，且未指定及无关调用仍被拒绝。Android syscall 样例对照原始 SVC 与 Bionic `syscall`，分别保留原始返回值与 errno 效果。可用性变更须运行这些重点测试、完整 Linux 进程与进程公共接口测试，以及 Android syscall、原生入口和信号测试。
 
 `CompletedQueryCache.*` 覆盖完整字节域答案、所有紧凑槽位、增长、上下文及所有者隔离、无效与不完整输入和精确存储边界。原生分支回归保持固定逻辑查询成本、精确预算和少一预算拒绝，即使完整答案省去了后端工作。
 

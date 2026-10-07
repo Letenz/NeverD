@@ -2175,6 +2175,8 @@ argument-dependent checks in the owning model.
 
 `KernelScheduler` owns live runtime priority and the shared priority/ready-order comparison. `KernelModelThreadPriorities` validates thread objects for `KeSetPriorityThread` and `KeQueryPriorityThread`; paused CPU contexts never copy priority state. `DriverSession` checks higher-priority readiness before callback synchronization and at API/event boundaries. See [driver scheduling](driver-scheduling.md) for the bounded policy and remaining limits.
 
+`KernelDispatcher` owns mutex recursion by logical thread. `KernelModel` captures the waiting thread for deferred `KeWaitForSingleObject` acquisition and uses the same identity for APC queries and `KeReleaseMutex`; nested stack retirement preserves ownership, while outermost return checks retain the lifetime guard.
+
 `KernelModelDeviceStack` keeps each device's driver owner, allocation, attachment neighbors, delete-pending state and internal references in one record. The guest `NextDevice` inventory and the host-owned attachment graph have different meanings. Namespace resolution retains the named lower device for `FILE_OBJECT` and reports, selects the current top for initial dispatch and READ/WRITE buffer flags, and captures a retained route. Detach/delete cannot expire devices still owned by a request or callback; the public `ReferenceCount` remains an open-handle count.
 
 `DriverUserMemory.h/.def` own explicit user-region and pointer-reference facts;

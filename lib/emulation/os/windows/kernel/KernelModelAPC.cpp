@@ -31,17 +31,11 @@ llvm::Expected<uint64_t> KernelModel::apcsDisabled() {
   auto State = apcStateForCall();
   if (!State)
     return State.takeError();
-  bool OwnsMutex = false;
-  for (const auto &[Execution, ThreadKey] : ExecutionThreadKeys)
-    if (ThreadKey == CurrentThreadKey && Dispatcher.ownsMutex(Execution)) {
-      OwnsMutex = true;
-      break;
-    }
   const bool PassiveInterrupt = std::any_of(
       PassiveInterruptThreads.begin(), PassiveInterruptThreads.end(),
       [&](const auto &Entry) { return Entry.second == CurrentThreadKey; });
   return uint64_t((*State)->CriticalDepth || (*State)->GuardedDepth ||
-                  OwnsMutex || PassiveInterrupt);
+                  Dispatcher.ownsMutex(CurrentThreadKey) || PassiveInterrupt);
 }
 
 llvm::Expected<uint64_t> KernelModel::allApcsDisabled() {
