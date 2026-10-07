@@ -47,6 +47,7 @@ Le opzioni sono un oggetto JSON massimo 64 KiB. Campi sconosciuti/null, tipi err
 | `stack_size` | 1048576 | Stack allineato alla pagina entro il budget |
 | `output_limit` | 1048576 | Byte complessivi catturati da stdout/stderr |
 | `instruction_quantum` | 1024 | Intervallo d’ammissione prima di cedere alla runtime |
+| `linux_kernel` | Assente | Interfacce del kernel guest osservate esplicitamente come non disponibili |
 | `linux_priority` | Assente | Valori nice espliciti per task e autorità del chiamante per i servizi Linux di priorità grezzi |
 
 `schema_version` è 1. Il report contiene profilo, architettura, backend e motivo della scelta, `stop_reason`, `exit_status` nullable, diagnostica, PC di ingresso/corrente, contatori, record dei servizi e ultimo esito CPU tipizzato. Indirizzi, numeri syscall, registri argomento e bit di ritorno sono stringhe esadecimali **senza** `0x`; `stdout_hex`/`stderr_hex` preservano NUL e UTF-8 non valido. Un risultato syscall null significa nessun ritorno modellato (per esempio exit o richiesta non supportata), non zero riuscito.
@@ -76,6 +77,14 @@ I servizi di memoria anonima condividono spazio del processo e budget fisico con
 Le lunghezze sono arrotondate a pagine. `munmap` tollera buchi e rimozioni ripetute; `mprotect` modifica il prefisso mappato prima di restituire `ENOMEM` al primo buco. `PROT_NONE` conserva allocazione e byte, negando l'accesso guest. Il `brk` grezzo restituisce il limite richiesto in caso di successo e quello precedente in caso di errore, non lo zero/meno uno del wrapper libc. Il limite iniziale è la fine immagine allineata a pagina. La crescita rispetta altre mappature e budget; la riduzione conserva i byte della pagina parziale restante. Regole e priorità degli errori seguono i servizi Linux di [mappatura](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) e [protezione](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c).
 
 Mappature di file, condivise o fisse, crescita verso il basso, pagine enormi, blocco memoria, chiavi di protezione, permessi di sola esecuzione/scrittura e altri flag restano esplicitamente non supportati: arresto prima di pubblicare effetti o inventare un ritorno. Errori ordinari di intervallo, lunghezza e allineamento nel sottoinsieme ammesso restituiscono errori guest e consentono di proseguire. Nessun puntatore o richiesta di mappatura guest viene inoltrato all'OS host.
+
+L’input opzionale `linux_kernel` registra le interfacce del kernel osservate esplicitamente come assenti. Per esempio, una prova senza implementazione di `pidfd_open` usa:
+
+```json
+{"linux_kernel":{"unavailable_syscalls":["pidfd_open"]}}
+```
+
+La chiamata grezza selezionata restituisce -ENOSYS prima della convalida degli argomenti, come una voce assente nel kernel, senza creare descrittori o effetti sulla memoria guest. Il wrapper `syscall` di Bionic mantiene la normale traduzione -1/errno. Input assente o elenco vuoto mantengono il limite esistente di servizio non supportato; altre chiamate sconosciute non diventano ENOSYS. Attualmente è ammesso solo `pidfd_open`; nomi sconosciuti, duplicati e tipi errati sono rifiutati. L’input non deduce versione del kernel, disponibilità dell’host o un’implementazione pidfd funzionante. Vedere l’[implementazione del kernel per chiamate assenti](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c).
 
 L’input opzionale `linux_priority` dichiara lo stato nice dei task di prova con l’UID del chiamante. Le chiamate grezze `setpriority` e `getpriority` condividono questo stato tra carichi Linux ELF64 e Android nativi; non modificano mai le priorità dell’host.
 

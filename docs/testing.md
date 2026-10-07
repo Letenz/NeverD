@@ -2985,6 +2985,8 @@ The MainActor fixture checks the complete fixed metadata/static-table flow and r
 
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` checks mixed root and undecided variables, nondecision roots, copying a copy, destroyed sources, later variable growth, both default phases, bounded interruption and resume, conflicts and restarts. Complete models and all search counters must match a fresh encoding.
 
+`ContextFiniteProofs.*` checks context and owner isolation, owner replacement, token moves, exact predicates and ordered projections, append-only growth, completed and incomplete results, storage ceilings and LRU eviction. Frame tests require the final uniqueness query before caching and preserve symbolic-node limits on hits.
+
 `LinuxPriorityTests.cpp` checks explicit task state, thread isolation, missing
 observations, malformed JSON, profile admission and refusal effects.
 Independent x64/AArch64 raw callers at O0/O2 verify nice clamping, 32-bit syscall
@@ -2993,3 +2995,11 @@ getpriority encoding. Run the `LinuxPriority.*` and
 `Backends/LinuxPriorityProcess.*` cases in `NeverDLinuxProcessTests`, then the
 complete Linux process, Android native and process public suites for shared
 kernel/JSON changes. Absent optional native transports remain explicit skips.
+
+`LinuxKernelAvailability.*` validates explicit absence inputs and profile
+admission. `Backends/LinuxKernelProcess.*` uses independent x64/AArch64 O0/O2
+raw callers to verify ENOSYS before argument validation and continued refusal
+for unspecified or unrelated calls. The Android syscall fixture compares raw
+SVC with Bionic `syscall`, preserving distinct raw return/errno effects.
+Run these focused tests, the full Linux process and public process suites,
+and Android syscall, native-entry and signal suites for availability changes.

@@ -76,6 +76,21 @@ protected:
   }
 };
 
+TEST_P(AndroidSyscall, ExplicitKernelAbsenceRetainsRawAndBionicErrorEncoding) {
+  Options.LinuxKernel.emplace().UnavailableSyscalls.insert(
+      LinuxUnavailableSyscall::PidFDOpen);
+  auto R = run("syscall_unavailable_kernel", {Buffer});
+  returned(R);
+  words(R, {uint64_t(0) - 38, 77, UINT64_MAX, 38, UINT64_MAX, 38});
+  ASSERT_EQ(R.Services.size(), 1u);
+  EXPECT_EQ(R.Services.front().Number, 434u);
+  EXPECT_EQ(R.Services.front().Result, uint64_t(0) - 38);
+  Options.LinuxKernel.reset();
+  R = run("syscall_unavailable_kernel", {Buffer});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_FALSE(R.Services.back().Result);
+}
+
 TEST_P(AndroidSyscall, NamedRawAndVariadicIdentityQueriesAgree) {
   auto R = run("syscall_identities", {Buffer});
   returned(R);

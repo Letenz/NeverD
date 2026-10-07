@@ -22,6 +22,12 @@ I confronti più larghi di otto bit confrontano prima le metà alte e usano quel
 
 Il motore SAT conserva quattro elementi di sorveglianza in ogni lista di letterale; le liste più lunghe crescono dinamicamente. Questo evita allocazioni separate delle liste corte durante costruzione, copia prima della ricerca e distruzione. Ordine di propagazione, clausole, proprietà indipendente e tutti i limiti di lavoro restano invariati.
 
+<!-- i18n-section: context-finite-proofs -->
+
+## Prove completate nello stesso contesto
+
+Il verificatore nativo di indipendenza lega la cache dei domini finiti al contesto simbolico effettivo, al quale si aggiungono soltanto nodi. Le chiavi compatte conservano il predicato esatto, le proiezioni ordinate e il limite dei valori. Si riutilizzano solo domini numerici completi o non unicità dimostrata; ogni mancata corrispondenza richiede ancora l’enumerazione completa e la prova finale di esclusione. Il contesto e il significato dei nodi esistenti devono restare stabili per tutta la vita della cache. I token preparati non passano a un altro proprietario né a un sostituto allo stesso indirizzo. Resta il limite di memoria in parole. Gli altri utenti mantengono chiavi strutturali e riutilizzo tramite rinomina delle variabili.
+
 <!-- i18n-section: z3-build -->
 
 ## Build Z3 facoltativa

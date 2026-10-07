@@ -1529,4 +1529,8 @@ MainActor 픽스처는 고정 메타데이터와 정적 테이블의 전체 흐�
 
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` 는 루트 할당 변수와 미결정 변수의 혼합, 비결정 루트 변수, 복사본의 재복사, 원본 소멸, 후속 변수 증가, 두 기본 극성, 예산 중단과 재개, 충돌과 재시작을 검사합니다. 전체 모델과 모든 검색 카운터는 새 인코딩과 같아야 합니다.
 
+`ContextFiniteProofs.*`는 컨텍스트와 소유자 격리, 소유자 교체, 토큰 이동, 정확한 술어와 투영 순서, 노드 추가, 완료 및 미완료 결과, 저장 한도와 LRU 제거를 검사합니다. 프레임 테스트는 저장 전 마지막 유일성 질의와 캐시 적중 시 심볼릭 노드 한도를 확인합니다.
+
 `LinuxPriorityTests.cpp`는 명시적인 작업 상태, 스레드 격리, 누락된 관찰값, 잘못된 JSON, 프로필 허용과 거부 효과를 검사합니다. 독립적인 x64/AArch64 원시 호출 프로그램을 O0/O2에서 실행하여 nice 제한, 시스템 호출 인수의 32비트 축소, CAP_SYS_NICE/RLIMIT_NICE 권한 경계와 커널 getpriority 인코딩을 검증합니다. `NeverDLinuxProcessTests`에서 `LinuxPriority.*`와 `Backends/LinuxPriorityProcess.*`를 실행하고, 공유 커널/JSON 변경 시 전체 Linux 프로세스, Android 네이티브 및 프로세스 공개 API 테스트를 실행합니다. 선택적인 네이티브 전송이 없으면 명시적으로 건너뜁니다.
+
+`LinuxKernelAvailability.*`는 명시적인 부재 입력과 프로필 허용을 검증합니다. `Backends/LinuxKernelProcess.*`는 독립적인 x64/AArch64 O0/O2 원시 호출 프로그램으로 인수 검사 전의 ENOSYS 및 미지정/무관한 호출의 거부를 확인합니다. Android syscall 픽스처는 원시 SVC와 Bionic `syscall`을 비교하며 원시 반환값과 errno 효과를 구분합니다. 가용성 변경 시 이 집중 테스트, 전체 Linux 프로세스 및 공개 API 테스트와 Android syscall, 네이티브 진입 및 시그널 테스트를 실행합니다.

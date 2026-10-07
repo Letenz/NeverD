@@ -1393,3 +1393,5 @@ Swift SDK Published의 enclosing-instance 접근자는 포인터 네 개를 유�
 정확히 인증된 `MainActor.shared` SDK getter는 객체 포인터 하나를 반환하고 메타타입을 swiftself(ARM64의 `x20`, x86-64의 `r13`)로 받습니다. Swift 6.1.2의 macOS/Mac Catalyst 네 가지 컴파일 및 내보내기 구성으로 전체 ABI와 `libswift_Concurrency`의 강한 가져오기 제공자를 확인합니다. 소유권, 실행기 스케줄링 및 전용 스택 프레임 분석에는 기존 계약이 적용됩니다.
 
 `LinuxPriority`는 같은 워크로드의 `LinuxServices` 안에서 명시적인 작업별 nice 상태를 관리합니다. x64/AArch64 원시 우선순위 트랩은 `LinuxValues.def`의 번호와 OS가 소유한 현재 스레드 ID를 사용합니다. 검증된 `LinuxPriorityOptions`가 테스트 작업 관찰값과 호출자의 CAP_SYS_NICE/RLIMIT_NICE 권한을 제공합니다. 알 수 없는 작업 상태와 그룹/사용자 선택은 지원하지 않습니다. 원시 조회는 커널 반환 인코딩을 보존하며 권한 오류는 작업 상태를 바꾸지 않습니다. JSON 필드와 진단은 기존 프로세스 및 Linux `.def` 파일에 선언합니다.
+
+`LinuxUnavailableSyscalls.def`는 선택적인 커널 호출의 공개 부재 관찰 ID, 입력 이름, 아키텍처별 번호와 고정 인수 수를 관리합니다. `LinuxKernelOptions`는 명시적인 테스트 관찰값이며, 공유 Linux 커널 서비스는 그 관찰값이 호출 부재를 선언했을 때만 ENOSYS를 반환합니다. 목록은 구현을 제공하거나 Android API 수준에서 가용성을 추론하지 않습니다. JSON 검사와 프로필 허용은 로드 전에 수행하며, 목록에 없거나 사용 가능하지만 모델링되지 않은 호출은 계속 지원하지 않습니다.

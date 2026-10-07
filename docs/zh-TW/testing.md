@@ -1485,4 +1485,8 @@ MainActor 測試資料檢查完整的固定中繼資料與靜態表流程，拒�
 
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` 檢查根層已賦值與未決變數混合、非決策根變數、副本再次複製、來源物件銷毀、後續變數增長、兩種預設極性、預算中斷與恢復、衝突及重新啟動。完整模型與全部搜尋計數必須與全新編碼一致。
 
+`ContextFiniteProofs.*` 檢查上下文與擁有者隔離、擁有者替換、權杖移動、精確謂詞與有序投影、節點追加、完整與不完整結果、儲存上限及 LRU 淘汰。框架測試要求快取前完成最終唯一性查詢，並在命中時保留符號節點限額。
+
 `LinuxPriorityTests.cpp` 檢查明確任務狀態、執行緒隔離、缺少觀察值、無效 JSON、設定准入及拒絕效果。獨立的 x64／AArch64 原始呼叫程式在 O0／O2 下驗證 nice 限制、系統呼叫參數的 32 位元截斷、CAP_SYS_NICE／RLIMIT_NICE 權限邊界與核心 getpriority 編碼。在 `NeverDLinuxProcessTests` 中執行 `LinuxPriority.*` 與 `Backends/LinuxPriorityProcess.*`；涉及共用核心／JSON 時，再執行完整 Linux 程序、Android 原生及程序公開介面測試。缺少的可選原生傳輸仍明確跳過。
+
+`LinuxKernelAvailability.*` 驗證明確缺少輸入與設定准入。`Backends/LinuxKernelProcess.*` 使用獨立的 x64／AArch64 O0／O2 原始呼叫程式，確認參數驗證前回傳 ENOSYS，且未指定與無關呼叫仍遭拒絕。Android syscall 範例對照原始 SVC 與 Bionic `syscall`，分別保留原始回傳值及 errno 效果。可用性變更須執行這些重點測試、完整 Linux 程序及程序公開介面測試，以及 Android syscall、原生入口和訊號測試。

@@ -51,6 +51,7 @@ output = bytes.fromhex(report["stdout_hex"])
 | `stack_size` | 1048576 | 预算内按页对齐的栈 |
 | `output_limit` | 1048576 | 捕获的 stdout/stderr 总字节数 |
 | `instruction_quantum` | 1024 | 让出给 runtime 前的接纳间隔 |
+| `linux_kernel` | 缺省 | 显式声明客户机内核中不可用的接口 |
 | `linux_priority` | 缺省 | 显式任务 nice 值及原始 Linux 优先级服务所需的调用者权限 |
 
 `schema_version` 为 1。结果含 profile、架构、所选后端与原因、`stop_reason`、可空的 `exit_status`、诊断、入口／当前 PC、计数器、服务记录和最后一个类型化 CPU 退出。地址、syscall 编号、参数寄存器及原始返回位均为**不带** `0x` 的十六进制字符串；`stdout_hex`／`stderr_hex` 保留 NUL 和无效 UTF-8。syscall 结果为 null 表示没有建模返回值（例如退出或不支持的请求），不表示成功返回 0。
@@ -80,6 +81,14 @@ x64 的 `arch_prctl` 支持 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS` 和 `A
 长度向上取整到页。`munmap` 允许空洞和重复移除；`mprotect` 遇到空洞前会修改已映射前缀，然后返回 `ENOMEM`。`PROT_NONE` 保留分配和字节，但禁止来宾访问。原始 `brk` 成功时返回请求的字节边界，失败时返回旧边界，不采用 libc 包装器的零／负一约定。初始 break 是页对齐的映像末尾。增长受其他映射与内存预算限制；收缩保留剩余部分页中的字节。受支持子集的规则与错误优先级遵循 Linux 的[映射](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c)和[保护](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c)服务。
 
 文件、共享、固定映射，向下增长、大页、内存锁定、保护键、仅执行／仅写策略及其他标志都属于明确不支持的服务：在发布效果或构造返回值前停止。已支持子集内的一般范围、长度和对齐错误会返回来宾错误，并允许继续执行。任何内存服务都不会向宿主 OS 转发来宾指针或映射请求。
+
+可选的 `linux_kernel` 记录经观察确认缺失的内核接口。例如，测试环境缺少 `pidfd_open` 实现时使用：
+
+```json
+{"linux_kernel":{"unavailable_syscalls":["pidfd_open"]}}
+```
+
+指定的原始调用在验证参数前返回 -ENOSYS，不创建描述符，也不修改客户内存；这与缺失的内核入口一致。Bionic 的 `syscall` 包装器仍执行通常的 -1／errno 转换。缺少输入或提供空列表时，该接口仍明确不支持；其他未知调用不会自动转换为 ENOSYS。目前仅接纳 `pidfd_open`，未知名称、重复项和类型错误均被拒绝。此输入不推断内核版本、宿主可用性或可工作的 pidfd 实现。参见[内核缺失调用实现](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c)。
 
 可选的 `linux_priority` 为与调用者 UID 相同的测试任务声明 nice 状态。Linux ELF64 与 Android 原生工作负载的原始 `setpriority` 和 `getpriority` 共用此状态，不修改宿主优先级。
 

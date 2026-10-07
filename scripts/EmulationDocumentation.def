@@ -1350,3 +1350,18 @@ NEVERD_EMULATION_DOC_PATH(LinuxPriorityTests, "docs/{locale}/testing.md")
 NEVERD_EMULATION_DOC_TOKEN(LinuxPriorityTests, "LinuxPriorityTests.cpp")
 NEVERD_EMULATION_DOC_TOKEN(LinuxPriorityTests,
                            "Backends/LinuxPriorityProcess.*")
+
+NEVERD_EMULATION_DOC_PATH(LinuxKernel, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(LinuxKernel, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_TOKEN(LinuxKernel, "LinuxKernelOptions")
+NEVERD_EMULATION_DOC_TOKEN(LinuxKernel, "LinuxUnavailableSyscalls.def")
+NEVERD_EMULATION_DOC_PATH(LinuxKernelProcess, "docs/process-emulation.md")
+NEVERD_EMULATION_DOC_PATH(LinuxKernelProcess,
+                          "docs/{locale}/process-emulation.md")
+NEVERD_EMULATION_DOC_TOKEN(LinuxKernelProcess, "linux_kernel")
+NEVERD_EMULATION_DOC_TOKEN(LinuxKernelProcess, "unavailable_syscalls")
+NEVERD_EMULATION_DOC_TOKEN(LinuxKernelProcess, "pidfd_open")
+NEVERD_EMULATION_DOC_PATH(LinuxKernelTests, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(LinuxKernelTests, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(LinuxKernelTests, "LinuxKernelAvailability.*")
+NEVERD_EMULATION_DOC_TOKEN(LinuxKernelTests, "Backends/LinuxKernelProcess.*")

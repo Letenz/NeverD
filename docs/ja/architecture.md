@@ -1416,3 +1416,5 @@ Swift SDK Published の enclosing-instance アクセサーは四つのポイン�
 厳密に認証した `MainActor.shared` SDK getter はオブジェクトポインターを返し、メタタイプを swiftself（ARM64 の `x20`、x86-64 の `r13`）で受け取ります。Swift 6.1.2 の macOS/Mac Catalyst の 4 構成で、コンパイラー出力とエクスポートから完全な ABI と `libswift_Concurrency` の強いインポートを確認します。所有権、executor のスケジューリング、プライベートスタックフレームの解析には既存の契約が適用されます。
 
 `LinuxPriority` は同じワークロードの `LinuxServices` 内で、タスクごとの明示的な nice 状態を管理します。x64／AArch64 の生の優先度トラップは `LinuxValues.def` の番号と OS が所有する現在のスレッド ID を使います。検証済みの `LinuxPriorityOptions` がフィクスチャのタスク観測値と呼び出し元の CAP_SYS_NICE／RLIMIT_NICE 権限を提供します。未知のタスク状態やグループ／ユーザー選択は未対応です。生の取得はカーネルの返却形式を保ち、権限エラーでは状態を変更しません。JSON フィールドと診断は既存のプロセスおよび Linux の `.def` ファイルで宣言します。
+
+`LinuxUnavailableSyscalls.def` は、選択した任意のカーネル呼び出しについて、公開する不存在観測 ID、入力名、アーキテクチャ別番号、固定引数数を管理します。`LinuxKernelOptions` は明示的なフィクスチャ観測であり、共有 Linux カーネルサービスは、その観測が不存在を宣言した場合だけ ENOSYS を返します。このカタログは実装を提供せず、Android API レベルから可用性を推測しません。JSON 検証とプロファイルの受け入れはロード前に行い、未登録の呼び出しと、存在しても未モデル化の呼び出しは未対応のままです。

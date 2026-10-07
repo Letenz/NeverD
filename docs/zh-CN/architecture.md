@@ -1406,3 +1406,5 @@ Swift SDK Published 的 enclosing-instance 访问器保留四个指针载体：�
 精确的 `MainActor.shared` SDK getter 返回一个对象指针，并通过 swiftself 接收元类型（ARM64 的 `x20`、x86-64 的 `r13`）。四种 Swift 6.1.2 macOS/Mac Catalyst 编译与导出配置认证完整 ABI 及 `libswift_Concurrency` 强导入提供方。所有权、执行器调度和私有栈帧分析仍由各自现有契约约束。
 
 `LinuxPriority` 在同一工作负载的 `LinuxServices` 中统一管理显式的逐任务 nice 状态。x64 与 AArch64 原始优先级陷阱使用 `LinuxValues.def` 的编号绑定和 OS 所有的当前线程身份。经校验的 `LinuxPriorityOptions` 提供测试任务观察值及调用者的 CAP_SYS_NICE／RLIMIT_NICE 权限；未知任务状态和组／用户选择仍不支持。原始查询保留内核返回编码，权限失败不改变任务状态。JSON 字段与诊断由现有进程和 Linux `.def` 文件声明。
+
+`LinuxUnavailableSyscalls.def` 统一声明公开的缺失观察标识、输入名称、架构编号及选定可选内核调用的固定参数数量。`LinuxKernelOptions` 是显式测试观察值；共享 Linux 内核服务仅在观察值声明调用缺失时返回 ENOSYS。目录不提供调用实现，也不根据 Android API 级别推断可用性。JSON 校验与配置准入在加载前完成；未列出及可用但未建模的调用仍明确不支持。

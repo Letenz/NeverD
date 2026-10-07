@@ -1539,4 +1539,8 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` は、根で割り当て済みの変数と未決定変数の混在、非決定根変数、コピーの再コピー、元の破棄、変数追加、両方の既定極性、予算による中断と再開、競合と再始動を検査します。完全なモデルとすべての探索カウンターは新規符号化と一致する必要があります。
 
+`ContextFiniteProofs.*` はコンテキストと所有者の分離、所有者の置換、トークンの移動、正確な述語と射影順、ノード追加、完了・未完了の結果、容量と LRU 退避を検査します。フレームの検査は保存前の最終一意性クエリと、ヒット時のシンボリックノード上限を確認します。
+
 `LinuxPriorityTests.cpp` は明示的なタスク状態、スレッド分離、観測値の欠落、不正な JSON、プロファイルの受け入れと拒否時の効果を検査します。独立した x64／AArch64 の生の呼び出しプログラムを O0／O2 で実行し、nice の制限、システムコール引数の 32 ビット化、CAP_SYS_NICE／RLIMIT_NICE の権限境界、カーネルの getpriority エンコーディングを確認します。`NeverDLinuxProcessTests` の `LinuxPriority.*` と `Backends/LinuxPriorityProcess.*` を実行し、共有カーネル／JSON を変更した場合は Linux プロセス、Android ネイティブ、プロセス公開 API の全テストも実行します。任意のネイティブ転送がない場合は明示的にスキップします。
+
+`LinuxKernelAvailability.*` は明示的な不存在入力とプロファイルの受け入れを検証します。`Backends/LinuxKernelProcess.*` は独立した x64／AArch64 O0／O2 の生の呼び出しで、引数検証前の ENOSYS と、未指定および無関係の呼び出しの拒否を確認します。Android syscall フィクスチャは生の SVC と Bionic `syscall` を比較し、生の戻り値と errno の効果を区別します。可用性を変更した場合は、これらの重点テスト、Linux プロセスと公開 API の全テスト、Android syscall、ネイティブ入口、シグナルの各テストを実行します。
