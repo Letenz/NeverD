@@ -1784,6 +1784,105 @@ TEST_F(SessionCAPITest, DisassemblyStatesHowEachInstructionMovesTheStack) {
   }
 }
 
+// An x86-64 executable whose code segment returns and whose separate
+// read-only segment holds \p Data.
+std::string makeDataELF(std::string_view Data) {
+  using ELF = llvm::object::ELF64LE;
+  using namespace llvm::ELF;
+  constexpr uint64_t Base = 0x400000;
+  const std::string Code("\xc3", 1);
+  const size_t CodeOffset = sizeof(ELF::Ehdr) + 2 * sizeof(ELF::Phdr);
+  const size_t DataOffset = 0x1000;
+  std::string Bytes(DataOffset + Data.size(), '\0');
+  ELF::Ehdr Header{};
+  std::memcpy(Header.e_ident, ElfMagic, sizeof(ElfMagic) - 1);
+  Header.e_ident[EI_CLASS] = ELFCLASS64;
+  Header.e_ident[EI_DATA] = ELFDATA2LSB;
+  Header.e_ident[EI_VERSION] = EV_CURRENT;
+  Header.e_type = ET_EXEC;
+  Header.e_machine = EM_X86_64;
+  Header.e_version = EV_CURRENT;
+  Header.e_entry = Base + CodeOffset;
+  Header.e_phoff = sizeof(ELF::Ehdr);
+  Header.e_ehsize = sizeof(ELF::Ehdr);
+  Header.e_phentsize = sizeof(ELF::Phdr);
+  Header.e_phnum = 2;
+  Header.e_shentsize = sizeof(ELF::Shdr);
+  ELF::Phdr Segments[2]{};
+  Segments[0].p_type = PT_LOAD;
+  Segments[0].p_flags = PF_R | PF_X;
+  Segments[0].p_vaddr = Base;
+  Segments[0].p_paddr = Base;
+  Segments[0].p_filesz = CodeOffset + Code.size();
+  Segments[0].p_memsz = CodeOffset + Code.size();
+  Segments[0].p_align = 0x1000;
+  Segments[1].p_type = PT_LOAD;
+  Segments[1].p_flags = PF_R;
+  Segments[1].p_offset = DataOffset;
+  Segments[1].p_vaddr = Base + DataOffset;
+  Segments[1].p_paddr = Base + DataOffset;
+  Segments[1].p_filesz = Data.size();
+  Segments[1].p_memsz = Data.size();
+  Segments[1].p_align = 0x1000;
+  std::memcpy(Bytes.data(), &Header, sizeof(Header));
+  std::memcpy(Bytes.data() + sizeof(Header), Segments, sizeof(Segments));
+  Bytes.replace(CodeOffset, Code.size(), Code);
+  Bytes.replace(DataOffset, Data.size(), Data);
+  return Bytes;
+}
+
+TEST_F(SessionCAPITest, StringScanFindsUTF8AndWideStringsByOption) {
+  // "hello", UTF-8 "中文字符" and UTF-16LE "Wide text", each terminated.
+  constexpr char Data[] = "hello\0"
+                          "\xe4\xb8\xad\xe6\x96\x87\xe5\xad\x97\xe7\xac\xa6\0"
+                          "\0"
+                          "W\0i\0d\0e\0 \0t\0e\0x\0t\0\0\0";
+  const auto Input = write(
+      "strings.elf", makeDataELF(std::string_view(Data, sizeof(Data) - 1)));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Scan = [&](const char *Options) {
+    const char *Raw = neverd_strings_ex_json(Session, Options);
+    if (!Raw)
+      return std::string("error: ") + takeString(neverd_last_error(Session));
+    return takeString(Raw);
+  };
+  const auto Defaults = Scan(nullptr);
+  auto Parsed = llvm::json::parse(Defaults);
+  ASSERT_TRUE(static_cast<bool>(Parsed)) << Defaults;
+  const auto *Rows = Parsed->getAsArray();
+  ASSERT_TRUE(Rows && Rows->size() == 3) << Defaults;
+  const auto Field = [&](size_t Row, llvm::StringRef Key) {
+    return (*Rows)[Row].getAsObject()->getString(Key).value_or("").str();
+  };
+  EXPECT_EQ(Field(0, "encoding"), "ascii");
+  EXPECT_EQ(Field(0, "addr"), "0x401000");
+  EXPECT_EQ(Field(1, "encoding"), "utf-8");
+  EXPECT_EQ(Field(1, "value"),
+            "\xe4\xb8\xad\xe6\x96\x87\xe5\xad\x97\xe7\xac\xa6");
+  EXPECT_EQ((*Rows)[1].getAsObject()->getInteger("chars"), 4);
+  EXPECT_EQ(Field(2, "encoding"), "utf-16le");
+  EXPECT_EQ(Field(2, "value"), "Wide text");
+  EXPECT_EQ((*Rows)[2].getAsObject()->getInteger("length"), 18);
+
+  // Options select encodings and the minimum length.
+  EXPECT_EQ(Scan(R"({"encodings":["utf-16le"]})").find("hello"),
+            std::string::npos);
+  EXPECT_EQ(Scan(R"({"min_length":6})").find("hello"), std::string::npos);
+  // Malformed options fail clearly.
+  EXPECT_EQ(Scan(R"({"encodings":["ebcdic"]})"),
+            "error: unknown string encoding: ebcdic");
+  EXPECT_EQ(Scan(R"({"min_length":0})"),
+            "error: min_length must be an integer from 1 to 1024");
+  EXPECT_EQ(Scan(R"({"limit":3})"), "error: unknown string option: limit");
+  EXPECT_EQ(Scan("[]"), "error: string options must be a JSON object");
+
+  const auto Encodings = takeString(neverd_string_encodings_json());
+  EXPECT_NE(Encodings.find(R"("name":"utf-16le","spelling":"UTF-16LE")"),
+            std::string::npos)
+      << Encodings;
+}
+
 TEST_F(SessionCAPITest, DecompileDiffPreservesEqualSuccessfulOutputs) {
   expectDecompileDiff("6001600055", true);
 }

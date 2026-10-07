@@ -86,7 +86,7 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
 
 選択した生の呼出しは、カーネル入口がない場合と同様に引数検査前に -ENOSYS を返し、記述子を作らずゲストメモリも変更しません。Bionic の `syscall` wrapper は通常の -1/errno 変換を保ちます。入力の省略と空リストでは、このインターフェースは従来の未対応境界に留まり、他の未知の呼出しを ENOSYS に変換しません。現在は `pidfd_open` のみを受理し、未知の名前、重複、誤った型を拒否します。入力からカーネル版、ホストの可用性、動作する pidfd 実装を推定しません。[カーネルの欠落呼出し実装](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c)を参照してください。
 
-明示した `linux_kernel.gki` は 5.10 から 6.18 のリリース済み Android common カーネルブランチを選択します。現在の実装範囲は生存するモデルプロセスへの `pidfd_open` で、版別のフラグと `linux_files` と同じ記述子表を使います。Bionic と生の trap は所有権とエラー順序を共有します。GKI と `pidfd_open` 欠如の観測を同時には選択できません。Android API level はカーネルを選択しません。八つの固定ソース版、記述子動作、テストと未実装範囲は[リリース済み GKI 契約](../android-gki-kernels.md)を参照してください。
+明示した `linux_kernel.gki` は、5.10～6.18 の公開済み Android common カーネル系列を選びます。実装範囲は、生存するモデルプロセスと明示したゲストタスクに対する `pidfd_open`、および版別のベクトル取り込みです。`linux_files` と記述子表を共有し、Bionic と生のトラップは所有権とエラー順序を共有します。GKI と `pidfd_open` 不在観測は同時に指定できません。任意の `linux_kernel.tasks` 配列は、他の生存タスクの固定された閉じた一覧を宣言します。項目例は `{ "id": 2000, "group_leader": true }` です。配列省略時は他の対象の検索が未対応、空配列では現在のグループリーダーだけが既知です。宣言した一覧外の PID は ESRCH になります。一覧と優先度観測は整合が必要で、協調型 Android ゲストスレッドとは併用できません。Android API レベルはカーネルを選びません。8 個のソース版、記述子動作、テストと残る範囲は[公開済み GKI 契約](../android-gki-kernels.md)を参照してください。
 
 任意の `linux_priority` 入力は、呼び出し元と同じ UID を持つテスト用タスクの nice 状態を宣言します。Linux ELF64 と Android の生の `setpriority` / `getpriority` はこの状態を共有し、ホストの優先度は変更しません。
 

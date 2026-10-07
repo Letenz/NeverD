@@ -52,6 +52,8 @@ NEVERD_CHOOSER_COLUMN(Strings, "address",
                       "address")
 NEVERD_CHOOSER_COLUMN(Strings, "length",
                       QT_TRANSLATE_NOOP("Choosers", "Length"), Hex, "length")
+NEVERD_CHOOSER_COLUMN(Strings, "type", QT_TRANSLATE_NOOP("Choosers", "Type"),
+                      Text, "type")
 NEVERD_CHOOSER_COLUMN(Strings, "text", QT_TRANSLATE_NOOP("Choosers", "String"),
                       Text, "text")
 

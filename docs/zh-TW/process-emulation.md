@@ -86,7 +86,7 @@ x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARC
 
 選定的原始呼叫在引數檢查前回傳 -ENOSYS，與核心入口缺失一致，不建立描述符，也不修改客體記憶體。Bionic 的 `syscall` 包裝器保留通常的 -1/errno 轉換。省略輸入或使用空清單時，此介面仍停在原有的未支援邊界；其他未知呼叫不會變成 ENOSYS。目前僅接受 `pidfd_open`，未知名稱、重複項目和錯誤型別皆被拒絕。輸入不推導核心版本、主機可用性或可運作的 pidfd 實作。參見[核心缺失呼叫實作](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c)。
 
-明確的 `linux_kernel.gki` 選擇 5.10 至 6.18 的已發布 Android common 核心分支。目前實作的子集是針對存活模型行程的 `pidfd_open`，旗標依版本而異，與 `linux_files` 共用描述符表；Bionic 與原始陷阱共用所有權和錯誤順序。GKI 不能與 `pidfd_open` 缺失觀測同時選擇。Android API 級別不選擇核心。參見[已發布 GKI 契約](../android-gki-kernels.md)，其中列出八個固定原始碼版本、描述符行為、測試及剩餘涵蓋範圍。
+明確的 `linux_kernel.gki` 選擇 5.10 至 6.18 的已發布 Android common 核心分支。實作子集包含存活模型行程及明確目錄內客體任務的 `pidfd_open`，以及依版本選取的向量匯入；它與 `linux_files` 共用描述元表，Bionic 與原始陷阱共用所有權及錯誤順序。GKI 不得與 `pidfd_open` 缺失觀測同時選擇。選用的 `linux_kernel.tasks` 陣列宣告其他存活任務的封閉固定目錄，例如 `{ "id": 2000, "group_leader": true }`。省略陣列時，其他目標查詢仍不支援；空陣列只確認目前執行的群組首領。PID 不在已宣告目錄時回傳 ESRCH。目錄與優先權觀測必須一致，且不能搭配協作式 Android 客體執行緒。Android API 等級不選擇核心。請參閱[已發布 GKI 契約](../android-gki-kernels.md)，包含八個固定原始碼版本、描述元行為、測試及剩餘範圍。
 
 選用的 `linux_priority` 宣告與呼叫者 UID 相同的測試工作之 nice 狀態。Linux ELF64 與 Android 的原始 `setpriority` / `getpriority` 共用此狀態，不改變宿主優先權。
 

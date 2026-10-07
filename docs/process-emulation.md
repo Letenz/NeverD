@@ -83,7 +83,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 | `linux_files` | Absent | Closed catalogue of immutable guest files for Linux ELF64 and Android native workloads |
 | `linux_signals` | Absent | Explicit initial signal dispositions; no signal delivery or host handlers |
 | `linux_priority` | Absent | Explicit per-task nice values and caller authority for raw Linux priority services |
-| `linux_kernel` | Absent | Explicit released GKI branch or observed absent guest kernel interfaces |
+| `linux_kernel` | Absent | Explicit released GKI branch, fixed guest task catalogue or observed absent guest kernel interfaces |
 
 `schema_version` is 1. Results include profile, architecture, selected backend
 and its selection reason, `stop_reason`, nullable `exit_status`, diagnostic,
@@ -99,7 +99,7 @@ request; it is distinct from a successful zero return.
 
 ## Linux profile semantics
 
-`writev` shares those sinks on x64/ARM64 and through Android Bionic. It imports up to 1024 guest `iovec` entries before output, rejects negative lengths with `EINVAL`, validates user ranges, and applies Linux’s page-aligned transfer cap. An invalid descriptor returns `EBADF` before vector access; inaccessible metadata returns `EFAULT` without output. A later payload fault preserves the copied prefix. The output budget covers the whole vector before publication, across both streams. `write` and `writev` use the low 32 descriptor bits; vector count also follows Linux’s 32-bit import. Bionic alone converts raw negative errors to `-1` and `errno`. `LinuxOutputNativeTests` runs ten original cases on host Linux with regular-file redirects; modeled x64/ARM64 cases also check budgets. See the [Linux vector import contract](https://github.com/torvalds/linux/blob/v6.12/lib/iov_iter.c).
+`writev` shares those sinks on x64/ARM64 and through Android Bionic. It imports up to 1024 guest `iovec` entries before output, rejects negative lengths with `EINVAL`, validates user ranges, and applies Linux’s page-aligned transfer cap. An invalid descriptor returns `EBADF` before vector access; inaccessible metadata returns `EFAULT` without output. A later payload fault preserves the copied prefix. The output budget covers the whole vector before publication, across both streams. `write` and `writev` use the low 32 descriptor bits; vector count also follows Linux’s 32-bit import. Bionic alone converts raw negative errors to `-1` and `errno`. `LinuxOutputNativeTests` runs ten original cases on host Linux with regular-file redirects; modeled x64/ARM64 cases also check budgets. Explicit GKI selection retains its released version's metadata and transfer-cap order; see [released GKI contracts](android-gki-kernels.md). See the [Linux vector import contract](https://github.com/torvalds/linux/blob/v6.12/lib/iov_iter.c).
 
 The existing ELF loader supplies decoded program headers. OS policy validates
 ABI tags, segment alignment, mapped program-header tables and user-address
@@ -161,10 +161,17 @@ input does not infer a kernel version, host availability or a working pidfd
 implementation. See the [kernel missing-call implementation](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c).
 
 An explicit `linux_kernel.gki` selects a released Android common kernel branch
-from 5.10 through 6.18. Its current implemented subset is `pidfd_open` for the
-live model process, with versioned flags and the same descriptor table used by
-`linux_files`; Bionic and raw traps share ownership and error ordering.
+from 5.10 through 6.18. Its current implemented subset includes `pidfd_open`
+for the live model process and explicitly catalogued guest tasks, and versioned
+vector import, with the same descriptor
+table used by `linux_files`; Bionic and raw traps share ownership and error ordering.
 Selecting GKI together with an absent `pidfd_open` observation is rejected.
+An optional `linux_kernel.tasks` array supplies a closed, fixed catalogue of
+additional live tasks as `{ "id": 2000, "group_leader": true }` entries.
+An omitted array leaves foreign target lookup unsupported; an empty array knows
+only the running group leader. A PID outside a declared catalogue returns ESRCH.
+Entries and priority observations must be consistent, and the fixed catalogue
+cannot be combined with cooperative Android guest threads.
 Android API levels do not select a kernel. See the
 [released GKI contracts](android-gki-kernels.md) for all eight source pins,
 descriptor behavior, tests and the remaining kernel coverage.

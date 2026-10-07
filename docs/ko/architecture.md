@@ -494,6 +494,8 @@ Windows 모델은 독립적인 비페이지 풀 MDL도 관리하며, 설명자�
 
 `KernelScheduler`가 실행 우선순위와 우선순위/준비 순서 비교를 일원화합니다. `KernelModelThreadPriorities`는 `KeSetPriorityThread`와 `KeQueryPriorityThread`의 스레드 객체를 검증하며 중지된 CPU 컨텍스트에 우선순위를 복사하지 않습니다. `DriverSession`은 콜백 동기화 진입 전과 API/이벤트 경계에서 높은 우선순위의 준비 스레드를 확인합니다. 범위와 제한은 [드라이버 스케줄링](driver-scheduling.md)을 참조하세요.
 
+`KernelDispatcher`는 논리 스레드별로 mutex 재귀 소유권을 관리합니다. `KernelModel`은 지연된 `KeWaitForSingleObject` 획득을 위해 대기 스레드를 저장하고 APC 조회와 `KeReleaseMutex`에 같은 ID를 사용합니다. 중첩 스택을 폐기해도 소유권은 유지되며, 가장 바깥쪽 반환에서 수명을 검사합니다.
+
 `KernelModelDeviceStack`은 장치의 드라이버 소유자, 할당, 상하 연결, 삭제 대기 상태, 내부 참조를 하나의 레코드로 관리합니다. 게스트 `NextDevice` 목록과 호스트 소유 연결 그래프는 별개입니다. 이름 확인은 이름 있는 하위 장치를 `FILE_OBJECT`와 보고서에 유지하고 초기 디스패치와 READ/WRITE 방식은 현재 최상단을 선택하며 요청 경로 전체를 보존합니다. 분리·삭제 후에도 요청/콜백이 참조하는 장치는 만료되지 않으며 공개 `ReferenceCount`는 열린 핸들만 셉니다.
 
 `KernelModelIRPStack`은 원래 게스트 패킷의 제한된 커서, 정확한 대상 디스패치, 완료 해제를 관리하고 인라인 Copy/Skip/SetCompletion 쓰기를 단일 근거로 사용합니다. 디스패치 상태, 완료 제어값, 최종 `IoStatus`는 별개이며 반환 후에도 pending을 전달할 수 있습니다. `STATUS_MORE_PROCESSING_REQUIRED`는 중첩 완료를 포함해 최종 해제를 재개할 때까지 IRP/MDL/버퍼를 보존합니다. `KernelGuestCall`의 소유 하위 시스템과 로컬 토큰이 WDM/WDF continuation 충돌을 막고 `DriverSession`은 CPU 프레임과 상속 IRQL을 유지합니다. 단일 게스트 드라이버를 별도 소유의 시나리오 PDO 위에 연결할 수 있습니다. 드라이버 할당 IRP, WDF 연결/전달, 사용 중 스택 연결, 중간 계층 분리, 주 기능 변경, 경로 외부 대상은 지원하지 않습니다. 상위 완료 콜백 전에 소비된 하위 스택 위치를 0으로 지웁니다.
@@ -1390,6 +1392,8 @@ Swift SDK Published의 enclosing-instance 접근자는 포인터 네 개를 유�
 
 정확히 인증된 `MainActor.shared` SDK getter는 객체 포인터 하나를 반환하고 메타타입을 swiftself(ARM64의 `x20`, x86-64의 `r13`)로 받습니다. Swift 6.1.2의 macOS/Mac Catalyst 네 가지 컴파일 및 내보내기 구성으로 전체 ABI와 `libswift_Concurrency`의 강한 가져오기 제공자를 확인합니다. 소유권, 실행기 스케줄링 및 전용 스택 프레임 분석에는 기존 계약이 적용됩니다.
 
+`LinuxPriority`는 같은 워크로드의 `LinuxServices` 안에서 명시적인 작업별 nice 상태를 관리합니다. x64/AArch64 원시 우선순위 트랩은 `LinuxValues.def`의 번호와 OS가 소유한 현재 스레드 ID를 사용합니다. 검증된 `LinuxPriorityOptions`가 테스트 작업 관찰값과 호출자의 CAP_SYS_NICE/RLIMIT_NICE 권한을 제공합니다. 알 수 없는 작업 상태와 그룹/사용자 선택은 지원하지 않습니다. 원시 조회는 커널 반환 인코딩을 보존하며 권한 오류는 작업 상태를 바꾸지 않습니다. JSON 필드와 진단은 기존 프로세스 및 Linux `.def` 파일에 선언합니다.
+
 `LinuxUnavailableSyscalls.def`는 선택적 커널 호출의 공개 부재 식별자, 입력 이름, 아키텍처별 번호 및 고정 인자 수를 소유합니다. `LinuxKernelOptions`는 명시적인 fixture 관측이며 공유 Linux 커널 서비스 계층은 관측이 부재를 선언한 호출에만 ENOSYS를 반환합니다. 카탈로그는 구현을 제공하거나 Android API 수준으로 가용성을 유도하지 않습니다. JSON 검증과 profile 허용은 로드 전에 수행하며, 목록에 없거나 존재하지만 모델링되지 않은 호출은 미지원 경계를 유지합니다.
 
-`LinuxGKIKernels.def`는 출시된 Android GKI 브랜치 식별자와 버전별 `pidfd_open` 플래그 마스크를 소유합니다. JSON 및 C++ 옵션이 계약을 명시적으로 선택하며 Android Bionic API 수준은 이를 추정하지 않습니다. `LinuxServices`는 공유 커널 호출을 분배하고 `LinuxFiles`는 일반 파일 및 표준 스트림과 함께 프로세스 descriptor를 소유합니다. `LinuxOutput`은 pidfd의 쓰기 연산 부재 전에 동일한 vector 가져오기와 오류 순서를 적용합니다. 호스트 프로세스 조회나 별도의 descriptor 네임스페이스는 없습니다. 고정 소스 증거와 구현 범위는 [출시된 GKI 계약](../android-gki-kernels.md)을 참조하십시오.
+`LinuxGKIKernels.def`는 출시된 GKI 계열 식별자, 버전별 `pidfd_open` 플래그 마스크, 비리더 오류와 iovec 가져오기 정책을 소유합니다. JSON과 C++이 명시적으로 선택하며 Bionic API 수준에서 추론하지 않습니다. `LinuxServices`가 공유 커널 호출을 전달하고 `LinuxFiles`가 파일, 표준 스트림과 pidfd 설명자를 통합 관리합니다. `LinuxOutput`은 캡처 출력과 pidfd의 쓰기 미지원 판정 전에 선택한 버전의 가져오기와 오류 순서를 적용합니다. `LinuxKernelOptions`는 추가 생존 게스트 작업의 선택적 고정 목록도 소유합니다. 닫힌 목록을 선언하면 부재를 판단하지만 생략 시 다른 대상은 미지원입니다. 공유 검증은 모순된 우선순위 관측과 협력형 Android 스레드 모드를 로드 전에 거부합니다. `LinuxPIDFD`는 설명자를 예약하기 전에 대상 종류를 검사하며 버전별 비리더 오류를 유지합니다. 호스트 조회나 별도의 설명자 이름 공간은 없습니다.[출시된 GKI 계약](../android-gki-kernels.md)을 참조하세요.

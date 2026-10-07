@@ -8,12 +8,24 @@
 
 #include "../../core/ExecutionDiagnostics.h"
 
+#include "llvm/Support/FormatVariadic.h"
+
+#include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <utility>
 
 namespace neverd::emulation {
+namespace whp::resource {
+#define NEVERD_WHP_RESOURCE_VALUE(Name, Value) constexpr uint64_t Name = Value;
+#define NEVERD_WHP_RESOURCE_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "WhpResourcePolicy.def"
+#undef NEVERD_WHP_RESOURCE_TEXT
+#undef NEVERD_WHP_RESOURCE_VALUE
+} // namespace whp::resource
 /// Cache one cooperative VP independently of the logical CPUs. Retiring the
 /// old VP and its GPA window before constructing the next discards hidden CPU
 /// state and translations. Parallel bindings retain separate VP leases within
@@ -110,6 +122,31 @@ public:
   ~WhpResourceBinding() { Shared->retire(this); }
   WhpResourceBinding(const WhpResourceBinding &) = delete;
   WhpResourceBinding &operator=(const WhpResourceBinding &) = delete;
+
+  /// Native setup precedes ISA validation and does not borrow its deadline.
+  /// Preserve typed interruptions and real host failures without publishing
+  /// a resource whose setup completed after cancellation.
+  llvm::Error
+  initialize(MachineRunControl Control = {
+                 std::chrono::steady_clock::now() +
+                 std::chrono::microseconds(
+                     whp::resource::InitializationTimeoutMicroseconds)}) {
+    auto Active = acquire(Control);
+    if (Active)
+      return llvm::Error::success();
+    return llvm::handleErrors(
+        Active.takeError(), [&](const MachineInterruptedError &Interrupted) {
+          std::string Detail;
+          llvm::raw_string_ostream OS(Detail);
+          Interrupted.log(OS);
+          return llvm::make_error<MachineInterruptedError>(
+              llvm::formatv(whp::resource::InitializationInterrupted,
+                            Interrupted.stopRequested(),
+                            Interrupted.deadlineReached(), OS.str())
+                  .str(),
+              Interrupted.stopRequested(), Interrupted.deadlineReached());
+        });
+  }
 
   llvm::Expected<typename Cache::Lease> acquire(MachineRunControl Control) {
     return Shared->acquire(this, Create, Control);

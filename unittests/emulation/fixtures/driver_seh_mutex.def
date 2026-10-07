@@ -1,0 +1,44 @@
+//===- driver_seh_mutex.def - Thread-owned mutex fixture contracts --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#ifdef NEVERD_SEH_MUTEX_CASE
+NEVERD_SEH_MUTEX_CASE(ParentRecursion, '5')
+NEVERD_SEH_MUTEX_CASE(FilterOwnership, '6')
+NEVERD_SEH_MUTEX_CASE(FinallyOwnership, '7')
+NEVERD_SEH_MUTEX_CASE(BlockedFilter, '8')
+#endif
+
+#ifdef NEVERD_SEH_MUTEX_VALUE
+NEVERD_SEH_MUTEX_VALUE(SehMutexMarker, '_')
+NEVERD_SEH_MUTEX_VALUE(SehMutexModeCharacters, 2)
+NEVERD_SEH_MUTEX_VALUE(SehMutexTinyQuantum, 1)
+NEVERD_SEH_MUTEX_VALUE(SehMutexShortQuantum, 17)
+NEVERD_SEH_MUTEX_VALUE(SehMutexDelay, 16384)
+NEVERD_SEH_MUTEX_VALUE(SehMutexFilterStage, 1)
+NEVERD_SEH_MUTEX_VALUE(SehMutexFinallyStage, 2)
+NEVERD_SEH_MUTEX_VALUE(SehMutexHandledStage, 3)
+NEVERD_SEH_MUTEX_VALUE(SehMutexInstructionLimit, 200000)
+NEVERD_SEH_MUTEX_VALUE(SehMutexPoolType, 0)
+NEVERD_SEH_MUTEX_VALUE(SehMutexPoolTag, 0x4d555458)
+NEVERD_SEH_MUTEX_VALUE(SehMutexChildOffset, 0x1000)
+NEVERD_SEH_MUTEX_VALUE(SehMutexPeerOffset, 0x2000)
+NEVERD_SEH_MUTEX_VALUE(SehMutexOtherOffset, 0x3000)
+#endif
+
+#ifdef NEVERD_SEH_MUTEX_WIDE_VALUE
+NEVERD_SEH_MUTEX_WIDE_VALUE(SehMutexBase, 0x180000000ULL)
+NEVERD_SEH_MUTEX_WIDE_VALUE(SehMutexRebased, 0x190000000ULL)
+#endif
+
+#ifdef NEVERD_SEH_MUTEX_TEXT
+NEVERD_SEH_MUTEX_TEXT(SehMutexService, "NeverDSEH")
+NEVERD_SEH_MUTEX_TEXT(SehMutexDriverSuffix, "_driver_")
+NEVERD_SEH_MUTEX_TEXT(SehMutexCheckedSuffix, "_checked_")
+NEVERD_SEH_MUTEX_TEXT(SehMutexCompleteMessage,
+                      "WDM SEH: thread mutex verified\n")
+NEVERD_SEH_MUTEX_TEXT(SehMutexFailure, "WDM SEH: failure")
+NEVERD_SEH_MUTEX_TEXT(SehMutexMissing, "original WDK SEH fixture unavailable")
+#endif

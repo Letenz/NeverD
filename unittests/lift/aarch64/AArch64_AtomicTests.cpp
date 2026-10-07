@@ -446,15 +446,13 @@ TEST_F(AArch64_Atomic, LdaddHighCUsesAtomicFetchAddAndCompiles) {
   ASSERT_FALSE(Byte.empty()) << source;
   EXPECT_NE(Byte.find("__atomic_fetch_add((uint8_t *)"), std::string::npos)
       << Byte;
-  EXPECT_NE(Byte.find("return (int32_t)(uint8_t)"), std::string::npos)
-      << Byte;
+  EXPECT_NE(Byte.find("return (uint8_t)("), std::string::npos) << Byte;
 
   auto Half = functionC(source, "test_ldaddh");
   ASSERT_FALSE(Half.empty()) << source;
   EXPECT_NE(Half.find("__atomic_fetch_add((uint16_t *)"), std::string::npos)
       << Half;
-  EXPECT_NE(Half.find("return (int32_t)(uint16_t)"), std::string::npos)
-      << Half;
+  EXPECT_NE(Half.find("return (uint16_t)("), std::string::npos) << Half;
 
   expectPairedClangSyntax(cFile, source);
 }
@@ -677,14 +675,11 @@ TEST_F(AArch64_Atomic, CasAndCaspHighCUseStandardCompareExchangeAndCompile) {
   auto Byte = functionC(source, "test_casb");
   ASSERT_FALSE(Byte.empty()) << source;
   EXPECT_NE(Byte.find("uint8_t neverd_expected"), std::string::npos) << Byte;
-  EXPECT_NE(Byte.find("return (int32_t)(uint8_t)"), std::string::npos)
-      << Byte;
+  EXPECT_NE(Byte.find("return (uint8_t)("), std::string::npos) << Byte;
   auto Half = functionC(source, "test_cash");
   ASSERT_FALSE(Half.empty()) << source;
-  EXPECT_NE(Half.find("uint16_t neverd_expected"), std::string::npos)
-      << Half;
-  EXPECT_NE(Half.find("return (int32_t)(uint16_t)"), std::string::npos)
-      << Half;
+  EXPECT_NE(Half.find("uint16_t neverd_expected"), std::string::npos) << Half;
+  EXPECT_NE(Half.find("return (uint16_t)("), std::string::npos) << Half;
 
   EXPECT_NE(
       functionC(source, "test_casa").find("__ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE"),

@@ -458,6 +458,8 @@ Windows 模型亦管理獨立的非分頁池 MDL；釋放描述符不會釋放�
 
 `KernelScheduler` 統一持有即時執行緒優先順序及優先順序／就緒順序比較規則。`KernelModelThreadPriorities` 為 `KeSetPriorityThread` 與 `KeQueryPriorityThread` 驗證執行緒物件；暫停的 CPU 上下文不複製優先順序狀態。`DriverSession` 在回呼同步入口及 API／事件邊界檢查較高優先順序的就緒執行緒。範圍與限制見[驅動程式排程](driver-scheduling.md)。
 
+`KernelDispatcher` 依邏輯執行緒維護 mutex 的遞迴所有權。`KernelModel` 為延遲的 `KeWaitForSingleObject` 取得保存等待執行緒，並讓 APC 查詢和 `KeReleaseMutex` 使用相同身分；巢狀堆疊退役保留所有權，最外層返回仍執行生命週期檢查。
+
 `KernelModelDeviceStack` 以單一記錄管理各裝置的驅動程式擁有者、配置、上下層鄰居、待刪除狀態與內部參考。客體 `NextDevice` 列舉串列與宿主擁有的附加圖意義不同。名稱解析保留具名下層裝置作為 `FILE_OBJECT` 和報告身分，選擇目前堆疊頂端進行初始派送及 READ/WRITE 緩衝設定，並保留整條請求路徑。解除附加或刪除不會讓請求／回呼仍持有的裝置失效；公開 `ReferenceCount` 仍只計算開啟的控制代碼。
 
 `KernelModelIRPStack` 管理原始客體封包的有界堆疊游標、確切目標派送及完成展開；內嵌 Copy/Skip/SetCompletion 寫入仍為權威資料。派送狀態、完成回呼控制值與最終 `IoStatus` 分離，pending 可在派送傳回後傳播。`STATUS_MORE_PROCESSING_REQUIRED` 保留封包、MDL 與緩衝區，直到繼續執行並到達最終展開邊界，包括巢狀完成。`KernelGuestCall` 攜帶子系統擁有者及區域 token，防止 WDM／WDF 續接身分碰撞；`DriverSession` 保留 CPU 框架與繼承的 IRQL。一個客體驅動程式可附加於獨立擁有的情境 PDO；驅動程式自行配置的 IRP 仍不支援。WDF 附加／轉送、活動堆疊附加、中間層移除、變更主要功能及路徑外目標仍不支援。 呼叫上層完成回呼之前，已消耗的下層堆疊位置會清零。
@@ -1341,6 +1343,8 @@ Swift SDK Published 的 enclosing-instance 存取器保留四個指標載體：�
 
 精確的 `MainActor.shared` SDK getter 回傳一個物件指標，並透過 swiftself 接收中繼型別（ARM64 的 `x20`、x86-64 的 `r13`）。四種 Swift 6.1.2 macOS/Mac Catalyst 編譯與匯出設定認證完整 ABI 及 `libswift_Concurrency` 強匯入提供者。所有權、執行器排程和私有堆疊框架分析仍由各自既有契約約束。
 
+`LinuxPriority` 在同一工作負載的 `LinuxServices` 中統一管理明確的逐任務 nice 狀態。x64 與 AArch64 原始優先權陷阱使用 `LinuxValues.def` 的編號繫結及 OS 擁有的目前執行緒身分。經驗證的 `LinuxPriorityOptions` 提供測試任務觀察值與呼叫者的 CAP_SYS_NICE／RLIMIT_NICE 權限；未知任務狀態及群組／使用者選擇仍不支援。原始查詢保留核心回傳編碼，權限失敗不改變任務狀態。JSON 欄位與診斷由既有程序及 Linux `.def` 檔案宣告。
+
 `LinuxUnavailableSyscalls.def` 統一擁有選用核心呼叫的公開缺失識別、輸入名稱、架構呼叫號及固定引數個數。`LinuxKernelOptions` 是明確的夾具觀測；共用 Linux 核心服務層僅在觀測明確宣告呼叫缺失時回傳 ENOSYS。目錄不提供呼叫實作，也不從 Android API 級別推導可用性。JSON 驗證與設定准入發生在載入前；未列出的呼叫及存在但尚未建模的呼叫仍保留未支援邊界。
 
-`LinuxGKIKernels.def` 擁有已發布 Android GKI 分支識別及依版本而異的 `pidfd_open` 旗標遮罩。JSON 與 C++ 選項明確選擇此契約，Android 的 Bionic API 級別不推導它。`LinuxServices` 分派共用核心呼叫，`LinuxFiles` 與一般檔案和標準串流一同擁有行程描述符。`LinuxOutput` 在 pidfd 缺少寫入操作之前執行相同的向量匯入與錯誤順序。沒有主機行程查詢或另一套描述符命名空間。固定原始碼證據及此實作子集的限制見[已發布 GKI 契約](../android-gki-kernels.md)。
+`LinuxGKIKernels.def` 擁有已發布 Android GKI 分支識別碼、依版本變化的 `pidfd_open` 旗標遮罩、非群組首領錯誤及 iovec 匯入策略。JSON 與 C++ 明確選擇契約，Bionic API 等級不推導它。`LinuxServices` 分派共用核心呼叫，`LinuxFiles` 統一擁有檔案、標準串流及 pidfd 描述元；`LinuxOutput` 對擷取輸出及 pidfd 缺少寫入操作之前採用所選版本的向量匯入與錯誤順序。`LinuxKernelOptions` 也擁有其他存活客體任務的選用固定目錄。宣告封閉目錄後可確認查詢缺失；省略時，其他目標仍不支援。共用准入在載入前拒絕矛盾的優先權觀測與協作式 Android 執行緒模式。`LinuxPIDFD` 在保留描述元前檢查目標類別，並保留各版本的非群組首領錯誤。沒有宿主查詢或第二套描述元命名空間。請參閱[已發布 GKI 契約](../android-gki-kernels.md)。

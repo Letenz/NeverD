@@ -7,6 +7,9 @@ typedef unsigned long U64;
 extern U64 linux_service(U64, U64, U64, U64);
 #if defined(__aarch64__)
 enum {
+  Mmap = 222,
+  Mprotect = 226,
+  Munmap = 215,
   GetPID = 172,
   OpenAt = 56,
   Close = 57,
@@ -18,6 +21,9 @@ enum {
 };
 #else
 enum {
+  Mmap = 9,
+  Mprotect = 10,
+  Munmap = 11,
   GetPID = 39,
   OpenAt = 257,
   Close = 3,
@@ -27,6 +33,43 @@ enum {
   Seek = 8,
   Exit = 60
 };
+#endif
+// The metadata ordering case needs all six anonymous-mmap arguments.
+static U64 call6(U64 number, U64 a0, U64 a1, U64 a2, U64 a3, U64 a4, U64 a5) {
+#if defined(__aarch64__)
+  register U64 x0 __asm__("x0") = a0;
+  register U64 x1 __asm__("x1") = a1;
+  register U64 x2 __asm__("x2") = a2;
+  register U64 x3 __asm__("x3") = a3;
+  register U64 x4 __asm__("x4") = a4;
+  register U64 x5 __asm__("x5") = a5;
+  register U64 x8 __asm__("x8") = number;
+  __asm__ volatile("svc #0"
+                   : "+r"(x0)
+                   : "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5), "r"(x8)
+                   : "memory", "cc");
+  return x0;
+#else
+  register U64 r10 __asm__("r10") = a3;
+  register U64 r8 __asm__("r8") = a4;
+  register U64 r9 __asm__("r9") = a5;
+  U64 result;
+  __asm__ volatile("syscall"
+                   : "=a"(result)
+                   : "a"(number), "D"(a0), "S"(a1), "d"(a2), "r"(r10), "r"(r8),
+                     "r"(r9)
+                   : "rcx", "r11", "memory", "cc");
+  return result;
+#endif
+}
+typedef struct {
+  const void *base;
+  U64 length;
+} Vector;
+#if defined(__aarch64__)
+static const U64 UserLimit = 0x0001000000000000UL;
+#else
+static const U64 UserLimit = 0x0000800000000000UL;
 #endif
 static void finish(U64 status) {
   linux_service(Exit, status, 0, 0);
@@ -43,7 +86,65 @@ void process_main(U64 *stack) {
   require(stack[0] == 3, 90);
   const char **arguments = (const char **)(stack + 1);
   char mode = arguments[1][0];
+  // Old imports validate the original extent; the newer one-buffer path
+  // caps it first. No payload exists here, and the output budget is one byte.
+  const Vector capped = {(void *)(UserLimit - 0x7ffff000UL), 0x80000000UL};
+  if (mode == 'b') {
+    require(linux_service(WriteV, 1, (U64)&capped, 1) == (U64)-14, 50);
+    finish(0);
+  }
   U64 self = linux_service(GetPID, 0, 0, 0);
+  if (mode == 'e') {
+    require(pidfd(2000, 0) == (U64)-3, 61);
+    require(pidfd(self, 0) == 3, 62);
+    require(linux_service(Close, 3, 0, 0) == 0, 63);
+    finish(0);
+  }
+  if (mode == 'c') {
+    unsigned truth = arguments[2][0] - '0';
+    U64 nonleader_error = (truth & 2) ? (U64)-2 : (U64)-22;
+    require(pidfd(2000UL | (1UL << 32), 0x800UL | (1UL << 32)) == 3, 64);
+    require(pidfd(2001, 0) == (U64)-3, 65);
+    require(pidfd(2001, 1) == (U64)-22, 66);
+    require(pidfd(3000, 0) == nonleader_error, 67);
+    U64 thread = pidfd(3000, 0x80);
+    if (truth & 1) {
+      require(thread == 4, 68);
+      require(linux_service(Close, thread, 0, 0) == 0, 69);
+    } else
+      require(thread == (U64)-22, 70);
+    require(pidfd(self, 0) == 4, 71);
+    require(pidfd(2001, 0) == (U64)-3, 72);
+    require(pidfd(3000, 0) == nonleader_error, 73);
+    require(pidfd(2000, 0) == (U64)-24, 74);
+    require(pidfd(2000, 1) == (U64)-22, 75);
+    require(linux_service(Close, 3, 0, 0) == 0, 76);
+    require(pidfd(2000, 0) == 3, 77);
+    require(linux_service(Close, 3, 0, 0) == 0, 78);
+    require(linux_service(Close, 4, 0, 0) == 0, 79);
+    finish(0);
+  }
+  if (mode == 'v') {
+    int single_buffer = arguments[2][0] == '1';
+    U64 fd = pidfd(self, 0);
+    require(fd == 3, 51);
+    U64 region = call6(Mmap, 0, 8192, 3, 0x22, ~0UL, 0);
+    require(region && region < UserLimit, 52);
+    Vector *tail = (Vector *)(region + 4096 - sizeof(Vector));
+    tail->base = (void *)1;
+    tail->length = ~0UL;
+    require(linux_service(Mprotect, region + 4096, 4096, 0) == 0, 53);
+    U64 expected = single_buffer ? (U64)-22 : (U64)-14;
+    require(linux_service(WriteV, fd, (U64)tail, 2) == expected, 54);
+    require(linux_service(WriteV, 1, (U64)tail, 2) == expected, 55);
+    require(linux_service(WriteV, 2, (U64)tail, 2) == expected, 56);
+    require(linux_service(WriteV, fd, (U64)&capped, 1) == expected, 57);
+    const Vector multiple[] = {capped, {(void *)1, 0}};
+    require(linux_service(WriteV, fd, (U64)multiple, 2) == (U64)-14, 58);
+    require(linux_service(Close, fd, 0, 0) == 0, 59);
+    require(linux_service(Munmap, region, 8192, 0) == 0, 60);
+    finish(0);
+  }
   if (mode == 'u') {
     pidfd(2000, 0);
     finish(91);

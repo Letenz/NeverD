@@ -7,6 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/debug/DebugContext.h"
 #include "neverd/ir/high/HighIR.h"
 
 #include "llvm/Support/FileSystem.h"
@@ -274,6 +275,53 @@ TEST(HighCIntegerConversion, APointerKeepsItsExplicitConversion) {
   compileAndRun(Source + R"(
 int main(void) {
   return address(0x100000004ull) == 8 ? 0 : 1;
+}
+)");
+}
+
+TEST(HighCIntegerConversion, AWideningArgumentKeepsItsExtension) {
+  // widen(uint64_t) receives the zero extension of an int32_t local: the
+  // argument must not become the local itself, which C would sign-extend.
+  class CalleeDbg : public NullDebugContext {
+  public:
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x2000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "widen";
+      FS.Addr = Addr;
+      FS.CallConv = DebugCallConv::Cdecl;
+      FS.ReturnType = NdType::makeInt(8, false);
+      FS.Params.emplace_back("value", NdType::makeInt(8, false));
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+  const TypeRef U64 = integer(8, false), U32 = integer(4, false);
+  const TypeRef I32 = integer(4, true);
+  auto Call = HighExpr::makeCall("widen", 0x2000,
+                                 {extend(NdOp::INT_ZEXT, local(1, I32), U64)});
+  Call->Type = U64;
+  HighFunc F =
+      function("probe", U64,
+               {assign(local(1, I32), cast(lowPart(input(), U32), I32)),
+                assign(local(2, U64), Call),
+                result(op(NdOp::INT_ADD, local(2, U64),
+                          extend(NdOp::INT_SEXT, local(1, I32), U64), U64))});
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options, &Dbg));
+  Out.flush();
+  compileAndRun("#define __fastcall\n" + Source + R"(
+uint64_t widen(uint64_t value) { return value; }
+int main(void) {
+  const uint32_t xs[] = {0, 1, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF};
+  for (unsigned i = 0; i < sizeof xs / sizeof xs[0]; ++i)
+    if (probe(xs[i]) != (uint64_t)xs[i] + (uint64_t)(int64_t)(int32_t)xs[i])
+      return 1;
+  return 0;
 }
 )");
 }

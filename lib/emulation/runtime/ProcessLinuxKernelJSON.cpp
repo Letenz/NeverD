@@ -7,6 +7,7 @@
 #include "ProcessLinuxKernelJSON.h"
 
 #include "../os/linux/kernel/LinuxKernelAvailability.h"
+#include "ProcessJSONInteger.h"
 
 #include "neverd/emulation/ProcessReportFields.h"
 namespace neverd::emulation {
@@ -33,7 +34,7 @@ std::optional<LinuxUnavailableSyscall> unavailableCall(llvm::StringRef Name) {
   return std::nullopt;
 }
 std::optional<AndroidGKIKernel> gkiKernel(llvm::StringRef Name) {
-#define NEVERD_LINUX_GKI_KERNEL(Kind, Label, Flags)                            \
+#define NEVERD_LINUX_GKI_KERNEL(Kind, Label, Flags, Import, NonLeader)         \
   if (Name == Label)                                                           \
     return AndroidGKIKernel::Kind;
 #include "neverd/emulation/LinuxGKIKernels.def"
@@ -52,6 +53,23 @@ linuxKernelOptionsFromJSON(const llvm::json::Value &Value) {
       auto Name = Entry.getAsString();
       if (!Name || !(Out.GKI = gkiKernel(*Name)))
         return invalid(field::GKI);
+    } else if (Key == field::KernelTasks) {
+      const auto *Tasks = Entry.getAsArray();
+      if (!Tasks || Tasks->size() > linux_model::KernelTaskLimit)
+        return invalid(field::KernelTasks);
+      auto &Catalogue = Out.Tasks.emplace();
+      for (const auto &Value : *Tasks) {
+        const auto *Task = Value.getAsObject();
+        if (!Task || Task->size() != 2 || !Task->get(field::KernelTaskID) ||
+            !Task->get(field::KernelTaskGroupLeader))
+          return invalid(field::KernelTasks);
+        auto ID =
+            process_json::integer<uint32_t>(*Task->get(field::KernelTaskID));
+        auto Leader = Task->getBoolean(field::KernelTaskGroupLeader);
+        if (!ID || !Leader ||
+            !Catalogue.emplace(*ID, LinuxKernelTask{*Leader}).second)
+          return invalid(field::KernelTasks);
+      }
     } else if (Key == field::UnavailableSyscalls) {
       const auto *Calls = Entry.getAsArray();
       if (!Calls)

@@ -42,6 +42,28 @@ namespace fs = std::filesystem;
 namespace {
 using IRViewFunction = const char *(*)(neverd_session_t, neverd_va_t,
                                        const char *, std::size_t, std::size_t);
+using StringsExFunction = const char *(*)(neverd_session_t, const char *);
+using StringEncodingsFunction = const char *(*)();
+// Additive C ABI capabilities for strings in more than ASCII.
+StringsExFunction stringsExFunction() {
+  static const auto function =
+      engineSymbol<StringsExFunction>("neverd_strings_ex_json");
+  return function;
+}
+/// The engine's string encodings, or an empty array from an older engine.
+const Json &stringEncodings() {
+  static const Json encodings = [] {
+    const auto function =
+        engineSymbol<StringEncodingsFunction>("neverd_string_encodings_json");
+    if (!function)
+      return Json::array();
+    const char *raw = function();
+    Json parsed = Json::parse(raw ? raw : "[]", nullptr, false);
+    neverd_free_string(raw);
+    return parsed.is_array() ? parsed : Json::array();
+  }();
+  return encodings;
+}
 IRViewFunction irViewFunction() {
   // Additive C ABI capability: an older matching engine can still run the GUI.
   static const auto function =
@@ -158,6 +180,10 @@ std::string folded(std::string text) {
   return text;
 }
 constexpr std::size_t MaxFunctionRows = 1000000;
+// Strings need this many characters unless string_options says otherwise;
+// a minimum is at most MaxStringMinLength (neverd::strings::MaxMinChars).
+constexpr int DefaultStringMinLength = 4;
+constexpr std::int64_t MaxStringMinLength = 1024;
 /// Lines of one engine code page; longer functions keep engine names.
 constexpr std::size_t MaxNamedViewLines = 2048;
 
@@ -442,10 +468,16 @@ void Engine::prepareFunction(std::uint64_t address) {
   graph_.reset();
   textKey_.clear();
 }
+Listing &Engine::newListing() {
+  listing_ = std::make_unique<Listing>(session_);
+  listing_->setStringOptions(stringOptions_);
+  return *listing_;
+}
+
 Listing &Engine::listing() {
   requireLoaded();
   if (!listing_)
-    listing_ = std::make_unique<Listing>(session_);
+    newListing();
   return *listing_;
 }
 bool Engine::hasIdleWork() const {
@@ -541,6 +573,62 @@ Json Engine::metadata() const {
 }
 
 Json Engine::execute(const std::string &operation, const Json &p) {
+  if (operation == "string_encodings") {
+    if (stringEncodings().empty())
+      throw Error("unsupported", "The engine finds only ASCII strings");
+    return {{"items", stringEncodings()}};
+  }
+  if (operation == "string_options") {
+    if (p.contains("encodings") || p.contains("min_length")) {
+      Json options = Json::object();
+      if (p.contains("encodings")) {
+        const auto &names = p["encodings"];
+        if (!names.is_array() || names.empty() || names.size() > 64)
+          throw Error("invalid_request",
+                      "encodings must be a non-empty array of names");
+        for (const auto &name : names) {
+          const bool known =
+              name.is_string() &&
+              std::any_of(stringEncodings().begin(), stringEncodings().end(),
+                          [&](const Json &encoding) {
+                            return encoding.value("name", std::string()) ==
+                                   name.get<std::string>();
+                          });
+          if (!known)
+            throw Error(
+                "unsupported_encoding",
+                "Unknown string encoding: " +
+                    (name.is_string() ? name.get<std::string>() : name.dump()));
+        }
+        options["encodings"] = names;
+      }
+      if (p.contains("min_length")) {
+        const auto &length = p["min_length"];
+        if (!length.is_number_integer() || length.get<std::int64_t>() < 1 ||
+            length.get<std::int64_t>() > MaxStringMinLength)
+          throw Error("invalid_request",
+                      "min_length must be an integer from 1 to " +
+                          std::to_string(MaxStringMinLength));
+        options["min_length"] = length;
+      }
+      stringOptions_ = options.dump();
+      if (listing_)
+        listing_->setStringOptions(stringOptions_);
+      stringsCache_ = nullptr;
+      ++revision_;
+    }
+    Json current =
+        stringOptions_.empty() ? Json::object() : Json::parse(stringOptions_);
+    if (!current.contains("encodings")) {
+      current["encodings"] = Json::array();
+      for (const auto &encoding : stringEncodings())
+        if (encoding.value("default", false))
+          current["encodings"].push_back(encoding.value("name", std::string()));
+    }
+    if (!current.contains("min_length"))
+      current["min_length"] = DefaultStringMinLength;
+    return current;
+  }
   if (operation == "contributions")
     return contributions_->listing();
   if (operation == "contribution_register")
@@ -616,7 +704,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     loadedTime_ = fileTime;
     history_.reset();
     preparedFunction_.reset();
-    listing_ = std::make_unique<Listing>(session_);
+    newListing();
     invalidate();
     ++revision_;
     projectId_ = "project-" + std::to_string(revision_);
@@ -870,11 +958,24 @@ Json Engine::execute(const std::string &operation, const Json &p) {
   }
   if (operation == "strings") {
     if (stringsCache_.is_null()) {
-      stringsCache_ = backendJson(neverd_strings_json(session_, 4));
+      const auto stringsEx = stringsExFunction();
+      stringsCache_ = backendJson(
+          stringsEx ? stringsEx(session_, stringOptions_.empty()
+                                              ? nullptr
+                                              : stringOptions_.c_str())
+                    : neverd_strings_json(session_, DefaultStringMinLength));
       for (auto &item : stringsCache_) {
         item["address"] = item.at("addr");
         item["text"] = item.at("value");
         item.erase("addr");
+        // The classic type column: C for plain bytes, else the encoding.
+        const auto encoding = item.value("encoding", std::string("ascii"));
+        std::string type = "C";
+        for (const auto &known : stringEncodings())
+          if (known.value("name", std::string()) == encoding &&
+              !known.value("spelling", std::string()).empty())
+            type = known.value("spelling", std::string());
+        item["type"] = type;
       }
     }
     return page(stringsCache_, p, "text");

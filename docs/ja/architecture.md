@@ -506,6 +506,8 @@ Windows モデルは独立した非ページプール MDL も管理し、記述�
 
 `KernelScheduler` が実行時優先度と優先度／実行可能順序の比較を一元管理します。`KernelModelThreadPriorities` が `KeSetPriorityThread` と `KeQueryPriorityThread` のスレッドオブジェクトを検証し、停止した CPU コンテキストには優先度をコピーしません。`DriverSession` はコールバック同期の入口と API／イベント境界で高優先度スレッドを確認します。範囲と制限は[ドライバースケジューリング](driver-scheduling.md)を参照してください。
 
+`KernelDispatcher` は論理スレッドごとに mutex の再帰所有権を管理します。`KernelModel` は遅延した `KeWaitForSingleObject` 取得の待機スレッドを保存し、APC 照会と `KeReleaseMutex` に同じ識別子を使用します。ネストしたスタックの破棄は所有権を保持し、最外層の復帰では寿命検査を行います。
+
 `KernelModelDeviceStack` はデバイスのドライバー所有者、割り当て、上下の接続、削除待ち状態、内部参照を一つの記録で管理します。ゲストの `NextDevice` 一覧とホストが所有する接続グラフは別の意味を持ちます。名前解決は名前付き下位デバイスを `FILE_OBJECT` とレポートに保持し、初期ディスパッチと READ/WRITE の方式には現在の最上位を選び、要求経路全体を保持します。切断・削除しても要求やコールバックが保持中のデバイスは失効せず、公開 `ReferenceCount` は開いたハンドル数だけを表します。
 
 `KernelModelIRPStack` は元のゲストパケット上で有界カーソル、指定対象へのディスパッチ、完了展開を管理し、インライン Copy/Skip/SetCompletion の書き込みが正本です。ディスパッチ状態、完了制御、最終 `IoStatus` を分離し、pending はディスパッチ復帰後にも伝播できます。`STATUS_MORE_PROCESSING_REQUIRED` は入れ子の完了も含め、最終展開を再開するまで IRP／MDL／バッファーを保持します。`KernelGuestCall` の所有サブシステムとローカルトークンが WDM／WDF 継続の衝突を防ぎ、`DriverSession` は CPU フレームと継承 IRQL を保存します。単一のゲストドライバーを、別所有のシナリオ PDO 上に接続できます。ドライバー割り当て IRP、WDF 接続／転送、使用中スタックへの接続、中間層切断、メジャー変更、経路外対象は未対応です。 上位の完了コールバックを実行する前に、消費済みの下位スタック位置をゼロにします。
@@ -1413,6 +1415,8 @@ Swift SDK Published の enclosing-instance アクセサーは四つのポイン�
 
 厳密に認証した `MainActor.shared` SDK getter はオブジェクトポインターを返し、メタタイプを swiftself（ARM64 の `x20`、x86-64 の `r13`）で受け取ります。Swift 6.1.2 の macOS/Mac Catalyst の 4 構成で、コンパイラー出力とエクスポートから完全な ABI と `libswift_Concurrency` の強いインポートを確認します。所有権、executor のスケジューリング、プライベートスタックフレームの解析には既存の契約が適用されます。
 
+`LinuxPriority` は同じワークロードの `LinuxServices` 内で、タスクごとの明示的な nice 状態を管理します。x64／AArch64 の生の優先度トラップは `LinuxValues.def` の番号と OS が所有する現在のスレッド ID を使います。検証済みの `LinuxPriorityOptions` がフィクスチャのタスク観測値と呼び出し元の CAP_SYS_NICE／RLIMIT_NICE 権限を提供します。未知のタスク状態やグループ／ユーザー選択は未対応です。生の取得はカーネルの返却形式を保ち、権限エラーでは状態を変更しません。JSON フィールドと診断は既存のプロセスおよび Linux の `.def` ファイルで宣言します。
+
 `LinuxUnavailableSyscalls.def` は任意のカーネル呼出しについて、公開の欠如識別子、入力名、アーキテクチャ別番号、固定引数数を所有します。`LinuxKernelOptions` は明示的な fixture 観測であり、共有 Linux カーネルサービス層は観測が欠如を宣言した呼出しだけに ENOSYS を返します。カタログは実装を提供せず、Android API level から可用性を推定しません。JSON 検証と profile 准入はロード前に行い、未掲載および存在しても未モデル化の呼出しは未対応境界を保ちます。
 
-`LinuxGKIKernels.def` はリリース済み Android GKI ブランチ識別子と版別の `pidfd_open` フラグマスクを所有します。JSON と C++ options が契約を明示的に選び、Android の Bionic API level は推定に使いません。`LinuxServices` が共有カーネル呼出しを分派し、`LinuxFiles` が通常ファイルや標準ストリームと共にプロセス記述子を所有します。`LinuxOutput` は pidfd の書込み操作の欠如に先立ち、同じベクトル取込みとエラー順序を適用します。ホストのプロセス検索や別の記述子名前空間はありません。固定ソースの証拠と実装範囲は[リリース済み GKI 契約](../android-gki-kernels.md)を参照してください。
+`LinuxGKIKernels.def` は公開済み GKI 系列識別子、版別の `pidfd_open` フラグマスク、非リーダーのエラーと iovec 取り込み方針を所有します。JSON と C++ が明示的に選択し、Bionic API レベルから推定しません。`LinuxServices` が共通カーネル呼び出しを分配し、`LinuxFiles` はファイル、標準ストリームと pidfd の記述子を一元管理します。`LinuxOutput` は捕捉出力および pidfd の書き込み未対応判定前に、選択版の取り込みとエラー順序を適用します。`LinuxKernelOptions` は追加の生存ゲストタスクの任意の固定一覧も所有します。閉じた一覧の宣言で不在を判断でき、省略時は他の対象が未対応です。共通検証は矛盾する優先度観測と協調型 Android スレッドをロード前に拒否します。`LinuxPIDFD` は記述子予約前に対象分類を調べ、版別の非リーダーエラーを保持します。ホスト検索も別の記述子名前空間もありません。[公開済み GKI 契約](../android-gki-kernels.md)を参照してください。

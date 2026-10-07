@@ -32,46 +32,79 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/ParallelCPU.ProcessorCallsOverlapAndPublishIndependentRegisters/{backend}x86_64")
+    "ExplicitBackends/"
+    "ParallelCPU.ProcessorCallsOverlapAndPublishIndependentRegisters/"
+    "{backend}x86_64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/ParallelCPU.ReentryCannotChangeAnActiveCPUsState/{backend}x86_64")
+    "ExplicitBackends/ParallelCPU.ReentryCannotChangeAnActiveCPUsState/"
+    "{backend}x86_64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/ParallelCPU.AtomicContendersSharePhysicalRAMAcrossAddressSpaces/{backend}x86_64")
+    "ExplicitBackends/"
+    "ParallelCPU.AtomicContendersSharePhysicalRAMAcrossAddressSpaces/"
+    "{backend}x86_64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/MMIOAtomic.OriginalInstructionResultsMatchRAMAcrossAllAtomicFamilies/{backend}x86_64")
+    "ExplicitBackends/"
+    "MMIOAtomic.OriginalInstructionResultsMatchRAMAcrossAllAtomicFamilies/"
+    "{backend}x86_64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/MMIOAtomic.StopsBeforeCommitPreserveCPUAndBothWideWords/{backend}x86_64")
+    "ExplicitBackends/MMIOAtomic.StopsBeforeCommitPreserveCPUAndBothWideWords/"
+    "{backend}x86_64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/MMIOAtomic.SuccessfulCommitWinsARacingStop/{backend}x86_64")
+    "ExplicitBackends/MMIOAtomic.SuccessfulCommitWinsARacingStop/"
+    "{backend}x86_64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/MMIOAtomic.MissingProviderNeverCallsLegacyReadOrWrite/{backend}x86_64")
+    "ExplicitBackends/MMIOAtomic.MissingProviderNeverCallsLegacyReadOrWrite/"
+    "{backend}x86_64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/MMIOAtomic.IdenticalValueWritesInvalidateOldPreviews/{backend}x86_64")
+    "ExplicitBackends/MMIOAtomic.IdenticalValueWritesInvalidateOldPreviews/"
+    "{backend}x86_64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/MMIOAtomic.ProviderFailuresAndExceptionsHaveNoEffects/{backend}x86_64")
+    "ExplicitBackends/MMIOAtomic.ProviderFailuresAndExceptionsHaveNoEffects/"
+    "{backend}x86_64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/MMIOAtomic.UnalignedOperandsNeverReachDeviceCallbacks/{backend}x86_64")
+    "ExplicitBackends/MMIOAtomic.UnalignedOperandsNeverReachDeviceCallbacks/"
+    "{backend}x86_64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/MMIOAtomic.ObserverExceptionsPreserveCPUAndDevice/{backend}x86_64")
+    "ExplicitBackends/MMIOAtomic.ObserverExceptionsPreserveCPUAndDevice/"
+    "{backend}x86_64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/MMIOAtomic.RepeatedAliasTransactionsRetirePrivateOperands/{backend}x86_64")
+    "ExplicitBackends/"
+    "MMIOAtomic.RepeatedAliasTransactionsRetirePrivateOperands/{backend}x86_64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/MMIOAtomic.ParallelCPUsCommitEveryDeviceUpdateExactlyOnce/{backend}x86_64")
+    "ExplicitBackends/"
+    "MMIOAtomic.ParallelCPUsCommitEveryDeviceUpdateExactlyOnce/{backend}x86_64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "WhpResources.IndependentBindingsRetainSimultaneousResourceLeases")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ProjectionCache.RelocatedWindowsKeepRAMIdentityAndInvalidateCachedRoots")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.RetainsPhysicalIdentityAcrossAliasesAndPermissionChanges")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.SameValueAndABAHostWritesInvalidateEveryOlderWitness")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.FullGranuleIsObservedButUnrelatedWritesDoNotBreakProgress")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.FailedHostWritesAndReadsPreserveTheWitness")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.RetainedViewsAndSiblingMappingsInvalidateTheSameBytes")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.TemporaryNativeWritesAndRollbackDoNotPublishInterference")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.CommitInvalidatesEvenWhenTheBytesDidNotChange")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.OpaqueExecutionInvalidatesBeforeUntrackedRAMAccess")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.RejectsForeignOwnersInvalidRangesAndMissingLeases")
+    "WhpResources.InitializationRetainsPhaseCauseAndOrdinaryDeadlines")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Transports/RAMReservationWriters.ScalarStringAndFaultingFrameWritesPublishInterference/{backend}")
+    "WhpResources.CancelledInitializationDiscardsTheCreatedResource")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "WhpResources.InitializationHostFailureOutranksConcurrentStop")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProjectionCache.RelocatedWindowsKeepRAMIdentityAndInvalidateCachedRoots")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "RAMReservations.RetainsPhysicalIdentityAcrossAliasesAndPermissionChanges")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "RAMReservations.SameValueAndABAHostWritesInvalidateEveryOlderWitness")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "RAMReservations.FullGranuleIsObservedButUnrelatedWritesDoNotBreakProgress")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "RAMReservations.FailedHostWritesAndReadsPreserveTheWitness")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "RAMReservations.RetainedViewsAndSiblingMappingsInvalidateTheSameBytes")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "RAMReservations.TemporaryNativeWritesAndRollbackDoNotPublishInterference")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "RAMReservations.CommitInvalidatesEvenWhenTheBytesDidNotChange")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "RAMReservations.OpaqueExecutionInvalidatesBeforeUntrackedRAMAccess")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "RAMReservations.RejectsForeignOwnersInvalidRangesAndMissingLeases")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/"
+    "RAMReservationWriters."
+    "ScalarStringAndFaultingFrameWritesPublishInterference/{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64LoopOracle.CountsFlagsAndBranchesMatchOriginalHostInstructions")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
@@ -355,29 +388,43 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64PushFlags.LockedFlagsStayUnsupported/"
     "{backend}Driver")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64Pause.PreservesCompleteStateAcrossObserverStopAndResume/{backend}Supervisor")
+    "ExplicitBackends/"
+    "X64Pause.PreservesCompleteStateAcrossObserverStopAndResume/"
+    "{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64Pause.PreservesCompleteStateAcrossObserverStopAndResume/{backend}User")
+    "ExplicitBackends/"
+    "X64Pause.PreservesCompleteStateAcrossObserverStopAndResume/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64Pause.PreservesCompleteStateAcrossObserverStopAndResume/{backend}Driver")
+    "ExplicitBackends/"
+    "X64Pause.PreservesCompleteStateAcrossObserverStopAndResume/"
+    "{backend}Driver")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64Pause.SpinLoopDeadlinePreservesStateAndAllowsResumption/{backend}Supervisor")
+    "ExplicitBackends/"
+    "X64Pause.SpinLoopDeadlinePreservesStateAndAllowsResumption/"
+    "{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64Pause.SpinLoopDeadlinePreservesStateAndAllowsResumption/{backend}User")
+    "ExplicitBackends/"
+    "X64Pause.SpinLoopDeadlinePreservesStateAndAllowsResumption/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64Pause.SpinLoopDeadlinePreservesStateAndAllowsResumption/{backend}Driver")
+    "ExplicitBackends/"
+    "X64Pause.SpinLoopDeadlinePreservesStateAndAllowsResumption/"
+    "{backend}Driver")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64Pause.LockPrefixIsRejectedBeforeEffects/{backend}Supervisor")
+    "ExplicitBackends/X64Pause.LockPrefixIsRejectedBeforeEffects/"
+    "{backend}Supervisor")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64Pause.LockPrefixIsRejectedBeforeEffects/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64Pause.LockPrefixIsRejectedBeforeEffects/{backend}Driver")
+    "ExplicitBackends/X64Pause.LockPrefixIsRejectedBeforeEffects/"
+    "{backend}Driver")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64SIMDCapability.RequirementsAreNativeBackendAndContractQualified")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Native/WindowsSIMDExecution.ActualFaultExecutesGuestHandlersAndRetries/{backend}")
+    "Native/WindowsSIMDExecution.ActualFaultExecutesGuestHandlersAndRetries/"
+    "{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Native/X64MXCSRProbe.SIMDDeliveryAndRetryAreRequiredBeforePublication/{backend}")
+    "Native/X64MXCSRProbe.SIMDDeliveryAndRetryAreRequiredBeforePublication/"
+    "{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "WindowsSIMDMapping.NativeObservationsDetermineStatusAndParameters")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
@@ -472,9 +519,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64PackedFloatInteger."
     "EveryVectorPairAndAliasedSource/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64PackedFloatInteger."
-    "EveryVectorPairAndAliasedSource/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64PackedFloatInteger."
+                                "EveryVectorPairAndAliasedSource/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64PackedFloatInteger."
     "MemoryFaultsPreserveValuesAndStatusAndRetry/{backend}Supervisor")
@@ -548,9 +594,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64PackedFloat."
     "EveryVectorPairAndAliasedSource/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64PackedFloat."
-    "EveryVectorPairAndAliasedSource/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64PackedFloat."
+                                "EveryVectorPairAndAliasedSource/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64PackedFloat."
     "MemoryFaultsPreserveValuesAndStatusAndRetry/{backend}Supervisor")
@@ -652,9 +697,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPrecision."
     "EveryVectorPairAndAliasedSource/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64SSEPrecision."
-    "EveryVectorPairAndAliasedSource/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64SSEPrecision."
+                                "EveryVectorPairAndAliasedSource/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64SSEPrecision."
     "MemoryFaultsPreserveValuesAndStatusAndRetry/{backend}Supervisor")
@@ -2340,82 +2384,230 @@ NEVERD_NATIVE_CPU_KVM_REQUIRED_CASES(
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
-NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.CapabilityAndRegisterWritesAreAtomic/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.CapabilityAndRegisterWritesAreAtomic/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.LoadsAndStoresUseExactlyFourBytesAcrossPageBoundaries/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.LoadsAndStoresUseExactlyFourBytesAcrossPageBoundaries/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.ObserversStopOrThrowBeforeEffectsAndRetry/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.ObserversStopOrThrowBeforeEffectsAndRetry/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.ReservedBitsFaultAndUnmaskedValuesFollowCapability/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.ReservedBitsFaultAndUnmaskedValuesFollowCapability/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.MissingPageAndDeniedStoresCannotPublishPartialEffects/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.MissingPageAndDeniedStoresCannotPublishPartialEffects/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.GuestLoadedDAZChangesArithmeticAndSurvivesContextSwitch/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64MXCSR.GuestLoadedDAZChangesArithmeticAndSurvivesContextSwitch/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("Native/X64MXCSRProbe.NativeSaveAndDAZExecutionAuthenticateCapability/{backend}")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("Native/X64MXCSRProbe.ZeroMaskUsesBaselineAndRejectedProbesPublishNothing/{backend}")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDSSMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDSSMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDSDMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDSDMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDPSMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDPSMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDPDMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZADDPDMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBSSMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBSSMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBSDMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBSDMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBPSMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBPSMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBPDMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSUBPDMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULSSMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULSSMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULSDMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULSDMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULPSMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULPSMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULPDMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMULPDMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVSSMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVSSMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVSDMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVSDMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVPSMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVPSMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVPDMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZDIVPDMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTSSMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTSSMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTSDMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTSDMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTPSMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTPSMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTPDMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZSQRTPDMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINSSMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINSSMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINSDMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINSDMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINPSMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINPSMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINPDMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMINPDMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXSSMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXSSMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXSDMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXSDMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXPSMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXPSMatchesIndependentHostExecution/{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXPDMatchesIndependentHostExecution/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64DAZData.DAZMAXPDMatchesIndependentHostExecution/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64MXCSR.CapabilityAndRegisterWritesAreAtomic/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64MXCSR.CapabilityAndRegisterWritesAreAtomic/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64MXCSR.LoadsAndStoresUseExactlyFourBytesAcrossPageBoundaries/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64MXCSR.LoadsAndStoresUseExactlyFourBytesAcrossPageBoundaries/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64MXCSR.ObserversStopOrThrowBeforeEffectsAndRetry/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64MXCSR.ObserversStopOrThrowBeforeEffectsAndRetry/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64MXCSR.ReservedBitsFaultAndUnmaskedValuesFollowCapability/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64MXCSR.ReservedBitsFaultAndUnmaskedValuesFollowCapability/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64MXCSR.MissingPageAndDeniedStoresCannotPublishPartialEffects/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64MXCSR.MissingPageAndDeniedStoresCannotPublishPartialEffects/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64MXCSR.GuestLoadedDAZChangesArithmeticAndSurvivesContextSwitch/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "X64MXCSR.GuestLoadedDAZChangesArithmeticAndSurvivesContextSwitch/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Native/X64MXCSRProbe.NativeSaveAndDAZExecutionAuthenticateCapability/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Native/X64MXCSRProbe.ZeroMaskUsesBaselineAndRejectedProbesPublishNothing/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZADDSSMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZADDSSMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZADDSDMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZADDSDMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZADDPSMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZADDPSMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZADDPDMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZADDPDMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSUBSSMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSUBSSMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSUBSDMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSUBSDMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSUBPSMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSUBPSMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSUBPDMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSUBPDMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMULSSMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMULSSMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMULSDMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMULSDMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMULPSMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMULPSMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMULPDMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMULPDMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZDIVSSMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZDIVSSMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZDIVSDMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZDIVSDMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZDIVPSMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZDIVPSMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZDIVPDMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZDIVPDMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSQRTSSMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSQRTSSMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSQRTSDMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSQRTSDMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSQRTPSMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSQRTPSMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSQRTPDMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZSQRTPDMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMINSSMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMINSSMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMINSDMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMINSDMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMINPSMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMINPSMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMINPDMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMINPDMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMAXSSMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMAXSSMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMAXSDMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMAXSDMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMAXPSMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMAXPSMatchesIndependentHostExecution/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMAXPDMatchesIndependentHostExecution/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "DAZBackends/X64DAZData.DAZMAXPDMatchesIndependentHostExecution/"
+    "{backend}User")
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 // DAZ numeric and state matrices require original-host and checked execution.
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "X64SSEComparisonDAZOracle.FlagsAndExceptionPriorityMatchOriginalInstructions")
+    "X64SSEComparisonDAZOracle."
+    "FlagsAndExceptionPriorityMatchOriginalInstructions")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64SSEPredicateDAZOracle.CMPSSMasksAndStatusMatchOriginalInstructions")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
@@ -2679,9 +2871,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "DAZBackends/X64SSEPredicateDAZ."
     "CMPSSMixedLanesAccumulateStatus/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "DAZBackends/X64SSEPredicateDAZ."
-    "CMPSSMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64SSEPredicateDAZ."
+                                "CMPSSMixedLanesAccumulateStatus/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "DAZBackends/X64SSEPredicateDAZ."
     "CMPSDRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
@@ -2691,9 +2882,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "DAZBackends/X64SSEPredicateDAZ."
     "CMPSDMixedLanesAccumulateStatus/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "DAZBackends/X64SSEPredicateDAZ."
-    "CMPSDMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64SSEPredicateDAZ."
+                                "CMPSDMixedLanesAccumulateStatus/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "DAZBackends/X64SSEPredicateDAZ."
     "CMPPSRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
@@ -2703,9 +2893,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "DAZBackends/X64SSEPredicateDAZ."
     "CMPPSMixedLanesAccumulateStatus/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "DAZBackends/X64SSEPredicateDAZ."
-    "CMPPSMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64SSEPredicateDAZ."
+                                "CMPPSMixedLanesAccumulateStatus/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "DAZBackends/X64SSEPredicateDAZ."
     "CMPPDRoundingModesAndUnrelatedFlagsRemainIndependent/{backend}Supervisor")
@@ -2715,9 +2904,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "DAZBackends/X64SSEPredicateDAZ."
     "CMPPDMixedLanesAccumulateStatus/{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "DAZBackends/X64SSEPredicateDAZ."
-    "CMPPDMixedLanesAccumulateStatus/{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("DAZBackends/X64SSEPredicateDAZ."
+                                "CMPPDMixedLanesAccumulateStatus/{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "DAZBackends/X64SSEPrecisionDAZ."
     "CVTSS2SDValuesAndStatusPreserveOtherState/{backend}Supervisor")
@@ -3214,24 +3402,36 @@ NEVERD_NATIVE_CPU_REQUIRED_CASES(
     "{backend}Driver_",
     "unittests/emulation/X64DoubleShiftCases.def", "NEVERD_DOUBLE_SHIFT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "Native/X64SIMDException.FaultStateAndBothRetriesAreArchitectural/{backend}Supervisor_",
+    "Native/X64SIMDException.FaultStateAndBothRetriesAreArchitectural/"
+    "{backend}Supervisor_",
     "unittests/emulation/X64SIMDExceptionCases.def", "NEVERD_SIMD_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "Native/X64SIMDException.FaultStateAndBothRetriesAreArchitectural/{backend}User_",
+    "Native/X64SIMDException.FaultStateAndBothRetriesAreArchitectural/"
+    "{backend}User_",
     "unittests/emulation/X64SIMDExceptionCases.def", "NEVERD_SIMD_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "Native/X64CheckedSIMDException.PublicFaultStateAndBothRetriesAreArchitectural/{backend}Supervisor_",
+    "Native/"
+    "X64CheckedSIMDException.PublicFaultStateAndBothRetriesAreArchitectural/"
+    "{backend}Supervisor_",
     "unittests/emulation/X64SIMDExceptionCases.def", "NEVERD_SIMD_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "Native/X64CheckedSIMDException.PublicFaultStateAndBothRetriesAreArchitectural/{backend}User_",
+    "Native/"
+    "X64CheckedSIMDException.PublicFaultStateAndBothRetriesAreArchitectural/"
+    "{backend}User_",
     "unittests/emulation/X64SIMDExceptionCases.def", "NEVERD_SIMD_CASE")
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
-NEVERD_NATIVE_CPU_REQUIRED_TEST("X64BranchOracle.ConditionsFlagsAndWidthsMatchOriginalHostInstructions")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("X64BranchDecoding.BothModelsRequireCompleteBytesBeforeObservers")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("Native/X64BranchProbe.OriginalBranchesDiscoverOneImmutableDecoderModel/{backend}")
-NEVERD_NATIVE_CPU_REQUIRED_TEST("Native/X64BranchProbe.BranchStateFailureCannotPublishTheDiscoveredModel/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64BranchOracle.ConditionsFlagsAndWidthsMatchOriginalHostInstructions")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "X64BranchDecoding.BothModelsRequireCompleteBytesBeforeObservers")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Native/X64BranchProbe.OriginalBranchesDiscoverOneImmutableDecoderModel/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Native/X64BranchProbe.BranchStateFailureCannotPublishTheDiscoveredModel/"
+    "{backend}")
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_CASES
@@ -3260,15 +3460,18 @@ NEVERD_NATIVE_CPU_REQUIRED_CASES(
     "{backend}Driver_",
     "unittests/emulation/X64BranchCases.def", "NEVERD_BRANCH_FORM")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64Branch.CrossPageDecodeRequiresTheActualInstructionExtent/"
+    "ExplicitBackends/"
+    "X64Branch.CrossPageDecodeRequiresTheActualInstructionExtent/"
     "{backend}Supervisor_",
     "unittests/emulation/X64BranchCases.def", "NEVERD_BRANCH_FORM")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64Branch.CrossPageDecodeRequiresTheActualInstructionExtent/"
+    "ExplicitBackends/"
+    "X64Branch.CrossPageDecodeRequiresTheActualInstructionExtent/"
     "{backend}User_",
     "unittests/emulation/X64BranchCases.def", "NEVERD_BRANCH_FORM")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64Branch.CrossPageDecodeRequiresTheActualInstructionExtent/"
+    "ExplicitBackends/"
+    "X64Branch.CrossPageDecodeRequiresTheActualInstructionExtent/"
     "{backend}Driver_",
     "unittests/emulation/X64BranchCases.def", "NEVERD_BRANCH_FORM")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
@@ -3352,27 +3555,33 @@ NEVERD_NATIVE_CPU_REQUIRED_CASES(
     "{backend}Driver_",
     "unittests/emulation/X64StackCases.def", "NEVERD_STACK_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64Stack.SplitPagesAndPhysicalAliasesRetainExactFootprints/"
+    "ExplicitBackends/"
+    "X64Stack.SplitPagesAndPhysicalAliasesRetainExactFootprints/"
     "{backend}Supervisor_",
     "unittests/emulation/X64StackCases.def", "NEVERD_STACK_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64Stack.SplitPagesAndPhysicalAliasesRetainExactFootprints/"
+    "ExplicitBackends/"
+    "X64Stack.SplitPagesAndPhysicalAliasesRetainExactFootprints/"
     "{backend}User_",
     "unittests/emulation/X64StackCases.def", "NEVERD_STACK_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64Stack.SplitPagesAndPhysicalAliasesRetainExactFootprints/"
+    "ExplicitBackends/"
+    "X64Stack.SplitPagesAndPhysicalAliasesRetainExactFootprints/"
     "{backend}Driver_",
     "unittests/emulation/X64StackCases.def", "NEVERD_STACK_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64Stack.CrossPageFaultAndRepairPreserveOneAtomicTransfer/"
+    "ExplicitBackends/"
+    "X64Stack.CrossPageFaultAndRepairPreserveOneAtomicTransfer/"
     "{backend}Supervisor_",
     "unittests/emulation/X64StackCases.def", "NEVERD_STACK_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64Stack.CrossPageFaultAndRepairPreserveOneAtomicTransfer/"
+    "ExplicitBackends/"
+    "X64Stack.CrossPageFaultAndRepairPreserveOneAtomicTransfer/"
     "{backend}User_",
     "unittests/emulation/X64StackCases.def", "NEVERD_STACK_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64Stack.CrossPageFaultAndRepairPreserveOneAtomicTransfer/"
+    "ExplicitBackends/"
+    "X64Stack.CrossPageFaultAndRepairPreserveOneAtomicTransfer/"
     "{backend}Driver_",
     "unittests/emulation/X64StackCases.def", "NEVERD_STACK_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
@@ -3420,15 +3629,18 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_CASES
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.WidthsPrefixesAndFullFrameAddressPreserveCompleteState/"
+    "ExplicitBackends/"
+    "X64FrameExit.WidthsPrefixesAndFullFrameAddressPreserveCompleteState/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.WidthsPrefixesAndFullFrameAddressPreserveCompleteState/"
+    "ExplicitBackends/"
+    "X64FrameExit.WidthsPrefixesAndFullFrameAddressPreserveCompleteState/"
     "{backend}User_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.WidthsPrefixesAndFullFrameAddressPreserveCompleteState/"
+    "ExplicitBackends/"
+    "X64FrameExit.WidthsPrefixesAndFullFrameAddressPreserveCompleteState/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
@@ -3444,75 +3656,93 @@ NEVERD_NATIVE_CPU_REQUIRED_CASES(
     "{backend}Driver_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.ReadOnlySplitFramesAndAliasesConsumeExactWidth/"
+    "ExplicitBackends/"
+    "X64FrameExit.ReadOnlySplitFramesAndAliasesConsumeExactWidth/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.ReadOnlySplitFramesAndAliasesConsumeExactWidth/"
+    "ExplicitBackends/"
+    "X64FrameExit.ReadOnlySplitFramesAndAliasesConsumeExactWidth/"
     "{backend}User_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.ReadOnlySplitFramesAndAliasesConsumeExactWidth/"
+    "ExplicitBackends/"
+    "X64FrameExit.ReadOnlySplitFramesAndAliasesConsumeExactWidth/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.MissingOrDeniedSuffixPreservesStateAndCanResume/"
+    "ExplicitBackends/"
+    "X64FrameExit.MissingOrDeniedSuffixPreservesStateAndCanResume/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.MissingOrDeniedSuffixPreservesStateAndCanResume/"
+    "ExplicitBackends/"
+    "X64FrameExit.MissingOrDeniedSuffixPreservesStateAndCanResume/"
     "{backend}User_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.MissingOrDeniedSuffixPreservesStateAndCanResume/"
+    "ExplicitBackends/"
+    "X64FrameExit.MissingOrDeniedSuffixPreservesStateAndCanResume/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.SupervisorFramePermissionsFollowGuestPrivilege/"
+    "ExplicitBackends/"
+    "X64FrameExit.SupervisorFramePermissionsFollowGuestPrivilege/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.SupervisorFramePermissionsFollowGuestPrivilege/"
+    "ExplicitBackends/"
+    "X64FrameExit.SupervisorFramePermissionsFollowGuestPrivilege/"
     "{backend}User_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.SupervisorFramePermissionsFollowGuestPrivilege/"
+    "ExplicitBackends/"
+    "X64FrameExit.SupervisorFramePermissionsFollowGuestPrivilege/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.InvalidFrameAddressesPreserveOldStackAndContext/"
+    "ExplicitBackends/"
+    "X64FrameExit.InvalidFrameAddressesPreserveOldStackAndContext/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.InvalidFrameAddressesPreserveOldStackAndContext/"
+    "ExplicitBackends/"
+    "X64FrameExit.InvalidFrameAddressesPreserveOldStackAndContext/"
     "{backend}User_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.InvalidFrameAddressesPreserveOldStackAndContext/"
+    "ExplicitBackends/"
+    "X64FrameExit.InvalidFrameAddressesPreserveOldStackAndContext/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.DeviceFramesRejectBeforeObservationsOrCallbacks/"
+    "ExplicitBackends/"
+    "X64FrameExit.DeviceFramesRejectBeforeObservationsOrCallbacks/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.DeviceFramesRejectBeforeObservationsOrCallbacks/"
+    "ExplicitBackends/"
+    "X64FrameExit.DeviceFramesRejectBeforeObservationsOrCallbacks/"
     "{backend}User_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.DeviceFramesRejectBeforeObservationsOrCallbacks/"
+    "ExplicitBackends/"
+    "X64FrameExit.DeviceFramesRejectBeforeObservationsOrCallbacks/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.RejectedPrefixesPublishNoObservationsOrEffects/"
+    "ExplicitBackends/"
+    "X64FrameExit.RejectedPrefixesPublishNoObservationsOrEffects/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.RejectedPrefixesPublishNoObservationsOrEffects/"
+    "ExplicitBackends/"
+    "X64FrameExit.RejectedPrefixesPublishNoObservationsOrEffects/"
     "{backend}User_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameExit.RejectedPrefixesPublishNoObservationsOrEffects/"
+    "ExplicitBackends/"
+    "X64FrameExit.RejectedPrefixesPublishNoObservationsOrEffects/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
@@ -3528,7 +3758,6 @@ NEVERD_NATIVE_CPU_REQUIRED_CASES(
     "{backend}Driver_",
     "unittests/emulation/X64FrameExitCases.def", "NEVERD_FRAME_EXIT_CASE")
 #endif
-
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
@@ -3540,7 +3769,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
 #endif
 #ifdef NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST
 NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
-    "X64FrameEntryOracle.OriginalHostFaultsRetainOrderedStoresAndEntryRegisters")
+    "X64FrameEntryOracle."
+    "OriginalHostFaultsRetainOrderedStoresAndEntryRegisters")
 #endif
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_CASES
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
@@ -3556,15 +3786,18 @@ NEVERD_NATIVE_CPU_REQUIRED_CASES(
     "{backend}Driver_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.OrderedFaultsKeepCompletedStoresAndRestartFromCurrentRAM/"
+    "ExplicitBackends/"
+    "X64FrameEntry.OrderedFaultsKeepCompletedStoresAndRestartFromCurrentRAM/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.OrderedFaultsKeepCompletedStoresAndRestartFromCurrentRAM/"
+    "ExplicitBackends/"
+    "X64FrameEntry.OrderedFaultsKeepCompletedStoresAndRestartFromCurrentRAM/"
     "{backend}User_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.OrderedFaultsKeepCompletedStoresAndRestartFromCurrentRAM/"
+    "ExplicitBackends/"
+    "X64FrameEntry.OrderedFaultsKeepCompletedStoresAndRestartFromCurrentRAM/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
@@ -3580,51 +3813,63 @@ NEVERD_NATIVE_CPU_REQUIRED_CASES(
     "{backend}Driver_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.FinalProbeAcceptsWriteOnlyRAMWithoutDataObservations/"
+    "ExplicitBackends/"
+    "X64FrameEntry.FinalProbeAcceptsWriteOnlyRAMWithoutDataObservations/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.FinalProbeAcceptsWriteOnlyRAMWithoutDataObservations/"
+    "ExplicitBackends/"
+    "X64FrameEntry.FinalProbeAcceptsWriteOnlyRAMWithoutDataObservations/"
     "{backend}User_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.FinalProbeAcceptsWriteOnlyRAMWithoutDataObservations/"
+    "ExplicitBackends/"
+    "X64FrameEntry.FinalProbeAcceptsWriteOnlyRAMWithoutDataObservations/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.ObserverStopsAndFailuresDiscardTheWholeInstruction/"
+    "ExplicitBackends/"
+    "X64FrameEntry.ObserverStopsAndFailuresDiscardTheWholeInstruction/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.ObserverStopsAndFailuresDiscardTheWholeInstruction/"
+    "ExplicitBackends/"
+    "X64FrameEntry.ObserverStopsAndFailuresDiscardTheWholeInstruction/"
     "{backend}User_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.ObserverStopsAndFailuresDiscardTheWholeInstruction/"
+    "ExplicitBackends/"
+    "X64FrameEntry.ObserverStopsAndFailuresDiscardTheWholeInstruction/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.PermissionFaultCancellationPublishesNoPrefix/"
+    "ExplicitBackends/"
+    "X64FrameEntry.PermissionFaultCancellationPublishesNoPrefix/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.PermissionFaultCancellationPublishesNoPrefix/"
+    "ExplicitBackends/"
+    "X64FrameEntry.PermissionFaultCancellationPublishesNoPrefix/"
     "{backend}User_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.PermissionFaultCancellationPublishesNoPrefix/"
+    "ExplicitBackends/"
+    "X64FrameEntry.PermissionFaultCancellationPublishesNoPrefix/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.PrivilegeDenialPreservesOnlyTheCompletedStores/"
+    "ExplicitBackends/"
+    "X64FrameEntry.PrivilegeDenialPreservesOnlyTheCompletedStores/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.PrivilegeDenialPreservesOnlyTheCompletedStores/"
+    "ExplicitBackends/"
+    "X64FrameEntry.PrivilegeDenialPreservesOnlyTheCompletedStores/"
     "{backend}User_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.PrivilegeDenialPreservesOnlyTheCompletedStores/"
+    "ExplicitBackends/"
+    "X64FrameEntry.PrivilegeDenialPreservesOnlyTheCompletedStores/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
@@ -3640,138 +3885,177 @@ NEVERD_NATIVE_CPU_REQUIRED_CASES(
     "{backend}Driver_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.ImmediateBytesCannotBeMistakenForRejectedPrefixes/"
+    "ExplicitBackends/"
+    "X64FrameEntry.ImmediateBytesCannotBeMistakenForRejectedPrefixes/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.ImmediateBytesCannotBeMistakenForRejectedPrefixes/"
+    "ExplicitBackends/"
+    "X64FrameEntry.ImmediateBytesCannotBeMistakenForRejectedPrefixes/"
     "{backend}User_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.ImmediateBytesCannotBeMistakenForRejectedPrefixes/"
+    "ExplicitBackends/"
+    "X64FrameEntry.ImmediateBytesCannotBeMistakenForRejectedPrefixes/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.RejectedPrefixesPublishNoObservationsOrEffects/"
+    "ExplicitBackends/"
+    "X64FrameEntry.RejectedPrefixesPublishNoObservationsOrEffects/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.RejectedPrefixesPublishNoObservationsOrEffects/"
+    "ExplicitBackends/"
+    "X64FrameEntry.RejectedPrefixesPublishNoObservationsOrEffects/"
     "{backend}User_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.RejectedPrefixesPublishNoObservationsOrEffects/"
+    "ExplicitBackends/"
+    "X64FrameEntry.RejectedPrefixesPublishNoObservationsOrEffects/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.DeviceFramesRejectBeforeAnyObservationOrStore/"
+    "ExplicitBackends/"
+    "X64FrameEntry.DeviceFramesRejectBeforeAnyObservationOrStore/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.DeviceFramesRejectBeforeAnyObservationOrStore/"
+    "ExplicitBackends/"
+    "X64FrameEntry.DeviceFramesRejectBeforeAnyObservationOrStore/"
     "{backend}User_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.DeviceFramesRejectBeforeAnyObservationOrStore/"
+    "ExplicitBackends/"
+    "X64FrameEntry.DeviceFramesRejectBeforeAnyObservationOrStore/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.ContextRestoreRetainsPartialRAMAndUsesNewInput/"
+    "ExplicitBackends/"
+    "X64FrameEntry.ContextRestoreRetainsPartialRAMAndUsesNewInput/"
     "{backend}Supervisor_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.ContextRestoreRetainsPartialRAMAndUsesNewInput/"
+    "ExplicitBackends/"
+    "X64FrameEntry.ContextRestoreRetainsPartialRAMAndUsesNewInput/"
     "{backend}User_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64FrameEntry.ContextRestoreRetainsPartialRAMAndUsesNewInput/"
+    "ExplicitBackends/"
+    "X64FrameEntry.ContextRestoreRetainsPartialRAMAndUsesNewInput/"
     "{backend}Driver_",
     "unittests/emulation/X64FrameEntryCases.def", "NEVERD_FRAME_ENTRY_CASE")
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_CASES
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.ComparisonResultsPublishTogetherAndObserversSeeOriginalState/"
+    "ExplicitBackends/"
+    "X64WideAtomic."
+    "ComparisonResultsPublishTogetherAndObserversSeeOriginalState/"
     "{backend}Supervisor_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.ComparisonResultsPublishTogetherAndObserversSeeOriginalState/"
+    "ExplicitBackends/"
+    "X64WideAtomic."
+    "ComparisonResultsPublishTogetherAndObserversSeeOriginalState/"
     "{backend}User_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.ComparisonResultsPublishTogetherAndObserversSeeOriginalState/"
+    "ExplicitBackends/"
+    "X64WideAtomic."
+    "ComparisonResultsPublishTogetherAndObserversSeeOriginalState/"
     "{backend}Driver_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.EveryObserverBoundaryCanCancelOrThrowWithoutPublishing/"
+    "ExplicitBackends/"
+    "X64WideAtomic.EveryObserverBoundaryCanCancelOrThrowWithoutPublishing/"
     "{backend}Supervisor_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.EveryObserverBoundaryCanCancelOrThrowWithoutPublishing/"
+    "ExplicitBackends/"
+    "X64WideAtomic.EveryObserverBoundaryCanCancelOrThrowWithoutPublishing/"
     "{backend}User_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.EveryObserverBoundaryCanCancelOrThrowWithoutPublishing/"
+    "ExplicitBackends/"
+    "X64WideAtomic.EveryObserverBoundaryCanCancelOrThrowWithoutPublishing/"
     "{backend}Driver_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.MissingAndDeniedOperandsAreWriteFaultsEvenOnMismatch/"
+    "ExplicitBackends/"
+    "X64WideAtomic.MissingAndDeniedOperandsAreWriteFaultsEvenOnMismatch/"
     "{backend}Supervisor_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.MissingAndDeniedOperandsAreWriteFaultsEvenOnMismatch/"
+    "ExplicitBackends/"
+    "X64WideAtomic.MissingAndDeniedOperandsAreWriteFaultsEvenOnMismatch/"
     "{backend}User_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.MissingAndDeniedOperandsAreWriteFaultsEvenOnMismatch/"
+    "ExplicitBackends/"
+    "X64WideAtomic.MissingAndDeniedOperandsAreWriteFaultsEvenOnMismatch/"
     "{backend}Driver_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.AlignmentPrecedesMemoryAndAllowsAddressRepair/"
+    "ExplicitBackends/"
+    "X64WideAtomic.AlignmentPrecedesMemoryAndAllowsAddressRepair/"
     "{backend}Supervisor_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.AlignmentPrecedesMemoryAndAllowsAddressRepair/"
+    "ExplicitBackends/"
+    "X64WideAtomic.AlignmentPrecedesMemoryAndAllowsAddressRepair/"
     "{backend}User_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.AlignmentPrecedesMemoryAndAllowsAddressRepair/"
+    "ExplicitBackends/"
+    "X64WideAtomic.AlignmentPrecedesMemoryAndAllowsAddressRepair/"
     "{backend}Driver_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.AddressWrappingSegmentsAndPhysicalAliasesUseTheOriginalOperand/"
+    "ExplicitBackends/"
+    "X64WideAtomic."
+    "AddressWrappingSegmentsAndPhysicalAliasesUseTheOriginalOperand/"
     "{backend}Supervisor_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.AddressWrappingSegmentsAndPhysicalAliasesUseTheOriginalOperand/"
+    "ExplicitBackends/"
+    "X64WideAtomic."
+    "AddressWrappingSegmentsAndPhysicalAliasesUseTheOriginalOperand/"
     "{backend}User_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.AddressWrappingSegmentsAndPhysicalAliasesUseTheOriginalOperand/"
+    "ExplicitBackends/"
+    "X64WideAtomic."
+    "AddressWrappingSegmentsAndPhysicalAliasesUseTheOriginalOperand/"
     "{backend}Driver_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.WholeOperandPermissionsProtectCrossPageResults/"
+    "ExplicitBackends/"
+    "X64WideAtomic.WholeOperandPermissionsProtectCrossPageResults/"
     "{backend}Supervisor_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.WholeOperandPermissionsProtectCrossPageResults/"
+    "ExplicitBackends/"
+    "X64WideAtomic.WholeOperandPermissionsProtectCrossPageResults/"
     "{backend}User_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.WholeOperandPermissionsProtectCrossPageResults/"
+    "ExplicitBackends/"
+    "X64WideAtomic.WholeOperandPermissionsProtectCrossPageResults/"
     "{backend}Driver_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.GuestPrivilegeAndContextRestorationRetainCommittedRAM/"
+    "ExplicitBackends/"
+    "X64WideAtomic.GuestPrivilegeAndContextRestorationRetainCommittedRAM/"
     "{backend}Supervisor_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.GuestPrivilegeAndContextRestorationRetainCommittedRAM/"
+    "ExplicitBackends/"
+    "X64WideAtomic.GuestPrivilegeAndContextRestorationRetainCommittedRAM/"
     "{backend}User_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.GuestPrivilegeAndContextRestorationRetainCommittedRAM/"
+    "ExplicitBackends/"
+    "X64WideAtomic.GuestPrivilegeAndContextRestorationRetainCommittedRAM/"
     "{backend}Driver_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
@@ -3787,35 +4071,43 @@ NEVERD_NATIVE_CPU_REQUIRED_CASES(
     "{backend}Driver_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.DeviceOperandsNeverEnterCallbacksOrPublishEffects/"
+    "ExplicitBackends/"
+    "X64WideAtomic.DeviceOperandsNeverEnterCallbacksOrPublishEffects/"
     "{backend}Supervisor_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.DeviceOperandsNeverEnterCallbacksOrPublishEffects/"
+    "ExplicitBackends/"
+    "X64WideAtomic.DeviceOperandsNeverEnterCallbacksOrPublishEffects/"
     "{backend}User_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.DeviceOperandsNeverEnterCallbacksOrPublishEffects/"
+    "ExplicitBackends/"
+    "X64WideAtomic.DeviceOperandsNeverEnterCallbacksOrPublishEffects/"
     "{backend}Driver_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.ResultsMatchIndependentOriginalHostInstructions/"
+    "ExplicitBackends/"
+    "X64WideAtomic.ResultsMatchIndependentOriginalHostInstructions/"
     "{backend}Supervisor_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.ResultsMatchIndependentOriginalHostInstructions/"
+    "ExplicitBackends/"
+    "X64WideAtomic.ResultsMatchIndependentOriginalHostInstructions/"
     "{backend}User_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/X64WideAtomic.ResultsMatchIndependentOriginalHostInstructions/"
+    "ExplicitBackends/"
+    "X64WideAtomic.ResultsMatchIndependentOriginalHostInstructions/"
     "{backend}Driver_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/NativeX64WideAtomic.HardwareFaultsRetainStateAndClassifyWriteAccess/"
+    "ExplicitBackends/"
+    "NativeX64WideAtomic.HardwareFaultsRetainStateAndClassifyWriteAccess/"
     "{backend}Supervisor_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 NEVERD_NATIVE_CPU_REQUIRED_CASES(
-    "ExplicitBackends/NativeX64WideAtomic.HardwareFaultsRetainStateAndClassifyWriteAccess/"
+    "ExplicitBackends/"
+    "NativeX64WideAtomic.HardwareFaultsRetainStateAndClassifyWriteAccess/"
     "{backend}User_",
     "unittests/emulation/X64WideAtomicCases.def", "NEVERD_WIDE_ATOMIC_CASE")
 #endif
@@ -3823,30 +4115,24 @@ NEVERD_NATIVE_CPU_REQUIRED_CASES(
 // The two-byte near return, deferred loader facts and stopped-process
 // observation carry packed-image recovery on each native transport.
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64ReturnPrefix."
-    "RepeatPrefixedReturnIsTheOrdinaryNearReturn/"
-    "{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64ReturnPrefix."
-    "RepeatPrefixedReturnIsTheOrdinaryNearReturn/"
-    "{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64ReturnPrefix."
-    "RepeatPrefixedReturnIsTheOrdinaryNearReturn/"
-    "{backend}Driver")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64ReturnPrefix."
-    "ReadObserverStopsBeforeTheTransfer/"
-    "{backend}Supervisor")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64ReturnPrefix."
-    "ReadObserverStopsBeforeTheTransfer/"
-    "{backend}User")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "ExplicitBackends/X64ReturnPrefix."
-    "ReadObserverStopsBeforeTheTransfer/"
-    "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64ReturnPrefix."
+                                "RepeatPrefixedReturnIsTheOrdinaryNearReturn/"
+                                "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64ReturnPrefix."
+                                "RepeatPrefixedReturnIsTheOrdinaryNearReturn/"
+                                "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64ReturnPrefix."
+                                "RepeatPrefixedReturnIsTheOrdinaryNearReturn/"
+                                "{backend}Driver")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64ReturnPrefix."
+                                "ReadObserverStopsBeforeTheTransfer/"
+                                "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64ReturnPrefix."
+                                "ReadObserverStopsBeforeTheTransfer/"
+                                "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("ExplicitBackends/X64ReturnPrefix."
+                                "ReadObserverStopsBeforeTheTransfer/"
+                                "{backend}Driver")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64ReturnPrefix."
     "OtherPrefixedReturnsPublishNoObservationsOrEffects/"
@@ -3859,74 +4145,60 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/X64ReturnPrefix."
     "OtherPrefixedReturnsPublishNoObservationsOrEffects/"
     "{backend}Driver")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/WindowsDeferred."
-    "UnmodeledImportsAreRejectedUnlessDeferred/"
-    "{backend_title}X64")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/WindowsDeferred."
-    "ResolvingOpaqueEntriesNeverExecutesThem/"
-    "{backend_title}X64")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/WindowsDeferred."
-    "ExecutingAnOpaqueEntryStopsAndNamesIt/"
-    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/WindowsDeferred."
+                                "UnmodeledImportsAreRejectedUnlessDeferred/"
+                                "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/WindowsDeferred."
+                                "ResolvingOpaqueEntriesNeverExecutesThem/"
+                                "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/WindowsDeferred."
+                                "ExecutingAnOpaqueEntryStopsAndNamesIt/"
+                                "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsDeferred."
     "ObserverSeesTheProcessBeforeItsFirstInstruction/"
     "{backend_title}X64")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/WindowsDeferred."
-    "ResumedObservationRunsTheProcessUnchanged/"
-    "{backend_title}X64")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/WindowsDeferred."
-    "ObserverFailuresAreNotGuestOutcomes/"
-    "{backend_title}X64")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/WindowsDeferred."
-    "ProfilesWithoutObservationRefuseAnObserver/"
-    "{backend_title}X64")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/Unpack."
-    "RecoveredImageRunsExactlyLikeTheOriginal/"
-    "{backend_title}")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/Unpack."
-    "DirectJumpToTheProgramIsObservedAsItsEntry/"
-    "{backend_title}")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/Unpack."
-    "StubCallIntoTheProgramIsNotItsEntry/"
-    "{backend_title}")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/Unpack."
-    "ExplicitTransferOverridesTheEntryStack/"
-    "{backend_title}")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/Unpack."
-    "RunThatEndsInsideTheStubReportsWhy/"
-    "{backend_title}")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/Unpack."
-    "ProgramThatGeneratesNoCodeHasNoEntryToRecover/"
-    "{backend_title}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/WindowsDeferred."
+                                "ResumedObservationRunsTheProcessUnchanged/"
+                                "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/WindowsDeferred."
+                                "ObserverFailuresAreNotGuestOutcomes/"
+                                "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/WindowsDeferred."
+                                "ProfilesWithoutObservationRefuseAnObserver/"
+                                "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/Unpack."
+                                "RecoveredImageRunsExactlyLikeTheOriginal/"
+                                "{backend_title}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/Unpack."
+                                "DirectJumpToTheProgramIsObservedAsItsEntry/"
+                                "{backend_title}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/Unpack."
+                                "StubCallIntoTheProgramIsNotItsEntry/"
+                                "{backend_title}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/Unpack."
+                                "ExplicitTransferOverridesTheEntryStack/"
+                                "{backend_title}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/Unpack."
+                                "RunThatEndsInsideTheStubReportsWhy/"
+                                "{backend_title}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/Unpack."
+                                "ProgramThatGeneratesNoCodeHasNoEntryToRecover/"
+                                "{backend_title}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/Unpack."
     "ProgramCodeBeyondTheModelStopsInsteadOfBeingSkipped/"
     "{backend_title}")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/UnpackGenerated."
-    "PackedProgramRunsLikeTheLinkedOne/"
-    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/UnpackGenerated."
+                                "PackedProgramRunsLikeTheLinkedOne/"
+                                "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated."
     "LoaderThatLeavesForTheProgramYieldsTheLinkedImage/"
     "{backend_title}X64")
-NEVERD_NATIVE_CPU_REQUIRED_TEST(
-    "Backends/UnpackGenerated."
-    "LoaderCallIntoTheProgramPrecedesItsEntry/"
-    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST("Backends/UnpackGenerated."
+                                "LoaderCallIntoTheProgramPrecedesItsEntry/"
+                                "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated."
     "SecondLoaderIsTheEntryUntilALaterTransferIsNamed/"

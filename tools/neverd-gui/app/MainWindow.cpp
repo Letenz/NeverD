@@ -71,6 +71,9 @@ using KDDockWidgets::InitialOption;
 constexpr char LayoutFileName[] = "desktop.json";
 constexpr char RecentFilesKey[] = "files/recent";
 constexpr char OpcodeBytesKey[] = "listing/opcodeBytes";
+// String search defaults and bounds (the worker's string_options).
+constexpr int DefaultStringMinLength = 4;
+constexpr int MaxStringMinLength = 1024;
 constexpr char DocumentationUrl[] =
     "https://github.com/NeverSight/NeverD/blob/dev/docs/gui.md";
 constexpr int FunctionsWidth = 380;
@@ -920,6 +923,7 @@ void MainWindow::connectActions() {
   on(ActionId::ViewZoomReset, [] { Theme::instance().resetCodeFontSize(); });
 
   on(ActionId::OptionsGeneral, [this] { showOptions(); });
+  on(ActionId::OptionsStrings, [this] { showStringOptions(); });
   on(ActionId::OptionsColors, [this] { chooseTheme(); });
   on(ActionId::OptionsFont, [this] { chooseFont(); });
   on(ActionId::OptionsShortcuts, [this] { showShortcuts(); });
@@ -1322,6 +1326,75 @@ void MainWindow::showOptions() {
   disassembly_->listing()->setShowPrefixes(prefixes->isChecked());
   Theme::instance().setMode(theme->currentIndex() == 0 ? Theme::Mode::Dark
                                                        : Theme::Mode::Light);
+}
+
+void MainWindow::showStringOptions() {
+  const auto failed = [this](const QString &, const QString &message) {
+    output_->append(tr("String options are unavailable: %1").arg(message), 2);
+  };
+  session_.read(
+      QStringLiteral("string_encodings"), {}, this,
+      [this, failed](const QJsonObject &encodings) {
+        session_.read(
+            QStringLiteral("string_options"), {}, this,
+            [this, encodings](const QJsonObject &current) {
+              stringOptionsDialog(encodings.value("items").toArray(), current);
+            },
+            failed);
+      },
+      failed);
+}
+
+void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
+                                     const QJsonObject &current) {
+  QDialog dialog(this);
+  dialog.setWindowTitle(tr("String literals"));
+  auto *form = new QFormLayout(&dialog);
+  auto *choices = new QWidget(&dialog);
+  auto *column = new QVBoxLayout(choices);
+  column->setContentsMargins(0, 0, 0, 0);
+  QStringList chosen;
+  for (const auto &name : current.value("encodings").toArray())
+    chosen.append(name.toString());
+  QVector<QPair<QString, QCheckBox *>> boxes;
+  for (const auto &value : encodings) {
+    const auto encoding = value.toObject();
+    const auto name = encoding.value("name").toString();
+    const auto spelling = encoding.value("spelling").toString();
+    // Plain ASCII has no listing spelling of its own.
+    auto *box = new QCheckBox(
+        spelling.isEmpty() ? QStringLiteral("ASCII") : spelling, choices);
+    box->setChecked(chosen.contains(name));
+    column->addWidget(box);
+    boxes.append({name, box});
+  }
+  form->addRow(tr("Encodings:"), choices);
+  auto *length = new QSpinBox(&dialog);
+  length->setRange(1, MaxStringMinLength);
+  length->setValue(current.value("min_length").toInt(DefaultStringMinLength));
+  form->addRow(tr("Minimum length:"), length);
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  form->addRow(buttons);
+  // At least one encoding stays selected.
+  const auto update = [&] {
+    buttons->button(QDialogButtonBox::Ok)
+        ->setEnabled(std::any_of(boxes.begin(), boxes.end(), [](auto &box) {
+          return box.second->isChecked();
+        }));
+  };
+  for (auto &box : boxes)
+    connect(box.second, &QCheckBox::toggled, &dialog, update);
+  update();
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted)
+    return;
+  QStringList names;
+  for (auto &box : boxes)
+    if (box.second->isChecked())
+      names.append(box.first);
+  session_.setStringOptions(names, length->value());
 }
 
 void MainWindow::showShortcuts() {

@@ -216,6 +216,26 @@ std::string HighCWriter::typedText(const HighExpr &E, std::string Text,
   return Text;
 }
 
+std::string HighCWriter::signedCarrierResult(const HighExpr &E,
+                                             std::string Value, int ValuePrec,
+                                             uint16_t Size) {
+  std::string Text =
+      "__builtin_bit_cast(" + typeToC(E.Type) + ", " + Value + ")";
+  UnsignedCarrierTexts[&E] = {std::move(Value), ValuePrec};
+  if (!isPlainInteger(E.Type))
+    return Text;
+  return typedText(E, std::move(Text), Size, true);
+}
+
+std::optional<std::string>
+HighCWriter::unsignedCarrierText(const HighExpr &E, int ParentPrec) const {
+  const auto It = UnsignedCarrierTexts.find(&E);
+  if (It == UnsignedCarrierTexts.end())
+    return std::nullopt;
+  const auto &[Text, Prec] = It->second;
+  return Prec <= ParentPrec ? "(" + Text + ")" : Text;
+}
+
 const HighExpr &HighCWriter::lowBytesSource(const HighExpr &E,
                                             uint16_t Width) const {
   const HighExpr *Cur = &E;
@@ -280,6 +300,13 @@ std::string HighCWriter::integerView(const HighExpr &E, const TypeRef &To,
   if (const auto Printed = printedIntegerType(*Source);
       Printed && Printed->first == Width && Printed->second == Signed)
     return Text;
+  // The unsigned carrier under a signed result has the same low bytes.
+  if (Source->Type && Width <= Source->Type->Size)
+    if (auto Carrier = unsignedCarrierText(*Source, ParentPrec)) {
+      if (!Signed && Width == Source->Type->Size)
+        return *Carrier;
+      return "(" + typeToC(To) + ")" + c_memory::castOperand(*Carrier);
+    }
   return "(" + typeToC(To) + ")" + c_memory::castOperand(Text);
 }
 
@@ -318,7 +345,24 @@ HighCWriter::implicitIntegerConversion(const HighExpr &E, const TypeRef &To) {
   std::string Text = exprStr(Source);
   if (!integerText(Source, Text))
     return std::nullopt;
+  // C's conversion reads the carrier under a signed result just the same,
+  // unless it widens.
+  if (Source.Type && Width <= Source.Type->Size)
+    if (auto Carrier = unsignedCarrierText(Source, 0))
+      return *Carrier;
   return Text;
+}
+
+std::string HighCWriter::storedValueText(const HighExpr &Value,
+                                         const TypeRef &To,
+                                         NdMemoryOrdering Ordering) {
+  // A plain store converts the value to the memory's type like an
+  // assignment does.
+  if (Ordering == NdMemoryOrdering::None && Value.Type &&
+      Value.Type->Kind == NdTypeKind::Int)
+    if (auto Converted = implicitIntegerConversion(Value, To))
+      return *Converted;
+  return exprStr(Value);
 }
 
 std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
@@ -492,12 +536,11 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
       return exprStr(Inner, ParentPrec);
     // Zero extension converts the source's unsigned view.
     if (isPlainInteger(Inner.Type) && isPlainInteger(E.Type))
-      return typedText(E,
-                       "(" + typeToC(E.Type) + ")" +
-                           integerView(
-                               Inner, NdType::makeInt(Inner.Type->Size, false),
-                               99),
-                       E.Type->Size, E.Type->IsSigned);
+      return typedText(
+          E,
+          "(" + typeToC(E.Type) + ")" +
+              integerView(Inner, NdType::makeInt(Inner.Type->Size, false), 99),
+          E.Type->Size, E.Type->IsSigned);
     if (Inner.Type)
       return "(" + typeToC(E.Type) + ")(" +
              typeToC(NdType::makeInt(Inner.Type->Size, false)) + ")" +
@@ -520,12 +563,11 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
       return exprStr(Inner, ParentPrec);
     // Sign extension converts the source's signed view.
     if (isPlainInteger(Inner.Type) && isPlainInteger(E.Type))
-      return typedText(E,
-                       "(" + typeToC(E.Type) + ")" +
-                           integerView(
-                               Inner, NdType::makeInt(Inner.Type->Size, true),
-                               99),
-                       E.Type->Size, E.Type->IsSigned);
+      return typedText(
+          E,
+          "(" + typeToC(E.Type) + ")" +
+              integerView(Inner, NdType::makeInt(Inner.Type->Size, true), 99),
+          E.Type->Size, E.Type->IsSigned);
     return "(" + typeToC(E.Type) + ")(" +
            (Inner.Type ? typeToC(NdType::makeInt(Inner.Type->Size, true))
                        : "int32_t") +
@@ -895,6 +937,16 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     };
     const HighExpr *Imm = Immediate(Immediate, *Op, 0);
     std::string Arg = exprStr(Imm ? *Imm : *Op);
+    // A signed result of at least an int's width passes the same register
+    // bits as its unsigned carrier, unless a prototype widens it.
+    const TypeRef DefinedParam = Defined && I < Defined->Params.size()
+                                     ? Defined->Params[I].Type
+                                     : nullptr;
+    if (!Imm && Op->Type && Op->Type->Size >= 4 &&
+        (!DefinedParam || (DefinedParam->Kind == NdTypeKind::Int &&
+                           DefinedParam->Size <= Op->Type->Size)))
+      if (auto Carrier = unsignedCarrierText(*Op, 0))
+        Arg = *Carrier;
     // A callee printed in this file has a prototype: convert between pointer
     // and integer arguments the way the machine passed them, in a register.
     if (Defined && I < Defined->Params.size() && Defined->Params[I].Type &&
@@ -1184,9 +1236,13 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
       llvm::report_fatal_error(
           "HighC cannot render an image constant in a segmented offset");
   }
-  if (Inner != &E)
-    return exprStr(*Inner, ParentPrec);
-  return exprStr(E, ParentPrec);
+  // An address needs only the bits, so a signed carrier result gives its
+  // unsigned carrier.
+  const HighExpr &Printed = Inner != &E ? *Inner : E;
+  std::string Text = exprStr(Printed, ParentPrec);
+  if (auto Carrier = unsignedCarrierText(Printed, ParentPrec))
+    return *Carrier;
+  return Text;
 }
 
 bool HighCWriter::isIntegerViewOfScalar(const HighExpr &E) const {
@@ -1469,6 +1525,22 @@ TypeRef HighCWriter::expectedDebugCallArgType(const FunctionSym &FS,
 
 std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
                                            const TypeRef &Expected) {
+  // C converts an integer argument by the signedness of its own type, so an
+  // extension to a wider parameter cannot pass its narrower source unless
+  // that source extends the same way.
+  if (Expected && Expected->Kind == NdTypeKind::Int && !Expected->IsEnum) {
+    const HighExpr &Source = lowBytesSource(E, Expected->Size);
+    if (Source.Kind == ExprKind::UnaryOp &&
+        (Source.Op == NdOp::INT_ZEXT || Source.Op == NdOp::INT_SEXT) &&
+        !Source.Operands.empty() && Source.Operands[0] &&
+        Source.Operands[0]->Kind != ExprKind::Const &&
+        Source.Operands[0]->Type &&
+        Source.Operands[0]->Type->Size < Expected->Size) {
+      if (auto Converted = implicitIntegerConversion(E, Expected))
+        return *Converted;
+      return exprStr(E);
+    }
+  }
   const HighExpr *Inner = peelIntegerViewOps(&E);
   if (!Inner)
     Inner = &E;
@@ -2864,6 +2936,7 @@ bool HighCWriter::isNamedFrameMemory(const HighExpr &E) const {
 std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec,
                                  MemoryLoadDestination *Destination) {
   PrintedIntegerTypes.erase(&E);
+  UnsignedCarrierTexts.erase(&E);
   std::string Text = exprStrImpl(E, ParentPrec, Destination);
   // A local's name has its declared type.
   if (!Text.empty() && (llvm::isAlpha(Text.front()) || Text.front() == '_'))
@@ -3099,8 +3172,18 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     return memoryStoreExpr(E.Operands[1]->Type, Addr, Val, E.MemoryOrdering,
                            E.MemoryAddressSpace);
   }
-  case ExprKind::Call:
-    return renderCallExpr(E);
+  case ExprKind::Call: {
+    std::string Text = renderCallExpr(E);
+    // `callee(...)` has the return type its declaration prints.
+    if (const TypeRef Return = knownCallReturnType(E); isPlainInteger(Return)) {
+      const std::string Prefix = callIdentifier(E) + "(";
+      if (llvm::StringRef(Text).starts_with(Prefix) && Text.back() == ')' &&
+          c_memory::castOperand(Text.substr(Prefix.size() - 1)) ==
+              Text.substr(Prefix.size() - 1))
+        return typedText(E, std::move(Text), Return->Size, Return->IsSigned);
+    }
+    return Text;
+  }
   case ExprKind::Cast: {
     if (E.Operands.empty())
       return "/* bad cast */";
@@ -3108,9 +3191,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       return exprStr(*Call, ParentPrec);
     const TypeRef &To = E.CastTo ? E.CastTo : E.Type;
     if (isPlainInteger(To) && isPlainInteger(E.Operands[0]->Type))
-      return typedText(
-          E, integerView(*E.Operands[0], To, ParentPrec),
-          To->Size, To->IsSigned);
+      return typedText(E, integerView(*E.Operands[0], To, ParentPrec), To->Size,
+                       To->IsSigned);
     std::string Ty = typeToC(To);
     return "(" + Ty + ")" + exprStr(*E.Operands[0], 99);
   }
@@ -3127,9 +3209,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return Text;
       }
       if (isPlainInteger(E.Type) && isPlainInteger(Src.Type))
-        return typedText(E,
-                         integerView(Src, E.Type, ParentPrec),
-                         E.Type->Size, E.Type->IsSigned);
+        return typedText(E, integerView(Src, E.Type, ParentPrec), E.Type->Size,
+                         E.Type->IsSigned);
       return "(" + typeToC(E.Type) + ")" + exprStr(Src, 99);
     }
     // The explicit source cast prevents integer promotions (or an unsuffixed
@@ -3310,10 +3391,10 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
                            Inner->Type->Size == FuncReturnType->Size;
     const bool SameSign =
         SameWidth && Inner->Type->IsSigned == FuncReturnType->IsSigned;
-    if (Inner->Kind == ExprKind::Const || SameSign)
-      return exprStr(*Inner);
     if (auto Converted = implicitIntegerConversion(*Inner, FuncReturnType))
       return *Converted;
+    if (Inner->Kind == ExprKind::Const || SameSign)
+      return exprStr(*Inner);
     return "(" + typeToC(FuncReturnType) + ")" + exprStr(*Inner, 99);
   }
 
@@ -3338,6 +3419,10 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
     return "(" + typeToC(FuncReturnType) + ")" + exprStr(Expr);
   }
 
+  if (Expr.Type && Expr.Type->Kind == NdTypeKind::Int &&
+      Expr.Type->Size == FuncReturnType->Size)
+    if (auto Converted = implicitIntegerConversion(Expr, FuncReturnType))
+      return *Converted;
   return exprStr(Expr);
 }
 

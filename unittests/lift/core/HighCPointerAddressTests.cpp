@@ -118,7 +118,8 @@ std::string emitFunctions(const std::vector<HighFunc> &Functions,
   return Source;
 }
 
-void compileAndRunCallOrdering(const std::string &Source) {
+void compileAndRunCallOrdering(const std::string &Source,
+                               bool TrapUndefined = false) {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -146,7 +147,7 @@ void compileAndRunCallOrdering(const std::string &Source) {
       std::nullopt, std::nullopt, ErrorPath.str()};
   for (llvm::StringRef Optimization : {"-O0", "-O2"}) {
     SCOPED_TRACE(Optimization.str());
-    const llvm::SmallVector<llvm::StringRef, 12> Arguments{
+    llvm::SmallVector<llvm::StringRef, 12> Arguments{
         Compiler,
         "-std=c11",
         Optimization,
@@ -156,6 +157,10 @@ void compileAndRunCallOrdering(const std::string &Source) {
         SourcePath,
         "-o",
         ExecutablePath};
+    if (TrapUndefined) {
+      Arguments.push_back("-fsanitize=undefined");
+      Arguments.push_back("-fsanitize-trap=undefined");
+    }
     std::string Error;
     const int Compiled = llvm::sys::ExecuteAndWait(
         Compiler, Arguments, std::nullopt, Redirects, 30, 0, &Error);
@@ -172,6 +177,57 @@ void compileAndRunCallOrdering(const std::string &Source) {
                       << "\n"
                       << Source;
   }
+}
+
+// Execute only the emitted ordinary-C continuation, not Windows SEH delivery.
+void compileAndRunSehContinuation(const std::string &Body,
+                                  const std::string &Global, bool Portable) {
+  std::string Program = "#include <stdint.h>\n#include <string.h>\nint32_t " +
+                        Global + ";\n#define OBSERVED " + Global + "\n";
+  if (Portable)
+    Program += "#define PORTABLE_FRAME\n"
+               "_Alignas(16) static uint8_t frameStorage[64];\n";
+  Program += "int32_t continuation(uint32_t bits) {\n" + Body + "\n}\n";
+  Program += R"c(
+static int check(uint32_t bits) {
+  const uint32_t expected = (uint32_t)((uint64_t)bits + 1);
+  const int32_t value = continuation(bits);
+  uint32_t actual, observed;
+  memcpy(&actual, &value, sizeof(actual));
+  memcpy(&observed, &OBSERVED, sizeof(observed));
+  if (actual != expected || observed != bits)
+    return 1;
+#ifdef PORTABLE_FRAME
+  if (memcmp(frameStorage, &bits, sizeof(bits)))
+    return 1;
+  for (unsigned i = sizeof(bits); i < sizeof(frameStorage); ++i)
+    if (frameStorage[i] != 0xa5)
+      return 1;
+#endif
+  return 0;
+}
+int main(void) {
+  static const uint32_t boundary[] = {
+      0, 1, 41, 0xffffff9c, 0x7ffffffe, 0x7fffffff, 0x80000000,
+      0xfffffffe, 0xffffffff};
+  for (unsigned i = 0; i < sizeof(boundary) / sizeof(boundary[0]); ++i)
+    if (check(boundary[i]))
+      return 1;
+  for (uint32_t i = 0; i < 65536; ++i)
+    if (check(i) || check(0xffff0000u | i))
+      return 1;
+  uint64_t state = 0xd15ea5e;
+  for (unsigned i = 0; i < 4096; ++i) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    if (check((uint32_t)state))
+      return 1;
+  }
+  return 0;
+}
+)c";
+  compileAndRunCallOrdering(Program, /*TrapUndefined=*/true);
 }
 
 std::optional<std::vector<std::string_view>>
@@ -847,8 +903,12 @@ TEST(HighCPointerAddresses, InlinedSignedIncrementKeepsModularExpression) {
   Func.Body = {Store};
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("+= 1"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__builtin_bit_cast(int32_t"), std::string::npos)
+  // The increment wraps in an unsigned carrier; the int32_t store converts
+  // it back.
+  EXPECT_NE(Source.find("= (uint32_t)(*(const neverd_unaligned_i32 *)"),
+            std::string::npos)
       << Source;
+  EXPECT_NE(Source.find(" + 1);"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, IncrementLoadKeptWhenValueIsUsed) {
@@ -887,9 +947,10 @@ TEST(HighCPointerAddresses, IncrementLoadKeptWhenValueIsUsed) {
   returnValue(Func, HighExpr::makeVar(T, I32));
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("+= 1"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__builtin_bit_cast(int32_t"), std::string::npos)
+  // The increment wraps in an unsigned carrier; the int32_t store converts
+  // it back.
+  EXPECT_NE(Source.find("= (uint32_t)t94_8 + 1);"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("t94_8"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, AddressTakenFrameSlotUsesSharedBacking) {
@@ -24252,7 +24313,7 @@ TEST(HighCPointerAddresses, X86DivPreconditionKeepsArithmeticWraps) {
       Source.substr(DividendAt, DividendEnd - DividendAt);
   // eRecord is declared uint32_t. Its add wraps at 32 bits before the
   // dividend is widened; the old per-operand casts are unnecessary.
-  EXPECT_NE(Dividend.find("(uint32_t)(eRecord + 1)"), std::string::npos)
+  EXPECT_NE(Dividend.find("(uint64_t)(eRecord + 1)"), std::string::npos)
       << Source;
   EXPECT_EQ(Dividend.find("(uint64_t)(eRecord) + 1"), std::string::npos)
       << Source;
@@ -25303,7 +25364,7 @@ TEST(HighCPointerAddresses, Win64SameBlockRdxRecoversPredSetupR8) {
   EXPECT_EQ(Args->size(), 3u) << Source << "\nHighIR:\n" << HighDump;
   if (Args->size() == 3) {
     EXPECT_NE((*Args)[1].find("3313"), std::string_view::npos) << Source;
-    EXPECT_NE((*Args)[2].find("+ 64)"), std::string_view::npos) << Source;
+    EXPECT_NE((*Args)[2].find(" + 64"), std::string_view::npos) << Source;
   }
   EXPECT_EQ(Source.find(", 42"), std::string::npos) << Source;
 }
@@ -25442,7 +25503,7 @@ TEST(HighCPointerAddresses, Win64CallJoinRecoversDominatingR8) {
   ASSERT_TRUE(Args) << Source;
   EXPECT_EQ(Args->size(), 3u) << Source << "\nHighIR:\n" << HighDump;
   if (Args->size() == 3)
-    EXPECT_NE((*Args)[2].find("+ 64)"), std::string_view::npos) << Source;
+    EXPECT_NE((*Args)[2].find(" + 64"), std::string_view::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, Win64IpMapSplitCallKeepsPredLeaArgs) {
@@ -25668,11 +25729,22 @@ TEST(HighCPointerAddresses, Win64CallOnlyBlockRecoversPredR9AndHome) {
   const auto CallAt = Source.rfind("Concatenate(");
   ASSERT_NE(CallAt, std::string::npos) << Source;
   const auto Open = Source.find('(', CallAt);
-  const auto Close = Source.find(')', Open);
   ASSERT_NE(Open, std::string::npos) << Source;
+  // Count the commas between arguments, not those inside an argument such
+  // as the unknown r8 the helper call clobbered.
+  int Depth = 0;
+  size_t Commas = 0;
+  size_t Close = std::string::npos;
+  for (size_t I = Open; I < Source.size() && Close == std::string::npos; ++I) {
+    if (Source[I] == '(')
+      ++Depth;
+    else if (Source[I] == ')' && --Depth == 0)
+      Close = I;
+    else if (Source[I] == ',' && Depth == 1)
+      ++Commas;
+  }
   ASSERT_NE(Close, std::string::npos) << Source;
-  const std::string Args = Source.substr(Open + 1, Close - Open - 1);
-  EXPECT_EQ(std::count(Args.begin(), Args.end(), ','), 4) << Source;
+  EXPECT_EQ(Commas, 4u) << Source;
 }
 
 TEST(HighCPointerAddresses, NestedIfGotoSkipInvertsToIf) {
@@ -34201,6 +34273,8 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   auto ExceptStore = sourceLineContaining(Source, "+= 20;");
   if (ExceptStore.empty())
     ExceptStore = sourceLineContaining(Source, ") + 20)");
+  if (ExceptStore.empty())
+    ExceptStore = sourceLineContaining(Source, ") + 20;");
   ASSERT_NE(Store, Stores.end()) << Source;
   ASSERT_FALSE(Clear.empty()) << Source;
   ASSERT_FALSE(Home.empty()) << Source;
@@ -38710,9 +38784,9 @@ TEST(HighCPointerAddresses, ReturnViewChainAroundAddKeepsOneCast) {
   Narrow->Operands = {Outer};
   returnValue(Func, Narrow);
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("return (int32_t)"), std::string::npos) << Source;
+  // The int32_t return converts the unsigned sum itself.
+  EXPECT_NE(Source.find("return arg0 + 1;"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("(int64_t)"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ "), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, ReturnZextFromNarrowerKeepsSourceWidth) {
@@ -38760,14 +38834,40 @@ TEST(HighCPointerAddresses, CorpusFuncLoadSehProbeRaisesImmediate) {
       << Source;
   EXPECT_EQ(Source.find("nd_seh_filter_"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v2 ="), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return __builtin_bit_cast(int32_t,"),
+  EXPECT_EQ(
+      llvm::StringRef(sourceLineContaining(Source, "sub_140001050(")).trim(),
+      "int32_t sub_140001050(int32_t arg0) {")
+      << Source;
+  EXPECT_EQ(llvm::StringRef(sourceLineContaining(Source, "var_m18;")).trim(),
+            "uint32_t var_m18;")
+      << Source;
+  EXPECT_EQ(llvm::StringRef(sourceLineContaining(Source, "t22_4;")).trim(),
+            "int32_t t22_4;")
+      << Source;
+  EXPECT_EQ(
+      llvm::StringRef(sourceLineContaining(Source, "g_1400050E0;")).trim(),
+      "int32_t g_1400050E0;")
+      << Source;
+  const std::string ReturnText = "return var_m18 + 1;";
+  const size_t FirstReturn = Source.find(ReturnText);
+  ASSERT_NE(FirstReturn, std::string::npos) << Source;
+  const size_t SecondReturn =
+      Source.find(ReturnText, FirstReturn + ReturnText.size());
+  ASSERT_NE(SecondReturn, std::string::npos) << Source;
+  EXPECT_EQ(Source.find(ReturnText, SecondReturn + ReturnText.size()),
             std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("(int64_t)(uint32_t)(int32_t)"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("return __builtin_bit_cast(int32_t, var_m18 + 1);"),
-            std::string::npos)
-      << Source;
+  const auto GlobalStore = sourceLineContaining(Source, "g_1400050E0 = ");
+  const auto Copy = sourceLineContaining(Source, "t22_4 = var_m18;");
+  ASSERT_FALSE(GlobalStore.empty()) << Source;
+  ASSERT_FALSE(Copy.empty()) << Source;
+  compileAndRunSehContinuation(
+      "uint32_t var_m18 = bits;\nint32_t t22_4;\n" + std::string(Copy) + "\n" +
+          std::string(GlobalStore) + "\n" +
+          std::string(sourceLineContaining(Source, ReturnText)),
+      "g_1400050E0", /*Portable=*/false);
 }
 
 TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeHasSingleWin64Arg) {
@@ -39583,11 +39683,48 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   EXPECT_NE(GlobalStore.find("__builtin_memcpy(&"), std::string_view::npos)
       << Source;
   EXPECT_NE(GlobalStore.find(JoinedAddress), std::string_view::npos) << Source;
-  const auto Return =
-      sourceLineContaining(HandlerText, "return __builtin_bit_cast(int32_t,");
+  const auto Return = sourceLineContaining(HandlerText, "return ");
+  ASSERT_FALSE(Return.empty()) << Source;
+  EXPECT_NE(Return.find("return (uint32_t)("), std::string_view::npos)
+      << Source;
+  EXPECT_NE(Return.find(") + 1;"), std::string_view::npos) << Source;
   EXPECT_NE(Return.find("__builtin_memcpy(&"), std::string_view::npos)
       << Source;
   EXPECT_NE(Return.find(JoinedAddress), std::string_view::npos) << Source;
+  EXPECT_LT(HandlerText.find("g_4040C8 = "), HandlerText.find("return "))
+      << Source;
+  EXPECT_EQ(HandlerText.find("return ", HandlerText.find("return ") + 7),
+            std::string::npos)
+      << Source;
+  EXPECT_EQ(llvm::StringRef(sourceLineContaining(Source, "sub_401040(")).trim(),
+            "int32_t sub_401040(int32_t arg0) {")
+      << Source;
+  EXPECT_EQ(llvm::StringRef(sourceLineContaining(Source, "g_4040C8;")).trim(),
+            "int32_t g_4040C8;")
+      << Source;
+  const auto ReturnArgs = callArguments(Return, "__builtin_memcpy", false);
+  const auto GlobalArgs = callArguments(GlobalStore, "__builtin_memcpy", false);
+  ASSERT_TRUE(ReturnArgs && ReturnArgs->size() == 3) << Source;
+  ASSERT_TRUE(GlobalArgs && GlobalArgs->size() == 3) << Source;
+  ASSERT_TRUE((*ReturnArgs)[0].starts_with("&")) << Source;
+  ASSERT_TRUE((*GlobalArgs)[0].starts_with("&")) << Source;
+  const std::string ReturnName((*ReturnArgs)[0].substr(1));
+  const std::string GlobalName((*GlobalArgs)[0].substr(1));
+  EXPECT_EQ(
+      llvm::StringRef(sourceLineContaining(Source, ReturnName + ";")).trim(),
+      "int32_t " + ReturnName + ";")
+      << Source;
+  EXPECT_EQ(
+      llvm::StringRef(sourceLineContaining(Source, GlobalName + ";")).trim(),
+      "int32_t " + GlobalName + ";")
+      << Source;
+  compileAndRunSehContinuation(
+      "uint8_t *frame = frameStorage;\nmemset(frame, 0xa5, 64);\n"
+      "const uintptr_t frame_base = (uintptr_t)(frame + 32);\n"
+      "memcpy(frame, &bits, 4);\nint32_t " +
+          ReturnName + ", " + GlobalName + ";\n" + std::string(GlobalStore) +
+          "\n" + std::string(Return),
+      "g_4040C8", /*Portable=*/true);
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
   // The retained SSA copy of the exception code must reach the call unchanged.

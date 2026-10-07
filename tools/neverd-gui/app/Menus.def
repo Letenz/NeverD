@@ -137,6 +137,7 @@ NEVERD_MENU_ITEM(View, ViewZoomReset)
 
 NEVERD_MENU(Options, None, QT_TRANSLATE_NOOP("Menus", "&Options"))
 NEVERD_MENU_ITEM(Options, OptionsGeneral)
+NEVERD_MENU_ITEM(Options, OptionsStrings)
 NEVERD_MENU_ITEM(Options, OptionsColors)
 NEVERD_MENU_ITEM(Options, OptionsFont)
 NEVERD_MENU_ITEM(Options, OptionsShortcuts)

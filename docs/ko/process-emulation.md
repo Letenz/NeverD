@@ -86,7 +86,7 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
 
 선택한 raw 호출은 커널 진입점이 없는 경우처럼 인자 검증 전에 -ENOSYS를 반환하며, descriptor를 생성하거나 게스트 메모리를 변경하지 않습니다. Bionic `syscall` wrapper는 일반적인 -1/errno 변환을 유지합니다. 입력을 생략하거나 빈 목록을 주면 이 인터페이스의 기존 미지원 경계가 유지되며, 다른 알 수 없는 호출을 ENOSYS로 변환하지 않습니다. 현재 `pidfd_open`만 허용하며 알 수 없는 이름, 중복, 잘못된 타입은 거부합니다. 입력으로 커널 버전, 호스트 가용성 또는 작동하는 pidfd 구현을 추정하지 않습니다. [커널의 누락 호출 구현](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c)을 참조하십시오.
 
-명시적인 `linux_kernel.gki`는 5.10부터 6.18까지 출시된 Android common 커널 브랜치를 선택합니다. 현재 구현 범위는 살아 있는 모델 프로세스에 대한 `pidfd_open`이며, 버전별 플래그와 `linux_files`와 동일한 descriptor 테이블을 사용합니다. Bionic과 raw trap은 소유권과 오류 순서를 공유합니다. GKI와 `pidfd_open` 부재 관측은 함께 선택할 수 없습니다. Android API 수준은 커널을 선택하지 않습니다. 고정된 8개 소스 버전, descriptor 동작, 테스트 및 남은 범위는 [출시된 GKI 계약](../android-gki-kernels.md)을 참조하십시오.
+명시적인 `linux_kernel.gki`는 5.10~6.18의 출시된 Android common 커널 계열을 선택합니다. 구현 범위는 살아 있는 모델 프로세스와 명시한 게스트 작업의 `pidfd_open`, 버전별 벡터 가져오기입니다. `linux_files`와 설명자 표를 공유하며 Bionic과 원시 트랩의 소유권과 오류 순서가 같습니다. GKI와 `pidfd_open` 부재 관측은 함께 지정할 수 없습니다. 선택적인 `linux_kernel.tasks` 배열은 다른 살아 있는 작업의 고정된 닫힌 목록을 선언합니다. 항목 예는 `{ "id": 2000, "group_leader": true }`입니다. 배열을 생략하면 다른 대상 조회는 미지원이며, 빈 배열은 실행 중인 그룹 리더만 알고 있습니다. 선언한 목록 밖 PID는 ESRCH를 반환합니다. 목록과 우선순위 관측은 일치해야 하며 협력형 Android 게스트 스레드와 함께 사용할 수 없습니다. Android API 수준은 커널을 선택하지 않습니다. 여덟 소스 버전, 설명자 동작, 테스트와 남은 범위는[출시된 GKI 계약](../android-gki-kernels.md)을 참조하세요.
 
 선택 입력 `linux_priority`는 호출자와 같은 UID를 가진 테스트 태스크의 nice 상태를 선언합니다. Linux ELF64와 Android의 원시 `setpriority` 및 `getpriority`는 이 상태를 공유하며 호스트 우선순위는 변경하지 않습니다.
 
