@@ -1254,27 +1254,76 @@ void HighCWriter::invalidateJoinPhiFrameAliases(const HighFunc &Func) {
   }
   if (AmbiguousFrameAliases.empty())
     return;
-  std::function<void(const std::vector<HighStmt> &)> Revive;
-  Revive = [&](const std::vector<HighStmt> &Stmts) {
-    for (const HighStmt &S : Stmts) {
-      if (S.Kind == StmtKind::Assign && S.Dst &&
-          (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi)) {
-        const std::string Name = varName(S.Dst->Var);
-        if (AmbiguousFrameAliases.count(Name)) {
-          Analysis.DeadStmts.erase(&S);
-          Analysis.DeadVars.erase(Name);
-        }
+  // Each variable \p S reads, the address of an assigned memory location
+  // included.
+  auto ForEachRead = [&](const HighStmt &S,
+                         const std::function<void(std::string)> &Fn) {
+    std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
+      if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
+        if (std::string Name = varName(E.Var); !Name.empty())
+          Fn(std::move(Name));
+        return;
       }
-      Revive(S.Body);
-      Revive(S.ElseBody);
-      for (const auto &C : S.Cases)
-        Revive(C.Body);
-      Revive(S.DefaultBody);
-      for (const auto &ClauseBody : S.EHClauseBodies)
-        Revive(ClauseBody);
-    }
+      E.forEachChildExpr([&](const ExprPtr &Child) {
+        if (Child)
+          Visit(*Child);
+      });
+    };
+    forEachExpr(S, [&](const ExprPtr &E) {
+      if (E && (E != S.Dst ||
+                (E->Kind != ExprKind::Var && E->Kind != ExprKind::Phi)))
+        Visit(*E);
+    });
   };
-  Revive(Func.Body);
+  std::map<std::string, std::vector<const HighStmt *>> Definitions;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Assign && S.Dst &&
+        (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi))
+      Definitions[varName(S.Dst->Var)].push_back(&S);
+  });
+  // The alias prints by name, so its definitions print again only when a
+  // printed statement reads it.  Reads continue through the definitions of
+  // each name read, since a hidden definition may print where it is
+  // forwarded.  The definitions of a name nothing printed reads stay hidden.
+  std::set<std::string> Read;
+  std::vector<std::string> Work;
+  auto Reach = [&](std::string Name) {
+    if (Read.insert(Name).second)
+      Work.push_back(std::move(Name));
+  };
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (!Analysis.DeadStmts.count(&S))
+      ForEachRead(S, Reach);
+  });
+  while (!Work.empty()) {
+    const std::string Name = std::move(Work.back());
+    Work.pop_back();
+    for (const HighStmt *Def : Definitions[Name])
+      ForEachRead(*Def, Reach);
+  }
+  for (auto It = AmbiguousFrameAliases.begin();
+       It != AmbiguousFrameAliases.end();)
+    It = Read.count(*It) ? std::next(It) : AmbiguousFrameAliases.erase(It);
+  // A revived definition prints, so every definition it reads must print as
+  // well, though an earlier pass may have dropped it as unused.
+  std::set<std::string> Revived;
+  auto Revive = [&](std::string Name) {
+    if (Revived.insert(Name).second)
+      Work.push_back(std::move(Name));
+  };
+  for (const std::string &Name : AmbiguousFrameAliases) {
+    Analysis.DeadVars.erase(Name);
+    Revive(Name);
+  }
+  while (!Work.empty()) {
+    const std::string Name = std::move(Work.back());
+    Work.pop_back();
+    for (const HighStmt *Def : Definitions[Name])
+      if (Analysis.DeadStmts.erase(Def)) {
+        Analysis.DeadVars.erase(Name);
+        ForEachRead(*Def, Revive);
+      }
+  }
 }
 
 void HighCWriter::applyDebugCallSlotTypes(const HighFunc &Func) {
