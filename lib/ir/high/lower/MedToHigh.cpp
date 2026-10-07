@@ -1307,7 +1307,9 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   // Names merge last: every earlier pass may still move statements as if
   // each local had the definitions it had in SSA.
   coalesceHighPhiCopies(Func);
-  // A copy back from a temporary joins its definition once names merged.
+  // A read used once by the next statement moves into it, and a copy back
+  // from a temporary joins its definition, once names merged.
+  inlineAdjacentLoads(Func);
   foldCopiesIntoDefinitions(Func);
   // Signedness follows the merged names: one declaration, one type.
   chooseIntegerSignedness(Func);

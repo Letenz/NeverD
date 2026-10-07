@@ -599,46 +599,49 @@ TEST(DarwinUIKitSourceCalls,
   auto High = MedToHighConverter().convert(Med, Arch::AArch64);
   auto Bound = sdk::bindObjCSourceReferences(High, I);
   unsigned Calls = 0, StorageCalls = 0, WordLoads = 0;
-  walkStmts(Bound.Function.Body, [&](const HighStmt &S) {
-    forEachExpr(S, [&](const ExprPtr &E) {
-      if (!E)
-        return;
-      if (E->Kind == ExprKind::Load && E->Type && E->Type->Size == 4)
-        ++WordLoads;
-      if (E->Kind != ExprKind::Call)
-        return;
-      ASSERT_TRUE(E->SourceCallHint);
-      EXPECT_TRUE(sdk::objcSourceCallBound(*E, I, {}));
-      if (E->SourceCallHint->CallKind ==
-          SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress) {
-        ++StorageCalls;
-        EXPECT_EQ(E->SourceCallHint->TargetAddress, 0x2188U);
-        return;
-      }
-      ++Calls;
-      ASSERT_EQ(E->Operands.size(), 2U);
-      EXPECT_EQ(E->SourceCallHint->TargetName,
-                "UIAccessibilityPostNotification");
-      for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
-        auto Wrong = std::make_shared<SourceCallTypeHint>(*E->SourceCallHint);
-        if (Mutation == 0)
-          Wrong->Signature.Parameters[0].Type = NdType::makeInt(1, false);
-        else if (Mutation == 1)
-          Wrong->Signature.Parameters[0].Type = NdType::makeInt(4, true);
-        else if (Mutation == 2)
-          Wrong->Signature.Parameters[0].Type = NdType::makeInt(8, false);
-        else if (Mutation == 3)
-          Wrong->Signature.Parameters[1].Type = NdType::makeInt(8, false);
-        else
-          Wrong->Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
-        ASSERT_TRUE(
-            assignDarwinFixedSourceABI(Wrong->Signature, Arch::AArch64, Error));
-        auto Changed = *E;
-        Changed.SourceCallHint = Wrong;
-        EXPECT_FALSE(sdk::objcSourceCallBound(Changed, I, {})) << Mutation;
-      }
-    });
-  });
+  // A load may sit in the call that reads it, and a storage call in the
+  // address of the load.
+  std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
+    if (!E)
+      return;
+    for (const ExprPtr &Operand : E->Operands)
+      Visit(Operand);
+    if (E->Kind == ExprKind::Load && E->Type && E->Type->Size == 4)
+      ++WordLoads;
+    if (E->Kind != ExprKind::Call)
+      return;
+    ASSERT_TRUE(E->SourceCallHint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*E, I, {}));
+    if (E->SourceCallHint->CallKind ==
+        SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress) {
+      ++StorageCalls;
+      EXPECT_EQ(E->SourceCallHint->TargetAddress, 0x2188U);
+      return;
+    }
+    ++Calls;
+    ASSERT_EQ(E->Operands.size(), 2U);
+    EXPECT_EQ(E->SourceCallHint->TargetName, "UIAccessibilityPostNotification");
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      auto Wrong = std::make_shared<SourceCallTypeHint>(*E->SourceCallHint);
+      if (Mutation == 0)
+        Wrong->Signature.Parameters[0].Type = NdType::makeInt(1, false);
+      else if (Mutation == 1)
+        Wrong->Signature.Parameters[0].Type = NdType::makeInt(4, true);
+      else if (Mutation == 2)
+        Wrong->Signature.Parameters[0].Type = NdType::makeInt(8, false);
+      else if (Mutation == 3)
+        Wrong->Signature.Parameters[1].Type = NdType::makeInt(8, false);
+      else
+        Wrong->Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+      ASSERT_TRUE(
+          assignDarwinFixedSourceABI(Wrong->Signature, Arch::AArch64, Error));
+      auto Changed = *E;
+      Changed.SourceCallHint = Wrong;
+      EXPECT_FALSE(sdk::objcSourceCallBound(Changed, I, {})) << Mutation;
+    }
+  };
+  walkStmts(Bound.Function.Body,
+            [&](const HighStmt &S) { forEachExpr(S, Visit); });
   ASSERT_EQ(Calls, 2U);
   EXPECT_GT(StorageCalls, 0U);
   EXPECT_EQ(WordLoads, 2U);

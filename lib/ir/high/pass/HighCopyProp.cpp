@@ -487,6 +487,125 @@ AssignsAndReads countAssignsAndReads(const HighFunc &Func) {
 
 } // namespace
 
+bool inlineAdjacentLoads(HighFunc &Func) {
+  // A handler may observe which statement a faulting read belonged to.
+  if (Func.StructuredExceptionRegions || Func.UnstructuredExceptionRegions)
+    return false;
+  AssignsAndReads Counts = countAssignsAndReads(Func);
+  VarKeyMap<int> &Defs = Counts.Defs, &Reads = Counts.Reads;
+  const std::set<va_t> &Targets = Counts.Targets;
+  // Evaluating \p E reads memory at most: no call, store, intrinsic or
+  // ordered access.
+  std::function<bool(const ExprPtr &)> Pure = [&](const ExprPtr &E) {
+    if (!E)
+      return true;
+    if (E->Kind == ExprKind::Call || E->Kind == ExprKind::Store ||
+        E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
+        E->MemoryOrdering != NdMemoryOrdering::None ||
+        E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return false;
+    bool Ok = true;
+    E->forEachChildExpr([&](const ExprPtr &C) { Ok = Ok && Pure(C); });
+    return Ok;
+  };
+  // The slot holding variable \p Key in \p E, when \p E reads it once.
+  std::function<ExprPtr *(ExprPtr &, const VarKey &)> SlotOf =
+      [&](ExprPtr &E, const VarKey &Key) -> ExprPtr * {
+    if (!E)
+      return nullptr;
+    if (E->Kind == ExprKind::Var && VK(E->Var) == Key)
+      return &E;
+    for (ExprPtr &C : E->Operands)
+      if (ExprPtr *Found = SlotOf(C, Key))
+        return Found;
+    return nullptr;
+  };
+  // The statement \p N reads its operands before any effect of its own, so a
+  // read moved into it keeps its place among the program's effects: every
+  // operand is pure, or \p N is one call whose arguments are.
+  auto Takes = [&](HighStmt &N, const VarKey &Key) -> ExprPtr * {
+    auto CallArgument = [&](ExprPtr &Call) -> ExprPtr * {
+      if (!Call || Call->Kind != ExprKind::Call)
+        return nullptr;
+      for (const ExprPtr &Operand : Call->Operands)
+        if (!Pure(Operand))
+          return nullptr;
+      return SlotOf(Call, Key);
+    };
+    switch (N.Kind) {
+    case StmtKind::Assign:
+      if (!N.Dst || N.Dst->Kind != ExprKind::Var)
+        return nullptr;
+      if (Pure(N.Val))
+        return SlotOf(N.Val, Key);
+      return CallArgument(N.Val);
+    case StmtKind::Call:
+      return CallArgument(N.CallExpr);
+    case StmtKind::Store:
+      if (!Pure(N.StoreAddr) || !Pure(N.StoreVal))
+        return nullptr;
+      if (ExprPtr *Slot = SlotOf(N.StoreAddr, Key))
+        return Slot;
+      return SlotOf(N.StoreVal, Key);
+    case StmtKind::Return:
+      if (Pure(N.RetVal))
+        return SlotOf(N.RetVal, Key);
+      return CallArgument(N.RetVal);
+    case StmtKind::If:
+    case StmtKind::IfElse:
+      return Pure(N.Cond) ? SlotOf(N.Cond, Key) : nullptr;
+    case StmtKind::Switch:
+      return Pure(N.SwitchExpr) ? SlotOf(N.SwitchExpr, Key) : nullptr;
+    default:
+      // A loop condition runs again on each pass; the read ran once.
+      return nullptr;
+    }
+  };
+  auto Entered = [&](const HighStmt &S) {
+    return S.Addr != 0 && S.Addr != InvalidVA && Targets.count(S.Addr);
+  };
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (size_t I = 0; I + 1 < L.size();) {
+          HighStmt &Def = L[I];
+          HighStmt &Use = L[I + 1];
+          // The C writer may print a PHI copy away from its place, which
+          // would move the read with it.
+          const bool Candidate =
+              Def.Kind == StmtKind::Assign && Def.Dst &&
+              Def.Dst->Kind == ExprKind::Var && Def.Dst->Operands.empty() &&
+              (Def.Dst->Var.Kind == MedVar::Reg ||
+               Def.Dst->Var.Kind == MedVar::Temp) &&
+              Def.Val && Def.Val->Kind == ExprKind::Load && Pure(Def.Val) &&
+              Def.Dst->Type && Def.Val->Type &&
+              Def.Dst->Type->Size == Def.Val->Type->Size &&
+              Defs[VK(Def.Dst->Var)] == 1 && Reads[VK(Def.Dst->Var)] == 1 &&
+              !Entered(Def) && !Entered(Use) && !Def.IsPhiCopy &&
+              !Use.IsPhiCopy;
+          if (Candidate)
+            if (ExprPtr *Slot = Takes(Use, VK(Def.Dst->Var));
+                Slot && (*Slot)->Type &&
+                (*Slot)->Type->Size == Def.Val->Type->Size) {
+              *Slot = Def.Val;
+              L.erase(L.begin() + I);
+              Changed = true;
+              continue;
+            }
+          ++I;
+        }
+        for (HighStmt &S : L) {
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+        }
+      };
+  Visit(Func.Body);
+  return Changed;
+}
+
 bool foldCopiesIntoDefinitions(HighFunc &Func) {
   // A handler may read a local whatever statement raised.
   if (Func.StructuredExceptionRegions || Func.UnstructuredExceptionRegions)

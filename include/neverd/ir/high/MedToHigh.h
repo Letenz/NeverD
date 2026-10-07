@@ -138,6 +138,11 @@ bool absorbSwitchRangeGuards(std::vector<HighStmt> &Body);
 /// nor t, nor leaves nor is entered: `x = e; S...;`.  Out of SSA a loop
 /// update reads `t = i + 1; ...; i = t;`; it reads `i = i + 1;`.
 bool foldCopiesIntoDefinitions(HighFunc &Func);
+/// `t = *p; S;` where t has no other use and S, the next statement, reads
+/// its operands before any effect of its own: S reads *p in t's place, as
+/// `*q = *p;`.  The read keeps its place among the program's effects; a
+/// loop condition, which runs again, never takes it.
+bool inlineAdjacentLoads(HighFunc &Func);
 /// A loop whose body never reaches its end and has no break or continue
 /// runs its body once: the body replaces the loop.
 bool unwrapLoopsThatNeverRepeat(std::vector<HighStmt> &Body);

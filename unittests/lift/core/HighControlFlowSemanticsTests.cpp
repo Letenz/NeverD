@@ -8022,6 +8022,75 @@ TEST(HighControlFlowSemantics, ByteReadOfArithmeticDropsUnreadBytes) {
   EXPECT_TRUE(HasUndef(F));
 }
 
+TEST(HighControlFlowSemantics, ReadUsedByTheNextStatementMovesIntoIt) {
+  // t = *p; S;  -- S reads *p in t's place when S reads all its operands
+  // before any effect of its own.
+  auto Load = [] {
+    auto L = std::make_shared<HighExpr>();
+    L->Kind = ExprKind::Load;
+    L->Type = NdType::makeInt(8);
+    L->Operands = {local(9)};
+    return L;
+  };
+  auto Read = [&] {
+    HighStmt S = assign(0x1000, 2, 0);
+    S.Val = Load();
+    return S;
+  };
+  auto Call = [](std::vector<ExprPtr> Args) {
+    auto C = std::make_shared<HighExpr>();
+    C->Kind = ExprKind::Call;
+    C->Type = NdType::makeInt(8);
+    C->CallAddr = 0x5000;
+    C->Operands = std::move(Args);
+    return C;
+  };
+  auto TakesLoad = [](const ExprPtr &E) {
+    bool Found = false;
+    std::function<void(const HighExpr &)> Walk = [&](const HighExpr &N) {
+      Found |= N.Kind == ExprKind::Load;
+      N.forEachChildExpr([&](const ExprPtr &C) { Walk(*C); });
+    };
+    if (E)
+      Walk(*E);
+    return Found;
+  };
+  // A store of the value: `*q = *p;`.
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.Addr = 0x1004;
+  Store.StoreAddr = local(8);
+  Store.StoreVal = local(2);
+  HighFunc F;
+  F.Body = {Read(), Store, result(0x1008, HighExpr::makeConst(0, 8))};
+  EXPECT_TRUE(inlineAdjacentLoads(F));
+  ASSERT_EQ(F.Body.size(), 2U);
+  EXPECT_TRUE(TakesLoad(F.Body[0].StoreVal));
+
+  // A direct argument of a call whose arguments are pure.
+  HighStmt Use = assign(0x1004, 3, 0);
+  Use.Val = Call({local(2), HighExpr::makeConst(1, 8)});
+  F.Body = {Read(), Use, result(0x1008, local(3))};
+  EXPECT_TRUE(inlineAdjacentLoads(F));
+  ASSERT_EQ(F.Body.size(), 2U);
+  EXPECT_TRUE(TakesLoad(F.Body[0].Val));
+
+  // Beside another call, which may write *p first, the read stays.
+  HighStmt Beside = assign(0x1004, 3, 0);
+  Beside.Val = HighExpr::makeBinop(NdOp::INT_ADD, Call({}), local(2));
+  Beside.Val->Type = NdType::makeInt(8);
+  F.Body = {Read(), Beside, result(0x1008, local(3))};
+  EXPECT_FALSE(inlineAdjacentLoads(F));
+
+  // A loop condition runs again; the read ran once.
+  HighStmt Loop;
+  Loop.Kind = StmtKind::While;
+  Loop.Addr = 0x1004;
+  Loop.Cond = local(2);
+  F.Body = {Read(), Loop, result(0x1008, HighExpr::makeConst(0, 8))};
+  EXPECT_FALSE(inlineAdjacentLoads(F));
+}
+
 TEST(HighControlFlowSemantics, CopyBackJoinsItsDefinition) {
   // t = x + 1; y = 5; x = t; return x + y;  -- x takes x + 1 at once.
   auto Plus = [](int Id, uint64_t Value) {

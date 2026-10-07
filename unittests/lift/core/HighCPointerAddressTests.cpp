@@ -42324,7 +42324,7 @@ TEST(HighCPointerAddresses, GuardDispatchPassesOnlyRegistersTheCallerSet) {
   EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("guard_dispatch_icall"), std::string::npos) << HighC;
   EXPECT_TRUE(std::regex_search(
-      HighC, std::regex(R"(\(\*\(void \*\*\)\(arg0\)\)\)\([^,()]+\))")))
+      HighC, std::regex(R"(\(\*\(void \*\*\)\(arg0\)\)\)\([^,;]+\);)")))
       << HighC;
 }
 
@@ -42363,7 +42363,7 @@ TEST(HighCPointerAddresses, ForwarderToTheGuardDispatchPointerIsADispatcher) {
   EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("140001020"), std::string::npos) << HighC;
   EXPECT_TRUE(std::regex_search(
-      HighC, std::regex(R"(\(\*\(void \*\*\)\(arg0\)\)\)\([^,()]+\))")))
+      HighC, std::regex(R"(\(\*\(void \*\*\)\(arg0\)\)\)\([^,;]+\);)")))
       << HighC;
 }
 
@@ -42422,7 +42422,7 @@ TEST(HighCPointerAddresses, DocumentedKernelRoutineTakesItsPrototypeArguments) {
   const std::string Caller = highcOnlyFunction(Build(), Entry);
   EXPECT_EQ(Caller.find("arg1"), std::string::npos) << Caller;
   EXPECT_TRUE(std::regex_search(
-      Caller, std::regex(R"(ExReleaseResourceLite\([^,()]+\))")))
+      Caller, std::regex(R"(ExReleaseResourceLite\([^,;]+\);)")))
       << Caller;
   const std::string Definition = highcOnlyFunction(Build(), Routine);
   EXPECT_NE(Definition.find("ExReleaseResourceLite(int64_t arg0)"),
@@ -42585,7 +42585,7 @@ TEST(HighCPointerAddresses, ContextCaptureTakesOnlyItsRecord) {
   Img.Symbols.push_back(RSym);
   const std::string Caller = highcOnlyFunction(std::move(Img), Entry);
   EXPECT_TRUE(
-      std::regex_search(Caller, std::regex(R"(RtlCaptureContext2\([^,()]+\))")))
+      std::regex_search(Caller, std::regex(R"(RtlCaptureContext2\([^,;]+\);)")))
       << Caller;
   EXPECT_EQ(Caller.find("unknown"), std::string::npos) << Caller;
 }
@@ -42871,7 +42871,7 @@ TEST(HighCPointerAddresses, CalleeSettingAllOnesTakesNoSuchArgument) {
   EXPECT_EQ(HighC.find("arg3"), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
   EXPECT_TRUE(
-      std::regex_search(HighC, std::regex(R"(sub_140001030\([^,()]+\))")))
+      std::regex_search(HighC, std::regex(R"(sub_140001030\([^,;]+\);)")))
       << HighC;
 }
 
@@ -42909,7 +42909,7 @@ TEST(HighCPointerAddresses, VariadicCalleeTakesOnlyTheArgumentsPassed) {
   EXPECT_EQ(HighC.find("arg3"), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
   EXPECT_TRUE(std::regex_search(
-      HighC, std::regex(R"(sub_140001040\([^,()]+, [^,()]+\))")))
+      HighC, std::regex(R"(sub_140001040\([^,;]+, [^,;]+\);)")))
       << HighC;
 }
 
@@ -42958,7 +42958,7 @@ TEST(HighCPointerAddresses, PrototypeBoundsStackArgumentsOfACall) {
   Img.Symbols.push_back(RSym);
   const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
   EXPECT_TRUE(std::regex_search(
-      HighC, std::regex(R"(ExAcquireFastMutexUnsafe\([^,()]+\))")))
+      HighC, std::regex(R"(ExAcquireFastMutexUnsafe\([^,;]+\);)")))
       << HighC;
 }
 
