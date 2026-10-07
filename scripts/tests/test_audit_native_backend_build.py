@@ -83,16 +83,20 @@ class NativeRecipeTests(unittest.TestCase):
                       "NEVERD_EMULATION_BACKEND_UNICORN": "OFF",
                       "NEVERD_EMULATION_BACKEND_KVM": "ON"}
 
-    def check(self):
+    def check(self, root=None):
         (self.build / "CMakeCache.txt").write_text("".join(
             key + ":BOOL=" + value + "\n" for key, value in self.cache.items()))
         (self.build / "compile_commands.json").write_text(json.dumps(self.rows))
-        return audit.audit_objects(self.build, "kvm", self.root)
+        return audit.audit_objects(self.build, "kvm", root or self.root)
 
     def test_each_native_source_has_a_hashed_arm64_object(self):
         objects = self.check()
         self.assertEqual(len(objects), 3)
         self.assertTrue(all(len(obj["object_sha256"]) == 64 for obj in objects))
+
+    def test_root_aliases_preserve_physical_source_identity(self):
+        alias = self.root / ".." / self.root.name
+        self.assertEqual(self.check(alias), self.check())
 
     def test_missing_and_duplicate_native_recipes_are_rejected(self):
         original = list(self.rows)
