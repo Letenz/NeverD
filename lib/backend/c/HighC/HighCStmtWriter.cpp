@@ -645,6 +645,12 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         OS << "0";
       else if (auto Enum = enumConstDisplay(varName(Stmt.Dst->Var), *Stmt.Val))
         OS << *Enum;
+      else if (std::optional<std::string> Converted =
+                   DestinationType != DeclaredCTypes.end() && !DirectAddress
+                       ? implicitIntegerConversion(*Stmt.Val,
+                                                   DestinationType->second)
+                       : std::nullopt)
+        OS << *Converted;
       else
         OS << ValueText;
     } else {
