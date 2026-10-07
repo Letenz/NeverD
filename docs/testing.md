@@ -3052,6 +3052,12 @@ later write fault. `ZeroTimeoutPollKeepsUnobservedBoundaries` retains unknown
 kernel, limit, masks, waits and descriptor readiness. Android's
 `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` checks the same table and
 errno ownership across all six packing profiles.
+`MemoryFileOpenFlagsRetainObservedPathErrors` checks both raw architectures
+and all released GKI branches for directory/direct bit normalization, known
+lookup failures, pathname-before-capacity ordering and unchanged cursors.
+`ReleasedGKIOpenFlagsSharePathErrorsAndErrno` repeats raw and the four Bionic
+open imports across packing profiles. The corresponding boundary cases keep
+existing directories and unobserved direct I/O unsupported.
 Run these first,
 then the complete Linux process, Android native and
 public process suites when changing shared kernel or descriptor semantics.
