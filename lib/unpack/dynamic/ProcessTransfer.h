@@ -16,15 +16,12 @@ namespace neverd::unpack {
 /// the image at that transfer. Control may also fall back to older code, as a
 /// callback does when it returns to the stub that called it.
 ///
-/// A transfer is the program's entry when the stack pointer has returned to
-/// its value at process entry: the stub has given back the stack it received.
+/// A transfer is the program's entry when it belongs to the OS model's main
+/// entry invocation and the stack pointer has returned to that invocation's
+/// initial value: the stub has given back the stack it received.
 /// A transfer on a deeper stack is a call the stub makes into the code it
-/// produced, such as an initialization callback. When an identified stub
-/// declares where it finally jumps, such a call already shows that the image
-/// is complete: the image is taken there, before any code of the program has
-/// run, and the declared address is the entry. The decision reads only bytes
-/// and registers the process has produced and operands of the stub; no entry
-/// is predicted.
+/// produced, such as an initialization callback. Execution continues until
+/// an actual transfer on the entry stack, without predicting a final jump.
 ///
 /// The observer knows no container and no guest system. The image supplies
 /// its extent, and the instruction set's traits supply the stack pointer and
@@ -32,16 +29,16 @@ namespace neverd::unpack {
 class TransferObserver final : public emulation::ProcessObserver {
 public:
   /// \p Wanted selects a transfer by its one-based position; zero accepts the
-  /// first one that has the entry stack. \p Declared is the entry an
-  /// identified stub names, if any.
+  /// first one that has the program invocation's entry stack.
   TransferObserver(const InputImage &Image, const ArchitectureTraits &Traits,
-                   uint64_t Wanted, std::optional<uint64_t> Declared)
-      : Extent(Image.extent()), Traits(Traits), Wanted(Wanted),
-        Declared(Declared) {}
+                   uint64_t Wanted)
+      : Extent(Image.extent()), Traits(Traits), Wanted(Wanted) {}
   llvm::Expected<std::vector<emulation::ExecutionWatch>>
   started(emulation::ProcessView &Process) override;
   llvm::Expected<std::optional<std::vector<emulation::ExecutionWatch>>>
   watched(emulation::ProcessView &Process, uint64_t PC) override;
+  llvm::Expected<std::optional<std::vector<emulation::ExecutionWatch>>>
+  invoking(emulation::ProcessView &Process) override;
   const std::vector<UnpackTransfer> &transfers() const { return Seen; }
   std::optional<Capture> take() { return std::move(Captured); }
 
@@ -55,8 +52,8 @@ private:
   const uint64_t Extent;
   const ArchitectureTraits Traits;
   const uint64_t Wanted;
-  const std::optional<uint64_t> Declared;
   uint64_t Base = 0, InitialSP = 0;
+  bool EnteredProgram = false;
   /// Images[0] is the loaded image; Images[N] is the image at transfer N.
   std::vector<std::vector<uint8_t>> Images;
   /// The generation of the code that is running, and the pages known to hold

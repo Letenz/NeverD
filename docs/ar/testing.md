@@ -1318,6 +1318,8 @@ cmake -S . -B build-native -G Ninja \
 
 تحقن `WhpStateTransferTests.cpp` عمليات نقل لكلا جيلي XSAVE للتحقق من المجموعات المتغيرة والالتقاط الكامل وتجاهل الحشو والفشل الجزئي والإلغاء وأولوية الاستثناء واستبدال القسم. يحصي `ContinuedStepsReuseCapturedRegistersAndFP` عمليات التثبيت المتجنبة، ويفرض `PartialTransferFailuresPreserveStateAndForceFullRetry` الاستعادة الكاملة. هذه اختبارات بروتوكول؛ وتبقى اختبارات FP وانتقالات الحالة وبرامج التشغيل وring3 الأصلية ضرورية.
 
+يتحقق `CancelledDirectRunPublishesACompleteBoundary` من اكتمال الحالة عند تأكيد إلغاء التنفيذ المباشر. ويفرض `FailedDirectCapturePreservesStateAndForcesFullRetry` الحفاظ على حالة المستدعي إذا فشل التقاط السجلات أو XSAVE أو البيانات الوصفية أثناء الإلغاء، ثم إعادة المحاولة بالكامل. لا يجوز لأي من جيلي API نشر جزء من السجلات.
+
 تغطي `WhpStateTransferCases.def` أيضًا الفشل بعد كل بادئة جزئية من القراءة المجمعة لـ32 سجلًا والتعارضات في حقول البيانات الوصفية السبعة. يجب أن يحافظ جيلا XSAVE على حالة المستدعي وأن يفرضا استعادة كاملة عند إعادة المحاولة. تتحقق المجموعة من قراءة سجلات واحدة لكل خطوة واستعادة البيانات الوصفية التي أغفلها XSAVE من تلك القراءة.
 
 يدعم `windows-pe64-v1` عمليات طرفية محدودة لـWindows x64/ARM64 مع PEB/TEB وTLS ثابت وديناميكي و`DllMain` وواجهات Win32 مسماة ورسوم DLL صريحة بلا دورات. تدعم الوحدات استيراد الشيفرة والبيانات بالاسم أو الرقم وDIR64 والتصدير المحال وهويات قوائم المحمّل الفعلية. تستخدم `LoadLibraryA` / `LoadLibraryW` و`FreeLibrary` و`GetProcAddress` دليل الوحدات المضبوط. ما زالت CRT/GUI وSEH للمستخدم على ARM64 القائم على إطارات المكدس والخيوط والتوافق العام مع Windows غير مكتملة، وكذلك أدلة ARM64 الأصلية لـKVM/WHP.
@@ -1358,7 +1360,11 @@ cmake -S . -B build-native -G Ninja \
 
 يقارن `WindowsLifetimeTests.cpp` آثاراً ثابتة بعمليات Windows أصلية مستقلة وتنفيذ KVM/WHP/Unicorn: الخروج العادي وعودة المدخل وفشلي DLL وأربعة مخارج مبكرة وDLL بلا مدخل. ويتحقق أيضاً من أخطاء الاستدعاءات والميزانية المشتركة وحقول TLS المعاد تموضعها والسعة الإجمالية. يحتفظ مسبار العودة الأصلي بمقبض الخيط الأول ويفحص رمز خروجه وتسلسل إشعارات الخيط/العملية بدقة 64 مرة. تُنهى الخيوط الفرعية الباقية بعد المراقبة؛ ولا يُعد خروج العملية قيمة عودة المدخل.
 
-تغطي `NeverDUnpackTests` و`NeverDUnpackExecutionTests` و`NeverDUnpackPublicTests` استعادة الصور المحزومة؛ انظر [فك الحزم](unpack.md). يتحقق `UnpackGeneratedTests.cpp` من قواعد نقطة الدخول على x86-64 وARM64 ببرنامج يحزمه الاختبار نفسه. يتحقق `X64ReturnPrefixTests.cpp` من الرجوع القريب ذي البايتين على كل ناقل ومن أن كل رجوع آخر ببادئة يبقى مرفوضًا. ويتحقق `WindowsDeferredTests.cpp` من المداخل المعتمة ومن رصد العملية المتوقفة؛ ويتحقق `ExecutionSessionTests.cpp` من مراقبات التنفيذ.
+تغطي `NeverDUnpackTests` و`NeverDUnpackExecutionTests` و`NeverDUnpackPublicTests` استعادة الصور المحزومة؛ انظر [فك الحزم](unpack.md). يتحقق `UnpackGeneratedTests.cpp` من قواعد نقطة الدخول على x86-64 وARM64 ببرنامج يحزمه الاختبار نفسه. يتحقق `X64ReturnPrefixTests.cpp` من الرجوع القريب ذي البايتين على كل ناقل ومن أن كل رجوع آخر ببادئة يبقى مرفوضًا. ويتحقق `WindowsDeferredTests.cpp` من المداخل المعتمة ومن رصد العملية المتوقفة؛ ويتحقق `ExecutionSessionTests.cpp` من مراقبات التنفيذ. يتحقق `DirectX64Tests.cpp` من مراقبة أجزاء الصفحات وجلب التعليمات عبر صفحتين والاستئناف مرة واحدة والخدمات والتعليمات غير الصالحة والحالة عند انتهاء المهلة.
+
+يختبر `ExtendedRegistersLoadOrdinaryImportsAgain` تحميلات R8-R15 المختصرة والمحشوة بتنفيذ x64 المتحقق والمباشر. تغطي السجلات الدنيا بايتا سابقا يشبه REX وروتين عنوان يحوي CALL فقط؛ وتتخطى الاستدعاءات المحشوة بايتات عشوائية بعد CALL. يطلب `ImportCallHelpersCannotDiscardPersistentEffects` بقاء الآثار الدائمة قابلة للرصد. يرفض `PERebuildTests.cpp` غياب دليل البداية أو النتيجة والبدايات المتداخلة ويحفظ عنوان عودة API الدقيق لنافذة من ستة إلى ثمانية بايتات.
+
+يعيد `OpaqueExportCallsAreRepairedBeforeTheExplicitStop` الاستدعاء النقي دون تجاوز API مجهولة. يغطي `ExportObservationIncludesTheOpaqueBoundary` الصادرات الثابتة والديناميكية والرقمية دون تغيير التنفيذ أو سجلات الخدمات. يطلب `OpaqueExportObservationPreservesAnUnreadableReturn` إبقاء بيانات العودة المفقودة غائبة.
 
 تضيف الذاكرة الافتراضية في Windows دعم `VirtualAlloc` و`VirtualFree` و`VirtualProtect` و`VirtualQuery` و`FlushInstructionCache` للعملية الحالية. تدير طبقة OS الحجوزات، وتبقى `AddressSpace` المرجع للصفحات الملتزم بها والصلاحيات والتخزين الفعلي. تشمل الاختبارات تعديل الشيفرة وأخطاء الوصول وإعادة استخدام ميزانية الذاكرة.
 

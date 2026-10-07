@@ -10,8 +10,8 @@
 NEVERD_UNPACK_FORMAT(PE64, "pe64")
 #endif
 
-// Identification names a protector only from evidence that is present in the
-// input. An unidentified input can still be unpacked by observing execution.
+// Legacy report vocabulary retained for source compatibility. Generic
+// recovery always reports Unidentified and supplies no brand evidence.
 #ifdef NEVERD_UNPACK_PACKER
 NEVERD_UNPACK_PACKER(Unidentified, "unidentified")
 NEVERD_UNPACK_PACKER(UPX, "upx")
@@ -31,10 +31,8 @@ NEVERD_UNPACK_OUTCOME(Unpacked, "unpacked")
 NEVERD_UNPACK_OUTCOME(NoEntry, "no_entry")
 #endif
 
-// Transfer: the entry is the observed transfer that was accepted. Stub: the
-// identified protector's stub names the entry as the operand of its final
-// jump; the run entered generated code on a deeper stack, so the stub was
-// calling into the program it had finished rather than leaving for it.
+// Transfer is the observed transfer that was accepted. Stub is retained for
+// old report consumers; recovery never predicts an entry from stub bytes.
 #ifdef NEVERD_UNPACK_ENTRY_SOURCE
 NEVERD_UNPACK_ENTRY_SOURCE(Transfer, "transfer")
 NEVERD_UNPACK_ENTRY_SOURCE(Stub, "stub")
@@ -104,6 +102,9 @@ NEVERD_UNPACK_REPORT_FIELD(PackedEntry, "packed_entry_rva")
 NEVERD_UNPACK_REPORT_FIELD(Entry, "entry_rva")
 NEVERD_UNPACK_REPORT_FIELD(EntrySource, "entry_source")
 NEVERD_UNPACK_REPORT_FIELD(StackBalanced, "stack_balanced")
+NEVERD_UNPACK_REPORT_FIELD(ProgramInvocation, "program_invocation")
+NEVERD_UNPACK_REPORT_FIELD(MaterializedTLSCallbacks,
+                           "materialized_tls_callbacks")
 NEVERD_UNPACK_REPORT_FIELD(GeneratedBytes, "generated_bytes")
 NEVERD_UNPACK_REPORT_FIELD(Sections, "sections")
 NEVERD_UNPACK_REPORT_FIELD(Name, "name")
@@ -111,6 +112,12 @@ NEVERD_UNPACK_REPORT_FIELD(RVA, "rva")
 NEVERD_UNPACK_REPORT_FIELD(VirtualSize, "virtual_size")
 NEVERD_UNPACK_REPORT_FIELD(FileSize, "file_size")
 NEVERD_UNPACK_REPORT_FIELD(Imports, "imports")
+NEVERD_UNPACK_REPORT_FIELD(ImportRepair, "import_repair")
+NEVERD_UNPACK_REPORT_FIELD(ObservedCalls, "observed_calls")
+NEVERD_UNPACK_REPORT_FIELD(RepairedCalls, "repaired_calls")
+NEVERD_UNPACK_REPORT_FIELD(ConflictingCalls, "conflicting_calls")
+NEVERD_UNPACK_REPORT_FIELD(ObservedLoads, "observed_loads")
+NEVERD_UNPACK_REPORT_FIELD(RepairedLoads, "repaired_loads")
 NEVERD_UNPACK_REPORT_FIELD(Module, "module")
 NEVERD_UNPACK_REPORT_FIELD(Ordinal, "ordinal")
 NEVERD_UNPACK_REPORT_FIELD(Slot, "slot_rva")

@@ -11,8 +11,8 @@
 #include "../os/darwin/kernel/DarwinTime.h"
 #include "../os/darwin/process/DarwinProcess.h"
 #include "../os/linux/android/AndroidInternal.h"
-#include "../os/linux/kernel/LinuxSignals.h"
 #include "../os/linux/kernel/LinuxPriority.h"
+#include "../os/linux/kernel/LinuxSignals.h"
 #include "../os/linux/kernel/LinuxTime.h"
 #include "../os/linux/process/LinuxProcess.h"
 #include "../os/windows/process/WindowsProcess.h"
@@ -54,6 +54,14 @@ const char *processStopReasonName(ProcessStopReason Reason) {
 }
 ProcessView::~ProcessView() = default;
 ProcessObserver::~ProcessObserver() = default;
+llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+ProcessObserver::invoking(ProcessView &) {
+  return std::nullopt;
+}
+llvm::Error ProcessObserver::exporting(ProcessView &, const ProcessExportView &,
+                                       std::optional<uint64_t>) {
+  return llvm::Error::success();
+}
 
 namespace {
 llvm::Expected<ProcessResult> runProfile(const std::filesystem::path &Path,

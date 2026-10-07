@@ -94,6 +94,12 @@ add_neverd_unittest(NeverDExecutionSessionTests
   TIMEOUT 15
   LINK_COMPONENTS EmulationRuntime EmulationImage)
 
+add_neverd_unittest(NeverDDirectX64Tests
+  DirectX64Tests.cpp
+  NO_PRETTY_VALUES
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationRuntime)
+
 add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64MemoryUpdateTests.cpp
   X64BitStringTests.cpp
@@ -308,6 +314,11 @@ target_include_directories(NeverDUnpackExecutionTests PRIVATE
 target_compile_definitions(NeverDUnpackExecutionTests PRIVATE
   NEVERD_UNPACK_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/unittests/unpack/fixtures/binaries")
 include(UnpackGeneratedFixtures.cmake)
+if(TARGET NeverDWindowsDeferredFixtures)
+  add_dependencies(NeverDUnpackExecutionTests NeverDWindowsDeferredFixtures)
+  target_compile_definitions(NeverDUnpackExecutionTests PRIVATE
+    NEVERD_WINDOWS_DEFERRED_FIXTURE_DIR="${_deferred_dir}")
+endif()
 
 add_neverd_unittest(NeverDExecutionBudgetTests
   ExecutionBudgetTests.cpp

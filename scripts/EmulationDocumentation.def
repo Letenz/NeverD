@@ -337,6 +337,10 @@ NEVERD_EMULATION_DOC_TOKEN(WhpStateReuseTest,
                            "ContinuedStepsReuseCapturedRegistersAndFP")
 NEVERD_EMULATION_DOC_TOKEN(
     WhpStateReuseTest, "PartialTransferFailuresPreserveStateAndForceFullRetry")
+NEVERD_EMULATION_DOC_TOKEN(WhpStateReuseTest,
+                           "CancelledDirectRunPublishesACompleteBoundary")
+NEVERD_EMULATION_DOC_TOKEN(
+    WhpStateReuseTest, "FailedDirectCapturePreservesStateAndForcesFullRetry")
 NEVERD_EMULATION_DOC_TOKEN(KvmSyncTests,
                            "SynchronizedCapturesRemoveOnlySupportedReadIoctls")
 NEVERD_EMULATION_DOC_TOKEN(KvmSyncTests,
@@ -1267,7 +1271,10 @@ NEVERD_EMULATION_DOC_TOKEN(Unpack, "entry_source")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "no_entry")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "windows.defer_unmodeled")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "IMAGE_FILE_RELOCS_STRIPPED")
-NEVERD_EMULATION_DOC_TOKEN(Unpack, "upx_pack_header")
+NEVERD_EMULATION_DOC_TOKEN(Unpack, "import_repair")
+NEVERD_EMULATION_DOC_TOKEN(Unpack, "observed_loads")
+NEVERD_EMULATION_DOC_TOKEN(Unpack, "repaired_loads")
+NEVERD_EMULATION_DOC_TOKEN(Unpack, "R8-R15")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "NeverDUnpackPublicTests")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "UnpackGeneratedTests.cpp")
 NEVERD_EMULATION_DOC_TOKEN(Unpack, "pe64")
@@ -1277,10 +1284,13 @@ NEVERD_EMULATION_DOC_PATH(UnpackOwner, "docs/architecture.md")
 NEVERD_EMULATION_DOC_PATH(UnpackOwner, "docs/{locale}/architecture.md")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "lib/unpack")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "format/pe")
-NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "packers/upx")
+NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "PETLS.cpp")
+NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "arch/X64Imports.cpp")
+NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "dynamic/ProcessImports.cpp")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "Observation.def")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "observeProcess")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "ProcessObserver")
+NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "exporting")
 NEVERD_EMULATION_DOC_TOKEN(UnpackOwner, "defer_unmodeled")
 NEVERD_EMULATION_DOC_PATH(UnpackTests, "docs/testing.md")
 NEVERD_EMULATION_DOC_PATH(UnpackTests, "docs/{locale}/testing.md")
@@ -1289,6 +1299,17 @@ NEVERD_EMULATION_DOC_TOKEN(UnpackTests, "NeverDUnpackExecutionTests")
 NEVERD_EMULATION_DOC_TOKEN(UnpackTests, "NeverDUnpackPublicTests")
 NEVERD_EMULATION_DOC_TOKEN(UnpackTests, "WindowsDeferredTests.cpp")
 NEVERD_EMULATION_DOC_TOKEN(UnpackTests, "UnpackGeneratedTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(UnpackTests, "PERebuildTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(UnpackTests,
+                           "ExtendedRegistersLoadOrdinaryImportsAgain")
+NEVERD_EMULATION_DOC_TOKEN(UnpackTests,
+                           "ImportCallHelpersCannotDiscardPersistentEffects")
+NEVERD_EMULATION_DOC_TOKEN(UnpackTests,
+                           "OpaqueExportCallsAreRepairedBeforeTheExplicitStop")
+NEVERD_EMULATION_DOC_TOKEN(UnpackTests,
+                           "ExportObservationIncludesTheOpaqueBoundary")
+NEVERD_EMULATION_DOC_TOKEN(UnpackTests,
+                           "OpaqueExportObservationPreservesAnUnreadableReturn")
 NEVERD_EMULATION_DOC_PATH(ReturnPrefix, "docs/cpu-execution.md")
 NEVERD_EMULATION_DOC_PATH(ReturnPrefix, "docs/{locale}/cpu-execution.md")
 NEVERD_EMULATION_DOC_TOKEN(ReturnPrefix, "F3 C3")

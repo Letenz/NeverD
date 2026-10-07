@@ -1285,6 +1285,8 @@ checked Unicorn은 `MachineRunControl`을 사용하며 ARM64 유지보수, 게�
 
 `WhpStateTransferTests.cpp`는 두 세대 XSAVE API에 전송을 주입하여 변경 그룹, 전체 캡처, 패딩 무시, 부분 실패, 취소, 예외 우선순위와 파티션 재생성을 확인합니다. `ContinuedStepsReuseCapturedRegistersAndFP`는 생략된 설치를 세고 `PartialTransferFailuresPreserveStateAndForceFullRetry`는 전체 복원을 요구합니다. 이는 프로토콜 검사이며 네이티브 실행 증거를 대신하지 않습니다. 기존 네이티브 FP·상태 전환·드라이버·ring3 테스트도 필수입니다.
 
+`CancelledDirectRunPublishesACompleteBoundary`는 direct 실행의 취소 확인 시 전체 상태가 게시되는지 검사합니다. `FailedDirectCapturePreservesStateAndForcesFullRetry`는 취소 중 레지스터, XSAVE 또는 메타데이터 캡처가 실패하면 호출자 상태를 보존하고 전체 재시도를 요구합니다. 두 API 세대 모두 일부 레지스터만 게시하면 안 됩니다.
+
 `WhpStateTransferCases.def`는 통합된 32개 레지스터 읽기의 모든 부분 접두부 실패와 일곱 메타데이터 필드의 충돌도 검사합니다. 두 XSAVE API 세대 모두 호출자 상태를 보존하고 재시도 시 전체 상태를 복원해야 합니다. 동일한 테스트에서 스텝당 레지스터 읽기가 한 번인지, XSAVE가 생략한 메타데이터를 해당 읽기로 복구하는지도 확인합니다.
 
 `windows-pe64-v1`은 PEB/TEB, 정적·동적 TLS, `DllMain`, 이름 기반 Win32 API 및 명시적 비순환 DLL 그래프를 갖춘 제한된 Windows x64/ARM64 콘솔 프로세스를 지원합니다. 게스트 모듈은 이름/서수 코드·데이터 가져오기, DIR64 재배치, 전달 내보내기 및 실제 로더 목록 식별자를 지원합니다. `LoadLibraryA` / `LoadLibraryW`, `FreeLibrary`, `GetProcAddress`는 설정된 모듈 카탈로그를 사용합니다. CRT/GUI, ARM64 스택 프레임 기반 사용자 SEH, 스레드 및 일반 Windows 앱 호환성은 미완성이며 네이티브 ARM64 KVM/WHP 증거도 아직 없습니다.
@@ -1325,7 +1327,11 @@ Windows ring3는 독립적인 네이티브 관측에 따라 checked x64의 `oper
 
 `WindowsLifetimeTests.cpp`는 고정된 추적을 독립 네이티브 Windows 프로세스 및 KVM/WHP/Unicorn 실행과 비교합니다. 정상 종료, 진입점 반환, 두 DLL의 초기화 실패, 네 곳의 조기 종료와 진입점 없는 DLL을 포함합니다. 콜백 오류, 공용 예산, 재배치 TLS 필드와 TLS 총용량도 확인합니다. 네이티브 진입점 반환 프로브는 초기 스레드 핸들을 보존하고 종료 코드와 정확한 스레드/프로세스 통지 순서를 64회 검증합니다. 남은 자식 스레드는 관찰 후 종료하며 프로세스 종료 코드를 진입점 반환값으로 취급하지 않습니다.
 
-`NeverDUnpackTests`, `NeverDUnpackExecutionTests`, `NeverDUnpackPublicTests`는 패킹된 이미지의 복구를 다룹니다. [언패킹](unpack.md)을 참고하십시오. `UnpackGeneratedTests.cpp`는 테스트가 직접 패킹한 프로그램으로 x86-64와 ARM64에서 진입점 규칙을 검사합니다. `X64ReturnPrefixTests.cpp`는 2바이트 근거리 복귀를 모든 전송 계층에서 검사하고, 그 밖의 접두사 붙은 복귀가 계속 거부되는지 확인합니다. `WindowsDeferredTests.cpp`는 불투명 진입점과 멈춘 프로세스의 관찰을, `ExecutionSessionTests.cpp`는 실행 감시를 검사합니다.
+`NeverDUnpackTests`, `NeverDUnpackExecutionTests`, `NeverDUnpackPublicTests`는 패킹된 이미지의 복구를 다룹니다. [언패킹](unpack.md)을 참고하십시오. `UnpackGeneratedTests.cpp`는 테스트가 직접 패킹한 프로그램으로 x86-64와 ARM64에서 진입점 규칙을 검사합니다. `X64ReturnPrefixTests.cpp`는 2바이트 근거리 복귀를 모든 전송 계층에서 검사하고, 그 밖의 접두사 붙은 복귀가 계속 거부되는지 확인합니다. `WindowsDeferredTests.cpp`는 불투명 진입점과 멈춘 프로세스의 관찰을, `ExecutionSessionTests.cpp`는 실행 감시를 검사합니다. `DirectX64Tests.cpp`는 부분 페이지 감시, 페이지 경계를 넘는 명령 가져오기, 한 번만 재개, 서비스 경계, 잘못된 명령과 시간 제한 시 상태를 검증합니다.
+
+`ExtendedRegistersLoadOrdinaryImportsAgain`는 짧은 형식과 패딩이 있는 R8-R15 로드를 검사 및 직접 x64 실행으로 검증합니다. 하위 레지스터 사례는 앞선 REX 모양 바이트와 CALL만 있는 주소 도우미를 다루며 패딩 호출은 CALL 뒤 임의 바이트를 건너뜁니다. `ImportCallHelpersCannotDiscardPersistentEffects`는 영구 부작용 보존을 요구합니다. `PERebuildTests.cpp`는 시작·결과 증거 누락과 겹친 시작을 거부하고 6~8바이트 구간의 정확한 API 반환 주소를 보존합니다.
+
+`OpaqueExportCallsAreRepairedBeforeTheExplicitStop`는 알 수 없는 API를 우회하지 않고 순수 호출을 복원합니다. `ExportObservationIncludesTheOpaqueBoundary`는 정적·동적·서수 내보내기를 다루며 실행과 서비스 로그를 보존합니다. `OpaqueExportObservationPreservesAnUnreadableReturn`는 누락된 반환 정보를 만들지 않도록 요구합니다.
 
 Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`와 현재 프로세스의 `FlushInstructionCache`를 지원합니다. OS 계층은 예약 영역을 소유하고 `AddressSpace`는 커밋된 페이지, 권한, 실제 저장 공간을 관리합니다. 테스트는 동적 코드 수정, 접근 오류, 메모리 한도 재사용을 검증합니다.
 

@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "../../arch/X64Imports.h"
 #include "PEImage.h"
 
 #include "neverd/emulation/GuestMemory.h"
@@ -44,8 +45,11 @@ Record fetch(llvm::ArrayRef<uint8_t> Bytes, uint64_t Offset) {
   return R;
 }
 
-/// Every pointer-sized cell of the mapped sections that holds the entry
-/// address of a bindable export. Cells keep their identity; nothing is moved.
+std::vector<Group> groupSlots(llvm::ArrayRef<Slot> Slots);
+
+/// Recover complete, terminated arrays of bindable export pointers. A pointer
+/// match alone cannot grant ownership of the following program bytes to the
+/// loader: each descriptor needs its own intact null terminator.
 llvm::Expected<std::vector<Slot>> findSlots(const Image &In, const Capture &C,
                                             llvm::ArrayRef<uint8_t> Memory) {
   std::vector<Slot> Slots;
@@ -67,7 +71,19 @@ llvm::Expected<std::vector<Slot>> findSlots(const Image &In, const Capture &C,
       RVA += value::PointerSize - 1;
     }
   }
-  return Slots;
+  std::vector<Slot> Terminated;
+  for (const auto &G : groupSlots(Slots)) {
+    const uint64_t End = Slots[G.First + G.Count - 1].RVA + value::PointerSize;
+    const bool InSection = llvm::any_of(In.regions(), [&](const auto &R) {
+      return Slots[G.First].RVA >= R.RVA && End >= R.RVA &&
+             End <= R.RVA + R.MemorySize &&
+             value::PointerSize <= R.RVA + R.MemorySize - End;
+    });
+    if (InSection && !endian::read64le(Memory.data() + End))
+      Terminated.insert(Terminated.end(), Slots.begin() + G.First,
+                        Slots.begin() + G.First + G.Count);
+  }
+  return Terminated;
 }
 
 std::vector<Group> groupSlots(llvm::ArrayRef<Slot> Slots) {
@@ -136,148 +152,108 @@ std::vector<uint8_t> buildImports(llvm::ArrayRef<Slot> Slots,
   return Out;
 }
 
-/// Six bytes a protector leaves in place of one `call qword ptr [rip]`.
-constexpr uint64_t MutatedImportBytes = 6;
-
-/// \p ReturnRVA is the instruction an export returned to. VMProtect's import
-/// mutation is six bytes ending at that instruction: a register push plus a
-/// relative call, or a relative call plus one junk byte that the stub skips.
-bool mutatedImportSite(llvm::ArrayRef<uint8_t> Memory, uint64_t ReturnRVA) {
-  if (ReturnRVA < MutatedImportBytes || ReturnRVA > Memory.size())
-    return false;
-  const uint8_t *Window = Memory.data() + ReturnRVA - MutatedImportBytes;
-  const auto Target = [&](uint64_t At) {
-    const uint64_t Opcode = At - (ReturnRVA - MutatedImportBytes);
-    const int32_t Relative = endian::read32le(Window + Opcode + 1);
-    return int64_t(At) + 5 + Relative;
-  };
-  const auto InImage = [&](int64_t At) {
-    return At >= 0 && uint64_t(At) < Memory.size();
-  };
-  if (Window[0] >= 0x50 && Window[0] <= 0x57 && Window[1] == 0xe8)
-    return InImage(Target(ReturnRVA - 5));
-  if (Window[0] == 0xe8 &&
-      (Window[5] == 0xc3 || Window[5] == 0x90 || Window[5] == 0xcc))
-    return InImage(Target(ReturnRVA - MutatedImportBytes));
-  return false;
-}
-
-void writeImportCall(llvm::MutableArrayRef<uint8_t> Memory, uint64_t ReturnRVA,
-                     uint64_t SlotRVA) {
-  uint8_t *Window = Memory.data() + ReturnRVA - MutatedImportBytes;
-  Window[0] = 0xff;
-  Window[1] = 0x15;
-  endian::write32le(Window + 2,
-                    uint32_t(int32_t(int64_t(SlotRVA) - int64_t(ReturnRVA))));
-}
-
-/// Point protector import calls at cells the loader can fill. An existing
-/// cell that already holds the export is reused. New cells are appended after
-/// the image's last non-zero bytes in the region that already holds the most
-/// resolved exports, with one zero qword for the loader's terminator.
-void redirectTailImports(const Image &In, const Capture &C,
-                         llvm::ArrayRef<TailImport> Calls,
-                         std::vector<uint8_t> &Memory) {
+struct TailRepairs {
   struct Site {
     uint64_t ReturnRVA, Gate;
+    x64::ImportSite Patch;
   };
   std::vector<Site> Sites;
+  uint64_t CellBytes = 0, Conflicts = 0;
+};
+
+/// Use existing export cells when possible; new cells belong to the appended
+/// metadata section. Zero bytes in an existing region may be live BSS and
+/// cannot authorize borrowing that storage for an import table.
+llvm::Expected<TailRepairs> planTailImports(const Image &In, const Capture &C,
+                                            llvm::ArrayRef<TailImport> Calls,
+                                            llvm::ArrayRef<uint8_t> Memory,
+                                            std::vector<Slot> &Slots) {
+  TailRepairs Repairs;
+  if (In.architecture() != emulation::GuestArchitecture::X64)
+    return Repairs;
   for (const auto &Call : Calls) {
     if (Call.ReturnAddress < C.Base ||
         Call.ReturnAddress - C.Base >= Memory.size() || !Call.Gate ||
         C.Exports.find(Call.Gate) == C.Exports.end())
       continue;
     const uint64_t ReturnRVA = Call.ReturnAddress - C.Base;
-    if (!mutatedImportSite(Memory, ReturnRVA))
+    if (Call.InstructionAddress < C.Base)
+      continue;
+    auto Patch =
+        x64::importSite(Memory, ReturnRVA, Call.AddressLoad,
+                        Call.InstructionAddress - C.Base, Call.ResultRegister);
+    if (!Patch)
       continue;
     auto Existing = llvm::find_if(
-        Sites, [&](const Site &S) { return S.ReturnRVA == ReturnRVA; });
-    if (Existing != Sites.end()) {
-      if (Existing->Gate != Call.Gate)
+        Repairs.Sites, [&](const auto &S) { return S.ReturnRVA == ReturnRVA; });
+    if (Existing != Repairs.Sites.end()) {
+      if (Existing->Gate &&
+          (Existing->Gate != Call.Gate || Existing->Patch.RVA != Patch->RVA ||
+           Existing->Patch.Register != Patch->Register)) {
         Existing->Gate = 0;
+        ++Repairs.Conflicts;
+      }
       continue;
     }
-    Sites.push_back({ReturnRVA, Call.Gate});
+    Repairs.Sites.push_back({ReturnRVA, Call.Gate, *Patch});
   }
-  llvm::erase_if(Sites, [](const Site &S) { return !S.Gate; });
-  if (Sites.empty())
-    return;
-  std::vector<uint64_t> Gates;
-  for (const auto &S : Sites)
-    if (llvm::find(Gates, S.Gate) == Gates.end())
-      Gates.push_back(S.Gate);
-  std::vector<uint64_t> Slots(Gates.size(), 0);
-  auto Cell = [&](uint64_t RVA) -> uint64_t {
-    if (RVA + value::PointerSize > Memory.size())
-      return 0;
-    return endian::read64le(Memory.data() + RVA);
-  };
-  for (size_t I = 0; I < Gates.size(); ++I) {
-    for (const auto &R : In.regions()) {
-      bool Found = false;
-      for (uint64_t RVA = R.RVA;
-           RVA + value::PointerSize <= R.RVA + R.MemorySize; ++RVA) {
-        if (Cell(RVA) != Gates[I])
-          continue;
-        Slots[I] = RVA;
-        Found = true;
-        break;
-      }
-      if (Found)
-        break;
+  // A byte sequence can describe overlapping sites. No observation gives one
+  // permission to overwrite another, even when both reach the same export.
+  llvm::sort(Repairs.Sites, [](const auto &A, const auto &B) {
+    return A.Patch.RVA < B.Patch.RVA;
+  });
+  for (size_t First = 0; First < Repairs.Sites.size();) {
+    size_t End = First + 1;
+    uint64_t Limit =
+        Repairs.Sites[First].Patch.RVA + Repairs.Sites[First].Patch.Size;
+    while (End < Repairs.Sites.size() && Repairs.Sites[End].Patch.RVA < Limit) {
+      Limit = std::max(Limit, Repairs.Sites[End].Patch.RVA +
+                                  Repairs.Sites[End].Patch.Size);
+      ++End;
     }
-  }
-  std::vector<size_t> Fresh;
-  for (size_t I = 0; I < Gates.size(); ++I)
-    if (!Slots[I])
-      Fresh.push_back(I);
-  if (!Fresh.empty()) {
-    const ImageRegion *Best = nullptr;
-    size_t Held = 0;
-    for (const auto &R : In.regions()) {
-      size_t Count = 0;
-      for (uint64_t RVA = R.RVA;
-           RVA + value::PointerSize <= R.RVA + R.MemorySize; ++RVA)
-        if (C.Exports.find(Cell(RVA)) != C.Exports.end()) {
-          ++Count;
-          RVA += value::PointerSize - 1;
+    if (End - First > 1)
+      for (size_t At = First; At < End; ++At)
+        if (Repairs.Sites[At].Gate) {
+          Repairs.Sites[At].Gate = 0;
+          ++Repairs.Conflicts;
         }
-      if (Count > Held) {
-        Held = Count;
-        Best = &R;
-      }
-    }
-    uint64_t At = 0;
-    bool Room = false;
-    if (Best) {
-      uint64_t Last = Best->RVA;
-      for (uint64_t RVA = Best->RVA; RVA < Best->RVA + Best->MemorySize; ++RVA)
-        if (Memory[RVA])
-          Last = RVA + 1;
-      At = llvm::alignTo(Last, value::PointerSize);
-      const uint64_t Need = (Fresh.size() + 1) * value::PointerSize;
-      const uint64_t End = Best->RVA + Best->MemorySize;
-      Room = At >= Best->RVA && At <= End && Need <= End - At;
-      if (Room)
-        for (uint64_t Byte = At; Byte < At + Need; ++Byte)
-          if (Memory[Byte])
-            Room = false;
-    }
-    if (Room)
-      for (size_t I = 0; I < Fresh.size(); ++I) {
-        Slots[Fresh[I]] = At + I * value::PointerSize;
-        endian::write64le(Memory.data() + Slots[Fresh[I]], Gates[Fresh[I]]);
-      }
+    First = End;
   }
-  for (const auto &S : Sites) {
-    const auto Gate = llvm::find(Gates, S.Gate);
-    const uint64_t Slot = Slots[Gate - Gates.begin()];
-    if (!Slot)
+  llvm::erase_if(Repairs.Sites, [](const auto &S) { return !S.Gate; });
+  for (const auto &Site : Repairs.Sites) {
+    const auto *Binding = &C.Exports.find(Site.Gate)->second;
+    if (llvm::any_of(Slots, [&](const Slot &S) { return S.Target == Binding; }))
       continue;
-    const int64_t Displacement = int64_t(Slot) - int64_t(S.ReturnRVA);
+    if (Slots.size() == defaults::Imports)
+      return failure(unpack::text::ImportLimit);
+    // Each fresh cell has its own zero terminator. Its lookup table controls
+    // the loader's count, so no existing program byte needs to become zero.
+    const uint64_t RVA = In.extent() + Repairs.CellBytes;
+    if (RVA > UINT32_MAX - 2 * value::PointerSize)
+      return failure(text::ImageSize);
+    Slots.push_back({RVA, Binding, ImportOrigin::Runtime});
+    Repairs.CellBytes += 2 * value::PointerSize;
+  }
+  for (const auto &Site : Repairs.Sites) {
+    const auto *Binding = &C.Exports.find(Site.Gate)->second;
+    const auto Cell = llvm::find_if(
+        Slots, [&](const Slot &S) { return S.Target == Binding; });
+    const int64_t Displacement =
+        int64_t(Cell->RVA) - int64_t(Site.Patch.instructionEnd());
     if (Displacement != int32_t(Displacement))
-      continue;
-    writeImportCall(Memory, S.ReturnRVA, Slot);
+      return failure(text::ImportRange);
+  }
+  return Repairs;
+}
+
+void redirectTailImports(const Capture &C, const TailRepairs &Repairs,
+                         llvm::ArrayRef<Slot> Slots,
+                         llvm::MutableArrayRef<uint8_t> Memory) {
+  for (const auto &Site : Repairs.Sites) {
+    const auto *Binding = &C.Exports.find(Site.Gate)->second;
+    const auto Cell = llvm::find_if(
+        Slots, [&](const Slot &S) { return S.Target == Binding; });
+    x64::writeImport(Memory, Site.Patch, Cell->RVA);
   }
 }
 
@@ -347,10 +323,13 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   if (!In.regionAt(C.EntryRVA))
     return failure(unpack::text::EntryOutside);
   std::vector<uint8_t> Memory(C.Memory.begin(), C.Memory.end());
-  redirectTailImports(In, C, Plan.TailImports, Memory);
   auto Slots = findSlots(In, C, Memory);
   if (!Slots)
     return Slots.takeError();
+  auto Repairs = planTailImports(In, C, Plan.TailImports, Memory, *Slots);
+  if (!Repairs)
+    return Repairs.takeError();
+  redirectTailImports(C, *Repairs, *Slots, Memory);
   const auto Groups = groupSlots(*Slots);
 
   // The metadata section follows the image, so every recovered RVA is kept.
@@ -359,16 +338,25 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   uint32_t DirectoryBytes = 0;
   std::vector<uint8_t> Metadata;
   if (!Slots->empty())
-    Metadata =
-        buildImports(*Slots, Groups, MetadataRVA, Thunks, DirectoryBytes);
+    Metadata = buildImports(*Slots, Groups, MetadataRVA + Repairs->CellBytes,
+                            Thunks, DirectoryBytes);
+  Metadata.insert(Metadata.begin(), Repairs->CellBytes, 0);
+  auto RebuiltTLS = rebuildTLS(In, C, MetadataRVA, Metadata);
+  if (!RebuiltTLS)
+    return RebuiltTLS.takeError();
   const uint64_t NewImageSize =
       MetadataRVA +
       llvm::alignTo(Metadata.size(), uint64_t(H.SectionAlignment));
   if (NewImageSize > UINT32_MAX)
     return failure(text::ImageSize);
 
-  for (size_t I = 0; I < Slots->size(); ++I)
-    endian::write64le(Memory.data() + (*Slots)[I].RVA, Thunks[I]);
+  for (size_t I = 0; I < Slots->size(); ++I) {
+    const uint64_t RVA = (*Slots)[I].RVA;
+    if (RVA < Extent)
+      endian::write64le(Memory.data() + RVA, Thunks[I]);
+    else
+      endian::write64le(Metadata.data() + RVA - MetadataRVA, Thunks[I]);
+  }
 
   const bool AddSection = !Metadata.empty();
   const uint64_t Count = Regions.size() + AddSection;
@@ -419,28 +407,34 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
 
   auto Directories = H.Directories;
   relocateDebugRecords(In, Placed, Directories, Memory);
+  if (RebuiltTLS->DirectoryRVA) {
+    Directories[llvm::COFF::TLS_TABLE].RelativeVirtualAddress =
+        RebuiltTLS->DirectoryRVA;
+    Directories[llvm::COFF::TLS_TABLE].Size = sizeof(coff_tls_directory64);
+  }
 #define NEVERD_UNPACK_PE_STALE_DIRECTORY(Name)                                 \
   if (llvm::COFF::Name < Directories.size())                                   \
     Directories[llvm::COFF::Name] = data_directory{};
 #include "PE.def"
 #undef NEVERD_UNPACK_PE_STALE_DIRECTORY
-  for (const auto &Override : Plan.Metadata) {
-    if (Override.Kind >= Directories.size() || !Override.Size ||
-        Override.RVA >= Extent || Override.Size > Extent - Override.RVA)
-      return failure(text::Override);
-    Directories[Override.Kind].RelativeVirtualAddress = Override.RVA;
-    Directories[Override.Kind].Size = Override.Size;
-  }
   if (llvm::COFF::IMPORT_TABLE < Directories.size())
     Directories[llvm::COFF::IMPORT_TABLE] = data_directory{};
-  if (AddSection) {
+  if (!Slots->empty()) {
     if (llvm::COFF::IMPORT_TABLE >= Directories.size())
       return failure(text::HeaderRoom);
-    Directories[llvm::COFF::IMPORT_TABLE].RelativeVirtualAddress = MetadataRVA;
+    Directories[llvm::COFF::IMPORT_TABLE].RelativeVirtualAddress =
+        MetadataRVA + Repairs->CellBytes;
     Directories[llvm::COFF::IMPORT_TABLE].Size = DirectoryBytes;
   }
 
   RebuiltImage Out;
+  for (const auto &Site : Repairs->Sites)
+    if (Site.Patch.Register)
+      ++Out.RepairedImportLoads;
+    else
+      ++Out.RepairedTailCalls;
+  Out.ConflictingTailCalls = Repairs->Conflicts;
+  Out.MaterializedTLSCallbacks = RebuiltTLS->MaterializedCallbacks;
   Out.File.assign(Cursor + Overlay.size(), 0);
   std::copy_n(File.begin(), H.SizeOfHeaders, Out.File.begin());
   auto COFF = fetch<coff_file_header>(Out.File, H.FileHeaderOffset);
@@ -497,6 +491,11 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
       Header.VirtualAddress = MetadataRVA;
       Header.Characteristics = llvm::COFF::IMAGE_SCN_CNT_INITIALIZED_DATA |
                                llvm::COFF::IMAGE_SCN_MEM_READ;
+      if (Repairs->CellBytes)
+        Header.Characteristics |= llvm::COFF::IMAGE_SCN_MEM_WRITE;
+      if (RebuiltTLS->MaterializedCallbacks)
+        Header.Characteristics |=
+            llvm::COFF::IMAGE_SCN_MEM_EXECUTE | llvm::COFF::IMAGE_SCN_CNT_CODE;
       Out.Sections.push_back(
           {Name.str(), MetadataRVA, Placed[I].VirtualSize, Placed[I].Size, 0});
       std::copy(Metadata.begin(), Metadata.end(),

@@ -33,7 +33,11 @@ llvm::Expected<std::unique_ptr<ExecutionSession>> ExecutionSession::create(
         if (!Resumed && S->watched(PC)) {
           S->WatchedPC = PC;
           S->AdmissionStop = SessionExitKind::ExecutionWatch;
-        } else if (!S->Budget->hasInstructions())
+        } else if (!Size)
+          // A direct watch handoff is not an admitted instruction. On resume,
+          // the CPU retires one instruction before rearming its page overlay.
+          return;
+        else if (!S->Budget->hasInstructions())
           S->AdmissionStop = SessionExitKind::InstructionLimit;
         else if (S->Admitted == S->Quantum)
           S->AdmissionStop = SessionExitKind::Quantum;

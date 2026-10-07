@@ -447,30 +447,39 @@ namespace {
 std::vector<ExecutionWatch>
 watchesExceptPage(llvm::ArrayRef<ExecutionWatch> Watches, uint64_t Page) {
   std::vector<ExecutionWatch> Open;
-  const uint64_t PageEnd = Page + x64::PageSize;
+  const uint64_t PageLast = Page | (x64::PageSize - 1);
   for (const ExecutionWatch &W : Watches) {
-    const uint64_t End = W.Address + W.Size;
-    if (End <= Page || W.Address >= PageEnd) {
+    const uint64_t Last = W.Address + (W.Size - 1);
+    if (Last < Page || W.Address > PageLast) {
       Open.push_back(W);
       continue;
     }
     if (W.Address < Page)
       Open.push_back({W.Address, Page - W.Address});
-    if (End > PageEnd)
-      Open.push_back({PageEnd, End - PageEnd});
+    if (Last > PageLast)
+      Open.push_back({PageLast + 1, Last - PageLast});
   }
   return Open;
 }
 } // namespace
 
-llvm::Error CheckedX64Backend::stepAcrossWatch(uint64_t FaultAddress) {
-  const uint64_t Page = FaultAddress & ~(x64::PageSize - 1);
+llvm::Error CheckedX64Backend::stepWatchedInstruction() {
+  const uint64_t PC = CPU.reg(X64Register::PC);
+  const uint64_t Page = PC & ~(x64::PageSize - 1);
+  auto Open = watchesExceptPage(ExecutionWatches, Page);
+  // A resumed instruction can itself cross into a second watched page. Open
+  // both fetch pages for this one processor step, retaining base permissions.
+  if (PC <= UINT64_MAX - (x64::MaxInstructionBytes - 1)) {
+    const uint64_t Last =
+        (PC + x64::MaxInstructionBytes - 1) & ~(x64::PageSize - 1);
+    if (Last != Page)
+      Open = watchesExceptPage(Open, Last);
+  }
   // The punched overlay must not reuse the full watch projection, and the
   // following free run must not reuse the punched one.
   ++WatchEpoch;
-  auto Root =
-      buildX64PageTables(*Memory, UserMode, Machine->requiresExceptionMonitor(),
-                         watchesExceptPage(ExecutionWatches, Page), WatchEpoch);
+  auto Root = buildX64PageTables(
+      *Memory, UserMode, Machine->requiresExceptionMonitor(), Open, WatchEpoch);
   ++WatchEpoch;
   if (!Root)
     return Root.takeError();
@@ -516,20 +525,26 @@ CheckedX64Backend::publishDirectException(const X64Exception &Raised,
       (*Raised.ErrorCode & x64::gateway::PageFaultExecute) ||
       ((*Raised.ErrorCode & x64::gateway::PageFaultPresent) &&
        !(*Raised.ErrorCode & x64::gateway::PageFaultWrite));
+  const bool WatchPage =
+      Raised.FaultAddress && llvm::any_of(ExecutionWatches, [&](const auto &W) {
+        const uint64_t Page = *Raised.FaultAddress & ~(x64::PageSize - 1);
+        return Page >= (W.Address & ~(x64::PageSize - 1)) &&
+               Page <= ((W.Address + W.Size - 1) & ~(x64::PageSize - 1));
+      });
   const bool FetchWatch =
       Raised.Vector == unsigned(x64::ExceptionVector::PageFault) &&
-      Raised.FaultAddress && FetchCode &&
-      executionWatched(*Raised.FaultAddress) &&
+      Raised.FaultAddress && FetchCode && WatchPage &&
       !Memory->check(*Raised.FaultAddress, 1, executionPermissions(Execute));
   if (FetchWatch && *Raised.FaultAddress == PC) {
-    if (Hooks.Instruction)
+    if (executionWatched(PC) && Hooks.Instruction)
       Hooks.Instruction(PC, 0);
-    return llvm::Error::success();
+    if (StopRequested || FirstFault)
+      return llvm::Error::success();
   }
-  if (FetchWatch && AllowSplit && *Raised.FaultAddress > PC &&
+  if (FetchWatch && AllowSplit && *Raised.FaultAddress >= PC &&
       *Raised.FaultAddress - PC < x64::MaxInstructionBytes) {
     const uint64_t Start = PC;
-    auto Stepped = stepAcrossWatch(*Raised.FaultAddress);
+    auto Stepped = stepWatchedInstruction();
     if (!Stepped) {
       // A step that did not retire the instruction would fault the same way
       // on every retry.

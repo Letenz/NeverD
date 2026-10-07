@@ -1,4 +1,4 @@
-//===- UnicornMachine.cpp - Portable checked-contract execution ----------===//
+//===- UnicornMachine.cpp - Portable machine execution -------------------===//
 //
 // NeverD Decompiler
 //
@@ -13,6 +13,7 @@
 
 #include "llvm/ADT/ScopeExit.h"
 
+#include <limits>
 #include <unicorn/arm64.h>
 #include <unicorn/unicorn.h>
 #include <unicorn/x86.h>
@@ -25,8 +26,8 @@ llvm::Error check(uc_err Status) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                  uc_strerror(Status));
 }
-/// The checked architecture owns admission and observations. This transport
-/// executes one admitted instruction over the same authoritative RAM pages.
+/// The architecture owns admission and observations. This transport executes
+/// checked steps or bounded direct runs over the same authoritative RAM pages.
 class UnicornStepper {
 public:
   uc_engine *Engine = nullptr;
@@ -54,7 +55,7 @@ public:
                                         : GuestArchitecture::AArch64))
       return E;
     uc_hook Hook;
-    return check(uc_hook_add(Engine, &Hook, UC_HOOK_CODE,
+    return check(uc_hook_add(Engine, &Hook, UC_HOOK_BLOCK,
                              reinterpret_cast<void *>(entry), this, 1, 0));
   }
   llvm::Error synchronize() {
@@ -119,8 +120,8 @@ public:
   bool entryCancelled() const { return Cancelled; }
 
 private:
-  // The synchronous engine call owns this borrow. Its instruction hook closes
-  // the race between the caller's final check and actual guest execution.
+  // The synchronous engine call owns this borrow. Checked entries use a
+  // one-instruction block; direct entries check at every translated block.
   const MachineRunControl *ActiveControl = nullptr;
   bool Cancelled = false;
   bool interrupted() const {
@@ -160,6 +161,14 @@ public:
       return E;
     if (!CPU.UserMode)
       return llvm::Error::success();
+    // The portable engine implements these instructions as hook-only helpers,
+    // even when EFER.SCE is clear. Turn that transport behavior into the same
+    // original-PC exception boundary the architecture receives from hardware.
+    for (int Instruction : {UC_X86_INS_SYSCALL, UC_X86_INS_SYSENTER})
+      if (auto E = check(uc_hook_add(CPU.Engine, &Hook, UC_HOOK_INSN,
+                                     reinterpret_cast<void *>(service), this, 1,
+                                     0, Instruction)))
+        return E;
     // In 64-bit Unicorn, writing CS/SS changes selectors only. SYSRET installs
     // real CPL3 segment caches before enabling translation. This private boot
     // instruction executes once, before any caller instruction or page table.
@@ -201,13 +210,33 @@ public:
   }
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control) override {
-    Control = Control.forNativeStep();
+    return enter(State, Root, Control.forNativeStep(), true);
+  }
+  llvm::Error run(X64MachineState &State, uint64_t Root,
+                  MachineRunControl Control) override {
+    if (!CPU.UserMode)
+      return diagnostic::error(diagnostic::DirectExecutionUnsupported);
+    return enter(State, Root, Control, false);
+  }
+
+private:
+  llvm::Error enter(X64MachineState &State, uint64_t Root,
+                    MachineRunControl Control, bool Single) {
     if (auto E = validateX64FPState(State.FP))
       return E;
     if (auto E = CPU.synchronize())
       return E;
     if (CPU.UserMode) {
       uint64_t CR0 = x64::CR0;
+      if (!Single) {
+        // The bootstrap enabled SYSCALL only to install CPL3 through SYSRET.
+        // Direct guest services must instead trap at their original PC, just
+        // as they do on the native transports; they cannot enter an unset
+        // LSTAR or execute a host service.
+        uc_x86_msr EFER{x64::EFERAddress, x64::EFER};
+        if (auto E = check(uc_reg_write(CPU.Engine, UC_X86_REG_MSR, &EFER)))
+          return E;
+      }
       if (auto E = check(uc_reg_write(CPU.Engine, UC_X86_REG_CR3, &Root)))
         return E;
       if (auto E = check(uc_reg_write(CPU.Engine, UC_X86_REG_CR0, &CR0)))
@@ -246,10 +275,31 @@ public:
     if (auto E = check(uc_reg_write(CPU.Engine, UC_X86_REG_FPTAG, &Tag)))
       return E;
     PendingException.reset();
-    auto RunError = CPU.run(State.reg(X64Register::PC), 1, &Control);
-    if (RunError && (!PendingException || CPU.entryCancelled()))
-      return RunError;
-    llvm::consumeError(std::move(RunError));
+    ServicePC.reset();
+    ServiceStatus = UC_ERR_OK;
+    // Disabling the engine's count hook invalidates old virtual addresses
+    // through the current MMU. A watch overlay can make those addresses
+    // non-executable, leaking a synthetic fault into the next real exception.
+    // Keep the hook installed across checked/direct entries. This transport
+    // ceiling is independent of the guest's instruction budget.
+    const size_t Count = Single ? 1 : std::numeric_limits<size_t>::max();
+    auto RunError = CPU.run(State.reg(X64Register::PC), Count, &Control);
+    if (ServiceStatus != UC_ERR_OK) {
+      llvm::consumeError(std::move(RunError));
+      return check(ServiceStatus);
+    }
+    bool Interrupted = false;
+    if (RunError && (!PendingException || CPU.entryCancelled())) {
+      if (Single || !RunError.isA<MachineInterruptedError>())
+        return RunError;
+      // Free execution may already have committed guest work. Capture the
+      // boundary it actually stopped on before publishing interruption.
+      Interrupted = true;
+    }
+    if (!Interrupted)
+      llvm::consumeError(std::move(RunError));
+    auto ConsumeRunError =
+        llvm::scope_exit([&] { llvm::consumeError(std::move(RunError)); });
     auto Next = State;
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
   if (auto E = check(uc_reg_read(CPU.Engine, registerID(X64Register::Name),    \
@@ -257,6 +307,12 @@ public:
     return E;
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
+    if (auto E =
+            check(uc_reg_read(CPU.Engine, UC_X86_REG_GS_BASE, &Next.GSBase)))
+      return E;
+    if (auto E =
+            check(uc_reg_read(CPU.Engine, UC_X86_REG_FS_BASE, &Next.FSBase)))
+      return E;
     for (unsigned I = 0; I < Next.Xmm.size(); ++I)
       if (auto E = check(
               uc_reg_read(CPU.Engine, UC_X86_REG_XMM0 + I, Next.Xmm[I].data())))
@@ -277,6 +333,12 @@ public:
     if (auto E = check(uc_reg_read(CPU.Engine, UC_X86_REG_FPTAG, &NextTag)))
       return E;
     Next.FP.setFullTag(NextTag);
+    if (ServicePC)
+      Next.reg(X64Register::PC) = *ServicePC;
+    if (Interrupted) {
+      State = Next;
+      return RunError;
+    }
     if (PendingException) {
       std::optional<uint64_t> Address;
       if (*PendingException == unsigned(x64::ExceptionVector::PageFault)) {
@@ -295,8 +357,17 @@ public:
     return llvm::Error::success();
   }
 
-private:
   std::optional<unsigned> PendingException;
+  std::optional<uint64_t> ServicePC;
+  uc_err ServiceStatus = UC_ERR_OK;
+  static void service(uc_engine *Engine, void *Opaque) {
+    auto &Machine = *static_cast<UnicornX64Machine *>(Opaque);
+    uint64_t PC = 0;
+    Machine.ServiceStatus = uc_reg_read(Engine, UC_X86_REG_RIP, &PC);
+    if (Machine.ServiceStatus == UC_ERR_OK)
+      Machine.ServicePC = PC;
+    exception(Engine, unsigned(x64::ExceptionVector::InvalidOpcode), Opaque);
+  }
   static void exception(uc_engine *Engine, uint32_t Vector, void *Opaque) {
     auto &Machine = *static_cast<UnicornX64Machine *>(Opaque);
     if (!Machine.PendingException)

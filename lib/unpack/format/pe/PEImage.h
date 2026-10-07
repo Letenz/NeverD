@@ -65,11 +65,27 @@ private:
 };
 
 /// Write the observed memory as a PE32+ file with the recovered entry point
-/// and a new import directory over the cells the program already uses. A
-/// metadata override names a data directory by its index. The result is
+/// and a new import directory over the cells the program already uses. The
+/// result is
 /// fixed at the observed base: relocation metadata for generated content is
 /// unknown and is therefore removed, not assumed.
 llvm::Expected<RebuiltImage>
 rebuild(const Image &Input, const Capture &Observed, const RebuildPlan &Plan);
+
+/// Recover a replaced TLS directory from allocation identity and observed
+/// callback entries. Ambiguous records are errors, not arbitrary choices.
+llvm::Expected<std::optional<uint64_t>>
+recoverTLSDirectory(const Image &Input, const Capture &Observed);
+
+struct TLSRebuild {
+  uint64_t DirectoryRVA = 0, MaterializedCallbacks = 0;
+};
+/// Validate and recover TLS metadata, then append adapters for initializers
+/// whose process-attach effects are already in the snapshot. Other TLS reasons
+/// still tail-call the original callback.
+llvm::Expected<TLSRebuild> rebuildTLS(const Image &Input,
+                                      const Capture &Observed,
+                                      uint64_t MetadataRVA,
+                                      std::vector<uint8_t> &Metadata);
 } // namespace neverd::unpack::pe
 #endif

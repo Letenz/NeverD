@@ -293,7 +293,7 @@ TEST_P(WindowsProcess, GuardPagesRequireExplicitExceptionSupport) {
   EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
   EXPECT_FALSE(R.ExitStatus);
 }
-// The direct user contract runs the same program on the hardware transport
+// The direct user contract runs the same program on the selected transport
 // between architectural events instead of single-stepping it. Its observable
 // result must equal the checked contract's, and nothing is single-stepped. A
 // transport without a free-running entry reports the contract unsupported
@@ -307,7 +307,8 @@ TEST_P(WindowsProcess, DirectUserContractMatchesCheckedOrIsUnsupported) {
   Options.Contract = ExecutionContract::DirectUserX64;
   auto Direct = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
   ASSERT_TRUE(bool(Direct)) << llvm::toString(Direct.takeError());
-  const bool Native = GetParam().Backend == ExecutionBackendKind::KVM ||
+  const bool Native = GetParam().Backend == ExecutionBackendKind::Unicorn ||
+                      GetParam().Backend == ExecutionBackendKind::KVM ||
                       GetParam().Backend == ExecutionBackendKind::WHP;
   if (!Native) {
     EXPECT_EQ(Direct->Stop, ProcessStopReason::CPUFailure)

@@ -4,13 +4,15 @@
 //
 //===----------------------------------------------------------------------===//
 #include "Format.h"
-#include "Packer.h"
 #ifdef NEVERD_UNPACK_EXECUTION
+#include "../dynamic/ProcessImports.h"
 #include "../dynamic/ProcessTransfer.h"
 
 #include "neverd/emulation/ProcessSession.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MathExtras.h"
 #endif
 
 #include <fstream>
@@ -47,12 +49,13 @@ readInput(const std::filesystem::path &Path) {
 }
 
 #ifdef NEVERD_UNPACK_EXECUTION
-/// Run the recovered image and collect export calls that return into it.
-/// Failure leaves the image as the entry snapshot already rebuilt it.
+/// Run the recovered image and collect witnessed export calls and address
+/// loads. Failure leaves the image as the entry snapshot already rebuilt it.
 llvm::Expected<std::vector<TailImport>>
 observeTailImports(llvm::ArrayRef<uint8_t> Image,
                    emulation::ProcessProfile Profile,
-                   const emulation::ProcessOptions &Options) {
+                   const emulation::ProcessOptions &Options,
+                   UnpackResult::ImportRepairReport &Report) {
   llvm::SmallString<128> Directory;
   if (std::error_code Error =
           llvm::sys::fs::createUniqueDirectory("neverd-unpack", Directory))
@@ -69,19 +72,43 @@ observeTailImports(llvm::ArrayRef<uint8_t> Image,
                       std::streamsize(Image.size())))
       return Finish(failure(text::ReadFailed + Path.filename().string()));
   }
-  auto Ran = emulation::emulateProcess(Path, Profile, Options);
+  // Discover actual export-call continuations before arming helper watches.
+  // Each pass has its own declared process limits. Neither a byte pattern nor
+  // an export call alone establishes a replacement's state effects.
+  ExportObserver Exports;
+  auto Discovery = emulation::observeProcess(Path, Profile, Options, Exports);
+  if (!Discovery)
+    return Finish(Discovery.takeError());
+  Report.Stop = emulation::processStopReasonName(Discovery->Stop);
+  Report.Diagnostic = Discovery->Diagnostic;
+  Report.Instructions = Discovery->Instructions;
+  Report.Events = Discovery->Events;
+  std::vector<uint64_t> Continuations, Gates;
+  for (const auto &Call : Exports.calls()) {
+    Continuations.push_back(Call.ReturnAddress);
+    Gates.push_back(Call.Gate);
+  }
+  Report.ObservedCalls = Continuations.size();
+  if (Continuations.empty())
+    return Finish(std::vector<TailImport>{});
+  ImportObserver Observer(Continuations, Gates);
+  auto Ran = emulation::observeProcess(Path, Profile, Options, Observer);
   if (!Ran)
     return Finish(Ran.takeError());
-  std::vector<TailImport> Calls;
-  for (const auto &Call : Ran->NativeCalls)
-    if (Call.ReturnAddress)
-      Calls.push_back({*Call.ReturnAddress, Call.PC});
+  Report.Stop = emulation::processStopReasonName(Ran->Stop);
+  Report.Diagnostic = Ran->Diagnostic;
+  Report.Instructions =
+      llvm::SaturatingAdd(Report.Instructions, Ran->Instructions);
+  Report.Events = llvm::SaturatingAdd(Report.Events, Ran->Events);
+  auto Calls = Observer.takeImports();
+  Report.ObservedLoads =
+      llvm::count_if(Calls, [](const auto &I) { return I.AddressLoad; });
   return Finish(std::move(Calls));
 }
 #endif
 
-// The orchestration names no container, instruction set, guest system or
-// protector. Each is chosen through its registry from facts of the input.
+// The orchestration names no container, instruction set or guest system.
+// Each is chosen from facts of the input, without identifying a protector.
 llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
                                         const UnpackOptions &Options) {
   if (Options.Transfer > defaults::MaxTransfers)
@@ -97,22 +124,16 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
 #ifdef NEVERD_UNPACK_EXECUTION
   UnpackResult Result;
   Result.Format = Container->kind();
-  Result.Packer = identify(Image);
   Result.Architecture = architectureName(Image.architecture());
   Result.ImageBase = Image.preferredBase();
   Result.PackedEntryRVA = Image.entryRVA();
-  // Only an identified stub may declare an entry; an unidentified input has
-  // no format whose operands could be read as one.
-  const Packer *Stub = packerOf(Result.Packer.Kind);
-  const std::optional<uint64_t> Declared =
-      Stub ? Stub->declaredEntry(Image) : std::nullopt;
   auto Traits = architectureTraits(Image.architecture());
   if (!Traits)
     return Traits.takeError();
   auto Profile = processProfile(Image);
   if (!Profile)
     return Profile.takeError();
-  TransferObserver Observer(Image, *Traits, Options.Transfer, Declared);
+  TransferObserver Observer(Image, *Traits, Options.Transfer);
   auto Run =
       emulation::observeProcess(Input, *Profile, Options.Process, Observer);
   if (!Run)
@@ -132,15 +153,14 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
     return Result;
   }
   RebuildPlan Plan;
-  if (Stub)
-    Stub->planRebuild(Image, *Observed, Plan);
   auto Rebuilt = Container->rebuild(Image, *Observed, Plan);
   if (!Rebuilt)
     return Rebuilt.takeError();
   // The entry snapshot still has protector import calls. Running it shows
   // which export each one reaches, and a second rebuild turns those sites
   // into ordinary import calls when the container recognizes them.
-  auto Tails = observeTailImports(Rebuilt->File, *Profile, Options.Process);
+  auto Tails = observeTailImports(Rebuilt->File, *Profile, Options.Process,
+                                  Result.ImportRepair);
   if (Tails && !Tails->empty()) {
     Plan.TailImports = std::move(*Tails);
     auto Repaired = Container->rebuild(Image, *Observed, Plan);
@@ -148,17 +168,17 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
       return Repaired.takeError();
     Rebuilt = std::move(Repaired);
   } else if (!Tails) {
-    llvm::consumeError(Tails.takeError());
+    Result.ImportRepair.Stop = text::ImportRepairSetupFailed;
+    Result.ImportRepair.Diagnostic = llvm::toString(Tails.takeError());
   }
+  Result.ImportRepair.RepairedCalls = Rebuilt->RepairedTailCalls;
+  Result.ImportRepair.RepairedLoads = Rebuilt->RepairedImportLoads;
+  Result.ImportRepair.ConflictingCalls = Rebuilt->ConflictingTailCalls;
+  Result.MaterializedTLSCallbacks = Rebuilt->MaterializedTLSCallbacks;
   Result.Outcome = UnpackOutcome::Unpacked;
   Result.ImageBase = Observed->Base;
   Result.EntryRVA = Observed->EntryRVA;
   Result.Source = Observed->Source;
-  // An observed entry outranks a declared one, but a stub that names another
-  // address than the one it reached is not the stub that was identified.
-  if (Declared && Observed->Source == EntrySource::Transfer &&
-      !Options.Transfer && *Declared != Observed->EntryRVA)
-    Result.Diagnostic = text::DeclaredEntry;
   Result.Sections = std::move(Rebuilt->Sections);
   Result.Imports = std::move(Rebuilt->Imports);
   Result.Image = std::move(Rebuilt->File);

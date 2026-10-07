@@ -59,9 +59,8 @@ private:
   };
   llvm::Error execute(const cs_insn &Instruction) override;
   llvm::Error executeDirect() override;
-  /// Retire one instruction that started outside a watch and fetched its tail
-  /// from a watched page. The watch stays in place for the next instruction.
-  llvm::Error stepAcrossWatch(uint64_t FaultAddress);
+  /// Retire one instruction through a temporary watch overlay, then rearm it.
+  llvm::Error stepWatchedInstruction();
   llvm::Error publishDirectException(const X64Exception &Raised,
                                      bool AllowSplit, bool &Resume);
   std::optional<ServiceRequest>
