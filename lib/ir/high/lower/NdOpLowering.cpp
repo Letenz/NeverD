@@ -21,6 +21,8 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/MedIntrinsicOutputs.h"
+#include "neverd/libc/LibCNames.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -127,6 +129,32 @@ void MedToHighConverter::lowerCall(HighFunc &Func, const MedBlock &CurBlock,
   auto Args = collectCallArgs(CurBlock, CallIdx);
   if (Callee == "___error")
     Args.clear();
+  // An image linked at a fixed address relocates no immediate, so a string
+  // argument arrives as a plain number.  A parameter the callee reads as a C
+  // string makes it the address of that string.
+  if (Image && Image->LoadsAtLinkAddress && !CurOp.SourceCallHint)
+    for (size_t K = 0; K < Args.size(); ++K) {
+      ExprPtr &Arg = Args[K];
+      HighExpr *Constant = Arg.get();
+      while (Constant && Constant->Operands.size() == 1 &&
+             (Constant->Kind == ExprKind::Cast ||
+              (Constant->Kind == ExprKind::UnaryOp &&
+               Constant->Op == NdOp::INT_ZEXT)))
+        Constant = Constant->Operands[0].get();
+      if (!Constant || Constant->Kind != ExprKind::Const ||
+          (Constant->ConstProvenance != ConstantAddressProvenance::Scalar &&
+           Constant->ConstProvenance != ConstantAddressProvenance::Unknown) ||
+          !libc::isCStringParameter(Callee, static_cast<unsigned>(K)))
+        continue;
+      const Segment *Seg = Image->getSegmentFor(Constant->ConstVal);
+      if (!Seg || Seg->isExecutable())
+        continue;
+      Arg = HighExpr::makeConst(Constant->ConstVal,
+                                Arg->Type        ? Arg->Type->Size
+                                : Constant->Type ? Constant->Type->Size
+                                                 : 8,
+                                ConstantAddressProvenance::DataAddress);
+    }
   auto CallExpr = HighExpr::makeCall(Callee, Target, std::move(Args));
   CallExpr->SourceCallHint = CurOp.SourceCallHint;
   CallExpr->DoesNotReturn = CurOp.DoesNotReturn;

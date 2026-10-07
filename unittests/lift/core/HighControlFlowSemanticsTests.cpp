@@ -3435,6 +3435,67 @@ TEST(HighControlFlowSemantics, SlotCallGoesThroughThePointerItHolds) {
   }
 }
 
+TEST(HighControlFlowSemantics, FixedImageStringArgumentIsAnAddress) {
+  // `mov edi, 0x402000; call puts` in a non-PIE executable: no relocation
+  // marks the immediate, but puts reads a C string there.  Only an image the
+  // loader cannot move makes the number that string's address.
+  const Arch Architecture = Arch::X64;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  for (bool Fixed : {true, false}) {
+    SCOPED_TRACE(Fixed);
+    BinaryImage Image;
+    Image.Format = BinaryFormat::ELF;
+    Image.Arch = Architecture;
+    Image.Bits = Bitness::Bits64;
+    Image.LoadsAtLinkAddress = Fixed;
+    Segment Rodata;
+    Rodata.VA = 0x402000;
+    Rodata.Data = {'t', 'e', 'n', 0};
+    Rodata.Size = Rodata.FileSz = Rodata.Data.size();
+    Rodata.Flags = SegmentFlags::Readable;
+    Image.Segments.push_back(Rodata);
+    MedFunc M;
+    M.Entry = 0x401000;
+    M.Name = "say";
+    M.ReturnType = NdType::makeVoid();
+    M.Blocks.resize(1);
+    M.Blocks[0].Id = 0;
+    M.Blocks[0].StartAddr = 0x401000;
+    M.Blocks[0].EndAddr = 0x401010;
+    auto Argument = machineValue(1, Architecture);
+    Argument.Kind = MedVar::Reg;
+    Argument.RegOff = TRI.IntParamRegs[0];
+    Argument.SSAVer = 1;
+    M.Blocks[0].Ops = {
+        operation(NdOp::COPY, 0x401000, Argument,
+                  {MedVar::makeConst(0x402000, 8)}),
+        operation(NdOp::CALL, 0x401005, {}, {MedVar::makeConst(0x401100, 8)}),
+        operation(NdOp::RETURN, 0x40100a, {}, {})};
+    M.Blocks[0].Ops[0].Inputs[0].Provenance = ConstantAddressProvenance::Scalar;
+    const std::map<va_t, std::string> Names{{0x401100, "puts"}};
+    MedToHighConverter Converter;
+    Converter.setBinaryImage(&Image);
+    Converter.setFuncNames(&Names);
+    const auto F = Converter.convert(M, Architecture);
+    ExprPtr Call;
+    for (const HighStmt &S : F.Body)
+      if (S.Kind == StmtKind::Call && S.CallExpr)
+        Call = S.CallExpr;
+    ASSERT_TRUE(Call);
+    ASSERT_FALSE(Call->Operands.empty());
+    const HighExpr *Argument0 = Call->Operands[0].get();
+    while (Argument0 && Argument0->Kind != ExprKind::Const &&
+           Argument0->Operands.size() == 1)
+      Argument0 = Argument0->Operands[0].get();
+    ASSERT_TRUE(Argument0);
+    ASSERT_EQ(Argument0->Kind, ExprKind::Const);
+    EXPECT_EQ(Argument0->ConstVal, 0x402000U);
+    EXPECT_EQ(Argument0->ConstProvenance,
+              Fixed ? ConstantAddressProvenance::DataAddress
+                    : ConstantAddressProvenance::Scalar);
+  }
+}
+
 TEST(HighControlFlowSemantics, SlotReadInAnotherBlockStillNamesItsImport) {
   // `mov rsi, [__imp_Sleep]` before a loop, `call rsi` inside it: the read
   // is in another block, and the callee is still the import.
