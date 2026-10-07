@@ -1335,6 +1335,12 @@ NEVERD_EMULATION_DOC_TOKEN(ThreadMutexTests, "DriverMutexThreadTests.cpp")
 NEVERD_EMULATION_DOC_TOKEN(ThreadMutexTests, "driver_seh_mutex.def")
 NEVERD_EMULATION_DOC_TOKEN(ThreadMutexTests, "NativeDriverTests.def")
 
+NEVERD_EMULATION_DOC_PATH(WhpResourceInitialization, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WhpResourceInitialization, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(WhpResourceInitialization, "WhpResourcePolicy.def")
+NEVERD_EMULATION_DOC_TOKEN(WhpResourceInitialization, "WhpResourceTests.cpp")
+NEVERD_EMULATION_DOC_TOKEN(WhpResourceInitialization, "30 s")
+
 NEVERD_EMULATION_DOC_PATH(LinuxPriority, "docs/architecture.md")
 NEVERD_EMULATION_DOC_PATH(LinuxPriority, "docs/{locale}/architecture.md")
 NEVERD_EMULATION_DOC_TOKEN(LinuxPriority, "LinuxPriorityOptions")

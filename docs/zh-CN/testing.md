@@ -1140,9 +1140,11 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 113 个工作负载产生 226 个 WHP 结果：27 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 4884 项 CPU 检查及 25 项 SEH 回归及 77 项调度检查，共有 5212 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `4884 CPU + 226 WHP + 25 SEH + 77 scheduling = 5212`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 113 个工作负载产生 226 个 WHP 结果：27 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 4887 项 CPU 检查及 25 项 SEH 回归及 77 项调度检查，共有 5215 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `4887 CPU + 226 WHP + 25 SEH + 77 scheduling = 5215`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
+
+`WhpResourcePolicy.def` 为 WHP x64 和 ARM64 的资源创建设置独立的 `30 s` 期限，再执行 ISA 自检。同步宿主设置完成后，发布资源前仍检查该期限。指令自检和普通 guest 执行保留各自的限制。`WhpResourceTests.cpp` 检查初始化中断的类型与原因诊断、取消后资源清理、宿主错误优先级及普通执行期限不变。
 
 `X64PopFlagsTests.cpp` 检查两种权限及 `driver-strict`：全部 256 种允许的标志输入与两种初态、九种编码、全部 64 个输入位、只读和可执行别名、跨页故障与修复、观察器中止及失败、设备栈拒绝和后续原生指令边界。`X64PopFlagsOracle` 在 x64 主机独立执行原始指令，核验 CPL3/IOPL0 和精确栈消耗。`driver_resource_flags.def` 使原 WDK 资源驱动通过两种操作数宽度设置、清除并恢复标志。测试保留完整整数、控制、x87、SSE 状态，不代表支持客体 TF/NT/AC/ID 或已有 ARM64 原生执行证据。
 
