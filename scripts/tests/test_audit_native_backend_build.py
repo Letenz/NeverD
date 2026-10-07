@@ -98,6 +98,17 @@ class NativeRecipeTests(unittest.TestCase):
         alias = self.root / ".." / self.root.name
         self.assertEqual(self.check(alias), self.check())
 
+    def test_real_cache_comments_and_line_endings_preserve_profile_entries(self):
+        expected = self.check()
+        cache = self.build / self.texts["Cache"]
+        entries = cache.read_text().splitlines()
+        for ending in ("\n", "\r\n"):
+            content = "# CMake cache\n\n" + "\n\n".join(
+                "//Enable the selected component\n" + entry for entry in entries) + "\n"
+            cache.write_bytes(content.replace("\n", ending).encode())
+            with self.subTest(ending=ending):
+                self.assertEqual(audit.audit_objects(self.build, "kvm", self.root), expected)
+
     def test_missing_and_duplicate_native_recipes_are_rejected(self):
         original = list(self.rows)
         for rows in [original[:-1], original + original[:1]]:

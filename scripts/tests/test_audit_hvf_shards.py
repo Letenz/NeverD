@@ -126,6 +126,15 @@ class HVFShardEvidenceTests(unittest.TestCase):
         self.mutate(path, lambda data: data["tests"].pop())
         self.mutate(path, lambda data: data["tests"][0]["properties"][-1].__setitem__("value", 99))
 
+    def test_coherent_shard_cannot_change_a_serial_execution_contract(self):
+        for test in self.document["tests"]:
+            if test["name"] == "Native.Execute/1":
+                test["properties"].append({"name": methods.METHOD_TEXT["RunSerial"], "value": True})
+        changed = self.root / "serial-shard"
+        self.assertEqual(self.collect(changed, 0), 0)
+        with self.assertRaisesRegex(ValueError, "full inventory execution contracts"):
+            self.check([changed, self.paths[1]])
+
     def test_coherent_shard_cannot_relabel_a_different_parameter_as_the_original(self):
         for test in self.document["tests"]:
             if test["name"] == "Native.Execute/1":
