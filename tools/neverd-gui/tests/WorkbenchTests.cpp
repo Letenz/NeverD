@@ -314,11 +314,13 @@ private slots:
     const QString declaration =
         QStringLiteral("typedef uint64_t neverd_unaligned_u64 "
                        "__attribute__((aligned(1), may_alias));");
+    const QString linked = QStringLiteral(
+        "extern int Bar_ctor() __asm__(\"_ZN3BarC1Ev\"); /* Bar::Bar() */");
     QCOMPARE(QApplication::clipboard()->text(),
              QStringLiteral("#include <stdint.h>\n") + declaration +
-                 QLatin1Char('\n'));
+                 QLatin1Char('\n') + linked + QLatin1Char('\n'));
     QTest::keyClick(code, Qt::Key_Plus, Qt::KeypadModifier);
-    QCOMPARE(code->lineCount(), 704);
+    QCOMPARE(code->lineCount(), 705);
     QTest::keyClick(code, Qt::Key_Minus, Qt::KeypadModifier);
     QCOMPARE(code->lineCount(), 702);
     QVERIFY(code->preludeFolded());
@@ -330,7 +332,12 @@ private slots:
     QVERIFY(!code->declarationLine(QStringLiteral("uint64_t")));
     QVERIFY(code->goToDeclaration(QStringLiteral("neverd_unaligned_u64")));
     QVERIFY(!code->preludeFolded());
-    QCOMPARE(code->lineCount(), 704);
+    QCOMPARE(code->lineCount(), 705);
+    // A C++ function links by the mangled symbol its label names, which is
+    // what navigation looks up.
+    QCOMPARE(code->linkedSymbol(QStringLiteral("Bar_ctor")),
+             std::optional<QString>(QStringLiteral("_ZN3BarC1Ev")));
+    QVERIFY(!code->linkedSymbol(QStringLiteral("neverd_unaligned_u64")));
     QCOMPARE(code->currentToken(), QStringLiteral("neverd_unaligned_u64"));
     code->setPreludeFolded(true);
     QCOMPARE(code->lineCount(), 702);

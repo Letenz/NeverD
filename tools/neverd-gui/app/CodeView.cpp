@@ -430,6 +430,17 @@ bool CodeText::event(QEvent *event) {
                                  .arg(text.toString()),
                              this);
           return true;
+        } else if (const auto linked = declarations().linked.constFind(token);
+                   linked != declarations().linked.cend()) {
+          // Its declaration names the symbol and the demangled signature.
+          QToolTip::showText(help->globalPos(),
+                             QStringView(source_)
+                                 .split(QLatin1Char('\n'))
+                                 .at(linked->first)
+                                 .trimmed()
+                                 .toString(),
+                             this);
+          return true;
         }
     QToolTip::hideText();
     event->ignore();
@@ -824,7 +835,8 @@ void CodeText::mouseDoubleClickEvent(QMouseEvent *event) {
       controlWords().contains(token) || keywordWords().contains(token) ||
       typeWords().contains(token))
     return;
-  emit nameActivated(token);
+  // A C++ function links by its mangled symbol, which the binary names.
+  emit nameActivated(linkedSymbol(token).value_or(token));
 }
 
 bool CodeText::hasPrelude() const {
@@ -845,36 +857,54 @@ void CodeText::setPreludeFolded(bool folded) {
   emit foldingChanged();
 }
 
-std::optional<int> CodeText::declarationLine(const QString &name) const {
-  if (!declarations_) {
-    // The declared name ends a typedef, before its attributes; a record or
-    // macro names itself first.
-    static const QRegularExpression Typedef(QStringLiteral(
-        R"(^\s*typedef\b.*?\b([A-Za-z_]\w*)\s*(?:__attribute__\s*\(\(.*\)\)\s*)?;\s*$)"));
-    static const QRegularExpression Record(QStringLiteral(
-        R"(^\s*(?:typedef\s+)?(?:struct|union|enum)\s+([A-Za-z_]\w*)\s*\{)"));
-    static const QRegularExpression Define(
-        QStringLiteral(R"(^\s*#\s*define\s+([A-Za-z_]\w*))"));
-    declarations_.emplace();
-    int line = 0;
-    for (const QStringView text :
-         QStringView(source_).split(QLatin1Char('\n'))) {
-      const QStringView head = text.trimmed();
-      if (head.startsWith(u"typedef") || head.startsWith(u"struct") ||
-          head.startsWith(u"union") || head.startsWith(u"enum") ||
-          head.startsWith(u'#'))
-        for (const auto *pattern : {&Typedef, &Record, &Define})
-          if (const auto match = pattern->matchView(text); match.hasMatch()) {
-            if (!declarations_->contains(match.captured(1)))
-              declarations_->insert(match.captured(1), line);
-            break;
-          }
-      ++line;
+const CodeText::Declarations &CodeText::declarations() const {
+  if (declarations_)
+    return *declarations_;
+  // The declared name ends a typedef, before its attributes; a record or
+  // macro names itself first; a labeled function names itself before its
+  // parameters.
+  static const QRegularExpression Typedef(QStringLiteral(
+      R"(^\s*typedef\b.*?\b([A-Za-z_]\w*)\s*(?:__attribute__\s*\(\(.*\)\)\s*)?;\s*$)"));
+  static const QRegularExpression Record(QStringLiteral(
+      R"(^\s*(?:typedef\s+)?(?:struct|union|enum)\s+([A-Za-z_]\w*)\s*\{)"));
+  static const QRegularExpression Define(
+      QStringLiteral(R"(^\s*#\s*define\s+([A-Za-z_]\w*))"));
+  static const QRegularExpression Labeled(QStringLiteral(
+      R"re(\b([A-Za-z_]\w*)\s*\([^;]*\)\s*__asm__\s*\(\s*"([^"\\]+)"\s*\))re"));
+  auto &found = declarations_.emplace();
+  int line = 0;
+  for (const QStringView text : QStringView(source_).split(QLatin1Char('\n'))) {
+    const QStringView head = text.trimmed();
+    if (head.startsWith(u"typedef") || head.startsWith(u"struct") ||
+        head.startsWith(u"union") || head.startsWith(u"enum") ||
+        head.startsWith(u'#')) {
+      for (const auto *pattern : {&Typedef, &Record, &Define})
+        if (const auto match = pattern->matchView(text); match.hasMatch()) {
+          if (!found.types.contains(match.captured(1)))
+            found.types.insert(match.captured(1), line);
+          break;
+        }
+    } else if (text.contains(u"__asm__")) {
+      if (const auto match = Labeled.matchView(text);
+          match.hasMatch() && !found.linked.contains(match.captured(1)))
+        found.linked.insert(match.captured(1), {line, match.captured(2)});
     }
+    ++line;
   }
-  if (const auto found = declarations_->constFind(name);
-      found != declarations_->cend())
+  return found;
+}
+
+std::optional<int> CodeText::declarationLine(const QString &name) const {
+  const auto &types = declarations().types;
+  if (const auto found = types.constFind(name); found != types.cend())
     return *found;
+  return std::nullopt;
+}
+
+std::optional<QString> CodeText::linkedSymbol(const QString &name) const {
+  const auto &linked = declarations().linked;
+  if (const auto found = linked.constFind(name); found != linked.cend())
+    return found->second;
   return std::nullopt;
 }
 

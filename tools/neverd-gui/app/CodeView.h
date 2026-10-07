@@ -66,6 +66,9 @@ public:
   std::optional<int> declarationLine(const QString &name) const;
   /// Show the declaration of \p name, expanding the prelude that holds it.
   bool goToDeclaration(const QString &name);
+  /// The symbol a function declaration links \p name to with an assembler
+  /// label: a C++ function reads by its stem and links by its mangled name.
+  std::optional<QString> linkedSymbol(const QString &name) const;
   void setFolded(bool folded);
   const QString &status() const { return status_; }
   /// Pages of the current function are still arriving.
@@ -128,8 +131,15 @@ private:
   bool foldPreludeAfterLoad_ = true;
   /// The first page's prelude: lines and end_byte.
   QJsonObject prelude_;
-  /// Names the code declares and their source lines, built on first use.
-  mutable std::optional<QHash<QString, int>> declarations_;
+  /// What the code declares, indexed on first use.
+  struct Declarations {
+    /// Types and macros, by their source lines.
+    QHash<QString, int> types;
+    /// Functions declared with an assembler label: source line and symbol.
+    QHash<QString, std::pair<int, QString>> linked;
+  };
+  const Declarations &declarations() const;
+  mutable std::optional<Declarations> declarations_;
   int cursorLine_ = 0, cursorColumn_ = 0;
   std::optional<std::pair<int, int>> anchor_;
   QVector<int> marked_;
