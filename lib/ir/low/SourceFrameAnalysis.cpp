@@ -425,7 +425,7 @@ public:
         Temps.clear();
         Instruction = Op.Addr;
       }
-      if (isArchitecturalNoReturn(Op, Architecture)) {
+      if (isArchitecturalNoReturn(Op)) {
         if (QueryIndex || Current.hasRetainedScratch() ||
             !Current.Values.empty())
           return false;
@@ -597,7 +597,7 @@ public:
             (TerminalOnly || !Block.Succs.empty() ||
              (Index + 1 != Block.Ops.size() &&
               (Index + 2 != Block.Ops.size() ||
-               !isArchitecturalNoReturn(Block.Ops.back(), Architecture)))))
+               !isArchitecturalNoReturn(Block.Ops.back())))))
           return false;
         const auto &Signature = *Found->second.Signature;
         const auto ErrorResult = sourceABIErrorResult(Signature);
@@ -1569,7 +1569,7 @@ frameGraph(const LowFunc &Function, Arch Architecture,
         Terminal != Calls.end() &&
         ordinaryFrameTermination(Terminal->second, Architecture);
     const bool ArchitecturalTrap =
-        isArchitecturalNoReturn(Function.Blocks[I].Ops.back(), Architecture);
+        isArchitecturalNoReturn(Function.Blocks[I].Ops.back());
     if ((Succs[I].empty() && !Returns && !ExceptionalCall &&
          !ArchitecturalTrap) ||
         ((ExceptionalCall || ArchitecturalTrap) && !Succs[I].empty()))

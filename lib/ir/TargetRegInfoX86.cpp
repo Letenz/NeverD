@@ -279,6 +279,11 @@ void initX86RegInfoTables() {
   X64RegInfo.ReturnOperandIsValue = true;
   X86RegInfo.ReturnOperandIsValue = true;
   X64RegInfo.CallPushesReturnAddress = true;
+  X64RegInfo.VectorReturnFieldsAreEightbytes = true;
+  X64RegInfo.HasSegmentAddressSpaces = true;
+  X86RegInfo.HasSegmentAddressSpaces = true;
+  X64RegInfo.ArithmeticWritesFlags = true;
+  X86RegInfo.ArithmeticWritesFlags = true;
   X86RegInfo.CallPushesReturnAddress = true;
 
   X64RegInfo.VecRegWidth = 64;

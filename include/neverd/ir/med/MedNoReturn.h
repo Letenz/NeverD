@@ -21,12 +21,22 @@
 namespace neverd {
 
 /// Architectural terminating operations recognized by the shared no-return
-/// proof. This does not grant an intrinsic a source ABI or memory semantics.
-bool isArchitecturalNoReturn(const MedOp &Op, Arch TheArch);
+/// proof: an intrinsic that never returns (AArch64 BRK and HLT, an x86 INT
+/// vector that does not resume).  The intrinsic names its architecture.  This
+/// does not grant an intrinsic a source ABI or memory semantics.
+bool isArchitecturalNoReturn(const MedOp &Op);
 
 /// LowIR form of the same architectural termination fact. Consumers must
 /// still prove that the operation ends its block before cutting a path.
-bool isArchitecturalNoReturn(const LowOp &Op, Arch TheArch);
+bool isArchitecturalNoReturn(const LowOp &Op);
+
+/// The same facts for callers that name the architecture; it adds nothing.
+inline bool isArchitecturalNoReturn(const MedOp &Op, Arch) {
+  return isArchitecturalNoReturn(Op);
+}
+inline bool isArchitecturalNoReturn(const LowOp &Op, Arch) {
+  return isArchitecturalNoReturn(Op);
+}
 
 /// Recheck the current graph using explicit terminators and already-proven
 /// call effects, without accepting the function's DoesNotReturn flag as proof.

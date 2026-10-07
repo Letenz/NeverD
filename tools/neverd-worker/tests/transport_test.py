@@ -210,6 +210,14 @@ def run(executable):
         target = client.call("xrefs", {"address": "0xffff800012340088", "direction": "to"})["payload"]["items"]
         assert {(item["address"], item["type"]) for item in target} >= {
             ("0xffff800012340086", "j"), ("0xffff800012343114", "o")}, target
+        # A mangled name reads demangled above its function and beside the
+        # instructions that name it, and the Functions window shows it so.
+        header = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012340090", "before": 0, "after": 20})["payload"]["lines"]]
+        assert "; Widget::draw()" in header, header
+        assert any(line.startswith("jmp") and line.endswith("; Widget::draw()") for line in header), header
+        rows = client.call("functions", {"filter": "widget::draw"})["payload"]["items"]
+        assert [row["name"] for row in rows] == ["function_9"], rows
         tables = client.call("names", {"filter": "jpt_"})["payload"]["items"]
         assert [(item["name"], item["address"]) for item in tables] == [
             ("jpt_FFFF800012340086", "0xffff800012343114")], tables

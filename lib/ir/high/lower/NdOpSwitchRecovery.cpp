@@ -322,6 +322,10 @@ bool MedToHighConverter::lowerSwitchFromJumpTable(HighFunc &Func,
     }
   }
   Func.Body.push_back(std::move(SW));
+  HighFunc::SwitchLabels &Published = Func.SwitchLabelsByJump[CurOp.Addr];
+  Published.Values = *CaseBits;
+  Published.DefaultPosition = DefaultCaseIdx;
+  Published.SelectorBits = static_cast<unsigned>(SelectorSize) * 8u;
   return true;
 }
 

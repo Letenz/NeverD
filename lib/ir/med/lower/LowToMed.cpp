@@ -308,7 +308,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
         llvm::report_fatal_error(
             "LowIR contains an unknown memory address space");
       if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
-          TheArch != Arch::X86 && TheArch != Arch::X64)
+          !getTargetRegInfo(TheArch).HasSegmentAddressSpaces)
         llvm::report_fatal_error(
             "FS/GS memory address spaces require an x86 target");
       if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
@@ -424,57 +424,11 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
 
   analyzeStack(Low);
 
-  // CFGBuilder proves the complete value of an ARM PC + R_ARM_REL32 literal
-  // at the exact ADD output. Preserve that occurrence proof across the LowIR
-  // to MedIR boundary: the literal word is a relative fragment, and treating
-  // its old-image integer as an independent table base loses relocation.
+  // ARM ELF literal relocations proved at their ADD outputs
+  // (LowToMedARM.cpp).
   using OccurrenceKey = std::pair<va_t, int>;
-  std::map<OccurrenceKey, const RelocatedInstructionAddressOccurrence *>
-      ExactRelativeAddressOutputs;
-  std::set<OccurrenceKey> AmbiguousRelativeAddressOutputs;
-  if (TheArch == Arch::ARM && Fmt == BinaryFormat::ELF && Image &&
-      Image->Arch == Arch::ARM && Image->isELF()) {
-    for (const auto &Occurrence : Low.RelocatedInstructionAddressOccurrences) {
-      const OccurrenceKey Key{Occurrence.InstructionAddr, Occurrence.OpSeq};
-      if (Occurrence.DefinesOutput && Occurrence.OutputMayDepend)
-        AmbiguousRelativeAddressOutputs.insert(Key);
-      if (!Occurrence.DefinesOutput || Occurrence.OutputMayDepend ||
-          Occurrence.Authority !=
-              RelocatedInstructionAddressProofKind::LoaderField ||
-          Occurrence.OutputOpcode != NdOp::INT_ADD || Occurrence.Width != 4 ||
-          Occurrence.OutputWitness.Size != 4 ||
-          (!Occurrence.OutputWitness.isReg() &&
-           !Occurrence.OutputWitness.isTemp()) ||
-          (Occurrence.Provenance != ConstantAddressProvenance::DataAddress &&
-           Occurrence.Provenance != ConstantAddressProvenance::CodeAddress))
-        continue;
-      const auto Field =
-          Image->ARMRelativeLiteralFields.find(Occurrence.FieldVA);
-      if (Field == Image->ARMRelativeLiteralFields.end() ||
-          Field->second.TargetVA != Occurrence.TargetVA ||
-          Field->second.TargetOwnerVA != Occurrence.TargetOwnerVA ||
-          static_cast<uint32_t>(Occurrence.InstructionAddr + 8) +
-                  Field->second.EncodedValue !=
-              static_cast<uint32_t>(Occurrence.TargetVA) ||
-          !Image->relocatedTargetBelongsToOwner(Occurrence.TargetVA,
-                                                Occurrence.TargetOwnerVA))
-        continue;
-      const Segment *Slot = Image->getSegmentFor(Occurrence.FieldVA);
-      const uint8_t *Bytes = Image->readVA(Occurrence.FieldVA, 4);
-      if (!Slot || !Slot->isReadable() || Slot->isWritable() || !Bytes ||
-          (uint32_t(Bytes[0]) | (uint32_t(Bytes[1]) << 8) |
-           (uint32_t(Bytes[2]) << 16) | (uint32_t(Bytes[3]) << 24)) !=
-              Field->second.EncodedValue)
-        continue;
-      auto [It, Inserted] =
-          ExactRelativeAddressOutputs.emplace(Key, &Occurrence);
-      if (!Inserted && (It->second->TargetVA != Occurrence.TargetVA ||
-                        It->second->TargetOwnerVA != Occurrence.TargetOwnerVA ||
-                        It->second->Provenance != Occurrence.Provenance ||
-                        It->second->OutputWitness != Occurrence.OutputWitness))
-        AmbiguousRelativeAddressOutputs.insert(Key);
-    }
-  }
+  const RelativeLiteralOutputs RelativeLiterals =
+      armRelativeLiteralOutputs(Low, TheArch, Fmt);
 
   MedFunc Func;
   Func.Entry = Low.Entry;
@@ -728,10 +682,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
       }
 
       const OccurrenceKey MaterializationKey{LOp.Addr, LOp.Seq};
-      auto Materialization =
-          ExactRelativeAddressOutputs.find(MaterializationKey);
-      if (Materialization != ExactRelativeAddressOutputs.end() &&
-          !AmbiguousRelativeAddressOutputs.count(MaterializationKey) &&
+      auto Materialization = RelativeLiterals.Exact.find(MaterializationKey);
+      if (Materialization != RelativeLiterals.Exact.end() &&
+          !RelativeLiterals.Ambiguous.count(MaterializationKey) &&
           LOp.Opcode == NdOp::INT_ADD && LOp.NumInputs == 2 &&
           LOp.Output == Materialization->second->OutputWitness &&
           MOp.Opcode == NdOp::INT_ADD && MOp.Output.Size == 4 &&
@@ -854,10 +807,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     buildSsa(Func, Low);
     debugVerifyMedFunc(Func, "buildSsa");
 
-    if (TargetArch == Arch::X86 || TargetArch == Arch::X64) {
-      foldMachineFlagsIntoPushfImages(Func);
-      debugVerifyMedFunc(Func, "foldMachineFlagsIntoPushfImages");
-    }
+    // Only the x86 lifter emits PUSHF, so this finds nothing elsewhere.
+    foldMachineFlagsIntoPushfImages(Func);
+    debugVerifyMedFunc(Func, "foldMachineFlagsIntoPushfImages");
 
     // Model a call's floating-point/vector return (x86-64 returns it in XMM0, a
     // caller-saved vector register the lifter did not model the call as
@@ -998,10 +950,11 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     eliminateFlags(Func);
     debugVerifyMedFunc(Func, "eliminateFlags");
 
-    // Flag lowering leaves PF/AF/OF writes that no remaining COND_BR reads.
-    // Without DCE those become LLVMC `__builtin_popcount` / flag SSA noise on
-    // `test`/`cmp` that only consume ZF.
-    if (TheArch == Arch::X86 || TheArch == Arch::X64) {
+    // Where ordinary arithmetic writes the flags, flag lowering leaves PF/AF/OF
+    // writes that no remaining COND_BR reads.  Without DCE those become LLVMC
+    // `__builtin_popcount` / flag SSA noise on `test`/`cmp` that only consume
+    // ZF.
+    if (getTargetRegInfo(TheArch).ArithmeticWritesFlags) {
       runDce(Func);
       debugVerifyMedFunc(Func, "runDce");
     }

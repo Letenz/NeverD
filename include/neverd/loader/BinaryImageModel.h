@@ -271,6 +271,10 @@ struct BinaryImage {
   BinaryFormat Format = BinaryFormat::Unknown;
   Bitness Bits = Bitness::Unknown;
   bool IsRelocatable = false;
+  /// The image runs at its link-time addresses: no loader rebases it, so an
+  /// absolute address its code or data holds stays valid without a
+  /// relocation.  ELF ET_EXEC images; set by the format loaders.
+  bool LoadsAtLinkAddress = false;
   va_t Base = 0;
   va_t Entry = 0;
   std::vector<Segment> Segments;

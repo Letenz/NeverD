@@ -169,10 +169,10 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
       // d1,[frame]`), is rewritten only from memory (an untainted LOAD), never
       // from a return register.  Compute the values tainted by an integer
       // return register across the straight-line region, then drop any FP field
-      // whose register is written by a tainted value. AArch64 only: x86-64 SysV
-      // genuinely returns mixed int+SSE aggregates and does not use this
-      // GP→vector idiom.
-      if (TargetArch == Arch::AArch64) {
+      // whose register is written by a tainted value. Only where aggregates
+      // return in a single register class: x86-64 SysV genuinely returns mixed
+      // int+SSE aggregates and does not use this GP→vector idiom.
+      if (TRI.ReturnAggregatesSingleClass) {
         auto isIntCandReg = [&](const MedVar &V) {
           if (V.Kind != MedVar::Reg)
             return false;
@@ -233,7 +233,7 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
       // lifted call also carries the lifter's dead integer-return-register
       // placeholder. Rejecting the mixed shape keeps such single-FP returns
       // (incl. recursive FP callees) on the scalar path.
-      if (TargetArch == Arch::AArch64 && AnyFP && AnyInt)
+      if (TRI.ReturnAggregatesSingleClass && AnyFP && AnyInt)
         continue;
 
       // Canonical field order (int regs then fp regs).
@@ -250,7 +250,7 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
       for (auto &F : Fields) {
         uint16_t Sz;
         if (F.IsFP)
-          Sz = (TargetArch == Arch::X64) ? 8 : (F.Size <= 4 ? 4 : 8);
+          Sz = TRI.VectorReturnFieldsAreEightbytes ? 8 : (F.Size <= 4 ? 4 : 8);
         else
           Sz = F.Size >= 8 ? 8 : (F.Size >= 4 ? 4 : (F.Size ? F.Size : 8));
         F.Size = Sz;
@@ -261,7 +261,7 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
           std::any_of(Fields.begin(), Fields.end(), [&](const FieldRead &F) {
             return isCallClobber(F.Value, Op.CallSiteId);
           });
-      if (TargetArch == Arch::AArch64 && Op.Opcode == NdOp::CALL &&
+      if (TRI.ReturnAggregatesSingleClass && Op.Opcode == NdOp::CALL &&
           HasImplicitField) {
         MedStructReturnCandidate Candidate;
         Candidate.CallSiteId = Op.CallSiteId;

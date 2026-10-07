@@ -1,0 +1,37 @@
+//===- ELFDynamicRelocations.def - Roles of ELF dynamic relocs --*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The dynamic relocations whose role the loader records, per architecture.
+/// Types are llvm::ELF relocation enumerators.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_ELF_IRELATIVE(Arch, Type): GNU indirect function relocations; the
+// addend, or the slot under REL, names the resolver the dynamic linker calls.
+#ifndef NEVERD_ELF_IRELATIVE
+#define NEVERD_ELF_IRELATIVE(Arch, Type)
+#endif
+NEVERD_ELF_IRELATIVE(X86, R_386_IRELATIVE)
+NEVERD_ELF_IRELATIVE(X64, R_X86_64_IRELATIVE)
+NEVERD_ELF_IRELATIVE(ARM, R_ARM_IRELATIVE)
+NEVERD_ELF_IRELATIVE(AArch64, R_AARCH64_IRELATIVE)
+#undef NEVERD_ELF_IRELATIVE
+
+// NEVERD_ELF_SLOT_BINDING(Arch, Type): relocations that store a symbol's
+// address in a GOT slot the dynamic linker binds.
+#ifndef NEVERD_ELF_SLOT_BINDING
+#define NEVERD_ELF_SLOT_BINDING(Arch, Type)
+#endif
+NEVERD_ELF_SLOT_BINDING(X86, R_386_GLOB_DAT)
+NEVERD_ELF_SLOT_BINDING(X86, R_386_JUMP_SLOT)
+NEVERD_ELF_SLOT_BINDING(X64, R_X86_64_GLOB_DAT)
+NEVERD_ELF_SLOT_BINDING(X64, R_X86_64_JUMP_SLOT)
+NEVERD_ELF_SLOT_BINDING(ARM, R_ARM_GLOB_DAT)
+NEVERD_ELF_SLOT_BINDING(ARM, R_ARM_JUMP_SLOT)
+NEVERD_ELF_SLOT_BINDING(AArch64, R_AARCH64_GLOB_DAT)
+NEVERD_ELF_SLOT_BINDING(AArch64, R_AARCH64_JUMP_SLOT)
+#undef NEVERD_ELF_SLOT_BINDING

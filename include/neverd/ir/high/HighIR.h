@@ -561,6 +561,22 @@ struct HighFunc {
   std::optional<ExceptionFunction> ExceptionMetadata;
   unsigned StructuredExceptionRegions = 0;
   unsigned UnstructuredExceptionRegions = 0;
+  /// The case values of one recovered switch, in the coordinate its `switch`
+  /// statement prints. They are recorded when the switch is built, because
+  /// later structuring merges and folds case bodies and Body no longer shows
+  /// which case selects each table position.
+  struct SwitchLabels {
+    /// The selector value that reaches each table position, as the
+    /// selector's two's complement bits.
+    std::vector<uint64_t> Values;
+    /// The position printed as `default` (the bounds guard's target), or -1.
+    int DefaultPosition = -1;
+    /// The selector's width in bits.
+    unsigned SelectorBits = 0;
+  };
+  /// Switch labels by the address of the jump that dispatches through the
+  /// table.
+  std::map<va_t, SwitchLabels> SwitchLabelsByJump;
 };
 
 /// After EH wrapping, invert `if (c) goto L; work; L:` in try/catch lists.
