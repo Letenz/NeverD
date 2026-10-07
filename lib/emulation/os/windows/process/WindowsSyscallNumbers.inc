@@ -1,6 +1,9 @@
 // Syscall immediates from the Wine ntdll prologue. The loader reads
 // mov r10, rcx / mov eax, imm32 before it will hook the export.
-static const struct { const char *Name; uint32_t Id; } WineSyscalls[] = {
+static const struct {
+  const char *Name;
+  uint32_t Id;
+} WineSyscalls[] = {
     {"NtAcceptConnectPort", 0x0},
     {"NtAccessCheck", 0x1},
     {"NtAccessCheckAndAuditAlarm", 0x2},

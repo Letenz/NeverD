@@ -119,12 +119,13 @@ NEVERD_WINDOWS_PROCESS_NAMED_API(RtlReAllocateHeap, "RtlReAllocateHeap", Native,
                                  4, true)
 NEVERD_WINDOWS_PROCESS_NAMED_API(RtlFreeHeap, "RtlFreeHeap", Native, 3, true)
 NEVERD_WINDOWS_PROCESS_NAMED_API(RtlSizeHeap, "RtlSizeHeap", Native, 3, true)
-NEVERD_WINDOWS_PROCESS_NAMED_API(RtlEncodePointer, "RtlEncodePointer", Native, 1,
-                                 true)
-NEVERD_WINDOWS_PROCESS_NAMED_API(RtlDecodePointer, "RtlDecodePointer", Native, 1,
-                                 true)
+NEVERD_WINDOWS_PROCESS_NAMED_API(RtlEncodePointer, "RtlEncodePointer", Native,
+                                 1, true)
+NEVERD_WINDOWS_PROCESS_NAMED_API(RtlDecodePointer, "RtlDecodePointer", Native,
+                                 1, true)
 NEVERD_WINDOWS_PROCESS_NAMED_API(RtlInitializeCriticalSection,
-                                 "RtlInitializeCriticalSection", Native, 1, true)
+                                 "RtlInitializeCriticalSection", Native, 1,
+                                 true)
 NEVERD_WINDOWS_PROCESS_NAMED_API(RtlInitializeCriticalSectionAndSpinCount,
                                  "RtlInitializeCriticalSectionAndSpinCount",
                                  Native, 2, true)
