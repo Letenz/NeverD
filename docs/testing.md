@@ -2547,6 +2547,12 @@ provider lifetime, absent inputs, fault ordering and unsupported partial
 copies. Linux process fixtures execute the raw x64/ARM64 service ABIs at O0/O2
 through available backends. Process JSON tests cover malformed and lossless
 inputs; C API/CLI and Python tests preserve dynamic names and exact output.
+Released GKI CPU clock cases compare raw and Bionic calls across all eight
+source pins, including current-process aliases, distinct PROF/VIRT/SCHED
+observations, low-32-bit arguments, target errors before pointer faults and
+unchanged canaries. The cooperative syscall fixture checks that the current
+nonleader TID still names its group's CPU sample. Linux raw callers verify that
+idle advancement changes wall clocks while leaving CPU samples fixed.
 These are deterministic model checks, not an Android device or native Linux
 clock comparison. Unsupported native transports remain explicit skips.
 
@@ -3030,6 +3036,12 @@ profiles; `ReleasedGKIVectorImportRetainsRawAndBionicErrors` repeats the vector
 ordering and cap differences through raw and Bionic transports.
 `ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` repeats the catalogue
 and exhaustion cases while checking raw errors and Bionic's preserved errno.
+`ProcessCPUClocksRetainIdentityAndIdleSeparation` and
+`ProcessCPUClocksKeepMissingObservationBoundaries` check encoded CPU identities,
+unknown observations, target validation, aliases and idle behavior. The
+`LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle` unit case
+checks the shared observation owner, and input cases reject aliases,
+unobserved/nonleader targets and negative CPU time before loading.
 Run these first,
 then the complete Linux process, Android native and
 public process suites when changing shared kernel or descriptor semantics.
