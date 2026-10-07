@@ -98,8 +98,10 @@ unless their lock is set. Rows mapped to instructions move the disassembly
 cursor. C opens at the function: the includes, support types and declarations
 before its definition fold into one line. Recognized library operations in C
 can fold into one-line summaries too. Click a summary or press Keypad + on it
-to expand it; Keypad - folds the declarations again. Copy and export always
-use the complete code.
+to expand it; Keypad - folds the declarations again, and the context menu
+expands or collapses either kind. Hovering a type or macro the code declares,
+such as an unaligned access type, shows its declaration, and double-clicking it
+goes there. Copy and export always use the complete code.
 
 C++ names read as a classic disassembler shows them: the listing keeps the
 linkage name an instruction uses and adds its demangled form as a comment

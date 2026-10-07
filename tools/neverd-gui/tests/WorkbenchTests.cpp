@@ -311,11 +311,28 @@ private slots:
     code->setCursorLine(0);
     QApplication::clipboard()->clear();
     QTest::keyClick(code, Qt::Key_C, Qt::ControlModifier);
+    const QString declaration =
+        QStringLiteral("typedef uint64_t neverd_unaligned_u64 "
+                       "__attribute__((aligned(1), may_alias));");
     QCOMPARE(QApplication::clipboard()->text(),
-             QStringLiteral("#include <stdint.h>\n#include <string.h>\n"));
+             QStringLiteral("#include <stdint.h>\n") + declaration +
+                 QLatin1Char('\n'));
     QTest::keyClick(code, Qt::Key_Plus, Qt::KeypadModifier);
     QCOMPARE(code->lineCount(), 704);
     QTest::keyClick(code, Qt::Key_Minus, Qt::KeypadModifier);
+    QCOMPARE(code->lineCount(), 702);
+    QVERIFY(code->preludeFolded());
+
+    // A type the prelude declares opens at its declaration, expanding the
+    // prelude; C's own types are not declarations.
+    QCOMPARE(code->declarationLine(QStringLiteral("neverd_unaligned_u64")),
+             std::optional<int>(1));
+    QVERIFY(!code->declarationLine(QStringLiteral("uint64_t")));
+    QVERIFY(code->goToDeclaration(QStringLiteral("neverd_unaligned_u64")));
+    QVERIFY(!code->preludeFolded());
+    QCOMPARE(code->lineCount(), 704);
+    QCOMPARE(code->currentToken(), QStringLiteral("neverd_unaligned_u64"));
+    code->setPreludeFolded(true);
     QCOMPARE(code->lineCount(), 702);
 
     // A list copies its selected rows, by key or from the Edit menu.

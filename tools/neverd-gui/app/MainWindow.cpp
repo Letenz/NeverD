@@ -1710,6 +1710,30 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   menu.addSeparator();
   menu.addAction(actions_.action(ActionId::EditCopy));
   menu.addAction(actions_.action(ActionId::EditCopyAddress));
+  // A code window's folds: the declarations before the function and the
+  // recognized library operations.
+  if (auto *code = focusedCodeView()) {
+    CodeText *text = code->text();
+    menu.addSeparator();
+    if (text->hasPrelude()) {
+      const bool folded = text->preludeFolded();
+      auto *declarations = menu.addAction(folded ? tr("Expand declarations")
+                                                 : tr("Collapse declarations"));
+      declarations->setStatusTip(
+          tr("Show or hide the includes and declarations before the function "
+             "(Keypad + / Keypad -)"));
+      connect(declarations, &QAction::triggered, text,
+              [text, folded] { text->setPreludeFolded(!folded); });
+    }
+    if (text->foldableCount() > 0) {
+      const bool folded = text->libraryFolded();
+      auto *library =
+          menu.addAction(folded ? tr("Expand library operations")
+                                : tr("Collapse library operations"));
+      connect(library, &QAction::triggered, text,
+              [text, folded] { text->setFolded(!folded); });
+    }
+  }
   menu.addSeparator();
   menu.addAction(actions_.action(ActionId::OptionsFont));
   menu.exec(globalPosition);

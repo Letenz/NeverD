@@ -1297,6 +1297,12 @@ Recognized library operation; click to show its code.</source>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>Включения, вспомогательные типы и объявления, с которыми компилируется этот код; щёлкните, чтобы показать их, клавиша - на цифровой клавиатуре сворачивает их снова.</translation>
     </message>
+    <message>
+        <source>%1
+Double-click to go to the declaration.</source>
+        <translation>%1
+Дважды щёлкните, чтобы перейти к объявлению.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1917,6 +1923,26 @@ Signed: %4</source>
     <message>
         <source>Display columns: a wide East Asian character counts two</source>
         <translation>Колонки на экране: широкий восточноазиатский символ считается за две</translation>
+    </message>
+    <message>
+        <source>Expand declarations</source>
+        <translation>Развернуть объявления</translation>
+    </message>
+    <message>
+        <source>Collapse declarations</source>
+        <translation>Свернуть объявления</translation>
+    </message>
+    <message>
+        <source>Show or hide the includes and declarations before the function (Keypad + / Keypad -)</source>
+        <translation>Показать или скрыть включения и объявления перед функцией (+ / - на цифровой клавиатуре)</translation>
+    </message>
+    <message>
+        <source>Expand library operations</source>
+        <translation>Развернуть библиотечные операции</translation>
+    </message>
+    <message>
+        <source>Collapse library operations</source>
+        <translation>Свернуть библиотечные операции</translation>
     </message>
 </context>
 <context>

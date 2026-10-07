@@ -1293,6 +1293,12 @@ Recognized library operation; click to show its code.</source>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>此程式碼編譯所需的引入檔、輔助型別與宣告；按一下可顯示，按數字鍵台 - 可再次摺疊。</translation>
     </message>
+    <message>
+        <source>%1
+Double-click to go to the declaration.</source>
+        <translation>%1
+按兩下前往宣告。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1911,6 +1917,26 @@ Signed: %4</source>
     <message>
         <source>Display columns: a wide East Asian character counts two</source>
         <translation>顯示欄數：東亞全形字元計為兩欄</translation>
+    </message>
+    <message>
+        <source>Expand declarations</source>
+        <translation>展開宣告</translation>
+    </message>
+    <message>
+        <source>Collapse declarations</source>
+        <translation>摺疊宣告</translation>
+    </message>
+    <message>
+        <source>Show or hide the includes and declarations before the function (Keypad + / Keypad -)</source>
+        <translation>顯示或隱藏函式前的引入檔與宣告（數字鍵台 + / 數字鍵台 -）</translation>
+    </message>
+    <message>
+        <source>Expand library operations</source>
+        <translation>展開函式庫操作</translation>
+    </message>
+    <message>
+        <source>Collapse library operations</source>
+        <translation>摺疊函式庫操作</translation>
     </message>
 </context>
 <context>

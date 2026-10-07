@@ -1295,6 +1295,12 @@ Recognized library operation; click to show its code.</translation>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</translation>
     </message>
+    <message>
+        <source>%1
+Double-click to go to the declaration.</source>
+        <translation>%1
+Double-click to go to the declaration.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1914,6 +1920,26 @@ Signed: %4</translation>
     <message>
         <source>Display columns: a wide East Asian character counts two</source>
         <translation>Display columns: a wide East Asian character counts two</translation>
+    </message>
+    <message>
+        <source>Expand declarations</source>
+        <translation>Expand declarations</translation>
+    </message>
+    <message>
+        <source>Collapse declarations</source>
+        <translation>Collapse declarations</translation>
+    </message>
+    <message>
+        <source>Show or hide the includes and declarations before the function (Keypad + / Keypad -)</source>
+        <translation>Show or hide the includes and declarations before the function (Keypad + / Keypad -)</translation>
+    </message>
+    <message>
+        <source>Expand library operations</source>
+        <translation>Expand library operations</translation>
+    </message>
+    <message>
+        <source>Collapse library operations</source>
+        <translation>Collapse library operations</translation>
     </message>
 </context>
 <context>

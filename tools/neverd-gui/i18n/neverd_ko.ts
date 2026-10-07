@@ -1293,6 +1293,12 @@ Recognized library operation; click to show its code.</source>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>이 코드가 컴파일에 사용하는 include, 지원 타입, 선언입니다. 클릭하면 표시하고, 숫자 키패드 -로 다시 접습니다.</translation>
     </message>
+    <message>
+        <source>%1
+Double-click to go to the declaration.</source>
+        <translation>%1
+두 번 클릭하면 선언으로 이동합니다.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1911,6 +1917,26 @@ Signed: %4</source>
     <message>
         <source>Display columns: a wide East Asian character counts two</source>
         <translation>표시 열: 동아시아 전각 문자는 2열로 셉니다</translation>
+    </message>
+    <message>
+        <source>Expand declarations</source>
+        <translation>선언 펼치기</translation>
+    </message>
+    <message>
+        <source>Collapse declarations</source>
+        <translation>선언 접기</translation>
+    </message>
+    <message>
+        <source>Show or hide the includes and declarations before the function (Keypad + / Keypad -)</source>
+        <translation>함수 앞의 include와 선언을 표시하거나 숨깁니다 (숫자 키패드 + / 숫자 키패드 -)</translation>
+    </message>
+    <message>
+        <source>Expand library operations</source>
+        <translation>라이브러리 연산 펼치기</translation>
+    </message>
+    <message>
+        <source>Collapse library operations</source>
+        <translation>라이브러리 연산 접기</translation>
     </message>
 </context>
 <context>

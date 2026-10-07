@@ -1295,6 +1295,12 @@ Operación de biblioteca reconocida; haz clic para mostrar su código.</translat
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>Los includes, tipos auxiliares y declaraciones con los que compila este código; haz clic para mostrarlos y pulsa - del teclado numérico para plegarlos de nuevo.</translation>
     </message>
+    <message>
+        <source>%1
+Double-click to go to the declaration.</source>
+        <translation>%1
+Haz doble clic para ir a la declaración.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1914,6 +1920,26 @@ Con signo: %4</translation>
     <message>
         <source>Display columns: a wide East Asian character counts two</source>
         <translation>Columnas en pantalla: un carácter ancho de Asia oriental cuenta como dos</translation>
+    </message>
+    <message>
+        <source>Expand declarations</source>
+        <translation>Desplegar declaraciones</translation>
+    </message>
+    <message>
+        <source>Collapse declarations</source>
+        <translation>Plegar declaraciones</translation>
+    </message>
+    <message>
+        <source>Show or hide the includes and declarations before the function (Keypad + / Keypad -)</source>
+        <translation>Mostrar u ocultar los includes y las declaraciones anteriores a la función (+ / - del teclado numérico)</translation>
+    </message>
+    <message>
+        <source>Expand library operations</source>
+        <translation>Desplegar operaciones de biblioteca</translation>
+    </message>
+    <message>
+        <source>Collapse library operations</source>
+        <translation>Plegar operaciones de biblioteca</translation>
     </message>
 </context>
 <context>

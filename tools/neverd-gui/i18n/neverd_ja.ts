@@ -1293,6 +1293,12 @@ Recognized library operation; click to show its code.</source>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>このコードのコンパイルに使うインクルード、補助型、宣言です。クリックで表示し、テンキーの - で再び折りたたみます。</translation>
     </message>
+    <message>
+        <source>%1
+Double-click to go to the declaration.</source>
+        <translation>%1
+ダブルクリックで宣言に移動します。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1911,6 +1917,26 @@ Signed: %4</source>
     <message>
         <source>Display columns: a wide East Asian character counts two</source>
         <translation>表示桁数：東アジアの全角文字は 2 桁と数えます</translation>
+    </message>
+    <message>
+        <source>Expand declarations</source>
+        <translation>宣言を展開</translation>
+    </message>
+    <message>
+        <source>Collapse declarations</source>
+        <translation>宣言を折りたたむ</translation>
+    </message>
+    <message>
+        <source>Show or hide the includes and declarations before the function (Keypad + / Keypad -)</source>
+        <translation>関数の前にあるインクルードと宣言を表示または非表示にします (テンキー + / テンキー -)</translation>
+    </message>
+    <message>
+        <source>Expand library operations</source>
+        <translation>ライブラリ操作を展開</translation>
+    </message>
+    <message>
+        <source>Collapse library operations</source>
+        <translation>ライブラリ操作を折りたたむ</translation>
     </message>
 </context>
 <context>
