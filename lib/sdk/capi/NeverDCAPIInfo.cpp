@@ -22,6 +22,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/ELF.h"
+#include "llvm/Support/CRC.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MD5.h"
@@ -733,13 +734,15 @@ const char *neverd_dashboard_json(neverd_session_t Sess) {
   if (Ifs.is_open()) {
     llvm::MD5 Md5;
     llvm::SHA256 Sha;
+    uint32_t Crc = 0;
     char Buf[8192];
     while (Ifs.read(Buf, sizeof(Buf)) || Ifs.gcount() > 0) {
       auto Count = static_cast<size_t>(Ifs.gcount());
-      Md5.update(llvm::ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(Buf),
-                                         Count));
-      Sha.update(llvm::ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(Buf),
-                                         Count));
+      const llvm::ArrayRef<uint8_t> Chunk(
+          reinterpret_cast<const uint8_t *>(Buf), Count);
+      Md5.update(Chunk);
+      Sha.update(Chunk);
+      Crc = llvm::crc32(Crc, Chunk);
     }
     llvm::MD5::MD5Result Md5Res;
     Md5.final(Md5Res);
@@ -752,6 +755,7 @@ const char *neverd_dashboard_json(neverd_session_t Sess) {
       Sha256Hex += Digits[B & 0xF];
     }
     Hashes["sha256"] = Sha256Hex;
+    Hashes["crc32"] = llvm::utohexstr(Crc, /*LowerCase=*/true, /*Width=*/8);
   }
   Root["hashes"] = std::move(Hashes);
 

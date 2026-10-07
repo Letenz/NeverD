@@ -135,6 +135,9 @@ NEVERD_API const char *neverd_data_symbols_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_relocs_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_headers_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_entrypoints_json(neverd_session_t Sess);
+/// An overview of the loaded image: "file" (path, name, format, arch, bits,
+/// entry, base, size), "hashes" of the input file ("md5", "sha256" and
+/// "crc32" in lowercase hex) and "counts".
 NEVERD_API const char *neverd_dashboard_json(neverd_session_t Sess);
 
 // ===--------------------------------------------------------------------===//

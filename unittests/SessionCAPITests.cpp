@@ -2294,6 +2294,21 @@ TEST_F(SessionCAPITest, QueryJSONPreservesUTF8FileSpelling) {
 }
 #endif
 
+TEST_F(SessionCAPITest, DashboardHashesTheInputFile) {
+  const auto Input = write("hashed.evm", "6001600055");
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  auto Dashboard =
+      llvm::json::parse(takeString(neverd_dashboard_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Dashboard))
+      << llvm::toString(Dashboard.takeError());
+  const auto *Hashes = Dashboard->getAsObject()->getObject("hashes");
+  ASSERT_NE(Hashes, nullptr);
+  // zlib's CRC-32 and MD5 of the ten input bytes.
+  EXPECT_EQ(Hashes->getString("crc32"), "704fe0d2");
+  EXPECT_EQ(Hashes->getString("md5"), "9ee02fc015f79641c0620e674c5be3c7");
+}
+
 TEST_F(SessionCAPITest, EntryPointsIncludeEVMZeroAddress) {
   const std::string Input = write("entry.evm", "00");
   ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
