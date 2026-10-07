@@ -119,6 +119,38 @@ TEST(FunctionDiscoveryAlignment, StartsIBTImportThunksAtTheirEndbr) {
   }
 }
 
+TEST(FunctionDiscoveryAlignment, RegistersLoaderRunFunctions) {
+  // sub rsp, 8; add rsp, 8; ret; ret; ret: initializers nothing in the image
+  // calls, and the entry point.
+  const uint8_t Code[] = {0x48, 0x83, 0xec, 0x08, 0x48, 0x83,
+                          0xc4, 0x08, 0xc3, 0xc3, 0xc3};
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  Img.Segments.push_back(executableSegment(0x1000, Code));
+  Img.Symbols.push_back(Symbol::makeFunc(0x1008, 1));
+  Img.Entry = 0x100A;
+  for (va_t Addr : {0x1000, 0x1008, 0x1009, 0x100A})
+    ASSERT_TRUE(Img.recordRuntimeFunction(Addr));
+  Img.DynInfo.InitAddr = 0x1000;
+  Img.DynInfo.FiniArray = {0x1008, 0x1009};
+  registerLoaderRunFunctions(Img);
+
+  for (va_t Addr : {0x1000, 0x1009}) {
+    const Symbol *Function = Img.findSymbolAt(Addr);
+    ASSERT_NE(Function, nullptr) << std::hex << Addr;
+    EXPECT_TRUE(Function->IsFunc);
+    EXPECT_EQ(Function->Size, 0u);
+  }
+  // A function symbol already there is kept as the only one.
+  EXPECT_EQ(std::count_if(Img.Symbols.begin(), Img.Symbols.end(),
+                          [](const Symbol &Sym) { return Sym.Addr == 0x1008; }),
+            1);
+  // The entry point is the function detector's, which recovers its extent.
+  EXPECT_EQ(Img.findSymbolAt(0x100A), nullptr);
+}
+
 TEST(FunctionDiscoveryAlignment, RejectsWrappedAndOutOfBufferAddresses) {
   const std::array<uint8_t, 8> Bytes = {0xff, 0x83, 0x00, 0xd1,
                                         0xff, 0x83, 0x00, 0xd1};
