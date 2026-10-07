@@ -1077,6 +1077,7 @@ endif()
 # Differential lift->recompile roundtrip across the 4 ISAs; run just this
 # binary via `ctest -L NeverDIndCallXformTests`.
 add_neverd_unittest(NeverDIndCallXformTests
+  allplatform/abi/AllPlatform_TailCallVarietyRTTests.cpp
   probe/indcall/AllPlatform_IndCallXformRTTests.cpp
 
   TIMEOUT 600

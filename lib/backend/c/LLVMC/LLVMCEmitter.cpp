@@ -634,16 +634,9 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn) {
 void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
   for (auto &Fn : Mod) {
     if (OnlyFunction) {
-      // Value carriers require declarations in selected function fragments,
-      // too; an implicit scalar return would change their calling convention.
-      const auto *Signature = Fn.getFunctionType();
-      const bool HasValueSignature =
-          Signature->getReturnType()->isVectorTy() ||
-          Signature->getReturnType()->isAggregateType() ||
-          llvm::any_of(Signature->params(), [](const llvm::Type *Type) {
-            return Type->isVectorTy() || Type->isAggregateType();
-          });
-      if (!HasValueSignature || &Fn == OnlyFunction ||
+      // Selected fragments need declarations for their referenced providers,
+      // including scalar calls and definitions whose bodies are not emitted.
+      if (&Fn == OnlyFunction ||
           !llvm::any_of(Fn.users(), [&](const llvm::User *User) {
             const auto *Instruction = llvm::dyn_cast<llvm::Instruction>(User);
             return Instruction && Instruction->getFunction() == OnlyFunction;

@@ -87,6 +87,9 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     Result.Stop = ProcessStopReason::Exited;
     Result.ExitStatus = Event.Arguments[0] & ExitMask;
     return std::optional<uint64_t>();
+  case ServiceKind::GetPriority:
+  case ServiceKind::SetPriority:
+    return Priority.handle(Kind, Event, Thread ? Thread->ID : ThreadID, Result);
   case ServiceKind::GetPID:
     return std::optional<uint64_t>(ProcessID);
   case ServiceKind::GetTID:

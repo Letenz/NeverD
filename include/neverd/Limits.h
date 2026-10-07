@@ -417,6 +417,10 @@ constexpr size_t kMaxSSAFunctionOps = 400000;
 /// Maximum estimated stack frame size.
 constexpr int64_t kMaxFrameSize = 16 * 1024 * 1024; // 16 MiB
 
+/// Operations, graph edges and retained-word visits in the necessary AArch64
+/// indirect-tail frame guard. Exhaustion retains the original indirect branch.
+constexpr size_t kMaxIndirectTailFrameWork = 262144;
+
 /// Joins at one block after which a stack-offset bound that is still moving
 /// (a stack pointer that drifts around a loop) becomes unbounded.
 constexpr unsigned kStackOffsetWideningJoins = 8;

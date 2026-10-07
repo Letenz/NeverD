@@ -243,6 +243,7 @@ add_neverd_unittest(NeverDLiftTests
   core/CircleRangeTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
+  core/JumpTableSharedAbsoluteTests.cpp
   core/JumpTableProposalLFPTests.cpp
   format/PatchFormatTests.cpp
   format/PatchFormatCOFFARMTests.cpp
@@ -1002,8 +1003,10 @@ target_include_directories(NeverDLiftTests PRIVATE
 )
 
 add_neverd_unittest(NeverDJumpTableTests
+  core/IndirectTailFrameTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
+  core/JumpTableSharedAbsoluteTests.cpp
   core/JumpTableProposalLFPTests.cpp
   LINK_COMPONENTS Pipeline Support
 )
@@ -1015,6 +1018,7 @@ target_compile_definitions(NeverDJumpTableTests PRIVATE
 )
 target_include_directories(NeverDJumpTableTests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include
+  ${CMAKE_SOURCE_DIR}/lib/ir/low
   ${CMAKE_SOURCE_DIR}/lib/pipeline ${LLVM_INCLUDE_DIRS})
 add_dependencies(NeverDJumpTableTests neverd)
 
@@ -1119,6 +1123,7 @@ add_neverd_unittest(NeverDHighControlFlowTests
   core/HighFrameStoreForwardingTests.cpp
   core/HighSwitchFollowTests.cpp
   core/HighIntegerSignednessTests.cpp
+  core/HighValueForwardTests.cpp
   core/HighSSADefinitionTests.cpp
   core/HighSourceRangeTests.cpp
   core/HighFrameTemporaryTests.cpp

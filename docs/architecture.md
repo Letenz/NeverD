@@ -86,6 +86,32 @@ operation witness, complete mapped slot and relocation ownership, and exclusive
 consumption by the recovered branch. The unused prefix gains no suppression
 authority from sharing that origin.
 
+A bounded group of AArch64 absolute dispatches in one relocatable ELF function
+can share an exact read-only pointer object. Each selector first proves its
+finite domain with every independent root retained and all group edges absent.
+The joint graph then replays every selector, target LOAD and address role.
+Three immutable rounds establish and replay the complete consumer inventory;
+every member audits the whole physical object, but suppression is limited to
+the independently proved runtime coordinates of the group. Unused slots keep
+their independent roots. The group publishes and withdraws atomically; a
+missing owner, changed member, observable table use or exhausted proof retains
+the unresolved transfers. Module-wide mutation and consumer arbitration still
+owns the final publication decision.
+
+CFG construction also owns indirect tail-call classification. For an AArch64
+candidate without a proved dispatch, `IndirectTailFrame` checks the necessary
+incoming SP and link-word restoration under the existing native call ABI.
+Whole-word copies, bounded pointer-width stack arithmetic and exact spills
+carry these identities; all reaching predecessors and backedges must converge.
+Independent roots start unknown. Partial or overlapping writes invalidate whole
+restoration words; unknown memory writes and exposed frame storage invalidate
+spill evidence. Unsupported effects, incomplete graphs and exhausted work
+retain the original indirect branch. Call preservation comes from `TargetRegInfo`'s
+format-selected ranges. This condition supplies no callee identity or source
+ABI. Successful classification emits an explicit `INDIR_CALL + RETURN` pair;
+HighIR cannot infer another tail call from a successorless `INDIR_BR`. An
+unresolved transfer without a usable switch remains an explicit failure path.
+
 The CLI parses commands in `tools/neverd`, creates a `neverd_session_t`, and
 calls the public API in `include/neverd/sdk/NeverDCAPI.h`. Engine state lives in
 `lib/sdk/SessionImpl.h`; `neverd_session_load` selects a loader and builds a
@@ -3488,3 +3514,12 @@ The fixed `MainActor: Actor` SDK contract shares a complete compiler reader betw
 Swift SDK Published enclosing-instance accessors preserve four pointer carriers: an opaque indirect result for the getter or a consumed value address for the setter, then owner, wrapped key path and storage key path. Four Swift 6.1.2 macOS/Mac Catalyst compiler and export profiles authenticate the exact getter/setter symbols and Combine providers. Neither ABI adds generic metadata or swiftself; original reference ownership, opaque value layout and frame obligations remain with their existing owners.
 
 The exact `MainActor.shared` SDK getter returns one object pointer and receives its metatype in swiftself (`x20` on ARM64, `r13` on x86-64). Four Swift 6.1.2 macOS/Mac Catalyst compiler and export profiles authenticate this complete ABI and the strong `libswift_Concurrency` provider. Ownership, executor scheduling and private-frame analysis retain their existing contracts.
+
+`LinuxPriority` owns explicit per-task nice state in the same workload's
+`LinuxServices`. Raw x64 and AArch64 priority traps use `LinuxValues.def` number
+bindings and the current OS-owned thread identity. Validated
+`LinuxPriorityOptions` supplies fixture-owned task observations and caller
+CAP_SYS_NICE/RLIMIT_NICE authority; unknown task state and group/user selection
+remain unsupported boundaries. The raw getter keeps kernel return encoding,
+and permission failures leave the task state unchanged. JSON vocabulary and
+diagnostics live in the existing process and Linux `.def` files.

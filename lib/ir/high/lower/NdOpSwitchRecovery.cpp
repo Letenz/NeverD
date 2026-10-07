@@ -5,8 +5,8 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// INDIR_BR lowering: jump-table-based switch recovery and tail-call
-/// detection for indirect branches.
+/// INDIR_BR lowering: jump-table-based switch recovery and explicit
+/// refusal of unresolved indirect control transfers.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -346,74 +346,15 @@ void MedToHighConverter::lowerBranchInd(HighFunc &Func,
     }
   }
 
-  // No jump table: tail call or plain indirect branch.
-  bool IsTailCall = !MustFailClosed && CurBlock.Succs.empty();
-
-  if (IsTailCall && CurOp.NumInputs >= 1) {
-    ExprPtr TargetExpr = medvarToExpr(CurOp.Inputs[0]);
-
-    size_t BrIdx = 0;
-    for (size_t K = 0; K < CurBlock.Ops.size(); ++K) {
-      if (&CurBlock.Ops[K] == &CurOp) {
-        BrIdx = K;
-        break;
-      }
-    }
-    auto Args = collectCallArgs(CurBlock, BrIdx);
-
-    std::string TargetName = "indirect_call";
-    bool IsIndirect = true;
-    int IndirectParam = -1;
-
-    if (TargetExpr->Kind == ExprKind::Var &&
-        TargetExpr->Var.Kind == MedVar::Reg) {
-      // A tail-call target in a reused argument register may be a call result.
-      int PIdx = TargetExpr->Var.SSAVer == 0
-                     ? regToArgIdx(TargetExpr->Var.RegOff)
-                     : -1;
-      if (PIdx >= 0) {
-        IndirectParam = PIdx;
-        TargetName = "arg" + std::to_string(PIdx);
-      }
-    } else if (TargetExpr->Kind == ExprKind::Const) {
-      bool FoundName = false;
-      if (FuncNames) {
-        auto It = FuncNames->find(TargetExpr->ConstVal);
-        if (It != FuncNames->end()) {
-          TargetName = It->second;
-          FoundName = true;
-        }
-      }
-      if (FoundName)
-        IsIndirect = false;
-    }
-
-    auto Call = HighExpr::makeCall(TargetName, CurOp.Addr, std::move(Args));
-    Call->IsIndirectCall = IsIndirect;
-    Call->IndirectParamIdx = IndirectParam;
-    if (IsIndirect) {
-      ExprPtr Callee = TargetExpr;
-      if (Callee && Callee->Kind == ExprKind::Var && Callee->Var.Id >= 0) {
-        auto It = DefExpr.find(varKey(Callee->Var));
-        if (It != DefExpr.end() && It->second &&
-            It->second->Kind == ExprKind::Load)
-          Callee = It->second;
-      }
-      Call->IndirectTarget = forceInlineCallTarget(Callee);
-    }
-
-    HighStmt RetStmt;
-    RetStmt.Kind = StmtKind::Return;
-    RetStmt.Addr = CurOp.Addr;
-    RetStmt.RetVal = Call;
-    Func.Body.push_back(std::move(RetStmt));
-  } else {
-    HighStmt S;
-    S.Kind = StmtKind::Goto;
-    S.Addr = CurOp.Addr;
-    S.GotoTarget = InvalidVA;
-    Func.Body.push_back(std::move(S));
-  }
+  // CFG construction owns tail-call classification and emits an explicit
+  // INDIR_CALL + RETURN pair when that classification succeeds. A remaining
+  // INDIR_BR is an unresolved control transfer; an empty successor list must
+  // not grant a second, weaker tail-call classification in the source route.
+  HighStmt S;
+  S.Kind = StmtKind::Goto;
+  S.Addr = CurOp.Addr;
+  S.GotoTarget = InvalidVA;
+  Func.Body.push_back(std::move(S));
 }
 
 } // namespace neverd

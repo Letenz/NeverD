@@ -15,6 +15,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "IndirectTailFrame.h"
+
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/DirectTailCall.h"
@@ -78,20 +80,33 @@ bool hasInstructionLocalGuard(const InstructionRecordT &Rec) {
 //===----------------------------------------------------------------------===//
 
 void CFGBuilder::convertIndirectTailCalls(LowFunc &Func) {
+  if (!CurrentImg)
+    return;
+  const bool NeedsFrameGuard = CurrentImg->Arch == Arch::AArch64;
+  // Coverage is published on LowFunc later in build(), so consult the current
+  // decode/lift account before granting a reaching-state condition here.
+  const auto RestoredFrames =
+      NeedsFrameGuard && DecodeFailureAddresses.empty() &&
+              UnsupportedInstructionAddresses.empty() &&
+              TruncatedPathAddresses.empty()
+          ? restoredAArch64IndirectTailFrames(Func, CurrentImg->Format)
+          : std::set<va_t>{};
   bool Changed = false;
   for (auto &[Addr, Rec] : Insns) {
-    // Only an unconditional indirect branch with no resolved jump-table targets
-    // is a function-pointer tail call.  A resolved INDIR_BR (switch / computed
-    // goto) keeps its successors; a conditional one and a return are
-    // unaffected.
+    // A lack of jump-table targets alone cannot establish a tail call. An
+    // AArch64 candidate must also restore its incoming SP and link word on
+    // every reaching path. Existing table identity/quarantine guards still own
+    // dispatch classification; this frame condition supplies no callee ABI.
     if (!Rec.IsBranch || !Rec.IsIndirect || Rec.IsCall || Rec.IsRet ||
         Rec.IsCond || !Rec.JumpTableTargets.empty() ||
+        (NeedsFrameGuard && !RestoredFrames.count(Addr)) ||
         EverPublishedJumpTableBranches.count(Addr) ||
         LostValidatedJumpTableBranches.count(Addr) ||
         StackTableEvidenceIncompleteBranches.count(Addr) ||
         IndexDomainEvidenceIncompleteBranches.count(Addr) ||
         IncompleteBranchMarkerEvidenceIncomplete ||
-        (finiteGOTOFFGroupClaimed() && guardedGroupContains(Addr)) ||
+        ((finiteGOTOFFGroupClaimed() || finiteAbsoluteGroupClaimed()) &&
+         guardedGroupContains(Addr)) ||
         ValidatedPhysicalJumpTableBranches.count(Addr) ||
         AmbiguousI386GOTPCBranches.count(Addr) ||
         PendingAmbiguousI386GOTPCBranches.count(Addr) ||

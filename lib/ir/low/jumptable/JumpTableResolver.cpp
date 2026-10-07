@@ -3591,6 +3591,19 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   };
   const bool FiniteJointGOTOFF =
       GuardedGroupProofContext && finiteGOTOFFGroupClaimed();
+  const bool FiniteJointAbsolute =
+      GuardedGroupProofContext && finiteAbsoluteGroupClaimed();
+  std::optional<std::vector<uint32_t>> JointAbsoluteCoordinates;
+  if (FiniteJointAbsolute) {
+    bool Incomplete = false;
+    JointAbsoluteCoordinates = replayFiniteAbsoluteGroupDomain(
+        Rec, Info, &CandidateEvidenceBudget, Incomplete);
+    CandidateEvidenceAnalysisIncomplete |= Incomplete;
+    if (!JointAbsoluteCoordinates || JointAbsoluteCoordinates->empty())
+      return {};
+    Info.MaxEntries = JointAbsoluteCoordinates->back() + 1;
+    Info.IndexDomainAuthenticated = true;
+  }
   bool GuardFound = Info.IndexDomainAuthenticated;
   bool AuthenticatedGuardUsesDefinedOccurrenceRoots = false;
   if (!GuardFound && (!GuardedGroupProofContext || FiniteJointGOTOFF)) {
@@ -3601,7 +3614,7 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
       Info.AuthenticatedGuardBound = Info.MaxEntries;
     }
   }
-  if (GuardedGroupProofContext && !FiniteJointGOTOFF) {
+  if (GuardedGroupProofContext && !FiniteJointGOTOFF && !FiniteJointAbsolute) {
     observeGroupProof("single-load-selector");
     if (!GroupHasSingleGuardedLoadAndSelector(Info))
       return {};
@@ -4162,6 +4175,12 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   bool ExactFiniteRelativeClosureUnknownValue = false;
   std::vector<uint32_t> MaskCoordinates;
   std::vector<JumpTableMaskKnownOneWitness> MaskKnownOneWitnesses;
+  if (JointAbsoluteCoordinates) {
+    if (!consumeCandidateProducts({{JointAbsoluteCoordinates->size(), 4}}))
+      return {};
+    MaskCoordinates = *JointAbsoluteCoordinates;
+    UsedNonContiguousMask = MaskCoordinates.size() != Info.MaxEntries;
+  }
   const bool HasExactFiniteSingletonStorage =
       ProvisionalRelativeEdgeTemplate &&
       ((ProvisionalRelativeEdgeTemplate->AuthenticatesPhysicalStorage &&
@@ -4180,7 +4199,8 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
           ? &ExactFiniteRelativeClosureUnknownValue
           : nullptr;
   const uint32_t MaskBound =
-      (GuardedGroupProofContext && !FiniteJointGOTOFF)
+      FiniteJointAbsolute ? Info.MaxEntries
+      : (GuardedGroupProofContext && !FiniteJointGOTOFF)
           ? 0
           : inferBoundsFromMaskWithAbsoluteProof(
                 Rec, Info, /*AllowNonContiguous=*/true, &IncompleteMaskDomain,
@@ -5005,6 +5025,17 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   auto RevalidateIndexDomain = [&]() -> bool {
     if (!GroupHasSingleGuardedLoadAndSelector(Info))
       return false;
+    if (FiniteJointAbsolute) {
+      bool Incomplete = false;
+      const auto Coordinates = replayFiniteAbsoluteGroupDomain(
+          Rec, Info, &CandidateEvidenceBudget, Incomplete);
+      CandidateEvidenceAnalysisIncomplete |= Incomplete;
+      if (!Coordinates || Coordinates->empty() ||
+          !consumeCandidateProducts({{Coordinates->size(), 4}}))
+        return false;
+      return *Coordinates == Info.AuthenticatedMaskCoordinates &&
+             Coordinates->back() + 1 == Info.MaxEntries;
+    }
     bool Revalidated = false;
     if (Info.AuthenticatedDenseMaskBound != 0) {
       observeGroupProof("dense-mask-revalidation");
@@ -5167,6 +5198,20 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   // only derive such a permission after inspecting the complete object.
   if (!ProveExactPhysicalStorage(Info, Info.ExactPhysicalStorageRange))
     return {};
+  if (FiniteJointAbsolute) {
+    const JumpTableStorageRange Physical{Info.BaseAddr, Info.EntrySize,
+                                         PhysicalEntryStride,
+                                         Info.PhysicalCapacity};
+    if (!Info.ExactPhysicalStorageRange ||
+        *Info.ExactPhysicalStorageRange != Physical ||
+        !consumeCandidateProducts({{Info.StorageRanges.size(), 2}, {1, 4}}))
+      return {};
+    // Every member shares this independently proved whole-object owner. Its
+    // runtime coordinates stay separate; a common physical range lets later
+    // consumers compare ownership without treating a sibling's permission as
+    // an unexplained extra slot in a two-coordinate storage fragment.
+    Info.StorageRanges = {Physical};
+  }
   bool ImportedPriorRelativePhysicalIdentity = false;
   const size_t PreReadRootCount = ActiveJumpTableProofRoots
                                       ? ActiveJumpTableProofRoots->size()
@@ -5598,15 +5643,24 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
       Info.ExactPhysicalStorageRange &&
       *Info.ExactPhysicalStorageRange ==
           ExactFiniteAbsoluteSingletonProofValue->PhysicalStorage;
+  const bool AuditExactAbsoluteGroupPhysicalObject =
+      FiniteJointAbsolute && Info.ExactPhysicalStorageRange &&
+      Info.ExactPhysicalStorageRange->BaseAddr == Info.BaseAddr &&
+      Info.ExactPhysicalStorageRange->EntrySize == 8 &&
+      Info.ExactPhysicalStorageRange->EntryStride == 8 &&
+      Info.ExactPhysicalStorageRange->PhysicalSlotCount ==
+          Info.PhysicalCapacity;
   std::vector<JumpTableStorageRange> ConsumerAuditStorageRanges =
       (AuditExactRelativePhysicalObject ||
-       AuditExactAbsoluteSingletonPhysicalObject)
+       AuditExactAbsoluteSingletonPhysicalObject ||
+       AuditExactAbsoluteGroupPhysicalObject)
           ? std::vector<JumpTableStorageRange>{*Info.ExactPhysicalStorageRange}
           : Info.StorageRanges;
   if (!ConsumerAuditStorageRanges.empty() && Img.getPointerSize() != 0 &&
       (!Info.SuppressibleRelocationSlots.empty() ||
        AuditExactRelativePhysicalObject ||
-       AuditExactAbsoluteSingletonPhysicalObject)) {
+       AuditExactAbsoluteSingletonPhysicalObject ||
+       AuditExactAbsoluteGroupPhysicalObject)) {
     ActiveJumpTableConsumerAudit = true;
     const std::set<uint64_t> &CodeRelocationSlots =
         AuditExactRelativePhysicalObject ? Img.RelCodeRelocSlots
@@ -5664,6 +5718,24 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
     PhysicalRelocationSlots.erase(std::unique(PhysicalRelocationSlots.begin(),
                                               PhysicalRelocationSlots.end()),
                                   PhysicalRelocationSlots.end());
+    if (FiniteJointAbsolute) {
+      const auto *Certificate =
+          GuardedGroupProofContext->FiniteRoundCertificate;
+      if (!Certificate || !consumeCandidateProducts(
+                              {{GuardedGroupIdentity->MemberCount, 64 * 16},
+                               {PhysicalRelocationSlots.size(), 128}}))
+        return {};
+      std::set<va_t> RuntimeSlots;
+      for (const auto &[Branch, Domain] : Certificate->Domains) {
+        (void)Branch;
+        for (uint32_t Slot : Domain)
+          RuntimeSlots.insert(Info.BaseAddr + uint64_t(Slot) * 8);
+      }
+      // An exact physical object cannot expand this group's independently
+      // proved runtime permission to unused prefix or filler coordinates.
+      std::erase_if(PhysicalRelocationSlots,
+                    [&](va_t Slot) { return !RuntimeSlots.count(Slot); });
+    }
 
     auto storageOwns = [&](va_t Address, bool &AnalysisComplete) {
       if (!consumeCandidateEvidence(
