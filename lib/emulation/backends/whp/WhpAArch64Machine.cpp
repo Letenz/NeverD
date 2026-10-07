@@ -49,12 +49,7 @@ public:
       : Memory(Memory),
         Binding([&Memory] { return createWhpArmProcessor(Memory); },
                 Memory.parallelEnabled()) {}
-  llvm::Error initialize() {
-    auto Active = Binding.acquire(
-        {std::chrono::steady_clock::now() +
-         std::chrono::microseconds(aarch64::ProbeTimeoutMicroseconds)});
-    return Active ? llvm::Error::success() : Active.takeError();
-  }
+  llvm::Error initialize() { return Binding.initialize(); }
   llvm::Error step(AArch64MachineState &State,
                    MachineRunControl Control) override {
     Control = Control.forNativeStep();

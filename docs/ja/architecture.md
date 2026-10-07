@@ -506,6 +506,8 @@ Windows モデルは独立した非ページプール MDL も管理し、記述�
 
 `KernelScheduler` が実行時優先度と優先度／実行可能順序の比較を一元管理します。`KernelModelThreadPriorities` が `KeSetPriorityThread` と `KeQueryPriorityThread` のスレッドオブジェクトを検証し、停止した CPU コンテキストには優先度をコピーしません。`DriverSession` はコールバック同期の入口と API／イベント境界で高優先度スレッドを確認します。範囲と制限は[ドライバースケジューリング](driver-scheduling.md)を参照してください。
 
+`KernelDispatcher` は論理スレッドごとに mutex の再帰所有権を管理します。`KernelModel` は遅延した `KeWaitForSingleObject` 取得の待機スレッドを保存し、APC 照会と `KeReleaseMutex` に同じ識別子を使用します。ネストしたスタックの破棄は所有権を保持し、最外層の復帰では寿命検査を行います。
+
 `KernelModelDeviceStack` はデバイスのドライバー所有者、割り当て、上下の接続、削除待ち状態、内部参照を一つの記録で管理します。ゲストの `NextDevice` 一覧とホストが所有する接続グラフは別の意味を持ちます。名前解決は名前付き下位デバイスを `FILE_OBJECT` とレポートに保持し、初期ディスパッチと READ/WRITE の方式には現在の最上位を選び、要求経路全体を保持します。切断・削除しても要求やコールバックが保持中のデバイスは失効せず、公開 `ReferenceCount` は開いたハンドル数だけを表します。
 
 `KernelModelIRPStack` は元のゲストパケット上で有界カーソル、指定対象へのディスパッチ、完了展開を管理し、インライン Copy/Skip/SetCompletion の書き込みが正本です。ディスパッチ状態、完了制御、最終 `IoStatus` を分離し、pending はディスパッチ復帰後にも伝播できます。`STATUS_MORE_PROCESSING_REQUIRED` は入れ子の完了も含め、最終展開を再開するまで IRP／MDL／バッファーを保持します。`KernelGuestCall` の所有サブシステムとローカルトークンが WDM／WDF 継続の衝突を防ぎ、`DriverSession` は CPU フレームと継承 IRQL を保存します。単一のゲストドライバーを、別所有のシナリオ PDO 上に接続できます。ドライバー割り当て IRP、WDF 接続／転送、使用中スタックへの接続、中間層切断、メジャー変更、経路外対象は未対応です。 上位の完了コールバックを実行する前に、消費済みの下位スタック位置をゼロにします。
@@ -1412,3 +1414,7 @@ Swift CGPoint のインスタンス変換は、double 入力二つ、double 結�
 Swift SDK Published の enclosing-instance アクセサーは四つのポインターを保持します。先頭は getter の不透明な間接結果、または setter の消費される値のアドレスで、その後に owner、wrapped key path、storage key path が続きます。四つの Swift 6.1.2 macOS/Mac Catalyst コンパイラー・エクスポート構成で正確なシンボルと Combine 提供元を検証します。ジェネリックメタデータや swiftself は追加せず、参照の所有権、不透明な値の配置、フレームの義務は既存の担当層が保持します。
 
 厳密に認証した `MainActor.shared` SDK getter はオブジェクトポインターを返し、メタタイプを swiftself（ARM64 の `x20`、x86-64 の `r13`）で受け取ります。Swift 6.1.2 の macOS/Mac Catalyst の 4 構成で、コンパイラー出力とエクスポートから完全な ABI と `libswift_Concurrency` の強いインポートを確認します。所有権、executor のスケジューリング、プライベートスタックフレームの解析には既存の契約が適用されます。
+
+`LinuxPriority` は同じワークロードの `LinuxServices` 内で、タスクごとの明示的な nice 状態を管理します。x64／AArch64 の生の優先度トラップは `LinuxValues.def` の番号と OS が所有する現在のスレッド ID を使います。検証済みの `LinuxPriorityOptions` がフィクスチャのタスク観測値と呼び出し元の CAP_SYS_NICE／RLIMIT_NICE 権限を提供します。未知のタスク状態やグループ／ユーザー選択は未対応です。生の取得はカーネルの返却形式を保ち、権限エラーでは状態を変更しません。JSON フィールドと診断は既存のプロセスおよび Linux の `.def` ファイルで宣言します。
+
+`LinuxUnavailableSyscalls.def` は、選択した任意のカーネル呼び出しについて、公開する不存在観測 ID、入力名、アーキテクチャ別番号、固定引数数を管理します。`LinuxKernelOptions` は明示的なフィクスチャ観測であり、共有 Linux カーネルサービスは、その観測が不存在を宣言した場合だけ ENOSYS を返します。このカタログは実装を提供せず、Android API レベルから可用性を推測しません。JSON 検証とプロファイルの受け入れはロード前に行い、未登録の呼び出しと、存在しても未モデル化の呼び出しは未対応のままです。

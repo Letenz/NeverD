@@ -187,7 +187,7 @@ TEST_F(DriverKernelDispatcher, MutexOwnershipRecursionAndRelease) {
   EXPECT_EQ(call("KeReadStateMutex", {Mutex}), 1u);
   expectError(Dispatcher.call("KeReadStateMutex", {Mutex}, 3),
               "unsupported IRQL");
-  expectError(Dispatcher.tryAcquire(Mutex), "active execution");
+  expectError(Dispatcher.tryAcquire(Mutex), dispatcher::MutexThreadRequired);
   EXPECT_TRUE(take(Dispatcher.tryAcquire(Mutex, First)));
   EXPECT_TRUE(Dispatcher.ownsMutex(First));
   EXPECT_FALSE(take(Dispatcher.tryAcquire(Mutex, Second)));

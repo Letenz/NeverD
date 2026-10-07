@@ -55,13 +55,20 @@ protected:
           return std::make_unique<FakeResource>(Stats, Identity);
         });
   }
-  void interrupted(llvm::Error E, bool Stopped, bool Expired) {
+  void interrupted(llvm::Error E, bool Stopped, bool Expired,
+                   llvm::StringRef Text = {}) {
     bool Seen = false;
     auto Remaining = llvm::handleErrors(
         std::move(E), [&](const MachineInterruptedError &Interrupted) {
           Seen = true;
           EXPECT_EQ(Interrupted.stopRequested(), Stopped);
           EXPECT_EQ(Interrupted.deadlineReached(), Expired);
+          if (!Text.empty()) {
+            std::string Detail;
+            llvm::raw_string_ostream OS(Detail);
+            Interrupted.log(OS);
+            EXPECT_EQ(OS.str(), Text);
+          }
         });
     EXPECT_EQ(llvm::toString(std::move(Remaining)), "");
     EXPECT_TRUE(Seen);
@@ -151,6 +158,48 @@ TEST_F(WhpResources, RejectedEntryCannotRetireTheHotResource) {
   EXPECT_EQ(Stats.Attempts[Second], 0u);
   ASSERT_NO_FATAL_FAILURE(touch(*A, First));
   EXPECT_EQ(Stats.Attempts[First], 1u);
+}
+TEST_F(WhpResources, InitializationRetainsPhaseCauseAndOrdinaryDeadlines) {
+  auto A = binding(First), B = binding(Second);
+  EXPECT_EQ(llvm::toString(A->initialize()), "");
+  std::atomic<bool> Stop{true};
+  interrupted(B->initialize({Clock::time_point::max(), &Stop}), true, false,
+              InitializationStopped);
+  interrupted(B->initialize({Clock::time_point::min()}), false, true,
+              InitializationExpired);
+  EXPECT_EQ(Stats.Attempts[Second], 0u);
+  EXPECT_EQ(Stats.Live, 1u);
+  auto Expired = A->acquire({Clock::time_point::min()});
+  ASSERT_FALSE(bool(Expired));
+  interrupted(Expired.takeError(), false, true, diagnostic::WhpRun);
+  ASSERT_NO_FATAL_FAILURE(touch(*A, First));
+  EXPECT_EQ(Stats.Attempts[First], 1u);
+}
+TEST_F(WhpResources, CancelledInitializationDiscardsTheCreatedResource) {
+  auto A = binding(First);
+  std::atomic<bool> Stop{false};
+  Stats.StopAtCreate = &Stop;
+  interrupted(A->initialize({Clock::time_point::max(), &Stop}), true, false,
+              InitializationStopped);
+  EXPECT_EQ(Stats.Created, 1u);
+  EXPECT_EQ(Stats.Created, Stats.Destroyed);
+  EXPECT_EQ(Stats.Live, 0u);
+  Stats.StopAtCreate = nullptr;
+  Stop = false;
+  EXPECT_EQ(llvm::toString(A->initialize()), "");
+  EXPECT_EQ(Stats.Attempts[First], 2u);
+  EXPECT_EQ(Stats.Live, 1u);
+}
+TEST_F(WhpResources, InitializationHostFailureOutranksConcurrentStop) {
+  auto A = binding(First);
+  std::atomic<bool> Stop{false};
+  Stats.StopAtCreate = &Stop;
+  Stats.Fail[First] = true;
+  auto E = A->initialize({Clock::time_point::max(), &Stop});
+  EXPECT_FALSE(E.isA<MachineInterruptedError>());
+  EXPECT_EQ(llvm::toString(std::move(E)), CreateFailed);
+  EXPECT_EQ(Stats.Attempts[First], 1u);
+  EXPECT_EQ(Stats.Created, 0u);
 }
 TEST_F(WhpResources, WaitingForAnotherOwnerHonorsTheOriginalDeadline) {
   auto A = binding(First), B = binding(Second);
