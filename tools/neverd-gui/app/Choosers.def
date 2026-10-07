@@ -15,8 +15,8 @@
 //   Requested lists rows only for a request its window sets (a search or an
 //   address's references); the others list on their own.
 // NEVERD_CHOOSER_COLUMN(Chooser, Field, Title, Format, SortField)
-//   Format: Text, Name, Address, SegmentOf, Hex, Decimal, Flag(R|W|X),
-//   XrefType, Direction.  An empty SortField makes the column unsortable.
+//   Format: a row of ChooserFormats.def, which also gives the column's
+//   starting width.  An empty SortField makes the column unsortable.
 #ifndef NEVERD_CHOOSER
 #define NEVERD_CHOOSER(Id, Operation, Title, Icon, Filterable, Requested)
 #endif
@@ -58,7 +58,7 @@ NEVERD_CHOOSER_COLUMN(Strings, "length",
 NEVERD_CHOOSER_COLUMN(Strings, "type", QT_TRANSLATE_NOOP("Choosers", "Type"),
                       Text, "type")
 NEVERD_CHOOSER_COLUMN(Strings, "text", QT_TRANSLATE_NOOP("Choosers", "String"),
-                      Text, "text")
+                      Literal, "text")
 
 NEVERD_CHOOSER(Segments, "regions", QT_TRANSLATE_NOOP("Choosers", "Segments"),
                "segments", false, false)
@@ -151,7 +151,7 @@ NEVERD_CHOOSER_COLUMN(StringReferences, "disasm",
 NEVERD_CHOOSER_COLUMN(StringReferences, "type",
                       QT_TRANSLATE_NOOP("Choosers", "Type"), Text, "type")
 NEVERD_CHOOSER_COLUMN(StringReferences, "text",
-                      QT_TRANSLATE_NOOP("Choosers", "String"), Text, "text")
+                      QT_TRANSLATE_NOOP("Choosers", "String"), Literal, "text")
 
 #undef NEVERD_CHOOSER
 #undef NEVERD_CHOOSER_COLUMN

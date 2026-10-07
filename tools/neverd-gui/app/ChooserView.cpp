@@ -34,6 +34,17 @@ constexpr ChooserSpec Specs[] = {
 #include "Choosers.def"
 };
 
+/// The digit widths a column of \p format starts at (ChooserFormats.def).
+int columnChars(ChooserModel::Format format) {
+  switch (format) {
+#define NEVERD_CHOOSER_FORMAT(Id, Columns)                                     \
+  case ChooserModel::Format::Id:                                               \
+    return Columns;
+#include "ChooserFormats.def"
+  }
+  return 1;
+}
+
 struct ColumnSpec {
   ChooserKind chooser;
   const char *field;
@@ -237,6 +248,23 @@ QString ChooserModel::display(const QJsonObject &row,
     if (value.isDouble())
       return QString::number(value.toDouble(), 'f', 0);
     return value.toString();
+  case Format::Literal: {
+    QString text;
+    for (const QChar c : value.toString()) {
+      if (c == QLatin1Char('\n'))
+        text += QStringLiteral("\\n");
+      else if (c == QLatin1Char('\t'))
+        text += QStringLiteral("\\t");
+      else if (c == QLatin1Char('\r'))
+        text += QStringLiteral("\\r");
+      else if (c.unicode() < 0x20 || c.unicode() == 0x7f)
+        text +=
+            QStringLiteral("\\x%1").arg(c.unicode(), 2, 16, QLatin1Char('0'));
+      else
+        text += c;
+    }
+    return text;
+  }
   case Format::Address: {
     const auto address = addressValue(value);
     return address ? displayAddress(*address, digits) : QString();
@@ -423,12 +451,12 @@ ChooserView::ChooserView(Session &session, const AddressSpace &space,
           [this] { updateStatus(); });
   connect(model_, &ChooserModel::failed, this,
           [this](const QString &message) { status_->setText(message); });
-  if (kind == ChooserKind::Functions) {
-    table_->header()->resizeSection(0, 240);
-  } else {
-    for (int i = 0; i + 1 < model_->columnCount(); ++i)
-      table_->header()->resizeSection(i, 140);
-  }
+  // Each column but the last, which stretches, starts as wide as its
+  // format needs.
+  const int digit = table_->fontMetrics().horizontalAdvance(QLatin1Char('0'));
+  for (int i = 0; i + 1 < model_->columnCount(); ++i)
+    table_->header()->resizeSection(i, columnChars(model_->column(i).format) *
+                                           digit);
   updateStatus();
 }
 

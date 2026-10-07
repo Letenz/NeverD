@@ -2,9 +2,14 @@
 
 #include <QFontMetricsF>
 #include <QTextCharFormat>
+#include <algorithm>
+#include <cmath>
 
 namespace neverd::gui {
 namespace {
+/// Pixels a character's advance may differ from its columns' width.
+constexpr qreal GridTolerance = 0.01;
+
 /// Whether a fixed-width listing draws \p code two columns wide; the worker
 /// aligns columns by the same table.
 bool isWideCharacter(char32_t code) {
@@ -108,37 +113,55 @@ QTextLayout &StyledLine::layout(const QFont &font, quint64 stamp,
     range.format.setForeground(colorOf(span.role));
     formats.append(range);
   }
-  // A wide character's glyph comes from whichever font has it; spacing
-  // makes it exactly two columns, so the columns after it line up.
-  const QFontMetricsF metrics(font);
-  const qreal column = metrics.horizontalAdvance(QLatin1Char('M'));
-  for (qsizetype i = 0; i < text.size();) {
-    const bool pair = text.at(i).isHighSurrogate() && i + 1 < text.size() &&
-                      text.at(i + 1).isLowSurrogate();
-    const char32_t code =
-        pair ? QChar::surrogateToUcs4(text.at(i), text.at(i + 1))
-             : text.at(i).unicode();
-    const int units = pair ? 2 : 1;
-    if (isWideCharacter(code)) {
-      QTextLayout::FormatRange range;
-      range.start = int(i);
-      range.length = units;
-      range.format.setFontLetterSpacingType(QFont::AbsoluteSpacing);
-      range.format.setFontLetterSpacing(
-          2 * column - metrics.horizontalAdvance(text.mid(i, units)));
-      formats.append(range);
-    }
-    i += units;
-  }
   layout_->setFormats(formats);
   QTextOption option;
   option.setWrapMode(QTextOption::NoWrap);
   layout_->setTextOption(option);
-  layout_->beginLayout();
-  QTextLine line = layout_->createLine();
-  if (line.isValid())
-    line.setPosition(QPointF(0, 0));
-  layout_->endLayout();
+  const auto layOut = [this] {
+    layout_->beginLayout();
+    QTextLine line = layout_->createLine();
+    if (line.isValid())
+      line.setPosition(QPointF(0, 0));
+    layout_->endLayout();
+  };
+  layOut();
+  // Text beyond ASCII keeps to the fixed-width grid: every character takes
+  // its columns, two for a wide one (WideCharacters.def), whichever font
+  // draws it.  A fallback font draws a script's characters at its own
+  // widths, and with them the spaces and punctuation Qt itemizes into the
+  // same run, so each character's measured advance is corrected.
+  if (std::any_of(text.begin(), text.end(),
+                  [](QChar c) { return c.unicode() >= 0x80; })) {
+    const qreal column =
+        QFontMetricsF(font).horizontalAdvance(QLatin1Char('M'));
+    const QTextLine line = layout_->lineAt(0);
+    bool corrected = false;
+    for (qsizetype i = 0; i < text.size();) {
+      const bool pair = text.at(i).isHighSurrogate() && i + 1 < text.size() &&
+                        text.at(i + 1).isLowSurrogate();
+      const char32_t code =
+          pair ? QChar::surrogateToUcs4(text.at(i), text.at(i + 1))
+               : text.at(i).unicode();
+      const int units = pair ? 2 : 1;
+      const qreal advance =
+          line.cursorToX(int(i + units)) - line.cursorToX(int(i));
+      const qreal expected = (isWideCharacter(code) ? 2 : 1) * column;
+      if (std::abs(advance - expected) > GridTolerance) {
+        QTextLayout::FormatRange range;
+        range.start = int(i);
+        range.length = units;
+        range.format.setFontLetterSpacingType(QFont::AbsoluteSpacing);
+        range.format.setFontLetterSpacing(expected - advance);
+        formats.append(range);
+        corrected = true;
+      }
+      i += units;
+    }
+    if (corrected) {
+      layout_->setFormats(formats);
+      layOut();
+    }
+  }
   stamp_ = stamp;
   return *layout_;
 }

@@ -29,18 +29,10 @@ class Session;
 class ChooserModel final : public QAbstractTableModel {
   Q_OBJECT
 public:
+  /// How a column shows its field (ChooserFormats.def).
   enum class Format {
-    Text,
-    Name,
-    Address,
-    SegmentAddress,
-    SegmentOf,
-    Hex,
-    Decimal,
-    FlagRead,
-    FlagWrite,
-    FlagExecute,
-    Direction
+#define NEVERD_CHOOSER_FORMAT(Id, Columns) Id,
+#include "ChooserFormats.def"
   };
   struct Column {
     QString field;
@@ -53,6 +45,7 @@ public:
                QObject *parent = nullptr);
 
   ChooserKind kind() const { return kind_; }
+  const Column &column(int index) const { return columns_.at(index); }
   QString title() const;
   QString iconName() const;
   bool filterable() const;
