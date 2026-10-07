@@ -76,9 +76,9 @@ if(TARGET neverd_shared)
   # Compile the emitted SDK exactly as a native C consumer sees it.
   # Deliberately do not link neverd_shared: its PUBLIC source-tree include
   # directory must not mask an incomplete staged include hierarchy.  The
-  # target-level dependency guarantees that neverd_shared's POST_BUILD SDK
-  # copy has finished before Ninja or a multi-configuration generator starts
-  # either C compilation.
+  # utility dependency waits for neverd_shared's linked output and POST_BUILD
+  # SDK copy.  A direct library dependency allows Ninja to start either C
+  # compilation before linking, while the staged headers are still absent.
   add_executable(NeverDStagedCSDKHeaderTests
     StagedCSDKCanonicalHeader.c
     StagedCSDKFlatHeader.c
@@ -95,7 +95,10 @@ if(TARGET neverd_shared)
     "$<TARGET_FILE_DIR:neverd_shared>/sdk"
   )
 
-  add_dependencies(NeverDStagedCSDKHeaderTests neverd_shared)
+  add_custom_target(NeverDStagedCSDKHeadersReady
+    DEPENDS "$<TARGET_FILE:neverd_shared>"
+  )
+  add_dependencies(NeverDStagedCSDKHeaderTests NeverDStagedCSDKHeadersReady)
   add_dependencies(NeverDUnitTests NeverDStagedCSDKHeaderTests)
 
   add_test(
