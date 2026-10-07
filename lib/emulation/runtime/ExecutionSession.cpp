@@ -52,6 +52,10 @@ llvm::Expected<std::unique_ptr<ExecutionSession>> ExecutionSession::create(
           S->CPU->stop();
       };
   Hooks.RecoverableFault = std::move(Recovery);
+  Hooks.MemoryWritten = [S = Session.get()] {
+    S->AdmissionStop = SessionExitKind::MemoryWriteWatch;
+    S->CPU->stop();
+  };
   if (auto E = Session->CPU->installHooks(std::move(Hooks)))
     return std::move(E);
   return Session;
@@ -117,16 +121,16 @@ bool ExecutionSession::watched(uint64_t PC) const {
          PC - std::prev(I)->Address < std::prev(I)->Size;
 }
 
-llvm::Error ExecutionSession::watchExecution(std::vector<ExecutionWatch> New) {
-  if (Current != State::Ready)
-    return diagnostic::error(runtime::SessionState);
+namespace {
+template <typename Watch>
+llvm::Expected<std::vector<Watch>> normalizeWatches(std::vector<Watch> New) {
   for (const auto &W : New)
     if (!W.Size || W.Size - 1 > UINT64_MAX - W.Address)
       return diagnostic::error(runtime::SessionWatch);
-  llvm::sort(New, [](const ExecutionWatch &A, const ExecutionWatch &B) {
+  llvm::sort(New, [](const Watch &A, const Watch &B) {
     return A.Address < B.Address;
   });
-  std::vector<ExecutionWatch> Merged;
+  std::vector<Watch> Merged;
   for (const auto &W : New) {
     // The last byte is representable even when the exclusive end is not.
     if (!Merged.empty() &&
@@ -141,11 +145,31 @@ llvm::Error ExecutionSession::watchExecution(std::vector<ExecutionWatch> New) {
     } else
       Merged.push_back(W);
   }
-  Watches = std::move(Merged);
+  return Merged;
+}
+} // namespace
+
+llvm::Error ExecutionSession::watchExecution(std::vector<ExecutionWatch> New) {
+  if (Current != State::Ready)
+    return diagnostic::error(runtime::SessionState);
+  auto Merged = normalizeWatches(std::move(New));
+  if (!Merged)
+    return Merged.takeError();
+  Watches = std::move(*Merged);
   // A direct contract enforces the watches in the CPU's page tables, so the
   // backend needs the merged set; the checked path reads Watches directly.
   CPU->setExecutionWatches(Watches);
   return llvm::Error::success();
+}
+
+llvm::Error
+ExecutionSession::watchMemoryWrites(std::vector<MemoryWriteWatch> New) {
+  if (Current != State::Ready)
+    return diagnostic::error(runtime::SessionState);
+  auto Merged = normalizeWatches(std::move(New));
+  if (!Merged)
+    return Merged.takeError();
+  return CPU->setMemoryWriteWatches(*Merged);
 }
 
 llvm::Expected<ServiceRequest> ExecutionSession::takeServiceRequest() {

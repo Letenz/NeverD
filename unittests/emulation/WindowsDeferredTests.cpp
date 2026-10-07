@@ -146,6 +146,12 @@ struct Observer final : ProcessObserver {
       Exporting =
           [](ProcessView &, const ProcessExportView &,
              std::optional<uint64_t>) { return llvm::Error::success(); };
+  std::function<llvm::Expected<std::optional<std::vector<ExecutionWatch>>>(
+      ProcessView &)>
+      Resuming = [](ProcessView &)
+      -> llvm::Expected<std::optional<std::vector<ExecutionWatch>>> {
+    return std::nullopt;
+  };
   unsigned Starts = 0, Watches = 0;
   llvm::Expected<std::vector<ExecutionWatch>>
   started(ProcessView &Process) override {
@@ -160,6 +166,10 @@ struct Observer final : ProcessObserver {
   llvm::Error exporting(ProcessView &Process, const ProcessExportView &Export,
                         std::optional<uint64_t> ReturnAddress) override {
     return Exporting(Process, Export, ReturnAddress);
+  }
+  llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+  resuming(ProcessView &Process) override {
+    return Resuming(Process);
   }
 };
 
@@ -394,6 +404,23 @@ TEST_P(WindowsDeferred, ObserverFailuresAreNotGuestOutcomes) {
   EXPECT_EQ(BeforeAPI->Stop, ProcessStopReason::RuntimeFailure);
   EXPECT_EQ(BeforeAPI->Diagnostic, ObserverFailure);
   EXPECT_TRUE(BeforeAPI->NativeCalls.empty());
+}
+
+TEST_P(WindowsDeferred, ResumeObservationFailureCannotExecuteGuestCode) {
+  Observer O;
+  O.Resuming = [](ProcessView &)
+      -> llvm::Expected<std::optional<std::vector<ExecutionWatch>>> {
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   ObserverFailure);
+  };
+  auto Failed = observeProcess(Path, ProcessProfile::WindowsPE64, Options, O);
+  ASSERT_TRUE(bool(Failed)) << llvm::toString(Failed.takeError());
+  EXPECT_EQ(Failed->Stop, ProcessStopReason::RuntimeFailure);
+  EXPECT_EQ(Failed->Diagnostic, ObserverFailure);
+  EXPECT_EQ(Failed->Instructions, 0u);
+  EXPECT_TRUE(Failed->NativeCalls.empty());
+  EXPECT_EQ(O.Starts, 1u);
+  EXPECT_EQ(O.Watches, 0u);
 }
 
 TEST_P(WindowsDeferred, ProfilesWithoutObservationRefuseAnObserver) {

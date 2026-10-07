@@ -1,5 +1,170 @@
 # NeverD Daily Progress
 
+Last verified: **2026-10-07 09:01:56 Asia/Shanghai (UTC+08:00)** / **2026-10-07 01:01:56 UTC**
+
+This is a bounded, point-in-time source and existing-evidence review. The [roadmap](docs/roadmap.md), [architecture](docs/architecture.md), [testing guide](docs/testing.md) and [contribution guidance](CONTRIBUTING.md) remain authoritative. No completion percentage or release-readiness claim is implied.
+
+## Current snapshot
+
+Source review is pinned to [db18af34](https://github.com/NeverSight/NeverD/commit/db18af34bbac577289a83896c142eebaa4ac108d), observed October 7 00:57 UTC. The previous reviewed source was [6f885ebb](https://github.com/NeverSight/NeverD/commit/6f885ebb7fda032077838950be03e31b90ffa593). Activity below runs from the previous report publication, October 6 01:06:21 UTC, through today's collection and excludes this new proposal.
+
+| Measure | Verified state |
+| --- | --- |
+| Open ordinary issues | 18, up one; 14 epics, no milestones, only #12 assigned |
+| Open PRs | 2: #589 and #605; yesterday's #525 and #565 merged |
+| PRs merged in activity window | 40 including report-only #568; 39 after that exclusion |
+| Closed PRs without merge | 0 |
+| Ordinary issue activity | #580 opened; no other ordinary issue updated |
+| Raw source inventory | 198 distinct commits; 557 changed file paths |
+| Path classification | 385 modified, 170 added, 2 removed; no submodule revision changes |
+| Report-only exclusion | 196 commits and 556 paths, excluding #568's content commit, merge commit and PROGRESS.md |
+| Confirmed defects | One HighC forwarding miscompile fixed below; four-site Darwin compile blocker already repaired in open #589 |
+| New code fixes from this review | 1 minimal HighC repair plus one focused regression, statically inspected only |
+| Qualification | Current dev has observed failures and unfinished coverage; no complete green gate |
+
+The [source comparison](https://github.com/NeverSight/NeverD/compare/6f885ebb7fda032077838950be03e31b90ffa593...db18af34bbac577289a83896c142eebaa4ac108d) was enumerated as 100 + 98 commits, then an empty third page. GitHub's comparison file list caps at 300. Path counts therefore use complete recursive trees of 6,099 and 6,278 entries, neither truncated, excluding directories and comparing path/blob identity; renames count as old/new paths. This inventory is not an exhaustive review count or a count of implementation-only commits.
+
+[#568](https://github.com/NeverSight/NeverD/pull/568) merged at October 6 05:42:05 UTC. Both [6e2272a1](https://github.com/NeverSight/NeverD/commit/6e2272a15ec7b2bacbfc0d5ed305927ff526ce95) and its [36e8142c merge](https://github.com/NeverSight/NeverD/commit/36e8142c2d1fd5d45a326abbf9b3d304f677a670) change only PROGRESS.md and are excluded from substantive advancement. The entire current 135,547-character tracker, including manual edits and earlier history, is preserved below.
+
+### Changes since the previous snapshot
+
+- Parallel checked CPUs/MMIO atomicity [#565](https://github.com/NeverSight/NeverD/pull/565) and bounded Darwin services [#525](https://github.com/NeverSight/NeverD/pull/525) merged. Darwin removal/rename [#581](https://github.com/NeverSight/NeverD/pull/581), Windows preemption [#582](https://github.com/NeverSight/NeverD/pull/582) and priorities [#602](https://github.com/NeverSight/NeverD/pull/602) followed. Their broad concurrency/OS semantics are outside today's bounded audit.
+- Linux trailing-slash and filesystem query contracts landed in [#570](https://github.com/NeverSight/NeverD/pull/570) and [#572](https://github.com/NeverSight/NeverD/pull/572). Process-observation unpacking [#579](https://github.com/NeverSight/NeverD/pull/579), direct x64 execution [#594](https://github.com/NeverSight/NeverD/pull/594), and execution watches [#597](https://github.com/NeverSight/NeverD/pull/597) are delivered source, not independently established runtime coverage.
+- Inference and solver work includes predicate retention [#590](https://github.com/NeverSight/NeverD/pull/590), branch-local encodings [#592](https://github.com/NeverSight/NeverD/pull/592), pristine finite-domain encodings [#598](https://github.com/NeverSight/NeverD/pull/598), prepared keys [#599](https://github.com/NeverSight/NeverD/pull/599), inline SAT watches [#600](https://github.com/NeverSight/NeverD/pull/600), root queues [#601](https://github.com/NeverSight/NeverD/pull/601) and reference bounds [#604](https://github.com/NeverSight/NeverD/pull/604).
+- ARM64 tail-frame checks [#606](https://github.com/NeverSight/NeverD/pull/606), scalar C declarations/literals [#607](https://github.com/NeverSight/NeverD/pull/607), and shared absolute dispatch [#608](https://github.com/NeverSight/NeverD/pull/608) merged. HighIR forwarding was tightened at the pinned head. Individual author corpus/semantic results cannot establish this combined head's qualification.
+- [Issue #580](https://github.com/NeverSight/NeverD/issues/580) requests real end-to-end latency, memory and scaling baselines. It remains open, unassigned and without comments. Its measurement contract is future work, not a benchmark result.
+
+## Bounded static review
+
+**Mode:** Source, interfaces, relevant callers, declared regressions and existing CI only. No project execution, build, test, benchmark, repository script, formatter/linter or dynamic analyzer was run. No workflow was dispatched or rerun. No CI-skip marker is added; ordinary automatic checks may run.
+
+### Finite projection, prepared keys and frame proofs
+
+Reviewed the full `lib/analysis/core/{FiniteValues.h,FiniteValues.cpp,FiniteQueryCache.h,FiniteQueryCache.cpp,FrameOffsets.cpp}`; focused clone contracts in `include/neverd/solver/BitVectorSolver.h:150–168`, `lib/solver/bv/BitVectorSolver.cpp:141–154` and `lib/solver/sat/SatSolver.cpp:340–350`; and regression bodies in `FiniteValuesTests.cpp:21–92,650–747`, `FiniteQueryCacheTests.cpp:399–506`, and `FrameOffsetsTests.cpp:393–434` under `unittests/devirtualization`.
+
+- [Finite projection validation](https://github.com/NeverSight/NeverD/blob/db18af34bbac577289a83896c142eebaa4ac108d/lib/analysis/core/FiniteValues.cpp#L312-L325) checks nonzero/in-range references and widths before constant fast paths or node access. The existing #604 repair is present. Invalid input cannot invoke the observer, spend a solver query or create nodes through these entry points.
+- `FiniteDomainEncoding` fixes the context/settings, forces model construction and stores only a pristine predicate encoding. Each projection/search mutates an independent solver copy; replacing the predicate releases the old template. Clone eligibility rejects searched or failed encoding state. Full internal SAT/watch-list ownership was not audited.
+- Enumeration requests explicit joint model variables, refuses missing values and observer abandonment, and still requires the final UNSAT query. Budget/unknown failures return no partial tuples. Encoding reuse is distinct from reuse of a completed mathematical domain.
+- [Prepared keys](https://github.com/NeverSight/NeverD/blob/db18af34bbac577289a83896c142eebaa4ac108d/lib/analysis/core/FiniteQueryCache.h#L35-L65) own complete serialized keys and projection widths without retaining context references. Moves invalidate the source token. Serialization retains predicate, projection order, limit, widths, operator payloads, constant bits and consistent variable sharing. Only Complete/TooManyValues results are admitted; malformed, oversized and incomplete entries are refused before eviction.
+- `FrameOffsets` prepares once, looks up and stores the same token. Its symbolic addend rewrite preserves full modular dependence on the root/predicate under a shared 16-visit budget. Singleton proof, node checks and infeasible/nonunique/invalid/budget distinctions remain explicit; this does not independently prove reachability or memory accessibility.
+- Declared regressions cover invalid predicate/projection references before fast paths; fresh/copy tuple and observer equivalence, exact/one-short budgets, predicate replacement and failed-projection isolation; prepared-key context destruction, renaming, moves, storage limits, projection order and empty/nonunique domains. These tests were read, not executed.
+
+**Result:** No additional statically proven defect in this boundary; no speculative code change. This is not a proof of all recovery callers, the complete solver or native refinement.
+
+### Captured HighC loads crossing memory assignments
+
+**Confirmed and fixed:** `collectValueForward` recognizes Store statements and assignments to scalar/stack variables, but omitted the supported Assign-to-Load memory-write representation. For `store(slot, x); t1 = load(slot); assign(load(slot), 5); return t1`, it could replace the captured value with a fresh load after the overwrite, returning 5 instead of x. This is established by the source/control flow, not by executing the example.
+
+- [The old clobber check](https://github.com/NeverSight/NeverD/blob/db18af34bbac577289a83896c142eebaa4ac108d/lib/backend/c/HighC/HighCFuncWriter.cpp#L3331-L3353) lacks this write form. [Statement emission](https://github.com/NeverSight/NeverD/blob/db18af34bbac577289a83896c142eebaa4ac108d/lib/backend/c/HighC/HighCStmtWriter.cpp#L448-L535) and existing `HighCStoreForwardingTests.cpp:651–674` explicitly support it.
+- Earlier store forwarding refuses Assign-to-Load as an immutable-slot sequence; liveness/frame-write cleanup retain the overwrite and observed load. A pure-load candidate bypasses the later adjacency gate. The issue also exists in parent `fc969e8cf77f1371c2443000c76c0cddf4111093`; the pinned head's scalar-copy repair does not cover it.
+- [Fix a6468b80](https://github.com/NeverSight/NeverD/commit/a6468b80f37d24146fd5a40a08eaf7be987ad58f) classifies both statement forms through the existing address/overlap check, using the assignment destination's access width. It preserves the existing alias policy and changes no shared IR or LLVMC behavior.
+- Added `HighValueForward.SlotLoadStaysBeforeAnAssignmentToItsSlot` to the already-registered `NeverDHighControlFlowTests`. It checks the retained temporary and declares O0/O2 emitted-C behavior for inputs 7 and 9 using the existing helper. Neither emitter nor regression was run.
+- #589 and #605 touch neither changed file; there is no existing unmerged related HighC proposal to reuse.
+
+Reviewed ranges under `lib/backend/c`: `HighC/HighCFuncWriter.cpp:324–435,946–1115,2330–2585,2826–3673,4720–4869`; `HighC/HighCExprWriter.cpp:84–154,1040–1090,2470–2520,3176–3204,3351–3364,3914–4055`; `HighC/HighCStmtWriter.cpp:282–555,3195–3344`; `HighC/HighCEmitter.cpp:2117–2245`; `pass/HighC/HighCStoreForwarding.cpp:34–210`, `HighCDeadStoreAnalysis.cpp:201–525` and `HighCVoidAnalysis.cpp:316–346`. Also reviewed HighIR statement/expression declarations, relevant HighCWriter/HighCPasses declarations, all `HighValueForwardTests.cpp`, `HighCStoreForwardingTests.cpp:516–735`, target registration and the parent's forwarding range.
+
+**Limits:** No second HighC defect or corresponding LLVMC defect was established. Other forwarding passes, address-taken scalar effects, complete alias analysis and end-to-end native equivalence are not exhaustively proven.
+
+### Darwin regression compilation blocker
+
+[Existing Linux CI](https://github.com/NeverSight/NeverD/actions/runs/37548781094/job/112559177441) reports conflicting initializer-list element types at `unittests/emulation/DarwinFileTests.cpp:1076` and `DarwinVectorTests.cpp:152,162,271`. Static inspection confirms the cause: braced range initializers mix `uint64_t`/UINT64_MAX, which this Linux compiler defines as unsigned long, with ULL expressions, which are unsigned long long. The declared range variable does not select the initializer-list's element type. This is a compile blocker before the tests run, not evidence of failing Darwin runtime semantics.
+
+All four type corrections already exist in [#589](https://github.com/NeverSight/NeverD/pull/589), head `dbb93b662f41b71b34ac76ac81833a977d04e66c`: explicit `uint64_t` operands in [DarwinFileTests.cpp](https://github.com/NeverSight/NeverD/blob/dbb93b662f41b71b34ac76ac81833a977d04e66c/unittests/emulation/DarwinFileTests.cpp#L3560) and [DarwinVectorTests.cpp](https://github.com/NeverSight/NeverD/blob/dbb93b662f41b71b34ac76ac81833a977d04e66c/unittests/emulation/DarwinVectorTests.cpp#L148-L166). That branch is unmerged. Its existing exact-head Linux default-target build passed before later tests failed, supporting the compile repair on that PR only. No duplicate repair was created; this does not establish a completed dev build.
+
+### Performance measurement boundary
+
+Re-read `lib/sdk/capi/NeverDCAPIBench.cpp:58–140` at the pinned source; the blob is unchanged from the previous review. Loading still precedes `T0Total`, and LowIR, MedIR, HighIR and LLVM still use separate pipeline runs. Their total is not one load-to-final-output operation. [#580](https://github.com/NeverSight/NeverD/issues/580) remains the relevant acceptance task: preserve completion denominators and strict semantics while measuring production workflows. No latency, memory, scaling improvement or regression is inferred from source inspection.
+
+## Existing CI and review evidence
+
+### Exact reviewed dev head
+
+At **October 7 01:01:56 UTC**, `db18af34bbac577289a83896c142eebaa4ac108d` had **four all-event workflows**: main CI and Mobile Decompilation running, LLVM Style successful, Mobile Real Applications skipped. **19 checks:** four successful, two failed, three running, ten skipped. Workflow and check collections used 100/page and explicitly empty second pages. Zero legacy commit statuses were returned; their empty aggregate “pending” is not an extra running check.
+
+- [Main Linux](https://github.com/NeverSight/NeverD/actions/runs/37548781094/job/112559177441) failed its default-target build at 00:53:16 UTC on the four Darwin initializer-list type errors above. Tests did not run in this leg.
+- [Mobile macOS](https://github.com/NeverSight/NeverD/actions/runs/37548781055/job/112559251785) failed at 00:15:02 UTC: Objective-C scalar, calls/Blocks and Swift source recovery rejected conditional or mutating preprocessor directives. Subsequent single-session parity had missing output evidence. No runtime root cause or speculative fix is inferred.
+- Ubuntu mobile and both Windows caller-context jobs passed. Main macOS/Windows and mobile Windows were still running. A partial mobile pass does not establish integrated/native aggregate success.
+- [Real applications](https://github.com/NeverSight/NeverD/actions/runs/37548847020): all nine jobs, including release qualification, skipped. No actual current-head application-recovery/reconstruction/behavior qualification was obtained.
+
+### Open proposals and blockers
+
+**[#589](https://github.com/NeverSight/NeverD/pull/589)**, head `dbb93b662f41b71b34ac76ac81833a977d04e66c`: open, non-draft, mergeable at the metadata sample. Four workflows: main/mobile running, style cancelled, Python SDK queued. Fifteen checks: eight success, one failure, one cancelled, one skipped, three running, one queued.
+
+- [Linux default-target build](https://github.com/NeverSight/NeverD/actions/runs/37550844856/job/112565885493) passed, but the job later failed at 01:00:50 UTC. Existing focused mobile-native artifact `11454033213` selected/reported 522 tests: 521 passed, one failed. `MachOInteriorCodePointerCFG.IndexedAbsoluteRootsKeepOwnershipAndRelayRejections` expected INDIR_CALL at `MachOPointerRelocationBoundaryTests.cpp:7854` and did not find it in six indexed cases.
+- Existing Linux CTest artifact `11453418469` selected 69,734 registrations, reported four (two pass, two fail for the same Mach-O test under two registrations), and left 69,730 without results. Missing registrations are not passes or independent defect counts.
+- [Mobile macOS](https://github.com/NeverSight/NeverD/actions/runs/37550844770/job/112565803383) passed at 00:37:08 UTC. Its log verifies scalar 22 methods/141 matching results, calls 21/134, and Swift 25 native bodies plus nine projections/858 checks for each variant, plus all 12 single-session cases. These are this PR's observed results, not transferable to dev.
+- Ubuntu mobile, Windows caller-context and Python 3.10–3.13 passed; Python 3.14 remained queued. Main macOS/Windows and mobile Windows were incomplete.
+- The description's local 1,413 Darwin registrations (897 pass, 516 unavailable-backend skips), 210 C/CLI and 33 native workloads are author-reported. It explicitly leaves physical iOS, Intel HVF and complete remote merge CI separate. Overlapping counts are not added.
+
+**[#605](https://github.com/NeverSight/NeverD/pull/605)**, head `afd6776df99001537a237f257c5bf3390e3a17bf`: draft, mergeable false at the metadata sample. All three workflows terminal: style success, main CI and Mobile Decompilation failed. Ten checks: five success, four failure, one skipped.
+
+- [Linux](https://github.com/NeverSight/NeverD/actions/runs/37533655568/job/112509025738) has the same four Darwin compile errors.
+- [Windows](https://github.com/NeverSight/NeverD/actions/runs/37533655568/job/112509025826) failed compiling `JumpTableEnhancedTests.cpp` with C1128: object section count exceeds the limit; the compiler suggests /bigobj. This older PR head's build configuration was not patched speculatively.
+- [Mobile macOS](https://github.com/NeverSight/NeverD/actions/runs/37533655538/job/112509026241) has the same unsupported-preprocessor recovery failures. [Main macOS](https://github.com/NeverSight/NeverD/actions/runs/37533655568/job/112509025925) artifact `11450905902` reports 688 of 71,915 selected tests: 685 pass, three fail (NeverDMobileIOSBackend, NeverDMobileIOSCallsBackend, NeverDMobileSwiftBackend), 71,227 missing.
+- The description's 2,016 local passes, six optional Z3 skips, 60 native outcomes, 16 proof-statistics pairs and 45 ASan cases remain author-reported. Its “no CI wait required” statement is not evidence of remote acceptance.
+
+Both open PRs have zero conversation comments, submitted reviews and inline comments in the sampled REST collections. No independent GitHub approval is inferred. Their complete code changes are outside today's source review except the four #589 compiler corrections.
+
+### Previous blockers reconciled
+
+- Previous source `6f885ebb` now has main/mobile workflows cancelled, style success and applications skipped. It is not a clean passing baseline.
+- At historical `253e5519`, [Markor official release](https://github.com/NeverSight/NeverD/actions/runs/37249288624/job/111577673147) failed October 5 01:16:38 UTC. Existing artifact `11320698349` records 10,713 classes, 67,111 methods and 63,750 bodies in the independent inventory; NeverD rejected RestrictTo on RemoteActionCompatParcelizer and published no output. Recompilation and original/reconstructed ART behavior remained incomplete.
+- That historical run's [release qualification](https://github.com/NeverSight/NeverD/actions/runs/37249288624/job/111582901351) had zero qualified cases, seven received and 15 missing, plus incomplete independent holdouts/toolchain variation. These are historical failures, not claims about the new source's runtime behavior.
+- No fresh result established resolution of the prior Android finalizer timeout, complete Intel HVF acceptance or complete current-head application qualification. Preserve those gates as open instead of carrying forward a green assumption.
+
+## Suggested next priorities
+
+### 1. Close current-candidate compile and qualification gaps
+
+**Dependency:** One exact candidate incorporating reviewed repairs; completed intended platform/application evidence. #589 has the narrow Linux compile repair but also a demonstrated Mach-O regression failure; #605 additionally has failing remote checks and mergeability false.
+
+**Next action:** Reconcile the pending Darwin type repair, Mach-O INDIR_CALL expectation and mobile preprocessor rejection with their actual owners. Then inspect terminal existing results and missing registrations without weakening strict failure or shortening coverage.
+
+**Acceptance:** Identified source compiles on intended platforms; required test registrations have terminal outcomes, all failures are resolved or explicitly blocking, and actual application recovery/reconstruction/behavior completes. Local receipts, skips and cancelled jobs remain separately labelled. This review initiates no run or merge.
+
+### 2. Review and validate the HighC captured-load repair
+
+**Dependency:** Review [a6468b80](https://github.com/NeverSight/NeverD/commit/a6468b80f37d24146fd5a40a08eaf7be987ad58f) and its new regression in the existing target; unrelated dev build failures currently obstruct broader qualification.
+
+**Next action:** Review statement-write classification and the preserved overlap policy. When execution is separately authorized, run the focused HighValueForward cases and relevant HighC memory/control-flow coverage on the actual final revision.
+
+**Acceptance:** The captured value survives Assign-to-Load overwrites at O0/O2; existing disjoint-slot forwarding and scalar/loop controls still hold. Compilation/runtime/formatting remain unverified until real results exist.
+
+### 3. Establish correctness-qualified end-to-end performance evidence
+
+**Dependency:** [#580](https://github.com/NeverSight/NeverD/issues/580)'s measurement contract, a pinned corpus and one coherent Release candidate.
+
+**Next action:** Prepare the load-to-final-output and persistent-session baseline design with completion denominators, process-tree memory, repeated-query growth, cache states and tail latency. Treat solver micro-optimizations as candidates until measured in that workflow.
+
+**Acceptance:** Reproducible raw measurements and source/hardware/corpus identities demonstrate real latency, memory and scaling without reduced semantic coverage or omitted failures. Unavailable metrics are explicit; this review performs no benchmarks.
+
+## Daily log
+
+### 2026-10-07 — HighC write barriers, finite proofs and qualification failures
+
+- Enumerated 198 commits and 557 changed paths; after the two pure report commits/path, 196 commits and 556 paths remain. Recorded 40 merges (39 excluding report-only #568), two open PRs and 18 ordinary issues; #580 is the only ordinary issue activity.
+- Found and committed one statically demonstrated HighC captured-load miscompile repair plus a focused unexecuted regression. Reviewed finite projection validation, pristine encoding and prepared-key/frame ownership without finding another proven defect.
+- Confirmed four Darwin compiler failures already repaired in unmerged #589, avoiding a duplicate patch. Distinguished that PR's passing Linux build/macOS mobile checks from its later Mach-O test failure and unfinished aggregate.
+- Recorded pinned-dev failed/running/skipped CI, #605's failed/conflicting state and historical application/finalizer/native-acceptance limits.
+- Preserved the complete prior English tracker verbatim. Only the bug-fix source/test and PROGRESS.md are changed; no other documentation, dependencies, security settings, issues, merge or deployment changed.
+- No project execution, build, test, benchmark, script, formatter/linter, manual workflow dispatch or rerun.
+
+## Collection, publication and verification limits
+
+- Open issues: 20 records (18 ordinary + two PRs), empty page 2. Open PRs: two, empty page 2. Activity since October 6 01:06:21 UTC: 43 records (42 PRs + #580), empty page 2. The update-sorted 100-PR page crosses the boundary and independently accounts for all 42 PR records: 40 merged, two open, zero closed without merge.
+- Root AGENTS.md, CONTRIBUTING.md, relevant architecture/testing/roadmap and repository review guidance were read. Complete recursive trees contain no nested AGENTS.md.
+- Existing workflow artifacts/logs were read only. Check-annotation endpoints were unavailable through the connector; #605 main macOS full log retrieval failed twice, so its existing CTest artifact supplied the failures. No full historical CI census was attempted.
+- The prior history blob is `a3694489fd9b85b6f6f2bb36e596b2681541aa9d`. Latest dev and affected file blobs were re-read before writes. Code commit `a6468b80f37d24146fd5a40a08eaf7be987ad58f` has exactly two changed files (26 added lines, three removed); its remote diff was inspected. The report is a separate documentation commit on the same focused branch, proposed as a draft PR.
+- The report/repair branch and its automatic CI are different from the reviewed dev and the two existing PR heads. Publishing a patch is not runtime validation or permission to merge.
+- The remainder of the 557-path inventory, all solver/watch-list internals, broad emulation/unpack/native/SDK/GUI surfaces, native acceptance and other forwarding passes are not exhaustively reviewed. Static review establishes neither race freedom, performance, complete semantic equivalence nor release readiness. This is one daily sample, not continuous monitoring.
+
+## Previous snapshots (preserved)
+
+<details>
+<summary>Complete October 6 tracker and earlier history, preserved verbatim</summary>
+
+# NeverD Daily Progress
+
 Last verified: **2026-10-06 09:03 Asia/Shanghai (UTC+08:00)** / **2026-10-06 01:03 UTC**
 
 This is a point-in-time source and existing-evidence review. The [roadmap](docs/roadmap.md), [architecture](docs/architecture.md), [testing guide](docs/testing.md) and [contribution guidance](CONTRIBUTING.md) remain authoritative. No completion percentage or release-readiness claim is implied.
@@ -1203,6 +1368,8 @@ them are author reports unless separately confirmed by linked workflow results.
 - GitHub search and Actions may change after this timestamp. This document is a
   point-in-time record, not a claim of continuous monitoring or a committed
   delivery schedule
+
+</details>
 
 </details>
 

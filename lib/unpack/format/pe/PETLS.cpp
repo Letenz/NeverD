@@ -84,12 +84,14 @@ llvm::Expected<std::optional<uint64_t>> recoverTLSDirectory(const Image &In,
           (In.architecture() == emulation::GuestArchitecture::AArch64 &&
            Target % sizeof(uint32_t)))
         return false;
+      const bool Initialized = llvm::is_contained(C.Initializers, Target);
       Witnessed |= llvm::any_of(C.Transfers, [&](const UnpackTransfer &T) {
         return (!T.StackBalanced || !T.ProgramInvocation) && T.Generation &&
-               T.RVA == Target - C.Base;
+               T.RVA == Target - C.Base &&
+               (!Generated || !Initialized || !T.ProgramInvocation);
       });
       if (!Generated)
-        Witnessed |= llvm::is_contained(C.Initializers, Target);
+        Witnessed |= Initialized;
       At += value::PointerSize;
     }
     return false;
@@ -117,9 +119,10 @@ llvm::Expected<std::optional<uint64_t>> recoverTLSDirectory(const Image &In,
     }
     return Found;
   };
-  // A completed loader initializer alone cannot outrank the directory of
-  // generated callbacks. Use that weaker evidence only when no generated
-  // callback record matches the allocation.
+  // A completed loader initializer, even revisited by the program after a
+  // rewrite, cannot outrank newly generated callbacks. An OS-owned call into
+  // generated code remains strong evidence even if it completed. Use weaker
+  // initialization evidence only when no generated callback record matches.
   auto Found = Find(true);
   if (!Found || *Found)
     return Found;

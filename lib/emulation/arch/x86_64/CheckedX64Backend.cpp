@@ -463,7 +463,7 @@ watchesExceptPage(llvm::ArrayRef<ExecutionWatch> Watches, uint64_t Page) {
 }
 } // namespace
 
-llvm::Error CheckedX64Backend::stepWatchedInstruction() {
+llvm::Error CheckedX64Backend::stepWatchedInstruction(bool WatchWrites) {
   const uint64_t PC = CPU.reg(X64Register::PC);
   const uint64_t Page = PC & ~(x64::PageSize - 1);
   auto Open = watchesExceptPage(ExecutionWatches, Page);
@@ -478,8 +478,9 @@ llvm::Error CheckedX64Backend::stepWatchedInstruction() {
   // The punched overlay must not reuse the full watch projection, and the
   // following free run must not reuse the punched one.
   ++WatchEpoch;
-  auto Root = buildX64PageTables(
-      *Memory, UserMode, Machine->requiresExceptionMonitor(), Open, WatchEpoch);
+  auto Root =
+      buildX64PageTables(*Memory, UserMode, Machine->requiresExceptionMonitor(),
+                         Open, WatchEpoch, WatchWrites);
   ++WatchEpoch;
   if (!Root)
     return Root.takeError();
@@ -488,7 +489,8 @@ llvm::Error CheckedX64Backend::stepWatchedInstruction() {
 
 llvm::Error
 CheckedX64Backend::publishDirectException(const X64Exception &Raised,
-                                          bool AllowSplit, bool &Resume) {
+                                          bool AllowSplit, bool &Resume,
+                                          bool WritesProtected) {
   Resume = false;
   const uint64_t PC = CPU.reg(X64Register::PC);
   // The system call extension is disabled, so each service instruction
@@ -535,27 +537,43 @@ CheckedX64Backend::publishDirectException(const X64Exception &Raised,
       Raised.Vector == unsigned(x64::ExceptionVector::PageFault) &&
       Raised.FaultAddress && FetchCode && WatchPage &&
       !Memory->check(*Raised.FaultAddress, 1, executionPermissions(Execute));
+  const bool SplitFetch = FetchWatch && AllowSplit &&
+                          *Raised.FaultAddress >= PC &&
+                          *Raised.FaultAddress - PC < x64::MaxInstructionBytes;
+  // Write protection belongs only to this projection. The underlying guest
+  // permissions still admit the store, including stores through another VA
+  // naming the watched physical page. Retire it once with the overlay open,
+  // then notify the owner before any subsequent guest instruction.
+  bool WriteWatch = false;
+  if (WritesProtected &&
+      Raised.Vector == unsigned(x64::ExceptionVector::PageFault) &&
+      Raised.FaultAddress &&
+      (Raised.ErrorCode ? bool(*Raised.ErrorCode & x64::gateway::PageFaultWrite)
+                        : !SplitFetch) &&
+      !Memory->check(*Raised.FaultAddress, 1, executionPermissions(Write))) {
+    const uint64_t Page = *Raised.FaultAddress & ~(x64::PageSize - 1);
+    const auto P = Memory->mappings().find(Page);
+    WriteWatch = P != Memory->mappings().end() && !P->second.IO &&
+                 Memory->writeWatched(P->second.Physical, x64::PageSize);
+  }
   if (FetchWatch && *Raised.FaultAddress == PC) {
     if (executionWatched(PC) && Hooks.Instruction)
       Hooks.Instruction(PC, 0);
     if (StopRequested || FirstFault)
       return llvm::Error::success();
   }
-  if (FetchWatch && AllowSplit && *Raised.FaultAddress >= PC &&
-      *Raised.FaultAddress - PC < x64::MaxInstructionBytes) {
-    const uint64_t Start = PC;
-    auto Stepped = stepWatchedInstruction();
+  // Some transports supply the fault address but no access/error code. A
+  // possible fetch gets its ordinary one-step retry first. A possible write
+  // is attributed to the overlay only if the retry without write protection
+  // retires successfully; a repeated real fault is published unchanged.
+  if (WriteWatch || SplitFetch) {
+    auto Stepped = stepWatchedInstruction(!WriteWatch);
     if (!Stepped) {
-      // A step that did not retire the instruction would fault the same way
-      // on every retry.
-      if (CPU.reg(X64Register::PC) == Start) {
-        BackendFault Fault{BackendFaultKind::Interrupt, Start};
-        Fault.Interrupt = Raised.Vector;
-        Fault.Address = Raised.FaultAddress;
-        Fault.ErrorCode = Raised.ErrorCode;
-        return raiseFault(Fault, true);
-      }
-      Resume = true;
+      // A processor step may retire a self-branch or one REP iteration while
+      // leaving RIP unchanged. Successful retirement is the evidence.
+      if (WriteWatch && Hooks.MemoryWritten)
+        Hooks.MemoryWritten();
+      Resume = !StopRequested;
       return llvm::Error::success();
     }
     if (Stepped.isA<MachineInterruptedError>())
@@ -571,7 +589,7 @@ CheckedX64Backend::publishDirectException(const X64Exception &Raised,
       return Other;
     if (!Again)
       return error(diagnostic::DirectExecutionUnsupported);
-    return publishDirectException(*Again, false, Resume);
+    return publishDirectException(*Again, false, Resume, !WriteWatch);
   }
   BackendFault Fault{BackendFaultKind::Interrupt, PC};
   Fault.Interrupt = Raised.Vector;
@@ -584,7 +602,7 @@ llvm::Error CheckedX64Backend::executeDirect() {
   for (;;) {
     auto Root = buildX64PageTables(*Memory, UserMode,
                                    Machine->requiresExceptionMonitor(),
-                                   ExecutionWatches, WatchEpoch);
+                                   ExecutionWatches, WatchEpoch, true);
     if (!Root)
       return Root.takeError();
     auto Next = CPU;

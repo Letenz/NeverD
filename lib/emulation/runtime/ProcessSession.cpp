@@ -54,9 +54,16 @@ const char *processStopReasonName(ProcessStopReason Reason) {
   llvm_unreachable(runtime::ProcessOutcome);
 }
 ProcessView::~ProcessView() = default;
+llvm::Expected<uint32_t> ProcessView::instructionSize(uint64_t) {
+  return diagnostic::error(diagnostic::InstructionInspectionUnsupported);
+}
 ProcessObserver::~ProcessObserver() = default;
 llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
 ProcessObserver::invoking(ProcessView &) {
+  return std::nullopt;
+}
+llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+ProcessObserver::resuming(ProcessView &) {
   return std::nullopt;
 }
 llvm::Error ProcessObserver::exporting(ProcessView &, const ProcessExportView &,

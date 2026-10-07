@@ -149,6 +149,14 @@ NEVERD_EXECUTION_DIAGNOSTIC(UnknownExit, "unknown CPU exit kind")
 NEVERD_EXECUTION_DIAGNOSTIC(TypedExecutionUnsupported,
                             "CPU does not implement typed execution results")
 NEVERD_EXECUTION_DIAGNOSTIC(
+    WriteWatchesUnsupported,
+    "CPU does not implement committed RAM write watches")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    WriteWatchRange, "RAM write watch must be nonempty and must not wrap")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    InstructionInspectionUnsupported,
+    "CPU does not implement stopped instruction inspection")
+NEVERD_EXECUTION_DIAGNOSTIC(
     DirectExecutionUnsupported,
     "CPU transport does not implement direct user execution")
 NEVERD_EXECUTION_DIAGNOSTIC(

@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "gtest/gtest.h"
 
+#include "neverd/emulation/AddressSpace.h"
 #include "neverd/emulation/ExecutionSession.h"
 
 namespace neverd::emulation {
@@ -133,6 +134,150 @@ TEST_P(DirectX64, WatchEndingAtTheLastAddressCanResumeWithoutWrapping) {
             SessionExitKind::ExecutionWatch);
   EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 6);
   EXPECT_EQ(reg(*S, CPURegister::X64AX), 2u);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, CommittedWriteStopsBeforeTheFollowingInstruction) {
+  constexpr uint8_t Bytes[] = {0x48, 0x89, 0x01, 0x48, 0xff, 0x01, 0x0f, 0x05};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64AX, {Value, 0}));
+  auto S = start();
+  llvm::cantFail(S->watchMemoryWrites({{Data, 8}}));
+  auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::MemoryWriteWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 3);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), Value);
+  Exit = llvm::cantFail(S->run(Code + 3, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::MemoryWriteWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 6);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), Value + 1);
+  llvm::cantFail(S->watchMemoryWrites({}));
+  Exit = llvm::cantFail(S->run(Code + 6, 1));
+  ASSERT_TRUE(Exit.CPU);
+  EXPECT_EQ(Exit.CPU->Kind, ExecutionExitKind::ServiceRequest);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, ReadingWriteWatchedRAMDoesNotPublishAWrite) {
+  constexpr uint8_t Bytes[] = {0x48, 0x8b, 0x01, 0x0f, 0x05};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeInteger(Data, Value, 8));
+  auto S = start();
+  llvm::cantFail(S->watchMemoryWrites({{Data, 8}}));
+  auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_TRUE(Exit.CPU);
+  EXPECT_EQ(Exit.CPU->Kind, ExecutionExitKind::ServiceRequest);
+  EXPECT_EQ(reg(*S, CPURegister::X64AX), Value);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, ResumedSelfBranchReachesTheSameWatchAgain) {
+  constexpr uint8_t Bytes[] = {0xeb, 0xfe};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  auto S = start();
+  llvm::cantFail(S->watchExecution({{Code, 2}}));
+  ASSERT_EQ(llvm::cantFail(S->run(Code, 1)).Kind,
+            SessionExitKind::ExecutionWatch);
+  ASSERT_EQ(llvm::cantFail(S->run(Code, 1)).Kind,
+            SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, WriteInAResumedFetchWatchIsCommittedExactlyOnce) {
+  constexpr uint8_t Bytes[] = {0x48, 0xff, 0x01, 0x0f, 0x05};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  auto S = start();
+  llvm::cantFail(S->watchMemoryWrites({{Data, 8}}));
+  llvm::cantFail(S->watchExecution({{Code, 3}}));
+  ASSERT_EQ(llvm::cantFail(S->run(Code, 1)).Kind,
+            SessionExitKind::ExecutionWatch);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), 0u);
+  auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::MemoryWriteWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code + 3);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), 1u);
+  llvm::cantFail(S->watchExecution({}));
+  Exit = llvm::cantFail(S->run(Code + 3, 1));
+  ASSERT_TRUE(Exit.CPU);
+  EXPECT_EQ(Exit.CPU->Kind, ExecutionExitKind::ServiceRequest);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), 1u);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, WriteWatchesFollowPhysicalAliasesAndMappingChanges) {
+  constexpr uint8_t Bytes[] = {0x48, 0x89, 0x01, 0x0f, 0x05};
+  constexpr uint64_t Alias = 0x30000, Other = Data + PageSize;
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64AX, {Value, 0}));
+  llvm::cantFail(CPU->map(Other, PageSize, Read | Write | UserAccessible));
+  llvm::cantFail(
+      CPU->mapAlias(Alias, Data, PageSize, Read | Execute | UserAccessible));
+  auto S = start();
+  llvm::cantFail(S->watchMemoryWrites({{Alias + 3, 2}}));
+  ASSERT_EQ(llvm::cantFail(S->run(Code, 1)).Kind,
+            SessionExitKind::MemoryWriteWatch);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), Value);
+  llvm::cantFail(S->cpu().replaceAliases(
+      {{Alias, PageSize}},
+      {{Alias, Other, PageSize, Read | Execute | UserAccessible}}));
+  // Old backing no longer matches. A normal service boundary ends this run.
+  llvm::cantFail(S->cpu().writeRegister(CPURegister::X64AX, {Value + 1, 0}));
+  auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_TRUE(Exit.CPU);
+  ASSERT_EQ(Exit.CPU->Kind, ExecutionExitKind::ServiceRequest);
+  llvm::cantFail(S->takeServiceRequest());
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), Value + 1);
+  llvm::cantFail(S->cpu().writeRegister(CPURegister::X64CX, {Other, 0}));
+  ASSERT_EQ(llvm::cantFail(S->run(Code, 1)).Kind,
+            SessionExitKind::MemoryWriteWatch);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Other, 8)), Value + 1);
+  EXPECT_EQ(Budget->instructions(), 0u);
+}
+
+TEST_P(DirectX64, RealWriteProtectionFaultOutranksAWriteWatch) {
+  constexpr uint8_t Bytes[] = {0x48, 0x89, 0x01};
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->protect(Data, PageSize, Read | UserAccessible));
+  auto S = start();
+  llvm::cantFail(S->watchMemoryWrites({{Data, 8}}));
+  auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::CPU);
+  ASSERT_TRUE(Exit.CPU);
+  ASSERT_EQ(Exit.CPU->Kind, ExecutionExitKind::GuestTrap);
+  ASSERT_TRUE(Exit.CPU->Fault);
+  EXPECT_EQ(Exit.CPU->Fault->PC, Code);
+  EXPECT_EQ(Exit.CPU->Fault->Address, Data);
+  EXPECT_EQ(Exit.CPU->Fault->Interrupt, 14u);
+  EXPECT_EQ(llvm::cantFail(S->cpu().addressSpace()->readInteger(Data, 8)), 0u);
+}
+
+TEST_P(DirectX64, RepWriteWatchPreservesPartialProgressBeforeARealFault) {
+  constexpr uint8_t Bytes[] = {0xf3, 0xaa, 0x0f, 0x05}; // rep stosb; syscall
+  llvm::cantFail(CPU->write(Code, Bytes));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64AX, {0x7f, 0}));
+  llvm::cantFail(CPU->writeRegister(CPURegister::X64CX, {2, 0}));
+  llvm::cantFail(
+      CPU->writeRegister(CPURegister::X64DI, {Data + PageSize - 1, 0}));
+  auto S = start();
+  llvm::cantFail(S->watchMemoryWrites({{Data, PageSize}}));
+  auto Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::MemoryWriteWatch);
+  EXPECT_EQ(reg(*S, CPURegister::X64PC), Code);
+  EXPECT_EQ(reg(*S, CPURegister::X64CX), 1u);
+  EXPECT_EQ(reg(*S, CPURegister::X64DI), Data + PageSize);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data + PageSize - 1, 1)),
+            0x7fu);
+  Exit = llvm::cantFail(S->run(Code, 1));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::CPU);
+  ASSERT_TRUE(Exit.CPU);
+  ASSERT_EQ(Exit.CPU->Kind, ExecutionExitKind::GuestTrap);
+  ASSERT_TRUE(Exit.CPU->Fault);
+  EXPECT_EQ(Exit.CPU->Fault->PC, Code);
+  EXPECT_EQ(Exit.CPU->Fault->Address, Data + PageSize);
+  EXPECT_EQ(Exit.CPU->Fault->Interrupt, 14u);
+  EXPECT_EQ(reg(*S, CPURegister::X64CX), 1u);
+  EXPECT_EQ(reg(*S, CPURegister::X64DI), Data + PageSize);
   EXPECT_EQ(Budget->instructions(), 0u);
 }
 

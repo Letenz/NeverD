@@ -3337,10 +3337,21 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
             Reads.count(varName(S.Dst->Var)))
           return true;
         if (ReadsMemory) {
+          const HighExpr *WriteAddr = nullptr;
+          TypeRef WriteType;
           if (S.Kind == StmtKind::Store && S.StoreAddr) {
-            const auto Disp = frameDisplacement(*S.StoreAddr);
-            const int64_t Size =
-                S.StoreVal && S.StoreVal->Type ? S.StoreVal->Type->Size : 8;
+            WriteAddr = S.StoreAddr.get();
+            WriteType = S.StoreVal ? S.StoreVal->Type : nullptr;
+          } else if (S.Kind == StmtKind::Assign && S.Dst &&
+                     S.Dst->Kind == ExprKind::Load &&
+                     !S.Dst->Operands.empty() && S.Dst->Operands[0]) {
+            // A load used as an assignment destination writes its memory.
+            WriteAddr = S.Dst->Operands[0].get();
+            WriteType = S.Dst->Type;
+          }
+          if (WriteAddr) {
+            const auto Disp = frameDisplacement(*WriteAddr);
+            const int64_t Size = WriteType ? WriteType->Size : 8;
             if (Escapes ? !Disp || !Slot || Overlaps(*Disp, Size)
                         : Disp && Overlaps(*Disp, Size))
               return true;

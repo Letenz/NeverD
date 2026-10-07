@@ -24,6 +24,7 @@ NEVERD_NATIVE_CPU_OWNER(NeverDProjectionCacheTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDThreadPointerTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDUserExecutionTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDDirectX64Tests)
+NEVERD_NATIVE_CPU_OWNER(NeverDExecutionSessionTests)
 NEVERD_NATIVE_CPU_OWNER(NeverDUnpackExecutionTests)
 #endif
 #ifdef NEVERD_NATIVE_CPU_HOST
@@ -32,6 +33,104 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 #endif
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64."
+    "ReadingWriteWatchedRAMDoesNotPublishAWrite/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64."
+    "ResumedSelfBranchReachesTheSameWatchAgain/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "GeneratedOperandAcrossAPageBoundaryEstablishesAnEntry/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "GeneratedOperandAcrossAPageBoundaryEstablishesAnEntry/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "LoaderGeneratesItsEntryInThePageItIsExecuting/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "LoaderGeneratesItsEntryInThePageItIsExecuting/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "LoaderRewritesACallbackInItsOwnPageBeforeEnteringIt/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "LoaderRewritesACallbackInItsOwnPageBeforeEnteringIt/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "ChangedDataBesideAnUnchangedInstructionIsNotAnEntry/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "ChangedDataBesideAnUnchangedInstructionIsNotAnEntry/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "ChangedOperandsInTheExecutingPageEstablishANewEntry/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "ChangedOperandsInTheExecutingPageEstablishANewEntry/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "StoppedServiceWritesCanGenerateCodeInAnExecutedPage/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "StoppedServiceWritesCanGenerateCodeInAnExecutedPage/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/RuntimeSession."
+    "CommittedWriteWatchStopsBeforeTheNextAdmission/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/RuntimeSession."
+    "WriteWatchesFollowPhysicalAliasesAndMappingChanges/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/RuntimeSession."
+    "InvalidWriteWatchReplacementPreservesThePreviousSet/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/RuntimeSession."
+    "StoppedInstructionInspectionHasNoExecutionEffects/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/RuntimeSession."
+    "CancelledStoreCannotPublishAWriteWatch/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64."
+    "CommittedWriteStopsBeforeTheFollowingInstruction/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64."
+    "WriteInAResumedFetchWatchIsCommittedExactlyOnce/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64."
+    "WriteWatchesFollowPhysicalAliasesAndMappingChanges/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64."
+    "RealWriteProtectionFaultOutranksAWriteWatch/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64."
+    "RepWriteWatchPreservesPartialProgressBeforeARealFault/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsDeferred."
+    "ResumeObservationFailureCannotExecuteGuestCode/"
+    "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated.ExportIdentitySurvivesRebindingAndLateResolution/"
     "{backend_title}X64")
