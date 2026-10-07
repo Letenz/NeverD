@@ -368,89 +368,23 @@ const char *neverd_strings_ex_json(neverd_session_t Sess,
   if (!S->Loaded)
     return dupStr(std::string("[]"));
   strings::ScanOptions Options;
-  if (OptionsJson && *OptionsJson) {
-    auto Parsed = llvm::json::parse(OptionsJson);
-    const llvm::json::Object *Object = Parsed ? Parsed->getAsObject() : nullptr;
-    if (!Object) {
-      if (!Parsed)
-        llvm::consumeError(Parsed.takeError());
-      S->setError("string options must be a JSON object");
-      return nullptr;
-    }
-    for (const auto &[Key, Value] : *Object) {
-      if (Key == "min_length") {
-        const auto Length = Value.getAsInteger();
-        if (!Length || *Length < 1 || *Length > strings::MaxMinChars) {
-          S->setError("min_length must be an integer from 1 to " +
-                      std::to_string(strings::MaxMinChars));
-          return nullptr;
-        }
-        Options.MinChars = static_cast<unsigned>(*Length);
-      } else if (Key == "encodings") {
-        const auto *Names = Value.getAsArray();
-        if (!Names) {
-          S->setError("encodings must be an array of encoding names");
-          return nullptr;
-        }
-        Options.Encodings = 0;
-        unsigned Legacy = 0;
-        for (const auto &Name : *Names) {
-          const auto Text = Name.getAsString();
-          const auto Encoding =
-              Text ? strings::encodingNamed(*Text) : std::nullopt;
-          if (!Encoding) {
-            S->setError("unknown string encoding: " +
-                        (Text ? Text->str() : std::string("non-string")));
-            return nullptr;
-          }
-          if (strings::isLegacyEncoding(*Encoding) &&
-              !(Options.Encodings & strings::encodingBit(*Encoding)) &&
-              ++Legacy > 1) {
-            S->setError("only one legacy code page can be searched at a time");
-            return nullptr;
-          }
-          Options.Encodings |= strings::encodingBit(*Encoding);
-        }
-      } else {
-        S->setError("unknown string option: " + Key.str());
-        return nullptr;
-      }
-    }
+  if (const auto Error = parseStringOptions(OptionsJson, Options);
+      !Error.empty()) {
+    S->setError(Error);
+    return nullptr;
   }
-
   std::string Buf;
   llvm::raw_string_ostream OS(Buf);
   llvm::json::OStream J(OS);
-  const auto ScanRange = [&](va_t Start, const uint8_t *Bytes, size_t Size) {
-    strings::scan(llvm::ArrayRef<uint8_t>(Bytes, Size), Options,
-                  [&](strings::FoundString &&Found) {
-                    J.object([&] {
-                      J.attribute("addr", vaHex(Start + Found.Offset));
-                      J.attribute("chars", static_cast<int64_t>(Found.Chars));
-                      J.attribute("encoding",
-                                  strings::encodingName(Found.Kind));
-                      J.attribute("length", static_cast<int64_t>(Found.Bytes));
-                      J.attribute("value", Found.Text);
-                    });
-                  });
-  };
   J.array([&] {
-    // Data segments whole, and the data sections of code segments.
-    for (const auto &Seg : S->Img.Segments) {
-      if (!Seg.isExecutable()) {
-        ScanRange(Seg.VA, Seg.Data.data(), Seg.Data.size());
-        continue;
-      }
-      for (const auto &Sec : S->Img.Sections) {
-        if (Sec.isExecutable() || !Sec.FileSz || !Seg.contains(Sec.VA) ||
-            Sec.VA - Seg.VA >= Seg.Data.size())
-          continue;
-        const uint64_t Offset = Sec.VA - Seg.VA;
-        const uint64_t Size = std::min<uint64_t>(
-            {Sec.Size, Sec.FileSz, Seg.Data.size() - Offset});
-        ScanRange(Sec.VA, Seg.Data.data() + Offset, static_cast<size_t>(Size));
-      }
-    }
+    for (const ImageString &String : imageStrings(*S, Options))
+      J.object([&] {
+        J.attribute("addr", vaHex(String.Address));
+        J.attribute("chars", static_cast<int64_t>(String.Chars));
+        J.attribute("encoding", strings::encodingName(String.Kind));
+        J.attribute("length", static_cast<int64_t>(String.Bytes));
+        J.attribute("value", String.Text);
+      });
   });
   OS.flush();
   return dupStr(Buf);

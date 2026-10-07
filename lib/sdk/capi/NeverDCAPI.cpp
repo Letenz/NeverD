@@ -244,6 +244,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.Renames.clear();
   S.SigDB.clear();
   S.DiscoveredFunctions.reset();
+  S.ImageStrings.reset();
   S.resetFunctionsFromImage();
 
   neverd_annotations_load(Sess);

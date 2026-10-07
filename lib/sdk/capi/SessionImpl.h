@@ -14,6 +14,7 @@
 #define NEVERD_SDK_CAPI_SESSION_IMPL_H
 
 #include "../plugin/PluginManager.h"
+#include "ImageStrings.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
@@ -98,6 +99,9 @@ struct Session {
   std::optional<bool> LlvmModuleNoOpt;
   bool SBFFunctionsSynchronized = false;
   bool NativeFunctionsSynchronized = false;
+  /// The image's strings under the options last searched with
+  /// (ImageStrings.h); kept until the next load.
+  std::optional<ImageStringScan> ImageStrings;
   /// Function entries the detector found on request
   /// (neverd_session_discover_functions); kept until the next load.
   std::optional<std::vector<std::pair<va_t, std::string>>> DiscoveredFunctions;

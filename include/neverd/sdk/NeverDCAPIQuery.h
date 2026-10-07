@@ -75,6 +75,25 @@ NEVERD_API const char *neverd_strings_ex_json(neverd_session_t Sess,
 /// of one code unit, "default" whether a search without options uses it and
 /// "legacy" whether it is an 8-bit code page.
 NEVERD_API const char *neverd_string_encodings_json(void);
+/// The instructions of up to \p MaxFunctions native functions, from
+/// \p FirstEntry in entry order, that refer to the text of a string the
+/// options (as neverd_strings_ex_json() takes them) find.  A reference into
+/// a string reads its text from the first character that starts at or after
+/// that byte, and counts only while at least the minimum length of characters
+/// remains there.  An instruction that reads or writes a slot the loader
+/// relocated, whose pointer reaches such text, refers to it through the slot.
+/// Returns {"refs":[["from","to","string",text_offset,"kind",
+/// "via"|null],...],"next_entry":"0x..."|null,"function_count":int}: "to"
+/// is the referenced byte, "string" the start of the string holding it,
+/// text_offset where its text begins in that string's UTF-8 "value", "kind"
+/// read, write or offset, and "via" the slot.  Functions decode as for
+/// neverd_code_refs_json(), and MaxFunctions is clamped to 1..4096.  NULL
+/// with neverd_last_error() for malformed options or an EVM or SBF image.
+/// This query never starts analysis.
+NEVERD_API const char *neverd_string_refs_json(neverd_session_t Sess,
+                                               const char *OptionsJson,
+                                               neverd_va_t FirstEntry,
+                                               int MaxFunctions);
 /// \p Size bytes decoded in \p Encoding (a name or alias of
 /// neverd_string_encodings_json()) for display, one cell per byte:
 /// {"cells":[...]}, where a character's first byte holds its text (UTF-8), a

@@ -1847,14 +1847,21 @@ TEST_F(SessionCAPITest, DisassemblyStatesTheMemoryEachInstructionReaches) {
   }
 }
 
-// An x86-64 executable whose code segment returns and whose separate
-// read-only segment holds \p Data.
-std::string makeDataELF(std::string_view Data) {
+// The code a data executable's entry runs, and where it and the data start.
+constexpr uint64_t DataELFBase = 0x400000;
+constexpr uint64_t DataELFEntry = DataELFBase + 0xb0;
+constexpr uint64_t DataELFData = DataELFBase + 0x1000;
+
+// An x86-64 executable whose code segment runs \p Code (by default a
+// return) and whose separate read-only segment holds \p Data.
+std::string makeDataELF(std::string_view Data,
+                        std::string_view Code = std::string_view("\xc3", 1)) {
   using ELF = llvm::object::ELF64LE;
   using namespace llvm::ELF;
-  constexpr uint64_t Base = 0x400000;
-  const std::string Code("\xc3", 1);
+  constexpr uint64_t Base = DataELFBase;
   const size_t CodeOffset = sizeof(ELF::Ehdr) + 2 * sizeof(ELF::Phdr);
+  static_assert(DataELFEntry - DataELFBase ==
+                sizeof(ELF::Ehdr) + 2 * sizeof(ELF::Phdr));
   const size_t DataOffset = 0x1000;
   std::string Bytes(DataOffset + Data.size(), '\0');
   ELF::Ehdr Header{};
@@ -1892,6 +1899,72 @@ std::string makeDataELF(std::string_view Data) {
   Bytes.replace(CodeOffset, Code.size(), Code);
   Bytes.replace(DataOffset, Data.size(), Data);
   return Bytes;
+}
+
+TEST_F(SessionCAPITest, StringReferencesReadTextFromTheReferencedCharacter) {
+  // "hello world" and UTF-8 "\u4e2d\u6587\u5b57\u7b26", each terminated.
+  constexpr char Data[] = "hello world\0"
+                          "\xe4\xb8\xad\xe6\x96\x87\xe5\xad\x97\xe7\xac\xa6";
+  // lea rdi/rsi/rdx/rcx, [rip + d] to bytes 0, 6, 9 and 13, then ret.
+  std::string Code;
+  const std::pair<uint8_t, uint64_t> Leas[] = {
+      {0x3d, 0}, {0x35, 6}, {0x15, 9}, {0x0d, 13}};
+  for (const auto &[ModRM, Offset] : Leas) {
+    const uint64_t Next = DataELFEntry + Code.size() + 7;
+    const auto Displacement =
+        static_cast<uint32_t>(DataELFData + Offset - Next);
+    Code += "\x48\x8d";
+    Code += static_cast<char>(ModRM);
+    for (unsigned I = 0; I < 4; ++I)
+      Code += static_cast<char>(Displacement >> (8 * I));
+  }
+  Code += '\xc3';
+  const auto Input =
+      write("string-refs.elf",
+            makeDataELF(std::string_view(Data, sizeof(Data)), Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  // The image has no symbols; the detector lists the entry's function.
+  ASSERT_GE(neverd_session_discover_functions(Session), 1)
+      << takeString(neverd_last_error(Session));
+  // Rows as (from, to, string, text offset).
+  const auto rows = [&](const char *Options) {
+    std::vector<std::tuple<uint64_t, uint64_t, uint64_t, int64_t>> Rows;
+    const auto Text =
+        takeString(neverd_string_refs_json(Session, Options, 0, 16));
+    auto Parsed = llvm::json::parse(Text);
+    EXPECT_TRUE(static_cast<bool>(Parsed)) << Text;
+    if (!Parsed)
+      return Rows;
+    const auto *Refs = Parsed->getAsObject()->getArray("refs");
+    for (const auto &Ref : *Refs) {
+      const auto &Row = *Ref.getAsArray();
+      const auto address = [&](size_t I) {
+        return std::stoull(Row[I].getAsString()->str(), nullptr, 16);
+      };
+      EXPECT_EQ(Row[4].getAsString()->str(), "offset") << Text;
+      EXPECT_TRUE(Row[5].getAsNull()) << Text;
+      Rows.emplace_back(address(0), address(1), address(2),
+                        *Row[3].getAsInteger());
+    }
+    return Rows;
+  };
+  // "world" is long enough on its own; "ld" and "\u6587\u5b57\u7b26" after
+  // the byte inside "\u4e2d" are not, under the default four characters.
+  using Row = std::tuple<uint64_t, uint64_t, uint64_t, int64_t>;
+  EXPECT_EQ(
+      rows(nullptr),
+      (std::vector<Row>{{DataELFEntry, DataELFData, DataELFData, 0},
+                        {DataELFEntry + 7, DataELFData + 6, DataELFData, 6}}));
+  // With three, the reference into "\u4e2d" reads from the next character,
+  // three UTF-8 bytes into the string's text.
+  const auto Three = rows(R"({"min_length":3})");
+  ASSERT_EQ(Three.size(), 3u);
+  EXPECT_EQ(Three[2],
+            (Row{DataELFEntry + 21, DataELFData + 13, DataELFData + 12, 3}));
+  EXPECT_EQ(neverd_string_refs_json(Session, R"({"encodings":["gbk","big5"]})",
+                                    0, 16),
+            nullptr);
 }
 
 TEST_F(SessionCAPITest, StringScanFindsUTF8AndWideStringsByOption) {
