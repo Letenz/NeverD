@@ -22,6 +22,9 @@ enum {
   Write = 64,
   Protect = 226,
   Exit = 93,
+  GetXAttr = 8,
+  LGetXAttr = 9,
+  FGetXAttr = 10,
   LargeFile = 0400000,
   DirectoryOnly = 040000,
   DirectIO = 0200000
@@ -42,6 +45,9 @@ enum {
   Write = 1,
   Protect = 10,
   Exit = 60,
+  GetXAttr = 191,
+  LGetXAttr = 192,
+  FGetXAttr = 193,
   LargeFile = 00100000,
   DirectoryOnly = 00200000,
   DirectIO = 00040000
@@ -169,6 +175,75 @@ U64 files_open_unobserved(U64 Mode) {
   const char *Name = Mode == 0 ? Path : "/fixture///";
   U64 Flags = Mode == 2 ? DirectoryOnly : DirectIO;
   raw(OpenAt, 0, (U64)Name, Flags, 0);
+  return 99;
+}
+
+U64 files_xattr_errors(U64 NameFirst) {
+  const char *Missing = "/fixture/missing";
+  const char *Name = "user.fixture";
+  char LongName[257];
+  for (unsigned I = 0; I != 256; ++I)
+    LongName[I] = 'x';
+  LongName[256] = 0;
+  for (unsigned I = 0; I != 64; ++I)
+    Pages[I] = 0xa5;
+  for (unsigned Route = 0; Route != 2; ++Route) {
+    U64 Call = Route ? LGetXAttr : GetXAttr;
+    CHECK(raw(Call, (U64)Missing, (U64)Name, 1, (U64)-1), (U64)-2);
+    CHECK(raw(Call, (U64)Missing, 1, (U64)Pages, 64),
+          (U64) - (NameFirst ? 14 : 2));
+    CHECK(raw(Call, (U64)Missing, (U64) "", (U64)Pages, 64),
+          (U64) - (NameFirst ? 34 : 2));
+    CHECK(raw(Call, 1, (U64) "", 1, 0), (U64) - (NameFirst ? 34 : 14));
+    CHECK(raw(Call, (U64)Path, 1, 1, 0), (U64)-14);
+    CHECK(raw(Call, (U64)Path, (U64) "", 1, 0), (U64)-34);
+    CHECK(raw(Call, (U64) "/fixture///", (U64) "", 1, 0), (U64)-34);
+    CHECK(raw(Call, (U64)Missing, (U64)LongName, 1, 0),
+          (U64) - (NameFirst ? 34 : 2));
+    CHECK(raw(Call, (U64)Path, (U64)LongName, 1, 0), (U64)-34);
+    CHECK(raw(Call, (U64) "/fixture/data/child", (U64) "", 1, 0),
+          (U64) - (NameFirst ? 34 : 20));
+    CHECK(raw(Call, (U64) "/fixture/data///", (U64)Name, 1, 0), (U64)-20);
+    LongName[255] = 0;
+    CHECK(raw(Call, (U64)Missing, (U64)LongName, 1, 0), (U64)-2);
+    LongName[255] = 'x';
+  }
+  CHECK(raw(FGetXAttr, (U64)-1, (U64)Name, 1, (U64)-1), (U64)-9);
+  CHECK(raw(FGetXAttr, (U64)-1, (U64) "", 1, 0), (U64) - (NameFirst ? 34 : 9));
+  CHECK(raw(FGetXAttr, (U64)-1, 1, 1, 0), (U64) - (NameFirst ? 14 : 9));
+  U64 F = raw(OpenAt, (U64)-100, (U64)Path, 0, 0);
+  CHECK(F, 3);
+  CHECK(raw(Read, F, (U64)(Pages + 128), 1, 0), 1);
+  CHECK(Pages[128], 0);
+  CHECK(raw(FGetXAttr, 0x1234567800000000UL | F, (U64) "", 1, 0), (U64)-34);
+  CHECK(raw(FGetXAttr, F, 1, 1, 0), (U64)-14);
+  CHECK(raw(Read, F, (U64)(Pages + 128), 1, 0), 1);
+  CHECK(Pages[128], 0xff);
+  CHECK(raw(Close, F, 0, 0, 0), 0);
+  CHECK(raw(FGetXAttr, F, (U64)Name, 1, 0), (U64)-9);
+  CHECK(raw(FGetXAttr, 1, (U64) "", 1, 0), (U64)-34);
+  for (unsigned I = 0; I != 64; ++I)
+    CHECK(Pages[I], 0xa5);
+  Pages[4094] = 'x';
+  Pages[4095] = 0;
+  CHECK(raw(Protect, (U64)(Pages + 4096), 4096, 0, 0), 0);
+  CHECK(raw(LGetXAttr, (U64)Missing, (U64)(Pages + 4094), 1, 0), (U64)-2);
+  CHECK(raw(LGetXAttr, (U64)Missing, (U64)(Pages + 4096), 1, 0),
+        (U64) - (NameFirst ? 14 : 2));
+  CHECK(raw(Protect, (U64)(Pages + 4096), 4096, 3, 0), 0);
+  return 0;
+}
+U64 files_xattr_unobserved(U64 Mode) {
+  const char *Name = "user.fixture";
+  if (Mode == 0)
+    raw(GetXAttr, (U64)Path, (U64)Name, 1, 0);
+  else if (Mode == 1)
+    raw(LGetXAttr, (U64) "/fixture///", (U64)Name, 1, 0);
+  else if (Mode == 2) {
+    U64 F = raw(OpenAt, (U64)-100, (U64)Path, 0, 0);
+    raw(FGetXAttr, F, (U64)Name, 1, 0);
+  } else
+    raw(FGetXAttr, 1, (U64)Name, 1, 0);
   return 99;
 }
 
@@ -662,6 +737,55 @@ U64 files_open_observed_errors_bionic(void) {
   }
   return 0;
 }
+extern I64 getxattr(const char *, const char *, void *, U64);
+extern I64 lgetxattr(const char *, const char *, void *, U64);
+extern I64 fgetxattr(int, const char *, void *, U64);
+U64 files_xattr_errors_bionic(U64 NameFirst) {
+  for (unsigned Route = 0; Route != 2; ++Route) {
+    *__errno() = 91;
+    CHECK(raw(Route ? LGetXAttr : GetXAttr, (U64) "/fixture/missing",
+              (U64) "user.fixture", 1, (U64)-1),
+          (U64)-2);
+    CHECK(*__errno(), 91);
+    I64 R = Route ? lgetxattr("/fixture/missing", "user.fixture", (void *)1, -1)
+                  : getxattr("/fixture/missing", "user.fixture", (void *)1, -1);
+    CHECK(R, -1);
+    CHECK(*__errno(), 2);
+    R = Route ? lgetxattr("/fixture/missing", "", (void *)1, 0)
+              : getxattr("/fixture/missing", "", (void *)1, 0);
+    CHECK(R, -1);
+    CHECK(*__errno(), NameFirst ? 34 : 2);
+    R = Route ? lgetxattr((void *)1, "", (void *)1, 0)
+              : getxattr((void *)1, "", (void *)1, 0);
+    CHECK(R, -1);
+    CHECK(*__errno(), NameFirst ? 34 : 14);
+    R = Route ? lgetxattr(Path, "", (void *)1, 0)
+              : getxattr(Path, "", (void *)1, 0);
+    CHECK(R, -1);
+    CHECK(*__errno(), 34);
+  }
+  CHECK(fgetxattr(-1, "", (void *)1, 0), -1);
+  CHECK(*__errno(), NameFirst ? 34 : 9);
+  CHECK(fgetxattr(-1, "user.fixture", (void *)1, 0), -1);
+  CHECK(*__errno(), 9);
+  int F = open(Path, 0);
+  CHECK(F, 3);
+  CHECK(*__errno(), 9);
+  CHECK(fgetxattr(F, "", (void *)1, 0), -1);
+  CHECK(*__errno(), 34);
+  CHECK(close(F), 0);
+  CHECK(*__errno(), 34);
+  return 0;
+}
+U64 files_xattr_unobserved_bionic(U64 Mode) {
+  if (Mode == 0)
+    getxattr(Path, "user.fixture", (void *)1, 0);
+  else if (Mode == 1)
+    lgetxattr("/fixture///", "user.fixture", (void *)1, 0);
+  else
+    fgetxattr(1, "user.fixture", (void *)1, 0);
+  return 99;
+}
 extern int pthread_create(U64 *, const void *, void *(*)(void *), void *);
 extern int pthread_join(U64, void **);
 extern void *dlopen(const char *, int);
@@ -1054,6 +1178,12 @@ void process_main(U64 *Stack) {
                : Mode == 'd' ? files_directory_errors()
                : Mode == 'q' ? files_trailing_paths()
                : Mode == 'v' ? files_filesystem_status()
+               : Mode == 'X' ? files_xattr_errors(0)
+               : Mode == 'Y' ? files_xattr_errors(1)
+               : Mode == 'U' ? files_xattr_unobserved(0)
+               : Mode == 'V' ? files_xattr_unobserved(1)
+               : Mode == 'W' ? files_xattr_unobserved(2)
+               : Mode == 'J' ? files_xattr_unobserved(3)
                : Mode == 'o' ? files_open_observed_errors()
                : Mode == 'R' ? files_open_unobserved(0)
                : Mode == 'D' ? files_open_unobserved(1)

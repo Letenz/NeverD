@@ -262,7 +262,8 @@ TEST_P(LinuxProcess, MemoryFileOpenFlagsRetainObservedPathErrors) {
   Options.LinuxFiles->Files["/fixture/data"] = {0, 0xff, 0x41};
   Options.LinuxFiles->DescriptorLimit = 4;
   constexpr AndroidGKIKernel Kernels[] = {
-#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error,  \
+                                NameFirst)                                     \
   AndroidGKIKernel::Name,
 #include "GKIReleaseCases.def"
 #undef NEVERD_GKI_RELEASE_CASE
@@ -295,6 +296,55 @@ TEST_P(LinuxProcess, MemoryFileOpenFlagsKeepUnobservedOpenedFiles) {
       EXPECT_NE(R.Diagnostic.find(Mode == 'R' ? "direct I/O" : "directory"),
                 std::string::npos);
     }
+  }
+}
+TEST_P(LinuxProcess, ReleasedGKIXAttrsPreserveNameAndTargetErrorOrder) {
+  Options.LinuxFiles.emplace().Files["/fixture/data"] = {0, 0xff};
+  struct Case {
+    AndroidGKIKernel Kernel;
+    bool NameFirst;
+  };
+  constexpr Case Kernels[] = {
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error,  \
+                                NameFirst)                                     \
+  {AndroidGKIKernel::Name, NameFirst},
+#include "GKIReleaseCases.def"
+#undef NEVERD_GKI_RELEASE_CASE
+  };
+  for (auto K : Kernels) {
+    SCOPED_TRACE(unsigned(K.Kernel));
+    Options.LinuxKernel.emplace().GKI = K.Kernel;
+    for (const char *Opt : {"O0", "O2"}) {
+      auto FilePath = Path.parent_path() /
+                      (Path.stem().string() + "-files-" + Opt + ".elf");
+      Options.Arguments = {"files", K.NameFirst ? "Y" : "X"};
+      auto R = llvm::cantFail(
+          emulateProcess(FilePath, ProcessProfile::LinuxELF64, Options));
+      ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+      EXPECT_EQ(R.ExitStatus, 0u);
+    }
+  }
+}
+TEST_P(LinuxProcess, XAttrsKeepUnknownKernelAndExistingObjectBoundaries) {
+  Options.LinuxFiles.emplace().Files["/fixture/data"] = {0};
+  for (const char *Opt : {"O0", "O2"}) {
+    auto FilePath =
+        Path.parent_path() / (Path.stem().string() + "-files-" + Opt + ".elf");
+    Options.Arguments = {"files", "X"};
+    auto R = llvm::cantFail(
+        emulateProcess(FilePath, ProcessProfile::LinuxELF64, Options));
+    ASSERT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    EXPECT_NE(R.Diagnostic.find("released GKI"), std::string::npos);
+    Options.LinuxKernel.emplace().GKI = AndroidGKIKernel::Android17_6_18;
+    for (char Mode : {'U', 'V', 'W', 'J'}) {
+      Options.Arguments = {"files", std::string(1, Mode)};
+      auto E = llvm::cantFail(
+          emulateProcess(FilePath, ProcessProfile::LinuxELF64, Options));
+      EXPECT_EQ(E.Stop, ProcessStopReason::UnsupportedService) << E.Diagnostic;
+      EXPECT_FALSE(E.Services.back().Result);
+      EXPECT_NE(E.Diagnostic.find("extended attributes"), std::string::npos);
+    }
+    Options.LinuxKernel.reset();
   }
 }
 TEST_P(LinuxProcess, TimeFaultsPreserveKernelErrnosAndOrderedWrites) {
