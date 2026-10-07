@@ -8022,6 +8022,48 @@ TEST(HighControlFlowSemantics, ByteReadOfArithmeticDropsUnreadBytes) {
   EXPECT_TRUE(HasUndef(F));
 }
 
+TEST(HighControlFlowSemantics, CopyBackJoinsItsDefinition) {
+  // t = x + 1; y = 5; x = t; return x + y;  -- x takes x + 1 at once.
+  auto Plus = [](int Id, uint64_t Value) {
+    auto Sum = HighExpr::makeBinop(NdOp::INT_ADD, local(Id),
+                                   HighExpr::makeConst(Value, 8));
+    Sum->Type = NdType::makeInt(8);
+    return Sum;
+  };
+  auto Program = [&](HighStmt Between) {
+    HighStmt Def = assign(0x1004, 2, 0);
+    Def.Val = Plus(1, 1);
+    HighStmt Copy = assign(0x100c, 1, 0);
+    Copy.Val = local(2);
+    HighFunc F;
+    F.Body = {
+        assign(0x1000, 1, 41), Def, Between, Copy,
+        result(0x1010, HighExpr::makeBinop(NdOp::INT_ADD, local(1), local(3)))};
+    F.Body.back().RetVal->Type = NdType::makeInt(8);
+    return F;
+  };
+  HighFunc F = Program(assign(0x1008, 3, 5));
+  const auto Expected = execute(F, 0);
+  EXPECT_TRUE(foldCopiesIntoDefinitions(F));
+  EXPECT_EQ(F.Body.size(), 4U);
+  EXPECT_EQ(execute(F, 0), Expected);
+  EXPECT_EQ(Expected, std::optional<uint64_t>(47));
+
+  // A statement between that reads x keeps the temporary.
+  HighStmt ReadsX = assign(0x1008, 3, 0);
+  ReadsX.Val = local(1);
+  HighFunc Reads = Program(ReadsX);
+  EXPECT_FALSE(foldCopiesIntoDefinitions(Reads));
+
+  // So does a label between, which a jump may enter past the definition.
+  HighFunc Entered = Program(assign(0x1008, 3, 5));
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.GotoTarget = 0x1008;
+  Entered.Body.push_back(Jump);
+  EXPECT_FALSE(foldCopiesIntoDefinitions(Entered));
+}
+
 TEST(HighControlFlowSemantics, ExceptHandlerJumpToAReturnTailBecomesItsCopy) {
   // __try { v = 1; } __except (...) { v = 2; goto R; } v = 3; R: return v;
   // The handler's jump reaches a return tail, which it now returns through.

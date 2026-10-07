@@ -134,6 +134,10 @@ bool moveSwitchTailsToTheirExit(std::vector<HighStmt> &Body);
 /// matches no case and reaches D through the default anyway, so the switch
 /// alone does the same.  This drops the range check a jump table needs.
 bool absorbSwitchRangeGuards(std::vector<HighStmt> &Body);
+/// `t = e; S...; x = t;` where t has no other use and S neither touches x
+/// nor t, nor leaves nor is entered: `x = e; S...;`.  Out of SSA a loop
+/// update reads `t = i + 1; ...; i = t;`; it reads `i = i + 1;`.
+bool foldCopiesIntoDefinitions(HighFunc &Func);
 /// A loop whose body never reaches its end and has no break or continue
 /// runs its body once: the body replaces the loop.
 bool unwrapLoopsThatNeverRepeat(std::vector<HighStmt> &Body);
