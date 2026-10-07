@@ -3191,13 +3191,22 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       return "(*" + varName(E.Operands.front()->Var) + ")";
     if (E.Operands.empty())
       return "/* bad load */";
+    // A plain access through an integer alias has exactly the alias's type:
+    // `*(_QWORD *)p` is a uint64_t.
+    auto Access = [&](std::string Text) {
+      if (!isPlainInteger(E.Type) ||
+          E.MemoryOrdering != NdMemoryOrdering::None ||
+          E.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+        return Text;
+      return typedText(E, std::move(Text), E.Type->Size, E.Type->IsSigned);
+    };
     if (E.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
       if (auto VA = constAddress(*E.Operands[0])) {
         if (imageBackingAddress(*VA))
-          return bareLoad(memoryLoadExpr(E.Type, addrStr(*E.Operands[0]),
-                                         E.MemoryOrdering, E.MemoryAddressSpace,
-                                         true, Destination),
-                          ParentPrec);
+          return Access(bareLoad(
+              memoryLoadExpr(E.Type, addrStr(*E.Operands[0]), E.MemoryOrdering,
+                             E.MemoryAddressSpace, true, Destination),
+              ParentPrec));
       }
     }
     if (E.MemoryOrdering == NdMemoryOrdering::None &&
@@ -3233,12 +3242,13 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
            E.Type->Size == 2 || E.Type->Size == 4 || E.Type->Size == 8 ||
            E.Type->Size == 16 || E.Type->Size == 32 || E.Type->Size == 64) &&
           equalSourceTypes(AddressType->Pointee, E.Type))
-        return bareLoad("(*(" + memoryTypeName(E.Type) + " *)(" + Addr + "))",
-                        ParentPrec);
+        return Access(bareLoad(
+            "(*(" + memoryTypeName(E.Type) + " *)(" + Addr + "))", ParentPrec));
     }
-    return bareLoad(memoryLoadExpr(E.Type, Addr, E.MemoryOrdering,
-                                   E.MemoryAddressSpace, false, Destination),
-                    ParentPrec);
+    return Access(
+        bareLoad(memoryLoadExpr(E.Type, Addr, E.MemoryOrdering,
+                                E.MemoryAddressSpace, false, Destination),
+                 ParentPrec));
   }
   case ExprKind::Store: {
     if (E.Operands.size() < 2)
@@ -3502,8 +3512,14 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
         return exprStr(Inner);
       // Keep the source-width interpretation of zext/sext when narrowing the
       // final C return type; a direct C cast from a signed input would turn
-      // zero extension into sign extension.
-      return "(" + typeToC(FuncReturnType) + ")(" + exprStr(Expr) + ")";
+      // zero extension into sign extension.  An extension printed as the
+      // return type already is the value returned.
+      std::string Text = exprStr(Expr);
+      if (const auto Printed = printedIntegerType(Expr);
+          Printed && Printed->first == FuncReturnType->Size &&
+          Printed->second == FuncReturnType->IsSigned)
+        return Text;
+      return "(" + typeToC(FuncReturnType) + ")(" + Text + ")";
     }
   }
 

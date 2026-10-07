@@ -34076,7 +34076,15 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsThrow) {
   EXPECT_NE((*OuterCtor)[0].find("v0 + 32"), std::string_view::npos) << Source;
   EXPECT_EQ(llvm::StringRef((*OuterCtor)[1]).trim(), "1") << Source;
   expectPortableStore(Source, "uint32_t", "v0 + 44", "0xFFFFFF9C");
-  EXPECT_NE(Source.find("(uint32_t)(__builtin_memcpy(&"), std::string::npos)
+  // The returned 32-bit slot is read unsigned, so it widens by zero.
+  std::smatch Returned;
+  ASSERT_TRUE(std::regex_search(
+      Source, Returned,
+      std::regex(
+          R"(return \(int64_t\)\(__builtin_memcpy\(&(memory_value_\d+))")))
+      << Source;
+  EXPECT_NE(Source.find("uint32_t " + Returned[1].str() + ";"),
+            std::string::npos)
       << Source;
   const auto ReturnedSlot = lastCallArguments(Source, "__builtin_memcpy");
   ASSERT_TRUE(ReturnedSlot.has_value()) << Source;
