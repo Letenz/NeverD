@@ -99,15 +99,30 @@ cursor. Recognized library operations in C can fold into one-line summaries:
 click a summary to expand it; copy and export always use the complete code.
 
 Strings are found in ASCII, UTF-8 and UTF-16LE by default: UTF-8 text such as
-Chinese, Japanese or Korean prints as itself (`db '中文字符串',0`), a string in a
+Chinese, Japanese or Korean prints as itself (`db '中文字符串',0`), each wide
+character two columns wide so the comments after it line up, a string in a
 wide encoding under its label as `text "UTF-16LE", 'Wide text',0`, and an
 instruction that refers to a string quotes it in a comment (`; "Usage: %s"`).
 **Options → String literals** chooses the encodings searched, including
-UTF-16BE and UTF-32, and the minimum length; the Strings window shows each
-string's encoding in its Type column.
+UTF-16BE and UTF-32, the minimum length, and one code page (GBK, Big5,
+Shift-JIS, EUC-KR, Windows-1250 to 1258, ISO-8859, KOI8 or IBM866) in which C
+strings that are not UTF-8 are read; the Strings window shows each string's
+encoding in its Type column. Code pages decode by the WHATWG Encoding Standard,
+and a string reads as text only when its characters keep to one script.
+
+**Search → String references** (Ctrl+Shift+F12, or `strref [text]` on the
+command line) lists every instruction that refers to a string: directly, into
+the middle of one (the text from that character on), or by reading a pointer
+slot that holds its address. The list opens with its filter ready; the filter
+matches the text, the function or the address, and every column but
+Disassembly sorts. Enter goes to the instruction. In this list and in
+Strings, X or Ctrl+X lists the references to the selected string.
 
 **Hex View-1** follows the disassembly cursor; while it is the active view, a
-jump (G or `g` on the command line) moves it and keeps it in front.
+jump (G or `g` on the command line) moves it and keeps it in front. Its
+context menu's **Text encoding** reads the text column as ASCII, UTF-8,
+UTF-16, UTF-32 or a code page; a character shows at its first byte, and wide
+characters take two columns. The choice is kept for later sessions.
 **Imports**, **Exports**, **Names**, **Strings**, **Segments** and
 **Bookmarks** are choosers with a quick filter and sortable columns. **Jump
 anywhere** (G) takes an address, a name or an expression such as `main+0x10`
@@ -117,7 +132,7 @@ worker's reference index.
 
 The output window's command line evaluates expressions in hexadecimal by
 default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
-`hex`, `analyze` and `save`; `help` lists them. **Options → Show command palette**
+`hex`, `strref`, `analyze` and `save`; `help` lists them. **Options → Show command palette**
 (Ctrl+Shift+P) searches every command.
 
 ## Keyboard
@@ -138,6 +153,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Alt+Up / Alt+Down | Previous / next occurrence of the highlighted identifier |
 | Ctrl+Shift+Up / Ctrl+Shift+Down | Previous / next function |
 | Shift+F3, Shift+F4, Shift+F7, Shift+F12 | Functions, Names, Segments, Strings |
+| Ctrl+Shift+F12 | String references |
 | F6 / Shift+F6 | Next / previous window |
 | Ctrl+W | Save the database |
 | Ctrl+Shift+P | Command palette |

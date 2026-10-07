@@ -131,5 +131,24 @@ NEVERD_CHOOSER_COLUMN(Bookmarks, "address",
 NEVERD_CHOOSER_COLUMN(Bookmarks, "text",
                       QT_TRANSLATE_NOOP("Choosers", "Description"), Text, "")
 
+// Every instruction that refers to a string, directly or through a pointer
+// slot, with the text it refers to.  Kinds are numbered in this order, which
+// saved window layouts keep, so new lists go last.
+NEVERD_CHOOSER(StringReferences, "string_references",
+               QT_TRANSLATE_NOOP("Choosers", "String references"),
+               "string_references", true)
+NEVERD_CHOOSER_COLUMN(StringReferences, "address",
+                      QT_TRANSLATE_NOOP("Choosers", "Address"), SegmentAddress,
+                      "address")
+NEVERD_CHOOSER_COLUMN(StringReferences, "function",
+                      QT_TRANSLATE_NOOP("Choosers", "Function"), Text,
+                      "function")
+NEVERD_CHOOSER_COLUMN(StringReferences, "disasm",
+                      QT_TRANSLATE_NOOP("Choosers", "Disassembly"), Text, "")
+NEVERD_CHOOSER_COLUMN(StringReferences, "type",
+                      QT_TRANSLATE_NOOP("Choosers", "Type"), Text, "type")
+NEVERD_CHOOSER_COLUMN(StringReferences, "text",
+                      QT_TRANSLATE_NOOP("Choosers", "String"), Text, "text")
+
 #undef NEVERD_CHOOSER
 #undef NEVERD_CHOOSER_COLUMN

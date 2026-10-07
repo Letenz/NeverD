@@ -1,8 +1,20 @@
 #include "StyledText.h"
 
+#include <QFontMetricsF>
 #include <QTextCharFormat>
 
 namespace neverd::gui {
+namespace {
+/// Whether a fixed-width listing draws \p code two columns wide; the worker
+/// aligns columns by the same table.
+bool isWideCharacter(char32_t code) {
+#define NEVERD_WIDE_CHARACTERS(First, Last)                                    \
+  if (code >= (First) && code <= (Last))                                       \
+    return true;
+#include "ListingVocabulary.def"
+  return false;
+}
+} // namespace
 
 bool isTokenCharacter(QChar c) {
   return c.isLetterOrNumber() || c == QLatin1Char('_') ||
@@ -95,6 +107,28 @@ QTextLayout &StyledLine::layout(const QFont &font, quint64 stamp,
     range.length = span.length;
     range.format.setForeground(colorOf(span.role));
     formats.append(range);
+  }
+  // A wide character's glyph comes from whichever font has it; spacing
+  // makes it exactly two columns, so the columns after it line up.
+  const QFontMetricsF metrics(font);
+  const qreal column = metrics.horizontalAdvance(QLatin1Char('M'));
+  for (qsizetype i = 0; i < text.size();) {
+    const bool pair = text.at(i).isHighSurrogate() && i + 1 < text.size() &&
+                      text.at(i + 1).isLowSurrogate();
+    const char32_t code =
+        pair ? QChar::surrogateToUcs4(text.at(i), text.at(i + 1))
+             : text.at(i).unicode();
+    const int units = pair ? 2 : 1;
+    if (isWideCharacter(code)) {
+      QTextLayout::FormatRange range;
+      range.start = int(i);
+      range.length = units;
+      range.format.setFontLetterSpacingType(QFont::AbsoluteSpacing);
+      range.format.setFontLetterSpacing(
+          2 * column - metrics.horizontalAdvance(text.mid(i, units)));
+      formats.append(range);
+    }
+    i += units;
   }
   layout_->setFormats(formats);
   QTextOption option;

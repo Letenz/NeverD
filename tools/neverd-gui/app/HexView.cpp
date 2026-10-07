@@ -4,10 +4,15 @@
 #include "Session.h"
 #include "Theme.h"
 
+#include <QActionGroup>
+#include <QContextMenuEvent>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QPainter>
 #include <QScrollBar>
+#include <QSettings>
 #include <algorithm>
 
 namespace neverd::gui {
@@ -19,6 +24,9 @@ constexpr int Margin = 6;
 // Columns: address, two spaces, 16 hex bytes ("xx " each, extra space after
 // eight), two spaces, 16 characters.
 constexpr int HexGroup = 8;
+constexpr char TextEncodingKey[] = "hex/textEncoding";
+/// What the text column shows for a byte that starts no shown character.
+constexpr char HiddenByte = '.';
 
 Address chunkBase(Address address) {
   return address & ~Address(ChunkBytes - 1);
@@ -30,24 +38,82 @@ HexView::HexView(Session &session, const AddressSpace &space, QWidget *parent)
   setFocusPolicy(Qt::StrongFocus);
   setFrameShape(QFrame::NoFrame);
   viewport()->setAttribute(Qt::WA_OpaquePaintEvent);
+  textEncoding_ = QSettings().value(TextEncodingKey).toString();
   updateMetrics();
   connect(&Theme::instance(), &Theme::changed, this, [this] {
     updateMetrics();
     viewport()->update();
   });
-  const auto reset = [this] {
-    ++serial_;
-    chunks_.clear();
-    order_.clear();
-    pending_.clear();
-    updateRange();
-    viewport()->update();
-  };
-  connect(&session_, &Session::opened, this, reset);
-  connect(&session_, &Session::unloaded, this, [this, reset] {
-    current_.reset();
-    reset();
+  connect(&session_, &Session::opened, this, [this] {
+    clearChunks();
+    loadEncodings();
   });
+  connect(&session_, &Session::unloaded, this, [this] {
+    current_.reset();
+    clearChunks();
+  });
+}
+
+void HexView::clearChunks() {
+  ++serial_;
+  chunks_.clear();
+  order_.clear();
+  pending_.clear();
+  updateRange();
+  viewport()->update();
+}
+
+void HexView::loadEncodings() {
+  session_.read(
+      QStringLiteral("string_encodings"), {}, this,
+      [this](const QJsonObject &payload) {
+        encodings_.clear();
+        for (const auto &value : payload.value("items").toArray()) {
+          const auto encoding = value.toObject();
+          const auto spelling = encoding.value("spelling").toString();
+          encodings_.append(
+              {encoding.value("name").toString(),
+               spelling.isEmpty() ? QStringLiteral("ASCII") : spelling,
+               encoding.value("legacy").toBool()});
+        }
+      },
+      [](const QString &, const QString &) {});
+}
+
+void HexView::setTextEncoding(const QString &name) {
+  if (name == textEncoding_)
+    return;
+  textEncoding_ = name;
+  QSettings settings;
+  if (name.isEmpty())
+    settings.remove(TextEncodingKey);
+  else
+    settings.setValue(TextEncodingKey, name);
+  clearChunks();
+}
+
+void HexView::contextMenuEvent(QContextMenuEvent *event) {
+  QMenu menu(this);
+  auto *encodings = menu.addMenu(tr("Text encoding"));
+  auto *group = new QActionGroup(encodings);
+  const auto add = [&](const QString &label, const QString &name) {
+    auto *action = encodings->addAction(label);
+    action->setCheckable(true);
+    action->setChecked(textEncoding_ == name);
+    group->addAction(action);
+    connect(action, &QAction::triggered, this,
+            [this, name] { setTextEncoding(name); });
+  };
+  // Plain ASCII needs no engine; Unicode encodings come before code pages.
+  add(QStringLiteral("ASCII"), {});
+  for (const auto &encoding : encodings_)
+    if (!encoding.legacy && encoding.label != QLatin1String("ASCII"))
+      add(encoding.label, encoding.name);
+  encodings->addSeparator();
+  for (const auto &encoding : encodings_)
+    if (encoding.legacy)
+      add(encoding.label, encoding.name);
+  menu.exec(event->globalPos());
 }
 
 void HexView::updateMetrics() {
@@ -107,22 +173,38 @@ void HexView::resizeEvent(QResizeEvent *event) {
 
 void HexView::scrollContentsBy(int, int) { viewport()->update(); }
 
-const HexView::Chunk *HexView::chunk(Address base) const {
-  if (auto it = chunks_.constFind(base); it != chunks_.cend())
+Address HexView::chunkKey(Address address) const {
+  const Address base = chunkBase(address);
+  const auto *region = space_.regionOf(address);
+  return region && region->start > base ? region->start : base;
+}
+
+const HexView::Chunk *HexView::chunk(Address key) const {
+  if (auto it = chunks_.constFind(key); it != chunks_.cend())
     return &*it;
-  request(base);
+  request(key);
   return nullptr;
 }
 
-void HexView::request(Address base) const {
-  if (pending_.contains(base) || !session_.loaded())
+void HexView::request(Address key) const {
+  if (pending_.contains(key) || !session_.loaded())
     return;
+  // Reading stops at the first unmapped byte, so a chunk ends with its
+  // region: bytes past a gap belong to the next region's chunk.
+  Address end = chunkBase(key) + ChunkBytes;
+  if (const auto *region = space_.regionOf(key))
+    end = std::min(end, region->end);
+  const Address base = key;
   pending_.insert(base);
   const quint64 serial = serial_;
   auto *self = const_cast<HexView *>(this);
+  QJsonObject request{{"address", hexAddress(base)},
+                      {"size", qint64(end - base)}};
+  // A character split across two chunks decodes as two hidden halves.
+  if (!textEncoding_.isEmpty())
+    request.insert("text_encoding", textEncoding_);
   session_.read(
-      QStringLiteral("bytes"),
-      {{"address", hexAddress(base)}, {"size", ChunkBytes}}, self,
+      QStringLiteral("bytes"), request, self,
       [self, base, serial](const QJsonObject &payload) {
         if (serial != self->serial_)
           return;
@@ -131,6 +213,9 @@ void HexView::request(Address base) const {
         chunk.data =
             QByteArray::fromHex(payload.value("data").toString().toLatin1());
         chunk.mapped = int(chunk.data.size());
+        for (const auto &cell : payload.value("cells").toArray())
+          chunk.cells.append(cell.isNull() ? QString(QLatin1Char(HiddenByte))
+                                           : cell.toString());
         self->chunks_.insert(base, chunk);
         self->order_.push_front(base);
         while (int(self->order_.size()) > MaxChunks) {
@@ -139,8 +224,13 @@ void HexView::request(Address base) const {
         }
         self->viewport()->update();
       },
-      [self, base](const QString &, const QString &) {
+      [self, base, serial](const QString &code, const QString &) {
+        if (serial != self->serial_)
+          return;
         self->pending_.remove(base);
+        // An encoding this engine does not know reads as ASCII again.
+        if (code == QLatin1String("unsupported_encoding"))
+          self->setTextEncoding({});
       });
 }
 
@@ -153,13 +243,27 @@ void HexView::addressSpaceChanged() {
 }
 
 std::optional<quint8> HexView::byteAt(Address address) const {
-  const auto it = chunks_.constFind(chunkBase(address));
+  const auto it = chunks_.constFind(chunkKey(address));
   if (it == chunks_.cend())
     return std::nullopt;
   const int offset = int(address - it.key());
   if (offset >= it->mapped)
     return std::nullopt;
   return static_cast<quint8>(it->data.at(offset));
+}
+
+std::optional<QString> HexView::textAt(Address address) const {
+  const auto it = chunks_.constFind(chunkKey(address));
+  if (it == chunks_.cend())
+    return std::nullopt;
+  const int offset = int(address - it.key());
+  if (offset >= it->mapped)
+    return std::nullopt;
+  if (!it->cells.isEmpty())
+    return it->cells.at(offset);
+  const auto value = static_cast<unsigned char>(it->data.at(offset));
+  return QString(value >= 0x20 && value < 0x7f ? QChar(value)
+                                               : QLatin1Char(HiddenByte));
 }
 
 void HexView::setCurrent(Address address, int size) {
@@ -192,30 +296,41 @@ void HexView::paintEvent(QPaintEvent *) {
     painter.setPen(theme.color(ColorRole::HexAddress));
     painter.drawText(QPointF(Margin, y + ascent_),
                      displayAddress(*rowAddress, digits));
-    const Address base = chunkBase(*rowAddress);
-    const Chunk *data = chunk(base);
-    // A row may straddle two chunks only when regions are unaligned.
-    const Chunk *next = nullptr;
-    if (chunkBase(*rowAddress + BytesPerRow - 1) != base)
-      next = chunk(chunkBase(*rowAddress + BytesPerRow - 1));
+    // A row may straddle two chunks only when its region is unaligned.
+    const Address firstKey = chunkKey(*rowAddress);
+    const Chunk *firstChunk = chunk(firstKey);
+    const Chunk *nextChunk = nullptr;
+    const Address lastKey = chunkKey(*rowAddress + BytesPerRow - 1);
+    if (lastKey != firstKey)
+      nextChunk = chunk(lastKey);
+    const auto isCurrent = [&](Address address) {
+      return current_ && address >= *current_ &&
+             address < *current_ + Address(currentSize_);
+    };
+    // Highlights go first: a wide character's glyph spans the next cells.
+    for (int b = 0; b < BytesPerRow; ++b) {
+      const Address address = *rowAddress + b;
+      if ((region && address >= region->end) || !isCurrent(address))
+        continue;
+      const qreal x = hexLeft + (b * 3 + (b >= HexGroup ? 1 : 0)) * charWidth_;
+      painter.fillRect(
+          QRectF(x - charWidth_ / 4, y, charWidth_ * 2.5, lineHeight_),
+          theme.color(ColorRole::HexCurrent));
+      painter.fillRect(
+          QRectF(asciiLeft + b * charWidth_, y, charWidth_, lineHeight_),
+          theme.color(ColorRole::HexCurrent));
+    }
     for (int b = 0; b < BytesPerRow; ++b) {
       const Address address = *rowAddress + b;
       if (region && address >= region->end)
         break;
       const qreal x = hexLeft + (b * 3 + (b >= HexGroup ? 1 : 0)) * charWidth_;
       const qreal ax = asciiLeft + b * charWidth_;
-      const Chunk *source = chunkBase(address) == base ? data : next;
-      const int offset = int(address - chunkBase(address));
+      const Address key = chunkKey(address);
+      const Chunk *source = key == firstKey ? firstChunk : nextChunk;
+      const int offset = int(address - key);
       const bool mapped = source && offset < source->mapped;
-      const bool current = current_ && address >= *current_ &&
-                           address < *current_ + Address(currentSize_);
-      if (current) {
-        painter.fillRect(
-            QRectF(x - charWidth_ / 4, y, charWidth_ * 2.5, lineHeight_),
-            theme.color(ColorRole::HexCurrent));
-        painter.fillRect(QRectF(ax, y, charWidth_, lineHeight_),
-                         theme.color(ColorRole::HexCurrent));
-      }
+      const bool current = isCurrent(address);
       if (!source) {
         painter.setPen(theme.color(ColorRole::HexUnmapped));
         painter.drawText(QPointF(x, y + ascent_), QStringLiteral(".."));
@@ -236,8 +351,15 @@ void HexView::paintEvent(QPaintEvent *) {
           QStringLiteral("%1").arg(value, 2, 16, QLatin1Char('0')).toUpper());
       painter.setPen(current ? theme.color(ColorRole::HexCurrentText)
                              : theme.color(ColorRole::HexAscii));
-      const QChar character =
-          value >= 0x20 && value < 0x7f ? QChar(value) : QLatin1Char('.');
+      if (!source->cells.isEmpty()) {
+        // A character's continuation bytes show nothing of their own.
+        if (const auto &cell = source->cells.at(offset); !cell.isEmpty())
+          painter.drawText(QPointF(ax, y + ascent_), cell);
+        continue;
+      }
+      const QChar character = value >= 0x20 && value < 0x7f
+                                  ? QChar(value)
+                                  : QLatin1Char(HiddenByte);
       painter.drawText(QPointF(ax, y + ascent_), QString(character));
     }
   }

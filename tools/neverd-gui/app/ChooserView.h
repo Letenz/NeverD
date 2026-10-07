@@ -67,6 +67,9 @@ public:
   bool loading() const { return !inFlight_.isEmpty(); }
   QJsonObject rowObject(int row) const;
   std::optional<Address> addressAt(int row) const;
+  /// The item a row stands for when its cross references are listed: a
+  /// string reference's string, otherwise the row's address.
+  std::optional<Address> referenceAddressAt(int row) const;
 
   int rowCount(const QModelIndex &parent = {}) const override;
   int columnCount(const QModelIndex &parent = {}) const override;
@@ -109,6 +112,8 @@ public:
   ChooserModel &model() { return *model_; }
   QTreeView *table() const { return table_; }
   std::optional<Address> currentAddress() const;
+  /// The current row's item for cross references (referenceAddressAt).
+  std::optional<Address> referenceTarget() const;
   void focusFilter();
   /// Show the quick filter with \p text applied after the usual debounce.
   void setFilterText(const QString &text);

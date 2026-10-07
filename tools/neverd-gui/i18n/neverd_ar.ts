@@ -703,6 +703,14 @@
         <source>Choose the encodings and minimum length of the strings the listing shows</source>
         <translation>اختيار الترميزات والحد الأدنى لطول السلاسل النصية التي تعرضها القائمة</translation>
     </message>
+    <message>
+        <source>String &amp;references</source>
+        <translation>مراجع السلاسل النصية(&amp;R)</translation>
+    </message>
+    <message>
+        <source>List the instructions that refer to strings</source>
+        <translation>سرد التعليمات التي تشير إلى سلاسل نصية</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -825,6 +833,18 @@
     <message>
         <source>Description</source>
         <translation>الوصف</translation>
+    </message>
+    <message>
+        <source>String references</source>
+        <translation>مراجع السلاسل النصية</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>الدالة</translation>
+    </message>
+    <message>
+        <source>Disassembly</source>
+        <translation>الشيفرة المفككة</translation>
     </message>
 </context>
 <context>
@@ -1508,6 +1528,13 @@ Recognized library operation; click to show its code.</source>
     </message>
 </context>
 <context>
+    <name>neverd::gui::HexView</name>
+    <message>
+        <source>Text encoding</source>
+        <translation>ترميز النص</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::JumpDialog</name>
     <message>
         <source>Jump anywhere</source>
@@ -1857,6 +1884,18 @@ Signed: %4</source>
         <source>Minimum length:</source>
         <translation>الحد الأدنى للطول:</translation>
     </message>
+    <message>
+        <source>None</source>
+        <translation>لا شيء</translation>
+    </message>
+    <message>
+        <source>Also read C strings that are not UTF-8 in this code page</source>
+        <translation>قراءة سلاسل C التي ليست UTF-8 أيضًا بصفحة الترميز هذه</translation>
+    </message>
+    <message>
+        <source>Code page:</source>
+        <translation>صفحة الترميز:</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -1907,6 +1946,10 @@ Signed: %4</source>
     <message>
         <source>  &lt;expr&gt;            evaluate: 0x10, 10h, #16, names, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</source>
         <translation>  &lt;expr&gt;            حساب القيمة: 0x10, 10h, #16, الأسماء, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</translation>
+    </message>
+    <message>
+        <source>  strref [text]     list the instructions that refer to strings</source>
+        <translation>  strref [text]     سرد التعليمات التي تشير إلى سلاسل نصية</translation>
     </message>
 </context>
 <context>

@@ -210,6 +210,12 @@ std::optional<Address> ChooserModel::addressAt(int row) const {
   return addressValue(object.value("address"));
 }
 
+std::optional<Address> ChooserModel::referenceAddressAt(int row) const {
+  if (kind_ == ChooserKind::StringReferences)
+    return addressValue(rowObject(row).value("string_address"));
+  return addressAt(row);
+}
+
 int ChooserModel::rowCount(const QModelIndex &parent) const {
   return parent.isValid() ? 0 : total_;
 }
@@ -426,6 +432,12 @@ ChooserView::ChooserView(Session &session, const AddressSpace &space,
 std::optional<Address> ChooserView::currentAddress() const {
   const auto index = table_->currentIndex();
   return index.isValid() ? model_->addressAt(index.row()) : std::nullopt;
+}
+
+std::optional<Address> ChooserView::referenceTarget() const {
+  const auto index = table_->currentIndex();
+  return index.isValid() ? model_->referenceAddressAt(index.row())
+                         : std::nullopt;
 }
 
 void ChooserView::focusFilter() {

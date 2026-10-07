@@ -16,6 +16,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLineEdit>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -103,6 +104,59 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(hex->byteAt(Base).has_value(), OpenTimeoutMs);
     QVERIFY(hex->isVisible());
+  }
+
+  void stringReferencesAndHexTextEncodings() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+
+    // The reference search lists instructions with the strings they use and
+    // opens ready for a query.
+    bench.action(ActionId::SearchStringReferences)->trigger();
+    ChooserView *references = nullptr;
+    for (auto *view : bench.window->findChildren<ChooserView *>())
+      if (view->model().kind() == ChooserKind::StringReferences)
+        references = view;
+    QVERIFY(references);
+    QTRY_VERIFY(references->findChild<QLineEdit *>()->isVisible());
+    QTRY_COMPARE_WITH_TIMEOUT(references->model().total(), 2, OpenTimeoutMs);
+    QTRY_COMPARE(references->model().rowObject(1).value("text").toString(),
+                 QStringLiteral("Wide"));
+    QCOMPARE(references->model().addressAt(1),
+             std::optional<Address>(Base + 0x73));
+    // Its cross references are those of the string, not the instruction.
+    QCOMPARE(references->model().referenceAddressAt(1),
+             std::optional<Address>(Base + 0x3108));
+    references->setFilterText(QString::fromUtf8("\u6587"));
+    QTRY_COMPARE(references->model().total(), 1);
+
+    // The hex view's text column reads the bytes in a chosen encoding.
+    for (auto *dock :
+         bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+      if (dock->uniqueName() == QLatin1String("hex-1"))
+        dock->raise();
+    auto *hex = bench.window->findChild<HexView *>();
+    QVERIFY(hex);
+    QTRY_VERIFY(hex->isVisible());
+    hex->setCurrent(Base + 0x3108);
+    QTRY_COMPARE_WITH_TIMEOUT(hex->textAt(Base + 0x3109),
+                              std::optional<QString>(QStringLiteral(".")),
+                              OpenTimeoutMs);
+    hex->setTextEncoding(QStringLiteral("utf-16le"));
+    QTRY_COMPARE_WITH_TIMEOUT(hex->textAt(Base + 0x3108),
+                              std::optional<QString>(QStringLiteral("W")),
+                              OpenTimeoutMs);
+    QCOMPARE(hex->textAt(Base + 0x3109), std::optional<QString>(QString()));
+    QCOMPARE(QSettings().value(QStringLiteral("hex/textEncoding")).toString(),
+             QStringLiteral("utf-16le"));
+    // An encoding the engine does not know falls back to ASCII.
+    hex->setTextEncoding(QStringLiteral("klingon"));
+    QTRY_COMPARE_WITH_TIMEOUT(hex->textEncoding(), QString(), OpenTimeoutMs);
+    QVERIFY(!QSettings().contains(QStringLiteral("hex/textEncoding")));
   }
 
   void viewsFollowTheSessionAndNavigation() {
