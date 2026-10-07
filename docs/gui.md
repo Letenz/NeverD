@@ -116,7 +116,7 @@ the middle of one (the text from that character on), or by reading a pointer
 slot that holds its address. The list opens with its filter ready; the filter
 matches the text, the function or the address, and every column but
 Disassembly sorts. Enter goes to the instruction. In this list and in
-Strings, X or Ctrl+X lists the references to the selected string.
+Strings, Ctrl+X lists the references to the selected string.
 
 **Hex View-1** follows the disassembly cursor; while it is the active view, a
 jump (G or `g` on the command line) moves it and keeps it in front. Its

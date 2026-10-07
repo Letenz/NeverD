@@ -827,10 +827,6 @@ void MainWindow::connectActions() {
                         false);
   });
   on(ActionId::JumpXrefOperand, [this] {
-    if (auto *list = focusedChooser()) {
-      showCrossReferences(list->referenceTarget(), true);
-      return;
-    }
     const auto target = disassembly_->operandTarget();
     showCrossReferences(target ? target : currentAddress(), true);
   });

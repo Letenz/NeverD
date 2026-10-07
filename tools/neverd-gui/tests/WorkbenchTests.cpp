@@ -12,6 +12,7 @@
 #include "mcp/McpConnectionManager.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -21,6 +22,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 #include <QTreeView>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <memory>
@@ -133,6 +135,33 @@ private slots:
              std::optional<Address>(Base + 0x3108));
     references->setFilterText(QString::fromUtf8("\u6587"));
     QTRY_COMPARE(references->model().total(), 1);
+
+    // In the Strings list, Ctrl+X lists the selected string's references.
+    bench.action(ActionId::ViewStrings)->trigger();
+    ChooserView *strings = nullptr;
+    for (auto *view : bench.window->findChildren<ChooserView *>())
+      if (view->model().kind() == ChooserKind::Strings)
+        strings = view;
+    QVERIFY(strings);
+    QTRY_COMPARE_WITH_TIMEOUT(strings->model().total(), 2, OpenTimeoutMs);
+    QTRY_VERIFY(strings->model().addressAt(1).has_value());
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    strings->table()->setFocus();
+    strings->table()->setCurrentIndex(strings->model().index(1, 0));
+    QTRY_VERIFY(strings->table()->hasFocus());
+    QString title;
+    QTimer::singleShot(0, [&title] {
+      if (auto *dialog = QApplication::activeModalWidget()) {
+        title = dialog->windowTitle();
+        dialog->close();
+      }
+    });
+    QTest::keyClick(strings->table(), Qt::Key_X, Qt::ControlModifier);
+    QTRY_VERIFY(!title.isEmpty());
+    QVERIFY2(
+        title.contains(QStringLiteral("FFFF800012343108"), Qt::CaseInsensitive),
+        qPrintable(title));
 
     // The hex view's text column reads the bytes in a chosen encoding.
     for (auto *dock :

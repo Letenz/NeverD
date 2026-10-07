@@ -26,10 +26,11 @@ struct ChooserSpec {
   const char *title;
   const char *icon;
   bool filterable;
+  bool requested;
 };
 constexpr ChooserSpec Specs[] = {
-#define NEVERD_CHOOSER(Id, Operation, Title, Icon, Filterable)                 \
-  {Operation, Title, Icon, Filterable},
+#define NEVERD_CHOOSER(Id, Operation, Title, Icon, Filterable, Requested)      \
+  {Operation, Title, Icon, Filterable, Requested},
 #include "Choosers.def"
 };
 
@@ -123,7 +124,9 @@ void ChooserModel::reload() {
   total_ = 0;
   endResetModel();
   emit totalChanged(total_);
-  if (session_.loaded() && !operation_.isEmpty())
+  // A list of search results or references waits for its request.
+  if (session_.loaded() && !operation_.isEmpty() &&
+      (!Specs[static_cast<int>(kind_)].requested || !request_.isEmpty()))
     requestPage(0);
 }
 

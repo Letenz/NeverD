@@ -5,7 +5,7 @@ namespace neverd::gui {
 // Kept apart from ChooserView.h: lupdate loses class scopes that follow an
 // #include inside a declaration in the same header.
 enum class ChooserKind : int {
-#define NEVERD_CHOOSER(Id, Operation, Title, Icon, Filterable) Id,
+#define NEVERD_CHOOSER(Id, Operation, Title, Icon, Filterable, Requested) Id,
 #include "Choosers.def"
   Count
 };
