@@ -1185,6 +1185,8 @@ Windows 进程时间策略归 `os/windows/process/` 中的 `WindowsProcessTime.c
 
 `MemoryProjection` 负责物理 RAM 写入失效记录，`ExecutionSession` 负责相应的停止和续接。x64 页表构建器为直接执行施加临时写保护，不包含镜像或保护器策略。Windows 进程观察在恢复执行前重新检查服务期间的写入。只有 `dynamic/ProcessTransfer` 依据实际解码的指令字节判定代际，并保持对混合代际页面的观察。
 
+`arch/x86_64/X64Watch.cpp` 负责控制流计划和标志敏感指令的续接；`X64PageTables.cpp` 与 `X64WatchTables.cpp` 负责投影构建和监视权限更新。传输层只安装执行停止点并保存实际 CPU 状态。 传输观察器只在已观察到的指令起点复用代际证据，并要求完整解码字节保持一致。操作数和跨页写入会重新布防；返回旧代码时会撤销上一代的执行证据。
+
 `arch/X64Imports.cpp` 统一负责 x64 导入指令的解码和生成。`dynamic/ProcessImports.cpp` 通过只读进程观察证明纯导出调用和地址加载结果；PE 写入器消费这些证据，不重复定义指令规则。
 
 导出地址只属于一次进程运行。辅助例程的证据携带证明该行为时解析出的模块和导出名称或序号；PE 写出层按身份值比较。发现阶段的地址可以在入口之后才绑定，但只有本轮运行的有效导出身份才能授权修复。

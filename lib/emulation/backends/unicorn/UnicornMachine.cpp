@@ -218,10 +218,20 @@ public:
       return diagnostic::error(diagnostic::DirectExecutionUnsupported);
     return enter(State, Root, Control, false);
   }
+  bool supportsExecutionStops() const override { return CPU.UserMode; }
+  llvm::Error runTo(X64MachineState &State, uint64_t Root,
+                    MachineRunControl Control,
+                    llvm::ArrayRef<uint64_t> Stops) override {
+    if (!CPU.UserMode || Stops.size() > x64::ExecutionStopCount ||
+        llvm::any_of(Stops, [](uint64_t PC) { return !x64::canonical(PC); }))
+      return diagnostic::error(diagnostic::DirectExecutionUnsupported);
+    return enter(State, Root, Control, false, Stops);
+  }
 
 private:
   llvm::Error enter(X64MachineState &State, uint64_t Root,
-                    MachineRunControl Control, bool Single) {
+                    MachineRunControl Control, bool Single,
+                    llvm::ArrayRef<uint64_t> Stops = {}) {
     if (auto E = validateX64FPState(State.FP))
       return E;
     if (auto E = CPU.synchronize())
@@ -283,7 +293,29 @@ private:
     // Keep the hook installed across checked/direct entries. This transport
     // ceiling is independent of the guest's instruction budget.
     const size_t Count = Single ? 1 : std::numeric_limits<size_t>::max();
+    // Address-bounded hooks instrument only these instruction starts, leaving
+    // unrelated translated loops free of per-instruction callbacks.
+    std::vector<uc_hook> StopHooks;
+    auto RemoveStops = [&]() {
+      llvm::Error E = llvm::Error::success();
+      for (auto Hook : StopHooks)
+        E = llvm::joinErrors(std::move(E),
+                             check(uc_hook_del(CPU.Engine, Hook)));
+      return E;
+    };
+    for (uint64_t PC : Stops) {
+      uc_hook Hook;
+      if (auto E = check(uc_hook_add(CPU.Engine, &Hook, UC_HOOK_CODE,
+                                     reinterpret_cast<void *>(executionStop),
+                                     this, PC, PC)))
+        return llvm::joinErrors(std::move(E), RemoveStops());
+      StopHooks.push_back(Hook);
+    }
     auto RunError = CPU.run(State.reg(X64Register::PC), Count, &Control);
+    if (auto E = RemoveStops()) {
+      llvm::consumeError(std::move(RunError));
+      return E;
+    }
     if (ServiceStatus != UC_ERR_OK) {
       llvm::consumeError(std::move(RunError));
       return check(ServiceStatus);
@@ -360,6 +392,9 @@ private:
   std::optional<unsigned> PendingException;
   std::optional<uint64_t> ServicePC;
   uc_err ServiceStatus = UC_ERR_OK;
+  static void executionStop(uc_engine *Engine, uint64_t, uint32_t, void *) {
+    uc_emu_stop(Engine);
+  }
   static void service(uc_engine *Engine, void *Opaque) {
     auto &Machine = *static_cast<UnicornX64Machine *>(Opaque);
     uint64_t PC = 0;

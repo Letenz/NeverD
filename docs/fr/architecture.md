@@ -1327,6 +1327,8 @@ La politique temporelle des processus Windows appartient à `WindowsProcessTime.
 
 `MemoryProjection` possède l’invalidation des écritures RAM physiques et `ExecutionSession` la continuation arrêtée. Le constructeur de tables x64 applique une protection temporaire en écriture pour l’exécution directe, sans politique d’image ni de protecteur. L’observation Windows revérifie les écritures des services avant la reprise. Seul `dynamic/ProcessTransfer` classe les générations à partir des octets réellement décodés et maintient l’observation des pages mixtes.
 
+`arch/x86_64/X64Watch.cpp` possède le plan de flot de contrôle et la reprise sensible aux indicateurs ; `X64PageTables.cpp` et `X64WatchTables.cpp` construisent la projection et actualisent les droits de surveillance. Les transports installent les arrêts et capturent l’état réel du CPU. L'observateur de transfert réutilise la génération d'une instruction uniquement à son début observé et tant que tous ses octets décodés restent identiques. Les écritures d'opérandes ou entre pages réarment la surveillance ; un retour à du code plus ancien retire les preuves d'exécution précédentes.
+
 `arch/X64Imports.cpp` possède le décodage et l’émission des instructions d’import x64. `dynamic/ProcessImports.cpp` prouve les appels exportés purs et les résultats de chargement d’adresses par observation seule du processus ; l’écriture PE utilise ces preuves sans dupliquer les règles d’instruction.
 
 Une adresse d’export appartient à une seule exécution. La preuve du helper conserve le module et le nom ou ordinal résolus pendant cette exécution ; l’écriture PE compare ces identités par valeur. Une adresse découverte peut être liée après l’entrée, mais seule son identité courante autorise la réparation.

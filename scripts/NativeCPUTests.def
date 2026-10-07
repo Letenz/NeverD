@@ -34,6 +34,10 @@ NEVERD_NATIVE_CPU_HOST(WHP, "Windows", "AMD64", "x86_64")
 
 #ifdef NEVERD_NATIVE_CPU_REQUIRED_TEST
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "MixedGenerationInstructionsDoNotRetriggerEveryIteration/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Transports/DirectX64."
     "ReadingWriteWatchedRAMDoesNotPublishAWrite/{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
@@ -213,6 +217,32 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Transports/DirectX64.PartialPageWatchStopsOnlyAtTheSelectedInstruction/"
     "{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.PartialWatchCanRunALongLoopInTheSamePage/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.FragmentedWatchesAllowRepeatedPageCrossings/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.FullNamespacePageCoverDoesNotWrap/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.WatchedCrossPageInstructionStopsBeforeItsEffects/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.AliasedCodeWriteInvalidatesAPlannedBranch/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.InactivePagePlansRevalidateWritesThroughPhysicalAliases/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.UnwatchedPageCanReturnToAPartialPageWatch/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.GuestTrapFlagOutranksAPartialPageWatch/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.IndirectFrontierDoesNotLeakASingleStepFlag/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.ManyControlFlowFrontiersPreservePushedFlags/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.ResumedPushFlagsWritesOnlyTheGuestFlags/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.ResumedPopFlagsPreservesTheNextGuestDebugTrap/{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Transports/"
     "DirectX64.ResumedWatchCanRetireOneInstructionAcrossTwoWatchedPages/"
     "{backend}")
@@ -268,6 +298,8 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "WhpResources.InitializationHostFailureOutranksConcurrentStop")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ProjectionCache.RelocatedWindowsKeepRAMIdentityAndInvalidateCachedRoots")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ProjectionCache.WatchOverlaysRestorePhysicalAliasPermissions")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.RetainsPhysicalIdentityAcrossAliasesAndPermissionChanges")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.SameValueAndABAHostWritesInvalidateEveryOlderWitness")
 NEVERD_NATIVE_CPU_REQUIRED_TEST("RAMReservations.FullGranuleIsObservedButUnrelatedWritesDoNotBreakProgress")

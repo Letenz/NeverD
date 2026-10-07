@@ -26,4 +26,8 @@ llvm::Error completeX64CR8Read(X64MachineState &State, unsigned GPR,
 llvm::Error X64Machine::run(X64MachineState &, uint64_t, MachineRunControl) {
   return diagnostic::error(diagnostic::DirectExecutionUnsupported);
 }
+llvm::Error X64Machine::runTo(X64MachineState &, uint64_t, MachineRunControl,
+                              llvm::ArrayRef<uint64_t>) {
+  return diagnostic::error(diagnostic::DirectExecutionUnsupported);
+}
 } // namespace neverd::emulation

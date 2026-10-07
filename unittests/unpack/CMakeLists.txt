@@ -3,6 +3,7 @@
 # that the native CPU inventory can require them.
 add_neverd_unittest(NeverDUnpackTests
   PERebuildTests.cpp
+  ProcessTransferTests.cpp
   UnpackIdentifyTests.cpp
   LINK_COMPONENTS Unpack)
 target_include_directories(NeverDUnpackTests PRIVATE "${PROJECT_SOURCE_DIR}/lib")

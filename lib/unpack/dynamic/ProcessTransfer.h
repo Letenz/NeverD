@@ -9,6 +9,8 @@
 #include "../core/Capture.h"
 #include "Platform.h"
 
+#include <map>
+
 namespace neverd::unpack {
 /// Follows the generations of code inside one image. Generation zero is the
 /// image as the guest loader mapped it. Every transfer into code that is newer
@@ -50,6 +52,7 @@ private:
                        std::vector<uint8_t> &Bytes,
                        std::vector<uint8_t> *Access = nullptr);
   void refreshWatches();
+  void removeInstructionWatch(uint64_t Offset);
   /// The generation of \p Bytes, which were read at image offset \p Offset.
   uint64_t generation(llvm::ArrayRef<uint8_t> Bytes, uint64_t Offset) const;
   const uint64_t Extent;
@@ -67,6 +70,9 @@ private:
   /// execution classification even when it arrives through another alias or
   /// through a stopped OS service.
   std::vector<uint8_t> Current;
+  // Only an observed start is exempted, never alternative entries inside its
+  // bytes. A resume revalidates the complete decoded extent after writes.
+  std::map<uint64_t, std::vector<uint8_t>> Instructions;
   std::vector<emulation::ExecutionWatch> Watches;
   std::vector<UnpackTransfer> Seen;
   std::optional<Capture> Captured;

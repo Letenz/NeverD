@@ -34,8 +34,9 @@ public:
   /// trap flag is its own, so a debug exception is reported like any other.
   llvm::Error run(X64MachineState &State, uint64_t Root,
                   MachineRunControl Control,
-                  uint32_t MXCSRMask = x64::fp::BaselineMXCSRMask) {
-    return enter(State, Root, Control, MXCSRMask, false);
+                  uint32_t MXCSRMask = x64::fp::BaselineMXCSRMask,
+                  llvm::ArrayRef<uint64_t> Stops = {}) {
+    return enter(State, Root, Control, MXCSRMask, false, Stops);
   }
 
 private:
@@ -43,11 +44,16 @@ private:
   /// entry (\p Step false) ends on the first architectural exception, which
   /// the guest's own trap flag may be, and returns its captured state.
   llvm::Error enter(X64MachineState &State, uint64_t Root,
-                    MachineRunControl Control, uint32_t MXCSRMask, bool Step) {
+                    MachineRunControl Control, uint32_t MXCSRMask, bool Step,
+                    llvm::ArrayRef<uint64_t> Stops = {}) {
+    if (Stops.size() > x64::ExecutionStopCount ||
+        std::any_of(Stops.begin(), Stops.end(),
+                    [](uint64_t PC) { return !x64::canonical(PC); }))
+      return diagnostic::error(diagnostic::DirectExecutionUnsupported);
     const bool Reuse = std::exchange(Runnable, false);
     if (auto E = validateX64FPState(State.FP))
       return E;
-    const auto Input = registers(State, Root, Step);
+    const auto Input = registers(State, Root, Step, Stops);
     if (auto E = installRegisters(Input, Reuse))
       return E;
     if (!Reuse || State.FP != CapturedState.FP ||
@@ -63,6 +69,16 @@ private:
       if (auto E = capture(Next, Actual, MXCSRMask))
         return E;
       const unsigned Vector = Exit.VpException.ExceptionType;
+      if (!Step && !Stops.empty() && Vector == x64::DebugVector) {
+        constexpr size_t StatusIndex =
+            std::find(std::begin(Names), std::end(Names), WHvX64RegisterDr6) -
+            std::begin(Names);
+        if (x64::executionStopHit(Stops, Next.reg(X64Register::PC),
+                                  Actual[StatusIndex].Reg64)) {
+          Next.reg(X64Register::FLAGS) &= ~x64::ResumeFlag;
+          return llvm::Error::success();
+        }
+      }
       // A step completes on its own debug trap. A free entry has no trap of
       // its own, so every exception is the boundary it stopped on.
       if (Step) {
@@ -169,7 +185,7 @@ private:
   }
 
   static RegisterPacket registers(const X64MachineState &State, uint64_t Root,
-                                  bool Step) {
+                                  bool Step, llvm::ArrayRef<uint64_t> Stops) {
     RegisterPacket Values{};
     size_t Index = 0;
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \

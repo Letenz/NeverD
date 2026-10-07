@@ -1125,6 +1125,8 @@ Windows 行程時間策略由 `os/windows/process/` 的 `WindowsProcessTime.cpp`
 
 `MemoryProjection` 負責物理 RAM 寫入失效記錄，`ExecutionSession` 負責相應的停止與續接。x64 分頁表建構器為直接執行施加暫時寫入保護，不包含映像或保護器策略。Windows 程序觀察在恢復執行前重新檢查服務期間的寫入。只有 `dynamic/ProcessTransfer` 依據實際解碼的指令位元組判定世代，並持續觀察混合世代頁面。
 
+`arch/x86_64/X64Watch.cpp` 負責控制流程計畫及旗標敏感指令的續接；`X64PageTables.cpp` 與 `X64WatchTables.cpp` 負責投影建構與監視權限更新。傳輸層只安裝執行停止點並擷取實際 CPU 狀態。 轉移觀察器只在已觀察到的指令起點重用代際證據，並要求完整解碼位元組保持一致。運算元和跨頁寫入會重新布防；返回舊程式碼時會撤銷上一代的執行證據。
+
 `arch/X64Imports.cpp` 統一負責 x64 導入指令的解碼與產生。`dynamic/ProcessImports.cpp` 透過唯讀行程觀察證明純導出呼叫與位址載入結果；PE 寫入器使用這些證據，不重複定義指令規則。
 
 匯出位址只屬於一次程序執行。輔助常式的證據攜帶證明該行為時解析出的模組和匯出名稱或序號；PE 寫出層按身分值比較。發現階段的位址可以在入口之後才繫結，但只有本次執行的有效匯出身分才能授權修復。

@@ -64,6 +64,7 @@ void PrintTo(const Profile &P, std::ostream *OS) { *OS << P.Name; }
 enum class SamePageCode {
   GeneratedJump,
   RewrittenCallback,
+  MixedInstructionLoop,
   AdjacentData,
   ChangedOperand,
   ServiceWrite
@@ -375,7 +376,8 @@ protected:
     write32le(Bytes.data() + Original.SectionTableOffset + Index * 40 + 8,
               std::max(Relay->VirtualSize, Relay->FileSize));
     write32le(Bytes.data() + Original.EntryOffset, Relay->RVA);
-    const bool Rewrite = Kind == SamePageCode::RewrittenCallback;
+    const bool MixedLoop = Kind == SamePageCode::MixedInstructionLoop;
+    const bool Rewrite = Kind == SamePageCode::RewrittenCallback || MixedLoop;
     const bool Data = Kind == SamePageCode::AdjacentData;
     const bool Service = Kind == SamePageCode::ServiceWrite;
     uint64_t ModuleSlot = 0, LookupSlot = 0;
@@ -440,7 +442,17 @@ protected:
         write32le(Code + 137, Original.Entry - (Target + 5));
       } else if (Rewrite) {
         Stub.insert(Stub.end(), {0x48, 0x83, 0xec, 0x28}); // sub rsp, 40
-        Store(Target, 0xc3, true);                         // ret
+        if (MixedLoop) {
+          // Each complete loop instruction is generated, but its opcode
+          // bytes remain from the loaded image. Only operands change.
+          constexpr uint8_t Loop[] = {0xb9, 0, 0,    0, 0,   0x83,
+                                      0xe9, 0, 0x75, 0, 0xc3};
+          llvm::copy(Loop, Code + 128);
+          Store(Target + 1, 1000000, false); // mov ecx, 1000000
+          Store(Target + 7, 1, true);        // sub ecx, 1
+          Store(Target + 9, 0xfb, true);     // jne to sub
+        } else
+          Store(Target, 0xc3, true); // ret
         Branch(0xe8, Target);
         Stub.insert(Stub.end(), {0x48, 0x83, 0xc4, 0x28}); // add rsp, 40
       }
@@ -542,7 +554,8 @@ protected:
       return;
     }
     ASSERT_EQ(Result->Outcome, UnpackOutcome::Unpacked) << Result->Diagnostic;
-    const bool Rewrite = Kind == SamePageCode::RewrittenCallback;
+    const bool MixedLoop = Kind == SamePageCode::MixedInstructionLoop;
+    const bool Rewrite = Kind == SamePageCode::RewrittenCallback || MixedLoop;
     ASSERT_EQ(Result->Transfers.size(), Rewrite ? 2u : 1u);
     const uint32_t Target = Original.section(RelaySection)->RVA + 128;
     EXPECT_EQ(Result->EntryRVA, Target);
@@ -614,6 +627,14 @@ TEST_P(UnpackGenerated, LoaderGeneratesItsEntryInThePageItIsExecuting) {
 
 TEST_P(UnpackGenerated, LoaderRewritesACallbackInItsOwnPageBeforeEnteringIt) {
   expectSamePage(SamePageCode::RewrittenCallback);
+}
+
+TEST_P(UnpackGenerated,
+       MixedGenerationInstructionsDoNotRetriggerEveryIteration) {
+  if (GetParam().Contract != ExecutionContract::DirectUserX64)
+    GTEST_SKIP() << "the long native loop requires direct x64 execution";
+  Options.Process.Limits.TimeoutMicroseconds = 10000000;
+  expectSamePage(SamePageCode::MixedInstructionLoop);
 }
 
 TEST_P(UnpackGenerated, ChangedDataBesideAnUnchangedInstructionIsNotAnEntry) {
