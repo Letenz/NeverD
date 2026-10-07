@@ -255,29 +255,21 @@ const char *neverd_import_slots_json(neverd_session_t Sess) {
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }
 
-const char *neverd_unwind_frames_json(neverd_session_t Sess) {
+const char *neverd_unwind_frame_json(neverd_session_t Sess,
+                                     neverd_va_t Address) {
   auto *S = toSession(Sess);
   if (!S || !S->Loaded)
-    return dupStr(std::string("[]"));
-  std::vector<const ExceptionFunction *> Frames;
-  for (const ExceptionFunction &F : S->Img.ExceptionMetadata.Functions)
-    if (F.CodeRange.isValid())
-      Frames.push_back(&F);
-  std::stable_sort(Frames.begin(), Frames.end(),
-                   [](const ExceptionFunction *A, const ExceptionFunction *B) {
-                     return A->CodeRange.Begin < B->CodeRange.Begin;
-                   });
-  llvm::json::Array Arr;
-  for (const ExceptionFunction *F : Frames) {
-    llvm::json::Object Obj{{"begin", vaHex(F->CodeRange.Begin)},
-                           {"end", vaHex(F->CodeRange.End)},
-                           {"encoding", getExceptionEncodingName(F->Encoding)},
-                           {"language_data", F->hasLanguageTable()}};
-    if (!F->PersonalityName.empty())
-      Obj["personality"] = jsonSafeText(F->PersonalityName);
-    Arr.push_back(std::move(Obj));
-  }
-  return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
+    return dupStr(std::string("null"));
+  const ExceptionFunction *F = S->Img.ExceptionMetadata.findFunction(Address);
+  if (!F || !F->CodeRange.isValid())
+    return dupStr(std::string("null"));
+  llvm::json::Object Obj{{"begin", vaHex(F->CodeRange.Begin)},
+                         {"end", vaHex(F->CodeRange.End)},
+                         {"encoding", getExceptionEncodingName(F->Encoding)},
+                         {"language_data", F->hasLanguageTable()}};
+  if (!F->PersonalityName.empty())
+    Obj["personality"] = jsonSafeText(F->PersonalityName);
+  return dupStr(jsonToString(llvm::json::Value(std::move(Obj))));
 }
 
 const char *neverd_exports_json(neverd_session_t Sess) {

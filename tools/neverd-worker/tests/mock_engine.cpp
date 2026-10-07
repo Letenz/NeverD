@@ -283,17 +283,24 @@ const char *neverd_pointer_refs_json(neverd_session_t s, neverd_va_t firstSlot,
                                      : Json(nullptr)}}
                   .dump());
 }
-const char *neverd_unwind_frames_json(neverd_session_t) {
-  return copy(Json::array({{{"begin", hexAddress(Base)},
-                            {"end", hexAddress(Base + 16)},
-                            {"encoding", "dwarf-fde"},
-                            {"language_data", false}},
-                           {{"begin", hexAddress(Base + 16)},
-                            {"end", hexAddress(Base + 32)},
-                            {"encoding", "dwarf-fde"},
-                            {"personality", "__gxx_personality_v0"},
-                            {"language_data", true}}})
-                  .dump());
+const char *neverd_unwind_frame_json(neverd_session_t, neverd_va_t address) {
+  // function_0 has a plain frame; function_1 names a personality.
+  if (address >= Base && address < Base + 16)
+    return copy(Json{
+        {"begin", hexAddress(Base)},
+        {"end", hexAddress(Base + 16)},
+        {"encoding", "dwarf-fde"},
+        {"language_data",
+         false}}.dump());
+  if (address >= Base + 16 && address < Base + 32)
+    return copy(Json{
+        {"begin", hexAddress(Base + 16)},
+        {"end", hexAddress(Base + 32)},
+        {"encoding", "dwarf-fde"},
+        {"personality", "__gxx_personality_v0"},
+        {"language_data",
+         true}}.dump());
+  return copy("null");
 }
 const char *neverd_decompile(neverd_session_t, neverd_va_t) {
   std::string text;

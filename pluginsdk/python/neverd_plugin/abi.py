@@ -1105,9 +1105,9 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
-    "neverd_unwind_frames_json",
+    "neverd_unwind_frame_json",
     "const char *",
-    ["neverd_session_t"],
+    ["neverd_session_t", "neverd_va_t"],
     ownership=Ownership.OWNED_STRING,
 )
 _declare(

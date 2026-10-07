@@ -48,14 +48,14 @@ NEVERD_API const char *neverd_exports_json(neverd_session_t Sess);
 /// entries, Mach-O bindings): [{"addr","name","addend"}] in address order.
 /// Slots whose metadata names conflicting symbols are omitted.
 NEVERD_API const char *neverd_import_slots_json(neverd_session_t Sess);
-/// Unwind records of native code in ascending address order:
-/// [{"begin","end","encoding","personality"?,"language_data"}].  "begin" and
-/// "end" bound the code a record describes, "encoding" names its format
-/// ("dwarf-fde", "x64-unwind-v1", ...), "personality" is the resolved
-/// personality routine when one is known, and "language_data" is true when
-/// the record carries decoded language-specific data.  An image without
-/// unwind tables yields [].
-NEVERD_API const char *neverd_unwind_frames_json(neverd_session_t Sess);
+/// The unwind record whose code range contains \p Address, as
+/// {"begin","end","encoding","personality"?,"language_data"}, or null.
+/// "begin" and "end" bound the code the record describes, "encoding" names
+/// its format ("dwarf-fde", "x64-unwind-v1", ...), "personality" is the
+/// resolved personality routine when one is known, and "language_data" is
+/// true when the record carries decoded language-specific data.
+NEVERD_API const char *neverd_unwind_frame_json(neverd_session_t Sess,
+                                                neverd_va_t Address);
 NEVERD_API const char *neverd_segments_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_strings_json(neverd_session_t Sess,
                                            int MinLength);

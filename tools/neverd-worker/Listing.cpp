@@ -25,7 +25,7 @@ using DisasmExFunction = const char *(*)(neverd_session_t, neverd_va_t, int,
                                          unsigned);
 using CodeRefsFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
 using ImportSlotsFunction = const char *(*)(neverd_session_t);
-using UnwindFramesFunction = const char *(*)(neverd_session_t);
+using UnwindFrameFunction = const char *(*)(neverd_session_t, neverd_va_t);
 using PointerRefsFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
 using DiscoverFunctionsFunction = int (*)(neverd_session_t);
 
@@ -272,10 +272,16 @@ struct Instruction {
   std::optional<std::uint64_t> target;
   std::vector<std::pair<std::uint64_t, RefKind>> refs;
 };
+/// An unwind frame a listing marks.
+struct UnwindMark {
+  std::uint64_t begin = 0, end = 0;
+  std::string personality;
+};
 struct DecodedFunction {
   std::vector<Instruction> instructions;
   std::set<std::uint64_t> labels;
   std::uint64_t end = 0;
+  std::optional<UnwindMark> unwind;
   /// The frame register a prologue sets up, or empty.
   std::string_view frameRegister;
   /// Stack variables by offset from the frame register, with their bytes.
@@ -376,7 +382,7 @@ struct Listing::Impl {
   DisasmExFunction disasmEx = nullptr;
   CodeRefsFunction codeRefs = nullptr;
   ImportSlotsFunction importSlots = nullptr;
-  UnwindFramesFunction unwindFrames = nullptr;
+  UnwindFrameFunction unwindFrame = nullptr;
   PointerRefsFunction pointerRefs = nullptr;
   DiscoverFunctionsFunction discoverFunctions = nullptr;
   /// Whether the engine's function detector has run for this image.
@@ -399,9 +405,6 @@ struct Listing::Impl {
   std::map<std::uint64_t, std::string> stubImports;
   /// Relocated data slots -> the pointer the loader stored there.
   std::map<std::uint64_t, std::uint64_t> pointers;
-  /// Marked unwind frames: begin -> personality, and end -> begin.
-  std::map<std::uint64_t, std::string> unwindBegins;
-  std::map<std::uint64_t, std::uint64_t> unwindEnds;
   /// Engine function name -> display name, where they differ.
   std::unordered_map<std::string, std::string> aliases;
   Json functionRowsCache;
@@ -425,8 +428,7 @@ struct Listing::Impl {
     disasmEx = engineSymbol<DisasmExFunction>("neverd_disasm_json_ex");
     codeRefs = engineSymbol<CodeRefsFunction>("neverd_code_refs_json");
     importSlots = engineSymbol<ImportSlotsFunction>("neverd_import_slots_json");
-    unwindFrames =
-        engineSymbol<UnwindFramesFunction>("neverd_unwind_frames_json");
+    unwindFrame = engineSymbol<UnwindFrameFunction>("neverd_unwind_frame_json");
     pointerRefs = engineSymbol<PointerRefsFunction>("neverd_pointer_refs_json");
     discoverFunctions = engineSymbol<DiscoverFunctionsFunction>(
         "neverd_session_discover_functions");
@@ -869,21 +871,6 @@ struct Listing::Impl {
         if (const auto next = page.value("next_slot", Json()); next.is_string())
           cursor = jsonAddress(next);
       }
-    unwindBegins.clear();
-    unwindEnds.clear();
-    if (unwindFrames)
-      if (const auto rows = takeJson(unwindFrames(session)); rows.is_array())
-        for (const auto &row : rows) {
-          const auto begin = jsonAddress(row.value("begin", Json()));
-          const auto end = jsonAddress(row.value("end", Json()));
-          auto personality = row.value("personality", std::string());
-          if (!begin || end <= begin ||
-              (!isMarkedUnwindEncoding(row.value("encoding", std::string())) &&
-               personality.empty()))
-            continue;
-          unwindEnds.emplace(end, begin);
-          unwindBegins.emplace(begin, std::move(personality));
-        }
     if (const auto rows = takeJson(neverd_exports_json(session));
         rows.is_array())
       for (const auto &row : rows) {
@@ -1175,6 +1162,7 @@ struct Listing::Impl {
     }
     if (dialect == OperandDialect::X86)
       buildFrame(body);
+    body.unwind = unwindAt(function.entry);
     // Only real instruction boundaries can carry labels.
     for (auto it = body.labels.begin(); it != body.labels.end();) {
       const auto at =
@@ -1407,6 +1395,25 @@ struct Listing::Impl {
     return true;
 #include "ListingVocabulary.def"
     return false;
+  }
+
+  /// The marked unwind frame that covers \p address: every DWARF frame, and
+  /// a frame of another format that names a handler.
+  std::optional<UnwindMark> unwindAt(std::uint64_t address) {
+    if (!unwindFrame)
+      return std::nullopt;
+    const auto frame = takeJson(unwindFrame(session, address));
+    if (!frame.is_object())
+      return std::nullopt;
+    UnwindMark mark;
+    mark.begin = jsonAddress(frame.value("begin", Json()));
+    mark.end = jsonAddress(frame.value("end", Json()));
+    mark.personality = frame.value("personality", std::string());
+    if (mark.end <= mark.begin ||
+        (!isMarkedUnwindEncoding(frame.value("encoding", std::string())) &&
+         mark.personality.empty()))
+      return std::nullopt;
+    return mark;
   }
 
   /// Whether the instruction at \p address in function \p f returns.
@@ -1757,12 +1764,12 @@ struct Listing::Impl {
       addNamedLine(out, item, base - NameColumnWidth, std::move(label),
                    item.start, "label");
     }
-    if (const auto frame = unwindBegins.find(item.start);
-        frame != unwindBegins.end()) {
+    if (body.unwind && body.unwind->begin == item.start) {
       StyledText open = lead(base - NameColumnWidth);
-      open.append(frame->second.empty()
+      open.append(body.unwind->personality.empty()
                       ? std::string(UnwindOpen)
-                      : std::string(UnwindOpen) + " // " + frame->second,
+                      : std::string(UnwindOpen) + " // " +
+                            body.unwind->personality,
                   ListingRole::AutoComment);
       addLine(out, item, item.start, "comment", std::move(open));
     }
@@ -1778,10 +1785,10 @@ struct Listing::Impl {
     addLine(out, item, item.start, "insn", std::move(text), target);
     out.back().flow = std::string(flowName(instruction.flow));
     const std::uint64_t next = item.start + item.size;
-    if (const auto frame = unwindEnds.lower_bound(item.start + 1);
-        frame != unwindEnds.end() && frame->first <= next) {
+    if (body.unwind && body.unwind->end > item.start &&
+        body.unwind->end <= next) {
       StyledText close = lead(base - NameColumnWidth);
-      close.append(UnwindClose + upperHex(frame->second),
+      close.append(UnwindClose + upperHex(body.unwind->begin),
                    ListingRole::AutoComment);
       addLine(out, item, item.start, "comment", std::move(close));
     }
