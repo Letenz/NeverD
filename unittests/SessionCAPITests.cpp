@@ -2201,6 +2201,55 @@ TEST_F(SessionCAPITest, StringScanReadsTheCodePagesSearched) {
       "[]");
 }
 
+TEST_F(SessionCAPITest, SwitchTablesComeFromWholeProgramAnalysis) {
+  // switch (x) on 0..3 through offsets from the table, as GCC lays out
+  // position-independent code: cmp edi, 3; ja default; mov edi, edi;
+  // lea rax, [rip + table]; movsxd rdx, [rax + rdi*4]; add rdx, rax;
+  // jmp rdx; then the four cases and the default, `mov eax, N; ret` each.
+  constexpr uint64_t Jump = DataELFEntry + 21, Cases = DataELFEntry + 23;
+  std::string Code("\x83\xff\x03\x77\x2a\x89\xff\x48\x8d\x05", 10);
+  const auto appendLE32 = [](std::string &Out, uint64_t Value) {
+    for (unsigned I = 0; I < 4; ++I)
+      Out.push_back(static_cast<char>(Value >> (8 * I)));
+  };
+  appendLE32(Code, DataELFData - (DataELFEntry + 14));
+  Code.append("\x48\x63\x14\xb8\x48\x01\xc2\xff\xe2", 9);
+  for (unsigned Value : {10u, 11u, 12u, 13u, 0xffffffffu}) {
+    Code.push_back('\xb8');
+    appendLE32(Code, Value);
+    Code.push_back('\xc3');
+  }
+  std::string Table;
+  for (unsigned Case = 0; Case < 4; ++Case)
+    appendLE32(Table, Cases + 6 * Case - DataELFData);
+  const auto Input = write("switch.elf", makeDataELF(Table, Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  // Tables come from the whole program's arbitrated analysis only.
+  EXPECT_EQ(neverd_switches_json(Session, 0, 16), nullptr);
+  ASSERT_EQ(neverd_session_analyze(Session), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Text = takeString(neverd_switches_json(Session, 0, 16));
+  auto Parsed = llvm::json::parse(Text);
+  ASSERT_TRUE(static_cast<bool>(Parsed)) << Text;
+  const auto *Switches = Parsed->getAsObject()->getArray("switches");
+  ASSERT_TRUE(Switches && Switches->size() == 1) << Text;
+  const auto &Switch = *(*Switches)[0].getAsObject();
+  const auto hex = [](uint64_t Value) { return "0x" + llvm::utohexstr(Value); };
+  EXPECT_EQ(Switch.getString("jump"), hex(Jump)) << Text;
+  EXPECT_EQ(Switch.getString("table"), hex(DataELFData)) << Text;
+  EXPECT_EQ(Switch.getString("form"), "table_relative") << Text;
+  EXPECT_EQ(Switch.getInteger("entry_size"), 4) << Text;
+  const auto *Targets = Switch.getArray("targets");
+  ASSERT_TRUE(Targets && Targets->size() == 4) << Text;
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    const auto &Target = *(*Targets)[Case].getAsArray();
+    EXPECT_EQ(Target[0].getAsString(), hex(Cases + 6 * Case)) << Text;
+    EXPECT_EQ(Target[1].getAsInteger(), Case) << Text;
+    EXPECT_EQ(Target[2].getAsInteger(), Case) << Text;
+  }
+}
+
 TEST(SessionTextDecoding, DecodesBytesForDisplayInAnyEncoding) {
   const unsigned char GBK[] = {'a', 0xd6, 0xd0, 0xff, 0x80};
   EXPECT_EQ(takeString(neverd_decode_text_json(GBK, sizeof(GBK), "gbk")),

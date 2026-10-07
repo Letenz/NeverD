@@ -42,6 +42,8 @@ NEVERD_NATIVE_BUILD_TEXT(ObjectRoot,
                          "lib/emulation/CMakeFiles/NeverDEmulationNative.dir")
 NEVERD_NATIVE_BUILD_TEXT(CompileCommands, "compile_commands.json")
 NEVERD_NATIVE_BUILD_TEXT(Cache, "CMakeCache.txt")
+NEVERD_NATIVE_BUILD_TEXT(CacheEntryPattern,
+                         "^([^#/\r\n:][^:\r\n]*):[^=\r\n]+=([^\r\n]*)$")
 NEVERD_NATIVE_BUILD_TEXT(CPUOption, "NEVERD_ENABLE_CPU_EMULATION")
 NEVERD_NATIVE_BUILD_TEXT(UnicornOption, "NEVERD_EMULATION_BACKEND_UNICORN")
 NEVERD_NATIVE_BUILD_TEXT(BackendOption, "NEVERD_EMULATION_BACKEND_")

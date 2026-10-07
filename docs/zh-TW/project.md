@@ -1,6 +1,6 @@
 **語言**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 0e490a01b7c701ed5c4ec7324feba7b113de2d5ccbc4713f2cef24397f7800d2 -->
+<!-- i18n-source: 28c7904abafc52d2209af4a57647570679e48107febcccb43e2bd9f607d0da2b -->
 
 <div align="center">
 
@@ -319,6 +319,7 @@ neverd decompile --arm-function-mode=0xADDRESS:thumb -o output.c binary
 | `hex` | 依位址十六進位傾印 |
 | `cfg` / `callgraph` | CFG / 呼叫圖（JSON；可選 DOT/SVG） |
 | `xrefs` | 交叉參照 |
+| `switches` | 全程式分析復原的 switch 跳躍表 |
 | `strings` / `search` | 字串 / 位元組或文字搜尋 |
 | `imports` / `exports` / `symbols` / `relocs` | 表 |
 | `segments` / `sections` / `entrypoints` | 配置 |

@@ -1,6 +1,6 @@
 **언어**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 0e490a01b7c701ed5c4ec7324feba7b113de2d5ccbc4713f2cef24397f7800d2 -->
+<!-- i18n-source: 28c7904abafc52d2209af4a57647570679e48107febcccb43e2bd9f607d0da2b -->
 
 <div align="center">
 
@@ -319,6 +319,7 @@ neverd decompile --arm-function-mode=0xADDRESS:thumb -o output.c binary
 | `hex` | 주소의 hex dump |
 | `cfg` / `callgraph` | CFG / 호출 그래프(JSON; DOT/SVG 선택) |
 | `xrefs` | 교차 참조 |
+| `switches` | 전체 프로그램 분석이 복원한 switch 점프 테이블 |
 | `strings` / `search` | 문자열 / 바이트 또는 텍스트 검색 |
 | `imports` / `exports` / `symbols` / `relocs` | 테이블 |
 | `segments` / `sections` / `entrypoints` | 레이아웃 |

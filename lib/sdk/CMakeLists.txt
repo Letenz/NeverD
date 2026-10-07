@@ -28,6 +28,7 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPISearch.cpp
     capi/NeverDCAPISigs.cpp
     capi/NeverDCAPIStringRefs.cpp
+    capi/NeverDCAPISwitches.cpp
     capi/NeverDCAPISimplify.cpp
     capi/NeverDCAPISynth.cpp
     capi/NeverDCAPISymbolic.cpp

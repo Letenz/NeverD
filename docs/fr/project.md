@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: 0e490a01b7c701ed5c4ec7324feba7b113de2d5ccbc4713f2cef24397f7800d2 -->
+<!-- i18n-source: 28c7904abafc52d2209af4a57647570679e48107febcccb43e2bd9f607d0da2b -->
 
 <div align="center">
 
@@ -320,6 +320,7 @@ Répétez l’option pour les autres entrées ambiguës, avec `:arm` si nécessa
 | `hex` | Dump hexadécimal à une adresse |
 | `cfg` / `callgraph` | CFG / graphe d’appels (JSON ; DOT/SVG optionnel) |
 | `xrefs` | Références croisées |
+| `switches` | Tables de sauts des switch issues de l'analyse du programme entier |
 | `strings` / `search` | Chaînes / recherche octets ou texte |
 | `imports` / `exports` / `symbols` / `relocs` | Tables |
 | `segments` / `sections` / `entrypoints` | Disposition |

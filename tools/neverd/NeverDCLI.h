@@ -187,6 +187,7 @@ extern llvm::cl::SubCommand SymbolsCmd;
 extern llvm::cl::SubCommand RelocsCmd;
 extern llvm::cl::SubCommand HeadersCmd;
 extern llvm::cl::SubCommand EntryPointsCmd;
+extern llvm::cl::SubCommand SwitchesCmd;
 extern llvm::cl::SubCommand DashboardCmd;
 extern llvm::cl::SubCommand SigsCmd;
 extern llvm::cl::SubCommand SimplifyCmd;
@@ -507,6 +508,7 @@ int runSections(neverd_session_t Sess);
 int runSymbols(neverd_session_t Sess);
 int runRelocs(neverd_session_t Sess);
 int runEntryPoints(neverd_session_t Sess);
+int runSwitches(neverd_session_t Sess);
 int runStrings(neverd_session_t Sess);
 
 // NeverDCmdDisasm.cpp — code views.

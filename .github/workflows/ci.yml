@@ -1997,6 +1997,8 @@ jobs:
             -DNEVERD_ENABLE_CPU_EMULATION=ON \
             -DNEVERD_ENABLE_DRIVER_EMULATION=OFF \
             -DNEVERD_EMULATION_BACKEND_UNICORN=OFF \
+            -DNEVERD_EMULATION_BACKEND_KVM=${{ matrix.backend == 'kvm' && 'ON' || 'OFF' }} \
+            -DNEVERD_EMULATION_BACKEND_WHP=${{ matrix.backend == 'whp' && 'ON' || 'OFF' }} \
             -DNEVERD_LLVM_PREBUILT=OFF
           cmake --build build-ci-arm64 --target NeverDEmulationNative --parallel 4
           python scripts/audit_native_backend_build.py \

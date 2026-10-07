@@ -1,0 +1,9 @@
+//===- NativeMethodExecution.def - GoogleTest method execution policy -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_NATIVE_METHOD_TEXT
+NEVERD_NATIVE_METHOD_TEXT(RunSerial, "RUN_SERIAL")
+NEVERD_NATIVE_METHOD_TEXT(InvalidRunSerial, "invalid CTest RUN_SERIAL value")
+#endif

@@ -494,6 +494,27 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                    {"complete", end == 700}}
                   .dump());
 }
+const char *neverd_switches_json(neverd_session_t, neverd_va_t first, int) {
+  // function_8 loads a table of three offsets from the table, in the free
+  // end of the read-only data, and dispatches through it.
+  constexpr std::uint64_t Entry = Base + 0x80, Table = RodataBase + 0x14;
+  Json switches = Json::array();
+  if (first <= Entry)
+    switches.push_back(
+        {{"function", hexAddress(Entry)},
+         {"jump", hexAddress(Entry + 6)},
+         {"load", hexAddress(Entry + 5)},
+         {"table", hexAddress(Table)},
+         {"entry_size", 4},
+         {"stride", 4},
+         {"storage", Json::array({Json::array({hexAddress(Table), 4, 4, 3})})},
+         {"form", "table_relative"},
+         {"targets",
+          Json::array({Json::array({hexAddress(Entry + 8), 0, 0}),
+                       Json::array({hexAddress(Entry + 10), 1, 1}),
+                       Json::array({hexAddress(Entry + 8), 2, 2})})}});
+  return copy(Json{{"switches", switches}, {"next_entry", nullptr}}.dump());
+}
 const char *neverd_string_encodings_json(void) {
   return copy(Json::array({{{"name", "ascii"},
                             {"spelling", ""},

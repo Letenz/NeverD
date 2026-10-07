@@ -74,7 +74,7 @@ def audit_objects(build: Path, backend: str, root: Path = ROOT) -> list[dict]:
     build, root = build.resolve(), root.resolve()
     profiles, sources, _, texts = definitions()
     _, definition, suffix = profiles[backend]
-    cache = dict(re.findall(r'^([^#/:][^:]*):[^=]+=(.*)$',
+    cache = dict(re.findall(texts["CacheEntryPattern"],
                            (build / texts["Cache"]).read_text(encoding="utf-8"),
                            re.M))
     if (cache.get(texts["CPUOption"]) != "ON"
