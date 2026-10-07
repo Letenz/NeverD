@@ -273,7 +273,8 @@ struct BinaryImage {
   bool IsRelocatable = false;
   /// The image runs at its link-time addresses: no loader rebases it, so an
   /// absolute address its code or data holds stays valid without a
-  /// relocation.  ELF ET_EXEC images; set by the format loaders.
+  /// relocation.  Set by the format loaders for ELF ET_EXEC images, PE images
+  /// without base relocations and Mach-O executables without MH_PIE.
   bool LoadsAtLinkAddress = false;
   va_t Base = 0;
   va_t Entry = 0;
