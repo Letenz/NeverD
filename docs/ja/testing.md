@@ -358,6 +358,8 @@ fixture は、ゲストの初期化、成功／失敗の戻り値、未対応動
 
 `DriverMutexThreadTests.cpp` は `driver_seh_mutex.def` の四つの独自 WDK モードを実行します。SEH フィルター内の再帰取得、フィルターまたは例外 finally が取得した所有権の保持、別のシステムスレッドによる解放後のブロック中フィルターの再開です。Unicorn/KVM/WHP の driver と checked 契約で、通常／有効 CFG イメージ、推奨／再配置アドレス、協調動作と 1/17 命令の時間片を検証します。モデルテストはネストしたスタック破棄後の APC 無効化、別スレッドからの解放拒否、最外層の復帰検査も確認します。KVM/WHP ケースは `NativeDriverTests.def` の必須項目です。
 
+`KernelWaitSetTests.cpp` は Unicorn なしで 15 件のモデルテストを実行し、部分的 `WaitAll`、先頭の準備済み `WaitAny`、保存インデックス、タイムアウト後の解放、不正な後続対象／領域、64 対象境界、IRQL、終了スレッド保持、2 個の同期タイマーを検証します。`DriverMultipleWaitTests.cpp` は `driver_wdm_multiple_wait.c` と `DriverMultipleWaitCases.def` の 7 種の独自 WDK モードを、Unicorn/KVM/WHP、両ドライバー契約、通常／CFG イメージ、再配置、協調／1／17 命令クォンタムで実行します。29 件のモデル／ネイティブ結果は `NativeDriverTests.def` の必須項目です。 回帰テストでは成功・タイムアウト後の重複完了、保存状態の変更、遅延待機の重複完了も検証します。
+
 `driver_context_limits.c`: API の IRQL 上限は `KernelAPIIRQL.def` にあり、引数依存の制約は担当モデルが検査します。DPC からレジストリ API やページプールの割り当て・解放・アクセスはできません。Unicode `DbgPrint` 変換は `PASSIVE_LEVEL` を要求し、対応する ANSI 出力と非ページ操作は `DISPATCH_LEVEL` で使用できます。コールバックスタックには範囲があり、逸脱したスタックポインターは別の待機ワーカーのスタックへ侵入できません。デバイス拡張内の有効なタイマーは早期解放を防ぎます。一般の IRQL 変更を公開する機能ではありません。
 
 `KernelDeviceStackTests.cpp` は所有関係と接続の独立性、最上位選択、失敗時の原子性、スタック容量、不透明フィールド、ハンドル数、切断・削除をまたぐワーク項目／要求の保持、ファイルとディスパッチ対象の違いを検証します。独自の `driver_wdm_stack.c` は実 WDK ヘッダーとインライン Copy/Skip/SetCompletion を使用し、通常／有効 CFG イメージを任意の `NEVERD_WDM_STACK_FIXTURE`／`NEVERD_WDM_STACK_CFG_FIXTURE` で指定します。`DriverWDMStackTests.cpp` は再配置、下位の実状態、完了順序／条件、遅延 pending 伝播、ワーカー／DPC、待機、`STATUS_MORE_PROCESSING_REQUIRED`、直接 MDL 保持、入れ子の完了、不正カーソル／制御を検証します。`DriverScenarioPublicTests.cpp` は C API／CLI 転送と C API の保持／入れ子完了を、設定された CFG イメージも含めて検証します。欠落時は明示的にスキップし、Linux の証拠は同一ドライバーのスタック範囲だけを示します。PDO／PnP／電源対応は示しません。 `KernelIRPStackTests.cpp` は個数に基づくカーソル、完全なインライン Copy 範囲、消費済み位置のクリア、状態／pending 伝播、MPR と入れ子完了、継続所有者、保持経路を検証します。実 READ/WRITE とファイルのライフサイクルもインライン Copy で検証します。
@@ -1230,9 +1232,9 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `windows-alignment-oracle.yml` は `check_windows_alignment.py` と `WindowsAlignmentCases.def` を使い、独自の x64 Windows 例外を 72 件観測します。九つの aligned SSE 形式を、七つの非整列アドレス／アクセス権のケースと、整列済みだがアクセス不能なページの対照で実行します。例外コード、引数、障害 PC、保存コンテキスト、生の出力、ソースとバイナリのハッシュを保持し、入力と RAM が不変であることを確認します。これは OS の動作の観測であり、KVM/WHP の実行認証や SEH 対応の追加ではありません。
 
-`native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
+`native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 113 ワークロードについて、元のアドレスと再配置先で計 226 の WHP 結果を必須とします。内訳は組み込みイメージ 27 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 4887 検査とSEH 回帰検査 25 件とスケジューリング検査 77 件を合わせ、必須の結果は 5215 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `4887 CPU + 226 WHP + 25 SEH + 77 scheduling = 5215`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `4933 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5294`。待機集合の 29 件は移植可能なモデル 15 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1564,3 +1566,13 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` は、分岐変更とシンボリックなフレーム書き込みを含む反復ネイティブ分岐先列、固定論理コスト、問い合わせ予算の境界と一回不足、不正な分岐先数制限、ゲート予算の枯渇、誤った終端観測を検証します。交互のフレーム射影と相関する分岐先射影では、述語置換後も完全なタプル、観測順序、不完全結果の拒否を維持します。
 `FrameOffsets.Cached*` は基準値の上位ビットを任意のままにしたアドレス平行移動、符号なしの折り返し、和の形状変更、両キャッシュ方式、述語の分離、容量ゼロ、クエリ／ノード予算による拒否、空の値域と非一意な値域の区別を検証する。初回要求は完全なソルバー証明を保持し、後続の平行移動はクエリ予算が残っていなくても完了済みの証明を利用できる。
+
+## 公開済み Android GKI カーネルの契約
+
+`AndroidTestExecution.def` は `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` に CTest 全体で 120 秒と `RUN_SERIAL` を設定します。二つのワークロードは各 30 秒の実行制限を保持し、直列化は容量試験間の競合を防ぎます。O0/O2 と再配置の全六構成に適用します。
+
+`LinuxPIDFD.*` はブランチとタスク一覧をロード前に検証します。`Backends/LinuxPIDFDProcess.*` は八ブランチの独立 x64/AArch64 O0/O2 呼び出し側でフラグ、共有表、上限、順序、対象種別、バッファ制限を確認します。`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` とほかの `AndroidSyscallTests.cpp` は六種の再配置構成で raw/Bionic と errno を確認します。共有部変更後は Linux プロセス、Android ネイティブ、公開プロセス API の全スイートを実行してください。モデル検証は GKI 起動とは別です。[ソースと証拠](android-gki-kernels.md)を参照してください。
+
+`ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: 八つの固定版で raw／Bionic の識別、PROF／VIRT／SCHED、下位 32 ビット、ポインター故障より先の対象検証、標本欠落、別名、非負 CPU 時間、壁時計と CPU のアイドル分離を確認します。`AndroidTimeTests.cpp` は出力とカナリアを、協調 syscall は現在の非リーダー TID を確認します。
+
+`ZeroTimeoutPollRetainsReadinessAndOrderedCopies` は八版の O0／O2 生呼び出しで、生存・負・閉じた記述子、重複件数、引数の縮小、タイムアウトとマスクの順序、読み取り専用ゼロ timespec、全メタデータの先行取り込み、後続障害で残る `revents` を検証します。`ZeroTimeoutPollKeepsUnobservedBoundaries` は未観測のカーネル、上限、マスク、待機、準備状態を維持します。Android の `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` は六つの梱包形式で共有表と errno の所有者を確認します。

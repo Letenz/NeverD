@@ -47,7 +47,7 @@ Le opzioni sono un oggetto JSON massimo 64 KiB. Campi sconosciuti/null, tipi err
 | `stack_size` | 1048576 | Stack allineato alla pagina entro il budget |
 | `output_limit` | 1048576 | Byte complessivi catturati da stdout/stderr |
 | `instruction_quantum` | 1024 | Intervallo d’ammissione prima di cedere alla runtime |
-| `linux_kernel` | Assente | Interfacce del kernel guest osservate esplicitamente come non disponibili |
+| `linux_kernel` | Assente | Ramo GKI esplicito, catalogo fisso di attività guest o interfacce del kernel osservate assenti |
 | `linux_priority` | Assente | Valori nice espliciti per task e autorità del chiamante per i servizi Linux di priorità grezzi |
 
 `schema_version` è 1. Il report contiene profilo, architettura, backend e motivo della scelta, `stop_reason`, `exit_status` nullable, diagnostica, PC di ingresso/corrente, contatori, record dei servizi e ultimo esito CPU tipizzato. Indirizzi, numeri syscall, registri argomento e bit di ritorno sono stringhe esadecimali **senza** `0x`; `stdout_hex`/`stderr_hex` preservano NUL e UTF-8 non valido. Un risultato syscall null significa nessun ritorno modellato (per esempio exit o richiesta non supportata), non zero riuscito.
@@ -109,6 +109,10 @@ I numeri dei segnali vanno da 1 a 64. `rt_sigaction` e Bionic condividono lo sta
 
 <a id="windows-pe64-profile"></a>
 
+`linux_kernel.gki` seleziona 5.10–6.18 per `pidfd_open` e import vettoriale; API Android non sceglie kernel. `linux_kernel.tasks` dichiara attività vive fisse come `{ "id": 2000, "group_leader": true }`. Omissione: target esterni non supportati; array vuoto: solo leader corrente; fuori catalogo: ESRCH. Priorità coerenti e assenza di thread Android cooperativi sono richieste. La tabella si condivide con `linux_files`; GKI e pidfd assente sono incompatibili. Vedere il [contratto completo](android-gki-kernels.md).
+
+Il sottoinsieme GKI comprende anche orologi CPU di processo osservati e pidfd `ppoll` con timeout zero. Quest’ultimo richiede timespec zero esplicita, maschera temporanea nulla e limite `linux_files`. Scrive solo `revents` ordinati senza riscrivere il timeout o avanzare l’orologio reale. Un descrittore chiuso produce POLLNVAL; un pidfd vivo non è pronto. Attese bloccanti e disponibilità di altri tipi restano non supportate.
+
 <!-- i18n-section: linux-clocks -->
 
 ## Orologi guest espliciti
@@ -122,9 +126,13 @@ L’opzione `linux_time` fornisce valori fissi alle chiamate Linux e ad Android 
   "timezone":{"minutes_west":-60,"dst_time":0}}}
 ```
 
-Sono ammessi gli identificatori statici 0–9 e 11. Ogni orologio è indipendente; un valore omesso resta sconosciuto. Identificatori duplicati o sconosciuti vengono rifiutati. I secondi sono interi con segno a 64 bit e i nanosecondi appartengono a `[0, 1000000000)`. Gli interi JSON sono limitati a `±9007199254740991`; le stringhe decimali preservano l’intero intervallo a 64 bit. I campi del fuso orario sono interi con segno a 32 bit. C++ usa `ProcessOptions::LinuxTime`; gli altri profili OS rifiutano l’opzione.
+Sono ammessi ID statici 0–9 e 11 e ID CPU negativi del GKI scelto. Identità duplicate, ID sconosciuti e oltre 16384 campioni sono rifiutati. I secondi hanno 64 bit con segno, non negativi per CPU; i nanosecondi sono in `[0, 1000000000)`. Gli interi JSON restano in `±9007199254740991`, le stringhe decimali preservano tutta la gamma; il fuso ha 32 bit con segno. C++ usa `ProcessOptions::LinuxTime`; altri profili OS rifiutano l’opzione.
 
-`clock_gettime`, `gettimeofday` e `time` su x64 condividono gli ingressi. Valori mancanti, orologi dinamici o scritture parziali non modellate causano un arresto esplicito; le scritture completate restano valide. Regolazione del tempo, sospensione e orologi fisici non sono modellati. Il [contratto completo degli orologi](../process-emulation.md#explicit-guest-clocks) descrive ordine delle scritture, errori e puntatori.
+`-16006` è SCHED del PID 2000. PROF e VIRT sono indipendenti. Gli ID SCHED correnti 2, -6 (PID zero) e -8006 (PID 1000) condividono un campione; gli alias PROF sono -8/-8008 e VIRT -7/-8007. Alias duplicati vengono rifiutati anche a valori uguali. I secondi CPU sono non negativi e i nanosecondi normalizzati. L’avanzamento inattivo modifica solo gli orologi di parete 0, 1 e 7; i campioni CPU restano fissi. L’esecuzione non deduce consumo CPU.
+
+`advance_on_idle: true` attiva `nanosleep` relativo x64/ARM64 e wrapper Android nominati/variadic. Gli orologi di parete 0, 1 e 7 possono coesistere con campioni CPU fissi; altri tipi sono esclusi da questa politica. I thread eseguibili procedono per primi; quando tutti sono bloccati, il tempo raggiunge la prima scadenza. Un unico thread avanza direttamente. Gli orologi dinamici/FD/di thread codificati restano non supportati.
+
+Il TID della stessa attività corrente identifica anche il suo gruppo, inclusi i thread Android cooperativi senza catalogo esterno. Un PID esterno assente dal catalogo chiuso o vivo ma non leader restituisce `EINVAL` prima dell’accesso alla destinazione. Catalogo omesso o campione mancante per un gruppo noto: arresto non supportato prima della copia. Tipi invalidi restituiscono `EINVAL`; campioni validi possono produrre `EFAULT` nella copia utente. I trap mantengono errori negativi; solo Bionic aggiorna errno e restituisce -1. [GKI](android-gki-kernels.md).
 
 <a id="explicit-memory-files"></a>
 

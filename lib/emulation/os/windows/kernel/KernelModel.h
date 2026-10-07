@@ -23,6 +23,7 @@
 #include "KernelRemoveLocks.h"
 #include "KernelScheduler.h"
 #include "KernelUsbIdle.h"
+#include "KernelWaits.h"
 
 #include "neverd/emulation/DriverSession.h"
 #include "neverd/emulation/GuestMemory.h"
@@ -175,6 +176,7 @@ public:
     enum class Kind {
       Dispatcher,
       Thread,
+      Multiple,
       Delay,
       RemoveLock,
       FrameworkQueueStop,
@@ -195,6 +197,12 @@ public:
     uint64_t Thread = 0;
     uint8_t IRQL = 0;
     std::optional<uint64_t> Deadline;
+    std::vector<uint64_t> Objects;
+    bool All = false;
+    uint64_t WaitBlockArray = 0;
+    uint32_t WaitBlockSize = 0;
+    uint64_t Registration = 0;
+    bool operator==(const Wait &) const = default;
   };
   std::optional<Wait> takeWait();
   llvm::Expected<std::optional<uint32_t>> pollWait(const Wait &Pending);
@@ -692,7 +700,10 @@ private:
   }
   llvm::Error canReleaseResources(uint64_t PDO) const;
   std::optional<Wait> PendingWait;
+  uint64_t NextWaitRegistration = kernel_wait::FirstRegistration;
+  std::map<uint64_t, Wait> WaitRegistrations;
   std::map<uint64_t, size_t> WaitReferences;
+  std::map<std::pair<uint64_t, uint32_t>, size_t> WaitBlockReferences;
   struct SystemThread {
     uint64_t Handle = 0;
     uint64_t CallbackID = 0;
@@ -733,6 +744,12 @@ private:
                               uint64_t IgnoredDMAPin = 0) const;
   llvm::Expected<uint64_t> beginWait(llvm::ArrayRef<uint64_t> Arguments,
                                      bool Delay);
+  llvm::Expected<uint64_t>
+  beginMultipleWait(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t> beginObjectWait(Wait Pending, uint64_t Timeout);
+  llvm::Expected<std::optional<uint32_t>>
+  acquireWaitObjects(const Wait &Pending);
+  llvm::Error releaseWaitReferences(const Wait &Pending);
   llvm::Error
   canRevokeVirtualRange(uint64_t Base, uint64_t Size,
                         std::optional<UsbIdleKey> RetiringUsbIdle = {}) const;

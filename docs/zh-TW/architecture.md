@@ -460,6 +460,8 @@ Windows 模型亦管理獨立的非分頁池 MDL；釋放描述符不會釋放�
 
 `KernelDispatcher` 依邏輯執行緒維護 mutex 的遞迴所有權。`KernelModel` 為延遲的 `KeWaitForSingleObject` 取得保存等待執行緒，並讓 APC 查詢和 `KeReleaseMutex` 使用相同身分；巢狀堆疊退役保留所有權，最外層返回仍執行生命週期檢查。
 
+`KernelModelWaits` 統一負責單物件／多物件等待登記、執行緒參考、期限及呼叫端不透明 `KWAIT_BLOCK` 的生命週期。`KernelDispatcher` 驗證完整集合後才提交訊號、計數及 mutex 變更；`KernelScheduler` 對選中的同步計時器訊號整批預檢和消耗。 `WaitRegistrations` 保存這份權威記錄。 每次延後等待都有不重複使用的識別碼與不可變的擷取狀態；輪詢已完成或被竄改的等待時，會在取得訊號或釋放參照之前報錯。
+
 `KernelModelDeviceStack` 以單一記錄管理各裝置的驅動程式擁有者、配置、上下層鄰居、待刪除狀態與內部參考。客體 `NextDevice` 列舉串列與宿主擁有的附加圖意義不同。名稱解析保留具名下層裝置作為 `FILE_OBJECT` 和報告身分，選擇目前堆疊頂端進行初始派送及 READ/WRITE 緩衝設定，並保留整條請求路徑。解除附加或刪除不會讓請求／回呼仍持有的裝置失效；公開 `ReferenceCount` 仍只計算開啟的控制代碼。
 
 `KernelModelIRPStack` 管理原始客體封包的有界堆疊游標、確切目標派送及完成展開；內嵌 Copy/Skip/SetCompletion 寫入仍為權威資料。派送狀態、完成回呼控制值與最終 `IoStatus` 分離，pending 可在派送傳回後傳播。`STATUS_MORE_PROCESSING_REQUIRED` 保留封包、MDL 與緩衝區，直到繼續執行並到達最終展開邊界，包括巢狀完成。`KernelGuestCall` 攜帶子系統擁有者及區域 token，防止 WDM／WDF 續接身分碰撞；`DriverSession` 保留 CPU 框架與繼承的 IRQL。一個客體驅動程式可附加於獨立擁有的情境 PDO；驅動程式自行配置的 IRP 仍不支援。WDF 附加／轉送、活動堆疊附加、中間層移除、變更主要功能及路徑外目標仍不支援。 呼叫上層完成回呼之前，已消耗的下層堆疊位置會清零。
@@ -1354,3 +1356,15 @@ Swift SDK Published 的 enclosing-instance 存取器保留四個指標載體：�
 `LinuxUnavailableSyscalls.def` 統一宣告公開的缺少觀察識別碼、輸入名稱、架構編號及選定可選核心呼叫的固定參數數量。`LinuxKernelOptions` 是明確測試觀察值；共用 Linux 核心服務僅在觀察值宣告呼叫缺少時回傳 ENOSYS。目錄不提供呼叫實作，也不根據 Android API 等級推斷可用性。JSON 驗證及設定准入在載入前完成；未列出及可用但未建模的呼叫仍明確不支援。
 
 框架偏移證明鍵從原始 64 位元位址的頂層和式移出常數偏移，再減去同一個入口框架根。首次證明保留完整述詞與既有餘項運算式。完成的值域在存入快取前減去偏移，命中時加回本次要求的偏移，保留模數回繞、空值域與非唯一性。鍵依原位址建立，因此有界餘項改寫在二元與多元和式間改變形狀不會改變證明身分。所有新節點均計入既有節點上限。
+
+## 已釋出 Android GKI 核心契約
+
+`LinuxGKIKernels.def` 統一管理已釋出分支、`pidfd_open` 標誌、非首領錯誤及 iovec 匯入策略。`LinuxKernelOptions` 顯式選擇版本並擁有可選的固定任務清單；省略清單時外部目標仍不支援。`LinuxServices` 分派呼叫，`LinuxFiles` 統一擁有檔案和程序描述符，`LinuxOutput` 複用版本化向量校驗，`LinuxPIDFD` 在分配描述符前檢查目標類別。共享准入拒絕矛盾的優先順序觀察值及協作式 Android 執行緒組合；不查詢宿主程序。詳見[已釋出 GKI 契約](android-gki-kernels.md)。
+
+`LinuxCPUClock` 解碼程序 CPU 身份並校驗已釋出 GKI 的任務觀察值，在訪問輸出前解析當前任務的程序組別名及外部組首領。`LinuxClock` 規範化樣本並拒絕重複別名。空閒策略只推進宣告的牆鍾，CPU 樣本保持固定；宿主時鐘和指令計量均不提供隱式觀察值。
+
+`LinuxPoll` 複用 `LinuxFiles` 的描述符所有者進行零超時 pidfd 查詢；先匯入超時和描述符元資料，檢查宣告的限額，再透過共享使用者複製策略按序提交 `revents`。固定存活觀察值不推斷退出、阻塞等待、臨時掩碼或其他描述符的就緒狀態。
+
+## 行動端原始碼組裝
+
+Objective-C 原始碼匯出器對完整原生單元與各方法單元同時關閉 `CEmitterOptions::EmitRecordGuards` 與 `CEmitterOptions::UseUnalignedPointers`。精確寬度的位元組複製保留非對齊記憶體存取語意，並使產生的巨集不進入行動端剖析器；條件指令與修改巨集的指令仍被拒絕。
