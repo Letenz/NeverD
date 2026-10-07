@@ -1583,3 +1583,14 @@ NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockTests,
                            "NativeWindowsOracleRunsTheSameExecutable")
 NEVERD_EMULATION_DOC_TOKEN(WindowsProcessClockTests, "BOOLEAN")
 #endif
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(WindowsProbeScheduling, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(WindowsProbeScheduling, "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(WindowsProbeScheduling, "WindowsTestExecution.def")
+NEVERD_EMULATION_DOC_TOKEN(WindowsProbeScheduling, "WindowsExclusive")
+NEVERD_EMULATION_DOC_TOKEN(WindowsProbeScheduling, "RUN_SERIAL")
+NEVERD_EMULATION_DOC_TOKEN(WindowsProbeScheduling, "60 s")
+#endif
