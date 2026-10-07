@@ -1293,7 +1293,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           if (!UnresolvedIndirect) {
             ExternalCallSources[Name].insert(SourceName);
             Targets.insert(Name);
-            if (Ex.DoesNotReturn)
+            // The statement writer's own rule, read from the call itself: a
+            // C name need not be the symbol the rule knows.
+            if (isNoreturnCallExpr(Ex))
               NoReturnCallTargets.insert(Name);
             if (auto FS = debugCallee(Ex)) {
               noteDebugExtern(Name, *FS);
@@ -1872,7 +1874,13 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       OS << debugExternPrototype(FunctionSym{}, Identifier) << ";\n";
     } else if (!ConflictingSourceNativeSignatures.count(Name)) {
       OS << "extern int " << Identifier << "(";
-      if (auto Arity = libc::libcArity(Name);
+      // The calls print as many arguments (debugCallArgLimit).
+      const auto Sources = ExternalCallSources.find(Name);
+      const llvm::StringRef Symbol =
+          Sources != ExternalCallSources.end() && Sources->second.size() == 1
+              ? llvm::StringRef(*Sources->second.begin())
+              : llvm::StringRef(Name);
+      if (auto Arity = knownArity(Symbol, Name);
           Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0) {
         if (Arity->IntArgs == 0)
           OS << "void";

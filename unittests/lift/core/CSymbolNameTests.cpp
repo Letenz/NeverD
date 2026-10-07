@@ -120,6 +120,58 @@ TEST(CSymbolNames, ElfCxxCallsReadByScopeAndLinkByMangledName) {
   EXPECT_EQ(Source.find("__fastcall"), NotFound) << Source;
 }
 
+TEST(CSymbolNames, RenamedNoreturnImportsStillNeverReturn) {
+  // std::__throw_bad_alloc() reads by its scopes, but its call still ends the
+  // path; the declaration must say so, or C falls through.
+  const std::string Source =
+      emitHighC({function("_ZN3Foo3runEv", 0x1000,
+                          {callStatement("_ZSt17__throw_bad_allocv", 0x2000)})},
+                BinaryFormat::ELF, Arch::X64);
+  EXPECT_NE(Source.find(" std___throw_bad_alloc() "
+                        "__asm__(\"_ZSt17__throw_bad_allocv\") "
+                        "__attribute__((noreturn));"),
+            NotFound)
+      << Source;
+}
+
+TEST(CSymbolNames, KnownAritiesFollowTheSymbol) {
+  // The runtime tables know `_Unwind_Resume` and `_ZSt9terminatev` by their
+  // symbols, which their C names keep or read by scope; declarations and
+  // calls take the tables' arity either way.
+  const std::string Source =
+      emitHighC({function("resume", 0x1000,
+                          {callStatement("_Unwind_Resume", 0x2000,
+                                         {HighExpr::makeConst(1, 8),
+                                          HighExpr::makeConst(2, 8)})}),
+                 function("terminate", 0x1100,
+                          {callStatement("_ZSt9terminatev", 0x2010,
+                                         {HighExpr::makeConst(3, 8)})})},
+                BinaryFormat::ELF, Arch::X64);
+  EXPECT_NE(Source.find("extern int _Unwind_Resume(int64_t)"), NotFound)
+      << Source;
+  EXPECT_NE(Source.find("_Unwind_Resume(1);"), NotFound) << Source;
+  EXPECT_NE(Source.find(
+                "extern int std_terminate(void) __asm__(\"_ZSt9terminatev\")"),
+            NotFound)
+      << Source;
+  EXPECT_NE(Source.find("std_terminate();"), NotFound) << Source;
+}
+
+TEST(CSymbolNames, UndeterminedKnownArgumentsAreUnknown) {
+  // A catch fragment whose incoming exception object the lift does not
+  // track still passes it: the call takes the declared argument, unknown.
+  const std::string Source =
+      emitHighC({function("catch_fragment", 0x1000,
+                          {callStatement("__cxa_begin_catch", 0x2000)})},
+                BinaryFormat::ELF, Arch::X64);
+  EXPECT_NE(Source.find("extern int __cxa_begin_catch(int64_t);"), NotFound)
+      << Source;
+  EXPECT_NE(Source.find("__cxa_begin_catch((__builtin_trap(), 0 /* unknown "
+                        "value */));"),
+            NotFound)
+      << Source;
+}
+
 TEST(CSymbolNames, MachOLabelsCarryTheDecoration) {
   const std::string Source =
       emitHighC(cxxCaller("_"), BinaryFormat::MachO, Arch::AArch64);

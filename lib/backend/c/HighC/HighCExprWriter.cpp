@@ -861,8 +861,11 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format);
   // A callee printed in this file fixes the count by its signature; otherwise
   // debug info and MSVC member knowledge may trim ABI-only extra operands.
-  const size_t PrintedArgs =
+  size_t PrintedArgs =
       Defined && !Defined->SourceTypeHint ? ArgCount : debugCallArgLimit(E);
+  // So does a known external function's declaration.
+  if (const auto Declared = plainDeclarationArity(E))
+    PrintedArgs = std::max(PrintedArgs, *Declared);
   for (size_t I = 0; I < PrintedArgs; ++I) {
     if (I > 0)
       S += ", ";
@@ -1458,10 +1461,35 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
   }
   if (Msvc)
     return msvcPrintedArgLimit(*Msvc, Have, UnknownAt, KeepExtra);
-  if (auto Arity = libc::libcArity(Name);
+  if (auto Arity = knownArity(resolvedCallTarget(E), Name);
       Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0)
     return Clamp(static_cast<size_t>(Arity->IntArgs));
   return Have;
+}
+
+std::optional<libc::LibCArity>
+HighCWriter::knownArity(llvm::StringRef Symbol, llvm::StringRef Identifier) {
+  if (auto Arity = libc::libcArityForSymbol(Symbol))
+    return Arity;
+  return libc::libcArity(Identifier);
+}
+
+std::optional<size_t>
+HighCWriter::plainDeclarationArity(const HighExpr &E) const {
+  if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None ||
+      E.IsIndirectCall || E.CallTarget.empty() ||
+      DefinedFuncs.count(E.CallTarget) || debugCallee(E))
+    return std::nullopt;
+  // Source, debug and MSVC knowledge declare the function their own way.
+  const std::string Name = callIdentifier(E);
+  if (SourceNativeSignatures.count(Name) ||
+      ConflictingSourceNativeSignatures.count(Name) ||
+      msvcCallee(Name, Opts.Format))
+    return std::nullopt;
+  const auto Arity = knownArity(resolvedCallTarget(E), Name);
+  if (!Arity || Arity->FpArgs != 0 || Arity->IntArgs < 0)
+    return std::nullopt;
+  return static_cast<size_t>(Arity->IntArgs);
 }
 
 namespace {

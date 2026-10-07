@@ -2779,8 +2779,13 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
   if (Msvc)
     return static_cast<unsigned>(
         msvcPrintedArgLimit(*Msvc, Have, UnknownAt, KeepExtra));
-  if (auto Arity = libc::libcArity(CalleeName.str());
-      Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0)
+  // The arity tables know symbols; a C++ callee's C name is its stem.
+  const auto *Callee = Call.getCalledFunction();
+  auto Arity =
+      libc::libcArityForSymbol(Callee ? Callee->getName() : CalleeName);
+  if (!Arity)
+    Arity = libc::libcArity(CalleeName.str());
+  if (Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0)
     return Clamp(static_cast<size_t>(Arity->IntArgs));
   if (!Call.getCalledFunction()) {
     unsigned Lim = Have;
