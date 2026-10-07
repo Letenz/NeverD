@@ -7,6 +7,8 @@
 #include "LanguageEHTestsDetail.h"
 #include "gtest/gtest.h"
 
+#include "neverd/loader/FunctionDiscovery.h"
+
 #include <limits>
 
 namespace {
@@ -606,6 +608,98 @@ TEST(ItaniumEHDriver, LeavesALandingPadAnotherFrameCovers) {
   ASSERT_EQ(Img.ExceptionMetadata.Functions.size(), 2u);
   EXPECT_NE(functionAt(Img, StubVA + 4), nullptr);
   EXPECT_EQ(functionAt(Img, StubVA), nullptr);
+}
+
+/// An x86-64 image whose `.eh_frame` holds one frame of \p FrameSize bytes
+/// at \p FrameVA.
+BinaryImage makeX64FrameImage(va_t FrameVA, uint64_t FrameSize) {
+  BinaryImage Img = makeImage();
+  FrameBytes Frame = buildSimpleFrame(kDataVA, FrameVA, FrameSize, "zR", 0, 0);
+  writeData(Img, kDataVA, Frame.Bytes);
+  Section EhFrame;
+  EhFrame.Name = ".eh_frame";
+  EhFrame.VA = kDataVA;
+  EhFrame.Size = Frame.Bytes.size();
+  EhFrame.Data = Frame.Bytes;
+  Img.Sections.push_back(std::move(EhFrame));
+  return Img;
+}
+
+// The .eh_frame_hdr search table names only each function's entry.  Its frame
+// proves the extent, and heuristic discovery must not guess a function start
+// inside it -- here an instruction byte equal to int3 before a prologue-like
+// sequence.
+TEST(ItaniumEHDriver, GivesSearchTableFunctionsTheirFrameBeforeDiscovery) {
+  const va_t FuncVA = kTextVA + 0x100;
+  const std::vector<uint8_t> PaddingLookalike = {0xcc, 0x55, 0x48, 0x89, 0xe5};
+  BinaryImage Guessed = makeX64FrameImage(FuncVA, 0x80);
+  writeData(Guessed, FuncVA + 0x3f, PaddingLookalike);
+  Guessed.Symbols.push_back(Symbol::makeFunc(FuncVA));
+  scanPaddingBoundaries(Guessed);
+  // Without the frame, the scan takes the sequence for a new function.
+  ASSERT_NE(functionAt(Guessed, FuncVA + 0x40), nullptr);
+
+  BinaryImage Img = makeX64FrameImage(FuncVA, 0x80);
+  writeData(Img, FuncVA + 0x3f, PaddingLookalike);
+  Img.Symbols.push_back(Symbol::makeFunc(FuncVA));
+  recordFrameExtents(Img);
+  scanPaddingBoundaries(Img);
+
+  const Symbol *Function = functionAt(Img, FuncVA);
+  ASSERT_NE(Function, nullptr);
+  EXPECT_EQ(Function->Size, 0x80u);
+  EXPECT_EQ(functionAt(Img, FuncVA + 0x40), nullptr);
+  ASSERT_EQ(Img.KnownCodeRanges.size(), 1u);
+  EXPECT_EQ(Img.KnownCodeRanges.front(), std::make_pair(FuncVA, FuncVA + 0x80));
+}
+
+TEST(ItaniumEHDriver, KeepsTheStatedSizeOfANamedFunction) {
+  const va_t FuncVA = kTextVA + 0x100;
+  BinaryImage Img = makeX64FrameImage(FuncVA, 0x80);
+  Symbol Start = Symbol::makeFunc(FuncVA);
+  Start.Name = "_start";
+  Img.Symbols.push_back(std::move(Start));
+
+  recordFrameExtents(Img);
+
+  const Symbol *Function = functionAt(Img, FuncVA);
+  ASSERT_NE(Function, nullptr);
+  EXPECT_EQ(Function->Size, 0u);
+  EXPECT_EQ(Img.KnownCodeRanges.size(), 1u);
+}
+
+// A linker emits one frame for a whole PLT section; its first stub is not a
+// function of that size.
+TEST(ItaniumEHDriver, LeavesAPLTFrameToItsStubs) {
+  const va_t StubsVA = kTextVA + 0x100;
+  BinaryImage Img = makeX64FrameImage(StubsVA, 0x48);
+  Section Stubs;
+  Stubs.Name = ".plt.got";
+  Stubs.VA = StubsVA;
+  Stubs.Size = 0x48;
+  Stubs.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Sections.push_back(std::move(Stubs));
+  Img.Symbols.push_back(Symbol::makeFunc(StubsVA));
+
+  recordFrameExtents(Img);
+
+  const Symbol *First = functionAt(Img, StubsVA);
+  ASSERT_NE(First, nullptr);
+  EXPECT_EQ(First->Size, 0u);
+}
+
+TEST(ItaniumEHDriver, ExtentsFirstStillDropTheEntryInsideAPaddedFunction) {
+  const va_t StubVA = kTextVA + 0x100;
+  BinaryImage Img = makeAArch64FrameImage(StubVA, kBTIStub, StubVA + 4, 12);
+  Img.Symbols.push_back(Symbol::makeFunc(StubVA + 4));
+
+  recordFrameExtents(Img);
+  parseItaniumExceptions(Img);
+
+  const Symbol *Stub = functionAt(Img, StubVA);
+  ASSERT_NE(Stub, nullptr);
+  EXPECT_EQ(Stub->Size, 16u);
+  EXPECT_EQ(functionAt(Img, StubVA + 4), nullptr);
 }
 
 TEST(ItaniumEHDriver, IgnoresAnImageWithoutAFrameSection) {

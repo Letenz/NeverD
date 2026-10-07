@@ -23,6 +23,16 @@
 
 namespace neverd::dwarf_eh {
 
+/// Record the code extent of every frame in the call frame section, before
+/// heuristic function discovery runs.  Each frame range becomes a known code
+/// range, and an automatically named function whose only evidence is its
+/// entry -- the `.eh_frame_hdr` search table holds nothing else -- takes its
+/// frame's extent.  Discovery then guesses no function start inside a frame,
+/// as it already does inside a PE `.pdata` range.  Language data is decoded
+/// later, by parseItaniumExceptions.  A no-op for a relocatable object, whose
+/// frames name their functions through relocations.
+void recordFrameExtents(BinaryImage &Img);
+
 /// Decode `.eh_frame` / `__eh_frame` and every LSDA it names into
 /// `Img.ExceptionMetadata`.  A no-op for an image without a frame section.
 ///
