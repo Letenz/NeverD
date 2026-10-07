@@ -19,15 +19,14 @@ namespace neverd {
 
 extern const CallArgumentConvention Win64CallArguments;
 const CallArgumentConvention Win64CallArguments = {
-    /*TheArch=*/Arch::X64,
-    /*Format=*/BinaryFormat::COFF,
-    /*SummaryListsNoParameters=*/nullptr,
-    /*DispatcherTargetRegister=*/x86reg::RAX,
-    /*VariadicFromSummary=*/true,
-    /*StackArgumentSummary=*/true,
-    /*IndirectCallsTakePrecedingSetup=*/false,
-    /*PositionalArgumentSlots=*/true,
-    /*ReservedOutgoingArea=*/true,
+    .TheArch = Arch::X64,
+    .Format = BinaryFormat::COFF,
+    .RegisterArgumentsFromCalleeSummary = true,
+    .DispatcherTargetRegister = x86reg::RAX,
+    .VariadicFromSummary = true,
+    .StackArgumentSummary = true,
+    .PositionalArgumentSlots = true,
+    .ReservedOutgoingArea = true,
 };
 
 } // namespace neverd

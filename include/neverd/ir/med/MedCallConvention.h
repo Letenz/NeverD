@@ -5,12 +5,13 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// How each calling convention turns what NeverD knows about a callee into
-/// the register arguments a call site passes: a direct callee's entry-read
-/// summary, an indirect-call dispatcher, or the setup writes before an
-/// indirect call.  Each convention is one table entry defined in its own
-/// file (MedCallConventionWin64.cpp, MedCallConventionSysV.cpp); generic
-/// lowering asks only for the entry that matches the target, so supporting
+/// The facts of each calling convention that call-argument recovery relies
+/// on: how a direct callee's entry-read summary, an indirect-call dispatcher
+/// or the setup writes before an indirect call become register arguments,
+/// and where the arguments a call passes live.  Each convention is one table
+/// entry defined in its own file (MedCallConventionWin64.cpp,
+/// MedCallConventionSysV.cpp, ...); generic recovery asks only for the entry
+/// that matches the target and tests the facts it needs, so supporting
 /// another convention adds a file and a registry line.
 ///
 /// The argument registers themselves are TargetRegInfo::integerParamRegs()
@@ -31,7 +32,11 @@ namespace neverd {
 
 struct CallArgumentConvention {
   Arch TheArch = Arch::Unknown;
+  /// The image format, or Unknown for every format of the architecture.
   BinaryFormat Format = BinaryFormat::Unknown;
+  /// A call to a summarized direct callee passes the argument registers the
+  /// callee reads at entry (LowToMed publishes them as the CALL's inputs).
+  bool RegisterArgumentsFromCalleeSummary = false;
   /// The callee's entry-read summary is not its parameter list, so the call
   /// passes no summarized arguments (a System V variadic prologue spills
   /// every argument register to its save area).  Null when every summary is.
@@ -59,10 +64,29 @@ struct CallArgumentConvention {
   /// offset from the entry stack pointer, and the callee may read every slot
   /// below the last one passed.
   bool ReservedOutgoingArea = false;
+  /// Only a directly called function of the image takes register arguments
+  /// (the compiler's regparm convention for internal functions).  An
+  /// imported or indirectly called function takes every argument on the
+  /// stack, so a parameter register live at such a call is scratch.
+  bool RegparmOnlyForInternalCalls = false;
+  /// The first stack argument directly follows the last register argument
+  /// the call uses, rather than every register position.
+  bool StackArgumentsFollowUsedRegisters = false;
+  /// Every variadic argument is passed on the stack, right after the fixed
+  /// arguments, even while argument registers remain.
+  bool VariadicArgumentsOnStack = false;
+  /// A 64-bit argument takes an even-odd register pair or an 8-byte aligned
+  /// stack slot, so the 4-byte lane before it can be unused padding.
+  bool PairAlignedWideArguments = false;
+  /// A variadic function takes every argument, fixed or variadic, on the
+  /// stack: it has no register save area, and its named parameters are all
+  /// stack parameters.
+  bool StackOnlyVariadicCallees = false;
 };
 
 /// The convention of code for \p A in a \p F image, or nullptr when NeverD
-/// derives no register arguments from callee summaries there.
+/// has no entry for it.  An entry for that exact format wins over one for
+/// every format of the architecture.
 const CallArgumentConvention *callArgumentConvention(Arch A, BinaryFormat F);
 
 } // namespace neverd

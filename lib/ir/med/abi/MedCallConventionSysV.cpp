@@ -27,15 +27,11 @@ bool readsVectorCount(const GPRReadWidths &Reads) {
 
 extern const CallArgumentConvention SysVX64CallArguments;
 const CallArgumentConvention SysVX64CallArguments = {
-    /*TheArch=*/Arch::X64,
-    /*Format=*/BinaryFormat::ELF,
-    /*SummaryListsNoParameters=*/readsVectorCount,
-    /*DispatcherTargetRegister=*/std::nullopt,
-    /*VariadicFromSummary=*/false,
-    /*StackArgumentSummary=*/false,
-    /*IndirectCallsTakePrecedingSetup=*/true,
-    /*PositionalArgumentSlots=*/false,
-    /*ReservedOutgoingArea=*/false,
+    .TheArch = Arch::X64,
+    .Format = BinaryFormat::ELF,
+    .RegisterArgumentsFromCalleeSummary = true,
+    .SummaryListsNoParameters = readsVectorCount,
+    .IndirectCallsTakePrecedingSetup = true,
 };
 
 } // namespace neverd
