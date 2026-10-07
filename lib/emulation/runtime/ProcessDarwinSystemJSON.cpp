@@ -11,6 +11,7 @@
 #include "neverd/emulation/ProcessReportFields.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 
 #include <type_traits>
 
@@ -30,6 +31,19 @@ bool parse(const llvm::json::Value &Value, std::optional<T> &Out) {
     Out = Text->str();
   } else if constexpr (std::is_same_v<T, bool>) {
     Out = Value.getAsBoolean();
+  } else if constexpr (std::is_same_v<T, std::vector<uint8_t>>) {
+    auto Text = Value.getAsString();
+    if (!Text || Text->size() != 2 * darwin_model::value::LoginNameSize)
+      return false;
+    T Bytes(darwin_model::value::LoginNameSize);
+    for (size_t I = 0; I != Bytes.size(); ++I) {
+      const unsigned High = llvm::hexDigitValue((*Text)[2 * I]);
+      const unsigned Low = llvm::hexDigitValue((*Text)[2 * I + 1]);
+      if (High >= 16 || Low >= 16)
+        return false;
+      Bytes[I] = uint8_t(High * 16 + Low);
+    }
+    Out = std::move(Bytes);
   } else {
     Out = process_json::integer<T>(Value);
   }

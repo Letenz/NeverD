@@ -92,6 +92,12 @@ struct DarwinSystemOptions {
   /// Fixed issetugid/P_SUGID observation. Explicit false is known zero;
   /// absence is unknown. Does not change credentials or authorize privileges.
   std::optional<bool> ProcessTainted;
+  /// Complete immutable session login buffer: exactly 255 raw bytes, including
+  /// NULs and bytes after a terminator. Missing is unknown; all-zero is
+  /// explicit. Not inferred from credentials, group/session IDs or the host.
+  /// Supplies read-only getlogin, without login authorization or setlogin
+  /// support.
+  std::optional<std::vector<uint8_t>> LoginNameBytes;
 };
 } // namespace neverd::emulation
 #endif

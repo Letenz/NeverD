@@ -1,6 +1,6 @@
 **Языки**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 5ede1d380a591548b87919442b32c86a0b1d52944086d0f9f0bcdd7592c368e3 -->
+<!-- i18n-source: 920271e860cb6e9a9c4c3fdb54e3adfc2fd1f058708ebfaa3ff693f11dfb47fe -->
 
 [← Оглавление документации](README.md)
 
@@ -684,3 +684,18 @@ BSD `getdtablesize(89)` требует этот предел и `ResourceLimits[
 ```
 
 [XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).
+
+
+## Явный буфер имени входа сеанса
+
+`DarwinSystemOptions::LoginNameBytes` независимо задаёт все 255 сырых байтов сеанса (`MAXLOGNAME`). JSON `login_name_hex` требует ровно 510 шестнадцатеричных символов ASCII любого регистра. Допустимы встроенные NUL и ненулевые байты после терминатора. Отсутствие означает неизвестность, явный нулевой буфер — известное значение. Короткое имя не дополняется; данные не выводятся из хоста, учётных данных, группы, сеанса или загрязнения. Наблюдение не даёт прав входа или доступа к файлам.
+
+`getlogin(49)` использует беззнаковые младшие 32 бита длины (`u_int`) и копирует ровно min(length,255) байтов, без декодирования, добавления NUL или выдачи требуемого размера. Нулевая длина успешна без наблюдения и памяти гостя даже для неверного указателя; `0xffffffff00000000` выбирает ноль. Ненулевой запрос требует полный буфер до проверок назначения. Полностью недоступная для записи область даёт EFAULT14; частичная область останавливается до копирования. Ошибки предварительной проверки не публикуют байты. Ошибки записи backend передаются существующим слоем без общей гарантии отката. Сохраняются BSD carry и второй регистр, включая исходный x64 RDX при ошибке.
+
+`setlogin(50)` не поддерживается даже с явным root или нулевым буфером. Исходная программа только чтения `login-buffer` проверяет полные аргументы длины, префиксы, соседние байты, указатели нулевой длины и EFAULT; `virtual-login-buffer` выводит 255 объявленных байтов. Отсутствующие значения и setters проверяются лишь моделью. macOS ARM64 не подтверждает физический iOS или нативный Intel. Пример явно задаёт 255 нулей, не выводя пустое имя входа.
+
+```json
+{"darwin_system":{"login_name_hex":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}}
+```
+
+[XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).

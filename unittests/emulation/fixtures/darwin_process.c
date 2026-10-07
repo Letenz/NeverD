@@ -55,6 +55,105 @@ static u64 little_integer(const unsigned char *p, unsigned width) {
     value |= (u64)p[i] << (i * 8);
   return value;
 }
+/* Original read-only raw buffer workload. No host login literal, text decoding
+ * or session setters; virtual mode publishes the declared bytes unchanged. */
+static int login_zero_calls(void) {
+  unsigned error;
+  const u64 pointers[] = {0,
+                          1,
+                          0x0000800000000000UL,
+                          0x8000000000000000UL,
+                          0xffff000000000000UL,
+                          -1UL,
+                          -101UL};
+  const u64 lengths[] = {0, 0x100000000UL, 0xffffffff00000000UL};
+  for (unsigned i = 0; i != 7; ++i)
+    for (unsigned j = 0; j != 3; ++j)
+      if (call(49, pointers[i], lengths[j], -1UL, -1UL, -1UL, -1UL, &error) ||
+          error || secondary)
+        return 201;
+  return 0;
+}
+static int login_buffer(int emit_values) {
+  unsigned error;
+  unsigned char snapshot[255], out[265];
+  if (call(49, (u64)snapshot, 255, -1UL, -1UL, -1UL, -1UL, &error) || error ||
+      secondary)
+    return 202;
+  int zero = login_zero_calls();
+  if (zero)
+    return zero;
+  const u64 lengths[] = {1,
+                         2,
+                         254,
+                         255,
+                         256,
+                         0xffffffffUL,
+                         0x80000000UL,
+                         0x100000001UL,
+                         0xffffffff00000001UL,
+                         0x12345678000000ffUL,
+                         0xffffffff000000ffUL,
+                         -1UL};
+  for (unsigned i = 0; i != 12; ++i) {
+    for (unsigned j = 0; j != sizeof(out); ++j)
+      out[j] = 0xa5;
+    if (call(49, (u64)(out + 3), lengths[i], -1UL, -1UL, -1UL, -1UL, &error) ||
+        error || secondary)
+      return 203;
+    unsigned n = (unsigned)lengths[i];
+    if (n > 255)
+      n = 255;
+    for (unsigned j = 0; j != sizeof(out); ++j)
+      if (out[j] != (j >= 3 && j < 3 + n ? snapshot[j - 3] : 0xa5))
+        return 204;
+  }
+  const u64 pointers[] = {0,
+                          1,
+                          0x0000800000000000UL,
+                          0x8000000000000000UL,
+                          0xffff000000000000UL,
+                          -1UL,
+                          -101UL};
+  const u64 invalid_lengths[] = {1,   255, 256, 0xffffffffUL, 0x100000001UL,
+                                 -1UL};
+  for (unsigned i = 0; i != 7; ++i)
+    for (unsigned j = 0; j != 6; ++j) {
+      if (call(49, pointers[i], invalid_lengths[j], 0x1122334455667788UL, -1UL,
+               -1UL, -1UL, &error) != 14 ||
+          !error)
+        return 205;
+#if defined(__aarch64__)
+      if (secondary)
+#else
+      if (secondary != 0x1122334455667788UL)
+#endif
+        return 206;
+    }
+  const char marker = 'L';
+  u64 size = emit_values ? sizeof(snapshot) : 1;
+  return call(4, 1, emit_values ? (u64)snapshot : (u64)&marker, size, 0, 0, 0,
+              &error) == size &&
+                 !error
+             ? 37
+             : 207;
+}
+static int login_zero(void) {
+  int result = login_zero_calls();
+  if (result)
+    return result;
+  unsigned error;
+  const char marker = 'Z';
+  return call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error ? 37 : 208;
+}
+static int login_unavailable(unsigned number) {
+  unsigned error;
+  const char marker = '!';
+  if (call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) != 1 || error)
+    return 209;
+  call(number, -1UL, 255, 0x1122334455667788UL, 0, 0, 0, &error);
+  return 210;
+}
 /* Read-only workload shared unchanged with the native kernel. Its marker
  * depends on shape/ABI, never a host-name literal; virtual mode emits bytes. */
 static int hostname_calls(int emit_values) {
@@ -3353,6 +3452,14 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "login-buffer") || equal(argv[1], "virtual-login-buffer"))
+    return login_buffer(equal(argv[1], "virtual-login-buffer"));
+  if (equal(argv[1], "login-zero"))
+    return login_zero();
+  if (equal(argv[1], "login-missing-after"))
+    return login_unavailable(49);
+  if (equal(argv[1], "login-set"))
+    return login_unavailable(50);
   if (equal(argv[1], "initial-directory-removal"))
     return argc < 3 ? 79 : initial_directory_removal(argv[2]);
   if (equal(argv[1], "initial-directory-swap"))

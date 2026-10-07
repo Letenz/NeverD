@@ -92,10 +92,16 @@ bool valid(const std::optional<T> &Value, uint64_t Limit) {
            (Value->size() < Limit && Value->find('\0') == std::string::npos);
   return true;
 }
-template <typename T> bool validProcess(const std::optional<T> &Value) {
-  if constexpr (std::is_same_v<T, uint32_t>)
-    return !Value || (*Value && *Value <= uint32_t(INT32_MAX));
-  return true;
+template <typename T>
+const char *invalidProcess(const std::optional<T> &Value) {
+  if constexpr (std::is_same_v<T, uint32_t>) {
+    if (Value && (!*Value || *Value > uint32_t(INT32_MAX)))
+      return diagnostic::ProcessIdentityOption;
+  } else if constexpr (std::is_same_v<T, std::vector<uint8_t>>) {
+    if (Value && Value->size() != LoginNameSize)
+      return diagnostic::LoginNameOption;
+  }
+  return nullptr;
 }
 } // namespace
 
@@ -142,8 +148,8 @@ llvm::Error validateSystemOptions(const DarwinSystemOptions &Options) {
 #include "DarwinSystemFields.def"
 #undef NEVERD_DARWIN_SYSTEM_FIELD
 #define NEVERD_DARWIN_PROCESS_FIELD(Member, Field)                             \
-  if (!validProcess(Options.Member))                                           \
-    return failure(diagnostic::ProcessIdentityOption);
+  if (const char *Reason = invalidProcess(Options.Member))                     \
+    return failure(Reason);
 #include "DarwinSystemFields.def"
 #undef NEVERD_DARWIN_PROCESS_FIELD
   if (Options.CPUCount &&
@@ -170,6 +176,18 @@ systemService(GuestMemory &Memory, uint64_t PageSize, ServiceKind Kind,
               const std::optional<DarwinSystemOptions> &Options,
               ProcessResult &Result) {
   const auto &A = Event.Arguments;
+  if (Kind == ServiceKind::GetLogin) {
+    const uint32_t Size = std::min(uint32_t(A[1]), uint32_t(LoginNameSize));
+    // XNU copies the raw session buffer, without string decoding or a NUL.
+    // Native zero-length probes confirm no observation or pointer is needed.
+    if (!Size)
+      return returned(0);
+    if (!Options || !Options->LoginNameBytes)
+      return unsupported(Result, diagnostic::LoginNameObservation);
+    return copyUserMemory(
+        Memory, A[0], llvm::ArrayRef(*Options->LoginNameBytes).take_front(Size),
+        diagnostic::LoginNamePartialOutput, Result);
+  }
   switch (Kind) {
   case ServiceKind::GetUID:
   case ServiceKind::GetEUID:

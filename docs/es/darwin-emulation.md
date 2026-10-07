@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 5ede1d380a591548b87919442b32c86a0b1d52944086d0f9f0bcdd7592c368e3 -->
+<!-- i18n-source: 920271e860cb6e9a9c4c3fdb54e3adfc2fd1f058708ebfaa3ff693f11dfb47fe -->
 
 [← Índice de documentación](README.md)
 
@@ -684,3 +684,18 @@ La llamada cruda `getpgrp(81)` lee el grupo; `getpgid(151)` y `getsid(310)` usan
 ```
 
 [XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).
+
+
+## Búfer explícito de inicio de sesión
+
+`DarwinSystemOptions::LoginNameBytes` declara de forma independiente los 255 bytes crudos de sesión (`MAXLOGNAME`). JSON `login_name_hex` exige exactamente 510 dígitos hexadecimales ASCII en ambas cajas. Se permiten NUL internos y bytes no nulos tras un terminador. Ausencia significa desconocido; un registro íntegramente cero es explícito. No se rellena un nombre corto ni se deduce desde anfitrión, credenciales, grupo, sesión o contaminación. La observación no concede permisos de acceso ni archivos.
+
+`getlogin(49)` usa los 32 bits bajos sin signo de longitud (`u_int`) y copia exactamente min(length,255) bytes, sin decodificar, añadir NUL o devolver tamaño necesario. Longitud cero tiene éxito sin observación ni memoria invitada incluso con punteros inválidos; `0xffffffff00000000` selecciona cero. Una petición no nula exige el búfer completo antes de comprobar el destino. Un destino totalmente no escribible devuelve EFAULT14; rangos parciales se rechazan antes de copiar. Errores previos no publican bytes. Los errores de escritura del backend se propagan por la capa existente sin garantía general de reversión. Se mantienen BSD carry y segundo registro, incluido RDX x64 original ante error.
+
+`setlogin(50)` sigue sin soporte con root explícito o registro cero. El programa original de solo lectura `login-buffer` comprueba longitudes completas, prefijos, bytes vecinos, punteros con longitud cero y EFAULT; `virtual-login-buffer` emite los 255 bytes declarados. Los casos ausentes y setters solo usan el modelo. La referencia macOS ARM64 no valida iOS físico ni Intel nativo. El ejemplo declara 255 ceros, sin inferir un nombre vacío.
+
+```json
+{"darwin_system":{"login_name_hex":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}}
+```
+
+[XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).

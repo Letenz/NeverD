@@ -830,6 +830,226 @@ TEST_P(DarwinSystemTest, ProcessTaintIsIndependentOfCredentialsAndAuthority) {
     }
 }
 
+TEST_P(DarwinSystemTest,
+       LoginBufferCopiesExactPrefixesWithUnsignedLow32Length) {
+  Options = darwin_test::loginBufferOptions();
+  const std::string Expected =
+      std::string("L\0\xff", 3) + std::string(251, '\xa5') + "~";
+  ASSERT_EQ(Expected.size(), 255u);
+  const uint64_t Sizes[] = {0,
+                            1,
+                            2,
+                            254,
+                            255,
+                            256,
+                            UINT32_MAX,
+                            0x80000000,
+                            0x100000000ULL,
+                            0xffffffff00000000ULL,
+                            0x100000001ULL,
+                            0xffffffff00000001ULL,
+                            0x12345678000000ffULL,
+                            UINT64_MAX};
+  for (uint64_t Size : Sizes) {
+    SCOPED_TRACE(Size);
+    fill();
+    const size_t Count = std::min(uint32_t(Size), uint32_t(255));
+    FailingSystemMemory Memory(*Space);
+    auto Out = systemService(
+        Memory, Page, ServiceKind::GetLogin,
+        {0,
+         49,
+         {Output + 3, Size, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX},
+         {}},
+        Options, Result);
+    ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+    result(*Out);
+    EXPECT_EQ(bytes(Output + 3, Count), Expected.substr(0, Count));
+    EXPECT_EQ(bytes(Output, 3), std::string(3, '\xa5'));
+    EXPECT_EQ(bytes(Output + 3 + Count, 8), std::string(8, '\xa5'));
+    EXPECT_EQ(Memory.Accesses, Count ? 1u : 0u);
+    EXPECT_EQ(Memory.Writes, Count ? 1u : 0u);
+    EXPECT_EQ(Memory.Reads, 0u);
+  }
+  Options->LoginNameBytes->assign(255, 0);
+  fill();
+  result(invoke(ServiceKind::GetLogin, {Output, 255}));
+  EXPECT_EQ(bytes(Output, 255), std::string(255, '\0'));
+  EXPECT_EQ(bytes(Output + 255, 8), std::string(8, '\xa5'));
+}
+
+TEST_P(DarwinSystemTest, LoginBufferZeroLengthNeedsNoObservationOrMemory) {
+  for (unsigned Config = 0; Config != 4; ++Config) {
+    Options.reset();
+    if (Config == 1)
+      Options.emplace();
+    if (Config == 2) {
+      Options = darwin_test::processObservationOptions();
+      Options->Credentials.emplace();
+      Options->HostName = "abcd";
+    }
+    if (Config == 3)
+      Options = darwin_test::loginBufferOptions();
+    for (uint64_t Pointer : std::array<uint64_t, 8>{
+             0, 1, Output, 0x0000800000000000ULL, 0x8000000000000000ULL,
+             0xffff000000000000ULL, UINT64_MAX, UINT64_MAX - 100}) {
+      for (uint64_t Size :
+           std::array<uint64_t, 3>{0, 0x100000000ULL, 0xffffffff00000000ULL}) {
+        FailingSystemMemory Memory(*Space);
+        Memory.FailAccess = Memory.FailRead = Memory.FailWrite = 1;
+        auto Out = systemService(Memory, Page, ServiceKind::GetLogin,
+                                 {0, 49, {Pointer, Size, UINT64_MAX}, {}},
+                                 Options, Result);
+        ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+        result(*Out);
+        EXPECT_EQ(Memory.Accesses, 0u);
+        EXPECT_EQ(Memory.Reads, 0u);
+        EXPECT_EQ(Memory.Writes, 0u);
+      }
+    }
+  }
+}
+
+TEST_P(DarwinSystemTest, LoginBufferAbsencePrecedesOutputChecks) {
+  for (unsigned Config = 0; Config != 3; ++Config) {
+    Options.reset();
+    if (Config == 1)
+      Options.emplace();
+    if (Config == 2) {
+      Options = darwin_test::processObservationOptions();
+      Options->Credentials = darwin_test::credentialOptions().Credentials;
+      Options->HostName = "abcd";
+    }
+    for (uint64_t Pointer : std::array<uint64_t, 3>{0, Output, UINT64_MAX}) {
+      FailingSystemMemory Memory(*Space);
+      Memory.FailAccess = Memory.FailRead = Memory.FailWrite = 1;
+      auto Out =
+          systemService(Memory, Page, ServiceKind::GetLogin,
+                        {0, 49, {Pointer, UINT64_MAX}, {}}, Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      EXPECT_FALSE(*Out);
+      EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(Result.Diagnostic, diagnostic::LoginNameObservation);
+      EXPECT_EQ(Memory.Accesses, 0u);
+      EXPECT_EQ(Memory.Reads, 0u);
+      EXPECT_EQ(Memory.Writes, 0u);
+      EXPECT_EQ(bytes(Output, 256), std::string(256, '\xa5'));
+    }
+  }
+}
+
+TEST_P(DarwinSystemTest, LoginBufferClampPrecedesPageEndAccessAdmission) {
+  Options = darwin_test::loginBufferOptions();
+  const uint64_t End = Base + Page * 2;
+  ASSERT_FALSE(bool(Space->map(End, Page, Read | Write | UserAccessible)));
+  ASSERT_FALSE(bool(Space->write(End, std::vector<uint8_t>(Page, 0xa5))));
+  ASSERT_FALSE(bool(Space->protect(End, Page, Read | UserAccessible)));
+  FailingSystemMemory Memory(*Space);
+  Memory.FailAccess = 2;
+  auto Out =
+      systemService(Memory, Page, ServiceKind::GetLogin,
+                    {0, 49, {End - 255, UINT64_MAX}, {}}, Options, Result);
+  ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+  result(*Out);
+  EXPECT_EQ(bytes(End - 255, 255),
+            std::string("L\0\xff", 3) + std::string(251, '\xa5') + "~");
+  EXPECT_EQ(bytes(End - 256, 1), std::string(1, '\xa5'));
+  EXPECT_EQ(bytes(End, 8), std::string(8, '\xa5'));
+  EXPECT_EQ(Memory.Accesses, 1u);
+  EXPECT_EQ(Memory.Writes, 1u);
+  EXPECT_EQ(Memory.Reads, 0u);
+}
+
+TEST_P(DarwinSystemTest, LoginBufferFaultAndPartialRangePublishNoBytes) {
+  Options = darwin_test::loginBufferOptions();
+  for (uint64_t Pointer : std::array<uint64_t, 5>{
+           0, 1, Base + Page * 2, value::UserLimit, UINT64_MAX}) {
+    FailingSystemMemory Memory(*Space);
+    auto Out = systemService(Memory, Page, ServiceKind::GetLogin,
+                             {0, 49, {Pointer, 255}, {}}, Options, Result);
+    ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+    result(*Out, 14);
+    EXPECT_EQ(Memory.Writes, 0u);
+    EXPECT_EQ(Memory.Reads, 0u);
+  }
+  FailingSystemMemory Memory(*Space);
+  auto Out =
+      systemService(Memory, Page, ServiceKind::GetLogin,
+                    {0, 49, {Base + Page * 2 - 127, 255}, {}}, Options, Result);
+  ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+  EXPECT_FALSE(*Out);
+  EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::LoginNamePartialOutput);
+  EXPECT_EQ(Memory.Accesses, 2u);
+  EXPECT_EQ(Memory.Writes, 0u);
+  EXPECT_EQ(bytes(Base + Page * 2 - 256, 256), std::string(256, '\xa5'));
+}
+
+TEST_P(DarwinSystemTest,
+       LoginBufferCrossPageCopyAndTransportErrorsKeepOwnerRules) {
+  Options = darwin_test::loginBufferOptions();
+  const uint64_t Destination = Base + Page - 127;
+  for (unsigned Phase = 0; Phase != 3; ++Phase) {
+    fill();
+    FailingSystemMemory Memory(*Space);
+    if (Phase == 1)
+      Memory.FailAccess = 2;
+    if (Phase == 2)
+      Memory.FailWrite = 1;
+    auto Out = systemService(Memory, Page, ServiceKind::GetLogin,
+                             {0, 49, {Destination, 255}, {}}, Options, Result);
+    if (Phase) {
+      ASSERT_FALSE(bool(Out));
+      EXPECT_EQ(llvm::toString(Out.takeError()),
+                Phase == 1 ? "transport access" : "transport write");
+      // This injected write fails before delegation. Arbitrary backend errors
+      // do not have a rollback guarantee.
+      EXPECT_EQ(bytes(Destination - 1, 257), std::string(257, '\xa5'));
+    } else {
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      result(*Out);
+      EXPECT_EQ(bytes(Destination, 255),
+                std::string("L\0\xff", 3) + std::string(251, '\xa5') + "~");
+      EXPECT_EQ(bytes(Destination - 1, 1), std::string(1, '\xa5'));
+      EXPECT_EQ(bytes(Destination + 255, 1), std::string(1, '\xa5'));
+    }
+    EXPECT_EQ(Memory.Accesses, 2u);
+    EXPECT_EQ(Memory.Reads, 0u);
+    EXPECT_EQ(Memory.Writes, Phase == 1 ? 0u : 1u);
+  }
+  fill();
+  ASSERT_FALSE(bool(Space->protect(Base + Page, Page, Read | UserAccessible)));
+  FailingSystemMemory Memory(*Space);
+  auto Out = systemService(Memory, Page, ServiceKind::GetLogin,
+                           {0, 49, {Destination, 255}, {}}, Options, Result);
+  ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+  EXPECT_FALSE(*Out);
+  EXPECT_EQ(Result.Diagnostic, diagnostic::LoginNamePartialOutput);
+  EXPECT_EQ(Memory.Writes, 0u);
+  EXPECT_EQ(bytes(Destination - 1, 257), std::string(257, '\xa5'));
+}
+
+TEST(DarwinSystemOptions, LoginBufferRequiresEveryByteWithoutStringRules) {
+  DarwinSystemOptions O;
+  EXPECT_FALSE(O.LoginNameBytes);
+  for (size_t Size : {0u, 1u, 254u, 256u, 510u}) {
+    O.LoginNameBytes.emplace(Size, 0);
+    EXPECT_EQ(llvm::toString(validateSystemOptions(O)),
+              diagnostic::LoginNameOption);
+  }
+  for (unsigned char Byte : {0u, 0xffu, 0xa5u}) {
+    O.LoginNameBytes.emplace(255, Byte);
+    EXPECT_FALSE(bool(validateSystemOptions(O)));
+    EXPECT_FALSE(O.Credentials);
+    EXPECT_FALSE(O.ProcessGroupID);
+    EXPECT_FALSE(O.SessionID);
+    EXPECT_FALSE(O.ProcessTainted);
+    EXPECT_FALSE(O.HostName);
+  }
+  O = darwin_test::loginBufferOptions();
+  EXPECT_FALSE(bool(validateSystemOptions(O)));
+}
+
 TEST(DarwinSystemOptions, ProcessIDsUseFullBoundsAndTaintHasNoDefaults) {
   DarwinSystemOptions O;
   EXPECT_FALSE(O.ProcessGroupID);

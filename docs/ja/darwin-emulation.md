@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 5ede1d380a591548b87919442b32c86a0b1d52944086d0f9f0bcdd7592c368e3 -->
+<!-- i18n-source: 920271e860cb6e9a9c4c3fdb54e3adfc2fd1f058708ebfaa3ff693f11dfb47fe -->
 
 [← ドキュメント一覧](README.md)
 
@@ -686,3 +686,18 @@ sysctl のコピー段階は維持します。EUID0 の実際の書き込みは�
 ```
 
 [XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).
+
+
+## 明示的なセッションログインバッファ
+
+`DarwinSystemOptions::LoginNameBytes` はセッションの255バイト全体（`MAXLOGNAME`）を独立に宣言する任意の観測値です。JSON `login_name_hex` は大文字・小文字を許す510文字ちょうどの ASCII 十六進数です。埋め込みNULや終端後の非ゼロバイトも有効です。省略は未知、明示的な全ゼロは既知です。短い名前を補完せず、ホスト、資格情報、プロセスグループ、セッションID、汚染状態から推測しません。ログインやファイル権限は与えません。
+
+生の `getlogin(49)` は長さの符号なし下位32ビット `u_int` を使い、min(length,255) バイトだけをコピーします。文字列の解釈、NULの追加、必要サイズの出力はありません。長さゼロは観測値やゲストメモリなしで無効ポインタでも成功し、`0xffffffff00000000` もゼロを選びます。非ゼロでは宛先検査より先に完全な観測値が必要です。全体が書き込めなければ EFAULT14、部分的に書き込める範囲はコピー前に未対応として停止します。事前検査エラーはバイトを公開しません。既存のコピー層がバックエンド書き込みエラーを伝え、一般的なロールバックは保証しません。BSD carry と第二戻り値規則、エラー時の x64 RDX を維持します。
+
+`setlogin(50)` は明示rootや全ゼロでも未対応です。独自の読み取り専用 `login-buffer` は完全な長さ引数、接頭部分、隣接バイト、ゼロ長ポインタ、EFAULTを検査し、`virtual-login-buffer` は宣言された255バイトを出力します。欠落値と設定操作のモデルテストをネイティブ実行に含めません。macOS ARM64の参照は実機iOSやIntelの受け入れではありません。例は255個のゼロを明示し、空ログインを推測しません。
+
+```json
+{"darwin_system":{"login_name_hex":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}}
+```
+
+[XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).

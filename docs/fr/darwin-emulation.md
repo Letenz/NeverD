@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 5ede1d380a591548b87919442b32c86a0b1d52944086d0f9f0bcdd7592c368e3 -->
+<!-- i18n-source: 920271e860cb6e9a9c4c3fdb54e3adfc2fd1f058708ebfaa3ff693f11dfb47fe -->
 
 [← Index de la documentation](README.md)
 
@@ -684,3 +684,18 @@ Les comptes se recoupent. `build-hvf-arm64/descriptor-table-observations/` conse
 ```
 
 [XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).
+
+
+## Tampon de connexion de session explicite
+
+`DarwinSystemOptions::LoginNameBytes` déclare indépendamment les 255 octets bruts de la session (`MAXLOGNAME`). JSON `login_name_hex` exige exactement 510 chiffres hexadécimaux ASCII, sans distinction de casse. Les NUL internes et les octets non nuls après un terminateur restent valides. Une omission est inconnue ; un tampon entièrement nul est explicite. Aucun remplissage de nom court, aucune déduction depuis hôte, identifiants, groupe, session ou état de contamination. Cette observation ne confère aucun droit de connexion ou de fichier.
+
+`getlogin(49)` utilise les 32 bits bas non signés de longueur (`u_int`) et copie exactement min(length,255) octets, sans décodage, ajout de NUL ou taille requise. Une longueur nulle réussit sans observation ni accès mémoire même avec un pointeur invalide ; `0xffffffff00000000` sélectionne zéro. Une demande non nulle exige le tampon complet avant de vérifier la destination. Une destination entièrement non inscriptible renvoie EFAULT14 ; une plage partielle est refusée avant copie. Les erreurs de précontrôle ne publient rien. La couche de copie transmet les erreurs du backend sans garantie générale de rollback. Les règles BSD carry et second registre, dont RDX x64 original en erreur, sont conservées.
+
+`setlogin(50)` reste non pris en charge même avec root explicite ou un tampon nul. Le programme original en lecture seule `login-buffer` vérifie longueur complète, préfixes, octets voisins, pointeurs de longueur nulle et EFAULT ; `virtual-login-buffer` émet les 255 octets déclarés. Les tests de valeurs manquantes et de setters sont uniquement modélisés. La référence macOS ARM64 ne valide ni iOS physique ni Intel natif. Cet exemple déclare explicitement 255 zéros, sans déduire un nom vide.
+
+```json
+{"darwin_system":{"login_name_hex":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}}
+```
+
+[XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).

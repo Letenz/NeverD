@@ -51,6 +51,87 @@ extern "C" ssize_t __getdirentries64(int, void *, size_t, off_t *);
 
 namespace neverd::emulation {
 namespace {
+TEST(DarwinNative, LoginBufferMatchesSDKAndOneCompleteRawCapture) {
+#if !defined(__APPLE__) || (!defined(__aarch64__) && !defined(__x86_64__))
+  GTEST_SKIP() << "native Darwin login buffer capture requires macOS";
+#else
+  ASSERT_EQ(SYS_getlogin, 49);
+  ASSERT_EQ(MAXLOGNAME, 255);
+  ASSERT_EQ(sizeof(u_int), 4u);
+  const auto Native = [](uint64_t Address, uint64_t Size) {
+#if defined(__aarch64__)
+    register uint64_t X0 __asm__("x0") = Address;
+    register uint64_t X1 __asm__("x1") = Size;
+    register uint64_t X16 __asm__("x16") = 49;
+    unsigned Carry;
+    __asm__ volatile("svc #0x80\n\tcset %w2, cs"
+                     : "+r"(X0), "+r"(X1), "=r"(Carry)
+                     : "r"(X16)
+                     : "cc", "memory");
+    return std::array<uint64_t, 3>{X0, X1, Carry};
+#else
+    uint64_t RAX = 0x2000031, RDX = 0x1122334455667788ULL;
+    unsigned char Carry;
+    __asm__ volatile("syscall\n\tsetc %2"
+                     : "+a"(RAX), "+d"(RDX), "=qm"(Carry)
+                     : "D"(Address), "S"(Size)
+                     : "rcx", "r11", "cc", "memory");
+    return std::array<uint64_t, 3>{RAX, RDX, Carry};
+#endif
+  };
+  std::array<uint8_t, 257> Captured;
+  Captured.fill(0xa5);
+  ASSERT_EQ(Native(uint64_t(Captured.data() + 1), 255),
+            (std::array<uint64_t, 3>{0, 0, 0}));
+  EXPECT_EQ(Captured.front(), 0xa5);
+  EXPECT_EQ(Captured.back(), 0xa5);
+  std::optional<DarwinSystemOptions> Options = DarwinSystemOptions{};
+  Options->LoginNameBytes.emplace(Captured.begin() + 1, Captured.end() - 1);
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(*Options)));
+  for (uint64_t Page : std::array<uint64_t, 2>{4096, 16384}) {
+    auto Physical = PhysicalMemory::create(Page * 2);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Space = AddressSpace::create(*Physical, Page * 2);
+    ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
+    const uint64_t Base = 0x100000, Destination = Base + Page - 127;
+    ASSERT_FALSE(
+        bool((*Space)->map(Base, Page * 2, Read | Write | UserAccessible)));
+    const uint64_t Sizes[] = {0,
+                              1,
+                              2,
+                              254,
+                              255,
+                              256,
+                              UINT32_MAX,
+                              0x80000000,
+                              0x100000000ULL,
+                              0xffffffff00000001ULL,
+                              0x12345678000000ffULL,
+                              UINT64_MAX};
+    for (uint64_t Size : Sizes) {
+      std::array<uint8_t, 257> Host, Guest;
+      Host.fill(0xa5);
+      Guest.fill(0xa5);
+      ASSERT_EQ(Native(uint64_t(Host.data() + 1), Size),
+                (std::array<uint64_t, 3>{0, 0, 0}));
+      ASSERT_FALSE(bool((*Space)->write(Destination - 1, Guest)));
+      ProcessResult Result{
+          ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+          ExecutionBackendKind::Unicorn, "one native raw login buffer capture"};
+      auto Out = darwin_model::systemService(
+          **Space, Page, darwin_model::ServiceKind::GetLogin,
+          {0, 49, {Destination, Size, UINT64_MAX}, {}}, Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out) << Result.Diagnostic;
+      EXPECT_EQ((**Out).Value, 0u);
+      EXPECT_FALSE((**Out).Error);
+      ASSERT_FALSE(bool((*Space)->read(Destination - 1, Guest)));
+      EXPECT_EQ(Guest, Host);
+    }
+  }
+#endif
+}
+
 TEST(DarwinNative, ProcessObservationsMatchIndependentLibcCaptures) {
 #if !defined(__APPLE__)
   GTEST_SKIP() << "native process observation capture requires macOS";

@@ -1439,3 +1439,18 @@ Raw `getpgrp(81)` reads the process group; `getpgid(151)` and `getsid(310)` use 
 ```
 
 [XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).
+
+
+## Explicit session login buffer
+
+`DarwinSystemOptions::LoginNameBytes` is an independent optional observation of all 255 raw session bytes (`MAXLOGNAME`). JSON `login_name_hex` requires exactly 510 ASCII hexadecimal digits; both cases are accepted. Embedded NUL and nonzero bytes after a terminator remain valid. Missing is unknown; an explicit all-zero record is known. The model neither pads a short name nor obtains bytes from the host, credentials, process group, session ID or taint. This observation grants no login or filesystem authority.
+
+Raw `getlogin(49)` takes unsigned low32 `u_int` length and copies exactly min(length,255) bytes, without string decoding, an added NUL or a required-size output. Zero length succeeds without an observation or guest-memory access even for invalid pointers; `0xffffffff00000000` therefore selects zero. A nonzero request requires the full declared buffer before destination checks. A wholly unwritable destination returns EFAULT14. Partial writable ranges stop unsupported before copying; preflight errors publish no bytes. Backend write errors propagate through the existing user-copy owner without a general rollback guarantee. BSD carry and secondary-register rules are retained, including original x64 RDX on errors.
+
+`setlogin(50)` stays unsupported even with explicit root credentials or an all-zero buffer. The original read-only `login-buffer` workload checks full-carrier lengths, prefixes, adjacent bytes, zero-length pointers and EFAULT; `virtual-login-buffer` emits the declared 255 bytes. Model-only missing/setter cases never enter native execution. macOS ARM64 references do not establish physical iOS or Intel native acceptance. The example explicitly declares all 255 zero bytes; it is not an inferred empty login.
+
+```json
+{"darwin_system":{"login_name_hex":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}}
+```
+
+[XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).

@@ -901,6 +901,84 @@ TEST_P(DarwinProcess, ProcessQueriesKeepIndependentSelfObservations) {
   }
 }
 
+TEST_P(DarwinProcess, LoginBufferPreservesExactBytesZeroLengthAndAuthority) {
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (unsigned Config = 0; Config != 3; ++Config) {
+    Options.DarwinSystem.reset();
+    if (Config == 1)
+      Options.DarwinSystem.emplace();
+    if (Config == 2) {
+      Options.DarwinSystem = darwin_test::processObservationOptions();
+      Options.DarwinSystem->Credentials.emplace();
+      Options.DarwinSystem->HostName = "abcd";
+    }
+    auto Zero = run("login-zero");
+    ASSERT_TRUE(bool(Zero)) << llvm::toString(Zero.takeError());
+    EXPECT_EQ(Zero->Stop, ProcessStopReason::Exited) << Zero->Diagnostic;
+    EXPECT_EQ(Zero->ExitStatus, 37);
+    EXPECT_EQ(Zero->StandardOutput, "Z");
+    auto Missing = run("login-missing-after");
+    ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+    EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Missing->Diagnostic,
+              "Darwin login buffer observation is not configured");
+    EXPECT_EQ(Missing->StandardOutput, "!");
+    EXPECT_EQ(Missing->Services.back().Number, Class + 49);
+    EXPECT_FALSE(Missing->Services.back().Result);
+  }
+  for (bool Zero : {false, true}) {
+    Options.DarwinSystem = darwin_test::loginBufferOptions();
+    if (Zero)
+      Options.DarwinSystem->LoginNameBytes->assign(255, 0);
+    for (const char *Mode : {"login-buffer", "virtual-login-buffer"}) {
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+      EXPECT_EQ(R->ExitStatus, 37);
+      EXPECT_EQ(R->StandardOutput, llvm::StringRef(Mode) == "login-buffer" ? "L"
+                                   : Zero ? std::string(255, '\0')
+                                          : std::string("L\0\xff", 3) +
+                                                std::string(251, '\xa5') + "~");
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      unsigned ZeroReturns = 0, Errors = 0, Copies = 0;
+      bool HighLength = false, HugeLength = false;
+      for (const auto &E : R->Services) {
+        if (E.Number != Class + 49)
+          continue;
+        if (!uint32_t(E.Arguments[1])) {
+          EXPECT_EQ(E.Result, 0u);
+          EXPECT_EQ(E.Error, false);
+          ++ZeroReturns;
+        } else if (E.Error == true) {
+          EXPECT_EQ(E.Result, 14u);
+          EXPECT_EQ(E.Arguments[2], 0x1122334455667788ULL);
+          ++Errors;
+        } else {
+          EXPECT_EQ(E.Result, 0u);
+          EXPECT_EQ(E.Error, false);
+          HighLength |= E.Arguments[1] == 0xffffffff00000001ULL;
+          HugeLength |= E.Arguments[1] == UINT64_MAX;
+          ++Copies;
+        }
+      }
+      EXPECT_EQ(ZeroReturns, 21u);
+      EXPECT_EQ(Errors, 42u);
+      EXPECT_EQ(Copies, 13u);
+      EXPECT_TRUE(HighLength);
+      EXPECT_TRUE(HugeLength);
+    }
+    Options.DarwinSystem->Credentials.emplace();
+    auto Setter = run("login-set");
+    ASSERT_TRUE(bool(Setter)) << llvm::toString(Setter.takeError());
+    EXPECT_EQ(Setter->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Setter->StandardOutput, "!");
+    EXPECT_EQ(Setter->Services.back().Number, Class + 50);
+    EXPECT_FALSE(Setter->Services.back().Result);
+  }
+}
+
 TEST_P(DarwinProcess, HostNameKeepsTruncationObservationAndWriteAuthority) {
   auto Missing = run("hostname-missing-after");
   ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());

@@ -928,6 +928,77 @@ TEST(ProcessReport, MalformedDarwinCredentialsFailBeforeImageLoading) {
 }
 
 TEST(ProcessReport,
+     DarwinLoginBufferRequiresCompleteStrictHexAndKeepsZeroKnown) {
+  auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");
+  ASSERT_TRUE(bool(Empty));
+  EXPECT_FALSE(Empty->DarwinSystem->LoginNameBytes);
+  auto Typed = darwin_test::loginBufferOptions();
+  const std::string Payload = darwin_test::LoginNameHex;
+  for (const std::string &Hex :
+       {Payload, llvm::StringRef(Payload).upper(), std::string(510, '0')}) {
+    auto Parsed = processOptionsFromJSON(
+        llvm::formatv("{0}",
+                      llvm::json::Value(llvm::json::Object{
+                          {"darwin_system",
+                           llvm::json::Object{{"login_name_hex", Hex}}}}))
+            .str());
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    ASSERT_TRUE(Parsed->DarwinSystem->LoginNameBytes);
+    EXPECT_EQ(*Parsed->DarwinSystem->LoginNameBytes,
+              Hex == std::string(510, '0') ? std::vector<uint8_t>(255, 0)
+                                           : *Typed.LoginNameBytes);
+    EXPECT_FALSE(Parsed->DarwinSystem->Credentials);
+    EXPECT_FALSE(Parsed->DarwinSystem->ProcessGroupID);
+    EXPECT_FALSE(Parsed->DarwinSystem->SessionID);
+    EXPECT_FALSE(Parsed->DarwinSystem->ProcessTainted);
+    EXPECT_FALSE(Parsed->DarwinSystem->HostName);
+  }
+  for (const char *Value :
+       {"null", "false", "true", "0", "255", "[]", "{}", "[0]"}) {
+    auto Bad = processOptionsFromJSON(
+        std::string(R"({"darwin_system":{"login_name_hex":)") + Value + "}}");
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+  for (const auto &Hex :
+       {std::string(), std::string(508, '0'), std::string(509, '0'),
+        std::string(511, '0'), std::string(512, '0'),
+        "0x" + std::string(508, '0'), std::string(509, '0') + "g",
+        std::string(509, '0') + " ", std::string(509, '0') + '\0',
+        std::string(508, '0') + "\xc3\xa9"}) {
+    auto Bad = processOptionsFromJSON(
+        llvm::formatv("{0}",
+                      llvm::json::Value(llvm::json::Object{
+                          {"darwin_system",
+                           llvm::json::Object{{"login_name_hex", Hex}}}}))
+            .str());
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+}
+
+TEST(ProcessReport, DarwinLoginBufferAdmissionPrecedesImageLoading) {
+  ProcessOptions O;
+  O.DarwinSystem = darwin_test::loginBufferOptions();
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64}) {
+    for (size_t Size : {0u, 1u, 254u, 256u}) {
+      O.DarwinSystem->LoginNameBytes->assign(Size, 0);
+      auto R = emulateProcess("missing.macho", P, O);
+      ASSERT_FALSE(bool(R));
+      EXPECT_EQ(llvm::toString(R.takeError()),
+                "Darwin system login_name_hex must encode exactly 255 bytes");
+    }
+  }
+}
+
+TEST(ProcessReport,
      DarwinProcessObservationsKeepIDsAndStrictBooleanIndependent) {
   auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");
   ASSERT_TRUE(bool(Empty));

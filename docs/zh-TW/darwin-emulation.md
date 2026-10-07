@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 5ede1d380a591548b87919442b32c86a0b1d52944086d0f9f0bcdd7592c368e3 -->
+<!-- i18n-source: 920271e860cb6e9a9c4c3fdb54e3adfc2fd1f058708ebfaa3ff693f11dfb47fe -->
 
 [← 文件索引](README.md)
 
@@ -686,3 +686,18 @@ sysctl 沿用既有複製階段。EUID0 的真實寫入在名稱/MIB 與 oldlenp
 ```
 
 [XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).
+
+
+## 明確的工作階段登入緩衝區
+
+`DarwinSystemOptions::LoginNameBytes` 獨立宣告工作階段的全部255個原始位元組（`MAXLOGNAME`）。JSON `login_name_hex` 必須包含恰好510個 ASCII 十六進位字元，允許大小寫。嵌入NUL及終止符後的非零位元組均有效。省略仍為未知，明確的全零記錄則是已知值。不會補齊短名稱，也不從主機、憑證、程序群組、工作階段ID或污染狀態推斷資料；此觀察值不授予登入或檔案權限。
+
+原始 `getlogin(49)` 以無符號低32位 `u_int` 解讀長度，恰好複製 min(length,255) 個位元組，不解碼字串、不補NUL，也不輸出所需大小。零長度不需要觀察值或客體記憶體存取，無效指標也成功；`0xffffffff00000000` 因而選擇零長度。非零請求先要求完整記錄，再檢查目的地。完全不可寫回傳 EFAULT14；部分可寫範圍在複製前停止，預檢錯誤不發布資料。後端寫入錯誤由原有使用者複製層傳遞，不承諾一般回復。保留 BSD carry 和第二回傳暫存器規則，包括 x64 錯誤時的原始 RDX。
+
+`setlogin(50)` 在明確root憑證或全零緩衝區下仍不支援。原始唯讀 `login-buffer` 檢查完整長度參數、前綴、相鄰位元組、零長度指標及EFAULT；`virtual-login-buffer` 輸出宣告的255個位元組。缺失值及設定器的模型測試不進入原生執行目錄。macOS ARM64參照不代表實體iOS或Intel原生驗收。範例明確宣告全部255個零位元組，不是推斷的空登入名稱。
+
+```json
+{"darwin_system":{"login_name_hex":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}}
+```
+
+[XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).

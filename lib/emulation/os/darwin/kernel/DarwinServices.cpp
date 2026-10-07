@@ -126,6 +126,7 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::GetPGID:
   case ServiceKind::GetSID:
   case ServiceKind::IsSetUGID:
+  case ServiceKind::GetLogin:
   case ServiceKind::GetUID:
   case ServiceKind::GetEUID:
   case ServiceKind::GetGID:

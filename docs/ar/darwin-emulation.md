@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 5ede1d380a591548b87919442b32c86a0b1d52944086d0f9f0bcdd7592c368e3 -->
+<!-- i18n-source: 920271e860cb6e9a9c4c3fdb54e3adfc2fd1f058708ebfaa3ff693f11dfb47fe -->
 
 [← فهرس الوثائق](README.md)
 
@@ -684,3 +684,18 @@ getuid24/geteuid25/getgid47/getegid43/getgroups79 تشترك بمالكsystem و
 ```
 
 [XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).
+
+
+## مخزن تسجيل دخول الجلسة الصريح
+
+يعلن `DarwinSystemOptions::LoginNameBytes` بصورة مستقلة كل 255 بايت خام للجلسة (`MAXLOGNAME`). يتطلب JSON `login_name_hex` عدد 510 محارف ASCII سداسية عشرية بالضبط ويقبل الحالتين. يسمح بـNUL داخل البيانات وبايتات غير صفرية بعد النهاية. الغياب مجهول، والسجل الصفري الكامل معلوم وصريح. لا تُملأ الأسماء القصيرة ولا تُستنتج البيانات من المضيف أو بيانات الاعتماد أو المجموعة أو الجلسة أو حالة التلوث. لا يمنح هذا الرصد صلاحيات دخول أو ملفات.
+
+يستخدم `getlogin(49)` أقل 32 بت غير موقعة من الطول (`u_int`) وينسخ min(length,255) بايت بالضبط، دون تفسير نص أو إضافة NUL أو إخراج الحجم المطلوب. ينجح الطول الصفري دون رصد أو وصول لذاكرة الضيف حتى مع مؤشر غير صالح؛ لذا يختار `0xffffffff00000000` صفراً. يتطلب الطلب غير الصفري المخزن الكامل قبل فحص الوجهة. تعيد الوجهة غير القابلة للكتابة بالكامل EFAULT14؛ يتوقف المجال القابل جزئياً قبل النسخ. لا تنشر أخطاء الفحص المسبق بايتات. تنتقل أخطاء كتابة الخلفية عبر طبقة النسخ الحالية دون ضمان تراجع عام. تبقى قواعد BSD carry وسجل الإرجاع الثاني ومنها RDX الأصلي على x64 عند الخطأ.
+
+يبقى `setlogin(50)` غير مدعوم حتى مع root صريح أو مخزن صفري. يفحص العمل الأصلي للقراءة فقط `login-buffer` حوامل الطول الكاملة والبادئات والبايتات المجاورة ومؤشرات الطول الصفري وEFAULT؛ ويخرج `virtual-login-buffer` البايتات الـ255 المعلنة. لا تدخل حالات الغياب والتعيين الخاصة بالنموذج في التنفيذ الأصلي. لا تثبت مراجع macOS ARM64 قبول iOS المادي أو Intel الأصلي. يعلن المثال 255 صفراً صراحة ولا يستنتج اسماً فارغاً.
+
+```json
+{"darwin_system":{"login_name_hex":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}}
+```
+
+[XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).

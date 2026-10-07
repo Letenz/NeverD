@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 5ede1d380a591548b87919442b32c86a0b1d52944086d0f9f0bcdd7592c368e3 -->
+<!-- i18n-source: 920271e860cb6e9a9c4c3fdb54e3adfc2fd1f058708ebfaa3ff693f11dfb47fe -->
 
 [← 문서 목록](README.md)
 
@@ -686,3 +686,18 @@ sysctl 복사 단계는 유지됩니다. EUID0의 실제 쓰기는 이름/MIB와
 ```
 
 [XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).
+
+
+## 명시적 세션 로그인 버퍼
+
+`DarwinSystemOptions::LoginNameBytes` 는 세션의 전체255바이트(`MAXLOGNAME`)를 독립적으로 선언하는 선택적 관측값입니다. JSON `login_name_hex` 는 대소문자를 허용하는 정확히510개의 ASCII 16진수 문자입니다. 내부NUL과 종료 뒤의 비영 바이트도 유효합니다. 생략은 미지, 명시적 전체0은 알려진 값입니다. 짧은 이름을 채우거나 호스트, 자격 증명, 프로세스 그룹, 세션ID, 오염 상태에서 추론하지 않습니다. 로그인 또는 파일 권한을 부여하지 않습니다.
+
+원시 `getlogin(49)` 는 길이의 부호 없는 하위32비트 `u_int` 를 사용하여 min(length,255) 바이트만 복사합니다. 문자열 해석, NUL 추가, 필요 크기 출력은 없습니다. 길이0은 관측값과 게스트 메모리 접근 없이 잘못된 포인터에서도 성공하며 `0xffffffff00000000` 도0을 선택합니다. 양의 길이는 목적지 검사 전에 전체 선언값을 요구합니다. 전혀 쓰지 못하면 EFAULT14, 일부만 쓸 수 있으면 복사 전에 미지원으로 중단합니다. 사전 검사 오류는 바이트를 쓰지 않습니다. 기존 복사 계층은 백엔드 쓰기 오류를 전파하며 일반 롤백을 보장하지 않습니다. BSD carry 와 두 번째 반환 레지스터 규칙 및 오류 시 원래 x64 RDX 를 유지합니다.
+
+`setlogin(50)` 은 명시root 또는 전체0에서도 미지원입니다. 독자적 읽기 전용 `login-buffer` 는 전체 길이 인수, 접두부, 인접 바이트, 길이0 포인터, EFAULT를 검사하고 `virtual-login-buffer` 는 선언한255바이트를 출력합니다. 누락 및 설정기 모델 테스트는 네이티브 실행에서 제외합니다. macOS ARM64 참조는 물리iOS나Intel 네이티브 검증을 뜻하지 않습니다. 예제는255개의0을 명시적으로 선언하며 빈 로그인 이름을 추론하지 않습니다.
+
+```json
+{"darwin_system":{"login_name_hex":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}}
+```
+
+[XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).

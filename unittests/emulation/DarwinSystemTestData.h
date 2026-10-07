@@ -51,6 +51,28 @@ inline constexpr char ProcessObservationsJSON[] =
     R"({"process_group_id":7,"session_id":16909060,"process_tainted":true})";
 // Independently packed little-endian group, session and int taint result.
 inline constexpr char ProcessObservationsHex[] = "070000000403020101000000";
+inline DarwinSystemOptions loginBufferOptions() {
+  DarwinSystemOptions O;
+  auto &Bytes = O.LoginNameBytes.emplace(255, 0xa5);
+  Bytes[0] = 0x4c;
+  Bytes[1] = 0;
+  Bytes[2] = 0xff;
+  Bytes.back() = 0x7e;
+  return O;
+}
+// Independently declared wire bytes for L, embedded NUL, 0xff, nonzero tail.
+inline constexpr char LoginNameHex[] =
+    "4c00ffa5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+    "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+    "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+    "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+    "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+    "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+    "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+    "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a57e";
+static_assert(sizeof(LoginNameHex) == 511);
+inline const std::string LoginNameJSON =
+    std::string(R"({"login_name_hex":")") + LoginNameHex + "\"}";
 inline DarwinSystemOptions resourceLimitOptions() {
   DarwinSystemOptions O;
   O.MaxFilesPerProcess = 64;
