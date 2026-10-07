@@ -7,6 +7,7 @@
 
 #include "neverd/emulation/GuestMemory.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MathExtras.h"
@@ -45,14 +46,15 @@ Record fetch(llvm::ArrayRef<uint8_t> Bytes, uint64_t Offset) {
 
 /// Every pointer-sized cell of the mapped sections that holds the entry
 /// address of a bindable export. Cells keep their identity; nothing is moved.
-llvm::Expected<std::vector<Slot>> findSlots(const Image &In, const Capture &C) {
+llvm::Expected<std::vector<Slot>> findSlots(const Image &In, const Capture &C,
+                                            llvm::ArrayRef<uint8_t> Memory) {
   std::vector<Slot> Slots;
   for (const auto &R : In.regions()) {
     const uint64_t End = R.RVA + R.MemorySize;
     // Thunk arrays are usually aligned, but neither the loader nor a stub
     // requires it. A cell is consumed whole, so matches cannot overlap.
     for (uint64_t RVA = R.RVA; RVA + value::PointerSize <= End; ++RVA) {
-      const uint64_t Pointer = endian::read64le(C.Memory.data() + RVA);
+      const uint64_t Pointer = endian::read64le(Memory.data() + RVA);
       auto Export = C.Exports.find(Pointer);
       if (Export == C.Exports.end())
         continue;
@@ -134,6 +136,151 @@ std::vector<uint8_t> buildImports(llvm::ArrayRef<Slot> Slots,
   return Out;
 }
 
+/// Six bytes a protector leaves in place of one `call qword ptr [rip]`.
+constexpr uint64_t MutatedImportBytes = 6;
+
+/// \p ReturnRVA is the instruction an export returned to. VMProtect's import
+/// mutation is six bytes ending at that instruction: a register push plus a
+/// relative call, or a relative call plus one junk byte that the stub skips.
+bool mutatedImportSite(llvm::ArrayRef<uint8_t> Memory, uint64_t ReturnRVA) {
+  if (ReturnRVA < MutatedImportBytes || ReturnRVA > Memory.size())
+    return false;
+  const uint8_t *Window = Memory.data() + ReturnRVA - MutatedImportBytes;
+  const auto Target = [&](uint64_t At) {
+    const uint64_t Opcode = At - (ReturnRVA - MutatedImportBytes);
+    const int32_t Relative = endian::read32le(Window + Opcode + 1);
+    return int64_t(At) + 5 + Relative;
+  };
+  const auto InImage = [&](int64_t At) {
+    return At >= 0 && uint64_t(At) < Memory.size();
+  };
+  if (Window[0] >= 0x50 && Window[0] <= 0x57 && Window[1] == 0xe8)
+    return InImage(Target(ReturnRVA - 5));
+  if (Window[0] == 0xe8 &&
+      (Window[5] == 0xc3 || Window[5] == 0x90 || Window[5] == 0xcc))
+    return InImage(Target(ReturnRVA - MutatedImportBytes));
+  return false;
+}
+
+void writeImportCall(llvm::MutableArrayRef<uint8_t> Memory, uint64_t ReturnRVA,
+                     uint64_t SlotRVA) {
+  uint8_t *Window = Memory.data() + ReturnRVA - MutatedImportBytes;
+  Window[0] = 0xff;
+  Window[1] = 0x15;
+  endian::write32le(Window + 2,
+                    uint32_t(int32_t(int64_t(SlotRVA) - int64_t(ReturnRVA))));
+}
+
+/// Point protector import calls at cells the loader can fill. An existing
+/// cell that already holds the export is reused. New cells are appended after
+/// the image's last non-zero bytes in the region that already holds the most
+/// resolved exports, with one zero qword for the loader's terminator.
+void redirectTailImports(const Image &In, const Capture &C,
+                         llvm::ArrayRef<TailImport> Calls,
+                         std::vector<uint8_t> &Memory) {
+  struct Site {
+    uint64_t ReturnRVA, Gate;
+  };
+  std::vector<Site> Sites;
+  for (const auto &Call : Calls) {
+    if (Call.ReturnAddress < C.Base ||
+        Call.ReturnAddress - C.Base >= Memory.size() || !Call.Gate ||
+        C.Exports.find(Call.Gate) == C.Exports.end())
+      continue;
+    const uint64_t ReturnRVA = Call.ReturnAddress - C.Base;
+    if (!mutatedImportSite(Memory, ReturnRVA))
+      continue;
+    auto Existing = llvm::find_if(
+        Sites, [&](const Site &S) { return S.ReturnRVA == ReturnRVA; });
+    if (Existing != Sites.end()) {
+      if (Existing->Gate != Call.Gate)
+        Existing->Gate = 0;
+      continue;
+    }
+    Sites.push_back({ReturnRVA, Call.Gate});
+  }
+  llvm::erase_if(Sites, [](const Site &S) { return !S.Gate; });
+  if (Sites.empty())
+    return;
+  std::vector<uint64_t> Gates;
+  for (const auto &S : Sites)
+    if (llvm::find(Gates, S.Gate) == Gates.end())
+      Gates.push_back(S.Gate);
+  std::vector<uint64_t> Slots(Gates.size(), 0);
+  auto Cell = [&](uint64_t RVA) -> uint64_t {
+    if (RVA + value::PointerSize > Memory.size())
+      return 0;
+    return endian::read64le(Memory.data() + RVA);
+  };
+  for (size_t I = 0; I < Gates.size(); ++I) {
+    for (const auto &R : In.regions()) {
+      bool Found = false;
+      for (uint64_t RVA = R.RVA;
+           RVA + value::PointerSize <= R.RVA + R.MemorySize; ++RVA) {
+        if (Cell(RVA) != Gates[I])
+          continue;
+        Slots[I] = RVA;
+        Found = true;
+        break;
+      }
+      if (Found)
+        break;
+    }
+  }
+  std::vector<size_t> Fresh;
+  for (size_t I = 0; I < Gates.size(); ++I)
+    if (!Slots[I])
+      Fresh.push_back(I);
+  if (!Fresh.empty()) {
+    const ImageRegion *Best = nullptr;
+    size_t Held = 0;
+    for (const auto &R : In.regions()) {
+      size_t Count = 0;
+      for (uint64_t RVA = R.RVA;
+           RVA + value::PointerSize <= R.RVA + R.MemorySize; ++RVA)
+        if (C.Exports.find(Cell(RVA)) != C.Exports.end()) {
+          ++Count;
+          RVA += value::PointerSize - 1;
+        }
+      if (Count > Held) {
+        Held = Count;
+        Best = &R;
+      }
+    }
+    uint64_t At = 0;
+    bool Room = false;
+    if (Best) {
+      uint64_t Last = Best->RVA;
+      for (uint64_t RVA = Best->RVA; RVA < Best->RVA + Best->MemorySize; ++RVA)
+        if (Memory[RVA])
+          Last = RVA + 1;
+      At = llvm::alignTo(Last, value::PointerSize);
+      const uint64_t Need = (Fresh.size() + 1) * value::PointerSize;
+      const uint64_t End = Best->RVA + Best->MemorySize;
+      Room = At >= Best->RVA && At <= End && Need <= End - At;
+      if (Room)
+        for (uint64_t Byte = At; Byte < At + Need; ++Byte)
+          if (Memory[Byte])
+            Room = false;
+    }
+    if (Room)
+      for (size_t I = 0; I < Fresh.size(); ++I) {
+        Slots[Fresh[I]] = At + I * value::PointerSize;
+        endian::write64le(Memory.data() + Slots[Fresh[I]], Gates[Fresh[I]]);
+      }
+  }
+  for (const auto &S : Sites) {
+    const auto Gate = llvm::find(Gates, S.Gate);
+    const uint64_t Slot = Slots[Gate - Gates.begin()];
+    if (!Slot)
+      continue;
+    const int64_t Displacement = int64_t(Slot) - int64_t(S.ReturnRVA);
+    if (Displacement != int32_t(Displacement))
+      continue;
+    writeImportCall(Memory, S.ReturnRVA, Slot);
+  }
+}
+
 /// Section access flags for the permissions the region's pages had.
 uint32_t observedAccess(const Capture &C, const ImageRegion &R) {
   unsigned Access = 0;
@@ -199,7 +346,9 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
     return failure(unpack::text::ImageChanged);
   if (!In.regionAt(C.EntryRVA))
     return failure(unpack::text::EntryOutside);
-  auto Slots = findSlots(In, C);
+  std::vector<uint8_t> Memory(C.Memory.begin(), C.Memory.end());
+  redirectTailImports(In, C, Plan.TailImports, Memory);
+  auto Slots = findSlots(In, C, Memory);
   if (!Slots)
     return Slots.takeError();
   const auto Groups = groupSlots(*Slots);
@@ -218,7 +367,6 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   if (NewImageSize > UINT32_MAX)
     return failure(text::ImageSize);
 
-  std::vector<uint8_t> Memory(C.Memory.begin(), C.Memory.end());
   for (size_t I = 0; I < Slots->size(); ++I)
     endian::write64le(Memory.data() + (*Slots)[I].RVA, Thunks[I]);
 
@@ -244,8 +392,20 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   };
   for (size_t I = 0; I < Regions.size(); ++I) {
     const auto &R = Regions[I];
-    Place(llvm::ArrayRef(Memory).slice(R.RVA, R.MemorySize),
-          H.Sections[I].VirtualSize ? H.Sections[I].VirtualSize : R.MemorySize);
+    // A loader reads the zero qword after each import run. That terminator is
+    // itself zero, so trimming trailing zeros would leave it outside the
+    // section and the run would not be file backed.
+    uint64_t ExtentInSection =
+        H.Sections[I].VirtualSize ? H.Sections[I].VirtualSize : R.MemorySize;
+    for (const auto &S : *Slots) {
+      if (S.RVA < R.RVA || S.RVA - R.RVA >= R.MemorySize)
+        continue;
+      const uint64_t Terminator = S.RVA + 2 * value::PointerSize;
+      if (Terminator < R.RVA || Terminator - R.RVA > R.MemorySize)
+        return failure(text::ImageSize);
+      ExtentInSection = std::max(ExtentInSection, Terminator - R.RVA);
+    }
+    Place(llvm::ArrayRef(Memory).slice(R.RVA, R.MemorySize), ExtentInSection);
   }
   if (AddSection)
     Place(Metadata, Metadata.size());

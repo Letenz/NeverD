@@ -47,7 +47,7 @@ La table des sections d'origine, la disposition du répertoire d'importation et 
 
 ## Limites
 
-Seuls les exécutables sont pris en charge ; les DLL ne sont pas exécutées. L'exécution vérifiée admet une instruction à la fois, de l'ordre de 10^5 par seconde, si bien qu'un stub qui exige des milliards d'instructions dépasse tout budget réaliste. L'exécution est suivie par page de 4 KiB : du code écrit dans une page qui exécute déjà du code de la même génération n'est pas signalé comme un transfert. Le code du programme qui s'exécute avant l'entrée, par exemple un rappel TLS qui appelle une API non modélisée, arrête l'exécution sauf si le stub déclare son entrée. Les chargeurs VMProtect ne sont pas encore pris en charge.
+Seuls les exécutables sont pris en charge ; les DLL ne sont pas exécutées. L'exécution vérifiée admet une instruction à la fois, de l'ordre de 10^5 par seconde, si bien qu'un stub qui exige des milliards d'instructions dépasse tout budget réaliste. L'exécution est suivie par page de 4 KiB : du code écrit dans une page qui exécute déjà du code de la même génération n'est pas signalé comme un transfert. Le code du programme qui s'exécute avant l'entrée, par exemple un rappel TLS qui appelle une API non modélisée, arrête l'exécution sauf si le stub déclare son entrée. Un chargeur VMProtect est dépaqueté lorsque chaque appel d'import protégé occupe encore six octets et se termine par un appel vers un export déjà résolu. Ces sites sont réécrits comme des appels d'import ordinaires. Le code virtualisé reste virtualisé.
 
 ## Vérification
 

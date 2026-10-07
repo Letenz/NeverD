@@ -45,7 +45,7 @@ The original section table, import directory layout and relocation table are not
 
 ## Limits
 
-Executables only; DLLs are not run. Checked execution admits one instruction at a time, on the order of 10^5 per second, so a stub that needs billions of instructions exceeds any practical budget. Execution is tracked per 4 KiB page: code written into a page that is already running code of the same generation is not reported as a transfer. Code of the program that runs before the entry, such as a TLS callback that calls an unmodeled API, stops the run unless the stub declares its entry. VMProtect loaders are not supported yet.
+Executables only; DLLs are not run. Checked execution admits one instruction at a time, on the order of 10^5 per second, so a stub that needs billions of instructions exceeds any practical budget. Execution is tracked per 4 KiB page: code written into a page that is already running code of the same generation is not reported as a transfer. Code of the program that runs before the entry, such as a TLS callback that calls an unmodeled API, stops the run unless the stub declares its entry. A VMProtect loader is unpacked when each protected import call is still a six-byte site that tail-calls a resolved export. Those sites are rewritten as ordinary import calls. Virtualized code is left virtualized.
 
 ## Verification
 

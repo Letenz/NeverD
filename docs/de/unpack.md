@@ -47,7 +47,7 @@ Die ursprüngliche Abschnittstabelle, die Anordnung des Importverzeichnisses und
 
 ## Grenzen
 
-Unterstützt werden nur ausführbare Dateien; DLLs werden nicht ausgeführt. Die geprüfte Ausführung lässt jeweils einen Befehl zu, in der Größenordnung von 10^5 pro Sekunde, sodass ein Stub, der Milliarden von Befehlen benötigt, jedes praktikable Budget übersteigt. Die Ausführung wird je Seite von 4 KiB verfolgt: Code, der in eine Seite geschrieben wird, die bereits Code derselben Generation ausführt, wird nicht als Transfer gemeldet. Code des Programms, der vor dem Einstieg läuft, etwa ein TLS-Callback, der eine nicht modellierte API aufruft, stoppt den Lauf, sofern der Stub seinen Einstieg nicht deklariert. VMProtect-Lader werden noch nicht unterstützt.
+Unterstützt werden nur ausführbare Dateien; DLLs werden nicht ausgeführt. Die geprüfte Ausführung lässt jeweils einen Befehl zu, in der Größenordnung von 10^5 pro Sekunde, sodass ein Stub, der Milliarden von Befehlen benötigt, jedes praktikable Budget übersteigt. Die Ausführung wird je Seite von 4 KiB verfolgt: Code, der in eine Seite geschrieben wird, die bereits Code derselben Generation ausführt, wird nicht als Transfer gemeldet. Code des Programms, der vor dem Einstieg läuft, etwa ein TLS-Callback, der eine nicht modellierte API aufruft, stoppt den Lauf, sofern der Stub seinen Einstieg nicht deklariert. Ein VMProtect-Lader wird entpackt, wenn jeder geschützte Importaufruf noch eine Stelle von sechs Byte ist, die einen aufgelösten Export per Tailcall erreicht. Diese Stellen werden als gewöhnliche Importaufrufe neu geschrieben. Virtualisierter Code bleibt virtualisiert.
 
 ## Verifikation
 

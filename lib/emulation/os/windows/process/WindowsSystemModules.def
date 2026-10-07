@@ -4,16 +4,24 @@
 //
 //===----------------------------------------------------------------------===//
 // These are bounded model images, not bytes or ordinals from a Windows build.
+// Each image is SystemImageSize bytes. Spans do not overlap, and the last
+// image ends before OpaqueModuleBase. Bases stay with each module.
+// Provider order is the InLoadOrder list after the executable. The observed
+// Wine order, which the VMProtect loader walks to its tail, is ntdll,
+// kernel32, kernelbase. NTDLL sits above the other two. Its Nt/Zw exports
+// are 32-byte stubs, so a 32-byte prologue read stays inside one export.
+// SystemImageSize is a 64K multiple so those stubs fit and the image ends
+// on an allocation granule.
 #ifdef NEVERD_WINDOWS_SYSTEM_MODULE
-NEVERD_WINDOWS_SYSTEM_MODULE(NTDLL, Native, 0x71100000)
-NEVERD_WINDOWS_SYSTEM_MODULE(KernelBase, Kernel, 0x71110000)
-NEVERD_WINDOWS_SYSTEM_MODULE(Kernel32, Kernel, 0x71120000)
+NEVERD_WINDOWS_SYSTEM_MODULE(NTDLL, Native, 0x71080000)
+NEVERD_WINDOWS_SYSTEM_MODULE(Kernel32, Kernel, 0x71060000)
+NEVERD_WINDOWS_SYSTEM_MODULE(KernelBase, Kernel, 0x71040000)
 #endif
 #ifdef NEVERD_WINDOWS_PROCESS_VALUE
 NEVERD_WINDOWS_PROCESS_VALUE(SystemModuleCount, 3)
-NEVERD_WINDOWS_PROCESS_VALUE(SystemImageSize, 0x3000)
+NEVERD_WINDOWS_PROCESS_VALUE(SystemImageSize, 0x20000)
 NEVERD_WINDOWS_PROCESS_VALUE(SystemExportRVA, 0x1000)
-NEVERD_WINDOWS_PROCESS_VALUE(SystemCodeRVA, 0x2000)
+NEVERD_WINDOWS_PROCESS_VALUE(SystemCodeRVA, 0xf000)
 NEVERD_WINDOWS_PROCESS_VALUE(SystemOrdinalBase, 1)
 NEVERD_WINDOWS_PROCESS_VALUE(SystemPEVersion, 6)
 #endif

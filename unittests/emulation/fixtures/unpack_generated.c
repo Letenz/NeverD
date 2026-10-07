@@ -17,6 +17,25 @@ __declspec(dllimport) void ExitProcess(U32);
 __declspec(dllimport) void *GetStdHandle(U32);
 __declspec(dllimport) int WriteFile(void *, const void *, U32, U32 *, void *);
 
+// A protector can replace one six-byte import call with a register push and a
+// call to one of these stubs. The stub drops that push and tail-calls the
+// import, so the export returns to the instruction after the site. Nothing
+// reaches them unless a test plants that call. The names stay in the export
+// table so the test can aim the planted call.
+#if defined(__x86_64__)
+#define TAIL(Name)                                                             \
+  __declspec(dllexport) __attribute__((naked, used)) void tail_##Name(void) {  \
+    __asm__("pop %rax\n\t"                                                     \
+            "add $8, %rsp\n\t"                                                 \
+            "push %rax\n\t"                                                    \
+            "jmp *__imp_" #Name "(%rip)");                                     \
+  }
+TAIL(ExitProcess)
+TAIL(GetStdHandle)
+TAIL(WriteFile)
+#undef TAIL
+#endif
+
 // The record a packer fills in; it is the only content of its section. As
 // linked it is empty and the loader below is never reached.
 struct PackRecord {

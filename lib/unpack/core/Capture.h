@@ -42,9 +42,21 @@ struct MetadataOverride {
   uint64_t RVA, Size;
 };
 
+/// One export call whose guest return address was still inside the image.
+/// A tail call names the instruction the export returns to, which is the
+/// program call the protector rewrote.
+struct TailImport {
+  uint64_t ReturnAddress = 0;
+  /// Entry address of the export that was entered.
+  uint64_t Gate = 0;
+};
+
 /// What a protector module adds to a rebuild beyond the observed memory.
 struct RebuildPlan {
   std::vector<MetadataOverride> Metadata;
+  /// Export calls observed by running the recovered entry. The container
+  /// uses them only when a call site still has a protector's form.
+  std::vector<TailImport> TailImports;
 };
 
 struct RebuiltImage {

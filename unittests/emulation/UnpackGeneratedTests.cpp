@@ -91,6 +91,63 @@ protected:
       std::filesystem::remove_all(Scratch);
   }
 
+  /// Replace each import call in the program with the six-byte tail call the
+  /// rebuilder recognizes. The linked file stays the oracle; only this copy
+  /// carries the protector's shape.
+  bool mutateImportCalls(std::vector<uint8_t> &Bytes) {
+    using namespace llvm::support::endian;
+    if (GetParam().ISA != GuestArchitecture::X64) {
+      ADD_FAILURE() << X64CallShape;
+      return false;
+    }
+    const auto *Program = Original.section(ProgramSection);
+    if (!Program || Program->VirtualSize > Program->FileSize ||
+        Program->FileOffset + Program->VirtualSize > Bytes.size()) {
+      ADD_FAILURE() << MissingRecord;
+      return false;
+    }
+    const char *Names[] = {"ExitProcess", "GetStdHandle", "WriteFile"};
+    bool Seen[] = {false, false, false};
+    for (uint32_t At = 0; At + 6 <= Program->VirtualSize; ++At) {
+      uint8_t *Site = Bytes.data() + Program->FileOffset + At;
+      if (Site[0] != 0xff || Site[1] != 0x15)
+        continue;
+      const int32_t Displacement = read32le(Site + 2);
+      const uint64_t Next = Original.Base + Program->RVA + At + 6;
+      const uint64_t Slot = uint64_t(int64_t(Next) + Displacement);
+      const Image::Import *Match = nullptr;
+      for (const auto &Import : Original.Imports)
+        if (Original.Base + Import.Slot == Slot)
+          Match = &Import;
+      if (!Match)
+        continue;
+      const auto Tail = Original.Exports.find("tail_" + Match->Name);
+      if (Tail == Original.Exports.end()) {
+        ADD_FAILURE() << Match->Name << MissingTail;
+        return false;
+      }
+      const int64_t Relative =
+          int64_t(Original.Base + Tail->second) - int64_t(Next);
+      if (Relative != int32_t(Relative)) {
+        ADD_FAILURE() << TailOutOfRange;
+        return false;
+      }
+      Site[0] = 0x51;
+      Site[1] = 0xe8;
+      write32le(Site + 2, uint32_t(Relative));
+      for (size_t I = 0; I < sizeof Names / sizeof Names[0]; ++I)
+        if (Match->Name == Names[I])
+          Seen[I] = true;
+      At += 5;
+    }
+    for (bool Found : Seen)
+      if (!Found) {
+        ADD_FAILURE() << NoImportCall;
+        return false;
+      }
+    return true;
+  }
+
   /// Do to the linked program what a packer does: keep its code only in a
   /// transformed copy and start at the loader that restores it.
   std::filesystem::path pack(uint32_t Mode) {
@@ -117,6 +174,8 @@ protected:
       std::fill_n(Bytes.begin() + S->FileOffset, S->FileSize, 0);
       write32le(Record + SizeAt, S->VirtualSize);
     };
+    if (Mode == MutatedMode && !mutateImportCalls(Bytes))
+      return {};
     Move(ProgramSection, ProgramBytesOffset, ProgramOffset);
     if (Mode == StagedMode)
       Move(RelaySection, RelayBytesOffset, RelayOffset);
@@ -277,6 +336,22 @@ TEST_P(UnpackGenerated, SecondLoaderIsTheEntryUntilALaterTransferIsNamed) {
   EXPECT_EQ(Second.Transfers[1].Generation, 2u);
   EXPECT_EQ(Second.EntryRVA, Original.Entry);
   expectOriginalProgram(Second);
+}
+
+// The linked program calls its imports directly. Packing rewrites each of
+// those calls into a six-byte tail call, which is the shape a protector leaves
+// when it does not virtualize the call. Unpacking must put the ordinary call
+// back, so the recovered section matches the linked one and the program runs.
+TEST_P(UnpackGenerated, MutatedImportTailCallsAreOrdinaryImportsAgain) {
+  if (GetParam().ISA != GuestArchitecture::X64)
+    GTEST_SKIP() << X64CallShape;
+  const auto Result = unpack(MutatedMode);
+  ASSERT_FALSE(HasFailure());
+  ASSERT_EQ(Result.Outcome, UnpackOutcome::Unpacked) << Result.Diagnostic;
+  EXPECT_EQ(Result.EntryRVA, Original.Entry);
+  EXPECT_EQ(Result.Source, EntrySource::Transfer);
+  EXPECT_EQ(Result.ProcessStop, test::StopObserver);
+  expectOriginalProgram(Result);
 }
 
 INSTANTIATE_TEST_SUITE_P(Backends, UnpackGenerated, testing::ValuesIn(Profiles),

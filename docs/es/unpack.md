@@ -47,7 +47,7 @@ La tabla de secciones original, la disposición del directorio de importación y
 
 ## Límites
 
-Solo se admiten ejecutables; las DLL no se ejecutan. La ejecución verificada admite una instrucción cada vez, del orden de 10^5 por segundo, por lo que un stub que necesita miles de millones de instrucciones supera cualquier presupuesto práctico. La ejecución se sigue por página de 4 KiB: el código escrito en una página que ya está ejecutando código de la misma generación no se informa como transferencia. El código del programa que se ejecuta antes de la entrada, como una devolución de llamada TLS que llama a una API no modelada, detiene la ejecución salvo que el stub declare su entrada. Los cargadores de VMProtect aún no son compatibles.
+Solo se admiten ejecutables; las DLL no se ejecutan. La ejecución verificada admite una instrucción cada vez, del orden de 10^5 por segundo, por lo que un stub que necesita miles de millones de instrucciones supera cualquier presupuesto práctico. La ejecución se sigue por página de 4 KiB: el código escrito en una página que ya está ejecutando código de la misma generación no se informa como transferencia. El código del programa que se ejecuta antes de la entrada, como una devolución de llamada TLS que llama a una API no modelada, detiene la ejecución salvo que el stub declare su entrada. Un cargador de VMProtect se desempaqueta cuando cada llamada de importación protegida sigue siendo un sitio de seis bytes que hace una llamada final a una exportación ya resuelta. Esos sitios se reescriben como llamadas de importación ordinarias. El código virtualizado sigue virtualizado.
 
 ## Verificación
 

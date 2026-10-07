@@ -7,6 +7,10 @@
 #include "Packer.h"
 #ifdef NEVERD_UNPACK_EXECUTION
 #include "../dynamic/ProcessTransfer.h"
+
+#include "neverd/emulation/ProcessSession.h"
+
+#include "llvm/Support/FileSystem.h"
 #endif
 
 #include <fstream>
@@ -41,6 +45,40 @@ readInput(const std::filesystem::path &Path) {
     return failure(text::ReadFailed + Path.filename().string());
   return Bytes;
 }
+
+#ifdef NEVERD_UNPACK_EXECUTION
+/// Run the recovered image and collect export calls that return into it.
+/// Failure leaves the image as the entry snapshot already rebuilt it.
+llvm::Expected<std::vector<TailImport>>
+observeTailImports(llvm::ArrayRef<uint8_t> Image,
+                   emulation::ProcessProfile Profile,
+                   const emulation::ProcessOptions &Options) {
+  llvm::SmallString<128> Directory;
+  if (std::error_code Error =
+          llvm::sys::fs::createUniqueDirectory("neverd-unpack", Directory))
+    return failure(text::ReadFailed + Error.message());
+  const auto Path =
+      std::filesystem::path(Directory.str().str()) / "unpacked.exe";
+  auto Finish = [&](llvm::Expected<std::vector<TailImport>> Result) {
+    llvm::sys::fs::remove_directories(Directory);
+    return Result;
+  };
+  {
+    std::ofstream Stream(Path, std::ios::binary);
+    if (!Stream.write(reinterpret_cast<const char *>(Image.data()),
+                      std::streamsize(Image.size())))
+      return Finish(failure(text::ReadFailed + Path.filename().string()));
+  }
+  auto Ran = emulation::emulateProcess(Path, Profile, Options);
+  if (!Ran)
+    return Finish(Ran.takeError());
+  std::vector<TailImport> Calls;
+  for (const auto &Call : Ran->NativeCalls)
+    if (Call.ReturnAddress)
+      Calls.push_back({*Call.ReturnAddress, Call.PC});
+  return Finish(std::move(Calls));
+}
+#endif
 
 // The orchestration names no container, instruction set, guest system or
 // protector. Each is chosen through its registry from facts of the input.
@@ -99,6 +137,19 @@ llvm::Expected<UnpackResult> unpackFile(const std::filesystem::path &Input,
   auto Rebuilt = Container->rebuild(Image, *Observed, Plan);
   if (!Rebuilt)
     return Rebuilt.takeError();
+  // The entry snapshot still has protector import calls. Running it shows
+  // which export each one reaches, and a second rebuild turns those sites
+  // into ordinary import calls when the container recognizes them.
+  auto Tails = observeTailImports(Rebuilt->File, *Profile, Options.Process);
+  if (Tails && !Tails->empty()) {
+    Plan.TailImports = std::move(*Tails);
+    auto Repaired = Container->rebuild(Image, *Observed, Plan);
+    if (!Repaired)
+      return Repaired.takeError();
+    Rebuilt = std::move(Repaired);
+  } else if (!Tails) {
+    llvm::consumeError(Tails.takeError());
+  }
   Result.Outcome = UnpackOutcome::Unpacked;
   Result.ImageBase = Observed->Base;
   Result.EntryRVA = Observed->EntryRVA;

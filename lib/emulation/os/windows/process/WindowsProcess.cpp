@@ -11,6 +11,9 @@
 
 #include "llvm/Support/Endian.h"
 
+#include <string>
+#include <vector>
+
 namespace neverd::emulation::windows_process {
 using namespace value;
 namespace {
@@ -441,8 +444,13 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       continue;
     }
     const Import *Import = nullptr;
+    auto NativeSyscall = [](llvm::StringRef Name) {
+      return (Name.starts_with("Nt") || Name.starts_with("Zw"));
+    };
     for (const auto &I : Program->Gates)
-      if (I.Gate == Request->PC) {
+      if (I.Gate == Request->PC ||
+          (Request->PC == I.Gate + NativeSyscallOffset &&
+           NativeSyscall(I.Name))) {
         Import = &I;
         break;
       }
@@ -478,6 +486,13 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     NativeCallEvent Event{Request->PC, Import->Target->Name};
     Event.Module = Import->Module;
     Event.ArgumentCount = Import->Target->Arguments;
+    if (X64) {
+      auto Ret = (*Space)->readInteger(StackPointer, PointerSize);
+      if (!Ret)
+        llvm::consumeError(Ret.takeError());
+      else
+        Event.ReturnAddress = *Ret;
+    }
     bool Invalid = false;
     for (unsigned I = 0; I < Event.ArgumentCount; ++I) {
       auto Location = ABI->argumentLocation(StackPointer, I);

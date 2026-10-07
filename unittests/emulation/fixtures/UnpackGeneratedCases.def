@@ -37,6 +37,8 @@ NEVERD_GENERATED_MODE(Jump, 1)
 NEVERD_GENERATED_MODE(Call, 2)
 // Writes a second loader and leaves for it; that one writes the program.
 NEVERD_GENERATED_MODE(Staged, 3)
+// The program's import calls are six-byte tail calls. x86-64 only.
+NEVERD_GENERATED_MODE(Mutated, 4)
 #endif
 
 #ifdef NEVERD_GENERATED_BUILD
@@ -69,6 +71,10 @@ NEVERD_GENERATED_TEXT(Message, "generated code ran\n")
 NEVERD_GENERATED_TEXT(ScratchPrefix, "neverd-unpack-generated")
 NEVERD_GENERATED_TEXT(MissingRecord, "the fixture has no pack record or loader")
 NEVERD_GENERATED_TEXT(RecordOverflow, " does not fit the pack record")
+NEVERD_GENERATED_TEXT(X64CallShape, "the mutated import call is an x86-64 shape")
+NEVERD_GENERATED_TEXT(MissingTail, "an import call has no tail stub")
+NEVERD_GENERATED_TEXT(TailOutOfRange, "a tail stub is out of relative-call range")
+NEVERD_GENERATED_TEXT(NoImportCall, "the program has no import call to mutate")
 #endif
 
 #ifdef NEVERD_GENERATED_KERNEL_API

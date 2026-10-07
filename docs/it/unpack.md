@@ -47,7 +47,7 @@ La tabella delle sezioni originale, la disposizione della directory di importazi
 
 ## Limiti
 
-Sono supportati solo eseguibili; le DLL non vengono eseguite. L'esecuzione controllata ammette un'istruzione alla volta, nell'ordine di 10^5 al secondo, quindi uno stub che richiede miliardi di istruzioni supera qualsiasi budget realistico. L'esecuzione è tracciata per pagina da 4 KiB: il codice scritto in una pagina che sta già eseguendo codice della stessa generazione non viene segnalato come trasferimento. Il codice del programma che gira prima dell'ingresso, per esempio una callback TLS che chiama un'API non modellata, ferma l'esecuzione a meno che lo stub dichiari il proprio ingresso. I caricatori VMProtect non sono ancora supportati.
+Sono supportati solo eseguibili; le DLL non vengono eseguite. L'esecuzione controllata ammette un'istruzione alla volta, nell'ordine di 10^5 al secondo, quindi uno stub che richiede miliardi di istruzioni supera qualsiasi budget realistico. L'esecuzione è tracciata per pagina da 4 KiB: il codice scritto in una pagina che sta già eseguendo codice della stessa generazione non viene segnalato come trasferimento. Il codice del programma che gira prima dell'ingresso, per esempio una callback TLS che chiama un'API non modellata, ferma l'esecuzione a meno che lo stub dichiari il proprio ingresso. Un caricatore VMProtect viene spacchettato quando ogni chiamata di import protetta è ancora un sito di sei byte che esegue una chiamata tail verso un export risolto. Quei siti sono riscritti come chiamate di import ordinarie. Il codice virtualizzato resta virtualizzato.
 
 ## Verifica
 

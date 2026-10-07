@@ -10,6 +10,7 @@
 #include "llvm/Support/Endian.h"
 
 #include <algorithm>
+#include <vector>
 
 namespace neverd::emulation::windows_process {
 namespace {
@@ -376,6 +377,66 @@ Services::memory(const Service &S, const NativeCallEvent &Event) {
       return V.takeError();
     return std::optional<uint64_t>(*V);
   };
+  if (S.Kind == API::WriteProcessMemory) {
+    if (A[0] != CurrentProcess)
+      return WinError(ErrorInvalidHandle);
+    if (A[3] > PageSize)
+      return unsupported(S);
+    if (A[4]) {
+      auto Out = access(A[4], PointerSize, Write);
+      if (!Out)
+        return Out.takeError();
+      if (!*Out)
+        return WinError(ErrorNoAccess);
+    }
+    std::vector<uint8_t> Bytes(A[3]);
+    if (A[3]) {
+      auto Readable = access(A[2], A[3], Read);
+      if (!Readable)
+        return Readable.takeError();
+      if (!*Readable)
+        return WinError(ErrorNoAccess);
+      if (auto E = CPU.read(A[2], Bytes))
+        return std::move(E);
+      auto Destination = access(A[1], A[3], Write);
+      if (!Destination)
+        return Destination.takeError();
+      uint32_t Old = 0;
+      bool Changed = false;
+      if (!*Destination) {
+        auto Info = Virtual.query(A[1]);
+        if (!Info)
+          return Info.takeError();
+        if (!*Info || !(**Info).Protection)
+          return WinError(ErrorInvalidAddress);
+        Old = (**Info).Protection;
+        const uint32_t Temporary =
+            (Old & 0xf0) ? PageExecuteReadWrite : PageReadWrite;
+        auto Protected = Virtual.protect(A[1], A[3], Temporary);
+        if (!Protected)
+          return Protected.takeError();
+        if (Protected->Unsupported)
+          return unsupported(S);
+        if (Protected->Error)
+          return WinError(Protected->Error);
+        Changed = true;
+      }
+      auto Written = CPU.write(A[1], Bytes);
+      if (Changed) {
+        auto Back = Virtual.protect(A[1], A[3], Old);
+        if (!Back)
+          return Written
+                     ? llvm::joinErrors(std::move(Written), Back.takeError())
+                     : Back.takeError();
+      }
+      if (Written)
+        return std::move(Written);
+    }
+    if (A[4])
+      if (auto E = CPU.writeInteger(A[4], A[3], PointerSize))
+        return std::move(E);
+    return std::optional<uint64_t>(1);
+  }
   if (S.Kind == API::FlushInstructionCache) {
     if (A[0] != CurrentProcess)
       return WinError(ErrorInvalidHandle);
