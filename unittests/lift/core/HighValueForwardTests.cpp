@@ -253,6 +253,18 @@ int main(void) { return same_slot(7) == 7 && same_slot(9) == 9 ? 0 : 1; }
 )");
 }
 
+TEST(HighValueForward, SlotLoadStaysBeforeAnAssignmentToItsSlot) {
+  HighFunc F = reloaded("assigned_slot", 16);
+  F.Body[2] = assign(HighExpr::makeLoad(frameSlot(16),
+                                       NdType::makeInt(8, false)),
+                     constant(5));
+  const std::string Source = emit({F});
+  EXPECT_NE(declarationOf(Source, "t1"), "") << Source;
+  compileAndRun(Source + R"(
+int main(void) { return assigned_slot(7) == 7 && assigned_slot(9) == 9 ? 0 : 1; }
+)");
+}
+
 TEST(HighValueForward, SlotLoadFoldsPastAStoreToAnotherSlot) {
   const std::string Source = emit({reloaded("other_slot", 32)});
   EXPECT_EQ(declarationOf(Source, "t1"), "") << Source;
