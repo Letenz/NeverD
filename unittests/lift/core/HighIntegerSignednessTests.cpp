@@ -265,6 +265,28 @@ int main(void) {
 )");
 }
 
+TEST(HighIntegerSignedness, ConstantsCompareFromTheRight) {
+  // 0 < x signed and 5 <= x unsigned print with the constant on the right.
+  HighFunc F = function(
+      "order", {when(op(NdOp::INT_SLESS, constant(0), input(), true),
+                     {result(constant(1))}),
+                when(op(NdOp::INT_LESSEQUAL, constant(5), input(), true),
+                     {result(constant(2))}),
+                result(constant(3))});
+  const std::string Source = emit({F});
+  EXPECT_NE(Source.find("(int64_t)arg0 > 0"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("arg0 >= 5"), std::string::npos) << Source;
+  compileAndRun(Source + R"(
+int main(void) {
+  if (order(1) != 1 || order(0x7FFFFFFFFFFFFFFFull) != 1)
+    return 1;
+  if (order(0) != 3 || order(0x8000000000000000ull) != 2)
+    return 2;
+  return 0;
+}
+)");
+}
+
 TEST(HighIntegerSignedness, NonIntegerLocalsKeepTheirTypes) {
   HighFunc F = function(
       "pointer", {assign(local(1, NdType::makePtr()), input()),

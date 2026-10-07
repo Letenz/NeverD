@@ -1107,6 +1107,18 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     RHS = CastOp(R);
   }
 
+  // A constant compares from the right, as a reader expects: `x >= 0` for
+  // `0 <= x`.  Both operands are evaluated either way.
+  const llvm::StringRef Sym(OpSym);
+  const bool Ordering =
+      Sym == " < " || Sym == " <= " || Sym == " == " || Sym == " != ";
+  const HighExpr *LeftValue = unwrapIntegerView(E.Operands[0].get());
+  const HighExpr *RightValue = unwrapIntegerView(E.Operands[1].get());
+  if (Ordering && LeftValue && LeftValue->Kind == ExprKind::Const &&
+      RightValue && RightValue->Kind != ExprKind::Const) {
+    std::swap(LHS, RHS);
+    OpSym = Sym == " < " ? " > " : Sym == " <= " ? " >= " : OpSym;
+  }
   std::string Result = LHS + OpSym + RHS;
   if (MyPrec > 0 && MyPrec <= ParentPrec)
     Result = "(" + Result + ")";
