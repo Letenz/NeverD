@@ -1,1357 +1,1961 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
 <TS version="2.1" language="ja" sourcelanguage="en">
-    <context>
-        <name>ConnectionsPane</name>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="20" />
-            <source>Pending</source>
-            <translation>待機中</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="21" />
-            <source>Completed</source>
-            <translation>完了</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="22" />
-            <source>Failed</source>
-            <translation>失敗</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="23" />
-            <source>Cancelled</source>
-            <translation>キャンセル済み</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="24" />
-            <source>Timed out</source>
-            <translation>タイムアウト</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="25" />
-            <source>Disconnected</source>
-            <translation>切断済み</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="36" />
-            <source>MCP connections</source>
-            <translation>MCP 接続</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="37" />
-            <source>No server connected</source>
-            <translation>サーバー未接続</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="38" />
-            <source>Current session is available to external agents.</source>
-            <translation>現在のセッションは外部エージェントからアクセスできます。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="38" />
-            <source>Connect tools and resources, or share this session with an external agent.</source>
-            <translation>ツールやリソースに接続するか、このセッションを外部エージェントと共有します。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="41" />
-            <source>Manage Connections…</source>
-            <translation>接続を管理…</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="46" />
-            <source>MCP Connections</source>
-            <translation>MCP 接続</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="59" />
-            <source>Current GUI session</source>
-            <translation>現在の GUI セッション</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="60" />
-            <source>Disable Sharing</source>
-            <translation>共有を無効化</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="60" />
-            <source>Enable Sharing</source>
-            <translation>共有を有効化</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="61" />
-            <source>Copy Credential Path</source>
-            <translation>認証情報のパスをコピー</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="63" />
-            <source>Sharing is off. Enabling it grants local agents access to this session using its private credential file.</source>
-            <translation>共有は無効です。有効にすると、ローカルエージェントが非公開の認証情報ファイルを使ってこのセッションにアクセスできます。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="67" />
-            <source>Transport</source>
-            <translation>トランスポート</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="68" />
-            <source>Absolute path to server executable</source>
-            <translation>サーバー実行ファイルの絶対パス</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="68" />
-            <source>Server endpoint</source>
-            <translation>サーバーのエンドポイント</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="70" />
-            <source>Disconnect</source>
-            <translation>切断</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="70" />
-            <source>Connect</source>
-            <translation>接続</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="80" />
-            <source>Arguments must be a JSON array of strings.</source>
-            <translation>引数は文字列の JSON 配列にしてください。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="87" />
-            <source>Arguments as JSON, for example ["--help"]</source>
-            <translation>JSON 形式の引数。例：["--help"]</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="87" />
-            <source>Server arguments</source>
-            <translation>サーバーの引数</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="91" />
-            <source>Bearer token (optional)</source>
-            <translation>Bearer トークン（任意）</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="91" />
-            <source>Bearer token</source>
-            <translation>Bearer トークン</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="92" />
-            <source>CA certificate path (optional)</source>
-            <translation>CA 証明書のパス（任意）</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="92" />
-            <source>CA certificate path</source>
-            <translation>CA 証明書のパス</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="106" />
-            <source>Tools</source>
-            <translation>ツール</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="106" />
-            <source>Resources</source>
-            <translation>リソース</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="106" />
-            <source>History</source>
-            <translation>履歴</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="146" />
-            <source>No items published by this server.</source>
-            <translation>このサーバーは項目を公開していません。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="146" />
-            <source>Connect a server to browse its tools and resources.</source>
-            <translation>サーバーに接続すると、ツールやリソースを閲覧できます。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="146" />
-            <source>No calls yet.</source>
-            <translation>呼び出し履歴はまだありません。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="156" />
-            <source>Result</source>
-            <translation>結果</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="157" />
-            <source>Schema</source>
-            <translation>スキーマ</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="158" />
-            <source>Call Tool</source>
-            <translation>ツールを呼び出す</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="159" />
-            <source>Cancel Call</source>
-            <translation>呼び出しをキャンセル</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="167" />
-            <source>Tool arguments as JSON</source>
-            <translation>JSON 形式のツール引数</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="169" />
-            <source>Select a resource or call a tool to inspect its response.</source>
-            <translation>リソースを選択するかツールを呼び出すと、応答を確認できます。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ConnectionsPane.qml" line="177" />
-            <source>Tool Input Schema</source>
-            <translation>ツール入力スキーマ</translation>
-        </message>
-    </context>
-    <context>
-        <name>DisassemblyPane</name>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="22" />
-            <source>Address</source>
-            <translation>アドレス</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="23" />
-            <source>Instruction</source>
-            <translation>命令</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="87" />
-            <source>Load more instructions</source>
-            <translation>命令をさらに読み込む</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="93" />
-            <source>Disassembly</source>
-            <translation>逆アセンブリ</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="94" />
-            <source>Select a function to inspect its instructions.</source>
-            <translation>関数を選択すると、命令を確認できます。</translation>
-        </message>
-        <message>
-            <location filename="../qml/DisassemblyPane.qml" line="94" />
-            <source>Addresses, instructions, and control flow in one place.</source>
-            <translation>アドレス、命令、制御フローをまとめて確認できます。</translation>
-        </message>
-    </context>
-    <context>
-        <name>DockTitleBar</name>
-        <message>
-            <location filename="../qml/DockTitleBar.qml" line="17" />
-            <source>Float or Dock Panel</source>
-            <translation>パネルを分離／ドッキング</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockTitleBar.qml" line="18" />
-            <source>Close Panel</source>
-            <translation>パネルを閉じる</translation>
-        </message>
-    </context>
-    <context>
-        <name>ExtensionsPane</name>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="25" />
-            <source>Import Manifest…</source>
-            <translation>マニフェストをインポート…</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="26" />
-            <source>Run</source>
-            <translation>実行</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="27" />
-            <source>Unload</source>
-            <translation>アンロード</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="55" />
-            <source>Import a declarative manifest to add analysis commands and views.</source>
-            <translation>宣言型マニフェストをインポートして、解析コマンドとビューを追加します。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ExtensionsPane.qml" line="59" />
-            <source>Select an extension command to inspect its result.</source>
-            <translation>拡張機能のコマンドを選択すると、結果を確認できます。</translation>
-        </message>
-    </context>
-    <context>
-        <name>FunctionsPane</name>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="84" />
-            <location filename="../qml/FunctionsPane.qml" line="22" />
-            <location filename="../qml/Main.qml" line="106" />
-            <source>FUNCTIONS</source>
-            <translation>関数</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="42" />
-            <source>Filter functions…</source>
-            <translation>関数を絞り込む…</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="43" />
-            <source>Filter functions</source>
-            <translation>関数を絞り込む</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="58" />
-            <source>Name</source>
-            <translation>名前</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="59" />
-            <source>Address</source>
-            <translation>アドレス</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="128" />
-            <source>No functions</source>
-            <translation>関数がありません</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="129" />
-            <source>Try another filter or wait for analysis.</source>
-            <translation>別のフィルターを試すか、解析の完了をお待ちください。</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="129" />
-            <source>Open a binary to browse its functions.</source>
-            <translation>バイナリを開くと、関数を閲覧できます。</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="157" />
-            <source>Rename</source>
-            <translation>名前を変更</translation>
-        </message>
-        <message>
-            <location filename="../qml/FunctionsPane.qml" line="158" />
-            <source>Comment</source>
-            <translation>コメント</translation>
-        </message>
-    </context>
-    <context>
-        <name>GraphPane</name>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="54" />
-            <source>Zoom out</source>
-            <translation>縮小</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="55" />
-            <source>Reset zoom</source>
-            <translation>ズームをリセット</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="56" />
-            <source>Zoom in</source>
-            <translation>拡大</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="57" />
-            <source>Fit</source>
-            <translation>全体表示</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="57" />
-            <source>Fit graph in viewport</source>
-            <translation>グラフを表示領域に合わせる</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="59" />
-            <source>%1 blocks · %2 edges</source>
-            <translation>%1 ブロック · %2 エッジ</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="96" />
-            <location filename="../qml/GraphPane.qml" line="119" />
-            <source>Control flow</source>
-            <translation>制御フロー</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="120" />
-            <source>Select a function to inspect its basic blocks.</source>
-            <translation>関数を選択すると、基本ブロックを確認できます。</translation>
-        </message>
-        <message>
-            <location filename="../qml/GraphPane.qml" line="120" />
-            <source>Explore the paths through a function.</source>
-            <translation>関数内の実行経路を調べます。</translation>
-        </message>
-    </context>
-    <context>
-        <name>GuiSessionBroker</name>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="22" />
-            <location filename="../mcp/GuiSessionBroker.cpp" line="98" />
-            <source>Session sharing disabled</source>
-            <translation>セッション共有は無効です</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="57" />
-            <source>Cannot create private session directory</source>
-            <translation>非公開のセッションディレクトリを作成できません</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="72" />
-            <source>Cannot open local session broker: %1</source>
-            <translation>ローカルセッションブローカーを開けません：%1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="78" />
-            <location filename="../mcp/GuiSessionBroker.cpp" line="83" />
-            <source>Cannot write private session credentials</source>
-            <translation>非公開のセッション認証情報を書き込めません</translation>
-        </message>
-        <message>
-            <location filename="../mcp/GuiSessionBroker.cpp" line="87" />
-            <source>Session sharing enabled</source>
-            <translation>セッション共有は有効です</translation>
-        </message>
-    </context>
-    <context>
-        <name>Main</name>
-        <message>
-            <location filename="../qml/Main.qml" line="16" />
-            <source>NeverD — Binary Analysis</source>
-            <translation>NeverD — バイナリ解析</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="61" />
-            <source>Unsaved annotations</source>
-            <translation>未保存の注釈</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="70" />
-            <source>Save annotation changes before continuing?</source>
-            <translation>続行する前に注釈の変更を保存しますか？</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="76" />
-            <source>Open Binary…</source>
-            <translation>バイナリを開く…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="77" />
-            <source>Go to Address or Symbol…</source>
-            <translation>アドレスまたはシンボルに移動…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="78" />
-            <source>Back</source>
-            <translation>戻る</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="79" />
-            <source>Forward</source>
-            <translation>進む</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="80" />
-            <source>Settings…</source>
-            <translation>設定…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="81" />
-            <source>Rename Function…</source>
-            <translation>関数名を変更…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="82" />
-            <source>Edit Comment…</source>
-            <translation>コメントを編集…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="83" />
-            <source>Undo</source>
-            <translation>元に戻す</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="84" />
-            <source>Redo</source>
-            <translation>やり直す</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="85" />
-            <source>Cancel Analysis</source>
-            <translation>解析をキャンセル</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="86" />
-            <location filename="../qml/Main.qml" line="196" />
-            <source>Restart Worker</source>
-            <translation>解析プロセスを再起動</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="87" />
-            <source>Toggle Bottom Panel</source>
-            <translation>下部パネルの表示を切り替え</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="88" />
-            <source>Quit NeverD</source>
-            <translation>NeverD を終了</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="97" />
-            <source>File</source>
-            <translation>ファイル</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="98" />
-            <source>Navigate</source>
-            <translation>移動</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="99" />
-            <source>Edit</source>
-            <translation>編集</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="99" />
-            <source>Save Annotations</source>
-            <translation>注釈を保存</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="99" />
-            <source>Reload Annotations</source>
-            <translation>注釈を再読み込み</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="101" />
-            <source>View</source>
-            <translation>表示</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="112" />
-            <source>Focus Panel</source>
-            <translation>パネルにフォーカス</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="98" />
-            <location filename="../qml/MachinePane.qml" line="22" />
-            <location filename="../qml/Main.qml" line="103" />
-            <location filename="../qml/Main.qml" line="113" />
-            <source>Disassembly</source>
-            <translation>逆アセンブリ</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="104" />
-            <source>Control Flow</source>
-            <translation>制御フロー</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="22" />
-            <location filename="../qml/Main.qml" line="105" />
-            <source>Hex</source>
-            <translation>16 進数</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="117" />
-            <source>Reset Layout</source>
-            <translation>レイアウトをリセット</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="119" />
-            <source>Analysis</source>
-            <translation>解析</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="122" />
-            <source>Import Manifest…</source>
-            <translation>マニフェストをインポート…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="125" />
-            <source>Help</source>
-            <translation>ヘルプ</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="125" />
-            <location filename="../qml/Main.qml" line="356" />
-            <source>Keyboard Shortcuts</source>
-            <translation>キーボードショートカット</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="125" />
-            <location filename="../qml/Main.qml" line="366" />
-            <source>About NeverD</source>
-            <translation>NeverD について</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="141" />
-            <location filename="../qml/Main.qml" line="253" />
-            <source>Open Binary</source>
-            <translation>バイナリを開く</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="152" />
-            <source>Go to address or symbol…</source>
-            <translation>アドレスまたはシンボルに移動…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="153" />
-            <source>Address or symbol</source>
-            <translation>アドレスまたはシンボル</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="162" />
-            <source>Cancel</source>
-            <translation>キャンセル</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="163" />
-            <location filename="../qml/Main.qml" line="320" />
-            <source>Settings</source>
-            <translation>設定</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="163" />
-            <source>Language and editor preferences</source>
-            <translation>言語とエディターの設定</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="172" />
-            <source>WORKSPACE</source>
-            <translation>ワークスペース</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="174" />
-            <source>No binary open</source>
-            <translation>バイナリが開かれていません</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="176" />
-            <source>%1 functions</source>
-            <translation>%1 関数</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="176" />
-            <source>Local analysis</source>
-            <translation>ローカル解析</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="22" />
-            <source>CFG</source>
-            <translation>制御フローグラフ</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="32" />
-            <source>Hex view</source>
-            <translation>16 進数ビュー</translation>
-        </message>
-        <message>
-            <location filename="../qml/MachinePane.qml" line="32" />
-            <source>Select an address to inspect its bytes.</source>
-            <translation>アドレスを選択すると、バイト列を確認できます。</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="105" />
-            <location filename="../qml/Main.qml" line="107" />
-            <location filename="../qml/Main.qml" line="114" />
-            <location filename="../qml/RepresentationPane.qml" line="30" />
-            <source>Pseudocode &amp; intermediate representations</source>
-            <translation>擬似コードと中間表現</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="46" />
-            <source>No representation available</source>
-            <translation>利用できる表現がありません</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="46" />
-            <source>Read beyond assembly</source>
-            <translation>アセンブリの先を読む</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="49" />
-            <source>Compare recovered C, LLVM C, LowIR, MedIR, HighIR, and LLVM IR. Select a function to begin.</source>
-            <translation>復元された C、LLVM C、LowIR、MedIR、HighIR、LLVM IR を比較します。関数を選択して開始してください。</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="112" />
-            <location filename="../qml/Main.qml" line="108" />
-            <source>References</source>
-            <translation>参照</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="119" />
-            <location filename="../qml/Main.qml" line="109" />
-            <source>Output</source>
-            <translation>出力</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="126" />
-            <location filename="../qml/Main.qml" line="110" />
-            <source>Connections</source>
-            <translation>接続</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="133" />
-            <location filename="../qml/Main.qml" line="121" />
-            <location filename="../qml/Main.qml" line="123" />
-            <source>Extensions</source>
-            <translation>拡張機能</translation>
-        </message>
-        <message>
-            <location filename="../qml/ReferencesPane.qml" line="42" />
-            <source>No references for this selection.</source>
-            <translation>選択した項目への参照はありません。</translation>
-        </message>
-        <message>
-            <location filename="../qml/ReferencesPane.qml" line="42" />
-            <source>References to the selected address appear here.</source>
-            <translation>選択したアドレスへの参照がここに表示されます。</translation>
-        </message>
-        <message>
-            <location filename="../qml/DockWorkspace.qml" line="120" />
-            <source>Worker events and analysis messages appear here.</source>
-            <translation>解析プロセスのイベントや解析メッセージがここに表示されます。</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="221" />
-            <source>Worker connected</source>
-            <translation>解析プロセスに接続済み</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="221" />
-            <source>Worker offline</source>
-            <translation>解析プロセス未接続</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="255" />
-            <location filename="../qml/Main.qml" line="262" />
-            <source>All files (*)</source>
-            <translation>すべてのファイル (*)</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="260" />
-            <source>Import Manifest</source>
-            <translation>マニフェストをインポート</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="262" />
-            <source>JSON files (*.json)</source>
-            <translation>JSON ファイル (*.json)</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="273" />
-            <source>Rename Function</source>
-            <translation>関数名を変更</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="283" />
-            <location filename="../qml/Main.qml" line="283" />
-            <source>Function name</source>
-            <translation>関数名</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="289" />
-            <source>Edit Comment</source>
-            <translation>コメントを編集</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="306" />
-            <source>Add a comment for this address…</source>
-            <translation>このアドレスにコメントを追加…</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="311" />
-            <source>Comment</source>
-            <translation>コメント</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="329" />
-            <source>Appearance</source>
-            <translation>外観</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="332" />
-            <source>Theme</source>
-            <translation>テーマ</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="337" />
-            <source>Code font size</source>
-            <translation>コードの文字サイズ</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="341" />
-            <source>Language</source>
-            <translation>言語</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="349" />
-            <source>Interface language</source>
-            <translation>表示言語</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="351" />
-            <source>Changes apply immediately. Code, symbols, and comments keep their original language.</source>
-            <translation>変更はすぐに適用されます。コード、シンボル、コメントは元の言語のままです。</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="372" />
-            <source>NeverD
-Binary analysis workbench
-
-Explore disassembly, control flow, recovered C, and intermediate representations with a local analysis worker.</source>
-            <translation>NeverD
-バイナリ解析ワークベンチ
-
-ローカル解析プロセスを使って、逆アセンブリ、制御フロー、復元された C、中間表現を調べます。</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="288" />
-            <source>Library features and byte signatures (*.json *.pat)</source>
-            <translation>ライブラリ特徴とバイトシグネチャ (*.json *.pat)</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="286" />
-            <source>Load Signature Pack</source>
-            <translation>シグネチャパックを読み込む</translation>
-        </message>
-        <message>
-            <location filename="../qml/Main.qml" line="131" />
-            <source>Load Signature Pack…</source>
-            <translation>シグネチャパックを読み込む…</translation>
-        </message>
-    </context>
-    <context>
-        <name>McpConnectionManager</name>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="18" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="145" />
-            <source>Disconnected</source>
-            <translation>切断済み</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="22" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="300" />
-            <source>MCP message exceeds 8 MiB</source>
-            <translation>MCP メッセージが 8 MiB を超えています</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="31" />
-            <source>Invalid MCP JSON-RPC message</source>
-            <translation>無効な MCP JSON-RPC メッセージです</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="41" />
-            <source>MCP process error: %1</source>
-            <translation>MCP プロセスエラー：%1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="45" />
-            <source>MCP process exited (%1): %2</source>
-            <translation>MCP プロセスが終了しました（%1）：%2</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="58" />
-            <source>MCP request timed out: %1</source>
-            <translation>MCP リクエストがタイムアウトしました：%1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="76" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="95" />
-            <source>Disconnect the running MCP process before reconnecting</source>
-            <translation>再接続する前に、実行中の MCP プロセスを切断してください</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="81" />
-            <source>Choose an absolute MCP executable path</source>
-            <translation>MCP 実行ファイルの絶対パスを選択してください</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="84" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="118" />
-            <source>Connecting</source>
-            <translation>接続中</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="102" />
-            <source>MCP HTTP requires HTTPS, or HTTP on localhost</source>
-            <translation>MCP HTTP は HTTPS、または localhost の HTTP が必要です</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="105" />
-            <source>Invalid authentication token</source>
-            <translation>無効な認証トークンです</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="110" />
-            <source>Cannot load CA certificate</source>
-            <translation>CA 証明書を読み込めません</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="182" />
-            <source>MCP request queue is full</source>
-            <translation>MCP リクエストキューがいっぱいです</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="194" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="220" />
-            <source>MCP outgoing message budget exceeded</source>
-            <translation>MCP 送信メッセージがサイズ制限を超えています</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="199" />
-            <source>MCP server is disconnected</source>
-            <translation>MCP サーバーは切断されています</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="245" />
-            <source>MCP session expired; reconnecting</source>
-            <translation>MCP セッションが期限切れです。再接続中</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="250" />
-            <source>MCP HTTP error %1: %2</source>
-            <translation>MCP HTTP エラー %1：%2</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="259" />
-            <source>MCP event stream ended before its response</source>
-            <translation>応答前に MCP イベントストリームが終了しました</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="276" />
-            <source>Invalid MCP HTTP response</source>
-            <translation>無効な MCP HTTP 応答です</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="292" />
-            <source>Invalid MCP session identifier</source>
-            <translation>無効な MCP セッション識別子です</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="294" />
-            <source>MCP session identifier is too large</source>
-            <translation>MCP セッション識別子が長すぎます</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="318" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="333" />
-            <source>Invalid MCP event data</source>
-            <translation>無効な MCP イベントデータです</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="347" />
-            <source>Invalid MCP protocol version</source>
-            <translation>無効な MCP プロトコルバージョンです</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="364" />
-            <source>MCP request failed: %1</source>
-            <translation>MCP リクエストが失敗しました：%1</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="367" />
-            <source>MCP response has no result object</source>
-            <translation>MCP 応答に結果オブジェクトがありません</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="371" />
-            <source>Unsupported MCP protocol version</source>
-            <translation>未対応の MCP プロトコルバージョンです</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="377" />
-            <location filename="../mcp/McpConnectionManager.cpp" line="387" />
-            <source>Connected</source>
-            <translation>接続済み</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="380" />
-            <source>Connected; tool list is partial</source>
-            <translation>接続済み。ツール一覧は一部のみ表示されています</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="383" />
-            <source>Connected; resource list is partial</source>
-            <translation>接続済み。リソース一覧は一部のみ表示されています</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="387" />
-            <source>MCP tool reported an error</source>
-            <translation>MCP ツールがエラーを報告しました</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="397" />
-            <source>Connect an MCP server first</source>
-            <translation>先に MCP サーバーに接続してください</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="398" />
-            <source>Tool arguments exceed the size limit</source>
-            <translation>ツール引数がサイズ制限を超えています</translation>
-        </message>
-        <message>
-            <location filename="../mcp/McpConnectionManager.cpp" line="402" />
-            <source>Tool arguments must be a JSON object</source>
-            <translation>ツール引数は JSON オブジェクトにしてください</translation>
-        </message>
-    </context>
-    <context>
-        <name>PaneRegistry</name>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="417" />
-            <source>Default</source>
-            <translation>既定</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="424" />
-            <source>Cannot create pane: invalid kind or pane limit reached.</source>
-            <translation>パネルを作成できません。種類が無効か、パネル数の上限に達しています。</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="429" />
-            <source>The source pane is unavailable.</source>
-            <translation>元のパネルを利用できません。</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="553" />
-            <source>Cannot create group: invalid name or group limit reached.</source>
-            <translation>グループを作成できません。名前が無効か、グループ数の上限に達しています。</translation>
-        </message>
-        <message>
-            <location filename="../PaneRegistry.cpp" line="1004" />
-            <source>The saved pane catalog is invalid.</source>
-            <translation>保存されたパネル一覧が無効です。</translation>
-        </message>
-    </context>
-    <context>
-        <name>RepresentationPane</name>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="31" />
-            <source>Refresh</source>
-            <translation>更新</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="32" />
-            <source>Unpin</source>
-            <translation>固定を解除</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="32" />
-            <source>Pin</source>
-            <translation>固定</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="32" />
-            <source>Keep this function while navigating</source>
-            <translation>移動中もこの関数を表示</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="54" />
-            <source>Load more lines</source>
-            <translation>行をさらに読み込む</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="91" />
-            <source>Close</source>
-            <translation>閉じる</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="54" />
-            <source>Details</source>
-            <translation>詳細</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="110" />
-            <source>Evidence SHA-256</source>
-            <translation>証拠 SHA-256</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="87" />
-            <source>Expand</source>
-            <translation>展開</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="49" />
-            <source>Expand all</source>
-            <translation>すべて展開</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="87" />
-            <source>Fold</source>
-            <translation>折りたたむ</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="49" />
-            <source>Fold all</source>
-            <translation>すべて折りたたむ</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="51" />
-            <source>Fold mapped library operations. Copy and export retain the full source.</source>
-            <translation>対応付け済みのライブラリ操作を折りたたみます。コピーとエクスポートでは完全なソースを保持します。</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="105" />
-            <source>Identity evidence</source>
-            <translation>識別の根拠</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="46" />
-            <source>Library operations</source>
-            <translation>ライブラリ操作</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="107" />
-            <source>Linkage</source>
-            <translation>リンケージ名</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="103" />
-            <source>Mapped to original source</source>
-            <translation>元のソースに対応付け済み</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="106" />
-            <source>Original instructions</source>
-            <translation>元の命令</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="103" />
-            <source>Original source stays expanded; mapping is incomplete or outside the loaded page</source>
-            <translation>対応付けが不完全か読み込み済みページの範囲外のため、元のソースは展開したままです</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="108" />
-            <source>Pack</source>
-            <translation>パック</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="109" />
-            <source>Profile SHA-256</source>
-            <translation>プロファイル SHA-256</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="84" />
-            <source>Recognized library operation</source>
-            <translation>認識されたライブラリ操作</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="104" />
-            <source>Rule</source>
-            <translation>ルール</translation>
-        </message>
-        <message>
-            <location filename="../qml/RepresentationPane.qml" line="111" />
-            <source>Source</source>
-            <translation>出典</translation>
-        </message>
-    </context>
-    <context>
-        <name>Workbench</name>
-        <message>
-            <location filename="../Workbench.cpp" line="71" />
-            <source>Loading debug symbols…</source>
-            <translation>デバッグシンボルを読み込み中…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="17" />
-            <source>Open a binary to begin</source>
-            <translation>バイナリを開いて開始</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="87" />
-            <source>Action failed</source>
-            <translation>操作に失敗しました</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="147" />
-            <source>Incompatible analysis worker protocol.</source>
-            <translation>解析プロセスのプロトコルに互換性がありません。</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="150" />
-            <source>Connected to %1</source>
-            <translation>%1 に接続しました</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="214" />
-            <source>Select an existing binary file.</source>
-            <translation>既存のバイナリファイルを選択してください。</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="217" />
-            <source>Starting analysis worker…</source>
-            <translation>解析プロセスを起動中…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="223" />
-            <source>Opening binary…</source>
-            <translation>バイナリを開いています…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="228" />
-            <source>Binary loaded</source>
-            <translation>バイナリを読み込みました</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="311" />
-            <location filename="../Workbench.cpp" line="352" />
-            <location filename="../Workbench.cpp" line="445" />
-            <source>Ready</source>
-            <translation>準備完了</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="328" />
-            <source>No function at this address</source>
-            <translation>このアドレスに関数がありません</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="330" />
-            <location filename="../Workbench.cpp" line="443" />
-            <source>Analyzing…</source>
-            <translation>解析中…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="351" />
-            <source>Complete</source>
-            <translation>完了</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="351" />
-            <source>More lines available</source>
-            <translation>続きの行があります</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="361" />
-            <source>Mapping belongs to an earlier revision; reload the representation</source>
-            <translation>マッピングは以前のリビジョンのものです。表現を再読み込みしてください</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="363" />
-            <source>Linked instruction addresses; synthetic rows may be unmapped</source>
-            <translation>命令アドレスと連動しています。合成された行には対応がない場合があります</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="364" />
-            <source>Instruction mapping unavailable for this representation</source>
-            <translation>この表現では命令マッピングを利用できません</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="416" />
-            <source>Loading graph viewport…</source>
-            <translation>グラフの表示領域を読み込み中…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="418" />
-            <source>Viewport limit reached; zoom in for details</source>
-            <translation>表示上限に達しました。詳細を見るには拡大してください</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="419" />
-            <source>%1 visible blocks · %2 edges</source>
-            <translation>表示中のブロック %1 個 · エッジ %2 本</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="452" />
-            <source>Cancellation requested; restart stops the worker immediately.</source>
-            <translation>キャンセルを要求しました。再起動すると解析プロセスはすぐに停止します。</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="453" />
-            <source>Cancellation requested</source>
-            <translation>キャンセルを要求しました</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="488" />
-            <source>Restarting analysis worker…</source>
-            <translation>解析プロセスを再起動中…</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="495" />
-            <source>Rename saved</source>
-            <translation>名前の変更を保存しました</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="502" />
-            <source>Comment changed; save annotations to keep it.</source>
-            <translation>コメントを変更しました。注釈を保存して変更を保持してください。</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="506" />
-            <source>Annotations saved</source>
-            <translation>注釈を保存しました</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="479" />
-            <location filename="../Workbench.cpp" line="510" />
-            <source>Annotations reloaded</source>
-            <translation>注釈を再読み込みしました</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="193" />
-            <source>Finish opening the binary before editing.</source>
-            <translation>バイナリを開き終わるまで、編集をお待ちください。</translation>
-        </message>
-        <message>
-            <location filename="../PaneController.cpp" line="414" />
-            <source>Library regions link to original instructions; other source may be unmapped</source>
-            <translation>ライブラリ領域は元の命令にリンクします。その他のソースには対応付けがない場合があります</translation>
-        </message>
-        <message>
-            <location filename="../Workbench.cpp" line="730" />
-            <source>Signature pack loaded</source>
-            <translation>シグネチャパックを読み込みました</translation>
-        </message>
-    </context>
-    <context>
-        <name>WorkerTransport</name>
-        <message>
-            <location filename="../EngineClient.cpp" line="28" />
-            <source>Analysis worker exited (%1). Restart to continue.</source>
-            <translation>解析プロセスが終了しました（%1）。続行するには再起動してください。</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="36" />
-            <source>Analysis worker is not running.</source>
-            <translation>解析プロセスは実行されていません。</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="41" />
-            <source>Analysis request queue is full.</source>
-            <translation>解析リクエストキューがいっぱいです。</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="57" />
-            <source>Invalid analysis protocol frame.</source>
-            <translation>無効な解析プロトコルフレームです。</translation>
-        </message>
-        <message>
-            <location filename="../EngineClient.cpp" line="67" />
-            <source>Invalid analysis protocol JSON.</source>
-            <translation>無効な解析プロトコル JSON です。</translation>
-        </message>
-    </context>
-    <context>
-        <name>TextPane</name>
-        <message>
-            <location filename="../qml/TextPane.qml" line="158" />
-            <source>Copy</source>
-            <translation>コピー</translation>
-        </message>
-        <message>
-            <location filename="../qml/TextPane.qml" line="159" />
-            <source>Select all</source>
-            <translation>すべて選択</translation>
-        </message>
-    </context>
+<context>
+    <name>Actions</name>
+    <message>
+        <source>&amp;Open...</source>
+        <translation>開く(&amp;O)...</translation>
+    </message>
+    <message>
+        <source>Open a binary for analysis</source>
+        <translation>解析するバイナリを開きます</translation>
+    </message>
+    <message>
+        <source>&amp;Reload the input file</source>
+        <translation>入力ファイルを再読み込み(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Reload the binary and its saved annotations</source>
+        <translation>バイナリと保存済みの注釈を再読み込みします</translation>
+    </message>
+    <message>
+        <source>&amp;FLIRT signature file...</source>
+        <translation>FLIRT シグネチャファイル(&amp;F)...</translation>
+    </message>
+    <message>
+        <source>Apply a byte signature (.pat) or library feature (.json) pack</source>
+        <translation>バイトシグネチャ (.pat) またはライブラリ特徴 (.json) のパックを適用します</translation>
+    </message>
+    <message>
+        <source>Signature &amp;directory...</source>
+        <translation>シグネチャディレクトリ(&amp;D)...</translation>
+    </message>
+    <message>
+        <source>Apply every matching pack from a signature tree</source>
+        <translation>シグネチャツリーから一致するすべてのパックを適用します</translation>
+    </message>
+    <message>
+        <source>Create &amp;LST file...</source>
+        <translation>LST ファイルを作成(&amp;L)...</translation>
+    </message>
+    <message>
+        <source>Write the current function&apos;s listing to a text file</source>
+        <translation>現在の関数のリスティングをテキストファイルに書き出します</translation>
+    </message>
+    <message>
+        <source>Create &amp;C file...</source>
+        <translation>C ファイルを作成(&amp;C)...</translation>
+    </message>
+    <message>
+        <source>Write the current function&apos;s pseudocode to a C file</source>
+        <translation>現在の関数の疑似コードを C ファイルに書き出します</translation>
+    </message>
+    <message>
+        <source>&amp;Save</source>
+        <translation>保存(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Save comments and history beside the binary</source>
+        <translation>コメントと履歴をバイナリと同じ場所に保存します</translation>
+    </message>
+    <message>
+        <source>&amp;Close</source>
+        <translation>閉じる(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Close the current binary</source>
+        <translation>現在のバイナリを閉じます</translation>
+    </message>
+    <message>
+        <source>&amp;Quick start</source>
+        <translation>クイックスタート(&amp;Q)</translation>
+    </message>
+    <message>
+        <source>Show the quick start window</source>
+        <translation>クイックスタートウィンドウを表示します</translation>
+    </message>
+    <message>
+        <source>E&amp;xit</source>
+        <translation>終了(&amp;X)</translation>
+    </message>
+    <message>
+        <source>Quit NeverD</source>
+        <translation>NeverD を終了します</translation>
+    </message>
+    <message>
+        <source>&amp;Undo</source>
+        <translation>元に戻す(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Undo the last comment or rename</source>
+        <translation>直前のコメントまたは名前の変更を元に戻します</translation>
+    </message>
+    <message>
+        <source>&amp;Redo</source>
+        <translation>やり直し(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Redo the last undone change</source>
+        <translation>最後に元に戻した変更をやり直します</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>コピー(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Copy the selection or current line</source>
+        <translation>選択範囲または現在の行をコピーします</translation>
+    </message>
+    <message>
+        <source>Copy &amp;address</source>
+        <translation>アドレスをコピー(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Copy the current address</source>
+        <translation>現在のアドレスをコピーします</translation>
+    </message>
+    <message>
+        <source>Re&amp;name...</source>
+        <translation>名前の変更(&amp;N)...</translation>
+    </message>
+    <message>
+        <source>Rename the current function</source>
+        <translation>現在の関数の名前を変更します</translation>
+    </message>
+    <message>
+        <source>Enter &amp;comment...</source>
+        <translation>コメントを入力(&amp;C)...</translation>
+    </message>
+    <message>
+        <source>Comment the current address</source>
+        <translation>現在のアドレスにコメントを追加します</translation>
+    </message>
+    <message>
+        <source>Enter re&amp;peatable comment...</source>
+        <translation>リピータブルコメントを入力(&amp;P)...</translation>
+    </message>
+    <message>
+        <source>&amp;Mark position...</source>
+        <translation>位置をマーク(&amp;M)...</translation>
+    </message>
+    <message>
+        <source>Bookmark the current address</source>
+        <translation>現在のアドレスをブックマークします</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;operand</source>
+        <translation>オペランドへジャンプ(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Follow the name or address under the cursor</source>
+        <translation>カーソル位置の名前またはアドレスへ移動します</translation>
+    </message>
+    <message>
+        <source>Jump in a new &amp;window</source>
+        <translation>新しいウィンドウでジャンプ(&amp;W)</translation>
+    </message>
+    <message>
+        <source>Open the target in a new disassembly view</source>
+        <translation>ジャンプ先を新しい逆アセンブルビューで開きます</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;previous position</source>
+        <translation>前の位置へジャンプ(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Go back in the navigation history</source>
+        <translation>ナビゲーション履歴を戻ります</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;next position</source>
+        <translation>次の位置へジャンプ(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Go forward in the navigation history</source>
+        <translation>ナビゲーション履歴を進みます</translation>
+    </message>
+    <message>
+        <source>Next f&amp;unction</source>
+        <translation>次の関数(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Move to the start of the next function</source>
+        <translation>次の関数の先頭へ移動します</translation>
+    </message>
+    <message>
+        <source>Pre&amp;vious function</source>
+        <translation>前の関数(&amp;V)</translation>
+    </message>
+    <message>
+        <source>Move to the start of the previous function</source>
+        <translation>前の関数の先頭へ移動します</translation>
+    </message>
+    <message>
+        <source>Jump to ps&amp;eudocode</source>
+        <translation>疑似コードへジャンプ(&amp;E)</translation>
+    </message>
+    <message>
+        <source>Switch between disassembly and pseudocode</source>
+        <translation>逆アセンブルと疑似コードを切り替えます</translation>
+    </message>
+    <message>
+        <source>Jump &amp;anywhere...</source>
+        <translation>任意の場所へジャンプ(&amp;A)...</translation>
+    </message>
+    <message>
+        <source>Jump to an address, name or expression</source>
+        <translation>アドレス、名前、または式で指定した位置へジャンプします</translation>
+    </message>
+    <message>
+        <source>Jump by na&amp;me...</source>
+        <translation>名前でジャンプ(&amp;M)...</translation>
+    </message>
+    <message>
+        <source>Choose a name to jump to</source>
+        <translation>ジャンプ先の名前を選択します</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;function...</source>
+        <translation>関数へジャンプ(&amp;F)...</translation>
+    </message>
+    <message>
+        <source>Choose a function to jump to</source>
+        <translation>ジャンプ先の関数を選択します</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;segment...</source>
+        <translation>セグメントへジャンプ(&amp;S)...</translation>
+    </message>
+    <message>
+        <source>Choose a segment to jump to</source>
+        <translation>ジャンプ先のセグメントを選択します</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;entry point...</source>
+        <translation>エントリポイントへジャンプ(&amp;E)...</translation>
+    </message>
+    <message>
+        <source>Choose an entry point to jump to</source>
+        <translation>ジャンプ先のエントリポイントを選択します</translation>
+    </message>
+    <message>
+        <source>List cross references &amp;to...</source>
+        <translation>相互参照（参照元）を一覧表示(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>List references to the current item</source>
+        <translation>現在の項目を参照している箇所を一覧表示します</translation>
+    </message>
+    <message>
+        <source>List cross references f&amp;rom...</source>
+        <translation>相互参照（参照先）を一覧表示(&amp;R)...</translation>
+    </message>
+    <message>
+        <source>List references made by the current instruction</source>
+        <translation>現在の命令からの参照を一覧表示します</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;xref to operand...</source>
+        <translation>オペランドの相互参照へジャンプ(&amp;X)...</translation>
+    </message>
+    <message>
+        <source>List references to the name under the cursor</source>
+        <translation>カーソル位置の名前への参照を一覧表示します</translation>
+    </message>
+    <message>
+        <source>Jump to mar&amp;ked position...</source>
+        <translation>マークした位置へジャンプ(&amp;K)...</translation>
+    </message>
+    <message>
+        <source>Choose a bookmark to jump to</source>
+        <translation>ジャンプ先のブックマークを選択します</translation>
+    </message>
+    <message>
+        <source>&amp;Text...</source>
+        <translation>テキスト(&amp;T)...</translation>
+    </message>
+    <message>
+        <source>Search the binary for text</source>
+        <translation>バイナリ内のテキストを検索します</translation>
+    </message>
+    <message>
+        <source>Next te&amp;xt</source>
+        <translation>次のテキスト(&amp;X)</translation>
+    </message>
+    <message>
+        <source>Repeat the last text search</source>
+        <translation>直前のテキスト検索を繰り返します</translation>
+    </message>
+    <message>
+        <source>Sequence of &amp;bytes...</source>
+        <translation>バイト列(&amp;B)...</translation>
+    </message>
+    <message>
+        <source>Search the binary for a byte sequence</source>
+        <translation>バイナリ内のバイト列を検索します</translation>
+    </message>
+    <message>
+        <source>Next seq&amp;uence of bytes</source>
+        <translation>次のバイト列(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Repeat the last byte search</source>
+        <translation>直前のバイト検索を繰り返します</translation>
+    </message>
+    <message>
+        <source>Search highlight &amp;up</source>
+        <translation>ハイライトを上方向に検索(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Move to the previous occurrence of the highlighted identifier</source>
+        <translation>ハイライトされた識別子の前の出現位置へ移動します</translation>
+    </message>
+    <message>
+        <source>Search highlight &amp;down</source>
+        <translation>ハイライトを下方向に検索(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Move to the next occurrence of the highlighted identifier</source>
+        <translation>ハイライトされた識別子の次の出現位置へ移動します</translation>
+    </message>
+    <message>
+        <source>&amp;Find in view...</source>
+        <translation>ビュー内を検索(&amp;F)...</translation>
+    </message>
+    <message>
+        <source>Find text among the loaded lines of the current view</source>
+        <translation>現在のビューで読み込み済みの行からテキストを検索します</translation>
+    </message>
+    <message>
+        <source>&amp;Quick view...</source>
+        <translation>クイックビュー(&amp;Q)...</translation>
+    </message>
+    <message>
+        <source>Choose a view to open</source>
+        <translation>開くビューを選択します</translation>
+    </message>
+    <message>
+        <source>&amp;Disassembly</source>
+        <translation>逆アセンブル(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Open a new disassembly view</source>
+        <translation>新しい逆アセンブルビューを開きます</translation>
+    </message>
+    <message>
+        <source>Toggle &amp;graph view</source>
+        <translation>グラフビューの切り替え(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Switch between text and graph views</source>
+        <translation>テキストビューとグラフビューを切り替えます</translation>
+    </message>
+    <message>
+        <source>Generate &amp;pseudocode</source>
+        <translation>疑似コードを生成(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Decompile the current function</source>
+        <translation>現在の関数を逆コンパイルします</translation>
+    </message>
+    <message>
+        <source>Generate &amp;LowIR</source>
+        <translation>LowIR を生成(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s LowIR</source>
+        <translation>現在の関数の LowIR を表示します</translation>
+    </message>
+    <message>
+        <source>Generate &amp;MedIR</source>
+        <translation>MedIR を生成(&amp;M)</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s MedIR</source>
+        <translation>現在の関数の MedIR を表示します</translation>
+    </message>
+    <message>
+        <source>Generate &amp;HighIR</source>
+        <translation>HighIR を生成(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s HighIR</source>
+        <translation>現在の関数の HighIR を表示します</translation>
+    </message>
+    <message>
+        <source>Generate LLVM &amp;IR</source>
+        <translation>LLVM IR を生成(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show the current function&apos;s LLVM IR</source>
+        <translation>現在の関数の LLVM IR を表示します</translation>
+    </message>
+    <message>
+        <source>Generate LLVM &amp;C</source>
+        <translation>LLVM C を生成(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Decompile the current function through LLVM</source>
+        <translation>LLVM を経由して現在の関数を逆コンパイルします</translation>
+    </message>
+    <message>
+        <source>&amp;Hex dump</source>
+        <translation>16進ダンプ(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the hex view</source>
+        <translation>16進ビューを表示します</translation>
+    </message>
+    <message>
+        <source>E&amp;xports</source>
+        <translation>エクスポート(&amp;X)</translation>
+    </message>
+    <message>
+        <source>Show exported names and entry points</source>
+        <translation>エクスポートされた名前とエントリポイントを表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Imports</source>
+        <translation>インポート(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show imported names</source>
+        <translation>インポートされた名前を表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Names</source>
+        <translation>名前(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Show every named location</source>
+        <translation>名前の付いたすべての位置を表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Functions</source>
+        <translation>関数(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Show the functions window</source>
+        <translation>関数ウィンドウを表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Strings</source>
+        <translation>文字列(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Show the strings window</source>
+        <translation>文字列ウィンドウを表示します</translation>
+    </message>
+    <message>
+        <source>S&amp;egments</source>
+        <translation>セグメント(&amp;E)</translation>
+    </message>
+    <message>
+        <source>Show the segments window</source>
+        <translation>セグメントウィンドウを表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Cross references</source>
+        <translation>相互参照(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Show references to the current item</source>
+        <translation>現在の項目への参照を表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Bookmarks</source>
+        <translation>ブックマーク(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Show bookmarks</source>
+        <translation>ブックマークを表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Output</source>
+        <translation>出力(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the output window</source>
+        <translation>出力ウィンドウを表示します</translation>
+    </message>
+    <message>
+        <source>Graph &amp;overview</source>
+        <translation>グラフ概要(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the graph overview</source>
+        <translation>グラフ概要を表示します</translation>
+    </message>
+    <message>
+        <source>MCP &amp;connections</source>
+        <translation>MCP 接続(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Manage MCP connections and session sharing</source>
+        <translation>MCP 接続とセッション共有を管理します</translation>
+    </message>
+    <message>
+        <source>E&amp;xtensions</source>
+        <translation>拡張機能(&amp;X)</translation>
+    </message>
+    <message>
+        <source>Manage declarative extensions</source>
+        <translation>宣言型拡張機能を管理します</translation>
+    </message>
+    <message>
+        <source>&amp;Undo history</source>
+        <translation>元に戻す履歴(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Show the comment and rename history</source>
+        <translation>コメントと名前の変更の履歴を表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Calculator...</source>
+        <translation>電卓(&amp;C)...</translation>
+    </message>
+    <message>
+        <source>Evaluate an expression</source>
+        <translation>式を評価します</translation>
+    </message>
+    <message>
+        <source>F&amp;ull screen</source>
+        <translation>全画面表示(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Toggle full screen</source>
+        <translation>全画面表示を切り替えます</translation>
+    </message>
+    <message>
+        <source>&amp;Increase font size</source>
+        <translation>フォントサイズを拡大(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Increase the code font size</source>
+        <translation>コードのフォントサイズを大きくします</translation>
+    </message>
+    <message>
+        <source>&amp;Decrease font size</source>
+        <translation>フォントサイズを縮小(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Decrease the code font size</source>
+        <translation>コードのフォントサイズを小さくします</translation>
+    </message>
+    <message>
+        <source>&amp;Reset font size</source>
+        <translation>フォントサイズをリセット(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Restore the default code font size</source>
+        <translation>コードのフォントサイズを既定に戻します</translation>
+    </message>
+    <message>
+        <source>&amp;General...</source>
+        <translation>全般(&amp;G)...</translation>
+    </message>
+    <message>
+        <source>Listing, analysis and language options</source>
+        <translation>リスティング、解析、言語のオプション</translation>
+    </message>
+    <message>
+        <source>&amp;Colors...</source>
+        <translation>配色(&amp;C)...</translation>
+    </message>
+    <message>
+        <source>Choose the color theme</source>
+        <translation>配色テーマを選択します</translation>
+    </message>
+    <message>
+        <source>&amp;Font...</source>
+        <translation>フォント(&amp;F)...</translation>
+    </message>
+    <message>
+        <source>Choose the code font</source>
+        <translation>コードのフォントを選択します</translation>
+    </message>
+    <message>
+        <source>&amp;Shortcuts...</source>
+        <translation>ショートカット(&amp;S)...</translation>
+    </message>
+    <message>
+        <source>List keyboard shortcuts</source>
+        <translation>キーボードショートカットを一覧表示します</translation>
+    </message>
+    <message>
+        <source>Show command &amp;palette...</source>
+        <translation>コマンドパレットを表示(&amp;P)...</translation>
+    </message>
+    <message>
+        <source>Search and run any command</source>
+        <translation>任意のコマンドを検索して実行します</translation>
+    </message>
+    <message>
+        <source>&amp;Repeat last palette command</source>
+        <translation>直前のパレットコマンドを繰り返す(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Run the last command chosen in the palette again</source>
+        <translation>パレットで最後に選択したコマンドをもう一度実行します</translation>
+    </message>
+    <message>
+        <source>&amp;Whole-program analysis</source>
+        <translation>プログラム全体の解析(&amp;W)</translation>
+    </message>
+    <message>
+        <source>Analyze every function together in the background</source>
+        <translation>すべての関数をバックグラウンドでまとめて解析します</translation>
+    </message>
+    <message>
+        <source>Ca&amp;ncel pending requests</source>
+        <translation>保留中のリクエストをキャンセル(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Cancel queued analysis requests</source>
+        <translation>キューに入っている解析リクエストをキャンセルします</translation>
+    </message>
+    <message>
+        <source>&amp;Restart analysis worker</source>
+        <translation>解析プロセスを再起動(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Restart the analysis process and reopen the binary</source>
+        <translation>解析プロセスを再起動し、バイナリを開き直します</translation>
+    </message>
+    <message>
+        <source>&amp;Save desktop</source>
+        <translation>デスクトップを保存(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Save the window layout</source>
+        <translation>ウィンドウレイアウトを保存します</translation>
+    </message>
+    <message>
+        <source>&amp;Load desktop</source>
+        <translation>デスクトップを読み込む(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Restore the saved window layout</source>
+        <translation>保存したウィンドウレイアウトを復元します</translation>
+    </message>
+    <message>
+        <source>&amp;Reset desktop</source>
+        <translation>デスクトップをリセット(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Restore the default window layout</source>
+        <translation>既定のウィンドウレイアウトに戻します</translation>
+    </message>
+    <message>
+        <source>&amp;Next window</source>
+        <translation>次のウィンドウ(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Activate the next window</source>
+        <translation>次のウィンドウをアクティブにします</translation>
+    </message>
+    <message>
+        <source>&amp;Previous window</source>
+        <translation>前のウィンドウ(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Activate the previous window</source>
+        <translation>前のウィンドウをアクティブにします</translation>
+    </message>
+    <message>
+        <source>&amp;Close window</source>
+        <translation>ウィンドウを閉じる(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Close the current window</source>
+        <translation>現在のウィンドウを閉じます</translation>
+    </message>
+    <message>
+        <source>&amp;Focus command line</source>
+        <translation>コマンドラインにフォーカス(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Move the keyboard focus to the command line</source>
+        <translation>キーボードフォーカスをコマンドラインに移動します</translation>
+    </message>
+    <message>
+        <source>&amp;Help</source>
+        <translation>ヘルプ(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Open the NeverD documentation</source>
+        <translation>NeverD のドキュメントを開きます</translation>
+    </message>
+    <message>
+        <source>&amp;About NeverD</source>
+        <translation>NeverD について(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Version and license information</source>
+        <translation>バージョンとライセンスの情報</translation>
+    </message>
+</context>
+<context>
+    <name>Choosers</name>
+    <message>
+        <source>Functions</source>
+        <translation>関数</translation>
+    </message>
+    <message>
+        <source>Function name</source>
+        <translation>関数名</translation>
+    </message>
+    <message>
+        <source>Segment</source>
+        <translation>セグメント</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>開始</translation>
+    </message>
+    <message>
+        <source>Length</source>
+        <translation>長さ</translation>
+    </message>
+    <message>
+        <source>Names</source>
+        <translation>名前</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名前</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>アドレス</translation>
+    </message>
+    <message>
+        <source>Type</source>
+        <translation>タイプ</translation>
+    </message>
+    <message>
+        <source>Strings</source>
+        <translation>文字列</translation>
+    </message>
+    <message>
+        <source>String</source>
+        <translation>文字列</translation>
+    </message>
+    <message>
+        <source>Segments</source>
+        <translation>セグメント</translation>
+    </message>
+    <message>
+        <source>End</source>
+        <translation>終了</translation>
+    </message>
+    <message>
+        <source>R</source>
+        <translation>R</translation>
+    </message>
+    <message>
+        <source>W</source>
+        <translation>W</translation>
+    </message>
+    <message>
+        <source>X</source>
+        <translation>X</translation>
+    </message>
+    <message>
+        <source>Align</source>
+        <translation>アライメント</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>クラス</translation>
+    </message>
+    <message>
+        <source>Imports</source>
+        <translation>インポート</translation>
+    </message>
+    <message>
+        <source>Ordinal</source>
+        <translation>序数</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>ライブラリ</translation>
+    </message>
+    <message>
+        <source>Exports</source>
+        <translation>エクスポート</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>種類</translation>
+    </message>
+    <message>
+        <source>Cross references</source>
+        <translation>相互参照</translation>
+    </message>
+    <message>
+        <source>Direction</source>
+        <translation>方向</translation>
+    </message>
+    <message>
+        <source>Location</source>
+        <translation>位置</translation>
+    </message>
+    <message>
+        <source>Search results</source>
+        <translation>検索結果</translation>
+    </message>
+    <message>
+        <source>Context</source>
+        <translation>コンテキスト</translation>
+    </message>
+    <message>
+        <source>Bookmarks</source>
+        <translation>ブックマーク</translation>
+    </message>
+    <message>
+        <source>Description</source>
+        <translation>説明</translation>
+    </message>
+</context>
+<context>
+    <name>GuiSessionBroker</name>
+    <message>
+        <source>Session sharing disabled</source>
+        <translation>セッション共有は無効です</translation>
+    </message>
+    <message>
+        <source>Cannot create private session directory</source>
+        <translation>非公開のセッションディレクトリを作成できません</translation>
+    </message>
+    <message>
+        <source>Cannot open local session broker: %1</source>
+        <translation>ローカルセッションブローカーを開けません：%1</translation>
+    </message>
+    <message>
+        <source>Cannot write private session credentials</source>
+        <translation>非公開のセッション認証情報を書き込めません</translation>
+    </message>
+    <message>
+        <source>Session sharing enabled</source>
+        <translation>セッション共有は有効です</translation>
+    </message>
+</context>
+<context>
+    <name>McpConnectionManager</name>
+    <message>
+        <source>Disconnected</source>
+        <translation>切断済み</translation>
+    </message>
+    <message>
+        <source>MCP message exceeds 8 MiB</source>
+        <translation>MCP メッセージが 8 MiB を超えています</translation>
+    </message>
+    <message>
+        <source>Invalid MCP JSON-RPC message</source>
+        <translation>無効な MCP JSON-RPC メッセージです</translation>
+    </message>
+    <message>
+        <source>MCP process error: %1</source>
+        <translation>MCP プロセスエラー：%1</translation>
+    </message>
+    <message>
+        <source>MCP process exited (%1): %2</source>
+        <translation>MCP プロセスが終了しました（%1）：%2</translation>
+    </message>
+    <message>
+        <source>MCP request timed out: %1</source>
+        <translation>MCP リクエストがタイムアウトしました：%1</translation>
+    </message>
+    <message>
+        <source>Disconnect the running MCP process before reconnecting</source>
+        <translation>再接続する前に、実行中の MCP プロセスを切断してください</translation>
+    </message>
+    <message>
+        <source>Choose an absolute MCP executable path</source>
+        <translation>MCP 実行ファイルの絶対パスを選択してください</translation>
+    </message>
+    <message>
+        <source>Connecting</source>
+        <translation>接続中</translation>
+    </message>
+    <message>
+        <source>MCP HTTP requires HTTPS, or HTTP on localhost</source>
+        <translation>MCP HTTP は HTTPS、または localhost の HTTP が必要です</translation>
+    </message>
+    <message>
+        <source>Invalid authentication token</source>
+        <translation>無効な認証トークンです</translation>
+    </message>
+    <message>
+        <source>Cannot load CA certificate</source>
+        <translation>CA 証明書を読み込めません</translation>
+    </message>
+    <message>
+        <source>MCP request queue is full</source>
+        <translation>MCP リクエストキューがいっぱいです</translation>
+    </message>
+    <message>
+        <source>MCP outgoing message budget exceeded</source>
+        <translation>MCP 送信メッセージがサイズ制限を超えています</translation>
+    </message>
+    <message>
+        <source>MCP server is disconnected</source>
+        <translation>MCP サーバーは切断されています</translation>
+    </message>
+    <message>
+        <source>MCP session expired; reconnecting</source>
+        <translation>MCP セッションが期限切れです。再接続中</translation>
+    </message>
+    <message>
+        <source>MCP HTTP error %1: %2</source>
+        <translation>MCP HTTP エラー %1：%2</translation>
+    </message>
+    <message>
+        <source>MCP event stream ended before its response</source>
+        <translation>応答前に MCP イベントストリームが終了しました</translation>
+    </message>
+    <message>
+        <source>Invalid MCP HTTP response</source>
+        <translation>無効な MCP HTTP 応答です</translation>
+    </message>
+    <message>
+        <source>Invalid MCP session identifier</source>
+        <translation>無効な MCP セッション識別子です</translation>
+    </message>
+    <message>
+        <source>MCP session identifier is too large</source>
+        <translation>MCP セッション識別子が長すぎます</translation>
+    </message>
+    <message>
+        <source>Invalid MCP event data</source>
+        <translation>無効な MCP イベントデータです</translation>
+    </message>
+    <message>
+        <source>Invalid MCP protocol version</source>
+        <translation>無効な MCP プロトコルバージョンです</translation>
+    </message>
+    <message>
+        <source>MCP request failed: %1</source>
+        <translation>MCP リクエストが失敗しました：%1</translation>
+    </message>
+    <message>
+        <source>MCP response has no result object</source>
+        <translation>MCP 応答に結果オブジェクトがありません</translation>
+    </message>
+    <message>
+        <source>Unsupported MCP protocol version</source>
+        <translation>未対応の MCP プロトコルバージョンです</translation>
+    </message>
+    <message>
+        <source>Connected</source>
+        <translation>接続済み</translation>
+    </message>
+    <message>
+        <source>Connected; tool list is partial</source>
+        <translation>接続済み。ツール一覧は一部のみ表示されています</translation>
+    </message>
+    <message>
+        <source>Connected; resource list is partial</source>
+        <translation>接続済み。リソース一覧は一部のみ表示されています</translation>
+    </message>
+    <message>
+        <source>MCP tool reported an error</source>
+        <translation>MCP ツールがエラーを報告しました</translation>
+    </message>
+    <message>
+        <source>Connect an MCP server first</source>
+        <translation>先に MCP サーバーに接続してください</translation>
+    </message>
+    <message>
+        <source>Tool arguments exceed the size limit</source>
+        <translation>ツール引数がサイズ制限を超えています</translation>
+    </message>
+    <message>
+        <source>Tool arguments must be a JSON object</source>
+        <translation>ツール引数は JSON オブジェクトにしてください</translation>
+    </message>
+</context>
+<context>
+    <name>Menus</name>
+    <message>
+        <source>&amp;File</source>
+        <translation>ファイル(&amp;F)</translation>
+    </message>
+    <message>
+        <source>&amp;Load file</source>
+        <translation>ファイルの読み込み(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Produce file</source>
+        <translation>ファイルの生成(&amp;P)</translation>
+    </message>
+    <message>
+        <source>&amp;Edit</source>
+        <translation>編集(&amp;E)</translation>
+    </message>
+    <message>
+        <source>Co&amp;mments</source>
+        <translation>コメント(&amp;M)</translation>
+    </message>
+    <message>
+        <source>&amp;Jump</source>
+        <translation>ジャンプ(&amp;J)</translation>
+    </message>
+    <message>
+        <source>&amp;Search</source>
+        <translation>検索(&amp;S)</translation>
+    </message>
+    <message>
+        <source>&amp;View</source>
+        <translation>表示(&amp;V)</translation>
+    </message>
+    <message>
+        <source>Open &amp;subviews</source>
+        <translation>サブビューを開く(&amp;S)</translation>
+    </message>
+    <message>
+        <source>&amp;Intermediate representations</source>
+        <translation>中間表現(&amp;I)</translation>
+    </message>
+    <message>
+        <source>&amp;Graphs</source>
+        <translation>グラフ(&amp;G)</translation>
+    </message>
+    <message>
+        <source>&amp;Toolbars</source>
+        <translation>ツールバー(&amp;T)</translation>
+    </message>
+    <message>
+        <source>&amp;Options</source>
+        <translation>オプション(&amp;O)</translation>
+    </message>
+    <message>
+        <source>&amp;Language</source>
+        <translation>言語(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Analysis</source>
+        <translation>解析(&amp;A)</translation>
+    </message>
+    <message>
+        <source>&amp;Windows</source>
+        <translation>ウィンドウ(&amp;W)</translation>
+    </message>
+    <message>
+        <source>&amp;Help</source>
+        <translation>ヘルプ(&amp;H)</translation>
+    </message>
+</context>
+<context>
+    <name>NavigationBand</name>
+    <message>
+        <source>Library function</source>
+        <translation>ライブラリ関数</translation>
+    </message>
+    <message>
+        <source>Regular function</source>
+        <translation>通常の関数</translation>
+    </message>
+    <message>
+        <source>Instruction</source>
+        <translation>命令</translation>
+    </message>
+    <message>
+        <source>Data</source>
+        <translation>データ</translation>
+    </message>
+    <message>
+        <source>Unexplored</source>
+        <translation>未探索</translation>
+    </message>
+    <message>
+        <source>External symbol</source>
+        <translation>外部シンボル</translation>
+    </message>
+</context>
+<context>
+    <name>ProjectDatabase</name>
+    <message>
+        <source>Cannot read %1: %2</source>
+        <translation>%1 を読み込めません: %2</translation>
+    </message>
+    <message>
+        <source>Cannot read %1</source>
+        <translation>%1 を読み込めません</translation>
+    </message>
+    <message>
+        <source>%1 uses database format %2, which this NeverD cannot update.</source>
+        <translation>%1 はデータベース形式 %2 を使用しており、この NeverD では更新できません。</translation>
+    </message>
+    <message>
+        <source>Cannot create %1</source>
+        <translation>%1 を作成できません</translation>
+    </message>
+    <message>
+        <source>%1 is not a NeverD database.</source>
+        <translation>%1 は NeverD データベースではありません。</translation>
+    </message>
+    <message>
+        <source>%1 does not exist.</source>
+        <translation>%1 は存在しません。</translation>
+    </message>
+    <message>
+        <source>%1 uses database format %2, which this NeverD cannot read.</source>
+        <translation>%1 はデータベース形式 %2 を使用しており、この NeverD では読み込めません。</translation>
+    </message>
+    <message>
+        <source>%1 names an invalid input file.</source>
+        <translation>%1 に無効な入力ファイルが指定されています。</translation>
+    </message>
+    <message>
+        <source>Cannot write %1: %2</source>
+        <translation>%1 に書き込めません: %2</translation>
+    </message>
+    <message>
+        <source>The input stored in %1 is damaged.</source>
+        <translation>%1 に保存されている入力が破損しています。</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>%1 に書き込めません</translation>
+    </message>
+</context>
+<context>
+    <name>Representations</name>
+    <message>
+        <source>Pseudocode</source>
+        <translation>疑似コード</translation>
+    </message>
+    <message>
+        <source>LLVM C</source>
+        <translation>LLVM C</translation>
+    </message>
+    <message>
+        <source>LowIR</source>
+        <translation>LowIR</translation>
+    </message>
+    <message>
+        <source>MedIR</source>
+        <translation>MedIR</translation>
+    </message>
+    <message>
+        <source>HighIR</source>
+        <translation>HighIR</translation>
+    </message>
+    <message>
+        <source>LLVM IR</source>
+        <translation>LLVM IR</translation>
+    </message>
+</context>
+<context>
+    <name>Toolbars</name>
+    <message>
+        <source>File</source>
+        <translation>ファイル</translation>
+    </message>
+    <message>
+        <source>Navigation</source>
+        <translation>ナビゲーション</translation>
+    </message>
+    <message>
+        <source>Jump</source>
+        <translation>ジャンプ</translation>
+    </message>
+    <message>
+        <source>Search</source>
+        <translation>検索</translation>
+    </message>
+    <message>
+        <source>Views</source>
+        <translation>ビュー</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>解析</translation>
+    </message>
+</context>
+<context>
+    <name>WorkerTransport</name>
+    <message>
+        <source>Analysis worker exited (%1). Restart to continue.</source>
+        <translation>解析プロセスが終了しました（%1）。続行するには再起動してください。</translation>
+    </message>
+    <message>
+        <source>Analysis worker is not running.</source>
+        <translation>解析プロセスは実行されていません。</translation>
+    </message>
+    <message>
+        <source>Analysis request queue is full.</source>
+        <translation>解析リクエストキューがいっぱいです。</translation>
+    </message>
+    <message>
+        <source>Invalid analysis protocol frame.</source>
+        <translation>無効な解析プロトコルフレームです。</translation>
+    </message>
+    <message>
+        <source>Invalid analysis protocol JSON.</source>
+        <translation>無効な解析プロトコル JSON です。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ChooserModel</name>
+    <message>
+        <source>References are still being indexed…</source>
+        <translation>参照のインデックスを作成しています…</translation>
+    </message>
+    <message>
+        <source>Up</source>
+        <translation>上</translation>
+    </message>
+    <message>
+        <source>Down</source>
+        <translation>下</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ChooserView</name>
+    <message>
+        <source>Quick filter</source>
+        <translation>クイックフィルター</translation>
+    </message>
+    <message>
+        <source>Line %1 of %2</source>
+        <translation>%2 行中 %1 行目</translation>
+    </message>
+    <message>
+        <source>1 item</source>
+        <translation>1 個の項目</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n items</source>
+        <translation>
+            <numerusform>%n 個の項目</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::CodeText</name>
+    <message>
+        <source>Decompiling…</source>
+        <translation>逆コンパイル中…</translation>
+    </message>
+    <message>
+        <source>Function-level analysis</source>
+        <translation>関数単位の解析</translation>
+    </message>
+    <message>
+        <source>rows linked to instructions</source>
+        <translation>命令にリンクされた行</translation>
+    </message>
+    <message>
+        <source>%1
+Recognized library operation; click to show its code.</source>
+        <translation>%1
+認識されたライブラリ操作です。クリックするとコードを表示します。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::CodeView</name>
+    <message>
+        <source>Fold library code</source>
+        <translation>ライブラリコードを折りたたむ</translation>
+    </message>
+    <message>
+        <source>Show each recognized library operation as a one-line summary; copy and export keep the full code.</source>
+        <translation>認識された各ライブラリ操作を 1 行の要約で表示します。コピーとエクスポートでは完全なコードが保持されます。</translation>
+    </message>
+    <message>
+        <source>Keep this function while the disassembly moves on</source>
+        <translation>逆アセンブルが移動してもこの関数を表示し続ける</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ConnectionsDialog</name>
+    <message>
+        <source>Pending</source>
+        <translation>待機中</translation>
+    </message>
+    <message>
+        <source>Completed</source>
+        <translation>完了</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>失敗</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>キャンセル済み</translation>
+    </message>
+    <message>
+        <source>Timed out</source>
+        <translation>タイムアウト</translation>
+    </message>
+    <message>
+        <source>Disconnected</source>
+        <translation>切断済み</translation>
+    </message>
+    <message>
+        <source>MCP Connections</source>
+        <translation>MCP 接続</translation>
+    </message>
+    <message>
+        <source>Current GUI session</source>
+        <translation>現在の GUI セッション</translation>
+    </message>
+    <message>
+        <source>Copy Credential Path</source>
+        <translation>認証情報のパスをコピー</translation>
+    </message>
+    <message>
+        <source>Transport</source>
+        <translation>トランスポート</translation>
+    </message>
+    <message>
+        <source>Arguments as JSON, for example [&quot;--help&quot;]</source>
+        <translation>JSON 形式の引数。例：[&quot;--help&quot;]</translation>
+    </message>
+    <message>
+        <source>Bearer token (optional)</source>
+        <translation>Bearer トークン（任意）</translation>
+    </message>
+    <message>
+        <source>Bearer token</source>
+        <translation>Bearer トークン</translation>
+    </message>
+    <message>
+        <source>CA certificate path (optional)</source>
+        <translation>CA 証明書のパス（任意）</translation>
+    </message>
+    <message>
+        <source>CA certificate path</source>
+        <translation>CA 証明書のパス</translation>
+    </message>
+    <message>
+        <source>Tools</source>
+        <translation>ツール</translation>
+    </message>
+    <message>
+        <source>Resources</source>
+        <translation>リソース</translation>
+    </message>
+    <message>
+        <source>History</source>
+        <translation>履歴</translation>
+    </message>
+    <message>
+        <source>Result</source>
+        <translation>結果</translation>
+    </message>
+    <message>
+        <source>Schema</source>
+        <translation>スキーマ</translation>
+    </message>
+    <message>
+        <source>Call Tool</source>
+        <translation>ツールを呼び出す</translation>
+    </message>
+    <message>
+        <source>Cancel Call</source>
+        <translation>呼び出しをキャンセル</translation>
+    </message>
+    <message>
+        <source>Select a resource or call a tool to inspect its response.</source>
+        <translation>リソースを選択するかツールを呼び出すと、応答を確認できます。</translation>
+    </message>
+    <message>
+        <source>Disable Sharing</source>
+        <translation>共有を無効化</translation>
+    </message>
+    <message>
+        <source>Enable Sharing</source>
+        <translation>共有を有効化</translation>
+    </message>
+    <message>
+        <source>Sharing is off. Enabling it grants local agents access to this session using its private credential file.</source>
+        <translation>共有は無効です。有効にすると、ローカルエージェントが非公開の認証情報ファイルを使ってこのセッションにアクセスできます。</translation>
+    </message>
+    <message>
+        <source>Absolute path to server executable</source>
+        <translation>サーバー実行ファイルの絶対パス</translation>
+    </message>
+    <message>
+        <source>Disconnect</source>
+        <translation>切断</translation>
+    </message>
+    <message>
+        <source>Connect</source>
+        <translation>接続</translation>
+    </message>
+    <message>
+        <source>No server connected</source>
+        <translation>サーバー未接続</translation>
+    </message>
+    <message>
+        <source>No calls yet.</source>
+        <translation>呼び出し履歴はまだありません。</translation>
+    </message>
+    <message>
+        <source>No items published by this server.</source>
+        <translation>このサーバーは項目を公開していません。</translation>
+    </message>
+    <message>
+        <source>Connect to a server to list its catalog.</source>
+        <translation>サーバーに接続すると、カタログを一覧表示できます。</translation>
+    </message>
+    <message>
+        <source>Arguments must be a JSON array of strings.</source>
+        <translation>引数は文字列の JSON 配列にしてください。</translation>
+    </message>
+    <message>
+        <source>Tool Input Schema</source>
+        <translation>ツール入力スキーマ</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::DisassemblyView</name>
+    <message>
+        <source>Graph view requires a location inside a function.</source>
+        <translation>グラフビューには関数内の位置が必要です。</translation>
+    </message>
+    <message>
+        <source> (Synchronized with %1)</source>
+        <translation> (%1 と同期)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::Expression</name>
+    <message>
+        <source>Unexpected character &apos;%1&apos;</source>
+        <translation>予期しない文字 &apos;%1&apos;</translation>
+    </message>
+    <message>
+        <source>Empty expression</source>
+        <translation>式が空です</translation>
+    </message>
+    <message>
+        <source>Unexpected text after the expression</source>
+        <translation>式の後に予期しないテキストがあります</translation>
+    </message>
+    <message>
+        <source>Unknown name &apos;%1&apos;</source>
+        <translation>不明な名前 &apos;%1&apos;</translation>
+    </message>
+    <message>
+        <source>Missing &apos;)&apos;</source>
+        <translation>&apos;)&apos; がありません</translation>
+    </message>
+    <message>
+        <source>Expected a value</source>
+        <translation>値が必要です</translation>
+    </message>
+    <message>
+        <source>Division by zero</source>
+        <translation>0 で除算しました</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExtensionsView</name>
+    <message>
+        <source>Import Manifest…</source>
+        <translation>マニフェストをインポート…</translation>
+    </message>
+    <message>
+        <source>Run</source>
+        <translation>実行</translation>
+    </message>
+    <message>
+        <source>Unload</source>
+        <translation>アンロード</translation>
+    </message>
+    <message>
+        <source>Import a declarative manifest to add analysis commands and views.</source>
+        <translation>宣言型マニフェストをインポートして、解析コマンドとビューを追加します。</translation>
+    </message>
+    <message>
+        <source>Select an extension command to inspect its result.</source>
+        <translation>拡張機能のコマンドを選択すると、結果を確認できます。</translation>
+    </message>
+    <message>
+        <source>Import extension manifest</source>
+        <translation>拡張機能マニフェストのインポート</translation>
+    </message>
+    <message>
+        <source>Manifests (*.json)</source>
+        <translation>マニフェスト (*.json)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::GraphView</name>
+    <message>
+        <source>Laying out graph…</source>
+        <translation>グラフをレイアウト中…</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::JumpDialog</name>
+    <message>
+        <source>Jump anywhere</source>
+        <translation>任意の場所へジャンプ</translation>
+    </message>
+    <message>
+        <source>Address, name or expression (0x401000, main, sub_401000+10)</source>
+        <translation>アドレス、名前、または式 (0x401000, main, sub_401000+10)</translation>
+    </message>
+    <message>
+        <source>Enter jumps to the expression; arrows choose a match.</source>
+        <translation>Enter キーで式の位置へジャンプし、矢印キーで候補を選択します。</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n matches</source>
+        <translation>
+            <numerusform>%n 件の一致</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MainWindow</name>
+    <message>
+        <source>Navigation band</source>
+        <translation>ナビゲーションバンド</translation>
+    </message>
+    <message>
+        <source>Extensions</source>
+        <translation>拡張機能</translation>
+    </message>
+    <message>
+        <source>Hex View-1</source>
+        <translation>16進ビュー-1</translation>
+    </message>
+    <message>
+        <source>NeverD View-A</source>
+        <translation>NeverD ビュー-A</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>関数</translation>
+    </message>
+    <message>
+        <source>Output</source>
+        <translation>出力</translation>
+    </message>
+    <message>
+        <source>Graph overview</source>
+        <translation>グラフ概要</translation>
+    </message>
+    <message>
+        <source>Background analysis: references and labels are indexed while you browse</source>
+        <translation>バックグラウンド解析：閲覧中に参照とラベルのインデックスを作成します</translation>
+    </message>
+    <message>
+        <source>Unsaved changes</source>
+        <translation>未保存の変更</translation>
+    </message>
+    <message>
+        <source>Comments were changed. Save them before continuing?</source>
+        <translation>コメントが変更されました。続行する前に保存しますか？</translation>
+    </message>
+    <message>
+        <source>Cannot jump to %1: %2</source>
+        <translation>%1 へジャンプできません：%2</translation>
+    </message>
+    <message>
+        <source>Load signature pack</source>
+        <translation>シグネチャパックを読み込む</translation>
+    </message>
+    <message>
+        <source>Signature packs (*.pat *.json);;All files (*)</source>
+        <translation>シグネチャパック (*.pat *.json);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>Signature directory</source>
+        <translation>シグネチャディレクトリ</translation>
+    </message>
+    <message>
+        <source>Mark position</source>
+        <translation>位置をマーク</translation>
+    </message>
+    <message>
+        <source>Description:</source>
+        <translation>説明：</translation>
+    </message>
+    <message>
+        <source>Find in view</source>
+        <translation>ビュー内を検索</translation>
+    </message>
+    <message>
+        <source>Text:</source>
+        <translation>テキスト：</translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; was not found among the loaded lines</source>
+        <translation>読み込み済みの行に &apos;%1&apos; が見つかりません</translation>
+    </message>
+    <message>
+        <source>History: %1 entries, cursor %2</source>
+        <translation>履歴：%1 件、カーソル %2</translation>
+    </message>
+    <message>
+        <source>AU: idle</source>
+        <translation>AU: アイドル</translation>
+    </message>
+    <message>
+        <source>AU: busy %1%</source>
+        <translation>AU: 処理中 %1%</translation>
+    </message>
+    <message>
+        <source>AU: busy</source>
+        <translation>AU: 処理中</translation>
+    </message>
+    <message>
+        <source>Down</source>
+        <translation>下方向</translation>
+    </message>
+    <message>
+        <source>Up</source>
+        <translation>上方向</translation>
+    </message>
+    <message>
+        <source>Disk: %1GB</source>
+        <translation>ディスク：%1GB</translation>
+    </message>
+    <message>
+        <source> · read-only</source>
+        <translation> · 読み取り専用</translation>
+    </message>
+    <message>
+        <source>%1 is not a function entry; only functions can be renamed.</source>
+        <translation>%1 は関数の先頭ではありません。名前を変更できるのは関数のみです。</translation>
+    </message>
+    <message>
+        <source>Rename function</source>
+        <translation>関数名の変更</translation>
+    </message>
+    <message>
+        <source>Name of %1:</source>
+        <translation>%1 の名前：</translation>
+    </message>
+    <message>
+        <source>Please enter text</source>
+        <translation>テキストを入力してください</translation>
+    </message>
+    <message>
+        <source>Comment at %1:</source>
+        <translation>%1 のコメント：</translation>
+    </message>
+    <message>
+        <source>xrefs to %1</source>
+        <translation>%1 への相互参照</translation>
+    </message>
+    <message>
+        <source>xrefs from %1</source>
+        <translation>%1 からの相互参照</translation>
+    </message>
+    <message>
+        <source>Place the cursor inside a function to decompile it.</source>
+        <translation>逆コンパイルするには、カーソルを関数内に置いてください。</translation>
+    </message>
+    <message>
+        <source>Text search</source>
+        <translation>テキスト検索</translation>
+    </message>
+    <message>
+        <source>Binary search</source>
+        <translation>バイナリ検索</translation>
+    </message>
+    <message>
+        <source>String:</source>
+        <translation>文字列：</translation>
+    </message>
+    <message>
+        <source>Hex bytes (e.g. 48 8B 05):</source>
+        <translation>16進バイト列（例：48 8B 05）：</translation>
+    </message>
+    <message>
+        <source>Search failed: %1 not found</source>
+        <translation>検索に失敗しました：%1 が見つかりません</translation>
+    </message>
+    <message>
+        <source>Evaluate expression</source>
+        <translation>式の評価</translation>
+    </message>
+    <message>
+        <source>Expression:</source>
+        <translation>式：</translation>
+    </message>
+    <message>
+        <source>Hex: %1h
+Decimal: %2
+Octal: %3
+Signed: %4</source>
+        <translation>16進：%1h
+10進：%2
+8進：%3
+符号付き：%4</translation>
+    </message>
+    <message>
+        <source>About NeverD</source>
+        <translation>NeverD について</translation>
+    </message>
+    <message>
+        <source>&lt;h3&gt;NeverD %1&lt;/h3&gt;&lt;p&gt;Interactive disassembler and decompiler workbench.&lt;/p&gt;&lt;p&gt;Licensed under the GNU Affero General Public License v3. Icons are original NeverD artwork.&lt;/p&gt;&lt;p&gt;&lt;a href=&quot;https://github.com/NeverSight/NeverD&quot;&gt;github.com/NeverSight/NeverD&lt;/a&gt;&lt;/p&gt;</source>
+        <translation>&lt;h3&gt;NeverD %1&lt;/h3&gt;&lt;p&gt;対話型の逆アセンブル・逆コンパイル用ワークベンチです。&lt;/p&gt;&lt;p&gt;GNU Affero General Public License v3 の下でライセンスされています。アイコンは NeverD オリジナルのアートワークです。&lt;/p&gt;&lt;p&gt;&lt;a href=&quot;https://github.com/NeverSight/NeverD&quot;&gt;github.com/NeverSight/NeverD&lt;/a&gt;&lt;/p&gt;</translation>
+    </message>
+    <message>
+        <source>Code font</source>
+        <translation>コードのフォント</translation>
+    </message>
+    <message>
+        <source>Dark (Visual Studio Code Dark+)</source>
+        <translation>ダーク (Visual Studio Code Dark+)</translation>
+    </message>
+    <message>
+        <source>Light (Visual Studio Code Light+)</source>
+        <translation>ライト (Visual Studio Code Light+)</translation>
+    </message>
+    <message>
+        <source>Colors</source>
+        <translation>配色</translation>
+    </message>
+    <message>
+        <source>Theme:</source>
+        <translation>テーマ：</translation>
+    </message>
+    <message>
+        <source>General options</source>
+        <translation>全般オプション</translation>
+    </message>
+    <message>
+        <source>Number of opcode bytes:</source>
+        <translation>オペコードのバイト数：</translation>
+    </message>
+    <message>
+        <source>Show segment:address line prefixes</source>
+        <translation>行頭に「セグメント:アドレス」を表示</translation>
+    </message>
+    <message>
+        <source>Shortcuts</source>
+        <translation>ショートカット</translation>
+    </message>
+    <message>
+        <source>Action</source>
+        <translation>アクション</translation>
+    </message>
+    <message>
+        <source>Shortcut</source>
+        <translation>ショートカット</translation>
+    </message>
+    <message>
+        <source>Command palette</source>
+        <translation>コマンドパレット</translation>
+    </message>
+    <message>
+        <source>Type a command</source>
+        <translation>コマンドを入力</translation>
+    </message>
+    <message>
+        <source>Create C file</source>
+        <translation>C ファイルを作成</translation>
+    </message>
+    <message>
+        <source>Create LST file</source>
+        <translation>LST ファイルを作成</translation>
+    </message>
+    <message>
+        <source>Cannot write %1</source>
+        <translation>%1 に書き込めません</translation>
+    </message>
+    <message>
+        <source>Wrote %1</source>
+        <translation>%1 を書き出しました</translation>
+    </message>
+    <message>
+        <source>Desktop saved</source>
+        <translation>デスクトップを保存しました</translation>
+    </message>
+    <message>
+        <source>No saved desktop</source>
+        <translation>保存されたデスクトップがありません</translation>
+    </message>
+    <message>
+        <source>NeverD: Quick start</source>
+        <translation>NeverD: クイックスタート</translation>
+    </message>
+    <message>
+        <source>New</source>
+        <translation>新規</translation>
+    </message>
+    <message>
+        <source>Disassemble a new file</source>
+        <translation>新しいファイルを逆アセンブルします</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation>開始</translation>
+    </message>
+    <message>
+        <source>Work on your own</source>
+        <translation>ファイルを開かずに作業を始めます</translation>
+    </message>
+    <message>
+        <source>Previous</source>
+        <translation>前回</translation>
+    </message>
+    <message>
+        <source>Load the selected recent file</source>
+        <translation>選択した最近のファイルを読み込みます</translation>
+    </message>
+    <message>
+        <source>Recent files:</source>
+        <translation>最近使ったファイル：</translation>
+    </message>
+    <message>
+        <source>Open binary or database</source>
+        <translation>バイナリまたはデータベースを開く</translation>
+    </message>
+    <message>
+        <source>All files (*);;NeverD databases (*.nddb)</source>
+        <translation>すべてのファイル (*);;NeverD データベース (*.nddb)</translation>
+    </message>
+    <message>
+        <source>The saved desktop of this database could not be restored.</source>
+        <translation>このデータベースに保存されたデスクトップを復元できませんでした。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::OutputWindow</name>
+    <message>
+        <source>Command line language: NeverD expressions and commands. Type help for a list.</source>
+        <translation>コマンドライン言語：NeverD の式とコマンド。help と入力すると一覧を表示します。</translation>
+    </message>
+    <message>
+        <source>Expression or command (help)</source>
+        <translation>式またはコマンド (help)</translation>
+    </message>
+    <message>
+        <source>Commands:</source>
+        <translation>コマンド：</translation>
+    </message>
+    <message>
+        <source>  g &lt;expr&gt;          jump to an address or name</source>
+        <translation>  g &lt;expr&gt;          アドレスまたは名前へジャンプ</translation>
+    </message>
+    <message>
+        <source>  x [expr]          list references to the current item or expr</source>
+        <translation>  x [expr]          現在の項目または expr への参照を一覧表示</translation>
+    </message>
+    <message>
+        <source>  n &lt;name&gt;          rename the current function</source>
+        <translation>  n &lt;name&gt;          現在の関数の名前を変更</translation>
+    </message>
+    <message>
+        <source>  c &lt;text&gt;          comment the current address</source>
+        <translation>  c &lt;text&gt;          現在のアドレスにコメントを追加</translation>
+    </message>
+    <message>
+        <source>  d [expr]          decompile the current or given function</source>
+        <translation>  d [expr]          現在の関数または指定した関数を逆コンパイル</translation>
+    </message>
+    <message>
+        <source>  f &lt;hex|&quot;text&quot;&gt;    search the binary</source>
+        <translation>  f &lt;hex|&quot;text&quot;&gt;    バイナリを検索</translation>
+    </message>
+    <message>
+        <source>  graph, hex        show the graph or hex view</source>
+        <translation>  graph, hex        グラフビューまたは16進ビューを表示</translation>
+    </message>
+    <message>
+        <source>  analyze, save     whole-program analysis, save comments</source>
+        <translation>  analyze, save     プログラム全体の解析、コメントの保存</translation>
+    </message>
+    <message>
+        <source>  &lt;expr&gt;            evaluate: 0x10, 10h, #16, names, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</source>
+        <translation>  &lt;expr&gt;            評価：0x10, 10h, #16, 名前, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::Session</name>
+    <message>
+        <source>Starting analysis worker…</source>
+        <translation>解析プロセスを起動中…</translation>
+    </message>
+    <message>
+        <source>Incompatible analysis worker protocol.</source>
+        <translation>解析プロセスのプロトコルに互換性がありません。</translation>
+    </message>
+    <message>
+        <source>Analysis engine %1 ready</source>
+        <translation>解析エンジン %1 の準備ができました</translation>
+    </message>
+    <message>
+        <source>Select an existing binary file.</source>
+        <translation>既存のバイナリファイルを選択してください。</translation>
+    </message>
+    <message>
+        <source>Loading %1…</source>
+        <translation>%1 を読み込み中…</translation>
+    </message>
+    <message>
+        <source>%1: %2 %3, %4 functions</source>
+        <translation>%1: %2 %3、関数 %4 個</translation>
+    </message>
+    <message>
+        <source>Annotations reloaded</source>
+        <translation>注釈を再読み込みしました</translation>
+    </message>
+    <message>
+        <source>Comments and history saved</source>
+        <translation>コメントと履歴を保存しました</translation>
+    </message>
+    <message>
+        <source>The edit was prepared for a session that is no longer open and was not applied.</source>
+        <translation>この編集は既に閉じられたセッション用に準備されたものであるため、適用されませんでした。</translation>
+    </message>
+    <message>
+        <source>Edits are paused while the pending save, open or close completes.</source>
+        <translation>保留中の保存・オープン・クローズが完了するまで、編集は一時停止されます。</translation>
+    </message>
+    <message>
+        <source>Renamed %1 to %2</source>
+        <translation>%1 の名前を %2 に変更しました</translation>
+    </message>
+    <message>
+        <source>Signature pack applied: %1 byte matches</source>
+        <translation>シグネチャパックを適用しました：バイト一致 %1 件</translation>
+    </message>
+    <message>
+        <source>Whole-program analysis started; views stay available.</source>
+        <translation>プログラム全体の解析を開始しました。ビューは引き続き使用できます。</translation>
+    </message>
+    <message>
+        <source>Whole-program analysis finished</source>
+        <translation>プログラム全体の解析が完了しました</translation>
+    </message>
+    <message>
+        <source>Queued requests cancelled; a running engine call finishes unless the worker is restarted.</source>
+        <translation>キュー内のリクエストをキャンセルしました。実行中のエンジン呼び出しは、解析プロセスを再起動しない限り最後まで実行されます。</translation>
+    </message>
+    <message>
+        <source>%1 describes a different version of this file and was not used; saving replaces it.</source>
+        <translation>%1 はこのファイルの別のバージョンを記述しているため使用されませんでした。保存すると置き換えられます。</translation>
+    </message>
+    <message>
+        <source>Could not restore %1 from the database.</source>
+        <translation>データベースから %1 を復元できませんでした。</translation>
+    </message>
+    <message>
+        <source>Database saved: %1</source>
+        <translation>データベースを保存しました: %1</translation>
+    </message>
+    <message>
+        <source>Could not save the database: %1</source>
+        <translation>データベースを保存できませんでした: %1</translation>
+    </message>
+    <message>
+        <source>Could not update the database: %1</source>
+        <translation>データベースを更新できませんでした: %1</translation>
+    </message>
+</context>
 </TS>

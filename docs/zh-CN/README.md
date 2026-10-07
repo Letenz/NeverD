@@ -1,6 +1,6 @@
 **语言**: [English](../README.md) | [简体中文](README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1f7e768c64fd7b3fd697260f693c68ca3b71562bf43cb0db4970c98487c270be -->
+<!-- i18n-source: 88b72dd8f373ee05729ab1db29a51d3837d123853880c232431f70eade967be3 -->
 
 [← NeverD 项目](project.md)
 
@@ -18,7 +18,7 @@
 | [贡献指南](CONTRIBUTING.md) | 开发环境、构建配置、工作流、风格与 PR 要求 |
 | [架构](architecture.md) | IR 路径、组件边界、严格提升、支持深度与修改位置 |
 | [测试](testing.md) | 测试套件、生成 fixture、Unicorn 往返与增量命令 |
-| [桌面工作台 (英文)](../gui.md) | 可选 Qt Quick 界面、独立工作进程、C ABI、标注和 MCP 工作流 |
+| [桌面工作台 (英文)](../gui.md) | 经典反汇编器布局、独立工作进程、项目数据库、本地化和 MCP 连接 |
 | [库识别（英文）](../library-recognition.md) | 基于证据的 STL、ATL/MFC、COM 和 libc 身份、配置与可恢复的 C 源码折叠 |
 | [桌面验收记录 (英文)](../gui-qualification.md) | 已测量的 GUI 证据、打包边界及尚未完成的平台验收 |
 | [解释器源码恢复](interpreter-recovery.md) | 实验性 x64 解释器特化、HighC/LLVMC 输出、执行前提、证据与限制; 嵌套循环证明候选; 显式发现预算和版本化 C API; 精确的原生到 LLVM 证明 API |

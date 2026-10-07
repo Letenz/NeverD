@@ -1,6 +1,6 @@
 **언어**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1f7e768c64fd7b3fd697260f693c68ca3b71562bf43cb0db4970c98487c270be -->
+<!-- i18n-source: 88b72dd8f373ee05729ab1db29a51d3837d123853880c232431f70eade967be3 -->
 
 [← NeverD 프로젝트](project.md)
 
@@ -18,7 +18,7 @@
 | [기여 가이드](CONTRIBUTING.md) | 개발 환경, 빌드 프로필, 워크플로, 스타일, PR 요구 사항 |
 | [아키텍처](architecture.md) | IR 경로, 구성 요소 경계, strict lifting, 지원 깊이, 수정 위치 |
 | [테스트](testing.md) | 테스트 스위트, 생성 fixture, Unicorn 왕복, 증분 명령 |
-| [데스크톱 워크벤치 (영문)](../gui.md) | 선택적 Qt Quick UI, 별도 작업 프로세스, C ABI, 주석과 MCP 작업 흐름 |
+| [데스크톱 워크벤치 (영문)](../gui.md) | 고전적인 디스어셈블러 레이아웃, 별도 작업 프로세스, 프로젝트 데이터베이스, 현지화와 MCP 연결 |
 | [라이브러리 인식 (영문)](../library-recognition.md) | 근거에 따른 STL, ATL/MFC, COM, libc 식별, 프로필 및 복원 가능한 C 코드 접기 |
 | [데스크톱 검증 기록 (영문)](../gui-qualification.md) | 측정된 GUI 증거, 패키징 범위와 남은 플랫폼 검증 |
 | [인터프리터 소스 복원](interpreter-recovery.md) | 실험적 x64 인터프리터 특수화, HighC/LLVMC 출력, 실행 전제, 근거와 제한; 중첩 루프 증명 후보; 명시적 탐색 예산과 버전별 C API; 정확한 네이티브에서 LLVM으로의 증명 API |

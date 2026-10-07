@@ -1,0 +1,365 @@
+//===- Actions.def - Workbench commands -------------------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Every workbench command: identifier, menu text, default shortcut, icon and
+/// status tip.  Shortcuts follow the conventional interactive disassembler
+/// defaults so existing muscle memory carries over.  Menus.def and
+/// Toolbars.def place the commands; MainWindow implements them.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_ACTION(Id, Text, Shortcut, Icon, Tip): shortcut active anywhere in
+// the main window.
+// NEVERD_VIEW_ACTION(Id, Text, Shortcut, Icon, Tip): shortcut active only while
+// an analysis view has the keyboard focus, so single keys such as N or G keep
+// typing into text fields.
+#ifndef NEVERD_ACTION
+#error "Define NEVERD_ACTION before including Actions.def"
+#endif
+#ifndef NEVERD_VIEW_ACTION
+#define NEVERD_VIEW_ACTION(Id, Text, Shortcut, Icon, Tip)                      \
+  NEVERD_ACTION(Id, Text, Shortcut, Icon, Tip)
+#endif
+
+// File.
+NEVERD_ACTION(FileOpen, QT_TRANSLATE_NOOP("Actions", "&Open..."), "Ctrl+O",
+              "open",
+              QT_TRANSLATE_NOOP("Actions", "Open a binary for analysis"))
+NEVERD_ACTION(FileReload,
+              QT_TRANSLATE_NOOP("Actions", "&Reload the input file"), "",
+              "refresh",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Reload the binary and its saved annotations"))
+NEVERD_ACTION(
+    FileLoadSignatures,
+    QT_TRANSLATE_NOOP("Actions", "&FLIRT signature file..."), "", "signatures",
+    QT_TRANSLATE_NOOP(
+        "Actions",
+        "Apply a byte signature (.pat) or library feature (.json) pack"))
+NEVERD_ACTION(FileLoadSignatureTree,
+              QT_TRANSLATE_NOOP("Actions", "Signature &directory..."), "",
+              "signatures",
+              QT_TRANSLATE_NOOP(
+                  "Actions", "Apply every matching pack from a signature tree"))
+NEVERD_ACTION(
+    FileExportListing, QT_TRANSLATE_NOOP("Actions", "Create &LST file..."), "",
+    "text_view",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Write the current function's listing to a text file"))
+NEVERD_ACTION(
+    FileExportPseudocode, QT_TRANSLATE_NOOP("Actions", "Create &C file..."), "",
+    "pseudocode",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Write the current function's pseudocode to a C file"))
+NEVERD_ACTION(FileSave, QT_TRANSLATE_NOOP("Actions", "&Save"), "Ctrl+W", "save",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Save comments and history beside the binary"))
+NEVERD_ACTION(FileClose, QT_TRANSLATE_NOOP("Actions", "&Close"), "", "close",
+              QT_TRANSLATE_NOOP("Actions", "Close the current binary"))
+NEVERD_ACTION(FileQuickStart, QT_TRANSLATE_NOOP("Actions", "&Quick start"), "",
+              "jump_entry",
+              QT_TRANSLATE_NOOP("Actions", "Show the quick start window"))
+NEVERD_ACTION(FileExit, QT_TRANSLATE_NOOP("Actions", "E&xit"), "Alt+X", "exit",
+              QT_TRANSLATE_NOOP("Actions", "Quit NeverD"))
+
+// Edit.
+NEVERD_ACTION(EditUndo, QT_TRANSLATE_NOOP("Actions", "&Undo"), "Ctrl+Z", "undo",
+              QT_TRANSLATE_NOOP("Actions", "Undo the last comment or rename"))
+NEVERD_ACTION(EditRedo, QT_TRANSLATE_NOOP("Actions", "&Redo"), "Ctrl+Shift+Z",
+              "redo",
+              QT_TRANSLATE_NOOP("Actions", "Redo the last undone change"))
+NEVERD_VIEW_ACTION(EditCopy, QT_TRANSLATE_NOOP("Actions", "&Copy"), "Ctrl+C",
+                   "copy",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Copy the selection or current line"))
+NEVERD_VIEW_ACTION(EditCopyAddress,
+                   QT_TRANSLATE_NOOP("Actions", "Copy &address"), "", "copy",
+                   QT_TRANSLATE_NOOP("Actions", "Copy the current address"))
+NEVERD_VIEW_ACTION(EditRename, QT_TRANSLATE_NOOP("Actions", "Re&name..."), "N",
+                   "rename",
+                   QT_TRANSLATE_NOOP("Actions", "Rename the current function"))
+NEVERD_VIEW_ACTION(EditComment,
+                   QT_TRANSLATE_NOOP("Actions", "Enter &comment..."), ":",
+                   "comment",
+                   QT_TRANSLATE_NOOP("Actions", "Comment the current address"))
+NEVERD_VIEW_ACTION(EditRepeatableComment,
+                   QT_TRANSLATE_NOOP("Actions", "Enter re&peatable comment..."),
+                   ";", "comment",
+                   QT_TRANSLATE_NOOP("Actions", "Comment the current address"))
+NEVERD_VIEW_ACTION(EditBookmark,
+                   QT_TRANSLATE_NOOP("Actions", "&Mark position..."), "Alt+M",
+                   "bookmark",
+                   QT_TRANSLATE_NOOP("Actions", "Bookmark the current address"))
+
+// Jump.
+NEVERD_VIEW_ACTION(
+    JumpOperand, QT_TRANSLATE_NOOP("Actions", "Jump to &operand"), "Return",
+    "jump",
+    QT_TRANSLATE_NOOP("Actions", "Follow the name or address under the cursor"))
+NEVERD_VIEW_ACTION(
+    JumpNewWindow, QT_TRANSLATE_NOOP("Actions", "Jump in a new &window"),
+    "Alt+Return", "float",
+    QT_TRANSLATE_NOOP("Actions", "Open the target in a new disassembly view"))
+NEVERD_VIEW_ACTION(
+    JumpBack, QT_TRANSLATE_NOOP("Actions", "Jump to &previous position"), "Esc",
+    "back", QT_TRANSLATE_NOOP("Actions", "Go back in the navigation history"))
+NEVERD_VIEW_ACTION(JumpForward,
+                   QT_TRANSLATE_NOOP("Actions", "Jump to &next position"),
+                   "Ctrl+Return", "forward",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Go forward in the navigation history"))
+NEVERD_VIEW_ACTION(JumpNextFunction,
+                   QT_TRANSLATE_NOOP("Actions", "Next f&unction"),
+                   "Ctrl+Shift+Down", "forward",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Move to the start of the next function"))
+NEVERD_VIEW_ACTION(
+    JumpPreviousFunction, QT_TRANSLATE_NOOP("Actions", "Pre&vious function"),
+    "Ctrl+Shift+Up", "back",
+    QT_TRANSLATE_NOOP("Actions", "Move to the start of the previous function"))
+NEVERD_VIEW_ACTION(
+    JumpPseudocode, QT_TRANSLATE_NOOP("Actions", "Jump to ps&eudocode"), "Tab",
+    "pseudocode",
+    QT_TRANSLATE_NOOP("Actions", "Switch between disassembly and pseudocode"))
+NEVERD_VIEW_ACTION(JumpAnywhere,
+                   QT_TRANSLATE_NOOP("Actions", "Jump &anywhere..."), "G",
+                   "jump",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Jump to an address, name or expression"))
+NEVERD_ACTION(JumpByName, QT_TRANSLATE_NOOP("Actions", "Jump by na&me..."),
+              "Ctrl+L", "jump_name",
+              QT_TRANSLATE_NOOP("Actions", "Choose a name to jump to"))
+NEVERD_ACTION(JumpFunction,
+              QT_TRANSLATE_NOOP("Actions", "Jump to &function..."), "Ctrl+P",
+              "jump_function",
+              QT_TRANSLATE_NOOP("Actions", "Choose a function to jump to"))
+NEVERD_ACTION(JumpSegment, QT_TRANSLATE_NOOP("Actions", "Jump to &segment..."),
+              "Ctrl+S", "jump_segment",
+              QT_TRANSLATE_NOOP("Actions", "Choose a segment to jump to"))
+NEVERD_ACTION(JumpEntry,
+              QT_TRANSLATE_NOOP("Actions", "Jump to &entry point..."), "Ctrl+E",
+              "jump_entry",
+              QT_TRANSLATE_NOOP("Actions", "Choose an entry point to jump to"))
+NEVERD_ACTION(JumpXrefsTo,
+              QT_TRANSLATE_NOOP("Actions", "List cross references &to..."),
+              "Ctrl+X", "xrefs",
+              QT_TRANSLATE_NOOP("Actions",
+                                "List references to the current item"))
+NEVERD_ACTION(JumpXrefsFrom,
+              QT_TRANSLATE_NOOP("Actions", "List cross references f&rom..."),
+              "Ctrl+J", "xrefs",
+              QT_TRANSLATE_NOOP(
+                  "Actions", "List references made by the current instruction"))
+NEVERD_VIEW_ACTION(
+    JumpXrefOperand,
+    QT_TRANSLATE_NOOP("Actions", "Jump to &xref to operand..."), "X", "xrefs",
+    QT_TRANSLATE_NOOP("Actions",
+                      "List references to the name under the cursor"))
+NEVERD_ACTION(JumpMark,
+              QT_TRANSLATE_NOOP("Actions", "Jump to mar&ked position..."),
+              "Ctrl+M", "bookmark",
+              QT_TRANSLATE_NOOP("Actions", "Choose a bookmark to jump to"))
+
+// Search.
+NEVERD_ACTION(SearchText, QT_TRANSLATE_NOOP("Actions", "&Text..."), "Alt+T",
+              "search_text",
+              QT_TRANSLATE_NOOP("Actions", "Search the binary for text"))
+NEVERD_ACTION(SearchNextText, QT_TRANSLATE_NOOP("Actions", "Next te&xt"),
+              "Ctrl+T", "search_next",
+              QT_TRANSLATE_NOOP("Actions", "Repeat the last text search"))
+NEVERD_ACTION(SearchBytes,
+              QT_TRANSLATE_NOOP("Actions", "Sequence of &bytes..."), "Alt+B",
+              "search_bytes",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Search the binary for a byte sequence"))
+NEVERD_ACTION(SearchNextBytes,
+              QT_TRANSLATE_NOOP("Actions", "Next seq&uence of bytes"), "Ctrl+B",
+              "search_next",
+              QT_TRANSLATE_NOOP("Actions", "Repeat the last byte search"))
+NEVERD_VIEW_ACTION(
+    SearchHighlightUp, QT_TRANSLATE_NOOP("Actions", "Search highlight &up"),
+    "Alt+Up", "back",
+    QT_TRANSLATE_NOOP(
+        "Actions",
+        "Move to the previous occurrence of the highlighted identifier"))
+NEVERD_VIEW_ACTION(
+    SearchHighlightDown, QT_TRANSLATE_NOOP("Actions", "Search highlight &down"),
+    "Alt+Down", "forward",
+    QT_TRANSLATE_NOOP(
+        "Actions", "Move to the next occurrence of the highlighted identifier"))
+NEVERD_VIEW_ACTION(
+    SearchInView, QT_TRANSLATE_NOOP("Actions", "&Find in view..."), "Ctrl+F",
+    "search_text",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Find text among the loaded lines of the current view"))
+
+// View.
+NEVERD_ACTION(ViewQuickView, QT_TRANSLATE_NOOP("Actions", "&Quick view..."),
+              "Ctrl+1", "window_list",
+              QT_TRANSLATE_NOOP("Actions", "Choose a view to open"))
+NEVERD_ACTION(ViewDisassembly, QT_TRANSLATE_NOOP("Actions", "&Disassembly"), "",
+              "text_view",
+              QT_TRANSLATE_NOOP("Actions", "Open a new disassembly view"))
+NEVERD_VIEW_ACTION(ViewToggleGraph,
+                   QT_TRANSLATE_NOOP("Actions", "Toggle &graph view"), "Space",
+                   "graph",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Switch between text and graph views"))
+NEVERD_ACTION(ViewPseudocode,
+              QT_TRANSLATE_NOOP("Actions", "Generate &pseudocode"), "F5",
+              "pseudocode",
+              QT_TRANSLATE_NOOP("Actions", "Decompile the current function"))
+NEVERD_ACTION(ViewLowIR, QT_TRANSLATE_NOOP("Actions", "Generate &LowIR"), "",
+              "ir",
+              QT_TRANSLATE_NOOP("Actions", "Show the current function's LowIR"))
+NEVERD_ACTION(ViewMedIR, QT_TRANSLATE_NOOP("Actions", "Generate &MedIR"),
+              "Ctrl+Shift+F8", "ir",
+              QT_TRANSLATE_NOOP("Actions", "Show the current function's MedIR"))
+NEVERD_ACTION(ViewHighIR, QT_TRANSLATE_NOOP("Actions", "Generate &HighIR"),
+              "Ctrl+F6", "ir",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Show the current function's HighIR"))
+NEVERD_ACTION(ViewLLVMIR, QT_TRANSLATE_NOOP("Actions", "Generate LLVM &IR"), "",
+              "ir",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Show the current function's LLVM IR"))
+NEVERD_ACTION(ViewLLVMC, QT_TRANSLATE_NOOP("Actions", "Generate LLVM &C"), "",
+              "pseudocode",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Decompile the current function through LLVM"))
+NEVERD_ACTION(ViewHex, QT_TRANSLATE_NOOP("Actions", "&Hex dump"), "", "hex",
+              QT_TRANSLATE_NOOP("Actions", "Show the hex view"))
+NEVERD_ACTION(ViewExports, QT_TRANSLATE_NOOP("Actions", "E&xports"), "",
+              "exports",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Show exported names and entry points"))
+NEVERD_ACTION(ViewImports, QT_TRANSLATE_NOOP("Actions", "&Imports"), "",
+              "imports", QT_TRANSLATE_NOOP("Actions", "Show imported names"))
+NEVERD_ACTION(ViewNames, QT_TRANSLATE_NOOP("Actions", "&Names"), "Shift+F4",
+              "names",
+              QT_TRANSLATE_NOOP("Actions", "Show every named location"))
+NEVERD_ACTION(ViewFunctions, QT_TRANSLATE_NOOP("Actions", "&Functions"),
+              "Shift+F3", "functions",
+              QT_TRANSLATE_NOOP("Actions", "Show the functions window"))
+NEVERD_ACTION(ViewStrings, QT_TRANSLATE_NOOP("Actions", "&Strings"),
+              "Shift+F12", "strings",
+              QT_TRANSLATE_NOOP("Actions", "Show the strings window"))
+NEVERD_ACTION(ViewSegments, QT_TRANSLATE_NOOP("Actions", "S&egments"),
+              "Shift+F7", "segments",
+              QT_TRANSLATE_NOOP("Actions", "Show the segments window"))
+NEVERD_ACTION(ViewCrossReferences,
+              QT_TRANSLATE_NOOP("Actions", "&Cross references"), "", "xrefs",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Show references to the current item"))
+NEVERD_ACTION(ViewBookmarks, QT_TRANSLATE_NOOP("Actions", "&Bookmarks"),
+              "Ctrl+Shift+M", "bookmark",
+              QT_TRANSLATE_NOOP("Actions", "Show bookmarks"))
+NEVERD_ACTION(ViewOutput, QT_TRANSLATE_NOOP("Actions", "&Output"), "Alt+0",
+              "output", QT_TRANSLATE_NOOP("Actions", "Show the output window"))
+NEVERD_ACTION(ViewGraphOverview,
+              QT_TRANSLATE_NOOP("Actions", "Graph &overview"), "",
+              "graph_overview",
+              QT_TRANSLATE_NOOP("Actions", "Show the graph overview"))
+NEVERD_ACTION(ViewConnections, QT_TRANSLATE_NOOP("Actions", "MCP &connections"),
+              "", "mcp",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Manage MCP connections and session sharing"))
+NEVERD_ACTION(ViewExtensions, QT_TRANSLATE_NOOP("Actions", "E&xtensions"), "",
+              "extensions",
+              QT_TRANSLATE_NOOP("Actions", "Manage declarative extensions"))
+NEVERD_ACTION(ViewUndoHistory, QT_TRANSLATE_NOOP("Actions", "&Undo history"),
+              "", "undo",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Show the comment and rename history"))
+NEVERD_ACTION(ViewCalculator, QT_TRANSLATE_NOOP("Actions", "&Calculator..."),
+              "?", "calculator",
+              QT_TRANSLATE_NOOP("Actions", "Evaluate an expression"))
+NEVERD_ACTION(ViewFullScreen, QT_TRANSLATE_NOOP("Actions", "F&ull screen"),
+              "F11", "maximize",
+              QT_TRANSLATE_NOOP("Actions", "Toggle full screen"))
+NEVERD_ACTION(ViewZoomIn, QT_TRANSLATE_NOOP("Actions", "&Increase font size"),
+              "Ctrl+=", "zoom_in",
+              QT_TRANSLATE_NOOP("Actions", "Increase the code font size"))
+NEVERD_ACTION(ViewZoomOut, QT_TRANSLATE_NOOP("Actions", "&Decrease font size"),
+              "Ctrl+-", "zoom_out",
+              QT_TRANSLATE_NOOP("Actions", "Decrease the code font size"))
+NEVERD_ACTION(ViewZoomReset, QT_TRANSLATE_NOOP("Actions", "&Reset font size"),
+              "Ctrl+0", "zoom_reset",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Restore the default code font size"))
+
+// Options.
+NEVERD_ACTION(OptionsGeneral, QT_TRANSLATE_NOOP("Actions", "&General..."), "",
+              "options",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Listing, analysis and language options"))
+NEVERD_ACTION(OptionsColors, QT_TRANSLATE_NOOP("Actions", "&Colors..."), "",
+              "colors", QT_TRANSLATE_NOOP("Actions", "Choose the color theme"))
+NEVERD_ACTION(OptionsFont, QT_TRANSLATE_NOOP("Actions", "&Font..."), "", "font",
+              QT_TRANSLATE_NOOP("Actions", "Choose the code font"))
+NEVERD_ACTION(OptionsShortcuts, QT_TRANSLATE_NOOP("Actions", "&Shortcuts..."),
+              "", "options",
+              QT_TRANSLATE_NOOP("Actions", "List keyboard shortcuts"))
+NEVERD_ACTION(OptionsPalette,
+              QT_TRANSLATE_NOOP("Actions", "Show command &palette..."),
+              "Ctrl+Shift+P", "palette",
+              QT_TRANSLATE_NOOP("Actions", "Search and run any command"))
+NEVERD_ACTION(
+    OptionsRepeatPalette,
+    QT_TRANSLATE_NOOP("Actions", "&Repeat last palette command"),
+    "Ctrl+Shift+R", "palette",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Run the last command chosen in the palette again"))
+NEVERD_ACTION(
+    OptionsAnalyze, QT_TRANSLATE_NOOP("Actions", "&Whole-program analysis"), "",
+    "analyze",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Analyze every function together in the background"))
+NEVERD_ACTION(OptionsCancel,
+              QT_TRANSLATE_NOOP("Actions", "Ca&ncel pending requests"), "",
+              "cancel",
+              QT_TRANSLATE_NOOP("Actions", "Cancel queued analysis requests"))
+NEVERD_ACTION(
+    OptionsRestartWorker,
+    QT_TRANSLATE_NOOP("Actions", "&Restart analysis worker"), "", "refresh",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Restart the analysis process and reopen the binary"))
+
+// Windows.
+NEVERD_ACTION(WindowsSaveDesktop, QT_TRANSLATE_NOOP("Actions", "&Save desktop"),
+              "", "save",
+              QT_TRANSLATE_NOOP("Actions", "Save the window layout"))
+NEVERD_ACTION(WindowsLoadDesktop, QT_TRANSLATE_NOOP("Actions", "&Load desktop"),
+              "", "open",
+              QT_TRANSLATE_NOOP("Actions", "Restore the saved window layout"))
+NEVERD_ACTION(WindowsResetDesktop,
+              QT_TRANSLATE_NOOP("Actions", "&Reset desktop"), "", "tile",
+              QT_TRANSLATE_NOOP("Actions", "Restore the default window layout"))
+NEVERD_ACTION(WindowsNext, QT_TRANSLATE_NOOP("Actions", "&Next window"), "F6",
+              "forward",
+              QT_TRANSLATE_NOOP("Actions", "Activate the next window"))
+NEVERD_ACTION(WindowsPrevious, QT_TRANSLATE_NOOP("Actions", "&Previous window"),
+              "Shift+F6", "back",
+              QT_TRANSLATE_NOOP("Actions", "Activate the previous window"))
+NEVERD_ACTION(WindowsClose, QT_TRANSLATE_NOOP("Actions", "&Close window"),
+              "Alt+F3", "close",
+              QT_TRANSLATE_NOOP("Actions", "Close the current window"))
+NEVERD_ACTION(WindowsFocusCommand,
+              QT_TRANSLATE_NOOP("Actions", "&Focus command line"), "Ctrl+.",
+              "output",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Move the keyboard focus to the command line"))
+
+// Help.
+NEVERD_ACTION(HelpContents, QT_TRANSLATE_NOOP("Actions", "&Help"), "F1", "help",
+              QT_TRANSLATE_NOOP("Actions", "Open the NeverD documentation"))
+NEVERD_ACTION(HelpAbout, QT_TRANSLATE_NOOP("Actions", "&About NeverD"), "",
+              "about",
+              QT_TRANSLATE_NOOP("Actions", "Version and license information"))
+
+#undef NEVERD_ACTION
+#undef NEVERD_VIEW_ACTION

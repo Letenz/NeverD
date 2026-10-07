@@ -1,118 +1,117 @@
-#include "Workbench.h"
+// Interface languages: bundled catalogs, the first-launch default and live
+// switching of the production window.
+#include "Language.h"
+#include "MainWindow.h"
+#include "Session.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
-#include <QCoreApplication>
-#include <QGuiApplication>
-#include <QQmlComponent>
-#include <QQmlEngine>
+#include <QApplication>
+#include <QMenuBar>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTranslator>
-#include <memory>
+#include <kddockwidgets/Config.h>
+#include <kddockwidgets/KDDockWidgets.h>
+#include <kddockwidgets/qtwidgets/views/DockWidget.h>
+
+using namespace neverd::gui;
+
+namespace {
+QString resourceLocale(QString code) { return code.replace('-', '_'); }
+constexpr char WindowContext[] = "neverd::gui::MainWindow";
+} // namespace
 
 class LanguageSwitchTests final : public QObject {
   Q_OBJECT
 private slots:
   void initTestCase() {
     QVERIFY(settingsDirectory_.isValid());
-    // These tests never modify the real application's language preference.
-    QCoreApplication::setOrganizationName("NeverDTests");
-    QCoreApplication::setApplicationName("LanguageSwitchTests");
+    // These tests never touch the real application's preferences.
+    QCoreApplication::setOrganizationName(QStringLiteral("NeverDTests"));
+    QCoreApplication::setApplicationName(QStringLiteral("LanguageSwitchTests"));
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        settingsDirectory_.path());
-    hadLanguage_ = QSettings().contains("ui/language");
-    previousLanguage_ = QSettings().value("ui/language");
+    KDDockWidgets::initFrontend(KDDockWidgets::FrontendType::QtWidgets);
   }
 
   void bundledCatalogsCoverEveryLocale() {
-    Workbench workbench("/unused/neverd-worker");
-    QCOMPARE(workbench.languages().size(), 11);
-    for (auto locale : workbench.languages()) {
-      locale.replace('-', '_');
+    QCOMPARE(languages().size(), 11);
+    QCOMPARE(languages().front().code, QStringLiteral("en"));
+    for (const auto &language : languages()) {
       QTranslator translator;
-      QVERIFY2(translator.load(":/i18n/neverd_" + locale + ".qm"),
-               qPrintable(locale));
-      QVERIFY2(!translator.translate("Main", "Open Binary").isEmpty(),
-               qPrintable(locale));
-      QVERIFY2(!translator.translate("McpConnectionManager", "Disconnected")
-                    .isEmpty(),
-               qPrintable(locale));
-      QVERIFY2(!translator.translate("DockTitleBar", "Close Panel").isEmpty(),
-               qPrintable(locale));
+      QVERIFY2(translator.load(QStringLiteral(":/i18n/neverd_") +
+                               resourceLocale(language.code) +
+                               QStringLiteral(".qm")),
+               qPrintable(language.code));
+      if (language.code == QLatin1String("en"))
+        continue;
+      for (const auto &[context, source] :
+           {std::pair{"Menus", "&File"}, std::pair{"Actions", "&Open..."},
+            std::pair{WindowContext, "Functions"},
+            std::pair{"McpConnectionManager", "Disconnected"}})
+        QVERIFY2(!translator.translate(context, source).isEmpty(),
+                 qPrintable(language.code + QStringLiteral(": ") +
+                            QLatin1String(source)));
     }
   }
 
   void firstLaunchDefaultsToEnglish() {
-    QSettings().remove("ui/language");
-    Workbench workbench("/unused/neverd-worker");
-    QCOMPARE(workbench.language(), "en");
+    QSettings().remove(QStringLiteral("ui/language"));
+    QCOMPARE(currentLanguage(), QStringLiteral("en"));
   }
 
-  void liveSwitchRetranslatesBindingsAndPersists() {
-    QSettings().setValue("ui/language", "en");
-    QQmlEngine engine;
-    Workbench workbench("/unused/neverd-worker");
-    workbench.setQmlEngine(&engine);
-    McpConnectionManager manager;
+  void liveSwitchRetranslatesTheWindowAndPersists() {
+    Session session(QStringLiteral("/unused/neverd-worker"));
+    McpConnectionManager mcp;
     GuiSessionBroker broker;
-    connect(&workbench, &Workbench::languageChanged, &manager,
-            &McpConnectionManager::retranslate);
-    connect(&workbench, &Workbench::languageChanged, &broker,
-            &GuiSessionBroker::retranslate);
-    QQmlComponent component(&engine);
-    component.setData(R"(
-            import QtQml
-            QtObject {
-                property string label: qsTranslate("Main", "Open Binary")
-                property string missing: qsTranslate("NeverDTestMissingContext", "English fallback")
-                property string address: "0xffffffffffffffff"
-            }
-        )",
-                      QUrl());
-    std::unique_ptr<QObject> object(component.create());
-    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
-    const auto originalSelection = workbench.selection();
-    for (const auto &locale : workbench.languages()) {
-      QString resourceLocale = locale;
-      resourceLocale.replace('-', '_');
+    QTemporaryDir layout;
+    MainWindow window(session, mcp, broker);
+    window.setLayoutPath(layout.filePath(QStringLiteral("layout.json")));
+    window.initializeLayout();
+    const auto fileMenu = [&] {
+      return window.menuBar()->actions().value(0)->text();
+    };
+    const auto functionsTitle = [&] {
+      for (auto *dock :
+           window.findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+        if (dock->uniqueName() == QLatin1String("functions"))
+          return dock->title();
+      return QString();
+    };
+    for (const auto &language : languages()) {
       QTranslator catalog;
-      QVERIFY(catalog.load(":/i18n/neverd_" + resourceLocale + ".qm"));
-      const auto expected = catalog.translate("Main", "Open Binary");
-      QVERIFY(!expected.isEmpty());
-      workbench.setLanguage(locale);
-      QTRY_COMPARE(object->property("label").toString(), expected);
-      QCOMPARE(QCoreApplication::translate("Main", "Open Binary"), expected);
-      QCOMPARE(manager.status(),
-               catalog.translate("McpConnectionManager", "Disconnected"));
-      QCOMPARE(broker.status(), catalog.translate("GuiSessionBroker",
-                                                  "Session sharing disabled"));
-      QCOMPARE(object->property("missing").toString(), "English fallback");
-      QCOMPARE(object->property("address").toString(), "0xffffffffffffffff");
-      QCOMPARE(workbench.selection(), originalSelection);
-      QCOMPARE(QSettings().value("ui/language").toString(), locale);
-      Workbench restored("/unused/neverd-worker");
-      QCOMPARE(restored.language(), locale);
+      QVERIFY(catalog.load(QStringLiteral(":/i18n/neverd_") +
+                           resourceLocale(language.code) +
+                           QStringLiteral(".qm")));
+      const auto translated = [&](const char *context, const char *source) {
+        const auto text = catalog.translate(context, source);
+        return text.isEmpty() ? QString::fromUtf8(source) : text;
+      };
+      applyLanguage(language.code);
+      mcp.retranslate();
+      QTRY_COMPARE(fileMenu(), translated("Menus", "&File"));
+      QCOMPARE(functionsTitle(), translated(WindowContext, "Functions"));
+      QCOMPARE(mcp.status(),
+               translated("McpConnectionManager", "Disconnected"));
+      QCOMPARE(QSettings().value(QStringLiteral("ui/language")).toString(),
+               language.code);
+      QCOMPARE(currentLanguage(), language.code);
+      QCOMPARE(QApplication::layoutDirection(),
+               language.code == QLatin1String("ar") ? Qt::RightToLeft
+                                                    : Qt::LeftToRight);
     }
-    workbench.setLanguage("unsupported-locale");
-    QCOMPARE(workbench.language(), "ar");
-    workbench.setLanguage("en");
-    QTRY_COMPARE(object->property("label").toString(), "Open Binary");
-  }
-
-  void cleanupTestCase() {
-    if (hadLanguage_)
-      QSettings().setValue("ui/language", previousLanguage_);
-    else
-      QSettings().remove("ui/language");
+    applyLanguage(QStringLiteral("unsupported-locale"));
+    QCOMPARE(currentLanguage(), QStringLiteral("ar"));
+    applyLanguage(QStringLiteral("en"));
+    QTRY_COMPARE(fileMenu(), QStringLiteral("&File"));
+    QCOMPARE(functionsTitle(), QStringLiteral("Functions"));
   }
 
 private:
   QTemporaryDir settingsDirectory_;
-  QVariant previousLanguage_;
-  bool hadLanguage_ = false;
 };
 
 QTEST_MAIN(LanguageSwitchTests)

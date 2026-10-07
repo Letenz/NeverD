@@ -228,6 +228,14 @@ int LibraryCodeView::sourcePosition(int position, bool end) const {
   return original_.size();
 }
 
+QVector<QPair<int, int>> LibraryCodeView::foldedRanges() const {
+  QVector<QPair<int, int>> ranges;
+  for (const auto &segment : segments_)
+    if (!segment.region.isEmpty())
+      ranges.append({segment.begin, segment.end});
+  return ranges;
+}
+
 QString LibraryCodeView::regionAt(int position) const {
   for (const auto &segment : segments_)
     if (position >= segment.begin && position < segment.end)

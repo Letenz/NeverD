@@ -1,6 +1,6 @@
 **Sprachen**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: b269d1f316b2dffb502ea0ed075d6255ed7c03d722bb9129b55578cf8a25acbd -->
+<!-- i18n-source: 0e490a01b7c701ed5c4ec7324feba7b113de2d5ccbc4713f2cef24397f7800d2 -->
 
 <div align="center">
 
@@ -264,7 +264,7 @@ Fokussierte Targets, CTest-Labels, Fixture-Anforderungen und das formatübergrei
 
 ## Desktop-Arbeitsumgebung
 
-Die optionale [Qt-Quick-Arbeitsumgebung (Englisch)](../gui.md) bietet andockbare Ansichten für Instruktionen, CFG, Hex, C und IR, alle 11 UI-Sprachen, gespeicherte Anmerkungen und MCP-Verbindungen. Die Analyse läuft in einem separaten Prozess ohne Qt; reine CLI-Builds bleiben unabhängig. Unterstützte Abläufe und noch erforderliche Plattformprüfungen vor einer Veröffentlichung stehen im [Qualifikationsnachweis (Englisch)](../gui-qualification.md).
+Die optionale [Desktop-Arbeitsumgebung (Englisch)](../gui.md) übernimmt Aufteilung und Tastenkürzel des klassischen interaktiven Disassemblers, mit Ansichten für Disassembly, Graph, Pseudocode, IR, Hex und Listen, einem Design im Stil von Visual Studio Code, allen 11 UI-Sprachen und `.nddb`-Projektdatenbanken. Die Analyse läuft in einem separaten Prozess ohne Qt; reine CLI-Builds bleiben unabhängig. Unterstützte Abläufe und noch erforderliche Plattformprüfungen vor einer Veröffentlichung stehen im [Qualifikationsnachweis (Englisch)](../gui-qualification.md).
 
 <!-- i18n-section: cli -->
 

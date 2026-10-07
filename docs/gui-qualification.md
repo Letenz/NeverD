@@ -5,25 +5,70 @@ claim that every P0–P4 release criterion has been completed.
 
 ## Delivered and exercised locally
 
-- Optional Qt Quick application, separate Qt-free C ABI worker and independently
-  built CLI. The GUI executable has no engine or LLVM dependency.
-- Dark+ dockable/floating workbench, saved layouts, narrow-window arrangement,
-  function search, paged instructions, Hex, references and C/Low/Med/High/LLVM.
-- Native Low/Med retained instruction anchors, exact hexadecimal addresses,
-  revision guards, one-to-many highlighted rows and explicit missing mappings.
-  Pin retains a representation while navigating the instruction pane.
-- Bounded function model tested at one million logical rows; indexed CFG tested
-  at 10,000 blocks. Production graph replies contain at most 256 nodes/512 edges,
-  with native scene-graph rendering and a bounded software-renderer fallback.
+- Optional Qt Widgets application, separate Qt-free C ABI worker and
+  independently built CLI. The GUI executable has no engine or LLVM dependency.
+- The classic disassembler desktop from first launch: function list, linear
+  disassembly and graph, pseudocode and IR, hex, imports, exports, names,
+  strings, segments, bookmarks, cross references, output with a command line,
+  navigation band and status bar; IDA-default shortcuts; Visual Studio Code
+  Dark+/Light+ colors and original SVG icons; dockable, floating and saved
+  desktops.
+- Classic names for generic functions (import thunks, `start`, `main`,
+  `_init_proc`/`_term_proc`) across listing, function list, jumps and code text.
+- `.nddb` project databases holding the input, sidecar state and workbench
+  state, written transactionally with parallel chunk compression.
+- Paged function list, address-proportional listing, worker-laid-out graphs
+  with client-measured blocks, library-operation folding in C, and Low/Med
+  instruction anchors; a lock keeps a code view on its function.
 - Atomic annotations/renames, input-bound undo/redo history, recovery journal,
-  shared CLI/worker write lock, and Save/Discard/Cancel for session transitions.
+  shared CLI/worker write lock, and Save/Discard/Cancel for session transitions;
+  edits prepared for a closed session are refused.
 - Namespaced declarative read-only query contributions, with plain-text results.
 - Headless MCP, explicitly enabled attachment to the active GUI project, and
   manual GUI stdio/Streamable HTTP connections with bounded history/cancellation.
-- All 11 bundled languages: 228 translated source keys, placeholder/newline
+- All 11 bundled languages: 469 translated source keys, placeholder/newline
   checks, English first-launch default, live switching, and Arabic/LTR checks.
 
-The local reference environment is macOS 15.6.1 arm64, AppleClang 17, Release,
+## 2026-10-06 Qt Widgets workbench validation — Linux
+
+The fixture-engine configuration used by the Desktop GUI workflow passed
+**14/14 CTest tests** on Ubuntu 26.04 x86-64 with Qt 6.8.3: query dispatch,
+library folding, workbench units, controller tests (session transitions,
+stale-session edits, external queries surviving Cancel, contributions and a
+database round trip), the in-application widgets probe (25 stages: open, jump
+dialog, history, graph, overview, pseudocode, hex, docking and desktop restore,
+live language switching and the unsaved-changes prompt), smoke, languages, MCP
+and worker protocol/graph/history/transport tests. The same probe passed all
+25 stages with the real engine on the 11 MB `ls` sample used below.
+
+Performance on an Intel Core i9-13900H (20 threads), Release builds, warm
+caches, opening the same stripped 11 MB x86-64 `ls`:
+
+| Measurement | NeverD | IDA 9.4 (`idat -A`, auto-analysis) |
+| --- | --- | --- |
+| Window to first frame | 41–75 ms | — |
+| Input loaded (worker) | 0.18–0.29 s | — |
+| First painted listing (GUI, offscreen, median of 5) | 0.59 s | — |
+| Complete direct reference index | 0.62–0.81 s | 57.3 s auto-analysis (99% of one core) |
+| Peak memory | 209 MB worker | 263 MB |
+
+NeverD reaches a fully cross-referenced listing without whole-program analysis:
+the reference index decodes every function in parallel from each instruction's
+own lift, and decompilation, graphs and IR analyze one function on demand
+(65–155 ms per graph here). IDA's figure is its complete initial
+auto-analysis, which also performs work NeverD defers or does differently, so
+the comparison is of time to a navigable, cross-referenced database, not of
+identical analyses. The engine load of this file fell from about 0.88 s to
+0.15 s after removing a quadratic duplicate check over relative relocations
+and repeated personality-name scans; differential loads of system ELF files
+compare functions, symbols, relocations, sections, headers and imports before
+and after. These are single-machine measurements, not a cross-platform or
+cold-cache claim.
+
+## 2026-09 macOS validation — historical Qt Quick workbench
+
+The sections from here on record the earlier Qt Quick workbench. Its local
+reference environment is macOS 15.6.1 arm64, AppleClang 17, Release,
 Qt 6.11.1, KDDockWidgets 2.4.1 and the pinned NeverD LLVM 23 r2 package. The
 standalone engine used for the bundle disables embedded Python plugins; its
 MCP adapter requires Python 3.10+ separately. The application bundle's audited
@@ -49,7 +94,7 @@ remained. The single useful-view smoke is not a performance statistic.
 Earlier packaged MCP checks are historical; this package's MCP protocol was
 not validated. MCP requires a separately supplied Python interpreter.
 
-## Measured performance
+## Measured performance — historical prototype
 
 The reproducible [benchmark report](../tools/neverd-gui/benchmarks/README.md)
 contains the raw results and limitations. The native Qt prototype tested 100k

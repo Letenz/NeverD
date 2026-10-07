@@ -42,6 +42,12 @@ inline bool insideInterval(const std::vector<std::pair<va_t, va_t>> &Ivs,
 /// prologue for the given architecture.
 bool checkPrologueAtOffset(const Segment &Seg, size_t Off, Arch A);
 
+/// Register the initialization and termination code the loader runs (ELF
+/// DT_INIT, DT_FINI and the preinit, init and fini arrays, Mach-O
+/// initializers) as function symbols: the format names them function entries
+/// even when no code in the image calls them.  Their sizes stay unknown.
+void registerLoaderRunFunctions(BinaryImage &Img);
+
 /// Scan executable segments for import thunk patterns (jmp [rip+disp32]
 /// on x86_64, jmp [abs32] on x86, ADRP/LDR/BR x16 on AArch64), map each
 /// recognized veneer to its Import, and register it as a function symbol.
@@ -90,6 +96,8 @@ verifyARMFunctionModeHints(const BinaryImage &Img,
 #define DEBUG_TYPE "neverd-func-discovery"
 inline void runPostLoadDiscovery(BinaryImage &Img,
                                  [[maybe_unused]] llvm::StringRef DebugTag) {
+  // Format-stated entries come before every heuristic scan.
+  registerLoaderRunFunctions(Img);
   // A `--func` PE load already has `.pdata` ranges and the requested body.
   // Import-thunk scanning walks every executable byte looking for IAT veneers
   // outside that table; skip it when the caller named the work set.

@@ -1,6 +1,6 @@
 **語言**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: b269d1f316b2dffb502ea0ed075d6255ed7c03d722bb9129b55578cf8a25acbd -->
+<!-- i18n-source: 0e490a01b7c701ed5c4ec7324feba7b113de2d5ccbc4713f2cef24397f7800d2 -->
 
 <div align="center">
 
@@ -262,7 +262,7 @@ cmake --build build --target check-neverd
 
 ## 桌面工作台
 
-選用的 [Qt Quick 桌面工作台 (英文)](../gui.md)提供可停駐的指令、CFG、十六進位、C 與 IR 檢視，支援全部 11 種介面語言、持久化註記與 MCP 連線。分析在不依賴 Qt 的獨立工作程序中執行，純 CLI 建置保持獨立。支援的工作流程及發布前仍需完成的平台驗證見[驗收紀錄 (英文)](../gui-qualification.md)。
+選用的[桌面工作台 (英文)](../gui.md)沿用經典互動式反組譯器的版面與快捷鍵，提供反組譯、圖形、偽代碼、IR、十六進位與清單檢視，採用 Visual Studio Code 風格主題，支援全部 11 種介面語言與 `.nddb` 專案資料庫。分析在不依賴 Qt 的獨立工作程序中執行，純 CLI 建置保持獨立。支援的工作流程及發布前仍需完成的平台驗證見[驗收紀錄 (英文)](../gui-qualification.md)。
 
 <!-- i18n-section: cli -->
 

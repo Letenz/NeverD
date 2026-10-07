@@ -1,6 +1,6 @@
 **Sprachen**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1f7e768c64fd7b3fd697260f693c68ca3b71562bf43cb0db4970c98487c270be -->
+<!-- i18n-source: 88b72dd8f373ee05729ab1db29a51d3837d123853880c232431f70eade967be3 -->
 
 [← NeverD-Projekt](project.md)
 
@@ -18,7 +18,7 @@ Englische Anleitungen liegen direkt unter `docs/`. Übersetzungen sind in `ar/`,
 | [Mitwirken](CONTRIBUTING.md) | Entwicklungsumgebung, Build-Profile, Ablauf, Stil und PR-Anforderungen |
 | [Architektur](architecture.md) | IR-Pfade, Komponentengrenzen, striktes Lifting, Supporttiefe und Änderungsorte |
 | [Tests](testing.md) | Testsuiten, generierte Fixtures, Unicorn-Roundtrips und inkrementelle Befehle |
-| [Desktop-Arbeitsplatz (Englisch)](../gui.md) | Optionale Qt-Quick-Oberfläche, separater Worker, C-ABI, Anmerkungen und MCP-Abläufe |
+| [Desktop-Arbeitsplatz (Englisch)](../gui.md) | Klassische Disassembler-Aufteilung, separater Worker, Projektdatenbanken, Lokalisierung und MCP-Verbindungen |
 | [Bibliothekserkennung (Englisch)](../library-recognition.md) | Belegte STL-, ATL/MFC-, COM- und libc-Identitäten, Profile und umkehrbares Einklappen von C-Code |
 | [Desktop-Validierung (Englisch)](../gui-qualification.md) | Gemessene GUI-Nachweise, Paketierungsgrenzen und offene Plattformvalidierung |
 | [Quelltextrekonstruktion aus Interpretern](interpreter-recovery.md) | Experimentelle Spezialisierung mit `--devirtualize`, CLI-Kontrollgrößen, Ausführungsvertrag, Nachweise und Grenzen; Beweisvorschläge für verschachtelte Schleifen; explizite Erkennungsbudgets und versionierte C-API; API für exakte Beweise von nativem Code zu LLVM |

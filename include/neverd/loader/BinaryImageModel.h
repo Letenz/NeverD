@@ -1316,7 +1316,9 @@ struct BinaryImage {
     for (const auto &Sym : Symbols)
       if (Sym.IsFunc)
         Result.push_back(&Sym);
-    std::sort(
+    // Aliases of one address keep their symbol table order, so the name a
+    // function is listed under never depends on how many others exist.
+    std::stable_sort(
         Result.begin(), Result.end(),
         [](const Symbol *A, const Symbol *B) { return A->Addr < B->Addr; });
     return Result;

@@ -7,18 +7,19 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../neverd-worker" "${CMAKE_BINARY_DIR}/worker")
 endif()
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network LinguistTools Svg)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Network LinguistTools Svg
+  Sql Concurrent)
 # Qt 6.8 exports private targets from the public module packages. Newer Qt
 # releases ship separate private packages; KDDockWidgets needs the matching
 # private headers in either layout.
-foreach(_neverd_private_module Gui Quick)
+foreach(_neverd_private_module Gui Widgets)
   if(NOT TARGET Qt6::${_neverd_private_module}Private)
     find_package(Qt6 6.8 REQUIRED COMPONENTS ${_neverd_private_module}Private)
   endif()
 endforeach()
 qt_standard_project_setup(REQUIRES 6.8)
 include(FetchContent)
-set(KDDockWidgets_FRONTENDS "qtquick" CACHE STRING "" FORCE)
+set(KDDockWidgets_FRONTENDS "qtwidgets" CACHE STRING "" FORCE)
 set(KDDockWidgets_QT6 ON CACHE BOOL "" FORCE)
 set(KDDockWidgets_STATIC ON CACHE BOOL "" FORCE)
 set(KDDockWidgets_QML_MODULE OFF CACHE BOOL "" FORCE)
@@ -32,35 +33,49 @@ FetchContent_Declare(neverd_docking
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(neverd_docking)
 
-add_library(neverd_gui_core STATIC EngineClient.cpp QueryService.cpp PageModel.cpp
-  PaneController.cpp PaneRegistry.cpp Workbench.cpp LibraryCodeView.cpp
-  mcp/McpConnectionManager.cpp mcp/GuiSessionBroker.cpp)
+# Worker transport, request dispatch and MCP bridges: no widgets.
+add_library(neverd_gui_core STATIC EngineClient.cpp QueryService.cpp
+  LibraryCodeView.cpp mcp/McpConnectionManager.cpp mcp/GuiSessionBroker.cpp)
 target_include_directories(neverd_gui_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_features(neverd_gui_core PUBLIC cxx_std_20)
-target_link_libraries(neverd_gui_core PUBLIC Qt6::Core Qt6::Gui Qt6::Qml Qt6::Network)
+target_link_libraries(neverd_gui_core PUBLIC Qt6::Core Qt6::Gui Qt6::Network)
 
-qt_add_executable(neverd-gui main.cpp StartupMetrics.cpp WorkbenchFocus.cpp
-  NativeLayoutSaver.cpp NativeCodeHighlighter.cpp NativeGraphItem.cpp)
-target_include_directories(neverd-gui PRIVATE "${neverd_docking_SOURCE_DIR}/src")
-target_link_libraries(neverd-gui PRIVATE neverd_gui_core Qt6::Quick Qt6::QuickControls2 Qt6::Svg KDAB::kddockwidgets)
-file(GLOB NEVERD_QML_FILES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "qml/*.qml")
-set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
-qt_add_qml_module(neverd-gui URI NeverD.Workbench VERSION 1.0 QML_FILES ${NEVERD_QML_FILES})
-qt_add_resources(neverd-gui "brand_assets" PREFIX /brand
-  BASE "${CMAKE_CURRENT_SOURCE_DIR}/../../docs/assets"
+# The workbench: views, windows and the command set.
+file(GLOB NEVERD_GUI_APP_SOURCES CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/app/*.cpp")
+add_library(neverd_gui_app STATIC ${NEVERD_GUI_APP_SOURCES})
+target_include_directories(neverd_gui_app PUBLIC
+  "${CMAKE_CURRENT_SOURCE_DIR}/app"
+  # Listing roles and address classes are shared with the worker.
+  "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-worker"
+  "${neverd_docking_SOURCE_DIR}/src")
+target_link_libraries(neverd_gui_app PUBLIC neverd_gui_core Qt6::Widgets Qt6::Svg
+  Qt6::Sql Qt6::Concurrent KDAB::kddockwidgets)
+file(GLOB NEVERD_GUI_ICONS CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/*.svg")
+qt_add_resources(neverd_gui_app "workbench_assets" PREFIX /neverd
+  BASE "${CMAKE_CURRENT_SOURCE_DIR}/resources"
+  FILES ${NEVERD_GUI_ICONS} "${CMAKE_CURRENT_SOURCE_DIR}/resources/theme.qss")
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/../../docs/assets/neverd-logo-dark.svg"
+  PROPERTIES QT_RESOURCE_ALIAS "icons/app.svg")
+qt_add_resources(neverd_gui_app "brand_assets" PREFIX /neverd
   FILES "${CMAKE_CURRENT_SOURCE_DIR}/../../docs/assets/neverd-logo-dark.svg")
+
+qt_add_executable(neverd-gui WIN32 MACOSX_BUNDLE main.cpp)
+target_link_libraries(neverd-gui PRIVATE neverd_gui_app)
 
 file(GLOB NEVERD_TRANSLATIONS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/i18n/*.ts")
 if(NEVERD_TRANSLATIONS)
   qt_add_translations(neverd-gui TS_FILES ${NEVERD_TRANSLATIONS}
+    SOURCE_TARGETS neverd-gui neverd_gui_app neverd_gui_core
     QM_FILES_OUTPUT_VARIABLE NEVERD_QM_FILES)
   qt_add_resources(neverd-gui "app_translations" PREFIX /i18n
     BASE "${CMAKE_CURRENT_BINARY_DIR}" FILES ${NEVERD_QM_FILES})
 endif()
 add_dependencies(neverd-gui neverd-worker)
 install(TARGETS neverd-gui RUNTIME DESTINATION bin BUNDLE DESTINATION .)
-# Qt's deployment script gathers QML plugins as well as the native libraries.
-qt_generate_deploy_qml_app_script(TARGET neverd-gui OUTPUT_SCRIPT deploy_script NO_UNSUPPORTED_PLATFORM_ERROR)
+qt_generate_deploy_app_script(TARGET neverd-gui OUTPUT_SCRIPT deploy_script
+  NO_UNSUPPORTED_PLATFORM_ERROR)
 install(SCRIPT ${deploy_script})
 install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp/neverd-mcp" DESTINATION bin)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp/server.py"
@@ -68,8 +83,7 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp/server.py"
 
 if(BUILD_TESTING)
   option(NEVERD_GUI_CI_DIAGNOSTICS
-    "Write file diagnostics for the two Windows GUI contract test runners" OFF)
-  set(_neverd_pane_test_log_args)
+    "Write file diagnostics for the Windows GUI controller test runner" OFF)
   set(_neverd_controller_test_log_args)
   if(NEVERD_GUI_CI_DIAGNOSTICS)
     if(NOT WIN32 OR NOT "$ENV{CI}" STREQUAL "true" OR
@@ -78,93 +92,51 @@ if(BUILD_TESTING)
     endif()
     set(_neverd_gui_ci_log_dir "${CMAKE_CURRENT_BINARY_DIR}/ci-diagnostics")
     file(MAKE_DIRECTORY "${_neverd_gui_ci_log_dir}")
-    set(_neverd_pane_test_log_args
-      -o "${_neverd_gui_ci_log_dir}/pane-navigation.txt,txt"
-      -o "${_neverd_gui_ci_log_dir}/pane-navigation.xml,xml"
-      -o "-,txt")
     set(_neverd_controller_test_log_args
       -o "${_neverd_gui_ci_log_dir}/controller.txt,txt"
       -o "${_neverd_gui_ci_log_dir}/controller.xml,xml"
       -o "-,txt")
   endif()
-  target_sources(neverd-gui PRIVATE tests/DockingProbe.cpp tests/AnalysisProbe.cpp
-    tests/ShortcutProbe.cpp)
-  target_compile_definitions(neverd-gui PRIVATE NEVERD_GUI_TEST_PROBES=1)
   find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
-  target_link_libraries(neverd-gui PRIVATE Qt6::Test)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
-  qt_add_executable(neverd-gui-focus-tests tests/WorkbenchFocusTests.cpp WorkbenchFocus.cpp)
-  target_include_directories(neverd-gui-focus-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-  target_link_libraries(neverd-gui-focus-tests PRIVATE Qt6::Quick Qt6::Test)
-  add_test(NAME NeverDGuiFocus COMMAND neverd-gui-focus-tests)
-  set_tests_properties(NeverDGuiFocus PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
-  qt_add_executable(neverd-gui-pane-tests tests/PaneNavigationTests.cpp)
-  target_link_libraries(neverd-gui-pane-tests PRIVATE neverd_gui_core
-    Qt6::Quick Qt6::QuickControls2 Qt6::Test)
-  target_compile_definitions(neverd-gui-pane-tests PRIVATE
-    TEST_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/qml")
-  add_test(NAME NeverDGuiPaneNavigation COMMAND neverd-gui-pane-tests
-    ${_neverd_pane_test_log_args})
-  set_tests_properties(NeverDGuiPaneNavigation PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
-  qt_add_executable(neverd-gui-query-tests
-    tests/QueryServiceTests.cpp QueryService.cpp)
+  target_sources(neverd-gui PRIVATE tests/WidgetsProbe.cpp)
+  target_compile_definitions(neverd-gui PRIVATE NEVERD_GUI_TEST_PROBES=1)
+  target_link_libraries(neverd-gui PRIVATE Qt6::Test)
+
+  qt_add_executable(neverd-gui-query-tests tests/QueryServiceTests.cpp QueryService.cpp)
   target_link_libraries(neverd-gui-query-tests PRIVATE Qt6::Core Qt6::Test)
   target_include_directories(neverd-gui-query-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   add_test(NAME NeverDGuiQueries COMMAND neverd-gui-query-tests)
   set_tests_properties(NeverDGuiQueries PROPERTIES TIMEOUT 60)
-  qt_add_executable(neverd-gui-independent-pane-tests tests/IndependentPaneTests.cpp)
-  target_link_libraries(neverd-gui-independent-pane-tests PRIVATE neverd_gui_core Qt6::Test)
-  add_test(NAME NeverDGuiIndependentPanes COMMAND neverd-gui-independent-pane-tests)
-  set_tests_properties(NeverDGuiIndependentPanes PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
-  if(TARGET neverd-worker-test-server)
-    add_test(NAME NeverDGuiShortcuts COMMAND neverd-gui --shortcuts-test
-      --worker $<TARGET_FILE:neverd-worker-test-server>)
-    set_tests_properties(NeverDGuiShortcuts PROPERTIES
-      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
-    qt_add_executable(neverd-gui-tests tests/WorkbenchTests.cpp)
-    target_link_libraries(neverd-gui-tests PRIVATE neverd_gui_core Qt6::Test)
-    target_compile_definitions(neverd-gui-tests PRIVATE TEST_WORKER="$<TARGET_FILE:neverd-worker-test-server>")
-    add_dependencies(neverd-gui-tests neverd-worker-test-server)
-    if(NEVERD_WORKER_REAL_ENGINE_TESTS)
-      target_compile_definitions(neverd-gui-tests PRIVATE
-        TEST_REAL_WORKER="$<TARGET_FILE:neverd-worker>")
-      add_dependencies(neverd-gui-tests neverd-worker)
-    endif()
-    add_test(NAME NeverDGuiController COMMAND neverd-gui-tests
-      ${_neverd_controller_test_log_args})
-    set_tests_properties(NeverDGuiController PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
-  endif()
-  qt_add_executable(neverd-gui-text-position-tests
-    tests/TextPanePositionTests.cpp NativeCodeHighlighter.cpp)
+
   qt_add_executable(neverd-gui-library-view-tests tests/LibraryCodeViewTests.cpp)
   target_link_libraries(neverd-gui-library-view-tests PRIVATE neverd_gui_core Qt6::Test)
   add_test(NAME NeverDGuiLibraryView COMMAND neverd-gui-library-view-tests)
   set_tests_properties(NeverDGuiLibraryView PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
-  target_link_libraries(neverd-gui-text-position-tests PRIVATE
-    neverd_gui_core Qt6::Quick Qt6::QuickControls2 Qt6::Test)
-  target_compile_definitions(neverd-gui-text-position-tests PRIVATE
-    TEST_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/qml")
+
+  qt_add_executable(neverd-gui-unit-tests tests/WorkbenchUnitTests.cpp)
+  target_link_libraries(neverd-gui-unit-tests PRIVATE neverd_gui_app Qt6::Test)
+  add_test(NAME NeverDGuiUnits COMMAND neverd-gui-unit-tests)
+  set_tests_properties(NeverDGuiUnits PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+
   if(TARGET neverd-worker-test-server)
-    target_compile_definitions(neverd-gui-text-position-tests PRIVATE
+    qt_add_executable(neverd-gui-tests tests/WorkbenchTests.cpp)
+    target_link_libraries(neverd-gui-tests PRIVATE neverd_gui_app Qt6::Test)
+    target_compile_definitions(neverd-gui-tests PRIVATE
       TEST_WORKER="$<TARGET_FILE:neverd-worker-test-server>")
-    add_dependencies(neverd-gui-text-position-tests neverd-worker-test-server)
+    add_dependencies(neverd-gui-tests neverd-worker-test-server)
+    add_test(NAME NeverDGuiController COMMAND neverd-gui-tests
+      ${_neverd_controller_test_log_args})
+    set_tests_properties(NeverDGuiController PROPERTIES
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 90)
+    add_test(NAME NeverDGuiWidgets COMMAND neverd-gui --widgets-test
+      --worker $<TARGET_FILE:neverd-worker-test-server>)
+    set_tests_properties(NeverDGuiWidgets PROPERTIES
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
   endif()
-  add_test(NAME NeverDGuiTextPosition COMMAND neverd-gui-text-position-tests)
-  set_tests_properties(NeverDGuiTextPosition PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
-  qt_add_executable(neverd-gui-graph-tests tests/NativeGraphItemTests.cpp NativeGraphItem.cpp)
-  target_link_libraries(neverd-gui-graph-tests PRIVATE Qt6::Quick Qt6::Test)
-  target_include_directories(neverd-gui-graph-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-  add_test(NAME NeverDGuiGraph COMMAND neverd-gui-graph-tests)
-  set_tests_properties(NeverDGuiGraph PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 15)
-  qt_add_executable(neverd-gui-page-tests tests/PageModelRetryTests.cpp)
-  target_link_libraries(neverd-gui-page-tests PRIVATE neverd_gui_core Qt6::Test)
-  add_test(NAME NeverDGuiPageRetries COMMAND neverd-gui-page-tests)
-  set_tests_properties(NeverDGuiPageRetries PROPERTIES TIMEOUT 15)
+
   qt_add_executable(neverd-mcp-qt-tests mcp/tests/test_mcp.cpp)
   target_link_libraries(neverd-mcp-qt-tests PRIVATE neverd_gui_core Qt6::Test)
   target_include_directories(neverd-mcp-qt-tests PRIVATE mcp)
@@ -178,25 +150,23 @@ if(BUILD_TESTING)
     add_test(NAME NeverDGuiAnalysis COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/analysis_probe_test.py"
       "$<TARGET_FILE:neverd-gui>" "$<TARGET_FILE:neverd_shared>")
-    set_tests_properties(NeverDGuiAnalysis PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30 SKIP_RETURN_CODE 77)
+    set_tests_properties(NeverDGuiAnalysis PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60 SKIP_RETURN_CODE 77)
   endif()
   add_test(NAME NeverDGuiSmoke COMMAND neverd-gui --smoke-test)
   set_tests_properties(NeverDGuiSmoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 15)
-  add_test(NAME NeverDGuiDocking COMMAND neverd-gui --docking-test)
-  set_tests_properties(NeverDGuiDocking PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
-  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/LanguageSwitchTests.cpp")
+  if(NEVERD_TRANSLATIONS)
     qt_add_executable(neverd-gui-language-tests tests/LanguageSwitchTests.cpp)
-    target_link_libraries(neverd-gui-language-tests PRIVATE neverd_gui_core Qt6::Test)
+    target_link_libraries(neverd-gui-language-tests PRIVATE neverd_gui_app Qt6::Test)
     qt_add_resources(neverd-gui-language-tests "test_translations" PREFIX /i18n
       BASE "${CMAKE_CURRENT_BINARY_DIR}" FILES ${NEVERD_QM_FILES})
     add_test(NAME NeverDGuiLanguages COMMAND neverd-gui-language-tests)
-    set_tests_properties(NeverDGuiLanguages PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 20)
+    set_tests_properties(NeverDGuiLanguages PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
   endif()
   # These are console test runners, even though they exercise Qt GUI objects.
   # Keep their diagnostics connected to CTest's stdout on Windows.
-  foreach(_neverd_gui_test IN ITEMS neverd-gui-tests neverd-gui-graph-tests neverd-gui-library-view-tests
-      neverd-gui-text-position-tests neverd-gui-query-tests neverd-gui-independent-pane-tests neverd-gui-page-tests neverd-mcp-qt-tests
-      neverd-gui-language-tests neverd-gui-focus-tests neverd-gui-pane-tests)
+  foreach(_neverd_gui_test IN ITEMS neverd-gui-tests neverd-gui-unit-tests
+      neverd-gui-library-view-tests neverd-gui-query-tests neverd-mcp-qt-tests
+      neverd-gui-language-tests)
     if(TARGET ${_neverd_gui_test})
       set_target_properties(${_neverd_gui_test} PROPERTIES WIN32_EXECUTABLE FALSE)
     endif()
