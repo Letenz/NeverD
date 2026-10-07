@@ -1,0 +1,73 @@
+//===- KernelWaits.def - Windows dispatcher wait contracts ---------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Public x64 WDK constants; the genuine WDK fixture checks the opaque extent.
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-kewaitformultipleobjects
+
+#ifdef NEVERD_KERNEL_WAIT_VALUE
+NEVERD_KERNEL_WAIT_VALUE(MaximumObjects, 64)
+NEVERD_KERNEL_WAIT_VALUE(BuiltinObjects, 3)
+NEVERD_KERNEL_WAIT_VALUE(BlockSize, 48)
+NEVERD_KERNEL_WAIT_VALUE(PointerSize, 8)
+NEVERD_KERNEL_WAIT_VALUE(All, 0)
+NEVERD_KERNEL_WAIT_VALUE(Any, 1)
+NEVERD_KERNEL_WAIT_VALUE(FirstRegistration, 1)
+#endif
+
+#ifdef NEVERD_KERNEL_WAIT_TEXT
+NEVERD_KERNEL_WAIT_TEXT(InvalidCount, "wait object count must be in 1..64")
+NEVERD_KERNEL_WAIT_TEXT(InvalidType, "wait type must be WaitAll or WaitAny")
+NEVERD_KERNEL_WAIT_TEXT(DuplicateObject,
+                        "duplicate wait objects are unsupported")
+NEVERD_KERNEL_WAIT_TEXT(InvalidObject,
+                        "unsupported or uninitialized wait object")
+NEVERD_KERNEL_WAIT_TEXT(InvalidCondition, "invalid external wait condition")
+NEVERD_KERNEL_WAIT_TEXT(
+    BlocksRequired, "more than three wait objects require a wait-block array")
+NEVERD_KERNEL_WAIT_TEXT(
+    BlocksStorage,
+    "wait-block array requires aligned writable nonpaged storage")
+NEVERD_KERNEL_WAIT_TEXT(ArrayStorage,
+                        "wait object array requires readable nonpaged storage")
+NEVERD_KERNEL_WAIT_TEXT(
+    BufferOverlap,
+    "wait-block storage overlaps a wait object or the object array")
+NEVERD_KERNEL_WAIT_TEXT(
+    BufferInUse, "cannot release storage with an outstanding wait-block array")
+NEVERD_KERNEL_WAIT_TEXT(OpaqueBlocks,
+                        "guest access to an active opaque wait-block array")
+NEVERD_KERNEL_WAIT_TEXT(WaitLost, "wait lost its dispatcher object reference")
+NEVERD_KERNEL_WAIT_TEXT(RegistrationLost,
+                        "wait registration is missing, completed or changed")
+NEVERD_KERNEL_WAIT_TEXT(RegistrationExhausted,
+                        "wait registration identity space is exhausted")
+NEVERD_KERNEL_WAIT_TEXT(BlockLost, "wait lost its wait-block storage reference")
+NEVERD_KERNEL_WAIT_TEXT(ThreadReference,
+                        "thread wait requires a referenced object pointer")
+NEVERD_KERNEL_WAIT_TEXT(SelfWait, "system thread cannot wait on itself")
+NEVERD_KERNEL_WAIT_TEXT(ThreadLost, "thread wait lost its object")
+NEVERD_KERNEL_WAIT_TEXT(TimerLost, "wait set lost a signaled scheduler timer")
+NEVERD_KERNEL_WAIT_TEXT(RecursiveIRQL,
+                        "recursive mutex wait changed DISPATCH_LEVEL")
+NEVERD_KERNEL_WAIT_TEXT(PreviousWait, "previous deferred wait was not consumed")
+NEVERD_KERNEL_WAIT_TEXT(BlockingIRQL,
+                        "blocking wait requires IRQL <= APC_LEVEL")
+NEVERD_KERNEL_WAIT_TEXT(WaitMode,
+                        "wait requires KernelMode and nonalertable execution")
+NEVERD_KERNEL_WAIT_TEXT(WaitReason,
+                        "only Executive wait reason is currently modeled")
+NEVERD_KERNEL_WAIT_TEXT(DelayInterval,
+                        "KeDelayExecutionThread requires an interval")
+NEVERD_KERNEL_WAIT_TEXT(PoFxWaitLost, "PoFx wait lost its blocking operation")
+NEVERD_KERNEL_WAIT_TEXT(FrameworkIdleLost, "StopIdle wait lost the framework")
+NEVERD_KERNEL_WAIT_TEXT(FrameworkFileLost,
+                        "synchronous file wait lost its framework")
+NEVERD_KERNEL_WAIT_TEXT(FrameworkRequestLost,
+                        "synchronous file wait lost its request")
+NEVERD_KERNEL_WAIT_TEXT(FrameworkQueueLost,
+                        "framework queue wait lost its binding")
+NEVERD_KERNEL_WAIT_TEXT(RemoveLockLost,
+                        "remove-lock wait lost its storage reference")
+#endif

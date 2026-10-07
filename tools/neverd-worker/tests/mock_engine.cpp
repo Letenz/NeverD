@@ -29,6 +29,11 @@ constexpr std::uint64_t Base = 0xffff800012340000ULL;
 constexpr std::uint64_t DataBase = Base + 0x3000, DataSlots = 8;
 // Read-only data holding a UTF-8 and a UTF-16LE string.
 constexpr std::uint64_t RodataBase = Base + 0x3100, RodataSize = 0x20;
+/// The pointer data slot \p index holds: function_(index + 1), except the
+/// last slot, which holds the UTF-16LE string.
+std::uint64_t slotTarget(std::uint64_t index) {
+  return index == DataSlots - 1 ? RodataBase + 8 : Base + 16 * (index + 1);
+}
 struct MockSession {
   std::string path, error;
   std::map<std::uint64_t, std::string> annotations, names;
@@ -183,12 +188,21 @@ const char *neverd_resolve_addr(neverd_session_t s, neverd_va_t address) {
 }
 int neverd_read_bytes(neverd_session_t, neverd_va_t address,
                       unsigned char *buffer, int size) {
+  if (size >= 0 && address >= RodataBase && address - RodataBase < RodataSize) {
+    // "\u4e2d\u6587" in UTF-8 at +0 and "Wide" in UTF-16LE at +8, zero filled.
+    static constexpr unsigned char Rodata[RodataSize] = {
+        0xe4, 0xb8, 0xad, 0xe6, 0x96, 0x87, 0, 0, 'W', 0, 'i', 0, 'd', 0, 'e'};
+    const auto available = static_cast<int>(
+        std::min<std::uint64_t>(size, RodataBase + RodataSize - address));
+    std::copy_n(Rodata + (address - RodataBase), available, buffer);
+    return available;
+  }
   if (size >= 0 && address >= DataBase && address - DataBase < DataSlots * 8) {
     const auto available = static_cast<int>(
         std::min<std::uint64_t>(size, DataBase + DataSlots * 8 - address));
     for (int i = 0; i < available; ++i) {
       const auto offset = address - DataBase + i;
-      const std::uint64_t pointer = Base + 16 * (offset / 8 + 1);
+      const std::uint64_t pointer = slotTarget(offset / 8);
       buffer[i] = static_cast<unsigned char>(pointer >> (8 * (offset % 8)));
     }
     return available;
@@ -315,12 +329,63 @@ const char *neverd_code_refs_json(neverd_session_t s, neverd_va_t firstEntry,
     // function_3 calls function_2 through data slot 1.
     if (index == 3)
       refs.push_back({hexAddress(entry + 4), hexAddress(Base + 0x20), "icall"});
+    // function_7 takes the UTF-8 string's address, reads the slot that
+    // holds the UTF-16LE string's, and points into both strings: at the
+    // second character of the UTF-8 one and at an odd byte of the other.
+    if (index == 7) {
+      refs.push_back({hexAddress(entry + 2), hexAddress(RodataBase), "offset"});
+      refs.push_back({hexAddress(entry + 3),
+                      hexAddress(DataBase + (DataSlots - 1) * 8), "read"});
+      refs.push_back(
+          {hexAddress(entry + 4), hexAddress(RodataBase + 3), "offset"});
+      refs.push_back(
+          {hexAddress(entry + 5), hexAddress(RodataBase + 11), "offset"});
+    }
   }
   return copy(
       Json{{"refs", refs},
            {"next_entry",
             index < 600 ? Json(hexAddress(Base + 16 * index)) : Json(nullptr)},
            {"function_count", 600}}
+          .dump());
+}
+const char *neverd_string_refs_json(neverd_session_t s, const char *options,
+                                    neverd_va_t firstEntry, int maxFunctions) {
+  session(s)->error.clear();
+  const Json parsed =
+      options ? Json::parse(options, nullptr, false) : Json::object();
+  const auto wanted = [&](const char *encoding) {
+    if (!parsed.contains("encodings"))
+      return true;
+    for (const auto &name : parsed["encodings"])
+      if (name == encoding)
+        return true;
+    return false;
+  };
+  const auto minimum = parsed.value("min_length", 4);
+  // function_7's references, as the engine joins them with the strings: the
+  // UTF-8 string whole and from its second character ("\u6587"), and the
+  // UTF-16LE one through data slot 7 and from its third character ("de").
+  constexpr std::uint64_t Entry = Base + 16 * 7;
+  const std::uint64_t slot = DataBase + (DataSlots - 1) * 8;
+  Json refs = Json::array();
+  if (firstEntry <= Entry && maxFunctions >= 1) {
+    if (wanted("utf-8"))
+      refs.push_back({hexAddress(Entry + 2), hexAddress(RodataBase),
+                      hexAddress(RodataBase), 0, "offset", nullptr, "nop"});
+    if (wanted("utf-16le"))
+      refs.push_back({hexAddress(Entry + 3), hexAddress(RodataBase + 8),
+                      hexAddress(RodataBase + 8), 0, "read", hexAddress(slot),
+                      "nop"});
+    if (wanted("utf-8") && minimum <= 1)
+      refs.push_back({hexAddress(Entry + 4), hexAddress(RodataBase + 3),
+                      hexAddress(RodataBase), 3, "offset", nullptr, "nop"});
+    if (wanted("utf-16le") && minimum <= 2)
+      refs.push_back({hexAddress(Entry + 5), hexAddress(RodataBase + 11),
+                      hexAddress(RodataBase + 8), 2, "offset", nullptr, "nop"});
+  }
+  return copy(
+      Json{{"refs", refs}, {"next_entry", nullptr}, {"function_count", 600}}
           .dump());
 }
 const char *neverd_pointer_refs_json(neverd_session_t s, neverd_va_t firstSlot,
@@ -332,8 +397,7 @@ const char *neverd_pointer_refs_json(neverd_session_t s, neverd_va_t firstSlot,
   for (int count = 0; slot < DataBase + DataSlots * 8 && count < maxSlots;
        ++count, slot += 8)
     refs.push_back({hexAddress(slot),
-                    hexAddress(Base + 16 * ((slot - DataBase) / 8 + 1)),
-                    "offset"});
+                    hexAddress(slotTarget((slot - DataBase) / 8)), "offset"});
   return copy(Json{{"refs", refs},
                    {"next_slot", slot < DataBase + DataSlots * 8
                                      ? Json(hexAddress(slot))
@@ -348,7 +412,7 @@ int neverd_pointer_at(neverd_session_t, neverd_va_t address, neverd_va_t *slot,
   if (slot)
     *slot = first;
   if (target)
-    *target = Base + 16 * ((first - DataBase) / 8 + 1);
+    *target = slotTarget((first - DataBase) / 8);
   return 1;
 }
 const char *neverd_unwind_frame_json(neverd_session_t, neverd_va_t address) {
@@ -442,7 +506,17 @@ const char *neverd_string_encodings_json(void) {
                            {{"name", "utf-16le"},
                             {"spelling", "UTF-16LE"},
                             {"unit", 2},
-                            {"default", true}}})
+                            {"default", true}},
+                           {{"name", "gbk"},
+                            {"spelling", "GBK"},
+                            {"unit", 1},
+                            {"default", false},
+                            {"legacy", true}},
+                           {{"name", "big5"},
+                            {"spelling", "Big5"},
+                            {"unit", 1},
+                            {"default", false},
+                            {"legacy", true}}})
                   .dump());
 }
 const char *neverd_strings_ex_json(neverd_session_t, const char *options) {
@@ -470,6 +544,30 @@ const char *neverd_strings_ex_json(neverd_session_t, const char *options) {
                      {"encoding", "utf-16le"},
                      {"value", "Wide"}});
   return copy(items.dump());
+}
+const char *neverd_decode_text_json(const unsigned char *bytes, int size,
+                                    const char *encoding) {
+  // ASCII shows printable bytes; UTF-16LE shows printable ASCII units at
+  // their first byte and nothing at the second.  Others are unknown.
+  const std::string_view name(encoding);
+  if ((name != "ascii" && name != "utf-16le") || size < 0)
+    return nullptr;
+  const auto shown = [](unsigned value) {
+    return value >= 0x20 && value < 0x7f
+               ? Json(std::string(1, static_cast<char>(value)))
+               : Json(nullptr);
+  };
+  Json cells = Json::array();
+  for (int i = 0; i < size; ++i) {
+    if (name == "ascii") {
+      cells.push_back(shown(bytes[i]));
+    } else if (i % 2 == 0 && i + 1 < size) {
+      cells.push_back(shown(bytes[i] | bytes[i + 1] << 8));
+    } else {
+      cells.push_back(i % 2 ? Json("") : Json(nullptr));
+    }
+  }
+  return copy(Json{{"cells", cells}}.dump());
 }
 const char *neverd_strings_json(neverd_session_t, int) {
   Json items = Json::array();

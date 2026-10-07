@@ -84,6 +84,7 @@ llvm::Expected<uint64_t> KernelModel::call(
   if ((Kind == KernelAPIKind::KeInitializeDpc ||
        Kind == KernelAPIKind::KeInitializeEvent ||
        Kind == KernelAPIKind::KeInitializeSemaphore ||
+       Kind == KernelAPIKind::KeInitializeMutex ||
        Kind == KernelAPIKind::KeInitializeTimer ||
        Kind == KernelAPIKind::KeInitializeTimerEx) &&
       WaitReferences.count(A[0]))
@@ -198,6 +199,8 @@ llvm::Expected<uint64_t> KernelModel::call(
   case KernelAPIKind::KeWaitForSingleObject:
   case KernelAPIKind::KeDelayExecutionThread:
     return beginWait(A, Kind == KernelAPIKind::KeDelayExecutionThread);
+  case KernelAPIKind::KeWaitForMultipleObjects:
+    return beginMultipleWait(A);
   case KernelAPIKind::IoAllocateIrp:
     return allocateDriverIRP(A);
   case KernelAPIKind::IoFreeIrp: {

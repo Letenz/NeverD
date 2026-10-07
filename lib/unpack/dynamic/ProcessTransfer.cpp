@@ -9,7 +9,6 @@
 #include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
-#include <tuple>
 
 namespace neverd::unpack {
 using namespace emulation;
@@ -82,7 +81,24 @@ TransferObserver::started(ProcessView &Process) {
   if (!SP)
     return SP.takeError();
   InitialSP = (*SP)[0];
+  EnteredProgram = Process.programInvocation();
   Executed.assign(Extent / value::PageSize, false);
+  return watches();
+}
+
+llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+TransferObserver::invoking(ProcessView &Process) {
+  if (!EnteredProgram && Process.programInvocation()) {
+    auto SP = Process.readRegister(Traits.StackPointer);
+    if (!SP)
+      return SP.takeError();
+    InitialSP = (*SP)[0];
+    EnteredProgram = true;
+  }
+  // OS-owned callbacks may generate the next invocation's code in the same
+  // page. A page executed by one invocation says nothing about the next one.
+  Running = 0;
+  Executed.assign(Executed.size(), false);
   return watches();
 }
 
@@ -123,25 +139,17 @@ TransferObserver::watched(ProcessView &Process, uint64_t PC) {
     return SP.takeError();
   if (Seen.size() == defaults::MaxTransfers)
     return failure(text::TransferLimit);
-  Seen.push_back({Offset, (*SP)[0] == InitialSP, Generation});
+  Seen.push_back(
+      {Offset, (*SP)[0] == InitialSP, Generation, Process.programInvocation()});
   Capture Observed{};
   Observed.Base = Base;
   Observed.EntryRVA = Offset;
   Observed.Source = EntrySource::Transfer;
   if (auto E = snapshot(Process, Observed.Memory, &Observed.PageAccess))
     return std::move(E);
-  bool Accepted = Wanted ? Seen.size() == Wanted : Seen.back().StackBalanced;
-  if (!Accepted && !Wanted && Declared && *Declared < Extent &&
-      Traits.InstructionWindow <= Extent - *Declared &&
-      generation(llvm::ArrayRef(Observed.Memory)
-                     .slice(*Declared, Traits.InstructionWindow),
-                 *Declared)) {
-    // The stub is calling into an image it has completed, and its own final
-    // jump names the address that this call is not.
-    Observed.EntryRVA = *Declared;
-    Observed.Source = EntrySource::Stub;
-    Accepted = true;
-  }
+  const bool Accepted =
+      Wanted ? Seen.size() == Wanted
+             : Seen.back().StackBalanced && Seen.back().ProgramInvocation;
   if (!Accepted) {
     Images.push_back(std::move(Observed.Memory));
     Running = Images.size() - 1;
@@ -150,17 +158,22 @@ TransferObserver::watched(ProcessView &Process, uint64_t PC) {
     return watches();
   }
   Observed.Baseline = std::move(Images.front());
+  Observed.Transfers = Seen;
+  if (Process.programInvocation()) {
+    Observed.Initializers = Process.completedInitializers();
+    auto ThreadLocal = Process.threadLocalMemory();
+    if (!ThreadLocal)
+      return ThreadLocal.takeError();
+    Observed.ThreadLocal = std::move(*ThreadLocal);
+  }
   // Several identities may share one address. Keep a named one, in a stable
   // order, so the rebuilt directory does not depend on enumeration order.
-  const auto Key = [](const ExportBinding &B) {
-    return std::tuple(B.Name.empty(), B.Module, B.Name, B.Ordinal);
-  };
   for (auto &Export : Process.exports()) {
     ExportBinding Candidate{std::move(Export.Module), std::move(Export.Name),
                             Export.Ordinal};
     auto [Slot, Inserted] =
         Observed.Exports.try_emplace(Export.Address, Candidate);
-    if (!Inserted && Key(Candidate) < Key(Slot->second))
+    if (!Inserted && Candidate < Slot->second)
       Slot->second = std::move(Candidate);
   }
   Captured = std::move(Observed);

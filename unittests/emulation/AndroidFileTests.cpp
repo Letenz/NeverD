@@ -63,6 +63,31 @@ protected:
 TEST_P(AndroidFiles, OpensOwnCursorsAndReuseTheLowestAvailableDescriptor) {
   returned(run("files_sequence"));
 }
+TEST_P(AndroidFiles, ReleasedGKIOpenFlagsSharePathErrorsAndErrno) {
+  Options.LinuxFiles->DescriptorLimit = 4;
+  Options.Android->ThreadLimit = 1;
+  constexpr AndroidGKIKernel Kernels[] = {
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
+  AndroidGKIKernel::Name,
+#include "GKIReleaseCases.def"
+#undef NEVERD_GKI_RELEASE_CASE
+  };
+  for (auto Kernel : Kernels) {
+    SCOPED_TRACE(unsigned(Kernel));
+    Options.LinuxKernel.emplace().GKI = Kernel;
+    returned(run("files_open_observed_errors"));
+    returned(run("files_open_observed_errors_bionic"));
+  }
+}
+TEST_P(AndroidFiles, OpenFlagsKeepKnownDirectoryAndDirectIOBoundaries) {
+  for (uint64_t Mode = 0; Mode != 3; ++Mode) {
+    auto R = run("files_open_unobserved", {Mode});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    EXPECT_FALSE(R.Services.back().Result);
+    EXPECT_NE(R.Diagnostic.find(Mode == 0 ? "direct I/O" : "directory"),
+              std::string::npos);
+  }
+}
 TEST_P(AndroidFiles, PageFaultsPreserveCopiedBytesAndAdvanceOnlyTheirCursor) {
   returned(run("files_faults"));
 }

@@ -162,8 +162,9 @@ implementation. See the [kernel missing-call implementation](https://github.com/
 
 An explicit `linux_kernel.gki` selects a released Android common kernel branch
 from 5.10 through 6.18. Its current implemented subset includes `pidfd_open`
-for the live model process and explicitly catalogued guest tasks, and versioned
-vector import, with the same descriptor
+for the live model process and explicitly catalogued guest tasks, versioned
+vector import, observed process CPU clocks and zero-timeout pidfd `ppoll`, with
+the same descriptor
 table used by `linux_files`; Bionic and raw traps share ownership and error ordering.
 Selecting GKI together with an absent `pidfd_open` observation is rejected.
 An optional `linux_kernel.tasks` array supplies a closed, fixed catalogue of
@@ -175,6 +176,11 @@ cannot be combined with cooperative Android guest threads.
 Android API levels do not select a kernel. See the
 [released GKI contracts](android-gki-kernels.md) for all eight source pins,
 descriptor behavior, tests and the remaining kernel coverage.
+The poll subset requires an explicit zero timespec, null temporary mask and
+`linux_files` descriptor limit. It writes only ordered `revents` fields and
+does not update the zero timeout or advance wall clocks. Closed descriptors
+produce POLLNVAL; observed live pidfds have no readiness. Blocking waits and
+other descriptor readiness remain unsupported.
 
 The optional `linux_priority` input declares nice state for fixture-owned tasks
 with the caller's UID. Raw `setpriority` and `getpriority` share this state across
@@ -333,7 +339,8 @@ realtime alarm, boottime alarm and TAI. Each is independent; absent clocks are
 unknown, including coarse variants. Selected released GKI contracts also admit
 negative encoded process CPU clock IDs with explicit live group observations;
 see [released GKI clocks](android-gki-kernels.md#implemented-process-cpu-clock-subset).
-Aliases of the current process share one observation. Duplicate identities,
+PROF, VIRT and SCHED retain independent observations; aliases of the current
+process share one observation. Duplicate identities,
 unknown input IDs and more than 16384 clock observations are errors.
 Seconds are signed 64-bit and must be nonnegative for CPU clocks;
 nanoseconds must be in `[0, 1000000000)`. Integer
@@ -420,8 +427,14 @@ process-owned descriptor table. Android `open`, `open64`, `openat`, `openat64`,
 `read`, `close`, `lseek`, `lseek64`, `fstat`, `fstat64` and `syscall` use that same state, including
 across guest threads. Bionic alone maps kernel errors to `-1` and thread-local
 `errno`; success preserves errno. Absolute paths ignore `dirfd`; mode is unused
-without creation. Opens admit only `O_RDONLY`, optional `O_CLOEXEC` and the
-architecture's `O_LARGEFILE`. Other flags, relative paths, internal repeated
+without creation. Ordinary file opens admit `O_RDONLY`, optional `O_CLOEXEC`
+and the architecture's `O_LARGEFILE`. `O_DIRECTORY` also admits known pathname
+failures and requires the final object to be a directory. `O_DIRECT` admits
+pathname and descriptor-exhaustion failures before reaching an opened file;
+the catalogue does not infer its backing filesystem's direct-I/O support.
+ARM64's directory/direct bits are `0x4000`/`0x10000`, while x64 uses
+`0x10000`/`0x4000`. These stable source-pinned rules do not require GKI selection.
+Other flags, relative paths, internal repeated
 separators, `.`/`..` components,
 directory opens, writes/creation, symlinks, duplication and descriptor-control
 operations remain unsupported. Exec is unmodeled, so close-on-exec flags have

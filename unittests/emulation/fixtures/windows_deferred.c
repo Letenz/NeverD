@@ -23,10 +23,17 @@ __declspec(dllimport) int FreeLibrary(void *);
 __declspec(dllimport) void *GetModuleHandleA(const char *);
 __declspec(dllimport) void *GetProcAddress(void *, const char *);
 // Neither of these has a model. Importing them must not prevent loading.
-__declspec(dllimport) U32 GetTickCount(void);
+__declspec(dllimport) U32 NeverDUnmodeledFixtureExport(void);
 __declspec(dllimport) int AbsentRoutine(int);
 
 typedef U32 (*Routine)(void);
+
+#if defined(__x86_64__)
+__attribute__((naked, noinline)) static void unreadable_return(void) {
+  __asm__("xor %esp, %esp\n\t"
+          "jmp *__imp_NeverDUnmodeledFixtureExport(%rip)");
+}
+#endif
 
 static void require(int Valid, U32 Site) {
   if (Valid)
@@ -47,7 +54,7 @@ static U32 mode(void) {
 // ordinary values a program may store, compare and pass around.
 static void query(void) {
   void *Kernel = GetModuleHandleA(KernelModule);
-  void *Unmodeled = (void *)GetTickCount;
+  void *Unmodeled = (void *)NeverDUnmodeledFixtureExport;
   void *Absent = (void *)AbsentRoutine;
   require(Kernel != 0 && Unmodeled != 0 && Absent != 0, 1);
   require(Unmodeled != Absent, 2);
@@ -80,13 +87,17 @@ static void query(void) {
 
 void entry(void) {
   const U32 Mode = mode();
+#if defined(__x86_64__)
+  if (Mode == UnreadableReturnMode)
+    unreadable_return();
+#endif
   if (Mode == QueryMode) {
     query();
     ExitProcess(ExitStatus);
   }
   U32 Result = 0;
   if (Mode == StaticMode)
-    Result = GetTickCount();
+    Result = NeverDUnmodeledFixtureExport();
   else if (Mode == ModuleMode)
     Result = (U32)AbsentRoutine(1);
   else {

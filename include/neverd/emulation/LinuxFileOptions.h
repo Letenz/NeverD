@@ -37,6 +37,7 @@ struct LinuxFileMetadata {
 struct LinuxFileOptions {
   std::map<std::string, std::vector<uint8_t>> Files;
   /// Exclusive descriptor ceiling, including initially reserved 0, 1 and 2.
+  /// Also supplies the guest RLIMIT_NOFILE bound for admitted ppoll requests.
   uint32_t DescriptorLimit = 256;
   /// Optional status observations keyed by an existing Files path. Absent
   /// metadata is unknown. These observations do not change catalogue access.

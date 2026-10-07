@@ -446,6 +446,9 @@ MainWindow::Dock *MainWindow::chooserDock(ChooserKind kind) {
   choosers_.insert(int(kind), view);
   connect(view, &ChooserView::activated, this,
           [this](Address address) { navigate(address); });
+  // Lists reload when a session opens; one first shown later loads now.
+  if (session_.loaded())
+    view->model().reload();
   auto *dock = makeDock(id, nullptr, view->model().iconName(), view);
   dock->setTitle(view->model().title());
   return dock;
@@ -633,6 +636,14 @@ std::optional<Address> MainWindow::currentAddress() const {
   return disassembly_ ? disassembly_->currentItem() : std::nullopt;
 }
 
+ChooserView *MainWindow::focusedChooser() const {
+  for (auto *widget = QApplication::focusWidget(); widget;
+       widget = widget->parentWidget())
+    if (auto *view = qobject_cast<ChooserView *>(widget))
+      return view;
+  return nullptr;
+}
+
 std::optional<Address> MainWindow::currentFunction() const {
   return disassembly_ ? disassembly_->currentFunction() : std::nullopt;
 }
@@ -803,10 +814,18 @@ void MainWindow::connectActions() {
     dock->open();
     dock->raise();
   });
-  on(ActionId::JumpXrefsTo,
-     [this] { showCrossReferences(currentAddress(), true); });
-  on(ActionId::JumpXrefsFrom,
-     [this] { showCrossReferences(currentAddress(), false); });
+  // In a list window the current row is the item, as in the classic lists:
+  // cross references to a string are those of the selected string.
+  on(ActionId::JumpXrefsTo, [this] {
+    auto *list = focusedChooser();
+    showCrossReferences(list ? list->referenceTarget() : currentAddress(),
+                        true);
+  });
+  on(ActionId::JumpXrefsFrom, [this] {
+    auto *list = focusedChooser();
+    showCrossReferences(list ? list->referenceTarget() : currentAddress(),
+                        false);
+  });
   on(ActionId::JumpXrefOperand, [this] {
     const auto target = disassembly_->operandTarget();
     showCrossReferences(target ? target : currentAddress(), true);
@@ -882,6 +901,11 @@ void MainWindow::connectActions() {
   on(ActionId::ViewNames, [openChooser] { openChooser(ChooserKind::Names); });
   on(ActionId::ViewStrings,
      [openChooser] { openChooser(ChooserKind::Strings); });
+  // The list opens ready for a query, like a debugger's reference search.
+  on(ActionId::SearchStringReferences, [this, openChooser] {
+    openChooser(ChooserKind::StringReferences);
+    choosers_.value(int(ChooserKind::StringReferences))->focusFilter();
+  });
   on(ActionId::ViewSegments,
      [openChooser] { openChooser(ChooserKind::Segments); });
   on(ActionId::ViewFunctions, [this] {
@@ -1357,10 +1381,19 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
   for (const auto &name : current.value("encodings").toArray())
     chosen.append(name.toString());
   QVector<QPair<QString, QCheckBox *>> boxes;
+  // Code pages read the same bytes differently, so at most one is chosen.
+  auto *codePage = new QComboBox(&dialog);
+  codePage->addItem(tr("None"), QString());
   for (const auto &value : encodings) {
     const auto encoding = value.toObject();
     const auto name = encoding.value("name").toString();
     const auto spelling = encoding.value("spelling").toString();
+    if (encoding.value("legacy").toBool()) {
+      codePage->addItem(spelling.isEmpty() ? name : spelling, name);
+      if (chosen.contains(name))
+        codePage->setCurrentIndex(codePage->count() - 1);
+      continue;
+    }
     // Plain ASCII has no listing spelling of its own.
     auto *box = new QCheckBox(
         spelling.isEmpty() ? QStringLiteral("ASCII") : spelling, choices);
@@ -1369,6 +1402,13 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
     boxes.append({name, box});
   }
   form->addRow(tr("Encodings:"), choices);
+  if (codePage->count() > 1) {
+    codePage->setToolTip(
+        tr("Also read C strings that are not UTF-8 in this code page"));
+    form->addRow(tr("Code page:"), codePage);
+  } else {
+    codePage->hide();
+  }
   auto *length = new QSpinBox(&dialog);
   length->setRange(1, MaxStringMinLength);
   length->setValue(current.value("min_length").toInt(DefaultStringMinLength));
@@ -1379,12 +1419,14 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
   // At least one encoding stays selected.
   const auto update = [&] {
     buttons->button(QDialogButtonBox::Ok)
-        ->setEnabled(std::any_of(boxes.begin(), boxes.end(), [](auto &box) {
-          return box.second->isChecked();
-        }));
+        ->setEnabled(codePage->currentIndex() > 0 ||
+                     std::any_of(boxes.begin(), boxes.end(), [](auto &box) {
+                       return box.second->isChecked();
+                     }));
   };
   for (auto &box : boxes)
     connect(box.second, &QCheckBox::toggled, &dialog, update);
+  connect(codePage, &QComboBox::currentIndexChanged, &dialog, update);
   update();
   connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -1394,6 +1436,8 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
   for (auto &box : boxes)
     if (box.second->isChecked())
       names.append(box.first);
+  if (const auto page = codePage->currentData().toString(); !page.isEmpty())
+    names.append(page);
   session_.setStringOptions(names, length->value());
 }
 
@@ -1568,6 +1612,11 @@ void MainWindow::runCommand(const QString &command, const QString &argument) {
     toggleGraph();
   } else if (command == QLatin1String("hex")) {
     actions_.action(ActionId::ViewHex)->trigger();
+  } else if (command == QLatin1String("strref")) {
+    actions_.action(ActionId::SearchStringReferences)->trigger();
+    if (!argument.isEmpty())
+      choosers_.value(int(ChooserKind::StringReferences))
+          ->setFilterText(argument);
   }
 }
 

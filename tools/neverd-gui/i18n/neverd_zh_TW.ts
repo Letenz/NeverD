@@ -703,6 +703,14 @@
         <source>Choose the encodings and minimum length of the strings the listing shows</source>
         <translation>選擇清單中顯示之字串的編碼與最小長度</translation>
     </message>
+    <message>
+        <source>String &amp;references</source>
+        <translation>字串引用(&amp;R)</translation>
+    </message>
+    <message>
+        <source>List the instructions that refer to strings</source>
+        <translation>列出引用字串的指令</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -825,6 +833,18 @@
     <message>
         <source>Description</source>
         <translation>描述</translation>
+    </message>
+    <message>
+        <source>String references</source>
+        <translation>字串引用</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>函式</translation>
+    </message>
+    <message>
+        <source>Disassembly</source>
+        <translation>反組譯</translation>
     </message>
 </context>
 <context>
@@ -1503,6 +1523,13 @@ Recognized library operation; click to show its code.</source>
     </message>
 </context>
 <context>
+    <name>neverd::gui::HexView</name>
+    <message>
+        <source>Text encoding</source>
+        <translation>文字編碼</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::JumpDialog</name>
     <message>
         <source>Jump anywhere</source>
@@ -1847,6 +1874,18 @@ Signed: %4</source>
         <source>Minimum length:</source>
         <translation>最小長度：</translation>
     </message>
+    <message>
+        <source>None</source>
+        <translation>無</translation>
+    </message>
+    <message>
+        <source>Also read C strings that are not UTF-8 in this code page</source>
+        <translation>同時以此字碼頁讀取非 UTF-8 的 C 字串</translation>
+    </message>
+    <message>
+        <source>Code page:</source>
+        <translation>字碼頁：</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -1897,6 +1936,10 @@ Signed: %4</source>
     <message>
         <source>  &lt;expr&gt;            evaluate: 0x10, 10h, #16, names, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</source>
         <translation>  &lt;expr&gt;            求值：0x10, 10h, #16, 名稱, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</translation>
+    </message>
+    <message>
+        <source>  strref [text]     list the instructions that refer to strings</source>
+        <translation>  strref [text]     列出引用字串的指令</translation>
     </message>
 </context>
 <context>

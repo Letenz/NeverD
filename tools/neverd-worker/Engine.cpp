@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <set>
 #include <string_view>
 #include <system_error>
 #include <unordered_map>
@@ -44,6 +45,8 @@ using IRViewFunction = const char *(*)(neverd_session_t, neverd_va_t,
                                        const char *, std::size_t, std::size_t);
 using StringsExFunction = const char *(*)(neverd_session_t, const char *);
 using StringEncodingsFunction = const char *(*)();
+using DecodeTextFunction = const char *(*)(const unsigned char *, int,
+                                           const char *);
 // Additive C ABI capabilities for strings in more than ASCII.
 StringsExFunction stringsExFunction() {
   static const auto function =
@@ -187,8 +190,10 @@ constexpr std::int64_t MaxStringMinLength = 1024;
 /// Lines of one engine code page; longer functions keep engine names.
 constexpr std::size_t MaxNamedViewLines = 2048;
 
+/// A page of \p items; a filter keeps the rows where one of \p searchFields
+/// contains it, ignoring the case of ASCII letters.
 Json page(const Json &items, const Json &payload,
-          const char *searchField = nullptr) {
+          std::initializer_list<const char *> searchFields = {}) {
   const auto offset =
       sizeField(payload, "offset", 0, std::numeric_limits<std::size_t>::max());
   const auto limit = sizeField(payload, "limit", 128, 512);
@@ -198,9 +203,14 @@ Json page(const Json &items, const Json &payload,
   Json selected = Json::array();
   std::size_t total = 0;
   for (const auto &item : items) {
-    if (searchField && !filter.empty() &&
-        folded(item.value(searchField, std::string())).find(filter) ==
-            std::string::npos)
+    if (!filter.empty() &&
+        std::none_of(searchFields.begin(), searchFields.end(),
+                     [&](const char *field) {
+                       const auto it = item.find(field);
+                       return it != item.end() && it->is_string() &&
+                              folded(it->get<std::string>()).find(filter) !=
+                                  std::string::npos;
+                     }))
       continue;
     if (total >= offset && selected.size() < limit)
       selected.push_back(item);
@@ -586,20 +596,29 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         if (!names.is_array() || names.empty() || names.size() > 64)
           throw Error("invalid_request",
                       "encodings must be a non-empty array of names");
+        std::set<std::string> legacy;
         for (const auto &name : names) {
-          const bool known =
-              name.is_string() &&
-              std::any_of(stringEncodings().begin(), stringEncodings().end(),
-                          [&](const Json &encoding) {
-                            return encoding.value("name", std::string()) ==
-                                   name.get<std::string>();
-                          });
-          if (!known)
+          const auto known =
+              name.is_string()
+                  ? std::find_if(
+                        stringEncodings().begin(), stringEncodings().end(),
+                        [&](const Json &encoding) {
+                          return encoding.value("name", std::string()) ==
+                                 name.get<std::string>();
+                        })
+                  : stringEncodings().end();
+          if (known == stringEncodings().end())
             throw Error(
                 "unsupported_encoding",
                 "Unknown string encoding: " +
                     (name.is_string() ? name.get<std::string>() : name.dump()));
+          if (known->value("legacy", false))
+            legacy.insert(name.get<std::string>());
         }
+        // Code pages read the same bytes differently; one is searched.
+        if (legacy.size() > 1)
+          throw Error("invalid_request",
+                      "Only one legacy code page can be searched at a time");
         options["encodings"] = names;
       }
       if (p.contains("min_length")) {
@@ -978,7 +997,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         item["type"] = type;
       }
     }
-    return page(stringsCache_, p, "text");
+    return page(stringsCache_, p, {"text", "address", "type"});
   }
   if (operation == "segments") {
     auto items = backendJson(neverd_segments_json(session_));
@@ -986,21 +1005,23 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       item["address"] = item.at("va");
       item.erase("va");
     }
-    return page(items, p, "name");
+    return page(items, p, {"name"});
   }
   if (operation == "listing")
     return listing().page(p);
+  if (operation == "string_references")
+    return listing().stringReferences(p);
   if (operation == "overview")
     return listing().overview(p);
   if (operation == "names") {
     auto items = listing().names();
     sortItems(items, p);
-    return page(items, p, "name");
+    return page(items, p, {"name"});
   }
   if (operation == "regions") {
     auto items = listing().regions();
     sortItems(items, p);
-    return page(items, p, "name");
+    return page(items, p, {"name"});
   }
   if (operation == "imports") {
     Json items = Json::array();
@@ -1012,7 +1033,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
                          {"module", row.value("module", std::string())},
                          {"ordinal", row.value("ordinal", 0)}});
     sortItems(items, p);
-    return page(items, p, "name");
+    return page(items, p, {"name"});
   }
   if (operation == "exports") {
     Json items = Json::array();
@@ -1027,7 +1048,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
                        {"ordinal", nullptr},
                        {"kind", row.value("type", std::string("entry"))}});
     sortItems(items, p);
-    return page(items, p, "name");
+    return page(items, p, {"name"});
   }
   if (operation == "search") {
     const auto kind = stringField(p, "kind", "text", 16);
@@ -1075,7 +1096,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       item["address"] = item.at("addr");
       item.erase("addr");
     }
-    return page(items, p, "text");
+    return page(items, p, {"text"});
   }
   if (operation == "save") {
     requireWriter();
@@ -1153,7 +1174,25 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       data += digits[buffer[i] >> 4];
       data += digits[buffer[i] & 15];
     }
-    return {
+    // The bytes as text in an encoding, one cell per byte, for a hex view.
+    Json cells;
+    if (p.contains("text_encoding")) {
+      const auto encoding = stringField(p, "text_encoding", {}, 64);
+      static const auto decode =
+          engineSymbol<DecodeTextFunction>("neverd_decode_text_json");
+      if (!decode)
+        throw Error("unsupported", "The engine cannot decode text");
+      const char *raw = decode(buffer.data(), count, encoding.c_str());
+      if (!raw)
+        throw Error("unsupported_encoding",
+                    "Unknown text encoding: " + encoding);
+      auto decoded = backendJson(raw);
+      if (!decoded.is_object() || !decoded["cells"].is_array() ||
+          decoded["cells"].size() != static_cast<std::size_t>(count))
+        throw Error("engine_error", "Engine returned malformed text cells");
+      cells = std::move(decoded["cells"]);
+    }
+    Json result = {
         {"address", hexAddress(address)},
         {"encoding", "hex"},
         {"data", data},
@@ -1167,6 +1206,9 @@ Json Engine::execute(const std::string &operation, const Json &p) {
                           std::numeric_limits<std::uint64_t>::max() - address
              ? Json(hexAddress(address + count))
              : Json(nullptr)}};
+    if (!cells.is_null())
+      result["cells"] = std::move(cells);
+    return result;
   }
   if (operation == "annotation_set") {
     requireWriter();

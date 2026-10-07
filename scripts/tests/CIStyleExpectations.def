@@ -1,0 +1,27 @@
+//===- CIStyleExpectations.def - LLVM workflow contract checks ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_CI_STYLE_EXPECTATION("name: LLVM Style")
+NEVERD_CI_STYLE_EXPECTATION("    branches:\n      - dev")
+NEVERD_CI_STYLE_EXPECTATION("  pull_request:")
+NEVERD_CI_STYLE_EXPECTATION("  workflow_dispatch:")
+NEVERD_CI_STYLE_EXPECTATION("  contents: read")
+NEVERD_CI_STYLE_EXPECTATION("runs-on: ubuntu-24.04")
+NEVERD_CI_STYLE_EXPECTATION(
+    "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1")
+NEVERD_CI_STYLE_EXPECTATION("fetch-depth: 0")
+NEVERD_CI_STYLE_EXPECTATION(
+    "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97")
+NEVERD_CI_STYLE_EXPECTATION("python-version: '3.12'")
+NEVERD_CI_STYLE_EXPECTATION("timeout-minutes: 5")
+NEVERD_CI_STYLE_EXPECTATION("clang-format==22.1.2")
+NEVERD_CI_STYLE_EXPECTATION(
+    "python -m unittest scripts.tests.test_check_clang_format -v")
+NEVERD_CI_STYLE_EXPECTATION(
+    "FORMAT_BASE: ${{ github.event_name == 'pull_request' && format('{0}^1', "
+    "github.sha) || github.event.before }}")
+NEVERD_CI_STYLE_EXPECTATION("FORMAT_HEAD: ${{ github.sha }}")
+NEVERD_CI_STYLE_EXPECTATION("python scripts/check_clang_format.py --base "
+                            "\"$FORMAT_BASE\" --head \"$FORMAT_HEAD\"")

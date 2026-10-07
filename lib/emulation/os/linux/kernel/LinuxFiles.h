@@ -28,6 +28,9 @@ public:
   openProcessDescriptor(uint32_t PID, uint32_t Flags,
                         const LinuxKernelOptions &Kernel,
                         ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>>
+  poll(const ProcessServiceEvent &Event,
+       const std::optional<LinuxKernelOptions> &Kernel, ProcessResult &Result);
 
 private:
   enum class Stream { Input, Output, Error };
@@ -57,6 +60,8 @@ private:
   static std::optional<uint64_t> unsupported(ProcessResult &Result,
                                              const char *Reason);
   uint32_t nextDescriptor() const;
+  std::optional<uint16_t> pollReadiness(int32_t FD,
+                                        ProcessResult &Result) const;
   llvm::Expected<Pathname> readPath(uint64_t Address, bool AllowEmpty = false);
   static std::optional<ParsedPath> parsePath(llvm::StringRef Path);
   PathKind lookupPath(const std::string &Path,

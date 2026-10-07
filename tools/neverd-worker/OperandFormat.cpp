@@ -705,7 +705,7 @@ std::size_t displayColumns(std::string_view text) {
 #define NEVERD_WIDE_CHARACTERS(First, Last)                                    \
   if (code >= First && code <= Last)                                           \
     width = 2;
-#include "ListingVocabulary.def"
+#include "neverd/support/WideCharacters.def"
     columns += width;
     at += length;
   }

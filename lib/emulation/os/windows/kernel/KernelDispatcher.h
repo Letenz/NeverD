@@ -68,6 +68,19 @@ public:
   /// Mutex ownership uses the logical thread key, shared by all of its stacks.
   llvm::Expected<bool> tryAcquire(uint64_t Object, uint64_t ThreadKey = 0,
                                   uint8_t CurrentIRQL = 0);
+  /// A thread's termination state is validated and supplied by its model owner.
+  /// External conditions never identify or mutate a dispatcher-owned object.
+  struct WaitCondition {
+    enum class Kind { Dispatcher, Ready, Pending };
+    Kind Type = Kind::Dispatcher;
+    uint64_t Object = 0;
+  };
+  /// Validate the complete set, select the first ready condition for WaitAny,
+  /// and commit every selected acquisition together. An unsatisfied WaitAll
+  /// consumes no event/timer signal, semaphore count or mutex recursion.
+  llvm::Expected<std::optional<uint32_t>>
+  tryAcquireSet(llvm::ArrayRef<WaitCondition> Conditions, bool All,
+                uint64_t ThreadKey, uint8_t CurrentIRQL);
   bool ownsMutex(uint64_t ThreadKey) const;
 
   /// Framework wait locks share dispatcher ownership and opaque storage. An

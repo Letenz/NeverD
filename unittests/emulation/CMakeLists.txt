@@ -94,6 +94,12 @@ add_neverd_unittest(NeverDExecutionSessionTests
   TIMEOUT 15
   LINK_COMPONENTS EmulationRuntime EmulationImage)
 
+add_neverd_unittest(NeverDDirectX64Tests
+  DirectX64Tests.cpp
+  NO_PRETTY_VALUES
+  TIMEOUT 15
+  LINK_COMPONENTS EmulationRuntime)
+
 add_neverd_unittest(NeverDX64MemoryUpdateTests
   X64MemoryUpdateTests.cpp
   X64BitStringTests.cpp
@@ -257,6 +263,8 @@ add_neverd_unittest(NeverDAndroidNativeTests
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDAndroidNativeTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)
 include(AndroidFixtures.cmake)
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/AndroidTestExecution.cmake")
 
 # Batch PE scenarios use the common harness timeout; each guest workload
 # retains its own finite instruction, event and time budget.
@@ -310,6 +318,11 @@ target_include_directories(NeverDUnpackExecutionTests PRIVATE
 target_compile_definitions(NeverDUnpackExecutionTests PRIVATE
   NEVERD_UNPACK_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/unittests/unpack/fixtures/binaries")
 include(UnpackGeneratedFixtures.cmake)
+if(TARGET NeverDWindowsDeferredFixtures)
+  add_dependencies(NeverDUnpackExecutionTests NeverDWindowsDeferredFixtures)
+  target_compile_definitions(NeverDUnpackExecutionTests PRIVATE
+    NEVERD_WINDOWS_DEFERRED_FIXTURE_DIR="${_deferred_dir}")
+endif()
 
 add_neverd_unittest(NeverDExecutionBudgetTests
   ExecutionBudgetTests.cpp
@@ -510,6 +523,10 @@ set(NEVERD_WDM_WAIT_WAKE_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK native wait/wake fixture")
 set(NEVERD_WDM_WAIT_WAKE_CFG_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK native wait/wake fixture with active CFG")
+set(NEVERD_WDM_MULTIPLE_WAIT_FIXTURE "" CACHE FILEPATH
+  "Optional original genuine WDK multiple-object wait fixture")
+set(NEVERD_WDM_MULTIPLE_WAIT_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK multiple-object wait fixture with active CFG")
 set(NEVERD_WDM_USB_IDLE_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK native USB idle fixture")
 set(NEVERD_WDM_USB_IDLE_CFG_FIXTURE "" CACHE FILEPATH
@@ -811,6 +828,31 @@ foreach(_driver_wait_wake_variable NEVERD_WDM_WAIT_WAKE_FIXTURE
     message(STATUS "Driver WDM native wait/wake fixture ${_driver_wait_wake_variable}: ${_driver_wait_wake_path}")
   else()
     message(STATUS "Driver WDM native wait/wake tests requiring ${_driver_wait_wake_variable} skipped: optional fixture is missing")
+  endif()
+endforeach()
+
+set(_driver_wdm_multiple_wait_definitions)
+set(_driver_has_wdm_multiple_wait_fixture FALSE)
+foreach(_driver_multiple_wait_variable NEVERD_WDM_MULTIPLE_WAIT_FIXTURE
+    NEVERD_WDM_MULTIPLE_WAIT_CFG_FIXTURE)
+  if(_driver_multiple_wait_variable STREQUAL "NEVERD_WDM_MULTIPLE_WAIT_CFG_FIXTURE"
+      AND NOT _driver_has_wdm_multiple_wait_fixture)
+    message(STATUS "Driver WDM multiple-object wait CFG tests skipped: NEVERD_WDM_MULTIPLE_WAIT_FIXTURE is unavailable")
+    continue()
+  endif()
+  if(NOT "${${_driver_multiple_wait_variable}}" STREQUAL ""
+      AND EXISTS "${${_driver_multiple_wait_variable}}"
+      AND NOT IS_DIRECTORY "${${_driver_multiple_wait_variable}}")
+    get_filename_component(_driver_multiple_wait_path
+      "${${_driver_multiple_wait_variable}}" ABSOLUTE)
+    list(APPEND _driver_wdm_multiple_wait_definitions
+      "${_driver_multiple_wait_variable}=\"${_driver_multiple_wait_path}\"")
+    if(_driver_multiple_wait_variable STREQUAL "NEVERD_WDM_MULTIPLE_WAIT_FIXTURE")
+      set(_driver_has_wdm_multiple_wait_fixture TRUE)
+    endif()
+    message(STATUS "Driver WDM multiple-object wait fixture ${_driver_multiple_wait_variable}: ${_driver_multiple_wait_path}")
+  else()
+    message(STATUS "Driver WDM multiple-object wait tests requiring ${_driver_multiple_wait_variable} skipped: optional fixture is missing")
   endif()
 endforeach()
 
@@ -1221,6 +1263,7 @@ set(_driver_execution_fixture_definitions
   ${_driver_wdm_stack_definitions}
   ${_driver_wdm_owned_irp_definitions}
   ${_driver_wdm_wait_wake_definitions}
+  ${_driver_wdm_multiple_wait_definitions}
   ${_driver_wdm_usb_idle_definitions}
   ${_driver_kmdf_usb_idle_definitions}
   ${_driver_wdm_pnp_definitions}
@@ -1242,6 +1285,8 @@ add_neverd_unittest(NeverDNativeDriverTests
   DriverSchedulingTests.cpp
   DriverThreadPriorityTests.cpp
   DriverMutexThreadTests.cpp
+  DriverMultipleWaitTests.cpp
+  KernelWaitSetTests.cpp
   DriverSIMDSEHTests.cpp
   KernelSEHTests.cpp
   TIMEOUT 30
@@ -1428,6 +1473,7 @@ if(TARGET neverd_shared AND TARGET neverd)
     ${_driver_wdm_stack_definitions}
   ${_driver_wdm_owned_irp_definitions}
   ${_driver_wdm_wait_wake_definitions}
+  ${_driver_wdm_multiple_wait_definitions}
   ${_driver_wdm_usb_idle_definitions}
   ${_driver_kmdf_usb_idle_definitions}
   ${_driver_wdm_pnp_definitions}

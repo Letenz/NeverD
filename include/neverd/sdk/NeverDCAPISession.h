@@ -171,8 +171,22 @@ NEVERD_API int neverd_session_import_count(neverd_session_t Sess);
 NEVERD_API int neverd_session_export_count(neverd_session_t Sess);
 NEVERD_API int neverd_session_symbol_count(neverd_session_t Sess);
 
+/// \p Size bytes from \p Addr as text, sixteen to a line: the address, the
+/// bytes in hexadecimal, and the printable ASCII characters among them.  A
+/// byte the image does not map or materialize prints as "??" and a blank,
+/// and the lines after the last mapped byte are left out.  NULL when the
+/// range maps no byte.
 NEVERD_API const char *neverd_hex_dump(neverd_session_t Sess, neverd_va_t Addr,
                                        int Size);
+/// neverd_hex_dump() with the text column read in \p TextEncoding, a name or
+/// alias of neverd_string_encodings_json(), or ASCII when NULL: a character
+/// shows at its first byte in the columns it draws (two for wide East Asian
+/// characters), its later bytes filling the rest of its width, and a byte
+/// that starts no shown character prints '.'.  Each run of mapped bytes
+/// decodes from its first byte.  NULL with an error for an unknown encoding.
+NEVERD_API const char *neverd_hex_dump_ex(neverd_session_t Sess,
+                                          neverd_va_t Addr, int Size,
+                                          const char *TextEncoding);
 
 // ===--------------------------------------------------------------------===//
 // Version info

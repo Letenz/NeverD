@@ -358,6 +358,7 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `KeSetPriorityThread`, `KeQueryPriorityThread` | 在 `PASSIVE_LEVEL` 访问运行时优先级；设置接受 1..31 并返回原值，确定性初始值为 8，要求已知线程对象。`scheduling` 启用优先级调度；动态提升与进程优先级类别尚未支持。 [driver-scheduling.md](driver-scheduling.md) |
 | `KeEnterCriticalRegion`, `KeLeaveCriticalRegion`, `KeEnterGuardedRegion`, `KeLeaveGuardedRegion`, `KeAreApcsDisabled`, `KeAreAllApcsDisabled` | 按线程跟踪可嵌套的 APC 禁用状态。临界区及持有的 KMUTEX 禁用普通内核 APC；保护区和 IRQL >= APC_LEVEL 禁用全部 APC。系统线程启动时处于一层临界区内。未匹配的离开和带未平衡状态返回都会失败；尚未实现 APC 投递。 |
 | `KeWaitForSingleObject` | 单个已初始化的事件、定时器、信号量或互斥体；非警报 `KernelMode`、原因 `Executive`；零超时轮询、有限相对／绝对或无限等待；非零／无限等待要求 IRQL <= APC_LEVEL |
+| `KeWaitForMultipleObjects` | 非警报式 `KernelMode`／`Executive` 下对 1..64 个对象执行 `WaitAll`／`WaitAny`；超过三个须提供非分页 `KWAIT_BLOCK`。原子获取、数组索引结果、线程引用和超时释放见[驱动调度](driver-scheduling.md)。 |
 | `KeDelayExecutionThread` | IRQL <= APC_LEVEL 的非警报 `KernelMode` 相对／绝对延迟；虚拟时间推进后恢复保存的来宾执行帧 |
 | `IoMarkIrpPending` | 标记当前存活的 IRP；也支持 WDM 宏对栈控制字段的等效写入；派发必须返回 `STATUS_PENDING` |
 | `IofCompleteRequest`、`IoCompleteRequest` | 使用 `IO_NO_INCREMENT` 执行完成展开，支持暂停／继续；仅在最终展开边界释放 IRP、MDL 和缓冲区 |

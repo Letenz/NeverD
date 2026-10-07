@@ -46,6 +46,9 @@ public:
   Json overview(const Json &payload);
   /// `xrefs` from the reference index or, for "from", the instruction's lift.
   Json references(std::uint64_t address, const Json &payload);
+  /// `string_references`: every instruction that refers to a string, directly
+  /// or through a pointer slot, as a filtered and sorted table page.
+  Json stringReferences(const Json &payload);
   /// Resolve an automatic or listing-local name to its address.
   std::optional<std::uint64_t> resolveName(const std::string &name);
   /// Formatted instruction lines (no prefixes) of [start, end), for graph

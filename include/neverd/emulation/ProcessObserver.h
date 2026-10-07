@@ -42,6 +42,11 @@ struct ProcessExportView {
   std::optional<uint16_t> Ordinal;
 };
 
+/// The OS-owned stack allocation of the observed thread.
+struct ProcessStackView {
+  uint64_t Base, Size;
+};
+
 /// A stopped process. The view is valid only during the observer callback
 /// that receives it and must not be retained.
 class ProcessView {
@@ -59,6 +64,27 @@ public:
   virtual std::vector<ProcessModuleView> modules() = 0;
   /// Every export identity currently bound to an OS-model entry address.
   virtual std::vector<ProcessExportView> exports() = 0;
+  /// Execution belongs to the main program's entry invocation, including
+  /// calls it makes. False for OS-owned initialization and teardown calls,
+  /// or when the profile supplies no invocation provenance.
+  virtual bool programInvocation() const { return false; }
+  /// Main-image initializers whose OS-owned startup calls returned normally.
+  /// These addresses are execution evidence, not predicted callback targets.
+  virtual std::vector<uint64_t> completedInitializers() const { return {}; }
+  /// The current thread's stack allocation, if the profile owns it.
+  virtual std::optional<ProcessStackView> stack() const { return std::nullopt; }
+  /// Number of OS service invocations so far, including calls still active.
+  /// Missing provenance cannot establish that a helper has no OS effects.
+  virtual std::optional<uint64_t> nativeCallCount() const {
+    return std::nullopt;
+  }
+  /// Live main-image static TLS bytes of the current thread, excluding
+  /// allocation padding. An empty vector means no data; std::nullopt means
+  /// the profile supplies no TLS snapshot contract.
+  virtual llvm::Expected<std::optional<std::vector<uint8_t>>>
+  threadLocalMemory() {
+    return std::nullopt;
+  }
 };
 
 /// Receives a process at its start and at each execution watch.
@@ -75,6 +101,17 @@ public:
   /// run with ProcessStopReason::Observer.
   virtual llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
   watched(ProcessView &Process, uint64_t PC) = 0;
+  /// The OS model has prepared a guest invocation or restored a suspended
+  /// caller. The initial invocation is covered by started(). Returning a
+  /// watch set replaces the current watches; std::nullopt keeps them.
+  virtual llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+  invoking(ProcessView &Process);
+  /// The OS has identified an export gate, before API effects or an
+  /// unsupported-export stop. Identity does not imply a modeled signature.
+  /// ReturnAddress is absent when the ABI return location could not be read.
+  virtual llvm::Error exporting(ProcessView &Process,
+                                const ProcessExportView &Export,
+                                std::optional<uint64_t> ReturnAddress);
 };
 
 /// As emulateProcess, under observation. Profiles without an observation

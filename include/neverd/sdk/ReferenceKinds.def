@@ -1,0 +1,28 @@
+//===- ReferenceKinds.def - Direct reference kinds -------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The kinds of the C API's direct references (neverd_code_refs_json,
+/// neverd_string_refs_json): the name, the classic one-letter cross
+/// reference type and whether the reference transfers control.  IndirectCall
+/// and IndirectJump transfer through a relocated pointer slot to the pointer
+/// it holds as loaded.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_REFERENCE_KIND(Id, Name, Letter, Code)
+#ifndef NEVERD_REFERENCE_KIND
+#define NEVERD_REFERENCE_KIND(Id, Name, Letter, Code)
+#endif
+NEVERD_REFERENCE_KIND(Call, "call", 'p', true)
+NEVERD_REFERENCE_KIND(Jump, "jump", 'j', true)
+NEVERD_REFERENCE_KIND(CondJump, "cjump", 'j', true)
+NEVERD_REFERENCE_KIND(Read, "read", 'r', false)
+NEVERD_REFERENCE_KIND(Write, "write", 'w', false)
+NEVERD_REFERENCE_KIND(Offset, "offset", 'o', false)
+NEVERD_REFERENCE_KIND(IndirectCall, "icall", 'p', true)
+NEVERD_REFERENCE_KIND(IndirectJump, "ijump", 'j', true)
+#undef NEVERD_REFERENCE_KIND

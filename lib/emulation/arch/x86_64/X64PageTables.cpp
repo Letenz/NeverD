@@ -24,14 +24,15 @@ llvm::Expected<uint64_t> buildX64PageTables(
   const uint64_t Variant =
       (ExceptionMonitor ? x64::gateway::ProjectionVariant : 0) |
       (WatchEpoch << 1);
-  // Watches are sorted and merged by the session; a page is covered when the
-  // last range starting at or before it still reaches it.
+  // Watches are sorted and merged by the session. A watch can start inside a
+  // page: cover any page intersecting the last range starting before its end.
   const auto watched = [&](uint64_t VA) {
     const auto I = llvm::upper_bound(
-        NoExecutePages, VA,
+        NoExecutePages, VA | (x64::PageSize - 1),
         [](uint64_t VA, const ExecutionWatch &W) { return VA < W.Address; });
     return I != NoExecutePages.begin() &&
-           VA - std::prev(I)->Address < std::prev(I)->Size;
+           (VA < std::prev(I)->Address ||
+            VA - std::prev(I)->Address < std::prev(I)->Size);
   };
   const uint64_t PreviousRoot = Memory.projectionRoot(GuestArchitecture::X64);
   if (!Memory.needsProjection(GuestArchitecture::X64, UserMode, Variant))

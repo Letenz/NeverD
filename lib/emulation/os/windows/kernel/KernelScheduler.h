@@ -327,6 +327,9 @@ public:
   /// A successful synchronization-timer wait consumes its signal. Timer kind
   /// and wait eligibility are validated by the caller, not guessed here.
   llvm::Expected<bool> consumeTimerSignal(uint64_t Timer);
+  /// Preflight every selected timer before consuming any synchronization
+  /// signal.
+  llvm::Error consumeTimerSignals(llvm::ArrayRef<uint64_t> TimerObjects);
   /// Rejects forgetting an armed timer or one with a queued callback. A
   /// nonperiodic timer can be freed inside its running callback.
   llvm::Error canForgetTimer(uint64_t Timer) const;

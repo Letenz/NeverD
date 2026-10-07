@@ -145,6 +145,9 @@ private:
   /// survived.
   llvm::Error capture(X64MachineState &Into, CapturePacket &Actual,
                       uint32_t MXCSRMask) {
+    // A cancelled direct entry captures into the caller's state. A later
+    // XSAVE or metadata failure must not publish an ordinary-register prefix.
+    auto Next = Into;
     if (const auto Status = API.WHvGetVirtualProcessorRegisters(
             Partition, ProcessorIndex, CaptureNames.data(), CaptureNames.size(),
             Actual.data());
@@ -153,13 +156,16 @@ private:
                       whp::operation::WHvGetVirtualProcessorRegisters);
     size_t Index = 0;
 #define NEVERD_X64_HOST_REGISTER(Name, Field, WHP)                             \
-  Into.reg(X64Register::Name) = Actual[Index++].Reg64;
+  Next.reg(X64Register::Name) = Actual[Index++].Reg64;
 #include "../../arch/x86_64/X64HostRegisters.def"
 #undef NEVERD_X64_HOST_REGISTER
     WhpXsaveState::MetadataPacket Metadata{};
     std::copy(Actual.begin() + std::size(Names), Actual.end(),
               Metadata.begin());
-    return Xsave.capture(API, Partition, Into, &Metadata, MXCSRMask);
+    if (auto E = Xsave.capture(API, Partition, Next, &Metadata, MXCSRMask))
+      return E;
+    Into = std::move(Next);
+    return llvm::Error::success();
   }
 
   static RegisterPacket registers(const X64MachineState &State, uint64_t Root,

@@ -70,6 +70,8 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     return std::optional<uint64_t>();
   case ServiceKind::SignalAction:
     return Signals.handle(CPU, Layout, Event, Result);
+  case ServiceKind::PPoll:
+    return Files.poll(Event, Options.LinuxKernel, Result);
   case ServiceKind::Open:
   case ServiceKind::OpenAt:
   case ServiceKind::Access:

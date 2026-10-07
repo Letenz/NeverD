@@ -3,122 +3,70 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+//
+// The scanners: where a string may start and end in each encoding.  How
+// bytes decode is TextCodec's, and whether the characters are text is
+// TextEvidence's.
+//
+//===----------------------------------------------------------------------===//
 
 #include "neverd/support/StringScan.h"
 
-#include "llvm/Support/ConvertUTF.h"
+#include "TextCodec.h"
+#include "TextEvidence.h"
 
 #include <algorithm>
+#include <iterator>
 #include <vector>
 
 namespace neverd::strings {
 
+using namespace detail;
+
 namespace {
 
-struct EncodingInfo {
-  llvm::StringRef Name, Spelling;
-  unsigned UnitBytes;
-  bool BigEndian;
-};
-
-constexpr EncodingInfo Encodings[] = {
-#define NEVERD_STRING_ENCODING(Id, Name, Spelling, UnitBytes, BigEndian)       \
-  {Name, Spelling, UnitBytes, BigEndian},
-#include "neverd/support/StringEncodings.def"
-};
-
-const EncodingInfo &info(Encoding E) {
-  return Encodings[static_cast<unsigned>(E)];
-}
-
-bool isTextASCII(uint32_t C) {
-  return (C >= 0x20 && C < 0x7f) || C == '\t' || C == '\n' || C == '\r';
-}
-
-/// A printable character beyond ASCII: no control, surrogate, private-use
-/// or noncharacter code point.
-bool isPrintableBeyondASCII(uint32_t C) {
-  if (C < 0xa0 || C > 0x10ffff)
-    return false;
-  if ((C >= 0xd800 && C <= 0xdfff) || (C >= 0xe000 && C <= 0xf8ff) ||
-      (C >= 0xfdd0 && C <= 0xfdef) || (C & 0xfffe) == 0xfffe || C >= 0xf0000)
-    return false;
-  return true;
-}
-
-/// Which code points a wide string may hold: printable ASCII and the
-/// printable characters of the text blocks, a bit each below U+10000.
-class WideTextSet {
-public:
-  WideTextSet() {
-    for (uint32_t C = 0; C < 0x80; ++C)
-      if (isTextASCII(C))
-        set(C);
-#define NEVERD_TEXT_BLOCK(First, Last)                                         \
-  for (uint32_t C = First; C <= Last && C <= 0xffff; ++C)                      \
-    if (isPrintableBeyondASCII(C))                                             \
-      set(C);
-#include "neverd/support/StringEncodings.def"
+/// A C string in \p Legacy from \p Start: its terminator, or nothing when
+/// it holds a character that is not text or does not end.  Collects the
+/// code points.
+const uint8_t *legacyString(const EncodingInfo &Legacy, const uint8_t *Start,
+                            const uint8_t *End, std::vector<uint32_t> &Codes) {
+  const bool SingleByte = Legacy.Kind == Decoder::SingleByte;
+  for (const uint8_t *Cursor = Start; Cursor < End;) {
+    if (!*Cursor)
+      return Cursor;
+    // 0xFFFF marks data, not text, though 0xFF is a letter in some pages.
+    if (SingleByte && *Cursor == 0xff && Cursor + 1 < End && Cursor[1] == 0xff)
+      return nullptr;
+    uint32_t Code[2];
+    unsigned Count = 0;
+    const unsigned Size = decodeLegacy(Legacy, Cursor, End, Code, Count);
+    if (!Size)
+      return nullptr;
+    for (unsigned I = 0; I < Count; ++I) {
+      const uint32_t C = Code[I];
+      // Halfwidth katakana come from single bytes 0xA1-0xDF, a quarter of
+      // all bytes, and modern text does not use them.
+      const bool Text = C < 0x80 ? isTextASCII(C)
+                                 : isPrintableBeyondASCII(C) &&
+                                       (!SingleByte || isLegacyLetter(C)) &&
+                                       !(C >= 0xff61 && C <= 0xff9f);
+      if (!Text)
+        return nullptr;
+      Codes.push_back(C);
+    }
+    Cursor += Size;
   }
-  bool contains(uint32_t C) const {
-    if (C <= 0xffff)
-      return Bits[C >> 6] >> (C & 63) & 1;
-#define NEVERD_TEXT_BLOCK(First, Last)                                         \
-  if (First > 0xffff && C >= First && C <= Last)                               \
-    return isPrintableBeyondASCII(C);
-#include "neverd/support/StringEncodings.def"
-    return false;
-  }
-
-private:
-  void set(uint32_t C) { Bits[C >> 6] |= uint64_t(1) << (C & 63); }
-  uint64_t Bits[0x10000 / 64] = {};
-};
-
-const WideTextSet &wideText() {
-  static const WideTextSet Set;
-  return Set;
+  return nullptr;
 }
 
-/// The length of the well-formed UTF-8 sequence of two to four bytes at
-/// \p At, storing its code point in \p Code, or 0.
-unsigned decodeUTF8(const uint8_t *At, const uint8_t *End, uint32_t &Code) {
-  const uint8_t Lead = At[0];
-  const auto continues = [&](unsigned Index) {
-    return At + Index < End && (At[Index] & 0xc0) == 0x80;
-  };
-  if (Lead < 0xc2 || Lead > 0xf4 || !continues(1))
-    return 0;
-  if (Lead < 0xe0) {
-    Code = (Lead & 0x1fu) << 6 | (At[1] & 0x3fu);
-    return 2;
-  }
-  if (!continues(2))
-    return 0;
-  if (Lead < 0xf0) {
-    Code = (Lead & 0x0fu) << 12 | (At[1] & 0x3fu) << 6 | (At[2] & 0x3fu);
-    return Code >= 0x800 && (Code < 0xd800 || Code > 0xdfff) ? 3 : 0;
-  }
-  if (!continues(3))
-    return 0;
-  Code = (Lead & 0x07u) << 18 | (At[1] & 0x3fu) << 12 | (At[2] & 0x3fu) << 6 |
-         (At[3] & 0x3fu);
-  return Code >= 0x10000 && Code <= 0x10ffff ? 4 : 0;
-}
-
-void appendUTF8(std::string &Out, uint32_t C) {
-  char Buffer[UNI_MAX_UTF8_BYTES_PER_CODE_POINT];
-  char *End = Buffer;
-  llvm::ConvertCodePointToUTF8(C, End);
-  Out.append(Buffer, End);
-}
-
-/// ASCII and UTF-8 strings ending in NUL.
+/// ASCII and UTF-8 strings ending in NUL, and where a run after a NUL is not
+/// UTF-8, a string in \p Legacy.
 void scanCStrings(llvm::ArrayRef<uint8_t> Data, const ScanOptions &Options,
+                  const EncodingInfo *Legacy, Encoding LegacyKind,
                   std::vector<FoundString> &Out) {
   const bool ASCII = Options.Encodings & encodingBit(Encoding::ASCII);
   const bool UTF8 = Options.Encodings & encodingBit(Encoding::UTF8);
-  if (!ASCII && !UTF8)
+  if (!ASCII && !UTF8 && !Legacy)
     return;
   const uint8_t *Begin = Data.data();
   const uint8_t *End = Begin + Data.size();
@@ -140,100 +88,99 @@ void scanCStrings(llvm::ArrayRef<uint8_t> Data, const ScanOptions &Options,
       Cursor += Size;
       Multibyte = true;
     }
-    if (Cursor == End || *Cursor || Chars < Options.MinChars ||
-        (Multibyte ? !UTF8 : !ASCII))
+    const bool Terminated = Cursor < End && !*Cursor;
+    if (Terminated) {
+      if (Chars >= Options.MinChars && (Multibyte ? UTF8 : ASCII) &&
+          (!Multibyte || readsAsText(utf8Codes(Start, Cursor), Source::UTF8))) {
+        FoundString Found;
+        Found.Offset = static_cast<uint64_t>(Start - Begin);
+        Found.Bytes = static_cast<uint64_t>(Cursor - Start);
+        Found.Chars = Chars;
+        Found.Kind = Multibyte ? Encoding::UTF8 : Encoding::ASCII;
+        Found.Text.assign(reinterpret_cast<const char *>(Start), Found.Bytes);
+        Out.push_back(std::move(Found));
+      }
+      continue;
+    }
+    // A run UTF-8 does not read may be text in the legacy code page, where
+    // a pool of strings would hold one: after a NUL.  Random bytes decode
+    // in a double-byte code page most of the time, so starting anywhere
+    // else would read most data again from every byte.
+    if (!Legacy || Cursor == End || (Start != Begin && Start[-1]))
+      continue;
+    std::vector<uint32_t> Codes;
+    const uint8_t *Terminator = legacyString(*Legacy, Start, End, Codes);
+    if (!Terminator || Codes.size() < Options.MinChars ||
+        std::all_of(Codes.begin(), Codes.end(),
+                    [](uint32_t C) { return C < 0x80; }) ||
+        !readsAsText(Codes, Legacy->Kind == Decoder::SingleByte
+                                ? Source::SingleByte
+                                : Source::DoubleByte))
       continue;
     FoundString Found;
     Found.Offset = static_cast<uint64_t>(Start - Begin);
-    Found.Bytes = static_cast<uint64_t>(Cursor - Start);
-    Found.Chars = Chars;
-    Found.Kind = Multibyte ? Encoding::UTF8 : Encoding::ASCII;
-    Found.Text.assign(reinterpret_cast<const char *>(Start), Found.Bytes);
+    Found.Bytes = static_cast<uint64_t>(Terminator - Start);
+    Found.Chars = static_cast<unsigned>(Codes.size());
+    Found.Kind = LegacyKind;
+    appendUTF8(Found.Text, Codes);
     Out.push_back(std::move(Found));
+    Cursor = Terminator;
   }
-}
-
-template <unsigned Unit, bool BigEndian> uint32_t readUnit(const uint8_t *At) {
-  uint32_t Value = 0;
-  for (unsigned I = 0; I < Unit; ++I)
-    Value = Value << 8 | At[BigEndian ? I : Unit - 1 - I];
-  return Value;
-}
-
-/// The code point of the wide character at \p At and its length in bytes,
-/// or 0 for a unit that does not start a text character.
-template <unsigned Unit, bool BigEndian>
-unsigned decodeWide(const uint8_t *At, const uint8_t *End, uint32_t &Code) {
-  Code = readUnit<Unit, BigEndian>(At);
-  unsigned Used = Unit;
-  if (Unit == 2 && Code >= 0xd800 && Code <= 0xdbff) {
-    if (End - At < 4)
-      return 0;
-    const uint32_t Low = readUnit<Unit, BigEndian>(At + 2);
-    if (Low < 0xdc00 || Low > 0xdfff)
-      return 0;
-    Code = 0x10000 + ((Code - 0xd800) << 10) + (Low - 0xdc00);
-    Used = 4;
-  }
-  return wideText().contains(Code) ? Used : 0;
 }
 
 /// UTF-16 or UTF-32 strings ending in a zero unit, at multiples of the unit
-/// size.  At least half of a wide string's characters are printable ASCII:
-/// random 16-bit data decodes into the large ideograph blocks too often for
-/// other text to be told from it by the code points alone.
+/// size, that read as text (readsAsText).  Random 16-bit data decodes into
+/// the large ideograph blocks a third of the time, so a string mostly beyond
+/// ASCII also needs a zero unit before it, as in a pool of strings, and must
+/// not be ASCII read one byte off (every unit's low byte zero).
 template <unsigned Unit, bool BigEndian>
 void scanWideStrings(llvm::ArrayRef<uint8_t> Data, Encoding Kind,
                      unsigned MinChars, std::vector<FoundString> &Out) {
+  const WideTextSet &Text = wideText();
   const uint8_t *Begin = Data.data();
   const uint8_t *End = Begin + Data.size() / Unit * Unit;
   for (const uint8_t *Cursor = Begin; Cursor < End; Cursor += Unit) {
     const uint8_t *Start = Cursor;
-    unsigned Chars = 0, ASCIIChars = 0;
+    unsigned Chars = 0, ASCII = 0;
+    bool LowBytesZero = true;
     uint32_t Code = 0;
-    // Counted first; the text is decoded only for a string that is kept.
+    // Counted first; the text is decoded only for a candidate that ends.
     while (Cursor < End) {
       const unsigned Used = decodeWide<Unit, BigEndian>(Cursor, End, Code);
-      if (!Used)
+      if (!Used || !Text.contains(Code))
         break;
       ++Chars;
-      ASCIIChars += Code < 0x80;
+      ASCII += Code < 0x80;
+      LowBytesZero &= Code < 0x80 || (Code & 0xff) == 0;
       Cursor += Used;
     }
-    if (Cursor >= End || readUnit<Unit, BigEndian>(Cursor) ||
-        Chars < MinChars || ASCIIChars * 2 < Chars)
+    if (Cursor >= End || readUnit<Unit, BigEndian>(Cursor) || Chars < MinChars)
+      continue;
+    // Text mostly beyond ASCII also sits where a pool of strings puts it,
+    // after a zero unit, and is not ASCII read one byte off.
+    if (ASCII * 2 < Chars &&
+        (LowBytesZero ||
+         (Start != Begin && readUnit<Unit, BigEndian>(Start - Unit))))
+      continue;
+    std::vector<uint32_t> Codes;
+    Codes.reserve(Chars);
+    for (const uint8_t *At = Start; At < Cursor;) {
+      At += decodeWide<Unit, BigEndian>(At, End, Code);
+      Codes.push_back(Code);
+    }
+    if (!readsAsText(Codes, Source::Wide))
       continue;
     FoundString Found;
     Found.Offset = static_cast<uint64_t>(Start - Begin);
     Found.Bytes = static_cast<uint64_t>(Cursor - Start);
     Found.Chars = Chars;
     Found.Kind = Kind;
-    for (const uint8_t *At = Start; At < Cursor;) {
-      At += decodeWide<Unit, BigEndian>(At, End, Code);
-      appendUTF8(Found.Text, Code);
-    }
+    appendUTF8(Found.Text, Codes);
     Out.push_back(std::move(Found));
   }
 }
 
 } // namespace
-
-llvm::StringRef encodingName(Encoding E) {
-  const unsigned Index = static_cast<unsigned>(E);
-  return Index < std::size(Encodings) ? Encodings[Index].Name
-                                      : llvm::StringRef();
-}
-
-unsigned encodingUnitBytes(Encoding E) { return info(E).UnitBytes; }
-
-llvm::StringRef encodingSpelling(Encoding E) { return info(E).Spelling; }
-
-std::optional<Encoding> encodingNamed(llvm::StringRef Name) {
-  for (unsigned I = 0; I < std::size(Encodings); ++I)
-    if (Encodings[I].Name.equals_insensitive(Name))
-      return static_cast<Encoding>(I);
-  return std::nullopt;
-}
 
 void scan(llvm::ArrayRef<uint8_t> Data, const ScanOptions &Options,
           llvm::function_ref<void(FoundString &&)> Found) {
@@ -241,7 +188,17 @@ void scan(llvm::ArrayRef<uint8_t> Data, const ScanOptions &Options,
   std::vector<FoundString> All;
   ScanOptions Effective = Options;
   Effective.MinChars = MinChars;
-  scanCStrings(Data, Effective, All);
+  // The legacy code page searched, the first one the options name.
+  const EncodingInfo *Legacy = nullptr;
+  Encoding LegacyKind = Encoding::ASCII;
+  const auto Known = encodings();
+  for (unsigned I = 0; I < Known.size() && !Legacy; ++I)
+    if (Known[I].Kind != Decoder::Unicode &&
+        (Options.Encodings & encodingBit(static_cast<Encoding>(I)))) {
+      Legacy = &Known[I];
+      LegacyKind = static_cast<Encoding>(I);
+    }
+  scanCStrings(Data, Effective, Legacy, LegacyKind, All);
   const auto searched = [&](Encoding E) {
     return (Options.Encodings & encodingBit(E)) != 0;
   };
@@ -253,11 +210,16 @@ void scan(llvm::ArrayRef<uint8_t> Data, const ScanOptions &Options,
     scanWideStrings<4, false>(Data, Encoding::UTF32LE, MinChars, All);
   if (searched(Encoding::UTF32BE))
     scanWideStrings<4, true>(Data, Encoding::UTF32BE, MinChars, All);
-  // The first string to start keeps the bytes; at one offset, the longer.
-  std::sort(
-      All.begin(), All.end(), [](const FoundString &A, const FoundString &B) {
-        return A.Offset != B.Offset ? A.Offset < B.Offset : A.Bytes > B.Bytes;
-      });
+  // The first string to start keeps the bytes; at one offset, the longer,
+  // then the Unicode encoding.
+  std::sort(All.begin(), All.end(),
+            [](const FoundString &A, const FoundString &B) {
+              if (A.Offset != B.Offset)
+                return A.Offset < B.Offset;
+              if (A.Bytes != B.Bytes)
+                return A.Bytes > B.Bytes;
+              return A.Kind < B.Kind;
+            });
   uint64_t Free = 0;
   for (auto &String : All) {
     if (String.Offset < Free)

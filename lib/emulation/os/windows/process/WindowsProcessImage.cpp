@@ -229,7 +229,8 @@ public:
     return R && (R->Permissions & Required) == Required;
   }
 };
-template <class View> llvm::Error readTLS(const View &R, Image &Out) {
+template <class View>
+llvm::Error readTLS(const View &R, Image &Out, bool DeferredCallbacks = false) {
   if (!Out.TLSDirectory)
     return llvm::Error::success();
   auto Data = R.bytes(Out.TLSDirectory, sizeof(coff_tls_directory64), false);
@@ -295,9 +296,14 @@ template <class View> llvm::Error readTLS(const View &R, Image &Out) {
          Target % DWordSize) ||
         !RVA(Target, 1, llvm::COFF::IMAGE_SCN_MEM_EXECUTE))
       return failure(text::TLS);
-    auto Code = R.bytes(Target - Out.Base, 1, false);
-    if (!Code)
-      return Code.takeError();
+    // An earlier callback can materialize a later callback in executable
+    // zero-filled memory. The directory and pointer array must be file backed,
+    // but deferred execution judges the target's actual bytes when reached.
+    if (!DeferredCallbacks) {
+      auto Code = R.bytes(Target - Out.Base, 1, false);
+      if (!Code)
+        return Code.takeError();
+    }
   }
   return failure(text::TLS);
 }
@@ -430,9 +436,11 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
         !R.accessible(PE.AddressOfEntryPoint, 1,
                       llvm::COFF::IMAGE_SCN_MEM_EXECUTE))
       return failure(text::Image);
-    auto Entry = R.bytes(PE.AddressOfEntryPoint, 1);
-    if (!Entry)
-      return Entry.takeError();
+    if (!Deferred) {
+      auto Entry = R.bytes(PE.AddressOfEntryPoint, 1);
+      if (!Entry)
+        return Entry.takeError();
+    }
   }
   std::array<data_directory, MaxDirectories> Directories{};
   for (unsigned I = 0; I < PE.NumberOfRvaAndSize; ++I) {
@@ -547,7 +555,7 @@ llvm::Expected<Image> readImage(const std::filesystem::path &Path,
   if (auto E = readImports(R, Directories[llvm::COFF::IMPORT_TABLE], Out,
                            GuestImports, Deferred))
     return std::move(E);
-  if (auto E = readTLS(R, Out))
+  if (auto E = readTLS(R, Out, Deferred))
     return std::move(E);
   auto Exports = readPEProgramExports(
       R.Raw, {Budget.MetadataBytes, Budget.Records, MaxName});

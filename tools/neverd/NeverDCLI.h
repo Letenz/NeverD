@@ -61,6 +61,14 @@ enum PatchStrategy { SectionMode, InplaceMode };
 /// an actual enum type for their parser.
 enum class TranslateObjectContainer { ELF, MachO };
 
+/// Where `neverd xrefs` takes references from.
+enum class XrefSourceKind {
+  /// What each instruction states, as the GUI lists them.
+  Direct,
+  /// The constants of the analyzed IR.
+  IR
+};
+
 /// Preserve LLVM's distinction between a missing optional value (`--func`)
 /// and an explicitly empty one (`--func=`).  Options using ValueOptional need
 /// that distinction so their handlers can produce stable, domain-specific
@@ -110,6 +118,16 @@ public:
 private:
   neverd_session_t Sess;
 };
+
+/// Reads a hexadecimal address, with or without "0x".
+inline bool parseHexAddress(const std::string &Text, neverd_va_t &Addr) {
+  llvm::StringRef Ref(Text);
+  if (Ref.empty() || Ref.front() == '-')
+    return false;
+  if ((Ref.consume_front("0x") || Ref.consume_front("0X")) && Ref.empty())
+    return false;
+  return !Ref.getAsInteger(16, Addr);
+}
 
 inline std::string takeLastError(neverd_session_t Sess) {
   const char *Error = neverd_last_error(Sess);
@@ -275,15 +293,21 @@ extern llvm::cl::opt<sbf::RuntimePurpose> SBFPurpose;
 
 // Strings.
 extern llvm::cl::opt<unsigned> MinStrLen;
+extern llvm::cl::list<std::string> StringEncodings;
+extern llvm::cl::opt<std::string> StringCodePage;
+extern llvm::cl::opt<bool> StringRefs;
+extern llvm::cl::opt<std::string> StringFilter;
 
 // Xrefs.
 extern llvm::cl::opt<std::string> XrefAddr;
+extern llvm::cl::opt<XrefSourceKind> XrefSource;
 
 // Funcs / Disasm / Cfg / Hex.
 extern llvm::cl::opt<std::string> DisasmFunc;
 extern llvm::cl::opt<bool> DisasmAnnotate;
 extern llvm::cl::opt<std::string> HexAddr;
 extern llvm::cl::opt<unsigned> HexSize;
+extern llvm::cl::opt<std::string> HexTextEncoding;
 extern llvm::cl::opt<bool> CfgDot;
 extern llvm::cl::opt<std::string> CfgSvg;
 extern llvm::cl::opt<unsigned> SymbolicMaxPaths;

@@ -252,13 +252,15 @@ def run(executable):
         assert "mov rax, [rsp+8]" in join, join
         # Strings in every encoding the engine finds, under the classic forms.
         encodings = client.call("string_encodings")["payload"]["items"]
-        assert [e["name"] for e in encodings] == ["ascii", "utf-8", "utf-16le"], encodings
+        assert [e["name"] for e in encodings] == ["ascii", "utf-8", "utf-16le", "gbk", "big5"], encodings
+        assert [e.get("legacy", False) for e in encodings] == [False, False, False, True, True], encodings
         options = client.call("string_options")["payload"]
         assert options == {"encodings": ["ascii", "utf-8", "utf-16le"], "min_length": 4}, options
         rodata = [" ".join(line["text"].split()) for line in client.call(
             "listing", {"address": "0xffff800012343100", "before": 0, "after": 12})["payload"]["lines"]]
-        assert "asc_FFFF800012343100 db '\u4e2d\u6587',0" in rodata, rodata
-        assert "aWide:" in rodata and "text \"UTF-16LE\", 'Wide',0" in rodata, rodata
+        assert any(line.startswith("asc_FFFF800012343100 db '\u4e2d\u6587',0") for line in rodata), rodata
+        assert any(line.startswith("aWide:") for line in rodata), rodata
+        assert "text \"UTF-16LE\", 'Wide',0" in rodata, rodata
         types = {row["text"]: row["type"] for row in client.call("strings", {"filter": ""})["payload"]["items"]}
         assert types.get("Wide") == "UTF-16LE" and types.get("\u4e2d\u6587") == "UTF-8", types
         assert client.call("string_options", {"encodings": ["ascii", "utf-8"]})["payload"]["encodings"] == ["ascii", "utf-8"]
@@ -266,6 +268,39 @@ def run(executable):
             "listing", {"address": "0xffff800012343100", "before": 0, "after": 12})["payload"]["lines"]]
         assert not any("UTF-16LE" in text for text in rodata), rodata
         assert client.call("string_options", {"encodings": ["ebcdic"]})["error"]["code"] == "unsupported_encoding"
+        client.call("string_options", {"encodings": ["ascii", "utf-8", "utf-16le"]})
+        # Hex views ask for bytes as text in an encoding, a cell per byte.
+        bytes_ = client.call("bytes", {"address": "0xffff800012343000", "size": 4, "text_encoding": "ascii"})["payload"]
+        assert len(bytes_["cells"]) == 4, bytes_
+        assert client.call("bytes", {"address": "0xffff800012343000", "size": 4,
+                                     "text_encoding": "klingon"})["error"]["code"] == "unsupported_encoding"
+        assert "string_references" in client.hello["capabilities"]
+        # Instructions that refer to strings, directly or through a slot.
+        refs = client.call("string_references")["payload"]
+        rows = {(row["address"], row["text"], row["type"], row.get("via")) for row in refs["items"]}
+        assert refs["total"] == 2, refs
+        assert ("0xffff800012340072", "\u4e2d\u6587", "UTF-8", None) in rows, refs
+        assert ("0xffff800012340073", "Wide", "UTF-16LE", "0xffff800012343038") in rows, refs
+        assert all(row["function"] == "function_7" for row in refs["items"]), refs
+        assert client.call("string_references", {"filter": "WIDE"})["payload"]["total"] == 1
+        assert client.call("string_references", {"filter": "340073"})["payload"]["total"] == 1
+        assert client.call("string_references", {"sort": "size"})["error"]["code"] == "invalid_request"
+        by_text = client.call("string_references", {"sort": "text", "descending": True})["payload"]["items"]
+        assert [row["text"] for row in by_text] == ["\u4e2d\u6587", "Wide"], by_text
+        # A reference into a string reads it from the first whole character
+        # on, once that is long enough to be a string itself.
+        client.call("string_options", {"encodings": ["ascii", "utf-8", "utf-16le"], "min_length": 1})
+        tails = client.call("string_references")["payload"]
+        rows = {(row["address"], row["string_address"], row["text"]) for row in tails["items"]}
+        assert tails["total"] == 4, tails
+        assert ("0xffff800012340074", "0xffff800012343103", "\u6587") in rows, tails
+        assert ("0xffff800012340075", "0xffff80001234310b", "de") in rows, tails
+        # Code pages read the same bytes differently; one is searched.
+        assert client.call("string_options", {"encodings": ["gbk", "big5"]})["error"]["code"] == "invalid_request"
+        client.call("string_options", {"encodings": ["ascii", "utf-8", "utf-16le"], "min_length": 4})
+        # The strings filter also matches addresses and types.
+        assert client.call("strings", {"filter": "343108"})["payload"]["total"] == 1
+        assert client.call("strings", {"filter": "utf-16"})["payload"]["total"] == 1
         # IR constant references require whole-program analysis.
         assert client.call("xrefs", {"address": BASE, "source": "ir"})["payload"]["items"][0]["address"] == "0xffff800012340008"
         client.close()

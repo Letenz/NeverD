@@ -123,7 +123,14 @@ int runExport(neverd_session_t Sess) {
     } else if (ExportFmt == FmtExports) {
       Json = neverd_exports_json(Sess);
     } else if (ExportFmt == FmtStrings) {
-      Json = neverd_strings_json(Sess, 4);
+      // The strings `neverd strings` lists by default: ASCII, UTF-8 and
+      // UTF-16LE, with each one's encoding.
+      Json = neverd_strings_ex_json(Sess, nullptr);
+      if (!Json) {
+        WithColor::error() << "string export failed: " << takeLastError(Sess)
+                           << "\n";
+        return 1;
+      }
     } else if (ExportFmt == FmtObjCMethods ||
                ExportFmt == FmtObjCMethodsSummary) {
       Json = ExportFmt == FmtObjCMethods
