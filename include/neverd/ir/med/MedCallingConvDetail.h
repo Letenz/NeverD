@@ -31,6 +31,16 @@ ValueSet computeForwardValueClosure(
 uint16_t findFirstUseSize(const MedFunc &Func, uint64_t ParamRegOff,
                           const TargetRegInfo &TRI);
 
+/// True for an entry-block self-copy of \p RegOff, which declares the
+/// register's incoming value.
+bool isEntryLiveInCopy(const MedOp &Op, uint64_t RegOff);
+
+/// True for an entry live-in copy whose output is a new version, so the
+/// incoming value it reads is a separate SSA value with uses of its own.
+bool isRenamedEntryLiveInCopy(const MedOp &Op, uint64_t RegOff);
+
+/// An i386 parameter register whose live-in value only feeds scratch idioms
+/// (MedCallingConvX86.cpp).
 bool liveInOnlyFeedsScratch(const MedFunc &Func, uint64_t ParamRegOff);
 
 } // namespace neverd::med_calling_conv_detail

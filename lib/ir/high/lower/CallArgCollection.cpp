@@ -981,8 +981,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
       return Collected;
     size_t N = 0;
     if (const std::optional<size_t> Count =
-            Policy && Policy->PrototypeArgCount
-                ? Policy->PrototypeArgCount(Name)
+            Convention && Convention->PrototypeArgCount
+                ? Convention->PrototypeArgCount(Name)
                 : std::nullopt) {
       // A platform prototype fixes the stack arguments too: outgoing-area
       // stores for a later call are not arguments of this one.

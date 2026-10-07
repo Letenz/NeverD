@@ -13,9 +13,20 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 
 namespace neverd {
+
+namespace {
+/// A WDK prototype fixes a kernel routine's argument count.
+std::optional<size_t> wdkPrototypeArgCount(llvm::StringRef Name) {
+  if (const libc::WindowsKernelPrototype *Proto =
+          libc::windowsKernelPrototype(Name))
+    return Proto->ArgCount;
+  return std::nullopt;
+}
+} // namespace
 
 extern const CallArgumentConvention Win64CallArguments;
 const CallArgumentConvention Win64CallArguments = {
@@ -27,6 +38,8 @@ const CallArgumentConvention Win64CallArguments = {
     .StackArgumentSummary = true,
     .PositionalArgumentSlots = true,
     .ReservedOutgoingArea = true,
+    .ParametersFromIncomingReads = true,
+    .PrototypeArgCount = wdkPrototypeArgCount,
 };
 
 } // namespace neverd

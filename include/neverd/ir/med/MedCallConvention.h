@@ -24,7 +24,11 @@
 
 #include "neverd/Common.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/StringRef.h"
+
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -82,7 +86,23 @@ struct CallArgumentConvention {
   /// stack: it has no register save area, and its named parameters are all
   /// stack parameters.
   bool StackOnlyVariadicCallees = false;
+  /// A function's register parameters are the argument registers whose
+  /// incoming bytes it reads: those its entry-read summary lists when it has
+  /// one, since every caller passes exactly those, else those whose incoming
+  /// value reaches a use (a call to a summarized callee reads its arguments).
+  bool ParametersFromIncomingReads = false;
+  /// Register arguments fill the argument registers in order with no gap
+  /// (regparm), so a live register after an unread one is not an argument.
+  bool RegisterArgumentsFillInOrder = false;
+  /// The argument count a platform prototype gives a named function (the
+  /// WDK's, for Windows kernel routines), or nullopt.
+  std::optional<size_t> (*PrototypeArgCount)(llvm::StringRef Name) = nullptr;
 };
+
+/// The calling convention MedIR records for code of \p A in a \p F image, or
+/// nullopt where it leaves the function's convention as detected later
+/// (i386 cdecl).
+std::optional<CallingConv> callingConventionOf(Arch A, BinaryFormat F);
 
 /// The convention of code for \p A in a \p F image, or nullptr when NeverD
 /// has no entry for it.  An entry for that exact format wins over one for

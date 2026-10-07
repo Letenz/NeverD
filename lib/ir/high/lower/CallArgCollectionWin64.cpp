@@ -16,7 +16,6 @@
 
 #include "CallArgCollectionDetail.h"
 
-#include "neverd/libc/LibCNames.h"
 
 #include <algorithm>
 #include <functional>
@@ -265,14 +264,6 @@ void fillUnwrittenParams(CallArgContext &C, size_t HintedCount, bool SelfCall,
   }
 }
 
-/// A WDK prototype fixes a kernel routine's argument count.
-std::optional<size_t> prototypeArgCount(llvm::StringRef Name) {
-  if (const libc::WindowsKernelPrototype *Proto =
-          libc::windowsKernelPrototype(Name))
-    return Proto->ArgCount;
-  return std::nullopt;
-}
-
 /// A scanned parameter copy can still be the argument where the source
 /// binding's CALL input was clobbered.  An IAT binding can also be short
 /// (`Concatenate` with only dest+a+na): keep recovered r9 / [rsp+20h] that
@@ -305,7 +296,6 @@ const CallArgPolicy Win64CallArgPolicy = {
     .ResolvePassThroughParams = resolvePassThroughParams,
     .FillUnwrittenParams = fillUnwrittenParams,
     .RecursiveCallsPassOwnSignature = true,
-    .PrototypeArgCount = prototypeArgCount,
     .MergeScannedArgs = mergeScannedArgs,
 };
 

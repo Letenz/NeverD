@@ -644,4 +644,292 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
     }
 }
 
+namespace med_calling_conv_detail {
+
+/// An i386 parameter register can look "live-in" purely because the body uses
+/// it as scratch in a way that reads its incoming bits — never because it
+/// receives an argument.  Two idioms produce that false signal:
+///   * a partial sub-register write (`setne %cl`, `mov %cx,..`) merges the
+///     register's old upper bits (`(reg & 0xFFFFFF00) | new_low`);
+///   * BSR/BSF model their architecturally-undefined zero-source destination as
+///     the preserved old value (`SELECT(src==0, old_dst, computed)`), so the
+///     first such instruction reads the register's incoming value.
+/// Returns true when the register's live-in value (and everything transitively
+/// copied from it) is consumed ONLY by those scratch idioms and never as a
+/// genuine value, so it must not be recovered as a parameter (doing so injects
+/// a phantom leading argument that shifts every real stack argument).
+bool liveInOnlyFeedsScratch(const MedFunc &Func, uint64_t ParamRegOff) {
+  if (Func.Blocks.empty())
+    return false;
+
+  llvm::DenseMap<med_calling_conv_detail::ValueKey, const MedOp *> Definitions;
+  for (const MedBlock &Block : Func.Blocks)
+    for (const MedOp &Op : Block.Ops)
+      if (!Op.Output.isConst())
+        Definitions.try_emplace(med_calling_conv_detail::valueKey(Op.Output),
+                                &Op);
+  auto findDef = [&](const MedVar &V) -> const MedOp * {
+    if (V.isConst())
+      return nullptr;
+    auto It = Definitions.find(med_calling_conv_detail::valueKey(V));
+    return It == Definitions.end() ? nullptr : It->second;
+  };
+
+  // Seed the taint set with the entry-block live-in self-copies of the
+  // register.
+  llvm::SmallVector<MedVar, 2> Seeds;
+  for (const auto &Op : Func.Blocks[0].Ops) {
+    if (Op.Opcode != NdOp::COPY || Op.NumInputs < 1)
+      continue;
+    if (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == ParamRegOff &&
+        Op.Inputs[0].Kind == MedVar::Reg && Op.Inputs[0].Id == Op.Output.Id) {
+      Seeds.push_back(Op.Output);
+      if (isRenamedEntryLiveInCopy(Op, ParamRegOff))
+        Seeds.push_back(Op.Inputs[0]);
+    }
+  }
+  if (Seeds.empty())
+    return false; // no identifiable live-in value: keep existing behavior
+
+  // The BSR/BSF zero-source preserve `SELECT(src==0, old_dst, computed)` reads
+  // the register only as `old_dst` (input 1); `computed` is `(bits-1) -
+  // LZCOUNT`. Matching that shape (not an arbitrary cmov) keeps a genuine
+  // `cond?reg:y` parameter use out of the scratch bucket.
+  auto isBsrBsfPreserve = [&](const MedOp &Op, int TaintedIdx) {
+    if (Op.Opcode != NdOp::SELECT || Op.NumInputs != 3 || TaintedIdx != 1)
+      return false;
+    const MedOp *Comp = findDef(Op.Inputs[2]);
+    if (!Comp || Comp->Opcode != NdOp::INT_SUB || Comp->NumInputs < 2)
+      return false;
+    const MedOp *Lz = findDef(Comp->Inputs[1]);
+    return Lz && Lz->Opcode == NdOp::LZCOUNT;
+  };
+
+  // Track the exact incoming bits that survive each lane view/splice.  Clang
+  // commonly lowers consecutive CH/CL writes as
+  //
+  //   SUBBYTES old_ecx, 0/2; CONCAT ...; COPY new_ecx
+  //
+  // rather than as an AND/OR mask.  Boolean taint would call the first
+  // CONCAT a genuine use, even when every surviving incoming lane is later
+  // discarded.  A bit mask distinguishes that scratch reconstruction from a
+  // real regparm use of the preserved upper bytes.
+  auto widthMask = [](uint16_t Size) -> std::optional<uint64_t> {
+    if (Size == 0 || Size > sizeof(uint64_t))
+      return std::nullopt;
+    const unsigned Bits = static_cast<unsigned>(Size) * 8;
+    return Bits == 64 ? ~uint64_t{0} : (uint64_t{1} << Bits) - 1;
+  };
+
+  uint16_t ParamWidth = 0;
+  for (const MedVar &Seed : Seeds)
+    ParamWidth = std::max(ParamWidth, Seed.Size);
+  if (ParamWidth == 0 || ParamWidth > sizeof(uint64_t))
+    return false;
+
+  struct TaintUse {
+    const MedOp *Op = nullptr;
+    const PhiNode *Phi = nullptr;
+  };
+  llvm::DenseMap<med_calling_conv_detail::ValueKey,
+                 llvm::SmallVector<TaintUse, 4>>
+      Uses;
+  for (const MedBlock &Block : Func.Blocks) {
+    for (const PhiNode &Phi : Block.Phis)
+      for (const auto &[Pred, Arg] : Phi.Args) {
+        (void)Pred;
+        if (!Arg.isConst())
+          Uses[med_calling_conv_detail::valueKey(Arg)].push_back(
+              {nullptr, &Phi});
+      }
+    for (const MedOp &Op : Block.Ops)
+      for (uint8_t I = 0; I < Op.NumInputs; ++I)
+        if (!Op.Inputs[I].isConst())
+          Uses[med_calling_conv_detail::valueKey(Op.Inputs[I])].push_back(
+              {&Op, nullptr});
+  }
+
+  llvm::DenseMap<med_calling_conv_detail::ValueKey, uint64_t> TaintMasks;
+  llvm::SmallVector<med_calling_conv_detail::ValueKey, 32> Worklist;
+  auto taintMask = [&](const MedVar &V) -> uint64_t {
+    if (V.isConst())
+      return 0;
+    auto It = TaintMasks.find(med_calling_conv_detail::valueKey(V));
+    return It == TaintMasks.end() ? 0 : It->second;
+  };
+  const TargetRegInfo &TRI = getTargetRegInfo(Arch::X86);
+  auto isScratchTransport = [&](const MedVar &V) {
+    if (V.Kind == MedVar::Temp)
+      return true;
+    if (V.Kind != MedVar::Reg || V.Size == 0 || V.Size > sizeof(uint64_t))
+      return false;
+    const uint64_t End = V.RegOff + V.Size;
+    if (End < V.RegOff)
+      return false;
+    const auto [WideReg, WideSize] = TRI.findWideReg(V.RegOff, V.Size);
+    (void)WideSize;
+    // Transport through an ordinary scratch register remains internal until a
+    // later use proves otherwise.  Crossing into a frame register, the return
+    // register, or the other regparm slot is already ABI-observable and must
+    // keep the incoming parameter.  Permit the queried register itself even
+    // when it aliases i386's secondary integer-return register.
+    if (TRI.isFrameReg(WideReg) ||
+        (WideReg != ParamRegOff && TRI.isReturnReg(WideReg)))
+      return false;
+    for (uint64_t OtherParam : TRI.IntParamRegs) {
+      if (OtherParam == ParamRegOff)
+        continue;
+      const uint64_t OtherEnd = OtherParam + ParamWidth;
+      if (V.RegOff < OtherEnd && OtherParam < End)
+        return false;
+    }
+    return true;
+  };
+  bool InvalidTransport = false;
+  auto addTaint = [&](const MedVar &Output, uint64_t Mask) {
+    std::optional<uint64_t> OutputMask = widthMask(Output.Size);
+    if (!OutputMask || !isScratchTransport(Output)) {
+      InvalidTransport = Mask != 0;
+      return;
+    }
+    Mask &= *OutputMask;
+    if (Mask == 0)
+      return;
+    uint64_t &Known = TaintMasks[med_calling_conv_detail::valueKey(Output)];
+    const uint64_t Added = Mask & ~Known;
+    Known |= Mask;
+    if (Added != 0)
+      Worklist.push_back(med_calling_conv_detail::valueKey(Output));
+  };
+  for (const MedVar &Seed : Seeds) {
+    std::optional<uint64_t> Mask = widthMask(Seed.Size);
+    if (!Mask)
+      return false;
+    addTaint(Seed, *Mask);
+    if (InvalidTransport)
+      return false;
+  }
+
+  auto propagateOp = [&](const MedOp &Op) {
+    llvm::SmallVector<uint64_t, 6> InputMasks(Op.NumInputs, 0);
+    bool HasTaint = false;
+    for (uint8_t I = 0; I < Op.NumInputs; ++I) {
+      InputMasks[I] = taintMask(Op.Inputs[I]);
+      HasTaint |= InputMasks[I] != 0;
+    }
+    if (!HasTaint)
+      return true;
+
+    // BSR/BSF's old-destination operand is architecturally undefined when
+    // selected.  It must not make a scratch destination into an argument.
+    if (isBsrBsfPreserve(Op, 1)) {
+      bool OnlyPreservedDestination = InputMasks[1] != 0;
+      for (uint8_t I = 0; I < Op.NumInputs; ++I)
+        if (I != 1)
+          OnlyPreservedDestination &= InputMasks[I] == 0;
+      if (OnlyPreservedDestination)
+        return true;
+    }
+
+    uint64_t OutputTaint = 0;
+    switch (Op.Opcode) {
+    case NdOp::COPY:
+      if (Op.NumInputs != 1)
+        return false;
+      OutputTaint = InputMasks[0];
+      break;
+    case NdOp::INT_ZEXT:
+      if (Op.NumInputs != 1)
+        return false;
+      OutputTaint = InputMasks[0];
+      break;
+    case NdOp::INT_SEXT: {
+      if (Op.NumInputs != 1 || Op.Inputs[0].Size == 0 ||
+          Op.Inputs[0].Size > sizeof(uint64_t))
+        return false;
+      OutputTaint = InputMasks[0];
+      const unsigned SignBit = static_cast<unsigned>(Op.Inputs[0].Size) * 8 - 1;
+      std::optional<uint64_t> OutputMask = widthMask(Op.Output.Size);
+      if (!OutputMask)
+        return false;
+      if (OutputTaint & (uint64_t{1} << SignBit))
+        OutputTaint |= *OutputMask & (~uint64_t{0} << SignBit);
+      break;
+    }
+    case NdOp::SUBBYTES: {
+      if (Op.NumInputs < 2 || Op.Inputs[1].Kind != MedVar::Const)
+        return false;
+      const uint64_t Offset = Op.Inputs[1].ConstVal;
+      OutputTaint =
+          Offset >= sizeof(uint64_t) ? 0 : InputMasks[0] >> (Offset * 8);
+      break;
+    }
+    case NdOp::CONCAT: {
+      if (Op.NumInputs != 2 || Op.Inputs[1].Size == 0 ||
+          Op.Inputs[1].Size > sizeof(uint64_t))
+        return false;
+      const unsigned LowBits = static_cast<unsigned>(Op.Inputs[1].Size) * 8;
+      if (LowBits == 64 && InputMasks[0] != 0)
+        return false;
+      OutputTaint = InputMasks[1];
+      if (LowBits < 64)
+        OutputTaint |= InputMasks[0] << LowBits;
+      break;
+    }
+    case NdOp::INT_AND: {
+      if (Op.NumInputs != 2)
+        return false;
+      const int ConstIdx = Op.Inputs[0].Kind == MedVar::Const
+                               ? 0
+                               : (Op.Inputs[1].Kind == MedVar::Const ? 1 : -1);
+      if (ConstIdx < 0)
+        return false;
+      OutputTaint =
+          InputMasks[ConstIdx == 0 ? 1 : 0] & Op.Inputs[ConstIdx].ConstVal;
+      break;
+    }
+    case NdOp::INT_OR:
+      if (Op.NumInputs != 2)
+        return false;
+      OutputTaint = InputMasks[0] | InputMasks[1];
+      if (Op.Inputs[0].Kind == MedVar::Const)
+        OutputTaint = InputMasks[1] & ~Op.Inputs[0].ConstVal;
+      else if (Op.Inputs[1].Kind == MedVar::Const)
+        OutputTaint = InputMasks[0] & ~Op.Inputs[1].ConstVal;
+      break;
+    default:
+      return false; // a genuine consumer: keep the register parameter
+    }
+
+    addTaint(Op.Output, OutputTaint);
+    return !InvalidTransport;
+  };
+
+  while (!Worklist.empty()) {
+    const med_calling_conv_detail::ValueKey Changed = Worklist.pop_back_val();
+    auto UsesIt = Uses.find(Changed);
+    if (UsesIt == Uses.end())
+      continue;
+    for (const TaintUse &Use : UsesIt->second) {
+      if (Use.Phi) {
+        uint64_t Mask = 0;
+        for (const auto &[Pred, Arg] : Use.Phi->Args) {
+          (void)Pred;
+          Mask |= taintMask(Arg);
+        }
+        addTaint(Use.Phi->Output, Mask);
+        if (InvalidTransport)
+          return false;
+        continue;
+      }
+      if (!propagateOp(*Use.Op))
+        return false;
+    }
+  }
+
+  return true; // all surviving incoming lanes feed scratch reconstruction only
+}
+
+} // namespace med_calling_conv_detail
+
 } // namespace neverd

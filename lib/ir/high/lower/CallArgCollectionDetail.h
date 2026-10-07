@@ -164,8 +164,6 @@ struct CallArgPolicy {
   /// A recursive call passes exactly the parameters of the signature it
   /// calls.
   bool RecursiveCallsPassOwnSignature = false;
-  /// The argument count a platform prototype gives a named callee.
-  std::optional<size_t> (*PrototypeArgCount)(llvm::StringRef Name) = nullptr;
   /// Merge scanned arguments into those a source binding names.
   void (*MergeScannedArgs)(CallArgContext &C,
                            std::vector<ExprPtr> &Hinted) = nullptr;

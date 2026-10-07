@@ -20,6 +20,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedCallingConvDetail.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/support/Diagnostic.h"
@@ -49,7 +50,11 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch);
 void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
                     BinaryFormat Fmt);
 
-namespace {
+using med_calling_conv_detail::isEntryLiveInCopy;
+using med_calling_conv_detail::isRenamedEntryLiveInCopy;
+
+namespace med_calling_conv_detail {
+ValueKey valueKey(const MedVar &V) { return {V.Kind, V.Id, V.SSAVer}; }
 
 /// True for an entry-block self-copy of \p RegOff, which declares the
 /// register's incoming value.  The copy takes a new version (`COPY R8.1 =
@@ -68,11 +73,6 @@ bool isEntryLiveInCopy(const MedOp &Op, uint64_t RegOff) {
 bool isRenamedEntryLiveInCopy(const MedOp &Op, uint64_t RegOff) {
   return isEntryLiveInCopy(Op, RegOff) && Op.Output.SSAVer != 0;
 }
-
-} // namespace
-
-namespace med_calling_conv_detail {
-ValueKey valueKey(const MedVar &V) { return {V.Kind, V.Id, V.SSAVer}; }
 
 bool containsValue(const ValueSet &Values, const MedVar &V) {
   return !V.isConst() && Values.contains(valueKey(V));
@@ -257,294 +257,6 @@ uint16_t findFirstUseSize(const MedFunc &Func, uint64_t ParamRegOff,
 
 } // namespace med_calling_conv_detail
 
-namespace med_calling_conv_detail {
-
-/// An i386 parameter register can look "live-in" purely because the body uses
-/// it as scratch in a way that reads its incoming bits — never because it
-/// receives an argument.  Two idioms produce that false signal:
-///   * a partial sub-register write (`setne %cl`, `mov %cx,..`) merges the
-///     register's old upper bits (`(reg & 0xFFFFFF00) | new_low`);
-///   * BSR/BSF model their architecturally-undefined zero-source destination as
-///     the preserved old value (`SELECT(src==0, old_dst, computed)`), so the
-///     first such instruction reads the register's incoming value.
-/// Returns true when the register's live-in value (and everything transitively
-/// copied from it) is consumed ONLY by those scratch idioms and never as a
-/// genuine value, so it must not be recovered as a parameter (doing so injects
-/// a phantom leading argument that shifts every real stack argument).
-bool liveInOnlyFeedsScratch(const MedFunc &Func, uint64_t ParamRegOff) {
-  if (Func.Blocks.empty())
-    return false;
-
-  llvm::DenseMap<med_calling_conv_detail::ValueKey, const MedOp *> Definitions;
-  for (const MedBlock &Block : Func.Blocks)
-    for (const MedOp &Op : Block.Ops)
-      if (!Op.Output.isConst())
-        Definitions.try_emplace(med_calling_conv_detail::valueKey(Op.Output),
-                                &Op);
-  auto findDef = [&](const MedVar &V) -> const MedOp * {
-    if (V.isConst())
-      return nullptr;
-    auto It = Definitions.find(med_calling_conv_detail::valueKey(V));
-    return It == Definitions.end() ? nullptr : It->second;
-  };
-
-  // Seed the taint set with the entry-block live-in self-copies of the
-  // register.
-  llvm::SmallVector<MedVar, 2> Seeds;
-  for (const auto &Op : Func.Blocks[0].Ops) {
-    if (Op.Opcode != NdOp::COPY || Op.NumInputs < 1)
-      continue;
-    if (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == ParamRegOff &&
-        Op.Inputs[0].Kind == MedVar::Reg && Op.Inputs[0].Id == Op.Output.Id) {
-      Seeds.push_back(Op.Output);
-      if (isRenamedEntryLiveInCopy(Op, ParamRegOff))
-        Seeds.push_back(Op.Inputs[0]);
-    }
-  }
-  if (Seeds.empty())
-    return false; // no identifiable live-in value: keep existing behavior
-
-  // The BSR/BSF zero-source preserve `SELECT(src==0, old_dst, computed)` reads
-  // the register only as `old_dst` (input 1); `computed` is `(bits-1) -
-  // LZCOUNT`. Matching that shape (not an arbitrary cmov) keeps a genuine
-  // `cond?reg:y` parameter use out of the scratch bucket.
-  auto isBsrBsfPreserve = [&](const MedOp &Op, int TaintedIdx) {
-    if (Op.Opcode != NdOp::SELECT || Op.NumInputs != 3 || TaintedIdx != 1)
-      return false;
-    const MedOp *Comp = findDef(Op.Inputs[2]);
-    if (!Comp || Comp->Opcode != NdOp::INT_SUB || Comp->NumInputs < 2)
-      return false;
-    const MedOp *Lz = findDef(Comp->Inputs[1]);
-    return Lz && Lz->Opcode == NdOp::LZCOUNT;
-  };
-
-  // Track the exact incoming bits that survive each lane view/splice.  Clang
-  // commonly lowers consecutive CH/CL writes as
-  //
-  //   SUBBYTES old_ecx, 0/2; CONCAT ...; COPY new_ecx
-  //
-  // rather than as an AND/OR mask.  Boolean taint would call the first
-  // CONCAT a genuine use, even when every surviving incoming lane is later
-  // discarded.  A bit mask distinguishes that scratch reconstruction from a
-  // real regparm use of the preserved upper bytes.
-  auto widthMask = [](uint16_t Size) -> std::optional<uint64_t> {
-    if (Size == 0 || Size > sizeof(uint64_t))
-      return std::nullopt;
-    const unsigned Bits = static_cast<unsigned>(Size) * 8;
-    return Bits == 64 ? ~uint64_t{0} : (uint64_t{1} << Bits) - 1;
-  };
-
-  uint16_t ParamWidth = 0;
-  for (const MedVar &Seed : Seeds)
-    ParamWidth = std::max(ParamWidth, Seed.Size);
-  if (ParamWidth == 0 || ParamWidth > sizeof(uint64_t))
-    return false;
-
-  struct TaintUse {
-    const MedOp *Op = nullptr;
-    const PhiNode *Phi = nullptr;
-  };
-  llvm::DenseMap<med_calling_conv_detail::ValueKey,
-                 llvm::SmallVector<TaintUse, 4>>
-      Uses;
-  for (const MedBlock &Block : Func.Blocks) {
-    for (const PhiNode &Phi : Block.Phis)
-      for (const auto &[Pred, Arg] : Phi.Args) {
-        (void)Pred;
-        if (!Arg.isConst())
-          Uses[med_calling_conv_detail::valueKey(Arg)].push_back(
-              {nullptr, &Phi});
-      }
-    for (const MedOp &Op : Block.Ops)
-      for (uint8_t I = 0; I < Op.NumInputs; ++I)
-        if (!Op.Inputs[I].isConst())
-          Uses[med_calling_conv_detail::valueKey(Op.Inputs[I])].push_back(
-              {&Op, nullptr});
-  }
-
-  llvm::DenseMap<med_calling_conv_detail::ValueKey, uint64_t> TaintMasks;
-  llvm::SmallVector<med_calling_conv_detail::ValueKey, 32> Worklist;
-  auto taintMask = [&](const MedVar &V) -> uint64_t {
-    if (V.isConst())
-      return 0;
-    auto It = TaintMasks.find(med_calling_conv_detail::valueKey(V));
-    return It == TaintMasks.end() ? 0 : It->second;
-  };
-  const TargetRegInfo &TRI = getTargetRegInfo(Arch::X86);
-  auto isScratchTransport = [&](const MedVar &V) {
-    if (V.Kind == MedVar::Temp)
-      return true;
-    if (V.Kind != MedVar::Reg || V.Size == 0 || V.Size > sizeof(uint64_t))
-      return false;
-    const uint64_t End = V.RegOff + V.Size;
-    if (End < V.RegOff)
-      return false;
-    const auto [WideReg, WideSize] = TRI.findWideReg(V.RegOff, V.Size);
-    (void)WideSize;
-    // Transport through an ordinary scratch register remains internal until a
-    // later use proves otherwise.  Crossing into a frame register, the return
-    // register, or the other regparm slot is already ABI-observable and must
-    // keep the incoming parameter.  Permit the queried register itself even
-    // when it aliases i386's secondary integer-return register.
-    if (TRI.isFrameReg(WideReg) ||
-        (WideReg != ParamRegOff && TRI.isReturnReg(WideReg)))
-      return false;
-    for (uint64_t OtherParam : TRI.IntParamRegs) {
-      if (OtherParam == ParamRegOff)
-        continue;
-      const uint64_t OtherEnd = OtherParam + ParamWidth;
-      if (V.RegOff < OtherEnd && OtherParam < End)
-        return false;
-    }
-    return true;
-  };
-  bool InvalidTransport = false;
-  auto addTaint = [&](const MedVar &Output, uint64_t Mask) {
-    std::optional<uint64_t> OutputMask = widthMask(Output.Size);
-    if (!OutputMask || !isScratchTransport(Output)) {
-      InvalidTransport = Mask != 0;
-      return;
-    }
-    Mask &= *OutputMask;
-    if (Mask == 0)
-      return;
-    uint64_t &Known = TaintMasks[med_calling_conv_detail::valueKey(Output)];
-    const uint64_t Added = Mask & ~Known;
-    Known |= Mask;
-    if (Added != 0)
-      Worklist.push_back(med_calling_conv_detail::valueKey(Output));
-  };
-  for (const MedVar &Seed : Seeds) {
-    std::optional<uint64_t> Mask = widthMask(Seed.Size);
-    if (!Mask)
-      return false;
-    addTaint(Seed, *Mask);
-    if (InvalidTransport)
-      return false;
-  }
-
-  auto propagateOp = [&](const MedOp &Op) {
-    llvm::SmallVector<uint64_t, 6> InputMasks(Op.NumInputs, 0);
-    bool HasTaint = false;
-    for (uint8_t I = 0; I < Op.NumInputs; ++I) {
-      InputMasks[I] = taintMask(Op.Inputs[I]);
-      HasTaint |= InputMasks[I] != 0;
-    }
-    if (!HasTaint)
-      return true;
-
-    // BSR/BSF's old-destination operand is architecturally undefined when
-    // selected.  It must not make a scratch destination into an argument.
-    if (isBsrBsfPreserve(Op, 1)) {
-      bool OnlyPreservedDestination = InputMasks[1] != 0;
-      for (uint8_t I = 0; I < Op.NumInputs; ++I)
-        if (I != 1)
-          OnlyPreservedDestination &= InputMasks[I] == 0;
-      if (OnlyPreservedDestination)
-        return true;
-    }
-
-    uint64_t OutputTaint = 0;
-    switch (Op.Opcode) {
-    case NdOp::COPY:
-      if (Op.NumInputs != 1)
-        return false;
-      OutputTaint = InputMasks[0];
-      break;
-    case NdOp::INT_ZEXT:
-      if (Op.NumInputs != 1)
-        return false;
-      OutputTaint = InputMasks[0];
-      break;
-    case NdOp::INT_SEXT: {
-      if (Op.NumInputs != 1 || Op.Inputs[0].Size == 0 ||
-          Op.Inputs[0].Size > sizeof(uint64_t))
-        return false;
-      OutputTaint = InputMasks[0];
-      const unsigned SignBit = static_cast<unsigned>(Op.Inputs[0].Size) * 8 - 1;
-      std::optional<uint64_t> OutputMask = widthMask(Op.Output.Size);
-      if (!OutputMask)
-        return false;
-      if (OutputTaint & (uint64_t{1} << SignBit))
-        OutputTaint |= *OutputMask & (~uint64_t{0} << SignBit);
-      break;
-    }
-    case NdOp::SUBBYTES: {
-      if (Op.NumInputs < 2 || Op.Inputs[1].Kind != MedVar::Const)
-        return false;
-      const uint64_t Offset = Op.Inputs[1].ConstVal;
-      OutputTaint =
-          Offset >= sizeof(uint64_t) ? 0 : InputMasks[0] >> (Offset * 8);
-      break;
-    }
-    case NdOp::CONCAT: {
-      if (Op.NumInputs != 2 || Op.Inputs[1].Size == 0 ||
-          Op.Inputs[1].Size > sizeof(uint64_t))
-        return false;
-      const unsigned LowBits = static_cast<unsigned>(Op.Inputs[1].Size) * 8;
-      if (LowBits == 64 && InputMasks[0] != 0)
-        return false;
-      OutputTaint = InputMasks[1];
-      if (LowBits < 64)
-        OutputTaint |= InputMasks[0] << LowBits;
-      break;
-    }
-    case NdOp::INT_AND: {
-      if (Op.NumInputs != 2)
-        return false;
-      const int ConstIdx = Op.Inputs[0].Kind == MedVar::Const
-                               ? 0
-                               : (Op.Inputs[1].Kind == MedVar::Const ? 1 : -1);
-      if (ConstIdx < 0)
-        return false;
-      OutputTaint =
-          InputMasks[ConstIdx == 0 ? 1 : 0] & Op.Inputs[ConstIdx].ConstVal;
-      break;
-    }
-    case NdOp::INT_OR:
-      if (Op.NumInputs != 2)
-        return false;
-      OutputTaint = InputMasks[0] | InputMasks[1];
-      if (Op.Inputs[0].Kind == MedVar::Const)
-        OutputTaint = InputMasks[1] & ~Op.Inputs[0].ConstVal;
-      else if (Op.Inputs[1].Kind == MedVar::Const)
-        OutputTaint = InputMasks[0] & ~Op.Inputs[1].ConstVal;
-      break;
-    default:
-      return false; // a genuine consumer: keep the register parameter
-    }
-
-    addTaint(Op.Output, OutputTaint);
-    return !InvalidTransport;
-  };
-
-  while (!Worklist.empty()) {
-    const med_calling_conv_detail::ValueKey Changed = Worklist.pop_back_val();
-    auto UsesIt = Uses.find(Changed);
-    if (UsesIt == Uses.end())
-      continue;
-    for (const TaintUse &Use : UsesIt->second) {
-      if (Use.Phi) {
-        uint64_t Mask = 0;
-        for (const auto &[Pred, Arg] : Use.Phi->Args) {
-          (void)Pred;
-          Mask |= taintMask(Arg);
-        }
-        addTaint(Use.Phi->Output, Mask);
-        if (InvalidTransport)
-          return false;
-        continue;
-      }
-      if (!propagateOp(*Use.Op))
-        return false;
-    }
-  }
-
-  return true; // all surviving incoming lanes feed scratch reconstruction only
-}
-
-} // namespace med_calling_conv_detail
-
 namespace {
 
 /// True when some byte of \p RegOff's incoming value reaches a use other than
@@ -710,32 +422,37 @@ std::set<uint64_t> findLiveInParamRegs(const MedBlock &Entry,
 
 void detectRegisterParams(MedFunc &Func, const TargetRegInfo &TRI,
                           llvm::ArrayRef<uint64_t> ParamRegs,
+                          llvm::ArrayRef<uint64_t> IntegerRegs,
                           std::set<uint64_t> UsedParamRegs, Arch TargetArch,
+                          const CallArgumentConvention *Convention,
                           const GPRReadWidths *EntryReadSummary = nullptr) {
-  // A routine with a documented WDK prototype takes exactly its declared
-  // parameters, however its body forwards registers to other calls.
-  const libc::WindowsKernelPrototype *Proto =
-      TargetArch == Arch::X64 && Func.CC == CallingConv::Win64
-          ? libc::windowsKernelPrototype(Func.Name)
-          : nullptr;
+  // A routine with a platform prototype (a documented WDK routine) takes
+  // exactly its declared parameters, however its body forwards registers to
+  // other calls.
+  const std::optional<size_t> ProtoArgs =
+      Convention && Convention->PrototypeArgCount
+          ? Convention->PrototypeArgCount(Func.Name)
+          : std::nullopt;
+  const bool FromIncomingReads =
+      Convention && Convention->ParametersFromIncomingReads;
   // Every caller passes the register arguments this function's call-graph
   // summary says it reads (LowToMed), so its own parameter list follows the
-  // same summary: a recursive call then matches the definition.
-  const bool FromSummary = !Proto && EntryReadSummary &&
-                           TargetArch == Arch::X64 &&
-                           Func.CC == CallingConv::Win64;
-  if (Proto) {
+  // same summary: a recursive call then matches the definition.  The summary
+  // covers the integer registers only.
+  const bool FromSummary = !ProtoArgs && EntryReadSummary && FromIncomingReads;
+  if (ProtoArgs) {
     UsedParamRegs.clear();
-    for (size_t I = 0; I < ParamRegs.size() && I < Proto->ArgCount; ++I)
+    for (size_t I = 0; I < ParamRegs.size() && I < *ProtoArgs; ++I)
       UsedParamRegs.insert(ParamRegs[I]);
   } else if (FromSummary) {
     UsedParamRegs.clear();
-    for (size_t I = 0; I < ParamRegs.size() && I < 4; ++I)
+    for (size_t I = 0; I < ParamRegs.size() && I < IntegerRegs.size(); ++I)
       if ((*EntryReadSummary)[ParamRegs[I] / 8])
         UsedParamRegs.insert(ParamRegs[I]);
-  } else if (TargetArch == Arch::X64 && Func.CC == CallingConv::Win64) {
-    // Only Win64 calls to summarized callees publish their register
-    // arguments as inputs; elsewhere an argument read is invisible here.
+  } else if (FromIncomingReads) {
+    // Calls to summarized callees publish their register arguments as
+    // inputs here, so a register only passed on is still a read; a live-in
+    // whose incoming bytes reach no use is not a parameter.
     for (auto It = UsedParamRegs.begin(); It != UsedParamRegs.end();)
       It = incomingBytesReachUse(Func, *It) ? std::next(It)
                                             : UsedParamRegs.erase(It);
@@ -756,14 +473,14 @@ void detectRegisterParams(MedFunc &Func, const TargetRegInfo &TRI,
     if (UsedParamRegs.count(ParamRegs[I]))
       LastUsedIdx = I;
 
-  // i386's optional regparm convention fills ECX then EDX with no gaps, so the
-  // used register arguments must be consecutive from arg0.  A parameter
-  // register that is "live-in" only because a partial sub-register write merges
-  // its old bits (e.g. `sete %dl` keeps EDX[31:8]) is not a real argument;
-  // requiring an unbroken run from arg0 rejects that false positive — an unused
-  // ECX proves a live EDX is not a regparm argument, so the function is plain
-  // cdecl.
-  if (TargetArch == Arch::X86) {
+  // A regparm convention (i386: ECX then EDX) fills its registers with no
+  // gaps, so the used register arguments must be consecutive from arg0.  A
+  // parameter register that is "live-in" only because a partial sub-register
+  // write merges its old bits (e.g. `sete %dl` keeps EDX[31:8]) is not a real
+  // argument; requiring an unbroken run from arg0 rejects that false positive
+  // — an unused ECX proves a live EDX is not a regparm argument, so the
+  // function is plain cdecl.
+  if (Convention && Convention->RegisterArgumentsFillInOrder) {
     size_t Consec = 0;
     while (Consec < ParamRegs.size() &&
            UsedParamRegs.count(ParamRegs[Consec]) &&
@@ -806,7 +523,7 @@ void detectRegisterParams(MedFunc &Func, const TargetRegInfo &TRI,
     }
     if (!Marker) {
       // A declared parameter the body never reads still holds its position.
-      if (Proto || FromSummary) {
+      if (ProtoArgs || FromSummary) {
         MedVar Placeholder;
         Placeholder.Kind = MedVar::Param;
         Placeholder.Id = -1;
@@ -910,13 +627,18 @@ void computeFrameBounds(
 // (offsets [0, overflow_base)); the trailing variadic arguments live at and
 // above the overflow base and are read through the va_arg walk (not direct
 // [entry_sp+k] loads), so they must not be mistaken for fixed stack parameters.
-void detectStackParams(MedFunc &Func, Arch TargetArch,
+void detectStackParams(MedFunc &Func, Arch TargetArch, BinaryFormat Fmt,
                        int64_t MaxStackOff = 0) {
-  if (TargetArch == Arch::X86 || Func.Blocks.empty())
+  // Stack parameters that follow the used registers (i386) are recovered by
+  // detectCdeclStackParams instead.
+  const CallArgumentConvention *Convention =
+      callArgumentConvention(TargetArch, Fmt);
+  if ((Convention && Convention->StackArgumentsFollowUsedRegisters) ||
+      Func.Blocks.empty())
     return;
   const auto &TRI = getTargetRegInfo(TargetArch);
   const uint64_t SpOff = TRI.StackPointer;
-  const auto Layout = TRI.integerArgumentLayout(Func.CC == CallingConv::Win64);
+  const auto Layout = TRI.integerArgumentLayout(Fmt);
   const auto ParamRegs = Layout.Registers;
   const int MaxRegArgs = static_cast<int>(ParamRegs.size());
   const int Slot = Layout.SlotBytes;
@@ -1397,21 +1119,21 @@ void detectIndirectResultParam(MedFunc &Func, const MedBlock &Entry,
 void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
                                  BinaryFormat Fmt) {
   const auto &TRI = getTargetRegInfo(TheArch);
-  bool IsWin64 = (TheArch == Arch::X64 && Fmt == BinaryFormat::COFF);
+  const CallArgumentConvention *Convention =
+      callArgumentConvention(TheArch, Fmt);
 
   // --- Determine calling convention ---
-  if (TheArch == Arch::X64)
-    Func.CC = IsWin64 ? CallingConv::Win64 : CallingConv::SysV_AMD64;
-  else if (TheArch == Arch::AArch64 || TheArch == Arch::ARM)
-    Func.CC = CallingConv::ARM_AAPCS;
+  if (const std::optional<CallingConv> CC = callingConventionOf(TheArch, Fmt))
+    Func.CC = *CC;
 
   // --- Build the ordered parameter register list ---
   std::vector<uint64_t> ParamRegs;
-  const auto IntegerRegs = TRI.integerArgumentLayout(IsWin64).Registers;
-  if (IsWin64) {
+  const auto IntegerRegs = TRI.integerArgumentLayout(Fmt).Registers;
+  if (Convention && Convention->PositionalArgumentSlots) {
+    // The FP argument registers take the same positions as the integer ones.
     ParamRegs.assign(IntegerRegs.begin(), IntegerRegs.end());
     for (uint64_t R : TRI.FPParamRegs)
-      if (ParamRegs.size() < TRI.Win64ParamRegs.size() + 4)
+      if (ParamRegs.size() < 2 * IntegerRegs.size())
         ParamRegs.push_back(R);
   } else {
     // Floating-point arguments use a *separate* register class with its own
@@ -1428,11 +1150,13 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
     const auto &Entry = Func.Blocks[0];
     auto UsedRegs = findLiveInParamRegs(Entry, ParamRegs);
     const GPRReadWidths *Summary = nullptr;
-    if (CallEntryReadGPRs && TargetFormat == BinaryFormat::COFF)
+    if (CallEntryReadGPRs && Convention &&
+        Convention->ParametersFromIncomingReads)
       if (auto It = CallEntryReadGPRs->find(Func.Entry);
           It != CallEntryReadGPRs->end())
         Summary = &It->second;
-    detectRegisterParams(Func, TRI, ParamRegs, UsedRegs, TargetArch, Summary);
+    detectRegisterParams(Func, TRI, ParamRegs, IntegerRegs, UsedRegs,
+                         TargetArch, Convention, Summary);
 
     // Detect a variadic prologue (register save area + va_start) so the FP save
     // area is not mistaken for FP parameters and the overflow area is recovered
@@ -1446,17 +1170,18 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
       detectXMMParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
   }
 
-  // x86-64 / AArch64 / ARM: recover stack-passed arguments beyond the parameter
-  // registers (no-op on i386, handled by detectCdeclStackParams below).  A
+  // Recover stack-passed arguments beyond the parameter registers (where they
+  // follow the registers used, detectCdeclStackParams below does).  A
   // variadic function reads its overflow stack arguments through the va_arg
   // pointer walk (PHI-merged, vectorized), invisible to this load scan; those
   // are recovered from the call sites in finalizeVariadicCallees instead.
   if (!Func.IsVariadic)
-    detectStackParams(Func, TargetArch);
-  else if (TargetArch == Arch::AArch64 && Fmt == BinaryFormat::MachO &&
+    detectStackParams(Func, TargetArch, Fmt);
+  else if (Convention && Convention->VariadicArgumentsOnStack &&
            Func.VariadicOverflowBase > 0) {
-    // Darwin AArch64 variadic with more than 8 named integer args: args 9.. are
-    // stack-passed FIXED args sitting below the overflow pointer.  Recover that
+    // A variadic function (Darwin AArch64) with more than the register count
+    // of named integer args: args 9.. are stack-passed FIXED args sitting
+    // below the overflow pointer.  Recover that
     // named prefix only (offsets [0, overflow_base)); the variadic args at and
     // above the overflow base are read through the va_arg walk (invisible to
     // the load scan) and finalized from the call sites.  Record how many named
@@ -1464,12 +1189,13 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
     // prefix as register params + these (the overflow count is everything past
     // them).
     const size_t Before = Func.Params.size();
-    detectStackParams(Func, TargetArch, Func.VariadicOverflowBase);
+    detectStackParams(Func, TargetArch, Fmt, Func.VariadicOverflowBase);
     Func.VariadicFixedStackArgs = static_cast<int>(Func.Params.size() - Before);
   }
 
-  // i386 CDECL: fall back to stack-passed parameters (no-op off 32-bit x86).
-  detectCdeclStackParams(Func, TargetArch);
+  // Stack parameters that follow the registers used (i386 cdecl and regparm).
+  if (Convention && Convention->StackArgumentsFollowUsedRegisters)
+    detectCdeclStackParams(Func, TargetArch);
 
   // AArch64: recover the hidden indirect-result (sret) pointer in x8 for a
   // by-value aggregate return (no-op on targets without a dedicated x8).

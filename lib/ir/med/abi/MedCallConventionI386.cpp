@@ -21,6 +21,7 @@ const CallArgumentConvention I386CallArguments = {
     .RegparmOnlyForInternalCalls = true,
     .StackArgumentsFollowUsedRegisters = true,
     .StackOnlyVariadicCallees = true,
+    .RegisterArgumentsFillInOrder = true,
 };
 
 } // namespace neverd

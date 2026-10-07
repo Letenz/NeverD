@@ -25,4 +25,17 @@ const CallArgumentConvention *callArgumentConvention(Arch A, BinaryFormat F) {
   return nullptr;
 }
 
+std::optional<CallingConv> callingConventionOf(Arch A, BinaryFormat F) {
+  switch (A) {
+  case Arch::X64:
+    return F == BinaryFormat::COFF ? CallingConv::Win64
+                                   : CallingConv::SysV_AMD64;
+  case Arch::AArch64:
+  case Arch::ARM:
+    return CallingConv::ARM_AAPCS;
+  default:
+    return std::nullopt;
+  }
+}
+
 } // namespace neverd
