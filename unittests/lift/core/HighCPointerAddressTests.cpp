@@ -38739,6 +38739,52 @@ TEST(HighCPointerAddresses, ReturnZextFromNarrowerKeepsSourceWidth) {
   EXPECT_NE(Source.find("uint16_t"), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, CorpusArmPredicatedBranchesStayForwardJumps) {
+  // An MSVC ARM32 Thumb-2 conditional branch lifts as a guard and an effect at
+  // one address.  Address-order layout once placed the split effect last, and
+  // the jump to it named the guard instruction: `bne` past the MZ check
+  // printed as `do {} while (magic != 0x5A4D);`.  Only the whole module picks
+  // that layout, so this runs every function.
+  if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
+    GTEST_SKIP() << "windows-eh corpus root is not configured";
+  const auto Path = std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) /
+                    "corpus/windows-eh/msvc/vs2019/arm/native/gs/o2/"
+                    "windows-seh-tests/xcpt4-msvc-arm-native-gs-o2.exe";
+  if (!std::filesystem::exists(Path))
+    GTEST_SKIP() << Path.string() << " is missing";
+  auto Img = loadBinary(Path);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  auto Result = Pipeline().run(*Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  auto Emit = [&](va_t Entry) {
+    for (const HighFunc &Func : Result.HighFuncs) {
+      if (Func.Entry != Entry)
+        continue;
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      CEmitterOptions Options;
+      Options.EmitIncludes = false;
+      Options.TheArch = Img->Arch;
+      Options.Format = Img->Format;
+      Options.Image = &*Img;
+      EXPECT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+      return Source;
+    }
+    return std::string();
+  };
+  // The image check returns early on each mismatch.
+  const std::string ImageCheck = Emit(0x40386C);
+  EXPECT_NE(ImageCheck.find("!= 0x5A4D) {"), std::string::npos) << ImageCheck;
+  EXPECT_EQ(ImageCheck.find("do {"), std::string::npos) << ImageCheck;
+  // `bne` past a local unwind jumps forward once.
+  const std::string Unwinds = Emit(0x4031F4);
+  EXPECT_NE(Unwinds.find("!= 10) {"), std::string::npos) << Unwinds;
+  EXPECT_EQ(Unwinds.find("do {"), std::string::npos) << Unwinds;
+}
+
 TEST(HighCPointerAddresses, CorpusFuncLoadSehProbeRaisesImmediate) {
   if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
     GTEST_SKIP() << "windows-eh corpus root is not configured";

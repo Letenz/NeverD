@@ -470,13 +470,53 @@ static bool hasExceptionRegions(const ExceptionFunction &EH) {
   return !UnwindOnly;
 }
 
+/// The emission order that follows block addresses.  MedIR numbers blocks by
+/// address, except that a block split out of the guest instruction ending its
+/// only predecessor (an ARM predicated effect, MedPredicatedEffects.cpp) is
+/// appended last, and its entry is that instruction's address.  A jump to it
+/// would name the instruction, whose first statement belongs to the
+/// predecessor, so the split block follows its predecessor instead.
+static std::vector<int> addressOrderLayout(const MedFunc &Med) {
+  const int Count = static_cast<int>(Med.Blocks.size());
+  std::vector<int> Follower(Count, -1);
+  std::vector<bool> Split(Count, false);
+  for (int I = 0; I < Count; ++I) {
+    const MedBlock &Block = Med.Blocks[I];
+    if (Block.Id != I || Block.Preds.size() != 1 || Block.StartAddr == 0)
+      continue;
+    const int Pred = Block.Preds.front();
+    if (Pred < 0 || Pred >= Count || Pred == I || Follower[Pred] != -1)
+      continue;
+    const MedBlock &Guard = Med.Blocks[Pred];
+    if (Guard.Ops.empty() || Guard.Ops.back().Addr != Block.StartAddr)
+      continue;
+    Follower[Pred] = I;
+    Split[I] = true;
+  }
+  std::vector<int> Order;
+  Order.reserve(Count);
+  std::vector<bool> Placed(Count, false);
+  for (int I = 0; I < Count; ++I) {
+    if (Split[I])
+      continue;
+    for (int B = I; B != -1 && !Placed[B]; B = Follower[B]) {
+      Placed[B] = true;
+      Order.push_back(B);
+    }
+  }
+  // A split block whose guard is itself unplaced would close a cycle; keep
+  // it in index order rather than drop it.
+  for (int I = 0; I < Count; ++I)
+    if (!Placed[I])
+      Order.push_back(I);
+  return Order;
+}
+
 std::vector<int> highBlockLayout(const MedFunc &Med,
                                  const std::set<int> &Dispatched,
                                  bool SEHReversePostorder) {
   const int Count = static_cast<int>(Med.Blocks.size());
-  std::vector<int> AddressOrder(Count);
-  for (int I = 0; I < Count; ++I)
-    AddressOrder[I] = I;
+  const std::vector<int> AddressOrder = addressOrderLayout(Med);
   const ExceptionFunction *EH =
       Med.ExceptionMetadata ? &*Med.ExceptionMetadata : nullptr;
   const bool SEHOnly = SEHReversePostorder && EH && EH->SEH &&

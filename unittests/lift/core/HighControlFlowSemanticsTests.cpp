@@ -2412,6 +2412,69 @@ TEST(HighControlFlowSemantics, ThreadedSoleSuccessorKeepsItsTransferAndPhi) {
   }
 }
 
+TEST(HighControlFlowSemantics, SwitchPublishesTheCaseOfEachTablePosition) {
+  // `switch (x) { case 10: case 11: case 12: }` dispatches on `x - 10`. The
+  // recovered switch prints 10..12, and the listing labels each table entry
+  // with the same case: publish the value that selects every position.
+  const Arch Architecture = Arch::X64;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  MedFunc M;
+  M.Entry = 0x1000;
+  M.Name = "offset_switch";
+  M.ReturnType = NdType::makeInt(8, false);
+  auto Input = machineValue(0, Architecture);
+  Input.Kind = MedVar::Param;
+  Input.RegOff = TRI.IntParamRegs[0];
+  M.Params = {Input};
+  auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+  const auto Index = machineValue(1, Architecture);
+  M.Blocks.resize(4);
+  for (int I = 0; I < 4; ++I) {
+    M.Blocks[I].Id = I;
+    M.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+    M.Blocks[I].EndAddr = M.Blocks[I].StartAddr + 0x20;
+  }
+  M.Blocks[0].Succs = {1, 2, 3};
+  M.Blocks[0].Ops = {
+      operation(NdOp::INT_ADD, 0x1000, Index, {Input, C(uint64_t(-10))}),
+      operation(NdOp::INDIR_BR, 0x1008, {}, {Index})};
+  M.SwitchSelectorPlans[0x1008] = {};
+  M.SwitchSelectorPlans[0x1008].Selector = Index;
+  M.SwitchSelectorPlans[0x1008].ResultSize = 8;
+  const uint64_t Results[] = {7, 37, 93};
+  for (int I = 1; I < 4; ++I) {
+    auto Return = machineValue(2, Architecture);
+    Return.Kind = MedVar::Reg;
+    Return.RegOff = TRI.IntReturnReg;
+    Return.SSAVer = I;
+    const va_t Start = M.Blocks[I].StartAddr;
+    M.Blocks[I].Preds = {0};
+    M.Blocks[I].Ops = {
+        operation(NdOp::COPY, Start, Return, {C(Results[I - 1])}),
+        operation(NdOp::RETURN, Start + 4, {}, {Return})};
+  }
+  JumpTable Table;
+  Table.InsnAddr = 0x1008;
+  Table.Targets = {0x1100, 0x1200, 0x1300};
+  Table.CaseLabels = {0, 1, 2};
+  MedToHighConverter Converter;
+  Converter.setJumpTables({Table});
+  const auto F = Converter.convert(M, Architecture);
+
+  const auto Published = F.SwitchLabelsByJump.find(0x1008);
+  ASSERT_NE(Published, F.SwitchLabelsByJump.end());
+  EXPECT_EQ(Published->second.Values, (std::vector<uint64_t>{10, 11, 12}));
+  EXPECT_EQ(Published->second.DefaultPosition, -1);
+  EXPECT_EQ(Published->second.SelectorBits, 64u);
+  for (size_t Position = 0; Position < Published->second.Values.size();
+       ++Position) {
+    SCOPED_TRACE(Position);
+    EXPECT_NO_THROW(
+        EXPECT_EQ(execute(F, Published->second.Values[Position], true),
+                  Results[Position]));
+  }
+}
+
 TEST(HighControlFlowSemantics, ThreadedFallthroughJumpsPastTheNextBlock) {
   // PiCMCaptureRegistryPropertyInputData: cold code falls into a `jmp` back
   // to the hot path.  Threading that jump-only block leaves a block without a
@@ -8327,6 +8390,77 @@ TEST(HighControlFlowSemantics, BlockLayoutFollowsForwardEdgesUnlessUnsure) {
   MedFunc Unknown = M;
   Unknown.Blocks[1].Ops.back().Inputs[0] = MedVar::makeConst(0x7000, 8);
   EXPECT_EQ(highBlockLayout(Unknown, {}), (std::vector<int>{0, 1, 2, 3}));
+}
+
+/// An ARM conditional branch lifts as a guard and an effect at one address;
+/// MedPredicatedEffects splits the effect into a block numbered last whose
+/// entry is the guard's instruction:
+/// `r = 5; if (x == 10) goto L; goto J; L: r = 7; J: return r;`.
+MedFunc splitPredicatedBranch() {
+  const Arch Architecture = Arch::ARM;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  MedFunc M;
+  M.Entry = 0x1000;
+  M.Name = "split_predicated_branch";
+  M.ReturnType = NdType::makeInt(4, false);
+  auto Input = machineValue(0, Architecture);
+  Input.Kind = MedVar::Param;
+  Input.Size = 4;
+  Input.RegOff = TRI.IntParamRegs[0];
+  M.Params = {Input};
+  auto C = [](uint64_t V) { return MedVar::makeConst(V, 4); };
+  auto Flag = machineValue(2, Architecture);
+  Flag.Size = 1;
+  auto Result = [&](int Version) {
+    auto V = machineValue(9, Architecture);
+    V.Kind = MedVar::Reg;
+    V.RegOff = TRI.IntReturnReg;
+    V.Size = 4;
+    V.SSAVer = Version;
+    return V;
+  };
+  const va_t Starts[] = {0x1000, 0x1008, 0x1010, 0x1006};
+  const va_t Ends[] = {0x1008, 0x1010, 0x1020, 0x1008};
+  M.Blocks.resize(4);
+  for (int I = 0; I < 4; ++I) {
+    M.Blocks[I].Id = I;
+    M.Blocks[I].StartAddr = Starts[I];
+    M.Blocks[I].EndAddr = Ends[I];
+  }
+  // The guard instruction tests its predicate and skips the branch effect
+  // when the predicate fails.
+  M.Blocks[0].Succs = {1, 3};
+  M.Blocks[0].Ops = {operation(NdOp::COPY, 0x1000, Result(1), {C(5)}),
+                     operation(NdOp::INT_EQUAL, 0x1006, Flag, {Input, C(10)}),
+                     operation(NdOp::COND_BR, 0x1006, {}, {C(0x1008), Flag})};
+  M.Blocks[1].Preds = {0};
+  M.Blocks[1].Succs = {2};
+  M.Blocks[1].Ops = {operation(NdOp::COPY, 0x1008, Result(2), {C(7)})};
+  M.Blocks[2].Preds = {1, 3};
+  M.Blocks[2].Phis = {{Result(3), {{1, Result(2)}, {3, Result(1)}}}};
+  M.Blocks[2].Ops = {operation(NdOp::RETURN, 0x1010, {}, {Result(3)})};
+  M.Blocks[3].Preds = {0};
+  M.Blocks[3].Succs = {2};
+  M.Blocks[3].Ops = {operation(NdOp::BRANCH, 0x1006, {}, {C(0x1010)})};
+  return M;
+}
+
+TEST(HighControlFlowSemantics, SplitInstructionBlockFollowsItsGuard) {
+  MedFunc M = splitPredicatedBranch();
+  // A table-driven handler keeps address order, so the effect block must
+  // still follow its guard: a jump to it would name the guard instruction
+  // and run the test again.
+  M.ExceptionMetadata.emplace();
+  M.ExceptionMetadata->PersonalityVA = 0x5000;
+  EXPECT_EQ(highBlockLayout(M, {}, /*SEHReversePostorder=*/false),
+            (std::vector<int>{0, 3, 1, 2}));
+  const auto F = MedToHighConverter().convert(M, Arch::ARM);
+  EXPECT_EQ(countKind(F, StmtKind::DoWhile), 0u);
+  EXPECT_EQ(countKind(F, StmtKind::While), 0u);
+  for (uint64_t X : {0u, 10u, 11u}) {
+    SCOPED_TRACE(X);
+    EXPECT_NO_THROW(EXPECT_EQ(execute(F, X, true), X == 10 ? 7u : 5u));
+  }
 }
 
 TEST(HighControlFlowSemantics, UnreachableCleanupDropsCodeAfterAnEndlessLoop) {

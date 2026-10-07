@@ -21,40 +21,49 @@
 #include "neverd/ir/intrinsics/X86Interrupts.h"
 
 #include <map>
+#include <optional>
 #include <queue>
 #include <set>
 #include <vector>
 
 namespace neverd {
 
-bool isArchitecturalNoReturn(const MedOp &Op, Arch TheArch) {
+namespace {
+/// Whether intrinsic \p Id with first operand \p Operand never returns.  Only
+/// the AArch64 lifter emits BRK and HLT, and only the x86 lifter INT n.
+bool intrinsicNeverReturns(Intrinsic Id, std::optional<uint64_t> Operand) {
+  switch (Id) {
+  case Intrinsic::Brk:
+  case Intrinsic::Hlt_A64:
+    return true;
+  case Intrinsic::IntN:
+    return Operand && isX86NoReturnInterrupt(*Operand);
+  default:
+    return false;
+  }
+}
+} // namespace
+
+bool isArchitecturalNoReturn(const MedOp &Op) {
   if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs < 1 ||
       !Op.Inputs[0].isConst())
     return false;
-
-  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
-  if (TheArch == Arch::AArch64)
-    return Id == Intrinsic::Brk || Id == Intrinsic::Hlt_A64;
-  if ((TheArch == Arch::X86 || TheArch == Arch::X64) && Id == Intrinsic::IntN &&
-      Op.NumInputs >= 2 && Op.Inputs[1].isConst() &&
-      isX86NoReturnInterrupt(Op.Inputs[1].ConstVal))
-    return true;
-  return false;
+  return intrinsicNeverReturns(
+      static_cast<Intrinsic>(Op.Inputs[0].ConstVal),
+      Op.NumInputs >= 2 && Op.Inputs[1].isConst()
+          ? std::optional<uint64_t>(Op.Inputs[1].ConstVal)
+          : std::nullopt);
 }
 
-bool isArchitecturalNoReturn(const LowOp &Op, Arch TheArch) {
+bool isArchitecturalNoReturn(const LowOp &Op) {
   if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs < 1 ||
       !Op.Inputs[0].isConst())
     return false;
-
-  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
-  if (TheArch == Arch::AArch64)
-    return Id == Intrinsic::Brk || Id == Intrinsic::Hlt_A64;
-  if ((TheArch == Arch::X86 || TheArch == Arch::X64) && Id == Intrinsic::IntN &&
-      Op.NumInputs >= 2 && Op.Inputs[1].isConst() &&
-      isX86NoReturnInterrupt(Op.Inputs[1].Offset))
-    return true;
-  return false;
+  return intrinsicNeverReturns(
+      static_cast<Intrinsic>(Op.Inputs[0].Offset),
+      Op.NumInputs >= 2 && Op.Inputs[1].isConst()
+          ? std::optional<uint64_t>(Op.Inputs[1].Offset)
+          : std::nullopt);
 }
 
 namespace {
@@ -119,8 +128,7 @@ bool provesNoReturn(const MedFunc &Func, Arch TheArch,
         return false;
       if ((Op.DoesNotReturn &&
            (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)) ||
-          isDirectCallTo(Op, KnownNoReturn) ||
-          isArchitecturalNoReturn(Op, TheArch)) {
+          isDirectCallTo(Op, KnownNoReturn) || isArchitecturalNoReturn(Op)) {
         SawProvenTerminator = true;
         PathTerminates = true;
         break;
