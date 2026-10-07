@@ -3016,10 +3016,15 @@ and Android syscall, native-entry and signal suites for availability changes.
 or an absent-pidfd observation combined with GKI before image loading.
 `Backends/LinuxPIDFDProcess.*` runs independent O0/O2 x64/AArch64 callers for all
 eight branches, including flag differences, shared file/pidfd allocation,
-limits, close/reuse and scalar/vector error ordering. Android's
+limits, close/reuse and scalar/vector error ordering. The versioned vector cases
+contrast an early negative length with inaccessible later metadata, and a single
+buffer whose original extent crosses the user limit while its capped extent fits.
+They check pidfds and both captured streams, with O0/O2 callers. Android's
 `ReleasedGKIProcessDescriptorsShareRawAndBionicOwnership` cases repeat the
 shared descriptor and errno behavior across all six compiled relocation
-profiles. Run these first, then the complete Linux process, Android native and
+profiles; `ReleasedGKIVectorImportRetainsRawAndBionicErrors` repeats the vector
+ordering and cap differences through raw and Bionic transports. Run these first,
+then the complete Linux process, Android native and
 public process suites when changing shared kernel or descriptor semantics.
 These tests execute the model; they do not boot the eight pinned GKI kernels.
 See [released GKI contracts](android-gki-kernels.md).

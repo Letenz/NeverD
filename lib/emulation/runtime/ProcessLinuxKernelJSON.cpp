@@ -33,7 +33,7 @@ std::optional<LinuxUnavailableSyscall> unavailableCall(llvm::StringRef Name) {
   return std::nullopt;
 }
 std::optional<AndroidGKIKernel> gkiKernel(llvm::StringRef Name) {
-#define NEVERD_LINUX_GKI_KERNEL(Kind, Label, Flags)                            \
+#define NEVERD_LINUX_GKI_KERNEL(Kind, Label, Flags, Import)                    \
   if (Name == Label)                                                           \
     return AndroidGKIKernel::Kind;
 #include "neverd/emulation/LinuxGKIKernels.def"

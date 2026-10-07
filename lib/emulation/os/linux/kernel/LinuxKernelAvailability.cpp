@@ -7,9 +7,19 @@
 namespace neverd::emulation::linux_model {
 std::optional<uint32_t> gkiPidFDFlags(AndroidGKIKernel Kernel) {
   switch (Kernel) {
-#define NEVERD_LINUX_GKI_KERNEL(Name, Label, Flags)                            \
+#define NEVERD_LINUX_GKI_KERNEL(Name, Label, Flags, Import)                    \
   case AndroidGKIKernel::Name:                                                 \
     return Flags;
+#include "neverd/emulation/LinuxGKIKernels.def"
+#undef NEVERD_LINUX_GKI_KERNEL
+  }
+  return std::nullopt;
+}
+std::optional<IOVectorImportKind> gkiIOVectorImport(AndroidGKIKernel Kernel) {
+  switch (Kernel) {
+#define NEVERD_LINUX_GKI_KERNEL(Name, Label, Flags, Import)                    \
+  case AndroidGKIKernel::Name:                                                 \
+    return IOVectorImportKind::Import;
 #include "neverd/emulation/LinuxGKIKernels.def"
 #undef NEVERD_LINUX_GKI_KERNEL
   }

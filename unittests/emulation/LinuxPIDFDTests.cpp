@@ -17,11 +17,11 @@ using namespace linux_model;
 struct KernelCase {
   AndroidGKIKernel Kernel;
   const char *Label;
-  bool ThreadFlag;
+  bool ThreadFlag, SingleBuffer;
 };
 constexpr KernelCase Kernels[] = {
-#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag)                       \
-  {AndroidGKIKernel::Name, Label, ThreadFlag},
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer)         \
+  {AndroidGKIKernel::Name, Label, ThreadFlag, SingleBuffer},
 #include "GKIReleaseCases.def"
 #undef NEVERD_GKI_RELEASE_CASE
 };
@@ -135,6 +135,36 @@ TEST_P(LinuxPIDFDProcess, ThreadFlagAndDescriptorLimitsFollowSelectedKernel) {
       EXPECT_EQ(D.ExitStatus, 0u);
     }
   }
+}
+TEST_P(LinuxPIDFDProcess, VectorImportPreservesReleasedKernelErrorOrder) {
+  for (const auto &K : Kernels) {
+    SCOPED_TRACE(K.Label);
+    Options.LinuxKernel.emplace().GKI = K.Kernel;
+    for (const char *Opt : {"O0", "O2"}) {
+      SCOPED_TRACE(Opt);
+      auto V = run('v', Opt, K.SingleBuffer);
+      ASSERT_EQ(V.Stop, ProcessStopReason::Exited) << V.Diagnostic;
+      EXPECT_EQ(V.ExitStatus, 0u);
+      EXPECT_TRUE(V.StandardOutput.empty());
+      EXPECT_TRUE(V.StandardError.empty());
+
+      Options.OutputLimit = 1;
+      auto B = run('b', Opt);
+      if (K.SingleBuffer)
+        EXPECT_EQ(B.Stop, ProcessStopReason::OutputLimit) << B.Diagnostic;
+      else {
+        ASSERT_EQ(B.Stop, ProcessStopReason::Exited) << B.Diagnostic;
+        EXPECT_EQ(B.ExitStatus, 0u);
+      }
+      EXPECT_TRUE(B.StandardOutput.empty());
+      EXPECT_TRUE(B.StandardError.empty());
+      Options.OutputLimit = 1024;
+    }
+  }
+  // Missing kernel selection retains the established single-buffer policy.
+  Options.LinuxKernel.reset();
+  Options.OutputLimit = 1;
+  EXPECT_EQ(run('b', "O2").Stop, ProcessStopReason::OutputLimit);
 }
 TEST_P(LinuxPIDFDProcess, UnknownTargetsAndMissingObservationsStayUnsupported) {
   Options.LinuxKernel.emplace().GKI = AndroidGKIKernel::Android17_6_18;
