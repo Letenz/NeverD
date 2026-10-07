@@ -285,6 +285,40 @@ TEST_P(LinuxPIDFDProcess, ProcessCPUClocksRetainIdentityAndIdleSeparation) {
     }
   }
 }
+TEST_P(LinuxPIDFDProcess, ZeroTimeoutPollRetainsReadinessAndOrderedCopies) {
+  for (const auto &K : Kernels) {
+    SCOPED_TRACE(K.Label);
+    auto &Kernel = Options.LinuxKernel.emplace();
+    Kernel.GKI = K.Kernel;
+    Kernel.Tasks.emplace().emplace(2000, LinuxKernelTask{true});
+    Kernel.Tasks->emplace(3000, LinuxKernelTask{false});
+    Options.LinuxTime.emplace().Clocks[1] = {31, 0};
+    Options.LinuxTime->AdvanceOnIdle = true;
+    for (const char *Opt : {"O0", "O2"}) {
+      auto R = run('o', Opt, K.ThreadFlag);
+      ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+      EXPECT_EQ(R.ExitStatus, 0u);
+    }
+  }
+}
+TEST_P(LinuxPIDFDProcess, ZeroTimeoutPollKeepsUnobservedBoundaries) {
+  auto R = run('h', "O2");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R.Diagnostic, PollKernelMissing);
+  Options.LinuxKernel.emplace().GKI = AndroidGKIKernel::Android17_6_18;
+  for (auto [Mode, Reason] : {std::pair{'j', PollSignalMaskUnsupported},
+                              std::pair{'k', PollWaitUnsupported},
+                              std::pair{'r', PollDescriptorUnsupported}}) {
+    R = run(Mode, "O2");
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(R.Diagnostic, Reason);
+    EXPECT_FALSE(R.Services.back().Result);
+  }
+  Options.LinuxFiles.reset();
+  R = run('h', "O2");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R.Diagnostic, PollLimitMissing);
+}
 TEST_P(LinuxPIDFDProcess, ProcessCPUClocksKeepMissingObservationBoundaries) {
   auto &Kernel = Options.LinuxKernel.emplace();
   Kernel.GKI = AndroidGKIKernel::Android17_6_18;

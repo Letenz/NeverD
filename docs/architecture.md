@@ -3555,6 +3555,11 @@ closed catalogue supplies lookup absence; an omitted one leaves foreign targets
 unsupported. Shared kernel validation rejects contradictory priority observations
 and cooperative Android thread mode before loading. `LinuxPIDFD` checks target
 class before reserving a descriptor, with release-specific nonleader errors.
+`LinuxPoll` uses that same descriptor owner for zero-timeout pidfd queries.
+It imports timeout and descriptor metadata before readiness selection, checks
+the declared descriptor limit, and commits only ordered revents fields through
+the shared user-copy policy. Its fixed live observations do not infer exits,
+blocking waits, temporary masks or other descriptor readiness.
 See
 [released GKI contracts](android-gki-kernels.md) for pinned source evidence and
 the limits of this implemented subset.

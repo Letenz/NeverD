@@ -162,8 +162,9 @@ implementation. See the [kernel missing-call implementation](https://github.com/
 
 An explicit `linux_kernel.gki` selects a released Android common kernel branch
 from 5.10 through 6.18. Its current implemented subset includes `pidfd_open`
-for the live model process and explicitly catalogued guest tasks, and versioned
-vector import, with the same descriptor
+for the live model process and explicitly catalogued guest tasks, versioned
+vector import, observed process CPU clocks and zero-timeout pidfd `ppoll`, with
+the same descriptor
 table used by `linux_files`; Bionic and raw traps share ownership and error ordering.
 Selecting GKI together with an absent `pidfd_open` observation is rejected.
 An optional `linux_kernel.tasks` array supplies a closed, fixed catalogue of
@@ -175,6 +176,11 @@ cannot be combined with cooperative Android guest threads.
 Android API levels do not select a kernel. See the
 [released GKI contracts](android-gki-kernels.md) for all eight source pins,
 descriptor behavior, tests and the remaining kernel coverage.
+The poll subset requires an explicit zero timespec, null temporary mask and
+`linux_files` descriptor limit. It writes only ordered `revents` fields and
+does not update the zero timeout or advance wall clocks. Closed descriptors
+produce POLLNVAL; observed live pidfds have no readiness. Blocking waits and
+other descriptor readiness remain unsupported.
 
 The optional `linux_priority` input declares nice state for fixture-owned tasks
 with the caller's UID. Raw `setpriority` and `getpriority` share this state across
