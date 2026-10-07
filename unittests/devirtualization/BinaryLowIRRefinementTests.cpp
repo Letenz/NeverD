@@ -278,6 +278,10 @@ TEST(BinaryLowIRRefinement, InterveningQueriesRetainFeasibleDomains) {
       ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
       const auto Good = P.check(Recovery.Residual);
       ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+      // These independent fixtures retain their full logical query costs
+      // even when an intervening complete answer avoids backend work.
+      EXPECT_EQ(Good.Proof.SolverQueries,
+                Count == 8 ? (Taken ? 37u : 29u) : (Taken ? 109u : 77u));
       ASSERT_GT(Good.Proof.SolverQueries, 0U);
       LowIRRefinementLimits Limits;
       Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;

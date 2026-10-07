@@ -10,6 +10,7 @@
 #include "../arch/x86_64/NativeStackControl.h"
 #include "../arch/x86_64/X64Recovery.h"
 #include "../arch/x86_64/X64UserFlags.h"
+#include "CompletedQueryCache.h"
 #include "FiniteQueryCache.h"
 #include "FiniteValues.h"
 #include "FrameEntryConstraints.h"
@@ -379,6 +380,9 @@ class Checker {
   // One completed model-free query in this immutable DAG and fixed solver
   // configuration. No model, incomplete answer or cross-context fact escapes.
   SymRef LastCompletedQuery;
+  // History belongs to this actual context and checker, never to an
+  // inference session or a later independent proof.
+  detail::CompletedQueryCache QueryProofs{Ctx, Limits.MaxSymbolicNodes};
   // Keep one completed SAT fact across intervening queries in this immutable
   // DAG. A retained hit still consumes the same charged query request.
   SymRef LastFeasibleQuery;
@@ -569,6 +573,13 @@ class Checker {
       LastCompletedAnswer = solver::SatResult::Sat;
       return LastCompletedAnswer;
     }
+    if (const auto Hit = QueryProofs.lookup(Ctx, Predicate)) {
+      LastCompletedQuery = Predicate;
+      LastCompletedAnswer = *Hit;
+      if (*Hit == solver::SatResult::Sat)
+        LastFeasibleQuery = Predicate;
+      return *Hit;
+    }
     const bool Reused = EncodingCache && *EncodingCache;
     const auto Fresh = [&] {
       auto Options = Limits.Solver;
@@ -593,6 +604,12 @@ class Checker {
       fail(Status::BudgetExceeded, "relational solver budget exhausted");
     if (Answer == solver::SatResult::Invalid)
       fail(Status::Invalid, "invalid relational solver query");
+    // One-shot checkers already retain their only answer in the immediate
+    // fast path. Allocate the history only after another query completes.
+    if (LastCompletedQuery) {
+      QueryProofs.store(Ctx, LastCompletedQuery, LastCompletedAnswer);
+      QueryProofs.store(Ctx, Predicate, Answer);
+    }
     LastCompletedQuery = Predicate;
     LastCompletedAnswer = Answer;
     if (Answer == solver::SatResult::Sat)
