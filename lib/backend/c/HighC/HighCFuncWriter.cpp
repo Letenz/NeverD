@@ -3114,6 +3114,10 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
   // single-use temporaries into their use, so a body this large keeps them.
   if (Sites.size() > limits::kMaxValueForwardSites)
     return;
+  // The candidate defining each name, whose value a fold may bring along.
+  std::map<std::string, const HighStmt *> CandidateDefs;
+  for (const Candidate &C : Candidates)
+    CandidateDefs.emplace(C.Name, C.Stmt);
   auto scalarSourceRedefined = [&](const Candidate &C) {
     if (!C.Stmt->Val)
       return true;
@@ -3259,18 +3263,59 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
           UseIt->second.Index <= TrySite->second.Index)
         continue;
     }
-    // A forwarded load reads memory again at its use.  Nothing between the
-    // definition and the use may write what it reads, compound statements
-    // included, and in the use statement no other side effect may be
-    // unsequenced with it: a single call whose arguments hold it is fine.
-    if (const HighExpr *Load = peelIntegerViewOps(C.Stmt->Val.get());
-        Load && Load->Kind == ExprKind::Load && !Load->Operands.empty() &&
-        Load->Operands[0]) {
-      const std::optional<int64_t> Slot = frameDisplacement(*Load->Operands[0]);
+    // A folded value is evaluated again at its use.  Nothing that runs
+    // between the definition and a use may assign a variable it reads,
+    // including through other candidates folded into it, nor, for a load,
+    // write the memory it reads.  Candidate statements count: one that is
+    // not folded stays and may reassign a merged name.  What runs first at a
+    // use: the statements of C's region up to the one holding it, then,
+    // inside each compound statement on the way down, its controlling
+    // expression and the statements before the use; a loop on the way runs
+    // its whole body between two evaluations.  In the use statement itself
+    // no other side effect may be unsequenced with a load: one top-level
+    // call holding the use is fine.  A use right after the try whose body
+    // defines the value (every catch leaves) sees the rest of that body and
+    // the statements between.
+    {
+      std::set<std::string> Reads;
+      bool ReadsMemory = false;
+      std::function<void(const HighExpr &, unsigned)> Collect =
+          [&](const HighExpr &E, unsigned Depth) {
+            if (Depth > 64) {
+              ReadsMemory = true;
+              return;
+            }
+            if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
+              const std::string Read = varName(E.Var);
+              if (!Reads.insert(Read).second)
+                return;
+              if (auto It = ValueForward.find(Read);
+                  It != ValueForward.end() && It->second)
+                Collect(*It->second, Depth + 1);
+              if (auto It = CandidateDefs.find(Read);
+                  It != CandidateDefs.end() && It->second->Val)
+                Collect(*It->second->Val, Depth + 1);
+            }
+            if (E.Kind == ExprKind::Load || E.Kind == ExprKind::Call ||
+                E.Kind == ExprKind::Store)
+              ReadsMemory = true;
+            E.forEachChildExpr(
+                [&](const ExprPtr &Child) { Collect(*Child, Depth + 1); });
+          };
+      Collect(*C.Stmt->Val, 0);
+      const HighExpr *Load = peelIntegerViewOps(C.Stmt->Val.get());
+      if (!Load || Load->Kind != ExprKind::Load || Load->Operands.empty() ||
+          !Load->Operands[0])
+        Load = nullptr;
+      const std::optional<int64_t> Slot =
+          Load ? frameDisplacement(*Load->Operands[0]) : std::nullopt;
       const std::optional<std::string> SlotName =
-          namedFrameSlot(*Load->Operands[0]);
-      const bool Escapes = !Slot || !SlotName || isAddressTakenSlot(*SlotName);
-      const int64_t Width = Load->Type ? Load->Type->Size : 8;
+          Load ? namedFrameSlot(*Load->Operands[0]) : std::nullopt;
+      // Memory reached otherwise than through this one named slot.
+      const bool Escapes = ReadsMemory && (!Load || !Slot || !SlotName ||
+                                           isAddressTakenSlot(*SlotName) ||
+                                           Load != C.Stmt->Val.get());
+      const int64_t Width = Load && Load->Type ? Load->Type->Size : 8;
       auto Overlaps = [&](int64_t Disp, int64_t Size) {
         return Disp < *Slot + Width && *Slot < Disp + Size;
       };
@@ -3283,57 +3328,65 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
             [&](const ExprPtr &Child) { Hit = Hit || Self(*Child, Self); });
         return Hit;
       };
-      std::function<bool(const HighStmt &)> Clobbers =
+      std::function<bool(const HighStmt &)> Changes =
           [&](const HighStmt &S) -> bool {
         if (Analysis.DeadStmts.count(&S))
           return false;
-        if (S.Kind == StmtKind::Store && S.StoreAddr) {
-          const auto Disp = frameDisplacement(*S.StoreAddr);
-          const int64_t Size =
-              S.StoreVal && S.StoreVal->Type ? S.StoreVal->Type->Size : 8;
-          if (!Slot || (Disp ? Overlaps(*Disp, Size) : Escapes))
+        if (S.Kind == StmtKind::Assign && S.Dst &&
+            (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi) &&
+            Reads.count(varName(S.Dst->Var)))
+          return true;
+        if (ReadsMemory) {
+          if (S.Kind == StmtKind::Store && S.StoreAddr) {
+            const auto Disp = frameDisplacement(*S.StoreAddr);
+            const int64_t Size =
+                S.StoreVal && S.StoreVal->Type ? S.StoreVal->Type->Size : 8;
+            if (Escapes ? !Disp || !Slot || Overlaps(*Disp, Size)
+                        : Disp && Overlaps(*Disp, Size))
+              return true;
+          }
+          if (S.Kind == StmtKind::Assign && S.Dst &&
+              S.Dst->Kind == ExprKind::Var &&
+              S.Dst->Var.Kind == MedVar::Stack &&
+              (!Slot || Overlaps(S.Dst->Var.StackOff, S.Dst->Var.Size)))
             return true;
         }
-        if (S.Kind == StmtKind::Assign && S.Dst &&
-            S.Dst->Kind == ExprKind::Var && S.Dst->Var.Kind == MedVar::Stack &&
-            (!Slot || Overlaps(S.Dst->Var.StackOff, S.Dst->Var.Size)))
-          return true;
         bool Hit = false;
         forEachExpr(S, [&](const ExprPtr &E) {
-          Hit = Hit || (E && Escapes && ExprWrites(*E, ExprWrites));
+          if (!E)
+            return;
+          Hit = Hit || (Escapes && ExprWrites(*E, ExprWrites));
+          if (E->Kind == ExprKind::Call)
+            for (const MedVar &Output : E->IntrinsicOutputs)
+              Hit = Hit || Reads.count(varName(Output)) != 0;
         });
         if (Hit)
           return true;
         for (const auto *Child : {&S.Body, &S.ElseBody, &S.DefaultBody})
           for (const HighStmt &Inner : *Child)
-            if (Clobbers(Inner))
+            if (Changes(Inner))
               return true;
         for (const SwitchCase &Case : S.Cases)
           for (const HighStmt &Inner : Case.Body)
-            if (Clobbers(Inner))
+            if (Changes(Inner))
               return true;
         for (const std::vector<HighStmt> &Clause : S.EHClauseBodies)
           for (const HighStmt &Inner : Clause)
-            if (Clobbers(Inner))
+            if (Changes(Inner))
               return true;
         return false;
       };
-      // What runs before the forwarded load at each use: the statements of
-      // C's region up to the one holding the use, then, inside each compound
-      // statement on the way down, its controlling expression and the
-      // statements before the use.  A loop on the way runs its whole body
-      // between two evaluations.
-      bool Clobbered = false;
+      bool Changed = false;
       const auto SeqIt = Linear.find(C.Region);
       if (SeqIt == Linear.end())
         continue;
       const auto &Seq = SeqIt->second;
-      auto ClobbersBefore = [&](uint64_t Region, size_t Index) {
+      auto ChangesBefore = [&](uint64_t Region, size_t Index) {
         const auto RegionSeq = Linear.find(Region);
         if (RegionSeq == Linear.end())
           return true;
         for (size_t I = 0; I < Index && I < RegionSeq->second.size(); ++I)
-          if (RegionSeq->second[I] && Clobbers(*RegionSeq->second[I]))
+          if (RegionSeq->second[I] && Changes(*RegionSeq->second[I]))
             return true;
         return false;
       };
@@ -3341,30 +3394,29 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       for (const HighStmt *US : UseStmts) {
         const auto UIt = Sites.find(US);
         if (UIt == Sites.end()) {
-          Clobbered = true;
+          Changed = true;
           break;
         }
-        // Within the use statement only one top-level call may hold the use.
-        const HighExpr *Top = US->CallExpr ? US->CallExpr.get()
-                              : US->Kind == StmtKind::Return ? US->RetVal.get()
-                                                             : US->Val.get();
-        bool OtherEffect = false;
-        forEachExpr(*US, [&](const ExprPtr &E) {
-          if (!E)
-            return;
-          if (E.get() == Top && E->Kind == ExprKind::Call) {
-            E->forEachChildExpr([&](const ExprPtr &Arg) {
-              OtherEffect = OtherEffect || ExprWrites(*Arg, ExprWrites);
-            });
-            return;
-          }
-          OtherEffect = OtherEffect || ExprWrites(*E, ExprWrites);
-        });
-        Clobbered = Clobbered || (OtherEffect && Escapes) ||
+        if (ReadsMemory) {
+          const HighExpr *Top = US->CallExpr ? US->CallExpr.get()
+                                : US->Kind == StmtKind::Return
+                                    ? US->RetVal.get()
+                                    : US->Val.get();
+          bool OtherEffect = false;
+          forEachExpr(*US, [&](const ExprPtr &E) {
+            if (!E)
+              return;
+            if (E.get() == Top && E->Kind == ExprKind::Call) {
+              E->forEachChildExpr([&](const ExprPtr &Arg) {
+                OtherEffect = OtherEffect || ExprWrites(*Arg, ExprWrites);
+              });
+              return;
+            }
+            OtherEffect = OtherEffect || ExprWrites(*E, ExprWrites);
+          });
+          Changed = Changed || (OtherEffect && Escapes) ||
                     (OtherEffect && US->Kind == StmtKind::Store);
-        // A use right after the try whose body defines the value: every catch
-        // leaves, so only the rest of the body and the statements between the
-        // try and the use run first.
+        }
         if (const auto Join = JoinAfterTry.find(C.Region);
             Join != JoinAfterTry.end() && Join->second == UIt->second.Region) {
           const auto TryIt = TryForBody.find(C.Region);
@@ -3373,58 +3425,55 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
                                    : Sites.find(TryIt->second);
           const auto JoinSeq = Linear.find(UIt->second.Region);
           if (TrySite == Sites.end() || JoinSeq == Linear.end()) {
-            Clobbered = true;
+            Changed = true;
             break;
           }
-          for (size_t I = C.Index + 1; !Clobbered && I < Seq.size(); ++I)
-            Clobbered = Seq[I] && Clobbers(*Seq[I]);
+          for (size_t I = C.Index + 1; !Changed && I < Seq.size(); ++I)
+            Changed = Seq[I] && Changes(*Seq[I]);
           for (size_t I = TrySite->second.Index + 1;
-               !Clobbered && I < UIt->second.Index &&
-               I < JoinSeq->second.size();
+               !Changed && I < UIt->second.Index && I < JoinSeq->second.size();
                ++I)
-            Clobbered = JoinSeq->second[I] && Clobbers(*JoinSeq->second[I]);
+            Changed = JoinSeq->second[I] && Changes(*JoinSeq->second[I]);
           continue;
         }
         uint64_t Region = UIt->second.Region;
         size_t Index = UIt->second.Index;
-        for (unsigned Depth = 0; !Clobbered && Region != C.Region; ++Depth) {
+        for (unsigned Depth = 0; !Changed && Region != C.Region; ++Depth) {
           const auto Parent = RegionParent.find(Region);
           const auto Split = RegionSplit.find(Region);
           if (Depth >= 64 || Parent == RegionParent.end() ||
               Split == RegionSplit.end() || !Split->second) {
-            Clobbered = true;
+            Changed = true;
             break;
           }
           const HighStmt &Holder = *Split->second;
           const auto HIt = Sites.find(&Holder);
           if (HIt == Sites.end()) {
-            Clobbered = true;
+            Changed = true;
             break;
           }
           if (Holder.Kind == StmtKind::While ||
               Holder.Kind == StmtKind::DoWhile ||
               Holder.Kind == StmtKind::For) {
-            Clobbered = Clobbers(Holder);
+            Changed = Changes(Holder);
           } else {
-            Clobbered = ClobbersBefore(Region, Index);
+            Changed = ChangesBefore(Region, Index);
             forEachExpr(Holder, [&](const ExprPtr &E) {
-              Clobbered =
-                  Clobbered || (E && Escapes && ExprWrites(*E, ExprWrites));
+              Changed = Changed || (E && Escapes && ExprWrites(*E, ExprWrites));
             });
           }
           Region = Parent->second;
           Index = HIt->second.Index;
         }
         if (Region != C.Region) {
-          Clobbered = true;
+          Changed = true;
           break;
         }
         Gate = std::max(Gate, Index);
       }
-      for (size_t I = C.Index + 1; !Clobbered && I < Gate && I < Seq.size();
-           ++I)
-        Clobbered = Seq[I] && Clobbers(*Seq[I]);
-      if (Clobbered)
+      for (size_t I = C.Index + 1; !Changed && I < Gate && I < Seq.size(); ++I)
+        Changed = Seq[I] && Changes(*Seq[I]);
+      if (Changed)
         continue;
     }
     auto stmtWrites = [&](const HighStmt &S) {
