@@ -2989,6 +2989,8 @@ The MainActor fixture checks the complete fixed metadata/static-table flow and r
 
 `CompletedQueryCache.*` checks full byte-domain answers, every packed slot, growth, context and owner isolation, invalid and incomplete inputs, and exact storage limits. Native branch regressions retain fixed logical query costs and exact/one-short budgets even when complete answers avoid backend work.
 
+`BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` check repeated native target chains with branch changes and symbolic frame stores, fixed logical costs, exact/one-short query budgets, invalid target limits, gate exhaustion and wrong terminal observations. Interleaved frame and correlated target projections also preserve complete tuples, observer order and incomplete-result refusal across predicate replacement.
+
 `LinuxPriorityTests.cpp` checks explicit task state, thread isolation, missing
 observations, malformed JSON, profile admission and refusal effects.
 Independent x64/AArch64 raw callers at O0/O2 verify nice clamping, 32-bit syscall

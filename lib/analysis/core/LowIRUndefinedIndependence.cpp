@@ -376,7 +376,9 @@ class Checker {
   // Exact query identities stay within this checker and its actual immutable
   // context. Retain only completed domains under the existing word ceiling.
   detail::FiniteQueryCache FrameProofs{Limits.MaxSymbolicNodes, Ctx};
-  detail::FiniteDomainEncoding FrameDomain{Ctx, Limits.Solver};
+  // Frame and native target projections clone one pristine full predicate.
+  // Their models, blocking clauses and searches remain independent.
+  detail::FiniteDomainEncoding ProjectionDomain{Ctx, Limits.Solver};
   // One completed model-free query in this immutable DAG and fixed solver
   // configuration. No model, incomplete answer or cross-context fact escapes.
   SymRef LastCompletedQuery;
@@ -671,7 +673,7 @@ class Checker {
   std::optional<llvm::APInt> frameDifference(SymRef Predicate, SymRef Value) {
     uint64_t Queries = Result.SolverQueries;
     const auto Offset = detail::proveFrameOffset(
-        FrameDomain, Predicate, Value, EntryRoot, Limits.MaxSolverQueries,
+        ProjectionDomain, Predicate, Value, EntryRoot, Limits.MaxSolverQueries,
         Limits.MaxSymbolicNodes, Queries, &FrameProofs);
     Result.SolverQueries = static_cast<uint32_t>(Queries);
     if (Offset.Status == detail::FrameOffsetStatus::Invalid)
@@ -1274,7 +1276,7 @@ class Checker {
     }
     uint64_t Queries = Result.SolverQueries;
     const auto Values = detail::enumerateFiniteValues(
-        Ctx, Predicate, {Target}, Limits.MaxIndirectTargets, Limits.Solver,
+        ProjectionDomain, Predicate, {Target}, Limits.MaxIndirectTargets,
         Limits.MaxSolverQueries, Limits.MaxSymbolicNodes, Queries);
     Result.SolverQueries = static_cast<uint32_t>(Queries);
     if (Values.Status != detail::FiniteValueStatus::Complete)

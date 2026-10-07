@@ -1532,3 +1532,6 @@ MainActor 픽스처는 고정 메타데이터와 정적 테이블의 전체 흐�
 `ContextFiniteProofs.*`는 컨텍스트와 소유자 격리, 소유자 교체, 토큰 이동, 정확한 술어와 투영 순서, 노드 추가, 완료 및 미완료 결과, 저장 한도와 LRU 제거를 검사합니다. 프레임 테스트는 저장 전 마지막 유일성 질의와 캐시 적중 시 심볼릭 노드 한도를 확인합니다.
 
 `CompletedQueryCache.*`는 전체 바이트 영역의 답, 모든 압축 위치, 확장, 컨텍스트와 소유자 격리, 잘못되거나 불완전한 입력, 정확한 저장 한도를 검사합니다. 네이티브 분기 회귀는 완료된 답으로 백엔드 작업을 생략해도 고정된 논리 질의 비용과 정확한 예산 및 하나 부족한 예산의 거부를 유지합니다.
+
+
+`BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` 는 분기 변경과 기호적 프레임 쓰기를 포함한 반복 네이티브 대상 체인, 고정 논리 비용, 정확하거나 한 번 부족한 질의 예산, 잘못된 대상 한도, 게이트 예산 소진 및 잘못된 종료 관측을 검사합니다. 교차하는 프레임 및 상관 대상 투영은 술어 교체 전후에도 완전한 튜플, 관측 순서와 불완전한 결과 거부를 유지합니다.
