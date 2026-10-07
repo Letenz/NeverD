@@ -26,6 +26,31 @@ NEVERD_MULTI_WAIT_VALUE(GuardByte, 0x5a)
 NEVERD_MULTI_WAIT_VALUE(ModeMarker, '_')
 NEVERD_MULTI_WAIT_VALUE(ModeCharacters, 2)
 NEVERD_MULTI_WAIT_VALUE(SuccessMarker, 0x57)
+NEVERD_MULTI_WAIT_VALUE(ArgumentHighBits, 0xa5a55a5a00000000ULL)
+#endif
+
+// Naked tail calls preserve the original WDK signatures and stack layout.
+// Only undefined argument-register bits change before the real API import.
+#ifdef NEVERD_MULTI_WAIT_INITIALIZE_SEMAPHORE_ASM
+NEVERD_MULTI_WAIT_INITIALIZE_SEMAPHORE_ASM(
+    "movabsq $0xa5a55a5a00000000, %rax\n\t"
+    "orq %rax, %rdx\n\t"
+    "orq %rax, %r8\n\t"
+    "jmpq *__imp_KeInitializeSemaphore(%rip)\n\t")
+#endif
+#ifdef NEVERD_MULTI_WAIT_RELEASE_SEMAPHORE_ASM
+NEVERD_MULTI_WAIT_RELEASE_SEMAPHORE_ASM(
+    "movabsq $0xa5a55a5a00000000, %rax\n\t"
+    "orq %rax, %rdx\n\t"
+    "orq %rax, %r8\n\t"
+    "orq %rax, %r9\n\t"
+    "jmpq *__imp_KeReleaseSemaphore(%rip)\n\t")
+#endif
+#ifdef NEVERD_MULTI_WAIT_INITIALIZE_MUTEX_ASM
+NEVERD_MULTI_WAIT_INITIALIZE_MUTEX_ASM(
+    "movabsq $0xa5a55a5a00000000, %rax\n\t"
+    "orq %rax, %rdx\n\t"
+    "jmpq *__imp_KeInitializeMutex(%rip)\n\t")
 #endif
 
 #ifdef NEVERD_MULTI_WAIT_OUTCOME

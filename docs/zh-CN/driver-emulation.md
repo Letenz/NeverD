@@ -364,6 +364,8 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `IofCompleteRequest`、`IoCompleteRequest` | 使用 `IO_NO_INCREMENT` 执行完成展开，支持暂停／继续；仅在最终展开边界释放 IRP、MDL 和缓冲区 |
 | `memcpy`、`memmove`、`memset`、`memcmp`、`RtlCopyMemory`、`RtlMoveMemory`、`RtlFillMemory`、`RtlZeroMemory`、`RtlCompareMemory` | 有界的来宾缓冲区操作，每次调用最多 1 MiB；要求不重叠的复制 API 会拒绝重叠 |
 
+`KernelDispatcher` 按带符号的 32 位 `LONG` 解码信号量的 `Count`、`Limit` 和 `Adjustment`，按 32 位 `ULONG` 解码互斥体的 `Level`，按 8 位 `BOOLEAN` 解码 `Wait`，并依照 [Windows x64 ABI](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170) 忽略寄存器中未定义的高位。有效位中的非法值及信号量溢出仍在修改对象状态之前被拒绝。
+
 API 的 IRQL 上限来自 `KernelAPIIRQL.def`，参数相关限制由所属模型检查。DPC 不能调用注册表 API，也不能分配、释放或访问分页池；Unicode `DbgPrint` 转换要求 `PASSIVE_LEVEL`，支持的 ANSI 输出和非分页操作仍可在 `DISPATCH_LEVEL` 使用。回调栈有明确边界，越界栈指针不能进入另一阻塞工作项的栈。设备扩展中的已启动定时器会阻止设备提前回收。
 
 定时器到期会先满足已登记的等待，再允许 DPC 重置或重新设置定时器。排队 DPC 先于已唤醒的 `PASSIVE_LEVEL` 执行帧恢复运行。若请求存储仍包含排队的 DPC，IRP 完成操作会在完成和缓冲区失效之前拒绝释放。
