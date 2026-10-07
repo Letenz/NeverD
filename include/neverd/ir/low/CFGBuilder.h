@@ -1059,15 +1059,34 @@ private:
   /// Rewrite an unconditional-branch instruction record into an explicit
   /// CALL + RETURN pair (tail call to another function).
   void rewriteAsTailCall(InsnRecord &Rec);
+  /// A direct x86 call to a label strictly inside this function's own
+  /// primary unwind range, which no function entry claims, is lifted as what
+  /// the instruction does: push the return address and jump.
+  void rewriteOwnInteriorCall(const BinaryImage &Img, InsnRecord &Rec,
+                              va_t Next);
+  struct OwnInteriorCallVerdict {
+    /// Targets a return pops the call's own return address for.
+    std::set<va_t> Subroutines;
+    /// The first return no proof covers, or the target whose returns
+    /// disagree.
+    std::optional<va_t> Unproven;
+  };
+  /// Tracks the stack pointer from each target's pushed return-address slot
+  /// and classifies how the returns reached from it treat that slot.
+  OwnInteriorCallVerdict classifyOwnInteriorCalls(const LowFunc &Func) const;
+  LowFunc buildOnce(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
+                    const std::string &FuncName);
 
   /// Rewrite an unconditional indirect branch (`bx reg` / `br reg` / `jmp *reg`
   /// through a function pointer, not a jump table) into an INDIR_CALL + RETURN
-  /// pair — an indirect tail call.  Without this the unresolved INDIR_BR lowers
-  /// to a fall-through `ret 0`, dropping the call.
+  /// pair — an indirect tail call. Unclassified INDIR_BR operations remain
+  /// indirect branches and fail clearly if their destination cannot be emitted.
   void rewriteAsIndirectTailCall(InsnRecord &Rec);
 
-  /// After all jump-table resolution, convert any remaining unconditional
-  /// unresolved indirect branch into an indirect tail call and rebuild blocks.
+  /// After jump-table resolution, convert eligible unconditional unresolved
+  /// branches into indirect tail calls. AArch64 additionally requires the
+  /// incoming SP/link words restored on all paths; incomplete frame evidence
+  /// retains the branch. Rebuild blocks only when a conversion was accepted.
   void convertIndirectTailCalls(LowFunc &Func);
 
   /// Make the block beginning at Func.Entry block 0 and remap every CFG edge
@@ -1645,10 +1664,10 @@ private:
     bool operator==(const JumpTableInfo &Other) const = default;
   };
 
-  /// Scratch-only assumptions for narrow i386 joint table proofs.
+  /// Scratch-only assumptions for bounded joint finite table proofs.
   /// They are never published as prior role/storage certificates. EmptyEdges
   /// removes every group edge for a hypothesis-free seed query.
-  struct FiniteGOTOFFRoundCertificate {
+  struct FiniteJumpTableRoundCertificate {
     // A complete all-consumer certificate belongs to exactly one immutable
     // group round. The next round uses a different edge/role hypothesis and
     // starts with an empty certificate.
@@ -1656,6 +1675,8 @@ private:
     std::map<va_t, std::vector<va_t>> PhysicalTargets;
     std::map<va_t, std::vector<va_t>> HypothesisEdges;
     std::set<va_t> Roots;
+    /// Exact use points for hypothesis-free absolute selector seeds.
+    std::map<va_t, JumpTableValueOccurrence> Indices;
   };
   struct GuardedJumpTableGroupProofContext {
     std::set<va_t> Roots;
@@ -1667,11 +1688,12 @@ private:
     /// No selector, target, root, or ownership proof may borrow these results.
     const std::map<va_t, JumpTableInfo> *ConsumerRoleInfos = nullptr;
     /// Borrowed from the enclosing round; never retained by a proposal.
-    FiniteGOTOFFRoundCertificate *FiniteRoundCertificate = nullptr;
+    FiniteJumpTableRoundCertificate *FiniteRoundCertificate = nullptr;
   };
   enum class GuardedJumpTableGroupKind : uint8_t {
     DenseGuard,
     FiniteAdjacentGOTOFF,
+    FiniteAbsolute,
   };
   struct GuardedJumpTableGroupKey {
     va_t OwnerBegin = InvalidVA;
@@ -1725,8 +1747,17 @@ private:
                                     llvm::ArrayRef<va_t> Candidates,
                                     bool &MadeProgress,
                                     bool &MetadataRefreshed);
+  bool recoverFiniteAbsoluteJumpTableGroup(const BinaryImage &Img,
+                                           LowFunc &Func,
+                                           llvm::ArrayRef<va_t> Candidates,
+                                           bool &MadeProgress,
+                                           bool &MetadataRefreshed);
+  std::optional<std::vector<uint32_t>> replayFiniteAbsoluteGroupDomain(
+      const InsnRecord &Rec, const JumpTableInfo &Info, size_t *EvidenceBudget,
+      bool &Incomplete) const;
   bool guardedGroupContains(va_t Branch) const;
   bool finiteGOTOFFGroupClaimed() const;
+  bool finiteAbsoluteGroupClaimed() const;
   bool guardedGroupIsComplete() const;
   bool guardedGroupHasNoLiveMembers() const;
   void closeGuardedGroupOwners(std::set<va_t> &Owners) const;
@@ -2405,6 +2436,11 @@ private:
   // reserved DenseMap sentinels (~0 / ~0-1).
   llvm::DenseSet<va_t> ExploredAddrs;
   llvm::DenseSet<va_t> CallTargets;
+  /// Calls into this function's own body lifted as a push and a jump (see
+  /// rewriteOwnInteriorCall), by target.
+  std::map<va_t, std::set<va_t>> OwnInteriorCallSites;
+  /// Targets proven to be subroutines, whose calls stay calls.
+  std::set<va_t> KeptOwnInteriorCallTargets;
   /// Executable addresses taken via a relocation-free PC-relative `lea` while
   /// exploring this function (same-section function pointers); copied into the
   /// LowFunc so the pipeline merges them into the image's CodeRefTargets (a

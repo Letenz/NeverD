@@ -393,3 +393,115 @@ TEST(FiniteQueryCache, ByteOrderIsRepresentedByTheExpressionDag) {
             (std::vector<std::vector<uint64_t>>{{1}}));
 }
 } // namespace
+
+namespace {
+using Cache = FiniteQueryCache;
+TEST(PreparedFiniteKeys, OwnsCompleteKeyAndWidthsAfterContextDestruction) {
+  Cache C(4096);
+  Cache::PreparedQuery Q;
+  FiniteValues Result;
+  {
+    SymContext S;
+    auto X = S.mkVar("old_x", 8), Y = S.mkVar("old_y", 8);
+    auto P = S.mkAnd(S.mkEq(S.mkAdd(X, Y), S.mkConst(8, 9)),
+                     S.mkUlt(X, S.mkConst(8, 2)));
+    Q = C.prepare(S, P, {X, Y}, 2);
+    EXPECT_FALSE(C.lookup(Q));
+    Result = prove(S, P, {X, Y}, 2);
+    ASSERT_EQ(Result.Status, FiniteValueStatus::Complete);
+    ASSERT_EQ(Result.Tuples,
+              (std::vector<std::vector<uint64_t>>{{0, 9}, {1, 8}}));
+  }
+  C.store(std::move(Q), Result);
+  SymContext S;
+  auto X = S.mkVar("renamed_x", 8), Y = S.mkVar("renamed_y", 8);
+  auto P = S.mkAnd(S.mkEq(S.mkAdd(X, Y), S.mkConst(8, 9)),
+                   S.mkUlt(X, S.mkConst(8, 2)));
+  auto Again = C.prepare(S, P, {X, Y}, 2);
+  auto Hit = C.lookup(Again);
+  ASSERT_TRUE(Hit);
+  EXPECT_EQ(Hit->Tuples, Result.Tuples);
+  EXPECT_FALSE(C.lookup(C.prepare(S, P, {Y, X}, 2)));
+  EXPECT_FALSE(C.lookup(C.prepare(S, P, {X, Y}, 1)));
+}
+TEST(PreparedFiniteKeys, InvalidIncompleteAndMalformedResultsDoNotEnterCache) {
+  SymContext S;
+  auto X = S.mkVar("x", 8);
+  auto P = S.mkEq(X, S.mkConst(8, 5));
+  const auto Good = prove(S, P, {X}, 1);
+  ASSERT_EQ(Good.Status, FiniteValueStatus::Complete);
+  for (auto Status : {FiniteValueStatus::Unknown, FiniteValueStatus::Invalid,
+                      FiniteValueStatus::QueryBudgetExceeded}) {
+    Cache C(4096);
+    C.store(C.prepare(S, P, {X}, 1), {Status, {}});
+    EXPECT_FALSE(C.lookup(C.prepare(S, P, {X}, 1)));
+  }
+  for (auto Tuples :
+       {std::vector<std::vector<uint64_t>>{{256}}, {{5, 5}}, {{5}, {5}}}) {
+    Cache C(4096);
+    C.store(C.prepare(S, P, {X}, 1), {FiniteValueStatus::Complete, Tuples});
+    EXPECT_FALSE(C.lookup(C.prepare(S, P, {X}, 1)));
+  }
+  Cache C(4096);
+  C.store(Cache::PreparedQuery{}, Good);
+  C.store(C.prepare(S, {}, {X}, 1), Good);
+  EXPECT_FALSE(C.lookup(C.prepare(S, P, {X}, 1)));
+  auto Source = C.prepare(S, P, {X}, 1);
+  auto Destination = std::move(Source);
+  C.store(std::move(Source), Good);
+  EXPECT_FALSE(C.lookup(C.prepare(S, P, {X}, 1)));
+  EXPECT_FALSE(C.lookup(Source));
+  Cache::PreparedQuery Assigned;
+  Assigned = std::move(Destination);
+  EXPECT_FALSE(C.lookup(Destination));
+  auto *Self = &Assigned;
+  Assigned = std::move(*Self);
+  C.store(std::move(Assigned), Good);
+  EXPECT_FALSE(C.lookup(Assigned));
+  ASSERT_TRUE(C.lookup(C.prepare(S, P, {X}, 1)));
+}
+TEST(PreparedFiniteKeys, OriginalCapacityAccountingAndTargetLimitsRemainExact) {
+  SymContext S;
+  auto X = S.mkVar("x", 8);
+  auto P = S.mkEq(X, S.mkConst(8, 5));
+  const auto Good = prove(S, P, {X}, 1);
+  unsigned Fits = 0, Rejects = 0;
+  for (uint64_t Budget = 0; Budget != 256; ++Budget) {
+    Cache A(Budget), B(Budget);
+    A.store(S, P, {X}, 1, Good);
+    B.store(B.prepare(S, P, {X}, 1), Good);
+    auto HA = A.lookup(S, P, {X}, 1), HB = B.lookup(B.prepare(S, P, {X}, 1));
+    EXPECT_EQ(bool(HA), bool(HB));
+    if (HA) {
+      ++Fits;
+      EXPECT_EQ(HA->Tuples, HB->Tuples);
+    } else
+      ++Rejects;
+  }
+  EXPECT_GT(Fits, 0U);
+  EXPECT_GT(Rejects, 0U);
+  Cache Large(4096), Small(1);
+  auto Q = Large.prepare(S, P, {X}, 1);
+  EXPECT_FALSE(Small.lookup(Q));
+  Small.store(std::move(Q), Good);
+  EXPECT_FALSE(Small.lookup(Large.prepare(S, P, {X}, 1)));
+}
+TEST(PreparedFiniteKeys, EmptyAndNonuniqueProofsKeepTheirExactDomains) {
+  SymContext S;
+  auto X = S.mkVar("x", 8);
+  Cache C(4096);
+  const auto Empty = prove(S, S.mkFalse(), {X}, 1);
+  C.store(C.prepare(S, S.mkFalse(), {X}, 1), Empty);
+  auto H = C.lookup(C.prepare(S, S.mkFalse(), {X}, 1));
+  ASSERT_TRUE(H);
+  EXPECT_EQ(H->Status, FiniteValueStatus::Complete);
+  EXPECT_TRUE(H->Tuples.empty());
+  const auto Many = prove(S, S.mkTrue(), {X}, 1);
+  ASSERT_EQ(Many.Status, FiniteValueStatus::TooManyValues);
+  C.store(C.prepare(S, S.mkTrue(), {X}, 1), Many);
+  H = C.lookup(C.prepare(S, S.mkTrue(), {X}, 1));
+  ASSERT_TRUE(H);
+  EXPECT_EQ(H->Status, FiniteValueStatus::TooManyValues);
+  EXPECT_FALSE(C.lookup(C.prepare(S, S.mkTrue(), {}, 1)));
+}
+} // namespace

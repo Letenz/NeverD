@@ -226,7 +226,13 @@ std::string missingHighFunctionReason(const PipelineResult &Result,
       if (Addrs.size() > 4)
         Reason += " ...";
     };
-    Name("unsupported instruction", Audit.UnsupportedInstructions);
+    std::vector<va_t> Unsupported;
+    for (va_t Addr : Audit.UnsupportedInstructions)
+      if (!llvm::is_contained(Audit.UnprovenReturns, Addr))
+        Unsupported.push_back(Addr);
+    Name("unsupported instruction", Unsupported);
+    Name("return that may pop an address the function pushed",
+         Audit.UnprovenReturns);
     Name("decode failure", Audit.DecodeFailures);
     return Reason + ")";
   }

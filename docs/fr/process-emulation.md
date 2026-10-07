@@ -47,6 +47,7 @@ Les options sont un objet JSON de 64 KiB maximum. Champs inconnus/null, types in
 | `stack_size` | 1048576 | Pile alignée sur page dans le budget |
 | `output_limit` | 1048576 | Total des octets stdout/stderr capturés |
 | `instruction_quantum` | 1024 | Intervalle d’admission avant cession à la runtime |
+| `linux_priority` | Non configuré | Valeurs nice explicites par tâche et droits de l’appelant pour les services Linux bruts de priorité |
 
 `schema_version` vaut 1. Le rapport inclut profil, architecture, backend sélectionné et motif, `stop_reason`, `exit_status` nullable, diagnostic, PC d’entrée/courant, compteurs, enregistrements de services et dernière sortie CPU typée. Adresses, numéros syscall, registres d’arguments et bits de retour sont des chaînes hexadécimales **sans** `0x` ; `stdout_hex`/`stderr_hex` préservent NUL et UTF-8 invalide. Un résultat syscall null signifie aucun retour modélisé (exit ou requête non prise en charge, par exemple), et non un zéro réussi.
 
@@ -75,6 +76,17 @@ Les services de mémoire anonyme partagent l'espace d'adressage et le budget phy
 Les longueurs sont arrondies aux pages. `munmap` tolère les trous et suppressions répétées ; `mprotect` modifie le préfixe mappé avant de retourner `ENOMEM` au premier trou. `PROT_NONE` conserve l'allocation et les octets sans autoriser l'accès invité. L'appel brut `brk` retourne la limite demandée en cas de succès et l'ancienne en cas d'échec, contrairement au zéro/moins un du wrapper libc. La limite initiale est la fin d'image alignée sur une page. L'extension respecte les autres mappings et le budget ; la réduction conserve les octets de la page partielle restante. Les règles et priorités d'erreur suivent les services Linux de [mapping](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) et de [protection](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c).
 
 Les mappings de fichiers, partagés ou fixes, la croissance descendante, les grandes pages, le verrouillage, les clés de protection, les politiques exécution seule/écriture seule et les autres drapeaux restent explicitement non pris en charge : arrêt avant tout effet publié ou retour inventé. Les erreurs ordinaires de plage, longueur et alignement du sous-ensemble admis retournent une erreur invitée et permettent de poursuivre. Aucun pointeur ni demande de mapping invité n'est transmis à l'OS hôte.
+
+L’entrée facultative `linux_priority` déclare l’état nice des tâches de test ayant l’UID de l’appelant. Les appels bruts `setpriority` et `getpriority` partagent cet état entre Linux ELF64 et Android, sans changer les priorités de l’hôte.
+
+```json
+{"linux_priority":{"tasks":[{"id":1000,"nice":0}],
+                   "cap_sys_nice":false,"rlimit_nice":0}}
+```
+
+Les identifiants sont des entiers signés positifs distincts sur 32 bits ; nice initial vaut -20..19 et `rlimit_nice` 0..40. `cap_sys_nice` et `rlimit_nice` valent par défaut false et 0 ; l’état reste explicite. Une entrée absente, une tâche non déclarée —y compris un nouveau thread sans état— et PRIO_PGRP/PRIO_USER arrêtent le service comme non pris en charge, sans déduire héritage ou propriétaire. PRIO_PROCESS avec who=0 choisit la tâche invitée courante, sinon la tâche désignée. Un sélecteur invalide renvoie -EINVAL brut. La requête de modification borne nice signé sur 32 bits à -20..19. Diminuer nice exige CAP_SYS_NICE ou un RLIMIT_NICE suffisant ; un refus renvoie -EACCES brut sans modifier l’état. La lecture brute renvoie `20 - nice`, soit le codage noyau 40..1, et non le résultat traduit de libc.
+
+[Linux setpriority/getpriority](https://man7.org/linux/man-pages/man2/setpriority.2.html).
 
 `linux_signals` fournit les actions initiales des signaux pour tout le processus. Une entrée absente est inconnue et ne signifie pas `SIG_DFL` ; une liste explicitement vide permet une installation sans lecture de l’action précédente. Les cinq champs sont obligatoires ; les valeurs non signées sur 64 bits hors de la plage exacte de JSON utilisent des chaînes décimales.
 

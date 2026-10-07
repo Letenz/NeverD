@@ -492,6 +492,8 @@ Windows 모델은 독립적인 비페이지 풀 MDL도 관리하며, 설명자�
 
 `KernelScheduler`는 준비 큐 순서, 콜백 식별자와 타이머 기한을, `KernelDispatcher`는 불투명 DPC·타이머·이벤트 객체와 신호를 관리합니다. `KernelModel`은 대기 등록, 작업 항목/장치 수명과 IRP 완료를 관리합니다. `DriverSession`은 Win64 스택 인수를 포함한 별도 콜백 스택과 전체 CPU 컨텍스트를 중단·복원하며 게스트 메모리는 공유합니다. 기본적으로 준비된 프레임이 없을 때만 가상 시간은 타이머/대기/취소 경계에서 진행하고 CPU0의 결정적 협력 스케줄링으로 DPC는 `DISPATCH_LEVEL`, 작업 항목은 `PASSIVE_LEVEL`에서 실행합니다. 일반 스레드/APC/스핀락, 설명된 계약 밖의 WDM/PnP 취소, 임의의 동시 공개 시나리오 제출, 전체 PnP/전원 또는 일반 하드웨어 지원은 포함하지 않습니다. API IRQL 상한은 `KernelAPIIRQL.def`에 정의되며 인수별 제한은 담당 모델이 검사합니다.
 
+`KernelScheduler`가 실행 우선순위와 우선순위/준비 순서 비교를 일원화합니다. `KernelModelThreadPriorities`는 `KeSetPriorityThread`와 `KeQueryPriorityThread`의 스레드 객체를 검증하며 중지된 CPU 컨텍스트에 우선순위를 복사하지 않습니다. `DriverSession`은 콜백 동기화 진입 전과 API/이벤트 경계에서 높은 우선순위의 준비 스레드를 확인합니다. 범위와 제한은 [드라이버 스케줄링](driver-scheduling.md)을 참조하세요.
+
 `KernelModelDeviceStack`은 장치의 드라이버 소유자, 할당, 상하 연결, 삭제 대기 상태, 내부 참조를 하나의 레코드로 관리합니다. 게스트 `NextDevice` 목록과 호스트 소유 연결 그래프는 별개입니다. 이름 확인은 이름 있는 하위 장치를 `FILE_OBJECT`와 보고서에 유지하고 초기 디스패치와 READ/WRITE 방식은 현재 최상단을 선택하며 요청 경로 전체를 보존합니다. 분리·삭제 후에도 요청/콜백이 참조하는 장치는 만료되지 않으며 공개 `ReferenceCount`는 열린 핸들만 셉니다.
 
 `KernelModelIRPStack`은 원래 게스트 패킷의 제한된 커서, 정확한 대상 디스패치, 완료 해제를 관리하고 인라인 Copy/Skip/SetCompletion 쓰기를 단일 근거로 사용합니다. 디스패치 상태, 완료 제어값, 최종 `IoStatus`는 별개이며 반환 후에도 pending을 전달할 수 있습니다. `STATUS_MORE_PROCESSING_REQUIRED`는 중첩 완료를 포함해 최종 해제를 재개할 때까지 IRP/MDL/버퍼를 보존합니다. `KernelGuestCall`의 소유 하위 시스템과 로컬 토큰이 WDM/WDF continuation 충돌을 막고 `DriverSession`은 CPU 프레임과 상속 IRQL을 유지합니다. 단일 게스트 드라이버를 별도 소유의 시나리오 PDO 위에 연결할 수 있습니다. 드라이버 할당 IRP, WDF 연결/전달, 사용 중 스택 연결, 중간 계층 분리, 주 기능 변경, 경로 외부 대상은 지원하지 않습니다. 상위 완료 콜백 전에 소비된 하위 스택 위치를 0으로 지웁니다.
@@ -1374,4 +1376,16 @@ SourceFrameAnalysis는 네이티브 출력 바이트의 완전 쓰기 증명과 
 
 Swift SDK 카탈로그는 Foundation의 제네릭 NSRange 초기화에 범위, 문자열, 두 메타데이터와 두 witness를 위한 일반 포인터 인자 여섯 개와 완전한 두 워드 결과를 인증합니다. Swift 6.1.2 선언과 SDK 내보내기는 ARM64/x86-64의 macOS와 Mac Catalyst에서 일치합니다. Foundation이 내보낸 설치 이름 두 개만 허용하며 불투명한 입력 포인터에 레이아웃, 대여 또는 비유출 계약을 부여하지 않습니다.
 
+동일한 서술자별 계약은 고정된 `String: StringProtocol` 적합성도 다룹니다. 네 가지 완전한 컴파일러 쿼리는 String 메타데이터, 서술자와 null로 초기화된 캐시를 보존합니다. 접근자는 캐시를 확인하고 세 포인터 runtime 호출의 세 번째 인자로 undef를 넘긴 뒤 release 순서로 witness를 저장하고 해당 PHI를 반환합니다. 저장소, ABI, 분기, PHI 입력 변경이나 추가 효과는 계약을 무효화합니다. undef만 투영하며 관측되는 진입 인자와 효과가 있는 표현식은 유지합니다.
+
 각 관계 검사기는 자체 컨텍스트와 고정 솔버 설정에 연결된 `FiniteDomainEncoding` 하나를 소유합니다. 같은 완전한 술어의 반복된 비캐시 프레임 질의는 탐색 전 인코딩을 복사하고 술어가 바뀌면 템플릿을 교체합니다. 투영, 차단 절, 학습 상태와 모델은 각 질의 내부에만 남습니다. 완전한 유한 열거, 최종 UNSAT 확인, 논리 질의 계산과 기존의 모든 제한을 계속 적용합니다.
+
+프레임 오프셋 쿼리는 조회와 이후 삽입에 사용할 완전한 유한 증명 키를 한 번 준비합니다. 이동 가능한 토큰은 문맥에 독립적이며 정확한 DAG 식별과 투영 너비를 보존합니다. 기호 참조나 불완전한 결과는 보관하지 않습니다. 토큰이 살아 있는 동안 캐시 외에 크기가 제한된 임시 키 하나가 추가됩니다. 결과 검증, 제거, 완전 열거와 모든 솔버 예산은 그대로입니다.
+
+Swift CGPoint 인스턴스 변환은 double 입력 두 개, 결과 두 개와 swiftself를 사용한다. Swift 6.1.2의 네 SDK 구성에서 일반 클래스와 제네릭 클래스 선언이 일치한다. 공유 ABI 계층은 ARM64와 x86-64에서 이 완전한 형태를 지원하며 정확한 가져온 CGPoint 선언을 네이티브 추론과 수신자 바인딩에 사용한다. thunk, async, throws, inout, Optional 및 다른 명목 타입은 이 계약에 포함되지 않는다.
+
+고정된 `MainActor: Actor` SDK 계약은 외부 데이터 및 witness 카탈로그에서 완전한 컴파일러 판독기를 공유합니다. 네 대상 모두 메타데이터 응답과 동일한 공개 정적 테이블을 유지해야 하며, 메타데이터 접근자와 대응 conformance 설명자 및 테이블을 `libswift_Concurrency`가 모두 내보내야 합니다. Swift 6.1.2의 정적 및 비의존 런타임 경로는 호출자의 인스턴스화 인수 2를 사용하지 않습니다. 기존 세 포인터 ABI, 메타데이터 입력과 캐시 게시 효과는 유지됩니다. 다른 Actor conformance, 값 배치 또는 프레임 효과에 대한 증명은 제공하지 않습니다.
+
+Swift SDK Published의 enclosing-instance 접근자는 포인터 네 개를 유지합니다. 첫 인수는 getter의 불투명한 간접 결과 또는 setter가 소비하는 값의 주소이며, 이후 owner, wrapped key path, storage key path가 이어집니다. Swift 6.1.2 macOS/Mac Catalyst의 네 컴파일러 및 내보내기 구성에서 정확한 심볼과 Combine 제공자를 확인합니다. 제네릭 메타데이터나 swiftself를 추가하지 않으며 참조 소유권, 불투명 값 배치 및 프레임 의무는 기존 담당 계층에 남습니다.
+
+정확히 인증된 `MainActor.shared` SDK getter는 객체 포인터 하나를 반환하고 메타타입을 swiftself(ARM64의 `x20`, x86-64의 `r13`)로 받습니다. Swift 6.1.2의 macOS/Mac Catalyst 네 가지 컴파일 및 내보내기 구성으로 전체 ABI와 `libswift_Concurrency`의 강한 가져오기 제공자를 확인합니다. 소유권, 실행기 스케줄링 및 전용 스택 프레임 분석에는 기존 계약이 적용됩니다.

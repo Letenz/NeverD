@@ -1180,6 +1180,8 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   // Names merge last: every earlier pass may still move statements as if
   // each local had the definitions it had in SSA.
   coalesceHighPhiCopies(Func);
+  // Signedness follows the merged names: one declaration, one type.
+  chooseIntegerSignedness(Func);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
 

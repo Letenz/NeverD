@@ -304,8 +304,9 @@ std::vector<PortableStoreCall> portableStoreCalls(std::string_view Source) {
          Source.substr(Address, Source.find(';', Address) - Address),
          Source.substr(Value, Source.find(';', Value) - Value)});
   }
-  // `((*(neverd_unaligned_u32 *)(uintptr_t)(ADDRESS)) = VALUE);`, the
-  // aligned(1), may_alias spelling of a scalar store.
+  // `((*(neverd_unaligned_u32 *)ADDRESS) = VALUE);`, the aligned(1),
+  // may_alias spelling of a scalar store.  ADDRESS is a name, a
+  // parenthesized expression, or `(uintptr_t)(&OBJECT)`.
   static constexpr std::pair<std::string_view, std::string_view> Aliases[] = {
       {"neverd_unaligned_u8", "uint8_t"},
       {"neverd_unaligned_i8", "int8_t"},
@@ -330,7 +331,8 @@ std::vector<PortableStoreCall> portableStoreCalls(std::string_view Source) {
     return std::string_view::npos;
   };
   constexpr std::string_view AliasPrefix = "((*(neverd_unaligned_";
-  constexpr std::string_view Cast = " *)(uintptr_t)(";
+  constexpr std::string_view Cast = " *)";
+  constexpr std::string_view Integer = "(uintptr_t)(";
   for (size_t At = Source.find(AliasPrefix); At != std::string_view::npos;
        At = Source.find(AliasPrefix, At + AliasPrefix.size())) {
     const size_t NameStart = At + 4;
@@ -342,20 +344,32 @@ std::vector<PortableStoreCall> portableStoreCalls(std::string_view Source) {
         Aliases, [&](const auto &Entry) { return Entry.first == Alias; });
     if (Known == std::end(Aliases))
       continue;
-    const size_t AddressStart = NameEnd + Cast.size();
-    const size_t AddressEnd = Close(AddressStart);
+    // The address text, and the offset just past it where `) = ` follows.
+    size_t AddressStart = NameEnd + Cast.size();
+    size_t AddressStop = std::string_view::npos, Next = std::string_view::npos;
+    if (Source.substr(AddressStart, Integer.size()) == Integer) {
+      AddressStart += Integer.size();
+      if (const size_t End = Close(AddressStart); End != std::string_view::npos)
+        AddressStop = End - 1, Next = End;
+    } else if (AddressStart < Source.size() && Source[AddressStart] == '(') {
+      ++AddressStart;
+      if (const size_t End = Close(AddressStart); End != std::string_view::npos)
+        AddressStop = End - 1, Next = End;
+    } else {
+      AddressStop = Source.find(')', AddressStart);
+      Next = AddressStop;
+    }
     constexpr std::string_view Assign = ") = ";
-    if (AddressEnd == std::string_view::npos ||
-        Source.substr(AddressEnd, Assign.size()) != Assign)
+    if (Next == std::string_view::npos ||
+        Source.substr(Next, Assign.size()) != Assign)
       continue;
-    const size_t ValueStart = AddressEnd + Assign.size();
+    const size_t ValueStart = Next + Assign.size();
     const size_t ValueEnd = Close(ValueStart);
     if (ValueEnd == std::string_view::npos)
       continue;
-    Stores.push_back(
-        {Known->second,
-         Source.substr(AddressStart, AddressEnd - 1 - AddressStart),
-         Source.substr(ValueStart, ValueEnd - 1 - ValueStart)});
+    Stores.push_back({Known->second,
+                      Source.substr(AddressStart, AddressStop - AddressStart),
+                      Source.substr(ValueStart, ValueEnd - 1 - ValueStart)});
   }
   return Stores;
 }
@@ -905,7 +919,7 @@ TEST(HighCPointerAddresses, AddressTakenFrameSlotUsesSharedBacking) {
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("uint8_t stack_storage[24]"), std::string::npos)
       << Source;
-  expectPortableStore(Source, "uint32_t", "frame_base) - 8", "7");
+  expectPortableStore(Source, "uint32_t", "frame_base - 8", "7");
   const auto ReturnAt = Source.rfind("return ");
   ASSERT_NE(ReturnAt, std::string::npos) << Source;
   EXPECT_NE(Source.substr(ReturnAt).find("frame_base"), std::string::npos)
@@ -10260,8 +10274,7 @@ TEST(HighCPointerAddresses, AddressTakenValuesHomePreservesWideStore) {
   Options.TheArch = Arch::X64;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
-  expectPortableStore(Source, "__int128", "frame_base) - 80",
-                      "AdjustmentLevel");
+  expectPortableStore(Source, "__int128", "frame_base - 80", "AdjustmentLevel");
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
 }
 
@@ -21003,7 +21016,7 @@ TEST(HighCPointerAddresses, CtorHomeSlotUsesTypedFrameAddress) {
   ASSERT_EQ(Args->size(), 2u) << Source;
   EXPECT_NE((*Args)[0].find("CStringT*"), std::string::npos) << Source;
   EXPECT_NE((*Args)[0].find("frame_base - 8"), std::string::npos) << Source;
-  expectPortableStore(Source, "uint64_t", "frame_base) - 8", "0");
+  expectPortableStore(Source, "uint64_t", "frame_base - 8", "0");
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("int64_t var_m8"), std::string::npos) << Source;
 }
@@ -25289,8 +25302,7 @@ TEST(HighCPointerAddresses, Win64SameBlockRdxRecoversPredSetupR8) {
   EXPECT_EQ(Args->size(), 3u) << Source << "\nHighIR:\n" << HighDump;
   if (Args->size() == 3) {
     EXPECT_NE((*Args)[1].find("3313"), std::string_view::npos) << Source;
-    EXPECT_NE((*Args)[2].find("+ (uint64_t)(64)"), std::string_view::npos)
-        << Source;
+    EXPECT_NE((*Args)[2].find("+ 64)"), std::string_view::npos) << Source;
   }
   EXPECT_EQ(Source.find(", 42"), std::string::npos) << Source;
 }
@@ -25429,8 +25441,7 @@ TEST(HighCPointerAddresses, Win64CallJoinRecoversDominatingR8) {
   ASSERT_TRUE(Args) << Source;
   EXPECT_EQ(Args->size(), 3u) << Source << "\nHighIR:\n" << HighDump;
   if (Args->size() == 3)
-    EXPECT_NE((*Args)[2].find("+ (uint64_t)(64)"), std::string_view::npos)
-        << Source;
+    EXPECT_NE((*Args)[2].find("+ 64)"), std::string_view::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, Win64IpMapSplitCallKeepsPredLeaArgs) {
@@ -27060,8 +27071,8 @@ TEST(HighCPointerAddresses, GotoJoinDefaultAssignKeepsMemberAddressIncoming) {
   structureIfElse(Func, 8);
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ (uint64_t)(40)"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ (uint64_t)(240)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 40)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 240)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("table("), std::string::npos) << Source;
   EXPECT_NE(Source.find("Find("), std::string::npos) << Source;
   EXPECT_NE(Source.find("arg3 == 0"), std::string::npos) << Source;
@@ -27108,7 +27119,7 @@ TEST(HighCPointerAddresses, GotoJoinLabelAddIsNotInvertSkip) {
   structureIfElse(Func, 8);
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ (uint64_t)(40)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 40)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("table("), std::string::npos) << Source;
   EXPECT_NE(Source.find("arg3 == 0"), std::string::npos) << Source;
 }
@@ -27222,7 +27233,7 @@ TEST(HighCPointerAddresses, GotoJoinDefaultAssignSinksPastPadHeavyTree) {
   structureIfElse(Func, 8);
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ (uint64_t)(40)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 40)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("table("), std::string::npos) << Source;
   EXPECT_NE(Source.find("arg3 == 0"), std::string::npos) << Source;
 }
@@ -27325,7 +27336,7 @@ TEST(HighCPointerAddresses, GotoJoinVirtPrefixKeepsIncomingAcrossEmptyClobber) {
   structureIfElse(Func, 8);
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ (uint64_t)(240)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 240)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("table(arg0)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("CStringT_ctor("), std::string::npos) << Source;
 }
@@ -27557,12 +27568,10 @@ TEST(HighCPointerAddresses, GotoJoinPhiKeepsPointerAddIncoming) {
   llvm::raw_string_ostream HighOS(HighDump);
   Pipeline::dumpHighIR({High}, HighOS);
   const std::string Source = emitFunctions({High}, Arch::X64, &Img);
-  EXPECT_NE(Source.find("+ (uint64_t)(40)"), std::string::npos)
-      << Source << "\nHighIR:\n"
-      << HighDump;
-  EXPECT_NE(Source.find("+ (uint64_t)(240)"), std::string::npos)
-      << Source << "\nHighIR:\n"
-      << HighDump;
+  EXPECT_NE(Source.find("+ 40)"), std::string::npos) << Source << "\nHighIR:\n"
+                                                     << HighDump;
+  EXPECT_NE(Source.find("+ 240)"), std::string::npos) << Source << "\nHighIR:\n"
+                                                      << HighDump;
   EXPECT_NE(Source.find("table("), std::string::npos) << Source << "\nHighIR:\n"
                                                       << HighDump;
   EXPECT_NE(Source.find("CStringT_ctor("), std::string::npos)
@@ -27698,9 +27707,9 @@ TEST(HighCPointerAddresses, GotoJoinNestedVirtIncomingSurvivesLabelFold) {
                Ctor};
   structureIfElse(Func, 10);
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("+ (uint64_t)(40)"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ (uint64_t)(240)"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ (uint64_t)(64)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 40)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 240)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("+ 64)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("CStringT_ctor("), std::string::npos) << Source;
   EXPECT_NE(Source.find("IsEmpty("), std::string::npos) << Source;
 }
@@ -32484,8 +32493,7 @@ TEST(HighCPointerAddresses, FrameAddressValueDeclaresSlot) {
   Func.Body.push_back(std::move(Ret));
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return ((uint64_t)((uint64_t)(frame_base)"),
-            std::string::npos)
+  EXPECT_NE(Source.find("return (uint64_t)frame_base - 8;"), std::string::npos)
       << Source;
   expectPortableStore(Source, "int64_t", "- 8", "arg0");
 }
@@ -33877,36 +33885,31 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsThrow) {
   // Escaping constructor objects and parameter homes share byte storage.
   // The prologue's -104 and the reload's +112 address the arg0 home at +8.
   EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
-  expectPortableStore(Source, "int32_t", "frame_base) + 8", "arg0");
-  EXPECT_NE(Source.find("(uint64_t)(frame_base) - (uint64_t)(104)"),
-            std::string::npos)
+  expectPortableStore(Source, "int32_t", "frame_base + 8", "arg0");
+  EXPECT_NE(Source.find("(uint64_t)frame_base - 104"), std::string::npos)
       << Source;
   const auto Condition = sourceLineContaining(Source, "if ((__builtin_memcpy(");
-  EXPECT_NE(Condition.find("(v0) + 112"), std::string_view::npos) << Source;
+  EXPECT_NE(Condition.find("v0 + 112"), std::string_view::npos) << Source;
   EXPECT_NE(Condition.find(" == 7)"), std::string_view::npos) << Source;
   const auto InnerCtor = lastCallArguments(Source, "sub_140001000");
   ASSERT_TRUE(InnerCtor.has_value()) << Source;
   ASSERT_EQ(InnerCtor->size(), 2u) << Source;
-  EXPECT_NE((*InnerCtor)[0].find("(v0) + (uint64_t)(40)"),
-            std::string_view::npos)
-      << Source;
+  EXPECT_NE((*InnerCtor)[0].find("v0 + 40"), std::string_view::npos) << Source;
   EXPECT_EQ(llvm::StringRef((*InnerCtor)[1]).trim(), "10") << Source;
   const size_t LastCtor = Source.rfind("sub_140001000(");
   const auto OuterCtor = lastCallArguments(
       std::string_view(Source).substr(0, LastCtor), "sub_140001000");
   ASSERT_TRUE(OuterCtor.has_value()) << Source;
   ASSERT_EQ(OuterCtor->size(), 2u) << Source;
-  EXPECT_NE((*OuterCtor)[0].find("(v0) + (uint64_t)(32)"),
-            std::string_view::npos)
-      << Source;
+  EXPECT_NE((*OuterCtor)[0].find("v0 + 32"), std::string_view::npos) << Source;
   EXPECT_EQ(llvm::StringRef((*OuterCtor)[1]).trim(), "1") << Source;
-  expectPortableStore(Source, "uint32_t", "(v0) + 44", "0xFFFFFF9C");
+  expectPortableStore(Source, "uint32_t", "v0 + 44", "0xFFFFFF9C");
   EXPECT_NE(Source.find("(uint32_t)(__builtin_memcpy(&"), std::string::npos)
       << Source;
   const auto ReturnedSlot = lastCallArguments(Source, "__builtin_memcpy");
   ASSERT_TRUE(ReturnedSlot.has_value()) << Source;
   ASSERT_EQ(ReturnedSlot->size(), 3u) << Source;
-  EXPECT_NE((*ReturnedSlot)[1].find("(v0) + 44"), std::string_view::npos)
+  EXPECT_NE((*ReturnedSlot)[1].find("v0 + 44"), std::string_view::npos)
       << Source;
   EXPECT_EQ(Source.find("t26"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t29 = arg0"), std::string::npos) << Source;
@@ -34195,7 +34198,7 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   // load/add/store when the value passes through the SEH clause boundary.
   auto ExceptStore = sourceLineContaining(Source, "+= 20;");
   if (ExceptStore.empty())
-    ExceptStore = sourceLineContaining(Source, "(uint32_t)(20)");
+    ExceptStore = sourceLineContaining(Source, ") + 20)");
   ASSERT_NE(Store, Stores.end()) << Source;
   ASSERT_FALSE(Clear.empty()) << Source;
   ASSERT_FALSE(Home.empty()) << Source;
@@ -34470,8 +34473,8 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsUnwindDestructor) {
   EXPECT_NE(After.find("sub_"), std::string::npos) << After;
   // Unwind funclets address the same established frame as the constructors.
   EXPECT_NE(After.find("frame_base - 104"), std::string::npos) << After;
-  EXPECT_NE(After.find("+ (uint64_t)(40)"), std::string::npos) << After;
-  EXPECT_NE(After.find("+ (uint64_t)(32)"), std::string::npos) << After;
+  EXPECT_NE(After.find("+ 40)"), std::string::npos) << After;
+  EXPECT_NE(After.find("+ 32)"), std::string::npos) << After;
   EXPECT_EQ(After.find("arg1"), std::string::npos) << After;
 }
 

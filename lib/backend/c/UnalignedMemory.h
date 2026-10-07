@@ -7,6 +7,8 @@
 #ifndef NEVERD_BACKEND_C_UNALIGNEDMEMORY_H
 #define NEVERD_BACKEND_C_UNALIGNEDMEMORY_H
 
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -65,10 +67,46 @@ template <typename Stream> inline void writeTypes(Stream &OS) {
   OS << "#endif\n\n";
 }
 
+/// \p Text as the operand of a cast.  A name, a number or one balanced
+/// parenthesized whole binds as tightly as the cast already; anything else,
+/// an embedded assignment included, is parenthesized.
+inline std::string castOperand(llvm::StringRef Text) {
+  if (!Text.empty() &&
+      llvm::all_of(Text, [](char C) { return llvm::isAlnum(C) || C == '_'; }))
+    return Text.str();
+  bool Whole = Text.size() >= 2 && Text.front() == '(' && Text.back() == ')';
+  int Depth = 0;
+  char Quote = 0;
+  for (size_t I = 0; Whole && I < Text.size(); ++I) {
+    const char C = Text[I];
+    if (Quote) {
+      if (C == '\\')
+        ++I;
+      else if (C == Quote)
+        Quote = 0;
+    } else if (C == '"' || C == '\'') {
+      Quote = C;
+    } else if (C == '(') {
+      ++Depth;
+    } else if (C == ')' && --Depth == 0 && I + 1 != Text.size()) {
+      Whole = false;
+    }
+  }
+  if (Whole && Depth == 0 && !Quote)
+    return Text.str();
+  return "(" + Text.str() + ")";
+}
+
 inline std::string access(llvm::StringRef Alias, llvm::StringRef Address,
                           bool ReadOnly) {
-  return "(*(" + std::string(ReadOnly ? "const " : "") + Alias.str() +
-         " *)(uintptr_t)(" + Address.str() + "))";
+  const std::string Pointer =
+      "(" + std::string(ReadOnly ? "const " : "") + Alias.str() + " *)";
+  // A machine address is a pointer-width integer or an object pointer, and
+  // C converts either to the access pointer directly.  An address-of may
+  // designate a function, whose pointer converts only through an integer.
+  if (Address.starts_with("&"))
+    return "(*" + Pointer + "(uintptr_t)(" + Address.str() + "))";
+  return "(*" + Pointer + castOperand(Address) + ")";
 }
 
 // The caller supplies a fresh, exact-type value carrier. In particular, a

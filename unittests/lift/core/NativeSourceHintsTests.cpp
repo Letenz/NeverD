@@ -2709,6 +2709,96 @@ TEST(NativeSourceHints,
   }
 }
 
+TEST(NativeSourceHints, CGPointClassTransformRequiresTheCompleteDeclaration) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  Image.Segments.push_back(std::move(Text));
+  const std::string Compiler = "_$s8PointABI0A5RelayC4echoySo7CGPointVAFF";
+  const std::string Generic =
+      "_$s8PointABI07GenericA5RelayC4echoySo7CGPointVAFF";
+  const std::string Named = "_$"
+                            "s3WMF28ColumnarCollectionViewLayoutC19targetConten"
+                            "tOffset011forProposedgH0So7CGPointVAG_tF";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    Image.Arch = Architecture;
+    for (const auto &Name : {Compiler, Generic, Named}) {
+      Image.Symbols = {{Name, 0x1000, 0, true}};
+      const auto Declaration =
+          swiftMangledCGPointClassMethodDeclaration(Image, 0x1000);
+      ASSERT_TRUE(Declaration) << Name;
+      const auto &Hint = Declaration->Signature;
+      EXPECT_EQ(Declaration->Module, Name == Named ? "WMF" : "PointABI");
+      EXPECT_EQ(Declaration->ClassName, Name == Named
+                                            ? "ColumnarCollectionViewLayout"
+                                        : Name == Generic ? "GenericPointRelay"
+                                                          : "PointRelay");
+      EXPECT_EQ(Hint.Origin, SourceFunctionTypeHint::OriginKind::SwiftMangled);
+      EXPECT_EQ(Hint.Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+      EXPECT_EQ(Hint.ReturnType->Size, 16U);
+      ASSERT_EQ(Hint.ReturnComponents.size(), 2U);
+      ASSERT_EQ(Hint.Parameters.size(), 2U);
+      ASSERT_EQ(Hint.Parameters[0].Components.size(), 2U);
+      const auto &TRI = getTargetRegInfo(Architecture);
+      for (size_t I = 0; I != 2; ++I) {
+        EXPECT_EQ(Hint.ReturnComponents[I].RegisterOffset, TRI.FPParamRegs[I]);
+        EXPECT_EQ(Hint.Parameters[0].Components[I].RegisterOffset,
+                  TRI.FPParamRegs[I]);
+      }
+      EXPECT_EQ(Hint.Parameters[1].TheRole,
+                SourceParameterTypeHint::Role::SwiftContext);
+      const auto Shared =
+          swiftMangledReceiverClassMethodSourceABI(Image, 0x1000);
+      ASSERT_TRUE(Shared);
+      EXPECT_TRUE(equalSourceABIs(*Shared, Hint));
+      auto Duplicate = Image;
+      Duplicate.Symbols.push_back(Duplicate.Symbols[0]);
+      EXPECT_TRUE(swiftMangledCGPointClassMethodSourceABI(Duplicate, 0x1000));
+    }
+    Image.Symbols = {{Compiler, 0x1000, 0, true}};
+    for (const auto &Name :
+         {Compiler + "To", Compiler + "TA", Compiler + "Z", Compiler + "Tj",
+          std::string("_$s8PointABI0A5RelayC4echoySo7CGPointVAFKF"),
+          std::string("_$s8PointABI0A5RelayC4echoySo7CGPointVAFYaF"),
+          std::string("_$s8PointABI0A5RelayC4echoySo7CGPointVAFzF"),
+          std::string("_$s8PointABI0A5RelayV4echoySo7CGPointVAFF"),
+          std::string("_$s8PointABI0A5RelayC4echoySo6CGSizeVAFF"),
+          std::string("_$s8PointABI0A5RelayC4echoySo7CGPointVAFSgF"),
+          std::string("_$s8PointABI0A5RelayC4echoySo7CGPointVSo6CGSizeVF"),
+          std::string("_$s8PointABI0A5RelayC4echoySo7CGPointVSgAFF"),
+          std::string("_$s8PointABI0A5RelayC4echoySo7CGPointV_So6CGSizeVtF")}) {
+      auto Wrong = Image;
+      Wrong.Symbols[0].Name = Name;
+      EXPECT_FALSE(swiftMangledCGPointClassMethodSourceABI(Wrong, 0x1000))
+          << Name;
+    }
+    for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+      auto Wrong = Image;
+      if (Mutation == 0)
+        Wrong.Format = BinaryFormat::ELF;
+      if (Mutation == 1)
+        Wrong.IsRelocatable = true;
+      if (Mutation == 2)
+        Wrong.Bits = Bitness::Bits32;
+      if (Mutation == 3)
+        Wrong.Symbols[0].IsBoundaryGuess = true;
+      if (Mutation == 4)
+        Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
+      if (Mutation == 5)
+        Wrong.Symbols[0].IsFunc = false;
+      if (Mutation == 6)
+        Wrong.Segments[0].Flags = SegmentFlags::Readable;
+      EXPECT_FALSE(swiftMangledCGPointClassMethodSourceABI(Wrong, 0x1000))
+          << Mutation;
+    }
+  }
+}
+
 TEST(NativeSourceHints, CGRectClassInitializerUsesFourFPLanesAndSwiftSelf) {
   BinaryImage Image;
   Image.Format = BinaryFormat::MachO;

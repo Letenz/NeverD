@@ -334,6 +334,9 @@ public:
                                             const TypeRef &Access = {}) const;
   bool isNamedFrameMemory(const HighExpr &E) const;
   std::string constStr(uint64_t Val, TypeRef Type = nullptr);
+  /// \p E prints as a local declared as a \p Width-byte integer of the given
+  /// signedness.
+  bool declaredLocalInteger(const HighExpr &E, uint16_t Width, bool Signed);
   std::string formatReturnExpr(const HighExpr &Expr);
   std::string collapseHiLo(const HighExpr &Expr);
   std::string unwrapCastVar(const HighExpr &E);

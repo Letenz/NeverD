@@ -22,6 +22,7 @@ add_neverd_component_library(NeverDIRHigh
   pass/HighExprSimplify.cpp
   pass/HighFlowOracle.cpp
   pass/HighFrameStoreForwarding.cpp
+  pass/HighIntegerSignedness.cpp
   pass/HighPrivateFrameCopies.cpp
   pass/HighSymSimplify.cpp
   pass/HighTypeInference.cpp

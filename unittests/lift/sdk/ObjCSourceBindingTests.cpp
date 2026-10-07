@@ -3162,17 +3162,27 @@ struct SwiftWitnessAccessorFixture {
 };
 } // namespace
 
-TEST(ObjCSourceBindings, SwiftWitnessUndefRequiresGenericDescriptorContract) {
-  for (const auto &[Architecture, Range] :
-       {std::pair{Arch::AArch64, false}, std::pair{Arch::X64, false},
-        std::pair{Arch::AArch64, true}, std::pair{Arch::X64, true}}) {
+TEST(ObjCSourceBindings, SwiftWitnessUndefRequiresExactDescriptorContract) {
+  for (const auto &[Architecture, Range, StringProtocol, MainActor] :
+       {std::tuple{Arch::AArch64, false, false, false},
+        std::tuple{Arch::X64, false, false, false},
+        std::tuple{Arch::AArch64, true, false, false},
+        std::tuple{Arch::X64, true, false, false},
+        std::tuple{Arch::AArch64, false, true, false},
+        std::tuple{Arch::X64, false, true, false},
+        std::tuple{Arch::AArch64, false, false, true},
+        std::tuple{Arch::X64, false, false, true}}) {
     SwiftWitnessAccessorFixture F(Architecture);
     const auto Descriptor =
-        Range ? "_$sSnyxGSXsMc"
-              : "_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc";
+        MainActor        ? "_$sScMScAsMc"
+        : StringProtocol ? "_$sSSSysMc"
+        : Range          ? "_$sSnyxGSXsMc"
+                : "_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc";
     const auto Module =
-        Range ? "/usr/lib/swift/libswiftCore.dylib"
-              : "/System/Library/Frameworks/Combine.framework/Combine";
+        MainActor ? "/usr/lib/swift/libswift_Concurrency.dylib"
+        : (Range || StringProtocol)
+            ? "/usr/lib/swift/libswiftCore.dylib"
+            : "/System/Library/Frameworks/Combine.framework/Combine";
     F.Image.ImportStorageSlots.erase(F.ConformanceSlot);
     F.Image.ImportPtrSlots[F.ConformanceSlot] = Descriptor;
     F.Image.DyldBindSlots[F.ConformanceSlot] = {Descriptor, 0, Module, false};
@@ -3205,17 +3215,23 @@ TEST(ObjCSourceBindings, SwiftWitnessUndefRequiresGenericDescriptorContract) {
 namespace {
 struct GenericWitnessFixture : SwiftWitnessAccessorFixture {
   explicit GenericWitnessFixture(Arch Architecture, bool Alias = false,
-                                 bool Range = false)
+                                 bool Range = false,
+                                 bool StringProtocol = false,
+                                 bool MainActor = false)
       : SwiftWitnessAccessorFixture(Architecture) {
     const auto Descriptor =
-        Range ? "_$sSnyxGSXsMc"
-              : "_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc";
+        MainActor        ? "_$sScMScAsMc"
+        : StringProtocol ? "_$sSSSysMc"
+        : Range          ? "_$sSnyxGSXsMc"
+                : "_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc";
     Image.ImportStorageSlots.erase(ConformanceSlot);
     Image.ImportPtrSlots[ConformanceSlot] = Descriptor;
     Image.DyldBindSlots[ConformanceSlot] = {
         Descriptor, 0,
-        Range ? "/usr/lib/swift/libswiftCore.dylib"
-              : "/System/Library/Frameworks/Combine.framework/Combine",
+        MainActor ? "/usr/lib/swift/libswift_Concurrency.dylib"
+        : (Range || StringProtocol)
+            ? "/usr/lib/swift/libswiftCore.dylib"
+            : "/System/Library/Frameworks/Combine.framework/Combine",
         false};
     WitnessCall->Operands[2] = HighExpr::makeUndef(8);
     Accessor.Body = {Accessor.Body[2], Accessor.Body[4]};
@@ -3236,13 +3252,20 @@ struct GenericWitnessFixture : SwiftWitnessAccessorFixture {
 } // namespace
 
 TEST(ObjCSourceBindings, SwiftWitnessUndefRejectsUnprovedInputAndABI) {
-  for (const auto &[Architecture, Range] :
-       {std::pair{Arch::AArch64, false}, std::pair{Arch::X64, false},
-        std::pair{Arch::AArch64, true}, std::pair{Arch::X64, true}}) {
+  for (const auto &[Architecture, Range, StringProtocol, MainActor] :
+       {std::tuple{Arch::AArch64, false, false, false},
+        std::tuple{Arch::X64, false, false, false},
+        std::tuple{Arch::AArch64, true, false, false},
+        std::tuple{Arch::X64, true, false, false},
+        std::tuple{Arch::AArch64, false, true, false},
+        std::tuple{Arch::X64, false, true, false},
+        std::tuple{Arch::AArch64, false, false, true},
+        std::tuple{Arch::X64, false, false, true}}) {
     SCOPED_TRACE(Range);
     for (unsigned Mutation = 0; Mutation != 33; ++Mutation) {
       SCOPED_TRACE(Mutation);
-      GenericWitnessFixture F(Architecture, false, Range);
+      GenericWitnessFixture F(Architecture, false, Range, StringProtocol,
+                              MainActor);
       auto Hint =
           std::make_shared<SourceCallTypeHint>(*F.WitnessCall->SourceCallHint);
       F.WitnessCall->SourceCallHint = Hint;
@@ -3339,7 +3362,7 @@ TEST(ObjCSourceBindings, SwiftWitnessUndefRejectsUnprovedInputAndABI) {
         F.Image.ConflictingImportStorageSlots.insert(F.ConformanceSlot);
         break;
       case 27:
-        Descriptor.Name = "_$sSSSysMc";
+        Descriptor.Name = "_$sS2sSTsMc";
         F.Image.ImportPtrSlots[F.ConformanceSlot] = Descriptor.Name;
         Descriptor.Module = "/usr/lib/swift/libswiftCore.dylib";
         break;

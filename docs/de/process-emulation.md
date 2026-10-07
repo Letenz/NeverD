@@ -47,6 +47,7 @@ Optionen sind ein JSON-Objekt bis 64 KiB. Unbekannte/null-Felder, falsche Typen,
 | `stack_size` | 1048576 | Seitenausgerichteter Stack innerhalb des Budgets |
 | `output_limit` | 1048576 | Zusammengefasste stdout/stderr-Bytes |
 | `instruction_quantum` | 1024 | Zulassungsintervall bis zur Rückgabe an die Runtime |
+| `linux_priority` | Nicht konfiguriert | Explizite nice-Werte je Aufgabe und Aufrufberechtigung für rohe Linux-Prioritätsdienste |
 
 `schema_version` ist 1. Der Bericht enthält Profil, Architektur, ausgewähltes Backend samt Grund, `stop_reason`, nullable `exit_status`, Diagnose, Ein-/aktuellen PC, Zähler, Service-Aufzeichnungen und letzten typisierten CPU-Ausgang. Adressen, syscall-Nummern, Registerargumente und rohe Rückgabebits sind Hex-Strings **ohne** `0x`; `stdout_hex`/`stderr_hex` erhalten NUL und ungültiges UTF-8. Ein null syscall-Ergebnis bedeutet keine modellierte Rückgabe (etwa Exit oder nicht unterstützte Anfrage), nicht erfolgreiche Null.
 
@@ -75,6 +76,17 @@ Anonyme Speicherdienste nutzen denselben Prozessadressraum und dasselbe physisch
 Längen werden auf Seiten aufgerundet. `munmap` toleriert Lücken und wiederholtes Entfernen; `mprotect` ändert das gemappte Präfix und liefert an einer Lücke `ENOMEM`. `PROT_NONE` erhält Allokation und Bytes, verweigert aber Gastzugriffe. Der rohe `brk`-Aufruf liefert bei Erfolg die angeforderte Bytegrenze, sonst die alte Grenze, nicht die Null/Minus-eins-Konvention des libc-Wrappers. Die anfängliche Grenze ist das seitenausgerichtete Image-Ende. Wachstum berücksichtigt andere Mappings und das Budget; Schrumpfen erhält Bytes der verbleibenden Teilseite. Regeln und Fehlerpriorität folgen den Linux-Diensten für [Mapping](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) und [Schutz](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c).
 
 Datei-, gemeinsame und feste Mappings, abwärts wachsender Speicher, große Seiten, Speichersperren, Schutzschlüssel, reine Ausführungs-/Schreibrechte und weitere Flags sind ausdrücklich nicht unterstützt. Sie stoppen vor veröffentlichten Effekten oder erfundenen Rückgabewerten. Normale Bereichs-, Längen- und Ausrichtungsfehler innerhalb der unterstützten Teilmenge liefern Gastfehler und erlauben die Fortsetzung. Kein Gastzeiger oder Mapping-Auftrag wird an das Host-OS weitergereicht.
+
+Die optionale Eingabe `linux_priority` deklariert den nice-Zustand von Testaufgaben mit der UID des Aufrufers. Rohe `setpriority`- und `getpriority`-Aufrufe teilen diesen Zustand zwischen Linux ELF64 und Android; Hostprioritäten ändern sich nicht.
+
+```json
+{"linux_priority":{"tasks":[{"id":1000,"nice":0}],
+                   "cap_sys_nice":false,"rlimit_nice":0}}
+```
+
+Aufgaben-IDs sind eindeutige positive vorzeichenbehaftete 32-Bit-Werte; anfängliches nice liegt bei -20..19 und `rlimit_nice` bei 0..40. `cap_sys_nice` und `rlimit_nice` sind standardmäßig false und 0; Aufgabenstatus ist immer explizit. Fehlende Eingaben, nicht aufgeführte Aufgaben einschließlich neuer Threads ohne deklarierte Werte sowie PRIO_PGRP/PRIO_USER bleiben nicht unterstützt. Vererbung oder fremde Eigentümer werden nicht geraten. PRIO_PROCESS mit who=0 wählt die aktuelle Gastaufgabe, sonst die benannte. Ungültige Selektoren liefern rohes -EINVAL. Setzen begrenzt das vorzeichenbehaftete 32-Bit-nice auf -20..19. Verringern von nice erfordert CAP_SYS_NICE oder ein ausreichendes RLIMIT_NICE; Ablehnung liefert rohes -EACCES ohne Zustandsänderung. Rohe Abfragen liefern `20 - nice` als Kernelkodierung 40..1, nicht das übersetzte libc-Ergebnis.
+
+[Linux setpriority/getpriority](https://man7.org/linux/man-pages/man2/setpriority.2.html).
 
 `linux_signals` legt die anfänglichen Signalaktionen für den gesamten Prozess fest. Fehlende Einträge sind unbekannt und bedeuten nicht `SIG_DFL`; eine ausdrücklich leere Liste erlaubt das Setzen ohne Abfrage des Vorgängers. Alle fünf Felder sind erforderlich. Für vorzeichenlose 64-Bit-Werte außerhalb des exakten JSON-Zahlenbereichs dienen Dezimalzeichenfolgen.
 

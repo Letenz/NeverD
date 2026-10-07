@@ -15,10 +15,13 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "IndirectTailFrame.h"
+
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/DirectTailCall.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
@@ -77,20 +80,33 @@ bool hasInstructionLocalGuard(const InstructionRecordT &Rec) {
 //===----------------------------------------------------------------------===//
 
 void CFGBuilder::convertIndirectTailCalls(LowFunc &Func) {
+  if (!CurrentImg)
+    return;
+  const bool NeedsFrameGuard = CurrentImg->Arch == Arch::AArch64;
+  // Coverage is published on LowFunc later in build(), so consult the current
+  // decode/lift account before granting a reaching-state condition here.
+  const auto RestoredFrames =
+      NeedsFrameGuard && DecodeFailureAddresses.empty() &&
+              UnsupportedInstructionAddresses.empty() &&
+              TruncatedPathAddresses.empty()
+          ? restoredAArch64IndirectTailFrames(Func, CurrentImg->Format)
+          : std::set<va_t>{};
   bool Changed = false;
   for (auto &[Addr, Rec] : Insns) {
-    // Only an unconditional indirect branch with no resolved jump-table targets
-    // is a function-pointer tail call.  A resolved INDIR_BR (switch / computed
-    // goto) keeps its successors; a conditional one and a return are
-    // unaffected.
+    // A lack of jump-table targets alone cannot establish a tail call. An
+    // AArch64 candidate must also restore its incoming SP and link word on
+    // every reaching path. Existing table identity/quarantine guards still own
+    // dispatch classification; this frame condition supplies no callee ABI.
     if (!Rec.IsBranch || !Rec.IsIndirect || Rec.IsCall || Rec.IsRet ||
         Rec.IsCond || !Rec.JumpTableTargets.empty() ||
+        (NeedsFrameGuard && !RestoredFrames.count(Addr)) ||
         EverPublishedJumpTableBranches.count(Addr) ||
         LostValidatedJumpTableBranches.count(Addr) ||
         StackTableEvidenceIncompleteBranches.count(Addr) ||
         IndexDomainEvidenceIncompleteBranches.count(Addr) ||
         IncompleteBranchMarkerEvidenceIncomplete ||
-        (finiteGOTOFFGroupClaimed() && guardedGroupContains(Addr)) ||
+        ((finiteGOTOFFGroupClaimed() || finiteAbsoluteGroupClaimed()) &&
+         guardedGroupContains(Addr)) ||
         ValidatedPhysicalJumpTableBranches.count(Addr) ||
         AmbiguousI386GOTPCBranches.count(Addr) ||
         PendingAmbiguousI386GOTPCBranches.count(Addr) ||
@@ -411,6 +427,52 @@ void CFGBuilder::rewriteAsTailCall(InsnRecord &Rec) {
   Rec.IsRet = true;
   Rec.BranchTarget = InvalidVA;
   CallTargets.insert(Target);
+}
+
+void CFGBuilder::rewriteOwnInteriorCall(const BinaryImage &Img, InsnRecord &Rec,
+                                        va_t Next) {
+  if (Img.Arch != Arch::X64 || Img.Format != BinaryFormat::COFF)
+    return;
+  // Compiler output reaches its own code with jumps; only hand-written code
+  // calls a label inside itself, and the return address that pushes is a
+  // value like any other.  Whether a return later pops it is for
+  // classifyOwnInteriorCalls to prove.
+  const va_t Target = *Rec.Immediate;
+  const ExceptionFunction *Own =
+      Img.ExceptionMetadata.findFunction(CurrentFuncEntry);
+  if (!Own || Own->Kind != RuntimeFunctionKind::Primary ||
+      Own->CodeRange.Begin != CurrentFuncEntry ||
+      !Own->CodeRange.contains(Rec.Addr) || !Own->CodeRange.contains(Target) ||
+      Target == Own->CodeRange.Begin ||
+      (KnownFuncEntries && KnownFuncEntries->count(Target)) ||
+      KeptOwnInteriorCallTargets.count(Target))
+    return;
+  const uint16_t PtrSize = 8;
+  const NdVar Rsp = NdVar::reg(x86reg::RSP, PtrSize);
+  LowOp Sub;
+  Sub.Opcode = NdOp::INT_SUB;
+  Sub.Output = Rsp;
+  Sub.addInput(Rsp);
+  Sub.addInput(NdVar::scalar(PtrSize, PtrSize));
+  Sub.Addr = Rec.Addr;
+  Sub.Seq = 0;
+  LowOp Store;
+  Store.Opcode = NdOp::STORE;
+  Store.addInput(Rsp);
+  Store.addInput(NdVar::cst(Next, PtrSize));
+  Store.Addr = Rec.Addr;
+  Store.Seq = 1;
+  LowOp Jump;
+  Jump.Opcode = NdOp::BRANCH;
+  Jump.addInput(NdVar::cst(Target, PtrSize));
+  Jump.Addr = Rec.Addr;
+  Jump.Seq = 2;
+  Rec.Ops = {Sub, Store, Jump};
+  Rec.IsCall = false;
+  Rec.IsBranch = true;
+  Rec.BranchTarget = Target;
+  CallTargets.erase(Target);
+  OwnInteriorCallSites[Target].insert(Rec.Addr);
 }
 
 void CFGBuilder::rewriteAsIndirectTailCall(InsnRecord &Rec) {

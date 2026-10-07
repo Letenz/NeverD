@@ -161,6 +161,8 @@ class WDKDriverFixtureTests(unittest.TestCase):
         }
         scheduled_cases = set()
         families = (
+            ("DriverThreadPriorityCases.def", "NEVERD_DRIVER_PRIORITY_CASE",
+             "DriverSchedulingPriority.RuntimePriorityControlsDispatchAndPreemption"),
             ("DriverPreemptiveCases.def", "NEVERD_PREEMPT_CASE",
              "DriverScheduling.BusyGuestMakesProgressWithoutCooperativeYield"),
             ("DriverPreemptiveCases.def", "NEVERD_PREEMPT_POFX",
@@ -199,6 +201,7 @@ class WDKDriverFixtureTests(unittest.TestCase):
                 paragraph = next(
                     part for part in guide.read_text(encoding="utf-8").split("\n\n")
                     if "`NativeDriverTests.def`" in part
+                    and "`DriverBuiltinImages.def`" in part
                 )
                 self.assertIn(formula, paragraph)
                 for count in (len(names), len(images), len(scenarios)):

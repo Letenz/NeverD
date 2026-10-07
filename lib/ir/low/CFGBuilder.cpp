@@ -18,6 +18,8 @@
 #include "neverd/ir/low/CFGBuilder.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/TargetRegInfo.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/loader/ReadOnlyBytes.h"
@@ -267,14 +269,373 @@ InstructionMode effectiveInstructionMode(Arch Architecture,
   return Mode;
 }
 
+// Stack-pointer offsets for calls into a function's own body (see
+// CFGBuilder::rewriteOwnInteriorCall).  A state maps the registers and
+// temporaries known to lie within a range of offsets from a base to that base
+// and range.  Base zero is the analysis' reference stack pointer; a stack
+// pointer loaded from anywhere else starts a base of its own, named after the
+// operation that loaded it, which only ever compares with itself.
+struct StackOffsetRange {
+  uint64_t Base = 0;
+  int64_t Lo = 0;
+  int64_t Hi = 0;
+  bool operator==(const StackOffsetRange &O) const {
+    return Base == O.Base && Lo == O.Lo && Hi == O.Hi;
+  }
+  bool operator!=(const StackOffsetRange &O) const { return !(*this == O); }
+};
+using StackOffsetKey = std::pair<VnodeSpace, uint64_t>;
+using StackOffsetState = std::map<StackOffsetKey, StackOffsetRange>;
+constexpr StackOffsetKey kStackPointerKey{VnodeSpace::REG, x86reg::RSP};
+constexpr int64_t kNoLowerBound = std::numeric_limits<int64_t>::min();
+constexpr int64_t kNoUpperBound = std::numeric_limits<int64_t>::max();
+
+int64_t shiftBound(int64_t Bound, int64_t Delta) {
+  if (Bound == kNoLowerBound || Bound == kNoUpperBound)
+    return Bound;
+  return Bound + Delta;
+}
+
+StackOffsetRange shiftRange(StackOffsetRange R, int64_t Delta) {
+  return {R.Base, shiftBound(R.Lo, Delta), shiftBound(R.Hi, Delta)};
+}
+
+/// Follows offsets through constant adjustments and full-width copies; any
+/// other write forgets what it overwrites.  A call keeps the stack pointer
+/// (the callee pops its own return address) and the registers Win64 calls
+/// preserve.
+void transferStackOffsets(const TargetRegInfo &TRI, const LowOp &Op,
+                          StackOffsetState &S) {
+  auto Forget = [&S](const NdVar &Out) {
+    for (auto It = S.begin(); It != S.end();)
+      It = It->first.first == Out.Space && Out.Offset < It->first.second + 8 &&
+                   It->first.second < Out.Offset + Out.Size
+               ? S.erase(It)
+               : std::next(It);
+  };
+  if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+    for (auto It = S.begin(); It != S.end();)
+      It = It->first.first == VnodeSpace::REG &&
+                   TRI.isCallPreserved(It->first.second, 8, BinaryFormat::COFF)
+               ? std::next(It)
+               : S.erase(It);
+    if (Op.Output.Size)
+      Forget(Op.Output);
+    return;
+  }
+  if (!Op.Output.Size)
+    return;
+  auto Known = [&S](const NdVar &V) -> std::optional<StackOffsetRange> {
+    if (V.Size != 8)
+      return std::nullopt;
+    auto It = S.find({V.Space, V.Offset});
+    if (It == S.end())
+      return std::nullopt;
+    return It->second;
+  };
+  std::optional<StackOffsetRange> Value;
+  if (Op.Output.Size == 8 && Op.Opcode == NdOp::COPY && Op.NumInputs == 1) {
+    Value = Known(Op.Inputs[0]);
+  } else if (Op.Output.Size == 8 &&
+             (Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
+             Op.NumInputs == 2) {
+    for (unsigned I = 0; I < 2 && !Value; ++I) {
+      // `constant - offset` is not an offset.
+      if (Op.Opcode == NdOp::INT_SUB && I != 0)
+        break;
+      const NdVar &C = Op.Inputs[1 - I];
+      if (!C.isConst() || C.Size != 8)
+        continue;
+      const auto Base = Known(Op.Inputs[I]);
+      const int64_t Delta = static_cast<int64_t>(C.Offset);
+      if (Base && Delta > -limits::kMaxFrameSize &&
+          Delta < limits::kMaxFrameSize)
+        Value = shiftRange(*Base, Op.Opcode == NdOp::INT_ADD ? Delta : -Delta);
+    }
+  }
+  // Any other full-width stack pointer is a base of its own.
+  if (!Value && Op.Output.Space == kStackPointerKey.first &&
+      Op.Output.Offset == kStackPointerKey.second && Op.Output.Size == 8)
+    Value = StackOffsetRange{(Op.Addr << 6 | (Op.Seq & 63)) + 1, 0, 0};
+  Forget(Op.Output);
+  if (Value)
+    S[{Op.Output.Space, Op.Output.Offset}] = *Value;
+}
+
+/// Forward fixpoint from the given block-entry states.  A join keeps the
+/// values every incoming path knows, as the hull of their ranges.  A bound
+/// still moving after limits::kStackOffsetWideningJoins joins at one block
+/// becomes unbounded; otherwise states only lose entries or grow, so it ends.
+void solveStackOffsets(const TargetRegInfo &TRI, const LowFunc &Func,
+                       std::vector<std::optional<StackOffsetState>> &In) {
+  const size_t N = Func.Blocks.size();
+  std::vector<unsigned> Joins(N, 0);
+  std::vector<int> Work;
+  for (size_t B = 0; B < N; ++B)
+    if (In[B])
+      Work.push_back(static_cast<int>(B));
+  while (!Work.empty()) {
+    const int B = Work.back();
+    Work.pop_back();
+    StackOffsetState Out = *In[B];
+    for (const LowOp &Op : Func.Blocks[B].Ops)
+      transferStackOffsets(TRI, Op, Out);
+    for (int S : Func.Blocks[B].Succs) {
+      if (S < 0 || static_cast<size_t>(S) >= N)
+        continue;
+      if (!In[S]) {
+        In[S] = Out;
+        Work.push_back(S);
+        continue;
+      }
+      const bool Widen = ++Joins[S] > limits::kStackOffsetWideningJoins;
+      StackOffsetState Met;
+      for (const auto &[K, Old] : *In[S]) {
+        auto It = Out.find(K);
+        if (It == Out.end() || It->second.Base != Old.Base)
+          continue;
+        StackOffsetRange R{Old.Base, std::min(Old.Lo, It->second.Lo),
+                           std::max(Old.Hi, It->second.Hi)};
+        if (Widen && R.Lo != Old.Lo)
+          R.Lo = kNoLowerBound;
+        if (Widen && R.Hi != Old.Hi)
+          R.Hi = kNoUpperBound;
+        Met.emplace(K, R);
+      }
+      if (Met != *In[S]) {
+        In[S] = std::move(Met);
+        Work.push_back(S);
+      }
+    }
+  }
+}
+
 } // namespace
 
 //===----------------------------------------------------------------------===//
 // CFGBuilder
 //===----------------------------------------------------------------------===//
 
+CFGBuilder::OwnInteriorCallVerdict
+CFGBuilder::classifyOwnInteriorCalls(const LowFunc &Func) const {
+  OwnInteriorCallVerdict Verdict;
+  const size_t N = Func.Blocks.size();
+  if (N == 0)
+    return Verdict;
+  const TargetRegInfo &TRI = getTargetRegInfo(Arch::X64);
+  // Offsets from the entry stack pointer.  Any other root, including a block
+  // an exceptional edge enters, starts with nothing known.
+  std::vector<std::optional<StackOffsetState>> FromEntry(N);
+  FromEntry[0] = StackOffsetState{{kStackPointerKey, {0, 0, 0}}};
+  for (size_t B = 1; B < N; ++B)
+    if (Func.Blocks[B].Preds.empty() ||
+        !Func.Blocks[B].ExceptionalPreds.empty())
+      FromEntry[B] = StackOffsetState{};
+  solveStackOffsets(TRI, Func, FromEntry);
+
+  std::map<va_t, size_t> BlockAt;
+  for (size_t B = 0; B < N; ++B)
+    BlockAt[Func.Blocks[B].StartAddr] = B;
+  auto StateBefore = [&](va_t Addr) -> std::optional<StackOffsetState> {
+    for (size_t B = 0; B < N; ++B) {
+      const LowBlock &Block = Func.Blocks[B];
+      if (Addr < Block.StartAddr || Addr >= Block.EndAddr)
+        continue;
+      if (!FromEntry[B])
+        return std::nullopt;
+      StackOffsetState S = *FromEntry[B];
+      for (const LowOp &Op : Block.Ops) {
+        if (Op.Addr == Addr)
+          break;
+        transferStackOffsets(TRI, Op, S);
+      }
+      return S;
+    }
+    return std::nullopt;
+  };
+  auto Reach = [&](size_t From) {
+    std::vector<bool> Reached(N, false);
+    std::vector<int> Work{static_cast<int>(From)};
+    while (!Work.empty()) {
+      const int B = Work.back();
+      Work.pop_back();
+      if (Reached[B])
+        continue;
+      Reached[B] = true;
+      for (int S : Func.Blocks[B].Succs)
+        if (S >= 0 && static_cast<size_t>(S) < N)
+          Work.push_back(S);
+    }
+    return Reached;
+  };
+  auto NoteUnproven = [&](va_t Addr) {
+    if (!Verdict.Unproven)
+      Verdict.Unproven = Addr;
+  };
+
+  std::vector<bool> ReachedByAny(N, false);
+  for (const auto &[Target, Sites] : OwnInteriorCallSites) {
+    auto TargetBlock = BlockAt.find(Target);
+    if (TargetBlock == BlockAt.end())
+      continue;
+    // Offsets from the slot the call pushed its return address into, which
+    // is the stack pointer the target starts with.  A value whose offset
+    // from the stack pointer is bounded at every call site keeps the bound
+    // that holds for all of them.
+    std::optional<StackOffsetState> Seed;
+    for (va_t Site : Sites) {
+      StackOffsetState Relative{{kStackPointerKey, {0, 0, 0}}};
+      if (const auto AtSite = StateBefore(Site)) {
+        auto SP = AtSite->find(kStackPointerKey);
+        if (SP != AtSite->end())
+          for (const auto &[K, V] : *AtSite) {
+            if (K == kStackPointerKey || V.Base != SP->second.Base)
+              continue;
+            // V - (SP - 8), with SP anywhere in its range.
+            const int64_t Lo =
+                V.Lo == kNoLowerBound || SP->second.Hi == kNoUpperBound
+                    ? kNoLowerBound
+                    : V.Lo - SP->second.Hi + 8;
+            const int64_t Hi =
+                V.Hi == kNoUpperBound || SP->second.Lo == kNoLowerBound
+                    ? kNoUpperBound
+                    : V.Hi - SP->second.Lo + 8;
+            if (Lo != kNoLowerBound || Hi != kNoUpperBound)
+              Relative[K] = {0, Lo, Hi};
+          }
+      }
+      if (!Seed) {
+        Seed = std::move(Relative);
+        continue;
+      }
+      StackOffsetState Met;
+      for (const auto &[K, V] : *Seed)
+        if (auto It = Relative.find(K); It != Relative.end())
+          Met.emplace(K, StackOffsetRange{0, std::min(V.Lo, It->second.Lo),
+                                          std::max(V.Hi, It->second.Hi)});
+      Seed = std::move(Met);
+    }
+    if (!Seed)
+      continue;
+
+    const std::vector<bool> Reached = Reach(TargetBlock->second);
+    for (size_t B = 0; B < N; ++B)
+      ReachedByAny[B] = ReachedByAny[B] || Reached[B];
+    std::vector<std::optional<StackOffsetState>> FromSlot(N);
+    FromSlot[TargetBlock->second] = *Seed;
+    solveStackOffsets(TRI, Func, FromSlot);
+
+    // Where the slot-relative offset is lost, the entry stack pointer still
+    // places the return above every slot the calls pushed when all of them
+    // lie below it: the entry runs once, so its offsets compare anywhere.
+    std::optional<int64_t> HighestSlot;
+    for (va_t Site : Sites) {
+      const auto AtSite = StateBefore(Site);
+      auto SP = AtSite ? AtSite->find(kStackPointerKey)
+                       : StackOffsetState::const_iterator();
+      if (!AtSite || SP == AtSite->end() || SP->second.Base != 0 ||
+          SP->second.Hi == kNoUpperBound) {
+        HighestSlot.reset();
+        break;
+      }
+      HighestSlot =
+          std::max(HighestSlot.value_or(kNoLowerBound), SP->second.Hi - 8);
+    }
+    auto AboveEverySlot = [&](va_t Return) {
+      if (!HighestSlot)
+        return false;
+      const auto AtReturn = StateBefore(Return);
+      if (!AtReturn)
+        return false;
+      auto SP = AtReturn->find(kStackPointerKey);
+      return SP != AtReturn->end() && SP->second.Base == 0 &&
+             SP->second.Lo != kNoLowerBound && SP->second.Lo > *HighestSlot;
+    };
+
+    // At a return, an offset of exactly zero pops this call's own return
+    // address: the target is a subroutine.  An offset above zero means the
+    // address was discarded first.  Anything else is not proven.
+    bool ConsumesSlot = false, Discards = false;
+    std::optional<va_t> Unproven;
+    for (size_t B = 0; B < N && !Unproven; ++B) {
+      if (!Reached[B])
+        continue;
+      StackOffsetState S = FromSlot[B] ? *FromSlot[B] : StackOffsetState{};
+      for (const LowOp &Op : Func.Blocks[B].Ops) {
+        if (Op.Opcode == NdOp::RETURN) {
+          auto SP = S.find(kStackPointerKey);
+          const bool Slot = SP != S.end() && SP->second.Base == 0;
+          if (Slot && SP->second.Lo == 0 && SP->second.Hi == 0) {
+            ConsumesSlot = true;
+          } else if ((Slot && SP->second.Lo > 0) || AboveEverySlot(Op.Addr)) {
+            Discards = true;
+          } else {
+            Unproven = Op.Addr;
+            break;
+          }
+          continue;
+        }
+        transferStackOffsets(TRI, Op, S);
+      }
+    }
+    if (!Unproven && ConsumesSlot && Discards)
+      Unproven = Target;
+    if (Unproven)
+      NoteUnproven(*Unproven);
+    else if (ConsumesSlot)
+      Verdict.Subroutines.insert(Target);
+  }
+
+  // Whatever the targets do with their own slots, a return they lead to
+  // below the entry stack pointer pops something this function pushed.
+  for (size_t B = 0; B < N && !Verdict.Unproven; ++B) {
+    if (!ReachedByAny[B] || !FromEntry[B])
+      continue;
+    StackOffsetState S = *FromEntry[B];
+    for (const LowOp &Op : Func.Blocks[B].Ops) {
+      if (Op.Opcode == NdOp::RETURN) {
+        auto SP = S.find(kStackPointerKey);
+        if (SP != S.end() && SP->second.Base == 0 && SP->second.Hi < 0) {
+          NoteUnproven(Op.Addr);
+          break;
+        }
+        continue;
+      }
+      transferStackOffsets(TRI, Op, S);
+    }
+  }
+  return Verdict;
+}
+
 LowFunc CFGBuilder::build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
                           const std::string &FuncName) {
+  // A call into the function's own body starts as a push and a jump.  Each
+  // target found to be a subroutine, one whose return pops that call's own
+  // return address, is lifted again as an ordinary call; anything else that
+  // cannot be proven makes the return that breaks the proof unsupported.
+  KeptOwnInteriorCallTargets.clear();
+  for (;;) {
+    LowFunc Func = buildOnce(Img, Dec, EntryAddr, FuncName);
+    if (OwnInteriorCallSites.empty())
+      return Func;
+    const OwnInteriorCallVerdict Verdict = classifyOwnInteriorCalls(Func);
+    if (!Verdict.Subroutines.empty()) {
+      KeptOwnInteriorCallTargets.insert(Verdict.Subroutines.begin(),
+                                        Verdict.Subroutines.end());
+      continue;
+    }
+    if (Verdict.Unproven) {
+      Func.UnprovenReturnAddresses.push_back(*Verdict.Unproven);
+      if (!llvm::is_contained(Func.UnsupportedInstructionAddresses,
+                              *Verdict.Unproven))
+        Func.UnsupportedInstructionAddresses.push_back(*Verdict.Unproven);
+    }
+    return Func;
+  }
+}
+
+LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
+                              va_t EntryAddr, const std::string &FuncName) {
   RelativeRelocationRootSourceCachePrepared = false;
   RelativeRelocationRootSourceCacheImage = nullptr;
   RelativeRelocationRootSourceCacheArch = Arch::Unknown;
@@ -286,6 +647,7 @@ LowFunc CFGBuilder::build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
   BlockStarts.clear();
   ExploredAddrs.clear();
   CallTargets.clear();
+  OwnInteriorCallSites.clear();
   DiscoveredCodeRefs.clear();
   DiscoveredCodeRefSources.clear();
   ResolvedTableInfo.clear();
@@ -1186,10 +1548,10 @@ LowFunc CFGBuilder::build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
     for (va_t Addr : *UnsafeJumpTableBranches)
       if (Insns.count(Addr))
         Func.UnsafeIndirectBranchAddresses.insert(Addr);
-  // A complete GOTOFF owner remains table-shaped even when one anchor or
+  // A complete group owner remains table-shaped even when one anchor or
   // relocation slot is damaged. The joint proof must publish every member or
   // none; retain the unresolved branch identity for downstream trap lowering.
-  if (finiteGOTOFFGroupClaimed())
+  if (finiteGOTOFFGroupClaimed() || finiteAbsoluteGroupClaimed())
     for (size_t I = 0; I < GuardedGroupIdentity->MemberCount; ++I) {
       const va_t Addr = GuardedGroupIdentity->Members[I];
       if (auto It = Insns.find(Addr);
@@ -1833,6 +2195,8 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
 
       restoreAdjacentNoReturnCall(Rec, Dec.directCallTarget(DI));
       classifyInsn(Rec);
+      if (Rec.IsCall && !Rec.IsIndirect && Rec.Immediate)
+        rewriteOwnInteriorCall(Img, Rec, Next);
 
       // Keep recursive CFG exploration consistent with the decoder's
       // architecture-specific terminator classification.  Trap instructions
