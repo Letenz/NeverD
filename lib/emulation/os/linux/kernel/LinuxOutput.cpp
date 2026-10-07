@@ -74,13 +74,16 @@ publishOutput(ExecutionBackend &CPU, uint64_t FD,
 llvm::Expected<std::optional<uint64_t>>
 writeOutput(ExecutionBackend &CPU, ServiceKind Kind,
             const ProcessServiceEvent &Event, const MemoryLayout &Layout,
-            const ProcessOptions &Options, ProcessResult &Result) {
+            const ProcessOptions &Options, ProcessResult &Result,
+            std::optional<uint64_t> AfterVectorImportError) {
   const auto [Descriptor, Address, Count, A3, A4, A5] = Event.Arguments;
   // Linux descriptor lookup consumes the low unsigned 32 bits for both calls.
   const uint32_t FD = Descriptor;
-  if (FD != StandardOutput && FD != StandardError)
+  if (!AfterVectorImportError && FD != StandardOutput && FD != StandardError)
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
   if (Kind == ServiceKind::Write) {
+    if (AfterVectorImportError)
+      return AfterVectorImportError;
     if (!userRange(Layout, Address, Count))
       return std::optional<uint64_t>(uint64_t(0) - BadAddress);
     if (!Count)
@@ -93,7 +96,7 @@ writeOutput(ExecutionBackend &CPU, ServiceKind Kind,
   if (Entries > MaxIOVectors)
     return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
   if (!Entries)
-    return std::optional<uint64_t>(0);
+    return AfterVectorImportError.value_or(0);
   if (!userRange(Layout, Address, Entries * IOVectorSize))
     return std::optional<uint64_t>(uint64_t(0) - BadAddress);
 
@@ -133,6 +136,11 @@ writeOutput(ExecutionBackend &CPU, ServiceKind Kind,
     Buffer.Size = std::min(Buffer.Size, Maximum - Total);
     Total += Buffer.Size;
   }
+  // A process descriptor has no write operation, but Linux imports the iovec
+  // before consulting that operation. Share this import and error ordering
+  // with captured output; never inspect payloads or publish bytes for pidfds.
+  if (AfterVectorImportError)
+    return AfterVectorImportError;
   return publishOutput(CPU, FD, Buffers, Layout, Options, Result);
 }
 } // namespace neverd::emulation::linux_model

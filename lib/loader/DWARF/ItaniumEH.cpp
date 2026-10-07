@@ -14,12 +14,14 @@
 #include "neverd/support/DwarfEH.h"
 #include "neverd/support/ISAEncoding.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <map>
 #include <optional>
 
 #define DEBUG_TYPE "neverd-dwarf-eh"
@@ -125,6 +127,56 @@ va_t functionEntry(const BinaryImage &Img, va_t FrameBegin,
 
 } // namespace
 
+void recordFrameExtents(BinaryImage &Img) {
+  FrameSection Sec;
+  if (Img.IsRelocatable || !findFrameSection(Img, Sec) || Sec.Size == 0)
+    return;
+  const ParseResult Frames = parseEHFrame(Img, Sec, computeBases(Img));
+  std::vector<std::pair<va_t, va_t>> Ranges;
+  Ranges.reserve(Frames.FDEs.size());
+  for (const DwarfFDE &FDE : Frames.FDEs) {
+    const va_t Begin = Img.Arch == Arch::ARM
+                           ? clearThumbBit(FDE.InitialLocation)
+                           : FDE.InitialLocation;
+    if (auto Range =
+            ExceptionAddressRange::fromStartAndSize(Begin, FDE.AddressRange))
+      Ranges.emplace_back(Range->Begin, Range->End);
+  }
+  std::sort(Ranges.begin(), Ranges.end());
+  // Functions known only by an automatic name and an entry.
+  llvm::DenseMap<va_t, size_t> Unsized;
+  for (size_t Index = 0; Index < Img.Symbols.size(); ++Index) {
+    const Symbol &Sym = Img.Symbols[Index];
+    if (Sym.IsFunc && Sym.Size == 0 &&
+        Sym.Name == Symbol::makeFunc(Sym.Addr).Name)
+      Unsized.try_emplace(Sym.Addr, Index);
+  }
+  for (const auto &[Begin, End] : Ranges) {
+    const Segment *Seg = Img.getSegmentFor(Begin);
+    if (!Seg || !Seg->isExecutable())
+      continue;
+    const va_t Entry = functionEntry(Img, Begin, Ranges);
+    Img.KnownCodeRanges.emplace_back(Entry, End);
+    // A frame that starts after its function's landing pad leaves the entry
+    // named at the frame start to parseItaniumExceptions, which removes it.
+    if (Entry != Begin)
+      continue;
+    // A linker's PLT frame covers every stub of its section, not a function.
+    if (const Section *Stubs = Img.getSectionFor(Begin)) {
+      const llvm::StringRef Name = Stubs->Name;
+      if (Name == section_names::elf::Plt || Name == section_names::elf::Iplt ||
+          Name.starts_with(section_names::elf::PltPrefix))
+        continue;
+    }
+    if (auto It = Unsized.find(Begin); It != Unsized.end())
+      Img.Symbols[It->second].Size = End - Begin;
+  }
+  std::sort(Img.KnownCodeRanges.begin(), Img.KnownCodeRanges.end());
+  Img.KnownCodeRanges.erase(
+      std::unique(Img.KnownCodeRanges.begin(), Img.KnownCodeRanges.end()),
+      Img.KnownCodeRanges.end());
+}
+
 void parseItaniumExceptions(BinaryImage &Img) {
   FrameSection Sec;
   if (!findFrameSection(Img, Sec) || Sec.Size == 0)
@@ -191,6 +243,10 @@ void parseItaniumExceptions(BinaryImage &Img) {
   std::sort(FrameRanges.begin(), FrameRanges.end());
   // Frames whose function starts at the landing pad before them.
   llvm::DenseSet<va_t> PaddedFrameStarts;
+  // Most frames share a few CIEs, and naming a personality scans the image's
+  // relocations and symbols.  The loop below only adds auto-named function
+  // symbols, which never name a routine, so a name found once stays exact.
+  std::map<std::pair<va_t, va_t>, std::string> PersonalityNames;
 
   for (DwarfFDE &FDE : Frames.FDEs) {
     const DwarfCIE *CIE = Out.findCIE(FDE.CIESectionOffset);
@@ -233,8 +289,12 @@ void parseItaniumExceptions(BinaryImage &Img) {
 
     F.PersonalityVA = CIE->PersonalityVA;
     if (CIE->PersonalityVA != 0 || CIE->PersonalitySlotVA != 0) {
-      F.PersonalityName =
-          resolveRoutineName(Img, CIE->PersonalityVA, CIE->PersonalitySlotVA);
+      auto [Known, Inserted] = PersonalityNames.try_emplace(
+          {CIE->PersonalityVA, CIE->PersonalitySlotVA});
+      if (Inserted)
+        Known->second =
+            resolveRoutineName(Img, CIE->PersonalityVA, CIE->PersonalitySlotVA);
+      F.PersonalityName = Known->second;
       F.Personality = F.PersonalityName.empty()
                           ? ExceptionPersonality::Unknown
                           : classifyPersonalityName(F.PersonalityName);

@@ -1,0 +1,121 @@
+//===- CodeVocabulary.def - Pseudocode and IR highlighting -----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Words the code view colors specially in C pseudocode and in the textual
+/// intermediate representations.  Highlighting is presentation only.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_C_CONTROL(Word): control-flow keywords.
+#ifndef NEVERD_C_CONTROL
+#define NEVERD_C_CONTROL(Word)
+#endif
+NEVERD_C_CONTROL("if")
+NEVERD_C_CONTROL("else")
+NEVERD_C_CONTROL("for")
+NEVERD_C_CONTROL("while")
+NEVERD_C_CONTROL("do")
+NEVERD_C_CONTROL("switch")
+NEVERD_C_CONTROL("case")
+NEVERD_C_CONTROL("default")
+NEVERD_C_CONTROL("break")
+NEVERD_C_CONTROL("continue")
+NEVERD_C_CONTROL("return")
+NEVERD_C_CONTROL("goto")
+NEVERD_C_CONTROL("__try")
+NEVERD_C_CONTROL("__except")
+NEVERD_C_CONTROL("__finally")
+NEVERD_C_CONTROL("__leave")
+NEVERD_C_CONTROL("try")
+NEVERD_C_CONTROL("catch")
+NEVERD_C_CONTROL("throw")
+#undef NEVERD_C_CONTROL
+
+// NEVERD_C_KEYWORD(Word): other keywords and qualifiers.
+#ifndef NEVERD_C_KEYWORD
+#define NEVERD_C_KEYWORD(Word)
+#endif
+NEVERD_C_KEYWORD("sizeof")
+NEVERD_C_KEYWORD("struct")
+NEVERD_C_KEYWORD("union")
+NEVERD_C_KEYWORD("enum")
+NEVERD_C_KEYWORD("typedef")
+NEVERD_C_KEYWORD("static")
+NEVERD_C_KEYWORD("extern")
+NEVERD_C_KEYWORD("const")
+NEVERD_C_KEYWORD("volatile")
+NEVERD_C_KEYWORD("inline")
+NEVERD_C_KEYWORD("register")
+NEVERD_C_KEYWORD("restrict")
+NEVERD_C_KEYWORD("_Alignas")
+NEVERD_C_KEYWORD("_Alignof")
+NEVERD_C_KEYWORD("_Noreturn")
+NEVERD_C_KEYWORD("_Static_assert")
+NEVERD_C_KEYWORD("__attribute__")
+NEVERD_C_KEYWORD("__builtin_bit_cast")
+NEVERD_C_KEYWORD("__builtin_trap")
+NEVERD_C_KEYWORD("NULL")
+NEVERD_C_KEYWORD("true")
+NEVERD_C_KEYWORD("false")
+#undef NEVERD_C_KEYWORD
+
+// NEVERD_C_TYPE(Word): builtin and fixed-width types.
+#ifndef NEVERD_C_TYPE
+#define NEVERD_C_TYPE(Word)
+#endif
+NEVERD_C_TYPE("void")
+NEVERD_C_TYPE("char")
+NEVERD_C_TYPE("short")
+NEVERD_C_TYPE("int")
+NEVERD_C_TYPE("long")
+NEVERD_C_TYPE("float")
+NEVERD_C_TYPE("double")
+NEVERD_C_TYPE("signed")
+NEVERD_C_TYPE("unsigned")
+NEVERD_C_TYPE("bool")
+NEVERD_C_TYPE("_Bool")
+NEVERD_C_TYPE("int8_t")
+NEVERD_C_TYPE("int16_t")
+NEVERD_C_TYPE("int32_t")
+NEVERD_C_TYPE("int64_t")
+NEVERD_C_TYPE("uint8_t")
+NEVERD_C_TYPE("uint16_t")
+NEVERD_C_TYPE("uint32_t")
+NEVERD_C_TYPE("uint64_t")
+NEVERD_C_TYPE("__int128")
+NEVERD_C_TYPE("size_t")
+NEVERD_C_TYPE("ssize_t")
+NEVERD_C_TYPE("ptrdiff_t")
+NEVERD_C_TYPE("intptr_t")
+NEVERD_C_TYPE("uintptr_t")
+NEVERD_C_TYPE("wchar_t")
+#undef NEVERD_C_TYPE
+
+// NEVERD_LLVM_KEYWORD(Word): LLVM IR keywords and instruction opcodes.
+#ifndef NEVERD_LLVM_KEYWORD
+#define NEVERD_LLVM_KEYWORD(Word)
+#endif
+NEVERD_LLVM_KEYWORD("define")
+NEVERD_LLVM_KEYWORD("declare")
+NEVERD_LLVM_KEYWORD("ret")
+NEVERD_LLVM_KEYWORD("br")
+NEVERD_LLVM_KEYWORD("switch")
+NEVERD_LLVM_KEYWORD("call")
+NEVERD_LLVM_KEYWORD("tail")
+NEVERD_LLVM_KEYWORD("load")
+NEVERD_LLVM_KEYWORD("store")
+NEVERD_LLVM_KEYWORD("alloca")
+NEVERD_LLVM_KEYWORD("getelementptr")
+NEVERD_LLVM_KEYWORD("phi")
+NEVERD_LLVM_KEYWORD("select")
+NEVERD_LLVM_KEYWORD("icmp")
+NEVERD_LLVM_KEYWORD("fcmp")
+NEVERD_LLVM_KEYWORD("unreachable")
+NEVERD_LLVM_KEYWORD("label")
+NEVERD_LLVM_KEYWORD("to")
+NEVERD_LLVM_KEYWORD("align")
+#undef NEVERD_LLVM_KEYWORD

@@ -8750,7 +8750,8 @@ TEST(HighCPointerAddresses, InvertSkipInsideSehTryFoldsRaise) {
   const std::string Source = emitFunctions({Func}, Arch::X86);
   EXPECT_EQ(Source.find("goto L_"), std::string::npos) << Source;
   EXPECT_NE(Source.find("RaiseException"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("0xFFFFFF9C"), std::string::npos) << Source;
+  // The int32_t slot takes the value of the 0xFFFFFF9C bit pattern.
+  EXPECT_NE(Source.find("= -100;"), std::string::npos) << Source;
   EXPECT_NE(Source.find("= 41"), std::string::npos) << Source;
 }
 
@@ -33520,7 +33521,8 @@ TEST(HighCPointerAddresses, ReturningCallFollowedByInt3PreservesDebugBreak) {
   EXPECT_NE(Source.find("abort_like("), std::string::npos) << Source;
   EXPECT_NE(Source.find("__debugbreak"), std::string::npos) << Source;
   EXPECT_NE(Source.find("= abort_like("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return (int32_t)v0"), std::string::npos) << Source;
+  // The int32_t return converts the 64-bit value itself.
+  EXPECT_NE(Source.find("return v0;"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, TestRcxDoesNotEmitPopcount) {
@@ -40863,10 +40865,39 @@ TEST(HighCPointerAddresses, SwitchCasesSharingATargetShareOneBody) {
        std::regex_search(It, HighC.cend(), Label, std::regex(R"((L_\w+):)"));
        It = Label.suffix().first)
     EXPECT_EQ(++Labels[Label[1].str()], 1) << Label[1] << "\n" << HighC;
-  // The switch value is a signed 32-bit NTSTATUS; either hex spelling of the
-  // case value is the same C constant after conversion.
-  EXPECT_NE(HighC.find("C000003F"), std::string::npos) << HighC;
-  EXPECT_NE(HighC.find("C0000470"), std::string::npos) << HighC;
+  // The signed selector prints each case as its converted NTSTATUS value.
+  EXPECT_NE(HighC.find("case -1073741761:"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("case -1073741668:"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("case -1073740688:"), std::string::npos) << HighC;
+  unsigned ZeroReturns = 0;
+  for (size_t Pos = HighC.find("return 0;"); Pos != std::string::npos;
+       Pos = HighC.find("return 0;", Pos + 1))
+    ++ZeroReturns;
+  EXPECT_EQ(ZeroReturns, 2u) << HighC;
+  compileAndRunCallOrdering("#include <stdint.h>\n#include <string.h>\n" +
+                            HighC + R"c(
+int main(void) {
+  const uint32_t words[] = {
+    0u, 1u, 0x7fffffffu, 0x80000000u, 0xffffffffu,
+    0xc000003eu, 0xc000003fu, 0xc0000040u,
+    0xc000009bu, 0xc000009cu, 0xc000009du,
+    0xc000046fu, 0xc0000470u, 0xc0000471u,
+    0xbfffffffu, 0xc0000000u
+  };
+  uint32_t random = 0x9145abcdu;
+  for (unsigned i = 0; i != 8208; ++i) {
+    uint32_t word;
+    if (i < 16) word = words[i];
+    else { random = random * 1664525u + 1013904223u; word = random; }
+    int32_t input;
+    memcpy(&input, &word, sizeof input);
+    const int zero = !(word & 0x80000000u) || word == 0xc000003fu ||
+      word == 0xc000009cu || word == 0xc0000470u;
+    if (sub_140001000(input) != !zero) return 1;
+  }
+  return 0;
+}
+)c");
 }
 
 TEST(HighCPointerAddresses, ControlAndDebugRegisterMovesUseMsvcIntrinsics) {

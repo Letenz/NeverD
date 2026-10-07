@@ -31,6 +31,8 @@
 #include "neverd/Common.h"
 #include "neverd/debug/DebugInfoDiscovery.h"
 #include "neverd/debug/PDBFunctionNameHint.h"
+#include "neverd/decode/Decoder.h"
+#include "neverd/ir/low/FuncDetector.h"
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/sbf/analysis/SBFAnalysisLimits.h"
 #include "neverd/sbf/analysis/SBFFunctionBody.h"
@@ -241,6 +243,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.Annotations.clear();
   S.Renames.clear();
   S.SigDB.clear();
+  S.DiscoveredFunctions.reset();
   S.resetFunctionsFromImage();
 
   neverd_annotations_load(Sess);
@@ -374,9 +377,14 @@ void neverd_session_restrict_function(neverd_session_t Sess,
   auto *S = toSession(Sess);
   if (!S)
     return;
-  S->OnlyFunctionEntries.clear();
+  std::set<va_t> Next;
   if (Entry)
-    S->OnlyFunctionEntries.insert(Entry);
+    Next.insert(Entry);
+  // A pipeline computed for another restriction must not answer queries for
+  // this one.
+  if (S->PipeRan && Next != S->OnlyFunctionEntries)
+    S->invalidatePipeline();
+  S->OnlyFunctionEntries = std::move(Next);
 }
 
 int neverd_session_set_arm_function_mode(neverd_session_t Sess,
@@ -434,6 +442,31 @@ const char *neverd_session_debug_info_kind(neverd_session_t Sess) {
 const char *neverd_session_debug_info_path(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   return dupStr(S ? S->DbgPath.string() : std::string());
+}
+
+int neverd_session_discover_functions(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return -1;
+  }
+  const bool Native = S->Img.Arch == Arch::X86 || S->Img.Arch == Arch::X64 ||
+                      S->Img.Arch == Arch::ARM || S->Img.Arch == Arch::AArch64;
+  if (Native && !S->DiscoveredFunctions) {
+    Decoder Dec;
+    if (!Dec.init(S->Img)) {
+      S->setError("failed to initialize a decoder for the image");
+      return -1;
+    }
+    FuncDetector Detector;
+    S->DiscoveredFunctions = Detector.detect(S->Img, Dec);
+    if (S->appendDiscoveredFunctions())
+      S->refreshFunctionNames();
+  }
+  return static_cast<int>(S->Functions.size());
 }
 
 int neverd_session_analyze(neverd_session_t Sess) {

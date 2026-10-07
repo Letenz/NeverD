@@ -1,6 +1,6 @@
 **Idiomas**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1f7e768c64fd7b3fd697260f693c68ca3b71562bf43cb0db4970c98487c270be -->
+<!-- i18n-source: 88b72dd8f373ee05729ab1db29a51d3837d123853880c232431f70eade967be3 -->
 
 [← Proyecto NeverD](project.md)
 
@@ -18,7 +18,7 @@ Las guías en inglés se encuentran directamente en `docs/`. Las traducciones se
 | [Contribución](CONTRIBUTING.md) | Entorno, perfiles de compilación, flujo, estilo y requisitos de PR |
 | [Arquitectura](architecture.md) | Rutas IR, límites de componentes, lifting estricto, profundidad de soporte y puntos de edición |
 | [Pruebas](testing.md) | Suites, fixtures generadas, recorridos Unicorn y comandos incrementales |
-| [Banco de trabajo de escritorio (inglés)](../gui.md) | Interfaz Qt Quick opcional, worker separado, ABI C, anotaciones y flujos MCP |
+| [Banco de trabajo de escritorio (inglés)](../gui.md) | Disposición de desensamblador clásico, worker separado, bases de datos de proyecto, localización y conexiones MCP |
 | [Reconocimiento de bibliotecas (inglés)](../library-recognition.md) | Identidades de STL, ATL/MFC, COM y libc con evidencias, perfiles y plegado reversible de código C |
 | [Validación del escritorio (inglés)](../gui-qualification.md) | Evidencia GUI medida, límites del empaquetado y validación de plataformas pendiente |
 | [Recuperación de código fuente de intérpretes](interpreter-recovery.md) | Especialización experimental con `--devirtualize`, controles CLI, contrato de ejecución, evidencias y límites; propuestas de prueba para bucles anidados; presupuestos de descubrimiento explícitos y API C versionada; API de prueba exacta de código nativo a LLVM |

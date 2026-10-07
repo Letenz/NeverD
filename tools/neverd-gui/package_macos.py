@@ -100,7 +100,7 @@ def resolve_embedded(dependency: str, image: Path, bundle: Path) -> Path | None:
 
 
 def validate_and_prune_sql_drivers(bundle: Path) -> None:
-    """Keep SQLite for deployed LocalStorage; validate every entry before pruning."""
+    """Keep SQLite for project databases; validate every entry before pruning."""
     bundle = bundle.absolute()
     if ".." in bundle.parts:
         raise RuntimeError(f"Invalid bundle path for SQL deployment: {bundle}")
@@ -335,7 +335,7 @@ def main() -> None:
     run("install_name_tool", "-add_rpath", "@executable_path/../Frameworks", macos / "neverd-worker")
     # Qt 6.8 does not support -no-codesign. Any deployment-time signatures
     # are regenerated after dependency repairs by the signing steps below.
-    run(args.qt_dir / "bin/macdeployqt", bundle, "-qmldir=" + str(source / "qml"),
+    run(args.qt_dir / "bin/macdeployqt", bundle,
         "-executable=" + str(macos / "neverd-worker"), "-libpath=" + str(args.qt_dir / "lib"),
         "-libpath=" + str(frameworks))
     validate_and_prune_sql_drivers(bundle)

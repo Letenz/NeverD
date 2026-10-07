@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 #include <functional>
 #include <memory>
 
@@ -68,7 +69,8 @@ public:
                                 QObject *owner, Completion complete);
   void unsubscribe(SubscriptionId id);
   void unsubscribeOwner(QObject *owner);
-  void cancelReads();
+  /// Detach every read except those owned by \p keep (commands always run).
+  void cancelReads(const QSet<QObject *> &keep = {});
 
   // resetSession must coincide with retiring the old transport/session; it
   // cannot stop a synchronous engine call by itself. Live subscribers receive

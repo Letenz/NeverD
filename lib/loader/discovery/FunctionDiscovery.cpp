@@ -68,6 +68,29 @@ const Import *BinaryImage::decodeImportThunkAt(va_t Addr) const {
 // FunctionDiscovery{X86,AArch64,ARM}.cpp; this dispatcher only builds the
 // import-target map and routes each executable segment by Arch.
 
+void registerLoaderRunFunctions(BinaryImage &Img) {
+  std::set<va_t> Functions;
+  for (const auto &Sym : Img.Symbols)
+    if (Sym.IsFunc)
+      Functions.insert(Sym.Addr);
+  const DynamicInfo &Dynamic = Img.DynInfo;
+  std::vector<va_t> Entries{Dynamic.InitAddr, Dynamic.FiniAddr};
+  for (const auto *Array :
+       {&Dynamic.PreinitArray, &Dynamic.InitArray, &Dynamic.FiniArray})
+    Entries.insert(Entries.end(), Array->begin(), Array->end());
+  [[maybe_unused]] size_t Added = 0;
+  for (va_t Addr : Entries) {
+    // The loaders record only executable code as runtime-called.
+    if (!Addr || !Img.isRuntimeFunctionAt(Addr) ||
+        !Functions.insert(Addr).second)
+      continue;
+    Img.Symbols.push_back(Symbol::makeFunc(Addr));
+    ++Added;
+  }
+  LLVM_DEBUG(llvm::dbgs() << "func-discovery: registered " << Added
+                          << " loader-run functions\n");
+}
+
 void scanImportThunks(BinaryImage &Img) {
   std::map<va_t, size_t> TargetImports;
   for (size_t I = 0; I < Img.Imports.size(); ++I)

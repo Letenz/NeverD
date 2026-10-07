@@ -113,3 +113,48 @@ u64 syscall_dynamic(u64 after_close) {
     return 3;
   return result == gettid() && *__errno() == 77 ? 0 : 4;
 }
+
+/* Raw and Bionic paths retain their different error encodings. */
+u64 syscall_unavailable_kernel(u64 *out) {
+  *__errno() = 77;
+  out[0] = (u64)raw(434, 1000, 0, 0, 0, 0, 0);
+  out[1] = (u64)*__errno();
+  out[2] = (u64)syscall(434, 1000UL, 0UL);
+  out[3] = (u64)*__errno();
+  out[4] = (u64)syscall(434, ~0UL, ~0UL);
+  out[5] = (u64)*__errno();
+  return 0;
+}
+
+/* Raw traps and Bionic consume the same workload-owned descriptor table. */
+u64 syscall_gki_pidfd(u64 *out, u64 thread_flag) {
+  *__errno() = 77;
+  long fd = raw(434, (u64)getpid(), 0, 0, 0, 0, 0);
+  out[0] = (u64)fd;
+  out[1] = (u64)syscall(57, (u64)fd);
+  out[2] = (u64)syscall(434, (u64)getpid(), 0x800UL);
+  out[3] = (u64)raw(57, out[2], 0, 0, 0, 0, 0);
+  out[4] = (u64)syscall(434, 0UL, 0UL);
+  out[5] = (u64)*__errno();
+  *__errno() = 91;
+  out[6] = (u64)raw(434, (u64)getpid(), 1, 0, 0, 0, 0);
+  out[7] = (u64)*__errno();
+  fd = syscall(434, (u64)getpid(), thread_flag ? 0x880UL : 0x80UL);
+  if (fd >= 0 && raw(57, (u64)fd, 0, 0, 0, 0, 0))
+    return 1;
+  return thread_flag ? (fd == 3 ? 0 : 2)
+                     : (fd == -1 && *__errno() == 22 ? 0 : 3);
+}
+
+u64 syscall_gki_pidfd_limit(u64 *out) {
+  *__errno() = 77;
+  out[0] = (u64)raw(434, (u64)getpid(), 0, 0, 0, 0, 0);
+  out[1] = (u64)*__errno();
+  out[2] = (u64)syscall(434, (u64)getpid(), 0UL);
+  out[3] = (u64)*__errno();
+  out[4] = (u64)syscall(57, 0UL);
+  out[5] = (u64)raw(434, (u64)getpid(), 0x800, 0, 0, 0, 0);
+  out[6] = (u64)syscall(57, out[5]);
+  out[7] = (u64)*__errno();
+  return 0;
+}

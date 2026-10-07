@@ -1,0 +1,56 @@
+/* Workbench chrome after the Visual Studio Code workbench.  ${Name} refers to
+   an entry of app/ChromeColors.def for the active theme. */
+QMainWindow, QDialog { background: ${Window}; }
+QMenuBar { background: ${MenuBar}; color: ${MenuBarText}; border: none; padding: 0 2px; }
+QMenuBar::item { background: transparent; padding: 4px 8px; border-radius: 3px; }
+QMenuBar::item:selected, QMenuBar::item:pressed { background: ${ToolBarHover}; }
+QMenu { background: ${Menu}; color: ${MenuText}; border: 1px solid ${MenuSeparator}; padding: 4px 0; }
+QMenu::item { padding: 4px 24px 4px 26px; }
+QMenu::item:selected { background: ${MenuSelection}; color: ${HighlightedText}; }
+QMenu::item:disabled { color: ${DisabledText}; }
+QMenu::separator { height: 1px; background: ${MenuSeparator}; margin: 4px 0; }
+QMenu::icon { padding-left: 6px; }
+QToolBar { background: ${ToolBar}; border: none; spacing: 1px; padding: 2px 3px; }
+QToolBar::separator { background: ${Separator}; width: 1px; margin: 3px 4px; }
+QToolButton { background: transparent; color: ${WindowText}; border: 1px solid transparent; border-radius: 3px; padding: 2px; }
+QToolButton:hover { background: ${ToolBarHover}; }
+QToolButton:pressed, QToolButton:checked { background: ${Highlight}; color: ${HighlightedText}; }
+QToolButton::menu-indicator { image: none; width: 0; }
+QStatusBar { background: ${StatusBar}; color: ${StatusBarText}; min-height: 22px; }
+QStatusBar QLabel { color: ${StatusBarText}; padding: 0 8px; }
+QStatusBar::item { border: none; }
+QTreeView, QListView, QTableView { background: ${Base}; alternate-background-color: ${AlternateBase}; color: ${Text}; border: none; selection-background-color: ${Highlight}; selection-color: ${HighlightedText}; outline: none; }
+QTreeView::item, QListView::item { padding: 1px 2px; }
+QTreeView::item:hover, QListView::item:hover { background: ${Hover}; }
+QTreeView::item:selected, QListView::item:selected { background: ${Highlight}; color: ${HighlightedText}; }
+QHeaderView { background: ${HeaderBackground}; }
+QHeaderView::section { background: ${HeaderBackground}; color: ${HeaderText}; border: none; border-right: 1px solid ${Border}; border-bottom: 1px solid ${Border}; padding: 3px 6px; }
+QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextEdit { background: ${Input}; color: ${Text}; border: 1px solid ${InputBorder}; border-radius: 2px; padding: 3px 4px; selection-background-color: ${Highlight}; selection-color: ${HighlightedText}; }
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus { border: 1px solid ${Focus}; }
+QComboBox QAbstractItemView { background: ${Menu}; color: ${MenuText}; border: 1px solid ${MenuSeparator}; selection-background-color: ${MenuSelection}; }
+QPushButton { background: ${Button}; color: ${ButtonText}; border: 1px solid ${Border}; border-radius: 2px; padding: 4px 14px; }
+QPushButton:hover { background: ${ToolBarHover}; }
+QPushButton:default { background: ${ButtonPrimary}; color: ${ButtonPrimaryText}; border: 1px solid ${ButtonPrimary}; }
+QPushButton:default:hover { background: ${ButtonPrimaryHover}; }
+QPushButton:disabled { color: ${DisabledText}; }
+QCheckBox, QRadioButton, QLabel, QGroupBox { color: ${WindowText}; }
+QGroupBox { border: 1px solid ${Border}; border-radius: 3px; margin-top: 8px; padding-top: 6px; }
+QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }
+QScrollBar:vertical { background: transparent; width: 12px; margin: 0; border: none; }
+QScrollBar:horizontal { background: transparent; height: 12px; margin: 0; border: none; }
+QScrollBar::handle:vertical { background: ${ScrollbarSlider}; min-height: 24px; }
+QScrollBar::handle:horizontal { background: ${ScrollbarSlider}; min-width: 24px; }
+QScrollBar::handle:hover { background: ${ScrollbarSliderHover}; }
+QScrollBar::handle:pressed { background: ${ScrollbarSliderActive}; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; border: none; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+QTabBar { background: ${TabBar}; }
+QTabBar::tab { background: ${TabInactive}; color: ${TabInactiveText}; padding: 5px 10px; border: none; border-right: 1px solid ${TabBar}; border-top: 1px solid transparent; }
+QTabBar::tab:selected { background: ${TabActive}; color: ${TabActiveText}; border-top: 1px solid ${TabActiveBorder}; }
+QTabBar::tab:hover:!selected { color: ${TabActiveText}; }
+QTabBar::close-button { image: url(:/neverd/icons/close_small.svg); subcontrol-position: right; border-radius: 3px; padding: 1px; margin-left: 4px; }
+QTabBar::close-button:hover { background: ${ToolBarHover}; }
+QTabWidget::pane { border: none; }
+QToolTip { background: ${ToolTipBase}; color: ${ToolTipText}; border: 1px solid ${MenuSeparator}; padding: 3px; }
+QSplitter::handle { background: ${Border}; }
+QAbstractScrollArea { border: none; }

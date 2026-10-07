@@ -1,0 +1,10 @@
+//===- LinuxUnavailableSyscalls.def - Explicit absent kernel calls --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+// Name, input label, x64 number, AArch64 number, fixed arity.
+// These entries declare known interfaces, not an implementation or availability.
+#ifdef NEVERD_LINUX_UNAVAILABLE_SYSCALL
+NEVERD_LINUX_UNAVAILABLE_SYSCALL(PidFDOpen, "pidfd_open", 434, 434, 2)
+#endif

@@ -1127,7 +1127,9 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 
 `NeverDHighControlFlowTests` の `HighIntegerSignedness.*` は、各レジスタまたは一時ローカルを、その用途の多数が読む符号に合わせて符号付きまたは符号なしと宣言する後段パスを検査します。ラップする算術、論理シフト、符号なし比較は符号なしを、符号付き比較、符号付き除算、算術シフト、符号拡張は符号付きを支持し、整数以外の用途が一つでもあるローカルは型を保ちます。生成した C は `-O0` と `-O2` で未定義動作トラップ付きで実行し、符号なしになったローカルの符号付き比較を含めて独立した参照演算と比較します。
 
-`NeverDHighControlFlowTests` の `HighValueForward.*` は、HighC ライタが一度だけ使う値をその使用箇所へ畳み込めるときを検査します。一つの名前が複数の SSA 値を表しうるため、ループ条件はループが代入する変数を読む値を保持し、読み直したフレームスロットはそのスロットへのストアをまたいで値を保ち、別スロットへのストアは越えて畳み込みます。各ケースを `-O0` と `-O2` で未定義動作トラップ付きで実行します。
+`NeverDHighControlFlowTests` の `HighValueForward.*` は、HighC ライタが一度だけ使う値をその使用箇所へ畳み込めるときを検査します。一つの名前が複数の SSA 値を表しうるため、ループ条件はループが代入する変数を読む値を保持し、読み直したフレームスロットはそのスロットへのストアをまたいで値を保ち、別スロットへのストアは越えて畳み込みます。使用前に元の変数が再代入されたコピーは、その値を保持します。各ケースを `-O0` と `-O2` で未定義動作トラップ付きで実行します。
+
+`NeverDHighControlFlowTests` の `HighCIntegerConversion.*` は、HighC ライタが C に任せる整数変換を検査します。外側の変換が保持するバイトを保持するオペランド内の変換は独自のキャストを出力せず、宣言済み整数ローカルへの代入と return は暗黙に変換し、リテラルは変換後の値として書かれます。一方、ポインタは明示的な変換を保ちます。各ケースを `-O0` と `-O2` で未定義動作トラップ付きで、参照となる演算と比較して実行します。
 
 ソース投影はこの整理後にも可変引数のオブジェクトリストを再検証する。空の命令アドレスアンカーは許可し、隠れた副作用や制御移動は拒否する。同期クリーンアップでは、同じ保存済みレシーバに対する単一の `int64_t` または `uint64_t` ビューを許可するが、幅の縮小、浮動小数点変換、アドレス演算、再代入は拒否する。Foundation のオブジェクト集合と正常時・例外時の解錠トレースを `-O0` と `-O2` の両方で実行する。
 
@@ -1536,3 +1538,14 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 `ObjCCallHints.SwiftMainActorSharedKeepsObjectAndMetatypeContext` は ARM64/x86-64 の完全な戻り値と swiftself のキャリアを検証し、各アーキテクチャで ABI の改変 10 件とインポート識別情報の改変 10 件を拒否します。独立した SDK 検証では、両方のソースアーキテクチャ設定から生成した未変更の C を ARM64 ホスト上の O0/O2 で実行し、128 回の呼び出しで単一インスタンスとメタタイプの同一性、および参照所有権の釣り合いを確認します。8 構成のクロスコンパイルで両アーキテクチャの macOS と Mac Catalyst を確認し、x86-64 のネイティブ実行は別の検証範囲として扱います。
 
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` は、根で割り当て済みの変数と未決定変数の混在、非決定根変数、コピーの再コピー、元の破棄、変数追加、両方の既定極性、予算による中断と再開、競合と再始動を検査します。完全なモデルとすべての探索カウンターは新規符号化と一致する必要があります。
+
+`ContextFiniteProofs.*` はコンテキストと所有者の分離、所有者の置換、トークンの移動、正確な述語と射影順、ノード追加、完了・未完了の結果、容量と LRU 退避を検査します。フレームの検査は保存前の最終一意性クエリと、ヒット時のシンボリックノード上限を確認します。
+
+`CompletedQueryCache.*` はバイト全域の結果、全圧縮位置、拡張、コンテキストと所有者の分離、不正・不完全な入力、正確な記憶上限を検査します。ネイティブ分岐の回帰は、完了済み結果でバックエンド処理を省いても、固定の論理問い合わせ数と正確な予算・1不足の拒否を維持します。
+
+
+`BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` は、分岐変更とシンボリックなフレーム書き込みを含む反復ネイティブ分岐先列、固定論理コスト、問い合わせ予算の境界と一回不足、不正な分岐先数制限、ゲート予算の枯渇、誤った終端観測を検証します。交互のフレーム射影と相関する分岐先射影では、述語置換後も完全なタプル、観測順序、不完全結果の拒否を維持します。
+
+`LinuxKernelAvailability.*` は明示的な欠如入力と profile 准入を検証します。`Backends/LinuxKernelProcess.*` は独立した x64/AArch64 O0/O2 の生の呼出しで、引数検証前の ENOSYS と未指定・無関係な呼出しの継続した拒否を確認します。Android syscall fixture は生の SVC と Bionic `syscall` を比較し、生の戻り値と errno の異なる効果を保ちます。可用性変更ではこれらの重点テストに続き、Linux process、公開 process、Android syscall、native entry、signal の完全な suite を実行します。
+
+`LinuxPIDFD.*` はリリース済み GKI ブランチの解析を確認し、不正な enum 値や GKI と pidfd 欠如観測の併用を image ロード前に拒否します。`Backends/LinuxPIDFDProcess.*` は独立した O0/O2 x64/AArch64 呼出しで八つの全ブランチを確認し、フラグ差、file/pidfd の共有割当て、上限、close/再利用、scalar/vector のエラー順序を含みます。Android の `ReleasedGKIProcessDescriptorsShareRawAndBionicOwnership` はコンパイル済みの六つ全ての再配置 profile で共有記述子と errno を再検証します。共有カーネルや記述子の意味を変更するときは、これらに続いて Linux process、Android native、公開 process の完全な suite を実行します。テストはモデルを実行し、固定した八つの GKI カーネルを起動しません。[リリース済み GKI 契約](../android-gki-kernels.md)を参照してください。

@@ -1,8 +1,10 @@
 #include "QueryService.h"
 
 #include <QCache>
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLoggingCategory>
 #include <QQueue>
 #include <QSet>
 #include <QTimer>
@@ -13,10 +15,15 @@ namespace {
 using Spec = QueryService::QuerySpec;
 using Id = QueryService::SubscriptionId;
 
+// QT_LOGGING_RULES="neverd.queries.debug=true" traces every worker request.
+Q_LOGGING_CATEGORY(lcQueries, "neverd.queries", QtWarningMsg)
+
 bool cacheable(const QString &operation) {
-  static const QSet<QString> operations{"functions", "resolve",   "disasm",
-                                        "bytes",     "decompile", "xrefs",
-                                        "strings",   "segments"};
+  // Listing pages and the overview also change with the background index
+  // generation, which does not advance the revision; their views cache them.
+  static const QSet<QString> operations{
+      "functions", "resolve", "disasm",  "bytes",   "decompile", "strings",
+      "segments",  "names",   "regions", "imports", "exports"};
   return operations.contains(operation);
 }
 
@@ -28,7 +35,11 @@ bool readable(const QString &operation) {
                                         "contribution_execute",
                                         "cfg",
                                         "cfg_summary",
-                                        "cfg_viewport"};
+                                        "cfg_viewport",
+                                        "listing",
+                                        "overview",
+                                        "xrefs",
+                                        "search"};
   return cacheable(operation) || operations.contains(operation);
 }
 
@@ -94,6 +105,15 @@ bool sameAddress(const QJsonValue &left, const QJsonValue &right) {
   return parse(left, a) && parse(right, b) && a == b;
 }
 
+/// The cfg_summary request of a graph query: its address plus the optional
+/// node metrics that size content-fitted nodes.
+QJsonObject summaryPayload(const QJsonObject &viewport) {
+  QJsonObject payload{{"address", viewport["address"]}};
+  if (viewport.contains("metrics"))
+    payload["metrics"] = viewport["metrics"];
+  return payload;
+}
+
 QJsonObject cleanResponse(QJsonObject response) {
   response.remove("request_id");
   response.remove("cancellation_requested");
@@ -119,6 +139,7 @@ struct QueryService::State {
     int graphRetries = 0;
     QJsonObject summary, result;
     QString summaryRevision;
+    QElapsedTimer sent;
   };
   using JobPtr = std::shared_ptr<Job>;
   struct Subscription {
@@ -351,6 +372,9 @@ struct QueryService::State {
     const auto expected =
         job->spec.policy == Spec::Exact ? job->spec.expectedRevision : revision;
     job->wireId = sender ? sender(operation, payload, expected) : QString{};
+    job->sent.start();
+    qCDebug(lcQueries).noquote()
+        << "send" << operation << job->wireId << "queued" << queue.size();
     if (job->wireId.isEmpty())
       finish(job, error("transport_unavailable",
                         "Analysis worker is not available."));
@@ -386,9 +410,8 @@ struct QueryService::State {
     job->phase = job->kind == Graph ? Summary : Reading;
     dispatch(job,
              job->kind == Graph ? QString("cfg_summary") : job->spec.operation,
-             job->kind == Graph
-                 ? QJsonObject{{"address", job->spec.payload["address"]}}
-                 : job->spec.payload);
+             job->kind == Graph ? summaryPayload(job->spec.payload)
+                                : job->spec.payload);
   }
 
   void standalone(Id id, QJsonObject response) {
@@ -511,6 +534,8 @@ struct QueryService::State {
       emit q->loadProgress(response.value("payload").toObject());
       return;
     }
+    qCDebug(lcQueries).noquote() << "done" << job->wireOperation << job->wireId
+                                 << status << job->sent.elapsed() << "ms";
     if (status != "ok" && status != "error" && status != "cancelled" &&
         status != "budget_exceeded") {
       finish(job, error("invalid_response",
@@ -567,8 +592,7 @@ struct QueryService::State {
           job->graphRetries++ == 0) {
         job->phase = Summary;
         job->summary = {};
-        dispatch(job, "cfg_summary",
-                 {{"address", job->spec.payload["address"]}});
+        dispatch(job, "cfg_summary", summaryPayload(job->spec.payload));
         return;
       }
       if (status == "ok") {
@@ -662,11 +686,13 @@ void QueryService::unsubscribeOwner(QObject *owner) {
       state_->detach(id);
   state_->notify();
 }
-void QueryService::cancelReads() {
+void QueryService::cancelReads(const QSet<QObject *> &keep) {
   const auto ids = state_->subscriptions.keys();
   for (const auto id : ids) {
-    const auto job = state_->jobs.value(state_->subscriptions.value(id).job);
-    if (job && job->kind != State::Command)
+    const auto &subscription = state_->subscriptions.value(id);
+    const auto job = state_->jobs.value(subscription.job);
+    if (job && job->kind != State::Command &&
+        !keep.contains(subscription.ownerKey))
       state_->detach(id);
   }
   state_->notify();

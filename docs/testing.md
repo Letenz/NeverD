@@ -255,7 +255,9 @@ call sites, backward calls, malformed encodings and jumps that need a veneer.
 
 `HighIntegerSignedness.*` in `NeverDHighControlFlowTests` checks the late pass that declares each register or temporary local signed or unsigned by what most of its uses read. Wrapping arithmetic, logical shifts and unsigned comparisons favor unsigned; signed comparisons, signed division, arithmetic shifts and sign extension favor signed; a local with any non-integer use keeps its types. The emitted C runs at `-O0` and `-O2` with undefined-behavior traps against independent reference arithmetic, including a signed comparison of a local that became unsigned.
 
-`HighValueForward.*` in `NeverDHighControlFlowTests` checks when the HighC writer may fold a single-use value into its use. A loop condition keeps a value whose variables the loop assigns, since one name can denote several SSA values; a reloaded frame slot keeps its value across a store to that slot and folds past a store to another slot. Each case runs at `-O0` and `-O2` with undefined-behavior traps.
+`HighValueForward.*` in `NeverDHighControlFlowTests` checks when the HighC writer may fold a single-use value into its use. A loop condition keeps a value whose variables the loop assigns, since one name can denote several SSA values; a reloaded frame slot keeps its value across a store to that slot and folds past a store to another slot. A copy keeps its value when its source is reassigned before the use. Each case runs at `-O0` and `-O2` with undefined-behavior traps.
+
+`HighCIntegerConversion.*` in `NeverDHighControlFlowTests` checks the integer conversions the HighC writer leaves to C. A conversion inside an operand that keeps the bytes an outer conversion keeps prints no cast of its own; an assignment to a declared integer local and a return convert implicitly, and a literal is spelled as the value it converts to, while a pointer keeps its explicit conversion. Each case runs at `-O0` and `-O2` with undefined-behavior traps against reference arithmetic.
 
 Source projection also revalidates variadic object lists after this cleanup: empty instruction anchors are accepted, while hidden effects or control transfers are rejected. Synchronized cleanup accepts a single `int64_t` or `uint64_t` view of the same saved receiver; narrowing, floating conversions, address arithmetic and reassignment remain rejected. Foundation object sets and normal/exceptional unlock traces run at both `-O0` and `-O2`.
 
@@ -2983,6 +2985,12 @@ The MainActor fixture checks the complete fixed metadata/static-table flow and r
 
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` checks mixed root and undecided variables, nondecision roots, copying a copy, destroyed sources, later variable growth, both default phases, bounded interruption and resume, conflicts and restarts. Complete models and all search counters must match a fresh encoding.
 
+`ContextFiniteProofs.*` checks context and owner isolation, owner replacement, token moves, exact predicates and ordered projections, append-only growth, completed and incomplete results, storage ceilings and LRU eviction. Frame tests require the final uniqueness query before caching and preserve symbolic-node limits on hits.
+
+`CompletedQueryCache.*` checks full byte-domain answers, every packed slot, growth, context and owner isolation, invalid and incomplete inputs, and exact storage limits. Native branch regressions retain fixed logical query costs and exact/one-short budgets even when complete answers avoid backend work.
+
+`BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` check repeated native target chains with branch changes and symbolic frame stores, fixed logical costs, exact/one-short query budgets, invalid target limits, gate exhaustion and wrong terminal observations. Interleaved frame and correlated target projections also preserve complete tuples, observer order and incomplete-result refusal across predicate replacement.
+
 `LinuxPriorityTests.cpp` checks explicit task state, thread isolation, missing
 observations, malformed JSON, profile admission and refusal effects.
 Independent x64/AArch64 raw callers at O0/O2 verify nice clamping, 32-bit syscall
@@ -2991,3 +2999,23 @@ getpriority encoding. Run the `LinuxPriority.*` and
 `Backends/LinuxPriorityProcess.*` cases in `NeverDLinuxProcessTests`, then the
 complete Linux process, Android native and process public suites for shared
 kernel/JSON changes. Absent optional native transports remain explicit skips.
+
+`LinuxKernelAvailability.*` validates explicit absence inputs and profile
+admission. `Backends/LinuxKernelProcess.*` uses independent x64/AArch64 O0/O2
+raw callers to verify ENOSYS before argument validation and continued refusal
+for unspecified or unrelated calls. The Android syscall fixture compares raw
+SVC with Bionic `syscall`, preserving distinct raw return/errno effects.
+Run these focused tests, the full Linux process and public process suites,
+and Android syscall, native-entry and signal suites for availability changes.
+
+`LinuxPIDFD.*` checks released GKI branch parsing and rejects invalid enum values
+or an absent-pidfd observation combined with GKI before image loading.
+`Backends/LinuxPIDFDProcess.*` runs independent O0/O2 x64/AArch64 callers for all
+eight branches, including flag differences, shared file/pidfd allocation,
+limits, close/reuse and scalar/vector error ordering. Android's
+`ReleasedGKIProcessDescriptorsShareRawAndBionicOwnership` cases repeat the
+shared descriptor and errno behavior across all six compiled relocation
+profiles. Run these first, then the complete Linux process, Android native and
+public process suites when changing shared kernel or descriptor semantics.
+These tests execute the model; they do not boot the eight pinned GKI kernels.
+See [released GKI contracts](android-gki-kernels.md).

@@ -48,6 +48,7 @@ Las opciones son un objeto JSON de hasta 64 KiB. Se rechazan campos desconocidos
 | `output_limit` | 1048576 | Bytes combinados capturados de stdout/stderr |
 | `instruction_quantum` | 1024 | Intervalo de admisión antes de ceder a la runtime |
 | `linux_priority` | Sin configurar | Valores nice explícitos por tarea y autoridad del llamador para servicios Linux de prioridad sin envolver |
+| `linux_kernel` | Ausente | Rama GKI publicada o ausencia observada de interfaces del kernel invitado, declarada explícitamente |
 
 `schema_version` vale 1. El informe incluye perfil, arquitectura, backend seleccionado y motivo, `stop_reason`, `exit_status` anulable, diagnóstico, PC de entrada/actual, contadores, registros de servicios y última salida CPU tipada. Direcciones, números syscall, registros de argumentos y bits de retorno son cadenas hexadecimales **sin** `0x`; `stdout_hex`/`stderr_hex` preservan NUL y UTF-8 inválido. Un resultado syscall null significa que no hay retorno modelado (por ejemplo, exit o solicitud no admitida), no un cero exitoso.
 
@@ -76,6 +77,16 @@ Los servicios de memoria anónima comparten el espacio del proceso y el presupue
 Las longitudes se redondean a páginas. `munmap` tolera huecos y retiradas repetidas; `mprotect` modifica el prefijo mapeado antes de devolver `ENOMEM` ante un hueco. `PROT_NONE` conserva la asignación y sus bytes, pero impide el acceso invitado. El `brk` bruto devuelve el límite solicitado si tiene éxito y el anterior si falla, no la convención cero/menos uno de libc. El límite inicial es el final de imagen alineado a página. El crecimiento respeta otros mapeos y el presupuesto; la reducción conserva los bytes de la página parcial restante. Las reglas y prioridades de error siguen los servicios Linux de [mapeo](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) y [protección](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c).
 
 Los mapeos de archivos, compartidos o fijos, crecimiento descendente, páginas enormes, bloqueo, claves de protección, permisos solo de ejecución/escritura y otros indicadores siguen sin soporte explícito: se detienen antes de publicar efectos o inventar un retorno. Los errores normales de rango, longitud y alineación del subconjunto admitido devuelven errores invitados y permiten continuar. Ningún servicio reenvía punteros ni peticiones de mapeo al OS anfitrión.
+
+La entrada opcional `linux_kernel` registra la ausencia observada explícitamente de interfaces del kernel. Por ejemplo, un fixture sin implementación de `pidfd_open` utiliza:
+
+```json
+{"linux_kernel":{"unavailable_syscalls":["pidfd_open"]}}
+```
+
+La llamada directa seleccionada devuelve -ENOSYS antes de validar argumentos, como una entrada de kernel ausente, sin crear descriptores ni modificar memoria invitada. El wrapper `syscall` de Bionic conserva su traducción habitual -1/errno. Omitir la entrada o dar una lista vacía mantiene el límite no soportado de esta interfaz; otras llamadas desconocidas no se convierten en ENOSYS. Actualmente solo se admite `pidfd_open`; se rechazan nombres desconocidos, duplicados y tipos incorrectos. La entrada no deduce versión del kernel, disponibilidad del host ni una implementación funcional de pidfd. Véase la [implementación de llamadas ausentes del kernel](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c).
+
+Un `linux_kernel.gki` explícito selecciona una rama publicada del kernel Android common entre 5.10 y 6.18. El subconjunto implementado actualmente es `pidfd_open` para el proceso vivo del modelo, con flags por versión y la misma tabla de descriptores que `linux_files`; Bionic y traps directos comparten propiedad y orden de errores. Se rechaza combinar GKI y ausencia observada de `pidfd_open`. El nivel de API Android no selecciona un kernel. Los [contratos GKI publicados](../android-gki-kernels.md) detallan las ocho revisiones de fuentes fijadas, descriptores, pruebas y cobertura pendiente.
 
 La entrada opcional `linux_priority` declara el estado nice de tareas de prueba con el UID del llamador. `setpriority` y `getpriority` sin envolver comparten ese estado entre Linux ELF64 y Android; no cambian prioridades del host.
 

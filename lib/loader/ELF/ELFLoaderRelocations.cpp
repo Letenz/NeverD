@@ -31,6 +31,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -259,6 +260,13 @@ void applyDynamicRelativeRelocations(
   };
 
   constexpr size_t PtrSize = sizeof(typename ELFT::Addr);
+  // Slots that already carry a base relocation.  A shared object lists tens
+  // of thousands of relative relocations, so a scan per slot is quadratic.  A
+  // malformed r_offset may be any value, including a DenseSet reserved key.
+  std::unordered_set<va_t> BaseRelocated;
+  BaseRelocated.reserve(Img.BaseRelocations.size());
+  for (const BaseRelocation &R : Img.BaseRelocations)
+    BaseRelocated.insert(R.Address);
   auto ApplyPointerSlot = [&](va_t SlotVA, uint64_t TargetVA) {
     if (!Img.patchPtr(SlotVA, TargetVA))
       return false;
@@ -275,9 +283,7 @@ void applyDynamicRelativeRelocations(
       break;
     }
 
-    if (std::none_of(
-            Img.BaseRelocations.begin(), Img.BaseRelocations.end(),
-            [&](const BaseRelocation &R) { return R.Address == SlotVA; }))
+    if (BaseRelocated.insert(SlotVA).second)
       Img.BaseRelocations.push_back(BaseRelocation{SlotVA, 0});
     recordAbsolutePointerRelocation(Img, SlotVA, TargetVA);
     return true;

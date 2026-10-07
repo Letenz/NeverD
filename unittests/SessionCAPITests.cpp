@@ -32,6 +32,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -1732,6 +1733,56 @@ TEST_F(SessionCAPITest, NativePhaseTraceFullStderrPreservesActualLoadContract) {
   }
 }
 #endif
+
+TEST_F(SessionCAPITest, DisassemblyStatesHowEachInstructionMovesTheStack) {
+  // Each row: its bytes, the stack pointer move "sp" (null when unknown) and
+  // the register it is relative to, when not the stack pointer.
+  struct Row {
+    std::string_view Bytes;
+    std::optional<int64_t> Move;
+    std::string_view Base;
+  };
+  const Row Rows[] = {
+      {"\x55", -8, {}},                       // push rbp
+      {"\x48\x89\xe5", 0, {}},                // mov rbp, rsp
+      {"\x48\x83\xe4\xf0", std::nullopt, {}}, // and rsp, -16
+      {"\x48\x8d\x65\xe8", -0x18, "rbp"},     // lea rsp, [rbp - 0x18]
+      {"\x48\x89\xec", 0, "rbp"},             // mov rsp, rbp
+      {"\xc9", 8, "rbp"},                     // leave
+      {"\x5c", std::nullopt, {}},             // pop rsp
+      {std::string_view("\xe8\x00\x00\x00\x00", 5), -8, {}}, // call $+5
+      {"\x48\x8d\x64\x24\x18", 0x18, {}}, // lea rsp, [rsp + 0x18]
+      {"\xff\x14\x24", 0, {}},            // call qword ptr [rsp]
+      {"\x9c", -8, {}},                   // pushfq
+      {"\x9d", 8, {}},                    // popfq
+      {"\x48\x01\xc4", std::nullopt, {}}, // add rsp, rax
+      // ret 0x10: its pops belong to the transfer out of the function.
+      {std::string_view("\xc2\x10\x00", 3), 0, {}},
+  };
+  std::string Code;
+  for (const auto &R : Rows)
+    Code += R.Bytes;
+  const auto Input =
+      write("stack-moves.elf", makeNativeELF(false, 0x400000, {}, Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Text = takeString(
+      neverd_disasm_json_ex(Session, neverd_session_entry_addr(Session),
+                            std::size(Rows), NEVERD_DISASM_STACK));
+  auto Parsed = llvm::json::parse(Text);
+  ASSERT_TRUE(static_cast<bool>(Parsed)) << Text;
+  const auto *Array = Parsed->getAsArray();
+  ASSERT_TRUE(Array && Array->size() == std::size(Rows)) << Text;
+  for (size_t I = 0; I < std::size(Rows); ++I) {
+    const auto *Object = (*Array)[I].getAsObject();
+    ASSERT_TRUE(Object && Object->get("sp")) << I << ": " << Text;
+    EXPECT_EQ(Object->getInteger("sp"), Rows[I].Move) << I << ": " << Text;
+    EXPECT_EQ(Object->getString("sp_base").value_or("").str(), Rows[I].Base)
+        << I << ": " << Text;
+    // Flow fields are not requested.
+    EXPECT_FALSE(Object->get("flow")) << I << ": " << Text;
+  }
+}
 
 TEST_F(SessionCAPITest, DecompileDiffPreservesEqualSuccessfulOutputs) {
   expectDecompileDiff("6001600055", true);

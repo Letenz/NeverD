@@ -156,9 +156,7 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
   if (!Path)
     return unsupported(Result, FilePathForm);
 
-  uint32_t FD = 0;
-  while (FD < Options->DescriptorLimit && Descriptors.contains(FD))
-    ++FD;
+  uint32_t FD = nextDescriptor();
   if (FD == Options->DescriptorLimit)
     return std::optional<uint64_t>(uint64_t(0) - TooManyFiles);
   switch (lookupPath(Path->Name, Path->RequiresDirectory)) {

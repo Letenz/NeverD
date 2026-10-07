@@ -48,6 +48,7 @@ options は最大 64 KiB の JSON object です。未知/null field、不正な�
 | `output_limit` | 1048576 | stdout/stderr 合計の捕捉 byte 数 |
 | `instruction_quantum` | 1024 | runtime に戻るまでの admission 間隔 |
 | `linux_priority` | 未設定 | タスクごとの明示的な nice 値と Linux の生の優先度サービスに対する呼び出し権限 |
+| `linux_kernel` | 未設定 | リリース済み GKI ブランチ、または観測したゲストカーネルインターフェースの欠如を明示 |
 
 `schema_version` は 1 です。report には profile、architecture、選択 backend と理由、`stop_reason`、nullable `exit_status`、診断、入口/現在 PC、counter、service record、最後の型付き CPU exit が含まれます。address、syscall number、引数 register、raw return bit は `0x` なしの hex string です。`stdout_hex`/`stderr_hex` は NUL と不正 UTF-8 を保持します。syscall 結果 null は model が戻り値を定義しないこと（exit や未対応 request など）を示し、成功値 0 とは異なります。
 
@@ -76,6 +77,16 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
 長さはページ単位に切り上げます。`munmap` は穴や重複解除を許容し、`mprotect` は穴までのマッピングを変更してから `ENOMEM` を返します。`PROT_NONE` は割り当てと内容を保持しつつゲストアクセスを禁止します。生の `brk` は成功時に要求したバイト境界、失敗時に旧境界を返し、libc のゼロ／負一の規約とは異なります。初期 break はページ境界に揃えたイメージ終端です。拡張は他のマッピングと予算に従い、縮小は残る部分ページの内容を保持します。対象範囲の規則とエラー優先順位は Linux の[マッピング](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c)および[保護](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c)に従います。
 
 ファイル／共有／固定マッピング、下方拡張、巨大ページ、メモリ固定、保護キー、実行専用／書き込み専用方針、その他のフラグは明示的に未対応です。効果の公開や戻り値の生成前に停止します。対応範囲内の通常の範囲・長さ・整列エラーはゲストエラーを返して実行を続けます。ゲストポインタやマッピング要求をホスト OS に転送することはありません。
+
+任意の `linux_kernel` 入力は、明確に観測したカーネルインターフェースの欠如を記録します。例えば `pidfd_open` 実装がない fixture は次を使用します。
+
+```json
+{"linux_kernel":{"unavailable_syscalls":["pidfd_open"]}}
+```
+
+選択した生の呼出しは、カーネル入口がない場合と同様に引数検査前に -ENOSYS を返し、記述子を作らずゲストメモリも変更しません。Bionic の `syscall` wrapper は通常の -1/errno 変換を保ちます。入力の省略と空リストでは、このインターフェースは従来の未対応境界に留まり、他の未知の呼出しを ENOSYS に変換しません。現在は `pidfd_open` のみを受理し、未知の名前、重複、誤った型を拒否します。入力からカーネル版、ホストの可用性、動作する pidfd 実装を推定しません。[カーネルの欠落呼出し実装](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c)を参照してください。
+
+明示した `linux_kernel.gki` は 5.10 から 6.18 のリリース済み Android common カーネルブランチを選択します。現在の実装範囲は生存するモデルプロセスへの `pidfd_open` で、版別のフラグと `linux_files` と同じ記述子表を使います。Bionic と生の trap は所有権とエラー順序を共有します。GKI と `pidfd_open` 欠如の観測を同時には選択できません。Android API level はカーネルを選択しません。八つの固定ソース版、記述子動作、テストと未実装範囲は[リリース済み GKI 契約](../android-gki-kernels.md)を参照してください。
 
 任意の `linux_priority` 入力は、呼び出し元と同じ UID を持つテスト用タスクの nice 状態を宣言します。Linux ELF64 と Android の生の `setpriority` / `getpriority` はこの状態を共有し、ホストの優先度は変更しません。
 

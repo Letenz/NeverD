@@ -1,6 +1,6 @@
 **언어**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: b269d1f316b2dffb502ea0ed075d6255ed7c03d722bb9129b55578cf8a25acbd -->
+<!-- i18n-source: 0e490a01b7c701ed5c4ec7324feba7b113de2d5ccbc4713f2cef24397f7800d2 -->
 
 <div align="center">
 
@@ -262,7 +262,7 @@ cmake --build build --target check-neverd
 
 ## 데스크톱 워크벤치
 
-선택적인 [Qt Quick 데스크톱 워크벤치 (영문)](../gui.md)는 도킹 가능한 명령어·CFG·16진수·C·IR 보기, 11개 UI 언어, 주석 저장, MCP 연결을 제공합니다. 분석은 Qt에 의존하지 않는 별도 작업 프로세스에서 실행되며 CLI 전용 빌드는 독립적으로 유지됩니다. 지원하는 작업 흐름과 출시 전에 남아 있는 플랫폼 검증은 [검증 기록 (영문)](../gui-qualification.md)을 참고하세요.
+선택적인 [데스크톱 워크벤치 (영문)](../gui.md)는 고전적인 대화형 디스어셈블러의 레이아웃과 단축키를 따르며 디스어셈블리·그래프·의사 코드·IR·16진수·목록 보기, Visual Studio Code 스타일 테마, 11개 UI 언어, `.nddb` 프로젝트 데이터베이스를 제공합니다. 분석은 Qt에 의존하지 않는 별도 작업 프로세스에서 실행되며 CLI 전용 빌드는 독립적으로 유지됩니다. 지원하는 작업 흐름과 출시 전에 남아 있는 플랫폼 검증은 [검증 기록 (영문)](../gui-qualification.md)을 참고하세요.
 
 <!-- i18n-section: cli -->
 

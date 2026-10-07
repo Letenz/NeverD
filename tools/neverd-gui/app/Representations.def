@@ -1,0 +1,27 @@
+//===- Representations.def - Code views of a function ----------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The code representations a code view can show: the worker's decompile
+/// representation name, the window title, and the highlighting dialect.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_REPRESENTATION(Name, Title, Dialect): Dialect is C, IR or LLVM.
+#ifndef NEVERD_REPRESENTATION
+#define NEVERD_REPRESENTATION(Name, Title, Dialect)
+#endif
+NEVERD_REPRESENTATION("c", QT_TRANSLATE_NOOP("Representations", "Pseudocode"),
+                      C)
+NEVERD_REPRESENTATION("llvmc", QT_TRANSLATE_NOOP("Representations", "LLVM C"),
+                      C)
+NEVERD_REPRESENTATION("low", QT_TRANSLATE_NOOP("Representations", "LowIR"), IR)
+NEVERD_REPRESENTATION("med", QT_TRANSLATE_NOOP("Representations", "MedIR"), IR)
+NEVERD_REPRESENTATION("high", QT_TRANSLATE_NOOP("Representations", "HighIR"),
+                      IR)
+NEVERD_REPRESENTATION("llvm", QT_TRANSLATE_NOOP("Representations", "LLVM IR"),
+                      LLVM)
+#undef NEVERD_REPRESENTATION

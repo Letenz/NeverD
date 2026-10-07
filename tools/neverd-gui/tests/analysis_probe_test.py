@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise actual QML/worker views on a self-contained, non-executed ELF."""
+"""Exercise the production workbench views on a self-contained, non-executed ELF."""
 from pathlib import Path
 import ctypes
 import struct

@@ -48,6 +48,7 @@ output = bytes.fromhex(report["stdout_hex"])
 | `output_limit` | 1048576 | stdout/stderr 합산 캡처 바이트 |
 | `instruction_quantum` | 1024 | runtime으로 양보하기 전 admission 간격 |
 | `linux_priority` | 미설정 | 태스크별 명시적 nice 값과 원시 Linux 우선순위 서비스의 호출 권한 |
+| `linux_kernel` | 미지정 | 출시된 GKI 브랜치 또는 관측된 게스트 커널 인터페이스 부재를 명시 |
 
 `schema_version`은 1입니다. 보고서에는 프로필, 아키텍처, 선택 백엔드와 이유, `stop_reason`, nullable `exit_status`, 진단, 진입/현재 PC, 카운터, 서비스 기록, 마지막 typed CPU exit가 포함됩니다. 주소, syscall 번호, 인자 레지스터, raw 반환 비트는 `0x` 없는 16진수 문자열입니다. `stdout_hex`/`stderr_hex`는 NUL과 잘못된 UTF-8을 보존합니다. syscall 결과 null은 모델링된 반환이 없다는 뜻(exit 또는 미지원 요청 등)이지 성공한 0이 아닙니다.
 
@@ -76,6 +77,16 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
 길이는 페이지 단위로 올림합니다. `munmap`은 빈 영역과 반복 해제를 허용하며, `mprotect`는 빈 영역 앞의 매핑을 변경한 후 `ENOMEM`을 반환합니다. `PROT_NONE`은 할당과 바이트를 보존하면서 게스트 접근을 거부합니다. 원시 `brk`는 성공 시 요청한 바이트 경계, 실패 시 이전 경계를 반환하며 libc의 0/-1 규약을 사용하지 않습니다. 초기 break는 페이지 정렬된 이미지 끝입니다. 확장은 다른 매핑과 예산을 준수하며 축소는 남은 부분 페이지의 바이트를 보존합니다. 지원 범위의 규칙과 오류 우선순위는 Linux [매핑](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) 및 [보호](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c)를 따릅니다.
 
 파일/공유/고정 매핑, 아래 방향 확장, 대형 페이지, 메모리 잠금, 보호 키, 실행 전용/쓰기 전용 정책 및 다른 플래그는 명시적으로 지원하지 않습니다. 효과를 게시하거나 반환값을 만들기 전에 중단합니다. 지원 범위 안의 일반 범위/길이/정렬 오류는 게스트 오류를 반환하고 실행을 계속합니다. 게스트 포인터나 매핑 요청을 호스트 OS에 전달하지 않습니다.
+
+선택적인 `linux_kernel` 입력은 명확히 관측한 커널 인터페이스 부재를 기록합니다. 예를 들어 `pidfd_open` 구현이 없는 fixture는 다음을 사용합니다.
+
+```json
+{"linux_kernel":{"unavailable_syscalls":["pidfd_open"]}}
+```
+
+선택한 raw 호출은 커널 진입점이 없는 경우처럼 인자 검증 전에 -ENOSYS를 반환하며, descriptor를 생성하거나 게스트 메모리를 변경하지 않습니다. Bionic `syscall` wrapper는 일반적인 -1/errno 변환을 유지합니다. 입력을 생략하거나 빈 목록을 주면 이 인터페이스의 기존 미지원 경계가 유지되며, 다른 알 수 없는 호출을 ENOSYS로 변환하지 않습니다. 현재 `pidfd_open`만 허용하며 알 수 없는 이름, 중복, 잘못된 타입은 거부합니다. 입력으로 커널 버전, 호스트 가용성 또는 작동하는 pidfd 구현을 추정하지 않습니다. [커널의 누락 호출 구현](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c)을 참조하십시오.
+
+명시적인 `linux_kernel.gki`는 5.10부터 6.18까지 출시된 Android common 커널 브랜치를 선택합니다. 현재 구현 범위는 살아 있는 모델 프로세스에 대한 `pidfd_open`이며, 버전별 플래그와 `linux_files`와 동일한 descriptor 테이블을 사용합니다. Bionic과 raw trap은 소유권과 오류 순서를 공유합니다. GKI와 `pidfd_open` 부재 관측은 함께 선택할 수 없습니다. Android API 수준은 커널을 선택하지 않습니다. 고정된 8개 소스 버전, descriptor 동작, 테스트 및 남은 범위는 [출시된 GKI 계약](../android-gki-kernels.md)을 참조하십시오.
 
 선택 입력 `linux_priority`는 호출자와 같은 UID를 가진 테스트 태스크의 nice 상태를 선언합니다. Linux ELF64와 Android의 원시 `setpriority` 및 `getpriority`는 이 상태를 공유하며 호스트 우선순위는 변경하지 않습니다.
 

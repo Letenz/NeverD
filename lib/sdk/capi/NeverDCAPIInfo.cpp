@@ -14,15 +14,22 @@
 #include "SessionImpl.h"
 
 #include "neverd/evm/bytecode/EVMBytecode.h"
+#include "neverd/loader/ExceptionEncoding.h"
+#include "neverd/loader/ExceptionFunction.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MD5.h"
 #include "llvm/Support/SHA256.h"
 
+#include <algorithm>
 #include <fstream>
+#include <map>
+#include <set>
 
 using namespace neverd;
 using namespace neverd::sdk;
@@ -160,16 +167,109 @@ const char *neverd_imports_json(neverd_session_t Sess) {
   if (!S->Loaded)
     return dupStr(std::string("[]"));
 
+  // Executable veneers forwarding to each import: exact registrations, and
+  // function entries inside import-stub machinery whose thunk decodes to one.
+  const auto &Imports = S->Img.Imports;
+  std::vector<std::vector<va_t>> Stubs(Imports.size());
+  const auto NoteStub = [&](va_t Addr, const Import *Imp) {
+    if (!Imp || Imp < Imports.data() || Imp >= Imports.data() + Imports.size())
+      return;
+    auto &List = Stubs[static_cast<size_t>(Imp - Imports.data())];
+    if (llvm::find(List, Addr) == List.end())
+      List.push_back(Addr);
+  };
+  for (const auto &[Addr, Index] : S->Img.ImportStubIndices)
+    if (Index < Imports.size())
+      NoteStub(Addr, &Imports[Index]);
+  if (S->synchronizeFunctions())
+    for (const auto &F : S->Functions)
+      if (S->Img.isImportStubAt(F.Entry))
+        NoteStub(F.Entry, S->Img.findImportStubAt(F.Entry));
+
   llvm::json::Array Arr;
-  for (const auto &Imp : S->Img.Imports) {
+  for (size_t I = 0; I < Imports.size(); ++I) {
+    const auto &Imp = Imports[I];
     llvm::json::Object Obj;
     Obj["module"] = jsonSafeText(Imp.Module);
     Obj["name"] = jsonSafeText(Imp.Name);
     Obj["ordinal"] = static_cast<int64_t>(Imp.Ordinal);
     Obj["iat_addr"] = vaHex(Imp.IATAddr);
+    llvm::sort(Stubs[I]);
+    llvm::json::Array StubArr;
+    for (va_t Addr : Stubs[I])
+      StubArr.push_back(vaHex(Addr));
+    Obj["stubs"] = std::move(StubArr);
     Arr.push_back(std::move(Obj));
   }
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
+}
+
+namespace {
+/// ELF dynamic relocations that store a symbol's address in a GOT slot.
+bool isELFSlotBinding(Arch Target, uint32_t Type) {
+  using namespace llvm::ELF;
+  switch (Target) {
+  case Arch::X64:
+    return Type == R_X86_64_GLOB_DAT || Type == R_X86_64_JUMP_SLOT;
+  case Arch::X86:
+    return Type == R_386_GLOB_DAT || Type == R_386_JUMP_SLOT;
+  case Arch::AArch64:
+    return Type == R_AARCH64_GLOB_DAT || Type == R_AARCH64_JUMP_SLOT;
+  case Arch::ARM:
+    return Type == R_ARM_GLOB_DAT || Type == R_ARM_JUMP_SLOT;
+  default:
+    return false;
+  }
+}
+} // namespace
+
+const char *neverd_import_slots_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S || !S->Loaded)
+    return dupStr(std::string("[]"));
+  const auto Collection = S->Img.collectImportStorageSlots();
+  std::map<va_t, std::pair<std::string, int64_t>> Slots;
+  std::set<va_t> Conflicts(Collection.Conflicts.begin(),
+                           Collection.Conflicts.end());
+  const auto Note = [&](va_t Addr, const std::string &Name, int64_t Addend) {
+    if (Name.empty())
+      return;
+    auto [It, Inserted] = Slots.try_emplace(Addr, Name, Addend);
+    if (!Inserted && (It->second.first != Name || It->second.second != Addend))
+      Conflicts.insert(Addr);
+  };
+  for (const auto &[Addr, Slot] : Collection.Slots)
+    Note(Addr, Slot.Name, Slot.Addend);
+  if (S->Img.Format == BinaryFormat::ELF && !S->Img.IsRelocatable)
+    for (const auto &Rel : S->Img.Relocations)
+      if (isELFSlotBinding(S->Img.Arch, Rel.Type))
+        Note(Rel.Address, Rel.SymbolName, Rel.Addend);
+  llvm::json::Array Arr;
+  for (const auto &[Addr, Slot] : Slots) {
+    if (Conflicts.count(Addr))
+      continue;
+    Arr.push_back(llvm::json::Object{{"addr", vaHex(Addr)},
+                                     {"name", jsonSafeText(Slot.first)},
+                                     {"addend", Slot.second}});
+  }
+  return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
+}
+
+const char *neverd_unwind_frame_json(neverd_session_t Sess,
+                                     neverd_va_t Address) {
+  auto *S = toSession(Sess);
+  if (!S || !S->Loaded)
+    return dupStr(std::string("null"));
+  const ExceptionFunction *F = S->Img.ExceptionMetadata.findFunction(Address);
+  if (!F || !F->CodeRange.isValid())
+    return dupStr(std::string("null"));
+  llvm::json::Object Obj{{"begin", vaHex(F->CodeRange.Begin)},
+                         {"end", vaHex(F->CodeRange.End)},
+                         {"encoding", getExceptionEncodingName(F->Encoding)},
+                         {"language_data", F->hasLanguageTable()}};
+  if (!F->PersonalityName.empty())
+    Obj["personality"] = jsonSafeText(F->PersonalityName);
+  return dupStr(jsonToString(llvm::json::Value(std::move(Obj))));
 }
 
 const char *neverd_exports_json(neverd_session_t Sess) {
@@ -215,36 +315,41 @@ const char *neverd_strings_json(neverd_session_t Sess, int MinLength) {
     return dupStr(std::string("[]"));
 
   unsigned MinLen = MinLength > 0 ? static_cast<unsigned>(MinLength) : 4;
-  llvm::json::Array Arr;
-
-  for (const auto &Seg : S->Img.Segments) {
-    if (Seg.isExecutable())
-      continue;
-    const uint8_t *Data = Seg.Data.data();
-    size_t Len = Seg.Data.size();
-    size_t RunStart = 0, RunLen = 0;
-    for (size_t I = 0; I <= Len; ++I) {
-      uint8_t B = (I < Len) ? Data[I] : 0;
-      bool IsPrintable = (B >= 0x20 && B < 0x7F) || B == '\t' || B == '\n';
-      if (IsPrintable) {
-        if (RunLen == 0)
-          RunStart = I;
-        ++RunLen;
-      } else {
-        if (RunLen >= MinLen && B == 0) {
-          va_t StrAddr = Seg.VA + RunStart;
-          llvm::json::Object Obj;
-          Obj["addr"] = vaHex(StrAddr);
-          Obj["value"] = std::string(
-              reinterpret_cast<const char *>(Data + RunStart), RunLen);
-          Obj["length"] = static_cast<int64_t>(RunLen);
-          Arr.push_back(std::move(Obj));
+  // Streamed in the sorted key order a json::Object prints.
+  std::string Buf;
+  llvm::raw_string_ostream OS(Buf);
+  llvm::json::OStream J(OS);
+  J.array([&] {
+    for (const auto &Seg : S->Img.Segments) {
+      if (Seg.isExecutable())
+        continue;
+      const uint8_t *Data = Seg.Data.data();
+      size_t Len = Seg.Data.size();
+      size_t RunStart = 0, RunLen = 0;
+      for (size_t I = 0; I <= Len; ++I) {
+        uint8_t B = (I < Len) ? Data[I] : 0;
+        bool IsPrintable = (B >= 0x20 && B < 0x7F) || B == '\t' || B == '\n';
+        if (IsPrintable) {
+          if (RunLen == 0)
+            RunStart = I;
+          ++RunLen;
+        } else {
+          if (RunLen >= MinLen && B == 0)
+            J.object([&] {
+              J.attribute("addr", vaHex(Seg.VA + RunStart));
+              J.attribute("length", static_cast<int64_t>(RunLen));
+              J.attribute(
+                  "value",
+                  llvm::StringRef(
+                      reinterpret_cast<const char *>(Data + RunStart), RunLen));
+            });
+          RunLen = 0;
         }
-        RunLen = 0;
       }
     }
-  }
-  return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
+  });
+  OS.flush();
+  return dupStr(Buf);
 }
 
 const char *neverd_sections_json(neverd_session_t Sess) {
@@ -277,15 +382,41 @@ const char *neverd_symbols_json(neverd_session_t Sess) {
   if (!S->Loaded)
     return dupStr("[]");
 
-  llvm::json::Array Arr;
-  for (const auto &Sym : S->Img.Symbols) {
-    llvm::json::Object Obj;
-    Obj["name"] = jsonSafeText(Sym.Name);
-    Obj["addr"] = vaHex(Sym.Addr);
-    Obj["size"] = static_cast<int64_t>(Sym.Size);
-    Arr.push_back(std::move(Obj));
-  }
-  return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
+  // Streamed in the sorted key order a json::Object prints: building an
+  // object tree per symbol costs more than reading the symbols.
+  std::string Buf;
+  llvm::raw_string_ostream OS(Buf);
+  llvm::json::OStream J(OS);
+  J.array([&] {
+    for (const auto &Sym : S->Img.Symbols)
+      J.object([&] {
+        J.attribute("addr", vaHex(Sym.Addr));
+        J.attribute("name", jsonSafeText(Sym.Name));
+        J.attribute("size", static_cast<int64_t>(Sym.Size));
+      });
+  });
+  OS.flush();
+  return dupStr(Buf);
+}
+
+const char *neverd_data_symbols_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S->Loaded)
+    return dupStr("[]");
+  std::string Buf;
+  llvm::raw_string_ostream OS(Buf);
+  llvm::json::OStream J(OS);
+  J.array([&] {
+    for (const auto &Sym : S->Img.Symbols)
+      if (!Sym.IsFunc)
+        J.object([&] {
+          J.attribute("addr", vaHex(Sym.Addr));
+          J.attribute("name", jsonSafeText(Sym.Name));
+          J.attribute("size", static_cast<int64_t>(Sym.Size));
+        });
+  });
+  OS.flush();
+  return dupStr(Buf);
 }
 
 const char *neverd_relocs_json(neverd_session_t Sess) {

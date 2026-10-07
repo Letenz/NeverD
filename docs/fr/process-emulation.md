@@ -48,6 +48,7 @@ Les options sont un objet JSON de 64 KiB maximum. Champs inconnus/null, types in
 | `output_limit` | 1048576 | Total des octets stdout/stderr capturés |
 | `instruction_quantum` | 1024 | Intervalle d’admission avant cession à la runtime |
 | `linux_priority` | Non configuré | Valeurs nice explicites par tâche et droits de l’appelant pour les services Linux bruts de priorité |
+| `linux_kernel` | Absent | Branche GKI publiée ou absence observée d’interfaces du noyau invité, déclarée explicitement |
 
 `schema_version` vaut 1. Le rapport inclut profil, architecture, backend sélectionné et motif, `stop_reason`, `exit_status` nullable, diagnostic, PC d’entrée/courant, compteurs, enregistrements de services et dernière sortie CPU typée. Adresses, numéros syscall, registres d’arguments et bits de retour sont des chaînes hexadécimales **sans** `0x` ; `stdout_hex`/`stderr_hex` préservent NUL et UTF-8 invalide. Un résultat syscall null signifie aucun retour modélisé (exit ou requête non prise en charge, par exemple), et non un zéro réussi.
 
@@ -76,6 +77,16 @@ Les services de mémoire anonyme partagent l'espace d'adressage et le budget phy
 Les longueurs sont arrondies aux pages. `munmap` tolère les trous et suppressions répétées ; `mprotect` modifie le préfixe mappé avant de retourner `ENOMEM` au premier trou. `PROT_NONE` conserve l'allocation et les octets sans autoriser l'accès invité. L'appel brut `brk` retourne la limite demandée en cas de succès et l'ancienne en cas d'échec, contrairement au zéro/moins un du wrapper libc. La limite initiale est la fin d'image alignée sur une page. L'extension respecte les autres mappings et le budget ; la réduction conserve les octets de la page partielle restante. Les règles et priorités d'erreur suivent les services Linux de [mapping](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) et de [protection](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c).
 
 Les mappings de fichiers, partagés ou fixes, la croissance descendante, les grandes pages, le verrouillage, les clés de protection, les politiques exécution seule/écriture seule et les autres drapeaux restent explicitement non pris en charge : arrêt avant tout effet publié ou retour inventé. Les erreurs ordinaires de plage, longueur et alignement du sous-ensemble admis retournent une erreur invitée et permettent de poursuivre. Aucun pointeur ni demande de mapping invité n'est transmis à l'OS hôte.
+
+L’entrée facultative `linux_kernel` consigne l’absence explicitement observée d’interfaces du noyau. Par exemple, un fixture sans implémentation de `pidfd_open` utilise :
+
+```json
+{"linux_kernel":{"unavailable_syscalls":["pidfd_open"]}}
+```
+
+L’appel brut sélectionné retourne -ENOSYS avant la validation des arguments, comme une entrée de noyau absente, sans créer de descripteur ni modifier la mémoire invitée. Le wrapper `syscall` de Bionic conserve sa conversion habituelle -1/errno. L’entrée omise et une liste vide maintiennent la limite non prise en charge de cette interface ; les autres appels inconnus ne deviennent pas ENOSYS. Seul `pidfd_open` est actuellement admis ; les noms inconnus, doublons et types incorrects sont rejetés. Cette entrée ne déduit ni version du noyau, ni disponibilité sur l’hôte, ni implémentation fonctionnelle de pidfd. Voir [l’implémentation des appels manquants du noyau](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c).
+
+Un `linux_kernel.gki` explicite sélectionne une branche publiée du noyau Android common, de 5.10 à 6.18. Le sous-ensemble implémenté est actuellement `pidfd_open` pour le processus vivant du modèle, avec des drapeaux propres à la version et la même table de descripteurs que `linux_files`. Bionic et les traps bruts partagent propriété et ordre des erreurs. Associer GKI à une observation d’absence de `pidfd_open` est rejeté. Le niveau d’API Android ne sélectionne pas de noyau. Voir les [contrats GKI publiés](../android-gki-kernels.md) pour les huit sources figées, le comportement des descripteurs, les tests et la couverture restante.
 
 L’entrée facultative `linux_priority` déclare l’état nice des tâches de test ayant l’UID de l’appelant. Les appels bruts `setpriority` et `getpriority` partagent cet état entre Linux ELF64 et Android, sans changer les priorités de l’hôte.
 

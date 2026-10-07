@@ -1035,7 +1035,9 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 
 `NeverDHighControlFlowTests` 中的 `HighIntegerSignedness.*` 检查一个后期 pass：它按每个寄存器或临时局部变量大多数用途的需要，把它声明为有符号或无符号。回绕算术、逻辑移位和无符号比较倾向无符号；有符号比较、有符号除法、算术移位和符号扩展倾向有符号；任何一处非整数用途都会让该变量保持原类型。生成的 C 在 `-O0` 和 `-O2` 下带未定义行为陷阱运行，并与独立的参考算术比对，其中包括对已变为无符号的局部变量做有符号比较的情形。
 
-`NeverDHighControlFlowTests` 中的 `HighValueForward.*` 检查 HighC 写出器何时可以把只用一次的值折叠进它的使用处。循环条件会保留一个其变量在循环中被赋值的值，因为同一个名字可能代表多个 SSA 值；重新读取的栈槽在对该槽的写入之后仍保持原值，而在对其他槽的写入之后可以折叠。每种情形都在 `-O0` 和 `-O2` 下带未定义行为陷阱运行。
+`NeverDHighControlFlowTests` 中的 `HighValueForward.*` 检查 HighC 写出器何时可以把只用一次的值折叠进它的使用处。循环条件会保留一个其变量在循环中被赋值的值，因为同一个名字可能代表多个 SSA 值；重新读取的栈槽在对该槽的写入之后仍保持原值，而在对其他槽的写入之后可以折叠。源变量在使用前被重新赋值时，副本保持原值。每种情形都在 `-O0` 和 `-O2` 下带未定义行为陷阱运行。
+
+`NeverDHighControlFlowTests` 中的 `HighCIntegerConversion.*` 检查 HighC 写出器交给 C 完成的整数转换。操作数内部的转换若保留了外层转换所保留的字节，就不再单独输出强制转换；对已声明整数局部变量的赋值和 return 采用隐式转换，字面量写成转换后的值，而指针保留显式转换。每种情形都在 `-O0` 和 `-O2` 下带未定义行为陷阱运行，并与参考运算比较。
 
 源码投影还会在清理后重新验证变参对象列表：允许空的指令地址锚点，但拒绝隐藏效果或控制转移。同步清理允许同一已保存接收者的单层 `int64_t` 或 `uint64_t` 视图；窄化、浮点转换、地址运算和重新赋值仍被拒绝。Foundation 对象集合及正常、异常解锁轨迹均在 `-O0` 和 `-O2` 下执行验证。
 
@@ -1444,3 +1446,14 @@ MainActor 测试数据检查完整的固定元数据与静态表流程，拒绝�
 `ObjCCallHints.SwiftMainActorSharedKeepsObjectAndMetatypeContext` 在 ARM64/x86-64 上检查完整结果与 swiftself 载体，每种架构拒绝十项 ABI 变异和十项导入身份变异。独立 SDK 验证在 ARM64 主机上以 O0/O2 执行两种源码架构配置的原样生成 C：128 次调用保持单例与元类型身份，并平衡引用所有权。八种交叉编译配置覆盖两种架构的 macOS 与 Mac Catalyst；x86-64 原生执行仍是独立覆盖项。
 
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` 检查根层已赋值与未决变量混合、非决策根变量、副本再次复制、源对象销毁、后续变量增长、两种默认极性、预算中断与恢复、冲突及重启。完整模型与全部搜索计数必须与全新编码一致。
+
+`ContextFiniteProofs.*` 检查上下文与所有者隔离、所有者替换、令牌移动、精确谓词与有序投影、节点追加、完整与不完整结果、存储上限及 LRU 淘汰。帧测试要求缓存前完成最终唯一性查询，并在命中时保留符号节点限额。
+
+`CompletedQueryCache.*` 覆盖完整字节域答案、所有紧凑槽位、增长、上下文及所有者隔离、无效与不完整输入和精确存储边界。原生分支回归保持固定逻辑查询成本、精确预算和少一预算拒绝，即使完整答案省去了后端工作。
+
+
+`BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` 检查带分支变化和符号帧写入的重复原生目标链、固定逻辑开销、精确及少一次查询预算、无效目标限额、门预算耗尽和错误终点观察。交错的帧与相关目标投影还在谓词替换前后保持完整元组、观察顺序及不完整结果拒绝。
+
+`LinuxKernelAvailability.*` 验证显式缺失输入和配置准入。`Backends/LinuxKernelProcess.*` 使用独立的 x64/AArch64 O0/O2 原始调用程序，检查参数验证前的 ENOSYS，以及未指定或无关调用继续被拒绝。Android syscall 夹具对比原始 SVC 与 Bionic `syscall`，保留原始返回值与 errno 的不同影响。修改可用性时，先运行这些定向测试，再运行完整 Linux 进程、公开进程、Android syscall、原生入口和信号套件。
+
+`LinuxPIDFD.*` 检查已发布 GKI 分支解析，并在加载映像前拒绝非法枚举值及 GKI 与 pidfd 缺失观测的组合。`Backends/LinuxPIDFDProcess.*` 使用独立的 O0/O2 x64/AArch64 调用程序覆盖全部八个分支，包括标志差异、文件/pidfd 共用分配、限制、关闭复用及标量/向量错误顺序。Android 的 `ReleasedGKIProcessDescriptorsShareRawAndBionicOwnership` 用全部六种已编译重定位配置重复检查共享描述符和 errno 行为。修改共享内核或描述符语义时，先运行这些测试，再运行完整 Linux 进程、Android 原生和公开进程套件。这些测试运行模型，不启动八个固定版本的 GKI 内核。参见[已发布 GKI 契约](../android-gki-kernels.md)。

@@ -48,6 +48,7 @@ output = bytes.fromhex(report["stdout_hex"])
 | `output_limit` | 1048576 | 擷取的 stdout/stderr 總位元組數 |
 | `instruction_quantum` | 1024 | 交還 runtime 前的准入間隔 |
 | `linux_priority` | 未設定 | 明確宣告的工作 nice 值與原始 Linux 優先權服務的呼叫權限 |
+| `linux_kernel` | 未設定 | 明確選擇已發布的 GKI 分支，或宣告觀測到的客體核心介面缺失 |
 
 `schema_version` 為 1。結果包含 profile、架構、所選後端與原因、`stop_reason`、可為 null 的 `exit_status`、診斷、進入／目前 PC、計數器、服務記錄與最後的型別化 CPU exit。位址、syscall 編號、參數暫存器及原始回傳位元均為**不含** `0x` 的十六進位字串；`stdout_hex`／`stderr_hex` 保留 NUL 與無效 UTF-8。syscall 結果為 null 表示沒有建模回傳值（例如 exit 或不支援要求），不代表成功回傳 0。
 
@@ -76,6 +77,16 @@ x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARC
 長度向上取整至頁。`munmap` 允許空洞及重複移除；`mprotect` 遇到空洞前會修改已映射前綴，再回傳 `ENOMEM`。`PROT_NONE` 保留配置與位元組，但禁止客體存取。原始 `brk` 成功時回傳請求的位元組邊界，失敗時回傳舊邊界，不採用 libc 包裝器的零／負一慣例。初始 break 為頁對齊的映像結尾。成長受其他映射及預算限制；縮減保留剩餘部分頁的位元組。支援子集的規則與錯誤優先序遵循 Linux [映射](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c)及[保護](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c)服務。
 
 檔案、共享、固定映射，向下成長、大頁、記憶體鎖定、保護鍵、僅執行／僅寫入策略及其他旗標均明確不支援：在發布效果或建立回傳值前停止。支援子集內的一般範圍、長度及對齊錯誤會回傳客體錯誤，允許繼續執行。任何記憶體服務均不會將客體指標或映射請求轉交主機 OS。
+
+選用的 `linux_kernel` 輸入記錄明確觀測到的核心介面缺失。例如，沒有 `pidfd_open` 實作的測試夾具使用：
+
+```json
+{"linux_kernel":{"unavailable_syscalls":["pidfd_open"]}}
+```
+
+選定的原始呼叫在引數檢查前回傳 -ENOSYS，與核心入口缺失一致，不建立描述符，也不修改客體記憶體。Bionic 的 `syscall` 包裝器保留通常的 -1/errno 轉換。省略輸入或使用空清單時，此介面仍停在原有的未支援邊界；其他未知呼叫不會變成 ENOSYS。目前僅接受 `pidfd_open`，未知名稱、重複項目和錯誤型別皆被拒絕。輸入不推導核心版本、主機可用性或可運作的 pidfd 實作。參見[核心缺失呼叫實作](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c)。
+
+明確的 `linux_kernel.gki` 選擇 5.10 至 6.18 的已發布 Android common 核心分支。目前實作的子集是針對存活模型行程的 `pidfd_open`，旗標依版本而異，與 `linux_files` 共用描述符表；Bionic 與原始陷阱共用所有權和錯誤順序。GKI 不能與 `pidfd_open` 缺失觀測同時選擇。Android API 級別不選擇核心。參見[已發布 GKI 契約](../android-gki-kernels.md)，其中列出八個固定原始碼版本、描述符行為、測試及剩餘涵蓋範圍。
 
 選用的 `linux_priority` 宣告與呼叫者 UID 相同的測試工作之 nice 狀態。Linux ELF64 與 Android 的原始 `setpriority` / `getpriority` 共用此狀態，不改變宿主優先權。
 

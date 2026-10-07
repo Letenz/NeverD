@@ -1,0 +1,133 @@
+//===- Choosers.def - List windows and their columns ------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The list ("chooser") windows: the worker table operation behind each one
+/// and its columns.  A column shows one row field; formats render addresses
+/// with their segment, sizes in hexadecimal, or flag letters.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_CHOOSER(Id, Operation, Title, Icon, Filterable)
+// NEVERD_CHOOSER_COLUMN(Chooser, Field, Title, Format, SortField)
+//   Format: Text, Name, Address, SegmentOf, Hex, Decimal, Flag(R|W|X),
+//   XrefType, Direction.  An empty SortField makes the column unsortable.
+#ifndef NEVERD_CHOOSER
+#define NEVERD_CHOOSER(Id, Operation, Title, Icon, Filterable)
+#endif
+#ifndef NEVERD_CHOOSER_COLUMN
+#define NEVERD_CHOOSER_COLUMN(Chooser, Field, Title, Format, SortField)
+#endif
+
+NEVERD_CHOOSER(Functions, "functions",
+               QT_TRANSLATE_NOOP("Choosers", "Functions"), "functions", true)
+NEVERD_CHOOSER_COLUMN(Functions, "display_name",
+                      QT_TRANSLATE_NOOP("Choosers", "Function name"), Name,
+                      "name")
+NEVERD_CHOOSER_COLUMN(Functions, "address",
+                      QT_TRANSLATE_NOOP("Choosers", "Segment"), SegmentOf, "")
+NEVERD_CHOOSER_COLUMN(Functions, "address",
+                      QT_TRANSLATE_NOOP("Choosers", "Start"), Address,
+                      "address")
+NEVERD_CHOOSER_COLUMN(Functions, "size",
+                      QT_TRANSLATE_NOOP("Choosers", "Length"), Hex, "size")
+
+NEVERD_CHOOSER(Names, "names", QT_TRANSLATE_NOOP("Choosers", "Names"), "names",
+               true)
+NEVERD_CHOOSER_COLUMN(Names, "name", QT_TRANSLATE_NOOP("Choosers", "Name"),
+                      Name, "name")
+NEVERD_CHOOSER_COLUMN(Names, "address",
+                      QT_TRANSLATE_NOOP("Choosers", "Address"), Address,
+                      "address")
+NEVERD_CHOOSER_COLUMN(Names, "kind", QT_TRANSLATE_NOOP("Choosers", "Type"),
+                      Text, "kind")
+
+NEVERD_CHOOSER(Strings, "strings", QT_TRANSLATE_NOOP("Choosers", "Strings"),
+               "strings", true)
+NEVERD_CHOOSER_COLUMN(Strings, "address",
+                      QT_TRANSLATE_NOOP("Choosers", "Address"), SegmentAddress,
+                      "address")
+NEVERD_CHOOSER_COLUMN(Strings, "length",
+                      QT_TRANSLATE_NOOP("Choosers", "Length"), Hex, "length")
+NEVERD_CHOOSER_COLUMN(Strings, "text", QT_TRANSLATE_NOOP("Choosers", "String"),
+                      Text, "text")
+
+NEVERD_CHOOSER(Segments, "regions", QT_TRANSLATE_NOOP("Choosers", "Segments"),
+               "segments", false)
+NEVERD_CHOOSER_COLUMN(Segments, "name", QT_TRANSLATE_NOOP("Choosers", "Name"),
+                      Name, "name")
+NEVERD_CHOOSER_COLUMN(Segments, "start", QT_TRANSLATE_NOOP("Choosers", "Start"),
+                      Address, "start")
+NEVERD_CHOOSER_COLUMN(Segments, "end", QT_TRANSLATE_NOOP("Choosers", "End"),
+                      Address, "end")
+NEVERD_CHOOSER_COLUMN(Segments, "flags", QT_TRANSLATE_NOOP("Choosers", "R"),
+                      FlagRead, "")
+NEVERD_CHOOSER_COLUMN(Segments, "flags", QT_TRANSLATE_NOOP("Choosers", "W"),
+                      FlagWrite, "")
+NEVERD_CHOOSER_COLUMN(Segments, "flags", QT_TRANSLATE_NOOP("Choosers", "X"),
+                      FlagExecute, "")
+NEVERD_CHOOSER_COLUMN(Segments, "alignment",
+                      QT_TRANSLATE_NOOP("Choosers", "Align"), Decimal, "")
+NEVERD_CHOOSER_COLUMN(Segments, "class", QT_TRANSLATE_NOOP("Choosers", "Class"),
+                      Text, "class")
+
+NEVERD_CHOOSER(Imports, "imports", QT_TRANSLATE_NOOP("Choosers", "Imports"),
+               "imports", true)
+NEVERD_CHOOSER_COLUMN(Imports, "address",
+                      QT_TRANSLATE_NOOP("Choosers", "Address"), Address,
+                      "address")
+NEVERD_CHOOSER_COLUMN(Imports, "ordinal",
+                      QT_TRANSLATE_NOOP("Choosers", "Ordinal"), Decimal,
+                      "ordinal")
+NEVERD_CHOOSER_COLUMN(Imports, "name", QT_TRANSLATE_NOOP("Choosers", "Name"),
+                      Name, "name")
+NEVERD_CHOOSER_COLUMN(Imports, "module",
+                      QT_TRANSLATE_NOOP("Choosers", "Library"), Text, "module")
+
+NEVERD_CHOOSER(Exports, "exports", QT_TRANSLATE_NOOP("Choosers", "Exports"),
+               "exports", true)
+NEVERD_CHOOSER_COLUMN(Exports, "name", QT_TRANSLATE_NOOP("Choosers", "Name"),
+                      Name, "name")
+NEVERD_CHOOSER_COLUMN(Exports, "address",
+                      QT_TRANSLATE_NOOP("Choosers", "Address"), Address,
+                      "address")
+NEVERD_CHOOSER_COLUMN(Exports, "ordinal",
+                      QT_TRANSLATE_NOOP("Choosers", "Ordinal"), Decimal,
+                      "ordinal")
+NEVERD_CHOOSER_COLUMN(Exports, "kind", QT_TRANSLATE_NOOP("Choosers", "Kind"),
+                      Text, "kind")
+
+NEVERD_CHOOSER(CrossReferences, "xrefs",
+               QT_TRANSLATE_NOOP("Choosers", "Cross references"), "xrefs",
+               false)
+NEVERD_CHOOSER_COLUMN(CrossReferences, "direction",
+                      QT_TRANSLATE_NOOP("Choosers", "Direction"), Direction, "")
+NEVERD_CHOOSER_COLUMN(CrossReferences, "type",
+                      QT_TRANSLATE_NOOP("Choosers", "Type"), Text, "")
+NEVERD_CHOOSER_COLUMN(CrossReferences, "text",
+                      QT_TRANSLATE_NOOP("Choosers", "Address"), Name, "")
+NEVERD_CHOOSER_COLUMN(CrossReferences, "address",
+                      QT_TRANSLATE_NOOP("Choosers", "Location"), Address, "")
+
+NEVERD_CHOOSER(SearchResults, "search",
+               QT_TRANSLATE_NOOP("Choosers", "Search results"), "search_text",
+               false)
+NEVERD_CHOOSER_COLUMN(SearchResults, "address",
+                      QT_TRANSLATE_NOOP("Choosers", "Address"), SegmentAddress,
+                      "")
+NEVERD_CHOOSER_COLUMN(SearchResults, "context",
+                      QT_TRANSLATE_NOOP("Choosers", "Context"), Text, "")
+
+NEVERD_CHOOSER(Bookmarks, "", QT_TRANSLATE_NOOP("Choosers", "Bookmarks"),
+               "bookmark", false)
+NEVERD_CHOOSER_COLUMN(Bookmarks, "address",
+                      QT_TRANSLATE_NOOP("Choosers", "Address"), SegmentAddress,
+                      "")
+NEVERD_CHOOSER_COLUMN(Bookmarks, "text",
+                      QT_TRANSLATE_NOOP("Choosers", "Description"), Text, "")
+
+#undef NEVERD_CHOOSER
+#undef NEVERD_CHOOSER_COLUMN

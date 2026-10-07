@@ -1,0 +1,43 @@
+//===- ListingRoles.def - Listing span display roles -----------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Stable protocol codes for the display role of a listing span.  The worker
+/// classifies text it formats; the desktop maps each role to a theme color.
+/// Codes are part of worker protocol 1.x: append new roles, never renumber.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_LISTING_ROLE(Name, Code)
+#ifndef NEVERD_LISTING_ROLE
+#error "Define NEVERD_LISTING_ROLE before including ListingRoles.def"
+#endif
+
+NEVERD_LISTING_ROLE(Plain, 0)
+NEVERD_LISTING_ROLE(Mnemonic, 1)
+NEVERD_LISTING_ROLE(Register, 2)
+NEVERD_LISTING_ROLE(Number, 3)
+NEVERD_LISTING_ROLE(Keyword, 4)
+NEVERD_LISTING_ROLE(Punctuation, 5)
+NEVERD_LISTING_ROLE(CodeName, 6)
+NEVERD_LISTING_ROLE(DummyCodeName, 7)
+NEVERD_LISTING_ROLE(DataName, 8)
+NEVERD_LISTING_ROLE(DummyDataName, 9)
+NEVERD_LISTING_ROLE(ImportName, 10)
+NEVERD_LISTING_ROLE(LibraryName, 11)
+NEVERD_LISTING_ROLE(String, 12)
+NEVERD_LISTING_ROLE(Comment, 13)
+NEVERD_LISTING_ROLE(AutoComment, 14)
+NEVERD_LISTING_ROLE(Xref, 15)
+NEVERD_LISTING_ROLE(Directive, 16)
+NEVERD_LISTING_ROLE(Separator, 17)
+NEVERD_LISTING_ROLE(SegmentName, 18)
+NEVERD_LISTING_ROLE(OpcodeBytes, 19)
+NEVERD_LISTING_ROLE(Label, 20)
+NEVERD_LISTING_ROLE(Error, 21)
+NEVERD_LISTING_ROLE(FlowMnemonic, 22)
+
+#undef NEVERD_LISTING_ROLE

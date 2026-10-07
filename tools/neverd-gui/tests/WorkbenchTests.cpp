@@ -1,496 +1,432 @@
-#include "Workbench.h"
+// Workbench controller tests against the fixture worker: the session, the
+// production main window and its views, edits and session transitions.
+#include "ChooserView.h"
+#include "CodeView.h"
+#include "DisassemblyView.h"
+#include "GraphView.h"
+#include "HexView.h"
+#include "MainWindow.h"
+#include "ProjectDatabase.h"
+#include "Session.h"
+#include "mcp/GuiSessionBroker.h"
+#include "mcp/McpConnectionManager.h"
 
-#include <QDataStream>
+#include <QAction>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTreeView>
+#include <kddockwidgets/qtwidgets/views/DockWidget.h>
+#include <memory>
 
-#ifdef TEST_REAL_WORKER
+using namespace neverd::gui;
+
 namespace {
-// A non-executed ELF containing either one return-value body or a direct call
-// to a second body. The optional MAP names only the entry, so analysis must
-// publish the additional function discovered through the call.
-QByteArray nativeFixture(bool named) {
-  const auto code = QByteArray::fromHex(named ? "e803000000c30000b807000000c3"
-                                              : "b807000000c3");
-  QByteArray data;
-  QDataStream out(&data, QIODevice::WriteOnly);
-  out.setByteOrder(QDataStream::LittleEndian);
-  auto ident = QByteArray::fromHex("7f454c46020101");
-  ident.resize(16, '\0');
-  out.writeRawData(ident.constData(), ident.size());
-  out << quint16(2) << quint16(62) << quint32(1) << quint64(0x400078)
-      << quint64(64) << quint64(0) << quint32(0) << quint16(64) << quint16(56)
-      << quint16(1) << quint16(64) << quint16(0) << quint16(0);
-  out << quint32(1) << quint32(5) << quint64(0) << quint64(0x400000)
-      << quint64(0x400000) << quint64(120 + code.size())
-      << quint64(120 + code.size()) << quint64(4096);
-  data += code;
-  return data;
+constexpr Address Base = 0xffff800012340000ULL;
+constexpr int OpenTimeoutMs = 7000;
+
+QString writeFixture(const QTemporaryDir &directory, const QString &name) {
+  const auto path = directory.filePath(name);
+  QFile file(path);
+  if (!file.open(QIODevice::WriteOnly) || file.write("fixture") != 7)
+    return {};
+  return path;
+}
+
+/// The production window over the fixture worker.
+struct Workbench {
+  Session session{QString::fromLocal8Bit(TEST_WORKER)};
+  McpConnectionManager mcp;
+  GuiSessionBroker broker;
+  QTemporaryDir layout;
+  std::unique_ptr<MainWindow> window;
+
+  Workbench() {
+    window = std::make_unique<MainWindow>(session, mcp, broker);
+    window->setLayoutPath(layout.filePath(QStringLiteral("layout.json")));
+    window->resize(1400, 900);
+    window->initializeLayout();
+    window->show();
+  }
+  ChooserView *functions() const {
+    auto *table =
+        window->findChild<QTreeView *>(QStringLiteral("functionsList"));
+    return table ? qobject_cast<ChooserView *>(table->parentWidget()) : nullptr;
+  }
+  QAction *action(ActionId id) const { return window->actions().action(id); }
+  CodeView *codeView(const QString &representation) const {
+    for (auto *view : window->findChildren<CodeView *>())
+      if (view->representation() == representation)
+        return view;
+    return nullptr;
+  }
+};
+
+QByteArray readAll(const QString &path) {
+  QFile file(path);
+  return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
 } // namespace
-#endif
 
 class WorkbenchTests : public QObject {
   Q_OBJECT
   QTemporaryDir settingsDirectory_;
 private slots:
-#ifdef TEST_REAL_WORKER
-  void nativeAnalysisRefreshesNavigation_data() {
-    QTest::addColumn<bool>("named");
-    QTest::newRow("stripped-entry") << false;
-    QTest::newRow("named-entry-with-recovered-callee") << true;
-  }
-  void nativeAnalysisRefreshesNavigation() {
-    QFETCH(bool, named);
-    QTemporaryDir directory;
-    const auto path = directory.filePath("native.elf");
-    QFile file(path);
-    QVERIFY(file.open(QIODevice::WriteOnly));
-    const auto bytes = nativeFixture(named);
-    QCOMPARE(file.write(bytes), bytes.size());
-    file.close();
-    if (named) {
-      QFile map(directory.filePath("native.map"));
-      QVERIFY(map.open(QIODevice::WriteOnly));
-      map.write("VMA LMA Size Align Out In Symbol\n"
-                "00400078 00400078 0000000e 1 .text\n"
-                "00400078 00400078 00000006 1 named_main\n");
-    }
-    Workbench controller(QString::fromLocal8Bit(TEST_REAL_WORKER));
-    int initialCount = -1;
-    connect(&controller, &Workbench::changed, this, [&] {
-      if (controller.loaded() && initialCount < 0)
-        initialCount = controller.functionCount();
-    });
-    controller.openFile(QUrl::fromLocalFile(path));
-    QTRY_VERIFY_WITH_TIMEOUT(controller.loaded(), 5000);
-    QCOMPARE(initialCount, named ? 1 : 0);
-    QTRY_VERIFY_WITH_TIMEOUT(!controller.representationText().isEmpty(), 5000);
-    QTRY_COMPARE_WITH_TIMEOUT(controller.functionCount(), named ? 2 : 1, 5000);
-    QCOMPARE(controller.selectedFunctionAddress(), QString("0x400078"));
-    QVERIFY(!controller.selectedFunctionName().isEmpty());
-    auto *functions = qobject_cast<PageModel *>(controller.functionsModel());
-    QVERIFY(functions);
-    QCOMPARE(functions->count(), named ? 2 : 1);
-    QSignalSpy resets(functions, &QAbstractItemModel::modelReset);
-    controller.setComment("ordinary revision after analysis");
-    QTRY_COMPARE(controller.selectedComment(),
-                 QString("ordinary revision after analysis"));
-    QCOMPARE(resets.size(), 0);
-    QVERIFY2(controller.error().isEmpty(), qPrintable(controller.error()));
-  }
-  void externalAnalysisRefreshesFunctionList() {
-    QTemporaryDir directory;
-    const auto path = directory.filePath("native.elf");
-    QFile file(path);
-    QVERIFY(file.open(QIODevice::WriteOnly));
-    const auto bytes = nativeFixture(false);
-    QCOMPARE(file.write(bytes), bytes.size());
-    file.close();
-    Workbench controller(QString::fromLocal8Bit(TEST_REAL_WORKER));
-    QSignalSpy replies(&controller, &Workbench::externalResponse);
-    bool submitted = false;
-    connect(&controller, &Workbench::changed, this, [&] {
-      if (!controller.loaded() || submitted)
-        return;
-      submitted = true;
-      // Retire startup view requests so the external request is the first
-      // caller to complete analysis in this shared worker session.
-      controller.cancel();
-      controller.externalQuery(
-          "external-analysis", "decompile",
-          {{"address", "0x400078"}, {"representation", "c"}}, {});
-    });
-    controller.openFile(QUrl::fromLocalFile(path));
-    QTRY_COMPARE_WITH_TIMEOUT(replies.size(), 1, 5000);
-    const auto response = replies.first().at(1).toJsonObject();
-    QCOMPARE(response["status"].toString(), QString("ok"));
-    QCOMPARE(response["analysis_state"].toString(), QString("complete"));
-    QTRY_COMPARE_WITH_TIMEOUT(controller.functionCount(), 1, 5000);
-    auto *functions = qobject_cast<PageModel *>(controller.functionsModel());
-    QVERIFY(functions);
-    QCOMPARE(functions->count(), 1);
-    QTRY_VERIFY(!controller.busy());
-    QVERIFY(controller.selectedAddress().isEmpty());
-    QVERIFY(controller.representationText().isEmpty());
-  }
-#endif
   void initTestCase() {
     QVERIFY(settingsDirectory_.isValid());
-    QCoreApplication::setOrganizationName("NeverDTests");
-    QCoreApplication::setApplicationName("WorkbenchTests");
+    QCoreApplication::setOrganizationName(QStringLiteral("NeverDTests"));
+    QCoreApplication::setApplicationName(QStringLiteral("WorkbenchTests"));
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        settingsDirectory_.path());
   }
-  void pageModelBoundaries() {
-    PageModel model({"address", "name"});
-    QJsonArray rows;
-    for (int i = 0; i < 5000; ++i)
-      rows.append(QJsonObject{{"address", QString::number(i)}, {"name", "f"}});
-    model.replace(rows);
-    QCOMPARE(model.count(), 4096);
-    QCOMPARE(model.get(0)["address"].toString(), "0");
-    model.append(QJsonArray{QJsonObject{{"address", "next"}, {"name", "g"}}});
-    QCOMPARE(model.count(), 4096);
-    QCOMPARE(model.get(0)["address"].toString(), "1");
-    QCOMPARE(model.get(4095)["address"].toString(), "next");
-    QVERIFY(model.get(-1).isEmpty());
-    QCOMPARE(model.rowCount(model.index(0, 0)), 0);
-  }
-  void millionRowModelRequestsOnlyVisiblePages() {
-    PageModel model({"address", "name"});
-    QJsonArray page;
-    for (int i = 0; i < 256; ++i)
-      page.append(QJsonObject{{"address", QString::number(i)}, {"name", "f"}});
-    model.setPage(0, 1000000, page);
-    QCOMPARE(model.rowCount(), 1000000);
-    QSignalSpy requests(&model, &PageModel::pageRequested);
-    QVERIFY(
-        model.data(model.index(900000), Qt::UserRole + 1).toString().isEmpty());
-    model.data(model.index(900001), Qt::UserRole + 2);
-    QTRY_COMPARE(requests.size(), 1);
-    QCOMPARE(requests.first().first().toInt(), 899840);
-    model.setPage(899840, 1000000, page);
-    QCOMPARE(model.data(model.index(900000), Qt::UserRole + 1).toString(),
-             "160");
-    QVERIFY(model.get(1000000).isEmpty());
-  }
-  void editsAreSerializedAndSessionChangesAreExplicit() {
+
+  void hexViewShownBeforeOpeningLoadsItsBytes() {
     QTemporaryDir directory;
-    const auto first = directory.filePath("first.bin");
-    const auto second = directory.filePath("second.bin");
-    for (const auto &path : {first, second}) {
-      QFile file(path);
-      QVERIFY(file.open(QIODevice::WriteOnly));
-      file.write("fixture");
-    }
-    Workbench controller(QString::fromLocal8Bit(TEST_WORKER));
-    controller.openFile(QUrl::fromLocalFile(first));
-    QTRY_VERIFY_WITH_TIMEOUT(!controller.representationText().isEmpty(), 7000);
-    controller.setComment("first revision");
-    controller.setComment("second revision");
-    controller.saveAnnotations();
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    // A restored desktop can show the hex view before the regions arrive.
+    for (auto *dock :
+         bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+      if (dock->uniqueName() == QLatin1String("hex-1"))
+        dock->raise();
+    auto *hex = bench.window->findChild<HexView *>();
+    QVERIFY(hex);
+    QTRY_VERIFY(hex->isVisible());
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(hex->byteAt(Base).has_value(), OpenTimeoutMs);
+    QVERIFY(hex->isVisible());
+  }
+
+  void viewsFollowTheSessionAndNavigation() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *disassembly = bench.window->disassembly();
+    QTRY_COMPARE_WITH_TIMEOUT(disassembly->currentItem(),
+                              std::optional<Address>(Base), OpenTimeoutMs);
+
+    // The function window pages rows from the worker.
+    auto *functions = bench.functions();
+    QVERIFY(functions);
+    QTRY_COMPARE_WITH_TIMEOUT(functions->model().total(), 600, OpenTimeoutMs);
+    QTRY_COMPARE(functions->model().rowObject(0).value("name").toString(),
+                 QStringLiteral("function_0"));
+    QCOMPARE(functions->model().addressAt(0), std::optional<Address>(Base));
+    functions->setFilterText(QStringLiteral("function_599"));
+    QTRY_COMPARE(functions->model().total(), 1);
+    QTRY_COMPARE(functions->model().rowObject(0).value("name").toString(),
+                 QStringLiteral("function_599"));
+    QCOMPARE(functions->model().addressAt(0),
+             std::optional<Address>(Base + 0x2570));
+    functions->setFilterText({});
+    QTRY_COMPARE(functions->model().total(), 600);
+
+    // Navigation records history and synchronizes the hex view.
+    disassembly->navigate(Base + 0x140);
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(Base + 0x140));
+    QTRY_COMPARE(disassembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    auto *hex = bench.window->findChild<HexView *>();
+    QVERIFY(hex);
+    QTRY_COMPARE(hex->currentAddress(), std::optional<Address>(Base + 0x140));
+    QVERIFY(disassembly->canGoBack());
+    disassembly->goBack();
+    QTRY_COMPARE(disassembly->currentItem(), std::optional<Address>(Base));
+    QVERIFY(disassembly->canGoForward());
+    disassembly->goForward();
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(Base + 0x140));
+
+    // Pseudocode pages every line of the function.
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    CodeView *pseudocode = nullptr;
+    QTRY_VERIFY((pseudocode = bench.codeView(QStringLiteral("c"))) != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        pseudocode->text()->allText().contains(QStringLiteral("code line 699")),
+        OpenTimeoutMs);
+    QCOMPARE(pseudocode->text()->function(),
+             std::optional<Address>(Base + 0x140));
+
+    // IR rows mapped to instructions move the disassembly cursor.
+    bench.action(ActionId::ViewLowIR)->trigger();
+    CodeView *ir = nullptr;
+    QTRY_VERIFY((ir = bench.codeView(QStringLiteral("low"))) != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(ir->text()->lineCount() > 3, OpenTimeoutMs);
+    ir->text()->setCursorLine(3);
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(Base + 0x143));
+
+    // The graph of the current function.
+    disassembly->navigate(Base + 0x140);
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewToggleGraph)->trigger();
+    QVERIFY(disassembly->graphMode());
+    QTRY_COMPARE_WITH_TIMEOUT(disassembly->graph()->nodes().size(),
+                              qsizetype(2), OpenTimeoutMs);
+    bench.action(ActionId::ViewToggleGraph)->trigger();
+    QVERIFY(!disassembly->graphMode());
+
+    // Unicode comments save atomically beside the binary.
+    bench.session.setComment(Base + 0x140, QString::fromUtf8("中文 تعليق"));
+    QTRY_VERIFY(bench.session.dirty());
+    bench.session.save();
+    QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(path + ".neverd-annotations.json"),
+                             OpenTimeoutMs);
+    QTRY_VERIFY(!bench.session.dirty());
+    QVERIFY(QString::fromUtf8(readAll(path + ".neverd-annotations.json"))
+                .contains(QString::fromUtf8("中文 تعليق")));
+
+    // Renames reach the function window.
+    bench.session.rename(Base + 0x140, QStringLiteral("renamed"));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        functions->model().rowObject(20).value("name").toString(),
+        QStringLiteral("renamed"), OpenTimeoutMs);
+    QTRY_VERIFY(bench.session.canUndo());
+    bench.session.undo();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        functions->model().rowObject(20).value("name").toString(),
+        QStringLiteral("function_20"), OpenTimeoutMs);
+
+    // A restarted worker reopens the file where its database left it.
+    bench.session.restart();
+    QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(disassembly->currentItem(),
+                              std::optional<Address>(Base + 0x140),
+                              OpenTimeoutMs);
+    QVERIFY2(bench.session.lastError().isEmpty(),
+             qPrintable(bench.session.lastError()));
+  }
+
+  void sessionChangesAreExplicit() {
+    QTemporaryDir directory;
+    const auto first = writeFixture(directory, QStringLiteral("first.bin"));
+    const auto second = writeFixture(directory, QStringLiteral("second.bin"));
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(first);
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    session.setComment(Base, QStringLiteral("first revision"));
+    session.setComment(Base, QStringLiteral("second revision"));
+    session.save();
     QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(first + ".neverd-annotations.json"),
-                             5000);
-    QTRY_VERIFY(!controller.unsavedChanges());
-    QFile saved(first + ".neverd-annotations.json");
-    QVERIFY(saved.open(QIODevice::ReadOnly));
-    QVERIFY(saved.readAll().contains("second revision"));
-    saved.close();
-    QVERIFY2(controller.error().isEmpty(), qPrintable(controller.error()));
+                             OpenTimeoutMs);
+    QTRY_VERIFY(!session.dirty());
+    QVERIFY(readAll(first + ".neverd-annotations.json")
+                .contains("second revision"));
 
-    controller.setComment("comment on A");
-    controller.navigate("function_20");
-    QTRY_COMPARE(controller.selectedAddress(), QString("0xffff800012340140"));
-    QTRY_VERIFY(controller.unsavedChanges());
-    // A delayed edit completion must not label the newly selected instruction.
-    QTRY_VERIFY(!controller.busy());
-    QVERIFY(controller.selectedComment() != "comment on A");
-    QSignalSpy confirmation(&controller, &Workbench::confirmSessionChange);
-    controller.openFile(QUrl::fromLocalFile(second));
+    // Opening another file with unsaved edits asks first.
+    session.setComment(Base + 0x140, QStringLiteral("comment on A"));
+    QTRY_VERIFY(session.dirty());
+    QSignalSpy confirmation(&session, &Session::transitionRequested);
+    session.open(second);
     QCOMPARE(confirmation.size(), 1);
-    QCOMPARE(controller.filePath(), first);
-    controller.resolveSessionChange("cancel");
-    QCOMPARE(controller.filePath(), first);
-    controller.openFile(QUrl::fromLocalFile(second));
-    controller.resolveSessionChange("save");
-    QTRY_COMPARE_WITH_TIMEOUT(controller.filePath(), second, 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(!controller.representationText().isEmpty(), 7000);
-    QVERIFY(!controller.unsavedChanges());
+    QCOMPARE(session.filePath(), first);
+    session.resolveTransition(QStringLiteral("cancel"));
+    QCOMPARE(session.filePath(), first);
+    session.open(second);
+    QCOMPARE(confirmation.size(), 2);
+    session.resolveTransition(QStringLiteral("save"));
+    QTRY_COMPARE_WITH_TIMEOUT(session.filePath(), second, OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    QVERIFY(!session.dirty());
+    QVERIFY(
+        readAll(first + ".neverd-annotations.json").contains("comment on A"));
 
-    // A deliberately interrupted read gets a terminal broker response.
-    QSignalSpy replies(&controller, &Workbench::externalResponse);
-    controller.externalQuery("external-restart", "metadata", {}, {});
-    controller.restartWorker();
+    // An interrupted external read gets a terminal reply.
+    QSignalSpy replies(&session, &Session::externalResponse);
+    session.externalQuery(QStringLiteral("external-restart"),
+                          QStringLiteral("metadata"), {}, {});
+    session.restart();
     QTRY_COMPARE(replies.size(), 1);
-    QCOMPARE(replies.first().at(0).toString(), QString("external-restart"));
+    QCOMPARE(replies.first().at(0).toString(),
+             QStringLiteral("external-restart"));
+    const auto status = replies.first().at(1).toJsonObject();
+    QVERIFY2(status.value("status").toString() == QLatin1String("ok") ||
+                 status.value("error").toObject().value("code").toString() ==
+                     QLatin1String("worker_stopped"),
+             QJsonDocument(status).toJson().constData());
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+
+    // Quitting with unsaved edits saves first when asked to.
+    session.setComment(Base, QStringLiteral("keep before quit"));
+    QTRY_VERIFY(session.dirty());
+    QVERIFY(!session.requestQuit());
+    QSignalSpy approved(&session, &Session::quitApproved);
+    session.resolveTransition(QStringLiteral("save"));
+    QTRY_COMPARE_WITH_TIMEOUT(approved.size(), 1, OpenTimeoutMs);
+    QVERIFY(!session.dirty());
+    QVERIFY(readAll(second + ".neverd-annotations.json")
+                .contains("keep before quit"));
+  }
+
+  void editsForAnOlderSessionAreRefused() {
+    QTemporaryDir directory;
+    const auto first = writeFixture(directory, QStringLiteral("first.bin"));
+    const auto second = writeFixture(directory, QStringLiteral("second.bin"));
+    const auto third = writeFixture(directory, QStringLiteral("third.bin"));
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(first);
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    const quint64 oldEpoch = session.epoch();
+    QSignalSpy confirmation(&session, &Session::transitionRequested);
+    session.open(second);
+    session.open(third);
+    QTRY_COMPARE_WITH_TIMEOUT(session.filePath(), third, OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    QCOMPARE(confirmation.size(), 0);
+    QVERIFY(session.epoch() != oldEpoch);
+    QSignalSpy messages(&session, &Session::message);
+    session.setComment(Base, QStringLiteral("must not enter new project"),
+                       oldEpoch);
+    QVERIFY(!session.dirty());
+    QVERIFY(!messages.isEmpty());
+    QCOMPARE(messages.last().at(1).toInt(), 1);
+  }
+
+  void cancellingViewReadsStillCompletesExternalQueries() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("external.bin"));
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(path);
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    QObject view;
+    bool viewReplied = false;
+    session.read(QStringLiteral("decompile"),
+                 {{"address", hexAddress(Base)}, {"representation", "low"}},
+                 &view, [&](const QJsonObject &) { viewReplied = true; });
+    QSignalSpy replies(&session, &Session::externalResponse);
+    session.externalQuery(QStringLiteral("external-survives-cancel"),
+                          QStringLiteral("metadata"), {}, {});
+    session.cancelReads();
+    QTRY_COMPARE_WITH_TIMEOUT(replies.size(), 1, OpenTimeoutMs);
+    QCOMPARE(replies.first().first().toString(),
+             QStringLiteral("external-survives-cancel"));
+    QCOMPARE(replies.first().at(1).toJsonObject().value("status").toString(),
+             QStringLiteral("ok"));
+    QTest::qWait(200);
+    QVERIFY(!viewReplied);
+    replies.clear();
+    session.externalQuery(QStringLiteral("exact-stale"),
+                          QStringLiteral("metadata"), {},
+                          QStringLiteral("invalid-revision"));
+    QTRY_COMPARE(replies.size(), 1);
     QCOMPARE(replies.first()
                  .at(1)
-                 .toJsonObject()["error"]
-                 .toObject()["code"]
+                 .toJsonObject()
+                 .value("error")
+                 .toObject()
+                 .value("code")
                  .toString(),
-             QString("worker_stopped"));
-    QTRY_VERIFY_WITH_TIMEOUT(controller.loaded(), 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(!controller.representationText().isEmpty(), 7000);
-    controller.setComment("keep before close");
-    QVERIFY(!controller.requestClose());
-    QSignalSpy closeReady(&controller, &Workbench::closeReady);
-    controller.resolveSessionChange("save");
-    QTRY_COMPARE_WITH_TIMEOUT(closeReady.size(), 1, 5000);
-    QVERIFY(!controller.unsavedChanges());
+             QStringLiteral("stale_revision"));
   }
-  void realControllerTransport() {
-    QTemporaryDir directory;
-    QVERIFY(directory.isValid());
-    const auto path = directory.filePath("fixture.bin");
-    QFile file(path);
-    QVERIFY(file.open(QIODevice::WriteOnly));
-    file.write("fixture");
-    file.close();
-    Workbench controller(QString::fromLocal8Bit(TEST_WORKER));
-    controller.openFile(QUrl::fromLocalFile(path));
-    QTRY_VERIFY_WITH_TIMEOUT(controller.loaded(), 5000);
-    QTRY_COMPARE_WITH_TIMEOUT(controller.selectedAddress(),
-                              QString("0xffff800012340000"), 5000);
-    auto *functions = qobject_cast<PageModel *>(controller.functionsModel());
-    auto *instructions =
-        qobject_cast<PageModel *>(controller.instructionsModel());
-    QVERIFY(functions);
-    QVERIFY(instructions);
-    QTRY_COMPARE_WITH_TIMEOUT(functions->count(), 600, 5000);
-    QTRY_COMPARE_WITH_TIMEOUT(instructions->count(), 256, 5000);
-    QCOMPARE(functions->get(0)["address"].toString(), "0xffff800012340000");
-    QCOMPARE(instructions->get(0)["address"].toString(), "0xffff800012340000");
-    // A timer continues firing during the deliberately synchronous worker
-    // pipeline.
-    int ticks = 0;
-    QTimer timer;
-    timer.setInterval(10);
-    connect(&timer, &QTimer::timeout, this, [&] { ++ticks; });
-    timer.start();
-    QTRY_VERIFY_WITH_TIMEOUT(!controller.representationText().isEmpty(), 7000);
-    QVERIFY(ticks > 20);
-    QVERIFY(controller.representationText().contains("code line 511"));
-    controller.toggleRepresentationPin();
-    QTRY_VERIFY(controller.hasMoreText());
-    controller.navigate("function_1");
-    QTRY_COMPARE(controller.selectedAddress(), QString("0xffff800012340010"));
-    QVERIFY(controller.hasMoreText());
-    controller.loadMoreText();
-    QTRY_VERIFY(controller.representationText().contains("code line 699"));
-    QVERIFY(!controller.hasMoreText());
-    controller.toggleRepresentationPin();
-    controller.navigate("0xffff800012340000");
-    QTRY_COMPARE(controller.selectedAddress(), QString("0xffff800012340000"));
-    controller.setRepresentation("low");
-    QTRY_VERIFY(!controller.textMappings().isEmpty());
-    controller.selectTextLine(3);
-    QTRY_COMPARE(controller.selectedAddress(), QString("0xffff800012340003"));
-    controller.loadMoreFunctions();
-    QTRY_COMPARE(functions->get(256)["name"].toString(),
-                 QString("function_256"));
-    const auto beforeFilter = functions->requestGeneration();
-    const auto selectedBeforeFilter = controller.selectedAddress();
-    controller.filterFunctions("function_59");
-    // Filtering must retire old selectable rows before either debounce or IPC.
-    QCOMPARE(functions->count(), 0);
-    QCOMPARE(controller.functionCount(), 0);
-    QVERIFY(functions->get(0).isEmpty());
-    QVERIFY(functions->requestGeneration() != beforeFilter);
-    controller.filterFunctions("function_599");
-    QCOMPARE(functions->count(), 0);
-    QTRY_COMPARE(functions->count(), 1);
-    QCOMPARE(functions->get(0)["name"].toString(), "function_599");
-    QCOMPARE(functions->get(0)["address"].toString(),
-             QString("0xffff800012342570"));
-    QCOMPARE(controller.selectedAddress(), selectedBeforeFilter);
-    // A previous debounce must not later replace the final one-row result.
-    QTest::qWait(250);
-    QCOMPARE(functions->count(), 1);
-    QCOMPARE(functions->get(0)["name"].toString(), "function_599");
-    controller.navigate("function_20");
-    QTRY_COMPARE(controller.selectedAddress(), QString("0xffff800012340140"));
-    QTRY_VERIFY(!controller.representationText().isEmpty());
-    controller.requestView("hex");
-    QTRY_VERIFY(!controller.hexText().isEmpty());
-    QVERIFY(controller.hexText().startsWith("ffff800012340140"));
-    controller.requestView("cfg");
-    QTRY_COMPARE(controller.graphNodes().size(), 2);
-    controller.setComment(QString::fromUtf8("中文 تعليق"));
-    QTRY_COMPARE(controller.selectedComment(), QString::fromUtf8("中文 تعليق"));
-    controller.saveAnnotations();
-    QTRY_VERIFY(QFile::exists(path + ".neverd-annotations.json"));
-    controller.renameFunction("renamed");
-    QTRY_COMPARE(controller.selectedFunctionName(), QString("renamed"));
-    controller.goBack();
-    QTRY_COMPARE(controller.selectedAddress(), QString("0xffff800012340000"));
-    QVERIFY(controller.canGoForward());
-    controller.goForward();
-    QTRY_COMPARE(controller.selectedAddress(), QString("0xffff800012340140"));
-    controller.restartWorker();
-    QTRY_VERIFY_WITH_TIMEOUT(controller.loaded(), 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(!controller.representationText().isEmpty(), 7000);
-    QVERIFY(controller.error().isEmpty());
-  }
-  void capturedEditTargetsSurviveFocusAndSourcePaneRemoval() {
-    QTemporaryDir directory;
-    const auto path = directory.filePath("targets.bin");
-    QFile input(path);
-    QVERIFY(input.open(QIODevice::WriteOnly));
-    input.write("fixture");
-    input.close();
-    Workbench controller(QString::fromLocal8Bit(TEST_WORKER));
-    controller.openFile(QUrl::fromLocalFile(path));
-    QTRY_VERIFY_WITH_TIMEOUT(!controller.representationText().isEmpty(), 7000);
-    auto *panes = controller.paneRegistry();
-    const auto sourceId = panes->createPane("machine");
-    auto *source = panes->findPane(sourceId);
-    panes->setPaneVisible(sourceId, true);
-    panes->setActivePane(sourceId);
-    source->navigate("function_20");
-    QTRY_COMPARE(source->selectedAddress(), QString("0xffff800012340140"));
-    const auto target = controller.captureCommandTarget();
-    panes->setActivePane("machine");
-    QCOMPARE(controller.selectedAddress(), QString("0xffff800012340000"));
-    controller.setCommentAt(target, "comment on captured extra pane");
-    QVERIFY(panes->beginRemovePane(sourceId));
-    panes->finishRemovePane(sourceId);
-    QTRY_VERIFY(!controller.busy());
-    QVERIFY(controller.unsavedChanges());
-    QVERIFY(controller.selectedComment() != "comment on captured extra pane");
-    controller.saveAnnotations();
-    QTRY_VERIFY(QFile::exists(path + ".neverd-annotations.json"));
-    QTRY_VERIFY(!controller.unsavedChanges());
-    QFile saved(path + ".neverd-annotations.json");
-    QVERIFY(saved.open(QIODevice::ReadOnly));
-    const auto bytes = saved.readAll();
-    QCOMPARE(saved.error(), QFileDevice::NoError);
-    // Rename also replaces this sidecar; an open QFile blocks that on Windows.
-    saved.close();
-    QVERIFY(bytes.contains("0xffff800012340140"));
-    QVERIFY(bytes.contains("comment on captured extra pane"));
-    controller.navigate("function_20");
-    QTRY_COMPARE(controller.selectedComment(),
-                 QString("comment on captured extra pane"));
-    controller.renameFunctionAt(target, "captured_function");
-    QTRY_VERIFY2(
-        controller.selectedFunctionName() == QString("captured_function"),
-        qPrintable(
-            QString("Expected captured_function; actual=%1; error=%2")
-                .arg(controller.selectedFunctionName(), controller.error())));
-    QFile renames(path + ".neverd-renames.json");
-    QVERIFY(renames.open(QIODevice::ReadOnly));
-    const auto renameBytes = renames.readAll();
-    QCOMPARE(renames.error(), QFileDevice::NoError);
-    renames.close();
-    const auto entries = QJsonDocument::fromJson(renameBytes).array();
-    QCOMPARE(entries.size(), 1);
-    const auto entry = entries.first().toObject();
-    QCOMPARE(entry.value("addr").toString(), QString("0xffff800012340140"));
-    QCOMPARE(entry.value("renamed").toString(), QString("captured_function"));
-  }
-  void queuedOpenIntentsUseTheNewSessionAndOldDialogTargetsExpire() {
-    QTemporaryDir directory;
-    const auto first = directory.filePath("first.bin");
-    const auto second = directory.filePath("second.bin");
-    const auto third = directory.filePath("third.bin");
-    for (const auto &path : {first, second, third}) {
-      QFile input(path);
-      QVERIFY(input.open(QIODevice::WriteOnly));
-      input.write("fixture");
-    }
-    Workbench controller(QString::fromLocal8Bit(TEST_WORKER));
-    controller.openFile(QUrl::fromLocalFile(first));
-    QTRY_VERIFY_WITH_TIMEOUT(!controller.representationText().isEmpty(), 7000);
-    const auto oldTarget = controller.captureCommandTarget();
-    QSignalSpy confirmation(&controller, &Workbench::confirmSessionChange);
-    controller.openFile(QUrl::fromLocalFile(second));
-    controller.openFile(QUrl::fromLocalFile(third));
-    QTRY_COMPARE_WITH_TIMEOUT(controller.filePath(), third, 7000);
-    QTRY_VERIFY_WITH_TIMEOUT(!controller.representationText().isEmpty(), 7000);
-    QCOMPARE(confirmation.size(), 0);
-    controller.setCommentAt(oldTarget, "must not enter new project");
-    QVERIFY(!controller.unsavedChanges());
-    QVERIFY(controller.selectedComment().isEmpty());
-    QVERIFY2(controller.error().isEmpty(), qPrintable(controller.error()));
-  }
-  void cancellingPaneReadsStillCompletesExternalQueries() {
-    QTemporaryDir directory;
-    const auto path = directory.filePath("external.bin");
-    QFile input(path);
-    QVERIFY(input.open(QIODevice::WriteOnly));
-    input.write("fixture");
-    input.close();
-    Workbench controller(QString::fromLocal8Bit(TEST_WORKER));
-    controller.openFile(QUrl::fromLocalFile(path));
-    QTRY_VERIFY_WITH_TIMEOUT(!controller.representationText().isEmpty(), 7000);
-    auto *functions = qobject_cast<PageModel *>(controller.functionsModel());
-    QVERIFY(functions);
-    // The first completed analysis refreshes the browser after publishing text.
-    // Establish a populated browser before checking synchronous Cancel effects.
-    QTRY_VERIFY_WITH_TIMEOUT(
-        !controller.busy() && controller.functionCount() == 600 &&
-            functions->count() == 600 && !functions->get(0).isEmpty(),
-        7000);
-    QSignalSpy replies(&controller, &Workbench::externalResponse);
-    controller.setRepresentation("low");
-    controller.externalQuery("external-survives-cancel", "metadata", {}, {});
-    const auto count = controller.functionCount();
-    controller.cancel();
-    QCOMPARE(qobject_cast<PageModel *>(controller.functionsModel())->count(),
-             count);
-    QTRY_COMPARE_WITH_TIMEOUT(replies.size(), 1, 5000);
-    QCOMPARE(replies.first().first().toString(), "external-survives-cancel");
-    QCOMPARE(replies.first()[1].toJsonObject()["status"].toString(), "ok");
-    replies.clear();
-    controller.externalQuery("exact-stale", "metadata", {}, "invalid-revision");
-    QTRY_COMPARE(replies.size(), 1);
-    QCOMPARE(replies.first()[1]
-                 .toJsonObject()["error"]
-                 .toObject()["code"]
-                 .toString(),
-             "stale_revision");
-  }
-  void cancelAtFirstLoadedNotificationPreventsLateEntryNavigation() {
-    QTemporaryDir directory;
-    QVERIFY(directory.isValid());
-    const auto path = directory.filePath("startup-cancel.bin");
-    QFile input(path);
-    QVERIFY(input.open(QIODevice::WriteOnly));
-    input.write("fixture");
-    input.close();
-    Workbench controller(QString::fromLocal8Bit(TEST_WORKER));
-    bool cancelled = false;
-    QObject observer;
-    connect(
-        &controller, &Workbench::changed, &observer,
-        [&] {
-          if (cancelled || !controller.loaded())
-            return;
-          cancelled = true;
-          controller.cancel();
-        },
-        Qt::DirectConnection);
 
-    controller.openFile(QUrl::fromLocalFile(path));
-    QTRY_VERIFY_WITH_TIMEOUT(cancelled, 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(!controller.busy(), 7000);
-    // The workspace's startup reads finish, but their history callback must
-    // respect the Cancel observed during the first loaded notification.
-    QCOMPARE(controller.functionCount(), 600);
-    QVERIFY(controller.selectedAddress().isEmpty());
-    QVERIFY(controller.representationText().isEmpty());
-    QVERIFY2(controller.error().isEmpty(), qPrintable(controller.error()));
-  }
-  void saveBeforeCloseDoesNotAcceptAnUncoveredLateEdit() {
+  void saveBeforeQuitRejectsALateEdit() {
     QTemporaryDir directory;
-    const auto path = directory.filePath("transition.bin");
-    QFile input(path);
-    QVERIFY(input.open(QIODevice::WriteOnly));
-    input.write("fixture");
-    input.close();
-    Workbench controller(QString::fromLocal8Bit(TEST_WORKER));
-    controller.openFile(QUrl::fromLocalFile(path));
-    QTRY_VERIFY_WITH_TIMEOUT(!controller.representationText().isEmpty(), 7000);
-    controller.setComment("accepted before close");
-    const auto target = controller.captureCommandTarget();
-    QVERIFY(!controller.requestClose());
-    QSignalSpy ready(&controller, &Workbench::closeReady);
-    controller.resolveSessionChange("save");
-    controller.setCommentAt(target, "late edit after save intent");
-    QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 5000);
-    QVERIFY(!controller.unsavedChanges());
-    QFile saved(path + ".neverd-annotations.json");
-    QVERIFY(saved.open(QIODevice::ReadOnly));
-    const auto bytes = saved.readAll();
-    QVERIFY(bytes.contains("accepted before close"));
+    const auto path = writeFixture(directory, QStringLiteral("transition.bin"));
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(path);
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    session.setComment(Base, QStringLiteral("accepted before quit"));
+    QTRY_VERIFY(session.dirty());
+    QVERIFY(!session.requestQuit());
+    QSignalSpy approved(&session, &Session::quitApproved);
+    session.resolveTransition(QStringLiteral("save"));
+    session.setComment(Base + 0x10,
+                       QStringLiteral("late edit after save intent"));
+    QTRY_COMPARE_WITH_TIMEOUT(approved.size(), 1, OpenTimeoutMs);
+    QVERIFY(!session.dirty());
+    const auto bytes = readAll(path + ".neverd-annotations.json");
+    QVERIFY(bytes.contains("accepted before quit"));
     QVERIFY(!bytes.contains("late edit after save intent"));
   }
+
+  void databaseCarriesTheProject() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("project.bin"));
+    const auto database = ProjectDatabase::pathFor(path);
+    {
+      Workbench bench;
+      bench.window->openFile(path);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      bench.window->disassembly()->navigate(Base + 0x140);
+      QTRY_COMPARE(bench.window->disassembly()->currentItem(),
+                   std::optional<Address>(Base + 0x140));
+      bench.session.setComment(Base + 0x140, QStringLiteral("packed comment"));
+      QTRY_VERIFY(bench.session.dirty());
+      QSignalSpy saved(&bench.session, &Session::databaseSaved);
+      bench.session.save();
+      QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
+      QVERIFY(saved.first().first().toBool());
+      QVERIFY(QFileInfo::exists(database));
+      QTRY_VERIFY(!bench.session.dirty());
+    }
+    // The database alone reopens the project: input, comment and location.
+    QTemporaryDir moved;
+    const auto copy = moved.filePath(QStringLiteral("moved.nddb"));
+    QVERIFY(QFile::copy(database, copy));
+    Workbench bench;
+    bench.window->openFile(copy);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(bench.session.projectPath(), copy);
+    QCOMPARE(bench.session.databasePath(), copy);
+    QVERIFY(bench.session.filePath() != path);
+    QTRY_COMPARE_WITH_TIMEOUT(bench.window->disassembly()->currentItem(),
+                              std::optional<Address>(Base + 0x140),
+                              OpenTimeoutMs);
+    QString comment;
+    bench.session.read(QStringLiteral("resolve"),
+                       {{"query", hexAddress(Base + 0x140)}}, &bench.session,
+                       [&](const QJsonObject &payload) {
+                         comment = payload.value("comment").toString();
+                       });
+    QTRY_COMPARE(comment, QStringLiteral("packed comment"));
+  }
+
+  void contributionsRegisterRunAndUnload() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("contrib.bin"));
+    const auto manifest = directory.filePath(QStringLiteral("manifest.json"));
+    {
+      QFile file(manifest);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(
+          R"({"schema_version": 1, "namespace": "sample", "version": "1.0",
+        "contributions": [{"id": "sample:selected-code", "title": "Selected instructions",
+        "kind": "panel", "query": {"operation": "disasm",
+        "payload": {"address": "${address}", "limit": 3}}}]})");
+    }
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(path);
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!session.contributions().isEmpty(), OpenTimeoutMs);
+    const auto builtIn = session.contributions().size();
+    session.registerContributions(manifest);
+    QTRY_COMPARE(session.contributions().size(), builtIn + 1);
+    QSignalSpy results(&session, &Session::contributionResult);
+    session.executeContribution(QStringLiteral("sample:selected-code"), Base);
+    QTRY_COMPARE_WITH_TIMEOUT(results.size(), 1, OpenTimeoutMs);
+    const auto result = results.first().first().toJsonObject();
+    QCOMPARE(result.value("contribution_id").toString(),
+             QStringLiteral("sample:selected-code"));
+    QCOMPARE(result.value("result").toObject().value("items").toArray().size(),
+             3);
+    session.unregisterContributions(QStringLiteral("sample"));
+    QTRY_COMPARE(session.contributions().size(), builtIn);
+  }
 };
+
 QTEST_MAIN(WorkbenchTests)
 #include "WorkbenchTests.moc"

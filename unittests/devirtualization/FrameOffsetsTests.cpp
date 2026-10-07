@@ -432,4 +432,73 @@ TEST(FrameOffsets, DomainEncodingReuseKeepsFullFrameProofsAndBudgets) {
             FrameOffsetStatus::Infeasible);
 }
 
+TEST(FrameOffsets, FrameAndJointTargetProjectionsKeepIndependentSearches) {
+  SymContext Ctx;
+  const auto Root = Ctx.mkVar("stack", 64);
+  const auto X = Ctx.mkVar("x", 4), Y = Ctx.mkVar("y", 4);
+  neverd::solver::SolverOptions Settings;
+  Settings.BuildModel = false;
+  FiniteDomainEncoding Encoding(Ctx, Settings);
+  for (unsigned Low : {8U, 24U, 8U}) {
+    const auto Predicate = Ctx.mkAnd(
+        Ctx.mkEq(Ctx.mkAnd(Root, Ctx.mkConst(64, 127)), Ctx.mkConst(64, Low)),
+        Ctx.mkEq(Ctx.mkAdd(X, Y), Ctx.mkConst(4, Low == 24 ? 3 : 7)));
+    for (unsigned Round = 0; Round != 4; ++Round) {
+      const auto Address =
+          Ctx.mkAdd(Ctx.mkAnd(Ctx.mkAdd(Root, Ctx.mkConst(64, Round + 1)),
+                              Ctx.mkConst(64, uint64_t{0} - 128)),
+                    Ctx.mkConst(64, 11));
+      uint64_t FrameQueries = 0, FreshFrameQueries = 0;
+      const auto Frame = proveFrameOffset(Encoding, Predicate, Address, Root, 2,
+                                          100000, FrameQueries);
+      const auto FreshFrame =
+          proveFrameOffset(Ctx, Predicate, Address, Root, Settings, 2, 100000,
+                           FreshFrameQueries);
+      ASSERT_EQ(Frame.Status, FrameOffsetStatus::Exact);
+      EXPECT_EQ(Frame.Status, FreshFrame.Status);
+      EXPECT_EQ(Frame.Offset, uint64_t{11} - Low);
+      EXPECT_EQ(Frame.Offset, FreshFrame.Offset);
+      EXPECT_EQ(FrameQueries, FreshFrameQueries);
+      EXPECT_EQ(FrameQueries, 2U);
+
+      const auto Target = Ctx.mkAdd(Ctx.mkZExt(X, 64), Ctx.mkConst(64, 0x7000));
+      uint64_t Queries = 0, FreshQueries = 0;
+      std::vector<std::vector<uint64_t>> Seen, FreshSeen;
+      const auto MaxQueries = Round == 1 ? 16U : 17U;
+      const auto MaxValues = Round == 2 ? 15U : 16U;
+      const auto Result = enumerateFiniteValues(
+          Encoding, Predicate, {Target, Y}, MaxValues, MaxQueries, 100000,
+          Queries, [&](llvm::ArrayRef<uint64_t> Tuple) {
+            Seen.emplace_back(Tuple.begin(), Tuple.end());
+            return true;
+          });
+      const auto Fresh = enumerateFiniteValues(
+          Ctx, Predicate, {Target, Y}, MaxValues, Settings, MaxQueries, 100000,
+          FreshQueries, [&](llvm::ArrayRef<uint64_t> Tuple) {
+            FreshSeen.emplace_back(Tuple.begin(), Tuple.end());
+            return true;
+          });
+      EXPECT_EQ(Result.Status, Fresh.Status);
+      EXPECT_EQ(Result.Tuples, Fresh.Tuples);
+      EXPECT_EQ(Queries, FreshQueries);
+      EXPECT_EQ(Seen, FreshSeen);
+      if (Round == 1 || Round == 2) {
+        EXPECT_EQ(Result.Status, Round == 1
+                                     ? FiniteValueStatus::QueryBudgetExceeded
+                                     : FiniteValueStatus::TooManyValues);
+        EXPECT_TRUE(Result.Tuples.empty());
+        EXPECT_EQ(Queries, 16U);
+      } else {
+        ASSERT_EQ(Result.Status, FiniteValueStatus::Complete);
+        ASSERT_EQ(Result.Tuples.size(), 16U);
+        EXPECT_EQ(Queries, 17U);
+        for (unsigned I = 0; I != 16; ++I) {
+          EXPECT_EQ(Result.Tuples[I][0], 0x7000 + I);
+          EXPECT_EQ(Result.Tuples[I][1], ((Low == 24 ? 3U : 7U) - I) & 15);
+        }
+      }
+    }
+  }
+}
+
 } // namespace
