@@ -360,22 +360,22 @@ std::vector<PortableStoreCall> portableStoreCalls(std::string_view Source) {
          Source.substr(Address, Source.find(';', Address) - Address),
          Source.substr(Value, Source.find(';', Value) - Value)});
   }
-  // `((*(neverd_unaligned_u32 *)ADDRESS) = VALUE);`, the aligned(1),
-  // may_alias spelling of a scalar store.  ADDRESS is a name, a
-  // parenthesized expression, or `(uintptr_t)(&OBJECT)`.
+  // `*(_DWORD *)ADDRESS = VALUE;`, the aligned(1), may_alias spelling of a
+  // scalar store, parenthesized as a whole inside an expression.  ADDRESS
+  // is a name, a parenthesized expression, or `(uintptr_t)(&OBJECT)`.
   static constexpr std::pair<std::string_view, std::string_view> Aliases[] = {
-      {"neverd_unaligned_u8", "uint8_t"},
-      {"neverd_unaligned_i8", "int8_t"},
-      {"neverd_unaligned_u16", "uint16_t"},
-      {"neverd_unaligned_i16", "int16_t"},
-      {"neverd_unaligned_u32", "uint32_t"},
-      {"neverd_unaligned_i32", "int32_t"},
-      {"neverd_unaligned_u64", "uint64_t"},
-      {"neverd_unaligned_i64", "int64_t"},
-      {"neverd_unaligned_u128", "unsigned __int128"},
-      {"neverd_unaligned_i128", "__int128"},
-      {"neverd_unaligned_f32", "float"},
-      {"neverd_unaligned_f64", "double"}};
+      {"_BYTE", "uint8_t"},
+      {"_SBYTE", "int8_t"},
+      {"_WORD", "uint16_t"},
+      {"_SWORD", "int16_t"},
+      {"_DWORD", "uint32_t"},
+      {"_SDWORD", "int32_t"},
+      {"_QWORD", "uint64_t"},
+      {"_SQWORD", "int64_t"},
+      {"_OWORD", "unsigned __int128"},
+      {"_SOWORD", "__int128"},
+      {"_FLOAT", "float"},
+      {"_DOUBLE", "double"}};
   // The offset just past the parenthesis closing one opened before \p At.
   auto Close = [&](size_t At) {
     for (unsigned Depth = 1; At < Source.size(); ++At) {
@@ -386,46 +386,51 @@ std::vector<PortableStoreCall> portableStoreCalls(std::string_view Source) {
     }
     return std::string_view::npos;
   };
-  constexpr std::string_view AliasPrefix = "((*(neverd_unaligned_";
   constexpr std::string_view Cast = " *)";
   constexpr std::string_view Integer = "(uintptr_t)(";
-  for (size_t At = Source.find(AliasPrefix); At != std::string_view::npos;
-       At = Source.find(AliasPrefix, At + AliasPrefix.size())) {
-    const size_t NameStart = At + 4;
-    const size_t NameEnd = Source.find(Cast, NameStart);
-    if (NameEnd == std::string_view::npos)
-      continue;
-    const auto Alias = Source.substr(NameStart, NameEnd - NameStart);
-    const auto *Known = llvm::find_if(
-        Aliases, [&](const auto &Entry) { return Entry.first == Alias; });
-    if (Known == std::end(Aliases))
-      continue;
-    // The address text, and the offset just past it where `) = ` follows.
-    size_t AddressStart = NameEnd + Cast.size();
-    size_t AddressStop = std::string_view::npos, Next = std::string_view::npos;
-    if (Source.substr(AddressStart, Integer.size()) == Integer) {
-      AddressStart += Integer.size();
-      if (const size_t End = Close(AddressStart); End != std::string_view::npos)
-        AddressStop = End - 1, Next = End;
-    } else if (AddressStart < Source.size() && Source[AddressStart] == '(') {
-      ++AddressStart;
-      if (const size_t End = Close(AddressStart); End != std::string_view::npos)
-        AddressStop = End - 1, Next = End;
-    } else {
-      AddressStop = Source.find(')', AddressStart);
-      Next = AddressStop;
+  for (const auto &[Alias, Type] : Aliases) {
+    const std::string Pointer = "*(" + std::string(Alias) + std::string(Cast);
+    for (size_t At = Source.find(Pointer); At != std::string_view::npos;
+         At = Source.find(Pointer, At + Pointer.size())) {
+      // The address text, and the offset just past it where ` = ` follows.
+      size_t AddressStart = At + Pointer.size();
+      size_t AddressStop = std::string_view::npos;
+      if (Source.substr(AddressStart, Integer.size()) == Integer) {
+        AddressStart += Integer.size();
+        if (const size_t End = Close(AddressStart);
+            End != std::string_view::npos)
+          AddressStop = End - 1;
+      } else if (AddressStart < Source.size() && Source[AddressStart] == '(') {
+        ++AddressStart;
+        if (const size_t End = Close(AddressStart);
+            End != std::string_view::npos)
+          AddressStop = End - 1;
+      } else {
+        AddressStop = AddressStart;
+        while (
+            AddressStop < Source.size() &&
+            (llvm::isAlnum(Source[AddressStop]) || Source[AddressStop] == '_'))
+          ++AddressStop;
+      }
+      if (AddressStop == std::string_view::npos)
+        continue;
+      const size_t Next =
+          Source[AddressStop] == ')' ? AddressStop + 1 : AddressStop;
+      constexpr std::string_view Assign = " = ";
+      if (Source.substr(Next, Assign.size()) != Assign)
+        continue;
+      // A statement ends at its semicolon; a parenthesized store at the
+      // parenthesis that opened before it.
+      const size_t ValueStart = Next + Assign.size();
+      const bool Wrapped = At > 0 && Source[At - 1] == '(';
+      const size_t ValueEnd =
+          Wrapped ? Close(ValueStart) : Source.find(';', ValueStart) + 1;
+      if (ValueEnd == std::string_view::npos || ValueEnd == 0)
+        continue;
+      Stores.push_back({Type,
+                        Source.substr(AddressStart, AddressStop - AddressStart),
+                        Source.substr(ValueStart, ValueEnd - 1 - ValueStart)});
     }
-    constexpr std::string_view Assign = ") = ";
-    if (Next == std::string_view::npos ||
-        Source.substr(Next, Assign.size()) != Assign)
-      continue;
-    const size_t ValueStart = Next + Assign.size();
-    const size_t ValueEnd = Close(ValueStart);
-    if (ValueEnd == std::string_view::npos)
-      continue;
-    Stores.push_back({Known->second,
-                      Source.substr(AddressStart, AddressStop - AddressStart),
-                      Source.substr(ValueStart, ValueEnd - 1 - ValueStart)});
   }
   return Stores;
 }
@@ -905,10 +910,9 @@ TEST(HighCPointerAddresses, InlinedSignedIncrementKeepsModularExpression) {
   EXPECT_EQ(Source.find("+= 1"), std::string::npos) << Source;
   // The increment wraps in an unsigned carrier; the int32_t store converts
   // it back.
-  EXPECT_NE(Source.find("= (uint32_t)(*(const neverd_unaligned_i32 *)"),
-            std::string::npos)
+  EXPECT_NE(Source.find("= (uint32_t)(*(_SDWORD *)"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find(" + 1);"), std::string::npos) << Source;
+  EXPECT_NE(Source.find(" + 1;"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, IncrementLoadKeptWhenValueIsUsed) {
@@ -949,8 +953,7 @@ TEST(HighCPointerAddresses, IncrementLoadKeptWhenValueIsUsed) {
   EXPECT_EQ(Source.find("+= 1"), std::string::npos) << Source;
   // The increment wraps in an unsigned carrier; the int32_t store converts
   // it back.
-  EXPECT_NE(Source.find("= (uint32_t)t94_8 + 1);"), std::string::npos)
-      << Source;
+  EXPECT_NE(Source.find("= (uint32_t)t94_8 + 1;"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, AddressTakenFrameSlotUsesSharedBacking) {
@@ -3153,11 +3156,12 @@ TEST(HighCPointerAddresses, ExternalPrototypeMatchesLeadingUnderscoreCall) {
                                      {HighExpr::makeConst(7, 8)});
   Func.Body.push_back(std::move(Call));
 
+  // An x64 symbol carries no decoration: the C name is the symbol.
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("extern int _report_gsfailure("), std::string::npos)
+  EXPECT_NE(Source.find("extern int __report_gsfailure("), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("_report_gsfailure(7);"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("extern int report_gsfailure("), std::string::npos)
+  EXPECT_NE(Source.find("__report_gsfailure(7);"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("extern int _report_gsfailure("), std::string::npos)
       << Source;
 }
 
@@ -3174,12 +3178,12 @@ TEST(HighCPointerAddresses, ExternalCallsKeepDistinctUnderscoreSpellings) {
   }
 
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("extern int nd_external("), std::string::npos)
-      << Source;
   EXPECT_NE(Source.find("extern int _nd_external("), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("    nd_external(1);"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("    _nd_external(2);"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("extern int __nd_external("), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("    _nd_external(1);"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("    __nd_external(2);"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, SecurityCheckCookieParamIsStackCookie) {

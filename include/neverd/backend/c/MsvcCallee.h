@@ -105,6 +105,16 @@ inline const MsvcCallee *msvcCallee(llvm::StringRef Identifier) {
   return nullptr;
 }
 
+/// The MSVC member rules describe the MSVC C++ ABI.  ELF and Mach-O images
+/// use Itanium's, whose constructors and operators take other operands, so
+/// their stems (`QDomNode_ctor`) match no rule.
+inline const MsvcCallee *msvcCallee(llvm::StringRef Identifier,
+                                    BinaryFormat Format) {
+  if (Format == BinaryFormat::ELF || Format == BinaryFormat::MachO)
+    return nullptr;
+  return msvcCallee(Identifier);
+}
+
 inline const char *msvcSpecialMemberStem(char Decoration) {
   if (!Decoration)
     return nullptr;

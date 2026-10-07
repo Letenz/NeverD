@@ -24,6 +24,7 @@
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/libc/LibCNames.h"
 
 #include "llvm/Support/raw_ostream.h"
 
@@ -119,6 +120,8 @@ public:
     std::string Name;
     bool Written = false;
   };
+  /// \p Text, an expression printed as a statement of its own.
+  static std::string statementText(std::string Text);
   std::string memoryLoadExpr(
       const TypeRef &Ty, llvm::StringRef Addr,
       NdMemoryOrdering MemoryOrdering = NdMemoryOrdering::None,
@@ -294,6 +297,13 @@ public:
   /// MSVC member rows live in MsvcCallees.def; `_ctor` keeps this plus a
   /// pointer/string/fill source and drops leftover register clobbers.
   size_t debugCallArgLimit(const HighExpr &E) const;
+  /// The fixed arity of the known function \p Symbol, which the C name
+  /// \p Identifier reads; a C++ stem is no name the tables know.
+  static std::optional<libc::LibCArity> knownArity(llvm::StringRef Symbol,
+                                                   llvm::StringRef Identifier);
+  /// How many arguments the plain declaration of the external function \p E
+  /// calls gives it (writeForwardDecls), when its arity is known.
+  std::optional<size_t> plainDeclarationArity(const HighExpr &E) const;
   void collectUnknownOnlyNames(const HighFunc &Func);
   void collectCtorSourceNames(const HighFunc &Func);
   bool isUnknownCallOperand(const HighExpr *Op) const;
@@ -522,6 +532,8 @@ public:
   std::map<va_t, const HighFunc *> DefinedFunctionsByAddress;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
   std::map<const HighFunc *, std::string> FunctionIdentifiers;
+  /// The C name each defined function's symbol spells, for its comment.
+  std::map<const HighFunc *, std::string> FunctionSymbolNames;
   std::map<std::string, std::string> FunctionIdentifiersBySourceName;
   std::map<std::string, std::string> ExternalFunctionIdentifiers;
   // External prototypes use projected C names, while call expressions still

@@ -158,8 +158,10 @@ NEVERD_API int neverd_pointer_at(neverd_session_t Sess, neverd_va_t Address,
 NEVERD_API const char *neverd_decompile(neverd_session_t Sess,
                                         neverd_va_t FuncEntry);
 
-/// LLVM-to-C for one native function (`neverd decompile --llvm`).  EVM and
-/// SBF have dedicated backends and return empty.  Free with neverd_free_string.
+/// LLVM-to-C for one native function (`neverd decompile --llvm`).  Only its
+/// body is emitted, with the other functions declared, so a function the
+/// emitter refuses fails alone.  EVM and SBF have dedicated backends and
+/// return empty.  Free with neverd_free_string.
 NEVERD_API const char *neverd_decompile_llvm(neverd_session_t Sess,
                                              neverd_va_t FuncEntry);
 

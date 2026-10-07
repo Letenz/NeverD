@@ -1,6 +1,6 @@
 **Langues** : [English](../emulation.md) | [简体中文](../zh-CN/emulation.md) | [繁體中文](../zh-TW/emulation.md) | [日本語](../ja/emulation.md) | [한국어](../ko/emulation.md) | [Français](emulation.md) | [Deutsch](../de/emulation.md) | [Español](../es/emulation.md) | [Italiano](../it/emulation.md) | [Русский](../ru/emulation.md) | [العربية](../ar/emulation.md)
 
-<!-- i18n-source: 43404b1ba61f34e6aed8a220c1bff2ec811fe2e43200dc183d01f9d774bf936e -->
+<!-- i18n-source: a3e64122b77a690dd856d02f5b2af53973d3bf1affd973bea5f9735aa9dd6722 -->
 
 [← Index de la documentation](README.md)
 
@@ -33,6 +33,8 @@ Pour les contrats natifs pris en charge, `auto` choisit KVM sous Linux, WHP sous
 `WindowsProcessHeap` centralise allocation, `HeapReAlloc`, libération et taille du tas du processus. Le redimensionnement conserve les octets retenus ; `HEAP_ZERO_MEMORY` initialise les octets ajoutés et `HEAP_REALLOC_IN_PLACE_ONLY` interdit le déplacement. Un redimensionnement échoué conserve le bloc et renvoie NULL avec `ERROR_NOT_ENOUGH_MEMORY` (8), conformément aux observations natives. Les pages indépendantes restituent leur capacité lors des réductions et libérations ; croissance préparée et copies bornées vérifient l’échéance. Tas personnalisés, indicateurs générant des exceptions, propriété inconnue et plages inaccessibles arrêtent explicitement l’exécution. `WindowsHeapTests.cpp` couvre les deux ISA, déplacement imposé, réutilisation du budget et atomicité des échecs ; CI exécute aussi le même EXE original sur Windows natif.
 
 La mémoire virtuelle Windows ajoute `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` et `FlushInstructionCache` pour le processus courant. La couche OS possède les réservations ; `AddressSpace` reste la référence pour les pages validées, les permissions et leur stockage. Les tests couvrent la réécriture de code, les défauts d’accès et la réutilisation du budget mémoire.
+
+`WriteProcessMemory` suit le comportement des pages engagées observé sur x64/ARM64 pour les écritures de 4 Kio au maximum dans le processus courant. Il conserve la protection de chaque région, les préfixes copiés, les nombres d'octets et LastError, y compris `ERROR_NOACCESS`, `ERROR_PARTIAL_COPY` et le succès après un préfixe RX. `WindowsMemoryWriteTests.cpp` contrôle les 25 paires de protections ; `check_windows_memory_write.py` vérifie le même exécutable original dans la CI Windows native. Les destinations non engagées restent explicitement non prises en charge.
 
 <!-- i18n-section: vectored-exceptions -->
 

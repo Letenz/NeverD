@@ -1293,6 +1293,12 @@ Recognized library operation; click to show its code.</source>
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>此代码编译所需的包含文件、辅助类型和声明；单击可显示，按小键盘 - 可再次折叠。</translation>
     </message>
+    <message>
+        <source>%1
+Double-click to go to the declaration.</source>
+        <translation>%1
+双击转到声明。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1537,6 +1543,14 @@ Recognized library operation; click to show its code.</source>
     <message>
         <source>Text encoding</source>
         <translation>文本编码</translation>
+    </message>
+    <message>
+        <source>Copy takes at most %1 bytes; select fewer.</source>
+        <translation>复制最多 %1 字节，请少选一些。</translation>
+    </message>
+    <message>
+        <source>The selection holds bytes no segment maps; nothing was copied.</source>
+        <translation>所选内容包含未被任何段映射的字节，未复制任何内容。</translation>
     </message>
 </context>
 <context>
@@ -1911,6 +1925,26 @@ Signed: %4</source>
     <message>
         <source>Display columns: a wide East Asian character counts two</source>
         <translation>显示列数：东亚宽字符计为两列</translation>
+    </message>
+    <message>
+        <source>Expand declarations</source>
+        <translation>展开声明</translation>
+    </message>
+    <message>
+        <source>Collapse declarations</source>
+        <translation>折叠声明</translation>
+    </message>
+    <message>
+        <source>Show or hide the includes and declarations before the function (Keypad + / Keypad -)</source>
+        <translation>显示或隐藏函数前的包含文件和声明（小键盘 + / 小键盘 -）</translation>
+    </message>
+    <message>
+        <source>Expand library operations</source>
+        <translation>展开库操作</translation>
+    </message>
+    <message>
+        <source>Collapse library operations</source>
+        <translation>折叠库操作</translation>
     </message>
 </context>
 <context>

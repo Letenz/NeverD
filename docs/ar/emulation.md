@@ -1,6 +1,6 @@
 **اللغات**: [English](../emulation.md) | [简体中文](../zh-CN/emulation.md) | [繁體中文](../zh-TW/emulation.md) | [日本語](../ja/emulation.md) | [한국어](../ko/emulation.md) | [Français](../fr/emulation.md) | [Deutsch](../de/emulation.md) | [Español](../es/emulation.md) | [Italiano](../it/emulation.md) | [Русский](../ru/emulation.md) | [العربية](emulation.md)
 
-<!-- i18n-source: 43404b1ba61f34e6aed8a220c1bff2ec811fe2e43200dc183d01f9d774bf936e -->
+<!-- i18n-source: a3e64122b77a690dd856d02f5b2af53973d3bf1affd973bea5f9735aa9dd6722 -->
 
 [← فهرس التوثيق](README.md)
 
@@ -33,6 +33,8 @@
 يجمع `WindowsProcessHeap` تخصيص كومة العملية و`HeapReAlloc` والتحرير والاستعلام عن الحجم. يحفظ تغيير الحجم البايتات المحتفظ بها؛ يصفّر `HEAP_ZERO_MEMORY` البايتات المضافة ويمنع `HEAP_REALLOC_IN_PLACE_ONLY` نقل الكتلة. يحفظ فشل إعادة التخصيص الكتلة القديمة ويعيد NULL مع ضبط `ERROR_NOT_ENOUGH_MEMORY` (8)، وفقاً للمشاهدات الأصلية. تعيد الصفحات المستقلة السعة عند التقليص والتحرير، ويفحص التوسيع المرحلي والنسخ المحدود مهلة التنفيذ. تتوقف صراحةً الأكوام المخصصة وأعلام توليد الاستثناءات والملكية المجهولة ونطاقات النسخ أو التصفير غير القابلة للوصول. يغطي `WindowsHeapTests.cpp` المعماريتين والنقل الإجباري وإعادة استخدام الميزانية وذرية الفشل؛ وتشغّل CI ملف EXE الأصلي نفسه على Windows أصلي.
 
 تضيف الذاكرة الافتراضية في Windows دعم `VirtualAlloc` و`VirtualFree` و`VirtualProtect` و`VirtualQuery` و`FlushInstructionCache` للعملية الحالية. تدير طبقة OS الحجوزات، وتبقى `AddressSpace` المرجع للصفحات الملتزم بها والصلاحيات والتخزين الفعلي. تشمل الاختبارات تعديل الشيفرة وأخطاء الوصول وإعادة استخدام ميزانية الذاكرة.
+
+يتبع `WriteProcessMemory` سلوك الصفحات الملتزم بها المقاس على x64/ARM64 عند كتابة ما لا يتجاوز 4 KiB في العملية الحالية. ويحافظ على حماية كل منطقة والبادئات المنسوخة وعدد البايتات وLastError، بما في ذلك `ERROR_NOACCESS` و`ERROR_PARTIAL_COPY` والنجاح بعد كتابة بادئة RX. يفحص `WindowsMemoryWriteTests.cpp` أزواج الحماية الخمسة والعشرين كلها، ويتحقق `check_windows_memory_write.py` من الملف التنفيذي الأصلي نفسه في CI على Windows الأصلي. تظل الوجهات غير الملتزم بها غير مدعومة صراحةً.
 
 <!-- i18n-section: vectored-exceptions -->
 

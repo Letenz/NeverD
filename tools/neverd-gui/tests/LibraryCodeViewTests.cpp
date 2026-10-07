@@ -74,8 +74,13 @@ private slots:
     QCOMPARE(view.originalSelection(0, summaryEnd),
              QString("#include <stdint.h>\n"));
     QCOMPARE(view.sourceLineAt(summaryEnd + 1), 2);
+    // Source line 2 shows on display line 1, under the summary.
+    QVERIFY(view.hasRegion("prelude"));
+    QCOMPARE(view.displayLine(2), 1);
+    QCOMPARE(view.displayLine(99), -1);
     view.toggleRegion("prelude");
     QCOMPARE(view.text(), source);
+    QCOMPARE(view.displayLine(2), 2);
   }
 
   void disjointSpansPreserveInterleavedCodeAndNavigation() {

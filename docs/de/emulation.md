@@ -1,6 +1,6 @@
 **Sprachen**: [English](../emulation.md) | [简体中文](../zh-CN/emulation.md) | [繁體中文](../zh-TW/emulation.md) | [日本語](../ja/emulation.md) | [한국어](../ko/emulation.md) | [Français](../fr/emulation.md) | [Deutsch](emulation.md) | [Español](../es/emulation.md) | [Italiano](../it/emulation.md) | [Русский](../ru/emulation.md) | [العربية](../ar/emulation.md)
 
-<!-- i18n-source: 43404b1ba61f34e6aed8a220c1bff2ec811fe2e43200dc183d01f9d774bf936e -->
+<!-- i18n-source: a3e64122b77a690dd856d02f5b2af53973d3bf1affd973bea5f9735aa9dd6722 -->
 
 [← Dokumentationsindex](README.md)
 
@@ -33,6 +33,8 @@ Bei unterstützten nativen Verträgen wählt `auto` KVM unter Linux, WHP unter W
 `WindowsProcessHeap` verwaltet Allokation, `HeapReAlloc`, Freigabe und Größenabfragen des Prozessheaps gemeinsam. Größenänderungen erhalten die verbleibenden Bytes; `HEAP_ZERO_MEMORY` löscht hinzugefügte Bytes, `HEAP_REALLOC_IN_PLACE_ONLY` verbietet Verschiebungen. Fehlgeschlagene Größenänderungen erhalten den alten Block und liefern NULL mit `ERROR_NOT_ENOUGH_MEMORY` (8), entsprechend den nativen Beobachtungen. Separate Seiten geben bei Verkleinerung und Freigabe Kapazität zurück; vorbereitetes Wachstum und begrenzte Kopien prüfen die Ausführungsfrist. Eigene Heaps, Ausnahmeflags, unbekannter Besitz und unzugängliche Kopier- oder Löschbereiche stoppen ausdrücklich. `WindowsHeapTests.cpp` prüft beide ISAs, erzwungene Verschiebung, Budgetwiederverwendung und Fehleratomarität; CI führt dieselbe eigene EXE auch auf nativem Windows aus.
 
 Der virtuelle Windows-Speicher ergänzt `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` und `FlushInstructionCache` für den aktuellen Prozess. Die OS-Schicht verwaltet Reservierungen; `AddressSpace` bleibt maßgeblich für zugesicherte Seiten, Zugriffsrechte und deren Speicher. Tests prüfen Codeänderungen, Zugriffsfehler und die Wiederverwendung des Speicherbudgets.
+
+`WriteProcessMemory` folgt bei Schreibzugriffen von höchstens 4 KiB auf den aktuellen Prozess dem auf x64/ARM64 beobachteten Verhalten zugesicherter Seiten. Der Schutz jedes Bereichs, kopierte Präfixe, Bytezahlen und LastError bleiben erhalten, einschließlich `ERROR_NOACCESS`, `ERROR_PARTIAL_COPY` und Erfolg nach einem RX-Präfix. `WindowsMemoryWriteTests.cpp` prüft alle 25 Schutzpaare; `check_windows_memory_write.py` überprüft dieselbe selbst erstellte ausführbare Datei in nativer Windows-CI. Nicht zugesicherte Zielbereiche bleiben ausdrücklich nicht unterstützt.
 
 <!-- i18n-section: vectored-exceptions -->
 
