@@ -1261,6 +1261,8 @@ SourceFrameAnalysis отделяет полное входное значени�
 
 Виртуальная память Windows поддерживает `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` и `FlushInstructionCache` для текущего процесса. Уровень ОС управляет резервированием; `AddressSpace` остаётся единственным владельцем отображений подтверждённых страниц, прав доступа и физической памяти. Тесты проверяют изменение кода, ошибки доступа и повторное использование лимита памяти.
 
+`WriteProcessMemory` воспроизводит измеренное на x64/ARM64 поведение страниц в состоянии MEM_COMMIT при записи до 4 КиБ в текущий процесс. Сохраняются защита каждого региона, скопированные префиксы, число байтов и LastError, включая `ERROR_NOACCESS`, `ERROR_PARTIAL_COPY` и успешный результат после префикса RX. `WindowsMemoryWriteTests.cpp` проверяет все 25 пар защиты; `check_windows_memory_write.py` проверяет тот же оригинальный исполняемый файл в CI на настоящей Windows. Целевые страницы без MEM_COMMIT явно не поддерживаются.
+
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 Политикой времени процессов Windows владеет `WindowsProcessTime.cpp` в `os/windows/process/`. `std::chrono` разделяет реальное время хоста и монотонный счётчик, а `WindowsProcess.def` задаёт единицы времени гостя и конечный предел ожидания. CPU-транспорты не содержат политики времени Windows.

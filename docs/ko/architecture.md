@@ -1166,6 +1166,8 @@ UIButton의 `contentEdgeInsets`, `imageEdgeInsets`, `titleEdgeInsets` getter/set
 
 Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`와 현재 프로세스의 `FlushInstructionCache`를 지원합니다. OS 계층은 예약 영역을 소유하고 `AddressSpace`는 커밋된 페이지, 권한, 실제 저장 공간을 관리합니다. 테스트는 동적 코드 수정, 접근 오류, 메모리 한도 재사용을 검증합니다.
 
+`WriteProcessMemory`는 현재 프로세스에 최대 4 KiB를 쓸 때 x64/ARM64에서 실측한 커밋된 페이지의 동작을 따릅니다. 각 영역의 보호 속성, 복사된 앞부분, 바이트 수와 LastError를 보존하며 `ERROR_NOACCESS`, `ERROR_PARTIAL_COPY`, RX 앞부분을 쓴 뒤 성공을 반환하는 동작도 재현합니다. `WindowsMemoryWriteTests.cpp`는 보호 속성의 25가지 조합을 모두 검사하고, `check_windows_memory_write.py`는 같은 자체 제작 실행 파일을 네이티브 Windows CI에서 검증합니다. 커밋되지 않은 대상 영역은 명시적으로 지원하지 않습니다.
+
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 Windows 프로세스 시간 정책은 `os/windows/process/`의 `WindowsProcessTime.cpp`가 담당합니다. `std::chrono`는 호스트 벽시계와 단조 카운터를 구분하고 `WindowsProcess.def`는 게스트 시간 단위와 유한 대기 한도를 정의합니다. CPU 백엔드에는 Windows 시간 정책을 두지 않습니다.

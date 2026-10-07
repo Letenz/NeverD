@@ -2134,6 +2134,9 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "WindowsProcess.VirtualProtectObservesAliasedOutputPermissions/"
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsMemoryWrite.MatchesNativeProtectionAndPartialWriteMatrix/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/"
     "WindowsProcess.VirtualMemoryTopDownPlacementHonorsSparseReservations/"
     "{backend_title}X64")

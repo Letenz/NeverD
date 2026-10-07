@@ -1313,6 +1313,8 @@ Bei `EXCEPTION_NONCONTINUABLE` löst ein x64-Filter mit Rückgabe `EXCEPTION_CON
 
 Der virtuelle Windows-Speicher ergänzt `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` und `FlushInstructionCache` für den aktuellen Prozess. Die OS-Schicht verwaltet Reservierungen; `AddressSpace` bleibt maßgeblich für zugesicherte Seiten, Zugriffsrechte und deren Speicher. Tests prüfen Codeänderungen, Zugriffsfehler und die Wiederverwendung des Speicherbudgets.
 
+`WriteProcessMemory` folgt bei Schreibzugriffen von höchstens 4 KiB auf den aktuellen Prozess dem auf x64/ARM64 beobachteten Verhalten zugesicherter Seiten. Der Schutz jedes Bereichs, kopierte Präfixe, Bytezahlen und LastError bleiben erhalten, einschließlich `ERROR_NOACCESS`, `ERROR_PARTIAL_COPY` und Erfolg nach einem RX-Präfix. `WindowsMemoryWriteTests.cpp` prüft alle 25 Schutzpaare; `check_windows_memory_write.py` überprüft dieselbe selbst erstellte ausführbare Datei in nativer Windows-CI. Nicht zugesicherte Zielbereiche bleiben ausdrücklich nicht unterstützt.
+
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 Die Zeitregeln für Windows-Prozesse liegen in `WindowsProcessTime.cpp` unter `os/windows/process/`. `std::chrono` trennt Host-Echtzeit und monotonen Zähler; `WindowsProcess.def` definiert Gast-Zeiteinheiten und die endliche Wartegrenze. CPU-Transporte enthalten keine Windows-Zeitregeln.

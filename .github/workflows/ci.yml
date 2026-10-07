@@ -2044,6 +2044,11 @@ jobs:
           python-version: '3.12'
       - name: Compile and observe the original Windows caller context
         run: python scripts/check_windows_context.py --arch ${{ matrix.arch }} --output build-context-oracle
+      - name: Observe original Windows cross-page process writes
+        run: |
+          python -m unittest scripts.tests.test_check_windows_memory_write
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/check_windows_memory_write.py --arch ${{ matrix.arch }} --output build-memory-write-oracle
       - name: Verify original nonempty x87 capture
         if: ${{ matrix.arch == 'X64' }}
         run: python scripts/check_windows_context.py --arch X64 --floating-point --output build-context-fp
@@ -2066,5 +2071,6 @@ jobs:
             build-context-fp/
             build-simd-oracle/
             build-exclusive-oracle/
+            build-memory-write-oracle/
           if-no-files-found: error
           retention-days: 14
