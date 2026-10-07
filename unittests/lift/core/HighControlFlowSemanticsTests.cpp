@@ -41,7 +41,7 @@ void elimConsecutiveDeadStores(std::vector<HighStmt> &);
 void postRenameCleanup(std::vector<HighStmt> &);
 void renameVars(std::vector<HighStmt> &);
 void eliminateUnusedValues(std::vector<HighStmt> &);
-void narrowUnreadRegisterBytes(HighFunc &);
+void narrowUnreadRegisterBytes(HighFunc &, Arch Architecture = Arch::Unknown);
 } // namespace neverd
 using namespace neverd;
 
@@ -7577,6 +7577,104 @@ TEST(HighControlFlowSemantics, ByteWriteIntoUnsetRegisterDropsUnreadBytes) {
   Keep.StoreAddr = HighExpr::makeConst(0x9000, 8);
   Keep.StoreVal = local(1);
   F.Body = {ByteWrite(), Keep, result(0x1004, LowByte)};
+  narrowUnreadRegisterBytes(F);
+  EXPECT_TRUE(HasUndef(F));
+}
+
+TEST(HighControlFlowSemantics, ByteReadOfArithmeticDropsUnreadBytes) {
+  // v = CONCAT(unset upper bytes, 7); return (uint8_t)(v + 0xFE); -- `and
+  // al, 7; lea ecx, [rax-2]; cmp cl, ..`: the low byte of a sum reads only
+  // the operands' low bytes, and the low byte of CONCAT(h, l) never reads h.
+  auto ByteWrite = [] {
+    auto Upper = HighExpr::makeBinop(NdOp::SUBBYTES, HighExpr::makeUndef(8),
+                                     HighExpr::makeConst(1, 4));
+    Upper->Type = NdType::makeInt(7, false);
+    auto Joined =
+        HighExpr::makeBinop(NdOp::CONCAT, Upper, HighExpr::makeConst(7, 1));
+    Joined->Type = NdType::makeInt(8, false);
+    auto Write = assign(0x1000, 1, 0);
+    Write.Val = Joined;
+    return Write;
+  };
+  auto LowByteOf = [](ExprPtr Value) {
+    auto Low =
+        HighExpr::makeBinop(NdOp::SUBBYTES, Value, HighExpr::makeConst(0, 4));
+    Low->Type = NdType::makeInt(1, false);
+    return Low;
+  };
+  auto HasUndef = [](const HighFunc &F) {
+    bool Found = false;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        std::function<void(const HighExpr &)> Walk = [&](const HighExpr &N) {
+          Found |= N.Kind == ExprKind::Undef;
+          N.forEachChildExpr([&](const ExprPtr &C) { Walk(*C); });
+        };
+        if (E)
+          Walk(*E);
+      });
+    });
+    return Found;
+  };
+  auto Sum = HighExpr::makeBinop(NdOp::INT_ADD, local(1),
+                                 HighExpr::makeConst(0xFE, 8));
+  Sum->Type = NdType::makeInt(8, false);
+  HighFunc F;
+  F.Body = {ByteWrite(), result(0x1004, LowByteOf(Sum))};
+  narrowUnreadRegisterBytes(F);
+  EXPECT_FALSE(HasUndef(F));
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(5));
+
+  // The upper bytes of v reach the result only through a high part that
+  // the low byte never reads.
+  auto High =
+      HighExpr::makeBinop(NdOp::SUBBYTES, local(1), HighExpr::makeConst(1, 4));
+  High->Type = NdType::makeInt(7, false);
+  auto Rejoined = HighExpr::makeBinop(NdOp::CONCAT, High, LowByteOf(local(1)));
+  Rejoined->Type = NdType::makeInt(8, false);
+  auto Plus =
+      HighExpr::makeBinop(NdOp::INT_ADD, Rejoined, HighExpr::makeConst(74, 8));
+  Plus->Type = NdType::makeInt(8, false);
+  F.Body = {ByteWrite(), result(0x1004, LowByteOf(Plus))};
+  narrowUnreadRegisterBytes(F);
+  EXPECT_FALSE(HasUndef(F));
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(81));
+
+  // So are the upper bytes of a register the function never sets: they
+  // would print as an unknown register.
+  MedVar Unset;
+  Unset.Kind = MedVar::Reg;
+  Unset.Id = 9;
+  Unset.Size = 8;
+  auto UnsetUpper = HighExpr::makeBinop(
+      NdOp::SUBBYTES, HighExpr::makeVar(Unset), HighExpr::makeConst(1, 4));
+  UnsetUpper->Type = NdType::makeInt(7, false);
+  auto FromUnset =
+      HighExpr::makeBinop(NdOp::CONCAT, UnsetUpper, HighExpr::makeConst(7, 1));
+  FromUnset->Type = NdType::makeInt(8, false);
+  auto UnsetWrite = assign(0x1000, 1, 0);
+  UnsetWrite.Val = FromUnset;
+  F.Body = {UnsetWrite, result(0x1004, LowByteOf(Sum))};
+  narrowUnreadRegisterBytes(F);
+  bool ReadsUnset = false;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      std::function<void(const HighExpr &)> Walk = [&](const HighExpr &N) {
+        ReadsUnset |= N.Kind == ExprKind::Var && N.Var.Kind == MedVar::Reg;
+        N.forEachChildExpr([&](const ExprPtr &C) { Walk(*C); });
+      };
+      if (E)
+        Walk(*E);
+    });
+  });
+  EXPECT_FALSE(ReadsUnset);
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(5));
+
+  // The low byte of a right shift reads the bytes above it.
+  auto Shifted =
+      HighExpr::makeBinop(NdOp::INT_RIGHT, local(1), HighExpr::makeConst(8, 8));
+  Shifted->Type = NdType::makeInt(8, false);
+  F.Body = {ByteWrite(), result(0x1004, LowByteOf(Shifted))};
   narrowUnreadRegisterBytes(F);
   EXPECT_TRUE(HasUndef(F));
 }
