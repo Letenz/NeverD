@@ -1563,3 +1563,4 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` は、分岐変更とシンボリックなフレーム書き込みを含む反復ネイティブ分岐先列、固定論理コスト、問い合わせ予算の境界と一回不足、不正な分岐先数制限、ゲート予算の枯渇、誤った終端観測を検証します。交互のフレーム射影と相関する分岐先射影では、述語置換後も完全なタプル、観測順序、不完全結果の拒否を維持します。
+`FrameOffsets.Cached*` は基準値の上位ビットを任意のままにしたアドレス平行移動、符号なしの折り返し、和の形状変更、両キャッシュ方式、述語の分離、容量ゼロ、クエリ／ノード予算による拒否、空の値域と非一意な値域の区別を検証する。初回要求は完全なソルバー証明を保持し、後続の平行移動はクエリ予算が残っていなくても完了済みの証明を利用できる。

@@ -3065,3 +3065,5 @@ then the complete Linux process, Android native and
 public process suites when changing shared kernel or descriptor semantics.
 These tests execute the model; they do not boot the eight pinned GKI kernels.
 See [released GKI contracts](android-gki-kernels.md).
+
+`FrameOffsets.Cached*` covers translated addresses with arbitrary high root bits, unsigned wrap, sum-shape changes, both cache modes, predicate separation, zero capacity, query/node budget refusals, and distinct empty/nonunique domains. Cold requests retain complete solver proofs; later translations may use an already completed proof with no remaining query budget.

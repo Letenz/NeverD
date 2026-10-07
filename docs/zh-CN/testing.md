@@ -1471,3 +1471,4 @@ MainActor 测试数据检查完整的固定元数据与静态表流程，拒绝�
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` 检查带分支变化和符号帧写入的重复原生目标链、固定逻辑开销、精确及少一次查询预算、无效目标限额、门预算耗尽和错误终点观察。交错的帧与相关目标投影还在谓词替换前后保持完整元组、观察顺序及不完整结果拒绝。
+`FrameOffsets.Cached*` 覆盖根高位保持任意的地址平移、无符号回绕、和式形状变化、两种缓存模式、谓词隔离、零容量、查询／节点预算拒绝，以及空域与非唯一域的区别。首次请求保留完整求解证明；后续平移可在没有剩余查询预算时使用已经完成的证明。
