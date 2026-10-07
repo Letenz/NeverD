@@ -358,7 +358,9 @@ fixture は、ゲストの初期化、成功／失敗の戻り値、未対応動
 
 `DriverMutexThreadTests.cpp` は `driver_seh_mutex.def` の四つの独自 WDK モードを実行します。SEH フィルター内の再帰取得、フィルターまたは例外 finally が取得した所有権の保持、別のシステムスレッドによる解放後のブロック中フィルターの再開です。Unicorn/KVM/WHP の driver と checked 契約で、通常／有効 CFG イメージ、推奨／再配置アドレス、協調動作と 1/17 命令の時間片を検証します。モデルテストはネストしたスタック破棄後の APC 無効化、別スレッドからの解放拒否、最外層の復帰検査も確認します。KVM/WHP ケースは `NativeDriverTests.def` の必須項目です。
 
-`KernelWaitSetTests.cpp` は Unicorn なしで 15 件のモデルテストを実行し、部分的 `WaitAll`、先頭の準備済み `WaitAny`、保存インデックス、タイムアウト後の解放、不正な後続対象／領域、64 対象境界、IRQL、終了スレッド保持、2 個の同期タイマーを検証します。`DriverMultipleWaitTests.cpp` は `driver_wdm_multiple_wait.c` と `DriverMultipleWaitCases.def` の 7 種の独自 WDK モードを、Unicorn/KVM/WHP、両ドライバー契約、通常／CFG イメージ、再配置、協調／1／17 命令クォンタムで実行します。29 件のモデル／ネイティブ結果は `NativeDriverTests.def` の必須項目です。 回帰テストでは成功・タイムアウト後の重複完了、保存状態の変更、遅延待機の重複完了も検証します。
+`KernelWaitSetTests.cpp` は Unicorn なしで 16 件のモデルテストを実行し、部分的 `WaitAll`、先頭の準備済み `WaitAny`、保存インデックス、タイムアウト後の解放、不正な後続対象／領域、64 対象境界、IRQL、終了スレッド保持、2 個の同期タイマーを検証します。`DriverMultipleWaitTests.cpp` は `driver_wdm_multiple_wait.c` と `DriverMultipleWaitCases.def` の 7 種の独自 WDK モードを、Unicorn/KVM/WHP、両ドライバー契約、通常／CFG イメージ、再配置、協調／1／17 命令クォンタムで実行します。30 件のモデル／ネイティブ結果は `NativeDriverTests.def` の必須項目です。 回帰テストでは成功・タイムアウト後の重複完了、保存状態の変更、遅延待機の重複完了も検証します。
+
+`KernelMultipleWait.DispatcherScalarParametersIgnoreUpperRegisterBits` は上位ビットの汚染、符号付き境界、オーバーフロー、およびオブジェクト状態が変わらないことを検証します。`DriverMultipleWaitCases.def` の裸の末尾呼び出しラッパーは、`driver_wdm_multiple_wait.c` の実際の WDK インポートを通じて同じ有効な ABI 呼び出しを実行し、有効な CFG、再配置、命令単位のプリエンプションも検証します。
 
 `driver_context_limits.c`: API の IRQL 上限は `KernelAPIIRQL.def` にあり、引数依存の制約は担当モデルが検査します。DPC からレジストリ API やページプールの割り当て・解放・アクセスはできません。Unicode `DbgPrint` 変換は `PASSIVE_LEVEL` を要求し、対応する ANSI 出力と非ページ操作は `DISPATCH_LEVEL` で使用できます。コールバックスタックには範囲があり、逸脱したスタックポインターは別の待機ワーカーのスタックへ侵入できません。デバイス拡張内の有効なタイマーは早期解放を防ぎます。一般の IRQL 変更を公開する機能ではありません。
 
@@ -1234,7 +1236,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `4935 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5296`。待機集合の 29 件は移植可能なモデル 15 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `4935 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5297`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1350,6 +1352,8 @@ Windows ring3 は独立したネイティブ観測に従い、checked x64 の `o
 `WindowsLifetimeTests.cpp` は固定トレースを独立したネイティブ Windows プロセスと KVM/WHP/Unicorn で照合します。通常終了、入口 return、両 DLL の初期化失敗、4 箇所の早期終了、入口なし DLL を含みます。回呼障害、共通予算、再配置 TLS フィールド、TLS 総容量も検証します。ネイティブ入口 return のプローブは初期スレッドのハンドルを保持し、終了コードと正確なスレッド／プロセス通知列を 64 回検証します。残る子スレッドは観測後に終了させ、プロセス終了値を入口の戻り値として扱いません。
 
 `NeverDUnpackTests`、`NeverDUnpackExecutionTests`、`NeverDUnpackPublicTests` はパックされたイメージの復元を対象とします。[アンパック](unpack.md)を参照してください。`UnpackGeneratedTests.cpp` は、テスト自身がパックしたプログラムを使って、x86-64 と ARM64 でエントリの規則を検査します。`X64ReturnPrefixTests.cpp` は 2 バイトの近リターンをすべてのトランスポートで検査し、それ以外のプレフィックス付きリターンが拒否されたままであることを確認します。`WindowsDeferredTests.cpp` は不透明なエントリと停止したプロセスの観測を、`ExecutionSessionTests.cpp` は実行ウォッチを検査します。 `DirectX64Tests.cpp` は部分ページの監視、ページ境界の命令取得、一度だけの再開、サービス境界、無効命令とタイムアウト時の状態も検証します。
+
+`WindowsDeferred.EarlierTLSCallbackMayGenerateALaterCallback` は、`IMAGE_SCN_CNT_UNINITIALIZED_DATA` を持つ独立した `.gentls` セクションを要求し、宣言されたバッファ範囲との完全一致と、生データのサイズおよびポインターがゼロであることを確認します。`WindowsDeferredCases.def` が記憶域とアセンブリを定義し、通常の `.data` は独立します。生成コールバックと生成エントリーの両ケースで、x64/ARM64 の厳密な拒否および遅延実行チェックを維持します。
 
 `ExtendedRegistersLoadOrdinaryImportsAgain` はコンパクト形式と余白付き R8-R15 読み込みを検査付き・直接 x64 実行で確認します。下位レジスタの例は直前の REX 風バイトと CALL のみのアドレス補助ルーチンを扱い、余白付き呼び出しは CALL 後の任意バイトを飛ばします。`ImportCallHelpersCannotDiscardPersistentEffects` は永続的な副作用の保存を確認します。`PERebuildTests.cpp` は開始・結果証拠の欠落と重複開始を拒否し、6～8 バイト領域の正確な API 戻りアドレスを維持します。
 

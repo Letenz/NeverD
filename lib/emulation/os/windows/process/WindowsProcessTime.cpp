@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "WindowsProcessModules.h"
+#include "WindowsProcess.h"
 
 #include "neverd/emulation/CPU.h"
 
