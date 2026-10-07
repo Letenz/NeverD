@@ -1,0 +1,92 @@
+//===- WindowsMemoryWriteCases.def - Original process-write observations --===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_MEMORY_WRITE_VALUE
+NEVERD_MEMORY_WRITE_VALUE(PageSize, 0x1000)
+NEVERD_MEMORY_WRITE_VALUE(MemCommitReserve, 0x3000)
+NEVERD_MEMORY_WRITE_VALUE(MemRelease, 0x8000)
+NEVERD_MEMORY_WRITE_VALUE(WriteSize, 2)
+NEVERD_MEMORY_WRITE_VALUE(InitialFirst, 0x31)
+NEVERD_MEMORY_WRITE_VALUE(InitialSecond, 0x52)
+NEVERD_MEMORY_WRITE_VALUE(UpdatedFirst, 0xa4)
+NEVERD_MEMORY_WRITE_VALUE(UpdatedSecond, 0xb7)
+NEVERD_MEMORY_WRITE_VALUE(LastErrorSeed, 0x12345678)
+NEVERD_MEMORY_WRITE_VALUE(WrittenSeed, 0xffffffff)
+NEVERD_MEMORY_WRITE_VALUE(StdoutSelector, 0xfffffff5)
+NEVERD_MEMORY_WRITE_VALUE(CompletionStatus, 0)
+NEVERD_MEMORY_WRITE_VALUE(FailureStatus, 99)
+NEVERD_MEMORY_WRITE_VALUE(RecordSize, 72)
+NEVERD_MEMORY_WRITE_VALUE(InformationSize, 48)
+NEVERD_MEMORY_WRITE_VALUE(BuildTimeoutSeconds, 60)
+NEVERD_MEMORY_WRITE_VALUE(NativeTimeoutSeconds, 10)
+NEVERD_MEMORY_WRITE_VALUE(InstructionLimit, 500000)
+NEVERD_MEMORY_WRITE_VALUE(TimeoutMicroseconds, 20000000)
+#endif
+#ifdef NEVERD_MEMORY_WRITE_PROTECTION
+NEVERD_MEMORY_WRITE_PROTECTION(NoAccess, 0x01)
+NEVERD_MEMORY_WRITE_PROTECTION(ReadOnly, 0x02)
+NEVERD_MEMORY_WRITE_PROTECTION(ReadWrite, 0x04)
+NEVERD_MEMORY_WRITE_PROTECTION(ExecuteRead, 0x20)
+NEVERD_MEMORY_WRITE_PROTECTION(ExecuteReadWrite, 0x40)
+#endif
+#ifdef NEVERD_MEMORY_WRITE_FIELD
+NEVERD_MEMORY_WRITE_FIELD(First)
+NEVERD_MEMORY_WRITE_FIELD(Second)
+NEVERD_MEMORY_WRITE_FIELD(Result)
+NEVERD_MEMORY_WRITE_FIELD(Error)
+NEVERD_MEMORY_WRITE_FIELD(Written)
+NEVERD_MEMORY_WRITE_FIELD(AfterFirst)
+NEVERD_MEMORY_WRITE_FIELD(AfterSecond)
+NEVERD_MEMORY_WRITE_FIELD(ByteFirst)
+NEVERD_MEMORY_WRITE_FIELD(ByteSecond)
+#endif
+#ifdef NEVERD_MEMORY_WRITE_API
+NEVERD_MEMORY_WRITE_API(ExitProcess)
+NEVERD_MEMORY_WRITE_API(GetCurrentProcess)
+NEVERD_MEMORY_WRITE_API(GetStdHandle)
+NEVERD_MEMORY_WRITE_API(GetLastError)
+NEVERD_MEMORY_WRITE_API(SetLastError)
+NEVERD_MEMORY_WRITE_API(WriteFile)
+NEVERD_MEMORY_WRITE_API(VirtualAlloc)
+NEVERD_MEMORY_WRITE_API(VirtualFree)
+NEVERD_MEMORY_WRITE_API(VirtualProtect)
+NEVERD_MEMORY_WRITE_API(VirtualQuery)
+NEVERD_MEMORY_WRITE_API(WriteProcessMemory)
+#endif
+#ifdef NEVERD_MEMORY_WRITE_TEXT
+NEVERD_MEMORY_WRITE_TEXT(ProgramFile, "memory-write.exe")
+NEVERD_MEMORY_WRITE_TEXT(SourceFile, "windows_memory_write.c")
+NEVERD_MEMORY_WRITE_TEXT(OutputDirectory, "windows-memory-write-fixtures")
+NEVERD_MEMORY_WRITE_TEXT(ProviderFile, "kernel32.dll")
+NEVERD_MEMORY_WRITE_TEXT(ProgramEntry, "entry")
+NEVERD_MEMORY_WRITE_TEXT(ProgramBase, "0x140000000")
+NEVERD_MEMORY_WRITE_TEXT(X64Target, "x86_64-pc-windows-msvc")
+NEVERD_MEMORY_WRITE_TEXT(AArch64Target, "aarch64-pc-windows-msvc")
+NEVERD_MEMORY_WRITE_TEXT(X64Machine, "x64")
+NEVERD_MEMORY_WRITE_TEXT(AArch64Machine, "arm64")
+NEVERD_MEMORY_WRITE_TEXT(InvalidInventory,
+                         "invalid process-write observation inventory")
+NEVERD_MEMORY_WRITE_TEXT(InvalidSize,
+                         "missing or extra process-write observations")
+NEVERD_MEMORY_WRITE_TEXT(InvalidIdentity,
+                         "process-write observation identity changed")
+NEVERD_MEMORY_WRITE_TEXT(InvalidResult,
+                         "invalid process-write observation values")
+NEVERD_MEMORY_WRITE_TEXT(DirtySource,
+                         "native observations require committed clean sources")
+NEVERD_MEMORY_WRITE_TEXT(HostMismatch,
+                         "native observations require matching Windows ISA")
+NEVERD_MEMORY_WRITE_TEXT(MissingTool,
+                         "required process-write fixture tool unavailable")
+NEVERD_MEMORY_WRITE_TEXT(UnexpectedStderr,
+                         "native process-write observation emitted stderr")
+NEVERD_MEMORY_WRITE_TEXT(
+    ChangedSource, "source changed during native process-write observation")
+#endif
+#ifdef NEVERD_MEMORY_WRITE_ABI
+NEVERD_MEMORY_WRITE_ABI(MemoryInfo, InformationSize, "memory-information ABI")
+NEVERD_MEMORY_WRITE_ABI(Observation, RecordSize,
+                        "process-write observation ABI")
+#endif
