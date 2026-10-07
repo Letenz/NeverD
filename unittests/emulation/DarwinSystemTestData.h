@@ -87,5 +87,18 @@ inline constexpr char ResourceUsageHex[] =
     "0200000000000000fdffffffffffffff0400000000000000fbffffffffffffff"
     "0600000000000000f9ffffffffffffff0800000000000000f7ffffffffffffff"
     "0a00000000000000f5ffffffffffffff0c00000000000000ffffffffffffff7f";
+inline DarwinSystemOptions credentialOptions() {
+  DarwinSystemOptions O;
+  O.Credentials = DarwinCredentials{
+      101, 202, 303, 404, std::vector<uint32_t>{404, 0, INT32_MAX, 7, 7}};
+  return O;
+}
+inline constexpr char CredentialsJSON[] =
+    R"({"credentials":{"real_uid":101,"effective_uid":202,"real_gid":303,"effective_gid":404,"groups":[404,0,"2147483647",7,7]}})";
+// Independently packed little-endian gids and four scalar IDs/count/list.
+inline constexpr char GroupsHex[] = "9401000000000000ffffff7f0700000007000000";
+inline constexpr char CredentialsHex[] =
+    "65000000ca0000002f01000094010000050000009401000000000000ffffff7f0700000007"
+    "000000";
 } // namespace neverd::emulation::darwin_test
 #endif

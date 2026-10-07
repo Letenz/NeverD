@@ -55,6 +55,120 @@ static u64 little_integer(const unsigned char *p, unsigned width) {
     value |= (u64)p[i] << (i * 8);
   return value;
 }
+static int credentials(int emit_values) {
+  unsigned error;
+  const u64 sentinel = 0x1122334455667788UL;
+#if defined(__aarch64__)
+  const u64 error_secondary = 0;
+#else
+  const u64 error_secondary = sentinel;
+#endif
+  u64 count = call(79, 0, -1UL, sentinel, 0, 0, 0, &error);
+  if (error || secondary || count < 1 || count > 16)
+    return 51;
+  u64 ids[4];
+  const unsigned getters[] = {24, 25, 47, 43};
+  for (unsigned i = 0; i != 4; ++i) {
+    ids[i] = call(getters[i], -1UL, -1UL, sentinel, 0, 0, 0, &error);
+    if (error || secondary || ids[i] > 0x7fffffffUL)
+      return 52 + i;
+  }
+  unsigned char bytes[66], saved[64], values[84];
+  const u64 capacities[] = {count, count + 1, 0x1000, 0x1234567800001000UL,
+                            0x1234567800000000UL | count};
+  for (unsigned n = 0; n != 5; ++n) {
+    for (unsigned i = 0; i != sizeof(bytes); ++i)
+      bytes[i] = 0xa5;
+    u64 returned =
+        call(79, capacities[n], (u64)(bytes + 1), sentinel, 0, 0, 0, &error);
+    if (error || secondary || returned != count || bytes[0] != 0xa5)
+      return 56;
+    for (unsigned i = 1 + 4 * count; i != sizeof(bytes); ++i)
+      if (bytes[i] != 0xa5)
+        return 57;
+    for (unsigned i = 0; i != 4 * count; ++i) {
+      if (!n)
+        saved[i] = bytes[i + 1];
+      else if (bytes[i + 1] != saved[i])
+        return 58;
+    }
+  }
+  if (little_integer(saved, 4) != ids[3])
+    return 59;
+  for (unsigned i = 0; i != count; ++i)
+    if (little_integer(saved + 4 * i, 4) > 0x7fffffffUL)
+      return 60;
+  for (unsigned i = 0; i != sizeof(bytes); ++i)
+    bytes[i] = 0xa5;
+  for (unsigned n = 0; n != 3; ++n) {
+    const u64 output = n == 0 ? 0 : n == 1 ? -1UL : (u64)(bytes + 1);
+    if (call(79, 0x1234567800000000UL, output, sentinel, 0, 0, 0, &error) !=
+            count ||
+        error || secondary)
+      return 61;
+  }
+  const u64 negative[] = {-1UL, 0x80000000UL, 0x12345678ffffffffUL};
+  for (unsigned n = 0; n != 3; ++n) {
+    if (call(79, negative[n], n == 0 ? (u64)(bytes + 1) : 0, sentinel, 0, 0, 0,
+             &error) != 22 ||
+        !error || secondary != error_secondary)
+      return 62;
+  }
+  if (count > 1 && (call(79, count - 1, 0, sentinel, 0, 0, 0, &error) != 22 ||
+                    !error || secondary != error_secondary))
+    return 63;
+  for (unsigned i = 0; i != sizeof(bytes); ++i)
+    if (bytes[i] != 0xa5)
+      return 64;
+  if (call(79, 0x1000, 0, sentinel, 0, 0, 0, &error) != 14 || !error ||
+      secondary != error_secondary)
+    return 65;
+  u64 mapped = call(197, 0, 2 * PAGE, 3, 0x1002, -1UL, 0, &error);
+  if (error || !mapped || secondary)
+    return 66;
+  /* Bound guest work independently of page size. All 132 guard bytes cross
+   * the page and enclose every supported group-list width; memory-owner tests
+   * separately verify both complete mapped pages. */
+  volatile unsigned char *guard =
+      (volatile unsigned char *)(mapped + PAGE - 67);
+  for (unsigned i = 0; i != 132; ++i)
+    guard[i] = 0xa5;
+  if (call(79, 0x1000, mapped + PAGE - 3, sentinel, 0, 0, 0, &error) != count ||
+      error || secondary)
+    return 67;
+  for (unsigned i = 0; i != 132; ++i) {
+    const unsigned char expected =
+        i >= 64 && i < 64 + 4 * count ? saved[i - 64] : 0xa5;
+    if (guard[i] != expected)
+      return 68;
+  }
+  if (call(74, mapped, 2 * PAGE, 1, 0, 0, 0, &error) || error || secondary)
+    return 69;
+  if (call(79, 0x1000, mapped, sentinel, 0, 0, 0, &error) != 14 || !error ||
+      secondary != error_secondary)
+    return 70;
+  if (call(73, mapped, 2 * PAGE, 0, 0, 0, 0, &error) || error || secondary)
+    return 71;
+  if (emit_values) {
+    for (unsigned i = 0; i != 5; ++i) {
+      const u64 v = i == 4 ? count : ids[i];
+      for (unsigned b = 0; b != 4; ++b)
+        values[4 * i + b] = v >> (8 * b);
+    }
+    for (unsigned i = 0; i != 4 * count; ++i)
+      values[20 + i] = saved[i];
+    if (call(4, 1, (u64)values, 20 + 4 * count, 0, 0, 0, &error) !=
+            20 + 4 * count ||
+        error || secondary)
+      return 72;
+  } else {
+    const unsigned char marker = 'k';
+    if (call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) != 1 || error || secondary)
+      return 73;
+  }
+  return 37;
+}
+
 static int resource_usage(int emit_values) {
   unsigned char bytes[146], saved_children[144];
   unsigned error = 0;
@@ -3015,6 +3129,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
     return argc < 3 ? 79 : file_access(argv[2]);
   if (equal(argv[1], "vectored-io"))
     return argc < 3 ? 79 : vectored_io(argv[2]);
+  if (equal(argv[1], "credentials") || equal(argv[1], "virtual-credentials"))
+    return credentials(equal(argv[1], "virtual-credentials"));
   if (equal(argv[1], "resource-usage") ||
       equal(argv[1], "virtual-resource-usage"))
     return resource_usage(equal(argv[1], "virtual-resource-usage"));

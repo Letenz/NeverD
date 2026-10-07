@@ -553,6 +553,10 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("initial-directory-removal", b"j"),
                                            ("initial-directory-move", b"p"),
                                            ("initial-directory-swap", b"q"),
+                                           ("credentials", b"k"),
+                                           ("virtual-credentials", bytes.fromhex(
+                                               "65000000ca0000002f0100009401000005000000"
+                                               "9401000000000000ffffff7f0700000007000000")),
                                            ("resource-usage", b"g"),
                                            ("virtual-resource-usage", bytes.fromhex(
                                                "00000000000000803f420f0000000000efcdab896745230140e2010000000000"
@@ -639,6 +643,13 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                           "type": 8, "next_offset": 99, "seek_offset": 0}]}}],
                                              "working_directory": "/empty",
                                              "stdin_hex": "00ff78", "descriptor_limit": 32}})
+                        if mode in ("credentials", "virtual-credentials", "created-file-metadata"):
+                            credential_options = json.loads(file_options)
+                            credential_options["darwin_system"] = {"credentials": {
+                                "real_uid": 101, "effective_uid": 202,
+                                "real_gid": 303, "effective_gid": 404,
+                                "groups": [404, 0, "2147483647", 7, 7]}}
+                            file_options = json.dumps(credential_options)
                         if mode in ("resource-usage", "virtual-resource-usage"):
                             usage_options = json.loads(file_options)
                             usage_options["darwin_system"] = {

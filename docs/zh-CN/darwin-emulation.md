@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: f2e1b376c3a2debfc3ffe6751fe7c57302755a5b03e02931fe21f4e83482165a -->
+<!-- i18n-source: dcf1c6fd8dade7571d6c20c70f66ce44bd254c717076498f8a48e46deec70a62 -->
 
 [← 文档索引](README.md)
 
@@ -41,7 +41,7 @@ BSD 系统调用遵循 Darwin ABI。ARM64 从 X16 读取服务号，x64 使用 B
 输出预算之前。此顺序已有真实 macOS 系统调用对照。
 
 服务清单为 `exit`、`write`、`getpid`、`getppid`、`getuid`、`geteuid`、`getgid`、
-`getegid`、`mmap`、`mprotect`、`munmap`。PID/UID/GID 固定为 1000，PPID 为 1。
+`getegid`、`getgroups`、`mmap`、`mprotect`、`munmap`。PID 为 1000，PPID 为 1；UID/GID 默认 1000，可由下述凭据显式提供不同的真实/有效 ID。
 匿名数据映射要求 `flags=0x1002`、描述符 -1 和零偏移；长度和非固定提示地址向上按 OS 页取整。
 旧式原始 mmap 的零长度请求返回零而不分配内存；`MAP_UNIX03` 已支持，零长度返回 EINVAL。
 Unmap/protect 地址必须对齐；允许 NONE/READ/WRITE，WRITE 隐含 READ，不接受匿名可执行映射。
@@ -148,7 +148,7 @@ O_CREAT 配合 `O_EXCL=0x800` 对已有文件或目录先返回 EEXIST，不截�
 
 可选 `darwin_files.creation_policy`（C++ `CreationPolicy`）为新对象提供完整元数据。严格对象恰含 `first_inode`、`block_size`、`generation`、`creation_time`、`mutation_policy`，时间及修改策略复用既有格式。必须显式提供 umask，至少授权一个 mutable 父目录，且每个授权父目录都有完整 metadata。block_size 为 1..INT32_MAX，generation 为 uint32；分配单元是 512..16 MiB 的二次幂，独立于块大小和 VM 页，纳秒须在 [0,1000000000)。first_inode 是非零 uint64，严格大于所有 stat/快照中的 inode，包括其他设备；超出 JSON 精确整数范围时使用十进制字符串。
 
-只有成功插入新名称才消耗全局递增 inode；成功使用 UINT64_MAX 后永久耗尽，关闭、删除、同名重建、umask 或后续查找都不能重置。排他、FD、路径、条目或字节预算失败不留下名称、FD 或计数器增量，打开已有 O_CREAT 也不消耗编号。新 stat64 的 device/GID 继承直接父目录，UID 为固定来宾有效用户 1000，mode 为 `S_IFREG | (mode & 0777 & ~umask)`，nlink=1，size/blocks/flags=0；块大小、generation 和四个初始固定时间来自策略。父目录完整 stat/列举失效后，仍可使用不变的 device/GID，但不会恢复完整记录。
+只有成功插入新名称才消耗全局递增 inode；成功使用 UINT64_MAX 后永久耗尽，关闭、删除、同名重建、umask 或后续查找都不能重置。排他、FD、路径、条目或字节预算失败不留下名称、FD 或计数器增量，打开已有 O_CREAT 也不消耗编号。新 stat64 的 device/GID 继承直接父目录，UID 为配置选择的来宾有效用户 ID（默认 1000），mode 为 `S_IFREG | (mode & 0777 & ~umask)`，nlink=1，size/blocks/flags=0；块大小、generation 和四个初始固定时间来自策略。父目录完整 stat/列举失效后，仍可使用不变的 device/GID，但不会恢复完整记录。
 
 新节点独立持有元数据与分配状态，不继承同名旧对象记录。后续写入、截断和删除共用修改策略，保留 inode/mode/birthtime 和已删除对象的 nlink=0；整段 EFAULT 后的未知状态仍不可恢复。策略不追溯修改已有节点。原生 `created-file-metadata` 对照权限、掩码返回值、有效 UID、父设备/组和身份存活，覆盖五种来宾组合；`virtual-created-metadata` 单独比较完整 144 字节记录。原生四个创建时间不一定相等；固定时间及稀疏分配是明确的虚拟文件系统规则。权限强制检查、凭据切换、ACL 和原生 APFS 元数据行为仍待实现。
 
@@ -468,7 +468,7 @@ Release Darwin 共 835 项：474 通过、360 项后端不可用跳过，既有 
 
 MIB 数量取低32位，须为2–12；名称长度取完整64位且须小于1024。先检查全部指定字节，再按首个 NUL 解释名称并移除一个末尾点；空名称返回 ENOENT，部分可读输入仍不支持。非空 `oldlenp` 必须在任何副作用前完整具备8字节读写权限。原生非法长度指针探测未在时限内返回，因此这类指针明确留在不支持边界。空 `oldlenp` 表示容量0；空 `oldp` 仅查询长度。短缓冲区返回 ENOMEM12、不写数据并把长度置0；数据 EFAULT 保持旧长度。输入和容量先取快照，随后写数据，最后写长度，保留别名顺序及后续传输失败前已完成的复制。
 
-只有 `newp` 和 `newlen` 均非零才构成写请求。选中的节点按模型固定非 root 身份，在检查观察值或输出前返回 EPERM1；包括原生允许特权写入的 `kern.osversion`。新长度为0时忽略指针。未知键、其他树和动态 OID 不会被猜测为 ENOENT。
+只有 newp/newlen 均非零才是写请求。先保留名称/MIB 与 oldlenp 完整读写预检，然后默认或显式非 root EUID 在观察值和数据输出检查前返回 EPERM1。显式 EUID0 对原生允许特权写的 kern.osversion 明确停止 unsupported，因为未建模特权写入；RUID 不决定此分支。其他原生只读节点即使 root 仍 EPERM1。新长度0忽略指针；未知键、树和动态 OID 不猜 ENOENT。
 
 原创 `system-info` 程序检查原生 macOS 与客户机 ABI；`virtual-system` 通过 C++、C/CLI、Python 比较配置的精确字节。独立 SDK 对照将宿主九项观察值显式作为测试输入，比较名称与数字查询输出。这不构成 iOS 真机或 Intel HVF 验收。
 
@@ -726,3 +726,27 @@ macOS ARM64 Release 的注册/通过/未执行跳过/失败为 1337 / 845 / 492 
 macOS ARM64 Release 登记/通过/不可用跳过/失败为 1371/867/504/0，全部 126 项必需 HVF 执行；文件组件 361/361，C/CLI 200/200, JSON 40/40, System/SDK 53/53, native 32/32 通过。新增十二项 4K/16K 行为和准入/SDK 对照；Python 五配置 42.865 秒通过，API 71、runner/reference 49 及 SDK 漂移、格式、能力、来源、文档检查通过。计数重叠。独立源码复审通过。证据冻结在 `build-hvf-arm64/resource-usage-observations/` 并绑定提交。初版 fixture 错误要求 x64 EINVAL 清零 RDX，现检查 x64 保留 RDX、ARM64 清零 X1；失败源码/二进制及空过滤尝试均保留，运行时、时限和负控未放宽。资源执行、权限、修改后目录观察、共享 map/EOF、时钟、Mach/thread/dyld 和框架仍有缺口；物理 iOS、暂停的 Intel HVF、远程合并 CI 单独验收。
 
 首轮完整验证为 866 通过、1 个既有 iOS ARM64 HVF rename 五秒超时、504 跳过；同一二进制复查该用例 386 毫秒通过，随后完整串行验证通过。原记录保留，超时原因未确定，不据此保证时延。
+
+
+## 显式凭据、用户组与一致的创建属主
+
+可选 DarwinSystemOptions::Credentials 含 RealUID、EffectiveUID、RealGID、EffectiveGID 及独立可选 GroupAccessList。省略凭据时四个查询维持1000；显式零/root 有效。ID 支持0..INT32_MAX。组列表必须1..16项，第一项等于 EffectiveGID，保留顺序与重复；缺少列表保持未知，不从宿主或 EGID 推断。严格 darwin_system.credentials 必须恰含 real_uid/effective_uid/real_gid/effective_gid，可另含 groups；无损整数及统一验证器在加载前拒绝形状、字段、范围、数量或首组不一致，非Darwin配置仍拒绝。
+
+getuid24/geteuid25/getgid47/getegid43/getgroups79 共用一个系统所有者。新普通文件 UID 使用有效用户，device/GID 仍继承直接父目录；改名、保留FD与旧名重用保持对象身份，输入stat不被改写。root 不自动授权文件写入、目录修改、权限或ACL；setuid/setgid/setgroups、进程/会话和权限强制检查未实现。
+
+getgroups 只将容量低32位按有符号int判断：负数先 EINVAL；未配置列表先 unsupported；已知容量0返回数量而不访问指针；正容量不足先 EINVAL；充足时一次复制4*数量小端字节并返回数量。0x1000 是正容量，不剥POSIX旗标。非对齐/跨页完整保护，完全不可写 EFAULT，部分可写在任何字节前 unsupported，backend错误仍为传输错误。BSD错误保留x64 RDX、清ARM64 X1，成功均清次结果；报告保留完整原始参数。
+
+
+~~~json
+{"darwin_system":{"credentials":{"real_uid":101,"effective_uid":202,
+ "real_gid":303,"effective_gid":404,"groups":[404,0,"2147483647",7,7]}}}
+~~~
+
+
+[Apple getgroups contract](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getgroups.2.html), [pinned XNU credential/group ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_prot.c).
+
+完整注册/通过/不可用跳过/失败: 1413/897/516/0; ARM64 HVF 129/129. System/SDK72/72, File365/365, Report43/43, C/CLI210/210; guest8/12skip; native33/33; Python5 82.918s; API71, runner/reference49. SDK drift / clang-format22.1.2 / capabilities23 / provenance / docs11+negative3: OK. Independent source review: OK.
+
+21 value +5 native fault,5s; host16groups, positive short capacity: OK. Native partial32byte thenEFAULT: observation only. Counts overlap. `build-hvf-arm64/credential-observations/`.
+
+首轮8个可用来宾失败（5个指令预算、3个5秒期限），12跳过；新程序遍历整两页过重。现检查同一跨页输出周围完整132字节（64前置、最多64数据、至少4后置），直接测试仍覆盖整两页。预算、调用参数和故障负控未变，源码/二进制/两次结果均保留；直接传输测试跨页几何在执行前按独立审阅修正。公共参数选择改为字符串内容比较。权限/ACL、链接、修改后目录完整观察、shared maps/EOF、递进时钟、Mach/thread/dyld、framework仍未完成；实体iOS、暂停Intel HVF和远端merge CI单独验收。

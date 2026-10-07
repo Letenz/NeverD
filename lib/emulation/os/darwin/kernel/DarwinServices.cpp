@@ -120,6 +120,11 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::SysctlByName:
   case ServiceKind::GetRlimit:
   case ServiceKind::GetRusage:
+  case ServiceKind::GetGroups:
+  case ServiceKind::GetUID:
+  case ServiceKind::GetEUID:
+  case ServiceKind::GetGID:
+  case ServiceKind::GetEGID:
     return systemService(CPU, Memory.pageSize(), Kind, Event,
                          Options.DarwinSystem, Result);
   case ServiceKind::TimebaseInfo:
@@ -172,12 +177,6 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
     return std::optional<ServiceResult>({ProcessID, false});
   case ServiceKind::GetPPID:
     return std::optional<ServiceResult>({ParentID, false});
-  case ServiceKind::GetUID:
-  case ServiceKind::GetEUID:
-    return std::optional<ServiceResult>({UserID, false});
-  case ServiceKind::GetGID:
-  case ServiceKind::GetEGID:
-    return std::optional<ServiceResult>({GroupID, false});
   case ServiceKind::Mmap:
   case ServiceKind::Mprotect:
   case ServiceKind::Munmap:

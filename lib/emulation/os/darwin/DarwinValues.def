@@ -83,6 +83,8 @@ NEVERD_DARWIN_VALUE(PermissionDenied, 13)
 NEVERD_DARWIN_VALUE(ResultTooLarge, 34)
 NEVERD_DARWIN_VALUE(SystemStringLimit, 1024)
 NEVERD_DARWIN_VALUE(SystemMIBLimit, 12)
+NEVERD_DARWIN_VALUE(CredentialIDMax, 0x7fffffff)
+NEVERD_DARWIN_VALUE(GroupAccessLimit, 16)
 NEVERD_DARWIN_VALUE(ResourceLimitCount, 9)
 NEVERD_DARWIN_VALUE(ResourceLimitPosixFlag, 0x1000)
 NEVERD_DARWIN_VALUE(ResourceLimitInfinity, 0x7fffffffffffffffULL)
@@ -127,6 +129,7 @@ NEVERD_DARWIN_SERVICE(FaccessAt, 466, Int)
 NEVERD_DARWIN_SERVICE(Dup, 41, Int)
 NEVERD_DARWIN_SERVICE(GetEGID, 43, UInt)
 NEVERD_DARWIN_SERVICE(GetGID, 47, UInt)
+NEVERD_DARWIN_SERVICE(GetGroups, 79, Int)
 NEVERD_DARWIN_SERVICE(Dup2, 90, Int)
 NEVERD_DARWIN_SERVICE(Fcntl, 92, Int)
 NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
@@ -203,6 +206,15 @@ NEVERD_DARWIN_DIAGNOSTIC(ResourceLimitPartialOutput,
 NEVERD_DARWIN_DIAGNOSTIC(
     ResourceUsageOption,
     "Darwin resource usage microseconds must be below 1000000")
+NEVERD_DARWIN_DIAGNOSTIC(
+    CredentialOption,
+    "Darwin credentials require bounded IDs and coherent 1..16 groups")
+NEVERD_DARWIN_DIAGNOSTIC(GroupObservation,
+                         "Darwin group access list is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(GroupPartialOutput,
+                         "Darwin group output is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(SystemPrivilegedWrite,
+                         "Darwin privileged system write is not modeled")
 NEVERD_DARWIN_DIAGNOSTIC(ResourceUsageObservation,
                          "Darwin resource usage observation is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(ResourceUsagePartialOutput,

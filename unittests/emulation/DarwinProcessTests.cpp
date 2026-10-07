@@ -511,6 +511,71 @@ TEST_P(DarwinProcess,
              Event.Error == false;
     })) << Number;
 }
+TEST_P(DarwinProcess, CredentialsKeepGroupQueriesAndCreationOwnershipCoherent) {
+  for (unsigned Missing = 0; Missing != 3; ++Missing) {
+    Options.DarwinSystem.reset();
+    if (Missing)
+      Options.DarwinSystem.emplace();
+    if (Missing == 2) {
+      Options.DarwinSystem = darwin_test::credentialOptions();
+      Options.DarwinSystem->Credentials->GroupAccessList.reset();
+    }
+    auto R = run("credentials");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(R->Diagnostic, "Darwin group access list is not configured");
+    EXPECT_TRUE(R->StandardOutput.empty());
+  }
+  Options.DarwinSystem = darwin_test::credentialOptions();
+  for (const char *Mode : {"credentials", "virtual-credentials"}) {
+    auto R = run(Mode);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 37);
+    EXPECT_EQ(R->StandardOutput,
+              llvm::StringRef(Mode) == "credentials"
+                  ? "k"
+                  : llvm::fromHex(darwin_test::CredentialsHex));
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    EXPECT_TRUE(llvm::any_of(R->Services, [](const auto &E) {
+      return (uint32_t(E.Number) & 0x00ffffff) == 79 &&
+             E.Arguments[0] == 0x1234567800001000ULL && E.Result == 5 &&
+             E.Error == false;
+    }));
+    EXPECT_TRUE(llvm::any_of(R->Services, [](const auto &E) {
+      return (uint32_t(E.Number) & 0x00ffffff) == 79 &&
+             E.Arguments[0] == 0x12345678ffffffffULL && E.Result == 22 &&
+             E.Error == true;
+    }));
+  }
+  Options.DarwinFiles.emplace();
+  Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',
+                                         '5', '6', '7', '8', '9'};
+  Options.DarwinFiles->Metadata["/data"] = darwin_test::mutationMetadata();
+  Options.DarwinFiles->Metadata["/"] = darwin_test::creationParentMetadata();
+  Options.DarwinFiles->MutableDirectories.insert("/");
+  Options.DarwinFiles->InitialUmask = 0027;
+  Options.DarwinFiles->CreationPolicy = darwin_test::CreationPolicy;
+  Options.Arguments[2] = "/data";
+  for (uint32_t EffectiveUID : {202u, 0u}) {
+    Options.DarwinSystem->Credentials->EffectiveUID = EffectiveUID;
+    auto R = run("created-file-metadata");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 37);
+    EXPECT_EQ(R->StandardOutput, "q");
+    EXPECT_TRUE(llvm::any_of(R->Services, [&](const auto &E) {
+      return (uint32_t(E.Number) & 0x00ffffff) == 25 &&
+             E.Result == EffectiveUID && E.Error == false;
+    }));
+  }
+  EXPECT_EQ(Options.DarwinSystem->Credentials->RealUID, 101u);
+  EXPECT_EQ(*Options.DarwinSystem->Credentials->GroupAccessList,
+            (std::vector<uint32_t>{404, 0, INT32_MAX, 7, 7}));
+  EXPECT_EQ(Options.DarwinFiles->Metadata.at("/").GID, 0xfedcba98u);
+}
+
 TEST_P(DarwinProcess,
        ResourceUsagePreservesIndependentSnapshotsSignedLayoutAndCopyOrder) {
   for (bool EmptySystem : {false, true}) {

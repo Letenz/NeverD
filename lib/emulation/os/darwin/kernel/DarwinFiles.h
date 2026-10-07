@@ -19,7 +19,8 @@ class DarwinFiles {
 public:
   DarwinFiles(GuestMemory &Memory,
               const std::optional<DarwinFileOptions> &Options,
-              uint64_t OutputLimit = process_defaults::Output);
+              uint64_t OutputLimit = process_defaults::Output,
+              uint32_t EffectiveUID = value::UserID);
   llvm::Expected<std::optional<ServiceResult>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ProcessResult &Result);
@@ -130,6 +131,7 @@ private:
   GuestMemory &Memory;
   const std::optional<DarwinFileOptions> &Options;
   const uint64_t OutputLimit;
+  const uint32_t EffectiveUID;
   std::map<uint32_t, Descriptor> Descriptors;
   std::map<std::string, std::shared_ptr<Contents>> Nodes;
   std::vector<std::shared_ptr<Contents>> Unlinked;

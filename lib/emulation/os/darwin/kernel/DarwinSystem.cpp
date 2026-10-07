@@ -8,6 +8,7 @@
 #include "DarwinUserMemory.h"
 
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <type_traits>
 
@@ -91,7 +92,39 @@ template <typename T> bool valid(const std::optional<T> &Value) {
 }
 } // namespace
 
+uint32_t credentialID(ServiceKind Kind,
+                      const std::optional<DarwinSystemOptions> &Options) {
+  const auto *C =
+      Options && Options->Credentials ? &*Options->Credentials : nullptr;
+  switch (Kind) {
+  case ServiceKind::GetUID:
+    return C ? C->RealUID : UserID;
+  case ServiceKind::GetEUID:
+    return C ? C->EffectiveUID : UserID;
+  case ServiceKind::GetGID:
+    return C ? C->RealGID : GroupID;
+  case ServiceKind::GetEGID:
+    return C ? C->EffectiveGID : GroupID;
+  default:
+    llvm_unreachable("invalid Darwin credential query");
+  }
+}
 llvm::Error validateSystemOptions(const DarwinSystemOptions &Options) {
+  if (Options.Credentials) {
+    const auto &C = *Options.Credentials;
+    for (auto ID : {C.RealUID, C.EffectiveUID, C.RealGID, C.EffectiveGID})
+      if (ID > CredentialIDMax)
+        return failure(diagnostic::CredentialOption);
+    if (C.GroupAccessList) {
+      const auto &G = *C.GroupAccessList;
+      if (G.empty() || G.size() > GroupAccessLimit ||
+          G.front() != C.EffectiveGID)
+        return failure(diagnostic::CredentialOption);
+      for (auto ID : G)
+        if (ID > CredentialIDMax)
+          return failure(diagnostic::CredentialOption);
+    }
+  }
 #define NEVERD_DARWIN_SYSTEM_FIELD(Member, Field, Name, Root, Leaf)            \
   if (!valid(Options.Member))                                                  \
     return failure(diagnostic::SystemString);
@@ -118,6 +151,38 @@ systemService(GuestMemory &Memory, uint64_t PageSize, ServiceKind Kind,
               const std::optional<DarwinSystemOptions> &Options,
               ProcessResult &Result) {
   const auto &A = Event.Arguments;
+  switch (Kind) {
+  case ServiceKind::GetUID:
+  case ServiceKind::GetEUID:
+  case ServiceKind::GetGID:
+  case ServiceKind::GetEGID:
+    return returned(credentialID(Kind, Options));
+  default:
+    break;
+  }
+  if (Kind == ServiceKind::GetGroups) {
+    const uint32_t Capacity = uint32_t(A[0]);
+    if (Capacity & 0x80000000u)
+      return returned(InvalidArgument, true);
+    if (!Options || !Options->Credentials ||
+        !Options->Credentials->GroupAccessList)
+      return unsupported(Result, diagnostic::GroupObservation);
+    const auto &Groups = *Options->Credentials->GroupAccessList;
+    if (!Capacity)
+      return returned(Groups.size());
+    if (Capacity < Groups.size())
+      return returned(InvalidArgument, true);
+    std::vector<uint8_t> Bytes(Groups.size() * 4);
+    for (size_t I = 0; I != Groups.size(); ++I)
+      llvm::support::endian::write32le(Bytes.data() + I * 4, Groups[I]);
+    auto Out = copyUserMemory(Memory, A[1], Bytes,
+                              diagnostic::GroupPartialOutput, Result);
+    if (!Out)
+      return Out.takeError();
+    if (*Out && !(**Out).Error)
+      (**Out).Value = Groups.size();
+    return Out;
+  }
   if (Kind == ServiceKind::GetRusage) {
     const uint32_t Who = uint32_t(A[0]);
     if (Who != 0 && Who != UINT32_MAX)
@@ -212,10 +277,15 @@ systemService(GuestMemory &Memory, uint64_t PageSize, ServiceKind Kind,
   }
   if (!Selected)
     return unsupported(Result, diagnostic::SystemKey);
-  // A pointer alone is not a write request. All selected nodes reject writes
-  // for the fixed non-root identity, including privileged kern.osversion.
-  if (A[4] && A[5])
+  // A pointer alone is not a write request. Keep name/MIB and oldlenp
+  // preflight before this decision. Root cannot infer a modeled privileged
+  // write to kern.osversion; native read-only nodes still reject writes.
+  if (A[4] && A[5]) {
+    if (Selected->Kind == Observation::OSVersion &&
+        credentialID(ServiceKind::GetEUID, Options) == 0)
+      return unsupported(Result, diagnostic::SystemPrivilegedWrite);
     return returned(OperationNotPermitted, true);
+  }
   auto Value = observation(Selected->Kind, PageSize, Options);
   if (!Value)
     return unsupported(Result, diagnostic::SystemObservation);

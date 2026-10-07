@@ -6,6 +6,7 @@
 #include "DarwinFileTestData.h"
 #include "gtest/gtest.h"
 #include "os/darwin/kernel/DarwinFiles.h"
+#include "os/darwin/kernel/DarwinSystem.h"
 
 #include "neverd/emulation/AddressSpace.h"
 
@@ -6846,6 +6847,68 @@ TEST(DarwinFileOptions, DirectorySnapshotBoundsDeduplicateMetadataPaths) {
                                           1);
   EXPECT_EQ(llvm::toString(validateFileOptions(O)),
             diagnostic::FileOptionsLimit);
+}
+
+TEST_P(DarwinFileTest, CreationUsesSelectedEffectiveUIDAndRetainsParentGroup) {
+  for (auto UID :
+       {uint32_t(1000), uint32_t(0), uint32_t(7), uint32_t(INT32_MAX)}) {
+    SCOPED_TRACE(UID);
+    std::optional<DarwinSystemOptions> System;
+    if (UID != 1000) {
+      System.emplace();
+      System->Credentials = DarwinCredentials{101, UID, 303, 404, std::nullopt};
+    }
+    creationPolicy();
+    Files = std::make_unique<DarwinFiles>(
+        *Space, Options, process_defaults::Output,
+        credentialID(ServiceKind::GetEUID, System));
+    const auto First = makeFile("/new", "a");
+    const auto Original = status(First);
+    EXPECT_EQ(llvm::support::endian::read32le(Original.data() + 16), UID);
+    EXPECT_EQ(llvm::support::endian::read32le(Original.data() + 20),
+              0xfedcba98u);
+    renameFile("/new", "/renamed");
+    EXPECT_EQ(status(First), Original);
+    identity(First, "/renamed");
+    const auto Fresh = makeFile("/new", "b");
+    const auto NewStatus = status(Fresh);
+    EXPECT_EQ(llvm::support::endian::read32le(NewStatus.data() + 16), UID);
+    EXPECT_EQ(llvm::support::endian::read32le(NewStatus.data() + 20),
+              0xfedcba98u);
+    EXPECT_NE(llvm::support::endian::read64le(NewStatus.data() + 8),
+              llvm::support::endian::read64le(Original.data() + 8));
+    EXPECT_EQ(status(First), Original);
+    contents(First, {'a'});
+    contents(Fresh, {'b'});
+    EXPECT_EQ(Options->Metadata.at("/").GID, 0xfedcba98u);
+    EXPECT_EQ(Options->CreationPolicy->FirstInode, 0xfedcba9876543211ULL);
+    if (System) {
+      EXPECT_EQ(System->Credentials->RealUID, 101u);
+      EXPECT_EQ(System->Credentials->EffectiveUID, UID);
+      EXPECT_EQ(System->Credentials->EffectiveGID, 404u);
+      EXPECT_FALSE(System->Credentials->GroupAccessList);
+    }
+  }
+}
+
+TEST_P(DarwinFileTest, ExplicitRootDoesNotGrantFileOrDirectoryMutation) {
+  creationPolicy();
+  Options->MutableDirectories.clear();
+  std::optional<DarwinSystemOptions> System = DarwinSystemOptions{};
+  System->Credentials = DarwinCredentials{7, 0, 9, 0, std::vector<uint32_t>{0}};
+  Files =
+      std::make_unique<DarwinFiles>(*Space, Options, process_defaults::Output,
+                                    credentialID(ServiceKind::GetEUID, System));
+  path("/new");
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x202, 0600}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryNotMutable);
+  path("/data");
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileNotWritable);
+  EXPECT_TRUE(Options->MutableDirectories.empty());
+  EXPECT_TRUE(Options->WritableFiles.empty());
+  EXPECT_EQ(Options->Files.at("/data"),
+            (std::vector<uint8_t>{'a', 'b', 0, 0xff, 'e', 'f'}));
 }
 
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinFileTest, testing::Values(4096, 16384));

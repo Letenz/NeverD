@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: f2e1b376c3a2debfc3ffe6751fe7c57302755a5b03e02931fe21f4e83482165a -->
+<!-- i18n-source: dcf1c6fd8dade7571d6c20c70f66ce44bd254c717076498f8a48e46deec70a62 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -39,7 +39,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 تستخدم استدعاءات BSD على ARM64 السجلات X16 وX0–X5 والتعليمة `svc #0x80`؛ ويستخدم x64 فئة BSD وهي `0x02000000` والسجلات RAX وRDI/RSI/RDX/R10/R8/R9. يمحو النجاح carry، بينما يضبطه الخطأ ويعيد errno موجباً. يمحو ARM64 السجل X1؛ ويمحو x64 السجل RDX عند النجاح ويحافظ عليه عند الخطأ. تغييرات سجلات SYSCALL صريحة. يعبّر التقرير عن خطأ BSD بواسطة `result` و`error=true`؛ ولا تملك الطلبات التي لا تعود أو غير المدعومة هذين الحقلين. تتبع القواعد مسارات XNU لـ [ARM64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/arm/systemcalls.c) و[x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/i386/systemcalls.c)، دون تضمين شيفرة Apple.
 
-الخدمات هي `exit` و`write` و`getpid` و`getppid` و`getuid` و`geteuid` و`getgid` و`getegid` و`mmap` و`mprotect` و`munmap`. قيم PID/UID/GID هي 1000، وPPID هو 1. يلتقط الواصفان 1 و2 البايتات بما فيها NUL وغير UTF8؛ وتعيد الواصفات المغلقة أو المخصصة للقراءة EBADF. تُحفظ البايتات المنسوخة جزئياً لكن خطأ الوصول اللاحق يبقى EFAULT. طول أكبر من `INT_MAX` يعيد EINVAL قبل فحص الواصف أو المؤشر أو الميزانية، وفق [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c).
+الخدمات هي `exit` و`write` و`getpid` و`getppid` و`getuid` و`geteuid` و`getgid` و`getegid` و`getgroups` و`mmap` و`mprotect` و`munmap`. قيمة PID هي1000 وPPID هي1؛ UID/GID افتراضياً1000 أو المعرفات الحقيقية/الفعالة المنفصلة المعلنة أدناه. يلتقط الواصفان 1 و2 البايتات بما فيها NUL وغير UTF8؛ وتعيد الواصفات المغلقة أو المخصصة للقراءة EBADF. تُحفظ البايتات المنسوخة جزئياً لكن خطأ الوصول اللاحق يبقى EFAULT. طول أكبر من `INT_MAX` يعيد EINVAL قبل فحص الواصف أو المؤشر أو الميزانية، وفق [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c).
 
 تدعم الذاكرة تعيينات بيانات خاصة مجهولة المصدر مع `flags=0x1002` وواصف -1 وإزاحة صفر. تُقرّب الأطوال وتلميحات العناوين غير الثابتة إلى أعلى وفق صفحة النظام. إذا كان التلميح مشغولاً يُبحث أولاً باتجاه العناوين الأعلى ثم يُرجع إلى الموضع الافتراضي. يعيد mmap الخام القديم ذو الطول صفر القيمة صفر دون تخصيص؛ ويدعم العقد `MAP_UNIX03` الذي يرفض الطول صفر بخطأ EINVAL. تتطلب unmap/protect عنواناً محاذياً. تُدعم NONE/READ/WRITE ويستلزم WRITE صلاحية READ. تملك كل صفحة نظام ذاكرتها الفعلية؛ يحرر unmap الجزئي ميزانيتها وتكون الصفحات الجديدة صفراً. يترك فشل protect عبر فجوة أو خارج الصلاحيات القصوى كامل النطاق دون تغيير. المرجع: [خدمات VM في XNU](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
 
@@ -138,7 +138,7 @@ allocation_unit وmutation_time وseconds/nanoseconds مطلوبة وفق قوا
 
 يوفر `darwin_files.creation_policy` الاختياري (C++ `CreationPolicy`) بيانات وصفية كاملة للكائنات الجديدة. يحتوي الكائن الصارم بالضبط على `first_inode` و`block_size` و`generation` و`creation_time` و`mutation_policy`؛ تستخدم الأوقات وسياسة التعديل التنسيقات الحالية. يلزم umask صريح وأب mutable واحد على الأقل وmetadata كاملة لكل أب مصرح. block_size بين 1 وINT32_MAX، وgeneration من نوع uint32؛ وحدة التخصيص قوة للعدد اثنين بين 512 و16 MiB مستقلة عن حجم الكتلة وصفحة VM، والنانوثواني ضمن [0,1000000000). first_inode هو uint64 موجب أكبر من كل inode في stat واللقطات، بما فيها الأجهزة الأخرى. تحافظ السلاسل العشرية على الأعداد خارج نطاق JSON الصحيح الدقيق.
 
-الإدراج الجديد الناجح وحده يستهلك تسلسل inode العام؛ بعد UINT64_MAX ينفد نهائياً، ولا تعيد close/unlink/إعادة الاسم/umask/البحث تهيئته. رفض الحصرية أو FD أو المسار أو ميزانية العناصر والبايتات لا ينشر اسماً أو FD ولا يزيد العداد؛ فتح O_CREAT موجود لا يستهلك رقماً. يرث stat64 الجديد device/GID من الأب المباشر، وUID=1000 من مستخدم الضيف الفعال الثابت، وmode هو `S_IFREG | (mode & 0777 & ~umask)`، وnlink=1 وsize/blocks/flags=0. حجم الكتلة وgeneration والأوقات الأولية الأربعة الثابتة تأتي من السياسة. بعد إبطال stat والتعداد الكاملين للأب تبقى device/GID الثابتة قابلة للاستخدام دون استعادة السجل الكامل.
+الإدراج الجديد الناجح وحده يستهلك تسلسل inode العام؛ بعد UINT64_MAX ينفد نهائياً، ولا تعيد close/unlink/إعادة الاسم/umask/البحث تهيئته. رفض الحصرية أو FD أو المسار أو ميزانية العناصر والبايتات لا ينشر اسماً أو FD ولا يزيد العداد؛ فتح O_CREAT موجود لا يستهلك رقماً. يرث stat64 الجديد device/GID من الأب المباشر، وUID الفعال المختار للضيف (افتراضياً1000)، وmode هو `S_IFREG | (mode & 0777 & ~umask)`، وnlink=1 وsize/blocks/flags=0. حجم الكتلة وgeneration والأوقات الأولية الأربعة الثابتة تأتي من السياسة. بعد إبطال stat والتعداد الكاملين للأب تبقى device/GID الثابتة قابلة للاستخدام دون استعادة السجل الكامل.
 
 يمتلك كل كائن جديد بياناته الوصفية وحالة تخصيصه، ولا يرث الكائن القديم بالاسم نفسه. تشترك write/truncate/unlink في السياسة وتحفظ inode/mode/birthtime وnlink=0 بعد unlink؛ يبقى EFAULT الكامل مجهولاً نهائياً. لا تطبق السياسة بأثر رجعي على الكائنات السابقة. يقارن `created-file-metadata` الأذونات والقناع السابق وUID الفعال وجهاز/مجموعة الأب والعمر الأصلي عبر خمسة ملفات تعريفية؛ ويقارن `virtual-created-metadata` كامل 144 بايت بصورة منفصلة. قد تختلف الأوقات الأصلية الأربعة. الوقت الثابت والتخصيص المتناثر قواعد افتراضية؛ فرض الأذونات وتبديل الهوية وACL وسلوك APFS الأصلي لا تزال عملاً لاحقاً.
 
@@ -366,7 +366,7 @@ Release Darwin:835 حالة، نجحت474 وتُخطيت360، وتجاوز اخ�
 
 يستخدم عدد MIB أدنى 32 بت ويجب أن يكون 2–12؛ طول الاسم يستخدم 64 بت كاملة ويجب أن يقل عن 1024. تُفحص جميع البايتات المحددة قبل تفسير أول NUL وإزالة نقطة نهائية واحدة. الاسم الفارغ يعيد ENOENT والمدخل المقروء جزئياً غير مدعوم. يجب أن يتيح `oldlenp` غير الصفري قراءة وكتابة ثمانية بايت كاملة قبل أي أثر. لم ترجع تجارب مؤشرات الطول المعطوبة الأصلية ضمن المهلة، لذا تبقى هذه المؤشرات خارج حدود الدعم صراحة. `oldlenp` الصفري يعني سعة صفر و`oldp` الصفري يطلب الحجم فقط. المخزن القصير يعيد ENOMEM12 دون تغيير البيانات ويكتب طولاً صفرياً. يحفظ EFAULT للبيانات الطول القديم. تُلتقط المدخلات والسعة قبل البيانات ويُنسخ الطول أخيراً، مع حفظ ترتيب التداخل والنسخ المكتملة إذا فشل النقل لاحقاً.
 
-لا يكون الطلب كتابة إلا إذا كان كل من `newp` و`newlen` غير صفري. تعيد العقد المختارة EPERM1 لهوية النموذج الثابتة غير root قبل فحص القيمة أو الخرج، بما فيها `kern.osversion` القابل للكتابة بصلاحيات خاصة على النظام الأصلي. طول جديد صفري يتجاهل المؤشر. لا يُخمن ENOENT للمفاتيح والأشجار وOID الديناميكية المجهولة.
+الكتابة تتطلب newp/newlen غير صفريين. تبقى قراءة الاسم/MIB وفحوص oldlenp الكاملة للقراءة/الكتابة أولاً. EUID الافتراضي أو غيرroot المعلن يعيد EPERM1 قبل الملاحظة وخرج البيانات. EUID0 يوقف kern.osversion unsupported لأن الكتابة ذات الصلاحيات الخاصة غير ممثلة؛ RUID لا يقرر. العقد الأصلية الأخرى للقراءة فقط تبقى EPERM1 حتىroot. طول جديد0 يتجاهل المؤشر ولا يُخمن ENOENT للمفاتيح/الأشجار/OID الديناميكية المجهولة.
 
 يفحص البرنامج الأصلي `system-info` واجهة ABI على macOS الأصلي والضيف؛ ويقارن `virtual-system` البايتات المضبوطة عبر C++ وC/CLI وPython. يلتقط مرجع SDK مستقل ملاحظات المضيف التسع كمدخلات اختبار صريحة ويقارن المخرجات الاسمية والرقمية. هذا لا يثبت قبول iOS الفعلي أو Intel HVF.
 
@@ -622,3 +622,27 @@ Release النهائي:1,175 حالة Darwin،731 نجاحاً،444 تخطياً
 macOS ARM64 Release المسجل/الناجح/المتجاوز دون تنفيذ/الفاشل 1371/867/504/0؛ جميع HVF المطلوبة 126 نفذت. File361/361، C/CLI 200/200, JSON 40/40, System/SDK 53/53, native 32/32 ناجحة. اثنا عشر4K/16K جديداً وفحوص القبول/SDK؛ Python خمسة إعدادات 42.865ثانية، API71 وrunner/reference49 وSDK drift/التنسيق/القدرات/المصدر/الوثائق ناجحة. الأعداد متداخلة والمراجعة المستقلة ناجحة. الأدلة مجمدة في `build-hvf-arm64/resource-usage-observations/` ومرتبطة بالالتزام. صُحح فحص x64 EINVAL الأول ليحفظ RDX بينما ARM64 يمسح X1؛ حُفظ الفشل والمرشح الفارغ. runtime والمهل والضوابط السلبية دون تغيير. الحدود والصلاحيات والدليل بعد التعديل وshared maps/EOF والساعات وMach/thread/dyld والأطر غير مكتملة؛ iOS الفعلي وIntel HVF الموقوف وCI الدمج منفصلة.
 
 الجولة الأولى:866 ناجحة وtimeout5s واحد لحالة rename iOS ARM64 HVF الموجودة و504skip. نفس binary نجح للحالة في386ms ثم نجح gate الكامل المتسلسل. كلاهما محفوظ؛ السبب غير محدد ولا ضمان للكمون.
+
+
+## هويات صريحة ومجموعات وملكية إنشاء متسقة
+
+Credentials الاختيارية تحتوي RealUID/EffectiveUID/RealGID/EffectiveGID وGroupAccessList اختيارية مستقلة. الغياب يبقي الاستعلامات الأربعة1000؛ الصفر/root الصريح صالح وID0..INT32_MAX. المجموعات1..16 وأولهاEffectiveGID، الترتيب والتكرار محفوظان؛ الغياب مجهول ولا يُستنتجhost/EGID. darwin_system.credentials يتطلب بالضبط real_uid/effective_uid/real_gid/effective_gid وgroups اختيارية. أعداد دون فقد والتحقق المركزي يرفضان الشكل/الحقول/المدى/العدد/عدم اتساق الأول قبل التحميل؛ غيرDarwin مرفوض.
+
+getuid24/geteuid25/getgid47/getegid43/getgroups79 تشترك بمالكsystem واحد. الملف العادي الجديد يستخدمUID الفعال وdevice/GID الأب المباشر؛ rename/FD المحفوظة/إعادة الاسم تحفظ الكائن وstat المدخل ثابت. Root لا يمنح كتابة/تعديل دليل/ACL؛ setuid/setgid/setgroups وprocess/session غير منفذة.
+
+سعةgetgroups هيlow32 signedint: السالبEINVAL أولاً، المجهولunsupported، الصفرالمعلوم=count دون مؤشر، الموجب القصيرEINVAL قبل الذاكرة؛ الكافي ينسخ4*count بايتlittle-endian مرة واحدة. 0x1000 موجب ولا يُزالPOSIXflag. حراس كاملة لعدم المحاذاة/عبور الصفحات؛ غيرقابل للكتابة كلياًEFAULT، جزئياًunsupported قبل بايت، خطأbackend يبقى نقل. خطأBSD يحفظx64RDX ويمسحARM64X1؛ النجاح يمسح الثانويين، التقرير يحفظ المعاملات الخام.
+
+
+~~~json
+{"darwin_system":{"credentials":{"real_uid":101,"effective_uid":202,
+ "real_gid":303,"effective_gid":404,"groups":[404,0,"2147483647",7,7]}}}
+~~~
+
+
+[Apple getgroups contract](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getgroups.2.html), [pinned XNU credential/group ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_prot.c).
+
+المسجل/الناجح/skip غيرالمتاح/الفاشل: 1413/897/516/0; ARM64 HVF 129/129. System/SDK72/72, File365/365, Report43/43, C/CLI210/210; guest8/12skip; native33/33; Python5 82.918s; API71, runner/reference49. SDK drift / clang-format22.1.2 / capabilities23 / provenance / docs11+negative3: OK. Independent source review: OK.
+
+21 value +5 native fault,5s; host16groups, positive short capacity: OK. Native partial32byte thenEFAULT: observation only. Counts overlap. `build-hvf-arm64/credential-observations/`.
+
+الجولة الأولى8فشل (5ميزانية تعليمات،3مهل5ثوان) و12skip. حُدد مسح صفحتين فيfixture إلى كامل132بايت على نفس الحد (64قبل،حتى64بيانات،4بعدعلى الأقل)؛ owner المباشر يفحص صفحتين كاملتين. الميزانيات/المعاملات/الضوابط السلبية ثابتة وحُفظت المصادر/binary والجولتان. هندسةtransport صُححت قبل التنفيذ وفق المراجعة واختيارpublic يقارن المحتوى. الصلاحيات/ACL والروابط وملاحظاتdirectory بعد التعديل وshared maps/EOF والساعات وMach/thread/dyld/framework غيرمكتملة؛ iOS الفعلي وIntelHVF الموقف وmergeCI منفصلة.

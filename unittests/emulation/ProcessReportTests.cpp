@@ -851,6 +851,109 @@ TEST(ProcessReport,
   }
 }
 
+TEST(ProcessReport, DarwinCredentialsRetainDistinctIDsAndOptionalGroupOrder) {
+  auto Good = processOptionsFromJSON(std::string("{\"darwin_system\":") +
+                                     darwin_test::CredentialsJSON + "}");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  ASSERT_TRUE(Good->DarwinSystem->Credentials);
+  const auto &C = *Good->DarwinSystem->Credentials;
+  EXPECT_EQ(C.RealUID, 101u);
+  EXPECT_EQ(C.EffectiveUID, 202u);
+  EXPECT_EQ(C.RealGID, 303u);
+  EXPECT_EQ(C.EffectiveGID, 404u);
+  EXPECT_EQ(*C.GroupAccessList,
+            (std::vector<uint32_t>{404, 0, INT32_MAX, 7, 7}));
+  auto Missing = processOptionsFromJSON(R"({"darwin_system":{}})");
+  ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+  EXPECT_FALSE(Missing->DarwinSystem->Credentials);
+  auto NoGroups = processOptionsFromJSON(R"({"darwin_system":{"credentials":{
+      "real_uid":0,"effective_uid":0,"real_gid":0,"effective_gid":0}}})");
+  ASSERT_TRUE(bool(NoGroups)) << llvm::toString(NoGroups.takeError());
+  EXPECT_EQ(NoGroups->DarwinSystem->Credentials->EffectiveUID, 0u);
+  EXPECT_FALSE(NoGroups->DarwinSystem->Credentials->GroupAccessList);
+  auto Root = processOptionsFromJSON(R"({"darwin_system":{"credentials":{
+      "real_uid":"0","effective_uid":"0","real_gid":"0",
+      "effective_gid":"0","groups":["0",0]}}})");
+  ASSERT_TRUE(bool(Root)) << llvm::toString(Root.takeError());
+  EXPECT_EQ(*Root->DarwinSystem->Credentials->GroupAccessList,
+            (std::vector<uint32_t>{0, 0}));
+}
+
+TEST(ProcessReport, MalformedDarwinCredentialsFailBeforeImageLoading) {
+  auto Seed = [] {
+    return llvm::cantFail(llvm::json::parse(darwin_test::CredentialsJSON));
+  };
+  auto Reject = [](llvm::json::Value System) {
+    auto Parsed = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_system", std::move(System)}}))
+            .str());
+    EXPECT_FALSE(bool(Parsed));
+    llvm::consumeError(Parsed.takeError());
+  };
+  for (const char *Bad : {"null", "[]", "true", "0", "{}"}) {
+    auto S = Seed();
+    (*S.getAsObject())["credentials"] = llvm::cantFail(llvm::json::parse(Bad));
+    Reject(std::move(S));
+  }
+  for (const char *Key :
+       {"real_uid", "effective_uid", "real_gid", "effective_gid"}) {
+    auto S = Seed();
+    S.getAsObject()->getObject("credentials")->erase(Key);
+    Reject(std::move(S));
+    for (const char *Bad : {"null", "true", "0.5", "-1", "2147483648",
+                            R"("4294967296")", R"("1.0")"}) {
+      S = Seed();
+      (*S.getAsObject()->getObject("credentials"))[Key] =
+          llvm::cantFail(llvm::json::parse(Bad));
+      Reject(std::move(S));
+    }
+  }
+  auto Unknown = Seed();
+  (*Unknown.getAsObject()->getObject("credentials"))["unknown"] = 0;
+  Reject(std::move(Unknown));
+  Unknown = Seed();
+  Unknown.getAsObject()->getObject("credentials")->erase("groups");
+  (*Unknown.getAsObject()->getObject("credentials"))["unknown"] = 0;
+  Reject(std::move(Unknown));
+  for (const char *Bad :
+       {"null", "{}", "true", "0", "[]", "[0]", "[404,true]", "[404,0.5]",
+        "[404,-1]", "[404,2147483648]", R"([404,"4294967296"])",
+        "[404,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]"}) {
+    auto S = Seed();
+    (*S.getAsObject()->getObject("credentials"))["groups"] =
+        llvm::cantFail(llvm::json::parse(Bad));
+    Reject(std::move(S));
+  }
+}
+
+TEST(ProcessReport, CredentialsRequireDarwinAndTypedAdmissionBeforeLoading) {
+  auto O = processOptionsFromJSON(std::string("{\"darwin_system\":") +
+                                  darwin_test::CredentialsJSON + "}");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (bool Groups : {false, true}) {
+    auto Bad = *O;
+    if (Groups)
+      Bad.DarwinSystem->Credentials->GroupAccessList->front() = 0;
+    else
+      Bad.DarwinSystem->Credentials->RealUID = 0x80000000u;
+    for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                   ProcessProfile::IOSSimulatorMachO64}) {
+      auto R = emulateProcess("missing.macho", P, Bad);
+      ASSERT_FALSE(bool(R));
+      EXPECT_EQ(
+          llvm::toString(R.takeError()),
+          "Darwin credentials require bounded IDs and coherent 1..16 groups");
+    }
+  }
+}
+
 TEST(ProcessReport, DarwinSystemInputsAreLosslessAndRequireDarwinProfiles) {
   auto O = processOptionsFromJSON(std::string("{\"darwin_system\":") +
                                   darwin_test::SystemJSON + "}");

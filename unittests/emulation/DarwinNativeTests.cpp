@@ -35,6 +35,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
+#include <sys/syslimits.h>
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
@@ -46,6 +47,71 @@ extern "C" ssize_t __getdirentries64(int, void *, size_t, off_t *);
 
 namespace neverd::emulation {
 namespace {
+TEST(DarwinNative, CredentialsMatchOneSDKCaptureAndExactGroupOrder) {
+#if !defined(__APPLE__)
+  GTEST_SKIP() << "native Darwin credential capture requires macOS";
+#else
+  ASSERT_EQ(sizeof(uid_t), 4u);
+  ASSERT_EQ(sizeof(gid_t), 4u);
+  ASSERT_EQ(NGROUPS_MAX, 16);
+  std::array<gid_t, NGROUPS_MAX> Groups;
+  const uid_t RealUID = ::getuid(), EffectiveUID = ::geteuid();
+  const gid_t RealGID = ::getgid(), EffectiveGID = ::getegid();
+  const int Count = ::getgroups(Groups.size(), Groups.data());
+  ASSERT_GE(Count, 1);
+  ASSERT_LE(Count, NGROUPS_MAX);
+  EXPECT_EQ(Groups[0], EffectiveGID);
+  std::optional<DarwinSystemOptions> Options = DarwinSystemOptions{};
+  Options->Credentials = DarwinCredentials{
+      RealUID, EffectiveUID, RealGID, EffectiveGID,
+      std::vector<uint32_t>(Groups.begin(), Groups.begin() + Count)};
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(*Options)));
+  for (auto Page : {uint64_t(4096), uint64_t(16384)}) {
+    auto Physical = PhysicalMemory::create(Page * 4);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Created = AddressSpace::create(*Physical, Page * 4);
+    ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+    constexpr uint64_t Base = 0x100000;
+    auto Space = *Created;
+    ASSERT_FALSE(
+        bool(Space->map(Base, Page * 2, Read | Write | UserAccessible)));
+    ProcessResult Result{
+        ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+        ExecutionBackendKind::Unicorn, "one SDK credential capture"};
+    for (const auto &[Kind, ID] :
+         {std::pair{darwin_model::ServiceKind::GetUID, RealUID},
+          std::pair{darwin_model::ServiceKind::GetEUID, EffectiveUID},
+          std::pair{darwin_model::ServiceKind::GetGID, RealGID},
+          std::pair{darwin_model::ServiceKind::GetEGID, EffectiveGID}}) {
+      auto Out = darwin_model::systemService(*Space, Page, Kind,
+                                             {0, 0, {UINT64_MAX}, std::nullopt},
+                                             Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out) << Result.Diagnostic;
+      EXPECT_FALSE((**Out).Error);
+      EXPECT_EQ((**Out).Value, ID);
+    }
+    for (auto Capacity :
+         {uint64_t(Count), uint64_t(0x1000), uint64_t(0x1234567800001000ULL)}) {
+      const auto Offset = Page - 3;
+      std::vector<uint8_t> Expected(Page * 2, 0xa5), Actual(Page * 2);
+      ASSERT_FALSE(bool(Space->write(Base, Expected)));
+      std::memcpy(Expected.data() + Offset, Groups.data(),
+                  Count * sizeof(gid_t));
+      auto Out = darwin_model::systemService(
+          *Space, Page, darwin_model::ServiceKind::GetGroups,
+          {0, 79, {Capacity, Base + Offset}, std::nullopt}, Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out) << Result.Diagnostic;
+      EXPECT_FALSE((**Out).Error);
+      EXPECT_EQ((**Out).Value, uint64_t(Count));
+      ASSERT_FALSE(bool(Space->read(Base, Actual)));
+      EXPECT_EQ(Actual, Expected);
+    }
+  }
+#endif
+}
+
 TEST(DarwinNative, UsageMatchesOneSDKCaptureWithEverySignedFieldAndPadding) {
 #if !defined(__APPLE__)
   GTEST_SKIP() << "native Darwin SDK capture requires macOS";

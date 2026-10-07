@@ -83,4 +83,6 @@ NEVERD_NATIVE_DARWIN_CASE(
     ResourceLimitsPreserveExplicitPairsSelectorsAndCopyOrder)
 NEVERD_NATIVE_DARWIN_CASE(
     ResourceUsagePreservesIndependentSnapshotsSignedLayoutAndCopyOrder)
+NEVERD_NATIVE_DARWIN_CASE(
+    CredentialsKeepGroupQueriesAndCreationOwnershipCoherent)
 #endif

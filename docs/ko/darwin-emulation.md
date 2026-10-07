@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: f2e1b376c3a2debfc3ffe6751fe7c57302755a5b03e02931fe21f4e83482165a -->
+<!-- i18n-source: dcf1c6fd8dade7571d6c20c70f66ce44bd254c717076498f8a48e46deec70a62 -->
 
 [← 문서 목록](README.md)
 
@@ -39,7 +39,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 BSD 호출에서 ARM64는 X16, X0–X5와 `svc #0x80`을 사용하고 x64는 BSD 클래스 `0x02000000`, RAX, RDI/RSI/RDX/R10/R8/R9를 사용합니다. 성공 시 carry를 지우고 오류 시 carry와 양수 errno를 반환합니다. ARM64는 X1을 지우고 x64는 성공 시 RDX를 지우며 오류 시 보존합니다. SYSCALL의 레지스터 변경은 명시적입니다. 보고서의 `result`와 `error=true`는 BSD 오류를 나타내며 반환하지 않거나 미지원인 요청에는 두 필드가 없습니다. XNU [ARM64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/arm/systemcalls.c)와 [x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/i386/systemcalls.c)의 규칙을 따르며 Apple 구현 코드를 포함하지 않습니다.
 
-지원 서비스는 `exit`, `write`, `getpid`, `getppid`, `getuid`, `geteuid`, `getgid`, `getegid`, `mmap`, `mprotect`, `munmap`입니다. PID/UID/GID는 1000, PPID는 1입니다. 설명자 1과 2는 NUL과 비 UTF8을 포함한 바이트를 캡처하고 닫혔거나 읽기 전용인 설명자는 EBADF를 반환합니다. 부분 복사된 바이트는 유지하지만 이후 오류는 EFAULT로 남습니다. 길이가 `INT_MAX`를 넘으면 설명자, 포인터, 예산을 검사하기 전에 EINVAL을 반환합니다. 근거는 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c)입니다.
+지원 서비스는 `exit`, `write`, `getpid`, `getppid`, `getuid`, `geteuid`, `getgid`, `getegid`, `getgroups`, `mmap`, `mprotect`, `munmap`입니다. PID는1000, PPID는1입니다. UID/GID 기본값은1000이며 아래 명시적 자격 정보로 실제/유효 ID를 따로 지정합니다. 설명자 1과 2는 NUL과 비 UTF8을 포함한 바이트를 캡처하고 닫혔거나 읽기 전용인 설명자는 EBADF를 반환합니다. 부분 복사된 바이트는 유지하지만 이후 오류는 EFAULT로 남습니다. 길이가 `INT_MAX`를 넘으면 설명자, 포인터, 예산을 검사하기 전에 EINVAL을 반환합니다. 근거는 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c)입니다.
 
 메모리 서비스는 `flags=0x1002`, 설명자 -1, 오프셋 0의 전용 익명 데이터 매핑을 지원합니다. 길이와 고정되지 않은 주소 힌트는 OS 페이지로 올림합니다. 점유된 힌트는 높은 주소부터 검색한 뒤 기본 배치로 돌아갑니다. 기존 raw mmap은 길이 0에서 할당 없이 0을 반환하며 `MAP_UNIX03`을 지원하며 길이 0은 EINVAL입니다. Unmap/protect는 정렬된 주소를 요구합니다. NONE/READ/WRITE를 지원하고 WRITE는 READ를 포함합니다. 물리 메모리는 OS 페이지별로 소유하므로 부분 해제는 예산을 반환하고 새 페이지는 0으로 채워집니다. 빈 구간이나 최대 권한을 넘는 protect가 실패하면 전체 범위를 변경하지 않습니다. 출처: [XNU VM 서비스](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
 
@@ -138,7 +138,7 @@ O_CREAT과 O_EXCL=0x800의 조합은 기존 파일/디렉터리에 자르기 전
 
 선택적 `darwin_files.creation_policy`(C++ `CreationPolicy`)는 새 객체에 완전한 메타데이터를 제공합니다. 엄격한 객체는 `first_inode`, `block_size`, `generation`, `creation_time`, `mutation_policy` 다섯 필드만 포함하며 시간과 변경 정책은 기존 형식을 사용합니다. 명시적 umask, 하나 이상의 mutable 부모와 모든 해당 부모의 완전한 metadata가 필요합니다. block_size는 1..INT32_MAX, generation은 uint32입니다. 할당 단위는 512..16 MiB 범위의 2의 거듭제곱이며 블록 크기/VM 페이지와 독립적이고 나노초는 [0,1000000000)입니다. first_inode는 0이 아닌 uint64로 다른 장치를 포함한 모든 stat/스냅샷 inode보다 커야 합니다. JSON의 정확한 정수 범위를 넘으면 10진수 문자열을 사용합니다.
 
-성공한 새 삽입만 전역 inode 순서를 진행합니다. UINT64_MAX 사용 후 영구 소진되며 close/unlink/이름 재사용/umask/이후 조회로 초기화되지 않습니다. 배타·FD·경로·항목·바이트 예산 실패는 이름/FD/번호 증가를 남기지 않고 기존 O_CREAT도 번호를 쓰지 않습니다. 새 stat64는 직계 부모 device/GID, 고정 게스트 유효 UID 1000, mode `S_IFREG | (mode & 0777 & ~umask)`, nlink=1, size/blocks/flags=0을 사용합니다. 블록 크기, generation, 네 초기 고정 시간은 정책에서 얻습니다. 부모 전체 stat/열거가 무효화되어도 불변 device/GID를 쓸 수 있지만 전체 기록은 복원하지 않습니다.
+성공한 새 삽입만 전역 inode 순서를 진행합니다. UINT64_MAX 사용 후 영구 소진되며 close/unlink/이름 재사용/umask/이후 조회로 초기화되지 않습니다. 배타·FD·경로·항목·바이트 예산 실패는 이름/FD/번호 증가를 남기지 않고 기존 O_CREAT도 번호를 쓰지 않습니다. 새 stat64는 직계 부모 device/GID, 선택한 게스트 유효 UID（기본1000）, mode `S_IFREG | (mode & 0777 & ~umask)`, nlink=1, size/blocks/flags=0을 사용합니다. 블록 크기, generation, 네 초기 고정 시간은 정책에서 얻습니다. 부모 전체 stat/열거가 무효화되어도 불변 device/GID를 쓸 수 있지만 전체 기록은 복원하지 않습니다.
 
 새 노드는 자체 메타데이터/할당 상태를 가지며 옛 동명 객체를 상속하지 않습니다. write/truncate/unlink는 변경 정책을 공유하고 inode/mode/birthtime과 삭제 후 nlink=0을 보존합니다. 전체 EFAULT 후 영구 미상 상태는 유지하며 기존 노드에 소급 적용하지 않습니다. `created-file-metadata`는 다섯 구성에서 네이티브 권한, 이전 마스크, 유효 UID, 부모 장치/그룹과 수명을 비교하고 `virtual-created-metadata`는 144바이트 전체 기록을 별도로 비교합니다. 네이티브의 네 시간은 같지 않을 수 있습니다. 고정 시간/희소 할당은 가상 규칙이며 권한 강제 검사, 자격 증명 전환, ACL, 네이티브 APFS 동작은 아직 지원하지 않습니다.
 
@@ -366,7 +366,7 @@ Release Darwin 835개: 통과474, 백엔드 미지원 건너뜀360, 기존 macOS
 
 MIB 개수는 하위32비트로2～12, 이름 길이는 전체64비트로1024 미만이어야 합니다. 지정된 모든 바이트를 검사한 뒤 첫 NUL을 해석하고 끝의 점 하나를 제거합니다. 빈 이름은 ENOENT, 부분적으로 읽을 수 있는 입력은 미지원입니다. null이 아닌 `oldlenp`는 효과 발생 전에8바이트 전체를 읽고 쓸 수 있어야 합니다. 잘못된 길이 포인터의 네이티브 실험이 제한 시간 안에 반환하지 않아 명시적으로 지원 범위 밖에 둡니다. null `oldlenp`는 용량0, null `oldp`는 크기 조회입니다. 짧은 버퍼는 ENOMEM12, 데이터 불변, 길이0입니다. 데이터 EFAULT는 이전 길이를 보존합니다. 입력과 용량을 먼저 캡처하고 데이터 다음 길이를 쓰므로 별칭 순서와 후속 전송 실패 전의 복사를 보존합니다.
 
-`newp`와 `newlen`이 모두0이 아닐 때만 쓰기입니다. 선택된 노드는 모델의 고정된 비 root 신원에 대해 관측값·출력 검사 전에 EPERM1을 반환합니다. 네이티브에서 특권 쓰기가 가능한 `kern.osversion`도 포함합니다. 새 길이0이면 포인터를 무시합니다. 알 수 없는 키, 다른 트리, 동적 OID를 ENOENT로 추정하지 않습니다.
+newp/newlen 모두0이 아니면 쓰기입니다. 이름/MIB와 oldlenp 전체 읽기/쓰기 사전 검사를 먼저 유지합니다. 기본 또는 명시적 비root EUID는 관측/데이터 출력 검사 전 EPERM1이며 EUID0의 kern.osversion 특권 쓰기는 미구현이므로 unsupported입니다. RUID는 결정하지 않습니다. 다른 네이티브 읽기 전용 노드는root도 EPERM1입니다. 새 길이0은 포인터를 무시하고 알 수 없는 키/트리/동적OID의 ENOENT는 추정하지 않습니다.
 
 자체 작성 `system-info`는 네이티브 macOS와 게스트 ABI를 검사하고 `virtual-system`은 C++·C/CLI·Python에서 설정 바이트를 비교합니다. 별도 SDK 검사는 호스트의 아홉 관측값을 명시적 테스트 입력으로 삼아 이름·숫자 출력을 비교합니다. iOS 실기기나 Intel HVF 검증을 뜻하지 않습니다.
 
@@ -624,3 +624,27 @@ macOS ARM64 Release 등록/통과/미실행 skip/실패: 1337 / 845 / 492 / 0, �
 macOS ARM64 Release 등록/통과/미실행 skip/실패 1371/867/504/0, 필수 HVF 126 전부 실행. File361/361, C/CLI 200/200, JSON 40/40, System/SDK 53/53, native 32/32 통과. 새4K/16K12개 및 입장/SDK 검사, Python5구성 42.865초; API71, runner/reference49, SDK drift/형식/기능/출처/문서 검사 통과. 수치는 겹치며 독립 검토 통과. 증거 `build-hvf-arm64/resource-usage-observations/`를 동결해 commit에 연결합니다. 초기 x64 EINVAL fixture는 RDX보존, ARM64 X1초기화로 수정했고 실패/빈 filter 기록 보존. runtime/기한/음성대조 불변. 집행, 권한, 변경 후 디렉터리, shared map/EOF, 시계, Mach/thread/dyld, framework 미완성. 물리iOS, 중단Intel HVF, remote merge CI 별도 검증입니다.
 
 첫 전체 검증866통과, 기존iOS ARM64 HVF rename5초timeout1개,504skip. 같은 binary의 해당 case386ms통과 후 전체 직렬 검증통과. 두 기록 보존, 원인미확정이며 latency보장 아님.
+
+
+## 명시적 자격 정보와 그룹 및 생성 소유자 일관성
+
+선택Credentials는RealUID/EffectiveUID/RealGID/EffectiveGID와 독립 선택GroupAccessList입니다. 생략하면 네조회1000, 명시0/root 유효, ID0..INT32_MAX. 그룹1..16, 첫항EffectiveGID, 순서/중복보존. 누락은 알수없음이며host/EGID로 채우지 않습니다. 엄격darwin_system.credentials는real_uid/effective_uid/real_gid/effective_gid 필수, groups선택. 무손실 정수/중앙검증은 모양/필드/범위/수/첫그룹 오류를 로드전 거부하며 비Darwin도 거부합니다.
+
+getuid24/geteuid25/getgid47/getegid43/getgroups79는 단일system소유자입니다. 새일반파일UID는 유효UID, device/GID는 직계부모상속. rename/보존FD/이름재사용은 객체 유지, 입력stat불변. root는 쓰기/디렉터리변경/권한/ACL을 부여하지 않으며 setuid/setgid/setgroups와process/session 미구현입니다.
+
+getgroups용량은 하위32bit 부호int입니다. 음수먼저EINVAL, 미설정unsupported, 알려진0은포인터접근없이count, 양수부족은메모리전EINVAL, 충분하면4*count작은엔디언byte한번복사. 0x1000은양수, POSIXflag제거없음. 비정렬/페이지경계guard보존, 전부쓰기불가EFAULT, 부분은byte전unsupported, backend오류는transport. BSD오류는x64 RDX보존/ARM64 X1소거, 성공은둘다secondary소거, 보고는raw인자보존.
+
+
+~~~json
+{"darwin_system":{"credentials":{"real_uid":101,"effective_uid":202,
+ "real_gid":303,"effective_gid":404,"groups":[404,0,"2147483647",7,7]}}}
+~~~
+
+
+[Apple getgroups contract](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getgroups.2.html), [pinned XNU credential/group ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_prot.c).
+
+등록/통과/불가skip/실패: 1413/897/516/0; ARM64 HVF 129/129. System/SDK72/72, File365/365, Report43/43, C/CLI210/210; guest8/12skip; native33/33; Python5 82.918s; API71, runner/reference49. SDK drift / clang-format22.1.2 / capabilities23 / provenance / docs11+negative3: OK. Independent source review: OK.
+
+21 value +5 native fault,5s; host16groups, positive short capacity: OK. Native partial32byte thenEFAULT: observation only. Counts overlap. `build-hvf-arm64/credential-observations/`.
+
+첫8실패（명령예산5, 5초deadline3）、12skip. 새fixture2페이지scan을 같은경계132byte guard（앞64, 최대data64, 뒤최소4）로제한. 직접owner는전체2페이지검증. 예산/인자/오류음성대조불변, source/binary/두run보존. 사전검토로transport경계수정, public설정내용비교. 권한/ACL、link、변경후directory전체관측、shared maps/EOF、clock、Mach/thread/dyld/framework미완；실물iOS、정지Intel HVF、merge CI별도.

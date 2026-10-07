@@ -12,6 +12,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace neverd::emulation {
 /// One fixed raw getrlimit observation, not a resource enforcement policy.
@@ -34,6 +35,18 @@ struct DarwinResourceUsage {
   /// ru_majflt, ru_nswap, ru_inblock, ru_oublock, ru_msgsnd, ru_msgrcv,
   /// ru_nsignals, ru_nvcsw, ru_nivcsw. Meanings are implementation-defined.
   std::array<int64_t, CounterCount> Counters{};
+};
+/// Fixed credential observations, not permission or privilege authorization.
+/// Supported IDs are 0..INT32_MAX. A supplied GroupAccessList has 1..16
+/// entries, preserves order/duplicates and starts with EffectiveGID.
+/// Omitted groups are unknown; constructing this record explicitly declares
+/// its zero/root IDs. Omitting Credentials retains the profile's legacy IDs.
+struct DarwinCredentials {
+  uint32_t RealUID = 0;
+  uint32_t EffectiveUID = 0;
+  uint32_t RealGID = 0;
+  uint32_t EffectiveGID = 0;
+  std::optional<std::vector<uint32_t>> GroupAccessList;
 };
 /// Fixed system observations, independent of host hardware and OS identity.
 /// Missing is unknown; an empty string is an explicit value. Strings contain
@@ -59,6 +72,10 @@ struct DarwinSystemOptions {
   /// No clock advancement, budget changes or guest performance is inferred.
   std::optional<DarwinResourceUsage> ResourceUsageSelf;
   std::optional<DarwinResourceUsage> ResourceUsageChildren;
+  /// Scalar queries and new-file UID share this immutable observation.
+  /// Absence retains UID/GID 1000; it never supplies a group list or grants
+  /// filesystem permissions, credential mutation or privileged sysctl writes.
+  std::optional<DarwinCredentials> Credentials;
 };
 } // namespace neverd::emulation
 #endif

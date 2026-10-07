@@ -843,6 +843,267 @@ TEST(DarwinSystemOptions,
   EXPECT_FALSE(bool(validateSystemOptions(O)));
 }
 
+TEST_P(DarwinSystemTest, CredentialScalarsShareSelectionWithoutMemoryAccess) {
+  const ServiceKind Kinds[] = {ServiceKind::GetUID, ServiceKind::GetEUID,
+                               ServiceKind::GetGID, ServiceKind::GetEGID};
+  for (unsigned Configuration = 0; Configuration != 4; ++Configuration) {
+    if (!Configuration)
+      Options.reset();
+    else
+      Options = DarwinSystemOptions{};
+    if (Configuration == 2)
+      Options->Credentials = DarwinCredentials{0, 7, 9, 11, {}};
+    if (Configuration == 3)
+      Options->Credentials = DarwinCredentials{};
+    const uint32_t Expected[] = {0, 7, 9, 11};
+    for (unsigned I = 0; I != 4; ++I) {
+      FailingSystemMemory Memory(*Space);
+      Memory.FailAccess = Memory.FailRead = Memory.FailWrite = 1;
+      auto Out = systemService(Memory, Page, Kinds[I],
+                               {0, 0, {UINT64_MAX, UINT64_MAX}, std::nullopt},
+                               Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out);
+      EXPECT_FALSE((**Out).Error);
+      EXPECT_EQ((**Out).Value, Configuration < 2    ? 1000u
+                               : Configuration == 2 ? Expected[I]
+                                                    : 0u);
+      EXPECT_EQ(Memory.Accesses, 0u);
+      EXPECT_EQ(Memory.Reads, 0u);
+      EXPECT_EQ(Memory.Writes, 0u);
+    }
+  }
+}
+TEST_P(DarwinSystemTest, GroupsPreserveDuplicatesAndOnlyCopyActualCount) {
+  Options = darwin_test::credentialOptions();
+  const auto Data = llvm::fromHex(darwin_test::GroupsHex);
+  ASSERT_EQ(Data.size(), 20u);
+  for (auto Capacity : {5ULL, 16ULL, 0x1000ULL, 0x7fffffffULL,
+                        0x1234567800000005ULL, 0x1234567800001000ULL})
+    for (auto OutAddress : {Output + 1, Base + Page - 9}) {
+      fill();
+      auto Out = invoke(ServiceKind::GetGroups, {Capacity, OutAddress});
+      ASSERT_TRUE(Out);
+      EXPECT_FALSE(Out->Error);
+      EXPECT_EQ(Out->Value, 5u);
+      std::string Expected(Page * 2, '\xa5');
+      Expected.replace(OutAddress - Base, Data.size(), Data);
+      EXPECT_EQ(bytes(Base, Page * 2), Expected);
+    }
+  EXPECT_EQ(Options->Credentials->EffectiveGID, 404u);
+  EXPECT_EQ(*Options->Credentials->GroupAccessList,
+            (std::vector<uint32_t>{404, 0, INT32_MAX, 7, 7}));
+}
+TEST_P(DarwinSystemTest, GroupsMaximumAndExplicitRootAreNotDefaulted) {
+  for (bool Maximum : {false, true}) {
+    Options = DarwinSystemOptions{};
+    Options->Credentials = DarwinCredentials{};
+    Options->Credentials->EffectiveGID = Maximum ? INT32_MAX : 0;
+    Options->Credentials->GroupAccessList =
+        Maximum ? std::vector<uint32_t>{INT32_MAX, 0, 1, 2,  3,  4,  5,  6,
+                                        7,         8, 9, 10, 11, 12, 13, 14}
+                : std::vector<uint32_t>{0};
+    ASSERT_FALSE(bool(validateSystemOptions(*Options)));
+    const auto Data = llvm::fromHex(
+        Maximum
+            ? "ffffff7f00000000010000000200000003000000040000000500000006000000"
+              "0700000008000000090000000a0000000b0000000c0000000d0000000e000000"
+            : "00000000");
+    fill();
+    auto Out = invoke(ServiceKind::GetGroups, {0x1000, Output + 1});
+    ASSERT_TRUE(Out);
+    EXPECT_FALSE(Out->Error);
+    EXPECT_EQ(Out->Value, Maximum ? 16u : 1u);
+    std::string Expected(Page * 2, '\xa5');
+    Expected.replace(Output + 1 - Base, Data.size(), Data);
+    EXPECT_EQ(bytes(Base, Page * 2), Expected);
+  }
+}
+TEST_P(DarwinSystemTest, GroupEarlyDecisionsNeverAccessOutput) {
+  for (unsigned Configuration = 0; Configuration != 4; ++Configuration) {
+    if (!Configuration)
+      Options.reset();
+    else
+      Options = DarwinSystemOptions{};
+    if (Configuration == 2)
+      Options->Credentials = DarwinCredentials{};
+    if (Configuration == 3)
+      Options = darwin_test::credentialOptions();
+    for (auto Capacity :
+         {0ULL, 0xffffffff00000000ULL, 1ULL, 4ULL, 0x1234567800000004ULL,
+          0xffffffffULL, 0x80000000ULL, 0xffffffff80000000ULL})
+      for (auto Address : {uint64_t(0), Output, UINT64_MAX}) {
+        FailingSystemMemory Memory(*Space);
+        Memory.FailAccess = Memory.FailRead = Memory.FailWrite = 1;
+        auto Out = systemService(Memory, Page, ServiceKind::GetGroups,
+                                 {0, 79, {Capacity, Address}, std::nullopt},
+                                 Options, Result);
+        ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+        bool Invalid = uint32_t(Capacity) & 0x80000000u;
+        bool Short = Configuration == 3 && uint32_t(Capacity) != 0 &&
+                     uint32_t(Capacity) < 5;
+        if (Invalid || Short) {
+          ASSERT_TRUE(*Out);
+          EXPECT_TRUE((**Out).Error);
+          EXPECT_EQ((**Out).Value, 22u);
+        } else if (Configuration != 3) {
+          EXPECT_FALSE(*Out);
+          EXPECT_EQ(Result.Diagnostic, diagnostic::GroupObservation);
+        } else {
+          ASSERT_TRUE(*Out);
+          EXPECT_FALSE((**Out).Error);
+          EXPECT_EQ((**Out).Value, 5u);
+        }
+        EXPECT_EQ(Memory.Accesses, 0u);
+        EXPECT_EQ(Memory.Reads, 0u);
+        EXPECT_EQ(Memory.Writes, 0u);
+      }
+  }
+}
+TEST_P(DarwinSystemTest, GroupFaultAndPartialCopiesNeverPublishBytes) {
+  Options = darwin_test::credentialOptions();
+  for (auto Address : {uint64_t(0), uint64_t(1), value::UserLimit, UINT64_MAX,
+                       Base + Page * 2}) {
+    fill();
+    result(invoke(ServiceKind::GetGroups, {0x1000, Address}), 14);
+    EXPECT_EQ(bytes(Base, Page * 2), std::string(Page * 2, '\xa5'));
+  }
+  fill();
+  ASSERT_FALSE(bool(Space->protect(Base + Page, Page, Read | UserAccessible)));
+  result(invoke(ServiceKind::GetGroups, {0x1000, Base + Page}), 14);
+  EXPECT_EQ(bytes(Base, Page * 2), std::string(Page * 2, '\xa5'));
+  EXPECT_FALSE(invoke(ServiceKind::GetGroups, {0x1000, Base + Page - 10}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::GroupPartialOutput);
+  EXPECT_EQ(bytes(Base, Page * 2), std::string(Page * 2, '\xa5'));
+  ASSERT_FALSE(bool(Space->unmap(Base + Page, Page)));
+  EXPECT_FALSE(invoke(ServiceKind::GetGroups, {16, Base + Page - 10}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::GroupPartialOutput);
+  EXPECT_EQ(bytes(Base, Page), std::string(Page, '\xa5'));
+}
+TEST_P(DarwinSystemTest, GroupTransportErrorsAndSingleSuccessfulCopy) {
+  Options = darwin_test::credentialOptions();
+  for (unsigned Failure = 0; Failure != 3; ++Failure) {
+    fill();
+    FailingSystemMemory Memory(*Space);
+    if (Failure < 2)
+      Memory.FailAccess = Failure + 1;
+    else
+      Memory.FailWrite = 1;
+    auto Out = systemService(Memory, Page, ServiceKind::GetGroups,
+                             {0, 79, {5, Base + Page - 9}, std::nullopt},
+                             Options, Result);
+    ASSERT_FALSE(bool(Out));
+    EXPECT_EQ(llvm::toString(Out.takeError()),
+              Failure < 2 ? "transport access" : "transport write");
+    EXPECT_EQ(Memory.Reads, 0u);
+    EXPECT_EQ(Memory.Writes, Failure < 2 ? 0u : 1u);
+    EXPECT_EQ(bytes(Base, Page * 2), std::string(Page * 2, '\xa5'));
+  }
+  fill();
+  FailingSystemMemory Memory(*Space);
+  auto Out = systemService(Memory, Page, ServiceKind::GetGroups,
+                           {0, 79, {0x1000, Base + Page - 9}, std::nullopt},
+                           Options, Result);
+  ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+  ASSERT_TRUE(*Out);
+  EXPECT_FALSE((**Out).Error);
+  EXPECT_EQ((**Out).Value, 5u);
+  EXPECT_EQ(Memory.Accesses, 2u);
+  EXPECT_EQ(Memory.Reads, 0u);
+  EXPECT_EQ(Memory.Writes, 1u);
+  std::string Expected(Page * 2, '\xa5');
+  Expected.replace(Base + Page - 9 - Base, 20,
+                   llvm::fromHex(darwin_test::GroupsHex));
+  EXPECT_EQ(bytes(Base, Page * 2), Expected);
+}
+TEST_P(DarwinSystemTest,
+       SysctlWriteDecisionUsesEffectiveIdentityAfterPreflight) {
+  for (unsigned Identity = 0; Identity != 3; ++Identity)
+    for (bool Missing : {false, true})
+      for (bool Named : {false, true}) {
+        Options = darwin_test::systemOptions();
+        if (Identity)
+          Options->Credentials = DarwinCredentials{
+              Identity == 1 ? 0u : 7u, Identity == 1 ? 7u : 0u, 0, 0, {}};
+        if (Missing)
+          Options->OSVersion.reset();
+        fill();
+        capacity(0);
+        std::optional<ServiceResult> Out;
+        if (Named)
+          Out = named("kern.osversion", UINT64_MAX, Length, UINT64_MAX, 1);
+        else {
+          ASSERT_FALSE(bool(Space->writeInteger(Base, 1, 4)));
+          ASSERT_FALSE(bool(Space->writeInteger(Base + 4, 65, 4)));
+          Out = invoke(ServiceKind::Sysctl,
+                       {Base, 2, UINT64_MAX, Length, UINT64_MAX, 1});
+        }
+        if (Identity == 2) {
+          EXPECT_FALSE(Out);
+          EXPECT_EQ(Result.Diagnostic, diagnostic::SystemPrivilegedWrite);
+        } else
+          result(Out, 1);
+        EXPECT_EQ(length(), 0u);
+        EXPECT_EQ(bytes(Output, 32), std::string(32, '\xa5'));
+        capacity(32);
+        result(named("kern.ostype", UINT64_MAX, Length, UINT64_MAX, 1), 1);
+      }
+  Options = darwin_test::systemOptions();
+  Options->Credentials = DarwinCredentials{};
+  capacity(8);
+  result(named("kern.osversion", Output, Length, UINT64_MAX, 0));
+  EXPECT_EQ(bytes(Output, 4), std::string("V42\0", 4));
+}
+TEST_P(DarwinSystemTest, RootSysctlCannotSkipNameOrLengthPreflight) {
+  Options = darwin_test::systemOptions();
+  Options->Credentials = DarwinCredentials{};
+  result(invoke(ServiceKind::SysctlByName,
+                {UINT64_MAX, 14, UINT64_MAX, Length, UINT64_MAX, 1}),
+         14);
+  result(invoke(ServiceKind::Sysctl,
+                {UINT64_MAX, 2, UINT64_MAX, Length, UINT64_MAX, 1}),
+         14);
+  EXPECT_FALSE(named("kern.osversion", UINT64_MAX, 1, UINT64_MAX, 1));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SystemLengthMemory);
+  ASSERT_FALSE(bool(Space->writeInteger(Base, 1, 4)));
+  ASSERT_FALSE(bool(Space->writeInteger(Base + 4, 65, 4)));
+  EXPECT_FALSE(
+      invoke(ServiceKind::Sysctl, {Base, 2, UINT64_MAX, 1, UINT64_MAX, 1}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SystemLengthMemory);
+  EXPECT_EQ(bytes(Output, 32), std::string(32, '\xa5'));
+}
+TEST(DarwinSystemOptions, CredentialsRequireBoundedCoherentGroups) {
+  auto O = darwin_test::credentialOptions();
+  ASSERT_FALSE(bool(validateSystemOptions(O)));
+  for (auto Member :
+       {&DarwinCredentials::RealUID, &DarwinCredentials::EffectiveUID,
+        &DarwinCredentials::RealGID, &DarwinCredentials::EffectiveGID})
+    for (auto ID : {0x80000000u, UINT32_MAX}) {
+      auto Bad = O;
+      (*Bad.Credentials).*Member = ID;
+      EXPECT_EQ(llvm::toString(validateSystemOptions(Bad)),
+                diagnostic::CredentialOption);
+    }
+  for (auto Groups : {std::vector<uint32_t>{}, std::vector<uint32_t>(17, 404),
+                      std::vector<uint32_t>{0, 404},
+                      std::vector<uint32_t>{404, UINT32_MAX}}) {
+    auto Bad = O;
+    Bad.Credentials->GroupAccessList = Groups;
+    EXPECT_EQ(llvm::toString(validateSystemOptions(Bad)),
+              diagnostic::CredentialOption);
+  }
+  O.Credentials =
+      DarwinCredentials{INT32_MAX, INT32_MAX, INT32_MAX, INT32_MAX,
+                        std::vector<uint32_t>{INT32_MAX, 0, INT32_MAX}};
+  EXPECT_FALSE(bool(validateSystemOptions(O)));
+  O.Credentials->GroupAccessList.reset();
+  EXPECT_FALSE(bool(validateSystemOptions(O)));
+  O.Credentials = DarwinCredentials{0, 0, 0, 0, std::vector<uint32_t>{0}};
+  EXPECT_FALSE(bool(validateSystemOptions(O)));
+  O.Credentials.reset();
+  EXPECT_FALSE(bool(validateSystemOptions(O)));
+}
+
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinSystemTest,
                          testing::Values(4096, 16384));
 } // namespace

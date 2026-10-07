@@ -433,6 +433,9 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"directories", "64"},
           std::pair{"directory-entries", "65"},
           std::pair{"time-values", emulation::darwin_test::TimeHex},
+          std::pair{"credentials", "6b"},
+          std::pair{"virtual-credentials",
+                    emulation::darwin_test::CredentialsHex},
           std::pair{"resource-usage", "67"},
           std::pair{"virtual-resource-usage",
                     emulation::darwin_test::ResourceUsageHex},
@@ -467,6 +470,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
   const auto &[File, Profile, Mode, Expected] = GetParam();
+  const llvm::StringRef ModeName(Mode);
   const bool X64 = llvm::StringRef(File).ends_with("x86_64");
   SCOPED_TRACE(File);
   Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
@@ -477,9 +481,13 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       std::string(
           R"({"backend":"unicorn","timeout_microseconds":10000000,"darwin_time":)") +
       emulation::darwin_test::TimeJSON + R"(,"darwin_system":)" +
-      ((Mode == "resource-limits" || Mode == "virtual-resource-limits")
+      ((ModeName == "credentials" || ModeName == "virtual-credentials" ||
+        ModeName == "created-file-metadata")
+           ? emulation::darwin_test::CredentialsJSON
+       : (ModeName == "resource-limits" ||
+          ModeName == "virtual-resource-limits")
            ? emulation::darwin_test::ResourceLimitsJSON
-       : (Mode == "resource-usage" || Mode == "virtual-resource-usage")
+       : (ModeName == "resource-usage" || ModeName == "virtual-resource-usage")
            ? emulation::darwin_test::ResourceUsageJSON
            : emulation::darwin_test::SystemJSON) +
       R"(,"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":)" +

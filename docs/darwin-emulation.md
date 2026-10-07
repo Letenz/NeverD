@@ -91,8 +91,8 @@ and [x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3
 entry paths; no Apple implementation code is incorporated.
 
 The core service inventory is `exit`, `write`, `getpid`, `getppid`, `getuid`,
-`geteuid`, `getgid`, `getegid`, `mmap`, `mprotect` and `munmap`. PID, UID and
-GID are deterministically 1000, and parent PID is 1. Output descriptors 1 and
+`geteuid`, `getgid`, `getegid`, `getgroups`, `mmap`, `mprotect` and `munmap`. PID is deterministically 1000 and parent PID is 1. UID/GID default to 1000;
+optional credentials below explicitly select distinct real/effective IDs. Output descriptors 1 and
 2 are initially captured byte sinks, including NUL and non-UTF8 bytes. Their
 duplicates retain the original sink; writes through closed or read-only
 descriptors return EBADF. A partial readable prefix is captured, but a subsequent copy
@@ -321,7 +321,7 @@ Optional `darwin_files.creation_policy` (C++ `CreationPolicy`) enables complete 
 
 Only a successful new insertion consumes the next global inode. A successful UINT64_MAX exhausts the sequence permanently; close, unlink, name reuse, umask and later namespace lookups cannot reset it. Exclusive, FD, path, entry and byte-budget refusals publish no name, descriptor or inode increment. Existing O_CREAT opens consume none.
 
-New stat64 records use the direct parent's supplied device and GID, the fixed guest effective UID 1000, mode `S_IFREG | (mode & 0777 & ~umask)`, nlink 1, and zero size/blocks/flags. Block size and generation come from policy; all four timestamps equal the fixed creation time. Device/GID remain known after a parent's complete stat/enumeration observation becomes invalid, so later creation can use those fields without restoring that full record. Each new node owns its metadata and allocation state; it never borrows an old same-name object's record. Subsequent write/truncate/unlink use the supplied mutation policy, preserve inode/mode/birthtime and an unlinked nlink=0, and retain permanent whole-EFAULT invalidation. Existing nodes are unaffected by the creation policy.
+New stat64 records use the direct parent's supplied device and GID, the selected guest effective UID (default 1000), mode `S_IFREG | (mode & 0777 & ~umask)`, nlink 1, and zero size/blocks/flags. Block size and generation come from policy; all four timestamps equal the fixed creation time. Device/GID remain known after a parent's complete stat/enumeration observation becomes invalid, so later creation can use those fields without restoring that full record. Each new node owns its metadata and allocation state; it never borrows an old same-name object's record. Subsequent write/truncate/unlink use the supplied mutation policy, preserve inode/mode/birthtime and an unlinked nlink=0, and retain permanent whole-EFAULT invalidation. Existing nodes are unaffected by the creation policy.
 
 The original `created-file-metadata` workload compares native modes, umask return bits, effective UID, parent device/group and identity lifetime across five guest profiles. `virtual-created-metadata` separately compares the entire 144-byte policy record. Native creation timestamps need not all be equal; the fixed values and sparse allocation policy describe the declared virtual filesystem. Permission enforcement, credential switching, ACLs and native APFS metadata behavior remain outside this contract.
 
@@ -858,7 +858,7 @@ Release Darwin reconciled 835 registrations: 474 passed, 360 unavailable-backend
 
 MIB counts use the low 32 bits and must be 2–12; named lengths use all 64 bits and must be below 1024. Every supplied name byte is checked before interpreting the first NUL and removing one final dot. An empty name returns ENOENT. Partial input remains unsupported. A nonnull `oldlenp` must be fully readable and writable for eight bytes before effects; faulting native length probes did not return within their deadlines, so those pointers remain an explicit unsupported boundary. Null `oldlenp` means capacity zero; null `oldp` requests only the size. A short buffer returns ENOMEM12, leaves data untouched and writes length zero. Data EFAULT preserves the old length. Input and capacity are captured before data, with the final length copy last, including aliases and retained earlier copies after transport failure.
 
-Only nonzero `newp` together with nonzero `newlen` is a write request. Selected nodes return EPERM1 for the model’s fixed non-root identity before checking the observation or output. This includes `kern.osversion`, which is privileged-writable natively. A pointer with zero new length is ignored. Unknown keys, other trees and dynamic OIDs do not acquire guessed ENOENT results.
+Only nonzero `newp` together with nonzero `newlen` is a write request. After the original name/MIB and complete oldlenp read/write preflight, default or explicit non-root EUID returns EPERM1 before observation lookup or data-output access. With explicit EUID0, privileged-writable `kern.osversion` stops unsupported because privileged writes are not modeled; real UID does not decide this branch. Native read-only selected nodes retain EPERM1 even for root. A pointer with zero new length is ignored. Unknown keys, other trees and dynamic OIDs do not acquire guessed ENOENT results.
 
 The original `system-info` program checks native macOS and guest ABI behavior; `virtual-system` compares exact configured bytes through C++, C/CLI and Python. A separate SDK oracle captures all nine host observations as explicit test inputs and compares both named and numeric output. This does not provide iOS device or Intel HVF acceptance.
 
@@ -1323,3 +1323,81 @@ This completes the declared query. Resource enforcement, permissions,
 directory metadata/enumeration after mutation, coherent shared maps/EOF faults,
 advancing clocks, Mach/thread/dyld and framework runtime remain unfinished.
 Physical iOS, suspended Intel HVF and remote merge CI need separate acceptance.
+
+
+## Explicit credentials, group access and coherent creation ownership
+
+Optional C++ DarwinSystemOptions::Credentials holds RealUID, EffectiveUID,
+RealGID, EffectiveGID and independently optional GroupAccessList. Omission keeps
+the historical four scalar getters at1000. An explicit record is complete;
+zero/root is a valid declaration. Missing groups remain unknown and are never
+inferred from host membership or EGID. The supported subset is0..INT32_MAX for
+each ID. Groups contain1..16 entries, preserve order and duplicates, and begin
+with EffectiveGID. Strict darwin_system.credentials requires exactly real_uid,
+effective_uid, real_gid, effective_gid and optionally groups. Lossless integer
+decoding and the central validator reject malformed shapes, fields, ranges,
+group counts or first-group mismatch before image loading; non-Darwin profiles
+still reject the option.
+
+getuid(24), geteuid(25), getgid(47), getegid(43) and getgroups(79) share one system
+owner. The process passes the selected effective UID once to the file owner.
+New regular files use that UID while inheriting device/GID from their direct
+parent; rename, retained descriptors and old-name reuse preserve object identity.
+Existing input stat records remain independent. Root does not grant file writes,
+mutable directories, permissions or ACLs. Credential mutation, setuid/setgid/
+setgroups, process/session creation and authorization enforcement remain absent.
+
+getgroups interprets the low32 capacity bits as signed int. Negative capacity
+returns EINVAL before observations or memory. Missing groups stop unsupported
+before output. Known zero capacity returns count without accessing any pointer;
+positive short capacity returns EINVAL before memory. Sufficient capacity copies
+only4*count little-endian bytes once, then returns count. Capacity0x1000 is
+positive and performs copying or pointer-fault handling; no POSIX flag is removed.
+Unaligned/cross-page copies preserve full guards. Wholly unwritable output gives
+EFAULT; individually partial output stops unsupported before any byte. Backend
+errors remain transport errors. BSD error return preserves x64 RDX and clears
+ARM64 X1; successful secondary results clear on both. Reports preserve full raw
+arguments. Explicit EUID0 changes only the declared kern.osversion write boundary
+described above, after the existing input/length preflight.
+
+
+~~~json
+{"darwin_system":{"credentials":{"real_uid":101,"effective_uid":202,
+ "real_gid":303,"effective_gid":404,"groups":[404,0,"2147483647",7,7]}}}
+~~~
+
+
+[Apple getgroups contract](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getgroups.2.html), [pinned XNU credential/group ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_prot.c).
+
+### Credential verification, 2026-10-07
+
+Release macOS ARM64 registrations/passed/unavailable-skipped/failed: 1413/897/516/0;
+all 129 required ARM64 HVF cases executed. System/SDK72/72, file365/365,
+report43/43 and public C/CLI210/210 passed without skips. Focused guests8 passed/
+12 unavailable; original native workloads33/33; Python all five configurations
+in 82.918s, Python API71 and runner/reference49 checks passed. SDK drift,
+pinned changed-source/full-PR formatting, capabilities, provenance and all11
+guides plus localization negative controls passed. Counts overlap. Independent
+source review passed. Evidence is frozen under
+`build-hvf-arm64/credential-observations/` and bound to the committed revision.
+
+The independent raw/SDK probe passed21 value checks and5 separate fault
+processes at unchanged5s. This host has16 groups, so positive short-capacity
+precedence was exercised natively. Native partial copy wrote32 bytes before
+EFAULT here; this observation is preserved separately and is not a portable
+prefix guarantee or a modeled partial copy.
+
+The first focused run retained8 failures (five instruction limits and three
+5s deadlines) and12 unavailable skips: scanning two complete pages in the new
+fixture exceeded unchanged bounds. The fixture now verifies all132 guard bytes
+around the same cross-page output (64 preceding, up to64 data, at least4
+following); direct owner tests still verify both complete pages. No service
+parameters, budgets or fault controls changed. Sources, binaries and both runs
+are preserved. Review also corrected the direct transport test's cross-page
+geometry before execution. Public option selection now compares string contents
+rather than literal pointer identities.
+
+Permissions/ACLs, links, complete directory observations after mutation,
+coherent shared maps/EOF, advancing clocks, Mach/thread/dyld and frameworks
+remain unfinished. Physical iOS, suspended Intel HVF and remote merge CI remain
+separate acceptance boundaries.

@@ -367,8 +367,9 @@ llvm::Error validateFileOptions(const DarwinFileOptions &Options) {
 
 DarwinFiles::DarwinFiles(GuestMemory &Memory,
                          const std::optional<DarwinFileOptions> &Options,
-                         uint64_t OutputLimit)
-    : Memory(Memory), Options(Options), OutputLimit(OutputLimit) {
+                         uint64_t OutputLimit, uint32_t EffectiveUID)
+    : Memory(Memory), Options(Options), OutputLimit(OutputLimit),
+      EffectiveUID(EffectiveUID) {
   const llvm::ArrayRef<uint8_t> Input =
       Options && Options->StandardInput
           ? llvm::ArrayRef<uint8_t>(*Options->StandardInput)
@@ -1296,7 +1297,7 @@ DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
     auto &M = Node->CurrentMetadata.emplace();
     M.Device = ParentIdentity->Device;
     M.GID = ParentIdentity->GID;
-    M.UID = UserID;
+    M.UID = EffectiveUID;
     M.Inode = NextCreatedInode;
     M.Mode = FileRegularMode | (Mode & 0777 & ~CurrentUmask);
     M.LinkCount = 1;

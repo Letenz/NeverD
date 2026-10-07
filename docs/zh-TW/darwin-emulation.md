@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: f2e1b376c3a2debfc3ffe6751fe7c57302755a5b03e02931fe21f4e83482165a -->
+<!-- i18n-source: dcf1c6fd8dade7571d6c20c70f66ce44bd254c717076498f8a48e46deec70a62 -->
 
 [← 文件索引](README.md)
 
@@ -39,7 +39,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 BSD 呼叫在 ARM64 使用 X16、X0–X5 與 `svc #0x80`；x64 使用 BSD 類別 `0x02000000`、RAX 及 RDI/RSI/RDX/R10/R8/R9。成功清除 carry，失敗設定 carry 並返回正 errno。ARM64 清除 X1；x64 成功清除 RDX、失敗保留 RDX。SYSCALL 的暫存器改寫明確定義。報告以 `result` 與 `error=true` 表達 BSD 錯誤；不返回或不支援的請求沒有這兩個欄位。規則依據 XNU [ARM64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/arm/systemcalls.c) 與 [x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/i386/systemcalls.c)，未納入 Apple 實作程式碼。
 
-服務包含 `exit`、`write`、`getpid`、`getppid`、`getuid`、`geteuid`、`getgid`、`getegid`、`mmap`、`mprotect`、`munmap`。PID/UID/GID 固定為 1000，PPID 為 1。描述元 1、2 擷取原始位元組，包含 NUL 與非 UTF8；關閉或唯讀描述元返回 EBADF。部分複製已取得的資料會保留，但後續錯誤仍為 EFAULT。長度超過 `INT_MAX` 時，先返回 EINVAL，再談描述元、指標或預算檢查，依據 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c)。
+服務包含 `exit`、`write`、`getpid`、`getppid`、`getuid`、`geteuid`、`getgid`、`getegid`、`getgroups`、`mmap`、`mprotect`、`munmap`。PID 為 1000，PPID 為 1；UID/GID 預設 1000，可由下述憑據明確提供不同的真實/有效 ID。描述元 1、2 擷取原始位元組，包含 NUL 與非 UTF8；關閉或唯讀描述元返回 EBADF。部分複製已取得的資料會保留，但後續錯誤仍為 EFAULT。長度超過 `INT_MAX` 時，先返回 EINVAL，再談描述元、指標或預算檢查，依據 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c)。
 
 記憶體服務支援私有匿名資料映射：`flags=0x1002`、描述元 -1、offset 零。長度及非固定提示位址向上取整至 OS 頁；提示已占用時先向上搜尋，再回到預設配置區。舊式原始 mmap 零長度返回零且不配置；`MAP_UNIX03` 已支援，零長度返回 EINVAL。Unmap/protect 位址必須對齊。支援 NONE/READ/WRITE，WRITE 隱含 READ。每個 OS 頁獨立持有實體記憶體，部分解除映射可釋放預算，新頁面清零。Protect 跨空洞或超過最大權限時，整個範圍維持原狀。來源：[XNU VM 服務](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c)。
 
@@ -138,7 +138,7 @@ O_CREAT=0x200 在明確 mutable 的直接父目錄建立空檔案，涵蓋一般
 
 可選 `darwin_files.creation_policy`（C++ `CreationPolicy`）為新物件提供完整中繼資料。嚴格物件恰含 `first_inode`、`block_size`、`generation`、`creation_time`、`mutation_policy`，時間與修改策略沿用既有格式。必須明確提供 umask、至少一個 mutable 父目錄，以及每個授權父目錄的完整 metadata。block_size 為 1..INT32_MAX、generation 為 uint32；配置單元是 512..16 MiB 的二次方，獨立於區塊大小和 VM 頁，奈秒須在 [0,1000000000)。first_inode 是非零 uint64，嚴格大於所有 stat/快照 inode，包含其他裝置；超過 JSON 精確整數範圍時使用十進位字串。
 
-只有成功插入新名稱才消耗全域遞增 inode；成功使用 UINT64_MAX 後永久耗盡，關閉、刪除、名稱重用、umask 或後續查找不能重置。排他、FD、路徑、項目或位元組預算失敗不留下名稱、FD 或編號增量；既有 O_CREAT 不消耗編號。新 stat64 的 device/GID 繼承直接父目錄，UID 為固定來賓有效使用者 1000，mode 為 `S_IFREG | (mode & 0777 & ~umask)`，nlink=1，size/blocks/flags=0；區塊大小、generation 及四個初始固定時間由策略提供。父目錄完整 stat/列舉失效後，仍可使用不變的 device/GID，但不恢復完整記錄。
+只有成功插入新名稱才消耗全域遞增 inode；成功使用 UINT64_MAX 後永久耗盡，關閉、刪除、名稱重用、umask 或後續查找不能重置。排他、FD、路徑、項目或位元組預算失敗不留下名稱、FD 或編號增量；既有 O_CREAT 不消耗編號。新 stat64 的 device/GID 繼承直接父目錄，UID 為設定選取的來賓有效使用者 ID（預設 1000），mode 為 `S_IFREG | (mode & 0777 & ~umask)`，nlink=1，size/blocks/flags=0；區塊大小、generation 及四個初始固定時間由策略提供。父目錄完整 stat/列舉失效後，仍可使用不變的 device/GID，但不恢復完整記錄。
 
 新節點獨立持有中繼資料與配置狀態，不繼承同名舊物件。後續寫入、截斷與刪除共用修改策略，保留 inode/mode/birthtime 和刪除後的 nlink=0；整段 EFAULT 後仍永久未知。策略不追溯套用到既有節點。原生 `created-file-metadata` 對照權限、遮罩回傳值、有效 UID、父裝置/群組及身分存續，涵蓋五種來賓；`virtual-created-metadata` 另比對完整 144 位元組記錄。原生四個建立時間不一定相等；固定時間與稀疏配置是虛擬檔案系統規則。權限強制檢查、憑據切換、ACL 與原生 APFS 行為仍待實作。
 
@@ -366,7 +366,7 @@ Release Darwin 共 835 項：474 通過、360 項後端不可用跳過，既有 
 
 MIB 數量取低32位且須為2–12；名稱長度取完整64位且須小於1024。先檢查全部指定的位元組，再依首個 NUL 解讀並移除一個末尾點；空名稱回傳 ENOENT，部分可讀輸入不支援。非空 `oldlenp` 在副作用前須完整具備8位元組讀寫權限；原生錯誤長度指標探測未在期限內返回，因此明確不支援。空 `oldlenp` 表示容量0；空 `oldp` 僅查長度。短緩衝區回傳 ENOMEM12、不寫資料並將長度設0；資料 EFAULT 保持原長度。先擷取輸入與容量，再寫資料、最後寫長度，保留別名順序與後續傳輸失敗前完成的複製。
 
-`newp`、`newlen` 皆非零才是寫入請求。已選節點依模型固定非 root 身分，在觀察值與輸出檢查前回傳 EPERM1，包括原生允許特權寫入的 `kern.osversion`。新長度0時忽略指標。未知鍵、其他樹及動態 OID 不會被推測為 ENOENT。
+newp/newlen 均非零才是寫入請求。先保留名稱/MIB 與 oldlenp 完整讀寫預檢，再由預設或明確非 root EUID 在觀察值和資料輸出前回傳 EPERM1。EUID0 的 kern.osversion 特權寫入明確停止 unsupported；RUID 不決定此分支。其他原生唯讀節點即使 root 仍 EPERM1。新長度0忽略指標；未知鍵、樹和動態 OID 不猜 ENOENT。
 
 原創 `system-info` 檢查原生 macOS 與客體 ABI；`virtual-system` 透過 C++、C/CLI、Python 比對明確設定的位元組。獨立 SDK 對照將主機九項觀察值作為明確測試輸入，比較名稱與數字輸出；不代表 iOS 實機或 Intel HVF 驗收。
 
@@ -624,3 +624,27 @@ macOS ARM64 Release：註冊/通過/未執行略過/失敗為 1337 / 845 / 492 /
 macOS ARM64 Release 登記/通過/不可用略過/失敗 1371/867/504/0，必需 HVF 126 全執行；檔案 361/361，C/CLI 200/200, JSON 40/40, System/SDK 53/53, native 32/32 通過。新增十二個 4K/16K 行為及准入/SDK 對照，Python 五設定 42.865 秒；API 71、runner/reference 49 和 SDK 漂移/格式/能力/來源/文件檢查通過。計數重疊，獨立複審通過。證據凍結於 `build-hvf-arm64/resource-usage-observations/` 並綁定提交。初版 x64 EINVAL 次要返回斷言修正為保留 RDX，ARM64 清零 X1；失敗與空過濾記錄保留，執行模型、期限與負控不變。限制執行、權限、修改後目錄、共享 map/EOF、時鐘、Mach/thread/dyld 與框架仍未完成；實體 iOS、暂停 Intel HVF 與遠端合併 CI 分別驗收。
 
 首輪完整驗證為 866 通過、1 個既有 iOS ARM64 HVF rename 五秒超時、504 略過；同一二進位複查 386 毫秒通過，後續完整串行驗證通過。原記錄保留，超時原因未知，不推論時延保證。
+
+
+## 明確憑據、群組與一致建立屬主
+
+可選 Credentials 含 RealUID/EffectiveUID/RealGID/EffectiveGID 及獨立可選 GroupAccessList。省略時四查詢為1000；明確零/root有效，ID0..INT32_MAX。群組1..16，首項EffectiveGID，保留順序/重複；缺少仍未知，不推斷宿主/EGID。嚴格 darwin_system.credentials 恰需 real_uid/effective_uid/real_gid/effective_gid，可加groups；無損整數與統一驗證器在載入前拒絕欄位/形狀/範圍/數量/首組錯誤，非Darwin仍拒絕。
+
+getuid24/geteuid25/getgid47/getegid43/getgroups79 共用系統所有者；新普通檔UID用有效使用者，device/GID繼承直接父目錄。改名、保留FD及舊名重用保持物件；輸入stat不變，root不授權寫入/目錄修改/權限/ACL，setuid/setgid/setgroups與程序/工作階段未實作。
+
+getgroups容量低32位有號int：負數先EINVAL，未知先unsupported，已知0只回傳數量不碰指標，正數不足先EINVAL，足夠一次複製4*數量小端位元組。0x1000為正容量，不剝POSIX旗標；非對齊/跨頁保留保護，完全不可寫EFAULT，部分在任何位元組前unsupported，backend錯誤保持傳輸錯誤。BSD錯誤保留x64 RDX、清ARM64 X1，成功皆清次結果；報告保留原始參數。
+
+
+~~~json
+{"darwin_system":{"credentials":{"real_uid":101,"effective_uid":202,
+ "real_gid":303,"effective_gid":404,"groups":[404,0,"2147483647",7,7]}}}
+~~~
+
+
+[Apple getgroups contract](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getgroups.2.html), [pinned XNU credential/group ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_prot.c).
+
+註冊/通過/不可用略過/失敗: 1413/897/516/0; ARM64 HVF 129/129. System/SDK72/72, File365/365, Report43/43, C/CLI210/210; guest8/12skip; native33/33; Python5 82.918s; API71, runner/reference49. SDK drift / clang-format22.1.2 / capabilities23 / provenance / docs11+negative3: OK. Independent source review: OK.
+
+21 value +5 native fault,5s; host16groups, positive short capacity: OK. Native partial32byte thenEFAULT: observation only. Counts overlap. `build-hvf-arm64/credential-observations/`.
+
+首輪8失敗（5指令預算、3個5秒期限）、12略過；兩頁掃描太重。改為同一跨頁完整132位元組保護（64前、最多64資料、至少4後），直接測試仍驗整兩頁。預算/參數/故障負控不變，源碼/二進位/兩次結果保留；直接傳輸跨頁幾何執行前修正，公共選項使用內容比較。權限/ACL、連結、修改後目錄完整觀察、shared maps/EOF、時鐘、Mach/thread/dyld/framework未完；實體iOS、暂停Intel HVF、merge CI分開驗收。

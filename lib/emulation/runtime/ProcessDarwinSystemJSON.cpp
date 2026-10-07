@@ -10,6 +10,8 @@
 
 #include "neverd/emulation/ProcessReportFields.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <type_traits>
 
 namespace neverd::emulation {
@@ -70,6 +72,43 @@ darwinSystemOptionsFromJSON(const llvm::json::Value &Value) {
   DarwinSystemOptions Out;
   for (const auto &[Key, V] : *Object) {
     const llvm::StringRef Name = Key;
+    if (Name == field::SystemCredentials) {
+      const auto *C = V.getAsObject();
+      if (!C || C->size() < 4 || C->size() > 5)
+        return invalid(Name);
+      DarwinCredentials Credentials;
+      const llvm::StringRef Keys[] = {
+          field::CredentialRealUID, field::CredentialEffectiveUID,
+          field::CredentialRealGID, field::CredentialEffectiveGID};
+      uint32_t *IDs[] = {&Credentials.RealUID, &Credentials.EffectiveUID,
+                         &Credentials.RealGID, &Credentials.EffectiveGID};
+      for (size_t I = 0; I != 4; ++I) {
+        const auto *Input = C->get(Keys[I]);
+        if (!Input)
+          return invalid(Name);
+        auto ID = process_json::integer<uint32_t>(*Input);
+        if (!ID)
+          return invalid(Name);
+        *IDs[I] = *ID;
+      }
+      for (const auto &[K, Input] : *C) {
+        if (K == field::CredentialGroups) {
+          const auto *Groups = Input.getAsArray();
+          if (!Groups || Groups->size() > darwin_model::value::GroupAccessLimit)
+            return invalid(Name);
+          auto &OutGroups = Credentials.GroupAccessList.emplace();
+          for (const auto &Group : *Groups) {
+            auto ID = process_json::integer<uint32_t>(Group);
+            if (!ID)
+              return invalid(Name);
+            OutGroups.push_back(*ID);
+          }
+        } else if (!llvm::is_contained(Keys, llvm::StringRef(K)))
+          return invalid(Name);
+      }
+      Out.Credentials = std::move(Credentials);
+      continue;
+    }
     if (Name == field::SystemResourceUsage) {
       const auto *Usages = V.getAsObject();
       if (!Usages || Usages->size() > 2)
