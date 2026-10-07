@@ -437,6 +437,21 @@ NEVERD_MARKED_UNWIND_ENCODING("dwarf-fde")
 NEVERD_ITEM_NAME_PREFIX(PointerNamePrefix, "off_")
 #undef NEVERD_ITEM_NAME_PREFIX
 
+// NEVERD_SWITCH_TEXT(Id, Spelling): how a classic listing marks a switch: the
+// prefix of its jump table's name (followed by the dispatch's address), the
+// comments on the instruction that loads the table, on the dispatch and on
+// the table, and the keyword of an entry the image base is added to.
+#ifndef NEVERD_SWITCH_TEXT
+#define NEVERD_SWITCH_TEXT(Id, Spelling)
+#endif
+NEVERD_SWITCH_TEXT(SwitchTablePrefix, "jpt_")
+NEVERD_SWITCH_TEXT(SwitchCasesLead, "switch ")
+NEVERD_SWITCH_TEXT(SwitchCasesTail, " cases")
+NEVERD_SWITCH_TEXT(SwitchJumpComment, "switch jump")
+NEVERD_SWITCH_TEXT(SwitchTableComment, "jump table for switch statement")
+NEVERD_SWITCH_TEXT(ImageRelativeKeyword, "rva ")
+#undef NEVERD_SWITCH_TEXT
+
 // NEVERD_FRAME_NAME_PREFIX(Id, Prefix): automatic names of stack variables
 // below the frame pointer and of stack arguments above the return address.
 #ifndef NEVERD_FRAME_NAME_PREFIX

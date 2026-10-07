@@ -64,6 +64,10 @@ public:
   Json names();
   Json regions();
 
+  /// Read the jump tables of whole-program analysis, once it has run: their
+  /// names, slots, comments and references join the listing.
+  void loadSwitches();
+
   bool hasIdleWork() const;
   /// Advance the reference index by one bounded step.
   void idleStep();
