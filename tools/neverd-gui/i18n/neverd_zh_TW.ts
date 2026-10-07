@@ -1283,6 +1283,16 @@ Recognized library operation; click to show its code.</source>
         <translation>%1
 已識別的程式庫操作；按一下以顯示其程式碼。</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of includes and declarations</source>
+        <translation>
+            <numerusform>%n 行引入檔與宣告</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
+        <translation>此程式碼編譯所需的引入檔、輔助型別與宣告；按一下可顯示，按數字鍵台 - 可再次摺疊。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>

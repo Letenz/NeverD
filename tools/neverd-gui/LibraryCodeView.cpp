@@ -49,6 +49,7 @@ void LibraryCodeView::reset(const QString &original,
       Region region;
       region.details = object.toVariantMap();
       region.id = object["id"].toString();
+      region.library = !object.contains("kind");
       region.summary = summaryText(object["display_name"].toString());
       region.available = !region.id.isEmpty() && !region.summary.isEmpty() &&
                          object["foldable"].toBool() &&
@@ -127,26 +128,46 @@ QVariantList LibraryCodeView::regions() const {
 }
 
 int LibraryCodeView::foldableCount() const {
-  return std::count_if(regions_.begin(), regions_.end(),
-                       [](const auto &region) { return region.available; });
+  return std::count_if(
+      regions_.begin(), regions_.end(),
+      [](const auto &region) { return region.available && region.library; });
+}
+
+bool LibraryCodeView::libraryFolded() const {
+  return std::any_of(regions_.begin(), regions_.end(), [&](const auto &region) {
+    return region.library && folded_.contains(region.id);
+  });
+}
+
+bool LibraryCodeView::canFold() const {
+  return std::any_of(regions_.begin(), regions_.end(),
+                     [](const auto &region) { return region.available; });
 }
 
 void LibraryCodeView::toggleRegion(const QString &id) {
+  setRegionFolded(id, !folded_.contains(id));
+}
+
+void LibraryCodeView::setRegionFolded(const QString &id, bool folded) {
   for (const auto &region : regions_)
     if (region.id == id && region.available) {
-      if (!folded_.remove(id))
+      if (folded)
         folded_.insert(id);
+      else
+        folded_.remove(id);
       rebuild();
       return;
     }
 }
 
 void LibraryCodeView::setFolded(bool folded) {
-  folded_.clear();
-  if (folded)
-    for (const auto &region : regions_)
-      if (region.available)
+  for (const auto &region : regions_)
+    if (region.available && region.library) {
+      if (folded)
         folded_.insert(region.id);
+      else
+        folded_.remove(region.id);
+    }
   rebuild();
 }
 

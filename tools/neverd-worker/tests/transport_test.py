@@ -226,6 +226,10 @@ def run(executable):
         assert first["total_lines"] == 700 and not first["complete"] and last["complete"]
         assert "code line 400" in last["text"]
         assert first["mapping_status"] == "unsupported_representation" and first["rows"] == []
+        # C pages say where the definition begins after the prelude.
+        source = client.call("decompile", {"address": BASE, "representation": "llvmc", "limit": 2})["payload"]
+        assert source["prelude"] == {"lines": 3, "end_byte": 41}, source
+        assert source["text"] == "#include <stdint.h>\n#include <string.h>\n", source
         for stage in ("low", "med"):
             mapped = client.call("decompile", {"address": BASE, "representation": stage, "offset": 0, "limit": 3})
             assert mapped["status"] == "ok", mapped

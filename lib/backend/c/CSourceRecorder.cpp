@@ -21,6 +21,7 @@ namespace neverd {
 CSourceRecorder::CSourceRecorder(CSourceMap &Map, llvm::StringRef Ordinary)
     : Map(Map) {
   Map.Regions.clear();
+  Map.Definitions.clear();
   if (Map.Recognitions)
     for (size_t I = 0; I < Map.Recognitions->size(); ++I)
       Map.Regions.push_back({I, {}, false});
@@ -220,6 +221,17 @@ std::string CSourceRecorder::end(size_t Event) const {
   return Prefix + std::to_string(Event) + "E\x1f";
 }
 
+std::string CSourceRecorder::definition(std::optional<va_t> Entry) {
+  DefinitionEntries.push_back(Entry);
+  return Prefix + std::to_string(DefinitionEntries.size() - 1) + "D\x1f";
+}
+
+std::string CSourceRecorder::definition(const llvm::Function &Function) {
+  auto I = LLVMFunctions.find(&Function);
+  return definition(I == LLVMFunctions.end() ? std::nullopt
+                                             : std::optional(I->second));
+}
+
 std::string CSourceRecorder::expression(va_t Function, const HighExpr &Expr,
                                         std::string Text) {
   auto It = HighRegions.find({Function, &Expr});
@@ -280,6 +292,7 @@ bool CSourceRecorder::finish(llvm::StringRef Annotated,
     size_t Begin;
   };
   std::vector<Frame> Stack;
+  std::vector<CSourceDefinition> Definitions;
   while (!Annotated.empty()) {
     size_t At = Annotated.find(Prefix);
     if (At == llvm::StringRef::npos) {
@@ -293,9 +306,15 @@ bool CSourceRecorder::finish(llvm::StringRef Annotated,
       return false;
     llvm::StringRef Token = Annotated.take_front(Stop);
     size_t Event = 0;
-    if (Token.drop_back().getAsInteger(10, Event) || Event >= Events.size())
+    if (Token.drop_back().getAsInteger(10, Event))
       return false;
-    if (Token.back() == 'B') {
+    if (Token.back() == 'D') {
+      if (Event >= DefinitionEntries.size())
+        return false;
+      Definitions.push_back({DefinitionEntries[Event], Clean.size()});
+    } else if (Event >= Events.size()) {
+      return false;
+    } else if (Token.back() == 'B') {
       Stack.push_back({Event, Clean.size()});
     } else if (Token.back() == 'E') {
       if (Stack.empty() || Stack.back().Event != Event)
@@ -347,6 +366,7 @@ bool CSourceRecorder::finish(llvm::StringRef Annotated,
     if (!Region.Mapped)
       Region.Spans.clear();
   Map.Regions = std::move(Candidate);
+  Map.Definitions = std::move(Definitions);
   return true;
 }
 

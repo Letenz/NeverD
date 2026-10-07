@@ -1284,6 +1284,17 @@ Recognized library operation; click to show its code.</source>
         <translation>%1
 Operación de biblioteca reconocida; haz clic para mostrar su código.</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of includes and declarations</source>
+        <translation>
+            <numerusform>%n línea de includes y declaraciones</numerusform>
+            <numerusform>%n líneas de includes y declaraciones</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
+        <translation>Los includes, tipos auxiliares y declaraciones con los que compila este código; haz clic para mostrarlos y pulsa - del teclado numérico para plegarlos de nuevo.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>

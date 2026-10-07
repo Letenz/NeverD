@@ -170,6 +170,8 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
     if (OnlyFunction && &Fn != OnlyFunction)
       continue;
     auto Event = SourceRecorder ? SourceRecorder->function(Fn) : std::nullopt;
+    if (SourceRecorder)
+      OS << SourceRecorder->definition(Fn);
     if (Event)
       OS << SourceRecorder->begin(*Event);
     writeFunction(Fn);
