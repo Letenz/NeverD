@@ -2412,6 +2412,69 @@ TEST(HighControlFlowSemantics, ThreadedSoleSuccessorKeepsItsTransferAndPhi) {
   }
 }
 
+TEST(HighControlFlowSemantics, SwitchPublishesTheCaseOfEachTablePosition) {
+  // `switch (x) { case 10: case 11: case 12: }` dispatches on `x - 10`. The
+  // recovered switch prints 10..12, and the listing labels each table entry
+  // with the same case: publish the value that selects every position.
+  const Arch Architecture = Arch::X64;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  MedFunc M;
+  M.Entry = 0x1000;
+  M.Name = "offset_switch";
+  M.ReturnType = NdType::makeInt(8, false);
+  auto Input = machineValue(0, Architecture);
+  Input.Kind = MedVar::Param;
+  Input.RegOff = TRI.IntParamRegs[0];
+  M.Params = {Input};
+  auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+  const auto Index = machineValue(1, Architecture);
+  M.Blocks.resize(4);
+  for (int I = 0; I < 4; ++I) {
+    M.Blocks[I].Id = I;
+    M.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+    M.Blocks[I].EndAddr = M.Blocks[I].StartAddr + 0x20;
+  }
+  M.Blocks[0].Succs = {1, 2, 3};
+  M.Blocks[0].Ops = {
+      operation(NdOp::INT_ADD, 0x1000, Index, {Input, C(uint64_t(-10))}),
+      operation(NdOp::INDIR_BR, 0x1008, {}, {Index})};
+  M.SwitchSelectorPlans[0x1008] = {};
+  M.SwitchSelectorPlans[0x1008].Selector = Index;
+  M.SwitchSelectorPlans[0x1008].ResultSize = 8;
+  const uint64_t Results[] = {7, 37, 93};
+  for (int I = 1; I < 4; ++I) {
+    auto Return = machineValue(2, Architecture);
+    Return.Kind = MedVar::Reg;
+    Return.RegOff = TRI.IntReturnReg;
+    Return.SSAVer = I;
+    const va_t Start = M.Blocks[I].StartAddr;
+    M.Blocks[I].Preds = {0};
+    M.Blocks[I].Ops = {
+        operation(NdOp::COPY, Start, Return, {C(Results[I - 1])}),
+        operation(NdOp::RETURN, Start + 4, {}, {Return})};
+  }
+  JumpTable Table;
+  Table.InsnAddr = 0x1008;
+  Table.Targets = {0x1100, 0x1200, 0x1300};
+  Table.CaseLabels = {0, 1, 2};
+  MedToHighConverter Converter;
+  Converter.setJumpTables({Table});
+  const auto F = Converter.convert(M, Architecture);
+
+  const auto Published = F.SwitchLabelsByJump.find(0x1008);
+  ASSERT_NE(Published, F.SwitchLabelsByJump.end());
+  EXPECT_EQ(Published->second.Values, (std::vector<uint64_t>{10, 11, 12}));
+  EXPECT_EQ(Published->second.DefaultPosition, -1);
+  EXPECT_EQ(Published->second.SelectorBits, 64u);
+  for (size_t Position = 0; Position < Published->second.Values.size();
+       ++Position) {
+    SCOPED_TRACE(Position);
+    EXPECT_NO_THROW(
+        EXPECT_EQ(execute(F, Published->second.Values[Position], true),
+                  Results[Position]));
+  }
+}
+
 TEST(HighControlFlowSemantics, ThreadedFallthroughJumpsPastTheNextBlock) {
   // PiCMCaptureRegistryPropertyInputData: cold code falls into a `jmp` back
   // to the hot path.  Threading that jump-only block leaves a block without a
