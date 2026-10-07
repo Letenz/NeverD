@@ -46,6 +46,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <list>
 #include <map>
 #include <memory>
 #include <optional>
@@ -98,6 +99,21 @@ struct Session {
   bool PipeRan = false;
   uint64_t PipelineFeatureGeneration = 0;
   std::optional<bool> LlvmModuleNoOpt;
+  /// One function's native LLVM module: its body, with every other function
+  /// declared by its own signature.  A page shows one function, so a sibling
+  /// the emitter refuses cannot hide it, and showing it emits one body.
+  struct FunctionLlvmModule {
+    va_t Entry = 0;
+    bool NoOpt = false;
+    std::unique_ptr<llvm::Module> Module;
+    std::shared_ptr<LLVMSourceMap> Sources;
+  };
+  /// The modules of the functions shown last, the newest first.
+  std::list<FunctionLlvmModule> FunctionLlvmModules;
+  static constexpr size_t MaxFunctionLlvmModules = 8;
+  /// Whether every native function's call ABI was recovered for this
+  /// pipeline's LLVM emission.
+  bool NativeCallAbiRecovered = false;
   bool SBFFunctionsSynchronized = false;
   bool NativeFunctionsSynchronized = false;
   /// The image's strings under the options last searched with
@@ -346,6 +362,9 @@ struct Session {
   void refreshFunctionNames();
 
   void clearPipeline() {
+    // Every module lives in the context.
+    FunctionLlvmModules.clear();
+    NativeCallAbiRecovered = false;
     PipeResult = {};
     LLVMCtx.reset();
     PipeRan = false;
@@ -414,8 +433,12 @@ struct Session {
       setError("LLVM module is not available");
       return nullptr;
     }
+    return findNativeLlvmFunction(*PipeResult.LlvmModule, Addr);
+  }
+
+  llvm::Function *findNativeLlvmFunction(llvm::Module &Module, va_t Addr) {
     llvm::Function *Match = nullptr;
-    for (auto &Function : *PipeResult.LlvmModule) {
+    for (auto &Function : Module) {
       if (Function.isDeclaration())
         continue;
       auto OriginalVA = rewrite_source::getOriginalVA(Function);
@@ -438,6 +461,113 @@ struct Session {
     if (!Match)
       setError("LLVM function not found at 0x" + llvm::utohexstr(Addr));
     return Match;
+  }
+
+  /// Emit, verify and optimize native LLVM for the pipeline's functions,
+  /// with bodies as \p BodyMask selects (MedLLVMEmitter::emit).  Sets the
+  /// error and returns null when the emitter refuses or verification fails.
+  std::unique_ptr<llvm::Module>
+  emitNativeLlvm(bool NoOpt, const std::vector<char> *BodyMask,
+                 std::shared_ptr<LLVMSourceMap> &Sources) {
+    // HighIR decompile does not run recoverCallAbi. --func --llvm still emits
+    // from that MedIR, so populate CallInfos here; otherwise MedLLVM emits
+    // 0-arg calls for unwritten live-in rcx.  A body-masked module declares
+    // the other functions by the signatures this recovers too; recovery
+    // recomputes each function's call information, so once per pipeline is
+    // enough for such modules.
+    if (!BodyMask || !NativeCallAbiRecovered) {
+      std::map<va_t, std::string> FuncNames;
+      for (const auto &MF : PipeResult.MedFuncs)
+        if (!MF.Name.empty())
+          FuncNames[MF.Entry] = MF.Name;
+      for (auto &MF : PipeResult.MedFuncs)
+        recoverCallAbi(MF, Img.Arch, FuncNames, &Img);
+      NativeCallAbiRecovered = true;
+    }
+    std::vector<std::pair<va_t, std::string>> ImportMap;
+    for (const auto &[Addr, Name] : Img.getImportAddressNames())
+      ImportMap.emplace_back(Addr, Name);
+    MedLLVMEmitter Emitter;
+    Sources.reset();
+    if (!PipeResult.LibraryRecognitions.empty()) {
+      Sources = std::make_shared<LLVMSourceMap>();
+      Emitter.setSourceMap(Sources.get());
+    }
+    auto Candidate = Emitter.emit(
+        PipeResult.MedFuncs, *LLVMCtx, "neverd_output", Img.Arch, ImportMap,
+        &Img, Img.Format, /*MergeableGlobals=*/false, BodyMask);
+    if (Sources)
+      Sources->preserveExpressionOrigins(PipeResult.LibraryRecognitions);
+    if (!Candidate) {
+      setError("native LLVM emission failed");
+      return nullptr;
+    }
+    // The native emitter can return a module after reporting verifier errors.
+    // Reject optional LLVM output without invalidating completed analysis.
+    std::string VerifyError;
+    llvm::raw_string_ostream VerifyStream(VerifyError);
+    if (llvm::verifyModule(*Candidate, &VerifyStream)) {
+      setError("native LLVM verification failed: " + VerifyError);
+      return nullptr;
+    }
+    if (NoOpt) {
+      Pipeline::promoteScaffoldingAllocas(*Candidate);
+      if (Sources)
+        Sources->refreshExpressionOrigins();
+    } else {
+      const OptimizationResult Optimization =
+          Pipeline::optimizeOrPromoteModule(*Candidate, Sources.get());
+      if (Optimization.Stop == OptimizationStopReason::VerificationFailed) {
+        setError(std::string("native LLVM optimization failed: ") +
+                 optimizationStopReasonName(Optimization.Stop));
+        return nullptr;
+      }
+    }
+    std::string FinalVerifyError;
+    llvm::raw_string_ostream FinalVerifyStream(FinalVerifyError);
+    if (llvm::verifyModule(*Candidate, &FinalVerifyStream)) {
+      setError("native LLVM post-optimization verification failed: " +
+               FinalVerifyError);
+      return nullptr;
+    }
+    return Candidate;
+  }
+
+  /// The module that shows the function at \p Entry: its body alone, every
+  /// other function declared.  Kept for the functions shown last.
+  const FunctionLlvmModule *ensureFunctionLlvmModule(va_t Entry, bool NoOpt) {
+    if (PipeRan && PipelineFeatureGeneration != SigDB.featureGeneration())
+      clearPipeline();
+    for (auto It = FunctionLlvmModules.begin(); It != FunctionLlvmModules.end();
+         ++It)
+      if (It->Entry == Entry && It->NoOpt == NoOpt) {
+        FunctionLlvmModules.splice(FunctionLlvmModules.begin(),
+                                   FunctionLlvmModules, It);
+        return &FunctionLlvmModules.front();
+      }
+    if (!ensurePipeline())
+      return nullptr;
+    std::vector<char> Mask(PipeResult.MedFuncs.size(), 0);
+    bool Found = false;
+    for (size_t I = 0; I < Mask.size(); ++I)
+      if (PipeResult.MedFuncs[I].Entry == Entry) {
+        Mask[I] = 1;
+        Found = true;
+      }
+    if (!Found) {
+      setError("LLVM function not found at 0x" + llvm::utohexstr(Entry));
+      return nullptr;
+    }
+    FunctionLlvmModule Built;
+    Built.Entry = Entry;
+    Built.NoOpt = NoOpt;
+    Built.Module = emitNativeLlvm(NoOpt, &Mask, Built.Sources);
+    if (!Built.Module)
+      return nullptr;
+    FunctionLlvmModules.push_front(std::move(Built));
+    if (FunctionLlvmModules.size() > MaxFunctionLlvmModules)
+      FunctionLlvmModules.pop_back();
+    return &FunctionLlvmModules.front();
   }
 
   bool ensureLlvmModule(bool NoOpt = false) {
@@ -470,63 +600,10 @@ struct Session {
       setError("no native functions available for LLVM emission");
       return false;
     }
-    // HighIR decompile does not run recoverCallAbi. --func --llvm still emits
-    // from that MedIR, so populate CallInfos here; otherwise MedLLVM emits
-    // 0-arg calls for unwritten live-in rcx.
-    {
-      std::map<va_t, std::string> FuncNames;
-      for (const auto &MF : PipeResult.MedFuncs)
-        if (!MF.Name.empty())
-          FuncNames[MF.Entry] = MF.Name;
-      for (auto &MF : PipeResult.MedFuncs)
-        recoverCallAbi(MF, Img.Arch, FuncNames, &Img);
-    }
-    std::vector<std::pair<va_t, std::string>> ImportMap;
-    for (const auto &[Addr, Name] : Img.getImportAddressNames())
-      ImportMap.emplace_back(Addr, Name);
-    MedLLVMEmitter Emitter;
     std::shared_ptr<LLVMSourceMap> Sources;
-    if (!PipeResult.LibraryRecognitions.empty()) {
-      Sources = std::make_shared<LLVMSourceMap>();
-      Emitter.setSourceMap(Sources.get());
-    }
-    auto Candidate =
-        Emitter.emit(PipeResult.MedFuncs, *LLVMCtx, "neverd_output", Img.Arch,
-                     ImportMap, &Img, Img.Format);
-    if (Sources)
-      Sources->preserveExpressionOrigins(PipeResult.LibraryRecognitions);
-    if (!Candidate) {
-      setError("native LLVM emission failed");
+    auto Candidate = emitNativeLlvm(NoOpt, nullptr, Sources);
+    if (!Candidate)
       return false;
-    }
-    // The native emitter can return a module after reporting verifier errors.
-    // Reject optional LLVM output without invalidating completed analysis.
-    std::string VerifyError;
-    llvm::raw_string_ostream VerifyStream(VerifyError);
-    if (llvm::verifyModule(*Candidate, &VerifyStream)) {
-      setError("native LLVM verification failed: " + VerifyError);
-      return false;
-    }
-    if (NoOpt) {
-      Pipeline::promoteScaffoldingAllocas(*Candidate);
-      if (Sources)
-        Sources->refreshExpressionOrigins();
-    } else {
-      const OptimizationResult Optimization =
-          Pipeline::optimizeOrPromoteModule(*Candidate, Sources.get());
-      if (Optimization.Stop == OptimizationStopReason::VerificationFailed) {
-        setError(std::string("native LLVM optimization failed: ") +
-                 optimizationStopReasonName(Optimization.Stop));
-        return false;
-      }
-    }
-    std::string FinalVerifyError;
-    llvm::raw_string_ostream FinalVerifyStream(FinalVerifyError);
-    if (llvm::verifyModule(*Candidate, &FinalVerifyStream)) {
-      setError("native LLVM post-optimization verification failed: " +
-               FinalVerifyError);
-      return false;
-    }
     PipeResult.LlvmModule = std::move(Candidate);
     PipeResult.LLVMSources = std::move(Sources);
     LlvmModuleNoOpt = NoOpt;
