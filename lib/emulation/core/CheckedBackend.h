@@ -80,6 +80,8 @@ protected:
         InstructionBytes(MaxInstructionBytes),
         InstructionAlignment(InstructionAlignment) {}
   llvm::Error initializeDecoder(cs_arch, cs_mode);
+  llvm::Expected<bool> decodeInstruction(uint64_t PC);
+  const cs_insn &decodedInstruction() const { return *Decoded; }
   virtual bool canonicalRange(uint64_t, uint64_t) const = 0;
   virtual bool supportsDeviceMappings() const { return false; }
   virtual uint64_t programCounter() const = 0;
@@ -125,7 +127,6 @@ protected:
 private:
   llvm::Error runImpl(uint64_t PC, uint64_t Timeout, bool &Started,
                       bool &BackendFailed);
-  llvm::Expected<bool> decodeInstruction(uint64_t PC);
   // Storage only: bytes, permissions and decoding are refreshed on every step.
   // The execution lease rejects recursive entry before this storage is touched.
   std::vector<uint8_t> InstructionBytes;

@@ -88,6 +88,10 @@ public:
   /// The current instruction's decoded extent, using the CPU's fetch rules.
   /// Missing decoding support is an error, never a guessed instruction size.
   virtual llvm::Expected<uint32_t> instructionSize(uint64_t Address);
+  /// No write or mapping change could have touched the RAM covered by the
+  /// memory write watches installed for the preceding CPU run. False supplies
+  /// no guarantee. Newly watched ranges still require an initial snapshot.
+  virtual bool watchedMemoryUnchanged() const { return false; }
 };
 
 /// Receives a process at its start and at each execution watch.

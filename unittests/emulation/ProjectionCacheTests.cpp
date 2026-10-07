@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "arch/aarch64/AArch64Machine.h"
 #include "arch/x86_64/X64Machine.h"
+#include "arch/x86_64/X64PageTables.h"
 #include "core/ExecutionDiagnostics.h"
 #include "core/MemoryProjection.h"
 #include "gtest/gtest.h"
@@ -160,6 +161,55 @@ TEST(ProjectionCache, MappingAndProtectionChangesInvalidateTheCurrentRoot) {
   const auto Protected = llvm::cantFail(buildX64PageTables(*Memory));
   EXPECT_NE(Protected, Mapped);
   EXPECT_EQ(llvm::cantFail(buildX64PageTables(*Memory)), Protected);
+}
+TEST(ProjectionCache, WatchOverlaysRestorePhysicalAliasPermissions) {
+  X64PageTableCache Cache;
+  auto Memory = llvm::cantFail(MemoryProjection::create(Limit));
+  llvm::cantFail(
+      Memory->map(Code, PageSize, Read | Write | Execute | UserAccessible));
+  llvm::cantFail(Memory->aliases(
+      {}, {{Alias, Code, PageSize, Read | Write | UserAccessible}}));
+  const uint64_t Physical = Memory->mappings().at(Code).Physical;
+  auto Leaf = [&](uint64_t VA, uint64_t Root) {
+    uint64_t Entry = Root;
+    for (unsigned Shift : {39u, 30u, 21u, 12u}) {
+      Entry = llvm::support::endian::read64le(
+          Memory->data() + Memory->transportOffset(Entry & x64::AddressMask) +
+          ((VA >> Shift) & 511) * 8);
+      if (!(Entry & 1))
+        return uint64_t(0);
+    }
+    return Entry;
+  };
+  auto Previous = llvm::cantFail(buildX64PageTables(
+      *Memory, true, false, {}, 0, false, std::nullopt, &Cache));
+  Memory->setWriteWatches({{Alias + 1, 1}});
+  const ExecutionWatch Watch{Code + 16, 1};
+  auto Root = llvm::cantFail(buildX64PageTables(*Memory, true, false, {Watch},
+                                                1, true, std::nullopt, &Cache));
+  EXPECT_NE(Root, Previous);
+  EXPECT_EQ(Leaf(Code, Root) & 2, 0u);
+  EXPECT_NE(Leaf(Code, Root) & (1ull << 63), 0u);
+  EXPECT_EQ(Leaf(Alias, Root) & 2, 0u);
+  Memory->setWriteWatches({});
+  Previous = Root;
+  Root = llvm::cantFail(
+      buildX64PageTables(*Memory, true, false, {}, 2, true, Physical, &Cache));
+  EXPECT_NE(Root, Previous);
+  EXPECT_EQ(Leaf(Code, Root) & (1ull << 63), 0u);
+  EXPECT_EQ(Leaf(Code, Root) & 2, 0u);
+  EXPECT_EQ(Leaf(Alias, Root) & 2, 0u);
+  llvm::cantFail(Memory->protect(Alias, PageSize, Read | UserAccessible));
+  Root = llvm::cantFail(buildX64PageTables(*Memory, true, false, {}, 3, true,
+                                           std::nullopt, &Cache));
+  EXPECT_NE(Leaf(Code, Root) & 2, 0u);
+  EXPECT_EQ(Leaf(Alias, Root) & 2, 0u);
+  llvm::cantFail(Memory->addressSpace()->unmap(Code, PageSize));
+  Root = llvm::cantFail(buildX64PageTables(*Memory, true, false, {}, 4, true,
+                                           std::nullopt, &Cache));
+  EXPECT_EQ(Leaf(Code, Root), 0u);
+  EXPECT_EQ(Leaf(Alias, Root) & x64::AddressMask,
+            Memory->transportPhysical(Physical));
 }
 TEST(ProjectionCache, AddressSpaceIdentityMattersWithMatchingGenerations) {
   auto RAM = llvm::cantFail(PhysicalMemory::create(Limit));
