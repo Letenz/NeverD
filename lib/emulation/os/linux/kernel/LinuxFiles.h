@@ -24,9 +24,10 @@ public:
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ProcessResult &Result);
   std::optional<uint64_t> outputError(uint32_t FD) const;
-  std::optional<uint64_t> openProcessDescriptor(uint32_t PID, uint32_t Flags,
-                                                uint32_t AllowedFlags,
-                                                ProcessResult &Result);
+  std::optional<uint64_t>
+  openProcessDescriptor(uint32_t PID, uint32_t Flags,
+                        const LinuxKernelOptions &Kernel,
+                        ProcessResult &Result);
 
 private:
   enum class Stream { Input, Output, Error };
