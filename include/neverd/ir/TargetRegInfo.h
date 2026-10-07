@@ -59,6 +59,9 @@ NdOp condToOpcode(CondCode CC);
 /// Whether the condition requires swapped operands (b op a instead of a op b).
 bool condSwapsOperands(CondCode CC);
 
+/// SubRegs indexed by narrow view (TargetRegInfo.cpp).
+struct SubRegIndex;
+
 /// Describes one sub-register relationship (e.g. RAX→AL, X0→W0).
 struct SubRegEntry {
   uint64_t WideRegOff;
@@ -132,6 +135,11 @@ struct TargetRegInfo {
 
   /// Sub-register relationship table.
   llvm::ArrayRef<SubRegEntry> SubRegs = {};
+
+  /// SubRegs by narrow view, which the sub-register queries search instead
+  /// of scanning the table; they scan a table it was not built for.  Set by
+  /// getTargetRegInfo() with SubRegs.
+  const SubRegIndex *SubRegLookup = nullptr;
 
   /// Architectural control-flow register when a RETURN carries its target as
   /// an explicit LowIR operand (ARM POP PC, for example). It is not a source

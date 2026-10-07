@@ -23,6 +23,10 @@ public:
   llvm::Expected<std::optional<uint64_t>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>>
+  extendedAttribute(ServiceKind Kind, const ProcessServiceEvent &Event,
+                    const std::optional<LinuxKernelOptions> &Kernel,
+                    ProcessResult &Result);
   std::optional<uint64_t> outputError(uint32_t FD) const;
   std::optional<uint64_t>
   openProcessDescriptor(uint32_t PID, uint32_t Flags,
@@ -63,6 +67,7 @@ private:
   std::optional<uint16_t> pollReadiness(int32_t FD,
                                         ProcessResult &Result) const;
   llvm::Expected<Pathname> readPath(uint64_t Address, bool AllowEmpty = false);
+  llvm::Expected<std::optional<uint64_t>> attributeNameError(uint64_t Address);
   static std::optional<ParsedPath> parsePath(llvm::StringRef Path);
   PathKind lookupPath(const std::string &Path,
                       bool RequiresDirectory = false) const;

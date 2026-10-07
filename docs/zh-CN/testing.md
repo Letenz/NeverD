@@ -1223,6 +1223,8 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 
 `WindowsProcess.ClockServicesUseConsistentUnitsAndPreserveLastError` 执行原始 x64/ARM64 PE 中的 `QueryPerformanceFrequency`、单调计数器、FILETIME、回绕 tick 计数和相对延迟调用。`WindowsProcess.UnmodeledDelaysStopWithoutClaimingCompletion` 验证警觉、正数绝对时间及 INT64_MIN 间隔在完成前被拒绝。`NativeWindowsOracleRunsTheSameExecutable` 也在 Windows 上直接运行成功的时钟情境；两项客户回归均纳入禁用 Unicorn 的 KVM/WHP 必测清单。 原始样例显式污染 `BOOLEAN` 参数寄存器的未使用高位，并以明确的 64 位类型定义常量，防止 Windows ABI 截断纪元值与 INT64_MIN。
 
+`ARM64 native backend build` 使用固定版本的 LLVM 源码，在 `ubuntu-24.04-arm`（KVM）和 `windows-11-arm`（WHP）上关闭 Unicorn 并编译 `NeverDEmulationNative`。`audit_native_backend_build.py` 核对每个声明的原生源文件、启用的后端定义、编译命令、ARM64 ELF/COFF 对象及哈希。`probe_native_host.py` 记录宿主初始化能力和资源清理；能力不可用会明确记录，初始化错误会使任务失败。这些任务验证编译和宿主初始化，尚不构成客户机执行证据。 `NeverDCapstoneCompilerOptions.inc` 将限定符诊断选项限定于 Clang 的 C 编译；GCC 和 MSVC 保留各自的告警规则。 `native_arm64_only=true` 可单独运行这些 ARM64 组件构建与初始化探测，不启动完整 x64 CPU 验收。 构建审计会先规范化源码和构建目录，再比对路径，包括 Windows 8.3 别名。
+
 `WindowsTestExecution.def` 将 Unicorn ARM64 的 `WindowsExclusive` 对照设为 `RUN_SERIAL`。CTest 策略避免它与其他客户负载争用资源，保留原有 60 s 客户机截止时间及全部结果、寄存器、权限和原生摘要检查。
 
 `WindowsProcessLifetime` 在同一个 CPU 和执行预算下，按依赖顺序执行 DLL TLS 回调及 `DllMain`，随后执行 EXE TLS 和入口。每个模块都有独立 TLS 索引及对齐的数据块，从完成重定位和导入绑定的映像复制，共享 64 KiB 空间。TLS 保留参数为零，启动／进程退出的 `DllMain` 接收不透明非空值。显式进程退出按加载器链表的逆序分离已完成初始化的 DLL，再执行 EXE TLS 退出回调，即使 EXE 初始化尚未运行。启动 `DllMain(FALSE)` 以 `0xc0000142` 退出，不发送分离通知。故障和预算耗尽不伪造清理。带客户 DLL 的 PE 入口返回涉及尚未支持的线程终止，明确停止。非零 `SizeOfZeroFill` 仍不支持；实际 TLS 模板中的零初始化字节受支持。 无入口 DLL 接收 TLS 挂接通知，但不接收进程分离通知。

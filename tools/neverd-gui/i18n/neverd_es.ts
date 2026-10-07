@@ -1881,12 +1881,28 @@ Con signo: %4</translation>
         <translation>Ninguna</translation>
     </message>
     <message>
-        <source>Also read C strings that are not UTF-8 in this code page</source>
-        <translation>Leer también en esta página de códigos las cadenas C que no son UTF-8</translation>
+        <source>Detect common code pages</source>
+        <translation>Detectar páginas de códigos comunes</translation>
     </message>
     <message>
-        <source>Code page:</source>
-        <translation>Página de códigos:</translation>
+        <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
+        <translation>Leer también en %1 las cadenas C que no son UTF-8, cuando una de ellas las lee como texto y ninguna página de códigos de otra escritura lo hace</translation>
+    </message>
+    <message>
+        <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
+        <translation>Leer primero en esta página de códigos las cadenas C que no son UTF-8, para que prevalezca donde otras páginas de códigos también las leen</translation>
+    </message>
+    <message>
+        <source>Code pages:</source>
+        <translation>Páginas de códigos:</translation>
+    </message>
+    <message>
+        <source>Preferred code page:</source>
+        <translation>Página de códigos preferida:</translation>
+    </message>
+    <message>
+        <source>Display columns: a wide East Asian character counts two</source>
+        <translation>Columnas en pantalla: un carácter ancho de Asia oriental cuenta como dos</translation>
     </message>
 </context>
 <context>
@@ -2027,8 +2043,12 @@ Con signo: %4</translation>
         <translation>No se pudo actualizar la base de datos: %1</translation>
     </message>
     <message>
-        <source>Strings: %1, at least %2 characters</source>
-        <translation>Cadenas: %1, al menos %2 caracteres</translation>
+        <source>Strings: %1, at least %2 columns</source>
+        <translation>Cadenas: %1, al menos %2 columnas</translation>
+    </message>
+    <message>
+        <source>Strings: %1, %2 first, at least %3 columns</source>
+        <translation>Cadenas: %1, primero %2, al menos %3 columnas</translation>
     </message>
 </context>
 </TS>

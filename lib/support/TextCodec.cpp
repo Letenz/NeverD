@@ -7,6 +7,7 @@
 #include "TextCodec.h"
 
 #include "llvm/Support/ConvertUTF.h"
+#include "llvm/Support/Unicode.h"
 
 #include <algorithm>
 #include <iterator>
@@ -279,6 +280,30 @@ void decode(llvm::ArrayRef<uint8_t> Data, Encoding E,
   }
 }
 
+std::string foldCase(llvm::StringRef Text) {
+  std::string Out;
+  Out.reserve(Text.size());
+  const auto *At = Text.bytes_begin();
+  const auto *End = Text.bytes_end();
+  while (At < End) {
+    if (*At < 0x80) {
+      Out += static_cast<char>(*At >= 'A' && *At <= 'Z' ? *At + 32 : *At);
+      ++At;
+      continue;
+    }
+    uint32_t Code = 0;
+    const unsigned Size = decodeUTF8(At, End, Code);
+    if (!Size) {
+      Out += static_cast<char>(*At++);
+      continue;
+    }
+    appendUTF8(Out, static_cast<uint32_t>(llvm::sys::unicode::foldCharSimple(
+                        static_cast<int>(Code))));
+    At += Size;
+  }
+  return Out;
+}
+
 std::optional<TextStart> textFrom(llvm::ArrayRef<uint8_t> Data, Encoding E,
                                   uint64_t Offset) {
   std::optional<TextStart> Start;
@@ -288,9 +313,11 @@ std::optional<TextStart> textFrom(llvm::ArrayRef<uint8_t> Data, Encoding E,
     if (!Character.Codes)
       return;
     if (!Start && Character.Offset >= Offset)
-      Start = TextStart{Character.Offset, Text, 0};
+      Start = TextStart{Character.Offset, Text, 0, 0};
     if (Start) {
       Start->Chars += Character.Codes;
+      for (unsigned I = 0; I < Character.Codes; ++I)
+        Start->Columns += displayColumns(Character.Code[I]);
       return;
     }
     for (unsigned I = 0; I < Character.Codes; ++I)

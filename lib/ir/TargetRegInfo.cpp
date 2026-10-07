@@ -12,8 +12,12 @@
 #include "neverd/lift/ARMRegs.h"
 #include "neverd/lift/X86Regs.h"
 
+#include "llvm/ADT/DenseMap.h"
+
 #include <algorithm>
 #include <limits>
+#include <numeric>
+#include <vector>
 
 namespace neverd {
 
@@ -97,16 +101,58 @@ CondCode TargetRegInfo::singleFlagCond(uint64_t FlagOff, bool Inverted) const {
 // Sub-register query implementations
 //===----------------------------------------------------------------------===//
 
+using NarrowView = std::pair<uint64_t, uint16_t>;
+
+/// A sub-register table's entries by narrow view.
+struct SubRegIndex {
+  /// The table indexed.
+  llvm::ArrayRef<SubRegEntry> Table;
+  /// Table positions ordered by narrow view and, within a view, by position.
+  std::vector<uint32_t> Positions;
+  /// Each view's run of Positions: its first position and the end.
+  llvm::DenseMap<NarrowView, std::pair<uint32_t, uint32_t>> Views;
+};
+
+namespace {
+
+NarrowView narrowView(const SubRegEntry &E) {
+  return {E.NarrowRegOff, E.NarrowSize};
+}
+
+/// Calls \p Visit on each entry of TRI.SubRegs whose narrow view is
+/// (\p Off, \p Size), in table order, until it returns false.
+template <typename VisitFn>
+void visitNarrowView(const TargetRegInfo &TRI, uint64_t Off, uint16_t Size,
+                     VisitFn Visit) {
+  const NarrowView View{Off, Size};
+  const SubRegIndex *Index = TRI.SubRegLookup;
+  if (!Index || Index->Table.data() != TRI.SubRegs.data() ||
+      Index->Table.size() != TRI.SubRegs.size()) {
+    for (const SubRegEntry &E : TRI.SubRegs)
+      if (narrowView(E) == View && !Visit(E))
+        return;
+    return;
+  }
+  const auto Run = Index->Views.find(View);
+  if (Run == Index->Views.end())
+    return;
+  for (uint32_t I = Run->second.first; I < Run->second.second; ++I)
+    if (!Visit(TRI.SubRegs[Index->Positions[I]]))
+      return;
+}
+
+} // namespace
+
 bool TargetRegInfo::isSubRegOf(uint64_t NarrowOff, uint16_t NarrowSz,
                                uint64_t WideOff, uint16_t WideSz) const {
   if (NarrowOff == WideOff && NarrowSz < WideSz)
     return true;
-  for (const auto &E : SubRegs) {
-    if (E.WideRegOff == WideOff && E.WideSize == WideSz &&
-        E.NarrowRegOff == NarrowOff && E.NarrowSize == NarrowSz)
-      return true;
-  }
-  return false;
+  bool Found = false;
+  visitNarrowView(*this, NarrowOff, NarrowSz, [&](const SubRegEntry &E) {
+    Found = E.WideRegOff == WideOff && E.WideSize == WideSz;
+    return !Found;
+  });
+  return Found;
 }
 
 bool isSameRegisterLowSlice(uint64_t OutputOffset, uint16_t OutputSize,
@@ -118,24 +164,26 @@ bool isSameRegisterLowSlice(uint64_t OutputOffset, uint16_t OutputSize,
 
 bool TargetRegInfo::writeZeroExtends(uint64_t RegOff, uint16_t Size) const {
   const uint16_t MaxWidth = maxRegisterWidth(RegOff);
-  for (const auto &E : SubRegs) {
-    if (E.NarrowRegOff == RegOff && E.NarrowSize == Size &&
-        E.WideSize <= MaxWidth && E.WriteZeroExtends)
-      return true;
-  }
-  return false;
+  bool Extends = false;
+  visitNarrowView(*this, RegOff, Size, [&](const SubRegEntry &E) {
+    Extends = E.WideSize <= MaxWidth && E.WriteZeroExtends;
+    return !Extends;
+  });
+  return Extends;
 }
 
 int TargetRegInfo::subRegByteOffset(uint64_t NarrowOff, uint16_t NarrowSz,
                                     uint64_t WideOff, uint16_t WideSz) const {
   if (NarrowOff == WideOff && NarrowSz < WideSz)
     return 0;
-  for (const auto &E : SubRegs) {
-    if (E.WideRegOff == WideOff && E.WideSize == WideSz &&
-        E.NarrowRegOff == NarrowOff && E.NarrowSize == NarrowSz)
-      return E.ByteOffset;
-  }
-  return -1;
+  int ByteOffset = -1;
+  visitNarrowView(*this, NarrowOff, NarrowSz, [&](const SubRegEntry &E) {
+    if (E.WideRegOff != WideOff || E.WideSize != WideSz)
+      return true;
+    ByteOffset = E.ByteOffset;
+    return false;
+  });
+  return ByteOffset;
 }
 
 std::pair<uint64_t, uint16_t> TargetRegInfo::findWideReg(uint64_t RegOff,
@@ -143,13 +191,14 @@ std::pair<uint64_t, uint16_t> TargetRegInfo::findWideReg(uint64_t RegOff,
   uint64_t BestOff = RegOff;
   uint16_t BestSz = Size;
   const uint16_t MaxWidth = maxRegisterWidth(RegOff);
-  for (const auto &E : SubRegs) {
-    if (E.NarrowRegOff == RegOff && E.NarrowSize == Size &&
-        E.WideSize <= MaxWidth && E.WideSize > BestSz) {
+  // The first of the widest containers wins.
+  visitNarrowView(*this, RegOff, Size, [&](const SubRegEntry &E) {
+    if (E.WideSize <= MaxWidth && E.WideSize > BestSz) {
       BestOff = E.WideRegOff;
       BestSz = E.WideSize;
     }
-  }
+    return true;
+  });
   const bool MayUseLegacyFallback =
       GeneralRegs.empty() && RegOff % FullRegWidth == 0;
   if (BestSz == Size && Size < FullRegWidth &&
@@ -165,6 +214,29 @@ std::pair<uint64_t, uint16_t> TargetRegInfo::findWideReg(uint64_t RegOff,
 //===----------------------------------------------------------------------===//
 
 static const TargetRegInfo UnknownRegInfo = {};
+
+/// Indexes TRI.SubRegs by narrow view into \p Index and lets the
+/// sub-register queries search it.
+static void indexSubRegs(TargetRegInfo &TRI, SubRegIndex &Index) {
+  Index.Table = TRI.SubRegs;
+  Index.Positions.resize(TRI.SubRegs.size());
+  std::iota(Index.Positions.begin(), Index.Positions.end(), 0u);
+  std::stable_sort(Index.Positions.begin(), Index.Positions.end(),
+                   [&](uint32_t A, uint32_t B) {
+                     return narrowView(TRI.SubRegs[A]) <
+                            narrowView(TRI.SubRegs[B]);
+                   });
+  for (uint32_t I = 0; I < Index.Positions.size();) {
+    const NarrowView View = narrowView(TRI.SubRegs[Index.Positions[I]]);
+    uint32_t End = I + 1;
+    while (End < Index.Positions.size() &&
+           narrowView(TRI.SubRegs[Index.Positions[End]]) == View)
+      ++End;
+    Index.Views[View] = {I, End};
+    I = End;
+  }
+  TRI.SubRegLookup = &Index;
+}
 
 static void initSubRegs() {
   // The pipeline's first getTargetRegInfo() call comes from CFGBuilder inside
@@ -182,6 +254,11 @@ static void initSubRegs() {
     initX86RegInfoTables();
     initAArch64RegInfoTables();
     initARMRegInfoTables();
+    static SubRegIndex Indexes[4];
+    indexSubRegs(X64RegInfo, Indexes[0]);
+    indexSubRegs(X86RegInfo, Indexes[1]);
+    indexSubRegs(A64RegInfo, Indexes[2]);
+    indexSubRegs(ARMRegInfo, Indexes[3]);
     return true;
   }();
 }

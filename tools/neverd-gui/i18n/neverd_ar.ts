@@ -1889,12 +1889,28 @@ Signed: %4</source>
         <translation>لا شيء</translation>
     </message>
     <message>
-        <source>Also read C strings that are not UTF-8 in this code page</source>
-        <translation>قراءة سلاسل C التي ليست UTF-8 أيضًا بصفحة الترميز هذه</translation>
+        <source>Detect common code pages</source>
+        <translation>اكتشاف صفحات الترميز الشائعة</translation>
     </message>
     <message>
-        <source>Code page:</source>
-        <translation>صفحة الترميز:</translation>
+        <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
+        <translation>قراءة سلاسل C غير المرمّزة بـ UTF-8 أيضًا في %1، عندما تقرؤها إحداها نصًا ولا تقرؤها صفحة ترميز لنظام كتابة آخر</translation>
+    </message>
+    <message>
+        <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
+        <translation>قراءة سلاسل C غير المرمّزة بـ UTF-8 بصفحة الترميز هذه أولًا، لتكون لها الأولوية حيث تقرؤها صفحات ترميز أخرى أيضًا</translation>
+    </message>
+    <message>
+        <source>Code pages:</source>
+        <translation>صفحات الترميز:</translation>
+    </message>
+    <message>
+        <source>Preferred code page:</source>
+        <translation>صفحة الترميز المفضلة:</translation>
+    </message>
+    <message>
+        <source>Display columns: a wide East Asian character counts two</source>
+        <translation>أعمدة العرض: يُحسب الحرف شرق الآسيوي العريض عمودين</translation>
     </message>
 </context>
 <context>
@@ -2035,8 +2051,12 @@ Signed: %4</source>
         <translation>تعذّر تحديث قاعدة البيانات: %1</translation>
     </message>
     <message>
-        <source>Strings: %1, at least %2 characters</source>
-        <translation>السلاسل النصية: %1، على الأقل %2 حرفًا</translation>
+        <source>Strings: %1, at least %2 columns</source>
+        <translation>السلاسل النصية: %1، على الأقل %2 عمودًا</translation>
+    </message>
+    <message>
+        <source>Strings: %1, %2 first, at least %3 columns</source>
+        <translation>السلاسل النصية: %1، %2 أولًا، على الأقل %3 عمودًا</translation>
     </message>
 </context>
 </TS>

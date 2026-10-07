@@ -157,7 +157,8 @@ TEST_P(AndroidTime, ReleasedGKIProcessCPUClocksShareRawAndBionicObservations) {
     const char *Label;
   };
   constexpr KernelCase Kernels[] = {
-#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error,  \
+                                NameFirst)                                     \
   {AndroidGKIKernel::Name, Label},
 #include "GKIReleaseCases.def"
 #undef NEVERD_GKI_RELEASE_CASE

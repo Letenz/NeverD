@@ -38,7 +38,8 @@ std::string take(const char *Text) {
 }
 
 /// The engine options the command searches with: the encodings it names,
-/// or the engine's defaults, the code page and the minimum length.
+/// or the engine's defaults, the code page it prefers and the minimum
+/// length.
 std::string scanOptions() {
   json::Array Names;
   if (StringEncodings.empty()) {
@@ -53,10 +54,10 @@ std::string scanOptions() {
     for (const auto &Name : StringEncodings)
       Names.push_back(Name);
   }
-  if (!StringCodePage.empty())
-    Names.push_back(StringCodePage.getValue());
   json::Object Options{{"encodings", std::move(Names)},
                        {"min_length", static_cast<int64_t>(MinStrLen)}};
+  if (!StringCodePage.empty())
+    Options["preferred"] = StringCodePage.getValue();
   std::string Text;
   raw_string_ostream(Text) << json::Value(std::move(Options));
   return Text;
@@ -238,13 +239,21 @@ int runStrings(neverd_session_t Sess) {
     outs() << json::Value(std::move(Kept)) << "\n";
     return 0;
   }
-  for (const auto &Row : Kept) {
-    const json::Object &Object = *Row.getAsObject();
+  // The type column fits the longest spelling, as windows-1252.
+  const auto typeOf = [&](const json::Object &Object) {
     const auto Encoding = Object.getString("encoding").value_or("").str();
     const auto Type = Types.find(Encoding);
-    outs() << format("%-18s %-10s ",
-                     Object.getString("addr").value_or("").str().c_str(),
-                     (Type == Types.end() ? Encoding : Type->second).c_str())
+    return Type == Types.end() ? Encoding : Type->second;
+  };
+  size_t TypeWidth = 0;
+  for (const auto &Row : Kept)
+    TypeWidth = std::max(TypeWidth, typeOf(*Row.getAsObject()).size());
+  for (const auto &Row : Kept) {
+    const json::Object &Object = *Row.getAsObject();
+    const auto Type = typeOf(Object);
+    outs() << format("%-18s ",
+                     Object.getString("addr").value_or("").str().c_str())
+           << Type << std::string(TypeWidth - Type.size() + 1, ' ')
            << printable(Object.getString("value").value_or("")) << "\n";
   }
   outs() << "\n" << Kept.size() << " strings found\n";

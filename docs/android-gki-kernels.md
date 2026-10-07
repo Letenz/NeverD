@@ -9,8 +9,9 @@ Linux kernel variants. Select a branch explicitly in a process request:
 
 The Android native profile's API 28 contract describes Bionic imports and does
 not select a Linux kernel version. GKI selection currently controls only the
-implemented `pidfd_open`, vectored-output, encoded process CPU clock and
-zero-timeout process-descriptor `ppoll` contracts.
+implemented `pidfd_open`, vectored-output, encoded process CPU clock,
+zero-timeout process-descriptor `ppoll` and extended-attribute query error
+contracts.
 It does not certify an
 entire kernel, load a kernel image, or infer device, namespace, credentials or
 process inventory.
@@ -23,8 +24,10 @@ The catalogue in `LinuxGKIKernels.def` follows these formal `r1` release tags,
 checked on 2026-10-07. Each linked immutable commit supplies `kernel/pid.c`,
 `include/uapi/linux/pidfd.h`, `arch/arm64/configs/gki_defconfig`,
 `kernel/fork.c`, `lib/iov_iter.c`, `fs/read_write.c` and the CPU clock sources
-linked below. Flag values come from the UAPI and the syscall's validation, rather than an Android API
-level or the host kernel.
+linked below. Extended-attribute ordering uses each pin’s `fs/xattr.c` and
+`include/uapi/linux/limits.h`; syscall numbers use the generic UAPI and x64
+syscall table. Flag values come from the UAPI and the syscall's validation,
+rather than an Android API level or the host kernel.
 
 | Request branch | Formal release tag | Pinned source commit | Admitted flags | Iovec import |
 | --- | --- | --- | --- | --- |
@@ -163,6 +166,34 @@ so existing regular files with that flag retain an explicit unsupported
 boundary. Existing directory opens remain unsupported. These stable rules
 also apply without a GKI selection; they do not infer procfs content or mounts.
 
+## Extended-attribute query import and target errors
+
+With explicit GKI and `linux_files` selection, raw x64/AArch64 `getxattr`,
+`lgetxattr` and `fgetxattr` share the file owner with their three named Bionic
+imports. The model admits errors determined by importing the attribute name
+or resolving a declared target. Empty names and names with no terminator in
+256 bytes return ERANGE; a valid name can contain at most 255 bytes. Import
+stops at the first NUL. An unreadable name returns EFAULT.
+
+The first seven released pins resolve the pathname or descriptor before
+importing the name. The 6.18 pin imports the name first. Thus a closed FD and
+empty name return EBADF on 5.10–6.12 and ERANGE on 6.18; a known missing path
+and unreadable name return ENOENT and EFAULT respectively. The order is
+source-pinned in [5.10 `path_getxattr` and `fgetxattr`](https://android.googlesource.com/kernel/common/+/b14525331e0d5d335b037d6ed17d40424ed47b0a/fs/xattr.c),
+[6.12](https://android.googlesource.com/kernel/common/+/894a317b5382555614ef2be7a79cca79083c6cf2/fs/xattr.c)
+and [6.18 `path_getxattrat`](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/fs/xattr.c).
+The name limit comes from each pin's
+[UAPI limits](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/include/uapi/linux/limits.h).
+
+Known absent paths return ENOENT and a regular file used as a directory returns
+ENOTDIR in the selected order. Closed descriptors return EBADF after consuming
+their low 32 bits. These failures do not access the value buffer or change file
+cursors. Bionic alone converts raw negative errors to `-1` and `errno`.
+For an existing object and valid name, the catalogue does not supply attributes,
+credentials, security policy or filesystem capability; execution stops explicitly.
+New `getxattrat` entry points, symlinks, listing and attribute mutations require
+additional contracts.
+
 ## Implemented process CPU clock subset
 
 With explicit GKI selection, `clock_gettime` admits negative encoded process
@@ -243,6 +274,10 @@ Open-flag fixtures check architecture-specific directory/direct bits, combined
 flags, narrow arguments, pathname faults, descriptor exhaustion and unchanged
 cursors on all eight branches. Android repeats raw and all four named open
 imports with independent errno checks, and retains existing-file boundaries.
+Extended-attribute fixtures check all eight import orders, empty and overlong
+names, name and pathname faults, page-edge terminators, low descriptor bits,
+unchanged cursors and value-buffer canaries. Raw/Bionic callers retain unknown
+kernel and existing-object boundaries across all packing profiles.
 
 Source pins and these model executions are evidence for the specified syscall
 subset. Native tests booting every pinned GKI image are not yet available.

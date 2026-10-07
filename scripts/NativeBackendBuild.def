@@ -1,0 +1,58 @@
+//===- NativeBackendBuild.def - ARM64 backend compilation evidence --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_NATIVE_BUILD_PROFILE
+NEVERD_NATIVE_BUILD_PROFILE(kvm, "Linux", "NEVERD_EMULATION_KVM", ".o")
+NEVERD_NATIVE_BUILD_PROFILE(whp, "Windows", "NEVERD_EMULATION_WHP", ".obj")
+#endif
+#ifdef NEVERD_NATIVE_BUILD_SOURCE
+NEVERD_NATIVE_BUILD_SOURCE(kvm, "backends/kvm/KvmMachine.cpp")
+NEVERD_NATIVE_BUILD_SOURCE(kvm, "backends/kvm/KvmAArch64Machine.cpp")
+NEVERD_NATIVE_BUILD_SOURCE(kvm, "backends/kvm/KvmRunControl.cpp")
+NEVERD_NATIVE_BUILD_SOURCE(whp, "backends/whp/WhpMachine.cpp")
+NEVERD_NATIVE_BUILD_SOURCE(whp, "backends/whp/WhpAArch64Machine.cpp")
+#endif
+#ifdef NEVERD_NATIVE_BUILD_VALUE
+NEVERD_NATIVE_BUILD_VALUE(ELFHeaderSize, 64)
+NEVERD_NATIVE_BUILD_VALUE(ELFClassOffset, 4)
+NEVERD_NATIVE_BUILD_VALUE(ELFDataOffset, 5)
+NEVERD_NATIVE_BUILD_VALUE(ELFTypeOffset, 16)
+NEVERD_NATIVE_BUILD_VALUE(ELFMachineOffset, 18)
+NEVERD_NATIVE_BUILD_VALUE(ELF64, 2)
+NEVERD_NATIVE_BUILD_VALUE(ELFLittleEndian, 1)
+NEVERD_NATIVE_BUILD_VALUE(ELFRelocatable, 1)
+NEVERD_NATIVE_BUILD_VALUE(ELFARM64, 183)
+NEVERD_NATIVE_BUILD_VALUE(COFFHeaderSize, 20)
+NEVERD_NATIVE_BUILD_VALUE(COFFARM64, 0xAA64)
+NEVERD_NATIVE_BUILD_VALUE(COFFOptionalSizeOffset, 16)
+NEVERD_NATIVE_BUILD_VALUE(BigObjHeaderSize, 56)
+NEVERD_NATIVE_BUILD_VALUE(BigObjSignature, 0xFFFF)
+NEVERD_NATIVE_BUILD_VALUE(BigObjVersion, 2)
+NEVERD_NATIVE_BUILD_VALUE(BigObjMachineOffset, 6)
+NEVERD_NATIVE_BUILD_VALUE(BigObjMagicOffset, 12)
+NEVERD_NATIVE_BUILD_VALUE(WordBytes, 2)
+#endif
+#ifdef NEVERD_NATIVE_BUILD_TEXT
+NEVERD_NATIVE_BUILD_TEXT(ELFMagic, "7f454c46")
+NEVERD_NATIVE_BUILD_TEXT(BigObjMagic, "c7a1bad1eebaa94baf20faf66aa4dcb8")
+NEVERD_NATIVE_BUILD_TEXT(SourceRoot, "lib/emulation")
+NEVERD_NATIVE_BUILD_TEXT(ObjectRoot,
+                         "lib/emulation/CMakeFiles/NeverDEmulationNative.dir")
+NEVERD_NATIVE_BUILD_TEXT(CompileCommands, "compile_commands.json")
+NEVERD_NATIVE_BUILD_TEXT(Cache, "CMakeCache.txt")
+NEVERD_NATIVE_BUILD_TEXT(CPUOption, "NEVERD_ENABLE_CPU_EMULATION")
+NEVERD_NATIVE_BUILD_TEXT(UnicornOption, "NEVERD_EMULATION_BACKEND_UNICORN")
+NEVERD_NATIVE_BUILD_TEXT(BackendOption, "NEVERD_EMULATION_BACKEND_")
+NEVERD_NATIVE_BUILD_TEXT(InvalidInventory, "invalid native build inventory")
+NEVERD_NATIVE_BUILD_TEXT(HostMismatch, "native ARM64 host required")
+NEVERD_NATIVE_BUILD_TEXT(DirtySource, "native build source tree is dirty")
+NEVERD_NATIVE_BUILD_TEXT(InvalidProfile, "native build profile disagrees")
+NEVERD_NATIVE_BUILD_TEXT(MissingRecipe,
+                         "native source recipe missing or repeated")
+NEVERD_NATIVE_BUILD_TEXT(MissingDefinition, "native backend definition missing")
+NEVERD_NATIVE_BUILD_TEXT(InvalidObject, "object is not relocatable ARM64")
+NEVERD_NATIVE_BUILD_TEXT(WrongOutput, "native source output disagrees")
+NEVERD_NATIVE_BUILD_TEXT(Description, "Audit native ARM64 backend compilation")
+#endif

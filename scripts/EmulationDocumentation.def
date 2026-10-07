@@ -1634,3 +1634,20 @@ NEVERD_EMULATION_DOC_TOKEN(GeneratedTLSStorage,
                            "IMAGE_SCN_CNT_UNINITIALIZED_DATA")
 NEVERD_EMULATION_DOC_TOKEN(GeneratedTLSStorage, ".data")
 #endif
+
+// Native ARM64 component builds are distinct from guest execution.
+NEVERD_EMULATION_DOC_PATH(NativeARM64Build, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(NativeARM64Build, "docs/{locale}/testing.md")
+NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build, "ARM64 native backend build")
+NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build, "NeverDEmulationNative")
+NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build, "ubuntu-24.04-arm")
+NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build, "windows-11-arm")
+NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build, "audit_native_backend_build.py")
+NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build, "probe_native_host.py")
+NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build, "ELF/COFF")
+NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build,
+                           "NeverDCapstoneCompilerOptions.inc")
+NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build, "Clang")
+NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build, "GCC")
+NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build, "native_arm64_only=true")
+NEVERD_EMULATION_DOC_TOKEN(NativeARM64Build, "8.3")

@@ -1881,12 +1881,28 @@ Mit Vorzeichen: %4</translation>
         <translation>Keine</translation>
     </message>
     <message>
-        <source>Also read C strings that are not UTF-8 in this code page</source>
-        <translation>C-Zeichenketten, die kein UTF-8 sind, zusätzlich in dieser Codepage lesen</translation>
+        <source>Detect common code pages</source>
+        <translation>Gängige Codepages erkennen</translation>
     </message>
     <message>
-        <source>Code page:</source>
-        <translation>Codepage:</translation>
+        <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
+        <translation>C-Zeichenketten, die kein UTF-8 sind, auch in %1 lesen, wenn eine davon sie als Text liest und keine Codepage für eine andere Schrift</translation>
+    </message>
+    <message>
+        <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
+        <translation>C-Zeichenketten, die kein UTF-8 sind, zuerst in dieser Codepage lesen, damit sie gewinnt, wo andere Codepages sie ebenfalls lesen</translation>
+    </message>
+    <message>
+        <source>Code pages:</source>
+        <translation>Codepages:</translation>
+    </message>
+    <message>
+        <source>Preferred code page:</source>
+        <translation>Bevorzugte Codepage:</translation>
+    </message>
+    <message>
+        <source>Display columns: a wide East Asian character counts two</source>
+        <translation>Anzeigespalten: ein breites ostasiatisches Zeichen zählt doppelt</translation>
     </message>
 </context>
 <context>
@@ -2027,8 +2043,12 @@ Mit Vorzeichen: %4</translation>
         <translation>Die Datenbank konnte nicht aktualisiert werden: %1</translation>
     </message>
     <message>
-        <source>Strings: %1, at least %2 characters</source>
-        <translation>Zeichenketten: %1, mindestens %2 Zeichen</translation>
+        <source>Strings: %1, at least %2 columns</source>
+        <translation>Zeichenketten: %1, mindestens %2 Spalten</translation>
+    </message>
+    <message>
+        <source>Strings: %1, %2 first, at least %3 columns</source>
+        <translation>Zeichenketten: %1, zuerst %2, mindestens %3 Spalten</translation>
     </message>
 </context>
 </TS>

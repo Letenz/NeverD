@@ -15,10 +15,12 @@ namespace neverd::gui {
 class AddressSpace;
 class Session;
 
-/// The hex dump: sixteen bytes per row across every mapped region, fetched
-/// from the worker in cached chunks.  The current item is highlighted and
-/// follows the synchronized disassembly view.  The text column reads the
-/// bytes as ASCII or, decoded by the engine, in a chosen text encoding.
+/// The hex dump: rows of sixteen bytes at addresses that are multiples of
+/// sixteen, over every mapped region, fetched from the worker in cached
+/// chunks.  Regions sharing a row share it; bytes no region maps are blank. The
+/// current item is highlighted and follows the synchronized disassembly view.
+/// The text column reads the bytes as ASCII or, decoded by the engine, in a
+/// chosen text encoding.
 class HexView final : public QAbstractScrollArea {
   Q_OBJECT
 public:
@@ -65,8 +67,15 @@ private:
     QString name, label;
     bool legacy = false;
   };
-  qint64 totalRows() const;
-  /// Row index of \p address (rows restart at each region).
+  /// A run of consecutive rows: the 16-byte lines from \c start to \c end
+  /// that regions touch, and the index of its first row.
+  struct RowRun {
+    Address start = 0, end = 0;
+    qint64 first = 0;
+  };
+  void buildRows();
+  qint64 totalRows() const { return rowCount_; }
+  /// Row index of \p address.
   qint64 rowOf(Address address) const;
   std::optional<Address> addressOfRow(qint64 row) const;
   /// Where the chunk holding \p address starts: its 4 KiB block, clipped to
@@ -89,6 +98,8 @@ private:
   int currentSize_ = 1;
   QString textEncoding_;
   QVector<TextEncoding> encodings_;
+  QVector<RowRun> rows_;
+  qint64 rowCount_ = 0;
   qreal charWidth_ = 8;
   int lineHeight_ = 16, ascent_ = 12;
   quint64 serial_ = 0;

@@ -1879,12 +1879,28 @@ Signed: %4</source>
         <translation>なし</translation>
     </message>
     <message>
-        <source>Also read C strings that are not UTF-8 in this code page</source>
-        <translation>UTF-8 でない C 文字列もこのコードページで読み取ります</translation>
+        <source>Detect common code pages</source>
+        <translation>一般的なコードページを検出</translation>
     </message>
     <message>
-        <source>Code page:</source>
+        <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
+        <translation>UTF-8 でない C 文字列を %1 でも読み取ります（いずれかがテキストとして読み取り、別の文字体系のコードページが読み取らない場合）</translation>
+    </message>
+    <message>
+        <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
+        <translation>UTF-8 でない C 文字列をまずこのコードページで読み取り、他のコードページも読み取れる場合はこちらを優先します</translation>
+    </message>
+    <message>
+        <source>Code pages:</source>
         <translation>コードページ：</translation>
+    </message>
+    <message>
+        <source>Preferred code page:</source>
+        <translation>優先コードページ：</translation>
+    </message>
+    <message>
+        <source>Display columns: a wide East Asian character counts two</source>
+        <translation>表示桁数：東アジアの全角文字は 2 桁と数えます</translation>
     </message>
 </context>
 <context>
@@ -2025,8 +2041,12 @@ Signed: %4</source>
         <translation>データベースを更新できませんでした: %1</translation>
     </message>
     <message>
-        <source>Strings: %1, at least %2 characters</source>
-        <translation>文字列：%1、%2 文字以上</translation>
+        <source>Strings: %1, at least %2 columns</source>
+        <translation>文字列：%1、%2 桁以上</translation>
+    </message>
+    <message>
+        <source>Strings: %1, %2 first, at least %3 columns</source>
+        <translation>文字列：%1、%2 を優先、%3 桁以上</translation>
     </message>
 </context>
 </TS>
