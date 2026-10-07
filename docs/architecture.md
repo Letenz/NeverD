@@ -86,6 +86,18 @@ operation witness, complete mapped slot and relocation ownership, and exclusive
 consumption by the recovered branch. The unused prefix gains no suppression
 authority from sharing that origin.
 
+A bounded group of AArch64 absolute dispatches in one relocatable ELF function
+can share an exact read-only pointer object. Each selector first proves its
+finite domain with every independent root retained and all group edges absent.
+The joint graph then replays every selector, target LOAD and address role.
+Three immutable rounds establish and replay the complete consumer inventory;
+every member audits the whole physical object, but suppression is limited to
+the independently proved runtime coordinates of the group. Unused slots keep
+their independent roots. The group publishes and withdraws atomically; a
+missing owner, changed member, observable table use or exhausted proof retains
+the unresolved transfers. Module-wide mutation and consumer arbitration still
+owns the final publication decision.
+
 CFG construction also owns indirect tail-call classification. For an AArch64
 candidate without a proved dispatch, `IndirectTailFrame` checks the necessary
 incoming SP and link-word restoration under the existing native call ABI.
@@ -907,7 +919,7 @@ Finite-value enumeration may observe feasible tuples without changing the proof 
 
 Frame-offset checks reuse the existing bounded `FiniteQueryCache` within each relation checker. Key construction and retained proofs are limited to `MaxSymbolicNodes` words, as in recovery. Keys preserve the full predicate and relative-expression relationships; only completed domains or proved nonuniqueness are reusable. Every access still checks address independence and frame bounds.
 
-The relation checker retains the latest completed model-free query answer and one completed SAT fact for exact predicate-reference reuse in the same immutable symbolic context and fixed solver configuration. Immediate repeated queries keep their existing uncharged reuse; a SAT hit after intervening queries still consumes one query request before avoiding re-encoding and search. Node limits are checked before either lookup. Unknown/Invalid results and models are never retained, and reuse ends with that checker. Different predicates still require proof.
+The relation checker caches completed model-free SAT/UNSAT answers by exact predicate reference within its actual immutable, append-only symbolic context and fixed solver configuration. A packed table uses two bits per node under `MaxSymbolicNodes` and is allocated only after a second query completes. Every lookup first checks the node limit. Immediate repeats keep the existing uncharged fast path; every other hit consumes one logical query before skipping encoding and search. Growth can temporarily retain both old and new allocations. Unknown/Invalid answers, models and mutable search state are never retained. Reuse ends with the checker, and an independent final checker starts empty. Different predicates still need complete proof.
 
 A native conditional branch shares one model-free encoder between its taken and fallthrough feasibility queries. Each query checks its complete predicate under separate assumptions; encoding reuse ends with that branch. Earlier branches therefore cannot accumulate clauses in a later branch’s search. The existing charged fresh retry applies only to encoding-gate exhaustion; search exhaustion and malformed inputs still refuse. Query, node and observation budgets remain enforced.
 
@@ -3491,7 +3503,7 @@ The Swift SDK catalog authenticates the generic Foundation NSRange initializer w
 
 The same descriptor-specific witness contract covers the fixed `String: StringProtocol` conformance. Four complete compiler queries preserve the direct String metadata, descriptor and null-initialized cache; the lazy accessor checks the cache, calls the three-pointer runtime with an undef third operand, stores the new witness with release ordering and returns the matching PHI value. Changed storage, prototypes, branches, PHI inputs or additional effects invalidate the contract. Only that undef operand is projected; observed entry arguments and effectful expressions remain intact.
 
-Each relation checker owns one `FiniteDomainEncoding` bound to its context and fixed solver settings. Repeated cold frame queries with the same complete predicate clone its pre-search encoding; a changed predicate replaces it. Projection, blocking clauses, learned state and models remain local to each query. Full finite enumeration, the final UNSAT check, logical query charges and all existing limits remain mandatory.
+Each relation checker owns one `FiniteDomainEncoding` bound to its context and fixed solver settings. Frame-offset and native indirect-target projections with the same complete predicate share its pre-search encoding; a changed predicate replaces this single template. Each projection receives an independent clone, and blocking clauses, learned state and models remain local to that query. Full finite enumeration, the final UNSAT check, logical query charges and all existing limits remain mandatory.
 
 Frame-offset queries prepare one complete, context-independent finite-proof key for lookup and later insertion. The movable token keeps exact DAG identity and projection widths; it never retains symbolic references or incomplete results. A live token adds one bounded temporary key beside the retained cache storage. Result validation, eviction, complete enumeration and all solver budgets are unchanged.
 
@@ -3502,3 +3514,31 @@ The fixed `MainActor: Actor` SDK contract shares a complete compiler reader betw
 Swift SDK Published enclosing-instance accessors preserve four pointer carriers: an opaque indirect result for the getter or a consumed value address for the setter, then owner, wrapped key path and storage key path. Four Swift 6.1.2 macOS/Mac Catalyst compiler and export profiles authenticate the exact getter/setter symbols and Combine providers. Neither ABI adds generic metadata or swiftself; original reference ownership, opaque value layout and frame obligations remain with their existing owners.
 
 The exact `MainActor.shared` SDK getter returns one object pointer and receives its metatype in swiftself (`x20` on ARM64, `r13` on x86-64). Four Swift 6.1.2 macOS/Mac Catalyst compiler and export profiles authenticate this complete ABI and the strong `libswift_Concurrency` provider. Ownership, executor scheduling and private-frame analysis retain their existing contracts.
+
+`LinuxPriority` owns explicit per-task nice state in the same workload's
+`LinuxServices`. Raw x64 and AArch64 priority traps use `LinuxValues.def` number
+bindings and the current OS-owned thread identity. Validated
+`LinuxPriorityOptions` supplies fixture-owned task observations and caller
+CAP_SYS_NICE/RLIMIT_NICE authority; unknown task state and group/user selection
+remain unsupported boundaries. The raw getter keeps kernel return encoding,
+and permission failures leave the task state unchanged. JSON vocabulary and
+diagnostics live in the existing process and Linux `.def` files.
+
+`LinuxUnavailableSyscalls.def` owns the public absence observation identifiers,
+input names, architecture numbers and fixed arities for selected optional
+kernel calls. `LinuxKernelOptions` is an explicit fixture observation; the
+shared Linux kernel service layer returns ENOSYS only when that observation
+declares a call absent. The catalogue does not supply an implementation or
+derive availability from an Android API level. JSON validation and profile
+admission happen before loading; unlisted and available-but-unmodeled calls
+retain their unsupported boundary.
+
+`LinuxGKIKernels.def` owns released Android GKI branch identifiers and the
+versioned `pidfd_open` flag mask. JSON and C++ options select that contract
+explicitly; Android's Bionic API level does not infer it. `LinuxServices`
+dispatches the shared kernel call, and `LinuxFiles` owns process descriptors
+alongside regular files and standard streams. `LinuxOutput` supplies the same
+vector import/error ordering before a pidfd's missing write operation. There
+is no host process lookup or parallel descriptor namespace. See
+[released GKI contracts](android-gki-kernels.md) for pinned source evidence and
+the limits of this implemented subset.

@@ -76,6 +76,48 @@ protected:
   }
 };
 
+TEST_P(AndroidSyscall, ExplicitKernelAbsenceRetainsRawAndBionicErrorEncoding) {
+  Options.LinuxKernel.emplace().UnavailableSyscalls.insert(
+      LinuxUnavailableSyscall::PidFDOpen);
+  auto R = run("syscall_unavailable_kernel", {Buffer});
+  returned(R);
+  words(R, {uint64_t(0) - 38, 77, UINT64_MAX, 38, UINT64_MAX, 38});
+  ASSERT_EQ(R.Services.size(), 1u);
+  EXPECT_EQ(R.Services.front().Number, 434u);
+  EXPECT_EQ(R.Services.front().Result, uint64_t(0) - 38);
+  Options.LinuxKernel.reset();
+  R = run("syscall_unavailable_kernel", {Buffer});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_FALSE(R.Services.back().Result);
+}
+
+TEST_P(AndroidSyscall,
+       ReleasedGKIProcessDescriptorsShareRawAndBionicOwnership) {
+  struct KernelCase {
+    AndroidGKIKernel Kernel;
+    const char *Label;
+    bool ThreadFlag;
+  };
+  constexpr KernelCase Kernels[] = {
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag)                       \
+  {AndroidGKIKernel::Name, Label, ThreadFlag},
+#include "GKIReleaseCases.def"
+#undef NEVERD_GKI_RELEASE_CASE
+  };
+  for (const auto &K : Kernels) {
+    SCOPED_TRACE(K.Label);
+    Options.LinuxKernel.emplace().GKI = K.Kernel;
+    Options.LinuxFiles.emplace().DescriptorLimit = 5;
+    auto R = run("syscall_gki_pidfd", {Buffer, K.ThreadFlag});
+    returned(R);
+    words(R, {3, 0, 3, 0, UINT64_MAX, 22, uint64_t(0) - 22, 91});
+    Options.LinuxFiles->DescriptorLimit = 3;
+    R = run("syscall_gki_pidfd_limit", {Buffer});
+    returned(R);
+    words(R, {uint64_t(0) - 24, 77, UINT64_MAX, 24, 0, 0, 0, 24});
+  }
+}
+
 TEST_P(AndroidSyscall, NamedRawAndVariadicIdentityQueriesAgree) {
   auto R = run("syscall_identities", {Buffer});
   returned(R);

@@ -8,6 +8,7 @@
 
 #include "LinuxFiles.h"
 #include "LinuxMemory.h"
+#include "LinuxPriority.h"
 #include "LinuxSignals.h"
 #include "LinuxTime.h"
 
@@ -23,7 +24,7 @@ public:
       : CPU(CPU), Layout(Layout), Options(Options), Result(Result),
         Memory(*CPU.addressSpace(), Layout, InitialBreak, Options),
         Files(CPU, Layout, Options.LinuxFiles), Signals(Options.LinuxSignals),
-        Clock(Options.LinuxTime) {}
+        Priority(Options.LinuxPriority), Clock(Options.LinuxTime) {}
 
   llvm::Expected<std::optional<uint64_t>>
   handle(const ProcessServiceEvent &Event, ThreadContext *Thread = nullptr);
@@ -46,6 +47,7 @@ private:
   LinuxMemory Memory;
   LinuxFiles Files;
   LinuxSignals Signals;
+  LinuxPriority Priority;
   LinuxClock Clock;
 };
 

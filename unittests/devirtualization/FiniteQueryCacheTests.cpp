@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../lib/analysis/core/FiniteQueryCache.h"
+#include "../../lib/analysis/core/FrameOffsets.h"
 #include "gtest/gtest.h"
 
 #include "neverd/symbolic/SymState.h"
@@ -503,5 +504,223 @@ TEST(PreparedFiniteKeys, EmptyAndNonuniqueProofsKeepTheirExactDomains) {
   ASSERT_TRUE(H);
   EXPECT_EQ(H->Status, FiniteValueStatus::TooManyValues);
   EXPECT_FALSE(C.lookup(C.prepare(S, S.mkTrue(), {}, 1)));
+}
+} // namespace
+
+namespace {
+TEST(ContextFiniteProofs, ContextOwnerAndModeAreSeparate) {
+  SymContext A, B;
+  const auto X = A.mkVar("x", 8), Y = B.mkVar("x", 8);
+  const auto P = A.mkEq(X, A.mkConst(8, 3));
+  const auto Q = B.mkEq(Y, B.mkConst(8, 7));
+  ASSERT_EQ(X.index(), Y.index());
+  ASSERT_EQ(P.index(), Q.index());
+  const auto R = prove(A, P, {X}, 1), Other = prove(B, Q, {Y}, 1);
+  ASSERT_EQ(R.Tuples, (std::vector<std::vector<uint64_t>>{{3}}));
+  ASSERT_EQ(Other.Tuples, (std::vector<std::vector<uint64_t>>{{7}}));
+  Cache C(4096, A), Sibling(4096, A), Foreign(4096, B), Structural(4096);
+  C.store(C.prepare(A, P, {X}, 1), R);
+  expectHit(C.lookup(A, P, {X}, 1), R);
+  EXPECT_FALSE(C.lookup(B, Q, {Y}, 1));
+  C.store(C.prepare(B, Q, {Y}, 1), Other);
+  expectHit(C.lookup(A, P, {X}, 1), R);
+  for (auto *Target : {&Sibling, &Foreign, &Structural}) {
+    auto Token = C.prepare(A, P, {X}, 1);
+    EXPECT_FALSE(Target->lookup(Token));
+    Target->store(std::move(Token), R);
+    EXPECT_FALSE(Target->lookup(A, P, {X}, 1));
+    EXPECT_FALSE(Target->lookup(B, Q, {Y}, 1));
+  }
+  Structural.store(Structural.prepare(A, P, {X}, 1), R);
+  EXPECT_FALSE(C.lookup(Structural.prepare(A, P, {X}, 1)));
+  Sibling.store(Structural.prepare(A, P, {X}, 1), R);
+  EXPECT_FALSE(Sibling.lookup(A, P, {X}, 1));
+  Foreign.store(Foreign.prepare(B, Q, {Y}, 1), Other);
+  expectHit(Foreign.lookup(B, Q, {Y}, 1), Other);
+}
+
+TEST(ContextFiniteProofs, ReplacedOwnerCannotConsumeOldTokens) {
+  SymContext Ctx;
+  const auto X = Ctx.mkVar("x", 8), P = Ctx.mkEq(X, Ctx.mkConst(8, 5));
+  const auto R = prove(Ctx, P, {X}, 1);
+  std::optional<Cache> Owner(std::in_place, 4096, Ctx);
+  const auto *Address = &*Owner;
+  auto Old = Owner->prepare(Ctx, P, {X}, 1);
+  Owner->store(Owner->prepare(Ctx, P, {X}, 1), R);
+  Owner.reset();
+  Owner.emplace(4096, Ctx);
+  ASSERT_EQ(Address, &*Owner);
+  Owner->store(Owner->prepare(Ctx, P, {X}, 1), R);
+  EXPECT_FALSE(Owner->lookup(Old));
+  Owner->store(std::move(Old), R);
+  expectHit(Owner->lookup(Ctx, P, {X}, 1), R);
+}
+
+TEST(ContextFiniteProofs, MovesInvalidateSourcesAndPreserveOwner) {
+  SymContext Ctx;
+  const auto X = Ctx.mkVar("x", 8), P = Ctx.mkEq(X, Ctx.mkConst(8, 5));
+  const auto R = prove(Ctx, P, {X}, 1);
+  Cache C(4096, Ctx), Other(4096, Ctx);
+  auto Q = C.prepare(Ctx, P, {X}, 1);
+  auto Moved = std::move(Q);
+  Cache::PreparedQuery Assigned;
+  Assigned = std::move(Moved);
+  auto *Self = &Assigned;
+  Assigned = std::move(*Self);
+  EXPECT_FALSE(Other.lookup(Assigned));
+  C.store(std::move(Assigned), R);
+  EXPECT_FALSE(C.lookup(Q));
+  EXPECT_FALSE(C.lookup(Moved));
+  EXPECT_FALSE(C.lookup(Assigned));
+  expectHit(C.lookup(Ctx, P, {X}, 1), R);
+}
+
+TEST(ContextFiniteProofs, ExactPredicateProjectionOrderArityAndLimit) {
+  SymContext Ctx;
+  const auto X = Ctx.mkVar("x", 8), Y = Ctx.mkVar("y", 8);
+  const auto PX = Ctx.mkEq(X, Ctx.mkConst(8, 3));
+  const auto P = Ctx.mkAnd(PX, Ctx.mkEq(Y, Ctx.mkConst(8, 7)));
+  Cache C(4096, Ctx);
+  const auto R = prove(Ctx, P, {X, Y}, 1);
+  ASSERT_EQ(R.Tuples, (std::vector<std::vector<uint64_t>>{{3, 7}}));
+  C.store(C.prepare(Ctx, P, {X, Y}, 1), R);
+  EXPECT_FALSE(C.lookup(Ctx, P, {Y, X}, 1));
+  EXPECT_FALSE(C.lookup(Ctx, P, {X, X}, 1));
+  EXPECT_FALSE(C.lookup(Ctx, P, {X}, 1));
+  EXPECT_FALSE(C.lookup(Ctx, P, {}, 1));
+  EXPECT_FALSE(C.lookup(Ctx, P, {X, Y}, 2));
+  EXPECT_FALSE(C.lookup(Ctx, PX, {X, Y}, 1));
+  EXPECT_FALSE(C.lookup(Ctx, Ctx.mkFalse(), {X, Y}, 1));
+  for (unsigned I = 0; I != 2048; ++I)
+    Ctx.mkFreshVar(64);
+  expectHit(C.lookup(Ctx, P, {X, Y}, 1), R);
+  EXPECT_EQ(prove(Ctx, P, {X, Y}, 1).Tuples, R.Tuples);
+}
+
+TEST(ContextFiniteProofs, CompleteEmptyAndNonuniqueResultsRemainDistinct) {
+  SymContext Ctx;
+  const auto X = Ctx.mkVar("x", 8);
+  Cache C(4096, Ctx);
+  const auto Empty = prove(Ctx, Ctx.mkFalse(), {X}, 1);
+  const auto Many = prove(Ctx, Ctx.mkTrue(), {X}, 1);
+  const auto Unit = prove(Ctx, Ctx.mkTrue(), {}, 1);
+  ASSERT_EQ(Empty.Status, FiniteValueStatus::Complete);
+  ASSERT_TRUE(Empty.Tuples.empty());
+  ASSERT_EQ(Many.Status, FiniteValueStatus::TooManyValues);
+  ASSERT_TRUE(Many.Tuples.empty());
+  ASSERT_EQ(Unit.Tuples, (std::vector<std::vector<uint64_t>>{{}}));
+  C.store(C.prepare(Ctx, Ctx.mkFalse(), {X}, 1), Empty);
+  C.store(C.prepare(Ctx, Ctx.mkTrue(), {X}, 1), Many);
+  C.store(C.prepare(Ctx, Ctx.mkTrue(), {}, 1), Unit);
+  expectHit(C.lookup(Ctx, Ctx.mkFalse(), {X}, 1), Empty);
+  expectHit(C.lookup(Ctx, Ctx.mkTrue(), {X}, 1), Many);
+  expectHit(C.lookup(Ctx, Ctx.mkTrue(), {}, 1), Unit);
+}
+
+TEST(ContextFiniteProofs, ResultValidationAndExactStorageCeilings) {
+  SymContext Ctx;
+  const auto X = Ctx.mkVar("x", 1), P = Ctx.mkTrue();
+  for (const FiniteValues R :
+       {FiniteValues{FiniteValueStatus::Unknown, {{0}}},
+        FiniteValues{FiniteValueStatus::Invalid, {}},
+        FiniteValues{FiniteValueStatus::QueryBudgetExceeded, {{0}}},
+        FiniteValues{FiniteValueStatus::Complete, {{2}}},
+        FiniteValues{FiniteValueStatus::Complete, {{0, 1}}},
+        FiniteValues{FiniteValueStatus::Complete, {{0}, {1}}},
+        FiniteValues{FiniteValueStatus::TooManyValues, {{0}}}}) {
+    Cache C(4096, Ctx);
+    C.store(C.prepare(Ctx, P, {X}, 1), R);
+    EXPECT_FALSE(C.lookup(Ctx, P, {X}, 1));
+  }
+  const auto V = Ctx.mkConst(8, 7);
+  const auto R = prove(Ctx, P, {V}, 1);
+  for (unsigned Budget = 0; Budget != 23; ++Budget) {
+    Cache C(Budget, Ctx);
+    C.store(C.prepare(Ctx, P, {V}, 1), R);
+    const auto H = C.lookup(Ctx, P, {V}, 1);
+    EXPECT_EQ(bool(H), Budget >= 21);
+    if (H)
+      expectHit(H, R);
+  }
+}
+
+TEST(ContextFiniteProofs, InvalidKeysCannotEvictOrRefreshStoredProofs) {
+  SymContext Ctx;
+  Cache C(42, Ctx);
+  const auto P = Ctx.mkTrue(), A = Ctx.mkConst(8, 7), B = Ctx.mkConst(8, 8);
+  const auto D = Ctx.mkConst(8, 9);
+  const auto RA = prove(Ctx, P, {A}, 1), RB = prove(Ctx, P, {B}, 1);
+  const auto RD = prove(Ctx, P, {D}, 1);
+  C.store(C.prepare(Ctx, P, {A}, 1), RA);
+  C.store(C.prepare(Ctx, P, {B}, 1), RB);
+  EXPECT_FALSE(C.lookup(Ctx, {}, {A}, 1));
+  EXPECT_FALSE(C.lookup(Ctx, A, {A}, 1));
+  EXPECT_FALSE(C.lookup(Ctx, P, {A}, 0));
+  EXPECT_FALSE(C.lookup(Ctx, P, {SymRef(0xfffffffe)}, 1));
+  EXPECT_FALSE(C.lookup(Ctx, P, {Ctx.mkVar("wide", 128)}, 1));
+  C.store(C.prepare(Ctx, P, std::vector<SymRef>(40, A), 1), RA);
+  C.store(C.prepare(Ctx, P, {D}, 1), RD);
+  EXPECT_FALSE(C.lookup(Ctx, P, {A}, 1));
+  expectHit(C.lookup(Ctx, P, {B}, 1), RB);
+  const auto Retained = C.lookup(Ctx, P, {D}, 1);
+  expectHit(Retained, RD);
+  expectHit(C.lookup(Ctx, P, {B}, 1), RB);
+  C.store(C.prepare(Ctx, P, {A}, 1), RA);
+  EXPECT_FALSE(C.lookup(Ctx, P, {D}, 1));
+  expectHit(Retained, RD);
+}
+
+TEST(ContextFiniteProofs, PartialEnumerationNeverSuppliesAFrameProof) {
+  SymContext Ctx;
+  const auto Root = Ctx.mkVar("root", 64), V = Ctx.mkVar("v", 64);
+  const auto P = Ctx.mkEq(V, Ctx.mkAdd(Root, Ctx.mkConst(64, 16)));
+  Cache C(4096, Ctx);
+  FiniteDomainEncoding Encoding(Ctx, {});
+  uint64_t Queries = 0;
+  const auto Short =
+      proveFrameOffset(Encoding, P, V, Root, 1, 65536, Queries, &C);
+  EXPECT_EQ(Short.Status, FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(Queries, 1u);
+  Queries = 0;
+  const auto Complete =
+      proveFrameOffset(Encoding, P, V, Root, 2, 65536, Queries, &C);
+  ASSERT_EQ(Complete.Status, FrameOffsetStatus::Exact);
+  EXPECT_EQ(Complete.Offset, 16u);
+  EXPECT_EQ(Queries, 2u);
+  Queries = 0;
+  const auto Cached =
+      proveFrameOffset(Encoding, P, V, Root, 0, 65536, Queries, &C);
+  EXPECT_EQ(Cached.Status, Complete.Status);
+  EXPECT_EQ(Cached.Offset, Complete.Offset);
+  EXPECT_EQ(Queries, 0u);
+  const auto TooSmall = proveFrameOffset(Encoding, P, V, Root, 0,
+                                         Ctx.numNodes() - 1, Queries, &C);
+  EXPECT_EQ(TooSmall.Status, FrameOffsetStatus::BudgetExceeded);
+  const auto Unconstrained =
+      proveFrameOffset(Encoding, Ctx.mkTrue(), V, Root, 0, 65536, Queries, &C);
+  EXPECT_EQ(Unconstrained.Status, FrameOffsetStatus::BudgetExceeded);
+}
+
+TEST(ContextFiniteProofs, UnknownAndInvalidAuthoritativeProofsAreNotCached) {
+  for (unsigned Kind = 0; Kind != 3; ++Kind) {
+    SymContext Ctx;
+    const auto X = Ctx.mkVar("x", 8), Y = Ctx.mkVar("y", 8);
+    const auto P = Ctx.mkEq(Ctx.mkAdd(X, Y), Ctx.mkConst(8, 9));
+    Cache C(4096, Ctx);
+    SpecializationOptions Options;
+    if (Kind == 0)
+      Options.MaxSolverGates = 1;
+    if (Kind == 1)
+      Options.MaxSolverQueries = 1;
+    const SymRef Value = Kind == 2 ? SymRef(0xfffffffe) : X;
+    uint64_t Queries = 0;
+    auto Token = C.prepare(Ctx, P, {Value}, 1);
+    const auto R = enumerateFiniteValues(Ctx, P, {Value}, 1, Options, Queries);
+    EXPECT_NE(R.Status, FiniteValueStatus::Complete);
+    EXPECT_NE(R.Status, FiniteValueStatus::TooManyValues);
+    EXPECT_TRUE(R.Tuples.empty());
+    C.store(std::move(Token), R);
+    EXPECT_FALSE(C.lookup(Ctx, P, {Value}, 1));
+  }
 }
 } // namespace

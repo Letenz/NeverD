@@ -243,6 +243,7 @@ add_neverd_unittest(NeverDLiftTests
   core/CircleRangeTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
+  core/JumpTableSharedAbsoluteTests.cpp
   core/JumpTableProposalLFPTests.cpp
   format/PatchFormatTests.cpp
   format/PatchFormatCOFFARMTests.cpp
@@ -1005,6 +1006,7 @@ add_neverd_unittest(NeverDJumpTableTests
   core/IndirectTailFrameTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
+  core/JumpTableSharedAbsoluteTests.cpp
   core/JumpTableProposalLFPTests.cpp
   LINK_COMPONENTS Pipeline Support
 )
@@ -1123,6 +1125,8 @@ add_neverd_unittest(NeverDHighControlFlowTests
   core/HighFrameStoreForwardingTests.cpp
   core/HighSwitchFollowTests.cpp
   core/HighIntegerSignednessTests.cpp
+  core/HighValueForwardTests.cpp
+  core/HighCIntegerConversionTests.cpp
   core/HighSSADefinitionTests.cpp
   core/HighSourceRangeTests.cpp
   core/HighFrameTemporaryTests.cpp

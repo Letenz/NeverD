@@ -2188,7 +2188,7 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
           // finite selectors on one private all-physical successor graph,
           // then replay their separate finite sets on the frozen owner graph.
           std::map<va_t, std::vector<uint32_t>> JointDomains;
-          FiniteGOTOFFRoundCertificate *RoundCertificate =
+          FiniteJumpTableRoundCertificate *RoundCertificate =
               GuardedGroupProofContext && finiteGOTOFFGroupClaimed()
                   ? GuardedGroupProofContext->FiniteRoundCertificate
                   : nullptr;

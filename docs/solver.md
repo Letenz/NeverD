@@ -34,6 +34,12 @@ and reject a changed original loop body.
 
 The SAT engine keeps four watch entries inline per literal list; longer lists grow dynamically. This avoids separate allocations for short lists during construction, pristine copying and destruction. Propagation order, clause contents, independent ownership and all work limits stay unchanged.
 
+<!-- i18n-section: context-finite-proofs -->
+
+## Completed proofs in one context
+
+The native independence checker binds its finite-domain cache to its actual append-only symbolic context. Compact keys retain the exact predicate, ordered projections and value limit. Only completed numeric domains or proved nonuniqueness are reusable; every miss still needs the complete enumeration and final exclusion proof. The context and existing node meanings must remain stable for the cache lifetime. Prepared tokens cannot cross cache owners or be reused by a replacement owner at the same address. Storage remains bounded by the existing word ceiling. Other users retain structural keys and variable-renaming reuse.
+
 <!-- i18n-section: z3-build -->
 
 ## Optional Z3 build

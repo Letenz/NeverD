@@ -152,6 +152,21 @@ std::optional<Key> makeKey(const SymContext &Ctx, SymRef Predicate,
   return Result;
 }
 
+std::optional<Key> makeContextKey(const SymContext &Ctx, SymRef Predicate,
+                                  llvm::ArrayRef<SymRef> Values, uint32_t Limit,
+                                  uint64_t MaxWords) {
+  if (!Limit || !validRef(Ctx, Predicate) || Ctx.width(Predicate) != 1 ||
+      MaxWords < 3 || Values.size() > MaxWords - 3)
+    return std::nullopt;
+  for (auto Value : Values)
+    if (!validRef(Ctx, Value) || Ctx.width(Value) > 64)
+      return std::nullopt;
+  Key Result{Limit, Values.size(), Predicate.index()};
+  for (auto Value : Values)
+    Result.push_back(Value.index());
+  return Result;
+}
+
 std::optional<uint64_t> resultWords(llvm::ArrayRef<uint32_t> Widths,
                                     uint32_t Limit, const FiniteValues &Result,
                                     uint64_t Budget) {
@@ -185,7 +200,11 @@ FiniteQueryCache::PreparedQuery FiniteQueryCache::prepare(
     const symbolic::SymContext &Ctx, symbolic::SymRef Predicate,
     llvm::ArrayRef<symbolic::SymRef> Values, uint32_t Limit) const {
   PreparedQuery Query;
-  auto Key = makeKey(Ctx, Predicate, Values, Limit, MaxWords);
+  if (BoundContext && BoundContext != &Ctx)
+    return Query;
+  auto Key = BoundContext
+                 ? makeContextKey(Ctx, Predicate, Values, Limit, MaxWords)
+                 : makeKey(Ctx, Predicate, Values, Limit, MaxWords);
   if (!Key)
     return Query;
   Query.Words = std::move(*Key);
@@ -193,12 +212,14 @@ FiniteQueryCache::PreparedQuery FiniteQueryCache::prepare(
   for (auto Value : Values)
     Query.Widths.push_back(Ctx.width(Value));
   Query.Limit = Limit;
+  Query.Scope = Scope;
   return Query;
 }
 
 std::optional<FiniteValues>
 FiniteQueryCache::lookup(const PreparedQuery &Query) const {
-  if (!Query.Limit || Query.Words.empty() || Query.Words.size() > MaxWords)
+  if (Query.Scope != Scope || !Query.Limit || Query.Words.empty() ||
+      Query.Words.size() > MaxWords)
     return std::nullopt;
   const auto Found = Entries.find(Query.Words);
   if (Found == Entries.end())
@@ -217,8 +238,8 @@ void FiniteQueryCache::store(PreparedQuery Query, const FiniteValues &Result) {
   if (Result.Status != FiniteValueStatus::Complete &&
       Result.Status != FiniteValueStatus::TooManyValues)
     return;
-  if (!Query.Limit || Query.Words.empty() || Query.Words.size() > MaxWords ||
-      Entries.contains(Query.Words))
+  if (Query.Scope != Scope || !Query.Limit || Query.Words.empty() ||
+      Query.Words.size() > MaxWords || Entries.contains(Query.Words))
     return;
   const auto Words = resultWords(Query.Widths, Query.Limit, Result,
                                  MaxWords - Query.Words.size());

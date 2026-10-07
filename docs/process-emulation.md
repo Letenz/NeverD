@@ -82,6 +82,8 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 | `linux_time` | Absent | Explicit clock observations and optional idle advancement for Linux ELF64 and Android native workloads |
 | `linux_files` | Absent | Closed catalogue of immutable guest files for Linux ELF64 and Android native workloads |
 | `linux_signals` | Absent | Explicit initial signal dispositions; no signal delivery or host handlers |
+| `linux_priority` | Absent | Explicit per-task nice values and caller authority for raw Linux priority services |
+| `linux_kernel` | Absent | Explicit released GKI branch or observed absent guest kernel interfaces |
 
 `schema_version` is 1. Results include profile, architecture, selected backend
 and its selection reason, `stop_reason`, nullable `exit_status`, diagnostic,
@@ -141,6 +143,54 @@ stop as `unsupported_service`; they never execute host syscalls.
 Real/effective identity queries agree with the corresponding auxv entries.
 They use the deterministic model identity above; credential-changing services
 such as `setuid` remain unsupported.
+
+The optional `linux_kernel` input records explicitly observed absent kernel
+interfaces. For example, a fixture with no `pidfd_open` implementation uses:
+
+```json
+{"linux_kernel":{"unavailable_syscalls":["pidfd_open"]}}
+```
+
+The selected raw call returns -ENOSYS before argument validation, as a missing
+kernel entry does, and creates no descriptor or guest-memory effect. Bionic's
+`syscall` wrapper retains its normal -1/errno translation. Missing input and an
+empty list retain the existing unsupported boundary for this interface;
+other unknown calls are not converted to ENOSYS. Currently only `pidfd_open`
+is admitted; unknown names, duplicates and wrong types are rejected. This
+input does not infer a kernel version, host availability or a working pidfd
+implementation. See the [kernel missing-call implementation](https://github.com/torvalds/linux/blob/master/kernel/sys_ni.c).
+
+An explicit `linux_kernel.gki` selects a released Android common kernel branch
+from 5.10 through 6.18. Its current implemented subset is `pidfd_open` for the
+live model process, with versioned flags and the same descriptor table used by
+`linux_files`; Bionic and raw traps share ownership and error ordering.
+Selecting GKI together with an absent `pidfd_open` observation is rejected.
+Android API levels do not select a kernel. See the
+[released GKI contracts](android-gki-kernels.md) for all eight source pins,
+descriptor behavior, tests and the remaining kernel coverage.
+
+The optional `linux_priority` input declares nice state for fixture-owned tasks
+with the caller's UID. Raw `setpriority` and `getpriority` share this state across
+Linux ELF64 and Android native workloads; they never change host priorities.
+
+```json
+{"linux_priority":{"tasks":[{"id":1000,"nice":0}],
+                   "cap_sys_nice":false,"rlimit_nice":0}}
+```
+
+Task IDs are distinct positive signed 32-bit values, initial nice values are
+-20 through 19, and `rlimit_nice` is 0 through 40. `cap_sys_nice` and
+`rlimit_nice` default to false and zero; task state is always explicit. Missing
+input, unlisted tasks, and PRIO_PGRP/PRIO_USER selection stop with an unsupported
+service. This includes newly created threads whose nice state was not declared;
+the model does not guess inheritance or another task's ownership. PRIO_PROCESS
+with who zero selects the current guest task, otherwise the named task.
+Invalid selectors return raw -EINVAL. Set requests clamp their signed 32-bit
+nice argument to -20..19. Lowering nice requires CAP_SYS_NICE or a sufficient
+RLIMIT_NICE limit; denial returns raw -EACCES without changing state.
+Raw get requests return `20 - nice`, preserving the kernel's 40..1 encoding;
+this is not libc's translated `getpriority` result. See the
+[Linux priority interface](https://man7.org/linux/man-pages/man2/setpriority.2.html).
 
 `linux_signals` supplies process-wide initial kernel actions. A missing entry
 is unknown; it does not imply `SIG_DFL`. An explicit empty action list enables

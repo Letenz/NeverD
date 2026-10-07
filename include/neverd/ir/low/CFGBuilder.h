@@ -1664,10 +1664,10 @@ private:
     bool operator==(const JumpTableInfo &Other) const = default;
   };
 
-  /// Scratch-only assumptions for narrow i386 joint table proofs.
+  /// Scratch-only assumptions for bounded joint finite table proofs.
   /// They are never published as prior role/storage certificates. EmptyEdges
   /// removes every group edge for a hypothesis-free seed query.
-  struct FiniteGOTOFFRoundCertificate {
+  struct FiniteJumpTableRoundCertificate {
     // A complete all-consumer certificate belongs to exactly one immutable
     // group round. The next round uses a different edge/role hypothesis and
     // starts with an empty certificate.
@@ -1675,6 +1675,8 @@ private:
     std::map<va_t, std::vector<va_t>> PhysicalTargets;
     std::map<va_t, std::vector<va_t>> HypothesisEdges;
     std::set<va_t> Roots;
+    /// Exact use points for hypothesis-free absolute selector seeds.
+    std::map<va_t, JumpTableValueOccurrence> Indices;
   };
   struct GuardedJumpTableGroupProofContext {
     std::set<va_t> Roots;
@@ -1686,11 +1688,12 @@ private:
     /// No selector, target, root, or ownership proof may borrow these results.
     const std::map<va_t, JumpTableInfo> *ConsumerRoleInfos = nullptr;
     /// Borrowed from the enclosing round; never retained by a proposal.
-    FiniteGOTOFFRoundCertificate *FiniteRoundCertificate = nullptr;
+    FiniteJumpTableRoundCertificate *FiniteRoundCertificate = nullptr;
   };
   enum class GuardedJumpTableGroupKind : uint8_t {
     DenseGuard,
     FiniteAdjacentGOTOFF,
+    FiniteAbsolute,
   };
   struct GuardedJumpTableGroupKey {
     va_t OwnerBegin = InvalidVA;
@@ -1744,8 +1747,17 @@ private:
                                     llvm::ArrayRef<va_t> Candidates,
                                     bool &MadeProgress,
                                     bool &MetadataRefreshed);
+  bool recoverFiniteAbsoluteJumpTableGroup(const BinaryImage &Img,
+                                           LowFunc &Func,
+                                           llvm::ArrayRef<va_t> Candidates,
+                                           bool &MadeProgress,
+                                           bool &MetadataRefreshed);
+  std::optional<std::vector<uint32_t>> replayFiniteAbsoluteGroupDomain(
+      const InsnRecord &Rec, const JumpTableInfo &Info, size_t *EvidenceBudget,
+      bool &Incomplete) const;
   bool guardedGroupContains(va_t Branch) const;
   bool finiteGOTOFFGroupClaimed() const;
+  bool finiteAbsoluteGroupClaimed() const;
   bool guardedGroupIsComplete() const;
   bool guardedGroupHasNoLiveMembers() const;
   void closeGuardedGroupOwners(std::set<va_t> &Owners) const;
