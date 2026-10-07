@@ -123,6 +123,17 @@ bool hoistLoopExitTests(std::vector<HighStmt> &Body);
 /// `while (1) { ..break..; X: .. } T...` where T never falls through and
 /// jumps back to X: T moves to the break, its only way in.
 bool moveLoopTailsToTheirBreak(std::vector<HighStmt> &Body);
+/// `switch (..) { ..break.. default: .. } T...` where one break, or one
+/// case running off its end, is the switch's only way out and T never falls
+/// through: T moves there, so `case 18: break; } return f();` reads
+/// `case 18: return f(); }`.  T is straight-line code that nothing jumps
+/// into.
+bool moveSwitchTailsToTheirExit(std::vector<HighStmt> &Body);
+/// `if (c) { switch (x) {..} } D...` where every case label passes c and the
+/// default runs D (a jump to it or a copy of it): a value that fails c
+/// matches no case and reaches D through the default anyway, so the switch
+/// alone does the same.  This drops the range check a jump table needs.
+bool absorbSwitchRangeGuards(std::vector<HighStmt> &Body);
 /// A loop whose body never reaches its end and has no break or continue
 /// runs its body once: the body replaces the loop.
 bool unwrapLoopsThatNeverRepeat(std::vector<HighStmt> &Body);

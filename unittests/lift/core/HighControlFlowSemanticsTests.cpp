@@ -1024,6 +1024,135 @@ TEST(HighControlFlowSemantics, FlagTestsOfOneCompareMergeIntoOneOrder) {
   }
 }
 
+namespace {
+HighStmt returning(uint64_t Value) {
+  HighStmt S;
+  S.Kind = StmtKind::Return;
+  S.RetVal = HighExpr::makeConst(Value, 8);
+  return S;
+}
+
+SwitchCase caseOf(uint64_t Value, std::vector<HighStmt> Body) {
+  SwitchCase C;
+  C.Value = Value;
+  C.Body = std::move(Body);
+  return C;
+}
+
+HighStmt dispatch(std::vector<SwitchCase> Cases,
+                  std::vector<HighStmt> Default) {
+  HighStmt S;
+  S.Kind = StmtKind::Switch;
+  S.Addr = 0x1010;
+  S.SwitchExpr = local(0);
+  S.SwitchExpr->Type = NdType::makeInt(8, false);
+  S.Cases = std::move(Cases);
+  S.DefaultBody = std::move(Default);
+  return S;
+}
+} // namespace
+
+TEST(HighControlFlowSemantics, SwitchTailMovesToItsOnlyExit) {
+  // `switch (x) { case 1: return 10; case 2: break; default: return 30; }
+  // return 20;` reaches the return after the switch only through case 2.
+  HighStmt Break;
+  Break.Kind = StmtKind::Break;
+  for (bool ImplicitExit : {false, true}) {
+    SCOPED_TRACE(ImplicitExit);
+    HighFunc F;
+    std::vector<HighStmt> Two;
+    if (!ImplicitExit)
+      Two.push_back(Break);
+    else
+      Two.push_back(assign(0x1020, 5, 1));
+    F.Body = {
+        dispatch({caseOf(1, {returning(10)}), caseOf(2, Two)}, {returning(30)}),
+        returning(20)};
+    std::vector<std::optional<uint64_t>> Expected;
+    for (uint64_t X : {1, 2, 3})
+      Expected.push_back(execute(F, X));
+    EXPECT_TRUE(moveSwitchTailsToTheirExit(F.Body));
+    ASSERT_EQ(F.Body.size(), 1U);
+    for (uint64_t X : {1, 2, 3})
+      EXPECT_EQ(execute(F, X), Expected[X - 1]) << X;
+  }
+  // A second way out keeps the tail where it is.
+  HighFunc F;
+  F.Body = {dispatch({caseOf(1, {Break}), caseOf(2, {Break})}, {returning(30)}),
+            returning(20)};
+  EXPECT_FALSE(moveSwitchTailsToTheirExit(F.Body));
+}
+
+TEST(HighControlFlowSemantics, SwitchAbsorbsTheRangeCheckItsDefaultRepeats) {
+  // `if (x - 10 <= 2) { switch (x) { case 10..12; default: return 9; } }
+  // return 9;`: a value failing the check matches no case and takes the
+  // default anyway.  A check that excludes a label must stay.
+  auto guarded = [&](uint64_t Bound, uint64_t LastLabel) {
+    auto Offset = HighExpr::makeBinop(NdOp::INT_SUB, local(0),
+                                      HighExpr::makeConst(10, 8));
+    Offset->Type = NdType::makeInt(8, false);
+    auto Check = HighExpr::makeBinop(NdOp::INT_LESSEQUAL, Offset,
+                                     HighExpr::makeConst(Bound, 8));
+    Check->Type = NdType::makeInt(1, false);
+    HighStmt Guard;
+    Guard.Kind = StmtKind::If;
+    Guard.Addr = 0x1000;
+    Guard.Cond = Check;
+    Guard.Body = {
+        dispatch({caseOf(10, {returning(1)}), caseOf(11, {returning(2)}),
+                  caseOf(LastLabel, {returning(3)})},
+                 {returning(9)})};
+    HighFunc F;
+    F.Body = {Guard, returning(9)};
+    return F;
+  };
+  HighFunc F = guarded(2, 12);
+  std::vector<std::optional<uint64_t>> Expected;
+  const std::vector<uint64_t> Inputs{0, 9, 10, 11, 12, 13, UINT64_MAX};
+  for (uint64_t X : Inputs)
+    Expected.push_back(execute(F, X));
+  EXPECT_TRUE(absorbSwitchRangeGuards(F.Body));
+  ASSERT_FALSE(F.Body.empty());
+  EXPECT_EQ(F.Body.back().Kind, StmtKind::Switch);
+  for (size_t I = 0; I < Inputs.size(); ++I)
+    EXPECT_EQ(execute(F, Inputs[I]), Expected[I]) << Inputs[I];
+
+  HighFunc Narrow = guarded(1, 12);
+  EXPECT_FALSE(absorbSwitchRangeGuards(Narrow.Body));
+
+  // A case that leaves the switch still needs the code after it, so the
+  // default's copy goes and unmatched values fall out to that code.
+  HighFunc Leaving = guarded(2, 12);
+  HighStmt &Inner = Leaving.Body[0].Body[0];
+  Inner.Cases[1].Body = {assign(0x1030, 5, 7)};
+  Expected.clear();
+  for (uint64_t X : Inputs)
+    Expected.push_back(execute(Leaving, X));
+  EXPECT_TRUE(absorbSwitchRangeGuards(Leaving.Body));
+  // The guard's label stays as an empty anchor before the switch.
+  ASSERT_EQ(Leaving.Body.size(), 3U);
+  EXPECT_EQ(Leaving.Body[1].Kind, StmtKind::Switch);
+  EXPECT_TRUE(Leaving.Body[1].DefaultBody.empty());
+  for (size_t I = 0; I < Inputs.size(); ++I)
+    EXPECT_EQ(execute(Leaving, Inputs[I]), Expected[I]) << Inputs[I];
+
+  // A default that only jumps to the code after the guard drops the jump.
+  HighFunc Jumping = guarded(2, 12);
+  Jumping.Body[1].Addr = 0x1040;
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.GotoTarget = 0x1040;
+  Jumping.Body[0].Body[0].DefaultBody = {Jump};
+  Expected.clear();
+  for (uint64_t X : Inputs)
+    Expected.push_back(execute(Jumping, X));
+  EXPECT_TRUE(absorbSwitchRangeGuards(Jumping.Body));
+  ASSERT_EQ(Jumping.Body.size(), 3U);
+  EXPECT_TRUE(Jumping.Body[1].DefaultBody.empty());
+  for (size_t I = 0; I < Inputs.size(); ++I)
+    EXPECT_EQ(execute(Jumping, Inputs[I]), Expected[I]) << Inputs[I];
+}
+
 TEST(HighControlFlowSemantics, AdjacentLocalSlicesPreserveEveryBit) {
   for (unsigned Offset : {0U, 1U, 2U})
     for (unsigned Bytes : {2U, 4U, 8U}) {
