@@ -1239,6 +1239,7 @@ add_neverd_unittest(NeverDNativeDriverTests
   DriverNativeExecutionTests.cpp
   DriverSchedulingTests.cpp
   DriverThreadPriorityTests.cpp
+  DriverMutexThreadTests.cpp
   DriverSIMDSEHTests.cpp
   KernelSEHTests.cpp
   TIMEOUT 30

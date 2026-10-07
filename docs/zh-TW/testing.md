@@ -353,6 +353,8 @@ fixture 涵蓋客體初始化、成功與失敗傳回、不支援的行為、記
 
 `DriverThreadPriorityTests.cpp` 使用原創編譯驅動程式 `driver_thread_priority.c`，在明確指定的 Unicorn／KVM／WHP driver 與 checked 契約下驗證排隊及阻塞執行緒的優先順序修改、時間片內事件／計時器喚醒、同級輪轉、DISPATCH_LEVEL 屏蔽與低優先順序飢餓時的計時器推進。成對計數迴圈證明搶佔後保留準確的剩餘時間片。模型測試涵蓋帶符號 ABI、失敗不改變狀態、已結束物件參照、巢狀身分及獨立回呼堆疊重用。原生案例納入 `NativeDriverTests.def` 強制清單；本機不可用的後端明確略過。
 
+`DriverMutexThreadTests.cpp` 執行 `driver_seh_mutex.def` 中四種原創 WDK 模式：在 SEH 篩選器中遞迴取得、篩選器或異常 finally 取得後保留所有權，以及篩選器阻塞並在另一系統執行緒釋放 mutex 後恢復。Unicorn／KVM／WHP 的 driver 與 checked 契約涵蓋一般／有效 CFG 映像、偏好／重定位位址及協作式／1／17 指令時間片。模型測試亦驗證巢狀堆疊退役後的 APC 停用、錯誤執行緒釋放及最外層返回檢查；KVM／WHP 案例納入 `NativeDriverTests.def` 強制清單。
+
 `driver_context_limits.c`: API 的 IRQL 上限來自 `KernelAPIIRQL.def`，參數相關限制由所屬模型檢查。DPC 不能呼叫登錄 API，也不能配置、釋放或存取分頁集區；Unicode `DbgPrint` 轉換要求 `PASSIVE_LEVEL`，支援的 ANSI 輸出與非分頁操作仍可在 `DISPATCH_LEVEL` 使用。回呼堆疊有明確邊界，越界堆疊指標不能進入另一阻塞工作項目的堆疊。裝置擴充中的已啟動計時器會阻止裝置提早回收。這些檢查並未開放一般 IRQL 切換。
 
 `KernelDeviceStackTests.cpp` 檢查獨立的擁有者／附加關係、頂端選擇、失敗原子性、堆疊容量、不透明欄位、開啟控制代碼計數、解除附加／刪除時的工作項目及請求保留，以及檔案身分與派送頂端的區別。原創 `driver_wdm_stack.c` 使用真正 WDK 標頭與內嵌 Copy/Skip/SetCompletion；一般／啟用 CFG 映像由選用的 `NEVERD_WDM_STACK_FIXTURE`／`NEVERD_WDM_STACK_CFG_FIXTURE` 設定。`DriverWDMStackTests.cpp` 涵蓋重新定位、實際下層狀態、完成順序和旗標、延遲 pending 傳播、工作項目／DPC、等待、`STATUS_MORE_PROCESSING_REQUIRED`、直接 MDL 保留、巢狀完成及格式錯誤的游標／控制值。`DriverScenarioPublicTests.cpp` 涵蓋 C API／CLI 轉送與 C API 保留／巢狀完成，包括已設定的 CFG 映像。缺少產物會明確略過；Linux 證據僅證明同驅動程式堆疊子集，不代表 PDO／PnP／電源支援。 `KernelIRPStackTests.cpp` 檢查計數游標、完整內嵌 Copy 前綴、已消耗位置清零、狀態／pending 傳播、MPR 與巢狀完成、續接擁有者檢查及保留路徑。真正 READ/WRITE 與檔案生命週期也使用內嵌 Copy 驗證。
@@ -1174,7 +1176,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 46 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 113 個工作負載產生 226 個 WHP 結果：27 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 4884 項 CPU 檢查及 17 項 SEH 回歸及 77 項排程檢查，共有 5204 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `4884 CPU + 226 WHP + 17 SEH + 77 scheduling = 5204`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 113 個工作負載產生 226 個 WHP 結果：27 個內建映像、46 個 WDK 映像及 40 個要求情境，均涵蓋原始與重定位位址。加上 4884 項 CPU 檢查及 25 項 SEH 回歸及 77 項排程檢查，共有 5212 項必測結果。固定位址映像保留預期的重定位拒絕。遺失或略過 WDK 映像與情境會使這項選用 CI 工作失敗；一般本機建置仍可不提供外部範例。`run_native_cpu_ci.py --with-drivers` 記錄已設定的測試目標與完整清單及 JUnit 證據。建置成功不代表 Windows 或 ARM64 原生執行已驗證。本機可用下列命令重現，也可將產生的快取載入現有模擬建置。 `4884 CPU + 226 WHP + 25 SEH + 77 scheduling = 5212`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1482,3 +1484,5 @@ MainActor 測試資料檢查完整的固定中繼資料與靜態表流程，拒�
 `ObjCCallHints.SwiftMainActorSharedKeepsObjectAndMetatypeContext` 在 ARM64/x86-64 上檢查完整結果與 swiftself 載體，每種架構拒絕十項 ABI 變異和十項匯入身分變異。獨立 SDK 驗證在 ARM64 主機上以 O0/O2 執行兩種原始碼架構設定的原樣生成 C：128 次呼叫保持單例與中繼型別身分，並平衡參考所有權。八種交叉編譯設定涵蓋兩種架構的 macOS 與 Mac Catalyst；x86-64 原生執行仍是獨立覆蓋項目。
 
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` 檢查根層已賦值與未決變數混合、非決策根變數、副本再次複製、來源物件銷毀、後續變數增長、兩種預設極性、預算中斷與恢復、衝突及重新啟動。完整模型與全部搜尋計數必須與全新編碼一致。
+
+`LinuxPriorityTests.cpp` 檢查明確任務狀態、執行緒隔離、缺少觀察值、無效 JSON、設定准入及拒絕效果。獨立的 x64／AArch64 原始呼叫程式在 O0／O2 下驗證 nice 限制、系統呼叫參數的 32 位元截斷、CAP_SYS_NICE／RLIMIT_NICE 權限邊界與核心 getpriority 編碼。在 `NeverDLinuxProcessTests` 中執行 `LinuxPriority.*` 與 `Backends/LinuxPriorityProcess.*`；涉及共用核心／JSON 時，再執行完整 Linux 程序、Android 原生及程序公開介面測試。缺少的可選原生傳輸仍明確跳過。

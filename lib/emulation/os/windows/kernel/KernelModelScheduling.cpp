@@ -669,6 +669,7 @@ llvm::Expected<uint64_t> KernelModel::beginWait(llvm::ArrayRef<uint64_t> A,
                                                 : Wait::Kind::Dispatcher;
   Pending.Object = Delay ? 0 : A[0];
   Pending.Execution = CurrentExecution;
+  Pending.Thread = CurrentThreadKey;
   Pending.IRQL = CurrentIRQL;
   bool PollOnly = false;
   if (TimeoutAddress) {
@@ -697,8 +698,8 @@ llvm::Expected<uint64_t> KernelModel::beginWait(llvm::ArrayRef<uint64_t> A,
       if (Thread.Exited)
         return windows::StatusSuccess;
     } else {
-      auto Acquired = Dispatcher.tryAcquire(Pending.Object, Pending.Execution,
-                                            Pending.IRQL);
+      auto Acquired =
+          Dispatcher.tryAcquire(Pending.Object, Pending.Thread, Pending.IRQL);
       if (!Acquired)
         return Acquired.takeError();
       if (*Acquired)
@@ -804,8 +805,8 @@ KernelModel::pollWait(const Wait &Pending) {
         return schedulingError("thread wait lost its object");
       Signaled = Thread->second.Exited;
     } else {
-      auto Acquired = Dispatcher.tryAcquire(Pending.Object, Pending.Execution,
-                                            Pending.IRQL);
+      auto Acquired =
+          Dispatcher.tryAcquire(Pending.Object, Pending.Thread, Pending.IRQL);
       if (!Acquired)
         return Acquired.takeError();
       Signaled = *Acquired;

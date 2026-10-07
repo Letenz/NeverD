@@ -47,6 +47,7 @@ output = bytes.fromhex(report["stdout_hex"])
 | `stack_size` | 1048576 | 預算內按頁對齊的堆疊 |
 | `output_limit` | 1048576 | 擷取的 stdout/stderr 總位元組數 |
 | `instruction_quantum` | 1024 | 交還 runtime 前的准入間隔 |
+| `linux_priority` | 未提供 | 明確的逐任務 nice 值與原始 Linux 優先權服務所需的呼叫者權限 |
 
 `schema_version` 為 1。結果包含 profile、架構、所選後端與原因、`stop_reason`、可為 null 的 `exit_status`、診斷、進入／目前 PC、計數器、服務記錄與最後的型別化 CPU exit。位址、syscall 編號、參數暫存器及原始回傳位元均為**不含** `0x` 的十六進位字串；`stdout_hex`／`stderr_hex` 保留 NUL 與無效 UTF-8。syscall 結果為 null 表示沒有建模回傳值（例如 exit 或不支援要求），不代表成功回傳 0。
 
@@ -75,6 +76,17 @@ x64 的 `arch_prctl` 支援 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS`、`ARC
 長度向上取整至頁。`munmap` 允許空洞及重複移除；`mprotect` 遇到空洞前會修改已映射前綴，再回傳 `ENOMEM`。`PROT_NONE` 保留配置與位元組，但禁止客體存取。原始 `brk` 成功時回傳請求的位元組邊界，失敗時回傳舊邊界，不採用 libc 包裝器的零／負一慣例。初始 break 為頁對齊的映像結尾。成長受其他映射及預算限制；縮減保留剩餘部分頁的位元組。支援子集的規則與錯誤優先序遵循 Linux [映射](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c)及[保護](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c)服務。
 
 檔案、共享、固定映射，向下成長、大頁、記憶體鎖定、保護鍵、僅執行／僅寫入策略及其他旗標均明確不支援：在發布效果或建立回傳值前停止。支援子集內的一般範圍、長度及對齊錯誤會回傳客體錯誤，允許繼續執行。任何記憶體服務均不會將客體指標或映射請求轉交主機 OS。
+
+可選的 `linux_priority` 為與呼叫者 UID 相同的測試任務宣告 nice 狀態。Linux ELF64 與 Android 原生工作負載的原始 `setpriority` 和 `getpriority` 共用此狀態，不修改主機優先權。
+
+```json
+{"linux_priority":{"tasks":[{"id":1000,"nice":0}],
+                   "cap_sys_nice":false,"rlimit_nice":0}}
+```
+
+任務 ID 必須是互不重複的正有號 32 位元整數，初始 nice 值範圍為 -20 至 19，`rlimit_nice` 範圍為 0 至 40。`cap_sys_nice` 和 `rlimit_nice` 預設為 false 和零；任務狀態必須明確宣告。缺少輸入、未列出的任務或 PRIO_PGRP／PRIO_USER 選擇會以不支援的服務停止；這也包括未宣告 nice 狀態的新建執行緒。模型不猜測繼承規則或其他任務的歸屬。PRIO_PROCESS 的 who 為零時選擇目前客體任務，否則選擇指定任務。
+
+無效選擇器回傳原始 -EINVAL。設定請求將有號 32 位元 nice 參數限制到 -20..19。降低 nice 值需要 CAP_SYS_NICE 或足夠的 RLIMIT_NICE；拒絕時回傳原始 -EACCES，狀態保持不變。原始查詢回傳 `20 - nice`，保留核心的 40..1 編碼，並非 libc 轉換後的 `getpriority` 結果。參見 [Linux 優先權介面](https://man7.org/linux/man-pages/man2/setpriority.2.html)。
 
 `linux_signals` 明確提供程序層級的初始訊號處置。缺少項目表示未知，不代表 `SIG_DFL`；明確的空清單允許在不查詢舊值的情況下安裝新處置。五個欄位均必填，四個動作欄位為無號 64 位元值，超出 JSON 精確整數範圍時使用十進位字串。
 

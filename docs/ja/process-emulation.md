@@ -47,6 +47,7 @@ options は最大 64 KiB の JSON object です。未知/null field、不正な�
 | `stack_size` | 1048576 | 予算内の page-aligned stack |
 | `output_limit` | 1048576 | stdout/stderr 合計の捕捉 byte 数 |
 | `instruction_quantum` | 1024 | runtime に戻るまでの admission 間隔 |
+| `linux_priority` | 未指定 | タスクごとの明示的な nice 値と、生の Linux 優先度サービスに必要な呼び出し元権限 |
 
 `schema_version` は 1 です。report には profile、architecture、選択 backend と理由、`stop_reason`、nullable `exit_status`、診断、入口/現在 PC、counter、service record、最後の型付き CPU exit が含まれます。address、syscall number、引数 register、raw return bit は `0x` なしの hex string です。`stdout_hex`/`stderr_hex` は NUL と不正 UTF-8 を保持します。syscall 結果 null は model が戻り値を定義しないこと（exit や未対応 request など）を示し、成功値 0 とは異なります。
 
@@ -75,6 +76,17 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
 長さはページ単位に切り上げます。`munmap` は穴や重複解除を許容し、`mprotect` は穴までのマッピングを変更してから `ENOMEM` を返します。`PROT_NONE` は割り当てと内容を保持しつつゲストアクセスを禁止します。生の `brk` は成功時に要求したバイト境界、失敗時に旧境界を返し、libc のゼロ／負一の規約とは異なります。初期 break はページ境界に揃えたイメージ終端です。拡張は他のマッピングと予算に従い、縮小は残る部分ページの内容を保持します。対象範囲の規則とエラー優先順位は Linux の[マッピング](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c)および[保護](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c)に従います。
 
 ファイル／共有／固定マッピング、下方拡張、巨大ページ、メモリ固定、保護キー、実行専用／書き込み専用方針、その他のフラグは明示的に未対応です。効果の公開や戻り値の生成前に停止します。対応範囲内の通常の範囲・長さ・整列エラーはゲストエラーを返して実行を続けます。ゲストポインタやマッピング要求をホスト OS に転送することはありません。
+
+任意の `linux_priority` 入力は、呼び出し元と同じ UID を持つフィクスチャのタスクの nice 状態を宣言します。Linux ELF64 と Android ネイティブの生の `setpriority`／`getpriority` はこの状態を共有し、ホストの優先度を変更しません。
+
+```json
+{"linux_priority":{"tasks":[{"id":1000,"nice":0}],
+                   "cap_sys_nice":false,"rlimit_nice":0}}
+```
+
+タスク ID は重複しない正の符号付き 32 ビット値、初期 nice 値は -20～19、`rlimit_nice` は 0～40 です。`cap_sys_nice` と `rlimit_nice` の既定値は false とゼロで、タスク状態は常に明示します。入力の欠落、未登録タスク、PRIO_PGRP／PRIO_USER の選択は未対応サービスとして停止します。nice 状態が未宣言の新規スレッドも同様です。継承や他のタスクの所有関係は推測しません。PRIO_PROCESS の who がゼロなら現在のゲストタスク、それ以外なら指定タスクを選びます。
+
+無効なセレクターは生の -EINVAL を返します。設定時は符号付き 32 ビットの nice 引数を -20..19 に制限します。nice 値の引き下げには CAP_SYS_NICE または十分な RLIMIT_NICE が必要で、拒否時は状態を変えず生の -EACCES を返します。生の取得結果は `20 - nice` で、カーネルの 40..1 エンコーディングを保持し、libc が変換した `getpriority` の結果とは異なります。[Linux 優先度インターフェイス](https://man7.org/linux/man-pages/man2/setpriority.2.html)を参照してください。
 
 `linux_signals` はプロセス全体の初期シグナル動作を指定します。未指定の項目は不明であり、`SIG_DFL` を意味しません。明示的な空リストでは、以前の動作を照会せずに新しい動作を登録できます。5 フィールドはすべて必須です。JSON の正確な整数範囲を超える符号なし 64 ビット値は十進文字列で指定します。
 

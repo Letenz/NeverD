@@ -356,6 +356,8 @@ fixture は、ゲストの初期化、成功／失敗の戻り値、未対応動
 
 `DriverThreadPriorityTests.cpp` は独自のコンパイル済み `driver_thread_priority.c` を明示的な Unicorn/KVM/WHP の driver・checked 契約で実行し、待機中・キュー内の優先度変更、量子内のイベント／タイマー起床、同優先度の交代、DISPATCH_LEVEL による抑止と低優先度の飢餓中の時計進行を検証します。対になるカウンターループで残りの量子が正確に保持されることを確認します。モデルテストは符号付き ABI、失敗時の状態保持、終了済み参照、入れ子の識別子、独立コールバックのスタック再利用を扱います。ネイティブケースは `NativeDriverTests.def` で必須です。利用できないバックエンドはローカルでは明示的にスキップします。
 
+`DriverMutexThreadTests.cpp` は `driver_seh_mutex.def` の四つの独自 WDK モードを実行します。SEH フィルター内の再帰取得、フィルターまたは例外 finally が取得した所有権の保持、別のシステムスレッドによる解放後のブロック中フィルターの再開です。Unicorn/KVM/WHP の driver と checked 契約で、通常／有効 CFG イメージ、推奨／再配置アドレス、協調動作と 1/17 命令の時間片を検証します。モデルテストはネストしたスタック破棄後の APC 無効化、別スレッドからの解放拒否、最外層の復帰検査も確認します。KVM/WHP ケースは `NativeDriverTests.def` の必須項目です。
+
 `driver_context_limits.c`: API の IRQL 上限は `KernelAPIIRQL.def` にあり、引数依存の制約は担当モデルが検査します。DPC からレジストリ API やページプールの割り当て・解放・アクセスはできません。Unicode `DbgPrint` 変換は `PASSIVE_LEVEL` を要求し、対応する ANSI 出力と非ページ操作は `DISPATCH_LEVEL` で使用できます。コールバックスタックには範囲があり、逸脱したスタックポインターは別の待機ワーカーのスタックへ侵入できません。デバイス拡張内の有効なタイマーは早期解放を防ぎます。一般の IRQL 変更を公開する機能ではありません。
 
 `KernelDeviceStackTests.cpp` は所有関係と接続の独立性、最上位選択、失敗時の原子性、スタック容量、不透明フィールド、ハンドル数、切断・削除をまたぐワーク項目／要求の保持、ファイルとディスパッチ対象の違いを検証します。独自の `driver_wdm_stack.c` は実 WDK ヘッダーとインライン Copy/Skip/SetCompletion を使用し、通常／有効 CFG イメージを任意の `NEVERD_WDM_STACK_FIXTURE`／`NEVERD_WDM_STACK_CFG_FIXTURE` で指定します。`DriverWDMStackTests.cpp` は再配置、下位の実状態、完了順序／条件、遅延 pending 伝播、ワーカー／DPC、待機、`STATUS_MORE_PROCESSING_REQUIRED`、直接 MDL 保持、入れ子の完了、不正カーソル／制御を検証します。`DriverScenarioPublicTests.cpp` は C API／CLI 転送と C API の保持／入れ子完了を、設定された CFG イメージも含めて検証します。欠落時は明示的にスキップし、Linux の証拠は同一ドライバーのスタック範囲だけを示します。PDO／PnP／電源対応は示しません。 `KernelIRPStackTests.cpp` は個数に基づくカーソル、完全なインライン Copy 範囲、消費済み位置のクリア、状態／pending 伝播、MPR と入れ子完了、継続所有者、保持経路を検証します。実 READ/WRITE とファイルのライフサイクルもインライン Copy で検証します。
@@ -1228,7 +1230,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 113 ワークロードについて、元のアドレスと再配置先で計 226 の WHP 結果を必須とします。内訳は組み込みイメージ 27 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 4884 検査とSEH 回帰検査 17 件とスケジューリング検査 77 件を合わせ、必須の結果は 5204 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `4884 CPU + 226 WHP + 17 SEH + 77 scheduling = 5204`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 113 ワークロードについて、元のアドレスと再配置先で計 226 の WHP 結果を必須とします。内訳は組み込みイメージ 27 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 4884 検査とSEH 回帰検査 25 件とスケジューリング検査 77 件を合わせ、必須の結果は 5212 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `4884 CPU + 226 WHP + 25 SEH + 77 scheduling = 5212`.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1536,3 +1538,5 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 `ObjCCallHints.SwiftMainActorSharedKeepsObjectAndMetatypeContext` は ARM64/x86-64 の完全な戻り値と swiftself のキャリアを検証し、各アーキテクチャで ABI の改変 10 件とインポート識別情報の改変 10 件を拒否します。独立した SDK 検証では、両方のソースアーキテクチャ設定から生成した未変更の C を ARM64 ホスト上の O0/O2 で実行し、128 回の呼び出しで単一インスタンスとメタタイプの同一性、および参照所有権の釣り合いを確認します。8 構成のクロスコンパイルで両アーキテクチャの macOS と Mac Catalyst を確認し、x86-64 のネイティブ実行は別の検証範囲として扱います。
 
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` は、根で割り当て済みの変数と未決定変数の混在、非決定根変数、コピーの再コピー、元の破棄、変数追加、両方の既定極性、予算による中断と再開、競合と再始動を検査します。完全なモデルとすべての探索カウンターは新規符号化と一致する必要があります。
+
+`LinuxPriorityTests.cpp` は明示的なタスク状態、スレッド分離、観測値の欠落、不正な JSON、プロファイルの受け入れと拒否時の効果を検査します。独立した x64／AArch64 の生の呼び出しプログラムを O0／O2 で実行し、nice の制限、システムコール引数の 32 ビット化、CAP_SYS_NICE／RLIMIT_NICE の権限境界、カーネルの getpriority エンコーディングを確認します。`NeverDLinuxProcessTests` の `LinuxPriority.*` と `Backends/LinuxPriorityProcess.*` を実行し、共有カーネル／JSON を変更した場合は Linux プロセス、Android ネイティブ、プロセス公開 API の全テストも実行します。任意のネイティブ転送がない場合は明示的にスキップします。

@@ -47,6 +47,7 @@ Las opciones son un objeto JSON de hasta 64 KiB. Se rechazan campos desconocidos
 | `stack_size` | 1048576 | Pila alineada a página dentro del presupuesto |
 | `output_limit` | 1048576 | Bytes combinados capturados de stdout/stderr |
 | `instruction_quantum` | 1024 | Intervalo de admisión antes de ceder a la runtime |
+| `linux_priority` | Ausente | Valores nice explícitos por tarea y autoridad del llamante para los servicios Linux de prioridad sin envoltorio |
 
 `schema_version` vale 1. El informe incluye perfil, arquitectura, backend seleccionado y motivo, `stop_reason`, `exit_status` anulable, diagnóstico, PC de entrada/actual, contadores, registros de servicios y última salida CPU tipada. Direcciones, números syscall, registros de argumentos y bits de retorno son cadenas hexadecimales **sin** `0x`; `stdout_hex`/`stderr_hex` preservan NUL y UTF-8 inválido. Un resultado syscall null significa que no hay retorno modelado (por ejemplo, exit o solicitud no admitida), no un cero exitoso.
 
@@ -75,6 +76,17 @@ Los servicios de memoria anónima comparten el espacio del proceso y el presupue
 Las longitudes se redondean a páginas. `munmap` tolera huecos y retiradas repetidas; `mprotect` modifica el prefijo mapeado antes de devolver `ENOMEM` ante un hueco. `PROT_NONE` conserva la asignación y sus bytes, pero impide el acceso invitado. El `brk` bruto devuelve el límite solicitado si tiene éxito y el anterior si falla, no la convención cero/menos uno de libc. El límite inicial es el final de imagen alineado a página. El crecimiento respeta otros mapeos y el presupuesto; la reducción conserva los bytes de la página parcial restante. Las reglas y prioridades de error siguen los servicios Linux de [mapeo](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) y [protección](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c).
 
 Los mapeos de archivos, compartidos o fijos, crecimiento descendente, páginas enormes, bloqueo, claves de protección, permisos solo de ejecución/escritura y otros indicadores siguen sin soporte explícito: se detienen antes de publicar efectos o inventar un retorno. Los errores normales de rango, longitud y alineación del subconjunto admitido devuelven errores invitados y permiten continuar. Ningún servicio reenvía punteros ni peticiones de mapeo al OS anfitrión.
+
+La entrada opcional `linux_priority` declara el estado nice de las tareas de prueba con el UID del llamante. Los servicios `setpriority` y `getpriority` sin envoltorio comparten este estado entre cargas Linux ELF64 y Android nativo; nunca cambian prioridades del host.
+
+```json
+{"linux_priority":{"tasks":[{"id":1000,"nice":0}],
+                   "cap_sys_nice":false,"rlimit_nice":0}}
+```
+
+Los ID de tarea son valores positivos distintos con signo de 32 bits, los valores nice iniciales van de -20 a 19 y `rlimit_nice` de 0 a 40. `cap_sys_nice` y `rlimit_nice` tienen por defecto false y cero; el estado de cada tarea siempre es explícito. La ausencia de entrada, las tareas no declaradas y la selección PRIO_PGRP/PRIO_USER detienen la ejecución como servicio no admitido. Esto incluye hilos nuevos sin estado nice declarado; el modelo no supone herencia ni propiedad de otras tareas. PRIO_PROCESS con who cero selecciona la tarea invitada actual; otro valor selecciona la tarea indicada.
+
+Los selectores inválidos devuelven -EINVAL sin traducir. Las solicitudes de cambio limitan el argumento nice con signo de 32 bits a -20..19. Reducir nice requiere CAP_SYS_NICE o suficiente RLIMIT_NICE; la denegación devuelve -EACCES sin traducir y no modifica el estado. Las consultas devuelven `20 - nice`, conservando la codificación 40..1 del kernel, no el resultado `getpriority` traducido por libc. Véase la [interfaz Linux de prioridad](https://man7.org/linux/man-pages/man2/setpriority.2.html).
 
 `linux_signals` proporciona las acciones iniciales de señal para todo el proceso. Una entrada ausente es desconocida y no implica `SIG_DFL`; una lista vacía explícita permite instalar sin consultar la acción anterior. Los cinco campos son obligatorios; los valores sin signo de 64 bits fuera del intervalo exacto de JSON usan cadenas decimales.
 

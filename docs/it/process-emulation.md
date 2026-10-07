@@ -47,6 +47,7 @@ Le opzioni sono un oggetto JSON massimo 64 KiB. Campi sconosciuti/null, tipi err
 | `stack_size` | 1048576 | Stack allineato alla pagina entro il budget |
 | `output_limit` | 1048576 | Byte complessivi catturati da stdout/stderr |
 | `instruction_quantum` | 1024 | Intervallo d’ammissione prima di cedere alla runtime |
+| `linux_priority` | Assente | Valori nice espliciti per task e autorità del chiamante per i servizi Linux di priorità grezzi |
 
 `schema_version` è 1. Il report contiene profilo, architettura, backend e motivo della scelta, `stop_reason`, `exit_status` nullable, diagnostica, PC di ingresso/corrente, contatori, record dei servizi e ultimo esito CPU tipizzato. Indirizzi, numeri syscall, registri argomento e bit di ritorno sono stringhe esadecimali **senza** `0x`; `stdout_hex`/`stderr_hex` preservano NUL e UTF-8 non valido. Un risultato syscall null significa nessun ritorno modellato (per esempio exit o richiesta non supportata), non zero riuscito.
 
@@ -75,6 +76,17 @@ I servizi di memoria anonima condividono spazio del processo e budget fisico con
 Le lunghezze sono arrotondate a pagine. `munmap` tollera buchi e rimozioni ripetute; `mprotect` modifica il prefisso mappato prima di restituire `ENOMEM` al primo buco. `PROT_NONE` conserva allocazione e byte, negando l'accesso guest. Il `brk` grezzo restituisce il limite richiesto in caso di successo e quello precedente in caso di errore, non lo zero/meno uno del wrapper libc. Il limite iniziale è la fine immagine allineata a pagina. La crescita rispetta altre mappature e budget; la riduzione conserva i byte della pagina parziale restante. Regole e priorità degli errori seguono i servizi Linux di [mappatura](https://github.com/torvalds/linux/blob/v6.8/mm/mmap.c) e [protezione](https://github.com/torvalds/linux/blob/v6.8/mm/mprotect.c).
 
 Mappature di file, condivise o fisse, crescita verso il basso, pagine enormi, blocco memoria, chiavi di protezione, permessi di sola esecuzione/scrittura e altri flag restano esplicitamente non supportati: arresto prima di pubblicare effetti o inventare un ritorno. Errori ordinari di intervallo, lunghezza e allineamento nel sottoinsieme ammesso restituiscono errori guest e consentono di proseguire. Nessun puntatore o richiesta di mappatura guest viene inoltrato all'OS host.
+
+L’input opzionale `linux_priority` dichiara lo stato nice dei task di prova con l’UID del chiamante. Le chiamate grezze `setpriority` e `getpriority` condividono questo stato tra carichi Linux ELF64 e Android nativi; non modificano mai le priorità dell’host.
+
+```json
+{"linux_priority":{"tasks":[{"id":1000,"nice":0}],
+                   "cap_sys_nice":false,"rlimit_nice":0}}
+```
+
+Gli ID dei task sono valori positivi distinti con segno a 32 bit, i valori nice iniziali vanno da -20 a 19 e `rlimit_nice` da 0 a 40. `cap_sys_nice` e `rlimit_nice` hanno valori predefiniti false e zero; lo stato dei task è sempre esplicito. Input assente, task non dichiarati e selezione PRIO_PGRP/PRIO_USER interrompono come servizio non supportato. Ciò include i nuovi thread privi di stato nice dichiarato; il modello non presume ereditarietà o proprietà di altri task. PRIO_PROCESS con who zero seleziona il task guest corrente, altrimenti quello indicato.
+
+I selettori non validi restituiscono -EINVAL grezzo. Le richieste di modifica limitano l’argomento nice con segno a 32 bit a -20..19. Ridurre nice richiede CAP_SYS_NICE o RLIMIT_NICE sufficiente; il rifiuto restituisce -EACCES grezzo senza modificare lo stato. Le letture grezze restituiscono `20 - nice`, mantenendo la codifica del kernel 40..1, non il risultato `getpriority` tradotto da libc. Vedere l’[interfaccia Linux di priorità](https://man7.org/linux/man-pages/man2/setpriority.2.html).
 
 `linux_signals` fornisce le azioni iniziali dei segnali per l’intero processo. Una voce assente è sconosciuta e non implica `SIG_DFL`; un elenco esplicitamente vuoto consente di installare senza leggere l’azione precedente. Tutti e cinque i campi sono obbligatori; i valori senza segno a 64 bit fuori dall’intervallo esatto di JSON usano stringhe decimali.
 
