@@ -1,4 +1,5 @@
 add_neverd_unittest(NeverDSolverTests
+  BitBlastArithTests.cpp
   BitBlasterTests.cpp
   BitVectorSolverTests.cpp
   CnfEncoderTests.cpp
@@ -11,6 +12,7 @@ add_neverd_unittest(NeverDSolverTests
 
 target_include_directories(NeverDSolverTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
+  ${CMAKE_SOURCE_DIR}/lib/solver/bv
 )
 
 if(NEVERD_ENABLE_Z3)
