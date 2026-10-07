@@ -32756,8 +32756,10 @@ TEST(HighCPointerAddresses, ConstantReturnIsNotInferredVoid) {
   EXPECT_EQ(Source.find("void GSHandlerCheck"), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses,
-     UnknownCalleeReturnIsNotDiscardedByBareSiblingReturn) {
+TEST(HighCPointerAddresses, BareSiblingReturnMakesATailCallingFunctionVoid) {
+  // One path returns RAX as the caller left it, so no caller can rely on a
+  // result: the function is void, the bare path returns normally, and the
+  // other path still makes its call exactly once.
   HighFunc Func;
   Func.Name = "cookie";
   Func.Entry = 0x140001350;
@@ -32794,30 +32796,21 @@ TEST(HighCPointerAddresses,
   Func.Body.push_back(std::move(Ret));
 
   const std::string Source = emitFunctions({Func});
-  EXPECT_EQ(Source.find("void cookie"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("sub_14000173C("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("return (int64_t)sub_14000173C(arg0)"),
-            std::string::npos)
+  EXPECT_NE(Source.find("void cookie"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("    sub_14000173C(arg0);"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("__builtin_trap(); /* unknown return value */"),
-            std::string::npos)
-      << Source;
-  EXPECT_EQ(Source.find("return;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("unknown return value"), std::string::npos) << Source;
   compileAndRunCallOrdering(Source + R"(
-static int calls, result;
+static int calls;
 int sub_14000173C(int64_t input) {
     ++calls;
-    if (input != 7) return 99;
-    return result;
+    return (int)input;
 }
 int main(void) {
-    const int values[] = {0, -41, INT32_MIN, INT32_MAX};
-    for (unsigned i = 0; i != sizeof(values) / sizeof(values[0]); ++i) {
-        calls = 0;
-        result = values[i];
-        if (cookie(7) != result || calls != 1) return 1;
-    }
-    return 0;
+    cookie(7);
+    if (calls != 1) return 1;
+    cookie(1);
+    return calls == 1 ? 0 : 2;
 }
 )");
 }
@@ -34261,10 +34254,11 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   EXPECT_NE(Source.find("__except"), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, CorpusFuncLoadGsCookieKeepsUnprovenFailReturn) {
-  // With no debug signature, a bare sibling return does not prove that the
-  // unnamed tail target is void or noreturn. Preserve its observed result and
-  // make the unproven bare return explicit instead of inventing a contract.
+TEST(HighCPointerAddresses, CorpusFuncLoadGsCookieReturnsOnTheValidPath) {
+  // __security_check_cookie returns without writing RAX when the cookie is
+  // valid and tail-calls __report_gsfailure otherwise.  That bare return
+  // leaves its caller nothing to rely on, so the function is void: the valid
+  // path returns instead of trapping, and the tail call still runs.
   if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
     GTEST_SKIP() << "windows-eh corpus root is not configured";
   const auto Path = gsSehProbePath();
@@ -34288,14 +34282,12 @@ TEST(HighCPointerAddresses, CorpusFuncLoadGsCookieKeepsUnprovenFailReturn) {
   ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
   const std::string Source = highcOnlyFunction(std::move(*Img), Entry);
   ASSERT_FALSE(Source.empty()) << Source;
-  const std::string Signature = "int64_t sub_" + llvm::utohexstr(Entry) + "(";
+  const std::string Signature = "void sub_" + llvm::utohexstr(Entry) + "(";
   const size_t BodyAt = Source.find(Signature);
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   const std::string Body = Source.substr(BodyAt);
-  EXPECT_NE(Body.find("__builtin_trap(); /* unknown return value */"),
-            std::string::npos)
-      << Source;
-  EXPECT_NE(Body.find("return (int64_t)sub_"), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("unknown return value"), std::string::npos) << Source;
+  EXPECT_NE(Body.find("    sub_"), std::string::npos) << Source;
   EXPECT_EQ(Body.find("= sub_"), std::string::npos) << Source;
   llvm::SmallVector<llvm::StringRef, 16> Lines;
   llvm::StringRef(Body).split(Lines, '\n');

@@ -10,6 +10,8 @@ enum {
   Mmap = 222,
   Mprotect = 226,
   Munmap = 215,
+  ClockGetTime = 113,
+  Nanosleep = 101,
   GetPID = 172,
   OpenAt = 56,
   Close = 57,
@@ -24,6 +26,8 @@ enum {
   Mmap = 9,
   Mprotect = 10,
   Munmap = 11,
+  ClockGetTime = 228,
+  Nanosleep = 35,
   GetPID = 39,
   OpenAt = 257,
   Close = 3,
@@ -94,6 +98,49 @@ void process_main(U64 *stack) {
     finish(0);
   }
   U64 self = linux_service(GetPID, 0, 0, 0);
+  if (mode == 'q' || mode == 'z' || mode == 'w') {
+    U64 id = mode == 'q' ? (U64)-16006 : mode == 'z' ? (U64)-29 : (U64)-2;
+    linux_service(ClockGetTime, id, ~0UL, 0);
+    finish(91);
+  }
+  if (mode == 'p') {
+    struct time_value {
+      U64 seconds, nanoseconds;
+    } value = {0xa5, 0x5a};
+    const U64 aliases[] = {2, (U64)-6, (U64)-8006};
+    for (unsigned i = 0; i < 3; ++i) {
+      require(linux_service(ClockGetTime, aliases[i], (U64)&value, 0) == 0, 80);
+      require(value.seconds == 3 && value.nanoseconds == 4, 81);
+    }
+    require(linux_service(ClockGetTime, 0x12345678ffffc17aUL, (U64)&value, 0) ==
+                0,
+            82);
+    require(value.seconds == 7 && value.nanoseconds == 9, 83);
+    require(linux_service(ClockGetTime, (U64)-16007, (U64)&value, 0) == 0, 84);
+    require(value.seconds == 8 && value.nanoseconds == 10, 85);
+    require(linux_service(ClockGetTime, (U64)-16008, (U64)&value, 0) == 0, 86);
+    require(value.seconds == 9 && value.nanoseconds == 11, 87);
+    const U64 own[] = {(U64)-8, (U64)-8008, (U64)-7, (U64)-8007};
+    for (unsigned i = 0; i < 4; ++i) {
+      require(linux_service(ClockGetTime, own[i], (U64)&value, 0) == 0, 88);
+      require(value.seconds == (i < 2 ? 13 : 16) &&
+                  value.nanoseconds == (i < 2 ? 15 : 17),
+              89);
+    }
+    require(linux_service(ClockGetTime, (U64)-16014, ~0UL, 0) == (U64)-22, 92);
+    require(linux_service(ClockGetTime, (U64)-24006, ~0UL, 0) == (U64)-22, 93);
+    require(linux_service(ClockGetTime, (U64)-1, ~0UL, 0) == (U64)-22, 94);
+    require(linux_service(ClockGetTime, (U64)-16006, ~0UL, 0) == (U64)-14, 95);
+    const struct time_value duration = {0, 2};
+    require(linux_service(Nanosleep, (U64)&duration, 0, 0) == 0, 96);
+    require(linux_service(ClockGetTime, 1, (U64)&value, 0) == 0, 97);
+    require(value.seconds == 11 && value.nanoseconds == 1, 98);
+    require(linux_service(ClockGetTime, (U64)-6, (U64)&value, 0) == 0, 99);
+    require(value.seconds == 3 && value.nanoseconds == 4, 100);
+    require(linux_service(ClockGetTime, (U64)-16006, (U64)&value, 0) == 0, 101);
+    require(value.seconds == 7 && value.nanoseconds == 9, 102);
+    finish(0);
+  }
   if (mode == 'e') {
     require(pidfd(2000, 0) == (U64)-3, 61);
     require(pidfd(self, 0) == 3, 62);

@@ -642,6 +642,26 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
                             static_cast<int>(ParamRegs.size())) -
                    1;
     }
+    // A System V indirect call whose own block sets no argument register
+    // still takes the ones set in the block before it (`mov rdi, [rdi]; test
+    // rdi, rdi; je; mov rax, [rdi]; call [rax+58h]`): the consecutive
+    // registers such setup writes give a known value, never padded to this
+    // function's own parameters.  A direct callee has its own summary.
+    const bool SysV64 =
+        TargetArch == Arch::X64 && !Win64 && Format == BinaryFormat::ELF;
+    if (SysV64 && MaxRegArg < 0 && CallIdx < Ops.size() &&
+        Ops[CallIdx].Opcode == NdOp::INDIR_CALL &&
+        Ops[CallIdx].CalleeRegisterArgs < 0 && !Ops[CallIdx].SourceCallHint) {
+      for (int K = 0; K < static_cast<int>(ParamRegs.size()) && K < MaxArgs;
+           ++K) {
+        if ((!tryPredSetupArg(K) && !tryDominatingForkSetup(K)) || !Found[K] ||
+            Found[K]->Kind == ExprKind::Undef) {
+          Found[K] = nullptr;
+          break;
+        }
+        FillLast = K;
+      }
+    }
     // Same-block writes of rcx/rdx/r8 must not hide a join PHI in r9
     // (`CStringTable::Find` nKey).  Unused function-entry r9 is not a PHI.
     if (Win64 && MaxRegArg >= 0) {
@@ -775,13 +795,14 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     }
   }
 
-  // A summarized Win64 callee published exactly the register arguments it
-  // reads as the CALL's inputs (LowToMed); SSA already renamed them to the
-  // values reaching the call, including a caller's pass-through argument.
+  // A summarized callee published exactly the register arguments it reads
+  // as the CALL's inputs (LowToMed); SSA already renamed them to the values
+  // reaching the call, including a caller's pass-through argument.
   if (CallIdx < Ops.size() && Ops[CallIdx].CalleeRegisterArgs >= 0 &&
       !Ops[CallIdx].SourceCallHint) {
     const MedOp &Call = Ops[CallIdx];
-    for (int I = 0; I < 4 && I < MaxArgs; ++I)
+    const int RegisterSlots = static_cast<int>(ParamRegs.size());
+    for (int I = 0; I < RegisterSlots && I < MaxArgs; ++I)
       Found[I] = I < Call.CalleeRegisterArgs && 1 + I < Call.NumInputs
                      ? medvarToExpr(Call.Inputs[1 + I])
                      : nullptr;

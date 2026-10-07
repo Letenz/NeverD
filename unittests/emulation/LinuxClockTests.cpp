@@ -58,5 +58,31 @@ TEST(LinuxClock, OverflowRefusesAllClocksAndSaturatedSleepIsNotEINVAL) {
   EXPECT_EQ(R.Diagnostic, linux_model::SleepRange);
   EXPECT_EQ(Clock.elapsed(), uint64_t(INT64_MAX) - 1);
 }
+TEST(LinuxClock, ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle) {
+  std::optional<LinuxTimeOptions> Options{std::in_place};
+  Options->AdvanceOnIdle = true;
+  Options->Clocks = {
+      {1, {4, 999999999}}, {-6, {3, 4}}, {-8, {5, 6}}, {-14, {7, 8}}};
+  ASSERT_FALSE(bool(linux_model::validateTimeOptions(*Options)));
+  linux_model::LinuxClock Clock(Options);
+  ProcessResult R{ProcessProfile::LinuxELF64,
+                  GuestArchitecture::AArch64,
+                  ExecutionBackendKind::Unicorn,
+                  {}};
+  ASSERT_TRUE(Clock.advanceTo(1000000002, R));
+  EXPECT_EQ(Clock.read(1, R)->Seconds, 6);
+  EXPECT_EQ(Clock.read(1, R)->Nanoseconds, 1);
+  for (int32_t ID : {2, -6, -8006}) {
+    EXPECT_EQ(Clock.read(ID, R)->Seconds, 3);
+    EXPECT_EQ(Clock.read(ID, R)->Nanoseconds, 4);
+  }
+  EXPECT_EQ(Clock.read(-8008, R)->Seconds, 5);
+  EXPECT_EQ(Clock.read(-14, R)->Seconds, 7);
+  EXPECT_EQ(Clock.read(-14, R)->Nanoseconds, 8);
+  Options->Clocks.emplace(2, LinuxTimespec{3, 4});
+  auto E = linux_model::validateTimeOptions(*Options);
+  ASSERT_TRUE(bool(E));
+  EXPECT_EQ(llvm::toString(std::move(E)), linux_model::TimeClockOption);
+}
 } // namespace
 } // namespace neverd::emulation

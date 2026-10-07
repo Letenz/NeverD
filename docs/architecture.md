@@ -1420,6 +1420,12 @@ transfer ownership of execution, thread or callback state out of the model.
 
 The Linux kernel component also owns validation and lookup of explicit
 clock observations in `LinuxTimeOptions`, plus time-service output ordering.
+`LinuxCPUClock` decodes process CPU identities and validates their released GKI
+task observations. It resolves current-task aliases to the process group and
+checks foreign group leaders before output access. `LinuxClock` canonicalizes
+observations and rejects duplicate aliases. Process CPU samples stay fixed
+while the idle policy advances declared wall clocks; no execution accounting
+or host clock supplies an observation.
 The process wire parser validates representations and delegates value policy
 to that owner. Android reuses clock lookup and raw kernel services; Bionic
 alone owns errno conversion and `time`'s user-space destination store.

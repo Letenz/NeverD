@@ -32,6 +32,13 @@ NEVERD_LINUX_VALUE(PriorityLimitMaximum, 40)
 NEVERD_LINUX_VALUE(PriorityTaskLimit, 4096)
 NEVERD_LINUX_VALUE(KernelTaskLimit, 4096)
 NEVERD_LINUX_VALUE(PidFDThread, 0x80)
+NEVERD_LINUX_VALUE(CPUClockShift, 3)
+NEVERD_LINUX_VALUE(CPUClockKindMask, 3)
+NEVERD_LINUX_VALUE(CPUClockThread, 4)
+NEVERD_LINUX_VALUE(CPUClockFDMask, 7)
+NEVERD_LINUX_VALUE(CPUClockFD, 3)
+NEVERD_LINUX_VALUE(CPUClockScheduled, 2)
+NEVERD_LINUX_VALUE(TimeClockLimit, 16384)
 NEVERD_LINUX_VALUE(AccessDenied, 13)
 NEVERD_LINUX_VALUE(ServiceNotImplemented, 38)
 NEVERD_LINUX_VALUE(BadDescriptor, 9)
@@ -298,7 +305,13 @@ NEVERD_LINUX_DIAGNOSTIC(UnexpectedExit,
 NEVERD_LINUX_DIAGNOSTIC(TimePartialOutput,
                         "partial Linux time output fault is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(TimeClockOption,
-                        "linux_time requires a known static Linux clock ID")
+                        "linux_time requires distinct supported Linux clock IDs")
+NEVERD_LINUX_DIAGNOSTIC(TimeCPUObservation,
+                        "Linux process CPU clocks require consistent GKI task observations and nonnegative seconds")
+NEVERD_LINUX_DIAGNOSTIC(TimeCPUTargetMissing,
+                        "CPU clock target process is not modeled")
+NEVERD_LINUX_DIAGNOSTIC(TimeThreadCPUClock,
+                        "encoded per-thread CPU clocks are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(TimeNanoseconds,
                         "linux_time nanoseconds must be in [0, 1000000000)")
 NEVERD_LINUX_DIAGNOSTIC(TimeClockMissing,
@@ -309,7 +322,7 @@ NEVERD_LINUX_DIAGNOSTIC(TimezoneMissing,
                         "Linux timezone has no explicit linux_time input")
 NEVERD_LINUX_DIAGNOSTIC(
     TimeAdvanceClock,
-    "advance_on_idle supports realtime, monotonic and boottime clocks only")
+    "advance_on_idle supports realtime, monotonic, boottime and fixed process CPU clocks only")
 NEVERD_LINUX_DIAGNOSTIC(
     TimeAdvanceOverflow,
     "Linux virtual clock advancement exceeds its modeled range")

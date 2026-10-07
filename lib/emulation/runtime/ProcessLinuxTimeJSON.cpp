@@ -42,7 +42,7 @@ linuxTimeOptionsFromJSON(const llvm::json::Value &Value) {
       Out.AdvanceOnIdle = *Enabled;
     } else if (Name == field::Clocks) {
       const auto *Clocks = V.getAsArray();
-      if (!Clocks)
+      if (!Clocks || Clocks->size() > linux_model::TimeClockLimit)
         return invalid(Name);
       for (const auto &Clock : *Clocks) {
         const auto *C = Clock.getAsObject();
