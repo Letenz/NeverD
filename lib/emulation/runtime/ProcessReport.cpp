@@ -11,6 +11,8 @@
 #include "ProcessDarwinTimeJSON.h"
 #include "ProcessLinuxFilesJSON.h"
 #include "ProcessLinuxSignalsJSON.h"
+#include "ProcessLinuxPriorityJSON.h"
+#include "ProcessLinuxKernelJSON.h"
 #include "ProcessLinuxTimeJSON.h"
 #include "ProcessWindowsJSON.h"
 
@@ -81,6 +83,20 @@ llvm::Expected<ProcessOptions> processOptionsFromJSON(llvm::StringRef Text) {
       if (!Files)
         return Files.takeError();
       Options.DarwinFiles = std::move(*Files);
+      continue;
+    }
+    if (Name == field::LinuxKernel) {
+      auto Kernel = linuxKernelOptionsFromJSON(V);
+      if (!Kernel)
+        return Kernel.takeError();
+      Options.LinuxKernel = std::move(*Kernel);
+      continue;
+    }
+    if (Name == field::LinuxPriority) {
+      auto Priority = linuxPriorityOptionsFromJSON(V);
+      if (!Priority)
+        return Priority.takeError();
+      Options.LinuxPriority = std::move(*Priority);
       continue;
     }
     if (Name == field::LinuxSignals) {

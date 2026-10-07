@@ -179,6 +179,8 @@ target_include_directories(NeverDX64ExceptionTests PRIVATE
 
 add_neverd_unittest(NeverDLinuxProcessTests
   LinuxProcessTests.cpp
+  LinuxPriorityTests.cpp
+  LinuxKernelAvailabilityTests.cpp
   LinuxProcessLayoutTests.cpp
   LinuxMemoryTests.cpp
   LinuxClockTests.cpp

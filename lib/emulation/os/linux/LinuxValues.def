@@ -24,6 +24,14 @@ NEVERD_LINUX_VALUE(IOVectorSize, 16)
 NEVERD_LINUX_VALUE(IOVectorLengthOffset, 8)
 NEVERD_LINUX_VALUE(MaxSignedIOSize, 0x7fffffffffffffffULL)
 NEVERD_LINUX_VALUE(MaxReadWriteSize, 0x7fffffff)
+NEVERD_LINUX_VALUE(PriorityProcess, 0)
+NEVERD_LINUX_VALUE(PriorityUser, 2)
+NEVERD_LINUX_VALUE(PriorityNiceMagnitude, 20)
+NEVERD_LINUX_VALUE(PriorityNiceMaximum, 19)
+NEVERD_LINUX_VALUE(PriorityLimitMaximum, 40)
+NEVERD_LINUX_VALUE(PriorityTaskLimit, 4096)
+NEVERD_LINUX_VALUE(AccessDenied, 13)
+NEVERD_LINUX_VALUE(ServiceNotImplemented, 38)
 NEVERD_LINUX_VALUE(BadDescriptor, 9)
 NEVERD_LINUX_VALUE(BadAddress, 14)
 NEVERD_LINUX_VALUE(PermissionDenied, 1)
@@ -125,6 +133,10 @@ NEVERD_LINUX_AUX(EXECFN, 31, *ExecutableAddress)
 NEVERD_LINUX_AUX(NULL, 0, 0)
 #endif
 #ifdef NEVERD_LINUX_SERVICE
+#define NEVERD_LINUX_UNAVAILABLE_SYSCALL(Name, Label, X64, ARM, Count) \
+  NEVERD_LINUX_SERVICE(Name, X64, ARM, Count)
+#include "neverd/emulation/LinuxUnavailableSyscalls.def"
+#undef NEVERD_LINUX_UNAVAILABLE_SYSCALL
 NEVERD_LINUX_SERVICE(SignalAction, 13, 134, 4)
 NEVERD_LINUX_SERVICE(Mincore, 27, 232, 3)
 // Linux UAPI: x86-64 and asm-generic numbers, followed by fixed arity.
@@ -145,6 +157,8 @@ NEVERD_LINUX_SERVICE(ClockGetTime, 228, 113, 2)
 NEVERD_LINUX_SERVICE(Nanosleep, 35, 101, 2)
 NEVERD_LINUX_SERVICE(Exit, 60, 93, 1)
 NEVERD_LINUX_SERVICE(ExitGroup, 231, 94, 1)
+NEVERD_LINUX_SERVICE(GetPriority, 140, 141, 2)
+NEVERD_LINUX_SERVICE(SetPriority, 141, 140, 3)
 NEVERD_LINUX_SERVICE(GetPID, 39, 172, 0)
 NEVERD_LINUX_SERVICE(GetTID, 186, 178, 0)
 NEVERD_LINUX_SERVICE(GetUID, 102, 174, 0)
@@ -175,6 +189,14 @@ NEVERD_LINUX_DYNAMIC_DEPENDENCY(DependencyAudit, 0x6ffffefb)
 #ifdef NEVERD_LINUX_DIAGNOSTIC
 NEVERD_LINUX_DIAGNOSTIC(MemoryResidency,
                         "unmodeled Linux page residency observation")
+NEVERD_LINUX_DIAGNOSTIC(KernelOptions, "invalid Linux kernel availability input")
+NEVERD_LINUX_DIAGNOSTIC(PriorityOptions, "invalid Linux priority input")
+NEVERD_LINUX_DIAGNOSTIC(PriorityInputsMissing,
+    "priority services require explicit linux_priority input")
+NEVERD_LINUX_DIAGNOSTIC(PrioritySelection,
+    "Linux group and user priority selection is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(PriorityTaskMissing,
+    "unmodeled Linux task priority: {0}")
 NEVERD_LINUX_DIAGNOSTIC(SignalOptions, "invalid Linux signal disposition input")
 NEVERD_LINUX_DIAGNOSTIC(SignalInputMissing,
                         "signal actions require explicit linux_signals input")

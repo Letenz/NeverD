@@ -1528,3 +1528,5 @@ MainActor 픽스처는 고정 메타데이터와 정적 테이블의 전체 흐�
 `ObjCCallHints.SwiftMainActorSharedKeepsObjectAndMetatypeContext`는 ARM64/x86-64의 전체 반환값과 swiftself 전달 위치를 검증하며, 아키텍처마다 ABI 변형 열 가지와 가져오기 식별 변형 열 가지를 거부합니다. 독립 SDK 검증은 두 소스 아키텍처 구성의 수정하지 않은 생성 C를 ARM64 호스트에서 O0/O2로 실행합니다. 128번의 호출에서 싱글턴과 메타타입 식별 및 참조 소유권 균형을 확인합니다. 여덟 가지 교차 컴파일 구성은 두 아키텍처의 macOS와 Mac Catalyst를 다루며, x86-64 네이티브 실행은 별도 검증 범위입니다.
 
 `BitVectorEncodingClone.RootQueuePreservesDecisionsAcrossGrowthAndBudgets` 는 루트 할당 변수와 미결정 변수의 혼합, 비결정 루트 변수, 복사본의 재복사, 원본 소멸, 후속 변수 증가, 두 기본 극성, 예산 중단과 재개, 충돌과 재시작을 검사합니다. 전체 모델과 모든 검색 카운터는 새 인코딩과 같아야 합니다.
+
+`ContextFiniteProofs.*`는 컨텍스트와 소유자 격리, 소유자 교체, 토큰 이동, 정확한 술어와 투영 순서, 노드 추가, 완료 및 미완료 결과, 저장 한도와 LRU 제거를 검사합니다. 프레임 테스트는 저장 전 마지막 유일성 질의와 캐시 적중 시 심볼릭 노드 한도를 확인합니다.

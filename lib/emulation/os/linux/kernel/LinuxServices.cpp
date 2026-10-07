@@ -6,6 +6,7 @@
 #include "LinuxServices.h"
 
 #include "LinuxTime.h"
+#include "LinuxKernelAvailability.h"
 
 #include "neverd/emulation/CPU.h"
 
@@ -54,7 +55,16 @@ LinuxServices::handle(const ProcessServiceEvent &Event, ThreadContext *Thread) {
 llvm::Expected<std::optional<uint64_t>>
 LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
                       ThreadContext *Thread) {
+  if (unavailableKernelService(Kind, Options.LinuxKernel))
+    return std::optional<uint64_t>(uint64_t(0) - ServiceNotImplemented);
   switch (Kind) {
+#define NEVERD_LINUX_UNAVAILABLE_SYSCALL(Name, Label, X64, ARM, Count) \
+  case ServiceKind::Name:
+#include "neverd/emulation/LinuxUnavailableSyscalls.def"
+#undef NEVERD_LINUX_UNAVAILABLE_SYSCALL
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic = llvm::formatv(Service, Event.Number).str();
+    return std::optional<uint64_t>();
   case ServiceKind::SignalAction:
     return Signals.handle(CPU, Layout, Event, Result);
   case ServiceKind::Open:
@@ -87,6 +97,9 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     Result.Stop = ProcessStopReason::Exited;
     Result.ExitStatus = Event.Arguments[0] & ExitMask;
     return std::optional<uint64_t>();
+  case ServiceKind::GetPriority:
+  case ServiceKind::SetPriority:
+    return Priority.handle(Kind, Event, Thread ? Thread->ID : ThreadID, Result);
   case ServiceKind::GetPID:
     return std::optional<uint64_t>(ProcessID);
   case ServiceKind::GetTID:
