@@ -1546,6 +1546,14 @@ Double-cliquez pour aller à la déclaration.</translation>
         <source>Text encoding</source>
         <translation>Encodage du texte</translation>
     </message>
+    <message>
+        <source>Copy takes at most %1 bytes; select fewer.</source>
+        <translation>La copie prend au plus %1 octets ; sélectionnez-en moins.</translation>
+    </message>
+    <message>
+        <source>The selection holds bytes no segment maps; nothing was copied.</source>
+        <translation>La sélection contient des octets qu&apos;aucun segment ne mappe ; rien n&apos;a été copié.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::JumpDialog</name>

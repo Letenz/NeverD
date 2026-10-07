@@ -94,14 +94,22 @@ shows the whole function and the visible area.
 
 **Pseudocode** (F5, Tab) and **IR** windows show C, C through LLVM, LowIR,
 MedIR, HighIR or LLVM IR of the current function and follow the disassembly
-unless their lock is set. Rows mapped to instructions move the disassembly
-cursor. C opens at the function: the includes, support types and declarations
-before its definition fold into one line. Recognized library operations in C
-can fold into one-line summaries too. Click a summary or press Keypad + on it
-to expand it; Keypad - folds the declarations again, and the context menu
-expands or collapses either kind. Hovering a type or macro the code declares,
-such as an unaligned access type, shows its declaration, and double-clicking it
-goes there. Copy and export always use the complete code.
+unless their lock is set. The LLVM views translate the current function alone,
+with the others declared, so a function the engine refuses to translate shows
+its reason without affecting other functions. Rows mapped to instructions move
+the disassembly cursor. C opens at the function: the includes, support types and
+declarations before its definition fold into one line. Recognized library
+operations in C can fold into one-line summaries too. Click a summary or press
+Keypad + on it to expand it; Keypad - folds the declarations again, and the
+context menu expands or collapses either kind. Hovering a type or macro the code
+declares, such as an unaligned access type, shows its declaration, and
+double-clicking it goes there. Memory reads and writes print as a classic
+decompiler shows them, `*(_QWORD *)p`: `_BYTE`, `_WORD`, `_DWORD`, `_QWORD` and
+`_OWORD` access unsigned integers of their sizes, `_SBYTE` to `_SOWORD` signed
+ones, and `_FLOAT` and `_DOUBLE` floating-point values. Unlike those of such a
+decompiler, the types are declared one byte aligned and allowed to alias any
+object, so the code compiles to the same accesses. Copy and export always use
+the complete code.
 
 C++ names read as a classic disassembler shows them: the listing keeps the
 linkage name an instruction uses and adds its demangled form as a comment

@@ -1544,6 +1544,14 @@ Double-click to go to the declaration.</source>
         <source>Text encoding</source>
         <translation>文字編碼</translation>
     </message>
+    <message>
+        <source>Copy takes at most %1 bytes; select fewer.</source>
+        <translation>複製最多 %1 位元組，請少選一些。</translation>
+    </message>
+    <message>
+        <source>The selection holds bytes no segment maps; nothing was copied.</source>
+        <translation>所選內容包含未被任何區段對應的位元組，未複製任何內容。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::JumpDialog</name>

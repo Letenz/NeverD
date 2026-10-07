@@ -1546,6 +1546,14 @@ Double-click to go to the declaration.</translation>
         <source>Text encoding</source>
         <translation>Text encoding</translation>
     </message>
+    <message>
+        <source>Copy takes at most %1 bytes; select fewer.</source>
+        <translation>Copy takes at most %1 bytes; select fewer.</translation>
+    </message>
+    <message>
+        <source>The selection holds bytes no segment maps; nothing was copied.</source>
+        <translation>The selection holds bytes no segment maps; nothing was copied.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::JumpDialog</name>

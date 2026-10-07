@@ -1546,6 +1546,14 @@ Doppelklicken springt zur Deklaration.</translation>
         <source>Text encoding</source>
         <translation>Textkodierung</translation>
     </message>
+    <message>
+        <source>Copy takes at most %1 bytes; select fewer.</source>
+        <translation>Kopieren übernimmt höchstens %1 Bytes; wählen Sie weniger aus.</translation>
+    </message>
+    <message>
+        <source>The selection holds bytes no segment maps; nothing was copied.</source>
+        <translation>Die Auswahl enthält Bytes, die kein Segment abbildet; es wurde nichts kopiert.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::JumpDialog</name>

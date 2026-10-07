@@ -1492,7 +1492,8 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
 
 void MainWindow::copySelection() {
   // The view holding the focus copies its selection: any code view, a
-  // chooser's rows, or a text field; the disassembly otherwise.
+  // chooser's rows, the hex view's bytes or a text field; the disassembly
+  // otherwise.
   for (QWidget *widget = QApplication::focusWidget(); widget;
        widget = widget->parentWidget()) {
     if (auto *field = qobject_cast<QLineEdit *>(widget)) {
@@ -1509,6 +1510,10 @@ void MainWindow::copySelection() {
     }
     if (auto *chooser = qobject_cast<ChooserView *>(widget)) {
       QApplication::clipboard()->setText(chooser->selectedText());
+      return;
+    }
+    if (auto *hex = qobject_cast<HexView *>(widget)) {
+      hex->copySelection();
       return;
     }
   }

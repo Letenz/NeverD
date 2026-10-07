@@ -465,13 +465,11 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
   if (std::string(representation) == "llvmc") {
     const std::string prelude =
         "#include <stdint.h>\n"
-        "typedef uint64_t neverd_unaligned_u64 __attribute__((aligned(1), "
-        "may_alias));\n"
+        "typedef uint64_t _QWORD __attribute__((aligned(1), may_alias));\n"
         "extern int Bar_ctor() __asm__(\"_ZN3BarC1Ev\"); /* Bar::Bar() */\n\n";
     std::vector<std::string> lines = {
         "#include <stdint.h>\n",
-        "typedef uint64_t neverd_unaligned_u64 "
-        "__attribute__((aligned(1), may_alias));\n",
+        "typedef uint64_t _QWORD __attribute__((aligned(1), may_alias));\n",
         "extern int Bar_ctor() __asm__(\"_ZN3BarC1Ev\"); /* "
         "Bar::Bar() */\n",
         "\n", "/* neverd.entry */\n"};

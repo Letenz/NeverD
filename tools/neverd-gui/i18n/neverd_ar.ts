@@ -1554,6 +1554,14 @@ Double-click to go to the declaration.</source>
         <source>Text encoding</source>
         <translation>ترميز النص</translation>
     </message>
+    <message>
+        <source>Copy takes at most %1 bytes; select fewer.</source>
+        <translation>يأخذ النسخ %1 بايت على الأكثر؛ حدّد عددًا أقل.</translation>
+    </message>
+    <message>
+        <source>The selection holds bytes no segment maps; nothing was copied.</source>
+        <translation>يضم التحديد بايتات لا يعيّنها أي مقطع؛ لم يُنسخ شيء.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::JumpDialog</name>

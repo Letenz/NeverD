@@ -228,8 +228,8 @@ def run(executable):
         assert first["mapping_status"] == "unsupported_representation" and first["rows"] == []
         # C pages say where the definition begins after the prelude.
         source = client.call("decompile", {"address": BASE, "representation": "llvmc", "limit": 2})["payload"]
-        assert source["prelude"] == {"lines": 4, "end_byte": 162}, source
-        assert source["text"] == "#include <stdint.h>\ntypedef uint64_t neverd_unaligned_u64 __attribute__((aligned(1), may_alias));\n", source
+        assert source["prelude"] == {"lines": 4, "end_byte": 148}, source
+        assert source["text"] == "#include <stdint.h>\ntypedef uint64_t _QWORD __attribute__((aligned(1), may_alias));\n", source
         for stage in ("low", "med"):
             mapped = client.call("decompile", {"address": BASE, "representation": stage, "offset": 0, "limit": 3})
             assert mapped["status"] == "ok", mapped

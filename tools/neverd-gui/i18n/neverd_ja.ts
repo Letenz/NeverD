@@ -1544,6 +1544,14 @@ Double-click to go to the declaration.</source>
         <source>Text encoding</source>
         <translation>テキストエンコーディング</translation>
     </message>
+    <message>
+        <source>Copy takes at most %1 bytes; select fewer.</source>
+        <translation>コピーできるのは最大 %1 バイトです。選択を減らしてください。</translation>
+    </message>
+    <message>
+        <source>The selection holds bytes no segment maps; nothing was copied.</source>
+        <translation>選択範囲にどのセグメントにも属さないバイトが含まれるため、何もコピーしませんでした。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::JumpDialog</name>
