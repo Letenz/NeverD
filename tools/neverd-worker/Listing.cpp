@@ -267,6 +267,13 @@ struct Function {
   /// An executable veneer forwarding to an import (ELF PLT entry, stub).
   bool thunk = false;
 };
+/// Where an instruction leaves the stack pointer (NEVERD_DISASM_STACK): its
+/// value before the instruction plus delta, or base's value plus delta.
+struct StackMove {
+  std::int64_t delta = 0;
+  std::string base;
+  bool known = true;
+};
 struct Instruction {
   std::uint64_t address = 0;
   std::uint32_t size = 0;
@@ -274,6 +281,11 @@ struct Instruction {
   Flow flow = Flow::None;
   std::optional<std::uint64_t> target;
   std::vector<std::pair<std::uint64_t, RefKind>> refs;
+  /// Absent when the engine does not state stack moves.
+  std::optional<StackMove> stackMove;
+  /// The stack pointer's offset from its value at the function's entry
+  /// before this instruction, when every path to it agrees.
+  std::optional<std::int64_t> stackDelta;
 };
 /// An unwind frame a listing marks.
 struct UnwindMark {
@@ -287,7 +299,14 @@ struct DecodedFunction {
   std::optional<UnwindMark> unwind;
   /// The frame register a prologue sets up, or empty.
   std::string_view frameRegister;
-  /// Stack variables by offset from the frame register, with their bytes.
+  /// The stack register, when the stack pointer is tracked.
+  std::string_view stackRegister;
+  /// The frame's base as an offset from the stack pointer at entry: the frame
+  /// register's value, or the entry stack pointer without one.  Variables
+  /// lie below it and arguments above the return address and saved frame
+  /// pointer.
+  std::int64_t frameBase = 0;
+  /// Stack variables by offset from the frame's base, with their bytes.
   std::map<std::int64_t, unsigned> frame;
 };
 struct StringItem {
@@ -992,7 +1011,7 @@ struct Listing::Impl {
     const char *raw =
         disasmEx
             ? disasmEx(session, address, static_cast<int>(count),
-                       NEVERD_DISASM_FLOW)
+                       NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK)
             : neverd_disasm_json(session, address, static_cast<int>(count));
     const auto rows = takeJson(raw);
     std::vector<Instruction> result;
@@ -1015,6 +1034,15 @@ struct Listing::Impl {
           if (auto kind = parseRefKind(ref.value("kind", std::string())))
             instruction.refs.push_back(
                 {jsonAddress(ref.value("to", Json())), *kind});
+      if (const auto sp = row.find("sp"); sp != row.end()) {
+        StackMove move;
+        move.known = sp->is_number_integer();
+        if (move.known) {
+          move.delta = sp->get<std::int64_t>();
+          move.base = row.value("sp_base", std::string());
+        }
+        instruction.stackMove = std::move(move);
+      }
       if (!instruction.size)
         break;
       result.push_back(std::move(instruction));
@@ -1022,11 +1050,12 @@ struct Listing::Impl {
     return result;
   }
 
-  /// The stack variables of a function whose prologue sets up a frame
-  /// pointer (`push rbp; mov rbp, rsp`, after an optional endbr).  An offset
-  /// the function addresses starts a variable typed by its first sized access
-  /// in address order (a byte when only its address is taken), unless it
-  /// falls inside the variable below it.
+  /// The stack variables of a function: offsets it addresses through the
+  /// frame register its prologue sets up (`push rbp; mov rbp, rsp`, after an
+  /// optional endbr), or through the stack register where the stack pointer
+  /// is tracked.  An offset starts a variable as wide as its widest access (a
+  /// byte when only its address is taken), unless it falls inside the
+  /// variable below it.
   void buildFrame(DecodedFunction &body) const {
     const auto &instructions = body.instructions;
     std::size_t first = 0;
@@ -1034,29 +1063,38 @@ struct Listing::Impl {
            (instructions[first].mnemonic == "endbr64" ||
             instructions[first].mnemonic == "endbr32"))
       ++first;
-    if (first + 1 >= instructions.size() ||
-        instructions[first].mnemonic != "push" ||
-        instructions[first + 1].mnemonic != "mov")
-      return;
+    if (first + 1 < instructions.size() &&
+        instructions[first].mnemonic == "push" &&
+        instructions[first + 1].mnemonic == "mov") {
 #define NEVERD_X86_FRAME_REGISTER(Name, PrologueSource)                        \
   if (instructions[first].operands == Name &&                                  \
       instructions[first + 1].operands ==                                      \
           std::string(Name) + ", " + PrologueSource)                           \
     body.frameRegister = Name;
 #include "ListingVocabulary.def"
-    if (body.frameRegister.empty())
+    }
+    // The pushed frame pointer sits between the return address and the
+    // frame register's value.
+    if (!body.frameRegister.empty())
+      body.frameBase = -static_cast<std::int64_t>(pointerSize);
+    trackStack(body);
+    if (body.frameRegister.empty() && body.stackRegister.empty())
       return;
-    // Offset -> bytes of its first sized access, or zero.
+    // Offset -> bytes of its widest access, or zero.
     std::map<std::int64_t, unsigned> accesses;
     for (const auto &instruction : instructions) {
-      const auto access =
-          x86FrameAccess(instruction.operands, body.frameRegister);
+      std::optional<FrameAccess> access;
+      if (!body.frameRegister.empty())
+        access = x86FrameAccess(instruction.operands, body.frameRegister);
+      if (const auto depth = stackDepth(body, instruction); !access && depth)
+        if ((access = x86FrameAccess(instruction.operands, body.stackRegister)))
+          access->offset -= *depth;
       // The saved frame pointer and return address are not variables.
-      if (!access || (access->offset >= 0 && access->offset < argumentBase()))
+      if (!access ||
+          (access->offset >= 0 && access->offset < argumentBase(body)))
         continue;
       auto &size = accesses[access->offset];
-      if (!size)
-        size = access->size;
+      size = std::max(size, access->size);
     }
     std::int64_t covered = std::numeric_limits<std::int64_t>::min();
     for (const auto &[offset, size] : accesses) {
@@ -1068,16 +1106,124 @@ struct Listing::Impl {
     }
   }
 
-  /// Frame offset of the first stack argument: above the saved frame pointer
-  /// and the return address.
-  std::int64_t argumentBase() const {
-    return 2 * static_cast<std::int64_t>(pointerSize);
+  /// The stack pointer's offset from its entry value before each instruction,
+  /// carried from the entry along fallthrough and direct branches inside the
+  /// body with the engine's stack moves.  An instruction that paths reach
+  /// with different offsets, or after a move the engine cannot state, gets
+  /// none, and neither do instructions only an indirect jump reaches.  Only
+  /// code with 8-byte pointers is tracked: there a callee returns with the
+  /// stack pointer its caller had, while a 32-bit callee may also pop its
+  /// arguments.
+  void trackStack(DecodedFunction &body) const {
+    auto &instructions = body.instructions;
+    if (!wide || instructions.empty() ||
+        std::any_of(instructions.begin(), instructions.end(),
+                    [](const Instruction &i) { return !i.stackMove; }))
+      return;
+#define NEVERD_X86_STACK_REGISTER(Name, PointerBytes)                          \
+  if (PointerBytes == pointerSize)                                             \
+    body.stackRegister = Name;
+#include "ListingVocabulary.def"
+    if (body.stackRegister.empty())
+      return;
+    enum class State : std::uint8_t { Unseen, Known, Conflicting };
+    std::vector<State> state(instructions.size(), State::Unseen);
+    std::vector<std::int64_t> delta(instructions.size(), 0);
+    std::vector<std::size_t> work;
+    const auto reach = [&](std::size_t index,
+                           std::optional<std::int64_t> value) {
+      if (state[index] == State::Conflicting ||
+          (state[index] == State::Known && value && delta[index] == *value))
+        return;
+      state[index] = state[index] == State::Unseen && value
+                         ? State::Known
+                         : State::Conflicting;
+      if (value)
+        delta[index] = *value;
+      work.push_back(index);
+    };
+    const auto indexOf =
+        [&](std::uint64_t address) -> std::optional<std::size_t> {
+      const auto it =
+          std::lower_bound(instructions.begin(), instructions.end(), address,
+                           [](const Instruction &i, std::uint64_t value) {
+                             return i.address < value;
+                           });
+      if (it == instructions.end() || it->address != address)
+        return std::nullopt;
+      return static_cast<std::size_t>(it - instructions.begin());
+    };
+    reach(0, 0);
+    while (!work.empty()) {
+      const auto index = work.back();
+      work.pop_back();
+      const Instruction &instruction = instructions[index];
+      const StackMove &move = *instruction.stackMove;
+      std::optional<std::int64_t> after;
+      if (move.known && move.base.empty() && state[index] == State::Known)
+        after = delta[index] + move.delta;
+      // Relative to the frame register, wherever the stack pointer was.
+      else if (move.known && !move.base.empty() &&
+               move.base == body.frameRegister)
+        after = body.frameBase + move.delta;
+      const auto next = [&] {
+        if (index + 1 < instructions.size())
+          reach(index + 1, after);
+      };
+      const auto branch = [&] {
+        if (instruction.target)
+          if (const auto to = indexOf(*instruction.target))
+            reach(*to, after);
+      };
+      switch (instruction.flow) {
+      case Flow::Return:
+      case Flow::IndirectJump:
+        break;
+      case Flow::Jump:
+        branch();
+        break;
+      case Flow::CondJump:
+        branch();
+        next();
+        break;
+      default:
+        next();
+        break;
+      }
+    }
+    for (std::size_t index = 0; index < instructions.size(); ++index)
+      if (state[index] == State::Known)
+        instructions[index].stackDelta = delta[index];
   }
 
-  std::string frameName(std::int64_t offset) const {
+  /// The distance from the stack pointer down from the frame's base before
+  /// \p instruction, when it is known and the instruction's operands address
+  /// the stack as it is before the instruction: one that does not move the
+  /// stack pointer.
+  std::optional<std::int64_t> stackDepth(const DecodedFunction &body,
+                                         const Instruction &instruction) const {
+    if (body.stackRegister.empty() || !instruction.stackDelta ||
+        !instruction.stackMove || !instruction.stackMove->known ||
+        !instruction.stackMove->base.empty() ||
+        instruction.stackMove->delta != 0)
+      return std::nullopt;
+    const std::int64_t depth = body.frameBase - *instruction.stackDelta;
+    if (depth < 0)
+      return std::nullopt;
+    return depth;
+  }
+
+  /// Frame offset of the first stack argument: above the return address and
+  /// the saved frame pointer, if any.
+  std::int64_t argumentBase(const DecodedFunction &body) const {
+    return static_cast<std::int64_t>(pointerSize) - body.frameBase;
+  }
+
+  std::string frameName(const DecodedFunction &body,
+                        std::int64_t offset) const {
     return offset < 0 ? std::string(LocalPrefix) + upperHex(-offset)
                       : std::string(ArgumentPrefix) +
-                            upperHex(offset - argumentBase());
+                            upperHex(offset - argumentBase(body));
   }
 
   /// The frame variable that \p offset falls in.
@@ -1089,7 +1235,7 @@ struct Listing::Impl {
     const auto &[start, size] = *std::prev(next);
     if (offset >= start + static_cast<std::int64_t>(size))
       return std::nullopt;
-    return FrameSlot{frameName(start), offset - start, size};
+    return FrameSlot{frameName(body, start), offset - start, size};
   }
 
   const DecodedFunction &decode(int index) {
@@ -1684,6 +1830,10 @@ struct Listing::Impl {
         return frameSlot(*body, offset);
       };
       facts.frameRegister = body->frameRegister;
+      if (const auto depth = stackDepth(*body, instruction)) {
+        facts.stackRegister = body->stackRegister;
+        facts.stackDepth = *depth;
+      }
       facts.frame = &frame;
     }
     for (const auto &[to, kind] : instruction.refs)
@@ -1745,7 +1895,7 @@ struct Listing::Impl {
         addLine(out, item, item.start, "blank", {});
         for (const auto &[offset, size] : body.frame) {
           StyledText line = lead(base - NameColumnWidth);
-          line.append(frameName(offset), ListingRole::Plain);
+          line.append(frameName(body, offset), ListingRole::Plain);
           line.padTo(base);
           line.append("= ", ListingRole::Punctuation);
           line.append(std::string(x86SizeKeyword(size)) + " ptr",

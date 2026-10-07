@@ -400,6 +400,16 @@ NEVERD_X86_FRAME_REGISTER("rbp", "rsp")
 NEVERD_X86_FRAME_REGISTER("ebp", "esp")
 #undef NEVERD_X86_FRAME_REGISTER
 
+// NEVERD_X86_STACK_REGISTER(Name, PointerBytes): the stack pointer of code
+// with PointerBytes-byte pointers.  Operands based on it name stack variables
+// wherever the stack pointer's distance from the frame is known.
+#ifndef NEVERD_X86_STACK_REGISTER
+#define NEVERD_X86_STACK_REGISTER(Name, PointerBytes)
+#endif
+NEVERD_X86_STACK_REGISTER("rsp", 8)
+NEVERD_X86_STACK_REGISTER("esp", 4)
+#undef NEVERD_X86_STACK_REGISTER
+
 // NEVERD_FUNCTION_ATTRIBUTE(Id, Spelling): function attributes, in the order
 // a function header lists them.
 #ifndef NEVERD_FUNCTION_ATTRIBUTE

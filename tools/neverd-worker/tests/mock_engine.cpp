@@ -203,7 +203,28 @@ int neverd_read_bytes(neverd_session_t, neverd_va_t address,
 // Each 16-byte fixture function is one-byte instructions: nops, a jump back
 // to its entry at offset 8 and a return at offset 15.
 constexpr std::uint64_t JumpOffset = 8, ReturnOffset = 15;
-Json fixtureInstructions(neverd_va_t address, int count, bool flow) {
+/// function_5 keeps a frame without a frame pointer: offset -> mnemonic,
+/// operands and stack pointer move.  Its loop back to the entry restores the
+/// stack pointer, and the code after the loop is unreachable.
+struct FrameRow {
+  const char *mnemonic, *operands;
+  int move;
+};
+const std::map<std::uint64_t, FrameRow> FrameFunction = {
+    {0, {"push", "rbx", -8}},
+    {1, {"sub", "rsp, 0x20", -0x20}},
+    {2, {"mov", "qword ptr [rsp + 0x18], rax", 0}},
+    {3, {"lea", "rdi, [rsp + 8]", 0}},
+    {4, {"mov", "rax, qword ptr [rsp + 0x30]", 0}},
+    {5, {"movups", "xmmword ptr [rsp + 8], xmm0", 0}},
+    {6, {"add", "rsp, 0x20", 0x20}},
+    {7, {"pop", "rbx", 8}},
+    {9, {"mov", "rax, qword ptr [rsp + 8]", 0}},
+};
+constexpr std::uint64_t FrameFunctionEntry = Base + 0x50;
+
+Json fixtureInstructions(neverd_va_t address, int count, bool flow,
+                         bool stack) {
   Json result = Json::array();
   for (int i = 0; i < count && address >= Base && address + i - Base < 9600;
        ++i) {
@@ -215,6 +236,15 @@ Json fixtureInstructions(neverd_va_t address, int count, bool flow) {
                 {"mnemonic", "nop"},
                 {"op_str", ""},
                 {"bytes", "90"}};
+    if (stack)
+      row["sp"] = 0;
+    if (const auto frame = FrameFunction.find(offset);
+        entry == FrameFunctionEntry && frame != FrameFunction.end()) {
+      row["mnemonic"] = frame->second.mnemonic;
+      row["op_str"] = frame->second.operands;
+      if (stack)
+        row["sp"] = frame->second.move;
+    }
     if (offset == JumpOffset) {
       row["mnemonic"] = "jmp";
       row["op_str"] = hexAddress(entry);
@@ -236,13 +266,14 @@ Json fixtureInstructions(neverd_va_t address, int count, bool flow) {
 const char *neverd_disasm_json(neverd_session_t s, neverd_va_t address,
                                int count) {
   session(s)->error.clear();
-  return copy(fixtureInstructions(address, count, false).dump());
+  return copy(fixtureInstructions(address, count, false, false).dump());
 }
 const char *neverd_disasm_json_ex(neverd_session_t s, neverd_va_t address,
                                   int count, unsigned options) {
   session(s)->error.clear();
-  return copy(
-      fixtureInstructions(address, count, options & NEVERD_DISASM_FLOW).dump());
+  return copy(fixtureInstructions(address, count, options & NEVERD_DISASM_FLOW,
+                                  options & NEVERD_DISASM_STACK)
+                  .dump());
 }
 const char *neverd_code_refs_json(neverd_session_t s, neverd_va_t firstEntry,
                                   int maxFunctions) {

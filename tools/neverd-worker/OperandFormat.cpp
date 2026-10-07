@@ -452,11 +452,20 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
         appendX86Token(out, compact[index + 2]);
       }
     };
-    // A variable of the function's frame: `[rbp+rax*4+var_290]`.  Its type
-    // states the size unless the access differs from it.
-    if (facts.frame && parsed.base &&
-        lower(compact[*parsed.base].text) == facts.frameRegister)
-      if (const auto slot = (*facts.frame)(parsed.displacement)) {
+    // A variable of the function's frame: `[rbp+rax*4+var_290]`, or through
+    // the stack register `[rsp+48h+var_30]`, which names its distance below
+    // the frame's base.  The variable's type states the size unless the
+    // access differs from it.
+    const auto baseName =
+        parsed.base ? lower(compact[*parsed.base].text) : std::string();
+    const bool viaFrame =
+        !facts.frameRegister.empty() && baseName == facts.frameRegister;
+    const bool viaStack = facts.stackDepth && !facts.stackRegister.empty() &&
+                          baseName == facts.stackRegister;
+    if (facts.frame && (viaFrame || viaStack))
+      if (const auto slot =
+              (*facts.frame)(viaStack ? parsed.displacement - *facts.stackDepth
+                                      : parsed.displacement)) {
         appendPrefix(slot->delta == 0 &&
                      sizeBits(sizeKeyword) == slot->size * 8);
         out.append("[", ListingRole::Punctuation);
@@ -464,6 +473,11 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
         if (parsed.index) {
           out.append("+", ListingRole::Punctuation);
           appendIndex();
+        }
+        if (viaStack && *facts.stackDepth) {
+          out.append("+", ListingRole::Punctuation);
+          out.append(x86Number(static_cast<std::uint64_t>(*facts.stackDepth)),
+                     ListingRole::Number);
         }
         out.append("+", ListingRole::Punctuation);
         out.append(slot->name, ListingRole::Plain);

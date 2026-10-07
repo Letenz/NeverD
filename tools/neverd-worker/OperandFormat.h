@@ -84,9 +84,14 @@ struct OperandFacts {
   std::vector<std::uint64_t> references;
   /// Instruction bytes as lowercase hexadecimal, or empty.
   std::string_view bytes;
-  /// The frame register and variables of a function with a frame pointer.
+  /// The variables of the function's frame and the frame register, when its
+  /// prologue sets one up.
   std::string_view frameRegister;
   const FrameNamer *frame = nullptr;
+  /// The stack register and its distance below the frame's base at this
+  /// instruction, when known: operands through it name frame variables too.
+  std::string_view stackRegister;
+  std::optional<std::int64_t> stackDepth;
 };
 
 /// A memory operand relative to a frame register.

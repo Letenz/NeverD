@@ -233,6 +233,16 @@ def run(executable):
         assert any(text.strip() == "; __unwind {" for text in code), code
         assert any(text.strip() == "; } // starts at FFFF800012340000" for text in code), code
         assert any(text.strip() == "; __unwind { // __gxx_personality_v0" for text in code), code
+        # function_5 has no frame pointer: its stack variables are named from
+        # the tracked stack pointer, except where no path reaches.
+        frame = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012340050", "before": 0, "after": 40})["payload"]["lines"]]
+        for expected in ("var_20 = xmmword ptr -20h", "var_10 = qword ptr -10h", "arg_0 = qword ptr 8",
+                         "mov [rsp+28h+var_10], rax", "lea rdi, [rsp+28h+var_20]",
+                         "mov rax, [rsp+28h+arg_0]", "movups [rsp+28h+var_20], xmm0",
+                         "mov rax, [rsp+8]"):
+            assert any(text.endswith(expected) for text in frame), (expected, frame)
+        assert not any("bp-based frame" in text for text in frame), frame
         # IR constant references require whole-program analysis.
         assert client.call("xrefs", {"address": BASE, "source": "ir"})["payload"]["items"][0]["address"] == "0xffff800012340008"
         client.close()

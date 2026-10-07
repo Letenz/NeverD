@@ -78,7 +78,9 @@ variables, unwind frame markers, `proc`/`endp`, `loc_` and `locret_` labels,
 data items, alignment and cross-reference comments, and the classic instruction
 spellings (`jz`, `retn`, `[rbp+var_30]`, sizes only where no operand implies
 them), with `segment:address` prefixes and optional opcode bytes (**Options →
-General**). Only a window of lines around the viewport is held; the scroll bar
+General**). Stack variables are named through the frame pointer and, in 64-bit
+code, through the stack pointer wherever every path agrees on its distance
+from the frame (`[rsp+48h+var_30]`); each is as wide as its widest access. Only a window of lines around the viewport is held; the scroll bar
 maps to the linear address space. The arrow gutter draws branches, and clicking
 an identifier highlights every occurrence. Names the engine leaves generic take
 their classic forms in the listing, function list and jumps: import thunks after

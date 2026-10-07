@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <string>
 
 using namespace neverd::worker;
@@ -41,7 +42,8 @@ struct Format {
   bool wide = true;
 };
 
-std::string format(const Format &input, const FrameNamer *frame = nullptr) {
+std::string format(const Format &input, const FrameNamer *frame = nullptr,
+                   std::optional<std::int64_t> stackDepth = std::nullopt) {
   OperandFacts facts;
   facts.dialect = OperandDialect::X86;
   facts.mnemonic = input.mnemonic;
@@ -52,6 +54,8 @@ std::string format(const Format &input, const FrameNamer *frame = nullptr) {
   if (frame) {
     facts.frameRegister = "rbp";
     facts.frame = frame;
+    facts.stackRegister = "rsp";
+    facts.stackDepth = stackDepth;
   }
   return formatOperands(input.operands, facts,
                         [](std::uint64_t, NameUse, std::string_view) {
@@ -60,8 +64,9 @@ std::string format(const Format &input, const FrameNamer *frame = nullptr) {
       .text();
 }
 
-void expectFormat(const Format &input, const FrameNamer *frame = nullptr) {
-  const auto text = format(input, frame);
+void expectFormat(const Format &input, const FrameNamer *frame = nullptr,
+                  std::optional<std::int64_t> stackDepth = std::nullopt) {
+  const auto text = format(input, frame, stackDepth);
   check(text == input.expected,
         std::string(input.mnemonic) + " " + std::string(input.operands) +
             " became " + text + ", not " + std::string(input.expected));
@@ -125,8 +130,8 @@ int main() {
                 "word ptr cs:[rax+rax+00000000h]"});
   expectFormat({"nop", "dword ptr [rax]", "0f1f00", "dword ptr [rax]"});
 
-  // Frame variables: typed by their first access; an access inside a larger
-  // variable names it with an offset and keeps its own size.
+  // Frame variables: sized by their widest access; an access inside a
+  // larger variable names it with an offset and keeps its own size.
   const std::map<std::int64_t, unsigned> variables = {
       {-0x88, 1}, {-0x78, 16}, {-0x30, 8}, {0x10, 8}};
   const FrameNamer frame =
@@ -162,6 +167,21 @@ int main() {
                &frame);
   // Offsets outside every variable stay numeric.
   expectFormat({"mov", "rax, qword ptr [rbp - 8]", "", "rax, [rbp-8]"}, &frame);
+  // Through the stack pointer, with its distance down from the frame's base.
+  expectFormat(
+      {"mov", "qword ptr [rsp + 0x18], rax", "", "[rsp+48h+var_30], rax"},
+      &frame, 0x48);
+  expectFormat({"lea", "rdi, [rsp - 0x40]", "", "rdi, [rsp+48h+var_88]"},
+               &frame, 0x48);
+  expectFormat({"mov", "rcx, qword ptr [rsp + rax*8 + 0x18]", "",
+                "rcx, [rsp+rax*8+48h+var_30]"},
+               &frame, 0x48);
+  // At the frame's base the distance is left out.
+  expectFormat({"mov", "rax, qword ptr [rsp + 0x10]", "", "rax, [rsp+arg_0]"},
+               &frame, 0);
+  // Without a known distance the operand stays numeric.
+  expectFormat({"mov", "qword ptr [rsp + 0x18], rax", "", "[rsp+18h], rax"},
+               &frame);
 
   const auto access = x86FrameAccess("dword ptr [rbp - 0x34], edi", "rbp");
   check(access && access->offset == -0x34 && access->size == 4,
