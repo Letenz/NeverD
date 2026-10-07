@@ -1486,3 +1486,6 @@ MainActor 測試資料檢查完整的固定中繼資料與靜態表流程，拒�
 `ContextFiniteProofs.*` 檢查上下文與擁有者隔離、擁有者替換、權杖移動、精確謂詞與有序投影、節點追加、完整與不完整結果、儲存上限及 LRU 淘汰。框架測試要求快取前完成最終唯一性查詢，並在命中時保留符號節點限額。
 
 `CompletedQueryCache.*` 涵蓋完整位元組域答案、所有緊湊槽位、成長、環境及所有者隔離、無效與不完整輸入及精確儲存邊界。原生分支迴歸維持固定邏輯查詢成本、精確預算與少一預算拒絕，即使完整答案省去了後端工作。
+
+
+`BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` 檢查帶分支變更和符號框架寫入的重複原生目標鏈、固定邏輯開銷、精確及少一次查詢預算、無效目標限額、閘預算耗盡和錯誤終點觀察。交錯的框架與相關目標投影還在謂詞替換前後保持完整元組、觀察順序及不完整結果拒絕。

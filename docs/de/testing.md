@@ -1656,3 +1656,6 @@ Die MainActor-Fixture prüft den vollständigen Ablauf für feste Metadaten und 
 `ContextFiniteProofs.*` prüft Kontext- und Besitzerisolation, Besitzerersatz, Token-Verschiebung, genaue Prädikate und Projektionsreihenfolge, Knotenwachstum, vollständige und unvollständige Ergebnisse, Speichergrenzen und LRU-Verdrängung. Frame-Tests verlangen die letzte Eindeutigkeitsabfrage vor dem Speichern und erhalten die Knotengrenze bei Cache-Treffern.
 
 `CompletedQueryCache.*` prüft vollständige Byte-Domänen, alle gepackten Plätze, Wachstum, Kontext- und Besitzerisolation, ungültige und unvollständige Eingaben sowie exakte Speichergrenzen. Native Verzweigungstests behalten feste logische Abfragekosten und exakte beziehungsweise um eins zu kleine Budgets, auch wenn vollständige Antworten Backend-Arbeit vermeiden.
+
+
+`BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` prüfen wiederholte native Zielketten mit Zweigwechseln und symbolischen Frame-Schreibzugriffen, feste logische Kosten, exakte und um eine Anfrage zu kleine Budgets, ungültige Zielgrenzen, erschöpfte Gate-Budgets und falsche Endbeobachtungen. Abwechselnde Frame- und korrelierte Zielprojektionen bewahren auch beim Prädikatwechsel vollständige Tupel, Beobachterreihenfolge und die Ablehnung unvollständiger Ergebnisse.

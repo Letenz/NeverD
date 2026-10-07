@@ -1448,3 +1448,6 @@ MainActor 测试数据检查完整的固定元数据与静态表流程，拒绝�
 `ContextFiniteProofs.*` 检查上下文与所有者隔离、所有者替换、令牌移动、精确谓词与有序投影、节点追加、完整与不完整结果、存储上限及 LRU 淘汰。帧测试要求缓存前完成最终唯一性查询，并在命中时保留符号节点限额。
 
 `CompletedQueryCache.*` 覆盖完整字节域答案、所有紧凑槽位、增长、上下文及所有者隔离、无效与不完整输入和精确存储边界。原生分支回归保持固定逻辑查询成本、精确预算和少一预算拒绝，即使完整答案省去了后端工作。
+
+
+`BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` 检查带分支变化和符号帧写入的重复原生目标链、固定逻辑开销、精确及少一次查询预算、无效目标限额、门预算耗尽和错误终点观察。交错的帧与相关目标投影还在谓词替换前后保持完整元组、观察顺序及不完整结果拒绝。
