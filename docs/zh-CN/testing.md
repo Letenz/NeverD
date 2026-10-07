@@ -1481,5 +1481,3 @@ MainActor 测试数据检查完整的固定元数据与静态表流程，拒绝�
 `ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: `ProcessCPUClocksRetainIdentityAndIdleSeparation`、`ProcessCPUClocksKeepMissingObservationBoundaries` 与 `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle` 检查八种固定版本的 raw／Bionic 身份、PROF／VIRT／SCHED、低 32 位参数、目标校验先于指针故障、观察值缺失、别名、CPU 非负值及墙钟／CPU 空闲分离。`AndroidTimeTests.cpp` 检查输出和哨兵；协作式 syscall 样例检查当前非首领 TID 的进程组样本。
 
 `ZeroTimeoutPollRetainsReadinessAndOrderedCopies` 覆盖八个 GKI 分支的 O0／O2 原始调用，检查存活／负数／已关闭描述符、重复计数、参数收窄、超时／掩码顺序、只读零 timespec、全部元数据先于就绪，以及后续故障保留较早 `revents`。`ZeroTimeoutPollKeepsUnobservedBoundaries` 保留内核、限额、掩码、等待和就绪状态的未知边界。Android 的 `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` 在六种打包配置中复验共享表和 errno 所有权。
-
-`CancelledDirectRunPublishesACompleteBoundary` 验证确认直接执行取消时发布完整状态。`FailedDirectCapturePreservesStateAndForcesFullRetry` 要求取消期间寄存器、XSAVE 或元数据捕获失败时保持调用者状态，随后完整重试；两个 XSAVE API 版本均不能发布部分寄存器前缀。

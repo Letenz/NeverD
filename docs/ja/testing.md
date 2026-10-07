@@ -1573,5 +1573,3 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 `ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: 八つの固定版で raw／Bionic の識別、PROF／VIRT／SCHED、下位 32 ビット、ポインター故障より先の対象検証、標本欠落、別名、非負 CPU 時間、壁時計と CPU のアイドル分離を確認します。`AndroidTimeTests.cpp` は出力とカナリアを、協調 syscall は現在の非リーダー TID を確認します。
 
 `ZeroTimeoutPollRetainsReadinessAndOrderedCopies` は八版の O0／O2 生呼び出しで、生存・負・閉じた記述子、重複件数、引数の縮小、タイムアウトとマスクの順序、読み取り専用ゼロ timespec、全メタデータの先行取り込み、後続障害で残る `revents` を検証します。`ZeroTimeoutPollKeepsUnobservedBoundaries` は未観測のカーネル、上限、マスク、待機、準備状態を維持します。Android の `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` は六つの梱包形式で共有表と errno の所有者を確認します。
-
-`CancelledDirectRunPublishesACompleteBoundary` は直接実行のキャンセル確認時の完全な状態を検証します。`FailedDirectCapturePreservesStateAndForcesFullRetry` はキャンセル中にレジスター、XSAVE、メタデータの取得が失敗した場合に呼び出し元の状態を保ち、完全再試行を要求します。どちらの XSAVE API もレジスターの一部分を公開できません。
