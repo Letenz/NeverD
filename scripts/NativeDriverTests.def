@@ -39,8 +39,51 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverKernelSEH.KernelSSEContinuationUsesTopLevelControlsAndAllRegisters")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverKernelSEH.KernelSSEFilterEditsPreserveUnwindAndRejectX87")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.WaitAllLeavesPartialSignalsAndMutexUnacquired")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.WaitAnyChoosesLowestIndexAndConsumesOnlyThatObject")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.DeferredWaitCapturesObjectsAndOriginalIndices")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.CompletedWaitCannotConsumeAnotherRegistrationsSignal")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.CapturedWaitStateRejectsAlterationBeforeAcquisition")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.CompletedDelayCannotReuseItsRegistration")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.TimeoutReleasesEveryObjectAndCallerBufferReference")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.InvalidLaterObjectCannotConsumeEarlierSignal")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.MaximumCountUsesCallerBlocksAndPreservesBoundaryBytes")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.InvalidCallerStorageAndTypeHaveNoAcquisitionEffects")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.DispatchLevelAllowsOnlyZeroTimeoutPolling")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.ThreadReferenceSurvivesHandleAndPointerRetirement")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.LateMutexIRQLFailureCannotPartiallyAcquireWaitAll")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait."
+    "WaitAllRetainsBothTimerSignalsUntilEveryConditionIsReady")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelMultipleWait.ExitedThreadWinsItsIndexWithoutConsumingAnotherSignal")
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_CASES
+NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
+    "Native/"
+    "DriverMultipleWait.OriginalWaitSetsPreserveSignalsAndThreadLifetimes/"
+    "{backend}_driver_",
+    "unittests/emulation/fixtures/DriverMultipleWaitCases.def",
+    "NEVERD_MULTI_WAIT_CASE")
+NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
+    "Native/"
+    "DriverMultipleWait.OriginalWaitSetsPreserveSignalsAndThreadLifetimes/"
+    "{backend}_checked_",
+    "unittests/emulation/fixtures/DriverMultipleWaitCases.def",
+    "NEVERD_MULTI_WAIT_CASE")
 NEVERD_NATIVE_DRIVER_REQUIRED_CASES(
     "Native/DriverMutexThread.NestedAndBlockedCallsRetainThreadOwnership/"
     "{backend}_driver_",

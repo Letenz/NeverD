@@ -1166,6 +1166,8 @@ Windows asynchronous support.
 
 `DriverMutexThreadTests.cpp` executes four original WDK modes from `driver_seh_mutex.def`: recursion from an SEH filter, ownership acquired by a filter or exceptional finally, and a blocked filter resumed after another system thread releases the mutex. Unicorn/KVM/WHP driver and checked contracts cover normal/active-CFG images, preferred/rebased addresses and cooperative/1/17-instruction quanta. Model tests also check APC suppression after nested stack retirement, wrong-thread release and the outermost return guard; KVM/WHP outcomes are mandatory in `NativeDriverTests.def`.
 
+`KernelWaitSetTests.cpp` runs fifteen portable model cases without Unicorn: partial `WaitAll`, first-ready `WaitAny`, captured indices, timeout cleanup, rejected late objects/storage, 64-object boundaries, IRQL, retained exited threads and two synchronization timers. `DriverMultipleWaitTests.cpp` executes seven original WDK modes from `driver_wdm_multiple_wait.c` and `DriverMultipleWaitCases.def` across Unicorn/KVM/WHP, both driver contracts, normal/CFG images, relocation and cooperative/1/17-instruction quanta. The 29 model/native outcomes are mandatory in `NativeDriverTests.def`. Regressions also cover stale completion after success or timeout, altered captured state and repeated delay completion.
+
 `DriverAsyncTests.cpp` submits two pending WDM IOCTLs on independent file
 objects with `defer_callback_drain`, then checks that both dispatches precede
 either worker and that each IRP completes with its own output. A second batch
@@ -2413,9 +2415,9 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 `windows-alignment-oracle.yml` uses `check_windows_alignment.py` and `WindowsAlignmentCases.def` to collect 72 original x64 Windows exception observations: nine aligned SSE forms across seven misaligned address/permission cases and an aligned inaccessible-page control. It retains exception codes, parameters, fault PCs, saved contexts, raw output and source/binary hashes, and verifies unchanged inputs and RAM. These observations establish OS behavior only; they neither certify KVM/WHP execution nor add SEH support.
 
-With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 46 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
+With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 48 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 226 WHP outcomes from all 113 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 46 WDK images and 40 request scenarios, each at original and rebased addresses. Together with the 4887 CPU checks and 25 SEH regressions and 77 scheduling checks, 5215 outcomes are mandatory. Fixed images retain their expected rebase rejection. Missing or skipped WDK images/scenarios fail this opt-in job; ordinary local builds keep external fixtures optional. `run_native_cpu_ci.py --with-drivers` records the configured owners and complete inventory/JUnit evidence. Building these images does not establish native Windows or ARM64 execution. Local reproduction uses the following commands; the generated cache can also be loaded into an existing emulation build. `4887 CPU + 226 WHP + 25 SEH + 77 scheduling = 5215`.
+`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `4933 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5294`. The 29 wait-set checks comprise fifteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 
@@ -2483,6 +2485,8 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 `NeverDInstructionFetchTests` executes x64/ARM64 checked programs through Unicorn, KVM and WHP at supervisor and user privilege. `InstructionFetchCases.def` covers changing operand forms and relative branches, guest and host writes through code aliases, context restoration, permission revocation, separate page backing, page-tail lookahead, invalid/truncated encodings and recursive entry rejection. Native Windows CI requires every x64 WHP case to pass. Unavailable host/ISA pairs are explicit skips; portable ARM64 execution does not establish native ARM64 support.
 
 `WhpStateTransferTests.cpp` checks both XSAVE API generations with injected register transfers: exact changed groups, complete capture, ignored padding, partial failures, cancellation, exception priority and partition replacement. `ContinuedStepsReuseCapturedRegistersAndFP` counts avoided installs; `PartialTransferFailuresPreserveStateAndForceFullRetry` requires complete restoration. These are protocol checks, not native execution evidence; existing native FP, state-transition, driver and ring3 suites remain required.
+
+`CancelledDirectRunPublishesACompleteBoundary` verifies complete state at an acknowledged direct-run cancellation. `FailedDirectCapturePreservesStateAndForcesFullRetry` requires unchanged caller state when register, XSAVE or metadata capture fails during cancellation, followed by a complete retry; neither API generation may publish a partial register prefix.
 
 `WhpStateTransferCases.def` also covers every partial prefix of the combined 32-register capture and conflicts in all seven metadata fields. Both XSAVE API generations must preserve caller state and force a complete retry. The same suite checks one register read per step and recovers omitted XSAVE metadata from that read.
 
@@ -2688,7 +2692,13 @@ A missing library anywhere in a `GetProcAddress` forwarder chain returns error 1
 
 `WindowsLifetimeTests.cpp` compares frozen traces with independent native Windows processes and KVM/WHP/Unicorn execution: normal exit, entry return, both DLL initialization failures, four early exits and DLLs without entry points. It separately checks callback faults, shared budgets, relocated TLS fields and aggregate TLS capacity. The native entry-return probe retains the initial thread handle and checks its exit code and exact thread/process notification sequence in 64 repetitions. Remaining child threads are terminated after observation; their process exit is not treated as the entry return value.
 
-`NeverDUnpackTests`, `NeverDUnpackExecutionTests` and `NeverDUnpackPublicTests` cover packed-image recovery; see [unpacking](unpack.md). `UnpackGeneratedTests.cpp` checks the entry rules on x86-64 and ARM64 with a program the test packs itself. `X64ReturnPrefixTests.cpp` checks the two-byte near return on every transport and that every other prefixed return stays rejected. `WindowsDeferredTests.cpp` checks opaque entries and stopped-process observation; `ExecutionSessionTests.cpp` checks execution watches.
+`NeverDUnpackTests`, `NeverDUnpackExecutionTests` and `NeverDUnpackPublicTests` cover packed-image recovery; see [unpacking](unpack.md). `UnpackGeneratedTests.cpp` checks the entry rules on x86-64 and ARM64 with a program the test packs itself. `X64ReturnPrefixTests.cpp` checks the two-byte near return on every transport and that every other prefixed return stays rejected. `WindowsDeferredTests.cpp` checks opaque entries and stopped-process observation; `ExecutionSessionTests.cpp` checks execution watches. `DirectX64Tests.cpp` checks partial-page watches, cross-page instructions, one-instruction resumption, service traps, invalid instructions and deadline state on Unicorn/KVM/WHP; native CI requires the matching KVM/WHP cases.
+
+`ExtendedRegistersLoadOrdinaryImportsAgain` executes compact and padded R8-R15 import loads through checked and direct x64 execution. Low-register cases cover a preceding REX-shaped byte and CALL-only address helpers. Padded call helpers skip arbitrary bytes after CALL. `ImportCallHelpersCannotDiscardPersistentEffects` requires persistent helper effects to remain observable. `PERebuildTests.cpp` rejects missing start/result evidence and overlapping starts, and preserves the exact API return address for six- to eight-byte call windows.
+
+`OpaqueExportCallsAreRepairedBeforeTheExplicitStop` restores a pure call without bypassing an unknown API. `ExportObservationIncludesTheOpaqueBoundary` covers static, dynamic and ordinal exports without changing execution or service logs. `OpaqueExportObservationPreservesAnUnreadableReturn` requires missing return metadata to remain absent.
+
+`ExportIdentitySurvivesRebindingAndLateResolution` changes opaque-export binding order and resolves an export after entry. Checked/direct x64 cases require the correct API identity and preserve the explicit unsupported-service stop.
 
 Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` and current-process `FlushInstructionCache`. The OS layer owns reservations; `AddressSpace` remains the authority for committed pages, permissions and backing. Tests cover dynamic code rewriting, access faults and memory-budget reuse.
 
@@ -3020,6 +3030,8 @@ SVC with Bionic `syscall`, preserving distinct raw return/errno effects.
 Run these focused tests, the full Linux process and public process suites,
 and Android syscall, native-entry and signal suites for availability changes.
 
+`AndroidTestExecution.def` gives `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` an aggregate CTest timeout of 120 seconds and `RUN_SERIAL`. Each of its two workloads retains its own finite 30-second runtime budget; serialization prevents capacity stress cases from timing out through contention. All six O0/O2 and relocation variants use this policy.
+
 `LinuxPIDFD.*` checks released GKI branch parsing and rejects invalid enum values
 or an absent-pidfd observation combined with GKI before image loading. It also
 rejects malformed, excessive and contradictory task catalogues before loading.
@@ -3044,8 +3056,18 @@ unknown observations, target validation, aliases and idle behavior. The
 `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle` unit case
 checks the shared observation owner, and input cases reject aliases,
 unobserved/nonleader targets and negative CPU time before loading.
+`ZeroTimeoutPollRetainsReadinessAndOrderedCopies` executes O0/O2 raw callers
+for every released GKI branch. It checks live/negative/closed entries, duplicate
+ready counts, argument narrowing, timeout/mask ordering, read-only zero
+timespecs, metadata-before-readiness admission and earlier revents before a
+later write fault. `ZeroTimeoutPollKeepsUnobservedBoundaries` retains unknown
+kernel, limit, masks, waits and descriptor readiness. Android's
+`ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` checks the same table and
+errno ownership across all six packing profiles.
 Run these first,
 then the complete Linux process, Android native and
 public process suites when changing shared kernel or descriptor semantics.
 These tests execute the model; they do not boot the eight pinned GKI kernels.
 See [released GKI contracts](android-gki-kernels.md).
+
+`FrameOffsets.Cached*` covers translated addresses with arbitrary high root bits, unsigned wrap, sum-shape changes, both cache modes, predicate separation, zero capacity, query/node budget refusals, and distinct empty/nonunique domains. Cold requests retain complete solver proofs; later translations may use an already completed proof with no remaining query budget.

@@ -358,6 +358,7 @@ PnP FDO では、`WdfDeviceInitSetDeviceType` が指定した 32 ビットの型
 | `KeSetPriorityThread`, `KeQueryPriorityThread` | `PASSIVE_LEVEL` の実行時優先度。設定は 1..31 で以前の値を返し、決定的な初期値は 8 です。既知のスレッドオブジェクトが必要です。`scheduling` で優先度スケジューリングを有効にします。動的ブーストとプロセス優先度クラスは未対応です。 [driver-scheduling.md](driver-scheduling.md) |
 | `KeEnterCriticalRegion`, `KeLeaveCriticalRegion`, `KeEnterGuardedRegion`, `KeLeaveGuardedRegion`, `KeAreApcsDisabled`, `KeAreAllApcsDisabled` | スレッドごとの入れ子の APC 無効化状態。クリティカル領域と保持中の KMUTEX は通常の APC を、ガード領域と IRQL >= APC_LEVEL は全 APC を無効化する。システムスレッドは一つのクリティカル領域内で開始する。不一致の終了や領域を残した復帰は失敗する。APC 配信は未対応。 |
 | `KeWaitForSingleObject` | 初期化済みイベント、タイマー、セマフォまたはミューテックス一個。非アラート `KernelMode`、理由 `Executive`。ゼロのポーリング、有限の相対／絶対または無限待機。非ゼロ／無限待機は IRQL <= APC_LEVEL |
+| `KeWaitForMultipleObjects` | 非アラート可能な `KernelMode`／`Executive` による 1..64 対象の `WaitAll`／`WaitAny`。3 個を超える場合は非ページ `KWAIT_BLOCK` が必要です。原子的取得、配列インデックス、スレッド参照、タイムアウト時の解放は[ドライバーのスケジューリング](driver-scheduling.md)を参照してください。 |
 | `KeDelayExecutionThread` | IRQL <= APC_LEVEL で非アラート `KernelMode` の相対／絶対遅延。仮想時間が進むと保存したゲストフレームを再開 |
 | `IoMarkIrpPending` | 現在の生存する IRP を保留にする。WDM マクロによるスタック制御フィールドへの等価な書き込みにも対応。ディスパッチは `STATUS_PENDING` を返す必要がある |
 | `IofCompleteRequest`、`IoCompleteRequest` | `IO_NO_INCREMENT` で完了を展開。停止／再開をサポートし、最終展開時にだけ IRP／MDL／バッファーを解放 |

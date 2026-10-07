@@ -3,26 +3,24 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-// One row per module. A container format or a protector is added by naming
-// it in Unpack.def, adding its row here and providing its directory; the
-// orchestration reaches every module only through these registries.
+// One row per container module. The orchestration reaches formats only
+// through this registry; no protector supplies execution or rebuild rules.
 // Kind, namespace of the module under lib/unpack/format.
 #ifdef NEVERD_UNPACK_FORMAT_MODULE
 NEVERD_UNPACK_FORMAT_MODULE(PE64, pe)
-#endif
-// Kind, namespace of the module under lib/unpack/packers. Identification
-// tries protectors in this order and names the first one whose evidence is
-// complete.
-#ifdef NEVERD_UNPACK_PACKER_MODULE
-NEVERD_UNPACK_PACKER_MODULE(UPX, upx)
 #endif
 
 #ifdef NEVERD_UNPACK_VALUE
 // The granule of guest page permissions and execution watches.
 NEVERD_UNPACK_VALUE(PageSize, 4096)
+NEVERD_UNPACK_VALUE(MaxImportHelperSites, 256)
+NEVERD_UNPACK_VALUE(ImportLookbackBytes, 256)
 #endif
 
 #ifdef NEVERD_UNPACK_PRIVATE_TEXT
+NEVERD_UNPACK_PRIVATE_TEXT(ImportRepairSetupFailed, "setup_failure")
+NEVERD_UNPACK_PRIVATE_TEXT(ImportHelperLimit,
+                           "import-helper candidate limit reached")
 // Rebuilt metadata lives in one appended extent so that no original byte of
 // the recovered program is displaced.
 NEVERD_UNPACK_PRIVATE_TEXT(MetadataSection, ".neverd")
@@ -45,7 +43,4 @@ NEVERD_UNPACK_PRIVATE_TEXT(UnknownName, "unknown unpacking enumerator")
 NEVERD_UNPACK_PRIVATE_TEXT(
     NoEntry, "execution ended before a transfer into generated code was "
              "accepted as the entry: ")
-NEVERD_UNPACK_PRIVATE_TEXT(
-    DeclaredEntry, "the identified stub names a different entry than the "
-                   "transfer that was observed; the observed entry was kept")
 #endif

@@ -11,6 +11,7 @@
 
 #include "KernelAPINames.h"
 #include "KernelModel.h"
+#include "KernelWaits.h"
 #include "WindowsKernelLayout.h"
 
 #include <algorithm>
@@ -647,189 +648,6 @@ std::optional<uint64_t> KernelModel::nextEventTime() const {
   return Deadline;
 }
 
-std::optional<KernelModel::Wait> KernelModel::takeWait() {
-  return std::exchange(PendingWait, std::nullopt);
-}
-
-llvm::Expected<uint64_t> KernelModel::beginWait(llvm::ArrayRef<uint64_t> A,
-                                                bool Delay) {
-  const uint8_t Mode = A[Delay ? 0 : 2];
-  const uint8_t Alertable = A[Delay ? 1 : 3];
-  if (Mode != windows::KernelMode || Alertable)
-    return schedulingError(
-        "wait requires KernelMode and nonalertable execution");
-  if (!Delay && A[1] != windows::ExecutiveWaitReason)
-    return schedulingError("only Executive wait reason is currently modeled");
-  const uint64_t TimeoutAddress = A[Delay ? 2 : 4];
-  if (Delay && !TimeoutAddress)
-    return schedulingError("KeDelayExecutionThread requires an interval");
-  Wait Pending;
-  Pending.Type = Delay                          ? Wait::Kind::Delay
-                 : SystemThreads.contains(A[0]) ? Wait::Kind::Thread
-                                                : Wait::Kind::Dispatcher;
-  Pending.Object = Delay ? 0 : A[0];
-  Pending.Execution = CurrentExecution;
-  Pending.Thread = CurrentThreadKey;
-  Pending.IRQL = CurrentIRQL;
-  bool PollOnly = false;
-  if (TimeoutAddress) {
-    if (auto E = validateGuestAccess(TimeoutAddress, sizeof(int64_t), false))
-      return E;
-    auto Raw = Memory.readInteger(TimeoutAddress, sizeof(int64_t));
-    if (!Raw)
-      return Raw.takeError();
-    auto Deadline = Scheduler.computeDeadline(std::bit_cast<int64_t>(*Raw));
-    if (!Deadline)
-      return Deadline.takeError();
-    Pending.Deadline = *Deadline;
-    PollOnly = !*Raw;
-  }
-  if (CurrentIRQL >
-      ((!Delay && PollOnly) ? scheduler::DispatchLevel : windows::APCLevel))
-    return schedulingError("blocking wait requires IRQL <= APC_LEVEL");
-  if (!Delay) {
-    if (Pending.Type == Wait::Kind::Thread) {
-      const auto &Thread = SystemThreads.at(Pending.Object);
-      if (!Thread.PointerReferences)
-        return schedulingError(
-            "thread wait requires a referenced object pointer");
-      if (Scheduler.active() && Thread.CallbackID == Scheduler.active()->ID)
-        return schedulingError("system thread cannot wait on itself");
-      if (Thread.Exited)
-        return windows::StatusSuccess;
-    } else {
-      auto Acquired =
-          Dispatcher.tryAcquire(Pending.Object, Pending.Thread, Pending.IRQL);
-      if (!Acquired)
-        return Acquired.takeError();
-      if (*Acquired)
-        return windows::StatusSuccess;
-    }
-  }
-  if (Pending.Deadline && *Pending.Deadline <= Scheduler.now100ns())
-    return Delay ? windows::StatusSuccess : windows::StatusTimeout;
-  if (PendingWait)
-    return schedulingError("previous deferred wait was not consumed");
-  if (Pending.Object)
-    ++WaitReferences[Pending.Object];
-  PendingWait = Pending;
-  // The session does not expose this placeholder as a guest return or event
-  // result. It saves the complete call frame until pollWait returns a status.
-  return 0;
-}
-
-llvm::Expected<std::optional<uint32_t>>
-KernelModel::pollWait(const Wait &Pending) {
-  if (Pending.Type == Wait::Kind::PoFxActive ||
-      Pending.Type == Wait::Kind::PoFxIdle) {
-    auto Operation = BlockingPoFx.find(Pending.Thread);
-    if (Operation == BlockingPoFx.end() ||
-        Operation->second.Handle != Pending.Object)
-      return schedulingError("PoFx wait lost its blocking operation");
-    auto Ready =
-        PoFx.conditionReached(Pending.Object, Operation->second.Component,
-                              Pending.Type == Wait::Kind::PoFxActive);
-    if (!Ready)
-      return Ready.takeError();
-    if (!Operation->second.Completed && !*Ready)
-      return std::optional<uint32_t>{};
-    BlockingPoFx.erase(Operation);
-    return std::optional<uint32_t>{windows::StatusSuccess};
-  }
-  if (Pending.Type == Wait::Kind::FrameworkWaitLock)
-    return pollFrameworkWaitLock(Pending);
-  if (Pending.Type == Wait::Kind::FrameworkCallback ||
-      Pending.Type == Wait::Kind::FrameworkCallbackLock)
-    return pollFrameworkCallback(Pending);
-  if (Pending.Type == Wait::Kind::FrameworkInterruptLock) {
-    auto Acquired =
-        Interrupts.tryAcquirePassive(Pending.Object, Pending.Execution);
-    if (!Acquired)
-      return Acquired.takeError();
-    if (!*Acquired)
-      return std::optional<uint32_t>{};
-    FrameworkInterruptLocks.emplace(
-        std::make_pair(Pending.Execution, Pending.Object),
-        scheduler::PassiveLevel);
-    return std::optional<uint32_t>{windows::StatusSuccess};
-  }
-  if (Pending.Type == Wait::Kind::InterruptSynchronization) {
-    auto Ready = Interrupts.reserveSynchronization(Pending.Object);
-    if (!Ready)
-      return Ready.takeError();
-    return *Ready ? std::optional<uint32_t>{windows::StatusSuccess}
-                  : std::optional<uint32_t>{};
-  }
-  if (Pending.Type == Wait::Kind::FrameworkIdle) {
-    if (!Framework)
-      return schedulingError("StopIdle wait lost the framework");
-    return Framework->powerPolicyWait(Pending.Object);
-  }
-  if (Pending.Type == Wait::Kind::FrameworkFileSend) {
-    if (!Framework)
-      return schedulingError("synchronous file wait lost its framework");
-    auto Waiting = Framework->synchronousFileSendPending(Pending.Object);
-    if (!Waiting)
-      return schedulingError("synchronous file wait lost its request");
-    return *Waiting ? std::optional<uint32_t>{} : std::optional<uint32_t>{1};
-  }
-  if (Pending.Type == Wait::Kind::FrameworkQueueStop ||
-      Pending.Type == Wait::Kind::FrameworkQueueEmpty) {
-    if (!Framework)
-      return schedulingError("framework queue wait lost its binding");
-    auto Ready = Framework->queueWaitReady(
-        Pending.Object, Pending.Type == Wait::Kind::FrameworkQueueEmpty);
-    if (!Ready)
-      return Ready.takeError();
-    return *Ready ? std::optional<uint32_t>{windows::StatusSuccess}
-                  : std::optional<uint32_t>{};
-  }
-  if (Pending.Type == Wait::Kind::RemoveLock) {
-    auto Drained = RemoveLocks.drained(Pending.Object);
-    if (!Drained)
-      return Drained.takeError();
-    if (!*Drained)
-      return std::optional<uint32_t>{};
-    auto Reference = RemoveLockWaitReferences.find(Pending.Object);
-    if (Reference == RemoveLockWaitReferences.end() || !Reference->second)
-      return schedulingError("remove-lock wait lost its storage reference");
-    if (!--Reference->second)
-      RemoveLockWaitReferences.erase(Reference);
-    return std::optional<uint32_t>{windows::StatusSuccess};
-  }
-  bool Signaled = false;
-  if (Pending.Object) {
-    if (Pending.Type == Wait::Kind::Thread) {
-      auto Thread = SystemThreads.find(Pending.Object);
-      if (Thread == SystemThreads.end())
-        return schedulingError("thread wait lost its object");
-      Signaled = Thread->second.Exited;
-    } else {
-      auto Acquired =
-          Dispatcher.tryAcquire(Pending.Object, Pending.Thread, Pending.IRQL);
-      if (!Acquired)
-        return Acquired.takeError();
-      Signaled = *Acquired;
-    }
-  }
-  const bool Expired =
-      Pending.Deadline && *Pending.Deadline <= Scheduler.now100ns();
-  if (!Signaled && !Expired)
-    return std::optional<uint32_t>{};
-  if (Pending.Object) {
-    auto Reference = WaitReferences.find(Pending.Object);
-    if (Reference == WaitReferences.end() || !Reference->second)
-      return schedulingError("wait lost its dispatcher object reference");
-    if (!--Reference->second)
-      WaitReferences.erase(Reference);
-    if (Pending.Type == Wait::Kind::Thread)
-      retireThreadIfUnreferenced(Pending.Object);
-  }
-  return std::optional<uint32_t>{Signaled || !Pending.Object
-                                     ? windows::StatusSuccess
-                                     : windows::StatusTimeout};
-}
-
 llvm::Error KernelModel::prepareReleaseRange(uint64_t Base, uint64_t Size,
                                              uint64_t IgnoredDMAPin) {
   return prepareReleaseRanges({{Base, Size}}, IgnoredDMAPin);
@@ -864,6 +682,10 @@ llvm::Error KernelModel::canRevokeVirtualRange(
   for (const auto &[Object, References] : WaitReferences)
     if (References && Object >= Base && Object < Base + Size)
       return schedulingError("cannot release storage with outstanding waits");
+  for (const auto &[Range, References] : WaitBlockReferences)
+    if (References && Range.first < Base + Size &&
+        Base < Range.first + Range.second)
+      return schedulingError(kernel_wait::BufferInUse);
   if (auto E = canReleaseRemoveLockStorage(Base, Size))
     return E;
   return Dispatcher.canReleaseRange(Base, Size);

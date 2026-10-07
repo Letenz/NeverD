@@ -62,6 +62,11 @@ ARCHITECTURE_CAPABILITY_TOKENS = {
 }
 GUIDE_STEMS = ("evm", "sbf", "android", "ios")
 MACOS_GUIDE_STEMS = ("macos-hvf", "darwin-emulation")
+EMULATION_DOC_INVENTORY = Path("scripts/EmulationDocumentation.def")
+EMULATION_GUIDE_STEMS = tuple(re.findall(
+    r'NEVERD_EMULATION_DOC_GUIDE\(\s*"([^\"]+)"\s*\)',
+    (REPO_ROOT / EMULATION_DOC_INVENTORY).read_text(encoding="utf-8"),
+))
 SBF_GUIDE_DOCS = (
     Path("docs/sbf.md"),
     *(Path(f"docs/{locale}/sbf.md") for locale in LOCALES),
@@ -773,6 +778,9 @@ LOCALIZED_DOCS = tuple(path for locale in LOCALES for path in localized_paths(lo
 MARKDOWN_DOCS = ENGLISH_DOCS + LOCALIZED_DOCS + (
     Path("docs/driver-scheduling.md"),
     *(Path(f"docs/{locale}/driver-scheduling.md") for locale in LOCALES),
+    *(Path(f"docs/{stem}.md") for stem in EMULATION_GUIDE_STEMS),
+    *(Path(f"docs/{locale}/{stem}.md")
+      for locale in LOCALES for stem in EMULATION_GUIDE_STEMS),
 )
 MOBILE_OVERVIEW_DOCS = (
     Path("docs/mobile.md"),
@@ -3013,14 +3021,14 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
 
     # Execution contracts and document paths stay in the .def inventory, so
     # every locale is checked against one set of semantic entry points.
-    inventory = view.read_text(Path("scripts/EmulationDocumentation.def"))
+    inventory = view.read_text(EMULATION_DOC_INVENTORY)
     doc_tokens: dict[str, list[str]] = defaultdict(list)
     for group, token in re.findall(
-        r'NEVERD_EMULATION_DOC_TOKEN\((\w+), "([^\"]+)"\)', inventory
+        r'NEVERD_EMULATION_DOC_TOKEN\(\s*(\w+),\s*"([^\"]+)"\s*\)', inventory
     ):
         doc_tokens[group].append(token)
     for group, pattern in re.findall(
-        r'NEVERD_EMULATION_DOC_PATH\((\w+), "([^\"]+)"\)', inventory
+        r'NEVERD_EMULATION_DOC_PATH\(\s*(\w+),\s*"([^\"]+)"\s*\)', inventory
     ):
         paths = [pattern.format(locale=locale) for locale in LOCALES]
         for path in dict.fromkeys(paths):

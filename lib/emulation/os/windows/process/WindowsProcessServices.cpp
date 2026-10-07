@@ -196,12 +196,105 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
   case API::VirtualProtect:
   case API::VirtualQuery:
   case API::FlushInstructionCache:
+  case API::WriteProcessMemory:
     return Wrap(memory(S, Event));
   case API::HeapAlloc:
+  case API::RtlAllocateHeap:
   case API::HeapReAlloc:
+  case API::RtlReAllocateHeap:
   case API::HeapFree:
+  case API::RtlFreeHeap:
   case API::HeapSize:
+  case API::RtlSizeHeap:
+  case API::HeapCreate:
+  case API::HeapSetInformation:
     return Wrap(heap(S, Event));
+  case API::ZwOpenFile:
+    return Wrap(openImage(S, Event));
+  case API::ZwCreateSection:
+    return Wrap(createSection(S, Event));
+  case API::ZwMapViewOfSection:
+    return Wrap(mapSection(S, Event));
+  case API::ZwUnmapViewOfSection:
+    return Wrap(unmapSection(S, Event));
+  case API::ZwClose:
+    return Wrap(closeHandle(S, Event));
+  case API::ZwProtectVirtualMemory:
+    return Wrap(protectMemory(S, Event));
+  case API::ZwQuerySystemInformation:
+    return Wrap(querySystem(S, Event));
+  case API::ZwQueryInformationProcess:
+    return Wrap(queryProcess(S, Event));
+  case API::ZwQueryInformationThread:
+    return Wrap(queryThread(S, Event));
+  case API::ZwSetInformationThread:
+    return Wrap(setThread(S, Event));
+  case API::ZwDelayExecution:
+    return Wrap(delay(S, Event));
+  case API::GetSystemTimeAsFileTime:
+  case API::GetTickCount:
+  case API::QueryPerformanceCounter:
+    return Wrap(clock(S, Event));
+  case API::EncodePointer:
+  case API::DecodePointer:
+  case API::RtlEncodePointer:
+  case API::RtlDecodePointer:
+    return Wrap(encodePointer(S, Event));
+  case API::InitializeCriticalSection:
+  case API::InitializeCriticalSectionAndSpinCount:
+  case API::RtlInitializeCriticalSection:
+  case API::RtlInitializeCriticalSectionAndSpinCount:
+  case API::EnterCriticalSection:
+  case API::LeaveCriticalSection:
+  case API::TryEnterCriticalSection:
+  case API::RtlEnterCriticalSection:
+  case API::RtlLeaveCriticalSection:
+  case API::RtlTryEnterCriticalSection:
+    return Wrap(criticalSection(S, Event));
+  case API::GetCommandLineA:
+  case API::GetStartupInfoA:
+  case API::GetFileType:
+  case API::SetHandleCount:
+  case API::GetACP:
+  case API::IsValidCodePage:
+  case API::GetCPInfo:
+  case API::GetStringTypeW:
+  case API::WideCharToMultiByte:
+  case API::MultiByteToWideChar:
+  case API::LCMapStringW:
+  case API::GetModuleFileNameA:
+    return Wrap(crt(S, Event));
+  case API::CreateToolhelp32Snapshot:
+  case API::Thread32First:
+  case API::Thread32Next:
+  case API::CloseHandle:
+  case API::GetSystemInfo:
+  case API::RtlSetThreadErrorMode:
+    return Wrap(toolhelp(S, Event));
+  case API::FlsAlloc:
+    for (uint32_t I = 0; I < DynamicTLSCount; ++I) {
+      if (FLSSlots[I])
+        continue;
+      FLSSlots.set(I);
+      FLSValues[I] = 0;
+      return Value(I);
+    }
+    return WinError(ErrorNotEnoughMemory, TLSOutOfIndexes);
+  case API::FlsFree:
+  case API::FlsGetValue:
+  case API::FlsSetValue: {
+    const uint32_t Index = A[0];
+    if (Index >= DynamicTLSCount || !FLSSlots[Index])
+      return WinError(ErrorInvalidParameter, 0);
+    if (S.Kind == API::FlsGetValue)
+      return WinError(ErrorSuccess, FLSValues[Index]);
+    if (S.Kind == API::FlsFree) {
+      FLSSlots.reset(Index);
+      FLSValues.erase(Index);
+    } else
+      FLSValues[Index] = A[1];
+    return Value(1);
+  }
   case API::GetStdHandle:
     switch (uint32_t(A[0])) {
     case StdInputSelector:

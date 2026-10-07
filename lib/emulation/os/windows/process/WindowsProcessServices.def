@@ -28,6 +28,61 @@ NEVERD_WINDOWS_PROCESS_API(HeapAlloc, Kernel, 3, true)
 NEVERD_WINDOWS_PROCESS_API(HeapReAlloc, Kernel, 4, true)
 NEVERD_WINDOWS_PROCESS_API(HeapFree, Kernel, 3, true)
 NEVERD_WINDOWS_PROCESS_API(HeapSize, Kernel, 3, true)
+// Opens the loaded program file. Any other object name stops.
+NEVERD_WINDOWS_PROCESS_API(ZwOpenFile, Native, 6, true)
+// Read-only SEC_COMMIT section of a file opened above.
+NEVERD_WINDOWS_PROCESS_API(ZwCreateSection, Native, 7, true)
+// The call has ten arguments. The process record holds eight, and the model
+// reads the trailing allocation type and protection from the x64 stack.
+NEVERD_WINDOWS_PROCESS_API(ZwMapViewOfSection, Native, 8, true)
+NEVERD_WINDOWS_PROCESS_API(ZwUnmapViewOfSection, Native, 2, true)
+NEVERD_WINDOWS_PROCESS_API(ZwClose, Native, 1, true)
+NEVERD_WINDOWS_PROCESS_API(ZwProtectVirtualMemory, Native, 5, true)
+// SystemBasicInformation only. Any other class stops.
+NEVERD_WINDOWS_PROCESS_API(ZwQuerySystemInformation, Native, 4, true)
+// ProcessBasicInformation for the current process only.
+NEVERD_WINDOWS_PROCESS_API(ZwQueryInformationProcess, Native, 5, true)
+// ThreadBasicInformation for the current thread only.
+NEVERD_WINDOWS_PROCESS_API(ZwQueryInformationThread, Native, 5, true)
+// ThreadHideFromDebugger for the current thread. The call is acknowledged.
+NEVERD_WINDOWS_PROCESS_API(ZwSetInformationThread, Native, 4, true)
+// A relative interval is waited, and capped, on the host clock.
+NEVERD_WINDOWS_PROCESS_API(ZwDelayExecution, Native, 2, true)
+NEVERD_WINDOWS_PROCESS_API(GetSystemTimeAsFileTime, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(GetTickCount, Kernel, 0, true)
+NEVERD_WINDOWS_PROCESS_API(QueryPerformanceCounter, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(HeapCreate, Kernel, 3, true)
+NEVERD_WINDOWS_PROCESS_API(HeapSetInformation, Kernel, 4, true)
+NEVERD_WINDOWS_PROCESS_API(EncodePointer, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(DecodePointer, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(InitializeCriticalSection, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(InitializeCriticalSectionAndSpinCount, Kernel, 2,
+                           true)
+NEVERD_WINDOWS_PROCESS_API(EnterCriticalSection, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(LeaveCriticalSection, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(TryEnterCriticalSection, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(FlsAlloc, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(FlsFree, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(FlsGetValue, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(FlsSetValue, Kernel, 2, true)
+NEVERD_WINDOWS_PROCESS_API(GetCommandLineA, Kernel, 0, true)
+NEVERD_WINDOWS_PROCESS_API(GetStartupInfoA, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(GetFileType, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(SetHandleCount, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(GetACP, Kernel, 0, true)
+NEVERD_WINDOWS_PROCESS_API(IsValidCodePage, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(GetCPInfo, Kernel, 2, true)
+NEVERD_WINDOWS_PROCESS_API(GetStringTypeW, Kernel, 4, true)
+NEVERD_WINDOWS_PROCESS_API(WideCharToMultiByte, Kernel, 8, true)
+NEVERD_WINDOWS_PROCESS_API(MultiByteToWideChar, Kernel, 6, true)
+NEVERD_WINDOWS_PROCESS_API(LCMapStringW, Kernel, 6, true)
+NEVERD_WINDOWS_PROCESS_API(GetModuleFileNameA, Kernel, 3, true)
+NEVERD_WINDOWS_PROCESS_API(CreateToolhelp32Snapshot, Kernel, 2, true)
+NEVERD_WINDOWS_PROCESS_API(Thread32First, Kernel, 2, true)
+NEVERD_WINDOWS_PROCESS_API(Thread32Next, Kernel, 2, true)
+NEVERD_WINDOWS_PROCESS_API(CloseHandle, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(GetSystemInfo, Kernel, 1, true)
+NEVERD_WINDOWS_PROCESS_API(RtlSetThreadErrorMode, Native, 2, true)
 NEVERD_WINDOWS_PROCESS_API(TlsAlloc, Kernel, 0, true)
 NEVERD_WINDOWS_PROCESS_API(TlsFree, Kernel, 1, true)
 NEVERD_WINDOWS_PROCESS_API(TlsSetValue, Kernel, 2, true)
@@ -39,6 +94,9 @@ NEVERD_WINDOWS_PROCESS_API(LoadLibraryA, Kernel, 1, true)
 NEVERD_WINDOWS_PROCESS_API(FreeLibrary, Kernel, 1, true)
 NEVERD_WINDOWS_PROCESS_API(GetProcAddress, Kernel, 2, true)
 NEVERD_WINDOWS_PROCESS_API(VirtualAlloc, Kernel, 4, true)
+// Current process only. A non-writable destination is made writable for the
+// copy and then restored, which is the hook write onto an image page.
+NEVERD_WINDOWS_PROCESS_API(WriteProcessMemory, Kernel, 5, true)
 NEVERD_WINDOWS_PROCESS_API(VirtualFree, Kernel, 3, true)
 NEVERD_WINDOWS_PROCESS_API(VirtualProtect, Kernel, 4, true)
 NEVERD_WINDOWS_PROCESS_API(VirtualQuery, Kernel, 3, true)
@@ -55,6 +113,28 @@ NEVERD_WINDOWS_PROCESS_NAMED_API(CSpecificHandler, "__C_specific_handler",
                                  Native, 4, true)
 NEVERD_WINDOWS_PROCESS_NAMED_API(NativeCaptureContext, "RtlCaptureContext",
                                  Native, 1, true)
+NEVERD_WINDOWS_PROCESS_NAMED_API(RtlAllocateHeap, "RtlAllocateHeap", Native, 3,
+                                 true)
+NEVERD_WINDOWS_PROCESS_NAMED_API(RtlReAllocateHeap, "RtlReAllocateHeap", Native,
+                                 4, true)
+NEVERD_WINDOWS_PROCESS_NAMED_API(RtlFreeHeap, "RtlFreeHeap", Native, 3, true)
+NEVERD_WINDOWS_PROCESS_NAMED_API(RtlSizeHeap, "RtlSizeHeap", Native, 3, true)
+NEVERD_WINDOWS_PROCESS_NAMED_API(RtlEncodePointer, "RtlEncodePointer", Native,
+                                 1, true)
+NEVERD_WINDOWS_PROCESS_NAMED_API(RtlDecodePointer, "RtlDecodePointer", Native,
+                                 1, true)
+NEVERD_WINDOWS_PROCESS_NAMED_API(RtlInitializeCriticalSection,
+                                 "RtlInitializeCriticalSection", Native, 1,
+                                 true)
+NEVERD_WINDOWS_PROCESS_NAMED_API(RtlInitializeCriticalSectionAndSpinCount,
+                                 "RtlInitializeCriticalSectionAndSpinCount",
+                                 Native, 2, true)
+NEVERD_WINDOWS_PROCESS_NAMED_API(RtlEnterCriticalSection,
+                                 "RtlEnterCriticalSection", Native, 1, true)
+NEVERD_WINDOWS_PROCESS_NAMED_API(RtlLeaveCriticalSection,
+                                 "RtlLeaveCriticalSection", Native, 1, true)
+NEVERD_WINDOWS_PROCESS_NAMED_API(RtlTryEnterCriticalSection,
+                                 "RtlTryEnterCriticalSection", Native, 1, true)
 #endif
 // A restriction declares both the provider and the known absence from the
 // other modules in its family. It does not turn unrelated unknown exports into

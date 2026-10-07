@@ -355,6 +355,8 @@ fixture 覆盖来宾初始化、成功与失败返回、不支持的行为、内
 
 `DriverMutexThreadTests.cpp` 执行 `driver_seh_mutex.def` 中四种原创 WDK 模式：在 SEH 过滤器中递归获取、过滤器或异常 finally 获取后保留所有权，以及过滤器阻塞并在另一系统线程释放 mutex 后恢复。Unicorn／KVM／WHP 的 driver 和 checked 契约覆盖普通／有效 CFG 映像、首选／重定位地址及协作式／1／17 指令时间片。模型测试还验证嵌套栈退役后的 APC 禁用、错误线程释放和最外层返回检查；KVM／WHP 用例纳入 `NativeDriverTests.def` 强制清单。
 
+`KernelWaitSetTests.cpp` 在不依赖 Unicorn 的情况下运行十五项模型测试：部分 `WaitAll`、首个就绪 `WaitAny`、索引快照、超时清理、后续非法对象／存储、64 对象边界、IRQL、已退出线程保留及两个同步定时器。`DriverMultipleWaitTests.cpp` 执行 `driver_wdm_multiple_wait.c` 和 `DriverMultipleWaitCases.def` 的七种原创 WDK 模式，覆盖 Unicorn/KVM/WHP、两种驱动契约、普通／CFG 映像、重定位及协作式／1／17 指令时间片。29 项模型／原生结果纳入 `NativeDriverTests.def` 强制验收。 回归还覆盖成功或超时后的重复完成、捕获状态被改动以及延时等待的重复完成。
+
 `driver_context_limits.c`: API 的 IRQL 上限来自 `KernelAPIIRQL.def`，参数相关限制由所属模型检查。DPC 不能调用注册表 API，也不能分配、释放或访问分页池；Unicode `DbgPrint` 转换要求 `PASSIVE_LEVEL`，支持的 ANSI 输出和非分页操作仍可在 `DISPATCH_LEVEL` 使用。回调栈有明确边界，越界栈指针不能进入另一阻塞工作项的栈。设备扩展中的已启动定时器会阻止设备提前回收。这些检查并未开放通用 IRQL 切换。
 
 `KernelDeviceStackTests.cpp` 检查独立的所有者／附着关系、栈顶选择、失败原子性、栈容量、不透明字段、打开句柄计数、拆链／删除时的工作项及请求保活，以及文件身份与派发栈顶的区别。原创 `driver_wdm_stack.c` 使用真实 WDK 头文件和内联 Copy/Skip/SetCompletion；普通／启用 CFG 映像由可选 `NEVERD_WDM_STACK_FIXTURE`／`NEVERD_WDM_STACK_CFG_FIXTURE` 配置。`DriverWDMStackTests.cpp` 覆盖重定位、真实下层状态、完成顺序和标志、延迟 pending 传播、工作项／DPC、等待、`STATUS_MORE_PROCESSING_REQUIRED`、直接 MDL 保留、嵌套完成及畸形游标／控制值。`DriverScenarioPublicTests.cpp` 覆盖 C API／CLI 转发及 C API 保留／嵌套完成，包括已配置 CFG 映像。缺少产物会明确跳过；Linux 证据仅证明同驱动设备栈子集，不代表 PDO／PnP／电源支持。 `KernelIRPStackTests.cpp` 检查计数游标、完整内联 Copy 前缀、已消耗栈位置清零、状态／pending 传播、MPR 与嵌套完成、续接所有者检查及保留路径。真实 READ/WRITE 与文件生命周期也使用内联 Copy 验证。
@@ -1138,9 +1140,9 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 `windows-alignment-oracle.yml` 通过 `check_windows_alignment.py` 和 `WindowsAlignmentCases.def` 收集 72 项原创 x64 Windows 异常观测：九种对齐 SSE 形式分别覆盖七种非对齐地址/权限场景，以及一个已对齐但页面不可访问的对照。它保留异常代码、参数、故障 PC、保存的上下文、原始输出和源码/二进制哈希，并验证输入与 RAM 未改变。这些观测仅建立 OS 行为依据，不代表 KVM/WHP 执行验收，也不新增 SEH 支持。
 
-在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 46 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
+在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 48 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 和 `DriverBackendParityCases.def` 中全部 113 个工作负载产生 226 个 WHP 结果：27 个内置映像、46 个 WDK 映像和 40 个请求场景，均覆盖原地址与重定位地址。加上 4887 项 CPU 检查及 25 项 SEH 回归及 77 项调度检查，共有 5215 项必测结果。固定位址映像保留预期的重定位拒绝。缺失或跳过 WDK 映像与场景会使这项可选 CI 任务失败；普通本地构建仍允许不提供外部样例。`run_native_cpu_ci.py --with-drivers` 记录已配置的测试目标及完整的发现清单和 JUnit 证据。构建成功不代表 Windows 或 ARM64 原生执行已验证。本地可用以下命令复现，也可将生成的缓存载入现有模拟构建。 `4887 CPU + 226 WHP + 25 SEH + 77 scheduling = 5215`.
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `4933 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5294`。29 项等待集合检查包含十五项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1209,6 +1211,8 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 
 `WhpStateTransferTests.cpp` 对两代 XSAVE API 注入寄存器传输，检查精确变化组、完整捕获、填充忽略、部分失败、取消、异常优先级及分区重建。`ContinuedStepsReuseCapturedRegistersAndFP` 统计省略的安装；`PartialTransferFailuresPreserveStateAndForceFullRetry` 要求完整恢复。这些是协议检查，不是原生执行证据；既有原生 FP、状态转换、驱动和 ring3 测试仍为必要验证。
 
+`CancelledDirectRunPublishesACompleteBoundary` 验证 direct 执行确认取消后发布的完整状态。`FailedDirectCapturePreservesStateAndForcesFullRetry` 要求取消期间寄存器、XSAVE 或元数据捕获失败时保留调用方状态，随后完整重试；两代 API 都不得发布部分寄存器前缀。
+
 `WhpStateTransferCases.def` 还覆盖合并后的 32 寄存器读取中每个部分前缀失败，以及全部七个元数据字段冲突。两代 XSAVE API 均须保持调用方状态并在重试时完整恢复。同一套测试核对每步仅一次寄存器读取，以及从该读取补齐 XSAVE 省略的元数据。
 
 `windows-pe64-v1` 支持有界 Windows x64/ARM64 控制台进程，包括 PEB/TEB、静态和动态 TLS、`DllMain`、具名 Win32 API 和显式无环 DLL 图。客户模块支持按名称／序号导入代码及数据、DIR64 重定位、转发导出和真实加载器链表身份。`LoadLibraryA`／`LoadLibraryW`、`FreeLibrary` 和 `GetProcAddress` 使用配置的模块目录。CRT／GUI、ARM64 基于栈帧的用户态 SEH、线程和通用 Windows 应用兼容性仍待完成；原生 ARM64 KVM/WHP 证据仍缺失。
@@ -1249,7 +1253,13 @@ Windows ring3 按独立原生观测，将 checked x64 的 `operand_alignment` �
 
 `WindowsLifetimeTests.cpp` 将冻结的通知序列与独立原生 Windows 进程及 KVM/WHP/Unicorn 执行对比，覆盖正常退出、入口返回、两个 DLL 初始化失败、四处提前退出及无入口 DLL。另行验证回调故障、共享预算、重定位 TLS 字段和 TLS 总容量。原生入口返回探针保留初始线程句柄，重复64 次核对线程退出码及精确线程／进程通知序列。观察完成后终止剩余子进程线程，不将其进程退出码当作入口返回值。
 
-`NeverDUnpackTests`、`NeverDUnpackExecutionTests` 和 `NeverDUnpackPublicTests` 覆盖加壳镜像的恢复；参见[脱壳](unpack.md)。`UnpackGeneratedTests.cpp` 用测试自己加壳的程序，在 x86-64 和 ARM64 上检查入口规则。`X64ReturnPrefixTests.cpp` 在每种传输上检查双字节近返回，并确认其它带前缀的返回仍被拒绝。`WindowsDeferredTests.cpp` 检查不透明入口与已停止进程的观察；`ExecutionSessionTests.cpp` 检查执行监视。
+`NeverDUnpackTests`、`NeverDUnpackExecutionTests` 和 `NeverDUnpackPublicTests` 覆盖加壳镜像的恢复；参见[脱壳](unpack.md)。`UnpackGeneratedTests.cpp` 用测试自己加壳的程序，在 x86-64 和 ARM64 上检查入口规则。`X64ReturnPrefixTests.cpp` 在每种传输上检查双字节近返回，并确认其它带前缀的返回仍被拒绝。`WindowsDeferredTests.cpp` 检查不透明入口与已停止进程的观察；`ExecutionSessionTests.cpp` 检查执行监视。 `DirectX64Tests.cpp` 还验证直接执行的部分页监视、跨页取指、恢复后只执行一次、服务边界、非法指令和超时状态。
+
+`ExtendedRegistersLoadOrdinaryImportsAgain` 通过受检和直接 x64 执行验证紧凑及带填充的 R8-R15 导入加载。低寄存器用例覆盖前置 REX 形状字节和仅含 CALL 的地址辅助例程；带填充的调用辅助例程跳过 CALL 后的任意字节。`ImportCallHelpersCannotDiscardPersistentEffects` 要求辅助例程的持久副作用仍可观察。`PERebuildTests.cpp` 拒绝缺失起点、结果证据及重叠起点，并保持六至八字节调用窗口的精确 API 返回地址。
+
+`OpaqueExportCallsAreRepairedBeforeTheExplicitStop` 恢复纯调用且不绕过未知 API。`ExportObservationIncludesTheOpaqueBoundary` 覆盖静态、动态和序号导出，保持执行及服务日志不变。`OpaqueExportObservationPreservesAnUnreadableReturn` 要求缺失的返回信息保持缺失。
+
+`ExportIdentitySurvivesRebindingAndLateResolution` 改变不透明导出的绑定顺序，并在入口之后解析导出。checked/direct x64 用例要求正确的 API 身份，并保留明确的 unsupported-service 停止。
 
 Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及当前进程的 `FlushInstructionCache`。OS 层管理预留区域，`AddressSpace` 统一管理已提交页面、权限和物理存储。测试覆盖动态代码改写、访问故障和内存额度回收。
 
@@ -1463,3 +1473,14 @@ MainActor 测试数据检查完整的固定元数据与静态表流程，拒绝�
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` 检查带分支变化和符号帧写入的重复原生目标链、固定逻辑开销、精确及少一次查询预算、无效目标限额、门预算耗尽和错误终点观察。交错的帧与相关目标投影还在谓词替换前后保持完整元组、观察顺序及不完整结果拒绝。
+`FrameOffsets.Cached*` 覆盖根高位保持任意的地址平移、无符号回绕、和式形状变化、两种缓存模式、谓词隔离、零容量、查询／节点预算拒绝，以及空域与非唯一域的区别。首次请求保留完整求解证明；后续平移可在没有剩余查询预算时使用已经完成的证明。
+
+## 已发布 Android GKI 内核契约
+
+`AndroidTestExecution.def` 为 `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` 设置 120 秒的整项 CTest 预算与 `RUN_SERIAL`。其中两次工作负载各自保留 30 秒的有限运行预算，串行约束避免容量压力用例相互争抢资源。六种 O0/O2 与重定位配置均采用此规则。
+
+`LinuxPIDFD.*` 检查分支、枚举、缺失观察值及任务清单的加载前校验。`Backends/LinuxPIDFDProcess.*` 用八个分支的独立 x64／AArch64 O0／O2 调用程序检查标志、文件表、限额／复用、错误顺序、清单查找、非首领和单向量限长。`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` 与其他 `AndroidSyscallTests.cpp` 用例覆盖六种重定位配置的 raw／Bionic 错误和 errno。共享语义变更后运行重点用例、完整 Linux 进程、Android 原生及进程公共接口套件。这些模型测试不等于启动八种 GKI 内核；参见[源码固定版本与证据](android-gki-kernels.md)。
+
+`ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: `ProcessCPUClocksRetainIdentityAndIdleSeparation`、`ProcessCPUClocksKeepMissingObservationBoundaries` 与 `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle` 检查八种固定版本的 raw／Bionic 身份、PROF／VIRT／SCHED、低 32 位参数、目标校验先于指针故障、观察值缺失、别名、CPU 非负值及墙钟／CPU 空闲分离。`AndroidTimeTests.cpp` 检查输出和哨兵；协作式 syscall 样例检查当前非首领 TID 的进程组样本。
+
+`ZeroTimeoutPollRetainsReadinessAndOrderedCopies` 覆盖八个 GKI 分支的 O0／O2 原始调用，检查存活／负数／已关闭描述符、重复计数、参数收窄、超时／掩码顺序、只读零 timespec、全部元数据先于就绪，以及后续故障保留较早 `revents`。`ZeroTimeoutPollKeepsUnobservedBoundaries` 保留内核、限额、掩码、等待和就绪状态的未知边界。Android 的 `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` 在六种打包配置中复验共享表和 errno 所有权。

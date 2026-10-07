@@ -27,6 +27,10 @@ NEVERD_GENERATED_VALUE(RelayOffset, 16 + 4096)
 NEVERD_GENERATED_VALUE(InstructionLimit, 2000000)
 NEVERD_GENERATED_VALUE(TimeoutMicroseconds, 60000000)
 NEVERD_GENERATED_VALUE(SecondTransfer, 2)
+NEVERD_GENERATED_VALUE(ExtendedLoadOffset, 4)
+NEVERD_GENERATED_VALUE(ExtendedLoadStride, 16)
+NEVERD_GENERATED_VALUE(OpaqueCallOffset, 6)
+NEVERD_GENERATED_VALUE(LateCallOffset, 4)
 #endif
 
 // What the loader does once the code it wrote exists.
@@ -37,6 +41,47 @@ NEVERD_GENERATED_MODE(Jump, 1)
 NEVERD_GENERATED_MODE(Call, 2)
 // Writes a second loader and leaves for it; that one writes the program.
 NEVERD_GENERATED_MODE(Staged, 3)
+// The program's import calls are six-byte tail calls. x86-64 only.
+NEVERD_GENERATED_MODE(Mutated, 4)
+// The program loads an export address through a balanced helper.
+NEVERD_GENERATED_MODE(Address, 5)
+// The helper changes persistent memory, so it must not be replaced.
+NEVERD_GENERATED_MODE(ImpureAddress, 6)
+// The same helper is pure once, then writes persistent memory.
+NEVERD_GENERATED_MODE(ChangingAddress, 7)
+// A helper invokes an OS service while preserving visible RAM/registers.
+NEVERD_GENERATED_MODE(ServiceAddress, 8)
+// The same helper returns an export once, then an unknown address.
+NEVERD_GENERATED_MODE(UnresolvedAddress, 9)
+// Each extended GPR carries an export through an eight-byte helper site.
+NEVERD_GENERATED_MODE(ExtendedAddress, 10)
+// The preceding instruction ends in a byte that resembles a REX.B prefix.
+NEVERD_GENERATED_MODE(PreviousPrefixAddress, 11)
+// Extended POP plus CALL fits seven bytes; its helper returns directly.
+NEVERD_GENERATED_MODE(CompactAddress, 12)
+// A five-byte CALL skips one arbitrary byte before entering the export.
+NEVERD_GENERATED_MODE(PaddedCall, 13)
+// A CALL returns an address while skipping two non-instruction bytes.
+NEVERD_GENERATED_MODE(CallOnlyAddress, 14)
+// One call proxy changes persistent memory before entering the export.
+NEVERD_GENERATED_MODE(ImpureCall, 15)
+// A pure helper reaches a real export whose behavior is not modeled.
+NEVERD_GENERATED_MODE(OpaqueCall, 16)
+// A dynamically resolved export moves when the rebuilt imports bind first.
+NEVERD_GENERATED_MODE(ReboundOpaqueCall, 17)
+// The export does not exist until the recovered entry resolves it.
+NEVERD_GENERATED_MODE(LateOpaqueCall, 18)
+#endif
+
+#ifdef NEVERD_GENERATED_ADDRESS_REGISTER
+NEVERD_GENERATED_ADDRESS_REGISTER(8)
+NEVERD_GENERATED_ADDRESS_REGISTER(9)
+NEVERD_GENERATED_ADDRESS_REGISTER(10)
+NEVERD_GENERATED_ADDRESS_REGISTER(11)
+NEVERD_GENERATED_ADDRESS_REGISTER(12)
+NEVERD_GENERATED_ADDRESS_REGISTER(13)
+NEVERD_GENERATED_ADDRESS_REGISTER(14)
+NEVERD_GENERATED_ADDRESS_REGISTER(15)
 #endif
 
 #ifdef NEVERD_GENERATED_BUILD
@@ -50,6 +95,9 @@ NEVERD_GENERATED_BUILD(AArch64Machine, "arm64")
 // A loader writes into both code sections, so both are writable.
 NEVERD_GENERATED_BUILD(ProgramAccess, ".prog,ERW")
 NEVERD_GENERATED_BUILD(RelayAccess, ".relay,ERW")
+// The early export cache lives before the static IAT and is loader writable.
+NEVERD_GENERATED_BUILD(CacheAccess, ".text,ERW")
+NEVERD_GENERATED_BUILD(CacheMerge, ".cache=.text")
 #endif
 
 #ifdef NEVERD_GENERATED_TEXT
@@ -61,6 +109,8 @@ NEVERD_GENERATED_TEXT(AArch64Dir, "AArch64")
 NEVERD_GENERATED_TEXT(MissingTools,
                       "requires Clang and lld-link generated-code fixtures")
 NEVERD_GENERATED_TEXT(KernelModule, "kernel32.dll")
+NEVERD_GENERATED_TEXT(OpaqueModule, "user32.dll")
+NEVERD_GENERATED_TEXT(LateExport, "GetDoubleClickTime")
 NEVERD_GENERATED_TEXT(PackSection, ".pay")
 NEVERD_GENERATED_TEXT(ProgramSection, ".prog")
 NEVERD_GENERATED_TEXT(RelaySection, ".relay")
@@ -69,10 +119,23 @@ NEVERD_GENERATED_TEXT(Message, "generated code ran\n")
 NEVERD_GENERATED_TEXT(ScratchPrefix, "neverd-unpack-generated")
 NEVERD_GENERATED_TEXT(MissingRecord, "the fixture has no pack record or loader")
 NEVERD_GENERATED_TEXT(RecordOverflow, " does not fit the pack record")
+NEVERD_GENERATED_TEXT(X64CallShape,
+                      "the mutated import call is an x86-64 shape")
+NEVERD_GENERATED_TEXT(MissingTail, "an import call has no tail stub")
+NEVERD_GENERATED_TEXT(TailOutOfRange,
+                      "a tail stub is out of relative-call range")
+NEVERD_GENERATED_TEXT(NoImportCall, "the program has no import call to mutate")
+#endif
+
+#ifdef NEVERD_GENERATED_USER_API
+NEVERD_GENERATED_USER_API(GetSystemMetrics)
 #endif
 
 #ifdef NEVERD_GENERATED_KERNEL_API
+NEVERD_GENERATED_KERNEL_API(SetUnhandledExceptionFilter)
 NEVERD_GENERATED_KERNEL_API(ExitProcess)
 NEVERD_GENERATED_KERNEL_API(GetStdHandle)
+NEVERD_GENERATED_KERNEL_API(GetModuleHandleA)
+NEVERD_GENERATED_KERNEL_API(GetProcAddress)
 NEVERD_GENERATED_KERNEL_API(WriteFile)
 #endif

@@ -18,6 +18,7 @@ add_neverd_component_library(NeverDEmulationLinuxKernel
   LinuxFilePaths.cpp
   LinuxFileIO.cpp
   LinuxPIDFD.cpp
+  LinuxPoll.cpp
   LinuxFileStatus.cpp
   LinuxFileSystemStatus.cpp
   LINK_COMPONENTS EmulationCore

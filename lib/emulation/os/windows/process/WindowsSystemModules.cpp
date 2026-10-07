@@ -12,11 +12,25 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <optional>
 
 namespace neverd::emulation::windows_process {
 namespace {
 using namespace value;
 using namespace llvm::object;
+#include "WindowsSyscallNumbers.inc"
+#include "WindowsWineExports.inc"
+std::optional<uint32_t> nativeSyscall(llvm::StringRef Name) {
+  const auto *First = std::begin(WineSyscalls);
+  const auto *Last = std::end(WineSyscalls);
+  const auto *Found = std::lower_bound(
+      First, Last, Name, [](const auto &Entry, llvm::StringRef Key) {
+        return llvm::StringRef(Entry.Name) < Key;
+      });
+  if (Found == Last || llvm::StringRef(Found->Name) != Name)
+    return std::nullopt;
+  return Found->Id;
+}
 constexpr SystemProvider Providers[] = {
 #define NEVERD_WINDOWS_SYSTEM_MODULE(Name, Family, Base)                       \
   {text::Name, APIProvider::Family, Base},
@@ -28,16 +42,33 @@ static_assert(std::size(Providers) == SystemModuleCount);
 llvm::Expected<Image> makeImage(const SystemProvider &Provider,
                                 GuestArchitecture Architecture,
                                 ImageReadBudget &Budget, bool Opaque = false) {
-  std::vector<const Service *> Exports;
+  // Names the loader resolves by walking this image, including exports the
+  // model does not implement. Calling one of those stops with its name; a
+  // missing directory entry would instead be a null pointer in the guest.
+  std::vector<llvm::StringRef> Names;
   for (const auto &S : services())
     if (!Opaque && findService(Provider.Name, S.Name) == &S)
-      Exports.push_back(&S);
-  llvm::sort(Exports, [](const auto *A, const auto *B) {
-    return llvm::StringRef(A->Name) < B->Name;
-  });
-  const uint64_t Count = Exports.size();
+      Names.push_back(S.Name);
+  if (!Opaque) {
+    const llvm::StringRef Module = Provider.Name;
+    llvm::ArrayRef<const char *> Extra;
+    if (Module == text::NTDLL)
+      Extra = WineNtdllExports;
+    else if (Module == text::Kernel32)
+      Extra = WineKernel32Exports;
+    else if (Module == text::KernelBase)
+      Extra = WineKernelBaseExports;
+    for (const char *N : Extra)
+      Names.push_back(N);
+  }
+  llvm::sort(Names);
+  Names.erase(std::unique(Names.begin(), Names.end()), Names.end());
+  const uint64_t Count = Names.size();
+  const bool Native = Provider.Family == APIProvider::Native && !Opaque;
+  const uint32_t Stride = Native ? NativeGateStride : GateStride;
   // Only an opaque module has no modeled export; its directory is empty.
-  if ((!Count && !Opaque) || Count * GateStride > PageSize ||
+  // The code span has to hold one gate per export.
+  if ((!Count && !Opaque) || Count * Stride > SystemImageSize - SystemCodeRVA ||
       SystemImageSize > Budget.MappedBytes)
     return failure(text::SystemImage);
   // Raw offsets equal RVAs. Decode the completed bytes with the same loader
@@ -70,26 +101,42 @@ llvm::Expected<Image> makeImage(const SystemProvider &Provider,
     return Name.takeError();
   Directory.NameRVA = *Name;
   for (size_t I = 0; I < Count; ++I) {
-    auto Name = String(Exports[I]->Name);
+    auto Name = String(Names[I]);
     if (!Name)
       return Name.takeError();
-    const uint32_t RVA = SystemCodeRVA + I * GateStride;
+    const uint32_t RVA = SystemCodeRVA + I * Stride;
     llvm::support::endian::write32le(
         File.data() + Directory.ExportAddressTableRVA + I * DWordSize, RVA);
     llvm::support::endian::write32le(
         File.data() + Directory.NamePointerRVA + I * DWordSize, *Name);
     llvm::support::endian::write16le(
         File.data() + Directory.OrdinalTableRVA + I * WideSize, I);
+    const Service *Exported = findService(Provider.Name, Names[I]);
     if (Architecture == GuestArchitecture::X64) {
-      std::copy(std::begin(X64Service), std::end(X64Service),
-                File.begin() + RVA);
-      if (Exports[I]->Kind == API::RaiseException)
-        std::copy(std::begin(X64Return), std::end(X64Return),
-                  File.begin() + RVA + sizeof(X64Service));
+      auto Syscall = Native ? nativeSyscall(Names[I]) : std::nullopt;
+      if (Syscall) {
+        // mov r10, rcx; mov eax, imm32; syscall; ret; int3 padding.
+        // The hook reads 32 bytes and copies whole instructions up to syscall.
+        std::array<uint8_t, NativeGateStride> Stub{};
+        Stub.fill(0xcc);
+        const uint8_t Prefix[] = {0x4c, 0x8b, 0xd1, 0xb8};
+        std::copy(std::begin(Prefix), std::end(Prefix), Stub.begin());
+        llvm::support::endian::write32le(Stub.data() + 4, *Syscall);
+        Stub[NativeSyscallOffset] = 0x0f;
+        Stub[NativeSyscallOffset + 1] = 0x05;
+        Stub[NativeSyscallOffset + 2] = 0xc3;
+        std::copy(Stub.begin(), Stub.end(), File.begin() + RVA);
+      } else {
+        std::copy(std::begin(X64Service), std::end(X64Service),
+                  File.begin() + RVA);
+        if (Exported && Exported->Kind == API::RaiseException)
+          std::copy(std::begin(X64Return), std::end(X64Return),
+                    File.begin() + RVA + sizeof(X64Service));
+      }
     } else {
       llvm::support::endian::write32le(File.data() + RVA,
                                        ArmServiceInstruction);
-      if (Exports[I]->Kind == API::RaiseException)
+      if (Exported && Exported->Kind == API::RaiseException)
         llvm::support::endian::write32le(File.data() + RVA + DWordSize,
                                          ArmReturnInstruction);
     }
@@ -118,8 +165,8 @@ llvm::Expected<Image> makeImage(const SystemProvider &Provider,
   Header += sizeof(COFF);
   pe32plus_header PE{};
   PE.Magic = llvm::COFF::PE32Header::PE32_PLUS;
-  PE.SizeOfCode = PageSize;
-  PE.SizeOfInitializedData = PageSize;
+  PE.SizeOfCode = SystemImageSize - SystemCodeRVA;
+  PE.SizeOfInitializedData = SystemCodeRVA - SystemExportRVA;
   PE.BaseOfCode = SystemCodeRVA;
   PE.ImageBase = Provider.Base;
   PE.SectionAlignment = PageSize;
@@ -142,8 +189,10 @@ llvm::Expected<Image> makeImage(const SystemProvider &Provider,
     const llvm::StringRef Name =
         I ? text::SystemCodeSection : text::SystemExportSection;
     std::copy(Name.begin(), Name.end(), Section.Name);
-    Section.VirtualSize = PageSize;
-    Section.SizeOfRawData = PageSize;
+    const uint32_t Span =
+        I ? SystemImageSize - SystemCodeRVA : SystemCodeRVA - SystemExportRVA;
+    Section.VirtualSize = Span;
+    Section.SizeOfRawData = Span;
     Section.VirtualAddress = I ? SystemCodeRVA : SystemExportRVA;
     Section.PointerToRawData = I ? SystemCodeRVA : SystemExportRVA;
     Section.Characteristics =
@@ -169,7 +218,7 @@ llvm::Expected<Image> makeImage(const SystemProvider &Provider,
   Out.Exports = std::move(*Decoded);
   for (uint64_t Offset = 0; Offset < SystemImageSize; Offset += PageSize) {
     const unsigned Rights =
-        Read | UserAccessible | (Offset == SystemCodeRVA ? Execute : 0);
+        Read | UserAccessible | (Offset >= SystemCodeRVA ? Execute : 0);
     Out.Regions.push_back(
         {Provider.Base + Offset,
          Rights,
@@ -233,16 +282,19 @@ llvm::Error prepareSystemModules(Program &P, VirtualMemory &Memory,
     M.Generation = P.NextGeneration++;
     M.State = ModuleState::Ready;
     M.Pinned = M.System = true;
-    M.ExportMetadata = {{0, PageSize}, {SystemExportRVA, PageSize}};
+    M.ExportMetadata = {{0, PageSize},
+                        {SystemExportRVA, SystemCodeRVA - SystemExportRVA}};
     for (size_t I = 0; I < M.Loaded.Exports.Entries.size(); ++I) {
       const auto &Export = M.Loaded.Exports.Entries[I];
       M.Ordinals.emplace(Export.Ordinal, I);
       for (const auto &Name : Export.Names) {
         M.Names.emplace(Name, I);
         const auto *Service = findService(Provider.Name, Name);
-        if (!Service || P.Gates.size() == MaxImports)
+        if (P.Gates.size() == MaxImports)
           return failure(text::Service);
         const uint64_t Gate = M.Loaded.Base + Export.RVA;
+        // An advertised export the model does not implement still has one
+        // address. Executing that address stops and names the export.
         P.Gates.push_back(
             {0, Service, Provider.Name, Gate, Name, std::nullopt});
       }

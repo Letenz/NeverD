@@ -39,6 +39,9 @@ NEVERD_LINUX_VALUE(CPUClockFDMask, 7)
 NEVERD_LINUX_VALUE(CPUClockFD, 3)
 NEVERD_LINUX_VALUE(CPUClockScheduled, 2)
 NEVERD_LINUX_VALUE(TimeClockLimit, 16384)
+NEVERD_LINUX_VALUE(PollDescriptorSize, 8)
+NEVERD_LINUX_VALUE(PollReventsOffset, 6)
+NEVERD_LINUX_VALUE(PollInvalidDescriptor, 0x20)
 NEVERD_LINUX_VALUE(AccessDenied, 13)
 NEVERD_LINUX_VALUE(ServiceNotImplemented, 38)
 NEVERD_LINUX_VALUE(BadDescriptor, 9)
@@ -164,6 +167,7 @@ NEVERD_LINUX_SERVICE(WriteV, 20, 66, 3)
 NEVERD_LINUX_SERVICE(GetTimeOfDay, 96, 169, 2)
 NEVERD_LINUX_SERVICE(ClockGetTime, 228, 113, 2)
 NEVERD_LINUX_SERVICE(Nanosleep, 35, 101, 2)
+NEVERD_LINUX_SERVICE(PPoll, 271, 73, 5)
 NEVERD_LINUX_SERVICE(Exit, 60, 93, 1)
 NEVERD_LINUX_SERVICE(ExitGroup, 231, 94, 1)
 NEVERD_LINUX_SERVICE(GetPriority, 140, 141, 2)
@@ -312,6 +316,18 @@ NEVERD_LINUX_DIAGNOSTIC(TimeCPUTargetMissing,
                         "CPU clock target process is not modeled")
 NEVERD_LINUX_DIAGNOSTIC(TimeThreadCPUClock,
                         "encoded per-thread CPU clocks are unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(PollKernelMissing,
+                        "ppoll requires an explicit released GKI kernel")
+NEVERD_LINUX_DIAGNOSTIC(PollLimitMissing,
+                        "ppoll requires an explicit guest descriptor limit")
+NEVERD_LINUX_DIAGNOSTIC(PollWaitUnsupported,
+                        "blocking ppoll waits are unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(PollSignalMaskUnsupported,
+                        "temporary ppoll signal masks are unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(PollDescriptorUnsupported,
+                        "ppoll readiness for this descriptor is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(PollPartialOutput,
+                        "partial ppoll revents output fault is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(TimeNanoseconds,
                         "linux_time nanoseconds must be in [0, 1000000000)")
 NEVERD_LINUX_DIAGNOSTIC(TimeClockMissing,
