@@ -508,6 +508,8 @@ Windows モデルは独立した非ページプール MDL も管理し、記述�
 
 `KernelDispatcher` は論理スレッドごとに mutex の再帰所有権を管理します。`KernelModel` は遅延した `KeWaitForSingleObject` 取得の待機スレッドを保存し、APC 照会と `KeReleaseMutex` に同じ識別子を使用します。ネストしたスタックの破棄は所有権を保持し、最外層の復帰では寿命検査を行います。
 
+`KernelModelWaits` が単一／複数待機の登録、スレッド参照、期限、呼び出し側の不透明な `KWAIT_BLOCK` の寿命を管理します。`KernelDispatcher` は集合全体を検証してから信号・カウント・mutex の変更を確定し、`KernelScheduler` は選択された同期タイマー信号を一括事前検証して消費します。
+
 `KernelModelDeviceStack` はデバイスのドライバー所有者、割り当て、上下の接続、削除待ち状態、内部参照を一つの記録で管理します。ゲストの `NextDevice` 一覧とホストが所有する接続グラフは別の意味を持ちます。名前解決は名前付き下位デバイスを `FILE_OBJECT` とレポートに保持し、初期ディスパッチと READ/WRITE の方式には現在の最上位を選び、要求経路全体を保持します。切断・削除しても要求やコールバックが保持中のデバイスは失効せず、公開 `ReferenceCount` は開いたハンドル数だけを表します。
 
 `KernelModelIRPStack` は元のゲストパケット上で有界カーソル、指定対象へのディスパッチ、完了展開を管理し、インライン Copy/Skip/SetCompletion の書き込みが正本です。ディスパッチ状態、完了制御、最終 `IoStatus` を分離し、pending はディスパッチ復帰後にも伝播できます。`STATUS_MORE_PROCESSING_REQUIRED` は入れ子の完了も含め、最終展開を再開するまで IRP／MDL／バッファーを保持します。`KernelGuestCall` の所有サブシステムとローカルトークンが WDM／WDF 継続の衝突を防ぎ、`DriverSession` は CPU フレームと継承 IRQL を保存します。単一のゲストドライバーを、別所有のシナリオ PDO 上に接続できます。ドライバー割り当て IRP、WDF 接続／転送、使用中スタックへの接続、中間層切断、メジャー変更、経路外対象は未対応です。 上位の完了コールバックを実行する前に、消費済みの下位スタック位置をゼロにします。

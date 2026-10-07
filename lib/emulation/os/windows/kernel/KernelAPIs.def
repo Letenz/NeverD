@@ -115,6 +115,7 @@ NEVERD_KERNEL_API(IoAcquireCancelSpinLock, 1, Export)
 NEVERD_KERNEL_API(IoReleaseCancelSpinLock, 1, Export)
 NEVERD_KERNEL_API(IoCancelIrp, 1, Export)
 NEVERD_KERNEL_API(KeWaitForSingleObject, 5, Export)
+NEVERD_KERNEL_API(KeWaitForMultipleObjects, 8, Export)
 NEVERD_KERNEL_API(KeDelayExecutionThread, 3, Export)
 
 #define NEVERD_KERNEL_INTERRUPT_API(Name, Arity, IRQL, Operation)              \

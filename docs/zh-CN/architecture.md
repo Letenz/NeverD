@@ -556,6 +556,8 @@ Windows 模型还管理独立的非分页池 MDL；描述符释放不会释放�
 
 `KernelDispatcher` 按逻辑线程维护 mutex 的递归所有权。`KernelModel` 为延迟的 `KeWaitForSingleObject` 获取保存等待线程，并让 APC 查询和 `KeReleaseMutex` 使用相同身份；嵌套栈退役保留所有权，最外层返回仍执行生命周期检查。
 
+`KernelModelWaits` 统一负责单对象／多对象等待登记、线程引用、截止时间及调用方不透明 `KWAIT_BLOCK` 的生命周期。`KernelDispatcher` 验证完整集合后才提交信号、计数和 mutex 更改；`KernelScheduler` 对选中的同步定时器信号整批预检和消耗。
+
 `KernelModelDeviceStack` 用单一记录管理每个设备的驱动所有者、分配、上下层邻居、待删除状态和内部引用。来宾 `NextDevice` 枚举链与宿主拥有的附着图含义不同。名称解析保留具名下层设备作为 `FILE_OBJECT` 和报告身份，选择当前栈顶进行初始派发及 READ/WRITE 缓冲配置，并保存保活整条路径的引用。拆链或删除不能使请求／回调仍持有的设备失效；公开 `ReferenceCount` 仍只计算打开句柄。
 
 `KernelModelIRPStack` 管理原始来宾数据包的有界栈游标、确切目标派发和完成展开；内联 Copy/Skip/SetCompletion 写入仍是权威数据。派发状态、完成回调控制值和最终 `IoStatus` 分离，pending 可以在派发返回后传播。`STATUS_MORE_PROCESSING_REQUIRED` 保留数据包、MDL 和缓冲区，直到继续执行并到达最终展开边界；这也适用于嵌套完成。`KernelGuestCall` 携带子系统所有者和局部 token，防止 WDM／WDF 续接身份碰撞；`DriverSession` 保存 CPU 帧和继承的 IRQL。一个来宾驱动可附着于单独拥有的场景 PDO；驱动自行分配的 IRP 仍不支持。WDF 附着／转发、活动栈附加、中间层拆除、改变主功能及路径外目标仍不支持。 在调用上层完成回调之前，已消耗的下层栈位置会被清零。

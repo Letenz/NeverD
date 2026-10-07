@@ -460,6 +460,8 @@ Windows 模型亦管理獨立的非分頁池 MDL；釋放描述符不會釋放�
 
 `KernelDispatcher` 依邏輯執行緒維護 mutex 的遞迴所有權。`KernelModel` 為延遲的 `KeWaitForSingleObject` 取得保存等待執行緒，並讓 APC 查詢和 `KeReleaseMutex` 使用相同身分；巢狀堆疊退役保留所有權，最外層返回仍執行生命週期檢查。
 
+`KernelModelWaits` 統一負責單物件／多物件等待登記、執行緒參考、期限及呼叫端不透明 `KWAIT_BLOCK` 的生命週期。`KernelDispatcher` 驗證完整集合後才提交訊號、計數及 mutex 變更；`KernelScheduler` 對選中的同步計時器訊號整批預檢和消耗。
+
 `KernelModelDeviceStack` 以單一記錄管理各裝置的驅動程式擁有者、配置、上下層鄰居、待刪除狀態與內部參考。客體 `NextDevice` 列舉串列與宿主擁有的附加圖意義不同。名稱解析保留具名下層裝置作為 `FILE_OBJECT` 和報告身分，選擇目前堆疊頂端進行初始派送及 READ/WRITE 緩衝設定，並保留整條請求路徑。解除附加或刪除不會讓請求／回呼仍持有的裝置失效；公開 `ReferenceCount` 仍只計算開啟的控制代碼。
 
 `KernelModelIRPStack` 管理原始客體封包的有界堆疊游標、確切目標派送及完成展開；內嵌 Copy/Skip/SetCompletion 寫入仍為權威資料。派送狀態、完成回呼控制值與最終 `IoStatus` 分離，pending 可在派送傳回後傳播。`STATUS_MORE_PROCESSING_REQUIRED` 保留封包、MDL 與緩衝區，直到繼續執行並到達最終展開邊界，包括巢狀完成。`KernelGuestCall` 攜帶子系統擁有者及區域 token，防止 WDM／WDF 續接身分碰撞；`DriverSession` 保留 CPU 框架與繼承的 IRQL。一個客體驅動程式可附加於獨立擁有的情境 PDO；驅動程式自行配置的 IRP 仍不支援。WDF 附加／轉送、活動堆疊附加、中間層移除、變更主要功能及路徑外目標仍不支援。 呼叫上層完成回呼之前，已消耗的下層堆疊位置會清零。

@@ -194,14 +194,30 @@ class WDKDriverFixtureTests(unittest.TestCase):
             scheduling_required - scheduled_cases,
             {test for test in required if test.startswith("DriverSchedulingPolicy.")},
         )
+        wait_cases = re.findall(
+            r"^NEVERD_MULTI_WAIT_CASE\(\s*(\w+),",
+            (source.parent / "fixtures/DriverMultipleWaitCases.def").read_text(),
+            re.M,
+        )
+        self.assertTrue(wait_cases)
+        wait_required = {
+            test for test in required if test.startswith("KernelMultipleWait.")
+        }
+        self.assertTrue(wait_required)
+        for contract in ("driver", "checked"):
+            wait_required.update(
+                "Native/DriverMultipleWait.OriginalWaitSetsPreserveSignalsAndThreadLifetimes/"
+                f"whp_{contract}_{case}" for case in wait_cases
+            )
+        self.assertTrue(wait_required <= required)
         arguments = {row[0]: row[1:] for row in inventory["ARGUMENTS"]}
         self.assertIn("-fasynchronous-unwind-tables", arguments["seh_compile"])
         self.assertTrue(seh_required <= required)
         self.assertEqual(len(required), len(cpu_required) + 2 * len(names)
-                         + len(seh_required) + len(scheduling_required))
+                         + len(seh_required) + len(scheduling_required) + len(wait_required))
         formula = (f"{len(cpu_required)} CPU + {2 * len(names)} WHP + "
                    f"{len(seh_required)} SEH + {len(scheduling_required)} scheduling "
-                   f"= {len(required)}")
+                   f"+ {len(wait_required)} wait sets = {len(required)}")
         definitions = (fixtures.ROOT / "scripts/EmulationDocumentation.def")
         self.assertIn(formula, definitions.read_text(encoding="utf-8"))
         guides = [fixtures.ROOT / "docs/testing.md"]

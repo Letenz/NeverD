@@ -17,6 +17,8 @@
 
 内核 mutex 的所有权属于逻辑线程，并跨嵌套回调和 SEH 保持。`KeWaitForSingleObject` 为延迟获取保存等待线程身份；该线程可在任一调用栈上执行 `KeReleaseMutex`。普通 APC 的禁用持续到最后一次递归释放，最外层返回会拒绝遗留的 mutex。
 
+`KeWaitForMultipleObjects` 支持对 1..64 个不同的已初始化事件、定时器、信号量、mutex 或已引用系统线程执行 `WaitAll`／`WaitAny`，限定非警报式 `KernelMode` 和 `Executive` 原因。`WaitAll` 一次提交全部获取；`WaitAny` 返回最小就绪数组索引，只消耗该对象。超过三个对象须提供可写非分页 `KWAIT_BLOCK` 存储。延迟等待保存对象数组，保留全部对象并保护调用方等待块，直至成功或超时。零超时轮询允许 DISPATCH_LEVEL，阻塞等待保存不高于 APC_LEVEL 的 IRQL。重复对象、警报式／用户模式等待及 mutex 遗弃仍不支持。
+
 可运行的续接、新工作项和系统线程共用就绪顺序。嵌套调用与 SEH 共享所属线程的时间片。切换保存完整 CPU 上下文、逻辑线程身份、APC 状态、有效 IRQL 和进程映射。PASSIVE/APC 级允许抢占；DISPATCH 及以上屏蔽线程切换。临界区和 guarded region 禁用 APC，但不禁止线程抢占。
 
 指令执行按截止时间顺序推进定时器和 DMA。取消服务等待取消锁可用，WDM 还要求 dispatch 已返回。可分页的 provider 完成、电源策略和 PoFx 服务等待被动级边界；原期限保持待处理，观测记录实际服务时间。时钟产生的独立回调与阻塞调用的同线程 PoFx 回调保持各自所有权。等待结果在期限到达时确定，不会被随后重设的计时器或事件信号覆盖；一条指令尝试跨过多个期限时也保持这一顺序。

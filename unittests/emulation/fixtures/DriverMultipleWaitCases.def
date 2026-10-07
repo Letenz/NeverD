@@ -1,0 +1,59 @@
+//===- DriverMultipleWaitCases.def - Original dispatcher wait cases -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#ifdef NEVERD_MULTI_WAIT_VALUE
+NEVERD_MULTI_WAIT_VALUE(MemoryLimit, 8388608)
+NEVERD_MULTI_WAIT_VALUE(Scratch, 0xffff800060000000ULL)
+NEVERD_MULTI_WAIT_VALUE(ScratchSize, 16384)
+NEVERD_MULTI_WAIT_VALUE(ImageBase, 0x180000000ULL)
+NEVERD_MULTI_WAIT_VALUE(Rebased, 0x1a0000000ULL)
+NEVERD_MULTI_WAIT_VALUE(ImageSize, 12288)
+NEVERD_MULTI_WAIT_VALUE(EntryOffset, 4096)
+NEVERD_MULTI_WAIT_VALUE(Stride, 256)
+NEVERD_MULTI_WAIT_VALUE(ObjectLimit, 64)
+NEVERD_MULTI_WAIT_VALUE(BuiltinLimit, 3)
+NEVERD_MULTI_WAIT_VALUE(WaitBlockBytes, 48)
+NEVERD_MULTI_WAIT_VALUE(PoolTag, 0x74576d4e)
+NEVERD_MULTI_WAIT_VALUE(SmallQuantum, 17)
+NEVERD_MULTI_WAIT_VALUE(InstructionLimit, 200000)
+NEVERD_MULTI_WAIT_VALUE(TimeoutTicks, 100)
+NEVERD_MULTI_WAIT_VALUE(TimerTicks, 50)
+NEVERD_MULTI_WAIT_VALUE(CompletionTicks, 2000)
+NEVERD_MULTI_WAIT_VALUE(GuardByte, 0x5a)
+NEVERD_MULTI_WAIT_VALUE(ModeMarker, '_')
+NEVERD_MULTI_WAIT_VALUE(ModeCharacters, 2)
+NEVERD_MULTI_WAIT_VALUE(SuccessMarker, 0x57)
+#endif
+
+#ifdef NEVERD_MULTI_WAIT_CASE
+NEVERD_MULTI_WAIT_CASE(ImmediateAny, 'A')
+NEVERD_MULTI_WAIT_CASE(AtomicAll, 'B')
+NEVERD_MULTI_WAIT_CASE(WorkerOrStop, 'C')
+NEVERD_MULTI_WAIT_CASE(TimerOrThread, 'D')
+NEVERD_MULTI_WAIT_CASE(TimeoutAll, 'E')
+NEVERD_MULTI_WAIT_CASE(FullWaitSet, 'F')
+NEVERD_MULTI_WAIT_CASE(DispatchPoll, 'G')
+#endif
+
+#ifdef NEVERD_MULTI_WAIT_TEXT
+NEVERD_MULTI_WAIT_TEXT(Service, "MultipleWait")
+NEVERD_MULTI_WAIT_TEXT(Complete, "Multiple wait: complete\n")
+NEVERD_MULTI_WAIT_TEXT(LegacySuffix, "_driver_")
+NEVERD_MULTI_WAIT_TEXT(CheckedSuffix, "_checked_")
+NEVERD_MULTI_WAIT_TEXT(MissingFixture,
+                       "original WDK multiple-wait fixture is unavailable")
+#endif
+
+#ifdef NEVERD_MULTI_WAIT_ABI
+NEVERD_MULTI_WAIT_ABI(sizeof(void *) == 8 &&
+                          sizeof(KWAIT_BLOCK) == WaitBlockBytes,
+                      "genuine x64 WDK wait-block extent")
+NEVERD_MULTI_WAIT_ABI(MAXIMUM_WAIT_OBJECTS == ObjectLimit &&
+                          THREAD_WAIT_OBJECTS == BuiltinLimit,
+                      "genuine WDK wait object limits")
+NEVERD_MULTI_WAIT_ABI(WaitAll == 0 && WaitAny == 1,
+                      "genuine WDK wait type values")
+#endif

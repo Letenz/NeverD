@@ -2177,6 +2177,8 @@ argument-dependent checks in the owning model.
 
 `KernelDispatcher` owns mutex recursion by logical thread. `KernelModel` captures the waiting thread for deferred `KeWaitForSingleObject` acquisition and uses the same identity for APC queries and `KeReleaseMutex`; nested stack retirement preserves ownership, while outermost return checks retain the lifetime guard.
 
+`KernelModelWaits` owns single/multiple wait registration, thread references, deadlines and opaque caller `KWAIT_BLOCK` lifetimes. `KernelDispatcher` validates the complete set before committing signal/count/mutex changes; `KernelScheduler` consumes selected synchronization-timer signals as one preflighted batch.
+
 `KernelModelDeviceStack` keeps each device's driver owner, allocation, attachment neighbors, delete-pending state and internal references in one record. The guest `NextDevice` inventory and the host-owned attachment graph have different meanings. Namespace resolution retains the named lower device for `FILE_OBJECT` and reports, selects the current top for initial dispatch and READ/WRITE buffer flags, and captures a retained route. Detach/delete cannot expire devices still owned by a request or callback; the public `ReferenceCount` remains an open-handle count.
 
 `DriverUserMemory.h/.def` own explicit user-region and pointer-reference facts;
