@@ -16,11 +16,14 @@
 #define NEVERD_LIB_BACKEND_C_CIDENTIFIER_H
 
 #include "neverd/backend/c/MsvcCallee.h"
+#include "neverd/loader/SymbolDecoration.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Demangle/Demangle.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <set>
 #include <string>
 #include <vector>
@@ -126,8 +129,7 @@ inline std::string msvcTemplateSpecialMemberStem(llvm::StringRef Raw) {
     return {};
   const llvm::StringRef Name = Raw.take_front(At);
   if (Name.empty() ||
-      (!isCProjectionIdentifierByte(
-           static_cast<unsigned char>(Name.front())) &&
+      (!isCProjectionIdentifierByte(static_cast<unsigned char>(Name.front())) &&
        Name.front() != '_'))
     return {};
   for (unsigned char Ch : Name.bytes())
@@ -146,8 +148,7 @@ inline std::string msvcTemplateFunctionStem(llvm::StringRef Raw) {
     return {};
   const llvm::StringRef Name = Raw.take_front(At);
   if (Name.empty() ||
-      (!isCProjectionIdentifierByte(
-           static_cast<unsigned char>(Name.front())) &&
+      (!isCProjectionIdentifierByte(static_cast<unsigned char>(Name.front())) &&
        Name.front() != '_'))
     return {};
   for (unsigned char Ch : Name.bytes())
@@ -266,9 +267,9 @@ inline std::string cxxQualifiedStem(llvm::StringRef Raw) {
         Sep == llvm::StringRef::npos ? Rest : Rest.take_front(Sep);
     if (Part.consume_front("~"))
       ;
-    if (Part.empty() ||
-        (!isCProjectionIdentifierByte(static_cast<unsigned char>(Part.front())) &&
-         Part.front() != '_'))
+    if (Part.empty() || (!isCProjectionIdentifierByte(
+                             static_cast<unsigned char>(Part.front())) &&
+                         Part.front() != '_'))
       return {};
     for (unsigned char Ch : Part.bytes()) {
       if (!isCProjectionIdentifierByte(Ch))
@@ -299,6 +300,99 @@ inline std::string cxxQualifiedStem(llvm::StringRef Raw) {
   return Out;
 }
 
+/// The C identifier stem of C++ operator function \p Base: `operator==` is
+/// `equal` and `operator bool` is `to_bool` (CxxOperatorNames.def); empty
+/// for other names.
+inline std::string cxxOperatorStem(llvm::StringRef Base) {
+  if (!Base.consume_front("operator") ||
+      (!Base.empty() &&
+       isCProjectionIdentifierByte(static_cast<unsigned char>(Base.front()))))
+    return {};
+  Base = Base.trim();
+#define NEVERD_CXX_OPERATOR(Spelling, Stem)                                    \
+  if (Base == Spelling)                                                        \
+    return Stem;
+#include "neverd/backend/c/CxxOperatorNames.def"
+  // A conversion operator names its type, which starts with a letter.
+  if (Base.empty() || !(llvm::isAlpha(Base.front()) || Base.front() == '_'))
+    return {};
+  std::string Out = "to";
+  bool Separate = true;
+  for (unsigned char Ch : cxxDropAngleArgs(Base)) {
+    if (!isCProjectionIdentifierByte(Ch)) {
+      Separate = true;
+      continue;
+    }
+    if (Separate)
+      Out += '_';
+    Out += static_cast<char>(Ch);
+    Separate = false;
+  }
+  return Out;
+}
+
+/// The C identifier stem of the function Itanium C++ symbol \p Raw mangles:
+/// its scopes and name joined by `_` as for MSVC names
+/// (`_ZNK8QDomNode8nodeTypeEv` is `QDomNode_nodeType`, a constructor
+/// `QDomNode_ctor`); empty for other names.
+inline std::string itaniumStem(llvm::StringRef Raw) {
+  if (!Raw.starts_with("_Z"))
+    return {};
+  const std::string Mangled = Raw.str();
+  llvm::ItaniumPartialDemangler Demangler;
+  if (Demangler.partialDemangle(Mangled.c_str()) || !Demangler.isFunction())
+    return {};
+  auto Take = [](char *Buffer) {
+    std::string Text = Buffer ? Buffer : "";
+    std::free(Buffer);
+    return Text;
+  };
+  size_t Size = 0;
+  const std::string Context =
+      Take(Demangler.getFunctionDeclContextName(nullptr, &Size));
+  Size = 0;
+  const std::string Base = Take(Demangler.getFunctionBaseName(nullptr, &Size));
+  if (Base.empty())
+    return {};
+  std::string Name = cxxOperatorStem(Base);
+  if (!Name.empty() && Context.empty())
+    Name = "operator_" + Name;
+  else if (Name.empty())
+    Name = cxxDropAngleArgs(Base);
+  if (Context.empty()) {
+    for (unsigned char Ch : Name)
+      if (!isCProjectionIdentifierByte(Ch))
+        return {};
+    return Name;
+  }
+  return cxxQualifiedStem(Context + "::" + Name);
+}
+
+/// The demangled spelling of mangled C name \p Name for a comment above its
+/// definition (`QDomNode::nodeType() const`), with `*/` broken apart; empty
+/// when \p Name is not mangled.
+inline std::string demangledComment(llvm::StringRef Name) {
+  std::string Demangled = llvm::demangle(Name);
+  if (Demangled == Name)
+    return {};
+  for (size_t At = Demangled.find("*/"); At != std::string::npos;
+       At = Demangled.find("*/", At + 2))
+    Demangled.replace(At, 2, "* /");
+  return Demangled;
+}
+
+/// \p Name, without one leading underscore where the C runtime's start files
+/// define the same name for \p Format (CRuntimeDefinitions.def): the C
+/// identifier a recovered definition of it takes.
+inline llvm::StringRef cDefinitionName(llvm::StringRef Name,
+                                       BinaryFormat Format) {
+#define NEVERD_C_RUNTIME_DEFINITION(FormatId, RuntimeName)                     \
+  if (Format == BinaryFormat::FormatId && Name == RuntimeName)                 \
+    return Name.drop_front();
+#include "neverd/backend/c/CRuntimeDefinitions.def"
+  return Name;
+}
+
 inline std::string
 canonicalizeCProjectionIdentifier(llvm::StringRef Raw,
                                   llvm::StringRef Fallback = "nd_symbol") {
@@ -307,6 +401,7 @@ canonicalizeCProjectionIdentifier(llvm::StringRef Raw,
   const std::string TemplateFunction = msvcTemplateFunctionStem(Raw);
   const std::string Decorated = msvcDecorationStem(Raw);
   const std::string Qualified = cxxQualifiedStem(Raw);
+  const std::string Itanium = itaniumStem(Raw);
   std::string Stripped;
   if (!TemplateMember.empty()) {
     Raw = TemplateMember;
@@ -316,6 +411,8 @@ canonicalizeCProjectionIdentifier(llvm::StringRef Raw,
     Raw = Decorated;
   } else if (!Qualified.empty()) {
     Raw = Qualified;
+  } else if (!Itanium.empty()) {
+    Raw = Itanium;
   } else {
     llvm::StringRef Rest = Raw;
     while (Rest.consume_front("`anonymous namespace'::") ||
@@ -356,9 +453,9 @@ canonicalizeCProjectionIdentifier(llvm::StringRef Raw,
   return Result;
 }
 
-/// C++ TPI spellings (`ATL::CStringT<wchar_t, ...>`) become a C tag (`CStringT`).
-/// Nested members after a template (`ATL::CAtlMap<...>::CNode`) keep `CNode`;
-/// stripping at the first `<` used to leave `CAtlMap`.
+/// C++ TPI spellings (`ATL::CStringT<wchar_t, ...>`) become a C tag
+/// (`CStringT`). Nested members after a template (`ATL::CAtlMap<...>::CNode`)
+/// keep `CNode`; stripping at the first `<` used to leave `CAtlMap`.
 inline std::string cNamedTypeSpelling(llvm::StringRef Raw) {
   std::string Buf;
   Buf.reserve(Raw.size());

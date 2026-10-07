@@ -1295,6 +1295,12 @@ Operazione di libreria riconosciuta; fai clic per mostrarne il codice.</translat
         <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
         <translation>Gli include, i tipi di supporto e le dichiarazioni con cui questo codice viene compilato; fai clic per mostrarli, - del tastierino numerico per richiuderli.</translation>
     </message>
+    <message>
+        <source>%1
+Double-click to go to the declaration.</source>
+        <translation>%1
+Fai doppio clic per andare alla dichiarazione.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1539,6 +1545,14 @@ Operazione di libreria riconosciuta; fai clic per mostrarne il codice.</translat
     <message>
         <source>Text encoding</source>
         <translation>Codifica del testo</translation>
+    </message>
+    <message>
+        <source>Copy takes at most %1 bytes; select fewer.</source>
+        <translation>La copia accetta al massimo %1 byte; selezionane meno.</translation>
+    </message>
+    <message>
+        <source>The selection holds bytes no segment maps; nothing was copied.</source>
+        <translation>La selezione contiene byte che nessun segmento mappa; non è stato copiato nulla.</translation>
     </message>
 </context>
 <context>
@@ -1914,6 +1928,26 @@ Con segno: %4</translation>
     <message>
         <source>Display columns: a wide East Asian character counts two</source>
         <translation>Colonne di visualizzazione: un carattere largo dell&apos;Asia orientale conta due</translation>
+    </message>
+    <message>
+        <source>Expand declarations</source>
+        <translation>Espandi dichiarazioni</translation>
+    </message>
+    <message>
+        <source>Collapse declarations</source>
+        <translation>Comprimi dichiarazioni</translation>
+    </message>
+    <message>
+        <source>Show or hide the includes and declarations before the function (Keypad + / Keypad -)</source>
+        <translation>Mostra o nasconde gli include e le dichiarazioni prima della funzione (+ / - del tastierino numerico)</translation>
+    </message>
+    <message>
+        <source>Expand library operations</source>
+        <translation>Espandi operazioni di libreria</translation>
+    </message>
+    <message>
+        <source>Collapse library operations</source>
+        <translation>Comprimi operazioni di libreria</translation>
     </message>
 </context>
 <context>

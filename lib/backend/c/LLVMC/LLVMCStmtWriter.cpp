@@ -1972,7 +1972,7 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
               ReturnType = FS->ReturnType;
             if (!ReturnType)
               if (const MsvcCallee *Msvc =
-                      msvcCallee(printedCalleeName(*Call))) {
+                      msvcCallee(printedCalleeName(*Call), Opts.Format)) {
                 if (Msvc->ReturnKind == MsvcReturnKind::WCharPtr)
                   ReturnType = NdType::makePtr(NdType::makeInt(2, false));
                 else if (Msvc->ReturnKind == MsvcReturnKind::VoidPtr)
@@ -3428,10 +3428,10 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
   if (UnalignedTypesWritten) {
     if (auto Alias = c_memory::alias(typeToCLLVM(Type)); !Alias.empty()) {
       if (Load)
-        OS << getName(Load) << " = " << c_memory::access(Alias, Pointer, true)
+        OS << getName(Load) << " = " << c_memory::access(Alias, Pointer)
            << ";\n";
       else
-        OS << c_memory::access(Alias, Pointer, false) << " = "
+        OS << c_memory::access(Alias, Pointer) << " = "
            << (Integer ? integerPointerOperandStr(Store->getValueOperand())
                        : valueStr(Store->getValueOperand()))
            << ";\n";
@@ -4598,7 +4598,8 @@ std::string LLVMCWriter::callArgStr(const llvm::Value *Arg,
     if (Slot != PhiTailSlot)
       return getName(Slot);
   }
-  if (const MsvcCallee *Msvc = msvcCallee(printedCalleeName(Call))) {
+  if (const MsvcCallee *Msvc =
+          msvcCallee(printedCalleeName(Call), Opts.Format)) {
     const TypeRef Expected = msvcExpectedCallArgType(*Msvc, ArgIdx);
     if (Expected && Expected->Kind == NdTypeKind::Int) {
       const llvm::Value *Inner = peelIntegerView(Arg);
@@ -5751,6 +5752,18 @@ LLVMCWriter::resolveImportCalleeName(const llvm::Value *Callee) const {
       return {};
     if (const Import *Imp = Img->findImportAt(Slot); Imp && !Imp->Name.empty())
       return canonicalizeCProjectionIdentifier(Imp->Name, "nd_import");
+    // A slot the loader binds to one import, such as an ELF GOT entry, names
+    // it while the call still loads the slot.  A C++ stem could merge two
+    // overloads, so a mangled import stays unnamed here.
+    if (const auto Bound = Img->ImportStorageSlots.find(Slot);
+        Bound != Img->ImportStorageSlots.end() &&
+        !Img->ConflictingImportStorageSlots.count(Slot) &&
+        Bound->second.Addend == 0 && !Bound->second.Name.empty()) {
+      const llvm::StringRef Name =
+          cNameOfSymbol(Bound->second.Name, Opts.Format, Opts.TheArch);
+      if (itaniumStem(Name).empty() && msvcDecorationStem(Name).empty())
+        return canonicalizeCProjectionIdentifier(Name, "nd_import");
+    }
     return {};
   };
 

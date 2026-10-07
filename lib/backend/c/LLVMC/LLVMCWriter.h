@@ -656,6 +656,8 @@ public:
   bool EmitFunctionWrapper = true;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
   std::map<const llvm::Function *, std::string> FunctionIdentifiers;
+  /// The C name each function's symbol spells, for its definition's comment.
+  std::map<const llvm::Function *, std::string> FunctionSymbolNames;
 
   int NextVar = 0;
   std::map<const llvm::Value *, std::string> ValNames;

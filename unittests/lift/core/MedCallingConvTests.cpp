@@ -669,6 +669,82 @@ TEST(MedABIPass, ForwardedLiveInKeepsParameterProvenance) {
   EXPECT_EQ(Func.CallInfos[0].Args[1].RegOff, TRI.IntParamRegs[1]);
 }
 
+TEST(MedABIPass, I386TailJumpPassesItsIncomingStackSlots) {
+  // `jmp callee` leaves on this function's entry stack: the callee reads its
+  // arguments at 4(%esp) and 8(%esp), above the return address.  swapper
+  // rewrites both slots; addone rewrites the first and passes the second
+  // through, which makes it a parameter of addone as well.
+  constexpr Arch TheArch = Arch::X86;
+  constexpr va_t Callee = 0x2000;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  for (bool Swap : {true, false}) {
+    SCOPED_TRACE(Swap);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.Name = Swap ? "swapper" : "addone";
+    Func.Blocks.resize(1);
+    MedBlock &Block = Func.Blocks[0];
+    Block.Id = 0;
+    const MedVar EntrySP = reg(1, 0, 4, TRI.StackPointer, TheArch);
+    const MedVar Low = temp(2, 0, 4, TheArch), High = temp(3, 0, 4, TheArch);
+    Block.Ops.push_back(
+        binary(NdOp::INT_ADD, Low, EntrySP, MedVar::makeConst(4, 4)));
+    Block.Ops.push_back(
+        binary(NdOp::INT_ADD, High, EntrySP, MedVar::makeConst(8, 4)));
+    const MedVar A = temp(4, 0, 4, TheArch), B = temp(5, 0, 4, TheArch);
+    MedOp LoadA = unary(NdOp::LOAD, A, Low);
+    Block.Ops.push_back(LoadA);
+    auto Store = [&](const MedVar &Address, const MedVar &Value) {
+      MedOp Op;
+      Op.Opcode = NdOp::STORE;
+      Op.addInput(Address);
+      Op.addInput(Value);
+      Block.Ops.push_back(Op);
+    };
+    if (Swap) {
+      Block.Ops.push_back(unary(NdOp::LOAD, B, High));
+      Store(Low, B);
+      Store(High, A);
+    } else {
+      Block.Ops.push_back(binary(NdOp::INT_ADD, B, A, MedVar::makeConst(1, 4)));
+      Store(Low, B);
+    }
+    MedOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Addr = 0x1010;
+    Call.Output = reg(6, 1, 4, TRI.IntReturnReg, TheArch);
+    Call.addInput(MedVar::makeConst(Callee, 4));
+    Block.Ops.push_back(Call);
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = 0x1010;
+    Return.addInput(Call.Output);
+    Block.Ops.push_back(Return);
+
+    const std::map<va_t, std::string> Names{{Callee, "callee"}};
+    std::map<va_t, int> RegArity{{Callee, 0}};
+    std::map<va_t, int> TotalArity{{Callee, 2}};
+    recoverCallAbi(Func, TheArch, Names, nullptr, &RegArity, &TotalArity);
+
+    ASSERT_EQ(Func.CallInfos.size(), 1u);
+    const auto &Args = Func.CallInfos[0].Args;
+    ASSERT_EQ(Args.size(), 2u);
+    if (Swap) {
+      EXPECT_EQ(Args[0], B);
+      EXPECT_EQ(Args[1], A);
+    } else {
+      EXPECT_EQ(Args[0], B);
+      EXPECT_EQ(Args[1].Kind, MedVar::Param);
+      EXPECT_EQ(Args[1].Id, 1);
+      EXPECT_TRUE(std::any_of(Func.Params.begin(), Func.Params.end(),
+                              [](const MedVar &P) {
+                                return P.Kind == MedVar::Param && P.Id == 1 &&
+                                       P.RegOff == kNoParamReg;
+                              }));
+    }
+  }
+}
+
 TEST(HighCallArguments, AArch64FullRegisterBankExtendsStackStoreScan) {
   constexpr Arch TheArch = Arch::AArch64;
   constexpr va_t Callee = 0x2000;

@@ -7,7 +7,9 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <string_view>
 #include <vector>
 
@@ -81,6 +83,29 @@ std::vector<uint8_t> callerThen(std::vector<uint8_t> Callee) {
   Code.insert(Code.end(), Callee.begin(), Callee.end());
   Code.resize(0x40, 0xcc);
   return Code;
+}
+
+TEST(InternalNoReturn, CallThroughALoaderBoundNoReturnSlotEndsItsBlock) {
+  // `_start: call *__libc_start_main@GOT(%rip); hlt`. The import the loader
+  // binds to the slot is the callee; nothing after the call runs.
+  for (const char *Bound : {"__libc_start_main", "puts"}) {
+    SCOPED_TRACE(Bound);
+    std::vector<uint8_t> Code(0x40, 0xcc);
+    // call qword ptr [rip + 0x1ffa] (the slot at 0x3000); hlt
+    const uint8_t Call[] = {0xff, 0x15, 0xfa, 0x1f, 0x00, 0x00, 0xf4};
+    std::copy(std::begin(Call), std::end(Call), Code.begin());
+    auto Image = imageWith(Code, {{Base, "_start"}});
+    Segment Got;
+    Got.VA = 0x3000;
+    Got.Size = Got.FileSz = 8;
+    Got.Data.resize(8);
+    Got.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Image.Segments.push_back(std::move(Got));
+    ASSERT_TRUE(Image.recordImportStorageSlot(
+        0x3000, Bound, 0, ImportStorageEvidence::LoaderBind));
+    EXPECT_EQ(callAtBaseEndsItsBlock(Image),
+              std::string_view(Bound) == "__libc_start_main");
+  }
 }
 
 TEST(InternalNoReturn, CallToACalleeEndingInFastFailEndsItsBlock) {

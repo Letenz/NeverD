@@ -463,10 +463,16 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
   session(s)->error.clear();
   // LLVM-C pages place the definition after a three-line prelude.
   if (std::string(representation) == "llvmc") {
-    const std::string prelude = "#include <stdint.h>\n#include <string.h>\n\n";
-    std::vector<std::string> lines = {"#include <stdint.h>\n",
-                                      "#include <string.h>\n", "\n",
-                                      "/* neverd.entry */\n"};
+    const std::string prelude =
+        "#include <stdint.h>\n"
+        "typedef uint64_t _QWORD __attribute__((aligned(1), may_alias));\n"
+        "extern int Bar_ctor() __asm__(\"_ZN3BarC1Ev\"); /* Bar::Bar() */\n\n";
+    std::vector<std::string> lines = {
+        "#include <stdint.h>\n",
+        "typedef uint64_t _QWORD __attribute__((aligned(1), may_alias));\n",
+        "extern int Bar_ctor() __asm__(\"_ZN3BarC1Ev\"); /* "
+        "Bar::Bar() */\n",
+        "\n", "/* neverd.entry */\n"};
     for (int i = 0; i < 700; ++i)
       lines.push_back("// code line " + std::to_string(i) + "\n");
     const auto total = lines.size();
@@ -497,7 +503,7 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                      {"total_lines", total},
                      {"complete", end == total},
                      {"next_offset", end == total ? Json(nullptr) : Json(end)},
-                     {"prelude", {{"lines", 3}, {"end_byte", prelude.size()}}}}
+                     {"prelude", {{"lines", 4}, {"end_byte", prelude.size()}}}}
                     .dump());
   }
   // Otherwise this mock represents an older page API that maps Low/Med only;

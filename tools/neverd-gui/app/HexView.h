@@ -27,8 +27,15 @@ public:
   HexView(Session &session, const AddressSpace &space,
           QWidget *parent = nullptr);
 
-  /// Show \p address, highlighting \p size bytes.
+  /// Show \p address, highlighting \p size bytes; a move elsewhere clears
+  /// the selection.
   void setCurrent(Address address, int size = 1);
+  /// The selected bytes, first and last, when more than the current one are
+  /// selected: by dragging, shift-clicking or Shift and the arrow keys.
+  std::optional<std::pair<Address, Address>> selection() const;
+  /// Copy the selected bytes, or the current item's, as hex text
+  /// (`48 89 5C 24 08`) once every one of them has loaded.
+  void copySelection();
   std::optional<Address> currentAddress() const { return current_; }
   /// Map rows again after the regions of the address space changed.
   void addressSpaceChanged();
@@ -51,6 +58,7 @@ protected:
   void resizeEvent(QResizeEvent *event) override;
   void keyPressEvent(QKeyEvent *event) override;
   void mousePressEvent(QMouseEvent *event) override;
+  void mouseMoveEvent(QMouseEvent *event) override;
   void wheelEvent(QWheelEvent *event) override;
   void scrollContentsBy(int dx, int dy) override;
   void contextMenuEvent(QContextMenuEvent *event) override;
@@ -85,6 +93,12 @@ private:
   void request(Address key) const;
   void clearChunks();
   void loadEncodings();
+  /// The byte drawn at \p position, if any.
+  std::optional<Address> addressAt(const QPointF &position) const;
+  /// Move the current byte, extending the selection from where it started.
+  void moveCurrent(Address address, bool extend);
+  /// Put the pending copy on the clipboard once all its bytes are loaded.
+  void completeCopy();
   void updateRange();
   void updateMetrics();
   int visibleRows() const;
@@ -96,6 +110,10 @@ private:
   mutable QSet<Address> pending_;
   std::optional<Address> current_;
   int currentSize_ = 1;
+  /// Where the selection started; it ends at the current byte.
+  std::optional<Address> anchor_;
+  /// The bytes a copy waits for, first and last.
+  std::optional<std::pair<Address, Address>> pendingCopy_;
   QString textEncoding_;
   QVector<TextEncoding> encodings_;
   QVector<RowRun> rows_;

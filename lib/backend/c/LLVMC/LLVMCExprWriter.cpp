@@ -3290,7 +3290,7 @@ std::string LLVMCWriter::atomicRMWText(const llvm::AtomicRMWInst &AI) {
 }
 
 bool LLVMCWriter::unreadMsvcThisReturn(const llvm::CallBase &Call) const {
-  const MsvcCallee *Msvc = msvcCallee(printedCalleeName(Call));
+  const MsvcCallee *Msvc = msvcCallee(printedCalleeName(Call), Opts.Format);
   if (!Msvc || (Msvc->Kind != MsvcCalleeKind::Ctor &&
                 Msvc->Kind != MsvcCalleeKind::Dtor))
     return false;
@@ -3318,7 +3318,7 @@ bool LLVMCWriter::unreadMsvcThisReturn(const llvm::CallBase &Call) const {
 std::string LLVMCWriter::ctorThisAddress(const llvm::CallBase &Call) {
   if (Call.arg_empty())
     return {};
-  const MsvcCallee *Msvc = msvcCallee(printedCalleeName(Call));
+  const MsvcCallee *Msvc = msvcCallee(printedCalleeName(Call), Opts.Format);
   if (!Msvc || Msvc->Kind != MsvcCalleeKind::Ctor)
     return {};
   const std::string Addr = valueStr(Call.getArgOperand(0));

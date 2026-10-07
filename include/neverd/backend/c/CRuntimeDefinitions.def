@@ -1,0 +1,30 @@
+//===- CRuntimeDefinitions.def - Names the C runtime defines --*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// C names the C runtime's start files define in every program of a format.
+/// A recovered function of the same name is the program's copy of that code;
+/// emitted under its own name it would clash with the start files when the
+/// output links, so its C identifier drops one leading underscore (`_start`
+/// becomes `start`).  References to imported runtime functions keep their
+/// exact names.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_C_RUNTIME_DEFINITION(Format, Name)
+#ifndef NEVERD_C_RUNTIME_DEFINITION
+#define NEVERD_C_RUNTIME_DEFINITION(Format, Name)
+#endif
+
+// glibc crt1.o, crti.o, rcrt1.o and libc_nonshared.a.
+NEVERD_C_RUNTIME_DEFINITION(ELF, "_start")
+NEVERD_C_RUNTIME_DEFINITION(ELF, "_init")
+NEVERD_C_RUNTIME_DEFINITION(ELF, "_fini")
+NEVERD_C_RUNTIME_DEFINITION(ELF, "_dl_relocate_static_pie")
+NEVERD_C_RUNTIME_DEFINITION(ELF, "__libc_csu_init")
+NEVERD_C_RUNTIME_DEFINITION(ELF, "__libc_csu_fini")
+
+#undef NEVERD_C_RUNTIME_DEFINITION

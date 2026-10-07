@@ -3379,6 +3379,230 @@ TEST(HighControlFlowSemantics, SlotCallGoesThroughThePointerItHolds) {
   }
 }
 
+TEST(HighControlFlowSemantics, SlotReadInAnotherBlockStillNamesItsImport) {
+  // `mov rsi, [__imp_Sleep]` before a loop, `call rsi` inside it: the read
+  // is in another block, and the callee is still the import.
+  const Arch Architecture = Arch::X64;
+  BinaryImage Image;
+  Image.Format = BinaryFormat::COFF;
+  Image.Arch = Architecture;
+  Image.Bits = Bitness::Bits64;
+  Segment Data;
+  Data.VA = 0x404000;
+  Data.Size = Data.FileSz = 0x100;
+  Data.Data.resize(0x100);
+  Data.Flags = SegmentFlags::Readable;
+  Image.Segments.push_back(Data);
+  Import Sleep;
+  Sleep.Name = "Sleep";
+  Sleep.IATAddr = 0x404010;
+  Image.Imports.push_back(Sleep);
+  MedFunc M;
+  M.Entry = 0x1000;
+  M.Name = "spin";
+  M.ReturnType = NdType::makeVoid();
+  auto Target = machineValue(0, Architecture);
+  Target.Kind = MedVar::Reg;
+  Target.RegOff = getTargetRegInfo(Architecture).IntParamRegs[1];
+  Target.SSAVer = 1;
+  M.Blocks.resize(2);
+  for (int I = 0; I < 2; ++I) {
+    M.Blocks[I].Id = I;
+    M.Blocks[I].StartAddr = 0x1000 + I * 0x10;
+    M.Blocks[I].EndAddr = M.Blocks[I].StartAddr + 0x10;
+  }
+  M.Blocks[0].Succs = {1};
+  M.Blocks[0].Ops = {
+      operation(NdOp::LOAD, 0x1000, Target, {MedVar::makeConst(0x404010, 8)})};
+  M.Blocks[1].Preds = {0};
+  M.Blocks[1].Ops = {operation(NdOp::INDIR_CALL, 0x1010, {}, {Target}),
+                     operation(NdOp::RETURN, 0x1016, {}, {})};
+  MedToHighConverter Converter;
+  Converter.setBinaryImage(&Image);
+  const auto F = Converter.convert(M, Architecture);
+  ExprPtr Call;
+  std::function<void(const std::vector<HighStmt> &)> Find =
+      [&](const std::vector<HighStmt> &Body) {
+        for (const HighStmt &S : Body) {
+          if (S.Kind == StmtKind::Call && S.CallExpr)
+            Call = S.CallExpr;
+          Find(S.Body);
+          Find(S.ElseBody);
+        }
+      };
+  Find(F.Body);
+  ASSERT_TRUE(Call);
+  EXPECT_FALSE(Call->IsIndirectCall);
+  EXPECT_EQ(Call->CallTarget, "Sleep");
+}
+
+namespace {
+/// An i386 cdecl function reading and rewriting its incoming stack slots.
+struct I386Frame {
+  MedFunc M;
+  MedVar EntrySP;
+  int NextId = 10;
+  explicit I386Frame(int Params) {
+    M.Entry = 0x1000;
+    M.Name = "i386_frame";
+    M.ReturnType = NdType::makeInt(4, false);
+    for (int I = 0; I < Params; ++I) {
+      MedVar P;
+      P.Kind = MedVar::Param;
+      P.Id = I;
+      P.RegOff = kNoParamReg;
+      P.Size = 4;
+      P.TheArch = Arch::X86;
+      M.Params.push_back(P);
+    }
+    EntrySP.Kind = MedVar::Reg;
+    EntrySP.Id = 3;
+    EntrySP.RegOff = getTargetRegInfo(Arch::X86).StackPointer;
+    EntrySP.Size = 4;
+    EntrySP.TheArch = Arch::X86;
+    M.Blocks.resize(1);
+    M.Blocks[0].Id = 0;
+    M.Blocks[0].StartAddr = 0x1000;
+    M.Blocks[0].EndAddr = 0x1040;
+  }
+  MedVar temp(uint16_t Size = 4) {
+    MedVar T;
+    T.Kind = MedVar::Temp;
+    T.Id = NextId++;
+    T.Size = Size;
+    T.TheArch = Arch::X86;
+    return T;
+  }
+  /// The address of the incoming stack slot at entry offset \p Offset.
+  MedVar slot(va_t Address, int64_t Offset) {
+    const MedVar Address32 = temp();
+    M.Blocks[0].Ops.push_back(
+        operation(NdOp::INT_ADD, Address, Address32,
+                  {EntrySP, MedVar::makeConst(uint64_t(Offset), 4)}));
+    return Address32;
+  }
+  MedVar returnRegister(int Version) const {
+    MedVar R;
+    R.Kind = MedVar::Reg;
+    R.Id = 6;
+    R.RegOff = getTargetRegInfo(Arch::X86).IntReturnReg;
+    R.Size = 4;
+    R.SSAVer = Version;
+    R.TheArch = Arch::X86;
+    return R;
+  }
+};
+
+ExprPtr firstCall(const std::vector<HighStmt> &Body) {
+  for (const HighStmt &S : Body) {
+    if (S.Kind == StmtKind::Call && S.CallExpr)
+      return S.CallExpr;
+    if ((S.Kind == StmtKind::Assign || S.Kind == StmtKind::Return) && S.Val &&
+        S.Val->Kind == ExprKind::Call)
+      return S.Val;
+    if (S.Kind == StmtKind::Return && S.RetVal) {
+      const HighExpr *E = S.RetVal.get();
+      while (E && E->Kind != ExprKind::Call && E->Operands.size() == 1)
+        E = E->Operands[0].get();
+      if (E && E->Kind == ExprKind::Call)
+        return std::make_shared<HighExpr>(*E);
+    }
+  }
+  return nullptr;
+}
+
+bool readsStack(const HighExpr &E) {
+  if (E.Kind == ExprKind::Var && E.Var.Kind == MedVar::Reg &&
+      E.Var.RegOff == getTargetRegInfo(Arch::X86).StackPointer)
+    return true;
+  for (const ExprPtr &Operand : E.Operands)
+    if (Operand && readsStack(*Operand))
+      return true;
+  return false;
+}
+} // namespace
+
+TEST(HighControlFlowSemantics, WrittenStackArgumentStartsAsTheArgument) {
+  // `addl $1, 4(%esp)` keeps arg0's home a memory slot: the function writes
+  // it. Its first read must see the argument, not an uninitialized local.
+  I386Frame Frame(1);
+  Frame.M.MutableStackParamHomes = {{0, 4}};
+  const MedVar Slot = Frame.slot(0x1000, 4);
+  const MedVar Old = Frame.temp(), New = Frame.temp(), Final = Frame.temp();
+  auto &Ops = Frame.M.Blocks[0].Ops;
+  Ops.push_back(operation(NdOp::LOAD, 0x1000, Old, {Slot}));
+  Ops.push_back(
+      operation(NdOp::INT_ADD, 0x1000, New, {Old, MedVar::makeConst(1, 4)}));
+  Ops.push_back(operation(NdOp::STORE, 0x1000, {}, {Slot, New}));
+  Ops.push_back(operation(NdOp::LOAD, 0x1008, Final, {Slot}));
+  const MedVar Result = Frame.returnRegister(1);
+  Ops.push_back(operation(NdOp::COPY, 0x1008, Result, {Final}));
+  Ops.push_back(operation(NdOp::RETURN, 0x100c, {}, {Result}));
+  const auto F = MedToHighConverter().convert(Frame.M, Arch::X86);
+  EXPECT_NO_THROW(EXPECT_EQ(execute(F, 41), 42U));
+}
+
+TEST(HighControlFlowSemantics, TailJumpPassesTheRewrittenIncomingSlots) {
+  // `int swapper(int a, int b) { return callee(b, a); }` at -O2 swaps its
+  // own incoming slots and jumps: the callee reads 4(%esp) then 8(%esp).
+  I386Frame Frame(2);
+  Frame.M.MutableStackParamHomes = {{0, 4}, {1, 8}};
+  const MedVar High = Frame.slot(0x1000, 8);
+  const MedVar B = Frame.temp();
+  auto &Ops = Frame.M.Blocks[0].Ops;
+  Ops.push_back(operation(NdOp::LOAD, 0x1000, B, {High}));
+  const MedVar Low = Frame.slot(0x1004, 4);
+  const MedVar A = Frame.temp();
+  Ops.push_back(operation(NdOp::LOAD, 0x1004, A, {Low}));
+  Ops.push_back(operation(NdOp::STORE, 0x1008, {}, {Low, B}));
+  Ops.push_back(operation(NdOp::STORE, 0x100c, {}, {High, A}));
+  const MedVar Result = Frame.returnRegister(1);
+  Ops.push_back(
+      operation(NdOp::CALL, 0x1010, Result, {MedVar::makeConst(0x2000, 4)}));
+  Ops.push_back(operation(NdOp::RETURN, 0x1010, {}, {Result}));
+  const std::map<va_t, std::string> Names{{0x2000, "callee"}};
+  MedToHighConverter Converter;
+  Converter.setFuncNames(&Names);
+  const auto F = Converter.convert(Frame.M, Arch::X86);
+  const ExprPtr Call = firstCall(F.Body);
+  ASSERT_TRUE(Call);
+  ASSERT_EQ(Call->Operands.size(), 2U);
+  ASSERT_EQ(Call->Operands[0]->Kind, ExprKind::Var);
+  ASSERT_EQ(Call->Operands[1]->Kind, ExprKind::Var);
+  EXPECT_EQ(Call->Operands[0]->Var.Id, B.Id);
+  EXPECT_EQ(Call->Operands[1]->Var.Id, A.Id);
+}
+
+TEST(HighControlFlowSemantics, CallTargetKeepsTheValueReadBeforeAStore) {
+  // `return fns[i % 3](x);` reads i from 4(%esp), stores x there for the
+  // tail call, then jumps through `fns(,%ecx,4)`. The target must use the
+  // i read before the store, not reread the slot.
+  I386Frame Frame(2);
+  Frame.M.MutableStackParamHomes = {{0, 4}};
+  const MedVar Low = Frame.slot(0x1000, 4);
+  const MedVar I = Frame.temp(), Index = Frame.temp(), Offset = Frame.temp(),
+               Entry = Frame.temp(), Target = Frame.temp();
+  auto &Ops = Frame.M.Blocks[0].Ops;
+  Ops.push_back(operation(NdOp::LOAD, 0x1000, I, {Low}));
+  Ops.push_back(
+      operation(NdOp::INT_AND, 0x1004, Index, {I, MedVar::makeConst(3, 4)}));
+  Ops.push_back(operation(NdOp::STORE, 0x1008, {}, {Low, Frame.M.Params[1]}));
+  Ops.push_back(operation(NdOp::INT_MULT, 0x100c, Offset,
+                          {Index, MedVar::makeConst(4, 4)}));
+  Ops.push_back(operation(NdOp::INT_ADD, 0x100c, Entry,
+                          {Offset, MedVar::makeConst(0x804c040, 4)}));
+  Ops.push_back(operation(NdOp::LOAD, 0x100c, Target, {Entry}));
+  const MedVar Result = Frame.returnRegister(1);
+  Ops.push_back(operation(NdOp::INDIR_CALL, 0x100c, Result, {Target}));
+  Ops.push_back(operation(NdOp::RETURN, 0x100c, {}, {Result}));
+  const auto F = MedToHighConverter().convert(Frame.M, Arch::X86);
+  const ExprPtr Call = firstCall(F.Body);
+  ASSERT_TRUE(Call);
+  ASSERT_TRUE(Call->IndirectTarget);
+  EXPECT_FALSE(readsStack(*Call->IndirectTarget))
+      << Call->IndirectTarget->str();
+}
+
 MedFunc loopFunction(Arch Architecture, bool Swap, bool ReversePhis) {
   MedFunc F;
   F.Entry = 0x1000;

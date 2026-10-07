@@ -266,6 +266,25 @@ MedToHighConverter::CallIndTarget MedToHighConverter::resolveCallIndTarget(
     return Result;
   if (tryResolveLoadTarget(CurOp, CurBlock, FuncNames, Image, Result))
     return Result;
+  // The slot can be read in another block, before a loop that calls through
+  // the register on every iteration. The import the loader bound there is
+  // the callee wherever the read happened.
+  if (TargetExpr && TargetExpr->Kind == ExprKind::Var) {
+    ExprPtr Def = TargetExpr;
+    for (int Hop = 0; Hop < 4 && Def && Def->Kind == ExprKind::Var &&
+                      Def->Var.Id >= 0 && !Def->Var.isConst();
+         ++Hop) {
+      auto It = DefExpr.find(varKey(Def->Var));
+      Def = It == DefExpr.end() ? nullptr : It->second;
+    }
+    if (Def && Def->Kind == ExprKind::Load && Def->Operands.size() == 1 &&
+        Def->Operands[0] && Def->Operands[0]->Kind == ExprKind::Const &&
+        Def->MemoryOrdering == NdMemoryOrdering::None &&
+        Def->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        tryResolveLoadedSlot(Def->Operands[0]->ConstVal, FuncNames, Image,
+                             Result))
+      return Result;
+  }
   if (tryResolveRegTarget(TargetExpr, TargetArch, Result))
     return Result;
   if (tryResolveStackSlotTarget(CurOp, CurBlock, TargetArch, Result))
@@ -317,14 +336,17 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
           NdType::makeInt(PointerBytes), NdMemoryOrdering::None,
           NdMemoryAddressSpace::Default);
     } else {
+      CallTargetUse = {&CurBlock, CI};
       ExprPtr Callee = TargetExpr;
-      if (Callee && Callee->Kind == ExprKind::Var && Callee->Var.Id >= 0) {
+      if (Callee && Callee->Kind == ExprKind::Var && Callee->Var.Id >= 0 &&
+          memoryReadReachesCallTarget(Callee->Var)) {
         auto It = DefExpr.find(varKey(Callee->Var));
         if (It != DefExpr.end() && It->second &&
             It->second->Kind == ExprKind::Load)
           Callee = It->second;
       }
       Call->IndirectTarget = forceInlineCallTarget(Callee);
+      CallTargetUse = {};
     }
   }
   Call->SourceCallHint = CurOp.SourceCallHint;
