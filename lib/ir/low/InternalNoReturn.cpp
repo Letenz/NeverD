@@ -53,7 +53,7 @@ bool lowFunctionNeverReturns(const LowFunc &Func, Arch TheArch) {
            K < Insn.FirstOp + Insn.OpCount && K < Block.Ops.size(); ++K) {
         if (Block.Ops[K].Opcode == NdOp::RETURN)
           return false;
-        if (isArchitecturalNoReturn(Block.Ops[K], TheArch))
+        if (isArchitecturalNoReturn(Block.Ops[K]))
           PathEnds = true;
       }
       if (PathEnds)

@@ -189,6 +189,18 @@ private:
   /// the partial write so buildSsa carries the merged value across the block
   /// boundary / into successor phis (LowToMedX86.cpp, Phase B2x).
   void mergePartialWritesCrossBlockX86(MedFunc &Func);
+  /// ARM ELF: the `PC + R_ARM_REL32` literal values CFGBuilder proved at their
+  /// ADD outputs, keyed by instruction and op sequence, and the outputs whose
+  /// proof is ambiguous (LowToMedARM.cpp).  Empty for other images.
+  struct RelativeLiteralOutputs {
+    std::map<std::pair<va_t, int>,
+             const RelocatedInstructionAddressOccurrence *>
+        Exact;
+    std::set<std::pair<va_t, int>> Ambiguous;
+  };
+  RelativeLiteralOutputs armRelativeLiteralOutputs(const LowFunc &Low,
+                                                   Arch TheArch,
+                                                   BinaryFormat Fmt) const;
   /// ARM/AArch64: reconstruct a full-width NEON Q read from its two more-recent
   /// 8-byte D halves within a block (LowToMedARM.cpp, Phase B3).
   void mergeWideVectorReadsARM(MedFunc &Func);

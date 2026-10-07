@@ -164,6 +164,25 @@ struct TargetRegInfo {
   /// link register.  Set by getTargetRegInfo().
   bool CallPushesReturnAddress = false;
 
+  /// A small aggregate is returned entirely in integer registers or entirely
+  /// in vector registers (an AArch64 HFA), never in a mix of both.  Set by
+  /// getTargetRegInfo().
+  bool ReturnAggregatesSingleClass = false;
+
+  /// Each vector-register field of a returned aggregate is a whole eightbyte
+  /// (an x86-64 SSE class, which may pack two floats), not the field's own
+  /// width.  Set by getTargetRegInfo().
+  bool VectorReturnFieldsAreEightbytes = false;
+
+  /// A memory operand can name an FS or GS segment address space (x86).  Set
+  /// by getTargetRegInfo().
+  bool HasSegmentAddressSpaces = false;
+
+  /// Ordinary arithmetic writes the condition flags (x86), rather than only
+  /// the flag-setting forms of each instruction, so flag lowering leaves many
+  /// flag writes nothing reads.  Set by getTargetRegInfo().
+  bool ArithmeticWritesFlags = false;
+
   /// An auto-declared unknown external callee must use a variadic prototype so
   /// the backend never mislays arguments (true on ARM/AArch64 where variadic
   /// and non-variadic calling conventions differ).  Set by getTargetRegInfo().
