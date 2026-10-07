@@ -487,6 +487,16 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
   Page["next_offset"] = End == Total
                             ? llvm::json::Value(nullptr)
                             : llvm::json::Value(static_cast<int64_t>(End));
+  // The lines before the function's definition: includes, support types and
+  // declarations. Published only where the emitter recorded the definition
+  // at the start of a line.
+  if (Map.Definitions.size() == 1) {
+    const size_t Begin = Map.Definitions.front().Begin;
+    if (Begin > 0 && Begin < Full.size() && Full[Begin - 1] == '\n')
+      Page["prelude"] = llvm::json::Object{
+          {"lines", static_cast<int64_t>(Full.take_front(Begin).count('\n'))},
+          {"end_byte", static_cast<int64_t>(Begin)}};
+  }
   return Page;
 }
 

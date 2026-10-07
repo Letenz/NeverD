@@ -55,6 +55,702 @@ static u64 little_integer(const unsigned char *p, unsigned width) {
     value |= (u64)p[i] << (i * 8);
   return value;
 }
+/* One read-only native workload. Its captured value is stable during these
+ * calls; explicit guest nice values use the identical raw instruction path. */
+static int priority_result(u64 which, u64 who, u64 expected, unsigned failure) {
+  unsigned error;
+  const u64 sentinel = 0x1122334455667788UL;
+  u64 result = call(100, which, who, sentinel, -1UL, -1UL, -1UL, &error);
+  if (result != expected || error != failure)
+    return 211;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (failure ? sentinel : 0))
+#endif
+    return 212;
+  return 0;
+}
+static int process_priority(int emit_values) {
+  unsigned error;
+  const u64 sentinel = 0x1122334455667788UL;
+  u64 nice = call(100, 0, 0, sentinel, -1UL, -1UL, -1UL, &error);
+  if (error || secondary || (long)nice < -20 || (long)nice > 20)
+    return 213;
+  // Successful -1 is not errno: success -> EINVAL -> success checks both
+  // carry transitions and x64 preservation/clearing of the same RDX sentinel.
+  if (priority_result(5, 0, 22, 1) ||
+      priority_result(0xffffffff00000000UL, 0xffffffff00000000UL, nice, 0))
+    return 214;
+  u64 pid = call(20, 0, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || !pid || pid > 0x7fffffffUL)
+    return 215;
+  const u64 selectors[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const u64 ids[] = {0,
+                     pid,
+                     0x100000000UL,
+                     0xffffffff00000000UL,
+                     0x1234567800000000UL | pid,
+                     0xffffffff00000000UL | pid};
+  for (unsigned i = 0; i != 3; ++i)
+    for (unsigned j = 0; j != 6; ++j)
+      if (priority_result(selectors[i], ids[j], nice, 0))
+        return 216;
+  const u64 invalid_ids[] = {0x80000000UL, 0xffffffffUL, 0x1234567880000000UL,
+                             -1UL};
+  for (unsigned i = 0; i != 9; ++i)
+    for (unsigned j = 0; j != 4; ++j)
+      if (priority_result(i, invalid_ids[j], 22, 1))
+        return 217;
+  const u64 invalid_selectors[] = {
+      5, 9, 0x1000, 0xffffffffUL, 0x80000000UL, 0x1234567800000005UL};
+  for (unsigned i = 0; i != 6; ++i)
+    if (priority_result(invalid_selectors[i], 0, 22, 1))
+      return 218;
+  if (priority_result(3, pid, 22, 1) ||
+      priority_result(0x1234567800000003UL, 0x1234567800000001UL, 22, 1) ||
+      priority_result(0, 0, nice, 0))
+    return 219;
+  const char marker = 'Q';
+  return call(4, 1, emit_values ? (u64)&nice : (u64)&marker,
+              emit_values ? sizeof(nice) : 1, 0, 0, 0,
+              &error) == (emit_values ? sizeof(nice) : 1) &&
+                 !error
+             ? 37
+             : 220;
+}
+/* These routes intentionally stop in the bounded model and never enter the
+ * original native workload catalogue. */
+static int priority_unavailable(u64 number, u64 which, u64 who) {
+  unsigned error;
+  const char marker = '!';
+  if (call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) != 1 || error)
+    return 221;
+  call(number, which, who, 0x1122334455667788UL, -1UL, -1UL, -1UL, &error);
+  return 222;
+}
+static int priority_errors_only(void) {
+  if (priority_result(5, 0, 22, 1) || priority_result(0, -1UL, 22, 1) ||
+      priority_result(0x1234567800000003UL, 0x1234567800000001UL, 22, 1))
+    return 223;
+  unsigned error;
+  const char marker = 'E';
+  return call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error ? 37 : 224;
+}
+
+/* Original read-only raw buffer workload. No host login literal, text decoding
+ * or session setters; virtual mode publishes the declared bytes unchanged. */
+static int login_zero_calls(void) {
+  unsigned error;
+  const u64 pointers[] = {0,
+                          1,
+                          0x0000800000000000UL,
+                          0x8000000000000000UL,
+                          0xffff000000000000UL,
+                          -1UL,
+                          -101UL};
+  const u64 lengths[] = {0, 0x100000000UL, 0xffffffff00000000UL};
+  for (unsigned i = 0; i != 7; ++i)
+    for (unsigned j = 0; j != 3; ++j)
+      if (call(49, pointers[i], lengths[j], -1UL, -1UL, -1UL, -1UL, &error) ||
+          error || secondary)
+        return 201;
+  return 0;
+}
+static int login_buffer(int emit_values) {
+  unsigned error;
+  unsigned char snapshot[255], out[265];
+  if (call(49, (u64)snapshot, 255, -1UL, -1UL, -1UL, -1UL, &error) || error ||
+      secondary)
+    return 202;
+  int zero = login_zero_calls();
+  if (zero)
+    return zero;
+  const u64 lengths[] = {1,
+                         2,
+                         254,
+                         255,
+                         256,
+                         0xffffffffUL,
+                         0x80000000UL,
+                         0x100000001UL,
+                         0xffffffff00000001UL,
+                         0x12345678000000ffUL,
+                         0xffffffff000000ffUL,
+                         -1UL};
+  for (unsigned i = 0; i != 12; ++i) {
+    for (unsigned j = 0; j != sizeof(out); ++j)
+      out[j] = 0xa5;
+    if (call(49, (u64)(out + 3), lengths[i], -1UL, -1UL, -1UL, -1UL, &error) ||
+        error || secondary)
+      return 203;
+    unsigned n = (unsigned)lengths[i];
+    if (n > 255)
+      n = 255;
+    for (unsigned j = 0; j != 3; ++j)
+      if (out[j] != 0xa5)
+        return 204;
+    for (unsigned j = 0; j != n; ++j)
+      if (out[3 + j] != snapshot[j])
+        return 204;
+    for (unsigned j = 3 + n; j != sizeof(out); ++j)
+      if (out[j] != 0xa5)
+        return 204;
+  }
+  const u64 pointers[] = {0,
+                          1,
+                          0x0000800000000000UL,
+                          0x8000000000000000UL,
+                          0xffff000000000000UL,
+                          -1UL,
+                          -101UL};
+  const u64 invalid_lengths[] = {1,   255, 256, 0xffffffffUL, 0x100000001UL,
+                                 -1UL};
+  for (unsigned i = 0; i != 7; ++i)
+    for (unsigned j = 0; j != 6; ++j) {
+      if (call(49, pointers[i], invalid_lengths[j], 0x1122334455667788UL, -1UL,
+               -1UL, -1UL, &error) != 14 ||
+          !error)
+        return 205;
+#if defined(__aarch64__)
+      if (secondary)
+#else
+      if (secondary != 0x1122334455667788UL)
+#endif
+        return 206;
+    }
+  const char marker = 'L';
+  u64 size = emit_values ? sizeof(snapshot) : 1;
+  return call(4, 1, emit_values ? (u64)snapshot : (u64)&marker, size, 0, 0, 0,
+              &error) == size &&
+                 !error
+             ? 37
+             : 207;
+}
+static int login_zero(void) {
+  int result = login_zero_calls();
+  if (result)
+    return result;
+  unsigned error;
+  const char marker = 'Z';
+  return call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error ? 37 : 208;
+}
+static int login_unavailable(unsigned number) {
+  unsigned error;
+  const char marker = '!';
+  if (call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) != 1 || error)
+    return 209;
+  call(number, -1UL, 255, 0x1122334455667788UL, 0, 0, 0, &error);
+  return 210;
+}
+/* Read-only workload shared unchanged with the native kernel. Its marker
+ * depends on shape/ABI, never a host-name literal; virtual mode emits bytes. */
+static int hostname_calls(int emit_values) {
+  unsigned error;
+  const char name[] = "kern.hostname";
+  unsigned mib[] = {1, 10};
+  unsigned char full[256], bytes[258];
+  u64 size = 0, length;
+  if (call(274, (u64)name, 13, 0, (u64)&size, 0, 0, &error) || error ||
+      secondary || !size || size > sizeof(full))
+    return 40;
+  length = sizeof(full);
+  if (call(202, (u64)mib, 0x1234567800000002UL, (u64)full, (u64)&length, 0, 0,
+           &error) ||
+      error || secondary || length != size || full[size - 1])
+    return 41;
+  const u64 capacities[] = {0, 1, 2, size - 1, size, size + 1, 256};
+  for (unsigned named = 0; named != 2; ++named) {
+    const u64 input = named ? (u64)name : (u64)mib;
+    const u64 count = named ? 13 : 0x1234567800000002UL;
+    const u64 number = named ? 274 : 202;
+    for (unsigned c = 0; c != 7; ++c) {
+      u64 n = capacities[c] < size ? capacities[c] : size;
+      for (unsigned i = 0; i != n + 2; ++i)
+        bytes[i] = 0xa5;
+      length = capacities[c];
+      u64 ret = call(number, input, count, (u64)(bytes + 1), (u64)&length, 0, 0,
+                     &error);
+      if (ret != (n ? 0 : 12) || error != !n || length != n ||
+          (n && secondary) || bytes[0] != 0xa5 || bytes[n + 1] != 0xa5)
+        return 42;
+#if defined(__aarch64__)
+      if (!n && secondary)
+        return 43;
+#else
+      if (!n && secondary != (u64)(bytes + 1))
+        return 43;
+#endif
+      for (unsigned i = 0; i + 1 < n; ++i)
+        if (bytes[i + 1] != full[i])
+          return 44;
+      if (n && bytes[n])
+        return 45;
+    }
+    for (unsigned variant = 0; variant != 3; ++variant) {
+      length = 1;
+      if (call(number, input, count, 0, (u64)&length, variant == 1 ? -1UL : 0,
+               variant == 2 ? 1 : 0, &error) ||
+          error || secondary || length != size)
+        return 46;
+    }
+  }
+  const char marker = 'n';
+  length = emit_values ? size : 1;
+  return call(4, 1, emit_values ? (u64)full : (u64)&marker, length, 0, 0, 0,
+              &error) == length &&
+                 !error
+             ? 37
+             : 47;
+}
+/* Model-only authority boundary. Never registered as a native workload. */
+static int hostname_write(void) {
+  unsigned error;
+  const char name[] = "kern.hostname", before = '!', after = 'w';
+  u64 length = 2;
+  if (call(4, 1, (u64)&before, 1, 0, 0, 0, &error) != 1 || error)
+    return 48;
+  if (call(274, (u64)name, 13, -1UL, (u64)&length, -1UL, 1, &error) != 1 ||
+      !error || length != 2)
+    return 49;
+#if defined(__aarch64__)
+  if (secondary)
+    return 49;
+#else
+  if (secondary != -1UL)
+    return 49;
+#endif
+  return call(4, 1, (u64)&after, 1, 0, 0, 0, &error) == 1 && !error ? 37 : 50;
+}
+static int hostname_query(int prior_output) {
+  unsigned error;
+  const char name[] = "kern.hostname", before = '!';
+  unsigned char byte = 0xa5;
+  u64 length = 1;
+  if (prior_output &&
+      (call(4, 1, (u64)&before, 1, 0, 0, 0, &error) != 1 || error))
+    return 51;
+  if (call(274, (u64)name, 13, (u64)&byte, (u64)&length, 0, 0, &error) ||
+      error || secondary || length != 1 || byte)
+    return 52;
+  return call(4, 1, (u64)&byte, 1, 0, 0, 0, &error) == 1 && !error ? 37 : 53;
+}
+/* Original read-only process workload; self PID is captured in this process.
+ * Native runs never assume the model's fixed PID or specific group/session. */
+static int process_observations(int emit_values) {
+  unsigned error;
+  const u64 sentinel = 0x1122334455667788UL;
+#if defined(__aarch64__)
+  const u64 error_secondary = 0;
+#else
+  const u64 error_secondary = sentinel;
+#endif
+  u64 pid = call(20, -1UL, -1UL, sentinel, -1UL, -1UL, -1UL, &error);
+  if (error || secondary || !pid || pid > 0x7fffffffUL)
+    return 101;
+  u64 group = call(81, -1UL, -1UL, sentinel, -1UL, -1UL, -1UL, &error);
+  if (error || secondary || !group || group > 0x7fffffffUL)
+    return 102;
+  u64 session = call(310, 0, -1UL, sentinel, -1UL, -1UL, -1UL, &error);
+  if (error || secondary || !session || session > 0x7fffffffUL)
+    return 103;
+  u64 tainted = call(327, -1UL, -1UL, sentinel, -1UL, -1UL, -1UL, &error);
+  if (error || secondary || tainted > 1)
+    return 104;
+  const unsigned numbers[] = {151, 310};
+  const u64 targets[] = {0,
+                         pid,
+                         0x100000000UL,
+                         0xffffffff00000000UL,
+                         0x1234567800000000UL | pid,
+                         0xffffffff00000000UL | pid};
+  const u64 negative[] = {0xffffffffUL, -1UL, 0x80000000UL,
+                          0xffffffff80000000UL};
+  for (unsigned n = 0; n != 2; ++n) {
+    for (unsigned i = 0; i != 6; ++i)
+      if (call(numbers[n], targets[i], -1UL, sentinel, -1UL, -1UL, -1UL,
+               &error) != (n ? session : group) ||
+          error || secondary)
+        return 105;
+    for (unsigned i = 0; i != 4; ++i)
+      if (call(numbers[n], negative[i], -1UL, sentinel, -1UL, -1UL, -1UL,
+               &error) != 3 ||
+          !error || secondary != error_secondary)
+        return 106;
+  }
+  const u64 values[] = {group, session, tainted};
+  unsigned char bytes[12];
+  for (unsigned n = 0; n != 3; ++n)
+    for (unsigned i = 0; i != 4; ++i)
+      bytes[n * 4 + i] = values[n] >> (i * 8);
+  const char marker = 'P';
+  u64 size = emit_values ? sizeof(bytes) : 1;
+  return call(4, 1, emit_values ? (u64)bytes : (u64)&marker, size, 0, 0, 0,
+              &error) == size &&
+                 !error
+             ? 37
+             : 107;
+}
+/* Model-only missing/peer/setter boundaries, excluded from native inventory. */
+static int process_negative_queries(void) {
+  unsigned error;
+  const u64 sentinel = 0x1122334455667788UL;
+#if defined(__aarch64__)
+  const u64 error_secondary = 0;
+#else
+  const u64 error_secondary = sentinel;
+#endif
+  const unsigned numbers[] = {151, 310};
+  const u64 targets[] = {0xffffffffUL, -1UL, 0x80000000UL,
+                         0xffffffff80000000UL};
+  for (unsigned n = 0; n != 2; ++n)
+    for (unsigned i = 0; i != 4; ++i)
+      if (call(numbers[n], targets[i], -1UL, sentinel, -1UL, -1UL, -1UL,
+               &error) != 3 ||
+          !error || secondary != error_secondary)
+        return 111;
+  const char marker = 'E';
+  return call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error ? 37 : 112;
+}
+static int process_query(unsigned number, u64 target, int prior_output) {
+  unsigned error;
+  const char before = '!';
+  if (prior_output &&
+      (call(4, 1, (u64)&before, 1, 0, 0, 0, &error) != 1 || error))
+    return 108;
+  u64 value = call(number, target, -1UL, 0x1122334455667788UL, -1UL, -1UL, -1UL,
+                   &error);
+  if (error || secondary || value > 0x7fffffffUL)
+    return 109;
+  unsigned char bytes[4];
+  for (unsigned i = 0; i != 4; ++i)
+    bytes[i] = value >> (i * 8);
+  return call(4, 1, (u64)bytes, sizeof(bytes), 0, 0, 0, &error) ==
+                     sizeof(bytes) &&
+                 !error
+             ? 37
+             : 110;
+}
+static int credentials(int emit_values) {
+  unsigned error;
+  const u64 sentinel = 0x1122334455667788UL;
+#if defined(__aarch64__)
+  const u64 error_secondary = 0;
+#else
+  const u64 error_secondary = sentinel;
+#endif
+  u64 count = call(79, 0, -1UL, sentinel, 0, 0, 0, &error);
+  if (error || secondary || count < 1 || count > 16)
+    return 51;
+  u64 ids[4];
+  const unsigned getters[] = {24, 25, 47, 43};
+  for (unsigned i = 0; i != 4; ++i) {
+    ids[i] = call(getters[i], -1UL, -1UL, sentinel, 0, 0, 0, &error);
+    if (error || secondary || ids[i] > 0x7fffffffUL)
+      return 52 + i;
+  }
+  unsigned char bytes[66], saved[64], values[84];
+  const u64 capacities[] = {count, count + 1, 0x1000, 0x1234567800001000UL,
+                            0x1234567800000000UL | count};
+  for (unsigned n = 0; n != 5; ++n) {
+    for (unsigned i = 0; i != sizeof(bytes); ++i)
+      bytes[i] = 0xa5;
+    u64 returned =
+        call(79, capacities[n], (u64)(bytes + 1), sentinel, 0, 0, 0, &error);
+    if (error || secondary || returned != count || bytes[0] != 0xa5)
+      return 56;
+    for (unsigned i = 1 + 4 * count; i != sizeof(bytes); ++i)
+      if (bytes[i] != 0xa5)
+        return 57;
+    for (unsigned i = 0; i != 4 * count; ++i) {
+      if (!n)
+        saved[i] = bytes[i + 1];
+      else if (bytes[i + 1] != saved[i])
+        return 58;
+    }
+  }
+  if (little_integer(saved, 4) != ids[3])
+    return 59;
+  for (unsigned i = 0; i != count; ++i)
+    if (little_integer(saved + 4 * i, 4) > 0x7fffffffUL)
+      return 60;
+  for (unsigned i = 0; i != sizeof(bytes); ++i)
+    bytes[i] = 0xa5;
+  for (unsigned n = 0; n != 3; ++n) {
+    const u64 output = n == 0 ? 0 : n == 1 ? -1UL : (u64)(bytes + 1);
+    if (call(79, 0x1234567800000000UL, output, sentinel, 0, 0, 0, &error) !=
+            count ||
+        error || secondary)
+      return 61;
+  }
+  const u64 negative[] = {-1UL, 0x80000000UL, 0x12345678ffffffffUL};
+  for (unsigned n = 0; n != 3; ++n) {
+    if (call(79, negative[n], n == 0 ? (u64)(bytes + 1) : 0, sentinel, 0, 0, 0,
+             &error) != 22 ||
+        !error || secondary != error_secondary)
+      return 62;
+  }
+  if (count > 1 && (call(79, count - 1, 0, sentinel, 0, 0, 0, &error) != 22 ||
+                    !error || secondary != error_secondary))
+    return 63;
+  for (unsigned i = 0; i != sizeof(bytes); ++i)
+    if (bytes[i] != 0xa5)
+      return 64;
+  if (call(79, 0x1000, 0, sentinel, 0, 0, 0, &error) != 14 || !error ||
+      secondary != error_secondary)
+    return 65;
+  u64 mapped = call(197, 0, 2 * PAGE, 3, 0x1002, -1UL, 0, &error);
+  if (error || !mapped || secondary)
+    return 66;
+  /* Bound guest work independently of page size. All 132 guard bytes cross
+   * the page and enclose every supported group-list width; memory-owner tests
+   * separately verify both complete mapped pages. */
+  volatile unsigned char *guard =
+      (volatile unsigned char *)(mapped + PAGE - 67);
+  for (unsigned i = 0; i != 132; ++i)
+    guard[i] = 0xa5;
+  if (call(79, 0x1000, mapped + PAGE - 3, sentinel, 0, 0, 0, &error) != count ||
+      error || secondary)
+    return 67;
+  for (unsigned i = 0; i != 132; ++i) {
+    const unsigned char expected =
+        i >= 64 && i < 64 + 4 * count ? saved[i - 64] : 0xa5;
+    if (guard[i] != expected)
+      return 68;
+  }
+  if (call(74, mapped, 2 * PAGE, 1, 0, 0, 0, &error) || error || secondary)
+    return 69;
+  if (call(79, 0x1000, mapped, sentinel, 0, 0, 0, &error) != 14 || !error ||
+      secondary != error_secondary)
+    return 70;
+  if (call(73, mapped, 2 * PAGE, 0, 0, 0, 0, &error) || error || secondary)
+    return 71;
+  if (emit_values) {
+    for (unsigned i = 0; i != 5; ++i) {
+      const u64 v = i == 4 ? count : ids[i];
+      for (unsigned b = 0; b != 4; ++b)
+        values[4 * i + b] = v >> (8 * b);
+    }
+    for (unsigned i = 0; i != 4 * count; ++i)
+      values[20 + i] = saved[i];
+    if (call(4, 1, (u64)values, 20 + 4 * count, 0, 0, 0, &error) !=
+            20 + 4 * count ||
+        error || secondary)
+      return 72;
+  } else {
+    const unsigned char marker = 'k';
+    if (call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) != 1 || error || secondary)
+      return 73;
+  }
+  return 37;
+}
+
+static int resource_usage(int emit_values) {
+  unsigned char bytes[146], saved_children[144];
+  unsigned error = 0;
+  int code = 51;
+  for (unsigned child = 0; child != 2; ++child) {
+    for (unsigned i = 0; i != 146; ++i)
+      bytes[i] = 0xa5;
+    u64 who = child ? 0xffffffffUL : 0;
+    u64 returned =
+        call(117, who, (u64)(bytes + 1), 0x1122334455667788UL, 0, 0, 0, &error);
+    if (error || returned || secondary || bytes[0] != 0xa5 ||
+        bytes[145] != 0xa5)
+      return code;
+    if (little_integer(bytes + 9, 4) >= 1000000 ||
+        little_integer(bytes + 25, 4) >= 1000000 ||
+        little_integer(bytes + 13, 4) || little_integer(bytes + 29, 4))
+      return code + 1;
+    if (child)
+      for (unsigned i = 0; i != 144; ++i)
+        saved_children[i] = bytes[i + 1];
+    if (emit_values &&
+        (call(4, 1, (u64)(bytes + 1), 144, 0, 0, 0, &error) != 144 || error ||
+         secondary))
+      return code + 2;
+    code += 3;
+  }
+  for (unsigned i = 0; i != 146; ++i)
+    bytes[i] = 0xa5;
+  u64 returned = call(117, 0x12345678ffffffffUL, (u64)(bytes + 1),
+                      0x1122334455667788UL, 0, 0, 0, &error);
+  if (error || returned || secondary || bytes[0] != 0xa5 || bytes[145] != 0xa5)
+    return code;
+  for (unsigned i = 0; i != 144; ++i)
+    if (bytes[i + 1] != saved_children[i])
+      return code + 1;
+  code += 2;
+  for (unsigned i = 0; i != 146; ++i)
+    bytes[i] = 0xa5;
+  returned = call(117, 0x100000000UL, (u64)(bytes + 1), 0, 0, 0, 0, &error);
+  if (error || returned || secondary || bytes[0] != 0xa5 ||
+      bytes[145] != 0xa5 || little_integer(bytes + 9, 4) >= 1000000 ||
+      little_integer(bytes + 25, 4) >= 1000000 ||
+      little_integer(bytes + 13, 4) || little_integer(bytes + 29, 4))
+    return code;
+  ++code;
+  const u64 invalid[] = {1, 0x1000, 0xfffffffeUL, 0xffffffff00000001UL};
+  for (unsigned n = 0; n != 4; ++n) {
+    for (unsigned i = 0; i != 146; ++i)
+      bytes[i] = 0xa5;
+    returned = call(117, invalid[n], (u64)(bytes + 1), 0x1122334455667788UL, 0,
+                    0, 0, &error);
+#if defined(__aarch64__)
+    const u64 error_secondary = 0;
+#else
+    const u64 error_secondary = 0x1122334455667788UL;
+#endif
+    if (!error || returned != 22 || secondary != error_secondary)
+      return code;
+    for (unsigned i = 0; i != 146; ++i)
+      if (bytes[i] != 0xa5)
+        return code + 1;
+    code += 2;
+  }
+  returned = call(117, 1, 0, 0, 0, 0, 0, &error);
+  if (!error || returned != 22 || secondary)
+    return code + 2;
+  returned = call(117, 0, 0, 0, 0, 0, 0, &error);
+  if (!error || returned != 14 || secondary)
+    return code + 2;
+  u64 mapped = call(197, 0, PAGE, 3, 0x1002, -1UL, 0, &error);
+  if (error || !mapped || secondary)
+    return code + 3;
+  returned = call(74, mapped, PAGE, 1, 0, 0, 0, &error);
+  if (error || returned || secondary)
+    return code + 4;
+  returned = call(117, 0, mapped, 0, 0, 0, 0, &error);
+  if (!error || returned != 14 || secondary)
+    return code + 2;
+  returned = call(73, mapped, PAGE, 0, 0, 0, 0, &error);
+  if (error || returned || secondary)
+    return code + 4;
+  if (!emit_values) {
+    unsigned char marker = 'g';
+    if (call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) != 1 || error || secondary)
+      return code;
+  }
+  return 37;
+}
+
+static int descriptor_table_query(void) {
+  unsigned error;
+  u64 value = call(0x1234567800000059UL, -1UL, -1UL, 0x1122334455667788UL, -1UL,
+                   -1UL, -1UL, &error);
+  if (error || secondary || value > 0x7fffffffUL)
+    return 51;
+  unsigned char bytes[4];
+  for (unsigned i = 0; i != 4; ++i)
+    bytes[i] = value >> (i * 8);
+  if (call(4, 1, (u64)bytes, 4, 0, 0, 0, &error) != 4 || error || secondary)
+    return 52;
+  return 37;
+}
+
+static int resource_limits(int emit_values) {
+  unsigned char bytes[18], flagged[16];
+  unsigned error;
+  int check = 51;
+#define RESOURCE_EXPECT(expression)                                            \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  for (unsigned resource = 0; resource != 9; ++resource) {
+    for (unsigned i = 0; i != sizeof(bytes); ++i)
+      bytes[i] = 0xa5;
+    RESOURCE_EXPECT(
+        !call(194, resource, (u64)(bytes + 1), 0, 0, 0, 0, &error) && !error &&
+        !secondary);
+    RESOURCE_EXPECT(bytes[0] == 0xa5 && bytes[17] == 0xa5 &&
+                    little_integer(bytes + 1, 8) <=
+                        little_integer(bytes + 9, 8) &&
+                    little_integer(bytes + 9, 8) <= 0x7fffffffffffffffUL);
+    RESOURCE_EXPECT(
+        !call(194, resource | 0x1000, (u64)flagged, 0, 0, 0, 0, &error) &&
+        !error && !secondary);
+    for (unsigned i = 0; i != 16; ++i)
+      if (flagged[i] != bytes[i + 1])
+        return 70;
+    if (emit_values)
+      RESOURCE_EXPECT(call(4, 1, (u64)(bytes + 1), 16, 0, 0, 0, &error) == 16 &&
+                      !error && !secondary);
+  }
+  RESOURCE_EXPECT(!call(194, 0x100000008UL, (u64)flagged, 0, 0, 0, 0, &error) &&
+                  !error && !secondary);
+  for (unsigned i = 0; i != 16; ++i)
+    if (flagged[i] != bytes[i + 1])
+      return 71;
+  const u64 nofile_current = little_integer(bytes + 1, 8);
+  const char cap_name[] = "kern.maxfilesperproc";
+  unsigned cap_mib[] = {1, 29};
+  unsigned char cap_bytes[6], saved_cap[4];
+  u64 cap = 0, cap_length = 4;
+  for (unsigned named = 0; named != 2; ++named) {
+    for (unsigned i = 0; i != sizeof(cap_bytes); ++i)
+      cap_bytes[i] = 0xa5;
+    cap_length = 4;
+    RESOURCE_EXPECT(
+        !call(named ? 274 : 202, named ? (u64)cap_name : (u64)cap_mib,
+              named ? sizeof(cap_name) - 1 : 0x1234567800000002UL,
+              (u64)(cap_bytes + 1), (u64)&cap_length, -1UL, 0, &error) &&
+        !error && !secondary && cap_length == 4 && cap_bytes[0] == 0xa5 &&
+        cap_bytes[5] == 0xa5);
+    if (!named) {
+      cap = little_integer(cap_bytes + 1, 4);
+      RESOURCE_EXPECT(cap <= 0x7fffffffUL);
+      for (unsigned i = 0; i != 4; ++i)
+        saved_cap[i] = cap_bytes[i + 1];
+    } else
+      RESOURCE_EXPECT(little_integer(cap_bytes + 1, 4) == cap);
+  }
+  const u64 expected_table = nofile_current < cap ? nofile_current : cap;
+  for (unsigned high = 0; high != 2; ++high) {
+    RESOURCE_EXPECT(call(high ? 0x1234567800000059UL : 89, -1UL,
+                         (u64)(cap_bytes + 1), 0x1122334455667788UL, -1UL,
+                         (u64)&cap_length, -1UL, &error) == expected_table &&
+                    !error && !secondary && cap_length == 4 &&
+                    cap_bytes[0] == 0xa5 && cap_bytes[5] == 0xa5 &&
+                    bytes[0] == 0xa5 && bytes[17] == 0xa5);
+    for (unsigned i = 0; i != 4; ++i)
+      RESOURCE_EXPECT(cap_bytes[i + 1] == saved_cap[i]);
+    for (unsigned i = 0; i != 16; ++i)
+      RESOURCE_EXPECT(flagged[i] == bytes[i + 1]);
+  }
+  const u64 invalid[] = {9, 0x1009, 0x2000, 0xffffffffUL};
+  for (unsigned i = 0; i != 4; ++i) {
+    for (unsigned j = 0; j != sizeof(bytes); ++j)
+      bytes[j] = 0xa5;
+    RESOURCE_EXPECT(
+        call(194, invalid[i], (u64)(bytes + 1), 0, 0, 0, 0, &error) == 22 &&
+        error && !secondary);
+    for (unsigned j = 0; j != sizeof(bytes); ++j)
+      if (bytes[j] != 0xa5)
+        return 72;
+  }
+  RESOURCE_EXPECT(call(194, 9, 0, 0, 0, 0, 0, &error) == 22 && error &&
+                  !secondary);
+  RESOURCE_EXPECT(call(194, 8, 0, 0, 0, 0, 0, &error) == 14 && error &&
+                  !secondary);
+  u64 mapping = call(197, 0, PAGE, 3, 0x1002, (u64)-1, 0, &error);
+  RESOURCE_EXPECT(!error && mapping && !secondary);
+  RESOURCE_EXPECT(!call(74, mapping, PAGE, 1, 0, 0, 0, &error) && !error &&
+                  !secondary);
+  RESOURCE_EXPECT(call(194, 8, mapping, 0, 0, 0, 0, &error) == 14 && error &&
+                  !secondary);
+  RESOURCE_EXPECT(!call(73, mapping, PAGE, 0, 0, 0, 0, &error) && !error &&
+                  !secondary);
+  if (!emit_values) {
+    char output = 'l';
+    RESOURCE_EXPECT(call(4, 1, (u64)&output, 1, 0, 0, 0, &error) == 1 &&
+                    !error && !secondary);
+  }
+#undef RESOURCE_EXPECT
+  return 37;
+}
+
 /* Raw Mach calls have a distinct return ABI. Record flags and live argument
  * carriers directly, without a libSystem wrapper or a BSD carry adapter. */
 struct mach_observation {
@@ -716,7 +1412,483 @@ static int created_file_metadata(const char *path, int virtual_record) {
   return 37;
 }
 
-/* Original native/guest same-parent rename and replacement comparison. */
+static unsigned directory_path(u64 fd, const char *parent, const char *tail) {
+  unsigned error;
+  char found[1024];
+  if (call(92, fd, 50, (u64)found, 0, 0, 0, &error) || error)
+    return 0;
+  unsigned i = 0, j = 0;
+  while (parent[i]) {
+    if (found[i] != parent[i])
+      return 0;
+    ++i;
+  }
+  if (i == 1 && parent[0] == '/' && tail[0] == '/')
+    i = 0;
+  do {
+    if (found[i + j] != tail[j])
+      return 0;
+  } while (tail[j++]);
+  return 1;
+}
+
+/* Original SDK-free two-way directory and mixed-object exchange workload. */
+static int swapped_directory(const char *path) {
+  unsigned error;
+  int check = 80;
+#define DIRECTORY_SWAP_EXPECT(expression)                                      \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  char parent[1024], bytes[3];
+  u64 input = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(
+      call(92, input, 50, (u64)parent, 0, 0, 0, &error) == 0 && !error);
+  unsigned size = 0, slash = 0;
+  while (parent[size]) {
+    if (parent[size] == '/')
+      slash = size;
+    ++size;
+  }
+  parent[slash ? slash : 1] = 0;
+  u64 root = call(5, (u64)parent, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  for (unsigned i = 0; i != 2; ++i)
+    DIRECTORY_SWAP_EXPECT(call(475, root, (u64)(i ? "right" : "left"), 0700, 0,
+                               0, 0, &error) == 0 &&
+                          !error);
+  u64 left = call(463, root, (u64) "left", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 right = call(463, root, (u64) "right", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(
+      call(475, left, (u64) "source", 0700, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(475, right, (u64) "target", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 source = call(463, left, (u64) "source", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 target = call(463, right, (u64) "target", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 duplicate = call(41, source, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(call(92, source, 2, 1, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(475, source, (u64) "sub", 0700, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(475, target, (u64) "sub", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 child = call(463, source, (u64) "sub", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 other_child = call(463, target, (u64) "sub", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 file = call(463, child, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 other_file =
+      call(463, other_child, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(call(4, file, (u64) "abc", 3, 0, 0, 0, &error) == 3 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(4, other_file, (u64) "xyz", 3, 0, 0, 0, &error) == 3 && !error);
+  u64 file_duplicate = call(41, file, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 independent = call(463, child, (u64) "data", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(call(199, file, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  unsigned char before[144] = {0}, after[144] = {0};
+  DIRECTORY_SWAP_EXPECT(call(339, file, (u64)before, 0, 0, 0, 0, &error) == 0 &&
+                        !error);
+  u64 mapping = call(197, 0, PAGE, 1, 2, file, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  u64 dead = call(463, source, (u64) "dead", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, source, (u64) "dead", 0, 0, 0, 0, &error) == 0 && !error);
+  u64 ordinary = call(463, root, (u64) "ordinary", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(call(4, ordinary, (u64) "F", 1, 0, 0, 0, &error) == 1 &&
+                        !error);
+  // Keep the freestanding image free of constant pointer-table rebases.
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source/.", right, (u64) "absent",
+                             2, 0, &error) == 2 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source/.", right,
+                             (u64) "absent/", 2, 0, &error) == 2 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source/sub/..", right,
+                             (u64) "absent", 2, 0, &error) == 2 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source/sub/..", right,
+                             (u64) "absent/", 2, 0, &error) == 2 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source", source, (u64) "sub", 2,
+                             0, &error) == 22 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, source, (u64) "sub", left, (u64) "source", 2,
+                             0, &error) == 22 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source", child, (u64) "data", 2,
+                             0, &error) == 22 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, child, (u64) "data", left, (u64) "source", 2,
+                             0, &error) == 22 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(
+      call(488, left, (u64) "source", 999, (u64)-1, 2, 0, &error) == 14 &&
+      error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source", 88888, (u64) "target",
+                             2, 0, &error) == 9 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source", root, (u64) "ordinary/",
+                             2, 0, &error) == 20 &&
+                        error);
+  DIRECTORY_SWAP_EXPECT(call(13, child, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(call(488, left, (u64) "source", right,
+                             (u64) "target///", 0x1234567800000012UL, 0,
+                             &error) == 0 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(directory_path(source, parent, "/right/target"));
+  DIRECTORY_SWAP_EXPECT(directory_path(duplicate, parent, "/right/target"));
+  DIRECTORY_SWAP_EXPECT(directory_path(target, parent, "/left/source"));
+  DIRECTORY_SWAP_EXPECT(directory_path(child, parent, "/right/target/sub"));
+  DIRECTORY_SWAP_EXPECT(
+      directory_path(other_child, parent, "/left/source/sub"));
+  DIRECTORY_SWAP_EXPECT(directory_path(file, parent, "/right/target/sub/data"));
+  DIRECTORY_SWAP_EXPECT(
+      directory_path(other_file, parent, "/left/source/sub/data"));
+  DIRECTORY_SWAP_EXPECT(directory_path(dead, parent, "/right/target/dead"));
+  u64 cwd = call(463, (u64)-2, (u64) ".", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(directory_path(cwd, parent, "/right/target/sub"));
+  u64 up = call(463, source, (u64) "..", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(directory_path(up, parent, "/right"));
+  DIRECTORY_SWAP_EXPECT(call(339, file, (u64)after, 0, 0, 0, 0, &error) == 0 &&
+                        !error);
+  unsigned unchanged = 1;
+  for (unsigned i = 0; i != 124; ++i)
+    if (i < 32 || i >= 48)
+      unchanged &= before[i] == after[i];
+  DIRECTORY_SWAP_EXPECT(unchanged);
+  DIRECTORY_SWAP_EXPECT(call(92, source, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  DIRECTORY_SWAP_EXPECT(call(92, duplicate, 1, 0, 0, 0, 0, &error) == 0 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(call(199, file_duplicate, 0, 1, 0, 0, 0, &error) == 1 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(call(199, independent, 0, 1, 0, 0, 0, &error) == 0 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(((volatile char *)mapping)[0] == 'a' &&
+                        ((volatile char *)mapping)[2] == 'c');
+  u64 reopened = call(463, left, (u64) "source/sub/data", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(call(153, reopened, (u64)bytes, 3, 0, 0, 0, &error) ==
+                            3 &&
+                        !error && bytes[0] == 'x' && bytes[2] == 'z');
+  DIRECTORY_SWAP_EXPECT(call(488, right, (u64) "target", root, (u64) "ordinary",
+                             2, 0, &error) == 0 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(directory_path(source, parent, "/ordinary"));
+  DIRECTORY_SWAP_EXPECT(directory_path(child, parent, "/ordinary/sub"));
+  DIRECTORY_SWAP_EXPECT(directory_path(cwd, parent, "/ordinary/sub"));
+  DIRECTORY_SWAP_EXPECT(directory_path(file, parent, "/ordinary/sub/data"));
+  DIRECTORY_SWAP_EXPECT(directory_path(dead, parent, "/ordinary/dead"));
+  DIRECTORY_SWAP_EXPECT(directory_path(ordinary, parent, "/right/target"));
+  u64 mixed_up = call(463, source, (u64) "..", 0, 0, 0, 0, &error);
+  DIRECTORY_SWAP_EXPECT(!error);
+  DIRECTORY_SWAP_EXPECT(directory_path(mixed_up, parent, ""));
+  DIRECTORY_SWAP_EXPECT(call(488, right, (u64) "target", root, (u64) "ordinary",
+                             2, 0, &error) == 0 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(directory_path(source, parent, "/right/target"));
+  DIRECTORY_SWAP_EXPECT(directory_path(ordinary, parent, "/ordinary"));
+  DIRECTORY_SWAP_EXPECT(call(488, right, (u64) "target", left, (u64) "source",
+                             2, 0, &error) == 0 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(directory_path(source, parent, "/left/source"));
+  DIRECTORY_SWAP_EXPECT(directory_path(target, parent, "/right/target"));
+  DIRECTORY_SWAP_EXPECT(directory_path(file, parent, "/left/source/sub/data"));
+  DIRECTORY_SWAP_EXPECT(directory_path(dead, parent, "/left/source/dead"));
+  DIRECTORY_SWAP_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(call(73, mapping, PAGE, 0, 0, 0, 0, &error) == 0 &&
+                        !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, child, (u64) "data", 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, other_child, (u64) "data", 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, source, (u64) "sub", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, target, (u64) "sub", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, left, (u64) "source", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, right, (u64) "target", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, root, (u64) "left", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, root, (u64) "right", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_SWAP_EXPECT(
+      call(472, root, (u64) "ordinary", 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 fds[] = {input,       root,     left,       right,
+                     source,      target,   duplicate,  child,
+                     other_child, file,     other_file, file_duplicate,
+                     independent, dead,     ordinary,   cwd,
+                     up,          reopened, mixed_up};
+  for (unsigned i = 0; i != sizeof(fds) / sizeof(fds[0]); ++i)
+    DIRECTORY_SWAP_EXPECT(call(6, fds[i], 0, 0, 0, 0, 0, &error) == 0 &&
+                          !error);
+  DIRECTORY_SWAP_EXPECT(call(4, 1, (u64) "s", 1, 0, 0, 0, &error) == 1 &&
+                        !error);
+#undef DIRECTORY_SWAP_EXPECT
+  return 37;
+}
+
+/* Original SDK-free native/guest directory subtree and retained-object test. */
+static int renamed_directory(const char *path) {
+  unsigned error;
+  int check = 80;
+#define DIRECTORY_RENAME_EXPECT(expression)                                    \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  char parent[1024], new_path[1024], bytes[3];
+  u64 input = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(92, input, 50, (u64)parent, 0, 0, 0, &error) == 0 && !error);
+  unsigned size = 0, slash = 0;
+  while (parent[size]) {
+    if (parent[size] == '/')
+      slash = size;
+    ++size;
+  }
+  parent[slash ? slash : 1] = 0;
+  u64 root = call(5, (u64)parent, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(475, root, (u64) "left", 0700, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(475, root, (u64) "right", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 left = call(463, root, (u64) "left", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  u64 right = call(463, root, (u64) "right", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(475, left, (u64) "source", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 source = call(463, left, (u64) "source", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  u64 duplicate = call(41, source, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(call(92, source, 2, 1, 0, 0, 0, &error) == 0 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(475, source, (u64) "child", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 child = call(463, source, (u64) "child", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  u64 file = call(463, child, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(call(4, file, (u64) "abc", 3, 0, 0, 0, &error) == 3 &&
+                          !error);
+  u64 file_duplicate = call(41, file, 0, 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  u64 independent = call(463, child, (u64) "data", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(call(199, file, 1, 0, 0, 0, 0, &error) == 1 &&
+                          !error);
+  unsigned char before[144] = {0}, after[144] = {0};
+  DIRECTORY_RENAME_EXPECT(
+      call(339, file, (u64)before, 0, 0, 0, 0, &error) == 0 && !error);
+  u64 mapping = call(197, 0, PAGE, 1, 2, file, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  u64 dead = call(463, source, (u64) "dead", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, source, (u64) "dead", 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(475, source, (u64) "gone", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 gone = call(463, source, (u64) "gone", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, source, (u64) "gone", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(475, right, (u64) "empty", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 target = call(463, right, (u64) "empty", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  u64 target_dead = call(463, target, (u64) "dead", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, target, (u64) "dead", 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(475, right, (u64) "busy", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 member = call(463, right, (u64) "busy/member", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(488, left, (u64) "missing", 999, (u64)-1, 0, 0, &error) == 2 &&
+      error);
+  DIRECTORY_RENAME_EXPECT(
+      call(488, left, (u64) "source", 999, (u64)-1, 0, 0, &error) == 14 &&
+      error);
+  DIRECTORY_RENAME_EXPECT(
+      call(488, left, (u64) "source/.", 999, (u64)-1, 0, 0, &error) == 14 &&
+      error);
+  DIRECTORY_RENAME_EXPECT(call(488, left, (u64) "source", child, (u64) "data",
+                               0, 0, &error) == 20 &&
+                          error);
+  DIRECTORY_RENAME_EXPECT(call(488, left, (u64) "source", right, (u64) "busy",
+                               0, 0, &error) == 66 &&
+                          error);
+  DIRECTORY_RENAME_EXPECT(call(488, left, (u64) "source/.", right,
+                               (u64) "empty", 4, 0, &error) == 17 &&
+                          error);
+  DIRECTORY_RENAME_EXPECT(call(488, left, (u64) "source", source,
+                               (u64) "inside", 0, 0, &error) == 22 &&
+                          error);
+  DIRECTORY_RENAME_EXPECT(call(488, left, (u64) "source", source, (u64) "child",
+                               4, 0, &error) == 17 &&
+                          error);
+  DIRECTORY_RENAME_EXPECT(
+      call(488, left, (u64) "source", right, (u64) ".", 0, 0, &error) == 22 &&
+      error);
+  DIRECTORY_RENAME_EXPECT(
+      call(488, 999, (u64)-1, 999, (u64)-1, 6, 0, &error) == 22 && error);
+  DIRECTORY_RENAME_EXPECT(call(13, child, 0, 0, 0, 0, 0, &error) == 0 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(call(488, left, (u64) "source", right,
+                               (u64) "moved///", 0x1234567800000010UL, 0,
+                               &error) == 0 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(directory_path(source, parent, "/right/moved"));
+  DIRECTORY_RENAME_EXPECT(directory_path(duplicate, parent, "/right/moved"));
+  DIRECTORY_RENAME_EXPECT(directory_path(child, parent, "/right/moved/child"));
+  DIRECTORY_RENAME_EXPECT(
+      directory_path(file, parent, "/right/moved/child/data"));
+  DIRECTORY_RENAME_EXPECT(
+      directory_path(file_duplicate, parent, "/right/moved/child/data"));
+  DIRECTORY_RENAME_EXPECT(
+      directory_path(independent, parent, "/right/moved/child/data"));
+  DIRECTORY_RENAME_EXPECT(directory_path(dead, parent, "/right/moved/dead"));
+  DIRECTORY_RENAME_EXPECT(directory_path(gone, parent, "/right/moved/gone"));
+  u64 cwd = call(463, (u64)-2, (u64) ".", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(directory_path(cwd, parent, "/right/moved/child"));
+  u64 up = call(463, source, (u64) "..", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(directory_path(up, parent, "/right"));
+  u64 removed_up = call(463, gone, (u64) "..", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(directory_path(removed_up, parent, "/right/moved"));
+  DIRECTORY_RENAME_EXPECT(
+      call(339, file, (u64)after, 0, 0, 0, 0, &error) == 0 && !error);
+  unsigned unchanged = 1;
+  for (unsigned i = 0; i != 124; ++i)
+    if (i < 32 || i >= 48)
+      unchanged &= before[i] == after[i];
+  DIRECTORY_RENAME_EXPECT(unchanged);
+  DIRECTORY_RENAME_EXPECT(call(92, source, 1, 0, 0, 0, 0, &error) == 1 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(call(92, duplicate, 1, 0, 0, 0, 0, &error) == 0 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(199, file_duplicate, 0, 1, 0, 0, 0, &error) == 1 && !error);
+  DIRECTORY_RENAME_EXPECT(call(199, independent, 0, 1, 0, 0, 0, &error) == 0 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(((volatile char *)mapping)[0] == 'a' &&
+                          ((volatile char *)mapping)[2] == 'c');
+  DIRECTORY_RENAME_EXPECT(call(465, right, (u64) "moved", right, (u64) "empty",
+                               0, 0, &error) == 0 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(directory_path(dead, parent, "/right/empty/dead"));
+  DIRECTORY_RENAME_EXPECT(
+      directory_path(target_dead, parent, "/right/empty/dead"));
+  DIRECTORY_RENAME_EXPECT(
+      call(463, target, (u64) "missing", 0x202, 0600, 0, 0, &error) == 2 &&
+      error);
+  u64 old_dot = call(463, target, (u64) ".", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(call(13, target, 0, 0, 0, 0, 0, &error) == 0 &&
+                          !error);
+  // Use full buffers for the absolute rename; no pointer-table rebases.
+  char old_path[1024];
+  DIRECTORY_RENAME_EXPECT(
+      call(92, source, 50, (u64)old_path, 0, 0, 0, &error) == 0 && !error);
+  unsigned n = 0;
+  while (parent[n]) {
+    new_path[n] = parent[n];
+    ++n;
+  }
+  if (n == 1 && parent[0] == '/')
+    n = 0;
+  const char final_tail[] = "/right/final";
+  unsigned j = 0;
+  do {
+    new_path[n + j] = final_tail[j];
+  } while (final_tail[j++]);
+  DIRECTORY_RENAME_EXPECT(
+      call(128, (u64)old_path, (u64)new_path, 0, 0, 0, 0, &error) == 0 &&
+      !error);
+  DIRECTORY_RENAME_EXPECT(directory_path(source, parent, "/right/final"));
+  DIRECTORY_RENAME_EXPECT(
+      directory_path(file, parent, "/right/final/child/data"));
+  DIRECTORY_RENAME_EXPECT(directory_path(dead, parent, "/right/final/dead"));
+  DIRECTORY_RENAME_EXPECT(directory_path(gone, parent, "/right/final/gone"));
+  DIRECTORY_RENAME_EXPECT(directory_path(target, parent, "/right/empty"));
+  DIRECTORY_RENAME_EXPECT(directory_path(old_dot, parent, "/right/empty"));
+  DIRECTORY_RENAME_EXPECT(
+      directory_path(target_dead, parent, "/right/empty/dead"));
+  u64 old_cwd = call(463, (u64)-2, (u64) ".", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(directory_path(old_cwd, parent, "/right/empty"));
+  u64 old_up = call(463, target, (u64) "..", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(directory_path(old_up, parent, "/right"));
+  u64 reopened = call(463, source, (u64) "child/data", 0, 0, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(
+      call(153, reopened, (u64)bytes, 3, 0, 0, 0, &error) == 3 && !error);
+  DIRECTORY_RENAME_EXPECT(bytes[0] == 'a' && bytes[2] == 'c');
+  u64 fresh = call(463, source, (u64) "fresh", 0xa02, 0600, 0, 0, &error);
+  DIRECTORY_RENAME_EXPECT(!error);
+  DIRECTORY_RENAME_EXPECT(call(4, fresh, (u64) "x", 1, 0, 0, 0, &error) == 1 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(directory_path(fresh, parent, "/right/final/fresh"));
+  DIRECTORY_RENAME_EXPECT(call(73, mapping, PAGE, 0, 0, 0, 0, &error) == 0 &&
+                          !error);
+  DIRECTORY_RENAME_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, child, (u64) "data", 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, source, (u64) "child", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, source, (u64) "fresh", 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, right, (u64) "final", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, right, (u64) "busy/member", 0, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, right, (u64) "busy", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, root, (u64) "left", 0x80, 0, 0, 0, &error) == 0 && !error);
+  DIRECTORY_RENAME_EXPECT(
+      call(472, root, (u64) "right", 0x80, 0, 0, 0, &error) == 0 && !error);
+  const u64 fds[] = {
+      input,   root,        left,           right,       source, duplicate,
+      child,   file,        file_duplicate, independent, dead,   gone,
+      target,  target_dead, member,         cwd,         up,     removed_up,
+      old_dot, old_cwd,     old_up,         reopened,    fresh};
+  for (unsigned i = 0; i != sizeof(fds) / sizeof(fds[0]); ++i)
+    DIRECTORY_RENAME_EXPECT(call(6, fds[i], 0, 0, 0, 0, 0, &error) == 0 &&
+                            !error);
+  DIRECTORY_RENAME_EXPECT(call(4, 1, (u64) "d", 1, 0, 0, 0, &error) == 1 &&
+                          !error);
+#undef DIRECTORY_RENAME_EXPECT
+  return 37;
+}
+
+/* Original native/guest same- and cross-parent rename/swap comparison. */
 static int renamed_file(const char *path) {
   unsigned error;
   int check = 80;
@@ -729,7 +1901,7 @@ static int renamed_file(const char *path) {
   u64 old = call(5, (u64)path, 2, 0, 0, 0, 0, &error);
   RENAME_EXPECT(!error);
   char original[1024], parent[1024], temporary[1024], final[1024], after[1024],
-      trailing[1024], bytes[10];
+      trailing[1024], new_parent[1024], bytes[10];
   RENAME_EXPECT(call(92, old, 50, (u64)original, 0, 0, 0, &error) == 0 &&
                 !error);
   unsigned size = 0, slash = 0;
@@ -739,17 +1911,24 @@ static int renamed_file(const char *path) {
       slash = size;
     ++size;
   }
-  RENAME_EXPECT(slash + 12 < sizeof(temporary));
+  RENAME_EXPECT(slash + 16 < sizeof(temporary));
   parent[slash ? slash : 1] = 0;
   for (unsigned i = 0; i <= slash; ++i)
-    temporary[i] = final[i] = trailing[i] = original[i];
-  const char names[][12] = {"rename.tmp", "rename.end", "rename.end/"};
-  for (unsigned i = 0; i != 12; ++i) {
+    temporary[i] = final[i] = trailing[i] = new_parent[i] = original[i];
+  const char names[][16] = {"rename.tmp", "rename.dir/end", "rename.dir/end/",
+                            "rename.dir"};
+  for (unsigned i = 0; i != 16; ++i) {
     temporary[slash + 1 + i] = names[0][i];
     final[slash + 1 + i] = names[1][i];
     trailing[slash + 1 + i] = names[2][i];
+    new_parent[slash + 1 + i] = names[3][i];
   }
   u64 directory = call(5, (u64)parent, 0, 0, 0, 0, 0, &error);
+  RENAME_EXPECT(!error);
+  RENAME_EXPECT(
+      call(475, directory, (u64) "rename.dir", 0700, 0, 0, 0, &error) == 0 &&
+      !error);
+  u64 new_directory = call(5, (u64)new_parent, 0, 0, 0, 0, 0, &error);
   RENAME_EXPECT(!error);
   unsigned char old_status[144], source_status[144], status[144];
   RENAME_EXPECT(call(339, old, (u64)old_status, 0, 0, 0, 0, &error) == 0 &&
@@ -783,6 +1962,12 @@ static int renamed_file(const char *path) {
   RENAME_EXPECT(call(128, (u64)temporary, (u64)temporary, 0, 0, 0, 0, &error) ==
                     0 &&
                 !error);
+  RENAME_EXPECT(call(488, directory, (u64)(temporary + slash + 1), directory,
+                     (u64)(temporary + slash + 1), 2, 0, &error) == 0 &&
+                !error);
+  RENAME_EXPECT(call(488, directory, (u64)(temporary + slash + 1),
+                     new_directory, (u64) "end", 0x12, 0, &error) == 2 &&
+                error);
   RENAME_EXPECT(call(128, (u64) final, (u64)-1, 0, 0, 0, 0, &error) == 2 &&
                 error);
   RENAME_EXPECT(call(128, (u64)temporary, (u64)trailing, 0, 0, 0, 0, &error) ==
@@ -800,8 +1985,8 @@ static int renamed_file(const char *path) {
   RENAME_EXPECT(call(488, (u64)-1, (u64)-1, (u64)-1, (u64)-1, 6, 0, &error) ==
                     22 &&
                 error);
-  RENAME_EXPECT(call(488, directory, (u64)(temporary + slash + 1), directory,
-                     (u64)(final + slash + 1), 0x14, 0, &error) == 0 &&
+  RENAME_EXPECT(call(488, directory, (u64)(temporary + slash + 1),
+                     new_directory, (u64) "end", 0x14, 0, &error) == 0 &&
                 !error);
   const u64 source_fds[] = {a, d, independent};
   for (unsigned i = 0; i != 3; ++i) {
@@ -809,6 +1994,50 @@ static int renamed_file(const char *path) {
                       0 &&
                   !error);
     RENAME_EXPECT(equal(after, final));
+  }
+  for (unsigned round = 0; round != 2; ++round) {
+    u64 from_directory = round ? directory : new_directory;
+    u64 to_directory = round ? new_directory : directory;
+    const char *from = round ? original + slash + 1 : "end";
+    const char *to = round ? "end" : original + slash + 1;
+    const char *source_path = round ? final : original;
+    const char *old_path = round ? original : final;
+    RENAME_EXPECT(call(488, from_directory, (u64)from, to_directory, (u64)to,
+                       round ? 2 : 0x1234567800000012UL, 0, &error) == 0 &&
+                  !error);
+    for (unsigned i = 0; i != 3; ++i) {
+      RENAME_EXPECT(call(92, source_fds[i], 50, (u64)after, 0, 0, 0, &error) ==
+                        0 &&
+                    !error);
+      RENAME_EXPECT(equal(after, source_path));
+    }
+    RENAME_EXPECT(call(92, old, 50, (u64)after, 0, 0, 0, &error) == 0 &&
+                  !error);
+    RENAME_EXPECT(equal(after, old_path));
+    RENAME_EXPECT(call(339, a, (u64)status, 0, 0, 0, 0, &error) == 0 && !error);
+    unsigned same_source = 1;
+    for (unsigned i = 0; i != sizeof(status); ++i)
+      if (i < 24 || (i >= 48 && i < 64) || (i >= 80 && i < 104))
+        same_source &= status[i] == source_status[i];
+    RENAME_EXPECT(same_source);
+    RENAME_EXPECT(call(339, old, (u64)status, 0, 0, 0, 0, &error) == 0 &&
+                  !error);
+    RENAME_EXPECT(little_integer(status + 8, 8) ==
+                      little_integer(old_status + 8, 8) &&
+                  little_integer(status + 6, 2) == 1 &&
+                  little_integer(status + 96, 8) == 10);
+    RENAME_EXPECT(call(199, d, 0, 1, 0, 0, 0, &error) == 3 && !error);
+    RENAME_EXPECT(call(199, independent, 0, 1, 0, 0, 0, &error) == 0 && !error);
+    RENAME_EXPECT(call(199, old, 0, 1, 0, 0, 0, &error) == 4 && !error);
+    RENAME_EXPECT(((volatile char *)source_map)[0] == 'n' &&
+                  ((volatile char *)source_map)[2] == 'w' &&
+                  ((volatile char *)old_map)[0] == '0');
+    u64 named = call(5, (u64)source_path, 0, 0, 0, 0, 0, &error);
+    RENAME_EXPECT(!error);
+    RENAME_EXPECT(call(3, named, (u64)bytes, 10, 0, 0, 0, &error) == 3 &&
+                  !error);
+    RENAME_EXPECT(bytes[0] == 'n' && bytes[2] == 'w');
+    RENAME_EXPECT(call(6, named, 0, 0, 0, 0, 0, &error) == 0 && !error);
   }
   RENAME_EXPECT(call(488, (u64)-1, (u64) final, (u64)-1, (u64)original,
                      0x1234567800000010UL, 0, &error) == 0 &&
@@ -865,8 +2094,10 @@ static int renamed_file(const char *path) {
   RENAME_EXPECT(call(153, a, (u64)bytes, 10, 0, 0, 0, &error) == 3 && !error);
   RENAME_EXPECT(bytes[0] == 'n' && bytes[2] == 'w');
   RENAME_EXPECT(call(10, (u64) final, 0, 0, 0, 0, 0, &error) == 0 && !error);
-  const u64 fds[] = {old, a, d, independent, fresh, directory};
-  for (unsigned i = 0; i != 6; ++i)
+  RENAME_EXPECT(call(137, (u64)new_parent, 0, 0, 0, 0, 0, &error) == 0 &&
+                !error);
+  const u64 fds[] = {old, a, d, independent, fresh, directory, new_directory};
+  for (unsigned i = 0; i != 7; ++i)
     RENAME_EXPECT(call(6, fds[i], 0, 0, 0, 0, 0, &error) == 0 && !error);
   RENAME_EXPECT(call(4, 1, (u64) "r", 1, 0, 0, 0, &error) == 1 && !error);
 #undef RENAME_EXPECT
@@ -1513,6 +2744,252 @@ static int system_info(int emit_values) {
   return 37;
 }
 
+static int initial_directory_swap(const char *path) {
+  unsigned error;
+  int check = 51;
+#define INITIAL_SWAP_EXPECT(expression)                                        \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+#define INITIAL_SWAP_CLOSE(fd)                                                 \
+  INITIAL_SWAP_EXPECT(call(6, fd, 0, 0, 0, 0, 0, &error) == 0 && !error)
+  char parent[1024], beforedir[1024], beforefile[1024], after[1024], byte = 0;
+  u64 input = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  INITIAL_SWAP_EXPECT(!error);
+  INITIAL_SWAP_EXPECT(
+      call(92, input, 50, (u64)beforefile, 0, 0, 0, &error) == 0 && !error);
+  unsigned size = 0, slash = 0;
+  while (beforefile[size]) {
+    parent[size] = beforefile[size];
+    if (parent[size] == '/')
+      slash = size;
+    ++size;
+  }
+  parent[slash ? slash : 1] = 0;
+  u64 root = call(5, (u64)parent, 0, 0, 0, 0, 0, &error);
+  INITIAL_SWAP_EXPECT(!error);
+  u64 original = call(463, root, (u64) "empty", 0, 0, 0, 0, &error);
+  INITIAL_SWAP_EXPECT(!error);
+  u64 duplicate = call(41, original, 0, 0, 0, 0, 0, &error);
+  INITIAL_SWAP_EXPECT(!error);
+  u64 inputdup = call(41, input, 0, 0, 0, 0, 0, &error);
+  INITIAL_SWAP_EXPECT(!error);
+  u64 independent = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  INITIAL_SWAP_EXPECT(!error);
+  INITIAL_SWAP_EXPECT(call(92, original, 2, 1, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_SWAP_EXPECT(call(199, original, 31, 0, 0, 0, 0, &error) == 31 &&
+                      !error);
+  INITIAL_SWAP_EXPECT(call(199, input, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  INITIAL_SWAP_EXPECT(
+      call(92, original, 50, (u64)beforedir, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_SWAP_EXPECT(
+      call(475, original, (u64) "sub", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 child = call(463, original, (u64) "sub", 0, 0, 0, 0, &error);
+  INITIAL_SWAP_EXPECT(!error);
+  u64 file = call(463, child, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  INITIAL_SWAP_EXPECT(!error);
+  INITIAL_SWAP_EXPECT(call(4, file, (u64) "abc", 3, 0, 0, 0, &error) == 3 &&
+                      !error);
+  u64 mapping = call(197, 0, PAGE, 1, 0x40002, file, 0, &error);
+  INITIAL_SWAP_EXPECT(!error && *(volatile char *)mapping == 'a');
+  INITIAL_SWAP_EXPECT(call(13, child, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_SWAP_EXPECT(call(488, root, (u64) "empty", root, (u64) "data", 0x12,
+                           0, &error) == 0 &&
+                      !error);
+  INITIAL_SWAP_EXPECT(call(92, original, 50, (u64)after, 0, 0, 0, &error) ==
+                          0 &&
+                      !error && equal(after, beforefile));
+  INITIAL_SWAP_EXPECT(call(92, input, 50, (u64)after, 0, 0, 0, &error) == 0 &&
+                      !error && equal(after, beforedir));
+  INITIAL_SWAP_EXPECT(call(199, duplicate, 0, 1, 0, 0, 0, &error) == 31 &&
+                      !error);
+  INITIAL_SWAP_EXPECT(call(92, original, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  INITIAL_SWAP_EXPECT(call(92, duplicate, 1, 0, 0, 0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_SWAP_EXPECT(call(3, inputdup, (u64)&byte, 1, 0, 0, 0, &error) == 1 &&
+                      !error && byte == '1');
+  INITIAL_SWAP_EXPECT(call(199, input, 0, 1, 0, 0, 0, &error) == 2 && !error);
+  INITIAL_SWAP_EXPECT(call(199, independent, 0, 1, 0, 0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_SWAP_EXPECT(
+      call(466, root, (u64) "empty/sub", 0, 0, 0, 0, &error) == 20 && error);
+  u64 ancestor = call(5, (u64) "..", 0, 0, 0, 0, 0, &error);
+  INITIAL_SWAP_EXPECT(!error);
+  INITIAL_SWAP_EXPECT(call(92, ancestor, 50, (u64)after, 0, 0, 0, &error) ==
+                          0 &&
+                      !error && equal(after, beforefile));
+  INITIAL_SWAP_EXPECT(
+      call(488, root, (u64) "data", child, (u64) "data", 2, 0, &error) == 22 &&
+      error);
+  u64 fresh = call(463, original, (u64) "fresh", 0xa02, 0600, 0, 0, &error);
+  INITIAL_SWAP_EXPECT(!error);
+  INITIAL_SWAP_EXPECT(
+      call(488, root, (u64) "empty", root, (u64) "data", 2, 0, &error) == 0 &&
+      !error);
+  INITIAL_SWAP_EXPECT(call(92, original, 50, (u64)after, 0, 0, 0, &error) ==
+                          0 &&
+                      !error && equal(after, beforedir));
+  INITIAL_SWAP_EXPECT(call(92, input, 50, (u64)after, 0, 0, 0, &error) == 0 &&
+                      !error && equal(after, beforefile));
+  INITIAL_SWAP_EXPECT(call(472, child, (u64) "data", 0, 0, 0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_SWAP_EXPECT(
+      call(472, original, (u64) "sub", 0x80, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_SWAP_EXPECT(*(volatile char *)mapping == 'a');
+  INITIAL_SWAP_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_SWAP_EXPECT(
+      call(472, original, (u64) "fresh", 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_SWAP_EXPECT(call(73, mapping, PAGE, 0, 0, 0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_SWAP_CLOSE(fresh);
+  INITIAL_SWAP_CLOSE(ancestor);
+  INITIAL_SWAP_CLOSE(file);
+  INITIAL_SWAP_CLOSE(child);
+  INITIAL_SWAP_CLOSE(independent);
+  INITIAL_SWAP_CLOSE(inputdup);
+  INITIAL_SWAP_CLOSE(input);
+  INITIAL_SWAP_CLOSE(duplicate);
+  INITIAL_SWAP_CLOSE(original);
+  INITIAL_SWAP_CLOSE(root);
+  const char marker = 'q';
+  INITIAL_SWAP_EXPECT(call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 &&
+                      !error);
+#undef INITIAL_SWAP_CLOSE
+#undef INITIAL_SWAP_EXPECT
+  return 37;
+}
+
+static int initial_directory_move(const char *path) {
+  unsigned error;
+  int check = 51;
+#define INITIAL_MOVE_EXPECT(expression)                                        \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+#define INITIAL_MOVE_CLOSE(fd)                                                 \
+  INITIAL_MOVE_EXPECT(call(6, fd, 0, 0, 0, 0, 0, &error) == 0 && !error)
+  char parent[1024], before[1024], after[1024], byte = 0;
+  u64 input = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(call(92, input, 50, (u64)parent, 0, 0, 0, &error) == 0 &&
+                      !error);
+  unsigned size = 0, slash = 0;
+  while (parent[size]) {
+    if (parent[size] == '/')
+      slash = size;
+    ++size;
+  }
+  parent[slash ? slash : 1] = 0;
+  INITIAL_MOVE_CLOSE(input);
+  u64 root = call(5, (u64)parent, 0, 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  u64 original = call(463, root, (u64) "empty", 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  u64 duplicate = call(41, original, 0, 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(call(92, original, 2, 1, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(call(199, original, 31, 0, 0, 0, 0, &error) == 31 &&
+                      !error);
+  INITIAL_MOVE_EXPECT(
+      call(92, original, 50, (u64)before, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(
+      call(475, original, (u64) "sub", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 child = call(463, original, (u64) "sub", 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  u64 file = call(463, child, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(call(4, file, (u64) "abc", 3, 0, 0, 0, &error) == 3 &&
+                      !error);
+  u64 filedup = call(41, file, 0, 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  u64 independent = call(463, child, (u64) "data", 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(call(199, file, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  u64 mapping = call(197, 0, PAGE, 1, 0x40002, file, 0, &error);
+  INITIAL_MOVE_EXPECT(!error && *(volatile char *)mapping == 'a');
+  INITIAL_MOVE_EXPECT(
+      call(475, root, (u64) "dest", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 destination = call(463, root, (u64) "dest", 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(call(13, child, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(call(465, root, (u64) "empty", destination, (u64) "moved",
+                           0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_MOVE_EXPECT(call(466, root, (u64) "empty", 0, 0, 0, 0, &error) == 2 &&
+                      error);
+  INITIAL_MOVE_EXPECT(call(92, original, 50, (u64)after, 0, 0, 0, &error) ==
+                          0 &&
+                      !error && !equal(before, after));
+  INITIAL_MOVE_EXPECT(call(199, duplicate, 0, 1, 0, 0, 0, &error) == 31 &&
+                      !error);
+  INITIAL_MOVE_EXPECT(call(92, original, 1, 0, 0, 0, 0, &error) == 1 && !error);
+  INITIAL_MOVE_EXPECT(call(92, duplicate, 1, 0, 0, 0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_MOVE_EXPECT(call(3, filedup, (u64)&byte, 1, 0, 0, 0, &error) == 1 &&
+                      !error && byte == 'b');
+  INITIAL_MOVE_EXPECT(call(199, file, 0, 1, 0, 0, 0, &error) == 2 && !error);
+  INITIAL_MOVE_EXPECT(call(199, independent, 0, 1, 0, 0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_MOVE_EXPECT(*(volatile char *)mapping == 'a');
+  u64 ancestor = call(5, (u64) "..", 0, 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(call(92, ancestor, 50, (u64)parent, 0, 0, 0, &error) ==
+                          0 &&
+                      !error && equal(parent, after));
+  INITIAL_MOVE_EXPECT(call(465, destination, (u64) "moved", child,
+                           (u64) "cycle", 0, 0, &error) == 22 &&
+                      error);
+  u64 fresh = call(463, original, (u64) "fresh", 0xa02, 0600, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(
+      call(475, root, (u64) "empty", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 replaced = call(463, root, (u64) "empty", 0, 0, 0, 0, &error);
+  INITIAL_MOVE_EXPECT(!error);
+  INITIAL_MOVE_EXPECT(call(465, destination, (u64) "moved", root, (u64) "empty",
+                           0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_MOVE_EXPECT(call(92, original, 50, (u64)after, 0, 0, 0, &error) ==
+                          0 &&
+                      !error && equal(before, after));
+  INITIAL_MOVE_EXPECT(
+      call(466, replaced, (u64) "sub", 0, 0, 0, 0, &error) == 2 && error);
+  INITIAL_MOVE_EXPECT(
+      call(466, original, (u64) "sub", 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(call(472, child, (u64) "data", 0, 0, 0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_MOVE_EXPECT(
+      call(472, original, (u64) "sub", 0x80, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(*(volatile char *)mapping == 'a');
+  INITIAL_MOVE_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(
+      call(472, original, (u64) "fresh", 0, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(
+      call(472, root, (u64) "dest", 0x80, 0, 0, 0, &error) == 0 && !error);
+  INITIAL_MOVE_EXPECT(call(73, mapping, PAGE, 0, 0, 0, 0, &error) == 0 &&
+                      !error);
+  INITIAL_MOVE_CLOSE(fresh);
+  INITIAL_MOVE_CLOSE(ancestor);
+  INITIAL_MOVE_CLOSE(independent);
+  INITIAL_MOVE_CLOSE(filedup);
+  INITIAL_MOVE_CLOSE(file);
+  INITIAL_MOVE_CLOSE(child);
+  INITIAL_MOVE_CLOSE(replaced);
+  INITIAL_MOVE_CLOSE(duplicate);
+  INITIAL_MOVE_CLOSE(original);
+  INITIAL_MOVE_CLOSE(destination);
+  INITIAL_MOVE_CLOSE(root);
+  const char marker = 'p';
+  INITIAL_MOVE_EXPECT(call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 &&
+                      !error);
+#undef INITIAL_MOVE_CLOSE
+#undef INITIAL_MOVE_EXPECT
+  return 37;
+}
+
 static int initial_directory_removal(const char *path) {
   unsigned error;
   char parent[1024], before[1024], after[1024], byte = 0;
@@ -2064,8 +3541,47 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "process-priority") ||
+      equal(argv[1], "virtual-process-priority"))
+    return process_priority(equal(argv[1], "virtual-process-priority"));
+  if (equal(argv[1], "priority-errors"))
+    return priority_errors_only();
+  if (equal(argv[1], "priority-missing-after"))
+    return priority_unavailable(100, 0x1234567800000000UL,
+                                0xffffffff000003e8UL);
+  if (equal(argv[1], "priority-peer"))
+    return priority_unavailable(100, 0, 0xffffffff00001000UL);
+  if (equal(argv[1], "priority-group"))
+    return priority_unavailable(100, 1, 1000);
+  if (equal(argv[1], "priority-user"))
+    return priority_unavailable(100, 2, 0);
+  if (equal(argv[1], "priority-thread"))
+    return priority_unavailable(100, 0x1234567800000003UL,
+                                0xffffffff00000000UL);
+  if (equal(argv[1], "priority-background"))
+    return priority_unavailable(100, 4, 0);
+  if (equal(argv[1], "priority-role"))
+    return priority_unavailable(100, 6, 0);
+  if (equal(argv[1], "priority-game"))
+    return priority_unavailable(100, 7, 0);
+  if (equal(argv[1], "priority-carplay"))
+    return priority_unavailable(100, 8, 0);
+  if (equal(argv[1], "priority-set"))
+    return priority_unavailable(96, 0, 0);
+  if (equal(argv[1], "login-buffer") || equal(argv[1], "virtual-login-buffer"))
+    return login_buffer(equal(argv[1], "virtual-login-buffer"));
+  if (equal(argv[1], "login-zero"))
+    return login_zero();
+  if (equal(argv[1], "login-missing-after"))
+    return login_unavailable(49);
+  if (equal(argv[1], "login-set"))
+    return login_unavailable(50);
   if (equal(argv[1], "initial-directory-removal"))
     return argc < 3 ? 79 : initial_directory_removal(argv[2]);
+  if (equal(argv[1], "initial-directory-swap"))
+    return argc < 3 ? 79 : initial_directory_swap(argv[2]);
+  if (equal(argv[1], "initial-directory-move"))
+    return argc < 3 ? 79 : initial_directory_move(argv[2]);
   if (equal(argv[1], "deleted-directories"))
     return argc < 3 ? 79 : deleted_directories(argv[2]);
   if (equal(argv[1], "directory-mutations"))
@@ -2074,6 +3590,42 @@ int main(int argc, char **argv, char **envp, char **apple) {
     return argc < 3 ? 79 : file_access(argv[2]);
   if (equal(argv[1], "vectored-io"))
     return argc < 3 ? 79 : vectored_io(argv[2]);
+  if (equal(argv[1], "process-observations") ||
+      equal(argv[1], "virtual-process-observations"))
+    return process_observations(equal(argv[1], "virtual-process-observations"));
+  if (equal(argv[1], "process-group-query"))
+    return process_query(151, 0xffffffff000003e8UL, 0);
+  if (equal(argv[1], "process-session-query"))
+    return process_query(310, 0x100000000UL, 0);
+  if (equal(argv[1], "process-taint-query"))
+    return process_query(327, -1UL, 0);
+  if (equal(argv[1], "process-missing-after"))
+    return process_query(81, -1UL, 1);
+  if (equal(argv[1], "process-negative"))
+    return process_negative_queries();
+  if (equal(argv[1], "process-peer-query"))
+    return process_query(151, 0xffffffff00001000UL, 1);
+  if (equal(argv[1], "process-setpgid"))
+    return process_query(82, -1UL, 1);
+  if (equal(argv[1], "process-setsid"))
+    return process_query(147, -1UL, 1);
+  if (equal(argv[1], "credentials") || equal(argv[1], "virtual-credentials"))
+    return credentials(equal(argv[1], "virtual-credentials"));
+  if (equal(argv[1], "resource-usage") ||
+      equal(argv[1], "virtual-resource-usage"))
+    return resource_usage(equal(argv[1], "virtual-resource-usage"));
+  if (equal(argv[1], "resource-limits") ||
+      equal(argv[1], "virtual-resource-limits"))
+    return resource_limits(equal(argv[1], "virtual-resource-limits"));
+  if (equal(argv[1], "hostname") || equal(argv[1], "virtual-hostname"))
+    return hostname_calls(equal(argv[1], "virtual-hostname"));
+  if (equal(argv[1], "hostname-write"))
+    return hostname_write();
+  if (equal(argv[1], "hostname-query") ||
+      equal(argv[1], "hostname-missing-after"))
+    return hostname_query(equal(argv[1], "hostname-missing-after"));
+  if (equal(argv[1], "descriptor-table-query"))
+    return descriptor_table_query();
   if (equal(argv[1], "system-info") || equal(argv[1], "virtual-system"))
     return system_info(equal(argv[1], "virtual-system"));
   if (equal(argv[1], "time-null"))
@@ -2103,6 +3655,10 @@ int main(int argc, char **argv, char **envp, char **apple) {
         .value;
   if (equal(argv[1], "renamed-file"))
     return argc < 3 ? 79 : renamed_file(argv[2]);
+  if (equal(argv[1], "renamed-directory"))
+    return argc < 3 ? 79 : renamed_directory(argv[2]);
+  if (equal(argv[1], "swapped-directory"))
+    return argc < 3 ? 79 : swapped_directory(argv[2]);
   if (equal(argv[1], "created-file-metadata") ||
       equal(argv[1], "virtual-created-metadata"))
     return argc < 3 ? 79

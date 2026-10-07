@@ -410,6 +410,15 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
                 span[field] =
                     base +
                     shiftedOffset(span[field].get<std::size_t>() - base, shift);
+    // Renames before the definition move where it begins, not its line.
+    if (auto prelude = full.find("prelude");
+        prelude != full.end() && prelude->is_object() &&
+        prelude->contains("end_byte") &&
+        (*prelude)["end_byte"].is_number_unsigned() &&
+        (*prelude)["end_byte"].get<std::size_t>() >= base)
+      (*prelude)["end_byte"] =
+          base + shiftedOffset((*prelude)["end_byte"].get<std::size_t>() - base,
+                               shift);
     namedViewLines_.clear();
     const auto &text = full["text"].get_ref<const std::string &>();
     namedViewLines_.push_back(0);

@@ -95,8 +95,11 @@ shows the whole function and the visible area.
 **Pseudocode** (F5, Tab) and **IR** windows show C, C through LLVM, LowIR,
 MedIR, HighIR or LLVM IR of the current function and follow the disassembly
 unless their lock is set. Rows mapped to instructions move the disassembly
-cursor. Recognized library operations in C can fold into one-line summaries:
-click a summary to expand it; copy and export always use the complete code.
+cursor. C opens at the function: the includes, support types and declarations
+before its definition fold into one line. Recognized library operations in C
+can fold into one-line summaries too. Click a summary or press Keypad + on it
+to expand it; Keypad - folds the declarations again. Copy and export always
+use the complete code.
 
 C++ names read as a classic disassembler shows them: the listing keeps the
 linkage name an instruction uses and adds its demangled form as a comment
@@ -179,6 +182,17 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 Single-key shortcuts apply only while an analysis view has the keyboard focus,
 so typing in a field or dialog keeps normal text editing. **Options →
 Shortcuts** lists every command with its key.
+
+**Edit → Copy** (Ctrl+C) copies from the window that has the keyboard focus:
+the selected lines of a disassembly, pseudocode or IR window (the current line
+when nothing is selected), the selected rows of a list with their columns
+separated by tabs, or the text selected in a field.
+
+GNOME attaches a modal dialog to its parent window, so dragging the dialog
+would drag the whole workbench. On GNOME the workbench keeps dialogs
+free-standing: under X11 a modal dialog takes the utility window type, and
+under Wayland the compositor is not told which dialogs are modal
+(`xdg-dialog-v1`). A modal dialog still blocks the workbench until it closes.
 
 ## Databases
 

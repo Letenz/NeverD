@@ -13,8 +13,10 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QClipboard>
 #include <QFile>
 #include <QFileInfo>
+#include <QItemSelectionModel>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLineEdit>
@@ -62,6 +64,13 @@ struct Workbench {
     return table ? qobject_cast<ChooserView *>(table->parentWidget()) : nullptr;
   }
   QAction *action(ActionId id) const { return window->actions().action(id); }
+  QString dockTitle(const QString &uniqueName) const {
+    for (auto *dock :
+         window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+      if (dock->uniqueName() == uniqueName)
+        return dock->title();
+    return {};
+  }
   CodeView *codeView(const QString &representation) const {
     for (auto *view : window->findChildren<CodeView *>())
       if (view->representation() == representation)
@@ -214,6 +223,14 @@ private slots:
              std::optional<Address>(Base + 0x2570));
     functions->setFilterText({});
     QTRY_COMPARE(functions->model().total(), 600);
+    // Rows that arrive before the regions name their segments once the
+    // regions do: only the Segment column repaints.
+    QTRY_VERIFY(functions->model().rowCount() > 0);
+    QSignalSpy repaint(&functions->model(), &QAbstractItemModel::dataChanged);
+    functions->model().addressSpaceChanged();
+    QCOMPARE(repaint.size(), 1);
+    QCOMPARE(repaint.first().at(0).toModelIndex().column(), 1);
+    QCOMPARE(repaint.first().at(1).toModelIndex().column(), 1);
 
     // Navigation records history and synchronizes the hex view.
     disassembly->navigate(Base + 0x140);
@@ -250,6 +267,74 @@ private slots:
     ir->text()->setCursorLine(3);
     QTRY_COMPARE(disassembly->currentItem(),
                  std::optional<Address>(Base + 0x143));
+
+    // Copy takes the lines selected in the window holding the focus, also in
+    // an IR window switched to pseudocode, which is not the pseudocode
+    // window; it used to copy the disassembly.
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    ir->setRepresentation(QStringLiteral("c"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !ir->text()->loading() && ir->text()->lineCount() > 3, OpenTimeoutMs);
+    // Two windows showing pseudocode are lettered apart.
+    QCOMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+             QStringLiteral("Pseudocode-A"));
+    QCOMPARE(bench.dockTitle(QStringLiteral("ir-a")),
+             QStringLiteral("Pseudocode-B"));
+    ir->text()->setFocus();
+    QTRY_VERIFY(ir->text()->hasFocus());
+    ir->text()->setCursorLine(1);
+    QTest::keyClick(ir->text(), Qt::Key_Down, Qt::ShiftModifier);
+    const QString lines = QStringLiteral("// code line 1\n// code line 2");
+    QApplication::clipboard()->clear();
+    QTest::keyClick(ir->text(), Qt::Key_C, Qt::ControlModifier);
+    QCOMPARE(QApplication::clipboard()->text(), lines);
+    QApplication::clipboard()->clear();
+    bench.action(ActionId::EditCopy)->trigger();
+    QCOMPARE(QApplication::clipboard()->text(), lines);
+
+    // C opens at the definition: the includes and declarations before it fold
+    // into one line, which Keypad + expands and Keypad - folds again, and
+    // which copies as the lines it stands for.
+    pseudocode->setRepresentation(QStringLiteral("llvmc"));
+    QCOMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+             QStringLiteral("LLVM C-A"));
+    QCOMPARE(bench.dockTitle(QStringLiteral("ir-a")),
+             QStringLiteral("Pseudocode-A"));
+    auto *code = pseudocode->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() == 702,
+                             OpenTimeoutMs);
+    QVERIFY(code->allText().startsWith(QStringLiteral("#include <stdint.h>")));
+    QCOMPARE(code->foldableCount(), 0);
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    code->setCursorLine(0);
+    QApplication::clipboard()->clear();
+    QTest::keyClick(code, Qt::Key_C, Qt::ControlModifier);
+    QCOMPARE(QApplication::clipboard()->text(),
+             QStringLiteral("#include <stdint.h>\n#include <string.h>\n"));
+    QTest::keyClick(code, Qt::Key_Plus, Qt::KeypadModifier);
+    QCOMPARE(code->lineCount(), 704);
+    QTest::keyClick(code, Qt::Key_Minus, Qt::KeypadModifier);
+    QCOMPARE(code->lineCount(), 702);
+
+    // A list copies its selected rows, by key or from the Edit menu.
+    auto &model = functions->model();
+    functions->table()->setFocus();
+    QTRY_VERIFY(functions->table()->hasFocus());
+    functions->table()->selectionModel()->select(
+        QItemSelection(model.index(0, 0),
+                       model.index(1, model.columnCount() - 1)),
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    QApplication::clipboard()->clear();
+    QTest::keyClick(functions->table(), Qt::Key_C, Qt::ControlModifier);
+    const QString rows = QApplication::clipboard()->text();
+    QCOMPARE(rows.count(QLatin1Char('\n')), 1);
+    QVERIFY2(rows.startsWith(QStringLiteral("function_0\t")), qPrintable(rows));
+    QVERIFY2(rows.contains(QStringLiteral("\nfunction_1\t")), qPrintable(rows));
+    QApplication::clipboard()->clear();
+    bench.action(ActionId::EditCopy)->trigger();
+    QCOMPARE(QApplication::clipboard()->text(), rows);
 
     // The graph of the current function.
     disassembly->navigate(Base + 0x140);

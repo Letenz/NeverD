@@ -415,11 +415,15 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"created-file", "63"},
           std::pair{"created-file-metadata", "71"},
           std::pair{"renamed-file", "72"},
+          std::pair{"renamed-directory", "64"},
+          std::pair{"swapped-directory", "73"},
           std::pair{"vectored-io", "7621"},
           std::pair{"file-access", "61"},
           std::pair{"directory-mutations", "6d"},
           std::pair{"deleted-directories", "68"},
           std::pair{"initial-directory-removal", "6a"},
+          std::pair{"initial-directory-move", "70"},
+          std::pair{"initial-directory-swap", "71"},
           std::pair{"virtual-created-metadata",
                     emulation::darwin_test::CreationMetadataHex},
           std::pair{"stdin", "00ff78"},
@@ -429,8 +433,28 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"directories", "64"},
           std::pair{"directory-entries", "65"},
           std::pair{"time-values", emulation::darwin_test::TimeHex},
+          std::pair{"credentials", "6b"},
+          std::pair{"virtual-credentials",
+                    emulation::darwin_test::CredentialsHex},
+          std::pair{"resource-usage", "67"},
+          std::pair{"virtual-resource-usage",
+                    emulation::darwin_test::ResourceUsageHex},
+          std::pair{"resource-limits", "6c"},
+          std::pair{"virtual-resource-limits",
+                    emulation::darwin_test::ResourceLimitsHex},
           std::pair{"system-info", "69"},
           std::pair{"virtual-system", emulation::darwin_test::SystemHex},
+          std::pair{"hostname", "6e"},
+          std::pair{"virtual-hostname", emulation::darwin_test::HostNameHex},
+          std::pair{"process-observations", "50"},
+          std::pair{"virtual-process-observations",
+                    emulation::darwin_test::ProcessObservationsHex},
+          std::pair{"process-priority", "51"},
+          std::pair{"virtual-process-priority",
+                    emulation::darwin_test::PriorityHex},
+          std::pair{"login-buffer", "4c"},
+          std::pair{"virtual-login-buffer",
+                    emulation::darwin_test::LoginNameHex},
           std::pair{"mach-time", "68"},
           std::pair{"mach-timebase-values",
                     emulation::darwin_test::TimebaseHex},
@@ -457,6 +481,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
   const auto &[File, Profile, Mode, Expected] = GetParam();
+  const llvm::StringRef ModeName(Mode);
   const bool X64 = llvm::StringRef(File).ends_with("x86_64");
   SCOPED_TRACE(File);
   Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
@@ -467,7 +492,25 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       std::string(
           R"({"backend":"unicorn","timeout_microseconds":10000000,"darwin_time":)") +
       emulation::darwin_test::TimeJSON + R"(,"darwin_system":)" +
-      emulation::darwin_test::SystemJSON +
+      ((ModeName == "credentials" || ModeName == "virtual-credentials" ||
+        ModeName == "created-file-metadata")
+           ? emulation::darwin_test::CredentialsJSON
+       : (ModeName == "resource-limits" ||
+          ModeName == "virtual-resource-limits")
+           ? emulation::darwin_test::ResourceLimitsJSON
+       : (ModeName == "resource-usage" || ModeName == "virtual-resource-usage")
+           ? emulation::darwin_test::ResourceUsageJSON
+       : (ModeName == "hostname" || ModeName == "virtual-hostname")
+           ? emulation::darwin_test::HostNameJSON
+       : (ModeName == "process-observations" ||
+          ModeName == "virtual-process-observations")
+           ? emulation::darwin_test::ProcessObservationsJSON
+       : (ModeName == "process-priority" ||
+          ModeName == "virtual-process-priority")
+           ? emulation::darwin_test::PriorityJSON
+       : (ModeName == "login-buffer" || ModeName == "virtual-login-buffer")
+           ? emulation::darwin_test::LoginNameJSON
+           : emulation::darwin_test::SystemJSON) +
       R"(,"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":)" +
       emulation::darwin_test::MetadataJSON +
       R"(}],"directories":[{"path":"/","contents":)" +
@@ -482,9 +525,13 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       llvm::StringRef(Mode) == "directory-mutations" ||
       llvm::StringRef(Mode) == "deleted-directories" ||
       llvm::StringRef(Mode) == "initial-directory-removal" ||
+      llvm::StringRef(Mode) == "initial-directory-move" ||
+      llvm::StringRef(Mode) == "initial-directory-swap" ||
       llvm::StringRef(Mode) == "created-file-metadata" ||
       llvm::StringRef(Mode) == "virtual-created-metadata" ||
       llvm::StringRef(Mode) == "renamed-file" ||
+      llvm::StringRef(Mode) == "renamed-directory" ||
+      llvm::StringRef(Mode) == "swapped-directory" ||
       llvm::StringRef(Mode) == "vectored-io") {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     auto *File = Input.getAsObject()
@@ -501,9 +548,13 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::StringRef(Mode) == "directory-mutations" ||
         llvm::StringRef(Mode) == "deleted-directories" ||
         llvm::StringRef(Mode) == "initial-directory-removal" ||
+        llvm::StringRef(Mode) == "initial-directory-move" ||
+        llvm::StringRef(Mode) == "initial-directory-swap" ||
         llvm::StringRef(Mode) == "created-file-metadata" ||
         llvm::StringRef(Mode) == "virtual-created-metadata" ||
-        llvm::StringRef(Mode) == "renamed-file") {
+        llvm::StringRef(Mode) == "renamed-file" ||
+        llvm::StringRef(Mode) == "renamed-directory" ||
+        llvm::StringRef(Mode) == "swapped-directory") {
       (*File->getObject(field::FileMetadata))[field::FileLinkCount] = 1;
       (*File)[field::FileMutationPolicy] = llvm::cantFail(
           llvm::json::parse(emulation::darwin_test::MutationPolicyJSON));
@@ -513,17 +564,30 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::StringRef(Mode) == "directory-mutations" ||
         llvm::StringRef(Mode) == "deleted-directories" ||
         llvm::StringRef(Mode) == "initial-directory-removal" ||
+        llvm::StringRef(Mode) == "initial-directory-move" ||
+        llvm::StringRef(Mode) == "initial-directory-swap" ||
         llvm::StringRef(Mode) == "created-file-metadata" ||
         llvm::StringRef(Mode) == "virtual-created-metadata" ||
-        llvm::StringRef(Mode) == "renamed-file")
+        llvm::StringRef(Mode) == "renamed-file" ||
+        llvm::StringRef(Mode) == "renamed-directory" ||
+        llvm::StringRef(Mode) == "swapped-directory")
       (*Input.getAsObject()
             ->getObject(field::DarwinFiles)
             ->getArray(field::Directories)
             ->front()
             .getAsObject())[field::DirectoryMutable] = true;
+    if (llvm::StringRef(Mode) == "renamed-file" ||
+        llvm::StringRef(Mode) == "swapped-directory")
+      (*Input.getAsObject()
+            ->getObject(field::DarwinFiles)
+            ->getArray(field::Directories)
+            ->front()
+            .getAsObject())[field::DirectorySwapRename] = true;
     if (llvm::StringRef(Mode) == "created-file-metadata" ||
         llvm::StringRef(Mode) == "virtual-created-metadata" ||
-        llvm::StringRef(Mode) == "renamed-file") {
+        llvm::StringRef(Mode) == "renamed-file" ||
+        llvm::StringRef(Mode) == "renamed-directory" ||
+        llvm::StringRef(Mode) == "swapped-directory") {
       auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
       (*Files)[field::FileUmask] = 0027;
       (*Files)[field::FileCreationPolicy] = llvm::cantFail(
@@ -540,6 +604,25 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       (*Files->getArray(field::Directories)
             ->front()
             .getAsObject())[field::FileMetadata] = std::move(Parent);
+    }
+    if (llvm::StringRef(Mode) == "initial-directory-swap") {
+      auto *Directories = Input.getAsObject()
+                              ->getObject(field::DarwinFiles)
+                              ->getArray(field::Directories);
+      (*Directories->front().getAsObject())[field::DirectorySwapRename] = true;
+      auto *Directory = Directories->back().getAsObject();
+      (*Directory)[field::DirectoryMutable] = true;
+      (*Directory)[field::DirectoryExchangeable] = true;
+      (*Directory)[field::DirectorySwapRename] = true;
+    }
+    if (llvm::StringRef(Mode) == "initial-directory-move") {
+      auto *Directory = Input.getAsObject()
+                            ->getObject(field::DarwinFiles)
+                            ->getArray(field::Directories)
+                            ->back()
+                            .getAsObject();
+      (*Directory)[field::DirectoryMutable] = true;
+      (*Directory)[field::DirectoryMovable] = true;
     }
     if (llvm::StringRef(Mode) == "initial-directory-removal")
       (*Input.getAsObject()
@@ -1443,6 +1526,153 @@ TEST_F(ProcessPublic, AndroidSyscallNamesMatchSDKAndCLI) {
   ASSERT_TRUE(bool(Bytes));
   EXPECT_EQ(llvm::cantFail(llvm::json::parse((*Bytes)->getBuffer())), Parsed);
 #endif
+}
+
+TEST_F(ProcessPublic, DarwinNiceRejectsMalformedOptionsBeforeLoading) {
+  for (const char *Bad :
+       {"null", "true", "false", "0.5", "[]", "{}", "21", "-21", "2147483648",
+        "-2147483649", R"("1e1")", R"(" 0")", R"("0 ")", R"("-21")"}) {
+    const auto Request =
+        std::string(R"({"darwin_system":{"nice":)") + Bad + "}}";
+    for (const char *Profile :
+         {MacOSMachO64, IOSMachO64, IOSSimulatorMachO64}) {
+      EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho", Profile,
+                                            Request.c_str()),
+                nullptr);
+      EXPECT_NE(takeString(neverd_last_error(Session)).find("nice"),
+                std::string::npos);
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    }
+  }
+  for (const char *Profile : {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
+    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho", Profile,
+                                          R"({"darwin_system":{"nice":-1}})"),
+              nullptr);
+    EXPECT_EQ(takeString(neverd_last_error(Session)),
+              field::DarwinSystemProfile);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+}
+
+TEST_F(ProcessPublic, DarwinLoginBufferRejectsMalformedOptionsBeforeLoading) {
+  for (const auto &Bad :
+       {std::string("null"), std::string("true"), std::string("false"),
+        std::string("255"), std::string("[]"), std::string("{}"),
+        std::string("\"\""), "\"" + std::string(508, '0') + "\"",
+        "\"" + std::string(509, '0') + "\"",
+        "\"" + std::string(512, '0') + "\"",
+        "\"" + std::string(509, '0') + "g\"",
+        "\"" + std::string(509, '0') + "\\u0000\""}) {
+    const auto Request =
+        std::string(R"({"darwin_system":{"login_name_hex":)") + Bad + "}}";
+    for (const char *Profile :
+         {MacOSMachO64, IOSMachO64, IOSSimulatorMachO64}) {
+      EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho", Profile,
+                                            Request.c_str()),
+                nullptr);
+      EXPECT_NE(takeString(neverd_last_error(Session)).find("login_name_hex"),
+                std::string::npos);
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    }
+  }
+  const auto Request = std::string(R"({"darwin_system":)") +
+                       emulation::darwin_test::LoginNameJSON + "}";
+  for (const char *Profile : {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
+    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho", Profile,
+                                          Request.c_str()),
+              nullptr);
+    EXPECT_EQ(takeString(neverd_last_error(Session)),
+              field::DarwinSystemProfile);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+}
+
+TEST_F(ProcessPublic,
+       DarwinProcessObservationsRejectMalformedOptionsBeforeLoading) {
+  for (const char *Field :
+       {"process_group_id", "session_id", "process_tainted"}) {
+    const bool Boolean = llvm::StringRef(Field) == "process_tainted";
+    for (const char *Bad : {"null", "0", "-1", "0.5", "[]", "{}", "2147483648",
+                            R"("4294967296")", R"("true")"}) {
+      const auto Request =
+          std::string(R"({"darwin_system":{")") + Field + "\":" + Bad + "}}";
+      for (const char *Profile :
+           {MacOSMachO64, IOSMachO64, IOSSimulatorMachO64}) {
+        EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho", Profile,
+                                              Request.c_str()),
+                  nullptr);
+        EXPECT_NE(takeString(neverd_last_error(Session)).find(Field),
+                  std::string::npos);
+        EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+      }
+    }
+    if (Boolean)
+      for (const char *Bad : {"1", R"("false")"}) {
+        const auto Request =
+            std::string(R"({"darwin_system":{"process_tainted":)") + Bad + "}}";
+        EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho",
+                                              MacOSMachO64, Request.c_str()),
+                  nullptr);
+        EXPECT_NE(takeString(neverd_last_error(Session)).find(Field),
+                  std::string::npos);
+      }
+  }
+  for (const char *Profile : {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
+    EXPECT_EQ(neverd_emulate_process_json(
+                  Session, "missing.macho", Profile,
+                  R"({"darwin_system":{"process_tainted":false}})"),
+              nullptr);
+    EXPECT_EQ(takeString(neverd_last_error(Session)),
+              field::DarwinSystemProfile);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+}
+
+TEST_F(ProcessPublic, DarwinHostNameRejectsMalformedOptionsBeforeLoading) {
+  for (const auto &Bad :
+       {std::string("null"), std::string("true"), std::string("1"),
+        std::string("[]"), std::string("{}"), std::string("\"x\\u0000y\""),
+        "\"" + std::string(256, 'x') + "\""}) {
+    auto Request = std::string(R"({"darwin_system":{"hostname":)") + Bad + "}}";
+    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho",
+                                          MacOSMachO64, Request.c_str()),
+              nullptr);
+    EXPECT_NE(takeString(neverd_last_error(Session)).find("hostname"),
+              std::string::npos);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+  for (const char *Profile : {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
+    EXPECT_EQ(
+        neverd_emulate_process_json(Session, "missing.macho", Profile,
+                                    R"({"darwin_system":{"hostname":""}})"),
+        nullptr);
+    EXPECT_EQ(takeString(neverd_last_error(Session)),
+              field::DarwinSystemProfile);
+  }
+}
+TEST_F(ProcessPublic, DarwinDescriptorCapRejectsMalformedOptionsBeforeLoading) {
+  for (const char *Bad :
+       {"null", "true", "-1", "0.5", "2147483648", R"("4294967296")"}) {
+    auto Request =
+        std::string("{\"darwin_system\":{\"max_files_per_process\":") + Bad +
+        "}}";
+    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho",
+                                          MacOSMachO64, Request.c_str()),
+              nullptr);
+    EXPECT_NE(
+        takeString(neverd_last_error(Session)).find("max_files_per_process"),
+        std::string::npos);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+  for (const char *Profile : {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
+    EXPECT_EQ(neverd_emulate_process_json(
+                  Session, "missing.macho", Profile,
+                  R"({"darwin_system":{"max_files_per_process":0}})"),
+              nullptr);
+    EXPECT_EQ(takeString(neverd_last_error(Session)),
+              field::DarwinSystemProfile);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
 }
 
 TEST_F(ProcessPublic, InvalidSetupDoesNotPoisonTheReusableSession) {

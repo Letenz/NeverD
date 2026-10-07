@@ -1283,6 +1283,16 @@ Recognized library operation; click to show its code.</source>
         <translation>%1
 인식된 라이브러리 연산입니다. 클릭하면 코드를 표시합니다.</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of includes and declarations</source>
+        <translation>
+            <numerusform>include 및 선언 %n줄</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
+        <translation>이 코드가 컴파일에 사용하는 include, 지원 타입, 선언입니다. 클릭하면 표시하고, 숫자 키패드 -로 다시 접습니다.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>

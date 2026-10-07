@@ -169,6 +169,7 @@ add_neverd_unittest(NeverDLiftTests
   ../loader/SwiftRuntimeSourceTests.cpp
   core/HighCPointerAddressTests.cpp
   core/HighCIntegerWidthTests.cpp
+  core/CSourceDefinitionTests.cpp
   sdk/ObjCSourceProjectionTests.cpp
   sdk/ObjCSourceBindingTests.cpp
   sdk/ObjCSwiftOnceSourceTests.cpp
@@ -244,6 +245,7 @@ add_neverd_unittest(NeverDLiftTests
   core/CircleRangeTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
+  core/JumpTableFixedAddressTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
   core/JumpTableProposalLFPTests.cpp
   format/PatchFormatTests.cpp
@@ -1007,6 +1009,7 @@ add_neverd_unittest(NeverDJumpTableTests
   core/IndirectTailFrameTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
+  core/JumpTableFixedAddressTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
   core/JumpTableProposalLFPTests.cpp
   LINK_COMPONENTS Pipeline Support

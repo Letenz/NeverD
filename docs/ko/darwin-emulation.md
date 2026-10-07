@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 34d34e187ac46720dfc5b061a28605b13c368d0ab705c3d1a43465497ac1b4fe -->
+<!-- i18n-source: 1fca157d25a2f609ab3d51be25fb8a113e6ef48a9fd3a7037c77cfbcf2d4425f -->
 
 [← 문서 목록](README.md)
 
@@ -39,7 +39,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 BSD 호출에서 ARM64는 X16, X0–X5와 `svc #0x80`을 사용하고 x64는 BSD 클래스 `0x02000000`, RAX, RDI/RSI/RDX/R10/R8/R9를 사용합니다. 성공 시 carry를 지우고 오류 시 carry와 양수 errno를 반환합니다. ARM64는 X1을 지우고 x64는 성공 시 RDX를 지우며 오류 시 보존합니다. SYSCALL의 레지스터 변경은 명시적입니다. 보고서의 `result`와 `error=true`는 BSD 오류를 나타내며 반환하지 않거나 미지원인 요청에는 두 필드가 없습니다. XNU [ARM64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/arm/systemcalls.c)와 [x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/dev/i386/systemcalls.c)의 규칙을 따르며 Apple 구현 코드를 포함하지 않습니다.
 
-지원 서비스는 `exit`, `write`, `getpid`, `getppid`, `getuid`, `geteuid`, `getgid`, `getegid`, `mmap`, `mprotect`, `munmap`입니다. PID/UID/GID는 1000, PPID는 1입니다. 설명자 1과 2는 NUL과 비 UTF8을 포함한 바이트를 캡처하고 닫혔거나 읽기 전용인 설명자는 EBADF를 반환합니다. 부분 복사된 바이트는 유지하지만 이후 오류는 EFAULT로 남습니다. 길이가 `INT_MAX`를 넘으면 설명자, 포인터, 예산을 검사하기 전에 EINVAL을 반환합니다. 근거는 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c)입니다.
+지원 서비스는 `exit`, `write`, `getpid`, `getppid`, `getuid`, `geteuid`, `getgid`, `getegid`, `getgroups`, `mmap`, `mprotect`, `munmap`입니다. PID는1000, PPID는1입니다. UID/GID 기본값은1000이며 아래 명시적 자격 정보로 실제/유효 ID를 따로 지정합니다. 설명자 1과 2는 NUL과 비 UTF8을 포함한 바이트를 캡처하고 닫혔거나 읽기 전용인 설명자는 EBADF를 반환합니다. 부분 복사된 바이트는 유지하지만 이후 오류는 EFAULT로 남습니다. 길이가 `INT_MAX`를 넘으면 설명자, 포인터, 예산을 검사하기 전에 EINVAL을 반환합니다. 근거는 [XNU write](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_generic.c)입니다.
 
 메모리 서비스는 `flags=0x1002`, 설명자 -1, 오프셋 0의 전용 익명 데이터 매핑을 지원합니다. 길이와 고정되지 않은 주소 힌트는 OS 페이지로 올림합니다. 점유된 힌트는 높은 주소부터 검색한 뒤 기본 배치로 돌아갑니다. 기존 raw mmap은 길이 0에서 할당 없이 0을 반환하며 `MAP_UNIX03`을 지원하며 길이 0은 EINVAL입니다. Unmap/protect는 정렬된 주소를 요구합니다. NONE/READ/WRITE를 지원하고 WRITE는 READ를 포함합니다. 물리 메모리는 OS 페이지별로 소유하므로 부분 해제는 예산을 반환하고 새 페이지는 0으로 채워집니다. 빈 구간이나 최대 권한을 넘는 protect가 실패하면 전체 범위를 변경하지 않습니다. 출처: [XNU VM 서비스](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_mman.c).
 
@@ -75,7 +75,7 @@ F_SETFL은 O_APPEND만 바꾸고 접근 모드, close-on-exec, FWASWRITTEN을 �
 
 DarwinMemory의 모든 매핑 구간을 unmap하기 전에는 변경을 거부하며 PROT_NONE과 닫힌 FD도 포함합니다. 실패/구형 0 길이 매핑은 임대를 남기지 않습니다. 새 매핑은 현재 바이트를 봅니다. O_WRONLY의 READ/WRITE mmap은 EACCES, PROT_NONE은 성공하고 mprotect로 읽기/쓰기를 부여할 수 있습니다.
 
-원본 일반/nocancel 프로그램의 네이티브 비교, 4K/16K 단위 테스트, C/CLI/Python의 다섯 구성을 검사합니다. 권한 강제 검사/디렉터리 삭제/부모 간 이름 변경/하드링크, 실제 파일 시스템 메타데이터 갱신, 매핑 일관성, EOF SIGBUS와 완전한 환경은 아직 미완성입니다. iOS 실기기와 Intel HVF 증거는 없고 Intel Actions는 중지 상태입니다.
+원본 일반/nocancel 프로그램의 네이티브 비교, 4K/16K 단위 테스트, C/CLI/Python의 다섯 구성을 검사합니다. 권한 강제 검사/디렉터리 삭제/서로 다른 초기 디렉터리 영역 간 이름 변경/하드링크, 실제 파일 시스템 메타데이터 갱신, 매핑 일관성, EOF SIGBUS와 완전한 환경은 아직 미완성입니다. iOS 실기기와 Intel HVF 증거는 없고 Intel Actions는 중지 상태입니다.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233","writable":true}]}}
@@ -112,7 +112,7 @@ allocation_unit, mutation_time 및 seconds/nanoseconds는 필수이며 기존 �
 
 `unlink(10)` / `unlinkat(472)`는 기존 일반 이름을 제거합니다. 일반 파일 제거의 하위32비트는 0 또는 `0x800`만 지원합니다. 알 수 없는 비트는 경로/FD보다 먼저 EINVAL; AT_REMOVEDIR는 아래 제한된 제거를 사용하고 DATALESS와 SYSTEM_DISCARDED는 미지원입니다. 공통 경로 해석으로 ENOENT, 파일 뒤 슬래시 ENOTDIR, 일반 디렉터리 EPERM, 슬래시만 있는 루트 EISDIR, `.`/`..`로 끝나는 루트 EBUSY를 보존하며 네이티브로 마지막 `.`/`..`도 검사했습니다.
 
-기존 FD/dup/독립 open은 데이터·커서·플래그를 유지하고 F_GETPATH는 이전 경로를 반환합니다. 새 open은 실패하되 암시적 부모와 CWD는 남습니다. 쓰기 권한은 객체에 속하며 마지막 설명자와 매핑 범위가 해제된 뒤 close/dup2/다음 변경에서 현재 바이트 예산을 회수합니다. 초기 경로 비용은 유지하며 권한 강제 검사·부모 간 이름 변경·하드링크는 남아 있습니다. 초기 디렉터리 제거는 아래의 명시적 허가를 사용합니다.
+기존 FD/dup/독립 open은 데이터·커서·플래그를 유지하고 F_GETPATH는 이전 경로를 반환합니다. 새 open은 실패하되 암시적 부모와 CWD는 남습니다. 쓰기 권한은 객체에 속하며 마지막 설명자와 매핑 범위가 해제된 뒤 close/dup2/다음 변경에서 현재 바이트 예산을 회수합니다. 초기 경로 비용은 유지하며 권한 강제 검사·서로 다른 초기 디렉터리 영역 간 이름 변경·하드링크는 남아 있습니다. 초기 디렉터리 제거는 아래의 명시적 허가를 사용합니다.
 
 부모 stat/readdir/SEEK_END는 구·신 FD 및 경로 모두에서 무효화되어 복사/커서 변경 전에 중지합니다. read/pread의 EISDIR와 SET/CUR/F_GETPATH/fchdir/상대 조회는 유지됩니다. 알려진 변경 정책은 nlink=0 및 고정 ctime만 적용하며 후속 쓰기도 nlink=1을 복구하지 않습니다. 정책 없음/EFAULT 뒤 메타데이터는 미상입니다. 실패는 상태를 보존하고 원본 `unlinked-file`은 네이티브 이름/FD 동작을 비교합니다. 정책 시간과 부모 무효화는 명시적 모델 규칙입니다.
 
@@ -128,7 +128,7 @@ O_CREAT=0x200은 명시적 mutable 부모 바로 아래 빈 파일을 만듭니�
 
 O_CREAT과 O_EXCL=0x800의 조합은 기존 파일/디렉터리에 자르기 전 EEXIST를 반환하며 O_EXCL만으로는 효과가 없습니다. 기존 디렉터리의 읽기 전용 O_CREAT은 성공합니다. 잘못된 접근 모드→FD 여유→O_CREAT|O_DIRECTORY의 EINVAL→경로 순서입니다. 원래 경로의 마지막 누락 요소만 생성하고 누락 조상 및 끝 `/`, `//`, `/.`, `/..`는 ENOENT입니다. 새 O_CREAT|O_TRUNC는 FWASWRITTEN을 설정하지 않지만 기존 파일 자르기는 설정합니다.
 
-실제 삽입만 부모 관측을 무효화하며 같은 이름의 새/옛 데이터·FD·메타데이터·매핑 수명은 독립적입니다. 256개 제한에는 초기 비파일 항목과 살아 있는 파일 객체가 포함됩니다. 새 정규 경로/NUL과 현재 바이트는 16 MiB에 포함하고 삭제 후 마지막 FD/매핑 해제 때 동적 비용을 회수합니다. 초기 비용은 유지합니다. 예산 또는 1024바이트 정규 경로 한계는 명시적으로 중단하며 ENOSPC나 네이티브 경로 오류를 만들지 않습니다. 실패는 이름/FD를 남기지 않습니다. created-file 네이티브/다섯 프로필, 4K/16K 경계 테스트가 계약을 검사합니다. 권한 강제 검사·부모 간 이름 변경·링크·디렉터리 변경은 남아 있습니다.
+실제 삽입만 부모 관측을 무효화하며 같은 이름의 새/옛 데이터·FD·메타데이터·매핑 수명은 독립적입니다. 256개 제한에는 초기 비파일 항목과 살아 있는 파일 객체가 포함됩니다. 새 정규 경로/NUL과 현재 바이트는 16 MiB에 포함하고 삭제 후 마지막 FD/매핑 해제 때 동적 비용을 회수합니다. 초기 비용은 유지합니다. 예산 또는 1024바이트 정규 경로 한계는 명시적으로 중단하며 ENOSPC나 네이티브 경로 오류를 만들지 않습니다. 실패는 이름/FD를 남기지 않습니다. created-file 네이티브/다섯 프로필, 4K/16K 경계 테스트가 계약을 검사합니다. 권한 강제 검사·서로 다른 초기 디렉터리 영역 간 이름 변경·링크·디렉터리 변경은 남아 있습니다.
 
 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
@@ -138,7 +138,7 @@ O_CREAT과 O_EXCL=0x800의 조합은 기존 파일/디렉터리에 자르기 전
 
 선택적 `darwin_files.creation_policy`(C++ `CreationPolicy`)는 새 객체에 완전한 메타데이터를 제공합니다. 엄격한 객체는 `first_inode`, `block_size`, `generation`, `creation_time`, `mutation_policy` 다섯 필드만 포함하며 시간과 변경 정책은 기존 형식을 사용합니다. 명시적 umask, 하나 이상의 mutable 부모와 모든 해당 부모의 완전한 metadata가 필요합니다. block_size는 1..INT32_MAX, generation은 uint32입니다. 할당 단위는 512..16 MiB 범위의 2의 거듭제곱이며 블록 크기/VM 페이지와 독립적이고 나노초는 [0,1000000000)입니다. first_inode는 0이 아닌 uint64로 다른 장치를 포함한 모든 stat/스냅샷 inode보다 커야 합니다. JSON의 정확한 정수 범위를 넘으면 10진수 문자열을 사용합니다.
 
-성공한 새 삽입만 전역 inode 순서를 진행합니다. UINT64_MAX 사용 후 영구 소진되며 close/unlink/이름 재사용/umask/이후 조회로 초기화되지 않습니다. 배타·FD·경로·항목·바이트 예산 실패는 이름/FD/번호 증가를 남기지 않고 기존 O_CREAT도 번호를 쓰지 않습니다. 새 stat64는 직계 부모 device/GID, 고정 게스트 유효 UID 1000, mode `S_IFREG | (mode & 0777 & ~umask)`, nlink=1, size/blocks/flags=0을 사용합니다. 블록 크기, generation, 네 초기 고정 시간은 정책에서 얻습니다. 부모 전체 stat/열거가 무효화되어도 불변 device/GID를 쓸 수 있지만 전체 기록은 복원하지 않습니다.
+성공한 새 삽입만 전역 inode 순서를 진행합니다. UINT64_MAX 사용 후 영구 소진되며 close/unlink/이름 재사용/umask/이후 조회로 초기화되지 않습니다. 배타·FD·경로·항목·바이트 예산 실패는 이름/FD/번호 증가를 남기지 않고 기존 O_CREAT도 번호를 쓰지 않습니다. 새 stat64는 직계 부모 device/GID, 선택한 게스트 유효 UID（기본1000）, mode `S_IFREG | (mode & 0777 & ~umask)`, nlink=1, size/blocks/flags=0을 사용합니다. 블록 크기, generation, 네 초기 고정 시간은 정책에서 얻습니다. 부모 전체 stat/열거가 무효화되어도 불변 device/GID를 쓸 수 있지만 전체 기록은 복원하지 않습니다.
 
 새 노드는 자체 메타데이터/할당 상태를 가지며 옛 동명 객체를 상속하지 않습니다. write/truncate/unlink는 변경 정책을 공유하고 inode/mode/birthtime과 삭제 후 nlink=0을 보존합니다. 전체 EFAULT 후 영구 미상 상태는 유지하며 기존 노드에 소급 적용하지 않습니다. `created-file-metadata`는 다섯 구성에서 네이티브 권한, 이전 마스크, 유효 UID, 부모 장치/그룹과 수명을 비교하고 `virtual-created-metadata`는 144바이트 전체 기록을 별도로 비교합니다. 네이티브의 네 시간은 같지 않을 수 있습니다. 고정 시간/희소 할당은 가상 규칙이며 권한 강제 검사, 자격 증명 전환, ACL, 네이티브 APFS 동작은 아직 지원하지 않습니다.
 
@@ -148,25 +148,17 @@ O_CREAT과 O_EXCL=0x800의 조합은 기존 파일/디렉터리에 자르기 전
 
 [XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c). [XNU rename / renameat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
 
-## 같은 부모 안의 일반 파일 이름 변경
+## 일반 파일과 생성 디렉터리의 원자적 교환
 
-`rename(128)`, `renameat(465)`, `renameatx_np(488)`는 명시적으로 변경 가능한 같은 직접 부모 안에서 일반 파일을 이동하거나 덮어씁니다. 같은 이름의 무동작도 권한이 필요하며 승인되면 관측을 보존합니다. 하위 32비트 flags는 `RENAME_EXCL=0x4`, `RENAME_NOFOLLOW_ANY=0x10`과 두 값의 조합을 허용합니다. 알 수 없는 비트와 EXCL+SWAP은 경로 읽기 전에 EINVAL이며 SECLUDE와 SWAP은 미지원입니다. 이곳의 무동작과 EISDIR 규칙은 EXCL이 없는 호출에 적용하고 EXCL은 아래 별도 계약을 따릅니다. 공유 해석기는 원본 우선 오류, FD, 원래 슬래시와 점 검사를 보존합니다. 디렉터리 원본은 즉시 미지원으로 중단합니다. 일반 파일 대상의 마지막 점/두 점은 해석 성공 후 마운트·권한 검사 전에 EINVAL이며 중첩/다른 부모도 포함합니다. 없거나 디렉터리가 아닌 조상의 오류가 우선합니다. 승인된 부모의 일반 디렉터리 대상은 EISDIR입니다.
+RENAME_SWAP=0x2는 renameatx_np로 기존 일반 파일 두 개, 살아 있는 프로세스 생성 디렉터리 두 개, 또는 파일과 생성 디렉터리를 교환합니다. RENAME_NOFOLLOW_ANY를 추가할 수 있습니다. 명시적 초기 디렉터리는 mutable:true와 swap_rename:true를 선언하며 C++는 DarwinFileOptions::SwapRenameDirectories를 사용합니다. 생성 후손은 원래 객체의 능력을 상속하지만 삭제한 이름의 재사용은 이전 선언을 옮기지 않습니다. false 또는 생략은 지원 여부를 알 수 없다는 뜻입니다. 같은 장치나 변경 권한만으로 교환 지원을 증명할 수 없으며 다른 초기 영역은 미지원입니다.
 
-독립 open, dup, 기존 FD의 `F_GETPATH`는 원본의 새 이름을 따릅니다. 덮어쓴 객체는 마지막 경로, 데이터, 커서, 플래그와 매핑 수명을 유지하며 쓰기 권한이나 메타데이터를 원본에 넘기지 않습니다. 알려진 정책은 각 ctime과 대상 nlink=0만 갱신하며 식별자·소유권·생성 시간·할당을 보존합니다. 정책 부재/전체 EFAULT 뒤에는 완전한 메타데이터가 계속 미상입니다. 실제 변경만 부모 stat/열거를 무효화합니다.
+`openat_nocancel`, `fstatat64`, `F_GETPATH=50`은 같은 파일 구성요소를 사용합니다. 교환 후 경로와 관찰은 각 객체에 속하며 전체 stat의 가용성은 기존 메타데이터 계약을 따릅니다.
 
-새 inode·항목·빈 FD가 필요 없습니다. 새 경로/NUL이 동적 경로 비용을 대체하고 초기 비용은 남습니다. 옛 FD/매핑이 없는 대상만 용량에 기여하며 한 번만 회수합니다. 부분 unmap은 전체 객체 비용을 유지합니다. 1024바이트 경로 또는 16 MiB 초과는 변경 전에 중단합니다. 부모 간 이동, 알려진 장치 충돌, 디렉터리 이동, swap/exclusive/seclude, 권한 강제 검사는 미지원입니다. 같은 stat 장치는 같은 마운트를 증명하지 않으므로 EXDEV를 추측하지 않습니다. `renamed-file`은 네이티브/게스트 식별·경로·덮어쓰기·매핑을 비교하며 시간과 예산은 가상 정책입니다.
+없는 대상은 후행 슬래시가 있어도 ENOENT이며 원본 점/이중 점, 영역, 권한, 능력 검사보다 우선합니다. 초기 또는 삭제된 디렉터리 피연산자는 미지원입니다. 허용된 영역에서 양방향 부모/자식 교환과 디렉터리/자식 파일 교환은 EINVAL, 일반 파일 대상의 후행 슬래시는 ENOTDIR입니다. 일반 구성요소의 같은 객체는 이름공간 권한 검사 후 무동작이며 능력 선언 없이도 가능합니다. 같은 객체의 원본 점/이중 점은 알 수 없는 파일시스템 대소문자 속성이 필요합니다. RENAME_EXCL=0x4 + RENAME_SWAP=0x2과 알 수 없는 flags는 경로 입력 전에 EINVAL이며 SECLUDE는 미지원입니다.
 
-## 디렉터리와 상대 경로
+비어 있지 않은 두 하위 트리는 부모 객체를 따라 이동하며 FD/매핑이 보유한 삭제된 디렉터리와 고아 파일도 포함합니다. 혼합 교환은 정확한 파일 루트만 옮기고 같은 옛 이름의 고아는 자신의 부모에 남습니다. FD, dup, CWD, 이중 점은 객체와 새 부모를 따릅니다. 후손 파일의 바이트, 정체성, 메타데이터, 쓰기 권한, 커서, flags, 임대는 보존됩니다. 이동 루트와 양쪽 직계 부모에는 기존 이름공간 메타데이터 규칙이 적용되며 설정 정책은 루트 파일 자체 ctime을 갱신합니다. 정책이 없거나 무효화되면 전체 메타데이터는 알 수 없습니다.
 
-선택적 `directories`는 정규 절대 `path`와 선택적 전체 `metadata`로 빈 디렉터리를 지정합니다. 루트와 조상은 암시적이며 메타데이터가 없는 경로를 만들지는 않습니다. mode는 `0x4000`과 권한, size는 [0, INT64_MAX]의 명시적 관측입니다. `working_directory`는 기존 정규 디렉터리여야 하며 생략한 CWD는 미지정입니다. 호스트에서 상속하지 않습니다. 지정 경로는 조상 메타데이터를 포함해 최대 256개, 경로/NUL/내용/입력/CWD 합계는 16 MiB입니다.
-
-`openat` (463), `openat_nocancel` (464), `chdir` (12), `fchdir` (13), `fstatat64` (470)는 해석기를 공유합니다. 상대 경로는 디렉터리 FD 또는 `AT_FDCWD=-2`를 사용하고 절대 경로는 FD를 무시합니다. 반복 슬래시, `.`, `..`, 끝 슬래시도 조상을 검사하여 `/file/..`는 ENOTDIR, `/missing/..`는 ENOENT입니다. 실패나 원래 FD의 닫기·재사용·교체는 CWD를 바꾸지 않습니다. `F_GETPATH=50`은 복제 FD에도 정규 경로와 NUL을 복사하며 이후 바이트는 보존합니다.
-
-디렉터리 read/pread는 길이 0에도 EISDIR이며 음수 pread 오프셋은 EINVAL이 우선합니다. SET/CUR은 커서를 공유하고 END는 명시 size가 필요하며 mmap은 EINVAL입니다. fstatat64는 0, `AT_SYMLINK_NOFOLLOW=0x20`, `AT_SYMLINK_NOFOLLOW_ANY=0x800`, `AT_FDONLY=0x400`(경로 무시)을 지원합니다. 잘못된 비트는 EINVAL, `AT_REALDEV=0x200`은 미지원입니다. 스트림 정체성은 미지정이며 권한은 접근 제어 모델이 아닙니다. 디렉터리 생성과 제한된 삭제는 아래 명시 허가를 사용합니다. 같은 `directories`를 네이티브와 다섯 게스트로 비교하고 stat은 실제 파일과 디렉터리를 비교합니다. Intel HVF Actions는 중지 상태입니다.
-
-[XNU VFS](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU flags](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h).
-
-디렉터리 검증(2026-10-05, Release): 등록 467건, 통과 227, 건너뜀 240, 실패 0이며 ARM64 HVF 필수 60/60건을 실행했습니다. 네이티브 macOS 프로그램 10개, 공개 C/CLI/보고서 37건(건너뜀 없음), Python 다섯 게스트, 검증 스크립트 66건이 통과했습니다. 집계는 중복됩니다. 증거: `build-hvf-arm64/darwin-directory-verified-evidence/`. 다른 네이티브 백엔드와 iOS 실기기는 미검증입니다.
+능력 참조 경로+NUL은 고정 초기 16 MiB 예산에 예약됩니다. 양방향의 모든 연결/보유 경로를 1024바이트 한계와 공유 총액으로 사전 검사한 뒤 옛 이름을 함께 제거하고 새 이름을 게시합니다. 루트 삭제나 교체 환급이 없고 열리지 않은 대상 바이트도 사용할 수 없습니다. 초기 파일의 첫 이동은 동적 경로 비용을 얻으며 되돌려도 없애지 않고 반복해도 누적하지 않습니다. 새 FD, 항목, 생성 inode가 필요하지 않습니다. 실패하면 두 이름공간, 부모, 커서, 관측, 매핑이 그대로입니다. 독자 SDK-free swapped-directory는 네이티브 macOS 및 다섯 C++/C/CLI/Python 프로필에서 디렉터리 교환과 혼합 양순서를 비교합니다.
 
 ```json
 {"darwin_files":{"files":[{"path":"/work/data","bytes_hex":"3031"}],"directories":[{"path":"/work/empty"}],"working_directory":"/work"}}
@@ -356,7 +348,7 @@ Release Darwin 835개: 통과474, 백엔드 미지원 건너뜀360, 기존 macOS
 
 `ProcessOptions::DarwinSystem` / `darwin_system`은 모든 Darwin 프로필의 `sysctl(202)`과 raw `sysctlbyname(274)`에 고정 관측값을 제공합니다. 필드는 모두 선택 사항이며, 누락된 값이나 목록 밖의 키는 지원되지 않음으로 중단합니다. 호스트 조회나 버전·모델 추정은 없습니다. 엄격한 JSON 및 C++ 검증은 이미지 로드 전에 잘못된 값과 비 Darwin 프로필을 거부합니다.
 
-`os_revision`은 부호 있는32비트, `cpu_count`는1～INT32_MAX, `memory_size`는 부호 없는64비트를 모두 보존합니다. 나머지는 내부 NUL 없는 최대1023바이트 문자열이며 명시적 빈 문자열도 허용합니다. 출력은 끝 NUL을 포함합니다. CPU·메모리 보고값은 스케줄링이나 할당 예산을 바꾸지 않습니다.
+`os_revision`은 부호 있는 32비트, `cpu_count`는 1..INT32_MAX, `memory_size`는 부호 없는 64비트입니다. `max_files_per_process`는 0..INT32_MAX의 4바이트 int입니다. 나머지 스칼라 필드는 최대 1023바이트(`hostname`은 255바이트)이며 내부 NUL이 없는 문자열입니다. 명시적 빈 문자열도 유효하고 결과는 끝 NUL을 포함합니다. 관측값은 스케줄링, 할당 또는 기술자 예산을 변경하지 않습니다.
 
 | JSON 필드 | sysctl 이름 | MIB |
 | --- | --- | --- |
@@ -369,17 +361,21 @@ Release Darwin 835개: 통과474, 백엔드 미지원 건너뜀360, 기존 macOS
 | `model` | `hw.model` | `6,2` |
 | `cpu_count` | `hw.ncpu` | `6,3` |
 | `memory_size` | `hw.memsize` | `6,24` |
+| `max_files_per_process` | `kern.maxfilesperproc` | `1,29` |
+| `hostname` | `kern.hostname` | `1,10` |
 
 `hw.pagesize`는 기존 게스트 메모리 정책을 따르며 보통8바이트, null이 아닌 출력의 용량이 정확히4이면4바이트입니다. 기존 MIB `[6,7]`과 `hw.pagesize_compat`는 항상4바이트입니다. `hw.pagesize`의 동적 숫자 OID는 지원하지 않습니다. `hw.memsize`도 용량4에서64비트 패턴이 부호 있는32비트 값의 부호 확장과 일치할 때만 축소합니다. 그렇지 않으면 ERANGE34이며 출력과 길이를 유지합니다.
 
-MIB 개수는 하위32비트로2～12, 이름 길이는 전체64비트로1024 미만이어야 합니다. 지정된 모든 바이트를 검사한 뒤 첫 NUL을 해석하고 끝의 점 하나를 제거합니다. 빈 이름은 ENOENT, 부분적으로 읽을 수 있는 입력은 미지원입니다. null이 아닌 `oldlenp`는 효과 발생 전에8바이트 전체를 읽고 쓸 수 있어야 합니다. 잘못된 길이 포인터의 네이티브 실험이 제한 시간 안에 반환하지 않아 명시적으로 지원 범위 밖에 둡니다. null `oldlenp`는 용량0, null `oldp`는 크기 조회입니다. 짧은 버퍼는 ENOMEM12, 데이터 불변, 길이0입니다. 데이터 EFAULT는 이전 길이를 보존합니다. 입력과 용량을 먼저 캡처하고 데이터 다음 길이를 쓰므로 별칭 순서와 후속 전송 실패 전의 복사를 보존합니다.
+MIB 개수는 하위32비트로2～12, 이름 길이는 전체64비트로1024 미만이어야 합니다. 지정된 모든 바이트를 검사한 뒤 첫 NUL을 해석하고 끝의 점 하나를 제거합니다. 빈 이름은 ENOENT, 부분적으로 읽을 수 있는 입력은 미지원입니다. null이 아닌 `oldlenp`는 효과 발생 전에8바이트 전체를 읽고 쓸 수 있어야 합니다. 잘못된 길이 포인터의 네이티브 실험이 제한 시간 안에 반환하지 않아 명시적으로 지원 범위 밖에 둡니다. null `oldlenp`는 용량0, null `oldp`는 크기 조회입니다. `kern.hostname` 외의 짧은 버퍼는 ENOMEM12, 데이터 불변, 길이0입니다. 데이터 EFAULT는 이전 길이를 보존합니다. 입력과 용량을 먼저 캡처하고 데이터 다음 길이를 쓰므로 별칭 순서와 후속 전송 실패 전의 복사를 보존합니다.
 
-`newp`와 `newlen`이 모두0이 아닐 때만 쓰기입니다. 선택된 노드는 모델의 고정된 비 root 신원에 대해 관측값·출력 검사 전에 EPERM1을 반환합니다. 네이티브에서 특권 쓰기가 가능한 `kern.osversion`도 포함합니다. 새 길이0이면 포인터를 무시합니다. 알 수 없는 키, 다른 트리, 동적 OID를 ENOENT로 추정하지 않습니다.
+`hostname`은 이 guest 호출자에게 보이는 바이트를 선언합니다. 호스트 조회, 모바일 환경의 `localhost` 기본값 또는 entitlement 추론은 없습니다. 생략은 미지이며 명시적 빈 문자열은 NUL 하나를 반환합니다. `kern.hostname`의 null이 아닌 출력이 양수 용량에서 짧으면 정확히 그 용량의 바이트를 끝 NUL과 함께 성공적으로 반환하고 해당 용량을 보고합니다. 용량0은 여전히 ENOMEM12, 길이0이며 데이터를 쓰지 않습니다. null 출력은 NUL을 포함한 전체 길이를 보고합니다. 실제 출력 범위만 검사합니다. 일부만 쓸 수 있는 범위는 미지원이고 접두부를 게시하지 않습니다. 네이티브 부분 복사는 모델 밖입니다. libc uname/gethostname이 쓰는 raw 관측만 추가하며 dylib 가져오기나 완전한 런타임을 구현하지 않습니다.
+
+newp/newlen 모두0이 아니면 쓰기입니다. 이름/MIB와 oldlenp 전체 읽기/쓰기 사전 검사를 먼저 유지합니다. 기본 또는 명시적 비root EUID는 관측/데이터 출력 검사 전 EPERM1이며 EUID0의 kern.osversion / kern.maxfilesperproc / kern.hostname 특권 쓰기는 미구현이므로 unsupported입니다. RUID는 결정하지 않습니다. 다른 네이티브 읽기 전용 노드는root도 EPERM1입니다. 새 길이0은 포인터를 무시하고 알 수 없는 키/트리/동적OID의 ENOENT는 추정하지 않습니다.
 
 자체 작성 `system-info`는 네이티브 macOS와 게스트 ABI를 검사하고 `virtual-system`은 C++·C/CLI·Python에서 설정 바이트를 비교합니다. 별도 SDK 검사는 호스트의 아홉 관측값을 명시적 테스트 입력으로 삼아 이름·숫자 출력을 비교합니다. iOS 실기기나 Intel HVF 검증을 뜻하지 않습니다.
 
 ```json
-{"darwin_system":{"os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
+{"darwin_system":{"hostname":"guest-node","os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
 ```
 
 [XNU sysctl](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_newsysctl.c), [XNU hardware MIB](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mib.c), [Apple sysctl(3)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/sysctl.3.html).
@@ -436,7 +432,7 @@ Release Darwin 971개 등록:575개 통과, 백엔드 미제공396개 건너뜀,
 
 `rmdir(137)`와 AT_REMOVEDIR(0x80)를 준 `unlinkat(472)`는 이 프로세스가 생성한 빈 디렉터리를 제거하며 AT_SYMLINK_NOFOLLOW_ANY(0x800)를 함께 쓸 수 있습니다. 미지 하위32비트는 입력 전에 EINVAL, DATALESS와 SYSTEM_DISCARDED는 미지원입니다. 알려진 경로/종류/루트 오류는 유지하고 removable 허가 없는 초기 디렉터리 삭제는 여전히 UnsupportedService입니다. 허가된 대상의 끝 점은 EINVAL, 연결된 디렉터리에서의 두 점/비어 있지 않은 대상은 ENOTEMPTY입니다. 디렉터리 FD(dup 포함)와 CWD는 원래 객체를 유지하며 삭제를 막지 않습니다. unlink된 일반 파일 FD/매핑은 이름에 포함하지 않으며 부모 삭제와 재사용 후 내용·inode·마지막 F_GETPATH가 유지됨을 네이티브로 비교합니다.
 
-새 정규 경로+NUL과1개 항목을 공통16 MiB/256개 예산에 합산하고 삭제 후 모든 참조가 없어질 때 해당 비용만 반환합니다. 고아 파일·매핑은 유지합니다. 성공할 때만 부모의 전체 stat/열거를 무효화하며 새 디렉터리 관측은 계속 미지입니다. 독자 `directory-mutations`는 네이티브 macOS,5개 게스트,C++/C/CLI/Python에서 중첩 생성·이름 변경·unlink·삭제·고아 객체 재사용을 비교합니다.
+새 정규 경로+NUL과1개 항목을 공통16 MiB/256개 예산에 합산하고 삭제 후 모든 참조가 없어질 때 해당 비용만 반환합니다. 고아 파일·매핑은 유지합니다. 성공할 때만 부모의 전체 stat/열거를 무효화하며 새 디렉터리 관측은 계속 미지입니다. 독자 `directory-mutations`는 네이티브 macOS,5개 게스트,C++/C/CLI/Python에서 중첩 생성·이름 변경·unlink·삭제·고아 객체 재사용을 비교합니다. FD 또는 매핑 임대가 유지하는 고아 파일도 부모 디렉터리 객체를 유지합니다. 모든 디렉터리 FD를 닫아도 현재 부모 경로/NUL과 항목 비용은 남으며 파일 회수 후 부모 체인을 회수합니다. 연결된 생성 조상을 이동하면 F_GETPATH가 갱신되지만 같은 이름의 교체 객체로 소속이 바뀌지 않습니다.
 
 [XNU mkdir/rmdir](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU directory creation lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c).
 
@@ -448,7 +444,7 @@ Release Darwin:1,017개 등록,609개 통과,백엔드 미제공408개 건너뜀
 
 ## 유지된 디렉터리 식별
 
-삭제된 디렉터리의 FD/CWD는 원래 부모 체인을 유지하며 이름 재사용으로 다른 객체에 연결되지 않습니다. 점 open은 독립 커서,dup는 공유 커서,두 점은 원래 부모를 사용합니다. 삭제된 디렉터리의 일반 자식은 ENOENT입니다. LOOKUP은 보존된 삭제 부모를 통과하지만 생성/삭제/이름 변경 탐색은 ENOENT입니다. 이름 변경의 끝 점/두 점은 해당 구성요소 탐색 전에 EINVAL이며 앞선 조상 오류가 우선합니다. F_GETPATH는 마지막 경로를 유지하고 전체 stat/열거는 미지입니다. 경로+NUL과 한 항목 비용은 FD/CWD/이전 자식 참조가 모두 해제될 때까지 유지합니다. close/dup2/CWD변경/수정 허용 시 도달 불가 체인을 회수하며 초기 비용과 파일 임대는 별개입니다. 독자 `deleted-directories`는 네이티브 macOS와5개 구성에서 보유 중 삭제·부모와 이름 재사용·탐색 의도·CWD 단독 유지를 비교합니다.
+삭제된 디렉터리의 FD/CWD는 원래 부모 체인을 유지하며 이름 재사용으로 다른 객체에 연결되지 않습니다. 점 open은 독립 커서,dup는 공유 커서,두 점은 원래 부모를 사용합니다. 삭제된 디렉터리의 일반 자식은 ENOENT입니다. LOOKUP은 보존된 삭제 부모를 통과하지만 생성/삭제/이름 변경 탐색은 ENOENT입니다. 이름 변경의 끝 점/두 점은 해당 구성요소 탐색 전에 EINVAL이며 앞선 조상 오류가 우선합니다. F_GETPATH는 마지막 경로를 유지하고 전체 stat/열거는 미지입니다. 경로+NUL과 한 항목 비용은 FD/CWD/이전 자식 참조가 모두 해제될 때까지 유지합니다. close/dup2/CWD변경/수정 허용 시 도달 불가 체인을 회수하며 초기 비용과 파일 임대는 별개입니다. 독자 `deleted-directories`는 네이티브 macOS와5개 구성에서 보유 중 삭제·부모와 이름 재사용·탐색 의도·CWD 단독 유지를 비교합니다. FD 또는 매핑 임대가 유지하는 고아 파일도 부모 디렉터리 객체를 유지합니다. 모든 디렉터리 FD를 닫아도 현재 부모 경로/NUL과 항목 비용은 남으며 파일 회수 후 부모 체인을 회수합니다. 연결된 생성 조상을 이동하면 F_GETPATH가 갱신되지만 같은 이름의 교체 객체로 소속이 바뀌지 않습니다.
 
 ### 디렉터리 수명 검증, 2026-10-06
 
@@ -478,8 +474,247 @@ removable 참조마다 경로와 NUL을 초기 16 MiB 비용에 더합니다. �
 
 ## 일반 파일의 배타적 이름 변경
 
-원본과 대상 조회 후 RENAME_EXCL은 서로 다른 기존 파일이나 디렉터리에 EEXIST를 반환하며 마운트 및 이름 공간 변경 검사보다 앞섭니다. 마지막 점/두 점의 EINVAL 등 앞선 경로 오류는 계속 우선합니다. 대상이 없으면 기존의 제한된 이름 변경 트랜잭션을 사용하며 열린 설명, 커서, 플래그, 매핑 임대 및 설정된 메타데이터 변경을 보존합니다. 동일 객체의 배타적 이름 변경은 파일 시스템의 대소문자 구분 여부에 의존하므로 명시적으로 미지원입니다. 정확한 카탈로그 키로 이 속성을 추정하지 않습니다. 대소문자 통합, 디렉터리 원본, SECLUDE와 SWAP은 범위 밖입니다. 기존 독자적 `renamed-file` 작업은 거부 시 메타데이터 유지와 EXCL|NOFOLLOW_ANY 성공을 네이티브 macOS 및 C++/C/CLI/Python에서 비교합니다.
+원본과 대상 조회 후 RENAME_EXCL은 서로 다른 기존 파일이나 디렉터리에 EEXIST를 반환하며 마운트 및 이름 공간 변경 검사보다 앞섭니다. 마지막 점/두 점의 EINVAL 등 앞선 경로 오류는 계속 우선합니다. 대상이 없으면 기존의 제한된 이름 변경 트랜잭션을 사용하며 열린 설명, 커서, 플래그, 매핑 임대 및 설정된 메타데이터 변경을 보존합니다. 동일 객체의 배타적 이름 변경은 파일 시스템의 대소문자 구분 여부에 의존하므로 명시적으로 미지원입니다. 정확한 카탈로그 키로 이 속성을 추정하지 않습니다. 대소문자 통합, 초기 디렉터리 이동, SECLUDE은 범위 밖입니다. 기존 독자적 `renamed-file` 작업은 거부 시 메타데이터 유지와 EXCL|NOFOLLOW_ANY 성공을 네이티브 macOS 및 C++/C/CLI/Python에서 비교합니다.
 
 검증, 2026-10-06(Release): Darwin 등록 1,097개, 통과 665개, 사용 불가로 432개 건너뜀, 실패 없음. 필수 ARM64 HVF 108개를 모두 실행했다. 집중 검증은 새 직접 검사 8개를 포함해 44개 통과, 12개 건너뜀이었다. 공개 C/CLI/보고서 191/191, Python 5개 조합 19.241초, 독립 원시 호출 탐침 26개 통과. 첫 전체 네이티브 실행은 기존 return에서 시간 초과가 발생했고 renamed-file을 포함한 나머지 25개는 통과했다. 변경하지 않은 동일 바이너리의 return 재확인 3회는 0.014–0.034초였고 이후 전체 26개가 원래 5초 제한으로 통과했다. 최초 실패는 보존했고 원인은 미해결이며, 이전 최종 HVF 통과까지 포함해 지연 안정성을 입증하지 않는다. 주 담당 검토 완료, 독립 검토 불가. 수치는 겹친다. 실제 iOS, 전체 GitHub CI, 중단된 Intel HVF Actions는 로컬 검증 범위 밖이다.
 
 `build-hvf-arm64/exclusive-rename-validation-summary.json`, `exclusive-rename-darwin-evidence/`, `exclusive-rename-public.xml`, `exclusive-rename-native-evidence/`, `exclusive-rename-native-rechecked-summary.json`, `exclusive-rename-probe/`.
+
+
+## 생성한 디렉터리 간 이름 변경
+
+초기 디렉터리와 이 프로세스가 mkdir/mkdirat으로 생성한 모든 자손은 같은 가상 이름 공간 영역을 공유합니다. `rename`, `renameat`, `renameatx_np`는 이 부모들 사이에서 일반 파일을 이동하며 새 JSON 필드가 필요 없습니다. 변경 가능한 초기 `/work` 아래 `/work/left`와 `/work/right`를 만든 뒤 `/work/data`를 자식으로, 자식 사이로 이동할 수 있습니다. 별도 초기 입력으로 선언한 `/work/left`는 device가 같아도 다른 영역입니다. 일반적인 마운트 구조는 미상입니다.
+
+두 직접 부모 모두 이름 변경 권한이 필요하고 생성한 디렉터리는 권한과 알려진 device/GID를 상속합니다. 파일 자체 식별자, 소유자/그룹, 쓰기 권한과 할당은 유지합니다. 알려진 장치 충돌은 거부하고 실제 이동은 두 부모의 전체 stat/열거를 무효화합니다. 삭제한 초기 디렉터리와 재사용한 경로는 다른 객체이며 옛 FD/CWD는 대체 영역을 얻지 않습니다.
+
+기존의 제한된 덮어쓰기, 매핑 수명, 경로/NUL 비용과 오류 순서를 유지합니다. EXCL의 다른 기존 대상은 영역/권한 검사 전에 EEXIST를 반환합니다. `renamed-file`은 생성한 자식으로 이동, 초기 부모에서 덮어쓰기, 자식으로 재이동을 C++/C/CLI/Python과 네이티브 macOS로 비교합니다. 권한 강제 검사, 초기 디렉터리 이동, 하드/심볼릭 링크, 네이티브 APFS 메타데이터는 미완성입니다.
+
+### 서로 다른 부모 간 검증, 2026-10-06
+
+최종 Release 검증은 Darwin 등록 1,115개를 대조했다. 683개 통과, 백엔드 사용 불가로 432개 건너뜀, 실패 없음이며 필수 ARM64 HVF 108개를 모두 실행했다. 직접 검사 56/56에는 새 4K/16K 사례 18개가 포함된다. 공개 C/CLI/report 191/191이 통과했고 Python 메서드는 22.254초 동안 환경 다섯 개를 검증했다. 원본 네이티브 프로그램 26/26, 별도 원시 시스템 호출 프로브 34개, 문서/기능/증거 실행기 스크립트 296/296도 통과했다. 집계는 중복된다. MSVC 전용 CMake 변경 후에도 검증 바이너리 열 개의 해시는 그대로였다.
+
+이전 전체 검증 두 번의 기존 HVF 파일 메서드 시간 초과 세 건과 두 건은 보존했다. 전체 메서드, 작업 디렉터리 및 세션 비교는 통과했으나 원인을 확인하지 못했으므로 최종 통과가 지연 안정성을 입증하지 않는다. 프로브는 처음 /tmp와 정규 경로 /private/tmp를 비교했으며 root FD의 경로를 조회하여 기대값 네 개를 수정했다. 확장 네이티브 프로그램의 정리에 mkdir(136)을 잘못 사용한 exit150은 rmdir(137)로 수정했다. 초기 소스와 실패 증거를 보존하고 게스트 제한은 원래 5초로 유지했다.
+
+전체 Linux CI에서 발견한 LP64 초기화 목록 충돌 네 곳은 명시적 uint64_t로 수정했고 MSVC NeverDJumpTableTests에 /bigobj를 추가했다. 실제 Linux/Windows 컴파일은 CI를 기다린다. 이전 전체 CI의 Windows EH 코퍼스 및 닫힌 PR 취소 실패는 별도 문제로 남아 있다. 주 에이전트가 소스/증거 자체 검토를 완료했으며 독립 검토, 실제 iOS 또는 중단된 Intel HVF 검증 통과를 주장하지 않는다.
+
+`build-hvf-arm64/cross-parent-rename-validation-summary.json`, `cross-parent-rename-darwin-synced-evidence/`, `cross-parent-rename-darwin-evidence/`, `cross-parent-rename-darwin-rechecked-evidence/`, `cross-parent-rename-public-synced.xml`, `cross-parent-rename-python-synced.log`, `cross-parent-rename-native-fixed-evidence/`, `cross-parent-rename-probe/`.
+
+## 일반 파일 이름의 원자적 교환
+
+RENAME_SWAP=0x2는 renameatx_np로 기존 일반 파일 두 개의 이름을 교환하며 RENAME_NOFOLLOW_ANY를 추가할 수 있습니다. 명시적인 초기 디렉터리에 mutable:true와 swap_rename:true가 모두 필요합니다. C++는 DarwinFileOptions::SwapRenameDirectories를 사용합니다. 생성된 후손은 원래 디렉터리 객체의 기능을 상속합니다. 삭제 후 경로 재사용은 옛 선언을 이전하지 않습니다. false 또는 생략은 기능을 알 수 없다는 뜻이며 같은 장치와 이름 공간 권한만으로 지원을 증명하지 않습니다. 서로 다른 초기 영역은 계속 미지원입니다.
+
+양쪽 경로는 기존 구성 요소 해석기를 사용합니다. 대상이 없으면 영역·권한·기능 검사 전에 ENOENT입니다. 디렉터리 피연산자는 명시적으로 미지원입니다. 네이티브 swap은 파일과 디렉터리도 교환하므로 일반 이름 변경의 EISDIR를 적용하지 않습니다. 동일 객체는 이름 공간 권한이 있으면 기능 선언 없이도 상태가 바뀌지 않는 무동작입니다. RENAME_EXCL=0x4 + RENAME_SWAP=0x2과 알 수 없는 flags는 경로 입력 전에 EINVAL이며 SECLUDE는 미지원입니다.
+
+두 파일은 연결된 상태를 유지합니다. 각자의 식별, 소유자/그룹, 바이트, 쓰기 권한, 열린 설명, 커서, flags와 매핑 임대를 보존합니다. 설정된 가상 정책은 각자의 ctime만 갱신하고 정책이 없거나 무효화되면 전체 메타데이터는 계속 미상입니다. 실제 교환은 양쪽 부모의 전체 메타데이터와 열거 관측을 무효화합니다. 생성 inode, 항목, FD를 소비하지 않고 호출자 입력도 바꾸지 않습니다.
+
+기능 참조의 경로+NUL은 고정 초기 16 MiB 예산에 예약됩니다. 트랜잭션은 양쪽 전체 동적 이름 비용을 검사한 후 게시하며 아직 연결된 바이트나 임대를 교체 회수로 사용하지 않습니다. 반복 교환은 동적 비용을 재사용합니다. 독자적인 renamed-file 프로그램은 생성된 자식으로 교환하고 되돌린 뒤 두 객체를 확인하고 일반 교체를 계속하며 네이티브 macOS와 모든 C++/C/CLI/Python 프로필에서 실행합니다. 권한 강제, 마운트 구성, 대소문자 통합 및 초기 디렉터리 이동은 별도 작업입니다.
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/work","mutable":true,"swap_rename":true}]}}
+```
+
+[Apple volume swap capability](https://developer.apple.com/documentation/foundation/urlresourcevalues/volumesupportsswaprenaming?changes=__1_2), [XNU rename](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
+### 교환 검증, 2026-10-06
+
+Release Darwin은 1,133개 등록, 701개 성공, 백엔드 불가 432개 건너뜀, 실패 없음이며 필수 ARM64 HVF 108개를 모두 실행했습니다. 직접 이름 변경 검사 68/68, 새 옵션 및 4K/16K 검사 18개 포함. 공개 C/CLI/보고서 192/192; Python 메서드 하나가 16.153초에 다섯 구성을 검증했습니다. 독자적인 네이티브 프로그램 26/26, 독립 원시 호출 탐침 45개 검사. 횟수는 겹치며 게스트 제한은 그대로입니다.
+
+초기 직접 테스트 두 개는 알 수 없는 쓰기 권한과 변경 후 메타데이터에 잘못된 기대가 있어 기대만 수정했습니다. 첫 JSON 필터는 0개를 선택했으므로 검증에 포함하지 않고 이후 실제 테스트 소유자와 전체 공개 검사는 성공했습니다. 초기 소스와 결과는 보존됩니다. 기존 HVF/네이티브 지연은 아직 미해명이며 이번 성공이 안정성을 입증하지 않습니다. 소스/증거 자체 검토는 완료했으나 독립 검토, iOS 실기기, 전체 GitHub CI 및 중단된 Intel HVF 검증은 주장하지 않습니다.
+
+`build-hvf-arm64/swap-rename-validation-summary.json`, `swap-rename-darwin-evidence/`, `swap-rename-public.xml`, `swap-rename-python.log`, `swap-rename-native-evidence/`, `swap-rename-probe/`.
+
+
+## 프로세스가 생성한 디렉터리 이름 변경
+
+일반 rename, renameat, renameatx_np는 한 초기 디렉터리 객체 영역 안에서 연결된 프로세스 생성 디렉터리와 하위 트리를 이동합니다. 양쪽 직접 부모의 변경 권한이 필요합니다. 없는 디렉터리 대상은 끝 슬래시를 허용하고 일반 파일 대상은 ENOTDIR, 비어 있지 않은 디렉터리는 ENOTEMPTY, 후손으로 이동하면 EINVAL입니다. 승인된 일반 같은 이름 호출은 무변경입니다. EXCL의 다른 기존 대상은 종류·순환·영역·권한보다 먼저 EEXIST이며 대상 조회 오류는 원본 점/두 점보다 앞섭니다. 같은 객체를 점/두 점으로 지정하면 대소문자 속성을 모르므로 UnsupportedService입니다. 초기/삭제된 원본, 초기 교체 대상, 다른 초기 영역, 링크, 권한 강제, SECLUDE는 미지원입니다.
+
+문자열 접두사가 아닌 부모 객체 체인으로 후손을 선택하여 이름이 있는 트리, FD가 유지한 삭제된 자식 디렉터리와 FD/매핑이 유지한 고아 파일 경로를 갱신합니다. 원본 FD, dup, CWD, 두 점은 같은 객체와 새 부모를 따릅니다. 교체된 빈 생성 대상은 옛 경로와 부모를 유지하고 일반 자식은 ENOENT이며 점/두 점/CWD는 옛 객체를 유지합니다. 새 원본을 재이동해도 같은 경로 문자열의 옛 대상 고아는 이동하지 않습니다.
+
+자식 파일 바이트, 정체성, 메타데이터, 쓰기 권한, 공유/독립 커서, FD 플래그와 매핑 임대를 보존합니다. 원본과 두 직접 부모의 완전한 stat/열거만 무효화되고 조상 이동만으로 자식 파일 관찰은 변하지 않습니다. 생성 디렉터리 권한은 후속 생성/승인된 파일 이름 변경에 남고 새 항목, FD, 생성 inode는 필요 없습니다.
+
+게시 전 모든 이름 있는/유지된 후손의 새 키와 경로를 할당하고 각 정규 경로/NUL의1024바이트 경계 및 공유16 MiB를 검증합니다. 이전 동적 비용은 한 번 교체합니다. FD/CWD/유지된 후손이 없는 빈 생성 대상만 회수 용량을 제공하며 한 번만 회수합니다. 실패는 모든 이름, 부모, 관찰, 커서, 매핑을 보존합니다. 매핑만 남은 고아 파일도 삭제된 부모의 경로/항목 비용을 유지합니다.
+
+독자적 SDK-free `renamed-directory`는 네이티브 macOS와 다섯 게스트를 C++/C/CLI/Python으로 비교합니다. 4K/16K는 객체 재사용, 전체 롤백, 정확한 용량, 긴 후손 경로, 대상 회수, 매핑 유지 부모 회수 및 항목/FD/inode 소진을 확인합니다.
+
+
+### 2026-10-06
+
+최종 Release Darwin1175개:731통과,444후단 미사용 건너뜀,실패0; 필수 ARM64 HVF111개 모두 실행. 집중32/44(12건너뜀,새4K/16K22개),최종 경계/기존 테스트4/4. 공개 C/CLI165/165,보고32/32 건너뜀 없음. Python5구성21.759초,네이티브27/27,독립 프로브79개. 독립 검토로 테스트 루트 구분자 오류와 동일 객체 원본 점의FS속성 경계를 수정 확인했습니다. 초기 게스트exit124 및 오래된 예상2개 실패와 원본/바이너리를 보존했고 최종 전체 검증은 통과했습니다. 횟수 중복,시간 제한 불변. 기존HVF/네이티브 시간 초과 원인은 미확정이며 지연 안정성 증거는 아닙니다. Intel HVF Actions는 중단,실제iOS와 전체GitHub CI는 별도입니다.
+
+`build-hvf-arm64/directory-rename-validation-summary.json`, `directory-rename-darwin-final-evidence/`, `directory-rename-public.xml`, `directory-rename-reports.xml`, `directory-rename-python.log`, `directory-rename-native-evidence/`, `directory-rename-probe/`, `directory-rename-initial-fixture/`, `directory-rename-darwin-evidence/failed-source/`.
+
+### 디렉터리 및 혼합 형식 교환 검증, 2026-10-07
+
+Release Darwin 등록 1,219개를 대조했다. 763개 통과, 사용할 수 없는 백엔드로 인한 건너뜀 456개, 실패 0개이며 필수 ARM64 HVF 114개가 모두 실행됐다. 집중 검증은 32/44개 통과와 12개 건너뜀이며 새 4K/16K 직접 검증 24개를 모두 포함한다. 전체 파일 구성요소는 317/317개, 원본 네이티브 프로그램은 28/28개 통과했다. 독립 원시 시스템 호출 탐침은 이 대소문자를 구분하지 않는 macOS 파일 시스템에서 성공한 관찰 32개를 기록했다. 집계에는 중복이 있으며 게스트 제한 시간은 그대로다.
+
+독립 계획 및 구현 검토에서 양방향 트랜잭션, 초기 파일 경로 비용, 양쪽 보존 하위 트리, 매핑만 유지하는 고아 객체와 정확한 반환을 확인했다. 최초 실패 테스트는 명시적 루트 교환 선언이 없어 인수 근거에서 제외했다. 수정한 이전 구현 기준에서는 선택한 6개가 모두 디렉터리 교환 거부로 실패했다. 초기 혼합 파일 단언 2개는 설정된 메타데이터를 잘못 버렸으며 현재는 ctime만 변경된 전체 레코드를 비교한다. 지역 상수 포인터 배열이 ARM64 재배치를 만들어 로딩 6개를 거부하게 했다. 스칼라 단언 4개로 교체한 프로그램에는 기존 방식의 재배치가 없고 로더는 미지원 fixups를 계속 명시적으로 거부한다.
+
+수정 프로그램의 최초 집중 실행에서 5초 HVF 시간 초과 3개를 보존했다. 개별 및 세 프로필 대조 검사와 이후 전체 검증은 통과했지만 원인은 아직 알 수 없고 지연 안정성을 증명하지 않는다. 초기 소스, 바이너리, 실패 및 대조 기록은 보존된다. 초기 디렉터리 이동, 별도 초기 도메인, 권한/마운트/대소문자 선언, 동적 의존성과 프레임워크 실행 환경은 미완성이다. 실제 iOS 기기, 중단된 Intel HVF와 전체 GitHub CI는 별도 인수 경계다.
+
+`build-hvf-arm64/directory-swap-research/`: `darwin-final-evidence/`, `darwin-evidence/`, `focused-v5.xml`, `file-owner-v5.xml`, `native-workload-fixed-evidence/`, `native-probe-v2-results.json`, `fixture-fixups-before/`, `hvf-controls.json`.
+
+최종 링크된 바이너리로 전체 Darwin 검증을 다시 통과했다. 고정 dev 0a9a1d28d 통합 검증은 공통 구성요소 20그룹의 4,515개를 기록했다. 4,489개 통과, 선택적 Z3 6개 및 없는 Windows EH 코퍼스 20개 건너뜀, 실패 0개다. 이 집계에 C/CLI 170/170과 보고서 32/32가 포함된다. Python은 30.780초에 다섯 프로필을 모두 검증했다. 네이티브 모바일 아키텍처/fixup 변형 12개 모두에서 원본 프로그램 관찰 4,532개가 일치했고 단일 세션 및 전체 Swift 메타데이터 일치는 12/12다. Swift witness 생성기도 주석 들여쓰기를 수정한 뒤 기록된 SDK/컴파일러로 카탈로그를 재현했다. 이는 로컬 Release LLVM 23/Apple Clang 17 인수이며 이후 dev 또는 Linux Clang 18 인수를 의미하지 않는다.
+
+
+## 명시한 초기 디렉터리 하위 트리의 일반 이동
+
+명시적인 초기 비루트 디렉터리의 엄격한 Boolean `"movable": true`는 해당 루트의 일반 rename을 허용하고 초기 하위 트리 전체가 고유한 이름의 일반 비마운트 디렉터리임을 선언합니다. C++ `DarwinFileOptions::MovableDirectories`는 기존 aggregate 멤버 뒤에 추가합니다. 바로 위 부모는 mutable이어야 합니다. 생략/false는 미상이며 다른 JSON 타입은 거부합니다. 후손의 mutable/removable/movable 및 파일 쓰기 권한은 그대로 별개입니다. 초기 디렉터리 SWAP, 일반 권한 판단이나 마운트를 허용하지 않습니다. 알려진 flags, 특수 디렉터리 모드, 다중 링크 일반 파일, stat/스냅샷의 inode 별칭을 거부합니다. 선언으로 연결한 비마운트 영역 전체에는 알려진 장치 번호가 하나만 있어야 합니다. stat 없는 공통 조상의 형제 트리와 파일도 포함하며, 장치 번호 일치만으로 별도 영역을 연결하지 않습니다.
+
+이름, 부모, 원래 stat/스냅샷, 권한은 객체가 소유합니다. 이전 입력 경로로 이동·삭제된 이름을 복원하지 않습니다. 열지 않은 후손, FD/dup/CWD, 매핑, 삭제된 후손도 원래 객체를 유지합니다. 변경되지 않은 후손은 stat, 스냅샷, cookie와 SEEK_END를 유지하고 이동 루트와 이름이 변경된 부모의 전체 관측은 미상이 됩니다. 옛 이름 재사용은 관측이나 권한을 상속하지 않습니다. 초기 입력은 한 번의 동기 실행을 위한 선언이며 실행 중 카탈로그 교체 API가 아닙니다. SWAP 능력은 별개입니다. 초기 객체는 직접 swap_rename 선언을 유지하고 mkdir은 부모 능력을 복사하며 이동은 이를 다시 계산하지 않습니다. 양쪽 SWAP 부모 모두 지원 선언이 필요합니다.
+
+빈 초기 대상 교체에는 별도 removable이 필요합니다. 이름 공개 전에 모든 경로의 1023바이트 한도와 공유 16 MiB 예산을 검사합니다. movable 참조는 원래 경로와 NUL을 고정 예약하며 항목을 늘리지 않습니다. 초기 디렉터리 경로·참조·스냅샷·항목은 삭제 후에도 예약됩니다. 동적 PathCharge는 0에서 시작해 이동할 때 연결되거나 보존된 각 객체의 현재 경로를 한 번 청구합니다. 즉시 해제 가능한 대상의 기존 동적 비용만 공제합니다. FD/CWD/자식/고아 매핑 보존은 공제 근거가 아니며 최종 회수는 한 번만 환급합니다. 암묵적 초기 조상은 256항목 한도에 추가하지 않고 초기 일반 파일 항목 회수는 유지합니다.
+
+예:
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/work","mutable":true,"movable":true}]}}
+```
+
+SDK 없는 initial-directory-move는 이동, 공유/독립 커서, FD flags, CWD, 사설 매핑, 교체와 원래 이름 복원을 확인합니다. 로컬 guest 설정과 실제 iOS 비교는 별도 검증입니다.
+
+초기 디렉터리 SWAP 미지원은 시스템 호출의 원본 또는 대상 루트 객체를 뜻합니다. 생성한 조상을 교환하면 그 아래로 이동한 초기 자손도 객체 상태와 동적 비용을 유지하며 함께 이동합니다. 앞서 설명한 초기 디렉터리 제한은 필요한 선언이 없는 경우에 적용됩니다.
+
+최종 독립 검토 후 ARM64 macOS 검증은 Darwin 1,264개 중 796개 통과, 사용할 수 없는 백엔드 468개 건너뜀, 실패 0개입니다. 필수 ARM64 HVF 117개는 모두 실행했습니다. 파일 소유 계층은 342/342이며 새 4K/16K 동작 22개와 승인 조건 3개를 포함합니다. CreationPolicy는 이동한 부모의 원래 Device/GID를 유지하고 이름 재사용, inode 순서, 현재 umask를 구분합니다. 정확한 16 MiB 한도에서 16회 왕복 교환은 비용을 누적하지 않으며 원위치 이동은 실제 6바이트 차이만 반환합니다. 공개 C/CLI 175/175, 보고서 파싱 33/33, 네이티브 커널 29/29, 독립 원시 프로브 19개 관측이 통과했습니다. Python 5개 설정은 27.865초에 통과했고 순수 API 71개, SDK 차이, runner 49개도 통과했습니다. 집계는 중복됩니다. 소스, 바이너리, 실패 시도, 최종 결과는 build-hvf-arm64/initial-directory-move/에 보존하고 커밋에 연결합니다. 실제 iOS, 중단된 Intel HVF, 초기 루트 SWAP, 권한·마운트·대소문자, 공유 매핑 EOF, Mach·스레드·dyld와 프레임워크 런타임은 별도 미완료 범위입니다.
+
+## 선언한 초기 디렉터리 루트의 원자 교환
+
+엄격한 Boolean exchangeable:true(C++ DarwinFileOptions::ExchangeableDirectories, aggregate 끝에 추가)는 명시한 비루트 초기 디렉터리만 RENAME_SWAP 루트 피연산자로 허용합니다. 바로 위 초기 부모는 mutable이어야 합니다. 생략/false는 미지원, 다른 타입은 무효입니다. movable과 일반 비마운트·유일 이름 자손 선언 및 flags/특수 모드/별칭/하드 링크/연결 성분 전체 장치 검증을 공유하지만 두 선언의 합집합은 토폴로지만 정합니다. 각각 원래 경로+NUL을 고정 예약하고 둘 다 선언하면 둘 다 계산합니다. 엔트리는 늘지 않으며 장치 일치만으로 영역을 연결하지 않습니다.
+
+일반/EXCL 초기 원본은 movable, 일반 초기 교체 대상은 removable이 별도로 필요합니다. exchangeable은 이 권한, 자손 mutable, 파일 쓰기, 일반 권한/마운트를 주지 않습니다. 다른 객체 교환은 양쪽 실제 부모가 mutable이며 각각 swap_rename을 지원해야 합니다. 허용된 일반 구성요소의 같은 이름 SWAP는 부모/장치를 확인한 뒤 변화가 없고 최초 요금이나 다른 객체용 교환 능력이 필요하지 않습니다. 같은 객체 dot/대소문자는 여전히 미지이며 없는 대상과 dot 순서는 유지됩니다.
+
+초기 비어 있지 않은 루트 쌍, 초기/생성 루트, 디렉터리/파일을 양방향 교환합니다. 양쪽 연결·보존 하위 트리를 모두 검사한 뒤 모든 이름을 뽑고 공개하며 두 루트는 연결됩니다. 교체/내용 공제나 FD/inode/엔트리 생성이 없습니다. FD/dup/CWD/커서, 부모 객체, 매핑 lease, 권한은 원래 객체를 따르고 변경 없는 자손은 stat/스냅샷을 유지합니다. 같은 이름의 삭제 객체와 새 객체는 분리됩니다. 동적 경로 비용은 처음 0, 최초 교환에 현재 경로를 한 번 계산하며 다음은 이전 비용을 대체합니다. 고정 비용은 반환하지 않으며 경로/예산 실패는 양쪽 상태를 유지합니다.
+
+SDK 독립 original initial-directory-swap은 기존 empty와 data를 교환하고 복원하며 자손, 매핑, CWD, 커서, FD flags, 이동 후 생성과 정리를 확인합니다. 앞의 f98068c07은 별도로 고정한 일반 이동 검증이며 초기 루트 SWAP는 이 선언으로만 확장합니다.
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"swap_rename":true},{"path":"/left","exchangeable":true},{"path":"/right","exchangeable":true}]}}
+```
+
+
+이번 macOS ARM64 Release 검증은 Darwin 등록 1,303개, 통과 823개, 백엔드 사용 불가 건너뜀 480개, 실패 0개이며 필수 ARM64 HVF 120개를 모두 실행했다. 파일 검사 361/361(새 4K/16K 동작 16개와 입력 승인 검사 3개), C/CLI 180/180, 보고서 파싱 34/34, 원본 커널 프로그램 30/30, 독립 프로브 관측 35개가 통과했다. Python 5개 구성은 33.894초에 통과했고 순수 API 71개, 목록/대조 단위 검사 49개, SDK 차이, 형식, 기능, 출처, 문서 검사도 통과했다. 집계는 중복된다.
+
+정확한 용량 경계에서 같은 이름 작업과 16회 왕복 교환은 원래 객체와 비용을 유지한다. 6바이트가 필요한데 5바이트만 남으면 양방향 거부가 두 트리, 커서, 후속 생성 예산을 모두 보존한다. 독립 계획 및 최종 소스 검토는 승인되었다. 시도, 소스, 바이너리, 결과를 `build-hvf-arm64/initial-directory-swap/`에 보존하고 커밋에 연결한다. 잘못 겹친 보고서 실행은 제외하고 순차 재실행했으며 번역 마커를 동기화했다. 시간 제한과 부정 대조를 완화하지 않았다. 권한, 선언하지 않은 마운트/대소문자, 공유 매핑/EOF, 진행 시계, Mach/스레드/dyld/프레임워크는 미완료다. 실제 iOS, 중단된 Intel HVF, 원격 병합 CI는 별도로 검증한다.
+
+## 명시적 읽기 전용 리소스 제한 관측값
+
+다섯 Darwin guest 구성의 `getrlimit(194)`는 `DarwinSystemOptions::ResourceLimits` (`darwin_system.resource_limits`)를 읽습니다. 키 0..8의 `DarwinResourceLimit`는 오프셋 0/8에 두 little-endian uint64, 총 16바이트입니다. `0 <= current <= maximum <= 9223372036854775807`이어야 하며 0은 명시값, INT64_MAX는 무한입니다. 호스트 조회나 FD/VM/저장/실행 예산 변경은 없습니다. `setrlimit`, 제한 집행, 신호, 스케줄링은 미완성입니다.
+
+엄격 JSON은 최대 아홉 고유 키와 정확히 `resource`, `current`, `maximum`만 허용하며 정확한 정수 또는 부호 없는 십진 문자열을 씁니다. 잘못된 형식/필드, 중복, 비정규 키, 역전 값은 로드 전에 실패합니다. 빈/생략 배열은 미상입니다. 구성 키에는 syscall 플래그나 절단 규칙을 적용하지 않습니다.
+
+syscall만 선택자의 하위 32비트를 취하고 `_RLIMIT_POSIX_FLAG=0x1000`를 지웁니다. 잘못된 리소스는 메모리 접근 전 EINVAL, 누락값은 출력 접근 전 unsupported입니다. 전부 쓰기 불가이면 EFAULT, 일부만 가능한 쌍은 모든 바이트를 보존하고 unsupported입니다. 완전한 비정렬/페이지 경계 복사는 16바이트만 변경하며 backend 오류는 전송 오류입니다. 네이티브 ARM64 probe는 값/선택자 23개와 독립 fault 4개를 통과했습니다. 이 호스트의 부분 prefix 불변을 보편 보장으로 확대하지 않습니다.
+
+```json
+{"darwin_system":{"resource_limits":[{"resource":8,"current":256,"maximum":"9223372036854775807"}]}}
+```
+
+macOS ARM64 Release 등록/통과/미실행 skip/실패: 1337 / 845 / 492 / 0, 필수 HVF 123개 모두 실행. 새 4K/16K 동작 검사 열두 개 및 SDK capture oracle, C/CLI 190/190, parser 37/37, native workload 31/31 통과. Python 다섯 구성 71.978초, 순수 API 71개와 runner 49개 통과; SDK drift, 형식, 기능, 출처, 문서 검사 통과. 수치는 겹칩니다. 증거는 `build-hvf-arm64/resource-limit-observations/`에 동결하고 커밋에 연결합니다. 초기 테스트 enum 컴파일 오류 및 연결/필터 시도를 보존하며 수정 후 직렬 검증에서 기한과 음성 대조를 완화하지 않았습니다. 제한 집행, 권한, 변경 후 디렉터리 정보/열거, 공유 map/EOF, 진행 시계, Mach/thread/dyld, framework는 미완성입니다. 물리 iOS, 중단된 Intel HVF와 원격 merge CI는 별도 검증이 필요합니다.
+
+## 명시적 읽기 전용 리소스 사용량
+
+다섯 Darwin guest 구성에서 getrusage(117)는 독립적인 선택 항목 DarwinSystemOptions::ResourceUsageSelf / ResourceUsageChildren을 읽습니다. 엄격 JSON: darwin_system.resource_usage.self / .children. 각 DarwinResourceUsage는 int64 user_seconds/system_seconds, 1000000 미만 uint32 user_microseconds/system_microseconds, 정확히 14개 int64 counters를 요구합니다. 정확한 정수나 부호 있는 십진 문자열은 전체 범위를 보존하며 잘못된 형식/필드/마이크로초/길이는 로드 전에 거부합니다. 누락된 상대는 미상이고 제공된 항목 조회를 막지 않습니다. 모두 0인 명시는 유효합니다.
+
+한 번에 144바이트 little-endian 출력: timeval 0/16에는 8바이트 초, 4 마이크로초, 4 zero padding; counter는32부터 각8바이트. Darwin 원값/단위를 보존하며 ru_maxrss에 Linux KiB 변환은 없습니다. 고정값은 호스트 성능 측정, 회계, fork/wait, 스케줄링, 제한 집행을 구현하지 않습니다.
+
+선택자 하위32비트만 사용해 0=SELF, -1=CHILDREN. 0x1000은 잘못된 값이며 POSIX flag 제거 없음. 잘못된 값은 메모리 전 EINVAL, 누락값은 출력 전 unsupported. 완전한 비정렬/페이지 경계 복사는 guard 보존; 모두 쓰기 불가 EFAULT, 일부 쓰기 가능은 복사 전 unsupported, backend 오류는 전송 오류입니다. SDK는 선택자별 한 번 캡처만 비교해 변화하는 후속 SELF를 피합니다. native probe 13개와 독립 fault4개는 기존5초로 통과. 이 호스트 partial SELF는 EFAULT 전64바이트 쓰기를 관측했으며 범용 prefix 보장으로 확대하지 않습니다.
+
+0..13: `ru_maxrss`, `ru_ixrss`, `ru_idrss`, `ru_isrss`, `ru_minflt`, `ru_majflt`, `ru_nswap`, `ru_inblock`, `ru_oublock`, `ru_msgsnd`, `ru_msgrcv`, `ru_nsignals`, `ru_nvcsw`, `ru_nivcsw`.
+
+```json
+{"darwin_system":{"resource_usage":{"self":{"user_seconds":"-9223372036854775808","user_microseconds":999999,"system_seconds":0,"system_microseconds":0,"counters":["9223372036854775807",0,0,0,0,0,0,0,0,0,0,0,0,0]}}}}
+```
+
+[Apple getrusage](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getrusage.2.html), [XNU](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [SDK layout](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/resource.h).
+
+macOS ARM64 Release 등록/통과/미실행 skip/실패 1371/867/504/0, 필수 HVF 126 전부 실행. File361/361, C/CLI 200/200, JSON 40/40, System/SDK 53/53, native 32/32 통과. 새4K/16K12개 및 입장/SDK 검사, Python5구성 42.865초; API71, runner/reference49, SDK drift/형식/기능/출처/문서 검사 통과. 수치는 겹치며 독립 검토 통과. 증거 `build-hvf-arm64/resource-usage-observations/`를 동결해 commit에 연결합니다. 초기 x64 EINVAL fixture는 RDX보존, ARM64 X1초기화로 수정했고 실패/빈 filter 기록 보존. runtime/기한/음성대조 불변. 집행, 권한, 변경 후 디렉터리, shared map/EOF, 시계, Mach/thread/dyld, framework 미완성. 물리iOS, 중단Intel HVF, remote merge CI 별도 검증입니다.
+
+첫 전체 검증866통과, 기존iOS ARM64 HVF rename5초timeout1개,504skip. 같은 binary의 해당 case386ms통과 후 전체 직렬 검증통과. 두 기록 보존, 원인미확정이며 latency보장 아님.
+
+
+## 명시적 자격 정보와 그룹 및 생성 소유자 일관성
+
+선택Credentials는RealUID/EffectiveUID/RealGID/EffectiveGID와 독립 선택GroupAccessList입니다. 생략하면 네조회1000, 명시0/root 유효, ID0..INT32_MAX. 그룹1..16, 첫항EffectiveGID, 순서/중복보존. 누락은 알수없음이며host/EGID로 채우지 않습니다. 엄격darwin_system.credentials는real_uid/effective_uid/real_gid/effective_gid 필수, groups선택. 무손실 정수/중앙검증은 모양/필드/범위/수/첫그룹 오류를 로드전 거부하며 비Darwin도 거부합니다.
+
+getuid24/geteuid25/getgid47/getegid43/getgroups79는 단일system소유자입니다. 새일반파일UID는 유효UID, device/GID는 직계부모상속. rename/보존FD/이름재사용은 객체 유지, 입력stat불변. root는 쓰기/디렉터리변경/권한/ACL을 부여하지 않으며 setuid/setgid/setgroups와process/session 미구현입니다.
+
+getgroups용량은 하위32bit 부호int입니다. 음수먼저EINVAL, 미설정unsupported, 알려진0은포인터접근없이count, 양수부족은메모리전EINVAL, 충분하면4*count작은엔디언byte한번복사. 0x1000은양수, POSIXflag제거없음. 비정렬/페이지경계guard보존, 전부쓰기불가EFAULT, 부분은byte전unsupported, backend오류는transport. BSD오류는x64 RDX보존/ARM64 X1소거, 성공은둘다secondary소거, 보고는raw인자보존.
+
+
+~~~json
+{"darwin_system":{"credentials":{"real_uid":101,"effective_uid":202,
+ "real_gid":303,"effective_gid":404,"groups":[404,0,"2147483647",7,7]}}}
+~~~
+
+
+[Apple getgroups contract](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getgroups.2.html), [pinned XNU credential/group ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_prot.c).
+
+등록/통과/불가skip/실패: 1413/897/516/0; ARM64 HVF 129/129. System/SDK72/72, File365/365, Report43/43, C/CLI210/210; guest8/12skip; native33/33; Python5 82.918s; API71, runner/reference49. SDK drift / clang-format22.1.2 / capabilities23 / provenance / docs11+negative3: OK. Independent source review: OK.
+
+21 value +5 native fault,5s; host16groups, positive short capacity: OK. Native partial32byte thenEFAULT: observation only. Counts overlap. `build-hvf-arm64/credential-observations/`.
+
+첫8실패（명령예산5, 5초deadline3）、12skip. 새fixture2페이지scan을 같은경계132byte guard（앞64, 최대data64, 뒤최소4）로제한. 직접owner는전체2페이지검증. 예산/인자/오류음성대조불변, source/binary/두run보존. 사전검토로transport경계수정, public설정내용비교. 권한/ACL、link、변경후directory전체관측、shared maps/EOF、clock、Mach/thread/dyld/framework미완；실물iOS、정지Intel HVF、merge CI별도.
+
+## 명시적 프로세스와 커널 한도로 결정되는 기술자 표 조회
+
+선택 `DarwinSystemOptions::MaxFilesPerProcess` / `darwin_system.max_files_per_process`는 음수가 아닌 int 관측값입니다. 누락은 미지정, 명시적 0은 유효합니다. 이름 `kern.maxfilesperproc`와 숫자 MIB `[1,29]`는 자원 제한과 독립적으로 같은 4바이트 값을 읽습니다. 무손실 정수 파싱과 중앙 검증은 잘못된 형식, 음수, 범위 초과를 로드 전에 거부하며 비 Darwin 설정도 거부합니다.
+
+BSD `getdtablesize(89)`는 이 상한과 `ResourceLimits[8].Current`를 모두 요구하고 작은 값을 반환합니다. 완전한 64비트 Current를 먼저 제한하므로 Current=`0x100000001`, cap=64이면 64이며 무한 값도 안전하게 제한됩니다. Maximum, 호스트 값, 실제 FD 수, `DescriptorLimit`로 추정하지 않습니다. 한쪽이 누락되면 다른 쪽이 0이어도 unsupported입니다. 여섯 인수를 모두 무시하며 사용자 메모리를 접근하지 않고 기존 BSD carry/보조 레지스터 규약을 사용합니다. Mach timebase trap 89는 독립적입니다.
+
+sysctl 복사 단계는 유지됩니다. EUID0의 실제 쓰기는 이름/MIB와 oldlenp 검사 뒤, 관측/출력 전에 unsupported이고 비 root는 EPERM입니다. 새 포인터 길이가 0이면 읽기입니다. 제한 실행이나 쓰기 권한은 추정하지 않습니다. 필수 자원 workload는 두 cap 조회와 낮은/높은 syscall number를 검증하고 `l` / 144바이트 출력을 유지합니다. 뒤의 unsupported도 이미 출력한 바이트를 보존합니다. 독립 스칼라 fixture는 누락, 0, 넓은 Current와 DescriptorLimit=3의 독립성을 검증합니다.
+
+```json
+{"darwin_system":{"max_files_per_process":64,"resource_limits":[{"resource":8,"current":"4294967297","maximum":"9223372036854775807"}]}}
+```
+
+[XNU getdtablesize](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c), [XNU proc_limitgetcur_nofile](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [XNU MIB constants](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/sysctl.h).
+
+검증: Darwin (등록/통과/사용 불가/실패) 1441/913/528/0; ARM64 HVF 132/132; System/SDK 80/80; File 365/365; C/CLI 211/211; ProcessReport 45/45; native 33/33; Python 5 (42.254s); API 71; runner 44 + reference 5. clang-format 22.1.2; capabilities/provenance; docs 286 / locales 10 / negative controls 3.
+
+시도 기록: 새 스칼라 메서드의 필수 등록이 없어 첫 runner 검사에서 ARM64와 x86-64 목록 검사가 실패했습니다. 전체 메서드 일치 규칙을 유지하며 등록을 추가했습니다. 초기 필수 129개 게이트와 실패 기록을 보존하며, 새 최종 ARM64 게이트는 132개를 요구합니다.
+
+개수는 서로 겹칩니다. `build-hvf-arm64/descriptor-table-observations/`는 실제 실행 기준과 정확한 소스/바이너리/로그 해시를 보존하고 이전 증거는 변경하지 않습니다. 일회용 ARM64 macOS 자식 프로세스 5개, 검사 40개, 각 5초 제한: 기본 Current=1048575/cap=245760은245760, 자식 Current=0/1/32/245777은0/1/32/245760입니다. 부모와 시스템 제한은 변경하지 않았습니다. 실제 iOS, 중지된 Intel HVF, 원격 merge CI는 별도 검증입니다. 권한, 변경 후 디렉터리 관측, 공유 map/EOF, 진행 시계, Mach/thread/dyld 및 framework runtime은 미완성입니다.
+
+## 명시적 프로세스 관측값
+
+`DarwinSystemOptions::ProcessGroupID`, `SessionID`, `ProcessTainted`는 서로 독립적인 선택 입력이며 JSON 이름은 `process_group_id`, `session_id`, `process_tainted`입니다. ID는 양수이며 INT32_MAX 이하여야 하고, 오염 상태는 JSON Boolean `true`/`false`만 받습니다. 생략은 알 수 없는 값이고 명시적 `false`는 알려진 0입니다. 호스트, PID1000, 자격 증명 또는 다른 관측값에서 추론하지 않습니다.
+
+원시 `getpgrp(81)`는 프로세스 그룹을 읽습니다. `getpgid(151)`와 `getsid(310)`은 부호 있는 하위32비트 `pid_t`를 사용하며 0 또는 고정된 현재 PID1000을 자기 자신으로 처리합니다. `0xffffffff000003e8`도 자기 자신입니다. 음수 하위32비트 PID는 관측값 조회 전에 ESRCH3을 반환하며, 읽기 전용 네이티브 프로브와 XNU의 프로세스 할당·조회 규칙으로 확인했습니다. `0x1000`을 포함한 알려지지 않은 양수의 다른 프로세스는 UnsupportedService로 중단하고 ESRCH나 플래그 마스크를 추측하지 않습니다. 선택한 자기 관측값이 없을 때도 지원하지 않음으로 중단합니다. `getpgrp`와 `issetugid(327)`는 모든 인수를 무시하며 네 개의 스칼라 조회는 게스트 메모리에 접근하지 않습니다. 기존 BSD carry와 두 번째 반환 레지스터 규칙을 유지합니다.
+
+`process_tainted`는 고정된 `P_SUGID` 관측값이며 실제 ID와 유효 ID의 일치 여부와 독립적입니다. EUID, 파일 소유권, sysctl 쓰기 권한, entitlement, 리더 또는 터미널 상태를 바꾸지 않습니다. `setpgid`, `setsid`와 자격 증명 변경은 계속 지원하지 않습니다. 원본 읽기 전용 `process-observations`는 자기 PID를 캡처하고 상위 비트 전달값, 음수 오류, 반환 상태를 확인합니다. `virtual-process-observations`는 설정한 그룹·세션·오염 상태 바이트를 출력합니다. 다른 프로세스, 누락값, 설정 호출의 모델 전용 사례는 네이티브 실행 목록에서 제외합니다. macOS 참조 실행은 실제 iOS 기기 검증이 아닙니다.
+
+```json
+{"darwin_system":{"process_group_id":7,"session_id":16909060,"process_tainted":false}}
+```
+
+[XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).
+
+
+## 명시적 세션 로그인 버퍼
+
+`DarwinSystemOptions::LoginNameBytes` 는 세션의 전체255바이트(`MAXLOGNAME`)를 독립적으로 선언하는 선택적 관측값입니다. JSON `login_name_hex` 는 대소문자를 허용하는 정확히510개의 ASCII 16진수 문자입니다. 내부NUL과 종료 뒤의 비영 바이트도 유효합니다. 생략은 미지, 명시적 전체0은 알려진 값입니다. 짧은 이름을 채우거나 호스트, 자격 증명, 프로세스 그룹, 세션ID, 오염 상태에서 추론하지 않습니다. 로그인 또는 파일 권한을 부여하지 않습니다.
+
+원시 `getlogin(49)` 는 길이의 부호 없는 하위32비트 `u_int` 를 사용하여 min(length,255) 바이트만 복사합니다. 문자열 해석, NUL 추가, 필요 크기 출력은 없습니다. 길이0은 관측값과 게스트 메모리 접근 없이 잘못된 포인터에서도 성공하며 `0xffffffff00000000` 도0을 선택합니다. 양의 길이는 목적지 검사 전에 전체 선언값을 요구합니다. 전혀 쓰지 못하면 EFAULT14, 일부만 쓸 수 있으면 복사 전에 미지원으로 중단합니다. 사전 검사 오류는 바이트를 쓰지 않습니다. 기존 복사 계층은 백엔드 쓰기 오류를 전파하며 일반 롤백을 보장하지 않습니다. BSD carry 와 두 번째 반환 레지스터 규칙 및 오류 시 원래 x64 RDX 를 유지합니다.
+
+`setlogin(50)` 은 명시root 또는 전체0에서도 미지원입니다. 독자적 읽기 전용 `login-buffer` 는 전체 길이 인수, 접두부, 인접 바이트, 길이0 포인터, EFAULT를 검사하고 `virtual-login-buffer` 는 선언한255바이트를 출력합니다. 누락 및 설정기 모델 테스트는 네이티브 실행에서 제외합니다. macOS ARM64 참조는 물리iOS나Intel 네이티브 검증을 뜻하지 않습니다. 예제는255개의0을 명시적으로 선언하며 빈 로그인 이름을 추론하지 않습니다.
+
+게스트 검증기는 매 복사 전에 출력 265바이트 전체를 초기화하고 서로 겹치지 않는 세 구간을 오름차순으로 검사합니다: [0,3), [3,3+n), [3+n,265). n은 기존과 같은 상한 적용 복사 길이입니다. 첫 구간과 마지막 구간은 모든 보호 바이트를, 중간 구간은 복사된 모든 바이트를 원래 스냅샷과 비교합니다. 전체 길이 인수 12개, 길이0 호출 21개, EFAULT 호출 42개, carry/보조 레지스터 검사와 raw/virtual 경로는 기존 실행 한도에서 유지됩니다. 검증 작업을 줄여도 바이트 범위와 첫 오류 순서는 보존되며 제품 런타임 성능은 별도 측정이 필요합니다.
+
+```json
+{"darwin_system":{"login_name_hex":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}}
+```
+
+[XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).
+
+
+## 현재 프로세스 우선순위 명시값
+
+`DarwinSystemOptions::ProcessNice` / JSON `darwin_system.nice` 는 -20 에서 20 사이의 고정 부호 있는 nice 값을 독립적으로 선언합니다. 생략은 미지이며 명시적0과 -1은 알려진 값입니다. 기존 무손실 정수 파서는 정수 숫자와 십진 정수 문자열을 허용하고 잘못된 형식, 소수, 지수 문자열, 공백, 범위 초과는 이미지 로드 전에 거부합니다. 정확한 정수의 숫자 JSON은 유효합니다. 비 Darwin 프로필은 거부합니다. 호스트, 자격 증명, 그룹, 세션, 오염, 로그인, 자원, CPU 값에서 추론하지 않고 스케줄링, 권한, 실행 예산을 바꾸지 않습니다.
+
+원시 `getpriority(100)` 은 int 선택자와 부호 없는 `id_t` 대상의 하위32비트를 씁니다. 대상이 INT32_MAX보다 크면 먼저 EINVAL22를 반환합니다. 알 수 없는 선택자(GPU5,0x1000 포함)와 스레드3의0이 아닌 대상도 관측값 전에 EINVAL입니다. `PRIO_PROCESS`0은0 또는 현재 PID1000만 지원하며 자신을 선택한 뒤 nice를 요구합니다. 다른 양수 PID는 ESRCH를 추측하지 않고 미지원입니다. 그룹1, 사용자2, 스레드3/대상0, 확장4,6,7,8은 관련 값이 있어도 미지원입니다. 스레드 대상의 상위만 비영이면 미지 상태이며 EINVAL이 아닙니다. 결과는64비트 부호 확장으로 -1은 carry가 지워진 성공 UINT64_MAX입니다. 게스트 메모리를 쓰지 않고 미사용 인수를 무시합니다. BSD 두 번째 레지스터 규칙은 x64 오류의 RDX를 보존하고 성공 때0으로, ARM64는 두 경로의 X1을0으로 합니다.
+
+`setpriority(96)` 은 명시 root/nice에서도 미지원입니다. 독자적 읽기 전용 `process-priority`는 자기 인수, 확실히 잘못된 인수, 성공/오류/성공 전환을 검사하며 `virtual-process-priority`는 설정한 부호 있는8바이트를 출력합니다. 다른 프로세스, 집계, 누락, 설정 경로는 모델만 시험합니다. 새 ARM64 macOS 탐침은 nice0으로191개 검사를 통과했습니다. 비음수 샘플은 음수 하드웨어 확장을 입증하지 않으므로 고정 버전의 부호 있는 진입 선언과 독립 모델 경계를 사용합니다. 물리 iOS와 Intel 네이티브 검증은 별개입니다.
+
+```json
+{"darwin_system":{"nice":-1}}
+```
+
+[XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).

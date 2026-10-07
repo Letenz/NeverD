@@ -1,8 +1,10 @@
 import ast
+import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -24,6 +26,55 @@ STYLE_EXPECTATIONS = ROOT / "scripts" / "tests" / "CIStyleExpectations.def"
 
 
 class CiConfigurationTests(unittest.TestCase):
+    def test_windows_serial_policy_runs_in_ctest_without_project_policies(self):
+        execution = ROOT / "unittests" / "emulation" / "WindowsTestExecution.cmake"
+        inventory = execution.with_suffix(".def").read_text(encoding="utf-8")
+        rule = re.search(
+            r'NEVERD_WINDOWS_TEST_SERIAL\(\s*"([^"]+)",\s*"([^"]+)",'
+            r'\s*"([^"]+)",\s*"([^"]+)"\s*\)', inventory,
+        )
+        self.assertIsNotNone(rule)
+        instantiation, suite, case, backend = rule.groups()
+        selected = f"{instantiation}/{suite}.{case}/{backend}"
+        neighbor = f"{instantiation}/{suite}.{case}/OtherBackend"
+        annotated = selected + f"  # GetParam() = {backend}"
+        other_annotated = neighbor + "  # GetParam() = OtherBackend"
+        for names, serial in (
+                ((selected, neighbor), {selected}),
+                ((annotated, other_annotated), {annotated}),
+                ((selected + "Extra", neighbor), set()),
+                ((neighbor,), set()), ((), set())):
+            with self.subTest(names=names), tempfile.TemporaryDirectory(
+                    prefix="neverd-ctest-windows-policy-") as directory:
+                root = Path(directory)
+                # CTest evaluates TEST_INCLUDE_FILES without the project's
+                # cmake_minimum_required policy scope. No guest runs here.
+                source = ""
+                for name in names:
+                    source += (
+                        f'add_test("{name}" "{Path(sys.executable).as_posix()}")\n'
+                    )
+                    source += (
+                        f'set_tests_properties("{name}" PROPERTIES TIMEOUT 17)\n'
+                    )
+                source += "set(NeverDWindowsProcessTests_TESTS "
+                source += " ".join(f'"{name}"' for name in names) + ")\n"
+                source += f'include("{execution.as_posix()}")\n'
+                (root / "CTestTestfile.cmake").write_text(source, encoding="utf-8")
+                result = subprocess.run(
+                    ["ctest", "--test-dir", str(root), "--show-only=json-v1"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn("CMP0057", result.stderr)
+                tests = json.loads(result.stdout)["tests"]
+                self.assertEqual({test["name"] for test in tests}, set(names))
+                for test in tests:
+                    properties = {p["name"]: p["value"] for p in test["properties"]}
+                    self.assertEqual(properties["TIMEOUT"], 17)
+                    self.assertEqual(properties.get("RUN_SERIAL", False),
+                                     test["name"] in serial)
+
     def test_mobile_focused_inventory_executes_on_every_runner(self):
         source = WORKFLOW.read_text(encoding="utf-8")
         step = self.workflow_step_containing(source, "focused contract has missing")

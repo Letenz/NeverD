@@ -1288,6 +1288,21 @@ Recognized library operation; click to show its code.</source>
         <translation>%1
 عملية مكتبة معروفة؛ انقر لعرض شيفرتها.</translation>
     </message>
+    <message numerus="yes">
+        <source>%n lines of includes and declarations</source>
+        <translation>
+            <numerusform>%n سطر من التضمينات والتصريحات</numerusform>
+            <numerusform>%n سطر من التضمينات والتصريحات</numerusform>
+            <numerusform>%n سطران من التضمينات والتصريحات</numerusform>
+            <numerusform>%n أسطر من التضمينات والتصريحات</numerusform>
+            <numerusform>%n سطرًا من التضمينات والتصريحات</numerusform>
+            <numerusform>%n سطر من التضمينات والتصريحات</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The includes, support types and declarations this code compiles with; click to show them, Keypad - to fold them again.</source>
+        <translation>التضمينات وأنواع الدعم والتصريحات التي يُترجَم بها هذا الكود؛ انقر لعرضها، واضغط - في لوحة الأرقام لطيّها مجددًا.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>

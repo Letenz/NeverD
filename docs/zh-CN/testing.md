@@ -1491,7 +1491,7 @@ MainActor 测试数据检查完整的固定元数据与静态表流程，拒绝�
 
 `AndroidTestExecution.def` 为 `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` 设置 120 秒的整项 CTest 预算与 `RUN_SERIAL`。其中两次工作负载各自保留 30 秒的有限运行预算，串行约束避免容量压力用例相互争抢资源。六种 O0/O2 与重定位配置均采用此规则。
 
-`LinuxPIDFD.*` 检查分支、枚举、缺失观察值及任务清单的加载前校验。`Backends/LinuxPIDFDProcess.*` 用八个分支的独立 x64／AArch64 O0／O2 调用程序检查标志、文件表、限额／复用、错误顺序、清单查找、非首领和单向量限长。`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` 与其他 `AndroidSyscallTests.cpp` 用例覆盖六种重定位配置的 raw／Bionic 错误和 errno。共享语义变更后运行重点用例、完整 Linux 进程、Android 原生及进程公共接口套件。这些模型测试不等于启动八种 GKI 内核；参见[源码固定版本与证据](android-gki-kernels.md)。
+`LinuxPIDFD.*` 在加载前检查已发布分支解析、非法枚举、GKI 与缺失观测冲突，以及畸形、过量或矛盾的任务目录。`Backends/LinuxPIDFDProcess.*` 用独立 O0/O2 x64/AArch64 调用程序覆盖八个分支的标志、共用分配、限制、关闭复用、封闭目录、各版本非组首领错误及标量/向量顺序；缺失目标和非首领检查先于 FD 耗尽，并覆盖线程标志及仅隐式 self 的空目录。向量用例比较早期负长度与后续不可访问元数据，以及原始跨度越过用户上限、截断跨度却有效的缓冲区，覆盖 pidfd 和两个捕获流。Android 的 `ReleasedGKIProcessDescriptorsShareRawAndBionicOwnership`、`ReleasedGKIVectorImportRetainsRawAndBionicErrors` 和 `ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` 在六种编译重定位配置中保留原始错误、Bionic errno、目录和耗尽规则。先运行这些定向测试，再运行完整 Linux 进程、Android 原生和公开进程套件。测试执行模型，不启动八个 GKI 内核。参见[已发布 GKI 契约](../android-gki-kernels.md)。
 
 `ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: `ProcessCPUClocksRetainIdentityAndIdleSeparation`、`ProcessCPUClocksKeepMissingObservationBoundaries` 与 `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle` 检查八种固定版本的 raw／Bionic 身份、PROF／VIRT／SCHED、低 32 位参数、目标校验先于指针故障、观察值缺失、别名、CPU 非负值及墙钟／CPU 空闲分离。`AndroidTimeTests.cpp` 检查输出和哨兵；协作式 syscall 样例检查当前非首领 TID 的进程组样本。
 

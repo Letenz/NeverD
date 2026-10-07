@@ -5,7 +5,8 @@
 //===----------------------------------------------------------------------===//
 // Fixture truth from the immutable r1 pins in docs/android-gki-kernels.md.
 // Do not derive expected behavior from the production flag catalogue.
-// Name, literal branch, PIDFD_THREAD acceptance, single-buffer iovec import, non-leader errno.
+// Name, literal branch, PIDFD_THREAD acceptance, single-buffer iovec import,
+// non-leader errno.
 #ifdef NEVERD_GKI_RELEASE_CASE
 NEVERD_GKI_RELEASE_CASE(Android12_5_10, "android12-5.10", false, false, 22, false)
 NEVERD_GKI_RELEASE_CASE(Android13_5_10, "android13-5.10", false, false, 22, false)

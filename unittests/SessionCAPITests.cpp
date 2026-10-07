@@ -3230,6 +3230,39 @@ TEST_F(SessionCAPITest, IRViewPreservesMultibyteUTF8AcrossPhysicalPages) {
   }
 }
 
+TEST_F(SessionCAPITest, SourcePagesLocateTheFunctionAfterItsPrelude) {
+  const auto Path = write("prelude.elf", makeNamedNativeELF("entry_fn"));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Entry = neverd_session_entry_addr(Session);
+  for (const char *Stage : {"c", "llvmc"}) {
+    SCOPED_TRACE(Stage);
+    auto Page = takeView(neverd_ir_view_json(Session, Entry, Stage, 0, 2048));
+    ASSERT_TRUE(Page.getString("text"))
+        << takeString(neverd_last_error(Session));
+    ASSERT_EQ(Page.getBoolean("complete"), true);
+    const std::string Text = Page.getString("text")->str();
+    EXPECT_EQ(Text, takeString(std::strcmp(Stage, "c") == 0
+                                   ? neverd_decompile(Session, Entry)
+                                   : neverd_decompile_llvm(Session, Entry)));
+    const auto *Prelude = Page.getObject("prelude");
+    ASSERT_NE(Prelude, nullptr) << Text;
+    const auto Lines = Prelude->getInteger("lines");
+    const auto End = Prelude->getInteger("end_byte");
+    ASSERT_TRUE(Lines && End);
+    ASSERT_GT(*End, 0);
+    ASSERT_LT(static_cast<size_t>(*End), Text.size());
+    // The prelude is whole lines: includes and declarations before the
+    // definition, which holds the function's name.
+    EXPECT_EQ(Text[*End - 1], '\n');
+    EXPECT_EQ(std::count(Text.begin(), Text.begin() + *End, '\n'), *Lines);
+    EXPECT_NE(Text.substr(0, *End).find("#include"), std::string::npos);
+    EXPECT_NE(Text.substr(*End).find("entry_fn"), std::string::npos) << Text;
+    if (std::strcmp(Stage, "c") == 0)
+      EXPECT_EQ(Text.compare(*End, 18, "/* neverd.entry: 0"), 0) << Text;
+  }
+}
+
 TEST_F(SessionCAPITest, SignatureJSONPreservesASCIINameAndMatchFields) {
   expectSignatureJSONName("ascii_function");
 }

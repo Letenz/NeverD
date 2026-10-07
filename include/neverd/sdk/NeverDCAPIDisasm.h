@@ -224,11 +224,15 @@ NEVERD_API const char *neverd_ir_llvm(neverd_session_t Sess,
 /// neverd_resolve_addr; original direct-call regions add callee and
 /// callee_identity. Span begin_byte/end_byte are half-open UTF-8 byte offsets
 /// in the complete source; byte_offset locates this page in it. An unknown
-/// mapping stays unfolded. Source text is always complete code, identical to
-/// the legacy C emitter. The page text is capped at 2 MiB; Low/Med retain no
-/// whole IR string for paging, while C renders one bounded function (at most 32
-/// MiB). Object IDs are stable for a fixed analysis snapshot, not across
-/// revisions. Free the result with neverd_free_string().
+/// mapping stays unfolded. C source pages also carry prelude {lines,
+/// end_byte} when the emitter recorded where the function's definition
+/// begins: the whole lines before it (includes, support types and
+/// declarations) and the byte where the definition starts. Source text is
+/// always complete code, identical to the legacy C emitter. The page text is
+/// capped at 2 MiB; Low/Med retain no whole IR string for paging, while C
+/// renders one bounded function (at most 32 MiB). Object IDs are stable for a
+/// fixed analysis snapshot, not across revisions. Free the result with
+/// neverd_free_string().
 NEVERD_API const char *neverd_ir_view_json(neverd_session_t Sess,
                                            neverd_va_t FuncEntry,
                                            const char *Representation,

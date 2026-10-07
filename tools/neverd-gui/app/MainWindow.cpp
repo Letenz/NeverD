@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "ChooserView.h"
 #include "CodeView.h"
 #include "ConnectionsDialog.h"
 #include "DisassemblyView.h"
@@ -48,7 +49,9 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSet>
 #include <QSettings>
 #include <QSpinBox>
 #include <QStandardPaths>
@@ -233,6 +236,9 @@ void MainWindow::buildMenusAndToolbars() {
       disassembly_->addressSpaceChanged();
     if (hex_)
       hex_->addressSpaceChanged();
+    // Lists that arrived first name their rows' segments now.
+    for (auto *chooser : std::as_const(choosers_))
+      chooser->model().addressSpaceChanged();
   });
   Q_UNUSED(toolbars);
 }
@@ -465,11 +471,9 @@ CodeView *MainWindow::codeView(const QString &representation) {
   auto *dock =
       makeDock(id, nullptr,
                c ? QStringLiteral("pseudocode") : QStringLiteral("ir"), view);
-  dock->setTitle(CodeView::titleOf(representation) + QStringLiteral("-A"));
+  retitleCodeDocks();
   connect(view, &CodeView::representationChanged, this,
-          [dock](const QString &name) {
-            dock->setTitle(CodeView::titleOf(name) + QStringLiteral("-A"));
-          });
+          &MainWindow::retitleCodeDocks);
   connect(view->text(), &CodeText::locationChanged, this, [this](Address a) {
     if (synchronizing_)
       return;
@@ -484,6 +488,25 @@ CodeView *MainWindow::codeView(const QString &representation) {
   if (c)
     pseudocode_ = view;
   return view;
+}
+
+void MainWindow::retitleCodeDocks() {
+  // Windows showing the same representation take letters in order, the
+  // pseudocode window first: Pseudocode-A, Pseudocode-B.
+  QSet<QString> taken;
+  for (const char *id : {PseudocodeDock, RepresentationDock}) {
+    auto *dock = docks_.value(QLatin1String(id));
+    auto *code = dock ? qobject_cast<CodeView *>(dock->widget()) : nullptr;
+    if (!code)
+      continue;
+    const QString title = CodeView::titleOf(code->representation());
+    char letter = 'A';
+    while (taken.contains(title + QLatin1Char('-') + QLatin1Char(letter)))
+      ++letter;
+    const QString name = title + QLatin1Char('-') + QLatin1Char(letter);
+    taken.insert(name);
+    dock->setTitle(name);
+  }
 }
 
 void MainWindow::initializeLayout() {
@@ -644,6 +667,14 @@ ChooserView *MainWindow::focusedChooser() const {
   return nullptr;
 }
 
+CodeView *MainWindow::focusedCodeView() const {
+  for (auto *widget = QApplication::focusWidget(); widget;
+       widget = widget->parentWidget())
+    if (auto *view = qobject_cast<CodeView *>(widget))
+      return view;
+  return nullptr;
+}
+
 std::optional<Address> MainWindow::currentFunction() const {
   return disassembly_ ? disassembly_->currentFunction() : std::nullopt;
 }
@@ -735,15 +766,7 @@ void MainWindow::connectActions() {
 
   on(ActionId::EditUndo, [this] { session_.undo(); });
   on(ActionId::EditRedo, [this] { session_.redo(); });
-  on(ActionId::EditCopy, [this] {
-    QWidget *focus = QApplication::focusWidget();
-    QString text;
-    if (pseudocode_ && pseudocode_->isAncestorOf(focus))
-      text = pseudocode_->text()->selectedText();
-    else
-      text = disassembly_->selectedText();
-    QApplication::clipboard()->setText(text);
-  });
+  on(ActionId::EditCopy, [this] { copySelection(); });
   on(ActionId::EditCopyAddress, [this] {
     if (const auto address = currentAddress())
       QApplication::clipboard()->setText(hexAddress(*address));
@@ -779,8 +802,8 @@ void MainWindow::connectActions() {
   on(ActionId::JumpNextFunction, [this] { stepFunction(true); });
   on(ActionId::JumpPreviousFunction, [this] { stepFunction(false); });
   on(ActionId::JumpPseudocode, [this] {
-    QWidget *focus = QApplication::focusWidget();
-    if (pseudocode_ && pseudocode_->isAncestorOf(focus)) {
+    // From any pseudocode or IR window back to the disassembly.
+    if (focusedCodeView()) {
       if (auto *dock = docks_.value(DisassemblyDock))
         dock->raise();
       disassembly_->focusContent();
@@ -858,10 +881,9 @@ void MainWindow::connectActions() {
                                             disassembly_->currentToken(), &ok);
     if (!ok || text.isEmpty())
       return;
-    QWidget *focus = QApplication::focusWidget();
     bool found = false;
-    if (pseudocode_ && pseudocode_->isAncestorOf(focus))
-      found = pseudocode_->text()->findText(text, searchDown_);
+    if (auto *code = focusedCodeView())
+      found = code->text()->findText(text, searchDown_);
     else
       found = disassembly_->listing()->findInLoaded(text, searchDown_);
     if (!found)
@@ -1468,6 +1490,31 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
   session_.setStringOptions(names, page, length->value());
 }
 
+void MainWindow::copySelection() {
+  // The view holding the focus copies its selection: any code view, a
+  // chooser's rows, or a text field; the disassembly otherwise.
+  for (QWidget *widget = QApplication::focusWidget(); widget;
+       widget = widget->parentWidget()) {
+    if (auto *field = qobject_cast<QLineEdit *>(widget)) {
+      field->copy();
+      return;
+    }
+    if (auto *log = qobject_cast<QPlainTextEdit *>(widget)) {
+      log->copy();
+      return;
+    }
+    if (auto *code = qobject_cast<CodeText *>(widget)) {
+      QApplication::clipboard()->setText(code->selectedText());
+      return;
+    }
+    if (auto *chooser = qobject_cast<ChooserView *>(widget)) {
+      QApplication::clipboard()->setText(chooser->selectedText());
+      return;
+    }
+  }
+  QApplication::clipboard()->setText(disassembly_->selectedText());
+}
+
 void MainWindow::showShortcuts() {
   QDialog dialog(this);
   dialog.setWindowTitle(tr("Shortcuts"));
@@ -1837,10 +1884,8 @@ void MainWindow::retranslateUi() {
       it.value()->setTitle(tr(title));
     else if (auto *chooser = qobject_cast<ChooserView *>(it.value()->widget()))
       it.value()->setTitle(chooser->model().title());
-    else if (auto *code = qobject_cast<CodeView *>(it.value()->widget()))
-      it.value()->setTitle(CodeView::titleOf(code->representation()) +
-                           QStringLiteral("-A"));
   }
+  retitleCodeDocks();
   disassembly_->setSyncName(tr("Hex View-1"));
   updateTitle();
   updateStatusBar();

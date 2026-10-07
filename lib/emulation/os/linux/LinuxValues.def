@@ -151,7 +151,7 @@ NEVERD_LINUX_AUX(EXECFN, 31, *ExecutableAddress)
 NEVERD_LINUX_AUX(NULL, 0, 0)
 #endif
 #ifdef NEVERD_LINUX_SERVICE
-#define NEVERD_LINUX_UNAVAILABLE_SYSCALL(Name, Label, X64, ARM, Count) \
+#define NEVERD_LINUX_UNAVAILABLE_SYSCALL(Name, Label, X64, ARM, Count)         \
   NEVERD_LINUX_SERVICE(Name, X64, ARM, Count)
 #include "neverd/emulation/LinuxUnavailableSyscalls.def"
 #undef NEVERD_LINUX_UNAVAILABLE_SYSCALL
@@ -211,16 +211,18 @@ NEVERD_LINUX_DYNAMIC_DEPENDENCY(DependencyAudit, 0x6ffffefb)
 #ifdef NEVERD_LINUX_DIAGNOSTIC
 NEVERD_LINUX_DIAGNOSTIC(MemoryResidency,
                         "unmodeled Linux page residency observation")
-NEVERD_LINUX_DIAGNOSTIC(KernelOptions, "invalid Linux kernel availability input")
+NEVERD_LINUX_DIAGNOSTIC(KernelOptions,
+                        "invalid Linux kernel availability input")
 NEVERD_LINUX_DIAGNOSTIC(PidFDTargetMissing,
                         "pidfd_open target process is not modeled")
 NEVERD_LINUX_DIAGNOSTIC(PriorityOptions, "invalid Linux priority input")
-NEVERD_LINUX_DIAGNOSTIC(PriorityInputsMissing,
+NEVERD_LINUX_DIAGNOSTIC(
+    PriorityInputsMissing,
     "priority services require explicit linux_priority input")
 NEVERD_LINUX_DIAGNOSTIC(PrioritySelection,
-    "Linux group and user priority selection is unmodeled")
+                        "Linux group and user priority selection is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(PriorityTaskMissing,
-    "unmodeled Linux task priority: {0}")
+                        "unmodeled Linux task priority: {0}")
 NEVERD_LINUX_DIAGNOSTIC(SignalOptions, "invalid Linux signal disposition input")
 NEVERD_LINUX_DIAGNOSTIC(SignalInputMissing,
                         "signal actions require explicit linux_signals input")

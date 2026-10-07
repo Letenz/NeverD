@@ -17,7 +17,9 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <string>
 #include <thread>
+#include <vector>
 
 using neverd::worker::hexAddress;
 using neverd::worker::Json;
@@ -459,8 +461,47 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                                 const char *representation, std::size_t offset,
                                 std::size_t limit) {
   session(s)->error.clear();
-  // This mock deliberately represents an older page API that maps Low/Med
-  // only. C requests must exercise the worker's legacy fallback.
+  // LLVM-C pages place the definition after a three-line prelude.
+  if (std::string(representation) == "llvmc") {
+    const std::string prelude = "#include <stdint.h>\n#include <string.h>\n\n";
+    std::vector<std::string> lines = {"#include <stdint.h>\n",
+                                      "#include <string.h>\n", "\n",
+                                      "/* neverd.entry */\n"};
+    for (int i = 0; i < 700; ++i)
+      lines.push_back("// code line " + std::to_string(i) + "\n");
+    const auto total = lines.size();
+    const auto first = std::min(offset, total);
+    const auto end = first + std::min(limit, total - first);
+    std::size_t byteOffset = 0;
+    for (std::size_t i = 0; i < first; ++i)
+      byteOffset += lines[i].size();
+    std::string text;
+    Json rows = Json::array();
+    for (auto i = first; i < end; ++i) {
+      text += lines[i];
+      rows.push_back({{"line", i},
+                      {"object_id", "llvmc:line:" + std::to_string(i)},
+                      {"kind", "source"},
+                      {"mapping_status", "unmapped"},
+                      {"addresses", Json::array()}});
+    }
+    return copy(Json{{"schema_version", 1},
+                     {"address", hexAddress(address)},
+                     {"representation", representation},
+                     {"mapping_status", "library_regions"},
+                     {"text", text},
+                     {"rows", rows},
+                     {"library_regions", Json::array()},
+                     {"offset", first},
+                     {"byte_offset", byteOffset},
+                     {"total_lines", total},
+                     {"complete", end == total},
+                     {"next_offset", end == total ? Json(nullptr) : Json(end)},
+                     {"prelude", {{"lines", 3}, {"end_byte", prelude.size()}}}}
+                    .dump());
+  }
+  // Otherwise this mock represents an older page API that maps Low/Med only;
+  // C requests exercise the worker's legacy fallback.
   if (std::string(representation) != "low" &&
       std::string(representation) != "med")
     return copy(Json{{"mapping_status", "unsupported_representation"},

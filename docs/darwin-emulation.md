@@ -91,8 +91,8 @@ and [x64](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3
 entry paths; no Apple implementation code is incorporated.
 
 The core service inventory is `exit`, `write`, `getpid`, `getppid`, `getuid`,
-`geteuid`, `getgid`, `getegid`, `mmap`, `mprotect` and `munmap`. PID, UID and
-GID are deterministically 1000, and parent PID is 1. Output descriptors 1 and
+`geteuid`, `getgid`, `getegid`, `getgroups`, `mmap`, `mprotect` and `munmap`. PID is deterministically 1000 and parent PID is 1. UID/GID default to 1000;
+optional credentials below explicitly select distinct real/effective IDs. Output descriptors 1 and
 2 are initially captured byte sinks, including NUL and non-UTF8 bytes. Their
 duplicates retain the original sink; writes through closed or read-only
 descriptors return EBADF. A partial readable prefix is captured, but a subsequent copy
@@ -217,7 +217,7 @@ The original `writable-files` and `writable-files-nocancel` workloads compare
 actual bytes, offsets, flags and error order with the native kernel. Unit tests
 cover 4 KiB/16 KiB pages, budget reclamation, backend failure, metadata invalidation
 and mapping lifetime; C/CLI/Python exercise all five profile/ISA combinations.
-Permission enforcement, directory deletion, cross-parent rename, hard links, native filesystem metadata updates, coherent vnode/COW
+Permission enforcement, arbitrary initial-directory deletion, rename between distinct initial directory domains, hard links, native filesystem metadata updates, coherent vnode/COW
 or shared mappings and EOF SIGBUS remain unfinished. This does not complete the
 macOS/iOS environment or establish physical iOS or Intel HVF verification.
 
@@ -291,7 +291,7 @@ Per-directory `mutable:true` (C++ `DarwinFileOptions::MutableDirectories`) expli
 
 `unlink(10)` and `unlinkat(472)` remove existing regular names; regular-file unlinkat accepts flags zero or `AT_SYMLINK_NOFOLLOW_ANY=0x800`. Unknown flag bits return EINVAL before path/FD checks; AT_REMOVEDIR uses the bounded directory-removal contract below; DATALESS and SYSTEM_DISCARDED remain unsupported. Low 32 flag bits apply. The shared resolver preserves pathname-fault/dirfd order, relative CWD/dirfd use and absolute-path independence. Missing names return ENOENT, file/trailing-slash paths ENOTDIR, ordinary directory targets EPERM and a slash-only guest root EISDIR; root paths ending in `.` or `..` return EBUSY. Original native probes also check terminal `.`/`..` directory paths.
 
-A live namespace owns file objects separately from open descriptions. Unlink preserves existing FD/dup/independent-open bytes, offsets and status flags. Later opens fail; implicit parent directories and CWD remain present. F_GETPATH retains the last linked path, matching the native reference even after name removal. The file's writable grant belongs to its object. Unlinked objects retain their current-byte budget while any description or mapping lease remains; close/dup2 and the next mutation reclaim only unreachable objects, after the final mapped range is unmapped. Initial path/reference costs remain charged. Cross-parent rename and hard links remain unfinished; initial-directory removal uses the explicit grant described below.
+A live namespace owns file objects separately from open descriptions. Unlink preserves existing FD/dup/independent-open bytes, offsets and status flags. Later opens fail; implicit parent directories and CWD remain present. F_GETPATH retains the last linked path, matching the native reference even after name removal. The file's writable grant belongs to its object. Unlinked objects retain their current-byte budget while any description or mapping lease remains; close/dup2 and the next mutation reclaim only unreachable objects, after the final mapped range is unmapped. Initial path/reference costs remain charged. Rename between distinct initial directory domains and hard links remains unfinished; initial-directory removal uses the explicit grant described below.
 
 A successful unlink invalidates only its parent's stat and enumeration observations across old/new FDs, dup and path queries. stat/readdir/SEEK_END stop before output or cursor changes; ordinary read/pread still return EISDIR, while SET/CUR, F_GETPATH, fchdir and relative lookup continue. With a still-known file mutation policy, unlink sets nlink=0 and ctime to its fixed time, preserving mtime/atime/bytes/allocation. Later writes or truncation cannot restore nlink=1. Without a policy, or after whole-EFAULT, complete file metadata remains unknown. Rejected unlinks preserve all state. The original `unlinked-file` program compares native kernel name/descriptor behavior; policy timestamps and directory invalidation are explicit model rules.
 
@@ -309,7 +309,7 @@ A successful unlink invalidates only its parent's stat and enumeration observati
 
 Only successful insertion invalidates the immediate parent's stat/enumeration observations. New and old unlinked objects at the same name retain independent bytes, descriptors, metadata and mapping leases. The 256-entry cap includes fixed initial non-file entries plus live and retained orphan file objects. Each new object charges its canonical path and NUL alongside current bytes within 16 MiB. Unlink reclaims these dynamic charges only after the last description and mapping lease; closing a still-named object releases neither its entry nor bytes. Initial input/reference charges remain reserved. Exhausted model budgets, including a resolved canonical path of 1024 bytes or more, stop explicitly without inventing ENOSPC or a native pathname error. Rejected creation publishes no name or descriptor.
 
-The original `created-file` workload compares native macOS and all five guest profiles; 4K/16K tests independently cover exact capacity, rollback and mapped name reuse. Permission enforcement, cross-parent rename, links and further directory operations remain separate work.
+The original `created-file` workload compares native macOS and all five guest profiles; 4K/16K tests independently cover exact capacity, rollback and mapped name reuse. Permission enforcement, rename between distinct initial directory domains, links and further directory operations remain separate work.
 
 [XNU open](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
 
@@ -321,7 +321,7 @@ Optional `darwin_files.creation_policy` (C++ `CreationPolicy`) enables complete 
 
 Only a successful new insertion consumes the next global inode. A successful UINT64_MAX exhausts the sequence permanently; close, unlink, name reuse, umask and later namespace lookups cannot reset it. Exclusive, FD, path, entry and byte-budget refusals publish no name, descriptor or inode increment. Existing O_CREAT opens consume none.
 
-New stat64 records use the direct parent's supplied device and GID, the fixed guest effective UID 1000, mode `S_IFREG | (mode & 0777 & ~umask)`, nlink 1, and zero size/blocks/flags. Block size and generation come from policy; all four timestamps equal the fixed creation time. Device/GID remain known after a parent's complete stat/enumeration observation becomes invalid, so later creation can use those fields without restoring that full record. Each new node owns its metadata and allocation state; it never borrows an old same-name object's record. Subsequent write/truncate/unlink use the supplied mutation policy, preserve inode/mode/birthtime and an unlinked nlink=0, and retain permanent whole-EFAULT invalidation. Existing nodes are unaffected by the creation policy.
+New stat64 records use the direct parent's supplied device and GID, the selected guest effective UID (default 1000), mode `S_IFREG | (mode & 0777 & ~umask)`, nlink 1, and zero size/blocks/flags. Block size and generation come from policy; all four timestamps equal the fixed creation time. Device/GID remain known after a parent's complete stat/enumeration observation becomes invalid, so later creation can use those fields without restoring that full record. Each new node owns its metadata and allocation state; it never borrows an old same-name object's record. Subsequent write/truncate/unlink use the supplied mutation policy, preserve inode/mode/birthtime and an unlinked nlink=0, and retain permanent whole-EFAULT invalidation. Existing nodes are unaffected by the creation policy.
 
 The original `created-file-metadata` workload compares native modes, umask return bits, effective UID, parent device/group and identity lifetime across five guest profiles. `virtual-created-metadata` separately compares the entire 144-byte policy record. Native creation timestamps need not all be equal; the fixed values and sparse allocation policy describe the declared virtual filesystem. Permission enforcement, credential switching, ACLs and native APFS metadata behavior remain outside this contract.
 
@@ -331,15 +331,15 @@ The original `created-file-metadata` workload compares native modes, umask retur
 
 [XNU creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU umask](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c). [XNU rename / renameat](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
 
-## Same-parent regular-file rename
+## Regular-file rename
 
-`rename(128)`, `renameat(465)` and `renameatx_np(488)` rename or replace a regular file within one explicitly mutable immediate parent. Even a same-name no-op requires that namespace grant; admitted no-ops preserve all observations. The low 32 flag bits accept `RENAME_EXCL=0x4` and `RENAME_NOFOLLOW_ANY=0x10`, separately or together. Unknown bits or EXCL+SWAP return EINVAL before reading paths; SECLUDE and SWAP remain unsupported. The no-op and EISDIR rules here apply without EXCL; its separate contract follows below. The existing component walker preserves source-before-target errors, directory-FD rules and original trailing-slash/dot checks. Directory sources stop explicitly before applying regular-file target rules. For a regular source, a successfully resolved final dot/dotdot returns EINVAL before mount or grant checks, including nested and other parents. Missing or non-directory ancestors keep their earlier errors. An ordinary directory target within the admitted parent returns EISDIR.
+`rename(128)`, `renameat(465)` and `renameatx_np(488)` move or replace a regular file within one mutable initial directory and its process-created descendants. Both immediate parents require namespace authority, even for a same-name no-op. The low 32 flag bits accept `RENAME_EXCL=0x4` or `RENAME_SWAP=0x2`, optionally combined with `RENAME_NOFOLLOW_ANY=0x10`; flags 0 or 0x10 perform ordinary rename. Unknown bits or EXCL+SWAP return EINVAL before reading paths; SECLUDE remains unsupported. The EXCL and SWAP contracts follow below. The component walker preserves source-before-target errors, directory-FD rules and original trailing-slash/dot checks. Removed directory sources stop explicitly. Live process-created directories and declared movable initial directories use the subtree contracts below. A resolved terminal target dot/dotdot returns EINVAL before mount or grant checks; missing or non-directory ancestors keep their earlier errors. An ordinary regular-file rename to a directory within the admitted namespace returns EISDIR.
 
-All existing source descriptions, including independent opens and dup, share the current `F_GETPATH` name. A removed or replaced target keeps its own last linked path, bytes, offsets, flags and mapping lifetime, even when the source moves again. Replacement never transfers the target's write grant or metadata to the source. Each object's known mutation policy updates only its ctime, plus nlink=0 for the replaced target; identity, ownership, birthtime, bytes and allocation remain attached to that object. Without a policy or after whole-EFAULT, complete metadata stays unknown. An actual move invalidates the parent's complete stat/enumeration observations; a no-op does not.
+All existing source descriptions, including independent opens and dup, share the current `F_GETPATH` name. A removed or replaced target keeps its own last linked path, bytes, offsets, flags and mapping lifetime, even when the source moves again. Replacement never transfers the target's write grant or metadata to the source. Each object's known mutation policy updates only its ctime, plus nlink=0 for the replaced target; identity, ownership, birthtime, bytes and allocation remain attached to that object. Without a policy or after whole-EFAULT, complete metadata stays unknown. An actual move invalidates both parents' complete stat/enumeration observations; a no-op does not.
 
 Rename consumes neither a creation inode nor a new entry, and needs no free FD. The destination canonical path/NUL replaces the source's dynamic path charge. Initial input/reference costs stay reserved. Replaced bytes and dynamic path costs can fund admission only if no old description or mapping retains that target, and are reclaimed once. Partial unmap retains the full object's byte charge until its final range is gone. Paths of 1024 bytes or more and insufficient aggregate 16 MiB capacity stop before name, metadata or descriptor changes.
 
-Cross-parent moves and contradictory known device observations remain unsupported: equal stat device numbers do not establish shared mount identity, so the model does not invent EXDEV. Directory moves, swap/exclusive/seclude operations and permission enforcement remain future work. The original `renamed-file` program compares native and guest identity, path, replacement and mapping behavior; policy timestamps and budget rules are explicit virtual behavior.
+Moves between distinct initial directory domains and contradictory known device observations remain unsupported: equal stat device numbers do not establish shared mount identity, so the model does not invent EXDEV. Initial-directory moves require the movable declaration below; initial-directory SWAP, SECLUDE and permission enforcement remain future work. The original `renamed-file` program compares native and guest identity, path, replacement and mapping behavior; policy timestamps and budget rules are explicit virtual behavior.
 
 ## Directories and relative paths
 
@@ -535,7 +535,7 @@ HVF runtime remains unvalidated and its Actions testing stays suspended. See the
 [HVF validation record](macos-hvf.md#implementation-validation-2026-10-02-to-2026-10-03).
 
 The focused workload gate additionally requires **every** Darwin process case
-on each platform supported by the host ISA: 108 cases on ARM64, or 72 on x64.
+on each platform supported by the host ISA: 111 cases on ARM64, or 74 on x64.
 Both `LC_MAIN` and independent raw `LC_UNIXTHREAD` programs are required on
 every supported platform. A source-inventory regression ensures each new
 Darwin process test joins this required set.
@@ -601,7 +601,7 @@ or physical iOS acceptance. Intel HVF Actions remain suspended.
 
 ### Remaining environment work
 
-1. Extend the bounded writable-file model with permission enforcement, cross-parent rename and remaining directory operations,
+1. Extend the bounded writable-file model with permission enforcement, rename between separate undeclared directory domains and remaining directory operations,
    shared mappings and EOF fault delivery. Keep native acceptance for cursor,
    mapping lifetime and error-order interactions as the supported set grows.
 2. Extend fixed time inputs with advancing clocks and additional system observations,
@@ -840,7 +840,7 @@ Release Darwin reconciled 835 registrations: 474 passed, 360 unavailable-backend
 
 `ProcessOptions::DarwinSystem` / `darwin_system` supplies fixed observations for `sysctl(202)` and raw `sysctlbyname(274)` on every Darwin profile. Each field is optional; an omitted value or unlisted key stops as unsupported. There are no host queries or inferred version/model defaults. Strict JSON and typed validation reject malformed values and non-Darwin profiles before image loading.
 
-`os_revision` is signed 32-bit; `cpu_count` is 1 through INT32_MAX; `memory_size` retains all unsigned 64 bits. Other fields are strings of at most 1023 bytes without embedded NUL; explicit empty strings are valid. Results include the terminating NUL. CPU and memory reports do not change scheduling or the allocation budget.
+`os_revision` is signed 32-bit; `cpu_count` is 1 through INT32_MAX; `memory_size` retains all unsigned 64 bits; `max_files_per_process` is 0 through INT32_MAX and has a four-byte int encoding. The remaining scalar fields are strings of at most 1023 bytes (255 for `hostname`) without embedded NUL; explicit empty strings are valid and results include the terminating NUL. These observations do not change scheduling or allocation/descriptor budgets.
 
 | JSON field | sysctl name | MIB |
 | --- | --- | --- |
@@ -853,17 +853,21 @@ Release Darwin reconciled 835 registrations: 474 passed, 360 unavailable-backend
 | `model` | `hw.model` | `6,2` |
 | `cpu_count` | `hw.ncpu` | `6,3` |
 | `memory_size` | `hw.memsize` | `6,24` |
+| `max_files_per_process` | `kern.maxfilesperproc` | `1,29` |
+| `hostname` | `kern.hostname` | `1,10` |
 
 `hw.pagesize` comes from the existing guest memory policy: normally eight bytes, or four when a nonnull output has capacity exactly four. The legacy MIB `[6,7]` and name `hw.pagesize_compat` always return four bytes. The dynamic numeric OID for `hw.pagesize` remains unsupported. `hw.memsize` also narrows at exact capacity four only when its 64-bit pattern is a sign extension of a signed 32-bit value; otherwise ERANGE34 preserves output and length.
 
-MIB counts use the low 32 bits and must be 2–12; named lengths use all 64 bits and must be below 1024. Every supplied name byte is checked before interpreting the first NUL and removing one final dot. An empty name returns ENOENT. Partial input remains unsupported. A nonnull `oldlenp` must be fully readable and writable for eight bytes before effects; faulting native length probes did not return within their deadlines, so those pointers remain an explicit unsupported boundary. Null `oldlenp` means capacity zero; null `oldp` requests only the size. A short buffer returns ENOMEM12, leaves data untouched and writes length zero. Data EFAULT preserves the old length. Input and capacity are captured before data, with the final length copy last, including aliases and retained earlier copies after transport failure.
+MIB counts use the low 32 bits and must be 2–12; named lengths use all 64 bits and must be below 1024. Every supplied name byte is checked before interpreting the first NUL and removing one final dot. An empty name returns ENOENT. Partial input remains unsupported. A nonnull `oldlenp` must be fully readable and writable for eight bytes before effects; faulting native length probes did not return within their deadlines, so those pointers remain an explicit unsupported boundary. Null `oldlenp` means capacity zero; null `oldp` requests only the size. For keys other than `kern.hostname`, a short buffer returns ENOMEM12, leaves data untouched and writes length zero. Data EFAULT preserves the old length. Input and capacity are captured before data, with the final length copy last, including aliases and retained earlier copies after transport failure.
 
-Only nonzero `newp` together with nonzero `newlen` is a write request. Selected nodes return EPERM1 for the model’s fixed non-root identity before checking the observation or output. This includes `kern.osversion`, which is privileged-writable natively. A pointer with zero new length is ignored. Unknown keys, other trees and dynamic OIDs do not acquire guessed ENOENT results.
+`hostname` declares the bytes visible to this guest caller, without host lookup, a mobile `localhost` default or inferred entitlements. Missing is unknown; empty returns one NUL. For `kern.hostname`, a nonnull output with positive short capacity succeeds with exactly that many bytes, ending in NUL, and reports that capacity. Zero capacity still returns ENOMEM12 with length zero and no data; a null output reports the complete NUL-inclusive length. Only the actual output span is checked. A partially writable span remains unsupported without prefix publication; native partial-copy behavior is outside this model. This adds the raw observation used by libc uname/gethostname, not their dylib imports or a complete runtime.
+
+Only nonzero `newp` together with nonzero `newlen` is a write request. After the original name/MIB and complete oldlenp read/write preflight, default or explicit non-root EUID returns EPERM1 before observation lookup or data-output access. With explicit EUID0, privileged-writable `kern.osversion / kern.maxfilesperproc / kern.hostname` stops unsupported because privileged writes are not modeled; real UID does not decide this branch. Native read-only selected nodes retain EPERM1 even for root. A pointer with zero new length is ignored. Unknown keys, other trees and dynamic OIDs do not acquire guessed ENOENT results.
 
 The original `system-info` program checks native macOS and guest ABI behavior; `virtual-system` compares exact configured bytes through C++, C/CLI and Python. A separate SDK oracle captures all nine host observations as explicit test inputs and compares both named and numeric output. This does not provide iOS device or Intel HVF acceptance.
 
 ```json
-{"darwin_system":{"os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
+{"darwin_system":{"hostname":"guest-node","os_type":"Darwin","os_release":"24.test","os_revision":0,"kernel_version":"Virtual kernel","os_version":"V42","machine":"virtual64","model":"VirtualModel","cpu_count":4,"memory_size":"17179869184"}}
 ```
 
 [XNU sysctl](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_newsysctl.c), [XNU hardware MIB](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_mib.c), [Apple sysctl(3)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/sysctl.3.html).
@@ -920,7 +924,7 @@ All calls share the component walker. Mkdir admits a missing final name followed
 
 `rmdir(137)` and `unlinkat(472)` with AT_REMOVEDIR(0x80), optionally AT_SYMLINK_NOFOLLOW_ANY(0x800), remove empty directories created by this process or explicitly admitted initial directories as described below. Unknown low32 flags return EINVAL before input; DATALESS and SYSTEM_DISCARDED remain unsupported. Known path/type/root errors remain; initial-directory removal without a removable grant remains UnsupportedService. For admitted directories, final dot gives EINVAL and dotdot from a linked directory or a nonempty target gives ENOTEMPTY. Directory FDs, duplicates and CWD retain the original directory object and no longer prevent its removal. Open unlinked regular files and their mappings do not count as names: native comparisons confirm their bytes, inode and last linked F_GETPATH survive parent removal and name reuse.
 
-Every created directory charges its canonical path plus NUL and one entry to the shared 16 MiB/256-entry catalogue limits. Reclaiming an unreachable removed directory refunds only its path and entry, preserving orphan-file bytes and leases. Successful namespace changes invalidate the direct parent's complete stat/enumeration observations; rejected changes preserve them. New directory metadata and snapshots remain unknown even with a regular-file creation policy. The original `directory-mutations` workload exercises nested creation, rename, unlink, deletion and orphan reuse across native macOS and all five guest combinations through C++/C/CLI/Python.
+Every created directory charges its canonical path plus NUL and one entry to the shared 16 MiB/256-entry catalogue limits. An orphan regular file retains its parent directory object through an open description or mapping lease. Removing every name and closing directory FDs does not refund those ancestors while that file remains retained. File reclamation precedes fixed-point directory reclamation; each unreachable created directory refunds its current path and entry exactly once. Successful namespace changes invalidate the direct parent's complete stat/enumeration observations; rejected changes preserve them. New directory metadata and snapshots remain unknown even with a regular-file creation policy. The original `directory-mutations` workload exercises nested creation, rename, unlink, deletion and orphan reuse across native macOS and all five guest combinations through C++/C/CLI/Python.
 
 [XNU mkdir/rmdir](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU directory creation lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c).
 
@@ -932,7 +936,7 @@ Release Darwin: 1,017 registered, 609 passed, 408 unavailable-backend skips, zer
 
 ## Retained directory identities
 
-A removed directory keeps its original parent chain through FD/CWD references, including when parent names are removed and reused. Dot opens preserve that object with an independent cursor; dup shares its cursor. Dotdot follows the original parent, while ordinary child lookup in a removed directory returns ENOENT and cannot see a replacement namespace. LOOKUP may traverse retained removed parents; create/delete/rename lookup refuses that traversal with ENOENT. A terminal rename dot/dotdot returns EINVAL before that component is traversed, after earlier ancestor errors. F_GETPATH retains the last path; complete removed-directory stat and enumeration remain unknown. Each removed created directory keeps its path+NUL and entry charge until no FD, CWD or retained child references it. Close, dup2, CWD changes and mutation admission reclaim unreachable chains; initial input costs and regular-file leases remain separate. The original `deleted-directories` workload compares deletion with held descriptors, parent/name reuse, lookup intent and CWD-only retention on native macOS and five guest profiles.
+A removed directory keeps its original parent chain through FD/CWD references, including when parent names are removed and reused. Dot opens preserve that object with an independent cursor; dup shares its cursor. Dotdot follows the original parent, while ordinary child lookup in a removed directory returns ENOENT and cannot see a replacement namespace. LOOKUP may traverse retained removed parents; create/delete/rename lookup refuses that traversal with ENOENT. A terminal rename dot/dotdot returns EINVAL before that component is traversed, after earlier ancestor errors. F_GETPATH follows the retained object: moving a live created ancestor updates its descendant paths, including removed directories and orphan files; replacement/name reuse does not attach old objects to the new directory. Complete removed-directory stat and enumeration remain unknown. Each removed created directory keeps its current path+NUL and entry charge until no FD, CWD, retained child directory or held orphan file/mapping references it. Close, dup2, CWD changes and mutation admission reclaim unreachable file-then-directory chains; initial input costs stay reserved. The original `deleted-directories` workload compares deletion with held descriptors, parent/name reuse, lookup intent and CWD-only retention on native macOS and five guest profiles.
 
 ### Directory lifetime verification, 2026-10-06
 
@@ -962,8 +966,508 @@ Two earlier complete runs had one and three timeouts in existing file/rename cas
 
 ## Exclusive regular-file rename
 
-After source and target lookup, RENAME_EXCL returns EEXIST for a distinct existing file or directory before mount and namespace-mutation checks. Earlier path errors still win, including terminal dot/dotdot EINVAL. An absent target uses the same bounded rename transaction, preserving held descriptions, cursors, flags, mapping leases and configured metadata transitions. Same-object exclusive rename remains explicitly unsupported: its native result depends on filesystem case sensitivity, which exact catalogue keys do not establish. Case folding, directory-source rename, SECLUDE and SWAP remain outside this contract. The existing original `renamed-file` workload now compares refusal without metadata changes and successful EXCL|NOFOLLOW_ANY moves through native macOS and C++/C/CLI/Python.
+After source and target lookup, RENAME_EXCL returns EEXIST for a distinct existing file or directory before mount and namespace-mutation checks. Earlier path errors still win, including terminal dot/dotdot EINVAL. An absent target uses the same bounded rename transaction, preserving held descriptions, cursors, flags, mapping leases and configured metadata transitions. Same-object exclusive rename remains explicitly unsupported: its native result depends on filesystem case sensitivity, which exact catalogue keys do not establish. Case folding, initial-directory-source rename and SECLUDE remain outside this contract. Created-directory EXCL moves use the subtree contract below. The existing original `renamed-file` workload now compares refusal without metadata changes and successful EXCL|NOFOLLOW_ANY moves through native macOS and C++/C/CLI/Python.
 
 Verification, 2026-10-06 (Release): 1,097 Darwin registrations, 665 passed, 432 unavailable-backend skips, no failures; all 108 required ARM64 HVF cases executed. Focused: 44 passed and 12 unavailable skips, including eight new direct cases. Public C/CLI/report: 191/191; Python: five combinations in 19.241s. The independent raw-call probe passed 26 checks. The first complete native attempt timed out on the existing return case; the other 25, including renamed-file, passed. Three unchanged-binary return rechecks completed in 0.014–0.034s, then all 26 native cases passed with the original 5s bound. The initial failure remains preserved and unexplained; neither this result nor the previous final HVF pass establishes latency stability. Primary audit completed; independent review was unavailable. Counts overlap; physical iOS, full GitHub CI and suspended Intel HVF Actions remain outside local acceptance.
 
 `build-hvf-arm64/exclusive-rename-validation-summary.json`, `exclusive-rename-darwin-evidence/`, `exclusive-rename-public.xml`, `exclusive-rename-native-evidence/`, `exclusive-rename-native-rechecked-summary.json`, `exclusive-rename-probe/`.
+
+
+## Cross-parent rename in created directories
+
+An initial directory and all descendants created from it by this process share one virtual namespace domain. `rename`, `renameat` and `renameatx_np` may move a regular file or a live process-created directory subtree between those parents; no additional JSON field is needed. For example, after creating `/work/left` and `/work/right` with mkdir/mkdirat under a mutable initial `/work`, `/work/data` can move into either child, and files can move between the children. A separately supplied initial `/work/left` is its own domain unless a movable or exchangeable declaration supplies its non-mount parent relation, as described below; matching devices alone do not join domains. General mount topology is unknown, so movement between separate undeclared domains remains explicitly unsupported.
+
+Both immediate parents require namespace authority. Created directories inherit that authority and known device/group observations; rename preserves the file's own identity, owner/group, write grant and allocation. Known device conflicts still refuse. An actual move invalidates both parents' full metadata and enumeration. Removed initial directories and reused paths remain different objects; held old directory FDs/CWD do not acquire the replacement's domain.
+
+The existing bounded replacement transaction, mapping retention, path/NUL charges and error precedence apply. EXCL against a distinct existing target still returns EEXIST before domain/grant checks. The original `renamed-file` workload now creates a child and moves into it, replaces a file back in the initial parent, then moves into the child again through C++/C/CLI/Python and native macOS. Permission enforcement, initial-directory moves, hard/symbolic links and native APFS metadata remain separate work.
+
+### Cross-parent verification, 2026-10-06
+
+The final Release gate reconciled 1,115 Darwin registrations: 683 passed, 432 unavailable-backend skips, zero failures; all 108 required ARM64 HVF identities executed. Direct checks passed 56/56, including 18 new 4K/16K cases. Public C/CLI/report passed 191/191; the Python method covered five profiles in 22.254s. Original native workloads passed 26/26, the separate raw-call probe passed 34 checks, and documentation/capability/evidence-runner script tests passed 296/296. Counts overlap. All ten acceptance binary hashes remained unchanged after the MSVC-only CMake adjustment.
+
+Two earlier complete gates retained three and two timeouts in the existing HVF file method. Exact-method, working-directory and session controls passed but did not establish their cause; the final pass does not prove latency stability. The probe initially compared lexical /tmp with canonical /private/tmp; obtaining the root FD path corrected four expectations. The first extended native workload used mkdir(136) for cleanup; rmdir(137) corrected its exit150 failure. Initial sources and failures remain preserved, and the original 5s guest bounds are unchanged.
+
+Four LP64 test initializer-list conflicts found by full Linux CI now use explicit uint64_t values; NeverDJumpTableTests now receives /bigobj under MSVC. Actual Linux/Windows compilation awaits CI. Prior full CI also reported separate Windows EH corpus and closed-PR cancellation failures. Primary source/evidence review was completed; no independent review, physical iOS or suspended Intel HVF acceptance is claimed.
+
+`build-hvf-arm64/cross-parent-rename-validation-summary.json`, `cross-parent-rename-darwin-synced-evidence/`, `cross-parent-rename-darwin-evidence/`, `cross-parent-rename-darwin-rechecked-evidence/`, `cross-parent-rename-public-synced.xml`, `cross-parent-rename-python-synced.log`, `cross-parent-rename-native-fixed-evidence/`, `cross-parent-rename-probe/`.
+
+## Atomic exchange of file and created-directory names
+
+RENAME_SWAP=0x2 exchanges two existing regular files, live process-created directories, declared exchangeable initial roots, or mixed file/directory pairs through renameatx_np, optionally with RENAME_NOFOLLOW_ANY. Initial roots require the separate declaration below. An explicit initial directory providing the filesystem capability must declare both mutable:true and swap_rename:true. DarwinFileOptions::SwapRenameDirectories supplies the C++ declaration. Created descendants inherit the original directory object's capability; deleting and reusing a path does not transfer the removed object's declaration. False or omission leaves support unknown. Matching devices and namespace grants alone do not establish support, and distinct undeclared initial directory domains remain unsupported.
+
+Source and target use the existing component walker. For an admitted source root, a missing target returns ENOENT before source-dot/dotdot, domain, parent-grant or filesystem-capability checks, including a missing target with trailing slashes. Undeclared initial roots or removed directory operands remain explicitly unsupported. Either ancestor order, including a directory and its child file, returns EINVAL in the admitted domain. A regular-file target with trailing slashes retains ENOTDIR. An authorized ordinary-component same-object swap is a no-op, even without the capability declaration; same-object source-dot/dotdot still needs an unknown filesystem case-sensitivity property. EXCL+SWAP and unknown flags retain EINVAL before path input; SECLUDE remains unsupported.
+
+All exchanged roots stay linked. Regular files retain their own identity, owner/group, bytes, write grants, descriptions, cursors, flags and mapping leases. Configured virtual policies update each file's own ctime; absent or invalidated policies leave full metadata unknown. Both parents' full metadata and enumeration become unknown after an actual exchange. No creation inode, entry or FD is consumed, and caller input stays unchanged.
+
+Each capability reference reserves path+NUL in the fixed 16 MiB input budget. The transaction preflights both complete dynamic name charges, retaining linked bytes and leases without replacement credit, before publishing either name. This also excludes an unopened target's bytes. An initial file's first move acquires a dynamic path charge; swapping back does not erase it, and repeated swaps reuse it. Permission enforcement, mount topology, case folding and initial-directory moves remain separate work.
+
+Directory exchanges follow parent objects in both subtrees, including nonempty live children, removed child directories and file orphans retained by FD or mapping. Mixed exchanges also move the exact regular-file root; an old unlinked file with the same last name stays attached to its original parent. Source/target FDs, duplicates, CWD and dotdot follow each object and its new parent. Descendant regular-file observations, bytes, write authority, offsets, flags and leases stay intact; moved roots and both immediate parents receive their existing namespace metadata updates.
+
+All live and retained paths in both directions are prepared and checked against the 1024-byte canonical-path limit and shared 16 MiB budget before effects. Opposing names are withdrawn together before either subtree is published. No root is unlinked or credited by a swap, and no FD, entry or creation inode is needed. Failure preserves both namespaces, parents, cursors, observations and mappings. The original SDK-free `swapped-directory` program compares directory/directory and both mixed orders against native macOS and all five C++/C/CLI/Python profiles.
+
+[Apple volume swap capability](https://developer.apple.com/documentation/foundation/urlresourcevalues/volumesupportsswaprenaming?changes=__1_2), [XNU rename flags and lookup order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/work","mutable":true,"swap_rename":true}]}}
+```
+
+### Swap verification, 2026-10-06
+
+Release Darwin reconciled 1,133 registrations: 701 passed, 432 unavailable-backend skips, zero failures; all 108 required ARM64 HVF cases executed. Direct rename checks passed 68/68, including 18 new option and 4K/16K cases. Public C/CLI/report passed 192/192; the Python method covered five profiles in 16.153s. Original native workloads passed 26/26 and the separate raw-call probe passed 45 checks. Counts overlap; guest limits are unchanged.
+
+Two initial direct-test instances used incorrect expectations for unknown write authority and unknown post-mutation metadata; correcting the expectations preserved the existing semantic owner. An initial JSON filter selected zero tests and is excluded from acceptance; the actual owner and full public gate subsequently passed. Initial sources and results remain preserved. Earlier HVF/native latency remains unexplained; this pass does not establish stability. Primary source/evidence self-review was completed; no independent review, physical iOS, full GitHub CI or suspended Intel HVF acceptance is claimed.
+
+`build-hvf-arm64/swap-rename-validation-summary.json`, `swap-rename-darwin-evidence/`, `swap-rename-public.xml`, `swap-rename-python.log`, `swap-rename-native-evidence/`, `swap-rename-probe/`.
+
+
+## Process-created directory rename
+
+Ordinary `rename`, `renameat` and `renameatx_np` move a live process-created directory and its subtree within one initial directory object's domain. Both immediate parents require namespace authority. A missing final directory target may have trailing slashes; a regular-file target returns ENOTDIR, a nonempty directory target ENOTEMPTY, and moving into a descendant EINVAL. An authorized ordinary same-name rename is a no-op. EXCL still returns EEXIST for a distinct existing target before type, cycle, domain or grant checks. Target lookup errors precede source-dot/dotdot rejection. A source dot/dotdot naming the same target object stays UnsupportedService because filesystem case sensitivity can change the native result. Without the initial-directory declarations below, initial directory sources and replacement targets remain unsupported. Removed sources, separate undeclared domains, links, permission enforcement and SECLUDE remain explicitly unsupported.
+
+The transaction follows parent objects rather than matching text prefixes. Live children, FD-held removed child directories and unlinked files retained by descriptions or mapping leases acquire the moved ancestor's new canonical paths. Source directory FDs, duplicates, CWD and dotdot follow that same object and its new parent. A replaced empty created target keeps its own last path and original parent; its ordinary children stay absent, while dot/dotdot and CWD retain the removed object. If the new source later moves again, old target orphans at identical path strings stay attached to the old target.
+
+Moving the subtree preserves descendant file bytes, identity, metadata, write authority, shared/independent cursors, descriptor flags and mapping leases. The moved directory and both immediate parents lose complete metadata/enumeration observations; child regular-file observations do not change merely because an ancestor moved. Created descendants retain namespace authority for future mkdir, file creation and admitted regular-file rename. No new catalogue entry, FD or creation inode is needed.
+
+Before effects, the bounded transaction allocates all replacement keys and paths and preflights every live and retained descendant's canonical path+NUL against 1024-byte paths and the shared 16 MiB budget. Each previous dynamic name charge is replaced once. Only an empty created target with no FD, CWD or retained descendant ownership can fund replacement credit; final reclamation applies that credit once. Failure preserves every name, object parent, file observation, cursor and mapping. Mapping-only orphan files also retain their removed parent directory path and entry charges until the last lease is released.
+
+The original SDK-free `renamed-directory` workload compares native macOS with all five guest profiles through C++, C, CLI and Python. Direct 4K/16K checks cover object/name reuse, whole-subtree rollback, exact capacity, long canonical descendants, target credits, mapping-retained ancestor reclamation and exhausted entries/descriptors/inode sequences.
+
+[Apple rename contract](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/rename.2.html), [XNU lookup and same-object ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c).
+
+
+### Created-directory verification, 2026-10-06
+
+The final Release Darwin gate reconciled 1,175 registrations: 731 passed, 444 unavailable-backend skips, zero failures; all 111 required ARM64 HVF cases executed. Focused checks passed 32/44 with 12 unavailable skips, including 22 new direct 4K/16K cases; final error-boundary/sibling checks passed 4/4. Public C/CLI passed 165/165 and JSON/report passed 32/32, with no skips. Python covered five profiles in 21.759s. Original native programs passed 27/27; the independent raw-call probe passed 79 checks on this case-insensitive macOS filesystem. Counts overlap and deadlines are unchanged.
+
+Independent plan and implementation review identified a root-path separator bug in the original fixture and the same-object source-dot filesystem-property boundary; both were corrected and reviewed. The initial fixture passed natively but exited124 at its first path assertion on all eight available guest transports. The first full gate retained two old direct expectations that still refused every created directory source; these now assert target EFAULT, and the final complete gate passed. Initial sources, binaries, failures and probes remain preserved. Prior unrelated HVF/native timeouts remain unexplained; this pass does not establish latency stability. Intel HVF Actions remain suspended, and physical iOS and full GitHub CI are separate acceptance boundaries.
+
+`build-hvf-arm64/directory-rename-validation-summary.json`, `directory-rename-darwin-final-evidence/`, `directory-rename-public.xml`, `directory-rename-reports.xml`, `directory-rename-python.log`, `directory-rename-native-evidence/`, `directory-rename-probe/`, `directory-rename-initial-fixture/`, `directory-rename-darwin-evidence/failed-source/`.
+
+### Directory and mixed-swap verification, 2026-10-07
+
+The Release Darwin gate reconciled 1,219 registrations: 763 passed, 456 unavailable-backend skips, zero failures; all 114 required ARM64 HVF cases executed. Focused checks passed 32/44 with 12 unavailable skips, including all 24 new direct 4K/16K cases. The complete file owner passed 317/317. Original native workloads passed 28/28; a separate raw-call probe recorded 32 successful observations on this case-insensitive macOS filesystem. Counts overlap and guest deadlines are unchanged.
+
+Independent plan and implementation review checked the two-way transaction, initial-file charges, both retained subtrees, mapping-only orphans and exact refunds. The first red fixture omitted its explicit root swap declaration and is excluded from acceptance; the corrected baseline failed all six selected cases at the old directory-swap refusal. Two early mixed-file assertions incorrectly discarded configured metadata; they now compare the full record with only ctime changed. A local constant pointer table introduced ARM64 rebases and caused six admission failures. Four scalar assertions removed that table; the fixed fixture has no classic rebases, and the image loader retains its unsupported-fixups boundary.
+
+The first fixed-fixture focused run retained three five-second HVF timeouts. Individual and three-profile controls passed, followed by the complete gate above. Their cause remains unknown and this pass does not establish latency stability. Initial sources, binaries, results and controls remain preserved. Initial-directory moves, separate initial domains, permission/mount/case declarations, dynamic dependencies and framework runtime remain unfinished; physical iOS, suspended Intel HVF and full GitHub CI are separate acceptance boundaries.
+
+`build-hvf-arm64/directory-swap-research/`, including `darwin-final-evidence/`, `darwin-evidence/`, `focused-v5.xml`, `file-owner-v5.xml`, `native-workload-fixed-evidence/`, `native-probe-v2-results.json`, `fixture-fixups-before/` and `hvf-controls.json`.
+
+The final linked binaries repeated the complete Darwin gate successfully. Frozen dev 0a9a1d28d integration checks recorded 4,515 cases across 20 shared owners: 4,489 passed, six optional Z3 and 20 unavailable Windows EH corpus cases skipped, zero failures. Public C/CLI passed 170/170 and reports 32/32, included in that count. Python exercised all five profiles in 30.780s. All 12 native mobile architecture/fixup variants matched 4,532 original-program observations; single-session and whole Swift metadata parity passed 12/12. The Swift witness generator also reproduced its catalogue with the recorded SDK/compiler after a comment-indentation repair. This is local Release LLVM 23/Apple Clang 17 acceptance, not acceptance of later dev revisions or Linux Clang 18.
+
+
+## Ordinary moves of declared initial directory subtrees
+
+A strict Boolean `"movable": true` on an explicit non-root initial directory
+authorizes ordinary rename of that root and declares its entire initial subtree
+to contain ordinary non-mount directories with unique namespace identities.
+C++ uses `DarwinFileOptions::MovableDirectories`, appended after existing aggregate
+fields. The immediate parent must already be mutable. Omission or false keeps
+moving that initial root unknown; other JSON types fail admission. Descendants
+retain their own mutable, removable, movable and byte-write grants. The declaration
+does not authorize an initial directory as either SWAP operand root, general
+permission checks or mounts. Swapping created ancestors may carry previously
+moved initial descendants; object state and dynamic charges follow the same
+subtree transaction. Earlier initial-directory restrictions apply when the
+required declaration is absent.
+
+Known flags, special directory modes, regular-file link counts other than one,
+and inode aliases from stat records or directory snapshots reject admission.
+Each non-mount component joined by the declaration must have at most one known
+device number, including observations on sibling subtrees and files under an
+ancestor without stat metadata. Matching devices alone never join another initial
+domain. Both immediate parents still need namespace authority at the actual
+rename. SWAP capability remains separate: initial objects keep their direct
+`swap_rename` declaration, mkdir copies its parent's capability into the created
+object, and movement does not replace it. Both SWAP parents require support.
+
+The live directory graph owns names and parent identities. Old input paths never
+reconstruct moved or removed names. Unopened descendants, FD/dup/CWD references,
+regular-file mappings and removed descendants follow their original objects.
+Untouched descendants keep their original full stat, enumeration snapshots,
+cookies and SEEK_END observations after an ancestor moves. The moved root and
+changed parents invalidate full stat/enumeration. Reusing an old path supplies
+no old metadata, snapshot or grant. Initial input is a complete declaration for
+one synchronous execution; it is not a runtime catalogue-replacement API.
+
+An empty initial replacement target needs its separate `removable` grant.
+All current canonical paths must fit 1023 bytes, and the entire transaction
+preflights the shared 16 MiB budget before publishing any names. Each movable
+reference reserves its original path plus NUL, without another entry. Fixed
+initial directory paths, references, snapshots and entries remain reserved after
+removal. Initial directory names start with zero dynamic PathCharge; a move
+charges the current path once for every linked or retained member. Only an
+immediately releasable replacement's existing dynamic charge supplies credit.
+FD/CWD/child/orphan-mapping retention supplies no credit, and final reclamation
+refunds each dynamic charge once. Implicit initial ancestors add no new entries
+to the existing 256-entry cap; initial regular-file entry reclamation is unchanged.
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true},{"path":"/work","mutable":true,"movable":true}]}}
+```
+
+The original `initial-directory-move` workload moves the native harness's existing
+empty directory, retains subdirectories, shared/independent cursors, descriptor
+flags, CWD and a private file mapping, replaces a created empty target and restores
+the original names. It uses no SDK or libSystem calls in the guest. Native macOS
+comparison is separate from physical iOS and other unavailable transports.
+
+Validation on native macOS ARM64 after the final independent review records
+1,264 Darwin registrations: 796 passed, 468 unavailable-backend skips, zero
+failures. All 117 required ARM64 HVF workloads executed. The file-owner subset
+passed 342/342, including 22 new 4K/16K behavior instances and three admission
+checks. CreationPolicy inherits the moved parent object's original Device/GID;
+name reuse, inode sequencing and current umask remain independent. At the exact
+16 MiB limit, 16 forward/reverse created-ancestor exchanges preserve initial
+descendants and release only the actual six-byte delta when moved back.
+Public C/CLI passed 175/175, report/parser checks 33/33, and the original native
+kernel workloads 29/29. The separate original probe recorded 19 successful
+observations. These counts overlap.
+
+Python integration passed all five guest configurations in 27.865 seconds; the
+pure API suite passed 71 cases, SDK drift passed, and native inventory/reference
+runners passed 49 unit checks. New sources, binaries, attempts and final results
+are preserved under `build-hvf-arm64/initial-directory-move/` with hashes bound
+to the committed revision. This establishes local guest-profile behavior, not
+physical iOS or suspended Intel HVF acceptance. Initial operand SWAP, permissions,
+undeclared mounts/case rules, shared-map EOF faults, Mach/thread/dyld dependencies
+and framework runtime remain separate unfinished work.
+
+## Atomic exchange of declared initial directory roots
+
+A strict Boolean `"exchangeable": true` on an explicit non-root initial directory
+authorizes that object as a `RENAME_SWAP` operand. C++ uses the appended
+`DarwinFileOptions::ExchangeableDirectories` field. Its immediate initial parent
+must be mutable. Omission/false keep that root unsupported; other JSON types fail.
+It declares an ordinary non-mount initial subtree with unique namespace identities,
+using the same flags, special-mode, alias, hard-link and connected-device admission
+as movable. The union of these declarations supplies topology, not root authority.
+Each movable and exchangeable reference reserves its own path plus NUL, even when
+both name one root; neither adds an entry. Matching devices alone do not join domains.
+
+Ordinary/EXCL initial sources still require movable. An ordinary initial replacement
+target still requires removable. Exchangeable grants neither of those, nor mutable
+descendant names, file writes, permission checks or general mount knowledge. Both
+actual parents of a distinct exchange must be mutable and separately support
+`swap_rename`. An authorized ordinary-component same-name SWAP checks parent
+authority/device compatibility, then does nothing without a first dynamic charge
+or a distinct-object filesystem capability. Same-object dot/case behavior remains
+unknown. Missing target and source-dot ordering stay unchanged.
+
+Two initial roots, initial/created roots, and initial directory/file pairs exchange
+complete nonempty subtrees in either direction. Initial descendants may travel
+without gaining direct root authority. Original FD/dup/CWD/cursors, parent object
+relationships, leases and object grants remain attached. Untouched descendants
+retain stat/snapshots; root namespace metadata follows the existing invalidation
+and regular-file policy. Reused paths cannot reconstruct input objects. Both old
+and new same-named removed descendants remain separate objects.
+
+The existing transaction preflights all linked and retained members of both trees
+before withdrawing every moving live name and inserting either tree. Both roots
+stay linked. There is no replacement credit, file-byte refund or new descriptor,
+inode or entry. Initial paths start with zero dynamic charge; first exchange
+charges current paths once while all fixed input costs remain reserved. Subsequent
+exchanges replace the two old dynamic charges rather than accumulate them. Path
+or byte-budget failure leaves both trees and their observations unchanged.
+
+```json
+{"darwin_files":{"files":[],"directories":[{"path":"/","mutable":true,"swap_rename":true},{"path":"/left","exchangeable":true},{"path":"/right","exchangeable":true}]}}
+```
+
+The original SDK-free `initial-directory-swap` workload exchanges the native
+harness's pre-existing empty directory with its regular file and then exchanges
+them back. It checks subtree movement, private mappings, CWD/parent identity,
+shared and independent cursors, descriptor flags, creation under the moved
+original directory, retained removed children and restoration of original names.
+The earlier ordinary-move acceptance at f98068c07 is a separate frozen result;
+its initial-root SWAP limitation is extended only by this explicit declaration.
+
+
+Validation on native macOS ARM64 (Release) reconciles 1,303 Darwin registrations:
+823 passed, 480 unavailable-backend skips, zero failures; all 120 required ARM64
+HVF workloads executed. File-owner checks pass 361/361, including 16 new 4K/16K
+behavior instances and three admission checks. At exact capacity, no-op and 16
+round-trip exchanges retain the original objects and charges. A first exchange
+requiring six bytes with only five available rejects both orientations without
+changing either path/cursor or the remaining creation budget.
+
+Public C/CLI passes 180/180, report/parser 34/34, original native kernel workloads
+30/30, and the separate original probe records 35 successful observations. Python
+integration covers five guest configurations in 33.894 seconds; 71 pure API and
+49 inventory/reference runner checks, SDK drift, pinned formatting, capability,
+provenance and documentation checks pass. Counts overlap. Independent plan and
+final source reviews found no remaining blocker. Sources, binaries, attempts and
+actual results are frozen under `build-hvf-arm64/initial-directory-swap/` and bound
+to the committed revision. An early build was interrupted to correct a known
+invalid report field; an accidentally overlapping report run is excluded and was
+repeated serially. Stale translation markers were corrected before final checks.
+No deadline or semantic negative control was weakened.
+
+This completes the declared initial-root exchange contract. Permissions,
+undeclared mounts/case behavior, coherent shared maps/EOF faults, advancing
+clocks, Mach/thread/dyld dependencies and framework runtime remain unfinished.
+Physical iOS, suspended Intel HVF and remote merge CI are separate acceptance.
+
+## Explicit read-only resource-limit observations
+
+`getrlimit(194)` reads caller-supplied `DarwinSystemOptions::ResourceLimits`
+(`darwin_system.resource_limits`) on all five Darwin guest configurations. Each
+canonical resource 0..8 has a `DarwinResourceLimit` pair: `Current` at byte 0 and
+`Maximum` at byte 8, both little-endian uint64, in one complete 16-byte output.
+The resources are CPU, FSIZE, DATA, STACK, CORE, AS/RSS, MEMLOCK, NPROC and NOFILE.
+Values require `0 <= current <= maximum <= 9223372036854775807`; zero is explicit
+and INT64_MAX is Darwin's infinity. These fixed observations never query host
+limits and do not change existing FD, VM, storage or execution budgets.
+`setrlimit`, limit enforcement, related signals and scheduling remain unfinished.
+
+Strict JSON accepts at most nine uniquely keyed objects with exactly `resource`,
+`current` and `maximum`. Exact integers or unsigned decimal strings preserve the
+full values; malformed, duplicate, noncanonical or reversed inputs fail before
+image loading. Empty or omitted arrays declare no limits. Configuration keys
+remain 0..8: syscall-only flag/truncation rules never normalize input keys.
+
+```json
+{"darwin_system":{"resource_limits":[{"resource":8,"current":256,"maximum":"9223372036854775807"}]}}
+```
+
+The syscall uses the low 32 selector bits and clears only `_RLIMIT_POSIX_FLAG`
+(`0x1000`). An invalid selector returns EINVAL before lookup or memory access;
+a valid absent observation stops unsupported before touching output. A wholly
+unwritable buffer returns EFAULT; an individually partially writable pair stops
+unsupported before publishing either word. A full unaligned or cross-page copy
+preserves surrounding bytes. Memory-backend errors remain transport errors.
+The original ARM64 native probe passed 23 selector/value/guard checks and four
+separate fault checks; this host's untouched partial prefix is not generalized
+into a portable partial-copy guarantee. [Apple getrlimit](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getrlimit.2.html),
+[XNU resource selector and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c),
+[XNU resource constants](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/resource.h).
+
+Native macOS ARM64 Release validation reconciles 1337 registrations:
+845 passed, 492 unavailable-backend
+skips and zero failures; all 123 required ARM64 HVF cases executed. The new
+query has twelve 4K/16K behavior instances, typed and strict-JSON admission
+controls, an SDK capture oracle and required SDK-free native/guest workloads.
+Public C/CLI passes 190/190, report/parser 37/37 and original native workloads
+31/31. Actual Python integration covers five configurations in 71.978 seconds;
+71 pure API and 49 runner/reference checks, SDK drift, pinned formatting,
+capability, provenance and documentation checks pass. Counts overlap. Evidence
+is frozen under `build-hvf-arm64/resource-limit-observations/` and bound to the
+committed source. A test-only profile enum typo was corrected after the preserved
+first build failure. The initial owner filter missed typed admission checks;
+they were run separately and included in the complete gate. Source-wiring
+attempts remain recorded; deadlines and negative controls are unchanged.
+
+This closes the explicit read-only query gap. Resource enforcement, permissions,
+directory metadata/enumeration after mutation, coherent shared maps/EOF faults,
+advancing clocks, Mach/thread/dyld dependencies and framework runtime remain
+unfinished. Physical iOS, suspended Intel HVF and remote merge CI remain separate
+acceptance requirements.
+
+## Explicit read-only resource-usage observations
+
+`getrusage(117)` reads independently optional
+`DarwinSystemOptions::ResourceUsageSelf` and `ResourceUsageChildren` on all five
+Darwin guest configurations. The strict JSON members are
+`darwin_system.resource_usage.self` and `.children`. Each `DarwinResourceUsage`
+requires signed int64 `user_seconds` / `system_seconds`, uint32
+`user_microseconds` / `system_microseconds` below 1000000, and exactly fourteen
+signed int64 `counters`. Exact integers or signed decimal strings preserve the
+full range; malformed, missing or unknown fields, invalid microseconds and
+counter lengths fail before image loading. Omitted peers stay unknown and do
+not prevent querying the supplied peer; explicit zero snapshots are valid.
+
+The complete little-endian output is 144 bytes. Timevals start at 0 and 16:
+seconds occupy eight bytes, microseconds four, then four zero padding bytes.
+Counters start at byte 32, eight bytes each; public indices 0..13 are
+`ru_maxrss`, `ru_ixrss`, `ru_idrss`, `ru_isrss`, `ru_minflt`, `ru_majflt`, `ru_nswap`, `ru_inblock`, `ru_oublock`, `ru_msgsnd`, `ru_msgrcv`, `ru_nsignals`, `ru_nvcsw`, `ru_nivcsw`. Preserve Darwin's raw values and units, including
+`ru_maxrss`; do not apply Linux KiB conversion. These observations remain fixed
+across calls. They neither sample host performance nor implement runtime
+accounting, fork/wait, scheduling or resource enforcement.
+
+```json
+{"darwin_system":{"resource_usage":{"self":{"user_seconds":"-9223372036854775808","user_microseconds":999999,"system_seconds":0,"system_microseconds":0,"counters":["9223372036854775807",0,0,0,0,0,0,0,0,0,0,0,0,0]}}}}
+```
+
+Only the low 32 selector bits matter: 0 is SELF, -1 is CHILDREN. Unlike
+`getrlimit`, `0x1000` is invalid and no POSIX flag is removed. Invalid selectors
+return EINVAL before lookup or memory access; missing selected observations stop
+unsupported before output access. One complete unaligned or cross-page copy
+changes exactly 144 bytes and preserves guards. Wholly unwritable output gives
+EFAULT; individually partially writable output stops unsupported before any
+byte. Backend errors remain transport errors. The SDK oracle uses one capture
+per selector, including every field and padding, because sequential SELF samples
+can change. The original native probe passed thirteen layout/selector/value
+checks and four independent fault checks at the unchanged five-second bound.
+On this host a partial SELF output published 64 bytes before EFAULT; this is
+preserved as an observation, without generalizing a portable prefix rule.
+[Apple getrusage](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getrusage.2.html), [XNU](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [SDK layout](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/resource.h).
+
+Native macOS ARM64 Release validation reconciles 1371 Darwin
+registrations: 867 passed, 504
+unavailable-backend skips, zero failures; all 126 required ARM64 HVF
+cases executed. File-owner coverage remains 361/361. C/CLI 200/200, JSON 40/40, System/SDK 53/53, native 32/32 pass.
+The new behavior has twelve 4K/16K instances plus typed/JSON admission and exact
+single-capture SDK comparison. Actual Python integration passes all five guest
+configurations in 42.865 seconds; 71 pure API and 49 inventory/reference
+checks, SDK drift, pinned format, capability, provenance and documentation
+checks pass. Counts overlap. Independent source review found no blocker.
+
+Evidence is frozen under `build-hvf-arm64/resource-usage-observations/` and bound
+to the committed source. The first guest fixture incorrectly required zero
+secondary return on x64 EINVAL despite a nonzero RDX input; the corrected
+assertion checks preserved RDX on x64 and cleared X1 on ARM64. The original
+failure, source/binaries and zero-match filter attempt remain separate evidence.
+The runtime return owner, deadlines and negative controls were unchanged.
+The first complete gate recorded 866 passed, one existing iOS ARM64 HVF rename
+five-second timeout and 504 unavailable skips. The same unchanged binary passed
+that exact case in 386 ms, then the complete serial gate passed. Both runs remain
+preserved; the timeout cause is unestablished and no latency guarantee is inferred.
+
+This completes the declared query. Resource enforcement, permissions,
+directory metadata/enumeration after mutation, coherent shared maps/EOF faults,
+advancing clocks, Mach/thread/dyld and framework runtime remain unfinished.
+Physical iOS, suspended Intel HVF and remote merge CI need separate acceptance.
+
+
+## Explicit credentials, group access and coherent creation ownership
+
+Optional C++ DarwinSystemOptions::Credentials holds RealUID, EffectiveUID,
+RealGID, EffectiveGID and independently optional GroupAccessList. Omission keeps
+the historical four scalar getters at1000. An explicit record is complete;
+zero/root is a valid declaration. Missing groups remain unknown and are never
+inferred from host membership or EGID. The supported subset is0..INT32_MAX for
+each ID. Groups contain1..16 entries, preserve order and duplicates, and begin
+with EffectiveGID. Strict darwin_system.credentials requires exactly real_uid,
+effective_uid, real_gid, effective_gid and optionally groups. Lossless integer
+decoding and the central validator reject malformed shapes, fields, ranges,
+group counts or first-group mismatch before image loading; non-Darwin profiles
+still reject the option.
+
+getuid(24), geteuid(25), getgid(47), getegid(43) and getgroups(79) share one system
+owner. The process passes the selected effective UID once to the file owner.
+New regular files use that UID while inheriting device/GID from their direct
+parent; rename, retained descriptors and old-name reuse preserve object identity.
+Existing input stat records remain independent. Root does not grant file writes,
+mutable directories, permissions or ACLs. Credential mutation, setuid/setgid/
+setgroups, process/session creation and authorization enforcement remain absent.
+
+getgroups interprets the low32 capacity bits as signed int. Negative capacity
+returns EINVAL before observations or memory. Missing groups stop unsupported
+before output. Known zero capacity returns count without accessing any pointer;
+positive short capacity returns EINVAL before memory. Sufficient capacity copies
+only4*count little-endian bytes once, then returns count. Capacity0x1000 is
+positive and performs copying or pointer-fault handling; no POSIX flag is removed.
+Unaligned/cross-page copies preserve full guards. Wholly unwritable output gives
+EFAULT; individually partial output stops unsupported before any byte. Backend
+errors remain transport errors. BSD error return preserves x64 RDX and clears
+ARM64 X1; successful secondary results clear on both. Reports preserve full raw
+arguments. Explicit EUID0 changes only the declared kern.osversion / kern.maxfilesperproc / kern.hostname write boundary
+described above, after the existing input/length preflight.
+
+
+~~~json
+{"darwin_system":{"credentials":{"real_uid":101,"effective_uid":202,
+ "real_gid":303,"effective_gid":404,"groups":[404,0,"2147483647",7,7]}}}
+~~~
+
+
+[Apple getgroups contract](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/getgroups.2.html), [pinned XNU credential/group ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_prot.c).
+
+### Credential verification, 2026-10-07
+
+Release macOS ARM64 registrations/passed/unavailable-skipped/failed: 1413/897/516/0;
+all 129 required ARM64 HVF cases executed. System/SDK72/72, file365/365,
+report43/43 and public C/CLI210/210 passed without skips. Focused guests8 passed/
+12 unavailable; original native workloads33/33; Python all five configurations
+in 82.918s, Python API71 and runner/reference49 checks passed. SDK drift,
+pinned changed-source/full-PR formatting, capabilities, provenance and all11
+guides plus localization negative controls passed. Counts overlap. Independent
+source review passed. Evidence is frozen under
+`build-hvf-arm64/credential-observations/` and bound to the committed revision.
+
+The independent raw/SDK probe passed21 value checks and5 separate fault
+processes at unchanged5s. This host has16 groups, so positive short-capacity
+precedence was exercised natively. Native partial copy wrote32 bytes before
+EFAULT here; this observation is preserved separately and is not a portable
+prefix guarantee or a modeled partial copy.
+
+The first focused run retained8 failures (five instruction limits and three
+5s deadlines) and12 unavailable skips: scanning two complete pages in the new
+fixture exceeded unchanged bounds. The fixture now verifies all132 guard bytes
+around the same cross-page output (64 preceding, up to64 data, at least4
+following); direct owner tests still verify both complete pages. No service
+parameters, budgets or fault controls changed. Sources, binaries and both runs
+are preserved. Review also corrected the direct transport test's cross-page
+geometry before execution. Public option selection now compares string contents
+rather than literal pointer identities.
+
+Permissions/ACLs, links, complete directory observations after mutation,
+coherent shared maps/EOF, advancing clocks, Mach/thread/dyld and frameworks
+remain unfinished. Physical iOS, suspended Intel HVF and remote merge CI remain
+separate acceptance boundaries.
+
+## Descriptor-table size from declared process and kernel limits
+
+`DarwinSystemOptions::MaxFilesPerProcess` / `darwin_system.max_files_per_process` declares an optional nonnegative int observation. Missing is unknown; explicit zero is valid. Named `kern.maxfilesperproc` and numeric MIB `[1,29]` read the same four-byte value, independently of resource limits. Strict lossless integer parsing and central validation reject malformed, negative or oversized values before image loading; non-Darwin profiles reject this configuration.
+
+BSD `getdtablesize(89)` requires this cap and `ResourceLimits[8].Current`, then returns their minimum. It clips the complete 64-bit Current before its int return: Current `0x100000001` with cap 64 returns 64, and infinite Current safely clips. Maximum, host values, live FD counts and `DescriptorLimit` are not substitutes. Missing either observation stops unsupported even when the known peer is zero. All six live arguments are ignored; the service performs no user-memory operation and uses the existing BSD carry/secondary-register convention. Mach timebase trap 89 remains separate.
+
+The existing sysctl copy phases apply. Declared effective UID 0 cannot infer privileged writes to `kern.maxfilesperproc`: a true write stops unsupported after name/MIB and oldlenp preflight, before observations or output. Non-root returns EPERM; a new pointer with zero length stays a read. No limits or write authorization are inferred. The required resource workload compares both cap queries and low/high-number getdtablesize while keeping its original `l` / 144-byte output; a later unsupported query preserves bytes already emitted. A separate scalar fixture proves missing peers, zero, wide Current and independence from DescriptorLimit=3.
+
+```json
+{"darwin_system":{"max_files_per_process":64,"resource_limits":[{"resource":8,"current":"4294967297","maximum":"9223372036854775807"}]}}
+```
+
+[XNU getdtablesize](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c), [XNU proc_limitgetcur_nofile](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c), [XNU MIB constants](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/sysctl.h).
+
+Checks: Darwin (registered/passed/unavailable/failed) 1441/913/528/0; ARM64 HVF 132/132; System/SDK 80/80; File 365/365; C/CLI 211/211; ProcessReport 45/45; native 33/33; Python 5 (42.254s); API 71; runner 44 + reference 5. clang-format 22.1.2; capabilities/provenance; docs 286 / locales 10 / negative controls 3.
+
+Attempt history: the first runner check failed in the ARM64 and x86-64 inventory subtests because the new scalar method lacked mandatory registration. Registration was added without relaxing the method-equality rule. The initial 129-required gate and failed runner records are retained; the fresh final ARM64 gate requires 132 cases.
+
+Counts overlap. Evidence preserves the actual execution baseline plus exact source/binary/log hashes under `build-hvf-arm64/descriptor-table-observations/`; prior observation evidence stays immutable. Native probe: five disposable ARM64 macOS processes, 40 checks, five-second deadline each. Captured default Current=1048575/cap=245760 returned 245760; child Current=0/1/32/245777 returned 0/1/32/245760. Parent and system limits were unchanged. Physical iOS, suspended Intel HVF and remote merge CI remain separate. Permissions, mutable directory observations, coherent shared maps/EOF, advancing clocks, Mach/thread/dyld and framework runtime remain unfinished.
+
+## Explicit process observations
+
+`DarwinSystemOptions::ProcessGroupID`, `SessionID` and `ProcessTainted` are independent optional inputs: JSON `process_group_id`, `session_id` and `process_tainted`. IDs must be positive, at most INT32_MAX; taint accepts only JSON Boolean `true`/`false`. Missing stays unknown, while explicit `false` is a known zero. No value comes from the host, PID1000, credentials or another observation.
+
+Raw `getpgrp(81)` reads the process group; `getpgid(151)` and `getsid(310)` use signed low32 `pid_t`, accepting zero or the fixed current PID1000. For example, `0xffffffff000003e8` still names self. A negative low32 PID returns ESRCH3 before observation lookup, as confirmed by read-only native probes and XNU process allocation/lookup. An unknown positive peer, including `0x1000`, stops with UnsupportedService without a guessed ESRCH or flag masking. A missing selected self value also stops unsupported. `getpgrp` and `issetugid(327)` ignore all arguments, and all four scalar queries access no guest memory. Existing BSD carry and secondary-register rules apply.
+
+`process_tainted` supplies the fixed `P_SUGID` observation independently of equal or unequal real/effective IDs. It does not change EUID, file ownership, sysctl write authority, entitlements, leadership or terminal state. `setpgid`, `setsid` and credential mutation remain unsupported. The original read-only `process-observations` workload captures its own PID and checks high carriers, negative errors and return state; `virtual-process-observations` emits configured group/session/taint bytes. Model-only peer, missing-value and setter cases are excluded from native execution. Native macOS references do not establish physical iOS acceptance.
+
+```json
+{"darwin_system":{"process_group_id":7,"session_id":16909060,"process_tainted":false}}
+```
+
+[XNU process queries](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c), [XNU service numbers](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/syscalls.master), [XNU PID allocation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_fork.c), [XNU PID lookup](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_proc.c).
+
+
+## Explicit session login buffer
+
+`DarwinSystemOptions::LoginNameBytes` is an independent optional observation of all 255 raw session bytes (`MAXLOGNAME`). JSON `login_name_hex` requires exactly 510 ASCII hexadecimal digits; both cases are accepted. Embedded NUL and nonzero bytes after a terminator remain valid. Missing is unknown; an explicit all-zero record is known. The model neither pads a short name nor obtains bytes from the host, credentials, process group, session ID or taint. This observation grants no login or filesystem authority.
+
+Raw `getlogin(49)` takes unsigned low32 `u_int` length and copies exactly min(length,255) bytes, without string decoding, an added NUL or a required-size output. Zero length succeeds without an observation or guest-memory access even for invalid pointers; `0xffffffff00000000` therefore selects zero. A nonzero request requires the full declared buffer before destination checks. A wholly unwritable destination returns EFAULT14. Partial writable ranges stop unsupported before copying; preflight errors publish no bytes. Backend write errors propagate through the existing user-copy owner without a general rollback guarantee. BSD carry and secondary-register rules are retained, including original x64 RDX on errors.
+
+`setlogin(50)` stays unsupported even with explicit root credentials or an all-zero buffer. The original read-only `login-buffer` workload checks full-carrier lengths, prefixes, adjacent bytes, zero-length pointers and EFAULT; `virtual-login-buffer` emits the declared 255 bytes. Model-only missing/setter cases never enter native execution. macOS ARM64 references do not establish physical iOS or Intel native acceptance. The example explicitly declares all 255 zero bytes; it is not an inferred empty login.
+
+The guest verifier initializes all 265 output bytes before every copy and checks them in three ascending, disjoint ranges: [0,3), [3,3+n), [3+n,265), where n is the same clamped copy length. The first and last ranges check every guard byte; the middle compares every copied byte to the original snapshot. All 12 length carriers, 21 zero-length calls, 42 EFAULT calls, carry/secondary checks and raw/virtual routes remain covered under the existing execution limits. This reduces the authored verifier workload while preserving its byte coverage and first-error order; production runtime performance requires separate measurements.
+
+```json
+{"darwin_system":{"login_name_hex":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}}
+```
+
+[XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).
+
+
+## Explicit current-process priority
+
+`DarwinSystemOptions::ProcessNice` / JSON `darwin_system.nice` declares an independent fixed signed nice value from -20 through 20. Missing is unknown; explicit zero and -1 are known. Lossless integer numbers and decimal integer strings use the existing parser; malformed types, fractions, exponent strings, whitespace and out-of-range values fail before image loading. Exact integer numeric JSON remains valid. Non-Darwin profiles reject the field. No host, credentials, group/session/taint/login, resource or CPU observation supplies it; it changes no scheduling, permissions or execution budget.
+
+Raw `getpriority(100)` uses low32 for the int selector and unsigned `id_t` target. A target above INT32_MAX first returns EINVAL22. Unknown selectors, including GPU5 and 0x1000, return EINVAL; thread selector3 with nonzero low32 target also returns EINVAL before observations. `PRIO_PROCESS`0 supports only zero or current PID1000, requiring the declared nice value after selection. Positive other PIDs remain unsupported without guessed ESRCH. Group1, user2, thread3/target0 and extended selectors4,6,7,8 remain unsupported even with related observations; high-half-only thread targets select unknown thread state, not EINVAL. The result is signed-extended to the full 64-bit carrier: -1 returns UINT64_MAX successfully with carry clear. The query accesses no guest memory and ignores unused arguments; existing BSD secondary-register rules retain x64 RDX on errors and clear it on success, while ARM64 X1 is cleared on both paths.
+
+`setpriority(96)` remains unsupported even with explicit root credentials and nice. Original read-only `process-priority` checks self carriers, guaranteed-invalid arguments and success/error/success return transitions; `virtual-process-priority` emits the configured eight signed bytes. Peer, aggregate, missing and setter routes are model-only. The fresh ARM64 macOS probe passed 191 checks with nice0; that nonnegative sample does not establish negative hardware extension, which uses pinned signed entry declarations and independent model boundaries. Physical iOS and Intel native acceptance remain separate.
+
+```json
+{"darwin_system":{"nice":-1}}
+```
+
+[XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).

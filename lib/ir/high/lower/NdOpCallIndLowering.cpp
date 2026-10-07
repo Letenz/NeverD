@@ -61,14 +61,79 @@ static bool tryResolveNamedAddress(va_t Addr,
   return false;
 }
 
+/// The function a call reaches through the pointer slot at \p Slot. Only an
+/// import slot names it: one the import directory lists, the loader bound, or
+/// the linker named `__imp_X`. Any other name at \p Slot labels the slot
+/// itself, a variable such as `int (*handler)(int)`: calling by that name
+/// would call the variable rather than the pointer stored in it.
+static bool tryResolveLoadedSlot(va_t Slot,
+                                 const std::map<va_t, std::string> *FuncNames,
+                                 const BinaryImage *Image,
+                                 MedToHighConverter::CallIndTarget &Out) {
+  if (Image) {
+    const ImportStorageSlotCollection Storage =
+        Image->collectImportStorageSlot(Slot);
+    if (Storage.Conflicts.count(Slot))
+      return false;
+    const Import *Imp = Image->findImportAt(Slot);
+    const bool DirectorySlot = Imp && Imp->IATAddr == Slot;
+    std::string Name = DirectorySlot ? Imp->Name : std::string();
+    // An import directory entry can carry no name (API-set and delay-load
+    // imports often do); the symbol for its slot names the import. The linker
+    // names any import address slot `__imp_X` (`__imp__X` on i386).
+    if (Name.empty())
+      if (const Symbol *Sym = Image->findSymbolAt(Slot);
+          Sym && !Sym->Name.empty() &&
+          (DirectorySlot || llvm::StringRef(Sym->Name).starts_with("__imp_") ||
+           llvm::StringRef(Sym->Name).starts_with("_imp_")))
+        Name = Sym->Name;
+    // A slot holding `import + addend` reaches no function by that name.
+    if (auto It = Storage.Slots.find(Slot); It != Storage.Slots.end()) {
+      if (It->second.Addend != 0)
+        return false;
+      if (Name.empty())
+        Name = It->second.Name;
+    }
+    if (Name.empty())
+      return false;
+    Out.Name = std::move(Name);
+    Out.Addr = Slot;
+    Out.IsIndirect = false;
+    return true;
+  }
+  // Without an image the caller's names are its only slot evidence.
+  if (!FuncNames)
+    return false;
+  auto It = FuncNames->find(Slot);
+  if (It == FuncNames->end())
+    return false;
+  Out.Name = It->second;
+  Out.Addr = Slot;
+  Out.IsIndirect = false;
+  return true;
+}
+
+/// x86 lifts a memory-indirect call through a constant slot, `call [rip+disp]`
+/// or `call [disp32]`, as an INDIR_CALL of the slot address, while a constant
+/// folded into `call rax` is the callee itself. No code runs from a
+/// non-executable segment, so a constant there is a slot: the call reaches
+/// the pointer stored in it unless the loader bound the slot to an import.
 static bool tryResolveConstTarget(const MedOp &CurOp,
                                   const std::map<va_t, std::string> *FuncNames,
                                   const BinaryImage *Image,
                                   MedToHighConverter::CallIndTarget &Out) {
   if (CurOp.NumInputs < 1 || !CurOp.Inputs[0].isConst())
     return false;
-  return tryResolveNamedAddress(CurOp.Inputs[0].ConstVal, FuncNames, Image,
-                                Out);
+  const va_t Addr = CurOp.Inputs[0].ConstVal;
+  if (Image) {
+    const Segment *Seg = Image->getSegmentFor(Addr);
+    if (Seg && !Seg->isExecutable()) {
+      if (!tryResolveLoadedSlot(Addr, FuncNames, Image, Out))
+        Out.ThroughSlot = true;
+      return true;
+    }
+  }
+  return tryResolveNamedAddress(Addr, FuncNames, Image, Out);
 }
 
 /// Strategy 2: trace through LOAD (and optional INT_ADD for RIP-relative
@@ -90,21 +155,28 @@ static bool tryResolveLoadTarget(const MedOp &CurOp, const MedBlock &CurBlock,
     // Direct constant load address.
     auto &Addr = BOp.Inputs[0];
     if (Addr.isConst() &&
-        tryResolveNamedAddress(Addr.ConstVal, FuncNames, Image, Out))
+        tryResolveLoadedSlot(Addr.ConstVal, FuncNames, Image, Out))
       return true;
 
-    // RIP-relative pattern: INT_ADD rip, disp -> LOAD -> INDIR_CALL.
+    // RIP-relative pattern: INT_ADD rip, disp -> LOAD -> INDIR_CALL. The
+    // load reads one named slot only when every addend is a constant: an
+    // index (`call *table(,%rdi,8)`) selects among the table's entries, and
+    // naming the table would drop that selection.
     for (auto &AOp : CurBlock.Ops) {
       if (AOp.Opcode != NdOp::INT_ADD || AOp.Output.Id != Addr.Id ||
-          AOp.Output.SSAVer != Addr.SSAVer || AOp.NumInputs < 2)
+          AOp.Output.SSAVer != Addr.SSAVer || AOp.NumInputs < 2 ||
+          AOp.Output.Size == 0 || AOp.Output.Size > 8)
         continue;
-      for (uint8_t KI = 0; KI < AOp.NumInputs; ++KI) {
-        if (!AOp.Inputs[KI].isConst())
-          continue;
-        if (tryResolveNamedAddress(AOp.Inputs[KI].ConstVal, FuncNames, Image,
-                                   Out))
-          return true;
+      uint64_t Slot = 0;
+      bool ConstantSlot = true;
+      for (uint8_t KI = 0; KI < AOp.NumInputs && ConstantSlot; ++KI) {
+        ConstantSlot = AOp.Inputs[KI].isConst();
+        Slot += AOp.Inputs[KI].ConstVal;
       }
+      if (AOp.Output.Size < 8)
+        Slot &= (uint64_t(1) << (AOp.Output.Size * 8)) - 1;
+      if (ConstantSlot && tryResolveLoadedSlot(Slot, FuncNames, Image, Out))
+        return true;
     }
     break;
   }
@@ -237,6 +309,13 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
     if (CurOp.SourceCallHint && CurOp.SourceCallHint->CallKind ==
                                     SourceCallTypeHint::Kind::SwiftVirtual) {
       Call->IndirectTarget = TargetExpr;
+    } else if (Target.ThroughSlot) {
+      const uint16_t PointerBytes = CurOp.Inputs[0].Size;
+      Call->IndirectTarget = HighExpr::makeLoad(
+          HighExpr::makeConst(CurOp.Inputs[0].ConstVal, PointerBytes,
+                              ConstantAddressProvenance::Address),
+          NdType::makeInt(PointerBytes), NdMemoryOrdering::None,
+          NdMemoryAddressSpace::Default);
     } else {
       ExprPtr Callee = TargetExpr;
       if (Callee && Callee->Kind == ExprKind::Var && Callee->Var.Id >= 0) {

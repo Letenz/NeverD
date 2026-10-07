@@ -1573,7 +1573,7 @@ MainActor 픽스처는 고정 메타데이터와 정적 테이블의 전체 흐�
 
 `AndroidTestExecution.def`는 `FiniteRegistryRejectsBeforeSuccessAndCanBeReused`에 전체 CTest 제한 120초와 `RUN_SERIAL`을 설정합니다. 두 워크로드는 각각 30초 실행 한도를 유지하며, 직렬화는 용량 테스트의 경합을 방지합니다. O0/O2 및 재배치의 여섯 구성을 모두 포함합니다.
 
-`LinuxPIDFD.*`는 로드 전에 분기와 태스크 목록을 검증합니다. `Backends/LinuxPIDFDProcess.*`는 여덟 분기의 독립 x64/AArch64 O0/O2 호출자로 플래그·공유 표·한도·순서·대상 종류·버퍼 제한을 검사합니다. `ReleasedGKICatalogueRetainsRawAndBionicLookupErrors`와 다른 `AndroidSyscallTests.cpp` 사례는 여섯 재배치 구성의 raw/Bionic 및 errno를 검사합니다. 공유 의미 변경 뒤 전체 Linux 프로세스·Android 네이티브·공개 프로세스 API 테스트를 실행하십시오. 이 모델 검증은 GKI 부팅과 별개입니다. [소스 및 증거](android-gki-kernels.md)를 참고하십시오.
+`LinuxPIDFD.*`는 계열 파싱, 잘못된 열거, GKI와 부재 관측 충돌, 잘못되거나 과도하거나 모순된 작업 목록을 로드 전에 검사합니다. `Backends/LinuxPIDFDProcess.*`는 독립적인 O0/O2 x64/AArch64 호출자로 여덟 계열의 플래그, 공유 할당, 제한, close/재사용, 닫힌 목록, 비리더 오류와 스칼라/벡터 순서를 확인합니다. 부재 대상과 비리더는 FD 소진 전에 검사하며 스레드 플래그와 암시적 self만 있는 빈 목록도 다룹니다. 벡터 사례는 앞선 음수 길이와 뒤의 접근 불가 메타데이터, 원래 범위가 사용자 한계를 넘지만 제한한 범위는 유효한 버퍼를 비교하여 pidfd와 두 캡처 스트림을 확인합니다. Android의 `ReleasedGKIProcessDescriptorsShareRawAndBionicOwnership`, `ReleasedGKIVectorImportRetainsRawAndBionicErrors`, `ReleasedGKICatalogueRetainsRawAndBionicLookupErrors`는 여섯 재배치 구성에서 원시 오류, Bionic errno, 목록과 소진 규칙을 유지합니다. 먼저 대상 테스트를 실행한 뒤 전체 Linux 프로세스, Android native, 공개 프로세스 스위트를 실행하세요. 모델을 실행하며 여덟 GKI 커널을 부팅하지 않습니다.[출시된 GKI 계약](../android-gki-kernels.md)을 참조하세요.
 
 `ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: 여덟 고정 버전의 원시/Bionic 식별, PROF/VIRT/SCHED, 하위 32비트, 포인터 오류보다 앞선 대상 검증, 표본 누락, 별칭, 음수 CPU 시간 거부와 벽시계/CPU 유휴 분리를 확인합니다. `AndroidTimeTests.cpp`는 출력과 감시값을, 협력 syscall은 현재 비리더 TID를 확인합니다.
 
