@@ -7748,6 +7748,103 @@ TEST(HighControlFlowSemantics,
   EXPECT_EQ(Found->Operands[0]->ConstVal, 7u);
 }
 
+TEST(HighControlFlowSemantics,
+     SummarizedCallPassesZeroInRegistersItNeverReads) {
+  // The callee reads RCX and its sixth argument, so RDX, R8, R9 and the
+  // fifth slot keep their positions.  It reads none of those registers:
+  // the RDX an earlier block set for something else is not passed as one.
+  // Through a dispatcher the count says only which registers the caller
+  // set, so the RDX reaching the call is still passed.
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  auto Arguments = [&](NdOp Opcode) {
+    MedFunc F;
+    F.Entry = 0x1000;
+    F.Name = "sixth_argument_callee";
+    F.ReturnType = NdType::makeInt(8, false);
+    F.CC = CallingConv::Win64;
+    auto Reg = [&](int Id, uint64_t RegOff) {
+      MedVar V;
+      V.Kind = MedVar::Reg;
+      V.TheArch = Arch::X64;
+      V.Id = Id;
+      V.SSAVer = 1;
+      V.Size = 8;
+      V.RegOff = RegOff;
+      return V;
+    };
+    auto Temp = [](int Id) {
+      MedVar V;
+      V.Kind = MedVar::Temp;
+      V.Id = Id;
+      V.SSAVer = 1;
+      V.Size = 8;
+      return V;
+    };
+    const MedVar Sp = Reg(30, TRI.StackPointer);
+    const MedVar Rdx = Reg(31, TRI.integerParamRegs(BinaryFormat::COFF)[1]);
+    const MedVar Result = Reg(20, TRI.IntReturnReg);
+    F.Blocks.resize(2);
+    F.Blocks[0].Id = 0;
+    F.Blocks[0].StartAddr = 0x1000;
+    F.Blocks[0].EndAddr = 0x1004;
+    F.Blocks[0].Succs = {1};
+    F.Blocks[0].Ops = {
+        operation(NdOp::COPY, 0x1000, Rdx, {MedVar::makeConst(9, 8)})};
+    F.Blocks[1].Id = 1;
+    F.Blocks[1].StartAddr = 0x1004;
+    F.Blocks[1].EndAddr = 0x1040;
+    F.Blocks[1].Preds = {0};
+    MedOp Call = operation(Opcode, 0x1010, Result,
+                           {Opcode == NdOp::CALL ? MedVar::makeConst(0x3000, 8)
+                                                 : Reg(32, TRI.IntReturnReg),
+                            MedVar::makeConst(7, 8)});
+    Call.CalleeRegisterArgs = 1;
+    Call.CalleeStackArgs = 6;
+    F.Blocks[1].Ops = {
+        operation(NdOp::INT_ADD, 0x1004, Temp(40),
+                  {Sp, MedVar::makeConst(0x20, 8)}),
+        operation(NdOp::STORE, 0x1006, {}, {Temp(40), MedVar::makeConst(5, 8)}),
+        operation(NdOp::INT_ADD, 0x1008, Temp(41),
+                  {Sp, MedVar::makeConst(0x28, 8)}),
+        operation(NdOp::STORE, 0x100a, {}, {Temp(41), MedVar::makeConst(6, 8)}),
+        Call,
+        operation(NdOp::STORE, 0x1014, {}, {Temp(41), Rdx}),
+        operation(NdOp::RETURN, 0x1020, {}, {Result})};
+    BinaryImage Img;
+    Img.Arch = Arch::X64;
+    Img.Format = BinaryFormat::COFF;
+    MedToHighConverter Converter;
+    Converter.setBinaryImage(&Img);
+    const auto High = Converter.convert(F, Arch::X64);
+    const HighExpr *Found = nullptr;
+    walkStmts(High.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        std::function<void(const HighExpr &)> Walk = [&](const HighExpr &N) {
+          if (N.Kind == ExprKind::Call)
+            Found = &N;
+          N.forEachChildExpr([&](const ExprPtr &C) { Walk(*C); });
+        };
+        if (E)
+          Walk(*E);
+      });
+    });
+    EXPECT_NE(Found, nullptr);
+    return Found ? std::vector<ExprPtr>(Found->Operands.begin(),
+                                        Found->Operands.end())
+                 : std::vector<ExprPtr>{};
+  };
+  const auto Direct = Arguments(NdOp::CALL);
+  ASSERT_GE(Direct.size(), 4u);
+  for (size_t K = 1; K < 4; ++K) {
+    ASSERT_EQ(Direct[K]->Kind, ExprKind::Const) << K;
+    EXPECT_EQ(Direct[K]->ConstVal, 0u) << K;
+  }
+  const auto Dispatched = Arguments(NdOp::INDIR_CALL);
+  ASSERT_GE(Dispatched.size(), 2u);
+  EXPECT_FALSE(Dispatched[1]->Kind == ExprKind::Const &&
+               Dispatched[1]->ConstVal == 0);
+}
+
 TEST(HighControlFlowSemantics, RenameCleanupKeepsLabelsOfRemovedStatements) {
   // v = 7; if (c) goto X; v = 3; X: v = v; return v; -- the self copy goes,
   // but the jump still needs its label.
