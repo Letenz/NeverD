@@ -28,8 +28,8 @@ protected:
     ASSERT_FALSE(HasFailure());
     // These are independently chosen export identities, not addresses from
     // a protected sample or from the process model's provider layout.
-    C.Exports.emplace(FirstGate, ExportBinding{"first.dll", "first", {}});
-    C.Exports.emplace(SecondGate, ExportBinding{"second.dll", "second", {}});
+    C.Exports.emplace(FirstGate, FirstBinding);
+    C.Exports.emplace(SecondGate, SecondBinding);
   }
 
   void prepare() {
@@ -103,6 +103,8 @@ protected:
   }
 
   static constexpr uint64_t FirstGate = 0x70010000, SecondGate = 0x70020000;
+  const ExportBinding FirstBinding{"first.dll", "first", {}};
+  const ExportBinding SecondBinding{"second.dll", "second", {}};
   test::Image Linked;
   std::vector<uint8_t> Bytes;
   std::unique_ptr<pe::Image> Input;
@@ -113,8 +115,8 @@ protected:
 TEST_F(PERebuild, NewImportCellsCannotConsumeProgramZeroFill) {
   plantCall(Linked.Entry);
   const auto Before = C.Memory;
-  const auto Result = rebuild(
-      {{C.Base + Linked.Entry + 6, FirstGate, false, C.Base + Linked.Entry}});
+  const auto Result = rebuild({{C.Base + Linked.Entry + 6, FirstBinding, false,
+                                C.Base + Linked.Entry}});
   ASSERT_FALSE(HasFailure());
   ASSERT_EQ(Result.RepairedTailCalls, 1u);
   ASSERT_EQ(Result.Imports.size(), 1u);
@@ -141,8 +143,8 @@ TEST_F(PERebuild, ExportPointerWithoutAnArrayTerminatorIsNotAnImportCell) {
   write64le(C.Memory.data() + Cell + 8, 0x5555555555555555);
   plantCall(Linked.Entry);
   const auto Before = C.Memory;
-  const auto Result = rebuild(
-      {{C.Base + Linked.Entry + 6, FirstGate, false, C.Base + Linked.Entry}});
+  const auto Result = rebuild({{C.Base + Linked.Entry + 6, FirstBinding, false,
+                                C.Base + Linked.Entry}});
   ASSERT_FALSE(HasFailure());
   ASSERT_EQ(Result.Imports.size(), 1u);
   EXPECT_GE(Result.Imports.front().SlotRVA, Input->extent());
@@ -169,20 +171,51 @@ TEST_F(PERebuild, ExistingCellIsReusedWithoutAllocatingAnotherImport) {
   plantCall(Linked.Entry);
   const uint64_t Cell = Input->regions().back().RVA + 0x100;
   write64le(C.Memory.data() + Cell, FirstGate);
-  const auto Result = rebuild(
-      {{C.Base + Linked.Entry + 6, FirstGate, false, C.Base + Linked.Entry}});
+  const auto Result = rebuild({{C.Base + Linked.Entry + 6, FirstBinding, false,
+                                C.Base + Linked.Entry}});
   ASSERT_FALSE(HasFailure());
   ASSERT_EQ(Result.RepairedTailCalls, 1u);
   ASSERT_EQ(Result.Imports.size(), 1u);
   EXPECT_EQ(Result.Imports.front().SlotRVA, Cell);
 }
 
+TEST_F(PERebuild, AProvenExportIdentityDoesNotNeedTheEntryCaptureAddressMap) {
+  plantCall(Linked.Entry);
+  C.Exports.clear();
+  const auto Result = rebuild({{C.Base + Linked.Entry + 6, FirstBinding, false,
+                                C.Base + Linked.Entry}});
+  ASSERT_FALSE(HasFailure());
+  EXPECT_EQ(Result.RepairedTailCalls, 1u);
+  ASSERT_EQ(Result.Imports.size(), 1u);
+  EXPECT_EQ(Result.Imports.front().Module, FirstBinding.Module);
+  EXPECT_EQ(Result.Imports.front().Name, FirstBinding.Name);
+  EXPECT_GE(Result.Imports.front().SlotRVA, Input->extent());
+}
+
+TEST_F(PERebuild, AnIncompleteExportIdentityCannotAuthorizeRepair) {
+  plantCall(Linked.Entry);
+  const ExportBinding Incomplete[] = {
+      {}, {"", "first", {}}, {"first.dll", "", {}}};
+  for (const auto &Target : Incomplete) {
+    const auto Result = rebuild(
+        {{C.Base + Linked.Entry + 6, Target, false, C.Base + Linked.Entry}});
+    ASSERT_FALSE(HasFailure());
+    EXPECT_EQ(Result.RepairedTailCalls, 0u);
+    EXPECT_TRUE(Result.Imports.empty());
+    const auto Image = test::readImage(Result.File);
+    EXPECT_TRUE(std::equal(C.Memory.begin() + Linked.Entry,
+                           C.Memory.begin() + Linked.Entry + 6,
+                           Image.Mapped.begin() + Linked.Entry));
+  }
+}
+
 TEST_F(PERebuild, ConflictingExportWitnessesCannotRewriteACallSite) {
   plantCall(Linked.Entry);
   const auto Result = rebuild(
-      {{C.Base + Linked.Entry + 6, FirstGate, false, C.Base + Linked.Entry},
-       {C.Base + Linked.Entry + 6, SecondGate, false, C.Base + Linked.Entry},
-       {C.Base + Linked.Entry + 6, FirstGate, false, C.Base + Linked.Entry}});
+      {{C.Base + Linked.Entry + 6, FirstBinding, false, C.Base + Linked.Entry},
+       {C.Base + Linked.Entry + 6, SecondBinding, false, C.Base + Linked.Entry},
+       {C.Base + Linked.Entry + 6, FirstBinding, false,
+        C.Base + Linked.Entry}});
   ASSERT_FALSE(HasFailure());
   EXPECT_EQ(Result.RepairedTailCalls, 0u);
   EXPECT_EQ(Result.ConflictingTailCalls, 1u);
@@ -198,10 +231,10 @@ TEST_F(PERebuild, X64CallBytesInAnARM64ImageHaveNoRepairAuthority) {
             llvm::COFF::IMAGE_FILE_MACHINE_ARM64);
   prepare();
   ASSERT_FALSE(HasFailure());
-  C.Exports.emplace(FirstGate, ExportBinding{"first.dll", "first", {}});
+  C.Exports.emplace(FirstGate, FirstBinding);
   plantCall(Linked.Entry);
-  const auto Result = rebuild(
-      {{C.Base + Linked.Entry + 6, FirstGate, false, C.Base + Linked.Entry}});
+  const auto Result = rebuild({{C.Base + Linked.Entry + 6, FirstBinding, false,
+                                C.Base + Linked.Entry}});
   ASSERT_FALSE(HasFailure());
   EXPECT_EQ(Result.RepairedTailCalls, 0u);
   EXPECT_TRUE(Result.Imports.empty());
@@ -212,7 +245,7 @@ TEST_F(PERebuild, ObservedExportAddressLoadsUseAnOwnedImportCell) {
   const uint8_t Bytes[] = {0x5b, 0xe8, 0x20, 0, 0, 0, 0xc3};
   std::copy(std::begin(Bytes), std::end(Bytes), C.Memory.begin() + RVA);
   const auto Result =
-      rebuild({{C.Base + RVA + 7, FirstGate, true, C.Base + RVA, 3}});
+      rebuild({{C.Base + RVA + 7, FirstBinding, true, C.Base + RVA, 3}});
   ASSERT_FALSE(HasFailure());
   ASSERT_EQ(Result.Imports.size(), 1u);
   const auto Image = test::readImage(Result.File);
@@ -236,8 +269,8 @@ TEST_F(PERebuild, ExportAddressLoadsPreserveEveryGPRDestinationExceptRSP) {
     Site[Prefix + 1] = 0xe8;
     write32le(Site + Prefix + 2, 0x20);
     Site[Prefix + 6] = 0xc3;
-    const auto Result = rebuild(
-        {{C.Base + RVA + Prefix + 7, FirstGate, true, C.Base + RVA, Register}});
+    const auto Result = rebuild({{C.Base + RVA + Prefix + 7, FirstBinding, true,
+                                  C.Base + RVA, Register}});
     ASSERT_FALSE(HasFailure());
     const auto Image = test::readImage(Result.File);
     if (Register == 4) {
@@ -263,7 +296,7 @@ TEST_F(PERebuild, AddressLoadsNeedTheirExecutedStart) {
   const uint64_t RVA = Linked.Entry;
   const uint8_t Bytes[] = {0x5b, 0xe8, 0x20, 0, 0, 0, 0xc3};
   std::copy(std::begin(Bytes), std::end(Bytes), C.Memory.begin() + RVA);
-  const auto Result = rebuild({{C.Base + RVA + 7, FirstGate, true, 0, 3}});
+  const auto Result = rebuild({{C.Base + RVA + 7, FirstBinding, true, 0, 3}});
   ASSERT_FALSE(HasFailure());
   EXPECT_EQ(Result.RepairedImportLoads, 0u);
   EXPECT_TRUE(Result.Imports.empty());
@@ -274,7 +307,7 @@ TEST_F(PERebuild, AddressLoadsNeedAnObservedResultRegister) {
   const uint8_t Bytes[] = {0x5b, 0xe8, 0x20, 0, 0, 0, 0xc3};
   std::copy(std::begin(Bytes), std::end(Bytes), C.Memory.begin() + RVA);
   const auto Result =
-      rebuild({{C.Base + RVA + 7, FirstGate, true, C.Base + RVA}});
+      rebuild({{C.Base + RVA + 7, FirstBinding, true, C.Base + RVA}});
   ASSERT_FALSE(HasFailure());
   EXPECT_EQ(Result.RepairedImportLoads, 0u);
   EXPECT_TRUE(Result.Imports.empty());
@@ -282,7 +315,7 @@ TEST_F(PERebuild, AddressLoadsNeedAnObservedResultRegister) {
 
 TEST_F(PERebuild, CallWitnessesNeedTheirExecutedStart) {
   plantCall(Linked.Entry);
-  const auto Result = rebuild({{C.Base + Linked.Entry + 6, FirstGate}});
+  const auto Result = rebuild({{C.Base + Linked.Entry + 6, FirstBinding}});
   ASSERT_FALSE(HasFailure());
   EXPECT_EQ(Result.RepairedTailCalls, 0u);
   EXPECT_TRUE(Result.Imports.empty());
@@ -298,7 +331,7 @@ TEST_F(PERebuild, PureCallWindowsRetainTheExactAPIReturnAddress) {
     C.Memory[RVA + 6] = 0x0b;
     C.Memory[RVA + 7] = 0xf4;
     const auto Result =
-        rebuild({{C.Base + RVA + Size, FirstGate, false, C.Base + RVA}});
+        rebuild({{C.Base + RVA + Size, FirstBinding, false, C.Base + RVA}});
     ASSERT_FALSE(HasFailure());
     ASSERT_EQ(Result.RepairedTailCalls, 1u);
     ASSERT_EQ(Result.Imports.size(), 1u);
@@ -319,7 +352,7 @@ TEST_F(PERebuild, APreviousRexShapedByteIsNotAnExecutedAddressLoadPrefix) {
   const uint8_t Bytes[] = {0x41, 0x5b, 0xe8, 0x20, 0, 0, 0, 0xc3};
   std::copy(std::begin(Bytes), std::end(Bytes), C.Memory.begin() + RVA - 1);
   const auto Result =
-      rebuild({{C.Base + RVA + 7, FirstGate, true, C.Base + RVA, 3}});
+      rebuild({{C.Base + RVA + 7, FirstBinding, true, C.Base + RVA, 3}});
   ASSERT_FALSE(HasFailure());
   const auto Image = test::readImage(Result.File);
   EXPECT_EQ(Result.RepairedImportLoads, 1u);
@@ -333,8 +366,8 @@ TEST_F(PERebuild, AddressLoadStartsSharingAReturnCannotOverwriteEachOther) {
   const uint8_t Bytes[] = {0x41, 0x5b, 0xe8, 0x20, 0, 0, 0, 0xc3};
   std::copy(std::begin(Bytes), std::end(Bytes), C.Memory.begin() + RVA);
   const auto Result = rebuild({
-      {C.Base + RVA + 8, FirstGate, true, C.Base + RVA, 11},
-      {C.Base + RVA + 8, FirstGate, true, C.Base + RVA + 1, 3},
+      {C.Base + RVA + 8, FirstBinding, true, C.Base + RVA, 11},
+      {C.Base + RVA + 8, FirstBinding, true, C.Base + RVA + 1, 3},
   });
   ASSERT_FALSE(HasFailure());
   EXPECT_EQ(Result.RepairedImportLoads, 0u);
@@ -352,9 +385,9 @@ TEST_F(PERebuild, NestedWindowsCannotHideANonAdjacentOverlap) {
   // [0,8) overlaps both [1,7) and [7,13), although the latter pair merely
   // touches. Adjacent-pair checks alone miss the third conflicting start.
   const auto Result = rebuild({
-      {C.Base + RVA + 8, FirstGate, false, C.Base + RVA},
-      {C.Base + RVA + 7, FirstGate, false, C.Base + RVA + 1},
-      {C.Base + RVA + 13, FirstGate, false, C.Base + RVA + 7},
+      {C.Base + RVA + 8, FirstBinding, false, C.Base + RVA},
+      {C.Base + RVA + 7, FirstBinding, false, C.Base + RVA + 1},
+      {C.Base + RVA + 13, FirstBinding, false, C.Base + RVA + 7},
   });
   ASSERT_FALSE(HasFailure());
   EXPECT_EQ(Result.RepairedTailCalls, 0u);

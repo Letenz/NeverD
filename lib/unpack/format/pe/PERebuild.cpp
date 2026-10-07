@@ -154,7 +154,8 @@ std::vector<uint8_t> buildImports(llvm::ArrayRef<Slot> Slots,
 
 struct TailRepairs {
   struct Site {
-    uint64_t ReturnRVA, Gate;
+    uint64_t ReturnRVA;
+    const ExportBinding *Target;
     x64::ImportSite Patch;
   };
   std::vector<Site> Sites;
@@ -173,8 +174,9 @@ llvm::Expected<TailRepairs> planTailImports(const Image &In, const Capture &C,
     return Repairs;
   for (const auto &Call : Calls) {
     if (Call.ReturnAddress < C.Base ||
-        Call.ReturnAddress - C.Base >= Memory.size() || !Call.Gate ||
-        C.Exports.find(Call.Gate) == C.Exports.end())
+        Call.ReturnAddress - C.Base >= Memory.size() ||
+        Call.Target.Module.empty() ||
+        (Call.Target.Name.empty() && !Call.Target.Ordinal))
       continue;
     const uint64_t ReturnRVA = Call.ReturnAddress - C.Base;
     if (Call.InstructionAddress < C.Base)
@@ -187,15 +189,15 @@ llvm::Expected<TailRepairs> planTailImports(const Image &In, const Capture &C,
     auto Existing = llvm::find_if(
         Repairs.Sites, [&](const auto &S) { return S.ReturnRVA == ReturnRVA; });
     if (Existing != Repairs.Sites.end()) {
-      if (Existing->Gate &&
-          (Existing->Gate != Call.Gate || Existing->Patch.RVA != Patch->RVA ||
-           Existing->Patch.Register != Patch->Register)) {
-        Existing->Gate = 0;
+      if (Existing->Target && (*Existing->Target != Call.Target ||
+                               Existing->Patch.RVA != Patch->RVA ||
+                               Existing->Patch.Register != Patch->Register)) {
+        Existing->Target = nullptr;
         ++Repairs.Conflicts;
       }
       continue;
     }
-    Repairs.Sites.push_back({ReturnRVA, Call.Gate, *Patch});
+    Repairs.Sites.push_back({ReturnRVA, &Call.Target, *Patch});
   }
   // A byte sequence can describe overlapping sites. No observation gives one
   // permission to overwrite another, even when both reach the same export.
@@ -213,16 +215,17 @@ llvm::Expected<TailRepairs> planTailImports(const Image &In, const Capture &C,
     }
     if (End - First > 1)
       for (size_t At = First; At < End; ++At)
-        if (Repairs.Sites[At].Gate) {
-          Repairs.Sites[At].Gate = 0;
+        if (Repairs.Sites[At].Target) {
+          Repairs.Sites[At].Target = nullptr;
           ++Repairs.Conflicts;
         }
     First = End;
   }
-  llvm::erase_if(Repairs.Sites, [](const auto &S) { return !S.Gate; });
+  llvm::erase_if(Repairs.Sites, [](const auto &S) { return !S.Target; });
   for (const auto &Site : Repairs.Sites) {
-    const auto *Binding = &C.Exports.find(Site.Gate)->second;
-    if (llvm::any_of(Slots, [&](const Slot &S) { return S.Target == Binding; }))
+    const auto *Binding = Site.Target;
+    if (llvm::any_of(Slots,
+                     [&](const Slot &S) { return *S.Target == *Binding; }))
       continue;
     if (Slots.size() == defaults::Imports)
       return failure(unpack::text::ImportLimit);
@@ -235,9 +238,9 @@ llvm::Expected<TailRepairs> planTailImports(const Image &In, const Capture &C,
     Repairs.CellBytes += 2 * value::PointerSize;
   }
   for (const auto &Site : Repairs.Sites) {
-    const auto *Binding = &C.Exports.find(Site.Gate)->second;
+    const auto *Binding = Site.Target;
     const auto Cell = llvm::find_if(
-        Slots, [&](const Slot &S) { return S.Target == Binding; });
+        Slots, [&](const Slot &S) { return *S.Target == *Binding; });
     const int64_t Displacement =
         int64_t(Cell->RVA) - int64_t(Site.Patch.instructionEnd());
     if (Displacement != int32_t(Displacement))
@@ -246,13 +249,12 @@ llvm::Expected<TailRepairs> planTailImports(const Image &In, const Capture &C,
   return Repairs;
 }
 
-void redirectTailImports(const Capture &C, const TailRepairs &Repairs,
-                         llvm::ArrayRef<Slot> Slots,
+void redirectTailImports(const TailRepairs &Repairs, llvm::ArrayRef<Slot> Slots,
                          llvm::MutableArrayRef<uint8_t> Memory) {
   for (const auto &Site : Repairs.Sites) {
-    const auto *Binding = &C.Exports.find(Site.Gate)->second;
+    const auto *Binding = Site.Target;
     const auto Cell = llvm::find_if(
-        Slots, [&](const Slot &S) { return S.Target == Binding; });
+        Slots, [&](const Slot &S) { return *S.Target == *Binding; });
     x64::writeImport(Memory, Site.Patch, Cell->RVA);
   }
 }
@@ -329,7 +331,7 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   auto Repairs = planTailImports(In, C, Plan.TailImports, Memory, *Slots);
   if (!Repairs)
     return Repairs.takeError();
-  redirectTailImports(C, *Repairs, *Slots, Memory);
+  redirectTailImports(*Repairs, *Slots, Memory);
   const auto Groups = groupSlots(*Slots);
 
   // The metadata section follows the image, so every recovered RVA is kept.

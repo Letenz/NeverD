@@ -1142,7 +1142,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 48 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `4931 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5292`。29 项等待集合检查包含十五项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `4933 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5294`。29 项等待集合检查包含十五项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1258,6 +1258,8 @@ Windows ring3 按独立原生观测，将 checked x64 的 `operand_alignment` �
 `ExtendedRegistersLoadOrdinaryImportsAgain` 通过受检和直接 x64 执行验证紧凑及带填充的 R8-R15 导入加载。低寄存器用例覆盖前置 REX 形状字节和仅含 CALL 的地址辅助例程；带填充的调用辅助例程跳过 CALL 后的任意字节。`ImportCallHelpersCannotDiscardPersistentEffects` 要求辅助例程的持久副作用仍可观察。`PERebuildTests.cpp` 拒绝缺失起点、结果证据及重叠起点，并保持六至八字节调用窗口的精确 API 返回地址。
 
 `OpaqueExportCallsAreRepairedBeforeTheExplicitStop` 恢复纯调用且不绕过未知 API。`ExportObservationIncludesTheOpaqueBoundary` 覆盖静态、动态和序号导出，保持执行及服务日志不变。`OpaqueExportObservationPreservesAnUnreadableReturn` 要求缺失的返回信息保持缺失。
+
+`ExportIdentitySurvivesRebindingAndLateResolution` 改变不透明导出的绑定顺序，并在入口之后解析导出。checked/direct x64 用例要求正确的 API 身份，并保留明确的 unsupported-service 停止。
 
 Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及当前进程的 `FlushInstructionCache`。OS 层管理预留区域，`AddressSpace` 统一管理已提交页面、权限和物理存储。测试覆盖动态代码改写、访问故障和内存额度回收。
 
@@ -1471,6 +1473,7 @@ MainActor 测试数据检查完整的固定元数据与静态表流程，拒绝�
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` 检查带分支变化和符号帧写入的重复原生目标链、固定逻辑开销、精确及少一次查询预算、无效目标限额、门预算耗尽和错误终点观察。交错的帧与相关目标投影还在谓词替换前后保持完整元组、观察顺序及不完整结果拒绝。
+`FrameOffsets.Cached*` 覆盖根高位保持任意的地址平移、无符号回绕、和式形状变化、两种缓存模式、谓词隔离、零容量、查询／节点预算拒绝，以及空域与非唯一域的区别。首次请求保留完整求解证明；后续平移可在没有剩余查询预算时使用已经完成的证明。
 
 ## 已发布 Android GKI 内核契约
 

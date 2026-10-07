@@ -1180,7 +1180,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 48 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `4931 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5292`。29 項等待集合檢查包含十五項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `4933 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5294`。29 項等待集合檢查包含十五項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1296,6 +1296,8 @@ Windows ring3 依獨立原生觀測，將 checked x64 的 `operand_alignment` �
 `ExtendedRegistersLoadOrdinaryImportsAgain` 以受檢及直接 x64 執行驗證緊湊與帶填充的 R8-R15 導入載入。低暫存器案例涵蓋前置 REX 形狀位元組與僅含 CALL 的位址輔助常式；填充呼叫會跳過 CALL 後的任意位元組。`ImportCallHelpersCannotDiscardPersistentEffects` 要求持久副作用仍可觀察。`PERebuildTests.cpp` 拒絕缺少起點、結果證據及重疊起點，並保留六至八位元組視窗的精確 API 返回位址。
 
 `OpaqueExportCallsAreRepairedBeforeTheExplicitStop` 還原純呼叫而不繞過未知 API。`ExportObservationIncludesTheOpaqueBoundary` 涵蓋靜態、動態與序號導出，保持執行和服務日誌不變。`OpaqueExportObservationPreservesAnUnreadableReturn` 要求缺少的返回資訊保持缺少。
+
+`ExportIdentitySurvivesRebindingAndLateResolution` 改變不透明匯出的繫結順序，並在入口之後解析匯出。checked/direct x64 案例要求正確的 API 身分，並保留明確的 unsupported-service 停止。
 
 Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及目前行程的 `FlushInstructionCache`。OS 層管理保留區域，`AddressSpace` 統一管理已認可頁面、權限和實體儲存。測試涵蓋動態程式碼改寫、存取錯誤和記憶體額度回收。
 
@@ -1509,6 +1511,7 @@ MainActor 測試資料檢查完整的固定中繼資料與靜態表流程，拒�
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` 檢查帶分支變更和符號框架寫入的重複原生目標鏈、固定邏輯開銷、精確及少一次查詢預算、無效目標限額、閘預算耗盡和錯誤終點觀察。交錯的框架與相關目標投影還在謂詞替換前後保持完整元組、觀察順序及不完整結果拒絕。
+`FrameOffsets.Cached*` 涵蓋根高位保持任意的位址平移、無號回繞、和式形狀變化、兩種快取模式、述詞隔離、零容量、查詢／節點預算拒絕，以及空值域與非唯一值域的差異。首次要求保留完整求解證明；後續平移可在沒有剩餘查詢預算時使用已完成的證明。
 
 ## 已釋出 Android GKI 核心契約
 

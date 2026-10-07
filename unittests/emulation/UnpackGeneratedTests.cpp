@@ -90,6 +90,7 @@ protected:
     Scratch = Created.str().str();
     Options.Process.Backend = P.Backend;
     Options.Process.Contract = P.Contract;
+    Options.Process.Windows.emplace().DeferUnmodeled = true;
     Options.Process.Limits.Instructions = InstructionLimit;
     Options.Process.Limits.TimeoutMicroseconds = TimeoutMicroseconds;
 #endif
@@ -196,17 +197,21 @@ protected:
          Mode == ImpureCallMode) &&
         !mutateImportCalls(Bytes, Mode))
       return {};
-    if (Mode == OpaqueCallMode) {
+    if (Mode == OpaqueCallMode || Mode == ReboundOpaqueCallMode ||
+        Mode == LateOpaqueCallMode) {
       const auto *Code = Original.section(ProgramSection);
       const uint64_t RVA =
-          Original.Exports.at("opaque_program") + OpaqueCallOffset;
+          Mode == OpaqueCallMode
+              ? Original.Exports.at("opaque_program") + OpaqueCallOffset
+              : Original.Exports.at("late_program") + LateCallOffset;
       const uint64_t At = Code->FileOffset + RVA - Code->RVA;
       if (Bytes[At] != 0xff || Bytes[At + 1] != 0x15) {
         ADD_FAILURE() << "independent program has no opaque import call";
         return {};
       }
-      const uint64_t Target =
-          Original.Exports.at("call_SetUnhandledExceptionFilter");
+      const uint64_t Target = Original.Exports.at(
+          Mode == OpaqueCallMode ? "call_SetUnhandledExceptionFilter"
+                                 : "late_export_helper");
       Bytes[At] = 0xe8;
       write32le(Bytes.data() + At + 1, uint32_t(Target - (RVA + 5)));
       Bytes[At + 5] = 0x0f;
@@ -560,6 +565,55 @@ TEST_P(UnpackGenerated, OpaqueExportCallsAreRepairedBeforeTheExplicitStop) {
   EXPECT_EQ(Actual.Diagnostic, Expected.Diagnostic);
   EXPECT_FALSE(Actual.ExitStatus);
   EXPECT_EQ(Actual.Instructions, Expected.Instructions);
+}
+
+TEST_P(UnpackGenerated, ExportIdentitySurvivesRebindingAndLateResolution) {
+  if (GetParam().ISA != GuestArchitecture::X64)
+    GTEST_SKIP() << X64CallShape;
+  for (const uint32_t Mode : {ReboundOpaqueCallMode, LateOpaqueCallMode}) {
+    SCOPED_TRACE(Mode);
+    const auto Result = unpack(Mode);
+    ASSERT_FALSE(HasFatalFailure());
+    ASSERT_EQ(Result.Outcome, UnpackOutcome::Unpacked) << Result.Diagnostic;
+    EXPECT_EQ(Result.ImportRepair.RepairedCalls, 1u);
+    EXPECT_EQ(Result.ImportRepair.Stop, "unsupported_service");
+    EXPECT_NE(Result.ImportRepair.Diagnostic.find(LateExport),
+              std::string::npos);
+    const auto Image = test::readImage(Result.Image);
+    ASSERT_FALSE(HasFatalFailure());
+    const uint64_t RVA = Original.Exports.at("late_program") + LateCallOffset;
+    EXPECT_EQ(Image.Mapped[RVA], 0xff);
+    EXPECT_EQ(Image.Mapped[RVA + 1], 0x15);
+    if (Image.Mapped[RVA] == 0xff && Image.Mapped[RVA + 1] == 0x15) {
+      const uint64_t Cell = RVA + 6 +
+                            int32_t(llvm::support::endian::read32le(
+                                Image.Mapped.data() + RVA + 2));
+      const auto Import = llvm::find_if(
+          Image.Imports, [&](const auto &I) { return I.Slot == Cell; });
+      ASSERT_NE(Import, Image.Imports.end());
+      EXPECT_EQ(Import->Module, OpaqueModule);
+      EXPECT_EQ(Import->Name, LateExport);
+      if (Mode == ReboundOpaqueCallMode)
+        EXPECT_EQ(Cell, Original.Exports.at("LateImports"));
+    }
+    // Independently linked code specifies the import. Only the proven call
+    // window may change when a late resolution needs a new loader-owned cell.
+    const auto *Program = Original.section(ProgramSection);
+    ASSERT_NE(Program, nullptr);
+    for (uint64_t At = Program->RVA; At < Program->RVA + Program->VirtualSize;
+         ++At)
+      if (At < RVA || At >= RVA + 6)
+        EXPECT_EQ(Image.Mapped[At], Original.Mapped[At]) << At;
+    const auto Path = Scratch / RebuiltFile;
+    test::writeFile(Path, Result.Image);
+    const auto Expected = runOriginal(Mode), Actual = run(Path);
+    ASSERT_FALSE(HasFatalFailure());
+    EXPECT_EQ(Expected.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(Expected.Diagnostic.find(LateExport), std::string::npos);
+    EXPECT_EQ(Actual.Stop, Expected.Stop);
+    EXPECT_EQ(Actual.Diagnostic, Expected.Diagnostic);
+    EXPECT_FALSE(Actual.ExitStatus);
+  }
 }
 
 TEST_P(UnpackGenerated, ImportAddressHelpersCannotDiscardPersistentEffects) {

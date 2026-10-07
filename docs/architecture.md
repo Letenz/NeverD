@@ -3264,6 +3264,8 @@ Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `Vi
 
 `arch/X64Imports.cpp` owns x64 import instruction decoding and emission. `dynamic/ProcessImports.cpp` proves pure export calls and address-load results from read-only process observations; the PE writer consumes that evidence without duplicating the instruction rules.
 
+Export addresses belong to one process. Helper evidence carries the module and export name or ordinal resolved in the proving run; the PE writer compares these identities by value. A discovery address may become bound after entry, but only its current export identity authorizes repair.
+
 `ProcessObserver::exporting` receives an identified export and optional ABI return address before modeled API effects or an opaque-export stop. Missing return metadata stays absent; no unknown signature or result is invented. Observer errors stop dispatch before API effects.
 
 Native dependency discovery can follow an ARM64 indirect call only when the current complete LowIR and immutable instructions prove an exact resolved chained code-pointer slot. A separate code-pointer reader checks unique read-only storage, competing fixups and the current function entry; ordinary data-pointer readers retain their existing boundary. The bounded trace stays within one block and requires a current runtime or native ABI before preserving a register across a call, including register-specific ARC imports. Frame reloads, unknown calls and incomplete evidence remain unresolved. The inventory retains the original indirect occurrence and does not itself bind its ABI or authorize source publication.
@@ -3569,6 +3571,8 @@ blocking waits, temporary masks or other descriptor readiness.
 See
 [released GKI contracts](android-gki-kernels.md) for pinned source evidence and
 the limits of this implemented subset.
+
+Frame-offset proof keys normalize a top-level 64-bit address sum by removing its constant bias and subtracting the same entry root. Cold proofs retain the complete predicate and the existing remainder expression. Completed domains subtract the bias before insertion and restore the requested bias on lookup, preserving modular wrap, empty domains and nonuniqueness. Keys follow the original address so a change in the bounded remainder rewrite from a binary to an n-ary sum cannot change proof identity. All new nodes count against the existing node limit.
 
 ## Mobile source assembly
 

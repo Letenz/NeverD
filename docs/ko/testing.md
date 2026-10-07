@@ -1224,7 +1224,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 48개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `4931 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5292`입니다. 대기 집합 검사 29개는 이식 가능한 모델 사례 15개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `4933 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5294`입니다. 대기 집합 검사 29개는 이식 가능한 모델 사례 15개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 
@@ -1340,6 +1340,8 @@ Windows ring3는 독립적인 네이티브 관측에 따라 checked x64의 `oper
 `ExtendedRegistersLoadOrdinaryImportsAgain`는 짧은 형식과 패딩이 있는 R8-R15 로드를 검사 및 직접 x64 실행으로 검증합니다. 하위 레지스터 사례는 앞선 REX 모양 바이트와 CALL만 있는 주소 도우미를 다루며 패딩 호출은 CALL 뒤 임의 바이트를 건너뜁니다. `ImportCallHelpersCannotDiscardPersistentEffects`는 영구 부작용 보존을 요구합니다. `PERebuildTests.cpp`는 시작·결과 증거 누락과 겹친 시작을 거부하고 6~8바이트 구간의 정확한 API 반환 주소를 보존합니다.
 
 `OpaqueExportCallsAreRepairedBeforeTheExplicitStop`는 알 수 없는 API를 우회하지 않고 순수 호출을 복원합니다. `ExportObservationIncludesTheOpaqueBoundary`는 정적·동적·서수 내보내기를 다루며 실행과 서비스 로그를 보존합니다. `OpaqueExportObservationPreservesAnUnreadableReturn`는 누락된 반환 정보를 만들지 않도록 요구합니다.
+
+`ExportIdentitySurvivesRebindingAndLateResolution`은 불투명 내보내기의 바인딩 순서를 바꾸고 진입점 이후의 확인도 검사합니다. checked/direct x64 사례는 올바른 API 식별 정보와 명시적인 unsupported-service 중단을 요구합니다.
 
 Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`와 현재 프로세스의 `FlushInstructionCache`를 지원합니다. OS 계층은 예약 영역을 소유하고 `AddressSpace`는 커밋된 페이지, 권한, 실제 저장 공간을 관리합니다. 테스트는 동적 코드 수정, 접근 오류, 메모리 한도 재사용을 검증합니다.
 
@@ -1553,6 +1555,7 @@ MainActor 픽스처는 고정 메타데이터와 정적 테이블의 전체 흐�
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` 는 분기 변경과 기호적 프레임 쓰기를 포함한 반복 네이티브 대상 체인, 고정 논리 비용, 정확하거나 한 번 부족한 질의 예산, 잘못된 대상 한도, 게이트 예산 소진 및 잘못된 종료 관측을 검사합니다. 교차하는 프레임 및 상관 대상 투영은 술어 교체 전후에도 완전한 튜플, 관측 순서와 불완전한 결과 거부를 유지합니다.
+`FrameOffsets.Cached*`는 기준값의 상위 비트를 자유롭게 유지한 주소 평행 이동, 부호 없는 순환, 합의 형태 변경, 두 캐시 모드, 술어 분리, 용량 0, 쿼리／노드 예산 거부, 빈 집합과 비유일 집합의 구분을 검사한다. 최초 요청은 완전한 솔버 증명을 유지하며, 후속 평행 이동은 남은 쿼리 예산이 없어도 이미 완료된 증명을 사용할 수 있다.
 
 ## 출시된 Android GKI 커널 계약
 

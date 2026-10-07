@@ -9,12 +9,28 @@
 #include "UnpackInternal.h"
 
 #include <map>
+#include <tuple>
 
 namespace neverd::unpack {
 /// One export identity a pointer-sized cell can name.
 struct ExportBinding {
   std::string Module, Name;
   std::optional<uint16_t> Ordinal;
+
+  bool operator==(const ExportBinding &Other) const {
+    return std::tie(Module, Name, Ordinal) ==
+           std::tie(Other.Module, Other.Name, Other.Ordinal);
+  }
+  bool operator!=(const ExportBinding &Other) const {
+    return !(*this == Other);
+  }
+  /// Prefer a named alias, then a stable identity independent of enumeration.
+  bool operator<(const ExportBinding &Other) const {
+    if (Name.empty() != Other.Name.empty())
+      return !Name.empty();
+    return std::tie(Module, Name, Ordinal) <
+           std::tie(Other.Module, Other.Name, Other.Ordinal);
+  }
 };
 
 /// The image of a stopped process at the transfer where its entry was
@@ -47,8 +63,9 @@ struct Capture {
 /// validated state transition.
 struct TailImport {
   uint64_t ReturnAddress = 0;
-  /// Entry address of the resolved export.
-  uint64_t Gate = 0;
+  /// Identity resolved in the same process that proved this use. Addresses
+  /// belong to one process and cannot be interpreted through another capture.
+  ExportBinding Target;
   /// A helper returned this export address in a register without changing
   /// other registers, flags or persistent guest memory.
   bool AddressLoad = false;
