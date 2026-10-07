@@ -1,0 +1,27 @@
+//===- SymbolDecorations.def - How formats spell C names -------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The object formats whose C compilers add one leading underscore to every
+/// C name they emit as a symbol: `printf` links as `_printf`.  ELF and x64
+/// COFF symbols spell C names as they are.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_ABI_UNDERSCORE(Format): on every architecture of Format.
+#ifndef NEVERD_ABI_UNDERSCORE
+#define NEVERD_ABI_UNDERSCORE(Format)
+#endif
+// NEVERD_ABI_UNDERSCORE_ON(Format, Arch): on one architecture of Format.
+#ifndef NEVERD_ABI_UNDERSCORE_ON
+#define NEVERD_ABI_UNDERSCORE_ON(Format, Arch)
+#endif
+
+NEVERD_ABI_UNDERSCORE(MachO)
+NEVERD_ABI_UNDERSCORE_ON(COFF, X86)
+
+#undef NEVERD_ABI_UNDERSCORE
+#undef NEVERD_ABI_UNDERSCORE_ON

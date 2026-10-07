@@ -110,6 +110,16 @@ name has the demangled one above its header, and the Functions window lists
 every function demangled, PLT entries included, with the filter matching
 either spelling. Itanium, Microsoft, Rust and D names are demangled.
 
+C has no `::`, so in C pseudocode a C++ function reads by its scopes joined
+with underscores: `QDomNode_nodeType`, constructors and destructors as
+`QDomNode_ctor` and `QDomNode_dtor`, operators by name (`QString_assign`).
+Its complete demangled signature is a comment above its definition, overloads
+sharing a name are numbered (`QDomNodeList_ctor_2`), and an imported C++
+function keeps its mangled symbol in an `__asm__` label so that the code still
+links. Other names keep every byte of their symbol (`__libc_start_main`), apart
+from the underscore Mach-O and 32-bit Windows add to C names and the start-up
+functions the C runtime defines itself (`_start` reads `start`).
+
 Strings are found by default in ASCII, UTF-8, UTF-16LE and UTF-32LE (the
 `wchar_t` of Linux and macOS), and C strings that are not UTF-8 in the common
 code pages: windows-1252, GBK, Big5, Shift-JIS and EUC-KR, all in one pass.

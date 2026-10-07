@@ -850,7 +850,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                               : E.Operands.size();
   std::string S = Name + "(";
   const auto Callee = debugCallee(E);
-  const MsvcCallee *Msvc = msvcCallee(Name);
+  const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format);
   // A callee printed in this file fixes the count by its signature; otherwise
   // debug info and MSVC member knowledge may trim ABI-only extra operands.
   const size_t PrintedArgs =
@@ -1089,7 +1089,7 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None)
     return {};
   const std::string Name = callIdentifier(E);
-  if (const MsvcCallee *Msvc = msvcCallee(Name))
+  if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format))
     return msvcSyntheticReturn(Msvc->ReturnKind);
   if (const auto Callee = debugCallee(E))
     return Callee->ReturnType;
@@ -1102,7 +1102,7 @@ bool HighCWriter::knownVoidCall(const HighExpr &E) const {
   // Other special-member rows are declared `void` too, but an MSVC
   // constructor or assignment returns `this`, and so does an ARM32 Itanium
   // destructor: a read of their result is real.
-  if (const MsvcCallee *Msvc = msvcCallee(callIdentifier(E)))
+  if (const MsvcCallee *Msvc = msvcCallee(callIdentifier(E), Opts.Format))
     return Msvc->Kind == MsvcCalleeKind::Dtor &&
            isMsvcDestructorName(resolvedCallTarget(E));
   const auto Callee = debugCallee(E);
@@ -1411,7 +1411,7 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
     return Have;
   auto Clamp = [&](size_t Limit) { return std::min(Limit, Have); };
   const std::string Name = callIdentifier(E);
-  const MsvcCallee *Msvc = msvcCallee(Name);
+  const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format);
   auto UnknownAt = [&](size_t I) {
     return I < Have && isUnknownCallOperand(E.Operands[I].get());
   };
@@ -1482,7 +1482,7 @@ TypeRef HighCWriter::displayCallArgType(const HighExpr &Call,
   if (auto It = DebugExternSigs.find(Name); It != DebugExternSigs.end())
     if (TypeRef Ty = FromFS(It->second))
       return Ty;
-  if (const MsvcCallee *Msvc = msvcCallee(Name)) {
+  if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format)) {
     if (Index == 0 || msvcTypesCallArgAsPointer(*Msvc, Index) ||
         (Msvc->Kind == MsvcCalleeKind::Ctor && Index == 1)) {
       TypeRef Ty = cDisplayType(msvcSyntheticThis(Name, *Msvc));
@@ -1700,7 +1700,7 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
   }
   std::string Declarator = Identifier + "(";
   size_t Emitted = 0;
-  const MsvcCallee *Msvc = msvcCallee(Identifier);
+  const MsvcCallee *Msvc = msvcCallee(Identifier, Opts.Format);
   auto Emit = [&](TypeRef Ty, std::string Name) {
     if (Msvc && Msvc->ArityKind == MsvcArityKind::Fixed &&
         Emitted >= Msvc->MaxArgs)

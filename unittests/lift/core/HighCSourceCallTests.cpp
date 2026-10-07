@@ -87,6 +87,9 @@ std::string emit(const std::vector<HighFunc> &Functions, bool Includes = true,
   llvm::raw_string_ostream OS(Result);
   CEmitterOptions Options;
   Options.TheArch = Architecture;
+  // Source calls are Apple-platform calls: their symbols carry Mach-O's
+  // decoration underscore.
+  Options.Format = BinaryFormat::MachO;
   Options.EmitIncludes = Includes;
   Options.EmitComments = false;
   EXPECT_TRUE(HighCEmitter().emit(Functions, OS, Options));

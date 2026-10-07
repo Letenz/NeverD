@@ -1972,7 +1972,7 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
               ReturnType = FS->ReturnType;
             if (!ReturnType)
               if (const MsvcCallee *Msvc =
-                      msvcCallee(printedCalleeName(*Call))) {
+                      msvcCallee(printedCalleeName(*Call), Opts.Format)) {
                 if (Msvc->ReturnKind == MsvcReturnKind::WCharPtr)
                   ReturnType = NdType::makePtr(NdType::makeInt(2, false));
                 else if (Msvc->ReturnKind == MsvcReturnKind::VoidPtr)
@@ -4598,7 +4598,8 @@ std::string LLVMCWriter::callArgStr(const llvm::Value *Arg,
     if (Slot != PhiTailSlot)
       return getName(Slot);
   }
-  if (const MsvcCallee *Msvc = msvcCallee(printedCalleeName(Call))) {
+  if (const MsvcCallee *Msvc =
+          msvcCallee(printedCalleeName(Call), Opts.Format)) {
     const TypeRef Expected = msvcExpectedCallArgType(*Msvc, ArgIdx);
     if (Expected && Expected->Kind == NdTypeKind::Int) {
       const llvm::Value *Inner = peelIntegerView(Arg);

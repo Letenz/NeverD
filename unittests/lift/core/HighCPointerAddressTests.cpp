@@ -3097,11 +3097,12 @@ TEST(HighCPointerAddresses, ExternalPrototypeMatchesLeadingUnderscoreCall) {
                                      {HighExpr::makeConst(7, 8)});
   Func.Body.push_back(std::move(Call));
 
+  // An x64 symbol carries no decoration: the C name is the symbol.
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("extern int _report_gsfailure("), std::string::npos)
+  EXPECT_NE(Source.find("extern int __report_gsfailure("), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("_report_gsfailure(7);"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("extern int report_gsfailure("), std::string::npos)
+  EXPECT_NE(Source.find("__report_gsfailure(7);"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("extern int _report_gsfailure("), std::string::npos)
       << Source;
 }
 
@@ -3118,12 +3119,12 @@ TEST(HighCPointerAddresses, ExternalCallsKeepDistinctUnderscoreSpellings) {
   }
 
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("extern int nd_external("), std::string::npos)
-      << Source;
   EXPECT_NE(Source.find("extern int _nd_external("), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("    nd_external(1);"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("    _nd_external(2);"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("extern int __nd_external("), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("    _nd_external(1);"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("    __nd_external(2);"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, SecurityCheckCookieParamIsStackCookie) {

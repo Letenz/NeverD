@@ -588,7 +588,7 @@ bool LLVMCWriter::sameSlotDestructorBetween(
     const auto *Other = llvm::dyn_cast<llvm::CallBase>(&I);
     if (!Other || Other == &Call)
       return false;
-    const MsvcCallee *Msvc = msvcCallee(printedCalleeName(*Other));
+    const MsvcCallee *Msvc = msvcCallee(printedCalleeName(*Other), Opts.Format);
     if (!Msvc || Msvc->Kind != MsvcCalleeKind::Dtor)
       return false;
     llvm::SmallVector<SlotMention, 2> DtorSlots;
@@ -671,7 +671,7 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
       const std::string Name = printedCalleeName(*Call);
       if (isMsvcCxxThrowCallName(Name))
         continue;
-      if (const MsvcCallee *Msvc = msvcCallee(Name))
+      if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format))
         if (Msvc->Kind == MsvcCalleeKind::Ctor)
           continue;
 
@@ -2652,7 +2652,7 @@ bool LLVMCWriter::isResultParamValue(const llvm::Value *V) const {
 unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
                                           llvm::StringRef CalleeName) const {
   const unsigned Have = Call.arg_size();
-  const MsvcCallee *Msvc = msvcCallee(CalleeName);
+  const MsvcCallee *Msvc = msvcCallee(CalleeName, Opts.Format);
   auto Clamp = [&](size_t Limit) {
     return static_cast<unsigned>(std::min(Limit, static_cast<size_t>(Have)));
   };
@@ -2843,7 +2843,7 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
     }
     if (Name.empty())
       return {};
-    if (const MsvcCallee *Msvc = msvcCallee(Name)) {
+    if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format)) {
       if (Index == 0 || msvcTypesCallArgAsPointer(*Msvc, Index) ||
           (Msvc->Kind == MsvcCalleeKind::Ctor && Index == 1)) {
         TypeRef Ty = cDisplayType(msvcSyntheticThis(Name, *Msvc));
@@ -7701,7 +7701,7 @@ LLVMCWriter::sharedReturnEpilogue(const llvm::BasicBlock *Tail) {
   if (Calls != 1 || !Call)
     return nullptr;
   const std::string Name = printedCalleeName(*Call);
-  const MsvcCallee *Msvc = msvcCallee(Name);
+  const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format);
   if (!Msvc || Msvc->Kind != MsvcCalleeKind::Dtor)
     return nullptr;
   unsigned Preds = 0;
@@ -8483,6 +8483,14 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
   OS.retarget(&BufOS);
 
   std::string FName = functionIdentifier(Fn);
+  // A C++ definition names its demangled signature: the C identifier keeps
+  // only its scopes and name.
+  if (Opts.EmitComments)
+    if (auto Symbol = FunctionSymbolNames.find(&Fn);
+        Symbol != FunctionSymbolNames.end())
+      if (const std::string Demangled = demangledComment(Symbol->second);
+          !Demangled.empty())
+        OS << "/* " << Demangled << " */\n";
   writeExceptionAnnotation(Fn);
 
   const bool IndirectReturn = !Opts.PreserveLLVMFunctionTypes && DebugFn &&

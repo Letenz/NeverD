@@ -26,11 +26,13 @@
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
+#include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
@@ -77,6 +79,7 @@ bool LLVMCWriter::isNativeVectorIntrinsic(const llvm::CallBase &Call,
 void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
   GlobalIdentifierAllocator = CProjectionIdentifierAllocator{};
   FunctionIdentifiers.clear();
+  FunctionSymbolNames.clear();
   for (llvm::Function &Fn : Mod) {
     llvm::StringRef Name = Fn.getName();
     std::string IntrinsicHelper;
@@ -132,20 +135,28 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
         }
       }
     }
-    if (!DebugName.empty())
-      Name = DebugName;
-    Name.consume_front("_");
+    // An image symbol carries the format's decoration; an LLVM name may have
+    // lost it already.  A definition steps aside from the C runtime's names.
+    llvm::StringRef CName =
+        DebugName.empty()
+            ? llvm_name::cNameOfLLVMName(Name, Opts.Format, Opts.TheArch)
+            : cNameOfSymbol(DebugName, Opts.Format, Opts.TheArch);
+    FunctionSymbolNames.emplace(&Fn, CName.str());
+    if (!Fn.isDeclaration())
+      CName = cDefinitionName(CName, Opts.Format);
     FunctionIdentifiers.emplace(
-        &Fn, GlobalIdentifierAllocator.allocate(Name, "nd_function"));
+        &Fn, GlobalIdentifierAllocator.allocate(CName, "nd_function"));
   }
 }
 
 std::string LLVMCWriter::functionIdentifier(const llvm::Function &Fn) const {
   if (auto It = FunctionIdentifiers.find(&Fn); It != FunctionIdentifiers.end())
     return It->second;
-  llvm::StringRef Name = Fn.getName();
-  Name.consume_front("_");
-  return canonicalizeCProjectionIdentifier(Name, "nd_function");
+  llvm::StringRef CName =
+      llvm_name::cNameOfLLVMName(Fn.getName(), Opts.Format, Opts.TheArch);
+  if (!Fn.isDeclaration())
+    CName = cDefinitionName(CName, Opts.Format);
+  return canonicalizeCProjectionIdentifier(CName, "nd_function");
 }
 
 void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
@@ -666,7 +677,7 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
 
     if (libc::isKnownFunction(Name))
       continue;
-    if (const MsvcCallee *Msvc = msvcCallee(Name)) {
+    if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format)) {
       OS << msvcSyntheticPrototype(Name, *Msvc,
                                    Opts.TheArch == Arch::X64 && Msvc->FastCall)
          << ";\n";
@@ -691,7 +702,23 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
       if (FT->isVarArg())
         OS << ", ...";
     }
-    OS << ");\n";
+    OS << ")";
+    // A C++ import reads by its stem but links by its mangled symbol, which
+    // a comment spells demangled.
+    std::string Comment;
+    if (Fn.isDeclaration()) {
+      const llvm::StringRef CName =
+          llvm_name::cNameOfLLVMName(RawName, Opts.Format, Opts.TheArch);
+      if (CName != Name && !itaniumStem(CName).empty()) {
+        std::string Label;
+        llvm::raw_string_ostream(Label).write_escaped(
+            symbolOfCName(CName, Opts.Format, Opts.TheArch));
+        OS << " __asm__(\"" << Label << "\")";
+        if (Opts.EmitComments)
+          Comment = " /* " + demangledComment(CName) + " */";
+      }
+    }
+    OS << ";" << Comment << "\n";
   }
 }
 

@@ -522,6 +522,8 @@ public:
   std::map<va_t, const HighFunc *> DefinedFunctionsByAddress;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
   std::map<const HighFunc *, std::string> FunctionIdentifiers;
+  /// The C name each defined function's symbol spells, for its comment.
+  std::map<const HighFunc *, std::string> FunctionSymbolNames;
   std::map<std::string, std::string> FunctionIdentifiersBySourceName;
   std::map<std::string, std::string> ExternalFunctionIdentifiers;
   // External prototypes use projected C names, while call expressions still
