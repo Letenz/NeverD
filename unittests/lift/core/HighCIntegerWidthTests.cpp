@@ -189,8 +189,8 @@ TEST(HighCIntegerWidths, UnsignedMachineWidthArithmeticUsesDeclaredType) {
       << Source;
   EXPECT_NE(Body("natural_u64_add").find("return arg0 + 1;"), std::string::npos)
       << Source;
-  EXPECT_NE(Body("natural_u32_to_s32")
-                .find("return __builtin_bit_cast(int32_t, arg0 + 1);"),
+  // The int32_t return converts the unsigned sum itself.
+  EXPECT_NE(Body("natural_u32_to_s32").find("return arg0 + 1;"),
             std::string::npos)
       << Source;
   EXPECT_EQ(Body("narrow_u16_add").find("return arg0 + 1;"), std::string::npos)
