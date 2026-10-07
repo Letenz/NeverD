@@ -41,6 +41,18 @@ void recordRuntimePointerArray(va_t Addr, uint64_t Size, std::vector<va_t> &Out,
 /// .ctors/.dtors spellings that are not necessarily described by PT_DYNAMIC.
 void parseRuntimeSections(BinaryImage &Img);
 
+/// Whether ELF relocation \p RelocType stores a symbol's address in a GOT
+/// slot the dynamic linker binds (GLOB_DAT, JUMP_SLOT).
+bool isELFSlotBinding(Arch Target, uint32_t RelocType);
+
+/// Record the slot of a dynamic relocation that binds an undefined symbol's
+/// address as import storage, as the Mach-O loader records its binds: the
+/// slot holds the external symbol, so a call through it calls the import.
+/// \p Undefined says whether the symbol is undefined in this image.
+bool recordImportSlotBinding(uint32_t RelocType, va_t Slot,
+                             llvm::StringRef Symbol, bool Undefined,
+                             int64_t Addend, BinaryImage &Img);
+
 /// Record the resolver named by an architecture-specific GNU IRELATIVE
 /// relocation.  RELA supplies \p Addend; REL reads the implicit addend from
 /// the mapped relocation slot.

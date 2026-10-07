@@ -23,7 +23,10 @@ namespace neverd::emulation {
 namespace {
 #define NEVERD_DEFERRED_VALUE(Name, Value) constexpr uint64_t Name = Value;
 #define NEVERD_DEFERRED_TEXT(Name, Text) constexpr char Name[] = Text;
+#define NEVERD_DEFERRED_GENERATED_BUFFER(Name, Bytes)                          \
+  constexpr uint64_t Name##Size = Bytes;
 #include "fixtures/WindowsDeferredCases.def"
+#undef NEVERD_DEFERRED_GENERATED_BUFFER
 #undef NEVERD_DEFERRED_TEXT
 #undef NEVERD_DEFERRED_VALUE
 struct Call {
@@ -89,7 +92,7 @@ protected:
 };
 
 TEST_P(WindowsDeferred, EarlierTLSCallbackMayGenerateALaterCallback) {
-  for (const char *Name : {"generated-tls.exe", "generated-tls-entry.exe"}) {
+  for (const char *Name : {GeneratedTLSFile, GeneratedTLSEntryFile}) {
     SCOPED_TRACE(Name);
     Path = Path.parent_path() / Name;
     Options.Contract.reset();
@@ -101,8 +104,12 @@ TEST_P(WindowsDeferred, EarlierTLSCallbackMayGenerateALaterCallback) {
     bool Unbacked = false;
     for (const auto &Section : (*Image)->sections()) {
       const auto *Header = (*Image)->getCOFFSection(Section);
-      if (llvm::cantFail(Section.getName()) == ".gentls") {
+      if (llvm::cantFail(Section.getName()) == GeneratedSection) {
         EXPECT_EQ(Header->SizeOfRawData, 0u);
+        EXPECT_EQ(Header->PointerToRawData, 0u);
+        EXPECT_EQ(Header->VirtualSize, GeneratedSize + GeneratedEntrySize);
+        EXPECT_TRUE(Header->Characteristics &
+                    llvm::COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA);
         Unbacked = Header->VirtualSize && !Header->SizeOfRawData;
       }
     }
@@ -139,6 +146,12 @@ struct Observer final : ProcessObserver {
       Exporting =
           [](ProcessView &, const ProcessExportView &,
              std::optional<uint64_t>) { return llvm::Error::success(); };
+  std::function<llvm::Expected<std::optional<std::vector<ExecutionWatch>>>(
+      ProcessView &)>
+      Resuming = [](ProcessView &)
+      -> llvm::Expected<std::optional<std::vector<ExecutionWatch>>> {
+    return std::nullopt;
+  };
   unsigned Starts = 0, Watches = 0;
   llvm::Expected<std::vector<ExecutionWatch>>
   started(ProcessView &Process) override {
@@ -153,6 +166,10 @@ struct Observer final : ProcessObserver {
   llvm::Error exporting(ProcessView &Process, const ProcessExportView &Export,
                         std::optional<uint64_t> ReturnAddress) override {
     return Exporting(Process, Export, ReturnAddress);
+  }
+  llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+  resuming(ProcessView &Process) override {
+    return Resuming(Process);
   }
 };
 
@@ -387,6 +404,23 @@ TEST_P(WindowsDeferred, ObserverFailuresAreNotGuestOutcomes) {
   EXPECT_EQ(BeforeAPI->Stop, ProcessStopReason::RuntimeFailure);
   EXPECT_EQ(BeforeAPI->Diagnostic, ObserverFailure);
   EXPECT_TRUE(BeforeAPI->NativeCalls.empty());
+}
+
+TEST_P(WindowsDeferred, ResumeObservationFailureCannotExecuteGuestCode) {
+  Observer O;
+  O.Resuming = [](ProcessView &)
+      -> llvm::Expected<std::optional<std::vector<ExecutionWatch>>> {
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   ObserverFailure);
+  };
+  auto Failed = observeProcess(Path, ProcessProfile::WindowsPE64, Options, O);
+  ASSERT_TRUE(bool(Failed)) << llvm::toString(Failed.takeError());
+  EXPECT_EQ(Failed->Stop, ProcessStopReason::RuntimeFailure);
+  EXPECT_EQ(Failed->Diagnostic, ObserverFailure);
+  EXPECT_EQ(Failed->Instructions, 0u);
+  EXPECT_TRUE(Failed->NativeCalls.empty());
+  EXPECT_EQ(O.Starts, 1u);
+  EXPECT_EQ(O.Watches, 0u);
 }
 
 TEST_P(WindowsDeferred, ProfilesWithoutObservationRefuseAnObserver) {

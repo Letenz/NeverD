@@ -189,6 +189,18 @@ private:
   /// the partial write so buildSsa carries the merged value across the block
   /// boundary / into successor phis (LowToMedX86.cpp, Phase B2x).
   void mergePartialWritesCrossBlockX86(MedFunc &Func);
+  /// ARM ELF: the `PC + R_ARM_REL32` literal values CFGBuilder proved at their
+  /// ADD outputs, keyed by instruction and op sequence, and the outputs whose
+  /// proof is ambiguous (LowToMedARM.cpp).  Empty for other images.
+  struct RelativeLiteralOutputs {
+    std::map<std::pair<va_t, int>,
+             const RelocatedInstructionAddressOccurrence *>
+        Exact;
+    std::set<std::pair<va_t, int>> Ambiguous;
+  };
+  RelativeLiteralOutputs armRelativeLiteralOutputs(const LowFunc &Low,
+                                                   Arch TheArch,
+                                                   BinaryFormat Fmt) const;
   /// ARM/AArch64: reconstruct a full-width NEON Q read from its two more-recent
   /// 8-byte D halves within a block (LowToMedARM.cpp, Phase B3).
   void mergeWideVectorReadsARM(MedFunc &Func);
@@ -299,8 +311,11 @@ private:
   const std::map<va_t, int> *CallEntryStackArgs = nullptr;
   const std::set<va_t> *CallDispatchThunks = nullptr;
   const std::map<va_t, int> *CallVariadicFrom = nullptr;
-  /// Win64 argument registers (bit I = RCX, RDX, R8, R9) defined on every
-  /// path to the dispatcher or variadic call being converted.
+  /// Argument registers DispatchCallDefinedArgs tracks, one bit each.
+  static constexpr size_t kTrackedArgSlots = 8;
+  /// The calling convention's argument registers (bit I = its Ith integer
+  /// argument register) defined on every path to the dispatcher or variadic
+  /// call being converted.
   uint8_t DispatchCallDefinedArgs = 0;
 
   /// GOT/pointer-slot VAs holding a stack-probe import; see setStackProbeSlots.

@@ -29,8 +29,9 @@ NEVERD_STRING_ENCODING(UTF32BE, "utf-32be", "UTF-32BE", 4, true)
 // pages, decoded as the WHATWG Encoding Standard decodes them from the
 // indexes of TextEncodingIndexes.inc.  Decoder: GB18030 (which also decodes
 // GBK), Big5, ShiftJIS, EUCKR, or SingleByte with its Table of bytes
-// 0x80-0xFF.  Different code pages read the same bytes, so a search uses at
-// most one of them.
+// 0x80-0xFF.  A search may read C strings in several code pages: where more
+// than one reads a string as text, the one its options prefer wins, then the
+// first listed here.
 #ifndef NEVERD_LEGACY_ENCODING
 #define NEVERD_LEGACY_ENCODING(Id, Name, Spelling, Decoder, Table)
 #endif
@@ -67,6 +68,58 @@ NEVERD_LEGACY_ENCODING(KOI8U, "koi8-u", "KOI8-U", SingleByte, SingleByte_koi8_u)
 NEVERD_LEGACY_ENCODING(IBM866, "ibm866", "IBM866", SingleByte,
                        SingleByte_ibm866)
 #undef NEVERD_LEGACY_ENCODING
+
+// NEVERD_CODE_PAGE_SCRIPT(Id, Family): a writing system (NEVERD_SCRIPT_FAMILY)
+// a code page is made for.  Where several code pages read one C string as
+// text, a reading in the scripts its code page is made for wins over a
+// reading in another: GBK reads the Big5 bytes of 中文 as two kana.
+#ifndef NEVERD_CODE_PAGE_SCRIPT
+#define NEVERD_CODE_PAGE_SCRIPT(Id, Family)
+#endif
+NEVERD_CODE_PAGE_SCRIPT(GBK, Han)
+NEVERD_CODE_PAGE_SCRIPT(GBK, Chinese)
+NEVERD_CODE_PAGE_SCRIPT(Big5, Han)
+NEVERD_CODE_PAGE_SCRIPT(Big5, Chinese)
+NEVERD_CODE_PAGE_SCRIPT(ShiftJIS, Han)
+NEVERD_CODE_PAGE_SCRIPT(ShiftJIS, Japanese)
+NEVERD_CODE_PAGE_SCRIPT(EUCKR, Han)
+NEVERD_CODE_PAGE_SCRIPT(EUCKR, Korean)
+NEVERD_CODE_PAGE_SCRIPT(Windows1250, Latin)
+NEVERD_CODE_PAGE_SCRIPT(Windows1251, Cyrillic)
+NEVERD_CODE_PAGE_SCRIPT(Windows1252, Latin)
+NEVERD_CODE_PAGE_SCRIPT(Windows1253, Greek)
+NEVERD_CODE_PAGE_SCRIPT(Windows1254, Latin)
+NEVERD_CODE_PAGE_SCRIPT(Windows1255, Hebrew)
+NEVERD_CODE_PAGE_SCRIPT(Windows1256, Arabic)
+NEVERD_CODE_PAGE_SCRIPT(Windows1257, Latin)
+NEVERD_CODE_PAGE_SCRIPT(Windows1258, Latin)
+NEVERD_CODE_PAGE_SCRIPT(ISO8859_2, Latin)
+NEVERD_CODE_PAGE_SCRIPT(ISO8859_5, Cyrillic)
+NEVERD_CODE_PAGE_SCRIPT(ISO8859_7, Greek)
+NEVERD_CODE_PAGE_SCRIPT(KOI8R, Cyrillic)
+NEVERD_CODE_PAGE_SCRIPT(KOI8U, Cyrillic)
+NEVERD_CODE_PAGE_SCRIPT(IBM866, Cyrillic)
+#undef NEVERD_CODE_PAGE_SCRIPT
+
+// NEVERD_DEFAULT_ENCODING(Id): the encodings a search uses unless its options
+// name others.  The code pages among them seldom read one string as text
+// together: the common-character evidence tells the double-byte pages apart,
+// and their bytes are not windows-1252 letters.  Single-byte pages for one
+// script read each other's text as text, so the others are searched only when
+// chosen or preferred.
+#ifndef NEVERD_DEFAULT_ENCODING
+#define NEVERD_DEFAULT_ENCODING(Id)
+#endif
+NEVERD_DEFAULT_ENCODING(ASCII)
+NEVERD_DEFAULT_ENCODING(UTF8)
+NEVERD_DEFAULT_ENCODING(UTF16LE)
+NEVERD_DEFAULT_ENCODING(UTF32LE)
+NEVERD_DEFAULT_ENCODING(GBK)
+NEVERD_DEFAULT_ENCODING(Big5)
+NEVERD_DEFAULT_ENCODING(ShiftJIS)
+NEVERD_DEFAULT_ENCODING(EUCKR)
+NEVERD_DEFAULT_ENCODING(Windows1252)
+#undef NEVERD_DEFAULT_ENCODING
 
 // NEVERD_ENCODING_ALIAS(Alias, Id): other names an encoding is known by.
 #ifndef NEVERD_ENCODING_ALIAS

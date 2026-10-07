@@ -827,6 +827,8 @@ KVM、WHP 和 Unicorn 的 checked x64/ARM64 可请求 `ExecutionFeature::Paralle
 发射和代码生成位于 `lib/backend/llvm/<ISA>` 及
 `lib/backend/codegen/CodeGen<ISA>.cpp`。
 
+共享 pass 中新增的目标专属规则应放在按目标划分的表中，而不是内联判断架构或格式。ISA 的事实是一个 `TargetRegInfo` 特性，在该 ISA 的 `lib/ir/TargetRegInfo<ISA>.cpp` 中设置。调用约定规则是一个 `CallArgumentConvention` 条目，定义在独立的 `lib/ir/med/abi/MedCallConvention<Name>.cpp` 中，并在 `MedCallConvention.cpp` 中登记。永不返回的函数按运行时分别列在 `include/neverd/libc` 下（`LibCNoReturn.inc`、`CxxRuntimeNoReturn.inc`、`WindowsNoReturn.inc`）。这样支持新目标只需新增文件或表项，而无需在共享 pass 中加分支。
+
 <a id="support-and-test-depth"></a>
 
 ### 支持范围与测试深度
@@ -1180,6 +1182,8 @@ Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`
 Windows 进程时间策略归 `os/windows/process/` 中的 `WindowsProcessTime.cpp` 管理。`std::chrono` 区分主机墙上时钟与单调计数器，`WindowsProcess.def` 定义客户时间单位及有限等待上限；CPU 后端不承载 Windows 时间策略。
 
 `lib/unpack` 分四层恢复加壳镜像。`core` 负责编排和格式注册表。`format/pe` 校验容器并重建观察到的内存、导入和元数据；`PETLS.cpp` 依据加载器分配信息和实际观察到的回调校验替换的 TLS 记录。不使用保护器注册表或静态外壳签名选择入口。`dynamic` 通过 `observeProcess` 观察来宾进程：`Observation.def` 把每种容器与指令集映射到一个进程配置，并给出每种指令集的栈指针和指令窗口。新增一个目标只需一行表项和一个模块目录，表中没有对应行的输入会被按名称拒绝。`ExecutionSession` 负责执行监视；`ProcessObserver` 读取已停止的进程并选择下一个停止点，但不能改变来宾状态。模拟层只知道 `defer_unmodeled`，它把未建模的导入绑定到一旦执行就停止的不透明入口。参见[脱壳](unpack.md)。 延迟加载允许可执行回调或入口目标位于零填充内存，由先前的初始化器生成其代码。回调数组和 TLS 分配元数据仍要求经过校验的文件内容；普通严格加载保留文件覆盖检查。操作系统模型提供调用归属，并在准备调用或恢复挂起的调用者时通知观察器。转移监视在这些边界重新布置，覆盖回调与生成入口同处一页的情况。
+
+`MemoryProjection` 负责物理 RAM 写入失效记录，`ExecutionSession` 负责相应的停止和续接。x64 页表构建器为直接执行施加临时写保护，不包含镜像或保护器策略。Windows 进程观察在恢复执行前重新检查服务期间的写入。只有 `dynamic/ProcessTransfer` 依据实际解码的指令字节判定代际，并保持对混合代际页面的观察。
 
 `arch/X64Imports.cpp` 统一负责 x64 导入指令的解码和生成。`dynamic/ProcessImports.cpp` 通过只读进程观察证明纯导出调用和地址加载结果；PE 写入器消费这些证据，不重复定义指令规则。
 

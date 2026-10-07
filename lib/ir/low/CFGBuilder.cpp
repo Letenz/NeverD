@@ -287,7 +287,19 @@ struct StackOffsetRange {
 };
 using StackOffsetKey = std::pair<VnodeSpace, uint64_t>;
 using StackOffsetState = std::map<StackOffsetKey, StackOffsetRange>;
-constexpr StackOffsetKey kStackPointerKey{VnodeSpace::REG, x86reg::RSP};
+/// What the analysis needs of the target: its stack pointer, the width of a
+/// pushed return address and of a full register, and the registers a call
+/// keeps under the image's calling convention.
+struct StackFrameModel {
+  const TargetRegInfo *TRI = nullptr;
+  BinaryFormat Format = BinaryFormat::Unknown;
+  StackOffsetKey StackPointer{VnodeSpace::REG, 0};
+  uint16_t Width = 0;
+
+  StackFrameModel(const TargetRegInfo &Info, BinaryFormat F)
+      : TRI(&Info), Format(F), StackPointer{VnodeSpace::REG, Info.StackPointer},
+        Width(Info.PointerSize) {}
+};
 constexpr int64_t kNoLowerBound = std::numeric_limits<int64_t>::min();
 constexpr int64_t kNoUpperBound = std::numeric_limits<int64_t>::max();
 
@@ -303,13 +315,14 @@ StackOffsetRange shiftRange(StackOffsetRange R, int64_t Delta) {
 
 /// Follows offsets through constant adjustments and full-width copies; any
 /// other write forgets what it overwrites.  A call keeps the stack pointer
-/// (the callee pops its own return address) and the registers Win64 calls
-/// preserve.
-void transferStackOffsets(const TargetRegInfo &TRI, const LowOp &Op,
+/// (the callee pops its own return address) and the registers the calling
+/// convention preserves.
+void transferStackOffsets(const StackFrameModel &M, const LowOp &Op,
                           StackOffsetState &S) {
-  auto Forget = [&S](const NdVar &Out) {
+  auto Forget = [&S, &M](const NdVar &Out) {
     for (auto It = S.begin(); It != S.end();)
-      It = It->first.first == Out.Space && Out.Offset < It->first.second + 8 &&
+      It = It->first.first == Out.Space &&
+                   Out.Offset < It->first.second + M.Width &&
                    It->first.second < Out.Offset + Out.Size
                ? S.erase(It)
                : std::next(It);
@@ -317,7 +330,7 @@ void transferStackOffsets(const TargetRegInfo &TRI, const LowOp &Op,
   if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
     for (auto It = S.begin(); It != S.end();)
       It = It->first.first == VnodeSpace::REG &&
-                   TRI.isCallPreserved(It->first.second, 8, BinaryFormat::COFF)
+                   M.TRI->isCallPreserved(It->first.second, M.Width, M.Format)
                ? std::next(It)
                : S.erase(It);
     if (Op.Output.Size)
@@ -326,8 +339,8 @@ void transferStackOffsets(const TargetRegInfo &TRI, const LowOp &Op,
   }
   if (!Op.Output.Size)
     return;
-  auto Known = [&S](const NdVar &V) -> std::optional<StackOffsetRange> {
-    if (V.Size != 8)
+  auto Known = [&S, &M](const NdVar &V) -> std::optional<StackOffsetRange> {
+    if (V.Size != M.Width)
       return std::nullopt;
     auto It = S.find({V.Space, V.Offset});
     if (It == S.end())
@@ -335,9 +348,10 @@ void transferStackOffsets(const TargetRegInfo &TRI, const LowOp &Op,
     return It->second;
   };
   std::optional<StackOffsetRange> Value;
-  if (Op.Output.Size == 8 && Op.Opcode == NdOp::COPY && Op.NumInputs == 1) {
+  if (Op.Output.Size == M.Width && Op.Opcode == NdOp::COPY &&
+      Op.NumInputs == 1) {
     Value = Known(Op.Inputs[0]);
-  } else if (Op.Output.Size == 8 &&
+  } else if (Op.Output.Size == M.Width &&
              (Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
              Op.NumInputs == 2) {
     for (unsigned I = 0; I < 2 && !Value; ++I) {
@@ -345,7 +359,7 @@ void transferStackOffsets(const TargetRegInfo &TRI, const LowOp &Op,
       if (Op.Opcode == NdOp::INT_SUB && I != 0)
         break;
       const NdVar &C = Op.Inputs[1 - I];
-      if (!C.isConst() || C.Size != 8)
+      if (!C.isConst() || C.Size != M.Width)
         continue;
       const auto Base = Known(Op.Inputs[I]);
       const int64_t Delta = static_cast<int64_t>(C.Offset);
@@ -355,8 +369,8 @@ void transferStackOffsets(const TargetRegInfo &TRI, const LowOp &Op,
     }
   }
   // Any other full-width stack pointer is a base of its own.
-  if (!Value && Op.Output.Space == kStackPointerKey.first &&
-      Op.Output.Offset == kStackPointerKey.second && Op.Output.Size == 8)
+  if (!Value && Op.Output.Space == M.StackPointer.first &&
+      Op.Output.Offset == M.StackPointer.second && Op.Output.Size == M.Width)
     Value = StackOffsetRange{(Op.Addr << 6 | (Op.Seq & 63)) + 1, 0, 0};
   Forget(Op.Output);
   if (Value)
@@ -367,7 +381,7 @@ void transferStackOffsets(const TargetRegInfo &TRI, const LowOp &Op,
 /// values every incoming path knows, as the hull of their ranges.  A bound
 /// still moving after limits::kStackOffsetWideningJoins joins at one block
 /// becomes unbounded; otherwise states only lose entries or grow, so it ends.
-void solveStackOffsets(const TargetRegInfo &TRI, const LowFunc &Func,
+void solveStackOffsets(const StackFrameModel &M, const LowFunc &Func,
                        std::vector<std::optional<StackOffsetState>> &In) {
   const size_t N = Func.Blocks.size();
   std::vector<unsigned> Joins(N, 0);
@@ -380,7 +394,7 @@ void solveStackOffsets(const TargetRegInfo &TRI, const LowFunc &Func,
     Work.pop_back();
     StackOffsetState Out = *In[B];
     for (const LowOp &Op : Func.Blocks[B].Ops)
-      transferStackOffsets(TRI, Op, Out);
+      transferStackOffsets(M, Op, Out);
     for (int S : Func.Blocks[B].Succs) {
       if (S < 0 || static_cast<size_t>(S) >= N)
         continue;
@@ -418,21 +432,23 @@ void solveStackOffsets(const TargetRegInfo &TRI, const LowFunc &Func,
 //===----------------------------------------------------------------------===//
 
 CFGBuilder::OwnInteriorCallVerdict
-CFGBuilder::classifyOwnInteriorCalls(const LowFunc &Func) const {
+CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
+                                     const LowFunc &Func) const {
   OwnInteriorCallVerdict Verdict;
   const size_t N = Func.Blocks.size();
   if (N == 0)
     return Verdict;
-  const TargetRegInfo &TRI = getTargetRegInfo(Arch::X64);
+  const StackFrameModel M(getTargetRegInfo(Img.Arch), Img.Format);
+  const StackOffsetKey &StackPointerKey = M.StackPointer;
   // Offsets from the entry stack pointer.  Any other root, including a block
   // an exceptional edge enters, starts with nothing known.
   std::vector<std::optional<StackOffsetState>> FromEntry(N);
-  FromEntry[0] = StackOffsetState{{kStackPointerKey, {0, 0, 0}}};
+  FromEntry[0] = StackOffsetState{{StackPointerKey, {0, 0, 0}}};
   for (size_t B = 1; B < N; ++B)
     if (Func.Blocks[B].Preds.empty() ||
         !Func.Blocks[B].ExceptionalPreds.empty())
       FromEntry[B] = StackOffsetState{};
-  solveStackOffsets(TRI, Func, FromEntry);
+  solveStackOffsets(M, Func, FromEntry);
 
   std::map<va_t, size_t> BlockAt;
   for (size_t B = 0; B < N; ++B)
@@ -448,7 +464,7 @@ CFGBuilder::classifyOwnInteriorCalls(const LowFunc &Func) const {
       for (const LowOp &Op : Block.Ops) {
         if (Op.Addr == Addr)
           break;
-        transferStackOffsets(TRI, Op, S);
+        transferStackOffsets(M, Op, S);
       }
       return S;
     }
@@ -485,22 +501,22 @@ CFGBuilder::classifyOwnInteriorCalls(const LowFunc &Func) const {
     // that holds for all of them.
     std::optional<StackOffsetState> Seed;
     for (va_t Site : Sites) {
-      StackOffsetState Relative{{kStackPointerKey, {0, 0, 0}}};
+      StackOffsetState Relative{{StackPointerKey, {0, 0, 0}}};
       if (const auto AtSite = StateBefore(Site)) {
-        auto SP = AtSite->find(kStackPointerKey);
+        auto SP = AtSite->find(StackPointerKey);
         if (SP != AtSite->end())
           for (const auto &[K, V] : *AtSite) {
-            if (K == kStackPointerKey || V.Base != SP->second.Base)
+            if (K == StackPointerKey || V.Base != SP->second.Base)
               continue;
-            // V - (SP - 8), with SP anywhere in its range.
+            // V - (SP - Width), with SP anywhere in its range.
             const int64_t Lo =
                 V.Lo == kNoLowerBound || SP->second.Hi == kNoUpperBound
                     ? kNoLowerBound
-                    : V.Lo - SP->second.Hi + 8;
+                    : V.Lo - SP->second.Hi + M.Width;
             const int64_t Hi =
                 V.Hi == kNoUpperBound || SP->second.Lo == kNoLowerBound
                     ? kNoUpperBound
-                    : V.Hi - SP->second.Lo + 8;
+                    : V.Hi - SP->second.Lo + M.Width;
             if (Lo != kNoLowerBound || Hi != kNoUpperBound)
               Relative[K] = {0, Lo, Hi};
           }
@@ -524,7 +540,7 @@ CFGBuilder::classifyOwnInteriorCalls(const LowFunc &Func) const {
       ReachedByAny[B] = ReachedByAny[B] || Reached[B];
     std::vector<std::optional<StackOffsetState>> FromSlot(N);
     FromSlot[TargetBlock->second] = *Seed;
-    solveStackOffsets(TRI, Func, FromSlot);
+    solveStackOffsets(M, Func, FromSlot);
 
     // Where the slot-relative offset is lost, the entry stack pointer still
     // places the return above every slot the calls pushed when all of them
@@ -532,15 +548,15 @@ CFGBuilder::classifyOwnInteriorCalls(const LowFunc &Func) const {
     std::optional<int64_t> HighestSlot;
     for (va_t Site : Sites) {
       const auto AtSite = StateBefore(Site);
-      auto SP = AtSite ? AtSite->find(kStackPointerKey)
+      auto SP = AtSite ? AtSite->find(StackPointerKey)
                        : StackOffsetState::const_iterator();
       if (!AtSite || SP == AtSite->end() || SP->second.Base != 0 ||
           SP->second.Hi == kNoUpperBound) {
         HighestSlot.reset();
         break;
       }
-      HighestSlot =
-          std::max(HighestSlot.value_or(kNoLowerBound), SP->second.Hi - 8);
+      HighestSlot = std::max(HighestSlot.value_or(kNoLowerBound),
+                             SP->second.Hi - M.Width);
     }
     auto AboveEverySlot = [&](va_t Return) {
       if (!HighestSlot)
@@ -548,7 +564,7 @@ CFGBuilder::classifyOwnInteriorCalls(const LowFunc &Func) const {
       const auto AtReturn = StateBefore(Return);
       if (!AtReturn)
         return false;
-      auto SP = AtReturn->find(kStackPointerKey);
+      auto SP = AtReturn->find(StackPointerKey);
       return SP != AtReturn->end() && SP->second.Base == 0 &&
              SP->second.Lo != kNoLowerBound && SP->second.Lo > *HighestSlot;
     };
@@ -564,7 +580,7 @@ CFGBuilder::classifyOwnInteriorCalls(const LowFunc &Func) const {
       StackOffsetState S = FromSlot[B] ? *FromSlot[B] : StackOffsetState{};
       for (const LowOp &Op : Func.Blocks[B].Ops) {
         if (Op.Opcode == NdOp::RETURN) {
-          auto SP = S.find(kStackPointerKey);
+          auto SP = S.find(StackPointerKey);
           const bool Slot = SP != S.end() && SP->second.Base == 0;
           if (Slot && SP->second.Lo == 0 && SP->second.Hi == 0) {
             ConsumesSlot = true;
@@ -576,7 +592,7 @@ CFGBuilder::classifyOwnInteriorCalls(const LowFunc &Func) const {
           }
           continue;
         }
-        transferStackOffsets(TRI, Op, S);
+        transferStackOffsets(M, Op, S);
       }
     }
     if (!Unproven && ConsumesSlot && Discards)
@@ -595,14 +611,14 @@ CFGBuilder::classifyOwnInteriorCalls(const LowFunc &Func) const {
     StackOffsetState S = *FromEntry[B];
     for (const LowOp &Op : Func.Blocks[B].Ops) {
       if (Op.Opcode == NdOp::RETURN) {
-        auto SP = S.find(kStackPointerKey);
+        auto SP = S.find(StackPointerKey);
         if (SP != S.end() && SP->second.Base == 0 && SP->second.Hi < 0) {
           NoteUnproven(Op.Addr);
           break;
         }
         continue;
       }
-      transferStackOffsets(TRI, Op, S);
+      transferStackOffsets(M, Op, S);
     }
   }
   return Verdict;
@@ -619,7 +635,7 @@ LowFunc CFGBuilder::build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
     LowFunc Func = buildOnce(Img, Dec, EntryAddr, FuncName);
     if (OwnInteriorCallSites.empty())
       return Func;
-    const OwnInteriorCallVerdict Verdict = classifyOwnInteriorCalls(Func);
+    const OwnInteriorCallVerdict Verdict = classifyOwnInteriorCalls(Img, Func);
     if (!Verdict.Subroutines.empty()) {
       KeptOwnInteriorCallTargets.insert(Verdict.Subroutines.begin(),
                                         Verdict.Subroutines.end());

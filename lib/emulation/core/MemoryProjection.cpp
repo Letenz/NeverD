@@ -8,6 +8,7 @@
 #include "ExecutionDiagnostics.h"
 #include "MemoryLayout.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
@@ -114,6 +115,7 @@ llvm::Error MemoryProjection::beginRun(RAMWriteTracking Tracking) {
     return diagnostic::error(diagnostic::Running);
   }
   RAM.Running = true;
+  WatchedWrite = false;
   WriteTracking = Tracking;
   if (Tracking == RAMWriteTracking::Opaque)
     RAM.invalidateReservations();
@@ -182,7 +184,67 @@ void MemoryProjection::recordRAMWrite(uint64_t Physical, uint64_t Size) {
   auto &RAM = *Space->State->Memory->State;
   assert(RAM.Running && diagnostic::RAMTransactionLease);
   RAM.invalidateReservations(Physical, Size);
+  WatchedWrite |= writeWatched(Physical, Size);
 }
+
+bool MemoryProjection::setWriteWatches(
+    const std::vector<MemoryWriteWatch> &Watches) {
+  if (WriteWatches == Watches)
+    return false;
+  WriteWatches = Watches;
+  WriteWatchSpace.reset();
+  return true;
+}
+
+void MemoryProjection::refreshWriteWatches() {
+  if (WriteWatchSpace.lock() == Space &&
+      WriteWatchGeneration == mappingGeneration())
+    return;
+  PhysicalWriteWatches.clear();
+  for (const auto &W : WriteWatches) {
+    const uint64_t Last = W.Address + W.Size - 1;
+    auto P = mappings().lower_bound(W.Address & ~(memory::PageSize - 1));
+    for (; P != mappings().end() && P->first <= Last; ++P) {
+      if (P->second.IO)
+        continue;
+      const uint64_t Begin = std::max(W.Address, P->first);
+      const uint64_t End = std::min(Last, P->first | (memory::PageSize - 1));
+      PhysicalWriteWatches.push_back(
+          {P->second.Physical + Begin - P->first, End - Begin + 1});
+    }
+  }
+  llvm::sort(PhysicalWriteWatches, [](const auto &A, const auto &B) {
+    return A.Address < B.Address;
+  });
+  std::vector<MemoryWriteWatch> Merged;
+  for (const auto &W : PhysicalWriteWatches) {
+    if (!Merged.empty() &&
+        W.Address - Merged.back().Address <= Merged.back().Size) {
+      const uint64_t End = std::max(Merged.back().Address + Merged.back().Size,
+                                    W.Address + W.Size);
+      Merged.back().Size = End - Merged.back().Address;
+    } else
+      Merged.push_back(W);
+  }
+  PhysicalWriteWatches = std::move(Merged);
+  WriteWatchSpace = Space;
+  WriteWatchGeneration = mappingGeneration();
+}
+
+bool MemoryProjection::writeWatched(uint64_t Physical, uint64_t Size) {
+  if (!Size || WriteWatches.empty())
+    return false;
+  refreshWriteWatches();
+  const auto I =
+      llvm::upper_bound(PhysicalWriteWatches, Physical + Size - 1,
+                        [](uint64_t Address, const MemoryWriteWatch &W) {
+                          return Address < W.Address;
+                        });
+  return I != PhysicalWriteWatches.begin() &&
+         (Physical < std::prev(I)->Address ||
+          Physical - std::prev(I)->Address < std::prev(I)->Size);
+}
+
 std::optional<MemoryAccessFailure>
 MemoryProjection::firstAccessFailure(uint64_t A, uint64_t N, unsigned P) const {
   std::lock_guard Lock(Space->State->Memory->State->Mutex);

@@ -925,6 +925,18 @@ trouvent dans `include/neverd/lift`. L’émission LLVM et la génération de co
 propres à la cible vivent sous `lib/backend/llvm/<ISA>` et
 `lib/backend/codegen/CodeGen<ISA>.cpp`.
 
+Les nouvelles règles propres à une cible dans les passes partagées vont dans des
+tables par cible, et non dans des tests en ligne de l'architecture ou du format.
+Un fait sur une ISA est un trait de `TargetRegInfo` défini dans son
+`lib/ir/TargetRegInfo<ISA>.cpp`. Une règle de convention d'appel est une entrée
+`CallArgumentConvention` dans son propre
+`lib/ir/med/abi/MedCallConvention<Name>.cpp`, recensée dans
+`MedCallConvention.cpp`. Les fonctions qui ne reviennent jamais sont listées par
+runtime sous `include/neverd/libc` (`LibCNoReturn.inc`,
+`CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`). Prendre en charge une autre
+cible ajoute alors un fichier ou une entrée de table plutôt qu'une branche dans
+la passe partagée.
+
 <a id="support-and-test-depth"></a>
 
 ### Support et profondeur des tests
@@ -1312,6 +1324,8 @@ La mémoire virtuelle Windows ajoute `VirtualAlloc`, `VirtualFree`, `VirtualProt
 La politique temporelle des processus Windows appartient à `WindowsProcessTime.cpp`, dans `os/windows/process/`. `std::chrono` distingue l’heure réelle du compteur monotone de l’hôte ; `WindowsProcess.def` définit les unités invitées et la limite d’attente finie. Les transports CPU ne portent aucune politique temporelle Windows.
 
 `lib/unpack` récupère les images compressées en quatre couches. `core` possède l’orchestration et le registre des formats. `format/pe` valide le conteneur et reconstruit la mémoire observée, les imports et les métadonnées ; `PETLS.cpp` valide les nouveaux enregistrements TLS selon l’allocation du chargeur et les rappels observés. Aucun registre de protecteurs ni signature statique de stub ne choisit l’entrée. `dynamic` observe un processus invité via `observeProcess` : `Observation.def` associe chaque conteneur et jeu d'instructions à un profil de processus et donne à chaque jeu d'instructions son pointeur de pile et sa fenêtre d'instruction. Une nouvelle cible est une ligne de table et un répertoire de module, et une entrée sans ligne est rejetée nommément. `ExecutionSession` possède les surveillances d'exécution ; un `ProcessObserver` lit un processus arrêté et choisit le prochain arrêt, mais ne peut pas modifier l'état de l'invité. La couche d'émulation ne connaît que `defer_unmodeled`, qui lie les importations non modélisées à des entrées opaques qui s'arrêtent dès qu'elles sont exécutées. Voir [dépaquetage](unpack.md). Le chargement différé autorise des cibles exécutables de callback ou d’entrée dans une mémoire initialement nulle dont un initialiseur antérieur produit le code. Les tableaux de callbacks et les métadonnées d’allocation TLS exigent toujours des données de fichier validées ; le chargement strict conserve ses vérifications. Le modèle OS fournit la provenance des invocations et avertit l’observateur lorsqu’il prépare un appel ou restaure un appelant suspendu. Les surveillances sont réarmées à ces frontières, même si callback et entrée générée partagent une page.
+
+`MemoryProjection` possède l’invalidation des écritures RAM physiques et `ExecutionSession` la continuation arrêtée. Le constructeur de tables x64 applique une protection temporaire en écriture pour l’exécution directe, sans politique d’image ni de protecteur. L’observation Windows revérifie les écritures des services avant la reprise. Seul `dynamic/ProcessTransfer` classe les générations à partir des octets réellement décodés et maintient l’observation des pages mixtes.
 
 `arch/X64Imports.cpp` possède le décodage et l’émission des instructions d’import x64. `dynamic/ProcessImports.cpp` prouve les appels exportés purs et les résultats de chargement d’adresses par observation seule du processus ; l’écriture PE utilise ces preuves sans dupliquer les règles d’instruction.
 

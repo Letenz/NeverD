@@ -60,9 +60,10 @@ private:
   llvm::Error execute(const cs_insn &Instruction) override;
   llvm::Error executeDirect() override;
   /// Retire one instruction through a temporary watch overlay, then rearm it.
-  llvm::Error stepWatchedInstruction();
+  llvm::Error stepWatchedInstruction(bool WatchWrites = true);
   llvm::Error publishDirectException(const X64Exception &Raised,
-                                     bool AllowSplit, bool &Resume);
+                                     bool AllowSplit, bool &Resume,
+                                     bool WritesProtected = true);
   std::optional<ServiceRequest>
   decodeServiceRequest(const cs_insn &) const override;
   llvm::Expected<uint64_t> operandRegister(unsigned Register) const;

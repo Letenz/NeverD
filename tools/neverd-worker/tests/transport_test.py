@@ -195,6 +195,32 @@ def run(executable):
         assert responses[0]["status"] == "cancelled"
         analysis = client.response(analyze_id)
         assert analysis["status"] == "ok" and analysis["cancellation_requested"] and analysis["calculation_stopped"]
+        # Whole-program analysis brings the switch tables: a table under its
+        # jpt_ name with a slot per line, the load and the dispatch commented,
+        # and each target referred to from the dispatch and the table.
+        table = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012343114", "before": 0, "after": 6})["payload"]["lines"]]
+        assert table[0].startswith("jpt_FFFF800012340086 dd offset loc_FFFF800012340088 - "), table
+        assert any("jump table for switch statement" in line for line in table), table
+        assert any(line.startswith("dd offset loc_FFFF80001234008A - ") for line in table), table
+        code = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012340085", "before": 0, "after": 3})["payload"]["lines"]
+            if line["kind"] == "insn"]
+        assert code[0].endswith("; switch 3 cases") and code[1].endswith("; switch jump"), code
+        target = client.call("xrefs", {"address": "0xffff800012340088", "direction": "to"})["payload"]["items"]
+        assert {(item["address"], item["type"]) for item in target} >= {
+            ("0xffff800012340086", "j"), ("0xffff800012343114", "o")}, target
+        # A mangled name reads demangled above its function and beside the
+        # instructions that name it, and the Functions window shows it so.
+        header = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012340090", "before": 0, "after": 20})["payload"]["lines"]]
+        assert "; Widget::draw()" in header, header
+        assert any(line.startswith("jmp") and line.endswith("; Widget::draw()") for line in header), header
+        rows = client.call("functions", {"filter": "widget::draw"})["payload"]["items"]
+        assert [row["name"] for row in rows] == ["function_9"], rows
+        tables = client.call("names", {"filter": "jpt_"})["payload"]["items"]
+        assert [(item["name"], item["address"]) for item in tables] == [
+            ("jpt_FFFF800012340086", "0xffff800012343114")], tables
         first = client.call("decompile", {"address": BASE, "representation": "llvm", "limit": 400})["payload"]
         last = client.call("decompile", {"address": BASE, "representation": "llvm", "offset": first["next_offset"], "limit": 400})["payload"]
         assert first["total_lines"] == 700 and not first["complete"] and last["complete"]
@@ -255,7 +281,7 @@ def run(executable):
         assert [e["name"] for e in encodings] == ["ascii", "utf-8", "utf-16le", "gbk", "big5"], encodings
         assert [e.get("legacy", False) for e in encodings] == [False, False, False, True, True], encodings
         options = client.call("string_options")["payload"]
-        assert options == {"encodings": ["ascii", "utf-8", "utf-16le"], "min_length": 4}, options
+        assert options == {"encodings": ["ascii", "utf-8", "utf-16le"], "preferred": None, "min_length": 4}, options
         rodata = [" ".join(line["text"].split()) for line in client.call(
             "listing", {"address": "0xffff800012343100", "before": 0, "after": 12})["payload"]["lines"]]
         assert any(line.startswith("asc_FFFF800012343100 db '\u4e2d\u6587',0") for line in rodata), rodata
@@ -295,8 +321,12 @@ def run(executable):
         assert tails["total"] == 4, tails
         assert ("0xffff800012340074", "0xffff800012343103", "\u6587") in rows, tails
         assert ("0xffff800012340075", "0xffff80001234310b", "de") in rows, tails
-        # Code pages read the same bytes differently; one is searched.
-        assert client.call("string_options", {"encodings": ["gbk", "big5"]})["error"]["code"] == "invalid_request"
+        # Several code pages are searched together; the preferred one reads
+        # first, and only a code page can be preferred.
+        both = client.call("string_options", {"encodings": ["gbk", "big5"], "preferred": "big5"})["payload"]
+        assert both["encodings"] == ["gbk", "big5"] and both["preferred"] == "big5", both
+        assert client.call("string_options", {"preferred": "utf-8"})["error"]["code"] == "invalid_request"
+        assert client.call("string_options", {"preferred": "klingon"})["error"]["code"] == "unsupported_encoding"
         client.call("string_options", {"encodings": ["ascii", "utf-8", "utf-16le"], "min_length": 4})
         # The strings filter also matches addresses and types.
         assert client.call("strings", {"filter": "343108"})["payload"]["total"] == 1

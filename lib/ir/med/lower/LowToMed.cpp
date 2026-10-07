@@ -18,6 +18,7 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMedError.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/SourceRegisterCopy.h"
@@ -204,48 +205,41 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
       !LOp.Inputs[0].isConst())
     return;
   // Publish the register arguments the callee reads as uses, so SSA sees a
-  // pass-through argument and the call site knows its arity.  Mach-O
-  // source-call binding owns single-input calls, hence COFF and ELF only.
-  // A Control Flow Guard dispatcher is an indirect call to RAX: its
-  // arguments are the registers this function set before the call, the rule
-  // IDA uses.  A register only passed through from this function's entry is
-  // not taken as an argument.
-  if (CallDispatchThunks && TargetArch == Arch::X64 &&
-      TargetFormat == BinaryFormat::COFF && MOp.NumInputs == 1 &&
+  // pass-through argument and the call site knows its arity.  The calling
+  // convention says whether and how (MedCallConvention.h); Mach-O
+  // source-call binding owns the single-input calls of the others.
+  const CallArgumentConvention *Convention =
+      callArgumentConvention(TargetArch, TargetFormat);
+  const TargetRegInfo &TRI = getTargetRegInfo(TargetArch);
+  const llvm::ArrayRef<uint64_t> ArgRegs = TRI.integerParamRegs(TargetFormat);
+  const int8_t Slots =
+      static_cast<int8_t>(std::min<size_t>(ArgRegs.size(), kTrackedArgSlots));
+  // An indirect-call dispatcher calls the function in its target register.
+  // Its arguments are the registers this function set before the call, the
+  // rule IDA uses; a register only passed through from this function's
+  // entry is not taken as an argument.
+  if (Convention && Convention->DispatcherTargetRegister &&
+      CallDispatchThunks && MOp.NumInputs == 1 &&
       CallDispatchThunks->count(LOp.Inputs[0].Offset)) {
-    static constexpr uint64_t Win64Args[] = {x86reg::RCX, x86reg::RDX,
-                                             x86reg::R8, x86reg::R9};
     int8_t Count = 0;
-    for (int8_t I = 0; I < 4; ++I)
+    for (int8_t I = 0; I < Slots; ++I)
       if ((DispatchCallDefinedArgs >> I) & 1)
         Count = I + 1;
-    // The function called is the one in RAX, not the dispatcher.
     MOp.Opcode = NdOp::INDIR_CALL;
-    MOp.Inputs[0] = ndVarToMedVar(NdVar::reg(x86reg::RAX, 8));
+    MOp.Inputs[0] = ndVarToMedVar(
+        NdVar::reg(*Convention->DispatcherTargetRegister, TRI.PointerSize));
     for (int8_t I = 0; I < Count; ++I)
-      MOp.addInput(ndVarToMedVar(NdVar::reg(Win64Args[I], 8)));
+      MOp.addInput(ndVarToMedVar(NdVar::reg(ArgRegs[I], TRI.PointerSize)));
     MOp.CalleeRegisterArgs = Count;
-  } else if (CallEntryReadGPRs && TargetArch == Arch::X64 &&
-             (TargetFormat == BinaryFormat::COFF ||
-              TargetFormat == BinaryFormat::ELF) &&
-             MOp.NumInputs == 1)
+  } else if (Convention && Convention->RegisterArgumentsFromCalleeSummary &&
+             CallEntryReadGPRs && MOp.NumInputs == 1)
     if (auto R = CallEntryReadGPRs->find(LOp.Inputs[0].Offset);
         R != CallEntryReadGPRs->end() &&
-        // A System V variadic callee tests AL and spills every argument
-        // register to its save area; those spills are not its parameters.
-        !(TargetFormat == BinaryFormat::ELF && R->second[x86reg::RAX / 8])) {
-      static constexpr uint64_t Win64Args[] = {x86reg::RCX, x86reg::RDX,
-                                               x86reg::R8, x86reg::R9};
-      static constexpr uint64_t SysVArgs[] = {x86reg::RDI, x86reg::RSI,
-                                              x86reg::RDX, x86reg::RCX,
-                                              x86reg::R8,  x86reg::R9};
-      const bool SysV = TargetFormat == BinaryFormat::ELF;
-      const llvm::ArrayRef<uint64_t> Args =
-          SysV ? llvm::ArrayRef<uint64_t>(SysVArgs)
-               : llvm::ArrayRef<uint64_t>(Win64Args);
+        !(Convention->SummaryListsNoParameters &&
+          Convention->SummaryListsNoParameters(R->second))) {
       int8_t Count = 0;
-      for (int8_t I = 0; I < static_cast<int8_t>(Args.size()); ++I)
-        if (R->second[Args[I] / 8])
+      for (int8_t I = 0; I < Slots; ++I)
+        if (R->second[ArgRegs[I] / 8])
           Count = I + 1;
       // Pass exactly the bytes the callee reads (DL for a KIRQL), so the
       // bytes it ignores do not become an unknown incoming value.  An unread
@@ -253,38 +247,35 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
       // callee cannot observe it, so it carries zero rather than whatever
       // the caller left in the register.
       for (int8_t I = 0; I < Count; ++I) {
-        const uint8_t Width = R->second[Args[I] / 8];
+        const uint8_t Width = R->second[ArgRegs[I] / 8];
         if (Width == 0) {
-          MOp.addInput(
-              MedVar::makeConst(0, getTargetRegInfo(TargetArch).PointerSize));
+          MOp.addInput(MedVar::makeConst(0, TRI.PointerSize));
           continue;
         }
         const uint16_t Size = Width <= 1   ? 1
                               : Width <= 2 ? 2
                               : Width <= 4 ? 4
                                            : 8;
-        MOp.addInput(ndVarToMedVar(NdVar::reg(Args[I], Size)));
+        MOp.addInput(ndVarToMedVar(NdVar::reg(ArgRegs[I], Size)));
       }
       // A variadic callee also reads the variadic arguments the caller
       // passes: the argument registers set on every path to the call.  An
       // unread fixed slot below them carries zero as above.
-      if (CallVariadicFrom && !SysV)
+      if (CallVariadicFrom && Convention->VariadicFromSummary)
         if (auto V = CallVariadicFrom->find(LOp.Inputs[0].Offset);
             V != CallVariadicFrom->end()) {
           int8_t Passed = Count;
-          for (int8_t I = static_cast<int8_t>(V->second); I < 4; ++I)
+          for (int8_t I = static_cast<int8_t>(V->second); I < Slots; ++I)
             if ((DispatchCallDefinedArgs >> I) & 1)
               Passed = I + 1;
           for (int8_t I = Count; I < Passed; ++I)
-            MOp.addInput(I < V->second
-                             ? MedVar::makeConst(
-                                   0, getTargetRegInfo(TargetArch).PointerSize)
-                             : ndVarToMedVar(NdVar::reg(Win64Args[I], 8)));
+            MOp.addInput(I < V->second ? MedVar::makeConst(0, TRI.PointerSize)
+                                       : ndVarToMedVar(NdVar::reg(
+                                             ArgRegs[I], TRI.PointerSize)));
           Count = Passed;
         }
       MOp.CalleeRegisterArgs = Count;
-      // The stack-argument summary counts Win64 positions.
-      if (CallEntryStackArgs && !SysV)
+      if (CallEntryStackArgs && Convention->StackArgumentSummary)
         if (auto S = CallEntryStackArgs->find(LOp.Inputs[0].Offset);
             S != CallEntryStackArgs->end())
           MOp.CalleeStackArgs = static_cast<int8_t>(std::min(
@@ -317,7 +308,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
         llvm::report_fatal_error(
             "LowIR contains an unknown memory address space");
       if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
-          TheArch != Arch::X86 && TheArch != Arch::X64)
+          !getTargetRegInfo(TheArch).HasSegmentAddressSpaces)
         llvm::report_fatal_error(
             "FS/GS memory address spaces require an x86 target");
       if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
@@ -433,57 +424,11 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
 
   analyzeStack(Low);
 
-  // CFGBuilder proves the complete value of an ARM PC + R_ARM_REL32 literal
-  // at the exact ADD output. Preserve that occurrence proof across the LowIR
-  // to MedIR boundary: the literal word is a relative fragment, and treating
-  // its old-image integer as an independent table base loses relocation.
+  // ARM ELF literal relocations proved at their ADD outputs
+  // (LowToMedARM.cpp).
   using OccurrenceKey = std::pair<va_t, int>;
-  std::map<OccurrenceKey, const RelocatedInstructionAddressOccurrence *>
-      ExactRelativeAddressOutputs;
-  std::set<OccurrenceKey> AmbiguousRelativeAddressOutputs;
-  if (TheArch == Arch::ARM && Fmt == BinaryFormat::ELF && Image &&
-      Image->Arch == Arch::ARM && Image->isELF()) {
-    for (const auto &Occurrence : Low.RelocatedInstructionAddressOccurrences) {
-      const OccurrenceKey Key{Occurrence.InstructionAddr, Occurrence.OpSeq};
-      if (Occurrence.DefinesOutput && Occurrence.OutputMayDepend)
-        AmbiguousRelativeAddressOutputs.insert(Key);
-      if (!Occurrence.DefinesOutput || Occurrence.OutputMayDepend ||
-          Occurrence.Authority !=
-              RelocatedInstructionAddressProofKind::LoaderField ||
-          Occurrence.OutputOpcode != NdOp::INT_ADD || Occurrence.Width != 4 ||
-          Occurrence.OutputWitness.Size != 4 ||
-          (!Occurrence.OutputWitness.isReg() &&
-           !Occurrence.OutputWitness.isTemp()) ||
-          (Occurrence.Provenance != ConstantAddressProvenance::DataAddress &&
-           Occurrence.Provenance != ConstantAddressProvenance::CodeAddress))
-        continue;
-      const auto Field =
-          Image->ARMRelativeLiteralFields.find(Occurrence.FieldVA);
-      if (Field == Image->ARMRelativeLiteralFields.end() ||
-          Field->second.TargetVA != Occurrence.TargetVA ||
-          Field->second.TargetOwnerVA != Occurrence.TargetOwnerVA ||
-          static_cast<uint32_t>(Occurrence.InstructionAddr + 8) +
-                  Field->second.EncodedValue !=
-              static_cast<uint32_t>(Occurrence.TargetVA) ||
-          !Image->relocatedTargetBelongsToOwner(Occurrence.TargetVA,
-                                                Occurrence.TargetOwnerVA))
-        continue;
-      const Segment *Slot = Image->getSegmentFor(Occurrence.FieldVA);
-      const uint8_t *Bytes = Image->readVA(Occurrence.FieldVA, 4);
-      if (!Slot || !Slot->isReadable() || Slot->isWritable() || !Bytes ||
-          (uint32_t(Bytes[0]) | (uint32_t(Bytes[1]) << 8) |
-           (uint32_t(Bytes[2]) << 16) | (uint32_t(Bytes[3]) << 24)) !=
-              Field->second.EncodedValue)
-        continue;
-      auto [It, Inserted] =
-          ExactRelativeAddressOutputs.emplace(Key, &Occurrence);
-      if (!Inserted && (It->second->TargetVA != Occurrence.TargetVA ||
-                        It->second->TargetOwnerVA != Occurrence.TargetOwnerVA ||
-                        It->second->Provenance != Occurrence.Provenance ||
-                        It->second->OutputWitness != Occurrence.OutputWitness))
-        AmbiguousRelativeAddressOutputs.insert(Key);
-    }
-  }
+  const RelativeLiteralOutputs RelativeLiterals =
+      armRelativeLiteralOutputs(Low, TheArch, Fmt);
 
   MedFunc Func;
   Func.Entry = Low.Entry;
@@ -497,21 +442,27 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     Func.ClassGetterCallFacts = sourceClassGetterCalls(*Image, Low);
   }
 
-  // Win64 argument registers written on every path from entry, per block,
-  // for Control Flow Guard dispatcher and variadic calls.  A call clobbers
-  // them.
+  // Argument registers written on every path from entry, per block, for
+  // dispatcher and variadic calls of conventions that pass them
+  // (MedCallConvention.h).  A call clobbers them.
   std::vector<uint8_t> DispatchDefinedIn;
+  const CallArgumentConvention *Convention =
+      callArgumentConvention(TheArch, Fmt);
+  const TargetRegInfo &ConventionRegs = getTargetRegInfo(TheArch);
+  const llvm::ArrayRef<uint64_t> ArgRegs = ConventionRegs.integerParamRegs(Fmt);
+  const size_t ArgSlots = std::min<size_t>(ArgRegs.size(), kTrackedArgSlots);
+  const uint8_t AllArgs = static_cast<uint8_t>((1u << ArgSlots) - 1);
   const bool TrackDispatchArgs =
-      ((CallDispatchThunks && !CallDispatchThunks->empty()) ||
-       (CallVariadicFrom && !CallVariadicFrom->empty())) &&
-      TheArch == Arch::X64 && Fmt == BinaryFormat::COFF;
-  auto ArgBit = [](const NdVar &V) -> uint8_t {
+      Convention && ((Convention->DispatcherTargetRegister &&
+                      CallDispatchThunks && !CallDispatchThunks->empty()) ||
+                     (Convention->VariadicFromSummary && CallVariadicFrom &&
+                      !CallVariadicFrom->empty()));
+  auto ArgBit = [&](const NdVar &V) -> uint8_t {
     if (!V.isReg())
       return 0;
-    static constexpr uint64_t Win64Args[] = {x86reg::RCX, x86reg::RDX,
-                                             x86reg::R8, x86reg::R9};
-    for (unsigned I = 0; I < 4; ++I)
-      if (V.Offset >= Win64Args[I] && V.Offset < Win64Args[I] + 8)
+    for (size_t I = 0; I < ArgSlots; ++I)
+      if (V.Offset >= ArgRegs[I] &&
+          V.Offset < ArgRegs[I] + ConventionRegs.FullRegWidth)
         return uint8_t(1u << I);
     return 0;
   };
@@ -524,13 +475,13 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     std::map<int, size_t> IndexOf;
     for (size_t B = 0; B < Low.Blocks.size(); ++B)
       IndexOf[Low.Blocks[B].Id] = B;
-    DispatchDefinedIn.assign(Low.Blocks.size(), 0xF);
+    DispatchDefinedIn.assign(Low.Blocks.size(), AllArgs);
     if (!DispatchDefinedIn.empty())
       DispatchDefinedIn[0] = 0;
     for (bool Changed = true; Changed;) {
       Changed = false;
       for (size_t B = 0; B < Low.Blocks.size(); ++B) {
-        uint8_t In = B == 0 ? 0 : 0xF;
+        uint8_t In = B == 0 ? 0 : AllArgs;
         bool AnyPred = false;
         for (int P : Low.Blocks[B].Preds) {
           auto It = IndexOf.find(P);
@@ -731,10 +682,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
       }
 
       const OccurrenceKey MaterializationKey{LOp.Addr, LOp.Seq};
-      auto Materialization =
-          ExactRelativeAddressOutputs.find(MaterializationKey);
-      if (Materialization != ExactRelativeAddressOutputs.end() &&
-          !AmbiguousRelativeAddressOutputs.count(MaterializationKey) &&
+      auto Materialization = RelativeLiterals.Exact.find(MaterializationKey);
+      if (Materialization != RelativeLiterals.Exact.end() &&
+          !RelativeLiterals.Ambiguous.count(MaterializationKey) &&
           LOp.Opcode == NdOp::INT_ADD && LOp.NumInputs == 2 &&
           LOp.Output == Materialization->second->OutputWitness &&
           MOp.Opcode == NdOp::INT_ADD && MOp.Output.Size == 4 &&
@@ -857,10 +807,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     buildSsa(Func, Low);
     debugVerifyMedFunc(Func, "buildSsa");
 
-    if (TargetArch == Arch::X86 || TargetArch == Arch::X64) {
-      foldMachineFlagsIntoPushfImages(Func);
-      debugVerifyMedFunc(Func, "foldMachineFlagsIntoPushfImages");
-    }
+    // Only the x86 lifter emits PUSHF, so this finds nothing elsewhere.
+    foldMachineFlagsIntoPushfImages(Func);
+    debugVerifyMedFunc(Func, "foldMachineFlagsIntoPushfImages");
 
     // Model a call's floating-point/vector return (x86-64 returns it in XMM0, a
     // caller-saved vector register the lifter did not model the call as
@@ -1001,10 +950,11 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     eliminateFlags(Func);
     debugVerifyMedFunc(Func, "eliminateFlags");
 
-    // Flag lowering leaves PF/AF/OF writes that no remaining COND_BR reads.
-    // Without DCE those become LLVMC `__builtin_popcount` / flag SSA noise on
-    // `test`/`cmp` that only consume ZF.
-    if (TheArch == Arch::X86 || TheArch == Arch::X64) {
+    // Where ordinary arithmetic writes the flags, flag lowering leaves PF/AF/OF
+    // writes that no remaining COND_BR reads.  Without DCE those become LLVMC
+    // `__builtin_popcount` / flag SSA noise on `test`/`cmp` that only consume
+    // ZF.
+    if (getTargetRegInfo(TheArch).ArithmeticWritesFlags) {
       runDce(Func);
       debugVerifyMedFunc(Func, "runDce");
     }

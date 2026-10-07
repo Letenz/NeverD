@@ -1381,17 +1381,22 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
   for (const auto &name : current.value("encodings").toArray())
     chosen.append(name.toString());
   QVector<QPair<QString, QCheckBox *>> boxes;
-  // Code pages read the same bytes differently, so at most one is chosen.
-  auto *codePage = new QComboBox(&dialog);
-  codePage->addItem(tr("None"), QString());
+  // Code pages: those searched by default together, and the one preferred.
+  QStringList common, commonSpellings;
+  auto *preferred = new QComboBox(&dialog);
+  preferred->addItem(tr("None"), QString());
   for (const auto &value : encodings) {
     const auto encoding = value.toObject();
     const auto name = encoding.value("name").toString();
     const auto spelling = encoding.value("spelling").toString();
     if (encoding.value("legacy").toBool()) {
-      codePage->addItem(spelling.isEmpty() ? name : spelling, name);
-      if (chosen.contains(name))
-        codePage->setCurrentIndex(codePage->count() - 1);
+      preferred->addItem(spelling.isEmpty() ? name : spelling, name);
+      if (current.value("preferred").toString() == name)
+        preferred->setCurrentIndex(preferred->count() - 1);
+      if (encoding.value("default").toBool()) {
+        common.append(name);
+        commonSpellings.append(spelling.isEmpty() ? name : spelling);
+      }
       continue;
     }
     // Plain ASCII has no listing spelling of its own.
@@ -1402,16 +1407,33 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
     boxes.append({name, box});
   }
   form->addRow(tr("Encodings:"), choices);
-  if (codePage->count() > 1) {
-    codePage->setToolTip(
-        tr("Also read C strings that are not UTF-8 in this code page"));
-    form->addRow(tr("Code page:"), codePage);
+  auto *detect = new QCheckBox(tr("Detect common code pages"), &dialog);
+  detect->setChecked(
+      !common.isEmpty() &&
+      std::all_of(common.begin(), common.end(),
+                  [&](const QString &name) { return chosen.contains(name); }));
+  detect->setToolTip(tr("Also read C strings that are not UTF-8 in %1, where "
+                        "one of them reads them as text and no code page for "
+                        "another script does")
+                         .arg(commonSpellings.join(QStringLiteral(", "))));
+  preferred->setToolTip(tr("Read C strings that are not UTF-8 in this code "
+                           "page first, so that it wins where other code "
+                           "pages read them too"));
+  if (preferred->count() > 1) {
+    if (!common.isEmpty())
+      form->addRow(tr("Code pages:"), detect);
+    else
+      detect->hide();
+    form->addRow(tr("Preferred code page:"), preferred);
   } else {
-    codePage->hide();
+    detect->hide();
+    preferred->hide();
   }
   auto *length = new QSpinBox(&dialog);
   length->setRange(1, MaxStringMinLength);
   length->setValue(current.value("min_length").toInt(DefaultStringMinLength));
+  length->setToolTip(
+      tr("Display columns: a wide East Asian character counts two"));
   form->addRow(tr("Minimum length:"), length);
   auto *buttons = new QDialogButtonBox(
       QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
@@ -1419,14 +1441,15 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
   // At least one encoding stays selected.
   const auto update = [&] {
     buttons->button(QDialogButtonBox::Ok)
-        ->setEnabled(codePage->currentIndex() > 0 ||
+        ->setEnabled(preferred->currentIndex() > 0 || detect->isChecked() ||
                      std::any_of(boxes.begin(), boxes.end(), [](auto &box) {
                        return box.second->isChecked();
                      }));
   };
   for (auto &box : boxes)
     connect(box.second, &QCheckBox::toggled, &dialog, update);
-  connect(codePage, &QComboBox::currentIndexChanged, &dialog, update);
+  connect(detect, &QCheckBox::toggled, &dialog, update);
+  connect(preferred, &QComboBox::currentIndexChanged, &dialog, update);
   update();
   connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -1436,9 +1459,13 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
   for (auto &box : boxes)
     if (box.second->isChecked())
       names.append(box.first);
-  if (const auto page = codePage->currentData().toString(); !page.isEmpty())
+  if (detect->isChecked())
+    names.append(common);
+  // A preferred code page alone searches only it.
+  const auto page = preferred->currentData().toString();
+  if (names.isEmpty())
     names.append(page);
-  session_.setStringOptions(names, length->value());
+  session_.setStringOptions(names, page, length->value());
 }
 
 void MainWindow::showShortcuts() {

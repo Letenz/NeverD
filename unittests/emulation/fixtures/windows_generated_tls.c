@@ -13,11 +13,19 @@ void entry(void);
 static volatile U32 Result;
 static volatile U32 StartupCount;
 static volatile U32 Notifications;
+// Initialized writable storage must not give generated code file backing.
+static volatile U32 ExitStatus = 37;
 static U32 Index;
 static const U32 TLSRaw[] = {11, 22};
-// The fixture linker gives this zero-filled section execute permission.
-__declspec(align(8)) unsigned char Generated[32];
-__declspec(align(8)) unsigned char GeneratedEntry[16];
+// Explicit COFF storage keeps the generated buffers unbacked independently of
+// the compiler's placement of ordinary zero-valued globals.
+#define NEVERD_DEFERRED_GENERATED_BUFFER(Name, Size)                           \
+  extern unsigned char Name[Size];
+#include "WindowsDeferredCases.def"
+#undef NEVERD_DEFERRED_GENERATED_BUFFER
+#define NEVERD_DEFERRED_GENERATED_ASM(Text) __asm__(Text);
+#include "WindowsDeferredCases.def"
+#undef NEVERD_DEFERRED_GENERATED_ASM
 
 static volatile U32 *threadLocalData(void) {
   void **Vector;
@@ -97,6 +105,6 @@ void entry(void) {
   }
   ExitProcess(Result == 42 && StartupCount == 1 && Notifications == 3 &&
                       threadLocalData()[0] == 0x2468
-                  ? 37
+                  ? ExitStatus
                   : 91);
 }

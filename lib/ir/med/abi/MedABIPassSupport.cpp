@@ -34,16 +34,6 @@
 
 namespace neverd {
 
-static llvm::ArrayRef<uint64_t> integerParamRegs(const TargetRegInfo &TRI,
-                                                 bool IsWin64) {
-  return TRI.integerArgumentLayout(IsWin64).Registers;
-}
-
-static int integerArgIndex(const TargetRegInfo &TRI, uint64_t RegOff,
-                           bool IsWin64) {
-  return TRI.integerArgumentLayout(IsWin64).registerIndex(RegOff);
-}
-
 // Address = Base + Offset modulo the original address width. Offset owns the
 // width; no rewrite may change it or peel a width-changing conversion.
 struct ReducedAddress {
@@ -357,10 +347,10 @@ std::optional<MedVar> vtableCallObject(const MedBlock &Blk, int CallIdx,
   return VtblLoad.Inputs[0];
 }
 
-std::optional<int> resolveIndirectTargetArgIdx(const MedBlock &Blk, int FromIdx,
-                                               const TargetRegInfo &TRI,
-                                               const MedVar &V, bool IsWin64,
-                                               int Depth) {
+std::optional<int>
+resolveIndirectTargetArgIdx(const MedBlock &Blk, int FromIdx,
+                            const TargetRegInfo &TRI, const MedVar &V,
+                            const IntegerArgumentLayout &Layout, int Depth) {
   if (Depth > 16 || V.isConst())
     return std::nullopt;
 
@@ -376,7 +366,7 @@ std::optional<int> resolveIndirectTargetArgIdx(const MedBlock &Blk, int FromIdx,
   if (DefIdx < 0) {
     if (V.Kind != MedVar::Reg && V.Kind != MedVar::Param)
       return std::nullopt;
-    int ArgIdx = integerArgIndex(TRI, V.RegOff, IsWin64);
+    int ArgIdx = Layout.registerIndex(V.RegOff);
     return ArgIdx >= 0 ? std::optional<int>(ArgIdx) : std::nullopt;
   }
 
@@ -391,24 +381,24 @@ std::optional<int> resolveIndirectTargetArgIdx(const MedBlock &Blk, int FromIdx,
     // provenance root instead of recursing through the identical SSA value.
     if (Def.Inputs[0].Kind == V.Kind && Def.Inputs[0].Id == V.Id &&
         Def.Inputs[0].SSAVer == V.SSAVer && Def.Inputs[0].RegOff == V.RegOff) {
-      int ArgIdx = integerArgIndex(TRI, V.RegOff, IsWin64);
+      int ArgIdx = Layout.registerIndex(V.RegOff);
       return ArgIdx >= 0 ? std::optional<int>(ArgIdx) : std::nullopt;
     }
-    return resolveIndirectTargetArgIdx(Blk, DefIdx, TRI, Def.Inputs[0], IsWin64,
+    return resolveIndirectTargetArgIdx(Blk, DefIdx, TRI, Def.Inputs[0], Layout,
                                        Depth + 1);
   case NdOp::SUBBYTES:
     return (Def.NumInputs >= 2 && Def.Inputs[1].isConst() &&
             Def.Inputs[1].ConstVal == 0)
                ? resolveIndirectTargetArgIdx(Blk, DefIdx, TRI, Def.Inputs[0],
-                                             IsWin64, Depth + 1)
+                                             Layout, Depth + 1)
                : std::nullopt;
   case NdOp::LOAD: {
     const auto Store = reachingStore(Blk, DefIdx);
     if (!Store)
       return std::nullopt;
     return resolveIndirectTargetArgIdx(
-        Blk, *Store, TRI, *safety::detail::storedValue(Blk.Ops[*Store]),
-        IsWin64, Depth + 1);
+        Blk, *Store, TRI, *safety::detail::storedValue(Blk.Ops[*Store]), Layout,
+        Depth + 1);
   }
   default:
     return std::nullopt;
@@ -844,7 +834,8 @@ static MedVar argRegSourceValue(const MedOp &Op) {
 // view -- a FILE* loaded into x1 right before an external `fputs` -- would be
 // recovered as the truncated low 32 bits, yielding a wild pointer at run time.
 MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
-                                const TargetRegInfo &TRI, bool IsWin64) {
+                                const TargetRegInfo &TRI,
+                                const IntegerArgumentLayout &Layout) {
   const MedOp &Op = Blk.Ops[J];
   MedVar Base = argRegSourceValue(Op);
   // Only a sub-register sync whose source is not the register itself needs the
@@ -857,11 +848,11 @@ MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
        Op.Inputs[0].RegOff == Op.Output.RegOff))
     return Base;
   const MedVar &Src = Op.Inputs[0];
-  const int ArgIdx = integerArgIndex(TRI, Op.Output.RegOff, IsWin64);
+  const int ArgIdx = Layout.registerIndex(Op.Output.RegOff);
   for (int K = J - 1; K >= 0; --K) {
     const MedOp &W = Blk.Ops[K];
     if (W.Output.Kind != MedVar::Reg ||
-        integerArgIndex(TRI, W.Output.RegOff, IsWin64) != ArgIdx)
+        Layout.registerIndex(W.Output.RegOff) != ArgIdx)
       continue;
     // The nearest earlier write to this same argument register: when it is a
     // wider write of the same source value, it is the full-width definition the
@@ -878,7 +869,7 @@ MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
 const PhiNode *selectAuthoritativeArgPhi(const MedFunc &Func,
                                          const MedBlock &Block,
                                          const TargetRegInfo &TRI, int ArgIdx,
-                                         bool IsWin64) {
+                                         const IntegerArgumentLayout &Layout) {
   // AArch64 may carry both Wn and Xn PHIs for one ABI argument.  Ordinarily the
   // full-width view is authoritative, but a wide alias synthesized only by a
   // loop back-edge is undef on the first iteration.  Prefer a PHI whose value
@@ -929,7 +920,7 @@ const PhiNode *selectAuthoritativeArgPhi(const MedFunc &Func,
   bool BestSeeded = false;
   for (const auto &Phi : Block.Phis) {
     if (Phi.Output.Kind != MedVar::Reg ||
-        integerArgIndex(TRI, Phi.Output.RegOff, IsWin64) != ArgIdx)
+        Layout.registerIndex(Phi.Output.RegOff) != ArgIdx)
       continue;
     const bool PhiSeeded = entryEdgesSeeded(Phi);
     if (!Best ||
@@ -956,11 +947,10 @@ const PhiNode *selectAuthoritativeArgPhi(const MedFunc &Func,
 // callee's arity, so a parameter register with no reaching definition is the
 // incoming argument of a forwarder and is recovered as a live-in even when it
 // is not yet a recorded parameter of the function.
-std::optional<MedVar> findReachingArgReg(const MedFunc &Func,
-                                         const TargetRegInfo &TRI, Arch TheArch,
-                                         int BlockId, int ArgIdx, bool IsWin64,
-                                         bool AllowUnknownLiveIn,
-                                         bool *FromLiveIn, bool *FoundDef) {
+std::optional<MedVar>
+findReachingArgReg(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
+                   int BlockId, int ArgIdx, const IntegerArgumentLayout &Layout,
+                   bool AllowUnknownLiveIn, bool *FromLiveIn, bool *FoundDef) {
   std::map<int, const MedBlock *> ById;
   for (const auto &B : Func.Blocks)
     ById[B.Id] = &B;
@@ -969,11 +959,11 @@ std::optional<MedVar> findReachingArgReg(const MedFunc &Func,
     for (int J = UpTo - 1; J >= 0; --J) {
       const auto &Op = B.Ops[J];
       if (Op.Output.Kind == MedVar::Reg && Op.Output.Size > 0 &&
-          integerArgIndex(TRI, Op.Output.RegOff, IsWin64) == ArgIdx)
-        return argRegSourceValueInBlock(B, J, TRI, IsWin64);
+          Layout.registerIndex(Op.Output.RegOff) == ArgIdx)
+        return argRegSourceValueInBlock(B, J, TRI, Layout);
     }
     if (const PhiNode *Phi =
-            selectAuthoritativeArgPhi(Func, B, TRI, ArgIdx, IsWin64))
+            selectAuthoritativeArgPhi(Func, B, TRI, ArgIdx, Layout))
       return Phi->Output;
     return std::nullopt;
   };
@@ -989,7 +979,7 @@ std::optional<MedVar> findReachingArgReg(const MedFunc &Func,
   // The call block's straight-line ops were already handled by the caller (with
   // its call-boundary stop); only its PHIs and the predecessor chain remain.
   if (const PhiNode *Phi =
-          selectAuthoritativeArgPhi(Func, *It->second, TRI, ArgIdx, IsWin64)) {
+          selectAuthoritativeArgPhi(Func, *It->second, TRI, ArgIdx, Layout)) {
     if (FoundDef)
       *FoundDef = true;
     return Phi->Output;
@@ -1021,7 +1011,7 @@ std::optional<MedVar> findReachingArgReg(const MedFunc &Func,
   // Recover it only when this argument register is a real parameter of the
   // current function, so an uninitialised caller-saved register is never
   // invented as an argument.
-  llvm::ArrayRef<uint64_t> ParamRegs = integerParamRegs(TRI, IsWin64);
+  llvm::ArrayRef<uint64_t> ParamRegs = Layout.Registers;
   if (ArgIdx >= 0 && ArgIdx < static_cast<int>(ParamRegs.size())) {
     uint64_t Reg = ParamRegs[ArgIdx];
     for (const auto &P : Func.Params)

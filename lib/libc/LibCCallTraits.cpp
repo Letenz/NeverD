@@ -208,7 +208,9 @@ bool isNoReturnFunction(std::string_view Name) {
   // fall-through code.
   return llvm::StringSwitch<bool>(stripLeadingUnderscores(Name))
 #define LIBC_NO_RETURN_SYMBOL(Name) .Case(Name, true)
+#include "neverd/libc/CxxRuntimeNoReturn.inc"
 #include "neverd/libc/LibCNoReturn.inc"
+#include "neverd/libc/WindowsNoReturn.inc"
 #undef LIBC_NO_RETURN_SYMBOL
       .Default(false);
 }

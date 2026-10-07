@@ -7,16 +7,21 @@
 /// \file
 /// Handlers that print a single flat table backed by a *_json C-API call:
 /// `imports`, `exports`, `segments`, `sections`, `symbols`, `relocs`,
-/// `entrypoints`, and `strings`.  With --json the raw blob is echoed; otherwise
-/// it is formatted as an aligned table.
+/// `entrypoints`, `switches`, and `strings`.  With --json the raw blob is
+/// echoed; otherwise it is formatted as an aligned table.
 ///
 //===----------------------------------------------------------------------===//
 
 #include "../NeverDCLI.h"
 
+#include "neverd/support/CaseList.h"
+
 #include "llvm/Support/Format.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <map>
 
 using namespace llvm;
 
@@ -238,6 +243,79 @@ int runEntryPoints(neverd_session_t Sess) {
   }
   if (Json)
     neverd_free_string(Json);
+  return 0;
+}
+
+int runSwitches(neverd_session_t Sess) {
+  if (!neverd_session_analyze(Sess)) {
+    WithColor::error() << "analysis failed: " << takeLastError(Sess) << "\n";
+    return 1;
+  }
+  // Every page, in function entry order.
+  constexpr int FunctionsPerPage = 4096;
+  json::Array Switches;
+  for (std::optional<neverd_va_t> Cursor = 0; Cursor;) {
+    const char *Raw = neverd_switches_json(Sess, *Cursor, FunctionsPerPage);
+    if (!Raw) {
+      WithColor::error() << "switches: " << takeLastError(Sess) << "\n";
+      return 1;
+    }
+    auto Page = json::parse(Raw);
+    neverd_free_string(Raw);
+    const json::Object *Object = Page ? Page->getAsObject() : nullptr;
+    if (!Object) {
+      if (!Page)
+        consumeError(Page.takeError());
+      WithColor::error() << "switches: the engine returned invalid JSON\n";
+      return 1;
+    }
+    if (const json::Array *Rows = Object->getArray("switches"))
+      for (const json::Value &Row : *Rows)
+        Switches.push_back(Row);
+    Cursor.reset();
+    if (const auto Next = Object->getString("next_entry")) {
+      neverd_va_t Entry = 0;
+      if (!parseHexAddress(Next->str(), Entry)) {
+        WithColor::error() << "switches: the engine returned an invalid "
+                              "next entry\n";
+        return 1;
+      }
+      Cursor = Entry;
+    }
+  }
+  if (JsonOutput) {
+    outs() << json::Value(json::Object{{"switches", std::move(Switches)}})
+           << "\n";
+    return 0;
+  }
+  outs() << "\nSwitches (" << Switches.size() << "):\n";
+  for (const json::Value &Row : Switches) {
+    const json::Object *Switch = Row.getAsObject();
+    if (!Switch)
+      continue;
+    const auto text = [&](StringRef Key) {
+      return Switch->getString(Key).value_or("-").str();
+    };
+    const json::Array *Targets = Switch->getArray("targets");
+    outs() << format("  jump %-18s table %-18s %4zu cases  %-14s function %s\n",
+                     text("jump").c_str(), text("table").c_str(),
+                     Targets ? Targets->size() : size_t(0),
+                     text("form").c_str(), text("function").c_str());
+    if (!Targets)
+      continue;
+    // Each target with the table indexes that reach it, in target order.
+    std::map<std::string, std::vector<int64_t>> Indexes;
+    for (const json::Value &Target : *Targets)
+      if (const json::Array *Fields = Target.getAsArray();
+          Fields && Fields->size() == 3)
+        if (const auto To = (*Fields)[0].getAsString())
+          if (const auto Index = (*Fields)[1].getAsInteger())
+            Indexes[To->str()].push_back(*Index);
+    for (const auto &[To, Values] : Indexes)
+      outs() << format("    %-18s %s %s\n", To.c_str(),
+                       Values.size() == 1 ? "index  " : "indexes",
+                       formatCaseList(Values).c_str());
+  }
   return 0;
 }
 

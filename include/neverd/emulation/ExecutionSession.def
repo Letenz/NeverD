@@ -9,4 +9,5 @@ NEVERD_SESSION_EXIT(Quantum, "quantum")
 NEVERD_SESSION_EXIT(InstructionLimit, "instruction_limit")
 NEVERD_SESSION_EXIT(Timeout, "timeout")
 NEVERD_SESSION_EXIT(ExecutionWatch, "execution_watch")
+NEVERD_SESSION_EXIT(MemoryWriteWatch, "memory_write_watch")
 #endif

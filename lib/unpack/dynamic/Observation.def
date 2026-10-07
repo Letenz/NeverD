@@ -6,8 +6,8 @@
 // What judging a transfer needs to know about an instruction set: the stack
 // pointer register and the longest instruction in bytes. A transfer is the
 // program's entry when the stack pointer has returned to its value at process
-// entry, and its target is compared over the longest instruction so that
-// data stored beside existing code is not mistaken for new code.
+// entry. The longest instruction bounds conservative execution watches;
+// the CPU decoder supplies the actual target extent for generation evidence.
 #ifdef NEVERD_UNPACK_ARCHITECTURE
 NEVERD_UNPACK_ARCHITECTURE(X64, X64SP, 15)
 NEVERD_UNPACK_ARCHITECTURE(AArch64, AArch64SP, 4)
@@ -34,4 +34,6 @@ NEVERD_UNPACK_OBSERVATION_TEXT(
     WatchOutside, "an execution watch fired outside the observed image")
 NEVERD_UNPACK_OBSERVATION_TEXT(
     TransferLimit, "transfers into generated code exceed the unpacking limit")
+NEVERD_UNPACK_OBSERVATION_TEXT(
+    InstructionExtent, "decoded instruction leaves the observed image extent")
 #endif

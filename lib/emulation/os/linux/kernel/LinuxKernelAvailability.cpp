@@ -7,7 +7,8 @@
 namespace neverd::emulation::linux_model {
 std::optional<uint32_t> gkiPidFDFlags(AndroidGKIKernel Kernel) {
   switch (Kernel) {
-#define NEVERD_LINUX_GKI_KERNEL(Name, Label, Flags, Import, NonLeader)         \
+#define NEVERD_LINUX_GKI_KERNEL(Name, Label, Flags, Import, NonLeader,         \
+                                NameFirst)                                     \
   case AndroidGKIKernel::Name:                                                 \
     return Flags;
 #include "neverd/emulation/LinuxGKIKernels.def"
@@ -17,7 +18,8 @@ std::optional<uint32_t> gkiPidFDFlags(AndroidGKIKernel Kernel) {
 }
 std::optional<IOVectorImportKind> gkiIOVectorImport(AndroidGKIKernel Kernel) {
   switch (Kernel) {
-#define NEVERD_LINUX_GKI_KERNEL(Name, Label, Flags, Import, NonLeader)         \
+#define NEVERD_LINUX_GKI_KERNEL(Name, Label, Flags, Import, NonLeader,         \
+                                NameFirst)                                     \
   case AndroidGKIKernel::Name:                                                 \
     return IOVectorImportKind::Import;
 #include "neverd/emulation/LinuxGKIKernels.def"
@@ -27,9 +29,21 @@ std::optional<IOVectorImportKind> gkiIOVectorImport(AndroidGKIKernel Kernel) {
 }
 std::optional<uint32_t> gkiPidFDNonLeaderError(AndroidGKIKernel Kernel) {
   switch (Kernel) {
-#define NEVERD_LINUX_GKI_KERNEL(Name, Label, Flags, Import, NonLeader)         \
+#define NEVERD_LINUX_GKI_KERNEL(Name, Label, Flags, Import, NonLeader,         \
+                                NameFirst)                                     \
   case AndroidGKIKernel::Name:                                                 \
     return NonLeader;
+#include "neverd/emulation/LinuxGKIKernels.def"
+#undef NEVERD_LINUX_GKI_KERNEL
+  }
+  return std::nullopt;
+}
+std::optional<bool> gkiXAttrNameFirst(AndroidGKIKernel Kernel) {
+  switch (Kernel) {
+#define NEVERD_LINUX_GKI_KERNEL(Name, Label, Flags, Import, NonLeader,         \
+                                NameFirst)                                     \
+  case AndroidGKIKernel::Name:                                                 \
+    return NameFirst;
 #include "neverd/emulation/LinuxGKIKernels.def"
 #undef NEVERD_LINUX_GKI_KERNEL
   }

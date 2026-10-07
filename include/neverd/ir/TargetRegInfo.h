@@ -59,6 +59,9 @@ NdOp condToOpcode(CondCode CC);
 /// Whether the condition requires swapped operands (b op a instead of a op b).
 bool condSwapsOperands(CondCode CC);
 
+/// SubRegs indexed by narrow view (TargetRegInfo.cpp).
+struct SubRegIndex;
+
 /// Describes one sub-register relationship (e.g. RAX→AL, X0→W0).
 struct SubRegEntry {
   uint64_t WideRegOff;
@@ -133,6 +136,11 @@ struct TargetRegInfo {
   /// Sub-register relationship table.
   llvm::ArrayRef<SubRegEntry> SubRegs = {};
 
+  /// SubRegs by narrow view, which the sub-register queries search instead
+  /// of scanning the table; they scan a table it was not built for.  Set by
+  /// getTargetRegInfo() with SubRegs.
+  const SubRegIndex *SubRegLookup = nullptr;
+
   /// Architectural control-flow register when a RETURN carries its target as
   /// an explicit LowIR operand (ARM POP PC, for example). It is not a source
   /// return-value carrier.
@@ -152,6 +160,36 @@ struct TargetRegInfo {
   /// so the carrying physical slot depends on TOP at the return.  Set by
   /// getTargetRegInfo().
   bool ReturnsFPInX87 = false;
+
+  /// A RETURN operation's operand is the integer return register's value
+  /// (x86 `ret` leaves the result in EAX/RAX), so whatever SSA left there is
+  /// the value returned.  Elsewhere the operand can be the return address.
+  /// Set by getTargetRegInfo().
+  bool ReturnOperandIsValue = false;
+
+  /// A call pushes its return address on the stack (x86), so a call made only
+  /// for that address is a push and a jump.  Elsewhere a call writes the
+  /// link register.  Set by getTargetRegInfo().
+  bool CallPushesReturnAddress = false;
+
+  /// A small aggregate is returned entirely in integer registers or entirely
+  /// in vector registers (an AArch64 HFA), never in a mix of both.  Set by
+  /// getTargetRegInfo().
+  bool ReturnAggregatesSingleClass = false;
+
+  /// Each vector-register field of a returned aggregate is a whole eightbyte
+  /// (an x86-64 SSE class, which may pack two floats), not the field's own
+  /// width.  Set by getTargetRegInfo().
+  bool VectorReturnFieldsAreEightbytes = false;
+
+  /// A memory operand can name an FS or GS segment address space (x86).  Set
+  /// by getTargetRegInfo().
+  bool HasSegmentAddressSpaces = false;
+
+  /// Ordinary arithmetic writes the condition flags (x86), rather than only
+  /// the flag-setting forms of each instruction, so flag lowering leaves many
+  /// flag writes nothing reads.  Set by getTargetRegInfo().
+  bool ArithmeticWritesFlags = false;
 
   /// An auto-declared unknown external callee must use a variadic prototype so
   /// the backend never mislays arguments (true on ARM/AArch64 where variadic
@@ -351,12 +389,24 @@ struct TargetRegInfo {
   /// IsWin64 is meaningful only on x86-64; do not select it by argument count.
   IntegerArgumentLayout integerArgumentLayout(bool IsWin64) const;
 
+  /// Physical integer argument layout of code in a \p Format image, in the
+  /// register order integerParamRegs() gives for that format.
+  IntegerArgumentLayout integerArgumentLayout(BinaryFormat Format) const {
+    return integerArgumentLayout(Format == BinaryFormat::COFF);
+  }
+
   /// Map a register offset to a parameter index, or -1 if not a param reg.
   int regToArgIdx(uint64_t RegOff) const;
 
   /// Map a register offset to a parameter index for a specific calling
   /// convention. \p IsWin64 selects the Win64 register order on x86-64.
   int regToArgIdx(uint64_t RegOff, bool IsWin64) const;
+
+  /// Map a register offset to a parameter index of code in a \p Format
+  /// image, as integerParamRegs() orders that format's registers.
+  int regToArgIdx(uint64_t RegOff, BinaryFormat Format) const {
+    return regToArgIdx(RegOff, Format == BinaryFormat::COFF);
+  }
 
   /// Check whether \p RegOff is a parameter register in any convention.
   bool isParamReg(uint64_t RegOff) const { return regToArgIdx(RegOff) >= 0; }

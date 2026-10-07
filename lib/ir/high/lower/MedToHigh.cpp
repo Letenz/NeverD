@@ -129,6 +129,17 @@ class HighConversionTrace {
     errno = SavedErrno;
   }
 
+  /// How many conversions of the selected function to trace
+  /// (NEVERD_HIGH_TRACE_INVOCATIONS, default 1).  A function with SEH scopes
+  /// is converted once per block layout, and the kept one may be the second.
+  static unsigned invocationLimit() noexcept {
+    const char *Value = std::getenv("NEVERD_HIGH_TRACE_INVOCATIONS");
+    unsigned Limit = 0;
+    if (!Value || llvm::StringRef(Value).getAsInteger(10, Limit))
+      return 1;
+    return Limit;
+  }
+
 public:
   HighConversionTrace(const MedFunc &Med, Arch Architecture) noexcept
       : Med(Med), Architecture(Architecture) {
@@ -138,7 +149,7 @@ public:
         std::string_view(Selected) == std::string_view(Med.Name)) {
       static std::atomic<unsigned> Count{0};
       Invocation = Count.fetch_add(1, std::memory_order_relaxed);
-      Enabled = Invocation < 1;
+      Enabled = Invocation < invocationLimit();
     }
     errno = SavedErrno;
   }

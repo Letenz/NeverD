@@ -59,11 +59,15 @@ NEVERD_API const char *neverd_unwind_frame_json(neverd_session_t Sess,
 NEVERD_API const char *neverd_segments_json(neverd_session_t Sess);
 /// Text strings in the image's initialized data that is not code: C strings
 /// in ASCII or UTF-8, UTF-16 or UTF-32 strings in either byte order, and C
-/// strings in one legacy code page, each ending in a zero code unit.
+/// strings in legacy code pages, each ending in a zero code unit.
 /// \p OptionsJson is NULL for the defaults or an object with optional
-/// "encodings" (names from neverd_string_encodings_json(), at most one of
-/// them a legacy code page; default ascii, utf-8 and utf-16le) and
-/// "min_length" (characters, 1 to 1024, default 4).  Returns
+/// "encodings" (names from neverd_string_encodings_json(); default those it
+/// marks "default"), "preferred" (a legacy code page that reads a C string
+/// first and so wins where other code pages read it as text too; searched
+/// whether or not "encodings" names it; without it the code pages read in
+/// the order neverd_string_encodings_json() lists them) and "min_length"
+/// (display columns, a wide East Asian character counting two, 1 to 1024,
+/// default 4).  Returns
 /// [{"addr","length","chars","encoding","value"},...] in address order, where
 /// "length" counts bytes without the terminator and "value" is UTF-8, or NULL
 /// with neverd_last_error() for malformed options.
@@ -96,6 +100,15 @@ NEVERD_API const char *neverd_string_refs_json(neverd_session_t Sess,
                                                const char *OptionsJson,
                                                neverd_va_t FirstEntry,
                                                int MaxFunctions);
+/// \p Text (UTF-8) with every character case-folded by Unicode simple case
+/// folding, so that a filter matches text regardless of case in any script.
+/// Bytes that are not UTF-8 stay as they are.  NULL for NULL.
+NEVERD_API const char *neverd_fold_case(const char *Text);
+/// \p Name as a listing reads it: an Itanium, Microsoft, Rust or D mangled
+/// name demangled the way function identities' "display_name" is, also with
+/// one leading underscore more (a Mach-O symbol or an ELF PLT entry's name),
+/// and any other name as it is.  NULL for NULL.
+NEVERD_API const char *neverd_demangle(const char *Name);
 /// \p Size bytes decoded in \p Encoding (a name or alias of
 /// neverd_string_encodings_json()) for display, one cell per byte:
 /// {"cells":[...]}, where a character's first byte holds its text (UTF-8), a
@@ -122,6 +135,9 @@ NEVERD_API const char *neverd_data_symbols_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_relocs_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_headers_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_entrypoints_json(neverd_session_t Sess);
+/// An overview of the loaded image: "file" (path, name, format, arch, bits,
+/// entry, base, size), "hashes" of the input file ("md5", "sha256" and
+/// "crc32" in lowercase hex) and "counts".
 NEVERD_API const char *neverd_dashboard_json(neverd_session_t Sess);
 
 // ===--------------------------------------------------------------------===//

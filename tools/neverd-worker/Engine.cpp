@@ -5,6 +5,7 @@
 #include "GraphSnapshot.h"
 #include "Listing.h"
 #include "ProjectHistory.h"
+#include "TextFold.h"
 
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
@@ -176,15 +177,12 @@ std::string ownedString(const char *value) {
                 "Engine result exceeds the 32 MiB adapter budget");
   return std::string(value, size);
 }
-std::string folded(std::string text) {
-  std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  return text;
-}
+/// \p text folded for comparisons that ignore case, in any script.
+std::string folded(const std::string &text) { return foldText(text); }
 constexpr std::size_t MaxFunctionRows = 1000000;
-// Strings need this many characters unless string_options says otherwise;
-// a minimum is at most MaxStringMinLength (neverd::strings::MaxMinChars).
+// Strings need this many display columns unless string_options says
+// otherwise; a minimum is at most MaxStringMinLength
+// (neverd::strings::MaxMinLength).
 constexpr int DefaultStringMinLength = 4;
 constexpr std::int64_t MaxStringMinLength = 1024;
 /// Lines of one engine code page; longer functions keep engine names.
@@ -460,6 +458,8 @@ void Engine::analyze() {
     throw Error("analysis_failed", error());
   analyzed_ = true;
   invalidate();
+  if (listing_)
+    listing_->loadSwitches();
   ++revision_;
 }
 void Engine::prepareFunction(std::uint64_t address) {
@@ -481,6 +481,8 @@ void Engine::prepareFunction(std::uint64_t address) {
 Listing &Engine::newListing() {
   listing_ = std::make_unique<Listing>(session_);
   listing_->setStringOptions(stringOptions_);
+  if (analyzed_)
+    listing_->loadSwitches();
   return *listing_;
 }
 
@@ -589,37 +591,42 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     return {{"items", stringEncodings()}};
   }
   if (operation == "string_options") {
-    if (p.contains("encodings") || p.contains("min_length")) {
+    if (p.contains("encodings") || p.contains("min_length") ||
+        p.contains("preferred")) {
       Json options = Json::object();
+      const auto knownEncoding = [](const Json &name) {
+        const auto known =
+            name.is_string()
+                ? std::find_if(stringEncodings().begin(),
+                               stringEncodings().end(),
+                               [&](const Json &encoding) {
+                                 return encoding.value("name", std::string()) ==
+                                        name.get<std::string>();
+                               })
+                : stringEncodings().end();
+        if (known == stringEncodings().end())
+          throw Error(
+              "unsupported_encoding",
+              "Unknown string encoding: " +
+                  (name.is_string() ? name.get<std::string>() : name.dump()));
+        return *known;
+      };
       if (p.contains("encodings")) {
         const auto &names = p["encodings"];
         if (!names.is_array() || names.empty() || names.size() > 64)
           throw Error("invalid_request",
                       "encodings must be a non-empty array of names");
-        std::set<std::string> legacy;
-        for (const auto &name : names) {
-          const auto known =
-              name.is_string()
-                  ? std::find_if(
-                        stringEncodings().begin(), stringEncodings().end(),
-                        [&](const Json &encoding) {
-                          return encoding.value("name", std::string()) ==
-                                 name.get<std::string>();
-                        })
-                  : stringEncodings().end();
-          if (known == stringEncodings().end())
-            throw Error(
-                "unsupported_encoding",
-                "Unknown string encoding: " +
-                    (name.is_string() ? name.get<std::string>() : name.dump()));
-          if (known->value("legacy", false))
-            legacy.insert(name.get<std::string>());
-        }
-        // Code pages read the same bytes differently; one is searched.
-        if (legacy.size() > 1)
-          throw Error("invalid_request",
-                      "Only one legacy code page can be searched at a time");
+        for (const auto &name : names)
+          knownEncoding(name);
         options["encodings"] = names;
+      }
+      // The code page that reads a C string first; the engine searches it
+      // whether or not the encodings name it.
+      if (p.contains("preferred") && !p["preferred"].is_null()) {
+        if (!knownEncoding(p["preferred"]).value("legacy", false))
+          throw Error("invalid_request",
+                      "preferred must name a legacy code page");
+        options["preferred"] = p["preferred"];
       }
       if (p.contains("min_length")) {
         const auto &length = p["min_length"];
@@ -646,6 +653,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     }
     if (!current.contains("min_length"))
       current["min_length"] = DefaultStringMinLength;
+    if (!current.contains("preferred"))
+      current["preferred"] = nullptr;
     return current;
   }
   if (operation == "contributions")
@@ -873,11 +882,14 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       functionOrder_.clear();
       for (std::size_t i = 0; i < rows.size(); ++i) {
         const auto &row = rows[i];
-        if (filter.empty() ||
-            folded(row.value("name", std::string())).find(filter) !=
-                std::string::npos ||
-            folded(row.value("engine_name", std::string())).find(filter) !=
-                std::string::npos ||
+        // The filter matches the name, the engine's name, the name as it
+        // reads demangled or the address.
+        const auto matches = [&](const char *field) {
+          return folded(row.value(field, std::string())).find(filter) !=
+                 std::string::npos;
+        };
+        if (filter.empty() || matches("name") || matches("engine_name") ||
+            matches("demangled_name") ||
             row.value("address", std::string()).find(filter) !=
                 std::string::npos)
           functionOrder_.push_back(i);
@@ -909,9 +921,11 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         item = Json::object();
       const bool renamed = row.contains("engine_name");
       for (const auto &[field, value] : row.items())
-        item[field] = value;
+        if (field != "demangled_name")
+          item[field] = value;
+      // A name the workbench gave reads demangled, as the engine's do.
       if (renamed || !item.contains("display_name"))
-        item["display_name"] = row["name"];
+        item["display_name"] = row.value("demangled_name", row["name"]);
       items.push_back(std::move(item));
     }
     const bool complete = offset >= total || items.size() >= total - offset;

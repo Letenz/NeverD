@@ -37,6 +37,8 @@ using StringsExFunction = const char *(*)(neverd_session_t, const char *);
 using StringRefsFunction = const char *(*)(neverd_session_t, const char *,
                                            neverd_va_t, int);
 using StringEncodingsFunction = const char *(*)();
+using SwitchesFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
+using DemangleFunction = const char *(*)(const char *);
 
 // Listing layout, in characters after the prefix: name, mnemonic and comment
 // columns of a conventional interactive disassembler listing.
@@ -69,6 +71,8 @@ constexpr int StringScanMinimum = 4;
 constexpr int StringReferencePageFunctions = 1024;
 constexpr std::size_t MaxReferencePage = 512;
 constexpr int PointerPage = 65536;
+/// Functions one neverd_switches_json call covers.
+constexpr int SwitchPageFunctions = 4096;
 constexpr char SeparatorRule[] = "; -------------------------------------------"
                                  "--------------------------------";
 constexpr char SubroutineRule[] =
@@ -192,6 +196,8 @@ bool isBranch(Flow flow) {
   constexpr std::string_view Id = Prefix;
 #define NEVERD_ITEM_NAME_PREFIX(Id, Prefix)                                    \
   constexpr std::string_view Id = Prefix;
+#define NEVERD_SWITCH_TEXT(Id, Spelling)                                       \
+  constexpr std::string_view Id = Spelling;
 #include "ListingVocabulary.def"
 
 struct Region {
@@ -271,6 +277,37 @@ struct Reference {
   std::uint64_t to = 0, from = 0;
   RefKind kind = RefKind::Offset;
 };
+/// A jump table whole-program analysis recovered (neverd_switches_json).
+struct SwitchTable {
+  std::uint64_t jump = 0;
+  std::optional<std::uint64_t> load, table;
+  unsigned entrySize = 0;
+  std::uint64_t stride = 0;
+  /// How every slot stores its target, empty when the engine names no form.
+  std::string form;
+  /// The slots, and each target with the table indexes that select it.
+  std::size_t entries = 0;
+  std::map<std::uint64_t, std::vector<std::int64_t>> targets;
+};
+/// A jump table slot whose form is known, and the target it holds.
+struct SwitchSlot {
+  std::uint64_t address = 0, target = 0;
+  std::size_t table = 0;
+};
+/// The data directive of an item \p bytes wide; empty for other widths.
+std::string_view dataDirective(unsigned bytes) {
+  switch (bytes) {
+  case 1:
+    return "db";
+  case 2:
+    return "dw";
+  case 4:
+    return "dd";
+  case 8:
+    return "dq";
+  }
+  return {};
+}
 
 enum class ItemKind : std::uint8_t {
   Instruction,
@@ -280,7 +317,9 @@ enum class ItemKind : std::uint8_t {
   Uninitialized,
   Slot,
   /// A data slot the loader relocated to hold a pointer.
-  Pointer
+  Pointer,
+  /// A slot of a switch's jump table.
+  SwitchEntry
 };
 struct Item {
   std::uint64_t start = 0, size = 1;
@@ -451,6 +490,10 @@ struct Listing::Impl {
   DataSymbolsFunction dataSymbols = nullptr;
   StringsExFunction stringsEx = nullptr;
   StringRefsFunction stringRefs = nullptr;
+  SwitchesFunction switchesQuery = nullptr;
+  DemangleFunction demangle = nullptr;
+  /// Names as the engine demangles them, where that differs.
+  std::unordered_map<std::string, std::string> demangledNames;
   /// The instructions referring to strings, and the string options and
   /// function count they were listed for.
   StringReferenceTable stringReferenceTable;
@@ -496,6 +539,16 @@ struct Listing::Impl {
   std::size_t indexDone = 0, indexTotal = 0;
   std::string indexError;
 
+  /// The jump tables whole-program analysis recovered, their slots in
+  /// address order, the switch of each table, load and dispatch, and the
+  /// references the tables add to the index.
+  std::vector<SwitchTable> switches;
+  std::vector<SwitchSlot> switchSlots;
+  std::unordered_map<std::uint64_t, std::size_t> switchTables, switchLoads,
+      switchJumps;
+  std::vector<Reference> switchReferences;
+  std::string switchError;
+
   int opcodeBytes = 0;
 
   explicit Impl(neverd_session_t s) : session(s) {
@@ -509,6 +562,8 @@ struct Listing::Impl {
     pointerAtQuery = engineSymbol<PointerAtFunction>("neverd_pointer_at");
     stringsEx = engineSymbol<StringsExFunction>("neverd_strings_ex_json");
     stringRefs = engineSymbol<StringRefsFunction>("neverd_string_refs_json");
+    switchesQuery = engineSymbol<SwitchesFunction>("neverd_switches_json");
+    demangle = engineSymbol<DemangleFunction>("neverd_demangle");
     if (const auto encodings = engineSymbol<StringEncodingsFunction>(
             "neverd_string_encodings_json"))
       if (const auto rows = takeJson(encodings()); rows.is_array())
@@ -1006,6 +1061,8 @@ struct Listing::Impl {
       listingNames.emplace(name, address);
       namedData.push_back(address);
     }
+    for (const auto &[address, table] : switchTables)
+      listingNames.emplace(switchTableName(table), address);
     for (const auto &entry : slots)
       namedData.push_back(entry.first);
     std::sort(namedData.begin(), namedData.end());
@@ -1517,6 +1574,9 @@ struct Listing::Impl {
         }
         return item; // An undecoded byte inside a function.
       }
+      // A table between functions, as MSVC places one after its function.
+      if (asSwitchEntry(item, region, address))
+        return item;
       const std::uint64_t gapStart = previousCodeEnd(address, region);
       const std::uint64_t gapEnd =
           std::min(nextFunctionStart(address, region), region.initializedEnd);
@@ -1529,6 +1589,8 @@ struct Listing::Impl {
         }
       return item;
     }
+    if (asSwitchEntry(item, region, address))
+      return item;
     for (std::uint64_t back = 0; back < pointerSize && back <= address; ++back)
       if (slots.contains(address - back) && address - back >= region.start) {
         item.kind = ItemKind::Slot;
@@ -1589,6 +1651,9 @@ struct Listing::Impl {
       return {slot->second.label, ListingRole::ImportName, address};
     if (auto data = dataNames.find(address); data != dataNames.end())
       return {data->second, ListingRole::DataName, address};
+    if (auto table = switchTables.find(address); table != switchTables.end())
+      return {switchTableName(table->second), ListingRole::DummyDataName,
+              address};
     if (const auto *string = stringAt(address);
         string && string->address == address)
       return {string->name, ListingRole::DummyDataName, address};
@@ -1680,8 +1745,10 @@ struct Listing::Impl {
     const int region = regionIndex(address);
     if (region < 0)
       return "?:" + upperHex(address, addressDigits);
-    // A named or referenced item reads by its name, like `.got:off_AC5AC0`.
+    // A named or referenced item reads by its name, like `.got:off_AC5AC0`
+    // or `.rodata:jpt_16328`.
     if (dataNames.contains(address) || slots.contains(address) ||
+        switchTables.contains(address) ||
         (isPointerSlot(address) &&
          referencesTo(address).first != referencesTo(address).second))
       return regions[region].name + ":" +
@@ -1721,6 +1788,7 @@ struct Listing::Impl {
     case ItemKind::Align:
     case ItemKind::Uninitialized:
     case ItemKind::Pointer:
+    case ItemKind::SwitchEntry:
       return AddressClass::Data;
     }
     return AddressClass::Unexplored;
@@ -1992,6 +2060,14 @@ struct Listing::Impl {
         addLine(out, item, item.start, "comment", std::move(line));
       }
       addLine(out, item, item.start, "blank", {});
+      // A mangled name reads demangled above, where a classic listing puts
+      // the prototype.
+      if (const auto &readable = demangledName(function.name);
+          !readable.empty()) {
+        StyledText line = lead(base - NameColumnWidth);
+        line.append("; " + readable, ListingRole::AutoComment);
+        addLine(out, item, item.start, "comment", std::move(line));
+      }
       // The entry point is public like every export.
       if (function.exported || function.entry == imageEntry ||
           runtimeEntries.contains(function.entry)) {
@@ -2051,16 +2127,51 @@ struct Listing::Impl {
     const auto comment =
         takeString(neverd_annotation_get(session, instruction.address));
     appendComment(text, comment, ListingRole::Comment, base - NameColumnWidth);
-    // Without a comment of its own, an instruction quotes the string it
-    // refers to.
-    if (comment.empty())
-      for (const auto &[to, kind] : instruction.refs)
-        if (const auto *string = stringAt(to);
-            string && string->address == to) {
-          appendComment(text, quoteString(string->value),
-                        ListingRole::AutoComment, base - NameColumnWidth);
-          break;
-        }
+    // Without a comment of its own, an instruction marks a switch's table
+    // load or dispatch, or quotes the string it refers to.
+    const auto switchComment = [&]() -> std::string {
+      const auto load = switchLoads.find(instruction.address);
+      const auto jump = switchJumps.find(instruction.address);
+      // The cases go where the table is read: with no load of its own, at
+      // the dispatch.
+      if (load != switchLoads.end() || jump != switchJumps.end()) {
+        const auto &table =
+            switches[load != switchLoads.end() ? load->second : jump->second];
+        if (load != switchLoads.end() || !table.load ||
+            *table.load == table.jump)
+          return std::string(SwitchCasesLead) + std::to_string(table.entries) +
+                 std::string(SwitchCasesTail);
+        return std::string(SwitchJumpComment);
+      }
+      return {};
+    };
+    // What an instruction transfers to or refers to first, read demangled
+    // when its name is mangled.
+    const auto demangledOperand = [&]() -> std::string {
+      std::optional<std::uint64_t> to = instruction.target;
+      if (!to && !instruction.refs.empty())
+        to = instruction.refs.front().first;
+      if (!to)
+        return {};
+      return demangledName(nameOf(*to, NameUse::Transfer, {}).text);
+    };
+    if (comment.empty()) {
+      if (const auto marked = switchComment(); !marked.empty()) {
+        appendComment(text, marked, ListingRole::AutoComment,
+                      base - NameColumnWidth);
+      } else if (const auto readable = demangledOperand(); !readable.empty()) {
+        appendComment(text, readable, ListingRole::AutoComment,
+                      base - NameColumnWidth);
+      } else {
+        for (const auto &[to, kind] : instruction.refs)
+          if (const auto *string = stringAt(to);
+              string && string->address == to) {
+            appendComment(text, quoteString(string->value),
+                          ListingRole::AutoComment, base - NameColumnWidth);
+            break;
+          }
+      }
+    }
     std::optional<std::uint64_t> target = instruction.target;
     if (!target && instruction.refs.size() == 1)
       target = instruction.refs.front().first;
@@ -2187,6 +2298,42 @@ struct Listing::Impl {
       // A pointer to a string quotes it.
       if (const auto *string = stringAt(to); string && string->address == to)
         comment = quoteString(string->value);
+      break;
+    }
+    case ItemKind::SwitchEntry: {
+      // dd offset loc_164C0 - 27444h, as the engine verified every slot
+      // stores its target.
+      const SwitchSlot &slot = switchSlots[item.index];
+      const SwitchTable &table = switches[slot.table];
+      // The table is named whether or not an instruction names it.
+      if (slot.address == table.table) {
+        const auto name = nameOf(item.start, NameUse::Data, {});
+        head.append(name.text, name.role, item.start);
+      } else {
+        named(ListingRole::Plain);
+      }
+      head.padTo(base);
+      head.append(dataDirective(table.entrySize), ListingRole::Directive);
+      head.padTo(base + 3);
+      head.append(table.form == "image_relative" ? ImageRelativeKeyword
+                                                 : std::string_view("offset "),
+                  ListingRole::Keyword);
+      if (const auto name = nameOf(slot.target, NameUse::Address, {});
+          !name.text.empty())
+        head.append(name.text, name.role, name.address);
+      else
+        head.append(dialect == OperandDialect::X86 ? x86Number(slot.target)
+                                                   : hexAddress(slot.target),
+                    ListingRole::Number);
+      if (table.form == "table_relative") {
+        head.append(" - ", ListingRole::Punctuation);
+        head.append(dialect == OperandDialect::X86 ? x86Number(*table.table)
+                                                   : hexAddress(*table.table),
+                    ListingRole::Number);
+      }
+      target = slot.target;
+      if (slot.address == table.table)
+        comment = SwitchTableComment;
       break;
     }
     case ItemKind::Align:
@@ -2371,6 +2518,19 @@ struct Listing::Impl {
         if (const auto next = page.value("next_slot", Json()); next.is_string())
           cursor = jsonAddress(next);
       }
+    indexState = IndexState::Ready;
+    references.insert(references.end(), switchReferences.begin(),
+                      switchReferences.end());
+    sortReferences();
+    indexDone = indexTotal;
+    // Labels and reference comments are now available.
+    decoded.clear();
+    decodedOrder.clear();
+    ++generation;
+  }
+
+  /// Orders the index by target, then source, without repeats.
+  void sortReferences() {
     std::sort(references.begin(), references.end(),
               [](const Reference &a, const Reference &b) {
                 return a.to != b.to ? a.to < b.to : a.from < b.from;
@@ -2381,12 +2541,145 @@ struct Listing::Impl {
                                           a.kind == b.kind;
                                  }),
                      references.end());
-    indexDone = indexTotal;
-    indexState = IndexState::Ready;
-    // Labels and reference comments are now available.
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Switches
+  //===--------------------------------------------------------------------===//
+
+  /// Reads the jump tables of whole-program analysis, which name tables,
+  /// lay out their slots, comment the load and the dispatch, and refer to
+  /// every target from the dispatch and the table.  Without the query an
+  /// engine has none; a failed query leaves none and its error.
+  void loadSwitches() {
+    switches.clear();
+    switchSlots.clear();
+    switchTables.clear();
+    switchLoads.clear();
+    switchJumps.clear();
+    switchReferences.clear();
+    switchError.clear();
+    for (std::optional<std::uint64_t> cursor = 0; switchesQuery && cursor;) {
+      const char *raw = switchesQuery(session, *cursor, SwitchPageFunctions);
+      cursor.reset();
+      if (!raw) {
+        switchError = takeString(neverd_last_error(session));
+        break;
+      }
+      const auto page = takeJson(raw);
+      if (const auto rows = page.value("switches", Json()); rows.is_array())
+        for (const auto &row : rows)
+          addSwitch(row);
+      if (const auto next = page.value("next_entry", Json()); next.is_string())
+        cursor = jsonAddress(next);
+    }
+    std::sort(switchSlots.begin(), switchSlots.end(),
+              [](const SwitchSlot &a, const SwitchSlot &b) {
+                return a.address < b.address;
+              });
+    for (const auto &table : switches)
+      for (const auto &[target, indexes] : table.targets) {
+        switchReferences.push_back({target, table.jump, RefKind::IndirectJump});
+        if (table.table)
+          switchReferences.push_back({target, *table.table, RefKind::Offset});
+      }
+    if (indexState == IndexState::Ready) {
+      references.insert(references.end(), switchReferences.begin(),
+                        switchReferences.end());
+      sortReferences();
+    }
+    built = false;
     decoded.clear();
     decodedOrder.clear();
     ++generation;
+  }
+
+  void addSwitch(const Json &row) {
+    SwitchTable table;
+    table.jump = jsonAddress(row.value("jump", Json()));
+    if (const auto load = row.value("load", Json()); load.is_string())
+      table.load = jsonAddress(load);
+    if (const auto base = row.value("table", Json()); base.is_string())
+      table.table = jsonAddress(base);
+    table.entrySize =
+        static_cast<unsigned>(jsonCount(row.value("entry_size", Json())));
+    table.stride = jsonCount(row.value("stride", Json()));
+    if (const auto form = row.value("form", Json()); form.is_string())
+      table.form = form.get<std::string>();
+    // Slots are laid out only in a form the engine verified.
+    const bool laidOut = table.table && !table.form.empty() &&
+                         !dataDirective(table.entrySize).empty() &&
+                         table.stride >= table.entrySize;
+    std::vector<SwitchSlot> slots;
+    if (const auto targets = row.value("targets", Json()); targets.is_array())
+      for (const auto &target : targets) {
+        if (!target.is_array() || target.size() != 3 ||
+            !target[1].is_number_integer())
+          continue;
+        const auto address = jsonAddress(target[0]);
+        table.targets[address].push_back(target[1].get<std::int64_t>());
+        ++table.entries;
+        if (laidOut && target[2].is_number_unsigned())
+          slots.push_back(
+              {*table.table + target[2].get<std::uint64_t>() * table.stride,
+               address, switches.size()});
+      }
+    if (!table.jump || table.targets.empty())
+      return;
+    const std::size_t index = switches.size();
+    switchJumps.emplace(table.jump, index);
+    if (table.load)
+      switchLoads.emplace(*table.load, index);
+    if (table.table)
+      switchTables.emplace(*table.table, index);
+    switchSlots.insert(switchSlots.end(), slots.begin(), slots.end());
+    switches.push_back(std::move(table));
+  }
+
+  /// The jump table slot holding \p address, if one does.
+  const SwitchSlot *switchSlotAt(std::uint64_t address) const {
+    auto it = std::upper_bound(switchSlots.begin(), switchSlots.end(), address,
+                               [](std::uint64_t value, const SwitchSlot &slot) {
+                                 return value < slot.address;
+                               });
+    if (it == switchSlots.begin())
+      return nullptr;
+    --it;
+    return address - it->address < switches[it->table].entrySize ? &*it
+                                                                 : nullptr;
+  }
+
+  /// Makes \p item the jump table slot holding \p address, when one does
+  /// within \p region.
+  bool asSwitchEntry(Item &item, const Region &region, std::uint64_t address) {
+    const SwitchSlot *slot = switchSlotAt(address);
+    if (!slot || slot->address < region.start ||
+        slot->address + switches[slot->table].entrySize > region.end)
+      return false;
+    item.kind = ItemKind::SwitchEntry;
+    item.start = slot->address;
+    item.size = switches[slot->table].entrySize;
+    item.index = static_cast<std::size_t>(slot - switchSlots.data());
+    return true;
+  }
+
+  /// \p name as the engine demangles it, or empty when it is not mangled.
+  const std::string &demangledName(const std::string &name) {
+    static const std::string none;
+    if (!demangle || name.empty())
+      return none;
+    auto it = demangledNames.find(name);
+    if (it == demangledNames.end()) {
+      auto text = takeString(demangle(name.c_str()));
+      it = demangledNames.emplace(name, text == name ? std::string() : text)
+               .first;
+    }
+    return it->second;
+  }
+
+  /// The name of the jump table at \p address: its prefix and dispatch.
+  std::string switchTableName(std::size_t table) const {
+    return std::string(SwitchTablePrefix) + upperHex(switches[table].jump);
   }
 
   /// The index of the string starting at \p address in the string list.
@@ -2923,6 +3216,9 @@ const Json &Listing::functionRows() {
                   {"exported", function.exported}};
       if (function.engineName != function.name)
         row["engine_name"] = function.engineName;
+      if (const auto &readable = d.demangledName(function.name);
+          !readable.empty())
+        row["demangled_name"] = readable;
       rows.push_back(std::move(row));
     }
     d.functionRowsCache = std::move(rows);
@@ -2957,8 +3253,14 @@ Json Listing::names() {
     items.push_back({{"name", string.name},
                      {"address", hexAddress(string.address)},
                      {"kind", "string"}});
+  for (const auto &[address, table] : d.switchTables)
+    items.push_back({{"name", d.switchTableName(table)},
+                     {"address", hexAddress(address)},
+                     {"kind", "data"}});
   return items;
 }
+
+void Listing::loadSwitches() { impl_->loadSwitches(); }
 
 Json Listing::regions() {
   auto &d = *impl_;

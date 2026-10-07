@@ -128,35 +128,48 @@ int HexView::visibleRows() const {
   return std::max(1, viewport()->height() / std::max(1, lineHeight_));
 }
 
-qint64 HexView::totalRows() const {
-  qint64 rows = 0;
-  for (const auto &region : space_.regions())
-    rows += qint64((region.end - region.start + BytesPerRow - 1) / BytesPerRow);
-  return rows;
+void HexView::buildRows() {
+  rows_.clear();
+  rowCount_ = 0;
+  for (const auto &region : space_.regions()) {
+    if (region.end <= region.start)
+      continue;
+    const Address start = region.start & ~Address(BytesPerRow - 1);
+    const Address last = (region.end - 1) & ~Address(BytesPerRow - 1);
+    // Regions sharing or abutting a row extend the run they meet.
+    if (!rows_.isEmpty() && start <= rows_.back().end) {
+      rows_.back().end = std::max(rows_.back().end, last + BytesPerRow);
+      continue;
+    }
+    rows_.append({start, last + BytesPerRow, 0});
+  }
+  for (auto &run : rows_) {
+    run.first = rowCount_;
+    rowCount_ += qint64((run.end - run.start) / BytesPerRow);
+  }
 }
 
 qint64 HexView::rowOf(Address address) const {
-  qint64 rows = 0;
-  for (const auto &region : space_.regions()) {
-    if (address >= region.start && address < region.end)
-      return rows + qint64((address - region.start) / BytesPerRow);
-    rows += qint64((region.end - region.start + BytesPerRow - 1) / BytesPerRow);
-  }
+  for (const auto &run : rows_)
+    if (address >= run.start && address < run.end)
+      return run.first + qint64((address - run.start) / BytesPerRow);
   return 0;
 }
 
 std::optional<Address> HexView::addressOfRow(qint64 row) const {
-  for (const auto &region : space_.regions()) {
-    const qint64 count =
-        qint64((region.end - region.start + BytesPerRow - 1) / BytesPerRow);
-    if (row < count)
-      return region.start + Address(row) * BytesPerRow;
-    row -= count;
-  }
-  return std::nullopt;
+  const auto run = std::upper_bound(
+      rows_.begin(), rows_.end(), row,
+      [](qint64 value, const RowRun &r) { return value < r.first; });
+  if (run == rows_.begin())
+    return std::nullopt;
+  const auto &found = *std::prev(run);
+  const Address address =
+      found.start + Address(row - found.first) * BytesPerRow;
+  return address < found.end ? std::optional(address) : std::nullopt;
 }
 
 void HexView::updateRange() {
+  buildRows();
   const qint64 rows = totalRows();
   auto *bar = verticalScrollBar();
   bar->setRange(0,
@@ -294,17 +307,9 @@ void HexView::paintEvent(QPaintEvent *) {
     if (!rowAddress)
       break;
     const int y = i * lineHeight_;
-    const auto *region = space_.regionOf(*rowAddress);
     painter.setPen(theme.color(ColorRole::HexAddress));
     painter.drawText(QPointF(Margin, y + ascent_),
                      displayAddress(*rowAddress, digits));
-    // A row may straddle two chunks only when its region is unaligned.
-    const Address firstKey = chunkKey(*rowAddress);
-    const Chunk *firstChunk = chunk(firstKey);
-    const Chunk *nextChunk = nullptr;
-    const Address lastKey = chunkKey(*rowAddress + BytesPerRow - 1);
-    if (lastKey != firstKey)
-      nextChunk = chunk(lastKey);
     const auto isCurrent = [&](Address address) {
       return current_ && address >= *current_ &&
              address < *current_ + Address(currentSize_);
@@ -312,7 +317,7 @@ void HexView::paintEvent(QPaintEvent *) {
     // Highlights go first: a wide character's glyph spans the next cells.
     for (int b = 0; b < BytesPerRow; ++b) {
       const Address address = *rowAddress + b;
-      if ((region && address >= region->end) || !isCurrent(address))
+      if (!isCurrent(address) || !space_.regionOf(address))
         continue;
       const qreal x = hexLeft + (b * 3 + (b >= HexGroup ? 1 : 0)) * charWidth_;
       painter.fillRect(
@@ -324,12 +329,13 @@ void HexView::paintEvent(QPaintEvent *) {
     }
     for (int b = 0; b < BytesPerRow; ++b) {
       const Address address = *rowAddress + b;
-      if (region && address >= region->end)
-        break;
+      // A byte no region maps stays blank, as between two sections.
+      if (!space_.regionOf(address))
+        continue;
       const qreal x = hexLeft + (b * 3 + (b >= HexGroup ? 1 : 0)) * charWidth_;
       const qreal ax = asciiLeft + b * charWidth_;
       const Address key = chunkKey(address);
-      const Chunk *source = key == firstKey ? firstChunk : nextChunk;
+      const Chunk *source = chunk(key);
       const int offset = int(address - key);
       const bool mapped = source && offset < source->mapped;
       const bool current = isCurrent(address);
@@ -341,7 +347,6 @@ void HexView::paintEvent(QPaintEvent *) {
       if (!mapped) {
         painter.setPen(theme.color(ColorRole::HexUnmapped));
         painter.drawText(QPointF(x, y + ascent_), QStringLiteral("??"));
-        painter.drawText(QPointF(ax, y + ascent_), QStringLiteral(" "));
         continue;
       }
       const auto value = static_cast<unsigned char>(source->data.at(offset));

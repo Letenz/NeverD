@@ -1949,21 +1949,19 @@ TEST_F(SessionCAPITest, StringReferencesReadTextFromTheReferencedCharacter) {
     }
     return Rows;
   };
-  // "world" is long enough on its own; "ld" and "\u6587\u5b57\u7b26" after
-  // the byte inside "\u4e2d" are not, under the default four characters.
+  // "world" is long enough on its own, and the reference into "\u4e2d" reads
+  // from the next character, three UTF-8 bytes into the string's text:
+  // "\u6587\u5b57\u7b26" fills six columns.  "ld" fills two, under the
+  // default four.
   using Row = std::tuple<uint64_t, uint64_t, uint64_t, int64_t>;
-  EXPECT_EQ(
-      rows(nullptr),
-      (std::vector<Row>{{DataELFEntry, DataELFData, DataELFData, 0},
-                        {DataELFEntry + 7, DataELFData + 6, DataELFData, 6}}));
-  // With three, the reference into "\u4e2d" reads from the next character,
-  // three UTF-8 bytes into the string's text.
-  const auto Three = rows(R"({"min_length":3})");
-  ASSERT_EQ(Three.size(), 3u);
-  EXPECT_EQ(Three[2],
-            (Row{DataELFEntry + 21, DataELFData + 13, DataELFData + 12, 3}));
-  EXPECT_EQ(neverd_string_refs_json(Session, R"({"encodings":["gbk","big5"]})",
-                                    0, 16),
+  const std::vector<Row> Default{
+      {DataELFEntry, DataELFData, DataELFData, 0},
+      {DataELFEntry + 7, DataELFData + 6, DataELFData, 6},
+      {DataELFEntry + 21, DataELFData + 13, DataELFData + 12, 3}};
+  EXPECT_EQ(rows(nullptr), Default);
+  // Seven columns leave "world" (five) and the ideographs (six) out.
+  EXPECT_EQ(rows(R"({"min_length":7})"), (std::vector<Row>{Default[0]}));
+  EXPECT_EQ(neverd_string_refs_json(Session, R"({"preferred":"utf-8"})", 0, 16),
             nullptr);
 }
 
@@ -2172,8 +2170,8 @@ TEST_F(SessionCAPITest, StringScanFindsUTF8AndWideStringsByOption) {
   EXPECT_EQ(Scan(R"({"min_length":0})"),
             "error: min_length must be an integer from 1 to 1024");
   EXPECT_EQ(Scan(R"({"limit":3})"), "error: unknown string option: limit");
-  EXPECT_EQ(Scan(R"({"encodings":["gbk","big5"]})"),
-            "error: only one legacy code page can be searched at a time");
+  EXPECT_EQ(Scan(R"({"preferred":"utf-8"})"),
+            "error: preferred must name a legacy code page");
   EXPECT_EQ(Scan("[]"), "error: string options must be a JSON object");
 
   const auto Encodings = takeString(neverd_string_encodings_json());
@@ -2182,19 +2180,85 @@ TEST_F(SessionCAPITest, StringScanFindsUTF8AndWideStringsByOption) {
       << Encodings;
 }
 
-TEST_F(SessionCAPITest, StringScanReadsTheChosenCodePage) {
+TEST_F(SessionCAPITest, StringScanReadsTheCodePagesSearched) {
   // "中文字符串" in GBK after a NUL.
   constexpr char Data[] = "\0\xd6\xd0\xce\xc4\xd7\xd6\xb7\xfb\xb4\xae\0";
   const auto Input =
       write("gbk.elf", makeDataELF(std::string_view(Data, sizeof(Data) - 1)));
   ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
       << takeString(neverd_last_error(Session));
-  EXPECT_EQ(takeString(neverd_strings_ex_json(Session, nullptr)), "[]");
-  const auto Found = takeString(
-      neverd_strings_ex_json(Session, R"({"encodings":["ascii","cp936"]})"));
-  EXPECT_EQ(Found, "[{\"addr\":\"0x401001\",\"chars\":5,\"encoding\":\"gbk\","
-                   "\"length\":10,\"value\":\"\xe4\xb8\xad\xe6\x96\x87\xe5\xad"
-                   "\x97\xe7\xac\xa6\xe4\xb8\xb2\"}]");
+  constexpr char Found[] =
+      "[{\"addr\":\"0x401001\",\"chars\":5,\"encoding\":\"gbk\","
+      "\"length\":10,\"value\":\"\xe4\xb8\xad\xe6\x96\x87\xe5\xad"
+      "\x97\xe7\xac\xa6\xe4\xb8\xb2\"}]";
+  // The common code pages are searched by default, and an alias names one.
+  EXPECT_EQ(takeString(neverd_strings_ex_json(Session, nullptr)), Found);
+  EXPECT_EQ(takeString(neverd_strings_ex_json(
+                Session, R"({"encodings":["ascii","cp936"]})")),
+            Found);
+  EXPECT_EQ(
+      takeString(neverd_strings_ex_json(Session, R"({"encodings":["ascii"]})")),
+      "[]");
+}
+
+TEST_F(SessionCAPITest, SwitchTablesComeFromWholeProgramAnalysis) {
+  // switch (x) on 0..3 through offsets from the table, as GCC lays out
+  // position-independent code: cmp edi, 3; ja default; mov edi, edi;
+  // lea rax, [rip + table]; movsxd rdx, [rax + rdi*4]; add rdx, rax;
+  // jmp rdx; then the four cases and the default, `mov eax, N; ret` each.
+  constexpr uint64_t Jump = DataELFEntry + 21, Cases = DataELFEntry + 23;
+  std::string Code("\x83\xff\x03\x77\x2a\x89\xff\x48\x8d\x05", 10);
+  const auto appendLE32 = [](std::string &Out, uint64_t Value) {
+    for (unsigned I = 0; I < 4; ++I)
+      Out.push_back(static_cast<char>(Value >> (8 * I)));
+  };
+  appendLE32(Code, DataELFData - (DataELFEntry + 14));
+  Code.append("\x48\x63\x14\xb8\x48\x01\xc2\xff\xe2", 9);
+  for (unsigned Value : {10u, 11u, 12u, 13u, 0xffffffffu}) {
+    Code.push_back('\xb8');
+    appendLE32(Code, Value);
+    Code.push_back('\xc3');
+  }
+  std::string Table;
+  for (unsigned Case = 0; Case < 4; ++Case)
+    appendLE32(Table, Cases + 6 * Case - DataELFData);
+  const auto Input = write("switch.elf", makeDataELF(Table, Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  // Tables come from the whole program's arbitrated analysis only.
+  EXPECT_EQ(neverd_switches_json(Session, 0, 16), nullptr);
+  ASSERT_EQ(neverd_session_analyze(Session), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Text = takeString(neverd_switches_json(Session, 0, 16));
+  auto Parsed = llvm::json::parse(Text);
+  ASSERT_TRUE(static_cast<bool>(Parsed)) << Text;
+  const auto *Switches = Parsed->getAsObject()->getArray("switches");
+  ASSERT_TRUE(Switches && Switches->size() == 1) << Text;
+  const auto &Switch = *(*Switches)[0].getAsObject();
+  const auto hex = [](uint64_t Value) { return "0x" + llvm::utohexstr(Value); };
+  EXPECT_EQ(Switch.getString("jump"), hex(Jump)) << Text;
+  EXPECT_EQ(Switch.getString("table"), hex(DataELFData)) << Text;
+  EXPECT_EQ(Switch.getString("form"), "table_relative") << Text;
+  EXPECT_EQ(Switch.getInteger("entry_size"), 4) << Text;
+  const auto *Targets = Switch.getArray("targets");
+  ASSERT_TRUE(Targets && Targets->size() == 4) << Text;
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    const auto &Target = *(*Targets)[Case].getAsArray();
+    EXPECT_EQ(Target[0].getAsString(), hex(Cases + 6 * Case)) << Text;
+    EXPECT_EQ(Target[1].getAsInteger(), Case) << Text;
+    EXPECT_EQ(Target[2].getAsInteger(), Case) << Text;
+  }
+}
+
+TEST(SessionNames, DemanglesAsIdentitiesDo) {
+  EXPECT_EQ(takeString(neverd_demangle("_ZN8QDomNodeC1Ev")),
+            "QDomNode::QDomNode()");
+  // An ELF PLT entry or a Mach-O symbol carries one underscore more.
+  EXPECT_EQ(takeString(neverd_demangle("__ZNK14QMessageLogger7warningEPKcz")),
+            "QMessageLogger::warning(char const*, ...) const");
+  EXPECT_EQ(takeString(neverd_demangle("?f@@YAXXZ")), "void __cdecl f(void)");
+  EXPECT_EQ(takeString(neverd_demangle("main")), "main");
+  EXPECT_EQ(neverd_demangle(nullptr), nullptr);
 }
 
 TEST(SessionTextDecoding, DecodesBytesForDisplayInAnyEncoding) {
@@ -2229,6 +2293,21 @@ TEST_F(SessionCAPITest, QueryJSONPreservesUTF8FileSpelling) {
   expectQueryJSONFileSpelling(Input);
 }
 #endif
+
+TEST_F(SessionCAPITest, DashboardHashesTheInputFile) {
+  const auto Input = write("hashed.evm", "6001600055");
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  auto Dashboard =
+      llvm::json::parse(takeString(neverd_dashboard_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Dashboard))
+      << llvm::toString(Dashboard.takeError());
+  const auto *Hashes = Dashboard->getAsObject()->getObject("hashes");
+  ASSERT_NE(Hashes, nullptr);
+  // zlib's CRC-32 and MD5 of the ten input bytes.
+  EXPECT_EQ(Hashes->getString("crc32"), "704fe0d2");
+  EXPECT_EQ(Hashes->getString("md5"), "9ee02fc015f79641c0620e674c5be3c7");
+}
 
 TEST_F(SessionCAPITest, EntryPointsIncludeEVMZeroAddress) {
   const std::string Input = write("entry.evm", "00");

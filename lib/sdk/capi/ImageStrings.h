@@ -43,8 +43,8 @@ struct ImageStringScan {
 };
 
 /// Reads the JSON options of neverd_strings_ex_json (`encodings`,
-/// `min_length`) into \p Options.  Returns why they are invalid, or an empty
-/// string.  Null or empty text keeps the defaults.
+/// `preferred`, `min_length`) into \p Options.  Returns why they are invalid,
+/// or an empty string.  Null or empty text keeps the defaults.
 std::string parseStringOptions(const char *Json, strings::ScanOptions &Options);
 
 /// The strings of the loaded image under \p Options, in address order: data

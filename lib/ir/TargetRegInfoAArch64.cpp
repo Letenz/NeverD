@@ -138,6 +138,7 @@ void initAArch64RegInfoTables() {
 
   A64RegInfo.IntReturnRegs = A64IntReturnRegs;
   A64RegInfo.FPReturnRegs = A64FPReturnRegs;
+  A64RegInfo.ReturnAggregatesSingleClass = true;
 }
 
 } // namespace neverd

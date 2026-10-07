@@ -429,11 +429,32 @@ TEST_F(PERebuild, GeneratedCallbackRecordWinsOverCompletedLoaderInitializer) {
   EXPECT_EQ(*Result, ProgramTLS);
 }
 
+TEST_F(PERebuild, GeneratedCallbackRecordWinsOverRevisitedLoaderInitializer) {
+  prepareTLS();
+  ASSERT_FALSE(HasFailure());
+  C.Initializers = {C.Base + Linked.Entry};
+  C.Transfers.insert(C.Transfers.begin(), {Linked.Entry, false, 1, true});
+  auto Result = pe::recoverTLSDirectory(*Input, C);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  EXPECT_EQ(*Result, ProgramTLS);
+}
+
+TEST_F(PERebuild, RevisitedLoaderInitializerRemainsAFallbackTLSWitness) {
+  prepareTLS();
+  ASSERT_FALSE(HasFailure());
+  C.Initializers = {C.Base + Linked.Entry};
+  C.Transfers = {{Linked.Entry, false, 1, true}};
+  auto Result = pe::recoverTLSDirectory(*Input, C);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  EXPECT_EQ(*Result, OriginalTLS);
+}
+
 TEST_F(PERebuild, OSTLSCallbackMayHaveTheProgramEntryStack) {
   prepareTLS();
   ASSERT_FALSE(HasFailure());
   C.Transfers.front().StackBalanced = true;
   C.Transfers.front().ProgramInvocation = false;
+  C.Initializers = {C.Base + Callback};
   auto Result = pe::recoverTLSDirectory(*Input, C);
   ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
   EXPECT_EQ(*Result, ProgramTLS);

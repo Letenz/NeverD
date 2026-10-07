@@ -97,9 +97,12 @@ public:
   void redo();
   void loadSignatures(const QString &path, bool tree);
   void analyzeWholeProgram();
-  /// Search strings in \p encodings (engine names) of at least \p minLength
-  /// characters.  Remembered and applied to every worker that starts.
-  void setStringOptions(const QStringList &encodings, int minLength);
+  /// Search strings in \p encodings (engine names), C strings that are not
+  /// UTF-8 in the code page \p preferred first (none when empty), and of at
+  /// least \p minLength display columns.  Remembered and applied to every
+  /// worker that starts.
+  void setStringOptions(const QStringList &encodings, const QString &preferred,
+                        int minLength);
   void cancelReads();
 
   // Declarative extension manifests.
@@ -168,6 +171,12 @@ private:
   void refreshContributions();
   /// Send the remembered string options, if any; \p announce reports them.
   void applyStringOptions(bool announce);
+  /// Whether the remembered string options predate the preferred code page.
+  bool stringOptionsNeedMigration() const;
+  /// Rewrites string options that named at most one code page, the one
+  /// searched, given the engine's \p encodings: it becomes the preferred
+  /// page, and the encodings searched by default join the list.
+  void migrateStringOptions(const QJsonArray &encodings);
   void resetState();
   void setError(const QString &text);
   /// Whether an edit aimed at \p epoch may be applied now.

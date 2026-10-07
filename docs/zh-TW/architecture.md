@@ -742,6 +742,8 @@ KVM、WHP 與 Unicorn 的 checked x64/ARM64 可要求 `ExecutionFeature::Paralle
 發射與程式碼產生位於 `lib/backend/llvm/<ISA>` 及
 `lib/backend/codegen/CodeGen<ISA>.cpp`。
 
+共用 pass 中新增的目標專屬規則應放在依目標劃分的表中，而不是內聯判斷架構或格式。ISA 的事實是一個 `TargetRegInfo` 特性，在該 ISA 的 `lib/ir/TargetRegInfo<ISA>.cpp` 中設定。呼叫慣例規則是一個 `CallArgumentConvention` 條目，定義在獨立的 `lib/ir/med/abi/MedCallConvention<Name>.cpp` 中，並在 `MedCallConvention.cpp` 中登記。永不返回的函式依執行環境分別列在 `include/neverd/libc` 下（`LibCNoReturn.inc`、`CxxRuntimeNoReturn.inc`、`WindowsNoReturn.inc`）。如此支援新目標只需新增檔案或表項，而無需在共用 pass 中加分支。
+
 <a id="support-and-test-depth"></a>
 
 ### 支援範圍與測試深度
@@ -1120,6 +1122,8 @@ Windows 虛擬記憶體新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`�
 Windows 行程時間策略由 `os/windows/process/` 的 `WindowsProcessTime.cpp` 管理。`std::chrono` 區分主機實際時間與單調計數器，`WindowsProcess.def` 定義客體時間單位與有限等待上限；CPU 後端不承載 Windows 時間策略。
 
 `lib/unpack` 分四層恢復加殼鏡像。`core` 負責編排和格式註冊表。`format/pe` 驗證容器並重建觀察到的記憶體、導入和中繼資料；`PETLS.cpp` 根據載入器分配資訊及觀察到的回呼驗證替換的 TLS 記錄。不使用保護器註冊表或靜態外殼簽章選擇入口。`dynamic` 透過 `observeProcess` 觀察來賓行程：`Observation.def` 把每種容器與指令集對應到一個行程設定檔，並給出每種指令集的堆疊指標和指令視窗。新增一個目標只需一列表項和一個模組目錄，表中沒有對應列的輸入會被依名稱拒絕。`ExecutionSession` 負責執行監視；`ProcessObserver` 讀取已停止的行程並選擇下一個停止點，但不能改變來賓狀態。模擬層只知道 `defer_unmodeled`，它把未建模的匯入繫結到一旦執行就停止的不透明入口。參見[脫殼](unpack.md)。 延遲載入允許可執行回呼或入口目標位於零填充記憶體，由先前的初始化器產生程式碼。回呼陣列與 TLS 配置中繼資料仍須有經驗證的檔案內容；一般嚴格載入保留檔案覆蓋檢查。作業系統模型提供呼叫歸屬，並在準備呼叫或恢復暫停的呼叫者時通知觀察器。轉移監視在這些邊界重新設定，涵蓋回呼與產生的入口位於同一頁的情況。
+
+`MemoryProjection` 負責物理 RAM 寫入失效記錄，`ExecutionSession` 負責相應的停止與續接。x64 分頁表建構器為直接執行施加暫時寫入保護，不包含映像或保護器策略。Windows 程序觀察在恢復執行前重新檢查服務期間的寫入。只有 `dynamic/ProcessTransfer` 依據實際解碼的指令位元組判定世代，並持續觀察混合世代頁面。
 
 `arch/X64Imports.cpp` 統一負責 x64 導入指令的解碼與產生。`dynamic/ProcessImports.cpp` 透過唯讀行程觀察證明純導出呼叫與位址載入結果；PE 寫入器使用這些證據，不重複定義指令規則。
 

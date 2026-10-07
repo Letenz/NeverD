@@ -58,6 +58,10 @@ public:
   /// the CPU at that PC. Resuming at the reported PC executes that one
   /// instruction without matching again, so an owner may keep the range.
   llvm::Error watchExecution(std::vector<ExecutionWatch> Watches);
+  /// Replace RAM write watches while stopped. A committed write ends the run
+  /// with MemoryWriteWatch before the next instruction, without charging it.
+  /// CPU faults outrank this notification, including partial REP faults.
+  llvm::Error watchMemoryWrites(std::vector<MemoryWriteWatch> Watches);
   llvm::Expected<ServiceRequest> takeServiceRequest();
   llvm::Expected<BackendFault> takeRecoverableFault();
   /// The sole thread-safe operation; follows the selected CPU's stop contract.

@@ -1879,12 +1879,28 @@ Signed: %4</source>
         <translation>없음</translation>
     </message>
     <message>
-        <source>Also read C strings that are not UTF-8 in this code page</source>
-        <translation>UTF-8이 아닌 C 문자열도 이 코드 페이지로 읽습니다</translation>
+        <source>Detect common code pages</source>
+        <translation>일반 코드 페이지 감지</translation>
     </message>
     <message>
-        <source>Code page:</source>
+        <source>Also read C strings that are not UTF-8 in %1, where one of them reads them as text and no code page for another script does</source>
+        <translation>UTF-8이 아닌 C 문자열을 %1에서도 읽습니다(그중 하나가 텍스트로 읽고 다른 문자 체계의 코드 페이지는 읽지 않을 때)</translation>
+    </message>
+    <message>
+        <source>Read C strings that are not UTF-8 in this code page first, so that it wins where other code pages read them too</source>
+        <translation>UTF-8이 아닌 C 문자열을 이 코드 페이지에서 먼저 읽어, 다른 코드 페이지도 읽을 때 이 코드 페이지를 우선합니다</translation>
+    </message>
+    <message>
+        <source>Code pages:</source>
         <translation>코드 페이지:</translation>
+    </message>
+    <message>
+        <source>Preferred code page:</source>
+        <translation>선호 코드 페이지:</translation>
+    </message>
+    <message>
+        <source>Display columns: a wide East Asian character counts two</source>
+        <translation>표시 열: 동아시아 전각 문자는 2열로 셉니다</translation>
     </message>
 </context>
 <context>
@@ -2025,8 +2041,12 @@ Signed: %4</source>
         <translation>데이터베이스를 업데이트할 수 없습니다: %1</translation>
     </message>
     <message>
-        <source>Strings: %1, at least %2 characters</source>
-        <translation>문자열: %1, 최소 %2자</translation>
+        <source>Strings: %1, at least %2 columns</source>
+        <translation>문자열: %1, 최소 %2열</translation>
+    </message>
+    <message>
+        <source>Strings: %1, %2 first, at least %3 columns</source>
+        <translation>문자열: %1, %2 우선, 최소 %3열</translation>
     </message>
 </context>
 </TS>

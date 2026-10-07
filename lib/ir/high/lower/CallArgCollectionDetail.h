@@ -7,7 +7,8 @@
 /// \file
 /// Internal declarations shared between CallArgCollection.cpp and the
 /// architecture-specific ABI refinements (CallArgCollectionX86.cpp,
-/// CallArgCollectionARM.cpp, CallArgCollectionAArch64.cpp).  Not public.
+/// CallArgCollectionARM.cpp, CallArgCollectionAArch64.cpp) and the
+/// calling-convention steps (CallArgCollectionWin64.cpp).  Not public.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -17,9 +18,12 @@
 #include "neverd/Common.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/StringRef.h"
 
 #include <optional>
 #include <set>
@@ -56,6 +60,9 @@ struct CallArgScan {
   const TargetRegInfo *TRI = nullptr;
   const BinaryImage *Image = nullptr;
   Arch TheArch = Arch::Unknown;
+  /// The calling convention of the call, or null when NeverD has no entry
+  /// for it (MedCallConvention.h).
+  const CallArgumentConvention *Convention = nullptr;
   int MaxArgs = 0;
   int FirstStackSlot = 0;
   int StoreScanWindow = 0;
@@ -92,9 +99,78 @@ struct CallArgScan {
       ResolveWindow;
 };
 
-/// Win64 passes arguments 0-3 in RCX, RDX, R8, R9 above a 32-byte home area;
-/// argument 4 + K is the 8-byte slot at [rsp + 32 + 8K] at the call.
-bool isWin64(const CallArgScan &Scan);
+/// What a calling convention's steps of register-argument recovery read and
+/// refine for one call (see CallArgPolicy).
+struct CallArgContext {
+  /// The recovered argument of each position, null where none is known yet.
+  std::vector<ExprPtr> &Found;
+  int MaxArgs = 0;
+  llvm::ArrayRef<uint64_t> ParamRegs;
+  const MedBlock &CurBlock;
+  /// The function being converted, when there is one.
+  const MedFunc *CurMed = nullptr;
+  llvm::function_ref<ExprPtr(const MedVar &)> ToExpr;
+  llvm::function_ref<ExprPtr(const MedOp &)> OpToExpr;
+  /// The argument position a write of an integer register sets, or -1.
+  llvm::function_ref<int(uint64_t)> IntegerSlot;
+  /// The convention's argument position of a register, or -1.
+  llvm::function_ref<int(uint64_t)> RegToArgIdx;
+  /// The parameter position of a value of the function being converted.
+  llvm::function_ref<int(const MedVar &)> AbiParamIndex;
+  /// The SSA value of a register at the entry of the call's block.
+  llvm::function_ref<bool(uint64_t, MedVar &)> ReachingAtEntry;
+  /// The value of \p V at op \p Before of \p Ops, through the copies and
+  /// views a window walk peels.
+  llvm::function_ref<ExprPtr(MedVar V, const std::vector<MedOp> &Ops,
+                             int Before)>
+      FromWindowValue;
+  /// Takes position K from a setup write before the call's block: the
+  /// predecessor's write of the register reaching the call, or the write
+  /// in the fork that dominates a join.  False when there is none.
+  llvm::function_ref<bool(int)> TakePrecedingSetup;
+};
+
+/// The steps of call-argument recovery that belong to one calling
+/// convention, each optional.  A convention defines its policy in its own
+/// file (CallArgCollectionWin64.cpp) and callArgPolicy() lists it; generic
+/// recovery runs a step at its point when the policy has one.
+struct CallArgPolicy {
+  Arch TheArch = Arch::Unknown;
+  /// The image format, or Unknown for every format of the architecture.
+  BinaryFormat Format = BinaryFormat::Unknown;
+  /// A call alone in a block that has one predecessor can take setup
+  /// stores from the end of that predecessor.
+  bool ReadsPredecessorWindow = false;
+  /// Takes the register-argument writes at the end of that predecessor.
+  void (*TakePredecessorRegisters)(CallArgContext &C,
+                                   const MedBlock &Pred) = nullptr;
+  /// The call's own block writes no argument register: recover what it
+  /// passes, and set \p FillLast, the highest position to fill from the
+  /// registers reaching the call.
+  void (*RecoverCallOnlySetup)(CallArgContext &C, int &FillLast) = nullptr;
+  /// Extend the positions up to \p MaxRegArg the block writes with values
+  /// that reach the call from before it.
+  void (*ExtendWrittenArgs)(CallArgContext &C, int MaxRegArg,
+                            int &FillLast) = nullptr;
+  /// Name a parameter of the function being converted that an argument
+  /// passes through by that parameter.
+  void (*ResolvePassThroughParams)(CallArgContext &C) = nullptr;
+  /// Fill unwritten register positions with the function's own parameters
+  /// for a callee without a summary.  \p HintedCount is the number of
+  /// arguments a source binding names, \p SelfCall whether the call is
+  /// recursive, and \p OwnParamCount the function's own parameter count.
+  void (*FillUnwrittenParams)(CallArgContext &C, size_t HintedCount,
+                              bool SelfCall, size_t OwnParamCount) = nullptr;
+  /// A recursive call passes exactly the parameters of the signature it
+  /// calls.
+  bool RecursiveCallsPassOwnSignature = false;
+  /// Merge scanned arguments into those a source binding names.
+  void (*MergeScannedArgs)(CallArgContext &C,
+                           std::vector<ExprPtr> &Hinted) = nullptr;
+};
+
+/// The call-argument policy for code of \p A in a \p F image, or null.
+const CallArgPolicy *callArgPolicy(Arch A, BinaryFormat F);
 
 /// True only for a same-SSA no-op (`COPY rcx = rcx`).  `COPY rcx.3 = rcx`
 /// restores the entry value into a new SSA version and is a real call-arg

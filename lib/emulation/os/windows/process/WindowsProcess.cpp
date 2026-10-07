@@ -37,6 +37,9 @@ public:
                    llvm::MutableArrayRef<uint8_t> Bytes) override {
     return Space.snapshotBacking(Address, Bytes);
   }
+  llvm::Expected<uint32_t> instructionSize(uint64_t Address) override {
+    return CPU.instructionSize(Address);
+  }
   llvm::Expected<std::vector<AddressMapping>> mappings() override {
     return Space.mappings();
   }
@@ -286,8 +289,9 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     if (!Watches)
       return Watches.takeError();
     if (*Watches)
-      return (*Session)->watchExecution(std::move(**Watches));
-    return llvm::Error::success();
+      if (auto E = (*Session)->watchExecution(std::move(**Watches)))
+        return E;
+    return (*Session)->watchMemoryWrites(Observer->writeWatches());
   };
   auto Prepare = [&]() -> llvm::Expected<bool> {
     while (true) {
@@ -359,6 +363,22 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     Result.ExitStatus = Life.exitStatus();
   };
   while (true) {
+    if (Observer) {
+      auto Watches = Observer->resuming(Stopped);
+      if (!Watches) {
+        Failed(Watches.takeError());
+        break;
+      }
+      if (*Watches)
+        if (auto E = (*Session)->watchExecution(std::move(**Watches))) {
+          Failed(std::move(E));
+          break;
+        }
+      if (auto E = (*Session)->watchMemoryWrites(Observer->writeWatches())) {
+        Failed(std::move(E));
+        break;
+      }
+    }
     auto Exit = (*Session)->run(Result.PC, Options.InstructionQuantum);
     if (!Exit) {
       Failed(Exit.takeError());
@@ -371,7 +391,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       break;
     }
     Result.PC = (*PC)[0];
-    if (Exit->Kind == SessionExitKind::Quantum)
+    if (Exit->Kind == SessionExitKind::Quantum ||
+        Exit->Kind == SessionExitKind::MemoryWriteWatch)
       continue;
     if (Exit->Kind == SessionExitKind::ExecutionWatch) {
       // Only an observer installs watches. The watched instruction has not

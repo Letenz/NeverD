@@ -364,6 +364,8 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `IofCompleteRequest`、`IoCompleteRequest` | 以 `IO_NO_INCREMENT` 執行完成展開，支援暫停／繼續；僅在最終展開邊界釋放 IRP、MDL 與緩衝區 |
 | `memcpy`、`memmove`、`memset`、`memcmp`、`RtlCopyMemory`、`RtlMoveMemory`、`RtlFillMemory`、`RtlZeroMemory`、`RtlCompareMemory` | 有界的客體緩衝區操作，每次呼叫最多 1 MiB；要求不重疊的複製 API 會拒絕重疊 |
 
+`KernelDispatcher` 以帶正負號的 32 位元 `LONG` 解碼號誌的 `Count`、`Limit` 與 `Adjustment`，以 32 位元 `ULONG` 解碼互斥體的 `Level`，以 8 位元 `BOOLEAN` 解碼 `Wait`，並依照 [Windows x64 ABI](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170) 忽略暫存器中未定義的高位元。有效位元中的無效值與號誌溢位仍在修改物件狀態前被拒絕。
+
 API 的 IRQL 上限來自 `KernelAPIIRQL.def`，參數相關限制由所屬模型檢查。DPC 不能呼叫登錄 API，也不能配置、釋放或存取分頁集區；Unicode `DbgPrint` 轉換要求 `PASSIVE_LEVEL`，支援的 ANSI 輸出與非分頁操作仍可在 `DISPATCH_LEVEL` 使用。回呼堆疊有明確邊界，越界堆疊指標不能進入另一阻塞工作項目的堆疊。裝置擴充中的已啟動計時器會阻止裝置提早回收。
 
 計時器到期會先滿足已登記的等待，再允許 DPC 重設或重新設定計時器。排入佇列的 DPC 先於已喚醒的 `PASSIVE_LEVEL` 執行框架還原執行。若請求儲存仍包含排入佇列的 DPC，IRP 完成操作會在完成及緩衝區失效之前拒絕釋放。

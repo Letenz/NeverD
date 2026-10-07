@@ -99,7 +99,8 @@ TEST_P(AndroidSyscall,
     bool ThreadFlag;
   };
   constexpr KernelCase Kernels[] = {
-#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error,  \
+                                NameFirst)                                     \
   {AndroidGKIKernel::Name, Label, ThreadFlag},
 #include "GKIReleaseCases.def"
 #undef NEVERD_GKI_RELEASE_CASE
@@ -125,7 +126,8 @@ TEST_P(AndroidSyscall, ReleasedGKIVectorImportRetainsRawAndBionicErrors) {
     bool SingleBuffer;
   };
   constexpr KernelCase Kernels[] = {
-#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error,  \
+                                NameFirst)                                     \
   {AndroidGKIKernel::Name, Label, SingleBuffer},
 #include "GKIReleaseCases.def"
 #undef NEVERD_GKI_RELEASE_CASE
@@ -151,7 +153,8 @@ TEST_P(AndroidSyscall, ReleasedGKICatalogueRetainsRawAndBionicLookupErrors) {
     uint32_t NonLeader;
   };
   constexpr KernelCase Kernels[] = {
-#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error,  \
+                                NameFirst)                                     \
   {AndroidGKIKernel::Name, Label, ThreadFlag, Error},
 #include "GKIReleaseCases.def"
 #undef NEVERD_GKI_RELEASE_CASE
@@ -208,7 +211,8 @@ TEST_P(AndroidSyscall, ReleasedGKICurrentTaskClockNamesItsProcessObservation) {
 }
 TEST_P(AndroidSyscall, ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults) {
   constexpr AndroidGKIKernel Kernels[] = {
-#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error,  \
+                                NameFirst)                                     \
   AndroidGKIKernel::Name,
 #include "GKIReleaseCases.def"
 #undef NEVERD_GKI_RELEASE_CASE

@@ -1073,7 +1073,8 @@ private:
   };
   /// Tracks the stack pointer from each target's pushed return-address slot
   /// and classifies how the returns reached from it treat that slot.
-  OwnInteriorCallVerdict classifyOwnInteriorCalls(const LowFunc &Func) const;
+  OwnInteriorCallVerdict classifyOwnInteriorCalls(const BinaryImage &Img,
+                                                  const LowFunc &Func) const;
   LowFunc buildOnce(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
                     const std::string &FuncName);
 

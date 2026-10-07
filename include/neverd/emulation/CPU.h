@@ -30,6 +30,14 @@ class AddressSpace;
 struct ExecutionWatch {
   uint64_t Address, Size;
 };
+/// A guest byte range whose physical backing is observed through every alias.
+/// A successful instruction that writes it yields after publishing its effects.
+/// Direct execution may also yield for other writes in the same physical page.
+/// A notification invalidates cached observations; it does not prove a change.
+struct MemoryWriteWatch {
+  uint64_t Address, Size;
+  bool operator==(const MemoryWriteWatch &) const = default;
+};
 struct BackendHooks {
   std::function<void(uint64_t, uint32_t)> Instruction;
   std::function<void(uint64_t, uint32_t)> Read;
@@ -41,6 +49,10 @@ struct BackendHooks {
   std::function<bool(const BackendFault &)> RecoverableFault;
   std::function<void(uint32_t)> Interrupt;
   std::function<void()> InvalidInstruction;
+  /// A write may have invalidated watched RAM, and registers including PC
+  /// describe the next boundary. Faults and service requests retain priority.
+  /// This is distinct from Write, which observes an access before its effects.
+  std::function<void()> MemoryWritten;
 };
 /// An owning CPU snapshot associated with exactly one backend instance.
 /// Guest memory and hooks are shared by all contexts and are never rolled back.
@@ -121,6 +133,14 @@ public:
   /// makes their pages non-executable so the next free run faults into them.
   /// Backends that do not run a direct contract need not retain the set.
   virtual void setExecutionWatches(const std::vector<ExecutionWatch> &) {}
+  /// Replace stopped write watches. Unsupported backends reject a nonempty
+  /// set; they must not silently miss writes. Device memory is not watched.
+  virtual llvm::Error
+  setMemoryWriteWatches(const std::vector<MemoryWriteWatch> &Watches);
+  /// Decode the instruction at a stopped execution address without admitting
+  /// it, changing CPU state or reading beyond accessible instruction bytes.
+  /// Failure supplies no guessed length and publishes no guest fault.
+  virtual llvm::Expected<uint32_t> instructionSize(uint64_t Address);
   /// Execute until stopped, timed out, or faulted. A successful Error result
   /// alone does not imply successful guest completion: inspect fault() and
   /// timedOut() as well, including after an interrupt callback stops execution.

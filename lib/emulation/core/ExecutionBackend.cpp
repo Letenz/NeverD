@@ -30,6 +30,17 @@ llvm::Expected<ExecutionExit> ExecutionBackend::runUntilExit(uint64_t,
   return diagnostic::error(diagnostic::TypedExecutionUnsupported);
 }
 
+llvm::Error ExecutionBackend::setMemoryWriteWatches(
+    const std::vector<MemoryWriteWatch> &Watches) {
+  if (!Watches.empty())
+    return diagnostic::error(diagnostic::WriteWatchesUnsupported);
+  return llvm::Error::success();
+}
+
+llvm::Expected<uint32_t> ExecutionBackend::instructionSize(uint64_t) {
+  return diagnostic::error(diagnostic::InstructionInspectionUnsupported);
+}
+
 const char *executionExitKindName(ExecutionExitKind Kind) {
   switch (Kind) {
 #define NEVERD_EXECUTION_EXIT(Name, Text)                                      \

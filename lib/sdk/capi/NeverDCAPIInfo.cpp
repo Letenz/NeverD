@@ -14,6 +14,7 @@
 #include "SessionImpl.h"
 
 #include "neverd/evm/bytecode/EVMBytecode.h"
+#include "neverd/loader/ELF/ELFLoaderUtils.h"
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionFunction.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
@@ -22,7 +23,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/ELF.h"
-#include "llvm/Demangle/Demangle.h"
+#include "llvm/Support/CRC.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MD5.h"
@@ -122,7 +123,7 @@ llvm::json::Object Session::functionIdentity(va_t Entry) const {
     return {};
   const auto &F = *At;
   std::string Display =
-      F.Origin == NameOrigin::User ? F.Name : llvm::demangle(F.Name);
+      F.Origin == NameOrigin::User ? F.Name : demangledName(F.Name);
   llvm::json::Array Annotations;
   const sigs::LibraryRecognition *Whole = nullptr;
   bool Ambiguous = false;
@@ -211,25 +212,6 @@ const char *neverd_imports_json(neverd_session_t Sess) {
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }
 
-namespace {
-/// ELF dynamic relocations that store a symbol's address in a GOT slot.
-bool isELFSlotBinding(Arch Target, uint32_t Type) {
-  using namespace llvm::ELF;
-  switch (Target) {
-  case Arch::X64:
-    return Type == R_X86_64_GLOB_DAT || Type == R_X86_64_JUMP_SLOT;
-  case Arch::X86:
-    return Type == R_386_GLOB_DAT || Type == R_386_JUMP_SLOT;
-  case Arch::AArch64:
-    return Type == R_AARCH64_GLOB_DAT || Type == R_AARCH64_JUMP_SLOT;
-  case Arch::ARM:
-    return Type == R_ARM_GLOB_DAT || Type == R_ARM_JUMP_SLOT;
-  default:
-    return false;
-  }
-}
-} // namespace
-
 const char *neverd_import_slots_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S || !S->Loaded)
@@ -249,7 +231,7 @@ const char *neverd_import_slots_json(neverd_session_t Sess) {
     Note(Addr, Slot.Name, Slot.Addend);
   if (S->Img.Format == BinaryFormat::ELF && !S->Img.IsRelocatable)
     for (const auto &Rel : S->Img.Relocations)
-      if (isELFSlotBinding(S->Img.Arch, Rel.Type))
+      if (elf_loader::isELFSlotBinding(S->Img.Arch, Rel.Type))
         Note(Rel.Address, Rel.SymbolName, Rel.Addend);
   llvm::json::Array Arr;
   for (const auto &[Addr, Slot] : Slots) {
@@ -413,6 +395,14 @@ const char *neverd_string_encodings_json(void) {
   });
   OS.flush();
   return dupStr(Buf);
+}
+
+const char *neverd_fold_case(const char *Text) {
+  return Text ? dupStr(strings::foldCase(Text)) : nullptr;
+}
+
+const char *neverd_demangle(const char *Name) {
+  return Name ? dupStr(demangledName(Name)) : nullptr;
 }
 
 const char *neverd_decode_text_json(const unsigned char *Bytes, int Size,
@@ -726,13 +716,15 @@ const char *neverd_dashboard_json(neverd_session_t Sess) {
   if (Ifs.is_open()) {
     llvm::MD5 Md5;
     llvm::SHA256 Sha;
+    uint32_t Crc = 0;
     char Buf[8192];
     while (Ifs.read(Buf, sizeof(Buf)) || Ifs.gcount() > 0) {
       auto Count = static_cast<size_t>(Ifs.gcount());
-      Md5.update(llvm::ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(Buf),
-                                         Count));
-      Sha.update(llvm::ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(Buf),
-                                         Count));
+      const llvm::ArrayRef<uint8_t> Chunk(
+          reinterpret_cast<const uint8_t *>(Buf), Count);
+      Md5.update(Chunk);
+      Sha.update(Chunk);
+      Crc = llvm::crc32(Crc, Chunk);
     }
     llvm::MD5::MD5Result Md5Res;
     Md5.final(Md5Res);
@@ -745,6 +737,7 @@ const char *neverd_dashboard_json(neverd_session_t Sess) {
       Sha256Hex += Digits[B & 0xF];
     }
     Hashes["sha256"] = Sha256Hex;
+    Hashes["crc32"] = llvm::utohexstr(Crc, /*LowerCase=*/true, /*Width=*/8);
   }
   Root["hashes"] = std::move(Hashes);
 

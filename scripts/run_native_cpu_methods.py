@@ -23,6 +23,11 @@ else:
     from audit_ci_test_results import TestOutcome
 
 
+METHOD_TEXT = dict(re.findall(
+    r'NEVERD_NATIVE_METHOD_TEXT\(\s*(\w+),\s*"([^"]+)"\s*\)',
+    Path(__file__).with_name("NativeMethodExecution.def").read_text(encoding="utf-8")))
+
+
 def google_test_command(command):
     # CMake 4.3+ launches discovered GoogleTests through LaunchTest.cmake.
     # Only its plain native form is equivalent to our direct invocation:
@@ -74,6 +79,9 @@ def method_inventory(document):
             source = properties.pop("DEF_SOURCE_LINE")
             if not isinstance(source, str) or not re.fullmatch(r".+:[1-9][0-9]*", source):
                 raise ValueError("invalid CTest definition source location")
+        run_serial = properties.pop(METHOD_TEXT["RunSerial"], False)
+        if type(run_serial) is not bool:
+            raise ValueError(METHOD_TEXT["InvalidRunSerial"])
         if set(properties) != allowed:
             raise ValueError("unsupported CTest properties: " + record.name)
         if properties["SKIP_REGULAR_EXPRESSION"] != [r"\[  SKIPPED \]"]:
@@ -93,7 +101,7 @@ def method_inventory(document):
             raise ValueError("invalid CTest environment")
         suite, case = name.split(".", 1)
         family = suite + "." + case.split("/", 1)[0]
-        key = (command[0], family, directory, tuple(environment), timeout)
+        key = (command[0], family, directory, tuple(environment), timeout, run_serial)
         methods.setdefault(key, {})[name] = record
     return methods
 
@@ -115,8 +123,8 @@ def shard_inventory(document, index, count):
 def inventory_contract(document):
     """Normalize runner locations while retaining every execution property."""
     return {record: (Path(binary).name, name, os.path.relpath(directory, Path(binary).parent),
-                     variables, timeout)
-            for (binary, family, directory, variables, timeout), expected
+                     variables, timeout, run_serial)
+            for (binary, family, directory, variables, timeout, run_serial), expected
             in method_inventory(document).items() for name, record in expected.items()}
 
 
@@ -203,7 +211,10 @@ def run_methods(document, evidence, environment):
     (evidence / "method-plan.json").write_text(
         json.dumps(method_plan(methods), indent=2) + "\n")
     for index, (key, expected) in enumerate(methods.items()):
-        binary, family, directory, variables, case_timeout = key
+        binary, family, directory, variables, case_timeout, _run_serial = key
+        # Every method waits for its child to retire before starting the next.
+        # This satisfies RUN_SERIAL for either value without dropping its
+        # declared policy from grouping or cross-run inventory comparisons.
         child_environment = dict(environment)
         child_environment.update(item.split("=", 1) for item in variables)
         for required in ("NEVERD_REQUIRE_HVF", "NEVERD_REQUIRE_NATIVE_WHP"):

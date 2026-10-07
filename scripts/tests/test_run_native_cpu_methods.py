@@ -91,6 +91,20 @@ class NativeMethodEvidenceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 methods.method_inventory(document)
 
+    def test_run_serial_is_a_boolean_execution_contract(self):
+        original = methods.inventory_contract(self.document)
+        for value in (True, False):
+            document = copy.deepcopy(self.document)
+            document["tests"][0]["properties"].append({"name": methods.METHOD_TEXT["RunSerial"], "value": value})
+            contract = methods.inventory_contract(document)
+            self.assertEqual(contract == original, not value)
+            self.assertEqual(len(methods.method_inventory(document)), 2 if value else 1)
+        for value in (0, 1, "ON", "OFF", None, [], {}):
+            document = copy.deepcopy(self.document)
+            document["tests"][0]["properties"].append({"name": methods.METHOD_TEXT["RunSerial"], "value": value})
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                methods.method_inventory(document)
+
     def test_distinct_environments_do_not_share_a_process(self):
         self.document["tests"][1]["properties"][1]["value"] = ["NEVERD_SIGNATURE_CACHE=on"]
         self.assertEqual(len(methods.method_inventory(self.document)), 2)
@@ -228,6 +242,8 @@ class NativeMethodEvidenceTests(unittest.TestCase):
         next_case["name"] = "Native.Later"
         next_case["command"][1] = "--gtest_filter=Native.Later"
         self.document["tests"].append(next_case)
+        for test in self.document["tests"][:2]:
+            test["properties"].append({"name": methods.METHOD_TEXT["RunSerial"], "value": True})
         for missing_xml in (False, True):
             def execute(command, directory, environment, timeout, evidence):
                 evidence.mkdir(parents=True)

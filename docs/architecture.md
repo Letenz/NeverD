@@ -2861,6 +2861,16 @@ Architecture lifters live in `lib/lift/X86`, `lib/lift/AArch64`, and
 `include/neverd/lift`. Target-specific LLVM emission and code generation live
 under `lib/backend/llvm/<ISA>` and `lib/backend/codegen/CodeGen<ISA>.cpp`.
 
+New target-specific rules in shared passes belong in per-target tables, not in
+inline architecture or format tests. A fact about an ISA is a `TargetRegInfo`
+trait set in its `lib/ir/TargetRegInfo<ISA>.cpp`. A calling-convention rule is a
+`CallArgumentConvention` entry in its own
+`lib/ir/med/abi/MedCallConvention<Name>.cpp`, listed in `MedCallConvention.cpp`.
+Functions that never return are listed per runtime under `include/neverd/libc`
+(`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`).
+Supporting another target then adds a file or a table entry instead of a branch
+in the shared pass.
+
 <a id="support-and-test-depth"></a>
 
 ### Support and test depth
@@ -3263,6 +3273,8 @@ Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `Vi
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
 `lib/unpack` recovers packed images in four layers. `core` owns orchestration and the format registry. `format/pe` validates the container and rebuilds observed memory, imports and metadata; `PETLS.cpp` validates replacement TLS records against the loader allocation and observed callbacks. No protector registry or static stub signature selects an entry. `dynamic` observes a guest process through `observeProcess`: `Observation.def` maps each container and instruction set to a process profile and gives each instruction set its stack pointer and instruction window. A new target is a table row and a module directory, and an input without a row is rejected by name. `ExecutionSession` owns execution watches; a `ProcessObserver` reads a stopped process and chooses the next stop, but cannot change guest state. The emulation layer knows only `defer_unmodeled`, which binds unmodeled imports to opaque entries that stop when executed. See [unpacking](unpack.md). Deferred loading permits executable callback and entry targets that earlier initializers materialize in zero-filled memory. Callback arrays and TLS allocation metadata still require validated backing; ordinary strict loading retains its file-backing checks. The OS model supplies invocation provenance and notifies observers when it prepares an invocation or restores a suspended caller. Transfer watches are rearmed at those boundaries, including when a callback and the generated entry share a page.
+
+`MemoryProjection` owns physical RAM write invalidation, and `ExecutionSession` owns its stopped continuation. The x64 page-table builder applies temporary write protection for direct execution; it contains no image or protector policy. Windows process observation rechecks stopped service writes before resuming. `dynamic/ProcessTransfer` alone classifies generations from decoded instruction bytes and keeps mixed-generation pages observed.
 
 `arch/X64Imports.cpp` owns x64 import instruction decoding and emission. `dynamic/ProcessImports.cpp` proves pure export calls and address-load results from read-only process observations; the PE writer consumes that evidence without duplicating the instruction rules.
 

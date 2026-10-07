@@ -14,6 +14,7 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include <algorithm>
 #include <functional>
@@ -676,6 +677,63 @@ bool LowToMedConverter::redirectWideSubpieceToNarrowARM(
     }
   }
   return false;
+}
+
+//===----------------------------------------------------------------------===//
+// ARM ELF relative literals
+//===----------------------------------------------------------------------===//
+
+LowToMedConverter::RelativeLiteralOutputs
+LowToMedConverter::armRelativeLiteralOutputs(const LowFunc &Low, Arch TheArch,
+                                             BinaryFormat Fmt) const {
+  // CFGBuilder proves the complete value of an ARM PC + R_ARM_REL32 literal
+  // at the exact ADD output. Preserve that occurrence proof across the LowIR
+  // to MedIR boundary: the literal word is a relative fragment, and treating
+  // its old-image integer as an independent table base loses relocation.
+  RelativeLiteralOutputs Outputs;
+  if (TheArch != Arch::ARM || Fmt != BinaryFormat::ELF || !Image ||
+      Image->Arch != Arch::ARM || !Image->isELF())
+    return Outputs;
+  for (const auto &Occurrence : Low.RelocatedInstructionAddressOccurrences) {
+    const std::pair<va_t, int> Key{Occurrence.InstructionAddr,
+                                   Occurrence.OpSeq};
+    if (Occurrence.DefinesOutput && Occurrence.OutputMayDepend)
+      Outputs.Ambiguous.insert(Key);
+    if (!Occurrence.DefinesOutput || Occurrence.OutputMayDepend ||
+        Occurrence.Authority !=
+            RelocatedInstructionAddressProofKind::LoaderField ||
+        Occurrence.OutputOpcode != NdOp::INT_ADD || Occurrence.Width != 4 ||
+        Occurrence.OutputWitness.Size != 4 ||
+        (!Occurrence.OutputWitness.isReg() &&
+         !Occurrence.OutputWitness.isTemp()) ||
+        (Occurrence.Provenance != ConstantAddressProvenance::DataAddress &&
+         Occurrence.Provenance != ConstantAddressProvenance::CodeAddress))
+      continue;
+    const auto Field = Image->ARMRelativeLiteralFields.find(Occurrence.FieldVA);
+    if (Field == Image->ARMRelativeLiteralFields.end() ||
+        Field->second.TargetVA != Occurrence.TargetVA ||
+        Field->second.TargetOwnerVA != Occurrence.TargetOwnerVA ||
+        static_cast<uint32_t>(Occurrence.InstructionAddr + 8) +
+                Field->second.EncodedValue !=
+            static_cast<uint32_t>(Occurrence.TargetVA) ||
+        !Image->relocatedTargetBelongsToOwner(Occurrence.TargetVA,
+                                              Occurrence.TargetOwnerVA))
+      continue;
+    const Segment *Slot = Image->getSegmentFor(Occurrence.FieldVA);
+    const uint8_t *Bytes = Image->readVA(Occurrence.FieldVA, 4);
+    if (!Slot || !Slot->isReadable() || Slot->isWritable() || !Bytes ||
+        (uint32_t(Bytes[0]) | (uint32_t(Bytes[1]) << 8) |
+         (uint32_t(Bytes[2]) << 16) | (uint32_t(Bytes[3]) << 24)) !=
+            Field->second.EncodedValue)
+      continue;
+    auto [It, Inserted] = Outputs.Exact.emplace(Key, &Occurrence);
+    if (!Inserted && (It->second->TargetVA != Occurrence.TargetVA ||
+                      It->second->TargetOwnerVA != Occurrence.TargetOwnerVA ||
+                      It->second->Provenance != Occurrence.Provenance ||
+                      It->second->OutputWitness != Occurrence.OutputWitness))
+      Outputs.Ambiguous.insert(Key);
+  }
+  return Outputs;
 }
 
 } // namespace neverd
