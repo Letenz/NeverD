@@ -67,7 +67,8 @@ TEST_P(AndroidFiles, ReleasedGKIOpenFlagsSharePathErrorsAndErrno) {
   Options.LinuxFiles->DescriptorLimit = 4;
   Options.Android->ThreadLimit = 1;
   constexpr AndroidGKIKernel Kernels[] = {
-#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error)  \
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error,  \
+                                NameFirst)                                     \
   AndroidGKIKernel::Name,
 #include "GKIReleaseCases.def"
 #undef NEVERD_GKI_RELEASE_CASE
@@ -86,6 +87,44 @@ TEST_P(AndroidFiles, OpenFlagsKeepKnownDirectoryAndDirectIOBoundaries) {
     EXPECT_FALSE(R.Services.back().Result);
     EXPECT_NE(R.Diagnostic.find(Mode == 0 ? "direct I/O" : "directory"),
               std::string::npos);
+  }
+}
+TEST_P(AndroidFiles, ReleasedGKIXAttrsShareRawAndBionicErrorOrder) {
+  struct Case {
+    AndroidGKIKernel Kernel;
+    bool NameFirst;
+  };
+  constexpr Case Kernels[] = {
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error,  \
+                                NameFirst)                                     \
+  {AndroidGKIKernel::Name, NameFirst},
+#include "GKIReleaseCases.def"
+#undef NEVERD_GKI_RELEASE_CASE
+  };
+  Options.Android->ThreadLimit = 1;
+  for (auto K : Kernels) {
+    SCOPED_TRACE(unsigned(K.Kernel));
+    Options.LinuxKernel.emplace().GKI = K.Kernel;
+    returned(run("files_xattr_errors", {K.NameFirst}));
+    returned(run("files_xattr_errors_bionic", {K.NameFirst}));
+  }
+}
+TEST_P(AndroidFiles, XAttrsKeepUnknownKernelAndExistingObjectBoundaries) {
+  auto R = run("files_xattr_errors", {0});
+  ASSERT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+  EXPECT_NE(R.Diagnostic.find("released GKI"), std::string::npos);
+  Options.LinuxKernel.emplace().GKI = AndroidGKIKernel::Android17_6_18;
+  for (uint64_t Mode = 0; Mode != 4; ++Mode) {
+    auto E = run("files_xattr_unobserved", {Mode});
+    ASSERT_EQ(E.Stop, ProcessStopReason::UnsupportedService) << E.Diagnostic;
+    ASSERT_FALSE(E.Services.empty());
+    EXPECT_FALSE(E.Services.back().Result);
+    EXPECT_NE(E.Diagnostic.find("extended attributes"), std::string::npos);
+    if (Mode < 3) {
+      auto B = run("files_xattr_unobserved_bionic", {Mode});
+      EXPECT_EQ(B.Stop, ProcessStopReason::UnsupportedService) << B.Diagnostic;
+      EXPECT_NE(B.Diagnostic.find("extended attributes"), std::string::npos);
+    }
   }
 }
 TEST_P(AndroidFiles, PageFaultsPreserveCopiedBytesAndAdvanceOnlyTheirCursor) {

@@ -3078,6 +3078,12 @@ lookup failures, pathname-before-capacity ordering and unchanged cursors.
 `ReleasedGKIOpenFlagsSharePathErrorsAndErrno` repeats raw and the four Bionic
 open imports across packing profiles. The corresponding boundary cases keep
 existing directories and unobserved direct I/O unsupported.
+`ReleasedGKIXAttrsPreserveNameAndTargetErrorOrder` checks O0/O2 callers on all
+eight releases for versioned name/target precedence, empty and overlong names,
+page-edge imports, descriptor narrowing, unchanged cursors and value canaries.
+Android’s `ReleasedGKIXAttrsShareRawAndBionicErrorOrder` repeats raw/named calls
+and independent errno checks across packing profiles. Corresponding boundary
+cases retain missing GKI and existing-object attribute uncertainty.
 Run these first,
 then the complete Linux process, Android native and
 public process suites when changing shared kernel or descriptor semantics.
