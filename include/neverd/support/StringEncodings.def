@@ -1,0 +1,57 @@
+//===- StringEncodings.def - text encodings of found strings -----*- C++
+//-*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The encodings neverd/support/StringScan.h finds strings in, and the
+/// Unicode blocks that wide strings may use.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_STRING_ENCODING(Id, Name, Spelling, UnitBytes, BigEndian)
+//   Name: the option and JSON name.  Spelling: how a listing names the
+//   encoding in `text "Spelling", '...'`.  UnitBytes: bytes per code unit.
+#ifndef NEVERD_STRING_ENCODING
+#define NEVERD_STRING_ENCODING(Id, Name, Spelling, UnitBytes, BigEndian)
+#endif
+NEVERD_STRING_ENCODING(ASCII, "ascii", "", 1, false)
+NEVERD_STRING_ENCODING(UTF8, "utf-8", "UTF-8", 1, false)
+NEVERD_STRING_ENCODING(UTF16LE, "utf-16le", "UTF-16LE", 2, false)
+NEVERD_STRING_ENCODING(UTF16BE, "utf-16be", "UTF-16BE", 2, true)
+NEVERD_STRING_ENCODING(UTF32LE, "utf-32le", "UTF-32LE", 4, false)
+NEVERD_STRING_ENCODING(UTF32BE, "utf-32be", "UTF-32BE", 4, true)
+#undef NEVERD_STRING_ENCODING
+
+// NEVERD_TEXT_BLOCK(First, Last): code points a wide string may hold besides
+// printable ASCII.  Random 16- and 32-bit data decodes to valid code points
+// all over the code space, so a wide string must stay within the blocks of
+// written languages, their punctuation and their symbols.
+#ifndef NEVERD_TEXT_BLOCK
+#define NEVERD_TEXT_BLOCK(First, Last)
+#endif
+NEVERD_TEXT_BLOCK(0x00A0, 0x024F)   // Latin-1 Supplement, Latin Extended-A/B
+NEVERD_TEXT_BLOCK(0x0370, 0x052F)   // Greek, Cyrillic and its supplement
+NEVERD_TEXT_BLOCK(0x0590, 0x06FF)   // Hebrew, Arabic
+NEVERD_TEXT_BLOCK(0x0900, 0x0DFF)   // Indic scripts, Sinhala
+NEVERD_TEXT_BLOCK(0x0E00, 0x0EFF)   // Thai, Lao
+NEVERD_TEXT_BLOCK(0x1E00, 0x1FFF)   // Latin Extended Additional, Greek Extended
+NEVERD_TEXT_BLOCK(0x2000, 0x206F)   // General Punctuation
+NEVERD_TEXT_BLOCK(0x20A0, 0x20CF)   // Currency Symbols
+NEVERD_TEXT_BLOCK(0x2100, 0x218F)   // Letterlike Symbols, Number Forms
+NEVERD_TEXT_BLOCK(0x2190, 0x21FF)   // Arrows
+NEVERD_TEXT_BLOCK(0x2460, 0x24FF)   // Enclosed Alphanumerics
+NEVERD_TEXT_BLOCK(0x2500, 0x25FF)   // Box Drawing, Block Elements, Shapes
+NEVERD_TEXT_BLOCK(0x2600, 0x27BF)   // Miscellaneous Symbols, Dingbats
+NEVERD_TEXT_BLOCK(0x3000, 0x30FF)   // CJK Symbols and Punctuation, Kana
+NEVERD_TEXT_BLOCK(0x3100, 0x312F)   // Bopomofo
+NEVERD_TEXT_BLOCK(0x3130, 0x318F)   // Hangul Compatibility Jamo
+NEVERD_TEXT_BLOCK(0x3400, 0x4DBF)   // CJK Unified Ideographs Extension A
+NEVERD_TEXT_BLOCK(0x4E00, 0x9FFF)   // CJK Unified Ideographs
+NEVERD_TEXT_BLOCK(0xAC00, 0xD7A3)   // Hangul Syllables
+NEVERD_TEXT_BLOCK(0xF900, 0xFAFF)   // CJK Compatibility Ideographs
+NEVERD_TEXT_BLOCK(0xFF00, 0xFFEF)   // Halfwidth and Fullwidth Forms
+NEVERD_TEXT_BLOCK(0x1F300, 0x1FAFF) // Pictographs, emoticons and symbols
+#undef NEVERD_TEXT_BLOCK
