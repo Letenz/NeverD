@@ -13,6 +13,7 @@
 #include "../os/linux/android/AndroidInternal.h"
 #include "../os/linux/kernel/LinuxSignals.h"
 #include "../os/linux/kernel/LinuxPriority.h"
+#include "../os/linux/kernel/LinuxKernelAvailability.h"
 #include "../os/linux/kernel/LinuxTime.h"
 #include "../os/linux/process/LinuxProcess.h"
 #include "../os/windows/process/WindowsProcess.h"
@@ -84,6 +85,13 @@ llvm::Expected<ProcessResult> runProfile(const std::filesystem::path &Path,
         Profile != ProcessProfile::IOSSimulatorMachO64)
       return diagnostic::error(process_report::DarwinFilesProfile);
     if (auto E = darwin_model::validateFileOptions(*Options.DarwinFiles))
+      return std::move(E);
+  }
+  if (Options.LinuxKernel) {
+    if (Profile != ProcessProfile::LinuxELF64 &&
+        Profile != ProcessProfile::AndroidNativeAArch64)
+      return diagnostic::error(process_report::LinuxKernelProfile);
+    if (auto E = linux_model::validateKernelOptions(*Options.LinuxKernel))
       return std::move(E);
   }
   if (Options.LinuxPriority) {

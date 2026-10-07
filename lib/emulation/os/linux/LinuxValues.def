@@ -31,6 +31,7 @@ NEVERD_LINUX_VALUE(PriorityNiceMaximum, 19)
 NEVERD_LINUX_VALUE(PriorityLimitMaximum, 40)
 NEVERD_LINUX_VALUE(PriorityTaskLimit, 4096)
 NEVERD_LINUX_VALUE(AccessDenied, 13)
+NEVERD_LINUX_VALUE(ServiceNotImplemented, 38)
 NEVERD_LINUX_VALUE(BadDescriptor, 9)
 NEVERD_LINUX_VALUE(BadAddress, 14)
 NEVERD_LINUX_VALUE(PermissionDenied, 1)
@@ -132,6 +133,10 @@ NEVERD_LINUX_AUX(EXECFN, 31, *ExecutableAddress)
 NEVERD_LINUX_AUX(NULL, 0, 0)
 #endif
 #ifdef NEVERD_LINUX_SERVICE
+#define NEVERD_LINUX_UNAVAILABLE_SYSCALL(Name, Label, X64, ARM, Count) \
+  NEVERD_LINUX_SERVICE(Name, X64, ARM, Count)
+#include "neverd/emulation/LinuxUnavailableSyscalls.def"
+#undef NEVERD_LINUX_UNAVAILABLE_SYSCALL
 NEVERD_LINUX_SERVICE(SignalAction, 13, 134, 4)
 NEVERD_LINUX_SERVICE(Mincore, 27, 232, 3)
 // Linux UAPI: x86-64 and asm-generic numbers, followed by fixed arity.
@@ -184,6 +189,7 @@ NEVERD_LINUX_DYNAMIC_DEPENDENCY(DependencyAudit, 0x6ffffefb)
 #ifdef NEVERD_LINUX_DIAGNOSTIC
 NEVERD_LINUX_DIAGNOSTIC(MemoryResidency,
                         "unmodeled Linux page residency observation")
+NEVERD_LINUX_DIAGNOSTIC(KernelOptions, "invalid Linux kernel availability input")
 NEVERD_LINUX_DIAGNOSTIC(PriorityOptions, "invalid Linux priority input")
 NEVERD_LINUX_DIAGNOSTIC(PriorityInputsMissing,
     "priority services require explicit linux_priority input")

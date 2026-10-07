@@ -5,6 +5,7 @@ add_neverd_component_library(NeverDEmulationLinuxKernel
   LinuxSleep.cpp
   LinuxSignals.cpp
   LinuxPriority.cpp
+  LinuxKernelAvailability.cpp
   LinuxUserMemory.cpp
   LinuxOutput.cpp
   LinuxServiceABI.cpp
