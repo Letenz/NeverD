@@ -3290,6 +3290,44 @@ TEST(HighCPointerAddresses, MaskedShiftCountNeedsNoOvershiftGuard) {
   EXPECT_NE(Unmasked.find("< 64 ?"), std::string::npos) << Unmasked;
 }
 
+TEST(HighCPointerAddresses, ShiftOperandOfTheSourceTypeKeepsItsText) {
+  // `t >> 32` and `t << 3` for a uint64_t local t need no conversion of t.
+  HighFunc Func;
+  Func.Name = "halves";
+  Func.ReturnType = NdType::makeInt(8, false);
+  Func.Params = {{"arg0", NdType::makeInt(8, false)}};
+  MedVar Temp;
+  Temp.Kind = MedVar::Temp;
+  Temp.Id = 1;
+  Temp.Size = 8;
+  Temp.TheArch = Arch::X64;
+  HighStmt Copy;
+  Copy.Kind = StmtKind::Assign;
+  Copy.Dst = HighExpr::makeVar(Temp, NdType::makeInt(8, false));
+  auto Twice = HighExpr::makeBinop(NdOp::INT_MULT,
+                                   parameter(0, NdType::makeInt(8, false)),
+                                   HighExpr::makeConst(2, 8));
+  Twice->Type = NdType::makeInt(8, false);
+  Copy.Val = Twice;
+  Func.Body.push_back(std::move(Copy));
+  auto Local = [&] {
+    return HighExpr::makeVar(Temp, NdType::makeInt(8, false));
+  };
+  auto High =
+      HighExpr::makeBinop(NdOp::INT_RIGHT, Local(), HighExpr::makeConst(32, 8));
+  High->Type = NdType::makeInt(8, false);
+  auto Scaled =
+      HighExpr::makeBinop(NdOp::INT_LEFT, Local(), HighExpr::makeConst(3, 8));
+  Scaled->Type = NdType::makeInt(8, false);
+  auto Sum = HighExpr::makeBinop(NdOp::INT_ADD, High, Scaled);
+  Sum->Type = NdType::makeInt(8, false);
+  returnValue(Func, Sum);
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("t1 >> 32"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("t1 << 3"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(uint64_t)t1"), std::string::npos) << Source;
+}
+
 TEST(HighCPointerAddresses, OmitsCopyForwardedTempDeclarations) {
   HighFunc Func;
   Func.Name = "fwd_temp";

@@ -654,8 +654,14 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
         return Value;
       return "(" + ResultType + ")" + Value;
     };
-    const auto Left =
-        "(" + SourceType + ")" + c_memory::castOperand(exprStr(*E.Operands[0]));
+    // An operand that already prints with the source type keeps its text.
+    const std::string LeftText = exprStr(*E.Operands[0]);
+    const auto LeftPrinted = printedIntegerType(*E.Operands[0]);
+    const auto Left = (LeftPrinted && LeftPrinted->first == Size &&
+                               LeftPrinted->second == Arithmetic
+                           ? ""
+                           : "(" + SourceType + ")") +
+                      c_memory::castOperand(LeftText);
     const auto Limit = std::to_string(Size * 8u);
     // The opcode determines sign extension independently of inferred types.
     // Preserve the count's own width, then guard C's undefined overshifts.
@@ -693,11 +699,20 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
         typeToC(NdType::makeInt(Size < 4 ? 4 : Size, false));
     const std::string Left = c_memory::castOperand(exprStr(*E.Operands[0]));
     const std::string Right = c_memory::castOperand(exprStr(*E.Operands[1]));
+    // An operand that already prints unsigned at the source width needs no
+    // source cast, and at the carrier width no carrier cast either.
+    const auto LeftPrinted = printedIntegerType(*E.Operands[0]);
+    const bool LeftIsSource =
+        LeftPrinted && LeftPrinted->first == SourceSize && !LeftPrinted->second;
     // At a carrier width the shifted carrier is the result already.
     const std::string Shifted =
-        "(" + CarrierType + ")" +
-        (SourceType == CarrierType ? "" : "(" + SourceType + ")") + Left +
-        " << " + Right;
+        (LeftIsSource && SourceType == CarrierType
+             ? ""
+             : "(" + CarrierType + ")" +
+                   (SourceType == CarrierType || LeftIsSource
+                        ? ""
+                        : "(" + SourceType + ")")) +
+        Left + " << " + Right;
     const bool AtCarrier = ResultType == CarrierType;
     const auto Shift = AtCarrier ? "(" + Shifted + ")"
                                  : "(" + ResultType + ")(" + Shifted + ")";
