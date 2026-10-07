@@ -15,6 +15,7 @@
 #include <vector>
 
 namespace neverd::emulation {
+struct X64Exception;
 class CheckedX64Backend final : public CheckedBackend {
 public:
   static llvm::Expected<std::unique_ptr<ExecutionBackend>>
@@ -58,6 +59,10 @@ private:
   };
   llvm::Error execute(const cs_insn &Instruction) override;
   llvm::Error executeDirect() override;
+  /// Retire one instruction through a temporary watch overlay, then rearm it.
+  llvm::Error stepWatchedInstruction();
+  llvm::Error publishDirectException(const X64Exception &Raised,
+                                     bool AllowSplit, bool &Resume);
   std::optional<ServiceRequest>
   decodeServiceRequest(const cs_insn &) const override;
   llvm::Expected<uint64_t> operandRegister(unsigned Register) const;

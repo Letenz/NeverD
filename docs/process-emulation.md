@@ -162,8 +162,9 @@ implementation. See the [kernel missing-call implementation](https://github.com/
 
 An explicit `linux_kernel.gki` selects a released Android common kernel branch
 from 5.10 through 6.18. Its current implemented subset includes `pidfd_open`
-for the live model process and explicitly catalogued guest tasks, and versioned
-vector import, with the same descriptor
+for the live model process and explicitly catalogued guest tasks, versioned
+vector import, observed process CPU clocks and zero-timeout pidfd `ppoll`, with
+the same descriptor
 table used by `linux_files`; Bionic and raw traps share ownership and error ordering.
 Selecting GKI together with an absent `pidfd_open` observation is rejected.
 An optional `linux_kernel.tasks` array supplies a closed, fixed catalogue of
@@ -175,6 +176,11 @@ cannot be combined with cooperative Android guest threads.
 Android API levels do not select a kernel. See the
 [released GKI contracts](android-gki-kernels.md) for all eight source pins,
 descriptor behavior, tests and the remaining kernel coverage.
+The poll subset requires an explicit zero timespec, null temporary mask and
+`linux_files` descriptor limit. It writes only ordered `revents` fields and
+does not update the zero timeout or advance wall clocks. Closed descriptors
+produce POLLNVAL; observed live pidfds have no readiness. Blocking waits and
+other descriptor readiness remain unsupported.
 
 The optional `linux_priority` input declares nice state for fixture-owned tasks
 with the caller's UID. Raw `setpriority` and `getpriority` share this state across
@@ -327,20 +333,28 @@ with instruction execution, or supplies a default epoch. For example:
   "timezone":{"minutes_west":-60,"dst_time":0}}}
 ```
 
-Clock IDs are Linux's static IDs 0–9 and 11: realtime, monotonic, process CPU,
+Clock IDs include Linux's static IDs 0–9 and 11: realtime, monotonic, process CPU,
 thread CPU, monotonic raw, realtime coarse, monotonic coarse, boottime,
 realtime alarm, boottime alarm and TAI. Each is independent; absent clocks are
-unknown, including coarse variants. Duplicate or unknown input IDs are errors.
-Seconds are signed 64-bit; nanoseconds must be in `[0, 1000000000)`. Integer
+unknown, including coarse variants. Selected released GKI contracts also admit
+negative encoded process CPU clock IDs with explicit live group observations;
+see [released GKI clocks](android-gki-kernels.md#implemented-process-cpu-clock-subset).
+PROF, VIRT and SCHED retain independent observations; aliases of the current
+process share one observation. Duplicate identities,
+unknown input IDs and more than 16384 clock observations are errors.
+Seconds are signed 64-bit and must be nonnegative for CPU clocks;
+nanoseconds must be in `[0, 1000000000)`. Integer
 JSON numbers are accepted within `±9007199254740991`; decimal strings preserve
 the full signed range. Timezone fields are signed 32-bit integers. C++ callers
 use `ProcessOptions::LinuxTime`, with the same value validation. Other process
 profiles reject this option.
 
 `"advance_on_idle": true` explicitly enables relative `nanosleep` on x64 and
-ARM64, including Android's named and variadic wrappers. Only clock IDs 0, 1 and
-7 may be supplied with this policy. Reads share each initial value plus elapsed
-virtual time. A sleeping Android thread retains its original pending service;
+ARM64, including Android's named and variadic wrappers. Clock IDs 0, 1 and
+7 advance from their initial values by elapsed virtual time. Process CPU clock
+observations may coexist with this policy and stay fixed during idle advancement.
+Other clock inputs remain excluded from this policy.
+A sleeping Android thread retains its original pending service;
 other runnable threads execute first. When all threads are blocked, time advances
 to the earliest sleep deadline. A single-threaded workload advances directly.
 Instruction execution itself does not advance time, so a busy runnable thread
@@ -360,8 +374,9 @@ Android's error conversion follows the API 28
 [AArch64 Bionic wrapper](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/arch-arm64/syscalls/nanosleep.S).
 
 `clock_gettime` consumes the low signed 32 bits of its clock ID, returns
-`EINVAL` for invalid positive IDs before accessing the destination, and stops
-for unmodeled encoded/dynamic clocks. A known clock without input stops as
+`EINVAL` for invalid positive IDs before accessing the destination. Selected GKI
+process CPU clocks validate their target before the destination; other encoded
+and dynamic clocks stop explicitly. A known clock without input stops as
 `unsupported_service`. `gettimeofday` writes seconds and truncated microseconds
 as two ordered 64-bit fields, followed by the optional pair of 32-bit timezone
 fields. `gettimeofday(NULL, NULL)` needs no input. Missing timezone input stops
@@ -412,8 +427,14 @@ process-owned descriptor table. Android `open`, `open64`, `openat`, `openat64`,
 `read`, `close`, `lseek`, `lseek64`, `fstat`, `fstat64` and `syscall` use that same state, including
 across guest threads. Bionic alone maps kernel errors to `-1` and thread-local
 `errno`; success preserves errno. Absolute paths ignore `dirfd`; mode is unused
-without creation. Opens admit only `O_RDONLY`, optional `O_CLOEXEC` and the
-architecture's `O_LARGEFILE`. Other flags, relative paths, internal repeated
+without creation. Ordinary file opens admit `O_RDONLY`, optional `O_CLOEXEC`
+and the architecture's `O_LARGEFILE`. `O_DIRECTORY` also admits known pathname
+failures and requires the final object to be a directory. `O_DIRECT` admits
+pathname and descriptor-exhaustion failures before reaching an opened file;
+the catalogue does not infer its backing filesystem's direct-I/O support.
+ARM64's directory/direct bits are `0x4000`/`0x10000`, while x64 uses
+`0x10000`/`0x4000`. These stable source-pinned rules do not require GKI selection.
+Other flags, relative paths, internal repeated
 separators, `.`/`..` components,
 directory opens, writes/creation, symlinks, duplication and descriptor-control
 operations remain unsupported. Exec is unmodeled, so close-on-exec flags have
@@ -559,6 +580,10 @@ and the [API 28 LP64 wrappers](https://github.com/aosp-mirror/platform_bionic/bl
 ## Windows PE64 profile
 
 `windows-pe64-v1` supports bounded Windows x64/ARM64 console processes with PEB/TEB, static and dynamic TLS, `DllMain`, named Win32 APIs and explicit acyclic DLL graphs. Guest modules support named/ordinal code and data imports, DIR64 rebasing, forwarded exports and actual loader-list identities. `LoadLibraryA` / `LoadLibraryW`, `FreeLibrary` and `GetProcAddress` use the configured module catalogue. CRT/GUI, ARM64 frame-based user SEH, threads and general Windows application compatibility remain unfinished; native ARM64 KVM/WHP evidence is still pending.
+
+`WindowsProcessTime.cpp` owns host-backed `GetSystemTimeAsFileTime`, `GetTickCount`, `QueryPerformanceCounter`, `QueryPerformanceFrequency` and `ZwDelayExecution`. FILETIME uses 100 ns units from 1601; the performance counter uses a monotonic clock and its reported 10 MHz frequency, while tick count wraps at 32 bits in milliseconds. Nonalertable relative delays up to 500 ms and a zero interval complete; alertable, positive absolute and longer delays stop explicitly without shortened waits or a successful result. These services preserve LastError and use the same model across CPU backends. `ZwDelayExecution` reads only the low 8 bits of `BOOLEAN`; unused argument-register bits do not change the wait policy.
+
+[Windows x64 ABI](https://learn.microsoft.com/cpp/build/x64-calling-convention), [QueryPerformanceFrequency](https://learn.microsoft.com/windows/win32/api/profileapi/nf-profileapi-queryperformancefrequency), [FILETIME](https://learn.microsoft.com/windows/win32/api/minwinbase/ns-minwinbase-filetime).
 
 Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` and current-process `FlushInstructionCache`. The OS layer owns reservations; `AddressSpace` remains the authority for committed pages, permissions and backing. Tests cover dynamic code rewriting, access faults and memory-budget reuse.
 

@@ -703,6 +703,14 @@
         <source>Choose the encodings and minimum length of the strings the listing shows</source>
         <translation>リストに表示する文字列のエンコーディングと最小長を選択します</translation>
     </message>
+    <message>
+        <source>String &amp;references</source>
+        <translation>文字列参照(&amp;R)</translation>
+    </message>
+    <message>
+        <source>List the instructions that refer to strings</source>
+        <translation>文字列を参照する命令を一覧表示します</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -825,6 +833,18 @@
     <message>
         <source>Description</source>
         <translation>説明</translation>
+    </message>
+    <message>
+        <source>String references</source>
+        <translation>文字列参照</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>関数</translation>
+    </message>
+    <message>
+        <source>Disassembly</source>
+        <translation>逆アセンブル</translation>
     </message>
 </context>
 <context>
@@ -1503,6 +1523,13 @@ Recognized library operation; click to show its code.</source>
     </message>
 </context>
 <context>
+    <name>neverd::gui::HexView</name>
+    <message>
+        <source>Text encoding</source>
+        <translation>テキストエンコーディング</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::JumpDialog</name>
     <message>
         <source>Jump anywhere</source>
@@ -1847,6 +1874,18 @@ Signed: %4</source>
         <source>Minimum length:</source>
         <translation>最小長：</translation>
     </message>
+    <message>
+        <source>None</source>
+        <translation>なし</translation>
+    </message>
+    <message>
+        <source>Also read C strings that are not UTF-8 in this code page</source>
+        <translation>UTF-8 でない C 文字列もこのコードページで読み取ります</translation>
+    </message>
+    <message>
+        <source>Code page:</source>
+        <translation>コードページ：</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -1897,6 +1936,10 @@ Signed: %4</source>
     <message>
         <source>  &lt;expr&gt;            evaluate: 0x10, 10h, #16, names, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</source>
         <translation>  &lt;expr&gt;            評価：0x10, 10h, #16, 名前, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</translation>
+    </message>
+    <message>
+        <source>  strref [text]     list the instructions that refer to strings</source>
+        <translation>  strref [text]     文字列を参照する命令を一覧表示</translation>
     </message>
 </context>
 <context>

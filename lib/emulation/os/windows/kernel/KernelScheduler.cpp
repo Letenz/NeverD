@@ -17,6 +17,8 @@
 
 #include "KernelScheduler.h"
 
+#include "KernelWaits.h"
+
 #include "neverd/emulation/DriverScheduling.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -848,6 +850,18 @@ llvm::Expected<bool> KernelScheduler::consumeTimerSignal(uint64_t Timer) {
   const bool WasSignaled = I->second.Signaled;
   I->second.Signaled = false;
   return WasSignaled;
+}
+
+llvm::Error
+KernelScheduler::consumeTimerSignals(llvm::ArrayRef<uint64_t> TimerObjects) {
+  for (uint64_t Timer : TimerObjects) {
+    auto I = Timers.find(Timer);
+    if (I == Timers.end() || !I->second.Signaled)
+      return schedulerError(kernel_wait::TimerLost);
+  }
+  for (uint64_t Timer : TimerObjects)
+    Timers.at(Timer).Signaled = false;
+  return llvm::Error::success();
 }
 
 llvm::Error KernelScheduler::canForgetTimer(uint64_t Timer) const {

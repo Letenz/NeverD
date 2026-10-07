@@ -9,15 +9,20 @@
 #include "../../core/RAMTransaction.h"
 #include "X64Decoder.h"
 #include "X64Exception.h"
+#include "X64ExceptionMonitor.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <chrono>
 #include <climits>
+#include <cstdio>
 #include <exception>
 #include <utility>
 
@@ -438,29 +443,57 @@ CheckedX64Backend::decodeServiceRequest(const cs_insn &I) const {
   return std::nullopt;
 }
 
-llvm::Error CheckedX64Backend::executeDirect() {
-  auto Root =
-      buildX64PageTables(*Memory, UserMode, Machine->requiresExceptionMonitor(),
-                         ExecutionWatches, WatchEpoch);
+namespace {
+std::vector<ExecutionWatch>
+watchesExceptPage(llvm::ArrayRef<ExecutionWatch> Watches, uint64_t Page) {
+  std::vector<ExecutionWatch> Open;
+  const uint64_t PageLast = Page | (x64::PageSize - 1);
+  for (const ExecutionWatch &W : Watches) {
+    const uint64_t Last = W.Address + (W.Size - 1);
+    if (Last < Page || W.Address > PageLast) {
+      Open.push_back(W);
+      continue;
+    }
+    if (W.Address < Page)
+      Open.push_back({W.Address, Page - W.Address});
+    if (Last > PageLast)
+      Open.push_back({PageLast + 1, Last - PageLast});
+  }
+  return Open;
+}
+} // namespace
+
+llvm::Error CheckedX64Backend::stepWatchedInstruction() {
+  const uint64_t PC = CPU.reg(X64Register::PC);
+  const uint64_t Page = PC & ~(x64::PageSize - 1);
+  auto Open = watchesExceptPage(ExecutionWatches, Page);
+  // A resumed instruction can itself cross into a second watched page. Open
+  // both fetch pages for this one processor step, retaining base permissions.
+  if (PC <= UINT64_MAX - (x64::MaxInstructionBytes - 1)) {
+    const uint64_t Last =
+        (PC + x64::MaxInstructionBytes - 1) & ~(x64::PageSize - 1);
+    if (Last != Page)
+      Open = watchesExceptPage(Open, Last);
+  }
+  // The punched overlay must not reuse the full watch projection, and the
+  // following free run must not reuse the punched one.
+  ++WatchEpoch;
+  auto Root = buildX64PageTables(
+      *Memory, UserMode, Machine->requiresExceptionMonitor(), Open, WatchEpoch);
+  ++WatchEpoch;
   if (!Root)
     return Root.takeError();
-  auto Next = CPU;
-  auto E = Machine->run(Next, *Root, {Deadline, &StopRequested});
-  // Only an event ends a free run.
-  if (!E)
-    return diagnostic::error(diagnostic::DirectExecutionUnsupported);
-  if (E.isA<MachineInterruptedError>()) {
-    CPU = Next;
-    return E;
-  }
-  return llvm::handleErrors(
-      std::move(E), [&](const X64ExceptionError &Raised) -> llvm::Error {
-        CPU = Next;
-        const uint64_t PC = CPU.reg(X64Register::PC);
-        // The system call extension is disabled, so each service instruction
-        // is undefined exactly where the guest requests the service.
-        if (Raised.exception().Vector ==
-            unsigned(x64::ExceptionVector::InvalidOpcode)) {
+  return Machine->step(CPU, *Root, {Deadline, &StopRequested});
+}
+
+llvm::Error
+CheckedX64Backend::publishDirectException(const X64Exception &Raised,
+                                          bool AllowSplit, bool &Resume) {
+  Resume = false;
+  const uint64_t PC = CPU.reg(X64Register::PC);
+  // The system call extension is disabled, so each service instruction
+  // is undefined exactly where the guest requests the service.
+  if (Raised.Vector == unsigned(x64::ExceptionVector::InvalidOpcode)) {
 #define NEVERD_X64_SERVICE(Kind, Name, ...)                                    \
   {                                                                            \
     constexpr uint8_t Expected[] = {__VA_ARGS__};                              \
@@ -477,26 +510,109 @@ llvm::Error CheckedX64Backend::executeDirect() {
   }
 #include "X64ServiceInstructions.def"
 #undef NEVERD_X64_SERVICE
-        }
-        // A fetch into a watched page faults only because the overlay made an
-        // otherwise executable page non-executable. That is the watch boundary,
-        // reported exactly as the checked contract reports an instruction
-        // watch: the instruction has not run, and the observer decides what to
-        // do next.
-        if (Raised.exception().Vector ==
-                unsigned(x64::ExceptionVector::PageFault) &&
-            Raised.exception().FaultAddress == PC && executionWatched(PC) &&
-            !Memory->check(PC, 1, executionPermissions(Execute))) {
-          if (Hooks.Instruction)
-            Hooks.Instruction(PC, 0);
-          return llvm::Error::success();
-        }
-        BackendFault Fault{BackendFaultKind::Interrupt, PC};
-        Fault.Interrupt = Raised.exception().Vector;
-        Fault.Address = Raised.exception().FaultAddress;
-        Fault.ErrorCode = Raised.exception().ErrorCode;
-        return raiseFault(Fault, true);
+  }
+  // A fetch into a watched page faults only because the overlay made an
+  // otherwise executable page non-executable. An instruction that starts in
+  // the range is the watch, reported before it runs. An instruction that
+  // started outside and only fetches its tail here is not: retire that one
+  // instruction, then the next one faults at the same boundary a checked
+  // watch uses.
+  // The execute bit distinguishes a fetch from a data fault. A transport that
+  // omits it still reports the overlay: the page stays present and readable,
+  // so the fault is not a write and not a not-present miss.
+  const bool FetchCode =
+      !Raised.ErrorCode ||
+      (*Raised.ErrorCode & x64::gateway::PageFaultExecute) ||
+      ((*Raised.ErrorCode & x64::gateway::PageFaultPresent) &&
+       !(*Raised.ErrorCode & x64::gateway::PageFaultWrite));
+  const bool WatchPage =
+      Raised.FaultAddress && llvm::any_of(ExecutionWatches, [&](const auto &W) {
+        const uint64_t Page = *Raised.FaultAddress & ~(x64::PageSize - 1);
+        return Page >= (W.Address & ~(x64::PageSize - 1)) &&
+               Page <= ((W.Address + W.Size - 1) & ~(x64::PageSize - 1));
       });
+  const bool FetchWatch =
+      Raised.Vector == unsigned(x64::ExceptionVector::PageFault) &&
+      Raised.FaultAddress && FetchCode && WatchPage &&
+      !Memory->check(*Raised.FaultAddress, 1, executionPermissions(Execute));
+  if (FetchWatch && *Raised.FaultAddress == PC) {
+    if (executionWatched(PC) && Hooks.Instruction)
+      Hooks.Instruction(PC, 0);
+    if (StopRequested || FirstFault)
+      return llvm::Error::success();
+  }
+  if (FetchWatch && AllowSplit && *Raised.FaultAddress >= PC &&
+      *Raised.FaultAddress - PC < x64::MaxInstructionBytes) {
+    const uint64_t Start = PC;
+    auto Stepped = stepWatchedInstruction();
+    if (!Stepped) {
+      // A step that did not retire the instruction would fault the same way
+      // on every retry.
+      if (CPU.reg(X64Register::PC) == Start) {
+        BackendFault Fault{BackendFaultKind::Interrupt, Start};
+        Fault.Interrupt = Raised.Vector;
+        Fault.Address = Raised.FaultAddress;
+        Fault.ErrorCode = Raised.ErrorCode;
+        return raiseFault(Fault, true);
+      }
+      Resume = true;
+      return llvm::Error::success();
+    }
+    if (Stepped.isA<MachineInterruptedError>())
+      return Stepped;
+    std::optional<X64Exception> Again;
+    auto Other = llvm::handleErrors(
+        std::move(Stepped),
+        [&](const X64ExceptionError &Exception) -> llvm::Error {
+          Again = Exception.exception();
+          return llvm::Error::success();
+        });
+    if (Other)
+      return Other;
+    if (!Again)
+      return error(diagnostic::DirectExecutionUnsupported);
+    return publishDirectException(*Again, false, Resume);
+  }
+  BackendFault Fault{BackendFaultKind::Interrupt, PC};
+  Fault.Interrupt = Raised.Vector;
+  Fault.Address = Raised.FaultAddress;
+  Fault.ErrorCode = Raised.ErrorCode;
+  return raiseFault(Fault, true);
+}
+
+llvm::Error CheckedX64Backend::executeDirect() {
+  for (;;) {
+    auto Root = buildX64PageTables(*Memory, UserMode,
+                                   Machine->requiresExceptionMonitor(),
+                                   ExecutionWatches, WatchEpoch);
+    if (!Root)
+      return Root.takeError();
+    auto Next = CPU;
+    auto E = Machine->run(Next, *Root, {Deadline, &StopRequested});
+    // Only an event ends a free run.
+    if (!E)
+      return error(diagnostic::DirectExecutionUnsupported);
+    if (E.isA<MachineInterruptedError>()) {
+      CPU = Next;
+      return E;
+    }
+    std::optional<X64Exception> Raised;
+    auto Other = llvm::handleErrors(
+        std::move(E), [&](const X64ExceptionError &Exception) -> llvm::Error {
+          CPU = Next;
+          Raised = Exception.exception();
+          return llvm::Error::success();
+        });
+    if (Other)
+      return Other;
+    if (!Raised)
+      return error(diagnostic::DirectExecutionUnsupported);
+    bool Resume = false;
+    if (auto Failed = publishDirectException(*Raised, true, Resume))
+      return Failed;
+    if (!Resume)
+      return llvm::Error::success();
+  }
 }
 
 llvm::Error CheckedX64Backend::execute(const cs_insn &I) {

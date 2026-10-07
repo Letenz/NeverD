@@ -47,8 +47,8 @@ options は最大 64 KiB の JSON object です。未知/null field、不正な�
 | `stack_size` | 1048576 | 予算内の page-aligned stack |
 | `output_limit` | 1048576 | stdout/stderr 合計の捕捉 byte 数 |
 | `instruction_quantum` | 1024 | runtime に戻るまでの admission 間隔 |
-| `linux_priority` | 未設定 | タスクごとの明示的な nice 値と Linux の生の優先度サービスに対する呼び出し権限 |
-| `linux_kernel` | 未設定 | リリース済み GKI ブランチ、または観測したゲストカーネルインターフェースの欠如を明示 |
+| `linux_kernel` | 未指定 | 明示的な GKI ブランチ、固定ゲストタスク一覧、またはカーネルインターフェイス不在の観測 |
+| `linux_priority` | 未指定 | タスクごとの明示的な nice 値と、生の Linux 優先度サービスに必要な呼び出し元権限 |
 
 `schema_version` は 1 です。report には profile、architecture、選択 backend と理由、`stop_reason`、nullable `exit_status`、診断、入口/現在 PC、counter、service record、最後の型付き CPU exit が含まれます。address、syscall number、引数 register、raw return bit は `0x` なしの hex string です。`stdout_hex`/`stderr_hex` は NUL と不正 UTF-8 を保持します。syscall 結果 null は model が戻り値を定義しないこと（exit や未対応 request など）を示し、成功値 0 とは異なります。
 
@@ -111,6 +111,10 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
 
 <a id="windows-pe64-profile"></a>
 
+`linux_kernel.gki` は `pidfd_open` とベクトル導入の 5.10–6.18 契約を選び、Android API レベルはカーネルを選びません。`linux_kernel.tasks` は `{ "id": 2000, "group_leader": true }` の固定生存タスク一覧です。省略時は外部対象未対応、空配列は現在のリーダーのみ、一覧外は ESRCH です。優先度との整合性が必要で、Android 協調スレッドと併用できません。表は `linux_files` と共有し、GKI と pidfd 不在は矛盾します。[詳細と制約](android-gki-kernels.md)を参照してください。
+
+この GKI 範囲は観測済みプロセス CPU クロックとタイムアウトゼロの pidfd `ppoll` も含みます。後者は明示的なゼロ timespec、null の一時マスク、`linux_files` 上限を要求し、`revents` のみを順に書きます。タイムアウトや壁時計は変更しません。閉じた記述子は POLLNVAL、生存 pidfd は準備未完了です。ブロッキング待機や他種の準備状態は未対応です。
+
 <!-- i18n-section: linux-clocks -->
 
 ## 明示的なゲストクロック
@@ -124,9 +128,13 @@ descriptor 1 と 2 は仮想 byte sink です。`write` は読取可能な user 
   "timezone":{"minutes_west":-60,"dst_time":0}}}
 ```
 
-静的クロック ID 0–9 と 11 に対応します。各クロックは独立しており、省略した値は未知のままです。重複または未知の ID は拒否します。秒は符号付き 64 ビット、ナノ秒は `[0, 1000000000)` です。JSON 整数は `±9007199254740991` 以内に制限し、十進文字列では全 64 ビット範囲を保持します。タイムゾーンのフィールドは符号付き 32 ビットです。C++ では `ProcessOptions::LinuxTime` を使い、他の OS プロファイルでは拒否します。
+静的クロック ID 0–9 と 11 に加え、選択済み GKI の負のプロセス CPU ID を受け付けます。重複識別子、未知 ID、16384 を超える標本は拒否します。秒は符号付き 64 ビット、CPU 秒は非負、ナノ秒は `[0, 1000000000)` です。JSON 整数は `±9007199254740991` 内で、10 進文字列は全範囲を保持します。タイムゾーンは符号付き 32 ビットです。C++ は `ProcessOptions::LinuxTime` を使い、他の OS プロファイルは拒否します。
 
-`clock_gettime`、`gettimeofday`、x64 の `time` が入力を共有します。入力の欠落、動的クロック、未モデル化の部分書き込みでは明示的に停止し、完了済みの書き込みは保持します。時刻調整、スリープ、実機クロックは未対応です。書き込み順、エラー、ポインタの扱いは[クロック契約の詳細](../process-emulation.md#explicit-guest-clocks)を参照してください。
+`-16006` は PID 2000 の SCHED です。PROF と VIRT は独立した観測です。現在の SCHED ID 2、-6（PID ゼロ）、-8006（PID 1000）は同じ標本を共有し、PROF の別名は -8／-8008、VIRT は -7／-8007 です。値が同じでも重複する別名は拒否します。CPU 秒は非負、ナノ秒は正規化が必要です。アイドル進行は壁時計 ID 0、1、7 だけを進め、プロセス CPU 標本は固定します。命令実行から CPU 使用量は推定しません。
+
+`advance_on_idle: true` は x64／ARM64 の相対 `nanosleep` と Android の名前付き／variadic ラッパーを有効にします。壁時計 0、1、7 と固定 CPU 標本を共存させられ、他の種類はこの方針で拒否します。実行可能なスレッドが先に進み、全スレッドが停止すると最初の期限まで時刻を進めます。単一スレッドは直接進みます。FD／動的／符号化スレッドクロックは未対応です。
+
+現在のタスク自身の TID はそのプロセスグループも指定します。外部一覧を持たない Android 協調スレッドでも同じです。閉じた一覧にない外部 PID と存続中の非リーダーは、出力先に触れる前に `EINVAL` になります。一覧省略時の外部検索と、既知グループの標本欠落は出力前に未対応として停止します。無効な種類は `EINVAL`、有効な標本のユーザーコピーは `EFAULT` を返す場合があります。raw トラップは負のエラーを保持し、Bionic だけが errno を更新して -1 を返します。 [GKI](android-gki-kernels.md).
 
 <a id="explicit-memory-files"></a>
 
@@ -164,6 +172,10 @@ C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` �
 ## Windows PE64 プロファイル
 
 `windows-pe64-v1` は PEB/TEB、静的・動的 TLS、`DllMain`、名前付き Win32 API、明示的な非循環 DLL グラフを持つ有界 Windows x64/ARM64 コンソールプロセスに対応します。ゲストモジュールは名前／序数によるコード・データのインポート、DIR64 再配置、転送エクスポートと実際のローダーリスト識別子を扱います。`LoadLibraryA` / `LoadLibraryW`、`FreeLibrary`、`GetProcAddress` は設定済みモジュールカタログを使用します。CRT/GUI、ARM64 のフレームベースのユーザー SEH、スレッド、一般的な Windows アプリ互換性は未完成で、ネイティブ ARM64 KVM/WHP の証拠も未取得です。
+
+`WindowsProcessTime.cpp` はホスト時計に基づく `GetSystemTimeAsFileTime`、`GetTickCount`、`QueryPerformanceCounter`、`QueryPerformanceFrequency`、`ZwDelayExecution` を管理します。FILETIME は 1601 年を起点とする 100 ns 単位、性能カウンターは単調時計と報告される 10 MHz の周波数を使い、ミリ秒の tick 数は 32 ビットで循環します。500 ms 以下の非 alertable 相対待機とゼロ間隔を受け入れます。alertable 待機、正の絶対時刻、より長い待機は明示的に停止し、待機を短縮したり成功を返したりしません。LastError を保持し、CPU バックエンド間で同じモデルを使います。 `ZwDelayExecution` は `BOOLEAN` の下位 8 ビットだけを読み、引数レジスターの未使用上位ビットは待機ポリシーに影響しません。
+
+[Windows x64 ABI](https://learn.microsoft.com/cpp/build/x64-calling-convention), [QueryPerformanceFrequency](https://learn.microsoft.com/windows/win32/api/profileapi/nf-profileapi-queryperformancefrequency), [FILETIME](https://learn.microsoft.com/windows/win32/api/minwinbase/ns-minwinbase-filetime).
 
 Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
 

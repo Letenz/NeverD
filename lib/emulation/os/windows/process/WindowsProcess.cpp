@@ -11,6 +11,10 @@
 
 #include "llvm/Support/Endian.h"
 
+#include <array>
+#include <string>
+#include <vector>
+
 namespace neverd::emulation::windows_process {
 using namespace value;
 namespace {
@@ -19,8 +23,12 @@ namespace {
 class StoppedProcess final : public ProcessView {
 public:
   StoppedProcess(ExecutionBackend &CPU, AddressSpace &Space,
-                 const Program &Modules)
-      : CPU(CPU), Space(Space), Modules(Modules) {}
+                 const Program &Modules, const Environment &Env,
+                 const std::optional<Lifetime::Call> &Active,
+                 const std::vector<uint64_t> &Initializers,
+                 const ProcessResult &Result, ProcessStackView Stack)
+      : CPU(CPU), Space(Space), Modules(Modules), Env(Env), Active(Active),
+        Initializers(Initializers), Result(Result), Stack(Stack) {}
   GuestArchitecture architecture() const override { return CPU.architecture(); }
   llvm::Expected<RegisterValue> readRegister(CPURegister Register) override {
     return CPU.readRegister(Register);
@@ -71,10 +79,38 @@ public:
     return Result;
   }
 
+  bool programInvocation() const override {
+    return Active && Active->Kind == Lifetime::CallKind::Entry;
+  }
+  std::vector<uint64_t> completedInitializers() const override {
+    return Initializers;
+  }
+  std::optional<ProcessStackView> stack() const override { return Stack; }
+  std::optional<uint64_t> nativeCallCount() const override {
+    return Result.NativeCalls.size();
+  }
+  llvm::Expected<std::optional<std::vector<uint8_t>>>
+  threadLocalMemory() override {
+    std::vector<uint8_t> Bytes(Modules.Modules.front().Loaded.TLSSize);
+    if (!Bytes.empty()) {
+      const auto Block = Env.TLS.find(0);
+      if (Block == Env.TLS.end() || Bytes.size() > Block->second.Size)
+        return failure(text::TLS);
+      if (auto E = Space.snapshotBacking(Block->second.Address, Bytes))
+        return std::move(E);
+    }
+    return std::move(Bytes);
+  }
+
 private:
   ExecutionBackend &CPU;
   AddressSpace &Space;
   const Program &Modules;
+  const Environment &Env;
+  const std::optional<Lifetime::Call> &Active;
+  const std::vector<uint64_t> &Initializers;
+  const ProcessResult &Result;
+  ProcessStackView Stack;
 };
 } // namespace
 
@@ -196,6 +232,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   Lifetime Life(*Program);
   Loader Modules(*Program, Virtual, **Space, *Env, CPU, *Resources);
   std::optional<Lifetime::Call> Active;
+  std::vector<uint64_t> Initializers;
   uint64_t ExpectedSP = 0, ExpectedGate = 0;
   uint64_t RootStackPointer = StackTop;
   struct Continuation {
@@ -239,6 +276,19 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
   auto CurrentLife = [&]() -> Lifetime & {
     return Pending.empty() ? Life : *Pending.back().Operation.Notifications;
   };
+  StoppedProcess Stopped(CPU, **Space, *Program, *Env, Active, Initializers,
+                         Result, {StackBase, Options.StackSize});
+  bool Observing = false;
+  auto Invoking = [&]() -> llvm::Error {
+    if (!Observing || !Observer)
+      return llvm::Error::success();
+    auto Watches = Observer->invoking(Stopped);
+    if (!Watches)
+      return Watches.takeError();
+    if (*Watches)
+      return (*Session)->watchExecution(std::move(**Watches));
+    return llvm::Error::success();
+  };
   auto Prepare = [&]() -> llvm::Expected<bool> {
     while (true) {
       auto Next = CurrentLife().next(CPU);
@@ -259,6 +309,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
           return Frame.takeError();
         ExpectedSP = Frame->ReturnStackPointer;
         if (auto E = CPU.writeRegister(PCRegister, {Result.PC, 0}))
+          return std::move(E);
+        if (auto E = Invoking())
           return std::move(E);
         return true;
       }
@@ -281,13 +333,14 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       ExpectedSP = C.ExpectedSP;
       ExpectedGate = C.ExpectedGate;
       Pending.pop_back();
+      if (auto E = Invoking())
+        return std::move(E);
       return true;
     }
   };
   auto Prepared = Prepare();
   if (!Prepared)
     return Prepared.takeError();
-  StoppedProcess Stopped(CPU, **Space, *Program);
   if (Observer) {
     auto Watches = Observer->started(Stopped);
     if (!Watches)
@@ -295,6 +348,7 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     if (auto E = (*Session)->watchExecution(std::move(*Watches)))
       return std::move(E);
   }
+  Observing = true;
   auto Failed = [&](llvm::Error E) {
     Result.Stop = ProcessStopReason::RuntimeFailure;
     Result.ExitStatus.reset();
@@ -429,6 +483,10 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
         Failed(std::move(E));
         break;
       }
+      if (Active->Kind == Lifetime::CallKind::TLS &&
+          Active->Arguments[0] == Loaded->Base &&
+          Active->Arguments[1] == DLLProcessAttach)
+        Initializers.push_back(Active->PC);
       auto More = Prepare();
       if (!More) {
         Failed(More.takeError());
@@ -441,8 +499,13 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       continue;
     }
     const Import *Import = nullptr;
+    auto NativeSyscall = [](llvm::StringRef Name) {
+      return (Name.starts_with("Nt") || Name.starts_with("Zw"));
+    };
     for (const auto &I : Program->Gates)
-      if (I.Gate == Request->PC) {
+      if (I.Gate == Request->PC ||
+          (Request->PC == I.Gate + NativeSyscallOffset &&
+           NativeSyscall(I.Name))) {
         Import = &I;
         break;
       }
@@ -450,6 +513,32 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       Result.Stop = ProcessStopReason::UnsupportedService;
       Result.Diagnostic = text::Service;
       break;
+    }
+    if (Observing && Observer) {
+      // This is call-boundary metadata, not an API result or signature.
+      // Read only committed RAM/registers; a missing return cannot authorize
+      // an import repair and does not change an opaque export's outcome.
+      std::optional<uint64_t> ReturnAddress;
+      if (ABI->info().Link != CPURegister::Invalid) {
+        auto Link = Stopped.readRegister(ABI->info().Link);
+        if (!Link)
+          llvm::consumeError(Link.takeError());
+        else
+          ReturnAddress = (*Link)[0];
+      } else {
+        std::array<uint8_t, PointerSize> Bytes{};
+        if (auto E = Stopped.read((*SP)[0], Bytes))
+          llvm::consumeError(std::move(E));
+        else
+          ReturnAddress = llvm::support::endian::read64le(Bytes.data());
+      }
+      if (auto E = Observer->exporting(
+              Stopped,
+              {Import->Gate, Import->Module, Import->Name, Import->Ordinal},
+              ReturnAddress)) {
+        Failed(std::move(E));
+        break;
+      }
     }
     if (!Import->Target) {
       // The guest was free to resolve and store this address; only calling
@@ -478,6 +567,13 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     NativeCallEvent Event{Request->PC, Import->Target->Name};
     Event.Module = Import->Module;
     Event.ArgumentCount = Import->Target->Arguments;
+    if (X64) {
+      auto Ret = (*Space)->readInteger(StackPointer, PointerSize);
+      if (!Ret)
+        llvm::consumeError(Ret.takeError());
+      else
+        Event.ReturnAddress = *Ret;
+    }
     bool Invalid = false;
     for (unsigned I = 0; I < Event.ArgumentCount; ++I) {
       auto Location = ABI->argumentLocation(StackPointer, I);

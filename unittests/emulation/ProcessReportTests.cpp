@@ -1576,7 +1576,7 @@ TEST(ProcessReport, MalformedClockInputsFailBeforeExecution) {
       {R"({"advance_on_idle":1})",
        R"({"advance_on_idle":"true"})",
        R"({"advance_on_idle":null})",
-       R"({"advance_on_idle":true,"clocks":[{"id":2,"seconds":0,"nanoseconds":0}]})",
+       R"({"advance_on_idle":true,"clocks":[{"id":3,"seconds":0,"nanoseconds":0}]})",
        "null",
        "[]",
        "true",

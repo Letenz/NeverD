@@ -703,6 +703,14 @@
         <source>Choose the encodings and minimum length of the strings the listing shows</source>
         <translation>Elegir las codificaciones y la longitud mínima de las cadenas que muestra el listado</translation>
     </message>
+    <message>
+        <source>String &amp;references</source>
+        <translation>&amp;Referencias a cadenas</translation>
+    </message>
+    <message>
+        <source>List the instructions that refer to strings</source>
+        <translation>Listar las instrucciones que hacen referencia a cadenas</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -825,6 +833,18 @@
     <message>
         <source>Description</source>
         <translation>Descripción</translation>
+    </message>
+    <message>
+        <source>String references</source>
+        <translation>Referencias a cadenas</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>Función</translation>
+    </message>
+    <message>
+        <source>Disassembly</source>
+        <translation>Desensamblado</translation>
     </message>
 </context>
 <context>
@@ -1504,6 +1524,13 @@ Operación de biblioteca reconocida; haz clic para mostrar su código.</translat
     </message>
 </context>
 <context>
+    <name>neverd::gui::HexView</name>
+    <message>
+        <source>Text encoding</source>
+        <translation>Codificación de texto</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::JumpDialog</name>
     <message>
         <source>Jump anywhere</source>
@@ -1849,6 +1876,18 @@ Con signo: %4</translation>
         <source>Minimum length:</source>
         <translation>Longitud mínima:</translation>
     </message>
+    <message>
+        <source>None</source>
+        <translation>Ninguna</translation>
+    </message>
+    <message>
+        <source>Also read C strings that are not UTF-8 in this code page</source>
+        <translation>Leer también en esta página de códigos las cadenas C que no son UTF-8</translation>
+    </message>
+    <message>
+        <source>Code page:</source>
+        <translation>Página de códigos:</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -1899,6 +1938,10 @@ Con signo: %4</translation>
     <message>
         <source>  &lt;expr&gt;            evaluate: 0x10, 10h, #16, names, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</source>
         <translation>  &lt;expr&gt;            evaluar: 0x10, 10h, #16, nombres, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</translation>
+    </message>
+    <message>
+        <source>  strref [text]     list the instructions that refer to strings</source>
+        <translation>  strref [text]     listar las instrucciones que hacen referencia a cadenas</translation>
     </message>
 </context>
 <context>

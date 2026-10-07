@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 4f2c32b592664760132b5349c4552df7b54238aa4fdbc868d7ed05d2ad7dd8e0 -->
+<!-- i18n-source: 1fca157d25a2f609ab3d51be25fb8a113e6ef48a9fd3a7037c77cfbcf2d4425f -->
 
 [← Indice della documentazione](README.md)
 
@@ -693,6 +693,8 @@ La chiamata grezza `getpgrp(81)` legge il gruppo; `getpgid(151)` e `getsid(310)`
 `getlogin(49)` usa i 32 bit bassi senza segno della lunghezza (`u_int`) e copia esattamente min(length,255) byte, senza interpretare stringhe, aggiungere NUL o restituire una dimensione richiesta. Lunghezza zero riesce senza osservazioni o memoria ospite anche con puntatori invalidi; `0xffffffff00000000` seleziona zero. Una richiesta non nulla esige il buffer completo prima dei controlli del destinatario. Un indirizzo totalmente non scrivibile restituisce EFAULT14; intervalli parziali si fermano prima della copia. Gli errori preventivi non pubblicano byte. Gli errori di scrittura del backend passano dal livello esistente senza garanzia generale di rollback. Restano BSD carry e secondo registro, compreso RDX x64 originale in errore.
 
 `setlogin(50)` resta non supportato anche con root esplicito o buffer nullo. Il programma originale in sola lettura `login-buffer` controlla lunghezze complete, prefissi, byte adiacenti, puntatori con lunghezza zero ed EFAULT; `virtual-login-buffer` emette i 255 byte dichiarati. Valori mancanti e setter sono casi solo del modello. La referenza macOS ARM64 non convalida iOS fisico o Intel nativo. L’esempio dichiara 255 zeri senza inferire un nome vuoto.
+
+Il verificatore guest inizializza tutti i 265 byte di uscita prima di ogni copia e controlla tre intervalli crescenti e disgiunti: [0,3), [3,3+n), [3+n,265), dove n resta la stessa lunghezza di copia limitata. Il primo e l’ultimo controllano ogni byte di guardia; quello centrale confronta ogni byte copiato con lo snapshot originale. Restano coperte le 12 lunghezze complete, 21 chiamate a lunghezza zero, 42 chiamate EFAULT, verifiche carry/registro secondario e percorsi grezzi/virtuali con i limiti esistenti. Si riduce il lavoro del verificatore mantenendo copertura e ordine del primo errore; le prestazioni di produzione richiedono misure separate.
 
 ```json
 {"darwin_system":{"login_name_hex":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}}

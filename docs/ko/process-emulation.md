@@ -47,8 +47,8 @@ output = bytes.fromhex(report["stdout_hex"])
 | `stack_size` | 1048576 | 예산 내 페이지 정렬 스택 |
 | `output_limit` | 1048576 | stdout/stderr 합산 캡처 바이트 |
 | `instruction_quantum` | 1024 | runtime으로 양보하기 전 admission 간격 |
-| `linux_priority` | 미설정 | 태스크별 명시적 nice 값과 원시 Linux 우선순위 서비스의 호출 권한 |
-| `linux_kernel` | 미지정 | 출시된 GKI 브랜치 또는 관측된 게스트 커널 인터페이스 부재를 명시 |
+| `linux_kernel` | 없음 | 명시적 GKI 분기, 고정 게스트 태스크 목록 또는 커널 인터페이스 부재 관측 |
+| `linux_priority` | 없음 | 명시적인 작업별 nice 값과 원시 Linux 우선순위 서비스의 호출자 권한 |
 
 `schema_version`은 1입니다. 보고서에는 프로필, 아키텍처, 선택 백엔드와 이유, `stop_reason`, nullable `exit_status`, 진단, 진입/현재 PC, 카운터, 서비스 기록, 마지막 typed CPU exit가 포함됩니다. 주소, syscall 번호, 인자 레지스터, raw 반환 비트는 `0x` 없는 16진수 문자열입니다. `stdout_hex`/`stderr_hex`는 NUL과 잘못된 UTF-8을 보존합니다. syscall 결과 null은 모델링된 반환이 없다는 뜻(exit 또는 미지원 요청 등)이지 성공한 0이 아닙니다.
 
@@ -111,6 +111,10 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
 
 <a id="windows-pe64-profile"></a>
 
+`linux_kernel.gki`는 `pidfd_open`과 벡터 가져오기의 5.10–6.18 계약을 선택합니다. Android API 수준은 커널을 선택하지 않습니다. `linux_kernel.tasks`는 `{ "id": 2000, "group_leader": true }` 형태의 고정 생존 목록입니다. 생략하면 외부 대상 미지원, 빈 배열은 현재 리더만, 목록 밖은 ESRCH입니다. 우선순위는 일치해야 하며 협력 Android 스레드는 결합할 수 없습니다. 표는 `linux_files`와 공유하고 GKI와 pidfd 부재는 모순입니다. [전체 계약](android-gki-kernels.md)을 참고하십시오.
+
+이 GKI 부분집합에는 관측된 프로세스 CPU 시계와 시간 제한 0의 pidfd `ppoll`도 포함됩니다. 후자는 명시적인 0 timespec, null 임시 마스크, `linux_files` 한도를 요구하고 `revents`만 순서대로 씁니다. 시간 제한이나 벽시계는 바꾸지 않습니다. 닫힌 설명자는 POLLNVAL, 살아 있는 pidfd는 준비 상태 없음이며 블로킹 대기와 다른 유형의 준비 상태는 미지원입니다.
+
 <!-- i18n-section: linux-clocks -->
 
 ## 명시적인 게스트 시계
@@ -124,9 +128,13 @@ x64 `arch_prctl`은 `ARCH_SET_FS`, `ARCH_GET_FS`, `ARCH_SET_GS`, `ARCH_GET_GS`�
   "timezone":{"minutes_west":-60,"dst_time":0}}}
 ```
 
-정적 시계 ID 0–9와 11을 지원합니다. 각 시계는 독립적이며 생략한 값은 알 수 없는 상태로 유지됩니다. 중복되거나 알 수 없는 ID는 거부합니다. 초는 부호 있는 64비트 정수이며 나노초 범위는 `[0, 1000000000)`입니다. JSON 정수는 `±9007199254740991` 이내여야 하고 십진 문자열은 전체 64비트 범위를 보존합니다. 시간대 필드는 부호 있는 32비트 정수입니다. C++에서는 `ProcessOptions::LinuxTime`을 사용하며 다른 OS 프로필은 이 옵션을 거부합니다.
+정적 시계 ID 0–9와 11 및 선택된 GKI의 음수 프로세스 CPU ID를 허용합니다. 중복 식별자, 알 수 없는 ID, 16384개를 넘는 표본은 거부합니다. 초는 부호 있는 64비트이며 CPU 초는 음수가 아니어야 하고 나노초는 `[0, 1000000000)`입니다. JSON 정수는 `±9007199254740991` 이내, 십진 문자열은 전체 범위를 보존하며 시간대는 부호 있는 32비트입니다. C++은 `ProcessOptions::LinuxTime`을 사용하고 다른 OS 프로필은 거부합니다.
 
-`clock_gettime`, `gettimeofday`, x64의 `time`이 같은 입력을 사용합니다. 입력 누락, 동적 시계 또는 모델링되지 않은 부분 쓰기는 명시적으로 중단되며 이미 완료된 쓰기는 유지됩니다. 시간 조정, 대기 및 실제 장치 시계는 지원하지 않습니다. 쓰기 순서, 오류 코드 및 포인터 동작은[전체 시계 계약](../process-emulation.md#explicit-guest-clocks)을 참조하세요.
+`-16006`은 PID 2000의 SCHED입니다. PROF와 VIRT는 독립 관측입니다. 현재 프로세스의 SCHED ID 2, -6(PID 0), -8006(PID 1000)은 같은 표본을 공유합니다. PROF 별칭은 -8/-8008, VIRT는 -7/-8007입니다. 값이 같아도 중복 별칭은 거부합니다. CPU 초는 음수가 아니어야 하고 나노초는 정규화해야 합니다. 유휴 진행은 벽시계 ID 0, 1, 7만 바꾸며 CPU 표본은 고정됩니다. 명령 실행으로 CPU 사용량을 추론하지 않습니다.
+
+`advance_on_idle: true`는 x64/ARM64 상대 `nanosleep`과 Android 이름 기반/variadic 래퍼를 활성화합니다. 벽시계 0, 1, 7과 고정 CPU 표본이 공존할 수 있으며 다른 종류는 이 정책에서 거부합니다. 실행 가능한 스레드가 먼저 진행하고 모두 차단되면 가장 이른 기한까지 시간을 진행합니다. 단일 스레드는 직접 진행합니다. FD/동적/인코딩된 스레드 시계는 미지원입니다.
+
+현재 작업의 TID도 해당 프로세스 그룹을 식별하며 외부 목록이 없는 Android 협력 스레드에도 적용됩니다. 닫힌 목록에 없는 외부 PID나 살아 있는 비리더는 출력 접근 전에 `EINVAL`을 반환합니다. 목록 생략 시 외부 조회와 알려진 그룹의 표본 누락은 출력 전에 미지원으로 중단합니다. 잘못된 종류는 `EINVAL`, 유효한 표본의 사용자 복사는 `EFAULT`를 반환할 수 있습니다. 원시 트랩은 음수 오류를 유지하며 Bionic만 errno를 갱신하고 -1을 반환합니다. [GKI](android-gki-kernels.md).
 
 <a id="explicit-memory-files"></a>
 
@@ -164,6 +172,10 @@ C++: `ProcessOptions::LinuxFiles`. `descriptor_limit`: 3–4096 (256); `files` �
 ## Windows PE64 프로필
 
 `windows-pe64-v1`은 PEB/TEB, 정적·동적 TLS, `DllMain`, 이름 기반 Win32 API 및 명시적 비순환 DLL 그래프를 갖춘 제한된 Windows x64/ARM64 콘솔 프로세스를 지원합니다. 게스트 모듈은 이름/서수 코드·데이터 가져오기, DIR64 재배치, 전달 내보내기 및 실제 로더 목록 식별자를 지원합니다. `LoadLibraryA` / `LoadLibraryW`, `FreeLibrary`, `GetProcAddress`는 설정된 모듈 카탈로그를 사용합니다. CRT/GUI, ARM64 스택 프레임 기반 사용자 SEH, 스레드 및 일반 Windows 앱 호환성은 미완성이며 네이티브 ARM64 KVM/WHP 증거도 아직 없습니다.
+
+`WindowsProcessTime.cpp`는 호스트 시계 기반 `GetSystemTimeAsFileTime`, `GetTickCount`, `QueryPerformanceCounter`, `QueryPerformanceFrequency`, `ZwDelayExecution`을 담당합니다. FILETIME은 1601년 기준 100 ns 단위이며, 성능 카운터는 단조 시계와 보고된 10 MHz 주파수를 사용하고 밀리초 tick은 32비트로 순환합니다. 500 ms 이하의 비경고 상대 지연과 0 간격을 지원합니다. 경고 가능 대기, 양수 절대 시각, 더 긴 지연은 대기를 줄이거나 성공을 반환하지 않고 명시적으로 중단합니다. LastError를 보존하며 CPU 백엔드마다 같은 모델을 사용합니다. `ZwDelayExecution`은 `BOOLEAN`의 하위 8비트만 읽으며 인수 레지스터의 사용하지 않는 상위 비트는 대기 정책에 영향을 주지 않습니다.
+
+[Windows x64 ABI](https://learn.microsoft.com/cpp/build/x64-calling-convention), [QueryPerformanceFrequency](https://learn.microsoft.com/windows/win32/api/profileapi/nf-profileapi-queryperformancefrequency), [FILETIME](https://learn.microsoft.com/windows/win32/api/minwinbase/ns-minwinbase-filetime).
 
 Windows 가상 메모리는 `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`와 현재 프로세스의 `FlushInstructionCache`를 지원합니다. OS 계층은 예약 영역을 소유하고 `AddressSpace`는 커밋된 페이지, 권한, 실제 저장 공간을 관리합니다. 테스트는 동적 코드 수정, 접근 오류, 메모리 한도 재사용을 검증합니다.
 

@@ -23,6 +23,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Demangle/Demangle.h"
+#include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MD5.h"
 #include "llvm/Support/SHA256.h"
@@ -34,6 +35,11 @@
 
 using namespace neverd;
 using namespace neverd::sdk;
+
+namespace {
+/// The most bytes neverd_decode_text_json decodes at once.
+constexpr int kMaxDecodedTextBytes = 65536;
+} // namespace
 
 namespace {
 
@@ -362,82 +368,23 @@ const char *neverd_strings_ex_json(neverd_session_t Sess,
   if (!S->Loaded)
     return dupStr(std::string("[]"));
   strings::ScanOptions Options;
-  if (OptionsJson && *OptionsJson) {
-    auto Parsed = llvm::json::parse(OptionsJson);
-    const llvm::json::Object *Object = Parsed ? Parsed->getAsObject() : nullptr;
-    if (!Object) {
-      if (!Parsed)
-        llvm::consumeError(Parsed.takeError());
-      S->setError("string options must be a JSON object");
-      return nullptr;
-    }
-    for (const auto &[Key, Value] : *Object) {
-      if (Key == "min_length") {
-        const auto Length = Value.getAsInteger();
-        if (!Length || *Length < 1 || *Length > strings::MaxMinChars) {
-          S->setError("min_length must be an integer from 1 to " +
-                      std::to_string(strings::MaxMinChars));
-          return nullptr;
-        }
-        Options.MinChars = static_cast<unsigned>(*Length);
-      } else if (Key == "encodings") {
-        const auto *Names = Value.getAsArray();
-        if (!Names) {
-          S->setError("encodings must be an array of encoding names");
-          return nullptr;
-        }
-        Options.Encodings = 0;
-        for (const auto &Name : *Names) {
-          const auto Text = Name.getAsString();
-          const auto Encoding =
-              Text ? strings::encodingNamed(*Text) : std::nullopt;
-          if (!Encoding) {
-            S->setError("unknown string encoding: " +
-                        (Text ? Text->str() : std::string("non-string")));
-            return nullptr;
-          }
-          Options.Encodings |= strings::encodingBit(*Encoding);
-        }
-      } else {
-        S->setError("unknown string option: " + Key.str());
-        return nullptr;
-      }
-    }
+  if (const auto Error = parseStringOptions(OptionsJson, Options);
+      !Error.empty()) {
+    S->setError(Error);
+    return nullptr;
   }
-
   std::string Buf;
   llvm::raw_string_ostream OS(Buf);
   llvm::json::OStream J(OS);
-  const auto ScanRange = [&](va_t Start, const uint8_t *Bytes, size_t Size) {
-    strings::scan(llvm::ArrayRef<uint8_t>(Bytes, Size), Options,
-                  [&](strings::FoundString &&Found) {
-                    J.object([&] {
-                      J.attribute("addr", vaHex(Start + Found.Offset));
-                      J.attribute("chars", static_cast<int64_t>(Found.Chars));
-                      J.attribute("encoding",
-                                  strings::encodingName(Found.Kind));
-                      J.attribute("length", static_cast<int64_t>(Found.Bytes));
-                      J.attribute("value", Found.Text);
-                    });
-                  });
-  };
   J.array([&] {
-    // Data segments whole, and the data sections of code segments.
-    for (const auto &Seg : S->Img.Segments) {
-      if (!Seg.isExecutable()) {
-        ScanRange(Seg.VA, Seg.Data.data(), Seg.Data.size());
-        continue;
-      }
-      for (const auto &Sec : S->Img.Sections) {
-        if (Sec.isExecutable() || !Sec.FileSz || !Seg.contains(Sec.VA) ||
-            Sec.VA - Seg.VA >= Seg.Data.size())
-          continue;
-        const uint64_t Offset = Sec.VA - Seg.VA;
-        const uint64_t Size = std::min<uint64_t>(
-            {Sec.Size, Sec.FileSz, Seg.Data.size() - Offset});
-        ScanRange(Sec.VA, Seg.Data.data() + Offset, static_cast<size_t>(Size));
-      }
-    }
+    for (const ImageString &String : imageStrings(*S, Options))
+      J.object([&] {
+        J.attribute("addr", vaHex(String.Address));
+        J.attribute("chars", static_cast<int64_t>(String.Chars));
+        J.attribute("encoding", strings::encodingName(String.Kind));
+        J.attribute("length", static_cast<int64_t>(String.Bytes));
+        J.attribute("value", String.Text);
+      });
   });
   OS.flush();
   return dupStr(Buf);
@@ -456,12 +403,55 @@ const char *neverd_string_encodings_json(void) {
       J.object([&] {
         J.attribute("default",
                     (Defaults.Encodings & strings::encodingBit(Encoding)) != 0);
+        J.attribute("legacy", strings::isLegacyEncoding(Encoding));
         J.attribute("name", strings::encodingName(Encoding));
         J.attribute("spelling", strings::encodingSpelling(Encoding));
         J.attribute("unit",
                     static_cast<int64_t>(strings::encodingUnitBytes(Encoding)));
       });
     }
+  });
+  OS.flush();
+  return dupStr(Buf);
+}
+
+const char *neverd_decode_text_json(const unsigned char *Bytes, int Size,
+                                    const char *Encoding) {
+  const auto Kind = Encoding ? strings::encodingNamed(Encoding) : std::nullopt;
+  if (!Kind || Size < 0 || Size > kMaxDecodedTextBytes || (Size && !Bytes))
+    return nullptr;
+  std::vector<std::optional<std::string>> Cells(static_cast<size_t>(Size));
+  strings::decode(
+      llvm::ArrayRef<uint8_t>(Bytes, static_cast<size_t>(Size)), *Kind,
+      [&](const strings::DecodedCharacter &Character) {
+        std::string Text;
+        bool Shown = Character.Codes > 0;
+        for (unsigned I = 0; I < Character.Codes; ++I) {
+          // A combining mark shows with the letter before it.
+          Shown &= I > 0 || strings::isShownCharacter(Character.Code[I]);
+          char Buffer[UNI_MAX_UTF8_BYTES_PER_CODE_POINT];
+          char *End = Buffer;
+          llvm::ConvertCodePointToUTF8(Character.Code[I], End);
+          Text.append(Buffer, End);
+        }
+        const uint64_t Last = std::min<uint64_t>(
+            Cells.size(), Character.Offset + Character.Bytes);
+        if (Shown)
+          Cells[Character.Offset] = std::move(Text);
+        for (uint64_t I = Character.Offset + 1; Shown && I < Last; ++I)
+          Cells[I] = std::string();
+      });
+  std::string Buf;
+  llvm::raw_string_ostream OS(Buf);
+  llvm::json::OStream J(OS);
+  J.object([&] {
+    J.attributeArray("cells", [&] {
+      for (const auto &Cell : Cells)
+        if (Cell)
+          J.value(*Cell);
+        else
+          J.value(nullptr);
+    });
   });
   OS.flush();
   return dupStr(Buf);

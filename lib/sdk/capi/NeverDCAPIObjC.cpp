@@ -201,12 +201,11 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     COptions.Format = S->Img.Format;
     COptions.Image = &S->Img;
     COptions.EmitComments = false;
-    // Each method source is one complete translation unit. The mobile source
-    // assembler parses those units and validates shared definitions before it
-    // combines them, so record macro guards are unnecessary and would weaken
-    // its deliberately macro-free parsing boundary.
+    // The mobile assembler parses complete units and validates shared
+    // definitions before combining them. Both record guards and unaligned
+    // alias declarations would introduce macros at that parsing boundary.
+    // Exact-width byte copies preserve unaligned accesses without macros.
     COptions.EmitRecordGuards = false;
-    // Portable byte copies also keep scalar memory helpers macro-free.
     COptions.UseUnalignedPointers = false;
     COptions.UseDebugNames = false;
     HighCEmitter Emitter;

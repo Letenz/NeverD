@@ -47,8 +47,8 @@ Optionen sind ein JSON-Objekt bis 64 KiB. Unbekannte/null-Felder, falsche Typen,
 | `stack_size` | 1048576 | Seitenausgerichteter Stack innerhalb des Budgets |
 | `output_limit` | 1048576 | Zusammengefasste stdout/stderr-Bytes |
 | `instruction_quantum` | 1024 | Zulassungsintervall bis zur Rückgabe an die Runtime |
-| `linux_priority` | Nicht konfiguriert | Explizite nice-Werte je Aufgabe und Aufrufberechtigung für rohe Linux-Prioritätsdienste |
-| `linux_kernel` | Nicht angegeben | Expliziter veröffentlichter GKI-Zweig oder beobachtete fehlende Gast-Kernelschnittstellen |
+| `linux_kernel` | Nicht angegeben | Expliziter GKI-Zweig, fester Gastaufgabenkatalog oder beobachtete fehlende Kernelschnittstellen |
+| `linux_priority` | Nicht angegeben | Explizite Nice-Werte je Task und Aufruferrechte für rohe Linux-Prioritätsdienste |
 
 `schema_version` ist 1. Der Bericht enthält Profil, Architektur, ausgewähltes Backend samt Grund, `stop_reason`, nullable `exit_status`, Diagnose, Ein-/aktuellen PC, Zähler, Service-Aufzeichnungen und letzten typisierten CPU-Ausgang. Adressen, syscall-Nummern, Registerargumente und rohe Rückgabebits sind Hex-Strings **ohne** `0x`; `stdout_hex`/`stderr_hex` erhalten NUL und ungültiges UTF-8. Ein null syscall-Ergebnis bedeutet keine modellierte Rückgabe (etwa Exit oder nicht unterstützte Anfrage), nicht erfolgreiche Null.
 
@@ -111,6 +111,10 @@ Die Signalnummern reichen von 1 bis 64. `rt_sigaction` und Bionic teilen denselb
 
 <a id="windows-pe64-profile"></a>
 
+`linux_kernel.gki` wählt 5.10–6.18 für `pidfd_open` und Vektorimport; Android-API-Stufen wählen keinen Kernel. `linux_kernel.tasks` enthält feste lebende Aufgaben als `{ "id": 2000, "group_leader": true }`. Weglassen lässt fremde Ziele ununterstützt, ein leeres Array kennt nur den laufenden Gruppenführer, außerhalb des Katalogs gilt ESRCH. Prioritäten müssen konsistent sein; kooperative Android-Threads sind ausgeschlossen. Die Tabelle gehört `linux_files`; GKI und ausdrücklich fehlendes pidfd widersprechen sich. Siehe [Vertrag und Grenzen](android-gki-kernels.md).
+
+Die GKI-Teilmenge umfasst auch beobachtete Prozess-CPU-Uhren und pidfd-`ppoll` mit Zeitlimit null. Letzteres verlangt eine explizite Null-timespec, eine Nullmaske und die Grenze aus `linux_files`. Es schreibt nur geordnete `revents`, ohne Zeitlimit oder Wanduhr zu verändern. Geschlossene Deskriptoren liefern POLLNVAL, lebende pidfds keine Bereitschaft. Blockieren und andere Bereitschaft bleiben ununterstützt.
+
 <!-- i18n-section: linux-clocks -->
 
 ## Explizite Gastuhren
@@ -124,9 +128,13 @@ Die optionale Eingabe `linux_time` liefert feste Zeitwerte für Linux-Systemaufr
   "timezone":{"minutes_west":-60,"dst_time":0}}}
 ```
 
-Die statischen Uhr-IDs 0–9 und 11 sind zulässig. Jede Uhr ist unabhängig; fehlende Werte bleiben unbekannt. Doppelte oder unbekannte IDs werden abgelehnt. Sekunden sind vorzeichenbehaftete 64-Bit-Werte, Nanosekunden liegen in `[0, 1000000000)`. JSON-Ganzzahlen sind auf `±9007199254740991` begrenzt; Dezimalzeichenfolgen erhalten den gesamten 64-Bit-Bereich. Zeitzonenfelder sind vorzeichenbehaftete 32-Bit-Werte. C++ verwendet `ProcessOptions::LinuxTime`; andere OS-Profile lehnen diese Option ab.
+Eingaben erlauben statische IDs 0–9 und 11 sowie negative Prozess-CPU-IDs des gewählten GKI. Doppelte Identitäten, unbekannte IDs und mehr als 16384 Werte werden abgelehnt. Sekunden sind vorzeichenbehaftete 64-Bit-Werte, CPU-Sekunden nicht negativ; Nanosekunden liegen in `[0, 1000000000)`. JSON-Ganzzahlen liegen innerhalb `±9007199254740991`, Dezimalzeichenfolgen erhalten den gesamten Bereich; Zeitzonen sind vorzeichenbehaftete 32-Bit-Werte. C++ nutzt `ProcessOptions::LinuxTime`; andere OS-Profile lehnen die Option ab.
 
-`clock_gettime`, `gettimeofday` und x64-`time` teilen diese Eingaben. Fehlende Werte, dynamische Uhren oder nicht modellierte Teilschreibzugriffe führen zum expliziten Stopp; abgeschlossene Schreibzugriffe bleiben erhalten. Zeitanpassung, Schlafen und reale Geräteuhren bleiben unmodelliert. Schreibreihenfolge, Fehler und Zeiger beschreibt der [vollständige Uhrvertrag](../process-emulation.md#explicit-guest-clocks).
+`-16006` ist SCHED für PID 2000. PROF und VIRT sind unabhängig. Die aktuellen SCHED-IDs 2, -6 (PID null) und -8006 (PID 1000) teilen einen Wert; PROF-Aliase sind -8/-8008, VIRT -7/-8007. Doppelte Aliase werden auch bei gleichem Wert abgelehnt. CPU-Sekunden sind nicht negativ, Nanosekunden normalisiert. Leerlauffortschritt ändert nur Wanduhren 0, 1 und 7; CPU-Werte bleiben fest. Aus Befehlen wird kein CPU-Verbrauch geschätzt.
+
+`advance_on_idle: true` aktiviert relatives `nanosleep` auf x64/ARM64 einschließlich benannter/variadischer Android-Wrapper. Wanduhren 0, 1 und 7 dürfen mit festen CPU-Werten bestehen; andere Arten sind bei dieser Strategie ausgeschlossen. Ausführbare Threads laufen zuerst; sind alle blockiert, geht die Zeit bis zur ersten Frist weiter. Ein einzelner Thread schreitet direkt fort. Dynamische/FD/codierte Thread-Uhren bleiben nicht unterstützt.
+
+Die eigene TID der aktuellen Aufgabe bezeichnet ebenfalls ihre Prozessgruppe, auch bei kooperativen Android-Threads ohne Fremdkatalog. Fehlende fremde PIDs und lebende Nichtführer im geschlossenen Katalog liefern `EINVAL` vor dem Ausgabezugriff. Ein ausgelassener Katalog oder fehlender Wert einer bekannten Gruppe bleibt vor der Kopie nicht unterstützt. Ungültige Arten liefern `EINVAL`, gültige Werte können beim Benutzerkopieren `EFAULT` liefern. Rohe Traps behalten negative Fehler; nur Bionic setzt errno und liefert -1. [GKI](android-gki-kernels.md).
 
 <a id="explicit-memory-files"></a>
 
@@ -164,6 +172,10 @@ Ein Eintrag kann vollständige `metadata` enthalten; C++ verwendet `LinuxFileOpt
 ## Windows-PE64-Profil
 
 `windows-pe64-v1` unterstützt begrenzte Windows-x64/ARM64-Konsolenprozesse mit PEB/TEB, statischem und dynamischem TLS, `DllMain`, benannten Win32-APIs und expliziten azyklischen DLL-Graphen. Gastmodule unterstützen Code-/Datenimporte nach Name oder Ordinal, DIR64, weitergeleitete Exports und echte Loader-Listen. `LoadLibraryA` / `LoadLibraryW`, `FreeLibrary` und `GetProcAddress` verwenden den konfigurierten Katalog. CRT/GUI, ARM64-Frame-basiertes Benutzer-SEH, Threads und allgemeine Windows-Kompatibilität bleiben unvollständig; native ARM64-KVM/WHP-Belege fehlen weiterhin.
+
+`WindowsProcessTime.cpp` verwaltet `GetSystemTimeAsFileTime`, `GetTickCount`, `QueryPerformanceCounter`, `QueryPerformanceFrequency` und `ZwDelayExecution` mit Host-Uhren. FILETIME zählt Einheiten von 100 ns seit 1601; der Leistungszähler verwendet eine monotone Uhr und seine gemeldete Frequenz von 10 MHz, während Millisekunden-Ticks bei 32 Bit umlaufen. Nicht alarmierbare relative Wartezeiten bis 500 ms und das Nullintervall werden abgeschlossen. Alarmierbare Wartezeiten, positive absolute Zeitpunkte und längere Wartezeiten stoppen ausdrücklich, ohne die Wartezeit zu verkürzen oder Erfolg zu melden. Die Dienste erhalten LastError und verwenden bei allen CPU-Backends dasselbe Modell. `ZwDelayExecution` liest nur die unteren 8 Bits von `BOOLEAN`; ungenutzte obere Bits des Argumentregisters ändern die Wartepolitik nicht.
+
+[Windows x64 ABI](https://learn.microsoft.com/cpp/build/x64-calling-convention), [QueryPerformanceFrequency](https://learn.microsoft.com/windows/win32/api/profileapi/nf-profileapi-queryperformancefrequency), [FILETIME](https://learn.microsoft.com/windows/win32/api/minwinbase/ns-minwinbase-filetime).
 
 Der virtuelle Windows-Speicher ergänzt `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` und `FlushInstructionCache` für den aktuellen Prozess. Die OS-Schicht verwaltet Reservierungen; `AddressSpace` bleibt maßgeblich für zugesicherte Seiten, Zugriffsrechte und deren Speicher. Tests prüfen Codeänderungen, Zugriffsfehler und die Wiederverwendung des Speicherbudgets.
 

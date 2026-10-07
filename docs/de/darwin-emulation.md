@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 4f2c32b592664760132b5349c4552df7b54238aa4fdbc868d7ed05d2ad7dd8e0 -->
+<!-- i18n-source: 1fca157d25a2f609ab3d51be25fb8a113e6ef48a9fd3a7037c77cfbcf2d4425f -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -693,6 +693,8 @@ Der rohe Aufruf `getpgrp(81)` liest die Prozessgruppe; `getpgid(151)` und `getsi
 `getlogin(49)` nutzt die vorzeichenlosen unteren 32 Längenbits (`u_int`) und kopiert genau min(length,255) Bytes, ohne Textauswertung, zusätzliches NUL oder Ausgabe einer benötigten Größe. Länge null gelingt ohne Beobachtung oder Gastzugriff auch bei ungültigen Zeigern; `0xffffffff00000000` wählt null. Für Nichtnull ist der vollständige Puffer vor Zielprüfungen nötig. Ein völlig unbeschreibbares Ziel liefert EFAULT14; teilweise beschreibbare Bereiche stoppen vor dem Kopieren. Vorprüfungsfehler veröffentlichen keine Bytes. Backend-Schreibfehler werden durch den vorhandenen Kopierbesitzer weitergegeben, ohne allgemeine Rollbackgarantie. BSD carry und zweites Rückgaberegister einschließlich ursprünglichem x64 RDX bei Fehlern bleiben erhalten.
 
 `setlogin(50)` bleibt auch mit explizitem root oder Nullpuffer ununterstützt. Der originale lesende Ablauf `login-buffer` prüft volle Längenträger, Präfixe, Nachbarbytes, Null-Längen-Zeiger und EFAULT; `virtual-login-buffer` gibt die 255 deklarierten Bytes aus. Fehlende Werte und Setter bleiben reine Modelltests. macOS ARM64 belegt weder physisches iOS noch Intel nativ. Das Beispiel deklariert 255 Nullbytes ausdrücklich und leitet keinen leeren Namen ab.
+
+Der Gastprüfer initialisiert vor jedem Kopieren alle 265 Ausgabebytes und prüft drei aufsteigende, disjunkte Bereiche: [0,3), [3,3+n), [3+n,265), wobei n dieselbe begrenzte Kopierlänge ist. Der erste und letzte Bereich prüfen jedes Schutzbyte; der mittlere vergleicht jedes kopierte Byte mit dem ursprünglichen Snapshot. Alle 12 Längenträger, 21 Aufrufe mit Länge null, 42 EFAULT-Aufrufe, Carry-/Sekundärregisterprüfungen und rohen/virtuellen Pfade bleiben unter den bestehenden Ausführungslimits abgedeckt. Die Prüfarbeit sinkt bei gleicher Byteabdeckung und Reihenfolge des ersten Fehlers; die Produktionslaufzeit benötigt gesonderte Messungen.
 
 ```json
 {"darwin_system":{"login_name_hex":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}}

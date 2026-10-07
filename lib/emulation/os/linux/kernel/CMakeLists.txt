@@ -2,6 +2,7 @@ add_neverd_component_library(NeverDEmulationLinuxKernel
   LinuxServices.cpp
   LinuxTime.cpp
   LinuxClock.cpp
+  LinuxCPUClock.cpp
   LinuxSleep.cpp
   LinuxSignals.cpp
   LinuxPriority.cpp
@@ -17,6 +18,7 @@ add_neverd_component_library(NeverDEmulationLinuxKernel
   LinuxFilePaths.cpp
   LinuxFileIO.cpp
   LinuxPIDFD.cpp
+  LinuxPoll.cpp
   LinuxFileStatus.cpp
   LinuxFileSystemStatus.cpp
   LINK_COMPONENTS EmulationCore

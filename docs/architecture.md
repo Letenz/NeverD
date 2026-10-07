@@ -1420,6 +1420,12 @@ transfer ownership of execution, thread or callback state out of the model.
 
 The Linux kernel component also owns validation and lookup of explicit
 clock observations in `LinuxTimeOptions`, plus time-service output ordering.
+`LinuxCPUClock` decodes process CPU identities and validates their released GKI
+task observations. It resolves current-task aliases to the process group and
+checks foreign group leaders before output access. `LinuxClock` canonicalizes
+observations and rejects duplicate aliases. Process CPU samples stay fixed
+while the idle policy advances declared wall clocks; no execution accounting
+or host clock supplies an observation.
 The process wire parser validates representations and delegates value policy
 to that owner. Android reuses clock lookup and raw kernel services; Bionic
 alone owns errno conversion and `time`'s user-space destination store.
@@ -1461,6 +1467,8 @@ do not need vocabulary entries.
 | `NeverDEmulationWindowsProcess` | Windows PE64 console process loading, PEB/TEB, TLS and named user APIs |
 | `NeverDEmulationProcess` | Process-profile dispatch, options and reports |
 | `NeverDEmulation` | Windows image loading, API model, policy and driver lifecycle |
+
+Windows process time policy belongs to `WindowsProcessTime.cpp` in `os/windows/process/`. `std::chrono` separates the host wall clock from its monotonic counter, and `WindowsProcess.def` owns guest units and the finite wait bound; CPU transports contain no Windows time policy.
 
 On macOS, [HVF](macos-hvf.md) is the native transport owned by `NeverDEmulationNative`: ARM64 on Apple Silicon and x86-64 on Intel. The host ISA selects this transport; it does not select a guest OS. [Darwin profiles](darwin-emulation.md) separately define macOS, iOS device and iOS Simulator startup and services. Remaining Linux ARM64 KVM and Windows ARM64 WHP validation gaps do not negate the recorded macOS ARM64 HVF results. Native availability and complete acceptance results remain explicit in the HVF guide.
 
@@ -2176,6 +2184,8 @@ argument-dependent checks in the owning model.
 `KernelScheduler` owns live runtime priority and the shared priority/ready-order comparison. `KernelModelThreadPriorities` validates thread objects for `KeSetPriorityThread` and `KeQueryPriorityThread`; paused CPU contexts never copy priority state. `DriverSession` checks higher-priority readiness before callback synchronization and at API/event boundaries. See [driver scheduling](driver-scheduling.md) for the bounded policy and remaining limits.
 
 `KernelDispatcher` owns mutex recursion by logical thread. `KernelModel` captures the waiting thread for deferred `KeWaitForSingleObject` acquisition and uses the same identity for APC queries and `KeReleaseMutex`; nested stack retirement preserves ownership, while outermost return checks retain the lifetime guard.
+
+`KernelModelWaits` owns single/multiple wait registration, thread references, deadlines and opaque caller `KWAIT_BLOCK` lifetimes. `KernelDispatcher` validates the complete set before committing signal/count/mutex changes; `KernelScheduler` consumes selected synchronization-timer signals as one preflighted batch. `WaitRegistrations` retains this authoritative record. Each deferred wait has a never-reused identity and immutable captured state; polling a completed or altered wait fails before acquiring signals or releasing references.
 
 `KernelModelDeviceStack` keeps each device's driver owner, allocation, attachment neighbors, delete-pending state and internal references in one record. The guest `NextDevice` inventory and the host-owned attachment graph have different meanings. Namespace resolution retains the named lower device for `FILE_OBJECT` and reports, selects the current top for initial dispatch and READ/WRITE buffer flags, and captures a retained route. Detach/delete cannot expire devices still owned by a request or callback; the public `ReferenceCount` remains an open-handle count.
 
@@ -3252,7 +3262,13 @@ Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `Vi
 
 `NeverDEmulationWindowsProcess` → `os/windows/process/`; `NeverDWindowsProcessTests` + `NeverDProcessPublicTests`: [windows-pe64-v1](process-emulation.md#windows-pe64-profile).
 
-`lib/unpack` recovers packed images in four layers. `core` owns the orchestration and the module registries; it names no container, instruction set, guest system or protector. `format/pe` validates one container and writes observed memory back as a file of it. `packers/upx` holds static stub knowledge for the containers and instruction sets it lists. `dynamic` observes a guest process through `observeProcess`: `Observation.def` maps each container and instruction set to a process profile and gives each instruction set its stack pointer and instruction window. A new target is a table row and a module directory, and an input without a row is rejected by name. `ExecutionSession` owns execution watches; a `ProcessObserver` reads a stopped process and chooses the next stop, but cannot change guest state. The emulation layer knows only `defer_unmodeled`, which binds unmodeled imports to opaque entries that stop when executed. See [unpacking](unpack.md).
+`lib/unpack` recovers packed images in four layers. `core` owns orchestration and the format registry. `format/pe` validates the container and rebuilds observed memory, imports and metadata; `PETLS.cpp` validates replacement TLS records against the loader allocation and observed callbacks. No protector registry or static stub signature selects an entry. `dynamic` observes a guest process through `observeProcess`: `Observation.def` maps each container and instruction set to a process profile and gives each instruction set its stack pointer and instruction window. A new target is a table row and a module directory, and an input without a row is rejected by name. `ExecutionSession` owns execution watches; a `ProcessObserver` reads a stopped process and chooses the next stop, but cannot change guest state. The emulation layer knows only `defer_unmodeled`, which binds unmodeled imports to opaque entries that stop when executed. See [unpacking](unpack.md). Deferred loading permits executable callback and entry targets that earlier initializers materialize in zero-filled memory. Callback arrays and TLS allocation metadata still require validated backing; ordinary strict loading retains its file-backing checks. The OS model supplies invocation provenance and notifies observers when it prepares an invocation or restores a suspended caller. Transfer watches are rearmed at those boundaries, including when a callback and the generated entry share a page.
+
+`arch/X64Imports.cpp` owns x64 import instruction decoding and emission. `dynamic/ProcessImports.cpp` proves pure export calls and address-load results from read-only process observations; the PE writer consumes that evidence without duplicating the instruction rules.
+
+Export addresses belong to one process. Helper evidence carries the module and export name or ordinal resolved in the proving run; the PE writer compares these identities by value. A discovery address may become bound after entry, but only its current export identity authorizes repair.
+
+`ProcessObserver::exporting` receives an identified export and optional ABI return address before modeled API effects or an opaque-export stop. Missing return metadata stays absent; no unknown signature or result is invented. Observer errors stop dispatch before API effects.
 
 Native dependency discovery can follow an ARM64 indirect call only when the current complete LowIR and immutable instructions prove an exact resolved chained code-pointer slot. A separate code-pointer reader checks unique read-only storage, competing fixups and the current function entry; ordinary data-pointer readers retain their existing boundary. The bounded trace stays within one block and requires a current runtime or native ABI before preserving a register across a call, including register-specific ARC imports. Frame reloads, unknown calls and incomplete evidence remain unresolved. The inventory retains the original indirect occurrence and does not itself bind its ABI or authorize source publication.
 
@@ -3549,6 +3565,17 @@ closed catalogue supplies lookup absence; an omitted one leaves foreign targets
 unsupported. Shared kernel validation rejects contradictory priority observations
 and cooperative Android thread mode before loading. `LinuxPIDFD` checks target
 class before reserving a descriptor, with release-specific nonleader errors.
+`LinuxPoll` uses that same descriptor owner for zero-timeout pidfd queries.
+It imports timeout and descriptor metadata before readiness selection, checks
+the declared descriptor limit, and commits only ordered revents fields through
+the shared user-copy policy. Its fixed live observations do not infer exits,
+blocking waits, temporary masks or other descriptor readiness.
 See
 [released GKI contracts](android-gki-kernels.md) for pinned source evidence and
 the limits of this implemented subset.
+
+Frame-offset proof keys normalize a top-level 64-bit address sum by removing its constant bias and subtracting the same entry root. Cold proofs retain the complete predicate and the existing remainder expression. Completed domains subtract the bias before insertion and restore the requested bias on lookup, preserving modular wrap, empty domains and nonuniqueness. Keys follow the original address so a change in the bounded remainder rewrite from a binary to an n-ary sum cannot change proof identity. All new nodes count against the existing node limit.
+
+## Mobile source assembly
+
+The Objective-C source exporter clears `CEmitterOptions::EmitRecordGuards` and `CEmitterOptions::UseUnalignedPointers` for the complete native unit and individual method units. Exact-width byte copies preserve unaligned memory access while keeping generated macros outside the mobile parser; conditional and mutating directives remain rejected.

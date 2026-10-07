@@ -22,7 +22,9 @@ enum {
   Write = 64,
   Protect = 226,
   Exit = 93,
-  LargeFile = 0400000
+  LargeFile = 0400000,
+  DirectoryOnly = 040000,
+  DirectIO = 0200000
 };
 #else
 static const U64 UserLimit = 0x0000800000000000UL;
@@ -40,7 +42,9 @@ enum {
   Write = 1,
   Protect = 10,
   Exit = 60,
-  LargeFile = 00100000
+  LargeFile = 00100000,
+  DirectoryOnly = 00200000,
+  DirectIO = 00040000
 };
 #endif
 
@@ -126,6 +130,46 @@ U64 files_sequence(void) {
   CHECK(raw(2, (U64)Path, 0, 0, 0), 5);
 #endif
   return 0;
+}
+
+U64 files_open_observed_errors(void) {
+  const char *Missing = "/fixture/missing";
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, DirectoryOnly, 0), (U64)-20);
+  CHECK(raw(OpenAt, 0, (U64)Path, DirectoryOnly | DirectIO | 02000000, 0777),
+        (U64)-20);
+  CHECK(raw(OpenAt, 0, (U64)Missing,
+            0x1234567800000000UL | DirectIO | LargeFile | 02000000, 0),
+        (U64)-2);
+  CHECK(raw(OpenAt, 0, (U64)Missing, DirectoryOnly, 0), (U64)-2);
+  CHECK(raw(OpenAt, 0, (U64) "/fixture/data/child", DirectIO, 0), (U64)-20);
+  CHECK(raw(OpenAt, 0, (U64) "/fixture/data///", DirectIO, 0), (U64)-20);
+  CHECK(raw(OpenAt, 0, 1, DirectoryOnly, 0), (U64)-14);
+  CHECK(raw(OpenAt, 0, 1, DirectIO, 0), (U64)-14);
+#if defined(__x86_64__)
+  CHECK(raw(2, (U64)Path, DirectoryOnly, 0777, 0), (U64)-20);
+  CHECK(raw(2, (U64)Missing, DirectIO | 02000000, 0, 0), (U64)-2);
+#endif
+  U64 F = raw(OpenAt, 0, (U64)Path, 0, 0);
+  CHECK(F, 3);
+  CHECK(raw(Read, F, (U64)Pages, 1, 0), 1);
+  CHECK(Pages[0], 0);
+  CHECK(raw(OpenAt, 0, (U64)Missing, DirectIO, 0), (U64)-24);
+  CHECK(raw(OpenAt, 0, (U64)Path, DirectoryOnly, 0), (U64)-24);
+  CHECK(raw(OpenAt, 0, (U64)Path, DirectIO, 0), (U64)-24);
+  CHECK(raw(OpenAt, 0, 1, DirectIO, 0), (U64)-14);
+  CHECK(raw(Read, F, (U64)Pages, 1, 0), 1);
+  CHECK(Pages[0], 0xff);
+  CHECK(raw(Close, F, 0, 0, 0), 0);
+  CHECK(raw(OpenAt, 0, (U64)Path, DirectoryOnly, 0), (U64)-20);
+  CHECK(raw(OpenAt, 0, (U64)Path, 0, 0), 3);
+  CHECK(raw(Close, 3, 0, 0, 0), 0);
+  return 0;
+}
+U64 files_open_unobserved(U64 Mode) {
+  const char *Name = Mode == 0 ? Path : "/fixture///";
+  U64 Flags = Mode == 2 ? DirectoryOnly : DirectIO;
+  raw(OpenAt, 0, (U64)Name, Flags, 0);
+  return 99;
 }
 
 U64 files_faults(void) {
@@ -589,6 +633,35 @@ extern int mkdir(const char *, U32);
 extern int mkdirat(int, const char *, U32);
 extern I64 syscall(I64, ...);
 extern int *__errno(void);
+U64 files_open_observed_errors_bionic(void) {
+  for (unsigned Route = 0; Route != 4; ++Route) {
+    *__errno() = 77;
+    I64 Result = Route == 0   ? open(Path, DirectoryOnly | 02000000)
+                 : Route == 1 ? open64(Path, DirectoryOnly)
+                 : Route == 2 ? openat(-1, Path, DirectoryOnly | DirectIO)
+                              : openat64(-1, Path, DirectoryOnly);
+    CHECK(Result, -1);
+    CHECK(*__errno(), 20);
+    Result = Route == 0   ? open("/fixture/missing", DirectIO | 02000000)
+             : Route == 1 ? open64("/fixture/missing", DirectIO)
+             : Route == 2 ? openat(-1, "/fixture/missing", DirectIO)
+                          : openat64(-1, "/fixture/missing", DirectIO);
+    CHECK(Result, -1);
+    CHECK(*__errno(), 2);
+    CHECK(raw(OpenAt, 0, 1, DirectoryOnly, 0), (U64)-14);
+    CHECK(*__errno(), 2);
+    int F = openat(-1, Path, 0);
+    CHECK(F, 3);
+    CHECK(*__errno(), 2);
+    CHECK(open("/fixture/missing", DirectoryOnly), -1);
+    CHECK(*__errno(), 24);
+    CHECK(open(Path, DirectIO), -1);
+    CHECK(*__errno(), 24);
+    CHECK(close(F), 0);
+    CHECK(*__errno(), 24);
+  }
+  return 0;
+}
 extern int pthread_create(U64 *, const void *, void *(*)(void *), void *);
 extern int pthread_join(U64, void **);
 extern void *dlopen(const char *, int);
@@ -981,6 +1054,10 @@ void process_main(U64 *Stack) {
                : Mode == 'd' ? files_directory_errors()
                : Mode == 'q' ? files_trailing_paths()
                : Mode == 'v' ? files_filesystem_status()
+               : Mode == 'o' ? files_open_observed_errors()
+               : Mode == 'R' ? files_open_unobserved(0)
+               : Mode == 'D' ? files_open_unobserved(1)
+               : Mode == 'B' ? files_open_unobserved(2)
                              : files_unsupported(Mode - '0');
   raw(Exit, Status, 0, 0, 0);
   __builtin_trap();

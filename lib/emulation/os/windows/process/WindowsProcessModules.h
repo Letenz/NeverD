@@ -58,6 +58,8 @@ struct Program {
   ImageReadBudget Reads{0, 0};
   /// WindowsProcessOptions::DeferUnmodeled for this process.
   bool DeferUnmodeled = false;
+  /// Host path of the main image. ZwOpenFile accepts only this file.
+  std::filesystem::path ImagePath;
   uint64_t OpaqueEntries = 0;
 };
 inline constexpr uint64_t ModuleCapacity =

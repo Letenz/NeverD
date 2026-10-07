@@ -70,6 +70,8 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     return std::optional<uint64_t>();
   case ServiceKind::SignalAction:
     return Signals.handle(CPU, Layout, Event, Result);
+  case ServiceKind::PPoll:
+    return Files.poll(Event, Options.LinuxKernel, Result);
   case ServiceKind::Open:
   case ServiceKind::OpenAt:
   case ServiceKind::Access:
@@ -87,7 +89,8 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Time:
   case ServiceKind::GetTimeOfDay:
   case ServiceKind::ClockGetTime:
-    return timeService(CPU, Kind, Event, Layout, Options, Clock, Result);
+    return timeService(CPU, Kind, Event, Layout, Options, Clock, Result,
+                       Thread ? Thread->ID : ThreadID);
   case ServiceKind::Nanosleep:
     return sleepService(CPU, Event, Layout, Clock, Thread, Result);
   case ServiceKind::Exit:

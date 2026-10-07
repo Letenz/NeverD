@@ -23,6 +23,7 @@
           "neverd_code_refs_json",
           "neverd_dashboard_json",
           "neverd_data_symbols_json",
+          "neverd_decode_text_json",
           "neverd_decompile",
           "neverd_decompile_all",
           "neverd_decompile_all_ex",
@@ -46,6 +47,7 @@
           "neverd_func_size",
           "neverd_headers_json",
           "neverd_hex_dump",
+          "neverd_hex_dump_ex",
           "neverd_import_slots_json",
           "neverd_imports_json",
           "neverd_inject_hello",
@@ -163,6 +165,7 @@
           "neverd_sig_matches_json",
           "neverd_simplify_result_dispose",
           "neverd_string_encodings_json",
+          "neverd_string_refs_json",
           "neverd_strings_ex_json",
           "neverd_strings_json",
           "neverd_symbols_json",
@@ -345,6 +348,7 @@
           "neverd hex --no-debug",
           "neverd hex --pdb",
           "neverd hex --size",
+          "neverd hex --text-encoding",
           "neverd hex --v",
           "neverd hunt",
           "neverd hunt --arm-function-mode",
@@ -530,11 +534,15 @@
           "neverd simplify --width",
           "neverd strings",
           "neverd strings --arm-function-mode",
+          "neverd strings --code-page",
+          "neverd strings --encodings",
+          "neverd strings --filter",
           "neverd strings --json",
           "neverd strings --map",
           "neverd strings --min-len",
           "neverd strings --no-debug",
           "neverd strings --pdb",
+          "neverd strings --refs",
           "neverd strings --v",
           "neverd sym-explore --arm-function-mode",
           "neverd sym-explore --expressions",
@@ -563,7 +571,8 @@
           "neverd xrefs --json",
           "neverd xrefs --map",
           "neverd xrefs --no-debug",
-          "neverd xrefs --pdb"
+          "neverd xrefs --pdb",
+          "neverd xrefs --source"
         ]
       },
       {
@@ -585,6 +594,7 @@
           "neverd_code_refs_json",
           "neverd_dashboard_json",
           "neverd_data_symbols_json",
+          "neverd_decode_text_json",
           "neverd_disasm_json",
           "neverd_disasm_json_ex",
           "neverd_entrypoints_json",
@@ -602,6 +612,7 @@
           "neverd_session_hunt_json",
           "neverd_sig_matches_json",
           "neverd_string_encodings_json",
+          "neverd_string_refs_json",
           "neverd_strings_ex_json",
           "neverd_strings_json",
           "neverd_symbols_json",
@@ -12843,17 +12854,17 @@
         "docs/testing.md"
       ],
       "limitations": [
-        "Unpacking observes a bounded `windows-pe64-v1` guest process and rebuilds its PE32+ image at the transfer accepted as the entry: the first transfer into generated code on the stack the process started with, an explicitly selected transfer, or the address an identified stub names as its final jump. It removes no virtualization and predicts no entry; a run that ends first reports `no_entry` with the process stop reason and writes nothing.",
-        "Only PE32+ executables for x86-64 and ARM64 are accepted; other containers and machines are rejected by name, and DLLs are not run. UPX identification and its declared entry cover x86-64 stubs only. VMProtect loaders are not supported. Checked execution admits one instruction at a time, so stubs that need billions of instructions exceed practical budgets, and execution is tracked per 4 KiB page.",
-        "The rebuilt image is fixed at its observed base: relocations of generated content are not observed, so the relocation directory is removed. The original section table and import directory layout are not reconstructed; a new import directory in an appended `.neverd` section names the cells the program already calls through. Program code that runs before the entry, such as a TLS callback that calls an unmodeled API, stops the run unless the identified stub declares its entry.",
-        "KVM and WHP run x86-64 guests on matching hosts and Unicorn runs both instruction sets; every available backend must produce byte-identical images. ARM64 guests have Unicorn evidence only."
+        "Unpacking observes a bounded `windows-pe64-v1` guest process and rebuilds its PE32+ image at an executed transfer into generated code. The default requires the main entry invocation and its initial stack pointer; `transfer` can select a reported transfer explicitly. No protector identity, pack header or stub signature predicts an entry. Virtualized functions stay virtualized. A run that ends first reports `no_entry` and writes nothing.",
+        "Only PE32+ executables for x86-64 and ARM64 are accepted; other containers and machines are rejected by name, and DLLs are not run. Recovery uses the same generic path for every protector. Unmodeled APIs stop explicitly. Checked execution admits one instruction at a time; x64 Unicorn, KVM and WHP also support time/event-bounded `direct-user-x64-v1`. Generated-code transfers are tracked per 4 KiB page.",
+        "The rebuilt image is fixed at its observed base because relocations of generated content were not observed. Original section RVAs remain; a new `.neverd` section holds rebuilt import metadata, additional cells and proven TLS startup adapters. Existing IAT arrays require their own intact terminators. Completed initializers and captured main-thread TLS memory may be materialized, but external process state is not generally portable.",
+        "Import repair uses two additional bounded runs: export dispatch discovery, including the final opaque export, and helper-state observation. It covers proven six- to eight-byte x64 call windows and seven- or eight-byte address loads, with complete register, mapping and persistent-memory preservation. Conflicting, impure or incomplete evidence cannot authorize a rewrite. Unreachable sites and other forms remain unresolved; `unpacked` does not certify every import or full program execution. KVM and WHP require matching native hosts; ARM64 native KVM/WHP coverage remains unverified. Export identity is retained from the proving process; addresses from another run cannot authorize rewriting. Exports resolved after entry remain observable."
       ],
       "tests": [
         {
           "runner": "gtest",
           "target": "NeverDUnpackTests",
           "source": "unittests/unpack/UnpackIdentifyTests.cpp",
-          "filter": "UnpackIdentify.EveryPackedFixtureShowsEachObservation",
+          "filter": "UnpackIdentify.PackedImagesNeedNoProtectorIdentity",
           "platforms": [
             "darwin",
             "linux",
@@ -12864,7 +12875,7 @@
           "runner": "gtest",
           "target": "NeverDUnpackTests",
           "source": "unittests/unpack/UnpackIdentifyTests.cpp",
-          "filter": "UnpackIdentify.OneObservationDoesNotNameThePacker",
+          "filter": "UnpackIdentify.ProtectorNamesAndPackHeadersDoNotAffectValidation",
           "platforms": [
             "darwin",
             "linux",
@@ -12875,7 +12886,7 @@
           "runner": "gtest",
           "target": "NeverDUnpackTests",
           "source": "unittests/unpack/UnpackIdentifyTests.cpp",
-          "filter": "UnpackIdentify.StubEvidenceIsBoundToItsInstructionSet",
+          "filter": "UnpackIdentify.ValidationUsesContainerMachineWithoutInspectingStubBytes",
           "platforms": [
             "darwin",
             "linux",
@@ -12975,6 +12986,17 @@
           "target": "NeverDUnpackExecutionTests",
           "source": "unittests/emulation/UnpackGeneratedTests.cpp",
           "filter": "*/UnpackGenerated.SecondLoaderIsTheEntryUntilALaterTransferIsNamed/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDUnpackExecutionTests",
+          "source": "unittests/emulation/UnpackGeneratedTests.cpp",
+          "filter": "*/UnpackGenerated.ExportIdentitySurvivesRebindingAndLateResolution/*",
           "platforms": [
             "darwin",
             "linux",

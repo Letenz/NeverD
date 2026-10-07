@@ -9,6 +9,8 @@
 
 #include "neverd/symbolic/SymState.h"
 
+#include <memory>
+
 using namespace neverd::analysis;
 using namespace neverd::analysis::detail;
 using namespace neverd::symbolic;
@@ -498,6 +500,149 @@ TEST(FrameOffsets, FrameAndJointTargetProjectionsKeepIndependentSearches) {
         }
       }
     }
+  }
+}
+
+TEST(FrameOffsets, CachedAddressTranslationsPreserveUnsignedWrap) {
+  for (bool Bound : {false, true}) {
+    SymContext Ctx;
+    const auto Root = Ctx.mkVar("root", 64);
+    const auto Low = Ctx.mkAnd(Root, Ctx.mkConst(64, 15));
+    const auto Predicate = Ctx.mkEq(Low, Ctx.mkConst(64, 8));
+    const auto Base = Ctx.mkAnd(Ctx.mkAdd(Root, Ctx.mkConst(64, 32)),
+                                Ctx.mkConst(64, ~uint64_t(15)));
+    auto Cache = Bound ? std::make_unique<FiniteQueryCache>(100000, Ctx)
+                       : std::make_unique<FiniteQueryCache>(100000);
+    FiniteDomainEncoding Encoding(Ctx, {});
+    bool First = true;
+    for (uint64_t Bias : {uint64_t(0), uint64_t(7), ~uint64_t(0),
+                          uint64_t(1) << 63, uint64_t(16)}) {
+      uint64_t Queries = 0;
+      auto Value = Ctx.mkAdd(Base, Ctx.mkConst(64, Bias));
+      const auto Result = proveFrameOffset(Encoding, Predicate, Value, Root,
+                                           100, 100000, Queries, Cache.get());
+      ASSERT_EQ(Result.Status, FrameOffsetStatus::Exact);
+      EXPECT_EQ(Result.Offset, uint64_t(24) + Bias);
+      if (First)
+        EXPECT_EQ(Queries, 2U);
+      else
+        EXPECT_EQ(Queries, 0U);
+      First = false;
+    }
+  }
+}
+
+TEST(FrameOffsets, CachedNonUniqueAndEmptyDomainsRemainDistinct) {
+  for (bool Empty : {false, true}) {
+    SymContext Ctx;
+    auto Root = Ctx.mkVar("root", 64), Input = Ctx.mkVar("x", 8);
+    auto Base = Ctx.mkAnd(Ctx.mkAdd(Root, Ctx.mkConst(64, 32)),
+                          Ctx.mkConst(64, ~uint64_t(15)));
+    auto Predicate =
+        Empty ? Ctx.mkEq(Ctx.mkMul(Input, Input), Ctx.mkConst(8, 2))
+              : Ctx.mkEq(Ctx.mkAnd(Root, Ctx.mkConst(64, 16)), Ctx.mkZero(64));
+    FiniteQueryCache Cache(100000, Ctx);
+    FiniteDomainEncoding Encoding(Ctx, {});
+    for (unsigned I = 0; I != 3; ++I) {
+      uint64_t Queries = 0;
+      auto Result = proveFrameOffset(Encoding, Predicate,
+                                     Ctx.mkAdd(Base, Ctx.mkConst(64, I)), Root,
+                                     100, 100000, Queries, &Cache);
+      ASSERT_EQ(Result.Status, Empty ? FrameOffsetStatus::Infeasible
+                                     : FrameOffsetStatus::NonUnique);
+      if (I)
+        EXPECT_EQ(Queries, 0U);
+      else
+        EXPECT_EQ(Queries, Empty ? 1U : 2U);
+    }
+  }
+}
+
+TEST(FrameOffsets, CachedTranslationsSeparatePredicatesAndCapacity) {
+  for (bool ZeroCapacity : {false, true}) {
+    SymContext Ctx;
+    auto Root = Ctx.mkVar("root", 64);
+    auto Base = Ctx.mkAnd(Ctx.mkAdd(Root, Ctx.mkConst(64, 32)),
+                          Ctx.mkConst(64, ~uint64_t(15)));
+    FiniteQueryCache Cache(ZeroCapacity ? 0 : 100000, Ctx);
+    FiniteDomainEncoding Encoding(Ctx, {});
+    for (uint64_t Low : {uint64_t(8), uint64_t(9), uint64_t(8)}) {
+      auto Predicate =
+          Ctx.mkEq(Ctx.mkAnd(Root, Ctx.mkConst(64, 15)), Ctx.mkConst(64, Low));
+      uint64_t Queries = 0;
+      auto Result = proveFrameOffset(Encoding, Predicate,
+                                     Ctx.mkAdd(Base, Ctx.mkConst(64, 3)), Root,
+                                     100, 100000, Queries, &Cache);
+      ASSERT_EQ(Result.Status, FrameOffsetStatus::Exact);
+      EXPECT_EQ(Result.Offset, 35 - Low);
+      if (ZeroCapacity || Low == 9)
+        EXPECT_EQ(Queries, 2U);
+    }
+  }
+}
+
+TEST(FrameOffsets, CachedTranslationsRejectIncompleteProofs) {
+  SymContext Ctx;
+  auto Root = Ctx.mkVar("root", 64);
+  auto Predicate =
+      Ctx.mkEq(Ctx.mkAnd(Root, Ctx.mkConst(64, 15)), Ctx.mkConst(64, 8));
+  auto Base = Ctx.mkAnd(Ctx.mkAdd(Root, Ctx.mkConst(64, 32)),
+                        Ctx.mkConst(64, ~uint64_t(15)));
+  FiniteQueryCache Cache(100000, Ctx);
+  FiniteDomainEncoding Encoding(Ctx, {});
+  uint64_t Queries = 0;
+  EXPECT_EQ(proveFrameOffset(Encoding, Predicate, Base, Root, 1, 100000,
+                             Queries, &Cache)
+                .Status,
+            FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(Queries, 1U);
+  Queries = 0;
+  auto Value = Ctx.mkAdd(Base, Ctx.mkConst(64, 7));
+  EXPECT_EQ(proveFrameOffset(Encoding, Predicate, Value, Root, 2,
+                             Ctx.numNodes() - 1, Queries, &Cache)
+                .Status,
+            FrameOffsetStatus::BudgetExceeded);
+  EXPECT_EQ(Queries, 0U);
+  Queries = 0;
+  auto Result = proveFrameOffset(Encoding, Predicate, Value, Root, 2, 100000,
+                                 Queries, &Cache);
+  ASSERT_EQ(Result.Status, FrameOffsetStatus::Exact);
+  EXPECT_EQ(Result.Offset, 31U);
+  EXPECT_EQ(Queries, 2U);
+  Queries = 0;
+  Result =
+      proveFrameOffset(Encoding, Predicate, Ctx.mkAdd(Base, Ctx.mkConst(64, 1)),
+                       Root, 0, 100000, Queries, &Cache);
+  EXPECT_EQ(Result.Status, FrameOffsetStatus::Exact);
+  EXPECT_EQ(Result.Offset, 25U);
+  EXPECT_EQ(Queries, 0U);
+}
+
+TEST(FrameOffsets, CachedNaryAddressesKeepProofIdentity) {
+  SymContext Ctx;
+  auto Root = Ctx.mkVar("root", 64), Index = Ctx.mkVar("index", 64);
+  auto Aligned = Ctx.mkAnd(Ctx.mkAdd(Root, Ctx.mkConst(64, 32)),
+                           Ctx.mkConst(64, ~uint64_t(15)));
+  auto Address = Ctx.mkAdd(Aligned, Index);
+  auto Predicate = Ctx.mkAnd(
+      Ctx.mkEq(Ctx.mkAnd(Root, Ctx.mkConst(64, 15)), Ctx.mkConst(64, 8)),
+      Ctx.mkEq(Index, Ctx.mkConst(64, 5)));
+  FiniteQueryCache Cache(100000, Ctx);
+  FiniteDomainEncoding Encoding(Ctx, {});
+  uint64_t Queries = 0;
+  auto Result = proveFrameOffset(Encoding, Predicate, Address, Root, 2, 100000,
+                                 Queries, &Cache);
+  ASSERT_EQ(Result.Status, FrameOffsetStatus::Exact);
+  EXPECT_EQ(Result.Offset, 29U);
+  EXPECT_EQ(Queries, 2U);
+  for (uint64_t Bias : {uint64_t(7), ~uint64_t(0), uint64_t(1) << 63}) {
+    Queries = 0;
+    auto Shifted = Ctx.mkAdd(Address, Ctx.mkConst(64, Bias));
+    Result = proveFrameOffset(Encoding, Predicate, Shifted, Root, 0, 100000,
+                              Queries, &Cache);
+    ASSERT_EQ(Result.Status, FrameOffsetStatus::Exact);
+    EXPECT_EQ(Result.Offset, uint64_t(29) + Bias);
+    EXPECT_EQ(Queries, 0U);
   }
 }
 

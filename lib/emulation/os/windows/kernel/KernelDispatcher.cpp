@@ -24,6 +24,7 @@
 #include "KernelDispatcher.h"
 
 #include "KernelException.h"
+#include "KernelWaits.h"
 
 #include "neverd/emulation/GuestMemory.h"
 
@@ -31,6 +32,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <set>
 
 namespace neverd::emulation {
 namespace {
@@ -285,42 +287,106 @@ llvm::Expected<bool> KernelDispatcher::signaled(uint64_t Address,
 llvm::Expected<bool> KernelDispatcher::tryAcquire(uint64_t Address,
                                                   uint64_t ThreadKey,
                                                   uint8_t CurrentIRQL) {
-  if (!isWaitable(Address))
-    return dispatcherError("unsupported or uninitialized wait object");
-  Object &State = Objects.at(Address);
-  if (auto E = Validate(Address, State.Size, false))
-    return E;
+  auto Acquired = tryAcquireSet({{WaitCondition::Kind::Dispatcher, Address}},
+                                false, ThreadKey, CurrentIRQL);
+  if (!Acquired)
+    return Acquired.takeError();
+  return Acquired->has_value();
+}
+
+llvm::Expected<std::optional<uint32_t>>
+KernelDispatcher::tryAcquireSet(llvm::ArrayRef<WaitCondition> Conditions,
+                                bool All, uint64_t ThreadKey,
+                                uint8_t CurrentIRQL) {
+  if (Conditions.empty() || Conditions.size() > kernel_wait::MaximumObjects)
+    return dispatcherError(kernel_wait::InvalidCount);
+  std::vector<Object *> States;
+  std::set<uint64_t> Seen;
+  for (const auto &Condition : Conditions) {
+    switch (Condition.Type) {
+    case WaitCondition::Kind::Dispatcher: {
+      if (!Seen.insert(Condition.Object).second)
+        return dispatcherError(kernel_wait::DuplicateObject);
+      if (!isWaitable(Condition.Object))
+        return dispatcherError(kernel_wait::InvalidObject);
+      Object &State = Objects.at(Condition.Object);
+      if (auto E = Validate(Condition.Object, State.Size, false))
+        return E;
+      if (State.Type == Kind::Mutex && !ThreadKey)
+        return dispatcherError(dispatcher::MutexThreadRequired);
+      States.push_back(&State);
+      break;
+    }
+    case WaitCondition::Kind::Ready:
+    case WaitCondition::Kind::Pending:
+      if (Condition.Object)
+        return dispatcherError(kernel_wait::InvalidCondition);
+      States.push_back(nullptr);
+      break;
+    default:
+      return dispatcherError(kernel_wait::InvalidCondition);
+    }
+  }
   if (auto E = Scheduler.processDueTimers())
     return E;
-  if (State.Type == Kind::Mutex) {
-    if (!ThreadKey)
-      return dispatcherError(dispatcher::MutexThreadRequired);
-    if (State.MutexDepth && State.MutexOwner != ThreadKey)
-      return false;
-    if (State.MutexDepth == uint32_t(std::numeric_limits<int32_t>::max()) + 1)
-      return llvm::make_error<KernelGuestException>(
-          dispatcher::StatusMutantLimitExceeded);
-    if (!State.MutexDepth) {
-      State.MutexOwner = ThreadKey;
-      State.MutexAcquiredAtDispatch = CurrentIRQL == dispatcher::DispatchLevel;
-    } else if (State.MutexAcquiredAtDispatch !=
-               (CurrentIRQL == dispatcher::DispatchLevel)) {
-      return dispatcherError("recursive mutex wait changed DISPATCH_LEVEL");
+  std::optional<uint32_t> First;
+  bool AllReady = true;
+  for (size_t I = 0; I < Conditions.size(); ++I) {
+    auto *State = States[I];
+    llvm::Expected<bool> Ready =
+        State ? State->Type == Kind::Mutex
+                    ? !State->MutexDepth || State->MutexOwner == ThreadKey
+                    : signaled(Conditions[I].Object, *State)
+              : Conditions[I].Type == WaitCondition::Kind::Ready;
+    if (!Ready)
+      return Ready.takeError();
+    AllReady &= *Ready;
+    if (*Ready && !First)
+      First = uint32_t(I);
+  }
+  if (!First || (All && !AllReady))
+    return std::optional<uint32_t>{};
+
+  std::vector<uint64_t> Timers;
+  for (size_t I = 0; I < Conditions.size(); ++I) {
+    auto *State = States[I];
+    if (!State || (!All && I != *First))
+      continue;
+    if (State->Type == Kind::Mutex) {
+      if (State->MutexDepth ==
+          uint32_t(std::numeric_limits<int32_t>::max()) + 1)
+        return llvm::make_error<KernelGuestException>(
+            dispatcher::StatusMutantLimitExceeded);
+      if (State->MutexDepth && State->MutexAcquiredAtDispatch !=
+                                   (CurrentIRQL == dispatcher::DispatchLevel))
+        return dispatcherError(kernel_wait::RecursiveIRQL);
     }
-    ++State.MutexDepth;
-    return true;
+    if (State->Type == Kind::Timer && State->Synchronization)
+      Timers.push_back(Conditions[I].Object);
   }
-  auto Signal = signaled(Address, State);
-  if (Signal && *Signal && State.Type == Kind::Semaphore) {
-    --State.Count;
-    return true;
+  // No guest execution or callbacks occur between preflight and commit. Timer
+  // consumption validates the complete selected batch before changing state;
+  // all remaining dispatcher updates are infallible model mutations.
+  if (auto E = Scheduler.consumeTimerSignals(Timers))
+    return E;
+  for (size_t I = 0; I < Conditions.size(); ++I) {
+    auto *State = States[I];
+    if (!State || (!All && I != *First))
+      continue;
+    if (State->Type == Kind::Mutex) {
+      if (!State->MutexDepth) {
+        State->MutexOwner = ThreadKey;
+        State->MutexAcquiredAtDispatch =
+            CurrentIRQL == dispatcher::DispatchLevel;
+      }
+      ++State->MutexDepth;
+    } else if (State->Type == Kind::Semaphore) {
+      --State->Count;
+    } else if (State->Synchronization && State->Type != Kind::Timer) {
+      State->Signaled = false;
+    }
   }
-  if (!Signal || !*Signal || !State.Synchronization)
-    return Signal;
-  if (State.Type == Kind::Timer)
-    return Scheduler.consumeTimerSignal(Address);
-  State.Signaled = false;
-  return true;
+  return std::optional<uint32_t>{All ? 0 : *First};
 }
 
 llvm::Expected<uint64_t> KernelDispatcher::call(llvm::StringRef Name,

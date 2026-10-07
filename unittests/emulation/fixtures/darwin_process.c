@@ -187,8 +187,14 @@ static int login_buffer(int emit_values) {
     unsigned n = (unsigned)lengths[i];
     if (n > 255)
       n = 255;
-    for (unsigned j = 0; j != sizeof(out); ++j)
-      if (out[j] != (j >= 3 && j < 3 + n ? snapshot[j - 3] : 0xa5))
+    for (unsigned j = 0; j != 3; ++j)
+      if (out[j] != 0xa5)
+        return 204;
+    for (unsigned j = 0; j != n; ++j)
+      if (out[3 + j] != snapshot[j])
+        return 204;
+    for (unsigned j = 3 + n; j != sizeof(out); ++j)
+      if (out[j] != 0xa5)
         return 204;
   }
   const u64 pointers[] = {0,

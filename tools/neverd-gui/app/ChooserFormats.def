@@ -1,0 +1,31 @@
+//===- ChooserFormats.def - How list columns show their field --*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The formats of list window columns (Choosers.def) and the width each
+/// column starts at, in digit widths of the list's font: an address with its
+/// segment name, a name, flags of one letter.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_CHOOSER_FORMAT(Id, Columns)
+#ifndef NEVERD_CHOOSER_FORMAT
+#define NEVERD_CHOOSER_FORMAT(Id, Columns)
+#endif
+NEVERD_CHOOSER_FORMAT(Text, 24)
+// The characters of a string, its control characters escaped as in C.
+NEVERD_CHOOSER_FORMAT(Literal, 48)
+NEVERD_CHOOSER_FORMAT(Name, 34)
+NEVERD_CHOOSER_FORMAT(Address, 18)
+NEVERD_CHOOSER_FORMAT(SegmentAddress, 26)
+NEVERD_CHOOSER_FORMAT(SegmentOf, 10)
+NEVERD_CHOOSER_FORMAT(Hex, 10)
+NEVERD_CHOOSER_FORMAT(Decimal, 8)
+NEVERD_CHOOSER_FORMAT(FlagRead, 3)
+NEVERD_CHOOSER_FORMAT(FlagWrite, 3)
+NEVERD_CHOOSER_FORMAT(FlagExecute, 3)
+NEVERD_CHOOSER_FORMAT(Direction, 6)
+#undef NEVERD_CHOOSER_FORMAT

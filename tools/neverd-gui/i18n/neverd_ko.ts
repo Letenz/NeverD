@@ -703,6 +703,14 @@
         <source>Choose the encodings and minimum length of the strings the listing shows</source>
         <translation>목록에 표시할 문자열의 인코딩과 최소 길이를 선택합니다</translation>
     </message>
+    <message>
+        <source>String &amp;references</source>
+        <translation>문자열 참조(&amp;R)</translation>
+    </message>
+    <message>
+        <source>List the instructions that refer to strings</source>
+        <translation>문자열을 참조하는 명령어를 나열합니다</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -825,6 +833,18 @@
     <message>
         <source>Description</source>
         <translation>설명</translation>
+    </message>
+    <message>
+        <source>String references</source>
+        <translation>문자열 참조</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>함수</translation>
+    </message>
+    <message>
+        <source>Disassembly</source>
+        <translation>디스어셈블리</translation>
     </message>
 </context>
 <context>
@@ -1503,6 +1523,13 @@ Recognized library operation; click to show its code.</source>
     </message>
 </context>
 <context>
+    <name>neverd::gui::HexView</name>
+    <message>
+        <source>Text encoding</source>
+        <translation>텍스트 인코딩</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::JumpDialog</name>
     <message>
         <source>Jump anywhere</source>
@@ -1847,6 +1874,18 @@ Signed: %4</source>
         <source>Minimum length:</source>
         <translation>최소 길이:</translation>
     </message>
+    <message>
+        <source>None</source>
+        <translation>없음</translation>
+    </message>
+    <message>
+        <source>Also read C strings that are not UTF-8 in this code page</source>
+        <translation>UTF-8이 아닌 C 문자열도 이 코드 페이지로 읽습니다</translation>
+    </message>
+    <message>
+        <source>Code page:</source>
+        <translation>코드 페이지:</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -1897,6 +1936,10 @@ Signed: %4</source>
     <message>
         <source>  &lt;expr&gt;            evaluate: 0x10, 10h, #16, names, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</source>
         <translation>  &lt;expr&gt;            평가: 0x10, 10h, #16, 이름, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</translation>
+    </message>
+    <message>
+        <source>  strref [text]     list the instructions that refer to strings</source>
+        <translation>  strref [text]     문자열을 참조하는 명령어 나열</translation>
     </message>
 </context>
 <context>

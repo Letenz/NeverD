@@ -13,6 +13,7 @@
 #include "llvm/Support/SHA256.h"
 
 #include <array>
+#include <ostream>
 
 namespace neverd::emulation {
 namespace {
@@ -49,6 +50,7 @@ struct Profile {
   ExecutionBackendKind Backend;
   const char *Name;
 };
+void PrintTo(const Profile &Value, std::ostream *OS) { *OS << Value.Name; }
 constexpr Profile Profiles[] = {
 #define NEVERD_ATOMIC_RESULT_BACKEND(Name) {ExecutionBackendKind::Name, #Name},
 #include "fixtures/WindowsAtomicResults.def"

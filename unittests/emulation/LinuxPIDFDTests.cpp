@@ -6,6 +6,7 @@
 #include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 #include "os/linux/kernel/LinuxKernelAvailability.h"
+#include "os/linux/kernel/LinuxTime.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
 #include "neverd/emulation/ProcessReport.h"
@@ -264,6 +265,112 @@ TEST(LinuxPIDFD, ClosedTaskCatalogueInputsRejectAmbiguityBeforeLoading) {
   Bad = emulateProcess("missing.elf", ProcessProfile::AndroidNativeAArch64, O);
   ASSERT_FALSE(bool(Bad));
   EXPECT_EQ(llvm::toString(Bad.takeError()), KernelOptions);
+}
+TEST_P(LinuxPIDFDProcess, ProcessCPUClocksRetainIdentityAndIdleSeparation) {
+  for (const auto &K : Kernels) {
+    SCOPED_TRACE(K.Label);
+    auto &Kernel = Options.LinuxKernel.emplace();
+    Kernel.GKI = K.Kernel;
+    Kernel.Tasks.emplace().emplace(2000, LinuxKernelTask{true});
+    Kernel.Tasks->emplace(3000, LinuxKernelTask{false});
+    auto &Time = Options.LinuxTime.emplace();
+    Time.AdvanceOnIdle = true;
+    Time.Clocks = {{1, {10, 999999999}}, {2, {3, 4}},       {-16006, {7, 9}},
+                   {-16007, {8, 10}},    {-16008, {9, 11}}, {-8, {13, 15}},
+                   {-8007, {16, 17}}};
+    for (const char *Opt : {"O0", "O2"}) {
+      auto R = run('p', Opt);
+      ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+      EXPECT_EQ(R.ExitStatus, 0u);
+    }
+  }
+}
+TEST_P(LinuxPIDFDProcess, ZeroTimeoutPollRetainsReadinessAndOrderedCopies) {
+  for (const auto &K : Kernels) {
+    SCOPED_TRACE(K.Label);
+    auto &Kernel = Options.LinuxKernel.emplace();
+    Kernel.GKI = K.Kernel;
+    Kernel.Tasks.emplace().emplace(2000, LinuxKernelTask{true});
+    Kernel.Tasks->emplace(3000, LinuxKernelTask{false});
+    Options.LinuxTime.emplace().Clocks[1] = {31, 0};
+    Options.LinuxTime->AdvanceOnIdle = true;
+    for (const char *Opt : {"O0", "O2"}) {
+      auto R = run('o', Opt, K.ThreadFlag);
+      ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+      EXPECT_EQ(R.ExitStatus, 0u);
+    }
+  }
+}
+TEST_P(LinuxPIDFDProcess, ZeroTimeoutPollKeepsUnobservedBoundaries) {
+  auto R = run('h', "O2");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R.Diagnostic, PollKernelMissing);
+  Options.LinuxKernel.emplace().GKI = AndroidGKIKernel::Android17_6_18;
+  for (auto [Mode, Reason] : {std::pair{'j', PollSignalMaskUnsupported},
+                              std::pair{'k', PollWaitUnsupported},
+                              std::pair{'r', PollDescriptorUnsupported}}) {
+    R = run(Mode, "O2");
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(R.Diagnostic, Reason);
+    EXPECT_FALSE(R.Services.back().Result);
+  }
+  Options.LinuxFiles.reset();
+  R = run('h', "O2");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R.Diagnostic, PollLimitMissing);
+}
+TEST_P(LinuxPIDFDProcess, ProcessCPUClocksKeepMissingObservationBoundaries) {
+  auto &Kernel = Options.LinuxKernel.emplace();
+  Kernel.GKI = AndroidGKIKernel::Android17_6_18;
+  Kernel.Tasks.emplace().emplace(2000, LinuxKernelTask{true});
+  Options.LinuxTime.emplace().Clocks.emplace(2, LinuxTimespec{3, 4});
+  auto R = run('q', "O2");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_FALSE(R.Services.back().Result);
+  EXPECT_EQ(R.Diagnostic,
+            "Linux clock -16006 has no explicit linux_time input");
+  Kernel.Tasks.reset();
+  R = run('q', "O2");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R.Diagnostic, TimeCPUTargetMissing);
+  R = run('z', "O2");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R.Diagnostic, TimeDynamicClock);
+  R = run('w', "O2");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R.Diagnostic, TimeThreadCPUClock);
+  Options.LinuxKernel.reset();
+  R = run('q', "O2");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R.Diagnostic, TimeDynamicClock);
+}
+TEST(LinuxPIDFD, ProcessCPUClockValuesRequireLiveObservedGroupsBeforeLoading) {
+  for (
+      const char *Value :
+      {R"({"linux_time":{"clocks":[{"id":-14,"seconds":0,"nanoseconds":0}]}})",
+       R"({"linux_kernel":{"gki":"android17-6.18"},"linux_time":{"clocks":[{"id":-14,"seconds":0,"nanoseconds":0}]}})",
+       R"({"linux_kernel":{"gki":"android17-6.18","tasks":[]},"linux_time":{"clocks":[{"id":-14,"seconds":0,"nanoseconds":0}]}})",
+       R"({"linux_kernel":{"gki":"android17-6.18","tasks":[{"id":1,"group_leader":false}]},"linux_time":{"clocks":[{"id":-14,"seconds":0,"nanoseconds":0}]}})"}) {
+    auto O = processOptionsFromJSON(Value);
+    ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+    auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, *O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), TimeCPUObservation);
+  }
+  for (
+      const char *Clocks :
+      {R"([{"id":2,"seconds":3,"nanoseconds":4},{"id":-6,"seconds":3,"nanoseconds":4}])",
+       R"([{"id":-8,"seconds":3,"nanoseconds":4},{"id":-8008,"seconds":3,"nanoseconds":4}])",
+       R"([{"id":-29,"seconds":0,"nanoseconds":0}])",
+       R"([{"id":-2,"seconds":0,"nanoseconds":0}])",
+       R"([{"id":-1,"seconds":0,"nanoseconds":0}])",
+       R"([{"id":-14,"seconds":-1,"nanoseconds":0}])"}) {
+    auto Bad = processOptionsFromJSON(
+        std::string("{\"linux_time\":{\"clocks\":") + Clocks + "}}");
+    EXPECT_FALSE(bool(Bad)) << Clocks;
+    if (!Bad)
+      llvm::consumeError(Bad.takeError());
+  }
 }
 INSTANTIATE_TEST_SUITE_P(Backends, LinuxPIDFDProcess,
                          testing::ValuesIn(Profiles));

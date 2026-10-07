@@ -55,6 +55,14 @@ const char *processStopReasonName(ProcessStopReason Reason) {
 }
 ProcessView::~ProcessView() = default;
 ProcessObserver::~ProcessObserver() = default;
+llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+ProcessObserver::invoking(ProcessView &) {
+  return std::nullopt;
+}
+llvm::Error ProcessObserver::exporting(ProcessView &, const ProcessExportView &,
+                                       std::optional<uint64_t>) {
+  return llvm::Error::success();
+}
 
 namespace {
 llvm::Expected<ProcessResult> runProfile(const std::filesystem::path &Path,
@@ -125,6 +133,8 @@ llvm::Expected<ProcessResult> runProfile(const std::filesystem::path &Path,
         Profile != ProcessProfile::AndroidNativeAArch64)
       return diagnostic::error(process_report::LinuxTimeProfile);
     if (auto E = linux_model::validateTimeOptions(*Options.LinuxTime))
+      return std::move(E);
+    if (auto E = linux_model::validateCPUClockInputs(Options))
       return std::move(E);
   }
   switch (Profile) {

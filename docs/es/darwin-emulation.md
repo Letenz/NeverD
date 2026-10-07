@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 4f2c32b592664760132b5349c4552df7b54238aa4fdbc868d7ed05d2ad7dd8e0 -->
+<!-- i18n-source: 1fca157d25a2f609ab3d51be25fb8a113e6ef48a9fd3a7037c77cfbcf2d4425f -->
 
 [← Índice de documentación](README.md)
 
@@ -693,6 +693,8 @@ La llamada cruda `getpgrp(81)` lee el grupo; `getpgid(151)` y `getsid(310)` usan
 `getlogin(49)` usa los 32 bits bajos sin signo de longitud (`u_int`) y copia exactamente min(length,255) bytes, sin decodificar, añadir NUL o devolver tamaño necesario. Longitud cero tiene éxito sin observación ni memoria invitada incluso con punteros inválidos; `0xffffffff00000000` selecciona cero. Una petición no nula exige el búfer completo antes de comprobar el destino. Un destino totalmente no escribible devuelve EFAULT14; rangos parciales se rechazan antes de copiar. Errores previos no publican bytes. Los errores de escritura del backend se propagan por la capa existente sin garantía general de reversión. Se mantienen BSD carry y segundo registro, incluido RDX x64 original ante error.
 
 `setlogin(50)` sigue sin soporte con root explícito o registro cero. El programa original de solo lectura `login-buffer` comprueba longitudes completas, prefijos, bytes vecinos, punteros con longitud cero y EFAULT; `virtual-login-buffer` emite los 255 bytes declarados. Los casos ausentes y setters solo usan el modelo. La referencia macOS ARM64 no valida iOS físico ni Intel nativo. El ejemplo declara 255 ceros, sin inferir un nombre vacío.
+
+El verificador huésped inicializa los 265 bytes de salida antes de cada copia y comprueba tres intervalos ascendentes y disjuntos: [0,3), [3,3+n), [3+n,265), donde n es la misma longitud de copia limitada. El primero y el último comprueban todos los bytes de guarda; el central compara cada byte copiado con la instantánea original. Se conservan las 12 longitudes completas, 21 llamadas de longitud cero, 42 llamadas EFAULT, comprobaciones de carry/registro secundario y rutas directas/virtuales bajo los límites existentes. Disminuye el trabajo del verificador conservando la cobertura y el orden del primer error; el rendimiento de producción requiere mediciones independientes.
 
 ```json
 {"darwin_system":{"login_name_hex":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}}

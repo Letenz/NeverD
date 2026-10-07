@@ -1784,14 +1784,84 @@ TEST_F(SessionCAPITest, DisassemblyStatesHowEachInstructionMovesTheStack) {
   }
 }
 
-// An x86-64 executable whose code segment returns and whose separate
-// read-only segment holds \p Data.
-std::string makeDataELF(std::string_view Data) {
+TEST_F(SessionCAPITest, DisassemblyStatesTheMemoryEachInstructionReaches) {
+  // Each row: its bytes and the reference it states, as an offset from the
+  // next instruction or an absolute address, with its kind.
+  struct Row {
+    std::string_view Bytes;
+    std::optional<int64_t> Relative;
+    std::optional<uint64_t> Absolute;
+    std::string_view Kind;
+  };
+  using namespace std::string_view_literals;
+  const Row Rows[] = {
+      // mov rdi, qword ptr [rip + 0x100]
+      {"\x48\x8b\x3d\x00\x01\x00\x00"sv, 0x100, {}, "read"},
+      // mov dword ptr [rip + 0x200], eax
+      {"\x89\x05\x00\x02\x00\x00"sv, 0x200, {}, "write"},
+      // mov rax, qword ptr fs:[0x28]: an offset in a segment, not an address
+      {"\x64\x48\x8b\x04\x25\x28\x00\x00\x00"sv, {}, {}, {}},
+      // mov eax, dword ptr [0x404000]
+      {"\x8b\x04\x25\x00\x40\x40\x00"sv, {}, 0x404000, "read"},
+      // lea rax, [rip + 0x10]
+      {"\x48\x8d\x05\x10\x00\x00\x00"sv, 0x10, {}, "offset"},
+      // mov rax, qword ptr [rbx + 8]
+      {"\x48\x8b\x43\x08"sv, {}, {}, {}},
+      {"\xc3"sv, {}, {}, {}},
+  };
+  std::string Code;
+  for (const auto &R : Rows)
+    Code += R.Bytes;
+  const auto Input =
+      write("memory-refs.elf", makeNativeELF(false, 0x400000, {}, Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const uint64_t Entry = neverd_session_entry_addr(Session);
+  const auto Text = takeString(neverd_disasm_json_ex(
+      Session, Entry, std::size(Rows), NEVERD_DISASM_FLOW));
+  auto Parsed = llvm::json::parse(Text);
+  ASSERT_TRUE(static_cast<bool>(Parsed)) << Text;
+  const auto *Array = Parsed->getAsArray();
+  ASSERT_TRUE(Array && Array->size() == std::size(Rows)) << Text;
+  uint64_t Next = Entry;
+  for (size_t I = 0; I < std::size(Rows); ++I) {
+    Next += Rows[I].Bytes.size();
+    const auto *Object = (*Array)[I].getAsObject();
+    ASSERT_TRUE(Object) << I << ": " << Text;
+    const auto *Refs = Object->getArray("refs");
+    if (Rows[I].Kind.empty()) {
+      EXPECT_TRUE(!Refs || Refs->empty()) << I << ": " << Text;
+      continue;
+    }
+    ASSERT_TRUE(Refs && Refs->size() == 1) << I << ": " << Text;
+    const auto *Ref = (*Refs)[0].getAsObject();
+    ASSERT_TRUE(Ref) << I << ": " << Text;
+    const uint64_t Expected =
+        Rows[I].Absolute ? *Rows[I].Absolute : Next + *Rows[I].Relative;
+    EXPECT_EQ(
+        std::stoull(Ref->getString("to").value_or("0").str(), nullptr, 16),
+        Expected)
+        << I << ": " << Text;
+    EXPECT_EQ(Ref->getString("kind").value_or("").str(), Rows[I].Kind)
+        << I << ": " << Text;
+  }
+}
+
+// The code a data executable's entry runs, and where it and the data start.
+constexpr uint64_t DataELFBase = 0x400000;
+constexpr uint64_t DataELFEntry = DataELFBase + 0xb0;
+constexpr uint64_t DataELFData = DataELFBase + 0x1000;
+
+// An x86-64 executable whose code segment runs \p Code (by default a
+// return) and whose separate read-only segment holds \p Data.
+std::string makeDataELF(std::string_view Data,
+                        std::string_view Code = std::string_view("\xc3", 1)) {
   using ELF = llvm::object::ELF64LE;
   using namespace llvm::ELF;
-  constexpr uint64_t Base = 0x400000;
-  const std::string Code("\xc3", 1);
+  constexpr uint64_t Base = DataELFBase;
   const size_t CodeOffset = sizeof(ELF::Ehdr) + 2 * sizeof(ELF::Phdr);
+  static_assert(DataELFEntry - DataELFBase ==
+                sizeof(ELF::Ehdr) + 2 * sizeof(ELF::Phdr));
   const size_t DataOffset = 0x1000;
   std::string Bytes(DataOffset + Data.size(), '\0');
   ELF::Ehdr Header{};
@@ -1829,6 +1899,233 @@ std::string makeDataELF(std::string_view Data) {
   Bytes.replace(CodeOffset, Code.size(), Code);
   Bytes.replace(DataOffset, Data.size(), Data);
   return Bytes;
+}
+
+TEST_F(SessionCAPITest, StringReferencesReadTextFromTheReferencedCharacter) {
+  // "hello world" and UTF-8 "\u4e2d\u6587\u5b57\u7b26", each terminated.
+  constexpr char Data[] = "hello world\0"
+                          "\xe4\xb8\xad\xe6\x96\x87\xe5\xad\x97\xe7\xac\xa6";
+  // lea rdi/rsi/rdx/rcx, [rip + d] to bytes 0, 6, 9 and 13, then ret.
+  std::string Code;
+  const std::pair<uint8_t, uint64_t> Leas[] = {
+      {0x3d, 0}, {0x35, 6}, {0x15, 9}, {0x0d, 13}};
+  for (const auto &[ModRM, Offset] : Leas) {
+    const uint64_t Next = DataELFEntry + Code.size() + 7;
+    const auto Displacement =
+        static_cast<uint32_t>(DataELFData + Offset - Next);
+    Code += "\x48\x8d";
+    Code += static_cast<char>(ModRM);
+    for (unsigned I = 0; I < 4; ++I)
+      Code += static_cast<char>(Displacement >> (8 * I));
+  }
+  Code += '\xc3';
+  const auto Input =
+      write("string-refs.elf",
+            makeDataELF(std::string_view(Data, sizeof(Data)), Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  // The image has no symbols; the detector lists the entry's function.
+  ASSERT_GE(neverd_session_discover_functions(Session), 1)
+      << takeString(neverd_last_error(Session));
+  // Rows as (from, to, string, text offset).
+  const auto rows = [&](const char *Options) {
+    std::vector<std::tuple<uint64_t, uint64_t, uint64_t, int64_t>> Rows;
+    const auto Text =
+        takeString(neverd_string_refs_json(Session, Options, 0, 16));
+    auto Parsed = llvm::json::parse(Text);
+    EXPECT_TRUE(static_cast<bool>(Parsed)) << Text;
+    if (!Parsed)
+      return Rows;
+    const auto *Refs = Parsed->getAsObject()->getArray("refs");
+    for (const auto &Ref : *Refs) {
+      const auto &Row = *Ref.getAsArray();
+      const auto address = [&](size_t I) {
+        return std::stoull(Row[I].getAsString()->str(), nullptr, 16);
+      };
+      EXPECT_EQ(Row[4].getAsString()->str(), "offset") << Text;
+      EXPECT_TRUE(Row[5].getAsNull()) << Text;
+      Rows.emplace_back(address(0), address(1), address(2),
+                        *Row[3].getAsInteger());
+    }
+    return Rows;
+  };
+  // "world" is long enough on its own; "ld" and "\u6587\u5b57\u7b26" after
+  // the byte inside "\u4e2d" are not, under the default four characters.
+  using Row = std::tuple<uint64_t, uint64_t, uint64_t, int64_t>;
+  EXPECT_EQ(
+      rows(nullptr),
+      (std::vector<Row>{{DataELFEntry, DataELFData, DataELFData, 0},
+                        {DataELFEntry + 7, DataELFData + 6, DataELFData, 6}}));
+  // With three, the reference into "\u4e2d" reads from the next character,
+  // three UTF-8 bytes into the string's text.
+  const auto Three = rows(R"({"min_length":3})");
+  ASSERT_EQ(Three.size(), 3u);
+  EXPECT_EQ(Three[2],
+            (Row{DataELFEntry + 21, DataELFData + 13, DataELFData + 12, 3}));
+  EXPECT_EQ(neverd_string_refs_json(Session, R"({"encodings":["gbk","big5"]})",
+                                    0, 16),
+            nullptr);
+}
+
+// A 32-bit PE image based at 0x400000 running \p Code at 0x401000, with
+// \p Data at 0x402000 and, when \p Relocated lists any, base relocations
+// (HIGHLOW) for the code bytes at those offsets.
+std::string makePE32(std::string_view Code, std::string_view Data,
+                     llvm::ArrayRef<uint16_t> Relocated) {
+  constexpr uint32_t ImageBase = 0x400000, Headers = 0x200, Raw = 0x200;
+  std::string Reloc;
+  const auto put16 = [](std::string &Out, size_t At, uint16_t Value) {
+    if (Out.size() < At + 2)
+      Out.resize(At + 2);
+    Out[At] = static_cast<char>(Value);
+    Out[At + 1] = static_cast<char>(Value >> 8);
+  };
+  const auto put32 = [&](std::string &Out, size_t At, uint32_t Value) {
+    put16(Out, At, static_cast<uint16_t>(Value));
+    put16(Out, At + 2, static_cast<uint16_t>(Value >> 16));
+  };
+  if (!Relocated.empty()) {
+    // One block for the code page, padded to four bytes with an absolute
+    // entry.
+    const size_t Entries = (Relocated.size() + 1) / 2 * 2;
+    put32(Reloc, 0, 0x1000);
+    put32(Reloc, 4, static_cast<uint32_t>(8 + 2 * Entries));
+    for (size_t I = 0; I < Entries; ++I)
+      put16(Reloc, 8 + 2 * I,
+            I < Relocated.size() ? static_cast<uint16_t>(0x3000 | Relocated[I])
+                                 : 0);
+  }
+  struct SectionSpec {
+    const char *Name;
+    uint32_t Rva;
+    std::string_view Bytes;
+    uint32_t Flags;
+  };
+  const SectionSpec Sections[] = {{".text", 0x1000, Code, 0x60000020},
+                                  {".rdata", 0x2000, Data, 0x40000040},
+                                  {".reloc", 0x3000, Reloc, 0x42000040}};
+  const unsigned Count = Relocated.empty() ? 2 : 3;
+  std::string Bytes(Headers + Count * Raw, '\0');
+  Bytes[0] = 'M';
+  Bytes[1] = 'Z';
+  put32(Bytes, 0x3c, 0x40);
+  Bytes.replace(0x40, 4, std::string("PE\0\0", 4));
+  put16(Bytes, 0x44, 0x14c); // Machine: i386
+  put16(Bytes, 0x46, static_cast<uint16_t>(Count));
+  put16(Bytes, 0x54, 0xe0);   // SizeOfOptionalHeader
+  put16(Bytes, 0x56, 0x0102); // Executable, 32-bit
+  constexpr size_t Optional = 0x58;
+  put16(Bytes, Optional, 0x10b);       // PE32
+  put32(Bytes, Optional + 16, 0x1000); // AddressOfEntryPoint
+  put32(Bytes, Optional + 28, ImageBase);
+  put32(Bytes, Optional + 32, 0x1000);               // SectionAlignment
+  put32(Bytes, Optional + 36, 0x200);                // FileAlignment
+  put16(Bytes, Optional + 40, 4);                    // OS version
+  put16(Bytes, Optional + 48, 4);                    // Subsystem version
+  put32(Bytes, Optional + 56, 0x1000 * (Count + 1)); // SizeOfImage
+  put32(Bytes, Optional + 60, Headers);
+  put16(Bytes, Optional + 68, 3);  // Console
+  put32(Bytes, Optional + 92, 16); // NumberOfRvaAndSizes
+  if (!Relocated.empty()) {
+    put32(Bytes, Optional + 96 + 5 * 8, 0x3000);
+    put32(Bytes, Optional + 96 + 5 * 8 + 4,
+          static_cast<uint32_t>(Reloc.size()));
+  }
+  for (unsigned I = 0; I < Count; ++I) {
+    const size_t Header = Optional + 0xe0 + 40 * I;
+    Bytes.replace(Header, std::strlen(Sections[I].Name), Sections[I].Name);
+    put32(Bytes, Header + 8, static_cast<uint32_t>(Sections[I].Bytes.size()));
+    put32(Bytes, Header + 12, Sections[I].Rva);
+    put32(Bytes, Header + 16, Raw);
+    put32(Bytes, Header + 20, Headers + I * Raw);
+    put32(Bytes, Header + 36, Sections[I].Flags);
+    Bytes.replace(Headers + I * Raw, Sections[I].Bytes.size(),
+                  Sections[I].Bytes);
+  }
+  return Bytes;
+}
+
+TEST_F(SessionCAPITest, RelocatedImmediatesAreOffsetsAndNumbersAreNot) {
+  // push 0x402000; mov dword ptr [esp], 0x402000; mov eax, 0x402006; ret
+  using namespace std::string_view_literals;
+  constexpr auto Code = "\x68\x00\x20\x40\x00"
+                        "\xc7\x04\x24\x00\x20\x40\x00"
+                        "\xb8\x06\x20\x40\x00"
+                        "\xc3"sv;
+  constexpr auto Data = "hello\0world\0"sv;
+  const auto offsets = [&](bool Relocated) {
+    const uint16_t Fields[] = {0x001, 0x008, 0x00d};
+    const auto Input =
+        write(Relocated ? "relocated.exe" : "fixed.exe",
+              makePE32(Code, Data,
+                       Relocated ? llvm::ArrayRef<uint16_t>(Fields)
+                                 : llvm::ArrayRef<uint16_t>()));
+    EXPECT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+        << takeString(neverd_last_error(Session));
+    std::vector<uint64_t> Targets;
+    const auto Text = takeString(
+        neverd_disasm_json_ex(Session, 0x401000, 4, NEVERD_DISASM_FLOW));
+    auto Parsed = llvm::json::parse(Text);
+    EXPECT_TRUE(static_cast<bool>(Parsed)) << Text;
+    if (!Parsed)
+      return Targets;
+    for (const auto &Row : *Parsed->getAsArray())
+      if (const auto *Refs = Row.getAsObject()->getArray("refs"))
+        for (const auto &Ref : *Refs)
+          if (Ref.getAsObject()->getString("kind") == "offset")
+            Targets.push_back(std::stoull(
+                Ref.getAsObject()->getString("to")->str(), nullptr, 16));
+    return Targets;
+  };
+  // The loader relocates each immediate, so each is an address.
+  EXPECT_EQ(offsets(true),
+            (std::vector<uint64_t>{0x402000, 0x402000, 0x402006}));
+  ASSERT_GE(neverd_session_discover_functions(Session), 1);
+  const auto Refs =
+      takeString(neverd_string_refs_json(Session, nullptr, 0, 16));
+  EXPECT_NE(
+      Refs.find(
+          R"(["0x401000","0x402000","0x402000",0,"offset",null,"push 0x402000"])"),
+      std::string::npos)
+      << Refs;
+  EXPECT_NE(
+      Refs.find(
+          R"(["0x40100C","0x402006","0x402006",0,"offset",null,"mov eax, 0x402006"])"),
+      std::string::npos)
+      << Refs;
+  // Without relocations the same immediates are numbers.
+  EXPECT_TRUE(offsets(false).empty());
+}
+
+TEST_F(SessionCAPITest, HexDumpsCrossGapsAndReadTextInAnyEncoding) {
+  // GBK "\u4e2d\u6587" then "ab", in the data segment after a gap.
+  constexpr char Data[] = "\xd6\xd0\xce\xc4"
+                          "ab";
+  const auto Input =
+      write("hex-dump.elf", makeDataELF(std::string_view(Data, 6)));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  // The bytes before the data segment are unmapped; the dump goes on past
+  // them and leaves out the unmapped lines after the last mapped byte.
+  const auto Dump =
+      takeString(neverd_hex_dump_ex(Session, DataELFData - 16, 48, "gbk"));
+  const auto Lines = llvm::StringRef(Dump).split('\n');
+  EXPECT_TRUE(Lines.first.contains("?? ?? ?? ?? ?? ?? ?? ??")) << Dump;
+  EXPECT_TRUE(
+      Lines.second.contains("d6 d0 ce c4 61 62 ?? ??  ?? ?? ?? ?? ?? ?? ?? ??"))
+      << Dump;
+  // Each wide character draws two columns over its two bytes; the segment
+  // ends after "ab".
+  EXPECT_TRUE(Lines.second.contains("|\xe4\xb8\xad\xe6\x96\x87"
+                                    "ab          |"))
+      << Dump;
+  EXPECT_EQ(llvm::StringRef(Dump).count('\n'), 2u) << Dump;
+  // ASCII by default, and an unknown encoding fails.
+  EXPECT_TRUE(
+      llvm::StringRef(takeString(neverd_hex_dump(Session, DataELFData, 6)))
+          .contains("|....ab|"));
+  EXPECT_EQ(neverd_hex_dump_ex(Session, DataELFData, 6, "klingon"), nullptr);
+  EXPECT_EQ(neverd_hex_dump(Session, DataELFData + 0x100000, 16), nullptr);
 }
 
 TEST_F(SessionCAPITest, StringScanFindsUTF8AndWideStringsByOption) {
@@ -1875,12 +2172,40 @@ TEST_F(SessionCAPITest, StringScanFindsUTF8AndWideStringsByOption) {
   EXPECT_EQ(Scan(R"({"min_length":0})"),
             "error: min_length must be an integer from 1 to 1024");
   EXPECT_EQ(Scan(R"({"limit":3})"), "error: unknown string option: limit");
+  EXPECT_EQ(Scan(R"({"encodings":["gbk","big5"]})"),
+            "error: only one legacy code page can be searched at a time");
   EXPECT_EQ(Scan("[]"), "error: string options must be a JSON object");
 
   const auto Encodings = takeString(neverd_string_encodings_json());
   EXPECT_NE(Encodings.find(R"("name":"utf-16le","spelling":"UTF-16LE")"),
             std::string::npos)
       << Encodings;
+}
+
+TEST_F(SessionCAPITest, StringScanReadsTheChosenCodePage) {
+  // "中文字符串" in GBK after a NUL.
+  constexpr char Data[] = "\0\xd6\xd0\xce\xc4\xd7\xd6\xb7\xfb\xb4\xae\0";
+  const auto Input =
+      write("gbk.elf", makeDataELF(std::string_view(Data, sizeof(Data) - 1)));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_strings_ex_json(Session, nullptr)), "[]");
+  const auto Found = takeString(
+      neverd_strings_ex_json(Session, R"({"encodings":["ascii","cp936"]})"));
+  EXPECT_EQ(Found, "[{\"addr\":\"0x401001\",\"chars\":5,\"encoding\":\"gbk\","
+                   "\"length\":10,\"value\":\"\xe4\xb8\xad\xe6\x96\x87\xe5\xad"
+                   "\x97\xe7\xac\xa6\xe4\xb8\xb2\"}]");
+}
+
+TEST(SessionTextDecoding, DecodesBytesForDisplayInAnyEncoding) {
+  const unsigned char GBK[] = {'a', 0xd6, 0xd0, 0xff, 0x80};
+  EXPECT_EQ(takeString(neverd_decode_text_json(GBK, sizeof(GBK), "gbk")),
+            "{\"cells\":[\"a\",\"\xe4\xb8\xad\",\"\",null,\"\xe2\x82\xac\"]}");
+  const unsigned char Wide[] = {'O', 0, 'K', 0, 0x0a, 0};
+  EXPECT_EQ(takeString(neverd_decode_text_json(Wide, sizeof(Wide), "utf-16le")),
+            R"({"cells":["O","","K","",null,null]})");
+  EXPECT_EQ(neverd_decode_text_json(GBK, sizeof(GBK), "ebcdic"), nullptr);
+  EXPECT_EQ(neverd_decode_text_json(GBK, -1, "gbk"), nullptr);
 }
 
 TEST_F(SessionCAPITest, DecompileDiffPreservesEqualSuccessfulOutputs) {

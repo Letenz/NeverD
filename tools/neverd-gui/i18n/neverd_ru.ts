@@ -703,6 +703,14 @@
         <source>Choose the encodings and minimum length of the strings the listing shows</source>
         <translation>Выбрать кодировки и минимальную длину строк, показываемых в листинге</translation>
     </message>
+    <message>
+        <source>String &amp;references</source>
+        <translation>&amp;Ссылки на строки</translation>
+    </message>
+    <message>
+        <source>List the instructions that refer to strings</source>
+        <translation>Показать инструкции, ссылающиеся на строки</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -825,6 +833,18 @@
     <message>
         <source>Description</source>
         <translation>Описание</translation>
+    </message>
+    <message>
+        <source>String references</source>
+        <translation>Ссылки на строки</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>Функция</translation>
+    </message>
+    <message>
+        <source>Disassembly</source>
+        <translation>Дизассемблированный код</translation>
     </message>
 </context>
 <context>
@@ -1505,6 +1525,13 @@ Recognized library operation; click to show its code.</source>
     </message>
 </context>
 <context>
+    <name>neverd::gui::HexView</name>
+    <message>
+        <source>Text encoding</source>
+        <translation>Кодировка текста</translation>
+    </message>
+</context>
+<context>
     <name>neverd::gui::JumpDialog</name>
     <message>
         <source>Jump anywhere</source>
@@ -1851,6 +1878,18 @@ Signed: %4</source>
         <source>Minimum length:</source>
         <translation>Минимальная длина:</translation>
     </message>
+    <message>
+        <source>None</source>
+        <translation>Нет</translation>
+    </message>
+    <message>
+        <source>Also read C strings that are not UTF-8 in this code page</source>
+        <translation>Также читать в этой кодовой странице C-строки, не являющиеся UTF-8</translation>
+    </message>
+    <message>
+        <source>Code page:</source>
+        <translation>Кодовая страница:</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -1901,6 +1940,10 @@ Signed: %4</source>
     <message>
         <source>  &lt;expr&gt;            evaluate: 0x10, 10h, #16, names, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</source>
         <translation>  &lt;expr&gt;            вычислить: 0x10, 10h, #16, имена, + - * / % &amp; | ^ &lt;&lt; &gt;&gt; ~</translation>
+    </message>
+    <message>
+        <source>  strref [text]     list the instructions that refer to strings</source>
+        <translation>  strref [text]     показать инструкции, ссылающиеся на строки</translation>
     </message>
 </context>
 <context>

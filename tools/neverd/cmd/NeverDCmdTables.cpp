@@ -241,28 +241,4 @@ int runEntryPoints(neverd_session_t Sess) {
   return 0;
 }
 
-int runStrings(neverd_session_t Sess) {
-  const char *Json =
-      neverd_strings_json(Sess, static_cast<int>(MinStrLen.getValue()));
-  if (JsonOutput) {
-    outs() << (Json ? Json : "[]") << "\n";
-  } else {
-    auto Parsed = json::parse(Json ? Json : "[]");
-    if (Parsed) {
-      if (auto *Arr = Parsed->getAsArray()) {
-        for (const auto &V : *Arr) {
-          auto *Obj = V.getAsObject();
-          if (!Obj)
-            continue;
-          outs() << Obj->getString("addr").value_or("") << "  "
-                 << Obj->getString("value").value_or("") << "\n";
-        }
-        outs() << "\n" << Arr->size() << " strings found\n";
-      }
-    }
-  }
-  neverd_free_string(Json);
-  return 0;
-}
-
 } // namespace neverd::cli

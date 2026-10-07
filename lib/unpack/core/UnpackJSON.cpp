@@ -93,7 +93,8 @@ std::string unpackResultJSON(const UnpackResult &Result,
     Transfers.push_back(
         llvm::json::Object{{field::RVA, bits(T.RVA)},
                            {field::StackBalanced, T.StackBalanced},
-                           {field::Generation, int64_t(T.Generation)}});
+                           {field::Generation, int64_t(T.Generation)},
+                           {field::ProgramInvocation, T.ProgramInvocation}});
   llvm::json::Value Output = nullptr;
   if (!Result.Image.empty()) {
     const auto Digest = llvm::SHA256::hash(Result.Image);
@@ -120,8 +121,21 @@ std::string unpackResultJSON(const UnpackResult &Result,
        Result.EntryRVA ? llvm::json::Value(entrySourceName(Result.Source))
                        : llvm::json::Value(nullptr)},
       {field::Transfers, std::move(Transfers)},
+      {field::MaterializedTLSCallbacks,
+       int64_t(Result.MaterializedTLSCallbacks)},
       {field::Sections, std::move(Sections)},
       {field::Imports, std::move(Imports)},
+      {field::ImportRepair,
+       llvm::json::Object{
+           {field::Stop, Result.ImportRepair.Stop},
+           {field::Diagnostic, Result.ImportRepair.Diagnostic},
+           {field::ObservedCalls, Result.ImportRepair.ObservedCalls},
+           {field::RepairedCalls, Result.ImportRepair.RepairedCalls},
+           {field::ConflictingCalls, Result.ImportRepair.ConflictingCalls},
+           {field::ObservedLoads, Result.ImportRepair.ObservedLoads},
+           {field::RepairedLoads, Result.ImportRepair.RepairedLoads},
+           {field::Instructions, Result.ImportRepair.Instructions},
+           {field::Events, Result.ImportRepair.Events}}},
       {field::Execution,
        llvm::json::Object{
            {field::Profile, Result.Profile},

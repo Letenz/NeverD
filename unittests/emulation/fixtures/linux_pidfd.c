@@ -10,6 +10,9 @@ enum {
   Mmap = 222,
   Mprotect = 226,
   Munmap = 215,
+  ClockGetTime = 113,
+  Nanosleep = 101,
+  PPoll = 73,
   GetPID = 172,
   OpenAt = 56,
   Close = 57,
@@ -24,6 +27,9 @@ enum {
   Mmap = 9,
   Mprotect = 10,
   Munmap = 11,
+  ClockGetTime = 228,
+  Nanosleep = 35,
+  PPoll = 271,
   GetPID = 39,
   OpenAt = 257,
   Close = 3,
@@ -94,6 +100,162 @@ void process_main(U64 *stack) {
     finish(0);
   }
   U64 self = linux_service(GetPID, 0, 0, 0);
+  if (mode == 'o' || mode == 'h' || mode == 'j' || mode == 'k' || mode == 'r') {
+    struct time_value {
+      long seconds, nanoseconds;
+    } timeout, wall;
+    timeout.seconds = 0;
+    timeout.nanoseconds = 0;
+    struct poll_descriptor {
+      int fd;
+      unsigned short events, revents;
+    } entries[5];
+    // Freestanding O0 fixtures cannot call an out-of-line aggregate memcpy.
+    entries[0].fd = 3;
+    entries[0].events = 17;
+    entries[0].revents = 0xa5a5;
+    entries[1].fd = 4;
+    entries[1].events = 0xffff;
+    entries[1].revents = 0x5a5a;
+    entries[2].fd = -1;
+    entries[2].events = 0xf0;
+    entries[2].revents = 0xa5a5;
+    entries[3].fd = 99;
+    entries[3].events = 0;
+    entries[3].revents = 0x5a5a;
+    entries[4].fd = 99;
+    entries[4].events = 0xffff;
+    entries[4].revents = 77;
+    if (mode == 'h') {
+      call6(PPoll, 1, 0, (U64)&timeout, 0, 0, 0);
+      finish(91);
+    }
+    require(pidfd(self, 0) == 3, 103);
+    if (mode == 'j') {
+      U64 mask = 0;
+      call6(PPoll, (U64)entries, 1, (U64)&timeout, (U64)&mask, 8, 0);
+      finish(91);
+    }
+    if (mode == 'k') {
+      timeout.nanoseconds = 1;
+      call6(PPoll, (U64)entries, 1, (U64)&timeout, 0, 0, 0);
+      finish(91);
+    }
+    if (mode == 'r') {
+      require(linux_service(OpenAt, (U64)-100, (U64) "/catalog/input", 0) == 4,
+              104);
+      call6(PPoll, (U64)(entries + 1), 1, (U64)&timeout, 0, 0, 0);
+      finish(91);
+    }
+    require(pidfd(2000, 0) == 4, 105);
+    require(call6(PPoll, (U64)entries, 0x100000005UL, (U64)&timeout, 0, ~0UL,
+                  ~0UL) == 2,
+            106);
+    require(entries[0].fd == 3 && entries[0].events == 17 &&
+                entries[0].revents == 0 && entries[1].revents == 0 &&
+                entries[2].fd == -1 && entries[2].events == 0xf0 &&
+                entries[2].revents == 0 && entries[3].revents == 32 &&
+                entries[4].revents == 32,
+            107);
+    require(call6(PPoll, 1, 6, (U64)&timeout, 0, 0, 0) == (U64)-22, 108);
+    require(call6(PPoll, 1, 6, 1, 1, 7, 0) == (U64)-14, 109);
+    timeout.seconds = -1;
+    require(call6(PPoll, 1, 0, (U64)&timeout, 1, 7, 0) == (U64)-22, 110);
+    timeout.seconds = 0;
+    timeout.nanoseconds = -1;
+    require(call6(PPoll, 1, 0, (U64)&timeout, 0, 0, 0) == (U64)-22, 111);
+    timeout.nanoseconds = 1000000000;
+    require(call6(PPoll, 1, 0, (U64)&timeout, 0, 0, 0) == (U64)-22, 112);
+    timeout.nanoseconds = 0;
+    require(call6(PPoll, 1, 0, (U64)&timeout, 1, 7, 0) == (U64)-22, 113);
+    require(call6(PPoll, 1, 0, (U64)&timeout, 1, 8, 0) == (U64)-14, 114);
+    require(call6(PPoll, 1, 1UL << 32, (U64)&timeout, 0, ~0UL, 0) == 0, 115);
+    require(call6(PPoll, ~0UL, 0, (U64)&timeout, 0, 0, 0) == (U64)-14, 116);
+    require(linux_service(ClockGetTime, 1, (U64)&wall, 0) == 0 &&
+                wall.seconds == 31 && wall.nanoseconds == 0,
+            117);
+    U64 pages = call6(Mmap, 0, 12288, 3, 0x22, ~0UL, 0);
+    require((long)pages >= 0, 118);
+    struct poll_descriptor *tail = (void *)(pages + 4096 - 8);
+    tail[0] = (struct poll_descriptor){-1, 17, 0xa5a5};
+    tail[1] = (struct poll_descriptor){3, 17, 0x5a5a};
+    struct time_value *readonly_timeout = (void *)(pages + 8192);
+    *readonly_timeout = timeout;
+    require(linux_service(Mprotect, pages + 8192, 4096, 1) == 0, 119);
+    require(linux_service(Mprotect, pages + 4096, 4096, 1) == 0, 120);
+    require(call6(PPoll, (U64)tail, 2, (U64)readonly_timeout, 0, 0, 0) ==
+                (U64)-14,
+            121);
+    require(tail[0].revents == 0 && tail[1].revents == 0x5a5a &&
+                tail[0].fd == -1 && tail[0].events == 17 && tail[1].fd == 3 &&
+                tail[1].events == 17,
+            122);
+    require(call6(PPoll, (U64)tail, 1, (U64)readonly_timeout, 0, 0, 0) == 0,
+            123);
+    tail[0].fd = 1; // Unknown readiness must follow complete metadata import.
+    tail[0].revents = 77;
+    require(linux_service(Mprotect, pages + 4096, 4096, 0) == 0, 124);
+    require(call6(PPoll, (U64)tail, 2, (U64)readonly_timeout, 0, 0, 0) ==
+                    (U64)-14 &&
+                tail[0].revents == 77,
+            125);
+    require(linux_service(Munmap, pages, 12288, 0) == 0, 126);
+    require(linux_service(Close, 3, 0, 0) == 0, 127);
+    require(linux_service(Close, 4, 0, 0) == 0, 128);
+    require(call6(PPoll, (U64)entries, 1, (U64)&timeout, 0, 0, 0) == 1 &&
+                entries[0].revents == 32,
+            129);
+    if (arguments[2][0] == '1') {
+      require(pidfd(3000, 0x80) == 3, 130);
+      require(call6(PPoll, (U64)entries, 1, (U64)&timeout, 0, 0, 0) == 0 &&
+                  entries[0].revents == 0,
+              131);
+    }
+    finish(0);
+  }
+  if (mode == 'q' || mode == 'z' || mode == 'w') {
+    U64 id = mode == 'q' ? (U64)-16006 : mode == 'z' ? (U64)-29 : (U64)-2;
+    linux_service(ClockGetTime, id, ~0UL, 0);
+    finish(91);
+  }
+  if (mode == 'p') {
+    struct time_value {
+      U64 seconds, nanoseconds;
+    } value = {0xa5, 0x5a};
+    const U64 aliases[] = {2, (U64)-6, (U64)-8006};
+    for (unsigned i = 0; i < 3; ++i) {
+      require(linux_service(ClockGetTime, aliases[i], (U64)&value, 0) == 0, 80);
+      require(value.seconds == 3 && value.nanoseconds == 4, 81);
+    }
+    require(linux_service(ClockGetTime, 0x12345678ffffc17aUL, (U64)&value, 0) ==
+                0,
+            82);
+    require(value.seconds == 7 && value.nanoseconds == 9, 83);
+    require(linux_service(ClockGetTime, (U64)-16007, (U64)&value, 0) == 0, 84);
+    require(value.seconds == 8 && value.nanoseconds == 10, 85);
+    require(linux_service(ClockGetTime, (U64)-16008, (U64)&value, 0) == 0, 86);
+    require(value.seconds == 9 && value.nanoseconds == 11, 87);
+    const U64 own[] = {(U64)-8, (U64)-8008, (U64)-7, (U64)-8007};
+    for (unsigned i = 0; i < 4; ++i) {
+      require(linux_service(ClockGetTime, own[i], (U64)&value, 0) == 0, 88);
+      require(value.seconds == (i < 2 ? 13 : 16) &&
+                  value.nanoseconds == (i < 2 ? 15 : 17),
+              89);
+    }
+    require(linux_service(ClockGetTime, (U64)-16014, ~0UL, 0) == (U64)-22, 92);
+    require(linux_service(ClockGetTime, (U64)-24006, ~0UL, 0) == (U64)-22, 93);
+    require(linux_service(ClockGetTime, (U64)-1, ~0UL, 0) == (U64)-22, 94);
+    require(linux_service(ClockGetTime, (U64)-16006, ~0UL, 0) == (U64)-14, 95);
+    const struct time_value duration = {0, 2};
+    require(linux_service(Nanosleep, (U64)&duration, 0, 0) == 0, 96);
+    require(linux_service(ClockGetTime, 1, (U64)&value, 0) == 0, 97);
+    require(value.seconds == 11 && value.nanoseconds == 1, 98);
+    require(linux_service(ClockGetTime, (U64)-6, (U64)&value, 0) == 0, 99);
+    require(value.seconds == 3 && value.nanoseconds == 4, 100);
+    require(linux_service(ClockGetTime, (U64)-16006, (U64)&value, 0) == 0, 101);
+    require(value.seconds == 7 && value.nanoseconds == 9, 102);
+    finish(0);
+  }
   if (mode == 'e') {
     require(pidfd(2000, 0) == (U64)-3, 61);
     require(pidfd(self, 0) == 3, 62);

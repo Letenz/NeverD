@@ -124,6 +124,44 @@ TEST_P(WindowsProcess, APIErrorsDoNotPoisonTheNextValidCall) {
   EXPECT_EQ(R.ExitStatus, ExitStatus);
   EXPECT_EQ(R.StandardOutput, std::string(Message) + Detached);
 }
+TEST_P(WindowsProcess, ClockServicesUseConsistentUnitsAndPreserveLastError) {
+  const auto R = run(ClockServices);
+  EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+  EXPECT_EQ(R.ExitStatus, ExitStatus) << llvm::toHex(R.StandardError);
+  EXPECT_EQ(R.StandardOutput, std::string(Message) + Detached);
+  EXPECT_EQ(R.StandardError, std::string(Binary, sizeof(Binary) - 1));
+#define NEVERD_WINDOWS_CLOCK_CALL(Symbol, Count)                               \
+  EXPECT_EQ(                                                                   \
+      std::count_if(R.NativeCalls.begin(), R.NativeCalls.end(),                \
+                    [](const auto &Call) { return Call.Name == #Symbol; }),    \
+      Count);
+#include "WindowsProcessTestData.def"
+#undef NEVERD_WINDOWS_CLOCK_CALL
+}
+TEST_P(WindowsProcess, UnmodeledDelaysStopWithoutClaimingCompletion) {
+  struct Negative {
+    const char *Mode, *Diagnostic;
+  };
+  const Negative Cases[] = {
+#define NEVERD_WINDOWS_DELAY_REJECT(Mode, Diagnostic)                          \
+  {Mode, win::text::Diagnostic},
+#include "WindowsProcessTestData.def"
+#undef NEVERD_WINDOWS_DELAY_REJECT
+  };
+  for (const auto &C : Cases) {
+    SCOPED_TRACE(C.Mode);
+    const auto R = run(C.Mode);
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    EXPECT_NE(R.Diagnostic.find(C.Diagnostic), std::string::npos)
+        << R.Diagnostic;
+    EXPECT_FALSE(R.ExitStatus);
+    EXPECT_TRUE(R.StandardOutput.empty());
+    EXPECT_TRUE(R.StandardError.empty());
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_EQ(R.NativeCalls.back().Name, DelayName);
+    EXPECT_FALSE(R.NativeCalls.back().Result);
+  }
+}
 TEST_P(WindowsProcess, SharedInstructionBudgetIncludesTLSInitialization) {
   Options.Limits.Instructions = LoopLimit;
   Options.InstructionQuantum = LoopQuantum;
@@ -293,7 +331,7 @@ TEST_P(WindowsProcess, GuardPagesRequireExplicitExceptionSupport) {
   EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
   EXPECT_FALSE(R.ExitStatus);
 }
-// The direct user contract runs the same program on the hardware transport
+// The direct user contract runs the same program on the selected transport
 // between architectural events instead of single-stepping it. Its observable
 // result must equal the checked contract's, and nothing is single-stepped. A
 // transport without a free-running entry reports the contract unsupported
@@ -307,7 +345,8 @@ TEST_P(WindowsProcess, DirectUserContractMatchesCheckedOrIsUnsupported) {
   Options.Contract = ExecutionContract::DirectUserX64;
   auto Direct = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
   ASSERT_TRUE(bool(Direct)) << llvm::toString(Direct.takeError());
-  const bool Native = GetParam().Backend == ExecutionBackendKind::KVM ||
+  const bool Native = GetParam().Backend == ExecutionBackendKind::Unicorn ||
+                      GetParam().Backend == ExecutionBackendKind::KVM ||
                       GetParam().Backend == ExecutionBackendKind::WHP;
   if (!Native) {
     EXPECT_EQ(Direct->Stop, ProcessStopReason::CPUFailure)
@@ -605,8 +644,8 @@ TEST_F(WindowsProcessImage, NativeWindowsOracleRunsTheSameExecutable) {
   ASSERT_FALSE(EC) << EC.message();
   for (const char *Mode :
        {Normal, Returned, Errors, AliasedOutput, TLSMutation, TailExit,
-        NativeExit, MemoryLifecycle, MemoryAlignment, MemoryQuery, MemoryCode,
-        MemoryAlias, MemoryPlacement, MemoryReclaim}) {
+        NativeExit, ClockServices, MemoryLifecycle, MemoryAlignment,
+        MemoryQuery, MemoryCode, MemoryAlias, MemoryPlacement, MemoryReclaim}) {
     SCOPED_TRACE(Mode);
     const auto Output = (Root / StdoutFile).string();
     const auto Error = (Root / StderrFile).string();

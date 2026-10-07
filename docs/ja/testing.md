@@ -358,6 +358,8 @@ fixture は、ゲストの初期化、成功／失敗の戻り値、未対応動
 
 `DriverMutexThreadTests.cpp` は `driver_seh_mutex.def` の四つの独自 WDK モードを実行します。SEH フィルター内の再帰取得、フィルターまたは例外 finally が取得した所有権の保持、別のシステムスレッドによる解放後のブロック中フィルターの再開です。Unicorn/KVM/WHP の driver と checked 契約で、通常／有効 CFG イメージ、推奨／再配置アドレス、協調動作と 1/17 命令の時間片を検証します。モデルテストはネストしたスタック破棄後の APC 無効化、別スレッドからの解放拒否、最外層の復帰検査も確認します。KVM/WHP ケースは `NativeDriverTests.def` の必須項目です。
 
+`KernelWaitSetTests.cpp` は Unicorn なしで 15 件のモデルテストを実行し、部分的 `WaitAll`、先頭の準備済み `WaitAny`、保存インデックス、タイムアウト後の解放、不正な後続対象／領域、64 対象境界、IRQL、終了スレッド保持、2 個の同期タイマーを検証します。`DriverMultipleWaitTests.cpp` は `driver_wdm_multiple_wait.c` と `DriverMultipleWaitCases.def` の 7 種の独自 WDK モードを、Unicorn/KVM/WHP、両ドライバー契約、通常／CFG イメージ、再配置、協調／1／17 命令クォンタムで実行します。29 件のモデル／ネイティブ結果は `NativeDriverTests.def` の必須項目です。 回帰テストでは成功・タイムアウト後の重複完了、保存状態の変更、遅延待機の重複完了も検証します。
+
 `driver_context_limits.c`: API の IRQL 上限は `KernelAPIIRQL.def` にあり、引数依存の制約は担当モデルが検査します。DPC からレジストリ API やページプールの割り当て・解放・アクセスはできません。Unicode `DbgPrint` 変換は `PASSIVE_LEVEL` を要求し、対応する ANSI 出力と非ページ操作は `DISPATCH_LEVEL` で使用できます。コールバックスタックには範囲があり、逸脱したスタックポインターは別の待機ワーカーのスタックへ侵入できません。デバイス拡張内の有効なタイマーは早期解放を防ぎます。一般の IRQL 変更を公開する機能ではありません。
 
 `KernelDeviceStackTests.cpp` は所有関係と接続の独立性、最上位選択、失敗時の原子性、スタック容量、不透明フィールド、ハンドル数、切断・削除をまたぐワーク項目／要求の保持、ファイルとディスパッチ対象の違いを検証します。独自の `driver_wdm_stack.c` は実 WDK ヘッダーとインライン Copy/Skip/SetCompletion を使用し、通常／有効 CFG イメージを任意の `NEVERD_WDM_STACK_FIXTURE`／`NEVERD_WDM_STACK_CFG_FIXTURE` で指定します。`DriverWDMStackTests.cpp` は再配置、下位の実状態、完了順序／条件、遅延 pending 伝播、ワーカー／DPC、待機、`STATUS_MORE_PROCESSING_REQUIRED`、直接 MDL 保持、入れ子の完了、不正カーソル／制御を検証します。`DriverScenarioPublicTests.cpp` は C API／CLI 転送と C API の保持／入れ子完了を、設定された CFG イメージも含めて検証します。欠落時は明示的にスキップし、Linux の証拠は同一ドライバーのスタック範囲だけを示します。PDO／PnP／電源対応は示しません。 `KernelIRPStackTests.cpp` は個数に基づくカーソル、完全なインライン Copy 範囲、消費済み位置のクリア、状態／pending 伝播、MPR と入れ子完了、継続所有者、保持経路を検証します。実 READ/WRITE とファイルのライフサイクルもインライン Copy で検証します。
@@ -1230,9 +1232,9 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `windows-alignment-oracle.yml` は `check_windows_alignment.py` と `WindowsAlignmentCases.def` を使い、独自の x64 Windows 例外を 72 件観測します。九つの aligned SSE 形式を、七つの非整列アドレス／アクセス権のケースと、整列済みだがアクセス不能なページの対照で実行します。例外コード、引数、障害 PC、保存コンテキスト、生の出力、ソースとバイナリのハッシュを保持し、入力と RAM が不変であることを確認します。これは OS の動作の観測であり、KVM/WHP の実行認証や SEH 対応の追加ではありません。
 
-`native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 46 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
+`native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 113 ワークロードについて、元のアドレスと再配置先で計 226 の WHP 結果を必須とします。内訳は組み込みイメージ 27 個、WDK イメージ 46 個、要求シナリオ 40 個です。CPU の 4887 検査とSEH 回帰検査 25 件とスケジューリング検査 77 件を合わせ、必須の結果は 5215 件です。固定イメージの再配置では従来どおり拒否を期待します。WDK イメージやシナリオが欠落またはスキップされると、この任意の CI ジョブは失敗します。通常のローカルビルドでは外部フィクスチャは任意のままです。`run_native_cpu_ci.py --with-drivers` は構成済みのテストターゲット、完全な一覧、JUnit 証拠を記録します。イメージの構築だけでは Windows や ARM64 のネイティブ実行を証明しません。次のコマンドでローカルに再現でき、生成したキャッシュを既存のエミュレーションビルドへ読み込むこともできます。 `4887 CPU + 226 WHP + 25 SEH + 77 scheduling = 5215`.
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `4935 CPU + 230 WHP + 25 SEH + 77 scheduling + 29 wait sets = 5296`。待機集合の 29 件は移植可能なモデル 15 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1301,11 +1303,17 @@ checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト�
 
 `WhpStateTransferTests.cpp` は両世代の XSAVE API で転送を注入し、変更グループ、完全取得、パディング無視、部分失敗、キャンセル、例外優先順位、区画再作成を検証します。`ContinuedStepsReuseCapturedRegistersAndFP` は省略された設定を数え、`PartialTransferFailuresPreserveStateAndForceFullRetry` は完全復元を要求します。これはプロトコル検証であり、既存のネイティブ FP・状態遷移・ドライバー・ring3 テストも引き続き必要です。
 
+`CancelledDirectRunPublishesACompleteBoundary` は direct 実行のキャンセル確認時に完全な状態を公開することを検証します。`FailedDirectCapturePreservesStateAndForcesFullRetry` はキャンセル中のレジスター、XSAVE、メタデータ取得の失敗で呼び出し元の状態を保持し、完全な再試行を要求します。両世代の API とも部分的なレジスター状態を公開してはいけません。
+
 `WhpStateTransferCases.def` は、統合した 32 レジスタ取得の各途中位置での失敗と、七つすべてのメタデータフィールドの不一致も検証します。両世代の XSAVE API は呼び出し元の状態を保持し、再試行時に全状態を復元する必要があります。同じテストで各ステップのレジスタ読み出しが一回であることと、XSAVE が省略したメタデータの補完を確認します。
 
 `windows-pe64-v1` は PEB/TEB、静的・動的 TLS、`DllMain`、名前付き Win32 API、明示的な非循環 DLL グラフを持つ有界 Windows x64/ARM64 コンソールプロセスに対応します。ゲストモジュールは名前／序数によるコード・データのインポート、DIR64 再配置、転送エクスポートと実際のローダーリスト識別子を扱います。`LoadLibraryA` / `LoadLibraryW`、`FreeLibrary`、`GetProcAddress` は設定済みモジュールカタログを使用します。CRT/GUI、ARM64 のフレームベースのユーザー SEH、スレッド、一般的な Windows アプリ互換性は未完成で、ネイティブ ARM64 KVM/WHP の証拠も未取得です。
 
 入力総バイト数と全イメージ範囲はそれぞれ `memory_limit` に制限され、実行環境のマッピングも後者に含みます。準備は 65,536 レコード、64 MiB のメタデータ読み取り、名前長、共通期限で制限します。ホスト I/O の硬い時間保証はありません。独自 EXE→DLL→DLL は再配置、序数、共有データ、API ポインター、`MEM_IMAGE`、リスト、EXE TLS attach/detach を検証します。`NeverDWindowsProcessTests` はネイティブ Windows 対照、`NeverDPEProgramExportsTests` は不正メタデータと予算、`NeverDProcessPublicTests` は C ABI/CLI の一致を検証します。利用不能なバックエンドは明示的にスキップします。
+
+`WindowsProcess.ClockServicesUseConsistentUnitsAndPreserveLastError` は元の x64/ARM64 PE で `QueryPerformanceFrequency`、単調カウンター、FILETIME、循環 tick 数、相対待機を実行します。`WindowsProcess.UnmodeledDelaysStopWithoutClaimingCompletion` は alertable 待機、正の絶対時刻、INT64_MIN 間隔が完了前に拒否されることを確認します。`NativeWindowsOracleRunsTheSameExecutable` は成功する時刻シナリオを Windows 上で直接実行します。両ゲスト回帰は Unicorn 無効の KVM/WHP 受け入れで必須です。 元のサンプルは `BOOLEAN` 引数の未使用上位ビットを明示的に汚染し、型付き 64 ビット定数で Windows ABI による紀元値と INT64_MIN の切り詰めを防ぎます。
+
+`WindowsTestExecution.def` は Unicorn ARM64 の `WindowsExclusive` 比較に `RUN_SERIAL` を指定します。他のゲスト負荷との競合を避けつつ、元の 60 s のゲスト期限と、結果・レジスター・権限・ネイティブダイジェストの全検査を保持します。
 
 `WindowsProcessLifetime` は同じ CPU と実行予算で依存順に DLL TLS コールバック、`DllMain`、続いて EXE TLS と入口を実行します。各モジュールに独立した TLS インデックスと整列済み領域を割り当て、再配置・リンク済みイメージから共有 64 KiB 領域へコピーします。TLS の予約引数はゼロ、起動／プロセス終了時の `DllMain` は不透明な非 NULL 値です。明示的なプロセス終了は初期化完了 DLL をローダーリストの逆順に切り離し、その後 EXE TLS を呼びます。EXE 初期化前でも同様です。起動時の `DllMain(FALSE)` は detach 通知なしで `0xc0000142` 終了します。障害や予算切れは後処理を捏造しません。ゲスト DLL がある PE 入口の return は未対応のスレッド終了を必要とするため明示停止します。非ゼロの `SizeOfZeroFill` は未対応ですが、実際の TLS テンプレート内のゼロ初期化バイトは対応します。 入口なし DLL は TLS attach を受けますが、プロセス detach 通知は受けません。
 
@@ -1341,7 +1349,13 @@ Windows ring3 は独立したネイティブ観測に従い、checked x64 の `o
 
 `WindowsLifetimeTests.cpp` は固定トレースを独立したネイティブ Windows プロセスと KVM/WHP/Unicorn で照合します。通常終了、入口 return、両 DLL の初期化失敗、4 箇所の早期終了、入口なし DLL を含みます。回呼障害、共通予算、再配置 TLS フィールド、TLS 総容量も検証します。ネイティブ入口 return のプローブは初期スレッドのハンドルを保持し、終了コードと正確なスレッド／プロセス通知列を 64 回検証します。残る子スレッドは観測後に終了させ、プロセス終了値を入口の戻り値として扱いません。
 
-`NeverDUnpackTests`、`NeverDUnpackExecutionTests`、`NeverDUnpackPublicTests` はパックされたイメージの復元を対象とします。[アンパック](unpack.md)を参照してください。`UnpackGeneratedTests.cpp` は、テスト自身がパックしたプログラムを使って、x86-64 と ARM64 でエントリの規則を検査します。`X64ReturnPrefixTests.cpp` は 2 バイトの近リターンをすべてのトランスポートで検査し、それ以外のプレフィックス付きリターンが拒否されたままであることを確認します。`WindowsDeferredTests.cpp` は不透明なエントリと停止したプロセスの観測を、`ExecutionSessionTests.cpp` は実行ウォッチを検査します。
+`NeverDUnpackTests`、`NeverDUnpackExecutionTests`、`NeverDUnpackPublicTests` はパックされたイメージの復元を対象とします。[アンパック](unpack.md)を参照してください。`UnpackGeneratedTests.cpp` は、テスト自身がパックしたプログラムを使って、x86-64 と ARM64 でエントリの規則を検査します。`X64ReturnPrefixTests.cpp` は 2 バイトの近リターンをすべてのトランスポートで検査し、それ以外のプレフィックス付きリターンが拒否されたままであることを確認します。`WindowsDeferredTests.cpp` は不透明なエントリと停止したプロセスの観測を、`ExecutionSessionTests.cpp` は実行ウォッチを検査します。 `DirectX64Tests.cpp` は部分ページの監視、ページ境界の命令取得、一度だけの再開、サービス境界、無効命令とタイムアウト時の状態も検証します。
+
+`ExtendedRegistersLoadOrdinaryImportsAgain` はコンパクト形式と余白付き R8-R15 読み込みを検査付き・直接 x64 実行で確認します。下位レジスタの例は直前の REX 風バイトと CALL のみのアドレス補助ルーチンを扱い、余白付き呼び出しは CALL 後の任意バイトを飛ばします。`ImportCallHelpersCannotDiscardPersistentEffects` は永続的な副作用の保存を確認します。`PERebuildTests.cpp` は開始・結果証拠の欠落と重複開始を拒否し、6～8 バイト領域の正確な API 戻りアドレスを維持します。
+
+`OpaqueExportCallsAreRepairedBeforeTheExplicitStop` は未知 API を迂回せず純粋な呼び出しを復元します。`ExportObservationIncludesTheOpaqueBoundary` は静的・動的・序数エクスポートを確認し、実行とサービスログを維持します。`OpaqueExportObservationPreservesAnUnreadableReturn` は欠落した戻り情報を作らないことを確認します。
+
+`ExportIdentitySurvivesRebindingAndLateResolution` は未モデル化エクスポートのバインド順序を変え、エントリ後の解決も検証します。checked/direct x64 ケースは正しい API 識別情報と明示的な unsupported-service 停止を要求します。
 
 Windows 仮想メモリに `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` と現在のプロセスの `FlushInstructionCache` を追加しました。OS 層が予約領域を所有し、コミット済みページ、権限、物理記憶域は `AddressSpace` が一元管理します。動的コードの書き換え、アクセス違反、メモリ予算の再利用をテストします。
 
@@ -1428,6 +1442,8 @@ build-release/bin/NeverDByteCellScalarizationTests
 `NeverDLowInstructionBoundaryTests` は集約リフトの全フィクスチャを構築せずに LowIR の命令由来テストを実行します。`BackwardSharedReturnEpilogueKeepsReturnAndCallerFrame` は整列した ADD と後置インデックス LDP によるスタック解放、および呼び出し元でリンクレジスタを復元する形を確認し、元の RET X30 と共有入口を独立して保持します。`BackwardSharedReturnEpilogueRejectsChangedReturnAndOwnership` は別の戻り先レジスタ、BR X30、欠落または非整列の解放、狭い復元、内部入口、修正情報、書き込み可能または曖昧なマッピング、再配置可能入力、別形式を拒否します。共有末尾のデコードはネイティブ ABI の証明ではなく、呼び出し元の保存や領域確保が欠ければ既存のフレーム証明は失敗します。
 
 `NeverDOwnInteriorCallTests` は、x64 関数が自身の unwind 範囲内のラベルを直接 call する場合を扱います。積んだ戻りアドレスのためだけの call はプッシュとジャンプとして持ち上げ、直線とループの両ケースで生成した C を `-O0` と `-O2` で AddressSanitizer と未定義動作トラップ付きで実行します。戻りがその call 自身の戻りアドレスを取り出すターゲットは通常の呼び出しのままです。関数が自分で積んだアドレスを取り出しうる戻り（不均衡な復元やスタック切り替えの後）があれば、関数を拒否し、その戻り命令を示します。
+
+`NeverDSysVCallContractTests` は、QtXml の `QDomNode::save` と `QDomNode::isDocument` の形を使って x86-64 System V の呼び出し規約を検査します。サマリが引数レジスタを読む直接呼び出し先は、呼び出し元がそのまま渡す入力の `this` も含め、呼び出し元の値を受け取ります。仮想呼び出しは、支配するブロックが `RDI` に読み込んだオブジェクトを引数に取ります。ある経路では `RAX` を書かずに戻り、他の経路では呼び出し先の結果を渡すだけのメソッドは void になります。比較の連鎖の前に `AL` に書いたバイトは、どの経路でも戻り値です。出力したプログラムは `-O0` と `-O2` で AddressSanitizer と未定義動作トラップ付きで実行します。
 
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` は CoreImage のプロバイダー、CIImage ファクトリー、完全な 48 バイトの論理レコード、x2 ポインターを検証し、欠落・不正なプロバイダー、x86_64、矛盾する宣言を拒否する。`ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` は同じ機械アドレスを持つ結果代入と元の呼び出しを区別する。`RejectsChangedCopyCallBodyAndCurrentImage` は証明、引数、ストア、フレーム、メタデータ、インポート、重複呼び出し、保存 IR に対する 24 種類の変更を拒否し、MedIR と HighIR の整合した同時変更も含む。`GeneratedCExecutesAgainstIndependentPhysicalCopyABI` は ARM64 上で変更しない生成 C を O0/O2 で実行し、コンパイラーから独立に観測した x2 ポインターを受け取る関数と比較する。6 個すべての浮動小数点ビット列、セレクターとレシーバーの識別、1 回の評価、戻りオブジェクト、コピーへの適法な書き込み、入力の不変性、境界ガードを検証する。他のホストではこの物理 ABI 実行テストをスキップする。
 
@@ -1553,7 +1569,14 @@ MainActor のフィクスチャは固定メタデータと静的テーブルの�
 
 
 `BinaryLowIRRefinement.NativeTargetDomainsKeepIndependentProjections` / `FrameOffsets.FrameAndJointTargetProjectionsKeepIndependentSearches` は、分岐変更とシンボリックなフレーム書き込みを含む反復ネイティブ分岐先列、固定論理コスト、問い合わせ予算の境界と一回不足、不正な分岐先数制限、ゲート予算の枯渇、誤った終端観測を検証します。交互のフレーム射影と相関する分岐先射影では、述語置換後も完全なタプル、観測順序、不完全結果の拒否を維持します。
+`FrameOffsets.Cached*` は基準値の上位ビットを任意のままにしたアドレス平行移動、符号なしの折り返し、和の形状変更、両キャッシュ方式、述語の分離、容量ゼロ、クエリ／ノード予算による拒否、空の値域と非一意な値域の区別を検証する。初回要求は完全なソルバー証明を保持し、後続の平行移動はクエリ予算が残っていなくても完了済みの証明を利用できる。
 
-`LinuxKernelAvailability.*` は明示的な欠如入力と profile 准入を検証します。`Backends/LinuxKernelProcess.*` は独立した x64/AArch64 O0/O2 の生の呼出しで、引数検証前の ENOSYS と未指定・無関係な呼出しの継続した拒否を確認します。Android syscall fixture は生の SVC と Bionic `syscall` を比較し、生の戻り値と errno の異なる効果を保ちます。可用性変更ではこれらの重点テストに続き、Linux process、公開 process、Android syscall、native entry、signal の完全な suite を実行します。
+## 公開済み Android GKI カーネルの契約
+
+`AndroidTestExecution.def` は `FiniteRegistryRejectsBeforeSuccessAndCanBeReused` に CTest 全体で 120 秒と `RUN_SERIAL` を設定します。二つのワークロードは各 30 秒の実行制限を保持し、直列化は容量試験間の競合を防ぎます。O0/O2 と再配置の全六構成に適用します。
 
 `LinuxPIDFD.*` は系列解析、不正列挙、GKI と不在観測の衝突、壊れた・過大な・矛盾するタスク一覧をロード前に検証します。`Backends/LinuxPIDFDProcess.*` は独立した O0/O2 x64/AArch64 呼び出しで8系列のフラグ、共有割り当て、制限、close/再利用、閉じた一覧、非リーダーエラーとスカラー/ベクトル順序を検証します。不在対象と非リーダーは FD 枯渇前に判定し、スレッドフラグと暗黙の self のみの空一覧も対象です。ベクトル例は先行する負の長さと後続の読めないメタデータ、元の範囲がユーザー上限を越えても制限後は収まるバッファを比較し、pidfd と両捕捉ストリームを検証します。Android の `ReleasedGKIProcessDescriptorsShareRawAndBionicOwnership`、`ReleasedGKIVectorImportRetainsRawAndBionicErrors`、`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` は6種類の再配置構成で生のエラー、Bionic errno、一覧と枯渇を保持します。対象テスト後に完全な Linux プロセス、Android native、公開プロセスの各スイートを実行します。これはモデルの実行であり8個の GKI カーネルを起動しません。[公開済み GKI 契約](../android-gki-kernels.md)を参照してください。
+
+`ProcessCPUClocksRetainIdentityAndIdleSeparation`, `ProcessCPUClocksKeepMissingObservationBoundaries`, `LinuxClock.ProcessCPUObservationsShareAliasesAndRemainFixedWhileIdle`: 八つの固定版で raw／Bionic の識別、PROF／VIRT／SCHED、下位 32 ビット、ポインター故障より先の対象検証、標本欠落、別名、非負 CPU 時間、壁時計と CPU のアイドル分離を確認します。`AndroidTimeTests.cpp` は出力とカナリアを、協調 syscall は現在の非リーダー TID を確認します。
+
+`ZeroTimeoutPollRetainsReadinessAndOrderedCopies` は八版の O0／O2 生呼び出しで、生存・負・閉じた記述子、重複件数、引数の縮小、タイムアウトとマスクの順序、読み取り専用ゼロ timespec、全メタデータの先行取り込み、後続障害で残る `revents` を検証します。`ZeroTimeoutPollKeepsUnobservedBoundaries` は未観測のカーネル、上限、マスク、待機、準備状態を維持します。Android の `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` は六つの梱包形式で共有表と errno の所有者を確認します。

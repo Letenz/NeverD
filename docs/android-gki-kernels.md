@@ -9,7 +9,9 @@ Linux kernel variants. Select a branch explicitly in a process request:
 
 The Android native profile's API 28 contract describes Bionic imports and does
 not select a Linux kernel version. GKI selection currently controls only the
-implemented `pidfd_open` and vectored-output contracts. It does not certify an
+implemented `pidfd_open`, vectored-output, encoded process CPU clock and
+zero-timeout process-descriptor `ppoll` contracts.
+It does not certify an
 entire kernel, load a kernel image, or infer device, namespace, credentials or
 process inventory.
 Existing unsupported services still stop explicitly. See the official
@@ -20,7 +22,8 @@ Existing unsupported services still stop explicitly. See the official
 The catalogue in `LinuxGKIKernels.def` follows these formal `r1` release tags,
 checked on 2026-10-07. Each linked immutable commit supplies `kernel/pid.c`,
 `include/uapi/linux/pidfd.h`, `arch/arm64/configs/gki_defconfig`,
-`kernel/fork.c`, `lib/iov_iter.c` and `fs/read_write.c`. Flag values come from the UAPI and the syscall's validation, rather than an Android API
+`kernel/fork.c`, `lib/iov_iter.c`, `fs/read_write.c` and the CPU clock sources
+linked below. Flag values come from the UAPI and the syscall's validation, rather than an Android API
 level or the host kernel.
 
 | Request branch | Formal release tag | Pinned source commit | Admitted flags | Iovec import |
@@ -100,9 +103,120 @@ single-buffer policy; it does not infer a kernel release.
 
 Bionic translates raw negative errors to `-1` and thread-local `errno`; a
 successful call preserves `errno`. `fstat` needs file metadata not supplied by
-this subset. Polling, exit notifications, signal delivery through pidfds,
+this subset. Blocking polling, exit notifications, signal delivery through pidfds,
 `pidfd_getfd`, `fcntl`, pidfs ioctls and unobserved task lookup remain unsupported.
 Scheduling and process lifetime are not inferred from a pidfd.
+
+## Implemented zero-timeout poll subset
+
+Selected GKI branches admit raw x64/AArch64 `ppoll` and Bionic's variadic
+`syscall` for an explicit zero timespec and a null temporary signal mask.
+`linux_files.descriptor_limit` supplies the guest RLIMIT_NOFILE bound for this
+subset. The low unsigned 32-bit `nfds` count may not exceed that limit. The
+shared descriptor owner reports no readiness for observed live pidfds, ignores
+negative descriptors and reports `POLLNVAL` (`0x20`) for closed descriptors,
+counting every nonzero entry separately. Readiness of other descriptor types
+remains unobserved and stops explicitly.
+
+The timeout is copied and validated before the mask and descriptor arguments.
+A nonnull mask has its full-width size and readable extent checked before the
+unsupported temporary-mask boundary. Null masks ignore the size argument.
+All descriptor metadata is imported before readiness selection or output.
+Only each 16-bit `revents` field is written, in entry order; a later fault
+retains earlier stores. Mixed access within one field retains the shared
+unsupported partial-copy boundary. The final user-range check also applies to
+an empty array. A zero timeout is never written back, so a readable, read-only
+zero timespec can succeed. The call does not read or advance any wall clock.
+
+These rules were checked at all eight immutable release pins in `fs/select.c`:
+`ppoll`, `do_sys_poll`, `do_pollfd`, `poll_select_set_timeout` and
+`poll_select_finish`. See the pinned
+[5.10 poll implementation](https://android.googlesource.com/kernel/common/+/b14525331e0d5d335b037d6ed17d40424ed47b0a/fs/select.c)
+and [6.18 poll implementation](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/fs/select.c).
+Live pidfd readiness follows `pidfd_poll` in the first six releases'
+[fork implementation](https://android.googlesource.com/kernel/common/+/5556e039c32fa02b239611dc8e5ebb958a7f12e1/kernel/fork.c)
+and the last two releases' pidfs implementation:
+[6.12](https://android.googlesource.com/kernel/common/+/894a317b5382555614ef2be7a79cca79083c6cf2/fs/pidfs.c),
+[6.18](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/fs/pidfs.c).
+Exit and reaping notifications differ across those versions and are outside
+the fixed-live-task subset. Blocking waits, temporary masks, signal delivery
+and named Bionic `ppoll` wrappers require further contracts.
+
+## Architecture-specific open flags and known path errors
+
+The closed `linux_files` catalogue also admits `O_DIRECTORY` and `O_DIRECT`
+when their result is determined before opening an observed file. ARM64 uses
+`0x4000` for directories and `0x10000` for direct I/O; x64's generic ABI uses
+the opposite values. All eight pinned ARM64 and generic UAPI headers agree:
+see the [5.10 ARM64 header](https://android.googlesource.com/kernel/common/+/b14525331e0d5d335b037d6ed17d40424ed47b0a/arch/arm64/include/uapi/asm/fcntl.h),
+[6.18 ARM64 header](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/arch/arm64/include/uapi/asm/fcntl.h)
+and [6.18 generic header](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/include/uapi/asm-generic/fcntl.h).
+
+The shared descriptor owner imports the pathname, checks descriptor capacity,
+and then resolves the catalogue and any directory requirement. Known absent
+paths return ENOENT; a regular file used as a directory returns ENOTDIR.
+An opened file's direct-I/O support follows pathname resolution in the pinned
+[5.10 open implementation](https://android.googlesource.com/kernel/common/+/b14525331e0d5d335b037d6ed17d40424ed47b0a/fs/open.c)
+and [6.18 implementation](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/fs/open.c).
+The catalogue does not declare a backing filesystem's direct-I/O capability,
+so existing regular files with that flag retain an explicit unsupported
+boundary. Existing directory opens remain unsupported. These stable rules
+also apply without a GKI selection; they do not infer procfs content or mounts.
+
+## Implemented process CPU clock subset
+
+With explicit GKI selection, `clock_gettime` admits negative encoded process
+CPU clock IDs for PROF, VIRT and SCHED. It uses the low signed 32-bit argument;
+the encoded PID and clock kind identify an explicit sample in `linux_time`.
+The current process is implicit. Other processes must be declared live group
+leaders in the closed task catalogue before a clock sample can be supplied:
+
+```json
+{"linux_kernel":{"gki":"android17-6.18","tasks":[{"id":2000,"group_leader":true}]},"linux_time":{"advance_on_idle":true,"clocks":[{"id":1,"seconds":10,"nanoseconds":0},{"id":2,"seconds":3,"nanoseconds":4},{"id":-16006,"seconds":7,"nanoseconds":9}]}}
+```
+
+Here `-16006` is PID 2000's SCHED clock. PROF and VIRT are independent
+observations. For the current process, SCHED IDs 2, -6 (encoded PID zero) and
+-8006 (PID 1000) share one sample. The corresponding PROF aliases are -8 and
+-8008, and VIRT aliases are -7 and -8007. Duplicate aliases are rejected even
+when their values agree. CPU seconds must be nonnegative and nanoseconds
+normalized. Idle advancement leaves every process CPU sample fixed while
+advancing only wall clock IDs 0, 1 and 7. Instruction execution does not infer
+CPU usage.
+
+The current task's own TID also identifies its process group, including in
+cooperative Android thread mode without a foreign task catalogue. For foreign
+targets, a closed catalogue's missing PID or live nonleader returns `EINVAL`
+before destination access. An omitted catalogue leaves the lookup unsupported.
+A known group without an explicit clock sample also stops unsupported before
+accessing the destination. Invalid CPU clock kinds return `EINVAL`; valid
+samples reach the shared user copy and can return `EFAULT`. Raw traps retain
+negative errors, and Bionic alone updates errno and returns -1 on those errors.
+
+These target and clock-kind rules follow `pid_for_clock`,
+`posix_cpu_clock_get`, the clock dispatcher and clock-ID definitions at every
+immutable release pin:
+
+| Request branch | Process CPU clock source |
+| --- | --- |
+| `android12-5.10` | [b14525331e0d](https://android.googlesource.com/kernel/common/+/b14525331e0d5d335b037d6ed17d40424ed47b0a/kernel/time/posix-cpu-timers.c) |
+| `android13-5.10` | [b9c8cb19d426](https://android.googlesource.com/kernel/common/+/b9c8cb19d426ec591e0a34dcc2d8638147e4ebc1/kernel/time/posix-cpu-timers.c) |
+| `android13-5.15` | [0b6028f1f30d](https://android.googlesource.com/kernel/common/+/0b6028f1f30da3c2143bb40eee912c4974108e5c/kernel/time/posix-cpu-timers.c) |
+| `android14-5.15` | [9938d39e2fe9](https://android.googlesource.com/kernel/common/+/9938d39e2fe99593abe347df3b82ea2f85c83d1d/kernel/time/posix-cpu-timers.c) |
+| `android14-6.1` | [79480508eb1e](https://android.googlesource.com/kernel/common/+/79480508eb1eed09620f1cd5484dbfa4a677d0a9/kernel/time/posix-cpu-timers.c) |
+| `android15-6.6` | [5556e039c32f](https://android.googlesource.com/kernel/common/+/5556e039c32fa02b239611dc8e5ebb958a7f12e1/kernel/time/posix-cpu-timers.c) |
+| `android16-6.12` | [894a317b5382](https://android.googlesource.com/kernel/common/+/894a317b5382555614ef2be7a79cca79083c6cf2/kernel/time/posix-cpu-timers.c) |
+| `android17-6.18` | [bab5f6aca819](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/kernel/time/posix-cpu-timers.c) |
+
+The FD-clock discriminator and CPU clock routing also follow the pinned
+[6.18 dispatcher](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/kernel/time/posix-timers.c)
+and [clock-ID definitions](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/include/linux/posix-timers_types.h).
+The pins' `init/Kconfig` enables POSIX timers by default, and their GKI
+defconfigs do not disable it; see the pinned
+[6.18 configuration default](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/init/Kconfig).
+FD-backed clocks and encoded per-thread CPU clocks remain unsupported. The
+catalogue is a fixed guest observation; permission, namespace, process lifetime
+and CPU-time accounting extensions require their own supported contracts.
 
 ## Validation and next coverage
 
@@ -113,9 +227,22 @@ ordering, inaccessible later metadata versus earlier negative lengths,
 single-vector cap versus original-extent checks, closed and omitted catalogues,
 live nonleaders, absent targets before FD exhaustion, and retained unsupported
 boundaries.
+Its CPU clock cases check identity and output ordering, independent clock kinds,
+explicit observation validation and separation from wall-clock idle advancement.
 `AndroidSyscallTests.cpp` repeats ownership and raw/Bionic error encoding over
 O0/O2 Android fixtures with ordinary, Android-packed and RELR relocations,
 including the versioned vector import, task lookup and errno differences.
+`AndroidTimeTests.cpp` checks named/raw process CPU clock output and canaries,
+and the cooperative syscall fixture verifies the current nonleader TID alias.
+Zero-timeout poll fixtures check live group and admitted nonleader pidfds,
+negative/closed descriptors, low-32-bit counts, timeout and mask error ordering,
+read-only timespecs, complete metadata import, ordered fault prefixes and
+unchanged wall clocks. Android repeats readiness and raw/Bionic errno behavior
+over all six relocation profiles.
+Open-flag fixtures check architecture-specific directory/direct bits, combined
+flags, narrow arguments, pathname faults, descriptor exhaustion and unchanged
+cursors on all eight branches. Android repeats raw and all four named open
+imports with independent errno checks, and retains existing-file boundaries.
 
 Source pins and these model executions are evidence for the specified syscall
 subset. Native tests booting every pinned GKI image are not yet available.

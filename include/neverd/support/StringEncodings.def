@@ -6,8 +6,8 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// The encodings neverd/support/StringScan.h finds strings in, and the
-/// Unicode blocks that wide strings may use.
+/// The encodings neverd/support/StringScan.h finds strings in, the code
+/// pages it decodes, and the characters each kind of string may hold.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -25,10 +25,94 @@ NEVERD_STRING_ENCODING(UTF32LE, "utf-32le", "UTF-32LE", 4, false)
 NEVERD_STRING_ENCODING(UTF32BE, "utf-32be", "UTF-32BE", 4, true)
 #undef NEVERD_STRING_ENCODING
 
+// NEVERD_LEGACY_ENCODING(Id, Name, Spelling, Decoder, Table): 8-bit code
+// pages, decoded as the WHATWG Encoding Standard decodes them from the
+// indexes of TextEncodingIndexes.inc.  Decoder: GB18030 (which also decodes
+// GBK), Big5, ShiftJIS, EUCKR, or SingleByte with its Table of bytes
+// 0x80-0xFF.  Different code pages read the same bytes, so a search uses at
+// most one of them.
+#ifndef NEVERD_LEGACY_ENCODING
+#define NEVERD_LEGACY_ENCODING(Id, Name, Spelling, Decoder, Table)
+#endif
+NEVERD_LEGACY_ENCODING(GBK, "gbk", "GBK", GB18030, nullptr)
+NEVERD_LEGACY_ENCODING(Big5, "big5", "Big5", Big5, nullptr)
+NEVERD_LEGACY_ENCODING(ShiftJIS, "shift_jis", "Shift-JIS", ShiftJIS, nullptr)
+NEVERD_LEGACY_ENCODING(EUCKR, "euc-kr", "EUC-KR", EUCKR, nullptr)
+NEVERD_LEGACY_ENCODING(Windows1250, "windows-1250", "windows-1250", SingleByte,
+                       SingleByte_windows_1250)
+NEVERD_LEGACY_ENCODING(Windows1251, "windows-1251", "windows-1251", SingleByte,
+                       SingleByte_windows_1251)
+NEVERD_LEGACY_ENCODING(Windows1252, "windows-1252", "windows-1252", SingleByte,
+                       SingleByte_windows_1252)
+NEVERD_LEGACY_ENCODING(Windows1253, "windows-1253", "windows-1253", SingleByte,
+                       SingleByte_windows_1253)
+NEVERD_LEGACY_ENCODING(Windows1254, "windows-1254", "windows-1254", SingleByte,
+                       SingleByte_windows_1254)
+NEVERD_LEGACY_ENCODING(Windows1255, "windows-1255", "windows-1255", SingleByte,
+                       SingleByte_windows_1255)
+NEVERD_LEGACY_ENCODING(Windows1256, "windows-1256", "windows-1256", SingleByte,
+                       SingleByte_windows_1256)
+NEVERD_LEGACY_ENCODING(Windows1257, "windows-1257", "windows-1257", SingleByte,
+                       SingleByte_windows_1257)
+NEVERD_LEGACY_ENCODING(Windows1258, "windows-1258", "windows-1258", SingleByte,
+                       SingleByte_windows_1258)
+NEVERD_LEGACY_ENCODING(ISO8859_2, "iso-8859-2", "ISO-8859-2", SingleByte,
+                       SingleByte_iso_8859_2)
+NEVERD_LEGACY_ENCODING(ISO8859_5, "iso-8859-5", "ISO-8859-5", SingleByte,
+                       SingleByte_iso_8859_5)
+NEVERD_LEGACY_ENCODING(ISO8859_7, "iso-8859-7", "ISO-8859-7", SingleByte,
+                       SingleByte_iso_8859_7)
+NEVERD_LEGACY_ENCODING(KOI8R, "koi8-r", "KOI8-R", SingleByte, SingleByte_koi8_r)
+NEVERD_LEGACY_ENCODING(KOI8U, "koi8-u", "KOI8-U", SingleByte, SingleByte_koi8_u)
+NEVERD_LEGACY_ENCODING(IBM866, "ibm866", "IBM866", SingleByte,
+                       SingleByte_ibm866)
+#undef NEVERD_LEGACY_ENCODING
+
+// NEVERD_ENCODING_ALIAS(Alias, Id): other names an encoding is known by.
+#ifndef NEVERD_ENCODING_ALIAS
+#define NEVERD_ENCODING_ALIAS(Alias, Id)
+#endif
+NEVERD_ENCODING_ALIAS("gb18030", GBK)
+NEVERD_ENCODING_ALIAS("gb2312", GBK)
+NEVERD_ENCODING_ALIAS("cp936", GBK)
+NEVERD_ENCODING_ALIAS("cp950", Big5)
+NEVERD_ENCODING_ALIAS("sjis", ShiftJIS)
+NEVERD_ENCODING_ALIAS("shift-jis", ShiftJIS)
+NEVERD_ENCODING_ALIAS("cp932", ShiftJIS)
+NEVERD_ENCODING_ALIAS("cp949", EUCKR)
+NEVERD_ENCODING_ALIAS("latin1", Windows1252)
+NEVERD_ENCODING_ALIAS("cp1252", Windows1252)
+NEVERD_ENCODING_ALIAS("cp1251", Windows1251)
+#undef NEVERD_ENCODING_ALIAS
+
+// NEVERD_LEGACY_LETTERS(First, Last): what a single-byte code page string
+// may hold beyond ASCII.  Random bytes 0x80-0xFF decode to printable
+// characters most of the time, so only letters and common typographic
+// punctuation count as text.
+#ifndef NEVERD_LEGACY_LETTERS
+#define NEVERD_LEGACY_LETTERS(First, Last)
+#endif
+NEVERD_LEGACY_LETTERS(0x00AB, 0x00AB) // Left guillemet
+NEVERD_LEGACY_LETTERS(0x00BB, 0x00BB) // Right guillemet
+NEVERD_LEGACY_LETTERS(0x00C0, 0x00D6) // Latin-1 letters
+NEVERD_LEGACY_LETTERS(0x00D8, 0x00F6) // Latin-1 letters
+NEVERD_LEGACY_LETTERS(0x00F8, 0x00FE) // Latin-1 letters
+NEVERD_LEGACY_LETTERS(0x0100, 0x024F) // Latin Extended-A and B
+NEVERD_LEGACY_LETTERS(0x0386, 0x03CE) // Greek
+NEVERD_LEGACY_LETTERS(0x0400, 0x045F) // Cyrillic
+NEVERD_LEGACY_LETTERS(0x0490, 0x0491) // Ukrainian ghe with upturn
+NEVERD_LEGACY_LETTERS(0x05D0, 0x05EA) // Hebrew
+NEVERD_LEGACY_LETTERS(0x0621, 0x064A) // Arabic
+NEVERD_LEGACY_LETTERS(0x2013, 0x2014) // En and em dash
+NEVERD_LEGACY_LETTERS(0x2018, 0x201E) // Quotation marks
+NEVERD_LEGACY_LETTERS(0x2026, 0x2026) // Ellipsis
+#undef NEVERD_LEGACY_LETTERS
+
 // NEVERD_TEXT_BLOCK(First, Last): code points a wide string may hold besides
 // printable ASCII.  Random 16- and 32-bit data decodes to valid code points
 // all over the code space, so a wide string must stay within the blocks of
-// written languages, their punctuation and their symbols.
+// written languages, their punctuation and their symbols.  The halfwidth
+// forms (U+FF61-U+FFEF) are left out: negative 16-bit numbers read as them.
 #ifndef NEVERD_TEXT_BLOCK
 #define NEVERD_TEXT_BLOCK(First, Last)
 #endif
@@ -52,6 +136,33 @@ NEVERD_TEXT_BLOCK(0x3400, 0x4DBF)   // CJK Unified Ideographs Extension A
 NEVERD_TEXT_BLOCK(0x4E00, 0x9FFF)   // CJK Unified Ideographs
 NEVERD_TEXT_BLOCK(0xAC00, 0xD7A3)   // Hangul Syllables
 NEVERD_TEXT_BLOCK(0xF900, 0xFAFF)   // CJK Compatibility Ideographs
-NEVERD_TEXT_BLOCK(0xFF00, 0xFFEF)   // Halfwidth and Fullwidth Forms
+NEVERD_TEXT_BLOCK(0xFF01, 0xFF60)   // Fullwidth ASCII variants and brackets
 NEVERD_TEXT_BLOCK(0x1F300, 0x1FAFF) // Pictographs, emoticons and symbols
 #undef NEVERD_TEXT_BLOCK
+
+// NEVERD_SCRIPT_FAMILY(First, Last, Family): the writing system of letters
+// beyond ASCII.  The letters of one string come from one family; a run that
+// mixes them is numbers that happen to decode.  Characters no row lists
+// (punctuation, symbols) belong to every family.
+#ifndef NEVERD_SCRIPT_FAMILY
+#define NEVERD_SCRIPT_FAMILY(First, Last, Family)
+#endif
+NEVERD_SCRIPT_FAMILY(0x00C0, 0x024F, Latin)
+NEVERD_SCRIPT_FAMILY(0x1E00, 0x1EFF, Latin)
+NEVERD_SCRIPT_FAMILY(0x0370, 0x03FF, Greek)
+NEVERD_SCRIPT_FAMILY(0x1F00, 0x1FFF, Greek)
+NEVERD_SCRIPT_FAMILY(0x0400, 0x052F, Cyrillic)
+NEVERD_SCRIPT_FAMILY(0x0590, 0x05FF, Hebrew)
+NEVERD_SCRIPT_FAMILY(0x0600, 0x06FF, Arabic)
+NEVERD_SCRIPT_FAMILY(0x0900, 0x0DFF, Indic)
+NEVERD_SCRIPT_FAMILY(0x0E00, 0x0EFF, Thai)
+NEVERD_SCRIPT_FAMILY(0x3040, 0x30FF, Japanese)
+NEVERD_SCRIPT_FAMILY(0xFF61, 0xFF9F, Japanese)
+NEVERD_SCRIPT_FAMILY(0x3100, 0x312F, Chinese)
+NEVERD_SCRIPT_FAMILY(0x3400, 0x4DBF, Han)
+NEVERD_SCRIPT_FAMILY(0x4E00, 0x9FFF, Han)
+NEVERD_SCRIPT_FAMILY(0xF900, 0xFAFF, Han)
+NEVERD_SCRIPT_FAMILY(0x1100, 0x11FF, Korean)
+NEVERD_SCRIPT_FAMILY(0x3130, 0x318F, Korean)
+NEVERD_SCRIPT_FAMILY(0xAC00, 0xD7A3, Korean)
+#undef NEVERD_SCRIPT_FAMILY

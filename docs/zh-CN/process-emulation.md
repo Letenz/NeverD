@@ -51,8 +51,8 @@ output = bytes.fromhex(report["stdout_hex"])
 | `stack_size` | 1048576 | 预算内按页对齐的栈 |
 | `output_limit` | 1048576 | 捕获的 stdout/stderr 总字节数 |
 | `instruction_quantum` | 1024 | 让出给 runtime 前的接纳间隔 |
-| `linux_priority` | 未配置 | 显式任务 nice 值与原始 Linux 优先级服务的调用权限 |
-| `linux_kernel` | 未配置 | 显式选择已发布的 GKI 分支，或声明观测到的客户内核接口缺失 |
+| `linux_kernel` | 缺省 | 显式 GKI 分支、固定来宾任务清单或内核接口缺失观察值 |
+| `linux_priority` | 缺省 | 显式任务 nice 值及原始 Linux 优先级服务所需的调用者权限 |
 
 `schema_version` 为 1。结果含 profile、架构、所选后端与原因、`stop_reason`、可空的 `exit_status`、诊断、入口／当前 PC、计数器、服务记录和最后一个类型化 CPU 退出。地址、syscall 编号、参数寄存器及原始返回位均为**不带** `0x` 的十六进制字符串；`stdout_hex`／`stderr_hex` 保留 NUL 和无效 UTF-8。syscall 结果为 null 表示没有建模返回值（例如退出或不支持的请求），不表示成功返回 0。
 
@@ -115,6 +115,10 @@ x64 的 `arch_prctl` 支持 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS` 和 `A
 
 <a id="windows-pe64-profile"></a>
 
+`linux_kernel.gki` 显式选择 5.10–6.18 已发布分支，控制 `pidfd_open` 与版本化向量导入；Android API 级别不选择内核。`linux_kernel.tasks` 是可选的固定存活任务清单，条目如 `{ "id": 2000, "group_leader": true }`；省略时外部目标仍不支持，空数组仅含当前组首领，清单外 PID 返回 ESRCH。任务与优先级观察值须一致，且不能组合协作式 Android 线程。描述符与 `linux_files` 共用表；GKI 与显式缺失 pidfd 观察值不能并存。参见[完整契约与限制](android-gki-kernels.md)。
+
+该 GKI 子集还支持已观察的进程 CPU 时钟，以及零超时 pidfd `ppoll`。后者要求显式零 timespec、空临时掩码和 `linux_files` 描述符限额；仅按序写 `revents`，不回写超时或推进墙钟。已关闭描述符返回 POLLNVAL，已观察的存活 pidfd 无就绪状态；阻塞等待和其他类型的就绪状态仍不支持。
+
 <!-- i18n-section: linux-clocks -->
 
 ## 显式客户机时钟
@@ -128,9 +132,11 @@ x64 的 `arch_prctl` 支持 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS` 和 `A
   "timezone":{"minutes_west":-60,"dst_time":0}}}
 ```
 
-支持静态时钟 ID 0–9 和 11；每个时钟独立，未提供的值仍然未知。重复或未知 ID 会被拒绝。秒数是有符号 64 位整数，纳秒范围为 `[0, 1000000000)`。JSON 整数须在 `±9007199254740991` 内，十进制字符串可表示完整 64 位范围；时区字段为有符号 32 位整数。C++ 使用 `ProcessOptions::LinuxTime`，其他 OS 配置不接受此选项。
+时钟输入包括静态 ID 0–9、11，以及显式 GKI 支持的负数编码进程 CPU 时钟。PROF、VIRT、SCHED 独立，当前进程别名共用样本；重复身份、未知 ID 或超过 16384 个观察值均拒绝。外部进程须在固定清单中声明为存活组首领。秒数为有符号 64 位，CPU 时钟须非负，纳秒范围为 `[0, 1000000000)`；JSON 整数限于 `±9007199254740991`，十进制字符串保留完整范围，时区为有符号 32 位。C++ 使用 `ProcessOptions::LinuxTime`；其他 OS 配置拒绝此选项。
 
-`clock_gettime`、`gettimeofday` 和 x64 的 `time` 共用这些输入。缺失输入、动态时钟和未建模的部分写入会明确停止；已完成的写入不会回滚。不模拟调时、休眠或真实设备时钟。字段顺序、错误码和指针语义详见[完整时钟契约](../process-emulation.md#explicit-guest-clocks)。
+`advance_on_idle: true` 显式启用 x64／ARM64 的相对 `nanosleep`，包括 Android 命名及 variadic 包装。墙钟 ID 0、1、7 随虚拟空闲时间推进，进程 CPU 样本可同时存在且保持固定；其他时钟不接受此策略。已阻塞线程保留原服务，其他可运行线程先执行；全部阻塞时推进至最早期限，单线程直接推进。指令执行不增加时间或 CPU 用量。
+
+`clock_gettime` 取 ID 的低 32 位有符号值，在目标复制前检查类别、任务及观察值；非法类别／外部目标可返回 `EINVAL`，有效样本的目标复制可返回 `EFAULT`。缺少观察值和未支持的动态／FD／编码线程时钟明确停止。原始陷阱保留负错误，Bionic 单独转换 errno。已有 `gettimeofday` 与 `time` 的有序写入及部分故障规则仍适用；参见[已发布 GKI 时钟契约](android-gki-kernels.md)与[完整时钟规则](../process-emulation.md#explicit-guest-clocks)。
 
 <a id="explicit-memory-files"></a>
 
@@ -168,6 +174,10 @@ x64 的 `arch_prctl` 支持 `ARCH_SET_FS`、`ARCH_GET_FS`、`ARCH_SET_GS` 和 `A
 ## Windows PE64 配置
 
 `windows-pe64-v1` 支持有界 Windows x64/ARM64 控制台进程，包括 PEB/TEB、静态和动态 TLS、`DllMain`、具名 Win32 API 和显式无环 DLL 图。客户模块支持按名称／序号导入代码及数据、DIR64 重定位、转发导出和真实加载器链表身份。`LoadLibraryA`／`LoadLibraryW`、`FreeLibrary` 和 `GetProcAddress` 使用配置的模块目录。CRT／GUI、ARM64 基于栈帧的用户态 SEH、线程和通用 Windows 应用兼容性仍待完成；原生 ARM64 KVM/WHP 证据仍缺失。
+
+`WindowsProcessTime.cpp` 管理基于主机时钟的 `GetSystemTimeAsFileTime`、`GetTickCount`、`QueryPerformanceCounter`、`QueryPerformanceFrequency` 与 `ZwDelayExecution`。FILETIME 以 1601 年为起点，单位为 100 ns；性能计数器使用单调时钟并报告 10 MHz 频率，毫秒 tick 计数按 32 位回绕。支持不超过 500 ms 的非警觉相对延迟和零间隔；警觉等待、正数绝对时间和更长延迟明确停止，不缩短等待或报告成功。这些服务保持 LastError，各 CPU 后端使用同一模型。 `ZwDelayExecution` 仅读取 `BOOLEAN` 的低 8 位，参数寄存器的未使用高位不会改变等待策略。
+
+[Windows x64 ABI](https://learn.microsoft.com/cpp/build/x64-calling-convention), [QueryPerformanceFrequency](https://learn.microsoft.com/windows/win32/api/profileapi/nf-profileapi-queryperformancefrequency), [FILETIME](https://learn.microsoft.com/windows/win32/api/minwinbase/ns-minwinbase-filetime).
 
 Windows 虚拟内存新增 `VirtualAlloc`、`VirtualFree`、`VirtualProtect`、`VirtualQuery` 及当前进程的 `FlushInstructionCache`。OS 层管理预留区域，`AddressSpace` 统一管理已提交页面、权限和物理存储。测试覆盖动态代码改写、访问故障和内存额度回收。
 

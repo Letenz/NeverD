@@ -22,6 +22,11 @@ jobs:
     if: ${{ github.event.action != 'closed' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    env:
+      # The event's base SHA can lag behind the checked-out PR merge ref.
+      # Use that merge's actual first parent for checking and evidence.
+      FORMAT_BASE: ${{ github.event_name == 'pull_request' && format('{0}^1', github.sha) || github.event.before }}
+      FORMAT_HEAD: ${{ github.sha }}
 
     steps:
       - name: Checkout repository history
@@ -53,9 +58,6 @@ jobs:
       - name: Check changed C and C++ files
         id: format_check
         run: python scripts/check_clang_format.py --base "$FORMAT_BASE" --head "$FORMAT_HEAD"
-        env:
-          FORMAT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          FORMAT_HEAD: ${{ github.sha }}
 
       - name: Capture proposed formatting changes
         if: ${{ !cancelled() && steps.format_check.outcome == 'failure' }}
@@ -161,9 +163,6 @@ jobs:
               save()
           raise SystemExit(0 if report["status"] == "complete" else 1)
           PY
-        env:
-          FORMAT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          FORMAT_HEAD: ${{ github.sha }}
 
       - name: Upload proposed formatting changes
         if: ${{ !cancelled() && steps.format_check.outcome == 'failure' }}

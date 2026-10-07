@@ -46,14 +46,18 @@ llvm::Expected<Reply> timeService(ExecutionBackend &CPU, ServiceKind Kind,
                                   const ProcessServiceEvent &Event,
                                   const MemoryLayout &Layout,
                                   const ProcessOptions &Options,
-                                  LinuxClock &Clock, ProcessResult &Result) {
+                                  LinuxClock &Clock, ProcessResult &Result,
+                                  uint64_t CurrentTask) {
   const auto &A = Event.Arguments;
   if (Kind == ServiceKind::ClockGetTime) {
     // clockid_t is a signed 32-bit ABI argument, including on LP64.
     int32_t ID = static_cast<int32_t>(static_cast<uint32_t>(A[0]));
-    if (ID < 0)
-      return unsupported(Result, TimeDynamicClock);
-    if (!isKnownClock(ID))
+    if (ID < 0) {
+      auto Admitted =
+          selectProcessCPUClock(ID, CurrentTask, Options, Result, ID);
+      if (!Admitted || *Admitted)
+        return Admitted;
+    } else if (!isKnownClock(ID))
       return Reply(0 - InvalidArgument);
     auto Value = Clock.read(ID, Result);
     if (!Value)
