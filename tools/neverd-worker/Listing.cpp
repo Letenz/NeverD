@@ -26,6 +26,7 @@ using DisasmExFunction = const char *(*)(neverd_session_t, neverd_va_t, int,
 using CodeRefsFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
 using ImportSlotsFunction = const char *(*)(neverd_session_t);
 using UnwindFramesFunction = const char *(*)(neverd_session_t);
+using PointerRefsFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
 
 // Listing layout, in characters after the prefix: name, mnemonic and comment
 // columns of a conventional interactive disassembler listing.
@@ -51,6 +52,7 @@ constexpr std::size_t MaxOverviewBuckets = 16384;
 constexpr int OverviewSamples = 4;
 constexpr int StringScanMinimum = 4;
 constexpr std::size_t MaxReferencePage = 512;
+constexpr int PointerPage = 65536;
 constexpr char SeparatorRule[] = "; -------------------------------------------"
                                  "--------------------------------";
 constexpr char SubroutineRule[] =
@@ -160,7 +162,18 @@ bool isBranch(Flow flow) {
   return flow == Flow::Jump || flow == Flow::CondJump;
 }
 
-enum class RefKind : std::uint8_t { Call, Jump, CondJump, Read, Write, Offset };
+/// IndirectCall and IndirectJump transfer through a relocated pointer slot to
+/// the pointer it holds as loaded.
+enum class RefKind : std::uint8_t {
+  Call,
+  Jump,
+  CondJump,
+  Read,
+  Write,
+  Offset,
+  IndirectCall,
+  IndirectJump
+};
 std::optional<RefKind> parseRefKind(const std::string &kind) {
   if (kind == "call")
     return RefKind::Call;
@@ -174,6 +187,10 @@ std::optional<RefKind> parseRefKind(const std::string &kind) {
     return RefKind::Write;
   if (kind == "offset")
     return RefKind::Offset;
+  if (kind == "icall")
+    return RefKind::IndirectCall;
+  if (kind == "ijump")
+    return RefKind::IndirectJump;
   return std::nullopt;
 }
 std::string_view refKindName(RefKind kind) {
@@ -190,15 +207,21 @@ std::string_view refKindName(RefKind kind) {
     return "write";
   case RefKind::Offset:
     return "offset";
+  case RefKind::IndirectCall:
+    return "icall";
+  case RefKind::IndirectJump:
+    return "ijump";
   }
   return {};
 }
 char refKindLetter(RefKind kind) {
   switch (kind) {
   case RefKind::Call:
+  case RefKind::IndirectCall:
     return 'p';
   case RefKind::Jump:
   case RefKind::CondJump:
+  case RefKind::IndirectJump:
     return 'j';
   case RefKind::Read:
     return 'r';
@@ -211,7 +234,8 @@ char refKindLetter(RefKind kind) {
 }
 bool isCodeRef(RefKind kind) {
   return kind == RefKind::Call || kind == RefKind::Jump ||
-         kind == RefKind::CondJump;
+         kind == RefKind::CondJump || kind == RefKind::IndirectCall ||
+         kind == RefKind::IndirectJump;
 }
 
 #define NEVERD_CLASSIC_NAME(Id, Spelling)                                      \
@@ -219,6 +243,8 @@ bool isCodeRef(RefKind kind) {
 #define NEVERD_FUNCTION_ATTRIBUTE(Id, Spelling)                                \
   constexpr std::string_view Id = Spelling;
 #define NEVERD_FRAME_NAME_PREFIX(Id, Prefix)                                   \
+  constexpr std::string_view Id = Prefix;
+#define NEVERD_ITEM_NAME_PREFIX(Id, Prefix)                                    \
   constexpr std::string_view Id = Prefix;
 #include "ListingVocabulary.def"
 
@@ -272,7 +298,9 @@ enum class ItemKind : std::uint8_t {
   String,
   Align,
   Uninitialized,
-  Slot
+  Slot,
+  /// A data slot the loader relocated to hold a pointer.
+  Pointer
 };
 struct Item {
   std::uint64_t start = 0, size = 1;
@@ -348,6 +376,7 @@ struct Listing::Impl {
   CodeRefsFunction codeRefs = nullptr;
   ImportSlotsFunction importSlots = nullptr;
   UnwindFramesFunction unwindFrames = nullptr;
+  PointerRefsFunction pointerRefs = nullptr;
   OperandDialect dialect = OperandDialect::Generic;
   bool wide = true, elf = false, macho = false;
   unsigned addressDigits = 16, pointerSize = 8;
@@ -364,6 +393,8 @@ struct Listing::Impl {
   std::map<std::string, std::uint64_t, std::less<>> listingNames;
   /// Executable import veneers and the import each forwards to.
   std::map<std::uint64_t, std::string> stubImports;
+  /// Relocated data slots -> the pointer the loader stored there.
+  std::map<std::uint64_t, std::uint64_t> pointers;
   /// Marked unwind frames: begin -> personality, and end -> begin.
   std::map<std::uint64_t, std::string> unwindBegins;
   std::map<std::uint64_t, std::uint64_t> unwindEnds;
@@ -392,6 +423,7 @@ struct Listing::Impl {
     importSlots = engineSymbol<ImportSlotsFunction>("neverd_import_slots_json");
     unwindFrames =
         engineSymbol<UnwindFramesFunction>("neverd_unwind_frames_json");
+    pointerRefs = engineSymbol<PointerRefsFunction>("neverd_pointer_refs_json");
   }
 
   //===--------------------------------------------------------------------===//
@@ -804,6 +836,22 @@ struct Listing::Impl {
           listingNames.emplace(slot.label, address);
           slots.emplace(address, std::move(slot));
         }
+    pointers.clear();
+    if (pointerRefs)
+      for (std::optional<std::uint64_t> cursor = 0; cursor;) {
+        const auto page = takeJson(pointerRefs(session, *cursor, PointerPage));
+        cursor.reset();
+        if (const auto rows = page.value("refs", Json()); rows.is_array())
+          for (const auto &row : rows)
+            if (row.is_array() && row.size() == 3) {
+              const auto slot = jsonAddress(row[0]);
+              // An import slot already lists its symbol.
+              if (!slots.contains(slot))
+                pointers.emplace(slot, jsonAddress(row[1]));
+            }
+        if (const auto next = page.value("next_slot", Json()); next.is_string())
+          cursor = jsonAddress(next);
+      }
     unwindBegins.clear();
     unwindEnds.clear();
     if (unwindFrames)
@@ -1104,7 +1152,8 @@ struct Listing::Impl {
           references.begin(), references.end(), function.entry + 1,
           [](const Reference &r, std::uint64_t value) { return r.to < value; });
       for (; it != references.end() && it->to < body.end; ++it)
-        if (it->kind == RefKind::Jump || it->kind == RefKind::CondJump)
+        if (it->kind == RefKind::Jump || it->kind == RefKind::CondJump ||
+            it->kind == RefKind::IndirectJump)
           body.labels.insert(it->to);
     }
     if (dialect == OperandDialect::X86)
@@ -1254,6 +1303,16 @@ struct Listing::Impl {
             std::min<std::uint64_t>(pointerSize, region.end - item.start);
         return item;
       }
+    if (auto it = pointers.upper_bound(address); it != pointers.begin()) {
+      --it;
+      if (address < it->first + pointerSize && it->first >= region.start &&
+          it->first + pointerSize <= region.end) {
+        item.kind = ItemKind::Pointer;
+        item.start = it->first;
+        item.size = pointerSize;
+        return item;
+      }
+    }
     if (const auto *string = stringAt(address);
         string && string->address >= region.start &&
         string->address + string->length < region.end) {
@@ -1301,6 +1360,9 @@ struct Listing::Impl {
     if (const auto *string = stringAt(address);
         string && string->address == address)
       return {string->name, ListingRole::DummyDataName, address};
+    if (use != NameUse::Transfer && pointers.contains(address))
+      return {std::string(PointerNamePrefix) + upperHex(address),
+              ListingRole::DummyDataName, address};
     const int region = regionIndex(address);
     if (region < 0)
       return {};
@@ -1315,7 +1377,7 @@ struct Listing::Impl {
     }
     std::string prefix = "unk_";
     if (use == NameUse::Slot)
-      prefix = "off_";
+      prefix = PointerNamePrefix;
     else if (use == NameUse::Data)
       if (const auto sized = dataNamePrefix(sizeKeyword); !sized.empty())
         prefix = std::string(sized);
@@ -1350,8 +1412,15 @@ struct Listing::Impl {
       return function.name + "+" + upperHex(address - function.entry);
     }
     const int region = regionIndex(address);
-    return (region >= 0 ? regions[region].name : std::string("?")) + ":" +
-           upperHex(address, addressDigits);
+    if (region < 0)
+      return "?:" + upperHex(address, addressDigits);
+    // A named or referenced item reads by its name, like `.got:off_AC5AC0`.
+    if (dataNames.contains(address) || slots.contains(address) ||
+        (pointers.contains(address) &&
+         referencesTo(address).first != referencesTo(address).second))
+      return regions[region].name + ":" +
+             nameOf(address, NameUse::Data, {}).text;
+    return regions[region].name + ":" + upperHex(address, addressDigits);
   }
 
   std::pair<std::vector<Reference>::const_iterator,
@@ -1385,6 +1454,7 @@ struct Listing::Impl {
     case ItemKind::String:
     case ItemKind::Align:
     case ItemKind::Uninitialized:
+    case ItemKind::Pointer:
       return AddressClass::Data;
     }
     return AddressClass::Unexplored;
@@ -1410,26 +1480,31 @@ struct Listing::Impl {
     text.append(comment, role);
   }
 
-  /// "CODE XREF: sub_X+1A↑j" lines for references to \p address.
+  /// "CODE XREF: sub_X+1A↑j" lines for references to \p address: code
+  /// references first, then data references, each group under its heading.
   std::vector<StyledText> xrefComments(std::uint64_t address) {
     std::vector<StyledText> result;
     auto [begin, end] = referencesTo(address);
     if (begin == end)
       return result;
-    const bool code = isCodeRef(begin->kind);
-    std::size_t shown = 0;
     const auto total = static_cast<std::size_t>(end - begin);
-    for (auto it = begin; it != end && shown < MaxXrefLines; ++it, ++shown) {
-      StyledText line;
-      if (!shown)
-        line.append(code ? "CODE XREF: " : "DATA XREF: ", ListingRole::Xref);
-      line.append(locationText(it->from), ListingRole::Xref, it->from);
-      line.append(it->from < address ? "↑" : "↓", ListingRole::Xref);
-      line.append(std::string(1, refKindLetter(it->kind)), ListingRole::Xref);
-      if (shown + 1 == MaxXrefLines && total > MaxXrefLines)
-        line.append(" ...", ListingRole::Xref);
-      result.push_back(std::move(line));
+    for (const bool code : {true, false}) {
+      bool heading = true;
+      for (auto it = begin; it != end && result.size() < MaxXrefLines; ++it) {
+        if (isCodeRef(it->kind) != code)
+          continue;
+        StyledText line;
+        if (heading)
+          line.append(code ? "CODE XREF: " : "DATA XREF: ", ListingRole::Xref);
+        heading = false;
+        line.append(locationText(it->from), ListingRole::Xref, it->from);
+        line.append(it->from < address ? "↑" : "↓", ListingRole::Xref);
+        line.append(std::string(1, refKindLetter(it->kind)), ListingRole::Xref);
+        result.push_back(std::move(line));
+      }
     }
+    if (total > result.size())
+      result.back().append(" ...", ListingRole::Xref);
     return result;
   }
 
@@ -1767,6 +1842,26 @@ struct Listing::Impl {
         comment = slot.module;
       break;
     }
+    case ItemKind::Pointer: {
+      named(ListingRole::Plain);
+      head.padTo(base);
+      head.append(pointerSize == 8 ? "dq" : "dd", ListingRole::Directive);
+      head.padTo(base + 3);
+      head.append("offset ", ListingRole::Keyword);
+      const auto to = pointers.at(item.start);
+      if (const auto name = nameOf(to, NameUse::Address, {});
+          !name.text.empty())
+        head.append(name.text, name.role, name.address);
+      else
+        head.append(dialect == OperandDialect::X86 ? x86Number(to)
+                                                   : hexAddress(to),
+                    ListingRole::Number);
+      target = to;
+      // A pointer to a string quotes it.
+      if (const auto *string = stringAt(to); string && string->address == to)
+        comment = escapeString(string->value, MaxStringDisplay);
+      break;
+    }
     case ItemKind::Align:
       head.padTo(base);
       head.append("align ", ListingRole::Directive);
@@ -1915,6 +2010,8 @@ struct Listing::Impl {
           static_cast<std::size_t>(std::max<std::ptrdiff_t>(1, to - from));
       return;
     }
+    for (const auto &[slot, to] : pointers)
+      references.push_back({to, slot, RefKind::Offset});
     std::sort(references.begin(), references.end(),
               [](const Reference &a, const Reference &b) {
                 return a.to != b.to ? a.to < b.to : a.from < b.from;

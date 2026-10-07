@@ -218,6 +218,18 @@ def run(executable):
         direct = client.call("xrefs", {"address": BASE})["payload"]
         assert direct["items"][0]["address"] == "0xffff800012340008" and direct["items"][0]["type"] == "j", direct
         assert client.call("xrefs", {"address": BASE, "direction": "from"})["status"] == "ok"
+        # A call through a relocated slot, and the slot's own pointer.
+        through_slot = client.call("xrefs", {"address": "0xffff800012340020"})["payload"]["items"]
+        kinds = {(item["from"], item["kind"], item["type"]) for item in through_slot}
+        assert ("0xffff800012340034", "icall", "p") in kinds, through_slot
+        assert ("0xffff800012343008", "offset", "o") in kinds, through_slot
+        data = client.call("listing", {"address": "0xffff800012343000", "after": 20})["payload"]["lines"]
+        slot = next(line for line in data if line["kind"] == "data")
+        assert "dq" in slot["text"] and "offset function_1" in slot["text"], data
+        code = [line["text"] for line in client.call("listing", {"address": BASE, "after": 120})["payload"]["lines"]]
+        assert any(text.strip() == "; __unwind {" for text in code), code
+        assert any(text.strip() == "; } // starts at FFFF800012340000" for text in code), code
+        assert any(text.strip() == "; __unwind { // __gxx_personality_v0" for text in code), code
         # IR constant references require whole-program analysis.
         assert client.call("xrefs", {"address": BASE, "source": "ir"})["payload"]["items"][0]["address"] == "0xffff800012340008"
         client.close()

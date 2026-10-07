@@ -419,6 +419,14 @@ NEVERD_FUNCTION_ATTRIBUTE(FrameAttribute, "bp-based frame")
 NEVERD_MARKED_UNWIND_ENCODING("dwarf-fde")
 #undef NEVERD_MARKED_UNWIND_ENCODING
 
+// NEVERD_ITEM_NAME_PREFIX(Id, Prefix): automatic names by what a data item
+// holds, when no size names it.
+#ifndef NEVERD_ITEM_NAME_PREFIX
+#define NEVERD_ITEM_NAME_PREFIX(Id, Prefix)
+#endif
+NEVERD_ITEM_NAME_PREFIX(PointerNamePrefix, "off_")
+#undef NEVERD_ITEM_NAME_PREFIX
+
 // NEVERD_FRAME_NAME_PREFIX(Id, Prefix): automatic names of stack variables
 // below the frame pointer and of stack arguments above the return address.
 #ifndef NEVERD_FRAME_NAME_PREFIX

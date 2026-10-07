@@ -24,6 +24,9 @@ using neverd::worker::Json;
 using neverd::worker::parseAddress;
 namespace {
 constexpr std::uint64_t Base = 0xffff800012340000ULL;
+// A read-only data section of relocated pointers: slot i points to function
+// i + 1.
+constexpr std::uint64_t DataBase = Base + 0x3000, DataSlots = 8;
 struct MockSession {
   std::string path, error;
   std::map<std::uint64_t, std::string> annotations, names;
@@ -105,8 +108,8 @@ int neverd_session_bitness(neverd_session_t) { return 64; }
 unsigned long long neverd_session_file_size(neverd_session_t) { return 8192; }
 neverd_va_t neverd_session_base_addr(neverd_session_t) { return Base; }
 neverd_va_t neverd_session_entry_addr(neverd_session_t) { return Base; }
-int neverd_session_segment_count(neverd_session_t) { return 1; }
-int neverd_session_section_count(neverd_session_t) { return 1; }
+int neverd_session_segment_count(neverd_session_t) { return 2; }
+int neverd_session_section_count(neverd_session_t) { return 2; }
 int neverd_session_import_count(neverd_session_t) { return 0; }
 int neverd_session_export_count(neverd_session_t) { return 1; }
 int neverd_session_symbol_count(neverd_session_t) { return 600; }
@@ -176,6 +179,16 @@ const char *neverd_resolve_addr(neverd_session_t s, neverd_va_t address) {
 }
 int neverd_read_bytes(neverd_session_t, neverd_va_t address,
                       unsigned char *buffer, int size) {
+  if (size >= 0 && address >= DataBase && address - DataBase < DataSlots * 8) {
+    const auto available = static_cast<int>(
+        std::min<std::uint64_t>(size, DataBase + DataSlots * 8 - address));
+    for (int i = 0; i < available; ++i) {
+      const auto offset = address - DataBase + i;
+      const std::uint64_t pointer = Base + 16 * (offset / 8 + 1);
+      buffer[i] = static_cast<unsigned char>(pointer >> (8 * (offset % 8)));
+    }
+    return available;
+  }
   if (address < Base || address - Base >= 9600 || size < 0)
     return 0;
   // Each 16-byte function body is the byte ramp 00 01 02 ... 0f.
@@ -240,6 +253,9 @@ const char *neverd_code_refs_json(neverd_session_t s, neverd_va_t firstEntry,
   for (; index < 600 && index < first + maxFunctions; ++index) {
     const auto entry = Base + 16 * static_cast<std::uint64_t>(index);
     refs.push_back({hexAddress(entry + JumpOffset), hexAddress(entry), "jump"});
+    // function_3 calls function_2 through data slot 1.
+    if (index == 3)
+      refs.push_back({hexAddress(entry + 4), hexAddress(Base + 0x20), "icall"});
   }
   return copy(
       Json{{"refs", refs},
@@ -247,6 +263,35 @@ const char *neverd_code_refs_json(neverd_session_t s, neverd_va_t firstEntry,
             index < 600 ? Json(hexAddress(Base + 16 * index)) : Json(nullptr)},
            {"function_count", 600}}
           .dump());
+}
+const char *neverd_pointer_refs_json(neverd_session_t s, neverd_va_t firstSlot,
+                                     int maxSlots) {
+  session(s)->error.clear();
+  Json refs = Json::array();
+  std::uint64_t slot = std::max<std::uint64_t>(firstSlot, DataBase);
+  slot = DataBase + (slot - DataBase + 7) / 8 * 8;
+  for (int count = 0; slot < DataBase + DataSlots * 8 && count < maxSlots;
+       ++count, slot += 8)
+    refs.push_back({hexAddress(slot),
+                    hexAddress(Base + 16 * ((slot - DataBase) / 8 + 1)),
+                    "offset"});
+  return copy(Json{{"refs", refs},
+                   {"next_slot", slot < DataBase + DataSlots * 8
+                                     ? Json(hexAddress(slot))
+                                     : Json(nullptr)}}
+                  .dump());
+}
+const char *neverd_unwind_frames_json(neverd_session_t) {
+  return copy(Json::array({{{"begin", hexAddress(Base)},
+                            {"end", hexAddress(Base + 16)},
+                            {"encoding", "dwarf-fde"},
+                            {"language_data", false}},
+                           {{"begin", hexAddress(Base + 16)},
+                            {"end", hexAddress(Base + 32)},
+                            {"encoding", "dwarf-fde"},
+                            {"personality", "__gxx_personality_v0"},
+                            {"language_data", true}}})
+                  .dump());
 }
 const char *neverd_decompile(neverd_session_t, neverd_va_t) {
   std::string text;
@@ -320,7 +365,11 @@ const char *neverd_segments_json(neverd_session_t) {
   return copy(Json::array({{{"name", ".text"},
                             {"va", hexAddress(Base)},
                             {"size", "0x2580"},
-                            {"flags", "R-X"}}})
+                            {"flags", "R-X"}},
+                           {{"name", ".data.rel.ro"},
+                            {"va", hexAddress(DataBase)},
+                            {"size", "0x40"},
+                            {"flags", "R--"}}})
                   .dump());
 }
 const char *neverd_sections_json(neverd_session_t) {
@@ -332,7 +381,15 @@ const char *neverd_sections_json(neverd_session_t) {
                             {"file_off", 0x1000},
                             {"file_sz", 0x2580},
                             {"alignment", 16},
-                            {"flags", "R-X"}}})
+                            {"flags", "R-X"}},
+                           {{"name", ".data.rel.ro"},
+                            {"segment", ".data.rel.ro"},
+                            {"va", hexAddress(DataBase)},
+                            {"size", DataSlots * 8},
+                            {"file_off", 0x4000},
+                            {"file_sz", DataSlots * 8},
+                            {"alignment", 8},
+                            {"flags", "R--"}}})
                   .dump());
 }
 const char *neverd_symbols_json(neverd_session_t) {

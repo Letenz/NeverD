@@ -182,6 +182,19 @@ InstructionFlow summarizeInstructionFlow(Decoder &Dec, const DecodedInsn &DI) {
   return Flow;
 }
 
+/// The pointer the loader stored in a relocated slot, as a code address when
+/// the slot points to code.
+std::optional<va_t> relocatedPointer(const BinaryImage &Img, va_t Slot) {
+  const size_t Size = Img.getPointerSize();
+  const uint8_t *Bytes = Size ? Img.readVA(Slot, Size) : nullptr;
+  if (!Bytes)
+    return std::nullopt;
+  const va_t Target = readPtr(Bytes, Size == 8);
+  return Img.Arch == Arch::ARM && Img.CodePtrRelocSlots.count(Slot)
+             ? clearThumbBit(Target)
+             : Target;
+}
+
 } // namespace
 
 // ===--------------------------------------------------------------------===//
@@ -385,6 +398,13 @@ const char *neverd_code_refs_json(neverd_session_t Sess, neverd_va_t FirstEntry,
               Out.push_back({DI.Addr, Flow.Target, Flow.Kind});
             for (const auto &[To, Kind] : Flow.Refs)
               Out.push_back({DI.Addr, To, Kind});
+            // A transfer through a slot the loader relocated to code reaches
+            // the slot's pointer as loaded.
+            if (Flow.Kind == "icall" || Flow.Kind == "ijump")
+              for (const auto &[Slot, Kind] : Flow.Refs)
+                if (Kind == "read" && S->Img.CodePtrRelocSlots.count(Slot))
+                  if (const auto Target = relocatedPointer(S->Img, Slot))
+                    Out.push_back({DI.Addr, *Target, Flow.Kind});
             return F.Size > 0 || !Local.isFunctionTerminator(DI);
           });
     }
@@ -404,6 +424,50 @@ const char *neverd_code_refs_json(neverd_session_t Sess, neverd_va_t FirstEntry,
                              ? llvm::json::Value(vaHex(Ordered[End]->Entry))
                              : nullptr;
   Result["function_count"] = static_cast<int64_t>(S->Functions.size());
+  return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
+}
+
+const char *neverd_pointer_refs_json(neverd_session_t Sess,
+                                     neverd_va_t FirstSlot, int MaxSlots) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return nullptr;
+  }
+  constexpr int MaxSlotsPerQuery = 65536;
+  const size_t Limit =
+      static_cast<size_t>(std::clamp(MaxSlots, 1, MaxSlotsPerQuery));
+  // Both slot sets are ordered; walk them as one ascending sequence.
+  const auto &Code = S->Img.CodePtrRelocSlots;
+  const auto &Data = S->Img.DataPtrRelocSlots;
+  auto CodeIt = Code.lower_bound(FirstSlot);
+  auto DataIt = Data.lower_bound(FirstSlot);
+  llvm::json::Array Refs;
+  size_t Visited = 0;
+  std::optional<va_t> Next;
+  while (CodeIt != Code.end() || DataIt != Data.end()) {
+    va_t Slot = 0;
+    if (DataIt == Data.end() || (CodeIt != Code.end() && *CodeIt <= *DataIt)) {
+      Slot = *CodeIt++;
+      if (DataIt != Data.end() && *DataIt == Slot)
+        ++DataIt;
+    } else {
+      Slot = *DataIt++;
+    }
+    if (Visited == Limit) {
+      Next = Slot;
+      break;
+    }
+    ++Visited;
+    if (const auto Target = relocatedPointer(S->Img, Slot))
+      Refs.push_back(llvm::json::Array{vaHex(Slot), vaHex(*Target), "offset"});
+  }
+  llvm::json::Object Result;
+  Result["refs"] = std::move(Refs);
+  Result["next_slot"] = Next ? llvm::json::Value(vaHex(*Next)) : nullptr;
   return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
 }
 

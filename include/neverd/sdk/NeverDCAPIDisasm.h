@@ -93,12 +93,24 @@ NEVERD_API const char *neverd_disasm_json_ex(neverd_session_t Sess,
 /// its first function terminator.  Returns
 /// {"refs":[["from","to","kind"],...],"next_entry":"0x..."|null,
 /// "function_count":int}, where kind is "call", "jump", "cjump", "read",
-/// "write" or "offset".  MaxFunctions is clamped to 1..4096.  EVM and SBF
-/// images return NULL with an error, because their analyzers own a different
-/// instruction model.  This query never starts analysis.
+/// "write" or "offset", or "icall"/"ijump" for a call or jump through a pointer
+/// slot the loader relocated to code: such a reference names the slot's
+/// pointer as loaded, which the program may still overwrite unless the slot
+/// is read-only after relocation.  MaxFunctions is clamped to 1..4096.  EVM and
+/// SBF images return NULL with an error, because their analyzers own a
+/// different instruction model.  This query never starts analysis.
 NEVERD_API const char *neverd_code_refs_json(neverd_session_t Sess,
                                              neverd_va_t FirstEntry,
                                              int MaxFunctions);
+
+/// The pointers the loader stored in up to \p MaxSlots relocated data slots at
+/// or above \p FirstSlot, in ascending slot order: each slot refers to its
+/// pointer's target with kind "offset".  Returns
+/// {"refs":[["from","to","offset"],...],"next_slot":"0x..."|null}.
+/// MaxSlots is clamped to 1..65536.
+NEVERD_API const char *neverd_pointer_refs_json(neverd_session_t Sess,
+                                                neverd_va_t FirstSlot,
+                                                int MaxSlots);
 
 // ===--------------------------------------------------------------------===//
 // Decompilation
