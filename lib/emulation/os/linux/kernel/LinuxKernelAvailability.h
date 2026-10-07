@@ -9,8 +9,10 @@
 namespace neverd::emulation::linux_model {
 enum class IOVectorImportKind { CopyAll, SingleBuffer };
 std::optional<uint32_t> gkiPidFDFlags(AndroidGKIKernel Kernel);
+std::optional<uint32_t> gkiPidFDNonLeaderError(AndroidGKIKernel Kernel);
 std::optional<IOVectorImportKind> gkiIOVectorImport(AndroidGKIKernel Kernel);
 llvm::Error validateKernelOptions(const LinuxKernelOptions &Options);
+llvm::Error validateKernelTaskInputs(const ProcessOptions &Options);
 bool unavailableKernelService(ServiceKind Kind,
                               const std::optional<LinuxKernelOptions> &Options);
 } // namespace neverd::emulation::linux_model

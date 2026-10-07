@@ -20,7 +20,7 @@ Existing unsupported services still stop explicitly. See the official
 The catalogue in `LinuxGKIKernels.def` follows these formal `r1` release tags,
 checked on 2026-10-07. Each linked immutable commit supplies `kernel/pid.c`,
 `include/uapi/linux/pidfd.h`, `arch/arm64/configs/gki_defconfig`,
-`lib/iov_iter.c` and `fs/read_write.c`. Flag values come from the UAPI and the syscall's validation, rather than an Android API
+`kernel/fork.c`, `lib/iov_iter.c` and `fs/read_write.c`. Flag values come from the UAPI and the syscall's validation, rather than an Android API
 level or the host kernel.
 
 | Request branch | Formal release tag | Pinned source commit | Admitted flags | Iovec import |
@@ -45,9 +45,33 @@ Raw x64/AArch64 traps and Android Bionic's `syscall` share `LinuxServices` and
 one workload-owned descriptor table. The model consumes the low 32 PID/flag
 bits and rejects unknown flag bits or nonpositive signed PIDs with `EINVAL`
 before reserving a descriptor. The current process is a known live group
-leader; it can open a pidfd with the selected flags. Any other positive PID
-requires an independent task observation and currently stops unsupported.
-An unknown target is not silently treated as an absent process.
+leader; it can open a pidfd with the selected flags. Other positive PIDs require
+an explicit guest task observation. An omitted catalogue retains the unsupported
+lookup boundary, without inferring absence from missing host information.
+
+The optional `tasks` array is a closed, fixed catalogue of additional live tasks
+in this workload's guest PID namespace:
+
+```json
+{"linux_kernel":{"gki":"android17-6.18","tasks":[{"id":2000,"group_leader":true},{"id":3000,"group_leader":false}]},"linux_files":{"files":[],"descriptor_limit":16}}
+```
+
+The running process (PID 1000, group leader) is implicit, including for an empty
+array. A valid positive PID outside a declared catalogue returns `ESRCH` before
+descriptor allocation. A live nonleader without `PIDFD_THREAD` returns `EINVAL`
+on the pinned 5.10–6.12 releases, and `ENOENT` on
+[the pinned 6.18 release's `pidfd_prepare`](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/kernel/fork.c).
+With the accepted thread flag, the 6.12 and 6.18 releases can open the declared
+live nonleader. Flag validation still precedes all target lookup.
+
+Every entry requires an integer `id` in 1..2147483647 and a Boolean
+`group_leader`. At most 4096 entries are admitted. Duplicate IDs, extra fields,
+an observed nonleader PID 1000, and a catalogue without GKI selection are
+rejected. Explicit priority observations must name tasks present in this
+catalogue or the running process. This fixed catalogue cannot be combined with
+Android's cooperative thread mode (`thread_limit > 1`); creation, reaping,
+credentials, namespace translation and other task lifetime changes need their
+own supported ownership before that combination can be admitted.
 
 A request must declare `linux_files` so the same descriptor limit and ownership
 apply to regular files and process descriptors. Allocation uses the lowest
@@ -77,8 +101,8 @@ single-buffer policy; it does not infer a kernel release.
 Bionic translates raw negative errors to `-1` and thread-local `errno`; a
 successful call preserves `errno`. `fstat` needs file metadata not supplied by
 this subset. Polling, exit notifications, signal delivery through pidfds,
-`pidfd_getfd`, `fcntl`, pidfs ioctls and nonleader/foreign task lookup remain
-unsupported. Scheduling and process lifetime are not inferred from a pidfd.
+`pidfd_getfd`, `fcntl`, pidfs ioctls and unobserved task lookup remain unsupported.
+Scheduling and process lifetime are not inferred from a pidfd.
 
 ## Validation and next coverage
 
@@ -86,11 +110,12 @@ unsupported. Scheduling and process lifetime are not inferred from a pidfd.
 across the available transports, for all eight branches. It checks versioned
 flags, descriptor reuse/limits, regular-file coexistence, scalar/vector error
 ordering, inaccessible later metadata versus earlier negative lengths,
-single-vector cap versus original-extent checks, and retained unsupported
+single-vector cap versus original-extent checks, closed and omitted catalogues,
+live nonleaders, absent targets before FD exhaustion, and retained unsupported
 boundaries.
 `AndroidSyscallTests.cpp` repeats ownership and raw/Bionic error encoding over
 O0/O2 Android fixtures with ordinary, Android-packed and RELR relocations,
-including the versioned vector import and errno differences.
+including the versioned vector import, task lookup and errno differences.
 
 Source pins and these model executions are evidence for the specified syscall
 subset. Native tests booting every pinned GKI image are not yet available.

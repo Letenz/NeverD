@@ -3015,17 +3015,24 @@ Run these focused tests, the full Linux process and public process suites,
 and Android syscall, native-entry and signal suites for availability changes.
 
 `LinuxPIDFD.*` checks released GKI branch parsing and rejects invalid enum values
-or an absent-pidfd observation combined with GKI before image loading.
+or an absent-pidfd observation combined with GKI before image loading. It also
+rejects malformed, excessive and contradictory task catalogues before loading.
 `Backends/LinuxPIDFDProcess.*` runs independent O0/O2 x64/AArch64 callers for all
 eight branches, including flag differences, shared file/pidfd allocation,
-limits, close/reuse and scalar/vector error ordering. The versioned vector cases
+limits, close/reuse, closed task lookup, versioned nonleader errors and
+scalar/vector error ordering. Task cases test missing targets and nonleaders
+before FD exhaustion, thread flags and an empty catalogue with implicit self.
+The versioned vector cases
 contrast an early negative length with inaccessible later metadata, and a single
 buffer whose original extent crosses the user limit while its capped extent fits.
 They check pidfds and both captured streams, with O0/O2 callers. Android's
 `ReleasedGKIProcessDescriptorsShareRawAndBionicOwnership` cases repeat the
 shared descriptor and errno behavior across all six compiled relocation
 profiles; `ReleasedGKIVectorImportRetainsRawAndBionicErrors` repeats the vector
-ordering and cap differences through raw and Bionic transports. Run these first,
+ordering and cap differences through raw and Bionic transports.
+`ReleasedGKICatalogueRetainsRawAndBionicLookupErrors` repeats the catalogue
+and exhaustion cases while checking raw errors and Bionic's preserved errno.
+Run these first,
 then the complete Linux process, Android native and
 public process suites when changing shared kernel or descriptor semantics.
 These tests execute the model; they do not boot the eight pinned GKI kernels.
