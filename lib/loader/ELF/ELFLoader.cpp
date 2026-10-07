@@ -80,6 +80,7 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
   const Elf_Ehdr &EH = ELF.getHeader();
   bool IsRelocatable = (EH.e_type == ET_REL);
   Img.IsRelocatable = IsRelocatable;
+  Img.LoadsAtLinkAddress = EH.e_type == ET_EXEC;
 
   Img.Arch = tripleToArch(Obj.getArch());
   if (Img.Arch == Arch::Unknown)

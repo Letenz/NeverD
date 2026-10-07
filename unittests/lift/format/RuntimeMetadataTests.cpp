@@ -538,6 +538,44 @@ TEST(RuntimeMetadata, RecordsOnlyExactMappedImportStorageSlots) {
   EXPECT_FALSE(Img.hasRelocationProvenanceAt(0x1010));
 }
 
+TEST(RuntimeMetadata, ELFSlotBindingsOfUndefinedSymbolsAreImportStorage) {
+  using namespace llvm::ELF;
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Segments.push_back(makeSegment(0x3000, 0x100, false));
+
+  // The dynamic linker writes an undefined symbol's address into its GOT
+  // slot, so the slot is the import's storage: a call through it calls the
+  // import, as `_start` calls __libc_start_main.
+  EXPECT_TRUE(elf_loader::recordImportSlotBinding(R_X86_64_GLOB_DAT, 0x3008,
+                                                  "__libc_start_main",
+                                                  /*Undefined=*/true, 0, Img));
+  EXPECT_TRUE(elf_loader::recordImportSlotBinding(
+      R_X86_64_JUMP_SLOT, 0x3010, "puts", /*Undefined=*/true, 0, Img));
+  // A defined symbol's slot holds this image's own address, and other
+  // relocations write no symbol's address into a slot of its own.
+  EXPECT_FALSE(elf_loader::recordImportSlotBinding(
+      R_X86_64_GLOB_DAT, 0x3018, "defined_here", /*Undefined=*/false, 0, Img));
+  EXPECT_FALSE(elf_loader::recordImportSlotBinding(
+      R_X86_64_64, 0x3020, "data_pointer", /*Undefined=*/true, 0, Img));
+  EXPECT_FALSE(elf_loader::recordImportSlotBinding(
+      R_X86_64_GLOB_DAT, 0x3028, "", /*Undefined=*/true, 0, Img));
+
+  const ImportStorageSlotCollection Collected = Img.collectImportStorageSlots();
+  ASSERT_EQ(Collected.Slots.size(), 2u);
+  EXPECT_EQ(Collected.Slots.at(0x3008).Name, "__libc_start_main");
+  EXPECT_EQ(Collected.Slots.at(0x3008).Evidence,
+            ImportStorageEvidence::LoaderBind);
+  EXPECT_EQ(Collected.Slots.at(0x3010).Name, "puts");
+
+  EXPECT_TRUE(elf_loader::isELFSlotBinding(Arch::AArch64, R_AARCH64_GLOB_DAT));
+  EXPECT_TRUE(elf_loader::isELFSlotBinding(Arch::ARM, R_ARM_JUMP_SLOT));
+  EXPECT_TRUE(elf_loader::isELFSlotBinding(Arch::X86, R_386_GLOB_DAT));
+  EXPECT_FALSE(elf_loader::isELFSlotBinding(Arch::X64, R_AARCH64_GLOB_DAT))
+      << "relocation numbers belong to their architecture";
+}
+
 TEST(RuntimeMetadata, ConflictingImportStorageIdentityFailsClosed) {
   BinaryImage Img;
   Img.Bits = Bitness::Bits64;
