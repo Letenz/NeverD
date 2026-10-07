@@ -1,6 +1,6 @@
 **Языки**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 920271e860cb6e9a9c4c3fdb54e3adfc2fd1f058708ebfaa3ff693f11dfb47fe -->
+<!-- i18n-source: 4f2c32b592664760132b5349c4552df7b54238aa4fdbc868d7ed05d2ad7dd8e0 -->
 
 [← Оглавление документации](README.md)
 
@@ -699,3 +699,18 @@ BSD `getdtablesize(89)` требует этот предел и `ResourceLimits[
 ```
 
 [XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).
+
+
+## Явный приоритет текущего процесса
+
+`DarwinSystemOptions::ProcessNice` / JSON `darwin_system.nice` независимо задаёт фиксированный знаковый nice от -20 до 20. Отсутствие означает неизвестность; явные0 и -1 известны. Существующий целочисленный парсер без потерь принимает целые числа и десятичные целые строки; неверные типы, дроби, экспоненциальные строки, пробелы и значения вне диапазона отклоняются до загрузки. Точно целое числовое JSON допустимо. Профили не Darwin отклоняют поле. Значение не выводится из хоста, учётных данных, группы/сеанса, загрязнения, входа, ресурсов или CPU; планирование, права и бюджеты не меняются.
+
+Сырой `getpriority(100)` использует младшие32 бита селектора int и беззнакового `id_t`. Цель выше INT32_MAX сначала даёт EINVAL22. Неизвестные селекторы, включая GPU5/0x1000, и thread3 с ненулевой младшей целью дают EINVAL до наблюдений. `PRIO_PROCESS`0 принимает0 или текущий PID1000 и затем требует nice. Иные положительные PID остаются неподдерживаемыми без придуманного ESRCH. Группа1, пользователь2, thread3/цель0 и расширения4,6,7,8 неизвестны даже с соседними наблюдениями; лишь старшие биты цели thread не дают EINVAL. Результат расширяет знак до64 бит: -1 успешно возвращает UINT64_MAX с очищенным carry. Память гостя не используется, лишние аргументы игнорируются. BSD сохраняет x64 RDX при ошибке и обнуляет при успехе; ARM64 X1 обнуляется в обоих случаях.
+
+`setpriority(96)` не поддерживается даже с явными root/nice. Исходный read-only `process-priority` проверяет свою цель, заведомо неверные аргументы и переходы успех/ошибка/успех; `virtual-process-priority` выдаёт восемь заданных знаковых байтов. Чужие процессы, агрегаты, отсутствующие значения и setter проверяются лишь моделью. Новая ARM64 macOS проба прошла191 проверку с nice0; неотрицательная выборка не доказывает аппаратное расширение отрицательных значений. Для них служат знаковые объявления фиксированной версии и независимые границы модели. Физический iOS и нативный Intel проверяются отдельно.
+
+```json
+{"darwin_system":{"nice":-1}}
+```
+
+[XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).

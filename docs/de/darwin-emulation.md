@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 920271e860cb6e9a9c4c3fdb54e3adfc2fd1f058708ebfaa3ff693f11dfb47fe -->
+<!-- i18n-source: 4f2c32b592664760132b5349c4552df7b54238aa4fdbc868d7ed05d2ad7dd8e0 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -699,3 +699,18 @@ Der rohe Aufruf `getpgrp(81)` liest die Prozessgruppe; `getpgid(151)` und `getsi
 ```
 
 [XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).
+
+
+## Explizite Priorität des aktuellen Prozesses
+
+`DarwinSystemOptions::ProcessNice` / JSON `darwin_system.nice` deklariert einen unabhängigen festen vorzeichenbehafteten nice-Wert von -20 bis 20. Fehlend ist unbekannt; explizite0 und -1 sind bekannt. Der bestehende verlustfreie Ganzzahlparser akzeptiert Ganzzahlen und dezimale Ganzzahlzeichenketten; falsche Typen, Bruchteile, Exponentzeichenketten, Leerzeichen und Werte außerhalb der Grenzen scheitern vor dem Laden. Exakt ganzzahliges numerisches JSON bleibt gültig. Nicht-Darwin-Profile lehnen das Feld ab. Host, Identität, Gruppe/Sitzung, Taint, Login, Ressourcen oder CPU liefern keinen Wert; Planung, Rechte und Ausführungsbudgets ändern sich nicht.
+
+Rohes `getpriority(100)` verwendet die unteren32 Bits des int-Selektors und des vorzeichenlosen `id_t`-Ziels. Ein Ziel über INT32_MAX liefert zuerst EINVAL22. Unbekannte Selektoren einschließlich GPU5/0x1000 und Thread3 mit nichtnull Ziel liefern vor Beobachtungen EINVAL. `PRIO_PROCESS`0 unterstützt nur0 oder die aktuelle PID1000 und fordert danach nice an. Andere positive PIDs bleiben ohne erfundenes ESRCH ununterstützt. Gruppe1, Benutzer2, Thread3/Ziel0 und4,6,7,8 bleiben auch mit verwandten Werten unbekannt. Ein Thread-Ziel nur mit hohen Bits ist kein EINVAL. Vorzeichenerweiterung auf64 Bits liefert für -1 erfolgreich UINT64_MAX mit gelöschtem carry. Kein Gastspeicher, ungenutzte Argumente ignoriert; BSD bewahrt x64 RDX bei Fehlern und löscht es bei Erfolg, ARM64 X1 ist immer0.
+
+`setpriority(96)` bleibt auch mit explizitem root/nice ununterstützt. Das originale nur lesende `process-priority` prüft Eigenziele, sicher ungültige Argumente und Erfolg/Fehler/Erfolg; `virtual-process-priority` gibt die acht deklarierten vorzeichenbehafteten Bytes aus. Fremdprozess-, Aggregat-, Fehlwert- und Setterfälle bleiben Modellfälle. Die neue ARM64-macOS-Sonde bestand191 Prüfungen bei nice0; dieser nichtnegative Wert beweist keine negative Hardwareerweiterung. Dafür gelten die festgelegten signierten Eintrittsdeklarationen und unabhängigen Modellgrenzen. Physisches iOS und natives Intel bleiben separat.
+
+```json
+{"darwin_system":{"nice":-1}}
+```
+
+[XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).

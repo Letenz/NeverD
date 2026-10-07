@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 920271e860cb6e9a9c4c3fdb54e3adfc2fd1f058708ebfaa3ff693f11dfb47fe -->
+<!-- i18n-source: 4f2c32b592664760132b5349c4552df7b54238aa4fdbc868d7ed05d2ad7dd8e0 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -701,3 +701,18 @@ sysctl のコピー段階は維持します。EUID0 の実際の書き込みは�
 ```
 
 [XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).
+
+
+## 現在のプロセス優先度の明示値
+
+`DarwinSystemOptions::ProcessNice` / JSON `darwin_system.nice` は -20 から 20 の固定符号付き nice 値を独立に宣言します。省略は未知、明示的な0と -1 は既知です。既存の損失のない整数解析で整数値と十進整数文字列を受け入れ、不正な型、小数、指数文字列、空白、範囲外値はイメージ読み込み前に拒否します。正確な整数の数値 JSON は有効です。Darwin 以外では拒否します。ホスト、資格情報、グループ、セッション、汚染、ログイン、資源、CPU から推測せず、スケジューリング、権限、実行予算を変えません。
+
+生の `getpriority(100)` は int 選択子と符号なし `id_t` 対象の下位32ビットを使います。対象が INT32_MAX を超えると最初に EINVAL22。不明な選択子（GPU5、0x1000 を含む）とスレッド選択子3の非ゼロ対象も観測値の前に EINVAL です。`PRIO_PROCESS`0 は0または現在の PID1000 のみを受け入れ、自己選択後に nice が必要です。他の正の PID は ESRCH を推測せず未対応です。グループ1、ユーザー2、スレッド3/対象0、拡張4,6,7,8 は関連観測値があっても未対応です。スレッド対象の上位だけが非ゼロなら未知状態であり EINVAL ではありません。結果は64ビットに符号拡張され、-1 は carry がクリアされた成功 UINT64_MAX です。ゲストメモリを使わず未使用引数を無視します。BSD の第二戻り値規則は x64 エラーで RDX を保持、成功で0、ARM64 は両方で X1 を0にします。
+
+`setpriority(96)` は明示 root/nice でも未対応です。独自の読み取り専用 `process-priority` は自己引数、不正引数、成功/エラー/成功の遷移を検査し、`virtual-process-priority` は設定の符号付き8バイトを出力します。他プロセス、集約、欠落、設定操作はモデルのみです。新しい ARM64 macOS 探針は nice0 で191項目に成功しました。非負サンプルでは負数のハードウェア拡張は証明できず、固定版の符号付き入口宣言と独立モデル境界を使います。実機 iOS と Intel のネイティブ検証は別です。
+
+```json
+{"darwin_system":{"nice":-1}}
+```
+
+[XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).

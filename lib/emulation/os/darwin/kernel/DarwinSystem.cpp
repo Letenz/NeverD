@@ -97,6 +97,10 @@ const char *invalidProcess(const std::optional<T> &Value) {
   if constexpr (std::is_same_v<T, uint32_t>) {
     if (Value && (!*Value || *Value > uint32_t(INT32_MAX)))
       return diagnostic::ProcessIdentityOption;
+  } else if constexpr (std::is_same_v<T, int32_t>) {
+    if (Value && (*Value < -int32_t(PriorityNiceBound) ||
+                  *Value > int32_t(PriorityNiceBound)))
+      return diagnostic::ProcessNiceOption;
   } else if constexpr (std::is_same_v<T, std::vector<uint8_t>>) {
     if (Value && Value->size() != LoginNameSize)
       return diagnostic::LoginNameOption;
@@ -176,6 +180,37 @@ systemService(GuestMemory &Memory, uint64_t PageSize, ServiceKind Kind,
               const std::optional<DarwinSystemOptions> &Options,
               ProcessResult &Result) {
   const auto &A = Event.Arguments;
+  if (Kind == ServiceKind::GetPriority) {
+    const uint32_t Which = uint32_t(A[0]), Who = uint32_t(A[1]);
+    // XNU checks unsigned id_t before its selector switch. GPU selector5
+    // belongs to setpriority only; no flags are masked from a getter selector.
+    if (Who > CredentialIDMax)
+      return returned(InvalidArgument, true);
+    switch (Which) {
+    case PriorityProcess:
+      if (Who && Who != ProcessID)
+        return unsupported(Result, diagnostic::ProcessPeerObservation);
+      break;
+    case PriorityThread:
+      if (Who)
+        return returned(InvalidArgument, true);
+      [[fallthrough]];
+    case PriorityGroup:
+    case PriorityUser:
+    case PriorityBackground:
+    case PriorityRole:
+    case PriorityGame:
+    case PriorityCarPlay:
+      return unsupported(Result, diagnostic::PrioritySelectionObservation);
+    default:
+      return returned(InvalidArgument, true);
+    }
+    if (!Options || !Options->ProcessNice)
+      return unsupported(Result, diagnostic::ProcessNiceObservation);
+    // INT returns use signed uu_rval on both native entry paths. In
+    // particular -1 is a successful full-width result with carry clear.
+    return returned(uint64_t(int64_t(*Options->ProcessNice)));
+  }
   if (Kind == ServiceKind::GetLogin) {
     const uint32_t Size = std::min(uint32_t(A[1]), uint32_t(LoginNameSize));
     // XNU copies the raw session buffer, without string decoding or a NUL.

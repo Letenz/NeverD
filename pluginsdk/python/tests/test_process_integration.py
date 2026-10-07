@@ -581,6 +581,9 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("process-observations", b"P"),
                                            ("virtual-process-observations", bytes.fromhex(
                                                "070000000403020101000000")),
+                                           ("process-priority", b"Q"),
+                                           ("virtual-process-priority", bytes.fromhex(
+                                               "f9ffffffffffffff")),
                                            ("login-buffer", b"L"),
                                            ("virtual-login-buffer", b"L\0\xff" +
                                             b"\xa5" * 251 + b"~"),
@@ -616,7 +619,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                             "darwin_system": {
                                 "hostname": "abcd",
                                 "process_group_id": 7, "session_id": 16909060,
-                                "process_tainted": True,
+                                "process_tainted": True, "nice": -7,
                                 "login_name_hex": "4c00ff" + "a5" * 251 + "7e",
                                 "os_type": "Darwin", "os_release": "24.test",
                                 "os_revision": -2147483648, "os_version": "V42",

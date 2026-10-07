@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 920271e860cb6e9a9c4c3fdb54e3adfc2fd1f058708ebfaa3ff693f11dfb47fe -->
+<!-- i18n-source: 4f2c32b592664760132b5349c4552df7b54238aa4fdbc868d7ed05d2ad7dd8e0 -->
 
 [← 문서 목록](README.md)
 
@@ -701,3 +701,18 @@ sysctl 복사 단계는 유지됩니다. EUID0의 실제 쓰기는 이름/MIB와
 ```
 
 [XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).
+
+
+## 현재 프로세스 우선순위 명시값
+
+`DarwinSystemOptions::ProcessNice` / JSON `darwin_system.nice` 는 -20 에서 20 사이의 고정 부호 있는 nice 값을 독립적으로 선언합니다. 생략은 미지이며 명시적0과 -1은 알려진 값입니다. 기존 무손실 정수 파서는 정수 숫자와 십진 정수 문자열을 허용하고 잘못된 형식, 소수, 지수 문자열, 공백, 범위 초과는 이미지 로드 전에 거부합니다. 정확한 정수의 숫자 JSON은 유효합니다. 비 Darwin 프로필은 거부합니다. 호스트, 자격 증명, 그룹, 세션, 오염, 로그인, 자원, CPU 값에서 추론하지 않고 스케줄링, 권한, 실행 예산을 바꾸지 않습니다.
+
+원시 `getpriority(100)` 은 int 선택자와 부호 없는 `id_t` 대상의 하위32비트를 씁니다. 대상이 INT32_MAX보다 크면 먼저 EINVAL22를 반환합니다. 알 수 없는 선택자(GPU5,0x1000 포함)와 스레드3의0이 아닌 대상도 관측값 전에 EINVAL입니다. `PRIO_PROCESS`0은0 또는 현재 PID1000만 지원하며 자신을 선택한 뒤 nice를 요구합니다. 다른 양수 PID는 ESRCH를 추측하지 않고 미지원입니다. 그룹1, 사용자2, 스레드3/대상0, 확장4,6,7,8은 관련 값이 있어도 미지원입니다. 스레드 대상의 상위만 비영이면 미지 상태이며 EINVAL이 아닙니다. 결과는64비트 부호 확장으로 -1은 carry가 지워진 성공 UINT64_MAX입니다. 게스트 메모리를 쓰지 않고 미사용 인수를 무시합니다. BSD 두 번째 레지스터 규칙은 x64 오류의 RDX를 보존하고 성공 때0으로, ARM64는 두 경로의 X1을0으로 합니다.
+
+`setpriority(96)` 은 명시 root/nice에서도 미지원입니다. 독자적 읽기 전용 `process-priority`는 자기 인수, 확실히 잘못된 인수, 성공/오류/성공 전환을 검사하며 `virtual-process-priority`는 설정한 부호 있는8바이트를 출력합니다. 다른 프로세스, 집계, 누락, 설정 경로는 모델만 시험합니다. 새 ARM64 macOS 탐침은 nice0으로191개 검사를 통과했습니다. 비음수 샘플은 음수 하드웨어 확장을 입증하지 않으므로 고정 버전의 부호 있는 진입 선언과 독립 모델 경계를 사용합니다. 물리 iOS와 Intel 네이티브 검증은 별개입니다.
+
+```json
+{"darwin_system":{"nice":-1}}
+```
+
+[XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).

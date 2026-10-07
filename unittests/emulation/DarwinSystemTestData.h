@@ -51,6 +51,14 @@ inline constexpr char ProcessObservationsJSON[] =
     R"({"process_group_id":7,"session_id":16909060,"process_tainted":true})";
 // Independently packed little-endian group, session and int taint result.
 inline constexpr char ProcessObservationsHex[] = "070000000403020101000000";
+inline DarwinSystemOptions priorityOptions() {
+  DarwinSystemOptions O;
+  O.ProcessNice = -7;
+  return O;
+}
+inline constexpr char PriorityJSON[] = R"({"nice":-7})";
+// Independent complete raw signed return bytes, rather than Linux 20-nice.
+inline constexpr char PriorityHex[] = "f9ffffffffffffff";
 inline DarwinSystemOptions loginBufferOptions() {
   DarwinSystemOptions O;
   auto &Bytes = O.LoginNameBytes.emplace(255, 0xa5);

@@ -51,6 +51,75 @@ extern "C" ssize_t __getdirentries64(int, void *, size_t, off_t *);
 
 namespace neverd::emulation {
 namespace {
+TEST(DarwinNative, ProcessNiceMatchesSDKAndOneSignedRawCapture) {
+#if !defined(__APPLE__) || (!defined(__aarch64__) && !defined(__x86_64__))
+  GTEST_SKIP() << "native Darwin priority capture requires macOS";
+#else
+  ASSERT_EQ(SYS_getpriority, 100);
+  ASSERT_EQ(PRIO_PROCESS, 0);
+  ASSERT_EQ(PRIO_DARWIN_THREAD, 3);
+  ASSERT_EQ(PRIO_MIN, -20);
+  ASSERT_EQ(PRIO_MAX, 20);
+  ASSERT_EQ(sizeof(id_t), 4u);
+  ASSERT_GT(id_t(-1), 0u);
+  errno = 0;
+  const int Nice = getpriority(PRIO_PROCESS, 0);
+  ASSERT_GE(Nice, -20);
+  ASSERT_LE(Nice, 20);
+  if (Nice == -1)
+    ASSERT_EQ(errno, 0);
+  const auto Captured = [] {
+#if defined(__aarch64__)
+    register uint64_t X0 __asm__("x0") = 0;
+    register uint64_t X1 __asm__("x1") = 0;
+    register uint64_t X16 __asm__("x16") = 100;
+    unsigned Carry;
+    __asm__ volatile("svc #0x80\n\tcset %w2, cs"
+                     : "+r"(X0), "+r"(X1), "=r"(Carry)
+                     : "r"(X16)
+                     : "cc", "memory");
+    return std::array<uint64_t, 3>{X0, X1, Carry};
+#else
+    uint64_t RAX = 0x2000064, RDX = 0x1122334455667788ULL;
+    unsigned char Carry;
+    __asm__ volatile("syscall\n\tsetc %2"
+                     : "+a"(RAX), "+d"(RDX), "=qm"(Carry)
+                     : "D"(uint64_t(0)), "S"(uint64_t(0))
+                     : "rcx", "r11", "cc", "memory");
+    return std::array<uint64_t, 3>{RAX, RDX, Carry};
+#endif
+  }();
+  EXPECT_EQ(Captured[0], uint64_t(int64_t(Nice)));
+  ASSERT_EQ(Captured[1], 0u);
+  ASSERT_EQ(Captured[2], 0u);
+  std::optional<DarwinSystemOptions> Options = DarwinSystemOptions{};
+  Options->ProcessNice = Nice;
+  ASSERT_FALSE(bool(darwin_model::validateSystemOptions(*Options)));
+  for (uint64_t Page : {4096u, 16384u}) {
+    auto Physical = PhysicalMemory::create(Page);
+    ASSERT_TRUE(bool(Physical)) << llvm::toString(Physical.takeError());
+    auto Space = AddressSpace::create(*Physical, Page);
+    ASSERT_TRUE(bool(Space)) << llvm::toString(Space.takeError());
+    ProcessResult Result{
+        ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+        ExecutionBackendKind::Unicorn, "native priority sample"};
+    for (uint64_t Who :
+         {0ULL, 1000ULL, 0xffffffff00000000ULL, 0x12345678000003e8ULL}) {
+      auto Out = darwin_model::systemService(
+          **Space, Page, darwin_model::ServiceKind::GetPriority,
+          {0, 100, {0x1234567800000000ULL, Who, UINT64_MAX}, {}}, Options,
+          Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out) << Result.Diagnostic;
+      EXPECT_EQ((**Out).Value, Captured[0]);
+      EXPECT_FALSE((**Out).Error);
+    }
+  }
+  // A nonnegative host sample does not establish negative hardware returns;
+  // independent model constants and the pinned signed INT entry cover them.
+#endif
+}
+
 TEST(DarwinNative, LoginBufferMatchesSDKAndOneCompleteRawCapture) {
 #if !defined(__APPLE__) || (!defined(__aarch64__) && !defined(__x86_64__))
   GTEST_SKIP() << "native Darwin login buffer capture requires macOS";

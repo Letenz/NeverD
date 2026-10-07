@@ -901,6 +901,118 @@ TEST_P(DarwinProcess, ProcessQueriesKeepIndependentSelfObservations) {
   }
 }
 
+TEST_P(DarwinProcess, PriorityKeepsSignedSuccessArgumentOrderAndScope) {
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (unsigned Config = 0; Config != 3; ++Config) {
+    Options.DarwinSystem.reset();
+    if (Config == 1)
+      Options.DarwinSystem.emplace();
+    if (Config == 2) {
+      Options.DarwinSystem = darwin_test::processObservationOptions();
+      Options.DarwinSystem->Credentials.emplace().GroupAccessList =
+          std::vector<uint32_t>{0, 1000, 1000};
+      Options.DarwinSystem->HostName = "abcd";
+      Options.DarwinSystem->LoginNameBytes.emplace(255, 0);
+    }
+    auto Errors = run("priority-errors");
+    ASSERT_TRUE(bool(Errors)) << llvm::toString(Errors.takeError());
+    EXPECT_EQ(Errors->Stop, ProcessStopReason::Exited) << Errors->Diagnostic;
+    EXPECT_EQ(Errors->ExitStatus, 37);
+    EXPECT_EQ(Errors->StandardOutput, "E");
+    auto Missing = run("priority-missing-after");
+    ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+    EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Missing->Diagnostic,
+              "Darwin process nice observation is not configured");
+    EXPECT_EQ(Missing->StandardOutput, "!");
+    EXPECT_EQ(Missing->Services.back().Number, Class + 100);
+    EXPECT_FALSE(Missing->Services.back().Result);
+  }
+  struct Sample {
+    int32_t Nice;
+    const char *Hex;
+    uint64_t Raw;
+  };
+  const Sample Samples[] = {{-20, "ecffffffffffffff", 0xffffffffffffffecULL},
+                            {-1, "ffffffffffffffff", UINT64_MAX},
+                            {0, "0000000000000000", 0},
+                            {20, "1400000000000000", 20}};
+  for (const auto &S : Samples) {
+    Options.DarwinSystem = darwin_test::priorityOptions();
+    Options.DarwinSystem->ProcessNice = S.Nice;
+    for (const char *Mode : {"process-priority", "virtual-process-priority"}) {
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+      EXPECT_EQ(R->ExitStatus, 37);
+      EXPECT_EQ(R->StandardOutput, llvm::StringRef(Mode) == "process-priority"
+                                       ? "Q"
+                                       : llvm::fromHex(S.Hex));
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      std::vector<const ProcessServiceEvent *> Priority;
+      for (const auto &E : R->Services) {
+        if (E.Number != Class + 100)
+          continue;
+        Priority.push_back(&E);
+        EXPECT_EQ(E.Arguments[2], 0x1122334455667788ULL);
+        EXPECT_EQ(E.Arguments[3], UINT64_MAX);
+        EXPECT_EQ(E.Arguments[4], UINT64_MAX);
+        EXPECT_EQ(E.Arguments[5], UINT64_MAX);
+        if (E.Error == true)
+          EXPECT_EQ(E.Result, 22u);
+        else {
+          EXPECT_EQ(E.Error, false);
+          EXPECT_EQ(E.Result, S.Raw);
+        }
+      }
+      ASSERT_EQ(Priority.size(), 66u);
+      EXPECT_EQ(Priority[0]->Result, S.Raw);
+      EXPECT_EQ(Priority[0]->Error, false);
+      EXPECT_EQ(Priority[1]->Result, 22u);
+      EXPECT_EQ(Priority[1]->Error, true);
+      EXPECT_EQ(Priority[1]->Arguments[0], 5u);
+      EXPECT_EQ(Priority[2]->Result, S.Raw);
+      EXPECT_EQ(Priority[2]->Error, false);
+      EXPECT_EQ(Priority[2]->Arguments[0], 0xffffffff00000000ULL);
+      EXPECT_EQ(Priority[2]->Arguments[1], 0xffffffff00000000ULL);
+    }
+  }
+  for (bool Known : {false, true}) {
+    Options.DarwinSystem = darwin_test::priorityOptions();
+    if (!Known)
+      Options.DarwinSystem->ProcessNice.reset();
+    Options.DarwinSystem->Credentials.emplace().GroupAccessList =
+        std::vector<uint32_t>{0, 1000, 1000};
+    Options.DarwinSystem->ProcessGroupID = 1000;
+    Options.DarwinSystem->SessionID = 1000;
+    for (const char *Mode :
+         {"priority-peer", "priority-group", "priority-user", "priority-thread",
+          "priority-background", "priority-role", "priority-game",
+          "priority-carplay", "priority-set"}) {
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(R->StandardOutput, "!");
+      EXPECT_FALSE(R->Services.back().Result);
+      EXPECT_EQ(R->Services.back().Number,
+                Class + (llvm::StringRef(Mode) == "priority-set" ? 96 : 100));
+      EXPECT_EQ(R->Diagnostic,
+                llvm::StringRef(Mode) == "priority-peer"
+                    ? "Darwin other-process queries are not modeled"
+                : llvm::StringRef(Mode) == "priority-set"
+                    ? (Class ? "unsupported Darwin service 0x2000060"
+                             : "unsupported Darwin service 0x60")
+                    : "Darwin selected priority observation is not modeled");
+      if (llvm::StringRef(Mode) == "priority-thread") {
+        EXPECT_EQ(R->Services.back().Arguments[0], 0x1234567800000003ULL);
+        EXPECT_EQ(R->Services.back().Arguments[1], 0xffffffff00000000ULL);
+      }
+    }
+  }
+}
+
 TEST_P(DarwinProcess, LoginBufferPreservesExactBytesZeroLengthAndAuthority) {
   const uint64_t Class =
       GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;

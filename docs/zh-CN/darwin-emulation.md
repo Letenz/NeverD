@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 920271e860cb6e9a9c4c3fdb54e3adfc2fd1f058708ebfaa3ff693f11dfb47fe -->
+<!-- i18n-source: 4f2c32b592664760132b5349c4552df7b54238aa4fdbc868d7ed05d2ad7dd8e0 -->
 
 [← 文档索引](README.md)
 
@@ -803,3 +803,18 @@ sysctl 沿用原复制阶段。显式 EUID0 的真实写请求在名称/MIB 与 
 ```
 
 [XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).
+
+
+## 显式当前进程优先级
+
+`DarwinSystemOptions::ProcessNice` / JSON `darwin_system.nice` 独立声明 -20 到 20 的固定有符号 nice 值。缺省表示未知，显式零和 -1 都是已知值。复用无损整数解析，接受整数数值和十进制整数字符串；错误类型、小数、指数字符串、空白和越界值在加载映像前拒绝，精确整数的数值 JSON 仍有效。非 Darwin 配置不接受该字段。不会从宿主机、凭据、进程组、会话、污染、登录、资源或 CPU 观察值推断 nice，也不改变调度、权限或执行预算。
+
+原始 `getpriority(100)` 使用选择器 int 和无符号目标 `id_t` 的低32位。目标超过 INT32_MAX 首先返回 EINVAL22；未知选择器（包括 GPU5、0x1000）及线程选择器3的非零低32位目标也在读取观察值前返回 EINVAL。`PRIO_PROCESS`0 只接受零或当前 PID1000，选中自身后才要求 nice。其他正数 PID 保持未支持，不猜测 ESRCH；组1、用户2、线程3/目标0及扩展选择器4、6、7、8 即使相关观察值齐全也保持未支持。线程目标仅高位非零仍选择未知线程状态，不能误报 EINVAL。结果符号扩展到完整64位：-1 是 carry 清除的成功 UINT64_MAX。查询不访问来宾内存，忽略未用参数；保留 BSD 第二返回寄存器规则，x64 错误保留 RDX、成功清零，ARM64 两种路径均清零 X1。
+
+`setpriority(96)` 在显式 root 和 nice 下仍不支持。原始只读 `process-priority` 检查自身参数载体、确定非法的参数及成功/错误/成功转换；`virtual-process-priority` 输出配置的八个有符号字节。其他进程、聚合、缺失和设置器路径只在模型中测试。新 ARM64 macOS 探针实际通过191项，nice样本为0；非负样本不能证明负数硬件扩展，负数依据固定版本的有符号入口声明及独立模型边界验证。物理 iOS 和 Intel 原生验收仍须分别完成。
+
+```json
+{"darwin_system":{"nice":-1}}
+```
+
+[XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).

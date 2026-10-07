@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 920271e860cb6e9a9c4c3fdb54e3adfc2fd1f058708ebfaa3ff693f11dfb47fe -->
+<!-- i18n-source: 4f2c32b592664760132b5349c4552df7b54238aa4fdbc868d7ed05d2ad7dd8e0 -->
 
 [← 文件索引](README.md)
 
@@ -701,3 +701,18 @@ sysctl 沿用既有複製階段。EUID0 的真實寫入在名稱/MIB 與 oldlenp
 ```
 
 [XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).
+
+
+## 明確的目前程序優先權
+
+`DarwinSystemOptions::ProcessNice` / JSON `darwin_system.nice` 獨立宣告 -20 至 20 的固定有號 nice 值。省略表示未知，明確的零與 -1 都是已知值。沿用無損整數解析，接受整數數值與十進位整數字串；錯誤型別、小數、指數字串、空白及超出範圍的值在載入映像前拒絕，精確整數的數值 JSON 仍有效。非 Darwin 設定拒絕此欄位。不從主機、憑證、群組、工作階段、污染、登入、資源或 CPU 觀察值推斷 nice，也不改變排程、權限或執行預算。
+
+原始 `getpriority(100)` 使用 int 選擇器與無號 `id_t` 目標的低32位。目標超過 INT32_MAX 先回傳 EINVAL22；未知選擇器（包括 GPU5、0x1000）及執行緒選擇器3的非零低32位目標，也在讀取觀察值前回傳 EINVAL。`PRIO_PROCESS`0 僅接受零或目前 PID1000，選中自身後才要求 nice。其他正數 PID 不支援，不猜測 ESRCH；群組1、使用者2、執行緒3/目標0及擴充選擇器4、6、7、8 即使相關欄位齊全也不支援。執行緒目標僅高位非零仍選擇未知狀態，不是 EINVAL。結果以符號擴展至完整64位：-1 是 carry 清除的成功 UINT64_MAX。查詢不存取客體記憶體並忽略未用參數；BSD 第二回傳暫存器維持 x64 錯誤保留 RDX、成功清零，ARM64 兩種路徑均清零 X1。
+
+`setpriority(96)` 在明確 root 與 nice 下仍不支援。原始唯讀 `process-priority` 檢查自身參數、必定非法的參數及成功/錯誤/成功轉換；`virtual-process-priority` 輸出設定的八個有號位元組。其他程序、聚合、缺失與設定器僅用模型測試。新 ARM64 macOS 探針通過191項，nice樣本為0；非負樣本不能證明負數硬體擴展，負數使用固定版本的有號入口宣告及獨立模型邊界驗證。實體 iOS 與 Intel 原生驗收仍分開進行。
+
+```json
+{"darwin_system":{"nice":-1}}
+```
+
+[XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).

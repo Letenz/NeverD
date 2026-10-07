@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 920271e860cb6e9a9c4c3fdb54e3adfc2fd1f058708ebfaa3ff693f11dfb47fe -->
+<!-- i18n-source: 4f2c32b592664760132b5349c4552df7b54238aa4fdbc868d7ed05d2ad7dd8e0 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -699,3 +699,18 @@ getuid24/geteuid25/getgid47/getegid43/getgroups79 تشترك بمالكsystem و
 ```
 
 [XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).
+
+
+## أولوية العملية الحالية الصريحة
+
+يعلن `DarwinSystemOptions::ProcessNice` / JSON `darwin_system.nice` قيمة nice ثابتة مستقلة موقعة من -20 إلى 20. الغياب مجهول؛ الصفر و -1 الصريحان معلومان. يقبل محلل الأعداد الصحيحة دون فقد الأعداد الصحيحة والسلاسل العشرية الصحيحة؛ ويرفض الأنواع الخاطئة والكسور والسلاسل الأسية والمسافات والقيم خارج النطاق قبل تحميل الصورة. يبقى JSON العددي الصحيح تماماً صالحاً. ترفض ملفات غير Darwin الحقل. لا يستنتج من المضيف أو الاعتماد أو المجموعة/الجلسة أو التلوث أو الدخول أو الموارد أو CPU، ولا يغير الجدولة أو الحقوق أو ميزانية التنفيذ.
+
+يستخدم `getpriority(100)` أقل32 بت من محدد int وهدف `id_t` غير الموقع. يعيد الهدف فوق INT32_MAX أولاً EINVAL22. المحددات المجهولة بما فيها GPU5 و0x1000، وthread3 مع هدف منخفض غير صفري، تعيد EINVAL قبل الرصد. يقبل `PRIO_PROCESS`0 الصفر أو PID1000 الحالي فقط ثم يتطلب nice. تظل أهداف PID الموجبة الأخرى غير مدعومة دون اختلاق ESRCH. المجموعة1 والمستخدم2 وthread3/هدف0 والمحددات4,6,7,8 غير مدعومة حتى مع الرصد المرتبط؛ هدف thread ذو بتات عالية فقط يختار حالة مجهولة وليس EINVAL. تمدد النتيجة الإشارة إلى64 بت: -1 نجاح UINT64_MAX مع carry ممسوح. لا وصول لذاكرة الضيف وتُهمل الحجج غير المستخدمة. تحفظ BSD سجل RDX على x64 عند الخطأ وتمسحه عند النجاح، وتمسح X1 على ARM64 في المسارين.
+
+يبقى `setpriority(96)` غير مدعوم حتى مع root/nice صريحين. يفحص الأصل للقراءة فقط `process-priority` الهدف الذاتي والحجج المضمونة الخطأ وانتقال نجاح/خطأ/نجاح؛ ويخرج `virtual-process-priority` البايتات الثمانية الموقعة المعلنة. الأهداف الأخرى والتجميع والغياب والتعيين حالات للنموذج فقط. نجح مسبار ARM64 macOS الجديد في191 فحصاً بعينة nice0؛ العينة غير السالبة لا تثبت تمديد القيم السالبة عتادياً، وتغطيها تصريحات الدخول الموقعة للنسخة المثبتة وحدود النموذج المستقلة. يبقى قبول iOS المادي وIntel الأصلي منفصلاً.
+
+```json
+{"darwin_system":{"nice":-1}}
+```
+
+[XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).

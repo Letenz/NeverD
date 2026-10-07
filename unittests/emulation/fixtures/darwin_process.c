@@ -55,6 +55,89 @@ static u64 little_integer(const unsigned char *p, unsigned width) {
     value |= (u64)p[i] << (i * 8);
   return value;
 }
+/* One read-only native workload. Its captured value is stable during these
+ * calls; explicit guest nice values use the identical raw instruction path. */
+static int priority_result(u64 which, u64 who, u64 expected, unsigned failure) {
+  unsigned error;
+  const u64 sentinel = 0x1122334455667788UL;
+  u64 result = call(100, which, who, sentinel, -1UL, -1UL, -1UL, &error);
+  if (result != expected || error != failure)
+    return 211;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (failure ? sentinel : 0))
+#endif
+    return 212;
+  return 0;
+}
+static int process_priority(int emit_values) {
+  unsigned error;
+  const u64 sentinel = 0x1122334455667788UL;
+  u64 nice = call(100, 0, 0, sentinel, -1UL, -1UL, -1UL, &error);
+  if (error || secondary || (long)nice < -20 || (long)nice > 20)
+    return 213;
+  // Successful -1 is not errno: success -> EINVAL -> success checks both
+  // carry transitions and x64 preservation/clearing of the same RDX sentinel.
+  if (priority_result(5, 0, 22, 1) ||
+      priority_result(0xffffffff00000000UL, 0xffffffff00000000UL, nice, 0))
+    return 214;
+  u64 pid = call(20, 0, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || !pid || pid > 0x7fffffffUL)
+    return 215;
+  const u64 selectors[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const u64 ids[] = {0,
+                     pid,
+                     0x100000000UL,
+                     0xffffffff00000000UL,
+                     0x1234567800000000UL | pid,
+                     0xffffffff00000000UL | pid};
+  for (unsigned i = 0; i != 3; ++i)
+    for (unsigned j = 0; j != 6; ++j)
+      if (priority_result(selectors[i], ids[j], nice, 0))
+        return 216;
+  const u64 invalid_ids[] = {0x80000000UL, 0xffffffffUL, 0x1234567880000000UL,
+                             -1UL};
+  for (unsigned i = 0; i != 9; ++i)
+    for (unsigned j = 0; j != 4; ++j)
+      if (priority_result(i, invalid_ids[j], 22, 1))
+        return 217;
+  const u64 invalid_selectors[] = {
+      5, 9, 0x1000, 0xffffffffUL, 0x80000000UL, 0x1234567800000005UL};
+  for (unsigned i = 0; i != 6; ++i)
+    if (priority_result(invalid_selectors[i], 0, 22, 1))
+      return 218;
+  if (priority_result(3, pid, 22, 1) ||
+      priority_result(0x1234567800000003UL, 0x1234567800000001UL, 22, 1) ||
+      priority_result(0, 0, nice, 0))
+    return 219;
+  const char marker = 'Q';
+  return call(4, 1, emit_values ? (u64)&nice : (u64)&marker,
+              emit_values ? sizeof(nice) : 1, 0, 0, 0,
+              &error) == (emit_values ? sizeof(nice) : 1) &&
+                 !error
+             ? 37
+             : 220;
+}
+/* These routes intentionally stop in the bounded model and never enter the
+ * original native workload catalogue. */
+static int priority_unavailable(u64 number, u64 which, u64 who) {
+  unsigned error;
+  const char marker = '!';
+  if (call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) != 1 || error)
+    return 221;
+  call(number, which, who, 0x1122334455667788UL, -1UL, -1UL, -1UL, &error);
+  return 222;
+}
+static int priority_errors_only(void) {
+  if (priority_result(5, 0, 22, 1) || priority_result(0, -1UL, 22, 1) ||
+      priority_result(0x1234567800000003UL, 0x1234567800000001UL, 22, 1))
+    return 223;
+  unsigned error;
+  const char marker = 'E';
+  return call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) == 1 && !error ? 37 : 224;
+}
+
 /* Original read-only raw buffer workload. No host login literal, text decoding
  * or session setters; virtual mode publishes the declared bytes unchanged. */
 static int login_zero_calls(void) {
@@ -3452,6 +3535,33 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "process-priority") ||
+      equal(argv[1], "virtual-process-priority"))
+    return process_priority(equal(argv[1], "virtual-process-priority"));
+  if (equal(argv[1], "priority-errors"))
+    return priority_errors_only();
+  if (equal(argv[1], "priority-missing-after"))
+    return priority_unavailable(100, 0x1234567800000000UL,
+                                0xffffffff000003e8UL);
+  if (equal(argv[1], "priority-peer"))
+    return priority_unavailable(100, 0, 0xffffffff00001000UL);
+  if (equal(argv[1], "priority-group"))
+    return priority_unavailable(100, 1, 1000);
+  if (equal(argv[1], "priority-user"))
+    return priority_unavailable(100, 2, 0);
+  if (equal(argv[1], "priority-thread"))
+    return priority_unavailable(100, 0x1234567800000003UL,
+                                0xffffffff00000000UL);
+  if (equal(argv[1], "priority-background"))
+    return priority_unavailable(100, 4, 0);
+  if (equal(argv[1], "priority-role"))
+    return priority_unavailable(100, 6, 0);
+  if (equal(argv[1], "priority-game"))
+    return priority_unavailable(100, 7, 0);
+  if (equal(argv[1], "priority-carplay"))
+    return priority_unavailable(100, 8, 0);
+  if (equal(argv[1], "priority-set"))
+    return priority_unavailable(96, 0, 0);
   if (equal(argv[1], "login-buffer") || equal(argv[1], "virtual-login-buffer"))
     return login_buffer(equal(argv[1], "virtual-login-buffer"));
   if (equal(argv[1], "login-zero"))

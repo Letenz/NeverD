@@ -85,6 +85,15 @@ NEVERD_DARWIN_VALUE(ResultTooLarge, 34)
 NEVERD_DARWIN_VALUE(SystemStringLimit, 1024)
 NEVERD_DARWIN_VALUE(HostNameLimit, 256)
 NEVERD_DARWIN_VALUE(LoginNameSize, 255)
+NEVERD_DARWIN_VALUE(PriorityNiceBound, 20)
+NEVERD_DARWIN_VALUE(PriorityProcess, 0)
+NEVERD_DARWIN_VALUE(PriorityGroup, 1)
+NEVERD_DARWIN_VALUE(PriorityUser, 2)
+NEVERD_DARWIN_VALUE(PriorityThread, 3)
+NEVERD_DARWIN_VALUE(PriorityBackground, 4)
+NEVERD_DARWIN_VALUE(PriorityRole, 6)
+NEVERD_DARWIN_VALUE(PriorityGame, 7)
+NEVERD_DARWIN_VALUE(PriorityCarPlay, 8)
 NEVERD_DARWIN_VALUE(SystemMIBLimit, 12)
 NEVERD_DARWIN_VALUE(CredentialIDMax, 0x7fffffff)
 NEVERD_DARWIN_VALUE(GroupAccessLimit, 16)
@@ -140,6 +149,7 @@ NEVERD_DARWIN_SERVICE(GetPGID, 151, Int)
 NEVERD_DARWIN_SERVICE(GetSID, 310, Int)
 NEVERD_DARWIN_SERVICE(IsSetUGID, 327, Int)
 NEVERD_DARWIN_SERVICE(GetDTableSize, 89, Int)
+NEVERD_DARWIN_SERVICE(GetPriority, 100, Int)
 NEVERD_DARWIN_SERVICE(Dup2, 90, Int)
 NEVERD_DARWIN_SERVICE(Fcntl, 92, Int)
 NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
@@ -221,6 +231,12 @@ NEVERD_DARWIN_DIAGNOSTIC(LoginNameObservation,
                          "Darwin login buffer observation is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(LoginNamePartialOutput,
                          "Darwin login buffer output is partially writable")
+NEVERD_DARWIN_DIAGNOSTIC(ProcessNiceOption,
+                         "Darwin system nice must be between -20 and 20")
+NEVERD_DARWIN_DIAGNOSTIC(ProcessNiceObservation,
+                         "Darwin process nice observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(PrioritySelectionObservation,
+                         "Darwin selected priority observation is not modeled")
 NEVERD_DARWIN_DIAGNOSTIC(ProcessPeerObservation,
                          "Darwin other-process queries are not modeled")
 NEVERD_DARWIN_DIAGNOSTIC(SystemPartialInput,

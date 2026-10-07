@@ -1454,3 +1454,18 @@ Raw `getlogin(49)` takes unsigned low32 `u_int` length and copies exactly min(le
 ```
 
 [XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).
+
+
+## Explicit current-process priority
+
+`DarwinSystemOptions::ProcessNice` / JSON `darwin_system.nice` declares an independent fixed signed nice value from -20 through 20. Missing is unknown; explicit zero and -1 are known. Lossless integer numbers and decimal integer strings use the existing parser; malformed types, fractions, exponent strings, whitespace and out-of-range values fail before image loading. Exact integer numeric JSON remains valid. Non-Darwin profiles reject the field. No host, credentials, group/session/taint/login, resource or CPU observation supplies it; it changes no scheduling, permissions or execution budget.
+
+Raw `getpriority(100)` uses low32 for the int selector and unsigned `id_t` target. A target above INT32_MAX first returns EINVAL22. Unknown selectors, including GPU5 and 0x1000, return EINVAL; thread selector3 with nonzero low32 target also returns EINVAL before observations. `PRIO_PROCESS`0 supports only zero or current PID1000, requiring the declared nice value after selection. Positive other PIDs remain unsupported without guessed ESRCH. Group1, user2, thread3/target0 and extended selectors4,6,7,8 remain unsupported even with related observations; high-half-only thread targets select unknown thread state, not EINVAL. The result is signed-extended to the full 64-bit carrier: -1 returns UINT64_MAX successfully with carry clear. The query accesses no guest memory and ignores unused arguments; existing BSD secondary-register rules retain x64 RDX on errors and clear it on success, while ARM64 X1 is cleared on both paths.
+
+`setpriority(96)` remains unsupported even with explicit root credentials and nice. Original read-only `process-priority` checks self carriers, guaranteed-invalid arguments and success/error/success return transitions; `virtual-process-priority` emits the configured eight signed bytes. Peer, aggregate, missing and setter routes are model-only. The fresh ARM64 macOS probe passed 191 checks with nice0; that nonnegative sample does not establish negative hardware extension, which uses pinned signed entry declarations and independent model boundaries. Physical iOS and Intel native acceptance remain separate.
+
+```json
+{"darwin_system":{"nice":-1}}
+```
+
+[XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).

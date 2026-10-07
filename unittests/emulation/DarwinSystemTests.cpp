@@ -830,6 +830,194 @@ TEST_P(DarwinSystemTest, ProcessTaintIsIndependentOfCredentialsAndAuthority) {
     }
 }
 
+TEST(DarwinSystemOptions,
+     ProcessNiceUsesSignedBoundsWithoutConstrainingRevision) {
+  DarwinSystemOptions O;
+  EXPECT_FALSE(bool(validateSystemOptions(O)));
+  for (int32_t Nice = -20; Nice <= 20; ++Nice) {
+    O.ProcessNice = Nice;
+    O.OSRevision = Nice < 0 ? INT32_MIN : INT32_MAX;
+    EXPECT_FALSE(bool(validateSystemOptions(O)));
+  }
+  for (int32_t Bad : {-21, 21, INT32_MIN, INT32_MAX}) {
+    O.ProcessNice = Bad;
+    auto E = validateSystemOptions(O);
+    ASSERT_TRUE(bool(E));
+    EXPECT_EQ(llvm::toString(std::move(E)),
+              "Darwin system nice must be between -20 and 20");
+  }
+}
+
+TEST_P(DarwinSystemTest, ProcessNicePreservesEverySignedValueAndFullCarriers) {
+  struct Boundary {
+    int32_t Nice;
+    uint64_t Raw;
+  };
+  const Boundary Boundaries[] = {{-20, 0xffffffffffffffecULL},
+                                 {-1, 0xffffffffffffffffULL},
+                                 {0, 0},
+                                 {20, 20}};
+  const auto Query = [&](uint64_t Which, uint64_t Who, uint64_t Expected) {
+    FailingSystemMemory Memory(*Space);
+    Memory.FailAccess = Memory.FailRead = Memory.FailWrite = 1;
+    auto Out = systemService(Memory, Page, ServiceKind::GetPriority,
+                             {0,
+                              100,
+                              {Which, Who, 0xffffffffffffffffULL, Output,
+                               Length, 0xffffffffffffffffULL},
+                              {}},
+                             Options, Result);
+    ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+    ASSERT_TRUE(*Out) << Result.Diagnostic;
+    EXPECT_EQ((**Out).Value, Expected);
+    EXPECT_FALSE((**Out).Error);
+    EXPECT_EQ(Memory.Accesses, 0u);
+    EXPECT_EQ(Memory.Reads, 0u);
+    EXPECT_EQ(Memory.Writes, 0u);
+  };
+  for (int32_t Nice = -20; Nice <= 20; ++Nice) {
+    SCOPED_TRACE(Nice);
+    Options.emplace().ProcessNice = Nice;
+    for (uint64_t Which : {0ULL, 0x1234567800000000ULL, 0xffffffff00000000ULL})
+      for (uint64_t Who : {0ULL, 1000ULL, 0x100000000ULL, 0x12345678000003e8ULL,
+                           0xffffffff00000000ULL, 0xffffffff000003e8ULL})
+        Query(Which, Who,
+              Nice < 0 ? 0xffffffffffffffffULL - uint64_t(-Nice - 1)
+                       : uint64_t(Nice));
+  }
+  for (const auto &B : Boundaries) {
+    Options->ProcessNice = B.Nice;
+    Query(0, 0, B.Raw);
+  }
+  EXPECT_EQ(bytes(Base, Page * 2), std::string(Page * 2, '\xa5'));
+}
+
+TEST_P(DarwinSystemTest, PriorityKnownArgumentErrorsPrecedeAllObservations) {
+  for (unsigned Config = 0; Config != 3; ++Config) {
+    Options.reset();
+    if (Config == 1)
+      Options.emplace();
+    if (Config == 2) {
+      Options = darwin_test::systemOptions();
+      Options->Credentials.emplace().GroupAccessList =
+          std::vector<uint32_t>{0, 1000, 1000};
+      Options->ProcessGroupID = 1000;
+      Options->SessionID = 1000;
+      Options->ProcessTainted = false;
+      Options->LoginNameBytes.emplace(255, 0);
+      Options->ResourceLimits =
+          darwin_test::resourceLimitOptions().ResourceLimits;
+      Options->ResourceUsageSelf.emplace();
+      Options->ProcessNice = -1;
+    }
+    const auto Invalid = [&](uint64_t Which, uint64_t Who) {
+      FailingSystemMemory Memory(*Space);
+      Memory.FailAccess = Memory.FailRead = Memory.FailWrite = 1;
+      auto Out = systemService(
+          Memory, Page, ServiceKind::GetPriority,
+          {0, 100, {Which, Who, 0xffffffffffffffffULL, Output, Length, 1}, {}},
+          Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out) << Result.Diagnostic;
+      EXPECT_EQ((**Out).Value, 22u);
+      EXPECT_TRUE((**Out).Error);
+      EXPECT_EQ(Memory.Accesses, 0u);
+      EXPECT_EQ(Memory.Reads, 0u);
+      EXPECT_EQ(Memory.Writes, 0u);
+    };
+    for (uint64_t Which :
+         {0ULL, 1ULL, 2ULL, 3ULL, 4ULL, 5ULL, 6ULL, 7ULL, 8ULL, 9ULL, 0x1000ULL,
+          0x1234567800000000ULL, 0xffffffffffffffffULL})
+      for (uint64_t Who : {0x80000000ULL, 0xffffffffULL, 0x1234567880000000ULL,
+                           0xffffffffffffffffULL})
+        Invalid(Which, Who);
+    for (uint64_t Which : {5ULL, 9ULL, 0x1000ULL, 0xffffffffULL, 0x80000000ULL,
+                           0x1234567800000005ULL})
+      for (uint64_t Who :
+           {0ULL, 1ULL, 1000ULL, 0x7fffffffULL, 0xffffffff00000000ULL})
+        Invalid(Which, Who);
+    for (uint64_t Who : {1ULL, 1000ULL, 0x7fffffffULL, 0x1234567800000001ULL,
+                         0xffffffff000003e8ULL})
+      Invalid(0x1234567800000003ULL, Who);
+  }
+}
+
+TEST_P(DarwinSystemTest, PrioritySelfPeerAndSelectedUnknownStayIndependent) {
+  for (unsigned Config = 0; Config != 4; ++Config) {
+    Options.reset();
+    if (Config == 1)
+      Options.emplace();
+    if (Config >= 2) {
+      Options = darwin_test::systemOptions();
+      Options->Credentials.emplace().GroupAccessList =
+          std::vector<uint32_t>{0, 1000, 1000};
+      Options->ProcessGroupID = 1000;
+      Options->SessionID = 1000;
+      Options->ProcessTainted = true;
+      Options->HostName = "abcd";
+      Options->LoginNameBytes.emplace(255, 0);
+      Options->ResourceLimits =
+          darwin_test::resourceLimitOptions().ResourceLimits;
+      Options->ResourceUsageSelf.emplace();
+      if (Config == 3)
+        Options->ProcessNice = 0;
+    }
+    const auto Query = [&](uint64_t Which, uint64_t Who, const char *Reason) {
+      FailingSystemMemory Memory(*Space);
+      Memory.FailAccess = Memory.FailRead = Memory.FailWrite = 1;
+      Result = {ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+                ExecutionBackendKind::Unicorn, "priority scope oracle"};
+      auto Out = systemService(Memory, Page, ServiceKind::GetPriority,
+                               {0,
+                                100,
+                                {Which, Who, 0xffffffffffffffffULL, Output,
+                                 Length, 0xffffffffffffffffULL},
+                                {}},
+                               Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      if (Reason) {
+        EXPECT_FALSE(*Out);
+        EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+        EXPECT_EQ(Result.Diagnostic, Reason);
+      } else {
+        ASSERT_TRUE(*Out);
+        EXPECT_EQ((**Out).Value, 0u);
+        EXPECT_FALSE((**Out).Error);
+      }
+      EXPECT_EQ(Memory.Accesses, 0u);
+      EXPECT_EQ(Memory.Reads, 0u);
+      EXPECT_EQ(Memory.Writes, 0u);
+    };
+    for (uint64_t Who :
+         {0ULL, 1000ULL, 0x12345678000003e8ULL, 0xffffffff00000000ULL})
+      Query(0, Who,
+            Config == 3 ? nullptr
+                        : "Darwin process nice observation is not configured");
+    for (uint64_t Who : {1ULL, 999ULL, 1001ULL, 0x1000ULL, 0x7fffffffULL,
+                         0x1234567800000001ULL})
+      Query(0, Who, "Darwin other-process queries are not modeled");
+    for (uint64_t Which :
+         {1ULL, 2ULL, 4ULL, 6ULL, 7ULL, 8ULL, 0x1234567800000001ULL})
+      for (uint64_t Who : {0ULL, 1000ULL, 0x7fffffffULL, 0xffffffff00000000ULL})
+        Query(Which, Who,
+              "Darwin selected priority observation is not modeled");
+    for (uint64_t Who : {0ULL, 0x100000000ULL, 0xffffffff00000000ULL})
+      Query(0x1234567800000003ULL, Who,
+            "Darwin selected priority observation is not modeled");
+  }
+}
+
+TEST_P(DarwinSystemTest, ProcessNiceAddsNoSysctlBindingOrWriteAuthority) {
+  Options = darwin_test::priorityOptions();
+  Options->Credentials.emplace();
+  capacity(8);
+  auto Out = named("kern.nice");
+  EXPECT_FALSE(Out);
+  EXPECT_EQ(Result.Diagnostic, "unsupported Darwin sysctl key");
+  EXPECT_EQ(length(), 8u);
+  EXPECT_EQ(bytes(Output, 8), std::string(8, '\xa5'));
+}
+
 TEST_P(DarwinSystemTest,
        LoginBufferCopiesExactPrefixesWithUnsignedLow32Length) {
   Options = darwin_test::loginBufferOptions();

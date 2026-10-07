@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 920271e860cb6e9a9c4c3fdb54e3adfc2fd1f058708ebfaa3ff693f11dfb47fe -->
+<!-- i18n-source: 4f2c32b592664760132b5349c4552df7b54238aa4fdbc868d7ed05d2ad7dd8e0 -->
 
 [← Index de la documentation](README.md)
 
@@ -699,3 +699,18 @@ Les comptes se recoupent. `build-hvf-arm64/descriptor-table-observations/` conse
 ```
 
 [XNU getlogin / MAXLOGNAME](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_prot.c#L1561).
+
+
+## Priorité explicite du processus courant
+
+`DarwinSystemOptions::ProcessNice` / JSON `darwin_system.nice` déclare une valeur nice signée fixe et indépendante de -20 à 20. Absente signifie inconnue; zéro et -1 explicites sont connus. Le parseur entier sans perte accepte les nombres entiers et chaînes décimales entières; types incorrects, fractions, chaînes exponentielles, espaces et dépassements sont rejetés avant le chargement. Le JSON numérique exactement entier reste valide. Les profils non Darwin rejettent ce champ. Ni hôte, identifiants, groupe/session, contamination, connexion, ressources ni CPU ne le fournissent; ordonnancement, permissions et budgets restent inchangés.
+
+`getpriority(100)` brut utilise les32 bits bas du sélecteur int et de la cible `id_t` non signée. Une cible supérieure à INT32_MAX donne EINVAL22 en premier. Sélecteurs inconnus (dont GPU5 et0x1000) et thread3 avec cible basse non nulle donnent EINVAL avant les observations. `PRIO_PROCESS`0 accepte zéro ou PID1000 courant et exige ensuite nice. Les autres PID positifs restent non pris en charge sans ESRCH inventé. Groupe1, utilisateur2, thread3/cible0 et extensions4,6,7,8 restent inconnus même avec observations connexes; une cible thread dont seuls les bits hauts sont non nuls ne donne pas EINVAL. Le résultat étend le signe à64 bits: -1 est UINT64_MAX avec succès et carry effacé. Aucune mémoire invitée, arguments inutilisés ignorés; BSD conserve RDX x64 en erreur et le remet à zéro en succès, X1 ARM64 est nul dans les deux cas.
+
+`setpriority(96)` reste non pris en charge même avec root/nice explicites. Le programme original en lecture seule `process-priority` vérifie les arguments propres, erreurs certaines et transitions succès/erreur/succès; `virtual-process-priority` émet les huit octets signés déclarés. Les cibles tierces, agrégats, absences et setters restent propres au modèle. La nouvelle sonde ARM64 macOS a passé191 contrôles avec nice0; cet échantillon non négatif ne prouve pas l’extension négative matérielle, couverte par les déclarations signées de la version épinglée et des bornes indépendantes du modèle. iOS physique et Intel natif restent séparés.
+
+```json
+{"darwin_system":{"nice":-1}}
+```
+
+[XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).

@@ -927,6 +927,87 @@ TEST(ProcessReport, MalformedDarwinCredentialsFailBeforeImageLoading) {
   }
 }
 
+TEST(ProcessReport, DarwinNiceKeepsEverySignedValueLosslessAndIndependent) {
+  auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");
+  ASSERT_TRUE(bool(Empty));
+  EXPECT_FALSE(Empty->DarwinSystem->ProcessNice);
+  for (int Nice = -20; Nice <= 20; ++Nice) {
+    for (bool String : {false, true}) {
+      const auto Value =
+          String ? "\"" + std::to_string(Nice) + "\"" : std::to_string(Nice);
+      auto Parsed = processOptionsFromJSON(
+          std::string(R"({"darwin_system":{"nice":)") + Value + "}}");
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      EXPECT_EQ(Parsed->DarwinSystem->ProcessNice, Nice);
+      EXPECT_FALSE(Parsed->DarwinSystem->Credentials);
+      EXPECT_FALSE(Parsed->DarwinSystem->ProcessGroupID);
+      EXPECT_FALSE(Parsed->DarwinSystem->SessionID);
+      EXPECT_FALSE(Parsed->DarwinSystem->ProcessTainted);
+      EXPECT_FALSE(Parsed->DarwinSystem->LoginNameBytes);
+      EXPECT_FALSE(Parsed->DarwinSystem->CPUCount);
+      EXPECT_TRUE(Parsed->DarwinSystem->ResourceLimits.empty());
+    }
+  }
+  // Exact integer numeric JSON remains lossless through the existing helper.
+  auto Exponent = processOptionsFromJSON(R"({"darwin_system":{"nice":1e1}})");
+  ASSERT_TRUE(bool(Exponent));
+  EXPECT_EQ(Exponent->DarwinSystem->ProcessNice, 10);
+  for (const char *Bad : {"null",
+                          "true",
+                          "false",
+                          "0.5",
+                          "[]",
+                          "{}",
+                          "21",
+                          "-21",
+                          "2147483647",
+                          "-2147483648",
+                          "2147483648",
+                          "-2147483649",
+                          "18446744073709551615",
+                          R"("")",
+                          R"("+1")",
+                          R"(" 0")",
+                          R"("0 ")",
+                          R"("1e1")",
+                          R"("0.5")",
+                          R"("0x0")",
+                          R"("-21")",
+                          R"("21")",
+                          R"("-2147483649")",
+                          R"("0\u0000")"}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"darwin_system":{"nice":)") + Bad + "}}");
+    EXPECT_FALSE(bool(Parsed)) << Bad;
+    llvm::consumeError(Parsed.takeError());
+  }
+  auto Extra =
+      processOptionsFromJSON(R"({"darwin_system":{"nice":0,"ncie":0}})");
+  EXPECT_FALSE(bool(Extra));
+  llvm::consumeError(Extra.takeError());
+}
+
+TEST(ProcessReport, DarwinNiceAdmissionPrecedesImageLoading) {
+  ProcessOptions O;
+  O.DarwinSystem = darwin_test::priorityOptions();
+  for (auto P : {ProcessProfile::WindowsPE64, ProcessProfile::LinuxELF64,
+                 ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing.macho", P, O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinSystemProfile);
+  }
+  for (auto P : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                 ProcessProfile::IOSSimulatorMachO64}) {
+    for (int32_t Bad : {-21, 21, INT32_MIN, INT32_MAX}) {
+      O.DarwinSystem->ProcessNice = Bad;
+      auto R = emulateProcess("missing.macho", P, O);
+      ASSERT_FALSE(bool(R));
+      EXPECT_EQ(llvm::toString(R.takeError()),
+                "Darwin system nice must be between -20 and 20");
+    }
+  }
+}
+
 TEST(ProcessReport,
      DarwinLoginBufferRequiresCompleteStrictHexAndKeepsZeroKnown) {
   auto Empty = processOptionsFromJSON(R"({"darwin_system":{}})");

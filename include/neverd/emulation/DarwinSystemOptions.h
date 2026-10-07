@@ -98,6 +98,10 @@ struct DarwinSystemOptions {
   /// Supplies read-only getlogin, without login authorization or setlogin
   /// support.
   std::optional<std::vector<uint8_t>> LoginNameBytes;
+  /// Fixed current-process nice observation (-20..20). Missing is unknown;
+  /// explicit zero and -1 are known. No host lookup, scheduling, priority
+  /// mutation or aggregate/peer observation is inferred.
+  std::optional<int32_t> ProcessNice;
 };
 } // namespace neverd::emulation
 #endif
