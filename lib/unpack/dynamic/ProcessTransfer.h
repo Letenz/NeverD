@@ -60,6 +60,7 @@ private:
   const uint64_t Wanted;
   uint64_t Base = 0, InitialSP = 0;
   bool EnteredProgram = false;
+  bool RefreshNeeded = true;
   /// Images[0] is the loaded image; Images[N] is the image at transfer N.
   std::vector<std::vector<uint8_t>> Images;
   /// The generation of the current instruction, and the visited pages whose

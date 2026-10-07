@@ -342,16 +342,27 @@ TEST_P(WindowsDeferred, ResumedObservationRunsTheProcessUnchanged) {
   auto Plain = emulateProcess(Path, ProcessProfile::WindowsPE64, Options);
   ASSERT_TRUE(bool(Plain)) << llvm::toString(Plain.takeError());
   Observer O;
+  std::vector<bool> MemoryUnchanged;
   O.Started = [](ProcessView &P) {
+    EXPECT_FALSE(P.watchedMemoryUnchanged());
     return std::vector<ExecutionWatch>{{P.modules().front().Entry, 1}};
   };
   // An empty watch set resumes without any further stop.
-  O.Watched = [](ProcessView &, uint64_t) {
+  O.Watched = [](ProcessView &P, uint64_t) {
+    EXPECT_TRUE(P.watchedMemoryUnchanged());
     return std::optional(std::vector<ExecutionWatch>());
+  };
+  O.Resuming = [&](ProcessView &P)
+      -> llvm::Expected<std::optional<std::vector<ExecutionWatch>>> {
+    MemoryUnchanged.push_back(P.watchedMemoryUnchanged());
+    return std::nullopt;
   };
   auto Result = observeProcess(Path, ProcessProfile::WindowsPE64, Options, O);
   ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
   EXPECT_EQ(O.Watches, 1u);
+  ASSERT_FALSE(MemoryUnchanged.empty());
+  EXPECT_FALSE(MemoryUnchanged.front());
+  EXPECT_EQ(llvm::count(MemoryUnchanged, true), 1);
   EXPECT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
   EXPECT_EQ(Result->ExitStatus, Plain->ExitStatus);
   EXPECT_EQ(Result->Instructions, Plain->Instructions);

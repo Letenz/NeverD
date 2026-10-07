@@ -25,6 +25,8 @@ public:
   std::vector<uint8_t> Bytes = std::vector<uint8_t>(8192);
   std::map<uint64_t, uint32_t> Sizes;
   uint64_t SP = 0x8000;
+  bool MemoryUnchanged = false;
+  unsigned Reads = 0;
   GuestArchitecture architecture() const override {
     return GuestArchitecture::X64;
   }
@@ -33,6 +35,7 @@ public:
     return RegisterValue{SP, 0};
   }
   llvm::Error read(uint64_t A, llvm::MutableArrayRef<uint8_t> Out) override {
+    ++Reads;
     if (A > Bytes.size() || Out.size() > Bytes.size() - A)
       return llvm::createStringError("test read outside the image");
     llvm::copy(llvm::ArrayRef(Bytes).slice(A, Out.size()), Out.begin());
@@ -47,6 +50,7 @@ public:
   }
   std::vector<ProcessExportView> exports() override { return {}; }
   bool programInvocation() const override { return true; }
+  bool watchedMemoryUnchanged() const override { return MemoryUnchanged; }
   llvm::Expected<uint32_t> instructionSize(uint64_t A) override {
     auto I = Sizes.find(A);
     if (I == Sizes.end())
@@ -157,6 +161,34 @@ TEST_F(ProcessTransfer, ReturningToOlderCodeWithdrawsInstructionEvidence) {
   EXPECT_TRUE(watched(Watches, 64));
   EXPECT_TRUE(watched(Watches, 128));
   EXPECT_EQ(Observer.transfers().size(), 1u);
+}
+
+TEST_F(ProcessTransfer, CleanWatchResumptionReusesCurrentSnapshots) {
+  Process.instruction(64, {0xb8, 0, 0, 0, 0});
+  Process.instruction(128, {0x83, 0xe9, 0});
+  start();
+  observe(64);
+  llvm::cantFail(Observer.resuming(Process));
+  observe(128);
+  Process.MemoryUnchanged = true;
+  Process.Reads = 0;
+  EXPECT_FALSE(llvm::cantFail(Observer.resuming(Process)).has_value());
+  EXPECT_EQ(Process.Reads, 0u);
+  Process.MemoryUnchanged = false;
+  Process.Bytes[130] = 1;
+  EXPECT_TRUE(watched(refresh(), 128));
+}
+
+TEST_F(ProcessTransfer, FirstVisitRefreshesPreviouslyUnwatchedFetchTails) {
+  Process.instruction(64, {0x90});
+  Process.instruction(4094, {0xb8, 0, 0, 0, 0});
+  start();
+  // No installed write watch covered this tail before the first page visit.
+  Process.Bytes[4096] = 1;
+  auto Watches = observe(64);
+  EXPECT_FALSE(watched(Watches, 4094));
+  Process.MemoryUnchanged = true;
+  EXPECT_TRUE(watched(refresh(), 4094));
 }
 } // namespace
 } // namespace neverd::unpack

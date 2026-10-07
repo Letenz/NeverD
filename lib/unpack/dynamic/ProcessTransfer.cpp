@@ -146,8 +146,12 @@ std::vector<MemoryWriteWatch> TransferObserver::writeWatches() const {
 
 llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
 TransferObserver::resuming(ProcessView &Process) {
-  if (llvm::none_of(Visited, [](bool Seen) { return Seen; }))
+  if (!RefreshNeeded && Process.watchedMemoryUnchanged())
     return std::nullopt;
+  if (llvm::none_of(Visited, [](bool Seen) { return Seen; })) {
+    RefreshNeeded = false;
+    return std::nullopt;
+  }
   auto Mappings = Process.mappings();
   if (!Mappings)
     return Mappings.takeError();
@@ -189,6 +193,7 @@ TransferObserver::resuming(ProcessView &Process) {
               Refresh(Offset + value::PageSize, Traits.InstructionWindow - 1))
         return std::move(E);
   }
+  RefreshNeeded = false;
   if (!Changed)
     return std::nullopt;
   refreshWatches();
@@ -224,6 +229,7 @@ TransferObserver::started(ProcessView &Process) {
   EnteredProgram = Process.programInvocation();
   Visited.assign(Extent / value::PageSize, false);
   Instructions.clear();
+  RefreshNeeded = true;
   Current = Images.front();
   refreshWatches();
   return Watches;
@@ -267,6 +273,9 @@ TransferObserver::watched(ProcessView &Process, uint64_t PC) {
     const uint64_t Page = Offset / value::PageSize;
     const bool NewlyVisited = !Visited[Page];
     if (NewlyVisited) {
+      // The preceding run did not watch this page or its fetch tail. Even a
+      // clean execution-watch stop cannot establish their older snapshots.
+      RefreshNeeded = true;
       auto Bytes = llvm::MutableArrayRef(Current).slice(Page * value::PageSize,
                                                         value::PageSize);
       if (auto E = Process.read(Base + Page * value::PageSize, Bytes))

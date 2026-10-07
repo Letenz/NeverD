@@ -53,7 +53,15 @@ private:
     const bool Reuse = std::exchange(Runnable, false);
     if (auto E = validateX64FPState(State.FP))
       return E;
-    const auto Input = registers(State, Root, Step, Stops);
+    constexpr size_t StatusIndex =
+        std::find(std::begin(Names), std::end(Names), WHvX64RegisterDr6) -
+        std::begin(Names);
+    auto Input = registers(State, Root, Step, Stops);
+    // Single stepping does not authenticate execution-breakpoint hits. Keep
+    // its captured sticky status rather than reinstalling DR6 after every
+    // acknowledged step. Free execution still resets status before entry.
+    if (Reuse && Step)
+      Input[StatusIndex].Reg64 = CapturedRegisters[StatusIndex].Reg64;
     if (auto E = installRegisters(Input, Reuse))
       return E;
     if (!Reuse || State.FP != CapturedState.FP ||
@@ -70,9 +78,6 @@ private:
         return E;
       const unsigned Vector = Exit.VpException.ExceptionType;
       if (!Step && !Stops.empty() && Vector == x64::DebugVector) {
-        constexpr size_t StatusIndex =
-            std::find(std::begin(Names), std::end(Names), WHvX64RegisterDr6) -
-            std::begin(Names);
         if (x64::executionStopHit(Stops, Next.reg(X64Register::PC),
                                   Actual[StatusIndex].Reg64)) {
           Next.reg(X64Register::FLAGS) &= ~x64::ResumeFlag;
