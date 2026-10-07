@@ -1425,6 +1425,8 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `NeverDOwnInteriorCallTests` は、x64 関数が自身の unwind 範囲内のラベルを直接 call する場合を扱います。積んだ戻りアドレスのためだけの call はプッシュとジャンプとして持ち上げ、直線とループの両ケースで生成した C を `-O0` と `-O2` で AddressSanitizer と未定義動作トラップ付きで実行します。戻りがその call 自身の戻りアドレスを取り出すターゲットは通常の呼び出しのままです。関数が自分で積んだアドレスを取り出しうる戻り（不均衡な復元やスタック切り替えの後）があれば、関数を拒否し、その戻り命令を示します。
 
+`NeverDSysVCallContractTests` は、QtXml の `QDomNode::save` と `QDomNode::isDocument` の形を使って x86-64 System V の呼び出し規約を検査します。サマリが引数レジスタを読む直接呼び出し先は、呼び出し元がそのまま渡す入力の `this` も含め、呼び出し元の値を受け取ります。仮想呼び出しは、支配するブロックが `RDI` に読み込んだオブジェクトを引数に取ります。ある経路では `RAX` を書かずに戻り、他の経路では呼び出し先の結果を渡すだけのメソッドは void になります。比較の連鎖の前に `AL` に書いたバイトは、どの経路でも戻り値です。出力したプログラムは `-O0` と `-O2` で AddressSanitizer と未定義動作トラップ付きで実行します。
+
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` は CoreImage のプロバイダー、CIImage ファクトリー、完全な 48 バイトの論理レコード、x2 ポインターを検証し、欠落・不正なプロバイダー、x86_64、矛盾する宣言を拒否する。`ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` は同じ機械アドレスを持つ結果代入と元の呼び出しを区別する。`RejectsChangedCopyCallBodyAndCurrentImage` は証明、引数、ストア、フレーム、メタデータ、インポート、重複呼び出し、保存 IR に対する 24 種類の変更を拒否し、MedIR と HighIR の整合した同時変更も含む。`GeneratedCExecutesAgainstIndependentPhysicalCopyABI` は ARM64 上で変更しない生成 C を O0/O2 で実行し、コンパイラーから独立に観測した x2 ポインターを受け取る関数と比較する。6 個すべての浮動小数点ビット列、セレクターとレシーバーの識別、1 回の評価、戻りオブジェクト、コピーへの適法な書き込み、入力の不変性、境界ガードを検証する。他のホストではこの物理 ABI 実行テストをスキップする。
 
 `ObjCCallHints.CurrentMethodEncodingMustAgreeWithCachedDeclaration` は、現在の空でないメソッド符号化またはセレクターと異なるキャッシュ ABI を拒否する。宣言のみを提供するクライアントの従来の契約は維持する。

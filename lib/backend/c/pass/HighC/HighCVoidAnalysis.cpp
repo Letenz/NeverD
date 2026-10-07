@@ -236,17 +236,112 @@ bool analyzeVoidReturn(const HighCAnalysisState &State, const HighFunc &Func,
     return false;
   };
 
+  // A return of the return register's incoming value, or of no value at
+  // all, leaves the caller nothing it could rely on, so it cannot belong to
+  // a value-returning contract.  Without a declared type such a path makes a
+  // function void unless another path returns a value it evidently means
+  // (below); what the other paths leave in the register is incidental.  An
+  // unreachable return after a call that does not return proves nothing
+  // either way.
+  std::function<bool(const HighExpr &)> IsUndefinedValue =
+      [&](const HighExpr &E) -> bool {
+    if (E.Kind == ExprKind::Undef)
+      return true;
+    if (E.Kind == ExprKind::Var) {
+      const std::string VName = VarFn(E.Var);
+      if (ParamNames.count(VName) || VarSources.count(VName))
+        return false;
+      const auto SeenIt = SeenVars.find(VName);
+      return SeenIt != SeenVars.end() && SeenIt->second.Kind == MedVar::Reg &&
+             SeenIt->second.SSAVer == 0;
+    }
+    if (((E.Kind == ExprKind::UnaryOp &&
+          (E.Op == NdOp::INT_ZEXT || E.Op == NdOp::INT_SEXT)) ||
+         E.Kind == ExprKind::Cast || E.Kind == ExprKind::BitCast ||
+         (E.Kind == ExprKind::BinOp && E.Op == NdOp::SUBBYTES)) &&
+        !E.Operands.empty() && E.Operands[0])
+      return IsUndefinedValue(*E.Operands[0]);
+    return false;
+  };
+
+  // A constant or a comparison in return position is a value the function
+  // means to return (a status, a boolean, a `setcc` byte merged into the
+  // register).  An address computation or a callee's result left in the
+  // register is as likely incidental.
+  std::function<bool(const HighExpr &, unsigned)> IsIntentionalValue =
+      [&](const HighExpr &E, unsigned Depth) -> bool {
+    if (Depth > 8)
+      return false;
+    switch (E.Kind) {
+    case ExprKind::Const:
+      return true;
+    case ExprKind::Var: {
+      const auto It = VarSources.find(VarFn(E.Var));
+      return It != VarSources.end() &&
+             IsIntentionalValue(*It->second, Depth + 1);
+    }
+    case ExprKind::Cast:
+    case ExprKind::BitCast:
+      return !E.Operands.empty() && E.Operands[0] &&
+             IsIntentionalValue(*E.Operands[0], Depth + 1);
+    case ExprKind::UnaryOp:
+      if (E.Op == NdOp::BOOL_NOT)
+        return true;
+      return (E.Op == NdOp::INT_ZEXT || E.Op == NdOp::INT_SEXT) &&
+             !E.Operands.empty() && E.Operands[0] &&
+             IsIntentionalValue(*E.Operands[0], Depth + 1);
+    case ExprKind::BinOp:
+      switch (E.Op) {
+      case NdOp::INT_EQUAL:
+      case NdOp::INT_NOTEQUAL:
+      case NdOp::INT_LESS:
+      case NdOp::INT_SLESS:
+      case NdOp::INT_LESSEQUAL:
+      case NdOp::INT_SLESSEQUAL:
+      case NdOp::BOOL_AND:
+      case NdOp::BOOL_OR:
+      case NdOp::BOOL_XOR:
+      case NdOp::FLOAT_EQUAL:
+      case NdOp::FLOAT_NOTEQUAL:
+      case NdOp::FLOAT_LESS:
+      case NdOp::FLOAT_LESSEQUAL:
+        return true;
+      case NdOp::SUBBYTES:
+        return E.Operands.size() == 2 && E.Operands[0] &&
+               IsIntentionalValue(*E.Operands[0], Depth + 1);
+      case NdOp::CONCAT:
+        // The low part is what a narrow return reads.
+        return E.Operands.size() == 2 && E.Operands[1] &&
+               IsIntentionalValue(*E.Operands[1], Depth + 1);
+      case NdOp::SELECT:
+        return E.Operands.size() == 3 && E.Operands[1] && E.Operands[2] &&
+               IsIntentionalValue(*E.Operands[1], Depth + 1) &&
+               IsIntentionalValue(*E.Operands[2], Depth + 1);
+      default:
+        return false;
+      }
+    default:
+      return false;
+    }
+  };
+
   bool HasReturn = false;
   bool AllVoid = true;
+  bool AnyUndefined = false;
+  bool AnyIntentional = false;
   walkStmts(Func.Body, [&](const HighStmt &S) {
     if (S.Kind != StmtKind::Return || !S.RetVal)
       return;
     HasReturn = true;
+    if (IsUndefinedValue(*S.RetVal))
+      AnyUndefined = true;
     if (IsVoidExpr(*S.RetVal))
       return;
     AllVoid = false;
+    if (IsIntentionalValue(*S.RetVal, 0))
+      AnyIntentional = true;
   });
-  return HasReturn && AllVoid;
+  return HasReturn && (AllVoid || (AnyUndefined && !AnyIntentional));
 }
 
 void analyzeVoidDeadChain(HighCAnalysisState &State, const HighFunc &Func,
