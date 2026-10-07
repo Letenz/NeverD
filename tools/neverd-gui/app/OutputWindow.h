@@ -1,0 +1,54 @@
+#pragma once
+
+#include "Address.h"
+
+#include <QStringList>
+#include <QWidget>
+#include <functional>
+
+class QLineEdit;
+class QPlainTextEdit;
+class QToolButton;
+
+namespace neverd::gui {
+
+class Session;
+
+/// The output window: engine and workbench messages above a command line
+/// that evaluates expressions and runs workbench commands.
+class OutputWindow final : public QWidget {
+  Q_OBJECT
+public:
+  explicit OutputWindow(Session &session, QWidget *parent = nullptr);
+
+  void append(const QString &text, int level = 0);
+  void focusCommandLine();
+  /// Run one command line as if typed (echoed to the log).
+  void run(const QString &line);
+  /// Supplies the current address for `.`/`here` and command defaults.
+  void setLocationProvider(std::function<std::optional<Address>()> provider) {
+    location_ = std::move(provider);
+  }
+
+signals:
+  void navigateRequested(neverd::gui::Address address);
+  void commandRequested(const QString &command, const QString &argument);
+
+protected:
+  bool eventFilter(QObject *object, QEvent *event) override;
+
+private:
+  void execute(const QString &line);
+  void evaluate(const QString &text,
+                std::function<void(std::optional<Address>, QString)> done);
+  void printHelp();
+  Session &session_;
+  QPlainTextEdit *log_;
+  QLineEdit *command_;
+  QToolButton *language_;
+  QStringList history_;
+  int historyIndex_ = 0;
+  std::function<std::optional<Address>()> location_;
+};
+
+} // namespace neverd::gui

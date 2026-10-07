@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   desktop:
-    name: Qt Quick (${{ matrix.runner }})
+    name: Qt Widgets (${{ matrix.runner }})
     if: ${{ github.event.action != 'closed' }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -103,8 +103,6 @@ jobs:
           output.mkdir(exist_ok=False)
           limit = 4 * 1024 * 1024
           files = {
-              "pane-navigation.txt": "ci-diagnostics/pane-navigation.txt",
-              "pane-navigation.xml": "ci-diagnostics/pane-navigation.xml",
               "controller.txt": "ci-diagnostics/controller.txt",
               "controller.xml": "ci-diagnostics/controller.xml",
               "ctest.xml": "ci-diagnostics/ctest.xml",

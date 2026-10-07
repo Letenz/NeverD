@@ -99,7 +99,7 @@ substring match; original non-ASCII bytes are preserved.
 |---|---|
 | `open` | `{path:string,read_only:false}`. Loads a regular file into a new Session, keeping the old Session on failure; returns metadata plus `warnings:[]`. Project ID changes and revision increases on success. |
 | `metadata` | Returns `path,architecture,format,bitness,file_size` (decimal string), `base_address,entry_address,function_count,segment_count,section_count,import_count,export_count,symbol_count,analyzed,analysis_state,read_only,dirty`. `function_count` is null before EVM/SBF analysis where a quick list is unavailable. |
-| `functions` | Standard page filtered by raw/display name or hex address. Items retain `{name,address,size}` and may add `display_name,linkage_name,name_origin,display_origin,linkage_origin,recognition_state,library_annotations` from the shared session identity. Filtering caches matching indices; an index beyond one million functions is refused explicitly. Unfiltered pages read only requested functions. |
+| `functions` | Standard page in address order, filtered by display name, engine name or hex address and optionally sorted by `{sort:field,descending}`. Items carry `{name,address,size,library,thunk,exported}` under the workbench display name (see Listing below) plus `engine_name` when that differs, and may add `display_name,linkage_name,name_origin,display_origin,linkage_origin,recognition_state,library_annotations` from the shared session identity. The order is cached per filter, sort and listing generation; a table beyond one million functions is refused explicitly. |
 | `resolve` | `{query:"0x..."}` or exact symbol name. Returns `{address,function_address:hex|null,name,comment}`. Optional display/linkage/evidence fields share the function-list identity. For an interior VA, containing function discovery uses engine sizes. An unmapped numeric VA remains an exact navigation address. |
 | `disasm` | `{address,limit:128}`; limit 1–512 instructions. Returns `{items,address,next_address:hex|null,complete}`. Rows `{address,size,bytes,mnemonic,operands,comment}` may include backend decode status. `next_address` is computed from the last decoded instruction's size, with overflow checks. A full page's successor is a continuation candidate; an empty following page means decoding ended. |
 | `bytes` | `{address,size:256}`; size 1–65536. Returns `{address,encoding:"hex",data,bytes_read,requested_size,mapping_status,next_address}`. Status is `mapped`, `partial`, or `unmapped_or_unmaterialized`. The legacy C ABI cannot distinguish BSS from unmapped bytes. Initial v1 carries bounded hex data in JSON, not separate binary attachments. |
@@ -107,10 +107,17 @@ substring match; original non-ASCII bytes are preserved.
 | `signatures_load` | `{path,mode:"file"}` loads one `.pat` or library feature `.json`; `mode:"auto"` selects from a signature tree including `features/rules`. Returns `{loaded:true,byte_matches}` and advances the analysis revision. Invalid packs preserve the previous evidence and revision. Available on read-only images; it does not write annotations or the binary. |
 | `decompile` | `{address,representation:"c",offset:0,limit:512}`; representation `c/llvmc/low/med/high/llvm`, line limit 1–2048. Triggers analysis when needed. Returns `{address,representation,text,offset,total_lines,next_offset,complete,mapping_status,provenance_complete,rows,project_id,revision}`. Native Low/Med/C/LLVMC use the optional bounded C ABI page API when present; other views retain one legacy function representation up to 32 MiB. C pages may also carry `byte_offset,function_identity,library_regions,recognition_budget_exhausted`. A wire code page is capped at 2 MiB. See source mapping below. |
 | `cfg` | `{address}`. Triggers analysis, returns `{name?,entry?,nodes,edges,complete:true}`. Nodes have `{id:string,start,end,insn_count,disasm:[string],address:start,label:start,lines:disasm}`; edges `{from:string,to:string|null,type}`. More than 500 nodes or 2000 edges returns `budget_exceeded`, with no partial graph. |
-| `cfg_summary` | `{address}`. Builds one immutable graph snapshot on the executor; returns counts, bounds and an opaque `layout_revision`, without node/edge arrays. Up to 20000 nodes / 100000 edges. See viewport contract below. |
+| `cfg_summary` | `{address,metrics?}`. Builds one immutable graph snapshot on the executor; returns counts, bounds and an opaque `layout_revision`, without node/edge arrays. Up to 20000 nodes / 100000 edges. Optional `metrics:{char_width,line_height,padding,...}` size each node to its formatted listing rows; the layered layout routes edges around nodes. See viewport contract below. |
 | `cfg_viewport` | `{address,layout_revision,x,y,width,height,scale:1,node_offset:0,edge_offset:0}`. Queries the current snapshot's spatial indexes; returns at most 256 nodes and 512 edges. No engine call or relayout per pan. A missing/mismatched snapshot returns `stale_layout`. |
-| `xrefs` | `{address,direction:"to",offset,limit}`. Triggers analysis. Rows preserve engine `from/to,func,block/opcode` and add `{address,function,kind:"IR constant reference"}`. Optional `function_identity` and direct-call `callee_identity` come from the shared session identity. These are existing IR-constant references, not a stronger claim of exact calls/data references. EVM/SBF return `unsupported`, because this C ABI scans native LowIR only. |
+| `xrefs` | `{address,direction:"to",offset,limit:128}`, limit 1–512. Direct references from each instruction's own lift, without whole-program analysis: rows `{address,from,to,kind,type,text,function,function_address?}` where `kind` is call/jump/cjump/read/write/offset and `type` its classic letter (p/j/r/w/o). "to" reads the parallel reference index, finishing it first when the background build has not; "from" decodes the one instruction. Engines without `neverd_code_refs_json` return `unsupported`. `{source:"ir"}` selects the previous IR-constant references instead: it triggers analysis, preserves engine `from/to,func,block/opcode` and adds `{address,function,kind:"IR constant reference"}`; EVM/SBF return `unsupported` there. |
 | `strings` | Standard page, filter matches string content, minimum length 4. Rows `{address,text,value,length}`. One legacy result is parsed and cached per revision. |
+| `listing` | `{address,sub:0,before:0,after:100,opcode_bytes:0}`; before/after 0–2000 lines, opcode bytes 0–12. The classic text listing of the whole image around an address: rows `{item,address,sub,cls,kind,prefix,text,spans,target?,flow?,function?,function_address?}` with `[byte_offset,byte_length,role,address?]` spans into the UTF-8 text (roles from `ListingRoles.def`, address classes `cls` from `AddressClasses.def`). Returns `{lines,anchor,at_start,at_end,generation}`. No analysis is started; functions decode lazily and the `generation` changes when labels or names can change. |
+| `overview` | `{buckets:1024}`, 1–16384. The address space as equal linear buckets, each the dominant address class digit: `{buckets:string,total,regions:[{name,start,end,initialized_end,linear,exec}],generation}`. |
+| `names` | Standard page by name, sortable: every function (kind `function`, `library` or `thunk`), data and string label and import slot as `{name,address,kind}`. |
+| `regions` | Standard page by name, sortable: sections or segments as `{name,address,start,end,size,initialized_end,flags,alignment,class}`. |
+| `imports` | Standard page by name, sortable: `{address,name,module,ordinal}` at each import's data slot. |
+| `exports` | Standard page by name, sortable: exports `{address,name,ordinal,kind:"export"}` and entry points with their engine type. |
+| `search` | `{kind:"text"|"bytes",pattern,case_sensitive:false,limit:256}`, limit 1–4096. Bytes are hexadecimal pairs with optional spaces. Returns `{items:[{address,...}],complete:true}`; a malformed pattern is `invalid_request`. |
 | `segments` | Standard page by name; rows `{name,address,size,flags}`. `size` is the engine's hex string. |
 | `annotations` | Standard page by text; rows `{address,text}`. |
 | `annotation_set` | `{address,text}`; an empty string removes the comment. Stages an edit, increments revision, returns `{address,text,dirty:true,saved:false}`. Requires the writer lock. |
@@ -355,3 +362,28 @@ all IR stages, CFG and the public SHA-256 against Python's digest. The shipped
 target always links the real engine. `NEVERD_WORKER_REAL_ENGINE_TESTS=OFF` is for
 CI that deliberately supplies a deterministic fixture engine, not for claiming
 real-engine validation.
+
+## Workbench names and background work
+
+The `listing`, `functions`, `names` and `resolve` operations share one naming
+layer for the workbench. Functions the engine leaves generic take classic
+names: executable import veneers (ELF PLT entries and `.plt.got` stubs that
+jump through an import slot) are thunks named after their import (`_` +
+import on ELF), the image entry is `start`, a function at the start of `.init`
+or `.fini` is `_init_proc` or `_term_proc`, and the first argument the start
+routine passes to `__libc_start_main` is `main`. Engine, symbol and user names
+always take precedence, and `resolve` accepts the workbench names. Import data
+slots, including ELF `GLOB_DAT` entries from `neverd_import_slots_json`, are
+named `<import>_ptr` on ELF. Code text from the engine (C and IR) keeps the
+engine's spellings.
+
+Heartbeats carry `background:{state,done,total,references,generation,functions}`
+for the work the worker does while idle. It first lets the engine add the
+functions its detector finds without lifting
+(`neverd_session_discover_functions`); `functions` is the listed function count,
+which clients compare to refresh function lists. It then builds the reference
+index: `pending`, `building`, `ready` or `unavailable`. Its generation changes
+when finished references can add labels and cross-reference comments to listing
+text; clients refresh visible lines then. Function-level analysis runs only for
+the function a decompile, CFG or IR request names; `analyze` remains the
+explicit whole-program pipeline.

@@ -1,5 +1,7 @@
 #include "GraphSnapshot.h"
 
+#include "GraphLayout.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -14,6 +16,8 @@ namespace {
 constexpr std::size_t MaxNodes = 20000, MaxEdges = 100000;
 constexpr std::size_t NodePage = 256, EdgePage = 512;
 constexpr double NodeWidth = 300, NodeHeight = 180;
+constexpr double MaxNodeExtent = 1e6;
+constexpr double ScaleForText = 0.6;
 struct Rect {
   double x = 0, y = 0, width = 0, height = 0;
   bool intersects(const Rect &r) const {
@@ -143,7 +147,7 @@ bool segmentVisible(Point a, Point b, const Rect &r) {
 struct GraphSnapshot::Impl {
   struct Node {
     std::string id, address, end;
-    Json lines;
+    Json lines, rows;
     std::size_t instructionCount = 0;
     bool linesTruncated = false;
     Rect box;
@@ -161,109 +165,54 @@ struct GraphSnapshot::Impl {
   Rect bounds;
   Index nodeIndex, edgeIndex;
 
-  void layout() {
-    const auto n = nodes.size();
-    std::vector<std::vector<std::size_t>> forward(n), reverse(n);
-    for (const auto &edge : edges) {
-      forward[edge.from].push_back(edge.to);
-      reverse[edge.to].push_back(edge.from);
-    }
-    // Iterative Kosaraju; a 20k block linear function cannot overflow the
-    // stack.
-    std::vector<bool> visited(n, false);
-    std::vector<std::size_t> finished;
-    for (std::size_t root = 0; root < n; ++root)
-      if (!visited[root]) {
-        visited[root] = true;
-        std::vector<std::pair<std::size_t, std::size_t>> stack{{root, 0}};
-        while (!stack.empty()) {
-          auto &[v, next] = stack.back();
-          if (next < forward[v].size()) {
-            const auto child = forward[v][next++];
-            if (!visited[child]) {
-              visited[child] = true;
-              stack.emplace_back(child, 0);
-            }
-          } else {
-            finished.push_back(v);
-            stack.pop_back();
-          }
-        }
-      }
-    std::vector<std::size_t> component(n, n);
-    std::size_t components = 0;
-    for (auto it = finished.rbegin(); it != finished.rend(); ++it)
-      if (component[*it] == n) {
-        component[*it] = components;
-        std::vector<std::size_t> stack{*it};
-        while (!stack.empty()) {
-          const auto v = stack.back();
-          stack.pop_back();
-          for (const auto child : reverse[v])
-            if (component[child] == n) {
-              component[child] = components;
-              stack.push_back(child);
-            }
-        }
-        ++components;
-      }
-    std::vector<std::vector<std::size_t>> dag(components);
-    for (const auto &edge : edges)
-      if (component[edge.from] != component[edge.to])
-        dag[component[edge.from]].push_back(component[edge.to]);
-    std::vector<std::size_t> incoming(components, 0), rank(components, 0);
-    for (auto &successors : dag) {
-      std::sort(successors.begin(), successors.end());
-      successors.erase(std::unique(successors.begin(), successors.end()),
-                       successors.end());
-      for (const auto next : successors)
-        ++incoming[next];
-    }
-    std::priority_queue<std::size_t, std::vector<std::size_t>, std::greater<>>
-        ready;
-    for (std::size_t i = 0; i < components; ++i)
-      if (!incoming[i])
-        ready.push(i);
-    while (!ready.empty()) {
-      const auto current = ready.top();
-      ready.pop();
-      for (const auto next : dag[current]) {
-        rank[next] = std::max(rank[next], rank[current] + 1);
-        if (!--incoming[next])
-          ready.push(next);
-      }
-    }
-    std::vector<std::vector<std::size_t>> layers(n);
-    for (std::size_t i = 0; i < n; ++i)
-      layers[rank[component[i]]].push_back(i);
-    double y = 40;
-    for (const auto &layer : layers)
-      if (!layer.empty()) {
-        for (std::size_t i = 0; i < layer.size(); ++i)
-          nodes[layer[i]].box = {40 + (i % 8) * 380.0, y + (i / 8) * 250.0,
-                                 NodeWidth, NodeHeight};
-        y += ((layer.size() + 7) / 8) * 250.0;
-      }
-    std::vector<Rect> nodeBoxes, edgeBoxes;
+  void layout(const GraphMetrics &metrics) {
+    LayoutInput input;
+    input.nodes.reserve(nodes.size());
     for (const auto &node : nodes) {
-      nodeBoxes.push_back(node.box);
-      bounds.include(node.box);
+      if (!metrics.valid()) {
+        input.nodes.push_back({NodeWidth, NodeHeight});
+        continue;
+      }
+      std::size_t columns = 0;
+      for (const auto &row : node.rows)
+        columns = std::max(columns, row.value("text", std::string()).size());
+      const double width =
+          std::min(MaxNodeExtent,
+                   static_cast<double>(std::max<std::size_t>(columns, 8)) *
+                           metrics.charWidth +
+                       2 * metrics.padding);
+      const double height = std::min(
+          MaxNodeExtent,
+          static_cast<double>(std::max<std::size_t>(node.rows.size(), 1)) *
+                  metrics.lineHeight +
+              2 * metrics.padding + metrics.titleHeight);
+      input.nodes.push_back({width, height});
     }
-    for (auto &edge : edges) {
-      const auto &a = nodes[edge.from].box, &b = nodes[edge.to].box;
-      if (b.y > a.y + a.height) {
-        const double mid = (a.y + a.height + b.y) / 2;
+    for (const auto &edge : edges)
+      input.edges.push_back({edge.from, edge.to});
+    // The entry block is the node at the requested function address.
+    for (std::size_t i = 0; i < nodes.size(); ++i)
+      if (nodes[i].address == address) {
+        input.entry = i;
+        break;
+      }
+    const auto placed = layoutGraph(input);
+    std::vector<Rect> nodeBoxes, edgeBoxes;
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+      nodes[i].box = {placed.positions[i].x, placed.positions[i].y,
+                      input.nodes[i].width, input.nodes[i].height};
+      nodeBoxes.push_back(nodes[i].box);
+      bounds.include(nodes[i].box);
+    }
+    for (std::size_t i = 0; i < edges.size(); ++i) {
+      auto &edge = edges[i];
+      edge.points.clear();
+      for (const auto &point : placed.routes[i])
+        edge.points.push_back({point.x, point.y});
+      if (edge.points.empty()) {
+        const auto &a = nodes[edge.from].box, &b = nodes[edge.to].box;
         edge.points = {{a.x + a.width / 2, a.y + a.height},
-                       {a.x + a.width / 2, mid},
-                       {b.x + b.width / 2, mid},
                        {b.x + b.width / 2, b.y}};
-      } else {
-        const double lane =
-            std::max(a.x + a.width, b.x + b.width) + 20 + (edge.from % 4) * 8;
-        edge.points = {{a.x + a.width, a.y + a.height / 2},
-                       {lane, a.y + a.height / 2},
-                       {lane, b.y + 30},
-                       {b.x + b.width, b.y + 30}};
       }
       edge.box = {edge.points.front().x, edge.points.front().y, 0, 0};
       for (auto point : edge.points)
@@ -279,7 +228,8 @@ struct GraphSnapshot::Impl {
 };
 
 GraphSnapshot::GraphSnapshot(Json graph, std::string address,
-                             std::string revision)
+                             std::string revision, GraphMetrics metrics,
+                             const GraphRows &rows)
     : impl_(std::make_unique<Impl>()) {
   auto &out = *impl_;
   out.address = std::move(address);
@@ -317,6 +267,8 @@ GraphSnapshot::GraphSnapshot(Json graph, std::string address,
         bytes += text.size();
       }
     }
+    node.rows = rows ? rows(parseAddress(node.address), parseAddress(node.end))
+                     : Json::array();
     out.nodes.push_back(std::move(node));
   }
   // Stable layout does not depend on backend container iteration order.
@@ -352,7 +304,7 @@ GraphSnapshot::GraphSnapshot(Json graph, std::string address,
       });
   for (std::size_t i = 0; i < out.edges.size(); ++i)
     out.edges[i].id = "edge:" + std::to_string(i);
-  out.layout();
+  out.layout(metrics);
 }
 GraphSnapshot::~GraphSnapshot() = default;
 const std::string &GraphSnapshot::address() const { return impl_->address; }
@@ -367,7 +319,7 @@ Json GraphSnapshot::summary() const {
           {"unresolved_edge_count", g.unresolvedEdges},
           {"node_limit", NodePage},
           {"edge_limit", EdgePage},
-          {"layout", "scc-layered-v1"},
+          {"layout", "layered-v2"},
           {"complete", true},
           {"snapshot_complete", true}};
 }
@@ -407,7 +359,8 @@ Json GraphSnapshot::viewport(const Json &request) const {
                   {"start", node.address},
                   {"end", node.end},
                   {"label", node.address},
-                  {"lines", scale >= 0.6 ? node.lines : Json::array()},
+                  {"lines", scale >= ScaleForText ? node.lines : Json::array()},
+                  {"rows", scale >= ScaleForText ? node.rows : Json::array()},
                   {"lines_truncated", node.linesTruncated},
                   {"insn_count", node.instructionCount}});
     visibleNodes.push_back(std::move(value));

@@ -1092,6 +1092,8 @@ target_compile_definitions(NeverDObjCSourceCallTests PRIVATE
 if(MSVC)
   target_compile_options(NeverDLiftTests PRIVATE /bigobj)
   target_compile_options(NeverDObjCSourceCallTests PRIVATE /bigobj)
+  # JumpTableEnhancedTests.cpp outgrows the default section limit here too.
+  target_compile_options(NeverDJumpTableTests PRIVATE /bigobj)
 endif()
 
 # Run instruction provenance and shared entry/frame checks without the full

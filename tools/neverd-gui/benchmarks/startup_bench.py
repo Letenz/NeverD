@@ -48,21 +48,20 @@ def validate_report(report, returncode):
         return "GUI report must be a JSON object"
     if returncode != 0 or not report.get("success"):
         return report.get("error") or report.get("failure_reason") or "GUI failed"
-    if report.get("schema_version") != 2:
-        return "Startup report schema 2 is required for synchronized frame measurement"
+    if report.get("schema_version") != 3:
+        return "Startup report schema 3 (Qt Widgets workbench) is required"
     milestones = report.get("milestones", {})
     if not isinstance(milestones, dict):
         return "GUI milestones must be a JSON object"
-    required = ("worker_ready_ms", "metadata_ms", "instructions_ms",
-                "representation_ms", "qml_created_ms", "first_frame_ms",
-                "useful_frame_sync_ms", "useful_frame_ms")
+    required = ("worker_ready_ms", "metadata_ms", "window_created_ms",
+                "first_frame_ms", "useful_frame_ms", "useful_frame_flushed_ms")
     for name in required:
         value = milestones.get(name)
         if not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
             return f"Missing or invalid milestone: {name}"
-    if not (max(milestones["instructions_ms"], milestones["representation_ms"])
-            <= milestones["useful_frame_sync_ms"] <= milestones["useful_frame_ms"]):
-        return "Useful frame precedes synchronization of required analysis data"
+    if not (milestones["metadata_ms"] <= milestones["useful_frame_ms"]
+            <= milestones["useful_frame_flushed_ms"]):
+        return "Useful frame precedes the opened file's metadata"
     if milestones["first_frame_ms"] > milestones["useful_frame_ms"]:
         return "Useful frame precedes the first frame"
     return None
@@ -105,9 +104,8 @@ def main():
 
     artifacts = {"gui": identity(args.gui), "worker": identity(args.worker),
                  "engine": identity(args.engine)}
-    environment_keys = ("QT_QPA_PLATFORM", "QT_QUICK_BACKEND", "QSG_RHI_BACKEND",
-                        "QSG_RENDER_LOOP", "QT_SCALE_FACTOR", "QT_FONT_DPI",
-                        "QSG_RENDERER_DEBUG", "QT_DEBUG_PLUGINS", "DISPLAY",
+    environment_keys = ("QT_QPA_PLATFORM", "QT_SCALE_FACTOR", "QT_FONT_DPI",
+                        "QT_DEBUG_PLUGINS", "DISPLAY",
                         "WAYLAND_DISPLAY", "XDG_SESSION_TYPE", "LANG", "LC_ALL")
     report = {"schema_version": 1, "kind": "production-gui-startup",
               "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -120,9 +118,9 @@ def main():
               "samples": [], "warmup": [], "success": False,
               "caveats": [
                   "Fresh GUI and worker processes; OS and application caches are warm and are not flushed.",
-                  "Qt frameSwapped emission is not independently measured hardware presentation.",
+                  "The listing paint and backing-store flush are not independently measured hardware presentation.",
                   "Milestones begin at main entry after dynamic loading; process wall time includes shutdown.",
-                  "Useful frame synchronizes instructions and representation in the fresh production layout.",
+                  "The useful frame is the first painted disassembly listing of the opened file in the fresh default desktop.",
                   "The default tiny ELF is analyzed but never executed; large-image performance is not implied.",
                   "Other system activity is not controlled; this run establishes no world ranking or speedup."]}
     if any("error" in value for value in artifacts.values()):

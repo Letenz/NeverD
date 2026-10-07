@@ -9,6 +9,8 @@
 #include "neverd/sdk/NeverDCAPISession.h"
 #include "neverd/sdk/NeverDCAPISigs.h"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -22,6 +24,9 @@ using neverd::worker::Json;
 using neverd::worker::parseAddress;
 namespace {
 constexpr std::uint64_t Base = 0xffff800012340000ULL;
+// A read-only data section of relocated pointers: slot i points to function
+// i + 1.
+constexpr std::uint64_t DataBase = Base + 0x3000, DataSlots = 8;
 struct MockSession {
   std::string path, error;
   std::map<std::uint64_t, std::string> annotations, names;
@@ -103,8 +108,8 @@ int neverd_session_bitness(neverd_session_t) { return 64; }
 unsigned long long neverd_session_file_size(neverd_session_t) { return 8192; }
 neverd_va_t neverd_session_base_addr(neverd_session_t) { return Base; }
 neverd_va_t neverd_session_entry_addr(neverd_session_t) { return Base; }
-int neverd_session_segment_count(neverd_session_t) { return 1; }
-int neverd_session_section_count(neverd_session_t) { return 1; }
+int neverd_session_segment_count(neverd_session_t) { return 2; }
+int neverd_session_section_count(neverd_session_t) { return 2; }
 int neverd_session_import_count(neverd_session_t) { return 0; }
 int neverd_session_export_count(neverd_session_t) { return 1; }
 int neverd_session_symbol_count(neverd_session_t) { return 600; }
@@ -131,6 +136,8 @@ const char *neverd_dashboard_json(neverd_session_t s) {
       Json{{"hashes", {{"sha256", digest + digest + digest + digest}}}}.dump());
 }
 int neverd_func_count(neverd_session_t) { return 600; }
+// The fixture's detector finds nothing the image does not list.
+int neverd_session_discover_functions(neverd_session_t) { return 600; }
 neverd_va_t neverd_func_entry(neverd_session_t, int index) {
   return Base + 16 * index;
 }
@@ -174,24 +181,192 @@ const char *neverd_resolve_addr(neverd_session_t s, neverd_va_t address) {
 }
 int neverd_read_bytes(neverd_session_t, neverd_va_t address,
                       unsigned char *buffer, int size) {
-  if (address < Base || address - Base >= 9600)
+  if (size >= 0 && address >= DataBase && address - DataBase < DataSlots * 8) {
+    const auto available = static_cast<int>(
+        std::min<std::uint64_t>(size, DataBase + DataSlots * 8 - address));
+    for (int i = 0; i < available; ++i) {
+      const auto offset = address - DataBase + i;
+      const std::uint64_t pointer = Base + 16 * (offset / 8 + 1);
+      buffer[i] = static_cast<unsigned char>(pointer >> (8 * (offset % 8)));
+    }
+    return available;
+  }
+  if (address < Base || address - Base >= 9600 || size < 0)
     return 0;
-  for (int i = 0; i < size; ++i)
-    buffer[i] = static_cast<unsigned char>(i);
-  return size;
+  // Each 16-byte function body is the byte ramp 00 01 02 ... 0f.
+  const auto available =
+      static_cast<int>(std::min<std::uint64_t>(size, Base + 9600 - address));
+  for (int i = 0; i < available; ++i)
+    buffer[i] = static_cast<unsigned char>((address - Base + i) & 0xf);
+  return available;
+}
+// Each 16-byte fixture function is one-byte instructions: nops, a jump back
+// to its entry at offset 8 and a return at offset 15.
+constexpr std::uint64_t JumpOffset = 8, ReturnOffset = 15;
+/// Functions with stack frames: offset -> mnemonic, operands, stack pointer
+/// move and, for a conditional jump, its target offset.
+struct FrameRow {
+  const char *mnemonic, *operands;
+  int move;
+  int branch = -1;
+};
+/// function_5 keeps a frame without a frame pointer.  Its loop back to the
+/// entry restores the stack pointer, and the code after the loop is
+/// unreachable.
+const std::map<std::uint64_t, FrameRow> FrameFunction = {
+    {0, {"push", "rbx", -8}},
+    {1, {"sub", "rsp, 0x20", -0x20}},
+    {2, {"mov", "qword ptr [rsp + 0x18], rax", 0}},
+    {3, {"lea", "rdi, [rsp + 8]", 0}},
+    {4, {"mov", "rax, qword ptr [rsp + 0x30]", 0}},
+    {5, {"movups", "xmmword ptr [rsp + 8], xmm0", 0}},
+    {6, {"add", "rsp, 0x20", 0x20}},
+    {7, {"pop", "rbx", 8}},
+    {9, {"mov", "rax, qword ptr [rsp + 8]", 0}},
+};
+constexpr std::uint64_t FrameFunctionEntry = Base + 0x50;
+/// function_6 reaches offset 4 both past a push and around it, so the stack
+/// pointer's distance there is unknown.
+const std::map<std::uint64_t, FrameRow> JoinFunction = {
+    {0, {"push", "rbx", -8}},
+    {1, {"mov", "rax, qword ptr [rsp]", 0}},
+    {2, {"je", "4", 0, 4}},
+    {3, {"push", "rcx", -8}},
+    {4, {"mov", "rax, qword ptr [rsp + 8]", 0}},
+    {7, {"ret", "", 0}},
+};
+constexpr std::uint64_t JoinFunctionEntry = Base + 0x60;
+
+Json fixtureInstructions(neverd_va_t address, int count, bool flow,
+                         bool stack) {
+  Json result = Json::array();
+  for (int i = 0; i < count && address >= Base && address + i - Base < 9600;
+       ++i) {
+    const auto at = address + i;
+    const auto offset = (at - Base) % 16;
+    const auto entry = at - offset;
+    Json row = {{"addr", hexAddress(at)},
+                {"size", 1},
+                {"mnemonic", "nop"},
+                {"op_str", ""},
+                {"bytes", "90"}};
+    if (stack)
+      row["sp"] = 0;
+    const auto *rows = entry == FrameFunctionEntry  ? &FrameFunction
+                       : entry == JoinFunctionEntry ? &JoinFunction
+                                                    : nullptr;
+    if (const auto frame = rows ? rows->find(offset) : FrameFunction.end();
+        rows && frame != rows->end()) {
+      row["mnemonic"] = frame->second.mnemonic;
+      row["op_str"] = frame->second.operands;
+      if (stack)
+        row["sp"] = frame->second.move;
+      if (flow && frame->second.branch >= 0) {
+        row["op_str"] = hexAddress(entry + frame->second.branch);
+        row["flow"] = "cjump";
+        row["target"] = hexAddress(entry + frame->second.branch);
+      } else if (flow && std::string_view(frame->second.mnemonic) == "ret") {
+        row["flow"] = "ret";
+      }
+    }
+    if (offset == JumpOffset) {
+      row["mnemonic"] = "jmp";
+      row["op_str"] = hexAddress(entry);
+      row["bytes"] = "eb";
+      if (flow) {
+        row["flow"] = "jump";
+        row["target"] = hexAddress(entry);
+      }
+    } else if (offset == ReturnOffset) {
+      row["mnemonic"] = "ret";
+      row["bytes"] = "c3";
+      if (flow)
+        row["flow"] = "ret";
+    }
+    result.push_back(std::move(row));
+  }
+  return result;
 }
 const char *neverd_disasm_json(neverd_session_t s, neverd_va_t address,
                                int count) {
   session(s)->error.clear();
-  Json result = Json::array();
-  if (address >= Base && address - Base < 9600)
-    for (int i = 0; i < count; ++i)
-      result.push_back({{"addr", hexAddress(address + i)},
-                        {"size", 1},
-                        {"mnemonic", "nop"},
-                        {"op_str", ""},
-                        {"bytes", "90"}});
-  return copy(result.dump());
+  return copy(fixtureInstructions(address, count, false, false).dump());
+}
+const char *neverd_disasm_json_ex(neverd_session_t s, neverd_va_t address,
+                                  int count, unsigned options) {
+  session(s)->error.clear();
+  return copy(fixtureInstructions(address, count, options & NEVERD_DISASM_FLOW,
+                                  options & NEVERD_DISASM_STACK)
+                  .dump());
+}
+const char *neverd_code_refs_json(neverd_session_t s, neverd_va_t firstEntry,
+                                  int maxFunctions) {
+  session(s)->error.clear();
+  maxFunctions = std::clamp(maxFunctions, 1, 4096);
+  Json refs = Json::array();
+  int first =
+      firstEntry <= Base ? 0 : static_cast<int>((firstEntry - Base + 15) / 16);
+  int index = first;
+  for (; index < 600 && index < first + maxFunctions; ++index) {
+    const auto entry = Base + 16 * static_cast<std::uint64_t>(index);
+    refs.push_back({hexAddress(entry + JumpOffset), hexAddress(entry), "jump"});
+    // function_3 calls function_2 through data slot 1.
+    if (index == 3)
+      refs.push_back({hexAddress(entry + 4), hexAddress(Base + 0x20), "icall"});
+  }
+  return copy(
+      Json{{"refs", refs},
+           {"next_entry",
+            index < 600 ? Json(hexAddress(Base + 16 * index)) : Json(nullptr)},
+           {"function_count", 600}}
+          .dump());
+}
+const char *neverd_pointer_refs_json(neverd_session_t s, neverd_va_t firstSlot,
+                                     int maxSlots) {
+  session(s)->error.clear();
+  Json refs = Json::array();
+  std::uint64_t slot = std::max<std::uint64_t>(firstSlot, DataBase);
+  slot = DataBase + (slot - DataBase + 7) / 8 * 8;
+  for (int count = 0; slot < DataBase + DataSlots * 8 && count < maxSlots;
+       ++count, slot += 8)
+    refs.push_back({hexAddress(slot),
+                    hexAddress(Base + 16 * ((slot - DataBase) / 8 + 1)),
+                    "offset"});
+  return copy(Json{{"refs", refs},
+                   {"next_slot", slot < DataBase + DataSlots * 8
+                                     ? Json(hexAddress(slot))
+                                     : Json(nullptr)}}
+                  .dump());
+}
+int neverd_pointer_at(neverd_session_t, neverd_va_t address, neverd_va_t *slot,
+                      neverd_va_t *target) {
+  if (address < DataBase || address >= DataBase + DataSlots * 8)
+    return 0;
+  const auto first = DataBase + (address - DataBase) / 8 * 8;
+  if (slot)
+    *slot = first;
+  if (target)
+    *target = Base + 16 * ((first - DataBase) / 8 + 1);
+  return 1;
+}
+const char *neverd_unwind_frame_json(neverd_session_t, neverd_va_t address) {
+  // function_0 has a plain frame; function_1 names a personality.
+  if (address >= Base && address < Base + 16)
+    return copy(Json{
+        {"begin", hexAddress(Base)},
+        {"end", hexAddress(Base + 16)},
+        {"encoding", "dwarf-fde"},
+        {"language_data",
+         false}}.dump());
+  if (address >= Base + 16 && address < Base + 32)
+    return copy(Json{
+        {"begin", hexAddress(Base + 16)},
+        {"end", hexAddress(Base + 32)},
+        {"encoding", "dwarf-fde"},
+        {"personality", "__gxx_personality_v0"},
+        {"language_data",
+         true}}.dump());
+  return copy("null");
 }
 const char *neverd_decompile(neverd_session_t, neverd_va_t) {
   std::string text;
@@ -265,8 +440,93 @@ const char *neverd_segments_json(neverd_session_t) {
   return copy(Json::array({{{"name", ".text"},
                             {"va", hexAddress(Base)},
                             {"size", "0x2580"},
-                            {"flags", "r-x"}}})
+                            {"flags", "R-X"}},
+                           {{"name", ".data.rel.ro"},
+                            {"va", hexAddress(DataBase)},
+                            {"size", "0x40"},
+                            {"flags", "R--"}}})
                   .dump());
+}
+const char *neverd_sections_json(neverd_session_t) {
+  // Spelled like the engine: numeric sizes and R/W/X flags.
+  return copy(Json::array({{{"name", ".text"},
+                            {"segment", ".text"},
+                            {"va", hexAddress(Base)},
+                            {"size", 0x2580},
+                            {"file_off", 0x1000},
+                            {"file_sz", 0x2580},
+                            {"alignment", 16},
+                            {"flags", "R-X"}},
+                           {{"name", ".data.rel.ro"},
+                            {"segment", ".data.rel.ro"},
+                            {"va", hexAddress(DataBase)},
+                            {"size", DataSlots * 8},
+                            {"file_off", 0x4000},
+                            {"file_sz", DataSlots * 8},
+                            {"alignment", 8},
+                            {"flags", "R--"}}})
+                  .dump());
+}
+const char *neverd_symbols_json(neverd_session_t) {
+  return copy(Json::array({{{"addr", hexAddress(Base)},
+                            {"name", "function_0"},
+                            {"type", "function"}}})
+                  .dump());
+}
+const char *neverd_imports_json(neverd_session_t) {
+  return copy(Json::array().dump());
+}
+const char *neverd_exports_json(neverd_session_t) {
+  return copy(Json::array({{{"addr", hexAddress(Base)},
+                            {"name", "function_0"},
+                            {"ordinal", 1}}})
+                  .dump());
+}
+const char *neverd_entrypoints_json(neverd_session_t) {
+  return copy(
+      Json::array(
+          {{{"addr", hexAddress(Base)}, {"name", "start"}, {"type", "entry"}}})
+          .dump());
+}
+// The fixture's "library" match names the second function.
+const char *neverd_sig_matches_json(neverd_session_t) {
+  return copy(Json::array({{{"addr", hexAddress(Base + 16)},
+                            {"name", "function_1"},
+                            {"source", "mock"}}})
+                  .dump());
+}
+void neverd_session_restrict_function(neverd_session_t, neverd_va_t) {}
+const char *neverd_search_bytes(neverd_session_t, const unsigned char *pattern,
+                                int length, int limit) {
+  Json hits = Json::array();
+  if (pattern && length > 0 && length <= 16 && pattern[0] + length <= 16) {
+    bool ramp = true;
+    for (int i = 1; i < length; ++i)
+      ramp = ramp && pattern[i] == pattern[0] + i;
+    for (int i = 0; ramp && i < 600 && static_cast<int>(hits.size()) < limit;
+         ++i)
+      hits.push_back({{"addr", hexAddress(Base + 16 * i + pattern[0])}});
+  }
+  return copy(hits.dump());
+}
+const char *neverd_search_string(neverd_session_t, const char *pattern,
+                                 int caseSensitive, int limit) {
+  Json hits = Json::array();
+  const auto fold = [caseSensitive](std::string text) {
+    if (!caseSensitive)
+      for (auto &c : text)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return text;
+  };
+  const auto needle = fold(pattern ? pattern : "");
+  for (int i = 0;
+       !needle.empty() && i < 600 && static_cast<int>(hits.size()) < limit;
+       ++i) {
+    const auto value = "string " + std::to_string(i);
+    if (fold(value).find(needle) != std::string::npos)
+      hits.push_back({{"addr", hexAddress(Base + i)}, {"value", value}});
+  }
+  return copy(hits.dump());
 }
 const char *neverd_xrefs_to_json(neverd_session_t s, neverd_va_t address) {
   session(s)->error.clear();

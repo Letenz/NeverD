@@ -834,6 +834,7 @@ _C_TYPES: dict[str, object] = {
     "unsigned char *": ctypes.POINTER(ctypes.c_ubyte),
     "const unsigned char *": ctypes.POINTER(ctypes.c_ubyte),
     "unsigned long long *": ctypes.POINTER(ctypes.c_ulonglong),
+    "neverd_va_t *": ctypes.POINTER(ctypes.c_uint64),
     "const void *": ctypes.c_void_p,
     "void *": ctypes.c_void_p,
     "neverd_load_progress_fn": LoadProgressCallback,
@@ -988,6 +989,7 @@ _declare(
 _declare("neverd_func_count", "int", ["neverd_session_t"])
 _declare("neverd_func_entry", "neverd_va_t", ["neverd_session_t", "int"])
 _declare("neverd_func_size", "int", ["neverd_session_t", "int"])
+_declare("neverd_session_discover_functions", "int", ["neverd_session_t"])
 _declare(
     "neverd_func_name",
     "const char *",
@@ -999,6 +1001,29 @@ _declare(
     "const char *",
     ["neverd_session_t", "neverd_va_t", "int"],
     ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_disasm_json_ex",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "int", "unsigned"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_code_refs_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "int"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_pointer_refs_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "int"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_pointer_at",
+    "int",
+    ["neverd_session_t", "neverd_va_t", "neverd_va_t *", "neverd_va_t *"],
 )
 _declare(
     "neverd_decompile",
@@ -1077,6 +1102,18 @@ _declare(
     "neverd_imports_json",
     "const char *",
     ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_import_slots_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_unwind_frame_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t"],
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
@@ -1345,6 +1382,12 @@ _declare(
 )
 _declare(
     "neverd_symbols_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_data_symbols_json",
     "const char *",
     ["neverd_session_t"],
     ownership=Ownership.OWNED_STRING,

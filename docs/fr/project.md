@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: b269d1f316b2dffb502ea0ed075d6255ed7c03d722bb9129b55578cf8a25acbd -->
+<!-- i18n-source: 0e490a01b7c701ed5c4ec7324feba7b113de2d5ccbc4713f2cef24397f7800d2 -->
 
 <div align="center">
 
@@ -263,7 +263,7 @@ Pour les cibles ciblées, les labels CTest, les exigences des fixtures et la gri
 
 ## Atelier de bureau
 
-L’[atelier Qt Quick (anglais)](../gui.md) optionnel propose des vues ancrables des instructions, CFG, hexadécimal, C et IR, les 11 langues d’interface, des annotations persistantes et des connexions MCP. L’analyse s’exécute dans un processus distinct sans Qt ; les builds CLI restent indépendants. Consultez le [dossier de qualification (anglais)](../gui-qualification.md) pour les workflows pris en charge et les validations de plateforme encore nécessaires avant publication.
+L’[atelier de bureau (anglais)](../gui.md) optionnel reprend la disposition et les raccourcis du désassembleur interactif classique, avec des vues de désassemblage, de graphe, de pseudo-code, d’IR, hexadécimale et de listes, un thème inspiré de Visual Studio Code, les 11 langues d’interface et des bases de projet `.nddb`. L’analyse s’exécute dans un processus distinct sans Qt ; les builds CLI restent indépendants. Consultez le [dossier de qualification (anglais)](../gui-qualification.md) pour les workflows pris en charge et les validations de plateforme encore nécessaires avant publication.
 
 <!-- i18n-section: cli -->
 

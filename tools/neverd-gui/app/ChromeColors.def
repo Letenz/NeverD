@@ -1,0 +1,76 @@
+//===- ChromeColors.def - Workbench chrome colors ---------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Widget chrome colors of the Light and Dark themes, after the Visual Studio
+/// Code Light+ and Dark+ workbench colors.  Entries named after QPalette
+/// roles build the application palette; every entry is also available to the
+/// theme style sheet as ${Name}.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_CHROME_COLOR(Name, Light, Dark)
+#ifndef NEVERD_CHROME_COLOR
+#error "Define NEVERD_CHROME_COLOR before including ChromeColors.def"
+#endif
+
+// QPalette roles.
+NEVERD_CHROME_COLOR(Window, "#F3F3F3", "#252526")
+NEVERD_CHROME_COLOR(WindowText, "#3B3B3B", "#CCCCCC")
+NEVERD_CHROME_COLOR(Base, "#FFFFFF", "#1E1E1E")
+NEVERD_CHROME_COLOR(AlternateBase, "#F7F7F7", "#232324")
+NEVERD_CHROME_COLOR(Text, "#3B3B3B", "#CCCCCC")
+NEVERD_CHROME_COLOR(Button, "#E7E7E7", "#3A3D41")
+NEVERD_CHROME_COLOR(ButtonText, "#3B3B3B", "#CCCCCC")
+NEVERD_CHROME_COLOR(Highlight, "#0060C0", "#04395E")
+NEVERD_CHROME_COLOR(HighlightedText, "#FFFFFF", "#FFFFFF")
+NEVERD_CHROME_COLOR(ToolTipBase, "#F3F3F3", "#252526")
+NEVERD_CHROME_COLOR(ToolTipText, "#3B3B3B", "#CCCCCC")
+NEVERD_CHROME_COLOR(PlaceholderText, "#8E8E8E", "#8C8C8C")
+NEVERD_CHROME_COLOR(Link, "#006AB1", "#3794FF")
+NEVERD_CHROME_COLOR(Light, "#FFFFFF", "#4A4A4A")
+NEVERD_CHROME_COLOR(Midlight, "#F0F0F0", "#3C3C3C")
+NEVERD_CHROME_COLOR(Mid, "#C8C8C8", "#2D2D2D")
+NEVERD_CHROME_COLOR(Dark, "#A0A0A0", "#1A1A1A")
+NEVERD_CHROME_COLOR(Shadow, "#808080", "#000000")
+NEVERD_CHROME_COLOR(DisabledText, "#A0A0A0", "#6E6E6E")
+
+// Workbench surfaces.
+NEVERD_CHROME_COLOR(Accent, "#007ACC", "#007ACC")
+NEVERD_CHROME_COLOR(Focus, "#0090F1", "#007FD4")
+NEVERD_CHROME_COLOR(Border, "#E5E5E5", "#3C3C3C")
+NEVERD_CHROME_COLOR(MenuBar, "#DDDDDD", "#3C3C3C")
+NEVERD_CHROME_COLOR(MenuBarText, "#333333", "#CCCCCC")
+NEVERD_CHROME_COLOR(Menu, "#FFFFFF", "#252526")
+NEVERD_CHROME_COLOR(MenuText, "#3B3B3B", "#CCCCCC")
+NEVERD_CHROME_COLOR(MenuSelection, "#0060C0", "#04395E")
+NEVERD_CHROME_COLOR(MenuSeparator, "#D4D4D4", "#454545")
+NEVERD_CHROME_COLOR(ToolBar, "#F3F3F3", "#2D2D2D")
+NEVERD_CHROME_COLOR(ToolBarHover, "#E1E1E1", "#3C3C3C")
+NEVERD_CHROME_COLOR(StatusBar, "#007ACC", "#007ACC")
+NEVERD_CHROME_COLOR(StatusBarText, "#FFFFFF", "#FFFFFF")
+NEVERD_CHROME_COLOR(TabBar, "#F3F3F3", "#252526")
+NEVERD_CHROME_COLOR(TabActive, "#FFFFFF", "#1E1E1E")
+NEVERD_CHROME_COLOR(TabInactive, "#ECECEC", "#2D2D2D")
+NEVERD_CHROME_COLOR(TabActiveText, "#333333", "#FFFFFF")
+NEVERD_CHROME_COLOR(TabInactiveText, "#7A7A7A", "#969696")
+NEVERD_CHROME_COLOR(TabActiveBorder, "#007ACC", "#007ACC")
+NEVERD_CHROME_COLOR(DockTitle, "#F3F3F3", "#252526")
+NEVERD_CHROME_COLOR(DockTitleText, "#616161", "#BBBBBB")
+NEVERD_CHROME_COLOR(Hover, "#E8E8E8", "#2A2D2E")
+NEVERD_CHROME_COLOR(Input, "#FFFFFF", "#3C3C3C")
+NEVERD_CHROME_COLOR(InputBorder, "#CECECE", "#3C3C3C")
+NEVERD_CHROME_COLOR(HeaderBackground, "#F3F3F3", "#252526")
+NEVERD_CHROME_COLOR(HeaderText, "#616161", "#BBBBBB")
+NEVERD_CHROME_COLOR(ScrollbarSlider, "#C1C1C1", "#424242")
+NEVERD_CHROME_COLOR(ScrollbarSliderHover, "#9A9A9A", "#4F4F4F")
+NEVERD_CHROME_COLOR(ScrollbarSliderActive, "#787878", "#6A6A6A")
+NEVERD_CHROME_COLOR(Separator, "#E5E5E5", "#3C3C3C")
+NEVERD_CHROME_COLOR(ButtonPrimary, "#007ACC", "#0E639C")
+NEVERD_CHROME_COLOR(ButtonPrimaryHover, "#0062A3", "#1177BB")
+NEVERD_CHROME_COLOR(ButtonPrimaryText, "#FFFFFF", "#FFFFFF")
+
+#undef NEVERD_CHROME_COLOR
