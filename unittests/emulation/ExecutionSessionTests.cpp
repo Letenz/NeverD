@@ -250,6 +250,130 @@ TEST_P(RuntimeSession, ExecutionWatchStopsBeforeAdmissionAndResumesOnce) {
   EXPECT_EQ(Trace[BeforeStore], Store);
   EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, sizeof(uint64_t))), 1u);
 }
+
+TEST_P(RuntimeSession, CommittedWriteWatchStopsBeforeTheNextAdmission) {
+  code(CounterX64, CounterARM);
+  auto S = start();
+  llvm::cantFail(S->watchMemoryWrites({{Data, sizeof(uint64_t)}}));
+  const uint64_t Next =
+      Code + (GetParam().ISA == GuestArchitecture::X64 ? 9 : 12);
+  auto Exit = llvm::cantFail(S->run(Code, Instructions));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::MemoryWriteWatch);
+  EXPECT_EQ(reg(*S, PC), Next);
+  EXPECT_EQ(Budget->instructions(), 3u);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), 1u);
+  Exit = llvm::cantFail(S->run(Next, Instructions));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::MemoryWriteWatch);
+  EXPECT_EQ(reg(*S, PC), Next);
+  EXPECT_EQ(Budget->instructions(), 7u);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), 2u);
+  llvm::cantFail(S->watchMemoryWrites({}));
+  EXPECT_EQ(llvm::cantFail(S->run(Next, Instructions)).Kind,
+            SessionExitKind::InstructionLimit);
+  EXPECT_EQ(Budget->instructions(), Instructions);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), 2u);
+}
+
+TEST_P(RuntimeSession, WriteWatchesFollowPhysicalAliasesAndMappingChanges) {
+  code(CounterX64, CounterARM);
+  const uint64_t Other = Data + PageSize;
+  llvm::cantFail(CPU->map(Other, PageSize, Read | Write | UserAccessible));
+  llvm::cantFail(
+      CPU->mapAlias(Alias, Data, PageSize, Read | Execute | UserAccessible));
+  auto S = start();
+  // The writer uses Data, while the watch names another virtual address.
+  llvm::cantFail(S->watchMemoryWrites({{Alias + 3, 2}}));
+  ASSERT_EQ(llvm::cantFail(S->run(Code, Instructions)).Kind,
+            SessionExitKind::MemoryWriteWatch);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), 1u);
+  llvm::cantFail(S->cpu().replaceAliases(
+      {{Alias, PageSize}},
+      {{Alias, Other, PageSize, Read | Execute | UserAccessible}}));
+  // The same watch now names different backing. An old physical match must
+  // disappear even though the watch set itself has not changed.
+  ASSERT_EQ(llvm::cantFail(S->run(Code, Quantum)).Kind,
+            SessionExitKind::Quantum);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), 2u);
+  llvm::cantFail(S->cpu().writeRegister(Source, {Other, 0}));
+  ASSERT_EQ(llvm::cantFail(S->run(Code, Instructions)).Kind,
+            SessionExitKind::MemoryWriteWatch);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Other, 8)), 1u);
+  EXPECT_EQ(Budget->instructions(), Instructions);
+}
+
+TEST_P(RuntimeSession, InvalidWriteWatchReplacementPreservesThePreviousSet) {
+  code(CounterX64, CounterARM);
+  auto S = start();
+  llvm::cantFail(S->watchMemoryWrites({{Data + 4, 4}, {Data, 6}}));
+  for (const auto W :
+       {MemoryWriteWatch{Data, 0}, MemoryWriteWatch{UINT64_MAX, 2}}) {
+    auto E = S->watchMemoryWrites({W});
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+  }
+  auto E = S->watchMemoryWrites({{0, UINT64_MAX}, {UINT64_MAX, 1}});
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  ASSERT_EQ(llvm::cantFail(S->run(Code, Instructions)).Kind,
+            SessionExitKind::MemoryWriteWatch);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), 1u);
+  EXPECT_EQ(Budget->instructions(), 3u);
+}
+
+TEST_P(RuntimeSession, StoppedInstructionInspectionHasNoExecutionEffects) {
+  code(CounterX64, CounterARM);
+  const auto Before = llvm::cantFail(CPU->readRegister(PC));
+  if (GetParam().ISA == GuestArchitecture::X64) {
+    constexpr uint8_t Nop[] = {0x90}, Prefix[] = {0x0f};
+    llvm::cantFail(CPU->write(Code + PageSize - 1, Nop));
+    EXPECT_EQ(llvm::cantFail(CPU->instructionSize(Code + PageSize - 1)), 1u);
+    llvm::cantFail(CPU->write(Code + PageSize - 1, Prefix));
+    auto Bad = CPU->instructionSize(Code + PageSize - 1);
+    EXPECT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  } else
+    EXPECT_EQ(llvm::cantFail(CPU->instructionSize(Code)), 4u);
+  auto Unmapped = CPU->instructionSize(Alias);
+  EXPECT_FALSE(bool(Unmapped));
+  llvm::consumeError(Unmapped.takeError());
+  EXPECT_FALSE(CPU->fault());
+  EXPECT_EQ(llvm::cantFail(CPU->readRegister(PC)), Before);
+  auto S = start();
+  EXPECT_EQ(llvm::cantFail(S->run(Code, Quantum)).Kind,
+            SessionExitKind::Quantum);
+  EXPECT_EQ(Budget->instructions(), Quantum);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), 1u);
+}
+
+TEST_P(RuntimeSession, CancelledStoreCannotPublishAWriteWatch) {
+  code(CounterX64, CounterARM);
+  const uint64_t Store =
+      Code + (GetParam().ISA == GuestArchitecture::X64 ? StoreOffsetX64
+                                                       : StoreOffsetARM);
+  auto *Raw = CPU.get();
+  bool Cancel = true;
+  Budget =
+      llvm::cantFail(ExecutionBudget::create({Instructions, Events, Timeout}));
+  auto S = llvm::cantFail(ExecutionSession::create(
+      std::move(CPU), Budget, {}, [&](uint64_t Address, uint32_t) {
+        if (Address == Store && Cancel) {
+          Cancel = false;
+          Raw->stop();
+        }
+      }));
+  llvm::cantFail(S->watchMemoryWrites({{Data, 8}}));
+  auto Exit = llvm::cantFail(S->run(Code, Instructions));
+  ASSERT_EQ(Exit.Kind, SessionExitKind::CPU);
+  ASSERT_TRUE(Exit.CPU);
+  EXPECT_EQ(Exit.CPU->Kind, ExecutionExitKind::Stopped);
+  EXPECT_EQ(reg(*S, PC), Store);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), 0u);
+  EXPECT_EQ(Budget->instructions(), 3u);
+  ASSERT_EQ(llvm::cantFail(S->run(Store, Instructions)).Kind,
+            SessionExitKind::MemoryWriteWatch);
+  EXPECT_EQ(llvm::cantFail(S->cpu().readInteger(Data, 8)), 1u);
+  EXPECT_EQ(Budget->instructions(), 4u);
+}
 TEST_P(RuntimeSession, OnlyAContinuationAtTheWatchedAddressStepsOverIt) {
   code(CounterX64, CounterARM);
   const uint64_t Store =

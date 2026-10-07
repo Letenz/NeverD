@@ -22,6 +22,13 @@ __declspec(dllimport) void *GetModuleHandleA(const char *);
 __declspec(dllimport) void *GetProcAddress(void *, const char *);
 __declspec(dllimport) int GetSystemMetrics(int);
 
+// Keep independently linked export lookup cells on both instruction sets.
+// A generated loader may use them to ask a modeled service to write its code.
+__declspec(dllexport) __attribute__((noinline)) void *
+lookup_export(const char *Module, const char *Name) {
+  return GetProcAddress(GetModuleHandleA(Module), Name);
+}
+
 // A protector can replace one six-byte import call with a register push and a
 // call to one of these stubs. The stub drops that push and tail-calls the
 // import, so the export returns to the instruction after the site. Nothing

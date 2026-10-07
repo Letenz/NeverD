@@ -25,7 +25,7 @@ namespace neverd::unpack {
 ///
 /// The observer knows no container and no guest system. The image supplies
 /// its extent, and the instruction set's traits supply the stack pointer and
-/// the size of the window a transfer target is compared over.
+/// a bound on instruction windows. The stopped CPU supplies decoded extents.
 class TransferObserver final : public emulation::ProcessObserver {
 public:
   /// \p Wanted selects a transfer by its one-based position; zero accepts the
@@ -39,6 +39,9 @@ public:
   watched(emulation::ProcessView &Process, uint64_t PC) override;
   llvm::Expected<std::optional<std::vector<emulation::ExecutionWatch>>>
   invoking(emulation::ProcessView &Process) override;
+  llvm::Expected<std::optional<std::vector<emulation::ExecutionWatch>>>
+  resuming(emulation::ProcessView &Process) override;
+  std::vector<emulation::MemoryWriteWatch> writeWatches() const override;
   const std::vector<UnpackTransfer> &transfers() const { return Seen; }
   std::optional<Capture> take() { return std::move(Captured); }
 
@@ -46,7 +49,7 @@ private:
   llvm::Error snapshot(emulation::ProcessView &Process,
                        std::vector<uint8_t> &Bytes,
                        std::vector<uint8_t> *Access = nullptr);
-  std::vector<emulation::ExecutionWatch> watches() const;
+  void refreshWatches();
   /// The generation of \p Bytes, which were read at image offset \p Offset.
   uint64_t generation(llvm::ArrayRef<uint8_t> Bytes, uint64_t Offset) const;
   const uint64_t Extent;
@@ -56,10 +59,15 @@ private:
   bool EnteredProgram = false;
   /// Images[0] is the loaded image; Images[N] is the image at transfer N.
   std::vector<std::vector<uint8_t>> Images;
-  /// The generation of the code that is running, and the pages known to hold
-  /// executed code of exactly that generation.
+  /// The generation of the current instruction, and the visited pages whose
+  /// bytes (including possible cross-page fetch tails) are checked on resume.
   uint64_t Running = 0;
-  std::vector<bool> Executed;
+  std::vector<bool> Visited;
+  /// Last stopped observations of visited pages. A write invalidates their
+  /// execution classification even when it arrives through another alias or
+  /// through a stopped OS service.
+  std::vector<uint8_t> Current;
+  std::vector<emulation::ExecutionWatch> Watches;
   std::vector<UnpackTransfer> Seen;
   std::optional<Capture> Captured;
 };

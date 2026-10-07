@@ -33,12 +33,13 @@ class MemoryProjection;
 /// \p NoExecutePages is non-empty, those guest pages are additionally marked
 /// non-executable regardless of their permissions, so a direct run's first
 /// fetch into one faults; \p WatchEpoch distinguishes successive overlays so a
-/// cached projection is not reused across a change to the set.
+/// cached projection is not reused across a change to the set. \p WatchWrites
+/// makes every alias of a watched RAM page read-only for direct execution.
 llvm::Expected<uint64_t>
 buildX64PageTables(MemoryProjection &Memory, bool UserMode = false,
                    bool ExceptionMonitor = false,
                    llvm::ArrayRef<ExecutionWatch> NoExecutePages = {},
-                   uint64_t WatchEpoch = 0);
+                   uint64_t WatchEpoch = 0, bool WatchWrites = false);
 struct X64MachineState {
   bool UserMode = false;
   std::array<uint64_t, unsigned(X64Register::SS) + 1> Registers{};

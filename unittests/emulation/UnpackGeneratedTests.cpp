@@ -61,6 +61,14 @@ constexpr Profile Profiles[] = {
 };
 void PrintTo(const Profile &P, std::ostream *OS) { *OS << P.Name; }
 
+enum class SamePageCode {
+  GeneratedJump,
+  RewrittenCallback,
+  AdjacentData,
+  ChangedOperand,
+  ServiceWrite
+};
+
 class UnpackGenerated : public testing::TestWithParam<Profile> {
 protected:
   void SetUp() override {
@@ -350,6 +358,211 @@ protected:
     EXPECT_EQ(Actual.Instructions, Expected.Instructions);
   }
 
+  /// Independently assembled code creates an entry inside its own page. The
+  /// linked program remains unchanged and supplies the execution oracle.
+  std::filesystem::path packSamePage(SamePageCode Kind) {
+    using namespace llvm::support::endian;
+    const auto *Relay = Original.section(RelaySection);
+    if (!Relay || Relay->FileSize < 320) {
+      ADD_FAILURE() << "the independent relay has no space for the loader";
+      return {};
+    }
+    auto Bytes = Original.File;
+    const uint32_t Target = Relay->RVA + 128;
+    uint8_t *Code = Bytes.data() + Relay->FileOffset;
+    std::fill_n(Code, Relay->FileSize, 0);
+    const auto Index = Relay - Original.Sections.data();
+    write32le(Bytes.data() + Original.SectionTableOffset + Index * 40 + 8,
+              std::max(Relay->VirtualSize, Relay->FileSize));
+    write32le(Bytes.data() + Original.EntryOffset, Relay->RVA);
+    const bool Rewrite = Kind == SamePageCode::RewrittenCallback;
+    const bool Data = Kind == SamePageCode::AdjacentData;
+    const bool Service = Kind == SamePageCode::ServiceWrite;
+    uint64_t ModuleSlot = 0, LookupSlot = 0;
+    if (Service) {
+      for (const auto &I : Original.Imports) {
+        if (I.Name == "GetModuleHandleA")
+          ModuleSlot = I.Slot;
+        if (I.Name == "GetProcAddress")
+          LookupSlot = I.Slot;
+      }
+      if (!ModuleSlot || !LookupSlot) {
+        ADD_FAILURE() << "the independent program has no export lookup imports";
+        return {};
+      }
+      constexpr char Module[] = "kernel32.dll", Name[] = "WriteProcessMemory";
+      std::copy(std::begin(Module), std::end(Module), Code + 160);
+      std::copy(std::begin(Name), std::end(Name), Code + 176);
+    }
+    if (GetParam().ISA == GuestArchitecture::X64) {
+      std::vector<uint8_t> Stub;
+      auto Store = [&](uint32_t RVA, uint32_t Value, bool Byte) {
+        const size_t At = Stub.size();
+        Stub.insert(Stub.end(),
+                    {uint8_t(Byte ? 0xc6 : 0xc7), 0x05, 0, 0, 0, 0});
+        Stub.resize(Stub.size() + (Byte ? 1 : 4));
+        write32le(Stub.data() + At + 2, RVA - (Relay->RVA + Stub.size()));
+        if (Byte)
+          Stub[At + 6] = Value;
+        else
+          write32le(Stub.data() + At + 6, Value);
+      };
+      auto Branch = [&](uint8_t Opcode, uint32_t RVA) {
+        const size_t At = Stub.size();
+        Stub.insert(Stub.end(), {Opcode, 0, 0, 0, 0});
+        write32le(Stub.data() + At + 1, RVA - (Relay->RVA + Stub.size()));
+      };
+      if (Service) {
+        auto Address = [&](uint8_t REX, uint8_t ModRM, uint32_t RVA) {
+          const size_t At = Stub.size();
+          Stub.insert(Stub.end(), {REX, 0x8d, ModRM, 0, 0, 0, 0});
+          write32le(Stub.data() + At + 3, RVA - (Relay->RVA + Stub.size()));
+        };
+        auto Import = [&](uint32_t Slot) {
+          const size_t At = Stub.size();
+          Stub.insert(Stub.end(), {0xff, 0x15, 0, 0, 0, 0});
+          write32le(Stub.data() + At + 2, Slot - (Relay->RVA + Stub.size()));
+        };
+        Stub.insert(Stub.end(), {0x48, 0x83, 0xec, 0x38}); // sub rsp, 56
+        Address(0x48, 0x0d, Relay->RVA + 160);             // rcx = module name
+        Import(ModuleSlot);
+        Stub.insert(Stub.end(), {0x48, 0x89, 0xc1}); // mov rcx, rax
+        Address(0x48, 0x15, Relay->RVA + 176);       // rdx = export name
+        Import(LookupSlot);
+        Stub.insert(Stub.end(), {0x48, 0xc7, 0xc1, 0xff, 0xff, 0xff, 0xff});
+        Address(0x48, 0x15, Target);                       // rdx = destination
+        Address(0x4c, 0x05, Relay->RVA + 136);             // r8 = source
+        Stub.insert(Stub.end(), {0x41, 0xb9, 5, 0, 0, 0}); // mov r9d, 5
+        Stub.insert(Stub.end(), {0x48, 0xc7, 0x44, 0x24, 0x20, 0, 0, 0, 0});
+        Stub.insert(Stub.end(), {0xff, 0xd0});             // call rax
+        Stub.insert(Stub.end(), {0x48, 0x83, 0xc4, 0x38}); // add rsp, 56
+        Code[136] = 0xe9;
+        write32le(Code + 137, Original.Entry - (Target + 5));
+      } else if (Rewrite) {
+        Stub.insert(Stub.end(), {0x48, 0x83, 0xec, 0x28}); // sub rsp, 40
+        Store(Target, 0xc3, true);                         // ret
+        Branch(0xe8, Target);
+        Stub.insert(Stub.end(), {0x48, 0x83, 0xc4, 0x28}); // add rsp, 40
+      }
+      if (Data) {
+        Code[128] = 0xe9;
+        write32le(Code + 129, Original.Entry - (Target + 5));
+        Store(Target + 5, 0xaa, true);
+      } else if (!Service) {
+        if (Kind == SamePageCode::ChangedOperand)
+          Code[128] = 0xe9;
+        Store(Target, 0xe9, true);
+        Store(Target + 1, Original.Entry - (Target + 5), false);
+      }
+      Branch(0xe9, Target);
+      llvm::copy(Stub, Code);
+    } else {
+      const uint32_t Jump =
+          0x14000000 | ((Original.Entry - Target) >> 2 & 0x03ffffff);
+      if (Service) {
+        uint32_t At = 0, Literal = 256;
+        auto Emit = [&](uint32_t Word) {
+          write32le(Code + At, Word);
+          At += 4;
+        };
+        auto Load = [&](unsigned Register, uint64_t Value) {
+          Emit(0x58000000 | ((Literal - At) >> 2) << 5 | Register);
+          write64le(Code + Literal, Value);
+          Literal += 8;
+        };
+        auto Import = [&](uint32_t Slot) {
+          Load(16, Original.Base + Slot);
+          Emit(0xf9400210); // ldr x16, [x16]
+          Emit(0xd63f0200); // blr x16
+        };
+        Emit(0xd100c3ff); // sub sp, sp, #48
+        Emit(0xa9027bfd); // stp x29, x30, [sp, #32]
+        Load(0, Original.Base + Relay->RVA + 160);
+        Import(ModuleSlot);
+        Load(1, Original.Base + Relay->RVA + 176);
+        Import(LookupSlot);
+        Emit(0xaa0003f0); // mov x16, x0
+        Emit(0x92800000); // mov x0, #-1
+        Load(1, Original.Base + Target);
+        Load(2, Original.Base + Relay->RVA + 136);
+        Emit(0xd2800083); // mov x3, #4
+        Emit(0xaa1f03e4); // mov x4, xzr
+        Emit(0xd63f0200); // blr x16
+        Emit(0xa9427bfd); // ldp x29, x30, [sp, #32]
+        Emit(0x9100c3ff); // add sp, sp, #48
+        Load(16, Original.Base + Target);
+        Emit(0xd61f0200); // br x16
+        write32le(Code + 136, Jump);
+      } else if (Rewrite) {
+        write32le(Code, 0xa9bf7bfd);      // stp x29, x30, [sp, #-16]!
+        write32le(Code + 4, 0x58000170);  // ldr x16, [pc, #44]
+        write32le(Code + 8, 0x18000191);  // ldr w17, [pc, #48]
+        write32le(Code + 12, 0xb9000211); // str w17, [x16]
+        write32le(Code + 16, 0xd63f0200); // blr x16
+        write32le(Code + 20, 0xa8c17bfd); // ldp x29, x30, [sp], #16
+        write32le(Code + 24, 0x18000131); // ldr w17, [pc, #36]
+        write32le(Code + 28, 0xb9000211); // str w17, [x16]
+        write32le(Code + 32, 0xd61f0200); // br x16
+        write64le(Code + 48, Original.Base + Target);
+        write32le(Code + 56, 0xd65f03c0); // ret
+        write32le(Code + 60, Jump);
+      } else {
+        write32le(Code, 0x58000090);     // ldr x16, [pc, #16]
+        write32le(Code + 4, 0x180000b1); // ldr w17, [pc, #20]
+        write32le(Code + 8, Data ? 0xb9000611 : 0xb9000211);
+        write32le(Code + 12, 0xd61f0200); // br x16
+        write64le(Code + 16, Original.Base + Target);
+        write32le(Code + 24, Data ? 0xaabbccdd : Jump);
+        if (Data || Kind == SamePageCode::ChangedOperand)
+          write32le(Code + 128, Data ? Jump : 0x14000000);
+      }
+    }
+    const auto Packed = Scratch / PackedFile;
+    test::writeFile(Packed, Bytes);
+    return Packed;
+  }
+
+  void expectSamePage(SamePageCode Kind) {
+    const auto Packed = packSamePage(Kind);
+    ASSERT_FALSE(HasFailure());
+    const auto Expected = runOriginal(), PackedRun = run(Packed);
+    ASSERT_FALSE(HasFailure());
+    ASSERT_EQ(Expected.Stop, ProcessStopReason::Exited) << Expected.Diagnostic;
+    ASSERT_EQ(Expected.ExitStatus, ExitStatus);
+    ASSERT_EQ(Expected.StandardOutput, Message);
+    ASSERT_EQ(PackedRun.Stop, Expected.Stop) << PackedRun.Diagnostic;
+    ASSERT_EQ(PackedRun.ExitStatus, Expected.ExitStatus);
+    ASSERT_EQ(PackedRun.StandardOutput, Expected.StandardOutput);
+    auto Result = unpackFile(Packed, Options);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    if (Kind == SamePageCode::AdjacentData) {
+      EXPECT_EQ(Result->Outcome, UnpackOutcome::NoEntry) << Result->Diagnostic;
+      EXPECT_TRUE(Result->Transfers.empty());
+      EXPECT_EQ(Result->ProcessStop, test::StopExited);
+      return;
+    }
+    ASSERT_EQ(Result->Outcome, UnpackOutcome::Unpacked) << Result->Diagnostic;
+    const bool Rewrite = Kind == SamePageCode::RewrittenCallback;
+    ASSERT_EQ(Result->Transfers.size(), Rewrite ? 2u : 1u);
+    const uint32_t Target = Original.section(RelaySection)->RVA + 128;
+    EXPECT_EQ(Result->EntryRVA, Target);
+    EXPECT_EQ(Result->Transfers.back().Generation, Rewrite ? 2u : 1u);
+    EXPECT_TRUE(Result->Transfers.back().StackBalanced);
+    EXPECT_TRUE(Result->Transfers.back().ProgramInvocation);
+    if (Rewrite) {
+      EXPECT_EQ(Result->Transfers.front().RVA, Target);
+      EXPECT_EQ(Result->Transfers.front().Generation, 1u);
+      EXPECT_FALSE(Result->Transfers.front().StackBalanced);
+    }
+    const auto Rebuilt = Scratch / RebuiltFile;
+    test::writeFile(Rebuilt, Result->Image);
+    const auto Actual = run(Rebuilt);
+    ASSERT_FALSE(HasFailure());
+    EXPECT_EQ(Actual.Stop, Expected.Stop) << Actual.Diagnostic;
+    EXPECT_EQ(Actual.ExitStatus, Expected.ExitStatus);
+    EXPECT_EQ(Actual.StandardOutput, Expected.StandardOutput);
+  }
+
   Image Original;
   std::filesystem::path Scratch;
   UnpackOptions Options;
@@ -393,6 +606,72 @@ TEST_P(UnpackGenerated, LoaderThatLeavesForTheProgramYieldsTheLinkedImage) {
   EXPECT_EQ(Result.EntryRVA, Original.Entry);
   EXPECT_EQ(Result.Source, EntrySource::Transfer);
   expectOriginalProgram(Result);
+}
+
+TEST_P(UnpackGenerated, LoaderGeneratesItsEntryInThePageItIsExecuting) {
+  expectSamePage(SamePageCode::GeneratedJump);
+}
+
+TEST_P(UnpackGenerated, LoaderRewritesACallbackInItsOwnPageBeforeEnteringIt) {
+  expectSamePage(SamePageCode::RewrittenCallback);
+}
+
+TEST_P(UnpackGenerated, ChangedDataBesideAnUnchangedInstructionIsNotAnEntry) {
+  expectSamePage(SamePageCode::AdjacentData);
+}
+
+TEST_P(UnpackGenerated, ChangedOperandsInTheExecutingPageEstablishANewEntry) {
+  expectSamePage(SamePageCode::ChangedOperand);
+}
+
+TEST_P(UnpackGenerated, StoppedServiceWritesCanGenerateCodeInAnExecutedPage) {
+  expectSamePage(SamePageCode::ServiceWrite);
+}
+
+TEST_P(UnpackGenerated, GeneratedOperandAcrossAPageBoundaryEstablishesAnEntry) {
+  if (GetParam().ISA != GuestArchitecture::X64)
+    GTEST_SKIP() << "aligned ARM64 instructions cannot straddle a 4 KiB page";
+  using namespace llvm::support::endian;
+  const auto *Record = Original.section(PackSection);
+  ASSERT_NE(Record, nullptr);
+  ASSERT_GE(Record->FileSize, 8200u);
+  auto Bytes = Original.File;
+  const uint32_t Entry = Record->RVA + 4096, Target = Record->RVA + 8190;
+  const uint32_t Relative = Original.Entry - (Target + 5);
+  uint8_t *Code = Bytes.data() + Record->FileOffset + 4096;
+  const uint8_t Stub[] = {0xc7, 0x05, 0, 0, 0, 0, 0, 0, 0, 0, 0xe9, 0, 0, 0, 0};
+  llvm::copy(Stub, Code);
+  write32le(Code + 2, Target + 2 - (Entry + 10));
+  write32le(Code + 6, Relative >> 8);
+  write32le(Code + 11, Target - (Entry + sizeof Stub));
+  // The opcode and first operand byte belong to an executed page and never
+  // change. Only bytes in its unvisited successor page are generated.
+  Code[4094] = 0xe9;
+  Code[4095] = Relative;
+  const auto Index = Record - Original.Sections.data();
+  write32le(Bytes.data() + Original.SectionTableOffset + Index * 40 + 36,
+            Record->Characteristics | llvm::COFF::IMAGE_SCN_MEM_EXECUTE);
+  write32le(Bytes.data() + Original.EntryOffset, Entry);
+  const auto Packed = Scratch / PackedFile;
+  test::writeFile(Packed, Bytes);
+  const auto Expected = runOriginal(), PackedRun = run(Packed);
+  ASSERT_FALSE(HasFailure());
+  ASSERT_EQ(PackedRun.Stop, ProcessStopReason::Exited) << PackedRun.Diagnostic;
+  ASSERT_EQ(PackedRun.ExitStatus, Expected.ExitStatus);
+  ASSERT_EQ(PackedRun.StandardOutput, Expected.StandardOutput);
+  auto Result = unpackFile(Packed, Options);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Outcome, UnpackOutcome::Unpacked) << Result->Diagnostic;
+  ASSERT_EQ(Result->Transfers.size(), 1u);
+  EXPECT_EQ(Result->EntryRVA, Target);
+  EXPECT_EQ(Result->Transfers.front().Generation, 1u);
+  const auto Rebuilt = Scratch / RebuiltFile;
+  test::writeFile(Rebuilt, Result->Image);
+  const auto Actual = run(Rebuilt);
+  ASSERT_FALSE(HasFailure());
+  EXPECT_EQ(Actual.Stop, Expected.Stop) << Actual.Diagnostic;
+  EXPECT_EQ(Actual.ExitStatus, Expected.ExitStatus);
+  EXPECT_EQ(Actual.StandardOutput, Expected.StandardOutput);
 }
 
 TEST_P(UnpackGenerated, LoaderCallIntoTheProgramPrecedesItsEntry) {

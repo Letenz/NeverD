@@ -50,7 +50,7 @@ Unicorn adapts its hook-only service helpers to the same original-PC boundary
 and captures the stopped CPU state on interruption. Execution watches are still honored: their
 pages are made non-executable, so the first fetch into a watched range faults at
 the same boundary a checked instruction watch stops on. Observation-driven
-unpacking recovers an entry under this contract without single-stepping.
+unpacking recovers an entry under this contract between explicit watch boundaries.
 Flat profiles have no architectural user/supervisor MMU isolation contract;
 their address width describes the direct mapping interface, not a claim of a
 64-bit hardware virtual-address mode. Checked x64 advertises bounded SIMD and
@@ -64,6 +64,8 @@ The instruction inventory remains authoritative; a feature flag does not
 admit every encoding in a family. Only checked user profiles
 advertise `service_traps`, meaning the interception boundary described below;
 supervisor and flat profiles do not advertise that boundary.
+
+`ExecutionSession::watchMemoryWrites` requests RAM invalidation after committed instruction effects. Checked CPUs match physical byte ranges; x64 direct execution may also report other writes in the same physical page. A notification does not prove changed bytes and does not charge the following instruction. Guest faults and pending services retain priority. Watches follow current mappings and aliases; unsupported CPUs reject nonempty sets. `instructionSize` uses the execution decoder to inspect a stopped instruction without publishing a guest fault.
 
 Checked x64 also admits masked legacy `ADD`, `SUB`, `MUL`, `DIV`, `SQRT`, `MIN` and `MAX` in `SS`, `SD`, `PS` and `PD` forms. `X64SSEInstructions.def` owns operand widths, alignment and admission. `MaskedSSEArithmeticMatchesIndependentHostExecution` compares register and RAM forms against an independent host CPU oracle, including all four rounding modes, FTZ, signed zero, subnormal inputs and NaNs; `SSEMemoryObserverStopsBeforeResultAndStatusChanges` verifies cancellation before effects. x87 and AVX remain excluded.
 

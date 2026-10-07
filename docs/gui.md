@@ -98,6 +98,13 @@ unless their lock is set. Rows mapped to instructions move the disassembly
 cursor. Recognized library operations in C can fold into one-line summaries:
 click a summary to expand it; copy and export always use the complete code.
 
+C++ names read as a classic disassembler shows them: the listing keeps the
+linkage name an instruction uses and adds its demangled form as a comment
+(`call _ZN8QDomNodeC1Ev ; QDomNode::QDomNode()`), a function with a mangled
+name has the demangled one above its header, and the Functions window lists
+every function demangled, PLT entries included, with the filter matching
+either spelling. Itanium, Microsoft, Rust and D names are demangled.
+
 Strings are found by default in ASCII, UTF-8, UTF-16LE and UTF-32LE (the
 `wchar_t` of Linux and macOS), and C strings that are not UTF-8 in the common
 code pages: windows-1252, GBK, Big5, Shift-JIS and EUC-KR, all in one pass.

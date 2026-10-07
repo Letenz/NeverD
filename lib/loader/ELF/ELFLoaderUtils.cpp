@@ -37,18 +37,11 @@ va_t normalizeELFFunctionAddress(va_t Addr, const BinaryImage &Img) {
 }
 
 bool isIRelativeRelocation(uint32_t Type, Arch TargetArch) {
-  switch (TargetArch) {
-  case Arch::X86:
-    return Type == R_386_IRELATIVE;
-  case Arch::X64:
-    return Type == R_X86_64_IRELATIVE;
-  case Arch::ARM:
-    return Type == R_ARM_IRELATIVE;
-  case Arch::AArch64:
-    return Type == R_AARCH64_IRELATIVE;
-  default:
-    return false;
-  }
+#define NEVERD_ELF_IRELATIVE(Target, Kind)                                     \
+  if (TargetArch == Arch::Target && Type == Kind)                              \
+    return true;
+#include "ELFDynamicRelocations.def"
+  return false;
 }
 
 /// Value of an ARM data-processing instruction's modified immediate: an
@@ -204,6 +197,23 @@ void parseRuntimeSections(BinaryImage &Img) {
     if (Out)
       recordRuntimePointerArray(Sec.VA, Sec.Size, *Out, Img);
   }
+}
+
+bool isELFSlotBinding(Arch Target, uint32_t RelocType) {
+#define NEVERD_ELF_SLOT_BINDING(TargetArch, Kind)                              \
+  if (Target == Arch::TargetArch && RelocType == Kind)                         \
+    return true;
+#include "ELFDynamicRelocations.def"
+  return false;
+}
+
+bool recordImportSlotBinding(uint32_t RelocType, va_t Slot,
+                             llvm::StringRef Symbol, bool Undefined,
+                             int64_t Addend, BinaryImage &Img) {
+  if (!Undefined || Symbol.empty() || !isELFSlotBinding(Img.Arch, RelocType))
+    return false;
+  return Img.recordImportStorageSlot(Slot, Symbol, Addend,
+                                     ImportStorageEvidence::LoaderBind);
 }
 
 bool recordIRelativeResolver(uint32_t RelocType, va_t Slot,

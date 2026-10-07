@@ -38,6 +38,7 @@ using StringRefsFunction = const char *(*)(neverd_session_t, const char *,
                                            neverd_va_t, int);
 using StringEncodingsFunction = const char *(*)();
 using SwitchesFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
+using DemangleFunction = const char *(*)(const char *);
 
 // Listing layout, in characters after the prefix: name, mnemonic and comment
 // columns of a conventional interactive disassembler listing.
@@ -490,6 +491,9 @@ struct Listing::Impl {
   StringsExFunction stringsEx = nullptr;
   StringRefsFunction stringRefs = nullptr;
   SwitchesFunction switchesQuery = nullptr;
+  DemangleFunction demangle = nullptr;
+  /// Names as the engine demangles them, where that differs.
+  std::unordered_map<std::string, std::string> demangledNames;
   /// The instructions referring to strings, and the string options and
   /// function count they were listed for.
   StringReferenceTable stringReferenceTable;
@@ -559,6 +563,7 @@ struct Listing::Impl {
     stringsEx = engineSymbol<StringsExFunction>("neverd_strings_ex_json");
     stringRefs = engineSymbol<StringRefsFunction>("neverd_string_refs_json");
     switchesQuery = engineSymbol<SwitchesFunction>("neverd_switches_json");
+    demangle = engineSymbol<DemangleFunction>("neverd_demangle");
     if (const auto encodings = engineSymbol<StringEncodingsFunction>(
             "neverd_string_encodings_json"))
       if (const auto rows = takeJson(encodings()); rows.is_array())
@@ -2055,6 +2060,14 @@ struct Listing::Impl {
         addLine(out, item, item.start, "comment", std::move(line));
       }
       addLine(out, item, item.start, "blank", {});
+      // A mangled name reads demangled above, where a classic listing puts
+      // the prototype.
+      if (const auto &readable = demangledName(function.name);
+          !readable.empty()) {
+        StyledText line = lead(base - NameColumnWidth);
+        line.append("; " + readable, ListingRole::AutoComment);
+        addLine(out, item, item.start, "comment", std::move(line));
+      }
       // The entry point is public like every export.
       if (function.exported || function.entry == imageEntry ||
           runtimeEntries.contains(function.entry)) {
@@ -2132,11 +2145,24 @@ struct Listing::Impl {
       }
       return {};
     };
+    // What an instruction transfers to or refers to first, read demangled
+    // when its name is mangled.
+    const auto demangledOperand = [&]() -> std::string {
+      std::optional<std::uint64_t> to = instruction.target;
+      if (!to && !instruction.refs.empty())
+        to = instruction.refs.front().first;
+      if (!to)
+        return {};
+      return demangledName(nameOf(*to, NameUse::Transfer, {}).text);
+    };
     if (comment.empty()) {
-      if (const auto marked = switchComment(); !marked.empty())
+      if (const auto marked = switchComment(); !marked.empty()) {
         appendComment(text, marked, ListingRole::AutoComment,
                       base - NameColumnWidth);
-      else
+      } else if (const auto readable = demangledOperand(); !readable.empty()) {
+        appendComment(text, readable, ListingRole::AutoComment,
+                      base - NameColumnWidth);
+      } else {
         for (const auto &[to, kind] : instruction.refs)
           if (const auto *string = stringAt(to);
               string && string->address == to) {
@@ -2144,6 +2170,7 @@ struct Listing::Impl {
                           ListingRole::AutoComment, base - NameColumnWidth);
             break;
           }
+      }
     }
     std::optional<std::uint64_t> target = instruction.target;
     if (!target && instruction.refs.size() == 1)
@@ -2634,6 +2661,20 @@ struct Listing::Impl {
     item.size = switches[slot->table].entrySize;
     item.index = static_cast<std::size_t>(slot - switchSlots.data());
     return true;
+  }
+
+  /// \p name as the engine demangles it, or empty when it is not mangled.
+  const std::string &demangledName(const std::string &name) {
+    static const std::string none;
+    if (!demangle || name.empty())
+      return none;
+    auto it = demangledNames.find(name);
+    if (it == demangledNames.end()) {
+      auto text = takeString(demangle(name.c_str()));
+      it = demangledNames.emplace(name, text == name ? std::string() : text)
+               .first;
+    }
+    return it->second;
   }
 
   /// The name of the jump table at \p address: its prefix and dispatch.
@@ -3175,6 +3216,9 @@ const Json &Listing::functionRows() {
                   {"exported", function.exported}};
       if (function.engineName != function.name)
         row["engine_name"] = function.engineName;
+      if (const auto &readable = d.demangledName(function.name);
+          !readable.empty())
+        row["demangled_name"] = readable;
       rows.push_back(std::move(row));
     }
     d.functionRowsCache = std::move(rows);

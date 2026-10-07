@@ -8,7 +8,7 @@
 #include "MachineRunControl.h"
 #include "MemoryStorage.h"
 
-#include "neverd/emulation/ExecutionBackend.h"
+#include "neverd/emulation/CPU.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 
@@ -97,6 +97,10 @@ public:
   /// Publish an already validated physical write under the execution lease.
   /// Do not call for temporary processor writes or transaction rollback.
   void recordRAMWrite(uint64_t Physical, uint64_t Size);
+  bool setWriteWatches(const std::vector<MemoryWriteWatch> &Watches);
+  /// Tests physical bytes, so writes through an unobserved alias still match.
+  bool writeWatched(uint64_t Physical, uint64_t Size);
+  bool takeWatchedWrite() { return std::exchange(WatchedWrite, false); }
   llvm::Error map(uint64_t A, uint64_t N, unsigned P) {
     return Space->map(A, N, P);
   }
@@ -176,6 +180,11 @@ private:
   llvm::sys::MemoryBlock TransportRAM;
   uint64_t TransportBase = 0;
   std::optional<std::pair<uint64_t, uint64_t>> DeviceOperand;
+  std::vector<MemoryWriteWatch> WriteWatches, PhysicalWriteWatches;
+  std::weak_ptr<AddressSpace> WriteWatchSpace;
+  uint64_t WriteWatchGeneration = 0;
+  bool WatchedWrite = false;
+  void refreshWriteWatches();
   void finishInstruction();
 };
 } // namespace neverd::emulation

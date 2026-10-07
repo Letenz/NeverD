@@ -41,6 +41,9 @@ public:
   llvm::Error snapshotBacking(uint64_t,
                               llvm::MutableArrayRef<uint8_t>) override;
   llvm::Error installHooks(BackendHooks) override;
+  llvm::Error
+  setMemoryWriteWatches(const std::vector<MemoryWriteWatch> &Watches) override;
+  llvm::Expected<uint32_t> instructionSize(uint64_t Address) override;
   void setExecutionWatches(const std::vector<ExecutionWatch> &W) override {
     // A new epoch forces the direct page tables to be rebuilt with this set
     // marked non-executable; the checked path reads the set per instruction.
@@ -122,6 +125,7 @@ protected:
 private:
   llvm::Error runImpl(uint64_t PC, uint64_t Timeout, bool &Started,
                       bool &BackendFailed);
+  llvm::Expected<bool> decodeInstruction(uint64_t PC);
   // Storage only: bytes, permissions and decoding are refreshed on every step.
   // The execution lease rejects recursive entry before this storage is touched.
   std::vector<uint8_t> InstructionBytes;
