@@ -27,19 +27,42 @@ inline bool canonicalRange(uint64_t Address, uint64_t Size) {
          canonical(Address + Size - 1) &&
          ((Address <= UserMax) == (Address + Size - 1 <= UserMax));
 }
+inline constexpr unsigned ExecutionStopCount = 4;
+inline uint64_t executionStopControl(unsigned Count) {
+  uint64_t Control = 0x400; // DR7's architecturally fixed bit.
+  for (unsigned I = 0; I < Count; ++I)
+    Control |= uint64_t(1) << (I * 2);
+  return Control;
+}
+inline bool executionStopHit(llvm::ArrayRef<uint64_t> Stops, uint64_t PC,
+                             uint64_t Status) {
+  // A guest trap or debug-register access is not our execution breakpoint.
+  if (Status &
+      ((uint64_t(1) << 13) | (uint64_t(1) << 14) | (uint64_t(1) << 15)))
+    return false;
+  for (unsigned I = 0; I < Stops.size(); ++I)
+    if ((Status & (uint64_t(1) << I)) && Stops[I] == PC)
+      return true;
+  return false;
+}
 } // namespace x64
 class MemoryProjection;
+struct X64PageTableCache;
 /// Build the guest page tables and return the transport-physical root. When
 /// \p NoExecutePages is non-empty, those guest pages are additionally marked
 /// non-executable regardless of their permissions, so a direct run's first
 /// fetch into one faults; \p WatchEpoch distinguishes successive overlays so a
 /// cached projection is not reused across a change to the set. \p WatchWrites
 /// makes every alias of a watched RAM page read-only for direct execution.
+/// \p WriteGuard additionally protects one physical code page while its
+/// decoded control-flow plan is in use; changes require a new watch epoch.
 llvm::Expected<uint64_t>
 buildX64PageTables(MemoryProjection &Memory, bool UserMode = false,
                    bool ExceptionMonitor = false,
                    llvm::ArrayRef<ExecutionWatch> NoExecutePages = {},
-                   uint64_t WatchEpoch = 0, bool WatchWrites = false);
+                   uint64_t WatchEpoch = 0, bool WatchWrites = false,
+                   std::optional<uint64_t> WriteGuard = std::nullopt,
+                   X64PageTableCache *Cache = nullptr);
 struct X64MachineState {
   bool UserMode = false;
   std::array<uint64_t, unsigned(X64Register::SS) + 1> Registers{};
@@ -85,6 +108,13 @@ public:
   /// Transports without this entry return an unsupported-contract error.
   virtual llvm::Error run(X64MachineState &State, uint64_t PageTableRoot,
                           MachineRunControl Control);
+  /// Run with private execution stops, returning success before a matching
+  /// instruction. Real exceptions and interruption retain their ordinary
+  /// outcomes. No instruction bytes or architectural trap flags are patched.
+  virtual bool supportsExecutionStops() const { return false; }
+  virtual llvm::Error runTo(X64MachineState &State, uint64_t PageTableRoot,
+                            MachineRunControl Control,
+                            llvm::ArrayRef<uint64_t> Stops);
 };
 } // namespace neverd::emulation
 #endif

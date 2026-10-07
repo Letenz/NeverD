@@ -127,25 +127,27 @@ llvm::Expected<std::vector<Watch>> normalizeWatches(std::vector<Watch> New) {
   for (const auto &W : New)
     if (!W.Size || W.Size - 1 > UINT64_MAX - W.Address)
       return diagnostic::error(runtime::SessionWatch);
-  llvm::sort(New, [](const Watch &A, const Watch &B) {
+  const auto Before = [](const Watch &A, const Watch &B) {
     return A.Address < B.Address;
-  });
-  std::vector<Watch> Merged;
-  for (const auto &W : New) {
+  };
+  if (!llvm::is_sorted(New, Before))
+    llvm::sort(New, Before);
+  size_t Count = 0;
+  for (const Watch W : New) {
     // The last byte is representable even when the exclusive end is not.
-    if (!Merged.empty() &&
-        W.Address - Merged.back().Address <= Merged.back().Size) {
-      const uint64_t Last =
-          std::max(Merged.back().Address + (Merged.back().Size - 1),
-                   W.Address + (W.Size - 1));
-      Merged.back().Size = Last - Merged.back().Address + 1;
+    if (Count && W.Address - New[Count - 1].Address <= New[Count - 1].Size) {
+      auto &LastRange = New[Count - 1];
+      const uint64_t Last = std::max(LastRange.Address + (LastRange.Size - 1),
+                                     W.Address + (W.Size - 1));
+      LastRange.Size = Last - LastRange.Address + 1;
       // A range covering the whole address space cannot state its size.
-      if (!Merged.back().Size)
+      if (!LastRange.Size)
         return diagnostic::error(runtime::SessionWatch);
     } else
-      Merged.push_back(W);
+      New[Count++] = W;
   }
-  return Merged;
+  New.resize(Count);
+  return New;
 }
 } // namespace
 

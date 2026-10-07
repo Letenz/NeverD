@@ -7,11 +7,15 @@
 #define NEVERD_EMULATION_ARCH_CHECKEDX64BACKEND_H
 #include "../../core/CheckedBackend.h"
 #include "X64Machine.h"
+#include "X64PageTables.h"
 
 #include "neverd/emulation/ExecutionBackend.h"
 
+#include "llvm/ADT/BitVector.h"
+
 #include <atomic>
 #include <capstone/capstone.h>
+#include <map>
 #include <vector>
 
 namespace neverd::emulation {
@@ -26,6 +30,7 @@ public:
     return GuestArchitecture::X64;
   }
   bool supportsSIMDExceptions() const override { return SIMDExceptions; }
+  void setExecutionWatches(const std::vector<ExecutionWatch> &) override;
   std::optional<X64BranchModel> x64BranchModel() const override {
     return Machine->branchModel();
   }
@@ -53,6 +58,7 @@ private:
     // A public entry resumes from the published architectural state. A REP
     // fault restores the flags at the start of this uninterrupted execution.
     StringRestart.reset();
+    leaveWatchedRegion();
   }
   struct SavedState : BackendContext::Storage {
     X64MachineState CPU;
@@ -61,9 +67,31 @@ private:
   llvm::Error executeDirect() override;
   /// Retire one instruction through a temporary watch overlay, then rearm it.
   llvm::Error stepWatchedInstruction(bool WatchWrites = true);
-  llvm::Error publishDirectException(const X64Exception &Raised,
-                                     bool AllowSplit, bool &Resume,
-                                     bool WritesProtected = true);
+  llvm::Error stepDirectInstruction(uint64_t Root);
+  /// Run decoded control-flow regions between private execution stops. A
+  /// temporary write guard invalidates the plan before code can change.
+  llvm::Error runWatchedRegion(std::optional<uint64_t> &OpenPage);
+  llvm::Expected<std::vector<uint64_t>> regionStops(uint64_t PC);
+  void leaveWatchedRegion();
+  llvm::Error
+  publishDirectException(const X64Exception &Raised, bool AllowSplit,
+                         bool &Resume, bool WritesProtected = true,
+                         std::optional<uint64_t> OpenPage = std::nullopt);
+  std::optional<uint64_t> RegionPage, RegionPhysical;
+  X64PageTableCache WatchTables;
+  std::vector<ExecutionWatch> FetchWatchPages;
+  using RegionStopMap =
+      std::map<uint64_t, std::shared_ptr<const std::vector<uint64_t>>>;
+  RegionStopMap RegionStops;
+  struct SavedRegion {
+    std::array<uint8_t, x64::PageSize> Bytes;
+    llvm::BitVector Decoded;
+    RegionStopMap Stops;
+  };
+  std::array<uint8_t, x64::PageSize> RegionBytes;
+  llvm::BitVector RegionDecoded{unsigned(x64::PageSize)};
+  bool RegionDirty = false;
+  std::map<uint64_t, SavedRegion> SavedRegions;
   std::optional<ServiceRequest>
   decodeServiceRequest(const cs_insn &) const override;
   llvm::Expected<uint64_t> operandRegister(unsigned Register) const;

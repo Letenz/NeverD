@@ -101,12 +101,22 @@ public:
                   MachineRunControl Control) override {
     return enter(State, Root, Control, false);
   }
+  bool supportsExecutionStops() const override { return true; }
+  llvm::Error runTo(X64MachineState &State, uint64_t Root,
+                    MachineRunControl Control,
+                    llvm::ArrayRef<uint64_t> Stops) override {
+    return enter(State, Root, Control, false, Stops);
+  }
 
 private:
   /// One hardware entry. A single step ends at the next instruction boundary;
   /// a free entry ends only at a synchronous exception or an interruption.
   llvm::Error enter(X64MachineState &State, uint64_t Root,
-                    MachineRunControl Control, bool Single) {
+                    MachineRunControl Control, bool Single,
+                    llvm::ArrayRef<uint64_t> Stops = {}) {
+    if (Stops.size() > x64::ExecutionStopCount ||
+        llvm::any_of(Stops, [](uint64_t PC) { return !x64::canonical(PC); }))
+      return diagnostic::error(diagnostic::DirectExecutionUnsupported);
     // Only a completely captured debug exit proves the next entry runnable.
     // Failed, cancelled and exception entries must reestablish it explicitly.
     const bool WasRunnable = Runnable;
@@ -189,6 +199,12 @@ private:
       if (Single)
         Debug.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP |
                         KVM_GUESTDBG_BLOCKIRQ;
+      else if (!Stops.empty()) {
+        Debug.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_USE_HW_BP;
+        for (unsigned I = 0; I < Stops.size(); ++I)
+          Debug.arch.debugreg[I] = Stops[I];
+        Debug.arch.debugreg[7] = x64::executionStopControl(Stops.size());
+      }
       if (ioctl(CPU, KVM_SET_GUEST_DEBUG, &Debug) < 0)
         return diagnostic::unavailable(diagnostic::KvmCapabilities,
                                        BackendAvailability::MissingCapability);
@@ -202,10 +218,13 @@ private:
                            Run->debug.arch.exception == x64::DebugVector &&
                            (Run->debug.arch.dr6 & x64::DebugSingleStep);
       const bool Exception = Run->exit_reason == KVM_EXIT_HLT;
+      const bool Debugged = !Single && !Stops.empty() &&
+                            Run->exit_reason == KVM_EXIT_DEBUG &&
+                            Run->debug.arch.exception == x64::DebugVector;
       // Synchronous exceptions enter a private IDT/IST and complete one HLT.
       // There is no unfinished KVM IO/MMIO operation to carry into a new entry.
       // Authenticate that gateway before publishing any architectural state.
-      if (!Stepped && !Exception) {
+      if (!Stepped && !Exception && !Debugged) {
         (void)ioctl(CPU, KVM_GET_REGS, &R);
         (void)ioctl(CPU, KVM_GET_SREGS, &S);
         return llvm::createStringError(
@@ -251,6 +270,14 @@ private:
           return Trap.takeError();
         State = Next;
         return llvm::make_error<X64ExceptionError>(*Trap);
+      }
+      if (!Single && Run->exit_reason == KVM_EXIT_DEBUG) {
+        if (!x64::executionStopHit(Stops, R.rip, Run->debug.arch.dr6)) {
+          State = Next;
+          return llvm::make_error<X64ExceptionError>(
+              X64Exception{x64::DebugVector, std::nullopt, std::nullopt});
+        }
+        Next.reg(X64Register::FLAGS) &= ~x64::ResumeFlag;
       }
       return llvm::Error::success();
     };

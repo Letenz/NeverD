@@ -126,11 +126,17 @@ public:
     return Space->State->Pages;
   }
   uint64_t mappingGeneration() const { return Space->mappingGeneration(); }
+  llvm::ArrayRef<MemoryWriteWatch> physicalWriteWatches() {
+    refreshWriteWatches();
+    return PhysicalWriteWatches;
+  }
   bool needsProjection(GuestArchitecture Architecture, bool UserMode = false,
-                       uint64_t Variant = 0) const {
+                       uint64_t Variant = 0,
+                       uint64_t VariantMask = UINT64_MAX) const {
     return ProjectedSpace.lock() != Space ||
            Generation != mappingGeneration() || ProjectedUserMode != UserMode ||
-           ProjectedVariant != Variant || ProjectedArchitecture != Architecture;
+           ((ProjectedVariant ^ Variant) & VariantMask) ||
+           ProjectedArchitecture != Architecture;
   }
   const std::map<uint64_t, std::shared_ptr<Device>> &devices() const {
     return Space->State->Devices;
