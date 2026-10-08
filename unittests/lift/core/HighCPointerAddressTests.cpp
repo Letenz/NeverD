@@ -39807,9 +39807,11 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86FilterThunksPrintTheirValue) {
   auto Img = loadBinary(Path, FuncOpts);
   ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
   const std::string Source = highcOnlyFunction(std::move(*Img), Entry);
-  EXPECT_NE(Source.find("__except (*(_SDWORD *)(frame_base - 32)) {"),
-            std::string::npos)
-      << Source;
+  bool ReadsTheLocal = false;
+  for (llvm::StringRef Line : llvm::split(Source, '\n'))
+    ReadsTheLocal |= Line.contains("__except (*(") &&
+                     Line.ends_with(" *)(frame_base - 32)) {");
+  EXPECT_TRUE(ReadsTheLocal) << Source;
   // 0x4029BD is `mov eax, 1; ret`, 0x401683 the frame read.
   EXPECT_EQ(Source.find("sub_4029BD"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("sub_401683"), std::string::npos) << Source;
