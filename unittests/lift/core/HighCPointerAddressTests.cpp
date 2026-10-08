@@ -43523,6 +43523,42 @@ int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
 )");
 }
 
+TEST(HighCPointerAddresses, AStackArgumentIsNotARegisterArgumentOfTheSameId) {
+  // Nine ARM32 arguments: r0-r3 and five stack slots.  The ninth, at
+  // [sp, #16], has parameter id 8, the id r0's parameter carries too;
+  // reading it must not read arg0 again.
+  constexpr va_t Entry = 0x10000;
+  const std::vector<uint8_t> Code = {
+      0x01, 0x00, 0x80, 0xe0, // add r0, r0, r1
+      0x02, 0x00, 0x80, 0xe0, // add r0, r0, r2
+      0x03, 0x00, 0x80, 0xe0, // add r0, r0, r3
+      0x00, 0x10, 0x9d, 0xe5, // ldr r1, [sp]
+      0x01, 0x00, 0x80, 0xe0, // add r0, r0, r1
+      0x04, 0x10, 0x9d, 0xe5, // ldr r1, [sp, #4]
+      0x01, 0x00, 0x80, 0xe0, // add r0, r0, r1
+      0x08, 0x10, 0x9d, 0xe5, // ldr r1, [sp, #8]
+      0x01, 0x00, 0x80, 0xe0, // add r0, r0, r1
+      0x0c, 0x10, 0x9d, 0xe5, // ldr r1, [sp, #12]
+      0x01, 0x00, 0x80, 0xe0, // add r0, r0, r1
+      0x10, 0x10, 0x9d, 0xe5, // ldr r1, [sp, #16]
+      0x01, 0x02, 0x80, 0xe0, // add r0, r0, r1, lsl #4
+      0x1e, 0xff, 0x2f, 0xe1, // bx lr
+  };
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Img.Arch = Arch::ARM;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  Symbol Sym = Symbol::makeFunc(Entry);
+  Sym.Name = "nine_args";
+  Img.Symbols.push_back(Sym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_NE(HighC.find("arg8"), std::string::npos) << HighC;
+  compileAndRunCallOrdering("#include <stdint.h>\n" + HighC + R"(
+int main(void) { return nine_args(1, 2, 3, 4, 5, 6, 7, 8, 100) != 1636; }
+)");
+}
+
 TEST(HighCPointerAddresses, LinkRegisterHoldsAValueOnceSaved) {
   // After the prologue saves LR, the compiler may use it as any other
   // register, here as a loop's accumulator; the epilogue then returns
