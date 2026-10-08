@@ -539,7 +539,7 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       auto Operand = [&](const ExprPtr &Value) {
         const uint16_t Width = Value->Type->Size;
         // A zero-extension printed as `(T)(uintN_t)x` only needs the carrier
-        // in place of T.
+        // in place of T, and a 0 or 1 not even the byte view.
         if (Value->Kind == ExprKind::UnaryOp && Value->Op == NdOp::INT_ZEXT &&
             Width == CarrierSize && !typedCallResult(Value.get()) &&
             !Value->Operands.empty() && Value->Operands[0] &&
@@ -547,10 +547,12 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
             Value->Operands[0]->Type &&
             Value->Operands[0]->Type->Size < CarrierSize)
           return "(" + Carrier + ")" +
-                 integerView(
-                     *Value->Operands[0],
-                     NdType::makeInt(Value->Operands[0]->Type->Size, false),
-                     99);
+                 (printsTruthValue(*Value->Operands[0])
+                      ? exprStr(*Value->Operands[0], 99)
+                      : integerView(*Value->Operands[0],
+                                    NdType::makeInt(
+                                        Value->Operands[0]->Type->Size, false),
+                                    99));
         if (Width == CarrierSize)
           return integerView(*Value, NdType::makeInt(Width, false),
                              OperandPrec);

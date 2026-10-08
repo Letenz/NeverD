@@ -54,10 +54,6 @@ uint64_t checkedStackAlign(uint64_t Size) {
   return checkedStackAdd(Size, Mask) & ~Mask;
 }
 
-uint16_t pointerBytes(Arch A) {
-  return (A == Arch::X86 || A == Arch::ARM) ? 4 : 8;
-}
-
 llvm::StringRef debugCallConvAttribute(DebugCallConv CC) {
   switch (CC) {
   case DebugCallConv::Cdecl:
@@ -229,6 +225,10 @@ std::string x86CIntrinsicTargetFeatures(const HighFunc &Func) {
 }
 
 } // anonymous namespace
+
+uint16_t pointerBytes(Arch A) {
+  return (A == Arch::X86 || A == Arch::ARM) ? 4 : 8;
+}
 
 TypeRef HighCWriter::declaredFunctionReturnType(const HighFunc &Func) const {
   // A bound source ABI is authoritative even when optional debug information
@@ -655,6 +655,27 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     UsedVars.try_emplace(Name, NdType::makeInt(4, false));
     VisibleAssigned.insert(Name);
   }
+  // A landing pad receives the exception object and its selector from the
+  // unwinder, which no C statement models: the names are declared wherever
+  // the pad's code reads them.
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &Root) {
+      std::vector<const HighExpr *> Work{Root.get()};
+      while (!Work.empty()) {
+        const HighExpr *E = Work.back();
+        Work.pop_back();
+        if (!E)
+          continue;
+        if ((E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) &&
+            (E->Var.Kind == MedVar::EHException ||
+             E->Var.Kind == MedVar::EHSelector))
+          VisibleAssigned.insert(varName(E->Var));
+        for (const ExprPtr &Operand : E->Operands)
+          Work.push_back(Operand.get());
+        Work.push_back(E->IndirectTarget.get());
+      }
+    });
+  });
 
   // Every variable the IR mentions, under its own and its forwarded name, is
   // a candidate for a late declaration if the rendered body names it.

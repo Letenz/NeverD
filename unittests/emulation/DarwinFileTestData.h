@@ -83,5 +83,30 @@ inline constexpr char MetadataJSON[] = R"({
   "modification_time":{"seconds":"9223372036854775807","nanoseconds":999999999},
   "change_time":{"seconds":-3,"nanoseconds":4},
   "birth_time":{"seconds":-5,"nanoseconds":6}})";
+inline DarwinFileOptions symbolicLinkOptions() {
+  DarwinFileOptions O;
+  O.Files["/data"] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+  O.Metadata["/data"] = metadata();
+  O.Directories.insert("/empty");
+  O.WorkingDirectory = "/";
+  O.SymbolicLinks = {{"/link", {'d', 'a', 't', 'a'}},
+                     {"/chain", {'l', 'i', 'n', 'k'}},
+                     {"/dangling", {'m', 'i', 's', 's', 'i', 'n', 'g'}},
+                     {"/cycle", {'c', 'y', 'c', 'l', 'e'}},
+                     {"/dirlink", {'e', 'm', 'p', 't', 'y'}}};
+  auto &M = O.Metadata["/link"];
+  M = metadata(4);
+  M.Mode = 0120777;
+  M.Inode = 123;
+  return O;
+}
+// Public consumers construct this same explicit catalogue; snapshots are
+// omitted because the five new names require their own complete observation.
+inline constexpr char SymbolicLinksJSON[] = R"([
+  {"path":"/link","target_hex":"64617461"},
+  {"path":"/chain","target_hex":"6c696e6b"},
+  {"path":"/dangling","target_hex":"6d697373696e67"},
+  {"path":"/cycle","target_hex":"6379636c65"},
+  {"path":"/dirlink","target_hex":"656d707479"}])";
 } // namespace neverd::emulation::darwin_test
 #endif

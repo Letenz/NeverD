@@ -113,6 +113,74 @@ TEST(ProcessReport, DarwinFileInputsAreLosslessAndRequireDarwinProfiles) {
   ASSERT_TRUE(EOFInput->DarwinFiles->StandardInput);
   EXPECT_TRUE(EOFInput->DarwinFiles->StandardInput->empty());
 }
+TEST(ProcessReport,
+     DarwinSymbolicLinkTargetsAreLosslessAndRequireDarwinProfiles) {
+  auto Good =
+      processOptionsFromJSON(R"({"darwin_files":{"files":[],"symbolic_links":[
+    {"path":"/link","target_hex":"2E2F2FFF2F"}]}})");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  ASSERT_TRUE(Good->DarwinFiles);
+  EXPECT_EQ(Good->DarwinFiles->SymbolicLinks.at("/link"),
+            (std::vector<uint8_t>{'.', '/', '/', 0xff, '/'}));
+  for (auto Profile : {ProcessProfile::LinuxELF64, ProcessProfile::WindowsPE64,
+                       ProcessProfile::AndroidNativeAArch64}) {
+    auto R = emulateProcess("missing-symbolic-link-fixture", Profile, *Good);
+    ASSERT_FALSE(bool(R));
+    EXPECT_EQ(llvm::toString(R.takeError()), field::DarwinFilesProfile);
+  }
+  Good->DarwinFiles->SymbolicLinks["/link"].push_back(0);
+  for (auto Profile : {ProcessProfile::MacOSMachO64, ProcessProfile::IOSMachO64,
+                       ProcessProfile::IOSSimulatorMachO64}) {
+    auto R = emulateProcess("missing-symbolic-link-fixture", Profile, *Good);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("symbolic link targets"),
+              std::string::npos);
+  }
+  auto Empty = processOptionsFromJSON(
+      R"({"darwin_files":{"files":[],"symbolic_links":[]}})");
+  ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
+  EXPECT_TRUE(Empty->DarwinFiles->SymbolicLinks.empty());
+}
+
+TEST(ProcessReport,
+     DarwinSymbolicLinksRejectMalformedTargetsAndNamespaceInput) {
+  for (
+      auto Bad :
+      {R"({"symbolic_links":null})", R"({"symbolic_links":{}})",
+       R"({"symbolic_links":[{}]})",
+       R"({"symbolic_links":[{"path":"/link","target_hex":null}]})",
+       R"({"symbolic_links":[{"path":"/link","target_hex":""}]})",
+       R"({"symbolic_links":[{"path":"/link","target_hex":"61F"}]})",
+       R"({"symbolic_links":[{"path":"/link","target_hex":"zz"}]})",
+       R"({"symbolic_links":[{"path":"/link","target_hex":"610062"}]})",
+       R"({"symbolic_links":[{"path":"/link","target_hex":"61","writable":true}]})",
+       R"({"symbolic_links":[{"path":"/link","target_hex":"61"},{"path":"/link","target_hex":"62"}]})",
+       R"({"symbolic_links":[{"path":"/link","target_hex":"61"}],"files":[{"path":"/link","bytes_hex":""}]})",
+       R"({"symbolic_links":[{"path":"/link","target_hex":"61"}],"directories":[{"path":"/link/child"}]})",
+       R"({"symbolic_links":[{"path":"/link","target_hex":"61"}],"working_directory":"/link"})",
+       R"({"symbolic_links":[{"path":"/link","target_hex":"61"}],"directories":[{"path":"/","mutable":true}]})"}) {
+    SCOPED_TRACE(Bad);
+    auto Files = llvm::cantFail(llvm::json::parse(Bad));
+    if (!Files.getAsObject()->get(field::Files))
+      (*Files.getAsObject())[field::Files] = llvm::json::Array{};
+    auto R = processOptionsFromJSON(R"({"darwin_files":)" +
+                                    llvm::formatv("{0}", Files).str() + '}');
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+  for (unsigned Size : {1023u, 1024u}) {
+    auto R = processOptionsFromJSON(
+        R"({"darwin_files":{"files":[],"symbolic_links":[{"path":"/link","target_hex":")" +
+        std::string(Size * 2, 'f') + R"("}]}})");
+    if (Size == 1023)
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    else {
+      EXPECT_FALSE(bool(R));
+      llvm::consumeError(R.takeError());
+    }
+  }
+}
+
 TEST(ProcessReport, DarwinWritableFilesRequireExplicitBooleanAdmission) {
   auto Good = processOptionsFromJSON(R"({"darwin_files":{"files":[
     {"path":"/a","bytes_hex":"00ff","writable":true},

@@ -73,6 +73,14 @@ private:
 /// Address of frame byte storage at \p Displacement from the entry SP.
 std::string frameStorageAddress(int64_t Displacement);
 
+/// The bytes of a pointer, and of an integer argument register, on \p A.
+uint16_t pointerBytes(Arch A);
+
+/// \p E prints as a C expression whose value is 0 or 1: a comparison, a
+/// logical operation, or a carry or overflow test.  Its zero or sign
+/// extension is that value at any width, with no view of its own byte.
+bool printsTruthValue(const HighExpr &E);
+
 class HighCWriter {
 public:
   static llvm::StringRef

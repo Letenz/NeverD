@@ -136,15 +136,15 @@ configuration stops `open`; an explicit empty catalogue still contains root, whi
 The file services include `open`, `read`, `pread`, `write`, `pwrite`, `truncate`,
 `ftruncate`, `lseek`, `close`, `dup`, `dup2`, `fcntl`, `rename`, `renameat` and `renameatx_np`. The `read`, `write`,
 `open`, `close`, `fcntl`, `pread` and `pwrite` nocancel entries use the same owners.
-`open` supports O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_TRUNC, O_CREAT, O_EXCL, O_CLOEXEC and O_DIRECTORY.
+`open` supports O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_TRUNC, O_CREAT, O_EXCL, O_CLOEXEC, O_DIRECTORY, O_NOFOLLOW and O_NOFOLLOW_ANY.
 `fcntl` supports F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD, F_SETFD, F_GETFL, bounded F_SETFL and F_GETPATH.
 Separate opens have independent cursors; duplicated descriptors share a cursor
 but have independent close-on-exec flags. `pread` never changes the cursor.
 Closing/replacing descriptors 0, 1 or 2 affects subsequent I/O, and a duplicated
 output descriptor keeps its capture sink and the shared output budget.
 
-Configuration allows at most 256 specified file/directory paths (including
-metadata/contents-only ancestor paths), 16 MiB of combined paths/NUL/file/input/CWD
+Configuration allows at most 256 specified file/directory/link paths (including
+metadata/contents-only ancestor paths), 16 MiB of combined paths/NUL/file/input/CWD/link-target
 and encoded directory-record bytes, paths shorter than 1024 bytes and components of at most 255 bytes.
 `descriptor_limit` is an exclusive ceiling from 3 to 4096, default 256.
 JSON retains the existing 64 KiB request limit. Invalid configuration is rejected
@@ -305,7 +305,7 @@ A successful unlink invalidates only its parent's stat and enumeration observati
 
 `O_CREAT=0x200` creates an empty regular file only in an explicitly mutable immediate parent. Ordinary/nocancel open and openat share this behavior. The namespace grant makes new objects writable; existing objects retain their separate `WritableFiles` authority. A read-only descriptor can create but cannot write. Without an explicit creation policy, new stat64 and sparse-seek observations remain unknown, including when an old configured name is reused. New objects never inherit that old name's metadata or mutation policy.
 
-`O_EXCL=0x800` with O_CREAT returns EEXIST for an existing file or directory before truncation or writable/mapping checks; alone it has no effect. Existing read-only directory opens with O_CREAT succeed. Invalid access mode precedes descriptor availability, then O_CREAT|O_DIRECTORY returns EINVAL before pathname access. Only a missing final original component can be created: missing ancestors, trailing `/`, `//`, `/.` and `/..` remain ENOENT. Relative CWD/dirfd and absolute-path rules share the existing resolver. New O_CREAT|O_TRUNC does not set FWASWRITTEN; truncating an existing object does.
+`O_EXCL=0x800` with O_CREAT returns EEXIST for an existing file or directory before truncation or writable/mapping checks; alone it has no effect. Existing read-only directory opens with O_CREAT succeed. After the openat prefix check described below, invalid access mode precedes descriptor availability, then O_CREAT|O_DIRECTORY returns EINVAL before pathname access. Only a missing final original component can be created: missing ancestors, trailing `/`, `//`, `/.` and `/..` remain ENOENT. Relative CWD/dirfd and absolute-path rules share the existing resolver. New O_CREAT|O_TRUNC does not set FWASWRITTEN; truncating an existing object does.
 
 Only successful insertion invalidates the immediate parent's stat/enumeration observations. New and old unlinked objects at the same name retain independent bytes, descriptors, metadata and mapping leases. The 256-entry cap includes fixed initial non-file entries plus live and retained orphan file objects. Each new object charges its canonical path and NUL alongside current bytes within 16 MiB. Unlink reclaims these dynamic charges only after the last description and mapping lease; closing a still-named object releases neither its entry nor bytes. Initial input/reference charges remain reserved. Exhausted model budgets, including a resolved canonical path of 1024 bytes or more, stop explicitly without inventing ENOSPC or a native pathname error. Rejected creation publishes no name or descriptor.
 
@@ -497,7 +497,7 @@ FD queries follow descriptor duplication and closure. The regular-file rdev,
 padding and reserved fields are zero. Inputs supply the initial metadata; the
 optional mutation policy governs changes. Reads do not change timestamps, and
 mode bits do not change catalogue access.
-Missing metadata, stream status, symbolic links, legacy stat layouts and
+Missing metadata, stream status, legacy stat layouts and
 extended-security variants remain unsupported. Missing paths and
 bad descriptors precede output-pointer checks; partial output stops before any
 bytes are written. Status queries neither allocate FDs nor change cursors.
@@ -904,7 +904,7 @@ Release Darwin reconciled 937 registrations: 553 passed, 384 unavailable-backend
 
 Mode uses the low 32 bits. Native authorization actions come from R/W/X (bits 0–2) or extended rights (bits 9–21). When `(mode & 0x003ffe07) == 0`, the request is an existence query; other bits, including the sign bit, are ignored rather than rejected as EINVAL. Requested permissions remain UnsupportedService after successful lookup, even if metadata or mutation grants appear permissive. Known pathname/descriptor errors occur first. No permission result is guessed.
 
-Faccessat accepts low-bit flags AT_EACCESS (0x10), AT_SYMLINK_NOFOLLOW (0x20) and AT_SYMLINK_NOFOLLOW_ANY (0x800), in any combination. Other flags return EINVAL before pathname or FD access, including when the catalogue is absent. The admitted catalogue has no symlinks and real/effective identities are fixed. Absolute paths ignore dirfd; relative lookup retains configured CWD/directory-FD requirements. Paths copy through their first NUL before relative FD checks; a missing string byte is EFAULT. Empty relative paths still check the FD: EBADF for unknown, ENOTDIR for regular files, otherwise ENOENT. Missing catalogue and unknown stream-directory identity remain explicitly unsupported.
+Faccessat accepts low-bit flags AT_EACCESS (0x10), AT_SYMLINK_NOFOLLOW (0x20) and AT_SYMLINK_NOFOLLOW_ANY (0x800), in any combination. Other flags return EINVAL before pathname or FD access, including when the catalogue is absent. Real/effective identities are fixed; fixed link lookup uses the policies described below. Absolute paths ignore dirfd; relative lookup retains configured CWD/directory-FD requirements. Non-AT_FDCWD nameiat routes import one byte and check a relative directory FD before full string import; a slash skips that FD check. An inaccessible first byte is EFAULT14; a later fault follows EBADF9/ENOTDIR20 for relative bad/file FDs. Empty relative paths still check the FD: EBADF for unknown, ENOTDIR for regular files, otherwise ENOENT. Missing catalogue and unknown stream-directory identity remain explicitly unsupported.
 
 The independent `file-access` workload compares both raw calls, ignored mode bits, flag combinations and lookup order on native macOS and five guest combinations through C++, C/CLI/Python. Native NOFOLLOW_ANY checks use a relative directory FD so host `/tmp` or `/var` symlinks do not alter the reference. Direct tests cover live namespace changes, mixed permission bits, descriptor exhaustion, metadata independence and failed guest-memory access.
 
@@ -979,7 +979,7 @@ An initial directory and all descendants created from it by this process share o
 
 Both immediate parents require namespace authority. Created directories inherit that authority and known device/group observations; rename preserves the file's own identity, owner/group, write grant and allocation. Known device conflicts still refuse. An actual move invalidates both parents' full metadata and enumeration. Removed initial directories and reused paths remain different objects; held old directory FDs/CWD do not acquire the replacement's domain.
 
-The existing bounded replacement transaction, mapping retention, path/NUL charges and error precedence apply. EXCL against a distinct existing target still returns EEXIST before domain/grant checks. The original `renamed-file` workload now creates a child and moves into it, replaces a file back in the initial parent, then moves into the child again through C++/C/CLI/Python and native macOS. Permission enforcement, initial-directory moves, hard/symbolic links and native APFS metadata remain separate work.
+The existing bounded replacement transaction, mapping retention, path/NUL charges and error precedence apply. EXCL against a distinct existing target still returns EEXIST before domain/grant checks. The original `renamed-file` workload now creates a child and moves into it, replaces a file back in the initial parent, then moves into the child again through C++/C/CLI/Python and native macOS. Permission enforcement, initial-directory moves, hard links, dynamic symbolic links and native APFS metadata remain separate work.
 
 ### Cross-parent verification, 2026-10-06
 
@@ -1471,3 +1471,32 @@ Raw `getpriority(100)` uses low32 for the int selector and unsigned `id_t` targe
 ```
 
 [XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).
+
+
+## No-follow open flags and directory preflight
+
+Ordinary and nocancel `open` / `openat` accept unsigned low32 O_NOFOLLOW=0x100 or O_NOFOLLOW_ANY=0x20000000 in the closed file catalogue. These lookup flags never appear in F_GETFL and do not change access, append, truncation, creation or descriptor-local CLOEXEC behavior. Combining both returns EINVAL22 after FD capacity admission, before importing the full pathname; a full descriptor table returns EMFILE24 first. Unknown flags remain unsupported.
+
+For non-AT_FDCWD `openat`, importing exactly the first pathname byte precedes access-mask and FD-capacity checks. An inaccessible first byte returns EFAULT14. A relative prefix, including NUL, first checks the held directory object: unknown FD gives EBADF9, regular file gives ENOTDIR20, and an unknown stream vnode kind remains unsupported. A slash skips dirfd validation. Only afterward does the existing open sequence import the full pathname. Ordinary `open` and AT_FDCWD skip this prefix phase. Other nameiat routes use the same first-byte/relative-FD preflight before full import; AT_FDONLY bypasses it. Rejected opens reserve no FD or new inode; transport errors propagate without namespace mutation.
+
+The original `file-access` workload uses relative directory FDs for NOFOLLOW_ANY to avoid native `/var` or `/tmp` aliases. Direct tests distinguish first/later byte faults, slash/NUL, user/page boundaries, exhausted descriptors and retained removed directories. The separate ARM64 macOS raw probe passed 30 cases with its unchanged five-second deadline; its final exhausted absolute-path row uses a valid directory FD despite its historical label. Physical iOS and Intel native acceptance remain separate.
+
+[XNU open1at / open1](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU vn_open_auth](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_vnops.c), [XNU open flags / FMASK](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/sys/fcntl.h).
+
+## Fixed initial symbolic links
+
+`DarwinFileOptions::SymbolicLinks` and JSON `darwin_files.symbolic_links` declare fixed links. Each entry requires canonical absolute `path` and raw hexadecimal `target_hex`; optional `metadata` observes the link itself. Targets contain 1..1023 non-NUL bytes, preserve non-UTF8 bytes, repeated slashes and dots, and need not exist. `files` remains required, including an empty array. Link names cannot collide with files/directories or be another declared name’s ancestor. Targets and path/NUL charges share the existing 256-entry/16 MiB limits. Link metadata requires S_IFLNK and size equal to the raw target length; complete directory snapshots include DT_LNK=10 and coherent link inodes. Configured CWD must name an actual directory.
+
+The file owner expands links before reducing dots. Relative targets start at the actual containing directory; absolute targets restart at the guest root. Every expansion reparses terminal slashes: consumed input slashes do not become target slashes. Up to 32 expansions are allowed; the next returns ELOOP62. Expanded target plus remaining suffix plus NUL must fit 1024 bytes or return ENAMETOOLONG63. Open descriptions, CWD, F_GETPATH and mmap retain the resolved file/directory object.
+
+`stat64`, ordinary open, access, truncate and chdir follow final links. `lstat64` and readlink retain the final link. O_NOFOLLOW retains it and returns ELOOP; O_DIRECTORY with that retained link returns ENOTDIR20 first. O_NOFOLLOW_ANY refuses required expansion. O_CREAT|O_EXCL retains an existing terminal link and returns EEXIST17, including dangling/cyclic links. AT_SYMLINK_NOFOLLOW (0x20) retains final links; AT_SYMLINK_NOFOLLOW_ANY (0x800) also retains them and rejects any required intermediate/trailing expansion. Both AT flags may be combined. Fstatat AT_FDONLY still ignores the pathname after flag validation.
+
+Raw `readlink(58)` takes a signed low32 count; `readlinkat(473)` retains the full size_t count. Both return int and reject counts above INT32_MAX before path/FD access. They copy only min(count,target length) raw bytes, add no NUL and preflight only that prefix. Zero length still resolves the path and checks link type, then ignores the output pointer. Non-links return EINVAL22. EFAULT14 means no writable prefix; a partially writable prefix stops unsupported before any bytes are copied. Transport and memory-budget errors propagate. The shared nameiat prefix order is confirmed separately by 26 additional ARM64 macOS controls, including critical repeated-slash expansion lengths.
+
+Nonempty links exclude all namespace mutation grants globally: MutableDirectories, RemovableDirectories, MovableDirectories, ExchangeableDirectories, SwapRenameDirectories and CreationPolicy. Fixed-name WritableFiles/MutationPolicies may still mutate the resolved regular file. Unlink/rename of retained links stop explicitly before effects. Dynamic links, hard links, ACL authorization and mutable link namespaces remain unsupported. The independent ARM64 macOS probe passed 189 observations and 115 full-buffer checks with its original five-second deadline; that reference alone does not establish physical iOS, Intel HVF or full OS compatibility.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"symbolic_links":[{"path":"/link","target_hex":"64617461"}],"working_directory":"/"}}
+```
+
+[XNU namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_lookup.c), [XNU readlink / AT](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU open authorization](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_subr.c).

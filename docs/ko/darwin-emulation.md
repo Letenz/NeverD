@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1fca157d25a2f609ab3d51be25fb8a113e6ef48a9fd3a7037c77cfbcf2d4425f -->
+<!-- i18n-source: 21441b8b14985fbac413a4bb78aa57c696ad5eb07b70d439200550bdc6ce27a4 -->
 
 [← 문서 목록](README.md)
 
@@ -126,7 +126,7 @@ allocation_unit, mutation_time 및 seconds/nanoseconds는 필수이며 기존 �
 
 O_CREAT=0x200은 명시적 mutable 부모 바로 아래 빈 파일을 만듭니다. 일반/nocancel open·openat이 공유합니다. 새 객체는 쓰기 가능하고 기존 객체는 WritableFiles를 유지합니다. 읽기 전용 FD도 생성할 수 있으나 쓸 수 없습니다. 생성 정책이 없으면 stat64와 희소 탐색은 미상입니다. 새 객체는 같은 이름의 옛 metadata/mutation_policy를 상속하지 않습니다.
 
-O_CREAT과 O_EXCL=0x800의 조합은 기존 파일/디렉터리에 자르기 전 EEXIST를 반환하며 O_EXCL만으로는 효과가 없습니다. 기존 디렉터리의 읽기 전용 O_CREAT은 성공합니다. 잘못된 접근 모드→FD 여유→O_CREAT|O_DIRECTORY의 EINVAL→경로 순서입니다. 원래 경로의 마지막 누락 요소만 생성하고 누락 조상 및 끝 `/`, `//`, `/.`, `/..`는 ENOENT입니다. 새 O_CREAT|O_TRUNC는 FWASWRITTEN을 설정하지 않지만 기존 파일 자르기는 설정합니다.
+O_CREAT과 O_EXCL=0x800의 조합은 기존 파일/디렉터리에 자르기 전 EEXIST를 반환하며 O_EXCL만으로는 효과가 없습니다. 기존 디렉터리의 읽기 전용 O_CREAT은 성공합니다. 아래의 openat 첫 바이트 및 디렉터리 사전 검사 뒤에는 잘못된 접근 모드→FD 여유→O_CREAT|O_DIRECTORY의 EINVAL→경로 순서입니다. 원래 경로의 마지막 누락 요소만 생성하고 누락 조상 및 끝 `/`, `//`, `/.`, `/..`는 ENOENT입니다. 새 O_CREAT|O_TRUNC는 FWASWRITTEN을 설정하지 않지만 기존 파일 자르기는 설정합니다.
 
 실제 삽입만 부모 관측을 무효화하며 같은 이름의 새/옛 데이터·FD·메타데이터·매핑 수명은 독립적입니다. 256개 제한에는 초기 비파일 항목과 살아 있는 파일 객체가 포함됩니다. 새 정규 경로/NUL과 현재 바이트는 16 MiB에 포함하고 삭제 후 마지막 FD/매핑 해제 때 동적 비용을 회수합니다. 초기 비용은 유지합니다. 예산 또는 1024바이트 정규 경로 한계는 명시적으로 중단하며 ENOSPC나 네이티브 경로 오류를 만들지 않습니다. 실패는 이름/FD를 남기지 않습니다. created-file 네이티브/다섯 프로필, 4K/16K 경계 테스트가 계약을 검사합니다. 권한 강제 검사·서로 다른 초기 디렉터리 영역 간 이름 변경·링크·디렉터리 변경은 남아 있습니다.
 
@@ -207,7 +207,7 @@ Release Darwin은 고유 등록 438건 중 210건 통과, 228건 건너뜀, 실�
 
 파일 항목에 `metadata`를 추가할 수 있으며 아래 필드는 모두 필수입니다. 십진 문자열은 정수의 전체 폭을 보존하고 JSON 숫자는 ±(2^53−1) 내 정확한 정수로 제한됩니다. device는 부호 있는 32비트, mode/link_count는 부호 없는 16비트, inode는 부호 없는 64비트, uid/gid/flags/generation은 부호 없는 32비트입니다. size는 파일 바이트 수와 같아야 하며 blocks는 부호 있는 64비트 상한 이하, block_size는 음수가 아닌 부호 있는 32비트입니다. 시간은 부호 있는 64비트 초와 0–999999999 나노초입니다.
 
-`stat64` (338), `fstat64` (339), `lstat64` (340)는 ARM64/x64에서 동일한 144바이트 LP64 레코드를 반환합니다. open과 경로 해석을 공유하며 FD 복제와 닫기를 따릅니다. FD를 할당하거나 커서를 바꾸지 않고 rdev, 패딩, 예약 필드는 0입니다. 입력은 초기 메타데이터를 제공하고 변경은 선택적 정책을 따릅니다. 읽기가 시간을 갱신하지 않고 mode가 접근 허가를 바꾸지 않습니다. 미지정 메타데이터, 스트림 상태, 심볼릭 링크, 구형 stat, 확장 보안은 미지원입니다. 경로/FD 오류를 출력 포인터보다 먼저 처리하며 부분 쓰기 가능 출력은 변경 전에 중지합니다. 네이티브 테스트는 실제 파일의 모든 바이트와 SDK 배치를 비교하고 동일한 자체 프로그램으로 세 호출을 검증합니다.
+`stat64` (338), `fstat64` (339), `lstat64` (340)는 ARM64/x64에서 동일한 144바이트 LP64 레코드를 반환합니다. open과 경로 해석을 공유하며 FD 복제와 닫기를 따릅니다. FD를 할당하거나 커서를 바꾸지 않고 rdev, 패딩, 예약 필드는 0입니다. 입력은 초기 메타데이터를 제공하고 변경은 선택적 정책을 따릅니다. 읽기가 시간을 갱신하지 않고 mode가 접근 허가를 바꾸지 않습니다. 미지정 메타데이터, 스트림 상태, 구형 stat, 확장 보안은 미지원입니다. 경로/FD 오류를 출력 포인터보다 먼저 처리하며 부분 쓰기 가능 출력은 변경 전에 중지합니다. 네이티브 테스트는 실제 파일의 모든 바이트와 SDK 배치를 비교하고 동일한 자체 프로그램으로 세 호출을 검증합니다.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"30313233343536373839","metadata":{
@@ -412,7 +412,7 @@ Release Darwin 937개 등록:553개 통과, 백엔드 미제공384개 건너뜀,
 
 모드는 하위32비트입니다. R/W/X는 비트0–2, 확장 권한은9–21을 사용합니다. `(mode & 0x003ffe07) == 0`이면 존재 조회이며 부호 비트 등 나머지는 EINVAL로 거부하지 않고 무시합니다. 권한 요청은 조회 성공 뒤 UnsupportedService로 중단하며, 메타데이터나 변경 허가로 권한을 추측하지 않습니다. 알려진 경로·설명자 오류가 먼저입니다.
 
-Faccessat는 AT_EACCESS(0x10), AT_SYMLINK_NOFOLLOW(0x20), AT_SYMLINK_NOFOLLOW_ANY(0x800) 하위 플래그의 모든 조합을 허용합니다. 나머지는 카탈로그가 없어도 경로·FD 접근 전에 EINVAL입니다. 현재 카탈로그에는 심볼릭 링크가 없고 실제/유효 ID는 고정입니다. 절대 경로는 dirfd를 무시하며 상대 경로는 설정된 CWD/디렉터리 FD 규칙을 유지합니다. 첫 NUL까지 복사한 뒤 상대 FD를 검사하고 문자열의 누락 바이트는 EFAULT입니다. 빈 상대 경로에서도 미지 FD는 EBADF, 일반 파일 FD는 ENOTDIR, 그 외에는 ENOENT입니다. 미설정 카탈로그와 미지 스트림 디렉터리 종류는 미지원입니다.
+Faccessat는 AT_EACCESS(0x10), AT_SYMLINK_NOFOLLOW(0x20), AT_SYMLINK_NOFOLLOW_ANY(0x800) 하위 플래그의 모든 조합을 허용합니다. 나머지는 카탈로그가 없어도 경로·FD 접근 전에 EINVAL입니다. 실제/유효 ID는 고정이며 고정 링크는 아래 해석 정책을 사용합니다. 절대 경로는 dirfd를 무시하며 상대 경로는 설정된 CWD/디렉터리 FD 규칙을 유지합니다. 비 AT_FDCWD nameiat는 첫 바이트/상대 디렉터리 FD를 검사한 뒤 전체 문자열을 읽습니다. `/`는 FD 검사를 생략합니다. 첫 바이트 오류는 EFAULT14, 상대 미지/파일 FD는 후속 오류보다 먼저 EBADF9/ENOTDIR20입니다. 빈 상대 경로에서도 미지 FD는 EBADF, 일반 파일 FD는 ENOTDIR, 그 외에는 ENOENT입니다. 미설정 카탈로그와 미지 스트림 디렉터리 종류는 미지원입니다.
 
 독자 `file-access`는 네이티브 macOS와5개 게스트, C++/C/CLI/Python에서 두 진입점·무시 비트·플래그·순서를 비교합니다. NOFOLLOW_ANY는 상대 디렉터리 FD로 시험해 호스트 `/tmp`, `/var` 링크의 영향을 피합니다. 직접 테스트는 이름 변경, 혼합 권한 비트, FD 고갈, 메타데이터 독립성과 메모리 실패를 다룹니다.
 
@@ -487,7 +487,7 @@ removable 참조마다 경로와 NUL을 초기 16 MiB 비용에 더합니다. �
 
 두 직접 부모 모두 이름 변경 권한이 필요하고 생성한 디렉터리는 권한과 알려진 device/GID를 상속합니다. 파일 자체 식별자, 소유자/그룹, 쓰기 권한과 할당은 유지합니다. 알려진 장치 충돌은 거부하고 실제 이동은 두 부모의 전체 stat/열거를 무효화합니다. 삭제한 초기 디렉터리와 재사용한 경로는 다른 객체이며 옛 FD/CWD는 대체 영역을 얻지 않습니다.
 
-기존의 제한된 덮어쓰기, 매핑 수명, 경로/NUL 비용과 오류 순서를 유지합니다. EXCL의 다른 기존 대상은 영역/권한 검사 전에 EEXIST를 반환합니다. `renamed-file`은 생성한 자식으로 이동, 초기 부모에서 덮어쓰기, 자식으로 재이동을 C++/C/CLI/Python과 네이티브 macOS로 비교합니다. 권한 강제 검사, 초기 디렉터리 이동, 하드/심볼릭 링크, 네이티브 APFS 메타데이터는 미완성입니다.
+기존의 제한된 덮어쓰기, 매핑 수명, 경로/NUL 비용과 오류 순서를 유지합니다. EXCL의 다른 기존 대상은 영역/권한 검사 전에 EEXIST를 반환합니다. `renamed-file`은 생성한 자식으로 이동, 초기 부모에서 덮어쓰기, 자식으로 재이동을 C++/C/CLI/Python과 네이티브 macOS로 비교합니다. 권한 강제 검사, 초기 디렉터리 이동, 하드 링크, 동적 심볼릭 링크, 네이티브 APFS 메타데이터는 미완성입니다.
 
 ### 서로 다른 부모 간 검증, 2026-10-06
 
@@ -718,3 +718,32 @@ sysctl 복사 단계는 유지됩니다. EUID0의 실제 쓰기는 이름/MIB와
 ```
 
 [XNU getpriority](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_resource.c), [XNU signed INT entry](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/dev/arm/systemcalls.c).
+
+
+## 링크 추적 금지 open 플래그와 디렉터리 사전 검사
+
+일반 및 nocancel `open` / `openat`은 부호 없는 하위32비트 O_NOFOLLOW=0x100 또는 O_NOFOLLOW_ANY=0x20000000을 허용합니다. 검색 플래그는 F_GETFL에 포함되지 않으며 접근, 추가, 잘라내기, 생성, FD별 CLOEXEC 동작을 바꾸지 않습니다. 두 플래그를 함께 지정하면 FD 용량 검사 뒤 전체 경로를 읽기 전에 EINVAL22를 반환하고, 테이블이 가득 차면 EMFILE24가 먼저입니다. 알 수 없는 플래그는 지원하지 않습니다.
+
+AT_FDCWD가 아닌 `openat`은 접근 모드와 FD 용량 검사보다 먼저 경로 첫 바이트만 읽습니다. 읽을 수 없으면 EFAULT14입니다. 상대 접두사(NUL 포함)는 FD가 보유한 디렉터리 객체를 먼저 확인하여 알 수 없는 FD는 EBADF9, 일반 파일은 ENOTDIR20을 반환하고 알 수 없는 스트림 vnode 유형은 지원하지 않습니다. `/`는 dirfd 검사를 건너뛰고 이후 기존 open 순서로 전체 경로를 읽습니다. 일반 `open`과 AT_FDCWD는 이 사전 검사를 하지 않으며 다른 nameiat 경로 서비스는 플래그/크기 검사 후 첫 바이트와 상대 dirfd를 확인하고 전체 문자열을 읽습니다. 거부된 호출은 FD나 새 inode를 소비하지 않고 전송 오류를 그대로 전달하며 이름 공간을 변경하지 않습니다.
+
+기존 `file-access`는 상대 디렉터리 FD로 NOFOLLOW_ANY를 검사하여 네이티브 `/var`, `/tmp` 링크 별칭을 피합니다. 직접 테스트는 첫 바이트와 후속 오류, 슬래시/NUL, 사용자 주소와 페이지 경계, FD 고갈, 삭제된 디렉터리 객체를 구분합니다. ARM64 macOS 독립 원시 프로브는 기존 5초 제한으로30건을 통과했습니다. 마지막 고갈 상태 절대 경로 행은 원래 라벨과 달리 유효한 디렉터리 FD를 사용합니다. 실제 iOS와 Intel 네이티브 검증은 별도입니다.
+
+[XNU open1at / open1](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU vn_open_auth](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_vnops.c), [XNU open flags / FMASK](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/sys/fcntl.h).
+
+## 고정 초기 심볼릭 링크
+
+`DarwinFileOptions::SymbolicLinks` / `darwin_files.symbolic_links`는 정규 절대 `path`, 원시 16진수 `target_hex`, 선택적인 링크 자체 `metadata`를 선언합니다. 대상은1..1023 비NUL 바이트이며 비UTF-8, 반복 슬래시, 점, 없는 대상을 보존합니다. 빈 배열이어도 `files`는 필수입니다. 이름 충돌과 링크 아래 선언은 거부합니다. 경로/NUL/대상은256개/16 MiB를 공유합니다. S_IFLNK, 대상 길이와 같은size, DT_LNK=10, 일치inode가 필요하며 설정 CWD는 실제 디렉터리여야 합니다.
+
+링크 확장 후 점을 처리합니다. 상대 대상은 실제 부모, 절대 대상은 게스트 루트에서 시작합니다. 확장마다 끝 슬래시를 다시 해석하며 소비한 입력 슬래시를 물려주지 않습니다.32회까지 허용,33회는ELOOP62; 대상+접미사+NUL이1024바이트 초과면ENAMETOOLONG63. FD/CWD/F_GETPATH/mmap은 최종 객체를 유지합니다.
+
+stat64/open/access/truncate/chdir는 끝 링크를 따르고 lstat64/readlink는 유지합니다. O_NOFOLLOW는ELOOP, O_DIRECTORY와 결합하면 먼저ENOTDIR20. O_NOFOLLOW_ANY는 필요한 확장을 거부합니다. O_CREAT|O_EXCL은 기존 끝 링크에EEXIST17(없는 대상/순환 포함). AT0x20과AT0x800은 끝 링크를 유지하며0x800은 중간/끝 슬래시 확장도 거부하고 결합 가능합니다. AT_FDONLY는 플래그 검사 후 경로를 무시합니다.
+
+readlink(58)는 부호 있는 하위32비트count, readlinkat(473)는 전체size_t이며int를 반환합니다. INT32_MAX 초과는 경로/FD보다 먼저EINVAL22. min(count,대상 길이)만 복사하고NUL을 추가하지 않으며 실제 범위만 검사합니다.0길이도 경로/유형 검사 후 출력 포인터를 무시합니다. 비링크EINVAL22, 모두 쓰기 불가EFAULT14, 부분 쓰기는 복사 전에 중지합니다. 전송/메모리 예산 오류를 전달합니다.
+
+비어 있지 않은 링크는 MutableDirectories/RemovableDirectories/MovableDirectories/ExchangeableDirectories/SwapRenameDirectories/CreationPolicy와 전역적으로 함께 사용할 수 없습니다. 고정 WritableFiles/MutationPolicies는 최종 일반 파일을 변경할 수 있습니다. 링크unlink/rename은 효과 전에 중지합니다. 동적/하드 링크,ACL,가변 링크 이름 공간은 미지원입니다. ARM64 macOS 독립 프로브는 기존5초 내189관찰/115전체 버퍼를 통과했으며 물리iOS/Intel HVF/전체OS를 입증하지 않습니다.
+
+```json
+{"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"symbolic_links":[{"path":"/link","target_hex":"64617461"}],"working_directory":"/"}}
+```
+
+[XNU namei](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_lookup.c), [XNU readlink / AT](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_syscalls.c), [XNU open authorization](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/vfs/vfs_subr.c).

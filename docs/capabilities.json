@@ -12761,10 +12761,11 @@
       "limitations": [
         "Explicit macos-macho64-v1, ios-macho64-v1 and ios-simulator-macho64-v1 execute bounded thin freestanding Mach-O processes. macOS and Simulator admit baseline x64/ARM64; devices require ARM64. Platform metadata is validated independently of the host backend.",
         "Original segments, zero fill, pagezero reservation and maximum protection feed one private address space. LC_MAIN receives argc/argv/envp/apple and a bounded return gate; LC_UNIXTHREAD accepts only a complete PC-only native state. ARM64 OS pages are 16 KiB over 4 KiB CPU mappings; x64 pages are 4 KiB.",
-        "Darwin BSD carry and positive errno, secondary result registers, byte output, exit, deterministic identity and private anonymous data mmap/mprotect/munmap are modeled. Raw write lengths above INT_MAX return EINVAL before descriptor, pointer and output-budget checks, with an original native macOS oracle. Executable anonymous/JIT/shared/file/fixed mappings, Mach IPC, indirect calls, threads, signals and filesystem/network services remain unsupported.",
+        "Darwin BSD carry and positive errno, secondary result registers, byte output, exit, deterministic identity and private anonymous data mmap/mprotect/munmap are modeled. Raw write lengths above INT_MAX return EINVAL before descriptor, pointer and output-budget checks, with an original native macOS oracle. Private regular-file mappings and explicit bounded file catalogues are modeled. Executable anonymous/JIT/shared/fixed mappings, Mach IPC, indirect calls, threads, signals and host filesystem/network services remain unsupported.",
         "External libraries, fixups, initialization/TLS, encrypted payloads, arm64e/PAC and unmodeled image contracts fail explicitly. No dyld linking, Objective-C/Swift runtime, Foundation/UIKit, AMFI, full application compatibility or native iOS-host HVF support is claimed.",
         "The complete regular input file, including unmapped metadata and trailing bytes, must fit memory_limit before parsing or copying. Reads use a bounded private snapshot; embedded-NUL paths, short reads and file-size changes are rejected. Host filesystem I/O has no hard wall-clock guarantee.",
-        "Each available matching native backend is tested separately. Cross-ISA software execution and compilation cannot establish Intel HVF, Linux KVM or Windows WHP runtime coverage."
+        "Each available matching native backend is tested separately. Cross-ISA software execution and compilation cannot establish Intel HVF, Linux KVM or Windows WHP runtime coverage.",
+        "Fixed initial symbolic_links with raw target_hex share bounded guest namei, readlink/readlinkat and own metadata/snapshot admission.32 expansions and terminator-inclusive1024-byte paths are enforced. Nonempty links exclude namespace mutation grants; fixed-name writable regular targets retain file-object ownership. Dynamic/hard links, ACL enforcement and mutable link namespaces remain unsupported. Native ARM64 macOS observations do not establish physical iOS acceptance."
       ],
       "tests": [
         {
@@ -12825,6 +12826,17 @@
           "target": "NeverDProcessPublicTests",
           "source": "unittests/emulation/ProcessPublicTests.cpp",
           "filter": "ProcessPublic.DarwinProfilesPreserveBSDResultsAcrossSDKAndCLI",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.SymbolicLinksPreserveRawTargetsMetadataAndNoFollowPolicies/*",
           "platforms": [
             "darwin",
             "linux",
