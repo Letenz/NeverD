@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d492dd2ee1d6198857c35a5a17205ffecebc13658e7634c2d278cc345d5e659b -->
+<!-- i18n-source: 80b9a839d334a69d7ab8f8dcf310b8a192ae093f80fa7ebad87ee1e4b60af8a8 -->
 
 [← Índice de documentación](README.md)
 
@@ -849,3 +849,15 @@ La preparación ARM64 privada retiene 14 vistas guarded raw-stat, 11 operaciones
 La transacción de tres tablas comprueba raíces, descendientes enlazados o retenidos, rutas completas y espacio dinámico antes de publicar. Nombres/objetivos/referencias iniciales, contenido y leases de mapping no dan crédito SWAP. La primera clave nueva reserva su ruta/NUL dinámica; los intercambios repetidos sustituyen su coste anterior una vez. No consumen entrada, FD ni inode de creación adicionales. La pertenencia sigue padres reales, sin incorporar objetos huérfanos antiguos por reutilizar nombres. Los objetivos crudos permanecen y la resolución relativa cambia de padre; FD/dup, cursores, CWD, referentes y mappings sobreviven. Las raíces directas aplican sus propias políticas stat solo a ctime; mover ancestros conserva descendientes. Sin política, stat completo queda desconocido, mientras el inode sigue disponible para enumeración viva y las versiones siguen el contrato de rebobinado existente. Sin campos JSON ni permisos nuevos.
 
 La preparación ARM64 original conserva 36 vistas stat protegidas de 144 bytes, 16 raw rename, compile120s/native5s/drain1s/reap1s y recuperación/limpieza confirmadas. `directory-link-roots` y `virtual-directory-link-roots` comprueban identidad y stat completo constante en cinco guest, C/CLI y Python. Los modelos de dos tamaños de página cubren presupuestos exactos, desbordamientos sin abrir, huérfanos y agotamiento FD/entrada/inode. Esta sección amplía las exclusiones anteriores dentro de esos permisos. Intel nativo, iOS físico, hard links, ACL y OS/runtime/framework completo siguen pendientes.
+
+## Consultas pathconf fijas del núcleo
+
+pathconf(191) / fpathconf(192) admiten constantes vnode XNU:15/16/17→1,19/25→0,20/22/23→4096,21→65536,24→255. Las observaciones de enlaces, asignación, I/O y transferencia no habilitan ejecución asíncrona ni autorización; no se deducen de páginas o presupuestos del catálogo.
+
+La resolución completa de ruta siguiendo enlaces o búsqueda del FD precede al selector low32. Se conservan CWD y EFAULT/ENOENT/ENOTDIR/ELOOP; FD ausente/cerrado devuelve EBADF. Los objetos archivo/directorio retenidos siguen consultables sin stat completo tras dup, movimiento, eliminación y reutilización del nombre. El tipo nativo de flujos capturados queda desconocido. Se mantiene BSD int/carry/registro secundario sin copiar salida, alterar cursor, metadatos/enumeración ni reservar entrada/FD/inode. NAME_MAX, propiedades de mayúsculas y selectores desconocidos siguen sin soporte tras búsqueda; no se usan valores del host ni EINVAL supuestos.
+
+kernel-pathconf, kernel-pathconf-values y kernel-pathconf-unsupported verifican semántica común,80 bytes literales independientes y parada conservando salida previa en invitado/C/CLI/Python. Preparación privada ARM64:250 consultas,249 comparaciones SDK,0.262s con límite5s intacto. Intel nativo/iOS físico/ACL/enlaces duros/runtime y frameworks completos siguen sin validar o implementar.
+
+[XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+`pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.

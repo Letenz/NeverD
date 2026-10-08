@@ -537,6 +537,12 @@ class ProcessIntegrationTests(unittest.TestCase):
                     with self.assertRaises(NeverDError):
                         session.emulate_process(path, wrong, options)
                     for mode, expected in (("files", b"f"), ("files-nocancel", b"f"),
+                                           ("kernel-pathconf", b"C"),
+                                           ("kernel-pathconf-values", bytes.fromhex(
+                                               "0100000000000000010000000000000001000000000000000000000000000000"
+                                               "0010000000000000000001000000000000100000000000000010000000000000"
+                                               "ff000000000000000000000000000000")),
+                                           ("kernel-pathconf-unsupported", b"C"),
                                            ("writable-files", b"00006e"),
                                            ("writable-files-nocancel", b"00006e"),
                                            ("sparse-file-seek", b"s"),
@@ -951,13 +957,35 @@ class ProcessIntegrationTests(unittest.TestCase):
                                     "symbolic-link-rename" if rename_links else "symbolic-link-unlink")
                                 mixed_options["arguments"].append("protected")
                             file_options = json.dumps(mixed_options)
+                        unknown_pathconf = mode == "kernel-pathconf-unsupported"
+                        if mode.startswith("kernel-pathconf"):
+                            query_options = json.loads(file_options)
+                            query_options["instruction_quantum"] = 1024
+                            query_options["timeout_microseconds"] = 5_000_000
+                            query_options["darwin_files"] = {
+                                "files": [{"path": "/data", "bytes_hex": "30313233343536373839"}],
+                                "directories": [{"path": "/"}, {"path": "/empty"}],
+                                "working_directory": "/empty",
+                                "symbolic_links": [
+                                    {"path": "/" + name, "target_hex": target.encode().hex()}
+                                    for name, target in (("alias", "data"), ("dangling", "missing"),
+                                                         ("cycle", "cycle"))]}
+                            file_options = json.dumps(query_options)
+                        incomplete = protected_link or unknown_pathconf
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
                         self.assertEqual(result["stop_reason"],
-                                         "unsupported_service" if protected_link else "exited",
+                                         "unsupported_service" if incomplete else "exited",
                                          f"{mode}: {result['diagnostic']}")
-                        self.assertEqual(result["exit_status"], None if protected_link else 37, mode)
+                        self.assertEqual(result["exit_status"], None if incomplete else 37, mode)
                         self.assertEqual(bytes.fromhex(result["stdout_hex"]), expected)
                         self.assertEqual(result["stderr_hex"], "")
+                        if unknown_pathconf:
+                            last = result["services"][-1]
+                            self.assertEqual(last["number"], "20000bf" if architecture == "x86_64" else "bf")
+                            self.assertIsNone(last["result"])
+                            self.assertNotIn("error", last)
+                            self.assertEqual(result["diagnostic"],
+                                             "Darwin filesystem-dependent pathconf selector is not modeled")
                         if unlink_links:
                             # U follows the guest's target FD/map identity checks.
                             services = result["services"]

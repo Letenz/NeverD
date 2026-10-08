@@ -66,8 +66,6 @@ static u64 little_integer(const unsigned char *p, unsigned width) {
     value |= (u64)p[i] << (i * 8);
   return value;
 }
-/* One read-only native workload. Its captured value is stable during these
- * calls; explicit guest nice values use the identical raw instruction path. */
 static int priority_result(u64 which, u64 who, u64 expected, unsigned failure) {
   unsigned error;
   const u64 sentinel = 0x1122334455667788UL;
@@ -82,6 +80,104 @@ static int priority_result(u64 which, u64 who, u64 expected, unsigned failure) {
     return 212;
   return 0;
 }
+static int pathconf_result(u64 number, u64 object, u64 selector, u64 expected,
+                           unsigned failure) {
+  unsigned error;
+  const u64 sentinel = 0x1122334455667788UL;
+  u64 value =
+      call(number, object, selector, sentinel, -1UL, -1UL, -1UL, &error);
+  if (value != expected || error != failure)
+    return 230;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (failure ? sentinel : 0))
+#endif
+    return 231;
+  return 0;
+}
+/* Kernel-owned scalar queries: the harness supplies data, empty/, alias,
+ * dangling and cycle in one isolated catalogue. No filesystem limit oracle. */
+static int kernel_pathconf(const char *path, unsigned mode) {
+  unsigned error;
+  char parent[1024];
+  unsigned length = 0, last = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  if (path[length] || !length)
+    return 232;
+  parent[last ? last : 1] = 0;
+  u64 file = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 233;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 234;
+  u64 copy = call(41, file, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || call(199, file, 37, 0, 0, 0, 0, &error) != 37 ||
+      error || secondary || call(13, root, 0, 0, 0, 0, 0, &error) || error ||
+      secondary)
+    return 235;
+  const unsigned selectors[] = {15, 16, 17, 19, 20, 21, 22, 23, 24, 25};
+  const u64 expected[] = {1, 1, 1, 0, 4096, 65536, 4096, 4096, 255, 0};
+  const u64 carriers[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const char names[4][8] = {"data", "empty", "alias", "."};
+  u64 observed[10];
+  for (unsigned i = 0; i != 10; ++i) {
+    observed[i] = call(192, file, selectors[i], -1UL, -1UL, -1UL, -1UL, &error);
+    if (error || secondary || observed[i] != expected[i])
+      return 236;
+    for (unsigned c = 0; c != 3; ++c) {
+      u64 selector = carriers[c] | selectors[i];
+      for (unsigned n = 0; n != 4; ++n)
+        if (pathconf_result(191, (u64)names[n], selector, expected[i], 0))
+          return 237;
+      for (unsigned n = 0; n != 3; ++n) {
+        u64 fd = n == 0 ? file : n == 1 ? root : copy;
+        if (pathconf_result(192, carriers[c] | fd, selector, expected[i], 0))
+          return 238;
+      }
+    }
+  }
+  if (pathconf_result(191, -1UL, -1UL, 14, 1) ||
+      pathconf_result(191, (u64) "missing", -1UL, 2, 1) ||
+      pathconf_result(191, (u64) "", -1UL, 2, 1) ||
+      pathconf_result(191, (u64) "data/child", -1UL, 20, 1) ||
+      pathconf_result(191, (u64) "data/", 15, 20, 1) ||
+      pathconf_result(191, (u64) "alias/", 15, 1, 0) ||
+      pathconf_result(191, (u64) "alias//", 15, 1, 0) ||
+      pathconf_result(191, (u64) "alias/.", 15, 20, 1) ||
+      pathconf_result(191, (u64) "alias/child", 15, 20, 1) ||
+      pathconf_result(191, (u64) "dangling", 15, 2, 1) ||
+      pathconf_result(191, (u64) "cycle", 15, 62, 1) ||
+      pathconf_result(192, -1UL, -1UL, 9, 1) ||
+      call(199, copy, 0, 1, 0, 0, 0, &error) != 37 || error || secondary)
+    return 239;
+  if (call(6, file, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      pathconf_result(192, file, -1UL, 9, 1) ||
+      pathconf_result(192, copy, 15, 1, 0) ||
+      call(6, copy, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(6, root, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 240;
+  const char marker = 'C';
+  if (call(4, 1, mode == 1 ? (u64)observed : (u64)&marker,
+           mode == 1 ? sizeof(observed) : 1, 0, 0, 0,
+           &error) != (mode == 1 ? sizeof(observed) : 1) ||
+      error || secondary)
+    return 241;
+  if (mode == 2) {
+    call(191, (u64) "data", 4, 0, 0, 0, 0, &error);
+    return 242; // Any result means the bounded unknown-selector stop failed.
+  }
+  return 37;
+}
+
+/* One read-only native workload. Its captured value is stable during these
+ * calls; explicit guest nice values use the identical raw instruction path. */
 static int process_priority(int emit_values) {
   unsigned error;
   const u64 sentinel = 0x1122334455667788UL;
@@ -5717,6 +5813,16 @@ int main(int argc, char **argv, char **envp, char **apple) {
                ? 79
                : mutable_initial_links(
                      argv[2], equal(argv[1], "virtual-mutable-initial-links"));
+  if (equal(argv[1], "kernel-pathconf") ||
+      equal(argv[1], "kernel-pathconf-values") ||
+      equal(argv[1], "kernel-pathconf-unsupported"))
+    return argc < 3
+               ? 79
+               : kernel_pathconf(argv[2],
+                                 equal(argv[1], "kernel-pathconf-values") ? 1
+                                 : equal(argv[1], "kernel-pathconf-unsupported")
+                                     ? 2
+                                     : 0);
   if (equal(argv[1], "directory-link-roots") ||
       equal(argv[1], "virtual-directory-link-roots"))
     return argc < 3

@@ -213,6 +213,8 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   access(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
          ProcessResult &Result, LinkPolicy Links = {true, false});
+  std::optional<ServiceResult> pathconf(const Description &File, uint32_t Name,
+                                        ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   status(const Description &File, uint64_t Address, ProcessResult &Result);
   const DarwinFileMetadata *metadata(const Description &File) const;

@@ -63,6 +63,13 @@ def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_fil
     results = []
     for mode, status, output in cases:
         case_input = input_file
+        if mode == "kernel-pathconf":
+            catalogue = initial_root / "pathconf"
+            (catalogue / "empty").mkdir(parents=True)
+            for name, target in (("alias", "data"), ("dangling", "missing"),
+                                 ("cycle", "cycle")):
+                (catalogue / name).symlink_to(target)
+            case_input = catalogue / "data"
         if mode == "mutable-initial-links":
             catalogue = initial_root / "catalogue"
             catalogue.mkdir()

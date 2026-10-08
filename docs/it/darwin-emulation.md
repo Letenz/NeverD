@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d492dd2ee1d6198857c35a5a17205ffecebc13658e7634c2d278cc345d5e659b -->
+<!-- i18n-source: 80b9a839d334a69d7ab8f8dcf310b8a192ae093f80fa7ebad87ee1e4b60af8a8 -->
 
 [← Indice della documentazione](README.md)
 
@@ -849,3 +849,15 @@ La preparazione ARM64 privata conserva 14 viste guarded raw-stat, 11 operazioni,
 La transazione delle tre tabelle verifica radici, discendenti collegati o trattenuti, percorsi completi e spazio dinamico prima della pubblicazione. Nomi/target/riferimenti iniziali, contenuti e lease dei mapping non offrono credito SWAP. La prima nuova chiave riserva un percorso/NUL dinamico indipendente; ripetere sostituisce una volta il costo precedente. Nessuna voce, FD o inode di creazione aggiuntivi. L’appartenenza segue i genitori reali, senza annettere vecchi orfani solo per nomi riutilizzati. Target grezzi invariati, risoluzione relativa sul nuovo genitore; FD/dup, cursori, CWD, referenti e mapping sopravvivono. Le radici dirette applicano proprie politiche stat solo a ctime, gli antenati preservano i discendenti. Senza politica stat completo è ignoto, ma inode resta per l’enumerazione corrente; le versioni seguono il contratto di riavvolgimento a zero esistente. Nessun nuovo campo JSON o permesso.
 
 La preparazione ARM64 originale conserva 36 viste stat protette di 144 byte, 16 raw rename, compile120s/native5s/drain1s/reap1s e recupero/pulizia confermati. `directory-link-roots` e `virtual-directory-link-roots` verificano identità e stat completo costante su cinque guest, C/CLI e Python. I modelli di due pagine coprono budget esatti, overflow senza apertura, orfani ed esaurimento FD/voce/inode. Questa sezione estende le esclusioni precedenti entro tali permessi. Intel nativo, iOS fisico, hard link, ACL e OS/runtime/framework completi restano attività separate.
+
+## Query pathconf fisse del kernel
+
+pathconf(191) / fpathconf(192) supportano le costanti vnode XNU:15/16/17→1,19/25→0,20/22/23→4096,21→65536,24→255. Le osservazioni su link, allocazione, I/O e trasferimenti non abilitano esecuzione asincrona o autorizzazione; non derivano da pagine o limiti del catalogo.
+
+La risoluzione completa del percorso con link o ricerca FD precede il selettore low32. CWD ed EFAULT/ENOENT/ENOTDIR/ELOOP restano invariati; FD assente/chiuso dà EBADF. Gli oggetti file/directory mantenuti restano interrogabili senza stat completo dopo dup, spostamento, eliminazione e riuso dei nomi. Il tipo nativo dei flussi catturati resta sconosciuto. Si conserva BSD int/carry/registro secondario senza copiare output, modificare cursori, metadati/enumerazione o riservare voci/FD/inode. NAME_MAX, proprietà della distinzione maiuscole e selettori sconosciuti restano non supportati dopo ricerca, senza valori host o EINVAL ipotizzati.
+
+kernel-pathconf, kernel-pathconf-values e kernel-pathconf-unsupported verificano semantica comune,80 byte letterali indipendenti e arresto con output precedente preservato via guest/C/CLI/Python. Preparazione ARM64 privata:250 query,249 confronti SDK,0.262s con limite5s invariato. Intel nativo/iOS fisico/ACL/hard link/runtime e framework completi restano non verificati o implementati.
+
+[XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+`pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.

@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d492dd2ee1d6198857c35a5a17205ffecebc13658e7634c2d278cc345d5e659b -->
+<!-- i18n-source: 80b9a839d334a69d7ab8f8dcf310b8a192ae093f80fa7ebad87ee1e4b60af8a8 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -851,3 +851,15 @@ unlink、通常/EXCL rename、葉リンク/ファイル/link SWAP、宣言済み
 既存の三つの名前表の取引はルート、接続中または保持された子孫、全パスと動的容量を公開前に検査します。初期名/ターゲット/参照、ファイル内容、mapping lease は SWAP の控除になりません。初期名の最初の再キーは別の動的パス/NUL を課金し、再交換は旧費用を一度置換します。entry/FD/作成 inode を追加消費せず、同じ綴りの古い孤立物体も実親が異なれば新木に属しません。生ターゲットは不変で相対解決は新親に結合します。FD/dup cursor、CWD、参照先、mapping は保持されます。直接ルートは自身の既存 stat 方針で ctime だけを更新し、祖先移動は子孫記録を保持します。方針省略時の完全 stat は未知ですが inode はライブ列挙に使え、関連列挙バージョンは既存のゼロ巻戻し契約に従います。JSON フィールドや権限の追加はありません。
 
 独自 ARM64 準備は 36 guarded 144-byte stat、16 raw rename、compile120s/native5s/drain1s/reap1s、回収と私有削除を記録します。`directory-link-roots` と `virtual-directory-link-roots` は五つの guest、C/CLI、Python でネイティブ識別と完全 stat 定数を確認します。二つのページモデルは厳密な予算、未オープン子孫の溢れ、孤立物体、FD/entry/inode 枯渇を検査します。本節は上記権限の範囲で以前の制限を拡張します。Intel ネイティブ、実機 iOS、hard link、ACL、完全 OS/runtime/framework は別の未検証または未実装項目です。
+
+## 固定カーネル pathconf クエリ
+
+生の pathconf(191) / fpathconf(192) は XNU 固定 vnode クエリを扱います。15/16/17→1、19/25→0、20/22/23→4096、21→65536、24→255。リンク、割り当て、I/O 宣言、転送推奨値の観測であり、非同期実行や権限を有効にせず、ページサイズやカタログ予算から値を推定しません。
+
+パスの完全なリンク追跡と FD 検索が low32 セレクタより先です。CWD、リンク、EFAULT/ENOENT/ENOTDIR/ELOOP を維持し、無効/閉じた FD は EBADF。保持した通常ファイル/ディレクトリは stat がなくても dup、移動、削除、名前再利用後に照会できます。入力/捕捉 FD のネイティブ種別は不明として停止。BSD int/キャリー/第2レジスタ契約を維持し、出力コピー、カーソル、メタデータ、列挙、エントリ/FD/inode を変更しません。NAME_MAX、大小文字属性や未知セレクタは検索後も未対応で、ホスト値や EINVAL を推測しません。
+
+kernel-pathconf、kernel-pathconf-values、kernel-pathconf-unsupported は共通動作、独立80バイト値、既存出力を保持する停止報告をゲスト/C/CLI/Python で検証します。私有 ARM64 ネイティブ準備は250照会、249 SDK 対照を0.262秒で完了し、5秒期限を維持。ネイティブ Intel、実機 iOS、ACL、ハードリンク、完全なランタイム/フレームワークは未検証または未対応です。
+
+[XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+`pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.

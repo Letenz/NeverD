@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d492dd2ee1d6198857c35a5a17205ffecebc13658e7634c2d278cc345d5e659b -->
+<!-- i18n-source: 80b9a839d334a69d7ab8f8dcf310b8a192ae093f80fa7ebad87ee1e4b60af8a8 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -849,3 +849,15 @@ Die private ARM64-Vorbereitung bewahrt 14 guarded raw-stat Ansichten, 11 Operati
 Die bestehende Drei-Tabellen-Transaktion prüft Wurzeln, verknüpfte/gehaltene Nachkommen, alle Pfade und dynamischen Speicher vor Veröffentlichung. Feste Anfangsnamen/Ziele/Referenzen, Dateidaten und Mapping-Leases liefern keinen SWAP-Kredit. Erste Umbenennung reserviert einen eigenen dynamischen Pfad/NUL; Wiederholung ersetzt nur dessen alte Kosten. Kein zusätzlicher Eintrag, FD oder Erstellungs-inode wird verbraucht. Zugehörigkeit folgt tatsächlichen Elternobjekten, nicht wiederverwendeter Schreibweise. Rohziele bleiben unverändert, relative Auflösung bindet neu; FD/dup-Cursor, CWD, Referenten und verwaiste Mappings bleiben erhalten. Direkte Wurzeln verwenden eigene stat-Regeln nur für ctime, Vorfahrenbewegung erhält Nachkommen. Ohne Regel bleibt vollständiger stat unbekannt, bekannte inodes dienen weiter der Live-Auflistung; relevante Versionen folgen dem bestehenden Rücksetzvertrag. Keine neuen JSON-Felder/Rechte.
 
 Die originale private ARM64-Vorbereitung bewahrt 36 geschützte 144-byte-stat-Ansichten, 16 raw rename, compile120s/native5s/drain1s/reap1s und bestätigte Prozess-/Verzeichnisbereinigung. `directory-link-roots` und `virtual-directory-link-roots` prüfen Identität und vollständige stat-Konstanten über fünf guest-Profile, C/CLI und Python. Modelle beider Seitengrößen prüfen genaue Budgets, ungeöffnete Überläufe, verwaiste Objekte sowie FD/Eintrag/inode-Erschöpfung. Dieser Abschnitt erweitert frühere Ausschlüsse innerhalb der genannten Rechte. Natives Intel, physisches iOS, Hardlinks, ACLs und vollständiges OS/runtime/framework bleiben separate Lücken.
+
+## Feste pathconf-Abfragen des Kernels
+
+pathconf(191) / fpathconf(192) unterstützen feste XNU-vnode-Werte:15/16/17→1,19/25→0,20/22/23→4096,21→65536,24→255. Diese Angaben zu Links, Allokation, I/O und Transfers aktivieren keine asynchrone Ausführung oder Autorisierung; Seitengröße und Katalogbudgets bestimmen sie nicht.
+
+Vollständige Pfadauflösung mit Link-Verfolgung oder FD-Suche erfolgt vor dem low32-Selektor. CWD und EFAULT/ENOENT/ENOTDIR/ELOOP bleiben erhalten; fehlende/geschlossene FDs liefern EBADF. Gehaltene Datei-/Verzeichnisobjekte bleiben ohne vollständigen stat über dup, Verschieben, Entfernen und Namenswiederverwendung abfragbar. Der native Typ von Eingabe/Ausgabe-Erfassung bleibt unbekannt. BSD-int/Carry/Zweitregister gelten ohne Ausgabekopie oder Änderungen an Cursor, Metadaten/Auflistung und Eintrag/FD/inode. NAME_MAX, Groß-/Kleinschreibung und unbekannte Selektoren bleiben nach der Suche ununterstützt; keine Hostwerte oder geratenen EINVAL.
+
+kernel-pathconf, kernel-pathconf-values und kernel-pathconf-unsupported prüfen gemeinsame Semantik, unabhängige80-Byte-Werte und den Stopp mit erhaltener Ausgabe über Gast/C/CLI/Python. Private ARM64-Vorbereitung:250 Abfragen,249 SDK-Vergleiche,0.262s bei unveränderter5s-Grenze. Natives Intel/physisches iOS/ACL/Hardlinks/vollständige Laufzeiten und Frameworks bleiben ungeprüft oder unimplementiert.
+
+[XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+`pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.

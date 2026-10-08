@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: d492dd2ee1d6198857c35a5a17205ffecebc13658e7634c2d278cc345d5e659b -->
+<!-- i18n-source: 80b9a839d334a69d7ab8f8dcf310b8a192ae093f80fa7ebad87ee1e4b60af8a8 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -849,3 +849,15 @@ getuid24/geteuid25/getgid47/getegid43/getgroups79 تشترك بمالكsystem و
 تفحص معاملة الجداول الثلاثة الجذور والذرية المرتبطة أو المحتفظ بها والمسارات الكاملة والمساحة الديناميكية قبل النشر. لا توفر الأسماء/الأهداف/مراجع التصريحات الأولية أو البيانات أو mapping leases رصيد SWAP. يحجز تغيير الاسم الأول تكلفة مسار/NUL ديناميكية منفصلة، والتكرار يستبدل التكلفة القديمة مرة واحدة. لا يستهلك entry أو FD أو inode إنشاء إضافيا. تتبع العضوية كائنات الوالد الفعلية، ولا تضم كائنا يتيما قديما بمجرد إعادة الاسم. تبقى الأهداف الخام، ويعاد ربط الحل النسبي بالوالد الجديد؛ تحتفظ FD/dup والمؤشرات وCWD والأهداف وmappings بكائناتها. تطبق الجذور المباشرة سياسات stat الخاصة بها على ctime فقط، ويحفظ نقل السلف سجلات الذرية. عند حذف السياسة يبقى stat الكامل مجهولا بينما يبقى inode للتعداد الحي وتتبع النسخ عقد الإرجاع إلى الصفر الحالي. لا حقول JSON أو صلاحيات جديدة.
 
 يسجل الإعداد ARM64 الأصلي 36 عرض stat محميا بطول 144 بايت و16 raw rename وحدود compile120s/native5s/drain1s/reap1s والاسترداد والتنظيف المؤكدين. يفحص `directory-link-roots` و`virtual-directory-link-roots` الهوية وstat الثابت الكامل عبر خمسة guest وC/CLI وPython. تغطي نماذج حجمي الصفحات الميزانية الدقيقة وتجاوز ذرية غير مفتوحة والكائنات اليتيمة ونفاد FD/entry/inode. يوسع هذا القسم الاستثناءات السابقة ضمن تلك الحقوق. تبقى Intel الأصلية وiOS الفعلي وhard links وACL وOS/runtime/framework الكامل فجوات منفصلة.
+
+## استعلامات pathconf الثابتة للنواة
+
+يدعم pathconf(191) / fpathconf(192) ثوابت XNU vnode:15/16/17→1،19/25→0،20/22/23→4096،21→65536،24→255. ملاحظات الروابط والتخصيص وI/O والنقل لا تفعّل التنفيذ غير المتزامن أو التفويض، ولا تستنتج القيم من الصفحات أو ميزانيات الكتالوج.
+
+يُحل المسار كاملاً مع اتباع الروابط أو يُبحث عن FD قبل المحدد low32. تبقى CWD وأخطاء EFAULT/ENOENT/ENOTDIR/ELOOP؛ FD غير المعروف/المغلق يعطي EBADF. يمكن الاستعلام عن كائنات الملفات/الأدلة المحتفظ بها دون stat كامل بعد dup والنقل والحذف وإعادة الاسم. نوع تدفقات الإدخال/الالتقاط الأصلي مجهول. تبقى قواعد BSD int/carry والسجل الثانوي دون نسخ مخرجات أو تغيير المؤشر والبيانات الوصفية/التعداد أو حجز عنصر/FD/inode. NAME_MAX وحساسية الأحرف والمحددات المجهولة غير مدعومة بعد البحث؛ لا قيم مضيف أو EINVAL تخميني.
+
+تختبر kernel-pathconf وkernel-pathconf-values وkernel-pathconf-unsupported السلوك المشترك و80 بايت مستقلة والتوقف مع حفظ المخرجات السابقة عبر الضيف/C/CLI/Python. التحضير الخاص ARM64:250 استعلاماً،249 مقارنة SDK،0.262ث ضمن حد5ث دون تغيير. Native Intel وiOS الفعلي وACL والروابط الصلبة وبيئة runtime/framework الكاملة غير متحققة أو غير منفذة.
+
+[XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+`pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.

@@ -466,6 +466,39 @@ TEST_P(DarwinProcess, DirectoryLinkRootsKeepIdentityAndReferentLifetime) {
   }
 }
 
+TEST_P(DarwinProcess, KernelPathConfPreservesLookupAndDescriptorState) {
+  Options.DarwinFiles = darwin_test::kernelPathConfOptions();
+  Options.Arguments[2] = "/data";
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  for (const char *Mode : {"kernel-pathconf", "kernel-pathconf-values",
+                           "kernel-pathconf-unsupported"}) {
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    const bool Unknown = llvm::StringRef(Mode).ends_with("-unsupported");
+    ASSERT_EQ(Result->Stop, Unknown ? ProcessStopReason::UnsupportedService
+                                    : ProcessStopReason::Exited)
+        << Result->Diagnostic;
+    EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+              llvm::StringRef(Mode) == "kernel-pathconf-values"
+                  ? darwin_test::KernelPathConfHex
+                  : "43");
+    EXPECT_TRUE(Result->StandardError.empty());
+    ASSERT_FALSE(Result->Services.empty());
+    if (Unknown) {
+      EXPECT_EQ(Result->Diagnostic,
+                "Darwin filesystem-dependent pathconf selector is not modeled");
+      const auto &Last = Result->Services.back();
+      EXPECT_EQ(uint32_t(Last.Number) & 0x00ffffff, 191u);
+      EXPECT_EQ(Last.Arguments[1], 4u);
+      EXPECT_FALSE(Last.Result);
+      EXPECT_FALSE(Last.Error);
+    } else {
+      EXPECT_EQ(Result->ExitStatus, 37);
+    }
+  }
+}
+
 TEST_P(DarwinProcess, CreatePreservesExclusiveChecksAndReusedNameLifetime) {
   Options.DarwinFiles.emplace();
   Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',

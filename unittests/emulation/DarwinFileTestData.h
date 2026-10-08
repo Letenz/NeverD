@@ -9,6 +9,22 @@
 #include "neverd/emulation/DarwinFileOptions.h"
 
 namespace neverd::emulation::darwin_test {
+inline constexpr char KernelPathConfHex[] =
+    "0100000000000000010000000000000001000000000000000000000000000000"
+    "0010000000000000000001000000000000100000000000000010000000000000"
+    "ff000000000000000000000000000000";
+inline constexpr char KernelPathConfJSON[] =
+    R"({"files":[{"path":"/data","bytes_hex":"30313233343536373839"}],"directories":[{"path":"/"},{"path":"/empty"}],"working_directory":"/empty","symbolic_links":[{"path":"/alias","target_hex":"64617461"},{"path":"/dangling","target_hex":"6d697373696e67"},{"path":"/cycle","target_hex":"6379636c65"}]})";
+inline DarwinFileOptions kernelPathConfOptions() {
+  DarwinFileOptions O;
+  O.Files["/data"] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+  O.Directories = {"/", "/empty"};
+  O.WorkingDirectory = "/empty";
+  O.SymbolicLinks["/alias"] = {'d', 'a', 't', 'a'};
+  O.SymbolicLinks["/dangling"] = {'m', 'i', 's', 's', 'i', 'n', 'g'};
+  O.SymbolicLinks["/cycle"] = {'c', 'y', 'c', 'l', 'e'};
+  return O;
+}
 inline DarwinFileMetadata metadata(uint64_t Size = 10) {
   return {-123,
           0xfedcba9876543210ULL,

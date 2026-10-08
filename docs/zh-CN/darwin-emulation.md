@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d492dd2ee1d6198857c35a5a17205ffecebc13658e7634c2d278cc345d5e659b -->
+<!-- i18n-source: 80b9a839d334a69d7ab8f8dcf310b8a192ae093f80fa7ebad87ee1e4b60af8a8 -->
 
 [← 文档索引](README.md)
 
@@ -955,3 +955,15 @@ readlink(58) 使用有符号低32位 count；readlinkat(473) 保留完整 size_t
 直接目录/链接根按各自既有 stat 策略更新 ctime，祖先移动保留后代记录。省略策略时完整 stat 仍未知，已知 inode 可用于实时枚举；已提交的父名称变化和直接目录移动按原契约使相关枚举版本失效，须归零重读。不增加 JSON 字段或权限。
 
 原创 ARM64 私有准备保留 36 个带保护的 144 字节 stat 视图、16 次原始 rename，并维持 compile120s/native5s/drain1s/reap1s、进程回收和私有清理。`directory-link-roots` 与 `virtual-directory-link-roots` 经五种 guest、C/CLI、Python 检查共同原生身份和完整常量 stat；两种页大小的模型覆盖精确预算、未打开后代溢出、旧孤立对象、缺失授权及 FD/条目/inode 耗尽。本节在这些授权范围内扩展前文目录/链接限制。Intel 原生、实体 iOS、硬链接、ACL 和完整 OS/runtime/framework 仍有验证或实现缺口。
+
+## 固定内核 pathconf 查询
+
+原始 pathconf(191) 和 fpathconf(192) 支持 XNU 固定的 vnode 查询：选择器15/16/17 返回1，19/25 返回0，20/22/23 返回4096，21 返回65536，24 返回255。这些值对应符号链接支持、最小分配声明、异步/优先/同步 I/O 声明、传输建议和符号链接上限。查询结果不会开启异步执行或文件系统授权，也不从来宾页大小、分配策略或目录预算推导。
+
+先导入路径并完成跟随解析，再处理选择器；保留 CWD、符号链接和 EFAULT/ENOENT/ENOTDIR/ELOOP 顺序。fpathconf 先按低32位查找 FD；未知或关闭的 FD 先返回 EBADF。已知普通文件/目录对象不依赖完整 stat，跨 dup、重命名、删除和名称复用保留查询。输入及捕获描述符的原生类型未知，明确停止。选择器使用低32位 int 和现有 BSD 返回约定；查询不复制输出、不改变游标、元数据或枚举，也不消耗条目、FD 或 inode。NAME_MAX、大小写敏感性及其他文件系统相关或未知选择器在解析后仍明确不支持，不借用宿主值或猜测 EINVAL。
+
+kernel-pathconf、kernel-pathconf-values 和 kernel-pathconf-unsupported 分别验证共同语义、独立80字节字面值及保留既有输出的停止报告，覆盖来宾/C/CLI/Python。独立原生 ARM64 准备检查250次查询，其中249次对照 SDK；0.262秒完成，5秒期限不变。原生 Intel、真实 iOS、ACL、硬链接及完整运行时/框架仍未验证或未实现。
+
+[XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+`pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.

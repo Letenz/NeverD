@@ -73,6 +73,12 @@ class DarwinKernelReferenceTests(unittest.TestCase):
                 self.assertTrue((path.parent / "cycle").is_symlink())
                 self.assertEqual((path.parent / "dirlink").readlink(), Path("empty"))
                 self.assertFalse((path.parent / "dangling").exists())
+            elif command[1] == "kernel-pathconf":
+                self.assertEqual({item.name for item in path.parent.iterdir()},
+                                 {"data", "empty", "alias", "dangling", "cycle"})
+                self.assertEqual((path.parent / "alias").readlink(), Path("data"))
+                self.assertEqual((path.parent / "cycle").readlink(), Path("cycle"))
+                self.assertFalse((path.parent / "dangling").exists())
             elif command[1] == "directory-link-roots":
                 catalogue = path.parent
                 self.assertEqual({item.name for item in catalogue.iterdir()}, {"data", "a", "b"})
@@ -110,9 +116,11 @@ class DarwinKernelReferenceTests(unittest.TestCase):
                  ("symbolic-link-rename", 37, b""),
                  ("mutable-initial-links", 37, b""),
                  ("directory-link-roots", 37, b""),
-                 ("directory-entries", 37, b"")])
+                 ("directory-entries", 37, b""),
+                 ("kernel-pathconf", 37, b"")])
         self.assertTrue(all(result["passed"] for result in results))
         self.assertEqual(roots[0], roots[8])
+        self.assertNotIn(roots[9], roots[:9])
         self.assertNotEqual(roots[0], roots[1])
         self.assertNotIn(roots[2], roots[:2])
         self.assertNotIn(roots[3], roots[:3])

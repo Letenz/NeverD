@@ -11857,6 +11857,166 @@ TEST_P(DarwinFileTest,
   swapFiles("/d", "/l");
 }
 
+TEST_P(DarwinFileTest, PathConfKernelResultsUseLowCarriersWithoutStat) {
+  // Independent scalar oracle: do not consume the production selector owner.
+  constexpr std::pair<uint32_t, uint64_t> Expected[] = {
+      {15, 1},     {16, 1},    {17, 1},    {19, 0},   {20, 4096},
+      {21, 65536}, {22, 4096}, {23, 4096}, {24, 255}, {25, 0}};
+  const auto File = ok(ServiceKind::Open, {Base});
+  path("/");
+  const auto Directory = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {File, 37, 0}), 37u);
+  std::array<uint8_t, 32> Before;
+  Before.fill(0xa5);
+  llvm::cantFail(Space->write(Base + Page, Before));
+  for (const char *Name : {"/data", "/"}) {
+    path(Name);
+    for (const auto &[Selector, Value] : Expected)
+      for (uint64_t Carrier :
+           {0ULL, 0x1234567800000000ULL, 0xffffffff00000000ULL}) {
+        EXPECT_EQ(
+            ok(ServiceKind::PathConf, {Base, Carrier | Selector, UINT64_MAX,
+                                       UINT64_MAX, UINT64_MAX, UINT64_MAX}),
+            Value);
+        for (const auto FD : {File, Directory})
+          EXPECT_EQ(ok(ServiceKind::FpathConf,
+                       {Carrier | FD, Carrier | Selector, UINT64_MAX,
+                        UINT64_MAX, UINT64_MAX, UINT64_MAX}),
+                    Value);
+      }
+  }
+  std::array<uint8_t, 32> After;
+  llvm::cantFail(Space->read(Base + Page, After));
+  EXPECT_EQ(After, Before);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {File, 0, 1}), 37u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Directory, 0, 1}), 0u);
+  path("/data");
+  EXPECT_EQ(ok(ServiceKind::Open, {Base}), 5u);
+}
+
+TEST_P(DarwinFileTest, PathConfResolvesBeforeUnknownSelector) {
+  error(ServiceKind::PathConf, {UINT64_MAX, UINT64_MAX}, 14);
+  for (const char *Name : {"/missing", ""}) {
+    path(Name);
+    error(ServiceKind::PathConf, {Base, UINT64_MAX}, 2);
+  }
+  for (const char *Name : {"/data/child", "/data/"}) {
+    path(Name);
+    error(ServiceKind::PathConf, {Base, UINT64_MAX}, 20);
+  }
+  error(ServiceKind::FpathConf, {UINT64_MAX, UINT64_MAX}, 9);
+  path("/data");
+  const auto FD = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+  error(ServiceKind::FpathConf, {FD, UINT64_MAX}, 9);
+}
+
+TEST_P(DarwinFileTest, PathConfUnknownSelectorsAndStreamKindsStayUnknown) {
+  path("/data");
+  const auto FD = ok(ServiceKind::Open, {Base});
+  for (const uint64_t Selector : {0ULL, 4ULL, 11ULL, 13ULL, 18ULL, 26ULL, 27ULL,
+                                  28ULL, 0x100fULL, 0xffffffffffffffffULL}) {
+    EXPECT_FALSE(invoke(ServiceKind::PathConf, {Base, Selector}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FilePathConf);
+    EXPECT_FALSE(invoke(ServiceKind::FpathConf, {FD, Selector}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FilePathConf);
+  }
+  for (const uint64_t FD : {0u, 1u, 2u}) {
+    EXPECT_FALSE(invoke(ServiceKind::FpathConf, {FD, 15}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FilePathConfKind);
+  }
+  EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+  error(ServiceKind::FpathConf, {FD, UINT64_MAX}, 9);
+}
+
+TEST_P(DarwinFileTest, PathConfUsesSharedLinkWalkerAndActualCWD) {
+  Options->Files["/work/child"] = {'x'};
+  Options->Directories.insert("/work/empty");
+  Options->WorkingDirectory = "/work";
+  Options->SymbolicLinks["/alias"] = {'w', 'o', 'r', 'k'};
+  Options->SymbolicLinks["/work/l"] = {'c', 'h', 'i', 'l', 'd'};
+  Options->SymbolicLinks["/dang"] = {'m', 'i', 's', 's', 'i', 'n', 'g'};
+  Options->SymbolicLinks["/cycle"] = {'c', 'y', 'c', 'l', 'e'};
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  for (const char *Name : {".", "./child", "l", "../alias/l", "/alias/empty/",
+                           "/alias//./child", "/work/l/", "/work/l///"}) {
+    path(Name);
+    EXPECT_EQ(ok(ServiceKind::PathConf, {Base, 23}), 4096u);
+  }
+  path("/dang");
+  error(ServiceKind::PathConf, {Base, 15}, 2);
+  path("/cycle");
+  error(ServiceKind::PathConf, {Base, 15}, 62);
+  path("/work/l/.");
+  error(ServiceKind::PathConf, {Base, 15}, 20);
+  path("/work/l/child");
+  error(ServiceKind::PathConf, {Base, 15}, 20);
+  path("/work");
+  const auto FD = ok(ServiceKind::Open, {Base});
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {FD}), 0u);
+  path("../data");
+  EXPECT_EQ(ok(ServiceKind::PathConf, {Base, 24}), 255u);
+}
+
+TEST_P(DarwinFileTest, PathConfRetainsRemovedObjectsAndReusedNames) {
+  namespacePolicy();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto FD = makeFile("/f", "ab");
+  const auto Dup = ok(ServiceKind::Dup, {FD});
+  const auto Directory = makeDirectory("/d");
+  const auto DirectoryDup = ok(ServiceKind::Dup, {Directory});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 1, 0}), 1u);
+  path("/f");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path("/d");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  const auto FileStat = status(FD), DirectoryStat = status(Directory);
+  makeFile("/f", "new");
+  makeDirectory("/d");
+  for (const auto Held : {FD, Dup, Directory, DirectoryDup})
+    for (const auto &[Selector, Value] : {std::pair{15u, 1u},
+                                          {16u, 1u},
+                                          {17u, 1u},
+                                          {19u, 0u},
+                                          {20u, 4096u},
+                                          {21u, 65536u},
+                                          {22u, 4096u},
+                                          {23u, 4096u},
+                                          {24u, 255u},
+                                          {25u, 0u}})
+      EXPECT_EQ(ok(ServiceKind::FpathConf, {Held, Selector}), Value);
+  EXPECT_EQ(status(FD), FileStat);
+  EXPECT_EQ(status(Directory), DirectoryStat);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Dup, 0, 1}), 1u);
+  contents(FD, {'a', 'b'});
+}
+
+TEST_P(DarwinFileTest, PathConfNeedsNoFreeDescriptorOrEntry) {
+  Options->DescriptorLimit = 4;
+  for (unsigned I = 0; I != 255; ++I)
+    Options->Files["/f" + std::to_string(I)] = {};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/data");
+  const auto FD = ok(ServiceKind::Open, {Base});
+  error(ServiceKind::Open, {Base}, 24);
+  EXPECT_EQ(ok(ServiceKind::PathConf, {Base, 16}), 1u);
+  EXPECT_EQ(ok(ServiceKind::FpathConf, {FD, 21}), 65536u);
+  EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Open, {Base}), FD);
+}
+
+TEST_P(DarwinFileTest, PathConfMissingCatalogueNeverInventsRoot) {
+  Options.reset();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/");
+  EXPECT_FALSE(invoke(ServiceKind::PathConf, {Base, 15}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileInputs);
+  error(ServiceKind::FpathConf, {999, 15}, 9);
+  EXPECT_FALSE(invoke(ServiceKind::FpathConf, {1, 15}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FilePathConfKind);
+}
+
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinFileTest, testing::Values(4096, 16384));
 } // namespace
 } // namespace neverd::emulation::darwin_model

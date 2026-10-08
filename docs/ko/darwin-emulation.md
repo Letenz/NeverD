@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d492dd2ee1d6198857c35a5a17205ffecebc13658e7634c2d278cc345d5e659b -->
+<!-- i18n-source: 80b9a839d334a69d7ab8f8dcf310b8a192ae093f80fa7ebad87ee1e4b60af8a8 -->
 
 [← 문서 목록](README.md)
 
@@ -851,3 +851,15 @@ unlink, 일반/EXCL rename, 말단 링크/파일/link SWAP, 선언된 디렉터�
 기존 세 이름 표 거래는 루트, 연결되거나 보유된 후손, 전체 경로와 동적 공간을 게시 전에 검사합니다. 초기 이름/대상/참조, 파일 내용, 매핑 임대는 SWAP 비용을 줄이지 않습니다. 첫 초기 이름 변경은 별도 동적 경로/NUL을 차감하고 반복 교환은 기존 비용을 한 번 교체합니다. 새 항목/FD/생성 inode가 필요하지 않으며 같은 철자의 오래된 고아 객체도 실제 부모가 다르면 새 트리에 속하지 않습니다. 원시 대상은 유지되고 상대 해석은 새 부모에 결합됩니다. FD/dup 커서, CWD, 참조 대상과 매핑은 유지됩니다. 직접 루트는 자신의 stat 정책으로 ctime만 갱신하고 조상 이동은 후손 기록을 유지합니다. 정책 생략 시 전체 stat은 미지지만 inode는 실시간 열거에 사용하며 관련 열거 버전은 기존 영점 되감기 계약을 따릅니다. JSON 필드나 권한을 추가하지 않습니다.
 
 독립 ARM64 준비는 guarded 144-byte stat 36개, raw rename 16개, compile120s/native5s/drain1s/reap1s와 회수/사적 정리를 기록합니다. `directory-link-roots`와 `virtual-directory-link-roots`는 다섯 guest·C/CLI·Python에서 원생 식별과 전체 stat 상수를 검사합니다. 두 페이지 모델은 정확한 예산, 미개방 후손 초과, 고아 객체와 FD/항목/inode 고갈을 다룹니다. 이 절은 위 권한 안에서 이전 제한을 확장합니다. Intel 원생, 실제 iOS, hard link, ACL과 전체 OS/runtime/framework는 별도 검증·구현 과제입니다.
+
+## 고정 커널 pathconf 쿼리
+
+원시 pathconf(191) / fpathconf(192)는 XNU 고정 vnode 쿼리를 지원합니다:15/16/17→1,19/25→0,20/22/23→4096,21→65536,24→255. 링크/할당/I/O 선언과 전송 권고를 조회할 뿐 비동기 실행이나 권한을 활성화하지 않으며 페이지 크기나 카탈로그 예산을 파일시스템 값으로 추정하지 않습니다.
+
+전체 경로 링크 해석 또는 FD 조회가 low32 선택자보다 먼저입니다. CWD, 링크와 EFAULT/ENOENT/ENOTDIR/ELOOP 순서를 유지하고 알 수 없거나 닫힌 FD는 EBADF입니다. 유지된 일반 파일/디렉터리는 stat 없이 dup/이동/삭제/이름 재사용 후에도 조회됩니다. 입력/캡처 FD의 원시 종류는 알 수 없어 명시적으로 중단합니다. BSD int/캐리/보조 레지스터 계약을 사용하며 출력 복사, 커서, 메타데이터/열거, 항목/FD/inode를 바꾸지 않습니다. NAME_MAX, 대소문자 속성 및 미지 선택자는 조회 후에도 지원하지 않고 호스트 값이나 EINVAL을 추측하지 않습니다.
+
+kernel-pathconf, kernel-pathconf-values, kernel-pathconf-unsupported는 공통 동작, 독립80바이트 값, 기존 출력을 유지하는 중단 보고를 게스트/C/CLI/Python에서 검사합니다. 별도 ARM64 원시 준비는250회 조회와249회 SDK 대조를0.262초에 완료했으며5초 제한은 그대로입니다. 원시 Intel/실제 iOS/ACL/하드 링크/전체 런타임과 프레임워크는 미검증 또는 미구현입니다.
+
+[XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+`pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.

@@ -2023,6 +2023,35 @@ ServiceResult DarwinFiles::duplicate(const Descriptor &Source, uint32_t Minimum,
   return {FD, false};
 }
 
+std::optional<ServiceResult> DarwinFiles::pathconf(const Description &File,
+                                                   uint32_t Name,
+                                                   ProcessResult &Result) {
+  if (File.Type != Kind::File && File.Type != Kind::Directory)
+    return unsupported(Result, diagnostic::FilePathConfKind);
+  // These are the fixed XNU vn_pathconf results, independent of vnode stat,
+  // page size and filesystem VNOPs. Other selectors need filesystem knowledge,
+  // including invalid selectors whose rejection belongs to that filesystem.
+  switch (Name) {
+  case 15: // _PC_2_SYMLINKS
+  case 16: // _PC_ALLOC_SIZE_MIN
+  case 17: // _PC_ASYNC_IO
+    return returned(1);
+  case 19: // _PC_PRIO_IO
+  case 25: // _PC_SYNC_IO
+    return returned(0);
+  case 20: // _PC_REC_INCR_XFER_SIZE
+  case 22: // _PC_REC_MIN_XFER_SIZE
+  case 23: // _PC_REC_XFER_ALIGN
+    return returned(4096);
+  case 21: // _PC_REC_MAX_XFER_SIZE
+    return returned(65536);
+  case 24: // _PC_SYMLINK_MAX
+    return returned(255);
+  default:
+    return unsupported(Result, diagnostic::FilePathConf);
+  }
+}
+
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
                     ProcessResult &Result) {
@@ -2114,6 +2143,16 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
         return returned(IsDirectory, true);
       return resize(File, A[1], Result);
     }
+  }
+  if (Service == ServiceKind::PathConf) {
+    auto Resolved = resolvePath(A[0], AtCurrentDirectory);
+    if (!Resolved)
+      return Resolved.takeError();
+    if (auto *Error = std::get_if<uint32_t>(&*Resolved))
+      return returned(*Error, true);
+    if (auto *Reason = std::get_if<const char *>(&*Resolved))
+      return unsupported(Result, *Reason);
+    return pathconf(std::get<Description>(*Resolved), uint32_t(A[1]), Result);
   }
   if (Service == ServiceKind::Stat64 || Service == ServiceKind::Lstat64)
     return statusPath(A[0], A[1], AtCurrentDirectory, Result,
@@ -2207,6 +2246,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return write(File, Buffers, Count, Offset, Positioned, Result);
   }
   switch (Service) {
+  case ServiceKind::FpathConf:
+    return pathconf(File, uint32_t(A[1]), Result);
   case ServiceKind::Ftruncate: {
     if (File.Type != Kind::File || !(File.Flags & OpenAccessMask))
       return returned(InvalidArgument, true);

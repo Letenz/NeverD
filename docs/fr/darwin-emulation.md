@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d492dd2ee1d6198857c35a5a17205ffecebc13658e7634c2d278cc345d5e659b -->
+<!-- i18n-source: 80b9a839d334a69d7ab8f8dcf310b8a192ae093f80fa7ebad87ee1e4b60af8a8 -->
 
 [← Index de la documentation](README.md)
 
@@ -849,3 +849,15 @@ La préparation ARM64 privée conserve 14 vues guarded raw-stat, 11 opérations,
 La transaction des trois tables vérifie racines, descendants liés ou retenus, chemins complets et mémoire dynamique avant publication. Noms/cibles/références initiaux, contenu et leases de mapping ne fournissent aucun crédit SWAP. La première nouvelle clé réserve un chemin/NUL dynamique indépendant; les répétitions remplacent une fois l’ancien coût. Aucun nouvel entry, FD ou inode de création. L’appartenance suit les parents réels et non l’orthographe réutilisée d’un ancien objet orphelin. Les cibles brutes restent inchangées; résolution relative, FD/dup, curseurs, CWD, référents et mappings conservent leurs contrats. Les racines directes appliquent leurs propres politiques stat à ctime uniquement; les déplacements d’ancêtres conservent les descendants. Sans politique, stat complet reste inconnu mais inode reste disponible pour l’énumération vive; les versions concernées suivent le contrat de remise à zéro. Aucun champ JSON ou droit nouveau.
 
 La préparation ARM64 originale conserve 36 vues stat protégées de 144 octets, 16 raw rename, compile120s/native5s/drain1s/reap1s et récupération/nettoyage confirmés. `directory-link-roots` et `virtual-directory-link-roots` vérifient identité et stat complet constant via cinq guest, C/CLI et Python. Les modèles de deux tailles de page couvrent budgets exacts, dépassements non ouverts, orphelins et épuisement FD/entry/inode. Cette section étend les exclusions précédentes dans ces droits. Intel natif, iOS physique, hard links, ACL et OS/runtime/framework complet restent des travaux distincts.
+
+## Requêtes pathconf fixes du noyau
+
+pathconf(191) / fpathconf(192) couvrent les constantes vnode XNU :15/16/17→1,19/25→0,20/22/23→4096,21→65536,24→255. Ces observations de liens, allocation, I/O et transfert ne permettent ni exécution asynchrone ni autorisation; pages et budgets du catalogue ne déterminent pas ces valeurs.
+
+La résolution complète du chemin avec suivi des liens ou la recherche du FD précède le sélecteur low32. CWD et EFAULT/ENOENT/ENOTDIR/ELOOP sont conservés; FD absent/fermé donne EBADF. Les objets fichier/répertoire retenus restent interrogeables après dup, déplacement, suppression ou réutilisation du nom sans stat complet. Le type natif des flux capturés reste inconnu. Le contrat BSD int/carry/registre secondaire est conservé sans copie de sortie, modification du curseur, métadonnées/énumération ou réservation d’entrée/FD/inode. NAME_MAX, casse et sélecteurs inconnus restent non pris en charge après recherche, sans valeur hôte ni EINVAL supposé.
+
+kernel-pathconf, kernel-pathconf-values et kernel-pathconf-unsupported vérifient le comportement commun,80 octets littéraux indépendants et l’arrêt conservant la sortie précédente via invité/C/CLI/Python. Préparation ARM64 privée :250 requêtes,249 comparaisons SDK,0.262s avec limite5s inchangée. Intel natif/iOS physique/ACL/liens physiques/runtime et frameworks complets restent non validés ou non implémentés.
+
+[XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+`pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.

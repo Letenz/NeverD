@@ -1386,7 +1386,7 @@ source review passed. Evidence is frozen under
 `build-hvf-arm64/credential-observations/` and bound to the committed revision.
 
 The independent raw/SDK probe passed21 value checks and5 separate fault
-processes at unchanged5s. This host has16 groups, so positive short-capacity
+processes at unchanged 5 s. This host has16 groups, so positive short-capacity
 precedence was exercised natively. Native partial copy wrote32 bytes before
 EFAULT here; this observation is preserved separately and is not a portable
 prefix guarantee or a modeled partial copy.
@@ -1612,3 +1612,15 @@ The existing three-map transaction preflights both roots, all linked or held des
 Raw targets stay unchanged and relative lookup rebinds at the new actual parent. Held FD/dup cursors, CWD, file/directory referents and orphan mapping leases survive. Direct directory/link roots apply their own existing stat policies to ctime; ancestor moves preserve descendant records. Omitted policies retain unknown full stat, while known inodes remain available to live enumeration. Committed parent changes/direct directory moves invalidate the relevant enumeration version; rewind uses the existing contract. No new JSON fields or API authority are added.
 
 The original private ARM64 preparation records 36 guarded 144-byte stat views and 16 raw rename operations under compile120s/native5s/drain1s/reap1s, with actual reap and private cleanup. Original `directory-link-roots` and `virtual-directory-link-roots` cover common native identity and literal complete stat through five guest profiles, C/CLI and Python. Both-page model checks cover exact budgets, unopened overflow, retained orphans, missing grants and descriptor/entry/inode exhaustion. This extends the preceding directory/link exclusions only within these grants. Native Intel, physical iOS, hard links, ACLs and complete OS/runtime/framework execution remain separate coverage or implementation gaps.
+
+## Fixed kernel pathconf queries
+
+Raw `pathconf(191)` and `fpathconf(192)` implement the fixed XNU vnode queries: selectors 15/16/17 return 1,19/25 return 0,20/22/23 return 4096,21 returns 65536 and 24 returns 255. These are _PC_2_SYMLINKS, _PC_ALLOC_SIZE_MIN, _PC_ASYNC_IO, _PC_PRIO_IO, _PC_SYNC_IO, transfer recommendations and _PC_SYMLINK_MAX. They are query results; asynchronous execution and filesystem authorization remain separate unsupported services. The values do not follow guest page size, allocation policy or catalogue limits.
+
+Pathname import and full follow lookup precede selector handling, retaining CWD, terminal/intermediate links and native EFAULT/ENOENT/ENOTDIR/ELOOP ordering. fpathconf first looks up signed-low32 FD ownership; unknown/closed FDs return EBADF before selector handling. Known regular-file/directory descriptions retain these queries across dup, rename, unlink and name reuse without stat observations. Input/capture descriptions have unknown native kind and stop explicitly. Low32 int selectors and the existing BSD int/carry/secondary-register return contract apply. Queries do not copy output, advance cursors, change metadata/enumeration or reserve an entry/FD/inode. Filesystem-dependent selectors, including NAME_MAX, case sensitivity and unknown values, remain unsupported after lookup; neither the host filesystem nor a guessed EINVAL supplies them.
+
+Original kernel-pathconf checks both calls and carrier/error transitions; kernel-pathconf-values emits an independent 80-byte literal across guest/C/CLI/Python, while kernel-pathconf-unsupported preserves prior output and reports no scalar/error result. The private native ARM64 preparation passed 250 queries (249 SDK cross-checks) in 0.262 s under the unchanged 5 s deadline, including held removed objects and cursor preservation. Native Intel/physical iOS, ACLs, hard links and complete runtime/framework execution remain unvalidated or unsupported.
+
+[XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+`pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.

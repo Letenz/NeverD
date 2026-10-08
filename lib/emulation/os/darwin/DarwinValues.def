@@ -163,6 +163,8 @@ NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
 NEVERD_DARWIN_SERVICE(Pwrite, 154, Wide)
 NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
 NEVERD_DARWIN_SERVICE(GetRlimit, 194, Int)
+NEVERD_DARWIN_SERVICE(PathConf, 191, Int)
+NEVERD_DARWIN_SERVICE(FpathConf, 192, Int)
 NEVERD_DARWIN_SERVICE(Truncate, 200, Int)
 NEVERD_DARWIN_SERVICE(Ftruncate, 201, Int)
 NEVERD_DARWIN_SERVICE(Sysctl, 202, Int)
@@ -486,6 +488,11 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryPartialFlags,
                          "Darwin directory flags buffer is partially writable")
 NEVERD_DARWIN_DIAGNOSTIC(FileControl, "unsupported Darwin fcntl command")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FilePathConf,
+    "Darwin filesystem-dependent pathconf selector is not modeled")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FilePathConfKind, "Darwin pathconf native descriptor kind is not modeled")
 NEVERD_DARWIN_DIAGNOSTIC(FileSeek, "unsupported Darwin data/hole seek")
 NEVERD_DARWIN_DIAGNOSTIC(
     FilePartialRead,

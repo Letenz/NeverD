@@ -1,6 +1,6 @@
 **Языки**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d492dd2ee1d6198857c35a5a17205ffecebc13658e7634c2d278cc345d5e659b -->
+<!-- i18n-source: 80b9a839d334a69d7ab8f8dcf310b8a192ae093f80fa7ebad87ee1e4b60af8a8 -->
 
 [← Оглавление документации](README.md)
 
@@ -849,3 +849,15 @@ unlink, обычный/EXCL rename, листовой link/file/link SWAP и об
 Транзакция трёх таблиц проверяет корни, связанные/удерживаемые потомки, полные пути и динамическую память до публикации. Начальные имена/цели/ссылки на декларации, данные и mapping lease не дают кредита SWAP. Первая новая запись имени отдельно резервирует динамический путь/NUL; повторы заменяют старую стоимость один раз. Новые entry, FD или inode создания не потребляются. Принадлежность следует реальным родительским объектам, а не повторённому имени старого сироты. Байты цели неизменны, относительное разрешение привязывается к новому родителю; FD/dup, курсоры, CWD, адресаты и mappings сохраняются. Прямые корни применяют собственные stat-политики только к ctime, перемещение предка сохраняет потомков. Без политики полный stat неизвестен, известный inode остаётся для живого перечисления; версии используют существующий контракт перемотки к нулю. Нет новых JSON-полей или прав.
 
 Оригинальная ARM64-подготовка сохраняет 36 защищённых 144-byte stat видов, 16 raw rename, compile120s/native5s/drain1s/reap1s и подтверждённое завершение/очистку. `directory-link-roots` и `virtual-directory-link-roots` проверяют идентичность и полный константный stat через пять guest, C/CLI и Python. Модели двух страниц покрывают точные бюджеты, переполнение неоткрытых потомков, сирот и исчерпание FD/entry/inode. Раздел расширяет прежние исключения в пределах этих прав. Native Intel, физический iOS, hard links, ACL и полный OS/runtime/framework остаются отдельными пробелами.
+
+## Фиксированные запросы pathconf ядра
+
+pathconf(191) / fpathconf(192) поддерживают константы XNU vnode:15/16/17→1,19/25→0,20/22/23→4096,21→65536,24→255. Наблюдения о ссылках, выделении, I/O и передаче не включают асинхронное выполнение или права; они не выводятся из страниц либо бюджетов каталога.
+
+Полное разрешение пути со ссылками или поиск FD предшествует селектору low32. Сохраняются CWD и EFAULT/ENOENT/ENOTDIR/ELOOP; неизвестный/закрытый FD даёт EBADF. Удержанные файлы/каталоги остаются доступны запросам без полного stat после dup, перемещения, удаления и повторного использования имени. Тип потоков ввода/перехвата неизвестен. Сохраняются BSD int/carry/второй регистр; запрос не копирует вывод, не меняет курсоры, метаданные/перечисление или записи/FD/inode. NAME_MAX, чувствительность к регистру и неизвестные селекторы не поддержаны после поиска; значения хоста и предполагаемый EINVAL не используются.
+
+kernel-pathconf, kernel-pathconf-values и kernel-pathconf-unsupported проверяют общую семантику, независимые80 байт и остановку с сохранением вывода через guest/C/CLI/Python. Частная подготовка ARM64:250 запросов,249 сверок SDK,0.262с при неизменных5с. Native Intel/физический iOS/ACL/жёсткие ссылки/полные runtime и frameworks остаются непроверенными или нереализованными.
+
+[XNU vn_pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_vnops.c), [XNU pathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU fpathconf](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_descrip.c).
+
+`pathconf`: `file/` → ENOTDIR; `alias/`, `alias//` → 1 (selector15); `alias/.`, `alias/child` → ENOTDIR.

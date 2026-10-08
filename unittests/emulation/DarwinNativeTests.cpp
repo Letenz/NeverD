@@ -1103,6 +1103,15 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
   for (const auto &Test : Cases) {
     SCOPED_TRACE(Test.Mode);
     auto CaseInput = Input;
+    if (llvm::StringRef(Test.Mode) == "kernel-pathconf") {
+      const auto Catalogue = Root / Test.Mode;
+      ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "empty"));
+      for (const auto &[Name, Target] :
+           {std::pair{"alias", "data"}, std::pair{"dangling", "missing"},
+            std::pair{"cycle", "cycle"}})
+        std::filesystem::create_symlink(Target, Catalogue / Name);
+      CaseInput = (Catalogue / "data").string();
+    }
     if (llvm::StringRef(Test.Mode) == "symbolic-links") {
       const auto Catalogue = Root / "symbolic-links";
       ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "empty"));
