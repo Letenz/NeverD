@@ -16,6 +16,7 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/solver/BitVectorSolver.h"
 #include "neverd/solver/CnfEncoder.h"
 #include "neverd/solver/SatSolver.h"
 #include "neverd/solver/SatTypes.h"
@@ -25,6 +26,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <memory>
 
 using namespace neverd::solver;
 
@@ -222,6 +224,71 @@ TEST(CnfEncoder, CollidingGateIdentitiesStayDistinctAfterGrowth) {
       EXPECT_EQ(S.solve(Assumptions), SatResult::Unsat);
       Assumptions.back() = Second.withPolarity(!SecondValue);
       EXPECT_EQ(S.solve(Assumptions), SatResult::Unsat);
+    }
+  }
+}
+
+TEST(CnfEncoder, PlacementFingerprintCollisionsOutliveSourceAndGrowth) {
+  // These conjunctions have different 64-bit identity hashes and the same
+  // 32-bit placement fingerprint. Exact operands must decide their identity.
+  const unsigned FirstIndices[] = {4, 56, 65, 90, 91, 93};
+  const unsigned SecondIndices[] = {10, 24, 27, 40, 53, 67};
+  for (auto Polarity : {GatePolarity::Positive, GatePolarity::Negative}) {
+    neverd::symbolic::SymContext Context;
+    auto Source = std::make_unique<BitVectorSolver>(Context);
+    auto &E = Source->blaster().encoder();
+    llvm::SmallVector<SatLit, 96> Inputs;
+    for (unsigned I = 0; I != 96; ++I)
+      Inputs.push_back(E.freshLit());
+    llvm::SmallVector<SatLit, 6> FirstTerms, SecondTerms;
+    for (unsigned I : FirstIndices)
+      FirstTerms.push_back(Inputs[I]);
+    for (unsigned I : SecondIndices)
+      SecondTerms.push_back(Inputs[I]);
+    const auto First = E.mkAnd(FirstTerms, Polarity);
+    const auto Second = E.mkAnd(SecondTerms, Polarity);
+    ASSERT_NE(First, Second);
+
+    for (unsigned I = 0; I != Inputs.size(); ++I)
+      for (unsigned Offset : {1U, 7U, 23U})
+        E.mkXor(Inputs[I], Inputs[(I + Offset) % Inputs.size()]);
+    const auto Gates = E.numGates();
+    const auto SourceClauses = Source->sat().numClauses();
+    auto Copy = Source->cloneEncoding();
+    ASSERT_TRUE(Copy);
+    auto &Copied = Copy->blaster().encoder();
+    std::reverse(FirstTerms.begin(), FirstTerms.end());
+    std::reverse(SecondTerms.begin(), SecondTerms.end());
+    EXPECT_EQ(Copied.mkAnd(FirstTerms), First);
+    EXPECT_EQ(Copied.mkAnd(SecondTerms), Second);
+    EXPECT_EQ(Copied.numGates(), Gates);
+    EXPECT_EQ(Source->sat().numClauses(), SourceClauses);
+    Source.reset();
+    EXPECT_EQ(Copied.mkAnd(FirstTerms), First);
+    EXPECT_EQ(Copied.mkAnd(SecondTerms), Second);
+
+    for (unsigned Assignment = 0; Assignment != 4096; ++Assignment) {
+      SCOPED_TRACE(Assignment);
+      llvm::SmallVector<SatLit, 97> Assumptions;
+      for (auto Input : Inputs)
+        Assumptions.push_back(~Input);
+      bool FirstValue = true, SecondValue = true;
+      for (unsigned I = 0; I != 6; ++I) {
+        const bool A = (Assignment >> I) & 1;
+        const bool B = (Assignment >> (I + 6)) & 1;
+        Assumptions[FirstIndices[I]] = Inputs[FirstIndices[I]].withPolarity(A);
+        Assumptions[SecondIndices[I]] =
+            Inputs[SecondIndices[I]].withPolarity(B);
+        FirstValue &= A;
+        SecondValue &= B;
+      }
+      ASSERT_EQ(Copy->sat().solve(Assumptions), SatResult::Sat);
+      EXPECT_EQ(Copy->sat().modelValue(First) == SatValue::True, FirstValue);
+      EXPECT_EQ(Copy->sat().modelValue(Second) == SatValue::True, SecondValue);
+      Assumptions.push_back(First.withPolarity(!FirstValue));
+      EXPECT_EQ(Copy->sat().solve(Assumptions), SatResult::Unsat);
+      Assumptions.back() = Second.withPolarity(!SecondValue);
+      EXPECT_EQ(Copy->sat().solve(Assumptions), SatResult::Unsat);
     }
   }
 }
