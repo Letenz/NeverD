@@ -36,7 +36,11 @@ std::string typeToC(const TypeRef &Ty);
 
 /// Readonly printable C/wchar image bytes as `"..."` / `L"..."`.
 /// Non-ASCII or writable/executable bytes stay unnamed. Empty NUL-only
-/// strings stay unnamed unless \p AllowEmpty (MSVC `??_C@` publics).
+/// strings stay unnamed unless \p AllowEmpty (MSVC `??_C@` publics).  Bytes
+/// that belong to a data object the image's symbols size stay unnamed too,
+/// unless the object is the string: an address inside the object points
+/// into it, and an object whose bytes go on past the terminator with more
+/// than zeros holds more than the text.
 std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
                                               bool AllowEmpty = false);
 

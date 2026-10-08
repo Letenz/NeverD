@@ -515,6 +515,51 @@ int main(void) {
   }
 }
 
+TEST(CImageObjects, ATableWhoseBytesReadAsTextStaysATable) {
+  // {10, 20, 0x4241, 40}: the first word reads as the UTF-16 text "\n" and
+  // the third as "AB", but no literal holds the table the caller reads.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  std::vector<uint8_t> Rodata(0x20, 0);
+  Rodata[0] = 10;
+  Rodata[4] = 20;
+  Rodata[8] = 'A';
+  Rodata[9] = 'B';
+  Rodata[12] = 40;
+  Img.Segments.push_back(
+      segment(".text", TextVA, std::vector<uint8_t>(0x10),
+              SegmentFlags::Readable | SegmentFlags::Executable));
+  Img.Segments.push_back(
+      segment(".rodata", RodataVA, std::move(Rodata), SegmentFlags::Readable));
+  Img.Symbols = {dataSymbol("vals", RodataVA, 16)};
+  const TypeRef U64 = NdType::makeInt(8, false);
+  HighFunc Whole = function("whole", U64, TextVA);
+  Whole.Body = {returnStatement(
+      HighExpr::makeConst(RodataVA, 8, ConstantAddressProvenance::Address))};
+  HighFunc Third = function("third_place", U64, TextVA + 4);
+  Third.Body = {returnStatement(HighExpr::makeConst(
+      RodataVA + 8, 8, ConstantAddressProvenance::Address))};
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Whole, Third}, OS, Options));
+  OS.flush();
+  EXPECT_EQ(Source.find("L\""), NotFound) << Source;
+  EXPECT_EQ(Source.find("\"AB\""), NotFound) << Source;
+  source_call_execution_test::compileAndRun(Source + R"(
+int main(void) {
+  const int32_t *all = (const int32_t *)(uintptr_t)whole();
+  const int32_t *third = (const int32_t *)(uintptr_t)third_place();
+  return all[3] != 40 || third[0] != 0x4241 || third[-2] != 10;
+}
+)");
+}
+
 TEST(CImageObjects, LiteralsSpellExactlyTheirBytes) {
   BinaryImage Img;
   Img.Arch = Arch::X64;
