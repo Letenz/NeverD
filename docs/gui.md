@@ -43,6 +43,13 @@ set `NEVERD_ENGINE_LIBRARY` to the runtime DLL and `NEVERD_ENGINE_IMPLIB` to its
 matching import `.lib`; make runtime dependencies available alongside the
 worker.
 
+Open a binary or a project with **File → Open**, or drag one file from
+the system file manager onto the quick-start dialog, workbench or a floating
+view. File drops use the same open workflow, including the save/discard/cancel
+prompt for unsaved changes. Drop one existing file at a time; directories and
+web URLs are not opened. Opening by drag and drop leaves the source file in
+place.
+
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
 worker never links the test engine.
