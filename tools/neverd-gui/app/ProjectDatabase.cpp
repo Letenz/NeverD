@@ -164,6 +164,7 @@ const QStringList &ProjectDatabase::sidecarSuffixes() {
   static const QStringList suffixes = {
       QStringLiteral(".neverd-annotations.json"),
       QStringLiteral(".neverd-renames.json"),
+      QStringLiteral(".neverd-functions.json"),
       QStringLiteral(".neverd-history.json")};
   return suffixes;
 }

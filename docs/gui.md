@@ -192,6 +192,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | F5 / Tab | Pseudocode / switch between disassembly and pseudocode |
 | X / Ctrl+X / Ctrl+J | References to the operand / to the item / from the item |
 | N | Rename the function |
+| P | Create a function at the address (**Edit → Functions** also deletes the current one) |
 | : or ; | Comment the address |
 | Alt+M / Ctrl+M | Mark a position / jump to a marked position |
 | Ctrl+P / Ctrl+L / Ctrl+S / Ctrl+E | Choose a function / name / segment / entry point |
@@ -223,11 +224,11 @@ under Wayland the compositor is not told which dialogs are modal
 
 **File → Save** (Ctrl+W) packs the project into a NeverD database next to the
 input: `ls` saves to `ls.nddb`. A database is one SQLite file holding the input
-itself, its comments, renames and edit history, and the workbench state
-(location, graph mode, bookmarks and desktop). Each save is a single
-transaction, so a database is never left half written; the input is stored in
-independently compressed chunks that compress and expand in parallel, and an
-unchanged input is not rewritten.
+itself, its comments, renames, function edits and edit history, and the
+workbench state (location, graph mode, bookmarks and desktop). Each save is a
+single transaction, so a database is never left half written; the input is
+stored in independently compressed chunks that compress and expand in parallel,
+and an unchanged input is not rewritten.
 
 Open a `.nddb` file directly to continue a project anywhere, even without the
 original binary: the input is unpacked into a per-database working directory
@@ -240,15 +241,24 @@ it. Closing the window updates the saved location of an existing database.
 
 ## Edits, history and analysis
 
-Comments are staged and saved explicitly; renames commit at once (staged
-comments are saved first). Opening another file, restarting the worker or
-quitting with unsaved comments offers Save, Discard and Cancel. Edits prepared
-for a session that has since closed are refused, never applied to the new one.
-Annotation and rename commands have bounded undo/redo history bound to the input
-hash and sidecar contents; a write-ahead journal recovers an interrupted save,
-and foreign edits disable replay instead of silently applying commands to
-another state. One worker owns a writable input through an operating-system
-advisory lock.
+Comments are staged and saved explicitly; renames and function edits commit at
+once (staged comments are saved first). Opening another file, restarting the
+worker or quitting with unsaved comments offers Save, Discard and Cancel. Edits
+prepared for a session that has since closed are refused, never applied to the
+new one. Annotation, rename and function edit commands have bounded undo/redo
+history bound to the input hash and sidecar contents; a write-ahead journal
+recovers an interrupted save, and foreign edits disable replay instead of
+silently applying commands to another state. One worker owns a writable input
+through an operating-system advisory lock.
+
+**Edit → Functions → Create function** (P) starts a function at the cursor,
+inside another function or in code nothing reaches; **Delete function** stops
+treating the current function as one. The last edit at an address decides over
+symbols, the function detector and analysis, and the edits are kept in
+`<input>.neverd-functions.json`, which the command line reads too (`neverd
+function-edits <input> --create <address>`, `--delete <address>`, `--list`).
+A function edit drops whole-program analysis results: analysis continues
+function by function until **Analyze** runs again.
 
 Opening a file never starts whole-program analysis. The listing, function list,
 references and graph come from the loader and from per-function work: a

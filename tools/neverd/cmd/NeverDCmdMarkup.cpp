@@ -301,4 +301,77 @@ int runRename(neverd_session_t Sess) {
   return 0;
 }
 
+int runFunctionEdits(neverd_session_t Sess) {
+  const bool Create = !FunctionCreate.empty();
+  const bool Delete = !FunctionDelete.empty();
+  if (Create && Delete) {
+    WithColor::error() << "--create and --delete edit one function at a time\n";
+    return 1;
+  }
+  if (Create || Delete) {
+    std::optional<uint64_t> Addr =
+        parseAddrArg(Create ? FunctionCreate : FunctionDelete);
+    if (!Addr) {
+      WithColor::error() << "invalid function address\n";
+      return 1;
+    }
+    // The symbol view of a stripped image lists no detected function; look
+    // further before refusing to delete one, as the workbench lists them.
+    if (Delete && neverd_func_find_by_addr(Sess, *Addr) < 0 &&
+        neverd_session_discover_functions(Sess) < 0) {
+      WithColor::error() << "function discovery failed: " << takeLastError(Sess)
+                         << "\n";
+      return 1;
+    }
+    if ((Create ? neverd_func_create : neverd_func_delete)(Sess, *Addr) != 0) {
+      WithColor::error() << (Create ? "create" : "delete")
+                         << " failed: " << takeLastError(Sess) << "\n";
+      return 1;
+    }
+    if (neverd_functions_save(Sess) != 0) {
+      WithColor::error() << "function edits save failed: "
+                         << takeLastError(Sess) << "\n";
+      return 1;
+    }
+    if (JsonOutput) {
+      json::Object Result;
+      Result["addr"] = "0x" + utohexstr(*Addr);
+      Result["created"] = Create;
+      outs() << json::Value(std::move(Result)) << "\n";
+    } else {
+      outs() << (Create ? "Created function at 0x" : "Deleted function at 0x")
+             << utohexstr(*Addr) << "\n";
+    }
+    return 0;
+  }
+
+  const char *Json = neverd_functions_json(Sess);
+  if (JsonOutput) {
+    outs() << (Json ? Json : "[]") << "\n";
+  } else {
+    outs() << "\nFunction edits:\n";
+    outs() << format("  %-18s %s\n", "Address", "Edit");
+    outs() << "  " << std::string(30, '-') << "\n";
+    size_t Count = 0;
+    auto Parsed = json::parse(Json ? Json : "[]");
+    if (!Parsed) {
+      consumeError(Parsed.takeError());
+    } else if (const json::Array *Arr = Parsed->getAsArray()) {
+      for (const json::Value &V : *Arr) {
+        const json::Object *Obj = V.getAsObject();
+        if (!Obj)
+          continue;
+        outs() << format("  %-18s %s\n",
+                         Obj->getString("addr").value_or("").str().c_str(),
+                         Obj->getString("state").value_or("").str().c_str());
+        ++Count;
+      }
+    }
+    if (Count == 0)
+      outs() << "  (none)\n";
+  }
+  neverd_free_string(Json);
+  return 0;
+}
+
 } // namespace neverd::cli

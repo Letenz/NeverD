@@ -259,9 +259,11 @@ are milliseconds, p50 / p95.
 | Pseudocode, again | 3.0 / 5.5 | 10.0 / 13.7 | 9.1 / 94.8 |
 
 The worker lays out a graph in 1-13 ms; a graph of a function seen for the
-first time waits for that function's analysis, and only the last graph is kept,
-so revisiting one analyzes it again. On ntoskrnl two sampled functions had no
-graph ("function not found").
+first time waits for that function's analysis, mostly its LowIR lift. The
+worker now keeps the last 64 laid-out graphs: on ntoskrnl revisiting a graph
+then took 5.0 / 12.9 ms instead of 187 / 426 ms. The two sampled ntoskrnl
+"functions" without a graph ("function not found") are text inside `.text`
+that function discovery took for code.
 
 ## Synthetic viewport harness
 

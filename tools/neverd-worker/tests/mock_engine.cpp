@@ -36,9 +36,27 @@ constexpr std::uint64_t RodataBase = Base + 0x3100, RodataSize = 0x20;
 std::uint64_t slotTarget(std::uint64_t index) {
   return index == DataSlots - 1 ? RodataBase + 8 : Base + 16 * (index + 1);
 }
+constexpr int ImageFunctions = 600;
+constexpr std::uint64_t CodeSize = 16 * ImageFunctions;
+/// The image's functions, one every 16 bytes, with the user's edits applied
+/// (true created, false deleted), in address order.
+std::vector<std::uint64_t>
+listedFunctions(const std::map<std::uint64_t, bool> &edits) {
+  std::vector<std::uint64_t> result;
+  for (int i = 0; i < ImageFunctions; ++i)
+    if (!edits.count(Base + 16 * i))
+      result.push_back(Base + 16 * i);
+  for (const auto &[address, created] : edits)
+    if (created)
+      result.push_back(address);
+  std::sort(result.begin(), result.end());
+  return result;
+}
 struct MockSession {
   std::string path, error;
   std::map<std::uint64_t, std::string> annotations, names;
+  std::map<std::uint64_t, bool> functionEdits;
+  std::vector<std::uint64_t> functions = listedFunctions({});
   neverd_load_progress_fn progress = nullptr;
   void *progressUser = nullptr;
 };
@@ -144,27 +162,50 @@ const char *neverd_dashboard_json(neverd_session_t s) {
   return copy(
       Json{{"hashes", {{"sha256", digest + digest + digest + digest}}}}.dump());
 }
-int neverd_func_count(neverd_session_t) { return 600; }
+int neverd_func_count(neverd_session_t s) {
+  return static_cast<int>(session(s)->functions.size());
+}
 // The fixture's detector finds nothing the image does not list.
-int neverd_session_discover_functions(neverd_session_t) { return 600; }
-neverd_va_t neverd_func_entry(neverd_session_t, int index) {
-  return Base + 16 * index;
+int neverd_session_discover_functions(neverd_session_t s) {
+  return neverd_func_count(s);
 }
-int neverd_func_size(neverd_session_t, int) { return 16; }
+neverd_va_t neverd_func_entry(neverd_session_t s, int index) {
+  const auto &functions = session(s)->functions;
+  return index >= 0 && index < static_cast<int>(functions.size())
+             ? functions[index]
+             : 0;
+}
+// Up to the next function, at most the 16 bytes of an image function.
+int neverd_func_size(neverd_session_t s, int index) {
+  const auto &functions = session(s)->functions;
+  if (index < 0 || index >= static_cast<int>(functions.size()))
+    return 16;
+  const auto end = index + 1 < static_cast<int>(functions.size())
+                       ? functions[index + 1]
+                       : Base + CodeSize;
+  return static_cast<int>(std::min<std::uint64_t>(16, end - functions[index]));
+}
 const char *neverd_func_name(neverd_session_t s, int index) {
-  const auto address = Base + 16 * index;
+  const auto address = neverd_func_entry(s, index);
   auto it = session(s)->names.find(address);
-  return copy(it == session(s)->names.end()
-                  ? "function_" + std::to_string(index)
-                  : it->second);
+  if (it != session(s)->names.end())
+    return copy(it->second);
+  if ((address - Base) % 16 == 0)
+    return copy("function_" + std::to_string((address - Base) / 16));
+  char name[32];
+  std::snprintf(name, sizeof name, "sub_%llX",
+                static_cast<unsigned long long>(address));
+  return copy(name);
 }
-int neverd_func_find_by_addr(neverd_session_t, neverd_va_t address) {
-  return address >= Base && address - Base < 9600 && (address - Base) % 16 == 0
-             ? static_cast<int>((address - Base) / 16)
+int neverd_func_find_by_addr(neverd_session_t s, neverd_va_t address) {
+  const auto &functions = session(s)->functions;
+  const auto it = std::lower_bound(functions.begin(), functions.end(), address);
+  return it != functions.end() && *it == address
+             ? static_cast<int>(it - functions.begin())
              : -1;
 }
 int neverd_func_find_by_name(neverd_session_t s, const char *name) {
-  for (int i = 0; i < 600; ++i) {
+  for (int i = 0, count = neverd_func_count(s); i < count; ++i) {
     const auto *value = neverd_func_name(s, i);
     const bool match = std::string(value) == name;
     neverd_free_string(value);
@@ -829,6 +870,52 @@ int neverd_renames_load(neverd_session_t s) {
     for (const auto &item : values)
       session(s)->names[parseAddress(item.at("addr").get<std::string>())] =
           item.at("renamed");
+    return 0;
+  } catch (...) {
+    return 1;
+  }
+}
+// Function edits as the engine keeps them: the last edit at an address
+// decides.
+int neverd_func_create(neverd_session_t s, neverd_va_t address) {
+  auto &state = *session(s);
+  if (address < Base || address - Base >= CodeSize) {
+    state.error = hexAddress(address) + " is not in executable code";
+    return -1;
+  }
+  if (neverd_func_find_by_addr(s, address) >= 0) {
+    state.error = "a function already starts at " + hexAddress(address);
+    return -1;
+  }
+  state.functionEdits[address] = true;
+  state.functions = listedFunctions(state.functionEdits);
+  return 0;
+}
+int neverd_func_delete(neverd_session_t s, neverd_va_t address) {
+  auto &state = *session(s);
+  if (neverd_func_find_by_addr(s, address) < 0) {
+    state.error = "no function starts at " + hexAddress(address);
+    return -1;
+  }
+  state.functionEdits[address] = false;
+  state.functions = listedFunctions(state.functionEdits);
+  return 0;
+}
+const char *neverd_functions_json(neverd_session_t s) {
+  Json result = Json::array();
+  for (const auto &[address, created] : session(s)->functionEdits)
+    result.push_back({{"addr", hexAddress(address)},
+                      {"state", created ? "created" : "deleted"}});
+  return copy(result.dump());
+}
+int neverd_functions_load(neverd_session_t s) {
+  try {
+    std::map<std::uint64_t, bool> edits;
+    for (const auto &item : read(session(s)->path + ".neverd-functions.json"))
+      edits[parseAddress(item.at("addr").get<std::string>())] =
+          item.at("state").get<std::string>() == "created";
+    session(s)->functionEdits = std::move(edits);
+    session(s)->functions = listedFunctions(session(s)->functionEdits);
     return 0;
   } catch (...) {
     return 1;

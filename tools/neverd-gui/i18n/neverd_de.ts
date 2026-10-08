@@ -711,6 +711,22 @@
         <source>List the instructions that refer to strings</source>
         <translation>Die Anweisungen auflisten, die auf Zeichenketten verweisen</translation>
     </message>
+    <message>
+        <source>Create &amp;function</source>
+        <translation>&amp;Funktion erstellen</translation>
+    </message>
+    <message>
+        <source>Start a function at the current address</source>
+        <translation>Eine Funktion an der aktuellen Adresse beginnen</translation>
+    </message>
+    <message>
+        <source>&amp;Delete function</source>
+        <translation>Funktion &amp;löschen</translation>
+    </message>
+    <message>
+        <source>Stop treating the current function as one</source>
+        <translation>Die aktuelle Funktion nicht mehr als Funktion behandeln</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1074,6 +1090,10 @@
     <message>
         <source>&amp;Help</source>
         <translation>&amp;Hilfe</translation>
+    </message>
+    <message>
+        <source>&amp;Functions</source>
+        <translation>&amp;Funktionen</translation>
     </message>
 </context>
 <context>
@@ -2094,6 +2114,14 @@ Mit Vorzeichen: %4</translation>
     <message>
         <source>Strings: %1, %2 first, at least %3 columns</source>
         <translation>Zeichenketten: %1, zuerst %2, mindestens %3 Spalten</translation>
+    </message>
+    <message>
+        <source>Created a function at %1</source>
+        <translation>Funktion bei %1 erstellt</translation>
+    </message>
+    <message>
+        <source>Deleted the function at %1</source>
+        <translation>Funktion bei %1 gelöscht</translation>
     </message>
 </context>
 </TS>
