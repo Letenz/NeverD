@@ -301,6 +301,20 @@ TEST(RustEH, IgnoresAnImageWithoutTheRustRuntime) {
   EXPECT_FALSE(Img.ExceptionMetadata.RustRuntime.has_value());
 }
 
+TEST(RustEH, WindowsImportsAreNotTheRustRuntime) {
+  // `RaiseException` once read as a v0 Rust symbol, so every PE that
+  // imported it had its C++ frames classified as Rust's.
+  BinaryImage Img = makeImage();
+  for (const char *Name : {"RaiseException", "_RTC_CheckEsp"}) {
+    Symbol Import;
+    Import.Name = Name;
+    Import.Addr = kTextVA + 0x900;
+    Import.IsFunc = true;
+    Img.Symbols.push_back(std::move(Import));
+  }
+  EXPECT_FALSE(rust_eh::hasRustRuntime(Img));
+}
+
 // A PE executable keeps its names in a PDB, so a Rust image built for MSVC
 // reaches this pass with no Rust symbol to find -- and MSVC is the target
 // where Rust needs recognizing most, because its frames use the same
@@ -396,6 +410,22 @@ TEST(RustMangling, DemanglesV0Symbols) {
 TEST(RustMangling, LeavesNonRustNamesAlone) {
   EXPECT_TRUE(demangleRustName("_ZNSt6vectorIiE9push_backERKi").empty());
   EXPECT_TRUE(demangleRustName("main").empty());
+}
+
+TEST(RustMangling, NamesThatStartWithRAreNotV0) {
+  // A v0 symbol is `_R` and the tag of a path.  Windows APIs and MSVC's
+  // run-time checks start with `R` or `_R` and spell no such tag.
+  for (const char *Name : {"ReadFile", "RaiseException", "_RTC_CheckEsp"}) {
+    EXPECT_FALSE(isRustMangledName(Name)) << Name;
+    EXPECT_TRUE(demangleRustName(Name).empty()) << Name;
+  }
+}
+
+TEST(RustMangling, ReadsLegacyEscapes) {
+  EXPECT_EQ(demangleRustName("_ZN58_$LT$alloc..string..String$u20$as$u20$"
+                             "core..fmt..Write$GT$9write_str"
+                             "17h3333333333333333E"),
+            "<alloc::string::String as core::fmt::Write>::write_str");
 }
 
 } // namespace
