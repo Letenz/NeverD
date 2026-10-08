@@ -45,11 +45,24 @@ inline llvm::StringRef cNameOfSymbol(llvm::StringRef Symbol,
   return Symbol;
 }
 
+/// Whether \p Name is already the symbol on \p Format and \p Target, which a
+/// format's underscore does not decorate (SymbolDecorations.def).
+inline bool isUndecoratedSymbol(llvm::StringRef Name, BinaryFormat Format,
+                                Arch Target) {
+#define NEVERD_ABI_UNDECORATED_PREFIX(FormatId, ArchId, Prefix)                \
+  if (Format == BinaryFormat::FormatId && Target == Arch::ArchId &&            \
+      Name.starts_with(Prefix))                                                \
+    return true;
+#include "neverd/loader/SymbolDecorations.def"
+  return false;
+}
+
 /// The symbol C name \p Name links as, which an assembler label must spell.
 inline std::string symbolOfCName(llvm::StringRef Name, BinaryFormat Format,
                                  Arch Target) {
-  return (llvm::StringRef(hasABIUnderscore(Format, Target) ? "_" : "") + Name)
-      .str();
+  const bool Underscore = hasABIUnderscore(Format, Target) &&
+                          !isUndecoratedSymbol(Name, Format, Target);
+  return (llvm::StringRef(Underscore ? "_" : "") + Name).str();
 }
 
 } // namespace neverd

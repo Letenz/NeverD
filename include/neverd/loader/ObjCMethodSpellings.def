@@ -1,0 +1,24 @@
+//===- ObjCMethodSpellings.def - How ObjC methods are named -----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The two kinds of Objective-C method, as clang's symbol names mark them and
+/// as the GNU Objective-C runtime names them in C.
+///
+///   NEVERD_OBJC_METHOD_KIND(Marker, CPrefix, IsClassMethod)
+///       a method whose symbol is `<Marker>[Class selector]` and whose C name
+///       starts with CPrefix: `-[NSString length]` is `_i_NSString__length`
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_OBJC_METHOD_KIND
+#define NEVERD_OBJC_METHOD_KIND(Marker, CPrefix, IsClassMethod)
+#endif
+
+NEVERD_OBJC_METHOD_KIND("-", "_i", false)
+NEVERD_OBJC_METHOD_KIND("+", "_c", true)
+
+#undef NEVERD_OBJC_METHOD_KIND

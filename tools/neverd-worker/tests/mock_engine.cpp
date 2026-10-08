@@ -161,6 +161,10 @@ void neverd_free_string(const char *value) {
   std::free(const_cast<char *>(value));
 }
 const char *neverd_version_number() { return copy("test-1.0"); }
+const char *neverd_headers_json(neverd_session_t) {
+  return copy(R"({"language":{"runtime":"c","secondary":[],"evidence":[]}})");
+}
+
 const char *neverd_dashboard_json(neverd_session_t s) {
   // Deterministic fixture-only identity. The real engine uses SHA-256; the
   // production real-engine test verifies that digest against Python hashlib.
