@@ -45,10 +45,18 @@ void validateRow(std::string_view table, const Json &row) {
       throw Error("history_invalid", "Rename text is missing");
     (void)stringField(row, "original", {}, 4096);
     (void)stringField(row, "renamed", {}, 4096);
-  } else {
+  } else if (table == "functions") {
     const auto state = stringField(row, "state", {}, 16);
     if (state != "created" && state != "deleted")
       throw Error("history_invalid", "Function edit state is invalid");
+  } else {
+    // The engine checks a data item against the image when it loads one.
+    (void)stringField(row, "kind", {}, 32);
+    if (!row.contains("size") || !row.at("size").is_number_unsigned() ||
+        row.at("size").get<std::uint64_t>() == 0)
+      throw Error("history_invalid", "Data item size is invalid");
+    if (row.contains("encoding"))
+      (void)stringField(row, "encoding", {}, 64);
   }
 }
 

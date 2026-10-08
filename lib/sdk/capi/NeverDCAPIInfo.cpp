@@ -385,6 +385,53 @@ const char *neverd_strings_ex_json(neverd_session_t Sess,
   return dupStr(Buf);
 }
 
+const char *neverd_string_at(neverd_session_t Sess, neverd_va_t Addr,
+                             const char *OptionsJson) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return nullptr;
+  }
+  strings::ScanOptions Options;
+  Options.MinLength = 1;
+  if (const auto Error = parseStringOptions(OptionsJson, Options);
+      !Error.empty()) {
+    S->setError(Error);
+    return nullptr;
+  }
+  // A string that does not end within this many bytes is not read.
+  constexpr size_t Window = 65536;
+  const Segment *Seg = S->Img.getSegmentFor(Addr);
+  const uint64_t Offset = Seg && Addr >= Seg->VA ? Addr - Seg->VA : 0;
+  if (!Seg || Addr < Seg->VA || Offset >= Seg->Data.size()) {
+    S->setError("no initialized data at " + vaHex(Addr));
+    return nullptr;
+  }
+  const llvm::ArrayRef<uint8_t> Bytes(
+      Seg->Data.data() + Offset,
+      std::min<size_t>(Window, Seg->Data.size() - static_cast<size_t>(Offset)));
+  std::optional<strings::FoundString> First;
+  strings::scan(Bytes, Options, [&](strings::FoundString &&Found) {
+    if (!First)
+      First = std::move(Found);
+  });
+  if (!First || First->Offset != 0) {
+    S->setError("no string starts at " + vaHex(Addr));
+    return nullptr;
+  }
+  llvm::json::Object Row{
+      {"addr", vaHex(Addr)},
+      {"chars", static_cast<int64_t>(First->Chars)},
+      {"encoding", strings::encodingName(First->Kind)},
+      {"length", static_cast<int64_t>(First->Bytes)},
+      {"unit", static_cast<int64_t>(strings::encodingUnitBytes(First->Kind))},
+      {"value", std::move(First->Text)}};
+  return dupStr(jsonToString(llvm::json::Value(std::move(Row))));
+}
+
 const char *neverd_string_encodings_json(void) {
   std::string Buf;
   llvm::raw_string_ostream OS(Buf);

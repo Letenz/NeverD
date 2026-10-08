@@ -31,6 +31,9 @@ constexpr std::uint64_t Base = 0xffff800012340000ULL;
 constexpr std::uint64_t DataBase = Base + 0x3000, DataSlots = 8;
 // Read-only data holding a UTF-8 and a UTF-16LE string.
 constexpr std::uint64_t RodataBase = Base + 0x3100, RodataSize = 0x20;
+// Unwritten data: the C library's stderr, copied in as an ELF program's,
+// then data only code reaches.
+constexpr std::uint64_t BssBase = Base + 0x3200, BssSize = 0x40;
 /// The pointer data slot \p index holds: function_(index + 1), except the
 /// last slot, which holds the UTF-16LE string.
 std::uint64_t slotTarget(std::uint64_t index) {
@@ -378,11 +381,14 @@ const char *neverd_code_refs_json(neverd_session_t s, neverd_va_t firstEntry,
     if (index == 7) {
       refs.push_back({hexAddress(entry + 2), hexAddress(RodataBase), "offset"});
       refs.push_back({hexAddress(entry + 3),
-                      hexAddress(DataBase + (DataSlots - 1) * 8), "read"});
+                      hexAddress(DataBase + (DataSlots - 1) * 8), "read", 8});
       refs.push_back(
           {hexAddress(entry + 4), hexAddress(RodataBase + 3), "offset"});
       refs.push_back(
           {hexAddress(entry + 5), hexAddress(RodataBase + 11), "offset"});
+      // It also reads eight bytes of unwritten data no symbol names.
+      refs.push_back(
+          {hexAddress(entry + 6), hexAddress(BssBase + 0x30), "read", 8});
     }
   }
   return copy(
@@ -712,7 +718,11 @@ const char *neverd_segments_json(neverd_session_t) {
                            {{"name", ".rodata"},
                             {"va", hexAddress(RodataBase)},
                             {"size", "0x20"},
-                            {"flags", "R--"}}})
+                            {"flags", "R--"}},
+                           {{"name", ".bss"},
+                            {"va", hexAddress(BssBase)},
+                            {"size", "0x40"},
+                            {"flags", "RW-"}}})
                   .dump());
 }
 const char *neverd_sections_json(neverd_session_t) {
@@ -740,14 +750,25 @@ const char *neverd_sections_json(neverd_session_t) {
                             {"file_off", 0x4100},
                             {"file_sz", RodataSize},
                             {"alignment", 16},
-                            {"flags", "R--"}}})
+                            {"flags", "R--"}},
+                           {{"name", ".bss"},
+                            {"segment", ".bss"},
+                            {"va", hexAddress(BssBase)},
+                            {"size", BssSize},
+                            {"file_off", 0x4120},
+                            {"file_sz", 0},
+                            {"alignment", 32},
+                            {"flags", "RW-"}}})
                   .dump());
 }
 const char *neverd_symbols_json(neverd_session_t) {
-  return copy(Json::array({{{"addr", hexAddress(Base)},
-                            {"name", "function_0"},
-                            {"type", "function"}}})
-                  .dump());
+  return copy(
+      Json::array(
+          {{{"addr", hexAddress(Base)},
+            {"name", "function_0"},
+            {"type", "function"}},
+           {{"addr", hexAddress(BssBase)}, {"name", "stderr"}, {"size", 8}}})
+          .dump());
 }
 const char *neverd_imports_json(neverd_session_t) {
   return copy(Json::array().dump());

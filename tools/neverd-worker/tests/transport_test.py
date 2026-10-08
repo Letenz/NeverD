@@ -298,6 +298,15 @@ def run(executable):
             "listing", {"address": "0xffff800012343100", "before": 0, "after": 12})["payload"]["lines"]]
         assert not any("UTF-16LE" in text for text in rodata), rodata
         assert client.call("string_options", {"encodings": ["ebcdic"]})["error"]["code"] == "unsupported_encoding"
+        # Unwritten data: stderr is as large as its symbol, not a run to the
+        # end of .bss, and data the code reads has a line of its own, named
+        # by the width of the read.
+        assert client.call("xrefs", {"address": "0xffff800012343230"})["status"] == "ok"
+        bss = [" ".join(line["text"].split()) for line in client.call(
+            "listing", {"address": "0xffff800012343200", "before": 0, "after": 16})["payload"]["lines"]]
+        assert "stderr dq ?" in bss, bss
+        assert "db 28h dup(?)" in bss, bss
+        assert any(line.startswith("qword_FFFF800012343230 dq ? ; DATA XREF: function_7+6") for line in bss), bss
         client.call("string_options", {"encodings": ["ascii", "utf-8", "utf-16le"]})
         # Hex views ask for bytes as text in an encoding, a cell per byte.
         bytes_ = client.call("bytes", {"address": "0xffff800012343000", "size": 4, "text_encoding": "ascii"})["payload"]
