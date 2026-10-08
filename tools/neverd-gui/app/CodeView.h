@@ -69,6 +69,9 @@ public:
   /// The symbol a function declaration links \p name to with an assembler
   /// label: a C++ function reads by its stem and links by its mangled name.
   std::optional<QString> linkedSymbol(const QString &name) const;
+  /// The image address of a global the code declares, as the comment its
+  /// writer puts beside the declaration names it.
+  std::optional<Address> objectAddress(const QString &name) const;
   void setFolded(bool folded);
   const QString &status() const { return status_; }
   /// Pages of the current function are still arriving.
@@ -78,6 +81,8 @@ signals:
   void locationChanged(neverd::gui::Address address);
   /// A name was double-clicked; the owner resolves and navigates.
   void nameActivated(const QString &name);
+  /// A global the code declares at an image address was double-clicked.
+  void objectActivated(neverd::gui::Address address);
   void statusChanged();
   void foldingChanged();
   void contextMenuRequested(const QPoint &globalPosition);
@@ -137,6 +142,8 @@ private:
     QHash<QString, int> types;
     /// Functions declared with an assembler label: source line and symbol.
     QHash<QString, std::pair<int, QString>> linked;
+    /// Globals declared at image addresses.
+    QHash<QString, Address> objects;
   };
   const Declarations &declarations() const;
   mutable std::optional<Declarations> declarations_;

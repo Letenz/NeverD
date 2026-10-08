@@ -687,6 +687,18 @@ void LLVMCWriter::writeImportCalleeDecls(llvm::Module &Mod) {
         if (!Call || Call->getCalledFunction() ||
             llvm::isa<llvm::InlineAsm>(Call->getCalledOperand()))
           continue;
+        // Only a slot the loader binds outside the import table names an
+        // import no header declares (an ELF GOT entry); a table's imports
+        // keep their headers' prototypes.
+        const llvm::Value *Slot = Call->getCalledOperand()->stripPointerCasts();
+        if (const auto *Cast = llvm::dyn_cast<llvm::IntToPtrInst>(Slot))
+          Slot = Cast->getOperand(0);
+        const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Slot);
+        const auto SlotVA =
+            Load ? imageDataVA(Load->getPointerOperand()) : std::nullopt;
+        if (!Img || !SlotVA || !Img->ImportStorageSlots.count(*SlotVA) ||
+            Img->findImportAt(*SlotVA))
+          continue;
         std::string Name = resolveImportCalleeName(Call->getCalledOperand());
         if (Name.empty() || Declared.count(Name))
           continue;

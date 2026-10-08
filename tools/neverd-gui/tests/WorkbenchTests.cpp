@@ -342,11 +342,14 @@ private slots:
         QStringLiteral("typedef struct QDomNode QDomNode;");
     const QString linked = QStringLiteral(
         "extern int Bar_ctor() __asm__(\"_ZN3BarC1Ev\"); /* Bar::Bar() */");
+    const QString globals =
+        QStringLiteral("/* neverd.image: 0x20 */\nint64_t dso_handle = 0x20;\n"
+                       "extern uint64_t qword_10; /* 0x10 */\n");
     QCOMPARE(QApplication::clipboard()->text(),
              QStringLiteral("#include <stdint.h>\n") + declaration +
-                 QLatin1Char('\n') + linked + QLatin1Char('\n'));
+                 QLatin1Char('\n') + linked + QLatin1Char('\n') + globals);
     QTest::keyClick(code, Qt::Key_Plus, Qt::KeypadModifier);
-    QCOMPARE(code->lineCount(), 705);
+    QCOMPARE(code->lineCount(), 708);
     QTest::keyClick(code, Qt::Key_Minus, Qt::KeypadModifier);
     QCOMPARE(code->lineCount(), 702);
     QVERIFY(code->preludeFolded());
@@ -358,7 +361,14 @@ private slots:
     QVERIFY(!code->declarationLine(QStringLiteral("uint64_t")));
     QVERIFY(code->goToDeclaration(QStringLiteral("QDomNode")));
     QVERIFY(!code->preludeFolded());
-    QCOMPARE(code->lineCount(), 705);
+    QCOMPARE(code->lineCount(), 708);
+    // A global goes to its address, under whatever name C gives it there.
+    QCOMPARE(code->objectAddress(QStringLiteral("dso_handle")),
+             std::optional<Address>(0x20));
+    QCOMPARE(code->objectAddress(QStringLiteral("qword_10")),
+             std::optional<Address>(0x10));
+    QVERIFY(!code->objectAddress(QStringLiteral("QDomNode")));
+    QVERIFY(!code->objectAddress(QStringLiteral("Bar_ctor")));
     // A C++ function links by the mangled symbol its label names, which is
     // what navigation looks up.
     QCOMPARE(code->linkedSymbol(QStringLiteral("Bar_ctor")),
