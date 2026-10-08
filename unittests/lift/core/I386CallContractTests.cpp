@@ -1,0 +1,167 @@
+//===- I386CallContractTests.cpp - i386 stack-passed call arguments -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// i386 passes every argument on the stack.  MSVC pushes them; GCC stores
+// each at [esp+N] below one adjustment, taking several ops per argument to
+// compute its address and value.  Stores to the function's own locals in
+// between are no arguments.
+//
+//===----------------------------------------------------------------------===//
+
+#include "gtest/gtest.h"
+
+#include "neverd/backend/c/CEmitterOptions.h"
+#include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/pipeline/Pipeline.h"
+
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace {
+using namespace neverd;
+
+constexpr va_t Text = 0x401000;
+constexpr va_t Iat = 0x403000;
+
+/// The slot of import \p Index.
+constexpr va_t slot(size_t Index) { return Iat + 4 * Index; }
+
+/// `call dword ptr [Slot]`.
+std::vector<uint8_t> callThroughSlot(va_t Slot) {
+  return {0xFF,
+          0x15,
+          static_cast<uint8_t>(Slot),
+          static_cast<uint8_t>(Slot >> 8),
+          static_cast<uint8_t>(Slot >> 16),
+          static_cast<uint8_t>(Slot >> 24)};
+}
+
+/// A PE32 image with \p Code at Text, the function `_wrap` there, and the
+/// msvcrt.dll imports \p Imports in consecutive slots at Iat.
+BinaryImage makeImage(std::vector<uint8_t> Code,
+                      const std::vector<const char *> &Imports) {
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = 0x400000;
+  Img.Entry = Text;
+  Segment Seg;
+  Seg.Name = ".text";
+  Seg.VA = Text;
+  Seg.Size = Code.size();
+  Seg.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Seg.Data = std::move(Code);
+  Img.Segments.push_back(std::move(Seg));
+  Segment Idata;
+  Idata.Name = ".idata";
+  Idata.VA = Iat;
+  Idata.Size = Idata.FileSz = 4 * Imports.size();
+  Idata.Data.resize(Idata.Size);
+  Idata.Flags = SegmentFlags::Readable;
+  Img.Segments.push_back(std::move(Idata));
+  for (size_t I = 0; I < Imports.size(); ++I) {
+    Import Imp;
+    Imp.Module = "msvcrt.dll";
+    Imp.Name = Imports[I];
+    Imp.IATAddr = slot(I);
+    Img.Imports.push_back(std::move(Imp));
+  }
+  Symbol Function = Symbol::makeFunc(Text);
+  Function.Name = "_wrap";
+  Img.Symbols.push_back(std::move(Function));
+  return Img;
+}
+
+/// The call of \p Callee in the HighC of `wrap` in \p Img: the rest of its
+/// line from the callee's name.
+std::string callIn(const BinaryImage &Img, const std::string &Callee) {
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Text};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  EXPECT_TRUE(Result.Success) << Result.Error;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Img.Arch;
+  Options.Format = Img.Format;
+  Options.Image = &Img;
+  EXPECT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
+  const size_t Body = Source.find(" wrap(");
+  const size_t At = Source.find(Callee + "(", Body);
+  if (Body == std::string::npos || At == std::string::npos) {
+    ADD_FAILURE() << Source;
+    return {};
+  }
+  return Source.substr(At, Source.find('\n', At) - At);
+}
+
+TEST(I386CallContract, ArgumentsStoredBelowOneAdjustmentAreAllPassed) {
+  // MinGW's __getmainargs wrapper: GCC stores its fifth parameter for the
+  // call first, then zeroes a local, and computes the other four arguments
+  // in more ops than a fixed window of them reaches.
+  std::vector<uint8_t> Code = {
+      0x55,                                     // push ebp
+      0x89, 0xE5,                               // mov ebp, esp
+      0x53,                                     // push ebx
+      0x83, 0xEC, 0x34,                         // sub esp, 0x34
+      0x8B, 0x45, 0x18,                         // mov eax, [ebp+0x18]
+      0xC7, 0x45, 0xEC, 0xFF, 0xFF, 0xFF, 0xFF, // mov [ebp-0x14], -1
+      0xC7, 0x45, 0xF0, 0x00, 0x00, 0x00, 0x00, // mov [ebp-0x10], 0
+      0x89, 0x44, 0x24, 0x10,                   // mov [esp+0x10], eax
+      0x8B, 0x45, 0x14,                         // mov eax, [ebp+0x14]
+      0xC7, 0x45, 0xF4, 0x00, 0x00, 0x00, 0x00, // mov [ebp-0xc], 0
+      0x89, 0x44, 0x24, 0x0C,                   // mov [esp+0xc], eax
+      0x8D, 0x45, 0xF4,                         // lea eax, [ebp-0xc]
+      0x89, 0x44, 0x24, 0x08,                   // mov [esp+8], eax
+      0x8D, 0x45, 0xF0,                         // lea eax, [ebp-0x10]
+      0x89, 0x44, 0x24, 0x04,                   // mov [esp+4], eax
+      0x8D, 0x45, 0xEC,                         // lea eax, [ebp-0x14]
+      0x89, 0x04, 0x24,                         // mov [esp], eax
+  };
+  for (uint8_t B : callThroughSlot(slot(0)))
+    Code.push_back(B);
+  for (uint8_t B : {0x8B, 0x45, 0xEC, // mov eax, [ebp-0x14]
+                    0x8B, 0x5D, 0xFC, // mov ebx, [ebp-4]
+                    0xC9,             // leave
+                    0xC3})            // ret
+    Code.push_back(B);
+  const std::string Call =
+      callIn(makeImage(Code, {"__getmainargs"}), "__getmainargs");
+  EXPECT_NE(Call.find("arg3, "), std::string::npos) << Call;
+  EXPECT_NE(Call.find("arg4)"), std::string::npos) << Call;
+}
+
+TEST(I386CallContract, AStoreToALocalBetweenPushesIsNoArgument) {
+  // calloc(n, size) pushed from the parameters, with a local written
+  // between the two pushes.
+  std::vector<uint8_t> Code = {
+      0x55,                                     // push ebp
+      0x89, 0xE5,                               // mov ebp, esp
+      0x83, 0xEC, 0x08,                         // sub esp, 8
+      0xFF, 0x75, 0x0C,                         // push [ebp+0xc]
+      0xC7, 0x45, 0xF8, 0x07, 0x00, 0x00, 0x00, // mov [ebp-8], 7
+      0xFF, 0x75, 0x08,                         // push [ebp+8]
+  };
+  for (uint8_t B : callThroughSlot(slot(0)))
+    Code.push_back(B);
+  for (uint8_t B : {0x83, 0xC4, 0x08, // add esp, 8
+                    0xC9,             // leave
+                    0xC3})            // ret
+    Code.push_back(B);
+  const std::string Call = callIn(makeImage(Code, {"calloc"}), "calloc");
+  EXPECT_NE(Call.find("(arg0, arg1)"), std::string::npos) << Call;
+  EXPECT_EQ(Call.find('7'), std::string::npos) << Call;
+}
+
+} // namespace

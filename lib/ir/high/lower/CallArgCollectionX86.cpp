@@ -87,6 +87,11 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
       if (Prev.Opcode != NdOp::STORE || Prev.NumInputs < 2 ||
           Prev.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         continue;
+      // A push stores at the stack pointer itself; a store elsewhere, such
+      // as to a local at [ebp-0xc], is no argument.
+      const MedVar &Address = Prev.Inputs[0];
+      if (Address.Kind != MedVar::Reg || Address.RegOff != Scan.SpRegOff)
+        continue;
       if (Scan.IsCalleeSave(Prev.Inputs[1]))
         continue;
       Pushed.push_back(Scan.ToExpr(Prev.Inputs[1]));
@@ -112,11 +117,13 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
 
 /// i386 cdecl and stdcall push their arguments, and a block boundary between
 /// the pushes and a call alone in its block leaves them in its predecessor.
-/// ECX and EDX there are not arguments.
+/// ECX and EDX there are not arguments.  GCC instead stores each argument at
+/// [esp+N] below one adjustment, in several ops apiece.
 extern const CallArgPolicy I386CallArgPolicy;
 const CallArgPolicy I386CallArgPolicy = {
     .TheArch = Arch::X86,
     .ReadsPredecessorWindow = true,
+    .OutgoingStoresFollowStackAdjustment = true,
 };
 
 } // namespace call_args_detail

@@ -65,7 +65,14 @@ struct CallArgScan {
   const CallArgumentConvention *Convention = nullptr;
   int MaxArgs = 0;
   int FirstStackSlot = 0;
+  /// How many ops before the call the stack-argument scan reads, or how many
+  /// stores when WindowReachesStackAdjustment.
   int StoreScanWindow = 0;
+  /// The scan reads the stores since the last stack pointer adjustment
+  /// before the call (CallArgPolicy::OutgoingStoresFollowStackAdjustment),
+  /// at addresses from CallStackPointer, the version the call sees.
+  bool WindowReachesStackAdjustment = false;
+  MedVar CallStackPointer;
   /// The call is a tail jump (CFG building rewrote `jmp callee` as a CALL and
   /// a RETURN of the same instruction): the callee enters on this function's
   /// stack, so its stack arguments sit at the callee-entry offsets from the
@@ -150,6 +157,10 @@ struct CallArgPolicy {
   /// A call alone in a block that has one predecessor can take setup
   /// stores from the end of that predecessor.
   bool ReadsPredecessorWindow = false;
+  /// Every argument is stored relative to the stack pointer the last
+  /// adjustment before the call left, however many ops computing them
+  /// takes: the stack-argument scan reads the stores since then.
+  bool OutgoingStoresFollowStackAdjustment = false;
   /// Takes the register-argument writes at the end of that predecessor.
   void (*TakePredecessorRegisters)(CallArgContext &C,
                                    const MedBlock &Pred) = nullptr;
@@ -192,6 +203,12 @@ inline bool isNoopRegisterCopy(const MedOp &Op) {
          Op.Output.Size == Op.Inputs[0].Size &&
          Op.Output.Id == Op.Inputs[0].Id &&
          Op.Output.SSAVer == Op.Inputs[0].SSAVer;
+}
+
+/// True when \p Op gives the stack pointer (\p SpRegOff) a new value.
+inline bool writesStackPointer(const MedOp &Op, uint64_t SpRegOff) {
+  return Op.Output.Kind == MedVar::Reg && Op.Output.Size != 0 &&
+         Op.Output.RegOff == SpRegOff && !isNoopRegisterCopy(Op);
 }
 
 void collectSpilledStackArgs(const CallArgScan &Scan,

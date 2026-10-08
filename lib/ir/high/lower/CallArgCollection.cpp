@@ -86,6 +86,46 @@ const CallArgPolicy *callArgPolicy(Arch A, BinaryFormat F) {
   return nullptr;
 }
 
+/// The offset of address \p V from the stack pointer \p Scan's call sees
+/// (CallArgScan::CallStackPointer), read from the definitions before op
+/// \p Before of \p Ops: through copies, the zero extension that widens an
+/// i386 address to the VA model, and one constant addend.  Empty for an
+/// address from another version, such as a frame pointer copied before the
+/// last adjustment.
+static std::optional<int64_t> callStackOffset(const CallArgScan &Scan,
+                                              const std::vector<MedOp> &Ops,
+                                              int Before, MedVar V) {
+  std::optional<int64_t> Addend;
+  for (int K = Before - 1;; --K) {
+    if (V.Kind == MedVar::Reg && V.RegOff == Scan.SpRegOff) {
+      if (V.Id != Scan.CallStackPointer.Id ||
+          V.SSAVer != Scan.CallStackPointer.SSAVer)
+        return std::nullopt;
+      return Addend.value_or(0);
+    }
+    if (V.Kind != MedVar::Temp && V.Kind != MedVar::Reg)
+      return std::nullopt;
+    for (; K >= 0; --K) {
+      const MedVar &Out = Ops[static_cast<size_t>(K)].Output;
+      if (Out.Kind == V.Kind && Out.Id == V.Id && Out.SSAVer == V.SSAVer)
+        break;
+    }
+    if (K < 0)
+      return std::nullopt;
+    const MedOp &Def = Ops[static_cast<size_t>(K)];
+    if ((Def.Opcode == NdOp::COPY || Def.Opcode == NdOp::INT_ZEXT) &&
+        Def.NumInputs >= 1) {
+      V = Def.Inputs[0];
+      continue;
+    }
+    if (Def.Opcode != NdOp::INT_ADD || Addend || Def.NumInputs != 2 ||
+        !Def.Inputs[1].isConst())
+      return std::nullopt;
+    Addend = static_cast<int64_t>(Def.Inputs[1].ConstVal);
+    V = Def.Inputs[0];
+  }
+}
+
 void collectSpilledStackArgs(const CallArgScan &Scan,
                              std::vector<ExprPtr> &Found) {
   const TargetRegInfo &TRI = *Scan.TRI;
@@ -149,10 +189,19 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
     const MedVar &AddrVar = Prev.Inputs[0];
     int64_t StackOff = -1;
 
-    if (AddrVar.Kind == MedVar::Reg && AddrVar.RegOff == Scan.SpRegOff)
+    // Only an address from the stack pointer the call sees is one of its
+    // outgoing slots.
+    if (Scan.WindowReachesStackAdjustment) {
+      const std::optional<int64_t> Offset =
+          callStackOffset(Scan, Ops, J, AddrVar);
+      if (!Offset)
+        return;
+      StackOff = *Offset;
+    } else if (AddrVar.Kind == MedVar::Reg && AddrVar.RegOff == Scan.SpRegOff)
       StackOff = 0;
 
-    if (StackOff < 0 && !AddrVar.isConst()) {
+    if (StackOff < 0 && !AddrVar.isConst() &&
+        !Scan.WindowReachesStackAdjustment) {
       for (int K = J - 1; K >= 0; --K) {
         const MedOp &DefOp = Ops[static_cast<size_t>(K)];
         if (DefOp.Output.Id != AddrVar.Id ||
@@ -301,10 +350,25 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
     }
   };
 
-  const int StoreScanStart =
+  int StoreScanStart =
       Reserved
           ? 0
           : std::max(0, static_cast<int>(Scan.CallIdx) - Scan.StoreScanWindow);
+  // Stores before the last stack pointer adjustment address another frame
+  // of the outgoing area; those since then are this call's, up to the
+  // window's count of stores.
+  if (!Reserved && Scan.WindowReachesStackAdjustment) {
+    StoreScanStart = static_cast<int>(Scan.CallIdx);
+    for (int J = static_cast<int>(Scan.CallIdx) - 1, Stores = 0;
+         J >= 0 && Stores < Scan.StoreScanWindow; --J) {
+      const MedOp &Op = (*Scan.Ops)[static_cast<size_t>(J)];
+      if (writesStackPointer(Op, Scan.SpRegOff))
+        break;
+      StoreScanStart = J;
+      if (Op.Opcode == NdOp::STORE)
+        ++Stores;
+    }
+  }
   scanWindow(*Scan.Ops, static_cast<int>(Scan.CallIdx) - 1, StoreScanStart);
   for (const auto &W : Scan.ExtraWindows)
     if (W.Ops)
@@ -839,6 +903,23 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
                   Ops[CallIdx + 1].Opcode == NdOp::RETURN &&
                   Ops[CallIdx + 1].Addr == Ops[CallIdx].Addr;
   Scan.StoreScanWindow = limits::kCallArgStoreScanWindow;
+  // The stack pointer the call sees: the last version its block defines
+  // before it, else the one reaching the block.  A tail jump's stores are
+  // read at the function's entry offsets instead.
+  if (Policy && Policy->OutgoingStoresFollowStackAdjustment && !Scan.TailJump) {
+    bool Known = false;
+    for (size_t J = CallIdx; J-- > 0 && !Known;)
+      if (call_args_detail::writesStackPointer(Ops[J], SpRegOff)) {
+        Scan.CallStackPointer = Ops[J].Output;
+        Known = true;
+      }
+    MedVar LiveIn;
+    if (!Known && reachingRegAtBlockEntry(CurBlock, SpRegOff, LiveIn)) {
+      Scan.CallStackPointer = LiveIn;
+      Known = true;
+    }
+    Scan.WindowReachesStackAdjustment = Known;
+  }
   Scan.ExtraWindows = ExtraWindows;
   auto ToExpr = [this](const MedVar &V) { return medvarToExpr(V); };
   Scan.ToExpr = ToExpr;
