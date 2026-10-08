@@ -18,6 +18,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/loader/BinaryImage.h"
@@ -1528,6 +1529,27 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
     } else {
       OS << getName(Load) << " = *(" << Pointer << ");\n";
     }
+    return;
+  }
+  if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst);
+      Load && !Load->isSimple() &&
+      isLLVMX86SegmentedAddressSpace(Load->getPointerAddressSpace())) {
+    if (Load->isAtomic())
+      throw std::runtime_error("unsupported atomic segmented C load");
+    auto Segment = renderX86SegmentedLoad(
+        Opts.TheArch, *Load,
+        [this](const llvm::Value *Value) { return valueStr(Value); });
+    if (Segment.empty())
+      throw std::runtime_error(
+          "unsupported segmented C load width or architecture");
+    if (Load->getType()->isPointerTy())
+      Segment =
+          "(" + typeToCLLVM(Load->getType()) + ")(uintptr_t)(" + Segment + ")";
+    // Ordered loads receive a materialized ValueTexts name. That name is
+    // their future use, not a replacement for the effect defining it.
+    emitIndent(Indent);
+    OS << getName(Load) << " = " << Segment << ";\n";
+    HasCIntrinsics = true;
     return;
   }
   if (Analysis.Inlinable.count(&Inst))
