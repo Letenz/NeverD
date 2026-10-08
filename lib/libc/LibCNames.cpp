@@ -218,6 +218,15 @@ std::optional<LibCArity> libcArity(std::string_view Name) {
   return It->second;
 }
 
+const LibCPrototype *libcPrototypeForSymbol(std::string_view Name) {
+  while (!Name.empty() && Name.front() == '_')
+    Name.remove_prefix(1);
+  for (const LibCPrototype &Prototype : kStartupPrototypes)
+    if (Prototype.Name == Name)
+      return &Prototype;
+  return nullptr;
+}
+
 std::optional<LibCArity> libcArityForSymbol(std::string_view Name) {
   // Mach-O prepends one underscore to the C identifier `__error`, producing
   // `___error`.  Do not normalize it to `error`: GNU error(3) is a distinct
