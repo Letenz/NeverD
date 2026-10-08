@@ -794,6 +794,8 @@ public:
     bool CallSlot = false;
     /// The code uses its address as a value, not only to access it there.
     bool AddressTaken = false;
+    /// The image relocates pointer slots inside it: each holds an address.
+    bool HoldsPointers = false;
     /// A string referenced by its address alone: declared as its array, with
     /// \ref ArrayBytes elements' bytes, initialized by the string.
     std::optional<ImageCString> String;
@@ -879,9 +881,24 @@ public:
   struct ImageBacking {
     va_t Base;
     va_t End;
+    /// The bytes, as an address names them (`table[8]`).
     std::string Name;
+    /// A backing that holds relocated pointer slots is a union of words and
+    /// bytes: its C object, and the slots, each word-aligned in it.
+    std::string Words;
+    std::vector<va_t> PointerSlots;
   };
   std::vector<ImageBacking> ImageBackings;
+  /// The C address a relocated pointer slot holds: the function or data it
+  /// names, or none when no C object names it.
+  std::optional<std::string> relocatedSlotTarget(va_t Slot) const;
+  /// A pointer-sized object at a relocated slot: the address it holds, as
+  /// its initializer.
+  std::optional<std::string> relocatedSlotInitializer(va_t Addr,
+                                                      const ImageObject &Obj) const;
+  /// Declares the objects whose relocated pointer slots name other objects:
+  /// the backings that hold them, as words, and the single slots \p Deferred.
+  void writePointerBackings(const std::vector<va_t> &Deferred);
 
   std::vector<HiLoPair> HiLoPairs;
 };

@@ -560,6 +560,82 @@ int main(void) {
 )");
 }
 
+TEST(CImageObjects, ARelocatedPointerTableNamesWhatItPointsTo) {
+  // `static int *const rows[3] = {a, b, c}`: the image relocates each slot,
+  // so the table holds the arrays' addresses, which the rebuilt program
+  // has elsewhere.  `rows[i][j]` reads through the table.
+  constexpr va_t Rows = RodataVA, A = RodataVA + 0x40, B = RodataVA + 0x60,
+                 C = RodataVA + 0x80;
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  std::vector<uint8_t> Rodata(0xA0, 0);
+  putPointer(Rodata, 0, A);
+  putPointer(Rodata, 8, B);
+  putPointer(Rodata, 16, C);
+  for (unsigned I = 0; I < 4; ++I) {
+    Rodata[0x40 + 4 * I] = static_cast<uint8_t>(10 + I);
+    Rodata[0x60 + 4 * I] = static_cast<uint8_t>(20 + I);
+    Rodata[0x80 + 4 * I] = static_cast<uint8_t>(30 + I);
+  }
+  Img.Segments.push_back(
+      segment(".text", TextVA, std::vector<uint8_t>(0x10),
+              SegmentFlags::Readable | SegmentFlags::Executable));
+  Img.Segments.push_back(
+      segment(".rodata", RodataVA, std::move(Rodata), SegmentFlags::Readable));
+  Img.Symbols = {dataSymbol("rows", Rows, 24), dataSymbol("a", A, 16),
+                 dataSymbol("b", B, 16), dataSymbol("c", C, 16)};
+  Img.DataPtrRelocSlots = {Rows, Rows + 8, Rows + 16};
+  const TypeRef U64 = NdType::makeInt(8, false);
+  const TypeRef I32 = NdType::makeInt(4, true);
+  auto Param = [&](int Id) {
+    MedVar V;
+    V.Kind = MedVar::Param;
+    V.Id = Id;
+    V.Size = 8;
+    V.TheArch = Arch::X64;
+    return HighExpr::makeVar(V, U64);
+  };
+  auto Scaled = [&](ExprPtr Index, uint64_t Scale) {
+    auto E = HighExpr::makeBinop(NdOp::INT_MULT, std::move(Index),
+                                 HighExpr::makeConst(Scale, 8));
+    E->Type = U64;
+    return E;
+  };
+  auto Sum = [&](ExprPtr L, ExprPtr R) {
+    auto E = HighExpr::makeBinop(NdOp::INT_ADD, std::move(L), std::move(R));
+    E->Type = U64;
+    return E;
+  };
+  auto Row = HighExpr::makeLoad(
+      Sum(Scaled(Param(0), 8),
+          HighExpr::makeConst(Rows, 8, ConstantAddressProvenance::Address)),
+      U64);
+  HighFunc Pick = function("pick", I32, TextVA);
+  Pick.Params = {{"arg0", U64}, {"arg1", U64}};
+  Pick.Body = {returnStatement(
+      HighExpr::makeLoad(Sum(Row, Scaled(Param(1), 4)), I32))};
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Pick}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("(uintptr_t)&b[0]"), NotFound) << Source;
+  source_call_execution_test::compileAndRun(Source + R"(
+int main(void) {
+  for (uint64_t i = 0; i < 3; ++i)
+    for (uint64_t j = 0; j < 4; ++j)
+      if (pick(i, j) != (int32_t)(10 * (i + 1) + j))
+        return 1;
+  return 0;
+}
+)");
+}
+
 TEST(CImageObjects, LiteralsSpellExactlyTheirBytes) {
   BinaryImage Img;
   Img.Arch = Arch::X64;
