@@ -529,6 +529,35 @@ private slots:
     QCOMPARE(h.sent.size(), 1);
   }
 
+  void aBackgroundListingChangeRetiresCachedAndFlyingReads() {
+    // Function discovery changes what reads list without a new revision.
+    Harness h;
+    establish(h);
+    QList<QString> texts;
+    const auto collect = [&](const QJsonObject &response) {
+      texts.append(response["payload"].toObject()["text"].toString());
+    };
+    h.service.subscribe(text(), &h.owner, collect);
+    QTRY_COMPARE(h.sent.size(), 1);
+    h.reply(0, {{"text", "cached before"}});
+    QTRY_COMPARE(texts.size(), 1);
+    h.service.subscribe(text("0x2000"), &h.owner, collect);
+    QTRY_COMPARE(h.sent.size(), 2);
+    h.service.listingChanged();
+    // Neither the cached read nor the one in flight answers a read made
+    // after the change.
+    h.service.subscribe(text(), &h.owner, collect);
+    h.service.subscribe(text("0x2000"), &h.owner, collect);
+    h.reply(1, {{"text", "flying before"}});
+    QTRY_COMPARE(h.sent.size(), 3);
+    h.reply(2, {{"text", "cached after"}});
+    QTRY_COMPARE(h.sent.size(), 4);
+    h.reply(3, {{"text", "flying after"}});
+    QTRY_COMPARE(texts.size(), 4);
+    QCOMPARE(texts, (QList<QString>{"cached before", "flying before",
+                                    "cached after", "flying after"}));
+  }
+
   void aNewSubscriberDoesNotJoinACancelledFlightButCanUseItsNaturalResult() {
     Harness h;
     establish(h);

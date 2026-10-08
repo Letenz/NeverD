@@ -86,6 +86,10 @@ public:
   bool hasPending() const;
   bool hasCommands() const;
   void setCacheBudgetMiB(int mebibytes);
+  /// Background analysis changed what reads list, such as the functions it
+  /// discovered, without a new revision: cached reads and reads in flight no
+  /// longer answer new reads.
+  void listingChanged();
 
 public slots:
   void receive(const QJsonObject &response);
