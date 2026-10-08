@@ -680,6 +680,16 @@ Json Engine::metadata() const {
       !analyzed_ && (folded(arch) == "evm" || folded(arch) == "sbf");
   // The language whose runtime built the image, as the engine read it.
   const auto headers = backendJson(neverd_headers_json(session_));
+  using DiagnosticsFunction = const char *(*)(neverd_session_t);
+  static const auto diagnosticsFunction =
+      engineSymbol<DiagnosticsFunction>("neverd_session_load_diagnostics_json");
+  Json diagnostics = Json::array();
+  if (diagnosticsFunction) {
+    const auto text = ownedString(diagnosticsFunction(session_));
+    const auto parsed = Json::parse(text, nullptr, false);
+    if (parsed.is_array())
+      diagnostics = parsed;
+  }
   return {{"path", ownedString(neverd_session_file_path(session_))},
           {"architecture", arch},
           {"format", ownedString(neverd_session_format_name(session_))},
@@ -687,6 +697,7 @@ Json Engine::metadata() const {
           {"file_size", std::to_string(neverd_session_file_size(session_))},
           {"base_address", hexAddress(neverd_session_base_addr(session_))},
           {"entry_address", hexAddress(neverd_session_entry_addr(session_))},
+          {"loader_diagnostics", std::move(diagnostics)},
           {"function_count",
            deferred ? Json(nullptr) : Json(neverd_func_count(session_))},
           {"segment_count", neverd_session_segment_count(session_)},
@@ -869,6 +880,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     if (!reloadDataItems())
       warnings.push_back("Data items sidecar could not be loaded");
     auto result = metadata();
+    for (const auto &diagnostic : result.at("loader_diagnostics"))
+      warnings.push_back(diagnostic.value("message", std::string()));
     result["warnings"] = warnings;
     return result;
   }

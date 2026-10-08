@@ -13,6 +13,7 @@
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
 #include <optional>
 
+class QDialog;
 class QLabel;
 class McpConnectionManager;
 class GuiSessionBroker;
@@ -151,6 +152,7 @@ private:
   // Project state packed into the database.
   QHash<QString, QByteArray> projectState() const;
   void restoreProjectState();
+  void navigateInitialAddress();
   QJsonArray bookmarks() const;
   void setBookmarks(const QJsonArray &rows);
   QString bookmarksKey() const;
@@ -170,6 +172,9 @@ private:
   QHash<QString, Dock *> docks_;
   QHash<int, ChooserView *> choosers_;
   QPointer<CodeView> pseudocode_;
+  std::optional<Address> initialAddress_;
+  bool restoreGraph_ = false;
+  QPointer<QDialog> quickStart_;
   QLabel *analysisLabel_ = nullptr, *directionLabel_ = nullptr,
          *diskLabel_ = nullptr, *fileLabel_ = nullptr;
   QMenu *recentMenu_ = nullptr;

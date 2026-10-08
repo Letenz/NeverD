@@ -165,6 +165,11 @@ NEVERD_API void neverd_free_string(const char *Str);
 NEVERD_API unsigned long long neverd_session_file_size(neverd_session_t Sess);
 NEVERD_API neverd_va_t neverd_session_base_addr(neverd_session_t Sess);
 NEVERD_API neverd_va_t neverd_session_entry_addr(neverd_session_t Sess);
+
+/// Non-fatal loader metadata diagnostics as [{code,message}]. No input bytes
+/// are repaired. Returns [] for an unloaded/null session. Caller frees.
+NEVERD_API const char *
+neverd_session_load_diagnostics_json(neverd_session_t Sess);
 NEVERD_API int neverd_session_segment_count(neverd_session_t Sess);
 NEVERD_API int neverd_session_section_count(neverd_session_t Sess);
 NEVERD_API int neverd_session_import_count(neverd_session_t Sess);
