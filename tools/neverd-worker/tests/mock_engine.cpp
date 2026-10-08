@@ -167,9 +167,9 @@ const char *neverd_headers_json(neverd_session_t) {
   return copy(R"({"language":{"runtime":"c","secondary":[],"evidence":[]}})");
 }
 
-const char *neverd_dashboard_json(neverd_session_t s) {
-  // Deterministic fixture-only identity. The real engine uses SHA-256; the
-  // production real-engine test verifies that digest against Python hashlib.
+// Deterministic fixture-only identity. The real engine uses SHA-256; the
+// production real-engine test verifies that digest against Python hashlib.
+std::string fixtureDigest(neverd_session_t s) {
   std::ifstream input(session(s)->path, std::ios::binary);
   std::uint64_t value = 1469598103934665603ULL;
   char byte;
@@ -179,8 +179,13 @@ const char *neverd_dashboard_json(neverd_session_t s) {
   }
   auto digest = hexAddress(value).substr(2);
   digest.insert(0, 16 - digest.size(), '0');
-  return copy(
-      Json{{"hashes", {{"sha256", digest + digest + digest + digest}}}}.dump());
+  return digest + digest + digest + digest;
+}
+const char *neverd_session_input_sha256(neverd_session_t s) {
+  return copy(fixtureDigest(s));
+}
+const char *neverd_dashboard_json(neverd_session_t s) {
+  return copy(Json{{"hashes", {{"sha256", fixtureDigest(s)}}}}.dump());
 }
 int neverd_func_count(neverd_session_t s) {
   return static_cast<int>(session(s)->functions.size());

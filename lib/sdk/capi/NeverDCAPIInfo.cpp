@@ -18,6 +18,7 @@
 #include "neverd/loader/ExceptionCommon.h"
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionFunction.h"
+#include "neverd/loader/InputDigest.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/support/FilePath.h"
@@ -30,7 +31,7 @@
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MD5.h"
-#include "llvm/Support/SHA256.h"
+#include "llvm/Support/MemoryBuffer.h"
 
 #include <algorithm>
 #include <fstream>
@@ -832,6 +833,26 @@ const char *neverd_entrypoints_json(neverd_session_t Sess) {
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }
 
+/// The SHA-256 of the input as loaded, in lowercase hexadecimal: the one the
+/// loader took while it read the input, else one hash of the file, kept.
+/// Empty when the file cannot be read.
+static std::string inputSha256(Session &S) {
+  if (!S.Img.InputFileSHA256) {
+    auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(S.FilePath));
+    if (!Buffer)
+      return {};
+    S.Img.InputFileSHA256 = sha256(llvm::ArrayRef<uint8_t>(
+        reinterpret_cast<const uint8_t *>((*Buffer)->getBufferStart()),
+        (*Buffer)->getBufferSize()));
+  }
+  return llvm::toHex(*S.Img.InputFileSHA256, /*LowerCase=*/true);
+}
+
+const char *neverd_session_input_sha256(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  return dupStr(S->Loaded ? inputSha256(*S) : std::string());
+}
+
 const char *neverd_dashboard_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S->Loaded)
@@ -859,7 +880,6 @@ const char *neverd_dashboard_json(neverd_session_t Sess) {
   std::ifstream Ifs(S->FilePath, std::ios::binary);
   if (Ifs.is_open()) {
     llvm::MD5 Md5;
-    llvm::SHA256 Sha;
     uint32_t Crc = 0;
     char Buf[8192];
     while (Ifs.read(Buf, sizeof(Buf)) || Ifs.gcount() > 0) {
@@ -867,20 +887,12 @@ const char *neverd_dashboard_json(neverd_session_t Sess) {
       const llvm::ArrayRef<uint8_t> Chunk(
           reinterpret_cast<const uint8_t *>(Buf), Count);
       Md5.update(Chunk);
-      Sha.update(Chunk);
       Crc = llvm::crc32(Crc, Chunk);
     }
     llvm::MD5::MD5Result Md5Res;
     Md5.final(Md5Res);
     Hashes["md5"] = Md5Res.digest().str().lower();
-    auto Sha256Res = Sha.final();
-    std::string Sha256Hex;
-    const char Digits[] = "0123456789abcdef";
-    for (auto B : Sha256Res) {
-      Sha256Hex += Digits[(B >> 4) & 0xF];
-      Sha256Hex += Digits[B & 0xF];
-    }
-    Hashes["sha256"] = Sha256Hex;
+    Hashes["sha256"] = inputSha256(*S);
     Hashes["crc32"] = llvm::utohexstr(Crc, /*LowerCase=*/true, /*Width=*/8);
   }
   Root["hashes"] = std::move(Hashes);
