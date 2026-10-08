@@ -380,6 +380,10 @@ constexpr size_t kMaxCallEffectExtraLifts = 256;
 /// A no-return proof for an internal callee lifts it, and its own proofs
 /// lift their callees in turn; one this many proofs deep counts as returning.
 constexpr unsigned kMaxNoReturnProofDepth = 4;
+/// Alignment no-ops between a call and the next function are fewer bytes
+/// than the widest function alignment compilers use (64); a longer run is
+/// not taken as padding.
+constexpr size_t kMaxAlignmentPaddingBytes = 64;
 /// Revisits of one block before a callee's incoming-stack-read summary widens
 /// a still-changing stack offset (a pointer stepped around a loop) to unknown.
 constexpr unsigned kMaxStackOffsetJoinVisits = 8;

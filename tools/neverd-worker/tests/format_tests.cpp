@@ -8,6 +8,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 using namespace neverd::worker;
 
@@ -40,6 +41,8 @@ struct Format {
   std::string_view mnemonic, operands, bytes;
   std::string_view expected;
   bool wide = true;
+  /// The user's number formats, by operand index.
+  std::vector<NumberFormat> formats = {};
 };
 
 std::string format(const Format &input, const FrameNamer *frame = nullptr,
@@ -51,6 +54,8 @@ std::string format(const Format &input, const FrameNamer *frame = nullptr,
   facts.size = 4;
   facts.wide = input.wide;
   facts.bytes = input.bytes;
+  if (!input.formats.empty())
+    facts.numberFormats = &input.formats;
   if (frame) {
     facts.frameRegister = "rbp";
     facts.frame = frame;
@@ -118,6 +123,50 @@ int main() {
   expectFormat({"push", "-0x18", "", "0FFFFFFFFFFFFFFE8h"});
   expectFormat({"push", "-1", "", "0FFFFFFFFh", false});
   expectFormat({"imul", "rax, -0x38", "", "rax, -38h"});
+  // The user's number formats: a base, a changed sign, inverted bits.
+  const auto user = [](NumberBase base, bool negate = false,
+                       bool invert = false) {
+    return std::vector<NumberFormat>{{}, {base, negate, invert}};
+  };
+  expectFormat(
+      {"mov", "eax, 0x1a", "", "eax, 26", true, user(NumberBase::Decimal)});
+  expectFormat({"mov", "eax, 26", "", "eax, 1Ah", true, user(NumberBase::Hex)});
+  expectFormat(
+      {"mov", "eax, 0x1a", "", "eax, 11010b", true, user(NumberBase::Binary)});
+  expectFormat(
+      {"mov", "eax, 0x41", "", "eax, 'A'", true, user(NumberBase::Char)});
+  expectFormat({"cmp", "eax, 0x41424344", "", "eax, 'ABCD'", true,
+                user(NumberBase::Char)});
+  expectFormat(
+      {"cmp", "eax, -1", "", "eax, -1", true, user(NumberBase::Number, true)});
+  expectFormat(
+      {"cmp", "eax, -1", "", "eax, -1", true, user(NumberBase::Decimal, true)});
+  expectFormat({"and", "eax, 0xfffffff0", "", "eax, ~0Fh", true,
+                user(NumberBase::Number, false, true)});
+  expectFormat({"mov", "eax, 0x401000", "", "eax, offset unk_401000", true,
+                user(NumberBase::Offset)});
+  // A format that cannot show the number leaves the listing's spelling: a
+  // control character, an offset nothing names.
+  expectFormat({"mov", "eax, 7", "", "eax, 7", true, user(NumberBase::Char)});
+  expectFormat(
+      {"mov", "eax, 0x10", "", "eax, 10h", true, user(NumberBase::Offset)});
+  // Only the operand the user formats changes.
+  expectFormat({"mov",
+                "eax, 0x1a",
+                "",
+                "eax, 1Ah",
+                true,
+                {{NumberBase::Decimal, false, false}}});
+  // Formats change plain numbers, signed or not, and only x86 operands.
+  check(formattableOperands("rsp, 8", OperandDialect::X86) ==
+            std::vector<bool>{false, true},
+        "a register and a number");
+  check(formattableOperands("dword ptr [rbp - 4], -5", OperandDialect::X86) ==
+            std::vector<bool>{false, true},
+        "a displacement is no plain number");
+  check(formattableOperands("w0, #0x20", OperandDialect::AArch64) ==
+            std::vector<bool>{false, false},
+        "AArch64 operands show no formats");
   expectFormat({"imul", "rsi, qword ptr [rax], -0xc8", "",
                 "rsi, [rax], 0FFFFFFFFFFFFFF38h"});
   // Thread storage offsets, missing base registers and zero displacements.

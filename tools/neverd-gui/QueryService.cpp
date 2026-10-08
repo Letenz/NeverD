@@ -55,6 +55,7 @@ bool command(const QString &operation) {
                                         "function_create",
                                         "function_delete",
                                         "item_define",
+                                        "operand_format",
                                         "save",
                                         "reload",
                                         "undo",

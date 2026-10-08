@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace neverd::worker {
 
@@ -61,6 +62,14 @@ public:
   bool isImport(std::uint64_t address);
   /// Build the reference index again, as for a changed function list.
   void reindex();
+  /// Read the user's operand formats again.  They change only instruction
+  /// text, so the rest of the listing stands.
+  void reloadNumberFormats();
+  /// Whether instruction lines show the user's operand formats.
+  bool showsNumberFormats();
+  /// Which operands of the instruction that starts at \p address a number
+  /// format changes, by index; none when no instruction starts there.
+  std::optional<std::vector<bool>> numberOperands(std::uint64_t address);
   /// The item at \p address as the listing shows it: {"start","size","kind"}
   /// and "user", the kind of the user's data item there; null outside the
   /// image.

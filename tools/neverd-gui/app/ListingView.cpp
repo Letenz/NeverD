@@ -3,6 +3,7 @@
 #include "AddressSpace.h"
 #include "Session.h"
 #include "Theme.h"
+#include "WorkerCodes.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -503,6 +504,41 @@ std::optional<Address> ListingView::operandTarget() const {
         span && span->address)
       return span->address;
   return line->target;
+}
+
+std::optional<int> ListingView::currentOperand() const {
+  const auto *line = cursorLine();
+  if (!line)
+    return std::nullopt;
+  // The operands follow the mnemonic; a comma outside brackets starts the
+  // next one.
+  bool operands = false;
+  int depth = 0, index = 0;
+  std::optional<int> under;
+  for (const auto &span : line->styled.spans) {
+    const auto role = static_cast<ListingRole>(span.role);
+    if (role == ListingRole::Mnemonic || role == ListingRole::FlowMnemonic) {
+      operands = true;
+      continue;
+    }
+    if (!operands)
+      continue;
+    if (role == ListingRole::Comment || role == ListingRole::AutoComment ||
+        role == ListingRole::Xref)
+      break;
+    if (cursorColumn_ >= span.start && cursorColumn_ < span.start + span.length)
+      under = index;
+    if (role == ListingRole::Punctuation)
+      for (const QChar c : line->styled.text.mid(span.start, span.length)) {
+        if (c == QLatin1Char('['))
+          ++depth;
+        else if (c == QLatin1Char(']'))
+          --depth;
+        else if (c == QLatin1Char(',') && depth == 0)
+          ++index;
+      }
+  }
+  return under;
 }
 
 QString ListingView::selectedText() const {
