@@ -6,23 +6,104 @@ bool plain(const HighExpr &Expression) {
   return Expression.IntrinsicId == Intrinsic::None &&
          Expression.IntrinsicOutputs.empty() &&
          Expression.MemoryOrdering == NdMemoryOrdering::None &&
-         Expression.MemoryAddressSpace == NdMemoryAddressSpace::Default;
+         Expression.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+         !Expression.IsIndirectCall && Expression.IndirectParamIdx < 0 &&
+         !Expression.IndirectTarget;
 }
 
-bool pureEntryValue(const ExprPtr &Expression, unsigned Depth = 0) {
-  if (!Expression || Depth > 16 || !plain(*Expression) || !Expression->Type ||
-      Expression->Type->Kind != NdTypeKind::Int || !Expression->Type->Size ||
-      Expression->Type->Size > 8)
+bool scalarEntryType(const TypeRef &Type) {
+  return Type &&
+         ((Type->Kind == NdTypeKind::Int && Type->Size && Type->Size <= 8) ||
+          (Type->Kind == NdTypeKind::Ptr && Type->Size == 8));
+}
+
+bool entryConversion(const HighExpr &Expression) {
+  if (Expression.Operands.size() != 1 || !Expression.Operands[0])
     return false;
+  if (Expression.Kind == ExprKind::Cast)
+    return scalarEntryType(Expression.Type);
+  const auto &Input = Expression.Operands[0]->Type;
+  return Expression.Kind == ExprKind::UnaryOp &&
+         (Expression.Op == NdOp::INT_ZEXT || Expression.Op == NdOp::INT_SEXT) &&
+         scalarEntryType(Expression.Type) && scalarEntryType(Input) &&
+         Expression.Type->Kind == NdTypeKind::Int &&
+         Input->Kind == NdTypeKind::Int && Expression.Type->Size >= Input->Size;
+}
+
+bool pureEntryValue(const ExprPtr &Expression, size_t &Budget,
+                    unsigned Depth = 0) {
+  if (!Expression || !Budget || Depth > 16 || !plain(*Expression) ||
+      !scalarEntryType(Expression->Type))
+    return false;
+  --Budget;
   if (Expression->Kind == ExprKind::Var || Expression->Kind == ExprKind::Const)
     return Expression->Operands.empty();
-  if (Expression->Kind == ExprKind::Cast && Expression->Operands.size() == 1)
-    return pureEntryValue(Expression->Operands[0], Depth + 1);
+  if (entryConversion(*Expression))
+    return pureEntryValue(Expression->Operands[0], Budget, Depth + 1);
   return Expression->Kind == ExprKind::BinOp &&
          (Expression->Op == NdOp::INT_ADD || Expression->Op == NdOp::INT_SUB) &&
          Expression->Operands.size() == 2 &&
-         pureEntryValue(Expression->Operands[0], Depth + 1) &&
-         pureEntryValue(Expression->Operands[1], Depth + 1);
+         pureEntryValue(Expression->Operands[0], Budget, Depth + 1) &&
+         pureEntryValue(Expression->Operands[1], Budget, Depth + 1);
+}
+
+const HighExpr *directEntryLoad(const ExprPtr &Value, unsigned Parameter) {
+  if (Value->Kind != ExprKind::Load || !Value->Type ||
+      Value->Type->Kind != NdTypeKind::Int ||
+      (Value->Type->Size != 4 && Value->Type->Size != 8) ||
+      Value->Operands.size() != 1)
+    return nullptr;
+  auto Address = Value->Operands[0];
+  while (Address && Address->Kind == ExprKind::Cast && plain(*Address) &&
+         scalarEntryType(Address->Type) && Address->Type->Size == 8 &&
+         Address->Operands.size() == 1)
+    Address = Address->Operands[0];
+  if (!Address || Address->Kind != ExprKind::Var || !plain(*Address) ||
+      !Address->Operands.empty() || Address->Var.Kind != MedVar::Param ||
+      Address->Var.Id != static_cast<int>(Parameter) || Address->Var.SSAVer ||
+      Address->Var.RenameTag >= 0 || !scalarEntryType(Address->Type) ||
+      Address->Type->Size != 8 || Address->Var.Size != 8)
+    return nullptr;
+  return Value.get();
+}
+
+/// Follow only unconditional dependencies. A surrounding read or direct call
+/// takes its address/arguments before performing its own observable operation;
+/// every sibling must be free of memory accesses and other effects.
+const HighExpr *entryLoad(const ExprPtr &Expression, unsigned Parameter,
+                          size_t &Budget, unsigned Depth = 0) {
+  if (!Expression || !Budget || Depth > 16 || !plain(*Expression))
+    return nullptr;
+  --Budget;
+  if (Expression->Kind == ExprKind::Load) {
+    if (!scalarEntryType(Expression->Type) || Expression->Operands.size() != 1)
+      return nullptr;
+    if (const auto *Load = directEntryLoad(Expression, Parameter))
+      return Load;
+    return entryLoad(Expression->Operands[0], Parameter, Budget, Depth + 1);
+  }
+  if (entryConversion(*Expression))
+    return entryLoad(Expression->Operands[0], Parameter, Budget, Depth + 1);
+  if ((Expression->Kind != ExprKind::BinOp ||
+       !scalarEntryType(Expression->Type) ||
+       (Expression->Op != NdOp::INT_ADD && Expression->Op != NdOp::INT_SUB) ||
+       Expression->Operands.size() != 2) &&
+      Expression->Kind != ExprKind::Call)
+    return nullptr;
+  for (size_t I = 0; I < Expression->Operands.size() && Budget; ++I) {
+    bool PureSiblings = true;
+    for (size_t J = 0; J < Expression->Operands.size(); ++J)
+      if (I != J &&
+          !pureEntryValue(Expression->Operands[J], Budget, Depth + 1)) {
+        PureSiblings = false;
+        break;
+      }
+    if (PureSiblings)
+      if (const auto *Load =
+              entryLoad(Expression->Operands[I], Parameter, Budget, Depth + 1))
+        return Load;
+  }
+  return nullptr;
 }
 } // namespace
 
@@ -46,6 +127,10 @@ TypeRef entryScalarLoadInput(const HighFunc &Function, unsigned Parameter) {
       if (Expression->Var.Kind == MedVar::Param &&
           Expression->Var.Id == static_cast<int>(Parameter) && ++Uses > 1)
         return false;
+    if (Expression->IsIndirectCall &&
+        Expression->IndirectParamIdx == static_cast<int>(Parameter) &&
+        ++Uses > 1)
+      return false;
     for (const auto &Output : Expression->IntrinsicOutputs)
       if (Output.Kind == MedVar::Param &&
           Output.Id == static_cast<int>(Parameter))
@@ -53,6 +138,9 @@ TypeRef entryScalarLoadInput(const HighFunc &Function, unsigned Parameter) {
     for (const auto &Operand : Expression->Operands)
       if (!Self(Self, Operand, Depth + 1))
         return false;
+    if (Expression->IndirectTarget &&
+        !Self(Self, Expression->IndirectTarget, Depth + 1))
+      return false;
     return true;
   };
   for (const auto &Statement : Function.Body) {
@@ -86,47 +174,37 @@ TypeRef entryScalarLoadInput(const HighFunc &Function, unsigned Parameter) {
         return {};
       continue;
     }
-    if (Statement.Kind != StmtKind::Assign || !Statement.Dst ||
-        Statement.Dst->Kind != ExprKind::Var || !plain(*Statement.Dst) ||
-        (Statement.Dst->Var.Kind != MedVar::Temp &&
-         Statement.Dst->Var.Kind != MedVar::Reg) ||
-        !Statement.Dst->Operands.empty() || Statement.Cond ||
-        Statement.RetVal || Statement.StoreAddr || Statement.StoreVal ||
-        Statement.CallExpr || Statement.SwitchExpr)
+    if (Statement.Cond || Statement.StoreAddr || Statement.StoreVal ||
+        Statement.SwitchExpr)
       return {};
-    auto Value = Statement.Kind == StmtKind::Assign ? Statement.Val : nullptr;
-    while (Value && Value->Kind == ExprKind::Cast && plain(*Value) &&
-           Value->Type && Value->Type->Kind == NdTypeKind::Int &&
-           Value->Operands.size() == 1)
-      Value = Value->Operands[0];
-    if (Value && Value->Kind == ExprKind::Load && plain(*Value) &&
-        Value->Type && Value->Type->Kind == NdTypeKind::Int &&
-        (Value->Type->Size == 4 || Value->Type->Size == 8) &&
-        Value->Operands.size() == 1 && Value->Operands[0]) {
-      auto Address = Value->Operands[0];
-      while (Address && Address->Kind == ExprKind::Cast && plain(*Address) &&
-             Address->Type && Address->Type->Size == 8 &&
-             (Address->Type->Kind == NdTypeKind::Int ||
-              Address->Type->Kind == NdTypeKind::Ptr) &&
-             Address->Operands.size() == 1)
-        Address = Address->Operands[0];
-      if (!Address)
+    ExprPtr Value;
+    if (Statement.Kind == StmtKind::Assign) {
+      if (!Statement.Dst || Statement.Dst->Kind != ExprKind::Var ||
+          !plain(*Statement.Dst) ||
+          (Statement.Dst->Var.Kind != MedVar::Temp &&
+           Statement.Dst->Var.Kind != MedVar::Reg) ||
+          !Statement.Dst->Operands.empty() || Statement.RetVal ||
+          Statement.CallExpr)
         return {};
-      const auto &Pointer = *Address;
-      if (Pointer.Kind == ExprKind::Var && plain(Pointer) &&
-          Pointer.Operands.empty() && Pointer.Var.Kind == MedVar::Param &&
-          Pointer.Var.Id == static_cast<int>(Parameter) &&
-          !Pointer.Var.SSAVer && Pointer.Var.RenameTag < 0 && Pointer.Type &&
-          (Pointer.Type->Kind == NdTypeKind::Ptr ||
-           Pointer.Type->Kind == NdTypeKind::Int) &&
-          Pointer.Type->Size == 8 && Pointer.Var.Size == 8) {
-        Load = Value.get();
-        AtEntry = false;
-        continue;
-      }
+      Value = Statement.Val;
+    } else if (!Statement.Dst && Statement.Kind == StmtKind::Return &&
+               !Statement.Val && !Statement.CallExpr) {
+      Value = Statement.RetVal;
+    } else if (!Statement.Dst && Statement.Kind == StmtKind::Call &&
+               !Statement.Val && !Statement.RetVal) {
+      Value = Statement.CallExpr;
+    } else if (!Statement.Dst && Statement.Kind == StmtKind::ExprStmt &&
+               !Statement.CallExpr && !Statement.RetVal) {
+      Value = Statement.Val;
+    } else {
+      return {};
     }
-    if (Statement.Kind != StmtKind::Assign || !Statement.Dst ||
-        Statement.Dst->Kind != ExprKind::Var || !pureEntryValue(Statement.Val))
+    if (const auto *Entry = entryLoad(Value, Parameter, Budget)) {
+      Load = Entry;
+      AtEntry = false;
+      continue;
+    }
+    if (Statement.Kind != StmtKind::Assign || !pureEntryValue(Value, Budget))
       return {};
   }
   return Load && Uses == 1 ? Load->Type : TypeRef{};
