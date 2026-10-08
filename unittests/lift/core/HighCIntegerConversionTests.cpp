@@ -167,6 +167,31 @@ static const uint64_t xs[] = {0, 1, 0x7F, 0x80, 0xFF, 0x7FFFFFFF, 0x80000000,
                               0xFFFFFFFFFFFFFFFFull};
 )";
 
+TEST(HighCIntegerConversion, ASignedCompareOfShiftsComparesSigned) {
+  // AArch64 `cmp w14, w13, lsl #24; cset lt` compares two bytes as signed
+  // chars by their shifted words.  Each shift happens in an unsigned
+  // carrier, whatever its signed type says, so the signed compare converts
+  // both: the low and second bytes of x, as signed chars.
+  const TypeRef U32 = integer(4, false), I32 = integer(4, true);
+  auto Low = lowPart(input(), U32);
+  auto Second = op(NdOp::INT_RIGHT, lowPart(input(), U32), constant(8, 4), U32);
+  auto Less = op(NdOp::INT_SLESS, op(NdOp::INT_LEFT, Low, constant(24, 4), I32),
+                 op(NdOp::INT_LEFT, Second, constant(24, 4), I32),
+                 integer(1, false));
+  HighFunc F = function("signed_byte_less", integer(8, false),
+                        {result(extend(NdOp::INT_ZEXT, Less, integer(8, false)))});
+  const std::string Source = emit(F);
+  compileAndRun(Source + R"(
+int main(void) {
+  const uint64_t xs[] = {0x0000, 0x8001, 0x0180, 0x7F80, 0x807F, 0xFF00, 0x00FF};
+  for (unsigned i = 0; i < sizeof xs / sizeof xs[0]; ++i)
+    if (signed_byte_less(xs[i]) != ((int8_t)xs[i] < (int8_t)(xs[i] >> 8)))
+      return 1;
+  return 0;
+}
+)");
+}
+
 TEST(HighCIntegerConversion, AConversionKeepingTheBytesNeedsNoCastOfItsOwn) {
   // t1 = x * 3 (read twice); return (uint32_t)(int32_t)t1 + (t1 >> 32):
   // the signed truncation inside the 32-bit sum keeps only bytes the
