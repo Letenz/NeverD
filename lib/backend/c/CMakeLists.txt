@@ -1,9 +1,19 @@
 add_neverd_component_library(NeverDBackendC
   CSourceRecorder.cpp
+  dialect/CDialect.cpp
+  dialect/CSyntaxLexer.cpp
+  dialect/CSyntaxParser.cpp
+  dialect/CSyntaxSema.cpp
+  dialect/CSyntaxTypes.cpp
+  dialect/DialectPrinter.cpp
+  dialect/GoDialect.cpp
+  dialect/RustDialect.cpp
+  dialect/SourceDialect.cpp
   HighC/HighCEmitter.cpp
   HighC/HighCExprBinOp.cpp
   HighC/HighCExprWriter.cpp
   HighC/HighCSourceCalls.cpp
+  HighC/HighCSourceNames.cpp
   HighC/HighCFuncWriter.cpp
   HighC/HighCStmtWriter.cpp
   LLVMC/LLVMCEmitter.cpp
@@ -35,6 +45,7 @@ add_neverd_component_library(NeverDBackendC
 
   LINK_COMPONENTS
   IR
+  LibC
   LLVMScalarLoopRecovery
   PassIR
   Support

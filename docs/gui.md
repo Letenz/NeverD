@@ -124,8 +124,9 @@ conditional (green/red) and unconditional edges routed around blocks; panning
 and zooming are local, and text is dropped at low zoom. The graph overview
 shows the whole function and the visible area.
 
-**Pseudocode** (F5, Tab) and **IR** windows show C, C through LLVM, LowIR,
-MedIR, HighIR or LLVM IR of the current function and follow the disassembly
+**Pseudocode** (F5, Tab) and **IR** windows show pseudocode in the function's
+own language, C, Rust, Go, C through LLVM, LowIR, MedIR, HighIR or LLVM IR of
+the current function and follow the disassembly
 unless their lock is set. A window hidden behind another tab catches up when it
 is shown, so moving through the disassembly never waits for a decompile no one
 sees, and F5 pressed while a jump is loading decompiles the function the jump
@@ -220,6 +221,33 @@ functions the C runtime defines itself (`_start` reads `start`). A name an
 image spells with control characters, and that no scheme reads, is never
 copied into a comment.
 
+**Pseudocode** reads in the language the function was written in: a Rust
+function as Rust, a Go function as Go and any other as C. The choice is made
+for each function, from its symbol, and for a function without one from the
+language the image was built in; the window says when it is not C
+(`Pseudocode-A (Rust)`). **C**, **Rust** and **Go** in the window's menu show
+every function in one of them. The Rust and Go views spell exactly what the C
+says. Each conversion C makes on its own is written out (`a as u32 + b as u32`,
+`uint32(a) + uint32(b)`), conditions compare with zero (`v != 0`,
+`!p.is_null()`, `p != nil`), memory is read and written through a pointer made
+from the address (`*((v0 + 8) as *mut i64)`, `*(*int64)(v0 + 8)`), and names
+read as their language spells them (`core::fmt::write`,
+`<&str as core::fmt::Display>::fmt`, `internal/cpu.Initialize`). Such a name is
+one name: a click highlights it everywhere, a double-click goes to it, and
+hovering it shows the C identifier and the symbol it reads. A few forms keep
+C's meaning where the language has none, as the first lines of the view say:
+integers wrap, `abort()` and `trap()` stand for a value the decompiler does not
+know and trap when computed, Go converts booleans and pointers as plainly as
+integers, and `goto`, SEH and C++ handlers and inline assembly keep their C
+spelling. A declaration a view cannot spell, such as a pointer into another
+address space, is shown as C with the reason above it, and the status line
+counts them. Rust that avoids those forms compiles: the test suite builds the
+Rust view of a set of functions with rustc and checks that it computes what the
+C does. `neverd decompile --language=rust`, `go` or `source` prints the same
+views for the whole program or, with `--func`, one function; `source` reads
+native code in the image's language, EVM bytecode as Solidity and an SBF
+program as Rust.
+
 Strings are found by default in ASCII, UTF-8, UTF-16LE and UTF-32LE (the
 `wchar_t` of Linux and macOS), and C strings that are not UTF-8 in the common
 code pages: windows-1252, GBK, Big5, Shift-JIS and EUC-KR, all in one pass.
@@ -276,7 +304,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Esc / Ctrl+Enter | Previous / next position (mouse Back/Forward work too) |
 | Enter / Alt+Enter | Follow the operand / follow it in a new view |
 | Space | Toggle graph and text view |
-| F5 / Tab | Pseudocode / switch between disassembly and pseudocode |
+| F5 / Tab | Pseudocode in the function's own language / switch between disassembly and pseudocode |
 | X / Ctrl+X / Ctrl+J | References to the operand / to the item / from the item |
 | N | Rename the name under the cursor, or the address: a function at its entry, data, a label in code |
 | P | Create a function at the address (**Edit → Functions** also deletes the current one) |
@@ -307,6 +335,30 @@ would drag the whole workbench. On GNOME the workbench keeps dialogs
 free-standing: under X11 a modal dialog takes the utility window type, and
 under Wayland the compositor is not told which dialogs are modal
 (`xdg-dialog-v1`). A modal dialog still blocks the workbench until it closes.
+
+## Loading a new file
+
+Opening a binary NeverD keeps no project for (no `.nddb` beside it and no
+sidecar files) with **File → Open** or by dropping it on the window first shows
+**Load a new file**, as IDA does. The list names every way the engine can read
+the file, the way IDA writes it: `ELF64 for x86-64 (Shared object) [elf]`,
+`Portable executable for AMD64 (PE) [pe]` (listed first), `Mach-O file
+(EXECUTE). ARM64 [macho]`, a row per slice of a universal Mach-O file, `EVM
+bytecode [evm]`, and `Binary file` last. A row NeverD cannot load is shown greyed
+with the reason in its tooltip: a processor NeverD has no lifter for (`NeverD has
+no MIPS processor`), a big-endian ELF file, the other slices of a universal file
+(NeverD loads the host's slice, else the first), or a binary file, which NeverD
+cannot load yet. The first row loadable for the file's contents is chosen, so
+Enter opens the file as before. A row a loader took for the file's name alone
+(EVM bytecode for a `.bin` file whose bytes are not bytecode) is listed but
+never chosen by default. **Processor type** shows the processor the header states; it cannot be
+changed, since every loader takes it from the header. **Analysis → Enabled**
+turns idle-time analysis (function discovery and the reference index) on or off
+for the file, **Indicator enabled** shows or hides the status line's analysis
+indicator, and **Options → Load debug information** reads the PDB, DWARF or
+linker map that belongs to the input. Projects, recent files and files opened
+from the command line skip the dialog. The command line lists the same rows with
+`neverd identify <input>` (`--json` for the engine's `neverd_identify_json`).
 
 ## Databases
 

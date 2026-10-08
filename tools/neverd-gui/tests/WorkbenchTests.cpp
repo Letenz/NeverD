@@ -6,6 +6,7 @@
 #include "GraphView.h"
 #include "HexView.h"
 #include "ListingView.h"
+#include "LoadFileDialog.h"
 #include "MainWindow.h"
 #include "OutputWindow.h"
 #include "ProjectDatabase.h"
@@ -98,6 +99,27 @@ QByteArray readAll(const QString &path) {
   QFile file(path);
   return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
+/// Accepts every "Load a new file" dialog with its defaults while it lives,
+/// as pressing Enter does.
+class LoadDialogAcceptor {
+public:
+  LoadDialogAcceptor() {
+    QObject::connect(&timer_, &QTimer::timeout, [this] {
+      if (auto *dialog = qobject_cast<LoadFileDialog *>(
+              QApplication::activeModalWidget())) {
+        ++accepted_;
+        dialog->accept();
+      }
+    });
+    timer_.start(10);
+  }
+  int accepted() const { return accepted_; }
+
+private:
+  QTimer timer_;
+  int accepted_ = 0;
+};
+
 bool dropFile(QWidget *target, const QString &path) {
   QMimeData mime;
   mime.setUrls({QUrl::fromLocalFile(path)});
@@ -140,7 +162,7 @@ private slots:
     QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
                  std::optional<Address>(Base + 0x140));
     bench.action(ActionId::ViewPseudocode)->trigger();
-    auto *view = bench.codeView(QStringLiteral("c"));
+    auto *view = bench.codeView(QStringLiteral("source"));
     QVERIFY(view);
     auto *code = view->text();
     QTRY_VERIFY(!code->loading() && code->lineCount() > 1);
@@ -203,7 +225,7 @@ private slots:
     QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
                  std::optional<Address>(Base + 0x140));
     bench.action(ActionId::ViewPseudocode)->trigger();
-    auto *view = bench.codeView(QStringLiteral("c"));
+    auto *view = bench.codeView(QStringLiteral("source"));
     QVERIFY(view);
     auto *code = view->text();
     QTRY_VERIFY(!code->loading() && code->lineCount() > 1);
@@ -288,7 +310,7 @@ private slots:
     bench.action(secondWindow ? ActionId::ViewLowIR : ActionId::ViewPseudocode)
         ->trigger();
     auto *view = bench.codeView(secondWindow ? QStringLiteral("low")
-                                             : QStringLiteral("c"));
+                                             : QStringLiteral("source"));
     QVERIFY(view);
     view->setRepresentation(representation);
     auto *code = view->text();
@@ -358,6 +380,86 @@ private slots:
     QTRY_VERIFY(code->hasFocus());
   }
 
+  void pseudocodeReadsInTheFunctionsLanguage() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("pseudocode-rust.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    // F5 shows a Rust function as Rust, and the window says so.
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 1,
+                             OpenTimeoutMs);
+    QCOMPARE(code->language(), QStringLiteral("rust"));
+    QCOMPARE(view->chosenLanguage(), QStringLiteral("Rust"));
+    QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+                 QStringLiteral("Pseudocode-A (Rust)"));
+    // A source name is one name wherever it is clicked, and resolves by the
+    // symbol it reads.
+    const QStringList lines = code->allText().split(QLatin1Char('\n'));
+    int row = -1;
+    for (int i = 0; i < lines.size() && row < 0; ++i)
+      if (lines[i].contains(QStringLiteral("core::fmt::write(")))
+        row = i;
+    QVERIFY(row >= 0);
+    const int column = int(lines[row].indexOf(QStringLiteral("fmt")));
+    const auto name = code->sourceNameAt(row, column);
+    QVERIFY(name);
+    QCOMPARE(name->first, QStringLiteral("core::fmt::write"));
+    QCOMPARE(name->second.identifier, QStringLiteral("core_fmt_write"));
+    QCOMPARE(name->second.address, std::optional<Address>(Base + 0x160));
+    QVERIFY(!code->sourceNameAt(row,
+                                int(lines[row].indexOf(QStringLiteral("v0")))));
+    QSignalSpy names(code, &CodeText::nameActivated);
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const QPoint point(
+        qRound(6 + (6 + column + 0.5) *
+                       metrics.horizontalAdvance(QLatin1Char('M'))),
+        qRound((row - code->verticalScrollBar()->value() + 0.5) *
+               std::ceil(metrics.lineSpacing())));
+    code->setFocus();
+    QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QTest::mouseDClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QCOMPARE(names.size(), 1);
+    QCOMPARE(names.first().first().toString(),
+             QStringLiteral("_ZN4core3fmt5write17h0123456789abcdefE"));
+    // A function the engine refuses reads in no language.
+    bench.window->disassembly()->navigate(Base + 0x180);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->status().contains(QStringLiteral("fixture refuses")),
+        OpenTimeoutMs);
+    QCOMPARE(code->language(), QStringLiteral("c"));
+    QCOMPARE(view->chosenLanguage(), QString());
+    QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+                 QStringLiteral("Pseudocode-A"));
+    QVERIFY(!code->sourceNameAt(0, 0));
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
+                                 code->language() == QLatin1String("rust"),
+                             OpenTimeoutMs);
+    // C and Go stay one choice away; Go says what it shows as C.
+    view->setRepresentation(QStringLiteral("c"));
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
+                                 code->language() == QLatin1String("c"),
+                             OpenTimeoutMs);
+    QCOMPARE(view->chosenLanguage(), QString());
+    QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+                 QStringLiteral("C-A"));
+    view->setRepresentation(QStringLiteral("go"));
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
+                                 code->language() == QLatin1String("go"),
+                             OpenTimeoutMs);
+    QVERIFY(code->allText().contains(QStringLiteral("func main.main()")));
+    QVERIFY(code->status().contains(QStringLiteral("shown as C")));
+  }
+
   void unknownEntryBrowsesMappedCodeAndShowsDiagnostics() {
     QTemporaryDir directory;
     const auto path =
@@ -410,7 +512,7 @@ private slots:
           bench.window->disassembly()->currentFunction().has_value(),
           OpenTimeoutMs);
       bench.action(ActionId::ViewPseudocode)->trigger();
-      auto *view = bench.codeView(QStringLiteral("c"));
+      auto *view = bench.codeView(QStringLiteral("source"));
       QVERIFY(view);
       target = view->text()->viewport();
     } else if (targetName == QLatin1String("output"))
@@ -429,9 +531,12 @@ private slots:
       QVERIFY(target->window() != bench.window.get());
     }
     QVERIFY(target);
+    // A new file asks how to load it first.
+    LoadDialogAcceptor loadDialogs;
     QVERIFY(dropFile(target, path));
     QTRY_COMPARE_WITH_TIMEOUT(bench.session.filePath(), path, OpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(loadDialogs.accepted(), 1);
     QVERIFY(QFileInfo::exists(path));
     if (targetName == QLatin1String("command"))
       QVERIFY(static_cast<QLineEdit *>(target)->text().isEmpty());
@@ -475,6 +580,7 @@ private slots:
     QTemporaryDir directory;
     const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
     Workbench bench;
+    LoadDialogAcceptor loadDialogs;
     QTimer drag;
     bool accepted = false;
     connect(&drag, &QTimer::timeout, this, [&] {
@@ -503,6 +609,7 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     bench.session.setComment(Base, QStringLiteral("unsaved comment"));
     QTRY_VERIFY(bench.session.dirty());
+    LoadDialogAcceptor loadDialogs;
     QTimer cancel;
     bool prompted = false;
     connect(&cancel, &QTimer::timeout, this, [&] {
@@ -710,7 +817,8 @@ private slots:
     // Pseudocode pages every line of the function.
     bench.action(ActionId::ViewPseudocode)->trigger();
     CodeView *pseudocode = nullptr;
-    QTRY_VERIFY((pseudocode = bench.codeView(QStringLiteral("c"))) != nullptr);
+    QTRY_VERIFY((pseudocode = bench.codeView(QStringLiteral("source"))) !=
+                nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(
         pseudocode->text()->allText().contains(QStringLiteral("code line 699")),
         OpenTimeoutMs);
@@ -731,7 +839,7 @@ private slots:
     // window; it used to copy the disassembly.
     bench.window->activateWindow();
     QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
-    ir->setRepresentation(QStringLiteral("c"));
+    ir->setRepresentation(QStringLiteral("source"));
     QTRY_VERIFY_WITH_TIMEOUT(
         !ir->text()->loading() && ir->text()->lineCount() > 3, OpenTimeoutMs);
     // Two windows showing pseudocode are lettered apart.

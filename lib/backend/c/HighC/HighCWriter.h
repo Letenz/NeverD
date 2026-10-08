@@ -108,6 +108,9 @@ public:
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
+  /// Records the functions and objects the text names in the source map
+  /// (HighCSourceNames.cpp).
+  void recordSourceNames(const std::vector<HighFunc> &Funcs);
   TypeRef declaredFunctionReturnType(const HighFunc &Func) const;
   void prepareFunctionReturns(std::vector<HighFunc> &Funcs) const;
   void prepareFunctionIdentifiers(const std::vector<HighFunc> &Funcs);
@@ -324,6 +327,11 @@ public:
   std::string indirectCalleeStr(const HighExpr &E,
                                 const TypeRef &ReturnType = nullptr);
   const HighExpr *unwrapIntegerView(const HighExpr *E) const;
+  /// The variable \p E converts between integer or pointer types of one
+  /// width, or null when a step changes the width or converts a float: a
+  /// narrowed or extended view is another value than the variable it reads
+  /// (`(int32_t)(int8_t)v` is not `v`).
+  const HighExpr *sameWidthVariable(const HighExpr &E) const;
   const HighExpr *forwardedExpr(const HighExpr *E) const;
   /// True when \p E prints as an unsigned integer of exactly \p Width bytes.
   /// Widening views and untyped add/sub/mul stay wrapped.
@@ -592,6 +600,9 @@ public:
   /// declared as function pointers, linked by their own names.
   std::set<std::string> ImportSlotIdentifiers;
   std::map<std::string, std::string> ExternalSourceIdentifiers;
+  /// The identifiers functionIdentifier() spelled for functions no map
+  /// names, and the symbols they stand for (recordSourceNames()).
+  mutable std::map<std::string, std::string> ReferencedFunctionSymbols;
   std::set<va_t> GotoTargets;
   /// How many gotos target each address in the current function.
   std::map<va_t, unsigned> GotoTargetUses;
@@ -669,6 +680,9 @@ public:
   bool UnalignedTypesWritten = false;
   bool Has256BitInteger = false;
   bool Has512BitInteger = false;
+  /// A 16-byte integer on a target whose C has no __int128, which the
+  /// prelude then spells as the C23 _BitInt(128).
+  bool Int128AsBitInt = false;
 
   HighCAnalysisState Analysis;
   bool InferredVoid = false;
@@ -785,6 +799,9 @@ public:
 
   struct ImageObject {
     std::string Name;
+    /// The name the user, debug information or a symbol gives it, which
+    /// \ref Name is spelled from; empty for a name the emitter made.
+    std::string Symbol;
     /// The symbol its name is spelled from, as its language spells it, for
     /// the comment that declares it; empty when the name is the symbol.
     std::string Readable;
@@ -797,6 +814,10 @@ public:
     bool WeakType = false;
     /// The code calls or jumps through the pointer it holds.
     bool CallSlot = false;
+    /// The code uses its address as a value, not only to access it there.
+    bool AddressTaken = false;
+    /// The image relocates pointer slots inside it: each holds an address.
+    bool HoldsPointers = false;
     /// A string referenced by its address alone: declared as its array, with
     /// \ref ArrayBytes elements' bytes, initialized by the string.
     std::optional<ImageCString> String;
@@ -804,6 +825,9 @@ public:
     /// A pointer slot only loaded, holding the address of a read-only string:
     /// declared as that string's pointer, initialized by its literal.
     std::optional<ImageCString> PointsTo;
+    /// The code indexes the object (`table[i]`): its whole extent, as the
+    /// image's symbol sizes it, is declared, as bytes.
+    uint64_t IndexedBytes = 0;
   };
   std::map<va_t, ImageObject> ImageObjects;
   /// The C initializer of an object's scalar value, as the image holds it;
@@ -811,6 +835,17 @@ public:
   /// cannot spell exactly.
   std::optional<std::string> imageObjectInitializer(va_t Addr,
                                                     const ImageObject &Obj);
+  /// The address constant of a sized image object that \p Address indexes
+  /// by a variable byte offset (`i + &table`), or null.  The constant may
+  /// point into the object (`i + &table[2]`).
+  const HighExpr *indexedImageBase(const HighExpr &Address) const;
+  /// The address and size of the outermost data object, sized by its
+  /// symbol, that holds \p Addr.
+  std::optional<std::pair<va_t, uint64_t>> sizedObjectAt(va_t Addr) const;
+  /// The image's sized data objects by address, each as large as the
+  /// largest symbol there, and the furthest end of any object up to each.
+  std::vector<std::pair<va_t, uint64_t>> SizedObjects;
+  std::vector<va_t> SizedObjectReach;
   /// The image object a call argument prints as when it is a string: the
   /// array's address, or a load of a pointer to one.  The expression is the
   /// one that prints the object's name.
@@ -868,9 +903,24 @@ public:
   struct ImageBacking {
     va_t Base;
     va_t End;
+    /// The bytes, as an address names them (`table[8]`).
     std::string Name;
+    /// A backing that holds relocated pointer slots is a union of words and
+    /// bytes: its C object, and the slots, each word-aligned in it.
+    std::string Words;
+    std::vector<va_t> PointerSlots;
   };
   std::vector<ImageBacking> ImageBackings;
+  /// The C address a relocated pointer slot holds: the function or data it
+  /// names, or none when no C object names it.
+  std::optional<std::string> relocatedSlotTarget(va_t Slot) const;
+  /// A pointer-sized object at a relocated slot: the address it holds, as
+  /// its initializer.
+  std::optional<std::string>
+  relocatedSlotInitializer(va_t Addr, const ImageObject &Obj) const;
+  /// Declares the objects whose relocated pointer slots name other objects:
+  /// the backings that hold them, as words, and the single slots \p Deferred.
+  void writePointerBackings(const std::vector<va_t> &Deferred);
 
   std::vector<HiLoPair> HiLoPairs;
 };

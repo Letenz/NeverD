@@ -1288,6 +1288,18 @@
         <source>LLVM IR</source>
         <translation>LLVM IR</translation>
     </message>
+    <message>
+        <source>C</source>
+        <translation>C</translation>
+    </message>
+    <message>
+        <source>Rust</source>
+        <translation>Rust</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation>Go</translation>
+    </message>
 </context>
 <context>
     <name>Toolbars</name>
@@ -1412,6 +1424,17 @@ Opération de bibliothèque reconnue ; cliquez pour afficher son code.</translat
 Double-click to go to the declaration.</source>
         <translation>%1
 Double-cliquez pour aller à la déclaration.</translation>
+    </message>
+    <message>
+        <source>C: %1</source>
+        <translation>C : %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations shown as C</source>
+        <translation>
+            <numerusform>%n déclaration affichée en C</numerusform>
+            <numerusform>%n déclarations affichées en C</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -1926,8 +1949,8 @@ Signé : %4</translation>
         <translation>Saisissez une commande</translation>
     </message>
     <message>
-        <source>Create C file</source>
-        <translation>Créer un fichier C</translation>
+        <source>Create source file</source>
+        <translation>Créer un fichier source</translation>
     </message>
     <message>
         <source>Create LST file</source>
@@ -2056,6 +2079,10 @@ Signé : %4</translation>
     <message>
         <source>Collapse library operations</source>
         <translation>Replier les opérations de bibliothèque</translation>
+    </message>
+    <message>
+        <source>The ways to load %1 are unknown: %2</source>
+        <translation>La façon de charger %1 est inconnue : %2</translation>
     </message>
 </context>
 <context>
@@ -2222,6 +2249,116 @@ Signé : %4</translation>
     <message>
         <source>Defined %1 at %2</source>
         <translation>%1 défini à %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LoadFileDialog</name>
+    <message>
+        <source>Load a new file</source>
+        <translation>Charger un nouveau fichier</translation>
+    </message>
+    <message>
+        <source>Load file %1 &amp;as</source>
+        <translation>Charger le fichier %1 &amp;comme</translation>
+    </message>
+    <message>
+        <source>The input file possibly has the listed formats</source>
+        <translation>Le fichier d&apos;entrée a peut-être l&apos;un des formats listés</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype</source>
+        <translation>T&amp;ype de processeur</translation>
+    </message>
+    <message>
+        <source>The file&apos;s header states the processor</source>
+        <translation>L&apos;en-tête du fichier fixe le processeur</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>Analyse</translation>
+    </message>
+    <message>
+        <source>&amp;Enabled</source>
+        <translation>&amp;Activée</translation>
+    </message>
+    <message>
+        <source>If turned off, NeverD will not analyze the program in idle time</source>
+        <translation>Si elle est désactivée, NeverD n&apos;analyse pas le programme pendant les temps morts</translation>
+    </message>
+    <message>
+        <source>In&amp;dicator enabled</source>
+        <translation>In&amp;dicateur activé</translation>
+    </message>
+    <message>
+        <source>Display the analysis progress in the status line</source>
+        <translation>Afficher la progression de l&apos;analyse dans la ligne d&apos;état</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>Options</translation>
+    </message>
+    <message>
+        <source>Load debu&amp;g information</source>
+        <translation>Charger les infos de débo&amp;gage</translation>
+    </message>
+    <message>
+        <source>Read the PDB, DWARF or linker map that belongs to the input</source>
+        <translation>Lire le fichier PDB, DWARF ou la carte de l&apos;éditeur de liens associés à l&apos;entrée</translation>
+    </message>
+    <message>
+        <source>NeverD cannot load this file: %1</source>
+        <translation>NeverD ne peut pas charger ce fichier : %1</translation>
+    </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>Listé pour le seul nom du fichier ; son contenu ne montre pas ce format</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>Seul le nom du fichier suggère un format ; choisissez une ligne pour charger le fichier ainsi</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>Processeur : %1</translation>
+    </message>
+</context>
+<context>
+    <name>Processors</name>
+    <message>
+        <source>Intel 80x86 processors</source>
+        <translation>Processeurs Intel 80x86</translation>
+    </message>
+    <message>
+        <source>ARM processors</source>
+        <translation>Processeurs ARM</translation>
+    </message>
+    <message>
+        <source>Virtual machines</source>
+        <translation>Machines virtuelles</translation>
+    </message>
+    <message>
+        <source>Intel 80386 and later (32-bit)</source>
+        <translation>Intel 80386 et ultérieurs (32 bits)</translation>
+    </message>
+    <message>
+        <source>AMD64 and Intel 64 (64-bit)</source>
+        <translation>AMD64 et Intel 64 (64 bits)</translation>
+    </message>
+    <message>
+        <source>ARM and Thumb (AArch32)</source>
+        <translation>ARM et Thumb (AArch32)</translation>
+    </message>
+    <message>
+        <source>ARM64 (AArch64)</source>
+        <translation>ARM64 (AArch64)</translation>
+    </message>
+    <message>
+        <source>Ethereum Virtual Machine</source>
+        <translation>Machine virtuelle Ethereum</translation>
+    </message>
+    <message>
+        <source>Solana BPF</source>
+        <translation>Solana BPF</translation>
     </message>
 </context>
 </TS>

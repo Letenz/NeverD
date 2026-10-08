@@ -117,6 +117,12 @@ const OperandFormatFunctions &operandFormats() {
       engineSymbol<SessionLoadFunction>("neverd_operand_formats_load")};
   return functions;
 }
+using IdentifyFunction = const char *(*)(const char *);
+IdentifyFunction identifyFunction() {
+  static const auto function =
+      engineSymbol<IdentifyFunction>("neverd_identify_json");
+  return function;
+}
 IRViewFunction irViewFunction() {
   // Additive C ABI capability: an older matching engine can still run the GUI.
   static const auto function =
@@ -413,6 +419,7 @@ void Engine::requireWriter() const {
 }
 bool Engine::keepsFunctionEdits() { return static_cast<bool>(functionEdits()); }
 bool Engine::keepsDataItems() { return static_cast<bool>(dataItems()); }
+bool Engine::identifiesFiles() { return identifyFunction() != nullptr; }
 bool Engine::keepsOperandFormats() {
   return static_cast<bool>(operandFormats());
 }
@@ -435,6 +442,22 @@ bool Engine::reloadOperandFormats() {
     operandFormatsChanged();
   return true;
 }
+void Engine::namesChanged() {
+  graphs_.clear();
+  if (listing_)
+    listing_->namesChanged();
+  textKey_.clear();
+  textCache_.clear();
+  textLines_.clear();
+  functionOrderKey_.clear();
+  functionOrder_.clear();
+}
+void Engine::commentsChanged() {
+  graphs_.clear();
+  textKey_.clear();
+  textCache_.clear();
+  textLines_.clear();
+}
 void Engine::operandFormatsChanged() {
   // Graph nodes hold formatted lines; pseudocode does not show the formats.
   graphs_.clear();
@@ -453,7 +476,7 @@ bool Engine::reloadDataItems() {
   if (items.load(session_) != 0)
     return false;
   if (dataItemRows() != before)
-    invalidate();
+    namesChanged();
   return true;
 }
 Json Engine::dataItemRows() const {
@@ -528,6 +551,12 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
             page["text"].get_ref<const std::string &>();
         for (auto &row : page["rows"])
           full["rows"].push_back(std::move(row));
+        // A spelled page names the source names on it alone.
+        if (auto names = page.find("source_names");
+            names != page.end() && names->is_array() &&
+            full.contains("source_names") && full["source_names"].is_array())
+          for (auto &name : *names)
+            full["source_names"].push_back(std::move(name));
       }
       if (complete)
         break;
@@ -556,6 +585,15 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
                 span[field] =
                     base +
                     shiftedOffset(span[field].get<std::size_t>() - base, shift);
+    if (auto names = full.find("source_names");
+        names != full.end() && names->is_array())
+      for (auto &name : *names)
+        for (const char *field : {"begin_byte", "end_byte"})
+          if (name.contains(field) && name[field].is_number_unsigned() &&
+              name[field].get<std::size_t>() >= base)
+            name[field] =
+                base +
+                shiftedOffset(name[field].get<std::size_t>() - base, shift);
     // Renames before the definition move where it begins, not its line.
     if (auto prelude = full.find("prelude");
         prelude != full.end() && prelude->is_object() &&
@@ -592,9 +630,20 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
       rows.push_back(row);
   }
   page["rows"] = std::move(rows);
+  const std::size_t base = namedView_.value("byte_offset", std::size_t{0});
+  if (auto names = namedView_.find("source_names");
+      names != namedView_.end() && names->is_array()) {
+    Json onPage = Json::array();
+    for (const auto &name : *names) {
+      const auto begin = name.value("begin_byte", std::size_t{0});
+      const auto nameEnd = name.value("end_byte", std::size_t{0});
+      if (nameEnd > base + startByte && begin < base + endByte)
+        onPage.push_back(name);
+    }
+    page["source_names"] = std::move(onPage);
+  }
   page["offset"] = start;
-  page["byte_offset"] =
-      namedView_.value("byte_offset", std::size_t{0}) + startByte;
+  page["byte_offset"] = base + startByte;
   page["total_lines"] = total;
   page["complete"] = end == total;
   page["next_offset"] = end == total ? Json(nullptr) : Json(end);
@@ -647,8 +696,8 @@ Listing &Engine::listing() {
   return *listing_;
 }
 bool Engine::hasIdleWork() const {
-  return listing_ && neverd_session_is_loaded(session_) &&
-         listing_->hasIdleWork();
+  return backgroundAnalysis_ && listing_ &&
+         neverd_session_is_loaded(session_) && listing_->hasIdleWork();
 }
 void Engine::idleStep() {
   if (hasIdleWork())
@@ -760,6 +809,17 @@ Json Engine::metadata() const {
 }
 
 Json Engine::execute(const std::string &operation, const Json &p) {
+  if (operation == "identify") {
+    // How each loader would read a file, before it is opened.
+    const auto identify = identifyFunction();
+    if (!identify)
+      throw Error("unsupported", "This engine cannot identify files");
+    const auto path = stringField(p, "path", {}, 32768);
+    auto result = backendJson(identify(path.c_str()));
+    if (result.contains("error"))
+      throw Error("invalid_request", result.value("error", std::string()));
+    return result;
+  }
   if (operation == "string_encodings") {
     if (stringEncodings().empty())
       throw Error("unsupported", "The engine finds only ASCII strings");
@@ -861,8 +921,9 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     const auto path = fs::canonical(utf8Path(pathText), ec);
     if (ec || !fs::is_regular_file(path, ec))
       throw Error("load_failed", "Input is not an accessible regular file");
-    if (p.contains("read_only") && !p["read_only"].is_boolean())
-      throw Error("invalid_request", "read_only must be boolean");
+    for (const char *flag : {"read_only", "debug_info", "analysis"})
+      if (p.contains(flag) && !p[flag].is_boolean())
+        throw Error("invalid_request", std::string(flag) + " must be boolean");
     const bool readOnly = p.value("read_only", false);
     auto currentPath =
         utf8Path(ownedString(neverd_session_file_path(session_)));
@@ -888,6 +949,10 @@ Json Engine::execute(const std::string &operation, const Json &p) {
               (*Sink)(Phase, Done, Total, Detail);
           },
           &loadProgress_);
+    // The load dialog's choices: the debug information beside the input, and
+    // idle-time analysis.
+    if (!p.value("debug_info", true))
+      neverd_session_set_debug_info_enabled(next.get(), 0);
     if (!neverd_session_load(next.get(), loadPath.c_str()))
       throw Error("load_failed", ownedString(neverd_last_error(next.get())));
     if (fs::file_size(path) != fileSize ||
@@ -900,6 +965,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     if (!reuseLock)
       lock_ = std::move(nextLock);
     readOnly_ = readOnly;
+    backgroundAnalysis_ = p.value("analysis", true);
     dirty_ = false;
     analyzed_ = false;
     loadedSize_ = fileSize;
@@ -1026,9 +1092,15 @@ Json Engine::execute(const std::string &operation, const Json &p) {
                     "History operation was saved but cannot be reloaded",
                     {{"saved", true}});
     }
-    // Reloading operand formats shows them already; any other table can
-    // change what the listing lays out.
-    if (command.at("kind") != "operand")
+    // Reloading operand formats shows them already, and names and data items
+    // leave the string scan as it is; a function edit changes what the
+    // listing lays out.
+    if (const auto kind = command.at("kind");
+        kind == "rename" || kind == "item")
+      namesChanged();
+    else if (kind == "annotation")
+      commentsChanged();
+    else if (kind != "operand")
       invalidate();
     ++revision_;
     auto result = store.listing(0, 128);
@@ -1417,7 +1489,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
          {"after", text}});
     neverd_annotation_set(session_, address, text.c_str());
     dirty_ = true;
-    invalidate();
+    commentsChanged();
     ++revision_;
     return {{"address", hexAddress(address)},
             {"text", text},
@@ -1481,7 +1553,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     if (neverd_renames_load(session_) != 0)
       throw Error("reload_failed", "Rename was saved but could not be reloaded",
                   {{"saved", true}});
-    invalidate();
+    namesChanged();
     ++revision_;
     return {{"address", hexAddress(address)}, {"name", name}, {"saved", true}};
   }
@@ -1627,10 +1699,10 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       store = checkpoint;
       // The sidecar still holds the items before this one.
       (void)items.load(session_);
-      invalidate();
+      namesChanged();
       throw;
     }
-    invalidate();
+    namesChanged();
     ++revision_;
     return {{"address", hexAddress(start)},
             {"kind", after.at("kind")},
@@ -1732,9 +1804,13 @@ Json Engine::execute(const std::string &operation, const Json &p) {
   }
   if (operation == "decompile") {
     const auto representation = stringField(p, "representation", "c", 16);
+    // `source` reads in the function's own language; `rust` and `go` spell
+    // the HighC source in one, through the engine's view alone.
+    const bool spelled = representation == "source" ||
+                         representation == "rust" || representation == "go";
     if (representation != "c" && representation != "llvmc" &&
         representation != "low" && representation != "med" &&
-        representation != "high" && representation != "llvm")
+        representation != "high" && representation != "llvm" && !spelled)
       throw Error("unsupported", "Unknown code representation");
     const auto offset =
         sizeField(p, "offset", 0, std::numeric_limits<std::size_t>::max());
@@ -1744,7 +1820,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     prepareFunction(address);
     std::string mappingStatus = "unsupported_representation";
     if (representation == "low" || representation == "med" ||
-        representation == "c" || representation == "llvmc") {
+        representation == "c" || representation == "llvmc" || spelled) {
       if (auto named = namedViewPage(address, representation, offset, limit))
         return *named;
       if (const auto view = irViewFunction()) {
@@ -1768,6 +1844,10 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       } else
         mappingStatus = "unavailable_engine_api";
     }
+    if (spelled)
+      throw Error("unavailable", error().empty()
+                                     ? "This representation is unavailable"
+                                     : error());
     const auto key = hexAddress(address) + ":" + representation;
     if (textKey_ != key) {
       textKey_.clear();

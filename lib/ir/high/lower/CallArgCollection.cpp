@@ -1493,22 +1493,26 @@ int MedToHighConverter::abiParamIndex(const MedVar &V) const {
   };
 
   if (V.Kind == MedVar::Param) {
-    // A stack parameter's Id is its position, which may equal the Id of an
-    // argument register's variable (R9's in a thunk whose four registers
-    // were its first variables), so it names only a stack parameter.
-    const bool StackParam = V.RegOff == kNoParamReg;
-    int IdMatch = -1;
+    // Register and stack parameters number their ids apart: ARM32's r0 can
+    // carry id 8, the same as the ninth argument's stack slot.  An id of the
+    // same kind decides first.
+    int IdMatch = -1, AnyIdMatch = -1;
     for (size_t I = 0; I < CurMed->Params.size(); ++I) {
       const MedVar &P = CurMed->Params[I];
-      if (P.Id < 0 || P.Id != V.Id || (StackParam && P.RegOff != kNoParamReg))
+      if (P.Id < 0 || P.Id != V.Id)
         continue;
       if (V.RegOff != kNoParamReg && P.RegOff == V.RegOff)
         return static_cast<int>(I);
-      if (IdMatch < 0)
+      if (AnyIdMatch < 0)
+        AnyIdMatch = static_cast<int>(I);
+      if (IdMatch < 0 &&
+          (V.RegOff == kNoParamReg) == (P.RegOff == kNoParamReg))
         IdMatch = static_cast<int>(I);
     }
     if (IdMatch >= 0)
       return IdMatch;
+    if (AnyIdMatch >= 0)
+      return AnyIdMatch;
     const int ByReg = SlotByReg(V.RegOff);
     if (ByReg >= 0)
       return ByReg;

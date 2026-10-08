@@ -305,7 +305,7 @@ void InteractionMetrics::measurePseudocode(const char *name, Done done) {
   {
     CodeView *code = nullptr;
     for (auto *view : window_.findChildren<CodeView *>())
-      if (view->isVisible() && view->representation() == QLatin1String("c")) {
+      if (view->isVisible() && CodeView::isSource(view->representation())) {
         code = view;
         break;
       }

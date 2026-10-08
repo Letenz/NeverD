@@ -36,7 +36,9 @@
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/COFF.h"
+#include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Object/COFF.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MemoryBuffer.h"
 
 #include <algorithm>
@@ -67,6 +69,17 @@ Arch machineToArch(uint16_t Machine) {
   default:
     return Arch::Unknown;
   }
+}
+
+/// How the load dialog names a COFF Machine value.
+std::string machineName(uint16_t Machine) {
+  switch (Machine) {
+#define NEVERD_PE_MACHINE(Value, Name)                                         \
+  case Value:                                                                  \
+    return Name;
+#include "neverd/loader/COFF/PENames.def"
+  }
+  return llvm::formatv("machine {0:x4}", Machine).str();
 }
 
 } // anonymous namespace
@@ -904,6 +917,42 @@ COFFLoader::load(const std::filesystem::path &Path) {
   rust_eh::parseRustExceptions(Img);
   objc_eh::parseObjCExceptions(Img);
   return Img;
+}
+
+void COFFLoader::identify(llvm::MemoryBufferRef Buffer,
+                          std::vector<LoadCandidate> &Rows) {
+  LoadCandidate Row;
+  Row.Row = llvm::identify_magic(Buffer.getBuffer()) ==
+                    llvm::file_magic::pecoff_executable
+                ? LoadRow::PE
+                : LoadRow::COFF;
+  Row.Format = BinaryFormat::COFF;
+  // A PE or COFF header names the file more exactly than any other loader.
+  Row.First = true;
+  auto Obj = llvm::object::COFFObjectFile::create(Buffer);
+  if (!Obj) {
+    Row.Description =
+        llvm::formatv(getLoadRowText(Row.Row).data(), machineName(0)).str();
+    Row.Reason = llvm::formatv(getLoadReasonText(LoadReason::Malformed).data(),
+                               llvm::toString(Obj.takeError()))
+                     .str();
+    Rows.push_back(std::move(Row));
+    return;
+  }
+  const uint16_t Machine = (*Obj)->getMachine();
+  Row.Description =
+      llvm::formatv(getLoadRowText(Row.Row).data(), machineName(Machine)).str();
+  // The processor load() reads the image as.
+  Row.TheArch = machineToArch(Machine);
+  Row.Loadable = Row.TheArch != Arch::Unknown;
+  if (Row.Loadable)
+    Row.Bits =
+        Row.TheArch == Arch::X64 || Row.TheArch == Arch::AArch64 ? 64 : 32;
+  else
+    Row.Reason = llvm::formatv(getLoadReasonText(LoadReason::Processor).data(),
+                               machineName(Machine))
+                     .str();
+  Rows.push_back(std::move(Row));
 }
 
 } // namespace neverd

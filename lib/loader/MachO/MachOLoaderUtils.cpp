@@ -105,6 +105,37 @@ void appendRuntimeFunction(va_t Addr, std::vector<va_t> *Out,
 
 } // anonymous namespace
 
+std::optional<size_t>
+chooseUniversalSlice(const llvm::object::MachOUniversalBinary &Universal) {
+  const auto reads =
+      [](const llvm::object::MachOUniversalBinary::ObjectForArch &Slice) {
+        auto Obj = Slice.getAsObjectFile();
+        if (Obj)
+          return true;
+        llvm::consumeError(Obj.takeError());
+        return false;
+      };
+  // The first slice for the host architecture, as getObjectForArch finds it.
+  const std::string Host =
+      llvm::Triple(llvm::sys::getProcessTriple()).getArchName().str();
+  size_t Index = 0;
+  for (const auto &Slice : Universal.objects()) {
+    if (Slice.getArchFlagName() == Host) {
+      if (reads(Slice))
+        return Index;
+      break;
+    }
+    ++Index;
+  }
+  Index = 0;
+  for (const auto &Slice : Universal.objects()) {
+    if (reads(Slice))
+      return Index;
+    ++Index;
+  }
+  return std::nullopt;
+}
+
 llvm::Expected<std::pair<std::unique_ptr<llvm::MemoryBuffer>,
                          std::unique_ptr<llvm::object::MachOObjectFile>>>
 openMachOFile(const std::filesystem::path &Path) {
@@ -123,23 +154,21 @@ openMachOFile(const std::filesystem::path &Path) {
 
   if (auto *Universal =
           llvm::dyn_cast<llvm::object::MachOUniversalBinary>(Binary.get())) {
-    llvm::Triple Host(llvm::sys::getProcessTriple());
-    std::string ArchName = Host.getArchName().str();
-    auto ObjOr = Universal->getMachOObjectForArch(ArchName);
-    if (!ObjOr) {
-      llvm::consumeError(ObjOr.takeError());
+    if (const auto Chosen = chooseUniversalSlice(*Universal)) {
+      size_t Index = 0;
       for (const auto &Slice : Universal->objects()) {
-        ObjOr = Slice.getAsObjectFile();
-        if (ObjOr)
-          break;
-        llvm::consumeError(ObjOr.takeError());
+        if (Index++ != *Chosen)
+          continue;
+        if (auto ObjOr = Slice.getAsObjectFile())
+          return std::make_pair(std::move(Buf), std::move(*ObjOr));
+        else
+          llvm::consumeError(ObjOr.takeError());
+        break;
       }
     }
-    if (!ObjOr)
-      return llvm::make_error<llvm::StringError>(
-          "macho: no slice in universal binary for host arch",
-          llvm::inconvertibleErrorCode());
-    return std::make_pair(std::move(Buf), std::move(*ObjOr));
+    return llvm::make_error<llvm::StringError>(
+        "macho: no slice in universal binary for host arch",
+        llvm::inconvertibleErrorCode());
   }
 
   if (auto *Obj = llvm::dyn_cast<llvm::object::MachOObjectFile>(Binary.get())) {

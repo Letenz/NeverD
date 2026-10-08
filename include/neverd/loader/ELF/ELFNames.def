@@ -1,0 +1,44 @@
+//===- ELFNames.def - How the load dialog names ELF headers -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// Display names only: whether NeverD loads a machine is the loader's own
+// decision.  A machine missing here is named by LLVM.
+//
+//===----------------------------------------------------------------------===//
+
+// NEVERD_ELF_MACHINE(Value, Name): an e_machine value.
+#ifdef NEVERD_ELF_MACHINE
+NEVERD_ELF_MACHINE(llvm::ELF::EM_386, "Intel 386")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_X86_64, "x86-64")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_ARM, "ARM")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_AARCH64, "ARM64")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_MIPS, "MIPS")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_PPC, "PowerPC")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_PPC64, "PowerPC64")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_RISCV, "Risc-V")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_SPARC, "SPARC")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_SPARCV9, "SPARC V9")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_S390, "IBM S/390")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_68K, "Motorola 68000")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_SH, "SuperH")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_IA_64, "Intel Itanium")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_LOONGARCH, "LoongArch")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_BPF, "BPF")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_HEXAGON, "Hexagon")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_AVR, "Atmel AVR")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_MSP430, "MSP430")
+NEVERD_ELF_MACHINE(llvm::ELF::EM_XTENSA, "Xtensa")
+#undef NEVERD_ELF_MACHINE
+#endif
+
+// NEVERD_ELF_TYPE(Value, Name): an e_type value.
+#ifdef NEVERD_ELF_TYPE
+NEVERD_ELF_TYPE(llvm::ELF::ET_REL, "Relocatable")
+NEVERD_ELF_TYPE(llvm::ELF::ET_EXEC, "Executable")
+NEVERD_ELF_TYPE(llvm::ELF::ET_DYN, "Shared object")
+NEVERD_ELF_TYPE(llvm::ELF::ET_CORE, "Core file")
+#undef NEVERD_ELF_TYPE
+#endif

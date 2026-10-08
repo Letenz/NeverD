@@ -1,6 +1,8 @@
 #ifndef NEVERD_LIBC_LIBCFCNTL_H
 #define NEVERD_LIBC_LIBCFCNTL_H
 
+#include "neverd/libc/LibCNames.h"
+
 #include <array>
 #include <string_view>
 
@@ -15,6 +17,11 @@ inline constexpr std::array kFcntlFunctions = {
     "open",
     "openat",
 };
+
+/// Fixed arity of the fcntl.h functions.  {IntArgs, FpArgs}.
+inline constexpr auto kFcntlArity = std::to_array<LibCArityEntry>({
+    {"creat", {2, 0}},
+});
 
 } // namespace neverd::libc
 

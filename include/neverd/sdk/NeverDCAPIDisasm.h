@@ -215,7 +215,10 @@ NEVERD_API const char *neverd_ir_llvm(neverd_session_t Sess,
 
 /// Return a schema_version=1 page of native Low/Med IR with instruction
 /// anchors, or C/LLVMC with optional library regions. Representation is
-/// "low", "med", "c" or "llvmc"; Offset is an absolute zero-based
+/// "low", "med", "c", "llvmc", "rust", "go" or "source"; "rust" and "go"
+/// spell the HighC page in that language and "source" in the function's own
+/// (Rust, Go or C), adding dialect, unread and source_names (where each
+/// source name such as core::fmt::write is). Offset is an absolute zero-based
 /// rendered line and Limit is 1..2048. Text is byte-for-byte the corresponding
 /// legacy IR dump slice. Rows carry line, object_id, kind, mapping_status,
 /// addresses (hex strings), and origin_seq when available. An instruction

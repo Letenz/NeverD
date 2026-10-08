@@ -704,7 +704,7 @@ NeverD, но не все общие библиотеки LLVM и Capstone, до�
 | `lib/decode` | Декодирование Capstone/native и диспетчеризация в lifter архитектуры | `NeverDIR`, `NeverDLift` |
 | `lib/ir` | Общие типы и определения/преобразования LowIR, MedIR, HighIR и intrinsic | Четыре подкомпонента IR |
 | `lib/pipeline` | Обнаружение функций и координация путей Low/Med/High/LLVM | IR, decode, lift, LLVM backend, debug info, проходы IR |
-| `lib/backend/c` | Вывод HighIR-в-C и LLVM-IR-в-C | IR |
+| `lib/backend/c` | Вывод HighIR-в-C и LLVM-IR-в-C, а также запись HighC на Rust и Go | IR |
 | `lib/backend/llvm` | Lowering MedIR в LLVM | IR |
 | `lib/backend/codegen` | Генерация целевого кода и patch/переписывание на месте PE/ELF/Mach-O | IR, loader |
 | `lib/sdk` | Публичный C ABI, жизненный цикл session, запросы, хранение, плагины, входы lift/decompile/patch/audit/hunt | Объединяет движок в `libneverd` |

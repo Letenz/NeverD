@@ -652,7 +652,7 @@ CMake.
 | `lib/decode` | فك Capstone/native والتوزيع إلى lifter العمارة | `NeverDIR` و`NeverDLift` |
 | `lib/ir` | الأنواع المشتركة وتعريفات/تحويلات LowIR وMedIR وHighIR وintrinsic | مكونات IR الفرعية الأربعة |
 | `lib/pipeline` | اكتشاف الدوال وتنسيق مسارات Low/Med/High/LLVM | IR وdecode وlift وLLVM backend ومعلومات التصحيح وIR pass |
-| `lib/backend/c` | عرض HighIR إلى C وLLVM IR إلى C | IR |
+| `lib/backend/c` | عرض HighIR إلى C وLLVM IR إلى C، وكتابة HighC بصيغة Rust وGo | IR |
 | `lib/backend/llvm` | خفض MedIR إلى LLVM | IR |
 | `lib/backend/codegen` | توليد شفرة الهدف وpatch/إعادة الكتابة الموضعية لـ PE/ELF/Mach-O | IR وloader |
 | `lib/sdk` | C ABI العامة، ودورة session، والاستعلامات، والاستمرارية، والإضافات، ومداخل lift/decompile/patch/audit/hunt | يجمع المحرك في `libneverd` |

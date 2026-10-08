@@ -61,7 +61,8 @@ Json validateQuery(Json query) {
   if (payload.contains("representation")) {
     const auto rep = stringField(payload, "representation", "c", 16);
     if (rep != "c" && rep != "llvmc" && rep != "low" && rep != "med" &&
-        rep != "high" && rep != "llvm")
+        rep != "high" && rep != "llvm" && rep != "source" && rep != "rust" &&
+        rep != "go")
       throw Error("invalid_manifest",
                   "Unsupported representation in query template");
   }
