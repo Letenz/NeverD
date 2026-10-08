@@ -1792,6 +1792,213 @@ TEST(LLVMCValues, ConstantHomesStayInitializedAcrossRepeatedDiamonds) {
     compileAndRun(Source, Optimization, {}, true);
 }
 
+TEST(LLVMCValues, PreservedIndirectCallsKeepSignatureAndABI) {
+  for (auto Convention : {llvm::CallingConv::C, llvm::CallingConv::Win64,
+                          llvm::CallingConv::X86_64_SysV}) {
+    SCOPED_TRACE(Convention);
+    llvm::LLVMContext C;
+    llvm::Module M("indirect-call-abi", C);
+    M.setDataLayout("e-p:64:64");
+    llvm::IRBuilder<> B(C);
+    auto *Type =
+        llvm::FunctionType::get(B.getInt64Ty(),
+                                {B.getInt8Ty(), B.getInt32Ty(), B.getInt64Ty(),
+                                 B.getInt64Ty(), B.getInt64Ty()},
+                                false);
+    auto *Fn = llvm::Function::Create(
+        llvm::FunctionType::get(B.getInt64Ty(), {B.getPtrTy()}, false),
+        llvm::GlobalValue::ExternalLinkage, "call_pointer", M);
+    B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+    auto *Call =
+        B.CreateCall(Type, Fn->getArg(0),
+                     {B.getInt8(0xf1), B.getInt32(0x87654321),
+                      B.getInt64(UINT64_C(0x8000000000000017)), B.getInt64(29),
+                      B.getInt64(UINT64_C(0xfedcba9876543210))});
+    Call->setCallingConv(Convention);
+    B.CreateRet(Call);
+    ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    neverd::CEmitterOptions Options;
+    Options.TheArch = neverd::Arch::X64;
+    Options.PreserveLLVMFunctionTypes = true;
+    std::string Text;
+    llvm::raw_string_ostream OS(Text);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(M, OS, Options));
+    const char *Attribute = Convention == llvm::CallingConv::Win64
+                                ? "__attribute__((ms_abi)) "
+                            : Convention == llvm::CallingConv::X86_64_SysV
+                                ? "__attribute__((sysv_abi)) "
+                                : "";
+    if (*Attribute)
+      EXPECT_NE(Text.find(Attribute), std::string::npos) << Text;
+    // An independently written callee makes wrong widths, register assignment,
+    // stack arguments and repeated calls observable. The fifth Win64 argument
+    // is passed on the stack, while SysV passes it in a register.
+    const std::string Program = Text + "\nstatic unsigned calls;\nuint64_t " +
+                                Attribute +
+                                R"(target(uint8_t a, uint32_t b, uint64_t c,
+                              uint64_t d, uint64_t e) {
+  ++calls;
+  if (a != 0xf1 || b != UINT32_C(0x87654321) ||
+      c != UINT64_C(0x8000000000000017) || d != 29 ||
+      e != UINT64_C(0xfedcba9876543210)) return 0;
+  return UINT64_C(0xdeadbeef80000001);
+}
+int main(void) {
+  return call_pointer((void *)target) != UINT64_C(0xdeadbeef80000001) ||
+         calls != 1;
+}
+)";
+    if (llvm::Triple(llvm::sys::getDefaultTargetTriple()).getArch() ==
+        llvm::Triple::x86_64)
+      for (const char *Level : {"-O0", "-O2"})
+        compileAndRun(Program, Level);
+  }
+}
+
+TEST(LLVMCValues, PreservedIndirectVoidCallHasExplicitEmptyPrototype) {
+  llvm::LLVMContext C;
+  llvm::Module M("indirect-void-call", C);
+  M.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> B(C);
+  auto *Fn = llvm::Function::Create(
+      llvm::FunctionType::get(B.getVoidTy(), {B.getPtrTy()}, false),
+      llvm::GlobalValue::ExternalLinkage, "call_void_pointer", M);
+  B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+  B.CreateCall(llvm::FunctionType::get(B.getVoidTy(), false), Fn->getArg(0));
+  B.CreateRetVoid();
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(M, OS, Options));
+  EXPECT_NE(Text.find("(*)(void)"), std::string::npos) << Text;
+  const auto Program = Text + R"(
+static unsigned calls;
+void target(void) { ++calls; }
+int main(void) { call_void_pointer((void *)target); return calls != 1; }
+)";
+  for (const char *Level : {"-O0", "-O2"})
+    compileAndRun(Program, Level);
+}
+
+TEST(LLVMCValues, PreservedIndirectCallRejectsUnknownConvention) {
+  llvm::LLVMContext C;
+  llvm::Module M("indirect-unsupported-abi", C);
+  llvm::IRBuilder<> B(C);
+  auto *Fn = llvm::Function::Create(
+      llvm::FunctionType::get(B.getInt64Ty(), {B.getPtrTy()}, false),
+      llvm::GlobalValue::ExternalLinkage, "call_unknown_abi", M);
+  B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+  auto *Call = B.CreateCall(llvm::FunctionType::get(B.getInt64Ty(), false),
+                            Fn->getArg(0));
+  Call->setCallingConv(llvm::CallingConv::Fast);
+  B.CreateRet(Call);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  EXPECT_THROW(neverd::LLVMCEmitter().emit(M, OS, Options), std::runtime_error);
+}
+
+TEST(LLVMCValues, PreservedIndirectCallsKeepNarrowReturns) {
+  for (unsigned Bits : {8u, 16u, 32u}) {
+    SCOPED_TRACE(Bits);
+    llvm::LLVMContext C;
+    llvm::Module M("indirect-narrow-return", C);
+    M.setDataLayout("e-p:64:64");
+    llvm::IRBuilder<> B(C);
+    auto *Fn = llvm::Function::Create(
+        llvm::FunctionType::get(B.getInt64Ty(), {B.getPtrTy(), B.getInt64Ty()},
+                                false),
+        llvm::GlobalValue::ExternalLinkage, "call_narrow", M);
+    B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+    auto *Call = B.CreateCall(
+        llvm::FunctionType::get(B.getIntNTy(Bits), {B.getInt64Ty()}, false),
+        Fn->getArg(0), {Fn->getArg(1)});
+    B.CreateRet(B.CreateZExt(Call, B.getInt64Ty()));
+    ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    neverd::CEmitterOptions Options;
+    Options.PreserveLLVMFunctionTypes = true;
+    std::string Text;
+    llvm::raw_string_ostream OS(Text);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(M, OS, Options));
+    const auto Program = Text + "\nuint" + std::to_string(Bits) +
+                         "_t target(uint64_t x) { return (uint" +
+                         std::to_string(Bits) +
+                         "_t)(x ^ UINT64_C(0x87654321fedcba98)); }\n" + R"(
+int main(void) {
+  const uint64_t values[] = {0, 1, UINT64_MAX, UINT64_C(1) << 63};
+  for (unsigned i = 0; i < 4; ++i)
+    if (call_narrow((void *)target, values[i]) != (uint64_t)target(values[i]))
+      return 1;
+  return 0;
+}
+)";
+    for (const char *Level : {"-O0", "-O2"})
+      compileAndRun(Program, Level);
+  }
+}
+
+TEST(LLVMCValues, PreservedIndirectVariadicCallKeepsFixedPrototype) {
+  llvm::LLVMContext C;
+  llvm::Module M("indirect-variadic-call", C);
+  M.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> B(C);
+  auto *Fn = llvm::Function::Create(
+      llvm::FunctionType::get(B.getInt64Ty(),
+                              {B.getPtrTy(), B.getInt64Ty(), B.getInt64Ty()},
+                              false),
+      llvm::GlobalValue::ExternalLinkage, "call_variadic", M);
+  B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+  auto *Call = B.CreateCall(
+      llvm::FunctionType::get(B.getInt64Ty(), {B.getInt32Ty()}, true),
+      Fn->getArg(0), {B.getInt32(2), Fn->getArg(1), Fn->getArg(2)});
+  B.CreateRet(Call);
+  ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(M, OS, Options));
+  EXPECT_NE(Text.find("uint32_t, ..."), std::string::npos) << Text;
+  const auto Program = "#include <stdarg.h>\n" + Text + R"(
+static unsigned calls;
+uint64_t target(uint32_t n, ...) {
+  ++calls;
+  va_list args;
+  va_start(args, n);
+  uint64_t first = va_arg(args, uint64_t);
+  uint64_t second = va_arg(args, uint64_t);
+  va_end(args);
+  return n == 2 ? first ^ second : 0;
+}
+int main(void) {
+  return call_variadic((void *)target, UINT64_C(0xfedcba9876543210),
+                       UINT64_C(0x80000000abcdef71)) !=
+      (UINT64_C(0xfedcba9876543210) ^ UINT64_C(0x80000000abcdef71)) || calls != 1;
+}
+)";
+  for (const char *Level : {"-O0", "-O2"})
+    compileAndRun(Program, Level);
+}
+
+TEST(LLVMCValues, PreservedIndirectVariadicCallNeedsFixedParameter) {
+  llvm::LLVMContext C;
+  llvm::Module M("indirect-variadic-without-fixed-parameter", C);
+  llvm::IRBuilder<> B(C);
+  auto *Fn = llvm::Function::Create(
+      llvm::FunctionType::get(B.getInt64Ty(), {B.getPtrTy()}, false),
+      llvm::GlobalValue::ExternalLinkage, "call_no_fixed_parameter", M);
+  B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+  B.CreateRet(B.CreateCall(llvm::FunctionType::get(B.getInt64Ty(), {}, true),
+                           Fn->getArg(0)));
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  EXPECT_THROW(neverd::LLVMCEmitter().emit(M, OS, Options), std::runtime_error);
+}
+
 } // namespace
 
 TEST(LLVMCValues, ImageStringsRejectOverlappingRelocationStorage) {

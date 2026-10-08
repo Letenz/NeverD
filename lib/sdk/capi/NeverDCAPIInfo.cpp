@@ -354,6 +354,18 @@ const char *neverd_strings_json(neverd_session_t Sess, int MinLength) {
   return dupStr(Buf);
 }
 
+/// One row of neverd_strings_ex_json(), keys in the order a json::Object
+/// prints them.
+static void writeStringRow(llvm::json::OStream &J, const ImageString &String) {
+  J.object([&] {
+    J.attribute("addr", vaHex(String.Address));
+    J.attribute("chars", static_cast<int64_t>(String.Chars));
+    J.attribute("encoding", strings::encodingName(String.Kind));
+    J.attribute("length", static_cast<int64_t>(String.Bytes));
+    J.attribute("value", String.Text);
+  });
+}
+
 const char *neverd_strings_ex_json(neverd_session_t Sess,
                                    const char *OptionsJson) {
   auto *S = toSession(Sess);
@@ -373,16 +385,102 @@ const char *neverd_strings_ex_json(neverd_session_t Sess,
   llvm::json::OStream J(OS);
   J.array([&] {
     for (const ImageString &String : imageStrings(*S, Options))
-      J.object([&] {
-        J.attribute("addr", vaHex(String.Address));
-        J.attribute("chars", static_cast<int64_t>(String.Chars));
-        J.attribute("encoding", strings::encodingName(String.Kind));
-        J.attribute("length", static_cast<int64_t>(String.Bytes));
-        J.attribute("value", String.Text);
-      });
+      writeStringRow(J, String);
   });
   OS.flush();
   return dupStr(Buf);
+}
+
+const char *neverd_strings_page_json(neverd_session_t Sess,
+                                     const char *OptionsJson,
+                                     neverd_va_t FirstAddr, int MaxRows) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  strings::ScanOptions Options;
+  if (const auto Error = parseStringOptions(OptionsJson, Options);
+      !Error.empty()) {
+    S->setError(Error);
+    return nullptr;
+  }
+  constexpr int MaxRowsPerPage = 65536;
+  const size_t Limit =
+      static_cast<size_t>(std::clamp(MaxRows, 1, MaxRowsPerPage));
+  // The scan runs once per options; a page reads it from its cursor.
+  static const std::vector<ImageString> None;
+  const auto &Strings = S->Loaded ? imageStrings(*S, Options) : None;
+  const auto Begin =
+      std::lower_bound(Strings.begin(), Strings.end(), FirstAddr,
+                       [](const ImageString &String, va_t Value) {
+                         return String.Address < Value;
+                       });
+  // A page never splits the strings that start at one address.
+  auto End = Begin;
+  for (size_t Count = 0; End != Strings.end(); ++End, ++Count)
+    if (Count >= Limit && End->Address != std::prev(End)->Address)
+      break;
+  std::string Buf;
+  llvm::raw_string_ostream OS(Buf);
+  llvm::json::OStream J(OS);
+  J.object([&] {
+    J.attribute("next_addr", End != Strings.end()
+                                 ? llvm::json::Value(vaHex(End->Address))
+                                 : llvm::json::Value(nullptr));
+    J.attributeArray("strings", [&] {
+      for (auto It = Begin; It != End; ++It)
+        writeStringRow(J, *It);
+    });
+  });
+  OS.flush();
+  return dupStr(Buf);
+}
+
+const char *neverd_string_at(neverd_session_t Sess, neverd_va_t Addr,
+                             const char *OptionsJson) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return nullptr;
+  }
+  strings::ScanOptions Options;
+  Options.MinLength = 1;
+  if (const auto Error = parseStringOptions(OptionsJson, Options);
+      !Error.empty()) {
+    S->setError(Error);
+    return nullptr;
+  }
+  // A string that does not end within this many bytes is not read.
+  constexpr size_t Window = 65536;
+  const Segment *Seg = S->Img.getSegmentFor(Addr);
+  const uint64_t Offset = Seg && Addr >= Seg->VA ? Addr - Seg->VA : 0;
+  if (!Seg || Addr < Seg->VA || Offset >= Seg->Data.size()) {
+    S->setError("no initialized data at " + vaHex(Addr));
+    return nullptr;
+  }
+  const llvm::ArrayRef<uint8_t> Bytes(
+      Seg->Data.data() + Offset,
+      std::min<size_t>(Window, Seg->Data.size() - static_cast<size_t>(Offset)));
+  std::optional<strings::FoundString> First;
+  strings::scan(Bytes, Options, [&](strings::FoundString &&Found) {
+    if (!First)
+      First = std::move(Found);
+  });
+  if (!First || First->Offset != 0) {
+    S->setError("no string starts at " + vaHex(Addr));
+    return nullptr;
+  }
+  llvm::json::Object Row{
+      {"addr", vaHex(Addr)},
+      {"chars", static_cast<int64_t>(First->Chars)},
+      {"encoding", strings::encodingName(First->Kind)},
+      {"length", static_cast<int64_t>(First->Bytes)},
+      {"unit", static_cast<int64_t>(strings::encodingUnitBytes(First->Kind))},
+      {"value", std::move(First->Text)}};
+  return dupStr(jsonToString(llvm::json::Value(std::move(Row))));
 }
 
 const char *neverd_string_encodings_json(void) {

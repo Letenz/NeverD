@@ -1141,9 +1141,21 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_string_at",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_strings_ex_json",
     "const char *",
     ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_strings_page_json",
+    "const char *",
+    ["neverd_session_t", "const char *", "neverd_va_t", "int"],
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
@@ -1408,6 +1420,18 @@ _declare(
 )
 _declare("neverd_functions_save", "int", ["neverd_session_t"])
 _declare("neverd_functions_load", "int", ["neverd_session_t"])
+_declare(
+    "neverd_item_set", "int", ["neverd_session_t", "neverd_va_t", "const char *"]
+)
+_declare("neverd_item_clear", "int", ["neverd_session_t", "neverd_va_t"])
+_declare(
+    "neverd_items_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare("neverd_items_save", "int", ["neverd_session_t"])
+_declare("neverd_items_load", "int", ["neverd_session_t"])
 _declare(
     "neverd_callgraph_json",
     "const char *",

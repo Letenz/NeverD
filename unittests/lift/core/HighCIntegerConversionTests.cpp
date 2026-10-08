@@ -326,6 +326,148 @@ int main(void) {
 )");
 }
 
+TEST(HighCIntegerConversion, AnUntypedDebugCalleeReturnsItsWholeRegister) {
+  // A public symbol names a function without its type.  Its result is the
+  // whole return register: a 64-bit pointer keeps its upper half.
+  class CalleeDbg : public NullDebugContext {
+  public:
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x2000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "lookup";
+      FS.Addr = Addr;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+  const TypeRef U64 = integer(8, false);
+  HighFunc F =
+      function("probe", U64,
+               {assign(local(1, U64), HighExpr::makeCall("lookup", 0x2000, {})),
+                result(op(NdOp::INT_ADD, local(1, U64), constant(1), U64))});
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options, &Dbg));
+  Out.flush();
+  EXPECT_NE(Source.find("extern uint64_t lookup();"), std::string::npos)
+      << Source;
+  compileAndRun(Source + R"(
+uint64_t lookup(void) { return 0xFFFF800012345678ull; }
+int main(void) { return probe(0) == 0xFFFF800012345679ull ? 0 : 1; }
+)");
+}
+
+TEST(HighCIntegerConversion, AnUndeclaredCalleeReturnsWhatItsCallersRead) {
+  // Nothing declares wide() or narrow().  The caller reads all eight bytes
+  // of wide()'s result, which an int would cut in half; an int holds what it
+  // reads of narrow()'s.
+  const TypeRef U64 = integer(8, false), U32 = integer(4, false);
+  HighFunc F =
+      function("probe", U64,
+               {assign(local(1, U64), HighExpr::makeCall("wide", 0x2000, {})),
+                assign(local(2, U32), HighExpr::makeCall("narrow", 0x2010, {})),
+                result(op(NdOp::INT_ADD, local(1, U64),
+                          extend(NdOp::INT_ZEXT, local(2, U32), U64), U64))});
+  const std::string Source = emit(F);
+  EXPECT_NE(Source.find("extern int64_t wide();"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("extern int narrow();"), std::string::npos) << Source;
+  compileAndRun(Source + R"(
+int64_t wide(void) { return INT64_C(0x7FFF800012345678); }
+int narrow(void) { return 5; }
+int main(void) { return probe(0) == 0x7FFF80001234567Dull ? 0 : 1; }
+)");
+}
+
+TEST(HighCIntegerConversion, BitCountsCountInTheOperandsWidth) {
+  // The machine counts a 32-bit register's leading zeros in 32 bits, and a
+  // zero's as 32; C's builtins count in unsigned int or unsigned long long
+  // and leave a zero's count undefined.  A negative 32-bit value has 32 bits
+  // to count ones in, not 64.
+  const TypeRef U64 = integer(8, false), U32 = integer(4, false);
+  const TypeRef I32 = integer(4, true), U16 = integer(2, false);
+  auto Count = [&](NdOp Op, ExprPtr Operand) {
+    return extend(NdOp::INT_ZEXT,
+                  typed(HighExpr::makeUnary(Op, std::move(Operand)), U32), U64);
+  };
+  auto Scaled = [&](ExprPtr Value, uint64_t Factor) {
+    return op(NdOp::INT_MULT, std::move(Value), constant(Factor), U64);
+  };
+  HighFunc F = function(
+      "counts", U64,
+      {result(
+          op(NdOp::INT_ADD,
+             op(NdOp::INT_ADD, Count(NdOp::LZCOUNT, lowPart(input(), I32)),
+                Scaled(Count(NdOp::LZCOUNT, lowPart(input(), U16)), 100), U64),
+             op(NdOp::INT_ADD,
+                Scaled(Count(NdOp::POPCOUNT, lowPart(input(), I32)), 10000),
+                Scaled(typed(HighExpr::makeUnary(NdOp::LZCOUNT, input()), U64),
+                       1000000),
+                U64),
+             U64))});
+  const std::string Source = emit(F);
+  compileAndRun(Source + R"(
+static uint64_t leading(uint64_t v, int bits) {
+  uint64_t n = 0;
+  for (int i = bits - 1; i >= 0 && !((v >> i) & 1); --i)
+    ++n;
+  return n;
+}
+static uint64_t ones(uint64_t v) {
+  uint64_t n = 0;
+  for (; v; v >>= 1)
+    n += v & 1;
+  return n;
+}
+int main(void) {
+  const uint64_t xs[] = {0, 1, 0x80000000ull, 0xFFFFFFFFull, 0x12345678ull,
+                         0x8000000000000000ull, 0xFFFF0000FFFFull, 0x10000ull};
+  for (unsigned i = 0; i < sizeof xs / sizeof xs[0]; ++i) {
+    const uint64_t x = xs[i];
+    const uint64_t want = leading(x & 0xFFFFFFFF, 32) +
+                          100 * leading(x & 0xFFFF, 16) +
+                          10000 * ones(x & 0xFFFFFFFF) +
+                          1000000 * leading(x, 64);
+    if (counts(x) != want)
+      return 1;
+  }
+  return 0;
+}
+)");
+}
+
+TEST(HighCIntegerConversion, ASelectHasItsOwnSignedness) {
+  // x / (d == 0 ? 1 : d), signed, with d an unsigned local: C would convert
+  // both arms to uint64_t and divide unsigned.  Each arm takes the select's
+  // type.
+  const TypeRef U64 = integer(8, false), I64 = integer(8, true);
+  auto Select = std::make_shared<HighExpr>();
+  Select->Kind = ExprKind::BinOp;
+  Select->Op = NdOp::SELECT;
+  Select->Operands = {
+      op(NdOp::INT_EQUAL, local(1, U64), constant(0), integer(1, false)),
+      constant(1), local(1, U64)};
+  Select->Type = I64;
+  HighFunc F = function(
+      "quotient", I64,
+      {assign(local(1, U64), op(NdOp::INT_AND, input(), constant(15), U64)),
+       result(op(NdOp::INT_SDIV, typed(input(), I64), Select, I64))});
+  const std::string Source = emit(F);
+  compileAndRun(Source + R"(
+int main(void) {
+  const int64_t xs[] = {-100, -1, 0, 7, 100, -16, 15};
+  for (unsigned i = 0; i < sizeof xs / sizeof xs[0]; ++i) {
+    const int64_t d = (int64_t)((uint64_t)xs[i] & 15);
+    if (quotient((uint64_t)xs[i]) != xs[i] / (d == 0 ? 1 : d))
+      return 1;
+  }
+  return 0;
+}
+)");
+}
+
 TEST(HighCIntegerConversion, ALandingPadDeclaresWhatTheUnwinderSets) {
   // A landing pad reads the exception object the unwinder hands it; no C
   // statement assigns it, and the name is declared all the same.

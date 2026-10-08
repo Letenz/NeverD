@@ -98,7 +98,9 @@ const char *neverd_string_refs_json(neverd_session_t Sess,
             Text += std::string(" ") + DI.Raw->op_str;
           return Text;
         };
-        for (const auto &[To, Kind] : Flow.Refs) {
+        for (const InstructionRef &Ref : Flow.Refs) {
+          const va_t To = Ref.To;
+          const llvm::StringRef Kind = Ref.Kind;
           if (const auto Text = referredText(Img, Strings, MinLength, To)) {
             Slots[Index].push_back(
                 {DI.Addr, To, *Text, Kind, std::nullopt, instruction()});

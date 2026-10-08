@@ -46,6 +46,16 @@ enum class Reads { Neither, Signed, Unsigned };
 /// What operand \p Index of \p Parent reads: the signedness its C spelling
 /// needs to go without a cast.
 Reads operandReads(const HighExpr &Parent, size_t Index) {
+  // A conversion to an integer as wide as its operand changes only how the
+  // bits read, and disappears when the operand already reads that way.
+  auto Integer = [](const TypeRef &Type) {
+    return Type && Type->Kind == NdTypeKind::Int && !Type->IsEnum;
+  };
+  if (Parent.Kind == ExprKind::Cast && Index == 0 && Integer(Parent.Type) &&
+      !Parent.Operands.empty() && Parent.Operands[0] &&
+      Integer(Parent.Operands[0]->Type) &&
+      Parent.Operands[0]->Type->Size == Parent.Type->Size)
+    return Parent.Type->IsSigned ? Reads::Signed : Reads::Unsigned;
   if (Parent.Kind != ExprKind::BinOp && Parent.Kind != ExprKind::UnaryOp)
     return Reads::Neither;
   switch (Parent.Op) {
@@ -55,8 +65,10 @@ Reads operandReads(const HighExpr &Parent, size_t Index) {
   case NdOp::INT_SREM:
   case NdOp::INT_SEXT:
     return Reads::Signed;
+  // A shift count reads the same in either signedness; unsigned spells the
+  // masking arithmetic that usually computes it without conversions.
   case NdOp::INT_ASHR:
-    return Index == 0 ? Reads::Signed : Reads::Neither;
+    return Index == 0 ? Reads::Signed : Reads::Unsigned;
   case NdOp::INT_LESS:
   case NdOp::INT_LESSEQUAL:
   case NdOp::INT_DIV:
@@ -70,7 +82,7 @@ Reads operandReads(const HighExpr &Parent, size_t Index) {
     return Reads::Unsigned;
   case NdOp::INT_RIGHT:
   case NdOp::INT_LEFT:
-    return Index == 0 ? Reads::Unsigned : Reads::Neither;
+    return Reads::Unsigned;
   default:
     return Reads::Neither;
   }

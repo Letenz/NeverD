@@ -1806,23 +1806,25 @@ TEST_F(SessionCAPITest, DisassemblyStatesHowEachInstructionMovesTheStack) {
 
 TEST_F(SessionCAPITest, DisassemblyStatesTheMemoryEachInstructionReaches) {
   // Each row: its bytes and the reference it states, as an offset from the
-  // next instruction or an absolute address, with its kind.
+  // next instruction or an absolute address, with its kind and, for a read
+  // or write, the bytes it accesses.
   struct Row {
     std::string_view Bytes;
     std::optional<int64_t> Relative;
     std::optional<uint64_t> Absolute;
     std::string_view Kind;
+    int64_t Size = 0;
   };
   using namespace std::string_view_literals;
   const Row Rows[] = {
       // mov rdi, qword ptr [rip + 0x100]
-      {"\x48\x8b\x3d\x00\x01\x00\x00"sv, 0x100, {}, "read"},
+      {"\x48\x8b\x3d\x00\x01\x00\x00"sv, 0x100, {}, "read", 8},
       // mov dword ptr [rip + 0x200], eax
-      {"\x89\x05\x00\x02\x00\x00"sv, 0x200, {}, "write"},
+      {"\x89\x05\x00\x02\x00\x00"sv, 0x200, {}, "write", 4},
       // mov rax, qword ptr fs:[0x28]: an offset in a segment, not an address
       {"\x64\x48\x8b\x04\x25\x28\x00\x00\x00"sv, {}, {}, {}},
       // mov eax, dword ptr [0x404000]
-      {"\x8b\x04\x25\x00\x40\x40\x00"sv, {}, 0x404000, "read"},
+      {"\x8b\x04\x25\x00\x40\x40\x00"sv, {}, 0x404000, "read", 4},
       // lea rax, [rip + 0x10]
       {"\x48\x8d\x05\x10\x00\x00\x00"sv, 0x10, {}, "offset"},
       // mov rax, qword ptr [rbx + 8]
@@ -1864,7 +1866,38 @@ TEST_F(SessionCAPITest, DisassemblyStatesTheMemoryEachInstructionReaches) {
         << I << ": " << Text;
     EXPECT_EQ(Ref->getString("kind").value_or("").str(), Rows[I].Kind)
         << I << ": " << Text;
+    EXPECT_EQ(Ref->getInteger("size").value_or(0), Rows[I].Size)
+        << I << ": " << Text;
   }
+  // The function's direct references carry the same widths, as a fourth
+  // element of a read or write.
+  ASSERT_GE(neverd_session_discover_functions(Session), 1)
+      << takeString(neverd_last_error(Session));
+  const auto Page = takeString(neverd_code_refs_json(Session, Entry, 1));
+  auto PageJson = llvm::json::parse(Page);
+  ASSERT_TRUE(static_cast<bool>(PageJson)) << Page;
+  const auto *PageRefs = PageJson->getAsObject()->getArray("refs");
+  ASSERT_TRUE(PageRefs) << Page;
+  size_t Accesses = 0;
+  for (const auto &Value : *PageRefs) {
+    const auto &Fields = *Value.getAsArray();
+    const auto Kind = Fields[2].getAsString().value_or("");
+    if (Kind != "read" && Kind != "write") {
+      EXPECT_EQ(Fields.size(), 3u) << Page;
+      continue;
+    }
+    ASSERT_EQ(Fields.size(), 4u) << Page;
+    const uint64_t From =
+        std::stoull(Fields[0].getAsString().value_or("0").str(), nullptr, 16);
+    uint64_t At = Entry;
+    for (const Row &R : Rows) {
+      if (At == From)
+        EXPECT_EQ(Fields[3].getAsInteger().value_or(0), R.Size) << Page;
+      At += R.Bytes.size();
+    }
+    ++Accesses;
+  }
+  EXPECT_EQ(Accesses, 3u) << Page;
 }
 
 // The code a data executable's entry runs, and where it and the data start.
@@ -2193,6 +2226,33 @@ TEST_F(SessionCAPITest, StringScanFindsUTF8AndWideStringsByOption) {
   EXPECT_EQ(Scan(R"({"preferred":"utf-8"})"),
             "error: preferred must name a legacy code page");
   EXPECT_EQ(Scan("[]"), "error: string options must be a JSON object");
+
+  // Pages of one string read the same rows from a cursor, ending with none.
+  std::string Paged = "[";
+  for (std::optional<uint64_t> Cursor = 0; Cursor;) {
+    const auto Page =
+        takeString(neverd_strings_page_json(Session, nullptr, *Cursor, 1));
+    auto PageJson = llvm::json::parse(Page);
+    ASSERT_TRUE(static_cast<bool>(PageJson)) << Page;
+    const auto *Object = PageJson->getAsObject();
+    const auto *Strings = Object->getArray("strings");
+    ASSERT_TRUE(Strings && Strings->size() == 1) << Page;
+    if (Paged.size() > 1)
+      Paged += ",";
+    Paged += llvm::formatv("{0}", (*Strings)[0]).str();
+    Cursor.reset();
+    if (const auto Next = Object->getString("next_addr")) {
+      uint64_t Value = 0;
+      ASSERT_FALSE(Next->getAsInteger(0, Value)) << Page;
+      Cursor = Value;
+    }
+  }
+  EXPECT_EQ(Paged + "]", Defaults);
+  EXPECT_EQ(takeString(neverd_strings_page_json(Session, nullptr,
+                                                0x401000 + 0x1000, 8)),
+            "{\"next_addr\":null,\"strings\":[]}");
+  EXPECT_EQ(neverd_strings_page_json(Session, R"({"min_length":0})", 0, 8),
+            nullptr);
 
   const auto Encodings = takeString(neverd_string_encodings_json());
   EXPECT_NE(Encodings.find(R"("name":"utf-16le","spelling":"UTF-16LE")"),
@@ -3412,6 +3472,82 @@ TEST_F(SessionCAPITest, UserFunctionEditsShapeTheListAnalysisAndSidecar) {
   ASSERT_GE(Restored, 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, Restored)), EntryName);
   EXPECT_LT(neverd_func_find_by_addr(Session, Second), 0);
+}
+
+TEST_F(SessionCAPITest, UserDataItemsDefineBytesAndPersist) {
+  // After the entry routine: "hello", then a word, in the image's one
+  // segment.
+  const auto Input = write(
+      "items.elf", makeNativeELF(false, 0x400000,
+                                 std::string_view("hello\0\x34\x12\0\0", 10)));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  const auto Text = Entry + 6, Word = Entry + 12;
+  const std::string TextHex = "0x" + llvm::utohexstr(Text);
+  const std::string WordHex = "0x" + llvm::utohexstr(Word);
+
+  // The string reads where it starts, however short.
+  EXPECT_EQ(takeString(neverd_string_at(Session, Text, nullptr)),
+            "{\"addr\":\"" + TextHex +
+                "\",\"chars\":5,\"encoding\":\"ascii\",\"length\":5,"
+                "\"unit\":1,\"value\":\"hello\"}");
+  EXPECT_EQ(neverd_string_at(Session, Text + 5, nullptr), nullptr);
+
+  // Values of a size, strings in an encoding and undefined bytes.
+  ASSERT_EQ(neverd_item_set(Session, Word, "{\"kind\":\"word\"}"), 0)
+      << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_item_set(Session, Text,
+                            "{\"kind\":\"string\",\"encoding\":\"utf-8\","
+                            "\"size\":6}"),
+            0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(takeString(neverd_items_json(Session)),
+            "[{\"addr\":\"" + TextHex +
+                "\",\"encoding\":\"utf-8\",\"kind\":\"string\","
+                "\"size\":6},{\"addr\":\"" +
+                WordHex + "\",\"kind\":\"word\",\"size\":2}]");
+  // An item may not share bytes with another, a string ends in its
+  // terminator, and a kind is one the tables name.
+  EXPECT_EQ(neverd_item_set(Session, Text + 2, "{\"kind\":\"byte\"}"), -1);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("overlaps"),
+            std::string::npos);
+  EXPECT_EQ(neverd_item_set(Session, Text,
+                            "{\"kind\":\"string\",\"encoding\":\"utf-8\","
+                            "\"size\":5}"),
+            -1);
+  EXPECT_EQ(neverd_item_set(Session, Word, "{\"kind\":\"oword\"}"), -1);
+  // Four bytes remain in the segment: a dword fits, a qword does not.
+  EXPECT_EQ(neverd_item_set(Session, Word, "{\"kind\":\"qword\"}"), -1);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("segment"),
+            std::string::npos);
+  EXPECT_EQ(neverd_item_set(Session, Word, "{\"kind\":\"dword\"}"), 0);
+  ASSERT_EQ(
+      neverd_item_set(Session, Word, "{\"kind\":\"undefined\",\"size\":4}"), 0);
+  // Undefined bytes give way to an item and stay undefined around it.
+  ASSERT_EQ(neverd_item_set(Session, Word + 1, "{\"kind\":\"byte\"}"), 0)
+      << takeString(neverd_last_error(Session));
+  const std::string ByteHex = "0x" + llvm::utohexstr(Word + 1);
+  const std::string RestHex = "0x" + llvm::utohexstr(Word + 2);
+  EXPECT_EQ(takeString(neverd_items_json(Session)),
+            "[{\"addr\":\"" + TextHex +
+                "\",\"encoding\":\"utf-8\",\"kind\":\"string\","
+                "\"size\":6},{\"addr\":\"" +
+                WordHex + "\",\"kind\":\"undefined\",\"size\":1},{\"addr\":\"" +
+                ByteHex + "\",\"kind\":\"byte\",\"size\":1},{\"addr\":\"" +
+                RestHex + "\",\"kind\":\"undefined\",\"size\":2}]");
+
+  // Saved, the items come back with the input.
+  ASSERT_EQ(neverd_items_save(Session), 0)
+      << takeString(neverd_last_error(Session));
+  const std::string Saved = takeString(neverd_items_json(Session));
+  {
+    neverd_session_t Reopened = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Reopened, Input.c_str()), 1);
+    EXPECT_EQ(takeString(neverd_items_json(Reopened)), Saved);
+    neverd_session_destroy(Reopened);
+  }
+  ASSERT_EQ(neverd_item_clear(Session, Word), 0);
+  EXPECT_EQ(neverd_item_clear(Session, Word), -1);
 }
 
 TEST_F(SessionCAPITest, SignatureJSONPreservesASCIINameAndMatchFields) {

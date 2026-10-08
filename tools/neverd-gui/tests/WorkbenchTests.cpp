@@ -460,6 +460,30 @@ private slots:
         functions->model().rowObject(21).value("name").toString(), looseName,
         OpenTimeoutMs);
 
+    // D makes the data under the cursor a value, the next size each time
+    // (stderr's qword gives way to a byte, then a word); U shows its bytes as
+    // bytes, and undo takes U back.  Each commits at once.
+    const Address object = Base + 0x3200;
+    const auto items = [&] {
+      return QString::fromUtf8(readAll(path + ".neverd-items.json"));
+    };
+    disassembly->navigate(object);
+    disassembly->focusContent();
+    QTRY_COMPARE(disassembly->currentItem(), std::optional<Address>(object));
+    QTRY_VERIFY(bench.action(ActionId::EditDefineData)->isEnabled());
+    bench.action(ActionId::EditDefineData)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(items().contains(QLatin1String("\"byte\"")),
+                             OpenTimeoutMs);
+    bench.action(ActionId::EditDefineData)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(items().contains(QLatin1String("\"word\"")),
+                             OpenTimeoutMs);
+    bench.action(ActionId::EditUndefine)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(items().contains(QLatin1String("\"undefined\"")),
+                             OpenTimeoutMs);
+    bench.session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(items().contains(QLatin1String("\"word\"")),
+                             OpenTimeoutMs);
+
     // A restarted worker reopens the file where its database left it.
     bench.session.restart();
     QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);

@@ -323,6 +323,8 @@ static int realMain(int Argc, char *Argv[]) {
     return runRename(Sess);
   if (FunctionEditsCmd)
     return runFunctionEdits(Sess);
+  if (ItemsCmd)
+    return runItems(Sess);
   if (SearchCmd)
     return runSearch(Sess);
   if (SigsCmd)

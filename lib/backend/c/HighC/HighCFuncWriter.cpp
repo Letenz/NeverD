@@ -230,6 +230,27 @@ uint16_t pointerBytes(Arch A) {
   return (A == Arch::X86 || A == Arch::ARM) ? 4 : 8;
 }
 
+uint16_t countedBytes(const HighExpr &Operand) {
+  if (Operand.Type)
+    return Operand.Type->Kind == NdTypeKind::Int ? Operand.Type->Size : 0;
+  return Operand.Kind == ExprKind::Var || Operand.Kind == ExprKind::Phi
+             ? Operand.Var.Size
+             : 0;
+}
+
+unsigned countedBits(const HighExpr &Operand) {
+  switch (countedBytes(Operand)) {
+  case 1:
+  case 2:
+  case 4:
+    return 32;
+  case 8:
+    return 64;
+  default:
+    return 0;
+  }
+}
+
 TypeRef HighCWriter::declaredFunctionReturnType(const HighFunc &Func) const {
   // A bound source ABI is authoritative even when optional debug information
   // disagrees. Debug-only projections still use one type for their declaration,
@@ -5426,8 +5447,13 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     auto emitParam = [&](TypeRef Ty, std::string Name) {
       if (Emitted > 0)
         Declarator += ", ";
-      Declarator +=
-          declarationToC(Ty, ParameterIdentifiers.allocate(Name, "nd_arg"));
+      const std::string Identifier =
+          ParameterIdentifiers.allocate(Name, "nd_arg");
+      Declarator += declarationToC(Ty, Identifier);
+      // A parameter's name has its declared type, as a local's has.
+      if (const TypeRef Display = cDisplayType(Ty);
+          Display && Display->Kind == NdTypeKind::Int && !Display->IsEnum)
+        DeclaredCTypes.emplace(Identifier, Display);
       ++Emitted;
     };
     const bool HighIRIncludesSret =
