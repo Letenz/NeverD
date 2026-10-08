@@ -751,6 +751,70 @@
         <source>Show the current item&apos;s bytes as bytes</source>
         <translation>将当前项显示为原始字节</translation>
     </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>数字(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>按列表的默认方式显示操作数的数字</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>十六进制(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>以十六进制显示操作数的数字</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>十进制(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>以十进制显示操作数的数字</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>二进制(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>以二进制显示操作数的数字</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>字符(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>以字符显示操作数的数字</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>偏移(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>以其指向地址的名字显示操作数的数字</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>改变符号(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>以相反的符号显示操作数的数字</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>按位取反(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>以按位取反的形式显示操作数的数字</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1118,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>函数(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>操作数类型(&amp;T)</translation>
     </message>
 </context>
 <context>

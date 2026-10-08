@@ -78,6 +78,22 @@ struct FrameSlot {
 
 /// Names the frame variable at an offset from the frame register.
 using FrameNamer = std::function<std::optional<FrameSlot>(std::int64_t)>;
+/// The base the user shows an operand's number in (neverd/OperandFormats.def).
+enum class NumberBase : std::uint8_t {
+#define NEVERD_OPERAND_BASE(Id, Spelling) Id,
+#include "neverd/OperandFormats.def"
+};
+std::optional<NumberBase> parseNumberBase(std::string_view spelling);
+std::string_view numberBaseName(NumberBase base);
+/// How the user shows an operand's number: its base, with its sign changed
+/// (`-1` for 0FFFFFFFFh) or its bits inverted (`~0Fh` for 0FFFFFFF0h).
+struct NumberFormat {
+  NumberBase base = NumberBase::Number;
+  bool negate = false, invert = false;
+  bool isDefault() const {
+    return base == NumberBase::Number && !negate && !invert;
+  }
+};
 
 struct OperandFacts {
   OperandDialect dialect = OperandDialect::Generic;
@@ -100,6 +116,8 @@ struct OperandFacts {
   /// instruction, when known: operands through it name frame variables too.
   std::string_view stackRegister;
   std::optional<std::int64_t> stackDepth;
+  /// The user's formats of the operands' numbers, by operand index.
+  const std::vector<NumberFormat> *numberFormats = nullptr;
 };
 
 /// A memory operand relative to a frame register.

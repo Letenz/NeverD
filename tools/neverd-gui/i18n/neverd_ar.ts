@@ -751,6 +751,70 @@
         <source>Show the current item&apos;s bytes as bytes</source>
         <translation>عرض بايتات العنصر الحالي كبايتات</translation>
     </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>رقم(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>عرض رقم المعامل كما تختاره القائمة</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>ست عشري(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>عرض رقم المعامل بالنظام الست عشري</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>عشري(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>عرض رقم المعامل بالنظام العشري</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>ثنائي(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>عرض رقم المعامل بالنظام الثنائي</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>حرف(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>عرض رقم المعامل كأحرف</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>إزاحة(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>عرض رقم المعامل كالعنوان الذي يشير إليه</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>تغيير الإشارة(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>عرض رقم المعامل بإشارة معكوسة</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>النفي على مستوى البت(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>عرض رقم المعامل مع عكس البتات</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1118,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>الدوال(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>نوع المعامل(&amp;T)</translation>
     </message>
 </context>
 <context>

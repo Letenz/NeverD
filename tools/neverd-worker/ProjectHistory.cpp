@@ -49,7 +49,7 @@ void validateRow(std::string_view table, const Json &row) {
     const auto state = stringField(row, "state", {}, 16);
     if (state != "created" && state != "deleted")
       throw Error("history_invalid", "Function edit state is invalid");
-  } else {
+  } else if (table == "items") {
     // The engine checks a data item against the image when it loads one.
     (void)stringField(row, "kind", {}, 32);
     if (!row.contains("size") || !row.at("size").is_number_unsigned() ||
@@ -57,6 +57,21 @@ void validateRow(std::string_view table, const Json &row) {
       throw Error("history_invalid", "Data item size is invalid");
     if (row.contains("encoding"))
       (void)stringField(row, "encoding", {}, 64);
+  } else {
+    // The engine checks each operand's base when it loads the formats.
+    if (!row.contains("operands") || !row.at("operands").is_array() ||
+        row.at("operands").size() > 8)
+      throw Error("history_invalid", "Operand formats are invalid");
+    for (const auto &operand : row.at("operands")) {
+      if (!operand.is_object() || !operand.contains("operand") ||
+          !operand.at("operand").is_number_unsigned() ||
+          operand.at("operand").get<std::uint64_t>() > 7)
+        throw Error("history_invalid", "Operand index is invalid");
+      (void)stringField(operand, "base", {}, 16);
+      for (const char *flag : {"negate", "invert"})
+        if (operand.contains(flag) && !operand.at(flag).is_boolean())
+          throw Error("history_invalid", "Operand format flag is invalid");
+    }
   }
 }
 

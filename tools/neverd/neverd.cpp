@@ -325,6 +325,8 @@ static int realMain(int Argc, char *Argv[]) {
     return runFunctionEdits(Sess);
   if (ItemsCmd)
     return runItems(Sess);
+  if (OperandsCmd)
+    return runOperands(Sess);
   if (SearchCmd)
     return runSearch(Sess);
   if (SigsCmd)

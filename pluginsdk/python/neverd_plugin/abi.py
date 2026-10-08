@@ -1436,6 +1436,19 @@ _declare(
 _declare("neverd_items_save", "int", ["neverd_session_t"])
 _declare("neverd_items_load", "int", ["neverd_session_t"])
 _declare(
+    "neverd_operand_format_set",
+    "int",
+    ["neverd_session_t", "neverd_va_t", "int", "const char *"],
+)
+_declare(
+    "neverd_operand_formats_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare("neverd_operand_formats_save", "int", ["neverd_session_t"])
+_declare("neverd_operand_formats_load", "int", ["neverd_session_t"])
+_declare(
     "neverd_callgraph_json",
     "const char *",
     ["neverd_session_t"],

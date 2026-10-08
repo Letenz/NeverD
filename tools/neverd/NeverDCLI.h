@@ -183,6 +183,7 @@ extern llvm::cl::SubCommand CallGraphCmd;
 extern llvm::cl::SubCommand RenameCmd;
 extern llvm::cl::SubCommand FunctionEditsCmd;
 extern llvm::cl::SubCommand ItemsCmd;
+extern llvm::cl::SubCommand OperandsCmd;
 extern llvm::cl::SubCommand SearchCmd;
 extern llvm::cl::SubCommand SectionsCmd;
 extern llvm::cl::SubCommand SymbolsCmd;
@@ -392,6 +393,12 @@ extern llvm::cl::opt<std::string> ItemUndefine;
 extern llvm::cl::opt<std::string> ItemClear;
 extern llvm::cl::opt<unsigned> ItemSize;
 extern llvm::cl::opt<std::string> ItemEncoding;
+extern llvm::cl::opt<std::string> OperandAddr;
+extern llvm::cl::opt<unsigned> OperandIndex;
+extern llvm::cl::opt<std::string> OperandBase;
+extern llvm::cl::opt<bool> OperandNegate;
+extern llvm::cl::opt<bool> OperandInvert;
+extern llvm::cl::opt<bool> OperandClear;
 
 // Search.
 extern llvm::cl::opt<std::string> SearchText;
@@ -550,6 +557,7 @@ int runAnnotate(neverd_session_t Sess);
 int runRename(neverd_session_t Sess);
 int runFunctionEdits(neverd_session_t Sess);
 int runItems(neverd_session_t Sess);
+int runOperands(neverd_session_t Sess);
 
 // NeverDCmdSearch.cpp — byte/string search and signature matching.
 int runSearch(neverd_session_t Sess);

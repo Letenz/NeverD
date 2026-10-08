@@ -368,9 +368,75 @@ void appendX86Token(StyledText &out, const Token &token) {
     out.append(token.text, ListingRole::Punctuation);
 }
 
+/// Appends \p value, a number \p bits wide, as \p format shows it; false
+/// when the format cannot show it (a character that does not print, an
+/// offset no name denotes), so the operand keeps the listing's spelling.
+bool appendFormattedNumber(StyledText &out, std::uint64_t value, unsigned bits,
+                           const NumberFormat &format,
+                           const LocationNamer &namer) {
+  const std::uint64_t mask =
+      bits >= 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << bits) - 1;
+  std::uint64_t shown = value & mask;
+  std::string sign;
+  if (format.negate) {
+    shown = (~shown + 1) & mask;
+    sign += '-';
+  }
+  if (format.invert) {
+    shown = ~shown & mask;
+    sign += '~';
+  }
+  std::string text;
+  switch (format.base) {
+  case NumberBase::Number:
+  case NumberBase::Hex:
+    text = x86Number(shown);
+    break;
+  case NumberBase::Decimal:
+    text = std::to_string(shown);
+    break;
+  case NumberBase::Binary:
+    for (std::uint64_t bit = std::uint64_t(1) << 63; bit; bit >>= 1)
+      if (!text.empty() || (shown & bit))
+        text += shown & bit ? '1' : '0';
+    text = (text.empty() ? std::string("0") : text) + "b";
+    break;
+  case NumberBase::Char: {
+    // Most significant byte first, as the characters read in the source.
+    for (int shift = 56; shift >= 0; shift -= 8) {
+      const auto byte = static_cast<unsigned char>(shown >> shift);
+      if (!byte && text.empty())
+        continue;
+      if (byte < 0x20 || byte >= 0x7f || byte == '\'')
+        return false;
+      text += static_cast<char>(byte);
+    }
+    if (text.empty())
+      return false;
+    text = "'" + text + "'";
+    break;
+  }
+  case NumberBase::Offset: {
+    if (!sign.empty())
+      return false;
+    const LocationName name = namer(shown, NameUse::Address, {});
+    if (name.text.empty())
+      return false;
+    out.append("offset ", ListingRole::Keyword);
+    out.append(name.text, name.role, name.address);
+    return true;
+  }
+  }
+  if (!sign.empty())
+    out.append(sign, ListingRole::Punctuation);
+  out.append(text, ListingRole::Number);
+  return true;
+}
+
 void formatX86Operand(StyledText &out, const OperandTokens &tokens,
                       const OperandFacts &facts, const LocationNamer &namer,
-                      const X86Context &context) {
+                      const X86Context &context,
+                      const NumberFormat *format = nullptr) {
   const auto open =
       std::find_if(tokens.begin(), tokens.end(), [](const Token &t) {
         return t.kind == TokenKind::Punct && t.text == "[";
@@ -532,6 +598,23 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
     }
     appendSuffix();
     return;
+  }
+  // An immediate the user formats: its value, unsigned in the operation's
+  // width.
+  if (format && !format->isDefault()) {
+    const unsigned bits = context.immediateBits ? context.immediateBits : 64;
+    const std::uint64_t mask =
+        bits >= 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << bits) - 1;
+    std::optional<std::uint64_t> value;
+    if (tokens.size() == 1 && tokens[0].kind == TokenKind::Number &&
+        tokens[0].valid)
+      value = tokens[0].value & mask;
+    else if (tokens.size() == 2 && tokens[0].kind == TokenKind::Punct &&
+             tokens[0].text == "-" && tokens[1].kind == TokenKind::Number &&
+             tokens[1].valid)
+      value = (~tokens[1].value + 1) & mask;
+    if (value && appendFormattedNumber(out, *value, bits, *format, namer))
+      return;
   }
   // A negative immediate is the unsigned value of the operation's width,
   // unless the instruction keeps a signed byte.
@@ -748,18 +831,41 @@ StyledText formatOperands(std::string_view operands, const OperandFacts &facts,
       context.immediateBits = facts.wide ? 64 : 32;
   }
   bool first = true;
-  for (const auto &operand : pieces) {
+  for (std::size_t index = 0; index < pieces.size(); ++index) {
+    const auto &operand = pieces[index];
     if (operand.empty())
       continue;
     if (!first)
       out.append(", ", ListingRole::Punctuation);
     first = false;
+    const NumberFormat *format =
+        facts.numberFormats && index < facts.numberFormats->size()
+            ? &(*facts.numberFormats)[index]
+            : nullptr;
     if (facts.dialect == OperandDialect::X86)
-      formatX86Operand(out, operand, facts, namer, context);
+      formatX86Operand(out, operand, facts, namer, context, format);
     else
       formatGenericOperand(out, operand, facts, namer);
   }
   return out;
+}
+
+std::optional<NumberBase> parseNumberBase(std::string_view spelling) {
+#define NEVERD_OPERAND_BASE(Id, Spelling)                                      \
+  if (spelling == Spelling)                                                    \
+    return NumberBase::Id;
+#include "neverd/OperandFormats.def"
+  return std::nullopt;
+}
+
+std::string_view numberBaseName(NumberBase base) {
+  switch (base) {
+#define NEVERD_OPERAND_BASE(Id, Spelling)                                      \
+  case NumberBase::Id:                                                         \
+    return Spelling;
+#include "neverd/OperandFormats.def"
+  }
+  return {};
 }
 
 std::optional<FrameAccess> x86FrameAccess(std::string_view operands,

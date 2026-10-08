@@ -323,6 +323,19 @@ are kept in `<input>.neverd-items.json`, which the command line reads and
 writes too (`neverd items <input> --data <address> --size 4`, `--string
 <address>`, `--undefine <address> --size <n>`, `--clear <address>`).
 
+**Edit → Operand type** shows an instruction operand's number the way the user
+picks, as IDA's keys do: **Hexadecimal** (Q), **Decimal** (H), **Binary** (B),
+**Character** (R, `'ABCD'` when every byte is printable), **Offset** (O, the
+name of the address the number points at), **Change sign** (`_`, the two's
+complement with a minus) and **Bitwise negate** (`~`); **Number** (`#`) goes
+back to the listing's own choice. The operand is the one under the cursor, or
+else the last operand holding a number. A form the value cannot take, such as
+characters for unprintable bytes or an offset to an address with no name,
+leaves the listing's number. Each change is one step of undo history and is
+kept in `<input>.neverd-operands.json`, which the command line reads and writes
+too (`neverd operands <input> --addr <address> --operand 1 --base decimal`,
+`--negate`, `--invert`, `--clear`).
+
 Opening a file never starts whole-program analysis. The listing, function list,
 references and graph come from the loader and from per-function work: a
 decompile, graph or IR request analyzes only the function it names. While the

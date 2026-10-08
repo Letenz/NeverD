@@ -101,6 +101,40 @@ NEVERD_VIEW_ACTION(EditDefineString, QT_TRANSLATE_NOOP("Actions", "&String"),
                    QT_TRANSLATE_NOOP("Actions",
                                      "Define the string that "
                                      "starts at the current address"))
+NEVERD_VIEW_ACTION(EditOperandNumber, QT_TRANSLATE_NOOP("Actions", "&Number"),
+                   "#", "operand_number",
+                   QT_TRANSLATE_NOOP("Actions", "Show the operand's number as "
+                                                "the listing chooses"))
+NEVERD_VIEW_ACTION(
+    EditOperandHex, QT_TRANSLATE_NOOP("Actions", "&Hexadecimal"), "Q",
+    "operand_hex",
+    QT_TRANSLATE_NOOP("Actions", "Show the operand's number in hexadecimal"))
+NEVERD_VIEW_ACTION(EditOperandDecimal, QT_TRANSLATE_NOOP("Actions", "&Decimal"),
+                   "H", "operand_decimal",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Show the operand's number in decimal"))
+NEVERD_VIEW_ACTION(EditOperandBinary, QT_TRANSLATE_NOOP("Actions", "&Binary"),
+                   "B", "operand_binary",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Show the operand's number in binary"))
+NEVERD_VIEW_ACTION(EditOperandChar, QT_TRANSLATE_NOOP("Actions", "&Character"),
+                   "R", "operand_char",
+                   QT_TRANSLATE_NOOP("Actions",
+                                     "Show the operand's number as characters"))
+NEVERD_VIEW_ACTION(EditOperandOffset, QT_TRANSLATE_NOOP("Actions", "&Offset"),
+                   "O", "operand_offset",
+                   QT_TRANSLATE_NOOP("Actions", "Show the operand's number as "
+                                                "the address it names"))
+NEVERD_VIEW_ACTION(EditOperandNegate,
+                   QT_TRANSLATE_NOOP("Actions", "Change &sign"), "_",
+                   "operand_negate",
+                   QT_TRANSLATE_NOOP("Actions", "Show the operand's number "
+                                                "with its sign changed"))
+NEVERD_VIEW_ACTION(EditOperandInvert,
+                   QT_TRANSLATE_NOOP("Actions", "Bitwise ne&gate"), "~",
+                   "operand_invert",
+                   QT_TRANSLATE_NOOP("Actions", "Show the operand's number "
+                                                "with its bits inverted"))
 NEVERD_VIEW_ACTION(EditUndefine, QT_TRANSLATE_NOOP("Actions", "Undef&ine"), "U",
                    "undefine",
                    QT_TRANSLATE_NOOP("Actions",

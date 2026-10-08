@@ -323,6 +323,16 @@ struct Session {
     bool operator==(const DataItem &) const = default;
   };
   std::map<va_t, DataItem> DataItems;
+  /// How the user shows an instruction operand's number
+  /// (neverd_operand_format_set): a base of OperandFormats.def, with its sign
+  /// changed or its bits inverted.
+  struct OperandFormat {
+    std::string Base;
+    bool Negate = false, Invert = false;
+    bool operator==(const OperandFormat &) const = default;
+  };
+  /// The user's operand formats by instruction address and operand index.
+  std::map<va_t, std::map<unsigned, OperandFormat>> OperandFormats;
 
   bool isDeletedFunction(va_t Entry) const {
     const auto Edit = FunctionEdits.find(Entry);

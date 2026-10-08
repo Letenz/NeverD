@@ -61,6 +61,9 @@ public:
   bool isImport(std::uint64_t address);
   /// Build the reference index again, as for a changed function list.
   void reindex();
+  /// Read the user's operand formats again.  They change only instruction
+  /// text, so the rest of the listing stands.
+  void reloadNumberFormats();
   /// The item at \p address as the listing shows it: {"start","size","kind"}
   /// and "user", the kind of the user's data item there; null outside the
   /// image.

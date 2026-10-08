@@ -751,6 +751,70 @@
         <source>Show the current item&apos;s bytes as bytes</source>
         <translation>現在の項目をバイトとして表示します</translation>
     </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>数値(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>オペランドの数値をリストの既定の形式で表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>16 進数(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>オペランドの数値を 16 進数で表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>10 進数(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>オペランドの数値を 10 進数で表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>2 進数(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>オペランドの数値を 2 進数で表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>文字(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>オペランドの数値を文字で表示します</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>オフセット(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>オペランドの数値を指すアドレスの名前で表示します</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>符号を反転(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>オペランドの数値を符号を反転して表示します</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>ビット反転(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>オペランドの数値をビット反転して表示します</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1118,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>関数(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>オペランドの型(&amp;T)</translation>
     </message>
 </context>
 <context>

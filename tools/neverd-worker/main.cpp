@@ -215,6 +215,8 @@ Json hello() {
       result["capabilities"].push_back(operation);
   if (Engine::keepsDataItems())
     result["capabilities"].push_back("item_define");
+  if (Engine::keepsOperandFormats())
+    result["capabilities"].push_back("operand_format");
   return result;
 }
 

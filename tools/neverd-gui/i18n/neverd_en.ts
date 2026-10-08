@@ -751,6 +751,70 @@
         <source>Show the current item&apos;s bytes as bytes</source>
         <translation>Show the current item&apos;s bytes as bytes</translation>
     </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>&amp;Number</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>Show the operand&apos;s number as the listing chooses</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>&amp;Hexadecimal</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>Show the operand&apos;s number in hexadecimal</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>&amp;Decimal</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>Show the operand&apos;s number in decimal</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>&amp;Binary</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>Show the operand&apos;s number in binary</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>&amp;Character</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>Show the operand&apos;s number as characters</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>&amp;Offset</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>Show the operand&apos;s number as the address it names</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>Change &amp;sign</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>Show the operand&apos;s number with its sign changed</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>Bitwise ne&amp;gate</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>Show the operand&apos;s number with its bits inverted</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1118,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>&amp;Functions</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>Operand &amp;type</translation>
     </message>
 </context>
 <context>

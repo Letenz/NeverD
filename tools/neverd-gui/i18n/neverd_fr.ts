@@ -751,6 +751,70 @@
         <source>Show the current item&apos;s bytes as bytes</source>
         <translation>Afficher les octets de l&apos;élément courant comme des octets</translation>
     </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>&amp;Nombre</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>Afficher le nombre de l&apos;opérande comme la liste le choisit</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>&amp;Hexadécimal</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>Afficher le nombre de l&apos;opérande en hexadécimal</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>&amp;Décimal</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>Afficher le nombre de l&apos;opérande en décimal</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>&amp;Binaire</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>Afficher le nombre de l&apos;opérande en binaire</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>&amp;Caractère</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>Afficher le nombre de l&apos;opérande en caractères</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>&amp;Offset</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>Afficher le nombre de l&apos;opérande comme l&apos;adresse qu&apos;il désigne</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>Changer le &amp;signe</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>Afficher le nombre de l&apos;opérande avec le signe changé</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>Né&amp;gation bit à bit</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>Afficher le nombre de l&apos;opérande avec ses bits inversés</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1118,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>&amp;Fonctions</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>&amp;Type d&apos;opérande</translation>
     </message>
 </context>
 <context>

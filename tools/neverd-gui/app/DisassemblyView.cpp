@@ -207,6 +207,10 @@ std::optional<Address> DisassemblyView::operandTarget() const {
   return graphMode() ? graph_->operandTarget() : listing_->operandTarget();
 }
 
+std::optional<int> DisassemblyView::currentOperand() const {
+  return graphMode() ? std::nullopt : listing_->currentOperand();
+}
+
 QString DisassemblyView::currentToken() const {
   return graphMode() ? graph_->currentToken() : listing_->currentToken();
 }
