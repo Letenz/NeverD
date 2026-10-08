@@ -55,6 +55,12 @@ public:
   bool isImport(std::uint64_t address);
   /// Build the reference index again, as for a changed function list.
   void reindex();
+  /// The item at \p address as the listing shows it: {"start","size","kind"}
+  /// and "user", the kind of the user's data item there; null outside the
+  /// image.
+  Json item(std::uint64_t address);
+  /// The options strings are searched with (JSON), empty for the defaults.
+  const std::string &stringOptions() const;
   /// Formatted instruction lines (no prefixes) of [start, end), for graph
   /// nodes.  Each element is {address, text, spans}.
   Json blockLines(std::uint64_t start, std::uint64_t end);

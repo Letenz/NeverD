@@ -92,4 +92,5 @@ NEVERD_NATIVE_DARWIN_CASE(
     CredentialsKeepGroupQueriesAndCreationOwnershipCoherent)
 NEVERD_NATIVE_DARWIN_CASE(
     SymbolicLinksPreserveRawTargetsMetadataAndNoFollowPolicies)
+NEVERD_NATIVE_DARWIN_CASE(FixedLinksObserveMutableTargetsAndRetainOldObjects)
 #endif

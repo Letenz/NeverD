@@ -80,7 +80,11 @@ spellings (`jz`, `retn`, `[rbp+var_30]`, sizes only where no operand implies
 them), with `segment:address` prefixes and optional opcode bytes (**Options →
 General**). Stack variables are named through the frame pointer and, in 64-bit
 code, through the stack pointer wherever every path agrees on its distance
-from the frame (`[rsp+48h+var_30]`); each is as wide as its widest access. Only a window of lines around the viewport is held; the scroll bar
+from the frame (`[rsp+48h+var_30]`); each is as wide as its widest access.
+A named object is as large as its symbol says (`stderr dq ?`), and data the
+code reads or writes is laid out as wide as those accesses, under the name its
+operands and the pseudocode use (`qword_A410 dq ?`, or `unk_` where the widths
+differ); other unwritten bytes run as `db N dup(?)` up to the next item. Only a window of lines around the viewport is held; the scroll bar
 maps to the linear address space. The arrow gutter draws branches, and clicking
 an identifier highlights every occurrence. Names the engine leaves generic take
 their classic forms in the listing, function list and jumps: import thunks after
@@ -131,12 +135,22 @@ the code calls through, the size of its accesses otherwise (`qword_3FB8`,
 line's `neverd decompile` prints the same declarations.
 
 A function's address reads as the function: `_start` passes `main`, not
-`0x1169`, and a function the output does not define is declared. A routine no
-standard header declares, such as `__libc_start_main`, is declared with the
-prototype the C library tables give it, and each argument converts to its
-parameter type as a disassembler's decompiler shows it:
-`__libc_start_main((int (*)(int, char **, char **))main, argc, (char **)argv,
-0, 0, (void (*)(void))rtld_fini, (void *)stack_end)`.
+`0x1169`. A function the output defines is declared before the code that
+names it, and one it does not define is declared as a callee is. A routine no
+standard header declares is declared with the prototype the C library tables
+give it: the start-up and exit routines (`__libc_start_main`, `__cxa_atexit`,
+`__cxa_finalize`), the errno and ctype accessors (`__errno_location`,
+`__ctype_b_loc`), the Itanium C++ runtime and unwinder (`__cxa_throw`,
+`__cxa_begin_catch`, `_Unwind_Resume`), glibc's fortified and ISO C routines
+(`__printf_chk`, `__isoc23_sscanf`) and, in a PE image, the Windows C
+runtime's (`__getmainargs`, `_initterm`, `__stdio_common_vfprintf`). Each
+argument converts to its parameter type as a disassembler's decompiler shows
+it: `__libc_start_main((int (*)(int, char **, char **))main, argc, (char
+**)argv, 0, 0, (void (*)(void))rtld_fini, (void *)stack_end)`. A pointer such
+a routine returns keeps the integer the machine reads,
+`(uintptr_t)__errno_location()`. A function passed to a standard function
+converts to the type its header declares: `qsort(base, n, 4, (int (*)(const
+void *, const void *))compare)`.
 
 C++ names read as a classic disassembler shows them: the listing keeps the
 linkage name an instruction uses and adds its demangled form as a comment
@@ -260,6 +274,12 @@ saved location, bookmarks and desktop; when its comment files are missing they
 are restored from the database, and a database that describes a different
 version of the file is reported and left unused until the next save replaces
 it. Closing the window updates the saved location of an existing database.
+
+Every database carries the SQLite application id `NDDB` (`0x4E444442`) in its
+header, so a renamed database still opens as a project and `file` tells it from
+other SQLite files (`application id 1313096770`). Another application's SQLite
+file is never read or written, even when it is named `.nddb`; it is reported as
+not a NeverD database.
 
 ## Edits, history and analysis
 

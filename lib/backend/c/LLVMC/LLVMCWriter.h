@@ -639,6 +639,7 @@ public:
   std::string renderInline(const llvm::Instruction &Inst);
   std::string renderInlineImpl(const llvm::Instruction &Inst);
   std::string callExpr(const llvm::CallBase &Call);
+  std::string preservedIndirectCalleeStr(const llvm::CallBase &Call);
   std::string atomicRMWText(const llvm::AtomicRMWInst &AI);
   std::string ctorThisAddress(const llvm::CallBase &Call);
 
