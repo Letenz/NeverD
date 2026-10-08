@@ -226,6 +226,10 @@ public:
   /// Operands of an integer-only C operator (bitwise, shift, multiply,
   /// divide): a frame slot address among them is printed as an integer.
   std::set<const HighExpr *> IntegerViewOperands;
+  /// Call arguments whose parameter takes a pointer: a string object (its
+  /// array, or a pointer to one) prints there as the pointer it is in C, and
+  /// elsewhere as the integer the machine holds.
+  std::set<const HighExpr *> PointerArgumentOperands;
   /// Address used by a load/store/atomic. Peels integer views and prints
   /// `base + imm` without sanitizer wrap. Value uses of the same add still
   /// wrap. Segmented offsets disable image backing projection to stay numeric.
@@ -758,8 +762,52 @@ public:
     std::string Name;
     TypeRef Type;
     std::set<uint16_t> MemoryWidths;
+    /// The code stores to it.
+    bool Written = false;
+    /// The code calls or jumps through the pointer it holds.
+    bool CallSlot = false;
+    /// A string referenced by its address alone: declared as its array, with
+    /// \ref ArrayBytes elements' bytes, initialized by the string.
+    std::optional<ImageCString> String;
+    uint64_t ArrayBytes = 0;
+    /// A pointer slot only loaded, holding the address of a read-only string:
+    /// declared as that string's pointer, initialized by its literal.
+    std::optional<ImageCString> PointsTo;
   };
   std::map<va_t, ImageObject> ImageObjects;
+  /// The C initializer of an object's scalar value, as the image holds it;
+  /// none for zero, for bytes the image does not hold, and for values C
+  /// cannot spell exactly.
+  std::optional<std::string> imageObjectInitializer(va_t Addr,
+                                                    const ImageObject &Obj);
+  /// The image object a call argument prints as when it is a string: the
+  /// array's address, or a load of a pointer to one.  The expression is the
+  /// one that prints the object's name.
+  std::optional<std::pair<const HighExpr *, const ImageObject *>>
+  stringObjectArgument(const HighExpr &Arg);
+  /// Whether parameter \p Index of the call \p E takes a pointer as C
+  /// passes it: a variadic argument, an unprototyped declaration's, or for
+  /// a \p NarrowString a known string parameter.
+  bool takesPointerArgument(const HighExpr &E, size_t Index,
+                            bool NarrowString) const;
+  /// The C library prototype the call \p E's callee is declared with: a
+  /// routine no header declares and nothing else gives a signature.
+  const libc::LibCPrototype *calleePrototype(const HighExpr &E) const;
+  /// Functions the code takes the address of, by entry: the C name the
+  /// address prints as.
+  std::map<va_t, std::string> FunctionAddressNames;
+  /// The symbols of those functions this output does not define, declared as
+  /// the functions it calls are.
+  std::set<std::string> AddressTakenFunctions;
+  void noteFunctionAddress(va_t Addr, const std::vector<HighFunc> &Funcs);
+  /// A constant known to be an address, which a function entry there makes
+  /// that function's.
+  static bool isAddressProvenance(ConstantAddressProvenance Provenance) {
+    return Provenance == ConstantAddressProvenance::Address ||
+           Provenance == ConstantAddressProvenance::CodeAddress;
+  }
+  /// The constant a call argument prints as when it is a function's address.
+  const HighExpr *functionAddressArgument(const HighExpr &Arg);
   struct ImageBacking {
     va_t Base;
     va_t End;

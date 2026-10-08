@@ -76,11 +76,18 @@ llvm::Expected<std::optional<uint64_t>> recoverTLSDirectory(const Image &In,
         Record.Characteristics != Loaded.Characteristics ||
         !Accessible(Record.AddressOfIndex, sizeof(uint32_t),
                     emulation::Write) ||
-        (Begin && !Accessible(Begin, std::max<uint64_t>(End - Begin, 1),
-                              emulation::Read)) ||
-        (!Begin && End) || !Record.AddressOfCallBacks ||
-        Record.AddressOfCallBacks % value::PointerSize)
+        (Begin && (Begin < C.Base || Begin - C.Base > Memory.size())) ||
+        (End != Begin && !Accessible(Begin, End - Begin, emulation::Read)) ||
+        (!Begin && End) || Record.AddressOfCallBacks % value::PointerSize)
       return false;
+    // An unchanged loader allocation at its original directory needs no
+    // callback witness when it has no callbacks. An unrelated record found
+    // by scanning still needs execution evidence, even if its fields match.
+    const bool OriginalAllocation = !Generated && RVA == Original &&
+                                    Begin == Loaded.StartAddressOfRawData &&
+                                    End == Loaded.EndAddressOfRawData;
+    if (!Record.AddressOfCallBacks)
+      return OriginalAllocation;
     uint64_t At = Record.AddressOfCallBacks;
     bool Witnessed = false;
     for (uint64_t I = 0; I <= value::MaxTLSCallbacks; ++I) {
@@ -88,7 +95,7 @@ llvm::Expected<std::optional<uint64_t>> recoverTLSDirectory(const Image &In,
         return false;
       const uint64_t Target = read64le(Memory.data() + At - C.Base);
       if (!Target)
-        return Witnessed;
+        return Witnessed || (!I && OriginalAllocation);
       if (I == value::MaxTLSCallbacks ||
           !Accessible(Target, 1, emulation::Execute) ||
           (In.architecture() == emulation::GuestArchitecture::AArch64 &&
@@ -154,16 +161,16 @@ llvm::Expected<TLSRebuild> rebuildTLS(const Image &In, const Capture &C,
   coff_tls_directory64 Record;
   std::memcpy(&Record, C.Memory.data() + **DirectoryRVA, sizeof(Record));
   std::vector<uint64_t> Callbacks;
-  const uint64_t Array = uint64_t(Record.AddressOfCallBacks) - C.Base;
-  for (uint64_t I = 0; I < value::MaxTLSCallbacks; ++I) {
-    const uint64_t Target = read64le(C.Memory.data() + Array + I * 8);
-    if (!Target)
-      break;
-    Callbacks.push_back(Target);
-    Result.MaterializedCallbacks += completedCallback(C, Target);
+  if (Record.AddressOfCallBacks) {
+    const uint64_t Array = uint64_t(Record.AddressOfCallBacks) - C.Base;
+    for (uint64_t I = 0; I < value::MaxTLSCallbacks; ++I) {
+      const uint64_t Target = read64le(C.Memory.data() + Array + I * 8);
+      if (!Target)
+        break;
+      Callbacks.push_back(Target);
+      Result.MaterializedCallbacks += completedCallback(C, Target);
+    }
   }
-  if (!Result.MaterializedCallbacks)
-    return Result;
 
   const uint64_t TLSSize =
       uint64_t(Record.EndAddressOfRawData) - Record.StartAddressOfRawData;
@@ -174,6 +181,14 @@ llvm::Expected<TLSRebuild> rebuildTLS(const Image &In, const Capture &C,
       !std::equal(C.ThreadLocal->begin(), C.ThreadLocal->end(),
                   C.Memory.begin() +
                       (uint64_t(Record.StartAddressOfRawData) - C.Base));
+  if (!Result.MaterializedCallbacks && !RestoreTLS)
+    return Result;
+  const bool StandaloneRestore = RestoreTLS && !Result.MaterializedCallbacks;
+  if (StandaloneRestore && Callbacks.size() == value::MaxTLSCallbacks)
+    return failure(text::TLSCallbacks);
+  Result.HasCode = true;
+  if (StandaloneRestore)
+    Callbacks.insert(Callbacks.begin(), 0);
 
   // Never overwrite original code or TLS storage. The adapters, callback
   // table and replacement directory all belong to the appended section.
@@ -184,8 +199,9 @@ llvm::Expected<TLSRebuild> rebuildTLS(const Image &In, const Capture &C,
   const bool X64 = In.architecture() == emulation::GuestArchitecture::X64;
   const uint64_t Stride = X64 ? 24 : 32;
   const uint64_t CopyStride = X64 ? 80 : 96;
-  const uint64_t Data = Code + Result.MaterializedCallbacks * Stride +
-                        (RestoreTLS ? CopyStride - Stride : 0);
+  const uint64_t Data =
+      Code + Result.MaterializedCallbacks * Stride +
+      (RestoreTLS ? CopyStride - (StandaloneRestore ? 0 : Stride) : 0);
   const uint64_t End = Data + (RestoreTLS ? TLSSize : 0);
   if (MetadataRVA > UINT32_MAX || End > UINT32_MAX - MetadataRVA)
     return failure(text::ImageSize);
@@ -197,7 +213,7 @@ llvm::Expected<TLSRebuild> rebuildTLS(const Image &In, const Capture &C,
   for (size_t I = 0; I < Callbacks.size(); ++I) {
     const uint64_t Target = Callbacks[I];
     uint64_t Callback = Target;
-    if (completedCallback(C, Target)) {
+    if (!Target || completedCallback(C, Target)) {
       Callback = C.Base + MetadataRVA + Next;
       if (RestoreTLS && X64) {
         // Restore the captured main-thread block only on process attach.
@@ -215,6 +231,11 @@ llvm::Expected<TLSRebuild> rebuildTLS(const Image &In, const Capture &C,
         };
         std::copy(std::begin(Adapter), std::end(Adapter),
                   Metadata.begin() + Next);
+        // A standalone state restoration has no original callback. Other
+        // notifications return directly, retaining the loader's new-thread
+        // template instead of restoring the captured process-attach bytes.
+        if (!Target)
+          Metadata[Next + 4] = 0x38; // jne ret
         write64le(Metadata.data() + Next + 16, Record.AddressOfIndex);
         write64le(Metadata.data() + Next + 32, C.Base + MetadataRVA + Data);
         write32le(Metadata.data() + Next + 41, TLSSize);
@@ -240,6 +261,8 @@ llvm::Expected<TLSRebuild> rebuildTLS(const Image &In, const Capture &C,
         };
         for (size_t J = 0; J < std::size(Adapter); ++J)
           write32le(Metadata.data() + Next + J * 4, Adapter[J]);
+        if (!Target)
+          write32le(Metadata.data() + Next + 4, 0x54000161); // b.ne ret
         write64le(Metadata.data() + Next + 64, Record.AddressOfIndex);
         write64le(Metadata.data() + Next + 72, C.Base + MetadataRVA + Data);
         write64le(Metadata.data() + Next + 80, Target);

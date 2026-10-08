@@ -321,7 +321,56 @@ iatProtection(const Image &In, llvm::ArrayRef<uint32_t> Permissions,
   return failure(text::IATProtection);
 }
 
-/// Debug records name their payload by file offset as well as by RVA.
+/// Keep complete debug records and mapped payloads in the file. A zero suffix
+/// still belongs to the record or payload; trimming it before rewriting file
+/// offsets could discard the rewritten field or truncate an all-zero payload.
+void retainDebugStorage(const Image &In,
+                        std::vector<data_directory> &Directories,
+                        llvm::ArrayRef<uint8_t> Memory,
+                        std::vector<uint64_t> &Required) {
+  if (llvm::COFF::DEBUG_DIRECTORY >= Directories.size())
+    return;
+  auto &Debug = Directories[llvm::COFF::DEBUG_DIRECTORY];
+  const uint64_t RVA = Debug.RelativeVirtualAddress, Size = Debug.Size;
+  const uint64_t Records = Size / sizeof(debug_directory);
+  if (!Size)
+    return;
+  if (Size % sizeof(debug_directory) || Records > value::MaxDebugRecords ||
+      RVA > In.extent() || Size > In.extent() - RVA) {
+    Debug = data_directory{};
+    return;
+  }
+  const auto Regions = In.regions();
+  uint64_t End = RVA;
+  while (End < RVA + Size) {
+    const auto *Region = In.regionAt(End);
+    if (!Region) {
+      Debug = data_directory{};
+      return;
+    }
+    End = std::min(RVA + Size, Region->RVA + Region->MemorySize);
+  }
+  for (const auto &Region : Regions) {
+    const uint64_t Begin = std::max(RVA, Region.RVA);
+    End = std::min(RVA + Size, Region.RVA + Region.MemorySize);
+    if (Begin < End)
+      Required[&Region - Regions.data()] = End - Region.RVA;
+  }
+  for (uint64_t I = 0; I < Records; ++I) {
+    const auto Record =
+        fetch<debug_directory>(Memory, RVA + I * sizeof(debug_directory));
+    const uint64_t Payload = Record.AddressOfRawData;
+    const auto *Region = In.regionAt(Payload);
+    if (!Payload || !Region ||
+        Record.SizeOfData > Region->MemorySize - (Payload - Region->RVA))
+      continue;
+    auto &Minimum = Required[Region - Regions.data()];
+    Minimum = std::max(Minimum, Payload - Region->RVA + Record.SizeOfData);
+  }
+}
+
+/// Debug records name their payload by file offset as well as by RVA. Their
+/// validated storage requirements have already participated in placement.
 void relocateDebugRecords(const Image &In, llvm::ArrayRef<Placement> Placed,
                           std::vector<data_directory> &Directories,
                           std::vector<uint8_t> &Memory) {
@@ -340,12 +389,6 @@ void relocateDebugRecords(const Image &In, llvm::ArrayRef<Placement> Placed,
   auto &Debug = Directories[llvm::COFF::DEBUG_DIRECTORY];
   const uint64_t RVA = Debug.RelativeVirtualAddress, Size = Debug.Size;
   const uint64_t Records = Size / sizeof(debug_directory);
-  if (Size &&
-      (Size % sizeof(debug_directory) || Records > value::MaxDebugRecords ||
-       RVA > In.extent() || Size > In.extent() - RVA)) {
-    Debug = data_directory{};
-    return;
-  }
   for (uint64_t I = 0; I < Records; ++I) {
     const uint64_t At = RVA + I * sizeof(debug_directory);
     auto Record = fetch<debug_directory>(Memory, At);
@@ -420,12 +463,17 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   if (Count > value::MaxSections || HeaderBytes > Regions.front().RVA)
     return failure(text::HeaderRoom);
 
+  auto Directories = H.Directories;
+  std::vector<uint64_t> Required(Regions.size());
+  retainDebugStorage(In, Directories, Memory, Required);
+
   // Section bytes are the observed memory without its trailing zero fill.
   std::vector<Placement> Placed;
   uint64_t Cursor = HeaderBytes;
-  auto Place = [&](llvm::ArrayRef<uint8_t> Bytes, uint64_t VirtualSize) {
+  auto Place = [&](llvm::ArrayRef<uint8_t> Bytes, uint64_t VirtualSize,
+                   uint64_t Minimum) {
     uint64_t Used = Bytes.size();
-    while (Used && !Bytes[Used - 1])
+    while (Used > Minimum && !Bytes[Used - 1])
       --Used;
     const uint64_t Size = llvm::alignTo(Used, uint64_t(H.FileAlignment));
     Placed.push_back({Size ? uint32_t(Cursor) : 0, uint32_t(Size),
@@ -447,10 +495,11 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
         return failure(text::ImageSize);
       ExtentInSection = std::max(ExtentInSection, Terminator - R.RVA);
     }
-    Place(llvm::ArrayRef(Memory).slice(R.RVA, R.MemorySize), ExtentInSection);
+    Place(llvm::ArrayRef(Memory).slice(R.RVA, R.MemorySize), ExtentInSection,
+          Required[I]);
   }
   if (AddSection)
-    Place(Metadata, Metadata.size());
+    Place(Metadata, Metadata.size(), 0);
   uint64_t InputEnd = H.SizeOfHeaders;
   for (const auto &R : Regions)
     InputEnd = std::max(InputEnd, R.FileOffset + R.FileSize);
@@ -459,7 +508,6 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   if (Cursor + Overlay.size() > UINT32_MAX)
     return failure(text::ImageSize);
 
-  auto Directories = H.Directories;
   if (IAT->Size && Directories.size() <= llvm::COFF::IAT) {
     // An input can leave trailing directory entries undeclared while still
     // reserving them in the optional header. Use that space without moving
@@ -560,13 +608,14 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
                                llvm::COFF::IMAGE_SCN_MEM_READ;
       if (Repairs->CellBytes)
         Header.Characteristics |= llvm::COFF::IMAGE_SCN_MEM_WRITE;
-      if (RebuiltTLS->MaterializedCallbacks)
+      if (RebuiltTLS->HasCode)
         Header.Characteristics |=
             llvm::COFF::IMAGE_SCN_MEM_EXECUTE | llvm::COFF::IMAGE_SCN_CNT_CODE;
       Out.Sections.push_back(
           {Name.str(), MetadataRVA, Placed[I].VirtualSize, Placed[I].Size, 0});
-      std::copy(Metadata.begin(), Metadata.end(),
-                Out.File.begin() + Placed[I].Offset);
+      std::copy_n(Metadata.begin(),
+                  std::min<uint64_t>(Metadata.size(), Placed[I].Size),
+                  Out.File.begin() + Placed[I].Offset);
     }
     Header.SizeOfRawData = Placed[I].Size;
     Header.PointerToRawData = Placed[I].Offset;

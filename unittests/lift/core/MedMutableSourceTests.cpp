@@ -167,14 +167,11 @@ void compileAndRun(const MedFunc &F, const char *Main,
     SCOPED_TRACE(Opt);
     std::string Error;
     const llvm::SmallVector<llvm::StringRef, 12> Args{
-        Compiler,
-        "-std=c11",
-        Opt,
-        "-fsanitize=undefined",
-        "-fno-sanitize-recover=all",
-        SourcePath,
-        "-o",
-        BinaryPath};
+        Compiler, "-std=c11", Opt, "-fsanitize=undefined",
+        // Decompiled C is built as its prelude says: for a target with
+        // unaligned access, without strict aliasing.
+        "-fno-sanitize=alignment", "-fno-strict-aliasing",
+        "-fno-sanitize-recover=all", SourcePath, "-o", BinaryPath};
     int Status = llvm::sys::ExecuteAndWait(Compiler, Args, std::nullopt,
                                            Redirects, 30, 0, &Error);
     auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);

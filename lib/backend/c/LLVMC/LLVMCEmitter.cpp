@@ -163,16 +163,19 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   OnlyFunction = Only;
   CurMod = &Mod;
   prepareFunctionIdentifiers(Mod);
+  collectImageDataUses(Mod);
   writeIncludes(Mod);
   OS << "\n";
   writeStructDefs(Mod);
   if (!OnlyFunction) {
     writeGlobals(Mod);
     writeForwardDecls(Mod);
+    writeImportCalleeDecls(Mod);
     OS << "\n";
   } else {
     writeReferencedImageObjects(*OnlyFunction);
     writeForwardDecls(Mod);
+    writeImportCalleeDecls(Mod);
   }
 
   for (auto &Fn : Mod) {
@@ -667,6 +670,74 @@ bool usedInFunction(const llvm::Value &Value, const llvm::Function &Function) {
   return false;
 }
 } // namespace
+
+void LLVMCWriter::writeImportCalleeDecls(llvm::Module &Mod) {
+  std::set<std::string> Declared;
+  for (const llvm::Function &Fn : Mod)
+    Declared.insert(functionIdentifier(Fn));
+  // Each import with the type its calls return; one whose calls disagree is
+  // left to them.
+  std::map<std::string, std::optional<std::string>> Imports;
+  for (const llvm::Function &Fn : Mod) {
+    if (Fn.isDeclaration() || (OnlyFunction && &Fn != OnlyFunction))
+      continue;
+    for (const llvm::BasicBlock &Block : Fn)
+      for (const llvm::Instruction &Inst : Block) {
+        const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst);
+        if (!Call || Call->getCalledFunction() ||
+            llvm::isa<llvm::InlineAsm>(Call->getCalledOperand()))
+          continue;
+        std::string Name = resolveImportCalleeName(Call->getCalledOperand());
+        if (Name.empty() || Declared.count(Name))
+          continue;
+        const std::string Return = typeToCLLVM(Call->getType());
+        const auto [Import, Added] = Imports.emplace(Name, Return);
+        if (!Added && Import->second && *Import->second != Return)
+          Import->second.reset();
+      }
+  }
+  // Unprototyped, the declaration takes the arguments the machine passed.
+  for (const auto &[Name, Return] : Imports)
+    if (Return)
+      OS << "extern " << *Return << " " << Name << "();\n";
+}
+
+void LLVMCWriter::collectImageDataUses(llvm::Module &Mod) {
+  // Image data is named by its address, from the image or from the module's
+  // data globals.
+  ImageDataUses.clear();
+  const llvm::DataLayout &Layout = Mod.getDataLayout();
+  for (const llvm::Function &Fn : Mod)
+    for (const llvm::BasicBlock &Block : Fn)
+      for (const llvm::Instruction &Inst : Block) {
+        const llvm::Value *Pointer = nullptr;
+        llvm::Type *Type = nullptr;
+        if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
+          Pointer = Load->getPointerOperand();
+          Type = Load->getType();
+        } else if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Inst)) {
+          Pointer = Store->getPointerOperand();
+          Type = Store->getValueOperand()->getType();
+        } else if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
+          // A call through a pointer the image holds.
+          if (Call->getCalledFunction())
+            continue;
+          const llvm::Value *Callee =
+              Call->getCalledOperand()->stripPointerCasts();
+          if (const auto *Cast = llvm::dyn_cast<llvm::IntToPtrInst>(Callee))
+            Callee = Cast->getOperand(0);
+          if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Callee))
+            if (auto VA = imageDataVA(Load->getPointerOperand()))
+              ImageDataUses[*VA].CallSlot = true;
+          continue;
+        }
+        if (!Pointer || !Type || !Type->isSized())
+          continue;
+        if (auto VA = imageDataVA(Pointer))
+          ImageDataUses[*VA].AccessBytes.insert(
+              Layout.getTypeStoreSize(Type).getFixedValue());
+      }
+}
 
 void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
   for (auto &Fn : Mod) {

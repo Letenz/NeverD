@@ -99,17 +99,22 @@ protected:
 TEST_P(UnpackLibrary, RecoversAttachEntryAndPreservesExports) {
   expectExecution(Directory / fixture::InputFile);
   for (uint32_t Mode :
-       {fixture::LoaderMode, fixture::TLSMode, fixture::PrivateTLSMode}) {
+       {fixture::LoaderMode, fixture::TLSMode, fixture::PrivateTLSMode,
+        fixture::NoTLSCallbacksMode, fixture::EmptyTLSCallbacksMode}) {
     SCOPED_TRACE(Mode);
     const auto Path = Scratch / fixture::InputFile;
     ASSERT_TRUE(fixture::write(Path, fixture::pack(Original, Mode)));
+    expectExecution(Path);
+    ASSERT_FALSE(HasFailure());
     auto Recovered = unpackFile(Path, Options);
     ASSERT_TRUE(bool(Recovered)) << llvm::toString(Recovered.takeError());
     ASSERT_EQ(Recovered->Outcome, UnpackOutcome::Unpacked)
         << Recovered->ProcessDiagnostic;
     EXPECT_EQ(Recovered->EntryRVA, Original.Entry);
     EXPECT_EQ(Recovered->Source, EntrySource::Transfer);
-    EXPECT_EQ(Recovered->MaterializedTLSCallbacks, 1u);
+    const bool NoCallbacks = Mode == fixture::NoTLSCallbacksMode ||
+                             Mode == fixture::EmptyTLSCallbacksMode;
+    EXPECT_EQ(Recovered->MaterializedTLSCallbacks, NoCallbacks ? 0u : 1u);
     ASSERT_FALSE(Recovered->Transfers.empty());
     EXPECT_TRUE(Recovered->Transfers.back().StackBalanced);
     EXPECT_TRUE(Recovered->Transfers.back().ProgramInvocation);
@@ -286,12 +291,16 @@ TEST_P(UnpackLibrary, RecoveredLibrariesLoadAndExportOnNativeWindows) {
   };
   for (uint32_t Mode :
        {0u, uint32_t(fixture::LoaderMode), uint32_t(fixture::TLSMode),
-        uint32_t(fixture::PrivateTLSMode),
-        uint32_t(fixture::WrappedEntryMode)}) {
+        uint32_t(fixture::PrivateTLSMode), uint32_t(fixture::WrappedEntryMode),
+        uint32_t(fixture::NoTLSCallbacksMode),
+        uint32_t(fixture::EmptyTLSCallbacksMode)}) {
     SCOPED_TRACE(Mode);
     auto Bytes = Mode ? fixture::pack(Original, Mode) : Original.File;
     ASSERT_TRUE(fixture::write(Path, Bytes));
     if (Mode) {
+      Native(0, std::string(fixture::AttachText) + fixture::QueryText +
+                    fixture::DetachText);
+      ASSERT_FALSE(HasFailure());
       Options.Transfer = Mode == fixture::WrappedEntryMode ? 1 : 0;
       auto Result = unpackFile(Path, Options);
       ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());

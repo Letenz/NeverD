@@ -2,6 +2,7 @@
 # on a CPU backend; those cases are registered with the execution tests so
 # that the native CPU inventory can require them.
 add_neverd_unittest(NeverDUnpackTests
+  PEDebugTests.cpp
   PERebuildTests.cpp
   ProcessImportsTests.cpp
   ProcessTransferTests.cpp

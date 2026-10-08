@@ -2995,8 +2995,7 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
                    VA && Size == PtrWidth && !StoredImageAddrs.count(*VA) &&
                    !foldReadonlyScalar(*VA, Size)) {
           if (std::string Image = imageDataCName(LI->getPointerOperand());
-              !Image.empty() &&
-              !llvm::StringRef(Image).starts_with(kSyntheticGlobalPrefix))
+              !Image.empty() && !synthesizedImageObject(*VA))
             ValueTexts[LI] = std::move(Image);
         }
         continue;

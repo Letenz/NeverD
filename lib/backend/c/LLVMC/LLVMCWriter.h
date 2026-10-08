@@ -722,6 +722,26 @@ public:
       UniqueImmediateUsers;
   mutable CProjectionIdentifierAllocator ImageIdentifierAllocator;
   mutable std::map<va_t, std::string> ImageObjectNames;
+  /// Image data no symbol or debug information names: its name is the
+  /// writer's own.
+  mutable std::set<va_t> SynthesizedImageObjects;
+  /// Whether namedImageObject(\p Addr) is a name the writer made up.
+  bool synthesizedImageObject(va_t Addr) const {
+    namedImageObject(Addr);
+    return SynthesizedImageObjects.count(Addr) != 0;
+  }
+  /// How the module's code reaches each image data address: the sizes of its
+  /// accesses and whether it calls through the pointer there, which name
+  /// unnamed data as the listing names it.
+  struct ImageDataUse {
+    std::set<uint64_t> AccessBytes;
+    bool CallSlot = false;
+  };
+  std::map<va_t, ImageDataUse> ImageDataUses;
+  void collectImageDataUses(llvm::Module &Mod);
+  /// Declare the imports that calls through the slots the loader binds print
+  /// by name (resolveImportCalleeName), with the type the calls return.
+  void writeImportCalleeDecls(llvm::Module &Mod);
   /// Last store in the current block. Cleared with `AllocaImmediates`.
   std::map<const llvm::AllocaInst *, const llvm::Value *> AllocaLastValues;
   /// Last store seen in `collectTypedHomes`. Survives per-block

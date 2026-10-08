@@ -116,6 +116,28 @@ beside it, after its encoding unless that is ASCII or UTF-8:
 `puts(u8s /* "你好" */)`, `/* GBK "中文" */`. Copy and export always use the
 complete code.
 
+Global data is declared the way C source declares it, with the value the image
+holds: a string the code reaches by its address is its array
+(`const char gbk[] = "\xD6\xD0\xCE\xC4"; /* GBK "中文" */`), a pointer the code
+only reads that holds a read-only string's address is that string's pointer
+(`const char *u8s = "你好";`, `const char16_t *w = u"宽字";`), and a scalar
+shows its initial value (`int32_t counter = 5;`). Every initializer spells the
+image's bytes exactly: text another encoding than UTF-8 holds is escaped, with
+the decoded text in a comment beside it. Unnamed data is named as the listing
+names it, so a name in the pseudocode matches the disassembly operand and
+double-clicking it goes there: `off_3FC0` for a slot holding a pointer or one
+the code calls through, the size of its accesses otherwise (`qword_3FB8`,
+`dword_4010`), and `unk_` for data reached by its address alone. The command
+line's `neverd decompile` prints the same declarations.
+
+A function's address reads as the function: `_start` passes `main`, not
+`0x1169`, and a function the output does not define is declared. A routine no
+standard header declares, such as `__libc_start_main`, is declared with the
+prototype the C library tables give it, and each argument converts to its
+parameter type as a disassembler's decompiler shows it:
+`__libc_start_main((int (*)(int, char **, char **))main, argc, (char **)argv,
+0, 0, (void (*)(void))rtld_fini, (void *)stack_end)`.
+
 C++ names read as a classic disassembler shows them: the listing keeps the
 linkage name an instruction uses and adds its demangled form as a comment
 (`call _ZN8QDomNodeC1Ev ; QDomNode::QDomNode()`), a function with a mangled

@@ -102,6 +102,18 @@ protected:
                           C.Memory.begin() + Region + 0x98);
   }
 
+  void prepareTLSWithoutCallbacks(bool EmptyArray) {
+    prepareTLS();
+    ASSERT_FALSE(HasFailure());
+    write64le(C.Memory.data() + OriginalTLS +
+                  offsetof(coff_tls_directory64, AddressOfCallBacks),
+              EmptyArray ? C.Base + Callbacks : 0);
+    write64le(C.Memory.data() + Callbacks, 0);
+    std::fill_n(C.Memory.data() + ProgramTLS, sizeof(coff_tls_directory64), 0);
+    C.Baseline = C.Memory;
+    C.Transfers = {{Linked.Entry, true, 1, true}};
+  }
+
   static constexpr uint64_t FirstGate = 0x70010000, SecondGate = 0x70020000;
   const ExportBinding FirstBinding{"first.dll", "first", {}};
   const ExportBinding SecondBinding{"second.dll", "second", {}};
@@ -543,6 +555,290 @@ TEST_F(PERebuild, TLSAllocationIdentityNeedsAnObservedCallback) {
   auto Result = pe::recoverTLSDirectory(*Input, C);
   ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
   EXPECT_FALSE(*Result);
+}
+
+TEST_F(PERebuild, OriginalTLSWithoutCallbacksKeepsTheLoaderAllocation) {
+  for (bool EmptyArray : {false, true}) {
+    SCOPED_TRACE(EmptyArray);
+    prepareTLSWithoutCallbacks(EmptyArray);
+    ASSERT_FALSE(HasFailure());
+    auto Directory = pe::recoverTLSDirectory(*Input, C);
+    ASSERT_TRUE(bool(Directory)) << llvm::toString(Directory.takeError());
+    EXPECT_EQ(*Directory, OriginalTLS);
+    std::vector<uint8_t> Metadata;
+    auto TLS = pe::rebuildTLS(*Input, C, Input->extent(), Metadata);
+    ASSERT_TRUE(bool(TLS)) << llvm::toString(TLS.takeError());
+    EXPECT_EQ(TLS->DirectoryRVA, OriginalTLS);
+    EXPECT_EQ(TLS->MaterializedCallbacks, 0u);
+    EXPECT_FALSE(TLS->HasCode);
+    EXPECT_TRUE(Metadata.empty());
+  }
+}
+
+TEST_F(PERebuild, CallbackFreeTLSRestoresCapturedBytesWithoutChangingTemplate) {
+  for (uint16_t Machine : {llvm::COFF::IMAGE_FILE_MACHINE_AMD64,
+                           llvm::COFF::IMAGE_FILE_MACHINE_ARM64}) {
+    SCOPED_TRACE(Machine);
+    write16le(Bytes.data() + Linked.MachineOffset, Machine);
+    for (bool EmptyArray : {false, true}) {
+      SCOPED_TRACE(EmptyArray);
+      prepareTLSWithoutCallbacks(EmptyArray);
+      ASSERT_FALSE(HasFailure());
+      ASSERT_TRUE(C.ThreadLocal);
+      (*C.ThreadLocal)[0] = 42;
+      const auto Before = C.Memory;
+      std::vector<uint8_t> Metadata;
+      auto TLS = pe::rebuildTLS(*Input, C, Input->extent(), Metadata);
+      ASSERT_TRUE(bool(TLS)) << llvm::toString(TLS.takeError());
+      EXPECT_TRUE(TLS->HasCode);
+      EXPECT_EQ(TLS->MaterializedCallbacks, 0u);
+      const auto Result = rebuild({});
+      ASSERT_FALSE(HasFailure());
+      EXPECT_EQ(Result.MaterializedTLSCallbacks, 0u);
+      const auto Image = test::readImage(Result.File);
+      const uint64_t Directory =
+          Image.directory(llvm::COFF::TLS_TABLE).RelativeVirtualAddress;
+      ASSERT_GE(Directory, Input->extent());
+      coff_tls_directory64 Record;
+      std::memcpy(&Record, Image.Mapped.data() + Directory, sizeof(Record));
+      const uint64_t Array = uint64_t(Record.AddressOfCallBacks) - C.Base;
+      const uint64_t Adapter = read64le(Image.Mapped.data() + Array) - C.Base;
+      EXPECT_GE(Adapter, Input->extent());
+      EXPECT_EQ(read64le(Image.Mapped.data() + Array + 8), 0u);
+      const uint64_t State =
+          read64le(
+              Image.Mapped.data() + Adapter +
+              (Machine == llvm::COFF::IMAGE_FILE_MACHINE_AMD64 ? 32 : 72)) -
+          C.Base;
+      ASSERT_LE(State + C.ThreadLocal->size(), Image.Mapped.size());
+      EXPECT_TRUE(std::equal(C.ThreadLocal->begin(), C.ThreadLocal->end(),
+                             Image.Mapped.begin() + State));
+      // The original TLS template remains authoritative for future threads.
+      for (const auto &R : Input->regions())
+        EXPECT_TRUE(std::equal(Before.begin() + R.RVA,
+                               Before.begin() + R.RVA + R.MemorySize,
+                               Image.Mapped.begin() + R.RVA));
+      EXPECT_TRUE(Image.Sections.back().Characteristics &
+                  llvm::COFF::IMAGE_SCN_MEM_EXECUTE);
+    }
+  }
+}
+
+TEST_F(PERebuild, CallbackFreeTLSStillRequiresAnExactLiveSnapshot) {
+  for (bool Missing : {false, true}) {
+    SCOPED_TRACE(Missing);
+    prepareTLSWithoutCallbacks(false);
+    ASSERT_FALSE(HasFailure());
+    if (Missing)
+      C.ThreadLocal.reset();
+    else
+      C.ThreadLocal->push_back(0);
+    auto Result = pe::rebuild(*Input, C, {});
+    ASSERT_FALSE(bool(Result));
+    EXPECT_NE(llvm::toString(Result.takeError()).find("live TLS snapshot"),
+              std::string::npos);
+  }
+}
+
+TEST_F(PERebuild, ZeroTLSStateUsesVirtualStorageAndPreservesTheOverlay) {
+  constexpr uint8_t Overlay[] = {0x41, 0, 0x99, 0xee, 0x7b};
+  for (uint16_t Machine : {llvm::COFF::IMAGE_FILE_MACHINE_AMD64,
+                           llvm::COFF::IMAGE_FILE_MACHINE_ARM64}) {
+    SCOPED_TRACE(Machine);
+    for (bool WithOverlay : {false, true}) {
+      SCOPED_TRACE(WithOverlay);
+      Bytes = Linked.File;
+      write16le(Bytes.data() + Linked.MachineOffset, Machine);
+      if (WithOverlay)
+        Bytes.insert(Bytes.end(), std::begin(Overlay), std::end(Overlay));
+      prepareTLSWithoutCallbacks(false);
+      ASSERT_FALSE(HasFailure());
+      const uint64_t Region = Input->regions().back().RVA;
+      const uint64_t Template = Region + 0x800;
+      constexpr uint64_t TLSSize = 0x800;
+      ASSERT_LE(Template + TLSSize, C.Memory.size());
+      write64le(C.Memory.data() + OriginalTLS +
+                    offsetof(coff_tls_directory64, StartAddressOfRawData),
+                C.Base + Template);
+      write64le(C.Memory.data() + OriginalTLS +
+                    offsetof(coff_tls_directory64, EndAddressOfRawData),
+                C.Base + Template + TLSSize);
+      std::fill_n(C.Memory.begin() + Template, TLSSize, 0);
+      C.Memory[Template] = 1;
+      C.Baseline = C.Memory;
+      C.ThreadLocal = std::vector<uint8_t>(TLSSize, 0);
+      uint64_t InputEnd = Input->headers().SizeOfHeaders;
+      for (const auto &R : Input->regions())
+        InputEnd = std::max(InputEnd, R.FileOffset + R.FileSize);
+      const auto ExpectedOverlay = llvm::ArrayRef(Bytes).drop_front(InputEnd);
+
+      const auto Result = rebuild({});
+      ASSERT_FALSE(HasFailure());
+      const auto Image = test::readImage(Result.File);
+      ASSERT_FALSE(HasFailure());
+      const auto &Metadata = Image.Sections.back();
+      EXPECT_GT(Metadata.VirtualSize, Metadata.FileSize);
+      const uint64_t OutputEnd =
+          uint64_t(Metadata.FileOffset) + Metadata.FileSize;
+      ASSERT_EQ(Result.File.size(), OutputEnd + ExpectedOverlay.size());
+      EXPECT_TRUE(std::equal(ExpectedOverlay.begin(), ExpectedOverlay.end(),
+                             Result.File.begin() + OutputEnd));
+
+      const uint64_t Directory =
+          Image.directory(llvm::COFF::TLS_TABLE).RelativeVirtualAddress;
+      const uint64_t Array =
+          read64le(Image.Mapped.data() + Directory +
+                   offsetof(coff_tls_directory64, AddressOfCallBacks)) -
+          C.Base;
+      const uint64_t Adapter = read64le(Image.Mapped.data() + Array) - C.Base;
+      const uint64_t State =
+          read64le(
+              Image.Mapped.data() + Adapter +
+              (Machine == llvm::COFF::IMAGE_FILE_MACHINE_AMD64 ? 32 : 72)) -
+          C.Base;
+      ASSERT_LE(State + TLSSize, Image.Mapped.size());
+      EXPECT_GT(State + TLSSize, uint64_t(Metadata.RVA) + Metadata.FileSize);
+      EXPECT_TRUE(std::all_of(Image.Mapped.begin() + State,
+                              Image.Mapped.begin() + State + TLSSize,
+                              [](uint8_t Byte) { return Byte == 0; }));
+      EXPECT_EQ(Image.Mapped[Template], 1u);
+    }
+  }
+}
+
+TEST_F(PERebuild, TLSRestorationKeepsCallbacksThatHaveNotCompleted) {
+  prepareTLS();
+  ASSERT_FALSE(HasFailure());
+  (*C.ThreadLocal)[0] = 42;
+  const auto Result = rebuild({});
+  ASSERT_FALSE(HasFailure());
+  EXPECT_EQ(Result.MaterializedTLSCallbacks, 0u);
+  const auto Image = test::readImage(Result.File);
+  const uint64_t Directory =
+      Image.directory(llvm::COFF::TLS_TABLE).RelativeVirtualAddress;
+  ASSERT_GE(Directory, Input->extent());
+  const uint64_t Array =
+      read64le(Image.Mapped.data() + Directory +
+               offsetof(coff_tls_directory64, AddressOfCallBacks)) -
+      C.Base;
+  EXPECT_GE(read64le(Image.Mapped.data() + Array), C.Base + Input->extent());
+  EXPECT_EQ(read64le(Image.Mapped.data() + Array + 8), C.Base + Callback);
+  EXPECT_EQ(read64le(Image.Mapped.data() + Array + 16), 0u);
+}
+
+TEST_F(PERebuild, EmptyTLSAllocationDoesNotRequireReadableTemplateBytes) {
+  for (uint64_t Begin :
+       {uint64_t(0), Linked.Base, Linked.Base + Linked.Mapped.size()}) {
+    SCOPED_TRACE(Begin);
+    prepareTLS();
+    ASSERT_FALSE(HasFailure());
+    for (uint64_t RVA : {OriginalTLS, ProgramTLS}) {
+      write64le(C.Memory.data() + RVA, Begin);
+      write64le(C.Memory.data() + RVA + sizeof(uint64_t), Begin);
+    }
+    C.Baseline = C.Memory;
+    C.ThreadLocal->clear();
+    C.Initializers = {C.Base + Callback};
+    // A zero-length range needs no readable byte, including at the image's
+    // one-past-end address. Callback and index storage remain accessible.
+    C.PageAccess.front() = 0;
+    auto Directory = pe::recoverTLSDirectory(*Input, C);
+    ASSERT_TRUE(bool(Directory)) << llvm::toString(Directory.takeError());
+    EXPECT_EQ(*Directory, ProgramTLS);
+    std::vector<uint8_t> Metadata;
+    auto TLS = pe::rebuildTLS(*Input, C, Input->extent(), Metadata);
+    ASSERT_TRUE(bool(TLS)) << llvm::toString(TLS.takeError());
+    EXPECT_EQ(TLS->MaterializedCallbacks, 1u);
+    EXPECT_TRUE(TLS->HasCode);
+  }
+}
+
+TEST_F(PERebuild, EmptyTLSTemplateAddressMustStillBelongToTheImage) {
+  for (bool BeforeImage : {false, true}) {
+    SCOPED_TRACE(BeforeImage);
+    prepareTLS();
+    ASSERT_FALSE(HasFailure());
+    // The loader accepted an empty allocation. The observed record cannot
+    // move that empty range outside the image and retain its authority.
+    for (uint64_t RVA : {OriginalTLS, ProgramTLS}) {
+      write64le(C.Memory.data() + RVA, 0);
+      write64le(C.Memory.data() + RVA + sizeof(uint64_t), 0);
+    }
+    C.Baseline = C.Memory;
+    const uint64_t Begin =
+        BeforeImage ? C.Base - 1 : C.Base + Input->extent() + 1;
+    for (uint64_t RVA : {OriginalTLS, ProgramTLS}) {
+      write64le(C.Memory.data() + RVA, Begin);
+      write64le(C.Memory.data() + RVA + sizeof(uint64_t), Begin);
+    }
+    C.Initializers = {C.Base + Callback};
+    auto Directory = pe::recoverTLSDirectory(*Input, C);
+    ASSERT_TRUE(bool(Directory)) << llvm::toString(Directory.takeError());
+    EXPECT_FALSE(*Directory);
+  }
+}
+
+TEST_F(PERebuild, NonemptyTLSTemplateStillRequiresReadableBytes) {
+  prepareTLS();
+  ASSERT_FALSE(HasFailure());
+  for (uint64_t RVA : {OriginalTLS, ProgramTLS}) {
+    write64le(C.Memory.data() + RVA, C.Base + Linked.Entry);
+    write64le(C.Memory.data() + RVA + sizeof(uint64_t),
+              C.Base + Linked.Entry + C.ThreadLocal->size());
+  }
+  C.Baseline = C.Memory;
+  C.Initializers = {C.Base + Callback};
+  C.PageAccess[Linked.Entry / 4096] &= ~emulation::Read;
+  auto Directory = pe::recoverTLSDirectory(*Input, C);
+  ASSERT_TRUE(bool(Directory)) << llvm::toString(Directory.takeError());
+  EXPECT_FALSE(*Directory);
+}
+
+TEST_F(PERebuild, ScannedTLSWithoutCallbacksDoesNotEstablishAReplacement) {
+  prepareTLSWithoutCallbacks(false);
+  ASSERT_FALSE(HasFailure());
+  // Only the original loader directory has provenance. Copying its valid
+  // allocation fields elsewhere cannot authenticate a replacement record.
+  std::memcpy(C.Memory.data() + ProgramTLS, C.Memory.data() + OriginalTLS,
+              sizeof(coff_tls_directory64));
+  write64le(C.Memory.data() + OriginalTLS +
+                offsetof(coff_tls_directory64, AddressOfIndex),
+            0);
+  auto Result = pe::recoverTLSDirectory(*Input, C);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  EXPECT_FALSE(*Result);
+}
+
+TEST_F(PERebuild, GeneratedTLSStillOutranksTheCallbackFreeOriginal) {
+  prepareTLS();
+  ASSERT_FALSE(HasFailure());
+  write64le(C.Memory.data() + OriginalTLS +
+                offsetof(coff_tls_directory64, AddressOfCallBacks),
+            0);
+  C.Baseline = C.Memory;
+  auto Result = pe::recoverTLSDirectory(*Input, C);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  EXPECT_EQ(*Result, ProgramTLS);
+  std::memcpy(C.Memory.data() + ProgramTLS + sizeof(coff_tls_directory64),
+              C.Memory.data() + ProgramTLS, sizeof(coff_tls_directory64));
+  auto Ambiguous = pe::recoverTLSDirectory(*Input, C);
+  ASSERT_FALSE(bool(Ambiguous));
+  EXPECT_NE(
+      llvm::toString(Ambiguous.takeError()).find("multiple TLS directories"),
+      std::string::npos);
+}
+
+TEST_F(PERebuild, TLSRestorationCannotOverflowTheCallbackTable) {
+  prepareTLS();
+  ASSERT_FALSE(HasFailure());
+  for (uint64_t I = 0; I < pe::value::MaxTLSCallbacks; ++I)
+    write64le(C.Memory.data() + Callbacks + I * 8, C.Base + Callback);
+  write64le(C.Memory.data() + Callbacks + pe::value::MaxTLSCallbacks * 8, 0);
+  (*C.ThreadLocal)[0] = 42;
+  auto Result = pe::rebuild(*Input, C, {});
+  ASSERT_FALSE(bool(Result));
+  EXPECT_NE(llvm::toString(Result.takeError()).find("supported callback count"),
+            std::string::npos);
 }
 
 TEST_F(PERebuild, UniqueTLSRecordUsesCompleteCallbackAndAllocationEvidence) {
