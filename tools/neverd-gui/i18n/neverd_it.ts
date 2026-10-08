@@ -136,7 +136,7 @@
         <translation>Inserisci commento ri&amp;petibile...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
+        <source>Mar&amp;k position...</source>
         <translation>Segna &amp;posizione...</translation>
     </message>
     <message>
@@ -192,7 +192,7 @@
         <translation>Vai all&apos;inizio della funzione precedente</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
+        <source>Jump to pseudo&amp;code</source>
         <translation>Salta allo ps&amp;eudocodice</translation>
     </message>
     <message>
@@ -296,7 +296,7 @@
         <translation>Cerca una sequenza di byte nel binario</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
+        <source>Next se&amp;quence of bytes</source>
         <translation>Sequenza di byte su&amp;ccessiva</translation>
     </message>
     <message>
@@ -392,7 +392,7 @@
         <translation>Mostra l&apos;LLVM IR della funzione corrente</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
+        <source>Generate &amp;LLVM C</source>
         <translation>Genera LLVM &amp;C</translation>
     </message>
     <message>
@@ -488,7 +488,7 @@
         <translation>Mostra la panoramica del grafo</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
+        <source>MCP c&amp;onnections</source>
         <translation>C&amp;onnessioni MCP</translation>
     </message>
     <message>
@@ -496,7 +496,7 @@
         <translation>Gestisci le connessioni MCP e la condivisione della sessione</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
+        <source>Ex&amp;tensions</source>
         <translation>Es&amp;tensioni</translation>
     </message>
     <message>
@@ -528,7 +528,7 @@
         <translation>Attiva o disattiva lo schermo intero</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
+        <source>I&amp;ncrease font size</source>
         <translation>&amp;Aumenta dimensione carattere</translation>
     </message>
     <message>
@@ -705,7 +705,7 @@
     </message>
     <message>
         <source>String &amp;references</source>
-        <translation>&amp;Riferimenti a stringhe</translation>
+        <translation>Riferi&amp;menti a stringhe</translation>
     </message>
     <message>
         <source>List the instructions that refer to strings</source>
@@ -745,11 +745,75 @@
     </message>
     <message>
         <source>Undef&amp;ine</source>
-        <translation>&amp;Annulla definizione</translation>
+        <translation>Ann&amp;ulla definizione</translation>
     </message>
     <message>
         <source>Show the current item&apos;s bytes as bytes</source>
         <translation>Mostra i byte dell&apos;elemento corrente come byte</translation>
+    </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>&amp;Numero</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>Mostra il numero dell&apos;operando come lo sceglie il listato</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>&amp;Esadecimale</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>Mostra il numero dell&apos;operando in esadecimale</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>&amp;Decimale</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>Mostra il numero dell&apos;operando in decimale</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>&amp;Binario</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>Mostra il numero dell&apos;operando in binario</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>&amp;Carattere</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>Mostra il numero dell&apos;operando come caratteri</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>&amp;Offset</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>Mostra il numero dell&apos;operando come l&apos;indirizzo che indica</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>Cambia &amp;segno</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>Mostra il numero dell&apos;operando con il segno cambiato</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>Ne&amp;gazione bit a bit</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>Mostra il numero dell&apos;operando con i bit invertiti</translation>
     </message>
 </context>
 <context>
@@ -1118,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>&amp;Funzioni</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>&amp;Tipo di operando</translation>
     </message>
 </context>
 <context>

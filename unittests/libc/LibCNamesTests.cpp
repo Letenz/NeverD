@@ -12,6 +12,7 @@
 #include "neverd/loader/BinaryImage.h"
 
 #include <gtest/gtest.h>
+#include <utility>
 
 #include <utility>
 

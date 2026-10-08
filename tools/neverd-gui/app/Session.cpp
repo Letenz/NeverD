@@ -28,6 +28,7 @@ bool isEdit(const QString &operation) {
                                    QStringLiteral("function_create"),
                                    QStringLiteral("function_delete"),
                                    QStringLiteral("item_define"),
+                                   QStringLiteral("operand_format"),
                                    QStringLiteral("undo"),
                                    QStringLiteral("redo"),
                                    QStringLiteral("save")};
@@ -632,6 +633,21 @@ void Session::defineItem(Address address, const QString &action,
               tr("Defined %1 at %2").arg(result.value("kind").toString(), at),
               0);
       });
+}
+
+void Session::formatOperand(Address address, std::optional<int> operand,
+                            const QString &action,
+                            std::optional<quint64> epoch) {
+  if (!acceptsEdit(epoch))
+    return;
+  // Like a rename, an operand format commits at once over saved comments.
+  if (dirty_)
+    save();
+  QJsonObject payload{{"address", hexAddress(address)}, {"action", action}};
+  if (operand)
+    payload.insert(QStringLiteral("operand"), *operand);
+  command(QStringLiteral("operand_format"), payload,
+          [this](const QJsonObject &) { refreshHistory(); });
 }
 
 void Session::createFunction(Address address, std::optional<quint64> epoch) {
