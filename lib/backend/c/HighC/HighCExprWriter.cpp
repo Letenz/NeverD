@@ -1458,6 +1458,11 @@ bool HighCWriter::isUnknownCallOperand(const HighExpr *Op) const {
     return true;
   if (Inner->Kind != ExprKind::Var && Inner->Kind != ExprKind::Phi)
     return false;
+  // The stack pointer the function was entered with is frame_base, which no
+  // statement assigns: `_start` passes it to __libc_start_main as stack_end.
+  if (CurrentFunc &&
+      isSyntheticEntryStackPointer(Inner->Var, *CurrentFunc, Opts.TheArch))
+    return false;
   const std::string Name = copyForwardName(varName(Inner->Var));
   if (auto It = ValueForward.find(Name); It != ValueForward.end() && It->second)
     return isUnknownCallOperand(It->second);
