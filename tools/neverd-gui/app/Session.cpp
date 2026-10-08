@@ -167,12 +167,13 @@ void Session::receive(const QJsonObject &incoming) {
       const auto generation = background.value("generation").toString();
       const bool newGeneration = generation != generation_;
       generation_ = generation;
-      // The first count only states what the opened file already listed.
       const auto functions =
           background.value("functions").toInteger(functionCount_);
       const bool moreFunctions =
           functionCount_ >= 0 && functions != functionCount_;
       functionCount_ = functions;
+      if (newGeneration || moreFunctions)
+        queries_.listingChanged();
       emit backgroundChanged();
       if (newGeneration)
         emit generationChanged();
@@ -405,6 +406,9 @@ void Session::sendOpen(const QString &requested, const QString &path,
         resetState();
         loadOptions_ = options;
         metadata_ = payload;
+        // The functions the opened file lists; idle-time discovery can add
+        // to them before the first heartbeat reports a count.
+        functionCount_ = payload.value("function_count").toInteger(-1);
         filePath_ = path;
         projectPath_ = requested;
         databasePath_ = database;
