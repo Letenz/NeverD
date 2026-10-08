@@ -303,7 +303,7 @@ NEVERD_DARWIN_DIAGNOSTIC(
     "Darwin symbolic link targets require 1..1023 non-NUL bytes")
 NEVERD_DARWIN_DIAGNOSTIC(
     SymbolicLinkNamespace,
-    "Darwin symbolic links cannot share a mutable directory namespace")
+    "Darwin mutable directories cannot contain fixed symbolic link names")
 NEVERD_DARWIN_DIAGNOSTIC(
     SymbolicLinkMutation,
     "Darwin symbolic link namespace mutation is not configured")

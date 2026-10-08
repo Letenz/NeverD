@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 21441b8b14985fbac413a4bb78aa57c696ad5eb07b70d439200550bdc6ce27a4 -->
+<!-- i18n-source: fab8f746a3afad0cc7aeaee21f82d848bf0bad20c33a1f8140b1f3c821e75281 -->
 
 [← 文档索引](README.md)
 
@@ -842,7 +842,9 @@ stat64、普通 open/access/truncate/chdir 跟随末端链接；lstat64/readlink
 
 readlink(58) 使用有符号低32位 count；readlinkat(473) 保留完整 size_t。两者返回 int，超过 INT32_MAX 先于路径/FD返回 EINVAL22。仅复制 min(count,目标长度) 字节，不补 NUL，只预检实际前缀。零长度仍验证路径和链接类型，随后忽略输出指针；非链接 EINVAL22，全不可写 EFAULT14，部分可写在复制前明确停止，传输与内存预算错误原样传播。
 
-非空链接全局排除 MutableDirectories、RemovableDirectories、MovableDirectories、ExchangeableDirectories、SwapRenameDirectories、CreationPolicy；固定名称 WritableFiles/MutationPolicies 仍可改变最终普通文件。保留链接的 unlink/rename 在效果前明确停止。动态链接、硬链接、ACL权限和可变链接命名空间仍不支持。独立 ARM64 macOS 探针在原五秒期限内通过189观察、115完整缓冲检查；这不能单独证明物理 iOS、Intel HVF 或完整 OS兼容。
+固定链接名称与原始目标字节保持不变。MutableDirectories 不能为根或任何固定链接名称的路径分段祖先；/work 不包含 /workspace/link。独立可变目录可容纳链接目标，包括运行期间创建、移动、删除和替换的名称。现有父目录、挂载、别名、标志、交换授权与创建策略校验仍适用；新建 inode 必须大于所有元数据/快照 inode，包括受保护链接。 固定名称 WritableFiles/MutationPolicies 仍可改变最终普通文件。保留链接的 unlink/rename 在效果前明确停止。动态链接、硬链接、ACL权限和可变链接命名空间仍不支持。独立 ARM64 macOS 探针在原五秒期限内通过189观察、115完整缓冲检查；这不能单独证明物理 iOS、Intel HVF 或完整 OS兼容。
+
+新增 60 项 ARM64 macOS DELETE/RENAME 原生矩阵在原五秒期限内记录完整 stat 缓冲、变更前后命名空间及保留 FD/CWD 身份。尾部斜杠可展开固定链接并改变实际目标；NOFOLLOW_ANY 拒绝必要展开并返回 ELOOP。无 SDK 的 symbolic-link-mutations 程序还检查创建、悬空目标、改名/删除/替换、保留 CWD 父对象，以及关闭描述符前全部原始 10 个文件字节和关闭后仍保留的全部 10 个映射字节。这些宿主观察不证明物理 iOS 或原生 Intel 覆盖。
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"symbolic_links":[{"path":"/link","target_hex":"64617461"}],"working_directory":"/"}}

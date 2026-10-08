@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 21441b8b14985fbac413a4bb78aa57c696ad5eb07b70d439200550bdc6ce27a4 -->
+<!-- i18n-source: fab8f746a3afad0cc7aeaee21f82d848bf0bad20c33a1f8140b1f3c821e75281 -->
 
 [← Indice della documentazione](README.md)
 
@@ -738,7 +738,9 @@ stat64/open/access/truncate/chdir seguono il link finale; lstat64/readlink lo ma
 
 readlink(58) usa count firmato basso32; readlinkat(473) size_t completo; ritornoint. OltreINT32_MAX:EINVAL22 prima di percorso/FD. Copia min(count,lunghezza), senzaNUL, verificando solo il prefisso reale. Lunghezza0 verifica percorso/tipo poi ignora output. Non link:EINVAL22; nessun byte scrivibile:EFAULT14; prefisso parziale: arresto prima della copia. Errori trasporto/budget si propagano.
 
-Link non vuoti escludono globalmente MutableDirectories/RemovableDirectories/MovableDirectories/ExchangeableDirectories/SwapRenameDirectories/CreationPolicy. WritableFiles/MutationPolicies fissi possono modificare il file risolto. Unlink/rename del link conservato si fermano prima di effetti. Link dinamici/hard,ACL e spazio mutabile restano esclusi. Sonda ARM64 macOS:189 osservazioni/115 buffer completi nei5s originali; non prova iOS fisico/Intel HVF/OS completo.
+I nomi dei link e i byte grezzi delle destinazioni restano fissi. MutableDirectories non può essere la radice o un antenato per segmenti di un link fisso; /work non contiene /workspace/link. Domini mutabili separati possono contenere destinazioni create, spostate, eliminate o sostituite durante l’esecuzione. Restano i controlli di genitori, mount, alias, flag, supporto SWAP e creazione; i nuovi inode devono superare tutti quelli di metadati/snapshot, inclusi i link protetti. WritableFiles/MutationPolicies fissi possono modificare il file risolto. Unlink/rename del link conservato si fermano prima di effetti. Link dinamici/hard,ACL e spazio mutabile restano esclusi. Sonda ARM64 macOS:189 osservazioni/115 buffer completi nei5s originali; non prova iOS fisico/Intel HVF/OS completo.
+
+I60 controlli ARM64 macOS DELETE/RENAME aggiuntivi registrano buffer stat completi, namespace prima/dopo e identità FD/CWD entro i5s originali. Le barre finali possono espandere un link fisso e modificarne la destinazione; NOFOLLOW_ANY rifiuta l’espansione necessaria con ELOOP. symbolic-link-mutations senza SDK verifica creazione, destinazioni mancanti, spostamento/rimozione/sostituzione, genitori CWD conservati e tutti i10 byte originali del file prima della chiusura dei FD, verificando ancora i10 byte del mapping dopo la chiusura. Non prova iOS fisico o Intel nativo.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"symbolic_links":[{"path":"/link","target_hex":"64617461"}],"working_directory":"/"}}

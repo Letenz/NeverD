@@ -7155,9 +7155,9 @@ TEST(DarwinFileOptions, SymbolicLinksExcludeNamespaceGrantsButPermitFileBytes) {
   EXPECT_FALSE(bool(validateFileOptions(Good)));
   for (unsigned Grant = 0; Grant != 6; ++Grant) {
     auto Bad = Good;
-    if (Grant == 0)
-      Bad.MutableDirectories.insert("/");
-    else if (Grant == 1)
+    Bad.Directories = {"/", "/elsewhere"};
+    Bad.MutableDirectories.insert("/");
+    if (Grant == 1)
       Bad.RemovableDirectories.insert("/elsewhere");
     else if (Grant == 2)
       Bad.MovableDirectories.insert("/elsewhere");
@@ -7165,11 +7165,80 @@ TEST(DarwinFileOptions, SymbolicLinksExcludeNamespaceGrantsButPermitFileBytes) {
       Bad.ExchangeableDirectories.insert("/elsewhere");
     else if (Grant == 4)
       Bad.SwapRenameDirectories.insert("/");
-    else
+    else if (Grant == 5) {
       Bad.CreationPolicy = darwin_test::CreationPolicy;
+      Bad.InitialUmask = 0027;
+      Bad.Metadata["/"] = darwin_test::creationParentMetadata();
+    }
+    auto WithoutLinks = Bad;
+    WithoutLinks.SymbolicLinks.clear();
+    EXPECT_FALSE(bool(validateFileOptions(WithoutLinks)));
     EXPECT_EQ(llvm::toString(validateFileOptions(Bad)),
               diagnostic::SymbolicLinkNamespace);
   }
+}
+
+TEST(DarwinFileOptions, FixedLinksAllowAllSeparateNamespaceGrants) {
+  for (unsigned Grants = 0; Grants != 64; ++Grants) {
+    SCOPED_TRACE(Grants);
+    auto Good = darwin_test::mixedSymbolicLinkOptions();
+    Good.Directories.insert("/work/child");
+    Good.Metadata["/work/child"] = darwin_test::creationParentMetadata();
+    Good.Metadata["/work/child"].Inode = 42;
+    Good.CreationPolicy.reset();
+    if (Grants & 1)
+      Good.MutableDirectories.insert("/work/child");
+    if (Grants & 2)
+      Good.RemovableDirectories.insert("/work/child");
+    if (Grants & 4)
+      Good.MovableDirectories.insert("/work/child");
+    if (Grants & 8)
+      Good.ExchangeableDirectories.insert("/work/child");
+    if (Grants & 16)
+      Good.SwapRenameDirectories.insert("/work");
+    if (Grants & 32)
+      Good.CreationPolicy = darwin_test::CreationPolicy;
+    EXPECT_FALSE(bool(validateFileOptions(Good)));
+    Good.SymbolicLinks["/work/child/protected"] = {'x'};
+    EXPECT_EQ(llvm::toString(validateFileOptions(Good)),
+              diagnostic::SymbolicLinkNamespace);
+  }
+}
+
+TEST(DarwinFileOptions, FixedLinkProtectionUsesNamesAndDirectorySegments) {
+  DarwinFileOptions Good;
+  Good.Directories = {"/work", "/static/work"};
+  Good.MutableDirectories = Good.Directories;
+  Good.SymbolicLinks = {{"/workspace/link", {'/', 'w', 'o', 'r', 'k'}},
+                        {"/static/link", {'w', 'o', 'r', 'k'}}};
+  EXPECT_FALSE(bool(validateFileOptions(Good)));
+  for (const char *Ancestor : {"/", "/static", "/workspace"}) {
+    auto Bad = Good;
+    Bad.MutableDirectories.insert(Ancestor);
+    EXPECT_EQ(llvm::toString(validateFileOptions(Bad)),
+              diagnostic::SymbolicLinkNamespace);
+  }
+}
+
+TEST(DarwinFileOptions, CreationIdentityIncludesProtectedLinkObservations) {
+  auto Good = darwin_test::mixedSymbolicLinkOptions();
+  Good.Metadata["/work/data"].Inode = 17;
+  Good.CreationPolicy->FirstInode = 124;
+  EXPECT_FALSE(bool(validateFileOptions(Good)));
+  Good.CreationPolicy->FirstInode = 123;
+  EXPECT_EQ(llvm::toString(validateFileOptions(Good)),
+            diagnostic::FileCreationPolicy);
+  Good.DirectoryContents["/static"] = {{{".", 50, 4, 1},
+                                        {"..", 1, 4, 2},
+                                        {"alias", 124, 10, 3},
+                                        {"data-link", 123, 10, 4},
+                                        {"missing-link", 1000, 10, 5}},
+                                       1};
+  Good.CreationPolicy->FirstInode = 1001;
+  EXPECT_FALSE(bool(validateFileOptions(Good)));
+  Good.CreationPolicy->FirstInode = 1000;
+  EXPECT_EQ(llvm::toString(validateFileOptions(Good)),
+            diagnostic::FileCreationPolicy);
 }
 
 TEST(DarwinFileOptions, SymbolicLinkMetadataAndSnapshotsObserveTheLinkObject) {
@@ -7559,6 +7628,273 @@ TEST_P(DarwinFileTest, ReadLinkMemoryBudgetErrorsKeepTheirTypeAndCanaryBytes) {
     llvm::cantFail(Space->read(Base + Page, After));
     EXPECT_EQ(After, Before);
   }
+}
+
+TEST_P(DarwinFileTest, FixedLinksObserveCreatedMovedAndReplacedTargets) {
+  Options = darwin_test::mixedSymbolicLinkOptions();
+  auto M = darwin_test::creationParentMetadata();
+  M.Inode = 50;
+  Options->Metadata["/static"] = M;
+  Options->DirectoryContents["/static"] = {{{".", 50, 4, 11, 0},
+                                            {"..", 1, 4, 22, 0},
+                                            {"alias", 124, 10, 33, 0},
+                                            {"data-link", 123, 10, 44, 0},
+                                            {"missing-link", 125, 10, 55, 0}},
+                                           1};
+  Options->DirectoryContents["/work"] = {
+      {{".", 41, 4, 11, 0},
+       {"..", 1, 4, 22, 0},
+       {"data", darwin_test::CreationPolicy.FirstInode - 1, 8, 33, 0}},
+      1};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  path("/static");
+  const auto Protected = ok(ServiceKind::Open, {Base});
+  const auto ProtectedDuplicate = ok(ServiceKind::Dup, {Protected});
+  const auto ProtectedStatus = status(Protected);
+  auto Snapshot = [&](uint64_t FD, uint64_t Size) {
+    std::array<uint8_t, 272> Bytes;
+    Bytes.fill(0xa5);
+    llvm::cantFail(Space->write(Base + Page, Bytes));
+    llvm::cantFail(Space->writeInteger(Base + Page + 512, UINT64_MAX, 8));
+    EXPECT_EQ(ok(ServiceKind::GetDirEntries64,
+                 {FD, Base + Page + 8, 256, Base + Page + 512}),
+              Size);
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page + 512, 8)), 0u);
+    llvm::cantFail(Space->read(Base + Page, Bytes));
+    EXPECT_TRUE(std::all_of(Bytes.begin(), Bytes.begin() + 8,
+                            [](uint8_t B) { return B == 0xa5; }));
+    EXPECT_TRUE(std::all_of(Bytes.begin() + 8 + Size, Bytes.end(),
+                            [](uint8_t B) { return B == 0xa5; }));
+    return Bytes;
+  };
+  // Native LP64 record padding gives 32 + 32 + 32 + 40 + 40 bytes.
+  const auto ProtectedContents = Snapshot(Protected, 176);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {ProtectedDuplicate, 0, 1}), 55u);
+  path("/work");
+  const auto Mutable = ok(ServiceKind::Open, {Base});
+  const auto MutableStatus = status(Mutable);
+  Snapshot(Mutable, 96);
+  path("/static/data-link");
+  const auto Old = ok(ServiceKind::Open, {Base, 2});
+  auto LinkStatus = [&] {
+    path("/static/data-link");
+    std::array<uint8_t, 160> Bytes;
+    Bytes.fill(0xa5);
+    llvm::cantFail(Space->write(Base + Page, Bytes));
+    EXPECT_EQ(ok(ServiceKind::Lstat64, {Base, Base + Page + 8}), 0u);
+    llvm::cantFail(Space->read(Base + Page, Bytes));
+    EXPECT_TRUE(std::all_of(Bytes.begin(), Bytes.begin() + 8,
+                            [](uint8_t B) { return B == 0xa5; }));
+    EXPECT_TRUE(std::all_of(Bytes.begin() + 152, Bytes.end(),
+                            [](uint8_t B) { return B == 0xa5; }));
+    return Bytes;
+  };
+  const auto Own = LinkStatus();
+  path("/static/missing-link");
+  error(ServiceKind::Open, {Base}, value::NoEntry);
+  error(ServiceKind::Open, {Base, 0x20000a02, 0600}, value::FileExists);
+  path("/static/alias/new");
+  error(ServiceKind::Open, {Base, 0x20000a02, 0600}, value::TooManyLinks);
+  const auto Created = makeFile("/static/alias/new", "UV");
+  EXPECT_EQ(llvm::support::endian::read64le(status(Created).data() + 8),
+            darwin_test::CreationPolicy.FirstInode);
+  path("/static/missing-link");
+  const auto Alias = ok(ServiceKind::Open, {Base});
+  const uint8_t UV[] = {'U', 'V'};
+  contents(Alias, UV);
+  renameFile("/static/alias/new", "/static/alias/moved");
+  path("/static/missing-link");
+  error(ServiceKind::Open, {Base}, value::NoEntry);
+  error(ServiceKind::Open, {Base, 0x100}, value::TooManyLinks);
+  path("/static/alias/moved");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  contents(Alias, UV);
+  EXPECT_EQ(llvm::support::endian::read16le(status(Created).data() + 6), 0u);
+  renameFile("/static/data-link/", "/work/renamed");
+  identity(Old, "/work/renamed");
+  path("/static/data-link");
+  error(ServiceKind::Open, {Base}, value::NoEntry);
+  path("/static/alias/renamed");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  const auto Replacement = makeFile("/static/alias/data", "XY");
+  EXPECT_EQ(llvm::support::endian::read64le(status(Replacement).data() + 8),
+            darwin_test::CreationPolicy.FirstInode + 1);
+  path("/static/data-link");
+  const auto Current = ok(ServiceKind::Open, {Base});
+  const uint8_t XY[] = {'X', 'Y'};
+  contents(Current, XY);
+  const uint8_t Original[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+  contents(Old, Original);
+  EXPECT_EQ(llvm::support::endian::read64le(status(Old).data() + 8),
+            Options->Metadata.at("/work/data").Inode);
+  EXPECT_EQ(LinkStatus(), Own);
+  std::array<uint8_t, 32> Bytes;
+  Bytes.fill(0xcc);
+  llvm::cantFail(Space->write(Base + Page, Bytes));
+  EXPECT_EQ(ok(ServiceKind::ReadLink, {Base, Base + Page + 8, 32}), 12u);
+  llvm::cantFail(Space->read(Base + Page, Bytes));
+  const auto &Raw = Options->SymbolicLinks.at("/static/data-link");
+  EXPECT_TRUE(std::equal(Raw.begin(), Raw.end(), Bytes.begin() + 8));
+  EXPECT_TRUE(std::all_of(Bytes.begin(), Bytes.begin() + 8,
+                          [](uint8_t B) { return B == 0xcc; }));
+  EXPECT_TRUE(std::all_of(Bytes.begin() + 20, Bytes.end(),
+                          [](uint8_t B) { return B == 0xcc; }));
+  EXPECT_EQ(Options->Files.at("/work/data"),
+            std::vector<uint8_t>(Original, Original + 10));
+  EXPECT_EQ(status(Protected), ProtectedStatus);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {ProtectedDuplicate, 0, 1}), 55u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {ProtectedDuplicate, 0, 0}), 0u);
+  EXPECT_EQ(Snapshot(Protected, 176), ProtectedContents);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {ProtectedDuplicate, 0, 1}), 55u);
+  llvm::cantFail(Space->write(Base + Page, MutableStatus));
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Mutable, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  std::array<uint8_t, 144> Unchanged;
+  llvm::cantFail(Space->read(Base + Page, Unchanged));
+  EXPECT_EQ(Unchanged, MutableStatus);
+  EXPECT_FALSE(invoke(ServiceKind::GetDirEntries64,
+                      {Mutable, Base + Page, 256, Base + Page + 512}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryMutated);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Mutable, 0, 1}), 33u);
+}
+
+TEST_P(DarwinFileTest,
+       FixedDirectoryAliasesKeepCreatedAndRemovedObjectParents) {
+  Options = darwin_test::mixedSymbolicLinkOptions();
+  Options->SymbolicLinks["/static/box-link"] = {'.', '.', '/', 'w', 'o', 'r',
+                                                'k', '/', 'b', 'o', 'x'};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  const auto Box = makeDirectory("/static/alias/box");
+  const auto File = makeFile("/static/box-link/item", "ABC");
+  path("/static/box-link/item");
+  EXPECT_EQ(ok(ServiceKind::Truncate, {Base, 2}), 0u);
+  const uint8_t AB[] = {'A', 'B'};
+  contents(File, AB);
+  path("/static/box-link");
+  EXPECT_EQ(ok(ServiceKind::Chdir, {Base}), 0u);
+  renameFile("/static/box-link/", "/static/alias/shift");
+  identity(Box, "/work/shift");
+  identity(File, "/work/shift/item");
+  path("/static/box-link");
+  error(ServiceKind::Open, {Base}, value::NoEntry);
+  path("/static/alias/shift/item");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path("/static/alias/shift");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  const auto Reused = makeDirectory("/static/alias/box");
+  identity(Reused, "/work/box");
+  path("new");
+  error(ServiceKind::Open, {Base, 0xa02, 0600}, value::NoEntry);
+  path("../data");
+  const auto ParentFile = ok(ServiceKind::Open, {Base});
+  const uint8_t Original[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+  contents(ParentFile, Original);
+  contents(File, AB);
+  identity(Box, "/work/shift");
+  path("/static/box-link/item");
+  error(ServiceKind::Open, {Base}, value::NoEntry);
+}
+
+TEST_P(DarwinFileTest, FixedLinkRefusalsPreserveParentsAndCreationSequence) {
+  Options = darwin_test::mixedSymbolicLinkOptions();
+  path("/work");
+  const auto Parent = ok(ServiceKind::Open, {Base});
+  const auto Before = status(Parent);
+  path("/static/data-link");
+  EXPECT_FALSE(invoke(ServiceKind::Unlink, {Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkMutation);
+  path("/work/moved", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkMutation);
+  path("/work/data", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base + 128, Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkMutation);
+  path("/static/data-link/");
+  error(ServiceKind::UnlinkAt, {999, Base, 0x800}, value::TooManyLinks);
+  path("/static/alias/new");
+  error(ServiceKind::Open, {Base, 0x20000a02, 0600}, value::TooManyLinks);
+  EXPECT_EQ(status(Parent), Before);
+  const auto Created = makeFile("/static/missing-link", "N");
+  EXPECT_EQ(Created, 4u);
+  EXPECT_EQ(llvm::support::endian::read64le(status(Created).data() + 8),
+            darwin_test::CreationPolicy.FirstInode);
+  path("/static/data-link");
+  const auto Existing = ok(ServiceKind::Open, {Base});
+  const uint8_t Original[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+  contents(Existing, Original);
+}
+
+TEST_P(DarwinFileTest, FixedLinkSlashRenameUsesActualTargetsAndFlagOrder) {
+  for (bool Directory : {false, true})
+    for (bool SourceLink : {false, true})
+      for (uint32_t Flags : {0u, 4u, 2u, 0x10u}) {
+        SCOPED_TRACE(Directory);
+        SCOPED_TRACE(SourceLink);
+        SCOPED_TRACE(Flags);
+        Options = darwin_test::mixedSymbolicLinkOptions();
+        Options->SwapRenameDirectories.insert("/work");
+        Options->SymbolicLinks["/static/dest-link"] = {
+            '.', '.', '/', 'w', 'o', 'r', 'k', '/', 'd', 'e', 's', 't'};
+        if (Directory) {
+          Options->Files.clear();
+          Options->WritableFiles.clear();
+          Options->MutationPolicies.clear();
+          for (const char *Name : {"/work/data", "/work/dest"}) {
+            Options->Directories.insert(Name);
+            Options->RemovableDirectories.insert(Name);
+            Options->MovableDirectories.insert(Name);
+            Options->ExchangeableDirectories.insert(Name);
+            Options->Metadata[Name] = darwin_test::creationParentMetadata();
+          }
+        } else {
+          Options->Files["/work/dest"] = {'D', 'E', 'S', 'T'};
+          Options->Metadata["/work/dest"] = darwin_test::mutationMetadata(4);
+          Options->MutationPolicies["/work/dest"] = darwin_test::MutationPolicy;
+          Options->WritableFiles.insert("/work/dest");
+        }
+        Options->Metadata["/work/data"].Inode = 101;
+        Options->Metadata["/work/dest"].Inode = 102;
+        ASSERT_FALSE(bool(validateFileOptions(*Options)));
+        Files = std::make_unique<DarwinFiles>(*Space, Options);
+        path("/work/data");
+        const auto Held = ok(ServiceKind::Open, {Base});
+        if (Directory)
+          EXPECT_EQ(ok(ServiceKind::Fchdir, {Held}), 0u);
+        path(SourceLink ? "/static/data-link/" : "/work/data");
+        path(SourceLink ? "/work/dest" : "/static/dest-link////", Base + 128);
+        if (Flags == 4 || Flags == 0x10)
+          error(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, Flags},
+                Flags == 4 ? value::FileExists : value::TooManyLinks);
+        else
+          EXPECT_EQ(
+              ok(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, Flags}),
+              0u);
+        const bool Moved = Flags == 0 || Flags == 2;
+        identity(Held, Moved ? "/work/dest" : "/work/data");
+        if (!Directory) {
+          const uint8_t Original[] = {'0', '1', '2', '3', '4',
+                                      '5', '6', '7', '8', '9'};
+          contents(Held, Original);
+          EXPECT_EQ(llvm::support::endian::read64le(status(Held).data() + 8),
+                    101u);
+        }
+        path("/static/data-link");
+        EXPECT_EQ(ok(ServiceKind::ReadLink, {Base, Base + Page, 12}), 12u);
+        if (Flags == 0)
+          error(ServiceKind::Open, {Base}, value::NoEntry);
+        else {
+          const auto AtName = ok(ServiceKind::Open, {Base});
+          if (!Directory)
+            EXPECT_EQ(
+                llvm::support::endian::read64le(status(AtName).data() + 8),
+                Flags == 2 ? 102u : 101u);
+        }
+        if (Directory) {
+          path("../dest");
+          const auto FromCWD = ok(ServiceKind::Open, {Base});
+          identity(FromCWD, "/work/dest");
+        }
+      }
 }
 
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinFileTest, testing::Values(4096, 16384));
