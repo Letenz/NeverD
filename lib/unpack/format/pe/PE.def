@@ -56,8 +56,10 @@ NEVERD_UNPACK_PE_TEXT(ImageSize,
                       "rebuilt image exceeds the PE32+ address range")
 NEVERD_UNPACK_PE_TEXT(AmbiguousTLS,
                       "multiple TLS directories match the observed callbacks")
-NEVERD_UNPACK_PE_TEXT(
-    TLSState, "completed TLS startup requires a matching live TLS snapshot")
+NEVERD_UNPACK_PE_TEXT(TLSState,
+                      "TLS restoration requires a matching live TLS snapshot")
+NEVERD_UNPACK_PE_TEXT(TLSCallbacks,
+                      "TLS restoration exceeds the supported callback count")
 NEVERD_UNPACK_PE_TEXT(ImportRange,
                       "a repaired import cell is outside relative-call range")
 NEVERD_UNPACK_PE_TEXT(
