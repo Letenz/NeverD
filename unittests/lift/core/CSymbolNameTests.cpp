@@ -291,6 +291,34 @@ define i64 @_ZN3Foo3runEv(i64 %this) {
   EXPECT_NE(Source.find(" Foo_run("), NotFound) << Source;
 }
 
+TEST(CSymbolNames, LLVMCNamesExternalSymbolsAsTheyLink) {
+  // An ELF image's GOT mirror references its imports as data, and the code
+  // calls them through those declarations; their underscores are part of
+  // their names.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+@__cxa_atexit = external global i8
+@slots = global [1 x i64] [i64 ptrtoint (ptr @__cxa_atexit to i64)]
+define i64 @install(i64 %handler) {
+  %r = call i64 @__cxa_atexit(i64 %handler, i64 0, i64 0)
+  ret i64 %r
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find("__cxa_atexit(handler, 0, 0)"), NotFound) << Source;
+  EXPECT_NE(Source.find("(void*)__cxa_atexit"), NotFound) << Source;
+  EXPECT_EQ(Source.find("_cxa_atexit"), Source.find("__cxa_atexit") + 1)
+      << Source;
+}
+
 TEST(CSymbolNames, ElfCxxLabelsLinkToTheMangledDefinitions) {
 #if !defined(__linux__)
   GTEST_SKIP() << "links an ELF program on the host";
@@ -618,6 +646,47 @@ TEST(CSymbolNames, FortifiedRoutinesAreVariadicWhereGlibcDeclaresThem) {
             NotFound)
       << Source;
   EXPECT_NE(Source.find("__printf_chk(1, 0, 5);"), NotFound) << Source;
+}
+
+TEST(CSymbolNames, ACallMadeForItsEffectKeepsItsOwnType) {
+  // Only a result something reads converts to the machine's integer.
+  const std::string Source =
+      emitFor({function("touch_errno", 0x1000,
+                        {callStatement("__errno_location", 0x2000)})},
+              BinaryFormat::ELF, Arch::X64);
+  EXPECT_NE(Source.find("    __errno_location();"), NotFound) << Source;
+  EXPECT_EQ(Source.find("(uintptr_t)__errno_location"), NotFound) << Source;
+}
+
+TEST(CSymbolNames, AVoidRoutineLeavesNoResult) {
+  // A PLT stub returns what the routine it jumps to returns, and
+  // __cxa_finalize returns nothing: the result register holds no value.
+  MedVar Result;
+  Result.Kind = MedVar::Temp;
+  Result.TheArch = Arch::X64;
+  Result.Id = 3;
+  Result.SSAVer = 1;
+  Result.Size = 8;
+  const TypeRef U64 = NdType::makeInt(8, false);
+  HighStmt Assign;
+  Assign.Kind = StmtKind::Assign;
+  Assign.Dst = HighExpr::makeVar(Result, U64);
+  Assign.Val =
+      HighExpr::makeCall("__cxa_finalize", 0x2000, {HighExpr::makeConst(0, 8)});
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeVar(Result, U64);
+  HighFunc Stub;
+  Stub.Name = "finalize_stub";
+  Stub.Entry = 0x1000;
+  Stub.ReturnType = U64;
+  Stub.Body = {Assign, Return};
+  const std::string Source = emitFor({Stub}, BinaryFormat::ELF, Arch::X64);
+  EXPECT_NE(Source.find("extern void __cxa_finalize(void *);"), NotFound)
+      << Source;
+  EXPECT_NE(Source.find("    __cxa_finalize(0);"), NotFound) << Source;
+  EXPECT_EQ(Source.find("= __cxa_finalize"), NotFound) << Source;
+  EXPECT_EQ(Source.find("(int64_t)__cxa_finalize"), NotFound) << Source;
 }
 
 } // namespace

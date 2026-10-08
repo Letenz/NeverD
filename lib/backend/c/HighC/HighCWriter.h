@@ -810,6 +810,13 @@ public:
   /// The call a statement makes for its effect alone, whose result no
   /// conversion prints.
   const HighExpr *StatementCall = nullptr;
+  /// \p E printed as a statement for its effect alone.
+  std::string statementCallText(const HighExpr &E) {
+    const HighExpr *Outer = std::exchange(StatementCall, &E);
+    std::string Text = exprStr(E);
+    StatementCall = Outer;
+    return Text;
+  }
   /// Functions the code takes the address of, by entry: the C name the
   /// address prints as.
   std::map<va_t, std::string> FunctionAddressNames;

@@ -18,6 +18,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/loader/BinaryImage.h"
@@ -5715,6 +5716,13 @@ LLVMCWriter::resolveImportCalleeName(const llvm::Value *Callee) const {
   if (!Callee)
     return {};
   const llvm::Value *Op = Callee->stripPointerCasts();
+  // A call to a symbol the module declares as data, such as an import its
+  // GOT mirror names, calls that import.
+  if (const auto *GV = llvm::dyn_cast<llvm::GlobalVariable>(Op);
+      GV && GV->isDeclaration() && !GV->getName().empty())
+    return canonicalizeCProjectionIdentifier(
+        llvm_name::cNameOfLLVMName(GV->getName(), Opts.Format, Opts.TheArch),
+        "nd_import");
   for (unsigned Depth = 0; Op && Depth < 6; ++Depth) {
     if (const auto *Fn = llvm::dyn_cast<llvm::Function>(Op))
       return functionIdentifier(*Fn);

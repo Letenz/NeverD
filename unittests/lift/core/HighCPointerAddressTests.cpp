@@ -38981,10 +38981,11 @@ TEST(HighCPointerAddresses, CorpusFuncLoadSehProbeRaisesImmediate) {
   const std::string Source = highcOnlyFunction(std::move(*Img), 0x140001050);
   EXPECT_NE(Source.find("RaiseException(0xE0421001"), std::string::npos)
       << Source;
-  EXPECT_NE(
-      Source.find(
-          "extern int RaiseException(int64_t, int64_t, int64_t, int64_t);"),
-      std::string::npos)
+  // kernel32 declares it with these parameters, whose upper halves the
+  // callee does not read.
+  EXPECT_NE(Source.find("extern void RaiseException(uint32_t, uint32_t, "
+                        "uint32_t, const uintptr_t *);"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("t22_1"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v36_0"), std::string::npos) << Source;
