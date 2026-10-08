@@ -72,6 +72,9 @@ struct ImageBuilder {
   /// Which runtime the prologue installs.  It decides the seed sentinel and
   /// whether the table carries a cookie header.
   std::string HandlerName = "_except_handler3";
+  /// Entries a heuristic scan guessed before the parse, as the data-pointer
+  /// scan guesses each relocated scope-table pointer.
+  std::vector<va_t> Guesses;
 
   va_t textVA() const { return kText + Text.size(); }
   va_t rdataVA() const { return kRData + RData.size(); }
@@ -133,6 +136,8 @@ struct ImageBuilder {
       Sym.IsFunc = true;
       Img.Symbols.push_back(std::move(Sym));
     }
+    for (const va_t Addr : Guesses)
+      Img.Symbols.push_back(Symbol::makeFunc(Addr));
     Symbol Handler;
     Handler.Name = HandlerName;
     Handler.Addr = kPersonality;
@@ -178,6 +183,35 @@ TEST(RegistrationTryLevel, ReadsTheSlotTheStoresAgreeOn) {
   ASSERT_TRUE(Chain->TryLevelOffset.has_value());
   EXPECT_EQ(*Chain->TryLevelOffset, -4);
   EXPECT_EQ(levels(*Chain), (std::vector<int32_t>{0, -1}));
+}
+
+TEST(RegistrationTryLevel, LeavesItsThunksToTheFunctionThatInstalledIt) {
+  // A filter runs in the frame of the function that installed the record, and
+  // its handler continues that function after the unwind.  The guesses the
+  // data-pointer scan made at them go; a stated symbol stays as a label.
+  ImageBuilder B;
+  B.addScope(-1, kText + 0x40, kText + 0x50);
+  B.addScope(-1, kText + 0x60, kText + 0x70);
+  B.endScopes();
+
+  emitInstall(B.Text, -1, static_cast<uint32_t>(kRData));
+  emitFrameStore(B.Text, -0x04, 0);
+  emitFrameStore(B.Text, -0x04, -1);
+  B.Text.push_back(0xC3);
+  B.Guesses = {kText + 0x40, kText + 0x50, kText + 0x70};
+
+  const BinaryImage Img = B.build({{"guarded", kText}, {"$LN5", kText + 0x60}});
+  std::vector<va_t> Functions;
+  for (const Symbol *Sym : Img.getFunctionSymbols())
+    Functions.push_back(Sym->Addr);
+  EXPECT_EQ(Functions, (std::vector<va_t>{kText, kPersonality}));
+  const Symbol *Label = Img.findSymbolAt(kText + 0x60);
+  ASSERT_NE(Label, nullptr);
+  EXPECT_EQ(Label->Name, "$LN5");
+  EXPECT_EQ(Img.findSymbolAt(kText + 0x50), nullptr);
+  const ExceptionFunction *Owner = Img.ExceptionMetadata.findFunction(kText);
+  ASSERT_NE(Owner, nullptr);
+  EXPECT_TRUE(Owner->CodeRange.contains(kText + 0x70));
 }
 
 TEST(RegistrationTryLevel, RejectsALocalWhoseValueNoScopeCouldName) {
