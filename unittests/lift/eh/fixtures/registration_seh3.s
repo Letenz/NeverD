@@ -14,6 +14,8 @@ _registration_entry:
   push eax
   mov fs:[0],esp
   sub esp,16
+  // Native CRT validates SavedESP before calling the filter; Wine does not.
+  mov [ebp-24],esp
 #define REGISTRATION_SENTINEL -1
 #include "registration_seh_body.inc"
 .safeseh __except_handler3

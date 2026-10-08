@@ -12,10 +12,12 @@ from check_windows_registration_rewrite import PE32
 
 def initialize_saved_esp(pe: PE32, data: bytearray, entry: int) -> None:
     """Redirect the fixture's first call through an address-independent stub."""
-    call = entry + 39
-    if data[call] != 0xe8:
+    prefix = bytes.fromhex('c745fc00000000e8')
+    state = data.find(prefix, entry, entry + 64)
+    if state < 0:
         raise ValueError('source fixture no longer has its expected raise call')
-    call_rva = pe.entry() + 39
+    call = state + len(prefix) - 1
+    call_rva = pe.entry() + call - entry
     target = call_rva + 5 + struct.unpack_from('<i', data, call + 1)[0]
     section = next(s for s in pe.sections if s[0] == '.text')
     _, rva, virtual_size, raw, raw_size = section

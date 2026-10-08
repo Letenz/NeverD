@@ -48,7 +48,8 @@ def main(argv: list[str] | None = None) -> int:
     root = args.evidence_root.resolve()
     report = {"schema": 1, "platform": platform.platform(),
               "evidence": "wine-replay" if launcher else "native-windows-replay",
-              "passed": False, "source_cases": [], "cookies": [], "failures": []}
+              "passed": False, "source_profile": args.source_profile,
+              "source_cases": [], "cookies": [], "failures": []}
 
     def checked_image(parent: Path, record: dict) -> Path:
         name = Path(record["image"]).name

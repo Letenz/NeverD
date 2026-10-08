@@ -23,6 +23,7 @@ _registration_entry:
   lea eax,[ebp-16]
   .byte 0x64,0x89,0x05
   .long 0
+  mov [ebp-24],esp
 #define REGISTRATION_SENTINEL -2
 #include "registration_seh_body.inc"
 .p2align 4,0x90
