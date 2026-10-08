@@ -21,6 +21,43 @@
 
 namespace neverd::coff_loader {
 
+bool hasCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA) {
+  if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF ||
+      Img.Base > UINT32_MAX || CheckVA > UINT32_MAX - 14 ||
+      !Img.DynInfo.SecurityCookieRVA)
+    return false;
+  const va_t Cookie = Img.Base + Img.DynInfo.SecurityCookieRVA;
+  const auto *Code = Img.readVA(CheckVA, 9);
+  if (Cookie > UINT32_MAX - 3 || !Img.readVA(Cookie, 4) || !Code ||
+      Code[0] != 0x3b || Code[1] != 0x0d ||
+      readLE<uint32_t>(Code + 2) != Cookie)
+    return false;
+  size_t Success = 0;
+  int64_t Failure = 0;
+  if (Code[6] == 0x75) {
+    Success = 8;
+    Failure = int64_t(CheckVA) + Success + int8_t(Code[7]);
+  } else {
+    Code = Img.readVA(CheckVA, 13);
+    if (!Code || Code[6] != 0x0f || Code[7] != 0x85)
+      return false;
+    Success = 12;
+    Failure = int64_t(CheckVA) + Success + readLE<int32_t>(Code + 8);
+  }
+  size_t Extent = Success + 1;
+  if (Code[Success] == 0xf3) {
+    ++Extent;
+    Code = Img.readVA(CheckVA, Extent);
+    if (!Code || Code[Success + 1] != 0xc3)
+      return false;
+  } else if (Code[Success] != 0xc3)
+    return false;
+  return Img.hasExecutableCodeOwnerRange(CheckVA, Extent) && Failure > 0 &&
+         Failure <= UINT32_MAX && Img.isCodeAddress(va_t(Failure)) &&
+         Img.readVA(va_t(Failure), 1) &&
+         (uint64_t(Failure) < CheckVA || uint64_t(Failure) >= CheckVA + Extent);
+}
+
 bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA) {
   if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF)
     return false;

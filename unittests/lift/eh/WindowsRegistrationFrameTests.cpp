@@ -557,6 +557,10 @@ void emitRuntimeFilterFrameProbe(bool EH4, bool GS = false) {
   llvm::IRBuilder<> EB(F.Entry->getTerminator());
   auto *Frame = EB.CreateAlloca(llvm::ArrayType::get(EB.getInt8Ty(), 64),
                                 nullptr, "source.frame");
+#ifdef LLVM_NEVERD_X86_REGISTRATION_GS
+  if (GS)
+    Frame->setAlignment(llvm::Align(64));
+#endif
   auto *EBP = EB.CreateAlloca(EB.getInt32Ty(), nullptr, "ebp.root");
   auto *ESP = EB.CreateAlloca(EB.getInt32Ty(), nullptr, "esp.root");
   F.clearFilter();
@@ -644,13 +648,48 @@ void emitRuntimeFilterFrameProbe(bool EH4, bool GS = false) {
   auto *Start = llvm::Function::Create(
       llvm::FunctionType::get(EB.getVoidTy(), false),
       llvm::GlobalValue::ExternalLinkage, "mainCRTStartup", F.Module);
+#ifdef LLVM_NEVERD_X86_REGISTRATION_GS
+  // This fixture's padding is at most 64 bytes. Do not require a CRT stack
+  // probing helper for the variable-sized caller allocation below.
+  if (GS)
+    Start->addFnAttr("no-stack-arg-probe");
+#endif
   llvm::IRBuilder<> Main(llvm::BasicBlock::Create(F.Context, "entry", Start));
   llvm::Value *Failures = Main.getInt32(0);
   for (unsigned I = 0; I < 16; ++I) {
+#ifdef LLVM_NEVERD_X86_REGISTRATION_GS
+    llvm::Value *SavedStack = nullptr;
+    llvm::AllocaInst *Padding = nullptr;
+    if (GS) {
+      SavedStack = Main.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
+          &F.Module, llvm::Intrinsic::stacksave, {Main.getPtrTy()}));
+      auto *Iteration = Main.CreateLoad(Main.getInt32Ty(), Counter);
+      Iteration->setVolatile(true);
+      auto *Bytes = Main.CreateAdd(Main.CreateMul(Iteration, Main.getInt32(4)),
+                                   Main.getInt32(4));
+      Padding = Main.CreateAlloca(Main.getInt8Ty(), Bytes, "caller.padding");
+      Padding->setAlignment(llvm::Align(4));
+      Main.CreateStore(Main.getInt8(I + 1), Padding)->setVolatile(true);
+    }
+#endif
     auto *Result = Main.CreateCall(F.Parent, {Main.getInt32(17)});
     Failures = Main.CreateAdd(
         Failures, Main.CreateZExt(Main.CreateICmpNE(Result, Main.getInt32(42)),
                                   Main.getInt32Ty()));
+#ifdef LLVM_NEVERD_X86_REGISTRATION_GS
+    if (GS) {
+      auto *Value = Main.CreateLoad(Main.getInt8Ty(), Padding);
+      Value->setVolatile(true);
+      Failures = Main.CreateAdd(
+          Failures,
+          Main.CreateZExt(Main.CreateICmpNE(Value, Main.getInt8(I + 1)),
+                          Main.getInt32Ty()));
+      Main.CreateCall(
+          llvm::Intrinsic::getOrInsertDeclaration(
+              &F.Module, llvm::Intrinsic::stackrestore, {Main.getPtrTy()}),
+          {SavedStack});
+    }
+#endif
   }
   auto *Count = Main.CreateLoad(Main.getInt32Ty(), Counter);
   auto *Format = Main.CreateGlobalString(

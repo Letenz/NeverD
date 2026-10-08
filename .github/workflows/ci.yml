@@ -2149,6 +2149,7 @@ jobs:
               header = package.extractfile('neverd-llvm-linux-x86_64/include/llvm/MC/BinaryRewrite.h').read()
               assert b'#define LLVM_NEVERD_X86_REGISTRATION_EH 1' in header
               assert b'#define LLVM_NEVERD_X86_REGISTRATION_COOKIES 1' in header
+              assert b'#define LLVM_NEVERD_X86_REGISTRATION_GS 1' in header
           with open(os.environ['GITHUB_ENV'], 'a') as output:
               output.write(f'REGISTRATION_LLVM_ARCHIVE_DIR={destination}\n')
               output.write(f'REGISTRATION_LLVM_ARCHIVE_SHA256={digest}\n')
@@ -2221,7 +2222,7 @@ jobs:
           build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
             --gtest_filter=-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract \
             --gtest_output=xml:build-windows-eh/evidence/native.xml
-          for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write eh4-filter eh4-nested-finally eh4-continue-search eh4-continue-execution eh4-normal-finally eh4-cdecl-parameter eh4-cdecl-parameter-write; do
+          for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write eh4-filter eh4-nested-finally eh4-continue-search eh4-continue-execution eh4-normal-finally eh4-cdecl-parameter eh4-cdecl-parameter-write eh4-gs-filter eh4-gs-nested-finally eh4-gs-continue-search eh4-gs-continue-execution eh4-gs-normal-finally eh4-gs-cdecl-parameter eh4-gs-cdecl-parameter-write; do
             python scripts/check_windows_registration_rewrite.py \
               --test-binary build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
               --patch-binary build-windows-eh/bin/neverd --case "$registration_case" \

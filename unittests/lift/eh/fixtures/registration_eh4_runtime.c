@@ -14,7 +14,7 @@ static void __fastcall check_cookie(word value) {
     ExitProcess(99);
 }
 
-void __fastcall __security_check_cookie(word value) { check_cookie(value); }
+void __fastcall __security_check_cookie(word value);
 
 #if !REGISTRATION_FORWARD_ONLY
 int __cdecl _except_handler4(void *exception, word *registration, void *context,
@@ -32,7 +32,7 @@ int __cdecl _except_handler4(void *exception, word *registration, void *context,
                  (word)(runtime_frame + (int)table[1]));
   check_cookie(*(word *)(runtime_frame + (int)table[2]) ^
                (word)(runtime_frame + (int)table[3]));
-  return _except_handler4_common(&__security_cookie, check_cookie, exception,
-                                 registration, context, dispatcher);
+  return _except_handler4_common(&__security_cookie, __security_check_cookie,
+                                 exception, registration, context, dispatcher);
 }
 #endif

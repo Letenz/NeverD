@@ -47,6 +47,12 @@ bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA);
 std::optional<va_t> getCheckedX86EH4CookieCheck(const BinaryImage &Img,
                                                 va_t HandlerVA);
 
+/// Check the leaf success path: compare ECX with the exact image cookie,
+/// branch to the original failure code on mismatch, otherwise return without
+/// touching stack storage or other registers. This authorizes no elision for
+/// an argument whose equality with that cookie has not separately been proved.
+bool hasCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA);
+
 } // namespace neverd::coff_loader
 
 #endif // NEVERD_LOADER_COFF_COFFREGISTRATIONEH_H

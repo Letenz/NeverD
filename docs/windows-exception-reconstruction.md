@@ -35,7 +35,7 @@ Analysis support does not imply native reconstruction support.
 | `__CxxFrameHandler4` | Bounded variable-length decoding into the common C++ graph, including action kinds and object offsets | Same HighIR graph with FH4 provenance | Analysis only; a touched function is rejected |
 | `__GSHandlerCheck_SEH/EH/EH4` | Wrapped personality plus checked GS cookie provenance | Base-language graph and wrapper annotation | Analysis only; a touched function is rejected rather than downgraded |
 | x86 registration-chain SEH3 | Checked scope graph, actual FS:[0] administration, callback roots and CFG-derived reaching try levels | Reducible, unambiguous regions become explicit EH nodes; other state flow retains native annotations | Native PE32 reconstruction for the checked fixed-frame, caller-cleanup subset below |
-| x86 registration-chain SEH4 | Checked cookie expressions, encoded scope pointer and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the authenticated no-GS direct-frame subset below |
+| x86 registration-chain SEH4 | Checked cookie expressions, encoded scope pointer and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the authenticated direct-frame subset below, including initialized EH/GS cookies |
 | x86 registration-chain C++ EH | Absolute-pointer FuncInfo and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Analysis and decompilation; native installation remains rejected |
 
 Malformed records are never treated as ordinary complete records. A partially
@@ -132,10 +132,18 @@ callees cannot change the image cookie or scope table, or observe synthetic
 cookie storage after installation. LLVM derives the generated cookie offsets
 from its physical registration record, including the runtime's virtual frame
 base; the installer compares those offsets with the exact emitted table bytes.
+A directly initialized GS slot gets a compiler-owned stack protector. GS encoding
+and exit checks use that same virtual base, including with stack realignment.
+The checker keeps the exact fastcall ABI and the original wrapper's code identity;
+a similarly named function or import cannot substitute for it.
+Its checked success path compares ECX with the load-config cookie and returns
+without touching stack storage or other registers. An escaped argument copy
+stays in the recovered local frame when LLVM realigns the stack.
 
 This path needs the LLVM fork's `LLVM_NEVERD_X86_REGISTRATION_EH` contract;
-EH4 also requires `LLVM_NEVERD_X86_REGISTRATION_COOKIES`. The older published r3
-package rejects native installation. EH4 source GS epilogues and native x86
+EH4 also requires `LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS initialization
+requires `LLVM_NEVERD_X86_REGISTRATION_GS`. The older published r3 package
+rejects native installation. Explicit EH4 source GS epilogues and native x86
 C++ FuncInfo installation remain separate requirements, even though their
 metadata is available for analysis.
 

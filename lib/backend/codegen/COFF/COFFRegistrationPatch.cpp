@@ -17,6 +17,7 @@
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
+#include "neverd/backend/llvm/WindowsRegistrationFrame.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
@@ -1052,22 +1053,32 @@ validateIncomingCallerFrame(const llvm::Function &Parent, const MedFunc &Source,
 #endif
 } // namespace
 
-std::optional<va_t>
-findCOFFRegistrationSecurityCookieVA(const BinaryImage &Image,
-                                     llvm::StringRef Symbol) {
+std::optional<va_t> findCOFFRegistrationRuntimeVA(const BinaryImage &Image,
+                                                  llvm::StringRef Symbol) {
+  const bool CookieSymbol = Symbol == "___security_cookie";
   if (Image.Arch != Arch::X86 || Image.Format != BinaryFormat::COFF ||
-      Image.Base > UINT32_MAX || Symbol != "___security_cookie" ||
+      Image.Base > UINT32_MAX ||
+      (!CookieSymbol && Symbol != "@__security_check_cookie@4") ||
       !Image.DynInfo.SecurityCookieRVA)
     return std::nullopt;
   const va_t Cookie = Image.Base + Image.DynInfo.SecurityCookieRVA;
   if (Cookie > UINT32_MAX - 3 || !Image.readVA(Cookie, 4))
     return std::nullopt;
+  std::optional<va_t> Result;
   for (const auto &EH : Image.ExceptionMetadata.Functions)
     if (EH.Personality == ExceptionPersonality::ExceptHandler4 &&
-        EH.ParseStatus == ExceptionParseStatus::Complete && EH.Registration &&
-        coff_loader::getCheckedX86EH4CookieCheck(Image, EH.PersonalityVA))
-      return Cookie;
-  return std::nullopt;
+        EH.ParseStatus == ExceptionParseStatus::Complete && EH.Registration)
+      if (auto Check = coff_loader::getCheckedX86EH4CookieCheck(
+              Image, EH.PersonalityVA)) {
+        if (!CookieSymbol &&
+            !coff_loader::hasCheckedX86CookieCheckSuccessPath(Image, *Check))
+          return std::nullopt;
+        const va_t Address = CookieSymbol ? Cookie : *Check;
+        if (Result && Result != Address)
+          return std::nullopt;
+        Result = Address;
+      }
+  return Result;
 }
 
 llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
@@ -1172,6 +1183,20 @@ llvm::Error validateCOFFRegistrationIR(const llvm::Function &Function,
         Cookie->getAddressSpace() || Cookie->hasDLLImportStorageClass())
       return reject(
           "EH4 cookie frame, image storage or CRT wrapper is unproved");
+    if (Source.Registration->GSCookieOffset != -2) {
+      const auto *Check =
+          Function.getParent()->getFunction("__security_check_cookie");
+      if (!Check || !hasX86RegistrationSecurityCheckABI(*Check))
+        return reject("EH4 GS cookie checker has an incompatible runtime ABI");
+      auto VA = rewrite_source::getOriginalVA(*Check);
+      if (!VA)
+        return VA.takeError();
+      if (!*VA || **VA != *coff_loader::getCheckedX86EH4CookieCheck(
+                              Image, Source.PersonalityVA))
+        return reject("EH4 GS cookie checker changed its original identity");
+      if (!coff_loader::hasCheckedX86CookieCheckSuccessPath(Image, **VA))
+        return reject("EH4 GS cookie checker has no checked success path");
+    }
   }
   LowToMedConverter Converter;
   Converter.setBinaryImage(&Image);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build, reconstruct and execute a real SEH3 PE32 function, including rebasing.
+"""Build, reconstruct and execute a real SEH3/EH4 PE32 function, including rebasing.
 
 The runtime caller PC must belong to the installed generated section. Original
 and rewritten images must both restore FS:[0] after repeated exception dispatch.
@@ -37,6 +37,9 @@ CASES = {"filter": (0, 0), "nested-finally": (1, 123),
          "normal-finally": (4, 2), "cdecl-parameter": (5, 7),
          "cdecl-parameter-write": (6, 177)}
 CASES.update({"eh4-" + name: value for name, value in tuple(CASES.items())})
+CASES.update({"eh4-gs-" + name: CASES[name] for name in
+              ("filter", "nested-finally", "continue-search", "continue-execution",
+               "normal-finally", "cdecl-parameter", "cdecl-parameter-write")})
 
 
 class PE32:
@@ -189,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     output.mkdir(parents=True, exist_ok=True)
     case, expected_trace = CASES[args.case]
     eh4 = args.case.startswith("eh4-")
+    gs = args.case.startswith("eh4-gs-")
     report = {"schema": 2, "evidence": f"reconstructed-source-registration-{'seh4' if eh4 else 'seh3'}",
               "case": args.case, "expected_trace": expected_trace,
               "passed": False, "steps": [], "observations": []}
@@ -219,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
         for source in sources:
             commands.append([compiler, "--target=i686-pc-windows-msvc", "-O0",
                              f"-DREGISTRATION_CASE={case}",
-                             "-DREGISTRATION_FORWARD_ONLY=1", "-DREGISTRATION_EXPECT_GS=0",
+                             "-DREGISTRATION_FORWARD_ONLY=1", f"-DREGISTRATION_EXPECT_GS={int(gs)}",
                              *( ["-x", "assembler-with-cpp"] if source.endswith(".s") else []),
                              "-fno-stack-protector", "-c", str(FIXTURES / source),
                              "-o", str(output / (source + ".obj"))])

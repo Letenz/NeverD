@@ -20,10 +20,16 @@ namespace llvm {
 class AllocaInst;
 class BasicBlock;
 class Function;
+class Module;
 class StoreInst;
 } // namespace llvm
 
 namespace neverd {
+
+/// The compiler's x86 MSVC stack protector passes the decoded cookie in ECX.
+/// A canonical declaration is separate from authentication of its image VA.
+bool hasX86RegistrationSecurityCheckABI(const llvm::Function &Function);
+llvm::Function *createX86RegistrationSecurityCheck(llvm::Module &Module);
 
 enum class X86RegistrationCallbackKind { Filter, Finally };
 

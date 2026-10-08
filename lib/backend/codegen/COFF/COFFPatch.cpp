@@ -466,8 +466,7 @@ PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
             return SerializeResolvedCode(
                 SourcePreparation.PreservedOriginalVAs.at(PreservedKey), true);
           if (CachedImage)
-            if (auto Cookie =
-                    findCOFFRegistrationSecurityCookieVA(*CachedImage, Sym))
+            if (auto Cookie = findCOFFRegistrationRuntimeVA(*CachedImage, Sym))
               return *Cookie;
           if (CachedImage)
             if (auto Personality =

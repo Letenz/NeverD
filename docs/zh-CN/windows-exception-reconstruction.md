@@ -30,7 +30,7 @@ NeverD 在加载、提升、反编译和二进制重写的全过程中携带 Win
 | `__CxxFrameHandler4` | 有界变长解码到公共 C++ 图，包括 action kind 与 object offset | 同一 HighIR 图并保留 FH4 来源 | 仅分析；拒绝修改涉及的函数 |
 | `__GSHandlerCheck_SEH/EH/EH4` | 包装后的 personality 与经检查的 GS cookie 来源 | 基础语言图加 wrapper 注释 | 仅分析；拒绝修改涉及的函数，不做降级 |
 | x86 registration-chain SEH3 | 经检查的 scope 图、实际 FS:[0] 操作、callback root 与基于 CFG 的 try-level 状态集合 | 可规约且无歧义的区域生成显式 EH 节点；其他状态保留原生注释 | 对下文固定栈帧、caller-cleanup 的已证明子集支持原生 PE32 重建 |
-| x86 registration-chain SEH4 | 经检查的 cookie 表达式、编码 scope 指针与基于 CFG 的状态流 | 可规约区域生成结构化 EH；其他形状保留无损注释 | 对下文已认证、无 GS 的直接栈帧子集支持原生 PE32 重建 |
+| x86 registration-chain SEH4 | 经检查的 cookie 表达式、编码 scope 指针与基于 CFG 的状态流 | 可规约区域生成结构化 EH；其他形状保留无损注释 | 对下文已认证的直接栈帧子集支持原生 PE32 重建，包含 EH/GS cookie 初始化 |
 | x86 registration-chain C++ EH | 绝对指针 FuncInfo 与基于 CFG 的状态流 | 可规约区域生成结构化 EH；其他形状保留无损注释 | 支持分析与反编译；仍拒绝原生安装 |
 
 畸形记录绝不会按普通完整记录处理。部分解码记录仍可用于检查，但不能授权生成原生
@@ -102,11 +102,16 @@ handler import 必须一致；仅凭 handler 名称不能授权重写。共享�
 公开前证明编码 scope 指针与每个 cookie 表达式。源函数及保留的 callee 不能修改映像
 cookie 或 scope table，也不能在安装后观察合成 cookie 栈槽。LLVM 按实际 registration
 record 推导生成 cookie 偏移，包括运行时的虚拟帧基址；安装器再与实际表字节逐项核对。
+直接初始化的 GS 栈槽由编译器生成 stack protector。GS 编码与退出校验使用同一虚拟
+基址，栈重新对齐时也保持一致。校验函数必须保留精确的 fastcall ABI 和原 wrapper
+使用的代码地址；同名函数或 import 不能替代这一身份。
+校验函数的经检查成功路径只将 ECX 与 load-config cookie 比较并返回，不修改栈存储
+或其他寄存器。LLVM 重新对齐栈时，回调引用的参数副本仍保留在可恢复的局部帧中。
 
 该路径要求 LLVM fork 提供 `LLVM_NEVERD_X86_REGISTRATION_EH` 契约；旧的已发布 r3
-预编译包会拒绝原生安装。EH4 还要求 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`。
-EH4 源 GS epilogue 与 x86 C++ FuncInfo 的原生安装仍是独立的后续要求，不能用已有的
-分析元数据替代。
+预编译包会拒绝原生安装。EH4 还要求 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`，
+GS 初始化还要求 `LLVM_NEVERD_X86_REGISTRATION_GS`。显式 EH4 源 GS epilogue 与
+x86 C++ FuncInfo 的原生安装仍是独立的后续要求，不能用已有的分析元数据替代。
 
 ## IR 契约
 

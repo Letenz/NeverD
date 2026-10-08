@@ -237,6 +237,63 @@ TEST(RegistrationTryLevel, EH4WrapperRequiresTheExactRuntimeForwardingABI) {
   }
 }
 
+TEST(RegistrationTryLevel, GSCookieCheckerHasOnlyTheCheckedLeafSuccessPath) {
+  for (bool Near : {false, true})
+    for (bool RepReturn : {false, true}) {
+      ImageBuilder B;
+      B.Text = {0x3b, 0x0d};
+      emit32(B.Text, kRData);
+      if (Near) {
+        B.Text.insert(B.Text.end(), {0x0f, 0x85});
+        emit32(B.Text, 20);
+      } else
+        B.Text.insert(B.Text.end(), {0x75, 24});
+      const auto Return = B.Text.size();
+      if (RepReturn)
+        B.Text.push_back(0xf3);
+      B.Text.push_back(0xc3);
+      B.Text.resize(64, 0xcc);
+      B.RData.resize(16);
+      auto Image = B.build({});
+      Image.DynInfo.SecurityCookieRVA = kRData - kBase;
+      ASSERT_TRUE(
+          coff_loader::hasCheckedX86CookieCheckSuccessPath(Image, kText));
+      for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+        auto Changed = Image;
+        auto &Code = Changed.Segments.front().Data;
+        if (Mutation == 0)
+          Code[1] = 0x15;
+        if (Mutation == 1)
+          Code[2] ^= 4;
+        if (Mutation == 2)
+          Code[Near ? 7 : 6] ^= 1;
+        if (Mutation == 3)
+          Code[Return] = 0xc2;
+        if (Mutation == 4) {
+          if (Near)
+            llvm::support::endian::write32le(Code.data() + 8, 0);
+          else
+            Code[7] = 0;
+        }
+        if (Mutation == 5) {
+          if (Near)
+            llvm::support::endian::write32le(Code.data() + 8, 0x1000);
+          else
+            Code[7] = 0x80;
+        }
+        if (Mutation == 6)
+          Changed.DynInfo.SecurityCookieRVA = 0;
+        if (Mutation == 7)
+          Changed.Segments[1].Data.clear();
+        if (Mutation == 8)
+          Changed.Segments.front().Flags = SegmentFlags::Readable;
+        EXPECT_FALSE(
+            coff_loader::hasCheckedX86CookieCheckSuccessPath(Changed, kText))
+            << Near << RepReturn << Mutation;
+      }
+    }
+}
+
 std::vector<int32_t> levels(const RegistrationChainInfo &Chain) {
   std::vector<int32_t> Levels;
   for (const RegistrationTryLevelStore &Store : Chain.TryLevelStores)

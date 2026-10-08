@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
+#include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/WindowsEHSemanticDigest.h"
@@ -112,6 +113,11 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
               Img->Base + Img->DynInfo.SecurityCookieRVA ||
           !coff_loader::getCheckedX86EH4CookieCheck(*Img, EH.PersonalityVA))))
       return false;
+    if (Img && Chain.GSCookieOffset != -2 &&
+        !coff_loader::hasCheckedX86CookieCheckSuccessPath(
+            *Img,
+            *coff_loader::getCheckedX86EH4CookieCheck(*Img, EH.PersonalityVA)))
+      return false;
     if (auto *Value = Mod->getNamedValue("__security_cookie")) {
       auto *Cookie = llvm::dyn_cast<llvm::GlobalVariable>(Value);
       if (!Cookie || !Cookie->getValueType()->isIntegerTy(32) ||
@@ -120,6 +126,21 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
           Cookie->getAddressSpace() || Cookie->hasDLLImportStorageClass())
         return false;
     }
+    if (Chain.GSCookieOffset != -2)
+      if (auto *Check = Mod->getNamedValue("__security_check_cookie")) {
+        auto *Function = llvm::dyn_cast<llvm::Function>(Check);
+        if (!Function || !hasX86RegistrationSecurityCheckABI(*Function))
+          return false;
+        auto VA = rewrite_source::getOriginalVA(*Function);
+        if (!VA) {
+          llvm::consumeError(VA.takeError());
+          return false;
+        }
+        if (Img && *VA &&
+            **VA != *coff_loader::getCheckedX86EH4CookieCheck(*Img,
+                                                              EH.PersonalityVA))
+          return false;
+      }
   }
   if (!States.Complete || !States.CallbackStatesComplete ||
       !States.IncomingFrameAccessesComplete ||
@@ -701,6 +722,15 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     new llvm::GlobalVariable(*Mod, llvm::Type::getInt32Ty(*Ctx), false,
                              llvm::GlobalValue::ExternalLinkage, nullptr,
                              "__security_cookie");
+  if (EH4 && Chain.GSCookieOffset != -2) {
+    auto *Check = Mod->getFunction("__security_check_cookie");
+    if (!Check)
+      Check = createX86RegistrationSecurityCheck(*Mod);
+    if (Img)
+      rewrite_source::setOriginalVA(
+          *Check,
+          *coff_loader::getCheckedX86EH4CookieCheck(*Img, EH.PersonalityVA));
+  }
   RegistrationIncomingIR.clear();
   RegistrationMemoryIR.clear();
   std::vector<llvm::Function *> SourceFunctions{&Parent};

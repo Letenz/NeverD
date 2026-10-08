@@ -552,14 +552,17 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
     }
     // The PE32 writer requires indexed compiler receipts; older prebuilt
     // LLVMs retain analysis support. EH4 additionally requires the compiler's
-    // physical cookie-frame contract. Source GS epilogues need their own
-    // normalization before that subset can be installed.
+    // physical cookie-frame contract. Source cookie observations and explicit
+    // GS epilogues must independently pass the shared lifetime/ABI proofs.
     bool OutputAvailable = false;
 #ifdef LLVM_NEVERD_X86_REGISTRATION_EH
     OutputAvailable = !EH4;
 #endif
 #ifdef LLVM_NEVERD_X86_REGISTRATION_COOKIES
     OutputAvailable |= EH4 && Chain.GSCookieOffset == -2;
+#endif
+#ifdef LLVM_NEVERD_X86_REGISTRATION_GS
+    OutputAvailable |= EH4;
 #endif
     if (Capability == WindowsEHNativeCapability::IRLowering || OutputAvailable)
       return {Model, WindowsEHNativeSourceReason::Eligible, Capability};

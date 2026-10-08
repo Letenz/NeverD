@@ -84,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         for name in ("registration_eh4_runtime.c", "registration_eh4_config.s"):
             commands.append([compiler, "--target=i686-pc-windows-msvc", "-O0",
                              f"-DREGISTRATION_EXPECT_GS={int(args.gs)}",
+                             *(["-x", "assembler-with-cpp"] if name.endswith(".s") else []),
                              "-fno-stack-protector", "-c", str(FIXTURES / name),
                              "-o", str(output / (name + ".obj"))])
         image = output / "valid.exe"

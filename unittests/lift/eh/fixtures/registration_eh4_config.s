@@ -14,3 +14,4 @@ __load_config_used:
 .type 0;
 .endef
 .set @feat.00,1
+#include "registration_cookie_check.inc"

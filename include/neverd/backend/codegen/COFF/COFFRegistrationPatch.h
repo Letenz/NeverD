@@ -28,10 +28,11 @@ struct CompiledImage;
 struct ExceptionFunction;
 struct COFFGuardTableUpdate;
 
-/// Resolve the compiler cookie only to the checked PE32 load-config storage.
-std::optional<va_t>
-findCOFFRegistrationSecurityCookieVA(const BinaryImage &Image,
-                                     llvm::StringRef Symbol);
+/// Resolve only the checked PE32 load-config cookie or the CRT wrapper's
+/// exact fastcall checker. Conflicting checker identities cannot share a
+/// symbol.
+std::optional<va_t> findCOFFRegistrationRuntimeVA(const BinaryImage &Image,
+                                                  llvm::StringRef Symbol);
 
 struct COFFRegistrationPatchUpdate {
   bool Apply = false;

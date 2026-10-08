@@ -83,11 +83,25 @@ void proveDirectRegistrationLayout(const BinaryImage &Img,
         P[22] != 0x83 || P[23] != 0xec || P[24] != 16 || P[25] != 0xa1 ||
         readLE<uint32_t>(P + 26) != CookieVA || P[30] != 0x31 ||
         P[31] != 0x45 || P[32] != 0xf8 || P[33] != 0x31 || P[34] != 0xe8 ||
-        P[35] != 0x89 || P[36] != 0x45 || P[37] != 0xe4 || P[38] != 0x8d ||
-        P[39] != 0x45 || P[40] != 0xf0 || P[41] != 0x64 || P[42] != 0x89 ||
-        P[43] != 0x05 || readLE<uint32_t>(P + 44) != 0)
+        P[35] != 0x89 || P[36] != 0x45 || P[37] != 0xe4)
       return;
-    Installation = 41;
+    size_t FrameAddress = 38;
+    if (Chain.GSCookieOffset != -2) {
+      // The same encoded value initializes a distinct, allocated GS slot.
+      // Header fields and dataflow, rather than a sign heuristic, prove which
+      // cookie each runtime check consumes.
+      P = Img.readVA(Site.Range.Begin, 51);
+      if (!P || Site.Range.size() < 51 || P[38] != 0x89 || P[39] != 0x45 ||
+          P[40] != 0xe0)
+        return;
+      FrameAddress += 3;
+    }
+    Installation = FrameAddress + 3;
+    if (P[FrameAddress] != 0x8d || P[FrameAddress + 1] != 0x45 ||
+        P[FrameAddress + 2] != 0xf0 || P[Installation] != 0x64 ||
+        P[Installation + 1] != 0x89 || P[Installation + 2] != 0x05 ||
+        readLE<uint32_t>(P + Installation + 3) != 0)
+      return;
   }
   Chain.RegistrationOffset = IsCxx ? -12 : -16;
   Chain.TryLevelOffset = -4;

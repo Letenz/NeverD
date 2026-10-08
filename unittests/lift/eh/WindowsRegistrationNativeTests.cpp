@@ -14,6 +14,7 @@
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
+#include "neverd/backend/llvm/WindowsRegistrationFrame.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
@@ -34,6 +35,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
+#include <algorithm>
 #include <cstdlib>
 
 namespace neverd {
@@ -189,6 +191,30 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
             return true;
           },
           "EH4 cookie or scope table is written");
+    if (EH.Registration->GSCookieOffset != -2) {
+      for (unsigned Mutation = 0; Mutation != 4; ++Mutation)
+        RejectMutation(
+            "compiler GS checker keeps its ABI and authenticated identity",
+            [Mutation](llvm::Function &F) {
+              auto *Check =
+                  F.getParent()->getFunction("__security_check_cookie");
+              if (!Check)
+                return false;
+              if (Mutation == 0)
+                Check->setCallingConv(llvm::CallingConv::C);
+              if (Mutation == 1)
+                Check->removeParamAttr(0, llvm::Attribute::InReg);
+              if (Mutation == 2) {
+                Check->setDSOLocal(false);
+                Check->setDLLStorageClass(
+                    llvm::GlobalValue::DLLImportStorageClass);
+              }
+              if (Mutation == 3)
+                rewrite_source::setOriginalVA(*Check, 0x401000);
+              return true;
+            },
+            "EH4 GS cookie checker");
+    }
   }
   RejectMutation(
       "unmarked image memory read cannot bypass source occurrence checks",
@@ -805,7 +831,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   ASSERT_NE(CodeVA, 0u);
   auto Resolve = [&](llvm::StringRef Symbol,
                      uint32_t) -> std::optional<uint64_t> {
-    if (auto Cookie = findCOFFRegistrationSecurityCookieVA(Image, Symbol))
+    if (auto Cookie = findCOFFRegistrationRuntimeVA(Image, Symbol))
       return *Cookie;
     if (auto Address = parseNdDataSymbol(Symbol))
       return *Address;
@@ -1172,6 +1198,66 @@ struct RegistrationNativeFixture {
   }
 };
 
+TEST(WindowsRegistrationNative, ResolvesOnlyTheAuthenticatedEH4RuntimeSymbols) {
+  BinaryImage Image;
+  Image.Arch = Arch::X86;
+  Image.Bits = Bitness::Bits32;
+  Image.Format = BinaryFormat::COFF;
+  Image.Base = 0x400000;
+  Image.DynInfo.SecurityCookieRVA = 0x3000;
+  Segment Text;
+  Text.VA = 0x401000;
+  Text.Size = 192;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xcc);
+  const uint8_t Wrapper[] = {
+      0x55, 0x89, 0xe5, 0xff, 0x75, 0x14, 0xff, 0x75, 0x10, 0xff, 0x75, 0x0c,
+      0xff, 0x75, 0x08, 0x68, 0,    0,    0,    0,    0x68, 0,    0,    0,
+      0,    0xff, 0x15, 0,    0,    0,    0,    0x83, 0xc4, 0x18, 0x5d, 0xc3};
+  std::copy(std::begin(Wrapper), std::end(Wrapper), Text.Data.begin());
+  llvm::support::endian::write32le(Text.Data.data() + 16, 0x401080);
+  llvm::support::endian::write32le(Text.Data.data() + 21, 0x403000);
+  llvm::support::endian::write32le(Text.Data.data() + 27, 0x403004);
+  const uint8_t Check[] = {0x3b, 0x0d, 0x00, 0x30, 0x40,
+                           0x00, 0x75, 0x10, 0xc3};
+  std::copy(std::begin(Check), std::end(Check), Text.Data.begin() + 128);
+  std::copy(std::begin(Check), std::end(Check), Text.Data.begin() + 160);
+  Image.Segments.push_back(Text);
+  Segment Data;
+  Data.VA = 0x403000;
+  Data.Size = 16;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(Data.Size);
+  Image.Segments.push_back(Data);
+  Image.Imports.push_back(
+      {"msvcrt.dll", "_except_handler4_common", 0, 0x403004});
+  ExceptionFunction EH;
+  EH.Personality = ExceptionPersonality::ExceptHandler4;
+  EH.PersonalityVA = Text.VA;
+  EH.ParseStatus = ExceptionParseStatus::Complete;
+  EH.Registration.emplace();
+  Image.ExceptionMetadata.Functions.push_back(EH);
+  EXPECT_EQ(findCOFFRegistrationRuntimeVA(Image, "___security_cookie"),
+            0x403000);
+  EXPECT_EQ(findCOFFRegistrationRuntimeVA(Image, "@__security_check_cookie@4"),
+            0x401080);
+  EXPECT_FALSE(findCOFFRegistrationRuntimeVA(Image, "__security_check_cookie"));
+  auto Conflicting = Image;
+  auto &Bytes = Conflicting.Segments.front().Data;
+  std::copy(Bytes.begin(), Bytes.begin() + sizeof(Wrapper), Bytes.begin() + 64);
+  llvm::support::endian::write32le(Bytes.data() + 64 + 16, 0x4010a0);
+  EH.PersonalityVA += 64;
+  Conflicting.ExceptionMetadata.Functions.push_back(EH);
+  EXPECT_FALSE(
+      findCOFFRegistrationRuntimeVA(Conflicting, "@__security_check_cookie@4"));
+  EXPECT_EQ(findCOFFRegistrationRuntimeVA(Conflicting, "___security_cookie"),
+            0x403000);
+  Image.Imports.front().Module = "custom.dll";
+  EXPECT_FALSE(findCOFFRegistrationRuntimeVA(Image, "___security_cookie"));
+  EXPECT_FALSE(
+      findCOFFRegistrationRuntimeVA(Image, "@__security_check_cookie@4"));
+}
+
 TEST(WindowsRegistrationNative, UsesCompilerOwnedScopesAndRecoveredCallbacks) {
   RegistrationNativeFixture F;
   ASSERT_TRUE(F.lower()) << F.print();
@@ -1504,6 +1590,8 @@ CompiledImage compileFixture(RegistrationNativeFixture &F) {
           return 0x2000;
         if (Symbol == "___security_cookie")
           return 0x2500;
+        if (Symbol == "@__security_check_cookie@4")
+          return 0x2600;
         if (Symbol == "_raise")
           return 0x5000;
         return std::nullopt;
@@ -1570,6 +1658,45 @@ TEST(WindowsRegistrationNative, AuthenticatesEveryEH4CookieFrameOffset) {
   EXPECT_NE(llvm::toString(std::move(Altered)).find("machine frame offsets"),
             std::string::npos);
 }
+
+#ifdef LLVM_NEVERD_X86_REGISTRATION_GS
+TEST(WindowsRegistrationNative, EH4GSUsesTheCompilerCookieAndFastcallChecker) {
+  RegistrationNativeFixture F;
+  for (auto &I : *F.Entry)
+    if (auto *Alloca = llvm::dyn_cast<llvm::AllocaInst>(&I);
+        Alloca && Alloca->getName() == "frame")
+      Alloca->setAlignment(llvm::Align(64));
+  auto &EH = *F.Source.ExceptionMetadata;
+  EH.Encoding = ExceptionEncoding::X86ScopeTableEH4;
+  EH.Personality = ExceptionPersonality::ExceptHandler4;
+  auto &Chain = *EH.Registration;
+  Chain.SeededTryLevel = -2;
+  Chain.GSCookieOffset = -32;
+  Chain.EHCookieOffset = -28;
+  Chain.HasSecurityCookies = true;
+  Chain.Scopes.front().EnclosingLevel = -2;
+  Chain.TryLevelStores.back().Level = -2;
+  F.Source.RegistrationStates->SecurityCookiesComplete = true;
+  F.Source.RegistrationStates->SecurityCookieVA = 0x2500;
+  for (auto &State : F.Source.RegistrationStates->Blocks)
+    for (auto &Level : State.Levels)
+      if (Level == -1)
+        Level = -2;
+  ASSERT_TRUE(F.lower());
+  EXPECT_TRUE(F.Parent->hasFnAttribute(llvm::Attribute::StackProtectReq));
+  const auto *Check = F.Module.getFunction("__security_check_cookie");
+  ASSERT_NE(Check, nullptr);
+  EXPECT_TRUE(hasX86RegistrationSecurityCheckABI(*Check));
+  auto Compiled = compileFixture(F);
+  ASSERT_TRUE(Compiled.Success);
+  ASSERT_EQ(Compiled.WinEHSemanticRecords.size(), 1u);
+  const auto &Row = Compiled.WinEHSemanticRecords.front();
+  EXPECT_NE(Row.RegistrationCookieOffsets[0], -2);
+  EXPECT_EQ(Row.RegistrationCookieOffsets[1], 0);
+  auto Valid = validateCOFFRegistrationSemanticRows(*F.Parent, EH, Compiled);
+  ASSERT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+}
+#endif
 
 TEST(WindowsRegistrationNative, BindsGeneratedParentsToTheSourceScopeGraph) {
   RegistrationNativeFixture F;
