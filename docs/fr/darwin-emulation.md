@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 21441b8b14985fbac413a4bb78aa57c696ad5eb07b70d439200550bdc6ce27a4 -->
+<!-- i18n-source: fab8f746a3afad0cc7aeaee21f82d848bf0bad20c33a1f8140b1f3c821e75281 -->
 
 [← Index de la documentation](README.md)
 
@@ -738,7 +738,9 @@ stat64/open/access/truncate/chdir suivent le lien final; lstat64/readlink le gar
 
 readlink(58) utilise count signé bas32, readlinkat(473) le size_t entier; retourint. Au-delà deINT32_MAX: EINVAL22 avant chemin/FD. Copie min(count,longueur), sansNUL; seul ce préfixe est vérifié. Taille0 vérifie chemin/type puis ignore la sortie. Non-lienEINVAL22, aucun octet accessibleEFAULT14; préfixe partiellement accessible: arrêt avant copie. Les erreurs de transport/budget mémoire se propagent.
 
-Les liens non vides excluent globalement MutableDirectories/RemovableDirectories/MovableDirectories/ExchangeableDirectories/SwapRenameDirectories/CreationPolicy. WritableFiles/MutationPolicies fixes peuvent modifier le fichier cible. Unlink/rename d’un lien retenu s’arrêtent avant effet. Liens dynamiques/durs, ACL et espace mutable restent exclus. La sonde ARM64 macOS a passé189 observations/115 tampons complets sous la limite initiale5s; pas une preuve d’iOS physique/Intel HVF/OS complet.
+Les noms des liens et leurs octets cibles restent fixes. MutableDirectories ne peut être la racine ni un ancêtre par composante d’un lien fixe ; /work ne contient pas /workspace/link. Des domaines mutables séparés peuvent contenir les cibles créées, déplacées, supprimées ou remplacées pendant l’exécution. Les contrôles de parent, montage, alias, flags, support SWAP et création restent applicables ; les nouveaux inodes doivent dépasser tous ceux des métadonnées/instantanés, liens protégés inclus. WritableFiles/MutationPolicies fixes peuvent modifier le fichier cible. Unlink/rename d’un lien retenu s’arrêtent avant effet. Liens dynamiques/durs, ACL et espace mutable restent exclus. La sonde ARM64 macOS a passé189 observations/115 tampons complets sous la limite initiale5s; pas une preuve d’iOS physique/Intel HVF/OS complet.
+
+Les 60 contrôles ARM64 macOS DELETE/RENAME supplémentaires conservent les tampons stat complets, l’espace de noms avant/après et les identités FD/CWD sous la limite initiale de5s. Les barres finales peuvent développer un lien fixe et modifier sa cible ; NOFOLLOW_ANY refuse le développement requis avec ELOOP. symbolic-link-mutations, sans SDK, vérifie création, cible absente, déplacement/suppression/remplacement, parents CWD conservés et les10 octets originaux du fichier avant fermeture des FD, puis les10 octets du mapping après fermeture. Ces observations ne prouvent pas iOS physique ou Intel natif.
 
 ```json
 {"darwin_files":{"files":[{"path":"/data","bytes_hex":"3031"}],"symbolic_links":[{"path":"/link","target_hex":"64617461"}],"working_directory":"/"}}
