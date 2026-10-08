@@ -3778,8 +3778,18 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       if (auto VA = constAddress(*Operand.Operands[0]))
         if (auto Name = imageObjectName(*VA))
           return "&" + *Name;
+      // An integer address converts to the pointer by its bits, which its
+      // unsigned view holds without a signed reinterpretation.
+      const HighExpr &Address = *Operand.Operands[0];
       return "(" + typeToC(Operand.Type) + " *)(" +
-             exprStr(*Operand.Operands[0]) + ")";
+             (Address.Type && Address.Type->Kind == NdTypeKind::Int
+                  ? integerView(Address,
+                                NdType::makeInt(
+                                    getTargetRegInfo(Opts.TheArch).PointerSize,
+                                    false),
+                                0)
+                  : exprStr(Address)) +
+             ")";
     }
     if (Operand.Kind == ExprKind::Var || Operand.Kind == ExprKind::Phi)
       return "&" + varName(Operand.Var);
