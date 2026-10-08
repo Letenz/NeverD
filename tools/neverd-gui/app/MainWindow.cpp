@@ -183,12 +183,10 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
   }
   // A code view shown again follows the function it missed while hidden,
   // after whatever showed it has chosen its own.
-  if (event->type() == QEvent::Show && followsDisassembly(object))
-    QTimer::singleShot(
-        0, this,
-        [this, view = QPointer<CodeView>(static_cast<CodeView *>(object))] {
-          followFunction(view);
-        });
+  if (event->type() == QEvent::Show && followsDisassembly(object)) {
+    const QPointer<CodeView> view = static_cast<CodeView *>(object);
+    QTimer::singleShot(0, this, [this, view] { followFunction(view); });
+  }
   return KDDockWidgets::QtWidgets::MainWindow::eventFilter(object, event);
 }
 

@@ -308,8 +308,8 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     return dupStr(*Output);
   }
 
-  if (const char *Cached = cachedSource(*S, FuncEntry,
-                                        Session::SourceRoute::HighC, SourceMap))
+  if (const char *Cached =
+          cachedSource(*S, FuncEntry, Session::SourceRoute::HighC, SourceMap))
     return Cached;
 
   const HighFunc *HF = S->findHighFunc(FuncEntry);
@@ -393,8 +393,8 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
     return dupStr(std::string());
   }
 
-  const auto Route = NoOpt ? Session::SourceRoute::LLVMCNoOpt
-                           : Session::SourceRoute::LLVMC;
+  const auto Route =
+      NoOpt ? Session::SourceRoute::LLVMCNoOpt : Session::SourceRoute::LLVMC;
   if (const char *Cached = cachedSource(*S, FuncEntry, Route, SourceMap))
     return Cached;
 
