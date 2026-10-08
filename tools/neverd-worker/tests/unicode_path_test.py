@@ -88,7 +88,9 @@ def run(worker):
                                        ok(client, "functions", {"limit": 512})["items"]}
             listing = ok(client, "listing", {"address": hex(item_address),
                                               "before": 0, "after": 1})
-            assert listing["lines"][0]["user"] == "dword", listing
+            line = listing["lines"][0]
+            assert (line["address"], line["kind"], line["text"].split()) == (
+                hex(item_address), "data", ["dd", "0"]), listing
             assert hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(data).digest()
 
         with Client(worker) as client:
@@ -99,7 +101,9 @@ def run(worker):
                                        ok(client, "functions", {"limit": 512})["items"]}
             listing = ok(client, "listing", {"address": hex(item_address),
                                               "before": 0, "after": 1})
-            assert listing["lines"][0]["user"] == "dword", listing
+            line = listing["lines"][0]
+            assert (line["address"], line["kind"], line["text"].split()) == (
+                hex(item_address), "data", ["dd", "0"]), listing
             evm = root / "\u4e2d\u6587\u76ee\u5f55" / "\u5408\u7ea6.hex"
             evm.write_text("600160005500", encoding="ascii")
             payload = ok(client, "open", {"path": str(evm), "read_only": True})
