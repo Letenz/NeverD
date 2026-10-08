@@ -9,13 +9,14 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "neverd/backend/c/pass/HighC/HighCPasses.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/c/pass/HighC/HighCPasses.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
 #include <algorithm>
 #include <limits>
+#include <map>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -205,21 +206,32 @@ bool hasOnlyPrivateFrameMemory(const HighFunc &Func,
            Var.Size == getTargetRegInfo(Var.TheArch).PointerSize &&
            Var.RegOff == getTargetRegInfo(Var.TheArch).StackPointer;
   };
+  // A value reached again through another use or definition has the answer
+  // it had: following each path anew is exponential in shared definitions.
+  // Each statement starts afresh, since the addresses a statement may use
+  // depend on the definitions before it.
+  std::map<std::pair<const HighExpr *, uint16_t>, bool> FullWidthSeen;
+  std::map<const HighExpr *, bool> ValueSeen;
   std::function<bool(const HighExpr &, uint16_t, unsigned)> FullWidth =
       [&](const HighExpr &Expr, uint16_t Width, unsigned Depth) {
-        if (Depth > limits::kMaxHighCMemoryWalkDepth || !Expr.Type || Expr.Type->Size != Width)
+        if (Depth > limits::kMaxHighCMemoryWalkDepth || !Expr.Type ||
+            Expr.Type->Size != Width)
           return false;
+        if (const auto Known = FullWidthSeen.find({&Expr, Width});
+            Known != FullWidthSeen.end())
+          return Known->second;
+        bool &Result = FullWidthSeen[{&Expr, Width}];
         if (Expr.Kind == ExprKind::Var) {
           if (Expr.Var.Size != Width)
-            return false;
+            return Result = false;
           if (const auto *Def = findUniqueDef(Defs, Expr.Var))
-            return FullWidth(*Def, Width, Depth + 1);
+            return Result = FullWidth(*Def, Width, Depth + 1);
         }
         for (const auto &Operand : Expr.Operands)
           if (!Operand || (Operand->Kind != ExprKind::Const &&
                            !FullWidth(*Operand, Width, Depth + 1)))
-            return false;
-        return true;
+            return Result = false;
+        return Result = true;
       };
   auto CheckAddress = [&](const HighExpr &Address, const TypeRef &Type) {
     const auto Reduced = reduceAddr(Address, DominatingDefs);
@@ -239,29 +251,35 @@ bool hasOnlyPrivateFrameMemory(const HighFunc &Func,
   };
   std::function<bool(const HighExpr &, unsigned)> CheckValue =
       [&](const HighExpr &Expr, unsigned Depth) {
-        if (Depth > limits::kMaxHighCMemoryWalkDepth || Expr.Kind == ExprKind::Call ||
-            Expr.Kind == ExprKind::Addr || Expr.Kind == ExprKind::Store ||
+        if (Depth > limits::kMaxHighCMemoryWalkDepth ||
+            Expr.Kind == ExprKind::Call || Expr.Kind == ExprKind::Addr ||
+            Expr.Kind == ExprKind::Store ||
             Expr.MemoryOrdering != NdMemoryOrdering::None ||
             Expr.MemoryAddressSpace != NdMemoryAddressSpace::Default)
           return false;
+        if (const auto Known = ValueSeen.find(&Expr); Known != ValueSeen.end())
+          return Known->second;
+        bool &Result = ValueSeen[&Expr];
         if (Expr.Kind == ExprKind::Load)
-          return Expr.Operands.size() == 1 && Expr.Operands[0] &&
-                 CheckAddress(*Expr.Operands[0], Expr.Type);
+          return Result = Expr.Operands.size() == 1 && Expr.Operands[0] &&
+                          CheckAddress(*Expr.Operands[0], Expr.Type);
         if (Expr.Kind == ExprKind::Var) {
           if (IsFrameBase(Expr.Var))
-            return false;
+            return Result = false;
           if (const auto *Def = findUniqueDef(Defs, Expr.Var))
-            return CheckValue(*Def, Depth + 1);
+            return Result = CheckValue(*Def, Depth + 1);
         }
         for (const auto &Operand : Expr.Operands)
           if (!Operand || !CheckValue(*Operand, Depth + 1))
-            return false;
-        return true;
+            return Result = false;
+        return Result = true;
       };
   bool Valid = true;
   walkStmts(Func.Body, [&](const HighStmt &Stmt) {
     if (!Valid)
       return;
+    FullWidthSeen.clear();
+    ValueSeen.clear();
     if (Stmt.MemoryOrdering != NdMemoryOrdering::None ||
         Stmt.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
       Valid = false;
