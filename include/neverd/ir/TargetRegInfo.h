@@ -291,8 +291,8 @@ struct TargetRegInfo {
   uint16_t callPreservedPrefixSize(uint64_t RegOff, uint16_t Size) const;
 
   /// The same queries under the calling convention \p Format selects.
-  /// Win64 (x86-64 COFF) also preserves RSI, RDI and the low 16 bytes of
-  /// XMM6-XMM15; callPreservedRanges(Format) reports the same set.
+  /// Win64 (x86-64 COFF) also preserves RSI, RDI, APX R30/R31 and the low
+  /// 16 bytes of XMM6-XMM15; callPreservedRanges(Format) reports the same set.
   bool isCallPreserved(uint64_t RegOff, uint16_t Size,
                        BinaryFormat Format) const {
     return callPreservedPrefixSize(RegOff, Size, Format) == Size;
