@@ -5,9 +5,11 @@ A rename, a data item, an undo and a comment let the listing read names and
 items again over its last string scan, or not rebuild at all.  After each
 edit, every page must match what a full rebuild (reload) shows.
 
-Builds a benign glibc program with the host C compiler and strips it, as
-distributions ship programs; it is analyzed, never executed. Exits 77 (skip)
-without a compiler and strip that build one.
+Reads a binary file first -- one segment, no symbols, a function only its
+call names and a string only its reference does -- then builds a benign glibc
+program with the host C compiler and strips it, as distributions ship
+programs.  Both are analyzed, never executed.  Exits 77 (skip) after the
+binary file without a compiler and strip that build the program.
 """
 from pathlib import Path
 import shutil
@@ -35,6 +37,17 @@ int main(int argc, char **argv) {
   return calls;
 }
 """
+
+
+# x86-64 code a binary file holds at BINARY_BASE: start calls add_seven at
+# +0x10 and points at the text at +0x18.
+BINARY_BASE = 0x400000
+BINARY_CODE = bytes.fromhex(
+    "e80b000000"  # call add_seven
+    "488d3d0c000000"  # lea rdi, [rip + text]
+    "c3909090"  # ret, padding
+    "8d4707c3"  # add_seven: lea eax, [rdi + 7]; ret
+    "00000000") + b"binary file text\0"
 
 
 def ok(client, operation, payload=None):
@@ -66,7 +79,32 @@ def same_as_full_rebuild(client, anchors, step):
             raise AssertionError(f"{step}: {key} has {len(light[key])} rows, not {len(full[key])}")
 
 
+def binary_file(executable, directory):
+    blob = Path(directory) / "blob.bin"
+    blob.write_bytes(BINARY_CODE)
+    start, callee, text = (hex(BINARY_BASE + offset) for offset in (0, 0x10, 0x18))
+    client = Client(executable)
+    try:
+        ok(client, "open", {"path": str(blob), "loader": "binary", "processor": "x86_64",
+                            "base": hex(BINARY_BASE)})
+        ok(client, "xrefs", {"address": text})
+        anchors = [start, callee, text]
+        same_as_full_rebuild(client, anchors, "binary file open")
+        ok(client, "rename", {"address": callee, "name": "add_seven"})
+        same_as_full_rebuild(client, anchors, "binary file function rename")
+        ok(client, "rename", {"address": text, "name": "label_text"})
+        same_as_full_rebuild(client, anchors, "binary file string rename")
+        ok(client, "item_define", {"address": text, "action": "data", "size": 4})
+        same_as_full_rebuild(client, anchors, "binary file string made data")
+        ok(client, "undo")
+        same_as_full_rebuild(client, anchors, "binary file undo")
+    finally:
+        client.close()
+
+
 def run(executable):
+    with tempfile.TemporaryDirectory(prefix="neverd-names-rebuild-") as directory:
+        binary_file(executable, directory)
     compiler = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
     strip = shutil.which("strip")
     if not compiler or not strip or not sys.platform.startswith("linux"):
@@ -116,7 +154,8 @@ def run(executable):
             same_as_full_rebuild(client, anchors, "comment")
         finally:
             client.close()
-    print("names rebuild: renames, a data item, undo and a comment show as a full rebuild does")
+    print("names rebuild: renames, a data item, undo and a comment show as a full rebuild does,"
+          " in a binary file and a program")
     return 0
 
 

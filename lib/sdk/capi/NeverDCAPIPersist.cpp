@@ -9,8 +9,10 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "LoadOptions.h"
 #include "SessionImpl.h"
 
+#include "neverd/loader/LoadCandidate.h"
 #include "neverd/support/AtomicOutput.h"
 #include "neverd/support/FilePath.h"
 #include "neverd/support/ProjectWriteLock.h"
@@ -40,7 +42,7 @@ static std::filesystem::path annotationPath(const Session *S) {
 }
 
 static bool saveSidecar(Session *S, const std::filesystem::path &Path,
-                        llvm::json::Array Values, llvm::StringRef Kind) {
+                        llvm::json::Value Values, llvm::StringRef Kind) {
   const auto UTF8Path = pathToUTF8(Path);
   auto Temporary = llvm::sys::fs::TempFile::create(
       UTF8Path + ".tmp-%%%%%%",
@@ -55,7 +57,7 @@ static bool saveSidecar(Session *S, const std::filesystem::path &Path,
     // TempFile owns the descriptor. Clear a handled stream error before its
     // destructor so ENOSPC/EFBIG becomes a C ABI error rather than LLVM abort.
     llvm::raw_fd_ostream OS(Temporary->FD, false);
-    OS << llvm::json::Value(std::move(Values));
+    OS << Values;
     OS.flush();
     WriteError = OS.error();
     OS.clear_error();
@@ -1010,4 +1012,186 @@ int neverd_items_load(neverd_session_t Sess) {
   }
   S->DataItems = std::move(Items);
   return 0;
+}
+
+// ===--------------------------------------------------------------------===//
+// Load options
+// ===--------------------------------------------------------------------===//
+
+namespace {
+
+/// The loader name that reads a file as its header or contents say.
+constexpr llvm::StringLiteral AutomaticLoaderName("auto");
+
+std::filesystem::path loadOptionsPath(const std::filesystem::path &Input) {
+  auto Path = Input;
+  Path += ".neverd-load.json";
+  return Path;
+}
+
+llvm::Error loadOptionsError(const llvm::Twine &Message) {
+  return llvm::make_error<llvm::StringError>(Message,
+                                             llvm::inconvertibleErrorCode());
+}
+
+/// A number of the load options: an integer, or hexadecimal digits with or
+/// without 0x; \p Missing when the key is absent.
+std::optional<uint64_t> optionNumber(const llvm::json::Object &Object,
+                                     llvm::StringRef Key, uint64_t Missing) {
+  const llvm::json::Value *Value = Object.get(Key);
+  if (!Value)
+    return Missing;
+  if (auto Integer = Value->getAsUINT64())
+    return *Integer;
+  if (auto Text = Value->getAsString()) {
+    llvm::StringRef Digits = *Text;
+    if (!Digits.consume_front("0x"))
+      Digits.consume_front("0X");
+    uint64_t Result = 0;
+    if (!Digits.empty() && !Digits.getAsInteger(16, Result))
+      return Result;
+  }
+  return std::nullopt;
+}
+
+} // namespace
+
+llvm::Expected<LoaderChoice>
+neverd::sdk::parseLoadOptions(llvm::StringRef Text) {
+  auto Parsed = llvm::json::parse(Text);
+  if (!Parsed)
+    return Parsed.takeError();
+  const auto *Object = Parsed->getAsObject();
+  if (!Object)
+    return loadOptionsError("load options are not a JSON object");
+  const auto Loader = Object->getString("loader");
+  LoaderChoice Choice;
+  if (!Loader || *Loader == AutomaticLoaderName)
+    return Choice;
+  if (*Loader == getLoadRowLoader(LoadRow::EVM)) {
+    Choice.Format = BinaryFormat::EVM;
+    return Choice;
+  }
+  if (*Loader != getLoadRowLoader(LoadRow::Binary))
+    return loadOptionsError("unknown loader " + *Loader +
+                            "; the loaders are auto, evm and binary");
+  Choice.Format = BinaryFormat::Raw;
+  RawLoadOptions &Options = Choice.Raw;
+  const auto Processor =
+      parseRawProcessor(Object->getString("processor").value_or(""));
+  if (!Processor)
+    return loadOptionsError(
+        "a binary file is read as x86, x86_64, arm, thumb or aarch64");
+  std::tie(Options.TheArch, Options.Mode) = *Processor;
+  const auto Base = optionNumber(*Object, "base", 0);
+  const auto Offset = optionNumber(*Object, "offset", 0);
+  const auto Size = optionNumber(*Object, "size", 0);
+  if (!Base || !Offset || !Size)
+    return loadOptionsError("base, offset and size are numbers");
+  Options.Base = *Base;
+  Options.Offset = *Offset;
+  Options.Size = *Size;
+  if (Object->get("entry")) {
+    const auto Entry = optionNumber(*Object, "entry", 0);
+    if (!Entry)
+      return loadOptionsError("entry is a number");
+    Options.Entry = *Entry;
+  }
+  return Choice;
+}
+
+std::string neverd::sdk::loadOptionsJson(const LoaderChoice &Choice) {
+  llvm::json::Object Object;
+  switch (Choice.Format) {
+  case BinaryFormat::EVM:
+    Object["loader"] = getLoadRowLoader(LoadRow::EVM);
+    break;
+  case BinaryFormat::Raw: {
+    const RawLoadOptions &Raw = Choice.Raw;
+    Object["loader"] = getLoadRowLoader(LoadRow::Binary);
+    Object["processor"] = getRawProcessorName(Raw.TheArch, Raw.Mode);
+    Object["base"] = vaHex(Raw.Base);
+    Object["offset"] = vaHex(Raw.Offset);
+    Object["size"] = vaHex(Raw.Size);
+    if (Raw.Entry)
+      Object["entry"] = vaHex(*Raw.Entry);
+    break;
+  }
+  default:
+    Object["loader"] = AutomaticLoaderName;
+    break;
+  }
+  return jsonToString(llvm::json::Value(std::move(Object)));
+}
+
+llvm::Expected<LoaderChoice>
+neverd::sdk::readLoadOptionsSidecar(const std::filesystem::path &Input) {
+  const auto Path = loadOptionsPath(Input);
+  std::error_code EC;
+  if (!std::filesystem::exists(Path, EC))
+    return LoaderChoice();
+  auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Path));
+  if (!Buffer)
+    return loadOptionsError("cannot read the load options sidecar");
+  auto Options = parseLoadOptions((*Buffer)->getBuffer());
+  if (!Options)
+    return loadOptionsError("load options sidecar: " +
+                            llvm::toString(Options.takeError()));
+  return Options;
+}
+
+int neverd_session_set_load_options(neverd_session_t Sess,
+                                    const char *OptionsJson) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!OptionsJson) {
+    S->RequestedLoad.reset();
+    return 0;
+  }
+  auto Choice = parseLoadOptions(OptionsJson);
+  if (!Choice) {
+    S->setError(llvm::toString(Choice.takeError()));
+    return -1;
+  }
+  S->RequestedLoad = *Choice;
+  return 0;
+}
+
+const char *neverd_session_load_options_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  return dupStr(S && S->Loaded ? loadOptionsJson(S->LoadedChoice)
+                               : std::string("{}"));
+}
+
+int neverd_load_options_save(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded)
+    return -1;
+  ProjectWriteLock Lock(S->FilePath);
+  if (!Lock) {
+    S->setError("project writer unavailable: " + Lock.error());
+    return -1;
+  }
+  const auto Path = loadOptionsPath(S->FilePath);
+  // A file read as its header or contents say needs no sidecar.
+  if (S->LoadedChoice.Format == BinaryFormat::Unknown) {
+    std::error_code EC;
+    std::filesystem::remove(Path, EC);
+    if (EC) {
+      S->setError("cannot remove the load options sidecar: " + EC.message());
+      return -1;
+    }
+    return 0;
+  }
+  auto Value = llvm::json::parse(loadOptionsJson(S->LoadedChoice));
+  if (!Value) {
+    S->setError(llvm::toString(Value.takeError()));
+    return -1;
+  }
+  return saveSidecar(S, Path, std::move(*Value), "load options") ? 0 : -1;
 }

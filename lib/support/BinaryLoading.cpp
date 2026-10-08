@@ -75,9 +75,23 @@ void normalizeBinaryMetadata(BinaryImage &Img) {
 
 Expected<BinaryImage> loadBinary(const std::filesystem::path &Path,
                                  const BinaryLoadOptions &Opts) {
-  auto TheLoader = Loader::create(Path);
+  std::unique_ptr<Loader> TheLoader;
+  switch (Opts.Choice.Format) {
+  case BinaryFormat::Unknown:
+    TheLoader = Loader::create(Path);
+    if (!TheLoader)
+      return make_error<StringError>(Loader::describeRefusal(Path),
+                                     inconvertibleErrorCode());
+    break;
+  case BinaryFormat::Raw:
+    TheLoader = std::make_unique<RawLoader>(Opts.Choice.Raw);
+    break;
+  default:
+    TheLoader = Loader::create(Opts.Choice.Format);
+    break;
+  }
   if (!TheLoader)
-    return make_error<StringError>("unknown binary format: " + pathToUTF8(Path),
+    return make_error<StringError>("no loader reads the chosen format",
                                    inconvertibleErrorCode());
   if (!Opts.OnlyFunctionEntries.empty())
     TheLoader->restrictFunctions(Opts.OnlyFunctionEntries);

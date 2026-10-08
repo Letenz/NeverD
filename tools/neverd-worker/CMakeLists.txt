@@ -108,6 +108,10 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/names_rebuild_test.py"
                 "$<TARGET_FILE:neverd-worker>")
       set_tests_properties(NeverDWorkerNamesRebuild PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+      add_test(NAME NeverDWorkerBinaryFile
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/binary_file_test.py"
+                "$<TARGET_FILE:neverd-worker>")
+      set_tests_properties(NeverDWorkerBinaryFile PROPERTIES TIMEOUT 60)
       add_test(NAME NeverDWorkerFunctionEdits
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/function_edits_test.py"
                 "$<TARGET_FILE:neverd-worker>")

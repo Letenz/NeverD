@@ -384,11 +384,21 @@ void Session::sendOpen(const QString &requested, const QString &path,
                        const QString &database,
                        const QHash<QString, QByteArray> &state,
                        LoadOptions options) {
+  QJsonObject payload{{"path", path},
+                      {"debug_info", options.debugInfo},
+                      {"analysis", options.analysis}};
+  if (!options.loader.isEmpty())
+    payload.insert(QStringLiteral("loader"), options.loader);
+  if (options.loader == QLatin1String("binary")) {
+    payload.insert(QStringLiteral("processor"), options.processor);
+    payload.insert(QStringLiteral("base"), hexAddress(options.base));
+    payload.insert(QStringLiteral("offset"), hexAddress(options.offset));
+    payload.insert(QStringLiteral("size"), hexAddress(options.size));
+    if (options.entry)
+      payload.insert(QStringLiteral("entry"), hexAddress(*options.entry));
+  }
   command(
-      QStringLiteral("open"),
-      {{"path", path},
-       {"debug_info", options.debugInfo},
-       {"analysis", options.analysis}},
+      QStringLiteral("open"), payload,
       [this, requested, path, database, state,
        options](const QJsonObject &payload) {
         opening_ = false;

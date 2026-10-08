@@ -2317,6 +2317,58 @@ Signed: %4</source>
         <source>Processor: %1</source>
         <translation>プロセッサ: %1</translation>
     </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1 は 16 進数ではありません</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>ファイルを読み込むベースアドレス</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>ファイルのコードが動作するプロセッサを選択します</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>エントリポイント(&amp;N)</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>ファイルオフセット(&amp;O)</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>読み込むバイト数</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>イメージベース(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>読み込みサイズ(&amp;Z)</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>プロセッサの種類（ダブルクリックで設定）(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>イメージベース</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>ファイルの末尾まで</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>実行を開始するアドレス</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>読み込むバイトのファイル内での開始位置</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2355,6 +2407,10 @@ Signed: %4</source>
     <message>
         <source>Solana BPF</source>
         <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>Thumb (AArch32)</source>
+        <translation>Thumb（AArch32）</translation>
     </message>
 </context>
 </TS>

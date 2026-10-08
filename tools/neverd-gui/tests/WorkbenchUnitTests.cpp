@@ -17,6 +17,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMainWindow>
 #include <QMenuBar>
@@ -449,6 +450,74 @@ private slots:
     QVERIFY(refused.findChild<QLabel *>(QStringLiteral("note"))
                 ->text()
                 .contains(QStringLiteral("NeverD has no MIPS processor")));
+  }
+
+  void loadDialogReadsABinaryFileAsTheUserSays() {
+    // Data no header names: a binary file, read as the processor and at the
+    // address the user picks.
+    const QJsonArray rows{QJsonObject{{"loader", "binary"},
+                                      {"text", "Binary file"},
+                                      {"processor", ""},
+                                      {"loadable", true}}};
+    LoadFileDialog dialog(QStringLiteral("/tmp/firmware.bin"), rows);
+    QCOMPARE(dialog.row(), 0);
+    auto *processors =
+        dialog.findChild<QTreeWidget *>(QStringLiteral("processors"));
+    auto *accept = dialog.findChild<QPushButton *>(QStringLiteral("ok"));
+    QVERIFY(processors->isEnabled());
+    // No processor is assumed.
+    QVERIFY(!accept->isEnabled());
+    QTreeWidgetItem *aarch64 = nullptr, *evm = nullptr;
+    for (int family = 0; family < processors->topLevelItemCount(); ++family)
+      for (int child = 0;
+           child < processors->topLevelItem(family)->childCount(); ++child) {
+        auto *item = processors->topLevelItem(family)->child(child);
+        const auto name = item->data(0, Qt::UserRole).toString();
+        if (name == QLatin1String("aarch64"))
+          aarch64 = item;
+        if (name == QLatin1String("evm"))
+          evm = item;
+      }
+    QVERIFY(aarch64 && evm);
+    // Bytecode machines read no binary file.
+    QVERIFY(!(evm->flags() & Qt::ItemIsEnabled));
+    processors->setCurrentItem(aarch64);
+    QVERIFY(accept->isEnabled());
+    dialog.findChild<QLineEdit *>(QStringLiteral("base"))
+        ->setText(QStringLiteral("0x80000"));
+    const auto options = dialog.options();
+    QCOMPARE(options.processor, QStringLiteral("aarch64"));
+    QCOMPARE(options.base, quint64(0x80000));
+    QCOMPARE(options.offset, quint64(0));
+    QVERIFY(!options.entry);
+    // A field that holds no number stops the load and says so.
+    dialog.findChild<QLineEdit *>(QStringLiteral("entry"))
+        ->setText(QStringLiteral("start"));
+    QVERIFY(!accept->isEnabled());
+    QVERIFY(dialog.findChild<QLabel *>(QStringLiteral("note"))
+                ->text()
+                .contains(QStringLiteral("start")));
+    QCOMPARE(options.loader, QStringLiteral("binary"));
+    // The processor picked last time is picked again.
+    LoadFileDialog again(QStringLiteral("/tmp/firmware.bin"), rows);
+    again.setBinaryProcessor(QStringLiteral("thumb"));
+    QCOMPARE(again.options().processor, QStringLiteral("thumb"));
+    QVERIFY(again.findChild<QPushButton *>(QStringLiteral("ok"))->isEnabled());
+    // A loader the file's name alone suggests is never the default, and
+    // reads the file only when the user chooses it.
+    const QJsonArray named{QJsonObject{{"loader", "evm"},
+                                       {"text", "EVM bytecode"},
+                                       {"processor", "evm"},
+                                       {"loadable", true},
+                                       {"by_name", true}},
+                           rows[0]};
+    LoadFileDialog chosen(QStringLiteral("/tmp/firmware.bin"), named);
+    QCOMPARE(chosen.row(), 1);
+    chosen.findChild<QListWidget *>(QStringLiteral("loaders"))
+        ->setCurrentRow(0);
+    QCOMPARE(chosen.options().loader, QStringLiteral("evm"));
+    QVERIFY(chosen.options().processor.isEmpty());
+    QVERIFY(chosen.findChild<QPushButton *>(QStringLiteral("ok"))->isEnabled());
   }
 
   void themesDefineEveryColor() {

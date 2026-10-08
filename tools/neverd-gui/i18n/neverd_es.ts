@@ -2321,6 +2321,58 @@ Con signo: %4</translation>
         <source>Processor: %1</source>
         <translation>Procesador: %1</translation>
     </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1 no es un número hexadecimal</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>Dirección base en la que se carga el archivo</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>Elija el procesador en el que se ejecuta el código del archivo</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>&amp;Punto de entrada</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>D&amp;esplazamiento en el archivo</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>Cuántos bytes cargar</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>&amp;Base de la imagen</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>Tamaño de ca&amp;rga</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>&amp;Tipo de procesador (doble clic para fijarlo)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>La base de la imagen</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>Hasta el final del archivo</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>Dónde empieza la ejecución</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>Dónde empiezan en el archivo los bytes cargados</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2359,6 +2411,10 @@ Con signo: %4</translation>
     <message>
         <source>Solana BPF</source>
         <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>Thumb (AArch32)</source>
+        <translation>Thumb (AArch32)</translation>
     </message>
 </context>
 </TS>
