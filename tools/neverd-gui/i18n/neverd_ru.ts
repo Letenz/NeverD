@@ -2301,6 +2301,58 @@ Signed: %4</source>
         <source>Processor: %1</source>
         <translation>Процессор: %1</translation>
     </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1 — не шестнадцатеричное число</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>Базовый адрес загрузки файла</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>Выберите процессор, на котором выполняется код файла</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>Точка вхо&amp;да</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>&amp;Смещение в файле</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>Сколько байт загрузить</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>&amp;Базовый адрес образа</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>&amp;Размер загрузки</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>&amp;Тип процессора (двойной щелчок, чтобы задать)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>Базовый адрес образа</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>До конца файла</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>Где начинается выполнение</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>С какого места файла начинаются загружаемые байты</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2339,6 +2391,10 @@ Signed: %4</source>
     <message>
         <source>Solana BPF</source>
         <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>Thumb (AArch32)</source>
+        <translation>Thumb (AArch32)</translation>
     </message>
 </context>
 </TS>

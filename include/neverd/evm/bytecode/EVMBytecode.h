@@ -116,9 +116,22 @@ ImageMetadata describeBytecode(const LoadedBytecode &Loaded);
 /// Return true only for files that can be fully validated as EVM input.
 bool looksLikeEVMInput(const std::filesystem::path &Path);
 
-/// Return true for explicit EVM/container filename extensions. This does not
-/// validate file contents and lets callers preserve detailed loader errors.
-bool hasEVMFileExtension(const std::filesystem::path &Path);
+/// How a file's name and contents tie it to EVM bytecode.
+enum class EVMInputMatch : uint8_t {
+  /// Nothing does.
+  None,
+  /// Binary contents under a name other tools give their files too, such as
+  /// a firmware image's .bin: they read as EVM bytecode only when the user
+  /// chooses so.
+  Name,
+  /// The file is EVM bytecode: text that decodes as bytecode or an artifact,
+  /// text under an EVM name, whose errors the EVM loader explains, or bytes
+  /// under a name that says EVM.  EVMFileNames.def lists the names.
+  Bytecode,
+};
+
+/// How \p Path's name and contents tie it to EVM bytecode.
+EVMInputMatch matchEVMInput(const std::filesystem::path &Path);
 
 } // namespace neverd::evm
 

@@ -69,6 +69,9 @@ struct MockSession {
   std::vector<std::uint64_t> functions = listedFunctions({});
   neverd_load_progress_fn progress = nullptr;
   void *progressUser = nullptr;
+  /// The loader the next load reads with, and the one the image was read
+  /// with, in neverd_session_set_load_options JSON; null reads the sidecar.
+  Json requestedLoad, loadedWith = {{"loader", "auto"}};
 };
 MockSession *session(neverd_session_t s) {
   return static_cast<MockSession *>(s);
@@ -111,6 +114,11 @@ int neverd_session_load(neverd_session_t s, const char *path) {
     return 0;
   }
   session(s)->path = path;
+  session(s)->loadedWith = session(s)->requestedLoad.is_null()
+                               ? read(std::string(path) + ".neverd-load.json")
+                               : session(s)->requestedLoad;
+  if (!session(s)->loadedWith.is_object())
+    session(s)->loadedWith = {{"loader", "auto"}};
   notify("ready", 1);
   return 1;
 }
@@ -187,9 +195,29 @@ const char *neverd_identify_json(const char *path) {
                   {"processor", ""},
                   {"bits", 0},
                   {"endian", "little"},
-                  {"loadable", false},
-                  {"reason", "Loading a binary file is not supported yet"}});
+                  {"loadable", true}});
   return copy(Json{{"rows", rows}}.dump());
+}
+// The loader choice as the engine takes it: auto, evm, or a binary file
+// with a processor; kept in the input's load options sidecar.
+int neverd_session_set_load_options(neverd_session_t s, const char *json) {
+  if (!json) {
+    session(s)->requestedLoad = nullptr;
+    return 0;
+  }
+  const Json options = Json::parse(json, nullptr, false);
+  const std::string loader =
+      options.is_object() ? options.value("loader", "auto") : "";
+  if ((loader != "auto" && loader != "evm" && loader != "binary") ||
+      (loader == "binary" && options.value("processor", "").empty())) {
+    session(s)->error = "mock: unusable load options";
+    return -1;
+  }
+  session(s)->requestedLoad = options;
+  return 0;
+}
+const char *neverd_session_load_options_json(neverd_session_t s) {
+  return copy(session(s)->loadedWith.dump());
 }
 void neverd_session_set_debug_info_enabled(neverd_session_t s, int enabled) {
   session(s)->debugInfo = enabled != 0;

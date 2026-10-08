@@ -190,11 +190,14 @@ std::optional<std::vector<Chunk>> compressInput(const QString &path,
 } // namespace
 
 const QStringList &ProjectDatabase::sidecarSuffixes() {
+  // Every table the worker's edit history keeps, its history, and how a
+  // binary file is read, which no edit changes.
   static const QStringList suffixes = {
-      QStringLiteral(".neverd-annotations.json"),
-      QStringLiteral(".neverd-renames.json"),
-      QStringLiteral(".neverd-functions.json"),
-      QStringLiteral(".neverd-history.json")};
+#define NEVERD_USER_STATE_TABLE(Table, Kind, Suffix, Optional)                 \
+  QStringLiteral(Suffix),
+#include "UserStateTables.def"
+      QStringLiteral(".neverd-history.json"),
+      QStringLiteral(".neverd-load.json")};
   return suffixes;
 }
 

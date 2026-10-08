@@ -41,7 +41,7 @@ rewrite는 명시적으로 거부되며 `patch`는 native binary 전용입니다
 
 | 입력 | 인식 및 정규화 |
 |------|----------------|
-| raw bytes | `.raw`, `.evmraw` 또는 명시적 EVM 확장자의 binary content |
+| raw bytes | `.evm` 또는 `.evmraw`의 binary content. `.bin`, `.hex`, `.bytecode`, `.json`, `.raw`는 다른 도구도 쓰는 확장자이므로, 그 binary content는 EVM 로더를 선택했을 때(`--loader evm` 또는 불러오기 대화 상자의 EVM 행)만 EVM bytecode로 읽고, 그렇지 않으면 불러오기를 거부합니다 |
 | hex text | 선택적 `0x`, 임의 ASCII 공백, `.evm`/`.hex`/`.bin`/`.bytecode`; 검증된 무확장자 hex도 감지 |
 | compiler artifact | root 또는 `evm` 아래 `deployedBytecode`, `runtimeBytecode`, `bytecode`를 가진 `.json`; `contracts → file → contract → evm` solc standard JSON도 지원 |
 

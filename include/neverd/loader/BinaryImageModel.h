@@ -1367,6 +1367,8 @@ struct BinaryImage {
       return "Mach-O";
     case BinaryFormat::EVM:
       return kEVMFormatName.data();
+    case BinaryFormat::Raw:
+      return "Binary";
     default:
       return "Unknown";
     }

@@ -80,6 +80,7 @@ constexpr char LayoutFileName[] = "desktop.json";
 constexpr char RecentFilesKey[] = "files/recent";
 constexpr char OpcodeBytesKey[] = "listing/opcodeBytes";
 constexpr char AnalysisIndicatorKey[] = "analysis/indicator";
+constexpr char BinaryProcessorKey[] = "load/binaryProcessor";
 // String search defaults and bounds (the worker's string_options).
 constexpr int DefaultStringMinLength = 4;
 constexpr int MaxStringMinLength = 1024;
@@ -1327,9 +1328,14 @@ void MainWindow::chooseLoader(const QString &path) {
         LoadFileDialog dialog(path, payload.value("rows").toArray(), this);
         dialog.setIndicator(
             QSettings().value(AnalysisIndicatorKey, true).toBool());
+        dialog.setBinaryProcessor(
+            QSettings().value(BinaryProcessorKey).toString());
         if (dialog.exec() != QDialog::Accepted || dialog.row() < 0)
           return;
         QSettings().setValue(AnalysisIndicatorKey, dialog.indicator());
+        if (const auto processor = dialog.options().processor;
+            !processor.isEmpty())
+          QSettings().setValue(BinaryProcessorKey, processor);
         applyIndicator();
         session_.open(path, dialog.options());
       },

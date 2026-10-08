@@ -15,6 +15,7 @@
 
 #include "../plugin/PluginManager.h"
 #include "ImageStrings.h"
+#include "LoadOptions.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/CSourceMap.h"
@@ -352,6 +353,12 @@ struct Session {
   };
   /// The user's operand formats by instruction address and operand index.
   std::map<va_t, std::map<unsigned, OperandFormat>> OperandFormats;
+  /// The loader the next load reads the input with, as
+  /// neverd_session_set_load_options chose it.  Unset, the load reads the
+  /// load options sidecar, else the file's own format.
+  std::optional<LoaderChoice> RequestedLoad;
+  /// The loader the loaded image was read with.
+  LoaderChoice LoadedChoice;
 
   bool isDeletedFunction(va_t Entry) const {
     const auto Edit = FunctionEdits.find(Entry);
@@ -498,6 +505,12 @@ struct Session {
   bool ensurePipeline() {
     if (!Loaded) {
       setError("no binary loaded");
+      return false;
+    }
+    // Analysis would have to guess the calling convention of a binary file;
+    // its functions are browsed, not lifted.
+    if (Img.Format == BinaryFormat::Raw) {
+      setError(BinaryFileNotAnalyzed.str());
       return false;
     }
     if (PipeRan && PipelineFeatureGeneration != SigDB.featureGeneration())

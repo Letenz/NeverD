@@ -2295,6 +2295,58 @@ Signed: %4</source>
         <source>Processor: %1</source>
         <translation>프로세서: %1</translation>
     </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1은(는) 16진수가 아닙니다</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>파일을 불러올 기준 주소</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>파일의 코드가 실행되는 프로세서를 선택하세요</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>진입점(&amp;N)</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>파일 오프셋(&amp;O)</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>불러올 바이트 수</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>이미지 베이스(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>불러올 크기(&amp;Z)</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>프로세서 종류(두 번 클릭하여 설정)(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>이미지 베이스</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>파일 끝까지</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>실행이 시작되는 주소</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>불러올 바이트가 파일에서 시작하는 위치</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2333,6 +2385,10 @@ Signed: %4</source>
     <message>
         <source>Solana BPF</source>
         <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>Thumb (AArch32)</source>
+        <translation>Thumb(AArch32)</translation>
     </message>
 </context>
 </TS>

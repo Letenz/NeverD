@@ -2310,6 +2310,58 @@ Signed: %4</source>
         <source>Processor: %1</source>
         <translation>المعالج: %1</translation>
     </message>
+    <message>
+        <source>%1 is not a hexadecimal number</source>
+        <translation>%1 ليس رقمًا ست عشريًا</translation>
+    </message>
+    <message>
+        <source>Base address for loading the file</source>
+        <translation>العنوان الأساسي لتحميل الملف</translation>
+    </message>
+    <message>
+        <source>Choose the processor the file&apos;s code runs on</source>
+        <translation>اختر المعالج الذي تعمل عليه شيفرة الملف</translation>
+    </message>
+    <message>
+        <source>E&amp;ntry point</source>
+        <translation>نقطة الدخول(&amp;N)</translation>
+    </message>
+    <message>
+        <source>File &amp;offset</source>
+        <translation>إزاحة الملف(&amp;O)</translation>
+    </message>
+    <message>
+        <source>How many bytes to load</source>
+        <translation>عدد البايتات المراد تحميلها</translation>
+    </message>
+    <message>
+        <source>Image &amp;base</source>
+        <translation>أساس الصورة(&amp;B)</translation>
+    </message>
+    <message>
+        <source>Loading si&amp;ze</source>
+        <translation>حجم التحميل(&amp;Z)</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype (double-click to set)</source>
+        <translation>نوع المعالج (انقر نقرًا مزدوجًا للتعيين)(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The image base</source>
+        <translation>أساس الصورة</translation>
+    </message>
+    <message>
+        <source>To the end of the file</source>
+        <translation>حتى نهاية الملف</translation>
+    </message>
+    <message>
+        <source>Where execution starts</source>
+        <translation>حيث يبدأ التنفيذ</translation>
+    </message>
+    <message>
+        <source>Where in the file the loaded bytes start</source>
+        <translation>موضع بدء البايتات المحمّلة في الملف</translation>
+    </message>
 </context>
 <context>
     <name>Processors</name>
@@ -2348,6 +2400,10 @@ Signed: %4</source>
     <message>
         <source>Solana BPF</source>
         <translation>Solana BPF</translation>
+    </message>
+    <message>
+        <source>Thumb (AArch32)</source>
+        <translation>Thumb (AArch32)</translation>
     </message>
 </context>
 </TS>

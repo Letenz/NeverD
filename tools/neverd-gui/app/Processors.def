@@ -5,9 +5,11 @@
 //===----------------------------------------------------------------------===//
 //
 // NEVERD_PROCESSOR_FAMILY(Id, Name): a folder of the processor list.
-// NEVERD_PROCESSOR(Family, ShortName, Name): a processor the engine loads.
-// The short name is the engine's processor name, as neverd_identify_json and
-// neverd_session_arch_name spell it.
+// NEVERD_PROCESSOR(Family, ShortName, Name, Binary): a processor the engine
+// loads.  The short name is the engine's processor name, as
+// neverd_identify_json and neverd_session_arch_name spell it, or the binary
+// file processor "thumb"; Binary says whether a binary file can be read as
+// it.
 //
 //===----------------------------------------------------------------------===//
 
@@ -23,16 +25,22 @@ NEVERD_PROCESSOR_FAMILY(VirtualMachine,
 #ifdef NEVERD_PROCESSOR
 NEVERD_PROCESSOR(X86, "x86",
                  QT_TRANSLATE_NOOP("Processors",
-                                   "Intel 80386 and later (32-bit)"))
+                                   "Intel 80386 and later (32-bit)"),
+                 true)
 NEVERD_PROCESSOR(X86, "x86_64",
-                 QT_TRANSLATE_NOOP("Processors", "AMD64 and Intel 64 (64-bit)"))
+                 QT_TRANSLATE_NOOP("Processors", "AMD64 and Intel 64 (64-bit)"),
+                 true)
 NEVERD_PROCESSOR(ARM, "arm",
-                 QT_TRANSLATE_NOOP("Processors", "ARM and Thumb (AArch32)"))
+                 QT_TRANSLATE_NOOP("Processors", "ARM and Thumb (AArch32)"),
+                 true)
+NEVERD_PROCESSOR(ARM, "thumb",
+                 QT_TRANSLATE_NOOP("Processors", "Thumb (AArch32)"), true)
 NEVERD_PROCESSOR(ARM, "aarch64",
-                 QT_TRANSLATE_NOOP("Processors", "ARM64 (AArch64)"))
+                 QT_TRANSLATE_NOOP("Processors", "ARM64 (AArch64)"), true)
 NEVERD_PROCESSOR(VirtualMachine, "evm",
-                 QT_TRANSLATE_NOOP("Processors", "Ethereum Virtual Machine"))
+                 QT_TRANSLATE_NOOP("Processors", "Ethereum Virtual Machine"),
+                 false)
 NEVERD_PROCESSOR(VirtualMachine, "sbf",
-                 QT_TRANSLATE_NOOP("Processors", "Solana BPF"))
+                 QT_TRANSLATE_NOOP("Processors", "Solana BPF"), false)
 #undef NEVERD_PROCESSOR
 #endif
