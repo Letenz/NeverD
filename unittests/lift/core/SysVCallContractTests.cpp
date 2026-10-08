@@ -426,6 +426,36 @@ TEST(SysVCallContract, PassThroughArgumentsReachAPrototypedImport) {
   }
 }
 
+TEST(SysVCallContract, AnArgumentOnlyTheCallSiteScanReadsKeepsItsValue) {
+  // parse(o): s = o->text + 1 in RDI, tested by a load through it; the call
+  // to an import with no prototype in the next block passes it on.  Only
+  // the call site's register scan reads that RDI, after the uses were
+  // counted, so its value must still print.
+  constexpr va_t Parse = Text, Stub = Text + 0x30;
+  std::vector<uint8_t> Code(0x40, 0xCC);
+  std::vector<uint8_t> ParseCode = {0x48, 0x8B, 0x47, 0x10, // mov rax, [rdi+16]
+                                    0x48, 0x8D, 0x78, 0x01, // lea rdi, [rax+1]
+                                    0x80, 0x3F, 0x2D, // cmp byte [rdi], '-'
+                                    0x74, 0x08,       // je minus
+                                    0x31, 0xF6,       // xor esi, esi
+                                    0xE8};            // call parse_num
+  for (uint8_t B : rel32(Parse + 20, Stub))
+    ParseCode.push_back(B);
+  for (uint8_t B : {0xC3,                         // ret
+                    0xB8, 0x01, 0x00, 0x00, 0x00, // minus: mov eax, 1
+                    0xC3})                        // ret
+    ParseCode.push_back(B);
+  put(Code, Parse, ParseCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Parse, "parse"}}, {{Stub, "parse_num"}});
+  const std::string Source = liftEntries(Img, {Parse});
+  const std::string Body = body(Source, "parse");
+  ASSERT_FALSE(Body.empty()) << Source;
+  EXPECT_NE(Body.find("parse_num("), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("unknown register"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
+}
+
 TEST(SysVCallContract, ARegisterTheCalleeLeavesAloneIsNoReturnedField) {
   // add(a, b): rdx = b; eax = inc(a); return eax + edx.  inc never writes
   // RDX, so GCC keeps b there across the call; EDX after it is b, not a
