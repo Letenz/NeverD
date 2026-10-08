@@ -438,7 +438,6 @@ struct Session {
 
   /// Recompute display identity from current evidence. No IR or image names
   /// are modified, and a failed/withdrawn match cannot leave a stale label.
-  /// C emitted so far is forgotten: it names data as the user named it then.
   void refreshFunctionNames();
 
   /// Drop the kept C of every function.  A change to anything the C emitters
