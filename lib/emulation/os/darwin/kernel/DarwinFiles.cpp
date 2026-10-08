@@ -105,12 +105,12 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
   if (Options.DescriptorLimit < 3 ||
       Options.DescriptorLimit > limits::Descriptors || Entries > limits::Files)
     return failure(diagnostic::FileOptionsLimit);
-  // Every admitted deletion/rekey subtree needs a mutable parent. Excluding
-  // fixed link names from those parents also protects them from subtree moves
-  // and inherited creation grants. Target bytes may name mutable objects.
+  // A mutable ancestor cannot confer mutation authority on an initial link.
+  // Each admitted link retains its independent, object-owned grant.
   for (const auto &Directory : Options.MutableDirectories)
     if (llvm::any_of(Options.SymbolicLinks, [&](const auto &Link) {
-          return containsPath(Directory, Link.first);
+          return containsPath(Directory, Link.first) &&
+                 !Options.MutableSymbolicLinks.contains(Link.first);
         }))
       return failure(diagnostic::SymbolicLinkNamespace);
   uint64_t Total = Options.StandardInput ? Options.StandardInput->size() : 0;
@@ -304,6 +304,34 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     if (HasAlias(Path))
       return failure(diagnostic::NamespaceAlias);
   }
+  for (const auto &Path : Options.MutableSymbolicLinks) {
+    const auto Parent = parentPath(Path);
+    if (!Options.SymbolicLinks.contains(Path) ||
+        !Options.MutableDirectories.contains(Parent))
+      return failure(diagnostic::SymbolicLinkMutableOption);
+    if (auto E = PathInput(Path, false))
+      return E;
+    const auto M = Options.Metadata.find(Path);
+    if (M != Options.Metadata.end() &&
+        (M->second.Flags || (M->second.Mode & 07000)))
+      return failure(diagnostic::NamespaceFlags);
+    if (HasAlias(Path) ||
+        (M != Options.Metadata.end() && M->second.LinkCount != 1))
+      return failure(diagnostic::NamespaceAlias);
+    const auto P = Options.Metadata.find(Parent);
+    if (M != Options.Metadata.end() && P != Options.Metadata.end() &&
+        M->second.Device != P->second.Device)
+      return failure(diagnostic::SymbolicLinkMutableDevice);
+  }
+  for (const auto &[Path, Policy] : Options.SymbolicLinkMutationPolicies) {
+    const auto M = Options.Metadata.find(Path);
+    if (!Options.MutableSymbolicLinks.contains(Path) ||
+        M == Options.Metadata.end() || !M->second.Inode ||
+        !validTime(Policy.Time))
+      return failure(diagnostic::SymbolicLinkMetadataMutationOption);
+    if (auto E = PathInput(Path, false))
+      return E;
+  }
   for (const auto &[Path, Bytes] : Options.Files) {
     if (!Options.MutableDirectories.contains(parentPath(Path)))
       continue;
@@ -374,7 +402,9 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
   std::map<std::string, int32_t> MoveDevices;
   for (const auto &[Path, M] : Options.Metadata) {
     const auto Directory =
-        Options.Files.contains(Path) ? parentPath(Path) : Path;
+        Options.Files.contains(Path) || Options.SymbolicLinks.contains(Path)
+            ? parentPath(Path)
+            : Path;
     const auto Domain = initialMountDomain(Options, Directory);
     if (!MoveDomains.contains(Domain))
       continue;
@@ -491,10 +521,13 @@ void DarwinFiles::initializeNamespace() {
     Node->Initial = Target;
     Node->Path = Path;
     Node->Parent = initialDirectoryNode(parentPath(Path));
-    Node->Protected = true;
+    Node->Protected = !Options->MutableSymbolicLinks.contains(Path);
     const auto Metadata = Options->Metadata.find(Path);
     if (Metadata != Options->Metadata.end())
       Node->Metadata = &Metadata->second;
+    const auto Policy = Options->SymbolicLinkMutationPolicies.find(Path);
+    if (Policy != Options->SymbolicLinkMutationPolicies.end())
+      Node->MutationTime = &Policy->second.Time;
     Links.emplace(Path, std::move(Node));
   }
   NamespaceReady = true;
@@ -578,8 +611,7 @@ uint32_t DarwinFiles::dynamicEntries() const {
   // created links consume additional entries; files retain their orphan charge.
   return Nodes.size() + Unlinked.size() +
          llvm::count_if(
-             Links,
-             [](const auto &Entry) { return !Entry.second->Protected; }) +
+             Links, [](const auto &Entry) { return Entry.second->Created; }) +
          llvm::count_if(
              Directories,
              [](const auto &Entry) { return Entry.second->Created; }) +
@@ -944,8 +976,12 @@ const DarwinFileMetadata *DarwinFiles::metadata(const Description &File) const {
     return File.File->metadata();
   if (File.Directory && File.Directory->CurrentMetadata)
     return &*File.Directory->CurrentMetadata;
-  if (File.Link && File.Link->CurrentMetadata)
-    return &*File.Link->CurrentMetadata;
+  if (File.Link) {
+    if (File.Link->MetadataInvalidated)
+      return nullptr;
+    if (File.Link->CurrentMetadata)
+      return &*File.Link->CurrentMetadata;
+  }
   return File.Metadata;
 }
 
@@ -957,6 +993,8 @@ DarwinFiles::status(const Description &File, uint64_t Address,
     return unsupported(Result, diagnostic::DirectoryMutated);
   if (File.File && File.File->MetadataInvalidated)
     return unsupported(Result, diagnostic::FileMutatedMetadata);
+  if (File.Link && File.Link->MetadataInvalidated)
+    return unsupported(Result, diagnostic::SymbolicLinkMutatedMetadata);
   const auto *Metadata = metadata(File);
   if (!Metadata)
     return unsupported(Result, diagnostic::FileMetadata);
@@ -1061,8 +1099,10 @@ DarwinFiles::makeSymbolicLink(uint64_t Target, uint64_t Path,
   if (Policy && !Parent->Identity)
     return unsupported(Result, diagnostic::FileCreationParent);
   auto Node = std::make_shared<LinkNode>();
+  Node->Created = true;
   Node->CreatedTarget.emplace(Bytes.begin(), Bytes.end());
   Node->Path = File.Path;
+  Node->PathCharge = File.Path.size() + 1;
   Node->Parent = Parent;
   if (Policy) {
     const uint64_t Unit = Policy->Namespace->SymbolicLinkAllocationUnit;
@@ -1217,9 +1257,9 @@ DarwinFiles::unlink(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result,
       return unsupported(Result, diagnostic::DirectoryNotMutable);
     if (auto E = prepareMutation())
       return std::move(E);
-    // No descriptor or mapping owns the link itself. Its opaque target and
-    // the current path charge are released with this namespace entry.
-    const uint64_t Charge = Link->Path.size() + 1 + Link->bytes().size();
+    // No observer owns the link itself. Initial target/path inputs stay fixed;
+    // only costs owned dynamically by this object can be released.
+    const uint64_t Charge = Link->dynamicCharge();
     Links.erase(Link->Path);
     *StorageUsed -= Charge;
     updateDirectoryMetadata(*Link->Parent, true);
@@ -1250,8 +1290,13 @@ void DarwinFiles::updateNamespaceMetadata(Contents &Node, bool Removed) {
 }
 
 void DarwinFiles::updateNamespaceMetadata(LinkNode &Node) {
-  if (Node.CurrentMetadata)
+  if (Node.MutationTime) {
+    if (!Node.CurrentMetadata)
+      Node.CurrentMetadata = *Node.Metadata;
     Node.CurrentMetadata->ChangeTime = *Node.MutationTime;
+  } else if (Node.Metadata) {
+    Node.MetadataInvalidated = true;
+  }
 }
 
 void DarwinFiles::updateDirectoryMetadata(DirectoryNode &Node,
@@ -1409,6 +1454,11 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   for (const auto *Metadata : {metadata(Source), metadata(Target)})
     if (Metadata && !SameDevice(Metadata->Device))
       return unsupported(Result, diagnostic::RenameMount);
+  // Initial identity remains authoritative even after complete stat becomes
+  // unavailable; a prior move must not discard known mount contradictions.
+  for (const auto &Link : {Source.Link, Target.Link})
+    if (Link && Link->Metadata && !SameDevice(Link->Metadata->Device))
+      return unsupported(Result, diagnostic::RenameMount);
   if (Source.Path == Target.Path)
     return returned(0);
   if (Mode == RenameMode::Swap &&
@@ -1426,9 +1476,9 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
     // Both objects stay linked. Neither their bytes nor their mapping leases
     // provide replacement credit; only their previous dynamic path charges do.
     const uint64_t SourceOld =
-        Source.Link ? Source.Link->Path.size() + 1 : Source.File->PathCharge;
+        Source.Link ? Source.Link->PathCharge : Source.File->PathCharge;
     const uint64_t TargetOld =
-        Target.Link ? Target.Link->Path.size() + 1 : Target.File->PathCharge;
+        Target.Link ? Target.Link->PathCharge : Target.File->PathCharge;
     const uint64_t Other = *StorageUsed - SourceOld - TargetOld;
     const uint64_t SourceCharge = Target.Path.size() + 1;
     const uint64_t TargetCharge = Source.Path.size() + 1;
@@ -1454,6 +1504,7 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
       else
         Exchange(Links, Nodes);
       Source.Link->Path.swap(SourceIdentity);
+      Source.Link->PathCharge = SourceCharge;
       Source.Link->Parent = TargetParent;
       updateNamespaceMetadata(*Source.Link);
     } else {
@@ -1468,6 +1519,7 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
     }
     if (Target.Link) {
       Target.Link->Path.swap(TargetIdentity);
+      Target.Link->PathCharge = TargetCharge;
       Target.Link->Parent = Parent;
       updateNamespaceMetadata(*Target.Link);
     } else {
@@ -1488,13 +1540,11 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
               Target.File->Lease.use_count() == 1
           ? Target.bytes().size() + Target.File->PathCharge
           : 0;
-  // Runtime links have no descriptor or mapping lease of their own. Replacing
-  // one releases its entire current name/target charge, regardless of owners
-  // of the referent. Moving a source link changes only its name charge.
-  const uint64_t LinkCredit =
-      Target.Link ? Target.Link->Path.size() + 1 + Target.bytes().size() : 0;
+  // Link replacement credit comes from this object's dynamic costs, never
+  // fixed initial declarations or the independent leases of its referent.
+  const uint64_t LinkCredit = Target.Link ? Target.Link->dynamicCharge() : 0;
   const uint64_t OldCharge =
-      Source.Link ? Source.Link->Path.size() + 1 : Source.File->PathCharge;
+      Source.Link ? Source.Link->PathCharge : Source.File->PathCharge;
   const uint64_t Other = *StorageUsed - OldCharge - FileCredit - LinkCredit;
   const uint64_t Charge = Target.Path.size() + 1;
   if (Target.Path.size() >= limits::Path || Charge > limits::Bytes - Other)
@@ -1517,6 +1567,7 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   if (Source.Link) {
     Move(Links);
     Source.Link->Path.swap(NewIdentity);
+    Source.Link->PathCharge = Charge;
     Source.Link->Parent = TargetParent;
     updateNamespaceMetadata(*Source.Link);
   } else {
@@ -1679,9 +1730,9 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
       return unsupported(Result, diagnostic::NamespaceAlias);
     if (New->size() >= limits::Path)
       return unsupported(Result, diagnostic::RenameLimit);
-    // Target bytes stay opaque and charged. Only the live name/NUL changes;
-    // unlike an initial file, every runtime link already owns that charge.
-    OldCharge += Node->Path.size() + 1;
+    // Initial targets and names retain their fixed input reservations. Rekey
+    // changes only the separately owned dynamic name charge.
+    OldCharge += Node->PathCharge;
     NewCharge += New->size() + 1;
     auto Key = *New;
     LinkMoves.push_back({Node, std::move(*New), std::move(Key), {}});
@@ -1748,6 +1799,7 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
     Move.Entry.key().swap(Move.Key);
     Links.insert(std::move(Move.Entry));
     Move.Node->Path.swap(Move.Path);
+    Move.Node->PathCharge = Move.Node->Path.size() + 1;
     // Retain the actual parent object as its path moves with the subtree.
     // Rewriting raw targets would change relative, dangling and opaque links.
   }

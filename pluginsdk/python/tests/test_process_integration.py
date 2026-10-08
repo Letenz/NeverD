@@ -543,6 +543,14 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("unlinked-file", b"u"),
                                            ("created-file", b"c"),
                                            ("created-file-metadata", b"q"),
+                                           ("mutable-initial-links", b"M"),
+                                           ("virtual-mutable-initial-links", bytes.fromhex(
+                                               "85ffffffffa101003900000000000000efcdab8998badcfe0000000000000000"
+                                               "01000000000000800100000000000000ffffffffffffff7fffc99a3b00000000"
+                                               "f3ffffffffffffffc801000000000000fbffffffffffffff0600000000000000"
+                                               "040000000000000008000000000000000010000000000000efcdab8900000000"
+                                               "00000000000000000000000000000000"
+                                               )),
                                            ("initial-directory-metadata", b"I"),
                                            ("virtual-initial-directory-metadata", bytes.fromhex(
                                                "85ffffffed4105002900000000000000efcdab8998badcfe0000000000000000"
@@ -813,6 +821,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                                      if d["path"] == "/")["metadata"] = parent
                             file_options = json.dumps(writable_options)
                         if mode in ("created-namespace-metadata", "virtual-created-namespace-metadata",
+                                    "mutable-initial-links", "virtual-mutable-initial-links",
                                     "directory-enumeration-mutations", "virtual-directory-enumeration",
                                     "initial-directory-metadata", "virtual-initial-directory-metadata"):
                             namespace_options = json.loads(file_options)
@@ -834,6 +843,15 @@ class ProcessIntegrationTests(unittest.TestCase):
                             parent = dict(original, inode=41, mode=0o40755, size=0, blocks=0)
                             root = next(d for d in files["directories"] if d["path"] == "/")
                             root.update(mutable=True, swap_rename=True, metadata=parent)
+                            if mode in ("mutable-initial-links", "virtual-mutable-initial-links"):
+                                root.pop("contents", None)
+                                link_metadata = dict(original, inode=57, mode=0o120777, size=4)
+                                files["symbolic_links"] = [
+                                    {"path": "/initial", "target_hex": "64617461", "mutable": True,
+                                     "metadata": link_metadata,
+                                     "mutation_policy": {"mutation_time": {"seconds": -13, "nanoseconds": 456}}},
+                                    {"path": "/initial-dir", "target_hex": "656d707479", "mutable": True}]
+                                next(d for d in files["directories"] if d["path"] == "/empty")["metadata"] = dict(parent, inode=42)
                             if mode in ("initial-directory-metadata", "virtual-initial-directory-metadata"):
                                 root["mutation_policy"] = {
                                     "directory_entry_size": 17,

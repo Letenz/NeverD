@@ -50,18 +50,26 @@ def execute_cases(program: Path, cases: list[tuple[str, int, bytes]]) -> list[di
           tempfile.TemporaryDirectory(prefix="neverd-darwin-mixed-links-") as mixed,
           tempfile.TemporaryDirectory(prefix="neverd-darwin-created-links-") as created,
           tempfile.TemporaryDirectory(prefix="neverd-darwin-unlinked-links-") as removed,
-          tempfile.TemporaryDirectory(prefix="neverd-darwin-renamed-links-") as renamed):
+          tempfile.TemporaryDirectory(prefix="neverd-darwin-renamed-links-") as renamed,
+          tempfile.TemporaryDirectory(prefix="neverd-darwin-initial-links-") as initial):
         input_file = Path(directory) / "data"
         (Path(directory) / "empty").mkdir()
-        return _execute_cases(program, cases, input_file, Path(links), Path(mixed), Path(created), Path(removed), Path(renamed))
+        return _execute_cases(program, cases, input_file, Path(links), Path(mixed), Path(created), Path(removed), Path(renamed), Path(initial))
 
 
 def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_file: Path,
                    symbolic_root: Path, mixed_root: Path, created_root: Path, removed_root: Path,
-                   renamed_root: Path) -> list[dict]:
+                   renamed_root: Path, initial_root: Path) -> list[dict]:
     results = []
     for mode, status, output in cases:
         case_input = input_file
+        if mode == "mutable-initial-links":
+            catalogue = initial_root / "catalogue"
+            catalogue.mkdir()
+            (catalogue / "empty").mkdir()
+            (catalogue / "initial").symlink_to("data")
+            (catalogue / "initial-dir").symlink_to("empty")
+            case_input = catalogue / "data"
         if mode == "symbolic-links":
             catalogue = symbolic_root / "catalogue"
             catalogue.mkdir()

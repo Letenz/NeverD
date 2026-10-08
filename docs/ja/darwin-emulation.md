@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 9553588d9792a9f22ea6a9d595406637472b0122514d854a6ed41e9c90f43414 -->
+<!-- i18n-source: 1480ab7f58ad16bb60f46433bfc9c34563c292fc7f17c020ca9b427f5f99b2b8 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -732,7 +732,7 @@ AT_FDCWD 以外の `openat` は、アクセスモードと FD 容量より先に
 
 ## 固定初期シンボリックリンク
 
-`DarwinFileOptions::SymbolicLinks` / `darwin_files.symbolic_links` は正規絶対 `path` と生の16進 `target_hex`、任意のリンク自身の `metadata` を指定します。目標は1..1023非NULバイトで、非UTF-8、連続スラッシュ、ドット、存在しない目標も保持します。`files` は空配列でも必須です。名前の衝突/リンク配下の宣言は禁止。名前/NUL/目標は256項/16 MiBを共有。S_IFLNK、目標長と同じsize、DT_LNK=10、inodeの一致が必要で、設定CWDは実際のディレクトリです。
+以下の初期名は既定で保護されます。明示的な変更権限を付与した場合の動作は末尾の節を参照してください。 `DarwinFileOptions::SymbolicLinks` / `darwin_files.symbolic_links` は正規絶対 `path` と生の16進 `target_hex`、任意のリンク自身の `metadata` を指定します。目標は1..1023非NULバイトで、非UTF-8、連続スラッシュ、ドット、存在しない目標も保持します。`files` は空配列でも必須です。名前の衝突/リンク配下の宣言は禁止。名前/NUL/目標は256項/16 MiBを共有。S_IFLNK、目標長と同じsize、DT_LNK=10、inodeの一致が必要で、設定CWDは実際のディレクトリです。
 
 リンクを展開してからドットを処理します。相対目標は実際の親、絶対目標はゲスト根から開始。各展開で末尾スラッシュを再解析し、消費した入力スラッシュは引き継ぎません。32展開まで許可し、33回目はELOOP62。目標+残り+NULが1024バイトを超えるとENAMETOOLONG63。FD/CWD/F_GETPATH/mmapは解決した対象を保持します。
 
@@ -740,7 +740,7 @@ stat64/open/access/truncate/chdirは末尾リンクを追跡し、lstat64/readli
 
 readlink(58)は符号付き下位32ビットcount、readlinkat(473)は完全なsize_t。intを返し、INT32_MAX超過はパス/FDより先にEINVAL22。min(count,目標長)だけコピーしNULなし、実際の範囲だけ検査。ゼロ長もパス/型を検証後に出力を無視。非リンクEINVAL22、全域書込み不可EFAULT14、部分書込みはコピー前に停止。転送/メモリ予算エラーは伝播します。
 
-固定リンク名と生の対象バイトは不変です。MutableDirectories はルートや固定リンク名のパス区切り上の祖先になれません。/work は /workspace/link を含みません。別の可変ディレクトリ内の対象は実行中に作成・移動・削除・置換できます。親、マウント、別名、フラグ、SWAP 対応、作成ポリシーの既存検証は維持され、新しい inode は保護リンクを含む全メタデータ/スナップショット inode より大きい必要があります。 固定名WritableFiles/MutationPoliciesは対象の通常ファイルを変更できます。リンクunlink/renameは作用前に停止。実行時リンク作成は次節で説明します。ハードリンク、ACL、可変初期リンク一覧は未対応。ARM64 macOS独立プローブは元の5秒以内に189観察/115全バッファを通過しました。物理iOS/Intel HVF/完全OSの証明ではありません。
+固定リンク名と生の対象バイトは不変です。MutableDirectories はルートや固定リンク名のパス区切り上の祖先になれません。/work は /workspace/link を含みません。別の可変ディレクトリ内の対象は実行中に作成・移動・削除・置換できます。親、マウント、別名、フラグ、SWAP 対応、作成ポリシーの既存検証は維持され、新しい inode は保護リンクを含む全メタデータ/スナップショット inode より大きい必要があります。 固定名WritableFiles/MutationPoliciesは対象の通常ファイルを変更できます。リンクunlink/renameは作用前に停止。実行時リンク作成は次節で説明します。ハードリンク、ACL、個別の権限のない初期リンク変更一覧は未対応。ARM64 macOS独立プローブは元の5秒以内に189観察/115全バッファを通過しました。物理iOS/Intel HVF/完全OSの証明ではありません。
 
 追加の ARM64 macOS DELETE/RENAME 60 ケースは元の5秒制限内で完全な stat バッファ、変更前後の名前空間、保持 FD/CWD の識別を記録します。末尾スラッシュは固定リンクを展開して実際の対象を変更でき、必要な展開を NOFOLLOW_ANY は ELOOP で拒否します。SDK 不要の symbolic-link-mutations は作成、存在しない対象、移動/削除/置換、保持 CWD の親、FD 終了前の元のファイル10バイト全体と、終了後にも保持されるマッピング10バイト全体を検証します。実機 iOS やネイティブ Intel の証明ではありません。
 
@@ -756,7 +756,7 @@ readlink(58)は符号付き下位32ビットcount、readlinkat(473)は完全なs
 
 現在のリンク表が実際の名前、親、対象バイトを保持します。既存末端はEEXIST17。ダングリングリンクの消費済み末尾スラッシュは対象名での作成を許し、元リンクは変わりません。空対象の展開はENOENT2。空対象のreadlinkは正の容量でも出力ポインタに触れず0を返しますが、count/パス/型の検査は先に行います。
 
-名前/NULと対象を一度だけ課金し、256エントリ/16 MiBを共有します。拒否はノード、親、FD、通常ファイルinodeに影響しません。新リンクの完全メタデータは未知で、通常ファイルCreationPolicyや再利用名の古い観察を引き継ぎません。作成後の親stat/スナップショットは未知です。対象を削除・置換してもFD/CWD/マッピングは元の物体を保持します。rmdirとディレクトリ置換はリンク子を検出します。移動/SWAPのどちらかに保護された初期リンクがあれば作用前に停止します。リンクと実ディレクトリの置換、ハードリンク、ACL、可変初期リンク一覧は未対応。別名は実際の親の権限を移しません。
+名前/NULと対象を一度だけ課金し、256エントリ/16 MiBを共有します。拒否はノード、親、FD、通常ファイルinodeに影響しません。新リンクの完全メタデータは未知で、通常ファイルCreationPolicyや再利用名の古い観察を引き継ぎません。作成後の親stat/スナップショットは未知です。対象を削除・置換してもFD/CWD/マッピングは元の物体を保持します。rmdirとディレクトリ置換はリンク子を検出します。移動/SWAPのどちらかに保護された初期リンクがあれば作用前に停止します。リンクと実ディレクトリの置換、ハードリンク、ACL、個別の権限のない初期リンク変更一覧は未対応。別名は実際の親の権限を移しません。
 
 ARM64 macOSの150件の原生記録は4件の観察器失敗を保持し、別の10件で実際の新対象と空リンク境界を確認します。SDK不要の `symbolic-link-creation` は両入口、対象/バッファ境界、親、置換ファイル、旧FD/マッピングの全10バイトを確認します。物理iOS、原生Intel、完全OS互換の証明ではありません。
 
@@ -802,7 +802,7 @@ ARM64 macOS の独立40例は元の5秒期限で28削除成功、12エラー、1
 
 有効時は通常ファイル、symlink、mkdirの成功挿入が一つのinode列を共有し、UINT64_MAXで永久に枯渇します。失敗や既存名openは消費しません。Device/GIDは実際の親、UIDは実効ゲストIDから得ます。リンクのmodeはS_IFLNKと `0777 & ~umask`、nlinkは1、sizeは空や非UTF-8を含む対象の生バイト数、blocksは宣言単位で切り上げた512バイトブロック数です。ディレクトリmodeはS_IFDIRと `mode & 0777 & ~umask`、nlinkは2と全種類の直下の連結名数の和、sizeはnlinkと宣言エントリサイズの積、blocksは固定です。保持された削除済み空ディレクトリにも適用します。これは明示仮想契約でAPFSの推測ではありません。
 
-初期時刻はcreation_time。子の名前変更は作成親のmtime/ctimeを、直接移動はリンク/ディレクトリのctimeのみをmutation_timeで更新します。祖先移動は子孫のメタデータを保持し、dup/CWD/置換/SWAP/削除/名前再利用でも記録は物体に属します。作成拡張だけでは初期親の完全な stat と固定スナップショットは保持されません。下記の独立方針が stat とライブ列挙を提供します。ACL、可変初期リンク、一般のディレクトリ/リンク根トランザクションは未対応です。ネイティブ `created-namespace-metadata` は共通のmode/所有者/同一性/寿命を確認し、`virtual-created-namespace-metadata` はC++/SDK/CLI/Pythonで144バイトの完全な定数記録を比較します。対象検証はモデル/受入11、厳密JSON1、元の5秒制限のネイティブ43、実行可能ゲスト8（利用不能12スキップ、必須HVF3実行）、公開10が成功。ポインタ表による失敗と修正後の静的ARM64記録は保持。ネイティブIntelと実機iOSは未検証です。
+初期時刻はcreation_time。子の名前変更は作成親のmtime/ctimeを、直接移動はリンク/ディレクトリのctimeのみをmutation_timeで更新します。祖先移動は子孫のメタデータを保持し、dup/CWD/置換/SWAP/削除/名前再利用でも記録は物体に属します。作成拡張だけでは初期親の完全な stat と固定スナップショットは保持されません。下記の独立方針が stat とライブ列挙を提供します。ACL、個別の権限のない初期リンク変更、一般のディレクトリ/リンク根トランザクションは未対応です。ネイティブ `created-namespace-metadata` は共通のmode/所有者/同一性/寿命を確認し、`virtual-created-namespace-metadata` はC++/SDK/CLI/Pythonで144バイトの完全な定数記録を比較します。対象検証はモデル/受入11、厳密JSON1、元の5秒制限のネイティブ43、実行可能ゲスト8（利用不能12スキップ、必須HVF3実行）、公開10が成功。ポインタ表による失敗と修正後の静的ARM64記録は保持。ネイティブIntelと実機iOSは未検証です。
 
 ```json
 {"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
@@ -824,8 +824,22 @@ ARM64 macOS の独立40例は元の5秒期限で28削除成功、12エラー、1
 
 記録と方針は dup、保持 FD、CWD、置換、削除、名前再利用でも元のオブジェクトに属します。新しい mkdir は、指定された場合は別の作成方針を使い、親や同名の旧オブジェクトの初期 stat 方針を継承しません。不変スナップショットは変更後も不明となり、独立した enumeration_policy がライブビューを提供できます。本方針を省略すると、変更された初期ディレクトリの完全なメタデータは不明のままです。
 
-独立した ARM64 ネイティブ準備では、変更のない 5 秒制限内で保護付き生 stat ビュー 27 件と操作 15 件を保存し、144 バイト SDK ABI と保持された同一性を確認しました。時刻や割り当ての一般規則は導きません。独自の `initial-directory-metadata` は共通ネイティブ観測を、`virtual-initial-directory-metadata` は guest、C/CLI、Python の完全な 144 バイト定数記録を検証します。モデルは初回削除、変更許可の欠如、作成方針の省略、スナップショットと列挙の独立性も扱います。ネイティブ Intel、実機 iOS、ACL、ハードリンク、可変初期リンク、完全な OS/フレームワークは未検証または未対応です。
+独立した ARM64 ネイティブ準備では、変更のない 5 秒制限内で保護付き生 stat ビュー 27 件と操作 15 件を保存し、144 バイト SDK ABI と保持された同一性を確認しました。時刻や割り当ての一般規則は導きません。独自の `initial-directory-metadata` は共通ネイティブ観測を、`virtual-initial-directory-metadata` は guest、C/CLI、Python の完全な 144 バイト定数記録を検証します。モデルは初回削除、変更許可の欠如、作成方針の省略、スナップショットと列挙の独立性も扱います。ネイティブ Intel、実機 iOS、ACL、ハードリンク、個別の権限のない初期リンク変更、完全な OS/フレームワークは未検証または未対応です。
 
 ```json
 {"mutation_policy":{"directory_entry_size":17,"mutation_time":{"seconds":-11,"nanoseconds":321}}}
+```
+
+## 初期シンボリックリンクの明示的な変更権限
+
+`symbolic_links[].mutable:true` と C++ `DarwinFileOptions::MutableSymbolicLinks` は元のリンク物体の名前空間変更を許可します。実際の親にも独立した変更権限が必要です。既知の flags、特殊 mode、link_count≠1、識別子の別名、親デバイスの矛盾は拒否します。省略した名前は保護され、変更可能な祖先領域に置けません。権限は固定の path/NUL 参照を予約し、エントリや作成 inode を増やしません。初期ターゲットは不変です。
+
+unlink、通常/EXCL rename、葉リンク/ファイル/link SWAP、宣言済みディレクトリ部分木の処理は、実際の親・mount・SWAP 条件を保持します。相対ターゲットは新しい親から再解決され、FD/dup、CWD、mapping lease は元の参照先を保持します。初期名前/ターゲット/参照の固定費用は削除後も残り、初回の改名には新しい動的名前費用が必要です。返却するのは物体が所有する動的名前/作成ターゲットのみです。動的エントリ数は新規リンクだけです。拒否と同物体の空操作は変更しません。
+
+`symbolic_links[].mutation_policy` は `DarwinSymbolicLinkMutationPolicy` と `DarwinFileOptions::SymbolicLinkMutationPolicies` を使います。唯一の `mutation_time` は損失のない signed 64-bit 秒と [0, 1000000000) のナノ秒で、権限と完全な非ゼロ inode 観測が必要です。最初の直接移動/SWAP は割当なしでスカラーを複製し ctime だけ変更します。blocks を含む他の値、祖先移動、拒否、空操作は保存されます。省略すると直接移動後の完全 stat は未知ですが、列挙用 inode と既知のデバイス矛盾は保持します。方針の path/NUL 費用は一度予約します。名前の再利用や新 symlink は初期記録/方針を継承せず、別の namespace policy を使います。
+
+独立 ARM64 準備は 14 guarded raw-stat、11 操作、144-byte SDK ABI、compile120s/native5s/drain1s/reap1s と私有領域の削除を記録します。`mutable-initial-links` はネイティブ識別子、相対再解決、参照先寿命を確認し、`virtual-mutable-initial-links` は五つの guest、C/CLI、Python で完全 stat を確認します。モデルは二つのページサイズ、部分木 SWAP、厳密な費用と entry/inode 枯渇を検査します。Intel と実機 iOS は未検証で、hard link、ACL、directory/link 根操作、完全 OS/runtime/framework は未対応です。
+
+```json
+{"mutable":true,"mutation_policy":{"mutation_time":{"seconds":-13,"nanoseconds":456}}}
 ```

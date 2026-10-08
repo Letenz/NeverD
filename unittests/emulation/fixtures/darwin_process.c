@@ -1143,6 +1143,161 @@ static int initial_directory_metadata(const char *path, int virtual_bytes) {
   return 37;
 }
 
+/* Independent guarded stat views of an initial link. Native comparisons use
+ * only stable identity fields; the separate virtual mode checks every field.
+ */
+static int mutable_initial_link_status(u64 dir, const char *name, u64 *record) {
+  unsigned error = 0;
+  u64 guarded[20];
+  guarded[0] = guarded[19] = 0xa5a5a5a5a5a5a5a5UL;
+  if (call(470, dir, (u64)name, (u64)(guarded + 1), 0x20, 0, 0, &error) ||
+      error || guarded[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      guarded[19] != 0xa5a5a5a5a5a5a5a5UL)
+    return 0;
+  for (unsigned i = 0; i != 18; ++i)
+    record[i] = guarded[i + 1];
+  return 1;
+}
+static int mutable_initial_link_identity(const u64 *before, const u64 *after,
+                                         int virtual_bytes) {
+  if (before[0] != after[0] || before[1] != after[1] || before[2] != after[2] ||
+      before[12] != after[12])
+    return 0;
+  if (virtual_bytes) {
+    for (unsigned i = 0; i != 18; ++i)
+      if (i != 8 && i != 9 && before[i] != after[i])
+        return 0;
+    if (after[8] != (u64)-13 || after[9] != 456)
+      return 0;
+  }
+  return 1;
+}
+static int mutable_initial_link_target(u64 dir, const char *name) {
+  unsigned error = 0;
+  u64 guarded[3] = {0xa5a5a5a5a5a5a5a5UL, 0xa5a5a5a5a5a5a5a5UL,
+                    0xa5a5a5a5a5a5a5a5UL};
+  return call(473, dir, (u64)name, (u64)(guarded + 1), 4, 0, 0, &error) == 4 &&
+         !error && guarded[0] == 0xa5a5a5a5a5a5a5a5UL &&
+         guarded[1] == 0xa5a5a5a561746164UL &&
+         guarded[2] == 0xa5a5a5a5a5a5a5a5UL;
+}
+static int mutable_initial_links(const char *path, int virtual_bytes) {
+  unsigned error = 0;
+  int check = 100;
+#define LINK_EXPECT(expression)                                                \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  char parent[1024];
+  unsigned last = 0, length = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  LINK_EXPECT(path[0] == '/' && !path[length] && length > last + 1);
+  parent[last ? last : 1] = 0;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  LINK_EXPECT(!error);
+  u64 before[18], after[18], captured[18];
+  LINK_EXPECT(mutable_initial_link_status(root, "initial", before));
+  u64 held = call(463, root, (u64) "initial", 0, 0, 0, 0, &error);
+  LINK_EXPECT(!error);
+  u64 mapped = call(197, 0, PAGE, 1, 2, held, 0, &error);
+  LINK_EXPECT(!error && *(const unsigned char *)mapped == '0');
+  LINK_EXPECT(call(488, root, (u64) "initial", root, (u64) "initial", 0, 0,
+                   &error) == 0 &&
+              !error);
+  LINK_EXPECT(mutable_initial_link_status(root, "initial", after));
+  if (virtual_bytes)
+    for (unsigned i = 0; i != 18; ++i)
+      LINK_EXPECT(after[i] == before[i]);
+  LINK_EXPECT(call(488, root, (u64) "initial", root, (u64) "data", 4, 0,
+                   &error) == 17 &&
+              error);
+  LINK_EXPECT(mutable_initial_link_status(root, "initial", after));
+  if (virtual_bytes)
+    for (unsigned i = 0; i != 18; ++i)
+      LINK_EXPECT(after[i] == before[i]);
+  LINK_EXPECT(call(488, root, (u64) "initial", root, (u64) "first", 0, 0,
+                   &error) == 0 &&
+              !error);
+  LINK_EXPECT(mutable_initial_link_status(root, "first", captured));
+  LINK_EXPECT(mutable_initial_link_identity(before, captured, virtual_bytes));
+  LINK_EXPECT(mutable_initial_link_target(root, "first"));
+  LINK_EXPECT(call(475, root, (u64) "s", 0700, 0, 0, 0, &error) == 0 && !error);
+  u64 s = call(463, root, (u64) "s", 0x100000, 0, 0, 0, &error);
+  LINK_EXPECT(!error);
+  u64 data = call(463, s, (u64) "data", 0xa02, 0600, 0, 0, &error);
+  LINK_EXPECT(!error);
+  LINK_EXPECT(call(4, data, (u64) "Z", 1, 0, 0, 0, &error) == 1 && !error);
+  LINK_EXPECT(call(488, root, (u64) "first", s, (u64) "l", 0, 0, &error) == 0 &&
+              !error);
+  LINK_EXPECT(mutable_initial_link_status(s, "l", after));
+  LINK_EXPECT(mutable_initial_link_identity(before, after, virtual_bytes));
+  u64 rebound = call(463, s, (u64) "l", 0, 0, 0, 0, &error);
+  LINK_EXPECT(!error);
+  unsigned char byte;
+  LINK_EXPECT(call(153, rebound, (u64)&byte, 1, 0, 0, 0, &error) == 1 &&
+              !error && byte == 'Z');
+  LINK_EXPECT(call(153, held, (u64)&byte, 1, 0, 0, 0, &error) == 1 && !error &&
+              byte == '0');
+  u64 file = call(463, s, (u64) "f", 0xa02, 0600, 0, 0, &error);
+  LINK_EXPECT(!error);
+  LINK_EXPECT(call(4, file, (u64) "F", 1, 0, 0, 0, &error) == 1 && !error);
+  LINK_EXPECT(call(488, s, (u64) "l", s, (u64) "f", 2, 0, &error) == 0 &&
+              !error);
+  LINK_EXPECT(mutable_initial_link_status(s, "f", after));
+  LINK_EXPECT(mutable_initial_link_identity(before, after, virtual_bytes));
+  LINK_EXPECT(mutable_initial_link_target(s, "f"));
+  LINK_EXPECT(call(488, s, (u64) "f", s, (u64) "l", 0, 0, &error) == 0 &&
+              !error);
+  LINK_EXPECT(call(153, file, (u64)&byte, 1, 0, 0, 0, &error) == 1 && !error &&
+              byte == 'F');
+  LINK_EXPECT(call(488, root, (u64) "s", root, (u64) "t", 0, 0, &error) == 0 &&
+              !error);
+  LINK_EXPECT(mutable_initial_link_status(s, "l", after));
+  LINK_EXPECT(mutable_initial_link_identity(before, after, virtual_bytes));
+  if (virtual_bytes)
+    for (unsigned i = 0; i != 18; ++i)
+      LINK_EXPECT(after[i] == captured[i]);
+  LINK_EXPECT(call(472, s, (u64) "l", 0, 0, 0, 0, &error) == 0 && !error);
+  LINK_EXPECT(call(153, held, (u64)&byte, 1, 0, 0, 0, &error) == 1 && !error &&
+              byte == '0' && *(const unsigned char *)mapped == '0');
+  LINK_EXPECT(call(474, (u64) "data", root, (u64) "initial", 0, 0, 0, &error) ==
+                  0 &&
+              !error);
+  LINK_EXPECT(mutable_initial_link_status(root, "initial", after));
+  if (virtual_bytes)
+    LINK_EXPECT(after[1] != before[1] && after[8] == (u64)-19 &&
+                after[9] == 987654321);
+  u64 dir = call(463, root, (u64) "initial-dir", 0x100000, 0, 0, 0, &error);
+  LINK_EXPECT(!error);
+  LINK_EXPECT(call(13, dir, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  LINK_EXPECT(call(472, root, (u64) "initial-dir", 0, 0, 0, 0, &error) == 0 &&
+              !error);
+  u64 here = call(5, (u64) ".", 0x100000, 0, 0, 0, 0, &error);
+  LINK_EXPECT(!error);
+  unsigned char directory[144], cwd[144];
+  LINK_EXPECT(call(339, dir, (u64)directory, 0, 0, 0, 0, &error) == 0 &&
+              !error);
+  LINK_EXPECT(initial_directory_identity(here, directory, cwd));
+  LINK_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  LINK_EXPECT(call(73, mapped, PAGE, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 descriptors[] = {held, rebound, data, file, s, dir, here, root};
+  for (unsigned i = 0; i != 8; ++i)
+    LINK_EXPECT(call(6, descriptors[i], 0, 0, 0, 0, 0, &error) == 0 && !error);
+  LINK_EXPECT(call(4, 1, virtual_bytes ? (u64)captured : (u64) "M",
+                   virtual_bytes ? sizeof(captured) : 1, 0, 0, 0,
+                   &error) == (virtual_bytes ? sizeof(captured) : 1) &&
+              !error);
+#undef LINK_EXPECT
+  return 37;
+}
+
 /* Original live-namespace workload. Native order and cookies are not predicted;
  * every record is checked against independently observed retained identities.
  */
@@ -5376,6 +5531,12 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (equal(argv[1], "files") || equal(argv[1], "files-nocancel"))
     return argc < 3 ? 139
                     : file_calls(argv[2], equal(argv[1], "files-nocancel"));
+  if (equal(argv[1], "mutable-initial-links") ||
+      equal(argv[1], "virtual-mutable-initial-links"))
+    return argc < 3
+               ? 79
+               : mutable_initial_links(
+                     argv[2], equal(argv[1], "virtual-mutable-initial-links"));
   if (equal(argv[1], "initial-directory-metadata") ||
       equal(argv[1], "virtual-initial-directory-metadata"))
     return argc < 3 ? 79

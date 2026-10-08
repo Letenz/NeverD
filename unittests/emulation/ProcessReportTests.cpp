@@ -388,6 +388,77 @@ TEST(ProcessReport, DarwinNamespaceCreationPolicyIsStrictAndLossless) {
   Refused(V);
 }
 
+TEST(ProcessReport, DarwinInitialLinkMutationIsExplicitStrictAndLossless) {
+  auto M = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
+  (*M.getAsObject())["inode"] = 57;
+  (*M.getAsObject())["mode"] = 0120777;
+  (*M.getAsObject())["size"] = 1;
+  (*M.getAsObject())["flags"] = 0;
+  (*M.getAsObject())["link_count"] = 1;
+  const auto Policy = llvm::cantFail(llvm::json::parse(
+      R"({"mutation_time":{"seconds":"-9223372036854775808","nanoseconds":999999999}})"));
+  llvm::json::Object Link{{"path", "/l"},
+                          {"target_hex", "78"},
+                          {"mutable", true},
+                          {"metadata", M},
+                          {"mutation_policy", Policy}};
+  auto Parse = [](const llvm::json::Object &Input) {
+    llvm::json::Object O{
+        {"darwin_files",
+         llvm::json::Object{
+             {"files", llvm::json::Array{}},
+             {"directories", llvm::json::Array{llvm::json::Object{
+                                 {"path", "/"}, {"mutable", true}}}},
+             {"symbolic_links", llvm::json::Array{llvm::json::Value(
+                                    llvm::json::Object(Input))}}}}};
+    return processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(std::move(O))).str());
+  };
+  auto Good = Parse(Link);
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_TRUE(Good->DarwinFiles->MutableSymbolicLinks.contains("/l"));
+  const auto &P = Good->DarwinFiles->SymbolicLinkMutationPolicies.at("/l");
+  EXPECT_EQ(P.Time.Seconds, INT64_MIN);
+  EXPECT_EQ(P.Time.Nanoseconds, 999999999);
+  auto Refused = [&](const llvm::json::Object &O) {
+    auto Out = Parse(O);
+    EXPECT_FALSE(bool(Out));
+    llvm::consumeError(Out.takeError());
+  };
+  for (const char *Bad : {"false", "null", "0", "[]", "\"true\""}) {
+    auto O = Link;
+    O["mutable"] = llvm::cantFail(llvm::json::parse(Bad));
+    Refused(O);
+  }
+  auto O = Link;
+  O.erase("mutable");
+  Refused(O);
+  O = Link;
+  O.erase("metadata");
+  Refused(O);
+  O = Link;
+  O["extra"] = 1;
+  Refused(O);
+  for (
+      const char *Bad :
+      {"null", "true", "[]", "{}", R"({"mutation_time":null})",
+       R"({"mutation_time":{"seconds":0,"nanoseconds":0},"extra":1})",
+       R"({"mutation_time":{"seconds":"9223372036854775808","nanoseconds":0}})",
+       R"({"mutation_time":{"seconds":0,"nanoseconds":-1}})",
+       R"({"mutation_time":{"seconds":0,"nanoseconds":1000000000}})",
+       R"({"mutation_time":{"seconds":1.5,"nanoseconds":0}})"}) {
+    O = Link;
+    O["mutation_policy"] = llvm::cantFail(llvm::json::parse(Bad));
+    Refused(O);
+  }
+  O = Link;
+  O.erase("mutation_policy");
+  O.erase("metadata");
+  auto WithoutStat = Parse(O);
+  ASSERT_TRUE(bool(WithoutStat)) << llvm::toString(WithoutStat.takeError());
+  EXPECT_TRUE(WithoutStat->DarwinFiles->SymbolicLinkMutationPolicies.empty());
+}
+
 TEST(ProcessReport, DarwinInitialDirectoryMutationPolicyIsStrictAndLossless) {
   auto Parent = llvm::cantFail(llvm::json::parse(darwin_test::MetadataJSON));
   (*Parent.getAsObject())["inode"] = 41;

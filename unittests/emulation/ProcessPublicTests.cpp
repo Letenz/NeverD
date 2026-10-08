@@ -414,6 +414,9 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"unlinked-file", "75"},
           std::pair{"created-file", "63"},
           std::pair{"created-file-metadata", "71"},
+          std::pair{"mutable-initial-links", "4d"},
+          std::pair{"virtual-mutable-initial-links",
+                    emulation::darwin_test::InitialSymbolicLinkMetadataHex},
           std::pair{"initial-directory-metadata", "49"},
           std::pair{"virtual-initial-directory-metadata",
                     emulation::darwin_test::InitialDirectoryMetadataHex},
@@ -653,6 +656,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   }
   if (ModeName == "created-namespace-metadata" ||
       ModeName == "virtual-created-namespace-metadata" ||
+      ModeName == "mutable-initial-links" ||
+      ModeName == "virtual-mutable-initial-links" ||
       ModeName == "initial-directory-metadata" ||
       ModeName == "virtual-initial-directory-metadata") {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
@@ -680,6 +685,38 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     (*Directory)[field::DirectoryMutable] = true;
     (*Directory)[field::DirectorySwapRename] = true;
     (*Directory)[field::FileMetadata] = std::move(Parent);
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  if (ModeName == "mutable-initial-links" ||
+      ModeName == "virtual-mutable-initial-links") {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
+    auto *Root = Files->getArray(field::Directories)->front().getAsObject();
+    Root->erase(field::DirectoryContents);
+    auto M = *Files->getArray(field::Files)
+                  ->front()
+                  .getAsObject()
+                  ->getObject(field::FileMetadata);
+    M[field::FileMode] = 0120777;
+    M[field::FileInode] = 57;
+    M[field::Size] = 4;
+    (*Files)[field::SymbolicLinks] = llvm::json::Array{
+        llvm::json::Object{
+            {field::Path, "/initial"},
+            {field::SymbolicLinkTarget, "64617461"},
+            {field::SymbolicLinkMutable, true},
+            {field::FileMetadata, std::move(M)},
+            {field::SymbolicLinkMutationPolicy,
+             llvm::cantFail(llvm::json::parse(
+                 emulation::darwin_test::InitialSymbolicLinkPolicyJSON))}},
+        llvm::json::Object{{field::Path, "/initial-dir"},
+                           {field::SymbolicLinkTarget, "656d707479"},
+                           {field::SymbolicLinkMutable, true}}};
+    auto Parent = *Root->getObject(field::FileMetadata);
+    Parent[field::FileInode] = 42;
+    (*Files->getArray(field::Directories)
+          ->back()
+          .getAsObject())[field::FileMetadata] = std::move(Parent);
     Options = llvm::formatv("{0}", Input).str();
   }
   if (ModeName == "initial-directory-metadata" ||

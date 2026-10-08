@@ -428,6 +428,25 @@ TEST_P(DarwinProcess,
   }
 }
 
+TEST_P(DarwinProcess, MutableInitialLinksKeepIdentityAndReferentLifetime) {
+  Options.DarwinFiles = darwin_test::mutableInitialSymbolicLinkOptions();
+  Options.Arguments[2] = "/data";
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  for (const char *Mode :
+       {"mutable-initial-links", "virtual-mutable-initial-links"}) {
+    auto Result = run(Mode);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+    EXPECT_EQ(Result->ExitStatus, 37);
+    EXPECT_EQ(llvm::toHex(Result->StandardOutput, true),
+              llvm::StringRef(Mode) == "mutable-initial-links"
+                  ? "4d"
+                  : darwin_test::InitialSymbolicLinkMetadataHex);
+    EXPECT_TRUE(Result->StandardError.empty());
+  }
+}
+
 TEST_P(DarwinProcess, CreatePreservesExclusiveChecksAndReusedNameLifetime) {
   Options.DarwinFiles.emplace();
   Options.DarwinFiles->Files["/data"] = {'0', '1', '2', '3', '4',

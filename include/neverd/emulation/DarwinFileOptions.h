@@ -76,6 +76,13 @@ struct DarwinDirectoryMutationPolicy {
   DarwinFileTime Time;
 };
 
+/// Retain an initial symbolic link's complete observed stat across direct
+/// namespace moves, changing only ctime to this declared time. Raw target bytes
+/// and all other fields stay object-owned; ancestor moves do not change stat.
+struct DarwinSymbolicLinkMutationPolicy {
+  DarwinFileTime Time;
+};
+
 /// Explicit virtual metadata rules for new links and directories. Link blocks
 /// round raw-target bytes up to SymbolicLinkAllocationUnit (in 512-byte
 /// blocks). Directory nlink is two plus its immediate linked names of every
@@ -218,8 +225,8 @@ struct DarwinFileOptions {
   std::set<std::string> ExchangeableDirectories;
   /// Fixed initial symbolic-link names and exact nonempty, non-NUL target
   /// bytes. Targets need not exist and are never normalized at admission.
-  /// Mutable directories cannot contain fixed link names. Separate mutable
-  /// domains may contain their targets; lookup observes current target names.
+  /// Mutable directories can contain initial link names only with an explicit
+  /// MutableSymbolicLinks grant. Lookup observes current target names.
   /// Content mutations, descriptors and mappings retain the actual target.
   std::map<std::string, std::vector<uint8_t>> SymbolicLinks;
   /// Optional per-object virtual enumeration for admitted initial directories
@@ -237,6 +244,19 @@ struct DarwinFileOptions {
   /// mkdir descendants use their separately declared creation policy.
   std::map<std::string, DarwinDirectoryMutationPolicy>
       DirectoryMutationPolicies;
+  /// Namespace mutation authority for explicit initial symbolic links. Their
+  /// actual parents must be mutable; this declares ordinary unique objects and
+  /// rejects known flags, aliases and conflicting parent devices. It grants no
+  /// access to referents. Fixed input costs remain reserved after removal;
+  /// moved names acquire separate dynamic costs. Omission keeps links
+  /// protected.
+  std::set<std::string> MutableSymbolicLinks;
+  /// Optional complete-stat retention for granted initial links with nonzero
+  /// observed inodes. Without a policy, a direct move makes full stat unknown
+  /// but retains inode identity for enumeration. This follows the object and
+  /// never transfers to a reused name or new symlink object.
+  std::map<std::string, DarwinSymbolicLinkMutationPolicy>
+      SymbolicLinkMutationPolicies;
 };
 } // namespace neverd::emulation
 #endif

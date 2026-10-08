@@ -1,6 +1,6 @@
 **Idiomas**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 9553588d9792a9f22ea6a9d595406637472b0122514d854a6ed41e9c90f43414 -->
+<!-- i18n-source: 1480ab7f58ad16bb60f46433bfc9c34563c292fc7f17c020ca9b427f5f99b2b8 -->
 
 [← Índice de documentación](README.md)
 
@@ -730,7 +730,7 @@ El `file-access` original usa FD relativos de directorio para NOFOLLOW_ANY y evi
 
 ## Enlaces simbólicos iniciales fijos
 
-`DarwinFileOptions::SymbolicLinks` / `darwin_files.symbolic_links` declaran `path` absoluto canónico, `target_hex` hexadecimal sin transformar y `metadata` opcional del propio enlace. Objetivos de1..1023 bytes noNUL conservan noUTF-8, barras repetidas y puntos; pueden faltar. `files` sigue obligatorio aunque vacío. Se rechazan colisiones y descendientes declarados bajo enlaces. Ruta/NUL/objetivo comparten256 entradas/16 MiB. Se requiere S_IFLNK, size=longitud, DT_LNK=10 e inode coherente; CWD debe ser directorio real.
+Los nombres iniciales siguientes están protegidos por defecto; la última sección describe los permisos explícitos de modificación. `DarwinFileOptions::SymbolicLinks` / `darwin_files.symbolic_links` declaran `path` absoluto canónico, `target_hex` hexadecimal sin transformar y `metadata` opcional del propio enlace. Objetivos de1..1023 bytes noNUL conservan noUTF-8, barras repetidas y puntos; pueden faltar. `files` sigue obligatorio aunque vacío. Se rechazan colisiones y descendientes declarados bajo enlaces. Ruta/NUL/objetivo comparten256 entradas/16 MiB. Se requiere S_IFLNK, size=longitud, DT_LNK=10 e inode coherente; CWD debe ser directorio real.
 
 Se expanden enlaces antes de puntos: objetivos relativos desde el padre real y absolutos desde la raíz invitada. Cada reinicio reinterpreta barras finales; las ya consumidas no pasan al objetivo. Hasta32 expansiones, la33 devuelveELOOP62; objetivo+sufijo+NUL sobre1024 bytes devuelveENAMETOOLONG63. FD/CWD/F_GETPATH/mmap conservan el objeto resuelto.
 
@@ -800,7 +800,7 @@ La opción `creation_policy.namespace_policy` (C++ `DarwinFileCreationPolicy::Na
 
 Las inserciones correctas de archivo,symlink,mkdir comparten una secuencia con agotamiento permanente enUINT64_MAX; errores y nombres existentes no consumen inodes. Device/GID proceden del padre real, UID de la identidad efectiva invitada. El enlace usa S_IFLNK con `0777 & ~umask`, nlink1, size de bytes brutos incluso vacíos/noUTF-8 y bloques512bytes redondeados a la unidad declarada. El directorio usa S_IFDIR con `mode & 0777 & ~umask`, nlink2 más todos los nombres directos enlazados, size=nlink por tamaño de entrada y blocks fijos, también para directorios vacíos retirados pero retenidos. Es un contrato virtual explícito, no una regla APFS inferida.
 
-Los tiempos iniciales usan creation_time. Cambiar nombres hijos actualiza mtime/ctime del padre creado; mover directamente cambia solo ctime con mutation_time. Mover ancestros preserva descendientes. Los registros completos pertenecen al objeto durante dup/CWD/reemplazo/SWAP/borrado/reutilización. La extensión de creación por sí sola no conserva el stat completo inicial ni snapshots fijos; las políticas independientes siguientes ofrecen stat y enumeración actual. ACL, enlaces iniciales mutables y transacciones generales raíz directorio/enlace siguen pendientes. `created-namespace-metadata` verifica observaciones nativas comunes; `virtual-created-namespace-metadata` compara144bytes constantes completos porC++/SDK/CLI/Python. Pasaron11 modelos/admisiones,1JSON estricto,43 workloads nativos bajo los5segundos originales,8 invitados（12 omitidos por backend ausente,3HVF requeridos ejecutados）y10 casos públicos. Se conservan el fallo de tabla de punteros y la corrección estáticaARM64. iOS físico e Intel nativo siguen sin validar.
+Los tiempos iniciales usan creation_time. Cambiar nombres hijos actualiza mtime/ctime del padre creado; mover directamente cambia solo ctime con mutation_time. Mover ancestros preserva descendientes. Los registros completos pertenecen al objeto durante dup/CWD/reemplazo/SWAP/borrado/reutilización. La extensión de creación por sí sola no conserva el stat completo inicial ni snapshots fijos; las políticas independientes siguientes ofrecen stat y enumeración actual. ACL, mutaciones de enlaces iniciales sin permiso individual y transacciones generales raíz directorio/enlace siguen pendientes. `created-namespace-metadata` verifica observaciones nativas comunes; `virtual-created-namespace-metadata` compara144bytes constantes completos porC++/SDK/CLI/Python. Pasaron11 modelos/admisiones,1JSON estricto,43 workloads nativos bajo los5segundos originales,8 invitados（12 omitidos por backend ausente,3HVF requeridos ejecutados）y10 casos públicos. Se conservan el fallo de tabla de punteros y la corrección estáticaARM64. iOS físico e Intel nativo siguen sin validar.
 
 ```json
 {"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
@@ -822,8 +822,22 @@ El registro observado completo permanece intacto hasta el primer cambio realment
 
 El registro y la política siguen al objeto original por dup, FD retenidos, CWD, reemplazo, borrado y reutilización del nombre. Un nuevo mkdir usa la política de creación separada, si existe, sin heredar la política stat inicial del padre ni del objeto homónimo antiguo. Los snapshots inmutables siguen siendo desconocidos tras cambios; una enumeration_policy independiente puede ofrecer vistas actuales. Sin esta política stat, las metadata completas de directorios iniciales modificados siguen siendo desconocidas.
 
-Una preparación nativa ARM64 independiente conservó 27 vistas stat brutas protegidas y 15 operaciones dentro de los cinco segundos sin modificar, verificando la ABI SDK de 144 bytes y la identidad retenida sin generalizar tiempos o asignación. El ensayo original `initial-directory-metadata` verifica observaciones nativas comunes; `virtual-initial-directory-metadata` compara un registro literal completo de 144 bytes por guest, C/CLI y Python. Los modelos también cubren primer borrado, ausencia de autoridad, omisión de creación e independencia snapshot/enumeración. Intel nativo, iOS físico, ACL, enlaces físicos, enlaces iniciales mutables y OS/frameworks completos siguen sin validar o sin soporte.
+Una preparación nativa ARM64 independiente conservó 27 vistas stat brutas protegidas y 15 operaciones dentro de los cinco segundos sin modificar, verificando la ABI SDK de 144 bytes y la identidad retenida sin generalizar tiempos o asignación. El ensayo original `initial-directory-metadata` verifica observaciones nativas comunes; `virtual-initial-directory-metadata` compara un registro literal completo de 144 bytes por guest, C/CLI y Python. Los modelos también cubren primer borrado, ausencia de autoridad, omisión de creación e independencia snapshot/enumeración. Intel nativo, iOS físico, ACL, enlaces físicos, mutaciones de enlaces iniciales sin permiso individual y OS/frameworks completos siguen sin validar o sin soporte.
 
 ```json
 {"mutation_policy":{"directory_entry_size":17,"mutation_time":{"seconds":-11,"nanoseconds":321}}}
+```
+
+## Mutación explícita de enlaces simbólicos iniciales
+
+`symbolic_links[].mutable:true` y C++ `DarwinFileOptions::MutableSymbolicLinks` autorizan el nombre del objeto inicial, con permiso independiente del padre real. Se rechazan flags conocidos, mode especial, link_count≠1, alias de identidad y dispositivos contradictorios. Sin declaración el nombre queda protegido y no puede estar en un dominio ancestral mutable. Cada permiso reserva una referencia path/NUL fija, sin entrada ni inode de creación. Los destinos iniciales no cambian.
+
+unlink, rename normal/EXCL, SWAP de hojas link/file/link y transacciones de subárboles declarados conservan requisitos de padre real, mount y SWAP. Destinos relativos se resuelven en el nuevo padre; FD/dup, CWD y leases de mapping conservan sus referentes. Costes iniciales siguen reservados tras borrar/reemplazar; el primer cambio reserva otro nombre dinámico. Solo se devuelven costes dinámicos propios y solo enlaces creados cuentan como entradas dinámicas. Rechazos y operaciones sin efecto no publican cambios.
+
+`symbolic_links[].mutation_policy` usa `DarwinSymbolicLinkMutationPolicy` y `DarwinFileOptions::SymbolicLinkMutationPolicies`. El único campo estricto `mutation_time` tiene segundos signed 64-bit sin pérdida y nanosegundos [0, 1000000000), con permiso y metadatos completos de inode no cero. El primer movimiento directo/SWAP copia escalares sin asignar y cambia solo ctime; blocks y el resto se conservan. Ancestros/rechazos/no-ops preservan el registro. Sin política, stat completo pasa a desconocido, pero inode de enumeración y contradicciones de dispositivo permanecen. Referencia path/NUL fija; nombres reutilizados y nuevos symlink no heredan la política inicial, sino la namespace policy de creación separada.
+
+La preparación ARM64 privada retiene 14 vistas guarded raw-stat, 11 operaciones, ABI SDK independiente de 144 bytes, límites compile120s/native5s/drain1s/reap1s y limpieza. `mutable-initial-links` comprueba identidad, resolución y referentes nativos; `virtual-mutable-initial-links` comprueba stat completo en cinco guest, C/CLI y Python. Modelos cubren dos páginas, SWAP de subárboles, costes exactos y agotamiento entry/inode. Intel e iOS físico no están validados; hard links, ACL, transacciones raíz directory/link y OS/runtime/framework completo quedan pendientes.
+
+```json
+{"mutable":true,"mutation_policy":{"mutation_time":{"seconds":-13,"nanoseconds":456}}}
 ```

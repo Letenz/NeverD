@@ -310,6 +310,18 @@ NEVERD_DARWIN_DIAGNOSTIC(
     SymbolicLinkMutation,
     "Darwin symbolic link namespace mutation is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(
+    SymbolicLinkMutableOption,
+    "Darwin mutable symbolic links require initial links and mutable parents")
+NEVERD_DARWIN_DIAGNOSTIC(
+    SymbolicLinkMutableDevice,
+    "Darwin mutable symbolic links have conflicting parent devices")
+NEVERD_DARWIN_DIAGNOSTIC(SymbolicLinkMetadataMutationOption,
+                         "Darwin symbolic link metadata mutation requires a "
+                         "grant, nonzero observed inode and valid time")
+NEVERD_DARWIN_DIAGNOSTIC(
+    SymbolicLinkMutatedMetadata,
+    "Darwin symbolic link metadata is unknown after namespace mutation")
+NEVERD_DARWIN_DIAGNOSTIC(
     SymbolicLinkPartialOutput,
     "Darwin symbolic link target output is partially writable")
 NEVERD_DARWIN_DIAGNOSTIC(

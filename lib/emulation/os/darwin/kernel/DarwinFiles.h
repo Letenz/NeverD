@@ -132,8 +132,14 @@ private:
     std::string Path;
     std::shared_ptr<DirectoryNode> Parent;
     bool Protected = false;
+    bool Created = false;
+    bool MetadataInvalidated = false;
+    uint64_t PathCharge = 0;
     llvm::ArrayRef<uint8_t> bytes() const {
       return CreatedTarget ? llvm::ArrayRef<uint8_t>(*CreatedTarget) : Initial;
+    }
+    uint64_t dynamicCharge() const {
+      return PathCharge + (CreatedTarget ? CreatedTarget->size() : 0);
     }
   };
   struct Description {

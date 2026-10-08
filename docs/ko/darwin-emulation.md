@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 9553588d9792a9f22ea6a9d595406637472b0122514d854a6ed41e9c90f43414 -->
+<!-- i18n-source: 1480ab7f58ad16bb60f46433bfc9c34563c292fc7f17c020ca9b427f5f99b2b8 -->
 
 [← 문서 목록](README.md)
 
@@ -732,7 +732,7 @@ AT_FDCWD가 아닌 `openat`은 접근 모드와 FD 용량 검사보다 먼저 �
 
 ## 고정 초기 심볼릭 링크
 
-`DarwinFileOptions::SymbolicLinks` / `darwin_files.symbolic_links`는 정규 절대 `path`, 원시 16진수 `target_hex`, 선택적인 링크 자체 `metadata`를 선언합니다. 대상은1..1023 비NUL 바이트이며 비UTF-8, 반복 슬래시, 점, 없는 대상을 보존합니다. 빈 배열이어도 `files`는 필수입니다. 이름 충돌과 링크 아래 선언은 거부합니다. 경로/NUL/대상은256개/16 MiB를 공유합니다. S_IFLNK, 대상 길이와 같은size, DT_LNK=10, 일치inode가 필요하며 설정 CWD는 실제 디렉터리여야 합니다.
+아래 초기 이름은 기본적으로 보호됩니다. 명시적 변경 권한을 부여한 동작은 마지막 절을 참조하세요. `DarwinFileOptions::SymbolicLinks` / `darwin_files.symbolic_links`는 정규 절대 `path`, 원시 16진수 `target_hex`, 선택적인 링크 자체 `metadata`를 선언합니다. 대상은1..1023 비NUL 바이트이며 비UTF-8, 반복 슬래시, 점, 없는 대상을 보존합니다. 빈 배열이어도 `files`는 필수입니다. 이름 충돌과 링크 아래 선언은 거부합니다. 경로/NUL/대상은256개/16 MiB를 공유합니다. S_IFLNK, 대상 길이와 같은size, DT_LNK=10, 일치inode가 필요하며 설정 CWD는 실제 디렉터리여야 합니다.
 
 링크 확장 후 점을 처리합니다. 상대 대상은 실제 부모, 절대 대상은 게스트 루트에서 시작합니다. 확장마다 끝 슬래시를 다시 해석하며 소비한 입력 슬래시를 물려주지 않습니다.32회까지 허용,33회는ELOOP62; 대상+접미사+NUL이1024바이트 초과면ENAMETOOLONG63. FD/CWD/F_GETPATH/mmap은 최종 객체를 유지합니다.
 
@@ -740,7 +740,7 @@ stat64/open/access/truncate/chdir는 끝 링크를 따르고 lstat64/readlink는
 
 readlink(58)는 부호 있는 하위32비트count, readlinkat(473)는 전체size_t이며int를 반환합니다. INT32_MAX 초과는 경로/FD보다 먼저EINVAL22. min(count,대상 길이)만 복사하고NUL을 추가하지 않으며 실제 범위만 검사합니다.0길이도 경로/유형 검사 후 출력 포인터를 무시합니다. 비링크EINVAL22, 모두 쓰기 불가EFAULT14, 부분 쓰기는 복사 전에 중지합니다. 전송/메모리 예산 오류를 전달합니다.
 
-고정 링크 이름과 원시 대상 바이트는 변하지 않습니다. MutableDirectories는 루트 또는 고정 링크 이름의 경로 구간 조상이 될 수 없으며 /work는 /workspace/link를 포함하지 않습니다. 별도의 가변 디렉터리에서 대상 이름을 실행 중 생성, 이동, 삭제, 교체할 수 있습니다. 기존 부모, 마운트, 별칭, 플래그, SWAP 지원, 생성 정책 검증은 유지되며 새 inode는 보호 링크를 포함한 모든 메타데이터/스냅샷 inode보다 커야 합니다. 고정 WritableFiles/MutationPolicies는 최종 일반 파일을 변경할 수 있습니다. 링크unlink/rename은 효과 전에 중지합니다. 실행 중 링크 생성은 다음 절에 설명합니다. 하드 링크,ACL,가변 초기 링크 목록은 미지원입니다. ARM64 macOS 독립 프로브는 기존5초 내189관찰/115전체 버퍼를 통과했으며 물리iOS/Intel HVF/전체OS를 입증하지 않습니다.
+고정 링크 이름과 원시 대상 바이트는 변하지 않습니다. MutableDirectories는 루트 또는 고정 링크 이름의 경로 구간 조상이 될 수 없으며 /work는 /workspace/link를 포함하지 않습니다. 별도의 가변 디렉터리에서 대상 이름을 실행 중 생성, 이동, 삭제, 교체할 수 있습니다. 기존 부모, 마운트, 별칭, 플래그, SWAP 지원, 생성 정책 검증은 유지되며 새 inode는 보호 링크를 포함한 모든 메타데이터/스냅샷 inode보다 커야 합니다. 고정 WritableFiles/MutationPolicies는 최종 일반 파일을 변경할 수 있습니다. 링크unlink/rename은 효과 전에 중지합니다. 실행 중 링크 생성은 다음 절에 설명합니다. 하드 링크,ACL,개별 권한 없는 초기 링크 변경 목록은 미지원입니다. ARM64 macOS 독립 프로브는 기존5초 내189관찰/115전체 버퍼를 통과했으며 물리iOS/Intel HVF/전체OS를 입증하지 않습니다.
 
 추가 ARM64 macOS DELETE/RENAME 60개 제어는 기존5초 내 전체 stat 버퍼, 변경 전후 이름 공간과 유지 FD/CWD 식별을 기록합니다. 끝 슬래시는 링크를 펼쳐 실제 대상을 변경할 수 있고 NOFOLLOW_ANY는 필요한 펼침을 ELOOP로 거부합니다. SDK 없는 symbolic-link-mutations는 생성, 없는 대상, 이동/삭제/교체, 유지 CWD 부모, FD 종료 전 원래 파일10바이트 전체와 종료 후에도 유지된 매핑10바이트 전체를 검사합니다. 물리 iOS나 네이티브 Intel 증거는 아닙니다.
 
@@ -756,7 +756,7 @@ readlink(58)는 부호 있는 하위32비트count, readlinkat(473)는 전체size
 
 현재 링크 표가 실제 이름, 부모와 대상 바이트를 보유합니다. 기존 말단은 EEXIST17입니다. 소모한 마지막 슬래시는 dangling 링크의 실제 대상 이름에서 생성을 허용하며 기존 링크는 바뀌지 않습니다. 빈 대상 확장은 ENOENT2입니다. 빈 대상 readlink는 양의 용량에서도 출력 포인터에 접근하지 않고0을 반환하지만 count/경로/유형을 먼저 검사합니다.
 
-이름/NUL과 대상은 한 번만 계산하며256항목/16 MiB를 공유합니다. 거부는 노드, 부모, FD, 일반 파일 inode를 바꾸지 않습니다. 새 링크의 전체 메타데이터는 알 수 없으며 일반 파일 CreationPolicy나 재사용 이름의 이전 관측을 상속하지 않습니다. 생성 후 부모 stat/스냅샷은 알 수 없습니다. 대상 삭제/교체 후에도 FD/CWD/매핑은 원래 객체를 유지합니다. rmdir와 디렉터리 교체는 링크 자식을 검사합니다. 이동/SWAP 양쪽 중 보호된 초기 링크가 있는 쪽이 있으면 효과 전에 중지합니다. 링크/디렉터리 교체, 하드 링크, ACL, 가변 초기 링크 목록은 미지원이며 별칭은 실제 부모의 권한을 옮기지 않습니다.
+이름/NUL과 대상은 한 번만 계산하며256항목/16 MiB를 공유합니다. 거부는 노드, 부모, FD, 일반 파일 inode를 바꾸지 않습니다. 새 링크의 전체 메타데이터는 알 수 없으며 일반 파일 CreationPolicy나 재사용 이름의 이전 관측을 상속하지 않습니다. 생성 후 부모 stat/스냅샷은 알 수 없습니다. 대상 삭제/교체 후에도 FD/CWD/매핑은 원래 객체를 유지합니다. rmdir와 디렉터리 교체는 링크 자식을 검사합니다. 이동/SWAP 양쪽 중 보호된 초기 링크가 있는 쪽이 있으면 효과 전에 중지합니다. 링크/디렉터리 교체, 하드 링크, ACL, 개별 권한 없는 초기 링크 변경 목록은 미지원이며 별칭은 실제 부모의 권한을 옮기지 않습니다.
 
 ARM64 macOS의150개 원시 기록은 관측기 실패4개를 유지하며 별도10개로 실제 새 대상과 빈 링크 경계를 확인합니다. SDK 없는 `symbolic-link-creation`은 두 진입점, 대상/버퍼 경계, 부모, 교체 파일 및 기존 FD/매핑10바이트 전체를 확인합니다. 물리 iOS, 네이티브 Intel, 전체 OS 호환성 증거는 아닙니다.
 
@@ -802,7 +802,7 @@ ARM64 macOS의150개 원시 기록은 관측기 실패4개를 유지하며 별�
 
 활성화하면 일반 파일,symlink,mkdir의 성공 삽입이 하나의inode 순서를 공유하고 UINT64_MAX에서 영구 고갈됩니다. 거부와 기존 이름open은 소비하지 않습니다. Device/GID는 실제 부모, UID는 유효 게스트 ID에서 옵니다. 링크mode는S_IFLNK와 `0777 & ~umask`, nlink=1, size는 빈 대상/비UTF-8을 포함한 원시 바이트 수이며 blocks는 선언 단위로 올림한512바이트 블록 수입니다. 디렉터리mode는S_IFDIR와 `mode & 0777 & ~umask`, nlink는2와 모든 종류의 직접 연결 이름 수의 합, size는nlink와 선언 항목 크기의 곱, blocks는 고정입니다. 유지된 삭제된 빈 디렉터리에도 적용하는 명시적 가상 계약이며 APFS 추론이 아닙니다.
 
-초기 시간은creation_time입니다. 자식 이름 변경은 새 부모mtime/ctime을, 직접 이동은 링크/디렉터리ctime만 mutation_time으로 갱신합니다. 조상 이동은 후손 기록을 유지하며 dup/CWD/교체/SWAP/삭제/이름 재사용에서 기록은 객체에 속합니다. 생성 확장만으로 초기 부모 전체 stat과 고정 스냅샷을 유지하지 않습니다. 아래 독립 정책이 stat과 실시간 열거를 제공합니다. ACL, 가변 초기 링크, 일반 디렉터리/링크 루트 거래는 미지원입니다. 원래 `created-namespace-metadata`는 공통mode/소유자/정체성/수명을, `virtual-created-namespace-metadata`는C++/SDK/CLI/Python에서 전체144바이트 상수 기록을 확인합니다. 대상 검증은 모델/준입11,엄격JSON1,기존5초의 원래43,실행 가능한 게스트8（불가12건 건너뜀,필수HVF3실행）,공개10을 통과했습니다. 포인터 표의 실패와 수정된 정적ARM64 기록을 보존합니다. 실제iOS/네이티브Intel은 미검증입니다。
+초기 시간은creation_time입니다. 자식 이름 변경은 새 부모mtime/ctime을, 직접 이동은 링크/디렉터리ctime만 mutation_time으로 갱신합니다. 조상 이동은 후손 기록을 유지하며 dup/CWD/교체/SWAP/삭제/이름 재사용에서 기록은 객체에 속합니다. 생성 확장만으로 초기 부모 전체 stat과 고정 스냅샷을 유지하지 않습니다. 아래 독립 정책이 stat과 실시간 열거를 제공합니다. ACL, 개별 권한 없는 초기 링크 변경, 일반 디렉터리/링크 루트 거래는 미지원입니다. 원래 `created-namespace-metadata`는 공통mode/소유자/정체성/수명을, `virtual-created-namespace-metadata`는C++/SDK/CLI/Python에서 전체144바이트 상수 기록을 확인합니다. 대상 검증은 모델/준입11,엄격JSON1,기존5초의 원래43,실행 가능한 게스트8（불가12건 건너뜀,필수HVF3실행）,공개10을 통과했습니다. 포인터 표의 실패와 수정된 정적ARM64 기록을 보존합니다. 실제iOS/네이티브Intel은 미검증입니다。
 
 ```json
 {"namespace_policy":{"symbolic_link_allocation_unit":512,"directory_entry_size":32,"directory_blocks":7}}
@@ -824,8 +824,22 @@ ARM64 macOS의150개 원시 기록은 관측기 실패4개를 유지하며 별�
 
 기록과 정책은 dup, 유지 FD, CWD, 교체, 삭제, 이름 재사용에서도 원래 객체에 속합니다. 새 mkdir 객체는 별도로 지정된 생성 정책을 사용하며 부모나 같은 이름의 이전 객체에서 초기 stat 정책을 상속하지 않습니다. 불변 스냅샷은 변경 후 계속 미상이며 독립 enumeration_policy가 실시간 보기를 제공할 수 있습니다. 이 stat 정책을 생략하면 변경된 초기 디렉터리의 전체 메타데이터는 미상으로 남습니다.
 
-독립 ARM64 네이티브 준비는 변경 없는 5초 안에 보호된 원시 stat 보기 27개와 작업 15개를 보존하고 144바이트 SDK ABI와 유지 신원을 확인했습니다. 네이티브 시간이나 할당 규칙을 일반화하지 않습니다. 독자적인 `initial-directory-metadata`는 공통 네이티브 관측을, `virtual-initial-directory-metadata`는 guest, C/CLI, Python의 전체 144바이트 상수 기록을 확인합니다. 모델은 첫 삭제, 변경 권한 부재, 생성 정책 생략, 스냅샷/열거 독립성도 다룹니다. 네이티브 Intel, 실제 iOS, ACL, 하드 링크, 가변 초기 링크, 전체 OS/프레임워크는 미검증 또는 미지원입니다.
+독립 ARM64 네이티브 준비는 변경 없는 5초 안에 보호된 원시 stat 보기 27개와 작업 15개를 보존하고 144바이트 SDK ABI와 유지 신원을 확인했습니다. 네이티브 시간이나 할당 규칙을 일반화하지 않습니다. 독자적인 `initial-directory-metadata`는 공통 네이티브 관측을, `virtual-initial-directory-metadata`는 guest, C/CLI, Python의 전체 144바이트 상수 기록을 확인합니다. 모델은 첫 삭제, 변경 권한 부재, 생성 정책 생략, 스냅샷/열거 독립성도 다룹니다. 네이티브 Intel, 실제 iOS, ACL, 하드 링크, 개별 권한 없는 초기 링크 변경, 전체 OS/프레임워크는 미검증 또는 미지원입니다.
 
 ```json
 {"mutation_policy":{"directory_entry_size":17,"mutation_time":{"seconds":-11,"nanoseconds":321}}}
+```
+
+## 초기 심볼릭 링크의 명시적 변경 권한
+
+`symbolic_links[].mutable:true`와 C++ `DarwinFileOptions::MutableSymbolicLinks`는 원래 링크 객체의 이름 공간 변경을 허용합니다. 실제 부모도 별도 변경 권한이 필요합니다. 알려진 flags, 특수 mode, link_count≠1, 식별자 별칭, 부모 장치 충돌은 거부됩니다. 생략하면 이름이 보호되어 변경 가능한 조상 영역에 놓을 수 없습니다. 권한은 고정 path/NUL 참조를 예약하며 항목이나 생성 inode를 추가하지 않습니다. 초기 대상 바이트는 불변입니다.
+
+unlink, 일반/EXCL rename, 말단 링크/파일/link SWAP, 선언된 디렉터리 하위 트리 거래는 실제 부모·mount·SWAP 조건을 유지합니다. 상대 대상은 새 실제 부모에서 해석하고 FD/dup, CWD, 매핑 lease는 기존 참조 객체를 유지합니다. 삭제/교체 후에도 초기 이름/대상/참조 비용은 고정 예약되며 첫 이름 변경은 동적 이름 비용을 별도로 예약합니다. 객체 소유 동적 이름/생성 대상 비용만 환불하고 생성 링크만 동적 항목으로 셉니다. 거부와 같은 객체 무효 동작은 상태를 바꾸지 않습니다.
+
+`symbolic_links[].mutation_policy`는 `DarwinSymbolicLinkMutationPolicy`, `DarwinFileOptions::SymbolicLinkMutationPolicies`를 사용합니다. 유일한 `mutation_time`은 무손실 signed 64-bit 초와 [0, 1000000000) 나노초이며 권한과 완전한 nonzero inode 관측이 필요합니다. 첫 직접 이동/SWAP은 할당 없이 스칼라를 복사하고 ctime만 바꿉니다. blocks 등 나머지 필드, 조상 이동, 거부, 무효 동작은 보존합니다. 정책이 없으면 직접 이동 후 전체 stat은 미상이지만 열거 inode와 알려진 장치 충돌은 유지됩니다. 정책 path/NUL 참조를 한 번 예약합니다. 이름 재사용이나 새 symlink는 초기 기록/정책을 상속하지 않고 별도 namespace policy를 사용합니다.
+
+독립 ARM64 준비는 guarded raw-stat 14개, 동작 11개, 144-byte SDK ABI, compile120s/native5s/drain1s/reap1s와 사적 영역 정리를 기록합니다. `mutable-initial-links`는 원생 식별자·대상 재해석·참조 수명을, `virtual-mutable-initial-links`는 다섯 guest·C/CLI·Python의 전체 stat을 확인합니다. 두 페이지 크기, 하위 트리 SWAP, 정확한 비용과 entry/inode 고갈을 모델로 검사합니다. Intel 및 실제 iOS는 원생 검증되지 않았고 hard link, ACL, directory/link 루트 거래와 전체 OS/runtime/framework는 남아 있습니다.
+
+```json
+{"mutable":true,"mutation_policy":{"mutation_time":{"seconds":-13,"nanoseconds":456}}}
 ```

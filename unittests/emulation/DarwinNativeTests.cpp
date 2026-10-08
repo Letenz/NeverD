@@ -1113,6 +1113,13 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
         std::filesystem::create_symlink(Target, Catalogue / Name);
       CaseInput = (Catalogue / "data").string();
     }
+    if (llvm::StringRef(Test.Mode) == "mutable-initial-links") {
+      const auto Catalogue = Root / Test.Mode;
+      ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "empty"));
+      std::filesystem::create_symlink("data", Catalogue / "initial");
+      std::filesystem::create_symlink("empty", Catalogue / "initial-dir");
+      CaseInput = (Catalogue / "data").string();
+    }
     if (llvm::StringRef(Test.Mode) == "symbolic-link-mutations" ||
         llvm::StringRef(Test.Mode) == "symbolic-link-creation" ||
         llvm::StringRef(Test.Mode) == "symbolic-link-unlink" ||

@@ -11056,6 +11056,424 @@ TEST_P(DarwinFileTest, RuntimeLinkSubtreesKeepActualGrantsAndMountsProtected) {
   }
 }
 
+TEST(DarwinFileOptions, MutableInitialLinksRequireExplicitOrdinaryIdentity) {
+  DarwinFileOptions Good;
+  Good.Directories.insert("/");
+  Good.MutableDirectories.insert("/");
+  Good.SymbolicLinks["/l"] = {'x'};
+  Good.MutableSymbolicLinks.insert("/l");
+  Good.Metadata["/"] = darwin_test::creationParentMetadata();
+  Good.Metadata["/l"] = darwin_test::initialSymbolicLinkMetadata(1);
+  Good.SymbolicLinkMutationPolicies["/l"] =
+      darwin_test::InitialSymbolicLinkPolicy;
+  ASSERT_FALSE(bool(validateFileOptions(Good)));
+  auto Refused = [](const DarwinFileOptions &O) {
+    auto E = validateFileOptions(O);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+  };
+  auto Bad = Good;
+  Bad.MutableSymbolicLinks.clear();
+  Refused(Bad);
+  Bad = Good;
+  Bad.MutableDirectories.clear();
+  Refused(Bad);
+  for (const char *Path : {"/", "/absent", "/file"}) {
+    Bad = Good;
+    Bad.Files["/file"] = {};
+    Bad.MutableSymbolicLinks.insert(Path);
+    Refused(Bad);
+  }
+  for (unsigned Which = 0; Which != 7; ++Which) {
+    Bad = Good;
+    auto &M = Bad.Metadata["/l"];
+    if (Which == 0)
+      M.Flags = 1;
+    if (Which == 1)
+      M.Mode |= 04000;
+    if (Which == 2)
+      M.LinkCount = 2;
+    if (Which == 3)
+      M.LinkCount = 0;
+    if (Which == 4)
+      M.Device = 2;
+    if (Which == 5) {
+      Bad.Files["/alias"] = {};
+      Bad.Metadata["/alias"] = darwin_test::mutationMetadata(0);
+      Bad.Metadata["/alias"].Inode = M.Inode;
+    }
+    if (Which == 6)
+      M.Inode = 0;
+    Refused(Bad);
+  }
+  Bad = Good;
+  Bad.Metadata.erase("/l");
+  Refused(Bad);
+  for (int64_t Nanos : {-1LL, 1000000000LL}) {
+    Bad = Good;
+    Bad.SymbolicLinkMutationPolicies["/l"].Time.Nanoseconds = Nanos;
+    Refused(Bad);
+  }
+  Bad = Good;
+  Bad.SymbolicLinkMutationPolicies.clear();
+  Bad.Metadata.erase("/l");
+  EXPECT_FALSE(bool(validateFileOptions(Bad)));
+  Bad = Good;
+  Bad.Metadata.erase("/");
+  Bad.Directories.insert("/a");
+  Bad.Metadata["/a"] = darwin_test::creationParentMetadata();
+  Bad.Metadata["/l"].Device = 2;
+  Bad.MovableDirectories.insert("/a");
+  Refused(Bad);
+}
+
+TEST(DarwinFileOptions, MutableInitialLinkReferencesRetainFixedCosts) {
+  DarwinFileOptions O;
+  O.Directories.insert("/");
+  O.MutableDirectories.insert("/");
+  O.SymbolicLinks["/l"] = {'x'};
+  O.MutableSymbolicLinks.insert("/l");
+  O.Metadata["/l"] = darwin_test::initialSymbolicLinkMetadata(1);
+  O.SymbolicLinkMutationPolicies["/l"] = darwin_test::InitialSymbolicLinkPolicy;
+  // root declaration/grant 2+2, link name/target/grant/policy 3+1+3+3,
+  // and filler name 3. References do not create additional entries.
+  O.Files["/f"] = std::vector<uint8_t>(darwin_file_limits::Bytes - 17);
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Files["/f"].push_back(0);
+  auto E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  O.Files.clear();
+  for (unsigned I = 0; I != 254; ++I)
+    O.Files["/f" + std::to_string(I)] = {};
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Files["/extra"] = {};
+  E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+}
+
+TEST_P(DarwinFileTest, MutableInitialLinkMovesRetainStatAndRebindTargets) {
+  Options.emplace();
+  Options->Directories = {"/", "/a", "/b"};
+  Options->MutableDirectories = {"/", "/a", "/b"};
+  Options->MovableDirectories = {"/a", "/b"};
+  Options->Files = {{"/a/target", {11}}, {"/b/target", {22}}};
+  Options->SymbolicLinks["/a/l"] = {'t', 'a', 'r', 'g', 'e', 't'};
+  Options->MutableSymbolicLinks.insert("/a/l");
+  Options->Metadata["/a/l"] = darwin_test::initialSymbolicLinkMetadata();
+  Options->SymbolicLinkMutationPolicies["/a/l"] =
+      darwin_test::InitialSymbolicLinkPolicy;
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto Before = namespaceStatus("/a/l");
+  path("/a/l");
+  const auto Held = ok(ServiceKind::Open, {Base});
+  auto Lease = Files->mappingSource(Held);
+  renameFile("/a/l", "/a/l");
+  EXPECT_EQ(namespaceStatus("/a/l"), Before);
+  path("/a/l");
+  path("/b/target", Base + 128);
+  error(ServiceKind::RenameAtX, {999, Base, 999, Base + 128, 4},
+        value::FileExists);
+  EXPECT_EQ(namespaceStatus("/a/l"), Before);
+  renameFile("/a/l", "/b/m");
+  const auto Expected = initialDirectoryRecord(
+      Before, darwin_test::InitialSymbolicLinkPolicy.Time);
+  EXPECT_EQ(namespaceStatus("/b/m"), Expected);
+  linkTarget("/b/m", "target");
+  path("/b/m");
+  const auto Rebound = ok(ServiceKind::Open, {Base});
+  const uint8_t A[] = {11}, B[] = {22};
+  contents(Held, A);
+  contents(Rebound, B);
+  ASSERT_TRUE(std::holds_alternative<DarwinFiles::Mapping>(Lease));
+  EXPECT_EQ(std::get<DarwinFiles::Mapping>(Lease).Bytes,
+            llvm::ArrayRef<uint8_t>(A));
+  renameFile("/b", "/moved");
+  EXPECT_EQ(namespaceStatus("/moved/m"), Expected);
+  linkTarget("/moved/m", "target");
+  path("/moved/m");
+  EXPECT_EQ(ok(ServiceKind::UnlinkAt, {999, Base, 0x800}), 0u);
+  contents(Held, A);
+  contents(Rebound, B);
+  EXPECT_EQ(Options->SymbolicLinks.at("/a/l"),
+            (std::vector<uint8_t>{'t', 'a', 'r', 'g', 'e', 't'}));
+}
+
+TEST_P(DarwinFileTest, MutableInitialLinkSwapAndReuseKeepObjectPolicies) {
+  Options.emplace();
+  namespacePolicy();
+  Options->Directories.insert("/");
+  Options->SwapRenameDirectories.insert("/");
+  Options->Files["/data"] = {11};
+  Options->Files["/f"] = {33};
+  Options->SymbolicLinks["/l"] = {'d', 'a', 't', 'a'};
+  Options->MutableSymbolicLinks.insert("/l");
+  Options->Metadata["/l"] = darwin_test::initialSymbolicLinkMetadata(4);
+  Options->SymbolicLinkMutationPolicies["/l"] =
+      darwin_test::InitialSymbolicLinkPolicy;
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto Before = namespaceStatus("/l");
+  path("/f");
+  const auto Held = ok(ServiceKind::Open, {Base});
+  swapFiles("/l", "/f");
+  const auto Expected = initialDirectoryRecord(
+      Before, darwin_test::InitialSymbolicLinkPolicy.Time);
+  EXPECT_EQ(namespaceStatus("/f"), Expected);
+  linkTarget("/f", "data");
+  identity(Held, "/l");
+  renameFile("/f", "/l");
+  EXPECT_EQ(namespaceStatus("/l"), Expected);
+  const uint8_t Bytes[] = {33};
+  contents(Held, Bytes);
+  path("/l");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  makeLink("/l", "data");
+  const auto Fresh = namespaceStatus("/l");
+  EXPECT_EQ(llvm::support::endian::read64le(Fresh.data() + 8),
+            darwin_test::CreationPolicy.FirstInode);
+  renameFile("/l", "/new");
+  const auto Changed = namespaceStatus("/new");
+  EXPECT_EQ(llvm::support::endian::read64le(Changed.data() + 64),
+            uint64_t(darwin_test::MutationPolicy.Time.Seconds));
+  EXPECT_EQ(llvm::support::endian::read64le(Changed.data() + 72),
+            uint64_t(darwin_test::MutationPolicy.Time.Nanoseconds));
+  EXPECT_EQ(Options->Metadata.at("/l").Inode, 57u);
+}
+
+TEST_P(DarwinFileTest, MutableInitialLinkUnknownStatKeepsEnumerationIdentity) {
+  Options.emplace();
+  Options->Directories.insert("/");
+  Options->MutableDirectories.insert("/");
+  Options->Metadata["/"] = darwin_test::creationParentMetadata();
+  Options->DirectoryEnumerationPolicies["/"] = {1, 1, 0};
+  Options->SymbolicLinks["/l"] = {'x'};
+  Options->MutableSymbolicLinks.insert("/l");
+  Options->Metadata["/l"] = darwin_test::initialSymbolicLinkMetadata(1);
+  Options->Files["/foreign"] = {};
+  Options->Metadata["/foreign"] = darwin_test::mutationMetadata(0);
+  Options->Metadata["/foreign"].Inode = 58;
+  Options->Metadata["/foreign"].Device = 456;
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto Before = namespaceStatus("/l");
+  path("/");
+  const auto Root = ok(ServiceKind::Open, {Base});
+  const auto Initial = directoryBytes(Root);
+  ASSERT_EQ(Initial.size(), 128u);
+  renameFile("/l", "/m");
+  path("/m");
+  llvm::cantFail(Space->write(Base + 256, Before));
+  EXPECT_FALSE(invoke(ServiceKind::Lstat64, {Base, Base + 256}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkMutatedMetadata);
+  std::array<uint8_t, 144> Unchanged;
+  llvm::cantFail(Space->read(Base + 256, Unchanged));
+  EXPECT_EQ(Unchanged, Before);
+  linkTarget("/m", "x");
+  path("/m");
+  path("/foreign", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameMount);
+  linkTarget("/m", "x");
+  EXPECT_FALSE(invoke(ServiceKind::GetDirEntries64,
+                      {Root, Base + 256, 1024, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::DirectoryEnumerationVersion);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Root, 0, 0}), 0u);
+  const auto After = directoryBytes(Root);
+  ASSERT_EQ(After.size(), 128u);
+  EXPECT_EQ(llvm::support::endian::read64le(After.data() + 96), 57u);
+  EXPECT_EQ(After[116], 10u);
+  EXPECT_EQ(After[117], 'm');
+}
+
+TEST_P(DarwinFileTest, MutableInitialLinkRemovalRetainsDirectoryReferents) {
+  Options.emplace();
+  Options->Directories = {"/", "/d"};
+  Options->MutableDirectories.insert("/");
+  Options->SymbolicLinks["/l"] = {'d'};
+  Options->MutableSymbolicLinks.insert("/l");
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/l");
+  EXPECT_EQ(ok(ServiceKind::Chdir, {Base}), 0u);
+  const auto FD = ok(ServiceKind::Open, {Base, 0x100000});
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path(".");
+  const auto CWD = ok(ServiceKind::Open, {Base});
+  identity(FD, "/d");
+  identity(CWD, "/d");
+  path("/l");
+  error(ServiceKind::Open, {Base}, value::NoEntry);
+  makeLink("/l", "missing");
+  linkTarget("/l", "missing");
+  identity(FD, "/d");
+}
+
+TEST_P(DarwinFileTest, MutableInitialLinkChargesOnlyOwnedDynamicStorage) {
+  for (bool Replace : {false, true}) {
+    SCOPED_TRACE(Replace);
+    Options.emplace();
+    Options->Directories.insert("/work");
+    Options->MutableDirectories.insert("/work");
+    Options->Files["/work/data"] = {};
+    Options->WritableFiles.insert("/work/data");
+    Options->MutationPolicies["/work/data"] = darwin_test::MutationPolicy;
+    Options->Metadata["/work/data"] = darwin_test::mutationMetadata(0);
+    Options->SymbolicLinks["/work/a"] = {'d', 'a', 't', 'a'};
+    Options->MutableSymbolicLinks.insert("/work/a");
+    if (Replace) {
+      Options->SymbolicLinks["/work/b"] = {'d', 'a', 't', 'a'};
+      Options->MutableSymbolicLinks.insert("/work/b");
+    }
+    ASSERT_FALSE(bool(validateFileOptions(*Options)));
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    // Directory/name/grants/policy cost 45. Each initial link fixes 8+4+8;
+    // no target or initial-name reservation can pay for a live dynamic name.
+    const uint64_t Capacity =
+        darwin_file_limits::Bytes - 65 - (Replace ? 20 : 0);
+    path("/work/data");
+    const auto Data = ok(ServiceKind::Open, {Base, 2});
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 7}), 0u);
+    path("/work/a");
+    path("/work/b", Base + 128);
+    EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+    linkTarget("/work/a", "data");
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 8}), 0u);
+    renameFile("/work/a", "/work/b");
+    EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity - 7}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+    path("/work/b");
+    EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity}), 0u);
+    EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity + 1}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 12}), 0u);
+    makeLink("/work/a", "data");
+    EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity - 11}));
+    path("/work/a");
+    EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity}), 0u);
+  }
+}
+
+TEST_P(DarwinFileTest, MutableInitialLinksNeverBecomeCreatedEntriesOrInodes) {
+  Options.emplace();
+  namespacePolicy(UINT64_MAX);
+  Options->Directories.insert("/");
+  Options->Files["/data"] = {};
+  for (unsigned I = 0; I != 254; ++I) {
+    const auto Name = "/l" + std::to_string(I);
+    Options->SymbolicLinks[Name] = {'x'};
+    Options->MutableSymbolicLinks.insert(Name);
+  }
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  renameFile("/l0", "/m");
+  path("/extra");
+  path("x", Base + 1024);
+  EXPECT_FALSE(invoke(ServiceKind::Symlink, {Base + 1024, Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkCreationLimit);
+  path("/m");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path("/extra");
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x202, 0600}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationLimit);
+  path("/data");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  const auto Last = makeFile("/last");
+  EXPECT_EQ(llvm::support::endian::read64le(status(Last).data() + 8),
+            UINT64_MAX);
+  EXPECT_EQ(ok(ServiceKind::Close, {Last}), 0u);
+  path("/last");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path("/exhausted");
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x202, 0600}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationInode);
+}
+
+TEST_P(DarwinFileTest, MutableInitialLinksInSwappedTreesKeepOwnPolicies) {
+  Options.emplace();
+  Options->Directories = {"/", "/a", "/b"};
+  Options->MutableDirectories = {"/", "/a", "/b"};
+  Options->SwapRenameDirectories.insert("/");
+  Options->ExchangeableDirectories = {"/a", "/b"};
+  Options->Files = {{"/a/data", {11}}, {"/b/other", {22}}};
+  Options->SymbolicLinks = {{"/a/l", {'d', 'a', 't', 'a'}},
+                            {"/b/l", {'o', 't', 'h', 'e', 'r'}}};
+  Options->MutableSymbolicLinks = {"/a/l", "/b/l"};
+  Options->Metadata["/a/l"] = darwin_test::initialSymbolicLinkMetadata(4, 57);
+  Options->Metadata["/b/l"] = darwin_test::initialSymbolicLinkMetadata(5, 58);
+  Options->SymbolicLinkMutationPolicies["/a/l"] =
+      darwin_test::InitialSymbolicLinkPolicy;
+  Options->SymbolicLinkMutationPolicies["/b/l"] = {{INT64_MIN, 999999999}};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto A = namespaceStatus("/a/l"), B = namespaceStatus("/b/l");
+  swapFiles("/a", "/b");
+  EXPECT_EQ(namespaceStatus("/b/l"), A);
+  EXPECT_EQ(namespaceStatus("/a/l"), B);
+  linkTarget("/b/l", "data");
+  linkTarget("/a/l", "other");
+  path("/b/l");
+  const auto Held = ok(ServiceKind::Open, {Base});
+  const uint8_t Bytes[] = {11};
+  contents(Held, Bytes);
+  renameFile("/b/l", "/a/m");
+  EXPECT_EQ(
+      namespaceStatus("/a/m"),
+      initialDirectoryRecord(A, darwin_test::InitialSymbolicLinkPolicy.Time));
+  EXPECT_EQ(namespaceStatus("/a/l"), B);
+  linkTarget("/a/m", "data");
+  contents(Held, Bytes);
+}
+
+TEST_P(DarwinFileTest, MutableInitialLinkSubtreeRekeysReserveNamesAtomically) {
+  Options.emplace();
+  Options->Directories = {"/", "/a"};
+  Options->MutableDirectories = {"/", "/a"};
+  Options->MovableDirectories.insert("/a");
+  Options->Files["/data"] = {};
+  Options->WritableFiles.insert("/data");
+  Options->MutationPolicies["/data"] = darwin_test::MutationPolicy;
+  Options->Metadata["/data"] = darwin_test::mutationMetadata(0);
+  Options->SymbolicLinks["/a/l"] = {'x'};
+  Options->MutableSymbolicLinks.insert("/a/l");
+  Options->Metadata["/a/l"] = darwin_test::initialSymbolicLinkMetadata(1);
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto Before = namespaceStatus("/a/l");
+  path("/data");
+  const auto Data = ok(ServiceKind::Open, {Base, 2});
+  path("/a");
+  const auto Directory = ok(ServiceKind::Open, {Base});
+  // Initial directory/grants/link costs:24; data name/write/policy:18.
+  // The first rekey needs new directory/link names 6+8, with no fixed credit.
+  const uint64_t Capacity = darwin_file_limits::Bytes - 42;
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 13}), 0u);
+  path("/a");
+  path("/long", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+  identity(Directory, "/a");
+  EXPECT_EQ(namespaceStatus("/a/l"), Before);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 14}), 0u);
+  renameFile("/a", "/long");
+  identity(Directory, "/long");
+  EXPECT_EQ(namespaceStatus("/long/l"), Before);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity - 13}));
+  renameFile("/long", "/a");
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 8}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity - 7}));
+  path("/a/l");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 3}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity - 2}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+}
+
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinFileTest, testing::Values(4096, 16384));
 } // namespace
 } // namespace neverd::emulation::darwin_model

@@ -120,6 +120,17 @@ directoryMutationPolicy(const llvm::json::Value &Value) {
     return Time.takeError();
   return DarwinDirectoryMutationPolicy{*Size, *Time};
 }
+llvm::Expected<DarwinSymbolicLinkMutationPolicy>
+symbolicLinkMutationPolicy(const llvm::json::Value &Value) {
+  const auto *Object = Value.getAsObject();
+  if (!Object || Object->size() != 1)
+    return invalid(field::SymbolicLinkMutationPolicy);
+  auto Time =
+      fileTime(Object->get(field::FileMutationTime), field::FileMutationTime);
+  if (!Time)
+    return Time.takeError();
+  return DarwinSymbolicLinkMutationPolicy{*Time};
+}
 llvm::Expected<DarwinFileMetadata> metadata(const llvm::json::Value &Value) {
   const auto *Object = Value.getAsObject();
   if (!Object || Object->size() != 15)
@@ -373,7 +384,11 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
       for (const auto &Value : *Links) {
         const auto *Link = Value.getAsObject();
         if (!Link || !Link->get(field::SymbolicLinkTarget) ||
-            Link->size() != 2 + unsigned(bool(Link->get(field::FileMetadata))))
+            Link->size() !=
+                2 + unsigned(bool(Link->get(field::FileMetadata))) +
+                    unsigned(bool(Link->get(field::SymbolicLinkMutable))) +
+                    unsigned(
+                        bool(Link->get(field::SymbolicLinkMutationPolicy))))
           return invalid(Name);
         const auto Path = Link->getString(field::Path);
         if (!Path || Path->size() >= Remaining)
@@ -385,6 +400,19 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
           return Target.takeError();
         if (!Out.SymbolicLinks.emplace(Path->str(), std::move(*Target)).second)
           return invalid(field::Path);
+        if (const auto *M = Link->get(field::SymbolicLinkMutable)) {
+          auto Mutable = M->getAsBoolean();
+          if (!Mutable)
+            return invalid(field::SymbolicLinkMutable);
+          if (*Mutable)
+            Out.MutableSymbolicLinks.insert(Path->str());
+        }
+        if (const auto *P = Link->get(field::SymbolicLinkMutationPolicy)) {
+          auto Parsed = symbolicLinkMutationPolicy(*P);
+          if (!Parsed)
+            return Parsed.takeError();
+          Out.SymbolicLinkMutationPolicies.emplace(Path->str(), *Parsed);
+        }
         if (const auto *M = Link->get(field::FileMetadata)) {
           auto Parsed = metadata(*M);
           if (!Parsed)

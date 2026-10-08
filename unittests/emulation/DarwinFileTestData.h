@@ -62,6 +62,41 @@ inline constexpr char NamespaceCreationPolicyJSON[] = R"({
     "directory_entry_size":32,"directory_blocks":7}})";
 inline constexpr DarwinDirectoryMutationPolicy InitialDirectoryMutationPolicy{
     17, {-11, 321}};
+inline DarwinFileMetadata initialSymbolicLinkMetadata(uint64_t Size = 6,
+                                                      uint64_t Inode = 57) {
+  auto M = mutationMetadata(Size);
+  M.Mode = 0120777;
+  M.Inode = Inode;
+  return M;
+}
+inline constexpr DarwinSymbolicLinkMutationPolicy InitialSymbolicLinkPolicy{
+    {-13, 456}};
+inline constexpr char InitialSymbolicLinkPolicyJSON[] = R"({
+  "mutation_time":{"seconds":-13,"nanoseconds":456}})";
+inline constexpr char InitialSymbolicLinkMetadataHex[] =
+    "85ffffffffa101003900000000000000efcdab8998badcfe0000000000000000"
+    "01000000000000800100000000000000ffffffffffffff7fffc99a3b00000000"
+    "f3ffffffffffffffc801000000000000fbffffffffffffff0600000000000000"
+    "040000000000000008000000000000000010000000000000efcdab8900000000"
+    "00000000000000000000000000000000";
+inline DarwinFileOptions mutableInitialSymbolicLinkOptions() {
+  DarwinFileOptions O;
+  O.Files["/data"] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+  O.Metadata["/data"] = mutationMetadata();
+  O.Metadata["/"] = creationParentMetadata();
+  O.Metadata["/empty"] = creationParentMetadata();
+  O.Metadata["/empty"].Inode = 42;
+  O.Directories = {"/", "/empty"};
+  O.MutableDirectories = O.SwapRenameDirectories = {"/"};
+  O.InitialUmask = 0027;
+  O.CreationPolicy = NamespaceCreationPolicy;
+  O.SymbolicLinks = {{"/initial", {'d', 'a', 't', 'a'}},
+                     {"/initial-dir", {'e', 'm', 'p', 't', 'y'}}};
+  O.MutableSymbolicLinks = {"/initial", "/initial-dir"};
+  O.Metadata["/initial"] = initialSymbolicLinkMetadata(4);
+  O.SymbolicLinkMutationPolicies["/initial"] = InitialSymbolicLinkPolicy;
+  return O;
+}
 inline constexpr char InitialDirectoryMutationPolicyJSON[] = R"({
   "directory_entry_size":17,"mutation_time":{"seconds":-11,"nanoseconds":321}})";
 inline constexpr char InitialDirectoryMetadataHex[] =

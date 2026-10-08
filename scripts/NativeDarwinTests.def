@@ -102,4 +102,5 @@ NEVERD_NATIVE_DARWIN_CASE(
     VirtualEnumerationTracksNamespaceChangesAndRetainedDirectories)
 NEVERD_NATIVE_DARWIN_CASE(
     InitialDirectoryMutationKeepsFullStatAndIndependentCreationRules)
+NEVERD_NATIVE_DARWIN_CASE(MutableInitialLinksKeepIdentityAndReferentLifetime)
 #endif
