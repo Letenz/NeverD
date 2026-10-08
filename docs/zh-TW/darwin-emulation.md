@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1480ab7f58ad16bb60f46433bfc9c34563c292fc7f17c020ca9b427f5f99b2b8 -->
+<!-- i18n-source: d492dd2ee1d6198857c35a5a17205ffecebc13658e7634c2d278cc345d5e659b -->
 
 [← 文件索引](README.md)
 
@@ -838,8 +838,16 @@ unlink、普通/EXCL rename、葉連結/檔案/link SWAP 與授權目錄子樹�
 
 `symbolic_links[].mutation_policy` 使用 `DarwinSymbolicLinkMutationPolicy`、`DarwinFileOptions::SymbolicLinkMutationPolicies`。嚴格唯一欄位 `mutation_time` 的秒為無損有符號 64 位，奈秒 [0, 1000000000)；須有明確授權及完整非零 inode 觀測。首次直接移動/SWAP 無配置複製標量，只將 ctime 設為宣告時間，其餘欄位包括 blocks 保持；祖先移動、拒絕、空操作保留完整記錄。無策略時完整 stat 變為未知，列舉仍保留 inode，已知裝置衝突仍拒絕。策略預留一次路徑/NUL。重用名稱、新 symlink 不繼承初始記錄/策略，建立使用獨立 namespace policy。
 
-原生 ARM64 私有準備保存 14 個 guarded raw-stat 視圖、11 個操作、獨立 144 位元組 SDK ABI，維持 compile120s/native5s/drain1s/reap1s 並記錄清理。`mutable-initial-links` 驗證原生身分、目標重解析及持有目標；`virtual-mutable-initial-links` 於五種 guest、C/CLI、Python 檢查完整 stat。模型覆蓋兩種頁大小、子樹 SWAP、精確成本與條目/inode 耗盡。Intel、實體 iOS 未原生驗證；硬連結、ACL、目錄/link 根交易及完整 OS/runtime/framework 尚有缺口。
+原生 ARM64 私有準備保存 14 個 guarded raw-stat 視圖、11 個操作、獨立 144 位元組 SDK ABI，維持 compile120s/native5s/drain1s/reap1s 並記錄清理。`mutable-initial-links` 驗證原生身分、目標重解析及持有目標；`virtual-mutable-initial-links` 於五種 guest、C/CLI、Python 檢查完整 stat。模型覆蓋兩種頁大小、子樹 SWAP、精確成本與條目/inode 耗盡。Intel、實體 iOS 未原生驗證；硬連結、ACL、完整 OS/runtime/framework 尚有缺口。
 
 ```json
 {"mutable":true,"mutation_policy":{"mutation_time":{"seconds":-13,"nanoseconds":456}}}
 ```
+
+## 目錄與符號連結根交易
+
+`renameatx_np(RENAME_SWAP)` 接受實際目錄與符號連結雙向交換，包含非空子樹。初始目錄需要 `exchangeable`，初始連結需要 `mutable`，雙方實際父目錄仍須在已確立的同一 mount 中有修改/SWAP 授權；受保護初始後代仍拒絕。在既有一般移動授權下，目錄到連結為 ENOTDIR20，反向為 EISDIR21，EXCL 對不同既有名稱為 EEXIST17。目錄與自身後代連結的兩個方向均在變更前回傳 EINVAL22。成功交換可能使連結自我引用，後續跟隨為 ELOOP62。
+
+既有三張名稱表的交易先檢查根、已連結或持有的後代、完整路徑及動態空間。初始名稱/目標/引用、檔案內容及映射租約不提供 SWAP 抵扣；首次初始名稱重鍵另計動態路徑/NUL，重複交換只替換舊費用。不消耗新條目、FD 或建立 inode。成員關係遵循實際父物件，同名舊孤立物件不加入新樹。原始目標不變，相對查找重新綁定父目錄；FD/dup 游標、CWD、目標與映射保持有效。直接根按各自 stat 策略只改 ctime，祖先移動保留後代記錄；省略策略保留未知完整 stat，但即時列舉仍可用已知 inode。相關列舉版本按既有歸零重讀契約失效，沒有新 JSON 欄位或權限。
+
+原創 ARM64 私有準備保存 36 個保護式 144 位元組 stat 視圖、16 次原始 rename，維持 compile120s/native5s/drain1s/reap1s、回收及清理。`directory-link-roots` 與 `virtual-directory-link-roots` 經五種 guest、C/CLI、Python 檢查原生身分與完整常量 stat；兩種頁模型涵蓋精確費用、未開啟後代溢出、孤立物件及 FD/條目/inode 耗盡。本節在上述授權內擴充前文限制；Intel 原生、實體 iOS、硬連結、ACL 與完整 OS/runtime/framework 仍待驗證或實作。

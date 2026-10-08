@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1480ab7f58ad16bb60f46433bfc9c34563c292fc7f17c020ca9b427f5f99b2b8 -->
+<!-- i18n-source: d492dd2ee1d6198857c35a5a17205ffecebc13658e7634c2d278cc345d5e659b -->
 
 [← 문서 목록](README.md)
 
@@ -838,8 +838,16 @@ unlink, 일반/EXCL rename, 말단 링크/파일/link SWAP, 선언된 디렉터�
 
 `symbolic_links[].mutation_policy`는 `DarwinSymbolicLinkMutationPolicy`, `DarwinFileOptions::SymbolicLinkMutationPolicies`를 사용합니다. 유일한 `mutation_time`은 무손실 signed 64-bit 초와 [0, 1000000000) 나노초이며 권한과 완전한 nonzero inode 관측이 필요합니다. 첫 직접 이동/SWAP은 할당 없이 스칼라를 복사하고 ctime만 바꿉니다. blocks 등 나머지 필드, 조상 이동, 거부, 무효 동작은 보존합니다. 정책이 없으면 직접 이동 후 전체 stat은 미상이지만 열거 inode와 알려진 장치 충돌은 유지됩니다. 정책 path/NUL 참조를 한 번 예약합니다. 이름 재사용이나 새 symlink는 초기 기록/정책을 상속하지 않고 별도 namespace policy를 사용합니다.
 
-독립 ARM64 준비는 guarded raw-stat 14개, 동작 11개, 144-byte SDK ABI, compile120s/native5s/drain1s/reap1s와 사적 영역 정리를 기록합니다. `mutable-initial-links`는 원생 식별자·대상 재해석·참조 수명을, `virtual-mutable-initial-links`는 다섯 guest·C/CLI·Python의 전체 stat을 확인합니다. 두 페이지 크기, 하위 트리 SWAP, 정확한 비용과 entry/inode 고갈을 모델로 검사합니다. Intel 및 실제 iOS는 원생 검증되지 않았고 hard link, ACL, directory/link 루트 거래와 전체 OS/runtime/framework는 남아 있습니다.
+독립 ARM64 준비는 guarded raw-stat 14개, 동작 11개, 144-byte SDK ABI, compile120s/native5s/drain1s/reap1s와 사적 영역 정리를 기록합니다. `mutable-initial-links`는 원생 식별자·대상 재해석·참조 수명을, `virtual-mutable-initial-links`는 다섯 guest·C/CLI·Python의 전체 stat을 확인합니다. 두 페이지 크기, 하위 트리 SWAP, 정확한 비용과 entry/inode 고갈을 모델로 검사합니다. Intel 및 실제 iOS는 원생 검증되지 않았고 hard link, ACL, 전체 OS/runtime/framework는 남아 있습니다.
 
 ```json
 {"mutable":true,"mutation_policy":{"mutation_time":{"seconds":-13,"nanoseconds":456}}}
 ```
+
+## 디렉터리와 심볼릭 링크 루트 교환
+
+`renameatx_np(RENAME_SWAP)`는 비어 있지 않은 하위 트리를 포함해 실제 디렉터리와 링크를 양방향으로 교환합니다. 초기 디렉터리는 `exchangeable`, 초기 링크는 `mutable`, 양쪽 실제 부모는 확립된 동일 mount의 변경/SWAP 권한이 필요합니다. 보호된 초기 후손은 계속 거부합니다. 기존 일반 이동 권한에서 디렉터리→링크는 ENOTDIR20, 반대는 EISDIR21, 다른 기존 이름에 대한 EXCL은 EEXIST17이며 자신의 후손 링크와의 교환은 두 방향 모두 변경 전에 EINVAL22입니다. 링크 자체를 교환하므로 자기 참조가 생기는 교환도 성공할 수 있고 이후 따라가기는 ELOOP62입니다.
+
+기존 세 이름 표 거래는 루트, 연결되거나 보유된 후손, 전체 경로와 동적 공간을 게시 전에 검사합니다. 초기 이름/대상/참조, 파일 내용, 매핑 임대는 SWAP 비용을 줄이지 않습니다. 첫 초기 이름 변경은 별도 동적 경로/NUL을 차감하고 반복 교환은 기존 비용을 한 번 교체합니다. 새 항목/FD/생성 inode가 필요하지 않으며 같은 철자의 오래된 고아 객체도 실제 부모가 다르면 새 트리에 속하지 않습니다. 원시 대상은 유지되고 상대 해석은 새 부모에 결합됩니다. FD/dup 커서, CWD, 참조 대상과 매핑은 유지됩니다. 직접 루트는 자신의 stat 정책으로 ctime만 갱신하고 조상 이동은 후손 기록을 유지합니다. 정책 생략 시 전체 stat은 미지지만 inode는 실시간 열거에 사용하며 관련 열거 버전은 기존 영점 되감기 계약을 따릅니다. JSON 필드나 권한을 추가하지 않습니다.
+
+독립 ARM64 준비는 guarded 144-byte stat 36개, raw rename 16개, compile120s/native5s/drain1s/reap1s와 회수/사적 정리를 기록합니다. `directory-link-roots`와 `virtual-directory-link-roots`는 다섯 guest·C/CLI·Python에서 원생 식별과 전체 stat 상수를 검사합니다. 두 페이지 모델은 정확한 예산, 미개방 후손 초과, 고아 객체와 FD/항목/inode 고갈을 다룹니다. 이 절은 위 권한 안에서 이전 제한을 확장합니다. Intel 원생, 실제 iOS, hard link, ACL과 전체 OS/runtime/framework는 별도 검증·구현 과제입니다.

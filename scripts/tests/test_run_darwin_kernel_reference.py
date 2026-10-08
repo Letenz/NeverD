@@ -73,6 +73,17 @@ class DarwinKernelReferenceTests(unittest.TestCase):
                 self.assertTrue((path.parent / "cycle").is_symlink())
                 self.assertEqual((path.parent / "dirlink").readlink(), Path("empty"))
                 self.assertFalse((path.parent / "dangling").exists())
+            elif command[1] == "directory-link-roots":
+                catalogue = path.parent
+                self.assertEqual({item.name for item in catalogue.iterdir()}, {"data", "a", "b"})
+                for name, value in (("a/target", 11), ("b/target", 22),
+                                    ("a/d/c", 31), ("a/other/mark", 41),
+                                    ("b/other/mark", 42)):
+                    self.assertEqual((catalogue / name).read_bytes(), bytes([value]))
+                for name, target in (("b/l", "target"), ("b/dang", "missing"),
+                                     ("b/dirlink", "other"), ("b/self", "../a/d"),
+                                     ("a/d/inside", "../target")):
+                    self.assertEqual((catalogue / name).readlink(), Path(target))
             elif command[1] == "mutable-initial-links":
                 self.assertEqual({item.name for item in path.parent.iterdir()},
                                  {"data", "empty", "initial", "initial-dir"})
@@ -98,15 +109,17 @@ class DarwinKernelReferenceTests(unittest.TestCase):
                  ("symbolic-link-unlink", 37, b""),
                  ("symbolic-link-rename", 37, b""),
                  ("mutable-initial-links", 37, b""),
+                 ("directory-link-roots", 37, b""),
                  ("directory-entries", 37, b"")])
         self.assertTrue(all(result["passed"] for result in results))
-        self.assertEqual(roots[0], roots[7])
+        self.assertEqual(roots[0], roots[8])
         self.assertNotEqual(roots[0], roots[1])
         self.assertNotIn(roots[2], roots[:2])
         self.assertNotIn(roots[3], roots[:3])
         self.assertNotIn(roots[4], roots[:4])
         self.assertNotIn(roots[5], roots[:5])
         self.assertNotIn(roots[6], roots[:6])
+        self.assertNotIn(roots[7], roots[:7])
         self.assertTrue(all(not path.exists() for path in roots))
 
     def test_native_file_cases_receive_real_isolated_input_bytes(self):

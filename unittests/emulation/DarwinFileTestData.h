@@ -79,6 +79,12 @@ inline constexpr char InitialSymbolicLinkMetadataHex[] =
     "f3ffffffffffffffc801000000000000fbffffffffffffff0600000000000000"
     "040000000000000008000000000000000010000000000000efcdab8900000000"
     "00000000000000000000000000000000";
+inline constexpr char DirectoryLinkRootMetadataHex[] =
+    "85ffffffffa101003900000000000000efcdab8998badcfe0000000000000000"
+    "01000000000000800100000000000000ffffffffffffff7fffc99a3b00000000"
+    "f3ffffffffffffffc801000000000000fbffffffffffffff0600000000000000"
+    "060000000000000008000000000000000010000000000000efcdab8900000000"
+    "00000000000000000000000000000000";
 inline DarwinFileOptions mutableInitialSymbolicLinkOptions() {
   DarwinFileOptions O;
   O.Files["/data"] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
@@ -95,6 +101,49 @@ inline DarwinFileOptions mutableInitialSymbolicLinkOptions() {
   O.MutableSymbolicLinks = {"/initial", "/initial-dir"};
   O.Metadata["/initial"] = initialSymbolicLinkMetadata(4);
   O.SymbolicLinkMutationPolicies["/initial"] = InitialSymbolicLinkPolicy;
+  return O;
+}
+inline DarwinFileOptions directoryLinkRootOptions() {
+  DarwinFileOptions O;
+  O.Directories = {"/", "/a", "/b", "/a/d", "/a/other", "/b/other"};
+  O.MutableDirectories = {"/", "/a", "/b", "/a/d"};
+  O.MovableDirectories = {"/a", "/b", "/a/d"};
+  O.ExchangeableDirectories.insert("/a/d");
+  O.SwapRenameDirectories = {"/a", "/b", "/a/d"};
+  O.Files = {{"/a/target", {11}},
+             {"/b/target", {22}},
+             {"/a/d/c", {31}},
+             {"/a/other/mark", {41}},
+             {"/b/other/mark", {42}}};
+  O.SymbolicLinks = {
+      {"/b/l", {'t', 'a', 'r', 'g', 'e', 't'}},
+      {"/b/dang", {'m', 'i', 's', 's', 'i', 'n', 'g'}},
+      {"/b/dirlink", {'o', 't', 'h', 'e', 'r'}},
+      {"/b/self", {'.', '.', '/', 'a', '/', 'd'}},
+      {"/a/d/inside", {'.', '.', '/', 't', 'a', 'r', 'g', 'e', 't'}}};
+  uint64_t Inode = 41;
+  for (const auto &Name : O.Directories) {
+    auto M = creationParentMetadata();
+    M.Inode = Inode++;
+    O.Metadata[Name] = M;
+  }
+  Inode = 101;
+  for (const auto &[Name, Bytes] : O.Files) {
+    auto M = mutationMetadata(Bytes.size());
+    M.Inode = Inode++;
+    O.Metadata[Name] = M;
+  }
+  Inode = 57;
+  for (const char *Name :
+       {"/b/l", "/b/dang", "/b/dirlink", "/b/self", "/a/d/inside"}) {
+    O.MutableSymbolicLinks.insert(Name);
+    O.Metadata[Name] =
+        initialSymbolicLinkMetadata(O.SymbolicLinks.at(Name).size(), Inode++);
+    O.SymbolicLinkMutationPolicies[Name] = InitialSymbolicLinkPolicy;
+  }
+  O.DirectoryMutationPolicies["/a/d"] = InitialDirectoryMutationPolicy;
+  O.CreationPolicy = NamespaceCreationPolicy;
+  O.InitialUmask = 0027;
   return O;
 }
 inline constexpr char InitialDirectoryMutationPolicyJSON[] = R"({

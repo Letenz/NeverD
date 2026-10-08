@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 1480ab7f58ad16bb60f46433bfc9c34563c292fc7f17c020ca9b427f5f99b2b8 -->
+<!-- i18n-source: d492dd2ee1d6198857c35a5a17205ffecebc13658e7634c2d278cc345d5e659b -->
 
 [← فهرس الوثائق](README.md)
 
@@ -836,8 +836,16 @@ getuid24/geteuid25/getgid47/getegid43/getgroups79 تشترك بمالكsystem و
 
 تستخدم `symbolic_links[].mutation_policy` النوع `DarwinSymbolicLinkMutationPolicy` والخريطة `DarwinFileOptions::SymbolicLinkMutationPolicies`. حقلها الوحيد الصارم `mutation_time` يحتوي ثواني signed 64-bit دون فقد ونانوثواني [0, 1000000000)، ويتطلب التصريح وبيانات كاملة ذات inode غير صفري. أول move/SWAP مباشر ينسخ القيم دون تخصيص ويغير ctime فقط. تبقى blocks وبقية القيم وحركات الأسلاف والرفض وno-op محفوظة. دون السياسة يصبح stat الكامل مجهولاً لكن تبقى هوية inode للتعداد وتعارضات الأجهزة المعروفة. مرجع path/NUL ثابت؛ لا ترث الأسماء المعاد استخدامها أو symlink الجديدة السجل أو السياسة الأولية، وتستخدم namespace policy الإنشاء المنفصلة.
 
-يحفظ الإعداد ARM64 الخاص 14 عرض guarded raw-stat و11 عملية و144-byte SDK ABI مستقل وحدود compile120s/native5s/drain1s/reap1s والتنظيف. تتحقق `mutable-initial-links` من الهوية والحل والكائنات المحتفظ بها؛ وتفحص `virtual-mutable-initial-links` stat الكامل في خمسة guest وC/CLI وPython. تشمل النماذج حجمي صفحات وSWAP الأشجار والتكاليف الدقيقة ونفاد entry/inode. لم يتحقق Intel أو iOS الفعلي؛ تبقى hard links وACL ومعاملات جذور directory/link وOS/runtime/framework الكامل منفصلة.
+يحفظ الإعداد ARM64 الخاص 14 عرض guarded raw-stat و11 عملية و144-byte SDK ABI مستقل وحدود compile120s/native5s/drain1s/reap1s والتنظيف. تتحقق `mutable-initial-links` من الهوية والحل والكائنات المحتفظ بها؛ وتفحص `virtual-mutable-initial-links` stat الكامل في خمسة guest وC/CLI وPython. تشمل النماذج حجمي صفحات وSWAP الأشجار والتكاليف الدقيقة ونفاد entry/inode. لم يتحقق Intel أو iOS الفعلي؛ تبقى hard links وACL وOS/runtime/framework الكامل منفصلة.
 
 ```json
 {"mutable":true,"mutation_policy":{"mutation_time":{"seconds":-13,"nanoseconds":456}}}
 ```
+
+## معاملات جذور الأدلة والروابط الرمزية
+
+يقبل `renameatx_np(RENAME_SWAP)` تبادل دليل فعلي ورابط بالاتجاهين، بما فيه الأشجار غير الفارغة. يحتاج الدليل الأولي `exchangeable` والرابط الأولي `mutable` وكلا الوالدين الفعليين صلاحيات تعديل/SWAP داخل mount واحد مثبت. تظل الذرية الأولية المحمية مرفوضة. مع صلاحيات النقل المعتادة يعطي الدليل إلى الرابط ENOTDIR20 والعكس EISDIR21 وEXCL إلى اسم آخر موجود EEXIST17. تعطي دورتا الدليل/الرابط التابع EINVAL22 قبل التأثيرات. يجري تبادل الرابط نفسه؛ قد ينتج رابط ذاتي عن نجاح التبادل ثم يعطي اتباعه ELOOP62.
+
+تفحص معاملة الجداول الثلاثة الجذور والذرية المرتبطة أو المحتفظ بها والمسارات الكاملة والمساحة الديناميكية قبل النشر. لا توفر الأسماء/الأهداف/مراجع التصريحات الأولية أو البيانات أو mapping leases رصيد SWAP. يحجز تغيير الاسم الأول تكلفة مسار/NUL ديناميكية منفصلة، والتكرار يستبدل التكلفة القديمة مرة واحدة. لا يستهلك entry أو FD أو inode إنشاء إضافيا. تتبع العضوية كائنات الوالد الفعلية، ولا تضم كائنا يتيما قديما بمجرد إعادة الاسم. تبقى الأهداف الخام، ويعاد ربط الحل النسبي بالوالد الجديد؛ تحتفظ FD/dup والمؤشرات وCWD والأهداف وmappings بكائناتها. تطبق الجذور المباشرة سياسات stat الخاصة بها على ctime فقط، ويحفظ نقل السلف سجلات الذرية. عند حذف السياسة يبقى stat الكامل مجهولا بينما يبقى inode للتعداد الحي وتتبع النسخ عقد الإرجاع إلى الصفر الحالي. لا حقول JSON أو صلاحيات جديدة.
+
+يسجل الإعداد ARM64 الأصلي 36 عرض stat محميا بطول 144 بايت و16 raw rename وحدود compile120s/native5s/drain1s/reap1s والاسترداد والتنظيف المؤكدين. يفحص `directory-link-roots` و`virtual-directory-link-roots` الهوية وstat الثابت الكامل عبر خمسة guest وC/CLI وPython. تغطي نماذج حجمي الصفحات الميزانية الدقيقة وتجاوز ذرية غير مفتوحة والكائنات اليتيمة ونفاد FD/entry/inode. يوسع هذا القسم الاستثناءات السابقة ضمن تلك الحقوق. تبقى Intel الأصلية وiOS الفعلي وhard links وACL وOS/runtime/framework الكامل فجوات منفصلة.

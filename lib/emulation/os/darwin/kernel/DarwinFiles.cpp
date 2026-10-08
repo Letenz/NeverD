@@ -1388,9 +1388,6 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
   auto &Target = std::get<Description>(*To);
   if (Target.Link && Target.Link->Protected)
     return unsupported(Result, diagnostic::SymbolicLinkMutation);
-  // Link leaf moves/exchanges are separate from actual directory/link pairs.
-  if ((Source.Link || Target.Link) && (Source.Directory || Target.Directory))
-    return unsupported(Result, diagnostic::SymbolicLinkMutation);
   if (Mode == RenameMode::Exclusive &&
       (Target.File || Target.Directory || Target.Link)) {
     // Same-object exclusive rename depends on filesystem case sensitivity.
@@ -1591,7 +1588,7 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
                             const std::shared_ptr<DirectoryNode> &Parent,
                             const std::shared_ptr<DirectoryNode> &TargetParent,
                             bool Swap, ProcessResult &Result) {
-  if (!Swap && Target.Type == Kind::File)
+  if (!Swap && (Target.Type == Kind::File || Target.Type == Kind::SymbolicLink))
     return returned(NotDirectory, true);
   if (Target.Directory && !Target.Directory->Created &&
       !(Swap ? Target.Directory->Exchangeable : Target.Directory->Removable))
@@ -1619,8 +1616,8 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
          llvm::StringRef(Link->first).starts_with(Prefix)))
       return returned(DirectoryNotEmpty, true);
   }
-  // Initial links remain protected, including indirect moves of their names.
-  // Runtime links participate in the same preflight as files and directories.
+  // Protected initial links cannot move indirectly. Other link roots and
+  // descendants participate in the same preflight as files and directories.
   if (llvm::any_of(Links, [&](const auto &Entry) {
         return Entry.second->Protected &&
                (Descendant(Entry.second->Parent, Source.Directory) ||
@@ -1674,8 +1671,9 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
                      Descendant(Node->Parent, Target.Directory)));
   };
   auto MovesLink = [&](const std::shared_ptr<LinkNode> &Node) {
-    return Descendant(Node->Parent, Source.Directory) ||
-           (Swap && Descendant(Node->Parent, Target.Directory));
+    return Node == Source.Link || Descendant(Node->Parent, Source.Directory) ||
+           (Swap && (Node == Target.Link ||
+                     Descendant(Node->Parent, Target.Directory)));
   };
   auto Directory = [&](const std::shared_ptr<DirectoryNode> &Node,
                        bool Linked) -> const char * {
@@ -1725,7 +1723,9 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
   for (const auto &[Path, Node] : Links) {
     if (!MovesLink(Node))
       continue;
-    auto New = NewPath(Node->Path, Descendant(Node->Parent, Source.Directory));
+    auto New =
+        NewPath(Node->Path, Node == Source.Link ||
+                                Descendant(Node->Parent, Source.Directory));
     if (!New)
       return unsupported(Result, diagnostic::NamespaceAlias);
     if (New->size() >= limits::Path)
@@ -1806,6 +1806,9 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
   if (Source.Directory) {
     Source.Directory->Parent = TargetParent;
     updateDirectoryMetadata(*Source.Directory, false);
+  } else if (Source.Link) {
+    Source.Link->Parent = TargetParent;
+    updateNamespaceMetadata(*Source.Link);
   } else {
     Source.File->Parent = TargetParent;
     updateNamespaceMetadata(*Source.File, false);
@@ -1814,6 +1817,9 @@ DarwinFiles::renameSubtrees(Description &Source, Description &Target,
     if (Target.Directory) {
       Target.Directory->Parent = Parent;
       updateDirectoryMetadata(*Target.Directory, false);
+    } else if (Target.Link) {
+      Target.Link->Parent = Parent;
+      updateNamespaceMetadata(*Target.Link);
     } else {
       Target.File->Parent = Parent;
       updateNamespaceMetadata(*Target.File, false);

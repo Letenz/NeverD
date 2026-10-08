@@ -544,6 +544,14 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("created-file", b"c"),
                                            ("created-file-metadata", b"q"),
                                            ("mutable-initial-links", b"M"),
+                                           ("directory-link-roots", b"R"),
+                                           ("virtual-directory-link-roots", bytes.fromhex(
+                                               "85ffffffffa101003900000000000000efcdab8998badcfe0000000000000000"
+                                               "01000000000000800100000000000000ffffffffffffff7fffc99a3b00000000"
+                                               "f3ffffffffffffffc801000000000000fbffffffffffffff0600000000000000"
+                                               "060000000000000008000000000000000010000000000000efcdab8900000000"
+                                               "00000000000000000000000000000000"
+                                               )),
                                            ("virtual-mutable-initial-links", bytes.fromhex(
                                                "85ffffffffa101003900000000000000efcdab8998badcfe0000000000000000"
                                                "01000000000000800100000000000000ffffffffffffff7fffc99a3b00000000"
@@ -822,6 +830,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                             file_options = json.dumps(writable_options)
                         if mode in ("created-namespace-metadata", "virtual-created-namespace-metadata",
                                     "mutable-initial-links", "virtual-mutable-initial-links",
+                                    "directory-link-roots", "virtual-directory-link-roots",
                                     "directory-enumeration-mutations", "virtual-directory-enumeration",
                                     "initial-directory-metadata", "virtual-initial-directory-metadata"):
                             namespace_options = json.loads(file_options)
@@ -852,6 +861,35 @@ class ProcessIntegrationTests(unittest.TestCase):
                                      "mutation_policy": {"mutation_time": {"seconds": -13, "nanoseconds": 456}}},
                                     {"path": "/initial-dir", "target_hex": "656d707479", "mutable": True}]
                                 next(d for d in files["directories"] if d["path"] == "/empty")["metadata"] = dict(parent, inode=42)
+                            if mode in ("directory-link-roots", "virtual-directory-link-roots"):
+                                files["working_directory"] = "/"
+                                files["directories"] = []
+                                for inode, name in enumerate(("/", "/a", "/a/d", "/a/other", "/b", "/b/other"), 41):
+                                    directory = {"path": name, "metadata": dict(parent, inode=inode)}
+                                    if name in ("/", "/a", "/b", "/a/d"):
+                                        directory["mutable"] = True
+                                    if name in ("/a", "/b", "/a/d"):
+                                        directory.update(movable=True, swap_rename=True)
+                                    if name == "/a/d":
+                                        directory.update(exchangeable=True, mutation_policy={
+                                            "directory_entry_size": 17,
+                                            "mutation_time": {"seconds": -11, "nanoseconds": 321}})
+                                    files["directories"].append(directory)
+                                files["files"] = [
+                                    {"path": name, "bytes_hex": bytes([value]).hex(),
+                                     "metadata": dict(original, inode=inode, size=1, blocks=8)}
+                                    for inode, (name, value) in enumerate((
+                                        ("/a/d/c", 31), ("/a/other/mark", 41), ("/a/target", 11),
+                                        ("/b/other/mark", 42), ("/b/target", 22)), 101)]
+                                files["symbolic_links"] = [
+                                    {"path": name, "target_hex": target.encode().hex(), "mutable": True,
+                                     "metadata": dict(original, inode=inode, mode=0o120777,
+                                                      size=len(target), blocks=8),
+                                     "mutation_policy": {"mutation_time": {"seconds": -13, "nanoseconds": 456}}}
+                                    for inode, (name, target) in enumerate((
+                                        ("/b/l", "target"), ("/b/dang", "missing"),
+                                        ("/b/dirlink", "other"), ("/b/self", "../a/d"),
+                                        ("/a/d/inside", "../target")), 57)]
                             if mode in ("initial-directory-metadata", "virtual-initial-directory-metadata"):
                                 root["mutation_policy"] = {
                                     "directory_entry_size": 17,

@@ -70,6 +70,19 @@ def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_fil
             (catalogue / "initial").symlink_to("data")
             (catalogue / "initial-dir").symlink_to("empty")
             case_input = catalogue / "data"
+        if mode == "directory-link-roots":
+            catalogue = initial_root / "root-transactions"
+            for name in ("a/d", "a/other", "b/other"):
+                (catalogue / name).mkdir(parents=True)
+            for name, value in (("a/target", 11), ("b/target", 22),
+                                ("a/d/c", 31), ("a/other/mark", 41),
+                                ("b/other/mark", 42)):
+                (catalogue / name).write_bytes(bytes([value]))
+            for name, target in (("b/l", "target"), ("b/dang", "missing"),
+                                 ("b/dirlink", "other"), ("b/self", "../a/d"),
+                                 ("a/d/inside", "../target")):
+                (catalogue / name).symlink_to(target)
+            case_input = catalogue / "data"
         if mode == "symbolic-links":
             catalogue = symbolic_root / "catalogue"
             catalogue.mkdir()

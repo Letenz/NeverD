@@ -417,6 +417,9 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"mutable-initial-links", "4d"},
           std::pair{"virtual-mutable-initial-links",
                     emulation::darwin_test::InitialSymbolicLinkMetadataHex},
+          std::pair{"directory-link-roots", "52"},
+          std::pair{"virtual-directory-link-roots",
+                    emulation::darwin_test::DirectoryLinkRootMetadataHex},
           std::pair{"initial-directory-metadata", "49"},
           std::pair{"virtual-initial-directory-metadata",
                     emulation::darwin_test::InitialDirectoryMetadataHex},
@@ -717,6 +720,81 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     (*Files->getArray(field::Directories)
           ->back()
           .getAsObject())[field::FileMetadata] = std::move(Parent);
+    Options = llvm::formatv("{0}", Input).str();
+  }
+  if (ModeName == "directory-link-roots" ||
+      ModeName == "virtual-directory-link-roots") {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
+    (*Files)[field::WorkingDirectory] = "/";
+    (*Files)[field::FileUmask] = 0027;
+    (*Files)[field::FileCreationPolicy] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::NamespaceCreationPolicyJSON));
+    auto Metadata = [](uint64_t Inode, uint16_t Mode, uint64_t Size,
+                       uint64_t Blocks) {
+      auto M = llvm::cantFail(
+          llvm::json::parse(emulation::darwin_test::MetadataJSON));
+      auto *Record = M.getAsObject();
+      (*Record)[field::FileInode] = Inode;
+      (*Record)[field::FileMode] = Mode;
+      (*Record)[field::Size] = Size;
+      (*Record)[field::FileBlocks] = Blocks;
+      (*Record)[field::FileLinkCount] = 1;
+      (*Record)[field::FileFlags] = 0;
+      return M;
+    };
+    llvm::json::Array Directories;
+    uint64_t Inode = 41;
+    for (const char *Name : {"/", "/a", "/a/d", "/a/other", "/b", "/b/other"}) {
+      const llvm::StringRef PathName(Name);
+      llvm::json::Object D{
+          {field::Path, Name},
+          {field::FileMetadata, Metadata(Inode++, 0040755, 0, 0)}};
+      if (PathName == "/" || PathName == "/a" || PathName == "/b" ||
+          PathName == "/a/d")
+        D[field::DirectoryMutable] = true;
+      if (PathName == "/a" || PathName == "/b" || PathName == "/a/d") {
+        D[field::DirectoryMovable] = true;
+        D[field::DirectorySwapRename] = true;
+      }
+      if (PathName == "/a/d") {
+        D[field::DirectoryExchangeable] = true;
+        D[field::DirectoryMutationPolicy] = llvm::cantFail(llvm::json::parse(
+            emulation::darwin_test::InitialDirectoryMutationPolicyJSON));
+      }
+      Directories.push_back(std::move(D));
+    }
+    (*Files)[field::Directories] = std::move(Directories);
+    llvm::json::Array Contents;
+    Inode = 101;
+    for (const auto &[Name, Bytes] :
+         {std::pair{"/a/d/c", "1f"}, std::pair{"/a/other/mark", "29"},
+          std::pair{"/a/target", "0b"}, std::pair{"/b/other/mark", "2a"},
+          std::pair{"/b/target", "16"}})
+      Contents.push_back(llvm::json::Object{
+          {field::Path, Name},
+          {field::Bytes, Bytes},
+          {field::FileMetadata, Metadata(Inode++, 0100644, 1, 8)}});
+    (*Files)[field::Files] = std::move(Contents);
+    llvm::json::Array Links;
+    Inode = 57;
+    for (const auto &[Name, Target] :
+         {std::pair{"/b/l", "target"}, std::pair{"/b/dang", "missing"},
+          std::pair{"/b/dirlink", "other"}, std::pair{"/b/self", "../a/d"},
+          std::pair{"/a/d/inside", "../target"}}) {
+      const llvm::StringRef RawTarget(Target);
+      Links.push_back(llvm::json::Object{
+          {field::Path, Name},
+          {field::SymbolicLinkTarget, llvm::toHex(RawTarget)},
+          {field::SymbolicLinkMutable, true},
+          {field::FileMetadata,
+           Metadata(Inode++, 0120777, RawTarget.size(), 8)},
+          {field::SymbolicLinkMutationPolicy,
+           llvm::cantFail(llvm::json::parse(
+               emulation::darwin_test::InitialSymbolicLinkPolicyJSON))}});
+    }
+    (*Files)[field::SymbolicLinks] = std::move(Links);
     Options = llvm::formatv("{0}", Input).str();
   }
   if (ModeName == "initial-directory-metadata" ||

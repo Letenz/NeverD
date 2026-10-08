@@ -103,4 +103,5 @@ NEVERD_NATIVE_DARWIN_CASE(
 NEVERD_NATIVE_DARWIN_CASE(
     InitialDirectoryMutationKeepsFullStatAndIndependentCreationRules)
 NEVERD_NATIVE_DARWIN_CASE(MutableInitialLinksKeepIdentityAndReferentLifetime)
+NEVERD_NATIVE_DARWIN_CASE(DirectoryLinkRootsKeepIdentityAndReferentLifetime)
 #endif

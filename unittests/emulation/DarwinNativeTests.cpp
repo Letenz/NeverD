@@ -1120,6 +1120,25 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
       std::filesystem::create_symlink("empty", Catalogue / "initial-dir");
       CaseInput = (Catalogue / "data").string();
     }
+    if (llvm::StringRef(Test.Mode) == "directory-link-roots") {
+      const auto Catalogue = Root / Test.Mode;
+      for (const char *Name : {"a/d", "a/other", "b/other"})
+        ASSERT_TRUE(std::filesystem::create_directories(Catalogue / Name));
+      for (const auto &[Name, Byte] :
+           {std::pair{"a/target", 11}, std::pair{"b/target", 22},
+            std::pair{"a/d/c", 31}, std::pair{"a/other/mark", 41},
+            std::pair{"b/other/mark", 42}}) {
+        std::ofstream File(Catalogue / Name, std::ios::binary);
+        File.put(char(Byte));
+        ASSERT_TRUE(File.good());
+      }
+      for (const auto &[Name, Target] :
+           {std::pair{"b/l", "target"}, std::pair{"b/dang", "missing"},
+            std::pair{"b/dirlink", "other"}, std::pair{"b/self", "../a/d"},
+            std::pair{"a/d/inside", "../target"}})
+        std::filesystem::create_symlink(Target, Catalogue / Name);
+      CaseInput = (Catalogue / "data").string();
+    }
     if (llvm::StringRef(Test.Mode) == "symbolic-link-mutations" ||
         llvm::StringRef(Test.Mode) == "symbolic-link-creation" ||
         llvm::StringRef(Test.Mode) == "symbolic-link-unlink" ||

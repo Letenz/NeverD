@@ -1298,6 +1298,186 @@ static int mutable_initial_links(const char *path, int virtual_bytes) {
   return 37;
 }
 
+static int directory_link_root_record(const u64 *before, const u64 *after,
+                                      int virtual_bytes, u64 seconds,
+                                      unsigned nanoseconds) {
+  if (before[0] != after[0] || before[1] != after[1] || before[2] != after[2] ||
+      before[12] != after[12])
+    return 0;
+  if (virtual_bytes) {
+    for (unsigned i = 0; i != 18; ++i)
+      if (i != 8 && i != 9 && before[i] != after[i])
+        return 0;
+    return after[8] == seconds && after[9] == nanoseconds;
+  }
+  return 1;
+}
+static int directory_link_root_unchanged(const u64 *before, const u64 *after,
+                                         int virtual_bytes) {
+  for (unsigned i = 0; i != 18; ++i)
+    if ((virtual_bytes || i == 0 || i == 1 || i == 2 || i == 12) &&
+        before[i] != after[i])
+      return 0;
+  return 1;
+}
+static int directory_link_root_target(u64 dir, const char *name,
+                                      const char *expected) {
+  unsigned error = 0, length = 0;
+  unsigned char guarded[40];
+  for (unsigned i = 0; i != 40; ++i)
+    guarded[i] = 0xa5;
+  while (expected[length])
+    ++length;
+  if (call(473, dir, (u64)name, (u64)(guarded + 4), 32, 0, 0, &error) !=
+          length ||
+      error)
+    return 0;
+  for (unsigned i = 0; i != 40; ++i)
+    if (guarded[i] !=
+        (i >= 4 && i < 4 + length ? (unsigned char)expected[i - 4] : 0xa5))
+      return 0;
+  return 1;
+}
+/* The same original root-exchange workload executes under the host kernel and
+ * model. Common mode compares same-run identities; virtual mode additionally
+ * checks all stat bytes against explicit object-owned mutation policies.
+ */
+static int directory_link_roots(const char *path, int virtual_bytes) {
+  unsigned error = 0, check = 0;
+#define ROOT_EXPECT(expression)                                                \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return 100 + check % 150;                                                \
+  } while (0)
+  char parent[1024];
+  unsigned last = 0, length = 0;
+  while (path[length] && length < 1023) {
+    parent[length] = path[length];
+    if (path[length] == '/')
+      last = length;
+    ++length;
+  }
+  ROOT_EXPECT(path[0] == '/' && !path[length] && length > last + 1);
+  parent[last ? last : 1] = 0;
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 a = call(463, root, (u64) "a", 0x100000, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 b = call(463, root, (u64) "b", 0x100000, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 d = call(463, a, (u64) "d", 0x100000, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 copy = call(41, d, 0, 0, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  ROOT_EXPECT(call(13, d, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  u64 child = call(463, d, (u64) "c", 0, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 child_copy = call(41, child, 0, 0, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 mapped = call(197, 0, PAGE, 1, 2, child, 0, &error);
+  ROOT_EXPECT(!error && *(const unsigned char *)mapped == 31);
+  u64 held = call(463, b, (u64) "l", 0, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 held_dir = call(463, b, (u64) "dirlink", 0x100000, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  u64 directory[18], inside[18], before[18], after[18], captured[18];
+  ROOT_EXPECT(mutable_initial_link_status(a, "d", directory));
+  ROOT_EXPECT(mutable_initial_link_status(d, "inside", inside));
+  for (unsigned reverse = 0; reverse != 2; ++reverse) {
+    ROOT_EXPECT(call(488, reverse ? b : a, (u64)(reverse ? "l" : "d"),
+                     reverse ? a : b, (u64)(reverse ? "d" : "l"), 0, 0,
+                     &error) == (reverse ? 21 : 20) &&
+                error);
+    ROOT_EXPECT(call(488, reverse ? b : a, (u64)(reverse ? "l" : "d"),
+                     reverse ? a : b, (u64)(reverse ? "d" : "l"), 4, 0,
+                     &error) == 17 &&
+                error);
+    ROOT_EXPECT(call(488, reverse ? d : a, (u64)(reverse ? "inside" : "d"),
+                     reverse ? a : d, (u64)(reverse ? "d" : "inside"), 2, 0,
+                     &error) == 22 &&
+                error);
+  }
+  ROOT_EXPECT(mutable_initial_link_status(a, "d", after));
+  ROOT_EXPECT(directory_link_root_unchanged(directory, after, virtual_bytes));
+  static const char names[4][8] = {"l", "dang", "dirlink", "self"};
+  static const char targets[4][16] = {"target", "missing", "other", "../a/d"};
+  unsigned char byte;
+  for (unsigned i = 0; i != 4; ++i) {
+    ROOT_EXPECT(mutable_initial_link_status(b, names[i], before));
+    ROOT_EXPECT(call(488, a, (u64) "d", b, (u64)names[i], 18, 0, &error) == 0 &&
+                !error);
+    ROOT_EXPECT(mutable_initial_link_status(a, "d", after));
+    ROOT_EXPECT(directory_link_root_record(before, after, virtual_bytes,
+                                           (u64)-13, 456));
+    if (i == 0)
+      for (unsigned word = 0; word != 18; ++word)
+        captured[word] = after[word];
+    ROOT_EXPECT(directory_link_root_target(a, "d", targets[i]));
+    ROOT_EXPECT(mutable_initial_link_status(b, names[i], after));
+    ROOT_EXPECT(directory_link_root_record(directory, after, virtual_bytes,
+                                           (u64)-11, 321));
+    ROOT_EXPECT(mutable_initial_link_status(d, "inside", after));
+    ROOT_EXPECT(directory_link_root_unchanged(inside, after, virtual_bytes));
+    u64 here = call(5, (u64) ".", 0x100000, 0, 0, 0, 0, &error);
+    ROOT_EXPECT(!error);
+    ROOT_EXPECT(initial_directory_identity(copy, (unsigned char *)directory,
+                                           (unsigned char *)after));
+    ROOT_EXPECT(initial_directory_identity(here, (unsigned char *)directory,
+                                           (unsigned char *)after));
+    ROOT_EXPECT(call(6, here, 0, 0, 0, 0, 0, &error) == 0 && !error);
+    u64 rebound =
+        call(463, a, (u64) "d", i == 2 ? 0x100000 : 0, 0, 0, 0, &error);
+    if (i == 1 || i == 3)
+      ROOT_EXPECT(error && rebound == (i == 1 ? 2 : 62));
+    else {
+      ROOT_EXPECT(!error);
+      u64 file = rebound;
+      if (i == 2) {
+        file = call(463, rebound, (u64) "mark", 0, 0, 0, 0, &error);
+        ROOT_EXPECT(!error);
+      }
+      ROOT_EXPECT(call(153, file, (u64)&byte, 1, 0, 0, 0, &error) == 1 &&
+                  !error && byte == (i == 2 ? 41 : 11));
+      ROOT_EXPECT(call(6, file, 0, 0, 0, 0, 0, &error) == 0 && !error);
+      if (i == 2)
+        ROOT_EXPECT(call(6, rebound, 0, 0, 0, 0, 0, &error) == 0 && !error);
+    }
+    ROOT_EXPECT(call(153, held, (u64)&byte, 1, 0, 0, 0, &error) == 1 &&
+                !error && byte == 22);
+    ROOT_EXPECT(call(488, a, (u64) "d", b, (u64)names[i], 2, 0, &error) == 0 &&
+                !error);
+    ROOT_EXPECT(mutable_initial_link_status(b, names[i], after));
+    ROOT_EXPECT(directory_link_root_record(before, after, virtual_bytes,
+                                           (u64)-13, 456));
+  }
+  u64 mark = call(463, held_dir, (u64) "mark", 0, 0, 0, 0, &error);
+  ROOT_EXPECT(!error);
+  ROOT_EXPECT(call(153, mark, (u64)&byte, 1, 0, 0, 0, &error) == 1 && !error &&
+              byte == 42);
+  ROOT_EXPECT(call(472, d, (u64) "c", 0, 0, 0, 0, &error) == 0 && !error);
+  ROOT_EXPECT(call(3, child, (u64)&byte, 1, 0, 0, 0, &error) == 1 && !error &&
+              byte == 31);
+  ROOT_EXPECT(call(199, child_copy, 0, 1, 0, 0, 0, &error) == 1 && !error);
+  ROOT_EXPECT(*(const unsigned char *)mapped == 31);
+  ROOT_EXPECT(call(488, root, (u64) "a", root, (u64) "x", 0, 0, &error) == 0 &&
+              !error);
+  ROOT_EXPECT(mutable_initial_link_status(d, "inside", after));
+  ROOT_EXPECT(directory_link_root_unchanged(inside, after, virtual_bytes));
+  ROOT_EXPECT(call(13, root, 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ROOT_EXPECT(call(73, mapped, PAGE, 0, 0, 0, 0, &error) == 0 && !error);
+  const u64 descriptors[] = {root,  a,          b,    d,        copy,
+                             child, child_copy, held, held_dir, mark};
+  for (unsigned i = 0; i != 10; ++i)
+    ROOT_EXPECT(call(6, descriptors[i], 0, 0, 0, 0, 0, &error) == 0 && !error);
+  ROOT_EXPECT(call(4, 1, virtual_bytes ? (u64)captured : (u64) "R",
+                   virtual_bytes ? sizeof(captured) : 1, 0, 0, 0,
+                   &error) == (virtual_bytes ? sizeof(captured) : 1) &&
+              !error);
+#undef ROOT_EXPECT
+  return 37;
+}
+
 /* Original live-namespace workload. Native order and cookies are not predicted;
  * every record is checked against independently observed retained identities.
  */
@@ -5537,6 +5717,12 @@ int main(int argc, char **argv, char **envp, char **apple) {
                ? 79
                : mutable_initial_links(
                      argv[2], equal(argv[1], "virtual-mutable-initial-links"));
+  if (equal(argv[1], "directory-link-roots") ||
+      equal(argv[1], "virtual-directory-link-roots"))
+    return argc < 3
+               ? 79
+               : directory_link_roots(
+                     argv[2], equal(argv[1], "virtual-directory-link-roots"));
   if (equal(argv[1], "initial-directory-metadata") ||
       equal(argv[1], "virtual-initial-directory-metadata"))
     return argc < 3 ? 79

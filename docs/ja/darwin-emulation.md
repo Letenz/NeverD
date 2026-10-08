@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1480ab7f58ad16bb60f46433bfc9c34563c292fc7f17c020ca9b427f5f99b2b8 -->
+<!-- i18n-source: d492dd2ee1d6198857c35a5a17205ffecebc13658e7634c2d278cc345d5e659b -->
 
 [← ドキュメント一覧](README.md)
 
@@ -838,8 +838,16 @@ unlink、通常/EXCL rename、葉リンク/ファイル/link SWAP、宣言済み
 
 `symbolic_links[].mutation_policy` は `DarwinSymbolicLinkMutationPolicy` と `DarwinFileOptions::SymbolicLinkMutationPolicies` を使います。唯一の `mutation_time` は損失のない signed 64-bit 秒と [0, 1000000000) のナノ秒で、権限と完全な非ゼロ inode 観測が必要です。最初の直接移動/SWAP は割当なしでスカラーを複製し ctime だけ変更します。blocks を含む他の値、祖先移動、拒否、空操作は保存されます。省略すると直接移動後の完全 stat は未知ですが、列挙用 inode と既知のデバイス矛盾は保持します。方針の path/NUL 費用は一度予約します。名前の再利用や新 symlink は初期記録/方針を継承せず、別の namespace policy を使います。
 
-独立 ARM64 準備は 14 guarded raw-stat、11 操作、144-byte SDK ABI、compile120s/native5s/drain1s/reap1s と私有領域の削除を記録します。`mutable-initial-links` はネイティブ識別子、相対再解決、参照先寿命を確認し、`virtual-mutable-initial-links` は五つの guest、C/CLI、Python で完全 stat を確認します。モデルは二つのページサイズ、部分木 SWAP、厳密な費用と entry/inode 枯渇を検査します。Intel と実機 iOS は未検証で、hard link、ACL、directory/link 根操作、完全 OS/runtime/framework は未対応です。
+独立 ARM64 準備は 14 guarded raw-stat、11 操作、144-byte SDK ABI、compile120s/native5s/drain1s/reap1s と私有領域の削除を記録します。`mutable-initial-links` はネイティブ識別子、相対再解決、参照先寿命を確認し、`virtual-mutable-initial-links` は五つの guest、C/CLI、Python で完全 stat を確認します。モデルは二つのページサイズ、部分木 SWAP、厳密な費用と entry/inode 枯渇を検査します。Intel と実機 iOS は未検証で、hard link、ACL、完全 OS/runtime/framework は未対応です。
 
 ```json
 {"mutable":true,"mutation_policy":{"mutation_time":{"seconds":-13,"nanoseconds":456}}}
 ```
+
+## ディレクトリとシンボリックリンクのルート交換
+
+`renameatx_np(RENAME_SWAP)` は空でない部分木を含む実ディレクトリとリンクを両方向で交換します。初期ディレクトリは `exchangeable`、初期リンクは `mutable`、両方の実親は同じ確立済み mount の変更/SWAP 権限が必要です。保護された初期子孫は拒否します。既存の通常移動権限の下でディレクトリ→リンクは ENOTDIR20、逆は EISDIR21、異なる既存名への EXCL は EEXIST17、自身の子孫リンクとの交換は両方向とも変更前に EINVAL22 です。リンク自体を交換するため自己参照を作る成功は可能で、後の追跡は ELOOP62 になります。
+
+既存の三つの名前表の取引はルート、接続中または保持された子孫、全パスと動的容量を公開前に検査します。初期名/ターゲット/参照、ファイル内容、mapping lease は SWAP の控除になりません。初期名の最初の再キーは別の動的パス/NUL を課金し、再交換は旧費用を一度置換します。entry/FD/作成 inode を追加消費せず、同じ綴りの古い孤立物体も実親が異なれば新木に属しません。生ターゲットは不変で相対解決は新親に結合します。FD/dup cursor、CWD、参照先、mapping は保持されます。直接ルートは自身の既存 stat 方針で ctime だけを更新し、祖先移動は子孫記録を保持します。方針省略時の完全 stat は未知ですが inode はライブ列挙に使え、関連列挙バージョンは既存のゼロ巻戻し契約に従います。JSON フィールドや権限の追加はありません。
+
+独自 ARM64 準備は 36 guarded 144-byte stat、16 raw rename、compile120s/native5s/drain1s/reap1s、回収と私有削除を記録します。`directory-link-roots` と `virtual-directory-link-roots` は五つの guest、C/CLI、Python でネイティブ識別と完全 stat 定数を確認します。二つのページモデルは厳密な予算、未オープン子孫の溢れ、孤立物体、FD/entry/inode 枯渇を検査します。本節は上記権限の範囲で以前の制限を拡張します。Intel ネイティブ、実機 iOS、hard link、ACL、完全 OS/runtime/framework は別の未検証または未実装項目です。

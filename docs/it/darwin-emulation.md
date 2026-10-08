@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1480ab7f58ad16bb60f46433bfc9c34563c292fc7f17c020ca9b427f5f99b2b8 -->
+<!-- i18n-source: d492dd2ee1d6198857c35a5a17205ffecebc13658e7634c2d278cc345d5e659b -->
 
 [← Indice della documentazione](README.md)
 
@@ -836,8 +836,16 @@ unlink, rename ordinario/EXCL, SWAP foglia link/file/link e transazioni dei sott
 
 `symbolic_links[].mutation_policy` usa `DarwinSymbolicLinkMutationPolicy` e `DarwinFileOptions::SymbolicLinkMutationPolicies`. L’unico campo rigoroso `mutation_time` richiede secondi signed 64-bit senza perdita e nanosecondi [0, 1000000000), permesso e osservazioni complete con inode non zero. Il primo move/SWAP diretto copia scalari senza allocazione e modifica soltanto ctime. Blocks e altri campi, movimenti antenati, rifiuti e no-op restano conservati. Senza policy stat completo diventa sconosciuto, ma inode di enumerazione e contraddizioni note di dispositivo restano. Il riferimento path/NUL è fisso; nomi riusati e nuovi symlink non ereditano record/policy iniziali e usano la namespace policy di creazione distinta.
 
-La preparazione ARM64 privata conserva 14 viste guarded raw-stat, 11 operazioni, ABI SDK indipendente di 144 byte, limiti compile120s/native5s/drain1s/reap1s e pulizia. `mutable-initial-links` verifica identità, risoluzione e referenti nativi; `virtual-mutable-initial-links` verifica stat completo in cinque guest, C/CLI e Python. Modelli coprono due pagine, SWAP dei sottoalberi, costi precisi ed esaurimento entry/inode. Intel e iOS fisico non sono validati; hard link, ACL, transazioni radice directory/link e OS/runtime/framework completi restano assenti.
+La preparazione ARM64 privata conserva 14 viste guarded raw-stat, 11 operazioni, ABI SDK indipendente di 144 byte, limiti compile120s/native5s/drain1s/reap1s e pulizia. `mutable-initial-links` verifica identità, risoluzione e referenti nativi; `virtual-mutable-initial-links` verifica stat completo in cinque guest, C/CLI e Python. Modelli coprono due pagine, SWAP dei sottoalberi, costi precisi ed esaurimento entry/inode. Intel e iOS fisico non sono validati; hard link, ACL, OS/runtime/framework completi restano assenti.
 
 ```json
 {"mutable":true,"mutation_policy":{"mutation_time":{"seconds":-13,"nanoseconds":456}}}
 ```
+
+## Transazioni radice di directory e link simbolico
+
+`renameatx_np(RENAME_SWAP)` scambia directory reale e link in entrambi gli ordini, inclusi sottoalberi non vuoti. La directory iniziale richiede `exchangeable`, il link iniziale `mutable` e i genitori reali autorizzazioni di modifica/SWAP nello stesso mount accertato. I discendenti iniziali protetti restano esclusi. Con le autorizzazioni ordinarie esistenti, directory→link restituisce ENOTDIR20, il contrario EISDIR21 e EXCL verso nomi distinti esistenti EEXIST17. Entrambi i cicli directory/link discendente danno EINVAL22 prima degli effetti. Si scambia il link stesso: una nuova autoreferenza può risultare da un successo e seguirla dopo restituisce ELOOP62.
+
+La transazione delle tre tabelle verifica radici, discendenti collegati o trattenuti, percorsi completi e spazio dinamico prima della pubblicazione. Nomi/target/riferimenti iniziali, contenuti e lease dei mapping non offrono credito SWAP. La prima nuova chiave riserva un percorso/NUL dinamico indipendente; ripetere sostituisce una volta il costo precedente. Nessuna voce, FD o inode di creazione aggiuntivi. L’appartenenza segue i genitori reali, senza annettere vecchi orfani solo per nomi riutilizzati. Target grezzi invariati, risoluzione relativa sul nuovo genitore; FD/dup, cursori, CWD, referenti e mapping sopravvivono. Le radici dirette applicano proprie politiche stat solo a ctime, gli antenati preservano i discendenti. Senza politica stat completo è ignoto, ma inode resta per l’enumerazione corrente; le versioni seguono il contratto di riavvolgimento a zero esistente. Nessun nuovo campo JSON o permesso.
+
+La preparazione ARM64 originale conserva 36 viste stat protette di 144 byte, 16 raw rename, compile120s/native5s/drain1s/reap1s e recupero/pulizia confermati. `directory-link-roots` e `virtual-directory-link-roots` verificano identità e stat completo costante su cinque guest, C/CLI e Python. I modelli di due pagine coprono budget esatti, overflow senza apertura, orfani ed esaurimento FD/voce/inode. Questa sezione estende le esclusioni precedenti entro tali permessi. Intel nativo, iOS fisico, hard link, ACL e OS/runtime/framework completi restano attività separate.
