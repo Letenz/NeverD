@@ -48,6 +48,27 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
 std::optional<std::string> imageStringComment(const BinaryImage *Img,
                                               va_t Addr);
 
+/// A string the image holds, as a C literal of exactly its bytes.
+struct ImageCString {
+  /// The element type: `char`, `char16_t` or `char32_t`, and its bytes.
+  llvm::StringRef Element;
+  unsigned UnitBytes = 1;
+  /// `"..."`, `u"..."` or `U"..."`: the text where the UTF-8 source shows it,
+  /// escapes for the bytes of another encoding and for controls.
+  std::string Literal;
+  /// Bytes the string occupies with its terminator.
+  uint64_t Bytes = 0;
+  /// The encoding and text when the literal escapes them (`GBK "你好"`, as
+  /// imageStringComment reads them); empty when the literal shows the text.
+  std::string Note;
+};
+
+/// The string that starts at \p Addr in readable, non-executable image bytes
+/// as a C literal.  None when no string starts there, when a relocation
+/// touches its bytes, or when its code units are not in the target's
+/// (little-endian) byte order, which `u"..."` and `U"..."` hold.
+std::optional<ImageCString> imageCString(const BinaryImage *Img, va_t Addr);
+
 /// Named class/struct returned by value.  MSVC x64 passes that object through
 /// a hidden pointer in RCX.  Enums stay in RAX.  Forward-ref classes may
 /// have Size 0.
