@@ -14,8 +14,6 @@
 #include <gtest/gtest.h>
 #include <utility>
 
-#include <utility>
-
 using namespace neverd;
 using namespace neverd::libc;
 
