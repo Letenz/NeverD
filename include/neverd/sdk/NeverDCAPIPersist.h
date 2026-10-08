@@ -74,6 +74,27 @@ NEVERD_API const char *neverd_functions_json(neverd_session_t Sess);
 NEVERD_API int neverd_functions_save(neverd_session_t Sess);
 NEVERD_API int neverd_functions_load(neverd_session_t Sess);
 
+/// Make the bytes from \p Addr the user's data item, given by the JSON object
+/// \p Row: {"kind":"byte"|"word"|"dword"|"qword"} for a value of that size,
+/// {"kind":"string","encoding":E,"size":N} for a string of N bytes in
+/// encoding E (a name of neverd_string_encodings_json()), its zero terminator
+/// included, or {"kind":"undefined","size":N} for N bytes shown as bytes,
+/// whatever analysis reads there.  An item replaces the one at its address
+/// and may share no byte with another.  Returns 0, or -1 with
+/// neverd_last_error.  neverd_items_save keeps the items.
+NEVERD_API int neverd_item_set(neverd_session_t Sess, neverd_va_t Addr,
+                               const char *Row);
+/// Forget the user's item at \p Addr.  Returns 0, or -1 when none starts
+/// there.
+NEVERD_API int neverd_item_clear(neverd_session_t Sess, neverd_va_t Addr);
+/// The user's data items, [{"addr","kind","size","encoding"?}] in address
+/// order.  Free with neverd_free_string.
+NEVERD_API const char *neverd_items_json(neverd_session_t Sess);
+/// Write or read the items as `<input>.neverd-items.json`, which
+/// neverd_session_load reads too.  Return 0, or -1 with neverd_last_error.
+NEVERD_API int neverd_items_save(neverd_session_t Sess);
+NEVERD_API int neverd_items_load(neverd_session_t Sess);
+
 #ifdef __cplusplus
 }
 #endif

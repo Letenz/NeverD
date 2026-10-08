@@ -233,8 +233,9 @@ InstructionFlow summarizeInstructionFlow(const BinaryImage &Img, Decoder &Dec,
         break;
       if (const auto Address = ValueOf(*Memory.Address);
           Address && Address->Kind != Role::Scalar)
-        Flow.Refs.push_back(
-            {Address->Value, Op.Opcode == NdOp::LOAD ? "read" : "write"});
+        Flow.Refs.push_back({Address->Value,
+                             Op.Opcode == NdOp::LOAD ? "read" : "write",
+                             Memory.AccessSize});
       // A stored address, such as an argument pushed as `offset aText`.
       if (Op.Opcode == NdOp::STORE && Memory.StoredValue)
         if (const auto Stored = ValueOf(*Memory.StoredValue);
@@ -259,8 +260,8 @@ InstructionFlow summarizeInstructionFlow(const BinaryImage &Img, Decoder &Dec,
   const va_t Next = DI.Addr + DI.Size;
   for (const va_t Address : Offsets)
     if (Address != Next && Address != Flow.Target &&
-        llvm::none_of(Flow.Refs, [&](const auto &Ref) {
-          return Ref.first == Address && Ref.second == "offset";
+        llvm::none_of(Flow.Refs, [&](const InstructionRef &Ref) {
+          return Ref.To == Address && Ref.Kind == "offset";
         }))
       Flow.Refs.push_back({Address, "offset"});
   return Flow;

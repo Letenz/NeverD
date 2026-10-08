@@ -39,3 +39,15 @@ NEVERD_DATA_ITEM_NAME(PointerNamePrefix, "off_")
 // Data the code reaches by its address alone, with no access that sizes it.
 NEVERD_DATA_ITEM_NAME(UnknownNamePrefix, "unk_")
 #undef NEVERD_DATA_ITEM_NAME
+
+// NEVERD_DATA_ITEM_KIND(Id, Spelling): kinds of data item a user defines
+// besides a value of one of the sizes above, which takes its size keyword
+// (`qword`) as its kind.
+#ifndef NEVERD_DATA_ITEM_KIND
+#define NEVERD_DATA_ITEM_KIND(Id, Spelling)
+#endif
+// A string ending in a zero code unit, in a named encoding.
+NEVERD_DATA_ITEM_KIND(StringItemKind, "string")
+// Bytes shown as bytes, whatever analysis reads there.
+NEVERD_DATA_ITEM_KIND(UndefinedItemKind, "undefined")
+#undef NEVERD_DATA_ITEM_KIND
