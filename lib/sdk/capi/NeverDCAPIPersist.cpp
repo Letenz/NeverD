@@ -222,6 +222,7 @@ int neverd_rename_func(neverd_session_t Sess, const char *OldName,
       const auto PreviousOrigin = F.Origin;
       const auto PreviousRenames = S->Renames;
       S->Renames[F.Entry] = NewName;
+      S->forgetEmittedSources();
       F.Name = NewName;
       F.Origin = NameOrigin::User;
       if (neverd_renames_save(Sess) != 0) {
@@ -272,6 +273,7 @@ int neverd_rename_addr(neverd_session_t Sess, neverd_va_t Addr,
         S->OriginalNames[Addr] = Sym->Name;
     S->Renames[Addr] = NewName.str();
   }
+  S->forgetEmittedSources();
   // A function entry takes the name in the function list too.
   S->refreshFunctionNames();
   if (neverd_renames_save(Sess) != 0) {
@@ -335,6 +337,7 @@ int neverd_renames_load(neverd_session_t Sess) {
         F.Name = Original->second;
     }
     S->Renames.clear();
+    S->forgetEmittedSources();
     S->refreshFunctionNames();
   };
   std::error_code EC;
