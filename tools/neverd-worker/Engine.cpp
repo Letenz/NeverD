@@ -442,6 +442,22 @@ bool Engine::reloadOperandFormats() {
     operandFormatsChanged();
   return true;
 }
+void Engine::namesChanged() {
+  graphs_.clear();
+  if (listing_)
+    listing_->namesChanged();
+  textKey_.clear();
+  textCache_.clear();
+  textLines_.clear();
+  functionOrderKey_.clear();
+  functionOrder_.clear();
+}
+void Engine::commentsChanged() {
+  graphs_.clear();
+  textKey_.clear();
+  textCache_.clear();
+  textLines_.clear();
+}
 void Engine::operandFormatsChanged() {
   // Graph nodes hold formatted lines; pseudocode does not show the formats.
   graphs_.clear();
@@ -460,7 +476,7 @@ bool Engine::reloadDataItems() {
   if (items.load(session_) != 0)
     return false;
   if (dataItemRows() != before)
-    invalidate();
+    namesChanged();
   return true;
 }
 Json Engine::dataItemRows() const {
@@ -1050,9 +1066,15 @@ Json Engine::execute(const std::string &operation, const Json &p) {
                     "History operation was saved but cannot be reloaded",
                     {{"saved", true}});
     }
-    // Reloading operand formats shows them already; any other table can
-    // change what the listing lays out.
-    if (command.at("kind") != "operand")
+    // Reloading operand formats shows them already, and names and data items
+    // leave the string scan as it is; a function edit changes what the
+    // listing lays out.
+    if (const auto kind = command.at("kind");
+        kind == "rename" || kind == "item")
+      namesChanged();
+    else if (kind == "annotation")
+      commentsChanged();
+    else if (kind != "operand")
       invalidate();
     ++revision_;
     auto result = store.listing(0, 128);
@@ -1441,7 +1463,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
          {"after", text}});
     neverd_annotation_set(session_, address, text.c_str());
     dirty_ = true;
-    invalidate();
+    commentsChanged();
     ++revision_;
     return {{"address", hexAddress(address)},
             {"text", text},
@@ -1505,7 +1527,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     if (neverd_renames_load(session_) != 0)
       throw Error("reload_failed", "Rename was saved but could not be reloaded",
                   {{"saved", true}});
-    invalidate();
+    namesChanged();
     ++revision_;
     return {{"address", hexAddress(address)}, {"name", name}, {"saved", true}};
   }
@@ -1651,10 +1673,10 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       store = checkpoint;
       // The sidecar still holds the items before this one.
       (void)items.load(session_);
-      invalidate();
+      namesChanged();
       throw;
     }
-    invalidate();
+    namesChanged();
     ++revision_;
     return {{"address", hexAddress(start)},
             {"kind", after.at("kind")},

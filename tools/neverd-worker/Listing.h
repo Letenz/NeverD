@@ -65,6 +65,9 @@ public:
   /// Read the user's operand formats again.  They change only instruction
   /// text, so the rest of the listing stands.
   void reloadNumberFormats();
+  /// Names or the user's data items changed: the next query reads them again
+  /// without scanning strings or reading imports and exports again.
+  void namesChanged();
   /// Whether instruction lines show the user's operand formats.
   bool showsNumberFormats();
   /// Which operands of the instruction that starts at \p address a number
