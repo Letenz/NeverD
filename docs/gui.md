@@ -56,6 +56,12 @@ region for browsing; this does not reconstruct the program's OEP. Invalid import
 bindings remain unknown, and fixed-image semantic checks retain their stricter
 requirements. Truncated or unmappable image structures can still prevent loading.
 
+Local file paths passed between the GUI, worker, CLI and C ABI use UTF-8 on
+all platforms. Windows paths are converted to native filesystem paths before
+loading binaries, companion PDB/MAP files, signatures and project sidecars.
+Chinese names, spaces and other Unicode characters are supported without
+changing the Windows system code page.
+
 The worker can also be built without Qt, either with `NEVERD_BUILD_WORKER=ON` in
 the root build or by configuring `tools/neverd-worker` standalone. The shipped
 worker never links the test engine.

@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/debug/PDBLoader.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/DebugInfo/MSF/MappedBlockStream.h"
@@ -110,7 +111,7 @@ std::optional<va_t> resolve(const std::filesystem::path &BinaryPath,
   if (Name.empty() || BinaryPath.empty() || PDBPath.empty())
     return std::nullopt;
 
-  auto BufferOr = llvm::MemoryBuffer::getFile(BinaryPath.string());
+  auto BufferOr = llvm::MemoryBuffer::getFile(pathToUTF8(BinaryPath));
   if (!BufferOr)
     return std::nullopt;
   auto ObjectOr =
@@ -146,7 +147,7 @@ std::optional<va_t> resolve(const std::filesystem::path &BinaryPath,
 
   std::unique_ptr<llvm::pdb::IPDBSession> Session;
   if (auto Err = llvm::pdb::loadDataForPDB(llvm::pdb::PDB_ReaderType::Native,
-                                           PDBPath.string(), Session)) {
+                                           pathToUTF8(PDBPath), Session)) {
     llvm::consumeError(std::move(Err));
     return std::nullopt;
   }

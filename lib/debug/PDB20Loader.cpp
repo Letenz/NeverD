@@ -5,8 +5,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/debug/PDBLoader.h"
-
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/support/FilePath.h"
 
 #include "llvm/DebugInfo/CodeView/CodeView.h"
 #include "llvm/DebugInfo/CodeView/TypeIndex.h"
@@ -40,8 +40,8 @@ llvm::Error pdb20Error(const llvm::Twine &Message) {
                                  "pdb20: " + Message);
 }
 
-llvm::Expected<std::vector<uint8_t>>
-readIndexedStream(llvm::pdb::PDBFile &File, uint32_t Index) {
+llvm::Expected<std::vector<uint8_t>> readIndexedStream(llvm::pdb::PDBFile &File,
+                                                       uint32_t Index) {
   if (Index >= File.getNumStreams())
     return pdb20Error("stream index out of range");
   const uint32_t Size = File.getStreamByteSize(Index);
@@ -117,8 +117,7 @@ parseModules(llvm::ArrayRef<uint8_t> Modi) {
     ModuleRec M;
     M.Stream = static_cast<int16_t>(
         llvm::support::endian::read16le(Modi.data() + Off + 34));
-    M.SymBytes =
-        llvm::support::endian::read32le(Modi.data() + Off + 36);
+    M.SymBytes = llvm::support::endian::read32le(Modi.data() + Off + 36);
     uint32_t P = Off + 64;
     while (P < Modi.size() && Modi[P] != 0)
       ++P;
@@ -192,9 +191,7 @@ DebugCallConv debugCallConv(uint8_t Call) {
   }
 }
 
-uint16_t pointerBytes(Bitness Bits) {
-  return Bits == Bitness::Bits64 ? 8 : 4;
-}
+uint16_t pointerBytes(Bitness Bits) { return Bits == Bitness::Bits64 ? 8 : 4; }
 
 TypeRef pointerTo(TypeRef Pointee, uint16_t Size) {
   auto Ptr = NdType::makePtr(Pointee ? Pointee : NdType::makeVoid());
@@ -429,8 +426,7 @@ llvm::Expected<TypeStore> parseTpi(const std::vector<uint8_t> &Bytes,
   const uint32_t End = HeaderLen + DataLen;
   uint32_t TI = TypeMin;
   while (Off + 4 <= End && TI < TypeMax) {
-    const uint16_t Len =
-        llvm::support::endian::read16le(Bytes.data() + Off);
+    const uint16_t Len = llvm::support::endian::read16le(Bytes.data() + Off);
     const uint16_t Kind =
         llvm::support::endian::read16le(Bytes.data() + Off + 2);
     if (Len < 2 || Off + 2u + Len > End)
@@ -456,8 +452,7 @@ void walkSymbols(llvm::ArrayRef<uint8_t> Bytes, uint32_t Start, uint32_t Limit,
   uint64_t CurrentKey = 0;
   bool InProc = false;
   while (Off + 4 <= End) {
-    const uint16_t Len =
-        llvm::support::endian::read16le(Bytes.data() + Off);
+    const uint16_t Len = llvm::support::endian::read16le(Bytes.data() + Off);
     const uint16_t Kind =
         llvm::support::endian::read16le(Bytes.data() + Off + 2);
     if (Len < 2 || Off + 2u + Len > Bytes.size())
@@ -541,9 +536,9 @@ loadPdb20DebugContext(const std::filesystem::path &PdbPath,
 
   std::unique_ptr<llvm::pdb::IPDBSession> Session;
   if (auto Err = llvm::pdb::loadDataForPDB(llvm::pdb::PDB_ReaderType::Native,
-                                           llvm::StringRef(PdbPath.string()),
+                                           llvm::StringRef(pathToUTF8(PdbPath)),
                                            Session))
-    return llvm::createFileError(PdbPath.string(), std::move(Err));
+    return llvm::createFileError(pathToUTF8(PdbPath), std::move(Err));
 
   auto *Native = static_cast<llvm::pdb::NativeSession *>(Session.get());
   llvm::pdb::PDBFile &File = Native->getPDBFile();
@@ -562,8 +557,7 @@ loadPdb20DebugContext(const std::filesystem::path &PdbPath,
   if (!Actual.isValid())
     return pdb20Error("PDB Info stream has an invalid signature/age");
   if (Actual != *Image.DynInfo.CodeViewPDBIdentity)
-    return pdb20Error(
-        "PDB Info signature/age does not match PE CodeView NB10");
+    return pdb20Error("PDB Info signature/age does not match PE CodeView NB10");
 
   auto DbiOr = readIndexedStream(File, llvm::pdb::StreamDBI);
   if (!DbiOr)
@@ -591,12 +585,10 @@ loadPdb20DebugContext(const std::filesystem::path &PdbPath,
   if (ModiSize < 0 || ScSize < 0 || SecMapSize < 0 || FileInfoSize < 0 ||
       TypeServerSize < 0 || ECSize < 0 || DbgSize < 0)
     return pdb20Error("DBI substream size is negative");
-  const uint64_t AfterHeader = 64ull + static_cast<uint32_t>(ModiSize) +
-                               static_cast<uint32_t>(ScSize) +
-                               static_cast<uint32_t>(SecMapSize) +
-                               static_cast<uint32_t>(FileInfoSize) +
-                               static_cast<uint32_t>(TypeServerSize) +
-                               static_cast<uint32_t>(ECSize);
+  const uint64_t AfterHeader =
+      64ull + static_cast<uint32_t>(ModiSize) + static_cast<uint32_t>(ScSize) +
+      static_cast<uint32_t>(SecMapSize) + static_cast<uint32_t>(FileInfoSize) +
+      static_cast<uint32_t>(TypeServerSize) + static_cast<uint32_t>(ECSize);
   if (AfterHeader + static_cast<uint32_t>(DbgSize) > DBI.size())
     return pdb20Error("DBI substreams overrun the stream");
 
@@ -616,8 +608,8 @@ loadPdb20DebugContext(const std::filesystem::path &PdbPath,
   if (auto EC = validateSections(Image, *SectionsOr))
     return EC;
 
-  auto ModsOr = parseModules(llvm::ArrayRef<uint8_t>(
-      DBI.data() + 64, static_cast<size_t>(ModiSize)));
+  auto ModsOr = parseModules(
+      llvm::ArrayRef<uint8_t>(DBI.data() + 64, static_cast<size_t>(ModiSize)));
   if (!ModsOr)
     return ModsOr.takeError();
 

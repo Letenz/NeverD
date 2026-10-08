@@ -13,6 +13,7 @@
 #include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/SignatureMatcher.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/FilePath.h"
 #include "neverd/support/ISAEncoding.h"
 #include "neverd/support/InstructionFields.h"
 #include "neverd/support/Parallel.h"
@@ -123,14 +124,14 @@ const std::string &SignatureDB::libraryNameOf(size_t ModuleIndex) const {
 }
 
 llvm::Error SignatureDB::loadFile(const std::filesystem::path &Path) {
-  auto Ext = Path.extension().string();
+  auto Ext = pathToUTF8(Path.extension());
 
   if (Ext == ".json")
     return loadFeaturePack(Path);
 
   if (Ext == PatternExtension) {
     SigSource Src;
-    Src.Path = Path.string();
+    Src.Path = pathToUTF8(Path);
     Src.LibraryName = libraryName(Path);
     const std::optional<SignatureCache::SourceIdentity> Identity =
         Cache ? SignatureCache::identify(Path) : std::nullopt;
@@ -144,10 +145,10 @@ llvm::Error SignatureDB::loadFile(const std::filesystem::path &Path) {
       }
     }
     auto BufferOrErr = llvm::MemoryBuffer::getFile(
-        Path.string(), /*IsText=*/false, /*RequiresNullTerminator=*/false);
+        pathToUTF8(Path), /*IsText=*/false, /*RequiresNullTerminator=*/false);
     if (!BufferOrErr)
       return llvm::make_error<llvm::StringError>(
-          "cannot open pattern file: " + Path.string(),
+          "cannot open pattern file: " + pathToUTF8(Path),
           llvm::inconvertibleErrorCode());
     auto SourceOrErr = parseSource((*BufferOrErr)->getBuffer());
     if (!SourceOrErr)
@@ -162,7 +163,7 @@ llvm::Error SignatureDB::loadFile(const std::filesystem::path &Path) {
   }
 
   return llvm::make_error<llvm::StringError>(
-      "unsupported signature file format: " + Path.string(),
+      "unsupported signature file format: " + pathToUTF8(Path),
       llvm::inconvertibleErrorCode());
 }
 
@@ -186,21 +187,21 @@ SignatureDB::listDirectory(const std::filesystem::path &Dir) {
   if (!std::filesystem::exists(Dir, EC)) {
     if (EC)
       return llvm::make_error<llvm::StringError>(
-          "cannot inspect signature directory: " + Dir.string() + ": " +
+          "cannot inspect signature directory: " + pathToUTF8(Dir) + ": " +
               EC.message(),
           llvm::inconvertibleErrorCode());
     return llvm::make_error<llvm::StringError>(
-        "signature directory does not exist: " + Dir.string(),
+        "signature directory does not exist: " + pathToUTF8(Dir),
         llvm::inconvertibleErrorCode());
   }
   if (!std::filesystem::is_directory(Dir, EC)) {
     if (EC)
       return llvm::make_error<llvm::StringError>(
-          "cannot inspect signature directory: " + Dir.string() + ": " +
+          "cannot inspect signature directory: " + pathToUTF8(Dir) + ": " +
               EC.message(),
           llvm::inconvertibleErrorCode());
     return llvm::make_error<llvm::StringError>(
-        "signature path is not a directory: " + Dir.string(),
+        "signature path is not a directory: " + pathToUTF8(Dir),
         llvm::inconvertibleErrorCode());
   }
 
@@ -210,7 +211,7 @@ SignatureDB::listDirectory(const std::filesystem::path &Dir) {
   const std::filesystem::directory_iterator End;
   if (EC)
     return llvm::make_error<llvm::StringError>(
-        "cannot enumerate signature directory: " + Dir.string() + ": " +
+        "cannot enumerate signature directory: " + pathToUTF8(Dir) + ": " +
             EC.message(),
         llvm::inconvertibleErrorCode());
   while (It != End) {
@@ -218,7 +219,7 @@ SignatureDB::listDirectory(const std::filesystem::path &Dir) {
     const bool IsRegular = It->is_regular_file(TypeError);
     if (TypeError)
       return llvm::make_error<llvm::StringError>(
-          "cannot inspect signature entry: " + It->path().string() + ": " +
+          "cannot inspect signature entry: " + pathToUTF8(It->path()) + ": " +
               TypeError.message(),
           llvm::inconvertibleErrorCode());
     if (IsRegular && It->path().extension() == PatternExtension.data())
@@ -226,7 +227,7 @@ SignatureDB::listDirectory(const std::filesystem::path &Dir) {
     It.increment(EC);
     if (EC)
       return llvm::make_error<llvm::StringError>(
-          "cannot enumerate signature directory: " + Dir.string() + ": " +
+          "cannot enumerate signature directory: " + pathToUTF8(Dir) + ": " +
               EC.message(),
           llvm::inconvertibleErrorCode());
   }
@@ -235,7 +236,7 @@ SignatureDB::listDirectory(const std::filesystem::path &Dir) {
 }
 
 std::string SignatureDB::libraryName(const std::filesystem::path &File) {
-  const std::string Stem = File.stem().string();
+  const std::string Stem = pathToUTF8(File.stem());
   const size_t Dot = llvm::StringRef(Stem).rfind(PartMarker);
   if (Dot == std::string::npos || Dot == 0)
     return Stem;
@@ -369,7 +370,7 @@ SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
     if (Cached[I])
       continue;
     auto BufferOrErr =
-        llvm::MemoryBuffer::getFile(PatFiles[I].string(), /*IsText=*/false,
+        llvm::MemoryBuffer::getFile(pathToUTF8(PatFiles[I]), /*IsText=*/false,
                                     /*RequiresNullTerminator=*/false);
     if (!BufferOrErr)
       continue;
@@ -404,11 +405,11 @@ SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
     llvm::Error Error =
         Opened ? PatternParser::firstError(FileChunks)
                : llvm::make_error<llvm::StringError>(
-                     "cannot open pattern file: " + PatFiles[I].string(),
+                     "cannot open pattern file: " + pathToUTF8(PatFiles[I]),
                      llvm::inconvertibleErrorCode());
     if (Error)
       return llvm::make_error<llvm::StringError>(
-          "cannot parse signature file: " + PatFiles[I].string() + ": " +
+          "cannot parse signature file: " + pathToUTF8(PatFiles[I]) + ": " +
               llvm::toString(std::move(Error)),
           llvm::inconvertibleErrorCode());
     for (const PatternChunk &Chunk : FileChunks)
@@ -421,7 +422,7 @@ SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
   NewSources.reserve(PatFiles.size());
   for (size_t I = 0; I < PatFiles.size(); ++I) {
     SigSource Source;
-    Source.Path = PatFiles[I].string();
+    Source.Path = pathToUTF8(PatFiles[I]);
     Source.LibraryName = libraryName(PatFiles[I]);
     Source.ModuleStart = NewModules.size();
     if (Cached[I]) {
