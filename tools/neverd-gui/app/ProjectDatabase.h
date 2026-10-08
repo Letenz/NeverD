@@ -30,6 +30,9 @@ public:
   /// Whether \p path is opened as a database: it has the `.nddb` suffix or
   /// its header carries the application id.
   static bool isDatabase(const QString &path);
+  /// Whether NeverD keeps a project for \p path: \p path is a database, or
+  /// the binary has a database or a sidecar beside it.
+  static bool hasState(const QString &path);
 
   struct Contents {
     QString inputName, inputSha256;

@@ -2060,6 +2060,10 @@ Signed: %4</source>
         <source>Collapse library operations</source>
         <translation>Свернуть библиотечные операции</translation>
     </message>
+    <message>
+        <source>The ways to load %1 are unknown: %2</source>
+        <translation>Неизвестно, как загрузить %1: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2225,6 +2229,104 @@ Signed: %4</source>
     <message>
         <source>Defined %1 at %2</source>
         <translation>%1 определено по адресу %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LoadFileDialog</name>
+    <message>
+        <source>Load a new file</source>
+        <translation>Загрузить новый файл</translation>
+    </message>
+    <message>
+        <source>Load file %1 &amp;as</source>
+        <translation>Загрузить файл %1 &amp;как</translation>
+    </message>
+    <message>
+        <source>The input file possibly has the listed formats</source>
+        <translation>Входной файл, возможно, имеет один из перечисленных форматов</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype</source>
+        <translation>&amp;Тип процессора</translation>
+    </message>
+    <message>
+        <source>The file&apos;s header states the processor</source>
+        <translation>Процессор определяется заголовком файла</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>Анализ</translation>
+    </message>
+    <message>
+        <source>&amp;Enabled</source>
+        <translation>&amp;Включён</translation>
+    </message>
+    <message>
+        <source>If turned off, NeverD will not analyze the program in idle time</source>
+        <translation>Если выключено, NeverD не анализирует программу в простое</translation>
+    </message>
+    <message>
+        <source>In&amp;dicator enabled</source>
+        <translation>&amp;Индикатор включён</translation>
+    </message>
+    <message>
+        <source>Display the analysis progress in the status line</source>
+        <translation>Показывать ход анализа в строке состояния</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>Параметры</translation>
+    </message>
+    <message>
+        <source>Load debu&amp;g information</source>
+        <translation>Загрузить &amp;отладочную информацию</translation>
+    </message>
+    <message>
+        <source>Read the PDB, DWARF or linker map that belongs to the input</source>
+        <translation>Читать PDB, DWARF или карту компоновщика, относящиеся к входному файлу</translation>
+    </message>
+    <message>
+        <source>NeverD cannot load this file: %1</source>
+        <translation>NeverD не может загрузить этот файл: %1</translation>
+    </message>
+</context>
+<context>
+    <name>Processors</name>
+    <message>
+        <source>Intel 80x86 processors</source>
+        <translation>Процессоры Intel 80x86</translation>
+    </message>
+    <message>
+        <source>ARM processors</source>
+        <translation>Процессоры ARM</translation>
+    </message>
+    <message>
+        <source>Virtual machines</source>
+        <translation>Виртуальные машины</translation>
+    </message>
+    <message>
+        <source>Intel 80386 and later (32-bit)</source>
+        <translation>Intel 80386 и новее (32 бита)</translation>
+    </message>
+    <message>
+        <source>AMD64 and Intel 64 (64-bit)</source>
+        <translation>AMD64 и Intel 64 (64 бита)</translation>
+    </message>
+    <message>
+        <source>ARM and Thumb (AArch32)</source>
+        <translation>ARM и Thumb (AArch32)</translation>
+    </message>
+    <message>
+        <source>ARM64 (AArch64)</source>
+        <translation>ARM64 (AArch64)</translation>
+    </message>
+    <message>
+        <source>Ethereum Virtual Machine</source>
+        <translation>Виртуальная машина Ethereum</translation>
+    </message>
+    <message>
+        <source>Solana BPF</source>
+        <translation>Solana BPF</translation>
     </message>
 </context>
 </TS>

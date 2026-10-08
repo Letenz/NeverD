@@ -2069,6 +2069,10 @@ Signed: %4</source>
         <source>Collapse library operations</source>
         <translation>طي عمليات المكتبات</translation>
     </message>
+    <message>
+        <source>The ways to load %1 are unknown: %2</source>
+        <translation>طريقة تحميل %1 غير معروفة: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2234,6 +2238,104 @@ Signed: %4</source>
     <message>
         <source>Defined %1 at %2</source>
         <translation>عُرِّف %1 عند %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LoadFileDialog</name>
+    <message>
+        <source>Load a new file</source>
+        <translation>تحميل ملف جديد</translation>
+    </message>
+    <message>
+        <source>Load file %1 &amp;as</source>
+        <translation>تحميل الملف %1 بصيغة(&amp;A)</translation>
+    </message>
+    <message>
+        <source>The input file possibly has the listed formats</source>
+        <translation>قد يكون للملف المُدخل أحد التنسيقات المدرجة</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype</source>
+        <translation>نوع المعالج(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The file&apos;s header states the processor</source>
+        <translation>يحدد رأس الملف المعالج</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>التحليل</translation>
+    </message>
+    <message>
+        <source>&amp;Enabled</source>
+        <translation>مُفعّل(&amp;E)</translation>
+    </message>
+    <message>
+        <source>If turned off, NeverD will not analyze the program in idle time</source>
+        <translation>عند إيقافه، لن يحلل NeverD البرنامج في وقت الخمول</translation>
+    </message>
+    <message>
+        <source>In&amp;dicator enabled</source>
+        <translation>تفعيل المؤشر(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Display the analysis progress in the status line</source>
+        <translation>عرض تقدم التحليل في سطر الحالة</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>الخيارات</translation>
+    </message>
+    <message>
+        <source>Load debu&amp;g information</source>
+        <translation>تحميل معلومات التصحيح(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Read the PDB, DWARF or linker map that belongs to the input</source>
+        <translation>قراءة ملف PDB أو DWARF أو خريطة الرابط الخاصة بالمُدخل</translation>
+    </message>
+    <message>
+        <source>NeverD cannot load this file: %1</source>
+        <translation>لا يستطيع NeverD تحميل هذا الملف: %1</translation>
+    </message>
+</context>
+<context>
+    <name>Processors</name>
+    <message>
+        <source>Intel 80x86 processors</source>
+        <translation>معالجات Intel 80x86</translation>
+    </message>
+    <message>
+        <source>ARM processors</source>
+        <translation>معالجات ARM</translation>
+    </message>
+    <message>
+        <source>Virtual machines</source>
+        <translation>الأجهزة الافتراضية</translation>
+    </message>
+    <message>
+        <source>Intel 80386 and later (32-bit)</source>
+        <translation>Intel 80386 وما بعده (32 بت)</translation>
+    </message>
+    <message>
+        <source>AMD64 and Intel 64 (64-bit)</source>
+        <translation>AMD64 وIntel 64 (64 بت)</translation>
+    </message>
+    <message>
+        <source>ARM and Thumb (AArch32)</source>
+        <translation>ARM وThumb (AArch32)</translation>
+    </message>
+    <message>
+        <source>ARM64 (AArch64)</source>
+        <translation>ARM64 (AArch64)</translation>
+    </message>
+    <message>
+        <source>Ethereum Virtual Machine</source>
+        <translation>آلة إيثريوم الافتراضية</translation>
+    </message>
+    <message>
+        <source>Solana BPF</source>
+        <translation>Solana BPF</translation>
     </message>
 </context>
 </TS>

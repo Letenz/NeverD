@@ -13,6 +13,7 @@
 #include <QUuid>
 #include <QtConcurrent/QtConcurrentMap>
 #include <QtEndian>
+#include <algorithm>
 #include <vector>
 
 namespace neverd::gui {
@@ -199,6 +200,14 @@ const QStringList &ProjectDatabase::sidecarSuffixes() {
 
 QString ProjectDatabase::pathFor(const QString &binary) {
   return binary + QLatin1String(Extension);
+}
+
+bool ProjectDatabase::hasState(const QString &path) {
+  if (isDatabase(path) || QFileInfo::exists(pathFor(path)))
+    return true;
+  return std::any_of(
+      sidecarSuffixes().cbegin(), sidecarSuffixes().cend(),
+      [&](const QString &suffix) { return QFileInfo::exists(path + suffix); });
 }
 
 bool ProjectDatabase::isDatabase(const QString &path) {

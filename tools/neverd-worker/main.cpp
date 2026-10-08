@@ -218,6 +218,8 @@ Json hello() {
     result["capabilities"].push_back("item_define");
   if (Engine::keepsOperandFormats())
     result["capabilities"].push_back("operand_format");
+  if (Engine::identifiesFiles())
+    result["capabilities"].push_back("identify");
   return result;
 }
 

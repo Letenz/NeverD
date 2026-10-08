@@ -11,8 +11,10 @@
 #include "JumpDialog.h"
 #include "Language.h"
 #include "ListingView.h"
+#include "LoadFileDialog.h"
 #include "NavigationBand.h"
 #include "OutputWindow.h"
+#include "ProjectDatabase.h"
 #include "Resolve.h"
 #include "Session.h"
 #include "Theme.h"
@@ -77,6 +79,7 @@ using KDDockWidgets::InitialOption;
 constexpr char LayoutFileName[] = "desktop.json";
 constexpr char RecentFilesKey[] = "files/recent";
 constexpr char OpcodeBytesKey[] = "listing/opcodeBytes";
+constexpr char AnalysisIndicatorKey[] = "analysis/indicator";
 // String search defaults and bounds (the worker's string_options).
 constexpr int DefaultStringMinLength = 4;
 constexpr int MaxStringMinLength = 1024;
@@ -213,7 +216,7 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
         QTimer::singleShot(0, this, [this, path, start] {
           if (start)
             start->reject();
-          openFile(path);
+          chooseLoader(path);
         });
       }
       return true;
@@ -647,6 +650,7 @@ void MainWindow::buildStatusBar() {
       tr("Background analysis: references and labels are indexed while you "
          "browse"));
   bar->addWidget(analysisLabel_);
+  applyIndicator();
   bar->addWidget(directionLabel_);
   bar->addWidget(diskLabel_);
   bar->addPermanentWidget(fileLabel_);
@@ -1307,7 +1311,38 @@ void MainWindow::openDialog() {
       start.isEmpty() ? QDir::homePath() : start,
       tr("All files (*);;NeverD databases (*.nddb)"));
   if (!path.isEmpty())
+    chooseLoader(path);
+}
+
+void MainWindow::chooseLoader(const QString &path) {
+  // A project opens as it was saved, and an engine that cannot list its
+  // loaders opens files as before.
+  if (!session_.identifiesFiles() || ProjectDatabase::hasState(path)) {
     openFile(path);
+    return;
+  }
+  session_.read(
+      QStringLiteral("identify"), {{"path", path}}, this,
+      [this, path](const QJsonObject &payload) {
+        LoadFileDialog dialog(path, payload.value("rows").toArray(), this);
+        dialog.setIndicator(
+            QSettings().value(AnalysisIndicatorKey, true).toBool());
+        if (dialog.exec() != QDialog::Accepted || dialog.row() < 0)
+          return;
+        QSettings().setValue(AnalysisIndicatorKey, dialog.indicator());
+        applyIndicator();
+        session_.open(path, dialog.options());
+      },
+      [this, path](const QString &, const QString &message) {
+        output_->append(
+            tr("The ways to load %1 are unknown: %2").arg(path, message), 1);
+        openFile(path);
+      });
+}
+
+void MainWindow::applyIndicator() {
+  analysisLabel_->setVisible(
+      QSettings().value(AnalysisIndicatorKey, true).toBool());
 }
 
 void MainWindow::rename() {

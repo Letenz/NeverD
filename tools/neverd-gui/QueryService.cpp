@@ -42,6 +42,7 @@ bool readable(const QString &operation) {
                                         "string_references",
                                         "string_encodings",
                                         "string_options",
+                                        "identify",
                                         "search"};
   return cacheable(operation) || operations.contains(operation);
 }
