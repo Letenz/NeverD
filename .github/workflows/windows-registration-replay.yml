@@ -1,0 +1,78 @@
+name: Replay Windows registration evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      evidence_run:
+        description: 'Successful Linux evidence run in this repository'
+        required: true
+        type: string
+      source_profile:
+        description: 'Source checkpoint represented by the artifact'
+        required: true
+        type: choice
+        default: all
+        options: [all, seh3-eh4]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  replay:
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run }}
+          name: windows-eh-x86-runtime-arm32-contracts
+          path: build-windows-eh
+      - name: Collect original-image runtime diagnostics
+        shell: python
+        run: |
+          import json, os, struct
+          from pathlib import Path
+          from scripts.check_windows_registration_eh import run_image
+          from scripts.check_windows_registration_rewrite import PE32
+          source = Path('build-windows-eh/evidence/source-filter/original.exe')
+          pe = PE32(source.read_bytes())
+          entry = pe.raw(pe.entry())
+          assert pe.data[entry:entry+5] == bytes.fromhex('5589e56aff')
+          table = pe.u32(entry + 6) - pe.base
+          filter_rva = pe.u32(pe.raw(table) + 4) - pe.base
+          config_rva, _ = pe.directory(10)
+          config = pe.raw(config_rva)
+          observations = []
+          for variant in ('original', 'constant-filter', 'no-safe-seh', 'no-load-config'):
+              data = bytearray(pe.data)
+              if variant == 'constant-filter':
+                  start = pe.raw(filter_rva, 6)
+                  data[start:start+6] = bytes.fromhex('b801000000c3')
+              if variant == 'no-safe-seh':
+                  struct.pack_into('<2I', data, config + 64, 0, 0)
+              if variant == 'no-load-config':
+                  struct.pack_into('<2I', data, pe.optional + 96 + 10*8, 0, 0)
+              image = Path('build-windows-eh') / ('diagnostic-' + variant + '.exe')
+              image.write_bytes(data)
+              result = run_image(image, [], os.environ.copy(), 60)
+              observations.append({'variant': variant, 'runtime': result})
+          Path('build-windows-eh/runtime-diagnostics.json').write_text(json.dumps({
+              'evidence': 'diagnostic-variants-only', 'observations': observations}, indent=2))
+          print(json.dumps(observations, indent=2))
+      - name: Replay exact source and cookie evidence
+        run: python scripts/replay_windows_registration.py --evidence-root build-windows-eh/evidence --source-profile '${{ inputs.source_profile }}' --output build-windows-eh/native-replay.json
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: windows-registration-replay
+          path: |
+            build-windows-eh/native-replay.json
+            build-windows-eh/runtime-diagnostics.json
+          if-no-files-found: error
+          retention-days: 14

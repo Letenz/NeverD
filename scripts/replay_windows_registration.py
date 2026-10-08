@@ -33,6 +33,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wine")
     parser.add_argument("--wine-prefix", type=Path)
     parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--source-profile", choices=("all", "seh3-eh4"),
+                        default="all", help="select an explicitly older evidence checkpoint")
     args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("--timeout must be positive and finite")
@@ -46,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     root = args.evidence_root.resolve()
     report = {"schema": 1, "platform": platform.platform(),
               "evidence": "wine-replay" if launcher else "native-windows-replay",
-              "passed": False, "source_cases": [], "cookies": []}
+              "passed": False, "source_cases": [], "cookies": [], "failures": []}
 
     def checked_image(parent: Path, record: dict) -> Path:
         name = Path(record["image"]).name
@@ -58,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         for case, (_, trace) in CASES.items():
+            if args.source_profile == "seh3-eh4" and case.startswith("eh4-gs-"):
+                continue
             parent = root / ("source-" + case)
             source = json.loads((parent / "registration-rewrite.json").read_text())
             records = source["observations"]
@@ -71,14 +75,21 @@ def main(argv: list[str] | None = None) -> int:
                      for r in records} != expected_images:
                 raise ValueError("source reconstruction evidence is incomplete")
             observations = []
-            for record in records:
-                observation = observe(checked_image(parent, record), record["generated"],
-                                      launcher, environment, args.timeout, trace)
-                if observation["runtime_base"] != record["runtime_base"]:
-                    raise ValueError("native loader changed the forced image base")
-                observations.append(observation)
             report["source_cases"].append({"case": case, "observations": observations})
-            print(f"PASS {runtime_name} source {case}: {len(observations)} executions", flush=True)
+            for record in records:
+                try:
+                    observation = observe(checked_image(parent, record), record["generated"],
+                                          launcher, environment, args.timeout, trace)
+                    if observation["runtime_base"] != record["runtime_base"]:
+                        raise ValueError("native loader changed the forced image base")
+                    observations.append(observation)
+                except (OSError, ValueError) as error:
+                    report["failures"].append({"case": case,
+                                               "image": Path(record["image"]).name,
+                                               "error": str(error)})
+            complete = len(observations) == len(records)
+            print(f"{'PASS' if complete else 'FAIL'} {runtime_name} source {case}: "
+                  f"{len(observations)}/{len(records)} executions", flush=True)
         for name, gs in (("eh4-cookie-runtime", False), ("eh4-gs-cookie-runtime", True)):
             parent = root / name
             source = json.loads((parent / "cookie-runtime.json").read_text())
@@ -97,9 +108,15 @@ def main(argv: list[str] | None = None) -> int:
                         pe.u16(pe.optional + 70) & 0x40:
                     raise ValueError("cookie probe lost its forced relocation base")
                 result = run_image(image, launcher, environment, args.timeout)
-                require_cookie_outcome(result, record["cookie_corrupted"] != "valid")
                 report["cookies"].append({"image": str(image), "runtime": result})
-            print(f"PASS {runtime_name} {name}: {len(records)} executions", flush=True)
+                try:
+                    require_cookie_outcome(result, record["cookie_corrupted"] != "valid")
+                except ValueError as error:
+                    report["failures"].append({"image": str(image),
+                                               "error": str(error), "runtime": result})
+            print(f"CHECKED {runtime_name} {name}: {len(records)} executions", flush=True)
+        if report["failures"]:
+            raise ValueError(f"{len(report['failures'])} replay executions failed")
         report["passed"] = True
     except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         report["error"] = str(error)
