@@ -39025,8 +39025,8 @@ TEST(HighCPointerAddresses, CorpusFuncLoadSehProbeRaisesImmediate) {
             "int32_t t22_4;")
       << Source;
   EXPECT_EQ(
-      llvm::StringRef(sourceLineContaining(Source, "g_1400050E0;")).trim(),
-      "int32_t g_1400050E0;")
+      llvm::StringRef(sourceLineContaining(Source, "dword_1400050E0;")).trim(),
+      "int32_t dword_1400050E0;")
       << Source;
   const std::string ReturnText = "return var_m18 + 1;";
   const size_t FirstReturn = Source.find(ReturnText);
@@ -39039,7 +39039,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadSehProbeRaisesImmediate) {
       << Source;
   EXPECT_EQ(Source.find("(int64_t)(uint32_t)(int32_t)"), std::string::npos)
       << Source;
-  const auto GlobalStore = sourceLineContaining(Source, "g_1400050E0 = ");
+  const auto GlobalStore = sourceLineContaining(Source, "dword_1400050E0 = ");
   const auto Copy = sourceLineContaining(Source, "t22_4 = var_m18;");
   ASSERT_FALSE(GlobalStore.empty()) << Source;
   ASSERT_FALSE(Copy.empty()) << Source;
@@ -39047,7 +39047,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadSehProbeRaisesImmediate) {
       "uint32_t var_m18 = bits;\nint32_t t22_4;\n" + std::string(Copy) + "\n" +
           std::string(GlobalStore) + "\n" +
           std::string(sourceLineContaining(Source, ReturnText)),
-      "g_1400050E0", /*Portable=*/false);
+      "dword_1400050E0", /*Portable=*/false);
 }
 
 TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeHasSingleWin64Arg) {
