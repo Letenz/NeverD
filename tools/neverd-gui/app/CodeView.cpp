@@ -312,6 +312,14 @@ void CodeText::request(int offset, quint64 serial) {
         if (serial != serial_)
           return;
         loading_ = false;
+        // A refused function reads in no language and names nothing.
+        sourceNames_.clear();
+        sourceNameIndex_.clear();
+        unread_ = 0;
+        if (!pageLanguage_.isEmpty()) {
+          pageLanguage_.clear();
+          emit languageChanged();
+        }
         lines_.clear();
         Line line;
         line.styled.text = message;

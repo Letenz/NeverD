@@ -429,6 +429,21 @@ private slots:
     QCOMPARE(names.size(), 1);
     QCOMPARE(names.first().first().toString(),
              QStringLiteral("_ZN4core3fmt5write17h0123456789abcdefE"));
+    // A function the engine refuses reads in no language.
+    bench.window->disassembly()->navigate(Base + 0x180);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->status().contains(QStringLiteral("fixture refuses")),
+        OpenTimeoutMs);
+    QCOMPARE(code->language(), QStringLiteral("c"));
+    QCOMPARE(view->chosenLanguage(), QString());
+    QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+                 QStringLiteral("Pseudocode-A"));
+    QVERIFY(!code->sourceNameAt(0, 0));
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&
+                                 code->language() == QLatin1String("rust"),
+                             OpenTimeoutMs);
     // C and Go stay one choice away; Go says what it shows as C.
     view->setRepresentation(QStringLiteral("c"));
     QTRY_VERIFY_WITH_TIMEOUT(!code->loading() &&

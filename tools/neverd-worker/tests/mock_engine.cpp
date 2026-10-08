@@ -663,8 +663,15 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
   session(s)->error.clear();
   if (std::string(representation) == "source" ||
       std::string(representation) == "rust" ||
-      std::string(representation) == "go")
+      std::string(representation) == "go") {
+    // One function of the Rust fixture is refused.
+    if (session(s)->path.ends_with("pseudocode-rust.bin") &&
+        address == Base + 0x180) {
+      session(s)->error = "fixture refuses this function";
+      return nullptr;
+    }
     return copy(spelledPage(s, address, representation, offset, limit));
+  }
   // LLVM-C pages place the definition after a three-line prelude.
   if (std::string(representation) == "llvmc") {
     // Globals declared as decompiled C and as C through LLVM declare them.
