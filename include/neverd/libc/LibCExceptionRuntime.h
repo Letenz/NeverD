@@ -15,23 +15,9 @@ namespace neverd::libc {
 /// in particular they preserve live-in exception objects passed through tiny
 /// compiler-generated catch/terminate helpers.
 inline constexpr auto kExceptionRuntimeArity = std::to_array<LibCArityEntry>({
-    // Itanium C++ ABI and LLVM unwinder.
-    {"cxa_allocate_exception", {1, 0}},
-    {"cxa_free_exception", {1, 0}},
-    {"cxa_throw", {3, 0}},
-    {"cxa_rethrow", {0, 0}},
-    {"cxa_begin_catch", {1, 0}},
-    {"cxa_end_catch", {0, 0}},
-    {"cxa_get_exception_ptr", {1, 0}},
-    {"cxa_current_exception_type", {0, 0}},
-    {"cxa_call_terminate", {1, 0}},
-    {"clang_call_terminate", {1, 0}},
+    // Itanium C++ ABI (kItaniumRuntimePrototypes gives the C-linkage entry
+    // points).
     {"ZSt9terminatev", {0, 0}},
-    {"Unwind_Resume", {1, 0}},
-    {"Unwind_DeleteException", {1, 0}},
-    {"Unwind_RaiseException", {1, 0}},
-    {"Unwind_ForcedUnwind", {3, 0}},
-    {"Unwind_Backtrace", {2, 0}},
 
     // Objective-C table and fragile runtimes.
     {"objc_exception_throw", {1, 0}},
@@ -74,6 +60,64 @@ inline constexpr auto kExceptionRuntimeArity = std::to_array<LibCArityEntry>({
     {"SetUnhandledExceptionFilter", {1, 0}},
     {"UnhandledExceptionFilter", {1, 0}},
     {"IsProcessorFeaturePresent", {1, 0}},
+});
+
+/// The C declarations of the Itanium C++ ABI's runtime entry points and of the
+/// unwinder it runs on, as the C++ ABI and the unwind.h of libgcc and LLVM's
+/// libunwind declare them.  A `std::type_info *` or `__class_type_info *` is
+/// a `void *` in C, a `struct _Unwind_Exception *` or `struct _Unwind_Context
+/// *` too, and a guard object the 64-bit integer the generic ABI makes it.
+/// Their arities are derived from them.
+inline constexpr auto kItaniumRuntimePrototypes = std::to_array<LibCPrototype>({
+    makeLibCPrototype("__cxa_allocate_exception", "void *", {"size_t"},
+                      "stddef.h"),
+    makeLibCPrototype("__cxa_free_exception", "void", {"void *"}),
+    makeLibCPrototype("__cxa_throw", "void",
+                      {"void *", "void *", "void (*)(void *)"}),
+    makeLibCPrototype("__cxa_rethrow", "void", {}),
+    makeLibCPrototype("__cxa_begin_catch", "void *", {"void *"}),
+    makeLibCPrototype("__cxa_end_catch", "void", {}),
+    makeLibCPrototype("__cxa_get_exception_ptr", "void *", {"void *"}),
+    makeLibCPrototype("__cxa_current_exception_type", "void *", {}),
+    makeLibCPrototype("__cxa_call_terminate", "void", {"void *"}),
+    makeLibCPrototype("__cxa_call_unexpected", "void", {"void *"}),
+    makeLibCPrototype("__clang_call_terminate", "void", {"void *"}),
+    makeLibCPrototype("__cxa_guard_acquire", "int", {"int64_t *"}),
+    makeLibCPrototype("__cxa_guard_release", "void", {"int64_t *"}),
+    makeLibCPrototype("__cxa_guard_abort", "void", {"int64_t *"}),
+    makeLibCPrototype("__cxa_pure_virtual", "void", {}),
+    makeLibCPrototype("__cxa_deleted_virtual", "void", {}),
+    makeLibCPrototype("__cxa_bad_cast", "void", {}),
+    makeLibCPrototype("__cxa_bad_typeid", "void", {}),
+    makeLibCPrototype("__cxa_throw_bad_array_new_length", "void", {}),
+    makeLibCPrototype("__cxa_get_globals", "void *", {}),
+    makeLibCPrototype("__cxa_get_globals_fast", "void *", {}),
+    makeLibCPrototype(
+        "__dynamic_cast", "void *",
+        {"const void *", "const void *", "const void *", "ptrdiff_t"},
+        "stddef.h"),
+    makeLibCPrototype("__cxa_demangle", "char *",
+                      {"const char *", "char *", "size_t *", "int *"},
+                      "stddef.h"),
+    makeLibCPrototype("_Unwind_Resume", "void", {"void *"}),
+    makeLibCPrototype("_Unwind_Resume_or_Rethrow", "int", {"void *"}),
+    makeLibCPrototype("_Unwind_RaiseException", "int", {"void *"}),
+    makeLibCPrototype("_Unwind_DeleteException", "void", {"void *"}),
+    makeLibCPrototype("_Unwind_ForcedUnwind", "int",
+                      {"void *",
+                       "int (*)(int, int, uint64_t, void *, void *, void *)",
+                       "void *"}),
+    makeLibCPrototype("_Unwind_Backtrace", "int",
+                      {"int (*)(void *, void *)", "void *"}),
+    makeLibCPrototype("_Unwind_GetIP", "uintptr_t", {"void *"}),
+    makeLibCPrototype("_Unwind_GetIPInfo", "uintptr_t", {"void *", "int *"}),
+    makeLibCPrototype("_Unwind_GetCFA", "uintptr_t", {"void *"}),
+    makeLibCPrototype("_Unwind_GetGR", "uintptr_t", {"void *", "int"}),
+    makeLibCPrototype("_Unwind_SetGR", "void", {"void *", "int", "uintptr_t"}),
+    makeLibCPrototype("_Unwind_SetIP", "void", {"void *", "uintptr_t"}),
+    makeLibCPrototype("_Unwind_GetLanguageSpecificData", "void *", {"void *"}),
+    makeLibCPrototype("_Unwind_GetRegionStart", "uintptr_t", {"void *"}),
+    makeLibCPrototype("_Unwind_FindEnclosingFunction", "void *", {"void *"}),
 });
 
 } // namespace neverd::libc

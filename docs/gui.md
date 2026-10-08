@@ -135,12 +135,22 @@ the code calls through, the size of its accesses otherwise (`qword_3FB8`,
 line's `neverd decompile` prints the same declarations.
 
 A function's address reads as the function: `_start` passes `main`, not
-`0x1169`, and a function the output does not define is declared. A routine no
-standard header declares, such as `__libc_start_main`, is declared with the
-prototype the C library tables give it, and each argument converts to its
-parameter type as a disassembler's decompiler shows it:
-`__libc_start_main((int (*)(int, char **, char **))main, argc, (char **)argv,
-0, 0, (void (*)(void))rtld_fini, (void *)stack_end)`.
+`0x1169`. A function the output defines is declared before the code that
+names it, and one it does not define is declared as a callee is. A routine no
+standard header declares is declared with the prototype the C library tables
+give it: the start-up and exit routines (`__libc_start_main`, `__cxa_atexit`,
+`__cxa_finalize`), the errno and ctype accessors (`__errno_location`,
+`__ctype_b_loc`), the Itanium C++ runtime and unwinder (`__cxa_throw`,
+`__cxa_begin_catch`, `_Unwind_Resume`), glibc's fortified and ISO C routines
+(`__printf_chk`, `__isoc23_sscanf`) and, in a PE image, the Windows C
+runtime's (`__getmainargs`, `_initterm`, `__stdio_common_vfprintf`). Each
+argument converts to its parameter type as a disassembler's decompiler shows
+it: `__libc_start_main((int (*)(int, char **, char **))main, argc, (char
+**)argv, 0, 0, (void (*)(void))rtld_fini, (void *)stack_end)`. A pointer such
+a routine returns keeps the integer the machine reads,
+`(uintptr_t)__errno_location()`. A function passed to a standard function
+converts to the type its header declares: `qsort(base, n, 4, (int (*)(const
+void *, const void *))compare)`.
 
 C++ names read as a classic disassembler shows them: the listing keeps the
 linkage name an instruction uses and adds its demangled form as a comment

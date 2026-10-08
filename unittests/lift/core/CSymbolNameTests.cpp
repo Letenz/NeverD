@@ -140,7 +140,7 @@ TEST(CSymbolNames, RenamedNoreturnImportsStillNeverReturn) {
 TEST(CSymbolNames, KnownAritiesFollowTheSymbol) {
   // The runtime tables know `_Unwind_Resume` and `_ZSt9terminatev` by their
   // symbols, which their C names keep or read by scope; declarations and
-  // calls take the tables' arity either way.
+  // calls take the tables' prototype or arity either way.
   const std::string Source =
       emitHighC({function("resume", 0x1000,
                           {callStatement("_Unwind_Resume", 0x2000,
@@ -150,9 +150,9 @@ TEST(CSymbolNames, KnownAritiesFollowTheSymbol) {
                           {callStatement("_ZSt9terminatev", 0x2010,
                                          {HighExpr::makeConst(3, 8)})})},
                 BinaryFormat::ELF, Arch::X64);
-  EXPECT_NE(Source.find("extern int _Unwind_Resume(int64_t)"), NotFound)
+  EXPECT_NE(Source.find("extern void _Unwind_Resume(void *)"), NotFound)
       << Source;
-  EXPECT_NE(Source.find("_Unwind_Resume(1);"), NotFound) << Source;
+  EXPECT_NE(Source.find("_Unwind_Resume((void *)1);"), NotFound) << Source;
   EXPECT_NE(Source.find(
                 "extern int std_terminate(void) __asm__(\"_ZSt9terminatev\")"),
             NotFound)
@@ -230,11 +230,12 @@ TEST(CSymbolNames, UndeterminedKnownArgumentsAreUnknown) {
       emitHighC({function("catch_fragment", 0x1000,
                           {callStatement("__cxa_begin_catch", 0x2000)})},
                 BinaryFormat::ELF, Arch::X64);
-  EXPECT_NE(Source.find("extern int __cxa_begin_catch(int64_t);"), NotFound)
+  EXPECT_NE(Source.find("extern void *__cxa_begin_catch(void *);"), NotFound)
       << Source;
-  EXPECT_NE(Source.find("__cxa_begin_catch((__builtin_trap(), 0 /* unknown "
-                        "value */));"),
-            NotFound)
+  EXPECT_NE(
+      Source.find("__cxa_begin_catch((void *)(uintptr_t)(__builtin_trap(), "
+                  "0 /* unknown value */));"),
+      NotFound)
       << Source;
 }
 
@@ -288,6 +289,34 @@ define i64 @_ZN3Foo3runEv(i64 %this) {
       << Source;
   EXPECT_NE(Source.find("/* Foo::run() */\n"), NotFound) << Source;
   EXPECT_NE(Source.find(" Foo_run("), NotFound) << Source;
+}
+
+TEST(CSymbolNames, LLVMCNamesExternalSymbolsAsTheyLink) {
+  // An ELF image's GOT mirror references its imports as data, and the code
+  // calls them through those declarations; their underscores are part of
+  // their names.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+@__cxa_atexit = external global i8
+@slots = global [1 x i64] [i64 ptrtoint (ptr @__cxa_atexit to i64)]
+define i64 @install(i64 %handler) {
+  %r = call i64 @__cxa_atexit(i64 %handler, i64 0, i64 0)
+  ret i64 %r
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find("__cxa_atexit(handler, 0, 0)"), NotFound) << Source;
+  EXPECT_NE(Source.find("(void*)__cxa_atexit"), NotFound) << Source;
+  EXPECT_EQ(Source.find("_cxa_atexit"), Source.find("__cxa_atexit") + 1)
+      << Source;
 }
 
 TEST(CSymbolNames, ElfCxxLabelsLinkToTheMangledDefinitions) {
@@ -428,6 +457,236 @@ TEST(CSymbolNames, FunctionAddressesReadAsTheirFunctions) {
   EXPECT_NE(Source.find("extern int on_exit_hook();"), NotFound) << Source;
   EXPECT_NE(Source.find("register_hook(on_exit_hook);"), NotFound) << Source;
   EXPECT_NE(Source.find("register_hook(0x1180);"), NotFound) << Source;
+}
+
+TEST(CSymbolNames, AFunctionWhoseAddressIsTakenIsDeclaredBeforeTheUse) {
+  const BinaryImage Img = startupImage();
+  // install passes on_exit_hook, whose body prints after it.
+  const std::string Source = emitWithImage(
+      {function("install", 0x1000,
+                {callStatement("register_hook", 0x2000, {address(0x1180)})}),
+       function("on_exit_hook", 0x1180, {})},
+      Img);
+  const size_t Declared = Source.find(" on_exit_hook(void);");
+  const size_t Used = Source.find("register_hook(on_exit_hook);");
+  ASSERT_NE(Declared, NotFound) << Source;
+  ASSERT_NE(Used, NotFound) << Source;
+  EXPECT_LT(Declared, Used) << Source;
+  EXPECT_EQ(Source.find("extern int on_exit_hook"), NotFound) << Source;
+  source_call_execution_test::compileAndRun(
+      Source + "int register_hook(void *Hook) { return Hook == 0; }\n"
+               "int main(void) { return (int)install(); }\n",
+      {"-Werror=int-conversion", "-Werror=incompatible-pointer-types"});
+}
+
+TEST(CSymbolNames, PosixRoutinesTheArityTablesNameTakeTheirHeaders) {
+  // Declared `extern int`, popen lost the upper half of its FILE * and
+  // drand48 read its double from the integer register.
+  const std::string Source =
+      emitHighC({function("run", 0x1000,
+                          {callStatement("popen", 0x2000,
+                                         {HighExpr::makeConst(0, 8),
+                                          HighExpr::makeConst(0, 8)}),
+                           callStatement("drand48", 0x2010),
+                           callStatement("srandom", 0x2020,
+                                         {HighExpr::makeConst(1, 4)})})},
+                BinaryFormat::ELF, Arch::X64);
+  EXPECT_NE(Source.find("#include <stdio.h>"), NotFound) << Source;
+  EXPECT_NE(Source.find("#include <stdlib.h>"), NotFound) << Source;
+  EXPECT_EQ(Source.find("extern int popen"), NotFound) << Source;
+  EXPECT_EQ(Source.find("extern int drand48"), NotFound) << Source;
+  EXPECT_EQ(Source.find("extern int srandom"), NotFound) << Source;
+}
+
+/// A function returning the result of the call \p Call, an integer.
+HighFunc returnsCall(const char *Name, va_t Entry, ExprPtr Call) {
+  Call->Type = NdType::makeInt(8, false);
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = std::move(Call);
+  HighFunc F;
+  F.Name = Name;
+  F.Entry = Entry;
+  F.ReturnType = NdType::makeInt(8, false);
+  F.Body.push_back(std::move(Return));
+  return F;
+}
+
+std::string emitFor(const std::vector<HighFunc> &Funcs, BinaryFormat Format,
+                    Arch Target, const BinaryImage *Img = nullptr) {
+  CEmitterOptions Options;
+  Options.TheArch = Target;
+  Options.Format = Format;
+  Options.Image = Img;
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  EXPECT_TRUE(HighCEmitter().emit(Funcs, OS, Options));
+  return Text;
+}
+
+TEST(CSymbolNames, CxxRuntimeRoutinesTakeTheirPrototypes) {
+  const BinaryImage Img = startupImage();
+  // A static object's destructor registers through __cxa_atexit, which no
+  // header declares: the destructor passes as the function it is.
+  const std::string Source = emitWithImage(
+      {function("install", 0x1000,
+                {callStatement("__cxa_atexit", 0x2000,
+                               {address(0x1180), HighExpr::makeConst(0, 8),
+                                HighExpr::makeConst(0, 8)}),
+                 callStatement("__cxa_end_catch", 0x2010)})},
+      Img);
+  EXPECT_NE(Source.find("extern int __cxa_atexit(void (*)(void *), void *, "
+                        "void *);"),
+            NotFound)
+      << Source;
+  EXPECT_NE(Source.find("extern void __cxa_end_catch(void);"), NotFound)
+      << Source;
+  EXPECT_NE(Source.find("__cxa_atexit((void (*)(void *))on_exit_hook, 0, 0);"),
+            NotFound)
+      << Source;
+  source_call_execution_test::compileAndRun(
+      Source + "int on_exit_hook(void *Object) { return Object != 0; }\n"
+               "void __cxa_end_catch(void) {}\n"
+               "int main(void) { return (int)install(); }\n",
+      {"-Werror=int-conversion", "-Werror=incompatible-pointer-types"});
+}
+
+TEST(CSymbolNames, APointerResultKeepsTheMachineInteger) {
+  // __errno_location returns a pointer: declared `int` it lost the upper half
+  // of the thread's errno address.
+  const std::string Source =
+      emitFor({returnsCall("errno_slot", 0x1000,
+                           HighExpr::makeCall("__errno_location", 0x2000, {}))},
+              BinaryFormat::ELF, Arch::X64);
+  EXPECT_NE(Source.find("extern int *__errno_location(void);"), NotFound)
+      << Source;
+  EXPECT_NE(Source.find("return (uintptr_t)__errno_location();"), NotFound)
+      << Source;
+  source_call_execution_test::compileAndRun(
+      Source + "int main(void) {\n"
+               "  int *Errno = (int *)errno_slot();\n"
+               "  *Errno = 7;\n"
+               "  return *Errno == 7 ? 0 : 1;\n"
+               "}\n",
+      {"-Werror=int-conversion", "-Werror=incompatible-pointer-types"});
+}
+
+TEST(CSymbolNames, HeaderFunctionsTakeFunctionsAsTheirParameterTypes) {
+  const BinaryImage Img = startupImage();
+  // qsort's header declares its comparison `int (*)(const void *, const void
+  // *)`; a recovered function's own signature is not that type.
+  const std::string Source = emitWithImage(
+      {function(
+           "sort_none", 0x1000,
+           {callStatement("qsort", 0x2000,
+                          {HighExpr::makeConst(0, 8), HighExpr::makeConst(0, 8),
+                           HighExpr::makeConst(4, 8), address(0x1180)})}),
+       function("on_exit_hook", 0x1180, {})},
+      Img);
+  EXPECT_NE(Source.find("qsort(0, 0, 4, (int (*)(const void *, const void "
+                        "*))on_exit_hook);"),
+            NotFound)
+      << Source;
+  source_call_execution_test::compileAndRun(
+      Source + "int main(void) { return (int)sort_none(); }\n",
+      {"-Werror=int-conversion", "-Werror=incompatible-pointer-types"});
+}
+
+TEST(CSymbolNames, WindowsRuntimeRoutinesTakeTheirPrototypesOnlyInPE) {
+  const std::vector<HighFunc> Funcs{function(
+      "startup", 0x1000,
+      {callStatement(
+           "_initterm", 0x2000,
+           {HighExpr::makeConst(0x3000, 8), HighExpr::makeConst(0x3010, 8)}),
+       callStatement("_lock", 0x2010,
+                     {HighExpr::makeConst(1, 4), HighExpr::makeConst(2, 4)})})};
+  const std::string PE = emitFor(Funcs, BinaryFormat::COFF, Arch::X64);
+  EXPECT_NE(PE.find("extern void _initterm(void (**)(void), void "
+                    "(**)(void));"),
+            NotFound)
+      << PE;
+  EXPECT_NE(PE.find("_initterm((void (**)(void))0x3000, (void "
+                    "(**)(void))0x3010);"),
+            NotFound)
+      << PE;
+  EXPECT_NE(PE.find("extern void _lock(int);"), NotFound) << PE;
+  // An ELF `_lock` is a routine of its own: both arguments stay.
+  const std::string ELF = emitFor(Funcs, BinaryFormat::ELF, Arch::X64);
+  EXPECT_EQ(ELF.find("_initterm(void (**)"), NotFound) << ELF;
+  EXPECT_NE(ELF.find("_lock(1, 2);"), NotFound) << ELF;
+}
+
+TEST(CSymbolNames, WindowsAPIRoutinesAreStdcallOn32BitX86) {
+  const std::vector<HighFunc> Funcs{
+      function("install", 0x1000,
+               {callStatement("SetUnhandledExceptionFilter", 0x2000,
+                              {HighExpr::makeConst(0, 4)})})};
+  const std::string X86 = emitFor(Funcs, BinaryFormat::COFF, Arch::X86);
+  EXPECT_NE(X86.find("extern __attribute__((stdcall)) void "
+                     "*SetUnhandledExceptionFilter(int32_t "
+                     "(__attribute__((stdcall)) *)(void *));"),
+            NotFound)
+      << X86;
+  const std::string X64 = emitFor(Funcs, BinaryFormat::COFF, Arch::X64);
+  EXPECT_NE(X64.find("extern void *SetUnhandledExceptionFilter(int32_t "
+                     "(*)(void *));"),
+            NotFound)
+      << X64;
+}
+
+TEST(CSymbolNames, FortifiedRoutinesAreVariadicWhereGlibcDeclaresThem) {
+  const std::string Source =
+      emitFor({function("report", 0x1000,
+                        {callStatement("__printf_chk", 0x2000,
+                                       {HighExpr::makeConst(1, 4),
+                                        HighExpr::makeConst(0, 8),
+                                        HighExpr::makeConst(5, 4)})})},
+              BinaryFormat::ELF, Arch::X64);
+  EXPECT_NE(Source.find("extern int __printf_chk(int, const char *, ...);"),
+            NotFound)
+      << Source;
+  EXPECT_NE(Source.find("__printf_chk(1, 0, 5);"), NotFound) << Source;
+}
+
+TEST(CSymbolNames, ACallMadeForItsEffectKeepsItsOwnType) {
+  // Only a result something reads converts to the machine's integer.
+  const std::string Source =
+      emitFor({function("touch_errno", 0x1000,
+                        {callStatement("__errno_location", 0x2000)})},
+              BinaryFormat::ELF, Arch::X64);
+  EXPECT_NE(Source.find("    __errno_location();"), NotFound) << Source;
+  EXPECT_EQ(Source.find("(uintptr_t)__errno_location"), NotFound) << Source;
+}
+
+TEST(CSymbolNames, AVoidRoutineLeavesNoResult) {
+  // A PLT stub returns what the routine it jumps to returns, and
+  // __cxa_finalize returns nothing: the result register holds no value.
+  MedVar Result;
+  Result.Kind = MedVar::Temp;
+  Result.TheArch = Arch::X64;
+  Result.Id = 3;
+  Result.SSAVer = 1;
+  Result.Size = 8;
+  const TypeRef U64 = NdType::makeInt(8, false);
+  HighStmt Assign;
+  Assign.Kind = StmtKind::Assign;
+  Assign.Dst = HighExpr::makeVar(Result, U64);
+  Assign.Val =
+      HighExpr::makeCall("__cxa_finalize", 0x2000, {HighExpr::makeConst(0, 8)});
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeVar(Result, U64);
+  HighFunc Stub;
+  Stub.Name = "finalize_stub";
+  Stub.Entry = 0x1000;
+  Stub.ReturnType = U64;
+  Stub.Body = {Assign, Return};
+  const std::string Source = emitFor({Stub}, BinaryFormat::ELF, Arch::X64);
+  EXPECT_NE(Source.find("extern void __cxa_finalize(void *);"), NotFound)
+      << Source;
+  EXPECT_NE(Source.find("    __cxa_finalize(0);"), NotFound) << Source;
+  EXPECT_EQ(Source.find("= __cxa_finalize"), NotFound) << Source;
+  EXPECT_EQ(Source.find("(int64_t)__cxa_finalize"), NotFound) << Source;
 }
 
 } // namespace
