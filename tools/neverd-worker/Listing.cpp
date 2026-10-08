@@ -551,13 +551,22 @@ struct Listing::Impl {
 
   bool built = false;
   int builtFunctionCount = -1;
+  /// The names, or the user's items, changed since the listing was built:
+  /// the next query reads them again over what the build scanned.
+  bool namesStale = false;
+  /// What the last full build read that names and the user's items do not
+  /// change: the string scan, and the import, import slot and export rows.
+  std::vector<StringItem> scannedStrings;
+  Json importRows, importSlotRows, exportRows;
   std::uint64_t generation = 1;
   std::vector<Region> regions;
   std::vector<Function> functions;
   std::unordered_map<std::uint64_t, std::string> dataNames;
   std::unordered_map<std::uint64_t, ImportSlot> slots;
   std::vector<StringItem> strings;
-  std::map<std::string, std::uint64_t, std::less<>> listingNames;
+  /// The address each name of the listing leads to; the first address to
+  /// take a name keeps it.
+  std::unordered_map<std::string, std::uint64_t> listingNames;
   /// Executable import veneers and the import each forwards to.
   std::map<std::uint64_t, std::string> stubImports;
   /// Where an import's name leads, as its symbol and as code calls it: its
@@ -650,9 +659,13 @@ struct Listing::Impl {
 
   void build() {
     const int count = neverd_func_count(session);
-    if (built && count == builtFunctionCount)
+    if (built && count == builtFunctionCount) {
+      if (namesStale)
+        rebuildNames(count);
       return;
+    }
     built = true;
+    namesStale = false;
     builtFunctionCount = count;
     ++generation;
     const auto arch = takeString(neverd_session_arch_name(session));
@@ -666,7 +679,21 @@ struct Listing::Impl {
     macho = format.find("Mach") != std::string::npos;
     buildRegions();
     buildFunctions(count);
-    buildNames();
+    buildNames(/*Rescan=*/true);
+    decoded.clear();
+    decodedOrder.clear();
+    alignCache.clear();
+    applyDisplayNames();
+  }
+
+  /// Read the names and the user's items again over what the last build
+  /// scanned, by the build's own steps.  Decoding again sets the extents of
+  /// functions without a size, as it did after the build.
+  void rebuildNames(int count) {
+    namesStale = false;
+    ++generation;
+    buildFunctions(count);
+    buildNames(/*Rescan=*/false);
     decoded.clear();
     decodedOrder.clear();
     alignCache.clear();
@@ -1032,7 +1059,7 @@ struct Listing::Impl {
           function->library = true;
   }
 
-  void buildNames() {
+  void buildNames(bool Rescan) {
     dataNames.clear();
     slots.clear();
     stubImports.clear();
@@ -1055,8 +1082,12 @@ struct Listing::Impl {
           dataSizes[address] = std::max(dataSizes[address], size);
         dataNames.emplace(address, std::move(name));
       }
-    if (const auto rows = takeJson(neverd_imports_json(session));
-        rows.is_array())
+    if (Rescan) {
+      importRows = takeJson(neverd_imports_json(session));
+      importSlotRows = importSlots ? takeJson(importSlots(session)) : Json();
+      exportRows = takeJson(neverd_exports_json(session));
+    }
+    if (const auto &rows = importRows; rows.is_array())
       for (const auto &row : rows) {
         const auto address = jsonAddress(row.value("iat_addr", Json()));
         auto name = row.value("name", std::string());
@@ -1078,21 +1109,19 @@ struct Listing::Impl {
       }
     // Every exact import slot, including data-relocated GOT entries that the
     // import table does not list (ELF GLOB_DAT such as __libc_start_main).
-    if (importSlots)
-      if (const auto rows = takeJson(importSlots(session)); rows.is_array())
-        for (const auto &row : rows) {
-          const auto address = jsonAddress(row.value("addr", Json()));
-          auto name = row.value("name", std::string());
-          if (!address || name.empty() || slots.contains(address) ||
-              functionAtEntry(address))
-            continue;
-          noteImportTarget(row, address);
-          ImportSlot slot{name, std::string(), elf ? name + "_ptr" : name};
-          listingNames.emplace(slot.label, address);
-          slots.emplace(address, std::move(slot));
-        }
-    if (const auto rows = takeJson(neverd_exports_json(session));
-        rows.is_array())
+    if (const auto &rows = importSlotRows; rows.is_array())
+      for (const auto &row : rows) {
+        const auto address = jsonAddress(row.value("addr", Json()));
+        auto name = row.value("name", std::string());
+        if (!address || name.empty() || slots.contains(address) ||
+            functionAtEntry(address))
+          continue;
+        noteImportTarget(row, address);
+        ImportSlot slot{name, std::string(), elf ? name + "_ptr" : name};
+        listingNames.emplace(slot.label, address);
+        slots.emplace(address, std::move(slot));
+      }
+    if (const auto &rows = exportRows; rows.is_array())
       for (const auto &row : rows) {
         const auto address = jsonAddress(row.value("addr", Json()));
         if (!address)
@@ -1116,7 +1145,9 @@ struct Listing::Impl {
     };
     const char *options =
         stringOptions.empty() ? nullptr : stringOptions.c_str();
-    if (stringsPage) {
+    if (!Rescan) {
+      strings = scannedStrings;
+    } else if (stringsPage) {
       // Page by page, so no result outgrows the adapter however many
       // strings a large image holds.
       for (std::optional<std::uint64_t> cursor = 0; cursor;) {
@@ -1138,6 +1169,8 @@ struct Listing::Impl {
       for (const auto &row : rows)
         addString(row);
     }
+    if (Rescan)
+      scannedStrings = strings;
     loadUserItems();
     loadNumberFormats();
     std::sort(strings.begin(), strings.end(),
@@ -1145,6 +1178,9 @@ struct Listing::Impl {
                 return a.address < b.address;
               });
     std::unordered_map<std::string, unsigned> used;
+    used.reserve(strings.size());
+    listingNames.reserve(listingNames.size() + strings.size() +
+                         dataNames.size() + functions.size());
     for (auto &item : strings) {
       if (auto it = dataNames.find(item.address); it != dataNames.end()) {
         item.name = it->second;
@@ -3294,6 +3330,11 @@ Listing::~Listing() = default;
 
 void Listing::invalidate() {
   impl_->built = false;
+  ++impl_->generation;
+}
+
+void Listing::namesChanged() {
+  impl_->namesStale = true;
   ++impl_->generation;
 }
 
