@@ -210,6 +210,18 @@ void chooseIntegerSignedness(HighFunc &Func) {
       Unsign(E);
       return;
     }
+    // A left shift into the sign bit overflows a signed operand, so it turns
+    // unsigned only; a logical right shift reads its operand unsigned
+    // whatever the result is called.
+    const bool LeftShift =
+        E->Kind == ExprKind::BinOp && E->Op == NdOp::INT_LEFT;
+    const bool RightShift =
+        E->Kind == ExprKind::BinOp && E->Op == NdOp::INT_RIGHT;
+    if ((LeftShift && !Signed) || RightShift) {
+      if (E->Type->IsSigned != Signed)
+        E->Type = NdType::makeInt(E->Type->Size, Signed);
+      return;
+    }
     if (!isBitwise(*E))
       return;
     if (E->Type->IsSigned != Signed)
@@ -227,6 +239,16 @@ void chooseIntegerSignedness(HighFunc &Func) {
         continue;
       if (const Reads Wanted = operandReads(*E, I); Wanted != Reads::Neither)
         Settle(Operand, Wanted == Reads::Signed);
+      // A narrowing keeps low bytes, which are the same in either signedness:
+      // read them unsigned, as the operation feeding them is spelled.
+      else if (I == 0 && Operand->Type && E->Type &&
+               Operand->Type->Size > E->Type->Size &&
+               (E->Kind == ExprKind::Cast ||
+                (E->Kind == ExprKind::BinOp && E->Op == NdOp::SUBBYTES &&
+                 E->Operands.size() == 2 && E->Operands[1] &&
+                 E->Operands[1]->Kind == ExprKind::Const &&
+                 E->Operands[1]->ConstVal == 0)))
+        Settle(Operand, /*Signed=*/false);
       SettleOperands(Operand);
     }
     if (E->IndirectTarget)
