@@ -8,6 +8,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 using namespace neverd::worker;
 
@@ -156,6 +157,16 @@ int main() {
                 "eax, 1Ah",
                 true,
                 {{NumberBase::Decimal, false, false}}});
+  // Formats change plain numbers, signed or not, and only x86 operands.
+  check(formattableOperands("rsp, 8", OperandDialect::X86) ==
+            std::vector<bool>{false, true},
+        "a register and a number");
+  check(formattableOperands("dword ptr [rbp - 4], -5", OperandDialect::X86) ==
+            std::vector<bool>{false, true},
+        "a displacement is no plain number");
+  check(formattableOperands("w0, #0x20", OperandDialect::AArch64) ==
+            std::vector<bool>{false, false},
+        "AArch64 operands show no formats");
   expectFormat({"imul", "rsi, qword ptr [rax], -0xc8", "",
                 "rsi, [rax], 0FFFFFFFFFFFFFF38h"});
   // Thread storage offsets, missing base registers and zero displacements.

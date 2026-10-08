@@ -111,8 +111,8 @@ NEVERD_API int neverd_items_load(neverd_session_t Sess);
 /// is the listing's own choice, "hex", "decimal", "binary", "char", "offset"),
 /// "negate"?: true to change the sign, "invert"?: true to invert the bits}.
 /// NULL, or the "number" base unchanged, forgets the operand's format.
-/// Returns 0, or -1 with neverd_last_error.  neverd_operand_formats_save
-/// keeps the formats.
+/// \p Addr lies in executable code.  Returns 0, or -1 with
+/// neverd_last_error.  neverd_operand_formats_save keeps the formats.
 NEVERD_API int neverd_operand_format_set(neverd_session_t Sess,
                                          neverd_va_t Addr, int Operand,
                                          const char *FormatJson);

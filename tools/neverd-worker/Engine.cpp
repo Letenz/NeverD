@@ -1637,13 +1637,29 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     if (dirty_)
       throw Error("unsaved_changes", "Save or reload staged annotations "
                                      "before formatting an operand");
-    // Formats belong to the instruction that starts at the address.
-    const Json at = listing().item(address);
-    if (at.is_null() || at.at("kind") != "instruction" ||
-        parseAddress(at.at("start").get<std::string>()) != address)
+    if (!listing().showsNumberFormats())
+      throw Error("unsupported",
+                  "Operand types are shown for x86 instructions only");
+    // Formats belong to the instruction that starts at the address, and
+    // change its operands that are numbers: the one asked for if it is one,
+    // else the last.
+    const auto numbers = listing().numberOperands(address);
+    if (!numbers)
       throw Error("invalid_request",
                   "No instruction starts at " + hexAddress(address));
-    const auto operand = sizeField(p, "operand", 0, 7);
+    std::optional<std::size_t> chosen;
+    if (p.contains("operand"))
+      if (const auto asked = sizeField(p, "operand", 0, 7);
+          asked < numbers->size() && (*numbers)[asked])
+        chosen = asked;
+    for (std::size_t i = numbers->size(); !chosen && i-- > 0;)
+      if ((*numbers)[i])
+        chosen = i;
+    if (!chosen)
+      throw Error("invalid_request", "The instruction at " +
+                                         hexAddress(address) +
+                                         " has no number to format");
+    const auto operand = *chosen;
     const auto action = stringField(p, "action", {}, 16);
     auto &store = history();
     auto state = store.committedState();

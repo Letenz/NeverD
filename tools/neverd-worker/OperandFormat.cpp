@@ -244,6 +244,20 @@ bool isLoneRegister(const std::vector<Token> &operand) {
 /// Tokens of one operand, without surrounding spaces.
 using OperandTokens = std::vector<Token>;
 
+/// The value of an operand that is a plain number, `5` or `-5`, unsigned in
+/// \p mask's width.
+std::optional<std::uint64_t> plainNumber(const OperandTokens &tokens,
+                                         std::uint64_t mask) {
+  if (tokens.size() == 1 && tokens[0].kind == TokenKind::Number &&
+      tokens[0].valid)
+    return tokens[0].value & mask;
+  if (tokens.size() == 2 && tokens[0].kind == TokenKind::Punct &&
+      tokens[0].text == "-" && tokens[1].kind == TokenKind::Number &&
+      tokens[1].valid)
+    return (~tokens[1].value + 1) & mask;
+  return std::nullopt;
+}
+
 std::vector<OperandTokens> splitOperands(const std::vector<Token> &tokens) {
   std::vector<OperandTokens> operands(1);
   int depth = 0;
@@ -605,15 +619,8 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
     const unsigned bits = context.immediateBits ? context.immediateBits : 64;
     const std::uint64_t mask =
         bits >= 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << bits) - 1;
-    std::optional<std::uint64_t> value;
-    if (tokens.size() == 1 && tokens[0].kind == TokenKind::Number &&
-        tokens[0].valid)
-      value = tokens[0].value & mask;
-    else if (tokens.size() == 2 && tokens[0].kind == TokenKind::Punct &&
-             tokens[0].text == "-" && tokens[1].kind == TokenKind::Number &&
-             tokens[1].valid)
-      value = (~tokens[1].value + 1) & mask;
-    if (value && appendFormattedNumber(out, *value, bits, *format, namer))
+    if (const auto value = plainNumber(tokens, mask);
+        value && appendFormattedNumber(out, *value, bits, *format, namer))
       return;
   }
   // A negative immediate is the unsigned value of the operation's width,
@@ -708,6 +715,20 @@ void formatGenericOperand(StyledText &out, const OperandTokens &tokens,
   }
 }
 } // namespace
+
+bool showsNumberFormats(OperandDialect dialect) {
+  // Only x86 operands apply number formats so far.
+  return dialect == OperandDialect::X86;
+}
+
+std::vector<bool> formattableOperands(std::string_view operands,
+                                      OperandDialect dialect) {
+  std::vector<bool> result;
+  for (const auto &operand : splitOperands(tokenize(operands)))
+    result.push_back(showsNumberFormats(dialect) &&
+                     plainNumber(operand, ~std::uint64_t(0)).has_value());
+  return result;
+}
 
 OperandDialect operandDialect(std::string_view architecture) {
   const auto name = lower(architecture);

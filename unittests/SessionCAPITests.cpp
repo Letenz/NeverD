@@ -2537,6 +2537,20 @@ TEST_F(SessionCAPITest, OperandFormatsPersistByInstructionAndOperand) {
       neverd_operand_format_set(Session, Entry, 0, R"({"base":"number"})"), 0);
   ASSERT_EQ(neverd_operand_format_set(Session, Entry, 1, nullptr), 0);
   EXPECT_EQ(takeString(neverd_operand_formats_json(Session)), "[]");
+  // Formats belong to code; data takes none.
+  const auto Data = write("operands-data.elf",
+                          makeDataELF(std::string_view("\x01\x02\x03\x04", 4)));
+  neverd_session_t DataSession = neverd_session_create();
+  ASSERT_EQ(neverd_session_load(DataSession, Data.c_str()), 1);
+  EXPECT_EQ(neverd_operand_format_set(DataSession, DataELFData, 0,
+                                      R"({"base":"hex"})"),
+            -1);
+  EXPECT_NE(takeString(neverd_last_error(DataSession)).find("executable"),
+            std::string::npos);
+  EXPECT_EQ(neverd_operand_format_set(DataSession, DataELFEntry, 0,
+                                      R"({"base":"hex"})"),
+            0);
+  neverd_session_destroy(DataSession);
 }
 
 TEST_F(SessionCAPITest, UserNamesNameDataInSymbolsAndC) {

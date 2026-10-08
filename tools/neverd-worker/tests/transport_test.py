@@ -364,9 +364,15 @@ def run(executable):
         assert data["error"]["code"] == "invalid_request", data
         assert client.call("undo")["status"] == "ok" and client.call("undo")["status"] == "ok"
         assert "sub rsp, 20h" in operand_line(), operand_line()
-        # A format outlives the session: its sidecar is read back on open.
-        assert client.call("operand_format", {**sub, "action": "binary"})["status"] == "ok"
+        # An operand that is no number gives the format to the instruction's
+        # last number; an instruction without one is refused.  A format
+        # outlives the session: its sidecar is read back on open.
+        fallback = client.call("operand_format", {**sub, "operand": 0, "action": "binary"})
+        assert fallback["payload"]["operand"] == 1, fallback
         assert "sub rsp, 100000b" in operand_line(), operand_line()
+        bare = client.call("operand_format", {"address": "0xffff800012340050", "action": "hex"})
+        assert bare["error"]["code"] == "invalid_request", bare
+        assert "no number" in bare["error"]["message"], bare
         client.call("string_options", {"encodings": ["ascii", "utf-8", "utf-16le"]})
         # Hex views ask for bytes as text in an encoding, a cell per byte.
         bytes_ = client.call("bytes", {"address": "0xffff800012343000", "size": 4, "text_encoding": "ascii"})["payload"]

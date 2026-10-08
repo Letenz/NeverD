@@ -514,7 +514,7 @@ std::optional<int> ListingView::currentOperand() const {
   // next one.
   bool operands = false;
   int depth = 0, index = 0;
-  std::optional<int> under, lastNumber;
+  std::optional<int> under;
   for (const auto &span : line->styled.spans) {
     const auto role = static_cast<ListingRole>(span.role);
     if (role == ListingRole::Mnemonic || role == ListingRole::FlowMnemonic) {
@@ -528,8 +528,6 @@ std::optional<int> ListingView::currentOperand() const {
       break;
     if (cursorColumn_ >= span.start && cursorColumn_ < span.start + span.length)
       under = index;
-    if (role == ListingRole::Number)
-      lastNumber = index;
     if (role == ListingRole::Punctuation)
       for (const QChar c : line->styled.text.mid(span.start, span.length)) {
         if (c == QLatin1Char('['))
@@ -540,9 +538,7 @@ std::optional<int> ListingView::currentOperand() const {
           ++index;
       }
   }
-  if (!operands)
-    return std::nullopt;
-  return under ? under : lastNumber;
+  return under;
 }
 
 QString ListingView::selectedText() const {

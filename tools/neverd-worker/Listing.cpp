@@ -3303,6 +3303,22 @@ void Listing::reloadNumberFormats() {
     impl_->loadNumberFormats();
 }
 
+bool Listing::showsNumberFormats() {
+  impl_->build();
+  return neverd::worker::showsNumberFormats(impl_->dialect);
+}
+
+std::optional<std::vector<bool>>
+Listing::numberOperands(std::uint64_t address) {
+  auto &d = *impl_;
+  d.build();
+  const auto item = d.itemAt(address);
+  if (!item || item->kind != ItemKind::Instruction || item->start != address)
+    return std::nullopt;
+  const auto &instruction = d.decode(item->function).instructions[item->index];
+  return formattableOperands(instruction.operands, d.dialect);
+}
+
 void Listing::setStringOptions(std::string options) {
   if (impl_->stringOptions == options)
     return;

@@ -809,6 +809,13 @@ int neverd_operand_format_set(neverd_session_t Sess, neverd_va_t Addr,
     S->setError(vaHex(Addr) + " is not in the image");
     return -1;
   }
+  // Formats belong to instructions, which lie in executable code.
+  if (llvm::none_of(S->Img.Segments, [&](const Segment &Seg) {
+        return Seg.isExecutable() && Seg.contains(Addr);
+      })) {
+    S->setError(vaHex(Addr) + " is not in executable code");
+    return -1;
+  }
   std::optional<Session::OperandFormat> Format;
   if (FormatJson) {
     auto Parsed = llvm::json::parse(FormatJson);

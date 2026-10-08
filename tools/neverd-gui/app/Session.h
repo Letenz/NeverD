@@ -98,11 +98,12 @@ public:
   bool keepsOperandFormats() const {
     return capabilities_.contains(QStringLiteral("operand_format"));
   }
-  /// Show operand \p operand of the instruction at \p address as \p action
+  /// Show a number operand of the instruction at \p address as \p action
   /// says: a base of OperandFormats.def, "negate" or "invert" to toggle the
-  /// sign or the bits.  Commits at once, like a rename.
-  void formatOperand(Address address, int operand, const QString &action,
-                     std::optional<quint64> epoch = {});
+  /// sign or the bits.  The worker formats \p operand if it is a number, and
+  /// else the instruction's last number.  Commits at once, like a rename.
+  void formatOperand(Address address, std::optional<int> operand,
+                     const QString &action, std::optional<quint64> epoch = {});
   /// Whether the worker's engine keeps the user's data items.
   bool keepsDataItems() const {
     return capabilities_.contains(QStringLiteral("item_define"));

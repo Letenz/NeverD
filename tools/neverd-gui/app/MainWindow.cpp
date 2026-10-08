@@ -956,14 +956,12 @@ void MainWindow::connectActions() {
       session_.deleteFunction(*function);
   });
   // An operand's number shows in the base the user picks, with its sign or
-  // bits changed; the operand is the one the cursor is on.
+  // bits changed: the number under the cursor, else the line's last number.
   const auto formatOperand = [this](const QString &action) {
     if (focusedCodeView())
       return;
-    const auto address = currentAddress();
-    const auto operand = disassembly_->currentOperand();
-    if (address && operand)
-      session_.formatOperand(*address, *operand, action);
+    if (const auto address = currentAddress())
+      session_.formatOperand(*address, disassembly_->currentOperand(), action);
   };
   for (const auto &[id, action] : {
 #define NEVERD_OPERAND_BASE(Id, Spelling)                                      \

@@ -44,8 +44,8 @@ public:
   QString currentFunctionName() const;
   /// Navigation target of the token under the cursor, else of the line.
   std::optional<Address> operandTarget() const;
-  /// The operand of the instruction line the cursor is on, counted from 0:
-  /// the one under the cursor, else the last one holding a number.
+  /// The operand under the cursor on an instruction line, counted from 0;
+  /// none off the operands.
   std::optional<int> currentOperand() const;
   /// Identifier token under the cursor.
   QString currentToken() const;

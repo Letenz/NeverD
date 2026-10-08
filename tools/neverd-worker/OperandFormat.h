@@ -155,6 +155,12 @@ std::string x86Number(std::uint64_t value);
 /// PC-relative or absolute memory locations with their names.
 StyledText formatOperands(std::string_view operands, const OperandFacts &facts,
                           const LocationNamer &namer);
+/// Whether formatted operands of \p dialect show the user's number formats.
+bool showsNumberFormats(OperandDialect dialect);
+/// Which operands of \p operands, an instruction's operand text, a number
+/// format changes: the plain numbers, by operand index.
+std::vector<bool> formattableOperands(std::string_view operands,
+                                      OperandDialect dialect);
 
 /// Classify one identifier of operand text for \p dialect.
 bool isRegisterName(OperandDialect dialect, std::string_view name);

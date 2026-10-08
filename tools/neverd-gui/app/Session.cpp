@@ -635,17 +635,18 @@ void Session::defineItem(Address address, const QString &action,
       });
 }
 
-void Session::formatOperand(Address address, int operand, const QString &action,
+void Session::formatOperand(Address address, std::optional<int> operand,
+                            const QString &action,
                             std::optional<quint64> epoch) {
   if (!acceptsEdit(epoch))
     return;
   // Like a rename, an operand format commits at once over saved comments.
   if (dirty_)
     save();
-  command(QStringLiteral("operand_format"),
-          {{"address", hexAddress(address)},
-           {"operand", operand},
-           {"action", action}},
+  QJsonObject payload{{"address", hexAddress(address)}, {"action", action}};
+  if (operand)
+    payload.insert(QStringLiteral("operand"), *operand);
+  command(QStringLiteral("operand_format"), payload,
           [this](const QJsonObject &) { refreshHistory(); });
 }
 

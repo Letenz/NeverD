@@ -361,13 +361,15 @@ picks, as IDA's keys do: **Hexadecimal** (Q), **Decimal** (H), **Binary** (B),
 **Character** (R, `'ABCD'` when every byte is printable), **Offset** (O, the
 name of the address the number points at), **Change sign** (`_`, the two's
 complement with a minus) and **Bitwise negate** (`~`); **Number** (`#`) goes
-back to the listing's own choice. The operand is the one under the cursor, or
-else the last operand holding a number. A form the value cannot take, such as
-characters for unprintable bytes or an offset to an address with no name,
-leaves the listing's number. Each change is one step of undo history and is
-kept in `<input>.neverd-operands.json`, which the command line reads and writes
-too (`neverd operands <input> --addr <address> --operand 1 --base decimal`,
-`--negate`, `--invert`, `--clear`).
+back to the listing's own choice. The number under the cursor changes; with
+the cursor elsewhere on the line, the line's last number does, and a line
+without one is refused. Only x86 instructions show operand types so far. A form
+the value cannot take, such as characters for unprintable bytes or an offset to
+an address with no name, leaves the listing's number. Each change is one step
+of undo history and is kept in `<input>.neverd-operands.json`, which the command
+line reads and writes too (`neverd operands <input> --addr <address> --operand 1
+--base decimal`, `--negate`, `--invert`, `--clear`; the address lies in
+executable code).
 
 Opening a file never starts whole-program analysis. The listing, function list,
 references and graph come from the loader and from per-function work: a
