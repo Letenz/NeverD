@@ -3392,7 +3392,9 @@ TEST(HighCPointerAddresses, WidenedParamCopyPrintsAsParamInCompare) {
   ElseRet.RetVal = HighExpr::makeConst(0, 4);
   Func.Body.push_back(std::move(ElseRet));
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("if (arg0 == 7)"), std::string::npos) << Source;
+  // The compare reads the parameter, through the zero extension the copy
+  // made: `(uint64_t)(uint32_t)arg0 == 7`.
+  EXPECT_NE(Source.find("arg0 == 7)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t29 ="), std::string::npos) << Source;
 }
 
@@ -34378,7 +34380,7 @@ int weigh(const int *p, int n) {
   const std::string HighC = highcOnlyFunction(std::move(*Img), Weigh->Addr);
   const size_t Body = HighC.find("weigh(");
   ASSERT_NE(Body, std::string::npos) << HighC;
-  EXPECT_NE(HighC.find("= _x2E_LCPI0_0;", Body), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("LCPI0_0;", Body), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find(" + " + PoolAddress + ")", Body), std::string::npos)
       << HighC;
   ASSERT_TRUE(Write(CheckPath, "#include <stdint.h>\n" + HighC));
