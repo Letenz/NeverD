@@ -17,6 +17,10 @@ namespace neverd {
 /// Returns false without modifying the image for every other ELF machine.
 llvm::Expected<bool> loadSBFELF(BinaryImage &Image);
 
+/// Whether \p Bytes is an SBF program's ELF file, as loadSBFELF decides, and
+/// if so whether its flags name an SBF version NeverD reads (\p Supported).
+bool isSBFELF(llvm::ArrayRef<uint8_t> Bytes, bool &Supported);
+
 } // namespace neverd
 
 #endif // NEVERD_LOADER_ELF_SBFELFLOADER_H

@@ -976,6 +976,15 @@ llvm::Error loadLegacy(const ELFFile &ELF, const Elf_Ehdr &Header,
 
 } // namespace
 
+bool isSBFELF(llvm::ArrayRef<uint8_t> Bytes, bool &Supported) {
+  if (!hasSBFMachine(Bytes))
+    return false;
+  constexpr size_t FlagsOffset = offsetof(Elf_Ehdr, e_flags);
+  Supported = sbf::isConcreteVersion(sbf::versionFromELFFlags(
+      llvm::support::endian::read32le(Bytes.data() + FlagsOffset)));
+  return true;
+}
+
 llvm::Expected<bool> loadSBFELF(BinaryImage &Image) {
   if (!hasSBFMachine(Image.Raw))
     return false;

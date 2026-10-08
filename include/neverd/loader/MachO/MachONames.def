@@ -1,0 +1,39 @@
+//===- MachONames.def - How the load dialog names Mach-O headers --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// Display names only: whether NeverD loads a CPU is the loader's own
+// decision.
+//
+//===----------------------------------------------------------------------===//
+
+// NEVERD_MACHO_CPU(Value, Name): a cputype value.
+#ifdef NEVERD_MACHO_CPU
+NEVERD_MACHO_CPU(llvm::MachO::CPU_TYPE_X86, "X86")
+NEVERD_MACHO_CPU(llvm::MachO::CPU_TYPE_X86_64, "X86_64")
+NEVERD_MACHO_CPU(llvm::MachO::CPU_TYPE_ARM, "ARM")
+NEVERD_MACHO_CPU(llvm::MachO::CPU_TYPE_ARM64, "ARM64")
+NEVERD_MACHO_CPU(llvm::MachO::CPU_TYPE_ARM64_32, "ARM64_32")
+NEVERD_MACHO_CPU(llvm::MachO::CPU_TYPE_POWERPC, "PPC")
+NEVERD_MACHO_CPU(llvm::MachO::CPU_TYPE_POWERPC64, "PPC64")
+#undef NEVERD_MACHO_CPU
+#endif
+
+// NEVERD_MACHO_FILE(Value, Name): a filetype value.
+#ifdef NEVERD_MACHO_FILE
+NEVERD_MACHO_FILE(llvm::MachO::MH_OBJECT, "OBJECT")
+NEVERD_MACHO_FILE(llvm::MachO::MH_EXECUTE, "EXECUTE")
+NEVERD_MACHO_FILE(llvm::MachO::MH_FVMLIB, "FVMLIB")
+NEVERD_MACHO_FILE(llvm::MachO::MH_CORE, "CORE")
+NEVERD_MACHO_FILE(llvm::MachO::MH_PRELOAD, "PRELOAD")
+NEVERD_MACHO_FILE(llvm::MachO::MH_DYLIB, "DYLIB")
+NEVERD_MACHO_FILE(llvm::MachO::MH_DYLINKER, "DYLINKER")
+NEVERD_MACHO_FILE(llvm::MachO::MH_BUNDLE, "BUNDLE")
+NEVERD_MACHO_FILE(llvm::MachO::MH_DYLIB_STUB, "DYLIB_STUB")
+NEVERD_MACHO_FILE(llvm::MachO::MH_DSYM, "DSYM")
+NEVERD_MACHO_FILE(llvm::MachO::MH_KEXT_BUNDLE, "KEXT_BUNDLE")
+NEVERD_MACHO_FILE(llvm::MachO::MH_FILESET, "FILESET")
+#undef NEVERD_MACHO_FILE
+#endif

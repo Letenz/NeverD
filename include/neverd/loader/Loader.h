@@ -17,6 +17,7 @@
 #include "neverd/Common.h"
 #include "neverd/loader/BinaryImageModel.h"
 #include "neverd/loader/InputDigest.h"
+#include "neverd/loader/LoadCandidate.h"
 #include "neverd/support/FilePath.h"
 
 #include "llvm/Support/Error.h"

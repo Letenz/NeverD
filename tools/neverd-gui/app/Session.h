@@ -15,6 +15,14 @@
 
 namespace neverd::gui {
 
+/// How to load a binary, as the load dialog chooses it.
+struct LoadOptions {
+  /// Read the debug information that belongs to the input.
+  bool debugInfo = true;
+  /// Analyze in idle time: function discovery and the reference index.
+  bool analysis = true;
+};
+
 /// One analysis worker and the binary it has open.  The session starts the
 /// worker before a file is chosen (hiding engine start-up), owns the request
 /// dispatcher, publishes background-index progress from heartbeats, and runs
@@ -70,7 +78,11 @@ public:
   bool canRedo() const { return history_.value("can_redo").toBool(); }
 
   // Session transitions.
-  void open(const QString &path);
+  void open(const QString &path, LoadOptions options = {});
+  /// Whether the worker lists the ways a file can be loaded (identify).
+  bool identifiesFiles() const {
+    return capabilities_.contains(QStringLiteral("identify"));
+  }
   void closeFile();
   void reload();
   void restart();
@@ -193,7 +205,7 @@ private:
   void openPending();
   void sendOpen(const QString &requested, const QString &path,
                 const QString &database,
-                const QHash<QString, QByteArray> &state);
+                const QHash<QString, QByteArray> &state, LoadOptions options);
   void packDatabase();
   void requestTransition(const QString &action);
   void finishTransition();
@@ -216,6 +228,9 @@ private:
   QueryService queries_;
   QObject reads_, external_;
   QString workerPath_, filePath_, pendingFile_, transition_, error_;
+  /// How the pending file loads, and how the open file loaded, which a
+  /// restart repeats.
+  LoadOptions pendingOptions_, loadOptions_;
   QString projectPath_, databasePath_;
   QHash<QString, QByteArray> databaseState_;
   std::function<QHash<QString, QByteArray>()> stateProvider_;

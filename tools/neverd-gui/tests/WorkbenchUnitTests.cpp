@@ -4,24 +4,30 @@
 #include "AddressSpace.h"
 #include "Expression.h"
 #include "Icons.h"
+#include "LoadFileDialog.h"
 #include "ProjectDatabase.h"
 #include "StyledText.h"
 #include "Theme.h"
 
 #include <QAction>
+#include <QCheckBox>
 #include <QDirIterator>
 #include <QFile>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QLabel>
+#include <QListWidget>
 #include <QMainWindow>
 #include <QMenuBar>
+#include <QPushButton>
 #include <QRandomGenerator>
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolBar>
+#include <QTreeWidget>
 
 using namespace neverd::gui;
 
@@ -370,6 +376,79 @@ private slots:
     QCOMPARE(ProjectDatabase::save(plain, binary, {}),
              QStringLiteral("%1 is not a NeverD database.").arg(plain));
     QCOMPARE(contents(plain), plainBytes);
+  }
+
+  void loadDialogOffersWhatTheEngineLoads() {
+    // An ELF file NeverD loads, and the binary file it cannot load yet.
+    const QJsonArray rows{
+        QJsonObject{{"loader", "elf"},
+                    {"text", "ELF64 for x86-64 (Shared object)"},
+                    {"processor", "x86_64"},
+                    {"loadable", true}},
+        QJsonObject{{"loader", "binary"},
+                    {"text", "Binary file"},
+                    {"processor", ""},
+                    {"loadable", false},
+                    {"reason", "Loading a binary file is not supported yet"}}};
+    LoadFileDialog dialog(QStringLiteral("/tmp/xxd"), rows);
+    auto *loaders = dialog.findChild<QListWidget *>(QStringLiteral("loaders"));
+    QVERIFY(loaders);
+    QCOMPARE(loaders->count(), 2);
+    QCOMPARE(loaders->item(0)->text(),
+             QStringLiteral("ELF64 for x86-64 (Shared object) [elf]"));
+    QCOMPARE(loaders->item(1)->text(), QStringLiteral("Binary file"));
+    // The first loadable row is chosen; a row NeverD cannot load says why.
+    QCOMPARE(dialog.row(), 0);
+    QVERIFY(!(loaders->item(1)->flags() & Qt::ItemIsEnabled));
+    QCOMPARE(loaders->item(1)->toolTip(),
+             QStringLiteral("Loading a binary file is not supported yet"));
+    // The header's processor shows, and cannot be changed.
+    auto *processors =
+        dialog.findChild<QTreeWidget *>(QStringLiteral("processors"));
+    QVERIFY(processors && !processors->isEnabled());
+    QVERIFY(processors->currentItem());
+    QCOMPARE(processors->currentItem()->data(0, Qt::UserRole).toString(),
+             QStringLiteral("x86_64"));
+    // Loading reads debug information and analyzes in idle time by default.
+    QVERIFY(dialog.options().debugInfo && dialog.options().analysis);
+    dialog.findChild<QCheckBox *>(QStringLiteral("analysis"))
+        ->setChecked(false);
+    QVERIFY(!dialog.options().analysis);
+    dialog.setIndicator(false);
+    QVERIFY(!dialog.indicator());
+    QVERIFY(dialog.findChild<QPushButton *>(QStringLiteral("ok"))->isEnabled());
+
+    // A file no row can load offers nothing to accept, and says why.
+    const QJsonArray mips{
+        QJsonObject{{"loader", "elf"},
+                    {"text", "ELF64 for MIPS (Executable)"},
+                    {"processor", ""},
+                    {"loadable", false},
+                    {"reason", "NeverD has no MIPS processor"}},
+        rows[1]};
+    // A row a loader took for the file's name alone is never the default.
+    const QJsonArray named{QJsonObject{{"loader", "evm"},
+                                       {"text", "EVM bytecode"},
+                                       {"processor", "evm"},
+                                       {"loadable", true},
+                                       {"by_name", true}},
+                           rows[1]};
+    LoadFileDialog byName(QStringLiteral("/tmp/firmware.bin"), named);
+    QCOMPARE(byName.row(), -1);
+    auto *accept = byName.findChild<QPushButton *>(QStringLiteral("ok"));
+    QVERIFY(!accept->isEnabled());
+    byName.findChild<QListWidget *>(QStringLiteral("loaders"))
+        ->setCurrentRow(0);
+    QCOMPARE(byName.row(), 0);
+    QVERIFY(accept->isEnabled());
+
+    LoadFileDialog refused(QStringLiteral("/tmp/mips"), mips);
+    QCOMPARE(refused.row(), -1);
+    QVERIFY(
+        !refused.findChild<QPushButton *>(QStringLiteral("ok"))->isEnabled());
+    QVERIFY(refused.findChild<QLabel *>(QStringLiteral("note"))
+                ->text()
+                .contains(QStringLiteral("NeverD has no MIPS processor")));
   }
 
   void themesDefineEveryColor() {

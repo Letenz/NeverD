@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <string>
@@ -57,6 +58,8 @@ listedFunctions(const std::map<std::uint64_t, bool> &edits) {
 }
 struct MockSession {
   std::string path, error;
+  /// Whether loading reads the debug information beside the input.
+  bool debugInfo = true;
   std::map<std::uint64_t, std::string> annotations, names;
   std::map<std::uint64_t, bool> functionEdits;
   /// The user's data items, as neverd_items_json lists them.
@@ -163,6 +166,34 @@ void neverd_free_string(const char *value) {
   std::free(const_cast<char *>(value));
 }
 const char *neverd_version_number() { return copy("test-1.0"); }
+// The mock loads any file as its fixture image, which it lists as a real
+// engine lists a header's loader, before the binary file.
+const char *neverd_identify_json(const char *path) {
+  std::error_code error;
+  if (!path || !std::filesystem::is_regular_file(path, error))
+    return copy(Json{
+        {"rows", Json::array()},
+        {"error", std::string("not a regular file: ") + (path ? path : "")}}
+                    .dump());
+  Json rows = Json::array();
+  rows.push_back({{"loader", "fixture"},
+                  {"text", "Fixture image"},
+                  {"processor", "x86_64"},
+                  {"bits", 64},
+                  {"endian", "little"},
+                  {"loadable", true}});
+  rows.push_back({{"loader", "binary"},
+                  {"text", "Binary file"},
+                  {"processor", ""},
+                  {"bits", 0},
+                  {"endian", "little"},
+                  {"loadable", false},
+                  {"reason", "Loading a binary file is not supported yet"}});
+  return copy(Json{{"rows", rows}}.dump());
+}
+void neverd_session_set_debug_info_enabled(neverd_session_t s, int enabled) {
+  session(s)->debugInfo = enabled != 0;
+}
 const char *neverd_headers_json(neverd_session_t) {
   return copy(R"({"language":{"runtime":"c","secondary":[],"evidence":[]}})");
 }

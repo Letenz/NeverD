@@ -1,0 +1,38 @@
+//===- Processors.def - The load dialog's processor list ---------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// NEVERD_PROCESSOR_FAMILY(Id, Name): a folder of the processor list.
+// NEVERD_PROCESSOR(Family, ShortName, Name): a processor the engine loads.
+// The short name is the engine's processor name, as neverd_identify_json and
+// neverd_session_arch_name spell it.
+//
+//===----------------------------------------------------------------------===//
+
+#ifdef NEVERD_PROCESSOR_FAMILY
+NEVERD_PROCESSOR_FAMILY(X86, QT_TRANSLATE_NOOP("Processors",
+                                               "Intel 80x86 processors"))
+NEVERD_PROCESSOR_FAMILY(ARM, QT_TRANSLATE_NOOP("Processors", "ARM processors"))
+NEVERD_PROCESSOR_FAMILY(VirtualMachine,
+                        QT_TRANSLATE_NOOP("Processors", "Virtual machines"))
+#undef NEVERD_PROCESSOR_FAMILY
+#endif
+
+#ifdef NEVERD_PROCESSOR
+NEVERD_PROCESSOR(X86, "x86",
+                 QT_TRANSLATE_NOOP("Processors",
+                                   "Intel 80386 and later (32-bit)"))
+NEVERD_PROCESSOR(X86, "x86_64",
+                 QT_TRANSLATE_NOOP("Processors", "AMD64 and Intel 64 (64-bit)"))
+NEVERD_PROCESSOR(ARM, "arm",
+                 QT_TRANSLATE_NOOP("Processors", "ARM and Thumb (AArch32)"))
+NEVERD_PROCESSOR(ARM, "aarch64",
+                 QT_TRANSLATE_NOOP("Processors", "ARM64 (AArch64)"))
+NEVERD_PROCESSOR(VirtualMachine, "evm",
+                 QT_TRANSLATE_NOOP("Processors", "Ethereum Virtual Machine"))
+NEVERD_PROCESSOR(VirtualMachine, "sbf",
+                 QT_TRANSLATE_NOOP("Processors", "Solana BPF"))
+#undef NEVERD_PROCESSOR
+#endif

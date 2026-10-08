@@ -127,6 +127,15 @@ def run(executable):
         binary.write_bytes(b"mock input")
         client = clients.enter_context(Client(executable))
         assert client.call("metadata")["error"]["code"] == "not_loaded"
+        # The ways a file can be loaded, listed before it is opened: what the
+        # engine reads the file as, then the binary file any file is.
+        assert "identify" in client.hello["capabilities"]
+        rows = client.call("identify", {"path": str(binary)})["payload"]["rows"]
+        assert [(row["loader"], row["loadable"]) for row in rows] == [("fixture", True), ("binary", False)], rows
+        missing = client.call("identify", {"path": str(binary) + ".missing"})
+        assert missing["error"]["code"] == "invalid_request", missing
+        flag = client.call("open", {"path": str(binary), "analysis": "yes"})
+        assert flag["error"]["code"] == "invalid_request", flag
         open_id = client.send("open", {"path": str(binary)}, fragmented=True)
         opened = client.response(open_id)
         assert opened["status"] == "ok", opened

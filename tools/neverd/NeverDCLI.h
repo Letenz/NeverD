@@ -183,6 +183,7 @@ extern llvm::cl::SubCommand CallGraphCmd;
 extern llvm::cl::SubCommand RenameCmd;
 extern llvm::cl::SubCommand FunctionEditsCmd;
 extern llvm::cl::SubCommand ItemsCmd;
+extern llvm::cl::SubCommand IdentifyCmd;
 extern llvm::cl::SubCommand OperandsCmd;
 extern llvm::cl::SubCommand SearchCmd;
 extern llvm::cl::SubCommand SectionsCmd;
@@ -566,6 +567,7 @@ int runSigs(neverd_session_t Sess, const char *Argv0);
 // NeverDCmdExport.cpp — file export and two-binary diff.
 int runExport(neverd_session_t Sess);
 int runDiff();
+int runIdentify();
 
 // NeverDCmdSimplify.cpp — semantic optimisation of a written expression.
 // Takes no session: its input is text, not a binary.

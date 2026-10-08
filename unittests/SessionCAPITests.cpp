@@ -16,6 +16,7 @@
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Object/ELFTypes.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Program.h"
@@ -2603,6 +2604,121 @@ TEST_F(SessionCAPITest, UserNamesNameDataInSymbolsAndC) {
   EXPECT_EQ(
       takeString(neverd_decompile(Session, DataELFEntry)).find("table_base"),
       std::string::npos);
+}
+
+// A universal Mach-O file of \p Slices, each at a page boundary.
+std::string makeFatMachO(const std::vector<std::string> &Slices) {
+  using namespace llvm::MachO;
+  constexpr uint32_t Alignment = 12;
+  std::string Bytes(sizeof(fat_header) + Slices.size() * sizeof(fat_arch),
+                    '\0');
+  const auto put32 = [&](size_t Offset, uint32_t Value) {
+    llvm::support::endian::write32be(Bytes.data() + Offset, Value);
+  };
+  put32(0, FAT_MAGIC);
+  put32(4, static_cast<uint32_t>(Slices.size()));
+  for (size_t I = 0; I < Slices.size(); ++I) {
+    Bytes.resize(llvm::alignTo(Bytes.size(), uint64_t(1) << Alignment), '\0');
+    const auto &Slice = Slices[I];
+    const auto *Header = reinterpret_cast<const mach_header_64 *>(Slice.data());
+    const size_t Entry = sizeof(fat_header) + I * sizeof(fat_arch);
+    put32(Entry, Header->cputype);
+    put32(Entry + 4, Header->cpusubtype);
+    put32(Entry + 8, static_cast<uint32_t>(Bytes.size()));
+    put32(Entry + 12, static_cast<uint32_t>(Slice.size()));
+    put32(Entry + 16, Alignment);
+    Bytes += Slice;
+  }
+  return Bytes;
+}
+
+TEST_F(SessionCAPITest, IdentifyListsWhatLoadingReads) {
+  const auto rows = [](const std::string &Path) {
+    auto Parsed =
+        llvm::json::parse(takeString(neverd_identify_json(Path.c_str())));
+    std::vector<llvm::json::Object> Result;
+    if (!Parsed) {
+      llvm::consumeError(Parsed.takeError());
+      return Result;
+    }
+    if (const auto *Rows = Parsed->getAsObject()->getArray("rows"))
+      for (const auto &Row : *Rows)
+        Result.push_back(*Row.getAsObject());
+    return Result;
+  };
+  const auto text = [](const llvm::json::Object &Row) {
+    return Row.getString("text").value_or("").str();
+  };
+  const auto loadable = [](const llvm::json::Object &Row) {
+    return Row.getBoolean("loadable").value_or(false);
+  };
+  // An ELF executable has its row, and any file is a binary file last.
+  const std::string Native = makeNativeELF(false);
+  const auto NativePath = write("identify.elf", Native);
+  auto Rows = rows(NativePath);
+  ASSERT_EQ(Rows.size(), 2u);
+  EXPECT_EQ(text(Rows[0]), "ELF64 for x86-64 (Executable)");
+  EXPECT_EQ(Rows[0].getString("loader").value_or(""), "elf");
+  EXPECT_EQ(Rows[0].getString("processor").value_or(""), "x86_64");
+  EXPECT_TRUE(loadable(Rows[0]));
+  EXPECT_EQ(text(Rows[1]), "Binary file");
+  EXPECT_FALSE(loadable(Rows[1]));
+  ASSERT_EQ(neverd_session_load(Session, NativePath.c_str()), 1);
+  EXPECT_EQ(takeString(neverd_session_arch_name(Session)), "x86_64");
+  // A processor NeverD lacks and a big-endian file are named and refused,
+  // as loading refuses them.
+  std::string Mips = Native;
+  llvm::support::endian::write16le(Mips.data() + llvm::ELF::EI_NIDENT + 2,
+                                   llvm::ELF::EM_MIPS);
+  const auto MipsPath = write("identify-mips.elf", Mips);
+  Rows = rows(MipsPath);
+  ASSERT_EQ(Rows.size(), 2u);
+  EXPECT_EQ(text(Rows[0]), "ELF64 for MIPS (Executable)");
+  EXPECT_FALSE(loadable(Rows[0]));
+  EXPECT_EQ(Rows[0].getString("reason").value_or(""),
+            "NeverD has no MIPS processor");
+  EXPECT_EQ(neverd_session_load(Session, MipsPath.c_str()), 0);
+  std::string Big = Native;
+  Big[llvm::ELF::EI_DATA] = llvm::ELF::ELFDATA2MSB;
+  Rows = rows(write("identify-big.elf", Big));
+  ASSERT_EQ(Rows.size(), 2u);
+  EXPECT_FALSE(loadable(Rows[0]));
+  // A thin Mach-O file, and a universal one with a row per slice: only the
+  // slice loading reads is loadable.
+  Rows = rows(write("identify.macho", makeObservedMachO(true, "_start")));
+  ASSERT_EQ(Rows.size(), 2u);
+  EXPECT_EQ(text(Rows[0]), "Mach-O file (EXECUTE). ARM64");
+  EXPECT_TRUE(loadable(Rows[0]));
+  const auto FatPath =
+      write("identify-fat", makeFatMachO({makeObservedMachO(false, "_start"),
+                                          makeObservedMachO(true, "_start")}));
+  Rows = rows(FatPath);
+  ASSERT_EQ(Rows.size(), 3u);
+  EXPECT_EQ(text(Rows[0]), "Fat Mach-O file, 1. X86_64");
+  EXPECT_EQ(text(Rows[1]), "Fat Mach-O file, 2. ARM64");
+  ASSERT_NE(loadable(Rows[0]), loadable(Rows[1]));
+  const auto &Chosen = loadable(Rows[0]) ? Rows[0] : Rows[1];
+  const auto &Other = loadable(Rows[0]) ? Rows[1] : Rows[0];
+  EXPECT_NE(Other.getString("reason").value_or("").find("slice"),
+            llvm::StringRef::npos);
+  ASSERT_EQ(neverd_session_load(Session, FatPath.c_str()), 1);
+  EXPECT_EQ(takeString(neverd_session_arch_name(Session)),
+            Chosen.getString("processor").value_or(""));
+  // Bytecode text is EVM by its contents; other contents named as bytecode
+  // are EVM for the name alone, which a dialog does not choose by default.
+  Rows = rows(write("identify-contract.evm", "6001600055"));
+  ASSERT_EQ(Rows.size(), 2u);
+  EXPECT_EQ(text(Rows[0]), "EVM bytecode");
+  EXPECT_TRUE(loadable(Rows[0]));
+  EXPECT_FALSE(Rows[0].getBoolean("by_name").value_or(true));
+  Rows = rows(write("identify-firmware.bin", std::string(64, '\x07')));
+  ASSERT_EQ(Rows.size(), 2u);
+  EXPECT_EQ(text(Rows[0]), "EVM bytecode");
+  EXPECT_TRUE(Rows[0].getBoolean("by_name").value_or(false));
+  // Data no loader reads is a binary file only.
+  Rows = rows(write("identify.dat", std::string(64, '\x07')));
+  ASSERT_EQ(Rows.size(), 1u);
+  EXPECT_EQ(text(Rows[0]), "Binary file");
 }
 
 TEST_F(SessionCAPITest, InputSha256IsTheHashOfTheLoadedFile) {
