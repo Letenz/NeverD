@@ -379,6 +379,8 @@ extern llvm::cl::opt<std::string> ExportSourceSignatures;
 extern llvm::cl::opt<std::string> RenameFrom;
 extern llvm::cl::opt<std::string> RenameTo;
 extern llvm::cl::opt<bool> RenameList;
+extern llvm::cl::opt<std::string> RenameAddr;
+extern llvm::cl::opt<bool> RenameClear;
 
 // Function edits.
 extern llvm::cl::opt<std::string> FunctionCreate;

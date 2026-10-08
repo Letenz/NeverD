@@ -120,8 +120,8 @@
         <translation>&amp;Umbenennen...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>Aktuelle Funktion umbenennen</translation>
+        <source>Rename the current address</source>
+        <translation>Die aktuelle Adresse umbenennen</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -1732,12 +1732,8 @@ Doppelklicken springt zur Deklaration.</translation>
         <translation> · schreibgeschützt</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 ist kein Funktionsanfang; nur Funktionen können umbenannt werden.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>Funktion umbenennen</translation>
+        <source>Rename address</source>
+        <translation>Adresse umbenennen</translation>
     </message>
     <message>
         <source>Name of %1:</source>

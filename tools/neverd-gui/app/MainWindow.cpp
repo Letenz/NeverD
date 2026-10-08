@@ -1167,33 +1167,25 @@ void MainWindow::openDialog() {
 }
 
 void MainWindow::rename() {
-  const auto function = disassembly_->currentFunction();
+  const auto item = currentAddress();
   const auto target = disassembly_->operandTarget();
-  if (!function && !target)
+  if (!item && !target)
     return;
   const quint64 epoch = session_.epoch();
-  // A name under the cursor renames what it denotes; otherwise the function
-  // containing the cursor.  Only functions carry renames in the engine.
-  const Address address = target ? *target : *function;
+  // A name under the cursor renames what it denotes; otherwise the item the
+  // cursor is on: a function at its entry, data, or a label in code.
+  const Address address = target ? *target : *item;
   session_.read(
       QStringLiteral("resolve"), {{"query", hexAddress(address)}}, this,
       [this, address, epoch](const QJsonObject &payload) {
-        const auto entry = addressValue(payload.value("function_address"));
-        if (!entry || *entry != address) {
-          output_->append(tr("%1 is not a function entry; only functions can "
-                             "be renamed.")
-                              .arg(displayAddress(address)),
-                          1);
-          return;
-        }
-        const QString current = payload.value("name").toString();
+        const QString current = payload.value("address_name").toString();
         bool ok = false;
         const auto name = QInputDialog::getText(
-            this, tr("Rename function"),
+            this, tr("Rename address"),
             tr("Name of %1:").arg(displayAddress(address)), QLineEdit::Normal,
             current, &ok);
-        if (ok && !name.trimmed().isEmpty() && name != current)
-          session_.rename(address, name, epoch);
+        if (ok && !name.trimmed().isEmpty() && name.trimmed() != current)
+          session_.rename(address, name.trimmed(), epoch);
       });
 }
 

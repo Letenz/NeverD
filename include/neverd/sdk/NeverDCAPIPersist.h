@@ -52,6 +52,16 @@ NEVERD_API int neverd_annotations_load(neverd_session_t Sess);
 
 NEVERD_API int neverd_rename_func(neverd_session_t Sess, const char *OldName,
                                   const char *NewName);
+/// Give \p Addr the user's name \p Name, or take the user's name away when
+/// \p Name is NULL or empty.  The name replaces a function's, a symbol's or
+/// an automatic name wherever the session names the address: the function
+/// list, neverd_symbols_json() and neverd_data_symbols_json() (a row of its
+/// own where no symbol names the address) and decompiled C, where it names
+/// image data.  A name has at most 4096 bytes and no spaces or control
+/// characters.  Saved at once to the renames sidecar; returns 0, or -1 with
+/// neverd_last_error.
+NEVERD_API int neverd_rename_addr(neverd_session_t Sess, neverd_va_t Addr,
+                                  const char *Name);
 NEVERD_API const char *neverd_renames_json(neverd_session_t Sess);
 NEVERD_API int neverd_renames_save(neverd_session_t Sess);
 NEVERD_API int neverd_renames_load(neverd_session_t Sess);

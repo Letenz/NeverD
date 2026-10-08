@@ -120,8 +120,8 @@
         <translation>Re&amp;name...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>Rename the current function</translation>
+        <source>Rename the current address</source>
+        <translation>Rename the current address</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -1732,12 +1732,8 @@ Double-click to go to the declaration.</translation>
         <translation> · read-only</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 is not a function entry; only functions can be renamed.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>Rename function</translation>
+        <source>Rename address</source>
+        <translation>Rename address</translation>
     </message>
     <message>
         <source>Name of %1:</source>

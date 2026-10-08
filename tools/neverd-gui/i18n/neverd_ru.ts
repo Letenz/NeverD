@@ -120,8 +120,8 @@
         <translation>Пере&amp;именовать...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>Переименовать текущую функцию</translation>
+        <source>Rename the current address</source>
+        <translation>Переименовать текущий адрес</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -1735,12 +1735,8 @@ Double-click to go to the declaration.</source>
         <translation> · только чтение</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 не является началом функции; переименовывать можно только функции.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>Переименовать функцию</translation>
+        <source>Rename address</source>
+        <translation>Переименовать адрес</translation>
     </message>
     <message>
         <source>Name of %1:</source>

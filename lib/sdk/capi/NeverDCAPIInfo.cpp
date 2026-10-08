@@ -583,46 +583,59 @@ const char *neverd_sections_json(neverd_session_t Sess) {
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }
 
+/// The symbols as rows, streamed in the sorted key order a json::Object
+/// prints (building an object tree per symbol costs more than reading the
+/// symbols).  The user's names replace the symbols' and name, in a row of
+/// their own, an address no symbol names; \p Data keeps data alone.
+static const char *symbolRows(Session &S, bool Data) {
+  std::string Buf;
+  llvm::raw_string_ostream OS(Buf);
+  llvm::json::OStream J(OS);
+  const auto Row = [&](va_t Addr, llvm::StringRef Name, uint64_t Size) {
+    J.object([&] {
+      J.attribute("addr", vaHex(Addr));
+      J.attribute("name", jsonSafeText(Name));
+      J.attribute("size", static_cast<int64_t>(Size));
+    });
+  };
+  std::set<va_t> Renamed;
+  J.array([&] {
+    for (const auto &Sym : S.Img.Symbols) {
+      if (Data && Sym.IsFunc)
+        continue;
+      const auto Rename = S.Renames.find(Sym.Addr);
+      if (Rename == S.Renames.end()) {
+        Row(Sym.Addr, Sym.Name, Sym.Size);
+        continue;
+      }
+      Renamed.insert(Sym.Addr);
+      Row(Sym.Addr, Rename->second, Sym.Size);
+    }
+    for (const auto &[Addr, Name] : S.Renames) {
+      if (Renamed.count(Addr) ||
+          (Data && llvm::any_of(S.Functions, [&](const auto &F) {
+             return F.Entry == Addr;
+           })))
+        continue;
+      Row(Addr, Name, 0);
+    }
+  });
+  OS.flush();
+  return dupStr(Buf);
+}
+
 const char *neverd_symbols_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S->Loaded)
     return dupStr("[]");
-
-  // Streamed in the sorted key order a json::Object prints: building an
-  // object tree per symbol costs more than reading the symbols.
-  std::string Buf;
-  llvm::raw_string_ostream OS(Buf);
-  llvm::json::OStream J(OS);
-  J.array([&] {
-    for (const auto &Sym : S->Img.Symbols)
-      J.object([&] {
-        J.attribute("addr", vaHex(Sym.Addr));
-        J.attribute("name", jsonSafeText(Sym.Name));
-        J.attribute("size", static_cast<int64_t>(Sym.Size));
-      });
-  });
-  OS.flush();
-  return dupStr(Buf);
+  return symbolRows(*S, false);
 }
 
 const char *neverd_data_symbols_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S->Loaded)
     return dupStr("[]");
-  std::string Buf;
-  llvm::raw_string_ostream OS(Buf);
-  llvm::json::OStream J(OS);
-  J.array([&] {
-    for (const auto &Sym : S->Img.Symbols)
-      if (!Sym.IsFunc)
-        J.object([&] {
-          J.attribute("addr", vaHex(Sym.Addr));
-          J.attribute("name", jsonSafeText(Sym.Name));
-          J.attribute("size", static_cast<int64_t>(Sym.Size));
-        });
-  });
-  OS.flush();
-  return dupStr(Buf);
+  return symbolRows(*S, true);
 }
 
 const char *neverd_relocs_json(neverd_session_t Sess) {

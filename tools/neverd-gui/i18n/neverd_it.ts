@@ -120,8 +120,8 @@
         <translation>Ri&amp;nomina...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>Rinomina la funzione corrente</translation>
+        <source>Rename the current address</source>
+        <translation>Rinomina l&apos;indirizzo corrente</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -1732,12 +1732,8 @@ Fai doppio clic per andare alla dichiarazione.</translation>
         <translation> · sola lettura</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 non è l&apos;inizio di una funzione; è possibile rinominare solo le funzioni.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>Rinomina funzione</translation>
+        <source>Rename address</source>
+        <translation>Rinomina indirizzo</translation>
     </message>
     <message>
         <source>Name of %1:</source>
