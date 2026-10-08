@@ -83,6 +83,10 @@ void narrowUnreadRegisterBytes(HighFunc &Func,
 /// Whether evaluating an unused integer value can be discarded without a
 /// memory access, call, or trap. This never supplies values for unknown bits.
 bool discardableIntegerValue(const ExprPtr &Root, size_t &Budget);
+/// Whether an integer value may go unevaluated: arithmetic, bit operations,
+/// comparisons and selections of locals and constants, which cannot access
+/// memory, call, divide or trap.
+bool harmlessIntegerValue(const ExprPtr &Root, size_t &Budget);
 
 //===----------------------------------------------------------------------===//
 // Expression simplification  (defined in HighExprSimplify.cpp)

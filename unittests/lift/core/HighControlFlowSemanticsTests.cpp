@@ -7295,6 +7295,51 @@ TEST(HighControlFlowSemantics, TemporariesReadOnceStayOutOfTheTailLimit) {
   }
 }
 
+TEST(HighControlFlowSemantics, ALaneOfAJoinIsThatLane) {
+  // A 16-byte value joined from four 4-byte lanes, read back at bytes 8..11,
+  // is the third lane; a comparison of two constants and a selection on a
+  // constant fold to what they select.
+  auto Int = [](uint16_t Bytes) { return NdType::makeInt(Bytes); };
+  auto Lane = [&](uint64_t Factor) {
+    auto Times = HighExpr::makeBinop(NdOp::INT_MULT, local(0),
+                                     HighExpr::makeConst(Factor, 8));
+    Times->Type = Int(8);
+    auto Low =
+        HighExpr::makeBinop(NdOp::SUBBYTES, Times, HighExpr::makeConst(0, 4));
+    Low->Type = Int(4);
+    return Low;
+  };
+  auto Join = [&](ExprPtr High, ExprPtr Low, uint16_t Bytes) {
+    auto J = HighExpr::makeBinop(NdOp::CONCAT, std::move(High), std::move(Low));
+    J->Type = Int(Bytes);
+    return J;
+  };
+  ExprPtr Vector =
+      Join(Join(Lane(7), Lane(5), 8), Join(Lane(3), Lane(2), 8), 16);
+  auto Read =
+      HighExpr::makeBinop(NdOp::SUBBYTES, Vector, HighExpr::makeConst(8, 4));
+  Read->Type = Int(4);
+  auto Less = HighExpr::makeBinop(NdOp::INT_LESS, HighExpr::makeConst(30, 4),
+                                  HighExpr::makeConst(32, 4));
+  Less->Type = Int(1);
+  auto Select = std::make_shared<HighExpr>();
+  Select->Kind = ExprKind::BinOp;
+  Select->Op = NdOp::SELECT;
+  Select->Type = Int(4);
+  Select->Operands = {Less, Read, HighExpr::makeConst(0, 4)};
+  HighFunc F;
+  F.Body = {result(0x10, Select)};
+  simplifyAllExprs(F.Body);
+  const ExprPtr &Root = F.Body[0].RetVal;
+  ASSERT_TRUE(Root);
+  ASSERT_EQ(Root->Kind, ExprKind::BinOp);
+  EXPECT_EQ(Root->Op, NdOp::SUBBYTES);
+  ASSERT_EQ(Root->Operands.size(), 2u);
+  ASSERT_EQ(Root->Operands[0]->Kind, ExprKind::BinOp);
+  EXPECT_EQ(Root->Operands[0]->Op, NdOp::INT_MULT);
+  EXPECT_EQ(Root->Operands[0]->Operands[1]->ConstVal, 5u);
+}
+
 TEST(HighControlFlowSemantics, PhiCopiesOfOneRegisterShareItsName) {
   // v1 = x; v2 = v1; L: v3 = v2 + 1; v2 = v3; if (v3 < x + 5) goto L;
   // return v3;  -- the PHI copies of one register never overlap the values
