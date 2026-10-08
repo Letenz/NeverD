@@ -27,6 +27,9 @@ inline constexpr auto kStringsArity = std::to_array<LibCArityEntry>({
     {"index", {2, 0}},
     {"rindex", {2, 0}},
     {"ffs", {1, 0}},
+    {"ffsl", {1, 0}},
+    {"strcasecmp_l", {3, 0}},
+    {"strncasecmp_l", {4, 0}},
 });
 
 } // namespace neverd::libc

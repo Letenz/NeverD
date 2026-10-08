@@ -118,6 +118,12 @@ private:
 
   // Commands.
   void openDialog();
+  /// Open \p path, first asking how to load it when NeverD keeps no project
+  /// for it, as IDA's "Load a new file" dialog does.
+  void chooseLoader(const QString &path);
+  /// Show or hide the status line's analysis indicator, as the load dialog
+  /// last chose.
+  void applyIndicator();
   void rename();
   void comment();
   void jumpAnywhere();

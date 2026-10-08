@@ -4278,10 +4278,13 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                   ? CName.str()
                   : stripLeadingUnderscores(Sym->Name).str();
         Obj.Readable = demangledComment(CName);
+        Obj.Symbol = Sym->Name;
       }
     }
     if (!Raw.empty())
       Obj.Name = GlobalIdentifierAllocator.allocate(Raw, "g");
+    if (Obj.Symbol.empty())
+      Obj.Symbol = Raw;
   }
   auto NamedDisplayPointer = [](const TypeRef &Type) {
     return Type && Type->Kind == NdTypeKind::Ptr && Type->Pointee &&

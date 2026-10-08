@@ -1288,6 +1288,18 @@
         <source>LLVM IR</source>
         <translation>LLVM IR</translation>
     </message>
+    <message>
+        <source>C</source>
+        <translation>C</translation>
+    </message>
+    <message>
+        <source>Rust</source>
+        <translation>Rust</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation>Go</translation>
+    </message>
 </context>
 <context>
     <name>Toolbars</name>
@@ -1410,6 +1422,16 @@ Recognized library operation; click to show its code.</source>
 Double-click to go to the declaration.</source>
         <translation>%1
 ダブルクリックで宣言に移動します。</translation>
+    </message>
+    <message>
+        <source>C: %1</source>
+        <translation>C：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n declarations shown as C</source>
+        <translation>
+            <numerusform>C で表示した宣言 %n 個</numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -1923,8 +1945,8 @@ Signed: %4</source>
         <translation>コマンドを入力</translation>
     </message>
     <message>
-        <source>Create C file</source>
-        <translation>C ファイルを作成</translation>
+        <source>Create source file</source>
+        <translation>ソースファイルを作成</translation>
     </message>
     <message>
         <source>Create LST file</source>
@@ -2053,6 +2075,10 @@ Signed: %4</source>
     <message>
         <source>Collapse library operations</source>
         <translation>ライブラリ操作を折りたたむ</translation>
+    </message>
+    <message>
+        <source>The ways to load %1 are unknown: %2</source>
+        <translation>%1 の読み込み方法が不明です: %2</translation>
     </message>
 </context>
 <context>
@@ -2219,6 +2245,116 @@ Signed: %4</source>
     <message>
         <source>Defined %1 at %2</source>
         <translation>%2 に %1 を定義しました</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LoadFileDialog</name>
+    <message>
+        <source>Load a new file</source>
+        <translation>新しいファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>Load file %1 &amp;as</source>
+        <translation>ファイル %1 の読み込み形式(&amp;A)</translation>
+    </message>
+    <message>
+        <source>The input file possibly has the listed formats</source>
+        <translation>入力ファイルは一覧の形式のいずれかである可能性があります</translation>
+    </message>
+    <message>
+        <source>Processor t&amp;ype</source>
+        <translation>プロセッサの種類(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>The file&apos;s header states the processor</source>
+        <translation>プロセッサはファイルのヘッダーで決まります</translation>
+    </message>
+    <message>
+        <source>Analysis</source>
+        <translation>解析</translation>
+    </message>
+    <message>
+        <source>&amp;Enabled</source>
+        <translation>有効(&amp;E)</translation>
+    </message>
+    <message>
+        <source>If turned off, NeverD will not analyze the program in idle time</source>
+        <translation>オフにすると、NeverD はアイドル時にプログラムを解析しません</translation>
+    </message>
+    <message>
+        <source>In&amp;dicator enabled</source>
+        <translation>インジケーターを表示(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Display the analysis progress in the status line</source>
+        <translation>解析の進行状況をステータス行に表示します</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>オプション</translation>
+    </message>
+    <message>
+        <source>Load debu&amp;g information</source>
+        <translation>デバッグ情報を読み込む(&amp;G)</translation>
+    </message>
+    <message>
+        <source>Read the PDB, DWARF or linker map that belongs to the input</source>
+        <translation>入力に対応する PDB、DWARF、またはリンカーマップを読み込みます</translation>
+    </message>
+    <message>
+        <source>NeverD cannot load this file: %1</source>
+        <translation>NeverD はこのファイルを読み込めません: %1</translation>
+    </message>
+    <message>
+        <source>Listed for the file&apos;s name alone; its contents do not show this format</source>
+        <translation>ファイル名だけで一覧に挙がっています。内容はこの形式を示していません</translation>
+    </message>
+    <message>
+        <source>Only the file&apos;s name suggests a format; choose a row to load the file that way</source>
+        <translation>形式を示しているのはファイル名だけです。その方法で読み込むには行を選んでください</translation>
+    </message>
+    <message>
+        <source>Processor: %1</source>
+        <translation>プロセッサ: %1</translation>
+    </message>
+</context>
+<context>
+    <name>Processors</name>
+    <message>
+        <source>Intel 80x86 processors</source>
+        <translation>Intel 80x86 プロセッサ</translation>
+    </message>
+    <message>
+        <source>ARM processors</source>
+        <translation>ARM プロセッサ</translation>
+    </message>
+    <message>
+        <source>Virtual machines</source>
+        <translation>仮想マシン</translation>
+    </message>
+    <message>
+        <source>Intel 80386 and later (32-bit)</source>
+        <translation>Intel 80386 以降（32 ビット）</translation>
+    </message>
+    <message>
+        <source>AMD64 and Intel 64 (64-bit)</source>
+        <translation>AMD64 および Intel 64（64 ビット）</translation>
+    </message>
+    <message>
+        <source>ARM and Thumb (AArch32)</source>
+        <translation>ARM および Thumb（AArch32）</translation>
+    </message>
+    <message>
+        <source>ARM64 (AArch64)</source>
+        <translation>ARM64（AArch64）</translation>
+    </message>
+    <message>
+        <source>Ethereum Virtual Machine</source>
+        <translation>Ethereum 仮想マシン</translation>
+    </message>
+    <message>
+        <source>Solana BPF</source>
+        <translation>Solana BPF</translation>
     </message>
 </context>
 </TS>

@@ -11,8 +11,10 @@
 #include "JumpDialog.h"
 #include "Language.h"
 #include "ListingView.h"
+#include "LoadFileDialog.h"
 #include "NavigationBand.h"
 #include "OutputWindow.h"
+#include "ProjectDatabase.h"
 #include "Resolve.h"
 #include "Session.h"
 #include "Theme.h"
@@ -77,6 +79,7 @@ using KDDockWidgets::InitialOption;
 constexpr char LayoutFileName[] = "desktop.json";
 constexpr char RecentFilesKey[] = "files/recent";
 constexpr char OpcodeBytesKey[] = "listing/opcodeBytes";
+constexpr char AnalysisIndicatorKey[] = "analysis/indicator";
 // String search defaults and bounds (the worker's string_options).
 constexpr int DefaultStringMinLength = 4;
 constexpr int MaxStringMinLength = 1024;
@@ -213,7 +216,7 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
         QTimer::singleShot(0, this, [this, path, start] {
           if (start)
             start->reject();
-          openFile(path);
+          chooseLoader(path);
         });
       }
       return true;
@@ -399,7 +402,7 @@ MainWindow::Dock *MainWindow::dockNamed(const QString &name) {
   if (auto *existing = docks_.value(name))
     return existing;
   if (name == QLatin1String(PseudocodeDock)) {
-    codeView(QStringLiteral("c"));
+    codeView(CodeView::pseudocodeRepresentation());
     return docks_.value(name);
   }
   if (name == QLatin1String(RepresentationDock)) {
@@ -525,8 +528,7 @@ MainWindow::Dock *MainWindow::chooserDock(ChooserKind kind) {
 }
 
 CodeView *MainWindow::codeView(const QString &representation) {
-  const bool c = representation == QLatin1String("c") ||
-                 representation == QLatin1String("llvmc");
+  const bool c = CodeView::isSource(representation);
   const QString id = c ? PseudocodeDock : RepresentationDock;
   if (auto *dock = docks_.value(id))
     return static_cast<CodeView *>(dock->widget());
@@ -537,6 +539,8 @@ CodeView *MainWindow::codeView(const QString &representation) {
                c ? QStringLiteral("pseudocode") : QStringLiteral("ir"), view);
   retitleCodeDocks();
   connect(view, &CodeView::representationChanged, this,
+          &MainWindow::retitleCodeDocks);
+  connect(view, &CodeView::languageChanged, this,
           &MainWindow::retitleCodeDocks);
   connect(view->text(), &CodeText::locationChanged, this, [this](Address a) {
     if (synchronizing_)
@@ -572,7 +576,11 @@ void MainWindow::retitleCodeDocks() {
       ++letter;
     const QString name = title + QLatin1Char('-') + QLatin1Char(letter);
     taken.insert(name);
-    dock->setTitle(name);
+    // Pseudocode in the function's own language says which it chose.
+    const QString language = code->chosenLanguage();
+    dock->setTitle(language.isEmpty() ? name
+                                      : name + QStringLiteral(" (") + language +
+                                            QLatin1Char(')'));
   }
 }
 
@@ -647,6 +655,7 @@ void MainWindow::buildStatusBar() {
       tr("Background analysis: references and labels are indexed while you "
          "browse"));
   bar->addWidget(analysisLabel_);
+  applyIndicator();
   bar->addWidget(directionLabel_);
   bar->addWidget(diskLabel_);
   bar->addPermanentWidget(fileLabel_);
@@ -992,7 +1001,7 @@ void MainWindow::connectActions() {
         dock->raise();
       disassembly_->focusContent();
     } else {
-      showPseudocode(QStringLiteral("c"));
+      showPseudocode(CodeView::pseudocodeRepresentation());
     }
   });
   on(ActionId::JumpAnywhere, [this] { jumpAnywhere(); });
@@ -1081,7 +1090,8 @@ void MainWindow::connectActions() {
     docks_.value(DisassemblyDock)->raise();
   });
   on(ActionId::ViewToggleGraph, [this] { toggleGraph(); });
-  on(ActionId::ViewPseudocode, [this] { showPseudocode(QStringLiteral("c")); });
+  on(ActionId::ViewPseudocode,
+     [this] { showPseudocode(CodeView::pseudocodeRepresentation()); });
   on(ActionId::ViewLLVMC, [this] { showPseudocode(QStringLiteral("llvmc")); });
   on(ActionId::ViewLowIR, [this] { showPseudocode(QStringLiteral("low")); });
   on(ActionId::ViewMedIR, [this] { showPseudocode(QStringLiteral("med")); });
@@ -1307,7 +1317,38 @@ void MainWindow::openDialog() {
       start.isEmpty() ? QDir::homePath() : start,
       tr("All files (*);;NeverD databases (*.nddb)"));
   if (!path.isEmpty())
+    chooseLoader(path);
+}
+
+void MainWindow::chooseLoader(const QString &path) {
+  // A project opens as it was saved, and an engine that cannot list its
+  // loaders opens files as before.
+  if (!session_.identifiesFiles() || ProjectDatabase::hasState(path)) {
     openFile(path);
+    return;
+  }
+  session_.read(
+      QStringLiteral("identify"), {{"path", path}}, this,
+      [this, path](const QJsonObject &payload) {
+        LoadFileDialog dialog(path, payload.value("rows").toArray(), this);
+        dialog.setIndicator(
+            QSettings().value(AnalysisIndicatorKey, true).toBool());
+        if (dialog.exec() != QDialog::Accepted || dialog.row() < 0)
+          return;
+        QSettings().setValue(AnalysisIndicatorKey, dialog.indicator());
+        applyIndicator();
+        session_.open(path, dialog.options());
+      },
+      [this, path](const QString &, const QString &message) {
+        output_->append(
+            tr("The ways to load %1 are unknown: %2").arg(path, message), 1);
+        openFile(path);
+      });
+}
+
+void MainWindow::applyIndicator() {
+  analysisLabel_->setVisible(
+      QSettings().value(AnalysisIndicatorKey, true).toBool());
 }
 
 void MainWindow::rename() {
@@ -1396,8 +1437,7 @@ void MainWindow::showPseudocode(const QString &representation) {
     return;
   }
   auto *view = codeView(representation);
-  const bool c = representation == QLatin1String("c") ||
-                 representation == QLatin1String("llvmc");
+  const bool c = CodeView::isSource(representation);
   auto *dock = docks_.value(c ? PseudocodeDock : RepresentationDock);
   if (!dock->isOpen()) {
     if (c)
@@ -1809,14 +1849,23 @@ void MainWindow::exportCurrent(bool pseudocode) {
   const auto function = currentFunction();
   if (!function)
     return;
+  // The pseudocode keeps the language its window shows.
+  auto *pseudocodeView =
+      pseudocode ? codeView(CodeView::pseudocodeRepresentation()) : nullptr;
+  const QString language =
+      pseudocodeView ? pseudocodeView->text()->language() : QString();
+  const QString suffix =
+      !pseudocode                         ? QStringLiteral(".lst")
+      : language == QLatin1String("rust") ? QStringLiteral(".rs")
+      : language == QLatin1String("go")   ? QStringLiteral(".go")
+                                          : QStringLiteral(".c");
   const auto path = QFileDialog::getSaveFileName(
-      this, pseudocode ? tr("Create C file") : tr("Create LST file"),
-      QFileInfo(session_.filePath()).completeBaseName() +
-          (pseudocode ? QStringLiteral(".c") : QStringLiteral(".lst")));
+      this, pseudocode ? tr("Create source file") : tr("Create LST file"),
+      QFileInfo(session_.filePath()).completeBaseName() + suffix);
   if (path.isEmpty())
     return;
   if (pseudocode) {
-    auto *view = codeView(QStringLiteral("c"));
+    auto *view = pseudocodeView;
     view->showFunction(*function);
     QTimer::singleShot(0, this, [this, path, view] {
       QFile file(path);
@@ -1874,7 +1923,7 @@ void MainWindow::runCommand(const QString &command, const QString &argument) {
       session_.setComment(*address, argument);
   } else if (command == QLatin1String("decompile")) {
     if (argument.isEmpty()) {
-      showPseudocode(QStringLiteral("c"));
+      showPseudocode(CodeView::pseudocodeRepresentation());
     } else {
       resolveExpression(
           session_, this, argument, currentAddress(),
@@ -1884,7 +1933,7 @@ void MainWindow::runCommand(const QString &command, const QString &argument) {
               return;
             }
             navigate(*value);
-            showPseudocode(QStringLiteral("c"));
+            showPseudocode(CodeView::pseudocodeRepresentation());
           });
     }
   } else if (command == QLatin1String("find")) {

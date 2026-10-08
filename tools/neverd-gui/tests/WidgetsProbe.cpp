@@ -216,7 +216,7 @@ private:
     stages_.push_back(focusDisassembly("pseudocode-focus"));
     stages_.push_back({"pseudocode", [this] { press(Qt::Key_Tab); },
                        [this] {
-                         auto *view = codeView(QStringLiteral("c"));
+                         auto *view = codeView(QStringLiteral("source"));
                          return view && view->text()->function() == target_ &&
                                 !view->text()->loading() &&
                                 view->text()->lineCount() > 0 &&
@@ -225,8 +225,8 @@ private:
     // Tab in pseudocode returns to the disassembly.
     stages_.push_back(
         {"pseudocode-focus-text",
-         [this] { codeView(QStringLiteral("c"))->text()->setFocus(); },
-         [this] { return focusedIn(codeView(QStringLiteral("c"))); }});
+         [this] { codeView(QStringLiteral("source"))->text()->setFocus(); },
+         [this] { return focusedIn(codeView(QStringLiteral("source"))); }});
     stages_.push_back(
         {"pseudocode-back", [this] { press(Qt::Key_Tab); },
          [this] {

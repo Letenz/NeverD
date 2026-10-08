@@ -18,11 +18,13 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Object/MachO.h"
+#include "llvm/Object/MachOUniversal.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBuffer.h"
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 
 namespace neverd {
 namespace macho_loader {
@@ -78,8 +80,14 @@ void parseFunctionStarts(const uint8_t *BasePtr, size_t FileSize,
                          const FunctionStartsInfo &Info, uint64_t TextVMAddr,
                          BinaryImage &Img);
 
+/// The slice of \p Universal NeverD loads: the host architecture's, else the
+/// first that reads as a Mach-O file; none when no slice reads.
+std::optional<size_t>
+chooseUniversalSlice(const llvm::object::MachOUniversalBinary &Universal);
+
 /// Open a thin or universal Mach-O executable and return the buffer plus a
-/// MachOObjectFile for the host architecture (cf. llvm-objdump -arch).
+/// MachOObjectFile for the slice chooseUniversalSlice picks (cf. llvm-objdump
+/// -arch).
 llvm::Expected<std::pair<std::unique_ptr<llvm::MemoryBuffer>,
                          std::unique_ptr<llvm::object::MachOObjectFile>>>
 openMachOFile(const std::filesystem::path &Path);

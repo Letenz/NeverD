@@ -748,7 +748,7 @@ CMake.
 | `lib/decode` | Decodifica Capstone/native e dispatch ai lifter di architettura | `NeverDIR`, `NeverDLift` |
 | `lib/ir` | Tipi comuni e definizioni/trasformazioni LowIR, MedIR, HighIR e intrinsic | Quattro sottocomponenti IR |
 | `lib/pipeline` | Rilevamento funzioni e orchestrazione dei percorsi Low/Med/High/LLVM | IR, decode, lift, backend LLVM, debug info, pass IR |
-| `lib/backend/c` | Rendering HighIR-to-C e LLVM-IR-to-C | IR |
+| `lib/backend/c` | Rendering HighIR-to-C e LLVM-IR-to-C, e HighC scritto in Rust e Go | IR |
 | `lib/backend/llvm` | Lowering da MedIR a LLVM | IR |
 | `lib/backend/codegen` | Generazione codice target e patch/riscrittura in-place PE/ELF/Mach-O | IR, loader |
 | `lib/sdk` | ABI C pubblica, ciclo session, query, persistenza, plugin, punti lift/decompile/patch/audit/hunt | Aggrega il motore in `libneverd` |

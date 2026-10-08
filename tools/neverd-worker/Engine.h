@@ -45,6 +45,8 @@ public:
   static bool keepsDataItems();
   /// Whether the engine keeps how the user shows operands' numbers.
   static bool keepsOperandFormats();
+  /// Whether the engine lists the ways it can load a file (identify).
+  static bool identifiesFiles();
 
 private:
   neverd_session_t session_ = nullptr;
@@ -68,6 +70,9 @@ private:
   bool analyzed_ = false;
   bool dirty_ = false;
   bool readOnly_ = false;
+  /// Whether idle time analyzes the open file: function discovery and the
+  /// reference index.  A cross-reference request still builds the index.
+  bool backgroundAnalysis_ = true;
   std::uintmax_t loadedSize_ = 0;
   std::filesystem::file_time_type loadedTime_;
   /// neverd_strings_ex_json options as JSON text, empty for the defaults; a
@@ -109,6 +114,12 @@ private:
   /// The user's operand formats changed: instruction text shows them at
   /// once, without building the listing again.
   void operandFormatsChanged();
+  /// Names or the user's data items changed: drop what shows them, and let
+  /// the listing read them again without its string scan.
+  void namesChanged();
+  /// A comment changed.  The listing reads comments as it formats lines, so
+  /// only views that keep formatted text drop it.
+  void commentsChanged();
   /// The function list changed: analysis restarts function by function and
   /// the reference index is built again.
   void functionsChanged();
