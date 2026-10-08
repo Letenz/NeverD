@@ -360,10 +360,21 @@ std::vector<PortableStoreCall> portableStoreCalls(std::string_view Source) {
          Source.substr(Address, Source.find(';', Address) - Address),
          Source.substr(Value, Source.find(';', Value) - Value)});
   }
-  // `*(_DWORD *)ADDRESS = VALUE;`, the aligned(1), may_alias spelling of a
-  // scalar store, parenthesized as a whole inside an expression.  ADDRESS
-  // is a name, a parenthesized expression, or `(uintptr_t)(&OBJECT)`.
+  // `*(uint32_t *)ADDRESS = VALUE;`, a scalar store through a pointer, or
+  // `*(_DWORD *)ADDRESS = VALUE;` in the aligned(1), may_alias spelling,
+  // parenthesized as a whole inside an expression.  ADDRESS is a name, a
+  // parenthesized expression, or `(uintptr_t)(&OBJECT)`.
   static constexpr std::pair<std::string_view, std::string_view> Aliases[] = {
+      {"uint8_t", "uint8_t"},
+      {"int8_t", "int8_t"},
+      {"uint16_t", "uint16_t"},
+      {"int16_t", "int16_t"},
+      {"uint32_t", "uint32_t"},
+      {"int32_t", "int32_t"},
+      {"uint64_t", "uint64_t"},
+      {"int64_t", "int64_t"},
+      {"float", "float"},
+      {"double", "double"},
       {"_BYTE", "uint8_t"},
       {"_SBYTE", "int8_t"},
       {"_WORD", "uint16_t"},
@@ -910,7 +921,7 @@ TEST(HighCPointerAddresses, InlinedSignedIncrementKeepsModularExpression) {
   EXPECT_EQ(Source.find("+= 1"), std::string::npos) << Source;
   // The increment wraps in an unsigned carrier; the int32_t store converts
   // it back.
-  EXPECT_NE(Source.find("= (uint32_t)(*(_SDWORD *)"), std::string::npos)
+  EXPECT_NE(Source.find("= (uint32_t)(*(int32_t *)"), std::string::npos)
       << Source;
   EXPECT_NE(Source.find(" + 1;"), std::string::npos) << Source;
 }

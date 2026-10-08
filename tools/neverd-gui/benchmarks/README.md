@@ -224,6 +224,45 @@ so samples are not written into the source tree. This standalone probe uses
 `QCoreApplication`; the earlier exploratory table used `QGuiApplication` before
 timing. Keep those environments distinct when comparing absolute timings.
 
+## Production GUI interaction
+
+`--interaction-benchmark <report.json>` opens the given file in the production
+workbench, waits for its first painted listing and then measures, each first
+over content the worker has not served yet and then once more:
+
+- listing scrolling: 300 wheel steps of three lines, one every 16 ms, down and
+  back up, from the step to the backing-store flush of its frame (a step
+  without a frame before the next one counts as missed);
+- jumps to up to 24 functions spread over the function list, until the
+  listing has painted the jump's lines;
+- control-flow graphs of the same functions, until the complete graph painted;
+- pseudocode of the same functions, until the decompiled text painted.
+
+The report keeps nearest-rank p50/p95/p99, maximum and mean per phase, and the
+result or failure of every sampled function. Like the startup benchmark it uses
+temporary settings and a fresh layout. `--interaction-benchmark-timeout`
+defaults to 600000 ms.
+
+Recorded on 2026-10-07: Linux x86-64, Intel Core i9-13900H, Qt 6.8.3, Xvfb
+through the xcb plugin (software rendering, not native presentation). Times
+are milliseconds, p50 / p95.
+
+| Phase | t.elf (12 functions) | libQt6Xml (776) | ntoskrnl.exe (26 349) |
+| --- | --- | --- | --- |
+| Scroll, first pass | 2.3 / 2.9 | 2.7 / 5.3 | 2.4 / 5.3 |
+| Scroll, again | 1.7 / 2.7 | 2.4 / 5.1 | 2.4 / 5.3 |
+| Jump, first | 8.8 / 10.1 | 22.9 / 40.0 | 25.1 / 35.4 |
+| Jump, again | 8.6 / 9.3 | 10.9 / 15.0 | 13.6 / 17.9 |
+| Graph, first | 5.5 / 11.0 | 12.6 / 77.8 | 177 / 447 |
+| Graph, again | 5.6 / 16.4 | 11.6 / 72.2 | 187 / 426 |
+| Pseudocode, first | 6.4 / 7.8 | 16.3 / 89.6 | 203 / 460 |
+| Pseudocode, again | 3.0 / 5.5 | 10.0 / 13.7 | 9.1 / 94.8 |
+
+The worker lays out a graph in 1-13 ms; a graph of a function seen for the
+first time waits for that function's analysis, and only the last graph is kept,
+so revisiting one analyzes it again. On ntoskrnl two sampled functions had no
+graph ("function not found").
+
 ## Synthetic viewport harness
 
 Build and run the Qt harness independently:

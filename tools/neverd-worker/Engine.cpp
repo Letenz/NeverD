@@ -996,6 +996,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       name = aliases.at(name);
     result["name"] = std::move(name);
     result["comment"] = ownedString(neverd_annotation_get(session_, address));
+    result["import"] = listing().isImport(address);
     return result;
   }
   if (operation == "strings") {

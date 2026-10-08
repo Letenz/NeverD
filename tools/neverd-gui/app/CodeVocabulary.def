@@ -93,7 +93,7 @@ NEVERD_C_TYPE("ptrdiff_t")
 NEVERD_C_TYPE("intptr_t")
 NEVERD_C_TYPE("uintptr_t")
 NEVERD_C_TYPE("wchar_t")
-// The engine's memory access types, as a classic decompiler names them.
+// The access types recovered bytecode and devirtualized sources declare.
 NEVERD_C_TYPE("_BYTE")
 NEVERD_C_TYPE("_SBYTE")
 NEVERD_C_TYPE("_WORD")

@@ -482,7 +482,7 @@ CodeView *MainWindow::codeView(const QString &representation) {
     synchronizing_ = false;
   });
   connect(view->text(), &CodeText::nameActivated, this,
-          [this](const QString &name) { navigateExpression(name); });
+          [this, view](const QString &name) { activateCodeName(view, name); });
   connect(view->text(), &CodeText::contextMenuRequested, this,
           &MainWindow::contextMenu);
   if (c)
@@ -700,6 +700,32 @@ void MainWindow::jump(Address address) {
   disassembly_->navigate(address, true);
   hex_->setCurrent(address);
   hex_->setFocus();
+}
+
+void MainWindow::activateCodeName(CodeView *view, const QString &name) {
+  // A function opens in the code view itself, which follows the disassembly,
+  // as a classic decompiler stays in its pseudocode.  Anything else shows in
+  // the disassembly: an import, whose thunk only jumps through its slot, other
+  // data, and every target of a locked view.
+  QPointer<CodeView> origin(view);
+  session_.read(
+      QStringLiteral("resolve"), {{"query", name}}, this,
+      [this, name, origin](const QJsonObject &payload) {
+        const auto address = addressValue(payload.value("address"));
+        if (!address) {
+          navigateExpression(name);
+          return;
+        }
+        if (payload.value("function_address").isNull() ||
+            payload.value("import").toBool() || !origin || origin->locked()) {
+          jump(*address);
+          return;
+        }
+        disassembly_->navigate(*address, true);
+      },
+      [this, name](const QString &, const QString &) {
+        navigateExpression(name);
+      });
 }
 
 void MainWindow::navigateExpression(const QString &text) {
