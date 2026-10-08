@@ -290,9 +290,50 @@ TEST(LibCArity, VaListConsumersHaveFixedPrototypes) {
   EXPECT_EQ(VPrintf->IntArgs, 2);
   EXPECT_EQ(VPrintf->FpArgs, 0);
 
-  auto Vsnprintf = libcArity("vsnprintf");
-  ASSERT_TRUE(Vsnprintf.has_value());
-  EXPECT_EQ(Vsnprintf->IntArgs, 3);
+  // The va_list is one more pointer argument, after every fixed one.
+  const std::pair<const char *, int> Consumers[] = {
+      {"vfprintf", 3}, {"vsnprintf", 4}, {"vsprintf", 3}, {"vdprintf", 3},
+      {"vscanf", 2},   {"vfscanf", 3},   {"vsscanf", 3},  {"vasprintf", 3}};
+  for (const auto &[Name, IntArgs] : Consumers) {
+    const auto Arity = libcArity(Name);
+    ASSERT_TRUE(Arity.has_value()) << Name;
+    EXPECT_EQ(Arity->IntArgs, IntArgs) << Name;
+  }
+}
+
+TEST(LibCArity, PosixRoutinesTakeTheirPrototypesArguments) {
+  // Without a table entry the call-argument scan decides the count: gzip
+  // printed fstat(fd, &st) with five arguments, and each PLT stub of these
+  // routines printed its call with none.
+  const std::pair<const char *, int> Expected[] = {
+      {"fstat", 2},         {"stat", 2},        {"mmap", 6},
+      {"sigaction", 3},     {"sigprocmask", 3}, {"setlocale", 2},
+      {"readdir", 1},       {"strftime", 4},    {"getopt_long", 5},
+      {"nl_langinfo", 1},   {"fnmatch", 3},     {"mbrtowc", 4},
+      {"regexec", 5},       {"re_search", 6},   {"pthread_create", 4},
+      {"socket", 3},        {"waitpid", 3},     {"reallocarray", 3},
+      {"__assert_fail", 4}, {"__overflow", 2},  {"__uflow", 1},
+      {"__fpending", 1},    {"mbrtoc32", 4},    {"fwrite_unlocked", 4}};
+  for (const auto &[Name, IntArgs] : Expected) {
+    const auto Arity = libcArityForSymbol(Name);
+    ASSERT_TRUE(Arity.has_value()) << Name;
+    EXPECT_EQ(Arity->IntArgs, IntArgs) << Name;
+    EXPECT_EQ(Arity->FpArgs, 0) << Name;
+  }
+}
+
+TEST(LibCArity, NoArityWhereACountCannotSayIt) {
+  // A variadic routine, a floating-point result, an aggregate result (a
+  // hidden pointer argument on i386) or an argument two 32-bit slots wide
+  // keeps the call-argument scan's count.
+  for (const char *Name : {"printf", "open", "fcntl", "strtod_l", "div", "ldiv",
+                           "lldiv", "imaxdiv", "ffsll", "imaxabs"})
+    EXPECT_FALSE(libcArityForSymbol(Name).has_value()) << Name;
+  // So does a routine the Windows C runtimes declare otherwise, since the
+  // tables apply to every format by name: _mkdir(dir), Win64's
+  // _setjmp(env, frame), msvcrt's wcstok(str, delim).
+  for (const char *Name : {"mkdir", "setjmp", "_setjmp", "wcstok"})
+    EXPECT_FALSE(libcArityForSymbol(Name).has_value()) << Name;
 }
 
 TEST(LibCArity, PreservesDarwinErrorSymbolSpelling) {
@@ -343,6 +384,17 @@ TEST(IsKnownFunction, NotLibC) {
 // =====================================================================
 // headerFor
 // =====================================================================
+
+TEST(HeaderFor, GnuAndPosixHeadersOfTheArityTables) {
+  EXPECT_STREQ(headerFor("getopt_long"), "getopt.h");
+  EXPECT_STREQ(headerFor("nl_langinfo"), "langinfo.h");
+  EXPECT_STREQ(headerFor("fnmatch"), "fnmatch.h");
+  EXPECT_STREQ(headerFor("__fpending"), "stdio_ext.h");
+  EXPECT_STREQ(headerFor("mbrtoc32"), "uchar.h");
+  EXPECT_STREQ(headerFor("renameat"), "stdio.h");
+  EXPECT_STREQ(headerFor("futimens"), "sys/stat.h");
+  EXPECT_STREQ(headerFor("re_search"), "regex.h");
+}
 
 TEST(HeaderFor, StdioFunctions) {
   EXPECT_STREQ(headerFor("printf"), "stdio.h");

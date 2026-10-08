@@ -1,6 +1,8 @@
 #ifndef NEVERD_LIBC_LIBCUCONTEXT_H
 #define NEVERD_LIBC_LIBCUCONTEXT_H
 
+#include "neverd/libc/LibCNames.h"
+
 #include <array>
 #include <string_view>
 
@@ -15,6 +17,13 @@ inline constexpr std::array kUcontextFunctions = {
     "setcontext",
     "swapcontext",
 };
+
+/// Fixed arity of the ucontext.h functions.  {IntArgs, FpArgs}.
+inline constexpr auto kUcontextArity = std::to_array<LibCArityEntry>({
+    {"getcontext", {1, 0}},
+    {"setcontext", {1, 0}},
+    {"swapcontext", {2, 0}},
+});
 
 } // namespace neverd::libc
 

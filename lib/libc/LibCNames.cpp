@@ -19,8 +19,11 @@
 #include "neverd/libc/LibCExceptionRuntime.h"
 #include "neverd/libc/LibCFcntl.h"
 #include "neverd/libc/LibCFenv.h"
+#include "neverd/libc/LibCFnmatch.h"
 #include "neverd/libc/LibCFortify.h"
+#include "neverd/libc/LibCGetopt.h"
 #include "neverd/libc/LibCInttypes.h"
+#include "neverd/libc/LibCLanginfo.h"
 #include "neverd/libc/LibCLibintl.h"
 #include "neverd/libc/LibCLink.h"
 #include "neverd/libc/LibCLocale.h"
@@ -39,12 +42,14 @@
 #include "neverd/libc/LibCStdbit.h"
 #include "neverd/libc/LibCStdfix.h"
 #include "neverd/libc/LibCStdio.h"
+#include "neverd/libc/LibCStdioExt.h"
 #include "neverd/libc/LibCStdlib.h"
 #include "neverd/libc/LibCString.h"
 #include "neverd/libc/LibCStrings.h"
 #include "neverd/libc/LibCTermios.h"
 #include "neverd/libc/LibCThreads.h"
 #include "neverd/libc/LibCTime.h"
+#include "neverd/libc/LibCUchar.h"
 #include "neverd/libc/LibCUcontext.h"
 #include "neverd/libc/LibCUnistd.h"
 #include "neverd/libc/LibCUtime.h"
@@ -120,6 +125,11 @@ struct Registry {
     registerFunctions(All, ToHeader, kDlfcnFunctions, kDlfcnHeader);
     registerFunctions(All, ToHeader, kFcntlFunctions, kFcntlHeader);
     registerFunctions(All, ToHeader, kLibintlFunctions, kLibintlHeader);
+    registerFunctions(All, ToHeader, kFnmatchFunctions, kFnmatchHeader);
+    registerFunctions(All, ToHeader, kGetoptFunctions, kGetoptHeader);
+    registerFunctions(All, ToHeader, kLanginfoFunctions, kLanginfoHeader);
+    registerFunctions(All, ToHeader, kStdioExtFunctions, kStdioExtHeader);
+    registerFunctions(All, ToHeader, kUcharFunctions, kUcharHeader);
     registerFunctions(All, ToHeader, kLinkFunctions, kLinkHeader);
     registerFunctions(All, ToHeader, kNlTypesFunctions, kNlTypesHeader);
     registerFunctions(All, ToHeader, kObjCFunctions, kObjCHeader);
@@ -205,6 +215,50 @@ struct ArityRegistry {
     registerArity(Map, kExceptionRuntimeArity);
     registerArity(Map, kSetjmpArity);
     registerArity(Map, kLibintlArity);
+    registerArity(Map, kAssertArity);
+    registerArity(Map, kDirentArity);
+    registerArity(Map, kDlfcnArity);
+    registerArity(Map, kFcntlArity);
+    registerArity(Map, kFenvArity);
+    registerArity(Map, kInttypesArity);
+    registerArity(Map, kLinkArity);
+    registerArity(Map, kLocaleArity);
+    registerArity(Map, kNlTypesArity);
+    registerArity(Map, kPollArity);
+    registerArity(Map, kPthreadArity);
+    registerArity(Map, kRegexArity);
+    registerArity(Map, kSchedArity);
+    registerArity(Map, kSearchArity);
+    registerArity(Map, kSignalArity);
+    registerArity(Map, kSpawnArity);
+    registerArity(Map, kTermiosArity);
+    registerArity(Map, kThreadsArity);
+    registerArity(Map, kUcontextArity);
+    registerArity(Map, kUtimeArity);
+    registerArity(Map, kWcharArity);
+    registerArity(Map, kWctypeArity);
+    registerArity(Map, kArpaInetArity);
+    registerArity(Map, kSysAuxvArity);
+    registerArity(Map, kSysEpollArity);
+    registerArity(Map, kSysIpcArity);
+    registerArity(Map, kSysMmanArity);
+    registerArity(Map, kSysRandomArity);
+    registerArity(Map, kSysResourceArity);
+    registerArity(Map, kSysSelectArity);
+    registerArity(Map, kSysSemArity);
+    registerArity(Map, kSysSendfileArity);
+    registerArity(Map, kSysSocketArity);
+    registerArity(Map, kSysStatArity);
+    registerArity(Map, kSysStatvfsArity);
+    registerArity(Map, kSysTimeArity);
+    registerArity(Map, kSysUioArity);
+    registerArity(Map, kSysUtsnameArity);
+    registerArity(Map, kSysWaitArity);
+    registerArity(Map, kGetoptArity);
+    registerArity(Map, kLanginfoArity);
+    registerArity(Map, kFnmatchArity);
+    registerArity(Map, kStdioExtArity);
+    registerArity(Map, kUcharArity);
     // The Windows C runtime's names are those of other runtimes' routines
     // once their underscores go (`_lock`, `terminate`): its prototypes apply
     // by object format alone.
