@@ -9,11 +9,13 @@
 #include "neverd/backend/llvm/WindowsRegistrationFrame.h"
 
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/ValueSymbolTable.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Object/COFF.h"
@@ -46,6 +48,11 @@ struct Fixture {
         llvm::FunctionType::get(llvm::Type::getInt32Ty(Context),
                                 {llvm::Type::getInt32Ty(Context)}, false),
         llvm::GlobalValue::ExternalLinkage, "parent", Module);
+    auto *PersonalityTy =
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(Context), {}, true);
+    Parent->setPersonalityFn(llvm::cast<llvm::Constant>(
+        Module.getOrInsertFunction("_except_handler3", PersonalityTy)
+            .getCallee()));
     Entry = llvm::BasicBlock::Create(Context, "entry", Parent);
     llvm::IRBuilder<> B(Entry);
     Local = B.CreateAlloca(B.getInt32Ty(), nullptr, "local");
@@ -54,6 +61,11 @@ struct Fixture {
     Filter = llvm::BasicBlock::Create(Context, "filter", Parent);
     llvm::IRBuilder<> F(Filter);
     F.CreateRet(F.CreateLoad(F.getInt32Ty(), Local));
+  }
+
+  void clearFilter() {
+    while (!Filter->empty())
+      Filter->back().eraseFromParent();
   }
 
   std::string text() {
@@ -74,6 +86,37 @@ struct Fixture {
     return Result;
   }
 };
+
+llvm::Expected<std::vector<char>> emitObject(llvm::Module &Module) {
+  std::string Errors;
+  static std::once_flag Once;
+  std::call_once(Once, [] {
+    llvm::InitializeAllTargetInfos();
+    llvm::InitializeAllTargets();
+    llvm::InitializeAllTargetMCs();
+    llvm::InitializeAllAsmPrinters();
+  });
+  const llvm::Target *Target =
+      llvm::TargetRegistry::lookupTarget(Module.getTargetTriple(), Errors);
+  if (!Target)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(), Errors);
+  llvm::TargetOptions Options;
+  std::unique_ptr<llvm::TargetMachine> Machine(Target->createTargetMachine(
+      Module.getTargetTriple(), "i686", "", Options, llvm::Reloc::Static));
+  if (!Machine)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "could not create i386 target machine");
+  Module.setDataLayout(Machine->createDataLayout());
+  llvm::SmallVector<char, 0> Bytes;
+  llvm::raw_svector_ostream OS(Bytes);
+  llvm::legacy::PassManager Passes;
+  if (Machine->addPassesToEmitFile(Passes, OS, nullptr,
+                                   llvm::CodeGenFileType::ObjectFile))
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "could not emit i386 object");
+  Passes.run(Module);
+  return std::vector<char>(Bytes.begin(), Bytes.end());
+}
 
 TEST(WindowsRegistrationFrame, FilterRecoversTheParentsActualLocal) {
   Fixture F;
@@ -150,7 +193,7 @@ TEST(WindowsRegistrationFrame, PreservesExistingEscapeIndices) {
 
 TEST(WindowsRegistrationFrame, ParentArgumentsAreRecoveredFromEscapedStorage) {
   Fixture F;
-  F.Filter->getTerminator()->eraseFromParent();
+  F.clearFilter();
   llvm::IRBuilder<> B(F.Filter);
   B.CreateRet(
       B.CreateAdd(B.CreateLoad(B.getInt32Ty(), F.Local), F.Parent->getArg(0)));
@@ -172,7 +215,7 @@ TEST(WindowsRegistrationFrame,
   auto *Frame =
       B.CreateAlloca(llvm::ArrayType::get(B.getInt8Ty(), 64), nullptr, "frame");
   X86RegistrationCallbackFrame Spec;
-  Spec.ExceptionPointersFrame = Frame;
+  Spec.SyntheticFrame = Frame;
   Spec.ExceptionPointersOffset = 40;
   auto Result = outlineX86RegistrationCallback(
       *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
@@ -201,13 +244,19 @@ TEST(WindowsRegistrationFrame, CallbackStackDoesNotOverwriteTheParentESPSlot) {
   Fixture F;
   llvm::IRBuilder<> B(F.Entry->getTerminator());
   auto *ESP = B.CreateAlloca(B.getInt32Ty(), nullptr, "esp.root");
-  F.Filter->getTerminator()->eraseFromParent();
+  F.clearFilter();
   llvm::IRBuilder<> FB(F.Filter);
-  FB.CreateStore(FB.getInt32(17), ESP);
-  FB.CreateRet(FB.CreateLoad(FB.getInt32Ty(), ESP));
+  auto *Seed = FB.CreateStore(F.Parent->getArg(0), ESP);
+  auto *Cell = FB.CreateIntToPtr(
+      FB.CreateSub(FB.CreateLoad(FB.getInt32Ty(), ESP), FB.getInt32(4)),
+      FB.getPtrTy());
+  FB.CreateStore(FB.getInt32(17), Cell);
+  FB.CreateRet(FB.CreateLoad(FB.getInt32Ty(), Cell));
+  X86RegistrationRootSeed Root{Seed, X86RegistrationRootKind::StackPointer};
   X86RegistrationCallbackFrame Spec;
-  Spec.StackPointerSlots = llvm::ArrayRef(ESP);
+  Spec.RootSeeds = llvm::ArrayRef(Root);
   Spec.StackBytes = 128;
+  Spec.StackPointerOffset = 128;
   auto Result = outlineX86RegistrationCallback(
       *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
       "filter.outlined", Spec);
@@ -232,7 +281,7 @@ TEST(WindowsRegistrationFrame,
   auto *FrameEnd = B.CreateInBoundsGEP(B.getInt8Ty(), Frame, B.getInt32(48));
   auto *FrameInt = B.CreatePtrToInt(FrameEnd, B.getInt64Ty());
   auto *FrameLow = B.CreateTrunc(FrameInt, B.getInt32Ty());
-  F.Filter->getTerminator()->eraseFromParent();
+  F.clearFilter();
   llvm::IRBuilder<> FB(F.Filter);
   auto *Cell =
       FB.CreateIntToPtr(FB.CreateSub(FrameLow, FB.getInt32(4)), FB.getPtrTy());
@@ -291,27 +340,10 @@ TEST(WindowsRegistrationFrame, CodegenEmitsThePE32FilterTableAndFrameRecovery) {
   std::string Errors;
   llvm::raw_string_ostream ErrorStream(Errors);
   ASSERT_FALSE(llvm::verifyModule(F.Module, &ErrorStream)) << Errors;
-  static std::once_flag Once;
-  std::call_once(Once, [] {
-    llvm::InitializeAllTargetInfos();
-    llvm::InitializeAllTargets();
-    llvm::InitializeAllTargetMCs();
-    llvm::InitializeAllAsmPrinters();
-  });
-  const llvm::Target *Target =
-      llvm::TargetRegistry::lookupTarget(F.Module.getTargetTriple(), Errors);
-  ASSERT_NE(Target, nullptr) << Errors;
-  llvm::TargetOptions Options;
-  std::unique_ptr<llvm::TargetMachine> Machine(Target->createTargetMachine(
-      F.Module.getTargetTriple(), "i686", "", Options, llvm::Reloc::Static));
-  ASSERT_NE(Machine, nullptr);
-  F.Module.setDataLayout(Machine->createDataLayout());
-  llvm::SmallVector<char, 0> Bytes;
-  llvm::raw_svector_ostream OS(Bytes);
-  llvm::legacy::PassManager Passes;
-  ASSERT_FALSE(Machine->addPassesToEmitFile(Passes, OS, nullptr,
-                                            llvm::CodeGenFileType::ObjectFile));
-  Passes.run(F.Module);
+  auto Emitted = emitObject(F.Module);
+  ASSERT_TRUE(static_cast<bool>(Emitted))
+      << llvm::toString(Emitted.takeError());
+  const auto &Bytes = *Emitted;
   auto Object =
       llvm::object::ObjectFile::createObjectFile(llvm::MemoryBufferRef(
           llvm::StringRef(Bytes.data(), Bytes.size()), "registration.obj"));
@@ -339,11 +371,82 @@ TEST(WindowsRegistrationFrame, CodegenEmitsThePE32FilterTableAndFrameRecovery) {
   EXPECT_TRUE(HasScope);
 }
 
+TEST(WindowsRegistrationFrame, FinallyTableTargetsTheRuntimeCleanupFunclet) {
+  Fixture F;
+  auto Result = outlineX86RegistrationCallback(
+      *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Finally,
+      "finally.outlined");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  llvm::Function *Helper = *Result;
+  auto *Protected = llvm::BasicBlock::Create(F.Context, "protected", F.Parent);
+  auto *Normal = llvm::BasicBlock::Create(F.Context, "normal", F.Parent);
+  auto *Cleanup = llvm::BasicBlock::Create(F.Context, "cleanup", F.Parent);
+  F.Module.addModuleFlag(llvm::Module::Warning, "eh-asynch", 1);
+  F.Entry->getTerminator()->eraseFromParent();
+  llvm::IRBuilder<> EB(F.Entry);
+  EB.CreateInvoke(llvm::Intrinsic::getOrInsertDeclaration(
+                      &F.Module, llvm::Intrinsic::seh_try_begin),
+                  Protected, Cleanup);
+  llvm::IRBuilder<> PB(Protected);
+  auto *Value = PB.CreateLoad(PB.getInt32Ty(), F.Local);
+  Value->setVolatile(true);
+  PB.CreateInvoke(llvm::Intrinsic::getOrInsertDeclaration(
+                      &F.Module, llvm::Intrinsic::seh_try_end),
+                  Normal, Cleanup);
+  llvm::IRBuilder<> NB(Normal);
+  auto *LocalAddress = llvm::Intrinsic::getOrInsertDeclaration(
+      &F.Module, llvm::Intrinsic::localaddress);
+  NB.CreateCall(Helper, {NB.getInt8(0), NB.CreateCall(LocalAddress)});
+  NB.CreateRet(Value);
+  llvm::IRBuilder<> CB(Cleanup);
+  auto *Pad = CB.CreateCleanupPad(llvm::ConstantTokenNone::get(F.Context), {});
+  const llvm::OperandBundleDef Bundle("funclet", Pad);
+  CB.CreateCall(Helper, {CB.getInt8(1), CB.CreateCall(LocalAddress)}, {Bundle});
+  CB.CreateCleanupRet(Pad, nullptr);
+  std::string Errors;
+  llvm::raw_string_ostream ES(Errors);
+  ASSERT_FALSE(llvm::verifyModule(F.Module, &ES)) << Errors;
+  auto Emitted = emitObject(F.Module);
+  ASSERT_TRUE(static_cast<bool>(Emitted))
+      << llvm::toString(Emitted.takeError());
+  const auto &Bytes = *Emitted;
+  auto Object = llvm::object::ObjectFile::createObjectFile(
+      llvm::MemoryBufferRef(llvm::StringRef(Bytes.data(), Bytes.size()),
+                            "registration-finally.obj"));
+  ASSERT_TRUE(static_cast<bool>(Object)) << llvm::toString(Object.takeError());
+  bool HasFinally = false;
+  for (llvm::object::SectionRef Section : (*Object)->sections()) {
+    auto Name = Section.getName();
+    ASSERT_TRUE(static_cast<bool>(Name)) << llvm::toString(Name.takeError());
+    if (*Name != ".xdata")
+      continue;
+    auto Contents = Section.getContents();
+    ASSERT_TRUE(static_cast<bool>(Contents))
+        << llvm::toString(Contents.takeError());
+    ASSERT_EQ(Contents->size(), 12u);
+    EXPECT_EQ(Contents->substr(4, 4), llvm::StringRef("\0\0\0\0", 4));
+    unsigned Targets = 0;
+    for (llvm::object::RelocationRef Relocation : Section.relocations()) {
+      EXPECT_EQ(Relocation.getOffset(), 8u);
+      EXPECT_EQ(Relocation.getType(), llvm::COFF::IMAGE_REL_I386_DIR32);
+      auto Target = Relocation.getSymbol()->getName();
+      ASSERT_TRUE(static_cast<bool>(Target))
+          << llvm::toString(Target.takeError());
+      EXPECT_TRUE(Target->starts_with("?dtor$")) << Target->str();
+      EXPECT_FALSE(Target->contains("finally.outlined"));
+      ++Targets;
+    }
+    EXPECT_EQ(Targets, 1u);
+    HasFinally = true;
+  }
+  EXPECT_TRUE(HasFinally);
+}
+
 TEST(WindowsRegistrationFrame, RejectsNonlocalValuesBeforeMutatingTheModule) {
   Fixture F;
   llvm::IRBuilder<> Entry(F.Entry->getTerminator());
   auto *Value = Entry.CreateLoad(Entry.getInt32Ty(), F.Local, "parent.value");
-  F.Filter->getTerminator()->eraseFromParent();
+  F.clearFilter();
   llvm::IRBuilder<>(F.Filter).CreateRet(Value);
   const std::string Before = F.text();
   auto Result = outlineX86RegistrationCallback(
@@ -364,7 +467,7 @@ TEST(WindowsRegistrationFrame, RejectsOrdinaryFlowIntoRuntimeCallback) {
       *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
       "filter.outlined");
   ASSERT_FALSE(static_cast<bool>(Result));
-  EXPECT_NE(llvm::toString(Result.takeError()).find("ordinary parent flow"),
+  EXPECT_NE(llvm::toString(Result.takeError()).find("outside"),
             std::string::npos);
   EXPECT_EQ(F.text(), Before);
 }
@@ -372,7 +475,7 @@ TEST(WindowsRegistrationFrame, RejectsOrdinaryFlowIntoRuntimeCallback) {
 TEST(WindowsRegistrationFrame, RejectsAnOutOfBoundsExceptionCellAtomically) {
   Fixture F;
   X86RegistrationCallbackFrame Spec;
-  Spec.ExceptionPointersFrame = F.Local;
+  Spec.SyntheticFrame = F.Local;
   Spec.ExceptionPointersOffset = 1;
   const std::string Before = F.text();
   auto Result = outlineX86RegistrationCallback(
@@ -381,6 +484,258 @@ TEST(WindowsRegistrationFrame, RejectsAnOutOfBoundsExceptionCellAtomically) {
   ASSERT_FALSE(static_cast<bool>(Result));
   EXPECT_NE(llvm::toString(Result.takeError()).find("outside"),
             std::string::npos);
+  EXPECT_EQ(F.text(), Before);
+}
+
+TEST(WindowsRegistrationFrame, RepositionsEscapeAfterNewStaticAllocas) {
+  Fixture F;
+  llvm::IRBuilder<> B(F.Entry->getTerminator());
+  auto *OldEscape = B.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
+                                     &F.Module, llvm::Intrinsic::localescape),
+                                 {F.Local});
+  auto *Later = B.CreateAlloca(B.getInt32Ty(), nullptr, "later");
+  B.CreateStore(B.getInt32(9), Later);
+  F.clearFilter();
+  llvm::IRBuilder<> FB(F.Filter);
+  FB.CreateRet(FB.CreateLoad(FB.getInt32Ty(), Later));
+  ASSERT_TRUE(OldEscape->comesBefore(Later));
+  ASSERT_FALSE(llvm::verifyModule(F.Module));
+  auto Result = outlineX86RegistrationCallback(
+      *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
+      "filter.outlined");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  auto Escape = F.calls(*F.Parent, llvm::Intrinsic::localescape);
+  ASSERT_EQ(Escape.size(), 1u);
+  EXPECT_TRUE(Later->comesBefore(Escape[0]));
+  EXPECT_FALSE(llvm::verifyModule(F.Module));
+}
+
+TEST(WindowsRegistrationFrame, CapturesArgumentsBeforeTheFirstFaultingCall) {
+  Fixture F;
+  llvm::IRBuilder<> B(F.Entry, F.Entry->getFirstInsertionPt());
+  auto Callee = F.Module.getOrInsertFunction(
+      "may_fault", llvm::FunctionType::get(B.getVoidTy(), {}, false));
+  auto *Fault = B.CreateCall(Callee);
+  F.clearFilter();
+  llvm::IRBuilder<>(F.Filter).CreateRet(F.Parent->getArg(0));
+  auto Result = outlineX86RegistrationCallback(
+      *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
+      "filter.outlined");
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  auto Escape = F.calls(*F.Parent, llvm::Intrinsic::localescape);
+  ASSERT_EQ(Escape.size(), 1u);
+  ASSERT_EQ(Escape[0]->arg_size(), 1u);
+  auto *Capture = llvm::cast<llvm::AllocaInst>(Escape[0]->getArgOperand(0));
+  bool InitializedBeforeFault = false;
+  for (llvm::User *User : Capture->users())
+    if (auto *Store = llvm::dyn_cast<llvm::StoreInst>(User))
+      InitializedBeforeFault |=
+          Store->getValueOperand() == F.Parent->getArg(0) &&
+          Store->comesBefore(Fault);
+  EXPECT_TRUE(InitializedBeforeFault);
+  EXPECT_FALSE(llvm::verifyModule(F.Module));
+}
+
+TEST(WindowsRegistrationFrame,
+     ARejectedLaterCallbackLeavesTheWholeBatchIntact) {
+  Fixture F;
+  llvm::IRBuilder<> B(F.Entry->getTerminator());
+  auto *Nonlocal = B.CreateLoad(B.getInt32Ty(), F.Local);
+  auto *Second = llvm::BasicBlock::Create(F.Context, "second", F.Parent);
+  llvm::IRBuilder<>(Second).CreateRet(Nonlocal);
+  std::vector<X86RegistrationCallbackRequest> Requests{
+      {F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter, "first", {}},
+      {Second, {Second}, X86RegistrationCallbackKind::Filter, "second", {}}};
+  const std::string Before = F.text();
+  auto Result = outlineX86RegistrationCallbacks(*F.Parent, Requests);
+  ASSERT_FALSE(static_cast<bool>(Result));
+  llvm::consumeError(Result.takeError());
+  EXPECT_EQ(F.text(), Before);
+}
+
+TEST(WindowsRegistrationFrame, BindsSourceEBPToTheRecoveredSyntheticFrame) {
+  Fixture F;
+  llvm::IRBuilder<> B(F.Entry->getTerminator());
+  auto *Frame = B.CreateAlloca(llvm::ArrayType::get(B.getInt8Ty(), 64), nullptr,
+                               "synthetic.frame");
+  auto *EBP = B.CreateAlloca(B.getInt32Ty(), nullptr, "ebp.root");
+  F.clearFilter();
+  llvm::IRBuilder<> FB(F.Filter);
+  auto *Seed = FB.CreateStore(F.Parent->getArg(0), EBP);
+  auto *Address = FB.CreateIntToPtr(
+      FB.CreateSub(FB.CreateLoad(FB.getInt32Ty(), EBP), FB.getInt32(4)),
+      FB.getPtrTy());
+  FB.CreateRet(FB.CreateLoad(FB.getInt32Ty(), Address));
+  X86RegistrationRootSeed Root{Seed, X86RegistrationRootKind::FramePointer};
+  X86RegistrationCallbackFrame Spec;
+  Spec.SyntheticFrame = Frame;
+  Spec.EstablishedFramePointerOffset = 48;
+  Spec.RootSeeds = llvm::ArrayRef(Root);
+  auto Result = outlineX86RegistrationCallback(
+      *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
+      "filter.outlined", Spec);
+  ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
+  auto Escape = F.calls(*F.Parent, llvm::Intrinsic::localescape);
+  ASSERT_EQ(Escape.size(), 1u);
+  ASSERT_EQ(Escape[0]->arg_size(), 1u);
+  EXPECT_EQ(Escape[0]->getArgOperand(0), Frame);
+  auto *SourceEBP = (*Result)->getValueSymbolTable()->lookup("source.ebp");
+  auto *GEP = llvm::dyn_cast_or_null<llvm::GetElementPtrInst>(SourceEBP);
+  ASSERT_NE(GEP, nullptr);
+  auto Recover = F.calls(**Result, llvm::Intrinsic::localrecover);
+  ASSERT_EQ(Recover.size(), 1u);
+  EXPECT_EQ(GEP->getPointerOperand(), Recover[0]);
+  EXPECT_EQ(llvm::cast<llvm::ConstantInt>(GEP->getOperand(1))->getZExtValue(),
+            48u);
+  EXPECT_FALSE(llvm::verifyModule(F.Module));
+}
+
+TEST(WindowsRegistrationFrame, RejectsASeedSlotSharedWithTheInterruptedParent) {
+  Fixture F;
+  F.clearFilter();
+  llvm::IRBuilder<> FB(F.Filter);
+  auto *Seed = FB.CreateStore(FB.getInt32(0), F.Local);
+  FB.CreateRet(FB.CreateLoad(FB.getInt32Ty(), F.Local));
+  X86RegistrationRootSeed Root{Seed, X86RegistrationRootKind::StackPointer};
+  X86RegistrationCallbackFrame Spec;
+  Spec.RootSeeds = llvm::ArrayRef(Root);
+  Spec.StackBytes = 32;
+  Spec.StackPointerOffset = 32;
+  const std::string Before = F.text();
+  auto Result = outlineX86RegistrationCallback(
+      *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
+      "filter.outlined", Spec);
+  ASSERT_FALSE(static_cast<bool>(Result));
+  EXPECT_NE(llvm::toString(Result.takeError()).find("storage"),
+            std::string::npos);
+  EXPECT_EQ(F.text(), Before);
+}
+
+TEST(WindowsRegistrationFrame, RejectsPrivateESPAsAnObservableReturnValue) {
+  Fixture F;
+  llvm::IRBuilder<> B(F.Entry->getTerminator());
+  auto *ESP = B.CreateAlloca(B.getInt32Ty(), nullptr, "esp.root");
+  F.clearFilter();
+  llvm::IRBuilder<> FB(F.Filter);
+  auto *Seed = FB.CreateStore(FB.getInt32(0), ESP);
+  FB.CreateRet(FB.CreateLoad(FB.getInt32Ty(), ESP));
+  X86RegistrationRootSeed Root{Seed, X86RegistrationRootKind::StackPointer};
+  X86RegistrationCallbackFrame Spec;
+  Spec.RootSeeds = llvm::ArrayRef(Root);
+  Spec.StackBytes = 32;
+  Spec.StackPointerOffset = 32;
+  const std::string Before = F.text();
+  auto Result = outlineX86RegistrationCallback(
+      *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
+      "filter.outlined", Spec);
+  ASSERT_FALSE(static_cast<bool>(Result));
+  EXPECT_NE(llvm::toString(Result.takeError()).find("observable"),
+            std::string::npos);
+  EXPECT_EQ(F.text(), Before);
+}
+
+TEST(WindowsRegistrationFrame, RejectsAnEntryStackCellRead) {
+  Fixture F;
+  llvm::IRBuilder<> B(F.Entry->getTerminator());
+  auto *ESP = B.CreateAlloca(B.getInt32Ty(), nullptr, "esp.root");
+  F.clearFilter();
+  llvm::IRBuilder<> FB(F.Filter);
+  auto *Seed = FB.CreateStore(FB.getInt32(0), ESP);
+  auto *Cell =
+      FB.CreateIntToPtr(FB.CreateLoad(FB.getInt32Ty(), ESP), FB.getPtrTy());
+  FB.CreateRet(FB.CreateLoad(FB.getInt32Ty(), Cell));
+  X86RegistrationRootSeed Root{Seed, X86RegistrationRootKind::StackPointer};
+  X86RegistrationCallbackFrame Spec;
+  Spec.RootSeeds = llvm::ArrayRef(Root);
+  Spec.StackBytes = 32;
+  Spec.StackPointerOffset = 32;
+  const std::string Before = F.text();
+  auto Result = outlineX86RegistrationCallback(
+      *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
+      "filter.outlined", Spec);
+  ASSERT_FALSE(static_cast<bool>(Result));
+  EXPECT_NE(llvm::toString(Result.takeError()).find("entry cell"),
+            std::string::npos);
+  EXPECT_EQ(F.text(), Before);
+}
+
+TEST(WindowsRegistrationFrame, RejectsUninitializedDispatcherStackContents) {
+  Fixture F;
+  llvm::IRBuilder<> B(F.Entry->getTerminator());
+  auto *ESP = B.CreateAlloca(B.getInt32Ty(), nullptr, "esp.root");
+  F.clearFilter();
+  llvm::IRBuilder<> FB(F.Filter);
+  auto *Seed = FB.CreateStore(FB.getInt32(0), ESP);
+  auto *Cell = FB.CreateIntToPtr(
+      FB.CreateSub(FB.CreateLoad(FB.getInt32Ty(), ESP), FB.getInt32(4)),
+      FB.getPtrTy());
+  FB.CreateRet(FB.CreateLoad(FB.getInt32Ty(), Cell));
+  X86RegistrationRootSeed Root{Seed, X86RegistrationRootKind::StackPointer};
+  X86RegistrationCallbackFrame Spec;
+  Spec.RootSeeds = llvm::ArrayRef(Root);
+  Spec.StackBytes = 32;
+  Spec.StackPointerOffset = 32;
+  const std::string Before = F.text();
+  auto Result = outlineX86RegistrationCallback(
+      *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
+      "filter.outlined", Spec);
+  ASSERT_FALSE(static_cast<bool>(Result));
+  EXPECT_NE(llvm::toString(Result.takeError()).find("definitely initialized"),
+            std::string::npos);
+  EXPECT_EQ(F.text(), Before);
+}
+
+TEST(WindowsRegistrationFrame, RejectsBlockAddressesHiddenInAGlobal) {
+  Fixture F;
+  auto *Address = llvm::BlockAddress::get(F.Parent, F.Filter);
+  auto *Table = new llvm::GlobalVariable(F.Module, Address->getType(), true,
+                                         llvm::GlobalValue::InternalLinkage,
+                                         Address, "callback.address");
+  llvm::IRBuilder<> B(F.Filter->getTerminator());
+  B.CreateLoad(B.getPtrTy(), Table);
+  const std::string Before = F.text();
+  auto Result = outlineX86RegistrationCallback(
+      *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
+      "filter.outlined");
+  ASSERT_FALSE(static_cast<bool>(Result));
+  llvm::consumeError(Result.takeError());
+  EXPECT_EQ(F.text(), Before);
+}
+
+TEST(WindowsRegistrationFrame, RejectsMustTailBeforeChangingTheSignature) {
+  Fixture F;
+  F.clearFilter();
+  llvm::IRBuilder<> B(F.Filter);
+  auto Callee =
+      F.Module.getOrInsertFunction("callee", F.Parent->getFunctionType());
+  auto *Call = B.CreateCall(Callee, {F.Parent->getArg(0)});
+  Call->setTailCallKind(llvm::CallInst::TCK_MustTail);
+  B.CreateRet(Call);
+  ASSERT_FALSE(llvm::verifyModule(F.Module));
+  const std::string Before = F.text();
+  auto Result = outlineX86RegistrationCallback(
+      *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
+      "filter.outlined");
+  ASSERT_FALSE(static_cast<bool>(Result));
+  EXPECT_NE(llvm::toString(Result.takeError()).find("ABI context"),
+            std::string::npos);
+  EXPECT_EQ(F.text(), Before);
+}
+
+TEST(WindowsRegistrationFrame, RejectsAConflictingRuntimePersonality) {
+  Fixture F;
+  F.Parent->setPersonalityFn(llvm::cast<llvm::Constant>(
+      F.Module
+          .getOrInsertFunction("__CxxFrameHandler3",
+                               llvm::FunctionType::get(
+                                   llvm::Type::getInt32Ty(F.Context), {}, true))
+          .getCallee()));
+  const std::string Before = F.text();
+  auto Result = outlineX86RegistrationCallback(
+      *F.Parent, *F.Filter, {F.Filter}, X86RegistrationCallbackKind::Filter,
+      "filter.outlined");
+  ASSERT_FALSE(static_cast<bool>(Result));
+  llvm::consumeError(Result.takeError());
   EXPECT_EQ(F.text(), Before);
 }
 
