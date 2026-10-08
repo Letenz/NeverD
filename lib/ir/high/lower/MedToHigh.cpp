@@ -349,6 +349,9 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
     return HighExpr::makeConst(V.ConstVal, V.Size, V.Provenance,
                                V.AddressOwnerVA);
   }
+  // The proven GOT base of an unlinked i386 object is address zero.
+  if (I386GotBase.count(varKey(V)))
+    return HighExpr::makeConst(0, V.Size, ConstantAddressProvenance::Scalar);
 
   auto SourceParameter = [&](MedVar Parameter, size_t Index) -> ExprPtr {
     const auto &Bindings = SourceParameters;
@@ -804,6 +807,7 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
   UseCount.clear();
   DefExpr.clear();
   SourceRecordValues.clear();
+  collectI386GotBase(Med);
   for (const auto &Block : Med.Blocks)
     for (const auto &Op : Block.Ops)
       if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&

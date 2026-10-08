@@ -34315,6 +34315,79 @@ std::string highcOnlyFunction(BinaryImage Img, va_t Entry,
   return Source;
 }
 
+TEST(HighCPointerAddresses, I386PicDataIsReadThroughItsObject) {
+  // `call $+5; pop eax; add eax, GOTPC` puts the GOT's address in EAX and
+  // `movdqa xmm0, .LCPI0_0@GOTOFF(%eax)` loads a constant-pool vector.  The
+  // GOT of an unlinked object is at zero, so the load reads the constant's
+  // object, not whatever lies at its image address in the rebuilt program
+  // (the stored call-next PC minus itself, plus that address).
+#ifdef NEVERD_TEST_CLANG
+  const std::string Compiler = NEVERD_TEST_CLANG;
+#else
+  const auto Found = llvm::sys::findProgramByName("clang");
+  ASSERT_TRUE(static_cast<bool>(Found)) << "clang is required";
+  const std::string Compiler = *Found;
+#endif
+  llvm::SmallString<128> SourcePath, ObjectPath, CheckPath, ErrorPath;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-pic", "c", SourcePath));
+  llvm::FileRemover RemoveSource(SourcePath);
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-pic", "o", ObjectPath));
+  llvm::FileRemover RemoveObject(ObjectPath);
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-pic-out", "c", CheckPath));
+  llvm::FileRemover RemoveCheck(CheckPath);
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-pic", "err", ErrorPath));
+  llvm::FileRemover RemoveError(ErrorPath);
+  auto Write = [](llvm::StringRef Path, llvm::StringRef Text) {
+    std::error_code EC;
+    llvm::raw_fd_ostream OS(Path, EC);
+    OS << Text;
+    return !EC;
+  };
+  ASSERT_TRUE(Write(SourcePath, R"(
+int weigh(const int *p, int n) {
+  int buf[64];
+  for (int i = 0; i < 64; i++) buf[i] = p[i] * 7 + 3;
+  int s = 0;
+  for (int i = 0; i < 64; i++) s += buf[(i * n) & 63];
+  return s;
+}
+)"));
+  const std::optional<llvm::StringRef> Redirects[] = {
+      std::nullopt, ErrorPath.str(), ErrorPath.str()};
+  auto Run = [&](llvm::ArrayRef<llvm::StringRef> Arguments) {
+    std::string Error;
+    const int Result = llvm::sys::ExecuteAndWait(
+        Compiler, Arguments, std::nullopt, Redirects, 60, 0, &Error);
+    auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
+    return Result == 0 ? std::string()
+                       : Error + (Errors ? (*Errors)->getBuffer().str() : "?");
+  };
+  const std::string Built =
+      Run({Compiler, "--target=i386-linux-gnu", "-march=pentium4", "-O2",
+           "-fPIC", "-c", SourcePath, "-o", ObjectPath});
+  ASSERT_TRUE(Built.empty()) << Built;
+  auto Img = loadBinary(ObjectPath.str().str());
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  const Symbol *Weigh = Img->findSymbol("weigh");
+  ASSERT_NE(Weigh, nullptr);
+  const Symbol *Pool = Img->findSymbol(".LCPI0_0");
+  ASSERT_NE(Pool, nullptr);
+  const std::string PoolAddress = std::to_string(Pool->Addr);
+  const std::string HighC = highcOnlyFunction(std::move(*Img), Weigh->Addr);
+  const size_t Body = HighC.find("weigh(");
+  ASSERT_NE(Body, std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("= _x2E_LCPI0_0;", Body), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find(" + " + PoolAddress + ")", Body), std::string::npos)
+      << HighC;
+  ASSERT_TRUE(Write(CheckPath, "#include <stdint.h>\n" + HighC));
+  const std::string Checked =
+      Run({Compiler, "--target=i386-linux-gnu", "-ffreestanding",
+           "-fsyntax-only", CheckPath});
+  EXPECT_TRUE(Checked.empty()) << Checked << HighC;
+}
+
 TEST(HighCPointerAddresses, CorpusBufferedCatchUsesParentFrameForIndex) {
   if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
     GTEST_SKIP() << "windows-eh corpus root is not configured";
