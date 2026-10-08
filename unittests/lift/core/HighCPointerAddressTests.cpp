@@ -1158,9 +1158,9 @@ TEST(HighCPointerAddresses, NumericConstantsDoNotAcquireImageObjectIdentity) {
     const auto Source = emitFunctions(Functions, Arch::X64, &Img);
     // Actual memory uses still materialize the named object or shared byte
     // backing. Only the two independent numeric occurrences stay guest bits.
-    ASSERT_NE(Source.find("g_140003580"), std::string::npos) << Source;
-    if (Overlapping)
-      EXPECT_NE(Source.find("g_140003580_bytes"), std::string::npos) << Source;
+    // The object is named as the listing names a four-byte access.
+    const char *Object = Overlapping ? "g_140003580_bytes" : "dword_140003580";
+    ASSERT_NE(Source.find(Object), std::string::npos) << Source;
     for (const char *Name :
          {"return_scalar_number", "return_address_fragment"}) {
       const auto Start = Source.find(Name);
@@ -1169,7 +1169,7 @@ TEST(HighCPointerAddresses, NumericConstantsDoNotAcquireImageObjectIdentity) {
       ASSERT_NE(End, std::string::npos) << Source;
       const auto Body = Source.substr(Start, End - Start);
       EXPECT_NE(Body.find("return 0x140003580"), std::string::npos) << Source;
-      EXPECT_EQ(Body.find("g_140003580"), std::string::npos) << Source;
+      EXPECT_EQ(Body.find("_140003580"), std::string::npos) << Source;
     }
   }
 }
@@ -8024,11 +8024,12 @@ TEST(HighCPointerAddresses, NamesWritableImageDataStore) {
   Options.Image = &Img;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
   OS.flush();
-  EXPECT_NE(Source.find("int32_t g_1400050E0;"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("g_1400050E0 = 41;"), std::string::npos) << Source;
+  // The object is named as the listing names the four-byte store's operand.
+  EXPECT_NE(Source.find("int32_t dword_1400050E0;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("dword_1400050E0 = 41;"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("*(int32_t *)(0x1400050E0)"), std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("dword_"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("data_1400050E0"), std::string::npos) << Source;
 }
 
@@ -8054,11 +8055,10 @@ TEST(LLVMCPointerAddresses, NamesWritableNdDataGlobal) {
   Options.EmitIncludes = false;
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
   OS.flush();
-  EXPECT_NE(Source.find("g_1400050E0"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("extern uint32_t g_1400050E0;"), std::string::npos)
+  // Named as the listing names the four-byte store's operand.
+  EXPECT_NE(Source.find("extern uint32_t dword_1400050E0;"), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("data_1400050E0"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("dword_"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, DeclaresLiveTempsAndPreservesUnusedCallResults) {
@@ -34701,9 +34701,9 @@ TEST(LLVMCPointerAddresses, AllocaImmediateImageLoadPrintsSyntheticGlobal) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img, Function));
   OS.flush();
-  EXPECT_NE(Source.find("extern uint64_t g_1400050E0;"), std::string::npos)
+  // Named as the listing names the eight-byte load's operand.
+  EXPECT_NE(Source.find("extern uint64_t qword_1400050E0;"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("g_1400050E0"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("*(uint64_t*)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("5368754400"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("0x1400050E0"), std::string::npos) << Source;
@@ -34942,10 +34942,11 @@ TEST(LLVMCPointerAddresses, NdDataGepPrintsSyntheticGlobalNotNullLoad) {
       LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   EXPECT_EQ(Source.find("*(uint64_t*)0"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("uint8_t g_140005000[256] = {0};"), std::string::npos)
+  // An array reached at an offset has no access of its own size.
+  EXPECT_NE(Source.find("uint8_t unk_140005000[256] = {0};"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("g_140005000 + 64"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("g_140005040"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("unk_140005000 + 64"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("_140005040"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, StaleAllocaZeroDoesNotFoldLaterComputedLoad) {
