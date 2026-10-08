@@ -16,6 +16,8 @@
 
 #include "llvm/Support/ErrorHandling.h"
 
+#include <algorithm>
+
 namespace neverd {
 
 namespace {
@@ -68,6 +70,57 @@ int getOpPrecedence(NdOp Op) {
   default:
     return 0;
   }
+}
+
+/// Whether the integer \p Count is certainly below \p Limit, so a shift by it
+/// needs no guard against C's undefined overshift: a constant, a mask by a
+/// small constant (x86 masks a variable count to the operand width), or such
+/// a value through a conversion that keeps it.
+bool countBelow(const HighExpr &Count, uint64_t Limit, unsigned Depth = 0) {
+  if (Count.Kind == ExprKind::Const)
+    return Count.ConstVal < Limit;
+  if (Depth > 8 || !Count.Type || Count.Type->Kind != NdTypeKind::Int ||
+      Count.Type->Size == 0)
+    return false;
+  // A value below Limit keeps it in any width that holds Limit - 1.
+  const auto Holds = [&](uint16_t Bytes) {
+    return Bytes >= 8 || Limit <= (uint64_t{1} << (Bytes * 8));
+  };
+  if (!Holds(Count.Type->Size))
+    return false;
+  if (Count.Kind == ExprKind::BinOp && Count.Op == NdOp::INT_AND &&
+      Count.Operands.size() == 2) {
+    const uint64_t Mask = Count.Type->Size >= 8
+                              ? ~uint64_t{0}
+                              : (uint64_t{1} << (Count.Type->Size * 8)) - 1;
+    return std::any_of(Count.Operands.begin(), Count.Operands.end(),
+                       [&](const ExprPtr &Side) {
+                         return Side && Side->Kind == ExprKind::Const &&
+                                (Side->ConstVal & Mask) < Limit;
+                       });
+  }
+  const HighExpr *Inner = nullptr;
+  if (Count.Kind == ExprKind::BinOp && Count.Op == NdOp::SUBBYTES &&
+      Count.Operands.size() == 2 && Count.Operands[1] &&
+      Count.Operands[1]->Kind == ExprKind::Const &&
+      Count.Operands[1]->ConstVal == 0)
+    Inner = Count.Operands[0].get();
+  else if (Count.Operands.size() == 1 &&
+           (Count.Kind == ExprKind::Cast || Count.Kind == ExprKind::BitCast ||
+            (Count.Kind == ExprKind::UnaryOp &&
+             (Count.Op == NdOp::INT_ZEXT || Count.Op == NdOp::INT_SEXT))))
+    Inner = Count.Operands[0].get();
+  if (!Inner || !Inner->Type || Inner->Type->Kind != NdTypeKind::Int ||
+      Inner->Type->Size == 0)
+    return false;
+  // A sign extension keeps only a value whose top bit is clear.
+  const bool SignExtends =
+      Inner->Type->Size < Count.Type->Size &&
+      ((Count.Kind == ExprKind::UnaryOp && Count.Op == NdOp::INT_SEXT) ||
+       (Count.Kind == ExprKind::Cast && Inner->Type->IsSigned));
+  if (SignExtends && Limit > (uint64_t{1} << (Inner->Type->Size * 8 - 1)))
+    return false;
+  return countBelow(*Inner, Limit, Depth + 1);
 }
 
 } // anonymous namespace
@@ -486,7 +539,7 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       auto Operand = [&](const ExprPtr &Value) {
         const uint16_t Width = Value->Type->Size;
         // A zero-extension printed as `(T)(uintN_t)x` only needs the carrier
-        // in place of T.
+        // in place of T, and a 0 or 1 not even the byte view.
         if (Value->Kind == ExprKind::UnaryOp && Value->Op == NdOp::INT_ZEXT &&
             Width == CarrierSize && !typedCallResult(Value.get()) &&
             !Value->Operands.empty() && Value->Operands[0] &&
@@ -494,10 +547,12 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
             Value->Operands[0]->Type &&
             Value->Operands[0]->Type->Size < CarrierSize)
           return "(" + Carrier + ")" +
-                 integerView(
-                     *Value->Operands[0],
-                     NdType::makeInt(Value->Operands[0]->Type->Size, false),
-                     99);
+                 (printsTruthValue(*Value->Operands[0])
+                      ? exprStr(*Value->Operands[0], 99)
+                      : integerView(*Value->Operands[0],
+                                    NdType::makeInt(
+                                        Value->Operands[0]->Type->Size, false),
+                                    99));
         if (Width == CarrierSize)
           return integerView(*Value, NdType::makeInt(Width, false),
                              OperandPrec);
@@ -601,8 +656,14 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
         return Value;
       return "(" + ResultType + ")" + Value;
     };
-    const auto Left =
-        "(" + SourceType + ")" + c_memory::castOperand(exprStr(*E.Operands[0]));
+    // An operand that already prints with the source type keeps its text.
+    const std::string LeftText = exprStr(*E.Operands[0]);
+    const auto LeftPrinted = printedIntegerType(*E.Operands[0]);
+    const auto Left = (LeftPrinted && LeftPrinted->first == Size &&
+                               LeftPrinted->second == Arithmetic
+                           ? ""
+                           : "(" + SourceType + ")") +
+                      c_memory::castOperand(LeftText);
     const auto Limit = std::to_string(Size * 8u);
     // The opcode determines sign extension independently of inferred types.
     // Preserve the count's own width, then guard C's undefined overshifts.
@@ -615,6 +676,10 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                              ? "(" + Left + " >> " + std::to_string(Count) + ")"
                              : Fallback);
     }
+    // A count masked below the width needs no overshift guard.
+    if (countBelow(*E.Operands[1], Size * 8u))
+      return RestoreType("(" + Left + " >> " +
+                         c_memory::castOperand(exprStr(*E.Operands[1])) + ")");
     const auto CountType = typeToC(NdType::makeInt(
         E.Operands[1]->Type ? E.Operands[1]->Type->Size : 8, false));
     const auto Right =
@@ -636,20 +701,30 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
         typeToC(NdType::makeInt(Size < 4 ? 4 : Size, false));
     const std::string Left = c_memory::castOperand(exprStr(*E.Operands[0]));
     const std::string Right = c_memory::castOperand(exprStr(*E.Operands[1]));
+    // An operand that already prints unsigned at the source width needs no
+    // source cast, and at the carrier width no carrier cast either.
+    const auto LeftPrinted = printedIntegerType(*E.Operands[0]);
+    const bool LeftIsSource =
+        LeftPrinted && LeftPrinted->first == SourceSize && !LeftPrinted->second;
     // At a carrier width the shifted carrier is the result already.
     const std::string Shifted =
-        "(" + CarrierType + ")" +
-        (SourceType == CarrierType ? "" : "(" + SourceType + ")") + Left +
-        " << " + Right;
+        (LeftIsSource && SourceType == CarrierType
+             ? ""
+             : "(" + CarrierType + ")" +
+                   (SourceType == CarrierType || LeftIsSource
+                        ? ""
+                        : "(" + SourceType + ")")) +
+        Left + " << " + Right;
     const bool AtCarrier = ResultType == CarrierType;
     const auto Shift = AtCarrier ? "(" + Shifted + ")"
                                  : "(" + ResultType + ")(" + Shifted + ")";
-    if (E.Operands[1]->Kind == ExprKind::Const) {
-      if (E.Operands[1]->ConstVal >= Size * 8u)
-        return "0";
+    if (E.Operands[1]->Kind == ExprKind::Const &&
+        E.Operands[1]->ConstVal >= Size * 8u)
+      return "0";
+    // A constant or masked count below the width needs no overshift guard.
+    if (countBelow(*E.Operands[1], Size * 8u))
       return AtCarrier && getOpPrecedence(NdOp::INT_LEFT) > ParentPrec ? Shifted
                                                                        : Shift;
-    }
     const auto CountType = typeToC(NdType::makeInt(
         E.Operands[1]->Type ? E.Operands[1]->Type->Size : 8, false));
     return "((" + CountType + ")" + Right + " < " + std::to_string(Size * 8u) +
@@ -725,16 +800,13 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
            ")))";
   }
   case NdOp::INT_CARRY: {
+    // The carry out of the unsigned sum at the operand width.  Each operand
+    // prints once: a chain of carries would otherwise double at every link.
     const uint16_t Size = E.Operands[0]->Type ? E.Operands[0]->Type->Size : 8;
     const auto OperandType = typeToC(NdType::makeInt(Size, false));
-    const auto CarrierType =
-        typeToC(NdType::makeInt(Size < 4 ? 4 : Size, false));
-    const auto Left = "(" + OperandType + ")(" + exprStr(*E.Operands[0]) + ")";
-    const auto Right = "(" + OperandType + ")(" + exprStr(*E.Operands[1]) + ")";
-    // Carry uses unsigned bit patterns and the operand width, not the boolean
-    // result width. Restore that width after C promotes narrow operands.
-    return "((" + OperandType + ")((" + CarrierType + ")(" + Left + ") + (" +
-           CarrierType + ")(" + Right + ")) < (" + Left + "))";
+    return "__builtin_add_overflow((" + OperandType + ")(" +
+           exprStr(*E.Operands[0]) + "), (" + OperandType + ")(" +
+           exprStr(*E.Operands[1]) + "), &(" + OperandType + "){0})";
   }
   case NdOp::INT_SOVF:
   case NdOp::INT_SBOR: {
@@ -1034,6 +1106,18 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     RHS = CastOp(R);
   }
 
+  // A constant compares from the right, as a reader expects: `x >= 0` for
+  // `0 <= x`.  Both operands are evaluated either way.
+  const llvm::StringRef Sym(OpSym);
+  const bool Ordering =
+      Sym == " < " || Sym == " <= " || Sym == " == " || Sym == " != ";
+  const HighExpr *LeftValue = unwrapIntegerView(E.Operands[0].get());
+  const HighExpr *RightValue = unwrapIntegerView(E.Operands[1].get());
+  if (Ordering && LeftValue && LeftValue->Kind == ExprKind::Const &&
+      RightValue && RightValue->Kind != ExprKind::Const) {
+    std::swap(LHS, RHS);
+    OpSym = Sym == " < " ? " > " : Sym == " <= " ? " >= " : OpSym;
+  }
   std::string Result = LHS + OpSym + RHS;
   if (MyPrec > 0 && MyPrec <= ParentPrec)
     Result = "(" + Result + ")";

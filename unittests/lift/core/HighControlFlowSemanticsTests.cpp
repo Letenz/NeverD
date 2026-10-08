@@ -7295,13 +7295,102 @@ TEST(HighControlFlowSemantics, TemporariesReadOnceStayOutOfTheTailLimit) {
   }
 }
 
+TEST(HighControlFlowSemantics, AValueReadManyTimesIsNamedOnce) {
+  // e0 = x; e(k+1) = e(k) * 3 + (e(k) & 0xff): each level reads the one
+  // below twice, so the returned expression prints 2^12 copies of x.
+  // Naming the repeated levels keeps every printed expression small, and
+  // the result is unchanged.
+  auto Typed = [](ExprPtr E) {
+    E->Type = NdType::makeInt(8);
+    return E;
+  };
+  ExprPtr Level = local(0);
+  Level->Type = NdType::makeInt(8);
+  for (unsigned K = 0; K < 12; ++K)
+    Level = Typed(HighExpr::makeBinop(
+        NdOp::INT_ADD,
+        Typed(HighExpr::makeBinop(NdOp::INT_MULT, Level,
+                                  HighExpr::makeConst(3, 8))),
+        Typed(HighExpr::makeBinop(NdOp::INT_AND, Level,
+                                  HighExpr::makeConst(0xff, 8)))));
+  HighFunc F;
+  F.Body = {result(0x10, Level)};
+  const std::vector<uint64_t> Inputs{0, 1, 0xff, 0x1234567, ~uint64_t{0}};
+  std::vector<std::optional<uint64_t>> Expected;
+  for (uint64_t Input : Inputs)
+    Expected.push_back(execute(F, Input));
+  EXPECT_TRUE(nameRepeatedValues(F));
+  // Printed in full, each statement's expressions stay small.
+  std::function<uint64_t(const ExprPtr &)> Printed = [&](const ExprPtr &E) {
+    uint64_t N = 1;
+    if (E)
+      for (const ExprPtr &Operand : E->Operands)
+        N = std::min<uint64_t>(N + Printed(Operand), 1u << 20);
+    return N;
+  };
+  unsigned Names = 0;
+  for (const HighStmt &S : F.Body) {
+    EXPECT_LE(Printed(S.Kind == StmtKind::Return ? S.RetVal : S.Val), 512u);
+    Names += S.Kind == StmtKind::Assign && S.KeepsName;
+  }
+  EXPECT_GT(Names, 0u);
+  for (size_t I = 0; I != Inputs.size(); ++I)
+    EXPECT_EQ(execute(F, Inputs[I]), Expected[I]) << Inputs[I];
+}
+
+TEST(HighControlFlowSemantics, ALaneOfAJoinIsThatLane) {
+  // A 16-byte value joined from four 4-byte lanes, read back at bytes 8..11,
+  // is the third lane; a comparison of two constants and a selection on a
+  // constant fold to what they select.
+  auto Int = [](uint16_t Bytes) { return NdType::makeInt(Bytes); };
+  auto Lane = [&](uint64_t Factor) {
+    auto Times = HighExpr::makeBinop(NdOp::INT_MULT, local(0),
+                                     HighExpr::makeConst(Factor, 8));
+    Times->Type = Int(8);
+    auto Low =
+        HighExpr::makeBinop(NdOp::SUBBYTES, Times, HighExpr::makeConst(0, 4));
+    Low->Type = Int(4);
+    return Low;
+  };
+  auto Join = [&](ExprPtr High, ExprPtr Low, uint16_t Bytes) {
+    auto J = HighExpr::makeBinop(NdOp::CONCAT, std::move(High), std::move(Low));
+    J->Type = Int(Bytes);
+    return J;
+  };
+  ExprPtr Vector =
+      Join(Join(Lane(7), Lane(5), 8), Join(Lane(3), Lane(2), 8), 16);
+  auto Read =
+      HighExpr::makeBinop(NdOp::SUBBYTES, Vector, HighExpr::makeConst(8, 4));
+  Read->Type = Int(4);
+  auto Less = HighExpr::makeBinop(NdOp::INT_LESS, HighExpr::makeConst(30, 4),
+                                  HighExpr::makeConst(32, 4));
+  Less->Type = Int(1);
+  auto Select = std::make_shared<HighExpr>();
+  Select->Kind = ExprKind::BinOp;
+  Select->Op = NdOp::SELECT;
+  Select->Type = Int(4);
+  Select->Operands = {Less, Read, HighExpr::makeConst(0, 4)};
+  HighFunc F;
+  F.Body = {result(0x10, Select)};
+  simplifyAllExprs(F.Body);
+  const ExprPtr &Root = F.Body[0].RetVal;
+  ASSERT_TRUE(Root);
+  ASSERT_EQ(Root->Kind, ExprKind::BinOp);
+  EXPECT_EQ(Root->Op, NdOp::SUBBYTES);
+  ASSERT_EQ(Root->Operands.size(), 2u);
+  ASSERT_EQ(Root->Operands[0]->Kind, ExprKind::BinOp);
+  EXPECT_EQ(Root->Operands[0]->Op, NdOp::INT_MULT);
+  EXPECT_EQ(Root->Operands[0]->Operands[1]->ConstVal, 5u);
+}
+
 TEST(HighControlFlowSemantics, PhiCopiesOfOneRegisterShareItsName) {
   // v1 = x; v2 = v1; L: v3 = v2 + 1; v2 = v3; if (v3 < x + 5) goto L;
   // return v3;  -- the PHI copies of one register never overlap the values
   // they copy, so all three versions become one local and the copies go.
-  // A version read after the other is redefined, a copy between two
-  // registers, one of an unknown value, of a register nothing assigns, or of
-  // a frame address stays.
+  // A temporary copied into the register joins it too, and so does a
+  // value of another register.  A version read after the other is
+  // redefined, a copy of an unknown value, of a register nothing assigns, or
+  // of a frame address stays.
   auto Reg = [](int Tag, unsigned Offset = 0x10) {
     MedVar V;
     V.Kind = MedVar::Reg;
@@ -7369,9 +7458,52 @@ TEST(HighControlFlowSemantics, PhiCopiesOfOneRegisterShareItsName) {
     for (uint64_t X = 0; X < 4; ++X)
       EXPECT_EQ(execute(F, X), std::optional<uint64_t>(X + 5)) << X;
   }
-  enum class Kept { ReadAfter, OtherRegister, Unknown, Unassigned, Frame };
-  for (Kept Kind : {Kept::ReadAfter, Kept::OtherRegister, Kept::Unknown,
-                    Kept::Unassigned, Kept::Frame}) {
+  {
+    // if (x < 3) { t7 = x + 2; v1 = t7; } else v1 = x; return v1;  -- copy
+    // propagation left a temporary in the register's PHI copy; it joins the
+    // register's local and takes its name.
+    MedVar T;
+    T.Kind = MedVar::Temp;
+    T.Id = 7;
+    T.Size = 8;
+    T.TheArch = Arch::X64;
+    auto Temp = [&] { return HighExpr::makeVar(T, NdType::makeInt(8)); };
+    HighStmt Branch;
+    Branch.Kind = StmtKind::IfElse;
+    Branch.Addr = 0x1000;
+    Branch.Cond =
+        HighExpr::makeBinop(NdOp::INT_LESS, Input(), HighExpr::makeConst(3, 8));
+    Branch.Body = {Set(0x1004, Temp(), Plus(Input(), 2)),
+                   Set(0x1008, Reg(1), Temp(), true)};
+    Branch.ElseBody = {Set(0x100c, Reg(1), Input(), true)};
+    HighFunc F;
+    F.Body = {Branch, result(0x1010, Reg(1))};
+    EXPECT_TRUE(coalesceHighPhiCopies(F));
+    EXPECT_EQ(countKind(F, StmtKind::Nop), 1u);
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        if (E && E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Temp)
+          EXPECT_EQ(E->Var.RenameTag, 1);
+      });
+    });
+    for (uint64_t X = 0; X < 6; ++X)
+      EXPECT_EQ(execute(F, X), std::optional<uint64_t>(X < 3 ? X + 2 : X)) << X;
+  }
+  {
+    // v1 = x; v2 = v1; v2 = v2 + 1; return v2;  -- v2 is another register.
+    HighFunc F;
+    F.Body = {Set(0x1000, Reg(1), Input()),
+              Set(0x1004, Reg(2, 0x18), Reg(1), true),
+              Set(0x1008, Reg(2, 0x18), Plus(Reg(2, 0x18), 1)),
+              result(0x100c, Reg(2, 0x18))};
+    EXPECT_TRUE(coalesceHighPhiCopies(F));
+    EXPECT_EQ(Names(F).size(), 1u);
+    for (uint64_t X = 0; X < 4; ++X)
+      EXPECT_EQ(execute(F, X), std::optional<uint64_t>(X + 1)) << X;
+  }
+  enum class Kept { ReadAfter, Unknown, Unassigned, Frame };
+  for (Kept Kind :
+       {Kept::ReadAfter, Kept::Unknown, Kept::Unassigned, Kept::Frame}) {
     SCOPED_TRACE(static_cast<int>(Kind));
     // v1 = x; v2 = v1; v2 = v2 + 1; return v1 + v2;
     ExprPtr First = Input();
@@ -7393,7 +7525,7 @@ TEST(HighControlFlowSemantics, PhiCopiesOfOneRegisterShareItsName) {
                                   HighExpr::makeVar(Frame, NdType::makeInt(8)),
                                   HighExpr::makeConst(16, 8));
     }
-    const unsigned Second = Kind == Kept::OtherRegister ? 0x18 : 0x10;
+    const unsigned Second = 0x10;
     ExprPtr Returned =
         Kind == Kept::ReadAfter
             ? HighExpr::makeBinop(NdOp::INT_ADD, Reg(1), Reg(2, Second))
@@ -8020,6 +8152,117 @@ TEST(HighControlFlowSemantics, ByteReadOfArithmeticDropsUnreadBytes) {
   F.Body = {ByteWrite(), result(0x1004, LowByteOf(Shifted))};
   narrowUnreadRegisterBytes(F);
   EXPECT_TRUE(HasUndef(F));
+}
+
+TEST(HighControlFlowSemantics, ReadUsedByTheNextStatementMovesIntoIt) {
+  // t = *p; S;  -- S reads *p in t's place when S reads all its operands
+  // before any effect of its own.
+  auto Load = [] {
+    auto L = std::make_shared<HighExpr>();
+    L->Kind = ExprKind::Load;
+    L->Type = NdType::makeInt(8);
+    L->Operands = {local(9)};
+    return L;
+  };
+  auto Read = [&] {
+    HighStmt S = assign(0x1000, 2, 0);
+    S.Val = Load();
+    return S;
+  };
+  auto Call = [](std::vector<ExprPtr> Args) {
+    auto C = std::make_shared<HighExpr>();
+    C->Kind = ExprKind::Call;
+    C->Type = NdType::makeInt(8);
+    C->CallAddr = 0x5000;
+    C->Operands = std::move(Args);
+    return C;
+  };
+  auto TakesLoad = [](const ExprPtr &E) {
+    bool Found = false;
+    std::function<void(const HighExpr &)> Walk = [&](const HighExpr &N) {
+      Found |= N.Kind == ExprKind::Load;
+      N.forEachChildExpr([&](const ExprPtr &C) { Walk(*C); });
+    };
+    if (E)
+      Walk(*E);
+    return Found;
+  };
+  // A store of the value: `*q = *p;`.
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.Addr = 0x1004;
+  Store.StoreAddr = local(8);
+  Store.StoreVal = local(2);
+  HighFunc F;
+  F.Body = {Read(), Store, result(0x1008, HighExpr::makeConst(0, 8))};
+  EXPECT_TRUE(inlineAdjacentLoads(F));
+  ASSERT_EQ(F.Body.size(), 2U);
+  EXPECT_TRUE(TakesLoad(F.Body[0].StoreVal));
+
+  // A direct argument of a call whose arguments are pure.
+  HighStmt Use = assign(0x1004, 3, 0);
+  Use.Val = Call({local(2), HighExpr::makeConst(1, 8)});
+  F.Body = {Read(), Use, result(0x1008, local(3))};
+  EXPECT_TRUE(inlineAdjacentLoads(F));
+  ASSERT_EQ(F.Body.size(), 2U);
+  EXPECT_TRUE(TakesLoad(F.Body[0].Val));
+
+  // Beside another call, which may write *p first, the read stays.
+  HighStmt Beside = assign(0x1004, 3, 0);
+  Beside.Val = HighExpr::makeBinop(NdOp::INT_ADD, Call({}), local(2));
+  Beside.Val->Type = NdType::makeInt(8);
+  F.Body = {Read(), Beside, result(0x1008, local(3))};
+  EXPECT_FALSE(inlineAdjacentLoads(F));
+
+  // A loop condition runs again; the read ran once.
+  HighStmt Loop;
+  Loop.Kind = StmtKind::While;
+  Loop.Addr = 0x1004;
+  Loop.Cond = local(2);
+  F.Body = {Read(), Loop, result(0x1008, HighExpr::makeConst(0, 8))};
+  EXPECT_FALSE(inlineAdjacentLoads(F));
+}
+
+TEST(HighControlFlowSemantics, CopyBackJoinsItsDefinition) {
+  // t = x + 1; y = 5; x = t; return x + y;  -- x takes x + 1 at once.
+  auto Plus = [](int Id, uint64_t Value) {
+    auto Sum = HighExpr::makeBinop(NdOp::INT_ADD, local(Id),
+                                   HighExpr::makeConst(Value, 8));
+    Sum->Type = NdType::makeInt(8);
+    return Sum;
+  };
+  auto Program = [&](HighStmt Between) {
+    HighStmt Def = assign(0x1004, 2, 0);
+    Def.Val = Plus(1, 1);
+    HighStmt Copy = assign(0x100c, 1, 0);
+    Copy.Val = local(2);
+    HighFunc F;
+    F.Body = {
+        assign(0x1000, 1, 41), Def, Between, Copy,
+        result(0x1010, HighExpr::makeBinop(NdOp::INT_ADD, local(1), local(3)))};
+    F.Body.back().RetVal->Type = NdType::makeInt(8);
+    return F;
+  };
+  HighFunc F = Program(assign(0x1008, 3, 5));
+  const auto Expected = execute(F, 0);
+  EXPECT_TRUE(foldCopiesIntoDefinitions(F));
+  EXPECT_EQ(F.Body.size(), 4U);
+  EXPECT_EQ(execute(F, 0), Expected);
+  EXPECT_EQ(Expected, std::optional<uint64_t>(47));
+
+  // A statement between that reads x keeps the temporary.
+  HighStmt ReadsX = assign(0x1008, 3, 0);
+  ReadsX.Val = local(1);
+  HighFunc Reads = Program(ReadsX);
+  EXPECT_FALSE(foldCopiesIntoDefinitions(Reads));
+
+  // So does a label between, which a jump may enter past the definition.
+  HighFunc Entered = Program(assign(0x1008, 3, 5));
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.GotoTarget = 0x1008;
+  Entered.Body.push_back(Jump);
+  EXPECT_FALSE(foldCopiesIntoDefinitions(Entered));
 }
 
 TEST(HighControlFlowSemantics, ExceptHandlerJumpToAReturnTailBecomesItsCopy) {

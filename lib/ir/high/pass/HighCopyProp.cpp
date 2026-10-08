@@ -34,6 +34,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <set>
 #include <unordered_set>
 
 namespace neverd {
@@ -436,6 +437,285 @@ void inlineSingleDefSingleUse(std::vector<HighStmt> &Stmts) {
   }
   if (!SingleUseDefs.empty())
     inlineSingleDefs(Stmts, SingleUseDefs);
+}
+
+namespace {
+
+/// How many times \p Func assigns and reads each variable, each count capped
+/// at two, and the addresses a jump or a handler enters.
+struct AssignsAndReads {
+  VarKeyMap<int> Defs, Reads;
+  std::set<va_t> Targets;
+};
+
+AssignsAndReads countAssignsAndReads(const HighFunc &Func) {
+  AssignsAndReads Counts;
+  auto CountReads = [&](const ExprPtr &Root) {
+    std::vector<const HighExpr *> Work{Root.get()};
+    while (!Work.empty()) {
+      const HighExpr *E = Work.back();
+      Work.pop_back();
+      if (!E)
+        continue;
+      if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
+        int &Count = Counts.Reads[VK(E->Var)];
+        Count = std::min(2, Count + 1);
+      }
+      for (const MedVar &Output : E->IntrinsicOutputs)
+        Counts.Defs[VK(Output)] = 2;
+      E->forEachChildExpr([&](const ExprPtr &C) { Work.push_back(C.get()); });
+    }
+  };
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Goto && S.GotoTarget != 0 &&
+        S.GotoTarget != InvalidVA)
+      Counts.Targets.insert(S.GotoTarget);
+    for (const HighEHClause &Clause : S.EHClauses)
+      Counts.Targets.insert(Clause.HandlerVA);
+    if (S.Kind == StmtKind::Assign && S.Dst &&
+        (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi)) {
+      int &Count = Counts.Defs[VK(S.Dst->Var)];
+      Count = std::min(2, Count + 1);
+    }
+    forEachRhsExpr(S, CountReads);
+    // A destination in memory reads its address.
+    if (S.Dst && S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
+      CountReads(S.Dst);
+  });
+  return Counts;
+}
+
+} // namespace
+
+bool inlineAdjacentLoads(HighFunc &Func) {
+  // A handler may observe which statement a faulting read belonged to.
+  if (Func.StructuredExceptionRegions || Func.UnstructuredExceptionRegions)
+    return false;
+  AssignsAndReads Counts = countAssignsAndReads(Func);
+  VarKeyMap<int> &Defs = Counts.Defs, &Reads = Counts.Reads;
+  const std::set<va_t> &Targets = Counts.Targets;
+  // Evaluating \p E reads memory at most: no call, store, intrinsic or
+  // ordered access.
+  std::function<bool(const ExprPtr &)> Pure = [&](const ExprPtr &E) {
+    if (!E)
+      return true;
+    if (E->Kind == ExprKind::Call || E->Kind == ExprKind::Store ||
+        E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
+        E->MemoryOrdering != NdMemoryOrdering::None ||
+        E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return false;
+    bool Ok = true;
+    E->forEachChildExpr([&](const ExprPtr &C) { Ok = Ok && Pure(C); });
+    return Ok;
+  };
+  // The slot holding variable \p Key in \p E, when \p E reads it once.
+  std::function<ExprPtr *(ExprPtr &, const VarKey &)> SlotOf =
+      [&](ExprPtr &E, const VarKey &Key) -> ExprPtr * {
+    if (!E)
+      return nullptr;
+    if (E->Kind == ExprKind::Var && VK(E->Var) == Key)
+      return &E;
+    for (ExprPtr &C : E->Operands)
+      if (ExprPtr *Found = SlotOf(C, Key))
+        return Found;
+    return nullptr;
+  };
+  // The statement \p N reads its operands before any effect of its own, so a
+  // read moved into it keeps its place among the program's effects: every
+  // operand is pure, or \p N is one call whose arguments are.
+  auto Takes = [&](HighStmt &N, const VarKey &Key) -> ExprPtr * {
+    auto CallArgument = [&](ExprPtr &Call) -> ExprPtr * {
+      if (!Call || Call->Kind != ExprKind::Call)
+        return nullptr;
+      for (const ExprPtr &Operand : Call->Operands)
+        if (!Pure(Operand))
+          return nullptr;
+      return SlotOf(Call, Key);
+    };
+    switch (N.Kind) {
+    case StmtKind::Assign:
+      if (!N.Dst || N.Dst->Kind != ExprKind::Var)
+        return nullptr;
+      if (Pure(N.Val))
+        return SlotOf(N.Val, Key);
+      return CallArgument(N.Val);
+    case StmtKind::Call:
+      return CallArgument(N.CallExpr);
+    case StmtKind::Store:
+      if (!Pure(N.StoreAddr) || !Pure(N.StoreVal))
+        return nullptr;
+      if (ExprPtr *Slot = SlotOf(N.StoreAddr, Key))
+        return Slot;
+      return SlotOf(N.StoreVal, Key);
+    case StmtKind::Return:
+      if (Pure(N.RetVal))
+        return SlotOf(N.RetVal, Key);
+      return CallArgument(N.RetVal);
+    case StmtKind::If:
+    case StmtKind::IfElse:
+      return Pure(N.Cond) ? SlotOf(N.Cond, Key) : nullptr;
+    case StmtKind::Switch:
+      return Pure(N.SwitchExpr) ? SlotOf(N.SwitchExpr, Key) : nullptr;
+    default:
+      // A loop condition runs again on each pass; the read ran once.
+      return nullptr;
+    }
+  };
+  auto Entered = [&](const HighStmt &S) {
+    return S.Addr != 0 && S.Addr != InvalidVA && Targets.count(S.Addr);
+  };
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (size_t I = 0; I + 1 < L.size();) {
+          HighStmt &Def = L[I];
+          HighStmt &Use = L[I + 1];
+          // The C writer may print a PHI copy away from its place, which
+          // would move the read with it.
+          const bool Candidate =
+              Def.Kind == StmtKind::Assign && Def.Dst &&
+              Def.Dst->Kind == ExprKind::Var && Def.Dst->Operands.empty() &&
+              (Def.Dst->Var.Kind == MedVar::Reg ||
+               Def.Dst->Var.Kind == MedVar::Temp) &&
+              Def.Val && Def.Val->Kind == ExprKind::Load && Pure(Def.Val) &&
+              Def.Dst->Type && Def.Val->Type &&
+              Def.Dst->Type->Size == Def.Val->Type->Size &&
+              Defs[VK(Def.Dst->Var)] == 1 && Reads[VK(Def.Dst->Var)] == 1 &&
+              !Entered(Def) && !Entered(Use) && !Def.IsPhiCopy &&
+              !Use.IsPhiCopy;
+          if (Candidate)
+            if (ExprPtr *Slot = Takes(Use, VK(Def.Dst->Var));
+                Slot && (*Slot)->Type &&
+                (*Slot)->Type->Size == Def.Val->Type->Size) {
+              *Slot = Def.Val;
+              L.erase(L.begin() + I);
+              Changed = true;
+              continue;
+            }
+          ++I;
+        }
+        for (HighStmt &S : L) {
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+        }
+      };
+  Visit(Func.Body);
+  return Changed;
+}
+
+bool foldCopiesIntoDefinitions(HighFunc &Func) {
+  // A handler may read a local whatever statement raised.
+  if (Func.StructuredExceptionRegions || Func.UnstructuredExceptionRegions)
+    return false;
+  AssignsAndReads Counts = countAssignsAndReads(Func);
+  VarKeyMap<int> &Defs = Counts.Defs, &Reads = Counts.Reads;
+  const std::set<va_t> &Targets = Counts.Targets;
+  auto Local = [](const ExprPtr &E) {
+    return E && E->Kind == ExprKind::Var && E->Operands.empty() && E->Type &&
+           (E->Var.Kind == MedVar::Reg || E->Var.Kind == MedVar::Temp);
+  };
+  // \p S or a statement nested in it reads or writes \p Key.
+  std::function<bool(const HighStmt &, const VarKey &)> Mentions =
+      [&](const HighStmt &S, const VarKey &Key) {
+        bool Found = false;
+        auto Scan = [&](const ExprPtr &Root) {
+          std::vector<const HighExpr *> Work{Root.get()};
+          while (!Found && !Work.empty()) {
+            const HighExpr *E = Work.back();
+            Work.pop_back();
+            if (!E)
+              continue;
+            Found |= (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) &&
+                     VK(E->Var) == Key;
+            for (const MedVar &Output : E->IntrinsicOutputs)
+              Found |= VK(Output) == Key;
+            E->forEachChildExpr(
+                [&](const ExprPtr &C) { Work.push_back(C.get()); });
+          }
+        };
+        forEachExpr(S, Scan);
+        for (const auto *List : {&S.Body, &S.ElseBody, &S.DefaultBody})
+          for (const HighStmt &T : *List)
+            Found = Found || Mentions(T, Key);
+        for (const auto &C : S.Cases)
+          for (const HighStmt &T : C.Body)
+            Found = Found || Mentions(T, Key);
+        for (const auto &ClauseBody : S.EHClauseBodies)
+          for (const HighStmt &T : ClauseBody)
+            Found = Found || Mentions(T, Key);
+        return Found;
+      };
+  // Control may leave \p S other than at its end, or enter it at a label.
+  std::function<bool(const HighStmt &)> Leaves = [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Goto || S.Kind == StmtKind::Return ||
+        S.Kind == StmtKind::Break || S.Kind == StmtKind::Continue ||
+        S.Kind == StmtKind::SEHTry || S.Kind == StmtKind::CxxTry ||
+        S.Kind == StmtKind::ItaniumTry ||
+        (S.Addr != 0 && S.Addr != InvalidVA && Targets.count(S.Addr)))
+      return true;
+    for (const auto *List : {&S.Body, &S.ElseBody, &S.DefaultBody})
+      for (const HighStmt &T : *List)
+        if (Leaves(T))
+          return true;
+    for (const auto &C : S.Cases)
+      for (const HighStmt &T : C.Body)
+        if (Leaves(T))
+          return true;
+    return false;
+  };
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (size_t I = 0; I < L.size(); ++I) {
+          HighStmt &Def = L[I];
+          if (Def.Kind != StmtKind::Assign || !Local(Def.Dst) || !Def.Val)
+            continue;
+          const VarKey T = VK(Def.Dst->Var);
+          if (Defs[T] != 1 || Reads[T] != 1)
+            continue;
+          // `t = e; S...; x = t;` where S neither touches x nor t, nor
+          // leaves nor is entered: x takes e at once, `x = e; S...;`.  e is
+          // evaluated where it was; only x's new value comes earlier, and
+          // nothing before the copy reads x.
+          for (size_t J = I + 1; J < L.size(); ++J) {
+            HighStmt &Copy = L[J];
+            if (Copy.Kind == StmtKind::Assign && Local(Copy.Dst) && Copy.Val &&
+                Copy.Val->Kind == ExprKind::Var && Copy.Val->Operands.empty() &&
+                VK(Copy.Val->Var) == T) {
+              const VarKey X = VK(Copy.Dst->Var);
+              const bool SameType =
+                  Copy.Dst->Type->Kind == Def.Dst->Type->Kind &&
+                  Copy.Dst->Type->Size == Def.Dst->Type->Size &&
+                  Copy.Val->Type && Copy.Val->Type->Size == Def.Dst->Type->Size;
+              const bool Entered = Copy.Addr != 0 && Copy.Addr != InvalidVA &&
+                                   Targets.count(Copy.Addr);
+              if (SameType && !Entered && !(X == T) &&
+                  std::none_of(
+                      L.begin() + I + 1, L.begin() + J,
+                      [&](const HighStmt &S) { return Mentions(S, X); })) {
+                Def.Dst = Copy.Dst;
+                L.erase(L.begin() + J);
+                Changed = true;
+              }
+              break;
+            }
+            if (Mentions(Copy, T) || Leaves(Copy))
+              break;
+          }
+        }
+        for (HighStmt &S : L) {
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+        }
+      };
+  Visit(Func.Body);
+  return Changed;
 }
 
 //===----------------------------------------------------------------------===//

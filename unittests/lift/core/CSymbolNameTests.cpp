@@ -157,6 +157,29 @@ TEST(CSymbolNames, KnownAritiesFollowTheSymbol) {
   EXPECT_NE(Source.find("std_terminate();"), NotFound) << Source;
 }
 
+TEST(CSymbolNames, KnownArgumentsFillOneRegisterEach) {
+  // MSVC's ARM compiler calls __intrinsic_setjmpex with the buffer and the
+  // frame, and longjmp takes the buffer and the value everywhere: the
+  // registers after them are not arguments, and on a 32-bit target each
+  // argument is one 32-bit register.
+  const std::string Source = emitHighC(
+      {function(
+          "jumps", 0x1000,
+          {callStatement("__intrinsic_setjmpex", 0x2000,
+                         {HighExpr::makeConst(1, 4), HighExpr::makeConst(2, 4),
+                          HighExpr::makeConst(3, 4)}),
+           callStatement("longjmp", 0x2010,
+                         {HighExpr::makeConst(1, 4), HighExpr::makeConst(4, 4),
+                          HighExpr::makeConst(5, 4),
+                          HighExpr::makeConst(6, 4)})})},
+      BinaryFormat::COFF, Arch::ARM);
+  EXPECT_NE(Source.find("extern int __intrinsic_setjmpex(int32_t, int32_t);"),
+            NotFound)
+      << Source;
+  EXPECT_NE(Source.find("__intrinsic_setjmpex(1, 2);"), NotFound) << Source;
+  EXPECT_NE(Source.find("longjmp(1, 4);"), NotFound) << Source;
+}
+
 TEST(CSymbolNames, UndeterminedKnownArgumentsAreUnknown) {
   // A catch fragment whose incoming exception object the lift does not
   // track still passes it: the call takes the declared argument, unknown.

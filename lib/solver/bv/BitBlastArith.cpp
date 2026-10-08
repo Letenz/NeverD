@@ -63,6 +63,15 @@ void addBits(CnfEncoder &E, LitSpan A, LitSpan B, SatLit CarryIn, LitVec &Out,
 
   SatLit Carry = CarryIn;
   for (size_t I = 0, N = A.size(); I < N; ++I) {
+    // For a repeated unordered input pair, the preceding majority already
+    // fixed the carry: maj(a, b, maj(a, b, c)) == maj(a, b, c).
+    // The sum still uses that carry, including at the first repeated pair.
+    if (I != 0 && ((A[I] == A[I - 1] && B[I] == B[I - 1]) ||
+                   (A[I] == B[I - 1] && B[I] == A[I - 1]))) {
+      const SatLit Ins[] = {A[I], B[I], Carry};
+      Out.push_back(E.mkXor(Ins));
+      continue;
+    }
     // The carry leaving the top bit is only built when somebody asked for it;
     // for an addition modulo the width it is dead weight.
     if (I + 1 == N && CarryOut == nullptr) {

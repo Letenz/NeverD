@@ -15,6 +15,7 @@
 
 #include "llvm/ADT/StringSwitch.h"
 
+#include <algorithm>
 #include <string_view>
 
 namespace neverd::libc {
@@ -214,6 +215,38 @@ bool isCStringParameter(std::string_view Name, unsigned Index) {
     if (Param.Index == Index && Param.Name == Bare)
       return true;
   return false;
+}
+
+std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
+                                                 va_t Target) {
+  struct Routine {
+    BinaryFormat Format;
+    Arch Architecture;
+    std::string_view Symbol;
+    StackProbeEffect Effect;
+  };
+  static constexpr Routine Routines[] = {
+#define STACK_PROBE(Format, Architecture, Symbol, Effect)                      \
+  {BinaryFormat::Format, Arch::Architecture, Symbol, StackProbeEffect::Effect},
+#include "neverd/libc/StackProbeRoutines.inc"
+  };
+  const auto Applies = [&](const Routine &R) {
+    return R.Format == Img.Format && R.Architecture == Img.Arch;
+  };
+  if (std::none_of(std::begin(Routines), std::end(Routines), Applies))
+    return std::nullopt;
+  // Only a name the binary or its debug information states proves the
+  // helper; one an analysis guessed does not drop a call.
+  std::string_view Name;
+  if (const Export *Exp = Img.findExportAt(Target); Exp && !Exp->Name.empty())
+    Name = Exp->Name;
+  else if (const Symbol *Sym = Img.findSymbolAt(Target);
+           Sym && Sym->Origin >= NameOrigin::Stated)
+    Name = Sym->Name;
+  for (const Routine &R : Routines)
+    if (!Name.empty() && Applies(R) && R.Symbol == Name)
+      return R.Effect;
+  return std::nullopt;
 }
 
 bool isNoReturnFunction(std::string_view Name) {

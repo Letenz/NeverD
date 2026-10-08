@@ -10,8 +10,9 @@
 /// arithmetic, logical shifts, unsigned comparisons and zero extension are
 /// plain C on an unsigned operand but need casts on a signed one, and the
 /// signed counterparts the other way round.  Each local takes the
-/// signedness most of its uses read, so the emitted C carries fewer casts;
-/// the value bits, and therefore the semantics, do not change.
+/// signedness most of its uses read, and a memory read the signedness of
+/// the one operation reading it, so the emitted C carries fewer casts; the
+/// value bits, and therefore the semantics, do not change.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -84,6 +85,17 @@ bool wrapsUnsigned(const HighExpr &E) {
 
 bool isPlainInteger(const TypeRef &Type) {
   return !Type || (Type->Kind == NdTypeKind::Int && !Type->IsEnum);
+}
+
+/// A plain read of a 1-, 2-, 4- or 8-byte integer, whose C spelling names
+/// its signedness and nothing else: `*(_QWORD *)p` or `*(_SQWORD *)p`.
+bool isPlainIntegerLoad(const HighExpr &E) {
+  if (E.Kind != ExprKind::Load || !E.Type || !isPlainInteger(E.Type) ||
+      E.MemoryOrdering != NdMemoryOrdering::None ||
+      E.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const uint16_t Size = E.Type->Size;
+  return Size == 1 || Size == 2 || Size == 4 || Size == 8;
 }
 
 template <typename F> void forEachStmt(std::vector<HighStmt> &Stmts, F &&Fn) {
@@ -177,12 +189,36 @@ void chooseIntegerSignedness(HighFunc &Func) {
       if (Operand && Operand->Type && Operand->Type->Size == E->Type->Size)
         Unsign(Operand);
   };
+  // A memory read has a single reader, the operation it is an operand of,
+  // and reads the signedness that operation wants: `*(_QWORD *)p + 8`.  A
+  // read a local receives whole has the local's.
+  std::function<void(const ExprPtr &)> RetypeLoads = [&](const ExprPtr &E) {
+    if (!E)
+      return;
+    for (size_t I = 0; I < E->Operands.size(); ++I) {
+      const ExprPtr &Operand = E->Operands[I];
+      if (!Operand)
+        continue;
+      if (isPlainIntegerLoad(*Operand))
+        if (const Reads Wanted = operandReads(*E, I); Wanted != Reads::Neither)
+          Operand->Type =
+              NdType::makeInt(Operand->Type->Size, Wanted == Reads::Signed);
+      RetypeLoads(Operand);
+    }
+    if (E->IndirectTarget)
+      RetypeLoads(E->IndirectTarget);
+  };
   forEachStmt(Func.Body, [&](HighStmt &S) {
     forEachExpr(S, Retype);
     if (S.Kind == StmtKind::Assign && S.Dst && S.Val && S.Dst->Type &&
         S.Dst->Type->Kind == NdTypeKind::Int && !S.Dst->Type->IsSigned &&
         localKey(*S.Dst))
       Unsign(S.Val);
+    if (S.Kind == StmtKind::Assign && S.Dst && S.Val && localKey(*S.Dst) &&
+        isPlainIntegerLoad(*S.Val) && isPlainInteger(S.Dst->Type) &&
+        S.Dst->Type && S.Dst->Type->Size == S.Val->Type->Size)
+      S.Val->Type = NdType::makeInt(S.Val->Type->Size, S.Dst->Type->IsSigned);
+    forEachExpr(S, RetypeLoads);
   });
 }
 

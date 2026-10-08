@@ -101,6 +101,91 @@ bool discardableIntegerValue(const ExprPtr &Root, size_t &Budget) {
   return true;
 }
 
+bool harmlessIntegerValue(const ExprPtr &Root, size_t &Budget) {
+  std::vector<const HighExpr *> Pending{Root.get()};
+  std::unordered_set<const HighExpr *> Seen;
+  while (!Pending.empty()) {
+    const auto *E = Pending.back();
+    Pending.pop_back();
+    if (!E || !Budget)
+      return false;
+    if (!Seen.insert(E).second)
+      continue;
+    --Budget;
+    if (!E->Type || E->Type->Kind != NdTypeKind::Int ||
+        E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
+        E->IndirectTarget || E->MemoryOrdering != NdMemoryOrdering::None ||
+        E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return false;
+    switch (E->Kind) {
+    case ExprKind::Var:
+    case ExprKind::Phi:
+    case ExprKind::Const:
+    case ExprKind::Undef:
+      if (!E->Operands.empty())
+        return false;
+      break;
+    case ExprKind::Cast:
+    case ExprKind::BitCast:
+      break;
+    case ExprKind::UnaryOp:
+      switch (E->Op) {
+      case NdOp::INT_ZEXT:
+      case NdOp::INT_SEXT:
+      case NdOp::INT_NEGATE:
+      case NdOp::INT_NOT:
+      case NdOp::INT_NEG2:
+      case NdOp::BOOL_NOT:
+      case NdOp::POPCOUNT:
+        break;
+      default:
+        return false;
+      }
+      break;
+    case ExprKind::BinOp:
+      switch (E->Op) {
+      case NdOp::INT_ADD:
+      case NdOp::INT_SUB:
+      case NdOp::INT_MULT:
+      case NdOp::INT_AND:
+      case NdOp::INT_OR:
+      case NdOp::INT_XOR:
+      case NdOp::INT_LEFT:
+      case NdOp::INT_RIGHT:
+      case NdOp::INT_ASHR:
+      case NdOp::INT_EQUAL:
+      case NdOp::INT_NOTEQUAL:
+      case NdOp::INT_LESS:
+      case NdOp::INT_LESSEQUAL:
+      case NdOp::INT_SLESS:
+      case NdOp::INT_SLESSEQUAL:
+      case NdOp::BOOL_AND:
+      case NdOp::BOOL_OR:
+      case NdOp::BOOL_XOR:
+      case NdOp::CONCAT:
+      case NdOp::SELECT:
+      case NdOp::INT_CARRY:
+      case NdOp::INT_SOVF:
+      case NdOp::INT_SBOR:
+        break;
+      case NdOp::SUBBYTES:
+        if (E->Operands.size() != 2 || !E->Operands[1] ||
+            E->Operands[1]->Kind != ExprKind::Const)
+          return false;
+        break;
+      default:
+        return false;
+      }
+      break;
+    default:
+      return false;
+    }
+    for (const auto &Operand : E->Operands)
+      Pending.push_back(Operand.get());
+  }
+  return true;
+}
+
 namespace {
 ExprPtr frameValuePrefix(ExprPtr Value, uint16_t Bytes) {
   // CONCAT's low operand owns the low-address bytes in supported native IR.

@@ -141,6 +141,7 @@ add_neverd_unittest(NeverDInterpreterSpecializationTests
   FiniteValuesTests.cpp
   FiniteQueryCacheTests.cpp
   CompletedQueryCacheTests.cpp
+  OrderedQueryTests.cpp
   FrameOffsetsTests.cpp
   StringTransferTests.cpp
   LINK_COMPONENTS InterpreterSpecialization
