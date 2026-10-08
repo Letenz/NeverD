@@ -130,7 +130,6 @@ public:
   std::string memoryTypeName(const TypeRef &Ty) const;
   void writeIncludes(const std::vector<HighFunc> &Funcs);
   void writeMemoryHelpers();
-  void writeX87FpremHelpers();
   void writeX64SyscallHelper();
   void writeX64WindowsSyscallHelper();
   struct MemoryLoadDestination {
@@ -605,7 +604,16 @@ public:
   std::map<va_t, std::string> SEHExceptionCodeNames;
   void writeSEHExceptionCodeCapture(va_t HandlerVA, int Indent);
   std::string sehFilterValueText(const HighExpr &Value);
-  bool NeedsX87FpremHelpers = false;
+  /// The x87 helpers the output calls, and whether it computes with the
+  /// x87 extended `long double`.
+  std::set<X87CHelper> X87Helpers;
+  bool UsesX87Extended = false;
+  /// An x87 extended value: what `long double` holds.
+  static bool isX87Value(const HighExpr &E);
+  /// The x87 helper \p E prints through, if any.
+  std::optional<X87CHelper> x87HelperFor(const HighExpr &E) const;
+  /// The name of \p Helper, which the output must declare.
+  std::string useX87Helper(X87CHelper Helper) const;
   bool NeedsX64SyscallHelper = false;
   bool NeedsX64WindowsSyscallHelper = false;
   /// A Windows x86 function renders an <intrin.h>-only intrinsic.
@@ -897,8 +905,8 @@ public:
   std::optional<std::string> relocatedSlotTarget(va_t Slot) const;
   /// A pointer-sized object at a relocated slot: the address it holds, as
   /// its initializer.
-  std::optional<std::string> relocatedSlotInitializer(va_t Addr,
-                                                      const ImageObject &Obj) const;
+  std::optional<std::string>
+  relocatedSlotInitializer(va_t Addr, const ImageObject &Obj) const;
   /// Declares the objects whose relocated pointer slots name other objects:
   /// the backings that hold them, as words, and the single slots \p Deferred.
   void writePointerBackings(const std::vector<va_t> &Deferred);

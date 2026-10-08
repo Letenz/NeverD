@@ -444,13 +444,14 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   Has256BitInteger = false;
   Has512BitInteger = false;
   Int128AsBitInt = false;
+  X87Helpers.clear();
+  UsesX87Extended = false;
   // Native AArch64 vector carriers are projected to SVE ACLE types.  x86
   // vector intrinsics use scalar integer carriers at the HighIR boundary.
   const bool ProjectsScalarWideIntegers =
       Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64;
   // C compilers provide __int128 on targets with 64-bit pointers only.
-  const bool TargetHasInt128 =
-      pointerBytes(Opts.TheArch) >= sizeof(uint64_t);
+  const bool TargetHasInt128 = pointerBytes(Opts.TheArch) >= sizeof(uint64_t);
   auto CollectWideType = [&](const TypeRef &Type) {
     if (const unsigned Bytes = partialIntegerBytes(Type))
       PartialIntegerBytes.emplace(typeToC(Type), Bytes);
@@ -460,6 +461,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
                         Type->Kind == NdTypeKind::Int && Type->Size == 64;
     Int128AsBitInt |= !TargetHasInt128 && Type &&
                       Type->Kind == NdTypeKind::Int && Type->Size == 16;
+    UsesX87Extended |= Type && Type->Kind == NdTypeKind::Float &&
+                       Type->Size == 10 && Type->SourceName.empty();
   };
   std::set<const HighExpr *> Seen;
   bool HideEHRuntimeMemory = false;
@@ -471,6 +474,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       return;
     CollectWideType(E.Type);
     CollectWideType(E.CastTo);
+    if (const auto Helper = x87HelperFor(E))
+      X87Helpers.insert(*Helper);
     if (E.Kind == ExprKind::UnaryOp && E.Op == NdOp::LZCOUNT &&
         !E.Operands.empty() && E.Operands[0]) {
       const unsigned Bits = countedBits(*E.Operands[0]);
@@ -1292,16 +1297,13 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
       }
       if (Ex.IntrinsicId == Intrinsic::A64_Frinti)
         NeedsFEnvAccess = true;
-      const bool IsX87FpremHelper = Ex.IntrinsicId == Intrinsic::X87Fprem ||
-                                    Ex.IntrinsicId == Intrinsic::X87Fprem1 ||
-                                    Ex.IntrinsicId == Intrinsic::X87ReadStatus;
-      if (IsX87FpremHelper)
-        NeedsX87FpremHelpers = true;
-      else if (Ex.IntrinsicId == Intrinsic::X64Syscall)
+      const bool IsX87Helper = x87HelperFor(Ex).has_value();
+      if (Ex.IntrinsicId == Intrinsic::X64Syscall)
         NeedsX64SyscallHelper = true;
       else if (Ex.IntrinsicId == Intrinsic::X64WindowsSyscall)
         NeedsX64WindowsSyscallHelper = true;
-      else if (Ex.IntrinsicId != Intrinsic::None &&
+      // The x87 helpers, collected with the unit's types, need no header.
+      else if (Ex.IntrinsicId != Intrinsic::None && !IsX87Helper &&
                (intrinsicCName(Ex.IntrinsicId) ||
                 x86MemoryIntrinsicUsesCHeader(Ex.IntrinsicId)))
         HasCIntrinsics = true;
@@ -2070,9 +2072,9 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                                  }),
                      SizedObjects.end());
   for (const auto &[Addr, Size] : SizedObjects)
-    SizedObjectReach.push_back(std::max(
-        SizedObjectReach.empty() ? va_t{0} : SizedObjectReach.back(),
-        Addr + Size));
+    SizedObjectReach.push_back(
+        std::max(SizedObjectReach.empty() ? va_t{0} : SizedObjectReach.back(),
+                 Addr + Size));
   // The code reaches all of an object through an address that varies or
   // points into it: the object is declared whole, as bytes.
   auto NoteWhole = [&](va_t Addr, const TypeRef &Access, bool Written) {
@@ -2217,9 +2219,9 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   PointerSlots.insert(Opts.Image->DataPtrRelocSlots.begin(),
                       Opts.Image->DataPtrRelocSlots.end());
   auto Extent = [](const ImageObject &Obj) -> uint64_t {
-    return std::max<uint64_t>(
-        Obj.IndexedBytes,
-        Obj.String ? Obj.ArrayBytes : (Obj.Type ? Obj.Type->Size : 0));
+    return std::max<uint64_t>(Obj.IndexedBytes,
+                              Obj.String ? Obj.ArrayBytes
+                                         : (Obj.Type ? Obj.Type->Size : 0));
   };
   std::set<va_t> NotedSlots;
   for (bool Changed = !PointerSlots.empty(); Changed;) {
@@ -2327,12 +2329,14 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       return;
     const auto First = ImageObjects.find(GroupBase);
     ImageBacking Backing{
-        GroupBase, GroupEnd,
+        GroupBase,
+        GroupEnd,
         First != ImageObjects.end() && !First->second.Name.empty()
             ? First->second.Name
             : GlobalIdentifierAllocator.allocate(
                   makeSyntheticGlobalName(GroupBase) + "_bytes", "g"),
-        {}, {}};
+        {},
+        {}};
     for (auto Slot = PointerSlots.lower_bound(GroupBase);
          Slot != PointerSlots.end() && *Slot < GroupEnd; ++Slot) {
       if ((*Slot - GroupBase) % PointerBytes ||
@@ -2368,8 +2372,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     GroupEnd = std::max(GroupEnd, End);
     ++GroupCount;
     NeedsBacking |= Obj.MemoryWidths.size() > 1 || Obj.IndexedBytes ||
-                    (Obj.HoldsPointers && !Obj.PointsTo &&
-                     Size > PointerBytes);
+                    (Obj.HoldsPointers && !Obj.PointsTo && Size > PointerBytes);
     for (uint16_t Width : Obj.MemoryWidths)
       NeedsBacking |= Width && (Width & (Width - 1)) != 0;
   }
@@ -2536,8 +2539,7 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
   }
 }
 
-std::optional<std::string>
-HighCWriter::relocatedSlotTarget(va_t Slot) const {
+std::optional<std::string> HighCWriter::relocatedSlotTarget(va_t Slot) const {
   const unsigned PointerBytes = pointerBytes(Opts.TheArch);
   const uint8_t *Bytes = Opts.Image->readVA(Slot, PointerBytes);
   if (!Bytes)
@@ -2646,57 +2648,6 @@ HighCWriter::imageObjectInitializer(va_t Addr, const ImageObject &Obj) {
   default:
     return std::nullopt;
   }
-}
-
-void HighCWriter::writeX87FpremHelpers() {
-  if (!NeedsX87FpremHelpers)
-    return;
-  // The status must be sampled inside the same asm block as FPREM. A separate
-  // C expression could let the compiler spill an x87 value before FNSTSW and
-  // thereby change the condition codes observed by the source program.
-  OS << "static _Thread_local uint16_t neverd_x87_fprem_status;\n"
-        "static _Thread_local unsigned char "
-        "neverd_x87_fprem_status_pending;\n\n"
-        "static inline _BitInt(80) neverd_x87_partial_remainder(\n"
-        "    _BitInt(80) dividend, _BitInt(80) divisor, int nearest) {\n"
-        "    unsigned char lhs[10], rhs[10], result[10];\n"
-        "    uint16_t status;\n"
-        "    __builtin_memcpy(lhs, &dividend, 10);\n"
-        "    __builtin_memcpy(rhs, &divisor, 10);\n"
-        "    if (nearest) {\n"
-        "        __asm__ volatile(\"fldt %[rhs]\\n\\t"
-        "fldt %[lhs]\\n\\tfprem1\\n\\tfnstsw %%ax\\n\\t"
-        "fstpt %[result]\\n\\tfstp %%st(0)\"\n"
-        "            : [result] \"=m\"(result), \"=a\"(status)\n"
-        "            : [lhs] \"m\"(lhs), [rhs] \"m\"(rhs)\n"
-        "            : \"cc\", \"memory\", \"st\", \"st(1)\");\n"
-        "    } else {\n"
-        "        __asm__ volatile(\"fldt %[rhs]\\n\\t"
-        "fldt %[lhs]\\n\\tfprem\\n\\tfnstsw %%ax\\n\\t"
-        "fstpt %[result]\\n\\tfstp %%st(0)\"\n"
-        "            : [result] \"=m\"(result), \"=a\"(status)\n"
-        "            : [lhs] \"m\"(lhs), [rhs] \"m\"(rhs)\n"
-        "            : \"cc\", \"memory\", \"st\", \"st(1)\");\n"
-        "    }\n"
-        "    neverd_x87_fprem_status = status;\n"
-        "    neverd_x87_fprem_status_pending = 1;\n"
-        "    _BitInt(80) bits = 0;\n"
-        "    __builtin_memcpy(&bits, result, 10);\n"
-        "    return bits;\n"
-        "}\n\n"
-        "static inline _BitInt(80) neverd_x87_fprem(\n"
-        "    _BitInt(80) dividend, _BitInt(80) divisor) {\n"
-        "    return neverd_x87_partial_remainder(dividend, divisor, 0);\n"
-        "}\n\n"
-        "static inline _BitInt(80) neverd_x87_fprem1(\n"
-        "    _BitInt(80) dividend, _BitInt(80) divisor) {\n"
-        "    return neverd_x87_partial_remainder(dividend, divisor, 1);\n"
-        "}\n\n"
-        "static inline uint16_t neverd_x87_read_status(void) {\n"
-        "    if (!neverd_x87_fprem_status_pending) __builtin_trap();\n"
-        "    neverd_x87_fprem_status_pending = 0;\n"
-        "    return neverd_x87_fprem_status;\n"
-        "}\n\n";
 }
 
 void HighCWriter::writeX64SyscallHelper() {
@@ -2813,8 +2764,8 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
     walkStmts(Func.Body,
               [&](const HighStmt &Stmt) { forEachExpr(Stmt, Visit); });
   }
+  writeX87CHelpers(OS, UsesX87Extended, X87Helpers);
   writeMemoryHelpers();
-  writeX87FpremHelpers();
   writeX64SyscallHelper();
   writeX64WindowsSyscallHelper();
   writeForwardDecls(Funcs);
