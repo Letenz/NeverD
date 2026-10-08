@@ -264,7 +264,7 @@ class NativeCPUEvidenceTests(unittest.TestCase):
         self.assertEqual(len(self.discoveries), 1)
         for command in (self.discoveries[0], self.executions[1]):
             self.assertEqual(command[command.index("--test-dir") + 1],
-                             str(self.build / "unittests"))
+                             str((self.build / "unittests").resolve()))
             self.assertEqual(command[command.index("-L") + 1],
                              "^(Owner|NeverDUnpackTests)$")
         inventory = json.loads((self.evidence / "inventory.json").read_text())
