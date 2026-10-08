@@ -317,6 +317,11 @@ public:
   std::string indirectCalleeStr(const HighExpr &E,
                                 const TypeRef &ReturnType = nullptr);
   const HighExpr *unwrapIntegerView(const HighExpr *E) const;
+  /// The variable \p E converts between integer or pointer types of one
+  /// width, or null when a step changes the width or converts a float: a
+  /// narrowed or extended view is another value than the variable it reads
+  /// (`(int32_t)(int8_t)v` is not `v`).
+  const HighExpr *sameWidthVariable(const HighExpr &E) const;
   const HighExpr *forwardedExpr(const HighExpr *E) const;
   /// True when \p E prints as an unsigned integer of exactly \p Width bytes.
   /// Widening views and untyped add/sub/mul stay wrapped.

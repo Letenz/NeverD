@@ -3136,6 +3136,42 @@ const HighExpr *HighCWriter::forwardedExpr(const HighExpr *E) const {
   return E;
 }
 
+const HighExpr *HighCWriter::sameWidthVariable(const HighExpr &E) const {
+  // Integers and pointers, which convert by their bits; a float converts by
+  // its value.
+  auto WidthOf = [](const HighExpr &Node) -> uint16_t {
+    if (Node.Type)
+      return Node.Type->Kind == NdTypeKind::Int ||
+                     Node.Type->Kind == NdTypeKind::Ptr
+                 ? Node.Type->Size
+                 : 0;
+    return Node.Kind == ExprKind::Var || Node.Kind == ExprKind::Phi
+               ? Node.Var.Size
+               : 0;
+  };
+  const uint16_t Width = WidthOf(E);
+  const HighExpr *Cur = &E;
+  for (unsigned Depth = 0; Cur && Width &&
+                           Depth < limits::kMaxIntegerViewUnwrapDepth;
+       ++Depth) {
+    if (Cur->Kind == ExprKind::Var || Cur->Kind == ExprKind::Phi)
+      return WidthOf(*Cur) == Width ? Cur : nullptr;
+    const bool View =
+        Cur->Kind == ExprKind::Cast || Cur->Kind == ExprKind::BitCast ||
+        (Cur->Kind == ExprKind::UnaryOp &&
+         (Cur->Op == NdOp::INT_ZEXT || Cur->Op == NdOp::INT_SEXT)) ||
+        (Cur->Kind == ExprKind::BinOp && Cur->Op == NdOp::SUBBYTES &&
+         Cur->Operands.size() == 2 && Cur->Operands[1] &&
+         Cur->Operands[1]->Kind == ExprKind::Const &&
+         Cur->Operands[1]->ConstVal == 0);
+    if (!View || Cur->Operands.empty() || !Cur->Operands[0] ||
+        WidthOf(*Cur) != Width || WidthOf(*Cur->Operands[0]) != Width)
+      return nullptr;
+    Cur = Cur->Operands[0].get();
+  }
+  return nullptr;
+}
+
 const HighExpr *HighCWriter::unwrapIntegerView(const HighExpr *E) const {
   unsigned Depth = 0;
   while (E && Depth++ < limits::kMaxIntegerViewUnwrapDepth &&

@@ -624,6 +624,28 @@ int main(void) {
 )");
 }
 
+TEST(HighValueForward, AnExtendedLowByteKeepsItsConversion) {
+  // t1 = (int64_t)(int8_t)x is read once: the use reads the sign-extended
+  // low byte, not x, which the views around it merely surround.
+  auto Low = HighExpr::makeBinop(NdOp::SUBBYTES, input(), constant(0));
+  Low->Type = NdType::makeInt(1, true);
+  auto Extended = HighExpr::makeUnary(NdOp::INT_SEXT, Low);
+  Extended->Type = NdType::makeInt(8, true);
+  HighFunc F =
+      function("extended", {assign(local(1), Extended),
+                            result(op(NdOp::INT_ADD, local(1), constant(1)))});
+  const std::string Source = emit({F});
+  compileAndRun(Source + R"(
+int main(void) {
+  const uint64_t xs[] = {0, 0x7F, 0x80, 0xFF, 0x1FF, 0x12345680};
+  for (unsigned i = 0; i < sizeof xs / sizeof xs[0]; ++i)
+    if (extended(xs[i]) != (uint64_t)((int64_t)(int8_t)xs[i] + 1))
+      return 1;
+  return 0;
+}
+)");
+}
+
 TEST(HighValueForward, CopyKeepsTheValueItsSourceLoses) {
   // t1 copies v3, then v3 changes under the same name; t1 must keep the old
   // value, in straight-line code and around a loop.
