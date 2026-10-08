@@ -10,7 +10,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Common.h"
+#include "neverd/libc/LibCFortify.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/WindowsCRT.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/StringSwitch.h"
@@ -45,9 +47,25 @@ unsigned irregularVarArgFixedCount(std::string_view Name) {
       .Default(0);
 }
 
+/// The standard routine whose arguments a C library's variant \p Name takes
+/// or implements, without leading underscores: glibc's ISO C conforming
+/// alias `__isoc99_scanf` takes scanf's, and the Universal CRT's
+/// `__stdio_common_vfprintf` implements vfprintf.  Otherwise \p Name itself.
+std::string_view isoAliasTarget(std::string_view Name) {
+  const std::string_view Bare = stripLeadingUnderscores(Name);
+  for (const std::string_view Prefix : kIsoAliasPrefixes)
+    if (Bare.starts_with(Prefix))
+      return Bare.substr(Prefix.size());
+  if (Bare.starts_with(kUCRTStdioPrefix))
+    return Bare.substr(kUCRTStdioPrefix.size());
+  return Name;
+}
+
 } // anonymous namespace
 
 unsigned varArgFixedCount(std::string_view Name) {
+  if (const std::string_view Standard = isoAliasTarget(Name); Standard != Name)
+    return varArgFixedCount(Standard);
   // Modern Darwin linkers specialize Objective-C dispatch through local
   // `_objc_msgSend$<selector>` stubs.  The stub materializes `_cmd` in x1,
   // while the caller supplies the receiver in x0 and one argument per colon
@@ -113,7 +131,7 @@ unsigned varArgFixedCount(std::string_view Name) {
 
 VarArgFixedParamKind varArgFixedParamKind(std::string_view Name,
                                           unsigned Index) {
-  Name = stripLeadingUnderscores(Name);
+  Name = isoAliasTarget(stripLeadingUnderscores(Name));
   const unsigned FixedCount = varArgFixedCount(Name);
   if (Index >= FixedCount)
     return VarArgFixedParamKind::Unknown;
@@ -183,6 +201,7 @@ VarArgFixedParamKind varArgFixedParamKind(std::string_view Name,
 }
 
 bool isVaListConsumer(std::string_view Name) {
+  Name = isoAliasTarget(Name);
   // Fortified __v*_chk forms (e.g. __vsnprintf_chk) take a va_list just like
   // their plain v* base; strip the suffix and fall through to the v* check.
   if (Name.ends_with("_chk"))
@@ -215,6 +234,25 @@ bool isCStringParameter(std::string_view Name, unsigned Index) {
     if (Param.Index == Index && Param.Name == Bare)
       return true;
   return false;
+}
+
+std::optional<std::string_view> functionPointerParameter(std::string_view Name,
+                                                         unsigned Index) {
+  struct FunctionPointerParam {
+    std::string_view Name;
+    unsigned Index;
+    std::string_view Type;
+  };
+  static constexpr FunctionPointerParam FunctionPointerParams[] = {
+#define LIBC_FUNCTION_POINTER_PARAM(Name, Index, Type) {Name, Index, Type},
+#include "neverd/libc/LibCFunctionPointerParams.inc"
+#undef LIBC_FUNCTION_POINTER_PARAM
+  };
+  const std::string_view Bare = stripLeadingUnderscores(Name);
+  for (const FunctionPointerParam &Param : FunctionPointerParams)
+    if (Param.Index == Index && Param.Name == Bare)
+      return Param.Type;
+  return std::nullopt;
 }
 
 std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,

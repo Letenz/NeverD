@@ -22,6 +22,7 @@
 #include "neverd/debug/MSVCMapLoader.h"
 
 #include "neverd/debug/MapDebugContextBase.h"
+#include "neverd/support/FilePath.h"
 
 #define DEBUG_TYPE "neverd-msvc-map-loader"
 #include "llvm/ADT/StringRef.h"
@@ -41,10 +42,10 @@ MSVCMapDebugContext::load(const std::filesystem::path &MapPath,
                           uint64_t ImageBase) {
   auto Ctx = std::unique_ptr<MSVCMapDebugContext>(new MSVCMapDebugContext());
 
-  auto BufOr = llvm::MemoryBuffer::getFile(MapPath.string());
+  auto BufOr = llvm::MemoryBuffer::getFile(pathToUTF8(MapPath));
   if (!BufOr) {
     llvm::WithColor::warning()
-        << "msvc-map: cannot open " << MapPath.string() << "\n";
+        << "msvc-map: cannot open " << pathToUTF8(MapPath) << "\n";
     return Ctx;
   }
 
@@ -60,7 +61,7 @@ MSVCMapDebugContext::load(const std::filesystem::path &MapPath,
                           << " function symbols, "
                           << Ctx->SourceLocations.size()
                           << " source locations from "
-                          << MapPath.filename().string() << "\n");
+                          << pathToUTF8(MapPath.filename()) << "\n");
   return Ctx;
 }
 

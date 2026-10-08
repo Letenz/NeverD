@@ -94,12 +94,21 @@ struct StackMove {
   bool Unknown = false;
 };
 
+/// A constant address an instruction refers to, how it does ("read",
+/// "write" or "offset"), and the bytes a read or write accesses there (0 for
+/// an address taken or when the lift names no width).
+struct InstructionRef {
+  va_t To = InvalidVA;
+  llvm::StringRef Kind;
+  unsigned Bytes = 0;
+};
+
 /// Control transfer and constant memory references of one decoded native
 /// instruction.  Kind is empty for a fall-through instruction.
 struct InstructionFlow {
   llvm::StringRef Kind;
   va_t Target = InvalidVA;
-  llvm::SmallVector<std::pair<va_t, llvm::StringRef>, 2> Refs;
+  llvm::SmallVector<InstructionRef, 2> Refs;
   StackMove Stack;
 };
 

@@ -141,8 +141,15 @@ StyledText formatOperands(std::string_view operands, const OperandFacts &facts,
 /// Classify one identifier of operand text for \p dialect.
 bool isRegisterName(OperandDialect dialect, std::string_view name);
 bool isOperandKeyword(std::string_view name);
+/// The kinds of data item a user defines besides a value of a size keyword.
+#define NEVERD_DATA_ITEM_KIND(Id, Spelling)                                    \
+  inline constexpr std::string_view Id = Spelling;
+#include "neverd/DataNames.def"
+
 /// Automatic data-name prefix for a size keyword, or empty.
 std::string_view dataNamePrefix(std::string_view sizeKeyword);
+/// The size keyword of an access \p bytes wide (`qword`), or empty.
+std::string_view sizeKeywordOf(std::uint64_t bytes);
 /// Parse an automatic name such as `loc_F2329` back to its address.
 std::optional<std::uint64_t> parseDummyName(std::string_view name);
 bool isPaddingMnemonic(std::string_view mnemonic);

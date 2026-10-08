@@ -120,8 +120,8 @@
         <translation>Re&amp;nommer...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>Renommer la fonction actuelle</translation>
+        <source>Rename the current address</source>
+        <translation>Renommer l&apos;adresse courante</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -726,6 +726,30 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>Ne plus traiter la fonction actuelle comme une fonction</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>&amp;Données</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>Définir une valeur à l&apos;adresse courante ; à nouveau pour la taille suivante</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>&amp;Chaîne</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>Définir la chaîne qui commence à l&apos;adresse courante</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>&amp;Annuler la définition</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>Afficher les octets de l&apos;élément courant comme des octets</translation>
     </message>
 </context>
 <context>
@@ -1708,12 +1732,8 @@ Double-cliquez pour aller à la déclaration.</translation>
         <translation> · lecture seule</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 n&apos;est pas le début d&apos;une fonction ; seules les fonctions peuvent être renommées.</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>Renommer la fonction</translation>
+        <source>Rename address</source>
+        <translation>Renommer l&apos;adresse</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -2122,6 +2142,18 @@ Signé : %4</translation>
     <message>
         <source>Deleted the function at %1</source>
         <translation>Fonction supprimée à %1</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>Les octets à %1 sont déjà non définis</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>Définition de l&apos;élément à %1 annulée</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>%1 défini à %2</translation>
     </message>
 </context>
 </TS>

@@ -323,16 +323,20 @@ uint16_t TargetRegInfo::callPreservedPrefixSize(uint64_t RegOff,
   return VecIdx >= 8 && VecIdx <= 15 ? 8 : 0;
 }
 
+// Additional Win64 GPRs, including the nonvolatile APX pair. Both
+// single-view queries and range enumeration use this same ABI table.
+static constexpr uint64_t Win64ExtraPreservedGPRs[] = {
+    x86reg::RSI, x86reg::RDI, x86reg::R30, x86reg::R31};
+
 uint16_t TargetRegInfo::callPreservedPrefixSize(uint64_t RegOff, uint16_t Size,
                                                 BinaryFormat Format) const {
   const uint16_t Base = callPreservedPrefixSize(RegOff, Size);
   if (Base == Size || TheArch != Arch::X64 || Format != BinaryFormat::COFF)
     return Base;
-  auto InsideSlot = [&](uint64_t Reg) {
-    return RegOff >= Reg && RegOff + Size <= Reg + FullRegWidth;
-  };
-  if (InsideSlot(x86reg::RSI) || InsideSlot(x86reg::RDI))
-    return Size;
+  for (uint64_t Reg : Win64ExtraPreservedGPRs)
+    if (RegOff >= Reg && RegOff - Reg < FullRegWidth &&
+        Size <= FullRegWidth - (RegOff - Reg))
+      return Size;
   if (isVectorReg(RegOff)) {
     const uint64_t Index = (RegOff - VecRegBase) / VecRegStride;
     if (Index >= 6 && Index <= 15)
@@ -371,8 +375,8 @@ TargetRegInfo::callPreservedRanges(BinaryFormat Format) const {
   }
 
   if (TheArch == Arch::X64 && Format == BinaryFormat::COFF) {
-    Add(x86reg::RSI, FullRegWidth);
-    Add(x86reg::RDI, FullRegWidth);
+    for (uint64_t Reg : Win64ExtraPreservedGPRs)
+      Add(Reg, FullRegWidth);
     for (unsigned I = 6; I <= 15 && I < VecRegCount; ++I)
       Add(VecRegBase + uint64_t(I) * VecRegStride, 16);
   }

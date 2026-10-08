@@ -16,6 +16,7 @@
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/support/FilePath.h"
 
 #define DEBUG_TYPE "neverd-pdb-loader"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -1508,9 +1509,9 @@ PDBDebugContext::load(const std::filesystem::path &PdbPath,
   std::unique_ptr<llvm::pdb::IPDBSession> Session;
   auto Err =
       llvm::pdb::loadDataForPDB(llvm::pdb::PDB_ReaderType::Native,
-                                llvm::StringRef(PdbPath.string()), Session);
+                                llvm::StringRef(pathToUTF8(PdbPath)), Session);
   if (Err)
-    return llvm::createFileError(PdbPath.string(), std::move(Err));
+    return llvm::createFileError(pathToUTF8(PdbPath), std::move(Err));
 
   auto *Native = static_cast<llvm::pdb::NativeSession *>(Session.get());
   Session->setLoadAddress(Image.Base);
@@ -1784,7 +1785,7 @@ PDBDebugContext::load(const std::filesystem::path &PdbPath,
     Ctx->PImpl->startTypePrefetch();
   LLVM_DEBUG(llvm::dbgs() << "pdb: loaded " << Ctx->PImpl->Functions.size()
                           << " function symbols from "
-                          << PdbPath.filename().string() << "\n");
+                          << pathToUTF8(PdbPath.filename()) << "\n");
   return Ctx;
 }
 

@@ -17,6 +17,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/loader/ARMModeCLIStrings.h"
+#include "neverd/support/FilePath.h"
 #include "neverd/support/StackSizeMain.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -116,7 +117,7 @@ static int realMain(int Argc, char *Argv[]) {
   if (Command.empty())
     return 1;
 
-  auto Path = std::filesystem::path(InputFile.getValue());
+  auto Path = std::filesystem::u8path(InputFile.getValue());
   if (!std::filesystem::exists(Path)) {
     WithColor::error() << "file not found: " << InputFile.getValue() << "\n";
     return 1;
@@ -180,7 +181,7 @@ static int realMain(int Argc, char *Argv[]) {
   }
 
   if (!JsonOutput) {
-    errs() << "Loading " << Path.filename().string() << "...\n";
+    errs() << "Loading " << pathToUTF8(Path.filename()) << "...\n";
     neverd_session_set_load_progress(
         Sess,
         [](void *, const char *Phase, unsigned long long Done,
@@ -255,7 +256,7 @@ static int realMain(int Argc, char *Argv[]) {
     const char *ArchStr = neverd_session_arch_name(Sess);
     outs() << "=== " << ProjectName << " v" << VersionString << " (" << Command
            << ") ===\n";
-    outs() << "File:  " << Path.filename().string() << "\n";
+    outs() << "File:  " << pathToUTF8(Path.filename()) << "\n";
     outs() << "Arch:  " << ArchStr << "\n";
     neverd_free_string(ArchStr);
 
@@ -266,7 +267,8 @@ static int realMain(int Argc, char *Argv[]) {
     const char *DbgPath = neverd_session_debug_info_path(Sess);
     if (DbgPath[0] != '\0')
       outs() << "Debug: " << DbgKind << " ("
-             << std::filesystem::path(DbgPath).filename().string() << ")\n";
+             << pathToUTF8(std::filesystem::u8path(DbgPath).filename())
+             << ")\n";
     neverd_free_string(DbgKind);
     neverd_free_string(DbgPath);
   }
@@ -323,6 +325,8 @@ static int realMain(int Argc, char *Argv[]) {
     return runRename(Sess);
   if (FunctionEditsCmd)
     return runFunctionEdits(Sess);
+  if (ItemsCmd)
+    return runItems(Sess);
   if (SearchCmd)
     return runSearch(Sess);
   if (SigsCmd)

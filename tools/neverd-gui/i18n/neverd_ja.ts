@@ -120,8 +120,8 @@
         <translation>名前の変更(&amp;N)...</translation>
     </message>
     <message>
-        <source>Rename the current function</source>
-        <translation>現在の関数の名前を変更します</translation>
+        <source>Rename the current address</source>
+        <translation>現在のアドレスの名前を変更します</translation>
     </message>
     <message>
         <source>Enter &amp;comment...</source>
@@ -726,6 +726,30 @@
     <message>
         <source>Stop treating the current function as one</source>
         <translation>現在の関数を関数として扱わないようにします</translation>
+    </message>
+    <message>
+        <source>&amp;Data</source>
+        <translation>データ(&amp;D)</translation>
+    </message>
+    <message>
+        <source>Define a value at the current address; again for the next size</source>
+        <translation>現在のアドレスに値を定義します。もう一度押すと次のサイズになります</translation>
+    </message>
+    <message>
+        <source>&amp;String</source>
+        <translation>文字列(&amp;S)</translation>
+    </message>
+    <message>
+        <source>Define the string that starts at the current address</source>
+        <translation>現在のアドレスから始まる文字列を定義します</translation>
+    </message>
+    <message>
+        <source>Undef&amp;ine</source>
+        <translation>定義解除(&amp;I)</translation>
+    </message>
+    <message>
+        <source>Show the current item&apos;s bytes as bytes</source>
+        <translation>現在の項目をバイトとして表示します</translation>
     </message>
 </context>
 <context>
@@ -1705,12 +1729,8 @@ Double-click to go to the declaration.</source>
         <translation> · 読み取り専用</translation>
     </message>
     <message>
-        <source>%1 is not a function entry; only functions can be renamed.</source>
-        <translation>%1 は関数の先頭ではありません。名前を変更できるのは関数のみです。</translation>
-    </message>
-    <message>
-        <source>Rename function</source>
-        <translation>関数名の変更</translation>
+        <source>Rename address</source>
+        <translation>アドレスの名前を変更</translation>
     </message>
     <message>
         <source>Name of %1:</source>
@@ -2119,6 +2139,18 @@ Signed: %4</source>
     <message>
         <source>Deleted the function at %1</source>
         <translation>%1 の関数を削除しました</translation>
+    </message>
+    <message>
+        <source>The bytes at %1 are already undefined</source>
+        <translation>%1 のバイトはすでに未定義です</translation>
+    </message>
+    <message>
+        <source>Undefined the item at %1</source>
+        <translation>%1 の項目の定義を解除しました</translation>
+    </message>
+    <message>
+        <source>Defined %1 at %2</source>
+        <translation>%2 に %1 を定義しました</translation>
     </message>
 </context>
 </TS>

@@ -267,8 +267,8 @@ QString ChooserModel::display(const QJsonObject &row,
       else if (c == QLatin1Char('\r'))
         text += QStringLiteral("\\r");
       else if (c.unicode() < 0x20 || c.unicode() == 0x7f)
-        text +=
-            QStringLiteral("\\x%1").arg(c.unicode(), 2, 16, QLatin1Char('0'));
+        text += QStringLiteral("\\x%1").arg(static_cast<uint>(c.unicode()), 2,
+                                            16, QLatin1Char('0'));
       else
         text += c;
     }

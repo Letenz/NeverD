@@ -117,7 +117,7 @@ int neverd_apply_signatures(neverd_session_t Sess, const char *SigDir) {
 
   auto Entries = findSignatureEntries(*S);
   useSignatureCache(*S);
-  auto Err = S->SigDB.loadDirectory(SigDir);
+  auto Err = S->SigDB.loadDirectory(std::filesystem::u8path(SigDir));
   if (Err) {
     S->setError(llvm::toString(std::move(Err)));
     return -1;
@@ -134,7 +134,7 @@ int neverd_apply_signature_file(neverd_session_t Sess, const char *SigPath) {
 
   auto Entries = findSignatureEntries(*S);
   useSignatureCache(*S);
-  auto Err = S->SigDB.loadFile(SigPath);
+  auto Err = S->SigDB.loadFile(std::filesystem::u8path(SigPath));
   if (Err) {
     S->setError(llvm::toString(std::move(Err)));
     return -1;
@@ -154,7 +154,7 @@ int neverd_auto_apply_signatures(neverd_session_t Sess,
     return 0;
   auto Entries = findSignatureEntries(*S);
   useSignatureCache(*S);
-  auto Err = S->SigDB.loadForImage(S->Img, SigBaseDir);
+  auto Err = S->SigDB.loadForImage(S->Img, std::filesystem::u8path(SigBaseDir));
   if (Err) {
     S->setError(llvm::toString(std::move(Err)));
     return -1;

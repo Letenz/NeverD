@@ -54,6 +54,7 @@ bool command(const QString &operation) {
                                         "rename",
                                         "function_create",
                                         "function_delete",
+                                        "item_define",
                                         "save",
                                         "reload",
                                         "undo",

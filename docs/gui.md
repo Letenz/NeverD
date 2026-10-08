@@ -43,6 +43,29 @@ set `NEVERD_ENGINE_LIBRARY` to the runtime DLL and `NEVERD_ENGINE_IMPLIB` to its
 matching import `.lib`; make runtime dependencies available alongside the
 worker.
 
+Open a binary or a project with **File → Open**, or drag one file from
+the system file manager onto the quick-start dialog, workbench or a floating
+view. File drops use the same open workflow, including the save/discard/cancel
+prompt for unsaved changes. Drop one existing file at a time; directories and
+web URLs are not opened. Opening by drag and drop leaves the source file in
+place.
+
+PE browsing tolerates complete legacy relocation layouts and reports unusable
+entry/import metadata in **Output**. An unknown entry opens at a mapped code
+region for browsing; this does not reconstruct the program's OEP. Invalid import
+bindings remain unknown, and fixed-image semantic checks retain their stricter
+requirements. Truncated or unmappable image structures can still prevent loading.
+
+Local file paths passed between the GUI, worker, CLI and C ABI use UTF-8 on
+all platforms. Windows paths are converted to native filesystem paths before
+loading binaries, companion PDB/MAP files, signatures and project sidecars.
+Chinese names, spaces and other Unicode characters are supported without
+changing the Windows system code page.
+
+The default application and code font is Consolas at 10 points when that
+family is installed. Otherwise, the system fixed-width font is used. A saved
+code-font choice continues to override the default for code views.
+
 Double-clicking a function name in a code view follows it in that same window,
 keeping its C or LLVM C representation even when the window is locked. Back and
 forward navigation also stays in the active code window. Imports and global
@@ -85,7 +108,11 @@ spellings (`jz`, `retn`, `[rbp+var_30]`, sizes only where no operand implies
 them), with `segment:address` prefixes and optional opcode bytes (**Options →
 General**). Stack variables are named through the frame pointer and, in 64-bit
 code, through the stack pointer wherever every path agrees on its distance
-from the frame (`[rsp+48h+var_30]`); each is as wide as its widest access. Only a window of lines around the viewport is held; the scroll bar
+from the frame (`[rsp+48h+var_30]`); each is as wide as its widest access.
+A named object is as large as its symbol says (`stderr dq ?`), and data the
+code reads or writes is laid out as wide as those accesses, under the name its
+operands and the pseudocode use (`qword_A410 dq ?`, or `unk_` where the widths
+differ); other unwritten bytes run as `db N dup(?)` up to the next item. Only a window of lines around the viewport is held; the scroll bar
 maps to the linear address space. The arrow gutter draws branches, and clicking
 an identifier highlights every occurrence. Names the engine leaves generic take
 their classic forms in the listing, function list and jumps: import thunks after
@@ -99,7 +126,12 @@ shows the whole function and the visible area.
 
 **Pseudocode** (F5, Tab) and **IR** windows show C, C through LLVM, LowIR,
 MedIR, HighIR or LLVM IR of the current function and follow the disassembly
-unless their lock is set. The LLVM views translate the current function alone,
+unless their lock is set. A window hidden behind another tab catches up when it
+is shown, so moving through the disassembly never waits for a decompile no one
+sees, and F5 pressed while a jump is loading decompiles the function the jump
+lands in. The engine emits a function's source once and pages it from there; a
+function longer than one page keeps the listing's names, such as `main`. The
+LLVM views translate the current function alone,
 with the others declared, so a function the engine refuses to translate shows
 its reason without affecting other functions. Rows mapped to instructions move
 the disassembly cursor. C opens at the function: the includes, support types and
@@ -136,12 +168,22 @@ the code calls through, the size of its accesses otherwise (`qword_3FB8`,
 line's `neverd decompile` prints the same declarations.
 
 A function's address reads as the function: `_start` passes `main`, not
-`0x1169`, and a function the output does not define is declared. A routine no
-standard header declares, such as `__libc_start_main`, is declared with the
-prototype the C library tables give it, and each argument converts to its
-parameter type as a disassembler's decompiler shows it:
-`__libc_start_main((int (*)(int, char **, char **))main, argc, (char **)argv,
-0, 0, (void (*)(void))rtld_fini, (void *)stack_end)`.
+`0x1169`. A function the output defines is declared before the code that
+names it, and one it does not define is declared as a callee is. A routine no
+standard header declares is declared with the prototype the C library tables
+give it: the start-up and exit routines (`__libc_start_main`, `__cxa_atexit`,
+`__cxa_finalize`), the errno and ctype accessors (`__errno_location`,
+`__ctype_b_loc`), the Itanium C++ runtime and unwinder (`__cxa_throw`,
+`__cxa_begin_catch`, `_Unwind_Resume`), glibc's fortified and ISO C routines
+(`__printf_chk`, `__isoc23_sscanf`) and, in a PE image, the Windows C
+runtime's (`__getmainargs`, `_initterm`, `__stdio_common_vfprintf`). Each
+argument converts to its parameter type as a disassembler's decompiler shows
+it: `__libc_start_main((int (*)(int, char **, char **))main, argc, (char
+**)argv, 0, 0, (void (*)(void))rtld_fini, (void *)stack_end)`. A pointer such
+a routine returns keeps the integer the machine reads,
+`(uintptr_t)__errno_location()`. A function passed to a standard function
+converts to the type its header declares: `qsort(base, n, 4, (int (*)(const
+void *, const void *))compare)`.
 
 C++ names read as a classic disassembler shows them: the listing keeps the
 linkage name an instruction uses and adds its demangled form as a comment
@@ -218,8 +260,9 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Space | Toggle graph and text view |
 | F5 / Tab | Pseudocode / switch between disassembly and pseudocode |
 | X / Ctrl+X / Ctrl+J | References to the operand / to the item / from the item |
-| N | Rename the function |
+| N | Rename the name under the cursor, or the address: a function at its entry, data, a label in code |
 | P | Create a function at the address (**Edit → Functions** also deletes the current one) |
+| D / A / U | Make data (again for the next size) / a string / bytes of the item |
 | : or ; | Comment the address |
 | Alt+M / Ctrl+M | Mark a position / jump to a marked position |
 | Ctrl+P / Ctrl+L / Ctrl+S / Ctrl+E | Choose a function / name / segment / entry point |
@@ -274,11 +317,11 @@ not a NeverD database.
 
 ## Edits, history and analysis
 
-Comments are staged and saved explicitly; renames and function edits commit at
-once (staged comments are saved first). Opening another file, restarting the
+Comments are staged and saved explicitly; renames, function edits and data
+items commit at once (staged comments are saved first). Opening another file, restarting the
 worker or quitting with unsaved comments offers Save, Discard and Cancel. Edits
 prepared for a session that has since closed are refused, never applied to the
-new one. Annotation, rename and function edit commands have bounded undo/redo
+new one. Annotation, rename, function edit and data item commands have bounded undo/redo
 history bound to the input hash and sidecar contents; a write-ahead journal
 recovers an interrupted save, and foreign edits disable replay instead of
 silently applying commands to another state. One worker owns a writable input
@@ -292,6 +335,26 @@ symbols, the function detector and analysis, and the edits are kept in
 function-edits <input> --create <address>`, `--delete <address>`, `--list`).
 A function edit drops whole-program analysis results: analysis continues
 function by function until **Analyze** runs again.
+
+**Edit → Rename** (N) names any address, as the listing and the pseudocode
+show it: a name under the cursor renames what it denotes, otherwise the item
+the cursor is on. A data name replaces `qword_A410` in its label, every operand
+(`mov rdx, cs:pname`) and the C (`fprintf(stderr, "%s: %s\n", pname, msg)`). A
+name has no spaces, leads to one address and is never an automatic name such
+as `sub_1234`. Names are kept in `<input>.neverd-renames.json`, which the
+command line reads and writes too (`neverd rename <input> --addr <address>
+--to <name>`, `--clear`).
+
+**Edit → Data** (D) makes the item under the cursor a value, and pressing it
+again cycles the value through byte, word, dword and qword; **Edit → String**
+(A) makes the string that starts there an item, read as the string scan reads
+one; **Edit → Undefine** (U) shows the item's bytes as bytes, whatever
+analysis reads in them. D or A inside undefined bytes takes just the bytes the
+new item needs and leaves the rest undefined, and each press is one step of
+undo history. Code belongs to its function and is never made data. The items
+are kept in `<input>.neverd-items.json`, which the command line reads and
+writes too (`neverd items <input> --data <address> --size 4`, `--string
+<address>`, `--undefine <address> --size <n>`, `--clear <address>`).
 
 Opening a file never starts whole-program analysis. The listing, function list,
 references and graph come from the loader and from per-function work: a

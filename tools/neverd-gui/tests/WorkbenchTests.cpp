@@ -7,6 +7,7 @@
 #include "HexView.h"
 #include "ListingView.h"
 #include "MainWindow.h"
+#include "OutputWindow.h"
 #include "ProjectDatabase.h"
 #include "Session.h"
 #include "Theme.h"
@@ -16,6 +17,9 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QFile>
 #include <QFileInfo>
 #include <QFontMetricsF>
@@ -23,6 +27,10 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QMessageBox>
+#include <QMimeData>
+#include <QPlainTextEdit>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSignalSpy>
@@ -31,6 +39,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeView>
+#include <QUrl>
 #include <cmath>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <memory>
@@ -88,6 +97,24 @@ struct Workbench {
 QByteArray readAll(const QString &path) {
   QFile file(path);
   return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+bool dropFile(QWidget *target, const QString &path) {
+  QMimeData mime;
+  mime.setUrls({QUrl::fromLocalFile(path)});
+  QDragEnterEvent enter(QPoint(10, 10), Qt::CopyAction | Qt::MoveAction, &mime,
+                        Qt::LeftButton, Qt::ShiftModifier);
+  QApplication::sendEvent(target, &enter);
+  if (!enter.isAccepted() || enter.dropAction() != Qt::CopyAction)
+    return false;
+  QDragMoveEvent move(QPoint(10, 10), Qt::CopyAction | Qt::MoveAction, &mime,
+                      Qt::LeftButton, Qt::ShiftModifier);
+  QApplication::sendEvent(target, &move);
+  if (!move.isAccepted() || move.dropAction() != Qt::CopyAction)
+    return false;
+  QDropEvent drop(QPointF(10, 10), Qt::CopyAction | Qt::MoveAction, &mime,
+                  Qt::LeftButton, Qt::ShiftModifier);
+  QApplication::sendEvent(target, &drop);
+  return drop.isAccepted() && drop.dropAction() == Qt::CopyAction;
 }
 } // namespace
 
@@ -329,6 +356,168 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!code->loading(), OpenTimeoutMs);
     QVERIFY(code->isVisible());
     QTRY_VERIFY(code->hasFocus());
+  }
+
+  void unknownEntryBrowsesMappedCodeAndShowsDiagnostics() {
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("unknown-entry.bin"));
+    Workbench bench;
+    QSignalSpy messages(&bench.session, &Session::message);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(bench.session.entryAddress(), Address(0));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bench.window->disassembly()->currentAddress().has_value(),
+        OpenTimeoutMs);
+    QVERIFY(*bench.window->disassembly()->currentAddress() >= Base);
+    QVERIFY(*bench.window->disassembly()->currentAddress() < Base + 0x3000);
+    bool warned = false;
+    for (const auto &message : messages)
+      warned |= message.first().toString() ==
+                QLatin1String("Fixture PE entry is unknown.");
+    QVERIFY(warned);
+    QCOMPARE(bench.session.entryAddress(), Address(0));
+  }
+
+  void fileDropOpensFromWorkbenchViews_data() {
+    QTest::addColumn<QString>("targetName");
+    for (const auto *name : {"window", "listing", "functions", "hex", "code",
+                             "output", "command", "floating"})
+      QTest::newRow(name) << QString::fromLatin1(name);
+  }
+
+  void fileDropOpensFromWorkbenchViews() {
+    QFETCH(QString, targetName);
+    QTemporaryDir directory;
+    const auto path = writeFixture(
+        directory, QString::fromUtf8("\u4e2d\u6587 space #% fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    QWidget *target = bench.window.get();
+    if (targetName == QLatin1String("listing"))
+      target = bench.window->disassembly()->listing()->viewport();
+    else if (targetName == QLatin1String("functions"))
+      target = bench.functions()->table()->viewport();
+    else if (targetName == QLatin1String("hex"))
+      target = bench.window->findChild<HexView *>()->viewport();
+    else if (targetName == QLatin1String("code")) {
+      // Code docks created after startup must accept file drops too.
+      bench.window->openFile(writeFixture(directory, "first.bin"));
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      bench.window->disassembly()->navigate(Base + 0x140);
+      QTRY_VERIFY_WITH_TIMEOUT(
+          bench.window->disassembly()->currentFunction().has_value(),
+          OpenTimeoutMs);
+      bench.action(ActionId::ViewPseudocode)->trigger();
+      auto *view = bench.codeView(QStringLiteral("c"));
+      QVERIFY(view);
+      target = view->text()->viewport();
+    } else if (targetName == QLatin1String("output"))
+      target = bench.window->findChild<OutputWindow *>()
+                   ->findChild<QPlainTextEdit *>()
+                   ->viewport();
+    else if (targetName == QLatin1String("command"))
+      target =
+          bench.window->findChild<OutputWindow *>()->findChild<QLineEdit *>();
+    else if (targetName == QLatin1String("floating")) {
+      auto *dock = qobject_cast<KDDockWidgets::QtWidgets::DockWidget *>(
+          bench.functions()->parentWidget());
+      QVERIFY(dock);
+      dock->setFloating(true);
+      target = bench.functions()->table()->viewport();
+      QVERIFY(target->window() != bench.window.get());
+    }
+    QVERIFY(target);
+    QVERIFY(dropFile(target, path));
+    QTRY_COMPARE_WITH_TIMEOUT(bench.session.filePath(), path, OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(QFileInfo::exists(path));
+    if (targetName == QLatin1String("command"))
+      QVERIFY(static_cast<QLineEdit *>(target)->text().isEmpty());
+  }
+
+  void fileDropRejectsInvalidInputs() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    Workbench bench;
+    const QList<QList<QUrl>> rejected{
+        {},
+        {QUrl(QStringLiteral("https://example.com/fixture.bin"))},
+        {QUrl::fromLocalFile(directory.path())},
+        {QUrl::fromLocalFile(directory.filePath("missing.bin"))},
+        {QUrl::fromLocalFile(path), QUrl::fromLocalFile(path)},
+        {QUrl(QStringLiteral("file:relative.bin"))}};
+    for (const auto &urls : rejected) {
+      QMimeData mime;
+      mime.setUrls(urls);
+      QDragEnterEvent enter(QPoint(10, 10), Qt::CopyAction, &mime,
+                            Qt::LeftButton, Qt::NoModifier);
+      QApplication::sendEvent(bench.window.get(), &enter);
+      QVERIFY(!enter.isAccepted());
+    }
+    QMimeData mime;
+    mime.setUrls({QUrl::fromLocalFile(path)});
+    QDragEnterEvent moveOnly(QPoint(10, 10), Qt::MoveAction, &mime,
+                             Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(bench.window.get(), &moveOnly);
+    QVERIFY(!moveOnly.isAccepted());
+    QMimeData text;
+    text.setText(path);
+    QDragEnterEvent plainText(QPoint(10, 10), Qt::CopyAction, &text,
+                              Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(bench.window.get(), &plainText);
+    QVERIFY(!plainText.isAccepted());
+    QVERIFY(bench.session.filePath().isEmpty());
+  }
+
+  void fileDropOpensFromQuickStart() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    Workbench bench;
+    QTimer drag;
+    bool accepted = false;
+    connect(&drag, &QTimer::timeout, this, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (!dialog || dialog->objectName() != QLatin1String("quickStartDialog"))
+        return;
+      drag.stop();
+      accepted = dropFile(dialog->findChild<QListWidget *>(), path);
+      if (!accepted)
+        dialog->reject();
+    });
+    drag.start(10);
+    bench.window->showQuickStart();
+    QVERIFY(accepted);
+    QTRY_COMPARE_WITH_TIMEOUT(bench.session.filePath(), path, OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(!QApplication::activeModalWidget());
+  }
+
+  void fileDropKeepsUnsavedChangesWhenCancelled() {
+    QTemporaryDir directory;
+    const auto first = writeFixture(directory, QStringLiteral("first.bin"));
+    const auto second = writeFixture(directory, QStringLiteral("second.bin"));
+    Workbench bench;
+    bench.window->openFile(first);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.session.setComment(Base, QStringLiteral("unsaved comment"));
+    QTRY_VERIFY(bench.session.dirty());
+    QTimer cancel;
+    bool prompted = false;
+    connect(&cancel, &QTimer::timeout, this, [&] {
+      if (auto *box =
+              qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+        prompted = true;
+        box->reject();
+      }
+    });
+    cancel.start(10);
+    QVERIFY(dropFile(bench.window.get(), second));
+    QTRY_VERIFY(prompted);
+    QCOMPARE(bench.session.filePath(), first);
+    QVERIFY(bench.session.loaded());
+    QVERIFY(bench.session.dirty());
   }
 
   void initTestCase() {
@@ -702,6 +891,30 @@ private slots:
         functions->model().rowObject(21).value("name").toString(), looseName,
         OpenTimeoutMs);
 
+    // D makes the data under the cursor a value, the next size each time
+    // (stderr's qword gives way to a byte, then a word); U shows its bytes as
+    // bytes, and undo takes U back.  Each commits at once.
+    const Address object = Base + 0x3200;
+    const auto items = [&] {
+      return QString::fromUtf8(readAll(path + ".neverd-items.json"));
+    };
+    disassembly->navigate(object);
+    disassembly->focusContent();
+    QTRY_COMPARE(disassembly->currentItem(), std::optional<Address>(object));
+    QTRY_VERIFY(bench.action(ActionId::EditDefineData)->isEnabled());
+    bench.action(ActionId::EditDefineData)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(items().contains(QLatin1String("\"byte\"")),
+                             OpenTimeoutMs);
+    bench.action(ActionId::EditDefineData)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(items().contains(QLatin1String("\"word\"")),
+                             OpenTimeoutMs);
+    bench.action(ActionId::EditUndefine)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(items().contains(QLatin1String("\"undefined\"")),
+                             OpenTimeoutMs);
+    bench.session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(items().contains(QLatin1String("\"word\"")),
+                             OpenTimeoutMs);
+
     // A restarted worker reopens the file where its database left it.
     bench.session.restart();
     QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
@@ -883,7 +1096,7 @@ private slots:
       const auto copy = moved.filePath(name);
       QVERIFY(QFile::copy(database, copy));
       Workbench bench;
-      bench.window->openFile(copy);
+      QVERIFY(dropFile(bench.window.get(), copy));
       QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
       QCOMPARE(bench.session.projectPath(), copy);
       QCOMPARE(bench.session.databasePath(), copy);
