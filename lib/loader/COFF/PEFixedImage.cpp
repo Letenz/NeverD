@@ -6,9 +6,12 @@
 
 #include "neverd/loader/COFF/PEFixedImage.h"
 
+#include "COFFObjectView.h"
+
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
 #include "neverd/loader/PointerRelocation.h"
+#include "neverd/object/PELayout.h"
 #include "neverd/support/ISAEncoding.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -120,7 +123,7 @@ llvm::Error preflightFixedHeader(llvm::ArrayRef<uint8_t> Bytes) {
 
 struct RawSection {
   uint64_t RVA;
-  uint64_t VirtualSize;
+  uint64_t ContentSize;
   uint64_t Offset;
   uint64_t RawSize;
   uint32_t Characteristics;
@@ -143,9 +146,10 @@ public:
   std::vector<RawSection> Sections;
   std::vector<size_t> ByRVA;
 
-  RawImage(const COFFObjectFile &Object, PEFixedImageLimits Limits)
-      : Bytes(llvm::arrayRefFromStringRef(Object.getData())), Object(Object),
-        Limits(Limits), Base(Object.getImageBase()) {}
+  RawImage(const COFFObjectFile &Object, llvm::ArrayRef<uint8_t> Bytes,
+           PEFixedImageLimits Limits)
+      : Bytes(Bytes), Object(Object), Limits(Limits),
+        Base(Object.getImageBase()) {}
 
   llvm::Error account(uint64_t Size, uint64_t Count = 1) {
     if (Size > Limits.MaxBytes - WorkBytes ||
@@ -170,7 +174,7 @@ public:
     if (!COFFHeader)
       return invalid("missing linked-image COFF header");
     const uint64_t COFFOffset =
-        reinterpret_cast<const uint8_t *>(COFFHeader) - Bytes.data();
+        reinterpret_cast<const char *>(COFFHeader) - Object.getData().data();
     const uint64_t TableEnd =
         COFFOffset + sizeof(coff_file_header) +
         COFFHeader->SizeOfOptionalHeader +
@@ -193,19 +197,23 @@ public:
         if (auto Error = account(Name.size(), 0))
           return Error;
       }
-      const RawSection Section{S->VirtualAddress,   S->VirtualSize,
-                               S->PointerToRawData, S->SizeOfRawData,
-                               S->Characteristics,  Name};
-      if (Section.RVA + Section.VirtualSize > (uint64_t{1} << 32) ||
-          Section.RVA + Section.VirtualSize > InvalidVA - Base ||
+      const RawSection Section{
+          S->VirtualAddress,
+          getPESectionContentSize(S->VirtualSize, S->SizeOfRawData),
+          S->PointerToRawData,
+          S->SizeOfRawData,
+          S->Characteristics,
+          Name};
+      if (Section.RVA + Section.ContentSize > (uint64_t{1} << 32) ||
+          Section.RVA + Section.ContentSize > InvalidVA - Base ||
           Section.Offset + Section.RawSize > Bytes.size())
         return invalid("section extent is outside its address space");
-      if (Section.VirtualSize)
-        Virtual.push_back({Section.RVA, Section.RVA + Section.VirtualSize});
+      if (Section.ContentSize)
+        Virtual.push_back({Section.RVA, Section.RVA + Section.ContentSize});
       if (Section.RawSize)
         Raw.push_back({Section.Offset, Section.Offset + Section.RawSize});
       Sections.push_back(Section);
-      if (Section.VirtualSize)
+      if (Section.ContentSize)
         ByRVA.push_back(Sections.size() - 1);
     }
     if (!disjoint(Virtual) || !disjoint(Raw))
@@ -226,7 +234,7 @@ public:
       return nullptr;
     const auto &S = Sections[*std::prev(It)];
     const uint64_t Offset = RVA - S.RVA;
-    if (Size > S.VirtualSize || Offset > S.VirtualSize - Size ||
+    if (Size > S.ContentSize || Offset > S.ContentSize - Size ||
         Size > S.RawSize || Offset > S.RawSize - Size)
       return nullptr;
     return &S;
@@ -260,7 +268,7 @@ public:
     if (!S)
       return invalid("import name is not file-backed");
     const uint64_t Available =
-        std::min(S->RawSize, S->VirtualSize) - (RVA - S->RVA);
+        std::min(S->RawSize, S->ContentSize) - (RVA - S->RVA);
     for (uint64_t I = Prefix; I < Available; ++I) {
       if (auto Error = account(1, 0))
         return std::move(Error);
@@ -476,7 +484,8 @@ llvm::Error coff_loader::parseBaseRelocations(const COFFObjectFile &Object,
   const auto Scaled = [&](uint64_t Factor) {
     return FileSize > UINT64_MAX / Factor ? UINT64_MAX : FileSize * Factor;
   };
-  RawImage Raw(Object, {.MaxBytes = Scaled(8), .MaxRecords = Scaled(2)});
+  RawImage Raw(Object, Image.Raw,
+               {.MaxBytes = Scaled(8), .MaxRecords = Scaled(2)});
   if (ImageBase != Raw.Base)
     return invalid("base relocation mapping differs from its header");
   if (auto Error = Raw.initialize())
@@ -529,14 +538,16 @@ PEFixedImageView::create(const BinaryImage &Image,
     return std::move(Error);
   const llvm::StringRef RawBytes(
       reinterpret_cast<const char *>(Image.Raw.data()), Image.Raw.size());
-  auto Object = COFFObjectFile::create(llvm::MemoryBufferRef(RawBytes, {}));
+  auto Object =
+      coff_loader::COFFObjectView::create(llvm::MemoryBufferRef(RawBytes, {}));
   if (!Object)
     return Object.takeError();
-  const auto *Header = (*Object)->getPE32PlusHeader();
-  if (!Header || (*Object)->getMachine() != IMAGE_FILE_MACHINE_AMD64 ||
-      (*Object)->getImageBase() != Image.Base)
+  const auto &Parsed = Object->object();
+  const auto *Header = Parsed.getPE32PlusHeader();
+  if (!Header || Parsed.getMachine() != IMAGE_FILE_MACHINE_AMD64 ||
+      Parsed.getImageBase() != Image.Base)
     return invalid("mapped image and preferred-base header disagree");
-  RawImage Raw(**Object, Limits);
+  RawImage Raw(Parsed, Image.Raw, Limits);
   if (auto Error = Raw.initialize(true))
     return std::move(Error);
   if (auto Error = Raw.account(Image.Raw.size(), 0))
@@ -554,20 +565,20 @@ PEFixedImageView::create(const BinaryImage &Image,
     const auto Flags = coffFlagsToNd(R.Characteristics);
     const auto Matches = [&](const auto &Mapping) {
       return Mapping.VA == Image.Base + R.RVA &&
-             Mapping.Size == R.VirtualSize && Mapping.FileOff == R.Offset &&
+             Mapping.Size == R.ContentSize && Mapping.FileOff == R.Offset &&
              Mapping.FileSz == R.RawSize && Mapping.Flags == Flags &&
              Mapping.Name == R.Name;
     };
     if (!Matches(M) || !Matches(S) || S.Type != R.Characteristics ||
         M.ReadOnlyAfterRelocations)
       return invalid("mapped section identity or permissions changed");
-    const uint64_t FileBytes = std::min(R.RawSize, R.VirtualSize);
+    const uint64_t FileBytes = std::min(R.RawSize, R.ContentSize);
     if (M.Data.size() < FileBytes || S.Data.size() < FileBytes)
       return invalid("incomplete mapped section bytes");
     if (auto Error = Raw.account(M.Data.size() + S.Data.size(), 0))
       return std::move(Error);
     const auto MatchesBytes = [&](llvm::ArrayRef<uint8_t> Bytes) {
-      if (Bytes.size() > std::max(R.RawSize, R.VirtualSize))
+      if (Bytes.size() > std::max(R.RawSize, R.ContentSize))
         return false;
       for (size_t J = 0; J < Bytes.size(); ++J)
         if (Bytes[J] != (J < R.RawSize ? Image.Raw[R.Offset + J] : 0))

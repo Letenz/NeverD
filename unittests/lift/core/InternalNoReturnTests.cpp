@@ -6,6 +6,7 @@
 #include "neverd/ir/low/InternalNoReturn.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/support/ProloguePatterns.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -179,6 +180,91 @@ TEST(InternalNoReturn, CallFollowedByCodeIsNotProved) {
   Code.resize(0x20, 0xcc);
   const auto Image = imageWith(Code, {{Base, "caller"}, {0x1010, "b"}});
   EXPECT_FALSE(callAtBaseEndsItsBlock(Image));
+}
+
+TEST(InternalNoReturn, RecognizesX86AlignmentNoOps) {
+  struct Case {
+    std::vector<uint8_t> Bytes;
+    bool Is64Bit;
+    size_t Length;
+  };
+  const Case Cases[] = {
+      {{0x90}, true, 1},
+      {{0x66, 0x90}, true, 2},
+      {{0x0f, 0x1f, 0x00}, true, 3},
+      {{0x0f, 0x1f, 0x40, 0x00}, true, 4},
+      {{0x0f, 0x1f, 0x44, 0x00, 0x00}, true, 5},
+      {{0x66, 0x0f, 0x1f, 0x44, 0x00, 0x00}, true, 6},
+      {{0x0f, 0x1f, 0x80, 0x00, 0x00, 0x00, 0x00}, true, 7},
+      {{0x66, 0x66, 0x2e, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00},
+       true,
+       11},
+      // The 32-bit fills that copy a register onto itself.
+      {{0x89, 0xf6}, false, 2},
+      {{0x8b, 0xff}, false, 2},
+      {{0x8d, 0x76, 0x00}, false, 3},
+      {{0x8d, 0x74, 0x26, 0x00}, false, 4},
+      {{0x8d, 0xb4, 0x26, 0x00, 0x00, 0x00, 0x00}, false, 7},
+      // In 64-bit code they zero the upper half.
+      {{0x8d, 0x76, 0x00}, true, 0},
+      // Not no-ops: pause, `nop` with a nonzero reg field, an adding lea, a
+      // copy between two registers, and a truncated `nop r/m`.
+      {{0xf3, 0x90}, true, 0},
+      {{0x0f, 0x1f, 0x48, 0x00}, true, 0},
+      {{0x8d, 0x76, 0x01}, false, 0},
+      {{0x89, 0xf7}, false, 0},
+      {{0x0f, 0x1f, 0x84, 0x00}, true, 0},
+  };
+  for (const Case &C : Cases)
+    EXPECT_EQ(x86AlignmentNopLength(C.Bytes.data(), C.Bytes.size(), C.Is64Bit),
+              C.Length);
+}
+
+TEST(InternalNoReturn, CallFollowedByAlignmentNoOpsEndsItsBlock) {
+  // caller: call b, then GCC's no-ops up to b's entry; b: int 0x29.
+  std::vector<uint8_t> Code(0x10, 0xcc);
+  putCall(Code, Base, Base + 0x10);
+  const uint8_t NoOps[] = {0x66, 0x0f, 0x1f, 0x44, 0x00, 0x00,
+                           0x0f, 0x1f, 0x44, 0x00, 0x00};
+  std::copy(std::begin(NoOps), std::end(NoOps), Code.begin() + 5);
+  Code.insert(Code.end(), {0xcd, 0x29});
+  Code.resize(0x20, 0xcc);
+  const auto Image = imageWith(Code, {{Base, "caller"}, {0x1010, "b"}});
+  EXPECT_TRUE(callAtBaseEndsItsBlock(Image));
+}
+
+TEST(InternalNoReturn, AlignmentNoOpsBeforeTheCallersOwnCodeProveNothing) {
+  // caller: call b; nop; ret at an aligned label of its own -- falling
+  // through the no-op reaches the label, so it is no padding.  b at 0x1020.
+  std::vector<uint8_t> Code(0x20, 0xcc);
+  putCall(Code, Base, Base + 0x20);
+  Code[5] = 0x0f;
+  Code[6] = 0x1f;
+  Code[7] = 0x00;
+  Code[8] = 0xc3;
+  Code.insert(Code.end(), {0xcd, 0x29});
+  Code.resize(0x30, 0xcc);
+  const auto Image = imageWith(Code, {{Base, "caller"}, {0x1020, "b"}});
+  EXPECT_FALSE(callAtBaseEndsItsBlock(Image));
+}
+
+TEST(InternalNoReturn, CallEndingItsFunctionsCodeRangeEndsItsBlock) {
+  // caller: call b; ret -- the caller's sized symbol ends with the call, so
+  // the `ret` is not its code and the call does not return where it is made,
+  // though b can (error(3) with a nonzero status is such a callee).  Without
+  // the size, the fall-through stays.
+  for (bool Sized : {true, false}) {
+    SCOPED_TRACE(Sized);
+    std::vector<uint8_t> Code(0x10, 0xcc);
+    putCall(Code, Base, Base + 0x10);
+    Code[5] = 0xc3;
+    Code.insert(Code.end(), {0xc3});
+    Code.resize(0x20, 0xcc);
+    auto Image = imageWith(Code, {{Base, "caller"}, {0x1010, "b"}});
+    if (Sized)
+      Image.Symbols.front().Size = 5;
+    EXPECT_EQ(callAtBaseEndsItsBlock(Image), Sized);
+  }
 }
 
 TEST(InternalNoReturn, SummaryStillLiftsAProvedCalleeForItsParameters) {

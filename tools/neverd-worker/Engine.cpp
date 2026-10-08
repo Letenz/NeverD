@@ -101,6 +101,22 @@ const DataItemFunctions &dataItems() {
       engineSymbol<StringAtFunction>("neverd_string_at")};
   return functions;
 }
+// Additive C ABI capability: how the user shows operands' numbers.
+using OperandFormatSetFunction = int (*)(neverd_session_t, neverd_va_t, int,
+                                         const char *);
+struct OperandFormatFunctions {
+  OperandFormatSetFunction set;
+  SessionJsonFunction rows;
+  SessionLoadFunction load;
+  explicit operator bool() const { return set && rows && load; }
+};
+const OperandFormatFunctions &operandFormats() {
+  static const OperandFormatFunctions functions{
+      engineSymbol<OperandFormatSetFunction>("neverd_operand_format_set"),
+      engineSymbol<SessionJsonFunction>("neverd_operand_formats_json"),
+      engineSymbol<SessionLoadFunction>("neverd_operand_formats_load")};
+  return functions;
+}
 IRViewFunction irViewFunction() {
   // Additive C ABI capability: an older matching engine can still run the GUI.
   static const auto function =
@@ -397,12 +413,37 @@ void Engine::requireWriter() const {
 }
 bool Engine::keepsFunctionEdits() { return static_cast<bool>(functionEdits()); }
 bool Engine::keepsDataItems() { return static_cast<bool>(dataItems()); }
+bool Engine::keepsOperandFormats() {
+  return static_cast<bool>(operandFormats());
+}
 bool Engine::reloadUserState() {
   const bool annotations = neverd_annotations_load(session_) == 0;
   const bool renames = neverd_renames_load(session_) == 0;
   const bool functions = reloadFunctionEdits();
   const bool items = reloadDataItems();
-  return annotations && renames && functions && items;
+  const bool operands = reloadOperandFormats();
+  return annotations && renames && functions && items && operands;
+}
+bool Engine::reloadOperandFormats() {
+  const auto &formats = operandFormats();
+  if (!formats)
+    return true;
+  const auto before = operandFormatRows();
+  if (formats.load(session_) != 0)
+    return false;
+  if (operandFormatRows() != before)
+    operandFormatsChanged();
+  return true;
+}
+void Engine::operandFormatsChanged() {
+  // Graph nodes hold formatted lines; pseudocode does not show the formats.
+  graphs_.clear();
+  if (listing_)
+    listing_->reloadNumberFormats();
+}
+Json Engine::operandFormatRows() const {
+  const auto &formats = operandFormats();
+  return formats ? backendJson(formats.rows(session_)) : Json::array();
 }
 bool Engine::reloadDataItems() {
   const auto &items = dataItems();
@@ -676,10 +717,15 @@ ProjectHistory &Engine::history() {
     const auto arch = folded(ownedString(neverd_session_arch_name(session_)));
     if (arch == "evm" || arch == "sbf")
       analyze();
-    // Hashing lives behind the C ABI; the worker gains no LLVM linkage.
-    const auto dashboard = backendJson(neverd_dashboard_json(session_));
-    const auto hash = dashboard.value("hashes", Json::object())
-                          .value("sha256", std::string());
+    // Hashing lives behind the C ABI; the worker gains no LLVM linkage.  The
+    // loader's own hash costs nothing, where an older engine's dashboard
+    // hashes the whole input again.
+    static const auto inputHash =
+        engineSymbol<SessionJsonFunction>("neverd_session_input_sha256");
+    const auto hash = inputHash ? ownedString(inputHash(session_))
+                                : backendJson(neverd_dashboard_json(session_))
+                                      .value("hashes", Json::object())
+                                      .value("sha256", std::string());
     history_ = std::make_unique<ProjectHistory>(
         utf8Path(ownedString(neverd_session_file_path(session_))), hash,
         version(), readOnly_, atomicWrite);
@@ -695,7 +741,8 @@ ProjectHistory &Engine::history() {
         {{"annotations", backendJson(neverd_annotations_json(session_))},
          {"renames", backendJson(neverd_renames_json(session_))},
          {"functions", functionEditRows()},
-         {"items", dataItemRows()}});
+         {"items", dataItemRows()},
+         {"operands", operandFormatRows()}});
   }
   return *history_;
 }
@@ -905,6 +952,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       warnings.push_back("Function edits sidecar could not be loaded");
     if (!reloadDataItems())
       warnings.push_back("Data items sidecar could not be loaded");
+    if (!reloadOperandFormats())
+      warnings.push_back("Operand formats sidecar could not be loaded");
     auto result = metadata();
     for (const auto &diagnostic : result.at("loader_diagnostics"))
       warnings.push_back(diagnostic.value("message", std::string()));
@@ -1003,7 +1052,10 @@ Json Engine::execute(const std::string &operation, const Json &p) {
                     "History operation was saved but cannot be reloaded",
                     {{"saved", true}});
     }
-    invalidate();
+    // Reloading operand formats shows them already; any other table can
+    // change what the listing lays out.
+    if (command.at("kind") != "operand")
+      invalidate();
     ++revision_;
     auto result = store.listing(0, 128);
     result["dirty"] = dirty_;
@@ -1272,20 +1324,22 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     const bool renamesLoaded = neverd_renames_load(session_) == 0;
     const bool functionsLoaded = reloadFunctionEdits();
     const bool itemsLoaded = reloadDataItems();
+    const bool operandsLoaded = reloadOperandFormats();
     // Each existing API can change its own table independently. Publish a new
     // revision even on partial failure so clients cannot retain stale pages.
     invalidate();
     ++revision_;
     history_.reset();
     if (!annotationsLoaded || !renamesLoaded || !functionsLoaded ||
-        !itemsLoaded)
+        !itemsLoaded || !operandsLoaded)
       throw Error("load_failed",
-                  "Could not reload the annotations, renames, function edits "
-                  "or data items sidecar",
+                  "Could not reload the annotations, renames, function edits, "
+                  "data items or operand formats sidecar",
                   {{"annotations_loaded", annotationsLoaded},
                    {"renames_loaded", renamesLoaded},
                    {"functions_loaded", functionsLoaded},
                    {"items_loaded", itemsLoaded},
+                   {"operands_loaded", operandsLoaded},
                    {"state_changed", true}});
     dirty_ = false;
     return metadata();
@@ -1293,9 +1347,10 @@ Json Engine::execute(const std::string &operation, const Json &p) {
   if (operation != "disasm" && operation != "bytes" &&
       operation != "annotation_set" && operation != "rename" &&
       operation != "function_create" && operation != "function_delete" &&
-      operation != "item_define" && operation != "decompile" &&
-      operation != "cfg" && operation != "cfg_summary" &&
-      operation != "cfg_viewport" && operation != "xrefs")
+      operation != "item_define" && operation != "operand_format" &&
+      operation != "decompile" && operation != "cfg" &&
+      operation != "cfg_summary" && operation != "cfg_viewport" &&
+      operation != "xrefs")
     throw Error("unsupported", "Unknown worker operation: " + operation);
   const auto address = parseAddress(stringField(p, "address"));
   if (operation == "disasm") {
@@ -1606,6 +1661,99 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     return {{"address", hexAddress(start)},
             {"kind", after.at("kind")},
             {"size", after.at("size")},
+            {"saved", true}};
+  }
+  if (operation == "operand_format") {
+    requireWriter();
+    const auto &formats = operandFormats();
+    if (!formats)
+      throw Error("unsupported", "This engine keeps no operand formats");
+    if (dirty_)
+      throw Error("unsaved_changes", "Save or reload staged annotations "
+                                     "before formatting an operand");
+    if (!listing().showsNumberFormats())
+      throw Error("unsupported",
+                  "Operand types are shown for x86 instructions only");
+    // Formats belong to the instruction that starts at the address, and
+    // change its operands that are numbers: the one asked for if it is one,
+    // else the last.
+    const auto numbers = listing().numberOperands(address);
+    if (!numbers)
+      throw Error("invalid_request",
+                  "No instruction starts at " + hexAddress(address));
+    std::optional<std::size_t> chosen;
+    if (p.contains("operand"))
+      if (const auto asked = sizeField(p, "operand", 0, 7);
+          asked < numbers->size() && (*numbers)[asked])
+        chosen = asked;
+    for (std::size_t i = numbers->size(); !chosen && i-- > 0;)
+      if ((*numbers)[i])
+        chosen = i;
+    if (!chosen)
+      throw Error("invalid_request", "The instruction at " +
+                                         hexAddress(address) +
+                                         " has no number to format");
+    const auto operand = *chosen;
+    const auto action = stringField(p, "action", {}, 16);
+    auto &store = history();
+    auto state = store.committedState();
+    const auto rowAt = [&](const Json &rows) -> Json {
+      for (const auto &row : rows)
+        if (parseAddress(row.at("addr").get<std::string>()) == address)
+          return row;
+      return nullptr;
+    };
+    const Json before = rowAt(state.at("operands"));
+    // The operand's format so far, then the action's change to it: a base,
+    // the sign, the bits, or the listing's own number again.
+    const std::string number(numberBaseName(NumberBase::Number));
+    Json next = {{"base", number}, {"negate", false}, {"invert", false}};
+    if (!before.is_null())
+      for (const auto &entry : before.at("operands"))
+        if (entry.at("operand").get<std::size_t>() == operand)
+          next = {{"base", entry.at("base")},
+                  {"negate", entry.value("negate", false)},
+                  {"invert", entry.value("invert", false)}};
+    if (action == "negate")
+      next["negate"] = !next.at("negate").get<bool>();
+    else if (action == "invert")
+      next["invert"] = !next.at("invert").get<bool>();
+    else if (action == number)
+      next = {{"base", number}, {"negate", false}, {"invert", false}};
+    else if (parseNumberBase(action))
+      next["base"] = action;
+    else
+      throw Error("invalid_request", "action is a base of OperandFormats.def, "
+                                     "\"negate\" or \"invert\"");
+    if (formats.set(session_, address, static_cast<int>(operand),
+                    next.dump().c_str()) != 0)
+      throw Error("invalid_request", error());
+    state["operands"] = operandFormatRows();
+    const Json after = rowAt(state.at("operands"));
+    if (before == after)
+      return {{"address", hexAddress(address)},
+              {"operand", operand},
+              {"format", next},
+              {"saved", false}};
+    const auto checkpoint = store;
+    try {
+      store.stage({{"kind", "operand"},
+                   {"address", hexAddress(address)},
+                   {"before", before},
+                   {"after", after}});
+      store.persist(state);
+    } catch (...) {
+      store = checkpoint;
+      // The sidecar still holds the formats before this one.
+      (void)formats.load(session_);
+      operandFormatsChanged();
+      throw;
+    }
+    operandFormatsChanged();
+    ++revision_;
+    return {{"address", hexAddress(address)},
+            {"operand", operand},
+            {"format", next},
             {"saved", true}};
   }
   if (operation == "decompile") {

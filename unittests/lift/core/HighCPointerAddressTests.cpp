@@ -3392,7 +3392,9 @@ TEST(HighCPointerAddresses, WidenedParamCopyPrintsAsParamInCompare) {
   ElseRet.RetVal = HighExpr::makeConst(0, 4);
   Func.Body.push_back(std::move(ElseRet));
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("if (arg0 == 7)"), std::string::npos) << Source;
+  // The compare reads the parameter, through the zero extension the copy
+  // made: `(uint64_t)(uint32_t)arg0 == 7`.
+  EXPECT_NE(Source.find("arg0 == 7)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t29 ="), std::string::npos) << Source;
 }
 
@@ -34315,6 +34317,79 @@ std::string highcOnlyFunction(BinaryImage Img, va_t Entry,
   return Source;
 }
 
+TEST(HighCPointerAddresses, I386PicDataIsReadThroughItsObject) {
+  // `call $+5; pop eax; add eax, GOTPC` puts the GOT's address in EAX and
+  // `movdqa xmm0, .LCPI0_0@GOTOFF(%eax)` loads a constant-pool vector.  The
+  // GOT of an unlinked object is at zero, so the load reads the constant's
+  // object, not whatever lies at its image address in the rebuilt program
+  // (the stored call-next PC minus itself, plus that address).
+#ifdef NEVERD_TEST_CLANG
+  const std::string Compiler = NEVERD_TEST_CLANG;
+#else
+  const auto Found = llvm::sys::findProgramByName("clang");
+  ASSERT_TRUE(static_cast<bool>(Found)) << "clang is required";
+  const std::string Compiler = *Found;
+#endif
+  llvm::SmallString<128> SourcePath, ObjectPath, CheckPath, ErrorPath;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-pic", "c", SourcePath));
+  llvm::FileRemover RemoveSource(SourcePath);
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-pic", "o", ObjectPath));
+  llvm::FileRemover RemoveObject(ObjectPath);
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-pic-out", "c", CheckPath));
+  llvm::FileRemover RemoveCheck(CheckPath);
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-pic", "err", ErrorPath));
+  llvm::FileRemover RemoveError(ErrorPath);
+  auto Write = [](llvm::StringRef Path, llvm::StringRef Text) {
+    std::error_code EC;
+    llvm::raw_fd_ostream OS(Path, EC);
+    OS << Text;
+    return !EC;
+  };
+  ASSERT_TRUE(Write(SourcePath, R"(
+int weigh(const int *p, int n) {
+  int buf[64];
+  for (int i = 0; i < 64; i++) buf[i] = p[i] * 7 + 3;
+  int s = 0;
+  for (int i = 0; i < 64; i++) s += buf[(i * n) & 63];
+  return s;
+}
+)"));
+  const std::optional<llvm::StringRef> Redirects[] = {
+      std::nullopt, ErrorPath.str(), ErrorPath.str()};
+  auto Run = [&](llvm::ArrayRef<llvm::StringRef> Arguments) {
+    std::string Error;
+    const int Result = llvm::sys::ExecuteAndWait(
+        Compiler, Arguments, std::nullopt, Redirects, 60, 0, &Error);
+    auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
+    return Result == 0 ? std::string()
+                       : Error + (Errors ? (*Errors)->getBuffer().str() : "?");
+  };
+  const std::string Built =
+      Run({Compiler, "--target=i386-linux-gnu", "-march=pentium4", "-O2",
+           "-fPIC", "-c", SourcePath, "-o", ObjectPath});
+  ASSERT_TRUE(Built.empty()) << Built;
+  auto Img = loadBinary(ObjectPath.str().str());
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  const Symbol *Weigh = Img->findSymbol("weigh");
+  ASSERT_NE(Weigh, nullptr);
+  const Symbol *Pool = Img->findSymbol(".LCPI0_0");
+  ASSERT_NE(Pool, nullptr);
+  const std::string PoolAddress = std::to_string(Pool->Addr);
+  const std::string HighC = highcOnlyFunction(std::move(*Img), Weigh->Addr);
+  const size_t Body = HighC.find("weigh(");
+  ASSERT_NE(Body, std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("LCPI0_0;", Body), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find(" + " + PoolAddress + ")", Body), std::string::npos)
+      << HighC;
+  ASSERT_TRUE(Write(CheckPath, "#include <stdint.h>\n" + HighC));
+  const std::string Checked =
+      Run({Compiler, "--target=i386-linux-gnu", "-ffreestanding",
+           "-fsyntax-only", CheckPath});
+  EXPECT_TRUE(Checked.empty()) << Checked << HighC;
+}
+
 TEST(HighCPointerAddresses, CorpusBufferedCatchUsesParentFrameForIndex) {
   if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
     GTEST_SKIP() << "windows-eh corpus root is not configured";
@@ -42001,6 +42076,27 @@ TEST(HighCPointerAddresses, IntegerVectorIntrinsicsTakeVectorOperands) {
   expectCompilesForMsvc("#include <immintrin.h>\n" + HighC);
 }
 
+TEST(HighCPointerAddresses, FloatVectorIntrinsicsTakeTheirVectorTypes) {
+  // `_mm_shuffle_ps` takes __m128 and `_mm_unpacklo_pd` __m128d, which C
+  // does not convert from an integer vector.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x0f, 0xc6, 0xc1, 0x1b,       // shufps xmm0, xmm1, 0x1b
+      0x0f, 0x11, 0x01,             // movups [rcx], xmm0
+      0x66, 0x0f, 0x14, 0xd3,       // unpcklpd xmm2, xmm3
+      0x66, 0x0f, 0x11, 0x12,       // movupd [rdx], xmm2
+      0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("_mm_shuffle_ps(__builtin_bit_cast(__m128, "),
+            std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find("_mm_unpacklo_pd(__builtin_bit_cast(__m128d, "),
+            std::string::npos)
+      << HighC;
+  expectCompilesForMsvc("#include <immintrin.h>\n" + HighC);
+}
+
 TEST(HighCPointerAddresses, SelfLoopTargetKeepsItsLabel) {
   // `jmp $` spins forever.  The branch into it must stay a jump to a label
   // whose statement loops, not fall through or reference a missing label.
@@ -43426,5 +43522,72 @@ TEST(HighCPointerAddresses, ConditionalReturnOutOfALoopReturnsItsValue) {
   EXPECT_EQ(HighC.find("void sum_to_ten"), std::string::npos) << HighC;
   compileAndRunCallOrdering("#include <stdint.h>\n" + HighC + R"(
 int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
+)");
+}
+
+TEST(HighCPointerAddresses, AStackArgumentIsNotARegisterArgumentOfTheSameId) {
+  // Nine ARM32 arguments: r0-r3 and five stack slots.  The ninth, at
+  // [sp, #16], has parameter id 8, the id r0's parameter carries too;
+  // reading it must not read arg0 again.
+  constexpr va_t Entry = 0x10000;
+  const std::vector<uint8_t> Code = {
+      0x01, 0x00, 0x80, 0xe0, // add r0, r0, r1
+      0x02, 0x00, 0x80, 0xe0, // add r0, r0, r2
+      0x03, 0x00, 0x80, 0xe0, // add r0, r0, r3
+      0x00, 0x10, 0x9d, 0xe5, // ldr r1, [sp]
+      0x01, 0x00, 0x80, 0xe0, // add r0, r0, r1
+      0x04, 0x10, 0x9d, 0xe5, // ldr r1, [sp, #4]
+      0x01, 0x00, 0x80, 0xe0, // add r0, r0, r1
+      0x08, 0x10, 0x9d, 0xe5, // ldr r1, [sp, #8]
+      0x01, 0x00, 0x80, 0xe0, // add r0, r0, r1
+      0x0c, 0x10, 0x9d, 0xe5, // ldr r1, [sp, #12]
+      0x01, 0x00, 0x80, 0xe0, // add r0, r0, r1
+      0x10, 0x10, 0x9d, 0xe5, // ldr r1, [sp, #16]
+      0x01, 0x02, 0x80, 0xe0, // add r0, r0, r1, lsl #4
+      0x1e, 0xff, 0x2f, 0xe1, // bx lr
+  };
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Img.Arch = Arch::ARM;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  Symbol Sym = Symbol::makeFunc(Entry);
+  Sym.Name = "nine_args";
+  Img.Symbols.push_back(Sym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_NE(HighC.find("arg8"), std::string::npos) << HighC;
+  compileAndRunCallOrdering("#include <stdint.h>\n" + HighC + R"(
+int main(void) { return nine_args(1, 2, 3, 4, 5, 6, 7, 8, 100) != 1636; }
+)");
+}
+
+TEST(HighCPointerAddresses, LinkRegisterHoldsAValueOnceSaved) {
+  // After the prologue saves LR, the compiler may use it as any other
+  // register, here as a loop's accumulator; the epilogue then returns
+  // through the saved copy.
+  constexpr va_t Entry = 0x10000;
+  const std::vector<uint8_t> Code = {
+      0x10, 0x40, 0x2d, 0xe9, // push {r4, lr}
+      0x00, 0xe0, 0xa0, 0xe3, // mov lr, #0
+      0x00, 0x20, 0xa0, 0xe3, // mov r2, #0
+      0x00, 0xe0, 0x8e, 0xe0, // loop: add lr, lr, r0
+      0x01, 0x20, 0x82, 0xe2, // add r2, r2, #1
+      0x03, 0x00, 0x52, 0xe3, // cmp r2, #3
+      0xfb, 0xff, 0xff, 0x1a, // bne loop
+      0x0e, 0x00, 0xa0, 0xe1, // mov r0, lr
+      0x10, 0x80, 0xbd, 0xe8, // pop {r4, pc}
+  };
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Img.Arch = Arch::ARM;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  Symbol Sym = Symbol::makeFunc(Entry);
+  Sym.Name = "triple";
+  Img.Symbols.push_back(Sym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  compileAndRunCallOrdering("#include <stdint.h>\n" + HighC + R"(
+int main(void) { return triple(14) != 42 || triple(-5) != -15; }
 )");
 }

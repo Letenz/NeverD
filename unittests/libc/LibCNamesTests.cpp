@@ -12,6 +12,7 @@
 #include "neverd/loader/BinaryImage.h"
 
 #include <gtest/gtest.h>
+#include <utility>
 
 using namespace neverd;
 using namespace neverd::libc;
@@ -302,6 +303,22 @@ TEST(LibCArity, PreservesDarwinErrorSymbolSpelling) {
 
   EXPECT_FALSE(libcArityForSymbol("error").has_value());
   EXPECT_FALSE(libcArityForSymbol("__error").has_value());
+}
+
+TEST(LibCArity, TranslationRoutines) {
+  // sed's `_("unmatched `{'")` is dcgettext(NULL, msgid, LC_MESSAGES).  An
+  // unbounded scan took two more live registers as arguments.
+  const std::pair<const char *, int> Expected[] = {
+      {"gettext", 1},     {"dgettext", 2},       {"dcgettext", 3},
+      {"__dcgettext", 3}, {"ngettext", 3},       {"dngettext", 4},
+      {"dcngettext", 5},  {"bindtextdomain", 2}, {"textdomain", 1}};
+  for (const auto &[Name, IntArgs] : Expected) {
+    const auto Arity = libcArityForSymbol(Name);
+    ASSERT_TRUE(Arity.has_value()) << Name;
+    EXPECT_EQ(Arity->IntArgs, IntArgs) << Name;
+    EXPECT_EQ(Arity->FpArgs, 0) << Name;
+  }
+  EXPECT_STREQ(headerFor("dcgettext"), "libintl.h");
 }
 
 // =====================================================================

@@ -134,6 +134,14 @@ inline uint32_t getPESectionAlignment(const PEHeaderPtrs &PE) {
   return 0;
 }
 
+/// Logical extent of a linked PE section, before page rounding. A zero
+/// VirtualSize uses the raw extent. Relocatable COFF objects have different
+/// section-size rules and must not use this helper.
+inline uint32_t getPESectionContentSize(uint32_t VirtualSize,
+                                        uint32_t RawSize) {
+  return VirtualSize ? VirtualSize : RawSize;
+}
+
 /// Accessible bytes of a Windows user-image section, rounded to guest pages.
 /// SectionAlignment positions section RVAs; it does not commit the intervening
 /// pages. Raw data beyond a nonzero VirtualSize cannot extend this page range.
@@ -141,7 +149,8 @@ inline uint32_t getPESectionAlignment(const PEHeaderPtrs &PE) {
 inline uint64_t getPEUserSectionMappedSize(uint32_t VirtualSize,
                                            uint32_t RawSize,
                                            uint64_t PageSize) {
-  return llvm::alignTo(uint64_t(VirtualSize ? VirtualSize : RawSize), PageSize);
+  return llvm::alignTo(uint64_t(getPESectionContentSize(VirtualSize, RawSize)),
+                       PageSize);
 }
 
 inline uint32_t getPESizeOfImage(const PEHeaderPtrs &PE) {

@@ -613,7 +613,12 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("mach-time", b"h"),
                                            ("mach-timebase-values", bytes.fromhex("674523f1795634e2")),
                                            ("mach-clock-values", bytes.fromhex(
-                                               "1032547698badcfeffffffffffffffff"))):
+                                               "1032547698badcfeffffffffffffffff")),
+                                           ("symbolic-link-creation", b"b"),
+                                           ("symbolic-link-unlink", b"U"),
+                                           ("symbolic-link-unlink-protected", b"U"),
+                                           ("symbolic-link-rename", b"R"),
+                                           ("symbolic-link-rename-protected", b"R")):
                         if architecture == "x86_64" and mode == "mach-clock-values":
                             continue
                         file_options = json.dumps({
@@ -793,7 +798,11 @@ class ProcessIntegrationTests(unittest.TestCase):
                             for directory in files["directories"]:
                                 directory.pop("contents", None)
                             file_options = json.dumps(symbolic_options)
-                        if mode == "symbolic-link-mutations":
+                        unlink_links = mode.startswith("symbolic-link-unlink")
+                        rename_links = mode.startswith("symbolic-link-rename")
+                        protected_link = (unlink_links or rename_links) and mode.endswith("-protected")
+                        if (mode in ("symbolic-link-mutations", "symbolic-link-creation")
+                                or unlink_links or rename_links):
                             mixed_options = json.loads(file_options)
                             original = mixed_options["darwin_files"]["files"][0]
                             metadata = dict(original["metadata"], flags=0, link_count=1)
@@ -818,13 +827,61 @@ class ProcessIntegrationTests(unittest.TestCase):
                                     "generation": 2309737967,
                                     "creation_time": {"seconds": -19, "nanoseconds": 987654321},
                                     "mutation_policy": mutation}}
+                            if rename_links:
+                                mixed_options["darwin_files"]["directories"][1]["swap_rename"] = True
                             mixed_options["arguments"][2] = "/work/data"
+                            if protected_link:
+                                mixed_options["arguments"][1] = (
+                                    "symbolic-link-rename" if rename_links else "symbolic-link-unlink")
+                                mixed_options["arguments"].append("protected")
                             file_options = json.dumps(mixed_options)
                         result = session.emulate_process(path, f"{profile}-macho64-v1", file_options)
-                        self.assertEqual(result["stop_reason"], "exited", f"{mode}: {result['diagnostic']}")
-                        self.assertEqual(result["exit_status"], 37, mode)
+                        self.assertEqual(result["stop_reason"],
+                                         "unsupported_service" if protected_link else "exited",
+                                         f"{mode}: {result['diagnostic']}")
+                        self.assertEqual(result["exit_status"], None if protected_link else 37, mode)
                         self.assertEqual(bytes.fromhex(result["stdout_hex"]), expected)
                         self.assertEqual(result["stderr_hex"], "")
+                        if unlink_links:
+                            # U follows the guest's target FD/map identity checks.
+                            services = result["services"]
+                            removal_numbers = (("200000a", "20001d8") if architecture == "x86_64"
+                                               else ("a", "1d8"))
+                            removals = [event for event in services
+                                        if event["number"] in removal_numbers]
+                            self.assertTrue(any(event.get("error") is False and event["result"] == "0"
+                                                for event in removals), mode)
+                            self.assertTrue(any(event.get("error") is True and event["result"] == "2"
+                                                for event in removals), mode)
+                            self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+                            if protected_link:
+                                self.assertEqual(services[-1]["number"],
+                                                 "200000a" if architecture == "x86_64" else "a")
+                                self.assertIsNone(services[-1]["result"])
+                                self.assertNotIn("error", services[-1])
+                        if rename_links:
+                            services = result["services"]
+                            rename_numbers = (("2000080", "20001d1", "20001e8")
+                                              if architecture == "x86_64" else ("80", "1d1", "1e8"))
+                            renames = [event for event in services if event["number"] in rename_numbers]
+                            self.assertTrue(any(event.get("error") is False and event["result"] == "0"
+                                                for event in renames), mode)
+                            self.assertTrue(any(event["number"] == rename_numbers[1]
+                                                and event.get("error") is True and event["result"] == "42"
+                                                for event in renames), mode)
+                            flagged = [event for event in renames if event["number"] == rename_numbers[2]]
+                            for code in ("11", "3e", "2", "16"):
+                                self.assertTrue(any(event.get("error") is True and event["result"] == code
+                                                    for event in flagged), mode)
+                            for flag in ("2", "12"):
+                                self.assertTrue(any(event.get("error") is False and event["result"] == "0"
+                                                    and event["arguments"][4] == flag
+                                                    for event in flagged), mode)
+                            self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+                            if protected_link:
+                                self.assertEqual(services[-1]["number"], rename_numbers[0])
+                                self.assertIsNone(services[-1]["result"])
+                                self.assertNotIn("error", services[-1])
                         if mode.startswith("mach-"):
                             services = result["services"]
                             clocks = mode == "mach-clock-values"

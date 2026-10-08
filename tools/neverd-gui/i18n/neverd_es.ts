@@ -136,7 +136,7 @@
         <translation>Introducir comentario re&amp;petible...</translation>
     </message>
     <message>
-        <source>&amp;Mark position...</source>
+        <source>Mar&amp;k position...</source>
         <translation>Marcar &amp;posición...</translation>
     </message>
     <message>
@@ -192,7 +192,7 @@
         <translation>Ir al inicio de la función anterior</translation>
     </message>
     <message>
-        <source>Jump to ps&amp;eudocode</source>
+        <source>Jump to pseudo&amp;code</source>
         <translation>Saltar al &amp;pseudocódigo</translation>
     </message>
     <message>
@@ -296,7 +296,7 @@
         <translation>Buscar una secuencia de bytes en el binario</translation>
     </message>
     <message>
-        <source>Next seq&amp;uence of bytes</source>
+        <source>Next se&amp;quence of bytes</source>
         <translation>Secuencia de bytes s&amp;iguiente</translation>
     </message>
     <message>
@@ -392,7 +392,7 @@
         <translation>Mostrar el LLVM IR de la función actual</translation>
     </message>
     <message>
-        <source>Generate LLVM &amp;C</source>
+        <source>Generate &amp;LLVM C</source>
         <translation>Generar LLVM &amp;C</translation>
     </message>
     <message>
@@ -457,7 +457,7 @@
     </message>
     <message>
         <source>&amp;Cross references</source>
-        <translation>&amp;Referencias cruzadas</translation>
+        <translation>Referencias cr&amp;uzadas</translation>
     </message>
     <message>
         <source>Show references to the current item</source>
@@ -488,7 +488,7 @@
         <translation>Mostrar la vista general del grafo</translation>
     </message>
     <message>
-        <source>MCP &amp;connections</source>
+        <source>MCP c&amp;onnections</source>
         <translation>C&amp;onexiones MCP</translation>
     </message>
     <message>
@@ -496,7 +496,7 @@
         <translation>Gestionar las conexiones MCP y el uso compartido de la sesión</translation>
     </message>
     <message>
-        <source>E&amp;xtensions</source>
+        <source>Ex&amp;tensions</source>
         <translation>E&amp;xtensiones</translation>
     </message>
     <message>
@@ -528,7 +528,7 @@
         <translation>Activar o desactivar la pantalla completa</translation>
     </message>
     <message>
-        <source>&amp;Increase font size</source>
+        <source>I&amp;ncrease font size</source>
         <translation>&amp;Aumentar tamaño de fuente</translation>
     </message>
     <message>
@@ -697,7 +697,7 @@
     </message>
     <message>
         <source>S&amp;tring literals...</source>
-        <translation>Literales de &amp;cadena...</translation>
+        <translation>&amp;Literales de cadena...</translation>
     </message>
     <message>
         <source>Choose the encodings and minimum length of the strings the listing shows</source>
@@ -729,7 +729,7 @@
     </message>
     <message>
         <source>&amp;Data</source>
-        <translation>&amp;Datos</translation>
+        <translation>D&amp;atos</translation>
     </message>
     <message>
         <source>Define a value at the current address; again for the next size</source>
@@ -737,7 +737,7 @@
     </message>
     <message>
         <source>&amp;String</source>
-        <translation>&amp;Cadena</translation>
+        <translation>Cad&amp;ena</translation>
     </message>
     <message>
         <source>Define the string that starts at the current address</source>
@@ -750,6 +750,70 @@
     <message>
         <source>Show the current item&apos;s bytes as bytes</source>
         <translation>Mostrar los bytes del elemento actual como bytes</translation>
+    </message>
+    <message>
+        <source>&amp;Number</source>
+        <translation>&amp;Número</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the listing chooses</source>
+        <translation>Mostrar el número del operando como lo elige el listado</translation>
+    </message>
+    <message>
+        <source>&amp;Hexadecimal</source>
+        <translation>&amp;Hexadecimal</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in hexadecimal</source>
+        <translation>Mostrar el número del operando en hexadecimal</translation>
+    </message>
+    <message>
+        <source>&amp;Decimal</source>
+        <translation>&amp;Decimal</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in decimal</source>
+        <translation>Mostrar el número del operando en decimal</translation>
+    </message>
+    <message>
+        <source>&amp;Binary</source>
+        <translation>&amp;Binario</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number in binary</source>
+        <translation>Mostrar el número del operando en binario</translation>
+    </message>
+    <message>
+        <source>&amp;Character</source>
+        <translation>&amp;Carácter</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as characters</source>
+        <translation>Mostrar el número del operando como caracteres</translation>
+    </message>
+    <message>
+        <source>&amp;Offset</source>
+        <translation>Despla&amp;zamiento</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number as the address it names</source>
+        <translation>Mostrar el número del operando como la dirección que nombra</translation>
+    </message>
+    <message>
+        <source>Change &amp;sign</source>
+        <translation>Cambiar el &amp;signo</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its sign changed</source>
+        <translation>Mostrar el número del operando con el signo cambiado</translation>
+    </message>
+    <message>
+        <source>Bitwise ne&amp;gate</source>
+        <translation>Ne&amp;gación bit a bit</translation>
+    </message>
+    <message>
+        <source>Show the operand&apos;s number with its bits inverted</source>
+        <translation>Mostrar el número del operando con sus bits invertidos</translation>
     </message>
 </context>
 <context>
@@ -1118,6 +1182,10 @@
     <message>
         <source>&amp;Functions</source>
         <translation>&amp;Funciones</translation>
+    </message>
+    <message>
+        <source>Operand &amp;type</source>
+        <translation>&amp;Tipo de operando</translation>
     </message>
 </context>
 <context>

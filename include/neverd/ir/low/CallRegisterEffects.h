@@ -78,6 +78,10 @@ struct RegisterStep {
   bool UnknownTailCall = false;
   /// An indirect or import call that returns.
   bool UnknownCall = false;
+  /// The address an import call or tail call names: an executable stub, or
+  /// the slot the loader binds.  An import whose prototype fixes its entry
+  /// reads (solveCallRegisterEffects) reads exactly those.
+  va_t ImportCallee = InvalidVA;
   /// Nothing after this step executes (a call that does not return).
   bool Exits = false;
 };
@@ -101,9 +105,11 @@ struct LocalRegisterEffect {
   bool Unknown = false;
   /// The body itself is not fully known, so neither summary exists.
   bool Incomplete = false;
-  /// Control leaves for code no summary describes (an import or indirect tail
-  /// call) while this function's argument registers may still be the
-  /// caller's; which of them that code reads is unknown.
+  /// Control leaves for code no summary describes (an indirect tail call)
+  /// while this function's argument registers may still be the caller's;
+  /// which of them that code reads is unknown.  An import tail call leaves
+  /// this to the solver, which knows the prototypes (RegisterStep::
+  /// ImportCallee).
   bool UnknownEntryReads = false;
   /// Liveness skeleton; block 0 is the entry.
   std::vector<RegisterBlock> Blocks;
@@ -163,7 +169,10 @@ struct CallRegisterSummaries {
 /// clobbers \p VolatileFamilies and does not make the caller read its own
 /// incoming argument registers.  The call site's arguments are the registers
 /// the caller itself set.  A function in \p FixedEntryReads (a documented
-/// prototype) reads exactly those bytes.
+/// prototype) reads exactly those bytes.  So does an import whose stub or
+/// bound slot it lists: a call to the import passes them, and a tail call
+/// into it forwards exactly them, while a tail call into any other import
+/// leaves the caller's entry reads unknown.
 CallRegisterSummaries solveCallRegisterEffects(
     const std::map<va_t, LocalRegisterEffect> &Funcs,
     GPRFamilyMask VolatileFamilies, GPRFamilyMask ArgumentFamilies,

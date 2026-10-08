@@ -567,6 +567,67 @@ std::filesystem::path itemsPath(const Session *S) {
   return Path;
 }
 
+#define NEVERD_OPERAND_BASE(Id, Spelling)                                      \
+  constexpr llvm::StringLiteral k##Id##Base(Spelling);
+#include "neverd/OperandFormats.def"
+
+/// The operands of one instruction a format may name.
+constexpr int MaxFormattedOperands = 8;
+
+std::filesystem::path operandsPath(const Session *S) {
+  auto Path = S->FilePath;
+  Path += ".neverd-operands.json";
+  return Path;
+}
+
+bool isOperandBase(llvm::StringRef Base) {
+#define NEVERD_OPERAND_BASE(Id, Spelling)                                      \
+  if (Base == Spelling)                                                        \
+    return true;
+#include "neverd/OperandFormats.def"
+  return false;
+}
+
+/// The format \p Object describes, or none with \p Error.
+std::optional<Session::OperandFormat>
+parseOperandFormat(const llvm::json::Object &Object, std::string &Error) {
+  Session::OperandFormat Format;
+  const auto Base = Object.getString("base");
+  if (!Base || !isOperandBase(*Base)) {
+    Error = "an operand's base is number, hex, decimal, binary, char or "
+            "offset";
+    return std::nullopt;
+  }
+  Format.Base = Base->str();
+  for (const auto &[Key, Field] : {std::pair{"negate", &Format.Negate},
+                                   std::pair{"invert", &Format.Invert}})
+    if (const llvm::json::Value *Value = Object.get(Key)) {
+      const auto Flag = Value->getAsBoolean();
+      if (!Flag) {
+        Error = std::string(Key) + " is true or false";
+        return std::nullopt;
+      }
+      *Field = *Flag;
+    }
+  return Format;
+}
+
+llvm::json::Array operandFormatRows(const Session *S) {
+  llvm::json::Array Rows;
+  for (const auto &[Addr, Operands] : S->OperandFormats) {
+    llvm::json::Array List;
+    for (const auto &[Index, Format] : Operands)
+      List.push_back(
+          llvm::json::Object{{"operand", static_cast<int64_t>(Index)},
+                             {"base", Format.Base},
+                             {"negate", Format.Negate},
+                             {"invert", Format.Invert}});
+    Rows.push_back(llvm::json::Object{{"addr", vaHex(Addr)},
+                                      {"operands", std::move(List)}});
+  }
+  return Rows;
+}
+
 /// The item \p Row describes at \p Addr, checked against the image; none
 /// with \p Error.
 std::optional<Session::DataItem> parseDataItem(const Session &S, va_t Addr,
@@ -730,6 +791,149 @@ int neverd_item_clear(neverd_session_t Sess, neverd_va_t Addr) {
     S->setError("no data item starts at " + vaHex(Addr));
     return -1;
   }
+  return 0;
+}
+
+int neverd_operand_format_set(neverd_session_t Sess, neverd_va_t Addr,
+                              int Operand, const char *FormatJson) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return -1;
+  }
+  if (Operand < 0 || Operand >= MaxFormattedOperands) {
+    S->setError("an operand index is 0 to 7");
+    return -1;
+  }
+  if (!S->Img.readVA(Addr, 1)) {
+    S->setError(vaHex(Addr) + " is not in the image");
+    return -1;
+  }
+  // Formats belong to instructions, which lie in executable code.
+  if (llvm::none_of(S->Img.Segments, [&](const Segment &Seg) {
+        return Seg.isExecutable() && Seg.contains(Addr);
+      })) {
+    S->setError(vaHex(Addr) + " is not in executable code");
+    return -1;
+  }
+  std::optional<Session::OperandFormat> Format;
+  if (FormatJson) {
+    auto Parsed = llvm::json::parse(FormatJson);
+    const auto *Object = Parsed ? Parsed->getAsObject() : nullptr;
+    if (!Object) {
+      if (!Parsed)
+        llvm::consumeError(Parsed.takeError());
+      S->setError("an operand format is a JSON object");
+      return -1;
+    }
+    std::string Error;
+    Format = parseOperandFormat(*Object, Error);
+    if (!Format) {
+      S->setError(Error);
+      return -1;
+    }
+  }
+  // The listing's own spelling is no format of the user's.
+  auto &Operands = S->OperandFormats[Addr];
+  if (!Format ||
+      (Format->Base == kNumberBase && !Format->Negate && !Format->Invert))
+    Operands.erase(static_cast<unsigned>(Operand));
+  else
+    Operands[static_cast<unsigned>(Operand)] = std::move(*Format);
+  if (Operands.empty())
+    S->OperandFormats.erase(Addr);
+  return 0;
+}
+
+const char *neverd_operand_formats_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  return dupStr(jsonToString(llvm::json::Value(operandFormatRows(S))));
+}
+
+int neverd_operand_formats_save(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded)
+    return -1;
+  ProjectWriteLock Lock(S->FilePath);
+  if (!Lock) {
+    S->setError("project writer unavailable: " + Lock.error());
+    return -1;
+  }
+  return saveSidecar(S, operandsPath(S), operandFormatRows(S),
+                     "operand formats")
+             ? 0
+             : -1;
+}
+
+int neverd_operand_formats_load(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded)
+    return -1;
+  const auto Path = operandsPath(S);
+  std::error_code EC;
+  const bool Exists = std::filesystem::exists(Path, EC);
+  if (EC) {
+    S->setError("cannot inspect operand formats: " + EC.message());
+    return -1;
+  }
+  std::map<va_t, std::map<unsigned, Session::OperandFormat>> Formats;
+  if (Exists) {
+    std::ifstream In(Path);
+    if (!In.is_open()) {
+      S->setError("cannot read operand formats");
+      return -1;
+    }
+    const std::string Content((std::istreambuf_iterator<char>(In)),
+                              std::istreambuf_iterator<char>());
+    auto Parsed = llvm::json::parse(Content);
+    if (!Parsed) {
+      llvm::consumeError(Parsed.takeError());
+      S->setError("operand formats sidecar is not valid JSON");
+      return -1;
+    }
+    const auto *Rows = Parsed->getAsArray();
+    if (!Rows) {
+      S->setError("operand formats sidecar is not an array");
+      return -1;
+    }
+    for (const auto &Value : *Rows) {
+      const auto *Row = Value.getAsObject();
+      const llvm::json::Value *Address = Row ? Row->get("addr") : nullptr;
+      const auto Addr =
+          Address ? parsePersistedAddress(*Address) : std::optional<va_t>();
+      const auto *Operands = Row ? Row->getArray("operands") : nullptr;
+      if (!Addr || !Operands) {
+        S->setError("operand formats sidecar has an invalid row");
+        return -1;
+      }
+      for (const auto &Entry : *Operands) {
+        const auto *Object = Entry.getAsObject();
+        const auto Index =
+            Object ? Object->getInteger("operand") : std::nullopt;
+        std::string Error;
+        auto Format =
+            Object ? parseOperandFormat(*Object, Error) : std::nullopt;
+        if (!Index || *Index < 0 || *Index >= MaxFormattedOperands || !Format) {
+          S->setError("operand formats sidecar has an invalid operand" +
+                      (Error.empty() ? std::string() : ": " + Error));
+          return -1;
+        }
+        Formats[*Addr][static_cast<unsigned>(*Index)] = std::move(*Format);
+      }
+    }
+  }
+  S->OperandFormats = std::move(Formats);
   return 0;
 }
 

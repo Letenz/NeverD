@@ -61,6 +61,8 @@ struct MockSession {
   std::map<std::uint64_t, bool> functionEdits;
   /// The user's data items, as neverd_items_json lists them.
   std::map<std::uint64_t, Json> items;
+  /// The user's operand formats by address and operand index.
+  std::map<std::uint64_t, std::map<int, Json>> operandFormats;
   std::vector<std::uint64_t> functions = listedFunctions({});
   neverd_load_progress_fn progress = nullptr;
   void *progressUser = nullptr;
@@ -165,9 +167,9 @@ const char *neverd_headers_json(neverd_session_t) {
   return copy(R"({"language":{"runtime":"c","secondary":[],"evidence":[]}})");
 }
 
-const char *neverd_dashboard_json(neverd_session_t s) {
-  // Deterministic fixture-only identity. The real engine uses SHA-256; the
-  // production real-engine test verifies that digest against Python hashlib.
+// Deterministic fixture-only identity. The real engine uses SHA-256; the
+// production real-engine test verifies that digest against Python hashlib.
+std::string fixtureDigest(neverd_session_t s) {
   std::ifstream input(session(s)->path, std::ios::binary);
   std::uint64_t value = 1469598103934665603ULL;
   char byte;
@@ -177,8 +179,13 @@ const char *neverd_dashboard_json(neverd_session_t s) {
   }
   auto digest = hexAddress(value).substr(2);
   digest.insert(0, 16 - digest.size(), '0');
-  return copy(
-      Json{{"hashes", {{"sha256", digest + digest + digest + digest}}}}.dump());
+  return digest + digest + digest + digest;
+}
+const char *neverd_session_input_sha256(neverd_session_t s) {
+  return copy(fixtureDigest(s));
+}
+const char *neverd_dashboard_json(neverd_session_t s) {
+  return copy(Json{{"hashes", {{"sha256", fixtureDigest(s)}}}}.dump());
 }
 int neverd_func_count(neverd_session_t s) {
   return static_cast<int>(session(s)->functions.size());
@@ -1191,6 +1198,59 @@ int neverd_items_load(neverd_session_t s) {
     for (const auto &item : read(session(s)->path + ".neverd-items.json"))
       items[parseAddress(item.at("addr").get<std::string>())] = item;
     session(s)->items = std::move(items);
+    return 0;
+  } catch (...) {
+    return 1;
+  }
+}
+// Operand formats as the engine keeps them.
+int neverd_operand_format_set(neverd_session_t s, neverd_va_t address,
+                              int operand, const char *text) {
+  auto &state = *session(s);
+  if (operand < 0 || operand > 7) {
+    state.error = "an operand index is 0 to 7";
+    return -1;
+  }
+  auto &operands = state.operandFormats[address];
+  try {
+    const auto format = text ? Json::parse(text) : Json(nullptr);
+    const auto base = format.is_null() ? std::string("number")
+                                       : format.at("base").get<std::string>();
+    const bool negate = format.is_object() && format.value("negate", false);
+    const bool invert = format.is_object() && format.value("invert", false);
+    if (base == "number" && !negate && !invert)
+      operands.erase(operand);
+    else
+      operands[operand] = {{"operand", operand},
+                           {"base", base},
+                           {"negate", negate},
+                           {"invert", invert}};
+  } catch (const Json::exception &) {
+    state.error = "invalid operand format";
+    return -1;
+  }
+  if (operands.empty())
+    state.operandFormats.erase(address);
+  return 0;
+}
+const char *neverd_operand_formats_json(neverd_session_t s) {
+  Json rows = Json::array();
+  for (const auto &[address, operands] : session(s)->operandFormats) {
+    Json list = Json::array();
+    for (const auto &[index, format] : operands)
+      list.push_back(format);
+    rows.push_back({{"addr", hexAddress(address)}, {"operands", list}});
+  }
+  return copy(rows.dump());
+}
+int neverd_operand_formats_load(neverd_session_t s) {
+  try {
+    std::map<std::uint64_t, std::map<int, Json>> formats;
+    for (const auto &row : read(session(s)->path + ".neverd-operands.json"))
+      for (const auto &format : row.at("operands"))
+        formats[parseAddress(row.at("addr").get<std::string>())]
+               [format.at("operand").get<int>()] = format;
+    session(s)->operandFormats = std::move(formats);
     return 0;
   } catch (...) {
     return 1;

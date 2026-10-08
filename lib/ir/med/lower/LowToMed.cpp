@@ -202,15 +202,20 @@ void splitEntryLoopHeader(MedFunc &Func) {
 } // namespace
 
 void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
-  if (LOp.Opcode != NdOp::CALL || LOp.NumInputs == 0 ||
-      !LOp.Inputs[0].isConst())
+  if ((LOp.Opcode != NdOp::CALL && LOp.Opcode != NdOp::INDIR_CALL) ||
+      LOp.NumInputs == 0 || !LOp.Inputs[0].isConst())
     return;
   // Publish the register arguments the callee reads as uses, so SSA sees a
   // pass-through argument and the call site knows its arity.  The calling
   // convention says whether and how (MedCallConvention.h); Mach-O
-  // source-call binding owns the single-input calls of the others.
+  // source-call binding owns the single-input calls of the others.  An
+  // indirect call through a constant slot reaches the import the loader
+  // binds there, which only its summary describes.
   const CallArgumentConvention *Convention =
       callArgumentConvention(TargetArch, TargetFormat);
+  if (LOp.Opcode == NdOp::INDIR_CALL &&
+      (!Convention || !Convention->ImportArgumentsFromPrototype))
+    return;
   const TargetRegInfo &TRI = getTargetRegInfo(TargetArch);
   const llvm::ArrayRef<uint64_t> ArgRegs = TRI.integerParamRegs(TargetFormat);
   const int8_t Slots =
@@ -685,11 +690,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
           if (Write.NumInputs == 0 || !Write.Inputs[0].isTemp())
             continue;
           MedVar Source = ndVarToMedVar(Write.Inputs[0]);
-          if (std::none_of(MOp.IntrinsicOutputs.begin(),
-                           MOp.IntrinsicOutputs.end(),
-                           [&](const MedVar &Existing) {
-                             return Existing == Source;
-                           }))
+          if (std::none_of(
+                  MOp.IntrinsicOutputs.begin(), MOp.IntrinsicOutputs.end(),
+                  [&](const MedVar &Existing) { return Existing == Source; }))
             MOp.IntrinsicOutputs.push_back(Source);
         }
       }
@@ -1192,8 +1195,7 @@ void LowToMedConverter::resolveI386GetPcModels(
           break;
       }
       if (PopLoad)
-        Bound = MedI386GetPcModel{MedVar{}, *PopLoad,
-                                   Occurrence.PCValue};
+        Bound = MedI386GetPcModel{MedVar{}, *PopLoad, Occurrence.PCValue};
     }
     if (Multiple || !Bound)
       continue;

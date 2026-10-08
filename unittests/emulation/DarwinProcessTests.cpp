@@ -1487,6 +1487,80 @@ TEST_P(DarwinProcess, ExplicitProfileCannotBeReplacedByHostPlatform) {
   ASSERT_FALSE(bool(Wrong));
   llvm::consumeError(Wrong.takeError());
 }
+TEST_P(DarwinProcess, RuntimeLinksCreateOpaqueTargetsAndRetainObjects) {
+  Options.DarwinFiles = darwin_test::mixedSymbolicLinkOptions();
+  Options.Arguments[2] = "/work/data";
+  auto Result = run("symbolic-link-creation");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "b");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {57u, 474u, 58u, 473u, 465u, 472u, 475u, 197u, 73u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Error == false;
+    })) << Number;
+}
+
+TEST_P(DarwinProcess, RuntimeCreatedSymbolicLinksCanBeRemoved) {
+  Options.DarwinFiles = darwin_test::mixedSymbolicLinkOptions();
+  Options.Arguments[2] = "/work/data";
+  auto Result = run("symbolic-link-unlink");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "U");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {10u, 57u, 474u, 472u, 473u, 475u, 197u, 73u, 13u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Error == false;
+    })) << Number;
+  for (auto Error : {2u, 62u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + 472 && Event.Error == true &&
+             Event.Result == Error;
+    })) << Error;
+}
+
+TEST_P(DarwinProcess, RuntimeCreatedSymbolicLinksCanBeRenamed) {
+  Options.DarwinFiles = darwin_test::mixedSymbolicLinkOptions();
+  Options.DarwinFiles->SwapRenameDirectories.insert("/work");
+  Options.Arguments[2] = "/work/data";
+  auto Result = run("symbolic-link-rename");
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  ASSERT_EQ(Result->Stop, ProcessStopReason::Exited) << Result->Diagnostic;
+  EXPECT_EQ(Result->ExitStatus, 37);
+  EXPECT_EQ(Result->StandardOutput, "R");
+  EXPECT_TRUE(Result->StandardError.empty());
+  EXPECT_EQ(Result->SelectedBackend, GetParam().Backend);
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (auto Number : {57u, 474u, 128u, 465u, 488u, 473u, 472u, 197u, 73u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + Number && Event.Error == false;
+    })) << Number;
+  for (auto Error : {17u, 62u, 2u, 22u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + 488 && Event.Error == true &&
+             Event.Result == Error;
+    })) << Error;
+  EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+    return Event.Number == Class + 465 && Event.Error == true &&
+           Event.Result == 66;
+  }));
+  for (auto Flags : {2u, 18u})
+    EXPECT_TRUE(llvm::any_of(Result->Services, [&](const auto &Event) {
+      return Event.Number == Class + 488 && Event.Error == false &&
+             Event.Result == 0 && uint32_t(Event.Arguments[4]) == Flags;
+    })) << Flags;
+}
+
 INSTANTIATE_TEST_SUITE_P(Transports, DarwinProcess,
                          testing::ValuesIn(profiles()),
                          [](const testing::TestParamInfo<Profile> &P) {

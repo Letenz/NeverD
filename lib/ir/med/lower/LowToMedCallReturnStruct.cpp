@@ -10,9 +10,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMed.h"
 
 #include <algorithm>
+#include <optional>
 #include <set>
 #include <utility>
 #include <vector>
@@ -106,6 +108,13 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
 
       // Which candidate return registers does the caller read straight-line
       // after the call (a genuine input) before that register is redefined?
+      // A register the callee provably never writes still holds the caller's
+      // own value (GCC keeps one in RDX across a call it knows leaves RDX
+      // alone), so it returns nothing.
+      auto PreservedByCall = [&](uint64_t RegOff) {
+        const std::optional<unsigned> Family = gprFamilyOf(TargetArch, RegOff);
+        return Family && ((Op.CallPreservedGPRs >> *Family) & 1) != 0;
+      };
       struct FieldRead {
         uint64_t RegOff;
         bool IsFP;
@@ -140,7 +149,8 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
             if (In.Kind != MedVar::Reg)
               continue;
             int CI = candIdx(In.RegOff);
-            if (CI >= 1000 || Redefined.count(In.RegOff))
+            if (CI >= 1000 || Redefined.count(In.RegOff) ||
+                PreservedByCall(In.RegOff))
               continue;
             // The field holds every byte the caller reads from it: `mov ecx,
             // eax` followed by `shr rax, 32` needs all of RAX.

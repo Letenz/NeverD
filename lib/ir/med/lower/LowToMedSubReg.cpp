@@ -10,10 +10,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMed.h"
 
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <set>
 
 namespace neverd {
@@ -366,12 +368,20 @@ void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
           ZextWrites.erase(NarrowKey);
         }
 
+        // A register the callee's summary shows it never writes keeps the
+        // caller's value across the call as a callee-saved one does.
+        auto SummaryPreserved = [&](uint64_t RegOff) {
+          const std::optional<unsigned> Family =
+              gprFamilyOf(TargetArch, RegOff);
+          return Family && ((MOp.CallPreservedGPRs >> *Family) & 1) != 0;
+        };
         auto DiscardClobbered = [&](RegWriteMap &Writes) {
           for (auto It = Writes.begin(); It != Writes.end();) {
             uint64_t RegOff = It->first.first;
             uint16_t Size = It->first.second;
             if (!TRI.isFrameOrLinkReg(RegOff) &&
-                !TRI.isCallPreserved(RegOff, Size, TargetFormat))
+                !TRI.isCallPreserved(RegOff, Size, TargetFormat) &&
+                !SummaryPreserved(RegOff))
               It = Writes.erase(It);
             else
               ++It;

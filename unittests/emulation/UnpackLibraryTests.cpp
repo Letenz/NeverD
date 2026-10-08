@@ -40,6 +40,10 @@ constexpr Profile Profiles[] = {
      ExecutionContract::DirectUserX64, "X64"},
 };
 void PrintTo(const Profile &P, std::ostream *OS) { *OS << P.Name; }
+struct Variant {
+  uint32_t Mode;
+  bool ZeroVirtualSizes = false;
+};
 class UnpackLibrary : public testing::TestWithParam<Profile> {
 protected:
   void SetUp() override {
@@ -98,12 +102,21 @@ protected:
 
 TEST_P(UnpackLibrary, RecoversAttachEntryAndPreservesExports) {
   expectExecution(Directory / fixture::InputFile);
-  for (uint32_t Mode :
-       {fixture::LoaderMode, fixture::TLSMode, fixture::PrivateTLSMode,
-        fixture::NoTLSCallbacksMode, fixture::EmptyTLSCallbacksMode}) {
+  constexpr Variant Variants[] = {{fixture::LoaderMode},
+                                  {fixture::TLSMode},
+                                  {fixture::PrivateTLSMode},
+                                  {fixture::NoTLSCallbacksMode},
+                                  {fixture::EmptyTLSCallbacksMode},
+                                  {fixture::LoaderMode, true},
+                                  {fixture::TLSMode, true}};
+  for (auto [Mode, ZeroVirtualSizes] : Variants) {
     SCOPED_TRACE(Mode);
+    SCOPED_TRACE(ZeroVirtualSizes);
     const auto Path = Scratch / fixture::InputFile;
-    ASSERT_TRUE(fixture::write(Path, fixture::pack(Original, Mode)));
+    auto Bytes = fixture::pack(Original, Mode);
+    if (ZeroVirtualSizes)
+      Bytes = fixture::withZeroVirtualSizes(Original, std::move(Bytes));
+    ASSERT_TRUE(fixture::write(Path, Bytes));
     expectExecution(Path);
     ASSERT_FALSE(HasFailure());
     auto Recovered = unpackFile(Path, Options);
@@ -289,13 +302,22 @@ TEST_P(UnpackLibrary, RecoveredLibrariesLoadAndExportOnNativeWindows) {
     EXPECT_TRUE(Err.empty());
     EXPECT_EQ(std::string(Out.begin(), Out.end()), Expected);
   };
-  for (uint32_t Mode :
-       {0u, uint32_t(fixture::LoaderMode), uint32_t(fixture::TLSMode),
-        uint32_t(fixture::PrivateTLSMode), uint32_t(fixture::WrappedEntryMode),
-        uint32_t(fixture::NoTLSCallbacksMode),
-        uint32_t(fixture::EmptyTLSCallbacksMode)}) {
+  constexpr Variant Variants[] = {{0},
+                                  {fixture::LoaderMode},
+                                  {fixture::TLSMode},
+                                  {fixture::PrivateTLSMode},
+                                  {fixture::WrappedEntryMode},
+                                  {fixture::NoTLSCallbacksMode},
+                                  {fixture::EmptyTLSCallbacksMode},
+                                  {0, true},
+                                  {fixture::LoaderMode, true},
+                                  {fixture::TLSMode, true}};
+  for (auto [Mode, ZeroVirtualSizes] : Variants) {
     SCOPED_TRACE(Mode);
+    SCOPED_TRACE(ZeroVirtualSizes);
     auto Bytes = Mode ? fixture::pack(Original, Mode) : Original.File;
+    if (ZeroVirtualSizes)
+      Bytes = fixture::withZeroVirtualSizes(Original, std::move(Bytes));
     ASSERT_TRUE(fixture::write(Path, Bytes));
     if (Mode) {
       Native(0, std::string(fixture::AttachText) + fixture::QueryText +

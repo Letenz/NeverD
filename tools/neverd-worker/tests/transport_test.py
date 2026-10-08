@@ -345,6 +345,34 @@ def run(executable):
         assert automatic["error"]["code"] == "invalid_request", automatic
         assert client.call("undo")["status"] == "ok"
         assert client.call("resolve", {"query": "program_name"})["status"] == "error"
+        # Operand types: an instruction's operand shows its number in the base
+        # the user picks, with its sign changed; each is a step of history.
+        assert "operand_format" in client.hello["capabilities"]
+
+        def operand_line():
+            lines = client.call("listing", {"address": "0xffff800012340051", "before": 0, "after": 1})
+            return next(" ".join(line["text"].split()) for line in lines["payload"]["lines"]
+                        if "sub" in line["text"])
+        assert "sub rsp, 20h" in operand_line(), operand_line()
+        sub = {"address": "0xffff800012340051", "operand": 1}
+        assert client.call("operand_format", {**sub, "action": "decimal"})["status"] == "ok"
+        assert "sub rsp, 32" in operand_line(), operand_line()
+        negated = client.call("operand_format", {**sub, "action": "negate"})["payload"]
+        assert negated["format"] == {"base": "decimal", "negate": True, "invert": False}, negated
+        assert "sub rsp, -18446744073709551584" in operand_line(), operand_line()
+        data = client.call("operand_format", {"address": "0xffff800012343100", "operand": 0, "action": "hex"})
+        assert data["error"]["code"] == "invalid_request", data
+        assert client.call("undo")["status"] == "ok" and client.call("undo")["status"] == "ok"
+        assert "sub rsp, 20h" in operand_line(), operand_line()
+        # An operand that is no number gives the format to the instruction's
+        # last number; an instruction without one is refused.  A format
+        # outlives the session: its sidecar is read back on open.
+        fallback = client.call("operand_format", {**sub, "operand": 0, "action": "binary"})
+        assert fallback["payload"]["operand"] == 1, fallback
+        assert "sub rsp, 100000b" in operand_line(), operand_line()
+        bare = client.call("operand_format", {"address": "0xffff800012340050", "action": "hex"})
+        assert bare["error"]["code"] == "invalid_request", bare
+        assert "no number" in bare["error"]["message"], bare
         client.call("string_options", {"encodings": ["ascii", "utf-8", "utf-16le"]})
         # Hex views ask for bytes as text in an encoding, a cell per byte.
         bytes_ = client.call("bytes", {"address": "0xffff800012343000", "size": 4, "text_encoding": "ascii"})["payload"]
@@ -398,6 +426,9 @@ def run(executable):
         bss = [" ".join(line["text"].split()) for line in reopened.call(
             "listing", {"address": "0xffff800012343230", "before": 0, "after": 2})["payload"]["lines"]]
         assert any(line.startswith("word_FFFF800012343230 dw ?") for line in bss), bss
+        code = [" ".join(line["text"].split()) for line in reopened.call(
+            "listing", {"address": "0xffff800012340051", "before": 0, "after": 1})["payload"]["lines"]]
+        assert any("sub rsp, 100000b" in line for line in code), code
         reopened.close()
 
     malformed = Client(executable)

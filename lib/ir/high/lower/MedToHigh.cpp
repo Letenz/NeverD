@@ -349,6 +349,9 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
     return HighExpr::makeConst(V.ConstVal, V.Size, V.Provenance,
                                V.AddressOwnerVA);
   }
+  // The proven GOT base of an unlinked i386 object is address zero.
+  if (I386GotBase.count(varKey(V)))
+    return HighExpr::makeConst(0, V.Size, ConstantAddressProvenance::Scalar);
 
   auto SourceParameter = [&](MedVar Parameter, size_t Index) -> ExprPtr {
     const auto &Bindings = SourceParameters;
@@ -547,8 +550,12 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
 
   auto Key = varKey(V);
 
+  // A single counted use takes its definition inline.  So does a use no
+  // count saw, such as a register argument the call-site scan finds after
+  // counting: lowerGenericAssign emitted no assignment for that definition.
   auto UIt = UseCount.find(Key);
-  if (UIt != UseCount.end() && UIt->second == 1)
+  const int Uses = UIt == UseCount.end() ? 0 : UIt->second;
+  if (Uses == 1 || (Uses == 0 && !CallOutputs.count(Key)))
     if (auto Definition = inlineableDefinition(Key))
       return Definition;
 
@@ -804,6 +811,7 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
   UseCount.clear();
   DefExpr.clear();
   SourceRecordValues.clear();
+  collectI386GotBase(Med);
   for (const auto &Block : Med.Blocks)
     for (const auto &Op : Block.Ops)
       if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
