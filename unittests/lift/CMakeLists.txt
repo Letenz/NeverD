@@ -1704,6 +1704,7 @@ add_neverd_unittest(NeverDLanguageEHTests
   language/ObjCEHRuntimeCallTests.cpp
   language/ObjCEHRuntimeStateTests.cpp
   language/ScratchRealBinary.cpp
+  language/SymbolSpellingTests.cpp
 )
 target_include_directories(NeverDLanguageEHTests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
