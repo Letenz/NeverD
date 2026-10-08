@@ -7,8 +7,8 @@
 #include "neverd/loader/EVM/EVMLoader.h"
 
 #include "neverd/Common.h"
-#include "neverd/evm/bytecode/EVMBytecode.h"
 #include "neverd/evm/EVMConstants.h"
+#include "neverd/evm/bytecode/EVMBytecode.h"
 
 namespace neverd {
 
@@ -55,6 +55,18 @@ llvm::Expected<BinaryImage> EVMLoader::load(const std::filesystem::path &Path) {
   Image.addSymbol(kEVMEntrySymbolName.str(), evm::kEntryPC, Loaded->Code.size(),
                   true);
   return Image;
+}
+
+void EVMLoader::identify(std::vector<LoadCandidate> &Rows) {
+  LoadCandidate Row;
+  Row.Row = LoadRow::EVM;
+  Row.Format = BinaryFormat::EVM;
+  Row.Description = getLoadRowText(LoadRow::EVM).str();
+  Row.TheArch = Arch::EVM;
+  Row.Bits = 256;
+  Row.BigEndian = true;
+  Row.Loadable = true;
+  Rows.push_back(std::move(Row));
 }
 
 } // namespace neverd

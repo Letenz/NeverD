@@ -21,6 +21,8 @@ namespace neverd {
 class EVMLoader final : public Loader {
 public:
   llvm::Expected<BinaryImage> load(const std::filesystem::path &Path) override;
+  /// Add the load dialog's row for a file Loader::create gives this loader.
+  static void identify(std::vector<LoadCandidate> &Rows);
 };
 
 } // namespace neverd

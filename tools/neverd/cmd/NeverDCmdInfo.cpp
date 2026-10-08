@@ -16,6 +16,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
@@ -41,6 +42,45 @@ std::string describeLanguage(const json::Object &Language) {
 }
 
 } // namespace
+
+int runIdentify() {
+  const char *Json = neverd_identify_json(InputFile.c_str());
+  const std::string Text = Json ? Json : "";
+  neverd_free_string(Json);
+  if (JsonOutput) {
+    outs() << Text << "\n";
+    return 0;
+  }
+  auto Parsed = json::parse(Text);
+  if (!Parsed) {
+    WithColor::error() << "identify failed: " << toString(Parsed.takeError())
+                       << "\n";
+    return 1;
+  }
+  const json::Object *Root = Parsed->getAsObject();
+  if (auto Error = Root->getString("error")) {
+    WithColor::error() << *Error << "\n";
+    return 1;
+  }
+  // As the load dialog lists them: the first loadable row is the default.
+  outs() << "Load file " << InputFile << " as:\n";
+  bool Chosen = false;
+  for (const json::Value &Value : *Root->getArray("rows")) {
+    const json::Object &Row = *Value.getAsObject();
+    const bool Loadable = Row.getBoolean("loadable").value_or(false);
+    const bool Default = Loadable && !Chosen;
+    Chosen |= Default;
+    outs() << (Default ? "  * " : "    ") << Row.getString("text").value_or("")
+           << " [" << Row.getString("loader").value_or("") << "]";
+    if (const auto Processor = Row.getString("processor");
+        Processor && !Processor->empty())
+      outs() << "  " << *Processor;
+    if (!Loadable)
+      outs() << "  (" << Row.getString("reason").value_or("") << ")";
+    outs() << "\n";
+  }
+  return 0;
+}
 
 int runInfo(neverd_session_t Sess) {
   if (JsonOutput) {
