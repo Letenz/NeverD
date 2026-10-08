@@ -547,8 +547,12 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
 
   auto Key = varKey(V);
 
+  // A single counted use takes its definition inline.  So does a use no
+  // count saw, such as a register argument the call-site scan finds after
+  // counting: lowerGenericAssign emitted no assignment for that definition.
   auto UIt = UseCount.find(Key);
-  if (UIt != UseCount.end() && UIt->second == 1)
+  const int Uses = UIt == UseCount.end() ? 0 : UIt->second;
+  if (Uses == 1 || (Uses == 0 && !CallOutputs.count(Key)))
     if (auto Definition = inlineableDefinition(Key))
       return Definition;
 
